@@ -14,6 +14,8 @@ export const codeMotionSpeechRequestSchema = z
     sceneIndex: z.number().int().min(0).max(11),
     text: z.string().trim().min(1).max(180),
     voice: z.enum(["female", "male"]),
+    // Omitted in historical requests: retain their serialized identity as narration.
+    role: z.enum(["narration", "dialogue"]).optional(),
     emotion: codeMotionEmotionSchema.optional(),
   })
   .strict();

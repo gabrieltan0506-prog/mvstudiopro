@@ -26,11 +26,17 @@ export const REVISION_VIDEO_RATE = Object.freeze({
 });
 export type CodeMotionRevisionPrice = {
   fingerprint: string;
-  rate: typeof REVISION_VIDEO_RATE;
+  rate:
+    | typeof REVISION_VIDEO_RATE
+    | typeof import("./codeMotionRevisionEdit").REVISION_EDIT_RATE
+    | typeof import("./codeMotionRevisionEdit").FREE_REVISION_EDIT_RATE;
   costUsd: number;
   credits: number;
   shot: CodeMotionProductionVideoShot;
-  basis: "published_rate_fixed_units";
+  basis:
+    | "published_rate_fixed_units"
+    | "published_rate_measured_units"
+    | "free_allowance";
 };
 export function revisionVideoCost(duration: number) {
   if (!Number.isInteger(duration) || duration < 4 || duration > 5)
@@ -102,12 +108,30 @@ export async function codeMotionRevisionCharge(
   const quote = await getCodeMotionRevisionPrice(userId, slot.projectId);
   if (
     !quote ||
-    grant.revision?.mode !== "paid_video" ||
+    !["paid_video", "video_edit"].includes(grant.revision?.mode || "") ||
     slot.kind !== "video" ||
     slot.index !== quote.shot.sceneIndex ||
     slot.digest !== codeMotionProductionDigest(quote.shot)
   )
     throw new Error("局部修改扣费缺少一致的已确认报价");
+  if (quote.shot.editSource) {
+    const { editVideoCost } = await import("./codeMotionRevisionEdit");
+    const source = quote.shot.editSource;
+    const expected =
+      grant.tier === "free"
+        ? 0
+        : editVideoCost(
+            source.inputDuration,
+            Math.max(source.inputDuration, quote.shot.duration)
+          ).credits;
+    if (
+      quote.credits !== expected ||
+      quote.shot.videoUrls.length !== 1 ||
+      quote.shot.videoUrls[0] !== (source.providerReference?.videoUri ?? source.asset.videoUri)
+    )
+      throw Error("原片修改价格合同不一致");
+    return quote.credits;
+  }
   if (
     quote.credits !== revisionVideoCost(quote.shot.duration).credits ||
     quote.shot.videoUrls.length
@@ -143,7 +167,8 @@ export async function persistCodeMotionRevisionTerminal(
   }
 }
 export async function settleCodeMotionRevisionCost(
-  task: CanvasVideoTaskRecord
+  task: CanvasVideoTaskRecord,
+  outputVideoUrl?: string
 ) {
   const slot = task.inkProduction;
   if (!slot) return;
@@ -167,9 +192,21 @@ export async function settleCodeMotionRevisionCost(
     !["completed", "succeeded", "success"].includes(
       String(response.status || "").toLowerCase()
     ) ||
-    (envelope.taskId && envelope.taskId !== task.taskId)
+    (envelope.taskId && envelope.taskId !== task.taskId) ||
+    (quote.shot.editSource && ((envelope.providerTaskId && envelope.providerTaskId!==task.evolinkTaskId) || (response.id && response.id!==task.evolinkTaskId)))
   )
     throw new Error("供应商回执尚未确认本任务成功，保留任务待核对");
+  if (quote.shot.editSource) {
+    const { settleCodeMotionVideoEdit } = await import(
+      "./codeMotionRevisionEditSettlement"
+    );
+    return settleCodeMotionVideoEdit(
+      task,
+      quote,
+      raw.body.toString(),
+      outputVideoUrl
+    );
+  }
   const receipt = {
     version: 1,
     taskId: task.taskId,

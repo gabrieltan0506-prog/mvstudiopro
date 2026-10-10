@@ -8,7 +8,7 @@ export const codeMotionVideoAssetSchema = z
       .regex(/^gs:\/\/[^/\s?#]+\/[^\s?#]+$/)
       .max(2048),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    durationSec: z.number().finite().min(4).max(5),
+    durationSec: z.number().finite().min(4).max(30),
   })
   .strict();
 export const codeMotionVideoSchema = z
@@ -21,8 +21,8 @@ export const codeMotionVideoSchema = z
           .object({
             assetId: z.string().min(1).max(100),
             at: z.number().finite().min(0).max(180),
-            duration: z.number().finite().positive().max(5),
-            sourceStartSec: z.number().finite().min(0).max(5).default(0),
+            duration: z.number().finite().positive().max(30),
+            sourceStartSec: z.number().finite().min(0).max(30).default(0),
             fit: z.enum(["cover", "contain"]).default("cover"),
           })
           .strict()

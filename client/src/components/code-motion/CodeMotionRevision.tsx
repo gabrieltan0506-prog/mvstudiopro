@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
@@ -12,16 +13,13 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import type { CodeMotionProject } from "@shared/codeMotion";
+import type { CodeMotionRevisionChange } from "@shared/codeMotionRevision";
+import CodeMotionRevisionAssistant from "./CodeMotionRevisionAssistant";
 type Pending = {
   projectId: string;
   expectedGeneration: string;
   requestId: string;
-  changes: {
-    index: number;
-    heading: string;
-    body: string;
-    motionPrompt?: string;
-  }[];
+  changes: CodeMotionRevisionChange[];
   confirmedQuote?: string;
 };
 export default function CodeMotionRevision({
@@ -49,12 +47,15 @@ export default function CodeMotionRevision({
       fingerprint: string;
       credits: number;
       costUsd: number;
+      sourcePreviewUrl?: string;
+      shot?: { version: string; mode: string };
     } | null>(null),
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [confirmOpen, setConfirmOpen] = useState(false),
     [pending, setPending] = useState<Pending | null>(null);
   const lock = useRef(false);
+  const [proposal,setProposal]=useState<{summary:string;changes:CodeMotionRevisionChange[]}|null>(null);
   const submit = trpc.codeMotionProduction.revisionSubmit.useMutation();
   const preparePrice = trpc.codeMotionProduction.revisionPrepare.useMutation();
   const quote = trpc.codeMotionProduction.revisionQuote.useQuery(
@@ -81,7 +82,7 @@ export default function CodeMotionRevision({
         !value.requestId ||
         !value.expectedGeneration ||
         !Array.isArray(value.changes) ||
-        value.changes.length !== 1 ||
+        value.changes.length < 1 || value.changes.length > 6 ||
         !Number.isInteger(value.changes[0]?.index) ||
         typeof value.changes[0]?.heading !== "string" ||
         typeof value.changes[0]?.body !== "string"
@@ -106,7 +107,7 @@ export default function CodeMotionRevision({
           projectId: project.id,
           expectedGeneration: generation,
           requestId: crypto.randomUUID(),
-          changes: [
+          changes: proposal?.changes.length ? proposal.changes : [
             {
               index,
               heading,
@@ -142,7 +143,8 @@ export default function CodeMotionRevision({
     >
       <h3 className="font-medium">局部修改</h3>
       <p className="text-xs text-stone-600">
-        修改选定镜头，沿用已有场景图、旁白和配乐。付费动作重做只生成本镜4–5秒，其余镜头保留。
+        修改选定镜头，沿用已有场景图、旁白和配乐。原片编辑只修改已采用的本镜4–5秒，其余镜头保留。免费使用Seedance
+        2.0，付费使用2.5专用编辑。
       </p>
       <p className="text-xs">
         {quote.data?.message || "完成当前版本成片后可修改。"}
@@ -150,11 +152,14 @@ export default function CodeMotionRevision({
           ? ` 剩余 ${quote.data.remaining} 次。`
           : ""}
       </p>
+      <CodeMotionRevisionAssistant project={project} generation={generation} disabled={disabled||busy||!!pending||(quote.data?.tier==="free"&&quote.data.remaining===0)} onProposal={value=>{setProposal(value.changes.length?value:null);setPrice(null);}} />
+      {proposal&&<p className="rounded bg-orange-50 p-2 text-sm">{proposal.summary}（修改画面{proposal.changes.map(c=>c.index+1).join("、")}）</p>}
+      <details><summary className="cursor-pointer text-sm">高级：逐镜修改</summary>
       <select
         aria-label="选择修改镜头"
         disabled={disabled || busy || !!pending}
         value={index}
-        onChange={e => setIndex(Number(e.target.value))}
+        onChange={e => {setProposal(null);setPrice(null);setIndex(Number(e.target.value));}}
         className="rounded border p-2"
       >
         {project.plan?.scenes.map((s, i) => (
@@ -168,7 +173,7 @@ export default function CodeMotionRevision({
         disabled={disabled || busy || !!pending}
         className="block w-full rounded border p-2"
         value={pending?.changes[0].heading ?? heading}
-        onChange={e => setHeading(e.target.value)}
+        onChange={e => {setProposal(null);setPrice(null);setHeading(e.target.value);}}
         maxLength={48}
       />
       <textarea
@@ -176,23 +181,25 @@ export default function CodeMotionRevision({
         disabled={disabled || busy || !!pending}
         className="block w-full rounded border p-2"
         value={pending?.changes[0].body ?? body}
-        onChange={e => setBody(e.target.value)}
+        onChange={e => {setProposal(null);setPrice(null);setBody(e.target.value);}}
         maxLength={100}
       />
-      {quote.data?.tier === "paid" && (
+      {quote.data && (
         <textarea
           aria-label="动作修改要求"
           disabled={disabled || busy || !!pending}
           className="block w-full rounded border p-2"
           value={pending?.changes[0].motionPrompt ?? motionPrompt}
           onChange={e => {
+            setProposal(null);
             setMotionPrompt(e.target.value);
             setPrice(null);
           }}
           maxLength={1200}
-          placeholder="可选：说明本镜需要重新生成的动作；留空仅修改文字与代码画面"
+          placeholder="可选：说明对本镜原片的修改；需已有4–5秒原片。留空仅修改文字与代码画面"
         />
       )}
+      </details>
       <button
         className="rounded border px-3 py-2 disabled:opacity-50"
         disabled={
@@ -206,7 +213,8 @@ export default function CodeMotionRevision({
               (quote.data.tier === "free" && quote.data.remaining === 0)))
         }
         onClick={async () => {
-          if (!pending && motionPrompt.trim()) {
+          const changes=proposal?.changes.length?proposal.changes:[{index,heading,body,...(motionPrompt.trim()?{motionPrompt:motionPrompt.trim()}:{})}];
+          if (!pending && changes.some(c=>c.motionPrompt)) {
             setBusy(true);
             setMessage("");
             try {
@@ -215,9 +223,7 @@ export default function CodeMotionRevision({
                   projectId: project.id,
                   expectedGeneration: generation,
                   requestId: crypto.randomUUID(),
-                  changes: [
-                    { index, heading, body, motionPrompt: motionPrompt.trim() },
-                  ],
+                  changes,
                 })
               );
               setConfirmOpen(true);
@@ -241,13 +247,27 @@ export default function CodeMotionRevision({
             <AlertDialogTitle>
               {pending ? "恢复原局部修改" : "确认本次局部修改"}
             </AlertDialogTitle>
+            {price?.sourcePreviewUrl && (
+              <video
+                aria-label="本次编辑原片"
+                controls
+                src={gcsTransferUrl(price.sourcePreviewUrl)}
+                className="max-h-56 w-full rounded"
+              />
+            )}
+            {price?.shot && (
+              <p className="text-sm">
+                Seedance {price.shot.version} ·{" "}
+                {price.shot.mode === "video_edit" ? "原片编辑" : "参考原片修改"}
+              </p>
+            )}
             <AlertDialogDescription>
               {pending
                 ? "恢复原修改使用相同请求，不再消耗免费修改次数。"
                 : quote.data?.tier === "free"
                   ? `本次确认提交将使用1次免费修改，提交后剩余${Math.max(0, (quote.data.remaining ?? 0) - 1)}次。取消不会消耗次数。`
                   : price
-                    ? `本镜工具成本按官方单价与固定秒数核算为 $${price.costUsd.toFixed(4)}，按成本×2换算收取${price.credits}积分。确认后在动作制作区恢复并提交本镜，使用相同报价；取消不扣费。`
+                    ? `本镜按官方单价预留上限 $${price.costUsd.toFixed(4)}，成本×2换算最多${price.credits}积分。成功后按实际输入、输出秒数核算，差额原路退回；不是供应商实扣账单。确认后在动作制作区恢复并提交本镜，使用相同报价；取消不扣费。`
                     : "本次仅修改文字与代码画面，沿用已有素材，外部工具成本为0，收费0积分。"}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -273,7 +293,7 @@ export default function CodeMotionRevision({
         </p>
       )}
       <p className="text-xs text-stone-500">
-        动作修改保存后，请在动作制作区生成、恢复及采用本镜；只在正式提交生成时按已确认报价扣费。含视频参考的动作修改暂待完整成本接线。
+        动作修改保存后，请在动作制作区生成、恢复及采用本镜；只在正式提交生成时按已确认报价扣费。未有完整已采用原片的镜头暂不支持模型编辑。短片由正式渲染末帧停留补足，长片按镜头时间窗取用；原始产物保留，不冒充新生成动作。
       </p>
     </section>
   );

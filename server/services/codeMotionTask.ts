@@ -57,7 +57,7 @@ const real: CodeMotionTaskDeps = {
       const { loadCodeMotion } = await import("./codeMotionStore");
       const saved = await loadCodeMotion(userId, projectId);
       const scenes = saved?.project.plan?.scenes.length ?? 0;
-      if (saved && scenes >= 4 && scenes <= 6 && saved.project.brief.duration <= 30) {
+      if (saved && scenes >= 4 && scenes <= 6 && saved.project.brief.duration <= 60) {
         const current = codeMotionRenderIdentity(userId, saved.project);
         if (current.requestId !== input.requestId) throw new Error("作品版本已变化，请重新查看安排");
         grant = await ensureCodeMotionProductionGrant(userId, { projectId, expectedGeneration: saved.generation, source });

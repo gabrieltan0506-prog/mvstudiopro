@@ -6,22 +6,23 @@ const make=()=>codeMotionProjectSchema.parse({id:"11111111-1111-4111-8111-111111
 const nextId="22222222-2222-4222-8222-222222222222";
 it("local revision updates selected visible text, preserves original assets and leaves untouched shots exact",()=>{
  const original=make(),before=JSON.stringify(original);
- const revised=reviseCodeMotionProject(original,nextId,[{index:0,heading:"新标题",body:"新说明",direction:"保留原图调整文字"}]);
+ const revised=reviseCodeMotionProject(original,nextId,[{index:2,heading:"新标题",body:"新说明",direction:"保留原图调整文字"}]);
  expect(JSON.stringify(original)).toBe(before);
  expect(revised.id).toBe(nextId);
  expect(revised.brief.images).toEqual(original.brief.images);
- expect(revised.plan!.scenes.slice(1)).toEqual(original.plan!.scenes.slice(1));
- expect(revised.plan!.scenes[0].composition!.elements.map(e=>e.type==="text"?e.text:e.id)).toEqual(["新标题","新说明","ball","photo"]);
- expect(revised.plan!.scenes[0].production!.motion).toBe("code");
- expect(revised.plan!.codeVideo!.clips.map(c=>c.assetId)).toEqual(["video1"]);
- expect(revised.plan!.codeVideo!.assets.map(a=>a.id)).toEqual(["video1"]);
+ expect(revised.plan!.scenes.slice(0,2)).toEqual(original.plan!.scenes.slice(0,2));
+ expect(revised.plan!.scenes[3]).toEqual(original.plan!.scenes[3]);
+ expect(revised.plan!.scenes[2].composition!.elements.map(e=>e.type==="text"?e.text:e.id)).toEqual(["新标题","新说明","ball","photo"]);
+ expect(revised.plan!.scenes[2].production!.motion).toBe("code");
+ expect(revised.plan!.codeVideo!.clips.map(c=>c.assetId)).toEqual(["video0","video1"]);
+ expect(revised.plan!.codeVideo!.assets.map(a=>a.id)).toEqual(["video0","video1"]);
  expect(()=>compileCodeMotion(revised.brief,revised.plan)).not.toThrow();
 });
-it("removes the video container when all generated shots are revised and rejects duplicate/out-of-range edit indexes",()=>{
+it("rejects code edits over archived video without changing the original and rejects duplicate/out-of-range edit indexes",()=>{
  const project=make();
- const revised=reviseCodeMotionProject(project,nextId,[0,1].map(index=>({index,heading:"修改",body:""})));
- expect(revised.plan!.codeVideo).toBeUndefined();
- expect(()=>compileCodeMotion(revised.brief,revised.plan)).not.toThrow();
+ const before=JSON.stringify(project);
+ expect(()=>reviseCodeMotionProject(project,nextId,[0,1].map(index=>({index,heading:"修改",body:""})))).toThrow("已有原视频");
+ expect(JSON.stringify(project)).toBe(before);
  expect(()=>reviseCodeMotionProject(project,nextId,[{index:5,heading:"无此镜",body:""}])).toThrow("不存在");
  expect(()=>reviseCodeMotionProject(project,nextId,[0,0].map(index=>({index,heading:"重复",body:""})))).toThrow("重复");
 });

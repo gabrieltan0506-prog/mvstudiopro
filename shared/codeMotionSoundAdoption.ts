@@ -9,6 +9,9 @@ export function adoptCodeMotionSoundInProject(
 ): CodeMotionProject {
   if (!project.plan || !source.generated) throw new Error("请先完成画面安排");
   const generated = source.generated;
+  const durationOfProject = project.brief.durationMode === "natural"
+    ? project.plan.scenes.reduce((sum, scene) => sum + scene.duration, 0)
+    : project.brief.duration;
   const scene =
     generated.kind === "speech"
       ? project.plan.scenes[generated.sceneIndex!]
@@ -18,6 +21,7 @@ export function adoptCodeMotionSoundInProject(
     (!scene ||
       scene.speech?.text.trim() !== generated.text ||
       scene.speech?.voice !== generated.voice ||
+      (scene.speech?.role || "narration") !== (generated.role || "narration") ||
       (scene.speech?.emotion || "") !== (generated.emotion || ""))
   )
     throw new Error("旁白内容已变化，请使用对应版本的音源");
@@ -46,13 +50,13 @@ export function adoptCodeMotionSoundInProject(
     : 0;
   const duration = scene
     ? source.duration
-    : Math.min(source.duration, project.brief.duration);
+    : Math.min(source.duration, durationOfProject);
   const timing = project.plan.timing;
   const nextTiming = timing && audios.some(a => a.id === timing.sourceId && a.sha256 === timing.sourceSha256)
     ? timing : undefined;
   return {
     ...project,
-    brief: { ...project.brief, audios },
+    brief: { ...project.brief, duration: durationOfProject, audios },
     plan: {
       ...project.plan,
       timing: nextTiming,
@@ -60,7 +64,7 @@ export function adoptCodeMotionSoundInProject(
         ...(project.plan.audioTimeline ?? []).filter(c => !ids.has(c.sourceId)),
         {
           sourceId: source.id,
-          role: scene ? "narration" : "bgm",
+          role: scene ? (generated.role || "narration") : "bgm",
           at,
           trimStart: 0,
           duration,
@@ -71,4 +75,40 @@ export function adoptCodeMotionSoundInProject(
       ],
     },
   };
+}
+
+/** Only the measured speech can extend its scene; existing animation keyframe seconds stay intact. */
+export function adoptCodeMotionSoundWithMeasuredDuration(
+  project: CodeMotionProject,
+  source: CodeMotionAudioSource
+): { project: CodeMotionProject; extendedBy: number } {
+  const index = source.generated?.kind === "speech" ? source.generated.sceneIndex : undefined;
+  const scene = index === undefined ? undefined : project.plan?.scenes[index];
+  if (!scene || source.duration <= scene.duration)
+    return { project: adoptCodeMotionSoundInProject(project, source), extendedBy: 0 };
+  if (project.plan?.codeVideo?.clips.length)
+    throw new Error("已有视频片段，不能移动已生成的镜窗；原配音已保留，请使用局部修改流程");
+  const modelMotion = scene.speech?.role === "dialogue" || scene.production?.motion === "natural";
+  const duration = modelMotion ? Math.ceil(source.duration) : Math.ceil(source.duration * 30) / 30;
+  const extendedBy = duration - scene.duration;
+  const oldTotal = project.plan!.scenes.reduce((n, s) => n + s.duration, 0);
+  const oldEnd = project.plan!.scenes.slice(0, index! + 1).reduce((n, s) => n + s.duration, 0);
+  const shifted: CodeMotionProject = {
+    ...project,
+    brief: { ...project.brief, duration: oldTotal + extendedBy },
+    plan: {
+      ...project.plan!,
+      scenes: project.plan!.scenes.map((s, i) => i === index
+        ? { ...s, duration, ...(s.composition ? { composition: { ...s.composition, duration } } : {}) }
+        : s),
+      audioTimeline: project.plan!.audioTimeline?.map(clip => {
+        if (clip.at >= oldEnd - 1e-6) return { ...clip, at: clip.at + extendedBy };
+        const audio = project.brief.audios?.find(a => a.id === clip.sourceId);
+        if (clip.role === "bgm" && clip.at === 0 && Math.abs(clip.duration - oldTotal) < 1e-6 && audio)
+          return { ...clip, duration: Math.min(audio.duration - clip.trimStart, oldTotal + extendedBy) };
+        return clip;
+      }),
+    },
+  };
+  return { project: adoptCodeMotionSoundInProject(shifted, source), extendedBy };
 }

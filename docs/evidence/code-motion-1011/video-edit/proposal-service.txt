@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionRevisionProposal.test.ts (1 test) 287ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  05:59:10
+   Duration  2.54s (transform 496ms, setup 0ms, collect 1.65s, tests 287ms, environment 0ms, prepare 105ms)
+

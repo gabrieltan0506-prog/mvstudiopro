@@ -6821,6 +6821,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         if (input.codeMotionContext) {
+          if (input.codeMotionContext.revisionSource) {
+            const { loadCodeMotion } = await import("./services/codeMotionStore");
+            const source = input.codeMotionContext.revisionSource;
+            const saved = await loadCodeMotion(String(ctx.user.id), source.projectId);
+            if (!saved?.project.plan || saved.generation !== source.generation)
+              throw new TRPCError({ code: "CONFLICT", message: "原作品版本无法确认，未扣除整理费用" });
+          }
           const { resolveRegisteredPostProdMediaSource } = await import("./services/postProdMediaSource");
           const { assertCodeMotionImageSource } = await import("./services/codeMotionImport");
           for (const image of input.codeMotionContext.images) {

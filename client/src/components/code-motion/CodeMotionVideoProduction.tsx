@@ -147,12 +147,30 @@ export default function CodeMotionVideoProduction({
                         className="my-2 max-h-40 rounded object-contain"
                       />
                     )}
+                    {prepared.videoPreviews?.find(
+                      p => p.sceneIndex === shot.sceneIndex
+                    ) && (
+                      <video
+                        controls
+                        aria-label={`画面${shot.sceneIndex + 1}编辑原片`}
+                        src={gcsTransferUrl(
+                          prepared.videoPreviews.find(
+                            p => p.sceneIndex === shot.sceneIndex
+                          )!.url
+                        )}
+                        className="my-2 max-h-40 rounded"
+                      />
+                    )}
                     <p className="whitespace-pre-wrap">{shot.prompt}</p>
                     <p className="mt-1 text-xs text-stone-600">
                       {shot.model} ·{" "}
-                      {shot.mode === "reference_to_video"
-                        ? "多模态参考生成"
-                        : "图片生成动作"}{" "}
+                      {shot.mode === "video_edit"
+                        ? "原片编辑"
+                        : shot.editSource
+                          ? "参考原片修改"
+                          : shot.mode === "reference_to_video"
+                            ? "多模态参考生成"
+                            : "图片生成动作"}{" "}
                       · 图片 {shot.imageUrls.length} / 视频{" "}
                       {shot.videoUrls.length} / 音源 {shot.audioUrls.length}
                       {shot.audioUrls.length
@@ -221,6 +239,8 @@ export default function CodeMotionVideoProduction({
               className="max-h-64 w-full rounded"
             />
           )}
+          {shot.costStatus === "pending_cost" && <p role="status" className="text-sm text-amber-800">产物已保留，可采用和渲染。实际工具用量超过确认上限，费用待核对；未追加扣款。</p>}
+          {shot.costStatus === "settled" && <p className="text-xs">实际用量结算 {shot.settledCredits} 积分，已原路退回差额 {shot.creditsRefunded} 积分。</p>}
           {shot.error && (
             <p role="alert" className="text-sm text-red-700">
               {shot.error}

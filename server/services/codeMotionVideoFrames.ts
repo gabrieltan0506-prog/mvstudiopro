@@ -16,6 +16,7 @@ export async function prepareCodeMotionVideoFrames(
   const frames = new Map<number, string>();
   if (!video) return frames;
   const inputs = new Map<string, string>();
+  const sourceTiming = new Map<string, { duration: number; frameSeconds: number }>();
   for (let index = 0; index < video.assets.length; index++) {
     const asset = video.assets[index],
       file = path.join(root, `video-source-${index}.mp4`);
@@ -44,14 +45,9 @@ export async function prepareCodeMotionVideoFrames(
       !codeMotionVideoDurationMatches(duration, asset.durationSec)
     )
       throw new Error("视频素材实际时长与已保存回执不一致");
-    if (
-      video.clips.some(
-        c =>
-          c.assetId === asset.id &&
-          c.sourceStartSec + c.duration > duration + 0.001
-      )
-    )
-      throw new Error("视频素材不足所选秒窗");
+    const [rateNumerator, rateDenominator = 1] = String(stream.avg_frame_rate || stream.r_frame_rate || meta.fps).split("/").map(Number);
+    const sourceFps = rateNumerator / rateDenominator;
+    sourceTiming.set(asset.id, { duration, frameSeconds: Number.isFinite(sourceFps) && sourceFps > 0 ? 1 / sourceFps : 1 / meta.fps });
     await preserve(
       `video-source-${index}.identity.json`,
       Buffer.from(
@@ -71,6 +67,10 @@ export async function prepareCodeMotionVideoFrames(
     const clip = video.clips[index],
       file = inputs.get(clip.assetId);
     if (!file) throw new Error("视频片段缺少已保存素材");
+    const timing = sourceTiming.get(clip.assetId)!;
+    // If a selected offset exceeds a shortened source, hold its last available frame.
+    const sourceStart = Math.min(clip.sourceStartSec, Math.max(0, timing.duration - timing.frameSeconds));
+    const available = Math.max(0, timing.duration - sourceStart);
     const dir = path.join(root, `video-frames-${index}`);
     await mkdir(dir);
     const count = Math.round(clip.duration * meta.fps),
@@ -87,15 +87,13 @@ export async function prepareCodeMotionVideoFrames(
         "error",
         "-i",
         file,
-        "-ss",
-        String(clip.sourceStartSec),
         "-t",
         String(clip.duration),
         "-map",
         "0:v:0",
         "-an",
         "-vf",
-        `fps=${meta.fps},${fit},setsar=1`,
+        `trim=start=${sourceStart},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=${clip.duration},fps=${meta.fps},${fit},setsar=1`,
         "-frames:v",
         String(count),
         "-start_number",
@@ -118,6 +116,10 @@ export async function prepareCodeMotionVideoFrames(
           ...clip,
           firstFrame: first,
           frameCount: count,
+          actualSourceDuration: timing.duration,
+          effectiveSourceStartSec: sourceStart,
+          normalization: available < clip.duration ? "hold_last_frame" : available > clip.duration ? "trim_to_timeline" : "none",
+          paddedSeconds: Math.max(0, clip.duration - available),
           decoder: "ffmpeg",
           audio: "muted",
         })

@@ -16,7 +16,7 @@ export const INK_VIDEO_PRODUCTION = {
     model: "seedance-2.5",
     version: "2.5",
     resolution: "720p",
-    maxDuration: 5,
+    maxDuration: 30,
     minDuration: 4,
     maxReferences: 50,
     imageLimit: 30,
@@ -39,7 +39,7 @@ export function planInkGeneratedShot(input: {
     input.duration > policy.maxDuration
   )
     throw new Error(
-      `本次模型镜头必须为${policy.minDuration}–5秒；更短的画面用代码编排`
+      `本次模型镜头必须为${policy.minDuration}–${policy.maxDuration}秒；更短的画面用代码编排`
     );
   const counts = [input.imageCount, input.videoCount, input.audioCount];
   if (counts.some(n => !Number.isSafeInteger(n) || n < 0))

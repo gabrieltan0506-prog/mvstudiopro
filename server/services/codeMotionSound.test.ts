@@ -101,6 +101,39 @@ async function setup() {
   } as unknown as CodeMotionSoundDeps;
   return { deps, storage };
 }
+it("对白 role 沿请求、Qwen身份、回执、采用及保存恢复保留，旁白旧身份不能冒用", async () => {
+  const { deps, storage } = await setup();
+  const dialogue = structuredClone(project);
+  dialogue.plan!.scenes[0].speech!.role = "dialogue";
+  await saveCodeMotion("1", dialogue, "1", storage);
+  const r = { ...request, role: "dialogue" as const };
+  await expect(submitCodeMotionSound("1", projectId, "2", r, deps)).rejects.toThrow("逐镜编排");
+  dialogue.brief.style = "scenes";
+  dialogue.plan!.scenes[0].composition = {id:"scene0",duration:30,elements:[{id:"title",type:"text",text:"欢迎"}]} as any;
+  await saveCodeMotion("1", dialogue, "2", storage);
+  await expect(submitCodeMotionSound("1", projectId, "3", request, deps)).rejects.toThrow("旁白已修改");
+  expect(deps.speech).not.toHaveBeenCalled();
+  await submitCodeMotionSound("1", projectId, "3", r, deps);
+  expect(deps.speech).toHaveBeenCalledWith(1, expect.objectContaining({input:request.text, speakerZh:"画面1对白", speakerId:`ink:${projectId}:0:dialogue`, voice:"longanlingxin"}));
+  const resumed = (await listCodeMotionSounds("1", projectId, deps))[0];
+  expect(resumed.request).toEqual(r);
+  await expect(submitCodeMotionSound("1", projectId, "3", request, deps)).rejects.toThrow("原请求编号");
+  expect(deps.speech).toHaveBeenCalledTimes(1);
+  const source = await adoptCodeMotionSound("1", projectId, requestId, 0, deps);
+  expect(source.generated?.role).toBe("dialogue");
+  expect(source.name).toBe("画面1对白.wav");
+  const adopted = adoptCodeMotionSoundInProject(dialogue, source);
+  expect(adopted.plan!.audioTimeline![0].role).toBe("dialogue");
+  await saveCodeMotion("1", adopted, "3", storage);
+  const restored = (await loadCodeMotion("1", projectId, storage))!.project;
+  expect(restored.brief.audios![0].generated?.role).toBe("dialogue");
+  expect(() => compileCodeMotion(restored.brief, restored.plan)).toThrow("动态镜头");
+  expect(compileCodeMotion(restored.brief, restored.plan, {allowPendingProduction:true}).codeAudio!.audioTimeline[0].role).toBe("dialogue");
+  await expect(assertCodeMotionGeneratedAudio("1", projectId, {...source, generated:{...source.generated!,role:"narration"}}, storage)).rejects.toThrow("回执");
+  restored.plan!.scenes[0].speech!.role = "narration";
+  expect(() => adoptCodeMotionSoundInProject(restored, source)).toThrow("旁白内容已变化");
+  expect(() => compileCodeMotion(restored.brief, restored.plan)).toThrow("配音");
+});
 it("沿漫剧音色库逐镜编译情绪，回执保存语气，改情绪不能复用旧配音", async () => {
   const { deps, storage } = await setup();
   const emotional = structuredClone(project);

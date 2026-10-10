@@ -4,11 +4,14 @@ import os from "node:os";
 import path from "node:path";
 
 const h = vi.hoisted(() => ({
+  editQuote:null as any,
   normalizeVideo: vi.fn(async (url: string, _userId?: number, _record?: any, _save?: any) => url),
   normalizeImage: vi.fn(async (url: string) => url),
   inkCheck: vi.fn(async()=>{}), inkReceipts:new Map<string,Buffer>(), evolinkUnknown:false, h3: vi.fn(), h3Unknown: false, evolink: vi.fn(), byteplus: vi.fn(), openrouter: vi.fn(), signed: 0,
   byteplusFailure: false, byteplusUnknown: false, byteplusRejected: false, byteplusPollFailed: false, byteplusPollReason: "InputImageSensitiveContentDetected.PrivacyInformation", openrouterEnabled: false,
 }));
+vi.mock("./codeMotionRevision",()=>({getCodeMotionRevisionPrice:async()=>h.editQuote}));
+vi.mock("./codeMotionRevisionEdit",()=>({verifyCodeMotionEditSource:vi.fn()}));
 vi.mock("./codeMotionProductionVideo",()=>({assertCodeMotionProductionVideoTask:h.inkCheck}));
 vi.mock("./codeMotionStore",()=>({codeMotionStorage:{write:async(name:string,body:Buffer)=>{h.inkReceipts.set(name,body);return "1";},read:async(name:string)=>h.inkReceipts.has(name)?{body:h.inkReceipts.get(name),generation:"1"}:null}}));
 vi.mock("./seedanceReferenceVideoSize.js", async original => ({ ...await original<typeof import("./seedanceReferenceVideoSize.js")>(), normalizeSeedanceReferenceVideo: h.normalizeVideo }));
@@ -79,7 +82,7 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     vi.resetModules();
     vi.clearAllMocks();
     h.evolink.mockReset(); h.byteplus.mockReset(); h.openrouter.mockReset();
-    h.h3.mockReset(); h.h3Unknown = false; h.evolinkUnknown=false;h.inkReceipts.clear();
+    h.h3.mockReset(); h.h3Unknown = false; h.evolinkUnknown=false;h.inkReceipts.clear();h.editQuote=null;
     h.normalizeVideo.mockReset().mockImplementation(async (url: string) => url);
     h.normalizeImage.mockReset().mockImplementation(async (url: string) => url);
     h.signed = 0; h.byteplusFailure = false; h.byteplusUnknown = false; h.byteplusRejected = false; h.byteplusPollFailed = false; h.byteplusPollReason = "InputImageSensitiveContentDetected.PrivacyInformation"; h.openrouterEnabled = false;
@@ -360,6 +363,18 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     const task=await createInkByteplus();delete task.byteplusTaskId;task.status="running";await fs.writeFile(path.join(dir,`${task.taskId}.json`),JSON.stringify(task));
     const {getCanvasVideoTask}=await import("./canvasVideoTask");expect((await getCanvasVideoTask(task.taskId,7))?.status).toBe("reconcile_manual");
     expect(h.byteplus).toHaveBeenCalledTimes(1);expect(h.evolink).not.toHaveBeenCalled();const {refundCreditsOnFailure}=await import("./paidJobLedger.js");expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+
+  it.each(["free","paid"])("INK %s original edit sends original video to correct EvoLink model, no BytePlus or paid upscale",async tier=>{
+    const uri="gs://test-bucket/uploads/u7/original.mp4",free=tier==="free";
+    h.editQuote={shot:{editSource:{width:1280,height:720}}};
+    const {createCanvasVideoTask}=await import("./canvasVideoTask");
+    const input={userId:7,creditsCharged:free?0:44,engine:free?"seedance20-evolink" as const:"seedance25-evolink" as const,label:"原片编辑",prompt:"保留原片，微调蒸汽",videoUrls:[uri],audioUrls:["gs://test-bucket/post-prod/7/reference-five-seconds.wav"],duration:5,resolution:free?"480p":"720p",workMode:free?"reference_to_video" as const:"video_edit" as const,...(free?{seedanceVersion:"2.0" as const}:{}),idempotencyKey:`ink-edit-${tier}`,inkProduction:{projectId:"11111111-1111-4111-8111-111111111111",grantId:"22222222-2222-4222-8222-222222222222",kind:"video" as const,index:0,requestId:`ink-edit-${tier}`,digest:"a".repeat(64)}};
+    const task=await createCanvasVideoTask(input);
+    await vi.waitFor(()=>expect(h.evolink).toHaveBeenCalledTimes(1));
+    expect(h.evolink.mock.calls[0][0].body).toMatchObject({model:free?"seedance-2.0-reference-to-video":"seedance-2.5-video-edit",duration:free?5:-1,aspect_ratio:free?"16:9":"adaptive",quality:free?"480p":"720p",content_filter:false,video_urls:[expect.stringContaining("original.mp4")],audio_urls:[expect.stringContaining("reference-five-seconds.wav")]});
+    expect(h.normalizeVideo).not.toHaveBeenCalled();expect(h.byteplus).not.toHaveBeenCalled();
+    await createCanvasVideoTask(input);expect(h.evolink).toHaveBeenCalledTimes(1);
   });
 
 });

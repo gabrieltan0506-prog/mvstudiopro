@@ -15,7 +15,7 @@ export default function CodeMotionSoundProduction({
   project: CodeMotionProject;
   disabled: boolean;
   save(): Promise<{ generation: string }>;
-  adopt(source: CodeMotionAudioSource): Promise<void>;
+  adopt(source: CodeMotionAudioSource, saved?: {project:CodeMotionProject;generation:string;updatedAt:string}, extendedBy?:number): Promise<void>;
   execute(action: () => Promise<void>): Promise<void>;
 }) {
   const [direction, setDirection] = useState(() => manhuaBgmArcFromShots(
@@ -27,7 +27,7 @@ export default function CodeMotionSoundProduction({
   const lock = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const generate = trpc.codeMotion.generateSound.useMutation();
-  const useSound = trpc.codeMotion.adoptSound.useMutation();
+  const useSound = trpc.codeMotion.adoptSoundAndSave.useMutation();
   const sounds = trpc.codeMotion.sounds.useQuery(
     { projectId: project.id },
     {
@@ -67,11 +67,11 @@ export default function CodeMotionSoundProduction({
   return (
     <section
       className="space-y-3 rounded-xl border border-stone-200 bg-stone-50 p-4"
-      aria-label="生成旁白和配乐"
+      aria-label="生成旁白、对白和配乐"
     >
       <h3 className="font-medium">制作声音</h3>
       <p className="text-xs text-stone-600">
-        没有现成音频也可以开始。按画面生成旁白和配乐，试听后采用到作品；生成沿用现有积分规则。
+        没有现成音频也可以开始。按画面生成旁白、对白和配乐，试听后采用到作品；生成沿用现有积分规则。
       </p>
       <button className={button} disabled={disabled || busy || !project.plan || sounds.isLoading || !!sounds.error}
         onClick={() => void run(async () => {
@@ -84,15 +84,15 @@ export default function CodeMotionSoundProduction({
             if (!mounted.current) return;
             const speech = project.plan!.scenes[sceneIndex].speech;
             if (!speech?.text.trim() || existing.some(r => r.request.kind === "speech" && r.request.sceneIndex === sceneIndex)) continue;
-            await generate.mutateAsync({projectId:project.id,generation:saved.generation,request:{kind:"speech",requestId:crypto.randomUUID(),sceneIndex,text:speech.text.trim(),voice:speech.voice,...(speech.emotion ? {emotion:speech.emotion} : {})}});
+            await generate.mutateAsync({projectId:project.id,generation:saved.generation,request:{kind:"speech",requestId:crypto.randomUUID(),sceneIndex,text:speech.text.trim(),voice:speech.voice,...(speech.role ? {role:speech.role} : {}),...(speech.emotion ? {emotion:speech.emotion} : {})}});
           }
           if (mounted.current && !existing.some(r => r.request.kind === "bgm")) await generate.mutateAsync({projectId:project.id,generation:saved.generation,request:{kind:"bgm",requestId:crypto.randomUUID(),direction:direction.trim()}});
-        })}>生成尚未制作的旁白与配乐</button>
+        })}>生成尚未制作的配音与配乐</button>
       {project.plan?.scenes.map((scene, sceneIndex) =>
         scene.speech?.text.trim() ? (
           <div key={sceneIndex} className="space-y-2">
             <p className="text-sm">
-              画面 {sceneIndex + 1}：{scene.speech.text}（
+              画面 {sceneIndex + 1} {scene.speech.role === "dialogue" ? "对白" : "旁白"}：{scene.speech.text}（
               {scene.speech.voice === "female" ? "女声" : "男声"}）
               {scene.speech.emotion && <span className="ml-2 text-xs text-stone-600">演绎：{scene.speech.emotion}</span>}
             </p>
@@ -117,12 +117,13 @@ export default function CodeMotionSoundProduction({
                     sceneIndex,
                     text: scene.speech!.text.trim(),
                     voice: scene.speech!.voice,
+                    ...(scene.speech!.role ? { role: scene.speech!.role } : {}),
                     ...(scene.speech!.emotion ? { emotion: scene.speech!.emotion } : {}),
                   })
                 )
               }
             >
-              生成本镜旁白
+              生成本镜{scene.speech.role === "dialogue" ? "对白" : "旁白"}
             </button>
           </div>
         ) : null
@@ -187,7 +188,7 @@ export default function CodeMotionSoundProduction({
         >
           <p className="text-sm">
             {sound.request.kind === "speech"
-              ? `画面${sound.request.sceneIndex + 1}：${sound.request.text}`
+              ? `画面${sound.request.sceneIndex + 1} ${sound.request.role === "dialogue" ? "对白" : "旁白"}：${sound.request.text}`
               : sound.request.direction}
           </p>
           <p className="text-xs text-stone-500">
@@ -224,20 +225,38 @@ export default function CodeMotionSoundProduction({
                 disabled={disabled || busy || sound.status !== "succeeded"}
                 onClick={() =>
                   void run(async () => {
-                    await save();
+                    const key = `ink:sound-adoption:${project.id}`;
+                    const raw = localStorage.getItem(key);
+                    const prior = raw ? JSON.parse(raw) as {projectId:string;requestId:string;variantIndex:number;expectedGeneration:string} : null;
+                    if (prior && (prior.projectId !== project.id || prior.requestId !== sound.request.requestId || prior.variantIndex !== v.index))
+                      throw new Error("前一次音源采用结果未确认，请先点击该音源恢复采用");
+                    const request = prior ?? {
+                      projectId: project.id, requestId: sound.request.requestId, variantIndex:v.index,
+                      expectedGeneration:(await save()).generation,
+                    };
+                    localStorage.setItem(key,JSON.stringify(request));
                     if (!mounted.current) return;
-                    const source = await useSound.mutateAsync({
-                      projectId: project.id,
-                      requestId: sound.request.requestId,
-                      variantIndex: v.index,
-                    });
-                    if (mounted.current) await adopt(source);
+                    let result: Awaited<ReturnType<typeof useSound.mutateAsync>>;
+                    try { result = await useSound.mutateAsync(request); }
+                    catch(error) {
+                      if(error instanceof Error && error.message.startsWith("SOUND_ADOPTION_NOT_COMMITTED:")) {
+                        localStorage.removeItem(key);
+                        throw new Error(error.message.slice("SOUND_ADOPTION_NOT_COMMITTED:".length));
+                      }
+                      throw error;
+                    }
+                    if (mounted.current) {
+                      await adopt(result.source,result.saved,result.extendedBy);
+                      localStorage.removeItem(key);
+                    }
                   })
                 }
               >
                 采用
                 {sound.variants.length > 1 ? `候选 ${v.index + 1}` : "此音源"}
               </button>
+              {sound.request.kind === "speech" && v.durationSec != null && v.durationSec > (project.plan?.scenes[sound.request.sceneIndex]?.duration ?? Infinity) &&
+                <p className="text-xs text-stone-600">配音长 {v.durationSec.toFixed(2)} 秒。采用时按实测音长延长本镜并顺移后续镜头，沿用原音图；已有视频或导出任务时保留原窗口。</p>}
             </div>
           ))}
         </article>

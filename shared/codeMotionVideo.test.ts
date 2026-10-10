@@ -53,3 +53,8 @@ it("requires real stored source identity and bounded 4–5 second generated clip
     }).success
   ).toBe(false);
 });
+
+it("paid8-second stored clip validates nominal timeline and retains ownership hash requirements",()=>{
+ const video=codeMotionVideoSchema.parse({...raw(),assets:[{...raw().assets[0],durationSec:8}],clips:[{...raw().clips[0],duration:8}]});expect(validateCodeMotionVideo(video,15,30)).toEqual([]);
+ expect(codeMotionVideoSchema.safeParse({...video,assets:[{...video.assets[0],durationSec:31}]}).success).toBe(false);
+});

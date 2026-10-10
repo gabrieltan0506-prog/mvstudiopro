@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { codeMotionProjectSchema } from "../../shared/codeMotion";
 import { artMotionJobSchema } from "../../shared/artMotion";
 const h = vi.hoisted(() => ({
   files: new Map<string, { body: Buffer; generation: string }>(),
   n: 0,
+  probeWidth:1280,probeDuration:5,
 }));
 vi.mock("./codeMotionStore", async original => {
   const actual = await original<any>();
@@ -19,6 +21,9 @@ vi.mock("./codeMotionStore", async original => {
   };
   return { ...actual, codeMotionStorage: storage };
 });
+vi.mock("./postProduction",async original=>({...await original<any>(),fetchPostProdSourceToFile:async(_u:string,file:string)=>{await (await import("node:fs/promises")).writeFile(file,"owned-edit-fixture");},runMediaTool:async()=>({stdout:JSON.stringify({streams:[{codec_type:"video",duration:h.probeDuration,width:h.probeWidth,height:720}]})})}));
+vi.mock("./gcs",async original=>({...await original<any>(),signGsUriV4ReadUrl:(uri:string)=>`https://storage.googleapis.com/${uri.slice(5)}?fixture=true`}));
+vi.mock("./paidJobLedger",()=>({readActiveJob:async()=>({status:"settlement_pending"}),markSettlementPending:async()=>true}));
 import { codeMotionStorage, saveCodeMotion } from "./codeMotionStore";
 import {
   codeMotionProductionFingerprint,
@@ -81,6 +86,7 @@ beforeEach(async () => {
   h.files.clear();
   h.n = 0;
   completed = true;
+  h.probeWidth=1280;h.probeDuration=5;
   paid = false;
   const p = project();
   generation = (await saveCodeMotion("7", p, "0", codeMotionStorage))
@@ -104,7 +110,28 @@ beforeEach(async () => {
     "0"
   );
 });
+async function saveEditableSource(p=project()) {
+ p.brief.style="scenes";p.plan!.scenes=p.plan!.scenes.map((scene,i)=>({...scene,composition:scene.composition||{id:`s${i}`,duration:5,elements:[{id:"title",type:"text",text:scene.heading}]}})) as any;
+ const asset={id:"owned-edit-clip",videoUri:"gs://fixture/canvas-video/owned-edit.mp4",sha256:createHash("sha256").update("owned-edit-fixture").digest("hex"),durationSec:5};
+ p.plan!.codeVideo={version:1,assets:[asset],clips:[{assetId:asset.id,at:5,duration:5,sourceStartSec:0,fit:"cover"}]};
+ await codeMotionStorage.write(`code-motion/u7/production/${projectId}/video-sources/${asset.id}.json`,Buffer.from(JSON.stringify(asset)),"0");
+ generation=(await saveCodeMotion("7",p,generation,codeMotionStorage)).generation;
+ return p;
+}
 describe("confirmed local revisions", () => {
+  it("code-only edits over a dialogue video fail before consuming a revision or creating a child", async () => {
+    const p = project();
+    p.plan!.scenes[1].speech = {text:"一起走吧",voice:"male",role:"dialogue"};
+    const original = await saveEditableSource(p);
+    const snapshot = Array.from(h.files.entries()).map(([key,value])=>[key,value.body.toString(),value.generation]);
+    const writes = h.n;
+    await expect(submitCodeMotionRevision("7",input(1),deps)).rejects.toThrow("已有原视频");
+    expect(h.n).toBe(writes);
+    expect(Array.from(h.files.entries()).map(([key,value])=>[key,value.body.toString(),value.generation])).toEqual(snapshot);
+    expect((await quoteCodeMotionRevision("7",projectId,deps)).remaining).toBe(2);
+    expect(original.plan!.codeVideo!.clips[0].assetId).toBe("owned-edit-clip");
+    expect(original.plan!.scenes[1].speech!.role).toBe("dialogue");
+  });
   it("previews consume none; concurrent requests accept only two; identical request restores same child", async () => {
     expect(
       (await quoteCodeMotionRevision("7", projectId, deps)).remaining
@@ -395,8 +422,7 @@ describe("paid action revision cost contract", () => {
         ],
       },
     })) as any;
-    generation = (await saveCodeMotion("7", p, generation, codeMotionStorage))
-      .generation;
+    await saveEditableSource(p);
     const { prepareCodeMotionRevision, getCodeMotionRevisionPrice } =
       await import("./codeMotionRevision");
     const {
@@ -412,14 +438,14 @@ describe("paid action revision cost contract", () => {
       ],
     };
     const price = await prepareCodeMotionRevision("7", raw, deps);
-    expect(price.credits).toBe(37);
+    expect(price.credits).toBe(44);
     await expect(submitCodeMotionRevision("7", raw, deps)).rejects.toThrow(
       "确认"
     );
     const confirmed = { ...raw, confirmedQuote: price.fingerprint };
     const child = await submitCodeMotionRevision("7", confirmed, deps);
     expect(child.grant.revision).toMatchObject({
-      mode: "paid_video",
+      mode: "video_edit",
       sceneIndexes: [1],
     });
     expect(
@@ -440,7 +466,7 @@ describe("paid action revision cost contract", () => {
       digest: codeMotionProductionDigest(price.shot),
     };
     await reserveCodeMotionProductionSlot("7", slot);
-    expect(await codeMotionRevisionCharge("7", slot)).toBe(37);
+    expect(await codeMotionRevisionCharge("7", slot)).toBe(44);
     await expect(
       reserveCodeMotionProductionSlot("7", { ...slot, index: 0 })
     ).rejects.toThrow();
@@ -459,14 +485,15 @@ describe("paid action revision cost contract", () => {
       expectedGeneration: child.generation,
     });
     expect(prepared.shots).toHaveLength(1);
-    expect(prepared.totalCredits).toBe(37);
+    expect(prepared.totalCredits).toBe(44);
     const task = {
       userId: 7,
       taskId: "cv_revision",
       inkProduction: slot,
-      creditsCharged: 37,
+      creditsCharged: 44,
       duration: 5,
       evolinkTaskId: "upstream-original",
+      engine:"seedance25-evolink",
     } as any;
     await expect(settleCodeMotionRevisionCost(task)).rejects.toThrow(
       "成功回执"
@@ -476,15 +503,15 @@ describe("paid action revision cost contract", () => {
       Buffer.from('{"status":"completed","id":"upstream-original"}'),
       "0"
     );
-    await settleCodeMotionRevisionCost(task);
-    await settleCodeMotionRevisionCost(task);
+    await settleCodeMotionRevisionCost(task,"https://storage.googleapis.com/fixture/result.mp4");
+    await settleCodeMotionRevisionCost(task,"https://storage.googleapis.com/fixture/result.mp4");
     const file = await codeMotionStorage.read(
       `code-motion/u7/production/${child.project.id}/video-evidence/1/cost-settlement.json`
     );
     expect(JSON.parse(file!.body.toString())).toMatchObject({
-      costUsd: 1.628,
-      creditsCharged: 37,
-      basis: "published_rate_fixed_units",
+      costUsd: 1.98,
+      creditsCharged: 44,
+      basis: "published_rate_measured_units",
       status: "settled",
     });
     await expect(
@@ -511,4 +538,36 @@ describe("paid action revision cost contract", () => {
       })
     ).rejects.toThrow("视频参考");
   }, 30000);
+});
+
+describe("original-clip edit grant",()=>{
+ it("free original edit preserves the source, uses standard2.0 and consumes one root revision only",async()=>{
+  await saveEditableSource();
+  const {prepareCodeMotionRevision}=await import("./codeMotionRevision");
+  const raw={...input(31),changes:[{...input(31).changes[0],motionPrompt:"保留原镜头，将蒸汽降低"}]};
+  const price=await prepareCodeMotionRevision("7",raw,deps);
+  expect(price.shot).toMatchObject({version:"2.0",mode:"reference_to_video",resolution:"480p",credits:0});
+  expect((await quoteCodeMotionRevision("7",projectId,deps)).remaining).toBe(2);
+  const child=await submitCodeMotionRevision("7",{...raw,confirmedQuote:price.fingerprint},deps);
+  expect(child.grant.revision?.mode).toBe("video_edit");
+  expect(child.project.plan!.codeVideo!.clips).toHaveLength(1);
+  expect((await quoteCodeMotionRevision("7",child.project.id,deps)).remaining).toBe(1);
+  paid=true;
+  const restored=await submitCodeMotionRevision("7",{...raw,confirmedQuote:price.fingerprint},deps);
+  expect(restored.project.id).toBe(child.project.id);expect(restored.grant.tier).toBe("free");
+  paid=false;
+  const {codeMotionProductionDigest}=await import("./codeMotionProductionGrant");
+  const slot={projectId:child.project.id,grantId:child.grant.id,kind:"video" as const,index:1,requestId:"edit-once",digest:codeMotionProductionDigest(price.shot)};
+  await reserveCodeMotionProductionSlot("7",slot);
+  await expect(reserveCodeMotionProductionSlot("7",{...slot,index:0})).rejects.toThrow();
+  await expect(reserveCodeMotionProductionSlot("7",{...slot,kind:"image"})).rejects.toThrow();
+ });
+ it("missing source and low-resolution paid input fail before a revision is consumed",async()=>{
+  const {prepareCodeMotionRevision}=await import("./codeMotionRevision");
+  const raw={...input(32),changes:[{...input(32).changes[0],motionPrompt:"修改原片"}]};
+  await expect(prepareCodeMotionRevision("7",raw,deps)).rejects.toThrow("原片");
+  await saveEditableSource();paid=true;h.probeWidth=200;
+  await expect(prepareCodeMotionRevision("7",{...raw,expectedGeneration:generation},deps)).rejects.toThrow("高清放大");
+  expect((await quoteCodeMotionRevision("7",projectId,deps)).used).toBe(0);
+ });
 });

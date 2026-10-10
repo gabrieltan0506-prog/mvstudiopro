@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
+import { signGsUriV4ReadUrl } from "../services/gcs";
 import { inkSource } from "../services/inkFreeQuota";
 import {
   ensureCodeMotionProductionGrant,
@@ -29,9 +30,15 @@ export const codeMotionProductionRouter = router({
     ),
   revisionPrepare: protectedProcedure
     .input(codeMotionRevisionInputSchema)
-    .mutation(({ ctx, input }) =>
-      prepareCodeMotionRevision(String(ctx.user.id), input)
-    ),
+    .mutation(async ({ ctx, input }) => {
+      const price = await prepareCodeMotionRevision(String(ctx.user.id), input);
+      return {
+        ...price,
+        sourcePreviewUrl: price.shot.editSource
+          ? signGsUriV4ReadUrl(price.shot.editSource.providerReference?.videoUri ?? price.shot.editSource.asset.videoUri, 3600)
+          : undefined,
+      };
+    }),
   revisionSubmit: protectedProcedure
     .input(codeMotionRevisionInputSchema)
     .mutation(({ ctx, input }) =>

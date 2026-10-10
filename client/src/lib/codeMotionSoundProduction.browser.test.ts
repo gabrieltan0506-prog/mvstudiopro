@@ -13,7 +13,7 @@ import React,{useState}from'react';import{createRoot}from'react-dom/client';
 import Studio from './client/src/pages/CodeMotionStudio';
 import{codeMotionProjectSchema}from './shared/codeMotion';
 const id='11111111-1111-4111-8111-111111111111',grant='22222222-2222-4222-8222-222222222222';
-const p={id,brief:{title:'测试作品',request:'树林中的小球',style:'scenes',duration:20,orientation:'landscape',images:[]},plan:{version:1,summary:'四个画面',scenes:Array.from({length:4},(_,i)=>({heading:'画面'+i,body:'',duration:5,speech:{text:'测试旁白'+i,voice:'female',emotion:['[tired][very fast]','[whispers]','[amazed]','[empathetic]'][i]},composition:{id:'scene'+i,duration:5,elements:[{id:'ball',type:'shape',shape:'ellipse'}]}}))}};
+const p={id,brief:{title:'测试作品',request:'树林中的小球',style:'scenes',duration:20,orientation:'landscape',images:[]},plan:{version:1,summary:'四个画面',scenes:Array.from({length:4},(_,i)=>({heading:'画面'+i,body:'',duration:5,speech:{text:'测试旁白'+i,voice:'female',...(i===1?{role:'dialogue'}:{}),emotion:['[tired][very fast]','[whispers]','[amazed]','[empathetic]'][i]},composition:{id:'scene'+i,duration:5,elements:[{id:'ball',type:'shape',shape:'ellipse'}]}}))}};
 const saved=JSON.parse(localStorage.getItem('image-probe:store')||'null');
 globalThis.fixture={events:JSON.parse(localStorage.getItem('image-probe:trace')||'[]'),sounds:JSON.parse(localStorage.getItem('sound-probe:sounds')||'[]'),batches:JSON.parse(localStorage.getItem('image-probe:batches')||'[]'),saved,prepared:{projectId:id,grantId:grant,generation:'3',tier:'free',fingerprint:'a'.repeat(64),credits:0,createdAt:'2026-10-10T19:00:00Z',shots:Array.from({length:4},(_,i)=>({index:i,name:'画面'+(i+1),prompt:'已保存镜头内容'+i,requestId:'33333333-3333-4333-8333-33333333333'+i,jobId:'fixed-job-'+i}))}};
 if(!localStorage.getItem('yingke:draft:7')){const project=codeMotionProjectSchema.parse(p);localStorage.setItem('yingke:draft:7',JSON.stringify({project,generation:'0',savedJson:'',pending:null}));}
@@ -29,13 +29,13 @@ createRoot(document.getElementById('root')).render(<Studio/>);` },
       b.onLoad({filter:/.*/,namespace:'fixture-unrelated'},()=>({loader:'js',contents:"export default function Unused(){throw Error('probe does not render unrelated media')}"}));
       b.onResolve({ filter: /^@\/lib\/trpc$/ }, () => ({ path: "trpc", namespace: "fixture" }));
       b.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({ loader: "js", resolveDir: process.cwd(), contents: `
-import{useState}from'react';const f=()=>globalThis.fixture;
+import{useState}from'react';import{adoptCodeMotionSoundWithMeasuredDuration}from'./shared/codeMotionSoundAdoption';const f=()=>globalThis.fixture;
 const record=e=>{f().events.push(e);localStorage.setItem('image-probe:trace',JSON.stringify(f().events))};
 const mutation=fn=>({useMutation:()=>({mutateAsync:fn})});
 const noMutation=mutation(async()=>{throw Error('unrequested generation')});
 const query=fn=>({useQuery:input=>{const[,set]=useState(0);const data=typeof fn==='function'?fn(input):fn;return{data,isLoading:false,refetch:async()=>{set(v=>v+1);return{data}}}}});
 export const trpc={useUtils:()=>({codeMotion:{get:{fetch:async()=>f().saved},prepare:{fetch:async()=>{throw Error('not exporting')}}},codeMotionProduction:{prepare:{fetch:async()=>({shots:[]})}}}),codeMotionProduction:{revisionQuote:query({completed:false,remaining:2,tier:"free",message:"先完成成片"}),revisionSubmit:noMutation,list:query({shots:[]}),submit:noMutation,adopt:noMutation},codeMotion:{
-analyzeTiming:noMutation,quote:query({remainingFreeToday:3,credits:0,speechEnabled:true}),list:query(()=>f().saved?[{id:f().saved.project.id,title:f().saved.project.brief.title,updatedAt:'2026-10-10T19:00:00Z'}]:[]),history:query([]),status:query(null),sounds:query(()=>f().sounds),generateSound:mutation(async input=>{record({sound:input});let row=f().sounds.find(r=>r.request.requestId===input.request.requestId);if(!row){row={projectId:input.projectId,generation:input.generation,request:input.request,createdAt:'2026-10-10T19:00:00Z',status:'succeeded',canResume:false,variants:[{index:0,gcsUri:'gs://bucket/post-prod/7/audio/'+input.request.requestId+'.wav',previewUrl:'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA=',durationSec:input.request.kind==='speech'?2:40}]};f().sounds.push(row);localStorage.setItem('sound-probe:sounds',JSON.stringify(f().sounds))}return row}),adoptSound:mutation(async input=>{record({adoptSound:input});const row=f().sounds.find(r=>r.request.requestId===input.requestId);const r=row.request;return{id:r.requestId,name:r.kind==='speech'?'旁白'+r.sceneIndex:'背景音乐',gcsUri:'gs://bucket/post-prod/7/code-motion/'+input.projectId+'/audio/'+r.requestId+'/'+ 'a'.repeat(64)+'.wav',duration:r.kind==='speech'?2:40,mimeType:'audio/wav',sha256:'a'.repeat(64),bytes:100,generated:r.kind==='speech'?{requestId:r.requestId,kind:r.kind,sceneIndex:r.sceneIndex,text:r.text,voice:r.voice,emotion:r.emotion}:{requestId:r.requestId,kind:r.kind}}}),resolveAudios:query(input=>(input?.audios||[]).map(a=>({id:a.id,name:a.name,url:'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA='}))),importAudio:noMutation,resolveImages:query([]),importFile:noMutation,submit:noMutation,
+analyzeTiming:noMutation,quote:query({remainingFreeToday:3,credits:0,speechEnabled:true}),list:query(()=>f().saved?[{id:f().saved.project.id,title:f().saved.project.brief.title,updatedAt:'2026-10-10T19:00:00Z'}]:[]),history:query([]),status:query(null),sounds:query(()=>f().sounds),generateSound:mutation(async input=>{record({sound:input});let row=f().sounds.find(r=>r.request.requestId===input.request.requestId);if(!row){row={projectId:input.projectId,generation:input.generation,request:input.request,createdAt:'2026-10-10T19:00:00Z',status:'succeeded',canResume:false,variants:[{index:0,gcsUri:'gs://bucket/post-prod/7/audio/'+input.request.requestId+'.wav',previewUrl:'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA=',durationSec:input.request.kind==='speech'?2:40}]};f().sounds.push(row);localStorage.setItem('sound-probe:sounds',JSON.stringify(f().sounds))}return row}),adoptSoundAndSave:mutation(async input=>{record({adoptSound:input});const row=f().sounds.find(r=>r.request.requestId===input.requestId);const r=row.request;const source={id:r.requestId,name:r.kind==='speech'?'旁白'+r.sceneIndex:'背景音乐',gcsUri:'gs://bucket/post-prod/7/code-motion/'+input.projectId+'/audio/'+r.requestId+'/'+ 'a'.repeat(64)+'.wav',duration:r.kind==='speech'?2:40,mimeType:'audio/wav',sha256:'a'.repeat(64),bytes:100,generated:r.kind==='speech'?{requestId:r.requestId,kind:r.kind,sceneIndex:r.sceneIndex,text:r.text,voice:r.voice,role:r.role,emotion:r.emotion}:{requestId:r.requestId,kind:r.kind}};const adopted=adoptCodeMotionSoundWithMeasuredDuration(f().saved.project,source);f().saved={project:adopted.project,generation:String(Number(f().saved.generation)+1),updatedAt:'2026-10-10T19:00:00Z'};localStorage.setItem('image-probe:store',JSON.stringify(f().saved));return{source,saved:f().saved,extendedBy:adopted.extendedBy}}),resolveAudios:query(input=>(input?.audios||[]).map(a=>({id:a.id,name:a.name,url:'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA='}))),importAudio:noMutation,resolveImages:query([]),importFile:noMutation,submit:noMutation,
 save:mutation(async input=>{record('save');const generation=String(Number(f().saved?.generation||0)+1);f().saved={project:input.project,generation,updatedAt:'2026-10-10T19:00:00Z'};localStorage.setItem('image-probe:store',JSON.stringify(f().saved));return f().saved}),
 imageAnalyze:mutation(async ()=>{throw Error("本夹具未调用语义模型")}),
 imagePrepare:mutation(async input=>{record('prepare');f().prepared.generation=input.expectedGeneration;return f().prepared}),
@@ -61,33 +61,35 @@ imageAdopt:mutation(async input=>{record('apiAdopt');return{sceneIndex:input.ind
     };
     await page.waitForFunction(()=>document.body.textContent?.includes('测试旁白3'));
     expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('yingke:draft:7')!).project.brief.audios||[])).toEqual([]);
-    await click('生成尚未制作的旁白与配乐');
-    await page.waitForFunction(()=>document.querySelectorAll('[aria-label="生成旁白和配乐"] article audio').length===5);
+    await click('生成尚未制作的配音与配乐');
+    await page.waitForFunction(()=>document.querySelectorAll('[aria-label="生成旁白、对白和配乐"] article audio').length===5);
     expect(await page.evaluate(()=>(globalThis as any).fixture.events.filter((e:any)=>e.sound).length)).toBe(5);
-    await click('生成尚未制作的旁白与配乐');
-    await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.trim()==='生成尚未制作的旁白与配乐')?.disabled);
+    await click('生成尚未制作的配音与配乐');
+    await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.trim()==='生成尚未制作的配音与配乐')?.disabled);
     expect(await page.evaluate(()=>(globalThis as any).fixture.events.filter((e:any)=>e.sound).length)).toBe(5);
     for(let i=0;i<5;i++){
-      await page.waitForFunction(index=>!(document.querySelectorAll('[aria-label="生成旁白和配乐"] article')[index]?.querySelector('button') as HTMLButtonElement)?.disabled,{},i);
-      await page.evaluate(index=>(document.querySelectorAll('[aria-label="生成旁白和配乐"] article')[index]!.querySelector('button') as HTMLButtonElement).click(),i);
+      await page.waitForFunction(index=>!(document.querySelectorAll('[aria-label="生成旁白、对白和配乐"] article')[index]?.querySelector('button') as HTMLButtonElement)?.disabled,{},i);
+      await page.evaluate(index=>(document.querySelectorAll('[aria-label="生成旁白、对白和配乐"] article')[index]!.querySelector('button') as HTMLButtonElement).click(),i);
       await page.waitForFunction(count=>(globalThis as any).fixture.saved.project.brief.audios?.length===count,{},i+1);
     }
     const stored=await page.evaluate(()=>(globalThis as any).fixture.saved.project);
     expect(stored.brief.audios).toHaveLength(5);
     expect(stored.brief.audios.filter((a:any)=>a.generated.kind==='speech').map((a:any)=>a.generated.emotion)).toEqual(['[tired][very fast]','[whispers]','[amazed]','[empathetic]']);
     expect(await page.evaluate(()=>(globalThis as any).fixture.events.find((e:any)=>e.sound?.request.kind==='bgm').sound.request.direction)).toContain('15.0–20.0秒');
-    expect(stored.plan.audioTimeline.filter((c:any)=>c.role==='narration').map((c:any)=>c.at)).toEqual([0,5,10,15]);
+    expect(stored.plan.audioTimeline.filter((c:any)=>c.role==='narration').map((c:any)=>c.at)).toEqual([0,10,15]);
+    expect(stored.plan.audioTimeline.find((c:any)=>c.role==='dialogue')).toMatchObject({at:5,duration:2,trimStart:0,volume:1});
+    expect(stored.brief.audios.find((a:any)=>a.generated.sceneIndex===1).generated.role).toBe('dialogue');
     expect(stored.plan.audioTimeline.find((c:any)=>c.role==='bgm')).toMatchObject({duration:20,volume:0.25});
     await page.reload(); await page.addScriptTag({content:bundle.outputFiles[0]!.text}); await page.addStyleTag({content:css});
-    await page.waitForFunction(()=>document.querySelectorAll('[aria-label="生成旁白和配乐"] article audio').length===5);
+    await page.waitForFunction(()=>document.querySelectorAll('[aria-label="生成旁白、对白和配乐"] article audio').length===5);
     const restored=await page.evaluate(()=>JSON.parse(localStorage.getItem('yingke:draft:7')!).project);
     expect(restored.brief.audios).toEqual(stored.brief.audios); expect(restored.plan.audioTimeline).toEqual(stored.plan.audioTimeline);
-    await click('生成尚未制作的旁白与配乐');
-    await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.trim()==='生成尚未制作的旁白与配乐')?.disabled);
+    await click('生成尚未制作的配音与配乐');
+    await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.trim()==='生成尚未制作的配音与配乐')?.disabled);
     expect(await page.evaluate(()=>(globalThis as any).fixture.events.filter((e:any)=>e.sound).length)).toBe(5);
-    const evidence=path.resolve('docs/evidence/code-motion-1011/sounds/emotion');await mkdir(evidence,{recursive:true});
+    const evidence=path.resolve('docs/evidence/code-motion-1011/sounds/role');await mkdir(evidence,{recursive:true});
     await writeFile(path.join(evidence,'studio-raw-trace.json'),JSON.stringify(await page.evaluate(()=>({events:(globalThis as any).fixture.events,stored:JSON.parse(localStorage.getItem('image-probe:store')!),local:JSON.parse(localStorage.getItem('yingke:draft:7')!),sounds:(globalThis as any).fixture.sounds})),null,2));
-    await (await page.$('[aria-label="生成旁白和配乐"]'))!.screenshot({path:path.join(evidence,'sound-panel-restored.png')});
+    await (await page.$('[aria-label="生成旁白、对白和配乐"]'))!.screenshot({path:path.join(evidence,'sound-panel-restored.png')});
     expect(errors).toEqual([]);
   } finally { await browser.close(); }
 }, 60000);

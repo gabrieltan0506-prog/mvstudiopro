@@ -43,7 +43,7 @@ it.each(["free", "paid"])(
               contents:
                 args.path === "auth"
                   ? "export const useAuth=()=>({user:{id:7}})"
-                  : `import{useState}from'react';export const trpc={codeMotionProduction:{revisionQuote:{useQuery:()=>{const[,tick]=useState(0);return{data:{tier:globalThis.fixture.tier,completed:true,remaining:globalThis.fixture.remaining,message:'每部成片2次'},refetch:async()=>tick(v=>v+1)}}},revisionPrepare:{useMutation:()=>({mutateAsync:async()=>({fingerprint:"a".repeat(64),credits:37,costUsd:1.628})})},revisionSubmit:{useMutation:()=>({mutateAsync:async input=>{globalThis.fixture.submits.push(input);globalThis.fixture.remaining=0;return{project:{},generation:'2'}}})}}};`,
+                  : `import{useState}from'react';export const trpc={mvAnalysis:{askPlatformSkillQa:{useMutation:()=>({mutateAsync:async()=>({answer:JSON.stringify({summary:'开头换文字',changes:[{index:0,heading:'新标题',body:'原文',motionPrompt:'杯中蒸汽缓慢上升'}],limitations:[]}),creditsCharged:0})})}},codeMotion:{quote:{useQuery:()=>({data:{credits:0},refetch:async()=>{}})}},codeMotionProduction:{revisionQuote:{useQuery:()=>{const[,tick]=useState(0);return{data:{tier:globalThis.fixture.tier,completed:true,remaining:globalThis.fixture.remaining,message:'每部成片2次'},refetch:async()=>tick(v=>v+1)}}},revisionPrepare:{useMutation:()=>({mutateAsync:async()=>({fingerprint:"a".repeat(64),credits:globalThis.fixture.tier==="paid"?44:0,costUsd:globalThis.fixture.tier==="paid"?1.98:0,shot:{version:globalThis.fixture.tier==="paid"?"2.5":"2.0",mode:globalThis.fixture.tier==="paid"?"video_edit":"reference_to_video"}})})},revisionSubmit:{useMutation:()=>({mutateAsync:async input=>{globalThis.fixture.submits.push(input);globalThis.fixture.remaining=0;return{project:{},generation:'2'}}})}}};`,
             }));
           },
         },
@@ -86,15 +86,21 @@ it.each(["free", "paid"])(
           text
         );
       };
-      await page.waitForSelector('[aria-label="修改标题"]');
-      await page.type('[aria-label="修改标题"]', "修改");
-      if (tier === "paid")
+      await page.waitForSelector('[aria-label="自然语言修改要求"]');
+      if(tier === "free") {
+        await page.type('[aria-label="自然语言修改要求"]', "让杯中蒸汽缓慢上升");
+        await click("整理修改（免费）");
+        await page.waitForFunction(()=>document.body.textContent?.includes("开头换文字（修改画面1）"));
+      } else {
+        await page.evaluate(()=>{(document.querySelector("details") as HTMLDetailsElement).open=true;});
+        await page.type('[aria-label="修改标题"]', "修改");
         await page.type('[aria-label="动作修改要求"]', "杯中蒸汽缓慢上升");
+      }
       await click("确认提交局部修改");
       await page.waitForSelector('[role="alertdialog"]');
       expect(
         await page.$eval('[role="alertdialog"]', e => e.textContent)
-      ).toContain(tier === "free" ? "提交后剩余0次" : "收取37积分");
+      ).toContain(tier === "free" ? "提交后剩余0次" : "最多44积分");
       await click("取消");
       expect(
         await page.evaluate(() => ({
@@ -114,8 +120,7 @@ it.each(["free", "paid"])(
         expect(await page.evaluate(() => document.body.textContent)).toContain(
           "免费2次已用完，请充值升级后继续"
         );
-      else
-        expect(
+      expect(
           await page.evaluate(
             () => (globalThis as any).fixture.submits[0].confirmedQuote
           )
@@ -128,7 +133,7 @@ it.each(["free", "paid"])(
         )
       ).toBeNull();
       expect(errors).toEqual([]);
-      const dir = path.resolve("docs/evidence/ink-production-1011");
+      const dir = path.resolve("docs/evidence/code-motion-1011/video-edit/browser");
       await mkdir(dir, { recursive: true });
       await writeFile(
         path.join(dir, `revision-${tier}-dialog-browser.json`),

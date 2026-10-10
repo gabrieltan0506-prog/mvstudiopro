@@ -43,7 +43,7 @@ const grantSchema = z
     tier: z.enum(["free", "paid"]),
     fingerprint: z.string(),
     sceneCount: z.number().int().min(4).max(6),
-    duration: z.number().min(15).max(30),
+    duration: z.number().min(15).max(60),
     createdAt: z.string(),
     revision: z
       .object({
@@ -52,7 +52,7 @@ const grantSchema = z
         parentProjectId: z.string().uuid(),
         number: z.number().int().min(1),
         sceneIndexes: z.array(z.number().int().min(0).max(5)).min(1).max(6),
-        mode: z.enum(["code_only", "paid_video"]),
+        mode: z.enum(["code_only", "paid_video", "video_edit"]),
         quoteFingerprint: z
           .string()
           .regex(/^[a-f0-9]{64}$/)
@@ -64,6 +64,12 @@ const grantSchema = z
       z.string(),
       z.object({ requestId: z.string(), digest: z.string() })
     ),
+    speechRebase: z.object({
+      journalId: z.string().regex(/^[a-f0-9]{64}$/),
+      fromFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      toFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      duration: z.number().min(15).max(60),
+    }).strict().optional(),
   })
   .strict();
 export type CodeMotionProductionGrant = z.infer<typeof grantSchema>;
@@ -126,6 +132,7 @@ export function codeMotionProductionFingerprint(project: CodeMotionProject) {
     text: project.brief.text,
     duration: project.brief.duration,
     orientation: project.brief.orientation,
+    ...(project.brief.generationTier ? { generationTier: project.brief.generationTier } : {}),
     scenes: project.plan.scenes.map(({ imageId, ...scene }) => ({
       ...scene,
       ...(scene.composition
@@ -173,6 +180,8 @@ export async function prepareCodeMotionProductionGrant(
   const saved = await loadCodeMotion(userId, input.projectId, deps.storage);
   if (!saved || saved.generation !== input.expectedGeneration)
     throw new Error("作品版本已变化，请先保存后核对");
+  if (saved.project.brief.style !== "scenes" && saved.project.plan?.scenes.some(scene => scene.speech?.role === "dialogue" && scene.speech.text.trim()))
+    throw new Error("对白口型请使用逐镜创作；当前模式请选择画外旁白，尚未占用制作名额");
   const fingerprint = codeMotionProductionFingerprint(saved.project);
   const old = await getCodeMotionProductionGrant(
     userId,
@@ -181,22 +190,21 @@ export async function prepareCodeMotionProductionGrant(
     deps
   );
   if (old) {
+    if (old.speechRebase) throw new Error("音源采用正在保存，请先恢复本次采用；不会重新生成音图");
     if (old.fingerprint !== fingerprint)
       throw new Error("本制作已绑定已确认分镜，请恢复原分镜；不自动重复生成");
     return old;
   }
   const sceneCount = saved.project.plan!.scenes.length;
-  if (sceneCount < 4 || sceneCount > 6 || saved.project.brief.duration > 30)
-    throw new Error("本次一键制作限4–6镜、总时长不超过30秒");
+  if (sceneCount < 4 || sceneCount > 6 || saved.project.brief.duration > 60)
+    throw new Error("本次一键制作支持4–6镜，总时长不超过60秒");
   const speechLength = saved.project.plan!.scenes.reduce(
     (n, s) => n + (s.speech?.text.length || 0),
     0
   );
   if (speechLength > 300)
     throw new Error("本次短片旁白总计最多300字，请先精简");
-  const tier = canUsePaidVideoByPlan(await deps.plan(Number(userId)))
-    ? "paid"
-    : "free";
+  const tier = await resolveCodeMotionProductionTier(userId, saved.project, deps.plan);
   const id = codeMotionProductionId(
     `ink-production:${userId}:${input.projectId}`
   );
@@ -213,6 +221,17 @@ export async function prepareCodeMotionProductionGrant(
     slots: {},
   });
   return grant;
+}
+/** One tier decision for previews and the grant that will authorize their submission. */
+export async function resolveCodeMotionProductionTier(
+  userId: string,
+  project: CodeMotionProject,
+  plan: typeof getUserPlan = getUserPlan
+): Promise<"free" | "paid"> {
+  const paidAvailable = canUsePaidVideoByPlan(await plan(Number(userId)));
+  if (project.brief.generationTier === "paid" && !paidAvailable)
+    throw new Error("当前账号尚未开通付费生成，请充值升级或选择免费生成");
+  return project.brief.generationTier ?? (paidAvailable ? "paid" : "free");
 }
 export async function ensureCodeMotionProductionGrant(
   userId: string,
@@ -255,8 +274,8 @@ function validateSlot(
     grant.revision &&
     input.kind !== "export" &&
     !(
-      grant.revision.mode === "paid_video" &&
-      grant.tier === "paid" &&
+      (grant.revision.mode === "video_edit" ||
+        (grant.revision.mode === "paid_video" && grant.tier === "paid")) &&
       input.kind === "video" &&
       grant.revision.sceneIndexes.length === 1 &&
       grant.revision.sceneIndexes[0] === input.index
@@ -296,13 +315,14 @@ export async function reserveCodeMotionProductionSlot(
         throw new Error("此制作步骤已占用，请恢复原任务；不会重复付费提交");
       return grant;
     }
+    if (grant.speechRebase) throw new Error("音源采用正在保存，请先恢复本次采用；未提交新生成");
     if (
       grant.tier === "free" &&
       input.kind === "video" &&
       Object.keys(grant.slots).filter(k => k.startsWith("video:")).length >= 2
     )
       throw new Error(
-        "免费作品最多生成2个各不超过5秒的动作镜头，请将其余镜头改为代码画面"
+        "免费作品最多生成2个各不超过5秒的动作镜头，请将其余对白改为画外旁白或代码画面"
       );
     const saved = await loadCodeMotion(userId, input.projectId, deps.storage);
     if (
@@ -323,6 +343,66 @@ export async function reserveCodeMotionProductionSlot(
     }
   }
   throw new Error("制作步骤占位未确认");
+}
+
+/** CAS locks only a measured-speech timeline change, never a new generation identity. */
+export async function beginCodeMotionSpeechRebase(
+  userId: string,
+  projectId: string,
+  grantId: string,
+  rebase: NonNullable<CodeMotionProductionGrant["speechRebase"]>,
+  deps: CodeMotionProductionGrantDeps = real
+) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const file = await deps.storage.read(path(userId, projectId));
+    if (!file) throw new Error("制作授权不存在");
+    const grant = grantSchema.parse(JSON.parse(file.body.toString()));
+    if (grant.userId !== userId || grant.id !== grantId || grant.projectId !== projectId)
+      throw new Error("制作授权身份不一致");
+    if (grant.revision || Object.keys(grant.slots).some(k => k.startsWith("video:") || k.startsWith("export:")))
+      throw new Error("已有视频或导出任务，不能移动已确认镜窗；已生成音图仍保留");
+    if (grant.speechRebase) {
+      if (codeMotionProductionDigest(grant.speechRebase) !== codeMotionProductionDigest(rebase))
+        throw new Error("另一份音源正在采用，请先恢复该音源");
+      return grant;
+    }
+    if (grant.fingerprint !== rebase.fromFingerprint)
+      throw new Error("分镜已变化，不能延长原制作；请恢复已确认版本");
+    const next = grantSchema.parse({ ...grant, speechRebase: rebase });
+    try {
+      await deps.storage.write(path(userId, projectId), Buffer.from(JSON.stringify(next)), file.generation);
+      return next;
+    } catch (error) { if (attempt === 7) throw error; }
+  }
+  throw new Error("音源采用锁未确认");
+}
+export async function completeCodeMotionSpeechRebase(
+  userId: string,
+  projectId: string,
+  grantId: string,
+  journalId: string,
+  deps: CodeMotionProductionGrantDeps = real
+) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const file = await deps.storage.read(path(userId, projectId));
+    if (!file) throw new Error("制作授权不存在");
+    const grant = grantSchema.parse(JSON.parse(file.body.toString()));
+    if (grant.userId !== userId || grant.id !== grantId || grant.projectId !== projectId)
+      throw new Error("制作授权身份不一致");
+    if (!grant.speechRebase) return grant;
+    if (grant.speechRebase.journalId !== journalId) throw new Error("音源采用身份不一致");
+    const saved = await loadCodeMotion(userId, projectId, deps.storage);
+    if (!saved || codeMotionProductionFingerprint(saved.project) !== grant.speechRebase.toFingerprint)
+      throw new Error("音源时间轴尚未保存，请恢复本次采用");
+    const next = { ...grant, fingerprint: grant.speechRebase.toFingerprint,
+      generation: saved.generation, duration: grant.speechRebase.duration };
+    delete next.speechRebase;
+    try {
+      await deps.storage.write(path(userId, projectId), Buffer.from(JSON.stringify(next)), file.generation);
+      return next;
+    } catch (error) { if (attempt === 7) throw error; }
+  }
+  throw new Error("音源采用授权保存未确认");
 }
 export async function assertCodeMotionProductionSlot(
   userId: string,

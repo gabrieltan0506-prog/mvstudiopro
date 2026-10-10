@@ -32,7 +32,10 @@ const codeMotionBriefObject = z
     request: z.string().trim().min(2, "说说你想做什么").max(2000),
     text: z.string().trim().max(4000).default(""),
     style: z.enum(["words", "cards", "data", "scenes"]),
-    duration: z.number().int().min(15).max(180),
+    duration: z.number().finite().min(15).max(180),
+    durationMode: z.enum(["natural", "fixed"]).optional(),
+    generationTier: z.enum(["free", "paid"]).optional(),
+    revisionSource: z.object({ projectId: uuid, generation: z.string().regex(/^\d+$/), instruction: z.string().trim().min(2).max(1200) }).strict().optional(),
     orientation: z.enum(["landscape", "portrait"]),
     images: z.array(codeMotionImageSchema).max(8).default([]),
     audios: z
@@ -111,6 +114,7 @@ export const codeMotionPlanSchema = z
               .object({
                 text: z.string().trim().max(180),
                 voice: z.enum(["female", "male"]),
+                role: z.enum(["narration", "dialogue"]).optional(),
                 emotion: codeMotionEmotionSchema.optional(),
               })
               .strict()
@@ -138,19 +142,19 @@ export function validateCodeMotionPlan(
   raw: unknown
 ): CodeMotionPlan {
   const plan = codeMotionPlanSchema.parse(raw);
+  const totalDuration = plan.scenes.reduce((sum, scene) => sum + scene.duration, 0);
+  const renderDuration = brief.durationMode === "natural" ? totalDuration : brief.duration;
+  if (renderDuration < 15 || renderDuration > 180)
+    throw new Error("安排的总时长须在15至180秒范围内");
   if (plan.timing) {
     if (brief.style !== "scenes") throw new Error("词拍动作需要逐镜创作模式");
     validateCodeMotionTimingSource(plan.timing, brief.audios || [], plan.audioTimeline || []);
   }
   if (plan.codeVideo) {
-    const errors = validateCodeMotionVideo(plan.codeVideo, brief.duration, 30);
+    const errors = validateCodeMotionVideo(plan.codeVideo, renderDuration, 30);
     if (errors.length) throw new Error(errors.join("；"));
   }
-  if (
-    Math.abs(
-      plan.scenes.reduce((sum, s) => sum + s.duration, 0) - brief.duration
-    ) > 0.000001
-  )
+  if (brief.durationMode !== "natural" && Math.abs(totalDuration - brief.duration) > 0.000001)
     throw new Error("安排的总时长与本次选择不一致，请重新调整");
   if (
     plan.scenes.some(
@@ -193,7 +197,7 @@ export function validateCodeMotionPlan(
       sources: brief.audios || [],
       audioTimeline: plan.audioTimeline || [],
     });
-    const errors = validateCodeMotionAudio(audio, brief.duration);
+    const errors = validateCodeMotionAudio(audio, renderDuration);
     if (errors.length) throw new Error(errors.join("；"));
   }
   return plan;
@@ -210,7 +214,7 @@ export function compileCodeMotion(
   if (!options.allowPendingProduction) {
     let sceneAt = 0;
     for (const scene of plan.scenes) {
-      if (scene.production?.motion === "natural" && !plan.codeVideo?.clips.some(clip => Math.abs(clip.at - sceneAt) < 1e-6 && Math.abs(clip.duration - scene.duration) < 1e-6))
+      if ((scene.production?.motion === "natural" || (scene.speech?.role === "dialogue" && scene.speech.text.trim())) && !plan.codeVideo?.clips.some(clip => Math.abs(clip.at - sceneAt) < 1e-6 && Math.abs(clip.duration - scene.duration) < 1e-6))
         throw new Error("动态镜头尚未完成制作，请先恢复制作并采用生成片段");
       sceneAt += scene.duration;
     }
@@ -226,14 +230,15 @@ export function compileCodeMotion(
             audio.generated.sceneIndex === index &&
             audio.generated.text === scene.speech!.text.trim() &&
             audio.generated.voice === scene.speech!.voice &&
-            (audio.generated.emotion || "") === (scene.speech!.emotion || "")
+            (audio.generated.emotion || "") === (scene.speech!.emotion || "") &&
+            (audio.generated.role || "narration") === (scene.speech!.role || "narration")
         );
         const clip =
           source &&
           plan.audioTimeline?.find(
             clip =>
               clip.sourceId === source.id &&
-              (clip.role === "dialogue" || clip.role === "narration") &&
+              clip.role === (scene.speech!.role || "narration") &&
               Math.abs(clip.at - at) < 1e-6 &&
               clip.trimStart === 0 &&
               Math.abs(clip.duration - source.duration) < 1e-6 &&
@@ -306,7 +311,9 @@ export function compileCodeMotion(
     version: 1,
     mode: "animation",
     grammar,
-    duration: brief.duration,
+    duration: brief.durationMode === "natural"
+      ? plan.scenes.reduce((sum, scene) => sum + scene.duration, 0)
+      : brief.duration,
     width: brief.orientation === "portrait" ? 720 : 1280,
     height: brief.orientation === "portrait" ? 1280 : 720,
     fps: 30,
@@ -365,7 +372,10 @@ export const codeMotionProjectSchema = z
         });
       }
     }
-  });
+  })
+  .transform(project => project.plan && project.brief.durationMode === "natural"
+    ? { ...project, brief: { ...project.brief, duration: project.plan.scenes.reduce((sum, scene) => sum + scene.duration, 0) } }
+    : project);
 export type CodeMotionProject = z.infer<typeof codeMotionProjectSchema>;
 export function codeMotionSceneDescription(
   style: CodeMotionBrief["style"],

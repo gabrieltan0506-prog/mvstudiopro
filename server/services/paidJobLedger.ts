@@ -214,7 +214,7 @@ export async function registerActiveJob(input: RegisterInput): Promise<void> {
     userId: input.userId,
     creditsBilled: input.creditsBilled,
     action: input.action,
-    status: existing?.status === "settled" || existing?.status === "refunded" || existing?.status === "refund_pending" || existing?.status === "reconciliation_pending"
+    status: existing?.status === "settled" || existing?.status === "refunded" || existing?.status === "refund_pending" || existing?.status === "reconciliation_pending" || existing?.status === "settlement_pending"
       ? existing.status
       : "active",
     chargedAt: existing?.chargedAt ?? now,

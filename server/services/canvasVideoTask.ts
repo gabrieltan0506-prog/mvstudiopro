@@ -456,6 +456,11 @@ type ResolvedSeedanceTaskReferences = Pick<
 async function resolveSeedanceTaskReferences(
   task: CanvasVideoTaskRecord,
 ): Promise<ResolvedSeedanceTaskReferences> {
+  const editQuote = task.inkProduction ? await (await import("./codeMotionRevision")).getCodeMotionRevisionPrice(String(task.userId),task.inkProduction.projectId) : null;
+  if(editQuote?.shot.editSource) {
+    await (await import("./codeMotionRevisionEdit")).verifyCodeMotionEditSource(String(task.userId),editQuote.shot.editSource);
+    if(task.engine.startsWith("seedance25-") && editQuote.shot.editSource.width*editQuote.shot.editSource.height < 407696) throw Error("原片尺寸不满足已确认编辑范围，不自动付费放大");
+  }
   const rawReferences = [
     task.imageUrl,
     ...(task.imageUrls || []),
@@ -483,7 +488,7 @@ async function resolveSeedanceTaskReferences(
     const resolved = await resolve(url);
     const key = extractSystemGcsObjectPath(url) || url;
     const record = (task.seedanceReferenceVideoUpscales ||= {})[key] ||= {};
-    videoUrls.push(task.seedanceVersion === "2.5" || task.engine.startsWith("seedance25-")
+    videoUrls.push(!editQuote?.shot.editSource && (task.seedanceVersion === "2.5" || task.engine.startsWith("seedance25-"))
       ? await normalizeSeedanceReferenceVideo(resolved, task.userId, record, () => writeTask(task), `${task.taskId}-reference-${videoUrls.length}`)
       : resolved);
   }
@@ -707,7 +712,7 @@ async function succeedTask(
 ): Promise<CanvasVideoTaskRecord> {
   if (task.inkProduction) {
     const {settleCodeMotionRevisionCost}=await import("./codeMotionRevisionPricing.js");
-    await settleCodeMotionRevisionCost(task);
+    await settleCodeMotionRevisionCost(task, videoUrl);
   }
   task.status = "succeeded";
   task.videoUrl = videoUrl;

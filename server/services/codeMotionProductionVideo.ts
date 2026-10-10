@@ -10,18 +10,17 @@ import {
   type InkProductionTier,
 } from "../../shared/inkVideoProductionPolicy";
 import type { CodeMotionProject } from "../../shared/codeMotion";
+import { formatPromptForEngine, hasBlockingFormatIssues } from "../../shared/promptFormatLayer";
 import {
   codeMotionVideoAssetSchema,
   type CodeMotionVideo,
 } from "../../shared/codeMotionVideo";
 import { canvasVideoClipCredits } from "../../shared/canvasGenerationPricing";
-import { canUsePaidVideoByPlan } from "../../shared/paidVideoAccess";
 import {
   codeMotionStorage,
   loadCodeMotion,
   type CodeMotionStoreDeps,
 } from "./codeMotionStore";
-import { getUserPlan } from "../credits";
 import { assertCodeMotionImageSource } from "./codeMotionImport";
 import { assertCodeMotionAudioOwnership } from "./codeMotionAudio";
 import { inkSource } from "./inkFreeQuota";
@@ -30,6 +29,7 @@ import {
   reserveCodeMotionProductionSlot,
   assertCodeMotionProductionSlot,
   getCodeMotionProductionGrant,
+  resolveCodeMotionProductionTier,
   codeMotionProductionId,
   codeMotionProductionDigest,
   type CodeMotionProductionSlot,
@@ -44,7 +44,10 @@ import {
   buildEvolinkSeedanceRequest,
   isEvolinkSeedanceConfigured,
 } from "./evolinkSeedanceVideo";
-import { buildByteplusSeedance25SubmitBody, isByteplusSeedanceConfigured } from "./byteplusSeedanceVideo";
+import {
+  buildByteplusSeedance25SubmitBody,
+  isByteplusSeedanceConfigured,
+} from "./byteplusSeedanceVideo";
 import { fetchPostProdSourceToFile, runMediaTool } from "./postProduction";
 import { getGcsBucketName, signGsUriV4ReadUrl } from "./gcs";
 import {
@@ -68,9 +71,10 @@ export type CodeMotionProductionVideoShot = {
   duration: number;
   prompt: string;
   model: string;
-  version: "2.0-mini" | "2.5";
+  version: "2.0-mini" | "2.0" | "2.5";
   resolution: "480p" | "720p";
-  mode: "image_to_video" | "reference_to_video";
+  mode: "image_to_video" | "reference_to_video" | "video_edit";
+  editSource?: import("./codeMotionRevisionEdit").CodeMotionEditSource;
   imageUrls: string[];
   videoUrls: string[];
   audioUrls: string[];
@@ -94,7 +98,8 @@ export function planCodeMotionProductionVideo(
     const start = at;
     at += scene.duration;
     const production = scene.production;
-    if (production?.motion !== "natural") continue;
+    const dialogue = scene.speech?.role === "dialogue" && !!scene.speech.text.trim();
+    if (production?.motion !== "natural" && !dialogue) continue;
     const selectedIds = scene.imageId
       ? [scene.imageId]
       : Array.from(
@@ -107,23 +112,24 @@ export function planCodeMotionProductionVideo(
     const imageUrls = selectedIds
       .map(id => project.brief.images.find(image => image.id === id)?.gcsUri)
       .filter((uri): uri is string => !!uri);
-    const videoUrls = (production.referenceVideoIds || []).map(id => {
+    const videoUrls = (production?.referenceVideoIds || []).map(id => {
       const asset = project.plan!.codeVideo?.assets.find(a => a.id === id);
       if (!asset) throw new Error("参考视频尚未保存或已移除");
       return asset.videoUri;
     });
     const sourceIds = new Set(
       (project.plan.audioTimeline || [])
-        .filter(c => c.at < at && c.at + c.duration > start)
+        .filter(c => c.at < at && c.at + c.duration > start && c.volume > 0)
         .map(c => c.sourceId)
     );
     const audioUrls = (project.brief.audios || [])
       .filter(source => sourceIds.has(source.id))
       .map(source => source.gcsUri);
     const duration = scene.duration;
-    if (!Number.isInteger(duration) || duration < 4 || duration > 5)
+    const maximumDuration = tier === "paid" ? 30 : 5;
+    if (!Number.isInteger(duration) || duration < 4 || duration > maximumDuration)
       throw new Error(
-        `画面${sceneIndex + 1}自然动作需要4–5秒，短镜请改为代码画面`
+        `画面${sceneIndex + 1}${dialogue ? "对白口型" : "自然动作"}需要4–${maximumDuration}秒，请调整本镜时长${dialogue ? "并保留完整对白" : "，短镜可改为代码画面"}`
       );
     const missing: string[] = [];
     if (!imageUrls.length && !videoUrls.length)
@@ -135,11 +141,20 @@ export function planCodeMotionProductionVideo(
           sourceIds.has(source.id) &&
           source.generated?.kind === "speech" &&
           source.generated.sceneIndex === sceneIndex &&
-          source.generated.text === scene.speech!.text &&
-          source.generated.voice === scene.speech!.voice
+          source.generated.text === scene.speech!.text.trim() &&
+          source.generated.voice === scene.speech!.voice &&
+          (source.generated.emotion || "") === (scene.speech!.emotion || "") &&
+          (source.generated.role || "narration") === (scene.speech!.role || "narration") &&
+          (project.plan!.audioTimeline || []).some(clip =>
+            clip.sourceId === source.id &&
+            clip.role === (scene.speech!.role || "narration") &&
+            Math.abs(clip.at - start) < 1e-6 && clip.trimStart === 0 &&
+            Math.abs(clip.duration - source.duration) < 1e-6 &&
+            clip.duration <= duration + 1e-6 && clip.volume > 0
+          )
       )
     )
-      missing.push("请先生成并采用本镜旁白");
+      missing.push(`请先生成并采用本镜${dialogue ? "对白" : "旁白"}`);
     const policy = planInkGeneratedShot({
       tier,
       duration,
@@ -147,17 +162,33 @@ export function planCodeMotionProductionVideo(
       videoCount: videoUrls.length,
       audioCount: audioUrls.length,
     });
+    let prompt = production?.videoPrompt || `${scene.heading}。${scene.body}。${scene.direction || ""}`;
+    if (dialogue) {
+      // The worker submits one actual window mix in audio_urls; never put its URL in <>.
+      // Preserve the spoken words and use the existing Seedance dialect/limit validator.
+      const formatted = formatPromptForEngine([
+        prompt.replace(/【([^【】]*)】/g, "$1"),
+        `本镜为画面内对白。分镜指定的唯一说话者使用${scene.speech!.voice === "female" ? "女声" : "男声"}；保持原分镜的说话者、听者、站位和视线对象，听者不张嘴抢话。`,
+        `0秒至${duration}秒，@音频1 的人声只属于该说话者，台词原文：{${scene.speech!.text.trim()}}。逐字口型与参考中对白的实际起止同步，原句、音色、情绪、顺序不得交换、改词、截断或重复；说完后保留反应停顿。`,
+        "(沿用 @音频1 中已有的配乐，不新增或覆盖配乐；对白时配乐压低，句尾恢复)",
+        "不把画外旁白、配乐或音效当成对白，不重新合成或覆盖参考对白。无字幕、无画面文字；字幕由后期制作。",
+      ].join("\n"), policy.version === "2.5" ? "seedance-2.5" : "seedance-2.0-mini", {
+        durationSec: duration, imageRefCount: imageUrls.length, videoRefCount: videoUrls.length,
+        // A missing voice blocks submission below; this is the planned single mixed reference.
+        audioRefCount: 1, applyCensorReplacements: false,
+      });
+      if (hasBlockingFormatIssues(formatted.issues)) throw Error(formatted.issues.map(issue => issue.detailZh).join("；"));
+      prompt = formatted.text;
+    }
     shots.push({
       sceneIndex,
       at: start,
       duration,
-      prompt:
-        production.videoPrompt ||
-        `${scene.heading}。${scene.body}。${scene.direction || ""}`,
+      prompt,
       model: policy.model,
       version: policy.version,
       resolution: policy.resolution,
-      mode: policy.mode,
+      mode: dialogue ? "reference_to_video" : policy.mode,
       imageUrls,
       videoUrls,
       audioUrls,
@@ -185,7 +216,7 @@ export function planCodeMotionProductionVideo(
 }
 type Manifest = {
   /** Absent on historical EvoLink manifests: preserve their original intent identity. */
-  providerRoute?: "byteplus-first";
+  providerRoute?: "byteplus-first" | "evolink-edit";
   projectId: string;
   grantId: string;
   fingerprint: string;
@@ -216,15 +247,24 @@ export async function prepareCodeMotionProductionVideo(
   if (!saved || saved.generation !== input.expectedGeneration)
     throw new Error("作品版本已变化，请先保存");
   const grant = await getCodeMotionProductionGrant(userId, input.projectId);
-  const tier =
-    grant?.tier ||
-    (canUsePaidVideoByPlan(await getUserPlan(Number(userId)))
-      ? "paid"
-      : "free");
-  let shots = planCodeMotionProductionVideo(saved.project, tier);
+  const tier = grant?.tier ?? await resolveCodeMotionProductionTier(userId, saved.project);
+  let shots: CodeMotionProductionVideoShot[];
+  if (grant?.revision?.mode === "video_edit") {
+    const { getCodeMotionRevisionPrice } = await import("./codeMotionRevision");
+    const quote = await getCodeMotionRevisionPrice(userId, input.projectId);
+    const scene = quote && saved.project.plan?.scenes[quote.shot.sceneIndex];
+    if (
+      !quote?.shot.editSource ||
+      !scene ||
+      scene.duration !== quote.shot.duration ||
+      scene.production?.videoPrompt !== quote.shot.prompt
+    )
+      throw Error("原片修改已超出确认范围，请恢复原版本");
+    shots = [quote.shot];
+  } else shots = planCodeMotionProductionVideo(saved.project, tier);
   if (tier === "free" && shots.length > 2)
     throw new Error(
-      "免费作品最多生成2个各不超过5秒的动作镜头，请先将其余镜头改为代码画面"
+      "免费作品最多生成2个各不超过5秒的动作镜头，请先将其余对白改为画外旁白或代码画面"
     );
   if (grant?.revision) {
     shots = shots.filter(s =>
@@ -254,6 +294,16 @@ export async function prepareCodeMotionProductionVideo(
     shots,
     totalCredits: shots.reduce((n, s) => n + s.credits, 0),
     fingerprint,
+    videoPreviews: shots.flatMap(s =>
+      s.editSource
+        ? [
+            {
+              sceneIndex: s.sceneIndex,
+              url: signGsUriV4ReadUrl(s.editSource.providerReference?.videoUri ?? s.editSource.asset.videoUri, 3600),
+            },
+          ]
+        : []
+    ),
   };
 }
 /** Real production entry: durable immutable manifest → fixed budget slot → existing intent/charge/task worker. */
@@ -273,11 +323,24 @@ export async function submitCodeMotionProductionVideo(
     throw new Error(prepared.shots.flatMap(s => s.missing).join("；"));
   if (!prepared.shots.length) return { grant: prepared.grant, shots: [] };
   let manifest = await readManifest(userId, input.projectId);
-  const byteplusFirst = !manifest || manifest.providerRoute === "byteplus-first";
+  const editing = prepared.grant?.revision?.mode === "video_edit";
+  const byteplusFirst = manifest
+    ? manifest.providerRoute === "byteplus-first"
+    : !editing;
   if (byteplusFirst && prepared.grant?.revision?.mode === "paid_video")
-    throw new Error("本次局部动作修改须先核定BytePlus及回落通道成本，尚未提交、未扣费；已有EvoLink任务可继续恢复");
-  if (byteplusFirst ? !isByteplusSeedanceConfigured() : !isEvolinkSeedanceConfigured())
-    throw new Error(byteplusFirst ? "BytePlus视频服务暂不可用，未提交、未扣费；仅上游明确拒绝后才回落EvoLink" : "原EvoLink任务服务暂不可用，请稍后恢复原任务");
+    throw new Error(
+      "本次局部动作修改须先核定BytePlus及回落通道成本，尚未提交、未扣费；已有EvoLink任务可继续恢复"
+    );
+  if (
+    byteplusFirst
+      ? !isByteplusSeedanceConfigured()
+      : !isEvolinkSeedanceConfigured()
+  )
+    throw new Error(
+      byteplusFirst
+        ? "BytePlus视频服务暂不可用，未提交、未扣费；仅上游明确拒绝后才回落EvoLink"
+        : "原EvoLink任务服务暂不可用，请稍后恢复原任务"
+    );
   const saved = (await loadCodeMotion(userId, input.projectId))!;
   for (const image of saved.project.brief.images)
     await assertCodeMotionImageSource(userId, image.gcsUri);
@@ -304,7 +367,7 @@ export async function submitCodeMotionProductionVideo(
     throw new Error("视频制作已提交，请恢复原任务；不重复生成");
   if (!manifest) {
     manifest = {
-      providerRoute: "byteplus-first",
+      providerRoute: editing ? "evolink-edit" : "byteplus-first",
       projectId: input.projectId,
       grantId: grant.id,
       fingerprint: prepared.fingerprint,
@@ -335,6 +398,12 @@ export async function submitCodeMotionProductionVideo(
     };
     await reserveCodeMotionProductionSlot(userId, slot);
     await assertCodeMotionProductionSlot(userId, slot);
+    if (shot.editSource) {
+      const { verifyCodeMotionEditSource } = await import(
+        "./codeMotionRevisionEdit"
+      );
+      await verifyCodeMotionEditSource(userId, shot.editSource);
+    }
     const providerAudioUrls = await prepareCodeMotionProductionAudio(
       userId,
       saved.project,
@@ -343,21 +412,47 @@ export async function submitCodeMotionProductionVideo(
     // Build the existing BytePlus request against owned, server-signed references; worker resolves them again.
     const useByteplus = manifest.providerRoute === "byteplus-first";
     if (useByteplus) {
-      if (!isByteplusSeedanceConfigured()) throw new Error("BytePlus视频服务暂不可用，未提交、未扣费");
-      const signed = (uri:string) => uri.startsWith("gs://") ? signGsUriV4ReadUrl(uri,3600) : uri;
+      if (shot.version === "2.0") throw new Error("标准2.0原片编辑必须使用已确认的EvoLink通道");
+      if (!isByteplusSeedanceConfigured())
+        throw new Error("BytePlus视频服务暂不可用，未提交、未扣费");
+      const signed = (uri: string) =>
+        uri.startsWith("gs://") ? signGsUriV4ReadUrl(uri, 3600) : uri;
       buildByteplusSeedance25SubmitBody({
-        version:shot.version,prompt:shot.prompt,imageUrls:shot.imageUrls.map(signed),videoUrls:shot.videoUrls.map(signed),
-        audioUrls:providerAudioUrls.map(signed),mode:shot.mode,duration:shot.duration,resolution:shot.resolution,
-        aspectRatio:saved.project.brief.orientation === "portrait" ? "9:16" : "16:9",generateAudio:true,watermark:false,
+        version: shot.version,
+        prompt: shot.prompt,
+        imageUrls: shot.imageUrls.map(signed),
+        videoUrls: shot.videoUrls.map(signed),
+        audioUrls: providerAudioUrls.map(signed),
+        mode: shot.mode,
+        duration: shot.duration,
+        resolution: shot.resolution,
+        aspectRatio:
+          saved.project.brief.orientation === "portrait" ? "9:16" : "16:9",
+        generateAudio: true,
+        watermark: false,
       });
-    } else buildEvolinkSeedanceRequest({
-      version:shot.version,prompt:shot.prompt,imageUrls:shot.imageUrls,videoUrls:shot.videoUrls,
-      audioUrls:providerAudioUrls,mode:shot.mode,duration:shot.duration,quality:shot.resolution,generateAudio:true,
-    });
+    } else
+      buildEvolinkSeedanceRequest({
+        version: shot.version,
+        prompt: shot.prompt,
+        imageUrls: shot.imageUrls,
+        videoUrls: shot.videoUrls,
+        audioUrls: providerAudioUrls,
+        mode: shot.mode,
+        duration: shot.duration,
+        quality: shot.resolution,
+        generateAudio: true,
+      });
     const taskInput = {
       engine: useByteplus
-        ? shot.version === "2.5" ? "seedance25-byteplus" as const : "seedance-mini-byteplus" as const
-        : shot.version === "2.5" ? "seedance25-evolink" as const : "seedance-mini-evolink" as const,
+        ? shot.version === "2.5"
+          ? ("seedance25-byteplus" as const)
+          : ("seedance-mini-byteplus" as const)
+        : shot.version === "2.5"
+          ? ("seedance25-evolink" as const)
+          : shot.version === "2.0"
+            ? ("seedance20-evolink" as const)
+            : ("seedance-mini-evolink" as const),
       label: `映客画面${shot.sceneIndex + 1}`,
       prompt: shot.prompt,
       imageUrls: shot.imageUrls,
@@ -369,8 +464,8 @@ export async function submitCodeMotionProductionVideo(
       resolution: shot.resolution,
       generateAudio: true,
       workMode: shot.mode,
-      ...(shot.version === "2.0-mini"
-        ? { seedanceVersion: "2.0-mini" as const }
+      ...(shot.version === "2.0-mini" || shot.version === "2.0"
+        ? { seedanceVersion: shot.version }
         : {}),
     };
     const gate = await gateCanvasIntentBeforeCharge({
@@ -400,7 +495,9 @@ export async function submitCodeMotionProductionVideo(
             resolution: shot.resolution,
             videoModel: shot.model,
             label: taskInput.label,
-            ...(grant.revision?.mode === "paid_video"
+            ...(["paid_video", "video_edit"].includes(
+              grant.revision?.mode || ""
+            )
               ? {
                   pricingMode: "inkRevisionVideo" as const,
                   inkRevisionSlot: slot,
@@ -472,8 +569,13 @@ export async function listCodeMotionProductionVideo(
     const task = taskId
       ? await getCanvasVideoTask(taskId, Number(userId))
       : null;
+    const costFile=shot.editSource ? await codeMotionStorage.read(`${prefix(userId,projectId)}video-evidence/${shot.sceneIndex}/cost-settlement.json`) : null;
+    const cost=costFile?JSON.parse(costFile.body.toString()):null;
     shots.push({
       ...shot,
+      costStatus:cost?.taskId===taskId?String(cost.status):undefined,
+      settledCredits:cost?.taskId===taskId?Number(cost.creditsCharged):undefined,
+      creditsRefunded:cost?.taskId===taskId?Number(cost.creditsRefunded):undefined,
       taskId,
       status:
         task?.status ||
@@ -546,6 +648,37 @@ export async function adoptCodeMotionProductionVideo(
       (s: { codec_type: string }) => s.codec_type === "video"
     );
     const duration = Number(videoStream?.duration ?? probe.format?.duration);
+    if (!videoStream) throw new Error("视频缺少可解码的视频轨");
+    if (shot.editSource) {
+      const { adoptCodeMotionEditedVideo } = await import(
+        "./codeMotionRevisionEditSettlement"
+      );
+      const asset = await adoptCodeMotionEditedVideo(
+        userId,
+        projectId,
+        shot.taskId,
+        videoUri,
+        file,
+        duration,
+        shot.duration,
+        dir
+      );
+      await codeMotionStorage.write(
+        assetName(userId, projectId, asset.id),
+        Buffer.from(JSON.stringify(asset)),
+        "0"
+      );
+      return {
+        asset,
+        clip: {
+          assetId: asset.id,
+          at: shot.at,
+          duration: shot.duration,
+          sourceStartSec: 0,
+          fit: "cover" as const,
+        },
+      };
+    }
     if (
       !videoStream ||
       !codeMotionVideoDurationMatches(duration, shot.duration)
@@ -632,7 +765,7 @@ export async function assertCodeMotionProductionVideoTask(
   const slot = task.inkProduction;
   if (!slot) return;
   const grant = await assertCodeMotionProductionSlot(String(task.userId), slot);
-  if (grant.revision?.mode === "paid_video") {
+  if (["paid_video", "video_edit"].includes(grant.revision?.mode || "")) {
     const { codeMotionRevisionCharge } = await import(
       "./codeMotionRevisionPricing"
     );
@@ -659,13 +792,22 @@ export async function assertCodeMotionProductionVideoTask(
       )
     : null;
   if (shot.audioFingerprint && !audio) throw new Error("本镜参考音频尚未归档");
-  const legacyEngine = grant.tier === "free" ? "seedance-mini-evolink" : "seedance25-evolink";
-  const primaryEngine = grant.tier === "free" ? "seedance-mini-byteplus" : "seedance25-byteplus";
-  const engineAllowed = manifest?.providerRoute === "byteplus-first"
-    ? task.engine === primaryEngine || (task.engine === legacyEngine && !!task.fallbackReason)
-    : task.engine === legacyEngine;
+  const legacyEngine =
+    grant.tier === "free" ? "seedance-mini-evolink" : "seedance25-evolink";
+  const primaryEngine =
+    grant.tier === "free" ? "seedance-mini-byteplus" : "seedance25-byteplus";
+  const engineAllowed =
+    manifest?.providerRoute === "evolink-edit"
+      ? !!shot.editSource &&
+        task.engine ===
+          (grant.tier === "free" ? "seedance20-evolink" : "seedance25-evolink")
+      : manifest?.providerRoute === "byteplus-first"
+        ? task.engine === primaryEngine ||
+          (task.engine === legacyEngine && !!task.fallbackReason)
+        : task.engine === legacyEngine;
   if (
     !engineAllowed ||
+    (shot.editSource && shot.version === "2.0" && task.seedanceVersion !== "2.0") ||
     task.duration !== shot.duration ||
     task.resolution !== shot.resolution ||
     task.prompt !== shot.prompt ||
@@ -675,7 +817,7 @@ export async function assertCodeMotionProductionVideoTask(
     JSON.stringify(task.audioUrls || []) !==
       JSON.stringify(audio ? [audio.uri] : []) ||
     (grant.tier === "free" && task.creditsCharged !== 0) ||
-    (grant.revision?.mode === "paid_video" &&
+    (["paid_video", "video_edit"].includes(grant.revision?.mode || "") &&
       task.creditsCharged !== shot.credits)
   )
     throw new Error("视频制作参数或账务与本次授权不一致");

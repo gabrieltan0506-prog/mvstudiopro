@@ -11,6 +11,7 @@ import {
   listCodeMotionSounds,
   adoptCodeMotionSound,
 } from "../services/codeMotionSound";
+import { adoptAndSaveCodeMotionSound } from "../services/codeMotionSoundAdoption";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
@@ -131,6 +132,9 @@ export const codeMotionRouter = router({
         input.variantIndex
       )
     ),
+  adoptSoundAndSave: protectedProcedure
+    .input(id.extend({ requestId:z.string().uuid(), variantIndex:z.number().int().min(0).max(10), expectedGeneration:z.string().regex(/^\d+$/) }))
+    .mutation(({ctx,input}) => adoptAndSaveCodeMotionSound(String(ctx.user.id),input)),
   freeQuote: protectedProcedure.query(({ ctx }) =>
     quoteInkFree(String(ctx.user.id), inkSource(ctx.req))
   ),
@@ -150,8 +154,12 @@ export const codeMotionRouter = router({
       ? 0
       : await countPlatformSkillQaToday(ctx.user.id, "terra", false);
     const limit = platformSkillQaDailyFreeLimit("terra");
+    const { getUserPlan } = await import("../credits");
+    const { canUsePaidVideoByPlan } = await import("../../shared/paidVideoAccess");
     return {
       speechEnabled: true,
+      paidGenerationAvailable: canUsePaidVideoByPlan(await getUserPlan(ctx.user.id)),
+      threeDWorkspaceAvailable: privileged,
       remainingFreeToday: Math.max(0, limit - used),
       credits:
         privileged || used < limit
@@ -318,7 +326,7 @@ export const codeMotionRouter = router({
     const videos = (identity.spec.codeVideo?.assets || []).map(asset => ({ id: asset.id, url: signGsUriV4ReadUrl(asset.videoUri, 3600) }));
     const productionGrant = await getCodeMotionProductionGrant(userId, input.projectId);
     const sceneCount = saved.project.plan!.scenes.length;
-    const productionQuote = productionGrant || (sceneCount >= 4 && sceneCount <= 6 && saved.project.brief.duration <= 30
+    const productionQuote = productionGrant || (sceneCount >= 4 && sceneCount <= 6 && saved.project.brief.duration <= 60
       ? await prepareCodeMotionProductionGrant(userId, { projectId: input.projectId, expectedGeneration: saved.generation }) : null);
     const freeEligibility = await quoteInkFree(userId, inkSource(ctx.req));
     if (identity.spec.codeAudio)

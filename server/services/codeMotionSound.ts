@@ -88,16 +88,18 @@ function speechInput(
     billingRequestId: r.requestId,
     input: compileCanvasDialogueInput(r.text, r.emotion || ""),
     voice: CODE_MOTION_VOICES[r.voice],
-    speakerZh: `画面${r.sceneIndex + 1}旁白`,
-    speakerId: `ink:${projectId}:${r.sceneIndex}`,
+    speakerZh: `画面${r.sceneIndex + 1}${r.role === "dialogue" ? "对白" : "旁白"}`,
+    speakerId: `ink:${projectId}:${r.sceneIndex}${r.role === "dialogue" ? ":dialogue" : ""}`,
     voiceStateZh: r.emotion || "",
   };
 }
 function assertScene(project: CodeMotionProject, r: CodeMotionSoundRequest) {
   if (!project.plan) throw new Error("请先完成并保存画面安排");
   if (r.kind === "speech") {
+    if (r.role === "dialogue" && project.brief.style !== "scenes")
+      throw new Error("对白口型请先选择逐镜编排，再生成配音");
     const speech = project.plan.scenes[r.sceneIndex]?.speech;
-    if (!speech || speech.text.trim() !== r.text || speech.voice !== r.voice || (speech.emotion || "") !== (r.emotion || ""))
+    if (!speech || speech.text.trim() !== r.text || speech.voice !== r.voice || (speech.emotion || "") !== (r.emotion || "") || (speech.role || "narration") !== (r.role || "narration"))
       throw new Error("旁白已修改，请先保存并核对本次内容");
   }
 }
@@ -257,13 +259,13 @@ export async function adoptCodeMotionSound(
     gcsUri: variant.gcsUri,
     name:
       r.kind === "speech"
-        ? `画面${r.sceneIndex + 1}旁白.wav`
+        ? `画面${r.sceneIndex + 1}${r.role === "dialogue" ? "对白" : "旁白"}.wav`
         : `配乐候选${index + 1}.mp3`,
     generated: {
       requestId,
       kind: r.kind,
       ...(r.kind === "speech"
-        ? { sceneIndex: r.sceneIndex, text: r.text, voice: r.voice, ...(r.emotion ? { emotion: r.emotion } : {}) }
+        ? { sceneIndex: r.sceneIndex, text: r.text, voice: r.voice, ...(r.role ? { role: r.role } : {}), ...(r.emotion ? { emotion: r.emotion } : {}) }
         : {}),
     },
   });

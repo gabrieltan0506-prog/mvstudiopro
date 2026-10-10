@@ -61,10 +61,14 @@ it("mini总参考9、2.5总参考50，同时检查单类通道上限，不截断
   expect(() =>
     planInkGeneratedShot({
       tier: "paid",
-      duration: 6,
+      duration: 31,
       imageCount: 1,
       videoCount: 0,
       audioCount: 0,
     })
-  ).toThrow("5秒");
+  ).toThrow("30秒");
+});
+it("paid accepts8 to30 seconds with complete references while free still rejects8",()=>{
+  for(const duration of [8,30])expect(planInkGeneratedShot({tier:"paid",duration,imageCount:1,videoCount:0,audioCount:2})).toMatchObject({duration,mode:"reference_to_video",version:"2.5"});
+  expect(()=>planInkGeneratedShot({tier:"free",duration:8,imageCount:1,videoCount:0,audioCount:1})).toThrow("4–5秒");
 });

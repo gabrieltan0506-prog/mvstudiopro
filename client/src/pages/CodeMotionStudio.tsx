@@ -23,6 +23,7 @@ import CodeMotionImageProduction from "@/components/code-motion/CodeMotionImageP
 import CodeMotionVideoProduction from "@/components/code-motion/CodeMotionVideoProduction";
 import CodeMotionTimingPanel from "@/components/code-motion/CodeMotionTimingPanel";
 import CodeMotionRevision from "@/components/code-motion/CodeMotionRevision";
+import CodeMotionEffects from "@/components/code-motion/CodeMotionEffects";
 import { adoptCodeMotionImageInProject } from "@shared/codeMotionImageProduction";
 import { adoptCodeMotionSoundInProject } from "@shared/codeMotionSoundAdoption";
 import CodeMotionSceneEditor, {
@@ -76,6 +77,7 @@ const fresh = (): CodeMotionProject => ({
     text: "",
     style: "scenes",
     duration: 30,
+    durationMode: "natural",
     orientation: "landscape",
     images: [],
     data: [],
@@ -314,7 +316,10 @@ export default function CodeMotionStudio() {
   };
   const requestPlan = async (original?: Pending) => {
     if (!user) throw new Error("请先登录，查看这次整理需要多少积分");
-    const brief = codeMotionBriefSchema.parse(original?.brief || project.brief);
+    const brief = codeMotionBriefSchema.parse(original?.brief || {
+      ...project.brief,
+      generationTier: project.brief.generationTier ?? (quote.data?.paidGenerationAvailable ? "paid" : "free"),
+    });
     const q = quote.data;
     if (!original && !q) throw new Error("本次费用还没查到，请稍后再试");
     const request: Pending = original || {
@@ -693,6 +698,7 @@ export default function CodeMotionStudio() {
             disabled={editDisabled}
             className="space-y-5 disabled:opacity-60"
           >
+            <CodeMotionEffects project={project} disabled={editDisabled} paidAvailable={quote.data?.paidGenerationAvailable === true} threeDAvailable={quote.data?.threeDWorkspaceAvailable === true} onChange={value=>{setProject(value);setPrepared(null);setPreview(false);}} />
             <label className="block text-sm">
               作品名称
               <input
@@ -895,7 +901,7 @@ export default function CodeMotionStudio() {
                 </select>
               </label>
               <label className="text-sm">
-                片长
+                {project.brief.durationMode === "natural" ? "期望片长（自然收尾）" : "固定片长"}
                 <select
                   className={field}
                   value={project.brief.duration}
@@ -903,11 +909,19 @@ export default function CodeMotionStudio() {
                     patchBrief({ duration: Number(e.target.value) })
                   }
                 >
-                  {[15, 30, 45, 60, 90, 120, 180].map(n => (
+                  {Array.from(new Set([15, 30, 45, 60, 90, 120, 180, project.brief.duration])).sort((a, b) => a - b).map(n => (
                     <option key={n} value={n}>
                       {n} 秒
                     </option>
                   ))}
+                </select>
+              </label>
+              <label className="text-sm">
+                收尾方式
+                <select className={field} value={project.brief.durationMode || "fixed"}
+                  onChange={e => patchBrief({ durationMode: e.target.value as "natural" | "fixed" })}>
+                  <option value="natural">跟随内容自然收尾</option>
+                  <option value="fixed">使用固定片长</option>
                 </select>
               </label>
               <label className="text-sm">
@@ -1334,7 +1348,7 @@ export default function CodeMotionStudio() {
                     </label>
                     {scene.speech &&
                       (!quote.data?.speechEnabled ||
-                        !!project.brief.audios?.length ||
+                        project.plan?.audioTimeline?.some(c => ["dialogue", "narration"].includes(c.role) && !project.brief.audios?.find(a => a.id === c.sourceId)?.generated) ||
                         project.brief.duration > 60) && (
                         <button
                           type="button"
@@ -1359,14 +1373,22 @@ export default function CodeMotionStudio() {
                         </button>
                       )}
                     <label className="mt-3 block text-sm">
-                      本镜合成对白（开放后支持60秒内作品）
+                      声音用途
+                      <select aria-label={`画面${index + 1}声音用途`} className={field}
+                        value={scene.speech?.role || "narration"}
+                        onChange={e=>{const role=e.target.value as "narration"|"dialogue";setProject(p=>({...p,plan:{...p.plan!,scenes:p.plan!.scenes.map((s,k)=>k===index?{...s,speech:{text:s.speech?.text||"",voice:s.speech?.voice||"female",...s.speech,role}}:s)}}));setPrepared(null);setPreview(false);}}
+                      ><option value="narration">旁白（画外音）</option><option value="dialogue" disabled={project.brief.style !== "scenes"}>对白（人物说话，参考语音生成口型）</option></select>
+                      {project.brief.style !== "scenes" && <span className="mt-1 block text-xs text-stone-500">对白口型请选逐镜创作；当前模式可使用画外旁白。</span>}
+                    </label>
+                    <label className="mt-3 block text-sm">
+                      本镜{scene.speech?.role === "dialogue" ? "对白" : "旁白"}文字转语音（Qwen，60秒内作品）
                       <textarea
                         className={field}
                         maxLength={180}
                         disabled={
                           !quote.data?.speechEnabled ||
                           project.brief.duration > 60 ||
-                          !!project.brief.audios?.length
+                          project.plan?.audioTimeline?.some(c => ["dialogue", "narration"].includes(c.role) && !project.brief.audios?.find(a => a.id === c.sourceId)?.generated)
                         }
                         value={scene.speech?.text || ""}
                         onChange={e => {
@@ -1379,6 +1401,7 @@ export default function CodeMotionStudio() {
                                   ? {
                                       ...s,
                                       speech: {
+                                        ...s.speech,
                                         text: e.target.value,
                                         voice: s.speech?.voice || "female",
                                       },
@@ -1393,13 +1416,13 @@ export default function CodeMotionStudio() {
                       />
                     </label>
                     <label className="mt-2 block text-sm">
-                      合成音色
+                      {scene.speech?.role === "dialogue" ? "说话者音色" : "旁白音色"}
                       <select
                         className={field}
                         disabled={
                           !quote.data?.speechEnabled ||
                           project.brief.duration > 60 ||
-                          !!project.brief.audios?.length
+                          project.plan?.audioTimeline?.some(c => ["dialogue", "narration"].includes(c.role) && !project.brief.audios?.find(a => a.id === c.sourceId)?.generated)
                         }
                         value={scene.speech?.voice || "female"}
                         onChange={e => {
@@ -1413,6 +1436,7 @@ export default function CodeMotionStudio() {
                                   ? {
                                       ...s,
                                       speech: {
+                                        ...s.speech,
                                         text: s.speech?.text || "",
                                         voice,
                                       },
@@ -1431,7 +1455,7 @@ export default function CodeMotionStudio() {
                     </label>
                     <p className="mt-2 text-xs text-stone-500">
                       {quote.data?.speechEnabled
-                        ? "合成对白限60秒内、合计300字。已有原音时使用原音时间轴。"
+                        ? "填写文字后在下方声音制作区生成、试听并采用。合计300字、60秒内；上传对白或旁白使用原音，BGM不影响文字转语音。"
                         : "合成配音暂未开放，可上传音频、直接录音或无声导出。"}{" "}
                       照片不自动对口型。
                     </p>
@@ -1557,7 +1581,7 @@ export default function CodeMotionStudio() {
               </div>
               <p className="text-sm text-stone-500">
                 合计 {project.plan.scenes.reduce((n, s) => n + s.duration, 0)}{" "}
-                秒 / 选择 {project.brief.duration} 秒
+                秒 / {project.brief.durationMode === "natural" ? "参考片长" : "固定片长"} {project.brief.duration} 秒
               </p>
               <CodeMotionImageProduction key={`images:${identity}`} project={project} disabled={busy || !user || !!pending}
                 execute={run} save={() => save(latestProject.current)}
@@ -1569,13 +1593,18 @@ export default function CodeMotionStudio() {
               <CodeMotionSoundProduction key={identity} project={project} disabled={busy || !user || !!pending}
                 execute={run}
                 save={() => save(latestProject.current)}
-                adopt={async source => {
+                adopt={async (source, receipt, extendedBy) => {
                   if (active.current !== identity) throw new Error("已切换作品，音源仍保留在原作品中");
-                  const value = adoptCodeMotionSoundInProject(latestProject.current, source);
+                  const value = receipt?.project ?? adoptCodeMotionSoundInProject(latestProject.current, source);
                   const clearedTiming = !!latestProject.current.plan?.timing && !value.plan?.timing;
-                  await save(value);
+                  if (receipt) {
+                    latestProject.current = receipt.project; latestGeneration.current = receipt.generation;
+                    setProject(receipt.project); setGeneration(receipt.generation); setSavedJson(JSON.stringify(receipt.project));
+                    await projects.refetch();
+                  } else await save(value);
                   setPrepared(null); setPreview(false); setReviewOpen(false);
-                  if (clearedTiming) setMessage("已采用新音源，原音源的词拍已清除，请重新核对新音源词拍。");
+                  if (extendedBy) setMessage(`已沿用原配音和图片，按实际音长延长本镜 ${extendedBy.toFixed(2)} 秒，并保存后续时间轴。`);
+                  else if (clearedTiming) setMessage("已采用新音源，原音源的词拍已清除，请重新核对新音源词拍。");
                 }} />
               <CodeMotionTimingPanel key={`timing:${identity}`} value={project.plan.timing} sources={project.brief.audios || []}
                 busy={busy || !user || !!pending} audioSources={(timingAudio.data || []).map(a => ({id:a.id,url:gcsTransferUrl(a.url)}))}

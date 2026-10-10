@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { codeMotionProjectSchema, type CodeMotionProject } from "./codeMotion";
+import { codeMotionPlanSceneSchema } from "./codeMotionComposition";
 
 export const codeMotionRevisionChangeSchema = z
   .object({
@@ -8,17 +9,49 @@ export const codeMotionRevisionChangeSchema = z
     body: z.string().trim().max(100),
     direction: z.string().trim().max(400).optional(),
     motionPrompt: z.string().trim().min(1).max(1200).optional(),
+    composition: codeMotionPlanSceneSchema.optional(),
   })
   .strict();
 export type CodeMotionRevisionChange = z.infer<
   typeof codeMotionRevisionChangeSchema
 >;
+export const codeMotionRevisionProposalSchema = z.object({
+  summary: z.string().trim().min(1).max(600),
+  changes: z.array(codeMotionRevisionChangeSchema).max(6),
+  // Leave room for deterministic server capability findings alongside model limitations.
+  limitations: z.array(z.string().max(300)).max(12).default([]),
+}).strict();
+
+/** Ordinary composition edits cannot replace or overlay archived video frames. */
+export function codeMotionRevisionUnsupportedVideoEdits(
+  project: CodeMotionProject,
+  changes: readonly CodeMotionRevisionChange[]
+): number[] {
+  let at = 0;
+  const windows = (project.plan?.scenes || []).map((scene, index) => {
+    const start = at;
+    at += scene.duration;
+    return { index, start, end: at };
+  });
+  return changes.filter(change => {
+    if (change.motionPrompt) return false;
+    const window = windows[change.index];
+    return window && project.plan?.codeVideo?.clips.some(clip =>
+      clip.at < window.end - 1e-6 && clip.at + clip.duration > window.start + 1e-6
+    );
+  }).map(change => change.index);
+}
+
+export function codeMotionRevisionVideoEditLimitation(indexes: readonly number[]) {
+  return `画面${indexes.map(index => index + 1).join("、")}已有原视频，当前不支持在原片上修改代码文字、颜色或特效；原片保持不变，请使用原片动作修改，或选择代码镜头。`;
+}
 
 /** A local edit retains owned media and original narration; it never silently requests another model. */
 export function reviseCodeMotionProject(
   project: CodeMotionProject,
   newId: string,
-  rawChanges: CodeMotionRevisionChange[]
+  rawChanges: CodeMotionRevisionChange[],
+  preserveEditedVideo = false
 ): CodeMotionProject {
   z.string().uuid().parse(newId);
   if (newId === project.id)
@@ -30,6 +63,8 @@ export function reviseCodeMotionProject(
     .parse(rawChanges);
   if (new Set(changes.map(c => c.index)).size !== changes.length)
     throw new Error("修改画面不能重复");
+  const unsupported = codeMotionRevisionUnsupportedVideoEdits(project, changes);
+  if (unsupported.length) throw new Error(codeMotionRevisionVideoEditLimitation(unsupported));
   const value = structuredClone(project);
   value.id = newId;
   if (!value.plan) throw new Error("请先打开已有分镜的作品");
@@ -50,6 +85,10 @@ export function reviseCodeMotionProject(
     scene.heading = change.heading;
     scene.body = change.body;
     if (change.direction !== undefined) scene.direction = change.direction;
+    if (change.composition) {
+      if (change.composition.duration !== scene.duration) throw Error("本次局部修改保持原镜头时间窗，请另行调整分镜时长");
+      scene.composition = change.composition;
+    }
     if (scene.production) {
       const { referenceVideoIds: _references, ...production } =
         scene.production;
@@ -118,6 +157,7 @@ export function reviseCodeMotionProject(
   if (video) {
     const clips = video.clips.filter(
       c =>
+        preserveEditedVideo ||
         !windows.some(
           w => c.at < w.end - 1e-6 && c.at + c.duration > w.start + 1e-6
         )

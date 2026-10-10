@@ -32,6 +32,7 @@ export const codeMotionAudioSourceSchema = z
         sceneIndex: z.number().int().min(0).max(11).optional(),
         text: z.string().max(180).optional(),
         voice: z.enum(["female", "male"]).optional(),
+        role: z.enum(["narration", "dialogue"]).optional(),
         emotion: codeMotionEmotionSchema.optional(),
       })
       .strict()

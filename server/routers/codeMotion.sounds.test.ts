@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const mock = vi.hoisted(() => ({ submit: vi.fn(), list: vi.fn(), adopt: vi.fn(), ensure: vi.fn() }));
+const mock = vi.hoisted(() => ({ submit: vi.fn(), list: vi.fn(), adopt: vi.fn(), adoptAndSave:vi.fn(), ensure: vi.fn() }));
+vi.mock("../services/codeMotionSoundAdoption",()=>({adoptAndSaveCodeMotionSound:mock.adoptAndSave}));
 vi.mock("../services/codeMotionSound", () => ({ submitCodeMotionSound: mock.submit, listCodeMotionSounds: mock.list, adoptCodeMotionSound: mock.adopt }));
 vi.mock("../services/codeMotionProductionGrant", async original => ({ ...await original<typeof import("../services/codeMotionProductionGrant")>(), ensureCodeMotionProductionGrant: mock.ensure }));
 import { codeMotionRouter } from "./codeMotion";
@@ -25,4 +26,24 @@ it("grant failure and absent authentication never reach a sound producer", async
   expect(mock.submit).not.toHaveBeenCalled();
   await expect(codeMotionRouter.createCaller({ ...ctx, user: null }).adoptSound({ projectId, requestId, variantIndex: 0 })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   expect(mock.adopt).not.toHaveBeenCalled();
+});
+it("official router accepts and preserves dialogue role, and rejects an invented audio role before reservation", async () => {
+  const api = codeMotionRouter.createCaller(ctx);
+  const request = {kind:"speech" as const,requestId,sceneIndex:1,text:"明天见",voice:"male" as const,role:"dialogue" as const};
+  await api.generateSound({projectId,generation:"5",request});
+  expect(mock.submit).toHaveBeenCalledWith("7",projectId,"5",request,undefined,{grantId});
+  await expect(api.generateSound({projectId,generation:"5",request:{...request,role:"bgm" as any}})).rejects.toMatchObject({code:"BAD_REQUEST"});
+  expect(mock.ensure).toHaveBeenCalledTimes(1);
+  expect(mock.submit).toHaveBeenCalledTimes(1);
+});
+it("measured adoption router binds owner and saved generation while retaining the old source-only API",async()=>{
+  const api=codeMotionRouter.createCaller(ctx);
+  const input={projectId,requestId,variantIndex:0,expectedGeneration:"4"};
+  await api.adoptSoundAndSave(input);
+  expect(mock.adoptAndSave).toHaveBeenCalledWith("7",input);
+  expect(mock.ensure).not.toHaveBeenCalled();
+  await api.adoptSound({projectId,requestId,variantIndex:0});
+  expect(mock.adopt).toHaveBeenCalledWith("7",projectId,requestId,0);
+  await expect(codeMotionRouter.createCaller({...ctx,user:null}).adoptSoundAndSave(input)).rejects.toMatchObject({code:"UNAUTHORIZED"});
+  expect(mock.adoptAndSave).toHaveBeenCalledTimes(1);
 });

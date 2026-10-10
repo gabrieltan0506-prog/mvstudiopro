@@ -269,3 +269,18 @@ it("free concurrent video reservations cap two distinct scenes while same-scene 
     reserveCodeMotionProductionSlot("7", slots[first], deps)
   ).resolves.toBeTruthy();
 });
+
+it("explicit generation choice uses free grant on a paid account and rejects an unentitled paid choice before claim",async()=>{
+ const one=setup();one.project.brief.generationTier="free";one.deps.plan=vi.fn(async()=>"pro" as any);
+ one.files.set(`code-motion/u7/projects/${projectId}.json`,{body:Buffer.from(JSON.stringify({project:one.project,updatedAt:new Date().toISOString()})),generation:"1"});
+ const input={projectId,expectedGeneration:"1",source:{day:"2026-10-10",ipHash:"ip"}};
+ const grant=await ensureCodeMotionProductionGrant("7",input,one.deps);expect(grant.tier).toBe("free");expect(one.deps.claim).toHaveBeenCalledTimes(1);
+ const two=setup();two.project.brief.generationTier="paid";two.files.set(`code-motion/u7/projects/${projectId}.json`,{body:Buffer.from(JSON.stringify({project:two.project,updatedAt:new Date().toISOString()})),generation:"1"});
+ await expect(ensureCodeMotionProductionGrant("7",input,two.deps)).rejects.toThrow("尚未开通付费");expect(two.deps.claim).not.toHaveBeenCalled();
+});
+
+it("dialogue in a non-scenes project fails before claiming its free allowance",async()=>{
+ const {deps,files,project}=setup();project.plan!.scenes[0].speech={text:"你好",voice:"male",role:"dialogue"};
+ files.set(`code-motion/u7/projects/${projectId}.json`,{body:Buffer.from(JSON.stringify({project,updatedAt:new Date().toISOString()})),generation:"1"});
+ await expect(ensureCodeMotionProductionGrant("7",{projectId,expectedGeneration:"1",source:{day:"2026-10-10",ipHash:"ip"}},deps)).rejects.toThrow("尚未占用制作名额");expect(deps.claim).not.toHaveBeenCalled();
+});
