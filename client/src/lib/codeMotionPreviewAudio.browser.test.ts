@@ -125,7 +125,7 @@ parent.postMessage({type:'art-motion-awaiting'},location.origin);
           f.closes++;
         }
         async decodeAudioData() {
-        return { duration: f.decodedDuration, sampleRate: 48_000 };
+          return { duration: f.decodedDuration, sampleRate: 48_000 };
         }
         createBufferSource() {
           return {
@@ -212,7 +212,7 @@ async function state(page: Page) {
       stops: f.stops,
       messages: f.messages,
       fetches: f.fetches,
-      button: document.querySelector("button")?.textContent,
+      button: document.querySelector("button .sr-only")?.textContent,
       alert: document.querySelector('[role="alert"]')?.textContent || "",
     };
   });

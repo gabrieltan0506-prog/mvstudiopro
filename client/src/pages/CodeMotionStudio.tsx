@@ -80,8 +80,12 @@ const fresh = (): CodeMotionProject => ({
 });
 const field =
   "mt-2 w-full rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300";
-const button =
-  "inline-flex items-center justify-center gap-2 rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40";
+const buttonLayout =
+  "inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60";
+const button = buttonLayout + " border-stone-300 bg-white text-stone-900";
+const primaryButton =
+  buttonLayout + " border-orange-800 bg-orange-800 text-white";
+const exportButton = buttonLayout + " border-stone-900 bg-stone-900 text-white";
 const labels: Record<string, string> = {
   queued: "排队中",
   running: "正在制作",
@@ -870,7 +874,7 @@ export default function CodeMotionStudio() {
                     patchBrief({ style });
                   }}
                 >
-                  <option value="scenes">逐镜创作</option>
+                  <option value="scenes">场景动画</option>
                   <option value="words">动态文字</option>
                   <option value="cards">图文介绍</option>
                   <option value="data">数据展示</option>
@@ -909,6 +913,26 @@ export default function CodeMotionStudio() {
                 </select>
               </label>
             </div>
+            {project.brief.style === "words" && (
+              <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm">
+                <p>
+                  当前只制作动态文字。要看到人物、道具、场景和动作，请改为场景动画，无需上传图片。
+                </p>
+                <button
+                  type="button"
+                  className={button + " mt-3"}
+                  disabled={busy || !!pending}
+                  onClick={() => patchBrief({ style: "scenes" })}
+                >
+                  改为场景动画
+                </button>
+              </div>
+            )}
+            {project.brief.style === "scenes" && (
+              <p className="text-sm text-stone-600">
+                无需上传图片，按你的描述绘制人物、道具和环境，并安排动作与场景变化。已有照片也可以加入。
+              </p>
+            )}
             {["cards", "scenes"].includes(project.brief.style) && (
               <div>
                 <label className={button + " cursor-pointer"}>
@@ -1129,7 +1153,8 @@ export default function CodeMotionStudio() {
             </p>
             {quote.data && (
               <p className="mt-1 text-xs text-stone-600">
-                今日还可免费整理 {quote.data.remainingFreeToday} 次。先查看方案，确认后再制作视频。
+                今日还可免费整理 {quote.data.remainingFreeToday}{" "}
+                次。先查看方案，确认后再制作视频。
               </p>
             )}
             {!user ? (
@@ -1138,9 +1163,7 @@ export default function CodeMotionStudio() {
               </a>
             ) : (
               <button
-                className={
-                  button + " mt-3 border-orange-700 bg-orange-700 text-white"
-                }
+                className={primaryButton + " mt-3"}
                 disabled={busy || !quote.data || !!pending}
                 onClick={() => void run(() => requestPlan())}
               >
@@ -1641,7 +1664,7 @@ export default function CodeMotionStudio() {
                   确认内容，播放预览
                 </button>
                 <button
-                  className={button + " bg-stone-900 text-white"}
+                  className={exportButton}
                   disabled={
                     busy ||
                     !prepared.freeEligibility.eligible ||

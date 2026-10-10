@@ -505,11 +505,18 @@
       });
       images.set(uri, image);
     }
-    for (const f of window.FONT_FACES || []) {
+    const families = new Set();
+    for (const scene of spec.composition.scenes) for (const element of scene.elements) {
+      if (element.type !== "text") continue;
+      if (element.font === "serif") families.add("LXGWWenKai-500");
+      else if (element.font === "mono") { families.add("CMU-rm"); families.add("PuHui-Medium"); }
+      else families.add(element.weight === "bold" ? "PuHui-Bold" : "PuHui-Medium");
+    }
+    await Promise.all((window.FONT_FACES || []).filter(f => families.has(f.family)).map(async f => {
       const ff = new FontFace(f.family, `url(${f.url})`, f.desc || {});
       await ff.load();
       document.fonts.add(ff);
-    }
+    }));
     await document.fonts.ready;
     let at = 0,
       prior = new Map(),

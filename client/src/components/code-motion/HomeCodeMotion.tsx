@@ -14,7 +14,7 @@ export default function HomeCodeMotion() {
       <div className="grid overflow-hidden rounded-3xl border border-[var(--hp-line)] bg-[var(--hp-card)] md:grid-cols-[1.2fr_1fr]">
         <div className="p-7 sm:p-10">
           <p className="text-xs tracking-[0.2em] text-[var(--hp-accent)]">
-            映客 INK · 代码创作
+            映客 INK · 图文与视频
           </p>
           <h2
             id="yingke-title"
@@ -26,7 +26,7 @@ export default function HomeCodeMotion() {
           </h2>
           <p className="mt-4 max-w-md text-sm leading-7 text-[var(--hp-muted)]">
             放入文案、图片或 Excel
-            表格，用自己的话说想法。用代码排版和制作动画，自选 PPTX 演示文稿或 MP4 视频。
+            表格，用自己的话说想法，制作可编辑的演示文稿或可播放的视频。
           </p>
           <a
             href="/yingke"
@@ -36,7 +36,7 @@ export default function HomeCodeMotion() {
             <ArrowUpRight size={17} />
           </a>
           <p className="mt-3 text-xs text-[var(--hp-muted)]">
-            PPTX 可编辑 · MP4 可播放 · 不需要写代码
+            演示文稿可编辑 · 视频可播放
           </p>
         </div>
         <div className="flex flex-col justify-center gap-3 bg-[var(--hp-input)] p-7 sm:p-10">

@@ -71,7 +71,10 @@ export default function CodeMotionPreview({
       if (remaining <= 0) continue;
       const buffer = buffers.current.get(clip.sourceId);
       if (!buffer) throw new Error("预览找不到这段原声，请重新打开本次内容");
-      if (buffer.duration + 1 / buffer.sampleRate < clip.trimStart + clip.duration)
+      if (
+        buffer.duration + 1 / buffer.sampleRate <
+        clip.trimStart + clip.duration
+      )
         throw new Error("这份原音解码后不足所选秒窗，请缩短片段或重新上传");
       const source = ac.createBufferSource(),
         gain = ac.createGain();
@@ -99,6 +102,7 @@ export default function CodeMotionPreview({
       nodes.current.push(source);
     }
   };
+  const [retry, setRetry] = useState(0);
   const [ready, setReady] = useState(false),
     [error, setError] = useState(""),
     [time, setTime] = useState(0),
@@ -153,6 +157,7 @@ export default function CodeMotionPreview({
   return (
     <div className="space-y-3">
       <iframe
+        key={retry}
         ref={frame}
         title="映客 INK动画预览"
         src="/art-motion/engine/studio.html"
@@ -161,9 +166,25 @@ export default function CodeMotionPreview({
         style={{ aspectRatio: `${spec.width}/${spec.height}` }}
       />
       {error ? (
-        <p role="alert" className="text-red-700">
-          预览没有打开：{error}
-        </p>
+        <div className="space-y-2">
+          <p role="alert" className="text-red-700">
+            预览没有打开：{error}
+          </p>
+          <button
+            type="button"
+            className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900"
+            onClick={() => {
+              stopAudio();
+              setPlaying(false);
+              setTime(0);
+              setReady(false);
+              setError("");
+              setRetry(value => value + 1);
+            }}
+          >
+            重新打开预览
+          </button>
+        </div>
       ) : (
         <p role="status" className="text-xs text-stone-500">
           {ready
