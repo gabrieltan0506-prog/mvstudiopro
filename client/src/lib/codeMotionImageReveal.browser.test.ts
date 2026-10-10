@@ -187,7 +187,7 @@ async function open(value: ReturnType<typeof spec>, preview = false) {
     await page.goto(origin + "/studio.html", { waitUntil: "domcontentloaded" });
     await page.waitForFunction("window.__productReady || window.__bootFailed");
     expect(
-      await page.evaluate(() => (window as Runtime).__bootFailed)
+      await page.evaluate(() => (window as unknown as Runtime).__bootFailed)
     ).toBeUndefined();
   }
   return { page, errors };
@@ -225,7 +225,7 @@ it.each(cases)(
     );
     try {
       const result = await page.evaluate(({ direction, rotation, scale }) => {
-        const runtime = window as Runtime;
+        const runtime = window as unknown as Runtime;
         const canvas = runtime.__canvas,
           ctx = canvas.getContext("2d")!;
         const read = (time: number) => {
@@ -346,7 +346,7 @@ it("omitted direction preserves existing nonzero reveal behavior", async () => {
   const { page } = await open(spec());
   try {
     const unchanged = await page.evaluate(() => {
-      const runtime = window as Runtime,
+      const runtime = window as unknown as Runtime,
         ctx = runtime.__canvas.getContext("2d")!;
       const pixels = (time: number) => {
         runtime.renderFrame(time);
@@ -383,7 +383,7 @@ it("React preview seek matches the formal export studio pixels", async () => {
     exported = await open(value),
     preview = await open(value, true);
   try {
-    await exported.page.evaluate(() => (window as Runtime).renderFrame(1));
+    await exported.page.evaluate(() => (window as unknown as Runtime).renderFrame(1));
     const expected = await canvasHash(exported.page, false);
     await preview.page.$eval('input[type="range"]', element => {
       Object.getOwnPropertyDescriptor(
