@@ -124,7 +124,7 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
 ]);
 
 function useLongTrpcHttpLink(op: { path: string }) {
-  return op.path.startsWith("fileConversion.") || TRPC_LONG_HTTP_LINK_PATHS.has(op.path);
+  return op.path.startsWith("codeMotion.") || op.path.startsWith("fileConversion.") || TRPC_LONG_HTTP_LINK_PATHS.has(op.path);
 }
 
 const redirectToLoginIfUnauthorized = (error: unknown) => {

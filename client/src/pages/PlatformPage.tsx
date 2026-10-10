@@ -492,7 +492,7 @@ type PlatformCopyLlmEngine = "vertex" | "openai";
 /**
  * 创作顾问问答档位。
  *
- * 用户 2026-08-05 明文**去掉深度档**，只留标准档：两档实际推理都是 Kimi K3，
+ * 用户 2026-08-05 明文**去掉深度档**，只留标准档：两档实际推理都是 GLM 5.3 FlashX，
  * 差异仅在每日免费次数与超额单价，双档只会让用户多做一次无意义的选择。
  * 服务端仍认 sol 参数（将来要恢复不必改后端），前台不再提供入口。
  */
@@ -4348,7 +4348,7 @@ export default function PlatformPage() {
       const raw = window.localStorage.getItem("mvstudiopro.platform.expandEngine.v1");
       return normalizePlatformTopicExpandEngine(raw);
     } catch {
-      return "kimi-k3";
+      return "glm-5.3-flashx";
     }
   });
   useEffect(() => {
@@ -5239,7 +5239,7 @@ export default function PlatformPage() {
                 title="扩写引擎：稳定档遇高峰自动切备用通道；轻快档速度更快、文风更简"
                 className="rounded-lg border border-white/15 bg-black/45 px-2 py-1.5 text-[11px] text-gray-300"
               >
-                <option value="kimi-k3">扩写·稳定档</option>
+                <option value="glm-5.3-flashx">扩写·稳定档</option>
                 <option value="qwen3.8-max">扩写·轻快档</option>
                 <option value="deepseek-v4">扩写·经济档</option>
               </select>

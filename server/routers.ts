@@ -1,3 +1,5 @@
+import { codeMotionBriefSchema } from "../shared/codeMotion";
+import { codeMotionRouter } from "./routers/codeMotion";
 import { fileConversionRouter } from "./routers/fileConversion";
 import { optimizationInputSchema } from "../shared/manhuaEpisodeOptimization";
 import { imageWorldRouter } from "./routers/imageWorld";
@@ -80,7 +82,7 @@ import {
   resolveSupervisorTopicCoverPixelEngineInput,
   type PlatformStage2LlmMode,
 } from "./config/platformSwitches.js";
-import { resolveOpenRouterKimiK3MaxCompletionTokens } from "./services/openrouterKimiK3.js";
+import { resolvePlatformTextMaxCompletionTokens } from "./services/platformTextModel.js";
 import { storagePut, storageGet } from "./storage";
 import { usageRouter, incrementUsageCount } from "./routers/usage";
 import { phoneRouter } from "./routers/phone";
@@ -170,7 +172,7 @@ import {
 } from "../shared/platformNativeVariants.js";
 import { enrichScriptContextWithBianDaoDirectorBoard } from "../shared/bianDaoStoryboard.js";
 import { ensureMinGraphicNoteBlueprints } from "../shared/ensureMinGraphicNoteBlueprints.js";
-import { PLATFORM_TOPIC_EXPAND_MAX, normalizeCommentHooksList } from "../shared/platformTopicShortlist.js";
+import { PLATFORM_TOPIC_EXPAND_MAX, normalizePlatformTopicExpandEngine, normalizeCommentHooksList } from "../shared/platformTopicShortlist.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import {
   isImageUpscaleConfigured,
@@ -641,25 +643,25 @@ const PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS = (() => {
 })();
 
 /**
- * Stage 2 / 看板等：OpenRouter Kimi K3 输出上限。  
- * 默认 131072（文档默认）；可用 `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS` 覆盖，封顶 1048576。
+ * Stage 2 / 看板等：GLM 5.3 FlashX 输出上限。
+ * 默认32768；可用 `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS` 覆盖，封顶131072。
  */
-const STAGE2_SHARED_MAX_OUTPUT_TOKENS = resolveOpenRouterKimiK3MaxCompletionTokens(
+const STAGE2_SHARED_MAX_OUTPUT_TOKENS = resolvePlatformTextMaxCompletionTokens(
   "PLATFORM_STAGE2_MAX_OUTPUT_TOKENS",
 );
 
-/** Stage 1 / Stage 2 / 深度追问：OpenRouter Kimi K3。 */
+/** Stage 1 / Stage 2 / 深度追问：GLM 5.3 FlashX。 */
 function resolvePlatformCopyLlmMode(_input?: PlatformStage2LlmMode | null): PlatformStage2LlmMode {
   return "openai";
 }
 
-/** Stage 1 看板 / 趋势追问等：结构化 JSON 文案（OpenRouter Kimi K3 · reasoning max）。 */
+/** Stage 1 看板 / 趋势追问等：结构化 JSON 文案（GLM 5.3 FlashX · reasoning low）。 */
 async function invokePlatformStructuredCopyLlm(options: {
   copyLlmMode: PlatformStage2LlmMode;
   systemInstruction: string;
   userText: string;
   abortSignal?: AbortSignal;
-  /** 覆寫推理檔位；Kimi 仅 max/high/low，非法值由 llm 升为 max */
+  /** 覆盖推理档位；平台GLM默认low */
   reasoningEffortOverride?: ReturnType<typeof resolvePlatformStage2OpenAiReasoningEffort>;
 }): Promise<string> {
   const modelName = getPlatformStage2OpenAiModel();
@@ -678,7 +680,7 @@ async function invokePlatformStructuredCopyLlm(options: {
   });
   const text = extractFirstChoicePlainText(response).trim();
   if (text) return text;
-  // 空回再试一次（Kimi 仍用 max；llm 会把非 max/high/low 升为 max）
+  // 空回再试一次，平台GLM保持low
   const retry = await invokeLLM({
     provider: "openai",
     modelName,
@@ -2092,7 +2094,7 @@ ${styleDirective}
     const invoke = (effort?: OpenAiEffort) => invokeLLM({
       provider: "openai",
       modelName: openaiCreativeModel,
-      // OpenRouter Kimi K3：文档默认 131072；推理 token 计入上限
+      // GLM 5.3 FlashX：默认32768；推理 token 计入上限
       max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
       response_format: { type: "json_object" },
       messages: dimMessages,
@@ -2103,19 +2105,19 @@ ${styleDirective}
     try {
       let res = await invoke();
       let rawText = extractFirstChoicePlainText(res).trim();
-      // Retry if empty（Kimi 仍用 max）
+      // 空回再试一次
       if (!rawText) {
         res = await invoke("max");
         rawText = extractFirstChoicePlainText(res).trim();
       }
       if (rawText) return parseSingleBlueprintRaw(rawText);
       console.warn(
-        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) OpenRouter Kimi K3 空回`,
+        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) GLM 5.3 FlashX 空回`,
       );
       return null;
     } catch (e) {
       console.warn(
-        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) OpenRouter Kimi K3 failed:`,
+        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) GLM 5.3 FlashX failed:`,
         e instanceof Error ? e.message : e,
       );
       return null;
@@ -2146,7 +2148,7 @@ ${styleDirective}
       });
       const rawText = extractFirstChoicePlainText(res).trim();
       if (rawText) return parseMonetizationRaw(rawText);
-      console.warn("[buildPlatformContent] monetization OpenRouter Kimi K3 空回");
+      console.warn("[buildPlatformContent] monetization GLM 5.3 FlashX 空回");
       return [];
     } catch (e) {
       console.warn(
@@ -3017,6 +3019,7 @@ function buildManhuaBgmJobResponse(
 }
 
 export const appRouter = router({
+  codeMotion: codeMotionRouter,
   fileConversion: fileConversionRouter,
   novelWorkspace: novelWorkspaceRouter,
   canvasMusicMv: canvasMusicMvRouter,
@@ -6715,8 +6718,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             )
             .min(1)
             .max(PLATFORM_TOPIC_EXPAND_MAX),
-          /** 扩写引擎（用户可选）：缺省 kimi-k3（OpenRouter 主/Evolink 兜底）；qwen3.8-max（Evolink 主/OpenRouter 兜底） */
-          expandEngine: z.enum(["kimi-k3", "qwen3.8-max", "deepseek-v4"]).optional(),
+          /** 扩写引擎（用户可选）：缺省 GLM FlashX（GLM/DeepSeek 四跳）；qwen3.8-max（Evolink 主/OpenRouter 兜底） */
+          expandEngine: z.enum(["glm-5.3-flashx", "kimi-k3", "qwen3.8-max", "deepseek-v4"]).transform(normalizePlatformTopicExpandEngine).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -6764,7 +6767,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               expandEngine:
                 input.expandEngine === "qwen3.8-max" || input.expandEngine === "deepseek-v4"
                   ? input.expandEngine
-                  : "kimi-k3",
+                  : "glm-5.3-flashx",
               chargedCredits: shouldCharge ? cost : 0,
               perItemCredits: shouldCharge ? perItemCost : 0,
             },
@@ -6818,8 +6821,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           requestId: z.string().uuid().optional(),
           /** 漫剧工厂当前集真实上下文；strict schema 禁止夹带身份、URL 或凭证字段。 */
           manhuaContext: manhuaCreativeAdvisorContextSchema.optional(),
+          codeMotionContext: codeMotionBriefSchema.optional(),
         }).superRefine((input, validationContext) => {
-          if (input.manhuaContext && !input.requestId) {
+          if (input.codeMotionContext && (input.manhuaContext || (input.qaModel && input.qaModel !== "gpt-5.6-terra"))) validationContext.addIssue({ code: "custom", message: "映刻使用独立工作区及默认咨询档位" });
+          if ((input.manhuaContext || input.codeMotionContext) && !input.requestId) {
             validationContext.addIssue({
               code: "custom",
               path: ["requestId"],
@@ -6860,10 +6865,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               question: string;
               rawQuestion: string;
               qaModel: string;
-              manhuaContext: NonNullable<typeof input.manhuaContext>;
+              manhuaContext?: NonNullable<typeof input.manhuaContext>;
+              codeMotionContext?: NonNullable<typeof input.codeMotionContext>;
             }
           | undefined;
-        if (input.manhuaContext) {
+        if (input.manhuaContext || input.codeMotionContext) {
           if (!input.requestId || !input.rawQuestion) {
             throw new TRPCError({
               code: "BAD_REQUEST",
@@ -6877,6 +6883,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             rawQuestion: input.rawQuestion,
             qaModel,
             manhuaContext: input.manhuaContext,
+            codeMotionContext: input.codeMotionContext,
           };
           const { reserveManhuaAdvisorOperation } = await import(
             "./services/manhuaAdvisorOperation.js"
@@ -6912,6 +6919,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
         }
 
+        if (input.codeMotionContext) {
+          const { resolveRegisteredPostProdMediaSource } = await import("./services/postProdMediaSource");
+          const { assertCodeMotionImageSource } = await import("./services/codeMotionImport");
+          for (const image of input.codeMotionContext.images) {
+            assertCodeMotionImageSource(String(ctx.user.id), image.gcsUri);
+            await resolveRegisteredPostProdMediaSource({ userId: String(ctx.user.id), source: image.gcsUri });
+          }
+        }
         // 已有回执先按账户/请求指纹回放；云存储临时不可用不应阻止取回已付费结果。
         if (input.manhuaContext) await assertAdvisorProject(ctx.user.id, input.manhuaContext.projectId);
         const usedToday = isAdminUser
@@ -6922,7 +6937,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         if (needPay && (!input.confirmPaid || (advisorOperationInput && input.confirmedCredits !== paidUnit))) {
           throw new TRPCError({
             code: "PAYMENT_REQUIRED",
-            message: advisorOperationInput
+            message: input.manhuaContext
               ? `本作品免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。`
               : `今日${qaMode === "sol" ? " Sol" : " Terra"}免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次（成本+60%）。请确认后重试。`,
           });
@@ -6977,7 +6992,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const jobId = operation.jobId;
           let projectFreeReserved = false;
           let projectQuotaUsed = usedToday;
-          if (!isAdminUser) {
+          if (!isAdminUser && input.manhuaContext) {
             let quota: Awaited<ReturnType<typeof reserveAdvisorProjectQuota>>;
             try { quota = await reserveAdvisorProjectQuota(ctx.user.id, input.manhuaContext?.projectId, input.requestId!); }
             catch (error) {
@@ -6995,8 +7010,22 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `本作品免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。` });
             }
           }
+          if (!isAdminUser && input.codeMotionContext) {
+            try {
+              const { reserveCodeMotionConsultQuota } = await import("./services/codeMotionConsultQuota");
+              const quota = await reserveCodeMotionConsultQuota(ctx.user.id, jobId, dailyLimit);
+              projectFreeReserved = quota.reserved;
+              projectQuotaUsed = quota.used;
+              needPay = !quota.reserved;
+              if (needPay && (!input.confirmPaid || input.confirmedCredits !== paidUnit)) throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `今日免费次数已用完。继续将扣除 ${paidUnit} 积分，请确认后重试。` });
+            } catch (error) {
+              const { awaitManhuaAdvisorPaymentConfirmation } = await import("./services/manhuaAdvisorOperation");
+              await awaitManhuaAdvisorPaymentConfirmation(jobId);
+              throw error;
+            }
+          }
           const restoreFreeQuota = async () => {
-            if (!projectFreeReserved) return;
+            if (!projectFreeReserved || !input.manhuaContext) return;
             await releaseAdvisorProjectQuota(ctx.user.id, input.manhuaContext?.projectId, input.requestId!);
           };
           const taskType = MANHUA_ADVISOR_TASK_TYPE;
@@ -7144,6 +7173,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 allowQaModelOverride: true,
                 qaModel,
                 manhuaContext: input.manhuaContext,
+                codeMotionContext: input.codeMotionContext,
                 paidCreditsAlreadyCharged: deducted.cost,
                 freeQuotaReserved: projectFreeReserved,
                 projectQuotaUsed,

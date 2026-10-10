@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
-vi.mock("./gpt56CopywritingGateway.js", () => ({
+vi.mock("./gpt56CopywritingGateway.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./gpt56CopywritingGateway.js")>(),
   getOfficialOpenAiApiKey: () => "sk-test-official-key-for-unit",
 }));
 
@@ -71,14 +72,14 @@ describe("invokeGpt56Responses", () => {
     const r = await invokeGpt56Responses({
       input: "ping",
       modelName: "moonshotai/kimi-k3",
-      reasoningEffort: "max",
+      reasoningEffort: "low",
     });
     expect(r.via).toBe("chat_completions");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(vi.mocked(invokeLLM)).toHaveBeenCalledWith(
       expect.objectContaining({
-        modelName: "moonshotai/kimi-k3",
-        reasoningEffort: "max",
+        modelName: "z-ai/glm-5.3-flashx",
+        reasoningEffort: "low",
       }),
     );
   });

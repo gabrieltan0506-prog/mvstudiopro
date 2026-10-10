@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { buildHtmlPptSlideImagePrompt } from "@shared/htmlPptImagePrompt";
+import type { CodeMotionBrief } from "@shared/codeMotion";
+import { z } from "zod";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   HTML_PPT_STYLES,
   HTML_PPT_VIZ_KINDS,
@@ -43,26 +46,34 @@ function formatWaitLabel(prefix: string, elapsedMs: number) {
   return `${prefix} · 已等待 ${sec}s`;
 }
 
-export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean }) {
+export type HtmlPptInitialContent = { title: string; request: string; text: string; images?: CodeMotionBrief["images"]; data?: CodeMotionBrief["data"]; chart?: "bar" | "line"; unit?: string; period?: string; source?: string };
+const pptDraftSchema = z.object({
+  version: z.literal(1), step: z.enum(["setup", "themes", "outline", "export"]),
+  title: z.string(), purpose: z.string(), pageCount: z.number().int().min(1).max(100).nullable(),
+  styleId: z.custom<HtmlPptStyleId>(v => typeof v === "string" && Object.hasOwn(HTML_PPT_STYLES, v)),
+  briefZh: z.string(), userThemeInputs: z.array(z.string()),
+  themeRows: z.array(z.object({ id: z.string(), title: z.string(), source: z.enum(["user", "ai"]), selected: z.boolean() })),
+  imageTemplateId: z.string(), enableSlideImages: z.boolean(),
+  pages: z.array(z.object({ title: z.string(), subtitle: z.string().optional(), bullets: z.array(z.string()).optional(),
+    kpi: z.string().optional(), note: z.string().optional(), viz: z.custom<HtmlPptVizKind>(v => HTML_PPT_VIZ_KINDS.includes(v as HtmlPptVizKind)).optional(),
+    series: z.array(z.object({ label: z.string(), value: z.number().finite() })).optional(),
+    themeId: z.string().optional(), themeTitle: z.string().optional(), highlight: z.array(z.string()).optional(),
+    imageUrl: z.string().optional(), imageSourceId: z.string().optional(),
+    imageMotion: z.array(z.object({ at: z.number(), pose: z.enum(["hero", "dock_right", "dock_left", "dock_bottom"]) })).optional(),
+  })), dataGroups: z.record(z.string(), z.number()), patchNotes: z.record(z.string(), z.string()),
+});
+export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKey }: { disabled?: boolean; initialContent?: HtmlPptInitialContent; draftKey?: string }) {
   const [step, setStep] = useState<StepId>("setup");
-  const [title, setTitle] = useState("AI漫剧的市场现状与前景");
+  const [title, setTitle] = useState(initialContent?.title || "");
   const [purpose, setPurpose] = useState("行业路演 / 数据洞察汇报");
   const [pageCount, setPageCount] = useState<number | null>(null);
   const [styleId, setStyleId] = useState<HtmlPptStyleId>(() => recommendHtmlPptStyle("数据洞察汇报"));
-  const [briefZh, setBriefZh] = useState(
-    [
-      "请做成高密度投屏稿；复杂比较进图表；禁止纯文字空页。",
-      "公开口径示例（讲解时标注来源）：2025 漫剧约 168 亿；2026 预估约 243.6 亿（+45%）。",
-    ].join("\n"),
-  );
-  const [userThemeInputs, setUserThemeInputs] = useState<string[]>([
-    "关键爆品",
-    "现有市场规模",
-    "入局门槛",
-  ]);
+  const [briefZh, setBriefZh] = useState([initialContent?.request, initialContent?.text].filter(Boolean).join("\n\n"));
+  const [userThemeInputs, setUserThemeInputs] = useState<string[]>(["", "", ""]);
+  const initialImported = useRef(Boolean(initialContent?.request || initialContent?.text));
   const [themeRows, setThemeRows] = useState<ThemeRow[]>([]);
   const [imageTemplateId, setImageTemplateId] = useState<string>("auto");
-  const [enableSlideImages, setEnableSlideImages] = useState(true);
+  const [enableSlideImages, setEnableSlideImages] = useState(false);
 
   const [pages, setPages] = useState<HtmlPptPage[]>([]);
   const [html, setHtml] = useState("");
@@ -72,7 +83,49 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   const [aiCost, setAiCost] = useState<number | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiBusyLabel, setAiBusyLabel] = useState("处理中…");
+  const [dataGroups, setDataGroups] = useState<Record<number, number>>({});
   const [patchNotes, setPatchNotes] = useState<Record<number, string>>({});
+
+  const [draftReady, setDraftReady] = useState<string | undefined>();
+  const [draftError, setDraftError] = useState("");
+  useEffect(() => {
+    if (!draftKey) return;
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (raw) {
+        const d = pptDraftSchema.parse(JSON.parse(raw));
+        initialImported.current = true;
+        setStep(d.step === "export" ? "outline" : d.step); setTitle(d.title); setPurpose(d.purpose);
+        setPageCount(d.pageCount); setStyleId(d.styleId); setBriefZh(d.briefZh); setUserThemeInputs(d.userThemeInputs);
+        setThemeRows(d.themeRows); setImageTemplateId(d.imageTemplateId); setEnableSlideImages(d.enableSlideImages);
+        setPages(d.pages); setDataGroups(d.dataGroups); setPatchNotes(d.patchNotes);
+      }
+      setDraftReady(draftKey);
+    } catch { setDraftError("本机演示草稿无法恢复，已保留原记录；请先下载当前内容。"); }
+  }, [draftKey]);
+  useEffect(() => {
+    if (!draftKey || draftReady !== draftKey) return;
+    try {
+      const raw = JSON.stringify({ version: 1, step, title, purpose, pageCount, styleId, briefZh, userThemeInputs,
+        themeRows, imageTemplateId, enableSlideImages, pages, dataGroups, patchNotes });
+      localStorage.setItem(draftKey, raw);
+      setDraftError("");
+    } catch { setDraftError("本机空间不足或存储不可用，演示草稿未保存，请下载文件。"); }
+  }, [draftKey, draftReady, step, title, purpose, pageCount, styleId, briefZh, userThemeInputs, themeRows, imageTemplateId, enableSlideImages, pages, dataGroups, patchNotes]);
+
+  useEffect(() => {
+    if (initialImported.current || !initialContent || !(initialContent.request || initialContent.text)) return;
+    initialImported.current = true;
+    setTitle(initialContent.title);
+    setBriefZh([initialContent.request, initialContent.text].filter(Boolean).join("\n\n"));
+  }, [initialContent]);
+  const useLatestMaterials = () => {
+    if (!initialContent) return;
+    if ((pages.length || briefZh) && !window.confirm("使用上方最新资料更新制作要求？已生成的页面会保留，重新生成需另行确认。")) return;
+    setTitle(initialContent.title);
+    setBriefZh([initialContent.request, initialContent.text].filter(Boolean).join("\n\n"));
+    setStep("setup");
+  };
 
   const perPageCost = CREDIT_COSTS.platformHtmlPptOutlinePerPage;
   const outlineCost = pageCount != null ? platformHtmlPptOutlineCredits(pageCount) : null;
@@ -80,6 +133,22 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   const pageReady = pageCount != null && pageCount >= PLATFORM_HTML_PPT_PAGE_MIN;
   const userThemesReady = userThemeInputs.map((t) => t.trim()).filter(Boolean).length >= 3;
 
+  const importedImages = trpc.codeMotion.resolveImages.useQuery({ images: initialContent?.images || [] }, { enabled: Boolean(initialContent?.images?.length), retry: false, staleTime: 30_000 });
+  const pagesWithFreshImages = async () => {
+    if (pages.some(page => page.series?.some(point => !Number.isFinite(point.value)))) throw new Error("图表有未填写的数值，请补充；不会把空格当成0。");
+    let normalized = normalizeHtmlPptPages(pages);
+    if (normalized.some(page => page.imageSourceId)) {
+      const result = await importedImages.refetch();
+      if (result.error || !result.data) throw new Error("上传图片暂时无法读取，未导出缺图文件");
+      normalized = normalized.map(page => {
+        if (!page.imageSourceId) return page;
+        const image = result.data.find(item => item.id === page.imageSourceId);
+        if (!image) throw new Error("页面引用的图片已不在本次资料中，请重新选择");
+        return { ...page, imageUrl: image.url };
+      });
+    }
+    return normalized;
+  };
   const generateOutlineMutation = trpc.mvAnalysis.generateHtmlPptOutline.useMutation();
   const suggestThemesMutation = trpc.mvAnalysis.suggestHtmlPptThemes.useMutation();
   const patchPageMutation = trpc.mvAnalysis.patchHtmlPptPage.useMutation();
@@ -110,6 +179,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
     themeRows.filter((t) => t.selected && t.title.trim()).map((t) => ({ id: t.id, title: t.title.trim() }));
 
   const goSuggestThemes = async () => {
+    if (briefZh.length > 4000) { setAiError("资料与要求合计超过4000字，请在下方选留本次内容；未截断、未提交。"); return; }
     const themes = userThemeInputs.map((t) => t.trim()).filter(Boolean);
     if (themes.length < 3) {
       setAiError("请至少填写 3 条大纲主题");
@@ -152,6 +222,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
   };
 
   const generateOutlineWithAi = async () => {
+    if (briefZh.length > 4000) { setAiError("资料与要求合计超过4000字，请选留本次内容；未截断、未扣费。"); return; }
     const themes = confirmedThemes();
     if (themes.length < 3) {
       setAiError("请至少勾选 3 条大纲主题");
@@ -209,6 +280,10 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
         const indices = [0, Math.min(2, nextPages.length - 1), Math.min(4, nextPages.length - 1)].filter(
           (v, i, a) => a.indexOf(v) === i,
         );
+        const preview = indices.map(idx => `第${idx + 1}页\n${buildHtmlPptSlideImagePrompt({ page: nextPages[idx], deckTitle: title.trim(), templateId: imageTemplateId === "auto" ? null : imageTemplateId, styleId })}`).join("\n\n——\n\n");
+        if (!window.confirm(`本次生成${indices.length}张16:9插图；当前不扣积分。模型：GPT Image 2；无参考图片。以下为实际发送的完整提示词：\n\n${preview}\n\n确认生成？取消会保留已生成页面。`)) {
+          setPages(nextPages); setStep("outline"); return;
+        }
         const pollLabel = window.setInterval(() => {
           setAiBusyLabel(formatWaitLabel("正在生成插图", Date.now() - imgStartedAt));
         }, 1000);
@@ -244,6 +319,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
           const byIdx = new Map(
             settled.filter((x): x is { idx: number; imageUrl: string } => Boolean(x)).map((x) => [x.idx, x.imageUrl]),
           );
+          if (byIdx.size < indices.length) setAiError(`${indices.length - byIdx.size}张插图未生成成功，页面内容已保留，未自动重试。`);
           if (byIdx.size) {
             nextPages = nextPages.map((p, i) => {
               const url = byIdx.get(i);
@@ -346,60 +422,45 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
     }
   };
 
-  const generateFromOutline = () => {
-    const normalized = normalizeHtmlPptPages(pages);
-    if (normalized.length < PLATFORM_HTML_PPT_PAGE_MIN) {
-      setAiError(`清单至少 ${PLATFORM_HTML_PPT_PAGE_MIN} 页`);
-      return;
-    }
-    const doc = buildHtmlPptDocument({
-      title,
-      styleId,
-      purposeZh: purpose,
-      pages: normalized,
-    });
-    setPages(normalized);
-    setHtml(doc);
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(URL.createObjectURL(new Blob([doc], { type: "text/html;charset=utf-8" })));
-    setStep("export");
+  const generateFromOutline = async () => {
+    setAiError(null); setAiBusy(true);
+    try {
+      const normalized = await pagesWithFreshImages();
+      if (normalized.length < PLATFORM_HTML_PPT_PAGE_MIN) throw new Error(`清单至少 ${PLATFORM_HTML_PPT_PAGE_MIN} 页`);
+      const doc = buildHtmlPptDocument({ title, styleId, purposeZh: purpose, pages: normalized });
+      setPages(normalized); setHtml(doc);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(URL.createObjectURL(new Blob([doc], { type: "text/html;charset=utf-8" })));
+      setStep("export");
+    } catch (error) { setAiError(error instanceof Error ? error.message : "预览未完成"); }
+    finally { setAiBusy(false); }
   };
 
-  const download = () => {
-    const normalized = normalizeHtmlPptPages(pages);
-    const doc =
-      html ||
-      buildHtmlPptDocument({
-        title,
-        styleId,
-        purposeZh: purpose,
-        pages: normalized.length
-          ? normalized
-          : buildDefaultHtmlPptPages(title, pageCount ?? PLATFORM_HTML_PPT_PAGE_MIN, purpose, styleId),
-      });
-    const blob = new Blob([doc], { type: "text/html;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${title.slice(0, 24).replace(/\s+/g, "-") || "website-ppt"}.html`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+  const download = async () => {
+    setAiError(null); setAiBusy(true);
+    try {
+      const normalized = await pagesWithFreshImages();
+      if (!normalized.length) throw new Error("请先创建并核对页面，未导出示例内容。");
+      const doc = buildHtmlPptDocument({ title, styleId, purposeZh: purpose, pages: normalized });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([doc], { type: "text/html;charset=utf-8" }));
+      a.download = `${title.slice(0, 24).replace(/\s+/g, "-") || "映刻演示"}.html`; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    } catch (error) { setAiError(error instanceof Error ? error.message : "导出未完成"); }
+    finally { setAiBusy(false); }
   };
 
   const downloadPptx = async () => {
-    const normalized = normalizeHtmlPptPages(pages);
-    const deckPages = normalized.length
-      ? normalized
-      : buildDefaultHtmlPptPages(title, pageCount ?? PLATFORM_HTML_PPT_PAGE_MIN, purpose, styleId);
+    setAiError(null); setAiBusy(true);
+    try {
+      const deckPages = await pagesWithFreshImages();
+      if (!deckPages.length) throw new Error("请先创建并核对页面，未导出示例内容。");
     const deck = {
       title,
       styleId,
       purposeZh: purpose,
       pages: deckPages,
     };
-    setAiError(null);
-    setAiBusy(true);
     setAiBusyLabel("正在导出可编辑 PPTX…");
-    try {
       const imageUrls = listHtmlPptPptxImageUrls(deck);
       let imageDataByUrl: Record<string, string> = {};
       if (imageUrls.length) {
@@ -446,7 +507,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
       setAiError(`请先选择页数（最少 ${PLATFORM_HTML_PPT_PAGE_MIN}）`);
       return;
     }
-    setPages(buildDefaultHtmlPptPages(title, pageCount, purpose, styleId));
+    setPages(buildDefaultHtmlPptPages(title, pageCount, purpose, styleId).map(page => ({ ...page, note: "示例数据，仅供查看版式，请替换为真实资料后使用" })));
     setAiSummary(null);
     setAiCost(null);
     setStep("outline");
@@ -456,6 +517,9 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
     <div className="space-y-4 rounded-2xl border border-indigo-400/25 bg-[linear-gradient(180deg,rgba(99,102,241,0.10),rgba(0,0,0,0.28))] p-4">
       <div>
         <div className="text-sm font-semibold text-indigo-100">动效PPT</div>
+        {draftError && <p role="alert" className="text-amber-300">{draftError}</p>}
+        {initialContent && <button type="button" disabled={busy} onClick={useLatestMaterials} className="mt-2 rounded border border-white/20 px-3 py-2 text-sm">使用上方最新资料与要求</button>}
+        <p className="mt-2 text-xs text-white/65">同一份页面可导出带分步动画的 HTML 演示，或可编辑 PPTX（不保留分步动画）。图表请核对原始数值、单位、时间范围与来源；缺数据不会补造。</p>
         <p className="mt-1 text-[11px] leading-relaxed text-white/55">
           路演投屏专用：主题与 ≥3 条大纲 → 免费补全候选 → 勾选后按页生成（{perPageCost} 积分/页，整次只扣一次）。
           支持分步 SVG 动效、关键页插图，导出 HTML 或可编辑 PPTX。
@@ -533,7 +597,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                 disabled={busy}
                 onChange={(e) => setEnableSlideImages(e.target.checked)}
               />
-              默认生成关键页插图（版式模板 + 页内容锁定；SVG/表格仍保留）
+              生成关键页插图（先展示实际提示词，再确认；当前不扣积分）
             </label>
             <label className="block text-[11px] text-white/60">
               插图版式模板
@@ -649,7 +713,7 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
               onClick={rebuildLocalFree}
               className="rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-[12px] font-semibold text-white/70 disabled:opacity-40"
             >
-              仅用模板骨架（免费）
+              查看模板示例（含示例数据，免费）
             </button>
           </div>
         </div>
@@ -777,6 +841,25 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                     className="w-20 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-violet-100/80"
                   />
                 </div>
+                {!!initialContent?.images?.length && <label className="block text-xs text-white/70">使用已上传图片
+                  <select aria-label={`第${i + 1}页上传图片`} disabled={busy || !importedImages.data} value={p.imageSourceId || ""} onChange={event => {
+                    const image = importedImages.data?.find(item => item.id === event.target.value);
+                    updatePage(i, { imageSourceId: image?.id, imageUrl: image?.url });
+                  }} className="ml-2 rounded border border-white/20 bg-slate-900 p-2"><option value="">不使用上传图片</option>{importedImages.data?.map(image => <option key={image.id} value={image.id}>{image.name}</option>)}</select>
+                  {importedImages.error && <span role="alert">图片暂时无法读取，原稿保留。</span>}
+                </label>}
+                {!!initialContent?.data?.length && <div className="flex flex-wrap items-center gap-2 text-xs text-white/70">
+                  <span>表格数据共 {initialContent.data.length} 项，每页最多 8 项。</span>
+                  <select aria-label={`第${i + 1}页数据范围`} disabled={busy} value={dataGroups[i] || 0} onChange={event => setDataGroups(prev => ({ ...prev, [i]: Number(event.target.value) }))} className="rounded border border-white/20 bg-slate-900 p-2">
+                    {Array.from({ length: Math.ceil(initialContent.data.length / 8) }, (_, group) => <option key={group} value={group}>第 {group * 8 + 1}–{Math.min(initialContent.data!.length, (group + 1) * 8)} 项</option>)}
+                  </select>
+                  <button type="button" disabled={busy} className="rounded border border-white/20 px-3 py-2" onClick={() => {
+                    const selected = initialContent.data!.slice((dataGroups[i] || 0) * 8, ((dataGroups[i] || 0) + 1) * 8);
+                    if (selected.some(row => row.value === null || !Number.isFinite(row.value))) { setAiError("选中范围有缺失数值，请先核对表格；不会补零。"); return; }
+                    updatePage(i, { series: selected.map(row => ({ label: row.label, value: row.value! })), viz: initialContent.chart === "line" ? "line" : "bars", subtitle: [initialContent.unit, initialContent.period].filter(Boolean).join(" · "), note: initialContent.source ? `数据来源：${initialContent.source}` : p.note });
+                    setAiError(null);
+                  }}>将所选表格数据用于本页</button>
+                </div>}
                 {(p.bullets || []).map((b, bi) => (
                   <input
                     key={`b-${i}-${bi}`}
@@ -800,8 +883,8 @@ export default function PlatformHtmlPptPanel({ disabled }: { disabled?: boolean 
                         <input
                           disabled={busy}
                           type="number"
-                          value={s.value}
-                          onChange={(e) => updateSeries(i, si, { value: Number(e.target.value) || 0 })}
+                          value={Number.isFinite(s.value) ? s.value : ""}
+                          onChange={(e) => updateSeries(i, si, { value: e.target.value.trim() ? Number(e.target.value) : NaN })}
                           className="w-24 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-emerald-100"
                         />
                       </div>

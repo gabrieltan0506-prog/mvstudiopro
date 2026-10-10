@@ -11,9 +11,9 @@ import { PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE } from "../../shared/platformCre
 import { getOfficialOpenAiApiKey } from "./gpt56CopywritingGateway.js";
 import { getOpenRouterApiKey } from "./openrouterGptImage2.js";
 import {
-  OPENROUTER_KIMI_K3_REASONING_EFFORT,
-  resolveOpenRouterKimiK3MaxCompletionTokens,
-} from "./openrouterKimiK3.js";
+  PLATFORM_TEXT_REASONING_EFFORT,
+  resolvePlatformTextMaxCompletionTokens,
+} from "./platformTextModel.js";
 
 export type OptimizeCustomCopyInput = {
   sourceText: string;
@@ -146,8 +146,8 @@ async function invokeOptimizeViaGpt(userBlock: string, modelName?: string): Prom
     provider: "openai",
     modelName: resolveOptimizeCopyModelName(modelName),
     reasoningEffort:
-      effort === "low" || effort === "high" ? effort : OPENROUTER_KIMI_K3_REASONING_EFFORT,
-    max_tokens: resolveOpenRouterKimiK3MaxCompletionTokens(),
+      effort === "low" || effort === "high" ? effort : PLATFORM_TEXT_REASONING_EFFORT,
+    max_tokens: resolvePlatformTextMaxCompletionTokens(),
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userBlock },
@@ -177,7 +177,7 @@ export async function optimizeCustomCopy(input: OptimizeCustomCopyInput): Promis
     return parseOptimizeCustomCopyJson(raw);
   } catch (err) {
     console.warn(
-      `[optimizeCustomCopy] Kimi K3 失败 (model=${resolveOptimizeCopyModelName(input.modelName)}):`,
+      `[optimizeCustomCopy] GLM 5.3 FlashX 失败 (model=${resolveOptimizeCopyModelName(input.modelName)}):`,
       err instanceof Error ? err.message.slice(0, 240) : err,
     );
     throw new Error(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);

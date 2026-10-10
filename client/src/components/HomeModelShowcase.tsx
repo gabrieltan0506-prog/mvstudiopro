@@ -38,7 +38,7 @@ const FUNCTIONS: FunctionEntry[] = [
         href: "/platform?mode=create&tab=copy",
       },
       {
-        label: "均衡档 · Kimi K3",
+        label: "均衡档 · GLM 5.3 FlashX",
         desc: "速度与密度的折中档",
         href: "/platform?mode=create&tab=copy",
       },
@@ -54,7 +54,7 @@ const FUNCTIONS: FunctionEntry[] = [
     tagline: "趋势看板、20 条爆款选题、逐镜拆片表，一口气交付。",
     options: [
       {
-        label: "稳定档 · Kimi K3",
+        label: "稳定档 · GLM 5.3 FlashX",
         desc: "趋势、选题、六维全案与顾问问答主力",
         href: "/platform?mode=create",
       },

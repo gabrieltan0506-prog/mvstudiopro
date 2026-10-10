@@ -1,5 +1,5 @@
 /**
- * 平台「深度追问 / 趋势续分析」：OpenRouter Kimi K3（reasoning max）。
+ * 平台「深度追问 / 趋势续分析」：平台配置的 GLM 5.3 FlashX（reasoning low）。
  */
 import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm.js";
 import {

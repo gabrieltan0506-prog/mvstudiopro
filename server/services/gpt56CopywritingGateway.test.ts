@@ -89,7 +89,7 @@ describe("resolveGpt56CopywritingTarget", () => {
     const t = resolveOpenRouterChatTarget("moonshotai/kimi-k3");
     expect(t.gateway).toBe("openrouter");
     expect(t.apiUrl).toBe(OPENROUTER_CHAT_COMPLETIONS_URL);
-    expect(t.modelName).toBe("moonshotai/kimi-k3");
+    expect(t.modelName).toBe("z-ai/glm-5.3-flashx");
   });
 
   it("official_only prefers api.openai.com when key present", () => {

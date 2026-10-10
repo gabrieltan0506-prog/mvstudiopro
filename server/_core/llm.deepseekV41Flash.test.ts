@@ -121,3 +121,11 @@ it.each(['glm-5.3-flashx','deepseek-v4.1-flash'])('隔离实测1214回归：EvoL
  await invokeLLM({provider:'openai',modelName,openAiGateway:'evolink_flash_only',messages:[{role:'system',content:'保留原稿'},{role:'user',content:'修改第一集灯光'}]});
  expect(JSON.parse(fetchMock.mock.calls[0][1].body).messages).toEqual([{role:'system',content:'保留原稿'},{role:'user',content:'修改第一集灯光'}]);
 });
+
+it.each(["kimi-k3", "moonshotai/kimi-k3"])("历史模型%s在真实传输前迁到GLM low", async modelName => {
+ vi.stubEnv("OPENROUTER_API_KEY", "sk-test-only-not-real");
+ const fetchMock=vi.fn().mockResolvedValue(new Response('data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}}));vi.stubGlobal('fetch',fetchMock);
+ await invokeLLM({provider:"openai",modelName,reasoningEffort:"max",messages:[{role:"user",content:"恢复旧稿"}]});
+ expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({model:"z-ai/glm-5.3-flashx",stream:true,reasoning:{effort:"low"},provider:{order:["Z.AI"],allow_fallbacks:false}});
+ expect(fetchMock).toHaveBeenCalledTimes(1);
+});

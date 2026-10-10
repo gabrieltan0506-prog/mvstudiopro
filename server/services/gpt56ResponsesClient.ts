@@ -11,11 +11,9 @@ import {
   normalizeEvolinkChatModel,
 } from "./evolinkChatModel.js";
 import { getOfficialOpenAiApiKey } from "./gpt56CopywritingGateway.js";
-import {
-  isOpenRouterKimiK3Model,
-  OPENROUTER_KIMI_K3_REASONING_EFFORT,
-  resolveOpenRouterKimiK3MaxCompletionTokens,
-} from "./openrouterKimiK3.js";
+import { migrateRetiredTextModel } from "../../shared/textModelPolicy";
+import { isDirectOpenRouterModelSlug } from "./gpt56CopywritingGateway";
+import { PLATFORM_TEXT_REASONING_EFFORT, resolvePlatformTextMaxCompletionTokens } from "./platformTextModel";
 
 export const OPENAI_OFFICIAL_RESPONSES_URL = "https://api.openai.com/v1/responses";
 
@@ -173,9 +171,9 @@ async function postOfficialResponses(opts: InvokeGpt56ResponsesOpts): Promise<In
 }
 
 async function fallbackChatCompletions(opts: InvokeGpt56ResponsesOpts): Promise<InvokeGpt56ResponsesResult> {
-  const rawModel = String(opts.modelName || "").trim();
-  const isKimi = isOpenRouterKimiK3Model(rawModel);
-  const modelName = isKimi
+  const rawModel = migrateRetiredTextModel(opts.modelName);
+  const isVendorChat = isDirectOpenRouterModelSlug(rawModel) && !/^openai\//i.test(rawModel);
+  const modelName = isVendorChat
     ? rawModel
     : normalizeEvolinkChatModel(rawModel || getEvolinkGpt56SolModel(), EVOLINK_CHAT_MODEL_GPT56_SOL);
   const instructions = String(opts.instructions || "").trim();
@@ -216,10 +214,10 @@ async function fallbackChatCompletions(opts: InvokeGpt56ResponsesOpts): Promise<
   if (instructions) messages.push({ role: "system", content: instructions });
   messages.push({ role: "user", content: userContent });
 
-  const reasoningEffort = isKimi
+  const reasoningEffort = isVendorChat
     ? opts.reasoningEffort === "low" || opts.reasoningEffort === "high"
       ? opts.reasoningEffort
-      : OPENROUTER_KIMI_K3_REASONING_EFFORT
+      : PLATFORM_TEXT_REASONING_EFFORT
     : opts.reasoningEffort === "none"
       ? "minimal"
       : "medium";
@@ -227,8 +225,8 @@ async function fallbackChatCompletions(opts: InvokeGpt56ResponsesOpts): Promise<
   const response = await invokeLLM({
     provider: "openai",
     modelName,
-    max_tokens: isKimi ? resolveOpenRouterKimiK3MaxCompletionTokens() : 16_384,
-    ...(isKimi ? {} : { temperature: 0.8 }),
+    max_tokens: isVendorChat ? resolvePlatformTextMaxCompletionTokens() : 16_384,
+    ...(isVendorChat ? {} : { temperature: 0.8 }),
     reasoningEffort,
     messages: messages as Parameters<typeof invokeLLM>[0]["messages"],
     response_format: opts.jsonObject ? { type: "json_object" } : undefined,
@@ -243,13 +241,13 @@ async function fallbackChatCompletions(opts: InvokeGpt56ResponsesOpts): Promise<
   };
 }
 
-/** 官方 Responses（可 Pro）→ 失败则 Chat Completions 标准模式。Kimi 直连 Chat Completions。 */
+/** 官方 Responses（可 Pro）→ 失败则 Chat Completions 标准模式。非OpenAI模型直连 Chat Completions。 */
 export async function invokeGpt56Responses(opts: InvokeGpt56ResponsesOpts): Promise<InvokeGpt56ResponsesResult> {
   const hasParts = Array.isArray(opts.inputParts) && opts.inputParts.length > 0;
   const input = String(opts.input || "").trim();
   if (!hasParts && !input) throw new Error("Responses input is empty");
 
-  if (isOpenRouterKimiK3Model(opts.modelName)) {
+  if (isDirectOpenRouterModelSlug(migrateRetiredTextModel(opts.modelName)) && !/^openai\//i.test(String(opts.modelName || ""))) {
     return fallbackChatCompletions(opts);
   }
 

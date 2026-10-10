@@ -1,3 +1,4 @@
+import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 import { buildDefaultHtmlPptPages } from "./htmlPptMaker";
 import { buildHtmlPptPptxBlob, listHtmlPptPptxImageUrls } from "./htmlPptPptx";
@@ -58,4 +59,19 @@ describe("buildHtmlPptPptxBlob", () => {
       buildHtmlPptPptxBlob({ title: "缺图", styleId: "dark_research", pages }),
     ).rejects.toThrow(/未能载入图片/);
   });
+});
+
+it("导出原生可编辑图表，数值与原表一致", async () => {
+  const blob = await buildHtmlPptPptxBlob({ title: "真实对比", styleId: "dark_research", pages: [{ title: "输入单价", viz: "bars", series: [{ label: "GLM", value: 0.37 }, { label: "DeepSeek", value: 0.3 }] }] });
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+  const charts = Object.keys(zip.files).filter(name => /^ppt\/charts\/chart[0-9]+\.xml$/.test(name));
+  expect(charts.length).toBe(1);
+  const xml = await zip.file(charts[0])!.async("string");
+  expect(xml).toContain("0.37"); expect(xml).toContain("0.3"); expect(xml).toContain("GLM");
+  expect(Object.keys(zip.files).some(name => name.startsWith("ppt/embeddings/") && name.endsWith(".xlsx"))).toBe(true);
+});
+
+it("含图页数据超出排版容量时明确失败，不丢掉后面数据", async () => {
+  const url = "https://cdn.example.com/test.png";
+  await expect(buildHtmlPptPptxBlob({title:"原始数据",styleId:"dark_research",pages:[{title:"全部六项",imageUrl:url,series:Array.from({length:6},(_,i)=>({label:`数据${i+1}`,value:i+0.25}))}]},{imageDataByUrl:{[url]:TINY_PNG}})).rejects.toThrow("未截断导出");
 });

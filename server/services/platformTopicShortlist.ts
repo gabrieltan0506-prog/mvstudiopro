@@ -1,3 +1,4 @@
+import { MANHUA_ADVISOR_HOPS, manhuaAdvisorReasoningEffort } from "./openrouterDeepSeekV41Flash";
 /**
  * 选题初选（20）与勾选扩写（5–6）LLM 服务。
  */
@@ -51,7 +52,7 @@ import {
  * 初选的推理档。
  *
  * 用户 2026-08-06：「选题用 medium 就好，吐出来给用户再用 high 来润色即可，这样快一点也省钱」。
- * 当前初选跑在卓越档（Kimi K3）上，它的三级是 low|high|max，中档即 high——
+ * 当前初选跑在卓越档（GLM FlashX）上，它的三级是 low|high|max，中档即 high——
  * 旧代码一直发 max，是这条链最慢也最贵的一环。
  */
 const SHORTLIST_REASONING_EFFORT = platformEngineEffort("shortlist", "superb");
@@ -500,7 +501,7 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
 
   let emptyRetried = false;
   console.info(
-    `[generatePlatformTopicShortlist] 开始 LLM count=${targetCount} reasoning=${SHORTLIST_REASONING_EFFORT} model=kimi-k3 trendStatus=${trendStatus} trendPlatforms=${trendBriefs.length}`,
+    `[generatePlatformTopicShortlist] 开始 LLM count=${targetCount} reasoning=${SHORTLIST_REASONING_EFFORT} model=glm-5.3-flashx trendStatus=${trendStatus} trendPlatforms=${trendBriefs.length}`,
   );
   /**
    * 三次机会：空回与上游抖动（空 200 / 心跳残包）都重试。
@@ -658,9 +659,9 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
 }
 
 /**
- * 扩写可选引擎：kimi-k3 主走 OpenRouter（Evolink 兜底）；qwen3.8-max 直走 Evolink；
+ * 扩写可选引擎：GLM FlashX 主用并以 DeepSeek 兜底；qwen3.8-max 直走 Evolink；
  * deepseek-v4 经济档（2026-08-15 用户拍板）走 OpenRouter，两抖后兜底轻快档。
- * 真源在 shared/platformTopicShortlist（前端/路由/worker 共用归一化，防各自回落 kimi）。
+ * 真源在 shared/platformTopicShortlist（前端/路由/worker 共用归一化，防各自回落下架模型）。
  */
 export type PlatformTopicExpandEngine = PlatformTopicExpandEngineId;
 
@@ -668,11 +669,7 @@ const EXPAND_EVOLINK_DIRECT_CHAT_URL = String(
   process.env.EVOLINK_DIRECT_CHAT_COMPLETIONS_URL || "https://direct.evolink.ai/v1/chat/completions",
 ).trim();
 
-/**
- * 输出封顶：Evolink 的 K3 reasoning_effort 只有 max（强制深思考），
- * 思考 token 全按输出计费。2026-08-12 用户拍板质量优先，上限提到 32k
- *（worst case 单条 ~$0.48，接受偶发毛利下探换文案质量）。
- */
+/** 长稿输出预算上限；实际模型和推理由统一文本策略控制。 */
 const EXPAND_MAX_COMPLETION_TOKENS = 32_000;
 /** Qwen 3.8 Max 输出上限（2026-08-12 用户拍板 65k）：单价低（$5.295/M），给足思考与长稿余量 */
 const EXPAND_QWEN_MAX_COMPLETION_TOKENS = 65_536;
@@ -905,7 +902,7 @@ async function invokeExpandViaDeepSeek(params: { system: string; user: string })
  * 而 EvoLink / OpenRouter 每一次都扣充值余额——
  * 「EvoLink 比 OpenRouter 便宜 12%」在「套餐零新增支出」面前不成立。
  *
- * ⚠️ 仅 qwen3.8-max 可走：套餐白名单 11 个模型里有它，没有 kimi-k3。
+ * ⚠️ 仅 qwen3.8-max 可走：套餐白名单 11 个模型里有它，没有 GLM FlashX。
  */
 async function invokeExpandViaBailianPlan(params: {
   model: PlatformTopicExpandEngine;
@@ -964,7 +961,7 @@ async function invokeExpandViaEvolink(params: {
   };
   if (params.model === "qwen3.8-max") {
     // Evolink Qwen：档位 low|medium|xhigh（无 max）；2026-08-12 用户拍板开到顶档，
-    // 与 Kimi high 对等公平；勿与 thinking_budget 同传（同知识卡提炼口径）
+    // 本档保持既定推理强度，勿与 thinking_budget 同传
     body.enable_thinking = true;
     body.reasoning_effort = "xhigh";
     body.max_completion_tokens = EXPAND_QWEN_MAX_COMPLETION_TOKENS;
@@ -1005,7 +1002,7 @@ export async function expandPlatformTopicPicks(params: {
   picks: PlatformTopicShortlistItem[];
   enabledSkillIds?: string[] | null;
   allowBloggerTitle?: boolean;
-  /** 缺省 kimi-k3（OpenRouter 主、Evolink 兜底）；qwen3.8-max 直走 Evolink */
+  /** 缺省 GLM FlashX（GLM/DeepSeek 四跳）；qwen3.8-max 直走 Evolink */
   engine?: PlatformTopicExpandEngine | null;
   /**
    * 每条写完立刻回调（后台任务据此写进度，前端一条一条冒出来）。
@@ -1114,7 +1111,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     );
 
     // 双通道编排（2026-08-12 用户拍板：哪家便宜哪家先，另一家兜底）——
-    // Kimi K3 两家同价（$3/$15），主走 OpenRouter、两次抖动后切 Evolink 保稳；
+    // GLM FlashX 走共用流式入口，失败按既有四跳落 DeepSeek；
     // Qwen 3.8 Max Evolink（$1.765/$5.295）比 OpenRouter（$2/$6）便宜 ~12%，
     // 主走 Evolink、兜底 OpenRouter（qwen/qwen3.8-max）。
     const engine: PlatformTopicExpandEngine = normalizePlatformTopicExpandEngine(params.engine);
@@ -1136,9 +1133,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
               named("openrouter", invokeExpandOpenRouter("qwen/qwen3.8-max")),
             ]
           : [
-              named("openrouter", invokeExpandOpenRouter(getPlatformStage2OpenAiModel())),
-              named("openrouter#2", invokeExpandOpenRouter(getPlatformStage2OpenAiModel())),
-              named("evolink", invokeExpandEvolink("kimi-k3")),
+              ...MANHUA_ADVISOR_HOPS.map(hop => named(hop.label, async () => extractFirstChoicePlainText(await invokeLLM({ provider: "openai", modelName: hop.modelName, openAiGateway: hop.gateway, reasoningEffort: manhuaAdvisorReasoningEffort(hop.modelName), max_tokens: 32_000, response_format: { type: "json_object" }, messages: [{ role: "system", content: system }, { role: "user", content: user }] })).trim())),
             ];
 
     console.info(
@@ -1147,7 +1142,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     /**
      * 上游抖动（空 200 / 心跳残包）不该毁掉这一条，更不该毁掉整批：
      * 2026-08-06 实测 OpenRouter 空体 200 让七条扩写全灭。最多三次，
-     * Kimi 第三次自动换 Evolink 通道（2026-08-12 凌晨 OpenRouter Kimi 连挂两单）。
+     * GLM链最多四跳，不追加其他模型。
      */
     let llmText = "";
     let lastErr: unknown = null;

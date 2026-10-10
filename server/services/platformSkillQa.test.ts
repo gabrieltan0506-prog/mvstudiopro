@@ -287,7 +287,7 @@ describe("漫剧工厂创作顾问上下文", () => {
     invokeLLMMock.mockResolvedValueOnce(llmJson({ ...patch, cameras: patch.cameras.map(c => ({ ...c, orbitDeg: 15, endPosition: [1, 1, 1] })) })).mockResolvedValueOnce(llmJson(patch));
     await askPlatformSkillQa({ userId: 7, question: "压迫感强一点", isAdmin: true, manhuaContext: manhuaContext({ previsEdit: makeAdvisorPrevisTarget("clip-1", studio) }) });
     expect(invokeLLMMock).toHaveBeenCalledTimes(2);
-    expect(invokeLLMMock.mock.calls[1][0].messages.at(-1).content).toContain("环绕与直线终点不能同时使用");
+    expect(JSON.stringify(invokeLLMMock.mock.calls[1][0].messages.at(-1).content)).toContain("环绕与直线终点不能同时使用");
   });
   it("携带真实视频的候选规格错误只在同一视频通道修正一次", async () => {
     const studio = createManhuaPrevisStudio(5);
@@ -443,7 +443,7 @@ describe("漫剧工厂创作顾问上下文", () => {
       messages: Array<{ role: string; content: string }>;
     };
     expect(payload.messages[0]?.content).toContain("可查内部趋势库");
-    expect(payload).toMatchObject({ modelName: "moonshotai/kimi-k3", max_tokens: 131_072 });
+    expect(payload).toMatchObject({ modelName: "z-ai/glm-5.3-flashx", max_tokens: 32_768 });
     expect(payload.messages[1]?.content).toContain("请解释镜头节奏");
     expect(payload.messages[1]?.content).not.toContain("这段文字不应进入旧平台问答");
     expect(payload.messages[1]?.content).not.toContain("【当前漫剧项目上下文");
@@ -553,6 +553,7 @@ describe("漫剧工厂创作顾问上下文", () => {
       qaModel: "gpt-5.6-terra",
       manhuaContext: manhuaContext(),
       paidCreditsAlreadyCharged: 8,
+      projectQuotaUsed: 5,
     });
 
     expect(result.creditsCharged).toBe(8);
@@ -785,4 +786,28 @@ it("逐镜来源完整送入顾问专用消息，能力不足原样提示且不�
   expect(input.messages[1].content).toContain(JSON.stringify(target.shotSource));
   expect(input.messages[0].content).toContain("不得用静立/转头/指点冒充");
   expect(input).toMatchObject({ modelName: "z-ai/glm-5.3-flashx", reasoningEffort: "low", max_tokens: 16_384 });
+});
+
+
+describe("映刻独立方案咨询", () => {
+  const brief = { title: "季度介绍", request: "做一段清晰的视频", text: "用户真实资料", style: "words" as const, duration: 15, orientation: "landscape" as const, images: [], data: [], unit: "", chart: "bar" as const, period: "", source: "" };
+  it("只调用指定规划链，保留模型名，不挂漫剧/联网/生图入口", async () => {
+    invokeLLMMock.mockResolvedValue({ choices: [{ message: { content: JSON.stringify({ version: 1, summary: "介绍资料", scenes: [{ heading: "季度介绍", body: "用户真实资料", duration: 15 }] }) } }] });
+    const value = await askPlatformSkillQa({ userId: 7, question: "请整理视频安排", isAdmin: true, codeMotionContext: brief });
+    expect(invokeLLMMock).toHaveBeenCalledTimes(1);
+    expect(value.modelName).toBe("z-ai/glm-5.3-flashx");
+    expect(value.imageOffer).toBeNull();
+    expect(resolvePlatformSkillsPromptMock).not.toHaveBeenCalled();
+    expect(JSON.stringify(invokeLLMMock.mock.calls[0][0].messages)).toContain("用户真实资料");
+    expect(JSON.parse(value.answer).scenes[0].duration).toBe(15);
+  });
+  it("四条通道失败后没有外层三轮放大", async () => {
+    invokeLLMMock.mockRejectedValue(new Error("503"));
+    await expect(askPlatformSkillQa({ userId: 7, question: "请整理视频安排", isAdmin: true, codeMotionContext: brief })).rejects.toThrow("安排未能完成");
+    expect(invokeLLMMock).toHaveBeenCalledTimes(4);
+  });
+  it("两种工作区混用时在模型前拒绝", async () => {
+    await expect(askPlatformSkillQa({ userId: 7, question: "请整理视频安排", isAdmin: true, codeMotionContext: brief, manhuaContext: manhuaContext() })).rejects.toThrow("不能混用");
+    expect(invokeLLMMock).not.toHaveBeenCalled();
+  });
 });

@@ -85,6 +85,10 @@ vi.mock("./services/manhuaAdvisorProjectQuota",()=>({
   releaseAdvisorProjectQuota:(...args:unknown[])=>releaseAdvisorProjectQuota(...args),
 }));
 
+
+const reserveCodeMotionConsultQuota = vi.fn();
+vi.mock("./services/codeMotionConsultQuota", () => ({ reserveCodeMotionConsultQuota: (...args: unknown[]) => reserveCodeMotionConsultQuota(...args) }));
+
 import { appRouter } from "./routers";
 
 const REQUEST_ID = "6f9619ff-8b86-4d01-b42d-00cf4fc964ff";
@@ -555,5 +559,35 @@ describe("每作品5次/12积分新增路径", () => {
     await expect(caller().mvAnalysis.askPlatformSkillQa(input)).rejects.toThrow();
     expect(releaseAdvisorProjectQuota).toHaveBeenCalledWith(7, projectId, REQUEST_ID);
     expect(deductCreditsAmount).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("映刻复用咨询回执但保持独立工作区", () => {
+  const brief = { title: "映刻样稿", request: "整理介绍内容", text: "真实资料", style: "words" as const, duration: 15, orientation: "landscape" as const, images: [], data: [], unit: "" };
+  const input = { question: "请整理视频安排", rawQuestion: "请整理视频安排", requestId: REQUEST_ID, codeMotionContext: brief };
+  it("恢复成功结果时不扣费、不重领日额度", async () => {
+    reserveManhuaAdvisorOperation.mockResolvedValueOnce({ kind: "replay", jobId: JOB_ID, result: { success: true, ...RESULT, replayed: true } });
+    expect(await caller().mvAnalysis.askPlatformSkillQa(input)).toMatchObject({ replayed: true });
+    expect(reserveCodeMotionConsultQuota).not.toHaveBeenCalled();
+    expect(askPlatformSkillQa).not.toHaveBeenCalled();
+    expect(deductCreditsAmount).not.toHaveBeenCalled();
+  });
+  it("免费请求原子认领平台额度，不读写漫剧作品额度", async () => {
+    countPlatformSkillQaToday.mockResolvedValue(0);
+    reserveCodeMotionConsultQuota.mockResolvedValue({ reserved: true, used: 1 });
+    reserveManhuaAdvisorOperation.mockResolvedValueOnce({ kind: "awaiting_confirmation", jobId: JOB_ID, requestFingerprint: FINGERPRINT }).mockResolvedValueOnce({ kind: "execute", jobId: JOB_ID, requestFingerprint: FINGERPRINT });
+    await caller().mvAnalysis.askPlatformSkillQa(input);
+    expect(reserveCodeMotionConsultQuota).toHaveBeenCalledWith(7, JOB_ID, 5);
+    expect(assertAdvisorProject).not.toHaveBeenCalled(); expect(reserveAdvisorProjectQuota).not.toHaveBeenCalled();
+    expect(askPlatformSkillQa).toHaveBeenCalledWith(expect.objectContaining({ codeMotionContext: expect.objectContaining(brief), freeQuotaReserved: true, paidCreditsAlreadyCharged: 0 }));
+    expect(deductCreditsAmount).not.toHaveBeenCalled();
+  });
+  it("最后免费名额被占时同请求退回等待付费确认，不调用模型", async () => {
+    countPlatformSkillQaToday.mockResolvedValue(0); reserveCodeMotionConsultQuota.mockResolvedValue({ reserved: false, used: 5 });
+    reserveManhuaAdvisorOperation.mockResolvedValueOnce({ kind: "awaiting_confirmation", jobId: JOB_ID, requestFingerprint: FINGERPRINT }).mockResolvedValueOnce({ kind: "execute", jobId: JOB_ID, requestFingerprint: FINGERPRINT });
+    await expect(caller().mvAnalysis.askPlatformSkillQa(input)).rejects.toMatchObject({ code: "PAYMENT_REQUIRED" });
+    expect(awaitManhuaAdvisorPaymentConfirmation).toHaveBeenCalledWith(JOB_ID);
+    expect(askPlatformSkillQa).not.toHaveBeenCalled(); expect(deductCreditsAmount).not.toHaveBeenCalled();
   });
 });

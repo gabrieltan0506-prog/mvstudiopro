@@ -1,9 +1,9 @@
 /**
- * 默认：Creator Growth **Stage 1 / Stage 2 全案文案** = **OpenRouter Kimi K3**（`moonshotai/kimi-k3`，`reasoning_effort=max`）。
+ * 默认：Creator Growth **Stage 1 / Stage 2 全案文案** = **GLM 5.3 FlashX**（`z-ai/glm-5.3-flashx`，`reasoning_effort=low`）。
  * **平台选题 / Canvas 生图** = **OpenAI 官方 gpt-image-2**（失败回退 **OpenRouter openai/gpt-image-2**）。**平台图 = GCS**。
- * 输出上限：文案默认 **131072**（`PLATFORM_KIMI_K3_MAX_COMPLETION_TOKENS` / `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`）。
+ * 输出上限：文案默认 **32768**（`PLATFORM_TEXT_MAX_COMPLETION_TOKENS` / `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`）。
  * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。Gemini 文案退路：設 `PLATFORM_STAGE2_LLM=vertex`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
- * 文案模型：`PLATFORM_OPENROUTER_MODEL`（默认 `moonshotai/kimi-k3`）；密钥：`OPENROUTER_API_KEY`。
+ * 文案模型：`PLATFORM_OPENROUTER_MODEL`（默认 `z-ai/glm-5.3-flashx`）；密钥：`OPENROUTER_API_KEY`。
  *
  * **Vertex Stage 2 暫停：** {@link PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED} 為 `true` 時，`buildPlatformContent` 一律走 OpenRouter 文案路徑，忽略 `PLATFORM_STAGE2_LLM=vertex`。Vertex 恢復後請設 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1`，或將該常數改 `false`。
  *
@@ -15,10 +15,10 @@
  */
 
 import {
-  getOpenRouterKimiK3Model,
-  OPENROUTER_KIMI_K3_MODEL,
-  OPENROUTER_KIMI_K3_REASONING_EFFORT,
-} from "../services/openrouterKimiK3.js";
+  getPlatformTextModel,
+  PLATFORM_TEXT_MODEL,
+  PLATFORM_TEXT_REASONING_EFFORT,
+} from "../services/platformTextModel.js";
 import { getEvolinkGpt56TerraModel } from "../services/evolinkChatModel.js";
 
 export type PlatformStage2LlmMode = "openai" | "vertex";
@@ -265,39 +265,39 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
 
 /**
  * Creator Growth **Stage 1 / Stage 2 全案 / 战略看板 / 深度追问 / 自定义选题文案**
- * 主路径固定 **OpenRouter Kimi K3**（`moonshotai/kimi-k3`）。
+ * 主路径固定 **GLM 5.3 FlashX**（`z-ai/glm-5.3-flashx`）。
  * **生图仍：OpenAI gpt-image-2 → OpenRouter**。
  */
 export function getPlatformStage2OpenAiModel(): string {
-  return getOpenRouterKimiK3Model();
+  return getPlatformTextModel();
 }
 
-/** @deprecated 与 {@link OPENROUTER_KIMI_K3_MODEL} 同值；保留旧导出名 */
-export const VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL = OPENROUTER_KIMI_K3_MODEL;
+/** @deprecated 与 {@link PLATFORM_TEXT_MODEL} 同值；保留旧导出名 */
+export const VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL = PLATFORM_TEXT_MODEL;
 
-/** 平台趋势 PNG 报表：Kimi K3 纯文本结构化分析，不再接收封面候选或视觉输入。 */
+/** 平台趋势 PNG 报表：GLM 5.3 FlashX 纯文本结构化分析，不再接收封面候选或视觉输入。 */
 
 /**
- * /platform 创作顾问问答默认模型：OpenRouter Kimi K3。
+ * /platform 创作顾问问答默认模型：GLM 5.3 FlashX。
  */
 export function getPlatformSkillQaOpenAiModel(): string {
-  return getOpenRouterKimiK3Model();
+  return getPlatformTextModel();
 }
 
 /**
- * 创作顾问问答推理强度：Kimi K3 固定 **max**（OpenRouter / 官方文档默认与最大档）。
- * env `PLATFORM_SKILL_QA_REASONING_EFFORT=max|high|low` 可覆盖（Kimi 侧 low/high 视网关是否透传）。
+ * 创作顾问问答推理强度：GLM 5.3 FlashX 默认 **low**（本产品成本与速度策略）。
+ * env `PLATFORM_SKILL_QA_REASONING_EFFORT=max|high|low` 可覆盖（GLM 使用 low/high/max）。
  */
 export function resolvePlatformSkillQaReasoningEffort(
   _mode?: "terra" | "sol",
 ): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" {
   const raw = norm(process.env.PLATFORM_SKILL_QA_REASONING_EFFORT);
   if (raw === "max" || raw === "high" || raw === "low") return raw;
-  return OPENROUTER_KIMI_K3_REASONING_EFFORT;
+  return PLATFORM_TEXT_REASONING_EFFORT;
 }
 
 /**
- * 解析创作顾问问答模型：计费档位仍可读 Sol/Terra（UI 额度），**实际推理一律 Kimi K3**。
+ * 解析创作顾问问答模型：计费档位仍可读 Sol/Terra（UI 额度），**实际推理一律 GLM 5.3 FlashX**。
  */
 export function resolvePlatformSkillQaOpenAiModel(params: {
   requested?: string | null;
@@ -305,7 +305,7 @@ export function resolvePlatformSkillQaOpenAiModel(params: {
   isSupervisor?: boolean;
 }): string {
   void params;
-  return getOpenRouterKimiK3Model();
+  return getPlatformTextModel();
 }
 
 /** 创作顾问超额售价（API 成本估值积分 × 1.6；可用 env 覆盖成本基数） */
@@ -324,7 +324,7 @@ export function resolvePlatformSkillQaPaidCredits(mode: "terra" | "sol"): number
 }
 
 /**
- * Stage 1 / Stage 2 文案推理强度：Kimi K3 默认 **max**。
+ * Stage 1 / Stage 2 文案推理强度：GLM 5.3 FlashX 默认 **low**。
  * 可用 `PLATFORM_STAGE2_OPENAI_REASONING_EFFORT=max|high|low` 覆盖。
  */
 export function resolvePlatformStage2OpenAiReasoningEffort():
@@ -337,7 +337,7 @@ export function resolvePlatformStage2OpenAiReasoningEffort():
   | "max" {
   const raw = norm(process.env.PLATFORM_STAGE2_OPENAI_REASONING_EFFORT);
   if (raw === "max" || raw === "high" || raw === "low") return raw;
-  return OPENROUTER_KIMI_K3_REASONING_EFFORT;
+  return PLATFORM_TEXT_REASONING_EFFORT;
 }
 
 /** 封面英文化 GPT‑5.4 JSON：默认 **medium**。 */
@@ -385,10 +385,10 @@ export function resolveGpt54CompositeTranslationMaxOutputTokens(): number {
 }
 
 /**
- * Stage 2 **第二階** JSON 封裝：与文案主路径一致，固定 OpenRouter Kimi K3。
+ * Stage 2 **第二階** JSON 封裝：与文案主路径一致，固定 GLM 5.3 FlashX。
  */
 export function getPlatformStage2StructureOpenAiModel(): string {
-  return getOpenRouterKimiK3Model();
+  return getPlatformTextModel();
 }
 
 /**

@@ -1,3 +1,4 @@
+import { migrateRetiredTextModel } from "../../shared/textModelPolicy";
 /**
  * GPT-5.6（sol / terra / luna）平台文案网关：
  * OpenAI 官方优先 → EvoLink fallback（含主路径超时切备胎）。
@@ -47,14 +48,14 @@ export function isOpenRouterChatEndpoint(apiUrl?: string): boolean {
 
 /** OpenRouter 侧模型 slug：`gpt-5.6-sol` → `openai/gpt-5.6-sol`（非 5.6 主链；保留兼容） */
 export function toOpenRouterGpt56Model(modelName: string): string {
-  const raw = String(modelName || "").trim();
+  const raw = migrateRetiredTextModel(modelName);
   if (!raw) return "openai/gpt-5.6-sol";
   if (raw.includes("/")) return raw;
   return `openai/${raw}`;
 }
 
 /**
- * 非 OpenAI GPT-5.6 的 OpenRouter `vendor/model` slug（如 `moonshotai/kimi-k3`）应直连 OpenRouter，
+ * 非 OpenAI GPT-5.6 的 OpenRouter `vendor/model` slug（如 `z-ai/glm-5.3-flashx`）应直连 OpenRouter，
  * 勿再走官方 OpenAI / Evolink 归一。
  */
 export function isDirectOpenRouterModelSlug(raw?: string): boolean {
@@ -70,7 +71,7 @@ export function resolveOpenRouterChatTarget(modelName: string): Gpt56Copywriting
   if (!openrouterKey) {
     throw new Error("OPENROUTER_API_KEY 未配置：无法调用 OpenRouter 模型");
   }
-  const raw = String(modelName || "").trim();
+  const raw = migrateRetiredTextModel(modelName);
   if (!raw) {
     throw new Error("OpenRouter modelName 为空");
   }

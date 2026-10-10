@@ -53,15 +53,8 @@ export type HtmlPptTheme = { id: string; title: string };
 /** series 允许绝对量级（亿元、万部、倍速）；条形宽度按页内 max 归一 */
 function clampSeriesValue(v: unknown): number {
   const n = Number(v);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.min(100_000_000, n);
-}
-
-/** bullets 推断：亿相对「万」放大，便于同页混排时保留量级差 */
-function scaleAbsoluteSeriesUnit(n: number, unit?: string): number {
-  if (unit === "亿") return clampSeriesValue(n * 10_000);
-  if (unit === "万" || unit === "倍") return clampSeriesValue(n);
-  return clampSeriesValue(n);
+  if (v === null || v === undefined || String(v).trim() === "" || !Number.isFinite(n)) throw new Error("图表中存在缺失或无效数值，请先核对原始数据");
+  return n;
 }
 
 function seriesBarPct(value: number, max: number): number {
@@ -69,10 +62,7 @@ function seriesBarPct(value: number, max: number): number {
 }
 
 function formatSeriesDisplay(value: number): string {
-  if (value >= 1000) return String(Math.round(value));
-  if (value >= 100) return String(Math.round(value));
-  if (Number.isInteger(value)) return String(value);
-  return value.toFixed(1);
+  return String(value);
 }
 
 /** 插图布局姿态：英雄居中 / 右停靠 / 左停靠 / 下方缩略 */
@@ -106,7 +96,7 @@ export type HtmlPptPage = {
   note?: string;
   /** 可选显式指定图表；不填则按 KPI/要点自动推断 */
   viz?: HtmlPptVizKind;
-  /** 条形/柱状数据；不填则从要点或演示种子生成 */
+  /** 条形/柱状数据；不填则只展示已有要点，不补造数据 */
   series?: Array<{ label: string; value: number }>;
   /** 挂靠的大纲主题 id */
   themeId?: string;
@@ -115,6 +105,8 @@ export type HtmlPptPage = {
   highlight?: string[];
   /** 可选插图 HTTPS URL（封面/关键页） */
   imageUrl?: string;
+  /** 映刻本人上传图片的稳定标识；导出前重新核验并更新访问地址。 */
+  imageSourceId?: string;
   /**
    * 插图分步关键帧（可选）。有图缺省时用 DEFAULT_HTML_PPT_IMAGE_MOTION；
    * 大纲阶段可先写关键帧，生图挂上 imageUrl 后生效。
@@ -699,6 +691,7 @@ export function normalizeHtmlPptPages(pages: HtmlPptPage[]): HtmlPptPage[] {
         highlight: Array.isArray(p?.highlight)
           ? p.highlight.map((h) => scrub(h, 40)).filter(Boolean).slice(0, 6)
           : undefined,
+        imageSourceId: typeof p?.imageSourceId === "string" ? p.imageSourceId : undefined,
         imageUrl:
           typeof p?.imageUrl === "string" && /^https?:\/\//i.test(p.imageUrl.trim())
             ? p.imageUrl.trim().slice(0, 2048)
@@ -717,59 +710,15 @@ export function normalizeHtmlPptPages(pages: HtmlPptPage[]): HtmlPptPage[] {
     .slice(0, 16);
 }
 
-function hashSeed(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h || 1;
-}
-
 function parseKpiPercent(kpi?: string): number | null {
   const m = String(kpi || "").match(/(\d+(?:\.\d+)?)\s*%/);
   if (!m) return null;
   return Math.max(0, Math.min(100, Number(m[1])));
 }
 
-function seriesFromPage(page: HtmlPptPage, index: number): Array<{ label: string; value: number }> {
-  if (page.series?.length) {
-    return page.series.map((s) => ({
-      label: String(s.label || "").slice(0, 28),
-      value: clampSeriesValue(s.value),
-    }));
-  }
-  const bullets = (page.bullets || []).filter(Boolean).slice(0, 6);
-  const pct = parseKpiPercent(page.kpi);
-  if (bullets.length) {
-    const seed = hashSeed(page.title + String(index));
-    return bullets.map((b, i) => {
-      const pctMatch = b.match(/(\d+(?:\.\d+)?)\s*%/);
-      const absMatch = b.match(/(\d+(?:\.\d+)?)\s*(亿|万|倍)?/);
-      const value = pctMatch
-        ? Math.max(0, Math.min(100, Number(pctMatch[1])))
-        : absMatch
-          ? scaleAbsoluteSeriesUnit(Number(absMatch[1]), absMatch[2])
-          : 35 + ((seed >> (i * 3)) % 55);
-      return {
-        label:
-          b
-            .replace(/\s*\d+(?:\.\d+)?\s*(?:%|亿|万|倍)?/g, "")
-            .trim()
-            .slice(0, 18) || `项${i + 1}`,
-        value,
-      };
-    });
-  }
-  if (pct != null) {
-    return [
-      { label: "主指标", value: pct },
-      { label: "对照", value: Math.max(12, Math.min(96, pct - 14)) },
-      { label: "目标", value: Math.max(pct, Math.min(98, pct + 10)) },
-    ];
-  }
-  const seed = hashSeed(page.title + String(index));
-  return ["A", "B", "C", "D"].map((lab, i) => ({
-    label: lab,
-    value: 28 + ((seed >> (i * 4)) % 60),
-  }));
+function seriesFromPage(page: HtmlPptPage, _index: number): Array<{ label: string; value: number }> {
+  // 数字只来自明确的 series，不能从年份、序号或文字自动猜测，也不补示意数值。
+  return (page.series || []).map(s => ({ label: String(s.label || "").slice(0, 28), value: clampSeriesValue(s.value) }));
 }
 
 export function inferHtmlPptViz(page: HtmlPptPage, index: number, total: number): HtmlPptVizKind {
@@ -854,7 +803,12 @@ function renderHighlightOnlyList(highlights: string[], buildStart: number): stri
 
 function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): string {
   const series = seriesFromPage(page, index);
-  const pct = parseKpiPercent(page.kpi) ?? series[0]?.value ?? 64;
+  if (series.some(s => s.value < 0) && !["cover", "table", "steps", "cards", "hub", "scene_cards"].includes(kind)) kind = "table";
+  if (["bars", "columns", "line", "compare", "sentiment", "ring"].includes(kind) && !series.length && !(kind === "ring" && parseKpiPercent(page.kpi) != null)) {
+    return '<div class="viz chart-in" data-build="1"><p>尚未提供这张图的数值，请补充真实数据。</p></div>';
+  }
+  if (kind === "ring" && parseKpiPercent(page.kpi) == null) return `<div class="viz"><strong>${escapeHtml(page.kpi || "未提供百分比")}</strong>${renderVizHtml(series.length ? "table" : "cards", page, index)}</div>`;
+  const pct = parseKpiPercent(page.kpi) ?? 0;
   const r = 54;
   const circ = 2 * Math.PI * r;
   const dash = ((Math.max(0, Math.min(100, pct)) / 100) * circ).toFixed(1);
@@ -878,7 +832,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
       .slice(0, 5)
       .map(
         (s, i) =>
-          `<div class="metric-row chart-in" data-build="${i + 2}" style="${toneStyle(i, `--v:${seriesBarPct(s.value, sideMax)}`)}"><em class="rank">${i + 1}</em><span>${escapeHtml(s.label)}</span><b class="countup" data-to="${Math.round(s.value)}" data-display="${escapeHtml(formatSeriesDisplay(s.value))}">0</b><i></i></div>`,
+          `<div class="metric-row chart-in" data-build="${i + 2}" style="${toneStyle(i, `--v:${seriesBarPct(s.value, sideMax)}`)}"><em class="rank">${i + 1}</em><span>${escapeHtml(s.label)}</span><b class="countup" data-to="${s.value}" data-display="${escapeHtml(formatSeriesDisplay(s.value))}">0</b><i></i></div>`,
       )
       .join("");
     const kpiText = page.kpi || `${Math.round(pct)}%`;
@@ -916,7 +870,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
       .slice(0, 6)
       .map(
         (s, i) =>
-          `<div class="col chart-in" data-build="${i + 1}" style="${toneStyle(i, `--h:${Math.round((s.value / max) * 100)}`)}"><div class="col-bar"></div><span>${escapeHtml(s.label)}</span><b class="countup" data-to="${Math.round(s.value)}">0</b></div>`,
+          `<div class="col chart-in" data-build="${i + 1}" style="${toneStyle(i, `--h:${Math.round((s.value / max) * 100)}`)}"><div class="col-bar"></div><span>${escapeHtml(s.label)}</span><b class="countup" data-to="${s.value}" data-display="${formatSeriesDisplay(s.value)}">0</b></div>`,
       )
       .join("");
     return `<div class="viz viz-cols">${cols}</div>`;
@@ -939,7 +893,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
       .slice(0, 4)
       .map(
         (s, i) =>
-          `<div class="card chart-in" data-build="${i + 1}" style="${toneStyle(i, `--v:${seriesBarPct(s.value, cardMax)}`)}"><div class="card-top"></div><b class="countup" data-to="${Math.round(s.value)}">0</b><span>${escapeHtml(s.label)}</span><i></i></div>`,
+          `<div class="card chart-in" data-build="${i + 1}" style="${toneStyle(i, `--v:${seriesBarPct(s.value, cardMax)}`)}"><div class="card-top"></div><b class="countup" data-to="${s.value}" data-display="${formatSeriesDisplay(s.value)}">0</b><span>${escapeHtml(s.label)}</span><i></i></div>`,
       )
       .join("");
     return `<div class="viz viz-cards">${cards}</div>`;
@@ -960,7 +914,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
     const dots = coords
       .map(
         (p, i) =>
-          `<g class="line-pt chart-in" data-build="${i + 2}" style="${toneStyle(i)}"><circle class="line-dot" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="5"/><text class="line-val" x="${p.x.toFixed(1)}" y="${(p.y - 10).toFixed(1)}">${Math.round(p.s.value)}</text></g>`,
+          `<g class="line-pt chart-in" data-build="${i + 2}" style="${toneStyle(i)}"><circle class="line-dot" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="5"/><text class="line-val" x="${p.x.toFixed(1)}" y="${(p.y - 10).toFixed(1)}">${p.s.value}</text></g>`,
       )
       .join("");
     const labs = pts
@@ -987,7 +941,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
       const body = rows
         .map(
           (s, i) =>
-            `<div class="hbar chart-in" data-build="${offset + i + 1}" style="${toneStyle(offset + i, `--v:${seriesBarPct(s.value, max)}`)}"><em class="rank">${i + 1}</em><div class="hbar-lab">${escapeHtml(s.label)}</div><div class="hbar-track"><div class="hbar-fill"><span class="shimmer"></span></div></div><div class="hbar-val countup" data-to="${Math.round(s.value)}">0</div></div>`,
+            `<div class="hbar chart-in" data-build="${offset + i + 1}" style="${toneStyle(offset + i, `--v:${seriesBarPct(s.value, max)}`)}"><em class="rank">${i + 1}</em><div class="hbar-lab">${escapeHtml(s.label)}</div><div class="hbar-track"><div class="hbar-fill"><span class="shimmer"></span></div></div><div class="hbar-val countup" data-to="${s.value}" data-display="${formatSeriesDisplay(s.value)}">0</div></div>`,
         )
         .join("");
       return `<div class="compare-side"><div class="compare-h chart-in" data-build="${offset}">${escapeHtml(head)}</div>${body}</div>`;
@@ -1001,7 +955,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
     const bullets = (page.bullets || []).slice(0, 6);
     const rows = series.slice(0, 8).map((s, i) => {
       const note = bullets[i] || "";
-      return `<tr class="tbl-row chart-in" data-build="${i + 1}" style="${toneStyle(i)}"><td class="tbl-rank">${i + 1}</td><td class="tbl-lab">${escapeHtml(s.label)}</td><td class="tbl-val countup" data-to="${Math.round(s.value)}" data-display="${formatSeriesDisplay(s.value)}">0</td>${note ? `<td class="tbl-note">${escapeHtml(note)}</td>` : ""}</tr>`;
+      return `<tr class="tbl-row chart-in" data-build="${i + 1}" style="${toneStyle(i)}"><td class="tbl-rank">${i + 1}</td><td class="tbl-lab">${escapeHtml(s.label)}</td><td class="tbl-val countup" data-to="${s.value}" data-display="${formatSeriesDisplay(s.value)}">0</td>${note ? `<td class="tbl-note">${escapeHtml(note)}</td>` : ""}</tr>`;
     });
     const hasNote = bullets.some(Boolean);
     const head = hasNote
@@ -1015,7 +969,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
     const cards = items
       .map(
         (s, i) =>
-          `<div class="scene-card chart-in" data-build="${i + 1}" style="${toneStyle(i)}"><div class="scene-icon" aria-hidden="true">${SCENE_CARD_EMOJI[i % SCENE_CARD_EMOJI.length]}</div><div class="scene-lab">${escapeHtml(s.label)}</div><div class="scene-val countup" data-to="${Math.round(s.value)}" data-display="${formatSeriesDisplay(s.value)}">0</div></div>`,
+          `<div class="scene-card chart-in" data-build="${i + 1}" style="${toneStyle(i)}"><div class="scene-icon" aria-hidden="true">${SCENE_CARD_EMOJI[i % SCENE_CARD_EMOJI.length]}</div><div class="scene-lab">${escapeHtml(s.label)}</div><div class="scene-val countup" data-to="${s.value}" data-display="${formatSeriesDisplay(s.value)}">0</div></div>`,
       )
       .join("");
     return `<div class="viz viz-scene-cards">${cards}</div>`;
@@ -1025,15 +979,16 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
     const bullets = (page.bullets || []).slice(0, 3);
     const vals = SENTIMENT_BUCKETS.map((b, i) => {
       const fromSeries = series.find((s) => s.label.includes(b.key));
-      const fromBullet = bullets[i]?.match(/(\d+(?:\.\d+)?)/);
-      const value = fromSeries?.value ?? (fromBullet ? Number(fromBullet[1]) : series[i]?.value ?? 33 + i * 12);
+      const value = fromSeries?.value ?? series[i]?.value;
+      if (value === undefined) return null;
       const caption = bullets[i] || fromSeries?.label || b.key;
-      return { ...b, value: Math.round(value), caption };
+      return { ...b, value, caption };
     });
     const faces = vals
+      .filter((v): v is NonNullable<typeof v> => v !== null)
       .map(
         (v, i) =>
-          `<div class="sent-face chart-in ${v.cls}" data-build="${i + 1}" style="${toneStyle(i, `--v:${Math.max(8, Math.min(100, v.value))}`)}"><div class="sent-emoji">${v.emoji}</div><div class="sent-key">${escapeHtml(v.key)}</div><div class="sent-val countup" data-to="${v.value}">0</div><div class="sent-cap">${escapeHtml(v.caption.slice(0, 24))}</div></div>`,
+          `<div class="sent-face chart-in ${v.cls}" data-build="${i + 1}" style="${toneStyle(i, `--v:${Math.max(8, Math.min(100, v.value))}`)}"><div class="sent-emoji">${v.emoji}</div><div class="sent-key">${escapeHtml(v.key)}</div><div class="sent-val countup" data-to="${v.value}" data-display="${formatSeriesDisplay(v.value)}">0</div><div class="sent-cap">${escapeHtml(v.caption.slice(0, 24))}</div></div>`,
       )
       .join("");
     return `<div class="viz viz-sentiment">${faces}</div>`;
@@ -1046,7 +1001,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
     const nodes = mods
       .map(
         (s, i) =>
-          `<div class="hub-node chart-in" data-build="${i + 1}" style="${toneStyle(i)}"><span class="hub-dot"></span><b>${escapeHtml(s.label)}</b><em class="countup" data-to="${Math.round(s.value)}">0</em></div>`,
+          `<div class="hub-node chart-in" data-build="${i + 1}" style="${toneStyle(i)}"><span class="hub-dot"></span><b>${escapeHtml(s.label)}</b><em class="countup" data-to="${s.value}" data-display="${formatSeriesDisplay(s.value)}">0</em></div>`,
       )
       .join("");
     return `<div class="viz viz-hub"><div class="hub-core chart-in" data-build="0"><div class="hub-ring"></div><strong>${hubLabel}</strong></div><div class="hub-grid">${nodes}</div></div>`;
@@ -1058,7 +1013,7 @@ function renderVizHtml(kind: HtmlPptVizKind, page: HtmlPptPage, index: number): 
     .slice(0, 8)
     .map(
       (s, i) =>
-        `<div class="hbar chart-in" data-build="${i + 1}" style="${toneStyle(i, `--v:${seriesBarPct(s.value, barMax)}`)}"><em class="rank">${i + 1}</em><div class="hbar-lab">${escapeHtml(s.label)}</div><div class="hbar-track"><div class="hbar-fill"><span class="shimmer"></span></div></div><div class="hbar-val countup" data-to="${Math.round(s.value)}" data-display="${formatSeriesDisplay(s.value)}">0</div></div>`,
+        `<div class="hbar chart-in" data-build="${i + 1}" style="${toneStyle(i, `--v:${seriesBarPct(s.value, barMax)}`)}"><em class="rank">${i + 1}</em><div class="hbar-lab">${escapeHtml(s.label)}</div><div class="hbar-track"><div class="hbar-fill"><span class="shimmer"></span></div></div><div class="hbar-val countup" data-to="${s.value}" data-display="${formatSeriesDisplay(s.value)}">0</div></div>`,
     )
     .join("");
   return `<div class="viz viz-bars">${bars}</div>`;
@@ -1068,9 +1023,8 @@ export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
   const styleId = input.styleId in HTML_PPT_STYLES ? input.styleId : "dark_research";
   const styleMeta = HTML_PPT_STYLES[styleId];
   const pages = normalizeHtmlPptPages(input.pages || []);
-  const safePages = pages.length
-    ? pages
-    : buildDefaultHtmlPptPages(input.title, 6, input.purposeZh, styleId);
+  if (!pages.length) throw new Error("请先添加页面，不会自动填入示例数据");
+  const safePages = pages;
   const title = escapeHtml(input.title || "动效PPT");
   const bgUrl = escapeHtml(styleMeta.bgUrl || `/html-ppt-templates/${styleId}/bg.png`);
   const slidesHtml = safePages

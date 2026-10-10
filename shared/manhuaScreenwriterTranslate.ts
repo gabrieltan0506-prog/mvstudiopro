@@ -1,11 +1,11 @@
 /**
- * 漫剧工厂：运镜/镜头说明 → 通顺中文（OpenRouter Kimi K3）
+ * 漫剧工厂：运镜/镜头说明 → 通顺中文（OpenRouter GLM 5.3 FlashX）
  * 人设：电影编剧与剧本创作大师；界面与 Seedance / I2V 共用中文运镜句。
  */
 
-export const MANHUA_SCREENWRITER_KIMI_MODEL = "moonshotai/kimi-k3" as const;
-/** @deprecated 与 {@link MANHUA_SCREENWRITER_KIMI_MODEL} 同值；旧导出名保留以免断链 */
-export const MANHUA_SCREENWRITER_TERRA_MODEL = MANHUA_SCREENWRITER_KIMI_MODEL;
+export const MANHUA_SCREENWRITER_GLM_MODEL = "z-ai/glm-5.3-flashx" as const;
+/** @deprecated 与 {@link MANHUA_SCREENWRITER_GLM_MODEL} 同值；旧导出名保留以免断链 */
+export const MANHUA_SCREENWRITER_TERRA_MODEL = MANHUA_SCREENWRITER_GLM_MODEL;
 
 /** 给 optimizeCustomCopy 的优化 brief（非 system，拼进用户块） */
 export const MANHUA_SCREENWRITER_TRANSLATE_BRIEF = [

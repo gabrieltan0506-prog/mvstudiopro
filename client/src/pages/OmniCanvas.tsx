@@ -14805,7 +14805,7 @@ async function runAdvisorWriterTrial() {
         </div>}
       </>}
       <ManhuaCreativeAdvisorPanel
-        knowledgePanel={<ManhuaAdvisorKnowledgePanel enabled={Boolean(user?.id)} />}
+        knowledgePanel={prepareQuestion => <ManhuaAdvisorKnowledgePanel enabled={Boolean(user?.id)} onPrepareQuestion={prepareQuestion} />}
         key={advisorComponentKey}
         userId={user?.id != null ? String(user.id) : undefined}
         projectId={projectScope?.projectId}

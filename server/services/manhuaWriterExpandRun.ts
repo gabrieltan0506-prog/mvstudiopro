@@ -1,3 +1,5 @@
+import { MANHUA_ADVISOR_HOPS, manhuaAdvisorReasoningEffort } from "./openrouterDeepSeekV41Flash";
+import { isSseContentSafetyError } from "./sseChatStream";
 /**
  * /canvas 编剧室连载扩写：四档模型调用（超凡=Anthropic Claude Opus 5）。
  * 通道与推理档写法对齐 `platformPersonaPolish.ts` 的双通道润色器，只是这里输出是长篇 Markdown 正文，
@@ -169,6 +171,19 @@ export async function runManhuaWriterExpand(params: {
       );
       throw new Error(MANHUA_WRITER_EXPAND_CAPACITY_MESSAGE);
     }
+  }
+  if (params.tier === "superb") {
+    for (const hop of MANHUA_ADVISOR_HOPS) {
+      try {
+        const result = await invokeLLM({ provider: "openai", modelName: hop.modelName, openAiGateway: hop.gateway,
+          reasoningEffort: manhuaAdvisorReasoningEffort(hop.modelName), max_tokens: maxTokens,
+          abortSignal: AbortSignal.timeout(EXPAND_TIMEOUT_MS), messages: [{ role: "user", content: params.prompt }] });
+        const text = extractFirstChoicePlainText(result).trim();
+        if (!text || result.choices?.[0]?.finish_reason === "length") throw new Error(MANHUA_WRITER_EXPAND_CAPACITY_MESSAGE);
+        return text;
+      } catch (error) { if (isSseContentSafetyError(error)) throw error; }
+    }
+    throw new Error(MANHUA_WRITER_EXPAND_CAPACITY_MESSAGE);
   }
   const targets = expandTargets(params.tier);
   if (targets.length === 0) throw new Error(MANHUA_WRITER_EXPAND_CAPACITY_MESSAGE);

@@ -177,6 +177,8 @@ export const manhuaCreativeAdvisorContextSchema = z
       "导演策略修订",
       true,
     ).optional(),
+    templateRecommendation: z.boolean().optional(),
+    templateChoiceIds: z.array(z.string().regex(/^mt_[a-z0-9]{4,16}$/i)).max(5).optional(),
     history: z
       .array(manhuaCreativeAdvisorHistoryMessageSchema)
       .max(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.historyItems)

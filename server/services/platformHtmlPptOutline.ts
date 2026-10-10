@@ -1,18 +1,13 @@
 /**
- * 动效 PPT 页面清单：Sol 生成文案与图表数据（方案 A）。
- * 主题补全 / 标题润色：Terra（免费）。
- * 路由：官方 OpenAI → OpenRouter（不走 EvoLink）。
+ * 动效 PPT 页面清单：GLM/DeepSeek 生成文案与图表数据（方案 A）。
+ * 主题补全 / 标题润色：同一GLM/DeepSeek链（当前用户免费）。
+ * 路由：GLM OpenRouter → GLM EvoLink → DeepSeek OpenRouter → DeepSeek EvoLink。
  * 长页数分片生成，避免网关/模型截断导致 Unexpected end of JSON。
  * 对外失败文案勿暴露模型名；调用方用异步 job，勿同步硬等。
  */
 import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm";
-import {
-  getPlatformSkillQaOpenAiModel,
-  getPlatformStage2OpenAiModel,
-  resolvePlatformSkillQaReasoningEffort,
-} from "../config/platformSwitches";
-import { getOfficialOpenAiApiKey } from "./gpt56CopywritingGateway.js";
-import { getOpenRouterApiKey } from "./openrouterGptImage2.js";
+import { MANHUA_ADVISOR_HOPS, manhuaAdvisorReasoningEffort } from "./openrouterDeepSeekV41Flash";
+import { isSseContentSafetyError } from "./sseChatStream";
 import {
   HTML_PPT_OUTLINE_CAPACITY_MESSAGE,
   buildHtmlPptOutlineSystemPrompt,
@@ -46,84 +41,27 @@ const HTML_PPT_THEME_SUGGEST_MAX_TOKENS = 8000;
 const CHUNK_SOFT_MAX = 6;
 const SINGLE_SHOT_MAX = 10;
 
-type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-
-async function invokeSolJson(
-  system: string,
-  userBlock: string,
-  reasoningEffort: ReasoningEffort,
-  maxTokens = HTML_PPT_OUTLINE_MAX_TOKENS,
-): Promise<string> {
-  if (!getOfficialOpenAiApiKey() && !getOpenRouterApiKey()) {
-    throw new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
-  }
-  const response = await invokeLLM({
-    provider: "openai",
-    modelName: getPlatformStage2OpenAiModel(),
-    reasoningEffort,
-    max_tokens: maxTokens,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: userBlock },
-    ],
-    response_format: { type: "json_object" },
-  });
-  return extractFirstChoicePlainText(response).trim();
-}
-
-async function invokeTerraJson(
-  system: string,
-  userBlock: string,
-  reasoningEffort: ReasoningEffort,
-  maxTokens = HTML_PPT_THEME_SUGGEST_MAX_TOKENS,
-): Promise<string> {
-  if (!getOfficialOpenAiApiKey() && !getOpenRouterApiKey()) {
-    throw new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
-  }
-  const response = await invokeLLM({
-    provider: "openai",
-    modelName: getPlatformSkillQaOpenAiModel(),
-    reasoningEffort,
-    max_tokens: maxTokens,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: userBlock },
-    ],
-    response_format: { type: "json_object" },
-  });
-  return extractFirstChoicePlainText(response).trim();
-}
-
-async function invokeSolWithEffortFallback(
-  system: string,
-  userBlock: string,
-  parse: (raw: string) => unknown,
-): Promise<unknown> {
-  const efforts: ReasoningEffort[] = ["max", "high"];
-  let lastError: unknown;
-  for (const reasoningEffort of efforts) {
+/** 一份请求最多依次四跳；每跳校验完整JSON，拒绝内容安全错误后继续换通道。 */
+async function invokePptJson<T>(system: string, userBlock: string, maxTokens: number, parse: (raw: string) => T): Promise<{ value: T; model: string }> {
+  let last: unknown;
+  for (const hop of MANHUA_ADVISOR_HOPS) {
     try {
-      const raw = await invokeSolJson(system, userBlock, reasoningEffort);
-      if (!raw || raw.length < 20) {
-        throw new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
-      }
-      return parse(raw);
-    } catch (err) {
-      lastError = err;
-      console.warn(
-        `[platformHtmlPptOutline] Kimi 失败 (reasoning=${reasoningEffort}):`,
-        err instanceof Error ? err.message.slice(0, 240) : err,
-      );
-    }
+      const response = await invokeLLM({ provider: "openai", modelName: hop.modelName, openAiGateway: hop.gateway,
+        reasoningEffort: manhuaAdvisorReasoningEffort(hop.modelName), max_tokens: maxTokens,
+        messages: [{ role: "system", content: system }, { role: "user", content: userBlock }],
+        response_format: { type: "json_object" } });
+      if (response.choices?.[0]?.finish_reason === "length") throw new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
+      return { value: parse(extractFirstChoicePlainText(response).trim()), model: hop.modelName };
+    } catch (error) { if (isSseContentSafetyError(error)) throw error; last = error; }
   }
-  throw lastError instanceof Error ? lastError : new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
+  throw last instanceof Error ? last : new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
 }
 
 async function generateOutlineOnce(
   input: HtmlPptOutlineLlmInput,
   pageCount: number,
   extraUserNote?: string,
-): Promise<HtmlPptOutlineLlmResult> {
+): Promise<HtmlPptOutlineLlmResult & { model: string }> {
   const styleId = (input.styleId || "dark_research") as HtmlPptStyleId;
   const userBlock = [
     buildHtmlPptOutlineUserPrompt({
@@ -140,11 +78,8 @@ async function generateOutlineOnce(
     .filter(Boolean)
     .join("\n");
 
-  return (await invokeSolWithEffortFallback(
-    buildHtmlPptOutlineSystemPrompt(),
-    userBlock,
-    (raw) => parseHtmlPptOutlineJson(raw, { pageCount }),
-  )) as HtmlPptOutlineLlmResult;
+  const result = await invokePptJson(buildHtmlPptOutlineSystemPrompt(), userBlock, HTML_PPT_OUTLINE_MAX_TOKENS, raw => parseHtmlPptOutlineJson(raw, { pageCount }));
+  return { ...result.value, model: result.model };
 }
 
 /** 把总页数拆成每段 ≤CHUNK_SOFT_MAX 的块，降低长稿截断概率 */
@@ -191,13 +126,13 @@ export async function generateHtmlPptOutline(
     PLATFORM_HTML_PPT_PAGE_MIN,
     Math.min(PLATFORM_HTML_PPT_PAGE_MAX, Math.floor(input.pageCount || PLATFORM_HTML_PPT_PAGE_MIN)),
   );
-  const model = getPlatformStage2OpenAiModel();
+  let model: string = MANHUA_ADVISOR_HOPS[0].modelName;
 
   try {
     const chunks = splitHtmlPptOutlinePageChunks(pageCount);
     if (chunks.length === 1) {
       const parsed = await generateOutlineOnce(input, pageCount);
-      return { ...parsed, model };
+      return parsed;
     }
 
     const allPages: HtmlPptOutlineLlmResult["pages"] = [];
@@ -222,6 +157,7 @@ export async function generateHtmlPptOutline(
         chunkN,
         chunkRoleNote(i, chunks.length, chunkN, pageCount),
       );
+      model = part.model;
       if (!deckTitle && part.deckTitle) deckTitle = part.deckTitle;
       if (!summary && part.summary) summary = part.summary;
       for (const p of part.pages) {
@@ -257,7 +193,7 @@ export async function generateHtmlPptOutline(
   }
 }
 
-/** 主题补全 + 标题润色（Terra，服务层免费） */
+/** 主题补全 + 标题润色（共用四跳，服务层免费） */
 export async function suggestHtmlPptThemes(
   input: HtmlPptThemeSuggestInput,
 ): Promise<HtmlPptThemeSuggestResult & { model: string }> {
@@ -272,37 +208,11 @@ export async function suggestHtmlPptThemes(
     briefZh: input.briefZh,
     userThemes,
   });
-  const configured = resolvePlatformSkillQaReasoningEffort();
-  const efforts: ReasoningEffort[] =
-    configured === "low" || configured === "high" ? [configured, "max"] : ["max", "high"];
-
-  let lastError: unknown;
-  const model = getPlatformSkillQaOpenAiModel();
-  for (const reasoningEffort of efforts) {
-    try {
-      const raw = await invokeTerraJson(
-        buildHtmlPptThemeSuggestSystemPrompt(),
-        userBlock,
-        reasoningEffort,
-      );
-      const parsed = parseHtmlPptThemeSuggestJson(raw);
-      return {
-        ...parsed,
-        polishedTitle: parsed.polishedTitle || title,
-        model,
-      };
-    } catch (err) {
-      lastError = err;
-      console.warn(
-        "[suggestHtmlPptThemes] Kimi 失败:",
-        err instanceof Error ? err.message.slice(0, 240) : err,
-      );
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error(HTML_PPT_OUTLINE_CAPACITY_MESSAGE);
+  const result = await invokePptJson(buildHtmlPptThemeSuggestSystemPrompt(), userBlock, HTML_PPT_THEME_SUGGEST_MAX_TOKENS, parseHtmlPptThemeSuggestJson);
+  return { ...result.value, polishedTitle: result.value.polishedTitle || title, model: result.model };
 }
 
-/** 单页重修（Sol high/65k） */
+/** 单页重修（同一四跳链/65k） */
 export async function patchHtmlPptPage(
   input: HtmlPptPagePatchInput,
 ): Promise<{ page: HtmlPptPage; model: string }> {
@@ -311,11 +221,6 @@ export async function patchHtmlPptPage(
   if (!input.page?.title) throw new Error("缺少当前页内容");
 
   const userBlock = buildHtmlPptPagePatchUserPrompt(input);
-  const page = (await invokeSolWithEffortFallback(
-    buildHtmlPptPagePatchSystemPrompt(),
-    userBlock,
-    parseHtmlPptPagePatchJson,
-  )) as HtmlPptPage;
-
-  return { page, model: getPlatformStage2OpenAiModel() };
+  const result = await invokePptJson(buildHtmlPptPagePatchSystemPrompt(), userBlock, HTML_PPT_OUTLINE_MAX_TOKENS, parseHtmlPptPagePatchJson);
+  return { page: result.value, model: result.model };
 }

@@ -4,35 +4,35 @@ import {
   resolvePlatformSkillQaPaidCredits,
   resolvePlatformSkillQaReasoningEffort,
 } from "./platformSwitches.js";
-import { OPENROUTER_KIMI_K3_MODEL } from "../services/openrouterKimiK3.js";
+import { PLATFORM_TEXT_MODEL } from "../services/platformTextModel.js";
 
 describe("resolvePlatformSkillQaOpenAiModel", () => {
-  it("always routes to OpenRouter Kimi K3 regardless of Sol/Terra UI choice", () => {
+  it("always routes to GLM 5.3 FlashX regardless of Sol/Terra UI choice", () => {
     expect(
       resolvePlatformSkillQaOpenAiModel({
         requested: "gpt-5.6-sol",
         isSupervisor: false,
       }),
-    ).toBe(OPENROUTER_KIMI_K3_MODEL);
+    ).toBe(PLATFORM_TEXT_MODEL);
     expect(
       resolvePlatformSkillQaOpenAiModel({
         requested: "gpt-5.6-terra",
         isSupervisor: true,
       }),
-    ).toBe(OPENROUTER_KIMI_K3_MODEL);
+    ).toBe(PLATFORM_TEXT_MODEL);
     expect(
       resolvePlatformSkillQaOpenAiModel({
         requested: null,
         isSupervisor: false,
       }),
-    ).toBe(OPENROUTER_KIMI_K3_MODEL);
+    ).toBe(PLATFORM_TEXT_MODEL);
   });
 });
 
 describe("resolvePlatformSkillQaReasoningEffort", () => {
-  it("defaults to max for Kimi K3", () => {
-    expect(resolvePlatformSkillQaReasoningEffort("terra")).toBe("max");
-    expect(resolvePlatformSkillQaReasoningEffort("sol")).toBe("max");
+  it("defaults to low for GLM", () => {
+    expect(resolvePlatformSkillQaReasoningEffort("terra")).toBe("low");
+    expect(resolvePlatformSkillQaReasoningEffort("sol")).toBe("low");
   });
 });
 

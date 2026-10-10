@@ -14,13 +14,13 @@ vi.mock("../_core/llm.js", () => ({
 }));
 
 vi.mock("../config/platformSwitches.js", () => ({
-  getPlatformStage2OpenAiModel: () => "moonshotai/kimi-k3",
+  getPlatformStage2OpenAiModel: () => "z-ai/glm-5.3-flashx",
   resolvePlatformStage2OpenAiReasoningEffort: () => "max",
 }));
 
-vi.mock("./openrouterKimiK3.js", () => ({
-  OPENROUTER_KIMI_K3_REASONING_EFFORT: "max",
-  resolveOpenRouterKimiK3MaxCompletionTokens: () => 131072,
+vi.mock("./platformTextModel.js", () => ({
+  PLATFORM_TEXT_REASONING_EFFORT: "low",
+  resolvePlatformTextMaxCompletionTokens: () => 32768,
 }));
 
 vi.mock("./gpt56CopywritingGateway.js", () => ({
@@ -58,7 +58,7 @@ describe("platformOptimizeCustomCopy", () => {
     );
   });
 
-  it("uses OpenRouter Kimi K3 and returns structured result", async () => {
+  it("uses OpenRouter GLM FlashX and returns structured result", async () => {
     vi.mocked(invokeLLM).mockResolvedValueOnce({ choices: [{ message: { content: "" } }] } as never);
     vi.mocked(extractFirstChoicePlainText).mockReturnValueOnce(
       JSON.stringify({
@@ -77,13 +77,13 @@ describe("platformOptimizeCustomCopy", () => {
     expect(result.optimizedMarkdown).toContain("优化稿");
     expect(vi.mocked(invokeLLM).mock.calls[0]?.[0]).toMatchObject({
       provider: "openai",
-      modelName: "moonshotai/kimi-k3",
-      reasoningEffort: "max",
-      max_tokens: 131072,
+      modelName: "z-ai/glm-5.3-flashx",
+      reasoningEffort: "low",
+      max_tokens: 32768,
     });
   });
 
-  it("throws capacity message when Kimi fails", async () => {
+  it("throws capacity message when GLM fails", async () => {
     vi.mocked(invokeLLM).mockRejectedValueOnce(new Error("OpenRouter returned non-JSON body"));
 
     await expect(

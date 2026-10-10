@@ -31,7 +31,7 @@ export function parseAdvisorRewrite(answer: string, episodeIndex: number, origin
   validateAdvisorRewriteBody(originalBody, result.body, result.endHook);
   return advisorRewriteCandidateSchema.parse({ episodeIndex, originalBody, rewrittenBody: result.body, changes: result.changes, ...(result.endHook ? { endHook: result.endHook, originalEndHook: originalEndHook || "" } : {}) });
 }
-export const TEMPLATE_PLAN_QUESTION = TEMPLATE_CATALOG_REQUEST_MARKER + '请根据当前故事推荐3—5个不同的库内剧本模板方案，说明适配依据、具体改动与保留内容。仅在answer字段内返回JSON文本，不加说明或代码围栏：{"kind":"template-plans","plans":[{"publicId":"库内ID","reason":"依据当前故事的理由","changes":["改动1","改动2"],"preserve":"保留的人物、动机与因果"}]}。plans为3—5个不同模板，不得编造ID。';
+export const TEMPLATE_PLAN_QUESTION = TEMPLATE_CATALOG_REQUEST_MARKER + '请根据当前故事给出一个主推荐，再列出另外三个不同模板各自的亮点。用日常语言说明会让哪一处更好、适用位置、代价和保留内容；用户可选一个，也可混合多个亮点。库中仅有三个可用模板时如实给三个，不编造第四个。仅在answer字段内返回JSON文本，不加说明或代码围栏：{"kind":"template-plans","plans":[{"publicId":"库内ID","reason":"依据当前故事的理由","changes":["改动1","改动2"],"preserve":"保留的人物、动机与因果"}]}。优先返回4个不同模板，第一项为主推荐，后面3项为备选。兼容历史3—5项；不得编造ID或让用户记编号。';
 export const TEMPLATE_REWRITE_QUESTION = "【模板改写建议】请把所选模板的适用方法落实到当前整集，生成完整优化稿供比较和套用。";
 export function buildTemplatePlanQuestion(templates: PublicManhuaViralTemplateCard[]): string {
   if (templates.length < 3) throw new Error("当前可用模板不足3个，暂不能生成模板方案。");

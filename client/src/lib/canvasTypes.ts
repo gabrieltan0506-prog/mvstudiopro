@@ -22,21 +22,21 @@ import { normalizeSeedance25EvolinkMode } from "@shared/seedanceEvolinkModels";
 export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize" | "video_reverse" | "music";
 
 /**
- * 画布文本主力：OpenRouter Kimi K3（`kimi-k3`）；
+ * 画布文本主力：OpenRouter GLM 5.3 FlashX（`glm-5.3-flashx`）；
  * Terra/Sol/Gemini 保留为旧选项/备用。
  */
 export type CanvasTextModel =
-  | "kimi-k3"
+  | "glm-5.3-flashx"
   | "gpt-5.6-sol"
   | "gpt-5.6-terra"
   | "gemini-3.1-pro"
   | "gpt-5.5"
   | "gpt-5.4";
 
-export const DEFAULT_CANVAS_TEXT_MODEL: CanvasTextModel = "kimi-k3";
+export const DEFAULT_CANVAS_TEXT_MODEL: CanvasTextModel = "glm-5.3-flashx";
 
 const CANVAS_TEXT_MODEL_IDS: CanvasTextModel[] = [
-  "kimi-k3",
+  "glm-5.3-flashx",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
   "gemini-3.1-pro",
@@ -48,7 +48,7 @@ export function normalizeCanvasTextModel(raw: unknown): CanvasTextModel {
   const key = String(raw || "").trim();
   if ((CANVAS_TEXT_MODEL_IDS as string[]).includes(key)) return key as CanvasTextModel;
   // 旧画布别名 / OpenRouter slug
-  if (key === "moonshotai/kimi-k3" || key === "kimi" || key.endsWith("/kimi-k3")) return "kimi-k3";
+  if (key === "kimi-k3" || key === "moonshotai/kimi-k3" || key === "kimi" || key.endsWith("/kimi-k3") || key === "z-ai/glm-5.3-flashx") return "glm-5.3-flashx";
   if (key === "gpt56sol" || key === "gpt-5.6") return "gpt-5.6-sol";
   if (key === "gpt56terra") return "gpt-5.6-terra";
   return DEFAULT_CANVAS_TEXT_MODEL;
@@ -367,7 +367,7 @@ export const CANVAS_KIND_META: Record<
 };
 
 export const TEXT_MODEL_OPTIONS: Array<{ id: CanvasTextModel; label: string }> = [
-  { id: "kimi-k3", label: "文案·主力" },
+  { id: "glm-5.3-flashx", label: "文案·主力" },
   { id: "gpt-5.6-terra", label: "文案·备用 A" },
   { id: "gpt-5.6-sol", label: "文案·备用 B" },
   { id: "gemini-3.1-pro", label: "文案·备用 C" },

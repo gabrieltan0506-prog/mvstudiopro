@@ -154,20 +154,20 @@ const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
 } as const;
 
-const CANVAS_KIMI_PRIMARY_MODEL = "moonshotai/kimi-k3" as const;
+const CANVAS_GLM_PRIMARY_MODEL = "z-ai/glm-5.3-flashx" as const;
 const CANVAS_TERRA_PRIMARY_MODEL = "gpt-5.6-terra" as const;
 const CANVAS_GEMINI_FALLBACK_MODEL = GEMINI_MODEL_MAP["gemini-3.1-pro"];
 
 function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
   const m = String(textModel || "").trim();
-  if (m === "kimi-k3" || m === "moonshotai/kimi-k3" || m.endsWith("/kimi-k3")) {
-    return CANVAS_KIMI_PRIMARY_MODEL;
+  if (m === "glm-5.3-flashx" || m === "z-ai/glm-5.3-flashx" || m === "kimi-k3" || m === "moonshotai/kimi-k3" || m.endsWith("/kimi-k3")) {
+    return CANVAS_GLM_PRIMARY_MODEL;
   }
   if (m === "gpt-5.6-sol" || m === "gpt-5.5" || m === "gpt-5.4" || m === "gpt-5.6-terra") {
     return m;
   }
-  // 默认 / 含显式 gemini：主力 Kimi；Gemini 仅 fallback
-  return CANVAS_KIMI_PRIMARY_MODEL;
+  // 默认 / 含显式 gemini：主力 GLM；Gemini 仅 fallback
+  return CANVAS_GLM_PRIMARY_MODEL;
 }
 
 /** 客户端轮询上限：两轮合计须盖过 worker CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS（0910 起 25min） */

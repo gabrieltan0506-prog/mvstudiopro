@@ -40,7 +40,7 @@ function block(patch: Partial<CanvasBlock> = {}): CanvasBlock {
     width: 420,
     height: 360,
     prompt: "原始第一镜",
-    textModel: "kimi-k3",
+    textModel: "glm-5.3-flashx",
     imageModel: "gpt-image-2",
     videoModel: "wan-3.0",
     aspectRatio: "9:16",

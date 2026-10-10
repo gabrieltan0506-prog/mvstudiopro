@@ -47,7 +47,7 @@ const defaults = {
   },
 };
 /** Reuse the native learning contract for owned-media review; no learning-library writes. */
-export async function askManhuaFilmReview(userId: number, target: AdvisorFilmReviewTarget, question: string, deps = defaults, continuity?: FilmReviewContinuityContext) {
+export async function askManhuaFilmReview(userId: number, target: AdvisorFilmReviewTarget, question: string, deps = defaults, continuity?: FilmReviewContinuityContext, craftReference?: string) {
   const uri=await deps.resolve({userId:String(userId),source:target.videoUri});
   if(!uri.startsWith("gs://")) throw new Error("请先将影片登记到作品云素材；本次未发送影片或降级成文字审片");
   const evidence=`manhua-film-review/${userId}/${randomUUID()}`;
@@ -55,7 +55,7 @@ export async function askManhuaFilmReview(userId: number, target: AdvisorFilmRev
   const receipt:Record<string,unknown>={status:"preparing",contract:"native_learning_plus_film_review",requestedModel:MODEL,route:"vertex_existing_gcs_video",uploaded:false,retries:0,generationAttempted:false,actualSamplingFps:null,requestedSamplingFps:12,cloudCostUsd:null,cost:{status:"pricing_not_verified",meaning:"Token usage is not an invoice; administrator credits are not provider cost."}};
   try {
     const source=await deps.inspect(uri); const media=await deps.probe(uri);
-    const request=buildFilmReviewNativeRequest({uri,durationSec:media.durationSec,hasAudio:media.audioStreams.length>0,question,continuity});
+    const request=buildFilmReviewNativeRequest({uri,durationSec:media.durationSec,hasAudio:media.audioStreams.length>0,question,continuity,craftReference});
     receipt.sourceGeneration=source.generation;
     await save("plan",{source:{uri,generation:source.generation},media,requestedSamplingFps:12,maxOutputTokens:65536});
     await save("request",request);
