@@ -1,0 +1,88 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' http://127.0.0.1:41625 blob:; connect-src http://127.0.0.1:41625 blob: data:; worker-src blob:; img-src data: blob:; style-src 'unsafe-inline'">
+<style>html,body{margin:0;background:transparent}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"/three/build/three.module.js","three/addons/":"/three/examples/jsm/","@sparkjsdev/spark":"/spark.module.js"}}</script></head><body>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {SplatMesh,SparkRenderer} from '@sparkjsdev/spark';
+const C={"origin":"http://127.0.0.1:41625","width":192,"height":192,"fps":24,"transform":{"scale":1,"quaternionXYZW":[0.7071067811865476,0,0,0.7071067811865476],"translationStage":[0,0,0]},"light":{"samples":16,"exposure":0,"keyEnergy":1000,"fillRatio":0.35}};
+try {
+ const renderer=new THREE.WebGLRenderer({antialias:false,alpha:true,preserveDrawingBuffer:true});
+ renderer.setPixelRatio(1);renderer.setSize(C.width,C.height);renderer.outputColorSpace=THREE.SRGBColorSpace;
+ renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=Math.pow(2,C.light.exposure);
+ renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.shadowMap.autoUpdate=false;
+ document.body.appendChild(renderer.domElement);
+ const scene=new THREE.Scene();scene.background=new THREE.Color(0x10151b);
+ const spark=new SparkRenderer({renderer,autoUpdate:false});spark.defaultView.setAutoUpdate(false);scene.add(spark);
+ const camera=new THREE.PerspectiveCamera(50,C.width/C.height,.05,500);camera.up.set(0,0,1);
+ const world=new SplatMesh({url:'/world.spz'});scene.add(world);
+ world.quaternion.fromArray(C.transform.quaternionXYZW);world.scale.setScalar(C.transform.scale);world.position.fromArray(C.transform.translationStage);
+ await world.initialized;console.info('VFX_STAGE_PROGRESS world_ready');
+ if(!world.packedSplats.numSplats || world.packedSplats.numSplats>500000)throw Error('正式场景高斯数量无效');
+ const loader=new GLTFLoader();
+ const parse=async name=>{const r=await fetch(name);if(!r.ok)throw Error('本次固定素材读取失败');const bytes=await r.arrayBuffer();return await new Promise((resolve,reject)=>loader.parse(bytes,'',resolve,reject));};
+ const [gltf,collision,timeline]=await Promise.all([parse('/animation.glb'),parse('/collider.glb'),fetch('/frames.json').then(r=>{if(!r.ok)throw Error('逐帧机位读取失败');return r.json();})]);
+ console.info('VFX_STAGE_PROGRESS models_ready');
+ if(!gltf.animations.length)throw Error('人物与碎片动画轨道为空');
+ const root=new THREE.Group();root.rotation.x=Math.PI/2;root.add(gltf.scene);scene.add(root);
+ const owner=o=>{for(let p=o;p&&p!==root;p=p.parent)if(p.userData.previsObjectId)return p.userData.previsObjectId;return null;};
+ const meshes=[],fragments=[],actors=[],ids=new Set(timeline.objectIds),fragmentIds=new Set(timeline.fragmentIds);
+ let vertices=0;
+ root.traverse(o=>{if(!o.isMesh)return;const id=owner(o);if(!ids.has(id))throw Error('导出模型含未绑定的物件');
+   vertices+=o.geometry.attributes.position.count;o.castShadow=o.receiveShadow=true;o.userData.vfxOwner=id;meshes.push(o);
+   (fragmentIds.has(id)?fragments:actors).push(o);
+   const materials=Array.isArray(o.material)?o.material:[o.material];o.material=materials.map(m=>m.clone());
+   if(!Array.isArray(o.geometry.groups)||o.geometry.groups.length===0)o.material=o.material[0];
+ });
+ if(!actors.length||!fragments.length||vertices>2000000||new Set(meshes.map(o=>o.userData.vfxOwner)).size!==ids.size)throw Error('正式模型角色、碎片或网格预算不完整');
+ const collider=collision.scene;collider.quaternion.fromArray(C.transform.quaternionXYZW);collider.scale.setScalar(C.transform.scale);collider.position.fromArray(C.transform.translationStage);
+ let colliderVertices=0;
+ collider.traverse(o=>{if(o.isMesh){colliderVertices+=o.geometry.attributes.position.count;o.material=new THREE.ShadowMaterial({opacity:.65,depthWrite:false});o.castShadow=o.receiveShadow=true;o.renderOrder=100;}});
+ if(!colliderVertices||colliderVertices>2000000)throw Error('正式场景碰撞面为空或超限');scene.add(collider);
+ const sun=new THREE.DirectionalLight(0xffffff,C.light.keyEnergy/1000);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.normalBias=.01;sun.shadow.bias=-.0001;scene.add(sun,sun.target);
+ const fill=new THREE.HemisphereLight(0xffffff,0x384552,C.light.keyEnergy/1000*C.light.fillRatio);scene.add(fill);
+ const mixer=new THREE.AnimationMixer(gltf.scene);for(const clip of gltf.animations){const action=mixer.clipAction(clip);action.setLoop(THREE.LoopOnce,1);action.clampWhenFinished=true;action.play();}
+ const cubeTarget=new THREE.WebGLCubeRenderTarget(128,{type:THREE.HalfFloatType,generateMipmaps:true,minFilter:THREE.LinearMipmapLinearFilter});
+ const cubeCamera=new THREE.CubeCamera(.05,500,cubeTarget);const pmrem=new THREE.PMREMGenerator(renderer);
+ const envView=spark.newViewpoint({sort360:true,autoUpdate:false});let propEnvironment,actorEnvironment;
+ const materialList=o=>Array.isArray(o.material)?o.material:[o.material];
+ async function captureEnvironment(center,hidden){
+   const visibility=hidden.map(o=>o.visible),saved=collider.visible;hidden.forEach(o=>o.visible=false);collider.visible=false;
+   const tone=renderer.toneMapping,exposure=renderer.toneMappingExposure;renderer.toneMapping=THREE.NoToneMapping;renderer.toneMappingExposure=1;renderer.shadowMap.needsUpdate=true;
+   try{await envView.prepare({scene,viewToWorld:new THREE.Matrix4().setPosition(center),update:true});spark.prepareViewpoint(envView);cubeCamera.position.copy(center);cubeCamera.update(renderer,scene);return pmrem.fromCubemap(cubeTarget.texture);}
+   finally{renderer.toneMapping=tone;renderer.toneMappingExposure=exposure;hidden.forEach((o,i)=>o.visible=visibility[i]);collider.visible=saved;spark.prepareViewpoint(spark.defaultView);}
+ }
+ function setEnvironment(objects,target){for(const o of objects)for(const material of materialList(o)){if(material.isMeshStandardMaterial){material.envMap=target.texture;material.envMapIntensity=.8;material.needsUpdate=true;}}}
+ const halton=(n,b)=>{let value=0,f=1;while(n>0){f/=b;value+=f*(n%b);n=Math.floor(n/b);}return value;};
+ const pixels=new Uint8Array(C.width*C.height*4),sum=new Uint32Array(pixels.length),out=document.createElement('canvas');out.width=C.width;out.height=C.height;
+ const output=out.getContext('2d'),image=output.createImageData(C.width,C.height);
+ window.__VFX_STAGE__={ready:true,inspect(){return {animations:gltf.animations.map(c=>({name:c.name,duration:c.duration,tracks:c.tracks.length})),meshes:meshes.map(o=>({id:o.userData.vfxOwner,skinned:!!o.isSkinnedMesh,positions:Array.from({length:o.geometry.attributes.position.count},(_,i)=>o.getVertexPosition(i,new THREE.Vector3()).applyMatrix4(o.matrixWorld).toArray())}))}},async frame(index){
+   const row=timeline.frames[index];if(!row||row.frame!==index+1||!row.active)throw Error('正式场景帧不在本次时窗');
+   mixer.setTime(index/C.fps);const visible=new Set(row.visibleObjectIds);
+   for(const o of meshes){o.visible=visible.has(o.userData.vfxOwner);if(fragmentIds.has(o.userData.vfxOwner))for(const m of materialList(o)){m.opacity=row.fragmentOpacity[o.userData.vfxOwner];m.transparent=m.opacity<1;m.depthWrite=m.opacity>=1;}}
+   root.updateMatrixWorld(true);for(const o of meshes)if(o.isSkinnedMesh)o.skeleton.update();
+   camera.position.fromArray(row.camera.position);camera.quaternion.fromArray(row.camera.quaternionXYZW);camera.fov=row.camera.vfovRad*180/Math.PI;
+   camera.near=row.camera.clipStart;camera.far=row.camera.clipEnd;camera.clearViewOffset();camera.updateProjectionMatrix();camera.updateMatrixWorld(true);
+   const box=new THREE.Box3();for(const o of meshes)if(o.visible)box.expandByObject(o,true);if(box.isEmpty())throw Error('本帧没有真实可见角色或碎片');
+   const center=box.getCenter(new THREE.Vector3()),span=Math.max(4,box.getSize(new THREE.Vector3()).length());
+   sun.position.copy(center).add(new THREE.Vector3(-3,-4,5).normalize().multiplyScalar(span+5));sun.target.position.copy(center);sun.shadow.camera.left=sun.shadow.camera.bottom=-span;sun.shadow.camera.right=sun.shadow.camera.top=span;sun.shadow.camera.near=.1;sun.shadow.camera.far=2*span+10;sun.shadow.camera.updateProjectionMatrix();
+   scene.updateMatrixWorld(true);spark.time=index/C.fps;spark.deltaTime=0;
+   console.info('VFX_STAGE_PROGRESS frame='+index+' reflections_start');
+   const nextProp=await captureEnvironment(center,fragments);setEnvironment(fragments,nextProp);propEnvironment?.dispose();propEnvironment=nextProp;
+   const nextActor=await captureEnvironment(center,actors);setEnvironment(actors,nextActor);actorEnvironment?.dispose();actorEnvironment=nextActor;
+   await spark.defaultView.prepare({scene,camera,update:true});renderer.shadowMap.needsUpdate=true;sum.fill(0);
+   for(let sample=0;sample<C.light.samples;sample++){
+     camera.setViewOffset(C.width,C.height,halton(sample+1,2)-.5,halton(sample+1,3)-.5,C.width,C.height);
+     renderer.render(scene,camera);if(sample%4===0)console.info('VFX_STAGE_PROGRESS frame='+index+' sample='+sample);renderer.getContext().readPixels(0,0,C.width,C.height,renderer.getContext().RGBA,renderer.getContext().UNSIGNED_BYTE,pixels);
+     for(let p=0;p<pixels.length;p++)sum[p]+=pixels[p];
+   }
+   camera.clearViewOffset();camera.updateMatrixWorld(true);
+   for(let y=0;y<C.height;y++)for(let x=0;x<C.width*4;x++)image.data[y*C.width*4+x]=Math.round(sum[(C.height-1-y)*C.width*4+x]/C.light.samples);
+   output.putImageData(image,0,0);
+   return {png:out.toDataURL('image/png'),frame:index+1,timeSec:index/C.fps,position:camera.position.toArray(),quaternion:camera.quaternion.toArray(),vfovRad:camera.fov*Math.PI/180,
+     visibleObjectIds:[...new Set(meshes.filter(o=>o.visible).map(o=>o.userData.vfxOwner))].sort(),samples:C.light.samples,
+     gaussianCount:world.packedSplats.numSplats,vertices,colliderVertices,dynamicReflectionMaps:2,shadowMapSize:sun.shadow.mapSize.x};
+ }};
+}catch(error){window.__VFX_STAGE_ERROR__=String(error?.message||error);}
+</script></body></html>

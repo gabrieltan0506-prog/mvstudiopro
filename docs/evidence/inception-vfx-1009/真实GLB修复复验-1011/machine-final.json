@@ -1,0 +1,26 @@
+[
+  {
+    "id": "7812595b294778",
+    "state": "stopped",
+    "region": "sin",
+    "updated_at": "2026-10-10T19:33:49Z",
+    "guest": {
+      "cpu_kind": "performance",
+      "cpus": 4,
+      "memory_mb": 8192
+    },
+    "process": "rig"
+  },
+  {
+    "id": "d892541f602228",
+    "state": "started",
+    "region": "sin",
+    "updated_at": "2026-10-10T17:54:34Z",
+    "guest": {
+      "cpu_kind": "shared",
+      "cpus": 4,
+      "memory_mb": 8192
+    },
+    "process": "app"
+  }
+]

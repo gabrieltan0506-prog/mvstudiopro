@@ -1,0 +1,2989 @@
+{
+  "complete": true,
+  "frames": 48,
+  "receipts": [
+    {
+      "frame": 1,
+      "timeSec": 0,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18533,
+      "sha256": "c6e1ebeacbaf57fd2b3f2ebb876c761b2c67c736a2d1065921b6d9acbc0d8bf3"
+    },
+    {
+      "frame": 2,
+      "timeSec": 0.041666666666666664,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18524,
+      "sha256": "ad3052af1660edbec5069e35712cdfd98c923718dcc2aa311cb0636446941551"
+    },
+    {
+      "frame": 3,
+      "timeSec": 0.08333333333333333,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18525,
+      "sha256": "6b5fe90f944a3416804185d42b218d6c01e921565cc57f626abc2287b5214b16"
+    },
+    {
+      "frame": 4,
+      "timeSec": 0.125,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18502,
+      "sha256": "d6baa1f6dd369b7b378095d8bac9f880c0f6bd3baa0c26fed03c6497e0a9fb94"
+    },
+    {
+      "frame": 5,
+      "timeSec": 0.16666666666666666,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18501,
+      "sha256": "f9ad2c885710fec0cc53c5caea3db32ccde5a8511edc8654e87b2d71a406b04a"
+    },
+    {
+      "frame": 6,
+      "timeSec": 0.20833333333333334,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18571,
+      "sha256": "a205c0178d11b3723c8cd23de46af695e05bb6930927e120c7733b65c327c982"
+    },
+    {
+      "frame": 7,
+      "timeSec": 0.25,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18600,
+      "sha256": "ccadb0ab82f567da247cb8e65b072253a51721a537c1172fcdb68d60c979cb07"
+    },
+    {
+      "frame": 8,
+      "timeSec": 0.2916666666666667,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18588,
+      "sha256": "733a984c9e18f7d92acb958d67197088b3e96eac7abd920c32005958ad9046ef"
+    },
+    {
+      "frame": 9,
+      "timeSec": 0.3333333333333333,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18684,
+      "sha256": "3d9f9a896fbed5f01d1b89e27f70ab8c8f54c6ca02ccdba8ba3306c2a7301cf5"
+    },
+    {
+      "frame": 10,
+      "timeSec": 0.375,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18709,
+      "sha256": "7ec4af513a21a19e831fbbe5cb05640c34b61fc9dddc5b04d626385d6d78d0dd"
+    },
+    {
+      "frame": 11,
+      "timeSec": 0.4166666666666667,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18696,
+      "sha256": "b2eddd6bce3949168199e5deb81a9e85781b86f9a1de5c26c06aae27157e41a5"
+    },
+    {
+      "frame": 12,
+      "timeSec": 0.4583333333333333,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18789,
+      "sha256": "f3973169e5c51113bcfdb58fbaec59e93e9320bcba1be00d7f2f611511464681"
+    },
+    {
+      "frame": 13,
+      "timeSec": 0.5,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18737,
+      "sha256": "ff0bff623c6efc7e1b30011d68eff527a025c7d2d34c819f01b1dcbaef41495d"
+    },
+    {
+      "frame": 14,
+      "timeSec": 0.5416666666666666,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18722,
+      "sha256": "ef3a3167db56097be4e30b97790f30e765d16d2f72325fac5828ba85bdc92c95"
+    },
+    {
+      "frame": 15,
+      "timeSec": 0.5833333333333334,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18691,
+      "sha256": "920aec0b891ffa12c330713681896cb9f912aa0f93d7a7848591c5e9b38b4b1e"
+    },
+    {
+      "frame": 16,
+      "timeSec": 0.625,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18727,
+      "sha256": "491e8055c0916b7babd3a7aa3ae9cbad26b490fd1c4b2e286755a8232ad7b93c"
+    },
+    {
+      "frame": 17,
+      "timeSec": 0.6666666666666666,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18751,
+      "sha256": "f0a4253813bee933e8ad5510952aec72cc972aaf340d7a61d8ef3382c1ef6174"
+    },
+    {
+      "frame": 18,
+      "timeSec": 0.7083333333333334,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18750,
+      "sha256": "026e0746c9dfb71946e68af851f12629757d9bbc08871b1efa308679bdc1a221"
+    },
+    {
+      "frame": 19,
+      "timeSec": 0.75,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18722,
+      "sha256": "11af40680d313883ed095ee6b480f94a68737aa8b2db78b5f156c263261eef0b"
+    },
+    {
+      "frame": 20,
+      "timeSec": 0.7916666666666666,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18669,
+      "sha256": "107ac1264cd7f6df7ad463785e60037c024a4e13531cdc2bac7b2d40b69417c7"
+    },
+    {
+      "frame": 21,
+      "timeSec": 0.8333333333333334,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18717,
+      "sha256": "606344cfc17a87ec63d7dd186cdffd5c7039e87857ffb93110e6c8251efd1c3a"
+    },
+    {
+      "frame": 22,
+      "timeSec": 0.875,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18709,
+      "sha256": "6b7e09270c1b6b14beb860bf9465940f2f96a4b3971a09ccbc51b0c0d19546b3"
+    },
+    {
+      "frame": 23,
+      "timeSec": 0.9166666666666666,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18675,
+      "sha256": "bbd35648b4f3d6e206e47f744ddb2af0622ea32d9b9948ac99dbd841ac31a6d0"
+    },
+    {
+      "frame": 24,
+      "timeSec": 0.9583333333333334,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18700,
+      "sha256": "c97b59487bf1ce072f32e7b0056358f42c3a094143d892647a4e2520a215f0c5"
+    },
+    {
+      "frame": 25,
+      "timeSec": 1,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18710,
+      "sha256": "ea882bce9b55bc8c43fe03089e74d3e8fafc5c6b8e489d71970b00a6c7e72aec"
+    },
+    {
+      "frame": 26,
+      "timeSec": 1.0416666666666667,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18706,
+      "sha256": "b31429b2e8167d91bd64fe09e746c686e547d992bf75f8076c425e773dbd4e27"
+    },
+    {
+      "frame": 27,
+      "timeSec": 1.0833333333333333,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18706,
+      "sha256": "030705308f1e413db488e7d6ea86b8400833c371fe5b39dc6df6cf98c5ecec6f"
+    },
+    {
+      "frame": 28,
+      "timeSec": 1.125,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18684,
+      "sha256": "65950f719bc13a2a431ae7870957bf02472f4e6c1c7a3b8e15009adabdcb4bb8"
+    },
+    {
+      "frame": 29,
+      "timeSec": 1.1666666666666667,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18708,
+      "sha256": "b8c5dd28cdbc3bb6d058501be6f61f5bd02dd35419773b19b6d0bcc832a2b1b0"
+    },
+    {
+      "frame": 30,
+      "timeSec": 1.2083333333333333,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18697,
+      "sha256": "b4cdc556b4f777b18d4b324fc85413da58035e03cdc81720e8011cfd949ebacd"
+    },
+    {
+      "frame": 31,
+      "timeSec": 1.25,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18740,
+      "sha256": "b1eacd6e3cb934c02498ac8288de6cf80e1afefe232fdf7e2c5525b89ecbc6f0"
+    },
+    {
+      "frame": 32,
+      "timeSec": 1.2916666666666667,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18692,
+      "sha256": "78b7ee9cee06271d115a39ef33ba24bc147ef123cd3532ead8be03dabfa1dfd9"
+    },
+    {
+      "frame": 33,
+      "timeSec": 1.3333333333333333,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18727,
+      "sha256": "c4a8adb135a59aed2f27fef02ffcb3000cb40d4b4ab3ef0c4da925abe9964424"
+    },
+    {
+      "frame": 34,
+      "timeSec": 1.375,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18711,
+      "sha256": "a3d8e6e7c89433209b0e239d38089c68fcb8d032a3007c596873151ac389935f"
+    },
+    {
+      "frame": 35,
+      "timeSec": 1.4166666666666667,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18714,
+      "sha256": "0a910e242eb85f0a496d38943d7586b95b6ff37e7c6e9a7504c128be798523a1"
+    },
+    {
+      "frame": 36,
+      "timeSec": 1.4583333333333333,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18729,
+      "sha256": "8dbc354231b69469619fe5a5a08656e4fb164a2c4c76f69717d8f582d1e36eb2"
+    },
+    {
+      "frame": 37,
+      "timeSec": 1.5,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18759,
+      "sha256": "2f7d12ea89be02fc85fb3ebac3b7e1f07864ea946e040010aba6561612f054f0"
+    },
+    {
+      "frame": 38,
+      "timeSec": 1.5416666666666667,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18730,
+      "sha256": "9394070ca2387299d6bac7ddb71fcfbf5b29907d3d2fe9cfc5a45e9f055cfc4b"
+    },
+    {
+      "frame": 39,
+      "timeSec": 1.5833333333333333,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18726,
+      "sha256": "a84ed15bb7fc0b002a15a88f3476f9946913bda1324da4ba49fff0e75f5dd243"
+    },
+    {
+      "frame": 40,
+      "timeSec": 1.625,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18742,
+      "sha256": "f7210a39f8acfd2bdbee9fd795eabb09ae643e115dd944702841e2bc5beb5f85"
+    },
+    {
+      "frame": 41,
+      "timeSec": 1.6666666666666667,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18692,
+      "sha256": "561845248983ec39b952e5902b4441a4645d9c423a842d32fe9939fd7ac70b51"
+    },
+    {
+      "frame": 42,
+      "timeSec": 1.7083333333333333,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18721,
+      "sha256": "49e6afa8e1277badabbd61a2b8b157ef9c97d86ba57145b9f6e0fba9c4c673d1"
+    },
+    {
+      "frame": 43,
+      "timeSec": 1.75,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18801,
+      "sha256": "8524533cbc20c589f7a701dadd2d1b0828cf1bd345e6afaf7a0eef311c76a8ff"
+    },
+    {
+      "frame": 44,
+      "timeSec": 1.7916666666666667,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18744,
+      "sha256": "191f01e353a8c1a764ee2cb1d884338fc79e36dd75b8bfeef15dcd365427a636"
+    },
+    {
+      "frame": 45,
+      "timeSec": 1.8333333333333333,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18769,
+      "sha256": "a33e5f3416c25b4953cc099e0c363df2ebc5eace1adcbdd0bd68557237c119a1"
+    },
+    {
+      "frame": 46,
+      "timeSec": 1.875,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18716,
+      "sha256": "57d50205590e8aee99e5275e85e72148be522b4ae807105d7a5bba1d91d431aa"
+    },
+    {
+      "frame": 47,
+      "timeSec": 1.9166666666666667,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18757,
+      "sha256": "4245dfa9e0c1d632613189650d9b19aec180a57ebcf56ebd9b815fb2c89f0f58"
+    },
+    {
+      "frame": 48,
+      "timeSec": 1.9583333333333333,
+      "position": [
+        0,
+        -5,
+        2
+      ],
+      "quaternion": [
+        0.6339889764785767,
+        0,
+        0,
+        0.7733420729637146
+      ],
+      "vfovRad": 0.6911111854780677,
+      "visibleObjectIds": [
+        "TEST_ONLY_body",
+        "TEST_ONLY_fragment"
+      ],
+      "samples": 16,
+      "gaussianCount": 9,
+      "vertices": 48,
+      "colliderVertices": 4,
+      "dynamicReflectionMaps": 2,
+      "shadowMapSize": 2048,
+      "bytes": 18741,
+      "sha256": "0617eb9e618bd05241797c725e810babe364ecf6b0ff72e418d0284c5a838261"
+    }
+  ],
+  "poseChecks": [
+    {
+      "frame": 1,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 2,
+      "maxVertexError": 6.76162717563207e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 3,
+      "maxVertexError": 7.026669900510479e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 4,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 5,
+      "maxVertexError": 7.208647579486096e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 6,
+      "maxVertexError": 7.20864756303883e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 7,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 8,
+      "maxVertexError": 7.583913056951568e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 9,
+      "maxVertexError": 7.583913056951568e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 10,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 11,
+      "maxVertexError": 7.583913039863864e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 12,
+      "maxVertexError": 7.583913039863864e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 13,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 14,
+      "maxVertexError": 8.372467352791422e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 15,
+      "maxVertexError": 8.372467352791422e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 16,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 17,
+      "maxVertexError": 8.372467352791422e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 18,
+      "maxVertexError": 8.372467352791422e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 19,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 20,
+      "maxVertexError": 8.372467352791422e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 21,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 22,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 23,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 24,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 25,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 26,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 27,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 28,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 29,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 30,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 31,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 32,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 33,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 34,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 35,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 36,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 37,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 38,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 39,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 40,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 41,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 42,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 43,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 44,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 45,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 46,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 47,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    },
+    {
+      "frame": 48,
+      "maxVertexError": 6.848862883020281e-8,
+      "comparisons": [
+        {
+          "id": "TEST_ONLY_body",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        },
+        {
+          "id": "TEST_ONLY_fragment",
+          "blenderVertices": 8,
+          "threeVertices": 24
+        }
+      ],
+      "animations": [
+        {
+          "name": "TEST_ONLY_rig",
+          "duration": 1.9583333730697632,
+          "tracks": 5
+        },
+        {
+          "name": "TEST_ONLY_fragment",
+          "duration": 1.9583333730697632,
+          "tracks": 1
+        }
+      ],
+      "skinnedMeshes": 1
+    }
+  ],
+  "errors": [],
+  "consoleLogs": [
+    "info: VFX_STAGE_PROGRESS world_ready",
+    "info: VFX_STAGE_PROGRESS models_ready",
+    "info: VFX_STAGE_PROGRESS frame=0 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=0 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=0 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=0 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=0 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=1 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=1 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=1 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=1 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=1 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=2 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=2 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=2 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=2 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=2 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=3 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=3 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=3 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=3 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=3 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=4 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=4 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=4 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=4 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=4 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=5 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=5 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=5 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=5 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=5 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=6 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=6 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=6 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=6 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=6 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=7 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=7 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=7 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=7 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=7 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=8 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=8 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=8 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=8 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=8 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=9 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=9 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=9 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=9 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=9 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=10 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=10 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=10 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=10 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=10 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=11 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=11 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=11 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=11 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=11 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=12 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=12 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=12 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=12 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=12 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=13 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=13 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=13 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=13 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=13 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=14 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=14 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=14 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=14 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=14 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=15 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=15 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=15 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=15 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=15 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=16 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=16 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=16 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=16 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=16 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=17 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=17 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=17 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=17 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=17 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=18 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=18 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=18 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=18 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=18 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=19 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=19 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=19 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=19 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=19 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=20 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=20 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=20 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=20 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=20 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=21 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=21 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=21 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=21 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=21 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=22 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=22 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=22 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=22 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=22 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=23 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=23 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=23 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=23 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=23 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=24 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=24 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=24 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=24 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=24 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=25 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=25 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=25 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=25 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=25 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=26 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=26 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=26 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=26 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=26 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=27 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=27 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=27 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=27 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=27 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=28 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=28 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=28 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=28 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=28 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=29 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=29 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=29 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=29 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=29 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=30 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=30 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=30 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=30 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=30 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=31 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=31 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=31 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=31 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=31 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=32 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=32 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=32 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=32 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=32 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=33 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=33 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=33 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=33 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=33 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=34 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=34 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=34 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=34 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=34 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=35 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=35 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=35 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=35 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=35 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=36 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=36 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=36 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=36 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=36 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=37 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=37 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=37 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=37 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=37 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=38 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=38 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=38 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=38 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=38 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=39 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=39 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=39 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=39 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=39 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=40 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=40 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=40 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=40 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=40 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=41 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=41 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=41 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=41 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=41 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=42 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=42 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=42 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=42 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=42 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=43 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=43 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=43 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=43 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=43 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=44 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=44 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=44 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=44 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=44 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=45 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=45 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=45 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=45 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=45 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=46 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=46 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=46 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=46 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=46 sample=12",
+    "info: VFX_STAGE_PROGRESS frame=47 reflections_start",
+    "info: VFX_STAGE_PROGRESS frame=47 sample=0",
+    "info: VFX_STAGE_PROGRESS frame=47 sample=4",
+    "info: VFX_STAGE_PROGRESS frame=47 sample=8",
+    "info: VFX_STAGE_PROGRESS frame=47 sample=12"
+  ]
+}
