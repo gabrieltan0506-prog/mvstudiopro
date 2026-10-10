@@ -15068,10 +15068,17 @@ export default function PlatformPage() {
                         <div role="status" aria-live="polite" className="mt-3 rounded-xl border border-[#8cefff]/20 bg-[rgba(140,239,255,0.07)] px-3 py-2.5 text-xs text-[#c9c0e6]">
                           <div className="font-semibold">待审模板 · {liveManhuaProposal.titleZh}</div>
                           <div className="mt-1">{liveManhuaProposal.reference ? `第 ${liveManhuaProposal.reference.episodeIndex} 集 · ` : ""}
-                            {liveManhuaProposal.totalSegments ? `${liveManhuaProposal.readCompletedSegments}/${liveManhuaProposal.totalSegments} 片门禁通过` : "正在准备分片"}
+                            {manhuaViralProposalsQuery.isError ? "待审卡读取失败，请稍后重试"
+                              : liveManhuaProposal.status === "succeeded"
+                                ? !liveManhuaProposal.reference ? "本轮没有可关联的待审卡"
+                                  : manhuaViralProposalsQuery.isFetching ? "正在读取已保存的待审卡" : "本轮暂无待批准卡"
+                                : liveManhuaProposal.status === "failed" ? "本轮已停止，已保存成果保留"
+                                  : liveManhuaProposal.totalSegments ? `${liveManhuaProposal.readCompletedSegments}/${liveManhuaProposal.totalSegments} 片门禁通过` : "正在准备分片"}
                           </div>
                           <div className="mt-1 text-[#c9c0e6]/70">{liveManhuaProposal.detailZh}</div>
-                          <div className="mt-1 text-[#c9c0e6]/60">每片门禁通过即更新进度；整形完成后可批准。</div>
+                          <div className="mt-1 text-[#c9c0e6]/60">{liveManhuaProposal.status === "queued" || liveManhuaProposal.status === "running"
+                            ? "每片门禁通过即更新进度；整形完成后可批准。"
+                            : "已批准的卡可在上方模板库查看；不要为恢复显示重复学习。"}</div>
                         </div>
                       ) : null}
                       {pendingManhuaViralProposals.length > 0 && selectedManhuaProposal ? (

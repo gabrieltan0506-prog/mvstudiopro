@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   assertPublicManhuaSourceHost,
   buildManhua0996EpisodeApiRequest,
   describeManhuaSourceFetchFailure,
   fetchManhua0996EpisodePlayback,
+  fetchManhua0996SeriesPage,
   MANHUA_MIRROR_SOURCE_AUTHORIZATION_ENV,
   MANHUA_MIRROR_SOURCE_COOKIE_ENV,
   readManhuaMirrorSourceAuthHeaders,
@@ -34,6 +36,26 @@ afterEach(() => {
 });
 
 describe("第三方播放页服务端安全边界", () => {
+  it("计划直达原域、执行换镜像后，分集身份完全一致", async () => {
+    const html = readFileSync(new URL("./__fixtures__/manhua-0996-series-page.html", import.meta.url), "utf8");
+    const directFetch = vi.fn(async () => new Response(html, { headers: { "content-type": "text/html" } })) as typeof fetch;
+    const direct = await fetchManhua0996SeriesPage(sourceUrl, undefined, directFetch);
+    const hosts: string[] = [];
+    const fallbackFetch = vi.fn(async (input: RequestInfo | URL) => {
+      hosts.push(new URL(String(input)).hostname);
+      return hosts.length === 1 ? new Response("", { status: 503 }) : new Response(html, { headers: { "content-type": "text/html" } });
+    }) as typeof fetch;
+    const fallback = await fetchManhua0996SeriesPage(sourceUrl, undefined, fallbackFetch);
+    expect(hosts).toEqual(["0996zp.com", "9zhoukj.com"]);
+    expect(fallback).toEqual(direct);
+    expect(fallback.episodes.every(episode => new URL(episode.url).hostname === "0996zp.com")).toBe(true);
+  }, 10_000);
+  it("镜像归一仍拒绝另一剧目录，不能以换域为由放宽身份", async () => {
+    const html = readFileSync(new URL("./__fixtures__/manhua-0996-series-page.html", import.meta.url), "utf8")
+      .replaceAll("146259", "146260");
+    const fetchImpl = vi.fn(async () => new Response(html, { headers: { "content-type": "text/html" } })) as typeof fetch;
+    await expect(fetchManhua0996SeriesPage(sourceUrl, undefined, fetchImpl)).rejects.toThrow("分集目录");
+  });
   it("公开前端签名与真实请求已验证向量一致", () => {
     const source = parseManhua0996SourceUrl(
       "https://0996zp.com/vod/play/146259/sid/1311527",

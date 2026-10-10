@@ -1260,6 +1260,27 @@ describe("0917 焦点项兜底：服务端换 seriesKey 后学习面板仍能跟
 
 describe("待审模板从入队到分片保存实时显示", () => {
   const base = { jobId: "this-page", status: "queued" as const, input: { params: { nativeDeepReadConfirmed: true, title: "本页影片" } } };
+  it("第12集成功终态仅有batchIndexes，刷新后仍精确找到已保存卡", () => {
+    const saved = JSON.parse(JSON.stringify({ ...base, status: "succeeded", output: {
+      seriesKey: "5bf6be0bf3d9-g38f", batchIndexes: [12], proposalId: null,
+      analysisStageLabel: "本轮学习结束",
+    } }));
+    expect(nativeLearnLiveProposalState(saved)?.reference).toEqual({ seriesKey: "5bf6be0bf3d9-g38f", episodeIndex: 12 });
+  });
+  it("成功批量只关联本任务实际落卡集，不遗失其余卡或串到其他剧", () => {
+    expect(nativeLearnLiveProposalState({ ...base, status: "succeeded", output: {
+      seriesKey: "batch-series", batchIndexes: [12, 13, 12], currentEpisodeIndex: 99,
+    } })?.reference).toEqual({ seriesKey: "batch-series", episodeIndex: 12, episodeIndexes: [12, 13] });
+  });
+  it("非法集号与空批次不能编造卡；运行中的进度不被旧批次取代", () => {
+    expect(nativeLearnLiveProposalState({ ...base, status: "succeeded", output: {
+      seriesKey: "this-series", batchIndexes: [0, -1, 1.5, "12", 1000],
+    } })?.reference).toBeUndefined();
+    expect(nativeLearnLiveProposalState({ ...base, status: "succeeded", output: { seriesKey: "this-series", batchIndexes: [] } })?.reference).toBeUndefined();
+    expect(nativeLearnLiveProposalState({ ...base, status: "running", output: {
+      nativeSeriesKey: "active-series", currentEpisodeIndex: 14, batchIndexes: [12],
+    } })?.reference).toEqual({ seriesKey: "active-series", episodeIndex: 14 });
+  });
   it("真实入队立即给学习状态，无卡也不等待刷新，不产生可批准卡", () => {
     expect(nativeLearnLiveProposalState(base)).toMatchObject({ jobId: "this-page", titleZh: "本页影片", completedSegments: 0, totalSegments: 0 });
     expect(nativeLearnLiveProposalState(base)?.reference).toBeUndefined();

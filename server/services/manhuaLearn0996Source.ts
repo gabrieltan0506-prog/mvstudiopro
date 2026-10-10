@@ -362,7 +362,10 @@ export async function fetchManhua0996SeriesPage(
   if (!source) throw new Error("第三方播放页链接无效或不在可信站点内");
   return runWithManhua0996HostFallback(source, signal, async (candidate) => {
     const html = await fetchTrustedPageHtml(candidate.canonicalUrl, signal, fetchImpl);
-    return parseManhua0996SeriesPage(html, candidate);
+    // 镜像只是传输兜底；分集身份始终绑定用户原来源，避免计划与执行
+    // 两次解析命中不同镜像时，把同一剧同一集误判成来源变化。
+    // 解析器仍逐项校验原 vodId、当前 nid 与完整分集目录。
+    return parseManhua0996SeriesPage(html, source);
   });
 }
 
