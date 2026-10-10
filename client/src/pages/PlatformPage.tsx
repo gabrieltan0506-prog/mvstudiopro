@@ -26,6 +26,7 @@ import {
   type CompletedManhuaLocalVideoUpload,
 } from "@/lib/manhuaLocalVideoUpload";
 import { GrowthSystemDebugPanel } from "@/components/platform/GrowthSystemDebugPanel";
+import { ApiErrorDebugPanel } from "@/components/platform/ApiErrorDebugPanel";
 import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
 import { PlatformModeShell } from "@/components/platform/PlatformModeShell";
 import { PlatformCreateStepRail } from "@/components/platform/PlatformCreateStepRail";
@@ -13094,6 +13095,7 @@ export default function PlatformPage() {
             )}
           </div>
         ) : null}
+        {canShowPlatformDebug && debugMode ? <ApiErrorDebugPanel /> : null}
         {canShowPlatformDebug && debugMode ? (
           <GrowthSystemDebugPanel
             enabled={debugMode}

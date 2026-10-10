@@ -26,7 +26,7 @@ export function sanitizePlatformUserMessage(raw: string, fallback = "操作暂�
       text,
     )
   ) {
-    return "算力紧张或请求超时，请稍后重试";
+    return "接口未返回有效数据（响应解析失败），请在 Debug 面板查看具体原因；提交结果请先核对，勿连续重复提交";
   }
   // 上游代理掐断：空 body / 非 JSON / HTML 错误页（status 200 也算）——只给业务句
   if (
@@ -34,7 +34,7 @@ export function sanitizePlatformUserMessage(raw: string, fallback = "操作暂�
       text,
     )
   ) {
-    return "算力紧张，请稍后重试（已自动重试仍未成功）";
+    return "接口返回了空内容或错误页面，请在 Debug 面板查看具体原因；提交结果请先核对，勿连续重复提交";
   }
   // 漫剧学节奏：抖音下片登录态（勿把 yt-dlp 英文 stderr 原样上屏）
   if (/Fresh cookies|cookies?.*(needed|required)|ERROR:\s*\[Douyin\]|Command failed:.*yt-dlp/i.test(text)) {
