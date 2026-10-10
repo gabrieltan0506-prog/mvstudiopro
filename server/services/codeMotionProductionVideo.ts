@@ -1,3 +1,4 @@
+import { codeMotionVideoDurationMatches } from "./codeMotionVideoDuration";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -43,6 +44,7 @@ import {
   buildEvolinkSeedanceRequest,
   isEvolinkSeedanceConfigured,
 } from "./evolinkSeedanceVideo";
+import { buildByteplusSeedance25SubmitBody, isByteplusSeedanceConfigured } from "./byteplusSeedanceVideo";
 import { fetchPostProdSourceToFile, runMediaTool } from "./postProduction";
 import { getGcsBucketName, signGsUriV4ReadUrl } from "./gcs";
 import {
@@ -182,6 +184,8 @@ export function planCodeMotionProductionVideo(
   return shots;
 }
 type Manifest = {
+  /** Absent on historical EvoLink manifests: preserve their original intent identity. */
+  providerRoute?: "byteplus-first";
   projectId: string;
   grantId: string;
   fingerprint: string;
@@ -268,8 +272,12 @@ export async function submitCodeMotionProductionVideo(
   if (prepared.shots.some(s => s.missing.length))
     throw new Error(prepared.shots.flatMap(s => s.missing).join("；"));
   if (!prepared.shots.length) return { grant: prepared.grant, shots: [] };
-  if (!isEvolinkSeedanceConfigured())
-    throw new Error("视频服务暂不可用，未提交、未扣费");
+  let manifest = await readManifest(userId, input.projectId);
+  const byteplusFirst = !manifest || manifest.providerRoute === "byteplus-first";
+  if (byteplusFirst && prepared.grant?.revision?.mode === "paid_video")
+    throw new Error("本次局部动作修改须先核定BytePlus及回落通道成本，尚未提交、未扣费；已有EvoLink任务可继续恢复");
+  if (byteplusFirst ? !isByteplusSeedanceConfigured() : !isEvolinkSeedanceConfigured())
+    throw new Error(byteplusFirst ? "BytePlus视频服务暂不可用，未提交、未扣费；仅上游明确拒绝后才回落EvoLink" : "原EvoLink任务服务暂不可用，请稍后恢复原任务");
   const saved = (await loadCodeMotion(userId, input.projectId))!;
   for (const image of saved.project.brief.images)
     await assertCodeMotionImageSource(userId, image.gcsUri);
@@ -292,11 +300,11 @@ export async function submitCodeMotionProductionVideo(
     ...input,
     source: inkSource(req),
   });
-  let manifest = await readManifest(userId, input.projectId);
   if (manifest && manifest.fingerprint !== prepared.fingerprint)
     throw new Error("视频制作已提交，请恢复原任务；不重复生成");
   if (!manifest) {
     manifest = {
+      providerRoute: "byteplus-first",
       projectId: input.projectId,
       grantId: grant.id,
       fingerprint: prepared.fingerprint,
@@ -332,23 +340,24 @@ export async function submitCodeMotionProductionVideo(
       saved.project,
       shot
     );
-    // A build-only preflight preserves all three media arrays. No reference silently downgraded to image-only.
-    buildEvolinkSeedanceRequest({
-      version: shot.version,
-      prompt: shot.prompt,
-      imageUrls: shot.imageUrls,
-      videoUrls: shot.videoUrls,
-      audioUrls: providerAudioUrls,
-      mode: shot.mode,
-      duration: shot.duration,
-      quality: shot.resolution,
-      generateAudio: true,
+    // Build the existing BytePlus request against owned, server-signed references; worker resolves them again.
+    const useByteplus = manifest.providerRoute === "byteplus-first";
+    if (useByteplus) {
+      if (!isByteplusSeedanceConfigured()) throw new Error("BytePlus视频服务暂不可用，未提交、未扣费");
+      const signed = (uri:string) => uri.startsWith("gs://") ? signGsUriV4ReadUrl(uri,3600) : uri;
+      buildByteplusSeedance25SubmitBody({
+        version:shot.version,prompt:shot.prompt,imageUrls:shot.imageUrls.map(signed),videoUrls:shot.videoUrls.map(signed),
+        audioUrls:providerAudioUrls.map(signed),mode:shot.mode,duration:shot.duration,resolution:shot.resolution,
+        aspectRatio:saved.project.brief.orientation === "portrait" ? "9:16" : "16:9",generateAudio:true,watermark:false,
+      });
+    } else buildEvolinkSeedanceRequest({
+      version:shot.version,prompt:shot.prompt,imageUrls:shot.imageUrls,videoUrls:shot.videoUrls,
+      audioUrls:providerAudioUrls,mode:shot.mode,duration:shot.duration,quality:shot.resolution,generateAudio:true,
     });
     const taskInput = {
-      engine:
-        shot.version === "2.5"
-          ? ("seedance25-evolink" as const)
-          : ("seedance-mini-evolink" as const),
+      engine: useByteplus
+        ? shot.version === "2.5" ? "seedance25-byteplus" as const : "seedance-mini-byteplus" as const
+        : shot.version === "2.5" ? "seedance25-evolink" as const : "seedance-mini-evolink" as const,
       label: `映客画面${shot.sceneIndex + 1}`,
       prompt: shot.prompt,
       imageUrls: shot.imageUrls,
@@ -533,13 +542,13 @@ export async function adoptCodeMotionProductionVideo(
       AbortSignal.timeout(30_000)
     );
     const probe = JSON.parse(raw.stdout);
-    const duration = Number(probe.format?.duration);
+    const videoStream = probe.streams?.find(
+      (s: { codec_type: string }) => s.codec_type === "video"
+    );
+    const duration = Number(videoStream?.duration ?? probe.format?.duration);
     if (
-      !probe.streams?.some(
-        (s: { codec_type: string }) => s.codec_type === "video"
-      ) ||
-      !Number.isFinite(duration) ||
-      Math.abs(duration - shot.duration) > 0.08
+      !videoStream ||
+      !codeMotionVideoDurationMatches(duration, shot.duration)
     )
       throw new Error("视频实际时长与本镜回执不一致");
     const asset = codeMotionVideoAssetSchema.parse({
@@ -650,10 +659,13 @@ export async function assertCodeMotionProductionVideoTask(
       )
     : null;
   if (shot.audioFingerprint && !audio) throw new Error("本镜参考音频尚未归档");
-  const expectedEngine =
-    grant.tier === "free" ? "seedance-mini-evolink" : "seedance25-evolink";
+  const legacyEngine = grant.tier === "free" ? "seedance-mini-evolink" : "seedance25-evolink";
+  const primaryEngine = grant.tier === "free" ? "seedance-mini-byteplus" : "seedance25-byteplus";
+  const engineAllowed = manifest?.providerRoute === "byteplus-first"
+    ? task.engine === primaryEngine || (task.engine === legacyEngine && !!task.fallbackReason)
+    : task.engine === legacyEngine;
   if (
-    task.engine !== expectedEngine ||
+    !engineAllowed ||
     task.duration !== shot.duration ||
     task.resolution !== shot.resolution ||
     task.prompt !== shot.prompt ||

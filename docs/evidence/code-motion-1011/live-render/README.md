@@ -9,7 +9,7 @@
 
 ## 未解與邊界
 
-1. **正式adopt尚未修復。** 四原片均121幀24fps、video5.041667秒；mini的format為5.088秒，2.5為5.056秒。`adoptCodeMotionProductionVideo`採format容差0.08會拒絕mini；`codeMotionVideoFrames`採30fps成片容差1/30則兩版都會拒絕。本次只在隔離probe保留原片後精準採150幀30fps/5秒，沒有期限後改產品。因此本片成功不能當作正式adopt驗收。
+1. **原時長阻塞已在後續修正。** 用戶接受小幅超時；採用與解碼現共用0.1秒上浮容差，優先讀video stream時長，原片不改寫，時間軸仍取用原定5秒。四原片均121幀24fps、video5.041667秒；mini format5.088秒、2.5 format5.056秒。四份未裁原片已經正式 `prepareCodeMotionVideoFrames` 各解碼150幀成功，見 ../duration-tolerance。下載適配為本地原檔；沒有重新生成或登入帳戶／GCS採用持久化端到端驗收。早先成片仍是隔離probe裁準素材的版本，不冒稱已重新渲染成片。
 2. 本probe沒有逐詞timing資料，video段FFmpeg shortcut不覆普通scene字幕；不宣稱逐詞字幕/節拍同步的實片驗收。
 3. **付費末圖烘字重疊。** 圖像模型違反無文字提示，末圖已有大品牌字；28秒成片代碼字幕與圖中文字局部重疊。未擅自多生成一張。
 4. 親看了啜飲/轉春原片及成片抽幀，基本喝咖啡與冬→春語義可見；尚不能以抽幀或聲音數值測試替代完整感知驗收。

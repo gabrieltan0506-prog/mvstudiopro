@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   tier: "free" as "free" | "paid",
   revisionPrice: null as any,
+  byteplusConfigured: true,
+  probeDuration:5.08,
+  intentInputs: new Map<string,string>(),
   project: null as any,
   files: new Map<string, Buffer>(),
   tasks: new Map<string, any>(),
@@ -67,6 +70,12 @@ vi.mock("./codeMotionProductionAudio", () => ({
     uri: "gs://fixture/trimmed-five-seconds.wav",
   })),
 }));
+vi.mock("./postProduction",async original=>({...await original<any>(),
+ fetchPostProdSourceToFile:vi.fn(async(_source:string,file:string)=>{const {writeFile}=await import("node:fs/promises");await writeFile(file,Buffer.from("unchanged-archived-video-fixture"));}),
+ runMediaTool:vi.fn(async()=>({stdout:JSON.stringify({streams:[{codec_type:"video",duration:String(state.probeDuration)},{codec_type:"audio",duration:"5.300"}],format:{duration:"5.300"}})})),
+}));
+vi.mock("./gcs",()=>({getGcsBucketName:()=>"fixture",signGsUriV4ReadUrl:(uri:string)=>`https://storage.googleapis.com/${uri.slice(5)}?signature=fixture`}));
+vi.mock("./byteplusSeedanceVideo",async original=>({...await original<any>(),isByteplusSeedanceConfigured:()=>state.byteplusConfigured,buildByteplusSeedance25SubmitBody:vi.fn((await original<any>()).buildByteplusSeedance25SubmitBody)}));
 vi.mock("./evolinkSeedanceVideo", async importOriginal => ({
   ...(await importOriginal<any>()),
   isEvolinkSeedanceConfigured: () => true,
@@ -88,9 +97,10 @@ vi.mock("./canvasGenerationIntent", () => ({
   }),
 }));
 vi.mock("../../api/jobs", () => ({
-  gateCanvasIntentBeforeCharge: vi.fn(async ({ intentId }: any) => {
+  gateCanvasIntentBeforeCharge: vi.fn(async ({ intentId, taskInput }: any) => {
     state.calls.push("intent");
     const prior = state.intents.get(intentId);
+    if (prior && state.intentInputs.get(intentId)!==JSON.stringify(taskInput)) throw Error("historical intent changed");
     if (prior)
       return {
         holderId: "holder",
@@ -99,6 +109,7 @@ vi.mock("../../api/jobs", () => ({
       };
     const taskId = `cv_${state.intents.size + 100000000}`;
     state.intents.set(intentId, taskId);
+    state.intentInputs.set(intentId,JSON.stringify(taskInput));
     return { holderId: "holder", taskId, step: { proceed: true } };
   }),
   canvasIntentStepReply: vi.fn(async (step: any) =>
@@ -171,7 +182,7 @@ function project() {
 beforeEach(() => {
   vi.clearAllMocks();
   state.tier = "free";
-  state.revisionPrice=null;
+  state.revisionPrice=null;state.byteplusConfigured=true;state.probeDuration=5.08;state.intentInputs.clear();
   state.project = project();
   state.files.clear();
   state.tasks.clear();
@@ -195,7 +206,7 @@ describe("映客正式视频生产入口", () => {
     expect(chargeCanvasVideoCredits).not.toHaveBeenCalled();
     const task = vi.mocked(createCanvasVideoTask).mock.calls[0][0];
     expect(task).toMatchObject({
-      engine: "seedance-mini-evolink",
+      engine: "seedance-mini-byteplus",
       duration: 5,
       resolution: "480p",
       creditsCharged: 0,
@@ -263,7 +274,7 @@ describe("映客正式视频生产入口", () => {
     expect(chargeCanvasVideoCredits).toHaveBeenCalledTimes(1);
     expect(createCanvasVideoTask).toHaveBeenCalledWith(
       expect.objectContaining({
-        engine: "seedance25-evolink",
+        engine: "seedance25-byteplus",
         workMode: "reference_to_video",
         audioUrls: ["gs://fixture/trimmed-five-seconds.wav"],
         creditsCharged: 130,
@@ -307,13 +318,15 @@ describe("映客正式视频生产入口", () => {
   });
 });
 
-it("paid revision submits only its selected shot via original intent/charge/task and restores without a second charge",async()=>{
+it("historical paid EvoLink revision keeps original intent identity and restores without a second charge",async()=>{
  state.tier="paid";
  const shot=planCodeMotionProductionVideo(state.project,"paid")[0];shot.credits=37;
  state.revisionPrice={fingerprint:"a".repeat(64),credits:37,shot};
  state.project.plan.scenes[1]={...state.project.plan.scenes[0],heading:"保留的另一个动作镜"};
  const prepared=await prepareCodeMotionProductionVideo("7",{projectId:id,expectedGeneration:"1"});
  expect(prepared.shots).toHaveLength(1);expect(prepared.totalCredits).toBe(37);
+ state.files.set(`code-motion/u7/production/${id}/video-manifest.json`,Buffer.from(JSON.stringify({projectId:id,grantId:"33333333-3333-4333-8333-333333333333",fingerprint:prepared.fingerprint,shots:prepared.shots,createdAt:"2026-10-10"})));
+ state.byteplusConfigured=false;
  const input={projectId:id,expectedGeneration:"1",confirmedFingerprint:prepared.fingerprint};
  await submitCodeMotionProductionVideo("7",input,{} as any);
  await submitCodeMotionProductionVideo("7",input,{} as any);
@@ -326,4 +339,42 @@ it("free prepare rejects three natural shots before any intent, charge or upstre
  state.project.plan.scenes.forEach((scene:any,index:number)=>{if(index<3){scene.imageId=imageId;scene.production.motion="natural";}});
  await expect(prepareCodeMotionProductionVideo("7",{projectId:id,expectedGeneration:"1"})).rejects.toThrow("最多生成2");
  expect(state.calls).toEqual([]);
+});
+
+it("new paid revisions stop before any write or charge until BytePlus cost contract is confirmed",async()=>{
+ state.tier="paid";const shot=planCodeMotionProductionVideo(state.project,"paid")[0];shot.credits=37;
+ state.revisionPrice={fingerprint:"a".repeat(64),credits:37,shot};
+ const prepared=await prepareCodeMotionProductionVideo("7",{projectId:id,expectedGeneration:"1"});
+ await expect(submitCodeMotionProductionVideo("7",{projectId:id,expectedGeneration:"1",confirmedFingerprint:prepared.fingerprint},{} as any)).rejects.toThrow("核定BytePlus");
+ expect(state.calls).toEqual([]);expect(state.files.size).toBe(0);expect(chargeCanvasVideoCredits).not.toHaveBeenCalled();
+});
+it("missing BytePlus configuration does not silently send a new task straight to EvoLink",async()=>{
+ state.byteplusConfigured=false;const prepared=await prepareCodeMotionProductionVideo("7",{projectId:id,expectedGeneration:"1"});
+ await expect(submitCodeMotionProductionVideo("7",{projectId:id,expectedGeneration:"1",confirmedFingerprint:prepared.fingerprint},{} as any)).rejects.toThrow("BytePlus视频服务");
+ expect(state.calls).toEqual([]);expect(createCanvasVideoTask).not.toHaveBeenCalled();
+});
+it("new manifest worker accepts only its primary engine or a recorded same-model fallback",async()=>{
+ const prepared=await prepareCodeMotionProductionVideo("7",{projectId:id,expectedGeneration:"1"});
+ await submitCodeMotionProductionVideo("7",{projectId:id,expectedGeneration:"1",confirmedFingerprint:prepared.fingerprint},{} as any);
+ const task=vi.mocked(createCanvasVideoTask).mock.calls[0][0];
+ expect(JSON.parse(state.files.get(`code-motion/u7/production/${id}/video-manifest.json`)!.toString()).providerRoute).toBe("byteplus-first");
+ await expect(assertCodeMotionProductionVideoTask({...task,engine:"seedance-mini-evolink"} as any)).rejects.toThrow("参数或账务");
+ await expect(assertCodeMotionProductionVideoTask({...task,engine:"seedance-mini-evolink",fallbackReason:"明确拒绝"} as any)).resolves.toBeUndefined();
+ await expect(assertCodeMotionProductionVideoTask({...task,engine:"seedance25-byteplus"} as any)).rejects.toThrow("参数或账务");
+});
+
+it.each([{duration:5.08,accepted:true},{duration:4.98,accepted:false}])("adopt uses video-stream duration $duration and retains nominal timeline/source bytes",async({duration,accepted})=>{
+ state.probeDuration=duration;
+ const prepared=await prepareCodeMotionProductionVideo("7",{projectId:id,expectedGeneration:"1"});
+ await submitCodeMotionProductionVideo("7",{projectId:id,expectedGeneration:"1",confirmedFingerprint:prepared.fingerprint},{} as any);
+ const task=Array.from(state.tasks.values())[0];task.status="succeeded";task.videoUrl="gs://fixture/canvas-video/fixture.mp4";
+ const {adoptCodeMotionProductionVideo}=await import("./codeMotionProductionVideo");
+ const {fetchPostProdSourceToFile,runMediaTool}=await import("./postProduction");
+ if (!accepted) {await expect(adoptCodeMotionProductionVideo("7",id,0)).rejects.toThrow("实际时长");return;}
+ const result=await adoptCodeMotionProductionVideo("7",id,0);
+ expect(result.asset).toMatchObject({durationSec:5,videoUri:task.videoUrl});expect(result.clip.duration).toBe(5);
+ const {createHash}=await import("node:crypto");expect(result.asset.sha256).toBe(createHash("sha256").update("unchanged-archived-video-fixture").digest("hex"));
+ expect(await adoptCodeMotionProductionVideo("7",id,0)).toEqual(result);
+ expect(fetchPostProdSourceToFile).toHaveBeenCalledTimes(1);expect(runMediaTool).toHaveBeenCalledTimes(1);
+ const receipt=state.files.get(`code-motion/u7/production/${id}/video-sources/${task.taskId}.json`);expect(JSON.parse(receipt!.toString())).toEqual(result.asset);
 });

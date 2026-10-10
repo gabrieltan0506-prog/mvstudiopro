@@ -339,4 +339,27 @@ describe("真实任务写盘到供应商请求的音频交接", () => {
     const task=await createInk();expect(h.evolink.mock.calls[0][0].body).toMatchObject({duration:5,quality:"480p",model:"seedance-2.0-mini-reference-to-video"});expect(h.evolink.mock.calls[0][0].body.audio_urls).toEqual([expect.stringContaining("reference-five-seconds.wav")]);const names=Array.from(h.inkReceipts.keys());expect(names.some(n=>n.endsWith("submit-raw.json"))).toBe(true);expect(names.some(n=>n.endsWith("submit-parsed.json"))).toBe(true);expect(task.inkProductionEvidence.raw).toMatchObject({sha256:expect.stringMatching(/^[a-f0-9]{64}$/),bytes:expect.any(Number)});expect(task.inkProductionEvidence.parsed.objectName).toContain("submit-parsed.json");delete task.evolinkTaskId;task.status="running";await fs.writeFile(path.join(dir,`${task.taskId}.json`),JSON.stringify(task));const {getCanvasVideoTask}=await import("./canvasVideoTask");expect((await getCanvasVideoTask(task.taskId,7))?.status).toBe("reconcile_manual");expect(h.evolink).toHaveBeenCalledTimes(1);
   });
 
+  async function createInkByteplus(key="ink-paid-byteplus") {
+    const {createCanvasVideoTask}=await import("./canvasVideoTask");
+    const task=await createCanvasVideoTask({userId:7,creditsCharged:130,engine:"seedance25-byteplus",label:"映客付费假服务探针",prompt:"杯中蒸汽升起",imageUrls:["https://example.test/cup.png"],audioUrls:["gs://test-bucket/post-prod/7/reference-five-seconds.wav"],duration:5,resolution:"720p",workMode:"reference_to_video",idempotencyKey:key,
+      inkProduction:{projectId:"11111111-1111-4111-8111-111111111111",grantId:"22222222-2222-4222-8222-222222222222",kind:"video",index:0,requestId:key,digest:"a".repeat(64)}});
+    let saved:any;await vi.waitFor(async()=>{saved=JSON.parse(await fs.readFile(path.join(dir,`${task.taskId}.json`),"utf8"));expect(["running","failed","reconcile_manual"]).toContain(saved.status);});return saved;
+  }
+  it("INK paid BytePlus unknown result has a durable marker and never falls back, resubmits or refunds",async()=>{
+    h.byteplusUnknown=true;const task=await createInkByteplus();expect(task.status).toBe("reconcile_manual");expect(task.inkProductionByteplusSubmissionStartedAt).toBeTruthy();
+    await createInkByteplus();const {getCanvasVideoTask}=await import("./canvasVideoTask");await getCanvasVideoTask(task.taskId,7);
+    expect(h.byteplus).toHaveBeenCalledTimes(1);expect(h.evolink).not.toHaveBeenCalled();
+    const {refundCreditsOnFailure}=await import("./paidJobLedger.js");expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+  it("INK paid explicit BytePlus rejection uses the existing EvoLink fallback with all audio references once",async()=>{
+    h.byteplusRejected=true;const task=await createInkByteplus();expect(task.engine).toBe("seedance25-evolink");expect(task.fallbackReason).toContain("AccountOverdue");
+    await createInkByteplus();expect(h.byteplus).toHaveBeenCalledTimes(1);expect(h.evolink).toHaveBeenCalledTimes(1);
+    expect(h.evolink.mock.calls[0][0].body.audio_urls).toEqual([expect.stringContaining("reference-five-seconds.wav")]);
+  });
+  it("INK paid BytePlus process recovery without a handle does not submit again",async()=>{
+    const task=await createInkByteplus();delete task.byteplusTaskId;task.status="running";await fs.writeFile(path.join(dir,`${task.taskId}.json`),JSON.stringify(task));
+    const {getCanvasVideoTask}=await import("./canvasVideoTask");expect((await getCanvasVideoTask(task.taskId,7))?.status).toBe("reconcile_manual");
+    expect(h.byteplus).toHaveBeenCalledTimes(1);expect(h.evolink).not.toHaveBeenCalled();const {refundCreditsOnFailure}=await import("./paidJobLedger.js");expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+
 });

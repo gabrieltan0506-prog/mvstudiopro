@@ -1,3 +1,4 @@
+import { codeMotionVideoDurationMatches } from "./codeMotionVideoDuration";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
@@ -40,10 +41,7 @@ export async function prepareCodeMotionVideoFrames(
     const duration = Number(stream?.duration ?? raw.format?.duration);
     if (
       !stream ||
-      !Number.isFinite(duration) ||
-      duration < 4 - 1 / meta.fps ||
-      duration > 5 + 1 / meta.fps ||
-      Math.abs(duration - asset.durationSec) > 1 / meta.fps + 0.001
+      !codeMotionVideoDurationMatches(duration, asset.durationSec)
     )
       throw new Error("视频素材实际时长与已保存回执不一致");
     if (

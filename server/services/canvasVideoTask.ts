@@ -146,6 +146,8 @@ export type CanvasVideoTaskRecord = {
   creditsCharged: number;
   inkProduction?: import("./codeMotionProductionGrant").CodeMotionProductionSlot;
   inkProductionSubmissionStartedAt?: string;
+  /** Paid INK BytePlus creation marker: an unknown response must not be resubmitted/refunded. */
+  inkProductionByteplusSubmissionStartedAt?: string;
   inkProductionEvidence?: { raw: {objectName:string;bytes:number;sha256:string}; parsed: {objectName:string;bytes:number;sha256:string} };
   engine: CanvasVideoEngine;
   label: string;
@@ -593,6 +595,11 @@ async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<vo
     task.miniByteplusSubmissionStartedAt = new Date().toISOString();
     await writeTask(task);
   }
+  if (task.inkProduction && !mini) {
+    buildByteplusSeedance25SubmitBody({prompt:task.prompt,...references,version:"2.5",aspectRatio:task.aspectRatio,duration:task.duration,resolution:task.resolution,generateAudio:task.generateAudio,mode:task.workMode});
+    task.inkProductionByteplusSubmissionStartedAt = new Date().toISOString();
+    await writeTask(task);
+  }
   try {
     const submitted = await submitByteplusSeedance25Video({
       prompt: task.prompt,
@@ -618,7 +625,7 @@ async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<vo
       await succeedTask(task, videoUrl, submitted.model, "byteplus");
     }
   } catch (error) {
-    if (mini && (error as { kind?: string })?.kind !== "rejected") throw error;
+    if ((mini || task.inkProduction) && (error as { kind?: string })?.kind !== "rejected") throw error;
     if (!isByteplusFallbackableError(error, !mini)) {
       throw error;
     }
@@ -1219,6 +1226,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
       await writeTask(task); await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {}); return task;
     }
 
+    if (task.engine === "seedance25-byteplus" && task.inkProductionByteplusSubmissionStartedAt && !task.byteplusTaskId) {
+      task.status = "reconcile_manual";task.error = "映客BytePlus创建回执待核对，已停止重复提交与自动退款";
+      await writeTask(task);await pauseActiveJob(task.taskId,TASK_TYPE).catch(()=>{});return task;
+    }
+
     if (task.engine === "seedance-mini-byteplus" && task.miniByteplusSubmissionStartedAt && !task.byteplusTaskId) {
       task.status = "reconcile_manual";
       task.error = "BytePlus Mini创建回执待核对，已停止重复提交";
@@ -1307,6 +1319,12 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           if (task.evolinkTaskId) { await writeTask(task).catch(() => {}); return task; }
           task.status = "reconcile_manual"; task.error = "映客视频创建结果未知，请核对原任务；不重复生成或自动退款";
           await writeTask(task).catch(() => {}); await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {}); return task;
+        }
+        if (task.inkProduction && task.inkProductionByteplusSubmissionStartedAt && (error as {kind?:string})?.kind !== "rejected") {
+          task.lastTransientError=(error instanceof Error ? error.message : String(error)).slice(0,280);
+          if (task.byteplusTaskId) {await writeTask(task).catch(()=>{});return task;}
+          task.status="reconcile_manual";task.error="映客BytePlus创建结果未知，请核对原任务；不重复生成或自动退款";
+          await writeTask(task).catch(()=>{});await pauseActiveJob(task.taskId,TASK_TYPE).catch(()=>{});return task;
         }
         if (task.engine === "seedance-mini-byteplus" && task.miniByteplusSubmissionStartedAt && (error as { kind?: string })?.kind !== "rejected") {
           if (task.byteplusTaskId) {
