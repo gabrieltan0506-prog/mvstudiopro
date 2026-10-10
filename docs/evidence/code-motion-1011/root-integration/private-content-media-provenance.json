@@ -1,0 +1,26 @@
+{
+  "sourceFileSha256": "488160dff93539f6a8dfafb3d5efc28ccac119e73e54f0cf921a2305dcead68e",
+  "sourceAudioWindow": [
+    50.8,
+    80.8
+  ],
+  "sourceVideoWindow": [
+    65.8,
+    70.8
+  ],
+  "videoOutputTimeline": [
+    15,
+    20
+  ],
+  "crop": [
+    592,
+    334,
+    0,
+    412
+  ],
+  "sourcePlayback": "1.5x screen recording as supplied, not slowed or pitch corrected",
+  "derivedAudioSha256": "d3fc8cfe197754c87358c13e4a68dc2d0ca29429edbe46fc95232c544861114e",
+  "derivedVideoSha256": "09bf6c916d8d307631faaa12f2eca209c91f3710e5708ebd31af4ad046da0e85",
+  "outputSha256": "74b12a7c43c8e12fcf60d9283cbb52bc962d904194f487d4e0fa74bfe0b5c79e",
+  "editedSceneSha256": "2d0ce65fdc2ea9c0fd9abd64b2c1b1bba970c4e1a8e0d1382a7f63853ffc0143"
+}

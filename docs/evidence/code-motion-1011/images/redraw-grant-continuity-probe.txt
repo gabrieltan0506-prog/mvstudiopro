@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/codeMotionImageProduction.test.ts > scene redraw visibly replaces only its reference layers, retains graphics and preserves original bytes in the unchanged input
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 2 skipped (3)
+   Start at  04:22:23
+   Duration  6.55s (transform 2.33s, setup 0ms, collect 5.52s, tests 41ms, environment 0ms, prepare 351ms)
+

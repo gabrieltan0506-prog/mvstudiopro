@@ -187,7 +187,7 @@ it("无图场景直接编排可见主体与动作；纯文字方案不得冒充�
     ).keyframes
   ).toHaveLength(2);
   const prompt = invoke.mock.calls[0][0].messages[0].content;
-  expect(prompt).toContain("没有上传图片也必须");
+  expect(prompt).toContain("没有上传图片时先编排可生成的场景图");
   expect(prompt).toContain("composition必须兑现direction");
   expect(
     JSON.parse(invoke.mock.calls[0][0].messages[1].content).images

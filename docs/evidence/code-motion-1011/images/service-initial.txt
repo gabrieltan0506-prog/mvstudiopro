@@ -1,0 +1,12 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionImages.test.ts > saved image production contract > fixed batch persists before enqueue, restores partial/unknown jobs without repeating them, adopts the same owned bytes
+ ✓ server/services/codeMotionImages.test.ts > saved image production contract > worker refuses forged input/owner/slot and paid quote uses existing per-shot prices
+ ✓ server/services/codeMotionImages.test.ts > saved image production contract > missing queue rows alone can resume; content/version mismatch never creates or purchases
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  03:51:48
+   Duration  3.31s (transform 920ms, setup 0ms, collect 2.56s, tests 40ms, environment 0ms, prepare 111ms)
+

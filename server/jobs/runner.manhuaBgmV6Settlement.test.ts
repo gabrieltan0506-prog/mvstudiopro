@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   job: null as any,
   claim: vi.fn(), patch: vi.fn(), failed: vi.fn(), requeue: vi.fn(),
-  deduct: vi.fn(), refund: vi.fn(), fetch: vi.fn(),
+  grant: vi.fn(), deduct: vi.fn(), refund: vi.fn(), fetch: vi.fn(),
 }));
 vi.mock("./repository", async load => ({
   ...await load<Record<string, unknown>>(),
@@ -13,6 +13,7 @@ vi.mock("./repository", async load => ({
   markJobFailed: state.failed,
   requeueJob: state.requeue,
 }));
+vi.mock("../services/codeMotionProductionGrant", async load => ({ ...await load<Record<string, unknown>>(), assertCodeMotionProductionSlot: state.grant }));
 vi.mock("../credits", async load => ({
   ...await load<Record<string, unknown>>(),
   getCredits: vi.fn(async () => ({ totalAvailable: 100 })),
@@ -75,6 +76,25 @@ describe("配乐 v6（TTAPI）真实 worker 控制流：未知建单不退不重
     expect(state.fetch).toHaveBeenCalledTimes(1);
     expect(state.deduct).toHaveBeenCalledTimes(1);
     expect(state.refund).not.toHaveBeenCalled();
+  });
+
+  it("映客免费BGM先核预算，真实worker不扣费也不误退款", async () => {
+    const params = state.job.input.params;
+    params.productionSlot = {projectId:"11111111-1111-4111-8111-111111111111",grantId:"22222222-2222-4222-8222-222222222222",kind:"bgm",index:0,requestId:params.billingRequestId,digest:params.briefDigest};
+    state.grant.mockResolvedValue({tier:"free"});
+    state.fetch.mockResolvedValue(new Response("denied",{status:403}));
+    await processJobsOnce();
+    expect(state.grant).toHaveBeenCalledWith("7",params.productionSlot);
+    expect(state.fetch).toHaveBeenCalledTimes(1);
+    expect(state.deduct).not.toHaveBeenCalled();expect(state.refund).not.toHaveBeenCalled();
+  });
+
+  it("映客预算不存在时不触达付费Suno入口", async () => {
+    const params = state.job.input.params;
+    params.productionSlot = {projectId:"11111111-1111-4111-8111-111111111111",grantId:"22222222-2222-4222-8222-222222222222",kind:"bgm",index:0,requestId:params.billingRequestId,digest:params.briefDigest};
+    state.grant.mockRejectedValue(Error("budget missing"));
+    await processJobsOnce();
+    expect(state.fetch).not.toHaveBeenCalled();expect(state.deduct).not.toHaveBeenCalled();
   });
 
   it("明确403拒绝仅按实际扣费来源退款，响应正文不入失败信息", async () => {

@@ -1,3 +1,4 @@
+import { SubmitRejectedError } from "./submitOutcomeErrors.js";
 import { isTaskHeartbeatStatus } from "./taskHeartbeat.js";
 import { formatEvolinkReferencePrompt } from "../../shared/evolinkReferencePrompt.js";
 import {
@@ -151,11 +152,13 @@ export async function submitEvolinkSeedanceVideo(
     signal: AbortSignal.timeout(60_000),
   });
 
-  const createJson = (await createRes.json().catch(() => ({}))) as EvolinkVideoTask;
+  const rawBody = await createRes.text();
+  if (input.persistSubmitReceipt) await input.persistSubmitReceipt({ status: createRes.status, body: rawBody });
+  const createJson = (() => { try { return JSON.parse(rawBody); } catch { return {}; } })() as EvolinkVideoTask;
   if (!createRes.ok) {
-    throw new Error(
-      createJson.error?.message || createJson.message || `EvoLink 创建任务失败 (${createRes.status})`,
-    );
+    const message = createJson.error?.message || createJson.message || `EvoLink 创建任务失败 (${createRes.status})`;
+    if (createRes.status >= 400 && createRes.status < 500 && ![408,409,429].includes(createRes.status)) throw new SubmitRejectedError(message);
+    throw new Error(message);
   }
 
   const immediateUrl = extractEvolinkVideoUrl(createJson);
@@ -193,6 +196,8 @@ export type EvolinkSeedanceRunInput = {
   contentFilter?: boolean;
   /** 2.5 text-to-video 可选联网增强 */
   webSearch?: boolean;
+  /** 映客持久化原始创建回执，必须在解释状态/提取任务号之前完成。 */
+  persistSubmitReceipt?: (receipt: { status: number; body: string }) => Promise<void>;
   /** 强制模式；默认按素材推断 */
   mode?: SeedanceEvolinkMode;
   version?: SeedanceEvolinkVersion;

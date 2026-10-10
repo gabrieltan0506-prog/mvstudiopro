@@ -32,7 +32,7 @@ export type CodeMotionStoreDeps = {
   write(name: string, body: Buffer, generation: string): Promise<string>;
   list(prefix: string): Promise<string[]>;
 };
-const real: CodeMotionStoreDeps = {
+export const codeMotionStorage: CodeMotionStoreDeps = {
   async read(name) {
     const gcsUri = `gs://${getGcsBucketName()}/${name}`;
     let meta;
@@ -81,7 +81,7 @@ const real: CodeMotionStoreDeps = {
 export async function loadCodeMotion(
   userId: string,
   projectId: string,
-  deps = real
+  deps = codeMotionStorage
 ): Promise<CodeMotionSaved | null> {
   const object = await deps.read(codeMotionObjectName(userId, projectId));
   if (!object) return null;
@@ -95,7 +95,7 @@ export async function saveCodeMotion(
   userId: string,
   projectInput: unknown,
   expectedGeneration: string,
-  deps = real
+  deps = codeMotionStorage
 ): Promise<CodeMotionSaved> {
   const project = codeMotionProjectSchema.parse(projectInput);
   z.string().regex(/^\d+$/).parse(expectedGeneration);
@@ -110,7 +110,7 @@ export async function saveCodeMotion(
   );
   return { project, generation, updatedAt };
 }
-export async function listCodeMotion(userId: string, deps = real) {
+export async function listCodeMotion(userId: string, deps = codeMotionStorage) {
   codeMotionObjectName(userId, "00000000-0000-4000-8000-000000000000");
   const names = await deps.list(`code-motion/u${userId}/projects/`);
   const ids = names.flatMap(name => {

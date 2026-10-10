@@ -1,7 +1,3 @@
-import {
-  inkFreeSpeechEnabled,
-  INK_FREE_SPEECH_UNAVAILABLE,
-} from "./inkFreeSpeechConfig";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -14,13 +10,16 @@ import { getJobByIdStrict } from "../jobs/repository";
 import { buildPostProdJobResponse } from "./postProdJobResponse";
 import { enqueueInkFree, type InkSource } from "./inkFreeQuota";
 import { assertCodeMotionAudioOwnership } from "./codeMotionAudio";
+import { assertCodeMotionProductionVideos } from "./codeMotionProductionVideo";
+import { getCodeMotionProductionGrant, ensureCodeMotionProductionGrant, reserveCodeMotionProductionSlot, enqueueCodeMotionProductionExport, codeMotionProductionDigest } from "./codeMotionProductionGrant";
 
 export function codeMotionRenderIdentity(
   userId: string,
-  project: CodeMotionProject
+  project: CodeMotionProject,
+  options: Parameters<typeof compileCodeMotion>[2] = {}
 ) {
   if (!project.plan) throw new Error("请先整理并保存本次内容安排");
-  const spec = compileCodeMotion(project.brief, project.plan);
+  const spec = compileCodeMotion(project.brief, project.plan, options);
   const fingerprint = createHash("sha256")
     .update(JSON.stringify([userId, project.id, spec]))
     .digest("hex");
@@ -43,7 +42,7 @@ export type CodeMotionTaskDeps = {
   ): Promise<{ jobId: string; status: string }>;
   view: typeof buildPostProdJobResponse;
   audioOwnership?: typeof assertCodeMotionAudioOwnership;
-  speechEnabled?: () => boolean;
+  videoOwnership?: typeof assertCodeMotionProductionVideos;
 };
 const real: CodeMotionTaskDeps = {
   load: getJobByIdStrict,
@@ -52,6 +51,24 @@ const real: CodeMotionTaskDeps = {
     if (!source) throw new Error("无法确认免费名额来源，未提交任务");
     const { artMotionJobSchema } = await import("../../shared/artMotion");
     const input = artMotionJobSchema.parse(raw);
+    const projectId = input.scopeKey.replace(/^code-motion:/, "");
+    let grant = await getCodeMotionProductionGrant(userId, projectId);
+    if (!grant) {
+      const { loadCodeMotion } = await import("./codeMotionStore");
+      const saved = await loadCodeMotion(userId, projectId);
+      const scenes = saved?.project.plan?.scenes.length ?? 0;
+      if (saved && scenes >= 4 && scenes <= 6 && saved.project.brief.duration <= 30) {
+        const current = codeMotionRenderIdentity(userId, saved.project);
+        if (current.requestId !== input.requestId) throw new Error("作品版本已变化，请重新查看安排");
+        grant = await ensureCodeMotionProductionGrant(userId, { projectId, expectedGeneration: saved.generation, source });
+      }
+    }
+    if (grant) {
+      const request = { id: artMotionTaskId(userId, input.requestId), userId, input, format: "mp4" as const, provider: "canvas-art-motion", type: "post_prod" as const };
+      const slot = { projectId, grantId: grant.id, kind: "export" as const, index: 0, requestId: request.id, digest: codeMotionProductionDigest(input) };
+      await reserveCodeMotionProductionSlot(userId, slot);
+      return enqueueCodeMotionProductionExport(request, slot);
+    }
     return enqueueInkFree(
       {
         id: artMotionTaskId(userId, input.requestId),
@@ -104,11 +121,6 @@ export async function submitCodeMotion(
   // 响应丢失或重进页面时只返回原任务；失败也不自动重复渲染。
   const old = await findCodeMotionTask(userId, project, deps);
   if (old) return { jobId: old.jobId, status: old.status };
-  if (
-    identity.spec.inkSpeech &&
-    !(deps.speechEnabled ?? inkFreeSpeechEnabled)()
-  )
-    throw new Error(INK_FREE_SPEECH_UNAVAILABLE);
   // 画面已由 compileCodeMotion 校验；无声计划沿同一权限、名额和队列导出。
   if (identity.spec.codeAudio)
     await (deps.audioOwnership ?? assertCodeMotionAudioOwnership)({
@@ -116,6 +128,7 @@ export async function submitCodeMotion(
       projectId: project.id,
       audio: identity.spec.codeAudio,
     });
+  if (identity.spec.codeVideo) await (deps.videoOwnership ?? assertCodeMotionProductionVideos)(userId, project.id, identity.spec.codeVideo);
   const input = await deps.resolve({
     userId,
     input: {

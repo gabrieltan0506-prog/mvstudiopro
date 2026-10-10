@@ -67,11 +67,6 @@ function raw(withSpeech = false) {
           heading: "原声",
           body: "介绍",
           duration: 15,
-          ...(withSpeech
-            ? {
-                speech: { text: "本句只测试接线，不调用合成", voice: "female" },
-              }
-            : {}),
         },
       ],
       audioTimeline: [
@@ -88,6 +83,8 @@ function raw(withSpeech = false) {
       ],
     }
   );
+  // Historical persisted jobs remain readable; new INK plans compile only adopted Qwen sources.
+  if (withSpeech) params.inkSpeech = { engine: "kokoro-zh-v1.1", lines: [{ at: 0, duration: 5, text: "历史任务只测试接线", voice: "female" }] } as typeof params.inkSpeech;
   return {
     action: "art_motion",
     scopeKey: `code-motion:${projectId}`,

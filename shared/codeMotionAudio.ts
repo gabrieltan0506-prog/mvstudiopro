@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { CODE_MOTION_AUDIO_SOURCE_LIMIT } from "./codeMotionMedia";
 
-export const CODE_MOTION_AUDIO_MAX_BYTES = 30 * 1024 * 1024;
+export const CODE_MOTION_AUDIO_MAX_BYTES = 64 * 1024 * 1024;
 export const CODE_MOTION_AUDIO_MAX_SECONDS = 180;
+export const CODE_MOTION_AUDIO_SOURCE_MAX_SECONDS = 360;
 export const codeMotionAudioMimeSchema = z.enum([
   "audio/mpeg",
   "audio/wav",
@@ -18,7 +20,21 @@ export const codeMotionAudioSourceSchema = z
       .string()
       .regex(/^gs:\/\/[^/]+\/.+$/)
       .max(2048),
-    duration: z.number().finite().positive().max(CODE_MOTION_AUDIO_MAX_SECONDS),
+    duration: z
+      .number()
+      .finite()
+      .positive()
+      .max(CODE_MOTION_AUDIO_SOURCE_MAX_SECONDS),
+    generated: z
+      .object({
+        requestId: z.string().uuid(),
+        kind: z.enum(["speech", "bgm"]),
+        sceneIndex: z.number().int().min(0).max(11).optional(),
+        text: z.string().max(180).optional(),
+        voice: z.enum(["female", "male"]).optional(),
+      })
+      .strict()
+      .optional(),
     mimeType: codeMotionAudioMimeSchema,
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     bytes: z.number().int().positive().max(CODE_MOTION_AUDIO_MAX_BYTES),
@@ -34,7 +50,7 @@ const codeMotionAudioClipObject = z
       .number()
       .finite()
       .min(0)
-      .max(CODE_MOTION_AUDIO_MAX_SECONDS)
+      .max(CODE_MOTION_AUDIO_SOURCE_MAX_SECONDS)
       .default(0),
     duration: z.number().finite().positive().max(CODE_MOTION_AUDIO_MAX_SECONDS),
     volume: z.number().finite().min(0).max(2).default(1),
@@ -68,8 +84,11 @@ export const codeMotionAudioClipDraftSchema = codeMotionAudioClipObject.extend({
 
 const audioShape = z
   .object({
-    sources: z.array(codeMotionAudioSourceSchema).min(1).max(3),
-    audioTimeline: z.array(codeMotionAudioClipSchema).min(1).max(12),
+    sources: z
+      .array(codeMotionAudioSourceSchema)
+      .min(1)
+      .max(CODE_MOTION_AUDIO_SOURCE_LIMIT),
+    audioTimeline: z.array(codeMotionAudioClipSchema).min(1).max(24),
   })
   .strict();
 export type CodeMotionAudioSource = z.infer<typeof codeMotionAudioSourceSchema>;

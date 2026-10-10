@@ -54,6 +54,7 @@ export async function queueArtMotion(
       input.scopeKey.startsWith("code-motion:") ||
       input.params.composition ||
       input.params.codeAudio ||
+      input.params.codeVideo ||
       input.params.inkSpeech
     )
       throw new Error(

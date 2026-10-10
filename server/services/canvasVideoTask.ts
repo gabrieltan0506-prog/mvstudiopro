@@ -144,6 +144,9 @@ export type CanvasVideoTaskRecord = {
   userId: number;
   status: CanvasVideoTaskStatus;
   creditsCharged: number;
+  inkProduction?: import("./codeMotionProductionGrant").CodeMotionProductionSlot;
+  inkProductionSubmissionStartedAt?: string;
+  inkProductionEvidence?: { raw: {objectName:string;bytes:number;sha256:string}; parsed: {objectName:string;bytes:number;sha256:string} };
   engine: CanvasVideoEngine;
   label: string;
   prompt: string;
@@ -513,8 +516,10 @@ async function resolveTaskVideoReferences(
 
 async function submitSeedance25Evolink(task: CanvasVideoTaskRecord): Promise<void> {
   const references = await resolveSeedanceTaskReferences(task);
+  if (task.inkProduction) { task.inkProductionSubmissionStartedAt = new Date().toISOString(); await writeTask(task); }
   const submitted = await submitEvolinkSeedanceVideo({
     ...seedance25RunInput(task),
+    ...(task.inkProduction ? { persistSubmitReceipt: (receipt: { status: number; body: string }) => persistInkVideoSubmitReceipt(task, receipt) } : {}),
     ...references,
   });
   task.engine = "seedance25-evolink";
@@ -552,7 +557,10 @@ async function submitSeedanceEvolinkVersioned(
   version: "2.0" | "2.0-fast" | "2.0-mini",
 ): Promise<void> {
   const references = await resolveSeedanceTaskReferences(task);
+  if (task.inkProduction) { task.inkProductionSubmissionStartedAt = new Date().toISOString(); await writeTask(task); }
   const submitted = await submitEvolinkSeedanceVideo({
+    ...(task.inkProduction ? { persistSubmitReceipt: (receipt: { status: number; body: string }) => persistInkVideoSubmitReceipt(task, receipt) } : {}),
+    mode: task.workMode,
     prompt: task.prompt,
     ...references,
     quality: task.resolution,
@@ -815,6 +823,10 @@ async function withEnhancementHeartbeat<T>(taskId: string, work: () => Promise<T
 }
 
 async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
+  if (task.inkProduction) {
+    const { assertCodeMotionProductionVideoTask } = await import("./codeMotionProductionVideo");
+    await assertCodeMotionProductionVideoTask(task);
+  }
   if (task.engine === "seedance-openrouter") {
     const body = buildOpenRouterSeedanceSubmitBody({
       variant:
@@ -1198,6 +1210,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
       return task;
     }
 
+    if (task.inkProduction && task.inkProductionSubmissionStartedAt && !task.evolinkTaskId) {
+      task.status = "reconcile_manual"; task.error = "映客视频创建回执待核对，已停止重复提交与自动退款";
+      await writeTask(task); await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {}); return task;
+    }
+
     if (task.engine === "seedance-mini-byteplus" && task.miniByteplusSubmissionStartedAt && !task.byteplusTaskId) {
       task.status = "reconcile_manual";
       task.error = "BytePlus Mini创建回执待核对，已停止重复提交";
@@ -1280,6 +1297,12 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           task.status = "reconcile_manual"; task.error = error.message;
           await writeTask(task); await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
           return task;
+        }
+        if (task.inkProduction && task.inkProductionSubmissionStartedAt && (error as { kind?: string })?.kind !== "rejected") {
+          task.lastTransientError = (error instanceof Error ? error.message : String(error)).slice(0,280);
+          if (task.evolinkTaskId) { await writeTask(task).catch(() => {}); return task; }
+          task.status = "reconcile_manual"; task.error = "映客视频创建结果未知，请核对原任务；不重复生成或自动退款";
+          await writeTask(task).catch(() => {}); await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {}); return task;
         }
         if (task.engine === "seedance-mini-byteplus" && task.miniByteplusSubmissionStartedAt && (error as { kind?: string })?.kind !== "rejected") {
           if (task.byteplusTaskId) {
@@ -1693,6 +1716,7 @@ export async function createCanvasVideoTask(input: {
   taskId?: string;
   userId: number;
   creditsCharged: number;
+  inkProduction?: import("./codeMotionProductionGrant").CodeMotionProductionSlot;
   engine: CanvasVideoEngine;
   label: string;
   prompt: string;
@@ -1776,6 +1800,7 @@ export async function createCanvasVideoTask(input: {
     userId: input.userId,
     status: "queued",
     creditsCharged: Math.max(0, Number(input.creditsCharged) || 0),
+    inkProduction: input.inkProduction,
     engine: input.engine,
     label: String(input.label || "画布成片").slice(0, 120),
     prompt,
@@ -1934,4 +1959,17 @@ export async function listVideoEnhanceTasks(userId: number, scopeKey: string) {
     status: task.status, createdAt: Date.parse(task.createdAt), creditsUsed: task.creditsCharged,
     videoUrl: task.videoUrl, error: task.error,
   }));
+}
+
+async function persistInkVideoSubmitReceipt(task: CanvasVideoTaskRecord, receipt: {status:number;body:string}) {
+ const slot=task.inkProduction;if(!slot)return;
+ const {codeMotionStorage}=await import("./codeMotionStore");
+ const prefix=`code-motion/u${task.userId}/production/${slot.projectId}/video-evidence/${slot.index}`;
+ const raw={taskId:task.taskId,requestId:slot.requestId,provider:"evolink",status:receipt.status,body:receipt.body};
+ const write=async(name:string,value:unknown)=>{const body=Buffer.from(JSON.stringify(value));try{await codeMotionStorage.write(name,body,"0");}catch(error){const old=await codeMotionStorage.read(name);if(!old||!old.body.equals(body))throw error;}return {objectName:name,bytes:body.length,sha256:createHash("sha256").update(body).digest("hex")};};
+ const rawEvidence=await write(`${prefix}/submit-raw.json`,raw);
+ let parsed:unknown;try{parsed=JSON.parse(receipt.body);}catch{parsed={invalidJson:true};}
+ const parsedEvidence=await write(`${prefix}/submit-parsed.json`,{taskId:task.taskId,requestId:slot.requestId,response:parsed});
+ task.inkProductionEvidence={raw:rawEvidence,parsed:parsedEvidence};
+ await writeTask(task);
 }

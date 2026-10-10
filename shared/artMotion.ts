@@ -6,6 +6,10 @@ import {
   validateCodeMotionAudio,
 } from "./codeMotionAudio";
 import { codeMotionCompositionSchema } from "./codeMotionComposition";
+import {
+  codeMotionVideoSchema,
+  validateCodeMotionVideo,
+} from "./codeMotionVideo";
 import { ART_MOTION_GRAMMARS, ART_MOTION_STYLES } from "./artMotionCatalog";
 
 const id = z.string().min(1).max(80);
@@ -112,6 +116,7 @@ export const artMotionSpecSchema = z
     audioTimeline: manhuaPrevisAudioSchema.optional(),
     inkSpeech: inkSpeechSchema.optional(),
     codeAudio: codeMotionAudioSchema.optional(),
+    codeVideo: codeMotionVideoSchema.optional(),
     composition: codeMotionCompositionSchema.optional(),
     audioUri: z
       .string()
@@ -122,6 +127,21 @@ export const artMotionSpecSchema = z
   .strict()
   .superRefine((v, ctx) => {
     const fail = (message: string) => ctx.addIssue({ code: "custom", message });
+    if (v.codeVideo) {
+      if (
+        v.mode !== "animation" ||
+        v.stageAnimation ||
+        v.alpha ||
+        !v.composition
+      )
+        fail("视频片段仅用于映客逐镜编排");
+      for (const message of validateCodeMotionVideo(
+        v.codeVideo,
+        v.duration,
+        v.fps
+      ))
+        fail(message);
+    }
     if (v.codeAudio) {
       if (
         v.stageAnimation ||

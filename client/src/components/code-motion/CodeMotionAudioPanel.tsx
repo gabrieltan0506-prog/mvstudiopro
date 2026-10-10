@@ -1,3 +1,4 @@
+import { CODE_MOTION_AUDIO_SOURCE_LIMIT } from "@shared/codeMotionMedia";
 import { useEffect, useRef, useState } from "react";
 import { Upload } from "lucide-react";
 import VoiceInputButton from "@/components/VoiceInputButton";
@@ -68,7 +69,7 @@ export default function CodeMotionAudioPanel({
     setBusy(true);
     setError("");
     try {
-      if (audios.length >= 3) throw new Error("一条作品最多保留三份音源");
+      if (audios.length >= CODE_MOTION_AUDIO_SOURCE_LIMIT) throw new Error("一条作品最多保留十四份音源");
       if (!file.size || file.size > 30 * 1024 * 1024)
         throw new Error("请选择不超过30 MB的音频");
       const ext = file.name.split(".").pop()?.toLowerCase() || "";
@@ -97,9 +98,9 @@ export default function CodeMotionAudioPanel({
         gcsUri: signed.gcsUri,
       });
       if (aliveHere(current)) {
-        if (latestAudios.current.length >= 3)
+        if (latestAudios.current.length >= CODE_MOTION_AUDIO_SOURCE_LIMIT)
           throw new Error(
-            "当前音源已达到三份，已保留新上传原音，请先移除不用的音源后再导入"
+            "当前音源已达到十四份，已保留新上传原音，请先移除不用的音源后再导入"
           );
         latestOnAudios.current([...latestAudios.current, source]);
       }
@@ -179,7 +180,7 @@ export default function CodeMotionAudioPanel({
           key={projectId}
           onRecording={importAudio}
           maxSeconds={180}
-          disabled={disabled || busy || audios.length >= 3}
+          disabled={disabled || busy || audios.length >= CODE_MOTION_AUDIO_SOURCE_LIMIT}
         />
       </div>
       <p className="text-xs leading-5 text-stone-600">
@@ -193,7 +194,7 @@ export default function CodeMotionAudioPanel({
           type="file"
           accept=".mp3,.wav,.m4a,.webm"
           className="sr-only"
-          disabled={disabled || busy || audios.length >= 3}
+          disabled={disabled || busy || audios.length >= CODE_MOTION_AUDIO_SOURCE_LIMIT}
           onChange={e => {
             const file = e.target.files?.[0];
             e.target.value = "";
@@ -254,7 +255,7 @@ export default function CodeMotionAudioPanel({
               {timeline && (
                 <button
                   type="button"
-                  disabled={disabled || busy || timeline.length >= 12}
+                  disabled={disabled || busy || timeline.length >= 24}
                   onClick={() =>
                     onTimeline([
                       ...timeline,

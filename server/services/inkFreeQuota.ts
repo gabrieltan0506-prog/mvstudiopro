@@ -60,6 +60,15 @@ async function priorJob(db: Db, request: InkFreeJob) {
 export async function assertInkFreeJob(userId: string, jobId: string, format: "pptx" | "mp4", provided?: Db) {
   const db = await store(provided);
   const claim = rows<{ jobId: string }>(await db.execute(sql`SELECT "jobId" FROM ink_free_claims WHERE "userId"=${userId} AND "jobId"=${jobId} AND format=${format}`))[0];
+  if (!claim && format === "mp4") {
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS ink_free_production_exports ("userId" varchar(64) NOT NULL,"grantId" varchar(64) NOT NULL,"jobId" varchar(64) NOT NULL UNIQUE,PRIMARY KEY("userId","grantId"))`);
+    await db.execute(sql`ALTER TABLE ink_free_production_exports ADD COLUMN IF NOT EXISTS "rootGrantId" varchar(64)`);
+    const linked = rows<{jobId:string}>(await db.execute(sql`SELECT e."jobId" FROM ink_free_production_exports e JOIN ink_free_claims c ON c."userId"=e."userId" AND c."jobId"=('ink_prod_' || COALESCE(e."rootGrantId",e."grantId")) WHERE e."userId"=${userId} AND e."jobId"=${jobId}`))[0];
+    if (linked) return;
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS ink_paid_production_exports ("userId" varchar(64) NOT NULL,"grantId" varchar(64) NOT NULL,"jobId" varchar(64) NOT NULL UNIQUE,PRIMARY KEY("userId","grantId"))`);
+    const paid = rows<{jobId:string}>(await db.execute(sql`SELECT "jobId" FROM ink_paid_production_exports WHERE "userId"=${userId} AND "jobId"=${jobId}`))[0];
+    if (paid) return;
+  }
   if (!claim) throw new Error("本任务没有可核对的免费名额，未开始生成");
 }
 const isRollback = (e: unknown) => {

@@ -87,6 +87,8 @@ export type PaidJobStatus =
   | "refund_pending"
   /** 业务已成功但 settle 写盘失败：只能继续结算，绝不退款（第七轮 P0·5） */
   | "settlement_pending"
+  /** Provider may have accepted the purchase; no automatic refund, settlement or repurchase. */
+  | "reconciliation_pending"
   | "settled"
   | "refunded";
 
@@ -212,7 +214,7 @@ export async function registerActiveJob(input: RegisterInput): Promise<void> {
     userId: input.userId,
     creditsBilled: input.creditsBilled,
     action: input.action,
-    status: existing?.status === "settled" || existing?.status === "refunded" || existing?.status === "refund_pending"
+    status: existing?.status === "settled" || existing?.status === "refunded" || existing?.status === "refund_pending" || existing?.status === "reconciliation_pending"
       ? existing.status
       : "active",
     chargedAt: existing?.chargedAt ?? now,
@@ -333,6 +335,16 @@ export async function markSettlementPending(
     );
     return false;
   }
+}
+
+/** An uncertain provider purchase is not a successfully delivered job. Keep it for explicit reconciliation. */
+export async function markReconciliationPending(jobId: string, taskType: PaidTaskType): Promise<boolean> {
+  const dir=await getLedgerDir(),file=holdFilePath(dir,taskType,jobId),hold=await readHoldFile(file);
+  if (!hold) return false;
+  if (hold.status === "settled" || hold.status === "refunded" || hold.status === "refund_pending") return false;
+  hold.status="reconciliation_pending";
+  await writeHoldFile(file,hold);
+  return true;
 }
 
 // ── 查询 / 列表 ──────────────────────────────────────────────────────────────
@@ -593,7 +605,7 @@ export async function refundCreditsOnFailure(
     // 上一次退分中途崩过：查真账补偿，不重复打款
     return reconcileRefundPendingHold(hold, file);
   }
-  if (hold.status !== "active") {
+  if (hold.status !== "active" && !(hold.status === "reconciliation_pending" && reason === "manual_admin_refund")) {
     // 已经 settled / refunded：幂等 no-op
     return { refunded: false, creditsRefunded: 0, status: hold.status };
   }

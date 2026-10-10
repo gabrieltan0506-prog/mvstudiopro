@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { Play, Pause } from "lucide-react";
 import type { ArtMotionSpec } from "@shared/artMotion";
+import { codeMotionVideoClipAt } from "@shared/codeMotionVideo";
 export default function CodeMotionPreview({
   spec,
   audioSources = [],
+  videoSources = [],
 }: {
   spec: ArtMotionSpec;
   audioSources?: { id: string; url: string }[];
+  videoSources?: { id: string; url: string }[];
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
+  const video = useRef<HTMLVideoElement>(null);
   const context = useRef<AudioContext | null>(null);
   const buffers = useRef(new Map<string, AudioBuffer>());
   const nodes = useRef<AudioBufferSourceNode[]>([]);
@@ -107,6 +111,33 @@ export default function CodeMotionPreview({
     [error, setError] = useState(""),
     [time, setTime] = useState(0),
     [playing, setPlaying] = useState(false);
+  const videoClip = codeMotionVideoClipAt(spec.codeVideo, time);
+  const videoSource = videoSources.find(
+    source => source.id === videoClip?.assetId
+  );
+  useEffect(() => {
+    const element = video.current;
+    if (!videoClip) {
+      element?.pause();
+      return;
+    }
+    if (!videoSource) {
+      setError("这段视频预览素材未就绪，请重新准备内容");
+      return;
+    }
+    if (!element) return;
+    const target = videoClip.sourceStartSec + time - videoClip.at;
+    if (
+      element.readyState > 0 &&
+      Math.abs(element.currentTime - target) > (playing ? 0.1 : 0.001)
+    )
+      element.currentTime = target;
+    if (playing)
+      void element.play().catch(e => {
+        if (e?.name !== "AbortError") setError("视频预览未能播放，请重新打开");
+      });
+    else element.pause();
+  }, [time, playing, videoClip, videoSource]);
   useEffect(() => {
     const receive = (e: MessageEvent) => {
       if (
@@ -141,7 +172,11 @@ export default function CodeMotionPreview({
       setTime(next);
       // 声音以完整片长收尾，画面停在最后一帧；跳转驱动避免两个播放时钟漂移。
       frame.current?.contentWindow?.postMessage(
-        { type: "art-motion-seek", time: next },
+        {
+          type: "art-motion-seek",
+          time: next,
+          overlayOnly: !!codeMotionVideoClipAt(spec.codeVideo, next),
+        },
         location.origin
       );
       if (elapsed >= spec.duration) {
@@ -152,19 +187,84 @@ export default function CodeMotionPreview({
     handle = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(handle);
   }, [playing, spec.duration, spec.fps]);
-  const send = (message: unknown) =>
-    frame.current?.contentWindow?.postMessage(message, location.origin);
+  const send = (
+    message:
+      | { type: "art-motion-seek"; time: number }
+      | { type: "art-motion-init"; spec: ArtMotionSpec }
+  ) =>
+    frame.current?.contentWindow?.postMessage(
+      message?.type === "art-motion-seek"
+        ? {
+            ...message,
+            overlayOnly: !!codeMotionVideoClipAt(spec.codeVideo, message.time),
+          }
+        : message,
+      location.origin
+    );
+  useEffect(() => {
+    if (ready) send({ type: "art-motion-seek", time });
+  }, [ready, spec]);
   return (
     <div className="space-y-3">
-      <iframe
-        key={retry}
-        ref={frame}
-        title="映客 INK动画预览"
-        src="/art-motion/engine/studio.html"
-        onLoad={() => send({ type: "art-motion-init", spec })}
-        className="mx-auto max-h-[520px] w-full rounded-xl bg-stone-100"
-        style={{ aspectRatio: `${spec.width}/${spec.height}` }}
-      />
+      <div
+        className="relative mx-auto max-h-[520px] w-full"
+        style={{
+          aspectRatio: `${spec.width}/${spec.height}`,
+          position: "relative",
+          width: "100%",
+          maxHeight: 520,
+          maxWidth: (520 * spec.width) / spec.height,
+          margin: "0 auto",
+        }}
+      >
+        <iframe
+          key={retry}
+          ref={frame}
+          title="映客 INK动画预览"
+          src="/art-motion/engine/studio.html"
+          onLoad={() => send({ type: "art-motion-init", spec })}
+          className="relative mx-auto max-h-[520px] w-full rounded-xl"
+          style={{
+            aspectRatio: `${spec.width}/${spec.height}`,
+            position: "relative",
+            width: "100%",
+            height: "100%",
+            border: 0,
+            display: "block",
+            zIndex: videoClip ? 2 : 0,
+            background: videoClip ? "transparent" : "#f5f5f4",
+            pointerEvents: videoClip ? "none" : undefined,
+          }}
+        />
+        {videoClip && videoSource && (
+          <video
+            key={videoSource.id}
+            ref={video}
+            src={videoSource.url}
+            muted
+            playsInline
+            preload="auto"
+            aria-label="已生成视频片段预览"
+            className="absolute inset-0 h-full w-full rounded-xl bg-black"
+            style={{
+              objectFit: videoClip.fit,
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+            }}
+            onLoadedData={e => {
+              e.currentTarget.currentTime =
+                videoClip.sourceStartSec + time - videoClip.at;
+            }}
+            onError={() => {
+              stopAudio();
+              setPlaying(false);
+              setError("这段视频无法读取，请重新准备内容");
+            }}
+          />
+        )}
+      </div>
       {error ? (
         <div className="space-y-2">
           <p role="alert" className="text-red-700">

@@ -14,9 +14,17 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { flyDownloadUrl, gcsTransferUrl } from "@/lib/gcsTransfer";
 import CodeMotionVideoPptx from "@/components/CodeMotionVideoPptx";
+import HomePhotoVideoUpscale from "@/components/HomePhotoVideoUpscale";
 import CodeMotionSpreadsheetPicker from "@/components/code-motion/CodeMotionSpreadsheetPicker";
 import type { CodeMotionWorkbook } from "@shared/codeMotionSpreadsheet";
 import CodeMotionAudioPanel from "@/components/code-motion/CodeMotionAudioPanel";
+import CodeMotionSoundProduction from "@/components/code-motion/CodeMotionSoundProduction";
+import CodeMotionImageProduction from "@/components/code-motion/CodeMotionImageProduction";
+import CodeMotionVideoProduction from "@/components/code-motion/CodeMotionVideoProduction";
+import CodeMotionTimingPanel from "@/components/code-motion/CodeMotionTimingPanel";
+import CodeMotionRevision from "@/components/code-motion/CodeMotionRevision";
+import { adoptCodeMotionImageInProject } from "@shared/codeMotionImageProduction";
+import { adoptCodeMotionSoundInProject } from "@shared/codeMotionSoundAdoption";
 import CodeMotionSceneEditor, {
   makeCodeMotionScene,
 } from "@/components/code-motion/CodeMotionSceneEditor";
@@ -165,6 +173,10 @@ export default function CodeMotionStudio() {
   );
   const latestProject = useRef(project);
   latestProject.current = project;
+  const analyzeTiming = trpc.codeMotion.analyzeTiming.useMutation();
+  const timingAudio = trpc.codeMotion.resolveAudios.useQuery({projectId: project.id, audios: project.brief.audios || []}, {enabled: !!user && !!project.brief.audios?.length, retry: false});
+  const latestGeneration = useRef(generation);
+  latestGeneration.current = generation;
   const dirty = savedJson !== JSON.stringify(project);
   const status = trpc.codeMotion.status.useQuery(
     { projectId: project.id },
@@ -288,11 +300,13 @@ export default function CodeMotionStudio() {
     const captured = active.current;
     const receipt = await saveMutation.mutateAsync({
       project: codeMotionProjectSchema.parse(value),
-      expectedGeneration: generation,
+      expectedGeneration: latestGeneration.current,
     });
     if (active.current !== captured)
       throw new Error("已切换作品，保存回执保留在原作品中");
     setProject(receipt.project);
+    latestProject.current = receipt.project;
+    latestGeneration.current = receipt.generation;
     setGeneration(receipt.generation);
     setSavedJson(JSON.stringify(receipt.project));
     await projects.refetch();
@@ -1545,6 +1559,50 @@ export default function CodeMotionStudio() {
                 合计 {project.plan.scenes.reduce((n, s) => n + s.duration, 0)}{" "}
                 秒 / 选择 {project.brief.duration} 秒
               </p>
+              <CodeMotionImageProduction key={`images:${identity}`} project={project} disabled={busy || !user || !!pending}
+                execute={run} save={() => save(latestProject.current)}
+                adopt={async source => {
+                  if (active.current !== identity) throw new Error("已切换作品，图片仍保留在原作品中");
+                  await save(adoptCodeMotionImageInProject(latestProject.current, source));
+                  setPrepared(null); setPreview(false); setReviewOpen(false);
+                }} />
+              <CodeMotionSoundProduction key={identity} project={project} disabled={busy || !user || !!pending}
+                execute={run}
+                save={() => save(latestProject.current)}
+                adopt={async source => {
+                  if (active.current !== identity) throw new Error("已切换作品，音源仍保留在原作品中");
+                  const value = adoptCodeMotionSoundInProject(latestProject.current, source);
+                  const clearedTiming = !!latestProject.current.plan?.timing && !value.plan?.timing;
+                  await save(value);
+                  setPrepared(null); setPreview(false); setReviewOpen(false);
+                  if (clearedTiming) setMessage("已采用新音源，原音源的词拍已清除，请重新核对新音源词拍。");
+                }} />
+              <CodeMotionTimingPanel key={`timing:${identity}`} value={project.plan.timing} sources={project.brief.audios || []}
+                busy={busy || !user || !!pending} audioSources={(timingAudio.data || []).map(a => ({id:a.id,url:gcsTransferUrl(a.url)}))}
+                onChange={timing => { setProject(p => ({...p,plan:p.plan ? {...p.plan,timing} : null})); setPrepared(null); setPreview(false); setReviewOpen(false); }}
+                onAnalyze={async sourceId => {
+                  if (lock.current) throw new Error("请先等待当前操作完成");
+                  lock.current = true; setBusy(true);
+                  try {
+                    const saved = await save(latestProject.current);
+                    const result = await analyzeTiming.mutateAsync({projectId:project.id,generation:saved.generation,sourceId});
+                    if (active.current !== identity) throw new Error("已切换作品，词拍数据保留在原作品中");
+                    return result.timing;
+                  } finally { lock.current = false; setBusy(false); }
+                }} />
+              <CodeMotionVideoProduction key={`video:${identity}`} project={project} disabled={busy || !user || !!pending}
+                save={() => save(latestProject.current)} execute={run}
+                adopt={async ({ asset, clip }) => {
+                  if (active.current !== identity) throw new Error("已切换作品，片段仍保留在原作品中");
+                  const current = latestProject.current;
+                  if (!current.plan) throw new Error("请先保存分镜");
+                  const prior = current.plan.codeVideo;
+                  const clips = [...(prior?.clips || []).filter(c => c.at !== clip.at), clip].sort((a,b) => a.at-b.at);
+                  const used = new Set(clips.map(c => c.assetId));
+                  const assets = [...(prior?.assets || []).filter(a => a.id !== asset.id && used.has(a.id)), asset];
+                  await save({ ...current, plan: { ...current.plan, codeVideo: { version: 1, assets, clips } } });
+                  setPrepared(null); setPreview(false); setReviewOpen(false);
+                }} />
               <button
                 className={button + " w-full"}
                 disabled={busy || !user || !!pending}
@@ -1557,6 +1615,7 @@ export default function CodeMotionStudio() {
           {reviewOpen && prepared && !dirty && (
             <div className="space-y-4 rounded-2xl border border-orange-200 bg-orange-50 p-5">
               <h3 className="font-semibold">这次要做的视频</h3>
+              {prepared.pendingProduction && <p className="text-sm text-orange-800">可先预览当前画面与已采用的声音。{prepared.pendingProduction}</p>}
               <p className="text-sm">
                 {project.brief.title} · {project.brief.duration} 秒 ·{" "}
                 {project.brief.orientation === "portrait" ? "竖屏" : "横屏"} ·
@@ -1651,7 +1710,7 @@ export default function CodeMotionStudio() {
               <p className="text-sm">
                 {INK_FREE_POLICY}
                 <br />
-                {inkFreeMessage(prepared.freeEligibility)}
+                {prepared.productionTier ? (prepared.productionTier === "free" ? "本作品已领取制作名额，成片导出包含在本次制作中。" : "本作品素材生成沿用首页积分，导出沿本次作品继续。") : inkFreeMessage(prepared.freeEligibility)}
                 <br />
                 本次符合资格的视频导出：0 积分。原图片与材料保留。
               </p>
@@ -1667,6 +1726,7 @@ export default function CodeMotionStudio() {
                   className={exportButton}
                   disabled={
                     busy ||
+                    !!prepared.pendingProduction ||
                     !prepared.freeEligibility.eligible ||
                     !!(
                       status.data &&
@@ -1703,6 +1763,7 @@ export default function CodeMotionStudio() {
           {preview && prepared && !dirty && (
             <CodeMotionPreview
               key={prepared.fingerprint}
+              videoSources={prepared.videos.map(v => ({ id: v.id, url: gcsTransferUrl(v.url) }))}
               audioSources={prepared.audios.map(a => ({
                 id: a.id,
                 url: gcsTransferUrl(a.url),
@@ -1741,6 +1802,20 @@ export default function CodeMotionStudio() {
                     title={project.brief.title}
                     orientation={project.brief.orientation}
                   />
+                  <HomePhotoVideoUpscale generatedVideoUrl={videoUrl} projectKey={project.id} />
+                  <CodeMotionRevision key={`revision:${identity}`} project={project} generation={generation}
+                    disabled={busy || !user || dirty || !!pending} execute={run}
+                    onCreated={async saved => {
+                      if (active.current !== identity) throw new Error("已切换作品，修改稿仍保留在原作品记录中");
+                      latestProject.current = saved.project;
+                      latestGeneration.current = saved.generation;
+                      setProject(saved.project);
+                      setGeneration(saved.generation);
+                      setSavedJson(JSON.stringify(saved.project));
+                      setPrepared(null); setPreview(false); setReviewOpen(false); setPending(null);
+                      setMessage("局部修改已保存为新版本，请预览后生成成片。");
+                      await projects.refetch();
+                    }} />
                 </>
               )}
               {status.data.error && (

@@ -25,7 +25,6 @@ const project = codeMotionProjectSchema.parse({
       {
         heading: "介绍",
         body: "原文",
-        speech: { text: "原文", voice: "female" },
         duration: 15,
       },
     ],
@@ -76,7 +75,6 @@ it("首次提交先走素材归属核验，再走原幂等队列", async () => {
     resolve = vi.fn(async (v: { input: unknown }) => v.input);
   const deps = {
     load: async () => null,
-    speechEnabled: () => true,
     queue,
     resolve,
     view: vi.fn(),
@@ -218,7 +216,7 @@ it("无声提交仍由原编译合同拦截缺方案、空镜头和空画面，�
   expect(queue).not.toHaveBeenCalled();
 });
 
-it("未开放的合成配音在名额与排队之前拒绝，原任务仍能恢复", async () => {
+it("文字旁白未生成采用前不能占名额或排队，本路径不隐式调用Kokoro", async () => {
   const identity = codeMotionRenderIdentity("1", project),
     queue = vi.fn(),
     resolve = vi.fn();
@@ -227,11 +225,12 @@ it("未开放的合成配音在名额与排队之前拒绝，原任务仍能恢�
     queue,
     resolve,
     view: vi.fn(),
-    speechEnabled: () => false,
   } as unknown as CodeMotionTaskDeps;
+  const pendingSpeech = structuredClone(project);
+  pendingSpeech.plan!.scenes[0].speech = { text: "原文", voice: "female" };
   await expect(
-    submitCodeMotion("1", project, identity.fingerprint, deps)
-  ).rejects.toThrow("暂未开放");
+    submitCodeMotion("1", pendingSpeech, identity.fingerprint, deps)
+  ).rejects.toThrow("配音尚未生成");
   expect(queue).not.toHaveBeenCalled();
   expect(resolve).not.toHaveBeenCalled();
 });

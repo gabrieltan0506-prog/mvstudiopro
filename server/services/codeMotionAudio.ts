@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   CODE_MOTION_AUDIO_MAX_BYTES,
   CODE_MOTION_AUDIO_MAX_SECONDS,
+  CODE_MOTION_AUDIO_SOURCE_MAX_SECONDS,
   codeMotionAudioSchema,
   codeMotionAudioSourceSchema,
   validateCodeMotionAudio,
@@ -24,6 +25,7 @@ import {
   runMediaTool,
 } from "./postProduction";
 import { AUDIO_SAMPLE_RATE, audioSamples } from "./audioTimelineRender";
+import { assertCodeMotionGeneratedAudio } from "./codeMotionAudioReceipt";
 
 type AudioInfo = {
   duration: number;
@@ -120,14 +122,14 @@ async function decodeAudio(
       "-c:a",
       "pcm_s16le",
       "-t",
-      String(CODE_MOTION_AUDIO_MAX_SECONDS + 0.1),
+      String(CODE_MOTION_AUDIO_SOURCE_MAX_SECONDS + 0.1),
       decoded,
     ],
     signal
   );
   const duration = await probeAudio(decoded, signal);
-  if (duration > CODE_MOTION_AUDIO_MAX_SECONDS)
-    throw new Error("单个音源不得超过 180 秒，请先裁剪");
+  if (duration > CODE_MOTION_AUDIO_SOURCE_MAX_SECONDS)
+    throw new Error("单个音源不得超过 360 秒，请先裁剪");
   return { ...format, duration };
 }
 
@@ -170,8 +172,11 @@ const importDeps: CodeMotionAudioImportDeps = {
       contentType,
       signal: AbortSignal.timeout(60_000),
     });
-    if (!result.created)
-      throw new Error("原声音源归档冲突，未覆盖任何已有文件");
+    if (!result.created) {
+      const chunks: Buffer[] = [];
+      await inspectGcsObjectBounded({ gcsUri: `gs://${getGcsBucketName()}/${objectName}`, maxBytes: CODE_MOTION_AUDIO_MAX_BYTES, timeoutMs: 60_000, onChunk: chunk => chunks.push(Buffer.from(chunk)) });
+      if (!Buffer.concat(chunks).equals(bytes)) throw new Error("原声音源归档冲突，未覆盖任何已有文件");
+    }
     return `gs://${getGcsBucketName()}/${objectName}`;
   },
 };
@@ -183,7 +188,7 @@ function ownerPrefix(userId: string, projectId: string) {
 }
 
 export async function importCodeMotionAudio(
-  input: { userId: string; projectId: string; name: string; gcsUri: string },
+  input: { userId: string; projectId: string; name: string; gcsUri: string; sourceId?: string; generated?: CodeMotionAudioSource["generated"] },
   deps = importDeps
 ): Promise<CodeMotionAudioSource> {
   const prefix = ownerPrefix(input.userId, input.projectId);
@@ -197,15 +202,18 @@ export async function importCodeMotionAudio(
   if (!/^gs:\/\/[^/]+\//.test(uri)) throw new Error("音源须通过站内上传后导入");
   const bytes = await deps.read(uri);
   if (!bytes.length || bytes.length > CODE_MOTION_AUDIO_MAX_BYTES)
-    throw new Error("音源为空或超过 30 MB");
+    throw new Error("音源为空或超过 64 MB");
+  if (!input.generated && bytes.length > 30 * 1024 * 1024) throw new Error("上传音源不得超过30 MB");
   const info = await deps.inspect(bytes);
-  const id = randomUUID();
+  if (!input.generated && info.duration > CODE_MOTION_AUDIO_MAX_SECONDS) throw new Error("上传音源不得超过180秒，请先裁剪");
+  const id = input.sourceId ? z.string().uuid().parse(input.sourceId) : randomUUID();
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const result = codeMotionAudioSourceSchema.parse({
     id,
     name,
     gcsUri: `${uri.split("/").slice(0, 3).join("/")}/${prefix}${id}/${sha256}.${info.extension}`,
     duration: info.duration,
+    ...(input.generated ? { generated: input.generated } : {}),
     mimeType: info.mimeType,
     sha256,
     bytes: bytes.length,
@@ -221,16 +229,25 @@ export async function importCodeMotionAudio(
 
 export type CodeMotionAudioOwnershipDeps = {
   resolve: typeof resolveRegisteredPostProdMediaSource;
+  generated?: typeof assertCodeMotionGeneratedAudio;
+  revisionParent?: (userId:string,projectId:string,source:CodeMotionAudioSource)=>Promise<string|null>;
 };
 export async function assertCodeMotionAudioOwnership(
   input: { userId: string; projectId: string; audio: CodeMotionAudio },
   deps: CodeMotionAudioOwnershipDeps = {
     resolve: resolveRegisteredPostProdMediaSource,
+    revisionParent: async(userId,projectId,source)=>(await import("./codeMotionRevision")).codeMotionRevisionAssetParent(userId,projectId,"audio",source),
   }
 ) {
   const audio = codeMotionAudioSchema.parse(input.audio);
-  const prefix = ownerPrefix(input.userId, input.projectId);
   for (const source of audio.sources) {
+    let ownerProject=input.projectId;
+    if (!source.gcsUri.includes(`/${ownerPrefix(input.userId,input.projectId)}`)) {
+      const parent=await deps.revisionParent?.(input.userId,input.projectId,source);
+      if(parent)ownerProject=parent;
+    }
+    const prefix=ownerPrefix(input.userId,ownerProject);
+    if (source.generated) await (deps.generated ?? assertCodeMotionGeneratedAudio)(input.userId, ownerProject, source);
     const expected = `${prefix}${source.id}/${source.sha256}.${extensions[source.mimeType]}`;
     if (source.gcsUri.split("/").slice(3).join("/") !== expected)
       throw new Error("音源不属于当前账号和作品，或归档身份已被修改");

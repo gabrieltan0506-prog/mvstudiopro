@@ -1,0 +1,17 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+stdout | server/services/openaiGptImage2.codeMotion.test.ts > free exact model and medium quality survive global Flare/quality overrides; raw response is saved before upload
+[openaiGptImage2] ok · lane=keyart · slot=test · attempt=1/2 · generations
+
+stderr | server/services/openaiGptImage2.codeMotion.test.ts > paid Sunburst is exact; ambiguous submit and receipt-save failure stop without second key or duplicate purchase
+[openaiGptImage2] test receipt storage down
+
+ ✓ server/services/openaiGptImage2.codeMotion.test.ts > free exact model and medium quality survive global Flare/quality overrides; raw response is saved before upload
+ ✓ server/services/openaiGptImage2.codeMotion.test.ts > paid Sunburst is exact; ambiguous submit and receipt-save failure stop without second key or duplicate purchase
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  03:52:50
+   Duration  1.60s (transform 183ms, setup 0ms, collect 241ms, tests 38ms, environment 1ms, prepare 180ms)
+

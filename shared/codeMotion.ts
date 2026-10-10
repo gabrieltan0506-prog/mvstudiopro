@@ -1,4 +1,7 @@
+import { codeMotionTimingSchema, validateCodeMotionTimingSource, applyCodeMotionTiming } from "./codeMotionTiming";
 import { z } from "zod";
+import { CODE_MOTION_AUDIO_SOURCE_LIMIT } from "./codeMotionMedia";
+import { codeMotionVideoSchema, validateCodeMotionVideo } from "./codeMotionVideo";
 import { artMotionSpecSchema, type ArtMotionSpec } from "./artMotion";
 import {
   codeMotionAudioSourceSchema,
@@ -32,7 +35,10 @@ const codeMotionBriefObject = z
     duration: z.number().int().min(15).max(180),
     orientation: z.enum(["landscape", "portrait"]),
     images: z.array(codeMotionImageSchema).max(8).default([]),
-    audios: z.array(codeMotionAudioSourceSchema).max(3).optional(),
+    audios: z
+      .array(codeMotionAudioSourceSchema)
+      .max(CODE_MOTION_AUDIO_SOURCE_LIMIT)
+      .optional(),
     data: z
       .array(
         z
@@ -92,7 +98,9 @@ export const codeMotionPlanSchema = z
   .object({
     version: z.literal(1),
     summary: z.string().trim().min(1).max(400),
-    audioTimeline: z.array(codeMotionAudioClipSchema).max(12).optional(),
+    audioTimeline: z.array(codeMotionAudioClipSchema).max(24).optional(),
+    codeVideo: codeMotionVideoSchema.optional(),
+    timing: codeMotionTimingSchema.optional(),
     scenes: z
       .array(
         z
@@ -107,6 +115,12 @@ export const codeMotionPlanSchema = z
               .strict()
               .optional(),
             duration: z.number().finite().min(0.5).max(180),
+            production: z.object({
+              imagePrompt: z.string().trim().min(2).max(2000),
+              motion: z.enum(["code", "natural"]),
+              videoPrompt: z.string().trim().max(2000),
+              referenceVideoIds: z.array(z.string().min(1).max(100)).max(10).optional(),
+            }).strict().optional(),
             composition: codeMotionPlanSceneSchema.optional(),
             direction: z.string().trim().max(400).optional(),
             imageId: uuid.optional(),
@@ -123,6 +137,14 @@ export function validateCodeMotionPlan(
   raw: unknown
 ): CodeMotionPlan {
   const plan = codeMotionPlanSchema.parse(raw);
+  if (plan.timing) {
+    if (brief.style !== "scenes") throw new Error("词拍动作需要逐镜创作模式");
+    validateCodeMotionTimingSource(plan.timing, brief.audios || [], plan.audioTimeline || []);
+  }
+  if (plan.codeVideo) {
+    const errors = validateCodeMotionVideo(plan.codeVideo, brief.duration, 30);
+    if (errors.length) throw new Error(errors.join("；"));
+  }
   if (
     Math.abs(
       plan.scenes.reduce((sum, s) => sum + s.duration, 0) - brief.duration
@@ -178,33 +200,62 @@ export function validateCodeMotionPlan(
 /** 编译受控场景与素材身份；只接收数据，不执行模型提供的代码。 */
 export function compileCodeMotion(
   briefInput: unknown,
-  planInput: unknown
+  planInput: unknown,
+  options: { allowPendingSpeech?: boolean; allowPendingProduction?: boolean } = {}
 ): ArtMotionSpec {
   const brief = codeMotionBriefSchema.parse(briefInput);
   const plan = validateCodeMotionPlan(brief, planInput);
   let at = 0;
-  let speechAt = 0;
-  const speechLines = plan.scenes.flatMap(scene => {
-    const start = speechAt;
-    speechAt += scene.duration;
-    return scene.speech?.text.trim()
-      ? [
-          {
-            at: start,
-            duration: scene.duration,
-            text: scene.speech.text.trim(),
-            voice: scene.speech.voice,
-          },
-        ]
-      : [];
-  });
-  const composition =
+  if (!options.allowPendingProduction) {
+    let sceneAt = 0;
+    for (const scene of plan.scenes) {
+      if (scene.production?.motion === "natural" && !plan.codeVideo?.clips.some(clip => Math.abs(clip.at - sceneAt) < 1e-6 && Math.abs(clip.duration - scene.duration) < 1e-6))
+        throw new Error("动态镜头尚未完成制作，请先恢复制作并采用生成片段");
+      sceneAt += scene.duration;
+    }
+  }
+  if (!options.allowPendingSpeech) {
+    let at = 0;
+    for (let index = 0; index < plan.scenes.length; index++) {
+      const scene = plan.scenes[index];
+      if (scene.speech?.text.trim()) {
+        const source = brief.audios?.find(
+          audio =>
+            audio.generated?.kind === "speech" &&
+            audio.generated.sceneIndex === index &&
+            audio.generated.text === scene.speech!.text.trim() &&
+            audio.generated.voice === scene.speech!.voice
+        );
+        const clip =
+          source &&
+          plan.audioTimeline?.find(
+            clip =>
+              clip.sourceId === source.id &&
+              (clip.role === "dialogue" || clip.role === "narration") &&
+              Math.abs(clip.at - at) < 1e-6 &&
+              clip.trimStart === 0 &&
+              Math.abs(clip.duration - source.duration) < 1e-6 &&
+              clip.volume > 0
+          );
+        if (!clip || clip.duration > scene.duration + 1e-6)
+          throw new Error(
+            `第${index + 1}镜配音尚未生成并完整选用，或台词/音色/时长已修改；请在声音区处理后再预览或导出`
+          );
+      }
+      at += scene.duration;
+    }
+  }
+  let composition =
     brief.style === "scenes"
       ? resolveCodeMotionCompositionImages(
           plan.scenes.map(scene => scene.composition!),
           brief.images
         )
       : undefined;
+  if (plan.timing && composition) {
+    if (plan.timing.review === "confirmed") composition = applyCodeMotionTiming(composition, plan.timing, plan.audioTimeline || []);
+    else if (!options.allowPendingSpeech && !options.allowPendingProduction) throw new Error("请先核对词拍时间并确认，再预览或导出");
+  }
   const grammar =
     brief.style === "words" || brief.style === "scenes"
       ? "y5_kinetic_type"
@@ -283,6 +334,7 @@ export function compileCodeMotion(
         : {},
     scenes: [],
     ...(composition ? { composition } : {}),
+    ...(plan.codeVideo ? { codeVideo: plan.codeVideo } : {}),
     ...(brief.audios?.length
       ? {
           codeAudio: {
@@ -290,9 +342,6 @@ export function compileCodeMotion(
             audioTimeline: plan.audioTimeline,
           },
         }
-      : {}),
-    ...(speechLines.length
-      ? { inkSpeech: { engine: "kokoro-zh-v1.1", lines: speechLines } }
       : {}),
   });
 }
@@ -306,7 +355,7 @@ export const codeMotionProjectSchema = z
   .superRefine((v, ctx) => {
     if (v.plan) {
       try {
-        compileCodeMotion(v.brief, v.plan);
+        compileCodeMotion(v.brief, v.plan, { allowPendingSpeech: true, allowPendingProduction: true });
       } catch (e) {
         ctx.addIssue({
           code: "custom",
@@ -331,7 +380,7 @@ export function codeMotionSceneDescription(
           : "文字卡片依次进入，同组最多三张并排展示";
 }
 export const CODE_MOTION_COST_NOTE =
-  "整理方案沿用创作顾问的当前额度与积分规则；上传原音按确认的秒窗混入视频。逐句合成配音需服务端音源可用，浏览器预览不会提前合成。提交前核对画面、原音及时间轴。";
+  "整理方案沿用创作顾问的当前额度与积分规则；上传原音按确认的秒窗混入视频。逐句配音先生成、试听选用，再与配乐一起进入预览及导出；导出不另行合成。提交前核对画面、原音及时间轴。";
 
 /** 未完成输入仅作本机草稿，提交仍使用上面的完整检查。 */
 export const codeMotionLocalProjectSchema = z
@@ -355,7 +404,7 @@ export const codeMotionLocalProjectSchema = z
       .extend({
         audioTimeline: z
           .array(codeMotionAudioClipDraftSchema)
-          .max(12)
+          .max(24)
           .optional(),
         scenes: z
           .array(

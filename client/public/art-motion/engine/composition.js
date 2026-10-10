@@ -506,17 +506,27 @@
       images.set(uri, image);
     }
     const families = new Set();
-    for (const scene of spec.composition.scenes) for (const element of scene.elements) {
-      if (element.type !== "text") continue;
-      if (element.font === "serif") families.add("LXGWWenKai-500");
-      else if (element.font === "mono") { families.add("CMU-rm"); families.add("PuHui-Medium"); }
-      else families.add(element.weight === "bold" ? "PuHui-Bold" : "PuHui-Medium");
-    }
-    await Promise.all((window.FONT_FACES || []).filter(f => families.has(f.family)).map(async f => {
-      const ff = new FontFace(f.family, `url(${f.url})`, f.desc || {});
-      await ff.load();
-      document.fonts.add(ff);
-    }));
+    for (const scene of spec.composition.scenes)
+      for (const element of scene.elements) {
+        if (element.type !== "text") continue;
+        if (element.font === "serif") families.add("LXGWWenKai-500");
+        else if (element.font === "mono") {
+          families.add("CMU-rm");
+          families.add("PuHui-Medium");
+        } else
+          families.add(
+            element.weight === "bold" ? "PuHui-Bold" : "PuHui-Medium"
+          );
+      }
+    await Promise.all(
+      (window.FONT_FACES || [])
+        .filter(f => families.has(f.family))
+        .map(async f => {
+          const ff = new FontFace(f.family, `url(${f.url})`, f.desc || {});
+          await ff.load();
+          document.fonts.add(ff);
+        })
+    );
     await document.fonts.ready;
     let at = 0,
       prior = new Map(),
@@ -553,6 +563,7 @@
     });
     if (Math.abs(at - spec.duration) > 0.001)
       throw new Error("逐镜编排总时长与影片不一致");
+    let timingOnly = false;
     const drawScene = (scene, t, alpha = 1, offset = 0, zoom = 1, clip = 1) => {
       c.save();
       c.globalAlpha = alpha;
@@ -563,7 +574,7 @@
       c.translate(W / 2, H / 2);
       c.scale(zoom, zoom);
       c.translate(-W / 2, -H / 2);
-      if (!spec.alpha) {
+      if (!spec.alpha && !timingOnly) {
         c.fillStyle = scene.background || spec.background;
         c.fillRect(0, 0, W, H);
       }
@@ -576,6 +587,9 @@
       const items = scene.elements
         .filter(
           e =>
+            (!timingOnly ||
+              e.id.startsWith("timing-word-") ||
+              e.id.startsWith("timing-beat-")) &&
             t >= e.start &&
             (t < (e.end ?? scene.duration) ||
               (t === scene.duration &&
@@ -625,6 +639,14 @@
           tr.type === "wipe" ? p : 1
         );
       } else drawScene(scene, local);
+    };
+    window.renderTimingOverlay = seconds => {
+      timingOnly = true;
+      try {
+        window.renderFrame(seconds);
+      } finally {
+        timingOnly = false;
+      }
     };
     window.__canvas = cv;
     window.__total = spec.duration;
