@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { codeMotionProjectSchema } from "../../shared/codeMotion";
+import { artMotionJobSchema } from "../../shared/artMotion";
 const h = vi.hoisted(() => ({
   files: new Map<string, { body: Buffer; generation: string }>(),
   n: 0,
@@ -348,7 +349,7 @@ describe("confirmed local revisions", () => {
       identity.fingerprint,
       {
         load: async () => null,
-        resolve: async ({ input }) => input,
+        resolve: async ({ input }) => artMotionJobSchema.parse(input),
         queue: async (_u, input) => {
           queued.push(input);
           return { jobId: "child-job", status: "queued" };
