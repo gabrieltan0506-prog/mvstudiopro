@@ -200,14 +200,43 @@ describe("映客整作品制作预算", () => {
       )
     ).rejects.toThrow("预算与请求");
   });
-  it("redraw adoption may replace original image layers while retaining the non-image code identity",()=>{
-    const {project}=setup();const a=structuredClone(project);
-    a.plan!.scenes[0].composition={id:"scene0",duration:5,elements:[{id:"source-photo",type:"image",imageId:"22222222-2222-4222-8222-222222222222",width:1,height:1},{id:"caption",type:"text",text:"原标题"}]} as any;
-    const b=structuredClone(a);b.plan!.scenes[0].composition!.elements=b.plan!.scenes[0].composition!.elements.filter(e=>e.type!=="image");
-    b.plan!.scenes[0].composition!.elements.push({id:"ink-generated-image-0",type:"image",imageId:"33333333-3333-4333-8333-333333333333",width:1,height:1} as any);
-    expect(codeMotionProductionFingerprint(a)).toBe(codeMotionProductionFingerprint(b));
-    (b.plan!.scenes[0].composition!.elements.find(e=>e.type==="text") as any).text="用户修改文字";
-    expect(codeMotionProductionFingerprint(a)).not.toBe(codeMotionProductionFingerprint(b));
+  it("redraw adoption may replace original image layers while retaining the non-image code identity", () => {
+    const { project } = setup();
+    const a = structuredClone(project);
+    a.plan!.scenes[0].composition = {
+      id: "scene0",
+      duration: 5,
+      elements: [
+        {
+          id: "source-photo",
+          type: "image",
+          imageId: "22222222-2222-4222-8222-222222222222",
+          width: 1,
+          height: 1,
+        },
+        { id: "caption", type: "text", text: "原标题" },
+      ],
+    } as any;
+    const b = structuredClone(a);
+    b.plan!.scenes[0].composition!.elements =
+      b.plan!.scenes[0].composition!.elements.filter(e => e.type !== "image");
+    b.plan!.scenes[0].composition!.elements.push({
+      id: "ink-generated-image-0",
+      type: "image",
+      imageId: "33333333-3333-4333-8333-333333333333",
+      width: 1,
+      height: 1,
+    } as any);
+    expect(codeMotionProductionFingerprint(a)).toBe(
+      codeMotionProductionFingerprint(b)
+    );
+    (
+      b.plan!.scenes[0].composition!.elements.find(
+        e => e.type === "text"
+      ) as any
+    ).text = "用户修改文字";
+    expect(codeMotionProductionFingerprint(a)).not.toBe(
+      codeMotionProductionFingerprint(b)
+    );
   });
-
 });

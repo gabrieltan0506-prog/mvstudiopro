@@ -65,7 +65,11 @@ export default function CodeMotionRevision({
         value.projectId !== project.id ||
         !value.requestId ||
         !value.expectedGeneration ||
-        !Array.isArray(value.changes)
+        !Array.isArray(value.changes) ||
+        value.changes.length !== 1 ||
+        !Number.isInteger(value.changes[0]?.index) ||
+        typeof value.changes[0]?.heading !== "string" ||
+        typeof value.changes[0]?.body !== "string"
       )
         throw Error("invalid");
       setPending(value);
