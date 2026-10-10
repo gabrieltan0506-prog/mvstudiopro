@@ -516,3 +516,16 @@ describe("listPostProdJobsForUser:服务端为任务记录主来源", () => {
     await expect(getJobById("pp-1")).resolves.toBeNull();
   });
 });
+
+it("未指定工作机的领取SQL始终排除特效，包括默认和Blender过滤", async () => {
+  vi.stubEnv("JOB_WORKER_ROLE", "app");
+  try {
+    for (const filter of [undefined, "blender", "non_bgm"] as const) {
+      let condition: unknown;
+      getDb.mockResolvedValue(fakeDb([1], c => { condition ??= c; }));
+      await claimNextPostProdJob(filter);
+      const values = sqlStringValues(condition);
+      expect(values.join("|")).toContain(" <> |manhua_vfx");
+    }
+  } finally { vi.unstubAllEnvs(); }
+});

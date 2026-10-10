@@ -52,6 +52,10 @@ it("顾问VFX/标题/转场/生成式按当前指纹填参，原链提交返回�
     await page.waitForFunction(() => (globalThis as any).saved.length === 1);
     expect((await act({ action: "effects", tool: "vfx", operation: "submit", sourceKey: vfx.sourceKey })).error).toContain("已变化");
     await metadata('[data-vfx-position-frame] video'); vfx = await inspect("vfx");
+    expect(vfx.creditsPer15Seconds.shield).toBe(8); expect(vfx.creditsPer15Seconds.motion_ghost).toBe(16); expect(vfx.creditsPer15Seconds.bullet_time).toBe(32);
+    expect(vfx.creditQuote.credits).toBe(8); expect(vfx.billingEnabled).toBe(false);
+    expect(await page.$eval('[aria-label="特效积分标价"]', node => node.textContent)).toContain("本片标价 8 积分");
+    expect(await page.$$eval('option', nodes => nodes.map(node => node.textContent))).toContain("能量护盾 · 8积分/15秒");
     const vfxReceipt = await act({ action: "effects", tool: "vfx", operation: "submit", sourceKey: vfx.sourceKey }); expect(vfxReceipt.error).toBeUndefined();
     const queuedVfx = await page.evaluate(() => (globalThis as any).calls.find((input: any) => input.action === "manhua_vfx")); expect(queuedVfx.scopeKey).toBe("project:advisor"); expect(queuedVfx.params.composition.effects[0].imageUri).toBe("gs://offline/stamp.png");
 

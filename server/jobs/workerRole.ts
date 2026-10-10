@@ -18,6 +18,14 @@ export function rigWorkerSplitEnabled(env: NodeJS.ProcessEnv = process.env): boo
 export function isBlenderPostProdAction(action: unknown): boolean {
   return (BLENDER_POST_PROD_ACTIONS as readonly string[]).includes(String(action || ""));
 }
+/** 特效只允许指定工作机执行；关闭分流开关也不能回退生产机。 */
+export function canRenderManhuaVfx(env: NodeJS.ProcessEnv = process.env): boolean {
+  const target = String(env.MANHUA_HEAVY_MACHINE_ID || "").trim();
+  return resolveJobWorkerRole(env) === "rig" && Boolean(target) && env.FLY_MACHINE_ID === target;
+}
+export function assertManhuaVfxWorker(env: NodeJS.ProcessEnv = process.env): void {
+  if (!canRenderManhuaVfx(env)) throw new Error("特效渲染只能在指定工作机执行，不回退生产机");
+}
 /** 本进程该领哪类后期任务：rig 只领 Blender；app 开了分流就不领 Blender；没开分流全领（单机模式，兼容旧部署）。 */
 export function resolvePostProdClaimFilter(env: NodeJS.ProcessEnv = process.env): PostProdClaimFilter {
   const role = resolveJobWorkerRole(env);
