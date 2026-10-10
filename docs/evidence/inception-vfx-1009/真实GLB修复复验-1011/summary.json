@@ -1,0 +1,44 @@
+{
+  "head": "6723c1c483c37e15c8da7fba240bd13c3e0a0813",
+  "sourceChanges": [
+    "server/scripts/manhua_vfx_stage_export.py",
+    "server/scripts/test_vfx_stage_export_timing.py"
+  ],
+  "videoDecodeExitCode": 0,
+  "runtime": {
+    "bytes": 9436,
+    "sha256": "081b53ac25e6d5e66cc5dd2df330bc04b60460ca39dcf7ea4a0dce2f1ed41a69",
+    "animations": 2,
+    "channels": 5,
+    "skins": 1,
+    "meshes": 2
+  },
+  "maxVertexError": 8.372467352791422e-08,
+  "inputRoundtripMatch": true,
+  "machineFinal": [
+    {
+      "id": "7812595b294778",
+      "state": "stopped",
+      "region": "sin",
+      "updated_at": "2026-10-10T19:33:49Z",
+      "guest": {
+        "cpu_kind": "performance",
+        "cpus": 4,
+        "memory_mb": 8192
+      },
+      "process": "rig"
+    },
+    {
+      "id": "d892541f602228",
+      "state": "started",
+      "region": "sin",
+      "updated_at": "2026-10-10T17:54:34Z",
+      "guest": {
+        "cpu_kind": "shared",
+        "cpus": 4,
+        "memory_mb": 8192
+      },
+      "process": "app"
+    }
+  ]
+}

@@ -1,3 +1,6 @@
+import type { ManhuaVfxEnvironmentOption } from "@shared/manhuaVfxEnvironment";
+import { deriveManhuaVfxChoreographySpec } from "@shared/manhuaVfxChoreography";
+import { isManhuaVfxSceneKind } from "@shared/manhuaVfxCityFold";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Loader2, Trash2, Sparkles, Film, SlidersHorizontal, Layers, Maximize2, Minimize2, MessageSquare } from "lucide-react";
@@ -5,8 +8,8 @@ import { ManhuaVfxEffectParameters, type VfxSceneOption } from "./ManhuaVfxEffec
 import { ManhuaVfxSurface } from "./ManhuaVfxSurface";
 import { ManhuaVfxTimeline } from "./ManhuaVfxTimeline";
 import { ManhuaVfxComparison } from "./ManhuaVfxComparison";
-import { MANHUA_VFX_RAIN_DEFAULTS, MANHUA_VFX_PRESET_LABELS, manhuaVfxCompositionSchema, type ManhuaVfxComposition, type ManhuaVfxEffect, type ManhuaVfxState } from "@shared/manhuaVfx";
-import { gcsTransferUrl } from "@/lib/gcsTransfer";
+import { isManhuaVfxPixelKind, MANHUA_VFX_RAIN_DEFAULTS, MANHUA_VFX_PRESET_LABELS, manhuaVfxCompositionSchema, type ManhuaVfxComposition, type ManhuaVfxEffect, type ManhuaVfxState } from "@shared/manhuaVfx";
+import { gcsTransferUrl, flyDownloadUrl } from "@/lib/gcsTransfer";
 import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { canAdoptManhuaVfxRequest, manhuaVfxPositionAtTime, manhuaVfxContainedVideoRect, manhuaVfxPositionFromPointer, upsertManhuaVfxTrajectoryPoint, type ManhuaVfxVideoRect, makeManhuaVfxEffect, manhuaVfxSourceKey, manhuaVfxMediaIdentity, parseManhuaVfxTrajectory, validateManhuaVfxDuration } from "@/lib/manhuaVfxWorkflow";
 import type { ClipOption, TrackedJob } from "@/lib/postProdWorkshop";
@@ -24,12 +27,13 @@ const LABELS = MANHUA_VFX_PRESET_LABELS;
 const controlClass = "w-full rounded border border-white/15 bg-black/30 px-2 py-1.5 text-xs text-white";
 const buttonClass = "rounded border border-cyan-300/35 px-3 py-2 text-xs text-cyan-100 disabled:opacity-40";
 
-export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], scenes = [], jobs, busy, onStateChange, onSubmit, onSourceChange, onPreview, onAdvisorEffectsControl, onOpenAdvisor, advisorOpen, onAdvisorDockChange, active = true }: {
+export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], scenes = [], environments = [], jobs, busy, onStateChange, onSubmit, onSourceChange, onPreview, onAdvisorEffectsControl, onOpenAdvisor, advisorOpen, onAdvisorDockChange, active = true }: {
   scopeKey: string;
   state?: ManhuaVfxState;
   clips: ClipOption[];
   imageOptions?: ClipOption[];
   scenes?: VfxSceneOption[];
+  environments?: ManhuaVfxEnvironmentOption[];
   onAdvisorEffectsControl?: AdvisorEffectsRegistration;
   onOpenAdvisor?: () => void;
   advisorOpen?: boolean;
@@ -76,7 +80,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
   const currentSource = Boolean(source && draft && manhuaVfxSourceKey(source) === draft.sourceKey);
   const sourceUrl = currentSource ? source!.url : "";
   const selectedEffect = draft?.composition.effects.find(effect => effect.id === selectedEffectId) || draft?.composition.effects[0];
-  const canPosition = selectedEffect?.kind !== "bullet_time";
+  const canPosition = !selectedEffect || !isManhuaVfxSceneKind(selectedEffect.kind);
   useEffect(() => { if (!canPosition) setPositioning(false); }, [canPosition]);
   let selectedTrajectory = selectedEffect?.anchor.trajectory || [];
   try { if (selectedEffect && Object.prototype.hasOwnProperty.call(trajectoryText, selectedEffect.id)) selectedTrajectory = parseManhuaVfxTrajectory(trajectoryText[selectedEffect.id]) || []; }
@@ -123,6 +127,16 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
     if (effects.some(effect => effect.kind === "image_overlay" && (!effect.imageUri || !imageOptions.some(image => manhuaVfxMediaIdentity(image.url) === effect.imageUri)))) throw new Error("叠加图片已变化或不在当前作品，请重新选择已保存的图片");
     const parsed = manhuaVfxCompositionSchema.safeParse({ ...draft.composition, effects });
     if (!parsed.success) throw new Error(parsed.error.issues[0]?.message || "请核对特效参数");
+    for (const effect of parsed.data.effects) if (effect.world) {
+      const scene = scenes.find(scene => scene.jobId === effect.world!.sceneJobId && scene.scopeId === effect.world!.sceneScopeId && scene.clipId === effect.world!.clipId);
+      if (!scene || effect.world.sourceStartSec + effect.durationSec > scene.durationSec + 1e-9) throw new Error("人物动画场景已变化或时窗不足，请选择当前作品足够长的三维动画");
+      if (effect.world.environment && !environments.some(item => item.worldTaskId === effect.world!.environment!.worldTaskId && item.sceneRef === effect.world!.environment!.sceneRef && item.sourceVersion === effect.world!.environment!.sourceVersion))
+        throw new Error("正式场景已不属于当前作品版本，请重新选择；原候选仍保留");
+      if (effect.world.choreography) {
+        if (!scene.spec) throw new Error("所选历史场景缺少原角色配置，请先查询原任务");
+        deriveManhuaVfxChoreographySpec(scene.spec, effect.world.choreography);
+      }
+    }
     const durationError = validateManhuaVfxDuration(parsed.data, durationSec);
     if (sourceError || durationError) throw new Error(sourceError || durationError);
     return { ...draft, videoUri: source.url, composition: parsed.data };
@@ -307,7 +321,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
     <h5 className="flex shrink-0 items-center gap-2 text-xs text-white/70"><Film className="h-4 w-4" />原片预览与定位</h5>
     {sourceUrl ? <div className={`overflow-hidden rounded-xl border border-white/10 bg-black ${expanded ? "flex min-h-[240px] flex-1 flex-col" : ""}`}>
       <div className={`relative ${expanded ? "min-h-0 flex-1" : ""}`} data-vfx-position-frame>
-        <video ref={videoRef} key={sourceUrl} controls={!positioning} playsInline preload="metadata" src={gcsTransferUrl(sourceUrl)} className={`w-full object-contain ${expanded ? "absolute inset-0 h-full" : "min-h-48 max-h-[540px] aspect-video"}`} onLoadedMetadata={event => {
+        <video ref={videoRef} key={sourceUrl} controls={!positioning} playsInline preload="metadata" src={sourceUrl.startsWith("gs://") ? flyDownloadUrl(sourceUrl) : gcsTransferUrl(sourceUrl)} className={`w-full object-contain ${expanded ? "absolute inset-0 h-full" : "min-h-48 max-h-[540px] aspect-video"}`} onLoadedMetadata={event => {
           const video = event.currentTarget;
           setDurationSec(video.duration); setPlaybackSec(video.currentTime); measureVideo();
           setSourceError(video.duration > 30 || Math.max(video.videoWidth, video.videoHeight) > 1920 || video.videoWidth * video.videoHeight > 1920 * 1080 ? "原片超出本次支持的时长或画幅，请先在现有工作流裁切或选择合适版本" : "");
@@ -349,8 +363,8 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
         <label className="text-xs text-white/60">图案编号 <input type="number" min={0} max={2147483647} className={`${controlClass} inline-block w-28`} value={draft.composition.seed} disabled={locked} onChange={event => setDraft({ ...draft, composition: { ...draft.composition, seed: Number(event.target.value) } })} /></label>
         <select aria-label="添加特效" className={`${controlClass} w-auto`} disabled={locked || draft.composition.effects.length >= 12} value="" onChange={event => {
           const effect = makeManhuaVfxEffect(event.target.value as ManhuaVfxEffect["kind"], crypto.randomUUID());
-          if (effect.kind === "bullet_time") effect.startSec = Math.max(0, ...draft.composition.effects.map(item => item.startSec + item.durationSec));
-          const effects = ["liquid_mirror", "motion_ghost", "bullet_wave"].includes(effect.kind) ? [effect, ...draft.composition.effects] : [...draft.composition.effects, effect];
+          if (isManhuaVfxSceneKind(effect.kind)) effect.startSec = Math.max(0, ...draft.composition.effects.map(item => item.startSec + item.durationSec));
+          const effects = isManhuaVfxPixelKind(effect.kind) ? [effect, ...draft.composition.effects] : [...draft.composition.effects, effect];
           setDraft({ ...draft, composition: { ...draft.composition, effects } }); setSelectedEffectId(effect.id);
         }}><option value="">＋ 添加特效</option>{Object.entries(LABELS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select>
       </div>
@@ -369,21 +383,21 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
           <div className="grid grid-cols-3 gap-2">{([{key:"columns",label:"列数",min:8,max:36,step:1},{key:"speed",label:"下落速度",min:0.05,max:1,step:0.01},{key:"trail",label:"拖尾字符",min:4,max:16,step:1}] as const).map(field=><label key={field.key} className="text-[11px] text-white/60">{field.label}<input aria-label={`数字雨${field.label}`} className={`${controlClass} mt-1`} type="number" min={field.min} max={field.max} step={field.step} value={(effect.rain || MANHUA_VFX_RAIN_DEFAULTS)[field.key]} onChange={event=>updateEffect(effect.id,{rain:{...(effect.rain || MANHUA_VFX_RAIN_DEFAULTS),[field.key]:Number(event.target.value)}})} /></label>)}</div>
           <p className="text-[10px] text-white/45">速度单位：每秒画面高度；最多576个字符，原片与原声保留。</p>
         </div> : null}
-        <ManhuaVfxEffectParameters effect={effect} scenes={scenes} onChange={patch => updateEffect(effect.id, patch)} />
+        <ManhuaVfxEffectParameters effect={effect} scenes={scenes} environments={environments} onChange={patch => updateEffect(effect.id, patch)} />
         {effect.kind === "image_overlay" ? <div>
           <label className="block text-xs text-white/65">叠加图片<select aria-label={`第${index + 1}个特效叠加图片`} className={`${controlClass} mt-1`} value={effect.imageUri || ""} onChange={event => updateEffect(effect.id, { imageUri: event.target.value || undefined })}><option value="">选择当前作品已保存的图片</option>{effect.imageUri && !imageOptions.some(image => manhuaVfxMediaIdentity(image.url) === effect.imageUri) ? <option value={effect.imageUri}>原图片已不在当前素材列表</option> : null}{imageOptions.map(image => <option key={image.id} value={manhuaVfxMediaIdentity(image.url)}>{image.label}</option>)}</select></label>
           {imageOptions.length === 0 ? <p className="mt-1 text-xs text-amber-200">当前没有可用图片，请先在本集素材中上传或生成图片并保存。外部链接须先保存到素材库。</p> : null}
-          {effect.imageUri ? <img alt="所选叠加图片" src={gcsTransferUrl(effect.imageUri)} className="mt-2 h-20 max-w-40 object-contain" /> : null}
+          {effect.imageUri ? <img alt="所选叠加图片" src={effect.imageUri.startsWith("gs://") ? flyDownloadUrl(effect.imageUri) : gcsTransferUrl(effect.imageUri)} className="mt-2 h-20 max-w-40 object-contain" /> : null}
           <p className="mt-1 text-[11px] text-white/50">使用图片原色与透明区域；挂点是图片中心，大小按画面高度，强度控制透明度（1为原图，最高按不透明处理）。支持手动轨迹，不自动跟踪。</p>
         </div> : null}
         <div className="grid grid-cols-2 gap-2">
-          {([{ key: "startSec", label: "开始秒", min: 0, max: 30, step: 0.05 }, { key: "durationSec", label: "持续秒", min: 0.05, max: 30, step: 0.05 }, { key: "scale", label: "大小（画面高比例）", min: 0.02, max: 2, step: 0.01 }, { key: "intensity", label: "强度", min: 0, max: 2, step: 0.05 }] as const).map(field => <label key={field.key} className="text-[11px] text-white/60">{field.label}<input className={`${controlClass} mt-1`} type="number" disabled={effect.kind === "bullet_time" && (field.key === "scale" || field.key === "intensity")} {...{ min: field.min, max: field.max, step: field.step }} value={effect[field.key]} onChange={event => updateEffect(effect.id, { [field.key]: Number(event.target.value) })} /></label>)}
+          {([{ key: "startSec", label: "开始秒", min: 0, max: 30, step: 0.05 }, { key: "durationSec", label: "持续秒", min: 0.05, max: 30, step: 0.05 }, { key: "scale", label: "大小（画面高比例）", min: 0.02, max: 2, step: 0.01 }, { key: "intensity", label: "强度", min: 0, max: 2, step: 0.05 }] as const).map(field => <label key={field.key} className="text-[11px] text-white/60">{field.label}<input className={`${controlClass} mt-1`} type="number" disabled={isManhuaVfxSceneKind(effect.kind) && (field.key === "scale" || field.key === "intensity")} {...{ min: field.min, max: field.max, step: field.step }} value={effect[field.key]} onChange={event => updateEffect(effect.id, { [field.key]: Number(event.target.value) })} /></label>)}
         </div>
         <div className="grid grid-cols-3 gap-2">
-          {!["image_overlay", "liquid_mirror", "motion_ghost", "bullet_time"].includes(effect.kind) ? <label className="text-[11px] text-white/60">颜色<input className={`${controlClass} mt-1 h-8`} type="color" value={effect.color} onChange={event => updateEffect(effect.id, { color: event.target.value })} /></label> : null}
-          {([0, 1] as const).map(axis => <label key={axis} className="text-[11px] text-white/60">{axis === 0 ? "横向位置（左0 → 右1）" : "纵向位置（上0 → 下1）"}<input disabled={effect.kind === "bullet_time"} type="number" min={0} max={1} step={0.01} className={`${controlClass} mt-1`} value={effect.anchor.position[axis]} onChange={event => { const position: [number, number] = [...effect.anchor.position]; position[axis] = Number(event.target.value); updateEffect(effect.id, { anchor: { ...effect.anchor, position } }); }} /></label>)}
+          {!["image_overlay", "liquid_mirror", "motion_ghost", "mirror_corridor", "bullet_time"].includes(effect.kind) ? <label className="text-[11px] text-white/60">颜色<input className={`${controlClass} mt-1 h-8`} type="color" value={effect.color} onChange={event => updateEffect(effect.id, { color: event.target.value })} /></label> : null}
+          {([0, 1] as const).map(axis => <label key={axis} className="text-[11px] text-white/60">{axis === 0 ? "横向位置（左0 → 右1）" : "纵向位置（上0 → 下1）"}<input disabled={isManhuaVfxSceneKind(effect.kind)} type="number" min={0} max={1} step={0.01} className={`${controlClass} mt-1`} value={effect.anchor.position[axis]} onChange={event => { const position: [number, number] = [...effect.anchor.position]; position[axis] = Number(event.target.value); updateEffect(effect.id, { anchor: { ...effect.anchor, position } }); }} /></label>)}
         </div>
-        {effect.kind !== "bullet_time" ? <details><summary className="cursor-pointer text-[11px] text-cyan-200">手动运动轨迹（可选）</summary><p className="my-1 text-[11px] text-white/50">每行填写「整片秒数 横向位置 纵向位置」，至少两行且时间递增；位置取0至1。不填写时固定在上方位置。</p><textarea aria-label={`第${index + 1}个特效轨迹`} rows={3} className={controlClass} placeholder="0 0.2 0.5&#10;1 0.8 0.5" value={trajectoryText[effect.id] ?? effect.anchor.trajectory?.map(point => `${point.timeSec} ${point.x} ${point.y}`).join("\n") ?? ""} onChange={event => setTrajectoryText({ ...trajectoryText, [effect.id]: event.target.value })} /></details> : null}
+        {!isManhuaVfxSceneKind(effect.kind) ? <details><summary className="cursor-pointer text-[11px] text-cyan-200">手动运动轨迹（可选）</summary><p className="my-1 text-[11px] text-white/50">每行填写「整片秒数 横向位置 纵向位置」，至少两行且时间递增；位置取0至1。不填写时固定在上方位置。</p><textarea aria-label={`第${index + 1}个特效轨迹`} rows={3} className={controlClass} placeholder="0 0.2 0.5&#10;1 0.8 0.5" value={trajectoryText[effect.id] ?? effect.anchor.trajectory?.map(point => `${point.timeSec} ${point.x} ${point.y}`).join("\n") ?? ""} onChange={event => setTrajectoryText({ ...trajectoryText, [effect.id]: event.target.value })} /></details> : null}
       </fieldset>)}</div>
       <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={locked || !onStateChange} onClick={() => void saveDraft()}>保存方案</button><button type="button" className={buttonClass} disabled={locked || pending || !onStateChange || !currentSource || Boolean(sourceError) || !durationSec} onClick={() => void submit()}>{saving ? <Loader2 className="mr-1 inline h-3 w-3 animate-spin" /> : null}渲染特效候选</button></div>
     </> : <p className="text-xs leading-relaxed text-white/45">选定原片后可添加效果、设置时间与位置，再生成候选。</p>}
@@ -396,7 +410,8 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
       const eligible = draft && canAdoptManhuaVfxRequest({ ...local, draft }, request.requestId, clips);
       const status = { submitting: "提交回执待确认", unknown: "回执待确认", queued: "排队中", running: "渲染中", succeeded: "候选已完成", failed: "任务失败" }[request.status];
       return <div key={request.requestId} className="rounded border border-white/15 bg-black/15 p-2 text-xs text-white/70"><div className="flex flex-wrap items-center gap-2"><span>{status} · {new Date(request.createdAt).toLocaleString()}</span>{local.adoptedRequestId === request.requestId ? <span className="text-emerald-200">已采用</span> : null}</div><div className="mt-2 flex flex-wrap gap-2">
-        {outputUrl ? <button type="button" className={buttonClass} onClick={() => { videoRef.current?.pause(); setExpanded(true); setCandidatePreview(outputUrl); onPreview(outputUrl, "特效候选"); }}>预览候选</button> : null}
+        {outputUrl ? <button type="button" className={buttonClass} onClick={() => { videoRef.current?.pause(); setExpanded(true); setCandidatePreview(outputUrl); onPreview(outputUrl.startsWith("gs://") ? flyDownloadUrl(outputUrl) : gcsTransferUrl(outputUrl), "特效候选"); }}>预览候选</button> : null}
+        {request.output?.layerBundle ? <a className={buttonClass} href={flyDownloadUrl(request.output.layerBundle.gcsUri)} download="特效分层.zip">下载同场分层</a> : null}
         {comparable.some(item => item.requestId === request.requestId) ? <button type="button" className={buttonClass} aria-pressed={comparisonId === request.requestId} onClick={() => { videoRef.current?.pause(); setComparisonId(request.requestId); }}>与原片比较</button> : null}
         {request.status === "succeeded" ? <><button type="button" className={buttonClass} disabled={locked} onClick={() => { setDraft({ sourceId: request.sourceId, sourceKey: request.sourceKey, videoUri: request.videoUri, composition: request.composition }); setTrajectoryText({}); setError(""); }}>恢复此方案</button><button type="button" className={buttonClass} disabled={locked || !eligible || Object.keys(trajectoryText).length > 0} onClick={() => void adopt(request.requestId)}>采用此候选</button></> : null}
         {request.status === "submitting" || request.status === "unknown" ? <button type="button" className={buttonClass} disabled={locked} onClick={() => void submit(request)}>查询原请求</button> : null}
@@ -404,7 +419,7 @@ export function ManhuaVfxEditor({ scopeKey, state, clips, imageOptions = [], sce
     })}</div></details>
     {candidatePreview ? <div role="dialog" aria-modal="true" aria-label="特效候选预览" className="absolute inset-0 z-30 flex min-h-0 flex-col gap-3 bg-slate-950 p-4">
       <div className="flex items-center justify-between gap-3"><h5 className="text-sm text-white">特效候选 · 尚未替换原片</h5><button autoFocus type="button" className={buttonClass} onClick={() => setCandidatePreview(undefined)}>关闭候选预览</button></div>
-      <video controls playsInline preload="metadata" src={gcsTransferUrl(candidatePreview)} className="min-h-0 flex-1 bg-black object-contain" />
+      <video controls playsInline preload="metadata" src={candidatePreview.startsWith("gs://") ? flyDownloadUrl(candidatePreview) : gcsTransferUrl(candidatePreview)} className="min-h-0 flex-1 bg-black object-contain" />
     </div> : null}
   </section></ManhuaVfxSurface>;
 }

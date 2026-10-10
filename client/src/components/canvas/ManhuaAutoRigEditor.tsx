@@ -608,6 +608,10 @@ export function ManhuaAutoRigEditorView({
   }
   const images =
     task?.output?.stage === "bind" ? (task.output.previewUrls ?? []) : [];
+  const candidateQuadruped = task?.params.settings.pose === "quadruped";
+  const candidatePoseLabels = candidateQuadruped
+    ? ["原姿态", "右前腿弯曲", "左前腿弯曲", "右后腿弯曲", "左后腿弯曲"]
+    : ["原姿态", "右臂弯曲", "左臂弯曲", "右膝弯曲", "左膝弯曲"];
   const inspectionImages = inspectionTask?.output?.previewUrls ?? [];
   const imagesReady =
     inspectionImages.length === 2 &&
@@ -870,6 +874,8 @@ export function ManhuaAutoRigEditorView({
       {images.length === 5 ? (
         <div className="mt-4 space-y-3 border-t border-border pt-4">
           <h3 className="font-semibold">检查真实变形</h3>
+          <p className="text-sm text-muted-foreground">当前候选实际输入：{candidateQuadruped ? "四足" : "人形"} · {task?.params.settings.targetHeight}米 · 任务 {task?.params.requestId}。上方参数用于新的模型检查，不代表历史候选的输入。</p>
+          {task?.params.sourceJobId !== sourceJobId ? <p className="text-sm text-amber-600">此候选来自此前的模型版本。采用会切换到该旧模型的带骨版本；请先核对外观，原模型保留。</p> : null}
           <p className="text-sm text-muted-foreground">
             数值检查已通过；请看原姿态和四肢弯曲，确认没有严重塌陷、撕裂或外观丢失后再采用。
           </p>
@@ -878,11 +884,7 @@ export function ManhuaAutoRigEditorView({
               <figure key={url}>
                 <img
                   src={url}
-                  alt={
-                    ["原姿态", "右臂弯曲", "左臂弯曲", "右膝弯曲", "左膝弯曲"][
-                      index
-                    ]
-                  }
+                  alt={candidatePoseLabels[index]}
                   className="w-full rounded"
                   onError={() => {
                     setLoaded(
@@ -899,7 +901,7 @@ export function ManhuaAutoRigEditorView({
                   }
                 />
                 <figcaption className="text-center text-xs">
-                  {["原姿态", "右臂", "左臂", "右膝", "左膝"][index]}
+                  {candidatePoseLabels[index]}
                 </figcaption>
               </figure>
             ))}

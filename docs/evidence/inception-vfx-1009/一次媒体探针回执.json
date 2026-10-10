@@ -1,0 +1,381 @@
+{
+  "id": "DEV_PROBE_PR1694_ONCE_1009",
+  "sourceHead": "7c716985384aa294bd2c534775d9aee53d90379c",
+  "sourceCodeCommit": "3ff15a6f027cfc406569364829cf52953148cc44",
+  "spec": {
+    "version": 1,
+    "seed": 1009,
+    "width": 360,
+    "height": 640,
+    "fps": 24,
+    "durationSec": 4,
+    "effects": [
+      {
+        "id": "mirror_probe",
+        "kind": "mirror_corridor",
+        "startSec": 0.2,
+        "durationSec": 1.6,
+        "color": "#67E8F9",
+        "scale": 1,
+        "intensity": 1.4,
+        "anchor": {
+          "space": "screen",
+          "position": [
+            0.5,
+            0.48
+          ]
+        },
+        "roi": {
+          "shape": "rectangle",
+          "width": 0.75,
+          "height": 0.74,
+          "feather": 0.025
+        },
+        "mirror": {
+          "layers": 5,
+          "shrink": 0.72,
+          "drift": 0.025
+        }
+      },
+      {
+        "id": "paper_probe",
+        "kind": "floating_paper",
+        "startSec": 2,
+        "durationSec": 1.8,
+        "color": "#FFF5DF",
+        "scale": 1,
+        "intensity": 1.1,
+        "anchor": {
+          "space": "screen",
+          "position": [
+            0.5,
+            0.4
+          ]
+        },
+        "paper": {
+          "count": 32,
+          "size": 0.07,
+          "drift": 0.18,
+          "flutter": 1.8,
+          "spread": 0.7
+        }
+      }
+    ]
+  },
+  "execution": {
+    "id": "DEV_PROBE_PR1694_ONCE_1009",
+    "sourceHead": "7c716985384aa294bd2c534775d9aee53d90379c",
+    "steps": [
+      {
+        "step": "source-pixels",
+        "exit": 0,
+        "elapsedSec": 6.416
+      },
+      {
+        "step": "transparent-layers",
+        "exit": 0,
+        "elapsedSec": 11.407
+      },
+      {
+        "step": "composite",
+        "exit": 0,
+        "elapsedSec": 2.141
+      }
+    ],
+    "modelCalls": 0,
+    "cost": 0,
+    "video": "/Users/tangenjie/Downloads/2026Oct09/特效探针Demo/PR1694-一次探针/新特效一次探针.mp4",
+    "bytes": 1026723,
+    "completed": true
+  },
+  "qa": {
+    "id": "DEV_PROBE_PR1694_ONCE_1009",
+    "sourceHead": "7c716985384aa294bd2c534775d9aee53d90379c",
+    "frames": 96,
+    "decodedNonemptyFrames": 96,
+    "processedSha256MatchesReceipt": true,
+    "inactiveFramesExactlyPreserved": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      44,
+      45,
+      46,
+      47,
+      92,
+      93,
+      94,
+      95
+    ],
+    "effects": [
+      {
+        "kind": "mirror_corridor",
+        "frames": [
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43
+        ],
+        "changedPixels": [
+          65423,
+          65957,
+          66080,
+          66098,
+          66091,
+          66082,
+          66247,
+          66293,
+          66117,
+          66090,
+          66095,
+          66093,
+          66088,
+          66079,
+          66074,
+          66053,
+          66031,
+          66016,
+          65993,
+          65967,
+          66022,
+          66087,
+          66105,
+          66007,
+          65946,
+          65950,
+          65949,
+          65977,
+          66071,
+          66091,
+          66100,
+          66110,
+          66084,
+          66058,
+          66006,
+          66027,
+          65972,
+          65927,
+          63624
+        ],
+        "roiOutsideExactlyPreserved": true
+      },
+      {
+        "kind": "floating_paper",
+        "frames": [
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81,
+          82,
+          83,
+          84,
+          85,
+          86,
+          87,
+          88,
+          89,
+          90,
+          91
+        ],
+        "changedPixels": [
+          18547,
+          18734,
+          18909,
+          18981,
+          18984,
+          19044,
+          19010,
+          19022,
+          19004,
+          18926,
+          18769,
+          18577,
+          18354,
+          18092,
+          17769,
+          17576,
+          17320,
+          17066,
+          16960,
+          16814,
+          16600,
+          16423,
+          16554,
+          16730,
+          16892,
+          16981,
+          17000,
+          16963,
+          16913,
+          16895,
+          16852,
+          16706,
+          16633,
+          16513,
+          16367,
+          16308,
+          16358,
+          16501,
+          16657,
+          16945,
+          17244,
+          17469,
+          17630,
+          17551
+        ]
+      }
+    ],
+    "audio": {
+      "bytes": 63812,
+      "sha256": "7307a66add52da095d2ff962dd2e0ac99cf8392509e8fbe1d4cab827f352e082",
+      "exactPacketBytesEqual": true
+    },
+    "video": {
+      "path": "/Users/tangenjie/Downloads/2026Oct09/特效探针Demo/PR1694-一次探针/新特效一次探针.mp4",
+      "bytes": 1026723,
+      "sha256": "3958ce6e14172f0bc03c078dcfd4051b9df76fc0ed3b77a7e13809309ca498a6",
+      "duration": "4.000000",
+      "codec": "h264",
+      "width": 360,
+      "height": 640,
+      "fps": 24
+    },
+    "normalSpeedHumanReview": "未验证",
+    "productionWorkflow": "尚未线上验收",
+    "modelCalls": 0,
+    "cost": 0
+  },
+  "rawLogs": [
+    {
+      "name": "spec.json",
+      "bytes": 1086,
+      "sha256": "29e31d9eb0b71d20edad86fa680a3f71b614c60057e058395017e562efc2f34c"
+    },
+    {
+      "name": "输入审查.json",
+      "bytes": 3123,
+      "sha256": "3b3325a539621a09076888916ee9f4374b43d7261deaa09f716f5e403dfec944"
+    },
+    {
+      "name": "source-pixels.log",
+      "bytes": 289,
+      "sha256": "01d21ed2b0dafac22c788e88ff0cef4ec59aa6472dfbc859ab88597179dc7c0e"
+    },
+    {
+      "name": "transparent-layers.log",
+      "bytes": 18450,
+      "sha256": "5c0b486f26d488cedd53d73e4f84168580fb48f3179df10b4c0489a12c7b85d5"
+    },
+    {
+      "name": "composite.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "processed.mkv.json",
+      "bytes": 581,
+      "sha256": "faf7db92099ec5d291798598bf12575cd331a5214f610fd84e567821dda8a56a"
+    },
+    {
+      "name": "probe-receipt.json",
+      "bytes": 567,
+      "sha256": "effeebdc9210881acc2296b26ba4506326710901e459e083dbb5a049c8fa9175"
+    },
+    {
+      "name": "qa-summary.json",
+      "bytes": 3443,
+      "sha256": "1773b4b6d64f48c038f51d0a1b148875cab552a6a7b329efe7e823e49b04ef45"
+    },
+    {
+      "name": "qa.log",
+      "bytes": 626,
+      "sha256": "9f6ec58bfa9b95aa2fd436f413270a17c4d0854b79677f515dffa88f5bb24877"
+    },
+    {
+      "name": "run_once.py",
+      "bytes": 2054,
+      "sha256": "b532b9188e1ac17e30f82cd2baea5173db19e226d0c82f3bd4913ec23f408894"
+    },
+    {
+      "name": "qa_once.py",
+      "bytes": 4219,
+      "sha256": "c36963a0f6685e09a11d03be6dc65230d705608f96c54d872ae423dadd1feebc"
+    }
+  ],
+  "visualInspection": {
+    "frames": [
+      "镜面-结果.png@1秒",
+      "纸页-结果.png@2.8秒",
+      "纸页-原片.png@2.8秒"
+    ],
+    "result": "抽看确认镜层与纸页可见；不能当成人工逐帧或常速质量通过"
+  },
+  "boundary": "仅用户追加授权的一次本地开发媒体探针；无服务/API/worker/真实项目任务/数据库/计费/Production验收；未重试或重渲染"
+}
