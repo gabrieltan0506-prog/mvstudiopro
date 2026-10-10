@@ -1,0 +1,66 @@
+{
+  "videoNativeReceipt": [
+    {
+      "tier": "free",
+      "scene": "scene-2",
+      "taskId": "task-unified-1791665012-jtwoh5wf",
+      "model": "seedance-2.0-mini-reference-to-video",
+      "cost": {
+        "credits": 6.9053,
+        "usd": 0.102,
+        "cny": 0.691
+      },
+      "generationElapsedSeconds": 141
+    },
+    {
+      "tier": "free",
+      "scene": "scene-3",
+      "taskId": "task-unified-1791665011-pd894kti",
+      "model": "seedance-2.0-mini-reference-to-video",
+      "cost": {
+        "credits": 6.9053,
+        "usd": 0.102,
+        "cny": 0.691
+      },
+      "generationElapsedSeconds": 120
+    },
+    {
+      "tier": "paid",
+      "scene": "scene-2",
+      "taskId": "task-unified-1791665012-vgp8mvlv",
+      "model": "seedance-2.5-reference-to-video",
+      "cost": {
+        "credits": 110.5,
+        "usd": 1.625,
+        "cny": 11.05
+      },
+      "generationElapsedSeconds": 170
+    },
+    {
+      "tier": "paid",
+      "scene": "scene-3",
+      "taskId": "task-unified-1791665011-njwdlb5a",
+      "model": "seedance-2.5-reference-to-video",
+      "cost": {
+        "credits": 110.5,
+        "usd": 1.625,
+        "cny": 11.05
+      },
+      "generationElapsedSeconds": 280
+    }
+  ],
+  "videoUsdTotal": 3.454,
+  "sunoNativeReceipt": [
+    {
+      "file": "paid.bgm.provider-raw.json",
+      "taskId": "86294191-64f1-4f80-8b27-3ddcedd7d73d",
+      "nativeQuota": "6"
+    },
+    {
+      "file": "free.bgm.provider-raw.json",
+      "taskId": "08366c68-723c-4f9f-8971-c9eeda4a8cb5",
+      "nativeQuota": "6"
+    }
+  ],
+  "unresolved": "Images and Qwen USD total require their actual usage/billing receipts. Suno quota not represented as a verified USD invoice. No numeric total claimed beyond video."
+}
