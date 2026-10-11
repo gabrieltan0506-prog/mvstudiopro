@@ -57,6 +57,9 @@ export const codeMotionStorage: CodeMotionStoreDeps = {
     return { body: Buffer.concat(chunks), generation: meta.generation };
   },
   async write(name, body, generation) {
+    // 共用存储也保存修改台账和采用记录；不能写入下一次读取必然拒绝的数据。
+    if (body.length > CODE_MOTION_PROJECT_MAX_BYTES)
+      throw new Error("作品记录超过保存上限，本次未写入，原版本已保留");
     try {
       const result = await uploadBufferToGcs({
         objectName: name,

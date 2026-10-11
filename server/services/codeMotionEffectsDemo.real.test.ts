@@ -41,7 +41,7 @@ it.skipIf(!process.env.INK_EFFECTS_DEMO_PREPARE && !process.env.INK_EFFECTS_DEMO
   await mkdir(path.join(outputRoot, "evidence"), { recursive: true });
   const userId = "12", projectId = "de101100-1234-4234-8234-123456789abc";
   const sourceRecords = [];
-  const images = [];
+  const images: Array<{ id: string; name: string; gcsUri: string }> = [];
   const selectedImages = [["29", "雪山"], ["16", "海岸漂流木"], ["10", "森林远水"]];
   for (let index = 0; index < selectedImages.length; index++) {
     const [file, name] = selectedImages[index];

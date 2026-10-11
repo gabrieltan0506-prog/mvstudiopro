@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionImageSemantic.test.ts (8 tests) 2648ms
+   ✓ 真实长度的音频窗归档后请求仍可保存，恢复不会重复调用 2558ms
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  13:53:26
+   Duration  4.44s (transform 739ms, setup 0ms, collect 1.59s, tests 2.65s, environment 0ms, prepare 51ms)
+

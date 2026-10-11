@@ -290,7 +290,14 @@ export async function analyzeCodeMotionImageSemantic(
     if (raw.length !== audio.bytes || bytesHash(raw) !== audio.sha256)
       throw new Error("原声内容已变化");
     const bytes = await deps.window(raw, start, end - start);
+    // 音频先不可变归档，请求记录只保存引用，避免 base64 撑爆恢复记录。
+    const canonicalUri = await deps.archive(
+      `${base}/sources/${bytesHash(bytes)}.wav`,
+      bytes,
+      "audio/wav"
+    );
     sources.push({
+      canonicalUri,
       sourceId: audio.id,
       kind: "audio",
       sha256: bytesHash(bytes),
@@ -303,7 +310,7 @@ export async function analyzeCodeMotionImageSemantic(
       {
         text: `sourceId=${audio.id}, kind=audio, sourceWindowStart=${start}, duration=${end - start}`,
       },
-      { inlineData: { mimeType: "audio/wav", data: bytes.toString("base64") } }
+      { fileData: { mimeType: "audio/wav", fileUri: canonicalUri } }
     );
   }
   for (const video of project.plan?.codeVideo?.assets || []) {

@@ -57,7 +57,7 @@ it("real canvas projects morph/orbit and reverse-seeks to exact pixels without e
     page.on("request", r => requests.push(r.url()));
     await page.setContent('<canvas id="c"></canvas>');
     await page.evaluate(value => {
-      (window as RenderWindow).COMPOSITION_SPEC = value;
+      (window as unknown as RenderWindow).COMPOSITION_SPEC = value;
     }, spec);
     await page.addScriptTag({
       content: readFileSync(
@@ -67,10 +67,10 @@ it("real canvas projects morph/orbit and reverse-seeks to exact pixels without e
     });
     await page.waitForFunction("window.__ready || window.__bootFailed");
     expect(
-      await page.evaluate(() => (window as RenderWindow).__bootFailed)
+      await page.evaluate(() => (window as unknown as RenderWindow).__bootFailed)
     ).toBeUndefined();
     const result = await page.evaluate(() => {
-      const w = window as RenderWindow,
+      const w = window as unknown as RenderWindow,
         c = w.__canvas.getContext("2d")!;
       return [0, 1, 2, 0.5, 1, 0].map(t => {
         w.renderFrame(t);

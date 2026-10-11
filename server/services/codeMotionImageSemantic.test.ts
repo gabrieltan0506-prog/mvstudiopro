@@ -211,7 +211,7 @@ describe("confirmed image semantic pipeline", () => {
     expect(parts.some((p: any) => p.fileData?.mimeType === "image/png")).toBe(
       true
     );
-    expect(parts.some((p: any) => p.inlineData?.mimeType === "audio/wav")).toBe(
+    expect(parts.some((p: any) => p.fileData?.mimeType === "audio/wav")).toBe(
       true
     );
     expect(
@@ -393,4 +393,22 @@ it("does not buy semantic analysis for an already committed image batch", async 
   ).rejects.toThrow("已经确认");
   expect(t.deps.post).not.toHaveBeenCalled();
   expect(t.deps.reserve).not.toHaveBeenCalled();
+});
+
+it("真实长度的音频窗归档后请求仍可保存，恢复不会重复调用", async () => {
+  const t = await setup();
+  const pcm = Buffer.alloc(20 * 48000 * 2, 1);
+  t.deps.window = vi.fn(async () => pcm);
+  const originalWrite = t.deps.storage.write;
+  t.deps.storage.write = async (name, body, generation) => {
+    if (body.length > 512000) throw new Error("超出真实存储读取上限");
+    return originalWrite(name, body, generation);
+  };
+  await analyzeCodeMotionImageSemantic("1", t.input, t.deps);
+  const audioPart = t.posts[0].contents[0].parts.find((p: any) => p.fileData?.mimeType === "audio/wav");
+  expect(audioPart.fileData.fileUri).toContain(`${h(pcm)}.wav`);
+  expect(t.deps.archive).toHaveBeenCalledWith(expect.stringContaining(`${h(pcm)}.wav`), pcm, "audio/wav");
+  for (const key of Array.from(t.files.keys())) if (key.endsWith("/result.json")) t.files.delete(key);
+  await analyzeCodeMotionImageSemantic("1", t.input, t.deps);
+  expect(t.deps.post).toHaveBeenCalledTimes(1);
 });
