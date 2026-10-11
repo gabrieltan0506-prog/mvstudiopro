@@ -107,19 +107,19 @@ export default function CodeMotionEffects({
               )}
             </optgroup>
           ))}
-          <optgroup label="独立付费工作台">
+          <optgroup label="三维资产 · 独立计费">
             <option
               value="model3d"
               disabled={tier === "free" || !threeDAvailable}
             >
-              3D建模 · 付费工作台
+              3D建模 · 本页制作
               {tier === "paid" && !threeDAvailable ? "（当前账号未开放）" : ""}
             </option>
             <option
               value="splat3d"
               disabled={tier === "free" || !threeDAvailable}
             >
-              3DGS场景 · 付费工作台
+              3DGS场景 · 本页制作
               {tier === "paid" && !threeDAvailable ? "（当前账号未开放）" : ""}
             </option>
           </optgroup>
@@ -128,15 +128,13 @@ export default function CodeMotionEffects({
       {external ? (
         <p id="ink-effect-description" className="text-xs leading-5">
           {effect === "model3d" ? "3D建模" : "3DGS场景"}
-          在漫剧工作台内选择项目、参考素材并确认费用。此处不会发起生成，产物尚不支持直接导入本映客工程。
-          <a
+          在本页“三维参考”中选择已采用的参考图、查看完整生成安排并确认费用。生成的资产可在本作品设置视角，作为视频模型参考。
+          {project.plan ? <a
             className="ml-2 underline"
-            href="/manhua-projects"
-            target="_blank"
-            rel="noreferrer"
+            href="#ink-spatial-production"
           >
-            打开漫剧工作台
-          </a>
+            前往本页三维制作
+          </a> : <span className="ml-2">先整理逐镜安排，下方会显示三维制作入口。</span>}
         </p>
       ) : (
         <>

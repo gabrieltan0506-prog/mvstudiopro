@@ -1,3 +1,6 @@
+import { adoptCodeMotionVideoIntoProject } from "@shared/codeMotionVideoAdoption";
+import { prepareCodeMotionSpatialScene } from "@shared/codeMotionSpatial";
+import CodeMotionSpatialProduction from "@/components/code-motion/CodeMotionSpatialProduction";
 import { retimeCodeMotionPlanScene } from "@shared/codeMotionComposition";
 import { INK_FREE_POLICY, inkFreeMessage } from "@shared/inkFree";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -126,6 +129,7 @@ export default function CodeMotionStudio() {
     [savedJson, setSavedJson] = useState("");
   const [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
+    [uploadFeedback, setUploadFeedback] = useState<{identity:string; state:"pending"|"success"|"error"; text:string}|null>(null),
     [pending, setPending] = useState<Pending | null>(null);
   const [imported, setImported] = useState<{
     name: string;
@@ -149,6 +153,7 @@ export default function CodeMotionStudio() {
     enabled: !!user,
     retry: false,
   });
+  const freeQuote = trpc.codeMotion.freeQuote.useQuery(undefined, { enabled: !!user, retry: false, refetchOnWindowFocus: true });
   const projects = trpc.codeMotion.list.useQuery(undefined, {
     enabled: !!user,
     retry: false,
@@ -459,7 +464,7 @@ export default function CodeMotionStudio() {
     setPreview(false);
     setReviewOpen(true);
   };
-  const fileSelected = async (file: File) => {
+  const importSelectedFile = async (file: File) => {
     if (!user) throw new Error("请先登录再导入文件");
     const captured = active.current;
     const ext = file.name.split(".").at(-1)?.toLowerCase() || "";
@@ -506,22 +511,27 @@ export default function CodeMotionStudio() {
         csv: "text/csv",
       } as Record<string, string>
     )[ext];
+    setUploadFeedback({identity:captured,state:"pending",text:`正在上传「${file.name}」…`});
     const receipt = await upload.mutateAsync({
       fileName: file.name,
       mimeType: mime,
     });
     const response = await fetch(gcsTransferUrl(receipt.uploadUrl), {
       method: "PUT",
+      credentials: "include",
       headers: { "Content-Type": mime, ...receipt.requiredHeaders },
       body: file,
     });
     if (!response.ok) throw new Error("文件上传没有完成，请重新选择");
+    if (captured !== active.current) return;
+    setUploadFeedback({identity:captured,state:"pending",text:`「${file.name}」上传完毕，正在核对文件内容…`});
     const result = await importFile.mutateAsync({
       gcsUri: receipt.gcsUri,
       name: file.name,
       bytes: file.size,
     });
     if (captured !== active.current) return;
+    setUploadFeedback({identity:captured,state:"success",text:`「${file.name}」上传成功。${result.kind === "image" ? "已加入本作品，尚未保存到云端。" : result.kind === "spreadsheet" ? "请选择工作表和列后采用。" : "已读取正文，请确认后采用。"}`});
     if (result.kind === "spreadsheet") {
       setSpreadsheet({ name: result.name, workbook: result.workbook });
       setMessage(result.message);
@@ -538,6 +548,15 @@ export default function CodeMotionStudio() {
         text: result.text,
         message: result.message,
       });
+  };
+  const fileSelected = async (file:File) => {
+    const captured=active.current;
+    setUploadFeedback({identity:captured,state:"pending",text:`正在检查「${file.name}」…`});
+    try { await importSelectedFile(file); }
+    catch(error) {
+      if(captured===active.current) setUploadFeedback({identity:captured,state:"error",text:`「${file.name}」上传失败：${error instanceof Error ? error.message : "网络或服务异常，请重试"}。原素材和编辑内容已保留。`});
+      throw error;
+    }
   };
   const result = status.data?.output as { url?: unknown } | null | undefined;
   const videoUrl =
@@ -724,6 +743,7 @@ export default function CodeMotionStudio() {
                 导入图片、文档或表格
                 <input
                   aria-label="导入图片、文档或表格"
+                  disabled={editDisabled}
                   type="file"
                   className="sr-only"
                   accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.md,.xlsx,.csv"
@@ -734,6 +754,7 @@ export default function CodeMotionStudio() {
                   }}
                 />
               </label>
+              {uploadFeedback?.identity===identity && <p role={uploadFeedback.state==="error"?"alert":"status"} aria-live="polite" className={`mt-2 text-sm ${uploadFeedback.state==="error"?"text-red-700":uploadFeedback.state==="success"?"text-green-800":"text-stone-600"}`}>{uploadFeedback.text}</p>}
               <p className="mt-2 text-xs leading-5 text-stone-500">
                 PNG / JPG / WebP 图片，PDF / DOCX / MD 文档，每个不超过 8
                 MB。支持 XLSX / CSV
@@ -968,6 +989,7 @@ export default function CodeMotionStudio() {
                   加入图片
                   <input
                     aria-label="上传图片"
+                  disabled={editDisabled}
                     type="file"
                     className="sr-only"
                     accept="image/png,image/jpeg,image/webp"
@@ -978,6 +1000,7 @@ export default function CodeMotionStudio() {
                     }}
                   />
                 </label>
+              {uploadFeedback?.identity===identity && <p role={uploadFeedback.state==="error"?"alert":"status"} aria-live="polite" className={`mt-2 text-sm ${uploadFeedback.state==="error"?"text-red-700":uploadFeedback.state==="success"?"text-green-800":"text-stone-600"}`}>{uploadFeedback.text}</p>}
                 <p className="mt-2 text-xs text-stone-500">
                   最多 8 张，每张不超过 8
                   MB。图片只作画面素材，不会变成人物表演。
@@ -1168,6 +1191,10 @@ export default function CodeMotionStudio() {
             hidden={output !== "video"}
             className="rounded-2xl bg-orange-50 p-4 text-sm leading-6"
           >
+            <p className="font-medium">每天10个免费制作名额 · 每个账号累计一次</p>
+            <p className="text-xs text-stone-600">{INK_FREE_POLICY}</p>
+            <p className="text-xs text-stone-600" role="status">{!user ? "登录后查询免费制作资格。" : freeQuote.error ? "免费名额暂未查到；不会自动转为付费。" : freeQuote.data ? inkFreeMessage(freeQuote.data) : "正在查询免费制作名额…"}</p>
+            <p className="mt-2 text-xs text-stone-600">顾问整理次数与免费制作名额分别计算。生成素材时领取制作名额，以服务端提交时的结果为准。</p>
             <p>
               {!user
                 ? "登录后查看费用"
@@ -1619,17 +1646,33 @@ export default function CodeMotionStudio() {
                     return result.timing;
                   } finally { lock.current = false; setBusy(false); }
                 }} />
+              <CodeMotionSpatialProduction key={`spatial:${identity}`} project={project} disabled={busy || !user || !!pending} threeDAvailable={quote.data?.threeDWorkspaceAvailable === true}
+                save={referenceSceneIndex => {
+                  const current = latestProject.current;
+                  if (referenceSceneIndex === undefined) return save(current);
+                  return save(prepareCodeMotionSpatialScene(current,referenceSceneIndex));
+                }} execute={run}
+                saveSpatial={async spatial => {
+                  if (active.current !== identity) throw new Error("已切换作品，三维素材仍保留在原作品");
+                  const current = latestProject.current;
+                  if (!current.plan) throw new Error("请先保存分镜");
+                  await save({...current, plan:{...current.plan,spatial}});
+                  setPrepared(null); setPreview(false); setReviewOpen(false);
+                }}
+                adopt={async ({ asset, clip, audioSource }) => {
+                  if (active.current !== identity) throw new Error("已切换作品，片段仍保留在原作品中");
+                  const current = latestProject.current;
+                  if (!current.plan) throw new Error("请先保存分镜");
+                  await save(adoptCodeMotionVideoIntoProject(current, {asset,clip,audioSource}));
+                  setPrepared(null); setPreview(false); setReviewOpen(false);
+                }} />
               <CodeMotionVideoProduction key={`video:${identity}`} project={project} disabled={busy || !user || !!pending}
                 save={() => save(latestProject.current)} execute={run}
                 adopt={async ({ asset, clip }) => {
                   if (active.current !== identity) throw new Error("已切换作品，片段仍保留在原作品中");
                   const current = latestProject.current;
                   if (!current.plan) throw new Error("请先保存分镜");
-                  const prior = current.plan.codeVideo;
-                  const clips = [...(prior?.clips || []).filter(c => c.at !== clip.at), clip].sort((a,b) => a.at-b.at);
-                  const used = new Set(clips.map(c => c.assetId));
-                  const assets = [...(prior?.assets || []).filter(a => a.id !== asset.id && used.has(a.id)), asset];
-                  await save({ ...current, plan: { ...current.plan, codeVideo: { version: 1, assets, clips } } });
+                  await save(adoptCodeMotionVideoIntoProject(current, {asset,clip}));
                   setPrepared(null); setPreview(false); setReviewOpen(false);
                 }} />
               <button

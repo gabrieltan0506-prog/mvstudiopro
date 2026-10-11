@@ -15613,8 +15613,6 @@ export default function PlatformPage() {
                 </div>
               </div>
 
-              <KnowledgeCardRecovery disabled={recoveryBlocked} onApply={applyKnowledgeCardRecovery} />
-
               <div className="mb-3 space-y-3">
                 <PlatformOutputTypePicker
                   value={outputType}
@@ -15953,6 +15951,8 @@ export default function PlatformPage() {
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
                 </button>
+                <KnowledgeCardRecovery disabled={recoveryBlocked} onApply={applyKnowledgeCardRecovery} />
+                <span className="text-xs text-[#c9c0e6]/60">恢复已有正文与图片，不重新生成、不扣费</span>
                 {(customNoteImageUpper || customNoteImageLower || customNoteError || customOptimizeResult) && !customNoteBusy && (
                   <button
                     type="button"

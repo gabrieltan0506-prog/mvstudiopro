@@ -1,3 +1,4 @@
+import { CodeMotionPlanError } from "./codeMotionPlanFailure";
 import { codeMotionBriefSchema, type CodeMotionBrief } from "../../shared/codeMotion";
 import { generateCodeMotionPlan } from "./codeMotionPlan";
 import { MANHUA_ADVISOR_PLAIN_LANGUAGE, TEMPLATE_RECOMMENDATION_DELIVERY, advisorTemplateChoiceSchema, validateAdvisorTemplateChoice } from "../../shared/manhuaAdvisorTemplateChoice";
@@ -999,6 +1000,7 @@ export async function askPlatformSkillQa(params: {
       break;
     } catch (e) {
       if (isSseContentSafetyError(e)) throw e;
+      if (codeMotionContext && e instanceof CodeMotionPlanError) throw e;
       // 候选检查失败时清掉本轮解析值，避免三次失败后仍返回无效候选。
       parsed = null;
       lastErr = e instanceof Error ? e.message : String(e);

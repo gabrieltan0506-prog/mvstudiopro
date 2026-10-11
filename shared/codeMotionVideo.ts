@@ -9,6 +9,7 @@ export const codeMotionVideoAssetSchema = z
       .max(2048),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     durationSec: z.number().finite().min(4).max(30),
+    originalAudioSourceId: z.string().uuid().optional(),
   })
   .strict();
 export const codeMotionVideoSchema = z

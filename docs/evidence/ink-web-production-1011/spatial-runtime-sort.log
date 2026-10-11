@@ -1,0 +1,9 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ client/src/lib/manhuaWorldStage.test.ts (15 tests | 14 skipped) 42ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 14 skipped (15)
+   Start at  16:38:21
+   Duration  1.47s (transform 327ms, setup 0ms, collect 800ms, tests 42ms, environment 0ms, prepare 107ms)

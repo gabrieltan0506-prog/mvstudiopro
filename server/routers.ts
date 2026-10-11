@@ -1,3 +1,4 @@
+import { codeMotionPlanFailureMessage } from "./services/codeMotionPlanFailure";
 import { buildManhuaBgmJobResponse, queueManhuaBgm } from "./services/manhuaBgmOperation";
 import { codeMotionBriefSchema } from "../shared/codeMotion";
 import { codeMotionRouter } from "./routers/codeMotion";
@@ -7104,7 +7105,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             try {
               const terminal = await claimManhuaAdvisorRefundPending(
                 jobId,
-                "顾问回答未完成，积分对账处理中",
+                codeMotionPlanFailureMessage(operationError) || "顾问回答未完成，积分对账处理中",
               );
               if (terminal === "succeeded") {
                 const replay = await reserveManhuaAdvisorOperation({
@@ -7136,10 +7137,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               } else if (refund.status !== "refunded") {
                 throw new Error(`advisor_refund_not_terminal:${refund.status}`);
               }
-              const reconciled = await markManhuaAdvisorRefundReconciled(
-                jobId,
-                creditsRefunded,
-              );
+              const planFailure = codeMotionPlanFailureMessage(operationError);
+              const reconciled = planFailure
+                ? await markManhuaAdvisorRefundReconciled(jobId, creditsRefunded, planFailure)
+                : await markManhuaAdvisorRefundReconciled(jobId, creditsRefunded);
               if (!reconciled) throw new Error("advisor_refund_reconcile_persist_failed");
               await restoreFreeQuota();
             } catch (refundError) {
@@ -7151,7 +7152,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `ADVISOR_OPERATION_FAILED：${operationError instanceof Error && operationError.message === "素材尚未登记,请从画布/成片里重新选择站内素材" ? "素材尚未登记，本次未发送影片" : "本次问答未完成"}${deducted.cost > 0 ? "；积分已原路退回" : ""}，请重新提问`,
+              message: `ADVISOR_OPERATION_FAILED：${codeMotionPlanFailureMessage(operationError) || (operationError instanceof Error && operationError.message === "素材尚未登记,请从画布/成片里重新选择站内素材" ? "素材尚未登记，本次未发送影片" : "本次问答未完成")}${deducted.cost > 0 ? "；积分已原路退回" : ""}，请重新提问`,
             });
           }
 

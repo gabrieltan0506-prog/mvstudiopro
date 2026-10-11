@@ -55,10 +55,6 @@ export default function CodeMotionVideoProduction({
           : false,
     }
   );
-  const images = trpc.codeMotion.resolveImages.useQuery(
-    { images: project.brief.images },
-    { enabled: !disabled && project.brief.images.length > 0, retry: false }
-  );
   async function run(action: () => Promise<void>) {
     if (lock.current) return;
     lock.current = true;
@@ -127,10 +123,6 @@ export default function CodeMotionVideoProduction({
                 · 本批动作镜头 {prepared.totalCredits} 积分
               </p>
               {prepared.shots.map(shot => {
-                const image = project.brief.images.find(i =>
-                  shot.imageUrls.includes(i.gcsUri)
-                );
-                const preview = images.data?.find(i => i.id === image?.id);
                 return (
                   <div
                     key={shot.sceneIndex}
@@ -140,13 +132,7 @@ export default function CodeMotionVideoProduction({
                       画面 {shot.sceneIndex + 1} · {shot.at}–
                       {shot.at + shot.duration} 秒 · {shot.resolution}
                     </p>
-                    {preview && (
-                      <img
-                        src={gcsTransferUrl(preview.url)}
-                        alt={`画面${shot.sceneIndex + 1}参考图`}
-                        className="my-2 max-h-40 rounded object-contain"
-                      />
-                    )}
+                    <div className="flex flex-wrap gap-2">{prepared.imagePreviews.filter(p=>p.sceneIndex===shot.sceneIndex).map(p=><figure key={p.index}><img src={gcsTransferUrl(p.url)} alt={`画面${shot.sceneIndex+1}参考图${p.index+1}`} className="my-2 max-h-40 rounded object-contain"/><figcaption className="text-xs">参考图{p.index+1}{p.index===0 && project.plan?.spatial?.frames.some(f=>f.sceneIndex===shot.sceneIndex) ? " · 三维视角" : ""}</figcaption></figure>)}</div>
                     {prepared.videoPreviews?.find(
                       p => p.sceneIndex === shot.sceneIndex
                     ) && (

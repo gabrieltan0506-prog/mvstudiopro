@@ -1,3 +1,4 @@
+import { assertCodeMotionSpatial, spatialSceneDigest } from "./codeMotionSpatial";
 import { codeMotionVideoDurationMatches } from "./codeMotionVideoDuration";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -75,6 +76,7 @@ export type CodeMotionProductionVideoShot = {
   resolution: "480p" | "720p";
   mode: "image_to_video" | "reference_to_video" | "video_edit";
   editSource?: import("./codeMotionRevisionEdit").CodeMotionEditSource;
+  spatialReference?: { frameId:string; sceneDigest:string; worldId:string; actorAssetIds:string[] };
   imageUrls: string[];
   videoUrls: string[];
   audioUrls: string[];
@@ -109,9 +111,15 @@ export function planCodeMotionProductionVideo(
             )
           )
         );
-    const imageUrls = selectedIds
-      .map(id => project.brief.images.find(image => image.id === id)?.gcsUri)
-      .filter((uri): uri is string => !!uri);
+    const spatialFrame = project.plan.spatial?.frames.find(f=>f.sceneIndex===sceneIndex);
+    if (spatialFrame && spatialFrame.sceneDigest !== spatialSceneDigest(scene)) throw Error(`画面${sceneIndex+1}已改变，请重新核对并采用三维参考帧`);
+    const boundImageIds = Array.from(new Set([...(spatialFrame?.referenceImageIds || []), ...selectedIds]));
+    const boundImages = boundImageIds.map(id => {
+      const image = project.brief.images.find(image => image.id === id);
+      if (!image) throw Error(`画面${sceneIndex+1}的身份参考图已移除，请重新核对三维参考`);
+      return image.gcsUri;
+    });
+    const imageUrls = [...(spatialFrame ? [spatialFrame.image.gcsUri] : []), ...boundImages];
     const videoUrls = (production?.referenceVideoIds || []).map(id => {
       const asset = project.plan!.codeVideo?.assets.find(a => a.id === id);
       if (!asset) throw new Error("参考视频尚未保存或已移除");
@@ -163,6 +171,7 @@ export function planCodeMotionProductionVideo(
       audioCount: audioUrls.length,
     });
     let prompt = production?.videoPrompt || `${scene.heading}。${scene.body}。${scene.direction || ""}`;
+    if (spatialFrame) prompt = `@图片1 是三维场景与人物站位参考，保持其空间关系和机位；${imageUrls.length>1 ? "后续参考图用于人物身份和材质细节。" : ""}将三维参考转为完成画面，不出现网格、操控器、界面或白模标记。\n${prompt}`;
     if (dialogue) {
       // The worker submits one actual window mix in audio_urls; never put its URL in <>.
       // Preserve the spoken words and use the existing Seedance dialect/limit validator.
@@ -189,6 +198,7 @@ export function planCodeMotionProductionVideo(
       version: policy.version,
       resolution: policy.resolution,
       mode: dialogue ? "reference_to_video" : policy.mode,
+      ...(spatialFrame ? {spatialReference:{frameId:spatialFrame.id,sceneDigest:spatialFrame.sceneDigest,worldId:spatialFrame.worldId,actorAssetIds:spatialFrame.actors.map(a=>a.assetId)}} : {}),
       imageUrls,
       videoUrls,
       audioUrls,
@@ -246,6 +256,7 @@ export async function prepareCodeMotionProductionVideo(
   const saved = await loadCodeMotion(userId, input.projectId, storage);
   if (!saved || saved.generation !== input.expectedGeneration)
     throw new Error("作品版本已变化，请先保存");
+  if (saved.project.plan?.spatial) await assertCodeMotionSpatial(userId,input.projectId,saved.project.plan.spatial,storage);
   const grant = await getCodeMotionProductionGrant(userId, input.projectId);
   const tier = grant?.tier ?? await resolveCodeMotionProductionTier(userId, saved.project);
   let shots: CodeMotionProductionVideoShot[];
@@ -294,6 +305,7 @@ export async function prepareCodeMotionProductionVideo(
     shots,
     totalCredits: shots.reduce((n, s) => n + s.credits, 0),
     fingerprint,
+    imagePreviews: shots.flatMap(s=>s.imageUrls.map((uri,index)=>({sceneIndex:s.sceneIndex,index,url:signGsUriV4ReadUrl(uri,3600)}))),
     videoPreviews: shots.flatMap(s =>
       s.editSource
         ? [

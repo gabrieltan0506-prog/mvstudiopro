@@ -1,3 +1,4 @@
+import { assertCodeMotionSpatial } from "../services/codeMotionSpatial";
 import { analyzeCodeMotionImageSemantic } from "../services/codeMotionImageSemantic";
 import { analyzeCodeMotionTiming } from "../services/codeMotionTiming";
 import { prepareCodeMotionImages, submitCodeMotionImages, listCodeMotionImages, adoptCodeMotionImage } from "../services/codeMotionImages";
@@ -277,6 +278,7 @@ export const codeMotionRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      if (input.project.plan?.spatial) await assertCodeMotionSpatial(String(ctx.user.id), input.project.id, input.project.plan.spatial);
       if (input.project.plan?.codeVideo) await assertCodeMotionProductionVideos(String(ctx.user.id), input.project.id, input.project.plan.codeVideo);
       for (const image of input.project.brief.images) {
         assertCodeMotionImageSource(String(ctx.user.id), image.gcsUri);

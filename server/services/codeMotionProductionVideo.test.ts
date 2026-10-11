@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { prepareCodeMotionSpatialScene } from "../../shared/codeMotionSpatial";
 const state = vi.hoisted(() => ({
   tier: "free" as "free" | "paid",
   revisionPrice: null as any,
@@ -137,6 +138,7 @@ import { createCanvasVideoTask } from "./canvasVideoTask";
 import { chargeCanvasVideoCredits } from "../../api/jobs";
 import { getUserPlan } from "../credits";
 import { getCodeMotionProductionGrant } from "./codeMotionProductionGrant";
+import { spatialSceneDigest } from "./codeMotionSpatial";
 const id = "11111111-1111-4111-8111-111111111111",
   imageId = "22222222-2222-4222-8222-222222222222";
 function project() {
@@ -182,6 +184,37 @@ function project() {
     },
   };
 }
+it("保存三维参考将代码镜头接入模型生产，保留提示词与镜长，非法镜长不偷偷调整", () => {
+  const value=project() as any;
+  value.plan.scenes[0].production.motion="code";
+  expect(planCodeMotionProductionVideo(value,"paid")).toHaveLength(0);
+  const selected=prepareCodeMotionSpatialScene(value,0);
+  expect(planCodeMotionProductionVideo(selected,"paid")).toHaveLength(1);
+  expect(selected.plan!.scenes[0].production?.videoPrompt).toBe(value.plan.scenes[0].production.videoPrompt);
+  expect(value.plan.scenes[0].production.motion).toBe("code");
+  delete value.plan.scenes[0].production;
+  const legacy=prepareCodeMotionSpatialScene(value,0);
+  expect(legacy.plan!.scenes[0].production?.imagePrompt).toContain(value.plan.scenes[0].heading);
+  expect(planCodeMotionProductionVideo(legacy,"paid")).toHaveLength(1);
+  value.plan.scenes[0].duration=3;
+  expect(()=>prepareCodeMotionSpatialScene(value,0)).toThrow("整秒");
+  value.brief.generationTier="free";value.plan.scenes[0].duration=8;
+  expect(()=>prepareCodeMotionSpatialScene(value,0)).toThrow("4–5");
+});
+it("三维帧优先，人物身份图和场景图完整传给模型；失效帧或丢失身份图拒绝提交", () => {
+  const value = project() as any;
+  const actorImage = { id: "55555555-5555-4555-8555-555555555555", name: "人物正面", gcsUri: "gs://fixture/actor.png" };
+  value.brief.images.push(actorImage);
+  value.plan.spatial = { assets: [], frames: [{ id: "frame", sceneIndex: 0, sceneDigest: spatialSceneDigest(value.plan.scenes[0]), image: { gcsUri: "gs://fixture/stage.png" }, worldId: "world", actors: [{ assetId: "actor" }], referenceImageIds: [actorImage.id, imageId] }] };
+  const shots = planCodeMotionProductionVideo(value, "paid");
+  expect(shots[0].imageUrls).toEqual(["gs://fixture/stage.png", actorImage.gcsUri, value.brief.images[0].gcsUri]);
+  expect(shots[0].prompt).toContain("@图片1");
+  expect(shots[0].spatialReference).toMatchObject({ frameId: "frame", actorAssetIds: ["actor"] });
+  value.brief.images.pop();
+  expect(() => planCodeMotionProductionVideo(value, "paid")).toThrow("身份参考图已移除");
+  value.brief.images.push(actorImage); value.plan.scenes[0].body = "改变站位和动作";
+  expect(() => planCodeMotionProductionVideo(value, "paid")).toThrow("重新核对并采用三维参考帧");
+});
 beforeEach(() => {
   vi.clearAllMocks();
   state.tier = "free";

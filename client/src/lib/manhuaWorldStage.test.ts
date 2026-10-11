@@ -19,15 +19,17 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 /** 执行生产 iframe 脚本，用受控加载信号取代网络/WebGL；不冒充真实画面验收。 */
-async function harness(characters = actors, failedWorldAttempts = 0, exportFailure?: "render" | "canvas" | "empty") {
+async function harness(characters = actors, failedWorldAttempts = 0, exportFailure?: "render" | "canvas" | "empty", waitForSort = false) {
   const config = buildStageSceneConfig({ spz500kUrl: "https://x/w.spz" }, characters, stageCameraRigs(characters).establish, "revision-7")!;
   const html = buildSrcDoc(config);
   const script = html.slice(html.indexOf('const CONFIG ='), html.lastIndexOf('</script>'))
     .replaceAll('await import(', 'await loadModule(');
   const messages: Record<string, unknown>[] = [];
-  const messageHandlers: Array<(event: { data: Record<string, unknown> }) => void> = [];
+  const messageHandlers: Array<(event: { data: Record<string, unknown>; source?: unknown }) => void | Promise<void>> = [];
   const pointerHandlers = new Map<string, (event: Record<string, unknown>) => void>();
   const world = deferred<void>();
+  const sorting = deferred<void>();
+  if (!waitForSort) sorting.resolve();
   const loading = new Map<string, (value: unknown) => void>();
   class Vector3 {
     constructor(public x = 0, public y = 0, public z = 0) {}
@@ -41,6 +43,7 @@ async function harness(characters = actors, failedWorldAttempts = 0, exportFailu
   const xyz = () => new Vector3();
   class Object3d {
     position = xyz(); quaternion = xyz(); scale = xyz(); rotation = { x: 0, z: 0 };
+    visible = true; updateMatrixWorld() {}
     add() {} remove() {} traverse() {} lookAt(_x: number, _y: number, _z: number) {} updateProjectionMatrix() {}
   }
   let splatInstances = 0;
@@ -63,6 +66,7 @@ async function harness(characters = actors, failedWorldAttempts = 0, exportFailu
         const length = Math.hypot(x - this.position.x, y - this.position.y, z - this.position.z) || 1;
         this.direction.set((x - this.position.x) / length, (y - this.position.y) / length, (z - this.position.z) / length);
       }
+      clone() { const value = new three.PerspectiveCamera(); value.position = this.position.clone(); value.direction = this.direction.clone(); return value; }
       getWorldDirection(target: Vector3) { return target.set(this.direction.x, this.direction.y, this.direction.z); }
     },
     Box3: class { min = { y: 0 }; max = { y: 1 }; setFromObject() { return this; } },
@@ -76,28 +80,38 @@ async function harness(characters = actors, failedWorldAttempts = 0, exportFailu
       render() { if (exportFailure === "render") throw new Error("render failed"); }
     },
   };
-  const loadModule = async (name: string) => name === "three" ? three : name.includes("GLTFLoader") ? { GLTFLoader: class { load(url: string, resolve: (v: unknown) => void) { loading.set(url, resolve); } } } : { SplatMesh: Splat };
+  const loadModule = async (name: string) => name === "three" ? three : name.includes("GLTFLoader") ? { GLTFLoader: class { load(url: string, resolve: (v: unknown) => void) { loading.set(url, resolve); } } } : { SplatMesh: Splat, SparkRenderer: class extends Object3d { defaultView = { setAutoUpdate() {}, prepare: () => sorting.promise }; } };
   const document = { getElementById: () => ({ textContent: "", remove() {} }), body: { appendChild() {} } };
   const window = { innerWidth: 640, innerHeight: 360, devicePixelRatio: 1,
-    addEventListener(type: string, handler: (event: { data: Record<string, unknown> }) => void) {
+    addEventListener(type: string, handler: (event: { data: Record<string, unknown>; source?: unknown }) => void | Promise<void>) {
       if (type === "message") messageHandlers.push(handler);
     },
   };
   const run = new Function("loadModule", "document", "window", "parent", `return (async () => {${script}})()`);
-  const done = run(loadModule, document, window, { postMessage: (m: Record<string, unknown>) => messages.push(m) });
+  const parent = { postMessage: (m: Record<string, unknown>) => messages.push(m) };
+  const done = run(loadModule, document, window, parent);
   for (let i = 0; i < 8; i++) await Promise.resolve();
   return {
-    config, messages, world, loading, done, splatInstances: () => splatInstances,
+    config, messages, world, sorting, loading, done, splatInstances: () => splatInstances,
     gltf: () => ({ scene: new Object3d() }),
-    send: (message: Record<string, unknown>) => messageHandlers.forEach((handler) => handler({ data: {
+    send: (message: Record<string, unknown>) => Promise.all(messageHandlers.map((handler) => handler({ source: parent, data: {
       source: "manhua-world-stage-host", revision: config.revision, ...message,
-    } })),
-    exportFrame(requestId: number) { this.send({ type: "export", requestId }); },
+    } }))),
+    exportFrame(requestId: number) { return this.send({ type: "export", requestId }); },
     pointer: (type: string, event: Record<string, unknown>) => pointerHandlers.get(type)?.(event),
   };
 }
 
 describe("片场生产脚本必需资产门禁", () => {
+  it("高斯排序未完成不交付参考帧，等待期间拖动不改变该帧机位", async () => {
+    const h = await harness([], 0, undefined, true);
+    h.world.resolve(); await h.done;
+    const pending = h.exportFrame(71);
+    expect(h.messages.at(-1)).toMatchObject({ type: "ready" });
+    h.pointer("wheel", { deltaY: -300, preventDefault() {} });
+    h.sorting.resolve(); await pending;
+    expect(h.messages.at(-1)).toMatchObject({ type: "frame", requestId: 71, cameraRig: { position: h.config.initialCamera.position } });
+  });
   it("相同场景内容的新对象保持同一签名，真实资产或站位变化才换实例", () => {
     const world = { spz500kUrl: "https://x/w.spz", colliderGlbUrl: "https://x/c.glb", metricScaleFactor: 1.2 };
     const initial = stageSceneSignature(world, actors);
@@ -148,12 +162,12 @@ describe("片场生产脚本必需资产门禁", () => {
     h.world.resolve();
     await h.done;
     expect(h.messages[0]).toMatchObject({ type: "ready", loaded: ["world"], failed: [] });
-    h.exportFrame(41);
+    await h.exportFrame(41);
     expect(h.messages.at(-1)).toEqual({
       source: "manhua-world-stage", revision: "revision-7", type: "export_error",
       requestId: 41, message: "视角图导出失败，请重试",
     });
-    h.exportFrame(42);
+    await h.exportFrame(42);
     expect(h.messages.at(-1)).toMatchObject({ type: "export_error", requestId: 42 });
   });
   it("拖动围绕观察点旋转，保持主体与距离；当前机位导出后可复位", async () => {
@@ -162,7 +176,7 @@ describe("片场生产脚本必需资产门禁", () => {
     await h.done;
     h.pointer("pointerdown", { pointerType: "mouse", button: 0, pointerId: 1, clientX: 0, clientY: 0 });
     h.pointer("pointermove", { pointerId: 1, clientX: 100, clientY: 0 });
-    h.exportFrame(51);
+    await h.exportFrame(51);
     const dragged = h.messages.at(-1) as { type: string; requestId: number; cameraRig: { position: number[]; target: number[] } };
     expect(dragged.type).toBe("frame");
     expect(dragged.requestId).toBe(51);
@@ -171,15 +185,15 @@ describe("片场生产脚本必需资产门禁", () => {
     const radius = (rig: { position: number[]; target: number[] }) => Math.hypot(...rig.position.map((n, i) => n - rig.target[i]!));
     expect(radius(dragged.cameraRig)).toBeCloseTo(radius(h.config.initialCamera), 6);
     h.pointer("wheel", { deltaY: -200, preventDefault() {} });
-    h.exportFrame(53);
+    await h.exportFrame(53);
     const zoomed = h.messages.at(-1) as { cameraRig: { position: number[]; target: number[] } };
     h.pointer("pointermove", { pointerId: 1, clientX: 120, clientY: 10 });
-    h.exportFrame(54);
+    await h.exportFrame(54);
     const continued = h.messages.at(-1) as { cameraRig: { position: number[]; target: number[] } };
     expect(radius(continued.cameraRig)).toBeCloseTo(radius(zoomed.cameraRig), 6);
     continued.cameraRig.target.forEach((value, index) => expect(value).toBeCloseTo(h.config.initialCamera.target[index]!));
     h.send({ type: "camera", rig: h.config.initialCamera, cameraKind: "establish" });
-    h.exportFrame(52);
+    await h.exportFrame(52);
     const reset = h.messages.at(-1) as { requestId: number; cameraRig: { target: number[] } };
     expect(reset.requestId).toBe(52);
     reset.cameraRig.target.forEach((value, index) => expect(value).toBeCloseTo(h.config.initialCamera.target[index]!));
@@ -190,16 +204,16 @@ describe("片场生产脚本必需资产门禁", () => {
     await h.done;
     let prevented = 0;
     h.pointer("wheel", { deltaY: -300, preventDefault() { prevented += 1; } });
-    h.exportFrame(61);
+    await h.exportFrame(61);
     const close = h.messages.at(-1) as { cameraRig: { position: number[] } };
     expect(prevented).toBe(1);
     expect(close.cameraRig.position).not.toEqual(h.config.initialCamera.position);
     h.pointer("wheel", { deltaY: 300, preventDefault() { prevented += 1; } });
-    h.exportFrame(62);
+    await h.exportFrame(62);
     const far = h.messages.at(-1) as { cameraRig: { position: number[] } };
     far.cameraRig.position.forEach((value, index) => expect(value).toBeCloseTo(h.config.initialCamera.position[index]!, 5));
     h.send({ type: "camera", rig: h.config.initialCamera, cameraKind: "establish" });
-    h.exportFrame(63);
+    await h.exportFrame(63);
     const reset = h.messages.at(-1) as { cameraRig: { position: number[] } };
     expect(reset.cameraRig.position).toEqual(h.config.initialCamera.position);
   });

@@ -155,6 +155,7 @@ if (THREE && SplatMesh) {
     let collider = null;
     let cameraKind = "";
     let canExport = false;
+    let exportingFrame = false;
     const required = [];
     const actorRoots = [];
     let animation = null;
@@ -227,7 +228,7 @@ if (THREE && SplatMesh) {
         return renderer.domElement.toDataURL("image/png");
       },state:()=>({animated:Boolean(animation),cameraPosition:camera.position.toArray(),aspect:camera.aspect,
         animationTimeSec:animation?.offset,visibleMeshIds:animation ? (()=>{const ids=[];animation.root.traverse(o=>{if(o.visible&&o.userData.previsObjectId)ids.push(o.userData.previsObjectId);});return ids;})():[]})};
-    window.addEventListener("message", (ev) => {
+    window.addEventListener("message", async (ev) => {
       const m = ev.data || {};
       if (ev.source!==parent || m.source !== "manhua-world-stage-host" || m.revision !== CONFIG.revision) return;
       if(m.type==="animation_load" && m.glb instanceof ArrayBuffer && m.frames){
@@ -246,20 +247,38 @@ if (THREE && SplatMesh) {
 
       if (m.type === "camera" && m.rig) { applyCamera(m.rig); cameraKind = String(m.cameraKind || ""); }
       if (m.type === "collider" && collider) collider.visible = Boolean(m.visible);
-      if (m.type === "export" && canExport && !animation) {
+      if (m.type === "export" && canExport && !animation && !exportingFrame) {
+        exportingFrame = true;
+        const exportCamera = camera.clone(), exportRig = activeRig;
+        const exportDistance = viewDistance, exportKind = String(m.cameraKind || cameraKind);
+        const gridVisible = grid.visible, colliderVisible = collider?.visible;
         try {
-          renderer.render(scene, camera);
+          // 解码完成不等于高斯排序完成；冻结导出机位，等待真实排序后再读取像素。
+          renderer.setAnimationLoop(null);
+          sparkRenderer.defaultView.setAutoUpdate(false);
+          grid.visible = false;
+          if (collider) collider.visible = false;
+          scene.updateMatrixWorld(true); exportCamera.updateMatrixWorld(true);
+          await sparkRenderer.defaultView.prepare({ scene, camera: exportCamera, update: true });
+          renderer.render(scene, exportCamera);
           const dataUrl = renderer.domElement.toDataURL("image/png");
           if (!dataUrl.startsWith("data:image/png;base64,") || dataUrl.length <= "data:image/png;base64,".length) throw new Error("empty_png");
-          const direction = camera.getWorldDirection(new THREE.Vector3());
-          const target = camera.position.clone().addScaledVector(direction, viewDistance);
+          const direction = exportCamera.getWorldDirection(new THREE.Vector3());
+          const target = exportCamera.position.clone().addScaledVector(direction, exportDistance);
           post({
             type: "frame", dataUrl,
-            viewLabelZh: m.viewLabelZh || "", cameraKind: String(m.cameraKind || cameraKind), requestId: m.requestId,
-            cameraRig: { ...activeRig, position: camera.position.toArray(), target: target.toArray() },
+            viewLabelZh: m.viewLabelZh || "", cameraKind: exportKind, requestId: m.requestId,
+            cameraRig: { ...exportRig, position: exportCamera.position.toArray(), target: target.toArray() },
           });
         }
         catch (e) { post({ type: "export_error", requestId: m.requestId, message: "视角图导出失败，请重试" }); }
+        finally {
+          grid.visible = gridVisible;
+          if (collider) collider.visible = colliderVisible;
+          exportingFrame = false;
+          sparkRenderer.defaultView.setAutoUpdate(!CAPTURE_ONLY);
+          if (!CAPTURE_ONLY) renderer.setAnimationLoop(drawFrame);
+        }
       }
     });
     window.addEventListener("resize", () => { renderer.setSize(window.innerWidth, window.innerHeight); camera.aspect = window.innerWidth / Math.max(1, window.innerHeight); camera.updateProjectionMatrix(); });

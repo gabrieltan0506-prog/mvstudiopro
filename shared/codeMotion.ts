@@ -1,3 +1,4 @@
+import { codeMotionSpatialSchema } from "./codeMotionSpatial";
 import { codeMotionTimingSchema, validateCodeMotionTimingSource, applyCodeMotionTiming } from "./codeMotionTiming";
 import { z } from "zod";
 import { CODE_MOTION_AUDIO_SOURCE_LIMIT, codeMotionEmotionSchema } from "./codeMotionMedia";
@@ -101,8 +102,10 @@ export const codeMotionPlanSchema = z
   .object({
     version: z.literal(1),
     summary: z.string().trim().min(1).max(400),
+    musicDirection: z.string().trim().min(2).max(1000).optional(),
     audioTimeline: z.array(codeMotionAudioClipSchema).max(24).optional(),
     codeVideo: codeMotionVideoSchema.optional(),
+    spatial: codeMotionSpatialSchema.optional(),
     timing: codeMotionTimingSchema.optional(),
     scenes: z
       .array(
@@ -220,6 +223,8 @@ export function compileCodeMotion(
     }
   }
   if (!options.allowPendingSpeech) {
+    if (plan.musicDirection && !plan.audioTimeline?.some(clip => clip.role === "bgm" && clip.volume > 0 && brief.audios?.some(source => source.id === clip.sourceId)))
+      throw new Error("配乐尚未生成并采用，请先制作配乐，或移除配乐安排后导出无配乐版本");
     let at = 0;
     for (let index = 0; index < plan.scenes.length; index++) {
       const scene = plan.scenes[index];

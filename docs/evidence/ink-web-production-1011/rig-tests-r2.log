@@ -1,0 +1,11 @@
+Connecting to fdaa:50:6acf:a7b:86e:ee9e:7601:2...
+
+ RUN  v2.1.9 /tmp/ink-web-review-1011
+
+ ✓ server/services/codeMotionRevision.test.ts (12 tests | 7 skipped) 2194ms
+   ✓ confirmed local revisions > official child export keeps parent audio and untouched generated video through compiler and ownership gates 2049ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed | 7 skipped (12)
+   Start at  08:51:32
+   Duration  4.18s (transform 1.76s, setup 0ms, collect 1.64s, tests 2.19s, environment 0ms, prepare 85ms)
