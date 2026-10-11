@@ -38,7 +38,8 @@ export default function CodeMotionAudioPanel({
   onTranscript(text: string): void;
 }) {
   const [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [uploadMessage, setUploadMessage] = useState("");
   const generation = useRef(projectId);
   generation.current = projectId;
   const alive = useRef(true);
@@ -68,6 +69,7 @@ export default function CodeMotionAudioPanel({
     operation.current = true;
     setBusy(true);
     setError("");
+    setUploadMessage(`正在上传「${file.name}」…`);
     try {
       if (audios.length >= CODE_MOTION_AUDIO_SOURCE_LIMIT) throw new Error("一条作品最多保留十四份音源");
       if (!file.size || file.size > 30 * 1024 * 1024)
@@ -88,10 +90,12 @@ export default function CodeMotionAudioPanel({
       });
       const response = await fetch(gcsTransferUrl(signed.uploadUrl), {
         method: "PUT",
+        credentials: "include",
         headers: { "Content-Type": mime, ...signed.requiredHeaders },
         body: file,
       });
       if (!response.ok) throw new Error("音频上传未完成，原音保留");
+      if (aliveHere(current)) setUploadMessage(`「${file.name}」上传完毕，正在核对音频…`);
       const source = await archive.mutateAsync({
         projectId: current,
         name: file.name,
@@ -103,10 +107,13 @@ export default function CodeMotionAudioPanel({
             "当前音源已达到十四份，已保留新上传原音，请先移除不用的音源后再导入"
           );
         latestOnAudios.current([...latestAudios.current, source]);
+        setUploadMessage(`「${file.name}」上传成功，已加入声音素材；请保存作品保留本次选择。`);
       }
     } catch (e) {
-      if (aliveHere(current))
-        setError(e instanceof Error ? e.message : "音频导入未完成");
+      if (aliveHere(current)) {
+        setUploadMessage("");
+        setError(`「${file.name}」上传失败：${e instanceof Error ? e.message : "音频导入未完成"}。原音与时间轴已保留。`);
+      }
     } finally {
       operation.current = false;
       if (aliveHere(current)) setBusy(false);
@@ -128,7 +135,7 @@ export default function CodeMotionAudioPanel({
       if (!aliveHere(current)) return;
       const url = refreshed.data?.find(a => a.id === source.id)?.url;
       if (!url) throw new Error("音源地址尚未就绪，请稍后再试");
-      const response = await fetch(gcsTransferUrl(url));
+      const response = await fetch(gcsTransferUrl(url), { credentials: "include" });
       if (!response.ok) throw new Error("原音读取失败");
       const bytes = new Uint8Array(await response.arrayBuffer());
       let binary = "";
@@ -202,7 +209,8 @@ export default function CodeMotionAudioPanel({
           }}
         />
       </label>
-      {busy && (
+      {uploadMessage && <p role="status" aria-live="polite" className="text-sm text-stone-700">{uploadMessage}</p>}
+      {busy && !uploadMessage && (
         <p role="status" className="text-sm">
           正在处理声音…
         </p>

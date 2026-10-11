@@ -3,7 +3,7 @@ export const INK_DAILY_NEW_ACCOUNTS = 10;
 export const INK_FREE_PPT_PAGES = 10;
 export const INK_FREE_FILE_MAX = 3;
 export const INK_FREE_POLICY =
-  "每天前10个新账号可免费导出一份视频，每个账号累计仅一次。次日不恢复，换IP不重置。PPTX免费入口尚未开放。";
+  "每天前10个首次领取名额的账号可免费制作一份视频，每个账号累计仅一次。次日不恢复，换IP不重置。选择免费制作时，额度内的图片、配音、配乐、动作镜头与成片导出共用这一名额。PPTX免费入口尚未开放。";
 export type InkFreeQuote = {
   day: string;
   eligible: boolean;
@@ -21,7 +21,7 @@ export function inkFreeMessage(quote: InkFreeQuote): string {
   if (quote.reason === "account_used")
     return "这个账号已使用过唯一一次免费机会，次日不会恢复。可继续下载已有作品。";
   if (quote.reason === "account_pending")
-    return "这个账号已有免费任务正在处理，请查看原任务；不会重复提交。";
+    return "这个账号已领取免费名额，请继续原作品或查看原任务；不会重复领取。";
   if (quote.reason === "ip_used")
     return "当前IP今天已领取免费名额，不能换账号重复领取。";
   if (quote.reason === "daily_full")

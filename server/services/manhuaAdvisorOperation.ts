@@ -347,6 +347,7 @@ export async function claimManhuaAdvisorRefundPending(
 export async function markManhuaAdvisorRefundReconciled(
   jobId: string,
   creditsRefunded: number,
+  failureReasonZh?: string,
 ): Promise<boolean> {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable — cannot finish advisor refund reconciliation");
@@ -357,7 +358,7 @@ export async function markManhuaAdvisorRefundReconciled(
         action: MANHUA_ADVISOR_REFUND_RECONCILED_ACTION,
         creditsRefunded,
       } as InsertJob["output"],
-      error: "创作顾问问答未完成，积分对账已完成",
+      error: failureReasonZh ? `${failureReasonZh.slice(0,1200)}；积分对账已完成` : "创作顾问问答未完成，积分对账已完成",
       updatedAt: new Date(),
     })
     .where(

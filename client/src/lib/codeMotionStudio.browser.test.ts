@@ -64,7 +64,7 @@ globalThis.fixture={asks:[],submits:[],saved:null,fail:true};createRoot(document
 const query=data=>({useQuery:()=>({data,refetch:async()=>({data})})});
 const f=()=>globalThis.fixture;
 const blocked={useMutation:()=>({mutateAsync:async()=>{throw Error('此回归不提交新媒体')}})};
-export const trpc={codeMotionProduction:{revisionQuote:query({completed:false,remaining:2,tier:"free",message:"先完成成片"}),revisionSubmit:blocked,list:query({shots:[]}),submit:blocked,adopt:blocked},useUtils:()=>({codeMotion:{prepare:{fetch:async()=>({generation:'1',fingerprint:'a'.repeat(64),freeEligibility:{eligible:true,reason:'available',remainingAccounts:10},audios:[],images:[],scenes:f().saved.project.plan.scenes.map(s=>({...s,movement:'文字进入'})),credits:0,spec:{},requestId:'test'})},get:{fetch:async()=>f().saved}}}),codeMotion:{analyzeTiming:blocked,resolveImages:query([]),sounds:query([]),generateSound:blocked,adoptSound:blocked,imageList:query([]),imageAnalyze:blocked,imagePrepare:blocked,imageSubmit:blocked,imageAdopt:blocked,resolveAudios:query([]),importAudio:{useMutation:()=>({mutateAsync:async()=>{throw Error("本夹具不上传录音")}})},quote:query({remainingFreeToday:3,credits:0}),list:query([]),history:query([]),status:query(null),importFile:{useMutation:()=>({mutateAsync:async()=>f().importReturn})},save:{useMutation:()=>({mutateAsync:async x=>{f().saved={project:x.project,generation:'1'};return f().saved}})},submit:{useMutation:()=>({mutateAsync:async x=>{f().submits.push(x);return{}}})}},mvAnalysis:{getVideoUploadSignedUrl:{useMutation:()=>({mutateAsync:async()=>({uploadUrl:'http://localhost:41943/test-upload',gcsUri:'gs://test/uploads/u7/test.csv',requiredHeaders:{}})})},askPlatformSkillQa:{useMutation:()=>({mutateAsync:async x=>{f().asks.push(x);if(f().fail)throw Error('连接中断');return {answer:JSON.stringify({...JSON.parse(localStorage.getItem('yingke:draft:7')).project.plan,summary:'原请求结果'}),creditsCharged:0}}})}}};`,
+export const trpc={codeMotionProduction:{spatialStatus:query(null),spatialPrepare:blocked,spatialSubmit:blocked,spatialAdopt:blocked,spatialPreviews:query({assets:[],frames:[]}),importedVideos:query([]),importSpatialAsset:blocked,importSpatialFrame:blocked,importExistingVideo:blocked,adoptImportedVideo:blocked,revisionQuote:query({completed:false,remaining:2,tier:"free",message:"先完成成片"}),revisionSubmit:blocked,revisionPrepare:blocked,list:query({shots:[]}),submit:blocked,adopt:blocked},useUtils:()=>({codeMotion:{prepare:{fetch:async()=>({generation:'1',fingerprint:'a'.repeat(64),freeEligibility:{eligible:true,reason:'available',remainingAccounts:10},audios:[],images:[],scenes:f().saved.project.plan.scenes.map(s=>({...s,movement:'文字进入'})),credits:0,spec:{},requestId:'test'})},get:{fetch:async()=>f().saved}}}),codeMotion:{analyzeTiming:blocked,resolveImages:query([]),sounds:query([]),generateSound:blocked,adoptSound:blocked,adoptSoundAndSave:blocked,imageList:query([]),imageAnalyze:blocked,imagePrepare:blocked,imageSubmit:blocked,imageAdopt:blocked,resolveAudios:query([]),importAudio:{useMutation:()=>({mutateAsync:async()=>{throw Error("本夹具不上传录音")}})},freeQuote:query({eligible:true,reason:"available",remainingAccounts:10}),quote:query({remainingFreeToday:3,credits:0}),list:query([]),history:query([]),status:query(null),importFile:{useMutation:()=>({mutateAsync:async()=>{if(f().importFailure)throw Error("文件读取失败");if(f().holdImport)await new Promise(resolve=>f().releaseImport=resolve);return f().importReturn}})},save:{useMutation:()=>({mutateAsync:async x=>{f().saved={project:x.project,generation:'1'};return f().saved}})},submit:{useMutation:()=>({mutateAsync:async x=>{f().submits.push(x);return{}}})}},mvAnalysis:{getVideoUploadSignedUrl:{useMutation:()=>({mutateAsync:async()=>({uploadUrl:'http://localhost:41943/test-upload',gcsUri:'gs://test/uploads/u7/test.csv',requiredHeaders:{}})})},askPlatformSkillQa:{useMutation:()=>({mutateAsync:async x=>{f().asks.push(x);if(f().fail)throw Error('连接中断');return {answer:JSON.stringify({...JSON.parse(localStorage.getItem('yingke:draft:7')).project.plan,summary:'原请求结果'}),creditsCharged:0}}})}}};`,
           }));
         },
       },
@@ -74,6 +74,7 @@ export const trpc={codeMotionProduction:{revisionQuote:query({completed:false,re
   try {
     const page = await browser.newPage();
     page.setDefaultTimeout(6000);
+    page.on("pageerror", error => console.error("测试页面异常", String(error)));
     await page.setRequestInterception(true);
     page.on("request", r =>
       r.isNavigationRequest()
@@ -144,6 +145,25 @@ export const trpc={codeMotionProduction:{revisionQuote:query({completed:false,re
         el.click();
       }, text);
     await page.waitForSelector("textarea");
+    // 上传状态在入口旁显示；失败不清空材料，同名文件可再次选择。
+    const selectUpload=async(name:string)=>page.evaluate(n=>{
+      const input=document.querySelector('input[aria-label="导入图片、文档或表格"]') as HTMLInputElement;
+      const files=new DataTransfer();files.items.add(new File(["测试正文"],n,{type:"text/markdown"}));input.files=files.files;input.dispatchEvent(new Event("change",{bubbles:true}));
+    },name);
+    await page.evaluate(()=>{const f=(globalThis as any).fixture;f.holdImport=true;f.importReturn={kind:"document",name:"资料.md",text:"已解析正文",message:"已读取文字"};});
+    await page.evaluate(()=>{const original=window.fetch; (globalThis as any).uploadCredentials=[];window.fetch=(input,init)=>{if(init?.method==='PUT')(globalThis as any).uploadCredentials.push(init.credentials);return original(input,init);};});
+    await selectUpload("资料.md");
+    await page.waitForFunction(()=>document.body.textContent?.includes("正在核对文件内容"));
+    expect(await page.$eval('input[aria-label="导入图片、文档或表格"]',el=>(el as HTMLInputElement).disabled)).toBe(true);
+    await page.evaluate(()=>{const f=(globalThis as any).fixture;f.holdImport=false;f.releaseImport();});
+    await page.waitForFunction(()=>document.body.textContent?.includes("「资料.md」上传成功"));
+    expect(await page.evaluate(()=>(globalThis as any).uploadCredentials)).toEqual(["include"]);
+    await page.evaluate(()=>{(globalThis as any).fixture.importFailure=true;});
+    await selectUpload("资料.md");
+    await page.waitForFunction(()=>document.body.textContent?.includes("「资料.md」上传失败：文件读取失败"));
+    expect(await page.$eval("body",el=>el.textContent)).toContain("已解析正文");
+    await page.evaluate(()=>{(globalThis as any).fixture.importFailure=false;});
+
     const openingText = await page.$eval(
       "body",
       node => node.textContent || ""

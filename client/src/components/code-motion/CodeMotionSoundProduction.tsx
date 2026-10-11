@@ -18,10 +18,14 @@ export default function CodeMotionSoundProduction({
   adopt(source: CodeMotionAudioSource, saved?: {project:CodeMotionProject;generation:string;updatedAt:string}, extendedBy?:number): Promise<void>;
   execute(action: () => Promise<void>): Promise<void>;
 }) {
-  const [direction, setDirection] = useState(() => manhuaBgmArcFromShots(
+  const [direction, setDirection] = useState(() => project.plan?.musicDirection || manhuaBgmArcFromShots(
     (project.plan?.scenes || []).map((scene, index) => ({index:index+1,durationSec:scene.duration,cameraZh:scene.direction || "",actionZh:(scene.direction || scene.heading).slice(0,48),intentZh:scene.heading.slice(0,20),emotionZh:(scene.speech?.emotion || "").slice(0,30),dialogueZh:scene.speech?.text || ""})),
     project.brief.duration,
   ).slice(0,1000) || "由轻盈铺陈推进到明亮收束，衬托旁白，纯音乐");
+  const directionEdited = useRef(false);
+  useEffect(() => {
+    if (!directionEdited.current && project.plan?.musicDirection) setDirection(project.plan.musicDirection);
+  }, [project.plan?.musicDirection]);
   const [busy, setBusy] = useState(false),
     [message, setMessage] = useState("");
   const lock = useRef(false), mounted = useRef(true);
@@ -71,7 +75,7 @@ export default function CodeMotionSoundProduction({
     >
       <h3 className="font-medium">制作声音</h3>
       <p className="text-xs text-stone-600">
-        没有现成音频也可以开始。按画面生成旁白、对白和配乐，试听后采用到作品；生成沿用现有积分规则。
+        没有现成音频也可以开始。下方是将提交的台词和配乐方向；音乐模型真正生成后，试听并采用到作品。选择免费制作并领取名额后，配音与配乐包含在本作品名额内；精细制作沿用现有积分规则。
       </p>
       <button className={button} disabled={disabled || busy || !project.plan || sounds.isLoading || !!sounds.error}
         onClick={() => void run(async () => {
@@ -135,7 +139,7 @@ export default function CodeMotionSoundProduction({
           maxLength={1000}
           value={direction}
           disabled={disabled || busy}
-          onChange={e => setDirection(e.target.value)}
+          onChange={e => { directionEdited.current = true; setDirection(e.target.value); }}
         />
       </label>
       <button

@@ -1,3 +1,5 @@
+import { codeMotionPlanningContract, codeMotionPlanningResponseSchema, normalizeCodeMotionPlanTransforms } from "./codeMotionPlanContract";
+import { classifyCodeMotionPlanFailure, CodeMotionPlanError, type CodeMotionPlanFailure } from "./codeMotionPlanFailure";
 import {
   codeMotionBriefSchema,
   validateCodeMotionPlan,
@@ -48,8 +50,10 @@ export async function generateCodeMotionPlan(
       mimeType,
     })),
   };
-  let last: unknown;
+  const failures: CodeMotionPlanFailure[] = [];
+  let correction: string | undefined;
   for (const hop of MANHUA_ADVISOR_HOPS) {
+    let stage: CodeMotionPlanFailure["stage"] = "request";
     try {
       const result = await deps.invoke({
         provider: "openai",
@@ -60,14 +64,22 @@ export async function generateCodeMotionPlan(
         max_tokens: 8192,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: INSTRUCTION },
+          { role: "system", content: `${INSTRUCTION}\n${codeMotionPlanningContract(brief)}` },
           { role: "user", content: JSON.stringify(modelBrief) },
+          ...(correction ? [{role:"user" as const,content:`上一次方案没有通过校验：${correction}。请依据相同资料重新输出完整合法方案，修正这些字段，不添加未支持字段，不改变用户素材或事实。`}] : []),
         ],
       });
+      stage = "content";
       if (result.choices?.[0]?.finish_reason === "length")
         throw new Error("方案输出不完整");
       const raw = extractFirstChoicePlainText(result);
-      const plan = validateCodeMotionPlan(brief, JSON.parse(raw));
+      stage = "json";
+      const parsed = JSON.parse(raw);
+      stage = "schema";
+      const normalized = normalizeCodeMotionPlanTransforms(parsed);
+      const contractPlan = codeMotionPlanningResponseSchema(brief).parse(normalized);
+      const plan = validateCodeMotionPlan(brief, contractPlan);
+      stage = "content";
       if (brief.style === "scenes") {
         const visualScenes = plan.scenes.filter(scene => {
           const visual = scene.composition!.elements.filter(
@@ -100,6 +112,7 @@ export async function generateCodeMotionPlan(
       if (
         speechEnabled &&
         !brief.audios?.length &&
+        !plan.musicDirection?.trim() &&
         !plan.scenes.some(scene => scene.speech?.text.trim()) &&
         !/无声|静音/.test(brief.request)
       )
@@ -107,10 +120,11 @@ export async function generateCodeMotionPlan(
       return { answer: JSON.stringify(plan), modelName: hop.modelName };
     } catch (e) {
       if (isSseContentSafetyError(e)) throw e;
-      last = e;
+      const failure=classifyCodeMotionPlanFailure(e,stage);
+      failures.push(failure);
+      console.warn("[codeMotionPlan] candidate rejected", JSON.stringify({model:hop.modelName,gateway:hop.gateway,...failure}));
+      correction=failure.stage!=="request"?failure.detailZh:correction;
     }
   }
-  throw new Error(
-    `这次内容安排未能完成，原材料保留。${last instanceof Error && /方案|时长|图片|数据展示/.test(last.message) ? last.message : "请稍后再试。"}`
-  );
+  throw new CodeMotionPlanError(failures);
 }

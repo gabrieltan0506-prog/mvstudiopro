@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ client/src/lib/manhuaWorldStage.test.ts (14 tests) 1508ms
+   ✓ 宿主上传开始后切机位仍保持忙碌，旧回执不能放开新请求 1478ms
+
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+   Start at  16:37:38
+   Duration  2.35s (transform 145ms, setup 0ms, collect 209ms, tests 1.51s, environment 0ms, prepare 75ms)

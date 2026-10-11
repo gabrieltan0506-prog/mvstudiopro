@@ -257,7 +257,7 @@ export async function submitCodeMotionRevision(
 export async function codeMotionRevisionAssetParent(
   userId: string,
   projectId: string,
-  kind: "audio" | "video",
+  kind: "audio" | "video" | "spatialAsset" | "spatialFrame",
   asset: unknown,
   storage = codeMotionStorage
 ): Promise<string | null> {
@@ -269,10 +269,9 @@ export async function codeMotionRevisionAssetParent(
   if (!file) return null;
   const ledger = JSON.parse(file.body.toString()) as Ledger;
   const entry = ledger.entries.find(e => e.project.id === projectId);
-  const sources =
-    kind === "audio"
-      ? entry?.project.brief.audios
-      : entry?.project.plan?.codeVideo?.assets;
+  const sourcesOf = (project?: CodeMotionProject): unknown[] | undefined =>
+    kind === "audio" ? project?.brief.audios : kind === "video" ? project?.plan?.codeVideo?.assets : kind === "spatialAsset" ? project?.plan?.spatial?.assets : project?.plan?.spatial?.frames;
+  const sources = sourcesOf(entry?.project);
   const permitted = sources?.some(
     s => codeMotionProductionDigest(s) === codeMotionProductionDigest(asset)
   );
@@ -282,10 +281,7 @@ export async function codeMotionRevisionAssetParent(
     const previous = ledger.entries.find(e => e.project.id === parent);
     if (!previous)
       return parent === grant.revision.rootProjectId ? parent : null;
-    const original =
-      kind === "audio"
-        ? previous.project.brief.audios
-        : previous.project.plan?.codeVideo?.assets;
+    const original = sourcesOf(previous.project);
     if (
       !original?.some(
         s => codeMotionProductionDigest(s) === codeMotionProductionDigest(asset)

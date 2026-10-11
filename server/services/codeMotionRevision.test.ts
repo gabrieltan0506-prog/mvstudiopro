@@ -119,6 +119,20 @@ async function saveEditableSource(p=project()) {
  return p;
 }
 describe("confirmed local revisions", () => {
+  it("局部修改稿继承原三维素材和参考帧，篡改记录或跨账号不继承", async () => {
+    const p = project();
+    const asset = {id:"a".repeat(64),kind:"spz" as const,name:"原场景",gcsUri:"gs://bucket/original.spz",sha256:"a".repeat(64),bytes:100};
+    const {spatialSceneDigest,assertCodeMotionSpatial}=await import("./codeMotionSpatial");
+    const frame={id:"44444444-4444-4444-8444-444444444444",sceneIndex:0,sceneDigest:spatialSceneDigest(p.plan!.scenes[0]),image:{id:"55555555-5555-4555-8555-555555555555",name:"参考帧",gcsUri:"gs://bucket/frame.png"},worldId:asset.id,actors:[],metricScaleFactor:1,groundPlaneOffset:0,camera:{position:[1,1,1] as [number,number,number],target:[0,0,0] as [number,number,number],lens:35,kind:"establish" as const,labelZh:"全景"},revision:"r1",viewLabelZh:"全景"};
+    p.plan!.spatial={assets:[asset],frames:[frame]};
+    for(const [folder,id,value] of [["assets",asset.id,asset],["frames",frame.id,frame]] as const)await codeMotionStorage.write(`code-motion/u7/production/${projectId}/spatial/${folder}/${id}.json`,Buffer.from(JSON.stringify(value)),"0");
+    generation=(await saveCodeMotion("7",p,generation,codeMotionStorage)).generation;
+    const child=await submitCodeMotionRevision("7",input(1),deps);
+    await expect(assertCodeMotionSpatial("7",child.project.id,child.project.plan!.spatial!)).resolves.toBeUndefined();
+    expect(await codeMotionRevisionAssetParent("7",child.project.id,"spatialAsset",{...asset,bytes:101})).toBeNull();
+    expect(await codeMotionRevisionAssetParent("7",child.project.id,"spatialFrame",{...frame,groundPlaneOffset:2})).toBeNull();
+    await expect(assertCodeMotionSpatial("8",child.project.id,child.project.plan!.spatial!)).rejects.toThrow("不属于");
+  });
   it("code-only edits over a dialogue video fail before consuming a revision or creating a child", async () => {
     const p = project();
     p.plan!.scenes[1].speech = {text:"一起走吧",voice:"male",role:"dialogue"};

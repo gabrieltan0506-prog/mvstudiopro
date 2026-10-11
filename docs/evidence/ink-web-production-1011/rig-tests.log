@@ -1,0 +1,59 @@
+Connecting to fdaa:50:6acf:a7b:86e:ee9e:7601:2...
+
+ RUN  v2.1.9 /tmp/ink-web-review-1011
+
+ ❯ server/services/codeMotionRevision.test.ts (12 tests | 5 failed) 1923ms
+   ✓ confirmed local revisions > 局部修改稿继承原三维素材和参考帧，篡改记录或跨账号不继承 620ms
+   × confirmed local revisions > official child export keeps parent audio and untouched generated video through compiler and ownership gates 847ms
+     → Failed to load url ../../api/jobs (resolved id: ../../api/jobs) in /tmp/ink-web-review-1011/server/services/codeMotionProductionVideo.ts. Does the file exist?
+   × paid action revision cost contract > locks a single paid scene at actual fixed tool units ×2; restores once and rejects unquoted inputs 21ms
+     → Failed to load url ../../api/jobs (resolved id: ../../api/jobs) in /tmp/ink-web-review-1011/server/services/codeMotionProductionVideo.ts. Does the file exist?
+   × paid action revision cost contract > never drops existing video references to fit an incomplete price 2ms
+     → Failed to load url ../../api/jobs (resolved id: ../../api/jobs) in /tmp/ink-web-review-1011/server/services/codeMotionProductionVideo.ts. Does the file exist?
+   × original-clip edit grant > free original edit preserves the source, uses standard2.0 and consumes one root revision only 31ms
+     → Failed to load url ../../api/jobs (resolved id: ../../api/jobs) in /tmp/ink-web-review-1011/server/services/codeMotionProductionVideo.ts. Does the file exist?
+   × original-clip edit grant > missing source and low-resolution paid input fail before a revision is consumed 20ms
+     → expected [Function] to throw error including '高清放大' but got 'Failed to load url ../../api/jobs (re…'
+ ✓ server/services/codeMotionSpatialProduction.test.ts (5 tests) 39ms
+ ✓ server/services/codeMotionSpatial.test.ts (4 tests) 23ms
+stderr | server/services/codeMotionPlanContract.test.ts > 首次错误进入原有下一跳反馈，合法音乐意图完整传回供真实生成
+[codeMotionPlan] candidate rejected {"model":"z-ai/glm-5.3-flashx","gateway":"auto","stage":"schema","code":"invalid_plan","detailZh":"顾问已返回方案，但audioTimeline.[0]：类型不正确或缺少必填项；audioTimeline：超过允许范围"}
+
+ ✓ server/services/codeMotionPlanContract.test.ts (4 tests) 28ms
+ ✓ shared/codeMotionVideoAdoption.test.ts (2 tests) 5ms
+ ✓ server/services/codeMotionVideoImport.real.test.ts (1 test) 977ms
+   ✓ 已有MP4完整解码并提取真实单音轨，静音片没有虚构音源 976ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/services/codeMotionRevision.test.ts > confirmed local revisions > official child export keeps parent audio and untouched generated video through compiler and ownership gates
+ FAIL  server/services/codeMotionRevision.test.ts > paid action revision cost contract > locks a single paid scene at actual fixed tool units ×2; restores once and rejects unquoted inputs
+ FAIL  server/services/codeMotionRevision.test.ts > paid action revision cost contract > never drops existing video references to fit an incomplete price
+ FAIL  server/services/codeMotionRevision.test.ts > original-clip edit grant > free original edit preserves the source, uses standard2.0 and consumes one root revision only
+Error: Failed to load url ../../api/jobs (resolved id: ../../api/jobs) in /tmp/ink-web-review-1011/server/services/codeMotionProductionVideo.ts. Does the file exist?
+ ❯ loadAndTransform ../../app/node_modules/.pnpm/vite@5.4.20_@types+node@20.19.41_lightningcss@1.30.1/node_modules/vite/dist/node/chunks/dep-D_zLpgQd.js:51968:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  server/services/codeMotionRevision.test.ts > original-clip edit grant > missing source and low-resolution paid input fail before a revision is consumed
+AssertionError: expected [Function] to throw error including '高清放大' but got 'Failed to load url ../../api/jobs (re…'
+
+Expected: "高清放大"
+Received: "Failed to load url ../../api/jobs (resolved id: ../../api/jobs) in /tmp/ink-web-review-1011/server/services/codeMotionProductionVideo.ts. Does the file exist?"
+
+ ❯ server/services/codeMotionRevision.test.ts:584:3
+    582|   await expect(prepareCodeMotionRevision("7",raw,deps)).rejects.toThro…
+    583|   await saveEditableSource();paid=true;h.probeWidth=200;
+    584|   await expect(prepareCodeMotionRevision("7",{...raw,expectedGeneratio…
+       |   ^
+    585|   expect((await quoteCodeMotionRevision("7",projectId,deps)).used).toB…
+    586|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ Test Files  1 failed | 5 passed (6)
+      Tests  5 failed | 23 passed (28)
+   Start at  08:50:01
+   Duration  11.31s (transform 1.97s, setup 0ms, collect 6.41s, tests 3.00s, environment 2ms, prepare 581ms)
+
+Error: ssh shell: Process exited with status 1
