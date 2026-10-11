@@ -1,0 +1,23 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+stdout | server/services/codeMotionVideoDuration.real.test.ts > decodes the four unmodified provider originals through the production consumer
+{"tier":"free","scene":2,"originalSha256":"66e60309c1b45dac1f6b5633827ada087fa5c89bbfbd1f013e3ce8ad9f7a12ab","streamDuration":"5.041667","containerDuration":"5.088000","decodedFrames":150}
+
+stdout | server/services/codeMotionVideoDuration.real.test.ts > decodes the four unmodified provider originals through the production consumer
+{"tier":"free","scene":3,"originalSha256":"346ab3ea4f1530cafdc1e1c9ac5de529ac35dc9df20bfac5787397ffbd529b59","streamDuration":"5.041667","containerDuration":"5.088000","decodedFrames":150}
+
+stdout | server/services/codeMotionVideoDuration.real.test.ts > decodes the four unmodified provider originals through the production consumer
+{"tier":"paid","scene":2,"originalSha256":"b1abc3cf53f49250dc89094af0593ce75f09d1d6a6290f0ebf02469f60aa28ab","streamDuration":"5.041667","containerDuration":"5.056000","decodedFrames":150}
+
+stdout | server/services/codeMotionVideoDuration.real.test.ts > decodes the four unmodified provider originals through the production consumer
+{"tier":"paid","scene":3,"originalSha256":"a9be37ddd4edb12db4923f99640132e87bdb32963e5eeed3de553a6fedb7a9c3","streamDuration":"5.041667","containerDuration":"5.056000","decodedFrames":150}
+
+ ✓ server/services/codeMotionVideoDuration.real.test.ts (1 test) 5931ms
+   ✓ decodes the four unmodified provider originals through the production consumer 5931ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  05:24:41
+   Duration  6.57s (transform 65ms, setup 0ms, collect 63ms, tests 5.93s, environment 0ms, prepare 155ms)
+

@@ -236,4 +236,18 @@ describe("paidJobLedger refund_pending 对账", () => {
     expect(result.refunded).toBe(1);
     expect((await readHold("canvasVideo", "job-plain")).status).toBe("refunded");
   });
+
+  it("未知图片提交保留原账待对账，普通失败与关机不退不结，仅明确人工退分可结案", async () => {
+    await writeHold("canvasGptImage2","job-unknown",baseHold({jobId:"job-unknown",taskType:"canvasGptImage2"}));
+    const mod=await ledger();
+    expect(await mod.markReconciliationPending("job-unknown","canvasGptImage2")).toBe(true);
+    await mod.reapStuckPaidJobs({forceAll:true,reason:"deploy_killed"});
+    await mod.refundCreditsOnFailure("job-unknown","canvasGptImage2","task_failed");
+    await mod.unregisterActiveJob("job-unknown","canvasGptImage2","settled");
+    expect(refundCredits).not.toHaveBeenCalled();
+    expect((await readHold("canvasGptImage2","job-unknown")).status).toBe("reconciliation_pending");
+    await mod.refundCreditsOnFailure("job-unknown","canvasGptImage2","manual_admin_refund","已核对上游未产出");
+    expect(refundCredits).toHaveBeenCalledTimes(1);
+    expect((await readHold("canvasGptImage2","job-unknown")).status).toBe("refunded");
+  });
 });

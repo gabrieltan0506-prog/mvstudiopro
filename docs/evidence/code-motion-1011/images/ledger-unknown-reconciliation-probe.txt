@@ -1,0 +1,58 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 正常路径两阶段：active → refunded，打款恰一次且 reason 带 refundKey
+[paidJobLedger] ▶︎ register taskType=canvasVideo jobId=job-1 userId=7 credits=388
+
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 正常路径两阶段：active → refunded，打款恰一次且 reason 带 refundKey
+[paidJobLedger] ↺ refunded 388 credits taskType=canvasVideo jobId=job-1 userId=7 reason=task_failed
+
+ ✓ server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 正常路径两阶段：active → refunded，打款恰一次且 reason 带 refundKey 930ms
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 崩溃窗口：hold 停在 refund_pending、账里已有 marker → 只补状态，不再打款
+[paidJobLedger] ↺ reconcile：退分已在账（[refundKey:canvasVideo/job-1]），只补 hold 状态 jobId=job-1
+
+ ✓ server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 崩溃窗口：hold 停在 refund_pending、账里已有 marker → 只补状态，不再打款
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 崩溃窗口：refund_pending、账里没有 marker → 补打款恰一次
+[paidJobLedger] ↺ reconcile：补执行退分 388 jobId=job-1 userId=7
+
+ ✓ server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 崩溃窗口：refund_pending、账里没有 marker → 补打款恰一次
+ ✓ server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > DB 不可用时保持 refund_pending，不盲退也不误标
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > reaper 每轮清扫 refund_pending（对账入口不依赖再次失败回调）
+[paidJobLedger] ↺ reconcile：补执行退分 388 jobId=job-1 userId=7
+[paidJobLedger] 🧹 reap done · scanned=1 refunded=1 cancelled=0 errors=0
+
+ ✓ server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > reaper 每轮清扫 refund_pending（对账入口不依赖再次失败回调）
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 团队扣款的退分走同源退回（refundCreditsForDeductAmount），不误退个人余额
+[paidJobLedger] ↺ refunded 388 credits taskType=canvasVideo jobId=job-1 userId=7 reason=task_failed
+
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > resumable hold：forceAll 与心跳线都不退，只兜 24h 硬底
+[paidJobLedger] 🧹 reap done · scanned=1 refunded=0 cancelled=0 errors=0
+
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > resumable hold：forceAll 与心跳线都不退，只兜 24h 硬底
+[paidJobLedger] 🧹 reap done · scanned=1 refunded=0 cancelled=0 errors=0
+
+ ✓ server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 团队扣款的退分走同源退回（refundCreditsForDeductAmount），不误退个人余额
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > resumable hold：forceAll 与心跳线都不退，只兜 24h 硬底
+[paidJobLedger] ↺ refunded 388 credits taskType=canvasVideo jobId=job-old userId=7 reason=task_timeout
+
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > resumable hold：forceAll 与心跳线都不退，只兜 24h 硬底
+[paidJobLedger] 🧹 reap done · scanned=2 refunded=1 cancelled=0 errors=0
+
+ ✓ server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > resumable hold：forceAll 与心跳线都不退，只兜 24h 硬底
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 非 resumable hold 保持原行为：forceAll 全退（部署兜底语义不回归）
+[paidJobLedger] ↺ refunded 388 credits taskType=canvasVideo jobId=job-plain userId=7 reason=deploy_killed
+
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 非 resumable hold 保持原行为：forceAll 全退（部署兜底语义不回归）
+[paidJobLedger] 🧹 reap done · scanned=1 refunded=1 cancelled=0 errors=0
+
+ ✓ server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 非 resumable hold 保持原行为：forceAll 全退（部署兜底语义不回归）
+stdout | server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 未知图片提交保留原账待对账，普通失败与关机不退不结，仅明确人工退分可结案
+[paidJobLedger] ↺ refunded 388 credits taskType=canvasGptImage2 jobId=job-unknown userId=7 reason=manual_admin_refund
+
+ ✓ server/services/paidJobLedger.refundPending.test.ts > paidJobLedger refund_pending 对账 > 未知图片提交保留原账待对账，普通失败与关机不退不结，仅明确人工退分可结案
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  04:15:07
+   Duration  2.08s (transform 296ms, setup 0ms, collect 104ms, tests 1.36s, environment 0ms, prepare 115ms)
+

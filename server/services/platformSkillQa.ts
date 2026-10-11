@@ -921,7 +921,9 @@ export async function askPlatformSkillQa(params: {
     let candidateRaw: string | undefined;
     try {
       if (codeMotionContext) {
-        const planned = await generateCodeMotionPlan(codeMotionContext);
+        const planned = codeMotionContext.revisionSource
+          ? await (await import("./codeMotionRevisionProposal")).generateCodeMotionRevisionProposal(String(params.userId), codeMotionContext)
+          : await generateCodeMotionPlan(codeMotionContext);
         parsed = { answer: planned.answer, imageIntent: false, creationRelated: true, suggestedImagePrompt: "", guideMessage: "" };
         usedModel = planned.modelName;
         lastErr = "";

@@ -1,0 +1,13 @@
+
+> mvstudiopro@1.1.0-rc.1 check /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+> tsc --noEmit
+
+client/src/lib/codeMotionImageReveal.browser.test.ts(190,34): error TS2352: Conversion of type 'Window & typeof globalThis' to type 'Runtime' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type 'Window & typeof globalThis' is missing the following properties from type '{ renderFrame: (seconds: number) => void; __canvas: HTMLCanvasElement; __bootFailed?: string | undefined; }': renderFrame, __canvas
+client/src/lib/codeMotionImageReveal.browser.test.ts(228,25): error TS2352: Conversion of type 'Window & typeof globalThis' to type 'Runtime' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type 'Window & typeof globalThis' is missing the following properties from type '{ renderFrame: (seconds: number) => void; __canvas: HTMLCanvasElement; __bootFailed?: string | undefined; }': renderFrame, __canvas
+client/src/lib/codeMotionImageReveal.browser.test.ts(313,23): error TS2352: Conversion of type 'Window & typeof globalThis' to type 'Runtime' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type 'Window & typeof globalThis' is missing the following properties from type '{ renderFrame: (seconds: number) => void; __canvas: HTMLCanvasElement; __bootFailed?: string | undefined; }': renderFrame, __canvas
+client/src/lib/codeMotionImageReveal.browser.test.ts(350,41): error TS2352: Conversion of type 'Window & typeof globalThis' to type 'Runtime' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type 'Window & typeof globalThis' is missing the following properties from type '{ renderFrame: (seconds: number) => void; __canvas: HTMLCanvasElement; __bootFailed?: string | undefined; }': renderFrame, __canvas
+ ELIFECYCLE  Command failed with exit code 2.

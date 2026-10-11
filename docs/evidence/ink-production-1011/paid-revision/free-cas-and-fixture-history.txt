@@ -1,0 +1,41 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionProductionGrant.test.ts (7 tests | 6 skipped) 53ms
+ ❯ server/services/codeMotionRevision.test.ts (8 tests | 1 failed | 6 skipped) 3143ms
+   × paid action revision cost contract > locks a single paid scene at actual fixed tool units ×2; restores once and rejects unquoted inputs 38ms
+     → [
+  {
+    "code": "custom",
+    "message": "方案遗漏了已选择的图片，请补齐或移除不用的图片",
+    "path": []
+  }
+]
+   ✓ paid action revision cost contract > never drops existing video references to fit an incomplete price 3102ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/services/codeMotionRevision.test.ts > paid action revision cost contract > locks a single paid scene at actual fixed tool units ×2; restores once and rejects unquoted inputs
+ZodError: [
+  {
+    "code": "custom",
+    "message": "方案遗漏了已选择的图片，请补齐或移除不用的图片",
+    "path": []
+  }
+]
+ ❯ Proxy.saveCodeMotion server/services/codeMotionStore.ts:100:43
+     98|   deps = codeMotionStorage
+     99| ): Promise<CodeMotionSaved> {
+    100|   const project = codeMotionProjectSchema.parse(projectInput);
+       |                                           ^
+    101|   z.string().regex(/^\d+$/).parse(expectedGeneration);
+    102|   const updatedAt = new Date().toISOString();
+ ❯ server/services/codeMotionRevision.test.ts:381:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 2 passed | 12 skipped (15)
+   Start at  04:35:43
+   Duration  11.98s (transform 4.42s, setup 0ms, collect 11.88s, tests 3.20s, environment 150ms, prepare 1.00s)
+

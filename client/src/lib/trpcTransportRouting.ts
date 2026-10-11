@@ -55,5 +55,5 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
 ]);
 
 export function useLongTrpcHttpLink(op: { path: string }) {
-  return op.path.startsWith("codeMotion.") || op.path.startsWith("fileConversion.") || TRPC_LONG_HTTP_LINK_PATHS.has(op.path);
+  return op.path.startsWith("codeMotion.") || op.path.startsWith("codeMotionProduction.") || op.path.startsWith("fileConversion.") || TRPC_LONG_HTTP_LINK_PATHS.has(op.path);
 }

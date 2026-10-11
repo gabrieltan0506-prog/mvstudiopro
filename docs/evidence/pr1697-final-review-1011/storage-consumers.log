@@ -1,0 +1,29 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionRevision.test.ts (11 tests) 1981ms
+   ✓ confirmed local revisions > asset reuse requires exact original revision snapshot; unrelated source metadata cannot inherit authority 483ms
+   ✓ confirmed local revisions > official child export keeps parent audio and untouched generated video through compiler and ownership gates 1261ms
+ ✓ server/services/codeMotionSoundAdoption.test.ts (10 tests) 241ms
+stderr | server/services/codeMotionImages.test.ts > saved image production contract > missing queue rows alone can resume; content/version mismatch never creates or purchases
+[codeMotionImages] queue outcome inkimage_dd24375d0cc645018b5ce6276672ec7c Error: database down before insert
+    at Object.<anonymous> (/Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/services/codeMotionImages.test.ts:216:15)
+    at Object.mockCall (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+spy@2.1.9/node_modules/@vitest/spy/dist/index.js:61:17)
+    at Object.spy [as create] (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/tinyspy@3.0.2/node_modules/tinyspy/dist/index.js:45:80)
+    at Module.submitCodeMotionImages (/Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/services/codeMotionImages.ts:408:20)
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/services/codeMotionImages.test.ts:220:19
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:5
+    at runTest (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:11)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+
+ ✓ server/services/codeMotionImages.test.ts (5 tests) 53ms
+ ✓ server/services/codeMotionTiming.test.ts (3 tests) 289ms
+ ✓ server/services/codeMotionStore.test.ts (2 tests) 64ms
+
+ Test Files  5 passed (5)
+      Tests  31 passed (31)
+   Start at  13:55:36
+   Duration  9.17s (transform 2.13s, setup 0ms, collect 5.36s, tests 2.63s, environment 1ms, prepare 329ms)
+

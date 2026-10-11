@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/routers/codeMotion.sounds.test.ts > official sound router checks project grant before invoking the existing production service and preserves the original request identity
+ ✓ server/routers/codeMotion.sounds.test.ts > grant failure and absent authentication never reach a sound producer
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  04:05:09
+   Duration  16.08s (transform 5.54s, setup 0ms, collect 14.64s, tests 99ms, environment 1ms, prepare 351ms)
+

@@ -151,7 +151,12 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-const plugins = [documentImportAssets(), react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
+// 编辑器定位与调试工具仅供开发；正式页面不注入额外运行时。
+const plugins = [documentImportAssets(), react(), tailwindcss(),
+  { ...jsxLocPlugin(), apply: "serve" as const },
+  { ...vitePluginManusRuntime(), apply: "serve" as const },
+  { ...vitePluginManusDebugCollector(), apply: "serve" as const },
+];
 
 export default defineConfig({
   plugins,

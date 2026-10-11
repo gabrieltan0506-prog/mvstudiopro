@@ -1,0 +1,43 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ❯ client/src/lib/codeMotionImageReveal.browser.test.ts (11 tests | 1 failed) 165396ms
+   ✓ real JPEG local wipe: 'left/cover' 21292ms
+   ✓ real JPEG local wipe: 'left/contain' 12161ms
+   ✓ real JPEG local wipe: 'right/cover' 8576ms
+   ✓ real JPEG local wipe: 'right/contain' 5226ms
+   ✓ real JPEG local wipe: 'top/cover' 9781ms
+   ✓ real JPEG local wipe: 'top/contain' 9213ms
+   ✓ real JPEG local wipe: 'bottom/cover' 12631ms
+   ✓ real JPEG local wipe: 'bottom/contain' 3870ms
+   × real JPEG local wipe: 'local-rotation-scale' 5187ms
+     → expected 27 to be +0 // Object.is equality
+   ✓ omitted direction preserves existing nonzero reveal behavior 5391ms
+   ✓ React preview seek matches the formal export studio pixels 19468ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/codeMotionImageReveal.browser.test.ts > real JPEG local wipe: 'local-rotation-scale'
+AssertionError: expected 27 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 27
+
+ ❯ client/src/lib/codeMotionImageReveal.browser.test.ts:297:32
+    295|       expect(result.photoPixels).toBeGreaterThan(100000);
+    296|       for (const row of result.rows) {
+    297|         expect(row.mismatches).toBe(0);
+       |                                ^
+    298|         expect(row.checked).toBeGreaterThan(95000);
+    299|         expect(row.sibling).toEqual([238, 119, 0, 255]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 passed (11)
+   Start at  06:53:17
+   Duration  220.81s (transform 11.67s, setup 0ms, collect 27.49s, tests 165.40s, environment 0ms, prepare 10.10s)
+

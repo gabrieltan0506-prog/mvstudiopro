@@ -12,11 +12,12 @@ async function fixture(kind: "art" | "image", layout = false) {
  import {ImageWorldStudio} from './client/src/components/canvas/ImageWorldStudio';
  import {defaultCanvasBlock} from './client/src/lib/canvasTypes';
  import {defaultArtMotionSpec} from './shared/artMotion';
- window.confirm=()=>true;window.calls=[];window.failModel=false;window.adopted=[];window.errors=[];
+ import {imageWorldPlatePrompt} from './shared/imageWorld';
+ window.confirm=()=>true;window.calls=[];window.failModel=false;window.adopted=[];window.errors=[];window.sceneAccessError=false;window.sceneAllowed=true;window.missingWorld=false;
  const plan={scene:'暖光木桌',ambience:'室内',objects:[{id:'left',name:'左杯',description:'白瓷杯',position:'左边',selected:true},{id:'right',name:'右杯',description:'黑陶杯',position:'右边',selected:true}]};
  const original={...defaultCanvasBlock('image',0,0),id:'source',prompt:'原始图片',outputUrl:'https://offline.invalid/original.png'};
  const state={...defaultCanvasBlock('text',0,0),id:'root',prompt:'拆景',imageWorld:{version:1,sourceBlockId:'source',sourceUrl:original.outputUrl,plan,objectBlockIds:{},models:{},generations:{},pending:{}}};
- function App(){const [blocks,setBlocks]=useState(${kind === "art" ? "[]" : "[original,state]"});window.blocks=blocks;window.replaceBlocks=(next)=>{window.blocks=next;setBlocks(next)};window.changeSource=()=>setBlocks(bs=>bs.map(b=>b.id==='source'?{...b,outputUrl:'https://offline.invalid/new.png'}:b));
+ function App(){const [blocks,setBlocks]=useState(${kind === "art" ? "[]" : "[original,state]"});window.blocks=blocks;window.replaceBlocks=(next)=>{window.blocks=next;setBlocks(next)};window.installPendingWorld=()=>{const old=window.blocks.find(b=>b.id==='root');const child={...original,id:'plate',status:'done',prompt:imageWorldPlatePrompt(plan),outputUrl:'https://offline.invalid/extracted.png'};const pending={kind:'world',assetRef:'plate',sourceUri:child.outputUrl,name:'原场景',plan,model:'marble-1.1'};const next=[...window.blocks.filter(b=>b.id!=='root'&&b.id!=='plate'),{...old,imageWorld:{...old.imageWorld,plateBlockId:'plate',pending:{world:pending}}},child];window.replaceBlocks(next)};window.changeSource=()=>setBlocks(bs=>bs.map(b=>b.id==='source'?{...b,outputUrl:'https://offline.invalid/new.png'}:b));
  const save=async(updates,asset)=>{for(const u of updates){const old=window.blocks.find(b=>b.id===u.next.id);if(u.expected===null?!!old:JSON.stringify(old)!==JSON.stringify(u.expected))throw new Error('stale');}const map=new Map(updates.map(u=>[u.next.id,u.next]));let next=[...window.blocks.map(b=>map.get(b.id)||b),...updates.filter(u=>!u.expected).map(u=>u.next)];if(window.replaceChildOnModelSave&&updates.some(u=>u.next.imageWorld?.pending?.left))next=next.map(b=>b.id===next.find(x=>x.id==='root').imageWorld.objectBlockIds.left?{...b,outputUrl:'https://offline.invalid/changed-child.png'}:b);window.blocks=next;setBlocks(next);if(asset)window.adopted.push(asset);};
  return ${kind === "art" ? `<ArtMotionStudio scopeKey="offline" blocks={blocks} onCreate={async()=>{const id='art-node';const next={...defaultCanvasBlock('video',0,0),id,artMotion:{version:1,spec:defaultArtMotionSpec(),history:[]}};window.blocks=[next];setBlocks([next]);return id}} onSave={async(id,state,expected,adopt)=>{const old=window.blocks.find(b=>b.id===id);if(JSON.stringify(old.artMotion)!==JSON.stringify(expected))throw new Error('stale');const next={...old,artMotion:state,...(adopt?{outputUrl:adopt.url}:{})};window.blocks=[next];setBlocks([next]);if(adopt)window.adopted.push(adopt)}}/>` : `<ImageWorldStudio scopeKey="offline" blocks={blocks} enabled={true} onSave={save} onAudioChange={(id,audioStudio)=>{const next=window.blocks.map(b=>b.id===id?{...b,audioStudio}:b);window.blocks=next;setBlocks(next);return true}} onRun={async(block,url,onTask,assert)=>{assert();window.calls.push({kind:block.kind,prompt:block.prompt,url});await onTask('image-task');return {outputUrl:'https://offline.invalid/extracted.png',outputUrls:['https://offline.invalid/extracted.png']}}}/>`};}
  createRoot(document.getElementById('root')).render(${layout ? '<CreativeStudioCanvasLayout tools={<App/>}><div data-offline-canvas className="absolute inset-0 bg-neutral-800 text-white">画布操作区域</div></CreativeStudioCanvasLayout>' : "<App/>"});
@@ -45,7 +46,7 @@ async function fixture(kind: "art" | "image", layout = false) {
             loader: "js",
             contents: a.path.endsWith("jobs")
               ? `export const getJob=async()=>({status:'succeeded',output:{imageUrl:'https://offline.invalid/extracted.png'}});`
-              : `const task={taskId:'3d-task',assetRef:'unused',status:'succeeded',sourceVersion:'https://offline.invalid/extracted.png',sourceImageUrl:'https://offline.invalid/extracted.png',glbGcsUri:'gs://offline/model.glb',updatedAt:new Date().toISOString()};const mutation={useMutation:()=>({mutateAsync:async()=>{throw new Error("Unexpected paid call")}})};export const trpc={canvasAudio:{generateDialogue:mutation,speedDialogueTake:mutation,createReferenceVoice:mutation},useUtils:()=>({canvasAudio:{listReferenceVoices:{fetch:async()=>[]}},mvAnalysis:{listManhuaBgmJobs:{fetch:async()=>[]},getPostProdJob:{fetch:async()=>({scopeKey:'offline',action:'art_motion',requestId:window.request.requestId,status:'succeeded',output:{url:'https://offline.invalid/render.mp4',gcsUri:'gs://offline/render.mp4'}})}},manhua3d:{getStatus:{fetch:async()=>task}},manhuaWorld:{getStatus:{fetch:async()=>task}}}),mvAnalysis:{draftManhuaBgmBrief:mutation,queueManhuaBgm:mutation,getVideoUploadSignedUrl:mutation,queuePostProd:{useMutation:()=>({mutateAsync:async input=>{window.calls.push(input);window.request=input;return {jobId:'art-task',status:'queued'}}})}},imageWorld:{object:{useMutation:()=>({mutateAsync:async input=>{window.calls.push({modelInput:input});if(window.failModel)throw new Error('network unknown');return {...task,assetRef:input.assetRef,sourceVersion:input.sourceUri}}})},world:{useMutation:()=>({mutateAsync:async()=>task})}}};`,
+              : `const task={taskId:'3d-task',assetRef:'unused',status:'succeeded',sourceVersion:'https://offline.invalid/extracted.png',sourceImageUrl:'https://offline.invalid/extracted.png',glbGcsUri:'gs://offline/model.glb',updatedAt:new Date().toISOString()};const mutation={useMutation:()=>({mutateAsync:async()=>{throw new Error("Unexpected paid call")}})};export const trpc={canvasAudio:{generateDialogue:mutation,speedDialogueTake:mutation,createReferenceVoice:mutation},useUtils:()=>({canvasAudio:{listReferenceVoices:{fetch:async()=>[]}},mvAnalysis:{listManhuaBgmJobs:{fetch:async()=>[]},getPostProdJob:{fetch:async()=>({scopeKey:'offline',action:'art_motion',requestId:window.request.requestId,status:'succeeded',output:{url:'https://offline.invalid/render.mp4',gcsUri:'gs://offline/render.mp4'}})}},manhua3d:{getStatus:{fetch:async()=>task}},manhuaWorld:{getStatus:{fetch:async input=>{window.calls.push({worldQuery:input});return task}}},imageWorld:{worldStatus:{fetch:async input=>{window.calls.push({worldLookup:input});return window.missingWorld?null:{...task,sceneRef:input.sceneRef,model:input.model,sourceVersion:input.sourceUri}}}}}),manhuaWorld:{sceneAccess:{useQuery:()=>window.sceneAccessError?{isError:true}:{data:{canGenerate:window.sceneAllowed,message:window.sceneAllowed?'内部验收':'3D场景仅限付费会员，会员入口待开放'}}}},mvAnalysis:{draftManhuaBgmBrief:mutation,queueManhuaBgm:mutation,getVideoUploadSignedUrl:mutation,queuePostProd:{useMutation:()=>({mutateAsync:async input=>{window.calls.push(input);window.request=input;return {jobId:'art-task',status:'queued'}}})}},imageWorld:{object:{useMutation:()=>({mutateAsync:async input=>{window.calls.push({modelInput:input});if(window.failModel)throw new Error('network unknown');return {...task,assetRef:input.assetRef,sourceVersion:input.sourceUri}}})},world:{useMutation:()=>({mutateAsync:async input=>{window.calls.push({worldSubmit:input});return task}})}}};`,
           }));
         },
       },
@@ -320,4 +321,43 @@ it("environment audio opens the real existing editor with a saved SFX cue withou
   } finally {
     await f.browser.close();
   }
+}, 120000);
+
+
+it("空间续查在权限查询异常时只找原提交，缺记录保留意图且不重新生成", async () => {
+  const f = await fixture("image");
+  try {
+    await f.click("打开工作台");
+    await f.page.evaluate(() => { const w=window as any; w.sceneAccessError=true; w.missingWorld=true; w.installPendingWorld(); });
+    await f.click("续查原空间提交");
+    const missing = await f.page.evaluate(() => { const w=window as any; return {calls:w.calls,pending:w.blocks.find((b:any)=>b.id==='root').imageWorld.pending.world}; });
+    expect(missing.pending.sourceUri).toBe("https://offline.invalid/extracted.png");
+    expect(missing.calls.filter((c:any)=>c.worldLookup)).toHaveLength(1);
+    expect(missing.calls.some((c:any)=>c.worldSubmit)).toBe(false);
+    await f.page.evaluate(() => { (window as any).missingWorld=false; });
+    await f.click("续查原空间提交");
+    await f.click("查询空间候选");
+    const found = await f.page.evaluate(() => { const w=window as any; return {calls:w.calls,state:w.blocks.find((b:any)=>b.id==='root').imageWorld}; });
+    expect(found.state.pending.world).toBeUndefined();
+    expect(found.state.world.taskId).toBe("3d-task");
+    expect(found.calls.filter((c:any)=>c.worldLookup)).toHaveLength(2);
+    expect(found.calls.filter((c:any)=>c.worldQuery)).toHaveLength(1);
+    expect(found.calls.some((c:any)=>c.worldSubmit)).toBe(false);
+    expect(f.errors).toEqual([]);
+  } finally { await f.browser.close(); }
+}, 120000);
+
+it("生成准入被拒时新建空间按钮禁用，已有空间查询仍独立", async () => {
+  const f = await fixture("image");
+  try {
+    await f.click("打开工作台");
+    await f.page.evaluate(() => { const w=window as any; w.sceneAllowed=false; w.replaceBlocks([...w.blocks]); });
+    expect(await f.page.$$eval("button", buttons=>buttons.find(b=>b.textContent==='建立三维空间')?.disabled)).toBe(true);
+    expect(await f.page.$eval('[data-scene-access]', e=>e.textContent)).toContain("付费会员");
+    await f.page.evaluate(() => { (window as any).installPendingWorld(); });
+    await f.click("续查原空间提交");
+    await f.click("查询空间候选");
+    expect(await f.page.evaluate(()=>(window as any).calls.some((c:any)=>c.worldSubmit))).toBe(false);
+    expect(f.errors).toEqual([]);
+  } finally { await f.browser.close(); }
 }, 120000);

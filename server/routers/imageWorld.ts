@@ -5,16 +5,24 @@ import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { resolveRegisteredPostProdMediaSource } from "../services/postProdMediaSource";
 import { signGsUriV4ReadUrl } from "../services/gcs";
 import { createManhua3dTask } from "../services/manhua3dTask";
-import { createManhuaWorldTask } from "../services/manhuaWorldTask";
+import { createManhuaWorldTask, findExistingManhuaWorldImageTask } from "../services/manhuaWorldTask";
 import {
   imageWorldPlanSchema,
   imageWorldEmptyPrompt,
 } from "../../shared/imageWorld";
 import { mapManhua3dTaskError } from "./manhua3d";
 import { mapManhuaWorldTaskError } from "./manhuaWorld";
+import { assertPaidSceneGenerationAccess } from "../services/paidSceneAccess";
 
 const source = z.string().min(1).max(4096);
-async function ownedSource(userId: number, uri: string) {
+const worldInput = z.object({
+  sceneRef: z.string().min(1).max(160),
+  sourceUri: source,
+  name: z.string().min(1).max(120),
+  plan: imageWorldPlanSchema,
+  model: z.enum(["marble-1.1", "marble-1.0-draft"]),
+}).strict();
+async function ownedCanonicalSource(userId: number, uri: string) {
   const canonical = await resolveRegisteredPostProdMediaSource({
     userId: String(userId),
     source: uri,
@@ -24,6 +32,10 @@ async function ownedSource(userId: number, uri: string) {
       code: "BAD_REQUEST",
       message: "请先将图片保存到当前账号的素材库",
     });
+  return canonical;
+}
+async function ownedSource(userId: number, uri: string) {
+  const canonical = await ownedCanonicalSource(userId, uri);
   return { canonical, url: signGsUriV4ReadUrl(canonical, 3600) };
 }
 /** Preserves existing model services, pricing and idempotency; no FAL/Hunyuan adapter. */
@@ -87,19 +99,22 @@ export const imageWorldRouter = router({
         return mapManhua3dTaskError(e);
       }
     }),
-  world: adminProcedure
-    .input(
-      z
-        .object({
-          sceneRef: z.string().min(1).max(160),
-          sourceUri: source,
-          name: z.string().min(1).max(120),
-          plan: imageWorldPlanSchema,
-          model: z.enum(["marble-1.1", "marble-1.0-draft"]),
-        })
-        .strict()
-    )
+  worldStatus: adminProcedure
+    .input(worldInput)
+    .query(async ({ ctx, input }) => {
+      const canonical = await ownedCanonicalSource(ctx.user.id, input.sourceUri);
+      return findExistingManhuaWorldImageTask({
+        userId: ctx.user.id,
+        sceneRef: input.sceneRef,
+        sourceVersion: canonical,
+        model: input.model,
+        prompt: { type: "image", isPano: "auto", textPrompt: imageWorldEmptyPrompt(input.plan) },
+      });
+    }),
+  world: protectedProcedure
+    .input(worldInput)
     .mutation(async ({ ctx, input }) => {
+      await assertPaidSceneGenerationAccess(ctx.user);
       const image = await ownedSource(ctx.user.id, input.sourceUri);
       try {
         return await createManhuaWorldTask({

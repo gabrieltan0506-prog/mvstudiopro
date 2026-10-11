@@ -1,12 +1,143 @@
 import { useEffect, useRef, useState } from "react";
 import { Play, Pause } from "lucide-react";
 import type { ArtMotionSpec } from "@shared/artMotion";
-export default function CodeMotionPreview({ spec }: { spec: ArtMotionSpec }) {
+import { codeMotionVideoClipAt } from "@shared/codeMotionVideo";
+export default function CodeMotionPreview({
+  spec,
+  audioSources = [],
+  videoSources = [],
+}: {
+  spec: ArtMotionSpec;
+  audioSources?: { id: string; url: string }[];
+  videoSources?: { id: string; url: string }[];
+}) {
   const frame = useRef<HTMLIFrameElement>(null);
+  const video = useRef<HTMLVideoElement>(null);
+  const context = useRef<AudioContext | null>(null);
+  const buffers = useRef(new Map<string, AudioBuffer>());
+  const nodes = useRef<AudioBufferSourceNode[]>([]);
+  const abort = useRef(new AbortController());
+  const mounted = useRef(true);
+  const playbackAnchor = useRef({ from: 0, started: 0, audio: false });
+  const [loadingAudio, setLoadingAudio] = useState(false);
+  const stopAudio = () => {
+    for (const node of nodes.current) {
+      try {
+        node.stop();
+        node.disconnect();
+      } catch {}
+    }
+    nodes.current = [];
+  };
+  useEffect(() => {
+    mounted.current = true;
+    abort.current = new AbortController();
+    return () => {
+      mounted.current = false;
+      abort.current.abort();
+      stopAudio();
+      void context.current?.close();
+    };
+  }, []);
+  const playAudio = async (from: number) => {
+    if (!spec.codeAudio) {
+      playbackAnchor.current = {
+        from,
+        started: performance.now() / 1000,
+        audio: false,
+      };
+      return;
+    }
+    context.current ||= new AudioContext();
+    const ac = context.current;
+    await ac.resume();
+    await Promise.all(
+      audioSources.map(async source => {
+        if (buffers.current.has(source.id)) return;
+        const response = await fetch(source.url, {
+          signal: abort.current.signal,
+        });
+        if (!response.ok)
+          throw new Error("原音预览读取失败，请重新打开本次内容");
+        buffers.current.set(
+          source.id,
+          await ac.decodeAudioData(await response.arrayBuffer())
+        );
+      })
+    );
+    if (!mounted.current) return;
+    stopAudio();
+    const now = ac.currentTime;
+    playbackAnchor.current = { from, started: now, audio: true };
+    for (const clip of spec.codeAudio.audioTimeline) {
+      const elapsed = Math.max(0, from - clip.at),
+        remaining = clip.duration - elapsed;
+      if (remaining <= 0) continue;
+      const buffer = buffers.current.get(clip.sourceId);
+      if (!buffer) throw new Error("预览找不到这段原声，请重新打开本次内容");
+      if (
+        buffer.duration + 1 / buffer.sampleRate <
+        clip.trimStart + clip.duration
+      )
+        throw new Error("这份原音解码后不足所选秒窗，请缩短片段或重新上传");
+      const source = ac.createBufferSource(),
+        gain = ac.createGain();
+      source.buffer = buffer;
+      source.connect(gain);
+      gain.connect(ac.destination);
+      const when = now + Math.max(0, clip.at - from);
+      const levelAt = (t: number) =>
+        clip.volume *
+        Math.min(1, clip.fadeIn ? t / clip.fadeIn : 1) *
+        Math.min(1, clip.fadeOut ? (clip.duration - t) / clip.fadeOut : 1);
+      gain.gain.setValueAtTime(Math.max(0, levelAt(elapsed)), when);
+      for (const point of [
+        clip.fadeIn,
+        clip.duration - clip.fadeOut,
+        clip.duration,
+      ]
+        .filter(t => t > elapsed)
+        .sort((a, b) => a - b))
+        gain.gain.linearRampToValueAtTime(
+          Math.max(0, levelAt(point)),
+          when + point - elapsed
+        );
+      source.start(when, clip.trimStart + elapsed, remaining);
+      nodes.current.push(source);
+    }
+  };
+  const [retry, setRetry] = useState(0);
   const [ready, setReady] = useState(false),
     [error, setError] = useState(""),
     [time, setTime] = useState(0),
     [playing, setPlaying] = useState(false);
+  const videoClip = codeMotionVideoClipAt(spec.codeVideo, time);
+  const videoSource = videoSources.find(
+    source => source.id === videoClip?.assetId
+  );
+  useEffect(() => {
+    const element = video.current;
+    if (!videoClip) {
+      element?.pause();
+      return;
+    }
+    if (!videoSource) {
+      setError("这段视频预览素材未就绪，请重新准备内容");
+      return;
+    }
+    if (!element) return;
+    const target = videoClip.sourceStartSec + time - videoClip.at;
+    if (
+      element.readyState > 0 &&
+      Math.abs(element.currentTime - target) > (playing ? 0.1 : 0.001)
+    )
+      element.currentTime = target;
+    if (playing)
+      void element.play().catch(e => {
+        if (e?.name !== "AbortError") setError("视频预览未能播放，请重新打开");
+      });
+    else element.pause();
+  }, [time, playing, videoClip, videoSource]);
   useEffect(() => {
     const receive = (e: MessageEvent) => {
       if (
@@ -30,56 +161,166 @@ export default function CodeMotionPreview({ spec }: { spec: ArtMotionSpec }) {
   }, [spec]);
   useEffect(() => {
     if (!playing) return;
-    const start = performance.now(),
-      from = time;
     let handle = 0;
-    const tick = (now: number) => {
-      const next = Math.min(
-        spec.duration - 1 / spec.fps,
-        from + (now - start) / 1000
-      );
+    const tick = () => {
+      const anchor = playbackAnchor.current;
+      const clock = anchor.audio
+        ? (context.current?.currentTime ?? anchor.started)
+        : performance.now() / 1000;
+      const elapsed = anchor.from + Math.max(0, clock - anchor.started);
+      const next = Math.min(spec.duration - 1 / spec.fps, elapsed);
       setTime(next);
-      if (next >= spec.duration - 1 / spec.fps) setPlaying(false);
-      else handle = requestAnimationFrame(tick);
+      // 声音以完整片长收尾，画面停在最后一帧；跳转驱动避免两个播放时钟漂移。
+      frame.current?.contentWindow?.postMessage(
+        {
+          type: "art-motion-seek",
+          time: next,
+          overlayOnly: !!codeMotionVideoClipAt(spec.codeVideo, next),
+        },
+        location.origin
+      );
+      if (elapsed >= spec.duration) {
+        setPlaying(false);
+        stopAudio();
+      } else handle = requestAnimationFrame(tick);
     };
     handle = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(handle);
   }, [playing, spec.duration, spec.fps]);
-  const send = (message: unknown) =>
-    frame.current?.contentWindow?.postMessage(message, location.origin);
+  const send = (
+    message:
+      | { type: "art-motion-seek"; time: number }
+      | { type: "art-motion-init"; spec: ArtMotionSpec }
+  ) =>
+    frame.current?.contentWindow?.postMessage(
+      message?.type === "art-motion-seek"
+        ? {
+            ...message,
+            overlayOnly: !!codeMotionVideoClipAt(spec.codeVideo, message.time),
+          }
+        : message,
+      location.origin
+    );
+  useEffect(() => {
+    if (ready) send({ type: "art-motion-seek", time });
+  }, [ready, spec]);
   return (
     <div className="space-y-3">
-      <iframe
-        ref={frame}
-        title="映客 INK动画预览"
-        src="/art-motion/engine/studio.html"
-        onLoad={() => send({ type: "art-motion-init", spec })}
-        className="mx-auto max-h-[520px] w-full rounded-xl bg-stone-100"
-        style={{ aspectRatio: `${spec.width}/${spec.height}` }}
-      />
+      <div
+        className="relative mx-auto max-h-[520px] w-full"
+        style={{
+          aspectRatio: `${spec.width}/${spec.height}`,
+          position: "relative",
+          width: "100%",
+          maxHeight: 520,
+          maxWidth: (520 * spec.width) / spec.height,
+          margin: "0 auto",
+        }}
+      >
+        <iframe
+          key={retry}
+          ref={frame}
+          title="映客 INK动画预览"
+          src="/art-motion/engine/studio.html"
+          onLoad={() => send({ type: "art-motion-init", spec })}
+          className="relative mx-auto max-h-[520px] w-full rounded-xl"
+          style={{
+            aspectRatio: `${spec.width}/${spec.height}`,
+            position: "relative",
+            width: "100%",
+            height: "100%",
+            border: 0,
+            display: "block",
+            zIndex: videoClip ? 2 : 0,
+            background: videoClip ? "transparent" : "#f5f5f4",
+            pointerEvents: videoClip ? "none" : undefined,
+          }}
+        />
+        {videoClip && videoSource && (
+          <video
+            key={videoSource.id}
+            ref={video}
+            src={videoSource.url}
+            muted
+            playsInline
+            preload="auto"
+            aria-label="已生成视频片段预览"
+            className="absolute inset-0 h-full w-full rounded-xl bg-black"
+            style={{
+              objectFit: videoClip.fit,
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+            }}
+            onLoadedData={e => {
+              e.currentTarget.currentTime =
+                videoClip.sourceStartSec + time - videoClip.at;
+            }}
+            onError={() => {
+              stopAudio();
+              setPlaying(false);
+              setError("这段视频无法读取，请重新准备内容");
+            }}
+          />
+        )}
+      </div>
       {error ? (
-        <p role="alert" className="text-red-700">
-          预览没有打开：{error}
-        </p>
+        <div className="space-y-2">
+          <p role="alert" className="text-red-700">
+            预览没有打开：{error}
+          </p>
+          <button
+            type="button"
+            className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900"
+            onClick={() => {
+              stopAudio();
+              setPlaying(false);
+              setTime(0);
+              setReady(false);
+              setError("");
+              setRetry(value => value + 1);
+            }}
+          >
+            重新打开预览
+          </button>
+        </div>
       ) : (
         <p role="status" className="text-xs text-stone-500">
           {ready
-            ? "这是浏览器预览；导出的视频完成后会显示在下方。预览无声。"
+            ? spec.codeAudio
+              ? "浏览器试听已选原音；导出另做峰值保护，最终音量以导出试听为准。"
+              : "这是浏览器画面预览；合成对白在导出后试听。"
             : "正在准备预览…"}
         </p>
       )}
       <div className="flex items-center gap-3">
         <button
           type="button"
-          disabled={!ready || !!error}
+          disabled={!ready || !!error || loadingAudio}
           className="rounded-lg border px-3 py-2"
-          onClick={() => {
-            if (!playing && time >= spec.duration - 1 / spec.fps) {
-              setTime(0);
-              send({ type: "art-motion-seek", time: 0 });
+          onClick={async () => {
+            if (playing) {
+              stopAudio();
+              send({ type: "art-motion-seek", time });
+              setPlaying(false);
+              return;
             }
-            send({ type: "art-motion-play" });
-            setPlaying(v => !v);
+            const from = time >= spec.duration - 1 / spec.fps ? 0 : time;
+            setLoadingAudio(true);
+            try {
+              await playAudio(from);
+              if (!mounted.current) return;
+              setTime(from);
+              send({ type: "art-motion-seek", time: from });
+              setPlaying(true);
+            } catch (e) {
+              stopAudio();
+              if (mounted.current)
+                setError(e instanceof Error ? e.message : "原音预览未能播放");
+            } finally {
+              if (mounted.current) setLoadingAudio(false);
+            }
           }}
         >
           {playing ? <Pause size={16} /> : <Play size={16} />}
@@ -92,10 +333,11 @@ export default function CodeMotionPreview({ spec }: { spec: ArtMotionSpec }) {
           max={spec.duration - 1 / spec.fps}
           step={1 / spec.fps}
           value={time}
-          disabled={!ready}
+          disabled={!ready || loadingAudio}
           className="min-w-0 flex-1"
           onChange={e => {
             const t = Number(e.target.value);
+            stopAudio();
             setTime(t);
             setPlaying(false);
             send({ type: "art-motion-seek", time: t });

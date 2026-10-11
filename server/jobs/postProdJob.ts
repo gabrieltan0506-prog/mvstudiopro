@@ -7,6 +7,7 @@
 import { burnSubtitle, concatClips, extractAudio, loudnessCheck, mountBgm, trimAudio, renderAudioTimeline } from "../services/postProduction";
 import { resolvePostProdInputSources } from "../services/postProdMediaSource";
 import { postProdJobInputSchema } from "./postProdInput";
+import { assertManhuaVfxWorker } from "./workerRole";
 
 export type PostProdJobOptions = { signal?: AbortSignal };
 
@@ -16,6 +17,7 @@ export async function processPostProdJob(
   options?: PostProdJobOptions,
 ): Promise<{ output: unknown; provider: string }> {
   const parsed = postProdJobInputSchema.parse(rawInput);
+  if (parsed.action === "manhua_vfx") assertManhuaVfxWorker();
   // worker 执行前重新核对素材登记约束(与入队同一把尺)
   const input = await resolvePostProdInputSources({ userId, input: parsed });
   const runOptions = { signal: options?.signal };

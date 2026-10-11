@@ -1,0 +1,10 @@
+{
+  "frameCount": 144,
+  "ffmpegVideoFrames": 96,
+  "canvasFrames": 48,
+  "audio": {
+    "narration440Hz": 16714679662597.406,
+    "suppressedSource880Hz": 141011.02373708738
+  },
+  "inputSha256": "de7a0bb5b779bfbfc33c248fa63037e11b9652c3f5a5262af1ef9ac6e7b0efb1"
+}

@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ client/src/lib/codeMotionImageProduction.browser.test.ts > official Studio image flow shows reviewed content, submits once, adopts, saves and restores after reload 6405ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  04:41:19
+   Duration  8.13s (transform 70ms, setup 0ms, collect 737ms, tests 6.41s, environment 0ms, prepare 109ms)
+

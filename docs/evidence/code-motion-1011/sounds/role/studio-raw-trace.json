@@ -1,0 +1,821 @@
+{
+  "events": [
+    "save",
+    {
+      "sound": {
+        "projectId": "11111111-1111-4111-8111-111111111111",
+        "generation": "1",
+        "request": {
+          "kind": "speech",
+          "requestId": "1d4d538d-752e-4e69-9774-ab103926f1c0",
+          "sceneIndex": 0,
+          "text": "测试旁白0",
+          "voice": "female",
+          "emotion": "[tired][very fast]"
+        }
+      }
+    },
+    {
+      "sound": {
+        "projectId": "11111111-1111-4111-8111-111111111111",
+        "generation": "1",
+        "request": {
+          "kind": "speech",
+          "requestId": "8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174",
+          "sceneIndex": 1,
+          "text": "测试旁白1",
+          "voice": "female",
+          "role": "dialogue",
+          "emotion": "[whispers]"
+        }
+      }
+    },
+    {
+      "sound": {
+        "projectId": "11111111-1111-4111-8111-111111111111",
+        "generation": "1",
+        "request": {
+          "kind": "speech",
+          "requestId": "3c30014b-c178-4e7b-a919-aacf77cddd95",
+          "sceneIndex": 2,
+          "text": "测试旁白2",
+          "voice": "female",
+          "emotion": "[amazed]"
+        }
+      }
+    },
+    {
+      "sound": {
+        "projectId": "11111111-1111-4111-8111-111111111111",
+        "generation": "1",
+        "request": {
+          "kind": "speech",
+          "requestId": "9d25737b-b84a-4ffd-bf12-3cb7ae8674ec",
+          "sceneIndex": 3,
+          "text": "测试旁白3",
+          "voice": "female",
+          "emotion": "[empathetic]"
+        }
+      }
+    },
+    {
+      "sound": {
+        "projectId": "11111111-1111-4111-8111-111111111111",
+        "generation": "1",
+        "request": {
+          "kind": "bgm",
+          "requestId": "8ae5b93a-273e-4427-ba40-2c49f09ff5db",
+          "direction": "为本段约20秒剧情写纯器乐配乐。随以下镜头推进情绪与力度，不加入人声、歌词或对白；对白处留空间，动作撞点短促，镜头转场不断裂。\n0.0–5.0秒：画面0；[tired][very fast]；画面0；有人声对白，音乐降低存在感\n5.0–10.0秒：画面1；[whispers]；画面1；有人声对白，音乐降低存在感\n10.0–15.0秒：画面2；[amazed]；画面2；有人声对白，音乐降低存在感\n15.0–20.0秒：画面3；[empathetic]；画面3；有人声对白，音乐降低存在感\n结尾按最后一镜的情绪收束，为下一段保留衔接空间。"
+        }
+      }
+    },
+    "save",
+    "save",
+    {
+      "adoptSound": {
+        "projectId": "11111111-1111-4111-8111-111111111111",
+        "requestId": "1d4d538d-752e-4e69-9774-ab103926f1c0",
+        "variantIndex": 0,
+        "expectedGeneration": "3"
+      }
+    },
+    "save",
+    {
+      "adoptSound": {
+        "projectId": "11111111-1111-4111-8111-111111111111",
+        "requestId": "8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174",
+        "variantIndex": 0,
+        "expectedGeneration": "5"
+      }
+    },
+    "save",
+    {
+      "adoptSound": {
+        "projectId": "11111111-1111-4111-8111-111111111111",
+        "requestId": "3c30014b-c178-4e7b-a919-aacf77cddd95",
+        "variantIndex": 0,
+        "expectedGeneration": "7"
+      }
+    },
+    "save",
+    {
+      "adoptSound": {
+        "projectId": "11111111-1111-4111-8111-111111111111",
+        "requestId": "9d25737b-b84a-4ffd-bf12-3cb7ae8674ec",
+        "variantIndex": 0,
+        "expectedGeneration": "9"
+      }
+    },
+    "save",
+    {
+      "adoptSound": {
+        "projectId": "11111111-1111-4111-8111-111111111111",
+        "requestId": "8ae5b93a-273e-4427-ba40-2c49f09ff5db",
+        "variantIndex": 0,
+        "expectedGeneration": "11"
+      }
+    },
+    "save"
+  ],
+  "stored": {
+    "project": {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "title": "测试作品",
+        "request": "树林中的小球",
+        "text": "",
+        "style": "scenes",
+        "duration": 20,
+        "orientation": "landscape",
+        "images": [],
+        "audios": [
+          {
+            "id": "1d4d538d-752e-4e69-9774-ab103926f1c0",
+            "name": "旁白0",
+            "gcsUri": "gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/1d4d538d-752e-4e69-9774-ab103926f1c0/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav",
+            "duration": 2,
+            "generated": {
+              "requestId": "1d4d538d-752e-4e69-9774-ab103926f1c0",
+              "kind": "speech",
+              "sceneIndex": 0,
+              "text": "测试旁白0",
+              "voice": "female",
+              "emotion": "[tired][very fast]"
+            },
+            "mimeType": "audio/wav",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bytes": 100
+          },
+          {
+            "id": "8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174",
+            "name": "旁白1",
+            "gcsUri": "gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav",
+            "duration": 2,
+            "generated": {
+              "requestId": "8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174",
+              "kind": "speech",
+              "sceneIndex": 1,
+              "text": "测试旁白1",
+              "voice": "female",
+              "role": "dialogue",
+              "emotion": "[whispers]"
+            },
+            "mimeType": "audio/wav",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bytes": 100
+          },
+          {
+            "id": "3c30014b-c178-4e7b-a919-aacf77cddd95",
+            "name": "旁白2",
+            "gcsUri": "gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/3c30014b-c178-4e7b-a919-aacf77cddd95/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav",
+            "duration": 2,
+            "generated": {
+              "requestId": "3c30014b-c178-4e7b-a919-aacf77cddd95",
+              "kind": "speech",
+              "sceneIndex": 2,
+              "text": "测试旁白2",
+              "voice": "female",
+              "emotion": "[amazed]"
+            },
+            "mimeType": "audio/wav",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bytes": 100
+          },
+          {
+            "id": "9d25737b-b84a-4ffd-bf12-3cb7ae8674ec",
+            "name": "旁白3",
+            "gcsUri": "gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/9d25737b-b84a-4ffd-bf12-3cb7ae8674ec/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav",
+            "duration": 2,
+            "generated": {
+              "requestId": "9d25737b-b84a-4ffd-bf12-3cb7ae8674ec",
+              "kind": "speech",
+              "sceneIndex": 3,
+              "text": "测试旁白3",
+              "voice": "female",
+              "emotion": "[empathetic]"
+            },
+            "mimeType": "audio/wav",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bytes": 100
+          },
+          {
+            "id": "8ae5b93a-273e-4427-ba40-2c49f09ff5db",
+            "name": "背景音乐",
+            "gcsUri": "gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/8ae5b93a-273e-4427-ba40-2c49f09ff5db/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav",
+            "duration": 40,
+            "generated": {
+              "requestId": "8ae5b93a-273e-4427-ba40-2c49f09ff5db",
+              "kind": "bgm"
+            },
+            "mimeType": "audio/wav",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bytes": 100
+          }
+        ],
+        "data": [],
+        "unit": "",
+        "chart": "bar",
+        "period": "",
+        "source": ""
+      },
+      "plan": {
+        "version": 1,
+        "summary": "四个画面",
+        "audioTimeline": [
+          {
+            "sourceId": "1d4d538d-752e-4e69-9774-ab103926f1c0",
+            "role": "narration",
+            "at": 0,
+            "trimStart": 0,
+            "duration": 2,
+            "volume": 1,
+            "fadeIn": 0,
+            "fadeOut": 0
+          },
+          {
+            "sourceId": "8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174",
+            "role": "dialogue",
+            "at": 5,
+            "trimStart": 0,
+            "duration": 2,
+            "volume": 1,
+            "fadeIn": 0,
+            "fadeOut": 0
+          },
+          {
+            "sourceId": "3c30014b-c178-4e7b-a919-aacf77cddd95",
+            "role": "narration",
+            "at": 10,
+            "trimStart": 0,
+            "duration": 2,
+            "volume": 1,
+            "fadeIn": 0,
+            "fadeOut": 0
+          },
+          {
+            "sourceId": "9d25737b-b84a-4ffd-bf12-3cb7ae8674ec",
+            "role": "narration",
+            "at": 15,
+            "trimStart": 0,
+            "duration": 2,
+            "volume": 1,
+            "fadeIn": 0,
+            "fadeOut": 0
+          },
+          {
+            "sourceId": "8ae5b93a-273e-4427-ba40-2c49f09ff5db",
+            "role": "bgm",
+            "at": 0,
+            "trimStart": 0,
+            "duration": 20,
+            "volume": 0.25,
+            "fadeIn": 0.5,
+            "fadeOut": 1
+          }
+        ],
+        "scenes": [
+          {
+            "heading": "画面0",
+            "body": "",
+            "speech": {
+              "text": "测试旁白0",
+              "voice": "female",
+              "emotion": "[tired][very fast]"
+            },
+            "duration": 5,
+            "composition": {
+              "id": "scene0",
+              "duration": 5,
+              "elements": [
+                {
+                  "id": "ball",
+                  "start": 0,
+                  "continuity": "reset",
+                  "transform": {},
+                  "keyframes": [],
+                  "blend": "normal",
+                  "layer": 0,
+                  "type": "shape",
+                  "shape": "ellipse",
+                  "width": 0.25,
+                  "height": 0.25,
+                  "radius": 0,
+                  "strokeWidth": 0.003,
+                  "filled": true
+                }
+              ]
+            }
+          },
+          {
+            "heading": "画面1",
+            "body": "",
+            "speech": {
+              "text": "测试旁白1",
+              "voice": "female",
+              "role": "dialogue",
+              "emotion": "[whispers]"
+            },
+            "duration": 5,
+            "composition": {
+              "id": "scene1",
+              "duration": 5,
+              "elements": [
+                {
+                  "id": "ball",
+                  "start": 0,
+                  "continuity": "reset",
+                  "transform": {},
+                  "keyframes": [],
+                  "blend": "normal",
+                  "layer": 0,
+                  "type": "shape",
+                  "shape": "ellipse",
+                  "width": 0.25,
+                  "height": 0.25,
+                  "radius": 0,
+                  "strokeWidth": 0.003,
+                  "filled": true
+                }
+              ]
+            }
+          },
+          {
+            "heading": "画面2",
+            "body": "",
+            "speech": {
+              "text": "测试旁白2",
+              "voice": "female",
+              "emotion": "[amazed]"
+            },
+            "duration": 5,
+            "composition": {
+              "id": "scene2",
+              "duration": 5,
+              "elements": [
+                {
+                  "id": "ball",
+                  "start": 0,
+                  "continuity": "reset",
+                  "transform": {},
+                  "keyframes": [],
+                  "blend": "normal",
+                  "layer": 0,
+                  "type": "shape",
+                  "shape": "ellipse",
+                  "width": 0.25,
+                  "height": 0.25,
+                  "radius": 0,
+                  "strokeWidth": 0.003,
+                  "filled": true
+                }
+              ]
+            }
+          },
+          {
+            "heading": "画面3",
+            "body": "",
+            "speech": {
+              "text": "测试旁白3",
+              "voice": "female",
+              "emotion": "[empathetic]"
+            },
+            "duration": 5,
+            "composition": {
+              "id": "scene3",
+              "duration": 5,
+              "elements": [
+                {
+                  "id": "ball",
+                  "start": 0,
+                  "continuity": "reset",
+                  "transform": {},
+                  "keyframes": [],
+                  "blend": "normal",
+                  "layer": 0,
+                  "type": "shape",
+                  "shape": "ellipse",
+                  "width": 0.25,
+                  "height": 0.25,
+                  "radius": 0,
+                  "strokeWidth": 0.003,
+                  "filled": true
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "generation": "13",
+    "updatedAt": "2026-10-10T19:00:00Z"
+  },
+  "local": {
+    "project": {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "brief": {
+        "title": "测试作品",
+        "request": "树林中的小球",
+        "text": "",
+        "style": "scenes",
+        "duration": 20,
+        "orientation": "landscape",
+        "images": [],
+        "audios": [
+          {
+            "id": "1d4d538d-752e-4e69-9774-ab103926f1c0",
+            "name": "旁白0",
+            "gcsUri": "gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/1d4d538d-752e-4e69-9774-ab103926f1c0/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav",
+            "duration": 2,
+            "generated": {
+              "requestId": "1d4d538d-752e-4e69-9774-ab103926f1c0",
+              "kind": "speech",
+              "sceneIndex": 0,
+              "text": "测试旁白0",
+              "voice": "female",
+              "emotion": "[tired][very fast]"
+            },
+            "mimeType": "audio/wav",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bytes": 100
+          },
+          {
+            "id": "8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174",
+            "name": "旁白1",
+            "gcsUri": "gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav",
+            "duration": 2,
+            "generated": {
+              "requestId": "8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174",
+              "kind": "speech",
+              "sceneIndex": 1,
+              "text": "测试旁白1",
+              "voice": "female",
+              "role": "dialogue",
+              "emotion": "[whispers]"
+            },
+            "mimeType": "audio/wav",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bytes": 100
+          },
+          {
+            "id": "3c30014b-c178-4e7b-a919-aacf77cddd95",
+            "name": "旁白2",
+            "gcsUri": "gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/3c30014b-c178-4e7b-a919-aacf77cddd95/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav",
+            "duration": 2,
+            "generated": {
+              "requestId": "3c30014b-c178-4e7b-a919-aacf77cddd95",
+              "kind": "speech",
+              "sceneIndex": 2,
+              "text": "测试旁白2",
+              "voice": "female",
+              "emotion": "[amazed]"
+            },
+            "mimeType": "audio/wav",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bytes": 100
+          },
+          {
+            "id": "9d25737b-b84a-4ffd-bf12-3cb7ae8674ec",
+            "name": "旁白3",
+            "gcsUri": "gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/9d25737b-b84a-4ffd-bf12-3cb7ae8674ec/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav",
+            "duration": 2,
+            "generated": {
+              "requestId": "9d25737b-b84a-4ffd-bf12-3cb7ae8674ec",
+              "kind": "speech",
+              "sceneIndex": 3,
+              "text": "测试旁白3",
+              "voice": "female",
+              "emotion": "[empathetic]"
+            },
+            "mimeType": "audio/wav",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bytes": 100
+          },
+          {
+            "id": "8ae5b93a-273e-4427-ba40-2c49f09ff5db",
+            "name": "背景音乐",
+            "gcsUri": "gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/8ae5b93a-273e-4427-ba40-2c49f09ff5db/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav",
+            "duration": 40,
+            "generated": {
+              "requestId": "8ae5b93a-273e-4427-ba40-2c49f09ff5db",
+              "kind": "bgm"
+            },
+            "mimeType": "audio/wav",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bytes": 100
+          }
+        ],
+        "data": [],
+        "unit": "",
+        "chart": "bar",
+        "period": "",
+        "source": ""
+      },
+      "plan": {
+        "version": 1,
+        "summary": "四个画面",
+        "audioTimeline": [
+          {
+            "sourceId": "1d4d538d-752e-4e69-9774-ab103926f1c0",
+            "role": "narration",
+            "at": 0,
+            "trimStart": 0,
+            "duration": 2,
+            "volume": 1,
+            "fadeIn": 0,
+            "fadeOut": 0
+          },
+          {
+            "sourceId": "8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174",
+            "role": "dialogue",
+            "at": 5,
+            "trimStart": 0,
+            "duration": 2,
+            "volume": 1,
+            "fadeIn": 0,
+            "fadeOut": 0
+          },
+          {
+            "sourceId": "3c30014b-c178-4e7b-a919-aacf77cddd95",
+            "role": "narration",
+            "at": 10,
+            "trimStart": 0,
+            "duration": 2,
+            "volume": 1,
+            "fadeIn": 0,
+            "fadeOut": 0
+          },
+          {
+            "sourceId": "9d25737b-b84a-4ffd-bf12-3cb7ae8674ec",
+            "role": "narration",
+            "at": 15,
+            "trimStart": 0,
+            "duration": 2,
+            "volume": 1,
+            "fadeIn": 0,
+            "fadeOut": 0
+          },
+          {
+            "sourceId": "8ae5b93a-273e-4427-ba40-2c49f09ff5db",
+            "role": "bgm",
+            "at": 0,
+            "trimStart": 0,
+            "duration": 20,
+            "volume": 0.25,
+            "fadeIn": 0.5,
+            "fadeOut": 1
+          }
+        ],
+        "scenes": [
+          {
+            "heading": "画面0",
+            "body": "",
+            "speech": {
+              "text": "测试旁白0",
+              "voice": "female",
+              "emotion": "[tired][very fast]"
+            },
+            "duration": 5,
+            "composition": {
+              "id": "scene0",
+              "duration": 5,
+              "elements": [
+                {
+                  "id": "ball",
+                  "start": 0,
+                  "continuity": "reset",
+                  "transform": {},
+                  "keyframes": [],
+                  "blend": "normal",
+                  "layer": 0,
+                  "type": "shape",
+                  "shape": "ellipse",
+                  "width": 0.25,
+                  "height": 0.25,
+                  "radius": 0,
+                  "strokeWidth": 0.003,
+                  "filled": true
+                }
+              ]
+            }
+          },
+          {
+            "heading": "画面1",
+            "body": "",
+            "speech": {
+              "text": "测试旁白1",
+              "voice": "female",
+              "role": "dialogue",
+              "emotion": "[whispers]"
+            },
+            "duration": 5,
+            "composition": {
+              "id": "scene1",
+              "duration": 5,
+              "elements": [
+                {
+                  "id": "ball",
+                  "start": 0,
+                  "continuity": "reset",
+                  "transform": {},
+                  "keyframes": [],
+                  "blend": "normal",
+                  "layer": 0,
+                  "type": "shape",
+                  "shape": "ellipse",
+                  "width": 0.25,
+                  "height": 0.25,
+                  "radius": 0,
+                  "strokeWidth": 0.003,
+                  "filled": true
+                }
+              ]
+            }
+          },
+          {
+            "heading": "画面2",
+            "body": "",
+            "speech": {
+              "text": "测试旁白2",
+              "voice": "female",
+              "emotion": "[amazed]"
+            },
+            "duration": 5,
+            "composition": {
+              "id": "scene2",
+              "duration": 5,
+              "elements": [
+                {
+                  "id": "ball",
+                  "start": 0,
+                  "continuity": "reset",
+                  "transform": {},
+                  "keyframes": [],
+                  "blend": "normal",
+                  "layer": 0,
+                  "type": "shape",
+                  "shape": "ellipse",
+                  "width": 0.25,
+                  "height": 0.25,
+                  "radius": 0,
+                  "strokeWidth": 0.003,
+                  "filled": true
+                }
+              ]
+            }
+          },
+          {
+            "heading": "画面3",
+            "body": "",
+            "speech": {
+              "text": "测试旁白3",
+              "voice": "female",
+              "emotion": "[empathetic]"
+            },
+            "duration": 5,
+            "composition": {
+              "id": "scene3",
+              "duration": 5,
+              "elements": [
+                {
+                  "id": "ball",
+                  "start": 0,
+                  "continuity": "reset",
+                  "transform": {},
+                  "keyframes": [],
+                  "blend": "normal",
+                  "layer": 0,
+                  "type": "shape",
+                  "shape": "ellipse",
+                  "width": 0.25,
+                  "height": 0.25,
+                  "radius": 0,
+                  "strokeWidth": 0.003,
+                  "filled": true
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "generation": "13",
+    "savedJson": "{\"id\":\"11111111-1111-4111-8111-111111111111\",\"brief\":{\"title\":\"测试作品\",\"request\":\"树林中的小球\",\"text\":\"\",\"style\":\"scenes\",\"duration\":20,\"orientation\":\"landscape\",\"images\":[],\"audios\":[{\"id\":\"1d4d538d-752e-4e69-9774-ab103926f1c0\",\"name\":\"旁白0\",\"gcsUri\":\"gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/1d4d538d-752e-4e69-9774-ab103926f1c0/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav\",\"duration\":2,\"generated\":{\"requestId\":\"1d4d538d-752e-4e69-9774-ab103926f1c0\",\"kind\":\"speech\",\"sceneIndex\":0,\"text\":\"测试旁白0\",\"voice\":\"female\",\"emotion\":\"[tired][very fast]\"},\"mimeType\":\"audio/wav\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":100},{\"id\":\"8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174\",\"name\":\"旁白1\",\"gcsUri\":\"gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav\",\"duration\":2,\"generated\":{\"requestId\":\"8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174\",\"kind\":\"speech\",\"sceneIndex\":1,\"text\":\"测试旁白1\",\"voice\":\"female\",\"role\":\"dialogue\",\"emotion\":\"[whispers]\"},\"mimeType\":\"audio/wav\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":100},{\"id\":\"3c30014b-c178-4e7b-a919-aacf77cddd95\",\"name\":\"旁白2\",\"gcsUri\":\"gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/3c30014b-c178-4e7b-a919-aacf77cddd95/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav\",\"duration\":2,\"generated\":{\"requestId\":\"3c30014b-c178-4e7b-a919-aacf77cddd95\",\"kind\":\"speech\",\"sceneIndex\":2,\"text\":\"测试旁白2\",\"voice\":\"female\",\"emotion\":\"[amazed]\"},\"mimeType\":\"audio/wav\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":100},{\"id\":\"9d25737b-b84a-4ffd-bf12-3cb7ae8674ec\",\"name\":\"旁白3\",\"gcsUri\":\"gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/9d25737b-b84a-4ffd-bf12-3cb7ae8674ec/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav\",\"duration\":2,\"generated\":{\"requestId\":\"9d25737b-b84a-4ffd-bf12-3cb7ae8674ec\",\"kind\":\"speech\",\"sceneIndex\":3,\"text\":\"测试旁白3\",\"voice\":\"female\",\"emotion\":\"[empathetic]\"},\"mimeType\":\"audio/wav\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":100},{\"id\":\"8ae5b93a-273e-4427-ba40-2c49f09ff5db\",\"name\":\"背景音乐\",\"gcsUri\":\"gs://bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/audio/8ae5b93a-273e-4427-ba40-2c49f09ff5db/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.wav\",\"duration\":40,\"generated\":{\"requestId\":\"8ae5b93a-273e-4427-ba40-2c49f09ff5db\",\"kind\":\"bgm\"},\"mimeType\":\"audio/wav\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":100}],\"data\":[],\"unit\":\"\",\"chart\":\"bar\",\"period\":\"\",\"source\":\"\"},\"plan\":{\"version\":1,\"summary\":\"四个画面\",\"audioTimeline\":[{\"sourceId\":\"1d4d538d-752e-4e69-9774-ab103926f1c0\",\"role\":\"narration\",\"at\":0,\"trimStart\":0,\"duration\":2,\"volume\":1,\"fadeIn\":0,\"fadeOut\":0},{\"sourceId\":\"8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174\",\"role\":\"dialogue\",\"at\":5,\"trimStart\":0,\"duration\":2,\"volume\":1,\"fadeIn\":0,\"fadeOut\":0},{\"sourceId\":\"3c30014b-c178-4e7b-a919-aacf77cddd95\",\"role\":\"narration\",\"at\":10,\"trimStart\":0,\"duration\":2,\"volume\":1,\"fadeIn\":0,\"fadeOut\":0},{\"sourceId\":\"9d25737b-b84a-4ffd-bf12-3cb7ae8674ec\",\"role\":\"narration\",\"at\":15,\"trimStart\":0,\"duration\":2,\"volume\":1,\"fadeIn\":0,\"fadeOut\":0},{\"sourceId\":\"8ae5b93a-273e-4427-ba40-2c49f09ff5db\",\"role\":\"bgm\",\"at\":0,\"trimStart\":0,\"duration\":20,\"volume\":0.25,\"fadeIn\":0.5,\"fadeOut\":1}],\"scenes\":[{\"heading\":\"画面0\",\"body\":\"\",\"speech\":{\"text\":\"测试旁白0\",\"voice\":\"female\",\"emotion\":\"[tired][very fast]\"},\"duration\":5,\"composition\":{\"id\":\"scene0\",\"duration\":5,\"elements\":[{\"id\":\"ball\",\"start\":0,\"continuity\":\"reset\",\"transform\":{},\"keyframes\":[],\"blend\":\"normal\",\"layer\":0,\"type\":\"shape\",\"shape\":\"ellipse\",\"width\":0.25,\"height\":0.25,\"radius\":0,\"strokeWidth\":0.003,\"filled\":true}]}},{\"heading\":\"画面1\",\"body\":\"\",\"speech\":{\"text\":\"测试旁白1\",\"voice\":\"female\",\"role\":\"dialogue\",\"emotion\":\"[whispers]\"},\"duration\":5,\"composition\":{\"id\":\"scene1\",\"duration\":5,\"elements\":[{\"id\":\"ball\",\"start\":0,\"continuity\":\"reset\",\"transform\":{},\"keyframes\":[],\"blend\":\"normal\",\"layer\":0,\"type\":\"shape\",\"shape\":\"ellipse\",\"width\":0.25,\"height\":0.25,\"radius\":0,\"strokeWidth\":0.003,\"filled\":true}]}},{\"heading\":\"画面2\",\"body\":\"\",\"speech\":{\"text\":\"测试旁白2\",\"voice\":\"female\",\"emotion\":\"[amazed]\"},\"duration\":5,\"composition\":{\"id\":\"scene2\",\"duration\":5,\"elements\":[{\"id\":\"ball\",\"start\":0,\"continuity\":\"reset\",\"transform\":{},\"keyframes\":[],\"blend\":\"normal\",\"layer\":0,\"type\":\"shape\",\"shape\":\"ellipse\",\"width\":0.25,\"height\":0.25,\"radius\":0,\"strokeWidth\":0.003,\"filled\":true}]}},{\"heading\":\"画面3\",\"body\":\"\",\"speech\":{\"text\":\"测试旁白3\",\"voice\":\"female\",\"emotion\":\"[empathetic]\"},\"duration\":5,\"composition\":{\"id\":\"scene3\",\"duration\":5,\"elements\":[{\"id\":\"ball\",\"start\":0,\"continuity\":\"reset\",\"transform\":{},\"keyframes\":[],\"blend\":\"normal\",\"layer\":0,\"type\":\"shape\",\"shape\":\"ellipse\",\"width\":0.25,\"height\":0.25,\"radius\":0,\"strokeWidth\":0.003,\"filled\":true}]}}]}}",
+    "pending": null,
+    "pptData": null
+  },
+  "sounds": [
+    {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "generation": "1",
+      "request": {
+        "kind": "speech",
+        "requestId": "1d4d538d-752e-4e69-9774-ab103926f1c0",
+        "sceneIndex": 0,
+        "text": "测试旁白0",
+        "voice": "female",
+        "emotion": "[tired][very fast]"
+      },
+      "createdAt": "2026-10-10T19:00:00Z",
+      "status": "succeeded",
+      "canResume": false,
+      "variants": [
+        {
+          "index": 0,
+          "gcsUri": "gs://bucket/post-prod/7/audio/1d4d538d-752e-4e69-9774-ab103926f1c0.wav",
+          "previewUrl": "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA=",
+          "durationSec": 2
+        }
+      ]
+    },
+    {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "generation": "1",
+      "request": {
+        "kind": "speech",
+        "requestId": "8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174",
+        "sceneIndex": 1,
+        "text": "测试旁白1",
+        "voice": "female",
+        "role": "dialogue",
+        "emotion": "[whispers]"
+      },
+      "createdAt": "2026-10-10T19:00:00Z",
+      "status": "succeeded",
+      "canResume": false,
+      "variants": [
+        {
+          "index": 0,
+          "gcsUri": "gs://bucket/post-prod/7/audio/8a9e3a1c-6761-4b6e-bae6-cd2c2a0b4174.wav",
+          "previewUrl": "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA=",
+          "durationSec": 2
+        }
+      ]
+    },
+    {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "generation": "1",
+      "request": {
+        "kind": "speech",
+        "requestId": "3c30014b-c178-4e7b-a919-aacf77cddd95",
+        "sceneIndex": 2,
+        "text": "测试旁白2",
+        "voice": "female",
+        "emotion": "[amazed]"
+      },
+      "createdAt": "2026-10-10T19:00:00Z",
+      "status": "succeeded",
+      "canResume": false,
+      "variants": [
+        {
+          "index": 0,
+          "gcsUri": "gs://bucket/post-prod/7/audio/3c30014b-c178-4e7b-a919-aacf77cddd95.wav",
+          "previewUrl": "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA=",
+          "durationSec": 2
+        }
+      ]
+    },
+    {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "generation": "1",
+      "request": {
+        "kind": "speech",
+        "requestId": "9d25737b-b84a-4ffd-bf12-3cb7ae8674ec",
+        "sceneIndex": 3,
+        "text": "测试旁白3",
+        "voice": "female",
+        "emotion": "[empathetic]"
+      },
+      "createdAt": "2026-10-10T19:00:00Z",
+      "status": "succeeded",
+      "canResume": false,
+      "variants": [
+        {
+          "index": 0,
+          "gcsUri": "gs://bucket/post-prod/7/audio/9d25737b-b84a-4ffd-bf12-3cb7ae8674ec.wav",
+          "previewUrl": "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA=",
+          "durationSec": 2
+        }
+      ]
+    },
+    {
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "generation": "1",
+      "request": {
+        "kind": "bgm",
+        "requestId": "8ae5b93a-273e-4427-ba40-2c49f09ff5db",
+        "direction": "为本段约20秒剧情写纯器乐配乐。随以下镜头推进情绪与力度，不加入人声、歌词或对白；对白处留空间，动作撞点短促，镜头转场不断裂。\n0.0–5.0秒：画面0；[tired][very fast]；画面0；有人声对白，音乐降低存在感\n5.0–10.0秒：画面1；[whispers]；画面1；有人声对白，音乐降低存在感\n10.0–15.0秒：画面2；[amazed]；画面2；有人声对白，音乐降低存在感\n15.0–20.0秒：画面3；[empathetic]；画面3；有人声对白，音乐降低存在感\n结尾按最后一镜的情绪收束，为下一段保留衔接空间。"
+      },
+      "createdAt": "2026-10-10T19:00:00Z",
+      "status": "succeeded",
+      "canResume": false,
+      "variants": [
+        {
+          "index": 0,
+          "gcsUri": "gs://bucket/post-prod/7/audio/8ae5b93a-273e-4427-ba40-2c49f09ff5db.wav",
+          "previewUrl": "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAIA+AAABAAgAZGF0YQAAAAA=",
+          "durationSec": 40
+        }
+      ]
+    }
+  ]
+}

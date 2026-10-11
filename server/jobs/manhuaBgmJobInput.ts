@@ -1,3 +1,4 @@
+import { codeMotionProductionSlotSchema, type CodeMotionProductionSlot } from "../services/codeMotionProductionGrant";
 /**
  * 漫剧配乐异步任务契约。
  *
@@ -75,6 +76,7 @@ export function digestManhuaBgmBrief(brief: unknown): string {
 const manhuaBgmJobParamsBaseSchema = z
   .object({
     billingRequestId: z.string().uuid(),
+    productionSlot: codeMotionProductionSlotSchema.optional(),
     brief: manhuaBgmBriefSchema,
     /**
      * 新任务持久化该值；旧任务没有时 parse 会按 brief 补出。
@@ -139,7 +141,8 @@ export function isSameManhuaBgmSubmission(
       requested.success &&
       existing.data.params.billingRequestId ===
         requested.data.params.billingRequestId &&
-      existing.data.params.briefDigest === requested.data.params.briefDigest
+      existing.data.params.briefDigest === requested.data.params.briefDigest &&
+      stableManhuaBgmJson(existing.data.params.productionSlot) === stableManhuaBgmJson(requested.data.params.productionSlot)
   );
 }
 

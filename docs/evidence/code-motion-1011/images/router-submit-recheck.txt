@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/routers/codeMotion.images.test.ts > official submit reserves only after confirmation; restored batch does not reserve or charge a second grant
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 1 skipped (2)
+   Start at  04:00:43
+   Duration  4.75s (transform 2.03s, setup 0ms, collect 4.12s, tests 26ms, environment 0ms, prepare 111ms)
+

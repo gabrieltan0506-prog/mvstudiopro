@@ -1,5 +1,15 @@
 import { z } from "zod";
 import { manhuaPrevisAudioSchema } from "./manhuaPrevisAudio";
+import { inkSpeechSchema } from "./inkSpeech";
+import {
+  codeMotionAudioSchema,
+  validateCodeMotionAudio,
+} from "./codeMotionAudio";
+import { codeMotionCompositionSchema } from "./codeMotionComposition";
+import {
+  codeMotionVideoSchema,
+  validateCodeMotionVideo,
+} from "./codeMotionVideo";
 import { ART_MOTION_GRAMMARS, ART_MOTION_STYLES } from "./artMotionCatalog";
 
 const id = z.string().min(1).max(80);
@@ -92,12 +102,22 @@ export const artMotionSpecSchema = z
       )
       .max(35)
       .default([]),
-    stageAnimation: z.object({
-      previsJobId:z.string().regex(/^prv_[a-f0-9]{48}$/),
-      scopeId:z.string().uuid(),clipId:z.string().min(1).max(160),
-      worldTaskId:z.string().min(1).max(200),sceneRef:z.string().min(1).max(200),worldSourceVersion:z.string().min(1).max(200),
-    }).strict().optional(),
+    stageAnimation: z
+      .object({
+        previsJobId: z.string().regex(/^prv_[a-f0-9]{48}$/),
+        scopeId: z.string().uuid(),
+        clipId: z.string().min(1).max(160),
+        worldTaskId: z.string().min(1).max(200),
+        sceneRef: z.string().min(1).max(200),
+        worldSourceVersion: z.string().min(1).max(200),
+      })
+      .strict()
+      .optional(),
     audioTimeline: manhuaPrevisAudioSchema.optional(),
+    inkSpeech: inkSpeechSchema.optional(),
+    codeAudio: codeMotionAudioSchema.optional(),
+    codeVideo: codeMotionVideoSchema.optional(),
+    composition: codeMotionCompositionSchema.optional(),
     audioUri: z
       .string()
       .regex(/^gs:\/\//)
@@ -107,6 +127,65 @@ export const artMotionSpecSchema = z
   .strict()
   .superRefine((v, ctx) => {
     const fail = (message: string) => ctx.addIssue({ code: "custom", message });
+    if (v.codeVideo) {
+      if (
+        v.mode !== "animation" ||
+        v.stageAnimation ||
+        v.alpha ||
+        !v.composition
+      )
+        fail("视频片段仅用于映客逐镜编排");
+      for (const message of validateCodeMotionVideo(
+        v.codeVideo,
+        v.duration,
+        v.fps
+      ))
+        fail(message);
+    }
+    if (v.codeAudio) {
+      if (
+        v.stageAnimation ||
+        v.audioUri ||
+        v.audioTimeline ||
+        v.mode !== "animation"
+      )
+        fail("映客音轨不能与其他制作路线混用");
+      for (const message of validateCodeMotionAudio(v.codeAudio, v.duration))
+        fail(message);
+    }
+    if (v.composition) {
+      if (
+        v.mode !== "animation" ||
+        v.stageAnimation ||
+        v.scenes.length ||
+        Object.keys(v.data).length
+      )
+        fail("逐镜编排不能混用旧艺术或场景路线");
+      if (
+        Math.abs(
+          v.composition.scenes.reduce((n, s) => n + s.duration, 0) - v.duration
+        ) > 1e-6
+      )
+        fail("逐镜编排总时长与视频不一致");
+      const registered = new Set(v.cues.map(c => c.imageUri).filter(Boolean));
+      if (
+        v.composition.scenes.some(s =>
+          s.elements.some(
+            e => e.type === "image" && !registered.has(e.imageUri)
+          )
+        )
+      )
+        fail("编排图片必须登记到素材入口");
+    }
+    if (
+      v.inkSpeech &&
+      (v.audioUri ||
+        v.audioTimeline ||
+        v.stageAnimation ||
+        v.duration > 60 ||
+        v.inkSpeech.lines.some(line => line.at + line.duration > v.duration))
+    )
+      fail("映客对白不可与其他音轨混用或超出片长");
     if (
       ![
         [720, 1280],
@@ -135,13 +214,38 @@ export const artMotionSpecSchema = z
       fail("艺术段落总时长必须等于片长");
     if (v.mode === "art" && v.alpha)
       fail("艺术场景使用完整背景，透明输出仅用于解说动画");
-    if(v.audioTimeline && (!v.stageAnimation || v.audioUri || v.audioTimeline.durationSec!==v.duration || v.audioTimeline.dialogueCount!==0))
-      fail("场景动画配乐须与本段时长一致，不含对白，且不能与旧单条音轨同时使用");
-    if(v.stageAnimation && (v.mode!=="animation" || v.alpha || v.fps!==24 || v.duration>30 || v.cues.length || Object.keys(v.data).length || v.scenes.length))
-      fail("3D场景动画只消费原白模动作：常速24帧、最多30秒，不叠加解说动画数据");
-    if (v.mode === "animation" && !v.stageAnimation && !v.cues.length && !Object.keys(v.data).length)
+    if (
+      v.audioTimeline &&
+      (!v.stageAnimation ||
+        v.audioUri ||
+        v.audioTimeline.durationSec !== v.duration ||
+        v.audioTimeline.dialogueCount !== 0)
+    )
+      fail(
+        "场景动画配乐须与本段时长一致，不含对白，且不能与旧单条音轨同时使用"
+      );
+    if (
+      v.stageAnimation &&
+      (v.mode !== "animation" ||
+        v.alpha ||
+        v.fps !== 24 ||
+        v.duration > 30 ||
+        v.cues.length ||
+        Object.keys(v.data).length ||
+        v.scenes.length)
+    )
+      fail(
+        "3D场景动画只消费原白模动作：常速24帧、最多30秒，不叠加解说动画数据"
+      );
+    if (
+      v.mode === "animation" &&
+      !v.stageAnimation &&
+      !v.composition &&
+      !v.cues.length &&
+      !Object.keys(v.data).length
+    )
       fail("请填写动画内容");
-    if (v.mode === "animation") {
+    if (v.mode === "animation" && !v.composition) {
       const allowed = ART_MOTION_CUE_KINDS[v.grammar] || [];
       if (v.cues.some(c => !allowed.includes(c.kind)))
         fail("当前样式不支持所选段落类型，请重新选择");

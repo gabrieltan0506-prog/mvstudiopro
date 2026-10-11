@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ client/src/lib/manhuaAdvisorEffectsControls.browser.test.ts (2 tests | 1 skipped) 3758ms
+   ✓ 顾问VFX/标题/转场/生成式按当前指纹填参，原链提交返回真回执，拒绝过期与失败保存 3756ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 1 skipped (2)
+   Start at  04:43:44
+   Duration  5.70s (transform 167ms, setup 0ms, collect 659ms, tests 3.76s, environment 0ms, prepare 330ms)
+

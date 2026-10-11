@@ -1,0 +1,42 @@
+[
+  {
+    "tier": "free",
+    "sceneIndex": 2,
+    "duration": 5.088,
+    "sha256": "66e60309c1b45dac1f6b5633827ada087fa5c89bbfbd1f013e3ce8ad9f7a12ab",
+    "bytes": 1743574,
+    "taskId": "task-unified-1791665012-jtwoh5wf",
+    "model": "seedance-2.0-mini-reference-to-video",
+    "nativeReceiptSha256": "2ae45baf08f021ae2c4805ca6a8836a49dbde10bd9e75b25db38ecd0dac9f1ed"
+  },
+  {
+    "tier": "free",
+    "sceneIndex": 3,
+    "duration": 5.088,
+    "sha256": "346ab3ea4f1530cafdc1e1c9ac5de529ac35dc9df20bfac5787397ffbd529b59",
+    "bytes": 1967629,
+    "taskId": "task-unified-1791665011-pd894kti",
+    "model": "seedance-2.0-mini-reference-to-video",
+    "nativeReceiptSha256": "8643e0419fc97240cde143d7449e5a9e759071312b2ade214c24c507c9293b53"
+  },
+  {
+    "tier": "paid",
+    "sceneIndex": 2,
+    "duration": 5.056,
+    "sha256": "b1abc3cf53f49250dc89094af0593ce75f09d1d6a6290f0ebf02469f60aa28ab",
+    "bytes": 6071433,
+    "taskId": "task-unified-1791665012-vgp8mvlv",
+    "model": "seedance-2.5-reference-to-video",
+    "nativeReceiptSha256": "61431000b327eb45e154d63ab22522c1f0bb9c9d35fa9747f6f215657745fa47"
+  },
+  {
+    "tier": "paid",
+    "sceneIndex": 3,
+    "duration": 5.056,
+    "sha256": "a9be37ddd4edb12db4923f99640132e87bdb32963e5eeed3de553a6fedb7a9c3",
+    "bytes": 5706749,
+    "taskId": "task-unified-1791665011-njwdlb5a",
+    "model": "seedance-2.5-reference-to-video",
+    "nativeReceiptSha256": "789bf5d6727b9381979dc52e2c1588ebfb8eecc91b6b6410dc688fb4f745b38e"
+  }
+]

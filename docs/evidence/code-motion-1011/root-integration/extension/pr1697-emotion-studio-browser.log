@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ client/src/lib/codeMotionSoundProduction.browser.test.ts > official Studio starts without audio, generates only missing speech and BGM, adopts all sources and restores the audio timeline 5058ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  04:31:44
+   Duration  6.14s (transform 53ms, setup 0ms, collect 500ms, tests 5.06s, environment 0ms, prepare 98ms)
+

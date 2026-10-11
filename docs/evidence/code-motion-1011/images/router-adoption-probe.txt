@@ -1,0 +1,40 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/codeMotionImageProduction.test.ts > adopted scene image reaches the official compiler without deleting original graphic animation or changing production identity
+ ✓ server/routers/codeMotion.images.test.ts > official protected router isolates account and does not consume a production grant while showing reviewed image content
+ × server/routers/codeMotion.images.test.ts > official submit reserves only after confirmation; restored batch does not reserve or charge a second grant
+   → 来源验证暂不可用，请稍后再试
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/routers/codeMotion.images.test.ts > official submit reserves only after confirmation; restored batch does not reserve or charge a second grant
+TRPCError: 来源验证暂不可用，请稍后再试
+ ❯ Module.fileConversionIpHash server/services/fileConversionIp.ts:24:22
+     22| export function fileConversionIpHash(req: Request, day: string, env: N…
+     23|   const secret = env.JWT_SECRET;
+     24|   if (!secret) throw new Error("来源验证暂不可用，请稍后再试");
+       |                      ^
+     25|   const raw = env.FLY_APP_NAME ? req.headers["fly-client-ip"] : req.so…
+     26|   if (typeof raw !== "string") throw new Error("无法确认来源地址，请从…
+ ❯ Module.inkSource server/services/inkFreeQuota.ts:18:63
+ ❯ server/routers/codeMotion.ts:64:167
+ ❯ resolveMiddleware ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@trpc+server@11.6.0_typescript@5.9.3/node_modules/@trpc/server/src/unstable-core-do-not-import/procedureBuilder.ts:571:22
+ ❯ callRecursive ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@trpc+server@11.6.0_typescript@5.9.3/node_modules/@trpc/server/src/unstable-core-do-not-import/procedureBuilder.ts:633:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'INTERNAL_SERVER_ERROR' }
+Caused by: Error: 来源验证暂不可用，请稍后再试
+ ❯ Module.fileConversionIpHash server/services/fileConversionIp.ts:24:22
+ ❯ Module.inkSource server/services/inkFreeQuota.ts:18:63
+ ❯ server/routers/codeMotion.ts:64:167
+ ❯ resolveMiddleware ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@trpc+server@11.6.0_typescript@5.9.3/node_modules/@trpc/server/src/unstable-core-do-not-import/procedureBuilder.ts:571:22
+ ❯ callRecursive ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@trpc+server@11.6.0_typescript@5.9.3/node_modules/@trpc/server/src/unstable-core-do-not-import/procedureBuilder.ts:633:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 2 passed (3)
+   Start at  03:59:34
+   Duration  6.01s (transform 2.72s, setup 0ms, collect 7.56s, tests 67ms, environment 1ms, prepare 304ms)
+

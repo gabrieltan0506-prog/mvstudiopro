@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ client/src/lib/codeMotionImageReveal.browser.test.ts (11 tests | 10 skipped) 8715ms
+   ✓ real JPEG local wipe: 'local-rotation-scale' 1869ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 10 skipped (11)
+   Start at  07:07:19
+   Duration  15.41s (transform 648ms, setup 0ms, collect 2.49s, tests 8.71s, environment 1ms, prepare 452ms)
+

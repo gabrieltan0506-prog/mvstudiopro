@@ -1,0 +1,18 @@
+# PR1697 image production development evidence
+
+Base HEAD: `9a3c808649514b22141889982bea2c268569101a`; this work is uncommitted during integration.
+
+- `service-initial.txt`: 3 service contract tests. Fake GCS/queue dependencies cover manifest-before-enqueue, a lost insert receipt, unchanged fixed jobs after failure/unknown results, restoration/adoption, owner/input/grant forgery, and missing-row recovery.
+- `generation-recovery.txt`: 3 affected service tests after changing grant validation from exact old generation to saved semantic fingerprint, including a save without changed content. This supersedes the first run for that validation branch.
+- `exact-model-contract.txt`: 2 request contract tests using a fake HTTP response and test-only keys. Verifies fixed free Image 2 medium and paid Sunburst despite a conflicting environment override, response evidence before image delivery, and no second-key retry when persistence outcome is unknown.
+
+No paid provider call, generated user image, production access, online acceptance, deployment, or PR push was performed by this subagent. The root agent owns router/UI integration, full-diff review, and authorized commit/push. Model response JSON is persisted by the production path under `code-motion/u<user>/images/<project>/evidence/<request>.raw.json`, `.parsed.json`, and `.receipt.json` before consumption. Existing jobs keep their fixed identities; a failed/unknown upstream purchase is surfaced for reconciliation and is never automatically replaced.
+
+
+Final child integration additions (1011):
+- Official image router and full Studio browser fixtures cover save→quote→submit→partial progress→adopt→reload. `studio-with-timing-regression.txt`, `studio-raw-trace.json`, `studio-restored.png`, `image-panel-restored.png`. Browser transport is stubbed; protected router contracts are separately exercised by `router-submit-recheck.txt` and `router-adoption-probe.txt`. Initial failed fixture runs are retained and clearly superseded.
+- `image-to-video-handoff-recheck.txt` verifies generated background adoption also supplies scene.imageId to the production video planner, preserving original graphics and pending-video export guard.
+- `preflight-edit-production-probe.txt`: actual service decisions with injected metadata and HTTP contract fixtures: bad-resolution inputs→one fixed Image2/Sunburst edits job, suitable original→reuse without new purchase, missing image→generate; retries restore same jobs. Both exact model/quality pairs and two-reference multipart requests checked. Production metadata path reads bounded original bytes with sharp and hashes them; the test does not claim a live cloud image was analysed.
+- `preflight-adoption-probe.txt` / `redraw-visible-adoption-probe.txt`: dimensional/aspect evidence and visible adopted redraw; old source bytes remain in immutable batch preflight evidence, original caller project remains unchanged. Semantic image/content conflict analysis is NOT implemented. Technical thresholds are short side below480px or target-frame cover retaining under65% source area.
+- `worker-unknown-settlement-probe.txt`, `ledger-unknown-reconciliation-probe.txt`: unknown provider outcomes preserve a reconciliation_pending hold; no repeated model call, automatic refund, or false successful settlement. A known failed job still uses existing refund policy. Manual reconciliation remains required; no raw-response repair/rearchive UI has been implemented.
+- `revision-clone-recheck.txt`: selected text edits retain images/audio and untouched scenes; selected generated-video clips are removed and those scenes use code. Parent agent owns revision ledger/UI integration.

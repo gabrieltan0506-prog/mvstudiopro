@@ -1,0 +1,15 @@
+{
+  "run": "pr1697-ruixin-20261010",
+  "outcomes": [
+    {
+      "tier": "free",
+      "status": "fulfilled"
+    },
+    {
+      "tier": "paid",
+      "status": "fulfilled"
+    }
+  ],
+  "completedAt": "2026-10-10T20:43:20.481Z",
+  "maximumImages": 12
+}

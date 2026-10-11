@@ -1,0 +1,31 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ × client/src/lib/codeMotionImageProduction.browser.test.ts > official Studio image flow shows reviewed content, submits once, adopts, saves and restores after reload 1052ms
+   → Failed to launch the browser process:  Code: null
+
+stderr:
+
+
+TROUBLESHOOTING: https://pptr.dev/troubleshooting
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/codeMotionImageProduction.browser.test.ts > official Studio image flow shows reviewed content, submits once, adopts, saves and restores after reload
+Error: Failed to launch the browser process:  Code: null
+
+stderr:
+
+
+TROUBLESHOOTING: https://pptr.dev/troubleshooting
+
+ ❯ ChildProcess.onClose ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@puppeteer+browsers@2.13.0/node_modules/@puppeteer/browsers/src/launch.ts:537:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  04:01:47
+   Duration  2.52s (transform 83ms, setup 0ms, collect 833ms, tests 1.05s, environment 0ms, prepare 145ms)
+

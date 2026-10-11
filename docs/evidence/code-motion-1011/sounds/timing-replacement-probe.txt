@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/codeMotionSoundAdoption.test.ts > replacing an analysed BGM candidate clears only its obsolete timing and preserves reusable audio
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  04:10:56
+   Duration  2.18s (transform 458ms, setup 0ms, collect 978ms, tests 118ms, environment 1ms, prepare 229ms)
+

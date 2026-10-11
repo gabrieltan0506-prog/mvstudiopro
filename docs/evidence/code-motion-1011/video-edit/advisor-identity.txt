@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/manhuaAdvisorOperation.test.ts (11 tests | 10 skipped) 2ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 10 skipped (11)
+   Start at  06:02:43
+   Duration  1.49s (transform 179ms, setup 0ms, collect 737ms, tests 2ms, environment 0ms, prepare 146ms)
+

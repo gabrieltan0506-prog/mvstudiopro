@@ -1,0 +1,26 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ × shared/codeMotionImageProduction.test.ts > adopted scene image reaches the official compiler without deleting original graphic animation or changing production identity
+   → 动态镜头尚未完成制作，请先恢复制作并采用生成片段
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  shared/codeMotionImageProduction.test.ts > adopted scene image reaches the official compiler without deleting original graphic animation or changing production identity
+Error: 动态镜头尚未完成制作，请先恢复制作并采用生成片段
+ ❯ Module.compileCodeMotion shared/codeMotion.ts:213:15
+    211|     for (const scene of plan.scenes) {
+    212|       if (scene.production?.motion === "natural" && !plan.codeVideo?.c…
+    213|         throw new Error("动态镜头尚未完成制作，请先恢复制作并采用生成…
+       |               ^
+    214|       sceneAt += scene.duration;
+    215|     }
+ ❯ shared/codeMotionImageProduction.test.ts:24:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  04:04:34
+   Duration  9.63s (transform 3.07s, setup 0ms, collect 7.27s, tests 41ms, environment 0ms, prepare 414ms)
+
