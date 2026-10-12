@@ -594,7 +594,7 @@ type Props = {
   /** AI 去字（3 分）：物理擦除画面文字 */
   onDetextCustomAsset?: (id: string) => void | Promise<void>;
   /** 按用户指令编辑图片；原图保留，新图作为同类参考入库。 */
-  onEditCustomAsset?: (id: string, instructionZh: string) => void | boolean | Promise<void | boolean>;
+  onEditCustomAsset?: (id: string, instructionZh: string, quality?: ManhuaAssetStandardizeQuality) => void | boolean | Promise<void | boolean>;
   /** 免费裁字：按保留区比例裁剪后入库为新参考图 */
   onCropCustomAsset?: (id: string, crop: { x: number; y: number; w: number; h: number }) => void | Promise<void>;
   /** 明确认领稳定锚点；场景允许一图多选，替代用显示名猜主键。 */
@@ -6956,7 +6956,7 @@ clipPromptReviewOpen ? (
                                       labelZh={ref.labelZh || "参考图"}
                                       disabled={!outlineComplete || assetStandardizeBusyId != null}
                                       busy={assetStandardizeBusyId === ref.id}
-                                      onSubmit={(instructionZh) => onEditCustomAsset(ref.id, instructionZh)}
+                                      onSubmit={(instructionZh, quality) => onEditCustomAsset(ref.id, instructionZh, quality)}
                                     />
                                   ) : null}
                                 </div>

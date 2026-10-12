@@ -100,6 +100,15 @@ function setup() {
 }
 
 describe("真实 worker 原图续签、收费、供应商消费和退款", () => {
+  it("高质编辑把high和既定5积分传到真实供应商与计费调用", async () => {
+    const s = setup();
+    s.input.params.assetStandardizeQuality = "high";
+    await s.run(s.input, "1", "test-high-job");
+    expect(s.generate).toHaveBeenCalledWith(expect.objectContaining({ qualityOverride: "high" }));
+    expect(s.deduct).toHaveBeenCalledWith(1, 5, "manhuaAssetStandardize", expect.any(String),
+      { chargeKey: "manhuaAssetStandardize/test-high-job" });
+  });
+
   it("续签在扣费之前，非空新链接和横版进入真实上游调用点", async () => {
     const s = setup();
     const output = await s.run(s.input, "1", "test-job");

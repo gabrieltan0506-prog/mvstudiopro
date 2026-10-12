@@ -7649,7 +7649,7 @@ function OmniCanvasWorkspace() {
    * 原图不覆盖；成功结果以新资产追加，便于用户对照和恢复。
    */
   const editCustomAsset = useCallback(
-    async (id: string, instructionZh: string) => {
+    async (id: string, instructionZh: string, quality: ManhuaAssetStandardizeQuality = "medium") => {
       if (assetStandardizeBusyId || assetActionLocked.current) return false;
       const ref = customAssetRefs.find((item) => item.id === id);
       if (!ref) return false;
@@ -7658,12 +7658,12 @@ function OmniCanvasWorkspace() {
         toast.error("请先写清楚要修改的内容");
         return false;
       }
-      const cost = manhuaAssetStandardizeCredits("medium");
+      const cost = manhuaAssetStandardizeCredits(quality);
       assetActionLocked.current = true;
       try {
         if (!(await confirmAssetAction({
           title: "确认图片编辑费用",
-          description: `将按你的要求编辑这张图片。\n\n${cost} 积分/张；失败自动退回。原图会保留，新图进入同一资产栏。\n处理约需 1–2 分钟，期间请不要关闭页面。`,
+          description: `将按你的要求编辑这张图片。\n\n${quality === "high" ? "高质（high）" : "标准（medium）"}：${cost} 积分/张；失败自动退回。原图会保留，新图进入同一资产栏。\n处理约需 1–2 分钟，期间请不要关闭页面。`,
           details: `参考图：${ref.labelZh || "资产"}\n修改要求：${instructionZh.trim()}`,
         }))) return false;
         setAssetStandardizeBusyId(id);
@@ -7682,7 +7682,7 @@ function OmniCanvasWorkspace() {
             imageLane: "asset",
             openaiImageVariant: readOpenAiImageVariantPref(),
             gcsSubdir: "manhua-asset-edited",
-            assetStandardizeQuality: "medium",
+            assetStandardizeQuality: quality,
             assetRefId: ref.id,
           }),
         });

@@ -1,0 +1,9 @@
+RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/new-chat/work/remix-video-notes
+
+ ✓ client/src/lib/manhuaAssetUploadWiring.test.ts (5 tests) 5ms
+ ✓ server/jobs/runner.canvasAssetEdit.test.ts (3 tests) 5ms
+
+ Test Files  2 passed (2)
+      Tests  8 passed (8)
+   Start at  18:35:06
+   Duration  882ms (transform 62ms, setup 0ms, collect 510ms, tests 11ms, environment 0ms, prepare 164ms)
