@@ -1,12 +1,7 @@
 import React from "react";
-import { Link } from "wouter";
 import { CREDIT_COSTS } from "@shared/plans";
 
-/**
- * 首页定价区（2026-08-12 用户拍板重写）：置顶、展开、明码标价——
- * 「我们是商业网站，不是搞慈善的」。价目一律取现行真实扣点：平台创作直接读
- * CREDIT_COSTS 单一真源；成片/超分/照片为站内已公开的拍板档位。以站内实际扣点为准。
- */
+/** 充值页收费明细，沿用现有价格来源；首页不再展示。 */
 
 type PriceRow = { name: string; price: string; note?: string };
 type PriceGroup = { title: string; rows: PriceRow[] };
@@ -70,12 +65,6 @@ export default function HomePricing() {
             所有价目即为站内实际扣点，生成失败的任务自动退回积分。优惠档位重算期间，以下即现行价。
           </p>
         </div>
-        <Link
-          href="/pricing"
-          className="shrink-0 rounded-full border border-[var(--hp-line)] bg-[var(--hp-card)] px-6 py-2.5 text-sm font-semibold text-[var(--hp-ink)] no-underline transition-colors hover:border-[var(--hp-line)] hover:bg-[var(--hp-card)]"
-        >
-          去充值 →
-        </Link>
       </div>
 
       <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
