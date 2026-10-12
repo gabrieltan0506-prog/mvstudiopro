@@ -59,21 +59,25 @@ def apply_rigged_posture(model, actor, scene):
             spine=rig.pose.bones[mapping['spine']]
             start=spine.head.copy()
             aim(spine,start,start+Vector((-math.sin(angle),0,math.cos(angle)))*spine.bone.length,frame)
-            delta=posture['supportHeight']-pelvis_minimum()
-            matrix=pelvis.matrix.copy()
-            matrix.translation += rig.matrix_world.inverted().to_3x3() @ Vector((0,0,delta))
-            set_matrix(pelvis,matrix,frame)
-            for side in ('-1','1'):
-                upper,lower,foot=[rig.pose.bones[mapping[name+side]] for name in ('upper_leg','lower_leg','foot')]
-                root=upper.head.copy(); ankle=feet[side].translation.copy()
-                # 座位前方落脚距离随真实腿长缩放，不复制基础人体脚点。
-                ankle.x += .32*(upper.bone.length+lower.bone.length)/.86
-                solved=solve_limb(tuple(root),tuple(ankle),upper.bone.length,lower.bone.length,(1,0,0))
-                if solved['unreachableDistance']>.005:raise ValueError('坐卧支撑高度超出真实腿长可达范围')
-                aim(upper,root,Vector(solved['joint']),frame)
-                aim(lower,Vector(solved['joint']),Vector(solved['end']),frame)
-                set_matrix(foot,Matrix.Translation(Vector(solved['end'])) @ feet[side].to_quaternion().to_matrix().to_4x4(),frame)
-            support_gap=pelvis_minimum()-posture['supportHeight']
+            # 腿部混合权重也会拉动骨盆区域；两者迭代收敛，不能只在腿IK前校正一次。
+            for _support_iteration in range(12):
+                delta=posture['supportHeight']-pelvis_minimum()
+                matrix=pelvis.matrix.copy()
+                matrix.translation += rig.matrix_world.inverted().to_3x3() @ Vector((0,0,delta))
+                set_matrix(pelvis,matrix,frame)
+                for side in ('-1','1'):
+                    upper,lower,foot=[rig.pose.bones[mapping[name+side]] for name in ('upper_leg','lower_leg','foot')]
+                    root=upper.head.copy(); ankle=feet[side].translation.copy()
+                    # 座位前方落脚距离随真实腿长缩放，不复制基础人体脚点。
+                    ankle.x += .32*(upper.bone.length+lower.bone.length)/.86
+                    solved=solve_limb(tuple(root),tuple(ankle),upper.bone.length,lower.bone.length,(1,0,0))
+                    if solved['unreachableDistance']>.005:raise ValueError('坐卧支撑高度超出真实腿长可达范围')
+                    aim(upper,root,Vector(solved['joint']),frame)
+                    aim(lower,Vector(solved['joint']),Vector(solved['end']),frame)
+                    set_matrix(foot,Matrix.Translation(Vector(solved['end'])) @ feet[side].to_quaternion().to_matrix().to_4x4(),frame)
+                support_gap=pelvis_minimum()-posture['supportHeight']
+                if abs(support_gap)<.001:
+                    break
             spine=rig.pose.bones[mapping['spine']]
             direction=spine.tail-spine.head
             lean=math.atan2(-direction.x,direction.z)

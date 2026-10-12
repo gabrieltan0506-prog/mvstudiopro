@@ -1,11 +1,15 @@
 import { useState } from "react";
+import { isStorySceneEffect } from "@shared/manhuaPrevisStoryEffects";
 import { Plus, Trash2 } from "lucide-react";
 import { manhuaPrevisSpecSchema, previsSpecKey, type ManhuaPrevisSpec } from "@shared/manhuaPrevis";
 import { PREVIS_SCENE_EFFECT_LABELS, type PrevisSceneEffect } from "@shared/manhuaPrevisSceneEffects";
 
-export function createPrevisSceneEffect(kind: PrevisSceneEffect["kind"], actorId: string, id: string, durationSec: number): PrevisSceneEffect {
+export function createPrevisSceneEffect(kind: PrevisSceneEffect["kind"], actorId: string, id: string, durationSec: number, propId = ""): PrevisSceneEffect {
   const base = { id, actorId };
   switch (kind) {
+    case "needle_trail": return { ...base, kind, propId, startSec: 0, endSec: Math.min(1,(durationSec*24-1)/24), color: "#FFD477", radius: .003, trailSec: .25 };
+    case "acupoint_smoke": return { ...base, kind, propId, startSec: Math.min(1,(durationSec*24-2)/24), endSec: (durationSec*24-1)/24, color: "#202228", radius: .035, rise: .2, density: 12, offset: [0,0,.02] };
+    case "complexion": return { ...base, kind, startSec: 0, endSec: (durationSec*24-1)/24, color: "#EFAE99", strength: .18 };
     case "cape": return { ...base, kind, width: 0.8, length: 1.2, color: "#315FA3", wind: [0.3, 0.6, 0] };
     case "explode": return { ...base, kind, distance: 0.5, startSec: 0, durationSec: Math.min(2, durationSec) };
     case "hologram": return { ...base, kind, color: "#67E8F9", intensity: 1 };
@@ -39,19 +43,31 @@ export function ManhuaPrevisSceneEffectsEditor({ spec, disabled, onApply }: {
     setBaseKey(previsSpecKey(parsed.data)); setEffects(parsed.data.sceneEffects || []); setError("");
   };
   return <details className="space-y-2 rounded border border-cyan-300/20 p-3" data-previs-scene-effects>
-    <summary className="cursor-pointer text-sm font-medium text-cyan-50">场景特效 · 布料、分件、材质与标注</summary>
+    <summary className="cursor-pointer text-sm font-medium text-cyan-50">场景特效 · 飞针、黑气、气色与布料</summary>
     <p className="text-xs leading-relaxed text-white/65">效果在本段白模三维场景中渲染，并随采用的白模作为视频生成参考；正式视频仍需审片，不保证逐像素复现。配置保存后，从下方原有入口渲染新候选。尚未线上验收。</p>
-    <p className="text-[11px] text-white/50">每段最多4项、3个角色、8秒；披风最多1件。披风与分件需分开预演。同一角色只能选择一种材质效果，同类效果不重复添加。</p>
-    {tooLarge ? <p className="text-xs text-amber-200">当前方案为{spec.durationSec}秒、{spec.actors.length}个角色。请先在现有白模方案中调整到支持范围，再增加场景特效；不会自动裁短或删角色。</p> : null}
+    <p className="text-[11px] text-white/50">剧情特效最多8项，沿本段时长与角色预算；旧披风、分件、材质与标注仍限4项、3个角色、8秒。飞针/黑气须选择本段已有的针；气色须真实带骨人体。同一角色的材质效果不能叠加。</p>
+    {tooLarge ? <p className="text-xs text-amber-200">当前方案为{spec.durationSec}秒、{spec.actors.length}个角色。旧披风等效果超出支持范围；飞针、针位黑气和气色渐变仍可配置，不裁短或删角色。</p> : null}
     {changedSource ? <div className="space-y-1 text-xs text-amber-200"><p>当前白模方案已更新，尚未保存的特效草案仍保留。请载入当前配置后再修改。</p><button type="button" className={button} disabled={disabled} onClick={() => { setEffects(spec.sceneEffects || []); setBaseKey(currentKey); setError(""); }}>载入当前白模配置</button></div> : null}
     <div className="flex flex-wrap gap-2">{(Object.keys(PREVIS_SCENE_EFFECT_LABELS) as PrevisSceneEffect["kind"][]).map(kind => {
-      const actor = spec.actors.find(item => kind !== "cape" || item.shape === "human");
-      return <button key={kind} type="button" className={button} disabled={disabled || changedSource || tooLarge || effects.length >= 4 || !actor || (kind === "cape" && effects.some(effect => effect.kind === "cape"))} onClick={() => { if (actor) setEffects(previous => [...previous, createPrevisSceneEffect(kind, actor.id, crypto.randomUUID(), spec.durationSec)]); setError(""); }}><Plus className="mr-1 inline h-3 w-3" />{PREVIS_SCENE_EFFECT_LABELS[kind]}</button>;
+      const story = isStorySceneEffect({kind});
+      const needle = spec.storyProps?.find(prop=>prop.kind==="needle");
+      const lastAnchor = needle?.keyframes.at(-1)?.anchor;
+      const actor = kind==="acupoint_smoke" && lastAnchor?.type==="bone" ? spec.actors.find(item=>item.id===lastAnchor.actorId)
+        : spec.actors.find(item => kind==="complexion" ? item.shape==="human" && item.riggedModel : kind !== "cape" || item.shape === "human");
+      const needsNeedle=kind==="needle_trail" || kind==="acupoint_smoke";
+      const capacity=effects.length>=8 || ((!story || effects.some(e=>!isStorySceneEffect(e))) && effects.length>=4);
+      return <button key={kind} type="button" className={button} disabled={disabled || changedSource || (!story && tooLarge) || capacity || !actor || (needsNeedle && !needle) || (kind === "cape" && effects.some(effect => effect.kind === "cape"))} onClick={() => { if (actor) setEffects(previous => [...previous, createPrevisSceneEffect(kind, actor.id, crypto.randomUUID(), spec.durationSec, needle?.id)]); setError(""); }}><Plus className="mr-1 inline h-3 w-3" />{PREVIS_SCENE_EFFECT_LABELS[kind]}</button>;
     })}</div>
     <div className="space-y-2">{effects.map((effect, index) => <fieldset key={effect.id} disabled={disabled || changedSource} className="space-y-2 rounded border border-white/15 bg-black/10 p-2">
       <div className="flex items-center justify-between gap-2"><span className="text-xs font-medium text-white">{index + 1}. {PREVIS_SCENE_EFFECT_LABELS[effect.kind]}</span><button type="button" className="text-white/50" aria-label={`移除${PREVIS_SCENE_EFFECT_LABELS[effect.kind]}`} onClick={() => setEffects(previous => previous.filter(item => item.id !== effect.id))}><Trash2 className="h-3.5 w-3.5" /></button></div>
-      <label className="block text-[11px] text-white/65">作用角色<select className={`${control} mt-1`} value={effect.actorId} onChange={event => replace({ ...effect, actorId: event.target.value })}>{spec.actors.filter(actor => effect.kind !== "cape" || actor.shape === "human").map(actor => <option key={actor.id} value={actor.id}>{actor.nameZh}</option>)}</select></label>
-      {effect.kind === "cape" ? <>
+      <label className="block text-[11px] text-white/65">作用角色<select className={`${control} mt-1`} value={effect.actorId} onChange={event => replace({ ...effect, actorId: event.target.value })}>{spec.actors.filter(actor => effect.kind === "complexion" ? actor.shape === "human" && actor.riggedModel : effect.kind !== "cape" || actor.shape === "human").map(actor => <option key={actor.id} value={actor.id}>{actor.nameZh}</option>)}</select></label>
+      {isStorySceneEffect(effect) ? <>
+        {effect.kind!=="complexion" ? <label className="block text-[11px] text-white/65">本段针道具<select aria-label="剧情特效针道具" className={control} value={effect.propId} onChange={event=>replace({...effect,propId:event.target.value})}>{(spec.storyProps||[]).filter(prop=>prop.kind==="needle").map(prop=><option key={prop.id} value={prop.id}>{prop.id}</option>)}</select></label> : null}
+        <div className="grid grid-cols-3 gap-2">{(["startSec","endSec"] as const).map(key=><label key={key} className="text-[11px] text-white/65">{key==="startSec"?"开始秒":"结束秒"}<input aria-label={`剧情特效${key==="startSec"?"开始秒":"结束秒"}`} className={control} type="number" min={0} max={(spec.durationSec*24-1)/24} step={1/24} value={effect[key]} onChange={event=>replace({...effect,[key]:Number(event.target.value)})}/></label>)}<label className="text-[11px] text-white/65">颜色<input aria-label="剧情特效颜色" className={`${control} h-8`} type="color" value={effect.color} onChange={event=>replace({...effect,color:event.target.value})}/></label></div>
+        {effect.kind==="complexion" ? <label className="block text-[11px] text-white/65">气色变化强度<input aria-label="气色变化强度" className={control} type="number" min={.01} max={.35} step={.01} value={effect.strength} onChange={event=>replace({...effect,strength:Number(event.target.value)})}/></label> : <div className="grid grid-cols-2 gap-2"><label className="text-[11px] text-white/65">{effect.kind==="needle_trail"?"光尾半径（米）":"烟气半径（米）"}<input aria-label="剧情特效半径" className={control} type="number" min={effect.kind==="needle_trail"?.001:.01} max={effect.kind==="needle_trail"?.02:.12} step={.001} value={effect.radius} onChange={event=>replace({...effect,radius:Number(event.target.value)})}/></label>{effect.kind==="needle_trail" ? <label className="text-[11px] text-white/65">光尾保留秒数<input aria-label="光尾保留秒数" className={control} type="number" min={1/24} max={.5} step={1/24} value={effect.trailSec} onChange={event=>replace({...effect,trailSec:Number(event.target.value)})}/></label> : <><label className="text-[11px] text-white/65">上升高度（米）<input aria-label="黑气上升高度" className={control} type="number" min={.05} max={.6} step={.01} value={effect.rise} onChange={event=>replace({...effect,rise:Number(event.target.value)})}/></label><label className="text-[11px] text-white/65">烟气浓度<input aria-label="黑气浓度" className={control} type="number" min={1} max={30} step={1} value={effect.density} onChange={event=>replace({...effect,density:Number(event.target.value)})}/></label></>}</div>}
+        {effect.kind==="acupoint_smoke" ? <div className="grid grid-cols-3 gap-2">{(["X","Y","Z"] as const).map((label,axis)=><label key={label} className="text-[11px] text-white/65">针位表面{label}偏移<input aria-label={`黑气${label}偏移`} className={control} type="number" min={-.3} max={.3} step={.01} value={effect.offset[axis]} onChange={event=>{const offset:[number,number,number]=[...effect.offset];offset[axis]=Number(event.target.value);replace({...effect,offset});}}/></label>)}</div> : null}
+        <p className="text-[11px] text-white/45">时间须对齐24帧。黑气从落针后开始；气色只作用于真实头颈权重，保持原贴图。先渲染候选检查遮挡与变化，再决定采用。</p>
+      </> : effect.kind === "cape" ? <>
         <div className="grid grid-cols-3 gap-2"><label className="text-[11px] text-white/65">宽度<input aria-label="披风宽度" className={control} type="number" min={0.2} max={2} step={0.05} value={effect.width} onChange={event => replace({ ...effect, width: Number(event.target.value) })} /></label><label className="text-[11px] text-white/65">长度<input aria-label="披风长度" className={control} type="number" min={0.2} max={3} step={0.05} value={effect.length} onChange={event => replace({ ...effect, length: Number(event.target.value) })} /></label><label className="text-[11px] text-white/65">颜色<input className={`${control} h-8`} type="color" value={effect.color} onChange={event => replace({ ...effect, color: event.target.value })} /></label></div>
         <div className="grid grid-cols-3 gap-2">{(["侧向风力", "前后风力", "升降风力"] as const).map((label, axis) => <label key={label} className="text-[11px] text-white/65">{label}<input className={control} type="number" min={-3} max={3} step={0.1} value={effect.wind[axis]} onChange={event => { const wind: [number, number, number] = [...effect.wind]; wind[axis] = Number(event.target.value); replace({ ...effect, wind }); }} /></label>)}</div>
         <p className="text-[11px] text-white/45">使用本段人物挂点与碰撞体模拟披风。保存配置不等于仿真通过，需渲染后检查穿插与运动。</p>

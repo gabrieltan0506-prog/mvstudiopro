@@ -16,8 +16,9 @@ from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 from bpy_extras.object_utils import world_to_camera_view
 
-KINDS=frozenset(('cape','explode','hologram','attribute_color','label'))
-BOUNDARIES={
+from previs_story_effects import KINDS as STORY_KINDS, FIELDS as STORY_FIELDS, BOUNDARIES as STORY_BOUNDARIES
+KINDS=frozenset(('cape','explode','hologram','attribute_color','label')) | STORY_KINDS
+BOUNDARIES={**STORY_BOUNDARIES,
     'cape':'程序披风真实布料仿真与骨骼挂点，已烘网格逐帧形变；碰撞质量只以本次真实测量为准，不是原服装自动改造。',
     'explode':'按现有独立网格中心径向展开；不切割连续网格，不推断机械语义或内部结构，不模拟刚体碰撞。',
     'hologram':'仅所选角色网格的透明发光扫描材质；不是实拍人物分割、隐身重建或场景追踪。',
@@ -120,15 +121,18 @@ def _binding_map(bindings,scene):
     return result
 
 
-def validate_scene_effects(events,scene,bindings):
-    if not isinstance(events,list) or len(events)>4:
-        raise ValueError('Expected at most four scene effects')
+def validate_scene_effects(events,scene,bindings,story_props=None):
+    if not isinstance(events,list) or len(events)>8:
+        raise ValueError('Expected at most eight scene effects')
     by_actor=_binding_map(bindings,scene)
     fps=scene.render.fps/scene.render.fps_base
-    if scene.frame_start!=1 or scene.frame_end/fps>8+1e-8 or len(bindings)>3:
-        raise ValueError('Scene effects support at most 8 seconds and 3 actors')
+    legacy=any(e.get('kind') not in STORY_KINDS for e in events if isinstance(e,dict))
+    if scene.frame_start!=1 or scene.frame_end/fps>30+1e-8:
+        raise ValueError('Scene effects exceed bounded timeline')
+    if legacy and (scene.frame_end/fps>8+1e-8 or len(bindings)>3 or len(events)>4):
+        raise ValueError('Original scene effects support at most 4 effects, 8 seconds and 3 actors')
     ids=set();cape_count=0;actor_modes={}
-    fields={'cape':{'width','length','color','wind'},'explode':{'distance','startSec','durationSec'},
+    fields={**STORY_FIELDS,'cape':{'width','length','color','wind'},'explode':{'distance','startSec','durationSec'},
             'hologram':{'color','intensity'},'attribute_color':{'color','colorEnd'},
             'label':{'bone','text','color','offset','fontSize'}}
     for e in events:
@@ -141,10 +145,14 @@ def validate_scene_effects(events,scene,bindings):
         ids.add(e['id']);kind=e['kind'];binding=by_actor[e['actorId']]
         modes=actor_modes.setdefault(e['actorId'],set())
         # Competing material overrides and duplicate decomposition cannot silently replace each other.
-        if kind in modes or (kind in ('hologram','attribute_color') and modes & {'hologram','attribute_color'}):
+        mode=(kind,e.get('propId')) if kind in ('needle_trail','acupoint_smoke') else kind
+        if mode in modes or (kind in ('hologram','attribute_color','complexion') and modes & {'hologram','attribute_color','complexion'}):
             raise ValueError('Conflicting effects on one actor')
-        modes.add(kind)
-        if kind=='cape':
+        modes.add(mode)
+        if kind in STORY_KINDS:
+            from previs_story_effects import validate
+            _color(e['color']);validate(e,scene,binding,story_props or [])
+        elif kind=='cape':
             cape_count+=1
             _number(e['width'],.2,2,'cape width');_number(e['length'],.2,3,'cape length');_color(e['color'])
             if not isinstance(e['wind'],list) or len(e['wind'])!=3:raise ValueError('Invalid cape wind')
@@ -537,9 +545,9 @@ def _cape(e,binding,scene,bindings,evidence_dir):
             'attachment':target,'bakedVertexFrames':len(cache)*len(vertices)}
 
 
-def build_scene_effects(events,scene,bindings,evidence_dir=None):
+def build_scene_effects(events,scene,bindings,evidence_dir=None,story_props=None):
     if not events:return []
-    by_actor=validate_scene_effects(events,scene,bindings)
+    by_actor=validate_scene_effects(events,scene,bindings,story_props)
     if evidence_dir is not None:
         evidence_dir=Path(evidence_dir);evidence_dir.mkdir(parents=True,exist_ok=True)
     handles=[];original=scene.frame_current
@@ -547,7 +555,10 @@ def build_scene_effects(events,scene,bindings,evidence_dir=None):
         for event in events:
             scene.frame_set(1);bpy.context.view_layer.update()
             binding=by_actor[event['actorId']]
-            if event['kind']=='cape':handle=_cape(event,binding,scene,bindings,evidence_dir)
+            if event['kind'] in STORY_KINDS:
+                from previs_story_effects import build
+                handle=build(event,binding,scene,story_props or [])
+            elif event['kind']=='cape':handle=_cape(event,binding,scene,bindings,evidence_dir)
             elif event['kind']=='explode':handle=_explode(event,binding,scene)
             elif event['kind']=='label':handle=_label(event,binding,scene)
             else:handle=_material_effect(event,binding,scene)
@@ -570,7 +581,10 @@ def measure_scene_effects(handles,scene):
                     projected=[world_to_camera_view(scene,scene.camera,point) for point in points]
                     if any(not (scene.camera.data.clip_start<p.z<scene.camera.data.clip_end and 0<=p.x<=1 and 0<=p.y<=1) for p in projected):
                         row['offscreenFrames'].append(frame)
-                if e['kind']=='cape':
+                if e['kind'] in STORY_KINDS:
+                    from previs_story_effects import measure
+                    sample.update(measure(h,scene,frame))
+                elif e['kind']=='cape':
                     sample.update(h['simulationSamples'][frame-1])
                     actual=_world_vertices(h['cloth'],graph)
                     sample['pinError']=max((a-b).length for a,b in zip(actual[:len(h['targetPoints'][frame])],h['targetPoints'][frame]))

@@ -38,7 +38,7 @@ afterEach(() => {
 });
 
 describe("inspectGcsObjectBounded", () => {
-  it("用真实 ReadableStream 逐块统计，只保留文件头与摘要", async () => {
+  it.each([32, Number.POSITIVE_INFINITY])("真实流按指定预算读取；不设上限时仍统计摘要：%s", async maxBytes => {
     const chunks = [
       Buffer.from("glTF"),
       Buffer.from([2, 0, 0, 0]),
@@ -53,7 +53,7 @@ describe("inspectGcsObjectBounded", () => {
 
     const result = await inspectGcsObjectBounded({
       gcsUri: "gs://test-bucket/uploads/u7/model.glb",
-      maxBytes: 32,
+      maxBytes,
       headerBytes: 12,
       timeoutMs: 1_000,
     });

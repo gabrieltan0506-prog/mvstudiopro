@@ -179,6 +179,31 @@ function fixture(withInteractions = false) {
   return { input, prefix, objects, result, seal, row, d };
 }
 describe("白模永久产物恢复", () => {
+  it.each(["story", "legacy", "story-large"])("报告超过旧4MB及16MB仍可完整恢复：%s", async mode => {
+    const f=fixture();
+    if(mode!=="legacy") {
+      f.input.spec=manhuaPrevisRequestSchema.shape.spec.parse({...f.input.spec,
+        storyProps:[{id:"needle",kind:"needle",keyframes:[{timeSec:0,anchor:{type:"world",position:[0,0,1]}},{timeSec:2,anchor:{type:"world",position:[1,0,1]}}]}],
+        sceneEffects:[{id:"tail",kind:"needle_trail",actorId:"actor-1",propId:"needle",startSec:0,endSec:1,color:"#FFFFFF",radius:.003,trailSec:.25}]});
+      f.result.spec=f.input.spec;
+      const prop=f.input.spec.storyProps![0];
+      f.result.report.storyProps=[{id:"needle",kind:"needle",samples:Array.from({length:48},(_,i)=>({frame:i+1,position:[i/48,0,1],visible:true,fromAnchor:prop.keyframes[0].anchor,toAnchor:prop.keyframes[i===0?0:1].anchor,progress:i/48}))}];
+      f.result.report.sceneEffects=[{id:"tail",kind:"needle_trail",actorId:"actor-1",boundaryZh:"离线恢复夹具",samples:Array.from({length:48},(_,i)=>({frame:i+1,finiteBounds:true,meshVertices:16,minimum:[0,0,0],maximum:[1,1,1],targetMeshes:["tail"],propId:"needle",active:i<=24,anchor:[i/48,0,1],attachmentError:0,trailLength:.1,segmentCount:6,tip:[i/48,0,1]}))}];
+    }
+    const padding=" ".repeat((mode==="story-large"?16:4)*1024*1024);
+    const request=Buffer.from(JSON.stringify(f.input)),report=Buffer.from(JSON.stringify(f.result.report)+padding);
+    f.objects.set(f.prefix+"request.json",request);f.objects.set(f.prefix+"report.json",report);
+    f.result.requestSha256=sha(request);f.result.reportSha256=sha(report);f.seal();
+    const result=Buffer.from(f.objects.get(f.prefix+"result.json")!.toString()+padding);
+    f.objects.set(f.prefix+"result.json",result);
+    const manifest=JSON.parse(f.objects.get(f.prefix+"result-evidence.json")!.toString());
+    manifest.result.bytes=result.length;manifest.result.sha256=sha(result);
+    f.objects.set(f.prefix+"result-evidence.json",Buffer.from(JSON.stringify(manifest)));
+    const recovered=await recoverPrevisResult(f.row,7,f.d);
+    expect(recovered.status).toBe("succeeded");
+    expect(f.d.save).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     "valid",
     "custom-valid",
@@ -479,7 +504,7 @@ describe("白模永久产物恢复", () => {
     expect(await recoverPrevisResult(f.row, 7, f.d)).toBe(f.row);
     expect(f.d.save).not.toHaveBeenCalled();
   });
-  it("原始回执被篡改/超限、manifest身份不符均拒收", async () => {
+  it("原始回执被篡改/无效JSON、manifest身份不符均拒收", async () => {
     for (const kind of ["corrupt", "large", "owner"]) {
       const f = fixture();
       if (kind === "corrupt")

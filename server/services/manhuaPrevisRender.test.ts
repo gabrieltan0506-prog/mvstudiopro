@@ -368,6 +368,20 @@ function fixture(extra: Partial<import("../../shared/manhuaPrevis").ManhuaPrevis
   };
 }
 
+it("超过16MB的完整检查报告仍保存并完成原渲染链", async () => {
+  const f=fixture(),original=f.d.run;
+  const raw=JSON.stringify(f.report)+" ".repeat(17*1024*1024);
+  f.d.run=async(command,args,signal)=>{
+    const output=await original(command,args,signal);
+    if(f.runs()===1)await writeFile(path.join(f.directory(),"report.json"),raw);
+    return output;
+  };
+  await f.run();
+  expect(f.stored.get("report.json")?.length).toBe(Buffer.byteLength(raw));
+  expect(f.stored.has("preview.mp4")).toBe(true);
+  expect(f.stored.has("result-evidence.json")).toBe(true);
+});
+
 it("原始及解析证据分存、条数与实际视频身份闭合", async () => {
   const f = fixture();
   const result = await f.run();

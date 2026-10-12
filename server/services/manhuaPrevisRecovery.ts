@@ -33,8 +33,7 @@ const objectEvidence = z
     bytes: z
       .number()
       .int()
-      .positive()
-      .max(4 * 1024 * 1024),
+      .positive(),
     sha256: digest,
   })
   .strict();
@@ -123,7 +122,8 @@ export async function recoverPrevisResult(
     const chunks: Buffer[] = [];
     await d.inspect({
       gcsUri: prefix + name,
-      maxBytes: 4 * 1024 * 1024,
+      // 只对本任务私有前缀下的报告/结果取消固定体积门槛；继续核对身份和SHA。
+      maxBytes: name === "report.json" || name === "result.json" ? Number.POSITIVE_INFINITY : 4 * 1024 * 1024,
       timeoutMs: 15000,
       onChunk: chunk => chunks.push(Buffer.from(chunk)),
     });
