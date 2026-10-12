@@ -7668,6 +7668,7 @@ clipPromptReviewOpen ? (
 
             <div
               data-manhua-episode-sheets
+              data-manhua-media-open={episodeSheetsRequired ? "true" : undefined}
               className="mt-3 space-y-2 rounded-xl border border-emerald-400/35 bg-emerald-500/[0.08] p-3"
             >
               <button type="button"
