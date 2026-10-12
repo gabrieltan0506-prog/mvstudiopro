@@ -33,14 +33,38 @@ spec={'actors':[actor],'storyProps':[
  {'id':'drop','kind':'blood_drop','keyframes':[key(0,bone('head')),key(1,{'type':'prop','propId':'bowl','offset':[0,0,.03]}),key(2,{'type':'prop','propId':'bowl','offset':[0,0,.03]},False)]},
  {'id':'glow','kind':'sleeve_glow','keyframes':[key(0,bone('hand1'),False),key(1,bone('hand1'),True),key(2,bone('hand1'),True)]},
 ]}
-if '--knife-jar-only' in sys.argv:
+if '--needle-grip-only' in sys.argv:
+    # 独立针轨迹先抬起手腕，释放后飞离；不渲染媒体。
+    world=lambda p:{'type':'world','position':p}
+    spec['storyProps']=[{'id':'needle-take','kind':'needle',
+        'grip':{'actorId':'holder','hand':'hand1','offset':[0,0,0],'startSec':0,'endSec':1},
+        'keyframes':[key(0,world([.40,0,1.15])),key(.5,world([.35,.06,1.40])),
+                     key(1,world([.40,.08,1.38])),key(1.5,world([1.4,.08,1.38])),
+                     key(2,world([1.4,.08,1.38]))]}]
+elif '--knife-jar-only' in sys.argv:
     world={'type':'world','position':[.5,0,1.2]}
     spec['storyProps']=[
       {'id':'knife','kind':'knife','grip':{'actorId':'holder','hand':'hand1','offset':[0,0,-.16],'startSec':0,'endSec':.75},'keyframes':[key(0,bone('hand1',[0,0,.16])),key(.75,bone('hand1',[0,0,.16]),False),key(2,bone('hand1',[0,0,.16]),False)]},
       {'id':'jar','kind':'jar','grip':{'actorId':'holder','hand':'hand1','offset':[0,0,-.02],'startSec':.75,'endSec':1.5},'keyframes':[key(0,bone('hand1',[0,0,.02]),False),key(.75,bone('hand1',[0,0,.02])),key(1.5,world),key(2,world)]},
     ]
 handles=build_story_props(spec,[(actor,rig,None,None,None)],scene,lambda _a,_f:True,[model])
-if '--knife-jar-only' in sys.argv:
+if '--needle-grip-only' in sys.argv:
+    needle=handles[0]
+    assert all('gripResidual' in sample for sample in needle['samples'][:24])
+    assert all('gripResidual' not in sample for sample in needle['samples'][24:])
+    positions=[]
+    for sample in needle['samples'][:24]:
+        scene.frame_set(sample['frame']);bpy.context.view_layer.update()
+        wrist=rig.matrix_world @ rig.pose.bones['hand1'].head
+        assert (wrist-Vector(sample['position'])).length<.005
+        positions.append(wrist.copy())
+    assert (positions[12]-positions[0]).length>.20
+    for sample in needle['samples'][36:]:
+        scene.frame_set(sample['frame']);bpy.context.view_layer.update()
+        wrist=rig.matrix_world @ rig.pose.bones['hand1'].head
+        assert (wrist-Vector(sample['position'])).length>.70
+    print('STORY_PROPS_NEEDLE_GRIP_OK frames=48 wristMoves>0.20 gripFrames=24 releaseFrames=24 rendered=0')
+elif '--knife-jar-only' in sys.argv:
     knife,jar=handles
     assert len(knife['objects'])==2 and len(jar['objects'])==2
     assert max(v.co.z for v in jar['objects'][0].data.vertices)>.29

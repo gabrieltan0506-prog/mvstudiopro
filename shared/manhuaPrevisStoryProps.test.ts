@@ -3,6 +3,19 @@ import { previsStoryPropsSchema, storyPropsIssue } from "./manhuaPrevisStoryProp
 const bone=(actorId="doctor",name="hand1")=>({type:"bone",actorId,bone:name,along:1,offset:[0,0,0]});
 const track=(id:string,anchor:unknown)=>({id,kind:"needle",keyframes:[{timeSec:0,anchor},{timeSec:2,anchor}]});
 const actors=[{id:"doctor",shape:"human"},{id:"horse",shape:"horse"}];
+it("取针用独立轨迹驱动手腕，离手后才绑定落点",()=>{
+ const world=(position:number[])=>({type:"world",position});
+ const props=previsStoryPropsSchema.parse([{id:"needle",kind:"needle",grip:{actorId:"doctor",hand:"hand1",startSec:0,endSec:1},keyframes:[
+  {timeSec:0,anchor:world([.3,0,1])},{timeSec:1,anchor:world([.4,0,1.3])},
+  {timeSec:1.5,anchor:bone("doctor","neck")},{timeSec:2,anchor:bone("doctor","neck")},
+ ]}]);
+ expect(storyPropsIssue(props,actors,2)).toBeNull();
+ const loop=structuredClone(props);loop[0].keyframes[0].anchor=previsStoryPropsSchema.parse([track("temp",bone())])[0].keyframes[0].anchor;
+ expect(storyPropsIssue(loop,actors,2)).toMatch(/独立世界锚点/);
+ const early=structuredClone(props);early[0].grip!.endSec=1.25;
+ expect(storyPropsIssue(early,actors,2)).toMatch(/独立世界锚点/);
+ expect(storyPropsIssue([...props,{...props[0],id:"second"}],actors,2)).toMatch(/同一只手/);
+});
 describe("剧情道具真实锚点契约",()=>{
  it("保留落针同一骨局部点及整段初末态",()=>{const p=previsStoryPropsSchema.parse([track("needle",bone())]);expect(storyPropsIssue(p,actors,2)).toBeNull();expect(p[0].keyframes[1].anchor).toEqual(p[0].keyframes[0].anchor);});
  it("拒绝不存在的演员或错误形态骨名",()=>{expect(storyPropsIssue(previsStoryPropsSchema.parse([track("n",bone("ghost"))]),actors,2)).toMatch(/不存在/);expect(storyPropsIssue(previsStoryPropsSchema.parse([track("n",bone("horse"))]),actors,2)).toMatch(/骨名/);});

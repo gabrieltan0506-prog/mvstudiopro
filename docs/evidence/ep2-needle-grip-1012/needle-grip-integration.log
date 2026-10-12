@@ -1,0 +1,9 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/new-chat/work/remix-video-notes
+
+ ✓ server/services/manhuaPrevisStoryPropsIntegration.test.ts (2 tests | 1 skipped) 9ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 1 skipped (2)
+   Start at  13:16:34
+   Duration  977ms (transform 457ms, setup 0ms, collect 719ms, tests 9ms, environment 0ms, prepare 58ms)
