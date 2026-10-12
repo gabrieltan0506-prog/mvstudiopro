@@ -25,6 +25,9 @@ beforeAll(async () => {
         generateDialogue:async input=>{f.calls.push(input);return {jobId:'test-job',status:'succeeded',result:{gcsUri:'gs://test-bucket/generated/test.mp3',audioUrl:'https://audio.test/test.mp3',bytes:12000,voiceGate:{durationSeconds:2.25}}};},
         getDialogue:async input=>{f.queries.push(input);return f.result;},
         speedDialogueTake:async input=>{(f.speedCalls=f.speedCalls||[]).push(input);return {gcsUri:input.gcsUri.replace(/\.wav$/,'-x'+input.speed.toFixed(2).replace('.','p')+'.wav'),durationSec:6.144/input.speed,bytes:9000,speed:input.speed};},
+        listReferenceVoices:async()=>[],
+        listDesignedVoices:async()=>f.designs||[],
+        createDesignedVoice:async input=>{(f.designCalls=f.designCalls||[]).push(input);const asset={requestId:input.requestId,request:input,labelZh:input.labelZh,status:f.designPending?'running':'ready',canResume:!!f.designPending,creditsCost:f.designPending?0:50,...(f.designPending?{}:{voiceId:'wsqwen_'+'a'.repeat(48),audioUrl:'https://audio.test/design.wav'})};f.designs=[asset];return asset;},
         draftMusic:async input=>{f.lastMusicDraft=input;return {brief:{model:input.model,custom_mode:true,instrumental:true,style:'恢宏',prompt:'展翼时释放气势',title:'守护',duration:30,negative_tags:'',style_weight:0.5,weirdness_constraint:0.5}};},
         generateMusic:async input=>{f.calls.push(input);return {jobId:'bgm-test',status:'queued'};},
         getMusic:async input=>{f.musicQueries.push(input.jobId);return f.history[input.jobId]||{jobId:input.jobId,status:'running',variants:[],titleZh:'守护',durationSec:30};},
@@ -116,6 +119,41 @@ async function open() {
   return { context, page, click, fill };
 }
 describe("逐句配音与分段配乐真实视图（仅虚构服务）", () => {
+  it("文字声线明确确认、原编号恢复、试听选择，并进入逐句生成", async () => {
+    const { context, page, click, fill } = await open();
+    try {
+      await click("添加一句对白");
+      await page.click('[aria-label="1 选择音色"]');
+      await click("自定义音色");
+      await page.waitForSelector('[aria-label="声线名称"]');
+      await fill("声线名称", "阿菁清亮声");
+      await fill("声线描述", "年轻女性，清亮中高音，咬字清晰温柔坚定。");
+      await page.evaluate(() => { (window as any).fixture.designPending = true; });
+      await page.evaluate(() => {
+        const label = Array.from(document.querySelectorAll('label')).find(e => e.textContent?.includes('确认设计样例'))!;
+        (label.querySelector('input') as HTMLInputElement).click();
+      });
+      await click("生成声样 · 确认费用");
+      await page.waitForFunction(() => (window as any).fixture.designCalls?.length === 1);
+      await page.waitForFunction(() => !!Array.from(document.querySelectorAll('button')).find(e => e.textContent?.includes('查询原设计') && !e.disabled));
+      await page.evaluate(() => { (window as any).fixture.designPending = false; });
+      await click("查询原设计并继续保存/结算");
+      await page.waitForFunction(() => (window as any).fixture.designCalls?.length === 2);
+      expect(await page.evaluate(() => { const c=(window as any).fixture.designCalls; return c[0].requestId === c[1].requestId; })).toBe(true);
+      await page.waitForSelector('audio[aria-label="阿菁清亮声声样试听"]');
+      await click("选为本句音色");
+      await page.waitForFunction(() => (window as any).fixture.state.cues[0].voice.startsWith('wsqwen_'));
+      await fill("1 本句台词", "别怕，有我在。");
+      await fill("1 说话角色", "阿菁");
+      await fill("1 镜头与动作", "第一镜安慰");
+      await page.click('[aria-label="生成第1句配音"]');
+      await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(e => e.textContent === '确认生成'));
+      await click("确认生成");
+      await page.waitForFunction(() => (window as any).fixture.calls.length === 1);
+      expect(await page.evaluate(() => (window as any).fixture.calls[0].input)).toBe("别怕，有我在。");
+      expect(await page.evaluate(() => (window as any).fixture.calls[0].voice)).toBe("wsqwen_" + "a".repeat(48));
+    } finally { await context.close(); }
+  }, 30_000);
   it("整段一位小数预览到应用、重新采用及重入，不改原声、不提交付费；保存失败明确提示", async () => {
     const { context, page, click } = await open();
     try {

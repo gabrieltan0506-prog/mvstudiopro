@@ -1,3 +1,5 @@
+import { DESIGNED_VOICE_PREFIX, type CanvasVoiceDesignInput } from "../../shared/canvasVoiceDesign";
+import { synthesizeWavespeedVoice } from "./wavespeedVoice";
 /**
  * 对白 TTS 路由：套餐优先（新加坡→北京，走 WebSocket 正门），OpenRouter 兜底。
  *
@@ -22,7 +24,7 @@ export type ManhuaDialogueTtsRouteResult = {
   voice: string;
   generationId: string;
   /** 实际走的路，透传给面板/账单描述 */
-  provider: "token-plan-singapore" | "token-plan-beijing" | "openrouter" | "bailian-singapore";
+  provider: "token-plan-singapore" | "token-plan-beijing" | "openrouter" | "bailian-singapore" | "wavespeed-qwen3";
   voiceGate: ManhuaDialogueVoiceGateResult;
 };
 
@@ -31,12 +33,15 @@ export type ManhuaDialogueTtsRouteInput = {
   voice: string;
   ownerUserId: number;
   seed?: number;
+  operationId?: string;
+  voiceDesign?: Pick<CanvasVoiceDesignInput, "labelZh" | "description">;
   signal?: AbortSignal;
 };
 
 export type ManhuaDialogueTtsRouteDependencies = {
   synthesizeTokenPlan?: typeof synthesizeTokenPlanDialogueWs;
   synthesizeOpenRouter?: typeof synthesizeQwenDialogue;
+  synthesizeDesigned?: typeof synthesizeWavespeedVoice;
   synthesizeReference?: typeof synthesizeTokenPlanDialogueWs;
   resolveReferenceWorkspace?: typeof resolveReferenceVoiceWorkspace;
 };
@@ -82,6 +87,7 @@ export async function synthesizeManhuaDialoguePreferred(
   input: ManhuaDialogueTtsRouteInput,
   dependencies: ManhuaDialogueTtsRouteDependencies = {}
 ): Promise<ManhuaDialogueTtsRouteResult> {
+  if (input.voice.startsWith(DESIGNED_VOICE_PREFIX)) return (dependencies.synthesizeDesigned || synthesizeWavespeedVoice)(input);
   const synthesizeTokenPlan =
     dependencies.synthesizeTokenPlan || synthesizeTokenPlanDialogueWs;
   const synthesizeOpenRouter =

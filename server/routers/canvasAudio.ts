@@ -1,3 +1,5 @@
+import { canvasVoiceDesignInputSchema } from "../../shared/canvasVoiceDesign";
+import { createCanvasVoiceDesign, listCanvasVoiceDesigns } from "../services/canvasVoiceDesign";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
@@ -16,6 +18,8 @@ async function safely<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export const canvasAudioRouter = router({
+  createDesignedVoice: protectedProcedure.input(canvasVoiceDesignInputSchema).mutation(({ ctx, input }) => safely(() => createCanvasVoiceDesign(ctx.user.id, input))),
+  listDesignedVoices: protectedProcedure.query(({ ctx }) => safely(() => listCanvasVoiceDesigns(ctx.user.id))),
   generateDialogue: protectedProcedure.input(canvasDialogueInputSchema).mutation(({ ctx, input }) => safely(() => generateCanvasDialogue(ctx.user.id, input))),
   getDialogue: protectedProcedure.input(z.object({ billingRequestId: z.string().uuid() })).query(({ ctx, input }) => safely(() => getCanvasDialogue(ctx.user.id, input.billingRequestId))),
   listDialogue: protectedProcedure.input(z.object({ limit: z.number().int().min(1).max(100).default(30) })).query(({ ctx, input }) => safely(() => listCanvasDialogue(ctx.user.id, input.limit))),

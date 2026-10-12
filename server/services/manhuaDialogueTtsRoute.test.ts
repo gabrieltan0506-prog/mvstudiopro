@@ -39,6 +39,16 @@ const input = {
 describe("synthesizeManhuaDialoguePreferred", () => {
   beforeEach(() => resetPlanVoiceRejectMemo());
 
+  it("设计声线只走固定参考克隆，失败不切供应商", async () => {
+    const synthesizeDesigned = vi.fn().mockRejectedValue(new Error("原任务排队"));
+    const synthesizeTokenPlan = vi.fn();
+    const synthesizeOpenRouter = vi.fn();
+    await expect(synthesizeManhuaDialoguePreferred({ ...input, voice: "wsqwen_" + "a".repeat(48), operationId: "test" }, { synthesizeDesigned, synthesizeTokenPlan, synthesizeOpenRouter })).rejects.toThrow("原任务排队");
+    expect(synthesizeDesigned).toHaveBeenCalledTimes(1);
+    expect(synthesizeTokenPlan).not.toHaveBeenCalled();
+    expect(synthesizeOpenRouter).not.toHaveBeenCalled();
+  });
+
   it("参考音色只走建声时同一业务空间的TTS，不掉入其他账号兜底", async () => {
     const voice = "qwen-audio-3.0-tts-plus-mvsref-abc123";
     const synthesizeReference = vi.fn(async () => ({ ...planResult, voice }));
