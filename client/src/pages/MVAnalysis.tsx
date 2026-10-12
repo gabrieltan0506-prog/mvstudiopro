@@ -1,3 +1,5 @@
+import Navbar from "@/components/Navbar";
+import RemixDraftEditor from "@/components/RemixDraftEditor";
 import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -367,7 +369,7 @@ type GrowthCampAsset = {
 };
 
 function isGrowthCampVideoFile(file: File): boolean {
-  return file.type.startsWith("video/") || /\.mp4$/i.test(file.name);
+  return file.type === "video/mp4" || /\.mp4$/i.test(file.name);
 }
 
 function isGrowthCampImageFile(file: File): boolean {
@@ -1666,7 +1668,7 @@ function PlatformTrendEntryPanel() {
   );
 }
 
-export default function MVAnalysisPage() {
+export default function MVAnalysisPage({ remixWorkspace = false }: { remixWorkspace?: boolean }) {
   const stripInternalJargon = (value: string) => String(value || "")
     .replace(/Call to Action/gi, "行动引导")
     .replace(/call-to-action/gi, "行动引导")
@@ -1687,9 +1689,12 @@ export default function MVAnalysisPage() {
 
   const [, navigate] = useLocation();
   const isPlatformPage = false;
+  const [remixFormat, setRemixFormat] = useState<"video" | "note">(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("format") === "note" ? "note" : "video");
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
   const { isAuthenticated, loading, user } = useAuth({ autoFetch: true });
 
+  const [remixDraftBusy, setRemixDraftBusy] = useState(false);
+  const remixRewriteMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
   const [assets, setAssets] = useState<GrowthCampAsset[]>([]);
   const [assetReadingId, setAssetReadingId] = useState<string | null>(null);
   const [uploadStage, setUploadStage] = useState<UploadStage>("idle");
@@ -1710,12 +1715,12 @@ export default function MVAnalysisPage() {
   const [estimatedTime, setEstimatedTime] = useState(0);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
-  const [analysisMode, setAnalysisMode] = useState<"GROWTH" | "REMIX">("GROWTH");
+  const [analysisMode, setAnalysisMode] = useState<"GROWTH" | "REMIX">(remixWorkspace ? "REMIX" : "GROWTH");
   const [growthCampAnalysisModel] = useState<GrowthCampModel>(() =>
     typeof window !== "undefined" ? readGrowthCampAnalysisModelFromLs() : GROWTH_CAMP_ANALYSIS_MODEL,
   );
   const [analysisProfile, setAnalysisProfile] = useState<GrowthAnalysisProfile>(() =>
-    typeof window !== "undefined" ? readGrowthCampAnalysisProfileFromLs() : "full",
+    remixWorkspace ? "full" : typeof window !== "undefined" ? readGrowthCampAnalysisProfileFromLs() : "full",
   );
   const [extractPrompt, setExtractPrompt] = useState(() =>
     typeof window !== "undefined" ? readGrowthCampExtractPromptFromLs() : "",
@@ -1778,10 +1783,10 @@ export default function MVAnalysisPage() {
     analysisMode === "REMIX" || inferRemixLayoutFromAnalysis(analysis);
 
   useEffect(() => {
-    if (analysis?.mode === "GROWTH" || analysis?.mode === "REMIX") {
+    if (!remixWorkspace && (analysis?.mode === "GROWTH" || analysis?.mode === "REMIX")) {
       setAnalysisMode(analysis.mode);
     }
-  }, [analysis?.mode]);
+  }, [analysis?.mode, remixWorkspace]);
   const [error, setError] = useState<string | null>(null);
   const [context, setContext] = useState("");
   const [quotaModalVisible, setQuotaModalVisible] = useState(false);
@@ -2053,6 +2058,10 @@ export default function MVAnalysisPage() {
 
   const ingestGrowthCampImages = useCallback((files: File[]) => {
     const valid = files.filter((f) => isGrowthCampImageFile(f));
+    if (valid.length !== files.length) {
+      setError("本次图片未添加：仅支持 PNG、JPG、JPEG。请移除其他格式后重新选择。");
+      return;
+    }
     if (!valid.length) {
       setError("请上传 PNG 或 JPG 图片（单次可多选）");
       return;
@@ -2144,7 +2153,26 @@ export default function MVAnalysisPage() {
     setDebugInfo(null);
   }, []);
 
+  const moveGrowthCampImage = (id: string, direction: -1 | 1) => {
+    if (isProcessing || assetReadingId) return;
+    setAssets(previous => {
+      const positions = previous.flatMap((asset, index) => asset.kind === "image" ? [index] : []);
+      const source = positions.findIndex(index => previous[index].id === id);
+      const destination = source + direction;
+      if (source < 0 || destination < 0 || destination >= positions.length) return previous;
+      const next = [...previous];
+      [next[positions[source]], next[positions[destination]]] = [next[positions[destination]], next[positions[source]]];
+      return next;
+    });
+    setAnalysis(null);
+    setDebugInfo(null);
+  };
+
   const handleAnalyze = useCallback(async () => {
+    const remixInstruction = remixFormat === "video"
+      ? "按实际内容拆解视频，不固定4镜/8秒或总时长。分镜保留来源时间、不确定项与可替换内容；只凭图片不能推断声音。"
+      : "按上传顺序拆解笔记封面、各页图文、标题与正文，给出可改写内容；imageTextNoteGuide.structuredBody中逐页内容使用“## 第1页”“## 第2页”等明确页标题，发布正文单独标注。封面放coverSetup，不重复编号；不得臆造未提供页。不要套视频分镜或强加BGM。";
+    const requestContext = remixWorkspace ? [context, remixInstruction].filter(Boolean).join("\n\n") : context;
     if (!allAssetsReady || assets.length === 0) return;
 
     if (videoAssets.length > 1) {
@@ -2201,7 +2229,7 @@ export default function MVAnalysisPage() {
           action: "growth_analyze_images",
           params: {
             images: imageInputs,
-            context: context || undefined,
+            context: requestContext || undefined,
             modelName: growthCampAnalysisModel,
             mode: analysisMode,
             analysisRunId,
@@ -2303,7 +2331,7 @@ export default function MVAnalysisPage() {
             gcsUri: signed.gcsUri,
             mimeType: asset.mimeType || "video/mp4",
             fileName: asset.fileName,
-            context: context || undefined,
+            context: requestContext || undefined,
             modelName: growthCampAnalysisModel,
             mode: analysisMode,
             analysisRunId,
@@ -2469,7 +2497,7 @@ export default function MVAnalysisPage() {
       if (partials.length > 1) {
         const merged = await synthesizeGrowthCampAnalysesMutation.mutateAsync({
           parts: partials.map((p) => ({ label: p.label, analysis: p.analysis })),
-          context: context || undefined,
+          context: requestContext || undefined,
           modelName: growthCampAnalysisModel,
         });
         finalAnalysis = normalizeAnalysisScale({ ...merged.analysis, mode: analysisMode }) as AnalysisResult;
@@ -2480,7 +2508,7 @@ export default function MVAnalysisPage() {
       setAnalyzedVideoUrl(lastVideoUrl);
       void trpcUtils.mvAnalysis.getGrowthSnapshot
         .fetch({
-          context: context || undefined,
+          context: requestContext || undefined,
           modelName: growthCampAnalysisModel,
           requestedPlatforms: [...FULL_PLATFORM_ORDER],
           analysis: finalAnalysis,
@@ -2505,6 +2533,7 @@ export default function MVAnalysisPage() {
       setUploadStage("error");
     }
   }, [
+    remixWorkspace, remixFormat,
     allAssetsReady,
     assets.length,
     videoAssets,
@@ -3308,8 +3337,9 @@ export default function MVAnalysisPage() {
 
   return (
     <div className="min-h-dvh bg-transparent text-[#f7f4ef]">
-      <div className="mx-auto max-w-[1760px] px-4 py-8">
-        <WorkAmbientPanel />
+      {remixWorkspace && <Navbar />}
+      <div className={remixWorkspace ? "mx-auto max-w-[1240px] px-4 pb-8 pt-24" : "mx-auto max-w-[1760px] px-4 py-8"}>
+        {!remixWorkspace && <WorkAmbientPanel />}
         <UsageQuotaBanner
           featureType="analysis"
           currentCount={usageStatsQuery.data?.features.analysis.currentCount ?? 0}
@@ -3330,16 +3360,16 @@ export default function MVAnalysisPage() {
           />
         ) : null}
 
-          <div className="mb-6 rounded-2xl border border-[#ff4fb8]/30 bg-[rgba(255,79,184,0.08)] px-4 py-3 text-sm leading-relaxed text-[#ffd4ec]">
+          {!remixWorkspace && <div className="mb-6 rounded-2xl border border-[#ff4fb8]/30 bg-[rgba(255,79,184,0.08)] px-4 py-3 text-sm leading-relaxed text-[#ffd4ec]">
             素材上传与视觉分析已迁移至{" "}
             <a
-              href="/platform?tab=assets"
+              href="/creator-growth-camp/premium-remix"
               className="font-semibold text-[#ff9fe0] underline underline-offset-2"
             >
-              平台页 · 视频深度拆解
+              爆款复刻
             </a>
-            。本页为旧版调试入口（<code className="text-xs">/creator-growth-camp/legacy</code>），新链路请用导航「视频深度拆解」（/platform?tab=video）。
-          </div>
+            。本页为旧版调试入口，新链路请使用导航中的“爆款复刻”。
+          </div>}
 
           <div className="mb-8 flex items-center justify-between">
           <button onClick={() => window.history.back()} className="rounded-full border border-white/10 bg-white/5 p-2 transition hover:bg-white/10">
@@ -3361,16 +3391,16 @@ export default function MVAnalysisPage() {
               </>
             ) : null}
             <div className="rounded-full border border-[#ff8a3d]/30 bg-[#ff8a3d]/10 px-3 py-1 text-sm text-[#ffb37f]">
-              Creator Growth Camp
+              {remixWorkspace ? "爆款复刻" : "Creator Growth Camp"}
             </div>
-            <button
+            {!remixWorkspace && <button
               type="button"
               onClick={() => setShowResearch((v) => !v)}
               className="inline-flex items-center gap-1.5 rounded-full border border-[#a78bfa]/30 bg-[#a78bfa]/10 px-3 py-1 text-sm font-semibold text-[#c4b5fd] transition hover:bg-[#a78bfa]/20"
             >
               <ScanSearch className="h-3.5 w-3.5" />
               竞品分析调研
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -3550,10 +3580,10 @@ export default function MVAnalysisPage() {
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.24em] text-white/55">
                 <Sparkles className="h-3.5 w-3.5" />
-                {isPlatformPage ? "平台数据分析" : "创作商业成长营"}
+                {remixWorkspace ? "参考拆解 · 内容改写 · 编辑交接" : isPlatformPage ? "平台数据分析" : "创作商业成长营"}
               </div>
-              <h1 className="mt-4 max-w-5xl text-4xl font-black leading-[0.96] text-white md:text-[86px]">
-                {isPlatformPage ? (
+              <h1 className={remixWorkspace ? "mt-4 max-w-5xl text-4xl font-black leading-tight text-white md:text-5xl" : "mt-4 max-w-5xl text-4xl font-black leading-[0.96] text-white md:text-[86px]"}>
+                {remixWorkspace ? <>爆款复刻<span className="mt-4 block text-xl font-normal leading-8 text-white/65">把值得借鉴的结构，变成你的作品。</span></> : isPlatformPage ? (
                   <>
                     <span className="block whitespace-nowrap">把平台趋势、数据库证据与</span>
                     <span className="mt-3 inline-block rounded-[24px] border border-[#90c4ff]/45 bg-[#90c4ff]/8 px-5 py-2 text-[#e9f5ff] shadow-[0_0_0_1px_rgba(144,196,255,0.12)]">
@@ -3572,12 +3602,12 @@ export default function MVAnalysisPage() {
                 )}
               </h1>
               <p className="mt-5 max-w-4xl text-base leading-8 text-white/70">
-                {isPlatformPage
+                {remixWorkspace ? "上传参考作品，拆解结构并改写成自己的分镜或图文稿。视频剪辑在漫剧工厂或自由画布中继续。" : isPlatformPage
                   ? "专门看平台推荐、平台数据参考、扶持信号和数据库证据，不把二次创作流程混进来。"
                   : "直接指出内容卡在哪里、该先修什么、先发哪里，以及怎么把流量接到可成交的商业动作。"}
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
-                {isPlatformPage ? (
+                {remixWorkspace ? <><a href="#remix-input" className="rounded-xl bg-orange-300 px-4 py-3 text-black">1 · 上传参考</a><a href="#remix-draft" className="rounded-xl border border-white/20 px-4 py-3">2 · 编辑复刻稿</a><span className="px-4 py-3 text-sm text-white/55">3 · 采用编辑稿，继续制作</span></> : isPlatformPage ? (
                   <>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">平台推荐</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">数据库证据</div>
@@ -3600,8 +3630,8 @@ export default function MVAnalysisPage() {
               </div>
             </div>
 
-            <div className="rounded-[28px] border border-white/10 bg-black/20 p-5 backdrop-blur-sm">
-              <div className="mb-5 rounded-[22px] border border-white/10 bg-white/[0.04] p-2">
+            <div id="remix-input" className="rounded-[28px] border border-white/10 bg-black/20 p-5 backdrop-blur-sm">
+              {remixWorkspace ? <div className="mb-5 grid grid-cols-2 gap-3" aria-label="复刻类型">{([{ value: "video", title: "视频复刻", desc: "镜头、节奏与声音" }, { value: "note", title: "笔记复刻", desc: "封面、图文与正文" }] as const).map(item => <button key={item.value} type="button" aria-pressed={remixFormat === item.value} disabled={isProcessing || remixDraftBusy} onClick={() => setRemixFormat(item.value)} className={`rounded-2xl border p-4 text-left ${remixFormat === item.value ? "border-orange-200 bg-orange-300/15" : "border-white/15"}`}><strong>{item.title}</strong><span className="mt-2 block text-xs text-white/60">{item.desc}</span></button>)}</div> : <div className="mb-5 rounded-[22px] border border-white/10 bg-white/[0.04] p-2">
                 <div className="grid gap-2 sm:grid-cols-2">
                   {[
                     { value: "GROWTH" as const, label: "商业成长营", desc: "保留全局分析，强化商业路径与增长判断" },
@@ -3622,31 +3652,35 @@ export default function MVAnalysisPage() {
                     </button>
                   ))}
                 </div>
-              </div>
-              {isRemixMode && (
+              </div>}
+              {isRemixMode && (!remixWorkspace || remixFormat === "video") && (
                 <div style={{ marginBottom: 20 }}>
                   <VideoParserWidget />
                 </div>
               )}
 
+              {remixWorkspace && <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm leading-7 text-white/75" aria-label="参考素材上传说明">
+                <strong className="block text-white">{remixFormat === "note" ? "笔记参考怎么上传" : "视频参考怎么上传"}</strong>
+                {remixFormat === "note" ? <><p>支持 PNG、JPG、JPEG 图片，可多选。第一张作为封面，其余按内页阅读顺序排列；添加后可前移、后移。</p><p>原笔记标题和正文请粘贴在下方输入框，并写明想换成的主题。不支持直接上传 PDF、Word 或笔记文件。</p><p>分析后编辑封面、各页图文与正文，再采用到图文制作。也可上传 1 个 MP4，提炼成图文稿。</p></> : <><p>支持 MP4 视频，每次 1 个；再次选择会替换当前视频。可补充 PNG、JPG、JPEG 参考图片。</p><p>分析后获得分镜文字稿，修改人物、场景与表达，再采用到自由画布继续制作。上传与分析不会直接生成剪辑成片。</p></>}
+              </div>}
               {assets.length === 0 ? (
-                <div className="flex min-h-[320px] w-full flex-col items-center justify-center rounded-[24px] border border-dashed border-white/15 bg-white/5 px-6 py-10 text-center">
+                <div className={`flex w-full flex-col items-center justify-center rounded-[24px] border border-dashed border-white/15 bg-white/5 px-6 text-center ${remixWorkspace ? "min-h-[220px] py-6" : "min-h-[320px] py-10"}`}>
                   <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#ff8a3d] text-black">
                     <Upload className="h-7 w-7" />
                   </div>
                   <div className="mt-5 text-2xl font-bold">
-                    {isPlatformPage ? "上传视频或图片素材" : "上传视频或图片素材"}
+                    {remixWorkspace ? remixFormat === "note" ? "上传笔记参考" : "上传视频参考" : "上传视频或图片素材"}
                   </div>
                   <p className="mt-3 max-w-lg text-sm leading-7 text-white/60">
-                    MP4 视频<strong className="text-white/85"> 每次仅 1 个</strong>；PNG / JPG 图片
-                    <strong className="text-white/85"> 单次可多选、数量不限</strong>。可组合「1 个视频 + 多张图片」做商业分析。
+                    {remixWorkspace && remixFormat === "note" ? "选择 PNG / JPG / JPEG 封面和内页图片，添加后确认阅读顺序。" : <>MP4 视频<strong className="text-white/85"> 每次仅 1 个</strong>；PNG / JPG / JPEG 图片
+                    <strong className="text-white/85"> 可多选</strong>。可组合「1 个视频 + 多张图片」做拆解分析。</>}
                   </p>
                   <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
                     <button
                       type="button"
                       onClick={handleSelectVideo}
                       disabled={Boolean(assetReadingId) || isProcessing}
-                      className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 text-sm font-bold text-black transition hover:bg-[#ff9c5c] disabled:opacity-50"
+                      className={`inline-flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-bold transition disabled:opacity-50 ${remixWorkspace && remixFormat === "note" ? "order-2 border border-white/15 bg-white/8 text-white hover:bg-white/12" : "bg-[#ff8a3d] text-black hover:bg-[#ff9c5c]"}`}
                     >
                       <Film className="h-4 w-4" />
                       上传 MP4（1 个）
@@ -3655,10 +3689,10 @@ export default function MVAnalysisPage() {
                       type="button"
                       onClick={handleSelectImages}
                       disabled={Boolean(assetReadingId) || isProcessing}
-                      className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/8 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/12 disabled:opacity-50"
+                      className={`inline-flex items-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold transition disabled:opacity-50 ${remixWorkspace && remixFormat === "note" ? "order-1 bg-[#ff8a3d] text-black hover:bg-[#ff9c5c]" : "border border-white/15 bg-white/8 text-white hover:bg-white/12"}`}
                     >
                       <ImageIcon className="h-4 w-4" />
-                      上传图片（可多选）
+                      上传 PNG / JPG 图片（可多选）
                     </button>
                   </div>
                 </div>
@@ -3732,6 +3766,11 @@ export default function MVAnalysisPage() {
                           </div>
                         )}
                         <div className="border-t border-white/10 px-3 py-2 text-xs text-white/70">
+                          {remixWorkspace && remixFormat === "note" && asset.kind === "image" && <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <strong className="mr-auto text-orange-200">{imageAssets[0]?.id === asset.id ? "封面" : `内页 ${imageAssets.findIndex(item => item.id === asset.id)}`}</strong>
+                            <button type="button" aria-label={`前移 ${asset.fileName}`} disabled={isProcessing || Boolean(assetReadingId) || imageAssets[0]?.id === asset.id} onClick={() => moveGrowthCampImage(asset.id, -1)} className="rounded border border-white/20 px-2 py-1 disabled:opacity-30">前移</button>
+                            <button type="button" aria-label={`后移 ${asset.fileName}`} disabled={isProcessing || Boolean(assetReadingId) || imageAssets.at(-1)?.id === asset.id} onClick={() => moveGrowthCampImage(asset.id, 1)} className="rounded border border-white/20 px-2 py-1 disabled:opacity-30">后移</button>
+                          </div>}
                           <div className="truncate font-medium">{asset.fileName}</div>
                           <div className="mt-0.5 text-white/45">
                             {asset.kind === "video" ? "MP4" : "图片"} · {(asset.size / (1024 * 1024)).toFixed(1)} MB
@@ -3775,14 +3814,14 @@ export default function MVAnalysisPage() {
 
               <div className="mt-5">
                 <label className="mb-2 block text-sm font-semibold text-white/80">
-                  业务背景 / 商业目标
+                  {remixWorkspace ? remixFormat === "note" ? "原笔记标题、正文与改写要求" : "这次准备复刻什么？" : "业务背景 / 商业目标"}
                 </label>
                 <div className="relative">
                   <textarea
                     value={context}
                     onChange={(e) => setContext(e.target.value)}
                     rows={4}
-                    placeholder="例如：我是形象穿搭美妆博主，想知道这支素材能承接什么商业价值，以及该先发哪个平台。"
+                    placeholder={remixWorkspace ? "例如：借鉴这篇笔记的阅读顺序，换成我的面试经历；或保留视频的悬念结构，换成我的人物和场景。" : "例如：我是形象穿搭美妆博主，想知道这支素材能承接什么商业价值，以及该先发哪个平台。"}
                     className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 pr-12 text-sm text-white placeholder:text-white/30"
                   />
                   <div className="absolute right-3 top-3">
@@ -3802,7 +3841,7 @@ export default function MVAnalysisPage() {
                 </p>
               </div>
 
-              <div className="mt-5">
+              <div className={remixWorkspace ? "hidden" : "mt-5"}>
                 <p className="mb-2 text-xs font-semibold text-white/70">分析模式</p>
                 <div className="inline-flex flex-wrap gap-2 rounded-xl border border-white/10 bg-black/30 p-1">
                   {([
@@ -3877,11 +3916,11 @@ export default function MVAnalysisPage() {
                 <button
                   type="button"
                   onClick={() => void handleAnalyze()}
-                  disabled={!allAssetsReady || isProcessing}
+                  disabled={!allAssetsReady || isProcessing || remixDraftBusy}
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 font-bold text-black transition hover:bg-[#ff9c5c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-                  {analysisProfile === "extract_only" ? "开始提取内容" : "开始进行商业分析"}
+                  {remixWorkspace ? "拆解参考，准备复刻" : analysisProfile === "extract_only" ? "开始提取内容" : "开始进行商业分析"}
                 </button>
               </div>
 
@@ -3890,8 +3929,9 @@ export default function MVAnalysisPage() {
           </div>
             </section>
 
+        {remixWorkspace && user?.id ? <div id="remix-draft" className="scroll-mt-24"><RemixDraftEditor key={`${user.id}:${remixFormat}`} evidence={analysis} format={remixFormat} userId={user.id} brief={context} onBusyChange={setRemixDraftBusy} rewriteCost={user.role === "admin" || user.role === "supervisor" ? 0 : CREDIT_COSTS.platformOptimizeCustomCopy} onRewrite={async input => { const result = await remixRewriteMutation.mutateAsync(input); return result.result.optimizedMarkdown; }} /></div> : null}
         <div>
-        {!analysis ? (
+        {!analysis && !remixWorkspace ? (
           <section className="mt-8 grid gap-4 md:grid-cols-3">
               <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                 <div className="flex items-center gap-3 text-[#ffb37f]">

@@ -1,3 +1,4 @@
+import RemixProductionImport from "@/components/RemixProductionImport";
 import { KnowledgeCardFilePicker, knowledgeCardFileMime } from "@/components/platform/KnowledgeCardFilePicker";
 import { nativeLearnLiveProposalState } from "@/lib/manhuaLearnResultUi";
 import { ensureManhuaLearnPageOwnership, readManhuaLearnPageJobId, writeManhuaLearnPageJobId, filterManhuaLearnPageJobs } from "@/lib/manhuaLearnPageScope";
@@ -15612,6 +15613,19 @@ export default function PlatformPage() {
                   </button>
                 </div>
               </div>
+
+              <RemixProductionImport userId={user?.id} format="note" disabled={recoveryBlocked} onApply={(draft, index) => {
+                if (recoveryBlocked || customNotePendingConfirmRef.current) return false;
+                const content = draft.units[index]?.content;
+                if (!content?.trim()) throw new Error("这一页内容为空，请返回编辑稿补齐");
+                if ((customNoteText.trim() || customNotePendingFilesRef.current.length) && !window.confirm("采用会替换当前正文和待处理文档，已有图片暂时保留。确认已备份当前内容？")) return false;
+                customNoteRevisionRef.current += 1; renderRunIdRef.current += 1;
+                customNotePendingFilesRef.current = []; setCustomNotePendingMeta([]); setCustomNoteUploadStatus(null);
+                setCustomNoteText(content); setCustomNoteFullMarkdown(null); setCustomNoteCompactMarkdown(null);
+                setCustomNoteDistillPhase("ready"); setCustomNoteKind("single_page_knowledge_card"); setOutputType("single_page");
+                setCustomOptimizeResult(null); setCustomOptimizeSummary(null); setCustomNoteError(null);
+                toast.success(`已载入第${index + 1}页正文，请核对分页与费用后生成；旧图片未重做`); return true;
+              }} />
 
               <div className="mb-3 space-y-3">
                 <PlatformOutputTypePicker

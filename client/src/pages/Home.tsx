@@ -8,7 +8,7 @@ import HomeRedeemCode from "../components/HomeRedeemCode";
 import HomeInviteApply from "../components/HomeInviteApply";
 import HomeEducation from "../components/HomeEducation";
 import HomeFeedback from "../components/HomeFeedback";
-import HomeBlogShowcase from "../components/HomeBlogShowcase";
+import HomeRemixStrip from "../components/HomeRemixStrip";
 import { LaunchCountdownBanner } from "../components/LaunchCountdownBanner";
 import HomePlatformHighlights from "../components/HomePlatformHighlights";
 import HomeFileConversion from "../components/HomeFileConversion";
@@ -34,7 +34,7 @@ export default function HomePage() {
         <HomePhotoTools />
         <HomeFileConversion />
         <HomePlatformHighlights />
-        <HomeBlogShowcase />
+        <HomeRemixStrip />
 
         <HomeMyWorks />
 

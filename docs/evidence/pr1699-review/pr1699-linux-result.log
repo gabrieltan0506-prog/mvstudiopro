@@ -1,0 +1,54 @@
+Connecting to fdaa:50:6acf:a7b:86e:ee9e:7601:2...
+node:assert:604
+    throw err;
+    ^
+
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /分镜来源已变化/. Input:
+
+'[\n' +
+  '  {\n' +
+  '    "code": "custom",\n' +
+  '    "path": [\n' +
+  '      "patch"\n' +
+  '    ],\n' +
+  '    "message": "顾问未提供有效修改或能力说明"\n' +
+  '  }\n' +
+  ']'
+
+    at Object.<anonymous> (/tmp/pr1699-b70d58de-probe.cjs:17788:23)
+    at Module._compile (node:internal/modules/cjs/loader:1804:14)
+    at Object..js (node:internal/modules/cjs/loader:1936:10)
+    at Module.load (node:internal/modules/cjs/loader:1525:32)
+    at Module._load (node:internal/modules/cjs/loader:1327:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:245:24)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: ZodError: [
+    {
+      "code": "custom",
+      "path": [
+        "patch"
+      ],
+      "message": "顾问未提供有效修改或能力说明"
+    }
+  ]
+      at applyAdvisorPrevisCandidate (/tmp/pr1699-b70d58de-probe.cjs:17728:58)
+      at /tmp/pr1699-b70d58de-probe.cjs:17788:36
+      at getActual (node:assert:611:5)
+      at strict.throws (node:assert:759:24)
+      at Object.<anonymous> (/tmp/pr1699-b70d58de-probe.cjs:17788:23)
+      at Module._compile (node:internal/modules/cjs/loader:1804:14)
+      at Object..js (node:internal/modules/cjs/loader:1936:10)
+      at Module.load (node:internal/modules/cjs/loader:1525:32)
+      at Module._load (node:internal/modules/cjs/loader:1327:12)
+      at TracingChannel.traceSync (node:diagnostics_channel:328:14),
+  expected: /分镜来源已变化/,
+  operator: 'throws',
+  diff: 'simple'
+}
+
+Node.js v24.13.1
+Error: ssh shell: Process exited with status 1

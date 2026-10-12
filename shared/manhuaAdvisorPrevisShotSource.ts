@@ -12,6 +12,7 @@ export const advisorPrevisShotSourceSchema = z.object({
     actionZh: text(20000),
     cameraZh: text(10000).optional(),
     dialogueZh: text(20000).optional(),
+    soundZh: text(10000).optional(),
   }).strict()).min(1).max(120),
 }).strict().superRefine((source, ctx) => {
   const seen = new Set<number>();
@@ -26,7 +27,7 @@ export const advisorPrevisShotSourceSchema = z.object({
 });
 export type AdvisorPrevisShotSource = z.infer<typeof advisorPrevisShotSourceSchema>;
 
-export function buildAdvisorPrevisShotSource(clipId: string, shots: readonly { index: number; durationSec: number; actionZh: string; cameraZh?: string; dialogueZh?: string }[]): AdvisorPrevisShotSource {
+export function buildAdvisorPrevisShotSource(clipId: string, shots: readonly { index: number; durationSec: number; actionZh: string; cameraZh?: string; dialogueZh?: string; soundZh?: string }[]): AdvisorPrevisShotSource {
   let cursor = 0;
   return advisorPrevisShotSourceSchema.parse({ version: 1, clipId, shots: shots.map(shot => {
     const startSec = cursor;
@@ -35,6 +36,7 @@ export function buildAdvisorPrevisShotSource(clipId: string, shots: readonly { i
     return { index: shot.index, startSec, endSec: cursor, actionZh: shot.actionZh,
       ...(shot.cameraZh?.trim() ? { cameraZh: shot.cameraZh } : {}),
       ...(shot.dialogueZh?.trim() ? { dialogueZh: shot.dialogueZh } : {}),
+      ...(shot.soundZh?.trim() ? { soundZh: shot.soundZh } : {}),
     };
   }) });
 }

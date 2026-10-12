@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/new-chat/work/remix-video-notes
+
+ ✓ shared/manhuaPrevisCastRepair.test.ts (5 tests | 4 skipped) 8ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 4 skipped (5)
+   Start at  12:44:27
+   Duration  454ms (transform 119ms, setup 0ms, collect 197ms, tests 8ms, environment 0ms, prepare 57ms)
+

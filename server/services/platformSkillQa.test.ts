@@ -775,7 +775,7 @@ it("1007普通顾问同读冻结导演包、指定模板和真实功能边界，
 
 it("逐镜来源完整送入顾问专用消息，能力不足原样提示且不自动重试或渲染", async () => {
   const studio = createManhuaPrevisStudio(5);
-  studio.advisorShotSource = buildAdvisorPrevisShotSource("clip-1", [{ index: 8, durationSec: 5, actionZh: "先生到墨屠原伤肩旁取血，刀刃离开伤肩后停住。", cameraZh: "肩侧近景，不翻过伤口轴线", dialogueZh: "无对白" }]);
+  studio.advisorShotSource = buildAdvisorPrevisShotSource("clip-1", [{ index: 8, durationSec: 5, actionZh: "先生到墨屠原伤肩旁取血，刀刃离开伤肩后停住。", cameraZh: "肩侧近景，不翻过伤口轴线", dialogueZh: "无对白", soundZh: "刀刃轻响后，血滴落陶碗；下一镜保留余响" }]);
   const target = makeAdvisorPrevisTarget("clip-1", studio);
   const patch = { kind: "previs_edit_v1", summaryZh: "取血接触尚不能完整预演", unsupportedZh: [], shotCoverage: [{ index: 8, status: "unsupported", actorIds: ["actor-1"], reasonZh: "缺少刀刃、伤肩及陶碗的完整接触动作" }], cameras: studio.spec.cameras };
   invokeLLMMock.mockResolvedValue(llmJson(JSON.stringify(patch)));
@@ -784,6 +784,7 @@ it("逐镜来源完整送入顾问专用消息，能力不足原样提示且不�
   expect(invokeLLMMock).toHaveBeenCalledTimes(1);
   const input = invokeLLMMock.mock.calls[0][0];
   expect(input.messages[1].content).toContain(JSON.stringify(target.shotSource));
+  expect(input.messages[1].content).toContain("刀刃轻响后，血滴落陶碗");
   expect(input.messages[0].content).toContain("不得用静立/转头/指点冒充");
   expect(input).toMatchObject({ modelName: "z-ai/glm-5.3-flashx", reasoningEffort: "low", max_tokens: 16_384 });
 });
