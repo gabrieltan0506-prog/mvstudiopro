@@ -15,7 +15,7 @@ describe("核对已有预演人物", () => {
     expect(next.selectedJobId).toBe("old-render"); expect(next.history).toEqual(old.history);
     expect(next.specHistory?.at(-1)?.spec).toEqual(old.spec);
     expect(old.spec.actors).toHaveLength(1); expect(old.spec.actors[0].shape).toBe("human");
-    expect(() => applyAdvisorPrevisCandidate("clip", next, { target: makeAdvisorPrevisTarget("clip", old), patch: { kind: "previs_edit_v1", summaryZh: "旧候选", unsupportedZh: [] } })).toThrow();
+    expect(() => applyAdvisorPrevisCandidate("clip", next, { target: makeAdvisorPrevisTarget("clip", old), patch: { kind: "previs_edit_v1", summaryZh: "旧候选", unsupportedZh: [], cameras: old.spec.cameras } })).toThrow("本段配置已变化");
   });
   it("骨骼不兼容则保留原模型并拒绝，不静默去骨", () => {
     const old = baseline(); old.spec.actors[0].riggedModel = { sourceJobId: "m3d_existing", forwardAxis: "+X", targetHeight: 1.7 };
