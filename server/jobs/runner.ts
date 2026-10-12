@@ -201,7 +201,12 @@ export function resolveFailedJobDisposition(job: {
   type: string;
   input: unknown;
   attempts?: number | null;
-}): "refund_and_fail_paid_image" | "requeue" | "fail" {
+}, error?: unknown): "refund_and_fail_paid_image" | "reconcile_and_fail_paid_image" | "requeue" | "fail" {
+  const params = (job.input as { params?: { codeMotionImage?: unknown } } | null)?.params;
+  if (job.type === "image" && isCanvasGptImage2Job(job.input) && params?.codeMotionImage &&
+      ((error as {kind?: string} | null)?.kind === "unknown" ||
+        (error instanceof Error && /^image job timed out after \d+ms$/.test(error.message))))
+    return "reconcile_and_fail_paid_image";
   if (job.type === "image" && paidImageLedgerTaskType(job.input)) {
     return "refund_and_fail_paid_image";
   }
@@ -1752,6 +1757,9 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
 
   /** Canvas 关键静帧 / 封面：与 sync op=canvasGptImage2 同核，供短入队+轮询 */
   if (input.action === "canvas_gpt_image2") {
+    const codeMotionPolicy = params.codeMotionImage
+      ? await (await import("../services/codeMotionImages.js")).resolveCodeMotionImageWorkerPolicy(jobUserId, jobId || "", params.codeMotionImage, input)
+      : null;
     const prompt = String(params.prompt ?? "").trim();
     if (!prompt) throw new Error("missing prompt");
     const aspectRatio = String(params.aspectRatio || "9:16") === "16:9" ? "16:9" : "9:16";
@@ -1810,7 +1818,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     }
     const { canvasImageCredits } = await import("../../shared/canvasGenerationPricing.js");
     const { manhuaAssetStandardizeCredits } = await import("../../shared/manhuaAssetStandardize.js");
-    const cost = assetStandardizeQuality
+    const cost = codeMotionPolicy ? codeMotionPolicy.credits : assetStandardizeQuality
       ? manhuaAssetStandardizeCredits(assetStandardizeQuality)
       : canvasImageCredits(typeof params.batchIndex === "number" ? params.batchIndex : 0);
     const chargeKey = assetStandardizeQuality
@@ -1883,7 +1891,16 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     };
     let imageUrl: string | null | undefined;
     try {
-      imageUrl = await generateGptImage2FromRawEnglishPrompt({
+      imageUrl = codeMotionPolicy
+        ? await (await import("../services/openaiGptImage2.js")).postOpenAiGptImage2AndUpload(prompt, gcsSubdir, {
+            aspectRatio, exactModel: codeMotionPolicy.model, quality: codeMotionPolicy.quality,
+            imageUrls: await Promise.all(referenceImageUrls.map(async uri =>
+              (await import("../services/gcs.js")).signGsUriV4ReadUrl(uri,3600))),
+            strictRequest: true, lane: imageLane, captureError,
+            persistResponse: response => import("../services/codeMotionImages.js").then(m =>
+              m.persistCodeMotionImageResponse(jobUserId, params.codeMotionImage, response)),
+          })
+        : await generateGptImage2FromRawEnglishPrompt({
         englishPrompt: prompt,
         aspectRatio,
         gcsSubdir,
@@ -1908,17 +1925,17 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
       // 不退款、不回落，账本转 settlement_pending 交对账；退了款用户再点一次就是平台付两份。
       if ((err as { kind?: string } | null)?.kind === "unknown") {
         if (creditDeducted > 0) {
-          const { markSettlementPending } = await import("../services/paidJobLedger.js");
-          await markSettlementPending(
+          const { markSettlementPending, markReconciliationPending } = await import("../services/paidJobLedger.js");
+          await (codeMotionPolicy ? markReconciliationPending : markSettlementPending)(
             jobId,
             assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2",
           ).catch(() => false);
         }
-        throw new Error(
+        throw Object.assign(new Error(
           `出图结果无法确认（供应商可能已建单），为避免重复扣费已停止重试并转人工对账：${
             err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200)
           }`,
-        );
+        ), { kind: "unknown" });
       }
       await refundCanvasImage("画布出图·生成失败·退回已扣积分");
       throw err;
@@ -2144,6 +2161,13 @@ async function processManhuaBgmJob(params: {
   jobId: string;
 }): Promise<{ output: ManhuaBgmJobOutput; provider: string }> {
   const parsed = manhuaBgmJobInputSchema.parse(params.input);
+  let inkSponsored = false;
+  if (parsed.params.productionSlot) {
+    const slot = parsed.params.productionSlot;
+    if (slot.kind !== "bgm" || slot.requestId !== parsed.params.billingRequestId || slot.digest !== parsed.params.briefDigest) throw new Error("配乐制作预算与任务不一致");
+    const { assertCodeMotionProductionSlot } = await import("../services/codeMotionProductionGrant");
+    inkSponsored = (await assertCodeMotionProductionSlot(params.userId, slot)).tier === "free";
+  }
   const manhuaBgmProviderLabel = (model: string) => (model.startsWith("suno-v6") ? `ttapi:${model}` : "evolink:suno-v5.5");
   const job = await getJobByIdStrict(params.jobId);
   if (
@@ -2232,7 +2256,7 @@ async function processManhuaBgmJob(params: {
     // chargeKey=jobId 幂等（重试/恢复不重复扣）；admin 由 deductCreditsAmount 内部免扣。
     const numericUserId = Number(params.userId);
     let bgmDeduct: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
-    if (Number.isFinite(numericUserId) && CANVAS_BGM_CREDITS_PER_RUN > 0) {
+    if (!inkSponsored && Number.isFinite(numericUserId) && CANVAS_BGM_CREDITS_PER_RUN > 0) {
       const credits = await getCredits(numericUserId);
       if (credits.totalAvailable < CANVAS_BGM_CREDITS_PER_RUN) {
         throw new Error(
@@ -4220,7 +4244,12 @@ async function runClaimedJob(
         console.error("[Jobs] trend report refund failed:", refundError),
       );
       await markJobFailed(job.id, message);
-    } else if (resolveFailedJobDisposition(job) === "refund_and_fail_paid_image") {
+    } else if (resolveFailedJobDisposition(job, error) === "reconcile_and_fail_paid_image") {
+      const { markReconciliationPending } = await import("../services/paidJobLedger.js");
+      await markReconciliationPending(job.id, "canvasGptImage2").catch(e =>
+        console.error("[Jobs] code motion image reconciliation pending:", e));
+      await markJobFailed(job.id, "场景图提交或保存结果尚未确认，保留原任务对账；不会再次生成或提前退款");
+    } else if (resolveFailedJobDisposition(job, error) === "refund_and_fail_paid_image") {
       /**
        * 七审 P0-2:canvas_gpt_image2 绝不整单重排——重排会第二次调用付费图片上游。
        * 八审 P0-4:外层墙钟超时/进程级失败走账本 refundCreditsOnFailure——退款失败

@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/evolinkSeedanceVideo.receipt.test.ts (5 tests | 4 skipped) 29ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 4 skipped (5)
+   Start at  04:39:23
+   Duration  1.51s (transform 337ms, setup 0ms, collect 397ms, tests 29ms, environment 0ms, prepare 188ms)
+

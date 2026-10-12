@@ -1,0 +1,96 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+stdout | server/routers.manhuaAdvisorOperation.test.ts
+[OAuth] Initialized with baseURL:
+
+stderr | server/routers.manhuaAdvisorOperation.test.ts
+[OAuth] ERROR: OAUTH_SERVER_URL is not configured! Set OAUTH_SERVER_URL environment variable.
+
+stderr | server/routers.manhuaAdvisorOperation.test.ts > askPlatformSkillQa · 漫剧顾问操作账本 > 模型失败且退分暂时失败时保留 REFUND_PENDING，不谎称已退款
+[askPlatformSkillQa] operation failed jobId=manhua_advisor_job Error: 上游暂时不可用
+    at /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/routers.manhuaAdvisorOperation.test.ts:342:46
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11
+    at runWithTimeout (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)
+    at runTest (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runFiles (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)
+    at startTests (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)
+[askPlatformSkillQa] refund pending jobId=manhua_advisor_job Error: 退款账本暂时不可用
+    at /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/routers.manhuaAdvisorOperation.test.ts:343:50
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11
+    at runWithTimeout (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)
+    at runTest (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runFiles (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)
+    at startTests (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)
+
+stderr | server/routers.manhuaAdvisorOperation.test.ts > askPlatformSkillQa · 漫剧顾问操作账本 > 任务登记失败只保存固定业务错误，原始异常不进入前台或退款原因
+[askPlatformSkillQa] register failed jobId=manhua_advisor_job Error: duplicate key value violates jobs_pkey
+    at /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/routers.manhuaAdvisorOperation.test.ts:409:7
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11
+    at runWithTimeout (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)
+    at runTest (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runFiles (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)
+    at startTests (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)
+
+stderr | server/routers.manhuaAdvisorOperation.test.ts > askPlatformSkillQa · 漫剧顾问操作账本 > 上游已返回但结果持久化失败时不交付答案，完成原路退分
+[askPlatformSkillQa] operation failed jobId=manhua_advisor_job Error: advisor_result_persist_failed
+    at /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/routers.ts:7097:37
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+
+stderr | server/routers.manhuaAdvisorOperation.test.ts > askPlatformSkillQa · 漫剧顾问操作账本 > 失败收口与迟到成功竞争时以 succeeded 为准，回放结果且不退款
+[askPlatformSkillQa] operation failed jobId=manhua_advisor_job Error: 当前 worker 连接已断
+    at /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/routers.manhuaAdvisorOperation.test.ts:472:46
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11
+    at runWithTimeout (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)
+    at runTest (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runFiles (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)
+    at startTests (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)
+
+stderr | server/routers.manhuaAdvisorOperation.test.ts > askPlatformSkillQa · 漫剧顾问操作账本 > 模型失败后只经原 hold 退款并收口 failed，保留原扣分来源快照
+[askPlatformSkillQa] operation failed jobId=manhua_advisor_job Error: 模型未返回合法 JSON
+    at /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/routers.manhuaAdvisorOperation.test.ts:496:46
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11
+    at runWithTimeout (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)
+    at runTest (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runFiles (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)
+    at startTests (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)
+
+ ✓ server/routers.manhuaAdvisorOperation.test.ts (21 tests | 13 skipped) 35ms
+stderr | server/routers.manhuaAdvisorOperation.test.ts > 每作品5次/12积分新增路径 > 免费调用失败释放原作品原编号，不赠送其他作品名额
+[askPlatformSkillQa] operation failed jobId=manhua_advisor_job Error: 测试模型失败
+    at /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/routers.manhuaAdvisorOperation.test.ts:557:46
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:146:14
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:11
+    at runWithTimeout (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:39:7)
+    at runTest (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:17)
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runFiles (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1262:5)
+    at startTests (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1271:3)
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed | 13 skipped (21)
+   Start at  15:52:41
+   Duration  6.33s (transform 3.24s, setup 0ms, collect 5.76s, tests 35ms, environment 0ms, prepare 139ms)

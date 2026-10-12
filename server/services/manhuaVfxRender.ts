@@ -11,6 +11,7 @@ import { fetchPostProdSourceToFile, runMediaTool, uploadResult } from "./postPro
 import { blenderLaunchCommand, blenderLowPriorityDefault, runPrevisProcess } from "./manhuaPrevisRender";
 import { mediaRuntime } from "./postProdResources";
 import { prepareManhuaVfxScene } from "./manhuaVfxSceneSource";
+import { assertManhuaVfxWorker } from "../jobs/workerRole";
 import { isManhuaVfxSceneKind } from "../../shared/manhuaVfxCityFold";
 import { composeVfxWorldLayers } from "./manhuaVfxWorldLayers";
 import { renderVfxStageEnvironment } from "./manhuaVfxStageRender";
@@ -219,6 +220,7 @@ export function buildVfxCompositeArgs(source: string, layers: string | undefined
 const renderDeps = { upload: uploadBufferToGcs, fetch: fetchPostProdSourceToFile, runBlender: runPrevisProcess, runMedia: runMediaTool, uploadResult, prepareScene: prepareManhuaVfxScene, runStage: renderVfxStageEnvironment };
 /** One authoritative worker operation. All evidence uploads survive cancellation; no automatic model calls. */
 export async function renderManhuaVfx(raw: unknown, userId: string, signal: AbortSignal, overrides: Omit<typeof renderDeps, "prepareScene" | "runStage"> & Partial<Pick<typeof renderDeps, "prepareScene" | "runStage">> = renderDeps) {
+  assertManhuaVfxWorker();
   const deps = { ...renderDeps, ...overrides };
   signal.throwIfAborted();
   const root = await mkdtemp(path.join(tmpdir(), "manhua-vfx-"));

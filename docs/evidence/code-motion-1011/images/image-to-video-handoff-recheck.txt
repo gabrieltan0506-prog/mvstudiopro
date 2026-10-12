@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/codeMotionImageProduction.test.ts > adopted scene image reaches the official compiler without deleting original graphic animation or changing production identity
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  04:08:10
+   Duration  14.38s (transform 5.17s, setup 0ms, collect 12.91s, tests 69ms, environment 1ms, prepare 195ms)
+

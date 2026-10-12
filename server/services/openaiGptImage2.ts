@@ -110,12 +110,23 @@ async function extractFirstImageBuffer(json: unknown): Promise<Buffer> {
   throw new Error("OpenAI gpt-image-2: no b64_json/url");
 }
 
+export type OpenAiImageResponseEvidence = { status: number; body: string };
+type PersistImageResponse = (response: OpenAiImageResponseEvidence) => Promise<void>;
+
+async function readImageResponse(res: Response, persist?: PersistImageResponse): Promise<unknown> {
+  if (!persist) return res.json().catch(() => ({}));
+  const body = await res.text();
+  await persist?.({ status: res.status, body });
+  try { return JSON.parse(body); } catch { return {}; }
+}
+
 async function postGenerations(
   apiKey: string,
   prompt: string,
   size: string,
   quality: OpenAiImageQuality,
   model: string,
+  persistResponse?: PersistImageResponse,
 ): Promise<Buffer> {
   const body = {
     model,
@@ -134,7 +145,7 @@ async function postGenerations(
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  const json: unknown = await res.json().catch(() => ({}));
+  const json = await readImageResponse(res, persistResponse);
   if (!res.ok) {
     const msg =
       (json as { error?: { message?: string } })?.error?.message || JSON.stringify(json).slice(0, 400);
@@ -153,6 +164,7 @@ async function postEdits(
   model: string,
   flowLog?: string[],
   beforeImageSubmit?: () => Promise<void>,
+  persistResponse?: PersistImageResponse,
 ): Promise<Buffer> {
   const rawBuffers = await Promise.all(imageUrls.slice(0, 16).map((u) => downloadUrl(u)));
   const { padImageBufferToSize } = await import("./manhuaKeyartPadReference.js");
@@ -219,7 +231,7 @@ async function postEdits(
     body: Buffer.concat(parts),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  const json: unknown = await res.json().catch(() => ({}));
+  const json = await readImageResponse(res, persistResponse);
   if (!res.ok) {
     const msg =
       (json as { error?: { message?: string } })?.error?.message || JSON.stringify(json).slice(0, 400);
@@ -235,6 +247,11 @@ export async function postOpenAiGptImage2AndUpload(
   prompt: string,
   gcsSubdir: string,
   opts: {
+    /** Internal feature contract; bypasses global model override only when explicitly supplied. */
+    exactModel?: "gpt-image-2-2026-04-21" | "gpt-image-2.5-sunburst";
+    /** Ambiguous submit/upload outcomes must never be retried or refunded as known failures. */
+    strictRequest?: boolean;
+    persistResponse?: PersistImageResponse;
     beforeImageSubmit?: () => Promise<void>;
     aspectRatio?: "9:16" | "16:9";
     size?: string;
@@ -260,7 +277,7 @@ export async function postOpenAiGptImage2AndUpload(
 
   const aspectRatio = opts.aspectRatio ?? "9:16";
   const size = resolveOpenAiSize(aspectRatio, opts.size);
-  const model = resolveOpenAiGptImage2Model(opts.variant);
+  const model = opts.exactModel ?? resolveOpenAiGptImage2Model(opts.variant);
   const quality = resolveQuality(opts.quality, model);
   const promptTrimmed = enforceSimplifiedChineseImagePrompt(String(prompt || "").trim());
   if (!promptTrimmed) {
@@ -289,8 +306,8 @@ export async function postOpenAiGptImage2AndUpload(
     const slot = keyChain[i]!;
     try {
       const buffer = refs.length
-        ? await postEdits(slot.key, promptTrimmed, size, quality, refs, maskUrl, model, L, opts.beforeImageSubmit)
-        : await postGenerations(slot.key, promptTrimmed, size, quality, model);
+        ? await postEdits(slot.key, promptTrimmed, size, quality, refs, maskUrl, model, L, opts.beforeImageSubmit, opts.persistResponse)
+        : await postGenerations(slot.key, promptTrimmed, size, quality, model, opts.persistResponse);
       const publicUrl = await uploadBufferToPlatformStorage(buffer, gcsSubdir, L);
       appendImageFlowLog(
         L,
@@ -306,6 +323,12 @@ export async function postOpenAiGptImage2AndUpload(
       lastMessage = e instanceof Error ? e.message : String(e);
       appendImageFlowLog(L, `[GPT-IMAGE-2·OpenAI] 异常 · 钥=${slot.slot} · ${lastMessage}`);
       console.warn("[openaiGptImage2]", slot.slot, lastMessage);
+      if (opts.strictRequest) {
+        if (!/^OpenAI (?:generations|edits) HTTP 4\d\d:/.test(lastMessage)) {
+          throw Object.assign(new Error("图片提交或保存结果尚未确认，请恢复原任务核对"), { kind: "unknown" });
+        }
+        break;
+      }
       const hasNext = i + 1 < keyChain.length;
       if (!hasNext || !shouldRetryOpenAiImageWithOtherKey(lastMessage)) break;
       appendImageFlowLog(L, `[GPT-IMAGE-2·OpenAI] 换钥重试 → ${keyChain[i + 1]!.slot}`);

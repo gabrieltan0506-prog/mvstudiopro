@@ -1,0 +1,5144 @@
+[
+  {
+    "id": "columnAnnotations",
+    "description": "三张已选图固定对齐，素材名注记依次落下并保留；新增布局可编辑。",
+    "useCase": "图文对照；至少3张已选图、每镜至少4秒",
+    "editedScenes": 3,
+    "compiled": {
+      "version": 1,
+      "scenes": [
+        {
+          "id": "s0",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题0",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-column-0-paper",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.45,
+                "fill": "#f4f1e8",
+                "stroke": "#b8b4aa"
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.58,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-0-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.44
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.255,
+              "height": 0.52,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-column-0-focus",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.45,
+                "opacity": 0,
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8,
+                  "ease": "step",
+                  "opacity": 1
+                },
+                {
+                  "at": 1.9,
+                  "ease": "step",
+                  "opacity": 0
+                }
+              ],
+              "blend": "normal",
+              "layer": 3,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.286,
+              "height": 0.586,
+              "radius": 0,
+              "strokeWidth": 0.006,
+              "filled": false
+            },
+            {
+              "id": "ink-menu-layout-column-0-note",
+              "start": 0.8,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#deef7c",
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.08,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.12,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-0-label",
+              "start": 0.8,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#182524"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.08,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "text",
+              "text": "素材1",
+              "fontSize": 0.024,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.25,
+              "lineHeight": 1.15,
+              "letterSpacing": 0
+            },
+            {
+              "id": "ink-menu-layout-column-1-paper",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.45,
+                "fill": "#f4f1e8",
+                "stroke": "#b8b4aa"
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.58,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-1-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.44
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.255,
+              "height": 0.52,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-column-1-focus",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.45,
+                "opacity": 0,
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 1.9,
+                  "ease": "step",
+                  "opacity": 1
+                },
+                {
+                  "at": 3,
+                  "ease": "step",
+                  "opacity": 0
+                }
+              ],
+              "blend": "normal",
+              "layer": 3,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.286,
+              "height": 0.586,
+              "radius": 0,
+              "strokeWidth": 0.006,
+              "filled": false
+            },
+            {
+              "id": "ink-menu-layout-column-1-note",
+              "start": 1.9,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#deef7c",
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 1.9,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.1799999999999997,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.12,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-1-label",
+              "start": 1.9,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#182524"
+              },
+              "keyframes": [
+                {
+                  "at": 1.9,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.1799999999999997,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "text",
+              "text": "素材2",
+              "fontSize": 0.024,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.25,
+              "lineHeight": 1.15,
+              "letterSpacing": 0
+            },
+            {
+              "id": "ink-menu-layout-column-2-paper",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.45,
+                "fill": "#f4f1e8",
+                "stroke": "#b8b4aa"
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.58,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-2-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.44
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.255,
+              "height": 0.52,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-column-2-focus",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.45,
+                "opacity": 0,
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 3,
+                  "ease": "step",
+                  "opacity": 1
+                },
+                {
+                  "at": 4.1000000000000005,
+                  "ease": "step",
+                  "opacity": 0
+                }
+              ],
+              "blend": "normal",
+              "layer": 3,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.286,
+              "height": 0.586,
+              "radius": 0,
+              "strokeWidth": 0.006,
+              "filled": false
+            },
+            {
+              "id": "ink-menu-layout-column-2-note",
+              "start": 3,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#deef7c",
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 3,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 3.2800000000000002,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.12,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-2-label",
+              "start": 3,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#182524"
+              },
+              "keyframes": [
+                {
+                  "at": 3,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 3.2800000000000002,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "text",
+              "text": "素材3",
+              "fontSize": 0.024,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.25,
+              "lineHeight": 1.15,
+              "letterSpacing": 0
+            }
+          ]
+        },
+        {
+          "id": "s1",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题1",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-column-0-paper",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.45,
+                "fill": "#f4f1e8",
+                "stroke": "#b8b4aa"
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.58,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-0-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.44
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.255,
+              "height": 0.52,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-column-0-focus",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.45,
+                "opacity": 0,
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8,
+                  "ease": "step",
+                  "opacity": 1
+                },
+                {
+                  "at": 1.9,
+                  "ease": "step",
+                  "opacity": 0
+                }
+              ],
+              "blend": "normal",
+              "layer": 3,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.286,
+              "height": 0.586,
+              "radius": 0,
+              "strokeWidth": 0.006,
+              "filled": false
+            },
+            {
+              "id": "ink-menu-layout-column-0-note",
+              "start": 0.8,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#deef7c",
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.08,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.12,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-0-label",
+              "start": 0.8,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#182524"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.08,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "text",
+              "text": "素材1",
+              "fontSize": 0.024,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.25,
+              "lineHeight": 1.15,
+              "letterSpacing": 0
+            },
+            {
+              "id": "ink-menu-layout-column-1-paper",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.45,
+                "fill": "#f4f1e8",
+                "stroke": "#b8b4aa"
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.58,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-1-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.44
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.255,
+              "height": 0.52,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-column-1-focus",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.45,
+                "opacity": 0,
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 1.9,
+                  "ease": "step",
+                  "opacity": 1
+                },
+                {
+                  "at": 3,
+                  "ease": "step",
+                  "opacity": 0
+                }
+              ],
+              "blend": "normal",
+              "layer": 3,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.286,
+              "height": 0.586,
+              "radius": 0,
+              "strokeWidth": 0.006,
+              "filled": false
+            },
+            {
+              "id": "ink-menu-layout-column-1-note",
+              "start": 1.9,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#deef7c",
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 1.9,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.1799999999999997,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.12,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-1-label",
+              "start": 1.9,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#182524"
+              },
+              "keyframes": [
+                {
+                  "at": 1.9,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.1799999999999997,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "text",
+              "text": "素材2",
+              "fontSize": 0.024,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.25,
+              "lineHeight": 1.15,
+              "letterSpacing": 0
+            },
+            {
+              "id": "ink-menu-layout-column-2-paper",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.45,
+                "fill": "#f4f1e8",
+                "stroke": "#b8b4aa"
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.58,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-2-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.44
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.255,
+              "height": 0.52,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-column-2-focus",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.45,
+                "opacity": 0,
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 3,
+                  "ease": "step",
+                  "opacity": 1
+                },
+                {
+                  "at": 4.1000000000000005,
+                  "ease": "step",
+                  "opacity": 0
+                }
+              ],
+              "blend": "normal",
+              "layer": 3,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.286,
+              "height": 0.586,
+              "radius": 0,
+              "strokeWidth": 0.006,
+              "filled": false
+            },
+            {
+              "id": "ink-menu-layout-column-2-note",
+              "start": 3,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#deef7c",
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 3,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 3.2800000000000002,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.12,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-2-label",
+              "start": 3,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#182524"
+              },
+              "keyframes": [
+                {
+                  "at": 3,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 3.2800000000000002,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "text",
+              "text": "素材3",
+              "fontSize": 0.024,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.25,
+              "lineHeight": 1.15,
+              "letterSpacing": 0
+            }
+          ]
+        },
+        {
+          "id": "s2",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题2",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-column-0-paper",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.45,
+                "fill": "#f4f1e8",
+                "stroke": "#b8b4aa"
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.58,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-0-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.44
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.255,
+              "height": 0.52,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-column-0-focus",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.45,
+                "opacity": 0,
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8,
+                  "ease": "step",
+                  "opacity": 1
+                },
+                {
+                  "at": 1.9,
+                  "ease": "step",
+                  "opacity": 0
+                }
+              ],
+              "blend": "normal",
+              "layer": 3,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.286,
+              "height": 0.586,
+              "radius": 0,
+              "strokeWidth": 0.006,
+              "filled": false
+            },
+            {
+              "id": "ink-menu-layout-column-0-note",
+              "start": 0.8,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#deef7c",
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.08,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.12,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-0-label",
+              "start": 0.8,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.18,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#182524"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.08,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "text",
+              "text": "素材1",
+              "fontSize": 0.024,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.25,
+              "lineHeight": 1.15,
+              "letterSpacing": 0
+            },
+            {
+              "id": "ink-menu-layout-column-1-paper",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.45,
+                "fill": "#f4f1e8",
+                "stroke": "#b8b4aa"
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.58,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-1-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.44
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.255,
+              "height": 0.52,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-column-1-focus",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.45,
+                "opacity": 0,
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 1.9,
+                  "ease": "step",
+                  "opacity": 1
+                },
+                {
+                  "at": 3,
+                  "ease": "step",
+                  "opacity": 0
+                }
+              ],
+              "blend": "normal",
+              "layer": 3,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.286,
+              "height": 0.586,
+              "radius": 0,
+              "strokeWidth": 0.006,
+              "filled": false
+            },
+            {
+              "id": "ink-menu-layout-column-1-note",
+              "start": 1.9,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#deef7c",
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 1.9,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.1799999999999997,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.12,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-1-label",
+              "start": 1.9,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#182524"
+              },
+              "keyframes": [
+                {
+                  "at": 1.9,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.1799999999999997,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "text",
+              "text": "素材2",
+              "fontSize": 0.024,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.25,
+              "lineHeight": 1.15,
+              "letterSpacing": 0
+            },
+            {
+              "id": "ink-menu-layout-column-2-paper",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.45,
+                "fill": "#f4f1e8",
+                "stroke": "#b8b4aa"
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.58,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-2-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.44
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.255,
+              "height": 0.52,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-column-2-focus",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.45,
+                "opacity": 0,
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 3,
+                  "ease": "step",
+                  "opacity": 1
+                },
+                {
+                  "at": 4.1000000000000005,
+                  "ease": "step",
+                  "opacity": 0
+                }
+              ],
+              "blend": "normal",
+              "layer": 3,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.286,
+              "height": 0.586,
+              "radius": 0,
+              "strokeWidth": 0.006,
+              "filled": false
+            },
+            {
+              "id": "ink-menu-layout-column-2-note",
+              "start": 3,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#deef7c",
+                "stroke": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 3,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 3.2800000000000002,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.28,
+              "height": 0.12,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-column-2-label",
+              "start": 3,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8200000000000001,
+                "y": 0.7,
+                "opacity": 0,
+                "fill": "#182524"
+              },
+              "keyframes": [
+                {
+                  "at": 3,
+                  "y": 0.7,
+                  "opacity": 0
+                },
+                {
+                  "at": 3.2800000000000002,
+                  "ease": "easeOut",
+                  "y": 0.77,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "text",
+              "text": "素材3",
+              "fontSize": 0.024,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.25,
+              "lineHeight": 1.15,
+              "letterSpacing": 0
+            }
+          ]
+        },
+        {
+          "id": "s3",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题3",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "paperStack",
+    "description": "2至4张已选图完整放入方角纸页，依序前移，旧页边缘持续可见。",
+    "useCase": "文件与手记展示；至少2张已选图、每镜至少4秒",
+    "editedScenes": 3,
+    "compiled": {
+      "version": 1,
+      "scenes": [
+        {
+          "id": "s0",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题0",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-paper-0-sheet",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-0-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-paper-1-sheet",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-1-image",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-paper-2-sheet",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 7,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-2-image",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 8,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain"
+            }
+          ]
+        },
+        {
+          "id": "s1",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题1",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-paper-0-sheet",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-0-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-paper-1-sheet",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-1-image",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-paper-2-sheet",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 7,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-2-image",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 8,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain"
+            }
+          ]
+        },
+        {
+          "id": "s2",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题2",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-paper-0-sheet",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-0-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-paper-1-sheet",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-1-image",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain"
+            },
+            {
+              "id": "ink-menu-layout-paper-2-sheet",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 7,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-2-image",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 8,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain"
+            }
+          ]
+        },
+        {
+          "id": "s3",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题3",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "imageReveal",
+    "description": "逐张揭开镜头已有图片，保留裁切、位置与其他动作。",
+    "useCase": "已有照片逐步出现；不会生成新图",
+    "editedScenes": 3,
+    "compiled": {
+      "version": 1,
+      "scenes": [
+        {
+          "id": "s0",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题0",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-0-sheet",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-0-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-1-sheet",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-1-image",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                },
+                {
+                  "at": 2.0999999999999996,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-2-sheet",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 7,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-2-image",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                },
+                {
+                  "at": 2.92,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 8,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            }
+          ]
+        },
+        {
+          "id": "s1",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题1",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-0-sheet",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-0-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-1-sheet",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-1-image",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                },
+                {
+                  "at": 2.0999999999999996,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-2-sheet",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 7,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-2-image",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                },
+                {
+                  "at": 2.92,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 8,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            }
+          ]
+        },
+        {
+          "id": "s2",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题2",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-0-sheet",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-0-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-1-sheet",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-1-image",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                },
+                {
+                  "at": 2.0999999999999996,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-2-sheet",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 7,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-2-image",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                },
+                {
+                  "at": 2.92,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 8,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            }
+          ]
+        },
+        {
+          "id": "s3",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题3",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "pointMorph3d",
+    "description": "空间点云从球体变为圆环，相机同步环绕；可逐帧定位。",
+    "useCase": "免费程序几何特效；不是生成3D模型或实景资产",
+    "editedScenes": 3,
+    "compiled": {
+      "version": 1,
+      "scenes": [
+        {
+          "id": "s0",
+          "duration": 5,
+          "camera": {
+            "orbitY": 0,
+            "keyframes": [
+              {
+                "at": 0,
+                "orbitY": 0
+              },
+              {
+                "at": 5,
+                "orbitY": 35
+              }
+            ]
+          },
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题0",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-0-sheet",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-0-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-1-sheet",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-1-image",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                },
+                {
+                  "at": 2.0999999999999996,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-2-sheet",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 7,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-2-image",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                },
+                {
+                  "at": 2.92,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 8,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-effect",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.45,
+                "rotationX": 15,
+                "morph": 0,
+                "fill": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "rotationY": 0,
+                  "morph": 0
+                },
+                {
+                  "at": 3.5999999999999996,
+                  "ease": "easeInOut",
+                  "rotationY": 100,
+                  "morph": 1
+                },
+                {
+                  "at": 5,
+                  "rotationY": 135,
+                  "morph": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 9,
+              "type": "pointMorph",
+              "from": "sphere",
+              "to": "torus",
+              "count": 240,
+              "seed": 41,
+              "spread": 0.4,
+              "size": 0.005
+            }
+          ]
+        },
+        {
+          "id": "s1",
+          "duration": 5,
+          "camera": {
+            "orbitY": 0,
+            "keyframes": [
+              {
+                "at": 0,
+                "orbitY": 0
+              },
+              {
+                "at": 5,
+                "orbitY": 35
+              }
+            ]
+          },
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题1",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-0-sheet",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-0-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-1-sheet",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-1-image",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                },
+                {
+                  "at": 2.0999999999999996,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-2-sheet",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 7,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-2-image",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                },
+                {
+                  "at": 2.92,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 8,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-effect",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.45,
+                "rotationX": 15,
+                "morph": 0,
+                "fill": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "rotationY": 0,
+                  "morph": 0
+                },
+                {
+                  "at": 3.5999999999999996,
+                  "ease": "easeInOut",
+                  "rotationY": 100,
+                  "morph": 1
+                },
+                {
+                  "at": 5,
+                  "rotationY": 135,
+                  "morph": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 9,
+              "type": "pointMorph",
+              "from": "sphere",
+              "to": "torus",
+              "count": 240,
+              "seed": 41,
+              "spread": 0.4,
+              "size": 0.005
+            }
+          ]
+        },
+        {
+          "id": "s2",
+          "duration": 5,
+          "camera": {
+            "orbitY": 0,
+            "keyframes": [
+              {
+                "at": 0,
+                "orbitY": 0
+              },
+              {
+                "at": 5,
+                "orbitY": 35
+              }
+            ]
+          },
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题2",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "ease": "easeOut",
+                  "reveal": 0
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-0-sheet",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 1,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-0-image",
+              "start": 0,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.62,
+                "y": 0.4,
+                "rotation": 3,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "x": 0.62,
+                  "y": 0.4,
+                  "rotation": 3,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 0.35,
+                  "ease": "easeOut",
+                  "x": 0.46,
+                  "y": 0.46,
+                  "rotation": -6,
+                  "opacity": 1
+                },
+                {
+                  "at": 1.2,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 2,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-1-sheet",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 4,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-1-image",
+              "start": 0.8999999999999999,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.644,
+                "y": 0.41900000000000004,
+                "rotation": 12,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 0.8999999999999999,
+                  "x": 0.644,
+                  "y": 0.41900000000000004,
+                  "rotation": 12,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 1.25,
+                  "ease": "easeOut",
+                  "x": 0.48400000000000004,
+                  "y": 0.47900000000000004,
+                  "rotation": 3,
+                  "opacity": 1
+                },
+                {
+                  "at": 2.0999999999999996,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 5,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-layout-paper-2-sheet",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "fill": "#f4f1e8",
+                "stroke": "#a4aaa6"
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 7,
+              "type": "shape",
+              "shape": "rect",
+              "width": 0.26247375,
+              "height": 0.66,
+              "radius": 0,
+              "strokeWidth": 0.003,
+              "filled": true
+            },
+            {
+              "id": "ink-menu-layout-paper-2-image",
+              "start": 1.7999999999999998,
+              "end": 5,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.668,
+                "y": 0.438,
+                "rotation": 7,
+                "opacity": 0,
+                "reveal": 0
+              },
+              "keyframes": [
+                {
+                  "at": 1.7999999999999998,
+                  "x": 0.668,
+                  "y": 0.438,
+                  "rotation": 7,
+                  "opacity": 0,
+                  "reveal": 0
+                },
+                {
+                  "at": 2.15,
+                  "ease": "easeOut",
+                  "x": 0.508,
+                  "y": 0.498,
+                  "rotation": -2,
+                  "opacity": 1
+                },
+                {
+                  "at": 2.92,
+                  "ease": "easeOut",
+                  "reveal": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 8,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.23885111250000002,
+              "height": 0.5874,
+              "fit": "contain",
+              "revealDirection": "left"
+            },
+            {
+              "id": "ink-menu-effect",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.45,
+                "rotationX": 15,
+                "morph": 0,
+                "fill": "#deef7c"
+              },
+              "keyframes": [
+                {
+                  "at": 0,
+                  "rotationY": 0,
+                  "morph": 0
+                },
+                {
+                  "at": 3.5999999999999996,
+                  "ease": "easeInOut",
+                  "rotationY": 100,
+                  "morph": 1
+                },
+                {
+                  "at": 5,
+                  "rotationY": 135,
+                  "morph": 1
+                }
+              ],
+              "blend": "normal",
+              "layer": 9,
+              "type": "pointMorph",
+              "from": "sphere",
+              "to": "torus",
+              "count": 240,
+              "seed": 41,
+              "spread": 0.4,
+              "size": 0.005
+            }
+          ]
+        },
+        {
+          "id": "s3",
+          "duration": 5,
+          "elements": [
+            {
+              "id": "title",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {},
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "text",
+              "text": "原标题3",
+              "fontSize": 0.08,
+              "font": "sans",
+              "weight": "bold",
+              "align": "center",
+              "maxWidth": 0.9,
+              "lineHeight": 1.2,
+              "letterSpacing": 0
+            },
+            {
+              "id": "photo0",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.2,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo1.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo1",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.5,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo2.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            },
+            {
+              "id": "photo2",
+              "start": 0,
+              "continuity": "reset",
+              "transform": {
+                "x": 0.8,
+                "y": 0.5
+              },
+              "keyframes": [],
+              "blend": "normal",
+              "layer": 0,
+              "type": "image",
+              "imageUri": "gs://fixture/owned/photo3.png",
+              "width": 0.2,
+              "height": 0.5,
+              "fit": "contain"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "freeProceduralSelectable": true,
+    "paidAssetsDisabledForFree": true,
+    "busyDisabled": true,
+    "allVideoDisabled": true
+  },
+  {
+    "artNavigation": {
+      "text": "图片／音讯代码特效 · 打开映客",
+      "target": "_blank",
+      "rel": "noopener noreferrer"
+    },
+    "currentBlockPreserved": true,
+    "autoImport": false,
+    "generationCalls": 0
+  }
+]

@@ -1,0 +1,12 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/codeMotionImagePreflight.test.ts > preflight distinguishes missing images, reusable originals, low resolution and measured multi-reference aspect conflicts
+ ✓ shared/codeMotionImageProduction.test.ts > adopted scene image reaches the official compiler without deleting original graphic animation or changing production identity
+ ✓ shared/codeMotionImageProduction.test.ts > only an explicit redraw receipt replaces a selected card while the original project stays intact
+
+ Test Files  2 passed (2)
+      Tests  3 passed (3)
+   Start at  04:19:36
+   Duration  8.36s (transform 3.23s, setup 0ms, collect 7.28s, tests 106ms, environment 1ms, prepare 492ms)
+

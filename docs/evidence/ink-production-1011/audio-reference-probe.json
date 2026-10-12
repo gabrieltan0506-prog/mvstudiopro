@@ -1,0 +1,58 @@
+{
+  "fixture": "440Hz narration + 880Hz BGM; both 20s, stereo 48kHz",
+  "sourceWindow": {
+    "at": 5,
+    "duration": 5
+  },
+  "sampleFrames": 240000,
+  "referenceDurationSec": 5,
+  "energy440": 0.03534677883129803,
+  "energy880": 0.013255359331163927,
+  "filters": [
+    "atrim=start_sample=240000:end_sample=480000,asetpts=PTS-STARTPTS"
+  ],
+  "receipt": {
+    "fingerprint": "2b3fb7cc248698f6900799aa9f5609f4264545a512fe8962294c2af1aa532058",
+    "uri": "gs://probe-bucket/post-prod/7/code-motion/11111111-1111-4111-8111-111111111111/reference-audio/c4b9ae5e72ad8e771566e243c057387ad30a8fed97e3e7274f36ef3ba0d66408.wav",
+    "sha256": "c4b9ae5e72ad8e771566e243c057387ad30a8fed97e3e7274f36ef3ba0d66408",
+    "durationSec": 5,
+    "at": 5,
+    "sourceReceipt": {
+      "duration": 20,
+      "sampleRate": 48000,
+      "sourceIds": [
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333"
+      ],
+      "sourceHashes": [
+        "9d022f237a81f1325507147225b24048d88c1302df8ddbb438d9a0a965973aa7",
+        "9d740f089306d8f92deba17b5f92ce649f060a0400c8dfde6b03f32998697bd9"
+      ],
+      "audioTimeline": [
+        {
+          "sourceId": "22222222-2222-4222-8222-222222222222",
+          "role": "narration",
+          "at": 0,
+          "trimStart": 0,
+          "duration": 20,
+          "volume": 0.8,
+          "fadeIn": 2,
+          "fadeOut": 2
+        },
+        {
+          "sourceId": "33333333-3333-4333-8333-333333333333",
+          "role": "bgm",
+          "at": 0,
+          "trimStart": 0,
+          "duration": 20,
+          "volume": 0.3,
+          "fadeIn": 2,
+          "fadeOut": 2
+        }
+      ],
+      "includedSpeech": false
+    }
+  },
+  "renderCallsAfterRestore": 1,
+  "providerCalls": 0
+}

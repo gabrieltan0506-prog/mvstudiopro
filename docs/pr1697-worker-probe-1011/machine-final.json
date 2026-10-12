@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-10T18:30:14.556356+00:00",
+  "machines": [
+    {
+      "id": "7812595b294778",
+      "state": "stopped",
+      "region": "sin",
+      "guest": {
+        "cpu_kind": "performance",
+        "cpus": 4,
+        "memory_mb": 8192
+      },
+      "image": "sha-3ea51b2373632f5661163f7104077d0ea1134880"
+    },
+    {
+      "id": "d892541f602228",
+      "state": "started",
+      "region": "sin",
+      "guest": {
+        "cpu_kind": "shared",
+        "cpus": 4,
+        "memory_mb": 8192
+      },
+      "image": "sha-3ea51b2373632f5661163f7104077d0ea1134880"
+    }
+  ]
+}

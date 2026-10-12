@@ -160,7 +160,7 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
         Object.defineProperties(el,{videoWidth:{value:1112},videoHeight:{value:834},duration:{value:10.08},src:{set(){queueMicrotask(()=>el.onloadedmetadata?.());}}});el.load=()=>{};
       }return el;};
       const root=createRoot(document.getElementById('root')); let version=0;
-      fixture.render=()=>root.render(<Component key={++version} generatedVideoUrl='https://test.invalid/generated.mp4'/>);
+      fixture.render=()=>root.render(<Component key={++version} generatedVideoUrl='https://test.invalid/generated.mp4' projectKey={fixture.projectKey}/>);
       fixture.render();`,
     },
     bundle: true,
@@ -319,6 +319,21 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
     expect(
       await page.evaluate(() => (window as any).fixture.posts.length)
     ).toBe(4);
+    // 映客固定当前成片；不重新让用户上传，不与首页或其他作品串恢复记录。
+    await page.evaluate(() => {
+      Object.assign((window as any).fixture, { fail: false, denied: false, user: 7, projectKey: "project-a", status: "running" });
+      (window as any).fixture.render();
+    });
+    await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some(b => /^超分 2K/.test(b.innerText) && !b.disabled));
+    expect(await page.$('select[aria-label="视频来源"]')).toBeNull();
+    expect(await page.$('input[type="file"]')).toBeNull();
+    await page.evaluate(() => (Array.from(document.querySelectorAll("button")).find(b => /^超分 2K/.test(b.innerText)) as HTMLButtonElement).click());
+    await page.waitForFunction(() => document.body.innerText.includes("task-2k"));
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("ink-video-upscale:v1:7:project-a")!)[0].taskId)).toBe("task-2k");
+    await page.screenshot({ path: "/tmp/pr1697-upscale-mounted.png", fullPage: true });
+    await page.evaluate(() => { (window as any).fixture.projectKey = "project-b"; (window as any).fixture.render(); });
+    await page.waitForFunction(() => !document.body.innerText.includes("task-2k") && Array.from(document.querySelectorAll("button")).some(b => /^超分 2K/.test(b.innerText) && !b.disabled));
+    expect(await page.evaluate(() => (window as any).fixture.posts.length)).toBe(5);
   } finally {
     await browser.close();
   }

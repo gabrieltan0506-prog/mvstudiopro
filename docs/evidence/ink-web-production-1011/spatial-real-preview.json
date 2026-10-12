@@ -1,0 +1,43 @@
+{
+  "frame": {
+    "viewLabelZh": "建立",
+    "cameraKind": "establish",
+    "actorIds": [
+      "actor-one"
+    ],
+    "revision": "r1",
+    "camera": {
+      "kind": "establish",
+      "position": [
+        0,
+        -7,
+        2.6
+      ],
+      "target": [
+        0,
+        1.7763568394002505e-15,
+        1.0000000000000029
+      ],
+      "lens": 28,
+      "labelZh": "建立·高位全景"
+    },
+    "actors": [
+      {
+        "id": "actor-one",
+        "assetRef": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "labelZh": "顾客",
+        "glbUrl": "https://assets.test/actor.glb",
+        "stagePoint": [
+          0,
+          0
+        ],
+        "heightM": 1.7,
+        "yawDeg": 0
+      }
+    ],
+    "timeSec": 0
+  },
+  "bytes": 1243393,
+  "errors": [],
+  "scope": "真实SPZ与GLB经网页生产预览组件载入并导出，服务保存与模型生成未实跑"
+}

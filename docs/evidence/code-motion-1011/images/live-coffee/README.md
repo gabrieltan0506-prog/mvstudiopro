@@ -1,0 +1,7 @@
+# Authorized coffee image probe
+
+At 2026-10-10 20:43:20 UTC, all 12 fixed images completed: six free-tier GPT Image 2 medium and six paid-tier Sunburst high. Exactly one initial character anchor and five edits referencing that anchor per tier. No retries or extra images. The live runner uses the existing production image service, exact model options, strict one-attempt behavior and durable raw-response callback before parsing.
+
+`evidence-index.json` lists all local PNG paths, SHA256/bytes/dimensions, GCS outputs, and permanent request/raw receipts. `raw-progress.log` is the actual remote process log; `summary.json` confirms both fulfilled branches. All 12 downloaded original PNGs were independently hash/byte-checked against the result receipts. The originals are under `task/pr1697-ruixin-probe/images/` and were not modified for preview.
+
+This verifies real provider production-service output and archive integrity. It does not claim authenticated router/account-ledger verification, real semantic Gemini analysis, generated motion, or online acceptance. Local visual checks of both tiers' scenes 2 and 3 found consistent wardrobe and ivory/dark-green cups, a rainy sipping scene and sunny green spring scene. For the winter-to-spring video, the winter reference and spring target should both be provided; the spring still alone is already the end-state. Paid scene 3 has a tense expression, so surprise/relief performance is not yet accepted by these stills.

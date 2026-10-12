@@ -1,0 +1,77 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 0 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 30 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 60 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 90 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 120 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 150 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 180 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 210 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 240 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 270 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 300 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 330 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 360 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 390 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 420 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 450 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 480 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 510 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 540 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 570 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 600 / 660
+
+stdout | server/services/codeMotionEffectsDemo.real.test.ts > authorized 22s effects demo through formal compiler and renderer
+[art-motion] frame 630 / 660
+
+ ✓ server/services/codeMotionEffectsDemo.real.test.ts (1 test) 201908ms
+   ✓ authorized 22s effects demo through formal compiler and renderer 201901ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  07:13:04
+   Duration  211.83s (transform 3.09s, setup 0ms, collect 6.31s, tests 201.91s, environment 2ms, prepare 2.30s)
+

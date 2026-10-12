@@ -1,0 +1,201 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts (6 tests | 6 failed) 345ms
+   × formal plan→resolved→spec→runtime retains morph and orbit with no asset fetch 176ms
+     → [
+  {
+    "code": "custom",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input"
+  }
+]
+   × each target has equal count, nonzero XYZ extent and exact stable point correspondence 36ms
+     → [
+  {
+    "code": "custom",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input"
+  }
+]
+   × orbit fixes target in center while depth and perspective change; absent orbit is legacy 5ms
+     → [
+  {
+    "code": "custom",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input"
+  }
+]
+   × reverse and repeated absolute-frame seeks produce identical sorted canvas draws 21ms
+     → [
+  {
+    "code": "custom",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input"
+  }
+]
+   × morph changes xyz projection with static camera independently of camera motion 3ms
+     → [
+  {
+    "code": "custom",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input"
+  }
+]
+   × schema rejects overflow, arbitrary shapes, executable URLs and morph on 2D elements 43ms
+     → [
+  {
+    "code": "custom",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input"
+  }
+]
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > formal plan→resolved→spec→runtime retains morph and orbit with no asset fetch
+ZodError: [
+  {
+    "code": "custom",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input"
+  }
+]
+ ❯ makeSpec client/src/lib/codeMotionPointMorphRuntime.test.ts:75:30
+     73|     elements: [element],
+     74|   });
+     75|   return artMotionSpecSchema.parse({
+       |                              ^
+     76|     version: 1,
+     77|     grammar: "composition",
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:148:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > each target has equal count, nonzero XYZ extent and exact stable point correspondence
+ZodError: [
+  {
+    "code": "custom",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input"
+  }
+]
+ ❯ makeSpec client/src/lib/codeMotionPointMorphRuntime.test.ts:75:30
+     73|     elements: [element],
+     74|   });
+     75|   return artMotionSpecSchema.parse({
+       |                              ^
+     76|     version: 1,
+     77|     grammar: "composition",
+ ❯ runtime client/src/lib/codeMotionPointMorphRuntime.test.ts:88:31
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:162:34
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > orbit fixes target in center while depth and perspective change; absent orbit is legacy
+ZodError: [
+  {
+    "code": "custom",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input"
+  }
+]
+ ❯ makeSpec client/src/lib/codeMotionPointMorphRuntime.test.ts:75:30
+     73|     elements: [element],
+     74|   });
+     75|   return artMotionSpecSchema.parse({
+       |                              ^
+     76|     version: 1,
+     77|     grammar: "composition",
+ ❯ runtime client/src/lib/codeMotionPointMorphRuntime.test.ts:88:31
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:186:34
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > reverse and repeated absolute-frame seeks produce identical sorted canvas draws
+ZodError: [
+  {
+    "code": "custom",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input"
+  }
+]
+ ❯ makeSpec client/src/lib/codeMotionPointMorphRuntime.test.ts:75:30
+     73|     elements: [element],
+     74|   });
+     75|   return artMotionSpecSchema.parse({
+       |                              ^
+     76|     version: 1,
+     77|     grammar: "composition",
+ ❯ runtime client/src/lib/codeMotionPointMorphRuntime.test.ts:88:31
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:203:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > morph changes xyz projection with static camera independently of camera motion
+ZodError: [
+  {
+    "code": "custom",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input"
+  }
+]
+ ❯ makeSpec client/src/lib/codeMotionPointMorphRuntime.test.ts:75:30
+     73|     elements: [element],
+     74|   });
+     75|   return artMotionSpecSchema.parse({
+       |                              ^
+     76|     version: 1,
+     77|     grammar: "composition",
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:218:27
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > schema rejects overflow, arbitrary shapes, executable URLs and morph on 2D elements
+ZodError: [
+  {
+    "code": "custom",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input"
+  }
+]
+ ❯ makeSpec client/src/lib/codeMotionPointMorphRuntime.test.ts:75:30
+     73|     elements: [element],
+     74|   });
+     75|   return artMotionSpecSchema.parse({
+       |                              ^
+     76|     version: 1,
+     77|     grammar: "composition",
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:235:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+ Test Files  1 failed (1)
+      Tests  6 failed (6)
+   Start at  07:07:15
+   Duration  4.99s (transform 830ms, setup 0ms, collect 1.54s, tests 345ms, environment 1ms, prepare 464ms)
+

@@ -1,0 +1,30 @@
+{
+  "classification": "PRIVATE content probe using provided reference media; not generated assets or online acceptance",
+  "sourceWindowStart": 50.8,
+  "duration": 30,
+  "sourcePlayback": "as provided 1.5x screen recording; no speed correction",
+  "referenceVideoWindow": [
+    65.8,
+    70.8
+  ],
+  "referenceVideoIsGenerated": false,
+  "entry": "codeMotionProjectSchema -> compileCodeMotion -> renderArtMotion -> renderCodeMotionAudio",
+  "audio": {
+    "streams": 1,
+    "correlation": 0.9995840851294759,
+    "gain": 0.9777637231099301,
+    "sourceSha256": "d3fc8cfe197754c87358c13e4a68dc2d0ca29429edbe46fc95232c544861114e"
+  },
+  "edit": {
+    "scene": 6,
+    "beforeText": "只修改選中的部分，保留其餘內容",
+    "afterText": "只核對聲音，其他畫面與秒窗保持不變",
+    "onlyOneSceneChanged": true
+  },
+  "outputSha256": "74b12a7c43c8e12fcf60d9283cbb52bc962d904194f487d4e0fa74bfe0b5c79e",
+  "referenceVideoTimeline": [
+    15,
+    20
+  ],
+  "metadataCorrection": "Initial reporting constants were 60.8–65.8; corrected against actual FFmpeg command and saved project placement. Render bytes unchanged."
+}

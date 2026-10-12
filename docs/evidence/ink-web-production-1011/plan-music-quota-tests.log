@@ -1,0 +1,57 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+stderr | server/services/codeMotionPlanContract.test.ts > 首次错误进入原有下一跳反馈，合法音乐意图完整传回供真实生成
+[codeMotionPlan] candidate rejected {"model":"z-ai/glm-5.3-flashx","gateway":"auto","stage":"schema","code":"invalid_plan","detailZh":"顾问已返回方案，但audioTimeline.[0]：类型不正确或缺少必填项；audioTimeline：超过允许范围"}
+[codeMotionPlan] candidate rejected {"model":"glm-5.3-flashx","gateway":"evolink_flash_only","stage":"content","code":"invalid_content","detailZh":"方案缺少实际对白或已上传音源"}
+[codeMotionPlan] candidate rejected {"model":"deepseek/deepseek-v4.1-flash","gateway":"auto","stage":"content","code":"invalid_content","detailZh":"顾问方案的素材绑定、声音或时间轴未通过校验，未采用该结果"}
+[codeMotionPlan] candidate rejected {"model":"deepseek-v4.1-flash","gateway":"evolink_flash_only","stage":"content","code":"invalid_content","detailZh":"顾问方案的素材绑定、声音或时间轴未通过校验，未采用该结果"}
+
+ ❯ server/services/codeMotionPlanContract.test.ts (4 tests | 1 failed) 17ms
+   × 首次错误进入原有下一跳反馈，合法音乐意图完整传回供真实生成 10ms
+     → 本次内容安排失败：顾问方案的素材绑定、声音或时间轴未通过校验，未采用该结果。原材料保留。
+stderr | server/services/codeMotionPlan.test.ts > 规划沿指定GLM→DeepSeek路线；模型只收到素材名字和ID
+[codeMotionPlan] candidate rejected {"model":"z-ai/glm-5.3-flashx","gateway":"auto","stage":"request","code":"provider_error","detailZh":"顾问模型调用失败，未取得可用方案"}
+[codeMotionPlan] candidate rejected {"model":"glm-5.3-flashx","gateway":"evolink_flash_only","stage":"request","code":"provider_error","detailZh":"顾问模型调用失败，未取得可用方案"}
+
+stderr | server/services/codeMotionPlan.test.ts > 非法计划不得进入导出；重试次数有界
+[codeMotionPlan] candidate rejected {"model":"z-ai/glm-5.3-flashx","gateway":"auto","stage":"schema","code":"invalid_content","detailZh":"安排的总时长与本次选择不一致，请重新调整"}
+[codeMotionPlan] candidate rejected {"model":"glm-5.3-flashx","gateway":"evolink_flash_only","stage":"schema","code":"invalid_content","detailZh":"安排的总时长与本次选择不一致，请重新调整"}
+[codeMotionPlan] candidate rejected {"model":"deepseek/deepseek-v4.1-flash","gateway":"auto","stage":"schema","code":"invalid_content","detailZh":"安排的总时长与本次选择不一致，请重新调整"}
+[codeMotionPlan] candidate rejected {"model":"deepseek-v4.1-flash","gateway":"evolink_flash_only","stage":"schema","code":"invalid_content","detailZh":"安排的总时长与本次选择不一致，请重新调整"}
+
+stderr | server/services/codeMotionPlan.test.ts > 配音未开放时按无声安排，拒绝模型擅自合成
+[codeMotionPlan] candidate rejected {"model":"z-ai/glm-5.3-flashx","gateway":"auto","stage":"content","code":"invalid_content","detailZh":"方案使用了尚未开放的合成配音"}
+[codeMotionPlan] candidate rejected {"model":"glm-5.3-flashx","gateway":"evolink_flash_only","stage":"content","code":"invalid_content","detailZh":"方案使用了尚未开放的合成配音"}
+[codeMotionPlan] candidate rejected {"model":"deepseek/deepseek-v4.1-flash","gateway":"auto","stage":"content","code":"invalid_content","detailZh":"方案使用了尚未开放的合成配音"}
+[codeMotionPlan] candidate rejected {"model":"deepseek-v4.1-flash","gateway":"evolink_flash_only","stage":"content","code":"invalid_content","detailZh":"方案使用了尚未开放的合成配音"}
+
+stderr | server/services/codeMotionPlan.test.ts > 无图场景直接编排可见主体与动作；纯文字方案不得冒充场景
+[codeMotionPlan] candidate rejected {"model":"z-ai/glm-5.3-flashx","gateway":"auto","stage":"content","code":"invalid_content","detailZh":"场景方案缺少实际画面与动作，不能用纯文字代替"}
+[codeMotionPlan] candidate rejected {"model":"glm-5.3-flashx","gateway":"evolink_flash_only","stage":"content","code":"invalid_content","detailZh":"场景方案缺少实际画面与动作，不能用纯文字代替"}
+[codeMotionPlan] candidate rejected {"model":"deepseek/deepseek-v4.1-flash","gateway":"auto","stage":"content","code":"invalid_content","detailZh":"场景方案缺少实际画面与动作，不能用纯文字代替"}
+[codeMotionPlan] candidate rejected {"model":"deepseek-v4.1-flash","gateway":"evolink_flash_only","stage":"content","code":"invalid_content","detailZh":"场景方案缺少实际画面与动作，不能用纯文字代替"}
+
+ ✓ server/services/codeMotionPlan.test.ts (5 tests) 53ms
+ ✓ client/src/lib/codeMotionStudio.browser.test.ts (1 test) 4494ms
+   ✓ 映刻真实页面保留资料，先展示再确认；断线恢复沿用同一个请求 4493ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/services/codeMotionPlanContract.test.ts > 首次错误进入原有下一跳反馈，合法音乐意图完整传回供真实生成
+CodeMotionPlanError: 本次内容安排失败：顾问方案的素材绑定、声音或时间轴未通过校验，未采用该结果。原材料保留。
+ ❯ Module.generateCodeMotionPlan server/services/codeMotionPlan.ts:128:9
+    126|     }
+    127|   }
+    128|   throw new CodeMotionPlanError(failures);
+       |         ^
+    129| }
+    130|
+ ❯ server/services/codeMotionPlanContract.test.ts:25:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 9 passed (10)
+   Start at  15:49:47
+   Duration  5.44s (transform 374ms, setup 0ms, collect 1.52s, tests 4.56s, environment 0ms, prepare 305ms)

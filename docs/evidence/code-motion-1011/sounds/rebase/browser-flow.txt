@@ -1,0 +1,13 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ client/src/lib/codeMotionSoundRebase.browser.test.ts (1 test) 5113ms
+   ✓ measured adoption resumes the same saved generation after a lost response and reload without saving stale audio or buying speech 5112ms
+ ✓ client/src/lib/codeMotionSoundProduction.browser.test.ts (1 test) 7421ms
+   ✓ official Studio starts without audio, generates only missing speech and BGM, adopts all sources and restores the audio timeline 7420ms
+
+ Test Files  2 passed (2)
+      Tests  2 passed (2)
+   Start at  06:20:00
+   Duration  9.06s (transform 125ms, setup 0ms, collect 1.14s, tests 12.53s, environment 1ms, prepare 332ms)
+

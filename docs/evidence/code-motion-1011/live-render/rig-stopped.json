@@ -1,0 +1,17 @@
+{
+  "machine": "7812595b294778",
+  "state": "stopped",
+  "stoppedAt": "2026-10-10T21:04:16.690Z",
+  "requestedStopAt": "2026-10-10T21:04:05.253Z",
+  "exitCode": 130,
+  "oomKilled": false,
+  "requestedStop": true,
+  "precedingGateAt": "2026-10-10T21:03:49.613Z",
+  "queueEmpty": true,
+  "conversionsEmpty": true,
+  "mediaProcessesEmpty": true,
+  "activeLeasesEmpty": true,
+  "allFourVideoTasksCompleted": true,
+  "bothRendersCompletedAt": "2026-10-10T21:01:23.022Z",
+  "mediaAndReceiptsSavedLocallyBeforeStop": true
+}

@@ -1,0 +1,47 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+stderr | server/services/openaiGptImage2.cancel.test.ts > OpenAI每一次真正付费请求前检查取消 > 第一把钥失败后刷新，不再换钥买第二笔
+[openaiGptImage2] a OpenAI generations HTTP 429: busy
+
+ ✓ server/services/openaiGptImage2.cancel.test.ts > OpenAI每一次真正付费请求前检查取消 > 已刷新不发第一笔
+ ✓ server/services/openaiGptImage2.cancel.test.ts > OpenAI每一次真正付费请求前检查取消 > 第一把钥失败后刷新，不再换钥买第二笔
+stdout | server/services/openaiGptImage2.cancel.test.ts > OpenAI每一次真正付费请求前检查取消 > 图片已经提交后刷新，收到图片仍上传保留
+[openaiGptImage2] ok · lane=keyart · slot=a · attempt=1/2 · generations
+
+stdout | server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > gpt-image-2.5-flare 改图不发送input_fidelity，图片、蒙版与质量保留
+[openaiGptImage2] ok · lane=keyart · slot=test · attempt=1/1 · edits
+
+ ✓ server/services/openaiGptImage2.cancel.test.ts > OpenAI每一次真正付费请求前检查取消 > 下载参考图时刷新，下载结束也不POST edits 374ms
+ ✓ server/services/openaiGptImage2.cancel.test.ts > OpenAI每一次真正付费请求前检查取消 > 图片已经提交后刷新，收到图片仍上传保留
+ ✓ server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > gpt-image-2.5-flare 改图不发送input_fidelity，图片、蒙版与质量保留 650ms
+stdout | server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > gpt-image-2.5-sunburst 改图不发送input_fidelity，图片、蒙版与质量保留
+[openaiGptImage2] ok · lane=keyart · slot=test · attempt=1/1 · edits
+
+ ✓ server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > gpt-image-2.5-sunburst 改图不发送input_fidelity，图片、蒙版与质量保留
+stdout | server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > gpt-image-2.5-flare-2026-09-08 改图不发送input_fidelity，图片、蒙版与质量保留
+[openaiGptImage2] ok · lane=keyart · slot=test · attempt=1/1 · edits
+
+ ✓ server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > gpt-image-2.5-flare-2026-09-08 改图不发送input_fidelity，图片、蒙版与质量保留
+stdout | server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > gpt-image-2.5-sunburst-2026-09-08 改图不发送input_fidelity，图片、蒙版与质量保留
+[openaiGptImage2] ok · lane=keyart · slot=test · attempt=1/1 · edits
+
+ ✓ server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > gpt-image-2.5-sunburst-2026-09-08 改图不发送input_fidelity，图片、蒙版与质量保留 350ms
+stdout | server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > gpt-image-2 改图不发送input_fidelity，图片、蒙版与质量保留
+[openaiGptImage2] ok · lane=keyart · slot=test · attempt=1/1 · edits
+
+ ✓ server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > gpt-image-2 改图不发送input_fidelity，图片、蒙版与质量保留 443ms
+stdout | server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > gpt-image-2-2026-04-21 改图不发送input_fidelity，图片、蒙版与质量保留
+[openaiGptImage2] ok · lane=keyart · slot=test · attempt=1/1 · edits
+
+stderr | server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > 文生图仍用generations且失败不存假结果
+[openaiGptImage2] test OpenAI generations HTTP 400: test upstream rejection
+
+ ✓ server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > gpt-image-2-2026-04-21 改图不发送input_fidelity，图片、蒙版与质量保留
+ ✓ server/services/openaiGptImage2.request.test.ts > 官方图片请求体参数兼容 > 文生图仍用generations且失败不存假结果
+
+ Test Files  2 passed (2)
+      Tests  11 passed (11)
+   Start at  03:54:56
+   Duration  5.71s (transform 798ms, setup 0ms, collect 2.98s, tests 2.57s, environment 1ms, prepare 949ms)
+

@@ -1,0 +1,9 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/codeMotionVideoAdoption.test.ts (2 tests) 2ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  15:56:03
+   Duration  301ms (transform 23ms, setup 0ms, collect 22ms, tests 2ms, environment 0ms, prepare 69ms)

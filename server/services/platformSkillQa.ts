@@ -1,3 +1,4 @@
+import { CodeMotionPlanError } from "./codeMotionPlanFailure";
 import { codeMotionBriefSchema, type CodeMotionBrief } from "../../shared/codeMotion";
 import { generateCodeMotionPlan } from "./codeMotionPlan";
 import { MANHUA_ADVISOR_PLAIN_LANGUAGE, TEMPLATE_RECOMMENDATION_DELIVERY, advisorTemplateChoiceSchema, validateAdvisorTemplateChoice } from "../../shared/manhuaAdvisorTemplateChoice";
@@ -921,7 +922,9 @@ export async function askPlatformSkillQa(params: {
     let candidateRaw: string | undefined;
     try {
       if (codeMotionContext) {
-        const planned = await generateCodeMotionPlan(codeMotionContext);
+        const planned = codeMotionContext.revisionSource
+          ? await (await import("./codeMotionRevisionProposal")).generateCodeMotionRevisionProposal(String(params.userId), codeMotionContext)
+          : await generateCodeMotionPlan(codeMotionContext);
         parsed = { answer: planned.answer, imageIntent: false, creationRelated: true, suggestedImagePrompt: "", guideMessage: "" };
         usedModel = planned.modelName;
         lastErr = "";
@@ -997,6 +1000,7 @@ export async function askPlatformSkillQa(params: {
       break;
     } catch (e) {
       if (isSseContentSafetyError(e)) throw e;
+      if (codeMotionContext && e instanceof CodeMotionPlanError) throw e;
       // 候选检查失败时清掉本轮解析值，避免三次失败后仍返回无效候选。
       parsed = null;
       lastErr = e instanceof Error ? e.message : String(e);

@@ -1,0 +1,20 @@
+{
+  "classification": "TEST_ONLY synthetic local assets; no paid generation or online acceptance",
+  "entry": "codeMotionProjectSchema -> compileCodeMotion -> renderArtMotion -> renderCodeMotionAudio",
+  "duration": 30,
+  "frameCount": 900,
+  "ffmpegVideoFrames": 150,
+  "canvasFrames": 750,
+  "timingOverlayFrames": 18,
+  "audio": {
+    "narration440Hz": 21430942827391.266,
+    "bgm660Hz": 1337677855310.903,
+    "suppressedVideo880Hz": 36380.42733451304
+  },
+  "videoSha256": "59adc8dd8231f4ba852dbf5aa9922ed11ad63a6658f842bf4e366657868d669a",
+  "audioSourceHashes": [
+    "cf308ee1a5a1be1ff807b23c3a7d96a77a7d80062c5c28021262983c18c1bc22",
+    "bfab7aaf192373fc86dff1af3232284215ae7d050fccf168de7c47b3957117d2"
+  ],
+  "outputSha256": "a6e186fff01d3c94df47d28a4247a87a380609f821d8e89150d13311a8c300fc"
+}

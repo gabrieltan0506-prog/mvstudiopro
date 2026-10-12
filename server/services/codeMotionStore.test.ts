@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import {
+  CODE_MOTION_PROJECT_MAX_BYTES,
   codeMotionObjectName,
   loadCodeMotion,
   saveCodeMotion,
@@ -57,4 +58,59 @@ it("草稿按账号隔离、服务失败不冒充空稿，版本冲突不覆盖"
       },
     })
   ).rejects.toThrow("offline");
+});
+
+it("超过旧100KB的合法中文镜头工程保存后完整恢复，超新上限拒绝", async () => {
+  const large = {
+    ...project,
+    brief: { ...project.brief, style: "scenes", duration: 180 },
+    plan: {
+      version: 1,
+      summary: "中文画面",
+      scenes: Array.from({ length: 12 }, (_, i) => ({
+        heading: `镜头${i}`,
+        body: "",
+        duration: 15,
+        composition: {
+          id: `scene${i}`,
+          duration: 15,
+          elements: Array.from({ length: 8 }, (_, k) => ({
+            id: `text${k}`,
+            type: "text",
+            text: "中".repeat(600),
+          })),
+        },
+      })),
+    },
+  };
+  let body: Buffer | null = null;
+  const deps: CodeMotionStoreDeps = {
+    read: async () => (body ? { body, generation: "1" } : null),
+    list: async () => [],
+    write: async (_, b) => {
+      body = b;
+      return "1";
+    },
+  };
+  const saved = await saveCodeMotion("1", large, "0", deps);
+  expect(body!.length).toBeGreaterThan(100_000);
+  expect(body!.length).toBeLessThan(CODE_MOTION_PROJECT_MAX_BYTES);
+  expect((await loadCodeMotion("1", project.id, deps))?.project).toEqual(
+    saved.project
+  );
+  body = Buffer.alloc(CODE_MOTION_PROJECT_MAX_BYTES + 1);
+  await expect(loadCodeMotion("1", project.id, deps)).rejects.toThrow(
+    "保存上限"
+  );
+  const huge = structuredClone(large);
+  huge.plan.scenes.forEach(scene => {
+    scene.composition.elements = Array.from({ length: 42 }, (_, k) => ({
+      id: `text${k}`,
+      type: "text",
+      text: "中".repeat(600),
+    }));
+  });
+  await expect(saveCodeMotion("1", huge, "1", deps)).rejects.toThrow(
+    /保存上限|动画配置过大/
+  );
 });

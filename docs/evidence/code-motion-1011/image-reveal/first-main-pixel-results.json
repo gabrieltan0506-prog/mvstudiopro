@@ -1,0 +1,536 @@
+[
+  {
+    "fixture": "client/public/showcase/shenzhen.jpg",
+    "bytes": 1535199,
+    "sha256": "9da0adbd8d846509371261ad02ffe19eef4bb462ab5b5ed6f92053ad24635e70"
+  },
+  {
+    "name": "left/cover",
+    "direction": "left",
+    "fit": "cover",
+    "rotation": 0,
+    "scale": 1,
+    "photoPixels": 518397,
+    "rows": [
+      {
+        "progress": 0.25,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 1886644663,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 1577919509,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.75,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 2380573621,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 1577919509,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      }
+    ]
+  },
+  {
+    "name": "left/contain",
+    "direction": "left",
+    "fit": "contain",
+    "rotation": 0,
+    "scale": 1,
+    "photoPixels": 218160,
+    "rows": [
+      {
+        "progress": 0.25,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 1688028672,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 1090194430,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.75,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 3597296221,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 1090194430,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      }
+    ]
+  },
+  {
+    "name": "right/cover",
+    "direction": "right",
+    "fit": "cover",
+    "rotation": 0,
+    "scale": 1,
+    "photoPixels": 518397,
+    "rows": [
+      {
+        "progress": 0.25,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 1357459582,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 1568513156,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.75,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 2873560714,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 1568513156,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      }
+    ]
+  },
+  {
+    "name": "right/contain",
+    "direction": "right",
+    "fit": "contain",
+    "rotation": 0,
+    "scale": 1,
+    "photoPixels": 218160,
+    "rows": [
+      {
+        "progress": 0.25,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 1688028672,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 1983175267,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.75,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 2543107869,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 102000,
+        "hash": 1983175267,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      }
+    ]
+  },
+  {
+    "name": "top/cover",
+    "direction": "top",
+    "fit": "cover",
+    "rotation": 0,
+    "scale": 1,
+    "photoPixels": 518397,
+    "rows": [
+      {
+        "progress": 0.25,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 4122930856,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 2116381287,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.75,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 2381137804,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 2116381287,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      }
+    ]
+  },
+  {
+    "name": "top/contain",
+    "direction": "top",
+    "fit": "contain",
+    "rotation": 0,
+    "scale": 1,
+    "photoPixels": 218160,
+    "rows": [
+      {
+        "progress": 0.25,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 2064012025,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 305468374,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.75,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 2243602922,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 305468374,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      }
+    ]
+  },
+  {
+    "name": "bottom/cover",
+    "direction": "bottom",
+    "fit": "cover",
+    "rotation": 0,
+    "scale": 1,
+    "photoPixels": 518397,
+    "rows": [
+      {
+        "progress": 0.25,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 2659033304,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 4106365767,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.75,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 753308313,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 4106365767,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      }
+    ]
+  },
+  {
+    "name": "bottom/contain",
+    "direction": "bottom",
+    "fit": "contain",
+    "rotation": 0,
+    "scale": 1,
+    "photoPixels": 218160,
+    "rows": [
+      {
+        "progress": 0.25,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 2239548568,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 3777246466,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.75,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 1438168315,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 101626,
+        "hash": 3777246466,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      }
+    ]
+  },
+  {
+    "name": "local-rotation-scale",
+    "direction": "left",
+    "fit": "cover",
+    "rotation": 35,
+    "scale": 0.7,
+    "photoPixels": 255093,
+    "rows": [
+      {
+        "progress": 0.25,
+        "mismatches": 27,
+        "checked": 102072,
+        "hash": 949502139,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 102072,
+        "hash": 151940053,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.75,
+        "mismatches": 102,
+        "checked": 102068,
+        "hash": 2396613859,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      },
+      {
+        "progress": 0.5,
+        "mismatches": 0,
+        "checked": 102072,
+        "hash": 151940053,
+        "sibling": [
+          238,
+          119,
+          0,
+          255
+        ]
+      }
+    ]
+  },
+  {
+    "omittedDirectionUnchanged": true
+  },
+  {
+    "exportStudioHash": 1881545052,
+    "reactPreviewHash": 1881545052
+  }
+]

@@ -10,9 +10,9 @@ export function KnowledgeCardRecovery({disabled,onApply}:{disabled:boolean;onApp
   const [candidate,setCandidate]=useState<RecoveredKnowledgeCard|null>(null);
   async function load(more=false) {setBusy(true);setError("");try{const r=await utils.mvAnalysis.listKnowledgeCardRecovery.fetch({cursor:more?cursor??undefined:undefined});setItems(old=>Array.from(new Map([...(more?old:[]),...r.items].map(x=>[x.key,x])).values()));setCursor(r.nextCursor);}catch(e){setError(e instanceof Error?e.message:"读取失败，请重试");}finally{setBusy(false);}}
   async function select(jobId:string){setBusy(true);setError("");setCandidate(null);try{setCandidate(await utils.mvAnalysis.getKnowledgeCardRecovery.fetch({jobId},{staleTime:0}));}catch(e){setError(e instanceof Error?e.message:"读取失败，请重试");}finally{setBusy(false);}}
-  return <div className="mt-3 text-sm" data-knowledge-card-recovery>
-    <button type="button" disabled={disabled||busy} className="rounded-lg border border-cyan-300/40 px-3 py-2 text-cyan-100 disabled:opacity-50" onClick={()=>{setOpen(!open);if(!open)void load();}}>恢复云端备份</button>
-    {open&&<div className="mt-2 space-y-3 rounded-xl border border-white/15 bg-black/25 p-4">
+  return <div className="contents text-sm" data-knowledge-card-recovery>
+    <button type="button" disabled={disabled||busy} aria-expanded={open} className="inline-flex items-center rounded-full border border-cyan-300/40 px-5 py-2.5 text-sm font-semibold text-cyan-100 disabled:opacity-50" onClick={()=>{setOpen(!open);if(!open)void load();}}>恢复上次内容</button>
+    {open&&<div className="order-last basis-full min-w-0 space-y-3 rounded-xl border border-white/15 bg-black/25 p-4">
       <p className="text-xs text-white/60">选择已完成的正文或图文成品。恢复不会重新生成或扣费。</p>
       {error&&<p role="alert" className="text-rose-300">{error}</p>}
       {busy&&<p role="status">正在读取云端备份…</p>}

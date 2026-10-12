@@ -1,0 +1,1025 @@
+[
+  {
+    "file": "client/src/lib/HomePhotoVideoUpscale.test.ts",
+    "cases": [
+      "真实生日视频 1112×834 / 10.08s 不冒充720p，费用与服务端ceil对齐",
+      "拒绝无效或超上限时长 %s",
+      "2K/4K原片不降报，保守遵守当前服务端档位限制",
+      "提交中刷新恢复为回执未知，不允许再次付费；对账态保留同ID",
+      "分别恢复原片和两档结果，拒绝损坏记录与非HTTP视频地址",
+      "实际读取video元数据并释放元素；超时明确失败",
+      "浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离、双档保留"
+    ],
+    "assertions": 28,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionCompositionRuntime.browser.test.ts",
+    "cases": [
+      "真实Canvas中2D/三维对象形成非背景像素，倒序seek像素一致",
+      "图片缺少归属映射时显式失败且不读取gs地址",
+      "已核验图片映射加载完成后进入画布，显式秒窗按结束边界隐藏",
+      "跨镜carry继承上一镜终点且不回跳旧起点",
+      "未识别元素类型明确失败",
+      "%s 三维几何本身产生非空像素且相机移动改变透视",
+      "进入转场不延长片长且四种转场均可倒序重放",
+      "粒子carry跨镜延续运动时钟，与未切镜同秒像素一致"
+    ],
+    "assertions": 27,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionCompositionRuntime.test.ts",
+    "cases": [
+      "任意顺序seek与逐帧求值一致，稀疏关键帧逐字段插值",
+      "step关键帧在到达前保持，旋转和透视产生真实深度变化",
+      "固定粒子种子可重放且不同粒子不共享位置",
+      "三维面跨过近裁面保留可见部分且投影全部有限"
+    ],
+    "assertions": 15,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionEffects.browser.test.ts",
+    "cases": [
+      "formal menu applies rendered particles and clears paid3D selection when switched to free"
+    ],
+    "assertions": 5,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionEffectsMenu.browser.test.ts",
+    "cases": [
+      "recipe descriptions lead to real edits, preserve original video, and restore the saved result",
+      "free procedural effects stay available while paid asset options and busy edits are guarded",
+      "art workbench opens the existing INK route separately without importing or mutating a block"
+    ],
+    "assertions": 29,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionImageProduction.browser.test.ts",
+    "cases": [
+      "official Studio image flow shows reviewed content, submits once, adopts, saves and restores after reload"
+    ],
+    "assertions": 7,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionImageReveal.browser.test.ts",
+    "cases": [
+      "real JPEG local wipe: $name",
+      "omitted direction preserves existing nonzero reveal behavior",
+      "React preview seek matches the formal export studio pixels"
+    ],
+    "assertions": 11,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionPointMorph.browser.test.ts",
+    "cases": [
+      "real canvas projects morph/orbit and reverse-seeks to exact pixels without external assets"
+    ],
+    "assertions": 6,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionPointMorphRuntime.test.ts",
+    "cases": [
+      "formal plan→resolved→spec→runtime retains morph and orbit with no asset fetch",
+      "each target has equal count, nonzero XYZ extent and exact stable point correspondence",
+      "orbit fixes target in center while depth and perspective change; absent orbit is legacy",
+      "reverse and repeated absolute-frame seeks produce identical sorted canvas draws",
+      "morph changes xyz projection with static camera independently of camera motion",
+      "schema rejects overflow, arbitrary shapes, executable URLs and morph on 2D elements"
+    ],
+    "assertions": 25,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionPreviewAudio.browser.test.ts",
+    "cases": [
+      "真实预览使用AudioContext时钟驱动画面，不依赖rAF时间戳",
+      "最后0.5秒原声不在最后画面帧提前停止，完整片长才收尾",
+      "跳转后以原音trimStart加已过时长播放，只保留片段剩余秒数"
+    ],
+    "assertions": 15,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionPreviewStartup.browser.test.ts",
+    "cases": [
+      "所需字体失败后显示错误，重开同一预览可恢复且不提交视频"
+    ],
+    "assertions": 7,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionPreviewVideo.browser.test.ts",
+    "cases": [
+      "actual HTML video follows timeline seek/play, stays muted, and ends at the exclusive clip boundary"
+    ],
+    "assertions": 6,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionRecording.browser.test.ts",
+    "cases": [
+      ";",
+      "达到时限自动停止，只保留一次原声并释放麦克风",
+      "组件卸载会停止录音，停止事件不上传原声",
+      "卸载后麦克风授权才返回时立即释放，不启动录音或上传",
+      "录音设备启动失败也释放已获取的麦克风"
+    ],
+    "assertions": 20,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionRevision.browser.test.ts",
+    "cases": [
+      "official %s revision dialog cancels without a request and confirms once with locked cost or remaining allowance"
+    ],
+    "assertions": 7,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionSceneEditor.browser.test.ts",
+    "cases": [
+      "程序3D粒子可添加、选择形状与保存动画节点",
+      "几何、图形、粒子参数及秒窗层级写回真实场景schema",
+      "贯穿选择绑定真实前驱而不展示内部ID",
+      "非法参数与带中间态的添加均提示并保留原稿，不抛页面异常",
+      "半秒默认镜头动作节点严格递增且全部在镜内"
+    ],
+    "assertions": 19,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionSoundProduction.browser.test.ts",
+    "cases": [
+      "official Studio starts without audio, generates only missing speech and BGM, adopts all sources and restores the audio timeline"
+    ],
+    "assertions": 14,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionSoundRebase.browser.test.ts",
+    "cases": [
+      "measured adoption resumes the same saved generation after a lost response and reload without saving stale audio or buying speech",
+      "explicit pre-submission rejection clears only its local pending identity and allows a fresh saved attempt"
+    ],
+    "assertions": 7,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionStudio.browser.test.ts",
+    "cases": [
+      "映刻真实页面保留资料，先展示再确认；断线恢复沿用同一个请求"
+    ],
+    "assertions": 19,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/codeMotionTimingPanel.browser.test.ts",
+    "cases": [
+      "real timing panel keeps irregular word times, edits/confirmation survive reload and removed source selection resets"
+    ],
+    "assertions": 4,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/creativeStudios.browser.test.ts",
+    "cases": [
+      "art controls save, submit one immutable intent, query and adopt a candidate",
+      "image decomposition keeps independent instance prompts and binds model adoption to the current source",
+      "unknown model submission freezes the exact source and reuses it after a reconnect",
+      "pending or failed child reference images never become 3D inputs",
+      "real CSS parent layout retains a scrollable editor and a usable canvas",
+      "changing the paid child during cloud confirmation blocks the 3D request",
+      "environment audio opens the real existing editor with a saved SFX cue without purchasing",
+      "空间续查在权限查询异常时只找原提交，缺记录保留意图且不重新生成",
+      "生成准入被拒时新建空间按钮禁用，已有空间查询仍独立"
+    ],
+    "assertions": 46,
+    "skip": []
+  },
+  {
+    "file": "client/src/lib/manhuaAdvisorEffectsControls.browser.test.ts",
+    "cases": [
+      "顾问VFX/标题/转场/生成式按当前指纹填参，原链提交返回真回执，拒绝过期与失败保存",
+      "顾问旧候选可读回原方案并保存后采用，成功任务续查不再提交"
+    ],
+    "assertions": 42,
+    "skip": []
+  },
+  {
+    "file": "server/jobs/claimRace.test.ts",
+    "cases": [
+      "抢到（影响 1 行）时返回任务",
+      "被别人抢走（影响 0 行）时返回 null，而不是照样开跑",
+      "等待用户付费确认的 manhua_advisor_qa 不进入通用异步 worker",
+      "把重启前的运行任务重新排队，并保留已取消任务的终止状态",
+      "部署切在 done payload 与 status 之间时直接收敛成功，不重新排队",
+      "数据库不可用时明确失败，不伪装成已恢复",
+      "只重试同一份终态写入，不重跑学习链",
+      "达到终态写入重试上限后明确返回 false",
+      "失败终态把回执补丁与 failed 状态放在同一次可重试 UPDATE",
+      "终态迟到回执只更新 nativeModelReceipts，不改状态、错误或其他 output",
+      "任务已 failed 后仍允许补记迟到的 started 回执",
+      "普通任务通道排除 post_prod(与 pdf_export 同列)",
+      "claimNextPostProdJob 用同一套条件 UPDATE 抢占,抢到返回任务",
+      "被别的实例抢走(影响 0 行)返回 null,不重复执行同一条后期任务",
+      "countPendingBlenderPostProdJobs 与 blender 领取口径同一套条件（0917 rig 按需启停靠它判有没有活）",
+      "打回排队中的 Blender 任务：只动 queued、只动这两类 action，绝不碰 running 或付费任务",
+      "数据库不可用时拒绝启停判断，不把失联当空队列",
+      "前两次状态写入未完成、第三次完成;媒体处理不在本函数内不会重跑",
+      "达到重试次数仍未写入时返回 false(runner 会保留 failed 任务记录)",
+      "按当前用户 + post_prod 条件查询,input/output 解析成对象",
+      "数据库不可用抛错:不把查询过程未完成折成空列表(防前端误删任务)",
+      "getJobByIdStrict:数据库不可用抛错;getJobById 保持宽松兜底 null",
+      "未指定工作机的领取SQL始终排除特效，包括默认和Blender过滤"
+    ],
+    "assertions": 51,
+    "skip": []
+  },
+  {
+    "file": "server/jobs/runner.canvasImagePolicy.test.ts",
+    "cases": [
+      "超时:canvas 出图 ≥ 12 分钟(覆盖单供应商 6min fetch + 镜像/登记);其他 image 保持 12s",
+      "失败处置:canvas 出图绝不重排(重排=第二次调付费上游),无论 attempts 几次",
+      "映客图片未知提交和外层墙钟超时保留原账待对账，确定失败仍沿原退款路径",
+      "退款幂等键:同 job 双路径(processImageJob 内部/runClaimedJob 外层)用同一把钥匙",
+      "八审 P1-6:超时墙钟 env 只能上调,设成低于 12 分钟被 Math.max 钉回下限",
+      "任务判定:action 精确匹配,数组/空值/其他 action 不误伤",
+      "Creative Nano 固定 8 分钟墙钟、持久账本类型，失败绝不重排烧第二次上游",
+      "Canvas 标准图与资产标准化走各自账本目录"
+    ],
+    "assertions": 25,
+    "skip": []
+  },
+  {
+    "file": "server/jobs/runner.manhuaBgmV6Settlement.test.ts",
+    "cases": [
+      "%s 结果不明：只POST一次，保留对账且不退款",
+      "映客免费BGM先核预算，真实worker不扣费也不误退款",
+      "映客预算不存在时不触达付费Suno入口",
+      "明确403拒绝仅按实际扣费来源退款，响应正文不入失败信息",
+      "对账检查点写入失败仍不退款，已有提交意图阻止第二次POST"
+    ],
+    "assertions": 26,
+    "skip": []
+  },
+  {
+    "file": "server/jobs/workerRole.test.ts",
+    "cases": [
+      "角色只认 rig，其余都是 app",
+      "领单过滤：rig 只领 Blender；app 开分流不领 Blender；不开分流全领",
+      "Blender 动作集合",
+      "父学习分机仅rig领取；单机仅app领取",
+      "特效只认指定工作机，不受分流开关关闭或角色伪配置影响"
+    ],
+    "assertions": 20,
+    "skip": []
+  },
+  {
+    "file": "server/routers/codeMotion.images.test.ts",
+    "cases": [
+      "official protected router isolates account and does not consume a production grant while showing reviewed image content",
+      "official submit reserves only after confirmation; restored batch does not reserve or charge a second grant",
+      "confirmed semantic router binds owner, saved generation and grant, then rebuilds the reviewed image content"
+    ],
+    "assertions": 20,
+    "skip": []
+  },
+  {
+    "file": "server/routers/codeMotion.sounds.test.ts",
+    "cases": [
+      "official sound router checks project grant before invoking the existing production service and preserves the original request identity",
+      "grant failure and absent authentication never reach a sound producer",
+      "official router accepts and preserves dialogue role, and rejects an invented audio role before reservation",
+      "measured adoption router binds owner and saved generation while retaining the old source-only API"
+    ],
+    "assertions": 20,
+    "skip": []
+  },
+  {
+    "file": "server/routers/codeMotion.timing.test.ts",
+    "cases": [
+      "official authenticated entry binds current project source and <=30-second adopted window before native analysis",
+      "stale generation, unselected source, oversized window and no grant cannot call native audio"
+    ],
+    "assertions": 11,
+    "skip": []
+  },
+  {
+    "file": "server/services/artMotionRender.codeAudio.test.ts",
+    "cases": [
+      "worker接原声混音并归档回执，无对白时不调用TTS",
+      "已有对白先保留原文件，再交同一soundtrack混合"
+    ],
+    "assertions": 11,
+    "skip": []
+  },
+  {
+    "file": "server/services/artMotionTask.test.ts",
+    "cases": [
+      "deduplicates simultaneous requests, rejects changed input and restores full history",
+      "映客新建任务不能从通用后期绕过名额，原任务仍可只读恢复"
+    ],
+    "assertions": 9,
+    "skip": []
+  },
+  {
+    "file": "server/services/canvasDialogueOperation.test.ts",
+    "cases": [
+      "一条真实输入独立生成、保留角色状态和验声，成功才结算",
+      "相同编号并发只抢占一次，不会重复合成",
+      "旧任务恢复沿用原定价，不按新时长追补",
+      "同号修改 %s 必须冲突",
+      "未知上游结果不自动重发，也不声称未扣费",
+      "验声拒收不复制、不结算",
+      "镜像失败后沿同一原音频恢复，不重烧",
+      "扣费结果未知仅使用同一结算键重查，不重新合成",
+      "回执写入失败只重试保存，不调用第二次上游",
+      "余额不足不能占位或调用上游",
+      "跨用户相同确认号互不泄露，查询不执行合成",
+      "空台词、超长状态与客户端额外URL在入口拒绝",
+      "未知表演控制在余额检查和上游调用前拒绝",
+      "阶段名不朗读，两个阶段各自所选音色与表演原样进入真实合成调用",
+      "核实免费制作步骤后零余额可生成；重进恢复不重发或扣费",
+      "付费制作保留原实测时长计费",
+      "伪造步骤/不匹配内容在上游调用前拒绝"
+    ],
+    "assertions": 74,
+    "skip": []
+  },
+  {
+    "file": "server/services/canvasVideoTask.audioReference.test.ts",
+    "cases": [
+      "H3音频身份写盘、请求现签，原句柄阻止重复建单",
+      "H3未知提交进入对账，不回落OpenRouter",
+      "H3提交后进程恢复无句柄时不重复生成或退款",
+      "Mini首发BytePlus，同键重送/刷新不重建且保持音频归属",
+      "Mini明确隐私拒绝才回落同Mini，不切2.5",
+      "Mini受理后终态隐私拒绝也回落同Mini",
+      "2.5明确拒绝转EvoLink，保留原音轨",
+      "2.5 上游非人脸失败终态只转交一次 EvoLink",
+      "Mini余额明确拒绝不回落，同键failed不重建",
+      "Mini未知创建转对账，不回落/退款/重建",
+      "Mini创建后崩溃缺句柄，恢复只对账",
+      "写实素材不跳过已配置BytePlus",
+      "EvoLink最终body是HTTPS，任务持久化仍为GS",
+      "白模放大在途先持久化原单，未达标不建BytePlus或Evo单",
+      "图片自动放大结果进入BytePlus及拒绝后的EvoLink，视频参考不被当作图片",
+      "BytePlus最终content包含已签音频",
+      "BytePlus回落EvoLink重新签名且不覆盖持久身份",
+      "人脸拒绝即使OpenRouter可用仍只转EvoLink并保留音频",
+      "延长模式把本人旧成片的过期签名换成供应商可读新链",
+      "未登记的同桶视频在供应商调用前拒绝",
+      "base64视频在供应商调用前拒绝",
+      "worker拒绝越权素材，三个供应商均零提交",
+      "INK创建未知只对账，原id恢复不重投且不退款",
+      "INK实际provider body包含5秒480p和短参考音，原始与parsed回执均保存；崩溃缺handle不重投",
+      "INK paid BytePlus unknown result has a durable marker and never falls back, resubmits or refunds",
+      "INK paid explicit BytePlus rejection uses the existing EvoLink fallback with all audio references once",
+      "INK paid BytePlus process recovery without a handle does not submit again",
+      "INK %s original edit sends original video to correct EvoLink model, no BytePlus or paid upscale"
+    ],
+    "assertions": 124,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionAudio.test.ts",
+    "cases": [
+      "导入先验证归属和真实类型，再不可覆盖归档原字节及SHA",
+      "越权、解码失败、空文件和过长音频均不得归档",
+      "真实容器检测允许录音未知时长，拒绝伪音频和实际视频",
+      "同账号别的作品、改SHA及改源编号不能绕过素材归属",
+      "整数样本裁段、延迟和淡入淡出保持原速，并将旧对白加入同一混音",
+      "样本取整导致尾音或淡入淡出越界时明确失败",
+      "worker再次验原文件SHA和真实长度，拒绝被替换或短缺的音轨",
+      "混音输出时长失败不返回产物，取消信号不继续下载"
+    ],
+    "assertions": 38,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionCompileRender.real.test.ts",
+    "cases": [
+      "formal CodeMotion compile to 30-second six-scene render with images, semantic timing, 5s video and single voice/BGM mix"
+    ],
+    "assertions": 9,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionContentProbe.real.test.ts",
+    "cases": [],
+    "assertions": 5,
+    "skip": [
+      "it.skipIf(process.env.INK_CONTENT_PROBE !== \"1\")("
+    ]
+  },
+  {
+    "file": "server/services/codeMotionEffectsDemo.real.test.ts",
+    "cases": [],
+    "assertions": 4,
+    "skip": [
+      "it.skipIf(!process.env.INK_EFFECTS_DEMO_PREPARE && !process.env.INK_EFFECTS_DEMO_RENDER)(\"authorized 22s effects demo through formal compiler and renderer\", async () => {"
+    ]
+  },
+  {
+    "file": "server/services/codeMotionImageSemantic.test.ts",
+    "cases": [
+      "sends actual native image/audio/video parts, saves raw before parsed, and reuses exactly one result",
+      "recovers preserved raw without repurchase after parsed persistence loss; unknown never retries",
+      "keeps malformed raw and refuses missing coverage, invented source, and invented requirement",
+      "does not redraw based on weak confidence or unreadable input",
+      "%s formal prepare→analyze→prepare→submit uses one fixed edit plus missing-image generation",
+      "does not buy semantic analysis for an already committed image batch",
+      "真实长度的音频窗归档后请求仍可保存，恢复不会重复调用"
+    ],
+    "assertions": 41,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionImages.test.ts",
+    "cases": [
+      "fixed batch persists before enqueue, restores partial/unknown jobs without repeating them, adopts the same owned bytes",
+      "worker refuses forged input/owner/slot and paid quote uses existing per-shot prices",
+      "missing queue rows alone can resume; content/version mismatch never creates or purchases",
+      "image preview without an existing grant uses a read-only quote and leaves slots, queue and manifest untouched",
+      "real image preflight edits poor inputs once, reuses suitable originals and still generates missing scenes"
+    ],
+    "assertions": 34,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionPlan.test.ts",
+    "cases": [
+      "规划沿指定GLM→DeepSeek路线；模型只收到素材名字和ID",
+      "非法计划不得进入导出；重试次数有界",
+      "安全策略拦截不换模型继续生成",
+      "配音未开放时按无声安排，拒绝模型擅自合成",
+      "无图场景直接编排可见主体与动作；纯文字方案不得冒充场景"
+    ],
+    "assertions": 16,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionProductionAudio.real.test.ts",
+    "cases": [
+      "440/880Hz20秒技术音沿正式混音保存为5–10秒窗，精确240000帧且两频都在；恢复零重混"
+    ],
+    "assertions": 10,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionProductionExport.test.ts",
+    "cases": [
+      "只看报价不领取；并发11制作最多10且产生媒体之前就占位",
+      "免费整作品只领一次；导出同槽幂等、失败不能重新释放已经花掉的图音视频预算",
+      "会员导出沿作品授权不占免费名额、不另造收费合同，worker必须有映射",
+      "局部修改子作品导出绑定原grant，不再次领取免费名额",
+      "pure-code first export through the actual task queue mints production grant before claiming and rendering"
+    ],
+    "assertions": 21,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionProductionGrant.test.ts",
+    "cases": [
+      "成本之前抢一次账号/IP名额，同作品恢复复用grant，不再领额",
+      "并发槽只有一个请求身份；未知结果、改digest、新request都不能重投",
+      "会员档位来自服务端plan，不消耗免费额度",
+      "采用图音仅更新素材；改变分镜必须停止新成本",
+      "没有服务端占位不能伪造免费上下文",
+      "redraw adoption may replace original image layers while retaining the non-image code identity",
+      "free concurrent video reservations cap two distinct scenes while same-scene recovery remains allowed",
+      "explicit generation choice uses free grant on a paid account and rejects an unentitled paid choice before claim",
+      "dialogue in a non-scenes project fails before claiming its free allowance"
+    ],
+    "assertions": 22,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionProductionVideo.test.ts",
+    "cases": [
+      "measured 4.72-second dialogue extends a four-second scene to a legal five-second prepared model shot",
+      "paid account choosing free without a grant quotes Mini and submits the same free task from an existing image",
+      "unentitled paid choice fails video preparation before manifest or submission",
+      "dialogue on a code scene requires real matching speech and emits Seedance dialogue/music markers without subtitle or URL instructions",
+      "dialogue cannot reuse a narration receipt, wrong emotion, muted voice or shortened speech clip",
+      "免费Mini480p完整走manifest→名额→intent→worker，恢复不会创建第二个视频或扣积分",
+      "有旁白+BGM时保持两条音源并选择reference_to_video，付费使用2.5/720p与既有charge",
+      "只有BGM不能冒充已采用旁白；纯代码场景不调用视频模型",
+      "不足4秒或超过5秒的自然镜头在生成前拒绝，不能生成半镜假装覆盖完整场景",
+      "reused original composition images remain video references when no generated scene.imageId exists",
+      "historical paid EvoLink revision keeps original intent identity and restores without a second charge",
+      "free prepare rejects three natural shots before any intent, charge or upstream work",
+      "new paid revisions stop before any write or charge until BytePlus cost contract is confirmed",
+      "missing BytePlus configuration does not silently send a new task straight to EvoLink",
+      "new manifest worker accepts only its primary engine or a recorded same-model fallback",
+      "adopt uses video-stream duration $duration and retains nominal timeline/source bytes",
+      "%s original edit uses EvoLink directly, stable intent and original clip reference",
+      "paid8s retains exact duration from quote through BytePlus submit, same intent restore and formal adoption;30s uses existing long retail"
+    ],
+    "assertions": 83,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionRevision.test.ts",
+    "cases": [
+      "code-only edits over a dialogue video fail before consuming a revision or creating a child",
+      "previews consume none; concurrent requests accept only two; identical request restores same child",
+      "unfinished version and other account cannot obtain revision; no ledger is consumed",
+      "second revision of a child shares the root limit, upgrade code-only uses no guessed provider charge",
+      "asset reuse requires exact original revision snapshot; unrelated source metadata cannot inherit authority",
+      "lost response plus browser reload/new request UUID restores the same confirmed edit without consuming another chance",
+      "official child export keeps parent audio and untouched generated video through compiler and ownership gates",
+      "locks a single paid scene at actual fixed tool units ×2; restores once and rejects unquoted inputs",
+      "never drops existing video references to fit an incomplete price",
+      "free original edit preserves the source, uses standard2.0 and consumes one root revision only",
+      "missing source and low-resolution paid input fail before a revision is consumed"
+    ],
+    "assertions": 56,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionRevisionEditMedia.test.ts",
+    "cases": [
+      "real FFmpeg 2.6s edit holds last frame to5s; formal consumer decodes150 frames and raw identity stays preserved"
+    ],
+    "assertions": 8,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionRevisionEditReference.test.ts",
+    "cases": [
+      "formal reference preflight preserves1s source and pads to5s, trims31s to5s and restores without rendering again"
+    ],
+    "assertions": 6,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionRevisionEditSettlement.test.ts",
+    "cases": [
+      "uses actual input/output units and one same-source refund across receipt-write crash recovery",
+      "unverified/refunded source and cost above confirmed ceiling cannot be called settled"
+    ],
+    "assertions": 15,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionRevisionProposal.test.ts",
+    "cases": [
+      "owned saved source produces a real code change; unknown source fails before advisor; model cannot fabricate an original clip",
+      "a proposed code overlay on an archived dialogue video becomes a limitation without deleting that clip"
+    ],
+    "assertions": 13,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionSound.test.ts",
+    "cases": [
+      "对白 role 沿请求、Qwen身份、回执、采用及保存恢复保留，旁白旧身份不能冒用",
+      "沿漫剧音色库逐镜编译情绪，回执保存语气，改情绪不能复用旧配音",
+      "已保存镜头→既有Qwen入口→刷新恢复→采用→保存再打开→正式编译消费同一音源",
+      "写入失败不发上游，断线仍恢复原请求编号，查询不生成不计费",
+      "旧版本或非本镜台词不生成，过长旁白不截断，改词后旧音源不能通过编译",
+      "BGM复用既有Suno队列，持久化双候选，并允许长音源在正式时间轴裁入片长"
+    ],
+    "assertions": 52,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionSoundAdoption.test.ts",
+    "cases": [
+      "formal measured adoption saves and restores the same speech/image grant without another purchase",
+      "recovers %s CAS interruption and blocks new cost slots until the original adoption finishes",
+      "refuses an extension after the %s identity was reserved",
+      "CAS conflict rechecks a concurrently reserved video and never shifts its window",
+      "refuses unrelated storyboard edits and another owner without altering the grant",
+      "a too-long free dialogue is an explicit pre-submission rejection and keeps the original receipt reusable",
+      "adopting the same speech after a later image save preserves the later version rather than replaying the old snapshot",
+      "source-relative word timing follows a shifted later audio window without retaining old absolute positions"
+    ],
+    "assertions": 40,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionStore.test.ts",
+    "cases": [
+      "草稿按账号隔离、服务失败不冒充空稿，版本冲突不覆盖",
+      "超过旧100KB的合法中文镜头工程保存后完整恢复，超新上限拒绝"
+    ],
+    "assertions": 11,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionTask.audio.test.ts",
+    "cases": [
+      "上传原声可不带TTS提交，音源权限先于排队检查",
+      "音量、原声SHA和秒窗变动均改变幂等指纹",
+      "原声任务响应丢失后恢复同任务，不重新排队或触发合成",
+      "云端保存恢复保留原声身份及全部秒窗，不生成新任务"
+    ],
+    "assertions": 14,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionTask.test.ts",
+    "cases": [
+      "同版本重复点击与重进页面恢复原任务，不新排队",
+      "首次提交先走素材归属核验，再走原幂等队列",
+      "无声逐镜沿原权限和名额来源提交，恢复同任务并保留账号及版本门禁",
+      "无声提交仍由原编译合同拦截缺方案、空镜头和空画面，不查询或排队",
+      "文字旁白未生成采用前不能占名额或排队，本路径不隐式调用Kokoro"
+    ],
+    "assertions": 27,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionTiming.test.ts",
+    "cases": [
+      "sends native bounded window, archives raw before parsing, maps source seconds and recovers without a second call",
+      "rejects unknown call replay, >30 seconds, and changed source bytes without another provider call",
+      "actually decodes and trims a bounded PCM window before any native call"
+    ],
+    "assertions": 15,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionVideoDialogueOriginal.real.test.ts",
+    "cases": [],
+    "assertions": 11,
+    "skip": [
+      "it.skipIf(!original || !evidence)(\"adopts the real eight-second dialogue original as 240 frames without changing provider bytes\", async () => {"
+    ]
+  },
+  {
+    "file": "server/services/codeMotionVideoDuration.real.test.ts",
+    "cases": [
+      "production consumer fills short media and trims long media without altering the input",
+      "paid8-second formal consumer decodes240 frames from an unmodified8.04-second source"
+    ],
+    "assertions": 13,
+    "skip": [
+      "it.skipIf(!root)(\"decodes the four unmodified provider originals through the production consumer\", async () => {",
+      "it.skipIf(!handoff)(\"decodes the new paid coffee handoff original without manually trimming provider bytes\", async () => {"
+    ]
+  },
+  {
+    "file": "server/services/codeMotionVideoDuration.test.ts",
+    "cases": [
+      "accepts valid source durations independently of the nominal timeline slot",
+      "rejects empty/nonfinite media and invalid nominal slots, not ordinary drift",
+      "accepts the paid8-second timeline without changing actual-duration compatibility"
+    ],
+    "assertions": 7,
+    "skip": []
+  },
+  {
+    "file": "server/services/codeMotionVideoRender.test.ts",
+    "cases": [
+      "actual exporter mixes 4-second FFmpeg clip with code scenes and only the final narration track",
+      "rejects a source whose real bytes differ from the saved fingerprint"
+    ],
+    "assertions": 10,
+    "skip": []
+  },
+  {
+    "file": "server/services/evolinkSeedanceVideo.receipt.test.ts",
+    "cases": [
+      "archives the exact HTTP body before returning the task handle",
+      "persists %s evidence and distinguishes only definitive rejection",
+      "archives a completed provider poll before returning success, and persistence failure retains the same upstream task"
+    ],
+    "assertions": 11,
+    "skip": []
+  },
+  {
+    "file": "server/services/googleTranscribeAccess.test.ts",
+    "cases": [
+      "只允许已登录用户POST，拒绝时不访问模型",
+      "服务端拒绝未知MIME、缺音频和损坏base64，不依赖客户端限制",
+      "8MB边界允许，超过8MB在上游调用前拒绝",
+      "保留原模型参数和旧{text}消费者合同，单次调用不重试",
+      "被截断、被阻止及空白结果明确失败，不冒充完整转写",
+      "上游失败只返回脱敏错误，不传播模型密钥或自动重试"
+    ],
+    "assertions": 25,
+    "skip": []
+  },
+  {
+    "file": "server/services/inkFreeQuota.test.ts",
+    "cases": [
+      "真实Postgres语义：并发十一个账号最多十个名额，名额与任务一起写入",
+      "同任务恢复不占第二次；换内容、换账号不得复用原任务",
+      "次日不重置账号福利，PPT与MP4共用；同IP当天阻止第二个账号",
+      "只有数据库终态失败才释放；任务缺失或运行中不释放"
+    ],
+    "assertions": 13,
+    "skip": []
+  },
+  {
+    "file": "server/services/manhuaAdvisorOperation.test.ts",
+    "cases": [
+      "operationId 对 user/request 稳定，指纹覆盖问题、模型与项目上下文",
+      "未确认请求只写 queued 占位，不保存正文且不取得执行权",
+      "确认后只有 queued→running CAS 胜者取得执行权",
+      "相同 requestId 绑定不同内容时 mismatch，不进入执行",
+      "成功终态回放完整结果并标 replayed，不再取得执行权",
+      "退款待对账终态不会冒充失败已退款",
+      "结果先以 running→succeeded CAS 持久化；已失败时不得覆盖",
+      "失败先落 refund_pending，再以 CAS 标记对账完成",
+      "stale/refund_pending 扫描只返回 jobs 表候选；DB 不可用显式失败",
+      "心跳包装只执行一次 work，并在结束后停止定时器",
+      "INK natural revision identity binds the saved source generation and instruction while a replay keeps its fingerprint"
+    ],
+    "assertions": 34,
+    "skip": []
+  },
+  {
+    "file": "server/services/manhuaVfxEvidenceFailure.test.ts",
+    "cases": [
+      "%s拒收前原始与完整解析JSON都永久归档，不提交结果"
+    ],
+    "assertions": 5,
+    "skip": []
+  },
+  {
+    "file": "server/services/manhuaVfxRender.blender.test.ts",
+    "cases": [],
+    "assertions": 15,
+    "skip": [
+      "it.skipIf(process.env.MANHUA_VFX_REAL_BLENDER_PROBE !== \"1\")(\"actual Blender image overlay passes service manifest gate and preserves source audio\", async () => {"
+    ]
+  },
+  {
+    "file": "server/services/manhuaVfxRender.test.ts",
+    "cases": [
+      "uses video duration and exact rational rate; rejects rotated source instead of misplacing effects",
+      "archives raw output before parsing, composites real pixels, and copies the source audio"
+    ],
+    "assertions": 13,
+    "skip": []
+  },
+  {
+    "file": "server/services/manhuaVfxSourcePipeline.test.ts",
+    "cases": [
+      "%s进入实际像素处理调用后合成，原声映射原始文件",
+      "%s像素处理失败时保留错误证据，不上传或自动重做候选",
+      "真三维单效果只调用三维消费者，不把空二维层当成3D；保留原音轨",
+      "原片像素处理失败时不合成、不上传候选；多输入合成映射正确原声",
+      "三维回执拒绝相机不环绕、非透视、朝向错误及冻结几何变化",
+      "%s经既有服务端渲染链消费，保留原音轨和实际参数",
+      "选择性定格回执拒绝人物静止、碎片漂移、源动画变速与身份错配",
+      "新场景证据必须逐角色、逐活动帧验证净空/受光，不能用其他角色动作代替"
+    ],
+    "assertions": 26,
+    "skip": []
+  },
+  {
+    "file": "server/services/manhuaVfxWorkerBoundary.test.ts",
+    "cases": [
+      "生产机在下载、证据上传和渲染之前拒绝特效执行"
+    ],
+    "assertions": 2,
+    "skip": []
+  },
+  {
+    "file": "server/services/manhuaWorldTask.test.ts",
+    "cases": [
+      "未配置钥匙：建单前失败，不落记录",
+      "建单：场景图按 gs:// 重签后提交，进入 running；同人同图同模型同提示词幂等不重复建单",
+      "断网恢复只读同一图片意图，输入归一化一致，缺失或跨账号不建单",
+      "完成：产物镜像到 Fly 桥（稳定地址）并归档 gs://；视图不带上游链接",
+      "主产物镜像失败保持 running 下轮重试；归档失败不挡成功、下轮补归档",
+      "提交 rejected → failed 可重试（新任务号）；unknown → reconcile 禁重试；上游报错 → failed",
+      "超时转人工对账；列表只列本人未删除；删除调上游删世界、进行中的不许删",
+      "PR-11/WL-D01 layout：深度 PNG 先传 media asset，再以 media_asset 引用 + z_min/z_max 提交 depth_to_rgb，得全景后以 is_pano:true 建世界；两步 operationId 与 cost 各自持久化",
+      "WL-D01：缺/坏 depthMeta 建单前拒，零上游调用（不拉图、不传、不提交）",
+      "PR-11 layout：带 gs:// 时第一步先重新签名再拉图（签名 url 过期后重试也能用）；签名/拉图/上传失败 → failed 不占上游",
+      "PR-11 layout：第一步 rejected → failed 可重试（media asset 留用不重传）；第一步 poll 报错 → failed；第二步提交 unknown → reconcile（第一步产物留在记录里）",
+      "两步恢复：第二步（建世界）rejected 失败后重试只重做第二步——不重传、不重新上色、不重付第一步",
+      "layout 元数据只在真要提交上色时校验：已提交（已付费）的第一步不会因记录里元数据缺失被判 failed 再重付",
+      "第一步镜像失败先保留原 operation：不提交第二步；恢复后先归档再建世界且不重付上色",
+      "第一步镜像成功、归档失败：从已有桥路径补归档，不重新拉图或上色",
+      "旧记录已有第二步 operation 也补第一步归档；成功后缺归档仍由 worker 退避恢复"
+    ],
+    "assertions": 151,
+    "skip": []
+  },
+  {
+    "file": "server/services/openaiGptImage2.codeMotion.test.ts",
+    "cases": [
+      "free exact model and medium quality survive global Flare/quality overrides; raw response is saved before upload",
+      "paid Sunburst is exact; ambiguous submit and receipt-save failure stop without second key or duplicate purchase",
+      "%s reference edit uses exact model/quality and both original images once"
+    ],
+    "assertions": 15,
+    "skip": []
+  },
+  {
+    "file": "server/services/paidJobLedger.editSettlement.test.ts",
+    "cases": [
+      "edit settlement pending survives process registration and overdue reaper without a full refund"
+    ],
+    "assertions": 4,
+    "skip": []
+  },
+  {
+    "file": "server/services/paidJobLedger.refundPending.test.ts",
+    "cases": [
+      "正常路径两阶段：active → refunded，打款恰一次且 reason 带 refundKey",
+      "崩溃窗口：hold 停在 refund_pending、账里已有 marker → 只补状态，不再打款",
+      "崩溃窗口：refund_pending、账里没有 marker → 补打款恰一次",
+      "DB 不可用时保持 refund_pending，不盲退也不误标",
+      "reaper 每轮清扫 refund_pending（对账入口不依赖再次失败回调）",
+      "团队扣款的退分走同源退回（refundCreditsForDeductAmount），不误退个人余额",
+      "resumable hold：forceAll 与心跳线都不退，只兜 24h 硬底",
+      "非 resumable hold 保持原行为：forceAll 全退（部署兜底语义不回归）",
+      "未知图片提交保留原账待对账，普通失败与关机不退不结，仅明确人工退分可结案"
+    ],
+    "assertions": 37,
+    "skip": []
+  },
+  {
+    "file": "server/services/paidSceneAccess.routes.test.ts",
+    "cases": [
+      "免费与普通付费会员的三个生成入口均在素材签名和任务创建前拒绝",
+      "两种内部角色三个入口仍沿原归属和任务链，会员查询不参与",
+      "旧任务查询删除不新增会员查询，物件和分析维持原权限",
+      "匿名账号不能查准入或提交场景",
+      "原提交续查沿内部角色和素材归属，只查原指纹，不签名或创建任务"
+    ],
+    "assertions": 36,
+    "skip": []
+  },
+  {
+    "file": "server/services/paidSceneAccess.test.ts",
+    "cases": [
+      "只从账号方案取会员身份，免费和普通付费会员均不产生生成授权",
+      "会员查询故障不放行，内部角色无须查询订阅"
+    ],
+    "assertions": 7,
+    "skip": []
+  },
+  {
+    "file": "shared/codeMotion.test.ts",
+    "cases": [
+      "文字编译为既有固定引擎，时间连续且总帧数不变",
+      "拒绝时长不闭合和模型注入代码",
+      "拒绝不存在或遗漏的图片",
+      "图表严格消费真实原数值，不允许模板默认数值",
+      "超长文档和未知资源不被静默截断",
+      "数据保留时间来源与六位精度，缺失值拒绝提交且允许本机恢复",
+      "两列表格完整读入，空白不变零、额外列及超量不截断",
+      "按完整镜头总长编译并保存恢复，不强凑30秒",
+      "自然时长仍核对真实音画边界，固定片长保留精确约束"
+    ],
+    "assertions": 30,
+    "skip": []
+  },
+  {
+    "file": "shared/codeMotionAudio.test.ts",
+    "cases": [
+      "音源及片段保留真实身份和四类用途",
+      "拒绝不存在的来源、越界、未使用及重复音源",
+      "拒绝坏数值、过长淡入淡出和没有声音的音量"
+    ],
+    "assertions": 10,
+    "skip": []
+  },
+  {
+    "file": "shared/codeMotionComposition.test.ts",
+    "cases": [
+      "保留实际几何与关键帧而非模板文案",
+      "拒绝重复ID、越界/乱序关键帧和隐含脚本字段",
+      "跨镜贯穿要求上一镜同一实体和类型",
+      "图片只允许本次素材ID转换，计划不能夹带链接",
+      "限制粒子、路径、镜头、时长和转场容量",
+      "拒绝没有渲染消费者的轴旋转和超量粒子，并严格拒绝未知元素字段",
+      "缩短时同步元素秒窗、动作、相机与转场且不修改原稿",
+      "延长仍限制转场并保留精确结尾与未填写end",
+      "拒绝非有限和越界镜长，避免除零或损坏草稿"
+    ],
+    "assertions": 32,
+    "skip": []
+  },
+  {
+    "file": "shared/codeMotionEffects.test.ts",
+    "cases": [
+      "keeps columns aligned and annotations accumulated through the formal save/restore/compile path",
+      "retains earlier square full pages while later pages enter in deterministic depth order",
+      "does not touch a scene covered even partially by an original video, or replace the saved video",
+      "rejects missing materials and capacity atomically without inventing content",
+      "image reveal preserves original identity, fit and non-reveal motion, including easing collisions",
+      "free 3D recipe writes real point morph and camera orbit while keeping existing camera motion",
+      "keeps the new 3D effect visible over a prior layout and rejects particle overflow without changing the project"
+    ],
+    "assertions": 45,
+    "skip": []
+  },
+  {
+    "file": "shared/codeMotionImagePreflight.test.ts",
+    "cases": [
+      "preflight distinguishes missing images, reusable originals, low resolution and measured multi-reference aspect conflicts"
+    ],
+    "assertions": 7,
+    "skip": []
+  },
+  {
+    "file": "shared/codeMotionImageProduction.test.ts",
+    "cases": [
+      "adopted scene image reaches the official compiler without deleting original graphic animation or changing production identity",
+      "only an explicit redraw receipt replaces a selected card while the original project stays intact",
+      "scene redraw visibly replaces only its reference layers, retains graphics and preserves original bytes in the unchanged input"
+    ],
+    "assertions": 18,
+    "skip": []
+  },
+  {
+    "file": "shared/codeMotionIntegration.test.ts",
+    "cases": [
+      "本机草稿保留尚未填完的音频秒窗，正式编译仍拒绝",
+      "原声、镜内动作和已选图片同时编译，浮点镜长闭合且不重复合成口播",
+      "旧图片字段不能假称逐镜元素已经使用图片",
+      "镜头说明不能代替画面，音轨不能超出片长或原音",
+      "直接后期入口也拒绝未登记的编排图片",
+      "旧工程和完整新编排都能通过恢复合同，无地址和动作丢失"
+    ],
+    "assertions": 15,
+    "skip": []
+  },
+  {
+    "file": "shared/codeMotionRevision.test.ts",
+    "cases": [
+      "local revision updates selected visible text, preserves original assets and leaves untouched shots exact",
+      "rejects code edits over archived video without changing the original and rejects duplicate/out-of-range edit indexes"
+    ],
+    "assertions": 14,
+    "skip": []
+  },
+  {
+    "file": "shared/codeMotionSoundAdoption.test.ts",
+    "cases": [
+      "replacing an analysed BGM candidate clears only its obsolete timing and preserves reusable audio",
+      "natural-duration draft adopts BGM through actual scene end before saving",
+      "dialogue requires an adopted video and matching dialogue track; legacy narration stays code-only"
+    ],
+    "assertions": 13,
+    "skip": []
+  },
+  {
+    "file": "shared/codeMotionTiming.test.ts",
+    "cases": [
+      "maps actual irregular source word and beat times through trim into scene-local semantic keyframes",
+      "requires confirmed bounded true-source timing instead of accepting stale or uniform invented data"
+    ],
+    "assertions": 10,
+    "skip": []
+  },
+  {
+    "file": "shared/codeMotionVideo.test.ts",
+    "cases": [
+      "video timing uses an exclusive end, with exact frame and source bounds",
+      "requires real stored source identity and bounded 4–5 second generated clips",
+      "paid8-second stored clip validates nominal timeline and retains ownership hash requirements"
+    ],
+    "assertions": 9,
+    "skip": []
+  },
+  {
+    "file": "shared/inkVideoProductionPolicy.test.ts",
+    "cases": [
+      "后台按档位固定模型分辨率，音讯参考不会走首尾帧模式",
+      "mini总参考9、2.5总参考50，同时检查单类通道上限，不截断参考",
+      "paid accepts8 to30 seconds with complete references while free still rejects8"
+    ],
+    "assertions": 8,
+    "skip": []
+  },
+  {
+    "file": "shared/manhuaVfxPricing.test.ts",
+    "cases": [
+      "%s秒按已确认整段及半价尾段计为%s积分",
+      "全部效果有明确价格状态，已核价多层只取最高单价，不重复累加",
+      "未知时长、无效果、无效类型与溢出不能给出有效报价",
+      "新增%s未获标价授权，单独或混合都不能显示零价或沿用较低价",
+      "核价标签与19项原合同保持一致"
+    ],
+    "assertions": 15,
+    "skip": []
+  },
+  {
+    "file": "shared/paidSceneAccess.test.ts",
+    "cases": [
+      "免费与未知会员状态均禁止场景建模，积分或邀请码不能替代会员",
+      "pro/enterprise识别为正式会员，收费链未开放前不承诺可生成",
+      "管理员与监管保留原内部验收权限"
+    ],
+    "assertions": 3,
+    "skip": []
+  }
+]

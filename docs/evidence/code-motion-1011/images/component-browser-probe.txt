@@ -1,0 +1,38 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+✘ [ERROR] Could not resolve "react"
+
+    fixture:trpc:2:20:
+      2 │ import{useState}from'react';const f=()=>globalThis.fixture;
+        ╵                     ~~~~~~~
+
+  The plugin "fixture transport only" didn't set a resolve directory for the file "fixture:trpc", so esbuild did not search for "react" on the file system.
+
+ × client/src/lib/codeMotionImageProduction.browser.test.ts > official image component shows reviewed content before submit, restores the same batch and adopts into the saved project
+   → Build failed with 1 error:
+fixture:trpc:2:20: ERROR: Could not resolve "react"
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/codeMotionImageProduction.browser.test.ts > official image component shows reviewed content before submit, restores the same batch and adopts into the saved project
+Error: Build failed with 1 error:
+fixture:trpc:2:20: ERROR: Could not resolve "react"
+ ❯ failureErrorWithLog ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/esbuild@0.25.10/node_modules/esbuild/lib/main.js:1467:15
+ ❯ ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/esbuild@0.25.10/node_modules/esbuild/lib/main.js:926:25
+ ❯ runOnEndCallbacks ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/esbuild@0.25.10/node_modules/esbuild/lib/main.js:1307:45
+ ❯ buildResponseToResult ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/esbuild@0.25.10/node_modules/esbuild/lib/main.js:924:7
+ ❯ ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/esbuild@0.25.10/node_modules/esbuild/lib/main.js:951:16
+ ❯ responseCallbacks.<computed> ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/esbuild@0.25.10/node_modules/esbuild/lib/main.js:603:9
+ ❯ handleIncomingPacket ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/esbuild@0.25.10/node_modules/esbuild/lib/main.js:658:12
+ ❯ Socket.readFromStdout ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/esbuild@0.25.10/node_modules/esbuild/lib/main.js:581:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { errors: [ { detail: undefined, id: '', location: { column: 20, file: 'fixture:trpc', length: 7, line: 2, lineText: 'import{useState}from\'react\';const f=()=>globalThis.fixture;', namespace: '', suggestion: '' }, notes: [ { location: null, text: 'The plugin "fixture transport only" didn\'t set a resolve directory for the file "fixture:trpc", so esbuild did not search for "react" on the file system.' } ], pluginName: '', text: 'Could not resolve "react"' } ], warnings: [] }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  04:00:16
+   Duration  1.51s (transform 71ms, setup 0ms, collect 420ms, tests 240ms, environment 0ms, prepare 160ms)
+

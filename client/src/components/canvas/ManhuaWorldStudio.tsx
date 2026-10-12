@@ -5,6 +5,7 @@ import {artMotionSpecSchema,type ArtMotionSpec} from "@shared/artMotion";
 import type { PrevisStageAnimation } from "@shared/manhuaPrevisAnimation";
 import type { AdvisorWorldControl } from "@/lib/manhuaAdvisorWorkflowControl";
 import { useEffect } from "react";
+import { trpc } from "@/lib/trpc";
 /**
  * 场景 3D 世界工作台（PR-8）：每个已锁场景一行——生成 Marble 3DGS 世界 → 预览（全景/缩略图）→ 产物链接（Fly 桥稳定地址）。
  * 场景方案由顾问编写，确认后沿用原生成入口；预览和视角图留在同页。
@@ -114,6 +115,9 @@ const STAGE_CLASS: Record<Stage, string> = {
 };
 
 export function ManhuaWorldStudio(props: Props) {
+  const sceneAccess = trpc.manhuaWorld.sceneAccess.useQuery(undefined, { retry: false, staleTime: 30_000 });
+  const canGenerateScene = sceneAccess.data?.canGenerate === true;
+  const sceneAccessMessage = sceneAccess.data?.message || (sceneAccess.isError ? "暂时无法确认3D场景权限，请稍后重试。" : "正在确认3D场景权限…");
   const [animationBusy,setAnimationBusy]=useState(false),[animationError,setAnimationError]=useState("");
   const animationLock=useRef(false);
   const { scenes, busyIds, disabled, onOpenAdvisor, onGenerate, onRetry, onRemove, stageCharacters = [], onExportStageFrame, onSubmitLayoutWorld, previsStatusZh, onOpenPrevis, savedFrameCount = 0, adoptedFrameCount = 0 } = props;
@@ -130,6 +134,7 @@ export function ManhuaWorldStudio(props: Props) {
         <span className="text-cyan-100">3D 场景</span>
         <span className="rounded bg-white/10 px-1.5 py-0.5">可尝试载入 {counts.ready}/{counts.total}</span>
       </div>
+      <p className="mb-2 text-[11px] text-amber-100" data-scene-access role="status">{sceneAccessMessage}</p>
       <div className="mb-2 flex flex-wrap items-center gap-2 rounded border border-cyan-300/20 bg-cyan-500/5 p-2 text-[11px] text-white/75" data-world-previs-link>
         <span>本段白模：{previsStatusZh || "尚无可用白模"}。3D 场景读取白模人物的起点站位，逐秒动作与切镜请回白模预演查看。</span>
         {onOpenPrevis ? <button type="button" className={btn} onClick={onOpenPrevis}>查看本段白模预演</button> : null}
@@ -170,7 +175,7 @@ export function ManhuaWorldStudio(props: Props) {
               <span className={`rounded px-1.5 py-0.5 ${STAGE_CLASS[stage]}`}>{busy ? "处理中…" : labelZh}</span>
               {reasonZh ? <span className="text-amber-100">{reasonZh}</span> : null}
               <span className="ml-auto flex gap-1">
-                {stage === "failed" && onRetry ? <button type="button" className={btn} disabled={disabled || busy} onClick={() => void onRetry(s.id)}>重试原任务（费用另行确认）</button> : null}
+                {stage === "failed" && onRetry ? <button type="button" className={btn} disabled={disabled || busy || !canGenerateScene} onClick={() => { if (canGenerateScene) void onRetry(s.id); }}>重试原任务（费用另行确认）</button> : null}
                 {onOpenAdvisor && (stage === "none" || stage === "failed" || stage === "ready") ? <button type="button" className={btnPrimary} disabled={disabled || busy} onClick={() => onOpenAdvisor(s.id)}>{stage === "ready" ? "讨论场景调整" : "让顾问安排3D场景"}</button> : null}
                 {onRemove && (stage === "ready" || stage === "failed" || stage === "review") ? <button type="button" className={btn} disabled={disabled || busy} onClick={() => void onRemove(s.id)}>删除世界</button> : null}
 

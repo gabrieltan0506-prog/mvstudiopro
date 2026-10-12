@@ -1,0 +1,88 @@
+{
+  "at": "2026-10-10T18:29:05.949Z",
+  "platform": "linux",
+  "node": "v24.13.1",
+  "machine": "7812595b294778",
+  "workerProcesses": [
+    {
+      "pid": "666",
+      "JOB_WORKER_ROLE": "rig",
+      "FLY_MACHINE_ID": "7812595b294778",
+      "MANHUA_HEAVY_MACHINE_ID": "7812595b294778",
+      "MANHUA_RIG_WORKER_SPLIT": "1"
+    },
+    {
+      "pid": "696",
+      "JOB_WORKER_ROLE": "rig",
+      "FLY_MACHINE_ID": "7812595b294778",
+      "MANHUA_HEAVY_MACHINE_ID": "7812595b294778",
+      "MANHUA_RIG_WORKER_SPLIT": "1"
+    },
+    {
+      "pid": "712",
+      "JOB_WORKER_ROLE": "rig",
+      "FLY_MACHINE_ID": "7812595b294778",
+      "MANHUA_HEAVY_MACHINE_ID": "7812595b294778",
+      "MANHUA_RIG_WORKER_SPLIT": "1"
+    },
+    {
+      "pid": "724",
+      "JOB_WORKER_ROLE": "rig",
+      "FLY_MACHINE_ID": "7812595b294778",
+      "MANHUA_HEAVY_MACHINE_ID": "7812595b294778",
+      "MANHUA_RIG_WORKER_SPLIT": "1"
+    },
+    {
+      "pid": "739",
+      "JOB_WORKER_ROLE": "rig",
+      "FLY_MACHINE_ID": "7812595b294778",
+      "MANHUA_HEAVY_MACHINE_ID": "7812595b294778",
+      "MANHUA_RIG_WORKER_SPLIT": "1"
+    }
+  ],
+  "fingerprints": {
+    "server/jobs/workerRole.ts": "6f8ed6fcad78a57d99c094ed91bcbc8afbe0abfb7e4d91d662582bae89e7c098",
+    "server/jobs/repository.ts": "5633ba386a65e8dde0720e9fcdbea68c4212372683fc9d479bbd2869f8a45118",
+    "server/jobs/postProdJob.ts": "db78c877873ccb858e978fec60bce2f26e185ae55404fbf3f679b69ac236d455",
+    "server/services/manhuaVfxRender.ts": "7b7db80cc31d43a917a0ebdd52e20dcf469984c21959e04043cd7b0ee5bc41a2",
+    "shared/manhuaVfxPricing.ts": "ff40585a473010c940475ec378fc23d888d57b8b1e50816fcc7c0a89fc2652b7",
+    "shared/manhuaVfx.ts": "17511db3b49278837dcfd9112663754c858cf19c69121a23ef64c75f55830295"
+  },
+  "quotes": [
+    {
+      "seconds": 15,
+      "unitCredits": 16,
+      "units": 1,
+      "credits": 16
+    },
+    {
+      "seconds": 30,
+      "unitCredits": 16,
+      "units": 2,
+      "credits": 32
+    },
+    {
+      "seconds": 31,
+      "unitCredits": 16,
+      "units": 2.5,
+      "credits": 40
+    },
+    {
+      "seconds": 45,
+      "unitCredits": 16,
+      "units": 3,
+      "credits": 48
+    },
+    {
+      "seconds": 46,
+      "unitCredits": 16,
+      "units": 3.5,
+      "credits": 56
+    }
+  ],
+  "guardRejected": 2,
+  "sideEffects": 0,
+  "mediaSubmissions": 0,
+  "modelCalls": 0,
+  "scope": "Linux模块导入与纯函数/入口防守；非线上媒体验收"
+}

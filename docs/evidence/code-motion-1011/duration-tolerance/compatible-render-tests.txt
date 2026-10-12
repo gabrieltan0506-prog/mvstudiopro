@@ -1,0 +1,34 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionVideoDuration.test.ts (2 tests) 2ms
+stdout | server/services/codeMotionVideoDuration.real.test.ts > decodes the four unmodified provider originals through the production consumer
+{"tier":"free","scene":2,"originalSha256":"66e60309c1b45dac1f6b5633827ada087fa5c89bbfbd1f013e3ce8ad9f7a12ab","streamDuration":"5.041667","containerDuration":"5.088000","decodedFrames":150}
+
+stdout | server/services/codeMotionVideoDuration.real.test.ts > decodes the four unmodified provider originals through the production consumer
+{"tier":"free","scene":3,"originalSha256":"346ab3ea4f1530cafdc1e1c9ac5de529ac35dc9df20bfac5787397ffbd529b59","streamDuration":"5.041667","containerDuration":"5.088000","decodedFrames":150}
+
+stdout | server/services/codeMotionVideoDuration.real.test.ts > decodes the four unmodified provider originals through the production consumer
+{"tier":"paid","scene":2,"originalSha256":"b1abc3cf53f49250dc89094af0593ce75f09d1d6a6290f0ebf02469f60aa28ab","streamDuration":"5.041667","containerDuration":"5.056000","decodedFrames":150}
+
+stdout | server/services/codeMotionVideoDuration.real.test.ts > decodes the four unmodified provider originals through the production consumer
+{"tier":"paid","scene":3,"originalSha256":"a9be37ddd4edb12db4923f99640132e87bdb32963e5eeed3de553a6fedb7a9c3","streamDuration":"5.041667","containerDuration":"5.056000","decodedFrames":150}
+
+stdout | server/services/codeMotionVideoDuration.real.test.ts > production consumer fills short media and trims long media without altering the input
+{"regressionFixture":true,"seconds":1,"decodedFrames":150,"unchangedInput":true}
+
+stdout | server/services/codeMotionVideoDuration.real.test.ts > production consumer fills short media and trims long media without altering the input
+{"regressionFixture":true,"seconds":4.6,"decodedFrames":150,"unchangedInput":true}
+
+stdout | server/services/codeMotionVideoDuration.real.test.ts > production consumer fills short media and trims long media without altering the input
+{"regressionFixture":true,"seconds":6,"decodedFrames":150,"unchangedInput":true}
+
+ ✓ server/services/codeMotionVideoDuration.real.test.ts (2 tests) 3598ms
+   ✓ decodes the four unmodified provider originals through the production consumer 3201ms
+   ✓ production consumer fills short media and trims long media without altering the input 396ms
+
+ Test Files  2 passed (2)
+      Tests  4 passed (4)
+   Start at  05:44:36
+   Duration  4.05s (transform 66ms, setup 0ms, collect 75ms, tests 3.60s, environment 0ms, prepare 245ms)
+

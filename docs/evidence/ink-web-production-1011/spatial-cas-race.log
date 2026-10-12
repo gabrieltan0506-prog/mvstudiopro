@@ -1,0 +1,9 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionSpatialProduction.test.ts (5 tests | 4 skipped) 10ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 4 skipped (5)
+   Start at  16:34:12
+   Duration  2.79s (transform 774ms, setup 0ms, collect 2.03s, tests 10ms, environment 0ms, prepare 105ms)

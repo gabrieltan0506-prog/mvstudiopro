@@ -1,0 +1,12 @@
+{
+  "head": "4a199ff3ac7902860df204842d68b5ad523ad075",
+  "files": {
+    "client/public/art-motion/engine/composition.js": "ab35320fa283626900ea20743b020ccf69a471dae655d643b04e22f4ddbc11de",
+    "shared/codeMotionComposition.ts": "70bb13019b339fc7ef10d36930fe9704341d7df901fa8a694274f35042aa3d9a",
+    "shared/codeMotionEffects.ts": "f63fdab3501727fa357bec9da982a15f953c3a16beb3b2be0473fc781d4a1dec",
+    "client/src/components/code-motion/CodeMotionEffects.tsx": "c7331b15a2dc3ffc6012d7dae35bb4d9d4248cb0acc774d78e32ce5aa45bde2f",
+    "client/src/components/code-motion/CodeMotionSceneEditor.tsx": "c929bb2d554a6ce94176ba7e50cffe5dcc0d4760a4993c55270926fbad6a6006",
+    "client/src/components/canvas/ArtMotionStudio.tsx": "b92563de99cdd612c0efd1ec65979036db66e474b054145de73eb5b7e5030926",
+    "server/services/codeMotionEffectsDemo.real.test.ts": "1c2cb1bd572812734ca7c896825f4517f8be7bd617c3bf1d1a7303ddde5d3df0"
+  }
+}

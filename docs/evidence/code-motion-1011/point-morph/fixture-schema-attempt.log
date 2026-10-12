@@ -1,0 +1,213 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts (6 tests | 6 failed) 82ms
+   × formal plan→resolved→spec→runtime retains morph and orbit with no asset fetch 51ms
+     → [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input: expected string, received undefined"
+  }
+]
+   × each target has equal count, nonzero XYZ extent and exact stable point correspondence 5ms
+     → [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input: expected string, received undefined"
+  }
+]
+   × orbit fixes target in center while depth and perspective change; absent orbit is legacy 3ms
+     → [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input: expected string, received undefined"
+  }
+]
+   × reverse and repeated absolute-frame seeks produce identical sorted canvas draws 3ms
+     → [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input: expected string, received undefined"
+  }
+]
+   × morph changes xyz projection with static camera independently of camera motion 2ms
+     → [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input: expected string, received undefined"
+  }
+]
+   × schema rejects overflow, arbitrary shapes, executable URLs and morph on 2D elements 10ms
+     → [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input: expected string, received undefined"
+  }
+]
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > formal plan→resolved→spec→runtime retains morph and orbit with no asset fetch
+ZodError: [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input: expected string, received undefined"
+  }
+]
+ ❯ makeSpec client/src/lib/codeMotionPointMorphRuntime.test.ts:75:30
+     73|     elements: [element],
+     74|   });
+     75|   return artMotionSpecSchema.parse({
+       |                              ^
+     76|     version: 1,
+     77|     mode: "animation",
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:147:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > each target has equal count, nonzero XYZ extent and exact stable point correspondence
+ZodError: [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input: expected string, received undefined"
+  }
+]
+ ❯ makeSpec client/src/lib/codeMotionPointMorphRuntime.test.ts:75:30
+     73|     elements: [element],
+     74|   });
+     75|   return artMotionSpecSchema.parse({
+       |                              ^
+     76|     version: 1,
+     77|     mode: "animation",
+ ❯ runtime client/src/lib/codeMotionPointMorphRuntime.test.ts:87:31
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:161:34
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > orbit fixes target in center while depth and perspective change; absent orbit is legacy
+ZodError: [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input: expected string, received undefined"
+  }
+]
+ ❯ makeSpec client/src/lib/codeMotionPointMorphRuntime.test.ts:75:30
+     73|     elements: [element],
+     74|   });
+     75|   return artMotionSpecSchema.parse({
+       |                              ^
+     76|     version: 1,
+     77|     mode: "animation",
+ ❯ runtime client/src/lib/codeMotionPointMorphRuntime.test.ts:87:31
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:185:34
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > reverse and repeated absolute-frame seeks produce identical sorted canvas draws
+ZodError: [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input: expected string, received undefined"
+  }
+]
+ ❯ makeSpec client/src/lib/codeMotionPointMorphRuntime.test.ts:75:30
+     73|     elements: [element],
+     74|   });
+     75|   return artMotionSpecSchema.parse({
+       |                              ^
+     76|     version: 1,
+     77|     mode: "animation",
+ ❯ runtime client/src/lib/codeMotionPointMorphRuntime.test.ts:87:31
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:202:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > morph changes xyz projection with static camera independently of camera motion
+ZodError: [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input: expected string, received undefined"
+  }
+]
+ ❯ makeSpec client/src/lib/codeMotionPointMorphRuntime.test.ts:75:30
+     73|     elements: [element],
+     74|   });
+     75|   return artMotionSpecSchema.parse({
+       |                              ^
+     76|     version: 1,
+     77|     mode: "animation",
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:217:27
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  client/src/lib/codeMotionPointMorphRuntime.test.ts > schema rejects overflow, arbitrary shapes, executable URLs and morph on 2D elements
+ZodError: [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "grammar"
+    ],
+    "message": "Invalid input: expected string, received undefined"
+  }
+]
+ ❯ makeSpec client/src/lib/codeMotionPointMorphRuntime.test.ts:75:30
+     73|     elements: [element],
+     74|   });
+     75|   return artMotionSpecSchema.parse({
+       |                              ^
+     76|     version: 1,
+     77|     mode: "animation",
+ ❯ client/src/lib/codeMotionPointMorphRuntime.test.ts:234:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+ Test Files  1 failed (1)
+      Tests  6 failed (6)
+   Start at  07:06:49
+   Duration  3.52s (transform 553ms, setup 0ms, collect 1.07s, tests 82ms, environment 1ms, prepare 625ms)
+

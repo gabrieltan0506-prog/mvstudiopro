@@ -1,0 +1,43 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+stdout | server/services/openaiGptImage2.codeMotion.test.ts > free exact model and medium quality survive global Flare/quality overrides; raw response is saved before upload
+[openaiGptImage2] ok · lane=keyart · slot=test · attempt=1/2 · generations
+
+stderr | server/services/openaiGptImage2.codeMotion.test.ts > paid Sunburst is exact; ambiguous submit and receipt-save failure stop without second key or duplicate purchase
+[openaiGptImage2] test receipt storage down
+
+stdout | server/services/openaiGptImage2.codeMotion.test.ts > gpt-image-2-2026-04-21 reference edit uses exact model/quality and both original images once
+[openaiGptImage2] ok · lane=keyart · slot=test · attempt=1/2 · edits
+
+stdout | server/services/openaiGptImage2.codeMotion.test.ts > gpt-image-2.5-sunburst reference edit uses exact model/quality and both original images once
+[openaiGptImage2] ok · lane=keyart · slot=test · attempt=1/2 · edits
+
+ ✓ server/services/openaiGptImage2.codeMotion.test.ts > free exact model and medium quality survive global Flare/quality overrides; raw response is saved before upload
+ ✓ server/services/openaiGptImage2.codeMotion.test.ts > paid Sunburst is exact; ambiguous submit and receipt-save failure stop without second key or duplicate purchase
+ ✓ server/services/openaiGptImage2.codeMotion.test.ts > gpt-image-2-2026-04-21 reference edit uses exact model/quality and both original images once
+ ✓ server/services/openaiGptImage2.codeMotion.test.ts > gpt-image-2.5-sunburst reference edit uses exact model/quality and both original images once
+stderr | server/services/codeMotionImages.test.ts > saved image production contract > missing queue rows alone can resume; content/version mismatch never creates or purchases
+[codeMotionImages] queue outcome inkimage_dd24375d0cc645018b5ce6276672ec7c Error: database down before insert
+    at Object.<anonymous> (/Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/services/codeMotionImages.test.ts:216:15)
+    at Object.mockCall (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+spy@2.1.9/node_modules/@vitest/spy/dist/index.js:61:17)
+    at Object.spy [as create] (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/tinyspy@3.0.2/node_modules/tinyspy/dist/index.js:45:80)
+    at Module.submitCodeMotionImages (/Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/services/codeMotionImages.ts:301:20)
+    at processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697/server/services/codeMotionImages.test.ts:220:19
+    at file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:533:5
+    at runTest (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1056:11)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+    at runSuite (file:///private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/@vitest+runner@2.1.9/node_modules/@vitest/runner/dist/index.js:1205:15)
+
+ ✓ server/services/codeMotionImages.test.ts > saved image production contract > fixed batch persists before enqueue, restores partial/unknown jobs without repeating them, adopts the same owned bytes
+ ✓ server/services/codeMotionImages.test.ts > saved image production contract > worker refuses forged input/owner/slot and paid quote uses existing per-shot prices
+ ✓ server/services/codeMotionImages.test.ts > saved image production contract > missing queue rows alone can resume; content/version mismatch never creates or purchases
+ ✓ server/services/codeMotionImages.test.ts > image preview without an existing grant uses a read-only quote and leaves slots, queue and manifest untouched
+ ✓ server/services/codeMotionImages.test.ts > real image preflight edits poor inputs once, reuses suitable originals and still generates missing scenes
+
+ Test Files  2 passed (2)
+      Tests  9 passed (9)
+   Start at  04:18:23
+   Duration  5.53s (transform 1.87s, setup 0ms, collect 4.71s, tests 176ms, environment 1ms, prepare 401ms)
+

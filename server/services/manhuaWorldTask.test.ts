@@ -8,6 +8,7 @@ import {
   createManhuaWorldTask,
   deleteManhuaWorldTask,
   getManhuaWorldTask,
+  findExistingManhuaWorldImageTask,
   listManhuaWorldTasks,
   resetManhuaWorldTaskDependenciesForTests,
   retryManhuaWorldTask,
@@ -96,6 +97,24 @@ describe("manhuaWorldTask", () => {
     expect(submit).toHaveBeenCalledTimes(1);
     const other = await createManhuaWorldTask(baseInput({ model: "marble-1.0-draft" }));
     expect(other.taskId).not.toBe(view.taskId);
+  });
+
+  it("断网恢复只读同一图片意图，输入归一化一致，缺失或跨账号不建单", async () => {
+    const input = baseInput({ sceneRef: " scene:deck ", sourceVersion: " gs://b/deck.png ", prompt: { type: "image", isPano: false, textPrompt: " 暴风雨夜 " } });
+    const lookup = { ...input, prompt: input.prompt as Extract<typeof input.prompt, { type: "image" }> };
+    expect(await findExistingManhuaWorldImageTask(lookup)).toBeNull();
+    expect(await fs.readdir(dir)).toEqual([]);
+    expect(submit).not.toHaveBeenCalled();
+    const created = await createManhuaWorldTask(input);
+    const before = await fs.readFile(path.join(dir, `${created.taskId}.json`), "utf8");
+    submit.mockClear(); poll.mockClear(); signSource.mockClear();
+    setManhuaWorldTaskDependenciesForTests({ isConfigured: () => false });
+    expect((await findExistingManhuaWorldImageTask(lookup))?.taskId).toBe(created.taskId);
+    expect(await findExistingManhuaWorldImageTask({ ...lookup, userId: 8 })).toBeNull();
+    expect(await findExistingManhuaWorldImageTask({ ...lookup, model: "marble-1.0-draft" })).toBeNull();
+    expect(await findExistingManhuaWorldImageTask({ ...lookup, prompt: { type: "image", isPano: false, textPrompt: "另一版" } })).toBeNull();
+    expect(submit).not.toHaveBeenCalled(); expect(poll).not.toHaveBeenCalled(); expect(signSource).not.toHaveBeenCalled();
+    expect(await fs.readFile(path.join(dir, `${created.taskId}.json`), "utf8")).toBe(before);
   });
 
   it("完成：产物镜像到 Fly 桥（稳定地址）并归档 gs://；视图不带上游链接", async () => {

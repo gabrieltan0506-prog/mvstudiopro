@@ -1,0 +1,27 @@
+{
+  "baseline": {
+    "htmlBytes": 378623,
+    "inlineDevelopmentRuntimeCharacters": 366770,
+    "pptxLibraryBytes": 275029,
+    "yingkeChunkBytes": 95152
+  },
+  "after": {
+    "htmlBytes": 11789,
+    "yingkeChunkBytes": 71787,
+    "developmentRuntimePresent": false,
+    "pptxInInitialStaticDependencyGraph": false,
+    "initialChunks": [
+      "CodeMotionStudio-BHTAuqJ1.js",
+      "VoiceInputButton-HhiSGuha.js",
+      "arrow-left-iv0MtYTh.js",
+      "artMotion-JbgTnVtA.js",
+      "index-r_p14d3M.js",
+      "mic-DiyKy0Hg.js",
+      "pause-T_yLuPhh.js",
+      "play-CW3qInKi.js",
+      "plus-DdZyIbjL.js",
+      "schemas-B_akEfhB.js"
+    ]
+  },
+  "boundary": "开发构建及公开资源检查；非正式登录浏览器加载计时。未生成媒体、未改变收费。"
+}

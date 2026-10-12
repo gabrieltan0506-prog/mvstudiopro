@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionImages.test.ts > image preview without an existing grant uses a read-only quote and leaves slots, queue and manifest untouched
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 3 skipped (4)
+   Start at  04:02:24
+   Duration  4.11s (transform 1.21s, setup 0ms, collect 3.16s, tests 47ms, environment 0ms, prepare 177ms)
+

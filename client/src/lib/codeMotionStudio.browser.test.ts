@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 import { build } from "esbuild";
 import puppeteer from "puppeteer";
 import path from "node:path";
+import { build as buildStyles } from "vite";
+import tailwindcss from "@tailwindcss/vite";
 
 it("映刻真实页面保留资料，先展示再确认；断线恢复沿用同一个请求", async () => {
   const bundle = await build({
@@ -61,7 +63,8 @@ globalThis.fixture={asks:[],submits:[],saved:null,fail:true};createRoot(document
             contents: `
 const query=data=>({useQuery:()=>({data,refetch:async()=>({data})})});
 const f=()=>globalThis.fixture;
-export const trpc={useUtils:()=>({codeMotion:{prepare:{fetch:async()=>({generation:'1',fingerprint:'a'.repeat(64),images:[],scenes:f().saved.project.plan.scenes.map(s=>({...s,movement:'文字进入'})),credits:0,spec:{},requestId:'test'})},get:{fetch:async()=>f().saved}}}),codeMotion:{quote:query({remainingFreeToday:3,credits:0}),list:query([]),history:query([]),status:query(null),importFile:{useMutation:()=>({mutateAsync:async()=>f().importReturn})},save:{useMutation:()=>({mutateAsync:async x=>{f().saved={project:x.project,generation:'1'};return f().saved}})},submit:{useMutation:()=>({mutateAsync:async x=>{f().submits.push(x);return{}}})}},mvAnalysis:{getVideoUploadSignedUrl:{useMutation:()=>({mutateAsync:async()=>({uploadUrl:'http://localhost:41943/test-upload',gcsUri:'gs://test/uploads/u7/test.csv',requiredHeaders:{}})})},askPlatformSkillQa:{useMutation:()=>({mutateAsync:async x=>{f().asks.push(x);if(f().fail)throw Error('连接中断');return {answer:JSON.stringify({version:1,summary:'原请求结果',scenes:[{heading:'门店介绍',body:'原材料',duration:30}]}),creditsCharged:0}}})}}};`,
+const blocked={useMutation:()=>({mutateAsync:async()=>{throw Error('此回归不提交新媒体')}})};
+export const trpc={codeMotionProduction:{spatialStatus:query(null),spatialPrepare:blocked,spatialSubmit:blocked,spatialAdopt:blocked,spatialPreviews:query({assets:[],frames:[]}),importedVideos:query([]),importSpatialAsset:blocked,importSpatialFrame:blocked,importExistingVideo:blocked,adoptImportedVideo:blocked,revisionQuote:query({completed:false,remaining:2,tier:"free",message:"先完成成片"}),revisionSubmit:blocked,revisionPrepare:blocked,list:query({shots:[]}),submit:blocked,adopt:blocked},useUtils:()=>({codeMotion:{prepare:{fetch:async()=>({generation:'1',fingerprint:'a'.repeat(64),freeEligibility:{eligible:true,reason:'available',remainingAccounts:10},audios:[],images:[],scenes:f().saved.project.plan.scenes.map(s=>({...s,movement:'文字进入'})),credits:0,spec:{},requestId:'test'})},get:{fetch:async()=>f().saved}}}),codeMotion:{analyzeTiming:blocked,resolveImages:query([]),sounds:query([]),generateSound:blocked,adoptSound:blocked,adoptSoundAndSave:blocked,imageList:query([]),imageAnalyze:blocked,imagePrepare:blocked,imageSubmit:blocked,imageAdopt:blocked,resolveAudios:query([]),importAudio:{useMutation:()=>({mutateAsync:async()=>{throw Error("本夹具不上传录音")}})},freeQuote:query({eligible:true,reason:"available",remainingAccounts:10}),quote:query({remainingFreeToday:3,credits:0}),list:query([]),history:query([]),status:query(null),importFile:{useMutation:()=>({mutateAsync:async()=>{if(f().importFailure)throw Error("文件读取失败");if(f().holdImport)await new Promise(resolve=>f().releaseImport=resolve);return f().importReturn}})},save:{useMutation:()=>({mutateAsync:async x=>{f().saved={project:x.project,generation:'1'};return f().saved}})},submit:{useMutation:()=>({mutateAsync:async x=>{f().submits.push(x);return{}}})}},mvAnalysis:{getVideoUploadSignedUrl:{useMutation:()=>({mutateAsync:async()=>({uploadUrl:'http://localhost:41943/test-upload',gcsUri:'gs://test/uploads/u7/test.csv',requiredHeaders:{}})})},askPlatformSkillQa:{useMutation:()=>({mutateAsync:async x=>{f().asks.push(x);if(f().fail)throw Error('连接中断');return {answer:JSON.stringify({...JSON.parse(localStorage.getItem('yingke:draft:7')).project.plan,summary:'原请求结果'}),creditsCharged:0}}})}}};`,
           }));
         },
       },
@@ -71,6 +74,7 @@ export const trpc={useUtils:()=>({codeMotion:{prepare:{fetch:async()=>({generati
   try {
     const page = await browser.newPage();
     page.setDefaultTimeout(6000);
+    page.on("pageerror", error => console.error("测试页面异常", String(error)));
     await page.setRequestInterception(true);
     page.on("request", r =>
       r.isNavigationRequest()
@@ -85,6 +89,53 @@ export const trpc={useUtils:()=>({codeMotion:{prepare:{fetch:async()=>({generati
     );
     await page.goto("http://localhost:41943/");
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
+    // 使用正式构建样式，防止DOM有文字却因白底白字不可见。
+    const styles = await buildStyles({
+      configFile: false,
+      root: path.resolve("client"),
+      logLevel: "silent",
+      plugins: [tailwindcss()],
+      build: {
+        write: false,
+        rollupOptions: { input: path.resolve("client/src/index.css") },
+      },
+    });
+    if (Array.isArray(styles) || !("output" in styles))
+      throw Error("样式构建未返回产物");
+    const cssFiles = styles.output.filter(
+      asset => asset.type === "asset" && asset.fileName.endsWith(".css")
+    );
+    expect(cssFiles.length).toBeGreaterThan(0);
+    for (const asset of cssFiles)
+      if (asset.type === "asset")
+        await page.addStyleTag({ content: String(asset.source) });
+    const checkReadable = async (text: string) => {
+      const contrast = await page.evaluate(t => {
+        const el = Array.from(document.querySelectorAll("button")).find(
+          e => e.textContent?.trim() === t
+        )!;
+        const style = getComputedStyle(el);
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const ctx = canvas.getContext("2d")!;
+        const luminance = (color: string) => {
+          ctx.clearRect(0, 0, 1, 1);
+          ctx.fillStyle = color;
+          ctx.fillRect(0, 0, 1, 1);
+          const rgb = Array.from(ctx.getImageData(0, 0, 1, 1).data)
+            .slice(0, 3)
+            .map(v => {
+              const n = v / 255;
+              return n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
+            });
+          return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+        };
+        const a = luminance(style.color),
+          b = luminance(style.backgroundColor);
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      }, text);
+      expect(contrast, text + "文字与底色对比度").toBeGreaterThanOrEqual(4.5);
+    };
     const click = async (text: string) =>
       page.evaluate(t => {
         const el = Array.from(document.querySelectorAll("button")).find(
@@ -94,10 +145,61 @@ export const trpc={useUtils:()=>({codeMotion:{prepare:{fetch:async()=>({generati
         el.click();
       }, text);
     await page.waitForSelector("textarea");
+    // 上传状态在入口旁显示；失败不清空材料，同名文件可再次选择。
+    const selectUpload=async(name:string)=>page.evaluate(n=>{
+      const input=document.querySelector('input[aria-label="导入图片、文档或表格"]') as HTMLInputElement;
+      const files=new DataTransfer();files.items.add(new File(["测试正文"],n,{type:"text/markdown"}));input.files=files.files;input.dispatchEvent(new Event("change",{bubbles:true}));
+    },name);
+    await page.evaluate(()=>{const f=(globalThis as any).fixture;f.holdImport=true;f.importReturn={kind:"document",name:"资料.md",text:"已解析正文",message:"已读取文字"};});
+    await page.evaluate(()=>{const original=window.fetch; (globalThis as any).uploadCredentials=[];window.fetch=(input,init)=>{if(init?.method==='PUT')(globalThis as any).uploadCredentials.push(init.credentials);return original(input,init);};});
+    await selectUpload("资料.md");
+    await page.waitForFunction(()=>document.body.textContent?.includes("正在核对文件内容"));
+    expect(await page.$eval('input[aria-label="导入图片、文档或表格"]',el=>(el as HTMLInputElement).disabled)).toBe(true);
+    await page.evaluate(()=>{const f=(globalThis as any).fixture;f.holdImport=false;f.releaseImport();});
+    await page.waitForFunction(()=>document.body.textContent?.includes("「资料.md」上传成功"));
+    expect(await page.evaluate(()=>(globalThis as any).uploadCredentials)).toEqual(["include"]);
+    await page.evaluate(()=>{(globalThis as any).fixture.importFailure=true;});
+    await selectUpload("资料.md");
+    await page.waitForFunction(()=>document.body.textContent?.includes("「资料.md」上传失败：文件读取失败"));
+    expect(await page.$eval("body",el=>el.textContent)).toContain("已解析正文");
+    await page.evaluate(()=>{(globalThis as any).fixture.importFailure=false;});
+
+    const openingText = await page.$eval(
+      "body",
+      node => node.textContent || ""
+    );
+    expect(openingText).toContain("本次免费整理");
+    expect(openingText).toContain("今日还可免费整理 3 次");
+    expect(openingText).not.toMatch(
+      /主用 GLM|DeepSeek|沿用创作顾问额度|用现有Gemini/
+    );
+
+    await checkReadable("请顾问整理安排");
     await page.type("textarea", "温暖介绍门店");
     await page.type(
       'textarea[placeholder="粘贴已有文案。自己安排时，每段一行。"]',
       "欢迎光临\n招牌饮品"
+    );
+    const mode = 'select:has(option[value="words"])';
+    expect(
+      await page.$eval(mode, element => (element as HTMLSelectElement).value)
+    ).toBe("scenes");
+    await page.select(mode, "words");
+    await page.waitForFunction(() =>
+      document.body.innerText.includes("当前只制作动态文字")
+    );
+    await click("改为场景动画");
+    expect(
+      await page.$eval(mode, element => (element as HTMLSelectElement).value)
+    ).toBe("scenes");
+    expect(
+      await page.$eval(
+        'textarea[placeholder="粘贴已有文案。自己安排时，每段一行。"]',
+        element => (element as HTMLTextAreaElement).value
+      )
+    ).toBe("欢迎光临\n招牌饮品");
+    expect(await page.evaluate(() => (globalThis as any).fixture.asks)).toEqual(
+      []
     );
     await click("PPT 演示");
     await page.waitForSelector('[aria-label="演示备注"]');
@@ -125,6 +227,8 @@ export const trpc={useUtils:()=>({codeMotion:{prepare:{fetch:async()=>({generati
     expect(
       await page.evaluate(() => (globalThis as any).fixture.submits)
     ).toEqual([]);
+    await checkReadable("确认内容，播放预览");
+    await checkReadable("确认内容，导出视频");
     await click("确认内容，导出视频");
     await page.waitForFunction(
       () => (globalThis as any).fixture.submits.length === 1

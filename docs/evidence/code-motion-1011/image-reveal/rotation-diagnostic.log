@@ -1,0 +1,33 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ❯ client/src/lib/codeMotionImageReveal.browser.test.ts (11 tests | 1 failed | 10 skipped) 69029ms
+   × real JPEG local wipe: 'local-rotation-scale' 24357ms
+     → Navigation timeout of 15000 ms exceeded
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  client/src/lib/codeMotionImageReveal.browser.test.ts > real JPEG local wipe: 'local-rotation-scale'
+TimeoutError: Navigation timeout of 15000 ms exceeded
+ ❯ new Deferred ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/util/Deferred.ts:74:28
+ ❯ Deferred.create ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/util/Deferred.ts:29:12
+ ❯ new LifecycleWatcher ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/cdp/LifecycleWatcher.ts:152:42
+ ❯ CdpFrame.goto ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/cdp/Frame.ts:158:21
+ ❯ CdpFrame.<anonymous> ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/util/decorators.ts:63:21
+ ❯ CdpPage.goto ../../../../../../../private/tmp/mvs-vfx-runtime-1009/node_modules/.pnpm/puppeteer-core@24.42.0/node_modules/puppeteer-core/src/api/Page.ts:1792:35
+ ❯ open client/src/lib/codeMotionImageReveal.browser.test.ts:187:16
+    185|       (window as Window & { __ART_SPEC?: unknown }).__ART_SPEC = s;
+    186|     }, value);
+    187|     await page.goto(origin + "/studio.html");
+       |                ^
+    188|     await page.waitForFunction("window.__productReady || window.__boot…
+    189|     expect(
+ ❯ client/src/lib/codeMotionImageReveal.browser.test.ts:223:30
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 skipped (11)
+   Start at  07:02:38
+   Duration  83.37s (transform 2.82s, setup 0ms, collect 7.29s, tests 69.03s, environment 2ms, prepare 1.92s)
+

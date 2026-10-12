@@ -1,3 +1,4 @@
+import { assertCodeMotionProductionSlot, type CodeMotionProductionSlot } from "./codeMotionProductionGrant";
 /** 单句配音持久操作：数据库唯一占位先于上游；断线仅恢复已有音频与结算。 */
 import { createHash } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
@@ -13,6 +14,7 @@ import { synthesizeManhuaDialoguePreferred, type ManhuaDialogueTtsRouteResult } 
 import { getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs";
 import { readBgmAudioWithLimit } from "./manhuaScoringRoom";
 import { assertReferenceVoiceOwner } from "./canvasVoiceReference";
+import { synthesizeQwenDialogue } from "./qwenDialogueTts";
 
 export const CANVAS_DIALOGUE_ACTION = "canvas_dialogue_line";
 export const canvasDialogueInputSchema = z.object({
@@ -26,7 +28,7 @@ export const canvasDialogueInputSchema = z.object({
 export type CanvasDialogueInput = z.output<typeof canvasDialogueInputSchema>;
 export type CanvasDialogueResult = Pick<ManhuaDialogueTtsRouteResult, "gcsUri" | "bytes" | "voice" | "voiceGate" | "provider"> & { durationSec?: number };
 export type CanvasDialogueRecord = {
-  id: string; userId: string; input: { action: string; digest: string; params: CanvasDialogueInput; pricingVersion?: "duration_v2" };
+  id: string; userId: string; input: { action: string; digest: string; params: CanvasDialogueInput; pricingVersion?: "duration_v2"; productionSlot?: CodeMotionProductionSlot; sponsored?: boolean };
   status: string; updatedAt: Date;
   output: { stage: string; upstream?: ManhuaDialogueTtsRouteResult; result?: CanvasDialogueResult } | null;
 };
@@ -54,10 +56,12 @@ export type CanvasDialogueDeps = {
   save: (id: string, userId: number, output: NonNullable<CanvasDialogueRecord["output"]>, succeeded?: boolean) => Promise<void>;
   balance: (userId: number) => Promise<number>;
   synthesize: typeof synthesizeManhuaDialoguePreferred;
+  synthesizeProduction?: typeof synthesizeManhuaDialoguePreferred;
   mirror: (result: ManhuaDialogueTtsRouteResult, userId: number, id: string) => Promise<CanvasDialogueResult>;
   charge: (userId: number, requestId: string, creditsCost: number) => Promise<void>;
   sign: (uri: string) => string;
   checkVoiceOwner?: (userId: number, voice: string) => Promise<void>;
+  productionGrant?: typeof assertCodeMotionProductionSlot;
 };
 
 async function database() {
@@ -66,6 +70,7 @@ async function database() {
   return db;
 }
 const realDeps: CanvasDialogueDeps = {
+  async synthesizeProduction(input) { return { ...await synthesizeQwenDialogue(input), provider: "openrouter" as const }; },
   async load(id, userId) {
     const db = await database();
     const [row] = await db.select().from(jobs).where(and(eq(jobs.id, id), eq(jobs.userId, String(userId)),
@@ -117,7 +122,7 @@ function responseFor(row: CanvasDialogueRecord, deps: CanvasDialogueDeps): Canva
     jobId: row.id, billingRequestId: params.billingRequestId,
     status: done ? "succeeded" : uncertain ? "reconcile_manual" : "running",
     speakerZh: params.speakerZh, speakerId: params.speakerId, voiceStateZh: params.voiceStateZh, input: params.input, voice: params.voice,
-    creditsCost: row.input.pricingVersion === "duration_v2" && Number.isFinite(row.output?.result?.durationSec) && (row.output?.result?.durationSec ?? 0) > 0
+    creditsCost: row.input.sponsored ? 0 : row.input.pricingVersion === "duration_v2" && Number.isFinite(row.output?.result?.durationSec) && (row.output?.result?.durationSec ?? 0) > 0
       ? canvasTtsCreditsForDuration(row.output!.result!.durationSec!) : row.input.pricingVersion === "duration_v2" ? 0 : CANVAS_TTS_CREDITS_PER_LINE,
     canResumeSettlement: Boolean(!done && (row.output?.upstream || row.output?.result)),
     ...(done ? { result: { ...done, audioUrl: deps.sign(done.gcsUri) } }
@@ -127,7 +132,7 @@ function responseFor(row: CanvasDialogueRecord, deps: CanvasDialogueDeps): Canva
   };
 }
 
-export async function generateCanvasDialogue(userId: number, rawInput: CanvasDialogueInput, deps: CanvasDialogueDeps = realDeps): Promise<CanvasDialogueResponse> {
+export async function generateCanvasDialogue(userId: number, rawInput: CanvasDialogueInput, deps: CanvasDialogueDeps = realDeps, productionSlot?: CodeMotionProductionSlot): Promise<CanvasDialogueResponse> {
   if (!Number.isSafeInteger(userId) || userId <= 0) throw new CanvasDialogueError("conflict", "登录身份无效");
   const input = canvasDialogueInputSchema.parse(rawInput);
   await (deps.checkVoiceOwner || assertReferenceVoiceOwner)(userId, input.voice);
@@ -135,15 +140,22 @@ export async function generateCanvasDialogue(userId: number, rawInput: CanvasDia
   catch (error) { throw new CanvasDialogueError("conflict", error instanceof Error ? error.message : "语气标签不合法"); }
   const id = canvasDialogueJobId(userId, input.billingRequestId);
   const digest = canvasDialogueDigest(input);
+  let sponsored = false;
+  if (productionSlot) {
+    if (productionSlot.kind !== "speech" || productionSlot.requestId !== input.billingRequestId || productionSlot.digest !== digest) throw new CanvasDialogueError("conflict", "制作步骤与旁白请求不一致");
+    const grant = await (deps.productionGrant ?? assertCodeMotionProductionSlot)(String(userId), productionSlot);
+    sponsored = grant.tier === "free";
+  }
   let row = await deps.load(id, userId);
   if (!row) {
-    if (await deps.balance(userId) < 2) throw new CanvasDialogueError("payment", "配音按实测时长计费，账户至少需有 2 积分");
+    if (!sponsored && await deps.balance(userId) < 2) throw new CanvasDialogueError("payment", "配音按实测时长计费，账户至少需有 2 积分");
     const fresh: CanvasDialogueRecord = { id, userId: String(userId), status: "running", updatedAt: new Date(),
-      input: { action: CANVAS_DIALOGUE_ACTION, digest, params: input, pricingVersion: "duration_v2" }, output: { stage: "generating" } };
+      input: { action: CANVAS_DIALOGUE_ACTION, digest, params: input, pricingVersion: "duration_v2", ...(productionSlot ? { productionSlot, sponsored } : {}) }, output: { stage: "generating" } };
     if (await deps.claim(fresh)) {
       let upstream: ManhuaDialogueTtsRouteResult;
       try {
-        upstream = await deps.synthesize({ input: input.input, voice: input.voice, ownerUserId: userId, signal: AbortSignal.timeout(180_000) });
+        const synthesize = productionSlot ? (deps.synthesizeProduction ?? deps.synthesize) : deps.synthesize;
+        upstream = await synthesize({ input: input.input, voice: input.voice, ownerUserId: userId, signal: AbortSignal.timeout(180_000) });
         if (!upstream.voiceGate.accepted || upstream.bytes <= 0) throw new Error("配音未通过验声");
       } catch {
         await deps.save(id, userId, { stage: "reconcile_manual" }).catch(() => {});
@@ -169,7 +181,9 @@ export async function generateCanvasDialogue(userId: number, rawInput: CanvasDia
       ? canvasTtsCreditsForDuration(result.durationSec ?? NaN) : CANVAS_TTS_CREDITS_PER_LINE;
     const output = { ...row.output, stage: "settlement_pending", result };
     await deps.save(id, userId, output);
-    await deps.charge(userId, input.billingRequestId, creditsCost);
+    if (row.input.sponsored) {
+      if (!row.input.productionSlot || (await (deps.productionGrant ?? assertCodeMotionProductionSlot)(String(userId), row.input.productionSlot)).tier !== "free") throw new Error("免费制作回执无法确认");
+    } else await deps.charge(userId, input.billingRequestId, creditsCost);
     await deps.save(id, userId, { ...output, stage: "done" }, true);
   } catch {
     // 结算结果未知时绝不显示“未扣费”；原素材与 chargeKey 留在同一任务中。

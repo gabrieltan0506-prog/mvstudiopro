@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ client/src/lib/codeMotionPointMorphRuntime.test.ts (6 tests | 1 skipped) 530ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed | 1 skipped (6)
+   Start at  07:08:04
+   Duration  7.46s (transform 811ms, setup 0ms, collect 1.57s, tests 530ms, environment 1ms, prepare 1.03s)
+

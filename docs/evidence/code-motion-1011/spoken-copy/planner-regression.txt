@@ -1,0 +1,10 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionPlan.test.ts (5 tests) 20ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  05:01:34
+   Duration  2.05s (transform 534ms, setup 0ms, collect 1.03s, tests 20ms, environment 0ms, prepare 218ms)
+

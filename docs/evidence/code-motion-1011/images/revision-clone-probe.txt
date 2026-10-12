@@ -1,0 +1,59 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ × shared/codeMotionRevision.test.ts > local revision updates selected visible text, preserves original assets and leaves untouched shots exact
+   → [
+  {
+    "code": "custom",
+    "message": "方案遗漏了已选择的图片，请补齐或移除不用的图片",
+    "path": []
+  }
+]
+ × shared/codeMotionRevision.test.ts > removes the video container when all generated shots are revised and rejects duplicate/out-of-range edit indexes
+   → [
+  {
+    "code": "custom",
+    "message": "方案遗漏了已选择的图片，请补齐或移除不用的图片",
+    "path": []
+  }
+]
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  shared/codeMotionRevision.test.ts > local revision updates selected visible text, preserves original assets and leaves untouched shots exact
+ZodError: [
+  {
+    "code": "custom",
+    "message": "方案遗漏了已选择的图片，请补齐或移除不用的图片",
+    "path": []
+  }
+]
+ ❯ make shared/codeMotionRevision.test.ts:5:40
+
+ ❯ shared/codeMotionRevision.test.ts:8:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { _zod: { traits: { constructor: 'Function<Set>', has: 'Function<has>', add: 'Function<add>', delete: 'Function<delete>', difference: 'Function<difference>', clear: 'Function<clear>', entries: 'Function<entries>', forEach: 'Function<forEach>', intersection: 'Function<intersection>', isSubsetOf: 'Function<isSubsetOf>', isSupersetOf: 'Function<isSupersetOf>', isDisjointFrom: 'Function<isDisjointFrom>', size: 2, symmetricDifference: 'Function<symmetricDifference>', union: 'Function<union>', values: 'Function<values>', keys: 'Function<values>' }, constr: 'Function<ZodError>', def: [ { code: 'custom', message: '方案遗漏了已选择的图片，请补齐或移除不用的图片', path: [] } ], deferred: [] }, issues: [ { code: 'custom', message: '方案遗漏了已选择的图片，请补齐或移除不用的图片', path: [] } ], format: 'Function<value>', flatten: 'Function<value>', addIssue: 'Function<value>', addIssues: 'Function<value>', isEmpty: false }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  shared/codeMotionRevision.test.ts > removes the video container when all generated shots are revised and rejects duplicate/out-of-range edit indexes
+ZodError: [
+  {
+    "code": "custom",
+    "message": "方案遗漏了已选择的图片，请补齐或移除不用的图片",
+    "path": []
+  }
+]
+ ❯ make shared/codeMotionRevision.test.ts:5:40
+
+ ❯ shared/codeMotionRevision.test.ts:21:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { _zod: { traits: { constructor: 'Function<Set>', has: 'Function<has>', add: 'Function<add>', delete: 'Function<delete>', difference: 'Function<difference>', clear: 'Function<clear>', entries: 'Function<entries>', forEach: 'Function<forEach>', intersection: 'Function<intersection>', isSubsetOf: 'Function<isSubsetOf>', isSupersetOf: 'Function<isSupersetOf>', isDisjointFrom: 'Function<isDisjointFrom>', size: 2, symmetricDifference: 'Function<symmetricDifference>', union: 'Function<union>', values: 'Function<values>', keys: 'Function<values>' }, constr: 'Function<ZodError>', def: [ { code: 'custom', message: '方案遗漏了已选择的图片，请补齐或移除不用的图片', path: [] } ], deferred: [] }, issues: [ { code: 'custom', message: '方案遗漏了已选择的图片，请补齐或移除不用的图片', path: [] } ], format: 'Function<value>', flatten: 'Function<value>', addIssue: 'Function<value>', addIssues: 'Function<value>', isEmpty: false }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  04:11:57
+   Duration  1.43s (transform 311ms, setup 0ms, collect 576ms, tests 47ms, environment 0ms, prepare 131ms)
+

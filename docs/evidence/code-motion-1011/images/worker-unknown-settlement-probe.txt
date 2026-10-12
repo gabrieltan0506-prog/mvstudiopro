@@ -1,0 +1,23 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+stdout | server/jobs/runner.canvasImagePolicy.test.ts
+[OAuth] Initialized with baseURL: 
+
+stderr | server/jobs/runner.canvasImagePolicy.test.ts
+[OAuth] ERROR: OAUTH_SERVER_URL is not configured! Set OAUTH_SERVER_URL environment variable.
+
+ ✓ server/jobs/runner.canvasImagePolicy.test.ts > runner · canvas_gpt_image2 墙钟/重排/退款策略(七审 P0-2) > 超时:canvas 出图 ≥ 12 分钟(覆盖单供应商 6min fetch + 镜像/登记);其他 image 保持 12s
+ ✓ server/jobs/runner.canvasImagePolicy.test.ts > runner · canvas_gpt_image2 墙钟/重排/退款策略(七审 P0-2) > 失败处置:canvas 出图绝不重排(重排=第二次调付费上游),无论 attempts 几次
+ ✓ server/jobs/runner.canvasImagePolicy.test.ts > runner · canvas_gpt_image2 墙钟/重排/退款策略(七审 P0-2) > 映客图片未知提交和外层墙钟超时保留原账待对账，确定失败仍沿原退款路径
+ ✓ server/jobs/runner.canvasImagePolicy.test.ts > runner · canvas_gpt_image2 墙钟/重排/退款策略(七审 P0-2) > 退款幂等键:同 job 双路径(processImageJob 内部/runClaimedJob 外层)用同一把钥匙
+ ✓ server/jobs/runner.canvasImagePolicy.test.ts > runner · canvas_gpt_image2 墙钟/重排/退款策略(七审 P0-2) > 八审 P1-6:超时墙钟 env 只能上调,设成低于 12 分钟被 Math.max 钉回下限
+ ✓ server/jobs/runner.canvasImagePolicy.test.ts > runner · canvas_gpt_image2 墙钟/重排/退款策略(七审 P0-2) > 任务判定:action 精确匹配,数组/空值/其他 action 不误伤
+ ✓ server/jobs/runner.canvasImagePolicy.test.ts > runner · canvas_gpt_image2 墙钟/重排/退款策略(七审 P0-2) > Creative Nano 固定 8 分钟墙钟、持久账本类型，失败绝不重排烧第二次上游
+ ✓ server/jobs/runner.canvasImagePolicy.test.ts > runner · canvas_gpt_image2 墙钟/重排/退款策略(七审 P0-2) > Canvas 标准图与资产标准化走各自账本目录
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  04:13:47
+   Duration  9.44s (transform 5.15s, setup 0ms, collect 8.89s, tests 5ms, environment 0ms, prepare 105ms)
+

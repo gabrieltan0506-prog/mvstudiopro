@@ -1,0 +1,8 @@
+{
+  "command": "./node_modules/.bin/tsc --noEmit --tsBuildInfoFile /tmp/pr1697-final.tsbuildinfo",
+  "exitCode": 0,
+  "rawLog": "/tmp/pr1697-extension-types-r2.log",
+  "rawBytes": 0,
+  "verifiedAt": "2026-10-10T20:51:32.135594+00:00",
+  "sourceHead": "f4c6f83cb4c2d7c7e106184f0ec81e6e55357e1d"
+}

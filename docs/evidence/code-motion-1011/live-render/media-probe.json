@@ -1,0 +1,90 @@
+{
+  "free": {
+    "sha256": "5c2f92e3087d6fb4b587e85ecc1abf79e7722415835795efbc56f740bfe04d72",
+    "bytes": 13194752,
+    "duration": 30,
+    "frameCount": 900,
+    "videoStreams": 1,
+    "audioStreams": 1,
+    "actualMixCorrelation": 0.9994889144440054,
+    "rmsRatio": 0.9964843988418579,
+    "provenance": "Qwen5+Suno1 chosen variant; generated video sources normalized mute and final mix once",
+    "boundary": "isolated official renderer, not account/router acceptance",
+    "ffprobe": {
+      "format": {
+        "duration": "30.000000",
+        "size": "13194752",
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2"
+      },
+      "streams": [
+        {
+          "codec_type": "video",
+          "codec_name": "h264",
+          "width": 720,
+          "height": 1280,
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "duration": "30.000000",
+          "nb_frames": "900",
+          "nb_read_frames": "900"
+        },
+        {
+          "codec_type": "audio",
+          "codec_name": "aac",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "duration": "30.000000",
+          "nb_frames": "1408",
+          "nb_read_frames": "1407",
+          "sample_rate": "48000",
+          "channels": 2
+        }
+      ]
+    },
+    "privateRawFfprobeSha256": "79dcdf2730de961fe50c7d814967091774faaa6231279040df9df766dc082a2e"
+  },
+  "paid": {
+    "sha256": "fbf47eafd627ebfb52bee62bb5ddd37f2c105b284639155ec1b34c6a50f72260",
+    "bytes": 12657014,
+    "duration": 30,
+    "frameCount": 900,
+    "videoStreams": 1,
+    "audioStreams": 1,
+    "actualMixCorrelation": 0.999211218174092,
+    "rmsRatio": 0.9953731894493103,
+    "provenance": "Qwen5+Suno1 chosen variant; generated video sources normalized mute and final mix once",
+    "boundary": "isolated official renderer, not account/router acceptance",
+    "ffprobe": {
+      "format": {
+        "duration": "30.000000",
+        "size": "12657014",
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2"
+      },
+      "streams": [
+        {
+          "codec_type": "video",
+          "codec_name": "h264",
+          "width": 720,
+          "height": 1280,
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "duration": "30.000000",
+          "nb_frames": "900",
+          "nb_read_frames": "900"
+        },
+        {
+          "codec_type": "audio",
+          "codec_name": "aac",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "duration": "30.000000",
+          "nb_frames": "1408",
+          "nb_read_frames": "1407",
+          "sample_rate": "48000",
+          "channels": 2
+        }
+      ]
+    },
+    "privateRawFfprobeSha256": "a0a7f784b7c6acd8860c94636de03cda5d31c3bdac4b896af914dd8622c491ea"
+  }
+}

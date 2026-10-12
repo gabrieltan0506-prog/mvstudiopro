@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ client/src/lib/codeMotionSceneEditor.browser.test.ts (5 tests | 4 skipped) 13056ms
+   ✓ 程序3D粒子可添加、选择形状与保存动画节点 4798ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 4 skipped (5)
+   Start at  07:09:23
+   Duration  21.99s (transform 1.40s, setup 0ms, collect 5.15s, tests 13.06s, environment 0ms, prepare 1.61s)
+

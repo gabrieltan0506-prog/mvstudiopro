@@ -1,0 +1,12 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/routers/codeMotion.images.test.ts > official protected router isolates account and does not consume a production grant while showing reviewed image content
+ ✓ server/routers/codeMotion.images.test.ts > official submit reserves only after confirmation; restored batch does not reserve or charge a second grant
+ ✓ server/routers/codeMotion.images.test.ts > confirmed semantic router binds owner, saved generation and grant, then rebuilds the reviewed image content
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  04:36:58
+   Duration  9.43s (transform 4.00s, setup 0ms, collect 7.96s, tests 29ms, environment 0ms, prepare 295ms)
+

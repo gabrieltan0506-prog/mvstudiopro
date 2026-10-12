@@ -1,0 +1,15 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ shared/codeMotionRevision.test.ts (2 tests) 88ms
+ ✓ server/services/codeMotionProductionGrant.test.ts (6 tests) 52ms
+ ✓ server/services/codeMotionProductionVideo.test.ts (5 tests) 33ms
+ ✓ server/services/codeMotionRevision.test.ts (6 tests) 2920ms
+   ✓ confirmed local revisions > asset reuse requires exact original revision snapshot; unrelated source metadata cannot inherit authority 511ms
+   ✓ confirmed local revisions > official child export keeps parent audio and untouched generated video through compiler and ownership gates 2332ms
+
+ Test Files  4 passed (4)
+      Tests  19 passed (19)
+   Start at  04:34:18
+   Duration  6.38s (transform 2.96s, setup 0ms, collect 7.62s, tests 3.09s, environment 1ms, prepare 1.58s)
+

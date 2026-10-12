@@ -1,0 +1,12 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/task/pr1697
+
+ ✓ server/services/codeMotionSpatial.test.ts (4 tests) 27ms
+ ✓ server/services/codeMotionRevision.test.ts (12 tests) 2061ms
+   ✓ confirmed local revisions > 局部修改稿继承原三维素材和参考帧，篡改记录或跨账号不继承 480ms
+   ✓ confirmed local revisions > official child export keeps parent audio and untouched generated video through compiler and ownership gates 1218ms
+
+ Test Files  2 passed (2)
+      Tests  16 passed (16)
+   Start at  16:41:36
+   Duration  4.59s (transform 1.91s, setup 0ms, collect 3.77s, tests 2.09s, environment 0ms, prepare 346ms)
