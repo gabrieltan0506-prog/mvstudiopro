@@ -1,6 +1,7 @@
 import { previsAnimationReceipt } from "@shared/manhuaPrevisAnimation";
 import { applyAdvisorPrevisCandidate } from "@shared/manhuaAdvisorPrevisEdit";
 import { ManhuaPrevisPlanImport } from "./ManhuaPrevisPlanImport";
+import { ManhuaPrevisCastRepair } from "./ManhuaPrevisCastRepair";
 import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import { advisorWorkflowRevision } from "@shared/manhuaAdvisorWorkflowPlan";
@@ -101,7 +102,7 @@ type Props = {
     /** assetRef：模型所在 ref（可能是 A-pose 候选图，与人物 id 不同） */
     model?: { taskId: string; assetRef?: string };
   }>;
-  sourceShots?: Array<PrevisSourceShot & {cameraZh?:string;dialogueZh?:string}>;
+  sourceShots?: Array<PrevisSourceShot & {cameraZh?:string;dialogueZh?:string;soundZh?:string}>;
   /** 0929：本段分镜的景别/机位/运镜原文，用于按分镜自动排运镜（不进草案身份键） */
   directionShots?: ManhuaDirectedShot[];
   /** 本集导演包主卡；只取卡片里已写明、能落到机位上的手法 */
@@ -883,6 +884,13 @@ export function ManhuaPrevisStudioView({
       </section>}
       {block.previsStudio && <section id="previs-cast" className="space-y-2 rounded border border-cyan-300/20 p-3" data-previs-cast>
         <p className="text-sm font-medium text-cyan-50">当前方案人物</p>
+        <ManhuaPrevisCastRepair key={previsSpecKey(studio.spec)} studio={studio} characters={characters} disabled={Boolean(disabled || busy || pendingId)} onApply={next => {
+          if (latest.current.disabled || busy || latest.current.studio.pending || lock.current) return false;
+          if (previsSpecKey(latest.current.studio.spec) !== previsSpecKey(studio.spec)) { setError("方案已变化，请重新核对人物。"); return false; }
+          if (!publish(next)) return false;
+          setStatus("人物核对已保存，原方案已留在历史；请让顾问安排新增人物的动作后再渲染。");
+          return true;
+        }} />
         <p className="text-xs text-cyan-100">渲染容量：{previsRenderCostUnits(studio.spec)} / {PREVIS_RENDER_UNIT_BUDGET}</p>
         <div className="flex flex-wrap gap-3">{studio.spec.actors.map(actor => <span key={actor.id} className="text-xs"><span className="mr-1 inline-block h-3 w-3 rounded-full" style={{ backgroundColor: previsActorColor(actor.id, studio.spec.actors).hex }} aria-hidden="true" />{actor.nameZh} · {actor.shape === "horse" ? "四足" : "人形"}</span>)}</div>
         {studio.spec.actors.filter(actor => !actor.creature).map(actor => {

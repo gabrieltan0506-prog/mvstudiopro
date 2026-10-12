@@ -917,3 +917,32 @@ it("未有复用档案也可显式启用已采用马模型，失败不保存且�
   expect(await page.evaluate(()=>{const f=(window as any).fixture;return {job:f.block.previsStudio.spec.actors[0].riggedModel.sourceJobId,sourceAssetRef:f.block.previsStudio.spec.actors[0].riggedModel.sourceAssetRef,submits:f.submits.length,history:f.block.previsStudio.specHistory.length,old:f.block.manhuaSegmentRefs.previs.url};})).toEqual({job:'m3d_horse',sourceAssetRef:'horse-full-ref',submits:0,history:1,old:'https://offline.invalid/old.mp4'});
  }finally{await page.close();}
 });
+
+it("核对人物补娘与马形走正式保存回调，不提交渲染且保留原参考", async () => {
+  const page = await open();
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const block = f.makeBlock();
+      block.previsStudio.spec.actors = [{ ...block.previsStudio.spec.actors[0], id: "horse", nameZh: "墨屠", assetRef: "character-mo", shape: "human" }];
+      f.setBlock(block);
+      f.setCharacters([{ id: "character-mo", label: "墨屠", shape: "horse" }, { id: "mother", label: "娘" }]);
+    });
+    await page.waitForSelector('select[aria-label="墨屠的预演形态"]');
+    await page.evaluate(() => Array.from(document.querySelectorAll("summary")).find(element => element.textContent === "核对本段人物与形态")!.click());
+    await page.select('select[aria-label="墨屠的预演形态"]', "horse");
+    await page.evaluate(() => {
+      Array.from(document.querySelectorAll("label")).find(element => element.textContent?.includes("补入娘"))!.querySelector<HTMLInputElement>("input")!.click();
+      (window as any).fixture.rejectSave = true;
+    });
+    await click(page, "保存人物核对");
+    expect(await page.evaluate(() => (window as any).fixture.block.previsStudio.spec.actors.length)).toBe(1);
+    await page.evaluate(() => { (window as any).fixture.rejectSave = false; });
+    await click(page, "保存人物核对");
+    await page.waitForFunction(() => (window as any).fixture.block.previsStudio.spec.actors.length === 2);
+    expect(await page.evaluate(() => {
+      const f = (window as any).fixture;
+      return { cast: f.block.previsStudio.spec.actors.map((actor: any) => [actor.nameZh, actor.shape]), submits: f.submits.length, history: f.block.previsStudio.specHistory.length, reference: f.block.manhuaSegmentRefs.previs.url };
+    })).toEqual({ cast: [["墨屠", "horse"], ["娘", "human"]], submits: 0, history: 1, reference: "https://offline.invalid/old.mp4" });
+  } finally { await page.close(); }
+});

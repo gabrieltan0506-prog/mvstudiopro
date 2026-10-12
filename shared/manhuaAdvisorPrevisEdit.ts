@@ -203,6 +203,7 @@ export function adoptAdvisorPrevisTrial(clipId: string, studio: ManhuaPrevisStud
   }] };
 }
 export const ADVISOR_PREVIS_EDIT_INSTRUCTIONS = `\n【白模调度候选模式】
+shotSource中的soundZh是原镜声音设计，须与动作接触、节奏及相邻切镜一并核对；它不代表已制作音轨。无声预演仍按该节奏安排动作，不因未生成音效而添加unsupported，不得擅自改对白或提交声音生成。声音原文变化后旧候选需重新核对。
 当前上下文提供的是指定片段的完整编辑规格。如有shotSource，它是本段逐镜原文与秒窗的完整来源版本，必须逐镜读取，不得用概括摘要替代或改变剧情。必须输出shotCoverage数组，每个原镜一项：{index:原镜号,status:"covered"或"unsupported",actorIds:[本镜涉及的现有角色ID],reasonZh:"说明秒窗、实际动作/机位及原文落实方式；不支持时说明缺少的能力"}。covered只代表方案有对应动作与机位，不代表已经渲染或画面通过。不得用静立/转头/指点冒充飞针、取血、倒地、道具接触等不支持动作；任何未落实要求须标unsupported并保留原文，不能默默省略。仅修改部分机位时也要逐镜说明其他动作从当前规格保留的依据，不能声称空动作基线已实现剧情。用户用自然语言要求修改动作或摄影机时，先结合剧情、场景、已有导演手法与运镜代码配方给出调度提案。在summaryZh说明剧情目的、为什么使用这组景别/机位/走位、与上一版差异及可继续调整的方向；不可只列数字。本模式覆盖普通问答的answer字符串格式：在外层JSON的answer字段直接放一个JSON对象，不要代码围栏，不要将对象或换行二次转义。先输出summaryZh，供用户流式阅读，随后给出完整候选。answer对象内容为：
 场景特效可用sceneEffects完整替换数组（清空用[]）：cape披风(width/length/color/wind)、explode分件(distance/startSec/durationSec)、hologram(color/intensity)、attribute_color(color/colorEnd)、label骨骼标注(bone/text/color/offset/fontSize)；每项须有id、actorId，最多4项/3角色/8秒。披风与分件不能同段；只改已存在角色，不生成模型内部结构。保留所有未要求修改的现有项。
 {"kind":"previs_edit_v1","summaryZh":"逐项说明哪些秒窗/人物/机位改了什么","unsupportedZh":[],"cameras":[完整的替换机位数组],"actors":[{"id":"原有角色ID","motionRoute":[{"timeSec":0,"position":[0,0],"facingDeg":0}],"start":[0,0],"end":[0,0],"moveStartSec":0,"moveEndSec":10,"facingDeg":0,"actions":[{"kind":"walk","startSec":0,"endSec":10}]}]}

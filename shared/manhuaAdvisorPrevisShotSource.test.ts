@@ -7,7 +7,7 @@ import { makeAdvisorPrevisTarget, prepareAdvisorPrevisTrial, applyAdvisorPrevisC
 function fixture() {
   const studio = createManhuaPrevisStudio(5);
   studio.advisorShotSource = buildAdvisorPrevisShotSource("clip-1", [
-    { index: 22, durationSec: 2, actionZh: "打手甲在后方追来，打手乙站在左侧。", cameraZh: "沿追逃方向横移", dialogueZh: "曹三：站住。" },
+    { index: 22, durationSec: 2, actionZh: "打手甲在后方追来，打手乙站在左侧。", cameraZh: "沿追逃方向横移", dialogueZh: "曹三：站住。", soundZh: "脚步逼近，切镜后保留半秒余声" },
     { index: 23, durationSec: 3, actionZh: "阿菁侧身避开，娘仍在背上。", cameraZh: "保留两名追者" },
   ]);
   const candidate: AdvisorPrevisCandidate = { target: makeAdvisorPrevisTarget("clip-1", studio), patch: {
@@ -24,6 +24,7 @@ describe("顾问逐镜来源与覆盖合同", () => {
     expect(restored.advisorShotSource).toEqual(studio.advisorShotSource);
     expect(candidate.target.shotSource?.shots.map(s => [s.index, s.startSec, s.endSec])).toEqual([[22, 0, 2], [23, 2, 5]]);
     expect(candidate.target.shotSource?.shots[0].dialogueZh).toBe("曹三：站住。");
+    expect(candidate.target.shotSource?.shots[0].soundZh).toBe("脚步逼近，切镜后保留半秒余声");
     expect(makeAdvisorPrevisTarget("clip-1", restored).shotSource).toEqual(candidate.target.shotSource);
   });
   it("缺镜、重复镜及虚构人物均不能准备渲染", () => {
@@ -48,6 +49,17 @@ describe("顾问逐镜来源与覆盖合同", () => {
     expect(() => adoptAdvisorPrevisTrial("clip-1", studio, trial, { jobId: "test", status: "succeeded", params: trial.request, output: { requestId: trial.request.requestId, clipId: "clip-1", durationSec: 5, gcsUri: "gs://test/preview.mp4", url: "/api/manhua-previs-media/test/preview" } })).toThrow("分镜来源已变化");
     const current = makeAdvisorPrevisTarget("clip-1", studio);
     expect(withAdvisorPrevisVideo(current, { target: candidate.target, requestId: crypto.randomUUID(), specJson: candidate.target.specJson })).toEqual(current);
+  });
+  it("仅声音设计变化也使旧候选及试看失效，旧稿缺声音字段仍兼容", () => {
+    const { studio, candidate } = fixture();
+    const trial = prepareAdvisorPrevisTrial("clip-1", studio, candidate);
+    studio.advisorShotSource!.shots[0].soundZh = "脚步突然停住，切镜前留白";
+    expect(() => applyAdvisorPrevisCandidate("clip-1", studio, candidate)).toThrow("分镜来源已变化");
+    expect(() => prepareAdvisorPrevisTrial("clip-1", studio, candidate)).toThrow("分镜来源已变化");
+    const current = makeAdvisorPrevisTarget("clip-1", studio);
+    expect(withAdvisorPrevisVideo(current, { target: candidate.target, requestId: trial.request.requestId, specJson: candidate.target.specJson })).toEqual(current);
+    delete studio.advisorShotSource!.shots[0].soundZh;
+    expect(advisorPrevisShotSourceSchema.safeParse(studio.advisorShotSource).success).toBe(true);
   });
   it("缺时长、错片段、断秒窗、重复镜、来源总长不符明确拒绝，不截断", () => {
     const { studio } = fixture();

@@ -1,3 +1,5 @@
+import RemixProductionImport from "@/components/RemixProductionImport";
+import { remixToNovelDraft } from "@/lib/remixProductionHandoff";
 import { manhuaVfxEnvironmentOptions } from "@shared/manhuaVfxEnvironment";
 import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
 import { adoptStageAnimationAsClip, assertCurrentStageAnimationAudio } from "@/lib/manhuaStageAnimationAdoption";
@@ -1717,7 +1719,7 @@ function OmniCanvasWorkspace() {
       if (!segment) throw new Error("当前原稿已找不到本段分镜，请重新选择；未使用旧来源");
       advisorShotSource = buildAdvisorPrevisShotSource(clip.id, segment.shots.map(shot => ({ index: shot.index,
         durationSec: shot.durationSec, actionZh: shot.actionZh, cameraZh: shot.cameraZh,
-        dialogueZh: shot.dialogueSuppressed ? "无对白" : shot.dialogueZh })));
+        dialogueZh: shot.dialogueSuppressed ? "无对白" : shot.dialogueZh, soundZh: shot.soundZh })));
     }
     return { ...studio, ...(advisorShotSource ? { advisorShotSource } : {}),
       spec: withRiggedModelSourceAssetRefs(studio.spec, customAssetRefs.map(ref => {
@@ -11411,6 +11413,12 @@ async function runAdvisorWriterTrial() {
       }
     >
       <Navbar compact={immersiveWorkbench} workspaceNavigation={immersiveWorkbench ? workspaceToolbar : undefined} />
+      <RemixProductionImport userId={user?.id} format="video" disabled={writerBusy || factoryBusy || Boolean(cloudConflict)} onApply={draft => {
+        const source = remixToNovelDraft(draft);
+        if ((novelDraft?.text || writerBrief.trim()) && !window.confirm("采用会替换当前编剧室原文与补充条件，已有剧本不变。确认已备份当前输入？")) return false;
+        setNovelDraft(source); setWriterBrief(""); setWriterConfirmed(false); setCanvasMode("manhua"); setImmersiveWorkspaceView("topic");
+        toast.success("已载入完整复刻稿，请选择本次镜头范围并核对引擎；尚未生成"); return true;
+      }} />
       {assetConfirmationDialog}
       {cloudConflict && <section role="alert" data-testid="manhua-cloud-conflict" className="z-50 mt-14 max-h-[50vh] shrink-0 overflow-auto border border-amber-500 bg-background p-4 text-foreground">
         <p>云端作品已有其他版本或缺少版本凭据，自动同步已暂停，本机内容保留。先导出副本，再读取云端版本；不会自动合并或覆盖。</p>

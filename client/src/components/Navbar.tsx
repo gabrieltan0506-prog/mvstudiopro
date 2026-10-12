@@ -26,7 +26,7 @@ import {
 
 const NAV_ITEMS: Array<{ label: string; href: string; beta?: boolean }> = [
   { label: "平台创作", href: "/platform" },
-  { label: "视频深度拆解", href: "/platform?tab=video" },
+  { label: "爆款复刻", href: "/creator-growth-camp/premium-remix" },
   // 竞品调研内测中：一般用户只见标注不给链接，supervisor/admin 仍可进（见 competitorResearchBeta）
   { label: "竞品调研", href: "/research", beta: true },
   { label: "一战成片", href: "/canvas" },
@@ -48,9 +48,9 @@ function isNavItemActive(href: string, locationPath: string): boolean {
   if (wantTab && VIDEO_DEEP_TAB_VALUES.has(wantTab)) {
     return curIsVideoDeep;
   }
-  // 「平台创作」：在 /platform 且未落在视频深度拆解 tab 时高亮
+  // 平台内的旧素材入口仍归平台创作，不再单列导航。
   if (path === "/platform" && !wantTab) {
-    return !curIsVideoDeep;
+    return true;
   }
   return !wantTab;
 }

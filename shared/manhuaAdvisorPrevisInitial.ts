@@ -4,6 +4,10 @@ import type { PrevisSourceShot } from "./manhuaPrevisScript";
 // 单字称呼只从明确出场名单或别名读取，不在动作正文里撞字匹配。
 const castNames = (value?: string) => Array.from(new Set(String(value || "").split(/[；;、，,/|与和\n]+/).map(name => name.replace(/（[^）]*）|\([^)]*\)/g, "").trim()).filter(Boolean)));
 
+export function inferPrevisCharacterShape(lookZh?: string): "human" | "horse" {
+  return /黑马|白马|骏马|瘸马|病马|伤马|马身|马体|四足|马匹|horse/i.test(lookZh || "") ? "horse" : "human";
+}
+
 /** 仅建立真实本段演员基线；动作与机位交由顾问，不把初始静立视为已完成预演。 */
 export function createAdvisorPrevisStudio(input: {
   durationSec: number;

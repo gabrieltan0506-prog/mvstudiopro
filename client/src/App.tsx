@@ -122,9 +122,9 @@ function Router() {
         <Route path={"/showcase"} component={Showcase} />
         <Route path={"/analysis"} component={GrowthCampRedirect} />
         <Route path={"/viral"} component={GrowthCampRedirect} />
-        <Route path={"/creator-growth-camp/legacy"} component={GrowthCampPage} />
+        <Route path={"/creator-growth-camp/legacy"}><GrowthCampPage /></Route>
         <Route path={"/creator-growth-camp/platform"} component={GrowthCampRedirect} />
-        <Route path={"/creator-growth-camp"} component={GrowthCampPage} />
+        <Route path={"/creator-growth-camp"}><GrowthCampPage /></Route>
         <Route path={"/platform"} component={PlatformPage} />
         <Route path={"/creator-growth-camp/premium-remix"} component={RemixLanding} />
         <Route path={"/storyboard"} component={Storyboard} />
