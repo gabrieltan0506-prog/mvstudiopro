@@ -1448,6 +1448,10 @@ export default function ManhuaScriptWorkbench({
   onUpsertShotDescriptions,
 }: Props) {
   const dockCanvas = Boolean(previewCanvas);
+  const episodeVoiceGatePrompts = useMemo(
+    () => collectManhuaEpisodeSegmentPromptsForVoiceGate(blocks, focusEpisode),
+    [blocks, focusEpisode],
+  );
   const continuity = shotContinuity || {
     keyartFromPrevStill: true,
     clipFromPrevTail: true,
@@ -4511,11 +4515,7 @@ clipPromptReviewOpen ? (
             const voiceGate = evaluateManhuaCrossSegmentVoiceGate({
               localSegmentIndex: row.segmentIndex,
               currentPrompt: p,
-              episodeSegmentPrompts:
-                collectManhuaEpisodeSegmentPromptsForVoiceGate(
-                  blocks,
-                  focusEpisode,
-                ),
+              episodeSegmentPrompts: episodeVoiceGatePrompts,
               voiceLocks: characterVoiceLocks,
             });
             return (

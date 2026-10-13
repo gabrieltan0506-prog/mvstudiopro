@@ -300,6 +300,7 @@ import {
 } from "@/components/platform/KnowledgeCardPreflight";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
+  KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
   knowledgeCardDistillFeeForModel,
   resolveKnowledgeCardDistillModel,
   type KnowledgeCardDistillModelId,

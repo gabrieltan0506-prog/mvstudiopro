@@ -61,7 +61,7 @@ export function knowledgeCardChainForPrimary(
   order: readonly KnowledgeCardGatewayStep[],
   primary: "openrouter" | "evolink",
 ): KnowledgeCardGatewayStep[] {
-  const tiers = [...new Set(order.map(step => step.tier))];
+  const tiers = Array.from(new Set(order.map(step => step.tier)));
   return tiers.flatMap(tier => {
     const steps = order.filter(step => step.tier === tier);
     return [...steps.filter(step => step.gateway === primary), ...steps.filter(step => step.gateway !== primary)];
