@@ -11381,7 +11381,7 @@ export default function PlatformPage() {
                   key={item.id} format={item.format} packageValue={item.xhsPackage}
                   pages={item.graphicNotePages} cells={item.storyboardCells}
                   coverUrl={coverUrl} coverCost={normalCoverCost} sheetCost={compositeCost}
-                  sheetLabel={compositeLabel} disabled={genBusy || !isAuthenticated}
+                  sheetLabel={compositeLabel} gridVariant={compositeGridVariant} onGridChange={setCompositeGridVariant} disabled={genBusy || !isAuthenticated}
                   coverBusy={batchGeneratingCoverIds.has(item.id)} sheetBusy={isThisCompositeLoading}
                   onCover={runSingleCover} onSheet={runSingleComposite}
                 />}

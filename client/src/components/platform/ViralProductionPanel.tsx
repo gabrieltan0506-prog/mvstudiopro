@@ -13,6 +13,8 @@ type Props = {
   coverCost: number;
   sheetCost: number;
   sheetLabel: string;
+  gridVariant: "2x4" | "3x4";
+  onGridChange: (value: "2x4" | "3x4") => void;
   disabled: boolean;
   coverBusy: boolean;
   sheetBusy: boolean;
@@ -40,6 +42,7 @@ export function ViralProductionPanel(props: Props) {
     </div>
     <div className="viral-content-production">
       <div className="viral-content-heading"><div><span className="creation-eyebrow">{graphic ? "图文笔记" : "视频文案"}</span><h4>{graphic ? `图文分页 · ${pages.length} 页` : `视频导演表 · ${props.cells?.length ?? 0} 镜`}</h4></div><button type="button" className="creation-primary" disabled={props.disabled || props.sheetBusy} onClick={props.onSheet}>{props.sheetBusy ? "配图生成中…" : `${graphic ? "生成图文配图" : "生成导演分镜图"} · ${props.sheetCost} 点`}</button></div>
+      <div className="viral-page-tabs" role="group" aria-label="配图布局"><button type="button" aria-pressed={props.gridVariant === "2x4"} disabled={props.disabled || props.sheetBusy} onClick={() => props.onGridChange("2x4")}>4列 × 2行 · 8格</button><button type="button" aria-pressed={props.gridVariant === "3x4"} disabled={props.disabled || props.sheetBusy} onClick={() => props.onGridChange("3x4")}>4列 × 3行 · 12格</button></div>
       <p className="creation-secondary-note">{graphic ? "逐页检查标题和正文；下方分页切换不计费。" : "逐镜检查台词、场景、动作、景别、运镜与剪辑；可复制整张表。"} 图片输出沿用{props.sheetLabel}。</p>
       {graphic ? page ? <>
         <div className="viral-page-tabs" role="tablist" aria-label="图文页码">{pages.map((p, i) => <button key={p.pageIndex} type="button" role="tab" aria-selected={i === activeIndex} aria-controls={panelId} onClick={() => setPageIndex(i)}>第 {p.pageIndex} 页</button>)}</div>
