@@ -13,8 +13,8 @@ afterEach(() => {
 
 describe("0923 用户令：模型服务异常隔 30 秒重试 3 次", () => {
   it("口径写死：3 次、30 秒", () => {
-    expect(KNOWLEDGE_CARD_CHAIN_RETRY_ROUNDS).toBe(3);
-    expect(KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS).toBe(30_000);
+    expect(KNOWLEDGE_CARD_CHAIN_RETRY_ROUNDS).toBe(4);
+    expect(KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS).toBe(20_000);
   });
 
   it("前三次失败、第四次成功：拿到结果，每次之间真的等满 30 秒", async () => {

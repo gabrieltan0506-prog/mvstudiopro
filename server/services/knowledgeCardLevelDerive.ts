@@ -13,7 +13,7 @@ import {
   openRouterProviderLockForTier,
   type KnowledgeCardTier,
 } from "./knowledgeCardGatewayOrder.js";
-import { GLM_53_FLASH_EVOLINK_MODEL, GLM_53_FLASH_OPENROUTER_MODEL } from "./glmModels.js";
+import { GLM_53_FLASHX_EVOLINK_MODEL, GLM_53_FLASHX_OPENROUTER_MODEL } from "./glmModels.js";
 import { assertSseContentSafety, isSseContentSafetyError, isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
@@ -22,12 +22,12 @@ import {
 
 /** 0911 用户令：降档第一手 GLM 5.3 Flash（两家供应商），Qwen 3.8 退到最后 */
 // 派生跟着读档档位走同一个模型（该档是 Flash：能读图的那个），不换成纯文本的 GLM 5.3
-export const KNOWLEDGE_CARD_DERIVE_MODEL_GLM_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_GLM_EVOLINK || GLM_53_FLASH_EVOLINK_MODEL).trim();
-export const KNOWLEDGE_CARD_DERIVE_MODEL_GLM_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_GLM_OPENROUTER || GLM_53_FLASH_OPENROUTER_MODEL).trim();
+export const KNOWLEDGE_CARD_DERIVE_MODEL_GLM_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_GLM_EVOLINK || GLM_53_FLASHX_EVOLINK_MODEL).trim();
+export const KNOWLEDGE_CARD_DERIVE_MODEL_GLM_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_GLM_OPENROUTER || GLM_53_FLASHX_OPENROUTER_MODEL).trim();
 
 /** 网关顺序（0911：同模型先换供应商）：EvoLink(DeepSeek) → OpenRouter(DeepSeek) → 新加坡(Qwen) → OpenRouter(Qwen) */
-// EvoLink 侧 V4.1 Flash 的 id 就是 deepseek-v4-flash-vision-exp（0911 实弹：写 deepseek-v4.1-flash 会 404）
-export const KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK || "deepseek-v4-flash-vision-exp").trim();
+// 使用 2026-10-13 真实 API 探针通过的 EvoLink 正式模型 ID。
+export const KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK || "deepseek-v4.1-flash").trim();
 export const KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER || "deepseek/deepseek-v4.1-flash").trim();
 export const KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG || "qwen3.8-max").trim();
 const EVOLINK_DIRECT_CHAT_URL = String(process.env.EVOLINK_DIRECT_CHAT_URL || "https://direct.evolink.ai/v1/chat/completions").trim();
@@ -230,7 +230,7 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
   return out;
 }
 
-/** 按网关链调用；整条链都失败时隔 30 秒重跑，最多 3 次（0923 用户令） */
+/** 按网关链调用；整条链都失败时隔 20 秒重跑，最多 4 次（0923 用户令） */
 async function deriveChat(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
   return retryKnowledgeCardChain(() => deriveChainOnce(params), {
     label: "knowledgeCardLevelDerive",

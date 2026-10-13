@@ -29,8 +29,8 @@ describe("主提炼真实模型路由与安全终止", () => {
     }));
     expect(await request()).toBe(markdown);
     expect(calls.map((c) => [new URL(c.url).hostname, c.body.model])).toEqual([
-      ["openrouter.ai", "z-ai/glm-5.3-flash"],
-      ["direct.evolink.ai", "glm-5.3-flash"],
+      ["openrouter.ai", "z-ai/glm-5.3-flashx"],
+      ["direct.evolink.ai", "glm-5.3-flashx"],
     ]);
     expect(calls[1]!.body).toMatchObject({ temperature: 0.7, reasoning_effort: "high", stream: true });
   });

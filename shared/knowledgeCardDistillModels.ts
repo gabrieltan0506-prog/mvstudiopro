@@ -1,17 +1,7 @@
 /**
- * 图文卡读档（提炼/读图）模型：用户二选一，Qwen 只做最后一手兜底（0911 用户令）。
- * - DeepSeek V4.1 Flash：主路 OpenRouter `deepseek/deepseek-v4.1-flash`（锁 DeepSeek 自营），
- *   兜底 EvoLink 同款——EvoLink 侧的 id 叫 `deepseek-v4-flash-vision-exp`，
- *   直接写 `deepseek-v4.1-flash` 会 404（0911 实弹核过）。两边都原生多模态，图文同一个模型
- * - GLM 5.3 Flash：EvoLink `glm-5.3-flash` 原生视觉、100 万上下文 → OpenRouter `z-ai/glm-5.3-flash`
- * - 选中的那档两家供应商都打不通，才换另一档；两档都失败，最后才走 Qwen3.8 Max
- *   （百炼新加坡 token plan → OpenRouter），Qwen 不再出现在下拉选单里。
- *
- * 页费含读档+出图；旧「超凡」（Claude）、「均衡」（Kimi）、GPT-5.6 Sol 与「轻量」（Qwen）已下架，
- * 旧值仍可解析（历史 receipt / localStorage），一律迁到本档位表，历史 receipt 按原价结算。
- *
- * @see https://evolink.ai/docs/en/api-manual/language-series/deepseek-v4/deepseek-v4-chat
- * @see https://evolink.ai/docs/en/api-manual/language-series/glm/chat-completions/chat-completions-reference
+ * 图文读档保留 GLM 5.3 FlashX 与 DeepSeek V4.1 Flash 两档。
+ * Flash 档历史 ID 保持不变，服务端实际请求 FlashX；旧回执与价格不变。
+ * 每档只走 OpenRouter / EvoLink，两档均失败即报错，不再调用 Qwen。
  */
 
 /** DeepSeek V4.1 Flash（EvoLink id；原生多模态，图文共用一个模型） */
@@ -83,7 +73,7 @@ export const KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS = [
   },
   {
     id: KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
-    labelZh: "读档·GLM 5.3 Flash",
+    labelZh: "读档·GLM 5.3 FlashX",
     creditsFull: KNOWLEDGE_CARD_PAGE_CREDITS_BY_MODEL[KNOWLEDGE_CARD_DISTILL_MODEL_GLM].full,
   },
 ] as const;
@@ -126,7 +116,7 @@ export function resolveKnowledgeCardDistillModel(raw?: string | null): Knowledge
   const envDefault = String(
     (typeof process !== "undefined" && process.env?.KNOWLEDGE_CARD_DISTILL_MODEL) || "",
   ).trim();
-  return mapKnownModelId(envDefault) || KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK;
+  return mapKnownModelId(envDefault) || KNOWLEDGE_CARD_DISTILL_MODEL_GLM;
 }
 
 /** 已下架档位的历史页价：旧 receipt 出图仍按原档结算，不因下架改价 */

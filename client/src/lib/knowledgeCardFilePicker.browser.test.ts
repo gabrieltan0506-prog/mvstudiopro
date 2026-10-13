@@ -36,3 +36,32 @@ it("不同类型可分批追加，选文件不提交；去重/移除/失败保�
     expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(2);
   } finally { await browser.close(); await rm(dir, { recursive: true, force: true }); }
 }, 20000);
+
+it("开始精炼旁的中止按钮在精炼中可点，等待真实终态并保留文件", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "knowledge-cancel-"));
+  const file = path.join(dir, "资料.png"); await writeFile(file, "test-only");
+  const bundle = await build({ stdin: { resolveDir: process.cwd(), loader: "tsx", contents: `
+    import React,{useState}from'react';import{createRoot}from'react-dom/client';
+    import{KnowledgeCardFilePicker}from'./client/src/components/platform/KnowledgeCardFilePicker';
+    globalThis.cancels=0;function Harness(){const[active,setActive]=useState(false);const[requested,setRequested]=useState(false);
+    return <KnowledgeCardFilePicker disabled={active} cancelRequested={requested} onCancel={active?()=>{globalThis.cancels++;setRequested(true);}:undefined}
+    onProcess={async()=>{setActive(true);await new Promise(r=>globalThis.finish=r);setActive(false);setRequested(false);return false;}}/>;}
+    createRoot(document.getElementById('root')).render(<Harness/>);` }, bundle: true, write: false, format: "iife", platform: "browser", jsx: "automatic" });
+  const browser = await puppeteer.launch({ headless: true });
+  try {
+    const page = await browser.newPage();page.setDefaultTimeout(5000);
+    await page.setContent('<div id="root"></div>');await page.addScriptTag({content:bundle.outputFiles[0].text});
+    const input=await page.waitForSelector('input[type=file]');await input!.uploadFile(file);
+    await page.waitForFunction(()=>document.body.textContent?.includes('开始精炼（1 个文件）'));
+    expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='中止任务')?.disabled)).toBe(true);
+    await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.startsWith('开始精炼'))!.click());
+    await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='中止任务'&&!b.disabled));
+    await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='中止任务')!.click());
+    await page.waitForFunction(()=>document.body.textContent?.includes('正在中止…'));
+    expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='正在中止…')?.disabled)).toBe(true);
+    expect(await page.evaluate(()=>(globalThis as any).cancels)).toBe(1);
+    await page.evaluate(()=>(globalThis as any).finish());
+    await page.waitForFunction(()=>document.body.textContent?.includes('开始精炼（1 个文件）'));
+    expect(await page.$$eval('li',els=>els.length)).toBe(1);
+  }finally{await browser.close();await rm(dir,{recursive:true,force:true});}
+},20000);

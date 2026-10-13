@@ -28,16 +28,12 @@ describe("distillGatewayChain（0911：选中档两家 → 另一档两家 → Q
       { gateway: "evolink", tier: "deepseek" },
       { gateway: "openrouter", tier: "glm" },
       { gateway: "evolink", tier: "glm" },
-      { gateway: "dashscope_sg", tier: "qwen" },
-      { gateway: "openrouter", tier: "qwen" },
     ]);
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_GLM)).toEqual([
       { gateway: "openrouter", tier: "glm" },
       { gateway: "evolink", tier: "glm" },
       { gateway: "openrouter", tier: "deepseek" },
       { gateway: "evolink", tier: "deepseek" },
-      { gateway: "dashscope_sg", tier: "qwen" },
-      { gateway: "openrouter", tier: "qwen" },
     ]);
   });
 
@@ -48,12 +44,10 @@ describe("distillGatewayChain（0911：选中档两家 → 另一档两家 → Q
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual([
       { gateway: "openrouter", tier: "deepseek" },
       { gateway: "openrouter", tier: "glm" },
-      { gateway: "openrouter", tier: "qwen" },
     ]);
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_GLM)).toEqual([
       { gateway: "openrouter", tier: "glm" },
       { gateway: "openrouter", tier: "deepseek" },
-      { gateway: "openrouter", tier: "qwen" },
     ]);
     vi.stubEnv("OPENROUTER_API_KEY", "");
     expect(distillGatewayChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK)).toEqual([]);
@@ -75,14 +69,14 @@ describe("目录页扫读挑页（makeKnowledgeCardPageSelector）", () => {
     const calls: string[] = [];
     __setKnowledgeCardDistillGatewayInvokerForTest(async (p) => {
       calls.push(`${p.gateway}:${p.tier ?? "?"}`);
-      if (p.tier === "glm") throw new Error("算力紧张，请稍后再试");
+      if (p.gateway === "openrouter") throw new Error("算力紧张，请稍后再试");
       return `选好了：{"pages":[{"page":41,"reason":"分式图解"},{"page":999,"reason":"不存在"},{"page":2}]}`;
     });
     const select = makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
     const picked = await triageVisionDown(() =>
       select([{ index: 1, pageNumbers: Array.from({ length: 48 }, (_, i) => i + 1), imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 48),
     );
-    expect(calls).toEqual(["openrouter:glm", "evolink:glm", "dashscope_sg:qwen"]);
+    expect(calls).toEqual(["openrouter:glm", "evolink:glm"]);
     expect(picked).toEqual([{ pageNumber: 41, reason: "分式图解" }, { pageNumber: 2, reason: undefined }]);
 
     // OpenRouter 未配时尾段只剩 EvoLink GLM 与新加坡 Qwen：GLM 挂了落 Qwen 接住，没有别的跳
@@ -91,7 +85,7 @@ describe("目录页扫读挑页（makeKnowledgeCardPageSelector）", () => {
     const tail = await triageVisionDown(() =>
       select([{ index: 1, pageNumbers: [1, 2, 3], imageUrl: "https://signed/sheet-1.jpg", gcsUri: "gs://b/sheet-1.jpg" }], 3),
     );
-    expect(calls).toEqual(["evolink:glm", "dashscope_sg:qwen"]);
+    expect(calls).toEqual(["evolink:glm"]);
     expect(tail).toEqual([{ pageNumber: 2, reason: undefined }]);
   });
 

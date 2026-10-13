@@ -3086,7 +3086,7 @@ export default function PlatformPage() {
       // 旧值（Sol / Terra / OR-qwen / 已下架的 Qwen 轻量档 / DeepSeek V4）由 resolve 迁到现行两档
       return resolveKnowledgeCardDistillModel(raw);
     } catch {
-      return KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK;
+      return KNOWLEDGE_CARD_DISTILL_MODEL_GLM;
     }
   });
   /** 成稿档：精华版（优先重点+简单解说）/ 完整版（第一重点+详细解说，不限页数）；0911 用户定名 */
@@ -3110,6 +3110,9 @@ export default function PlatformPage() {
   /** 正在跑的后台读档/派生任务：有值＝停这个后台任务 */
   const [customNoteDistillJobId, setCustomNoteDistillJobId] = useState<string>("");
   const [customNoteCancelBusy, setCustomNoteCancelBusy] = useState(false);
+  const [customNoteCancelRequested, setCustomNoteCancelRequested] = useState(false);
+  const customNoteUploadStopRef = useRef(false);
+
   /**
    * 出图阶段的停止标记（0911 用户令：中途停了，出几张就扣几张）。
    * 用 ref 而不是 state：并发 worker 在循环里每轮都要读最新值，state 快照会读到旧的。
@@ -8325,6 +8328,7 @@ export default function PlatformPage() {
     const pageRequestId = knowledgeCardPageTasks.begin("knowledge_card_derive_level");
     const revision = customNoteRevisionRef.current;
     setCustomNoteLevelSwitching(true);
+    setCustomNoteCancelRequested(false);
     setCustomNoteProgress({ status: "running", percent: 1, label: "派生精华版…" });
     try {
       const queued = await enqueueKnowledgeCardLevelDeriveMutation.mutateAsync({
@@ -8379,6 +8383,7 @@ export default function PlatformPage() {
       if (owned) {
         setCustomNoteDistillJobId((prev) => (prev === owned ? "" : prev));
         deriveOwnedJobIdRef.current = "";
+        setCustomNoteCancelRequested(false);
       }
     }
   };
@@ -8474,6 +8479,7 @@ export default function PlatformPage() {
     setCustomNoteCompactMarkdown(null);
     // 新一轮提炼：上一本 EPUB 的 PDF 按钮不再挂着（本轮转档成功会重新出现）
     setKnowledgeCardEpubPdfs([]);
+    setCustomNoteCancelRequested(false);
     const pageRequestId = knowledgeCardPageTasks.begin("knowledge_card_distill");
     const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
       pageRequestId,
@@ -8517,6 +8523,19 @@ export default function PlatformPage() {
       return `分段提炼 ${dc}/${tc} 段`;
     };
     setCustomNoteDistillJobId(String(queued.progressJobId || ""));
+    // 提交请求在途时点中止：取得同一任务 ID 后请求停止，失败仍继续轮询并允许重试中止。
+    if (customNoteUploadStopRef.current && args.files?.length) {
+      try {
+        const response = await fetch(`/api/jobs/knowledge-card/${encodeURIComponent(queued.progressJobId)}/cancel`, { method: "POST", credentials: "include" });
+        const result = await response.json();
+        if (!response.ok) throw new Error("中止请求未确认，请再点中止任务；不要重复提交精炼");
+        setCustomNoteCancelRequested(Boolean(result.cancelled));
+        toast.message(String(result.messageZh || "已请求中止"));
+      } catch (error) {
+        setCustomNoteCancelRequested(false);
+        toast.error(error instanceof Error ? error.message : "中止请求未确认，请再点中止任务");
+      }
+    }
     const ownedJobId = String(queued.progressJobId || "");
     try {
     const job = await pollJobUntilTerminal(queued.progressJobId, {
@@ -8553,6 +8572,7 @@ export default function PlatformPage() {
     } finally {
       // 只清自己那单：迟到的旧轮询不许把新任务的终止按钮抹掉
       setCustomNoteDistillJobId((prev) => (prev === ownedJobId ? "" : prev));
+      setCustomNoteCancelRequested(false);
     }
   };
 
@@ -8577,7 +8597,14 @@ export default function PlatformPage() {
       return;
     }
     const jobId = customNoteDistillJobId;
-    if (!jobId || customNoteCancelBusy) return;
+    if (customNoteCancelBusy || customNoteCancelRequested) return;
+    if (!jobId && customNoteUploadBusy) {
+      customNoteUploadStopRef.current = true;
+      setCustomNoteCancelRequested(true);
+      setCustomNoteUploadStatus("正在中止：当前文件上传结束后停止，不再上传后续文件或提交提炼");
+      return;
+    }
+    if (!jobId) return;
     setCustomNoteCancelBusy(true);
     try {
       const res = await fetch(`/api/jobs/knowledge-card/${encodeURIComponent(jobId)}/cancel`, {
@@ -8586,6 +8613,7 @@ export default function PlatformPage() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(String((body as { error?: string }).error || "停止失败，请稍后重试"));
+      if ((body as { cancelled?: boolean }).cancelled) setCustomNoteCancelRequested(true);
       toast.message(String((body as { messageZh?: string }).messageZh || "已请求停止读档"));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "停止失败，请稍后重试");
@@ -15690,15 +15718,21 @@ export default function PlatformPage() {
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <KnowledgeCardFilePicker
                     onSelectionCountChange={setCustomNoteSelectedFileCount}
+                    onCancel={customNoteUploadBusy || customNoteDistillJobId ? cancelCustomNoteDistill : undefined}
+                    cancelBusy={customNoteCancelBusy}
+                    cancelRequested={customNoteCancelRequested && (customNoteUploadBusy || Boolean(customNoteDistillJobId))}
                     key={String(user?.id ?? "anonymous")}
                     disabled={customNoteBusy || customNoteUploadBusy || customNoteLevelSwitching}
                     onProcess={async (list) => {
+                          customNoteUploadStopRef.current = false;
+                          setCustomNoteCancelRequested(false);
                           setCustomNoteUploadBusy(true);
                           let completedDirectUploads = 0;
                           setCustomNoteProgress({ status: "running", percent: 0, label: "上传文件…" });
                           try {
                             const encoded: KnowledgeCardPendingFile[] = [];
                             for (const file of list) {
+                              if (customNoteUploadStopRef.current) throw new Error("已中止任务，未提交后续提炼");
                               const doneFiles = encoded.length;
                               const mimeType = knowledgeCardFileMime(file);
                               // 不论大小一律 GCS 直传（0908 用户令；媒体传输铁律禁止 base64 塞请求体）
@@ -15721,6 +15755,7 @@ export default function PlatformPage() {
                                 completedDirectUploads += 1;
                               }
                             }
+                            if (customNoteUploadStopRef.current) throw new Error("已中止任务，未提交后续提炼");
                             setCustomNoteUploadStatus(null);
                             // 生成按钮依赖文本框非空：上传后立刻 OCR+提炼写入文本框，否则无法点生成
                             const allPending = [...customNotePendingFilesRef.current, ...encoded];
@@ -15754,6 +15789,7 @@ export default function PlatformPage() {
                               files: allPending,
                               onStatus: setCustomNoteUploadStatus,
                             });
+                            if (customNoteUploadStopRef.current) throw new Error("已中止任务，已保留现有正文");
                             if (!distilled) {
                               throw new Error("提炼结果为空，请换文件或改用可选中文字的 PDF / 关键页图片");
                             }
@@ -15922,7 +15958,7 @@ export default function PlatformPage() {
                   <KnowledgeCardProgress
                     state={customNoteProgress}
                     onCancel={customNoteDistillJobId || customNoteRendering ? cancelCustomNoteDistill : undefined}
-                    cancelBusy={customNoteCancelBusy}
+                    cancelBusy={customNoteCancelBusy || customNoteCancelRequested}
                   />
                   <p className="text-xs text-muted-foreground">刷新或关闭页面会停止读档、提炼、派生及后续出图；已提交供应商的图片仍会完成。</p>
                 </div>

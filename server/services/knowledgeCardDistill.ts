@@ -31,15 +31,15 @@ import {
   resolveKnowledgeCardDistillModel,
   type KnowledgeCardDistillModelId,
 } from "../../shared/knowledgeCardDistillModels.js";
-import { GLM_53_FLASH_EVOLINK_MODEL, GLM_53_FLASH_OPENROUTER_MODEL, glm53ReasoningEffort } from "./glmModels.js";
+import { GLM_53_FLASHX_EVOLINK_MODEL, GLM_53_FLASHX_OPENROUTER_MODEL, glm53ReasoningEffort } from "./glmModels.js";
 import { assertSseContentSafety, isSseContentSafetyError, isSseIncompleteStreamError, isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 import {
   KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
   KNOWLEDGE_CARD_GLM_FIRST_ORDER,
   KNOWLEDGE_CARD_PREMIUM_FALLBACK_TAIL,
   filterConfiguredSteps,
+  knowledgeCardChainForPrimary,
   openRouterProviderLockForTier,
-  evolinkFirstChain,
   type KnowledgeCardGatewayStep,
   type KnowledgeCardTier,
 } from "./knowledgeCardGatewayOrder.js";
@@ -75,7 +75,7 @@ export const KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE =
 
 /** @deprecated 用 resolveKnowledgeCardDistillModel */
 export const KNOWLEDGE_CARD_DISTILL_MODEL = resolveKnowledgeCardDistillModel(
-  process.env.KNOWLEDGE_CARD_DISTILL_MODEL || KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
+  process.env.KNOWLEDGE_CARD_DISTILL_MODEL || KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
 );
 
 const DISTILL_MAX_TOKENS = Math.min(
@@ -159,7 +159,7 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_EFFORT_CHUNK", "high"),
     effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_EFFORT_FINAL", "high"),
     requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_TIMEOUT_MS", 240_000, 60_000, 480_000),
-    // 0923 用户令：每段隔 30 秒重试 3 次
+    // 2026-10-13：每段隔 20 秒重试 4 次
     chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_CHUNK_RETRIES", KNOWLEDGE_CARD_CHAIN_RETRY_ROUNDS, 0, 4),
     minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_MIN_SECTIONS", 3, 2, 24),
     refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_DEEPSEEK_REFINE_MAX_CHARS", 48_000, 0, 200_000),
@@ -175,7 +175,7 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_GLM_EFFORT_CHUNK", "high"),
     effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_GLM_EFFORT_FINAL", "high"),
     requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_GLM_TIMEOUT_MS", 240_000, 60_000, 480_000),
-    // 0923 用户令：每段隔 30 秒重试 3 次
+    // 2026-10-13：每段隔 20 秒重试 4 次
     chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_GLM_CHUNK_RETRIES", KNOWLEDGE_CARD_CHAIN_RETRY_ROUNDS, 0, 4),
     minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_GLM_MIN_SECTIONS", 3, 2, 24),
     refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_GLM_REFINE_MAX_CHARS", 48_000, 0, 200_000),
@@ -297,28 +297,22 @@ function hasDistillGateway(modelName: KnowledgeCardDistillModelId): boolean {
   return Boolean(officialFallbackKey(modelName));
 }
 
-/** 主通道之外任一兜底可用即可发起：新加坡 Qwen token plan 或 OpenRouter */
+/** 本业务仅保留 OpenRouter 与 EvoLink；旧 Qwen 配置不代表通道可用。 */
 function officialFallbackKey(_modelName: KnowledgeCardDistillModelId): string {
-  return getDashscopeSgPlanKey() || getOpenRouterApiKey();
+  return getOpenRouterApiKey();
 }
 
-/**
- * DeepSeek 在 EvoLink 的真实 id（0911 实弹核过，别再照 OpenRouter 的 slug 猜）：
- * · `deepseek-v4.1-flash` 在 EvoLink 是 404 model_not_found（我们这把钥匙没开通，永久性不要重试）；
- * · EvoLink 侧的同一款就是 `deepseek-v4-flash-vision-exp`——原生多模态、1M 上下文、384K 输出、
- *   带思考模式，官方页面标的就是 V4.1 Flash 那款（回包里 model 字段回 `deepseek-flash`）。
- * 所以图文都用它：带图走 api.evolink.ai，纯文本走 direct（两条都实测 200，流式也回 SSE）。
- */
-const DEEPSEEK_EVOLINK_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_VISION_MODEL", "deepseek-v4-flash-vision-exp");
+/** 2026-10-13：EvoLink V4.1 Flash 当前正式 ID，文本与图片 API 探针均已返回正确正文。 */
+const DEEPSEEK_EVOLINK_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_VISION_MODEL", "deepseek-v4.1-flash");
 const DEEPSEEK_EVOLINK_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_MODEL", DEEPSEEK_EVOLINK_VISION_MODEL);
 /** OpenRouter 同款（锁 DeepSeek 自营，见 openRouterProviderLockForTier）：一样图文同模型 */
 const DEEPSEEK_OPENROUTER_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_TEXT_MODEL", "deepseek/deepseek-v4.1-flash");
 const DEEPSEEK_OPENROUTER_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_VISION_MODEL", DEEPSEEK_OPENROUTER_TEXT_MODEL);
 const QWEN_OPENROUTER_MODEL = envStr("KNOWLEDGE_CARD_QWEN_OPENROUTER_MODEL", KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR);
-/** 0911 用户令：降档第一手换成 GLM 5.3 Flash（原生视觉、图文都吃，Qwen 退到最后） */
+/** 0911 用户令：降档第一手换成 GLM 5.3 FlashX（原生视觉、图文都吃） */
 // 读档要吃图：这里只能用 **Flash**（GLM 5.3 是纯长文本，不收图；两者不可混用）
-const GLM_OPENROUTER_MODEL = envStr("KNOWLEDGE_CARD_GLM_OPENROUTER_MODEL", GLM_53_FLASH_OPENROUTER_MODEL);
-const GLM_EVOLINK_MODEL = envStr("KNOWLEDGE_CARD_GLM_EVOLINK_MODEL", GLM_53_FLASH_EVOLINK_MODEL);
+const GLM_OPENROUTER_MODEL = envStr("KNOWLEDGE_CARD_GLM_OPENROUTER_MODEL", GLM_53_FLASHX_OPENROUTER_MODEL);
+const GLM_EVOLINK_MODEL = envStr("KNOWLEDGE_CARD_GLM_EVOLINK_MODEL", GLM_53_FLASHX_EVOLINK_MODEL);
 /** GLM 官方输出上限 131,072（含思维链）；Qwen 跳仍是 32k */
 const GLM_MAX_TOKENS = 131_072;
 const QWEN_MAX_TOKENS = 32_768;
@@ -662,15 +656,9 @@ function distillRefineTimeoutMs(_modelName: KnowledgeCardDistillModelId): number
 
 export const KNOWLEDGE_CARD_REFINE_TIMEOUT_MS = 10 * 60_000;
 
-/**
- * 统稿链（0926 用户令「超时交给 DeepSeek」）：选 GLM 时 GLM 只试首跳一次，失败直接交 DeepSeek 两家，再千问兜底；
- * 不再在第二家 GLM 上再等一轮。选 DeepSeek 时链序不变。
- */
+/** 统稿与提炼使用相同主备链，同模型先 OpenRouter，再 EvoLink。 */
 export function knowledgeCardRefineChain(modelName: KnowledgeCardDistillModelId): KnowledgeCardGatewayStep[] {
-  const chain = distillGatewayChain(modelName);
-  if (resolveKnowledgeCardDistillModel(modelName) !== KNOWLEDGE_CARD_DISTILL_MODEL_GLM) return chain;
-  const firstGlm = chain.findIndex((s) => s.tier === "glm");
-  return chain.filter((s, i) => s.tier !== "glm" || i === firstGlm);
+  return distillGatewayChain(modelName);
 }
 
 function mapFetchAbortError(err: unknown): Error {
@@ -1001,7 +989,7 @@ async function invokeDistillLlm(params: {
   /** 覆盖链序（挑页的降档尾段用：只走精细档的 Qwen 尾跳，不多出第 5 跳） */
   chainOverride?: readonly KnowledgeCardGatewayStep[];
   /**
-   * 整链重试开关（默认开）。分段提炼自己在「每一段」这层隔 30 秒重试 3 次，传 false 关掉这层，
+   * 整链重试开关（默认开）。分段提炼自己在「每一段」这层隔 20 秒重试 4 次，传 false 关掉这层，
    * 避免两层相乘（0923 用户拍板：只放一层）。
    */
   chainRetry?: boolean;
@@ -1011,7 +999,7 @@ async function invokeDistillLlm(params: {
   plainUserContent?: boolean;
 }): Promise<string> {
   if (params.chainRetry === false) return invokeDistillChainOnce(params);
-  // 0923 用户令：整条通道链都失败（模型服务异常）隔 30 秒重跑，最多 3 次，不直接报到前端
+  // 0923 用户令：整条通道链都失败（模型服务异常）隔 20 秒重跑，最多 4 次，不直接报到前端
   return retryKnowledgeCardChain(() => invokeDistillChainOnce(params), {
     label: "knowledgeCardDistill",
     abortSignal: params.abortSignal,
@@ -1120,7 +1108,7 @@ async function distillOneChunkWithRetry(params: {
   for (let attempt = 0; attempt <= params.retries; attempt++) {
     try {
       return await invokeDistillLlm({
-        // 重试放在本层（隔 30 秒 × 3 次），整链那层关掉，不叠加
+        // 重试放在本层（隔 20 秒 × 4 次），整链那层关掉，不叠加
         chainRetry: false,
         chainOverride: params.chainOverride,
         // 读图段 6 分钟（0926 用户令）；纯文字段不传，走 profile 默认
@@ -1146,7 +1134,7 @@ async function distillOneChunkWithRetry(params: {
       console.warn(
         `[knowledgeCardDistill] ${params.chunkLabel} attempt ${attempt + 1}/${params.retries + 1} failed: ${lastError.message.slice(0, 160)}`,
       );
-      // 0923 用户令：隔 30 秒重试（原 2 秒、4 秒递增作废）；间隔按调用时读，测试可置 0
+      // 0923 用户令：隔 20 秒重试（原 2 秒、4 秒递增作废）；间隔按调用时读，测试可置 0
       const backoffMs = Number(process.env.KNOWLEDGE_CARD_DISTILL_RETRY_BACKOFF_MS);
       const wait = Number.isFinite(backoffMs) && backoffMs >= 0 ? backoffMs : KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS;
       if (attempt < params.retries && wait > 0) {
@@ -1158,39 +1146,7 @@ async function distillOneChunkWithRetry(params: {
     }
   }
 
-  // 退避用尽：对半细切重提，小片更不容易撞上游超时
-  if (params.chunk.length > 3_000) {
-    const halves = splitSourceTextForDistill(params.chunk, Math.ceil(params.chunk.length / 2));
-    if (halves.length > 1) {
-      console.warn(
-        `[knowledgeCardDistill] ${params.chunkLabel} retry exhausted → split into ${halves.length} finer parts`,
-      );
-      const finer: string[] = [];
-      for (let i = 0; i < halves.length; i++) {
-        finer.push(
-          await distillOneChunkWithRetry({
-            abortSignal: params.abortSignal,
-            chunk: halves[i]!,
-            imageUrls: i === 0 ? params.imageUrls : [],
-            pageImages: i === 0 ? params.pageImages : [],
-            ocrImages: i === 0 ? params.ocrImages : [],
-            modelName: params.modelName,
-            minSections: Math.max(2, Math.ceil(params.minSections / halves.length)),
-            chunkLabel: `${params.chunkLabel}-${i + 1}`,
-            retries: 1,
-            effort: params.effort,
-            // 只有带图的那一半才给标记规则
-            docKeys: i === 0 && params.pageImages?.length ? params.docKeys : [],
-            detailLevel: params.detailLevel,
-            // 细切的半段仍走原来那条路
-            chainOverride: params.chainOverride,
-          }),
-        );
-      }
-      return mergeDistilledMarkdownChunks(finer);
-    }
-  }
-
+  // 四次重试用尽即记录失败，不再递归细切绕过重试上限。
   throw lastError || new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
 }
 
@@ -1549,7 +1505,7 @@ export type KnowledgeCardDistillProgress = {
   phase: "distilling" | "refining";
 };
 
-type DistillChunk = { text: string; pageImages: DistillPageImage[]; ocrImages: DistillPageImage[]; label: string };
+type DistillChunk = { imageUrls?: string[]; text: string; pageImages: DistillPageImage[]; ocrImages: DistillPageImage[]; label: string };
 
 /**
  * 按页对齐分段：同一段里的文字与被选中的参考页图来自同一段页码，
@@ -1609,8 +1565,9 @@ export function buildPageAlignedChunks(
 /** 0926 用户令：带扫描页读字图的段单跳超时 6 分钟（读图 + 提炼比纯文字重）；纯文字段仍按 profile */
 export const KNOWLEDGE_CARD_OCR_CHUNK_TIMEOUT_MS = 6 * 60_000;
 
-/** 0923 用户令：分段提炼每条路 3 个工位（两条路共 6 段并发）；统稿并发仍按 profile.concurrency */
-export const KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE = 3;
+/** 每路 5 个在读文件，两路总上限 10；完成一份立即补下一份。 */
+export const KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE = 5;
+export const KNOWLEDGE_CARD_ROUTE_STAGGER_MS = 3_500;
 
 export async function invokeDistillLlmPossiblyChunked(params: {
   sourceText: string;
@@ -1637,7 +1594,7 @@ export async function invokeDistillLlmPossiblyChunked(params: {
   // 扫描页读字图只在分段里按 8 页一批带（0926）；有扫描页就不走短文单发
   const hasOcrPages = params.documents.some((d) => d.pages.some((p) => p.ocrImageUrl));
   // 短文单发；但参考页图超过单请求上限时仍走分段，避免整本页图塞进一个请求
-  if (!hasOcrPages && (!text || text.length <= profile.chunkThreshold) && allPageImages.length <= DISTILL_MAX_PAGE_IMAGES_PER_CALL) {
+  if (!hasOcrPages && (!text || text.length <= profile.chunkThreshold) && urls.length <= 1 && urls.length + allPageImages.length <= DISTILL_MAX_PAGE_IMAGES_PER_CALL) {
     return invokeDistillLlm({
       abortSignal: params.abortSignal,
       sourceText: text,
@@ -1656,6 +1613,14 @@ export async function invokeDistillLlmPossiblyChunked(params: {
   const chunks: DistillChunk[] = pageDocs.length
     ? buildPageAlignedChunks(pageDocs, params.extraText, profile.chunkChars)
     : splitSourceTextForDistill(text, profile.chunkChars).map((piece, i) => ({ text: piece, pageImages: [], ocrImages: [], label: `第 ${i + 1} 段` }));
+  // 上传图片每份独立读取，五个工位滚动补位，不能一张失败就重读同批成功图片。
+  urls.forEach((url, index) => {
+    chunks.push({
+      text: `请读取第 ${index + 1}/${urls.length} 份上传图片中的文字、图表与要点，保留原意供整篇统稿。`,
+      imageUrls: [url], pageImages: [], ocrImages: [],
+      label: `上传图片 ${index + 1}/${urls.length}`,
+    });
+  });
   console.info(
     `[knowledgeCardDistill] long doc ${text.length} chars → ${chunks.length} chunks ` +
       `(model=${params.modelName} chunkChars=${profile.chunkChars} concurrency=${KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE}×2路 effort=${profile.effortChunk} level=${params.detailLevel} refPages=${allPageImages.length} docs=${params.documents.length})`,
@@ -1670,13 +1635,12 @@ export async function invokeDistillLlmPossiblyChunked(params: {
   let done = 0;
   await params.onProgress?.({ doneChunks: 0, totalChunks: chunks.length, phase: "distilling" });
 
-  /**
-   * 0923 用户令：两条路各 3 个工位（OpenRouter 先 / EvoLink 先），共 6 段并发；
-   * 谁先做完谁接下一段——快的那条路多做，不再整波等最慢那一段。
-   * 两条路的链都保留完整兜底（一条路挂了照样换到另一家）。
-   */
+  // 两路取不同文件；EvoLink 组错开 3.5 秒启动，此后完成几个就补几个。
   const defaultChain = distillGatewayChain(params.modelName);
-  const routes: Array<readonly KnowledgeCardGatewayStep[]> = [defaultChain, evolinkFirstChain(defaultChain)];
+  const routes = [
+    { chain: knowledgeCardChainForPrimary(defaultChain, "openrouter"), delay: 0 },
+    { chain: knowledgeCardChainForPrimary(defaultChain, "evolink"), delay: KNOWLEDGE_CARD_ROUTE_STAGGER_MS },
+  ];
   let nextIdx = 0;
   // 某段致命失败（额度/拒答/终止）：其它工位不再领新段
   let stopped = false;
@@ -1689,8 +1653,8 @@ export async function invokeDistillLlmPossiblyChunked(params: {
         outputs[idx] = await distillOneChunkOrSkip(params.onNotice, chunks.length, idx, chunk.label, () => distillOneChunkWithRetry({
           abortSignal: params.abortSignal,
           chunk: chunk.text,
-          // 用户附图只挂第一段；原稿参考页跟随所在段
-          imageUrls: idx === 0 ? urls : [],
+          // 上传图片跟随自己的批次，原稿参考页跟随所在段。
+          imageUrls: chunk.imageUrls || [],
           pageImages: chunk.pageImages,
           ocrImages: chunk.ocrImages,
           modelName: params.modelName,
@@ -1712,7 +1676,11 @@ export async function invokeDistillLlmPossiblyChunked(params: {
     }
   };
   await Promise.all(
-    routes.flatMap((chain) => Array.from({ length: KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE }, () => worker(chain))),
+    routes.flatMap(({ chain, delay }) => Array.from({ length: KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE }, async () => {
+      await waitAbortable(delay, params.abortSignal);
+      params.abortSignal?.throwIfAborted();
+      if (!stopped) await worker(chain);
+    })),
   );
 
   // 审查 P1：只有真正成功的段进正文；全失败＝本次没有稿子，按失败结算

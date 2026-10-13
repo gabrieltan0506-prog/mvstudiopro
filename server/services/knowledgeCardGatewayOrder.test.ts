@@ -44,21 +44,17 @@ describe("唯一顺序定义", () => {
       "evolink:deepseek",
       "openrouter:glm",
       "evolink:glm",
-      "dashscope_sg:qwen",
-      "openrouter:qwen",
     ]);
     expect(KNOWLEDGE_CARD_GLM_FIRST_ORDER.map(label)).toEqual([
       "openrouter:glm",
       "evolink:glm",
       "openrouter:deepseek",
       "evolink:deepseek",
-      "dashscope_sg:qwen",
-      "openrouter:qwen",
     ]);
     // Qwen 永远最后两跳，任何一条链都不许把它提前
     for (const order of [KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER, KNOWLEDGE_CARD_GLM_FIRST_ORDER]) {
-      expect(order.slice(-2).map((s) => s.tier)).toEqual(["qwen", "qwen"]);
-      expect(order.slice(0, -2).some((s) => s.tier === "qwen")).toBe(false);
+      expect(order).toHaveLength(4);
+      expect(order.some((s) => s.tier === "qwen")).toBe(false);
     }
   });
 
@@ -66,14 +62,11 @@ describe("唯一顺序定义", () => {
     expect(KNOWLEDGE_CARD_PREMIUM_FALLBACK_TAIL.map(label)).toEqual([
       "openrouter:glm",
       "evolink:glm",
-      "dashscope_sg:qwen",
-      "openrouter:qwen",
     ]);
     // 只配了 OpenRouter 钥匙时，三档各留一跳、顺序不变
     expect(filterConfiguredSteps(KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER, { evolink: false, dashscope_sg: false, openrouter: true }).map((s) => s.tier)).toEqual([
       "deepseek",
       "glm",
-      "qwen",
     ]);
   });
 
@@ -156,14 +149,14 @@ describe("派生链按 receipt 档位走同一份顺序", () => {
     }
     const glm = build(KNOWLEDGE_CARD_DISTILL_MODEL_GLM);
     expect(glm.map((g) => `${g.name}:${g.tier}`)).toEqual(KNOWLEDGE_CARD_GLM_FIRST_ORDER.map(label));
-    expect(glm[0]).toMatchObject({ name: "openrouter", model: "z-ai/glm-5.3-flash" });
-    expect(glm[1]).toMatchObject({ name: "evolink", model: "glm-5.3-flash" });
+    expect(glm[0]).toMatchObject({ name: "openrouter", model: "z-ai/glm-5.3-flashx" });
+    expect(glm[1]).toMatchObject({ name: "evolink", model: "glm-5.3-flashx" });
 
     const deepseek = build(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
     expect(deepseek.map((g) => `${g.name}:${g.tier}`)).toEqual(KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER.map(label));
     expect(deepseek[0]).toMatchObject({ name: "openrouter", model: "deepseek/deepseek-v4.1-flash" });
-    expect(deepseek[1]).toMatchObject({ name: "evolink", model: "deepseek-v4-flash-vision-exp" });
-    expect(deepseek[deepseek.length - 1]).toMatchObject({ name: "openrouter", model: "qwen/qwen3.8-max" });
+    expect(deepseek[1]).toMatchObject({ name: "evolink", model: "deepseek-v4.1-flash" });
+    expect(deepseek.some(g => /qwen/i.test(g.model))).toBe(false);
 
     // 历史 receipt 里的旧档位值（Qwen 轻量档 / DeepSeek V4）也要迁到现行两档，不掉回旧链
     expect(build("qwen3.8-max").map((g) => `${g.name}:${g.tier}`)).toEqual(KNOWLEDGE_CARD_GLM_FIRST_ORDER.map(label));

@@ -95,12 +95,12 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     ]);
     // 第一跳（OpenRouter GLM）：锁 Z.AI 自营
     const orGlm = calls[0]!.body;
-    expect(orGlm.model).toBe("z-ai/glm-5.3-flash");
+    expect(orGlm.model).toBe("z-ai/glm-5.3-flashx");
     expect(orGlm.provider).toEqual({ order: ["Z.AI"], allow_fallbacks: false, require_parameters: true });
     expect(orGlm.reasoning).toEqual({ effort: "high" });
     // 第二跳（EvoLink GLM）：恒开思考不发 thinking 开关，只发 reasoning_effort
     const evoGlm = calls[1]!.body;
-    expect(evoGlm.model).toBe("glm-5.3-flash");
+    expect(evoGlm.model).toBe("glm-5.3-flashx");
     expect(evoGlm.reasoning_effort).toBe("high");
     // 0923：派生每批输出保底 6.4 万（思考与正文共用额度），GLM 档不翻倍
     expect(evoGlm.max_tokens).toBe(64_000);
@@ -115,36 +115,30 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     expect(orDs.temperature).toBe(0.2);
   });
 
-  it("末跳 OpenRouter Qwen（两档四跳都挂之后）：max_tokens 不吃 DeepSeek 翻倍、不带 provider 锁", async () => {
+  it("仅保留两模型四跳，末跳 EvoLink DeepSeek 成功", async () => {
     stubKeys();
-    vi.spyOn(console, "warn").mockImplementation(() => {});
     const { calls } = recordFetch([
-      () => new Response("down", { status: 503 }),
-      () => new Response("down", { status: 503 }),
       () => new Response("down", { status: 503 }),
       () => new Response("down", { status: 503 }),
       () => new Response("down", { status: 503 }),
       () => ok(PICKED),
     ]);
-    const r = await deriveKnowledgeCardCompact({ fullMarkdown: FULL, targetSections: 3 });
+    const r = await deriveKnowledgeCardCompact({ fullMarkdown: FULL, targetSections: 3, model: "glm-5.3-flash" });
     expect(r.sections).toBe(3);
-    // 共享顺序里没有 evolink:qwen 跳；这里验的是真实末跳 OpenRouter Qwen 的契约
-    const lastBody = calls[calls.length - 1]!.body;
-    expect(lastBody.model).toBe("qwen/qwen3.8-max");
-    // 保底 6.4 万到 Qwen 档仍被 32768 封顶（Qwen 输出上限）
-    expect(lastBody.max_tokens).toBe(32_768);
-    expect("provider" in lastBody).toBe(false);
+    expect(calls.map(c => c.body.model)).toEqual([
+      "z-ai/glm-5.3-flashx", "glm-5.3-flashx", "deepseek/deepseek-v4.1-flash", "deepseek-v4.1-flash",
+    ]);
   });
 
   it("EvoLink DeepSeek 跳（OpenRouter 挂了才轮到）：thinking:{type:enabled} + reasoning_effort high + max_tokens 翻倍", async () => {
     stubKeys();
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const { calls } = recordFetch([() => new Response("or down", { status: 503 }), () => ok(PICKED)]);
-    const r = await deriveKnowledgeCardCompact({ fullMarkdown: FULL, targetSections: 3 });
+    const r = await deriveKnowledgeCardCompact({ fullMarkdown: FULL, targetSections: 3, model: "deepseek-v4.1-flash" });
     expect(r.sections).toBe(3);
     expect(new URL(calls[1]!.url).hostname).toBe("direct.evolink.ai");
     const body = calls[1]!.body;
-    expect(body.model).toBe("deepseek-v4-flash-vision-exp");
+    expect(body.model).toBe("deepseek-v4.1-flash");
     expect(body.thinking).toEqual({ type: "enabled" });
     expect(body.reasoning_effort).toBe("high");
     // maxTokens=64000（0923 保底）→ DeepSeek 档翻倍 128000 留给思维链
@@ -158,7 +152,7 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
   it("OpenRouter DeepSeek 首跳：模型是 V4.1 Flash，provider 锁 DeepSeek 自营且不许回落（0911 用户令）", async () => {
     stubKeys();
     const { calls } = recordFetch([() => ok(PICKED)]);
-    const r = await deriveKnowledgeCardCompact({ fullMarkdown: FULL, targetSections: 3 });
+    const r = await deriveKnowledgeCardCompact({ fullMarkdown: FULL, targetSections: 3, model: "deepseek-v4.1-flash" });
     expect(r.sections).toBe(3);
     expect(new URL(calls[0]!.url).hostname).toBe("openrouter.ai");
     const body = calls[0]!.body;
