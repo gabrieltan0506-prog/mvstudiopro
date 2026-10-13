@@ -1,3 +1,4 @@
+import { ViralProductionPanel } from "@/components/platform/ViralProductionPanel";
 import { TopicSelectionPanel } from "@/components/platform/TopicSelectionPanel";
 import "@/components/platform/creation-workbench.css";
 import { ViralCreationPackageView } from "@/components/platform/ViralCreationPackageView";
@@ -11112,7 +11113,7 @@ export default function PlatformPage() {
           </div>
         ) : null}
 
-        <div className="mt-4 max-h-[900px] space-y-4 overflow-y-auto pr-1">
+        <div className="mt-4 space-y-4">
           {cards.map((item, bi) => {
             const isGraphicFormat = item.format === "图文" || item.format === "小红书";
             const compositeKind = isGraphicFormat
@@ -11376,6 +11377,14 @@ export default function PlatformPage() {
                     </div>
                   </div>
                 ) : null}
+                {item.viralCreation && <ViralProductionPanel
+                  key={item.id} format={item.format} packageValue={item.xhsPackage}
+                  pages={item.graphicNotePages} cells={item.storyboardCells}
+                  coverUrl={coverUrl} coverCost={normalCoverCost} sheetCost={compositeCost}
+                  sheetLabel={compositeLabel} disabled={genBusy || !isAuthenticated}
+                  coverBusy={batchGeneratingCoverIds.has(item.id)} sheetBusy={isThisCompositeLoading}
+                  onCover={runSingleCover} onSheet={runSingleComposite}
+                />}
                 {item.viralCreation && <ViralCreationPackageView value={item.xhsPackage} platform={item.targetPlatform} />}
                 {item.detailedScript ? (
                   <details className="mt-3 text-xs text-gray-400">
@@ -11387,7 +11396,7 @@ export default function PlatformPage() {
                     </div>
                   </details>
                 ) : null}
-                {Array.isArray((item as any).storyboardCells) &&
+                {!item.viralCreation && Array.isArray((item as any).storyboardCells) &&
                 (item as any).storyboardCells.length > 0 &&
                 !/图文|小红书/.test(String(item.format || "")) ? (
                   <div className="mt-3 rounded-lg bg-black/30 p-3 text-xs text-gray-400">
