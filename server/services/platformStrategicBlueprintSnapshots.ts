@@ -14,6 +14,8 @@ import {
 } from "../../shared/platformNativeVariants.js";
 
 export type EnrichedBlueprintSnapshot = {
+  viralCreation?: boolean;
+  targetPlatform?: "xiaohongshu" | "douyin";
   sceneId: string;
   title: string;
   hook: string;
@@ -37,6 +39,7 @@ export class PlatformCoverInputsError extends Error {
 }
 
 export type OptimizedCoverFromDb = {
+  viralCreation?: boolean;
   topicHook: string;
   context: string;
   format: "短视频" | "图文";
@@ -99,6 +102,8 @@ export function buildEnrichedBlueprintSnapshots(contentBlueprints: unknown[]): E
         : undefined;
     const platformVariants = normalizePlatformVariants(raw.platformVariants ?? raw.platformAdaptations);
     enriched.push({
+      viralCreation: raw.viralCreation === true,
+      targetPlatform: raw.targetPlatform === "douyin" ? "douyin" : "xiaohongshu",
       sceneId,
       title,
       hook,
@@ -393,7 +398,7 @@ export function optimizeEnrichedBlueprintForCover(
   let copywriting = stripRedundantLeading(hit.copywriting, [title, hook, pickedTitle]);
   copywriting = copywriting.replace(/\s+/g, " ").trim();
 
-  const pickedVariant = pickCoverVariantFromVariants(hit.platformVariants, preferredPlatform);
+  const pickedVariant = pickCoverVariantFromVariants(hit.platformVariants, hit.viralCreation ? hit.targetPlatform : preferredPlatform);
   const coverFromVariant = pickedVariant.coverHeadline.trim();
   const topicHook = (coverFromVariant || title).slice(0, 500);
   /** 变体 hook 优先作 appeal；否则用正文钩子 */
@@ -417,6 +422,7 @@ export function optimizeEnrichedBlueprintForCover(
   const format: "短视频" | "图文" =
     hit.isGraphicCover || formatFromVariant.includes("图文") ? "图文" : "短视频";
   return {
+    viralCreation: hit.viralCreation === true,
     topicHook,
     context,
     format,

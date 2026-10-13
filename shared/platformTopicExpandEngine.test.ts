@@ -14,9 +14,9 @@ describe("normalizePlatformTopicExpandEngine", () => {
     expect(normalizePlatformTopicExpandEngine("deepseek-v4")).toBe("deepseek-v4");
   });
   it("未知/空值回落稳定档", () => {
-    expect(normalizePlatformTopicExpandEngine("")).toBe("kimi-k3");
-    expect(normalizePlatformTopicExpandEngine(null)).toBe("kimi-k3");
-    expect(normalizePlatformTopicExpandEngine("gpt-99")).toBe("kimi-k3");
+    expect(normalizePlatformTopicExpandEngine("")).toBe("glm-5.3-flashx");
+    expect(normalizePlatformTopicExpandEngine(null)).toBe("glm-5.3-flashx");
+    expect(normalizePlatformTopicExpandEngine("gpt-99")).toBe("glm-5.3-flashx");
   });
 });
 

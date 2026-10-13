@@ -42,6 +42,7 @@ export const PLATFORM_SKILL_ID_ORDER: readonly string[] = [
   "cover-stop-scroll",
   "vivid-anti-boring",
   // graphic
+  "xhs-content-growth",
   "graphic-note-rhythm",
   "xhs-collectible-note",
   "blue-ocean-natural",
@@ -75,6 +76,7 @@ export const PLATFORM_SKILL_ID_ORDER: readonly string[] = [
 ];
 
 const GRAPHIC_IDS = new Set([
+  "xhs-content-growth",
   "graphic-note-rhythm",
   "xhs-collectible-note",
   "blue-ocean-natural",

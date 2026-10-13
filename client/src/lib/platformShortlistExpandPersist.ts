@@ -3,14 +3,29 @@
  * 烧积分打 API 后刷新/切 Tab 也不能丢。
  */
 
+import { XHS_CONTENT_SKILL_ID } from "@shared/xhsContentStrategy";
 import type { PlatformTopicShortlistItem } from "@shared/platformTopicShortlist";
 
 export const PLATFORM_SHORTLIST_EXPAND_LS_KEY = "mvstudiopro.platform.shortlistExpand.v1";
 
+export type ViralCreationPreferences = { platforms: Array<"xiaohongshu" | "douyin">; formats: Array<"图文" | "短视频"> };
+
+function readViralPreferences(raw: unknown): ViralCreationPreferences | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const value = raw as ViralCreationPreferences;
+  if (!Array.isArray(value.platforms) || !Array.isArray(value.formats)) return undefined;
+  const platforms = Array.from(new Set(value.platforms.filter(p => p === "xiaohongshu" || p === "douyin")));
+  const formats = Array.from(new Set(value.formats.filter(f => f === "图文" || f === "短视频")));
+  return platforms.length && formats.length ? { platforms, formats } : undefined;
+}
+
 export type PlatformShortlistExpandPersist = {
+  viralPreferences?: ViralCreationPreferences;
   v: 1;
   userKey: string;
   savedAt: string;
+  failedPicks?: PlatformTopicShortlistItem[];
+  pendingExpand?: { jobId: string; picks: PlatformTopicShortlistItem[] };
   topics: PlatformTopicShortlistItem[];
   contentBlueprints: Array<Record<string, unknown>>;
 };
@@ -37,7 +52,11 @@ export function readShortlistExpandPersist(
       v: 1,
       userKey: parsed.userKey,
       savedAt: String(parsed.savedAt || ""),
-      topics: Array.isArray(parsed.topics) ? parsed.topics : [],
+      viralPreferences: readViralPreferences(parsed.viralPreferences),
+      failedPicks: Array.isArray(parsed.failedPicks) ? parsed.failedPicks : [],
+      pendingExpand: parsed.pendingExpand && typeof parsed.pendingExpand.jobId === "string" && Array.isArray(parsed.pendingExpand.picks) ? parsed.pendingExpand : undefined,
+      // 用户要求刷新淘汰旧选题；只保留新创作候选，正文和在途任务不清除。
+      topics: Array.isArray(parsed.topics) ? parsed.topics.filter(topic => Array.isArray(topic?.skillsUsed) && topic.skillsUsed.includes(XHS_CONTENT_SKILL_ID)) : [],
       contentBlueprints: Array.isArray(parsed.contentBlueprints)
         ? (parsed.contentBlueprints as Array<Record<string, unknown>>)
         : [],
@@ -49,7 +68,10 @@ export function readShortlistExpandPersist(
 
 export function writeShortlistExpandPersist(
   input: {
+    viralPreferences?: ViralCreationPreferences;
     userKey: string;
+    failedPicks?: PlatformTopicShortlistItem[];
+    pendingExpand?: { jobId: string; picks: PlatformTopicShortlistItem[] };
     topics: PlatformTopicShortlistItem[];
     contentBlueprints: Array<Record<string, unknown>>;
   },
@@ -61,6 +83,9 @@ export function writeShortlistExpandPersist(
       v: 1,
       userKey: input.userKey,
       savedAt: new Date().toISOString(),
+      viralPreferences: readViralPreferences(input.viralPreferences),
+      failedPicks: input.failedPicks?.slice(0, 20),
+      pendingExpand: input.pendingExpand,
       topics: (input.topics || []).slice(0, 40),
       contentBlueprints: (input.contentBlueprints || []).slice(0, 40),
     };

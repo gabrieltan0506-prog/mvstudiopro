@@ -3,6 +3,7 @@
  */
 
 import { z } from "zod";
+import { xhsGrowthEvidenceSchema } from "./xhsContentEvidenceSchema.js";
 import type { PlatformSkillLane } from "./platformSkillRouter.js";
 
 /** 计价「含在基础积分内」的条数（勿与全案默认条数混淆） */
@@ -147,6 +148,11 @@ export const platformGraphicNotePageSchema = z.object({
 export type PlatformGraphicNotePage = z.infer<typeof platformGraphicNotePageSchema>;
 
 export const platformTopicShortlistItemSchema = z.object({
+  xhsGrowthEvidence: xhsGrowthEvidenceSchema.optional(),
+  douyinGrowthEvidence: xhsGrowthEvidenceSchema.optional(),
+  creationPlatforms: z.array(z.enum(["xiaohongshu", "douyin"])).min(1).max(2).optional(),
+  targetPlatform: z.enum(["xiaohongshu", "douyin"]).optional(),
+  sourceTopicId: z.string().max(64).optional(),
   id: z.string().min(4).max(64),
   title: z.string().min(4).max(120),
   hookSketch: z.string().min(4).max(200),

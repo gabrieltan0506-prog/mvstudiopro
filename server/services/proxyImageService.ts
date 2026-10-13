@@ -1,3 +1,4 @@
+import { XHS_IMAGE_POLICY } from "../../shared/xhsContentStrategy.js";
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
 import {
@@ -973,6 +974,7 @@ async function fallbackNanoBanana2FromPrompt(
  * 函数名历史遗留。
  */
 export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(options: {
+  viralCreation?: boolean;
   englishPrompt: string;
   flowLog?: string[];
   coverPixelEngine?: PlatformTopicCoverPixelEngineChoice;
@@ -1004,6 +1006,7 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     flowLog: L,
     referenceImageUrls: refImageUrls.length ? refImageUrls : undefined,
     providerOverride: "openai",
+    ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
     captureError: options.captureError,
   });
 }
@@ -1108,8 +1111,8 @@ const STORYBOARD_PREVIOUS_ROW_CONTINUITY_DIRECTIVE_EN = [
   "wardrobe or location jumps that break continuity with the previous row.",
 ].join("\n");
 
-function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverPersonaContext?: string): string {
-  const persona = appendFashionEditorialCharacterGuidance(
+function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverPersonaContext?: string, viralCreation = false): string {
+  const persona = viralCreation ? String(coverPersonaContext || "").replace(PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH, "").trim() : appendFashionEditorialCharacterGuidance(
     String(coverPersonaContext || "").trim(),
     { maxChars: 2800, lang: "zh" },
   );
@@ -1185,6 +1188,8 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   openaiImageVariant?: OpenAiImageVariant | null;
   /** Explicit advisor Flare/Sunburst comparison must not silently downgrade to image-2. */
   requireImageVariant?: boolean;
+  /** 本专项固定模型，不受旧全局模型覆盖影响。 */
+  exactSunburst?: boolean;
   /** 覆盖默认 quality；xhigh/max 只对 OpenAI gpt-image-2.5 生效，其余家折回 high */
   qualityOverride?: GptImage2ApiQuality | "xhigh" | "max";
   /** OpenAI 改图对原图忠实度（有参考图才有意义）；默认 high */
@@ -1232,7 +1237,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const photoIntent =
     options.aspectRatio === "9:16" ? "platform_vertical_cover_after_gpt2_aspect_lock" : "platform_landscape_sheet";
   const withProVisual =
-    generalEdit || forbidOnImageText
+    generalEdit || forbidOnImageText || options.exactSunburst
       ? base
       : appendVertexProPhotographyPromptModifiers(base, photoIntent);
   const prompt =
@@ -1341,6 +1346,8 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
             maskUrl: hasRef ? maskUrl : undefined,
             captureError: err,
             lane: options.imageLane ?? null,
+            exactModel: options.exactSunburst ? "gpt-image-2.5-sunburst" : undefined,
+            strictRequest: options.exactSunburst || undefined,
             variant: options.openaiImageVariant ?? null,
             inputFidelity: options.openaiInputFidelity ?? null,
             beforeImageSubmit: options.beforeImageSubmit,
@@ -1357,6 +1364,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
               captureError: err,
             })
         : postEvolinkGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
+            model: options.exactSunburst ? "gpt-image-2.5-sunburst" : undefined,
             aspectRatio: options.aspectRatio,
             flowLog: L,
             // EvoLink gpt-image-2.5 与官方同档位、同 quality 口径（xhigh/max 也收）
@@ -1376,7 +1384,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
        */
       const batchLane = options.imageLane === "asset" || options.imageLane === "keyart";
       // 0909：主路径是 OpenAI 官方（最贵一家）时不竞速——弃赛不取消上游，照扣照跑，再烧备胎=双花
-      const raceAllowed = isPrimary && !isLast && !batchLane && provider !== "openai";
+      const raceAllowed = !options.requireImageVariant && isPrimary && !isLast && !batchLane && provider !== "openai";
       const url = raceAllowed
         ? await racePrimaryTimeout(run, primaryTimeoutMs, `GPT-image-2·${tag}`)
         : await run;
@@ -1550,6 +1558,7 @@ async function generatePlatformCompositeSheetViaNanoBanana2Primary(options: {
  * - **无** Nano Banana 2 / EvoLink 降级
  */
 export async function generatePlatformCompositeSheetImage(options: {
+  viralCreation?: boolean;
   beforeImageSubmit?: () => Promise<void>;
   kind: PlatformCompositeSheetKind;
   title: string;
@@ -1657,7 +1666,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     .map((u) => String(u || "").trim())
     .filter(Boolean);
   const compositeImageEngine =
-    referencePhotoUrlEarly || continuityRefsEarly.length > 0
+    options.viralCreation || referencePhotoUrlEarly || continuityRefsEarly.length > 0
       ? "gpt_image2"
       : resolvePlatformCompositeSheetImageEngine(options.compositeImageEngine ?? null);
 
@@ -1714,7 +1723,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     appendImageFlowLog(L, `[2×4·图文] 已跳过 executionDetails/shootingTechniqueBrief（避免手法卡）`);
   }
   // 全案 / 自定义分镜：无论是否有参考人像，均注入国际时尚大片人物造型约束
-  if (!skipContextInjection) {
+  if (!skipContextInjection && !options.viralCreation) {
     scriptContextForPipeline = appendFashionEditorialCharacterGuidance(scriptContextForPipeline, {
       maxChars: 14000,
       lang: "zh",
@@ -1732,6 +1741,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     scriptContextForPipeline = appendStoryboardProtagonistAnchorToScript(
       scriptContextForPipeline,
       options.coverPersonaContext,
+      options.viralCreation,
     );
     if (continuityRefs.length > 0) {
       scriptContextForPipeline = `${String(scriptContextForPipeline).trim()}\n\n【3×4 跨段视觉真源】须对齐已生成的上一段横排：同一现代主人公脸型与时装阶层、同一色调布光与场景材质语言；本段只画新的一横排四格，禁止重画上一段镜头。`;
@@ -1748,6 +1758,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   const { buildCoverTaskInputFromPipeline } = await import("./agenticCoverWorkflow.js");
   const drFromEnv = isCompositeSheetDeepResearchProEnabled();
   const runCompositeDrPro =
+    !options.viralCreation &&
     !isKnowledgeCard &&
     !options.forceSkipCompositeDeepResearchPro &&
     (drFromAdmin || drFromEnv);
@@ -1981,6 +1992,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "openai") : undefined,
         imageLane: isKnowledgeCard ? "asset" : undefined,
         openaiImageVariant: options.openaiImageVariant ?? null,
+        ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
         qualityOverride: knowledgeCardQuality,
         evolinkResolution: isKnowledgeCard ? "4K" : undefined,
         // 0908 用户：官方也出 3840x2160，与 EvoLink 同尺寸，PDF 合成不用补边
@@ -2007,6 +2019,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "openai") : undefined,
           imageLane: isKnowledgeCard ? "asset" : undefined,
           openaiImageVariant: options.openaiImageVariant ?? null,
+        ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
           qualityOverride: knowledgeCardQuality,
           evolinkResolution: isKnowledgeCard ? "4K" : undefined,
           openaiSize: isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,

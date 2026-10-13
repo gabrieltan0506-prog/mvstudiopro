@@ -25,7 +25,7 @@ function sampleTopic(id: string): PlatformTopicShortlistItem {
     title: `选题标题足够长 ${id}`,
     hookSketch: "钩子草稿示意",
     conveyGoal: "传达目标示意",
-    skillsUsed: ["生活节奏"],
+    skillsUsed: ["xhs-content-growth"],
     primaryLane: "default",
     formatHint: "图文",
     dedupeKey: `dk-${id}`,
@@ -83,4 +83,20 @@ describe("platformShortlistExpandPersist", () => {
     clearShortlistExpandPersist("u1", storage);
     expect(readShortlistExpandPersist("u1", storage)).toBeNull();
   });
+});
+
+it("保留双平台选择、失败份与原任务编号，旧草稿继续可读", () => {
+ const storage = memoryStorage();
+ const topic = sampleTopic("viral-a");
+ const payload = { userKey: "u1", topics: [topic], contentBlueprints: [{ id: "draft", xhsPackage: { audience: "职场新人" } }], viralPreferences: { platforms: ["xiaohongshu", "douyin"] as Array<"xiaohongshu" | "douyin">, formats: ["图文", "短视频"] as Array<"图文" | "短视频"> }, failedPicks: [topic], pendingExpand: { jobId: "original-job", picks: [topic] } };
+ expect(writeShortlistExpandPersist(payload, storage)).toBe(true);
+ const restored = readShortlistExpandPersist("u1", storage)!;
+ expect(restored.viralPreferences).toEqual(payload.viralPreferences); expect(restored.pendingExpand?.jobId).toBe("original-job"); expect(restored.failedPicks).toEqual([topic]); expect(restored.contentBlueprints[0].xhsPackage).toEqual({ audience: "职场新人" });
+});
+
+it("刷新清除旧选题但保留已经生成的正文与原任务", () => {
+ const storage=memoryStorage();const old={...sampleTopic("old1"),skillsUsed:["生活节奏"]};
+ writeShortlistExpandPersist({userKey:"u1",topics:[old],contentBlueprints:[{id:"paid-draft",copywriting:"已生成的正文"}],pendingExpand:{jobId:"running-job",picks:[old]}},storage);
+ const result=readShortlistExpandPersist("u1",storage)!;
+ expect(result.topics).toEqual([]);expect(result.contentBlueprints[0].id).toBe("paid-draft");expect(result.pendingExpand?.jobId).toBe("running-job");
 });
