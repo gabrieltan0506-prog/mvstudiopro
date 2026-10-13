@@ -1,0 +1,100 @@
+/** 隔离 PostgreSQL 引擎：真实生产 SQL/路由，外部服务与计费为显式替身。 */
+import { beforeAll, beforeEach, afterAll, describe, it, expect, vi } from "vitest";
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle } from "drizzle-orm/pglite";
+const state = vi.hoisted(() => ({ db: null as any, submit: vi.fn(), poll: vi.fn(), charge: vi.fn(), fallback: vi.fn(), grant: vi.fn() }));
+vi.mock("../db", () => ({ getDb: async () => state.db }));
+vi.mock("../credits", () => ({ getCredits: async () => ({ totalAvailable: 1000 }) }));
+vi.mock("./canvasDialogueCharge", () => ({ settleCanvasDialogueCharge: (...a: any[]) => state.charge(...a) }));
+vi.mock("./codeMotionProductionGrant", () => ({ assertCodeMotionProductionSlot: (...a: any[]) => state.grant(...a) }));
+vi.mock("./qwenDialogueTts", () => ({ synthesizeQwenDialogue: (...a: any[]) => state.fallback(...a) }));
+vi.mock("./tokenPlanDialogueTtsWs", () => ({ synthesizeTokenPlanDialogueWs: (...a: any[]) => state.fallback(...a) }));
+vi.mock("./canvasVoiceReference", () => ({ REFERENCE_VOICE_MODEL: "test-model", REFERENCE_VOICE_PREFIX: "test-ref", assertReferenceVoiceOwner: async () => {}, resolveReferenceVoiceWorkspace: () => { throw Error("禁止替代通道"); } }));
+vi.mock("./wavespeedWanVideo", () => ({ submitWavespeedPredictionRequest: (...a: any[]) => state.submit(...a), pollWavespeedWanOnce: (...a: any[]) => state.poll(...a) }));
+vi.mock("./gcs", () => ({ getGcsBucketName: () => "test-bucket", signGsUriV4ReadUrl: (uri: string) => `https://test.invalid/${encodeURIComponent(uri)}`, uploadBufferToGcs: async ({ objectName }: any) => ({ gcsUri: `gs://test-bucket/${objectName}` }) }));
+vi.mock("./manhuaScoringRoom", () => ({ readBgmAudioWithLimit: async () => Buffer.from("test-canonical") }));
+vi.mock("./postProduction", () => ({ normalizeDialogueAudio: async () => ({ buffer: Buffer.from("test-canonical"), durationSec: 5 }) }));
+vi.mock("./tokenPlanDialogueTts", () => ({ inspectTokenPlanDialogueAudio: async () => ({ accepted: true, durationSeconds: 5, voicedSeconds: 4, voicedRatio: .8, voiceRegions: [{ start: 0, end: 4 }] }), TokenPlanDialogueTtsConfigurationError: class extends Error {}, TokenPlanDialogueTtsExplicitRejectionError: class extends Error {} }));
+import { createCanvasVoiceDesign, listCanvasVoiceDesigns } from "./canvasVoiceDesign";
+import { generateCanvasDialogue, canvasDialogueJobId, canvasDialogueDigest, canvasDialogueInputSchema } from "./canvasDialogueOperation";
+import { loadDesignedVoice } from "./wavespeedVoice";
+const pg = new PGlite();
+const request = { requestId: "11111111-1111-4111-8111-111111111111", labelZh: "阿菁", description: "年轻女性，声音清亮温柔且坚定", text: "别怕，有我在，我们一定能一起回家。", consent: true as const };
+const secondId = "22222222-2222-4222-8222-222222222222";
+beforeAll(async () => {
+  state.db = drizzle(pg);
+  await pg.exec(`CREATE TABLE jobs (id varchar(64) PRIMARY KEY, "userId" varchar(64) NOT NULL, type text NOT NULL, provider varchar(64) NOT NULL, status text NOT NULL DEFAULT 'queued', input json NOT NULL, output json, error text, attempts integer NOT NULL DEFAULT 0, "createdAt" timestamp NOT NULL DEFAULT now(), "updatedAt" timestamp NOT NULL DEFAULT now());`);
+});
+beforeEach(async () => {
+  await pg.exec("TRUNCATE jobs");
+  vi.clearAllMocks();
+  state.submit.mockReset().mockResolvedValue({ predictionId: "test-prediction" });
+  state.poll.mockReset().mockResolvedValue({ state: "completed", sourceUrl: "https://wavespeed.ai/test.wav" });
+  state.charge.mockReset().mockResolvedValue(undefined);
+  state.fallback.mockReset().mockRejectedValue(Error("禁止替代通道"));
+  state.grant.mockReset().mockResolvedValue({ tier: "free" });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (!String(url).startsWith("https://wavespeed.ai/test.wav") && !String(url).startsWith("https://test.invalid/")) throw Error("探针禁止联网");
+    return new Response("test-canonical");
+  }));
+});
+afterAll(async () => { vi.unstubAllGlobals(); await pg.close(); });
+describe("固定声线隔离 PostgreSQL 生产链", () => {
+  it("8路并发通过真实唯一键只提交一次，历史恢复同一资产", async () => {
+    const concurrent = await Promise.allSettled(Array.from({ length: 8 }, () => createCanvasVoiceDesign(7, request)));
+    expect(concurrent.filter(result => result.status === "rejected")).toEqual([]);
+    const ready = await createCanvasVoiceDesign(7, request);
+    expect(ready.status).toBe("ready");
+    expect(state.submit).toHaveBeenCalledTimes(1);
+    const rows = await pg.query("select id,status from jobs");
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows.every((r: any) => r.status === "succeeded")).toBe(true);
+    expect((await listCanvasVoiceDesigns(7))[0].voiceId).toBe(ready.voiceId);
+    expect(await listCanvasVoiceDesigns(8)).toEqual([]);
+  });
+  it("原prediction恢复后固定GCS声样跨场景克隆，其他用户被真实SQL拒绝", async () => {
+    state.poll.mockResolvedValueOnce({ state: "running" });
+    expect((await createCanvasVoiceDesign(7, request)).status).toBe("running");
+    const ready = await createCanvasVoiceDesign(7, request);
+    const ref = await loadDesignedVoice(7, ready.voiceId!);
+    await expect(loadDesignedVoice(8, ready.voiceId!)).rejects.toThrow("不属于");
+    const line = { billingRequestId: secondId, input: "我在河边等你。", voice: ready.voiceId!, speakerZh: "阿菁", voiceStateZh: "" };
+    expect((await generateCanvasDialogue(7, line)).status).toBe("succeeded");
+    expect((await generateCanvasDialogue(7, { ...line, billingRequestId: "33333333-3333-4333-8333-333333333333", input: "我们已经到家了。" })).status).toBe("succeeded");
+    const calls = state.submit.mock.calls;
+    expect(calls).toHaveLength(3);
+    expect(calls[1][0]).toContain("voice-clone");
+    expect(calls[1][1].audio).toBe(calls[2][1].audio);
+    expect(calls[1][1].audio).toContain(encodeURIComponent(ref.gcsUri));
+    expect(state.poll.mock.calls.every(([id]) => id === "test-prediction")).toBe(true);
+    expect(state.fallback).not.toHaveBeenCalled();
+  });
+  it("迟到pending回执不会覆盖已持久的结算结果，恢复不重发", async () => {
+    let release!: (value: any) => void;
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    state.poll.mockImplementationOnce(() => { entered(); return new Promise(resolve => { release = resolve; }); });
+    state.charge.mockRejectedValue(Error("test账目暂不可用"));
+    const slow = createCanvasVoiceDesign(7, request);
+    await started;
+    await createCanvasVoiceDesign(7, request);
+    release({ state: "running" });
+    await slow;
+    const id = canvasDialogueJobId(7, request.requestId);
+    const row = (await pg.query<any>('select output from jobs where id=$1', [id])).rows[0];
+    expect(row.output.stage).toBe("settlement_pending");
+    expect(row.output.result.gcsUri).toContain("post-prod/7/dialogue/");
+    state.charge.mockResolvedValue(undefined);
+    expect((await createCanvasVoiceDesign(7, request)).status).toBe("ready");
+    expect(state.submit).toHaveBeenCalledTimes(1);
+  });
+  it("生产槽仍走固定声样，公开schema拒绝内部设计字段", async () => {
+    const ready = await createCanvasVoiceDesign(7, request);
+    const line = { billingRequestId: secondId, input: "我在河边等你。", voice: ready.voiceId!, speakerZh: "阿菁", voiceStateZh: "" };
+    const slot = { kind: "speech", requestId: secondId, digest: canvasDialogueDigest(line) } as any;
+    expect((await generateCanvasDialogue(7, line, undefined, slot)).status).toBe("succeeded");
+    expect(state.submit.mock.calls.at(-1)?.[0]).toContain("voice-clone");
+    expect(state.fallback).not.toHaveBeenCalled();
+    expect(canvasDialogueInputSchema.safeParse({ ...line, voiceDesign: { labelZh: "假", description: "不允许" } }).success).toBe(false);
+  });
+});

@@ -1,0 +1,30 @@
+Connecting to fdaa:50:6acf:a7b:86e:ee9e:7601:2...
+
+ RUN  v2.1.9 /tmp/qwen-isolated-1013
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/services/canvasVoiceDesign.pg.test.ts > 固定声线隔离 PostgreSQL 生产链 > 迟到pending回执不会覆盖已持久的结算结果，恢复不重发
+AssertionError: expected 'provider_pending' to be 'settlement_pending' // Object.is equality
+
+Expected: "settlement_pending"
+Received: "provider_pending"
+
+ ❯ server/services/canvasVoiceDesign.pg.test.ts:84:30
+ × server/services/canvasVoiceDesign.pg.test.ts > 固定声线隔离 PostgreSQL 生产链 > 迟到pending回执不会覆盖已持久的结算结果，恢复不重发
+   → expected 'provider_pending' to be 'settlement_pending' // Object.is equality
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  10:54:21
+   Duration  3.81s (transform 395ms, setup 0ms, collect 1.48s, tests 1.87s, environment 0ms, prepare 119ms)
+
+     82|     const id = canvasDialogueJobId(7, request.requestId);
+     83|     const row = (await pg.query<any>('select output from jobs where id…
+     84|     expect(row.output.stage).toBe("settlement_pending");
+       |                              ^
+     85|     expect(row.output.result.gcsUri).toContain("post-prod/7/dialogue/"…
+     86|     state.charge.mockResolvedValue(undefined);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

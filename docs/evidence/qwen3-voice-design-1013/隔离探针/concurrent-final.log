@@ -1,0 +1,12 @@
+Connecting to fdaa:50:6acf:a7b:86e:ee9e:7601:2...
+
+ RUN  v2.1.9 /tmp/qwen-isolated-1013
+
+ ✓ server/services/canvasVoiceDesign.pg.test.ts > 固定声线隔离 PostgreSQL 生产链 > 8路并发通过真实唯一键只提交一次，历史恢复同一资产
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 3 skipped (4)
+   Start at  10:55:32
+   Duration  3.73s (transform 346ms, setup 0ms, collect 1.31s, tests 2.01s, environment 0ms, prepare 121ms)
+
+JSON report written to /tmp/qwen-isolated-1013/concurrent-final.json
