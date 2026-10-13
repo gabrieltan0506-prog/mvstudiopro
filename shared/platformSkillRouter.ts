@@ -166,6 +166,8 @@ export function routePlatformSkillIdsForLane(params: {
     selected.push(id);
   };
   const reasons = [`forcedLane=${params.lane}`];
+  // 可选专项优先保留；不在用户允许池内时无任何变化。
+  add("xhs-content-growth");
   for (const id of PLATFORM_SKILL_ROUTER_CORE_IDS) add(id);
 
   const sheet = params.sheetKind || "unknown";

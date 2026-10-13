@@ -1,3 +1,6 @@
+import { buildViralRolePrompt, buildViralMethodPlan, VIRAL_CREATION_METHODS, VIRAL_METHOD_VERSION } from "../../shared/viralCreationMethods.js";
+import { XHS_PACKAGE_OUTPUT_PROMPT, auditXhsCreationPackage, connectXhsPackageToBlueprint } from "../../shared/xhsCreationPackage.js";
+import { XHS_CONTENT_SKILL_ID, XHS_CONTENT_GUIDANCE, XHS_TEXT_MODEL, XHS_TEXT_HOPS, xhsTopicCount, buildXhsGrowthEvidence, type XhsGrowthEvidence } from "../../shared/xhsContentStrategy.js";
 import { MANHUA_ADVISOR_HOPS, manhuaAdvisorReasoningEffort } from "./openrouterDeepSeekV41Flash";
 /**
  * 选题初选（20）与勾选扩写（5–6）LLM 服务。
@@ -223,8 +226,10 @@ function filterTrendRowsToWindow(
  * 初选前先查本机热门样本：小红书主、B站+抖音辅。
  * 只读 volume 本地文件，**不打冷仓**；读失败返回空数组继续出题。
  */
-async function readShortlistTrendBriefs(windowDays?: number | null): Promise<{
+async function readShortlistTrendBriefs(windowDays?: number | null, xhsMode = false, context = "", creationPlatforms: Array<"xiaohongshu" | "douyin"> = ["xiaohongshu"]): Promise<{
   briefs: ShortlistTrendBrief[];
+  xhsGrowthEvidence?: XhsGrowthEvidence;
+  douyinGrowthEvidence?: XhsGrowthEvidence;
   status: "ok" | "timeout" | "error" | "empty";
 }> {
   const platforms = [
@@ -269,10 +274,18 @@ async function readShortlistTrendBriefs(windowDays?: number | null): Promise<{
     >;
     const timedOutAll = perPlatform.every(([, c]) => !c);
     const briefs: ShortlistTrendBrief[] = [];
+    const xhsItems = collections.xiaohongshu?.items;
+    const xhsGrowthEvidence = xhsMode && creationPlatforms.includes("xiaohongshu") ? buildXhsGrowthEvidence(Array.isArray(xhsItems) ? xhsItems : [], windowDays ?? 30, Date.now(), context) : undefined;
+    const douyinItems = collections.douyin?.items;
+    const douyinGrowthEvidence = xhsMode && creationPlatforms.includes("douyin") ? buildXhsGrowthEvidence(Array.isArray(douyinItems) ? douyinItems : [], windowDays ?? 30, Date.now(), context, "douyin") : undefined;
     for (const { platform, role, titleCap } of platforms) {
+      if (xhsMode && !creationPlatforms.includes(platform as "xiaohongshu" | "douyin")) continue;
       const items = collections[platform]?.items;
       if (!Array.isArray(items) || !items.length) continue;
-      const rows = filterTrendRowsToWindow(items as Array<Record<string, unknown>>, windowDays);
+      // 新能力使用自己的严格摘要；未启用时完整保留旧趋势行为。
+      const rows: Array<Record<string, unknown>> = xhsMode
+        ? ((platform === "douyin" ? douyinGrowthEvidence : xhsGrowthEvidence)?.samples || []).map(sample => ({ ...sample }))
+        : filterTrendRowsToWindow(items as Array<Record<string, unknown>>, windowDays);
       if (!rows.length) continue;
       const ranked = [...rows].sort(
         (a, b) => Number(b.hotValue || b.likes || 0) - Number(a.hotValue || a.likes || 0),
@@ -309,8 +322,8 @@ async function readShortlistTrendBriefs(windowDays?: number | null): Promise<{
         });
       if (hotTitles.length) briefs.push({ platform, role, hotTitles, hotTags, commentHotTitles });
     }
-    if (briefs.length) return { briefs, status: "ok" };
-    return { briefs, status: timedOutAll ? "timeout" : "empty" };
+    if (briefs.length) return { briefs, xhsGrowthEvidence, douyinGrowthEvidence, status: "ok" };
+    return { briefs, xhsGrowthEvidence, douyinGrowthEvidence, status: timedOutAll ? "timeout" : "empty" };
   } catch (err) {
     console.warn(
       `[generatePlatformTopicShortlist] 本机趋势读取失败: ${err instanceof Error ? err.message : String(err)}`.slice(
@@ -318,7 +331,7 @@ async function readShortlistTrendBriefs(windowDays?: number | null): Promise<{
         200,
       ),
     );
-    return { briefs: [], status: "error" };
+    return { briefs: [], status: "error", ...(xhsMode ? { xhsGrowthEvidence: buildXhsGrowthEvidence([], windowDays ?? 30) } : {}) };
   }
 }
 
@@ -330,7 +343,10 @@ async function resolvePoolAndPrompt(params: {
 }): Promise<string> {
   const all = await listAllPlatformSkillsForUser(params.userId);
   const byId = new Map(all.map((s) => [s.id, s]));
-  const selected = params.skillIds.map((id) => byId.get(id)).filter(Boolean) as typeof all;
+  const orderedIds = params.skillIds.includes(XHS_CONTENT_SKILL_ID)
+    ? [XHS_CONTENT_SKILL_ID]
+    : params.skillIds;
+  const selected = orderedIds.map((id) => byId.get(id)).filter(Boolean) as typeof all;
   const { composeBloggerTitlePolicyPrompt } = await import("../../shared/platformNativeVariants.js");
   const blogger = composeBloggerTitlePolicyPrompt(Boolean(params.allowBloggerTitle));
   return [composePlatformSkillsPromptBlock(selected), blogger].filter(Boolean).join("\n\n");
@@ -339,6 +355,7 @@ async function resolvePoolAndPrompt(params: {
 export async function generatePlatformTopicShortlist(params: {
   userId: number | string;
   context?: string;
+  creationPlatforms?: Array<"xiaohongshu" | "douyin">;
   enabledSkillIds?: string[] | null;
   allowBloggerTitle?: boolean;
   existingTitles?: string[];
@@ -354,7 +371,7 @@ export async function generatePlatformTopicShortlist(params: {
   /** 这轮想获客/转化/涨粉：决定钩子与结尾动作往哪落（用户 2026-08-06） */
   topicGoal?: string | null;
 }): Promise<{ topics: PlatformTopicShortlistItem[]; diagnostics: Record<string, unknown> }> {
-  const targetCount = clampTopicShortlistCount(params.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
+  let targetCount = clampTopicShortlistCount(params.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
   const all = await listAllPlatformSkillsForUser(params.userId);
   const fallbackPoolIds =
     params.enabledSkillIds == null ? all.filter((s) => s.defaultEnabled).map((s) => s.id) : [];
@@ -362,6 +379,10 @@ export async function generatePlatformTopicShortlist(params: {
     enabledSkillIds: params.enabledSkillIds,
     fallbackPoolIds,
   });
+
+  const xhsMode = poolIds.includes(XHS_CONTENT_SKILL_ID);
+  if (xhsMode) targetCount = Number(params.count) === 1 ? 1 : xhsTopicCount(params.count);
+  const promptPoolIds = xhsMode ? [XHS_CONTENT_SKILL_ID] : poolIds;
 
   const dims = Array.from({ length: 6 }, (_, i) => ({
     dimIndex: i,
@@ -381,20 +402,20 @@ export async function generatePlatformTopicShortlist(params: {
   const skillsBlock = await resolvePoolAndPrompt({
     userId: params.userId,
     enabledSkillIds: params.enabledSkillIds,
-    skillIds: poolIds.slice(0, 14),
+    skillIds: promptPoolIds.slice(0, 14),
     allowBloggerTitle: params.allowBloggerTitle,
   });
 
   const { listOfficialCampaigns, pickLinkedCampaignsForTopic, ensureOfficialCampaignSeedsLoaded } = await import(
     "./platformOfficialCampaigns"
   );
-  await ensureOfficialCampaignSeedsLoaded();
-  const featuredCampaigns = await listOfficialCampaigns({
+  if (!xhsMode) await ensureOfficialCampaignSeedsLoaded();
+  const featuredCampaigns = xhsMode ? [] : await listOfficialCampaigns({
     platform: "xiaohongshu",
     featuredOnly: true,
   });
-  const { briefs: trendBriefs, status: trendStatus } = await readShortlistTrendBriefs(
-    params.windowDays,
+  const { briefs: trendBriefs, status: trendStatus, xhsGrowthEvidence, douyinGrowthEvidence } = await readShortlistTrendBriefs(
+    params.windowDays, xhsMode, params.context || "", params.creationPlatforms,
   );
   const blueOceanGroups = (params.blueOceanGroups || [])
     .map((g) => ({
@@ -427,7 +448,12 @@ export async function generatePlatformTopicShortlist(params: {
     topicHooks: c.topicHooks.slice(0, 2),
   }));
 
-  const system = `你是平台选题初选编辑。只输出 JSON，不要 Markdown。
+  const system = xhsMode ? `${buildViralRolePrompt("shortlist", undefined, undefined, "database")}
+只输出json对象 {"topics":[...]}，恰好${targetCount}条互不重复选题。本次平台由user.targetPlatforms指定；参考其各自证据，不强制小红书为主。
+每条包含title(4–120字)、hookSketch(4–200字)、conveyGoal(4–240字)、skillsUsed(只用池内真实ID)、primaryLane(default或适合赛道)、formatHint(图文或短视频)、dedupeKey(≤80字)、commentHook(≤3字)、viralScore(0–100主观创意分)、viralReason(适配依据，不是概率)、commentHeat(主观讨论潜力)。linkedCampaigns仅在真实活动与需求相关时选，否则空数组。
+资料方法库methodLibrary须实际用于人群场景、标题承诺、可制作画面和承接动作。无相关Growth样本就给待验证创意，不能补假引用。蓝海词只是候选搜索词，不自动证明低竞争。用户要求页数/时长后续照办，本阶段不写完整稿或生成图片。
+${XHS_CONTENT_GUIDANCE}
+${goalPromptLine}` : `你是平台选题初选编辑。只输出 JSON，不要 Markdown。
 任务：基于人设与 Skill 池，生成恰好 ${targetCount} 条**互不重复**的选题初选（不是完整长文）。
 ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 硬约束：
@@ -464,22 +490,27 @@ ${
 ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
 输出：{ "topics": [ ...恰好${targetCount}条，每条含 viralScore / viralReason / commentHeat${
     blueOceanWords.length ? " / blueOceanHit" : ""
-  } ] }`;
+  } ] }
+`;
 
   const user = JSON.stringify({
-    personaContext: String(params.context || "").slice(0, 6000),
+    personaContext: String(params.context || "").slice(0, xhsMode ? 8000 : 6000),
     skillPoolIds: poolIds,
     laneHints: laneSkillHints,
     stage1Seeds: (params.stage1Seeds || []).slice(0, 6),
+    ...(xhsMode ? { methodLibrary: VIRAL_CREATION_METHODS, methodVersion: VIRAL_METHOD_VERSION, methodPlan: buildViralMethodPlan(params.context || "", params.topicGoal) } : {}),
+    targetPlatforms: xhsMode ? (params.creationPlatforms || ["xiaohongshu"]) : undefined,
     avoidTitles: (params.existingTitles || []).slice(0, 40),
     skillsBrief: skillsBlock.slice(0, 8000),
     officialCampaigns: campaignBrief,
     trendHot: trendBriefs,
+    ...(xhsGrowthEvidence ? { xhsGrowthEvidence } : {}),
+      ...(douyinGrowthEvidence ? { douyinGrowthEvidence } : {}),
     ...(blueOceanWords.length ? { blueOceanWords } : {}),
     ...(blueOceanGroups.length ? { blueOceanGroups } : {}),
     ...(goalPromptLine ? { topicGoal: platformTopicGoalLabel(params.topicGoal) } : {}),
     ...(Number(params.windowDays) > 0
-      ? { trendWindowDays: Number(params.windowDays), trendWindowNote: "trendHot 已按该窗口裁过" }
+      ? { trendWindowDays: Number(params.windowDays), trendWindowNote: xhsMode ? "小红书与抖音分别使用所属平台证据摘要及严格时间窗口" : "trendHot 已按该窗口裁过" }
       : {}),
   });
 
@@ -487,7 +518,7 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
   const invokeShortlist = () =>
     invokeLLM({
       provider: "openai",
-      modelName: getPlatformStage2OpenAiModel(),
+      modelName: xhsMode ? XHS_TEXT_MODEL : getPlatformStage2OpenAiModel(),
       // 20–30 条时输出会明显变长，按条数抬上限，避免 JSON 被截断解析失败
       max_tokens: Math.max(maxTokens, 24_000),
       response_format: { type: "json_object" },
@@ -572,9 +603,12 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
       ? r.skillsUsed.map(String).filter(Boolean)
       : routed.selectedIds;
     const skillsUsed = Array.from(
-      new Set([...skillsUsedRaw.filter((id) => poolIds.includes(id)), ...routed.selectedIds]),
+      new Set([...(xhsMode ? [XHS_CONTENT_SKILL_ID] : []), ...skillsUsedRaw.filter((id) => poolIds.includes(id)), ...routed.selectedIds]),
     ).slice(0, 12);
     const item = {
+      ...(xhsGrowthEvidence ? { xhsGrowthEvidence } : {}),
+      ...(douyinGrowthEvidence ? { douyinGrowthEvidence } : {}),
+      ...(xhsMode ? { creationPlatforms: params.creationPlatforms || ["xiaohongshu"] } : {}),
       id: String(r.id || nanoid(10)).slice(0, 64),
       title: title.slice(0, 120),
       hookSketch: String(r.hookSketch || r.hook || title).slice(0, 200),
@@ -611,7 +645,7 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
     };
     const checked = platformTopicShortlistItemSchema.safeParse(item);
     if (checked.success) {
-      const linked =
+      const linked = xhsMode ? [] :
         checked.data.linkedCampaigns && checked.data.linkedCampaigns.length
           ? checked.data.linkedCampaigns
           : await pickLinkedCampaignsForTopic({
@@ -1049,9 +1083,17 @@ export async function expandPlatformTopicPicks(params: {
       skillIds: pick.skillsUsed,
       allowBloggerTitle: params.allowBloggerTitle,
     });
+    const xhsMode = pick.skillsUsed.includes(XHS_CONTENT_SKILL_ID);
+    const selectedEvidence = pick.targetPlatform === "douyin" ? pick.douyinGrowthEvidence : pick.xhsGrowthEvidence;
     const isVideo = pick.formatHint === "短视频";
     // 系统/用户消息必须含小写 json（Responses API json_object 硬门槛）
-    const system = `你是平台执行文案编辑。只输出一个 json 对象：{ "blueprint": { ... } }。
+    const system = xhsMode ? `${buildViralRolePrompt("expand", pick.targetPlatform || "xiaohongshu", isVideo ? "短视频" : "图文", "database")}
+只输出json对象 {"blueprint":{...}}。生成当前已选题目的完整${isVideo ? "视频文案与分镜导演表" : "图文笔记正文与分页"}。
+blueprint必须含title、hook、format=${isVideo ? "短视频" : "图文"}、copywriting(完整可发布正文或口播)、detailedScript(完整分页或时间轴)、suitablePlatforms、actionableSteps、publishingAdvice、executionDetails{environmentAndWardrobe,lightingAndCamera,stepByStepScript}、platformVariants(只需本条目标平台)、commentHooks(1个自然主动作，不要求强制互动)。
+${isVideo ? "storyboardCells必须为真实逐镜表1–12镜，字段cellIndex(从1连续)、dialogueZh(≤200字)、sceneZh(≤60字)、shotSize(≤12字)、actionZh(≤160字)、cameraMoveZh(≤24字)、editNoteZh(≤80字)；每镜都要有可拍动作、场景、景别与运镜，不用空行或重复句凑数。台词要与口播一致，时长服从用户。graphicNotePages可以为空。" : "graphicNotePages必须为完整可读分页，每页含pageIndex(从1连续)、role(cover/audience_pain/scene/inventory_index/detail_card/share_tips/evidence/checklist/save_reason/cta)、headline(2–48字)、body(4–400字)；封面/正文/结尾层次清楚。页数以用户要求与信息量为准，本生成接口支持最多12页；无法满足更长要求时明确说明，不静默截断。storyboardCells为空数组。"}
+参考资料需真实可追溯，未给出处不自动补权威；不要把运营说明、内部字段、审稿过程写成读者正文。图文不套视频篇幅，视频不套图文密度。
+${XHS_CONTENT_GUIDANCE}
+${XHS_PACKAGE_OUTPUT_PROMPT}` : `你是平台执行文案编辑。只输出一个 json 对象：{ "blueprint": { ... } }。
 必须遵守挂载 Skill。本条赛道 primaryLane=${pick.primaryLane}。
 ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 硬约束：
@@ -1073,11 +1115,13 @@ ${
 }
 - 若赛道为 fmcg 或正文做畅销品/标签科普：正文必须出现一句可追溯权威（如按《中国居民膳食指南（2022）》…）
 - 去临床恐吓；强监管赛道用优化表达
-conveyGoal（须兑现）：${pick.conveyGoal}`;
+conveyGoal（须兑现）：${pick.conveyGoal}
+`;
 
     const user = JSON.stringify({
-      personaContext: String(params.context || "").slice(0, 5000),
-      pick,
+      personaContext: String(params.context || "").slice(0, 8000),
+      ...(xhsMode ? { methodLibrary: VIRAL_CREATION_METHODS, methodVersion: VIRAL_METHOD_VERSION, methodPlan: buildViralMethodPlan(params.context || "") } : {}),
+      pick: { ...pick, xhsGrowthEvidence: selectedEvidence },
       skillsPrompt: skillsPrompt.slice(0, 14000),
       outputFormat: "json",
     });
@@ -1114,7 +1158,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     // GLM FlashX 走共用流式入口，失败按既有四跳落 DeepSeek；
     // Qwen 3.8 Max Evolink（$1.765/$5.295）比 OpenRouter（$2/$6）便宜 ~12%，
     // 主走 Evolink、兜底 OpenRouter（qwen/qwen3.8-max）。
-    const engine: PlatformTopicExpandEngine = normalizePlatformTopicExpandEngine(params.engine);
+    const engine: PlatformTopicExpandEngine = xhsMode ? "glm-5.3-flashx" : normalizePlatformTopicExpandEngine(params.engine);
     const attempts: Array<{ gateway: string; run: () => Promise<string> }> =
       engine === "deepseek-v4"
         ? [
@@ -1133,7 +1177,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
               named("openrouter", invokeExpandOpenRouter("qwen/qwen3.8-max")),
             ]
           : [
-              ...MANHUA_ADVISOR_HOPS.map(hop => named(hop.label, async () => extractFirstChoicePlainText(await invokeLLM({ provider: "openai", modelName: hop.modelName, openAiGateway: hop.gateway, reasoningEffort: manhuaAdvisorReasoningEffort(hop.modelName), max_tokens: 32_000, response_format: { type: "json_object" }, messages: [{ role: "system", content: system }, { role: "user", content: user }] })).trim())),
+              ...(xhsMode ? XHS_TEXT_HOPS : MANHUA_ADVISOR_HOPS).map(hop => named(hop.label, async () => extractFirstChoicePlainText(await invokeLLM({ provider: "openai", modelName: hop.modelName, openAiGateway: hop.gateway, reasoningEffort: manhuaAdvisorReasoningEffort(hop.modelName), max_tokens: 32_000, response_format: { type: "json_object" }, messages: [{ role: "system", content: system }, { role: "user", content: user }] })).trim())),
             ];
 
     console.info(
@@ -1164,6 +1208,12 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
         }
         // 能解析 ≠ 能用：缺字段的会在下游退回骨架，那时钱已经计了
         assertUsableExpandedBlueprint(candidate);
+        if (xhsMode) {
+          const data = extractJsonObject(candidate) as Record<string, unknown>;
+          const candidateBlueprint = data.blueprint && typeof data.blueprint === "object" ? data.blueprint as Record<string, unknown> : data;
+          const audit = auditXhsCreationPackage(candidateBlueprint, selectedEvidence, isVideo ? "短视频" : "图文");
+          if (!audit.passed) throw new Error(`小红书创作包未通过检查：${audit.findings.map(f => f.message).join("；")}`);
+        }
         llmText = candidate;
         successfulGateway = step.gateway;
         break;
@@ -1227,13 +1277,15 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     bp.format = String(bp.format || pick.formatHint);
     bp.hook = String(bp.hook || pick.hookSketch);
     bp.skillsUsed = pick.skillsUsed;
+    if (xhsMode) { bp.viralCreation = true; bp.targetPlatform = pick.targetPlatform || "xiaohongshu"; bp.suitablePlatforms = [bp.targetPlatform]; }
+    if (xhsMode && selectedEvidence) bp.xhsGrowthEvidence = selectedEvidence;
     bp.primaryLane = pick.primaryLane;
     bp.conveyGoal = pick.conveyGoal;
     bp.dedupeKey = pick.dedupeKey;
     bp.shortlistId = pick.id;
     // 与旧 Stage2 六条文案同字段：执行卡 / 封面 / 分镜认 id·sceneId
-    bp.id = String(bp.id || bp.sceneId || pick.id);
-    bp.sceneId = String(bp.sceneId || bp.id || pick.id);
+    bp.id = xhsMode ? pick.id : String(bp.id || bp.sceneId || pick.id);
+    bp.sceneId = xhsMode ? pick.id : String(bp.sceneId || bp.id || pick.id);
     const linkedCampaigns = Array.isArray(pick.linkedCampaigns)
       ? pick.linkedCampaigns
           .map((x) => {
@@ -1255,10 +1307,11 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       const prevAdvice = typeof bp.publishingAdvice === "string" ? bp.publishingAdvice.trim() : "";
       bp.publishingAdvice = `${prevAdvice}\n官方活动：${tag}（发布时挂同名话题/参与创作者中心活动）`.trim();
     }
-    bp.commentHooks = Array.isArray(bp.commentHooks)
+    bp.commentHooks = xhsMode ? [String((bp.xhsPackage as { conversion?: { action?: string } })?.conversion?.action || "")] : Array.isArray(bp.commentHooks)
       ? (bp.commentHooks as unknown[]).map((x) => normalizeCommentHook(x)).slice(0, 4)
       : [normalizeCommentHook(pick.commentHook)];
 
+    if (!xhsMode) {
     const cite = ensureAuthorityCiteInCopy({
       copywriting: String(bp.copywriting || ""),
       lane: pick.primaryLane,
@@ -1276,13 +1329,14 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     });
     bp.copywriting = med.copywriting;
     if (med.patched) bp.authorityCitePatched = true;
+    }
 
     // 逐镜拆片表：LLM 输出优先，坏行归一丢弃；短视频缺表时从口播时间轴降级拆装，
     // 保证结果卡表格与出图 scriptContext 两处消费者有内容。图文笔记无镜头概念，不硬造。
     const normalizedCells = normalizePlatformStoryboardCells(bp.storyboardCells);
     if (normalizedCells.length) {
       bp.storyboardCells = normalizedCells;
-    } else if (isVideo) {
+    } else if (isVideo && !xhsMode) {
       const exec =
         bp.executionDetails && typeof bp.executionDetails === "object"
           ? (bp.executionDetails as Record<string, unknown>)
@@ -1301,7 +1355,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     }
 
     const hooks = bp.commentHooks as string[];
-    if (!Array.isArray(bp.graphicNotePages) || (bp.graphicNotePages as unknown[]).length < 6) {
+    if (!xhsMode && (!Array.isArray(bp.graphicNotePages) || (bp.graphicNotePages as unknown[]).length < 6)) {
       bp.graphicNotePages = buildGraphicNotePagesFromBlueprint({
         title: String(bp.title),
         hook: String(bp.hook),
@@ -1310,6 +1364,16 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       });
     }
 
+    if (xhsMode) {
+      const audit = auditXhsCreationPackage(bp, selectedEvidence, isVideo ? "短视频" : "图文");
+      if (!audit.passed || !audit.package) {
+        failed.push({ id: pick.id, title: pick.title, reason: "小红书方案转换后检查未通过，已保留失败回执" });
+        continue;
+      }
+      connectXhsPackageToBlueprint(bp, audit.package);
+      bp.viralMethodVersion = VIRAL_METHOD_VERSION;
+      bp.xhsAudit = { passed: true, checks: ["完整字段", "主标题一致", "承诺原文引用", "来源ID", "夸大词检查"], semanticReview: "待人工确认事实与画面质量" };
+    }
     results.push(bp);
     successfulGateways.push({ id: pick.id, title: pick.title, gateway: successfulGateway });
     if (params.onItem) {

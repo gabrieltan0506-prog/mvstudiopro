@@ -1,3 +1,4 @@
+import { XHS_CONTENT_SKILL_ID, xhsTopicCount } from "../shared/xhsContentStrategy.js";
 import { codeMotionPlanFailureMessage } from "./services/codeMotionPlanFailure";
 import { buildManhuaBgmJobResponse, queueManhuaBgm } from "./services/manhuaBgmOperation";
 import { codeMotionBriefSchema } from "../shared/codeMotion";
@@ -175,6 +176,7 @@ import {
 } from "../shared/platformNativeVariants.js";
 import { enrichScriptContextWithBianDaoDirectorBoard } from "../shared/bianDaoStoryboard.js";
 import { ensureMinGraphicNoteBlueprints } from "../shared/ensureMinGraphicNoteBlueprints.js";
+import { xhsGrowthEvidenceSchema } from "../shared/xhsContentEvidenceSchema.js";
 import { PLATFORM_TOPIC_EXPAND_MAX, normalizePlatformTopicExpandEngine, normalizeCommentHooksList } from "../shared/platformTopicShortlist.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import {
@@ -6181,6 +6183,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           });
         }
         return runPlatformTopicImagePipeline({
+          viralCreation: resolvedCover.viralCreation,
           topicHook: finalTopicHook,
           format: finalFormatForPipeline,
           context: enrichedContext,
@@ -6310,6 +6313,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .input(
         z.object({
           context: z.string().max(8000).optional(),
+          creationPlatforms: z.array(z.enum(["xiaohongshu", "douyin"])).min(1).max(2).optional(),
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
           existingTitles: z.array(z.string().max(200)).max(60).optional(),
@@ -6349,7 +6353,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const { clampTopicShortlistCount, platformTopicShortlistTotalCredits, PLATFORM_TOPIC_SHORTLIST_DEFAULT } =
           await import("../shared/platformTopicShortlist.js");
-        const requestedCount = clampTopicShortlistCount(input.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
+        const requestedCount = input.enabledSkillIds?.includes(XHS_CONTENT_SKILL_ID) ? xhsTopicCount(input.count) : clampTopicShortlistCount(input.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
 
         // 免费试跑：跑几条就是几条，打码那几条一律不进模型，否则免费池就是纯亏。
         if (input.freeTrial && !isAdminUser) {
@@ -6375,6 +6379,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const freeResult = await runShortlist({
             userId,
             context: input.context,
+            creationPlatforms: input.creationPlatforms,
             enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
             allowBloggerTitle: Boolean(input.allowBloggerTitle),
             existingTitles: input.existingTitles,
@@ -6429,6 +6434,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const result = await generatePlatformTopicShortlist({
           userId,
           context: input.context,
+            creationPlatforms: input.creationPlatforms,
           enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
           allowBloggerTitle: Boolean(input.allowBloggerTitle),
           existingTitles: input.existingTitles,
@@ -6606,6 +6612,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           picks: z
             .array(
               z.object({
+                xhsGrowthEvidence: xhsGrowthEvidenceSchema.optional(),
+                douyinGrowthEvidence: xhsGrowthEvidenceSchema.optional(),
+                creationPlatforms: z.array(z.enum(["xiaohongshu", "douyin"])).min(1).max(2).optional(),
+                targetPlatform: z.enum(["xiaohongshu", "douyin"]).optional(),
+                sourceTopicId: z.string().max(64).optional(),
                 id: z.string().min(4).max(64),
                 title: z.string().min(4).max(120),
                 hookSketch: z.string().min(4).max(200),
@@ -8427,6 +8438,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .input(
         z
           .object({
+            viralCreation: z.boolean().optional(),
             jobId: z.string().max(128).optional(),
             sceneId: z.string().min(1),
             title: z.string().min(1).max(220),
@@ -8856,6 +8868,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
               appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
               imageUrl = await generateSheet({
+                viralCreation: input.viralCreation === true || input.enabledSkillIds?.includes("xhs-content-growth") === true,
                 beforeImageSubmit,
                 kind: input.kind,
                 title: input.title,
@@ -8948,6 +8961,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
           appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
           imageUrl = await generateSheet({
+                viralCreation: input.viralCreation === true || input.enabledSkillIds?.includes("xhs-content-growth") === true,
             kind: input.kind,
             title: input.title,
             scriptContext: enrichedCompositeScriptContext,

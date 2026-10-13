@@ -1,3 +1,8 @@
+import { TopicSelectionPanel } from "@/components/platform/TopicSelectionPanel";
+import "@/components/platform/creation-workbench.css";
+import { ViralCreationPackageView } from "@/components/platform/ViralCreationPackageView";
+import { planViralExpansions } from "@shared/viralCreationSelection";
+import { platformGraphicNotePageSchema, type PlatformGraphicNotePage } from "@shared/platformTopicShortlist";
 import RemixProductionImport from "@/components/RemixProductionImport";
 import { KnowledgeCardFilePicker, knowledgeCardFileMime } from "@/components/platform/KnowledgeCardFilePicker";
 import { nativeLearnLiveProposalState } from "@/lib/manhuaLearnResultUi";
@@ -14,6 +19,8 @@ import { NATIVE_REPORT_THEME_OPTIONS, type NativeReportThemeChoice } from "../..
 import { ManhuaRestructureControl } from "@/components/ManhuaRestructureControl";
 import { buildManhuaRestructureParams } from "@/lib/manhuaRestructure";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { XhsContentGrowthPanel, XhsGrowthEvidenceView } from "@/components/platform/XhsContentGrowthPanel";
+import { XHS_CONTENT_SKILL_ID, xhsTopicCount } from "@shared/xhsContentStrategy";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { toPng } from "html-to-image";
@@ -43,7 +50,6 @@ import {
   assessPlatformPersonaSpecificity,
   type PlatformTopicGoalId,
 } from "@shared/platformPersonaPolish";
-import { PlatformOutputTypePicker } from "@/components/platform/PlatformOutputTypePicker";
 import { PlatformDraftPresetsBar } from "@/components/platform/PlatformDraftPresetsBar";
 import { PlatformAdvancedSettingsFold } from "@/components/platform/PlatformAdvancedSettingsFold";
 import { PlatformSkillDrawer } from "@/components/platform/PlatformSkillDrawer";
@@ -1345,6 +1351,7 @@ function buildCoverPersonaContextForImageGen(personaSummary: string, _ipProfile?
 /** 供分镜表 / 小红书图文单图：汇整折叠区内容，供 gpt-image-2 拆镜（后端再截断） */
 function buildPlatformSheetScriptContext(
   item: {
+    viralCreation?: boolean;
     title: string;
     hook: string;
     copywriting: string;
@@ -1386,7 +1393,7 @@ function buildPlatformSheetScriptContext(
   // 图文笔记：只喂读者向攻略正文；禁止发布建议/创作SOP（否则会画成「技术指导」格）
   if (isGraphic) {
     const pages = Array.isArray(item.graphicNotePages) ? item.graphicNotePages : [];
-    if (pages.length >= 6) {
+    if (pages.length >= (item.viralCreation ? 1 : 6)) {
       const pageBlock = pages
         .slice(0, 12)
         .map((p, i) => {
@@ -1399,7 +1406,7 @@ function buildPlatformSheetScriptContext(
         .join("\n\n");
       parts.push(`【可发图文页结构·按页排版】\n${pageBlock}`);
       parts.push(
-        "【体裁·硬约束】按上方页结构直接排成读者向笔记；禁止创作 SOP 格；评论钩若出现须≤3字生活词。",
+        item.viralCreation ? "【体裁·硬约束】保留上方全部页的正文、顺序和具体互动任务，按用户选择的合成网格合理合并或拆分画面，禁止新增事实或删掉兑现承诺。" : "【体裁·硬约束】按上方页结构直接排成读者向笔记；禁止创作 SOP 格；评论钩若出现须≤3字生活词。",
       );
     } else {
       if (item.copywriting) {
@@ -1422,7 +1429,9 @@ function buildPlatformSheetScriptContext(
       }
     }
     const hooks = Array.isArray(item.commentHooks) ? item.commentHooks.filter(Boolean).slice(0, 3) : [];
-    if (hooks.length) parts.push(`【评论短钩】${hooks.join("、")}（每词≤3字）`);
+    if (hooks.length) parts.push(item.viralCreation ? `【互动任务】${hooks.join("；")}` : `【评论短钩】${hooks.join("、")}（每词≤3字）`);
+    if (item.viralCreation && item.executionDetails?.environmentAndWardrobe) parts.push(`【场景与系列连续性】${item.executionDetails.environmentAndWardrobe}`);
+    if (item.viralCreation && item.executionDetails?.lightingAndCamera) parts.push(`【视觉构图】${item.executionDetails.lightingAndCamera}`);
     // 故意不喂 publishingAdvice：易变成「怎么发」技术指导格
     if (is3x4) {
       parts.push(
@@ -1563,6 +1572,11 @@ function executionCardDomId(sceneId: string): string {
 }
 
 type PlatformContentExecutionCard = {
+  viralCreation?: boolean;
+  targetPlatform?: "xiaohongshu" | "douyin";
+  platformVariants?: unknown;
+  xhsPackage?: unknown;
+  graphicNotePages?: PlatformGraphicNotePage[];
   id: string;
   title: string;
   hook: string;
@@ -1664,6 +1678,11 @@ function mapContentBlueprintToExecutionCard(
       : [];
 
   return {
+    viralCreation: item.viralCreation === true,
+    targetPlatform: item.targetPlatform === "douyin" ? "douyin" : "xiaohongshu",
+    platformVariants: item.platformVariants,
+    xhsPackage: item.xhsPackage,
+    graphicNotePages: Array.isArray(item.graphicNotePages) ? item.graphicNotePages.flatMap(p => { const parsed = platformGraphicNotePageSchema.safeParse(p); return parsed.success ? [parsed.data] : []; }) : undefined,
     id: String(item.id || item.sceneId || item.topicId || `topic-${index}`),
     title: baseTitle,
     hook: cleanUserCopy(
@@ -1722,6 +1741,11 @@ function executionCardToSnapshotBlueprint(card: PlatformContentExecutionCard): R
   return {
     id: card.id,
     sceneId: card.id,
+    viralCreation: card.viralCreation,
+    targetPlatform: card.targetPlatform,
+    platformVariants: card.platformVariants,
+    xhsPackage: card.xhsPackage,
+    graphicNotePages: card.graphicNotePages,
     title: card.title,
     hook: card.hook,
     copywriting: card.copywriting,
@@ -3228,6 +3252,7 @@ export default function PlatformPage() {
     resolvePlatformLocation().mode,
   );
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const [creationTool, setCreationTool] = useState<"viral" | "knowledge">("viral");
   const [createStep, setCreateStep] = useState<PlatformCreateStepId>("persona");
   /** 这轮想获客/转化/涨粉：独立参数进选题提示词，不是装饰标签（用户 2026-08-06） */
   const [topicGoal, setTopicGoal] = useState<PlatformTopicGoalId | null>(null);
@@ -4303,6 +4328,10 @@ export default function PlatformPage() {
   /** 选题初选 20–30 条 → 用户自己挑 → 可改标题 → 单条扩写（全案默认 20） */
   const [topicShortlist, setTopicShortlist] = useState<PlatformTopicShortlistItem[]>([]);
   const [topicShortlistCount, setTopicShortlistCount] = useState(PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT);
+  const xhsMode = platformMode === "create" || enabledPlatformSkillIds.has(XHS_CONTENT_SKILL_ID);
+  const effectiveShortlistCount = xhsMode ? xhsTopicCount(topicShortlistCount) : topicShortlistCount;
+  const [viralPlatforms, setViralPlatforms] = useState<Array<"xiaohongshu" | "douyin">>(["xiaohongshu"]);
+  const [xhsFormats, setXhsFormats] = useState<Array<"图文" | "短视频">>(["图文"]);
   /** 全案过程日志：选题初选 · 扩写 · 封面/分镜出图（进顶部 Debug；失败时按钮下方也可见末行） */
   const [shortlistDebugLines, setShortlistDebugLines] = useState<string[]>([]);
   const [shortlistLastError, setShortlistLastError] = useState<string | null>(null);
@@ -4424,12 +4453,15 @@ export default function PlatformPage() {
   /** 扩写改走后台任务 + 轮询：每条写完就渲染，不再等七条跑完 */
   const enqueueTopicExpandMutation = trpc.mvAnalysis.enqueuePlatformTopicExpand.useMutation();
   const [shortlistExpandBusy, setShortlistExpandBusy] = useState(false);
+  const [shortlistRestoreKey, setShortlistRestoreKey] = useState<string | null>(null);
+  const [failedExpandPicks, setFailedExpandPicks] = useState<PlatformTopicShortlistItem[]>([]);
+  const [pendingExpand, setPendingExpand] = useState<{ jobId: string; picks: PlatformTopicShortlistItem[] }>();
   const [shortlistExpandProgress, setShortlistExpandProgress] = useState<{
     done: number;
     total: number;
   } | null>(null);
   const topicShortlistPrice = platformTopicShortlistTotalCredits({
-    count: topicShortlistCount,
+    count: effectiveShortlistCount,
     baseCredits: CREDIT_COSTS.platformTopicShortlist,
     extraPerTopic: CREDIT_COSTS.platformTopicShortlistExtra,
   });
@@ -4441,12 +4473,16 @@ export default function PlatformPage() {
   useEffect(() => {
     if (!workbenchUserKey) return;
     if (shortlistExpandRestoredForKeyRef.current === workbenchUserKey) return;
+    const changedUser = Boolean(shortlistExpandRestoredForKeyRef.current);
     shortlistExpandRestoredForKeyRef.current = workbenchUserKey;
+    if (changedUser) { setTopicShortlist([]); setPlatformContent(null); setFailedExpandPicks([]); setPendingExpand(undefined); setSelectedShortlistIds([]); }
     const saved = readShortlistExpandPersist(workbenchUserKey);
+    setShortlistRestoreKey(workbenchUserKey);
     if (!saved) return;
-    if (saved.topics.length > 0) {
-      setTopicShortlist((prev) => (prev.length > 0 ? prev : saved.topics));
-    }
+    if (saved.viralPreferences) { setViralPlatforms(saved.viralPreferences.platforms); setXhsFormats(saved.viralPreferences.formats); }
+    setFailedExpandPicks(saved.failedPicks || []);
+    setPendingExpand(saved.pendingExpand);
+    setTopicShortlist(saved.topics);
     if (saved.contentBlueprints.length > 0) {
       setPlatformContent((prev) => {
         if (Array.isArray(prev?.contentBlueprints) && prev!.contentBlueprints.length > 0) return prev;
@@ -4462,19 +4498,22 @@ export default function PlatformPage() {
     }
   }, [workbenchUserKey, pushShortlistDebug]);
 
-  // 有结果就落盘；空状态不写，避免把已存文案冲掉
+  // 当前用户恢复完成后才落盘，避免初次空状态覆盖已存文案。
   useEffect(() => {
     if (!workbenchUserKey) return;
     const bps = Array.isArray(platformContent?.contentBlueprints)
       ? (platformContent!.contentBlueprints as Array<Record<string, unknown>>)
       : [];
-    if (topicShortlist.length === 0 && bps.length === 0) return;
+    if (shortlistRestoreKey !== workbenchUserKey) return;
     writeShortlistExpandPersist({
+      viralPreferences: { platforms: viralPlatforms, formats: xhsFormats },
       userKey: workbenchUserKey,
       topics: topicShortlist,
       contentBlueprints: bps,
+      failedPicks: failedExpandPicks,
+      pendingExpand,
     });
-  }, [workbenchUserKey, topicShortlist, platformContent?.contentBlueprints]);
+  }, [workbenchUserKey, topicShortlist, platformContent?.contentBlueprints, failedExpandPicks, pendingExpand, viralPlatforms, xhsFormats, shortlistRestoreKey]);
 
   // 监管验收：?demoExpand=1 注入假文案，不烧积分，只验同页可见
   useEffect(() => {
@@ -4952,8 +4991,11 @@ export default function PlatformPage() {
 
   /** 初选 → 正式文案：走 expandPlatformTopicPicks（不依赖战略看板） */
   const expandShortlistPicks = useCallback(
-    async (picksIn: PlatformTopicShortlistItem[]) => {
-      const picks = picksIn.slice(0, PLATFORM_TOPIC_EXPAND_MAX);
+    async (picksIn: PlatformTopicShortlistItem[], resumeJobId?: string) => {
+      if (pendingExpand && !resumeJobId) { toast.error("已有扩写任务，请先查询原任务结果"); return; }
+      let picks: PlatformTopicShortlistItem[];
+      try { picks = planViralExpansions(picksIn, viralPlatforms, xhsFormats); }
+      catch (error) { toast.error(error instanceof Error ? error.message : "请选择平台与形式"); return; }
       if (!picks.length) {
         toast.error("请先勾选至少一条选题");
         return;
@@ -4962,7 +5004,7 @@ export default function PlatformPage() {
       // 按条计费（2026-08-12 拍板，单价见 CREDIT_COSTS）
       const cost = CREDIT_COSTS.platformTopicExpand * picks.length;
       if (
-        !supervisorAccess &&
+        !resumeJobId && !supervisorAccess &&
         !window.confirm(
           `将为选中的 ${picks.length} 条选题扩写正式文案（${CREDIT_COSTS.platformTopicExpand} 点/条 × ${picks.length} = ${cost} 点；失败条自动退款）。是否继续？`,
         )
@@ -5002,7 +5044,7 @@ export default function PlatformPage() {
         return fresh.length;
       };
       try {
-        const { jobId, freeRetry } = await enqueueTopicExpandMutation.mutateAsync({
+        const { jobId, freeRetry } = resumeJobId ? { jobId: resumeJobId, freeRetry: false } : await enqueueTopicExpandMutation.mutateAsync({
           context: focusPrompt.trim() || undefined,
           enabledSkillIds: Array.from(enabledPlatformSkillIds),
           allowBloggerTitle,
@@ -5018,8 +5060,14 @@ export default function PlatformPage() {
             dedupeKey: p.dedupeKey,
             commentHook: p.commentHook,
             linkedCampaigns: p.linkedCampaigns,
+            xhsGrowthEvidence: p.xhsGrowthEvidence,
+            douyinGrowthEvidence: p.douyinGrowthEvidence,
+            creationPlatforms: p.creationPlatforms,
+            targetPlatform: p.targetPlatform,
+            sourceTopicId: p.sourceTopicId,
           })),
         });
+        setPendingExpand({ jobId, picks });
         pushShortlistDebug(
           `已入队 job=${jobId}，每条写完即刻显示${freeRetry ? " · 上次未出稿，本次重跑不扣点" : ""}`,
         );
@@ -5050,7 +5098,8 @@ export default function PlatformPage() {
             }
           },
         });
-        if (job.status === "failed") throw new Error(job.error || "扩写失败，请稍后重试");
+        setPendingExpand(undefined);
+        if (job.status === "failed") { setFailedExpandPicks(picks); throw new Error(job.error || "扩写失败，请稍后重试"); }
         const out = (job.output || {}) as {
           contentBlueprints?: unknown;
           chargedCredits?: number;
@@ -5063,9 +5112,10 @@ export default function PlatformPage() {
           : [];
         setCreateStep("result");
         setHasAnalyzed(true);
-        // 失败的留在勾选里，用户可以只重跑这几条
+        setFailedExpandPicks(picks.filter(p => failedPicks.some(f => f.id === p.id)));
+        // 失败条保留独立平台与形式，重试按钮不重新生成已成功稿件。
         setSelectedShortlistIds(
-          failedPicks.map((f) => String(f?.id || "")).filter((id) => id && picks.some((p) => p.id === id)),
+          failedPicks.map(f => picks.find(p => p.id === f.id)?.sourceTopicId || String(f.id || "")).filter(id => picksIn.some(p => p.id === id)),
         );
         setShortlistExpandProgress({ done: bps.length, total: picks.length });
         if (failedPicks.length) {
@@ -5109,6 +5159,10 @@ export default function PlatformPage() {
     },
     [
       enqueueTopicExpandMutation,
+      xhsFormats,
+      pendingExpand,
+      viralPlatforms,
+      platformExpandEngine,
       shortlistExpandBusy,
       supervisorAccess,
       pushShortlistDebug,
@@ -5121,306 +5175,59 @@ export default function PlatformPage() {
 
   /** 选题初选卡片：可多处挂载（须各自独立 React 节点 + 不同 domId，禁止复用同一 element） */
   const renderTopicShortlistSection = (domId: string, opts?: { showGenerateButton?: boolean }) => {
-    const showGenerateButton = opts?.showGenerateButton !== false;
-    return (
-      <div
-        id={domId}
-        className="scroll-mt-24 rounded-2xl border border-[#49e6ff]/25 bg-[rgba(10,15,35,0.75)] px-4 py-4 md:px-5"
-      >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="text-lg font-bold text-white md:text-xl">
-              选题初选
-              {topicShortlist.length > 0 ? (
-                <span className="ml-2 text-base font-black text-[#8cefff]">
-                  · 已出 {topicShortlist.length} 条
-                </span>
-              ) : null}
-            </div>
-            <p className="mt-1 text-[13px] leading-snug text-gray-300">
-              默认 {PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT} 条（可调 25/30）；以小红书为主，参考 B站与抖音的近期热点。
-              <strong className="text-white/90">这步只出题</strong>，挑哪条、标题改成什么都由你定，确认后才写文案与封面。
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-gray-300">
-              <span>条数</span>
-              {([6, 12, 20, 25, 30] as const).map((n) => (
-                <button
-                  key={`${domId}-n-${n}`}
-                  type="button"
-                  onClick={() => setTopicShortlistCount(n)}
-                  className={`rounded border px-2.5 py-1 font-semibold ${
-                    topicShortlistCount === n
-                      ? "border-[#49e6ff]/50 bg-[#49e6ff]/20 text-[#b8f4ff]"
-                      : "border-white/15 text-gray-400"
-                  }`}
-                >
-                  {n}
-                  {n === PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT
-                    ? "·常用"
-                    : n > PLATFORM_TOPIC_SHORTLIST_DEFAULT
-                      ? "·加量"
-                      : "·少出"}
-                </button>
-              ))}
-            </div>
-          </div>
-          {showGenerateButton ? (
-            <div className="flex shrink-0 flex-col items-stretch gap-1.5">
-              <button
-                type="button"
-                disabled={!isAuthenticated || generateTopicShortlistMutation.isPending}
-                onClick={() => void runCreateTopicShortlist()}
-                className="rounded-xl border border-[#49e6ff]/50 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-5 py-3 text-[14px] font-bold text-white shadow-[0_10px_32px_rgba(73,230,255,0.18)] transition hover:brightness-110 disabled:opacity-50"
-              >
-                {generateTopicShortlistMutation.isPending
-                  ? "生成中…"
-                  : `生成 ${topicShortlistCount} 条选题（${topicShortlistPrice.total} 点）`}
-              </button>
-              {shortlistFreeQuota?.nextFree ? (
-                <button
-                  type="button"
-                  disabled={!isAuthenticated || generateTopicShortlistMutation.isPending}
-                  onClick={() => void runCreateTopicShortlist({ freeTrial: true })}
-                  className="rounded-xl border border-emerald-400/45 bg-emerald-500/12 px-5 py-2 text-[12px] font-semibold text-emerald-100 transition hover:brightness-110 disabled:opacity-50"
-                >
-                  先免费试跑 {shortlistFreeQuota.freeTopics} 条
-                  {shortlistFreeQuota.firstFreeLeft > 0 ? `（还剩 ${shortlistFreeQuota.firstFreeLeft} 次）` : "（今日）"}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-        {generateTopicShortlistMutation.isPending ? (
-          <div className="mt-3 flex items-center gap-2 text-sm text-[#8cefff]">
-            <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-            正在读取小红书 / B站 / 抖音热点并生成约 {topicShortlistCount} 条选题…
-          </div>
-        ) : null}
-        {topicShortlist.length > 0 ? (
-          <>
-            <p className="mt-3 text-[12px] leading-snug text-gray-400">
-              已按爆款概率 + 评论区热度排序，前 {PLATFORM_TOPIC_TOP_PICK_COUNT} 条标了「优先」。
-              <strong className="text-white/90">可勾选多条</strong>
-              （最多 {PLATFORM_TOPIC_EXPAND_MAX}），再点「写选中的」；也可单条点「就写这条」。改标题后再写。
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  const topIds = topicShortlist
-                    .filter((t) => t.isTopPick)
-                    .map((t) => t.id)
-                    .slice(0, PLATFORM_TOPIC_EXPAND_MAX);
-                  setSelectedShortlistIds(topIds);
-                }}
-                className="rounded-lg border border-white/15 px-2.5 py-1.5 text-[11px] text-gray-300"
-              >
-                勾选优先
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedShortlistIds([])}
-                className="rounded-lg border border-white/15 px-2.5 py-1.5 text-[11px] text-gray-400"
-              >
-                清空勾选
-              </button>
-              <button
-                type="button"
-                disabled={selectedShortlistIds.length === 0 || shortlistExpandBusy}
-                onClick={() => {
-                  const picks = topicShortlist.filter((t) => selectedShortlistIds.includes(t.id));
-                  void expandShortlistPicks(picks);
-                }}
-                className="rounded-lg border border-emerald-400/50 bg-emerald-500/20 px-3 py-1.5 text-[11px] font-bold text-emerald-50 disabled:opacity-40"
-              >
-                {shortlistExpandBusy
-                  ? shortlistExpandProgress
-                    ? `扩写中 ${shortlistExpandProgress.done}/${shortlistExpandProgress.total}…`
-                    : "扩写中…"
-                  : `写选中的 ${selectedShortlistIds.length || ""} 条（${
-                      CREDIT_COSTS.platformTopicExpand * Math.max(1, selectedShortlistIds.length)
-                    } 点 · ${CREDIT_COSTS.platformTopicExpand}/条）`}
-              </button>
-              <select
-                value={platformExpandEngine}
-                onChange={(e) => setPlatformExpandEngine(normalizePlatformTopicExpandEngine(e.target.value))}
-                title="扩写引擎：稳定档遇高峰自动切备用通道；轻快档速度更快、文风更简"
-                className="rounded-lg border border-white/15 bg-black/45 px-2 py-1.5 text-[11px] text-gray-300"
-              >
-                <option value="glm-5.3-flashx">扩写·稳定档</option>
-                <option value="qwen3.8-max">扩写·轻快档</option>
-                <option value="deepseek-v4">扩写·经济档</option>
-              </select>
-              <span className="text-[11px] text-gray-500">
-                已勾 {selectedShortlistIds.length}/{PLATFORM_TOPIC_EXPAND_MAX}
-              </span>
-            </div>
-            {shortlistExpandBusy ? (
-              <div className="mt-2 flex items-center gap-2 text-sm text-emerald-200/90">
-                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                {shortlistExpandProgress && shortlistExpandProgress.done > 0
-                  ? `已出 ${shortlistExpandProgress.done}/${shortlistExpandProgress.total} 条，写好的已显示在下方，其余继续生成…`
-                  : `正在写第 1 条（共 ${shortlistExpandProgress?.total ?? selectedShortlistIds.length} 条）；每写好一条就会显示，可以先看不用等全部完成`}
-              </div>
-            ) : null}
-            <div className="mt-2 max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
-              {topicShortlist.map((t, i) => {
-                const checked = selectedShortlistIds.includes(t.id);
-                return (
-                <div
-                  key={`${domId}-${t.id}`}
-                  className={`rounded-md border px-2.5 py-2 text-[12px] ${
-                    checked
-                      ? "border-emerald-400/50 bg-emerald-500/10 text-gray-200"
-                      : t.isTopPick
-                      ? "border-[#fde047]/40 bg-[#fde047]/8 text-gray-200"
-                      : "border-white/10 bg-black/20 text-gray-300"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-2">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={shortlistExpandBusy}
-                        onChange={() => toggleShortlistSelection(t.id)}
-                        className="mt-1 h-3.5 w-3.5 shrink-0 accent-emerald-400"
-                        aria-label={`勾选选题：${t.title}`}
-                      />
-                      <div className="min-w-0 flex-1">
-                      <span className="mr-1.5 text-[11px] font-bold text-gray-500">{i + 1}.</span>
-                      {t.isTopPick ? (
-                        <span className="mr-1.5 rounded bg-[#fde047]/20 px-1.5 py-0.5 text-[10px] font-bold text-[#fde047]">
-                          优先
-                        </span>
-                      ) : null}
-                      {editingShortlistTopicId === t.id ? (
-                        <input
-                          value={editingShortlistTitle}
-                          autoFocus
-                          maxLength={120}
-                          onChange={(e) => setEditingShortlistTitle(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              commitEditingShortlistTitle();
-                            }
-                            if (e.key === "Escape") cancelEditingShortlistTitle();
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          className="w-full rounded border border-[#49e6ff]/40 bg-black/40 px-2 py-1 text-[12px] font-semibold text-white outline-none"
-                          aria-label="修改选题标题"
-                        />
-                      ) : (
-                        <span className="font-semibold text-white/95">{t.title}</span>
-                      )}
-                      {typeof t.commentHeat === "number" && editingShortlistTopicId !== t.id ? (
-                        <span
-                          className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-bold ${
-                            t.commentHeat >= 70
-                              ? "bg-[#ff8fab]/20 text-[#ffb3c6]"
-                              : "bg-white/10 text-gray-400"
-                          }`}
-                          title="预估评论区热度：大家想不想在评论里说话"
-                        >
-                          评论热 {t.commentHeat}
-                        </span>
-                      ) : null}
-                      <span className="mt-0.5 block text-gray-400">{t.conveyGoal}</span>
-                      {t.viralReason ? (
-                        <span className="mt-0.5 block text-[11px] text-[#8cefff]/70">
-                          {typeof t.viralScore === "number" ? `${t.viralScore} 分 · ` : ""}
-                          {t.viralReason}
-                        </span>
-                      ) : null}
-                      </div>
-                    </label>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      {editingShortlistTopicId === t.id ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={commitEditingShortlistTitle}
-                            className="rounded-lg border border-[#49e6ff]/50 bg-[#49e6ff]/20 px-2 py-1.5 text-[11px] font-bold text-[#b8f4ff]"
-                          >
-                            存标题
-                          </button>
-                          <button
-                            type="button"
-                            onClick={cancelEditingShortlistTitle}
-                            className="rounded-lg border border-white/15 px-2 py-1.5 text-[11px] text-gray-400"
-                          >
-                            取消
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => startEditingShortlistTitle(t)}
-                            className="rounded-lg border border-white/15 px-2 py-1.5 text-[11px] text-gray-300"
-                          >
-                            改标题
-                          </button>
-                          <button
-                            type="button"
-                            disabled={shortlistExpandBusy}
-                            onClick={() => void expandShortlistPicks([t])}
-                            className="rounded-lg border border-emerald-400/50 bg-emerald-500/20 px-2.5 py-1.5 text-[11px] font-bold text-emerald-50 disabled:opacity-40"
-                          >
-                            就写这条
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-              })}
-              {shortlistMaskedCount > 0
-                ? Array.from({ length: Math.min(shortlistMaskedCount, 8) }).map((_, i) => (
-                    <div
-                      key={`${domId}-masked-${i}`}
-                      className="relative overflow-hidden rounded-md border border-white/10 bg-black/30 px-2.5 py-2"
-                      aria-hidden
-                    >
-                      <div className="select-none blur-[5px]">
-                        <div className="h-3 w-3/5 rounded bg-white/25" />
-                        <div className="mt-1.5 h-2.5 w-4/5 rounded bg-white/12" />
-                      </div>
-                    </div>
-                  ))
-                : null}
-            </div>
-            {shortlistMaskedCount > 0 ? (
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#fbbf24]/30 bg-[rgba(251,191,36,0.07)] px-3 py-2.5">
-                <p className="min-w-0 flex-1 text-[12px] leading-snug text-[#fde68a]">
-                  还有 {shortlistMaskedCount} 条没生成。免费这次只跑看得见的几条，解锁后按你选的条数重新出一整批。
-                </p>
-                <button
-                  type="button"
-                  disabled={generateTopicShortlistMutation.isPending}
-                  onClick={() => void runCreateTopicShortlist()}
-                  className="shrink-0 rounded-lg border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.14)] px-3 py-1.5 text-[11px] font-bold text-[#fde68a] transition hover:brightness-110 disabled:opacity-50"
-                >
-                  解锁 {topicShortlistCount} 条（{topicShortlistPrice.total} 点）
-                </button>
-              </div>
-            ) : null}
-          </>
-        ) : !generateTopicShortlistMutation.isPending ? (
-          <p className="mt-3 text-[12px] text-gray-500">
-            点右上「生成 {topicShortlistCount} 条选题」后，选题会出现在这里（约 1–2 分钟）。
-          </p>
-        ) : null}
-        {/* 扩写文案 + 出图按钮：见 renderExpandedShortlistGenZone（接旧 Stage2 同套接线） */}
-      </div>
-    );
+    const selected = topicShortlist.filter(topic => selectedShortlistIds.includes(topic.id));
+    let total = selected.length;
+    try { total = planViralExpansions(selected, viralPlatforms, xhsFormats).length; } catch { /* 交由点击处理器提示具体原因。 */ }
+    return <TopicSelectionPanel id={domId} topics={topicShortlist} selectedIds={selectedShortlistIds}
+      count={effectiveShortlistCount} countOptions={xhsMode ? [2, 3] : [6, 12, 20, 25, 30]} onCount={setTopicShortlistCount}
+      generationCost={topicShortlistPrice.total} expansionCount={total} expansionCost={CREDIT_COSTS.platformTopicExpand * total}
+      loading={generateTopicShortlistMutation.isPending} expanding={shortlistExpandBusy} authenticated={isAuthenticated}
+      showGenerate={opts?.showGenerateButton} freeTopics={shortlistFreeQuota?.nextFree ? shortlistFreeQuota.freeTopics : undefined}
+      freeRemaining={shortlistFreeQuota?.firstFreeLeft} maskedCount={shortlistMaskedCount}
+      onGenerate={free => void runCreateTopicShortlist(free ? { freeTrial: true } : undefined)}
+      onToggle={toggleShortlistSelection} onClear={() => setSelectedShortlistIds([])}
+      onSelectSuggested={() => setSelectedShortlistIds(topicShortlist.filter(t => t.isTopPick).map(t => t.id).slice(0, PLATFORM_TOPIC_EXPAND_MAX))}
+      onExpand={topics => void expandShortlistPicks(topics)} editingId={editingShortlistTopicId} editingTitle={editingShortlistTitle}
+      onEditingTitle={setEditingShortlistTitle} onEdit={startEditingShortlistTitle} onSave={commitEditingShortlistTitle} onCancel={cancelEditingShortlistTitle}
+      error={shortlistLastError} progress={shortlistExpandProgress ? `已生成 ${shortlistExpandProgress.done} / ${shortlistExpandProgress.total} 份稿件，结果会陆续显示在下方。` : undefined}>
+      {pendingExpand && !shortlistExpandBusy && <button type="button" className="creation-text-action mt-4" onClick={() => void expandShortlistPicks(pendingExpand.picks, pendingExpand.jobId)}>继续查询原扩写任务（不重复提交）</button>}
+      {failedExpandPicks.length > 0 && !pendingExpand && <button type="button" className="creation-text-action mt-4" disabled={shortlistExpandBusy} onClick={() => void expandShortlistPicks(failedExpandPicks)}>重试未出稿的 {failedExpandPicks.length} 份</button>}
+      {topicShortlist[0]?.xhsGrowthEvidence && <XhsGrowthEvidenceView evidence={topicShortlist[0].xhsGrowthEvidence} />}
+      {topicShortlist[0]?.douyinGrowthEvidence && <XhsGrowthEvidenceView evidence={topicShortlist[0].douyinGrowthEvidence} />}
+    </TopicSelectionPanel>;
   };
 
   const platformMainPersonaTopicsPanel = (
-    <div className="space-y-4">
-      <PlatformStructuredPersonaForm
+    <div className="creation-intake">
+      <XhsContentGrowthPanel
+        enabled={xhsMode}
+        platforms={viralPlatforms}
+        onPlatformsChange={setViralPlatforms}
+        formats={xhsFormats}
+        onFormatsChange={setXhsFormats}
+        onEnabledChange={(enabled) => setEnabledPlatformSkillIds(previous => {
+          const next = new Set(previous);
+          if (enabled && !next.has(XHS_CONTENT_SKILL_ID) && next.size >= 24) { toast.error("最多启用24项方法，请先取消一项再启用爆款创作"); return previous; }
+          if (enabled) next.add(XHS_CONTENT_SKILL_ID); else next.delete(XHS_CONTENT_SKILL_ID);
+          return next;
+        })}
+        onApply={(text, goal) => {
+          if (!xhsMode && enabledPlatformSkillIds.size >= 24) { toast.error("最多启用24项方法，请先取消一项"); return; }
+          const next = [focusPrompt.trim(), text].filter(Boolean).join("\n\n");
+          if (next.length > 8000) { toast.error("合并后的创作需求超过8000字，请先精简原需求"); return; }
+          setFocusPrompt(next);
+          setFreeformOverride(true);
+          setTopicGoal(goal);
+          setEnabledPlatformSkillIds(previous => new Set([...Array.from(previous), XHS_CONTENT_SKILL_ID]));
+          toast.success("已加入创作需求；可继续编辑，再按原流程选题");
+        }}
+      />
+      {xhsMode ? <section id="platform-persona-focus" className="creation-profile">
+        <label htmlFor="viral-profile" className="block text-base font-semibold text-white">你想为谁，写什么？</label>
+        <textarea id="viral-profile" value={focusPrompt} maxLength={8000} rows={5} onChange={e => { setFocusPrompt(e.target.value); setFreeformOverride(true); setPersonaFieldErrors({}); }} placeholder="例如：我做职场沟通培训，帮助刚入职的年轻人。想分享开会表达的方法，语气自然，给出能直接使用的例句。" className="mt-3 w-full rounded-xl border border-white/15 bg-black/20 p-3 text-sm leading-6 text-white" />
+        <p className="mt-2 text-xs text-gray-400">简介与要求写在这里即可。先生成2–3个选题，确认后写稿；封面图片需另行点击生成。</p>
+        {personaFieldErrors.freeform && <p role="alert" className="mt-2 text-sm text-rose-300">{personaFieldErrors.freeform}</p>}
+      </section> : <PlatformStructuredPersonaForm
         id="platform-persona-focus"
         value={structuredPersona}
         onChange={(next) => {
@@ -5449,7 +5256,8 @@ export default function PlatformPage() {
             size={26}
           />
         }
-      />
+      />}
+      <details className="text-sm text-slate-300"><summary className="cursor-pointer py-2">需要帮助整理需求？</summary>
       <PlatformPersonaPolishPanel
         id="platform-persona-polish"
         value={focusPrompt}
@@ -5461,36 +5269,8 @@ export default function PlatformPage() {
         goal={topicGoal}
         onGoalChange={setTopicGoal}
       />
-      <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.03)] px-4 py-3.5 md:px-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-semibold text-white">
-              Skill · 已启用 {enabledPlatformSkillIds.size}
-              {platformSkillRecommend.labels.length
-                ? ` · 推荐 ${platformSkillRecommend.labels.length}`
-                : ""}
-            </div>
-            <p className="mt-1 text-[12px] leading-snug text-gray-300">
-              核心已默认开启。推荐原因：匹配你的人物背景
-              {platformSkillRecommend.lane !== "default" ? `（赛道 ${platformSkillRecommend.lane}）` : ""}
-              。建议加开：
-              <span className="text-[#a7f3d0]">
-                {platformSkillRecommend.labels.length
-                  ? platformSkillRecommend.labels.join(" · ")
-                  : "暂无额外赛道（保持核心即可）"}
-              </span>
-            </p>
-            <p className="mt-1 text-[11px] text-[#c9c0e6]/50">选题初选约 1–2 分钟；挑完再扩写，点数见主按钮。</p>
-          </div>
-          <button
-            type="button"
-            onClick={applyPlatformSkillRecommend}
-            className="shrink-0 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-[11px] font-semibold text-[#c9c0e6] hover:bg-white/10"
-          >
-            采纳推荐（次级）
-          </button>
-        </div>
-      </div>
+      </details>
+      <div className="creation-method-summary" aria-label="自动应用的创作检查"><span>人群与场景匹配</span><span>标题承诺有正文对应</span><span>一个主承接动作</span><span>来源与非空校验</span></div>
 
       {renderTopicShortlistSection("platform-topic-shortlist")}
     </div>
@@ -9292,6 +9072,7 @@ export default function PlatformPage() {
     const progressJobId = newPlatformCompositeProgressJobId();
     const shootBrief = lastShootingTechniqueBriefRef.current.trim() || undefined;
     const res = await generatePlatformCompositeSheetMutation.mutateAsync({
+      viralCreation: card.viralCreation,
       sceneId: card.id,
       title: card.title,
       scriptContext: buildPlatformSheetScriptContext(card, { shootingTechniqueBrief: shootBrief }),
@@ -9565,6 +9346,7 @@ export default function PlatformPage() {
             `composite:${item.id}:${compositeKind}`,
             () =>
               generatePlatformCompositeSheetMutation.mutateAsync({
+                viralCreation: item.viralCreation,
                 sceneId: item.id,
                 title: headlineTitle,
                 scriptContext: buildPlatformSheetScriptContext(item as any, {
@@ -11442,6 +11224,7 @@ export default function PlatformPage() {
                 }
                 void runThrottledPlatformImageRequest(`shortlist-composite:${item.id}:${compositeKind}`, () =>
                   generatePlatformCompositeSheetMutation.mutateAsync({
+                    viralCreation: item.viralCreation,
                     sceneId: item.id,
                     title: item.title,
                     scriptContext: buildPlatformSheetScriptContext(item as any, {
@@ -11593,6 +11376,7 @@ export default function PlatformPage() {
                     </div>
                   </div>
                 ) : null}
+                {item.viralCreation && <ViralCreationPackageView value={item.xhsPackage} platform={item.targetPlatform} />}
                 {item.detailedScript ? (
                   <details className="mt-3 text-xs text-gray-400">
                     <summary className="cursor-pointer select-none text-[13px] font-semibold text-[#ff9900]">
@@ -11824,11 +11608,12 @@ export default function PlatformPage() {
 
   /** 全案分析主路径：确认后出 20–30 条选题初选（trendStore 小红书主 + B站/抖音辅），不直接烧六条文案 */
   const resolveFullcaseShortlistCount = useCallback(() => {
+    if (xhsMode) return xhsTopicCount(topicShortlistCount);
     const n = clampTopicShortlistCount(topicShortlistCount);
     return n >= PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT
       ? n
       : PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT;
-  }, [topicShortlistCount]);
+  }, [topicShortlistCount, xhsMode]);
 
   /**
    * 全案确认后并行补齐：平台优先级看板 + 商业化路径（不覆盖选题扩写文案）。
@@ -11985,8 +11770,9 @@ export default function PlatformPage() {
         ...topicShortlist.map((t) => t.title),
       ].filter(Boolean);
       const res = await generateTopicShortlistMutation.mutateAsync({
+        creationPlatforms: xhsMode ? viralPlatforms : undefined,
         context: focusPrompt.trim() || undefined,
-        enabledSkillIds: Array.from(enabledPlatformSkillIds),
+        enabledSkillIds: xhsMode ? [XHS_CONTENT_SKILL_ID] : Array.from(enabledPlatformSkillIds),
         allowBloggerTitle,
         existingTitles,
         count: n,
@@ -12545,7 +12331,7 @@ export default function PlatformPage() {
     // 太笼统就先拦下来：出来的选题必然泛，等于白烧一轮的钱。
     // 但只在他还有免费优化额度时硬拦——额度用完还拦等于收保护费。
     const specificity = assessPlatformPersonaSpecificity(focusPrompt);
-    if (!specificity.ok) {
+    if (!specificity.ok && !xhsMode) {
       const canPolishFree = personaPolishQuota?.nextFree !== false;
       if (canPolishFree) {
         setPersonaFieldErrors({ freeform: specificity.reason });
@@ -12557,7 +12343,7 @@ export default function PlatformPage() {
       }
       toast.warning(specificity.reason);
     }
-    const count = clampTopicShortlistCount(topicShortlistCount);
+    const count = xhsMode ? xhsTopicCount(topicShortlistCount) : clampTopicShortlistCount(topicShortlistCount);
     setShortlistLastError(null);
     pushShortlistDebug(`面板初选：请求 ${count} 条`);
     trackPlatformFunnel("topic_shortlist_start", { count });
@@ -12568,12 +12354,13 @@ export default function PlatformPage() {
       ].filter(Boolean);
       const t0 = Date.now();
       const res = await generateTopicShortlistMutation.mutateAsync({
+        creationPlatforms: xhsMode ? viralPlatforms : undefined,
         context: focusPrompt.trim() || undefined,
-        enabledSkillIds: Array.from(enabledPlatformSkillIds),
+        enabledSkillIds: xhsMode ? [XHS_CONTENT_SKILL_ID] : Array.from(enabledPlatformSkillIds),
         allowBloggerTitle,
         existingTitles,
         count,
-        windowDays: selectedWindowDays,
+        windowDays: xhsMode ? 30 : selectedWindowDays,
         ...(freeTrial ? { freeTrial: true } : {}),
         ...(topicGoal ? { topicGoal } : {}),
         ...buildShortlistBlueOceanInput(decisionIntelBlueOceanLexicon),
@@ -12634,6 +12421,8 @@ export default function PlatformPage() {
     personaPolishQuota,
     refetchShortlistQuota,
     topicShortlistCount,
+    xhsMode,
+    viralPlatforms,
     platformContent,
     topicShortlist,
     generateTopicShortlistMutation,
@@ -12979,7 +12768,7 @@ export default function PlatformPage() {
   })();
 
   return (
-    <div className="min-h-screen bg-transparent text-[#f7f2ff]">
+    <div className={`min-h-screen text-[#f7f2ff] ${platformMode === "create" ? "platform-create-surface" : "bg-transparent"}`}>
       <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}@keyframes mvspPlatformOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-10px) scale(1.07)}}@keyframes coverGenWaitCarouselProgress{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselProg{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselGlow{0%,100%{opacity:0.4}50%{opacity:0.92}}`}</style>
 
       <Dialog open={Boolean(manhuaReportTarget)} onOpenChange={(open) => { if (!open) setManhuaReportTarget(null); }}>
@@ -15466,7 +15255,7 @@ export default function PlatformPage() {
                 stepRail={
                   <PlatformCreateStepRail
                     activeStep={createStep}
-                    onStepChange={setCreateStep}
+                    onStepChange={step => { setCreationTool("viral"); setCustomWorkspaceTab("topic"); setCreateStep(step); requestAnimationFrame(() => scrollToPlatformSection(step === "persona" ? "platform-persona-focus" : step === "topics" ? "platform-topic-shortlist" : "platform-creation-results")); }}
                     doneSteps={createDoneSteps}
                   />
                 }
@@ -15474,173 +15263,41 @@ export default function PlatformPage() {
                   <PlatformCreateStepRail
                     orientation="horizontal"
                     activeStep={createStep}
-                    onStepChange={setCreateStep}
+                    onStepChange={step => { setCreationTool("viral"); setCustomWorkspaceTab("topic"); setCreateStep(step); requestAnimationFrame(() => scrollToPlatformSection(step === "persona" ? "platform-persona-focus" : step === "topics" ? "platform-topic-shortlist" : "platform-creation-results")); }}
                     doneSteps={createDoneSteps}
                   />
                 }
                 stickyCta={stickyCtaNode}
               >
-                <div className="mb-3 flex flex-wrap gap-2 lg:hidden">
-                  <button
-                    type="button"
-                    onClick={() => setSkillDrawerOpen(true)}
-                    className="rounded-lg border border-white/12 bg-white/5 px-3 py-1.5 text-[12px] font-semibold text-[#c9c0e6]"
-                  >
-                    Skill / 模板
-                  </button>
+                <div className="creation-workspace-heading"><div><p className="creation-eyebrow">MV STUDIO · 创作台</p><h1>把想法，写成值得读的内容。</h1><p>从你的经验出发，完成选题、正文与视觉方案。</p></div></div>
+                <div className="creation-tool-tabs" role="tablist" aria-label="创作工具">
+                  <button type="button" role="tab" aria-selected={creationTool === "viral"} disabled={customWorkspaceOperating} onClick={() => { setCreationTool("viral"); setCustomWorkspaceTab("topic"); }}>爆款创作<span>选题 · 图文 · 视频文案</span></button>
+                  <button type="button" role="tab" aria-selected={creationTool === "knowledge"} disabled={customWorkspaceOperating} onClick={() => { setCreationTool("knowledge"); setCustomWorkspaceTab("copy"); setCustomNoteKind("single_page_knowledge_card"); setOutputType("single_page"); }}>图文知识卡片<span>上传资料 · 提炼 · 生成卡片</span></button>
                 </div>
-                <div className="mb-1 flex flex-wrap items-center gap-2">
-                  <PenLine className="h-5 w-5 text-[#ff4fb8]" />
-                  <h2 className="text-lg font-black tracking-tight text-white md:text-xl">内容创作</h2>
-                  <span className="rounded-full border border-[#ff4fb8]/35 bg-[rgba(255,79,184,0.1)] px-2 py-0.5 text-[10px] font-bold text-[#ff9fe0]">
-                    生成选题与文案
-                  </span>
-                </div>
-                <p className="mb-4 text-xs text-[#c9c0e6]/55">
-                  人物背景 → Skill → 选题初选 → 文案/分镜 → 输出形式。
-                </p>
-
-          {/* 内容创作 Tab：文案 / 选题 / 文生图与海报 */}
-          <div className="mb-5 inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-1">
-              <button
-                type="button"
-                onClick={() => setCustomWorkspaceTab("copy")}
-                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-semibold transition disabled:opacity-50 ${
-                  customWorkspaceTab === "copy"
-                    ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
-                    : "text-[#c9c0e6]/70 hover:text-white"
-                }`}
-              >
-                <PenLine className="h-3.5 w-3.5 shrink-0" />
-                自定义文案
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (customWorkspaceTab !== "copy") setCustomWorkspaceTab("copy");
-                  void handleExportCustomCopyPdf();
-                }}
-                disabled={
-                  customNoteBusy ||
-                  customTopicBusy ||
-                  customMattingBusy ||
-                  isDownloadingCustomCopyPdf ||
-                  !canExportCustomCopyPdf
-                }
-                title={
-                  canExportCustomCopyPdf
-                    ? "导出当前自定义文案、优化结果与生成图片为 PDF"
-                    : "请先输入文案或完成生成"
-                }
-                className="inline-flex items-center gap-1.5 rounded-lg border border-[#ff4fb8]/35 bg-[rgba(255,79,184,0.08)] px-2.5 py-2 text-[11px] font-semibold text-[#ff9fe0] transition hover:bg-[rgba(255,79,184,0.16)] disabled:cursor-not-allowed disabled:opacity-45"
-              >
-                {isDownloadingCustomCopyPdf ? (
-                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                ) : (
-                  <FileText className="h-3.5 w-3.5 shrink-0" />
-                )}
-                导出 PDF
-              </button>
-              <button
-                type="button"
-                onClick={() => setCustomWorkspaceTab("topic")}
-                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-semibold transition disabled:opacity-50 ${
-                  customWorkspaceTab === "topic"
-                    ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
-                    : "text-[#c9c0e6]/70 hover:text-white"
-                }`}
-              >
-                <UserRound className="h-3.5 w-3.5 shrink-0" />
-                自定义选题
-              </button>
-              <button
-                type="button"
-                onClick={() => setCustomWorkspaceTab("imageGen")}
-                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-semibold transition disabled:opacity-50 ${
-                  customWorkspaceTab === "imageGen"
-                    ? "bg-[linear-gradient(135deg,#34d399,#0ea5e9)] text-white shadow-sm"
-                    : "text-[#c9c0e6]/70 hover:text-white"
-                }`}
-              >
-                <Image className="h-3.5 w-3.5 shrink-0" />
-                文生图与海报
-              </button>
-          </div>
-
-
-          {customWorkspaceTab === "copy" || customWorkspaceTab === "topic" ? (
+          {creationTool === "viral" ? (
             <div className="mb-5 space-y-4">
               {platformMainPersonaTopicsPanel}
-              {renderExpandedShortlistGenZone("platform-topic-shortlist")}
-              {platformSkillsAccessoryPanel}
+              <div id="platform-creation-results">{renderExpandedShortlistGenZone("platform-topic-shortlist")}</div>
             </div>
           ) : null}
 
-          {customWorkspaceTab === "copy" ? (
+          {creationTool === "knowledge" ? (
             <>
               <div className="mb-5 grid gap-2 sm:grid-cols-2">
                 <PlatformWorkspaceStepHint
                   step={1}
                   title="粘贴文案"
-                  lines={["贴入 Markdown 或分镜脚本，并选择生成类型。", "可选「优化自定义文案」先深度改写再出图。"]}
+                  lines={["粘贴正文，或上传文档与图片。", "检查提炼内容、分页和费用，再生成卡片。"]}
                   active={!customNoteText.trim()}
                   done={Boolean(customNoteText.trim())}
                 />
                 <PlatformWorkspaceStepHint
                   step={2}
                   title="生成结果"
-                  lines={["点击生成按钮，等待任务完成。", "图片或优化稿直接显示在本 Tab 下方。"]}
+                  lines={["点击生成按钮，等待任务完成。", "卡片在下方显示，可预览和下载。"]}
                   active={Boolean(customNoteText.trim()) && !customNoteImages.length && !customNoteImageUpper && !customOptimizeResult}
                   done={Boolean(customNoteImages.length || customNoteImageUpper || customNoteImageLower || customOptimizeResult)}
                 />
-              </div>
-
-              <div className="mb-4">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">生成类型</div>
-                <div className="inline-flex flex-wrap rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
-                  <button
-                    type="button"
-                    onClick={() => { setCustomNoteKind("single_page_knowledge_card"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteImages([]); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); }}
-                    disabled={customNoteBusy}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                      customNoteKind === "single_page_knowledge_card"
-                        ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
-                        : "text-[#c9c0e6]/70 hover:text-white"
-                    }`}
-                  >
-                    <Image className="h-3.5 w-3.5 shrink-0" />
-                    图文精华浓缩知识卡片
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setCustomNoteKind("storyboard_sheet_landscape"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteImages([]); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); }}
-                    disabled={customNoteBusy}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                      customNoteKind === "storyboard_sheet_landscape"
-                        ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
-                        : "text-[#c9c0e6]/70 hover:text-white"
-                    }`}
-                  >
-                    <Film className="h-3.5 w-3.5 shrink-0" />
-                    2×4 编导分镜图
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setCustomNoteKind("optimize_custom_copy"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteImages([]); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); }}
-                    disabled={customNoteBusy}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                      customNoteKind === "optimize_custom_copy"
-                        ? "bg-[linear-gradient(135deg,#fbbf24,#f97316)] text-white shadow-sm"
-                        : "text-[#c9c0e6]/70 hover:text-white"
-                    }`}
-                  >
-                    <FileText className="h-3.5 w-3.5 shrink-0" />
-                    优化自定义文案
-                  </button>
-                </div>
               </div>
 
               <RemixProductionImport userId={user?.id} format="note" disabled={recoveryBlocked} onApply={(draft, index) => {
@@ -15657,17 +15314,7 @@ export default function PlatformPage() {
               }} />
 
               <div className="mb-3 space-y-3">
-                <PlatformOutputTypePicker
-                  value={outputType}
-                  onChange={(v) => {
-                    setOutputType(v);
-                    trackPlatformFunnel("output_type_pick", { outputType: v });
-                    setCreateStep("output");
-                    if (v === "single_page") setCustomNoteKind("single_page_knowledge_card");
-                    else if (v === "storyboard_2x4") setCustomNoteKind("storyboard_sheet_landscape");
-                    else setCustomNoteKind("optimize_custom_copy");
-                  }}
-                />
+
                 {outputType ? (
                   <PlatformAdvancedSettingsFold
                     title="高级设置"
@@ -16226,351 +15873,6 @@ export default function PlatformPage() {
                 </div>
               )}
             </>
-          ) : customWorkspaceTab === "topic" ? (
-            <>
-              <div className="mb-5 grid gap-2 sm:grid-cols-3">
-                <PlatformWorkspaceStepHint
-                  step={1}
-                  title="填写设定"
-                  lines={["写主人公特质与专长，可选填选题标题。", "勾选需要生成的文案、封面或分镜。"]}
-                  active={!customTopicProtagonist.trim()}
-                  done={Boolean(customTopicProtagonist.trim())}
-                />
-                <PlatformWorkspaceStepHint
-                  step={2}
-                  title="上传人像"
-                  lines={["上传参考人像，封面与分镜会融合相貌。", "生成封面/分镜时必填；仅文案可跳过。"]}
-                  active={Boolean(customTopicProtagonist.trim()) && !customTopicPhotoUrl && (customTopicGenCover || customTopicGenStoryboard)}
-                  done={Boolean(customTopicPhotoUrl) || (!customTopicGenCover && !customTopicGenStoryboard && Boolean(customTopicProtagonist.trim()))}
-                />
-                <PlatformWorkspaceStepHint
-                  step={3}
-                  title="一键生成"
-                  lines={["文案扩写首次免费，图片积分见按钮。", "结果在本 Tab 预览，可下载或设为参考。"]}
-                  active={Boolean(customTopicProtagonist.trim()) && !(customTopicCard || customTopicCoverUrl || customTopicStoryboardUrl)}
-                  done={Boolean(customTopicCard || customTopicCoverUrl || customTopicStoryboardUrl)}
-                />
-              </div>
-
-              <div className="mb-5 rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.03)] px-4 py-3">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2.5">
-                  生成内容（可多选）
-                </div>
-                <div className="flex flex-wrap gap-x-5 gap-y-2">
-                  {(
-                    [
-                      ["copy", "文案生成", customTopicGenCopy, setCustomTopicGenCopy],
-                      ["cover", "封面生成", customTopicGenCover, setCustomTopicGenCover],
-                      ["storyboard", "分镜生成", customTopicGenStoryboard, setCustomTopicGenStoryboard],
-                    ] as const
-                  ).map(([key, label, checked, setter]) => (
-                    <label
-                      key={key}
-                      className={`inline-flex items-center gap-2 text-sm cursor-pointer select-none ${
-                        customTopicBusy ? "opacity-50 cursor-not-allowed" : "text-white/90"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={customTopicBusy}
-                        onChange={(e) => setter(e.target.checked)}
-                        className="h-4 w-4 rounded border-white/20 bg-black/40 text-[#49e6ff] focus:ring-[#49e6ff]/40"
-                      />
-                      {label}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
-                {/* 左侧表单 */}
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
-                      选题标题（可选）
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={80}
-                      placeholder="例：职场妈妈的时间管理心法"
-                      value={customTopicTitle}
-                      onChange={(e) => setCustomTopicTitle(e.target.value)}
-                      disabled={customTopicBusy}
-                      className="w-full rounded-xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-2.5 text-sm text-white placeholder-[#6d6384] focus:border-[#49e6ff]/50 focus:outline-none focus:ring-1 focus:ring-[#49e6ff]/30 transition"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
-                      主人公特质与专长 {customTopicGenCopy ? <span className="text-[#ff9fe0]">*</span> : null}
-                    </label>
-                    <textarea
-                      className="w-full min-h-[120px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#49e6ff]/50 focus:outline-none focus:ring-1 focus:ring-[#49e6ff]/30 transition"
-                      placeholder="描述主人公的身份、性格、专业领域、表达风格、目标受众…（建议 50–400 字）&#10;例：35 岁儿科医生，温和专业，擅长用生活化比喻讲育儿知识，面向 0–3 岁新手爸妈。"
-                      value={customTopicProtagonist}
-                      onChange={(e) => setCustomTopicProtagonist(e.target.value)}
-                      disabled={customTopicBusy}
-                    />
-                  </div>
-
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">分镜网格</div>
-                    <div className="inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
-                      <button
-                        type="button"
-                        onClick={() => setCustomTopicGridVariant("2x4")}
-                        disabled={customTopicBusy}
-                        className={`rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                          customTopicGridVariant === "2x4"
-                            ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white"
-                            : "text-[#c9c0e6]/70 hover:text-white"
-                        }`}
-                      >
-                        2×4 八格
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setCustomTopicGridVariant("3x4")}
-                        disabled={customTopicBusy}
-                        className={`rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                          customTopicGridVariant === "3x4"
-                            ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white"
-                            : "text-[#c9c0e6]/70 hover:text-white"
-                        }`}
-                      >
-                        3×4 十二格
-                      </button>
-                    </div>
-                    <p className="mt-1.5 text-[11px] text-[#c9c0e6]/50">
-                      3×4 为分段拼接长图，文字更清晰，积分略高。
-                    </p>
-                  </div>
-                </div>
-
-                {/* 右侧人像上传 */}
-                <div className="flex flex-col">
-                  <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
-                    主人公图像 {(customTopicGenCover || customTopicGenStoryboard) ? <span className="text-[#ff9fe0]">*</span> : null}
-                  </label>
-                  <div
-                    className={`relative flex-1 min-h-[220px] rounded-2xl border-2 border-dashed transition overflow-hidden ${
-                      customTopicPhotoPreview
-                        ? "border-[#49e6ff]/40 bg-[rgba(73,230,255,0.04)]"
-                        : "border-white/15 bg-[rgba(255,255,255,0.02)] hover:border-[#49e6ff]/30"
-                    }`}
-                  >
-                    {customTopicPhotoPreview ? (
-                      <>
-                        <img
-                          src={customTopicPhotoPreview}
-                          alt="主人公参考图"
-                          className="absolute inset-0 w-full h-full object-cover"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-                        <div className="absolute bottom-0 left-0 right-0 p-3 flex items-center justify-between gap-2">
-                          <span className="text-[11px] text-white/80">已上传 · 封面与分镜将融合此相貌</span>
-                          {!customTopicBusy && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setCustomTopicPhotoUrl(null);
-                                setCustomTopicPhotoPreview(null);
-                              }}
-                              className="text-[11px] text-red-300 hover:text-red-200 transition"
-                            >
-                              移除
-                            </button>
-                          )}
-                        </div>
-                      </>
-                    ) : (
-                      <label
-                        className={`flex flex-col items-center justify-center h-full min-h-[220px] cursor-pointer px-4 text-center ${
-                          customTopicPhotoUploading ? "cursor-wait opacity-70" : ""
-                        }`}
-                      >
-                        {customTopicPhotoUploading ? (
-                          <Loader2 className="h-8 w-8 animate-spin text-[#49e6ff] mb-2" />
-                        ) : (
-                          <UserRound className="h-10 w-10 text-[#49e6ff]/60 mb-2" />
-                        )}
-                        <span className="text-sm font-medium text-white/90">
-                          {customTopicPhotoUploading ? "上传中…" : "点击上传人像"}
-                        </span>
-                        <span className="mt-1 text-[11px] text-[#c9c0e6]/50">JPG / PNG · ≤ 25MB · 长边自动压缩至 1280px</span>
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          className="hidden"
-                          disabled={customTopicPhotoUploading || customTopicBusy}
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) void handleUploadCustomTopicPhoto(f);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                    )}
-                    {customTopicPhotoPreview && !customTopicBusy && (
-                      <label className="absolute top-2 right-2 cursor-pointer rounded-full border border-white/20 bg-black/50 px-2.5 py-1 text-[10px] text-white/80 hover:bg-black/70 transition">
-                        更换
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          className="hidden"
-                          disabled={customTopicPhotoUploading}
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) void handleUploadCustomTopicPhoto(f);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-5 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => void handleGenerateCustomTopic()}
-                  disabled={customTopicBusy || !customTopicCanSubmit}
-                  className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(73,230,255,0.2)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {customTopicBusy ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      {customTopicPhase === "copy"
-                        ? "扩写文案中…"
-                        : customTopicGenCover && customTopicGenStoryboard
-                          ? "生成封面与分镜…"
-                          : customTopicGenCover
-                            ? "生成封面…"
-                            : "生成编导分镜…"}
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-4 w-4" />
-                      {customTopicActionLabel}
-                    </>
-                  )}
-                </button>
-                {(customTopicCard || customTopicCoverUrl || customTopicStoryboardUrl || customTopicError) && !customTopicBusy && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCustomTopicTitle("");
-                      setCustomTopicProtagonist("");
-                      setCustomTopicPhotoUrl(null);
-                      setCustomTopicPhotoPreview(null);
-                      setCustomTopicCard(null);
-                      setCustomTopicCoverUrl(null);
-                      setCustomTopicStoryboardUrl(null);
-                      setCustomTopicError(null);
-                    }}
-                    className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
-                  >
-                    清除
-                  </button>
-                )}
-              </div>
-
-              {customTopicBusy && (
-                <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#49e6ff]/15 bg-[rgba(73,230,255,0.05)] px-4 py-3 text-sm text-[#8cefff]/80">
-                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#49e6ff]" />
-                  {customTopicPhase === "copy"
-                    ? "正在 AI 扩写选题文案…"
-                    : customTopicGenCover && customTopicGenStoryboard
-                      ? `正在先生成竖版封面，再以封面人脸生成 ${customTopicGridVariant === "3x4" ? "3×4" : "2×4"} 分镜，约需 8–12 分钟，请勿关闭页面…`
-                      : customTopicGenCover
-                        ? "正在生成竖版封面，约需 3–5 分钟，请勿关闭页面…"
-                        : `正在生成 ${customTopicGridVariant === "3x4" ? "3×4" : "2×4"} 分镜（融合主人公参考图），约需 5–8 分钟，请勿关闭页面…`}
-                </div>
-              )}
-
-              {customTopicError && (
-                <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-                  ❌ {sanitizePlatformUserMessage(customTopicError, "生成失败，请稍后重试")}
-                </div>
-              )}
-
-              {customTopicCard && (
-                <div className="mt-6 rounded-2xl border border-[#f472b6]/25 bg-[rgba(244,114,182,0.06)] p-5 space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">扩写文案</div>
-                  <h3 className="text-base font-bold text-white leading-snug">{customTopicCard.title}</h3>
-                  {customTopicCard.hook && (
-                    <p className="text-sm text-[#fde047]/90 leading-relaxed">
-                      <span className="text-[#c9c0e6]/50 text-xs mr-1">钩子</span>
-                      {customTopicCard.hook}
-                    </p>
-                  )}
-                  {customTopicCard.copywriting && (
-                    <div className="text-sm text-[#c9c0e6]/90 leading-relaxed whitespace-pre-wrap max-h-[240px] overflow-y-auto rounded-xl border border-white/5 bg-black/20 px-4 py-3">
-                      {customTopicCard.copywriting}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {(customTopicCoverUrl || customTopicStoryboardUrl) && (
-                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {customTopicCoverUrl && (
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[#8cefff]/70">竖版封面 · 主人公融合</div>
-                      <img
-                        src={customTopicCoverUrl}
-                        alt="自定义选题封面"
-                        className="w-full max-w-[280px] mx-auto rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
-                      />
-                      <div className="flex justify-center">
-                        <a
-                          href={gcsTransferUrl(customTopicCoverUrl)}
-                          download="custom-topic-cover.png"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
-                        >
-                          <Download className="h-4 w-4" />
-                          下载封面
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                  {customTopicStoryboardUrl && (
-                    <div className="space-y-3 md:col-span-1">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[#8cefff]/70">
-                        {customTopicGridVariant === "3x4" ? "3×4 十二格分镜" : "2×4 八格分镜"}
-                      </div>
-                      <img
-                        src={customTopicStoryboardUrl}
-                        alt="自定义选题分镜"
-                        className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
-                      />
-                      <div className="flex justify-end">
-                        <a
-                          href={gcsTransferUrl(customTopicStoryboardUrl)}
-                          download={`custom-topic-storyboard-${customTopicGridVariant}.png`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
-                        >
-                          <Download className="h-4 w-4" />
-                          下载分镜
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          ) : customWorkspaceTab === "imageGen" ? (
-            <div className="mb-4">
-              <PlatformImageGenPanel
-                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-              />
-            </div>
           ) : null}
 
               </PlatformCreateWorkbench>
@@ -16849,7 +16151,7 @@ export default function PlatformPage() {
           </div>
         </section>
 
-        <div className="lg:hidden">
+        <div className={platformMode === "create" ? "hidden" : "lg:hidden"}>
           <PlatformStickyCtaRail
             variant="bar"
             title={platformMode === "trend" ? "趋势分析" : platformMode === "tools" ? "工具操作" : "内容创作"}
@@ -16874,11 +16176,11 @@ export default function PlatformPage() {
         ) : null}
         <div
           className={
-            platformMode === "tools" || customWorkspaceOperating
+            platformMode !== "trend" || customWorkspaceOperating
               ? "hidden"
               : undefined
           }
-          aria-hidden={platformMode === "tools" || customWorkspaceOperating}
+          aria-hidden={platformMode !== "trend" || customWorkspaceOperating}
         >
         <section className={shellCardClasses("overflow-hidden p-5 md:p-6")}>
           <div className="absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(73,230,255,0.55),transparent)]" />
@@ -19272,6 +18574,7 @@ export default function PlatformPage() {
                             };
                                 void runThrottledPlatformImageRequest(`composite:${item.id}:${compositeKind}`, () =>
                                   generatePlatformCompositeSheetMutation.mutateAsync({
+                                    viralCreation: item.viralCreation,
                                     sceneId: item.id,
                                     title: headlineTitle,
                                     scriptContext: buildPlatformSheetScriptContext(item as any, {

@@ -105,6 +105,7 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   "cover-stop-scroll",
   "vivid-anti-boring",
   // graphic
+  "xhs-content-growth",
   "graphic-note-rhythm",
   "xhs-collectible-note",
   "blue-ocean-natural",

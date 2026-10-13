@@ -77,6 +77,7 @@ export type ImagePromptStats = {
 };
 
 export type RunPlatformTopicImagePipelineInput = {
+  viralCreation?: boolean;
   topicHook: string;
   format?: "短视频" | "图文";
   context?: string;
@@ -177,10 +178,10 @@ export async function runPlatformTopicImagePipeline(
   const trendBrief = String(input.trendEngagementVisualBrief || "").trim();
   const userContext = String(input.context || "").trim();
   const ctxStr = [trendBrief, userContext].filter(Boolean).join("\n\n");
-  const { appendFashionEditorialCharacterGuidance } = await import(
+  const { appendFashionEditorialCharacterGuidance, PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH } = await import(
     "../../shared/platformFashionEditorialCharacter.js",
   );
-  const coverPersona = appendFashionEditorialCharacterGuidance(
+  const coverPersona = input.viralCreation ? String(input.coverPersonaContext || "").replace(PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH, "").trim() : appendFashionEditorialCharacterGuidance(
     String(input.coverPersonaContext || "").trim(),
     { maxChars: 3800, lang: "zh" },
   );
@@ -216,7 +217,7 @@ export async function runPlatformTopicImagePipeline(
     const coverCaptureError: { message?: string; moderationBlocked?: boolean } = {};
 
     let strategistChinesePrompt: string | null = null;
-    if (isPlatformCoverAgenticBrainEnabled()) {
+    if (!input.viralCreation && isPlatformCoverAgenticBrainEnabled()) {
       topicImageCondenseLog.push(
         `${platformFlowLogTimestamp()}  [步骤0·企划大脑] 开启（默认）→ 先出中文视觉企划，失败则降级原链路`,
       );
@@ -245,8 +246,8 @@ export async function runPlatformTopicImagePipeline(
       }
     }
 
-    const drFromAdminRequest = Boolean(input.enableTopicCoverDeepResearchPro);
-    const drFromEnv = isTopicCoverDeepResearchProEnabled();
+    const drFromAdminRequest = !input.viralCreation && Boolean(input.enableTopicCoverDeepResearchPro);
+    const drFromEnv = !input.viralCreation && isTopicCoverDeepResearchProEnabled();
     const runCoverDrPro = drFromAdminRequest || drFromEnv;
     if (runCoverDrPro) {
       topicImageCondenseLog.push(
@@ -354,6 +355,7 @@ export async function runPlatformTopicImagePipeline(
           );
         }
         imageUrl = await generatePlatformTopicCoverNanoBanana2FromEnglishPrompt({
+          viralCreation: input.viralCreation,
           englishPrompt: safePrompt,
           flowLog: topicImageCondenseLog,
           coverPixelEngine: coverPixelEngineOverride,

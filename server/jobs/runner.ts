@@ -3195,6 +3195,7 @@ async function processPlatformJob(
       let snapshotPlatformsKey = "";
       let coverSublineOut: string | undefined;
       let coverNativePlatformOut: string | undefined;
+      let viralCreation = false;
       let coverHeadlineFromVariantOut: boolean | undefined;
       try {
         const resolved = await assertOptimizedCoverInputsFromDb({
@@ -3205,6 +3206,7 @@ async function processPlatformJob(
               ? String((params as { coverPlatformHint?: string }).coverPlatformHint)
               : undefined,
         });
+        viralCreation = resolved.viralCreation === true;
         topicHook = resolved.topicHook;
         contextRaw = resolved.context;
         appealHookOut = resolved.appealHook;
@@ -3260,6 +3262,7 @@ async function processPlatformJob(
       const referencePhotoUrl =
         typeof rawRefPhoto === "string" && rawRefPhoto.trim() ? rawRefPhoto.trim() : undefined;
       const result = await runPlatformTopicImagePipeline({
+        viralCreation,
         topicHook,
         format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
         context: enrichedContext,
@@ -3329,6 +3332,7 @@ async function processPlatformJob(
       let snapshotPlatformsKey = "";
       let coverSublineOut: string | undefined;
       let coverNativePlatformOut: string | undefined;
+      let viralCreation = false;
       let coverHeadlineFromVariantOut: boolean | undefined;
       try {
         const resolved = await assertOptimizedCoverInputsFromDb({
@@ -3339,6 +3343,7 @@ async function processPlatformJob(
               ? String((params as { coverPlatformHint?: string }).coverPlatformHint)
               : undefined,
         });
+        viralCreation = resolved.viralCreation === true;
         topicHook = resolved.topicHook;
         contextRaw = resolved.context;
         appealHookOut = resolved.appealHook;
@@ -3446,6 +3451,7 @@ async function processPlatformJob(
 
       try {
         coverResult = await runPlatformTopicImagePipeline({
+          viralCreation,
           topicHook,
           format: fmt === "图文" || fmt === "短视频" ? fmt : undefined,
           context: enrichedContext,
@@ -3477,6 +3483,7 @@ async function processPlatformJob(
       if (storyboardReferenceUrl) {
         try {
           sheetUrl = await (compositeIs3x4 ? generatePlatformGridStitchedSheetImage : generatePlatformCompositeSheetImage)({
+            viralCreation,
             kind: compositeKind,
             title: compositeTitle,
             scriptContext: compositeScriptContext,
