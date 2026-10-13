@@ -10,6 +10,11 @@ type Props = {
   pages?: PlatformGraphicNotePage[];
   cells?: PlatformStoryboardCell[];
   coverUrl?: string;
+  referencePhotoUrl?: string;
+  referenceIsGlobal?: boolean;
+  referenceUploading?: boolean;
+  onReferenceUpload?: (file: File) => void;
+  onReferenceRemove?: () => void;
   coverCost: number;
   sheetCost: number;
   sheetLabel: string;
@@ -38,10 +43,17 @@ export function ViralProductionPanel(props: Props) {
       <div className="viral-cover-preview">
         {props.coverUrl ? <img src={props.coverUrl} alt="已生成的稿件封面"/> : <><span>封面文字预览 · 图片尚未生成</span><strong>{cover?.headline || "尚无封面方案"}</strong><p>{cover?.subline}</p></>}
       </div>
-      <div className="viral-cover-description"><span className="creation-eyebrow">封面生成</span><h4>先让读者看懂这一篇</h4>{cover ? <><p>{cover.visual}</p><p><b>排版：</b>{cover.layout}</p><p><b>系列连续性：</b>{cover.continuity}</p></> : <p>当前稿件缺少完整封面方案，请检查原稿。</p>}<button type="button" className="creation-primary" disabled={props.disabled || props.coverBusy} onClick={props.onCover}>{props.coverBusy ? "封面生成中…" : `${props.coverUrl ? "重新生成封面" : "生成封面"} · ${props.coverCost} 点`}</button></div>
+      <div className="viral-cover-description"><span className="creation-eyebrow">封面生成</span><h4>先让读者看懂这一篇</h4>{cover ? <><p>{cover.visual}</p><p><b>排版：</b>{cover.layout}</p><p><b>系列连续性：</b>{cover.continuity}</p></> : <p>当前稿件缺少完整封面方案，请检查原稿。</p>}{props.onReferenceUpload && <div className="viral-reference-photo">
+        <strong>参考人像（可选）</strong>
+        <p>上传你希望出现在封面中的人物照片，后续导演图也会使用该人物参考。不上传则按文案创作人物。</p>
+        {props.referencePhotoUrl && <div className="viral-reference-bound"><img src={props.referencePhotoUrl} alt="当前绑定的参考人像"/><span>{props.referenceIsGlobal ? "沿用全局参考人像" : "已绑定本稿参考人像"}</span></div>}
+        <label className="viral-reference-upload">{props.referenceUploading ? "人像上传中…" : props.referencePhotoUrl ? "更换本稿参考人像" : "上传参考人像"}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={props.disabled || props.referenceUploading || props.coverBusy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) props.onReferenceUpload?.(file); }}/></label>
+        {props.referencePhotoUrl && !props.referenceIsGlobal && props.onReferenceRemove && <button type="button" disabled={props.disabled || props.referenceUploading || props.coverBusy} onClick={props.onReferenceRemove}>移除本稿人像</button>}
+      </div>}
+      <button type="button" className="creation-primary" disabled={props.disabled || props.coverBusy || props.referenceUploading} onClick={props.onCover}>{props.coverBusy ? "封面生成中…" : `${props.coverUrl ? "重新生成封面" : "生成封面"} · ${props.coverCost} 点`}</button></div>
     </div>
     <div className="viral-content-production">
-      <div className="viral-content-heading"><div><span className="creation-eyebrow">{graphic ? "图文笔记" : "视频文案"}</span><h4>{graphic ? `图文分页 · ${pages.length} 页` : `视频导演表 · ${props.cells?.length ?? 0} 镜`}</h4></div><button type="button" className="creation-primary" disabled={props.disabled || props.sheetBusy} onClick={props.onSheet}>{props.sheetBusy ? "配图生成中…" : `${graphic ? "生成图文配图" : "生成导演分镜图"} · ${props.sheetCost} 点`}</button></div>
+      <div className="viral-content-heading"><div><span className="creation-eyebrow">{graphic ? "图文笔记" : "视频文案"}</span><h4>{graphic ? `图文分页 · ${pages.length} 页` : `视频导演表 · ${props.cells?.length ?? 0} 镜`}</h4></div><button type="button" className="creation-primary" disabled={props.disabled || props.sheetBusy || props.referenceUploading} onClick={props.onSheet}>{props.sheetBusy ? "配图生成中…" : `${graphic ? "生成图文配图" : "生成导演分镜图"} · ${props.sheetCost} 点`}</button></div>
       <div className="viral-page-tabs" role="group" aria-label="配图布局"><button type="button" aria-pressed={props.gridVariant === "2x4"} disabled={props.disabled || props.sheetBusy} onClick={() => props.onGridChange("2x4")}>4列 × 2行 · 8格</button><button type="button" aria-pressed={props.gridVariant === "3x4"} disabled={props.disabled || props.sheetBusy} onClick={() => props.onGridChange("3x4")}>4列 × 3行 · 12格</button></div>
       <p className="creation-secondary-note">{graphic ? "逐页检查标题和正文；下方分页切换不计费。" : "逐镜检查台词、场景、动作、景别、运镜与剪辑；可复制整张表。"} 图片输出沿用{props.sheetLabel}。</p>
       {graphic ? page ? <>
