@@ -1072,13 +1072,13 @@ export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
           ? 2
           : Math.max(1, seriesBuildCount) + talkBullets.length + (highlightOnly ? highlights.length : 0) + 1;
       const imageMotion = resolveHtmlPptImageMotion(p);
-      const hasImage = Boolean(imageMotion?.length && p.imageUrl);
+      const hasImage = !p.videoUrl && Boolean(imageMotion?.length && p.imageUrl);
       const imagePanel = p.videoUrl
-        ? `<aside class="slide-image" data-build="0"><video controls preload="metadata" style="width:100%;height:100%;object-fit:contain" src="${escapeHtml(p.videoUrl)}"></video></aside>`
+        ? `<aside class="slide-image" data-build="0"><video controls preload="metadata" style="display:block;width:100%;height:auto;aspect-ratio:16/9;max-height:62vh;object-fit:contain" src="${escapeHtml(p.videoUrl)}"></video></aside>`
         : hasImage
         ? `<aside class="slide-image anim" data-build="0" data-role="slide-image"><img src="${escapeHtml(p.imageUrl!)}" alt="" loading="lazy" decoding="async"/></aside>`
         : "";
-      const bodyClass = hasImage || p.videoUrl ? " slide-has-image" : "";
+      const bodyClass = p.videoUrl ? " slide-has-image img-pose-dock_right" : hasImage ? " slide-has-image" : "";
       const imgMotionAttr = hasImage
         ? ` data-img-motion="${escapeHtml(JSON.stringify(imageMotion))}"`
         : "";
@@ -1390,6 +1390,7 @@ ${slidesHtml}
     return m;
   }
   function clearImagePose(slide){
+    if(slide.querySelector('video')) return;
     for(var ci=0;ci<IMG_POSE_CLASSES.length;ci++) slide.classList.remove(IMG_POSE_CLASSES[ci]);
   }
   function syncImagePose(slide, upTo){

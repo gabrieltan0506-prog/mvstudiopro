@@ -101,5 +101,8 @@ it("HTML内嵌MP4可离线保留，视频操作不触发翻页，离页暂停", 
   expect(html).toContain(`src="${videoUrl}"`);
   expect(html).toContain("closest('#controls,video')");
   expect(html).toContain("v.pause()");
+  expect(html).toContain("slide-has-image img-pose-dock_right");
+  expect(html).toContain("aspect-ratio:16/9");
+  expect(html).toContain("if(slide.querySelector('video')) return;");
   expect(normalizeHtmlPptPages([{ ...pages[0], videoUrl: "javascript:alert(1)" }])[0].videoUrl).toBeUndefined();
 });
