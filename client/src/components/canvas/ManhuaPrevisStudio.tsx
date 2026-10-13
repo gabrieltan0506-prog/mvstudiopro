@@ -1,5 +1,5 @@
 import { previsAnimationReceipt } from "@shared/manhuaPrevisAnimation";
-import { applyAdvisorPrevisCandidate } from "@shared/manhuaAdvisorPrevisEdit";
+import { applyAdvisorPrevisCandidate, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
 import { ManhuaPrevisPlanImport } from "./ManhuaPrevisPlanImport";
 import { ManhuaPrevisCastRepair } from "./ManhuaPrevisCastRepair";
 import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
@@ -681,7 +681,7 @@ export function ManhuaPrevisStudioView({
     const assertSource = () => { assertTarget(); if (!action.sourceKey || action.sourceKey !== currentEffectsKey()) throw new Error("白模或审片状态已变化，请重新读取当前配置"); };
     assertTarget();
     if (action.tool !== "scene" || (action.clipId && action.clipId !== clipId)) throw new Error("请先打开目标片段的白模工作台");
-    if (action.operation === "inspect") return JSON.stringify({tool:"scene",sourceKey:currentEffectsKey(),clipId,spec:JSON.parse(JSON.stringify(latest.current.studio.spec, (key,value)=>["assetRef","riggedModel","scriptSource"].includes(key)?undefined:value)),pendingRequestId:latest.current.studio.pending?.requestId,candidates:latest.current.studio.history.map(row=>({requestId:row.requestId,jobId:row.jobId,selected:row.jobId===latest.current.studio.selectedJobId})),reviewedRequestId,frameReviewConfirmed,normalSpeedConfirmed});
+    if (action.operation === "inspect") return JSON.stringify({tool:"scene",sourceKey:currentEffectsKey(),clipId,spec:JSON.parse(advisorPrevisSpecJson(latest.current.studio.spec)),pendingRequestId:latest.current.studio.pending?.requestId,candidates:latest.current.studio.history.map(row=>({requestId:row.requestId,jobId:row.jobId,selected:row.jobId===latest.current.studio.selectedJobId})),reviewedRequestId,frameReviewConfirmed,normalSpeedConfirmed});
     assertSource();
     if (disabled || busy || lock.current || sceneControlLock.current) throw new Error("白模原操作尚未结束，请查询原任务");
     sceneControlLock.current = true;

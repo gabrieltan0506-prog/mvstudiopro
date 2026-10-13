@@ -1,0 +1,13 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/new-chat/work/remix-video-notes
+
+ ✓ client/src/lib/canvasAudioStudio.browser.test.ts (29 tests | 26 skipped) 3371ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 文字声线明确确认、原编号恢复、试听选择，并进入逐句生成 1043ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 首句确认的角色音色阻止同角色异声生成，改台词后仍能沿用 597ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 未知语气控制在报价确认前拒绝，阶段标签不冒充实际声线 765ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed | 26 skipped (29)
+   Start at  01:19:21
+   Duration  3.79s (transform 57ms, setup 0ms, collect 172ms, tests 3.37s, environment 0ms, prepare 53ms)
+

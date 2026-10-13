@@ -1,0 +1,27 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/new-chat/work/remix-video-notes
+
+ ✓ shared/canvasSpeakerVoiceLock.test.ts (4 tests) 5ms
+ ✓ server/services/canvasVoiceReference.test.ts (2 tests) 2ms
+ ✓ server/services/wavespeedVoice.test.ts (13 tests) 7ms
+stderr | server/services/manhuaDialogueTtsRoute.test.ts > synthesizeManhuaDialoguePreferred > falls back to openrouter when the plan is not configured
+[manhua-tts-route] token plan unavailable, falling back to openrouter: missing
+
+stderr | server/services/manhuaDialogueTtsRoute.test.ts > synthesizeManhuaDialoguePreferred > falls back to openrouter when every plan region explicitly rejects
+[manhua-tts-route] token plan unavailable, falling back to openrouter: token_plan_tts_explicit_rejection:beijing:http_400
+
+stderr | server/services/manhuaDialogueTtsRoute.test.ts > synthesizeManhuaDialoguePreferred > remembers engine-rejected voices and skips the plan handshake next time
+[manhua-tts-route] token plan unavailable, falling back to openrouter: token_plan_tts_explicit_rejection:beijing:http_400
+
+stderr | server/services/manhuaDialogueTtsRoute.test.ts > synthesizeManhuaDialoguePreferred > does not blacklist a voice on connect-level failures (status 0)
+[manhua-tts-route] token plan unavailable, falling back to openrouter: token_plan_tts_explicit_rejection:singapore:http_0
+[manhua-tts-route] token plan unavailable, falling back to openrouter: token_plan_tts_explicit_rejection:singapore:http_0
+
+ ✓ server/services/manhuaDialogueTtsRoute.test.ts (8 tests) 6ms
+ ✓ server/services/canvasDialogueOperation.test.ts (22 tests) 13ms
+
+ Test Files  5 passed (5)
+      Tests  49 passed (49)
+   Start at  01:12:06
+   Duration  1.26s (transform 549ms, setup 0ms, collect 3.81s, tests 33ms, environment 1ms, prepare 333ms)
+

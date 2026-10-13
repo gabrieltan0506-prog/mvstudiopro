@@ -1,0 +1,49 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/new-chat/work/remix-video-notes
+
+ ✓ client/src/lib/creativeStudios.browser.test.ts (9 tests) 16583ms
+   ✓ art controls save, submit one immutable intent, query and adopt a candidate 2199ms
+   ✓ image decomposition keeps independent instance prompts and binds model adoption to the current source 2220ms
+   ✓ unknown model submission freezes the exact source and reuses it after a reconnect 1564ms
+   ✓ pending or failed child reference images never become 3D inputs 1454ms
+   ✓ real CSS parent layout retains a scrollable editor and a usable canvas 2818ms
+   ✓ changing the paid child during cloud confirmation blocks the 3D request 1508ms
+   ✓ environment audio opens the real existing editor with a saved SFX cue without purchasing 1482ms
+   ✓ 空间续查在权限查询异常时只找原提交，缺记录保留意图且不重新生成 1718ms
+   ✓ 生成准入被拒时新建空间按钮禁用，已有空间查询仍独立 1619ms
+ ✓ client/src/lib/canvasAudioStudio.browser.test.ts (29 tests) 36627ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 文字声线明确确认、原编号恢复、试听选择，并进入逐句生成 1421ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 整段一位小数预览到应用、重新采用及重入，不改原声、不提交付费；保存失败明确提示 1175ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 已采用原声的旧高精度秒窗可手动改成一位小数并在重入后保留 793ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 独立BGM处理从按钮到完成绑定，原对白/采用记录与旧母轨不变，重入不重复提交 5687ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 0929 对白长于秒窗：默认给出刚好放进窗口的倍速，生成变速新候选（同台词可确认），原候选保留、变速件不再叠加变速 626ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 首句确认的角色音色阻止同角色异声生成，改台词后仍能沿用 722ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 娘的咳嗽与吸气按钮在光标处插入声音，不朗读说明文字 603ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 配乐方式只使用三个现有版本且切换后重新确认要求 720ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 声音状态无法保存时不提交免费合听任务 621ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 配乐任务编号保存失败时不发起生成也不增加恢复编号 665ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 任务编号保存失败时不调用付费配音，修复保存后才能提交 738ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 正式声音工作台导入已有原曲后只保存 GCS 来源，不触发配乐生成 511ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 部分配乐通过旧任务恢复及重新挂载仍提示缺失版本，不重新生成 595ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 旧配乐不在最近页仍按持久任务取回并选择 561ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 多条合法长台词合听使用短签名，真实回写状态不超字段容量 567ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 字段越界保留原值，满一百条不截旧草稿也不新增 804ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 未知语气控制在报价确认前拒绝，阶段标签不冒充实际声线 784ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 保存结算恢复须再次确认，并使用原输入原编号而非重购 514ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 先显示剧本；单句页面确认才调用，变身声音状态随请求且不自动采用 1159ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 短段越界在免费裁切前拒绝，不套用三十秒默认窗 477ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 裁切只发送当前这一段，原曲和其他段均保留 501ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 恢复只查询原配音编号，不重新提交；未知状态不清原任务 458ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 母轨保存失败保留原任务且不宣告挂载 463ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 预混母轨回来：有回调则挂 master 一次并 settle；无回调保留 pending 不 settle 469ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 真实触发路径：出片中 settle 被丢弃、pending 留着，下一轮轮询读到最新 master 不再重复挂 11460ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 母轨已是同一份产物时再次命中不重复挂、不重复提示，只 settle 454ms
+   ✓ 逐句配音与分段配乐真实视图（仅虚构服务） > 声音编辑后迟到的预混只保留旧合听，不覆盖当前母轨 488ms
+   ✓ 修改对白内容、声音状态和情绪后保留旧候选，恢复编辑值并以新内容提交 848ms
+   ✓ 原声通过现有传输入口播放且不改变候选或发起生成 633ms
+
+ Test Files  2 passed (2)
+      Tests  38 passed (38)
+   Start at  01:13:39
+   Duration  37.13s (transform 121ms, setup 0ms, collect 359ms, tests 53.21s, environment 0ms, prepare 133ms)
+

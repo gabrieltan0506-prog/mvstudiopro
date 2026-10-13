@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/new-chat/work/remix-video-notes
+
+ ✓ server/services/canvasDialogueCharge.test.ts (4 tests) 4ms
+ ✓ server/jobs/staleJobsReaper.test.ts (6 tests) 6ms
+
+ Test Files  2 passed (2)
+      Tests  10 passed (10)
+   Start at  01:14:12
+   Duration  917ms (transform 357ms, setup 0ms, collect 1.09s, tests 10ms, environment 0ms, prepare 121ms)
+

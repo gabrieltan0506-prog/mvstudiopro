@@ -246,7 +246,8 @@ export async function renderManhuaPrevis(
         reportBytes = await readBoundedArtifact(
           path.join(dir, "report.json"),
           0,
-          4 * 1024 * 1024,
+          // 本次服务端生成的完整逐帧报告不设固定字节上限。
+          Number.POSITIVE_INFINITY,
           "白模报告体积异常，原文件保留待检查"
         );
       } catch (error) {

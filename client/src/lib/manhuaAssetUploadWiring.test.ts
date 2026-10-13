@@ -44,7 +44,7 @@ describe("漫剧参考图导入接线", () => {
 
   it("自定义编辑从资产卡进入同一条服务端长任务，保留原图并追加新图", () => {
     expect(WORKBENCH).toContain("<ManhuaAssetEditInput");
-    expect(WORKBENCH).toContain("onSubmit={(instructionZh) => onEditCustomAsset(ref.id, instructionZh)}");
+    expect(WORKBENCH).toContain("onSubmit={(instructionZh, quality) => onEditCustomAsset(ref.id, instructionZh, quality)}");
     expect(WORKBENCH).not.toContain("window.prompt(");
     const start = CANVAS.indexOf("const editCustomAsset = useCallback");
     const end = CANVAS.indexOf("const cropCustomAssetToFile = useCallback", start);
@@ -53,7 +53,7 @@ describe("漫剧参考图导入接线", () => {
     expect(editFlow).toContain("referenceImageUrls: [source.url]");
     expect(editFlow).toContain("const source = await prepareAssetImageEdit(ref)");
     expect(editFlow).toContain('gcsSubdir: "manhua-asset-edited"');
-    expect(editFlow).toContain('assetStandardizeQuality: "medium"');
+    expect(editFlow).toContain('assetStandardizeQuality: quality');
     expect(editFlow).toContain("normalizeManhuaCustomAssetRefs([\n            ...prev,");
     expect(editFlow).toContain('labelZh: `${ref.labelZh || "资产"}·编辑`');
   });

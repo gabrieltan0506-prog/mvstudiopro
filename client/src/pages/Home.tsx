@@ -2,7 +2,6 @@ import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
 import HomePresentationShowcase from "../components/HomePresentationShowcase";
 import HomeHero from "../components/HomeHero";
-import HomePricing from "../components/HomePricing";
 import HomeMyWorks from "../components/HomeMyWorks";
 import HomeRedeemCode from "../components/HomeRedeemCode";
 import HomeInviteApply from "../components/HomeInviteApply";
@@ -17,7 +16,7 @@ import HomePhotoTools from "../components/HomePhotoTools";
 import "../styles/homeProduct.css";
 
 /**
- * 营销首页（方案 A）：导航 + Hero + V3 动效段 + 定价占位 + 试读 + 我的作品；
+ * 首页展示创作入口与作品；收费明细统一放在充值页。
  * 兑换/邀请收在页底次要区。
  */
 export default function HomePage() {
@@ -28,13 +27,11 @@ export default function HomePage() {
         <HomeHero />
         <LaunchCountdownBanner />
         <HomePresentationShowcase />
-        {/* 定价置顶（用户 2026-08-12：商业网站先谈钱）；试读样刊区整区下架，换 /blog 实测封面直达生成 */}
-        <HomePricing />
+        <HomeRemixStrip />
         <HomeCodeMotion />
         <HomePhotoTools />
         <HomeFileConversion />
         <HomePlatformHighlights />
-        <HomeRemixStrip />
 
         <HomeMyWorks />
 

@@ -1,0 +1,15 @@
+Connecting to fdaa:50:6acf:a7b:86e:ee9e:7601:2...
+
+ RUN  v2.1.9 /tmp/qwen-isolated-1013
+
+ ✓ server/services/canvasVoiceDesign.pg.test.ts > 固定声线隔离 PostgreSQL 生产链 > 8路并发通过真实唯一键只提交一次，历史恢复同一资产
+ ✓ server/services/canvasVoiceDesign.pg.test.ts > 固定声线隔离 PostgreSQL 生产链 > 原prediction恢复后固定GCS声样跨场景克隆，其他用户被真实SQL拒绝
+ ✓ server/services/canvasVoiceDesign.pg.test.ts > 固定声线隔离 PostgreSQL 生产链 > 迟到pending回执不会覆盖已持久的结算结果，恢复不重发
+ ✓ server/services/canvasVoiceDesign.pg.test.ts > 固定声线隔离 PostgreSQL 生产链 > 生产槽仍走固定声样，公开schema拒绝内部设计字段
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  10:53:27
+   Duration  4.30s (transform 358ms, setup 0ms, collect 1.40s, tests 2.37s, environment 0ms, prepare 157ms)
+
+JSON report written to /tmp/qwen-isolated-1013/result.json

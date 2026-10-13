@@ -1,3 +1,4 @@
+import { WavespeedVoicePendingError, WavespeedVoiceRejectedError, designedVoiceId } from "./wavespeedVoice";
 import { describe, expect, it, vi } from "vitest";
 import { canvasDialogueDigest, canvasDialogueInputSchema, canvasDialogueJobId, generateCanvasDialogue, getCanvasDialogue,
   type CanvasDialogueDeps, type CanvasDialogueInput, type CanvasDialogueRecord } from "./canvasDialogueOperation";
@@ -30,6 +31,37 @@ function harness() {
 }
 
 describe("逐句配音持久操作", () => {
+  it("设计样例排队后只用原请求恢复，成功结算后不再调用", async () => {
+    const { deps } = harness();
+    const design = { ...input, input: "别怕，我们一起找到回家的路。", voice: designedVoiceId(canvasDialogueJobId(7, input.billingRequestId)), voiceDesign: { labelZh: "阿菁", description: "年轻女性清亮温柔的声音" } };
+    vi.mocked(deps.synthesize).mockRejectedValueOnce(new WavespeedVoicePendingError("排队中")).mockResolvedValue({ ...upstream, voice: design.voice, provider: "wavespeed-qwen3" });
+    vi.mocked(deps.mirror).mockResolvedValue({ ...upstream, voice: design.voice, durationSec: 5 });
+    const pending = await generateCanvasDialogue(7, design, deps);
+    expect(pending.canResumeSettlement).toBe(true);
+    expect(deps.charge).not.toHaveBeenCalled();
+    const done = await generateCanvasDialogue(7, design, deps);
+    expect(done.status).toBe("succeeded");
+    await generateCanvasDialogue(7, design, deps);
+    expect(deps.synthesize).toHaveBeenCalledTimes(2);
+    expect(deps.charge).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(deps.synthesize).mock.calls.every(([args]) => args.operationId === canvasDialogueJobId(7, input.billingRequestId))).toBe(true);
+  });
+  it("明确拒绝保留失败原单，查询和同号确认不再合成/扣费", async () => {
+    const { deps } = harness();
+    const design = { ...input, input: "别怕，我们一起找到回家的路。", voice: designedVoiceId(canvasDialogueJobId(7, input.billingRequestId)), voiceDesign: { labelZh: "阿菁", description: "年轻女性清亮温柔的声音" } };
+    vi.mocked(deps.synthesize).mockRejectedValue(new WavespeedVoiceRejectedError("拒绝"));
+    expect((await generateCanvasDialogue(7, design, deps)).status).toBe("failed");
+    expect((await generateCanvasDialogue(7, design, deps)).canResumeSettlement).toBe(false);
+    expect(deps.synthesize).toHaveBeenCalledTimes(1);
+    expect(deps.charge).not.toHaveBeenCalled();
+  });
+  it("固定声线拒绝未支持表演标签，发生在占位和付费调用之前", async () => {
+    const { deps } = harness();
+    deps.checkVoiceOwner = vi.fn(async () => {});
+    await expect(generateCanvasDialogue(7, { ...input, voice: "wsqwen_" + "a".repeat(48) }, deps)).rejects.toThrow("纯台词");
+    expect(deps.claim).not.toHaveBeenCalled();
+    expect(deps.synthesize).not.toHaveBeenCalled();
+  });
   it("一条真实输入独立生成、保留角色状态和验声，成功才结算", async () => {
     const { deps, records } = harness();
     const result = await generateCanvasDialogue(7, input, deps);
@@ -164,6 +196,17 @@ describe("映客制作预算接入原配音入口", () => {
     expect(first.status).toBe("succeeded"); expect(again.creditsCost).toBe(0);
     expect(deps.productionGrant).toHaveBeenCalledWith("7",slot); expect(deps.synthesize).toHaveBeenCalledTimes(1);
     expect(deps.balance).not.toHaveBeenCalled(); expect(deps.charge).not.toHaveBeenCalled();
+  });
+  it("制作预算中的固定声线也不得转入OpenRouter更换音色", async () => {
+    const { deps } = harness();
+    const fixed = { ...input, input: "别怕，有我在。", voice: "wsqwen_" + "a".repeat(48) };
+    deps.checkVoiceOwner = vi.fn(async () => {});
+    deps.productionGrant = vi.fn(async () => grant("paid"));
+    deps.synthesizeProduction = vi.fn(async () => upstream);
+    vi.mocked(deps.synthesize).mockResolvedValue({ ...upstream, voice: fixed.voice, provider: "wavespeed-qwen3" });
+    await generateCanvasDialogue(7, fixed, deps, { ...slot, digest: canvasDialogueDigest(fixed) });
+    expect(deps.synthesize).toHaveBeenCalledWith(expect.objectContaining({ voice: fixed.voice, operationId: canvasDialogueJobId(7, fixed.billingRequestId) }));
+    expect(deps.synthesizeProduction).not.toHaveBeenCalled();
   });
   it("付费制作保留原实测时长计费", async () => {
     const {deps} = harness(); deps.productionGrant = vi.fn(async()=>grant("paid"));

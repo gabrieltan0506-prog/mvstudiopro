@@ -1,0 +1,8 @@
+[33mWARN[0m The running flyctl agent (v0.4.88) is older than the current flyctl (v0.4.94).
+[33mWARN[0m The out-of-date agent will be shut down along with existing wireguard connections. The new agent will start automatically as needed.
+Connecting to fdaa:50:6acf:a7b:86e:ee9e:7601:2...
+tar (child): /tmp/qwen-isolated-1013.tgz: Cannot open: No such file or directory
+tar (child): Error is not recoverable: exiting now
+tar: Child returned status 2
+tar: Error is not recoverable: exiting now
+Error: ssh shell: Process exited with status 2

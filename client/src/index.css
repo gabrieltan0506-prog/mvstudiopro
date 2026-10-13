@@ -1264,7 +1264,7 @@
    被收起的旧式批量面板仍可从顶部“更多操作”切回完整模式，不移除生产能力。 */
 #manhua-workbench-shell.mh-redesign.mh-compact [data-manhua-phase-panel="assets"] :is(
   [data-manhua-assets-secondary-tools],
-  [data-manhua-episode-sheets],
+  [data-manhua-episode-sheets]:not([data-manhua-media-open]),
   [data-manhua-art-style-picker],
   [data-manhua-cast-selected],
   [data-manhua-look-sets],

@@ -635,6 +635,6 @@ export function validatePrevisReport(
   validateRouteReport(report.motionRoutes, spec, report.models);
   validateCameraTimingReport(report.cameraTiming, spec);
   validateEffectsReport(report.effects, spec);
-  validatePrevisSceneEffectsReport(report.sceneEffects, spec);
+  validatePrevisSceneEffectsReport(report.sceneEffects, spec, report.storyProps);
   return report;
 }

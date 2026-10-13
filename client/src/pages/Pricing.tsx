@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { nanoid } from "nanoid";
 import PaymentProofPanel from "@/components/payment/PaymentProofPanel";
+import HomePricing from "@/components/HomePricing";
+import "@/styles/homeProduct.css";
 
 type BillingInterval = "monthly" | "quarterly" | "yearly";
 type PackId = "trial199" | "medium" | "large";
@@ -281,6 +283,10 @@ export default function Pricing() {
             </a>
           </Link>
         </div>
+      </div>
+
+      <div data-home-theme="warm" className="mx-6 mb-10 rounded-2xl bg-[#fbf8f4]">
+        <HomePricing />
       </div>
 
       {/* ════════════════════════════════════════════════════════════════

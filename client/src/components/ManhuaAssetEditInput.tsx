@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { manhuaAssetStandardizeCredits, type ManhuaAssetStandardizeQuality } from "@shared/manhuaAssetStandardize";
 import {
   Dialog,
   DialogContent,
@@ -16,9 +17,10 @@ export function ManhuaAssetEditInput({
   labelZh: string;
   disabled: boolean;
   busy: boolean;
-  onSubmit: (instructionZh: string) => void | boolean | Promise<void | boolean>;
+  onSubmit: (instructionZh: string, quality: ManhuaAssetStandardizeQuality) => void | boolean | Promise<void | boolean>;
 }) {
   const [open, setOpen] = useState(false);
+  const [quality, setQuality] = useState<ManhuaAssetStandardizeQuality>("medium");
   const [instruction, setInstruction] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -36,7 +38,7 @@ export function ManhuaAssetEditInput({
         title="输入修改要求后编辑这张图；原图保留，新图进入同一资产栏"
         className="rounded border border-violet-300/40 bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-medium text-violet-100 hover:bg-violet-500/25 disabled:opacity-40"
       >
-        {busy || submitting ? "编辑中…" : "编辑图片·3分"}
+        {busy || submitting ? "编辑中…" : "编辑图片"}
       </button>
       <Dialog
         open={open}
@@ -52,6 +54,15 @@ export function ManhuaAssetEditInput({
           <DialogDescription>
             写清楚这张图要改什么。未提到的部分会尽量保持原样；原图保留，新图进入同一资产栏。下一步仍需确认费用。
           </DialogDescription>
+          <label className="text-sm">
+            图片画质
+            <select aria-label="图片画质" value={quality} disabled={submitting}
+              onChange={event => setQuality(event.target.value === "high" ? "high" : "medium")}
+              className="ml-3 rounded border border-white/20 bg-[#141418] p-2">
+              <option value="medium">标准（medium）· {manhuaAssetStandardizeCredits("medium")} 积分</option>
+              <option value="high">高质（high）· {manhuaAssetStandardizeCredits("high")} 积分</option>
+            </select>
+          </label>
           <label className="text-sm">
             修改要求
             <textarea
@@ -87,7 +98,7 @@ export function ManhuaAssetEditInput({
                 locked.current = true;
                 setSubmitting(true);
                 try {
-                  const accepted = await onSubmit(instruction.trim());
+                  const accepted = await onSubmit(instruction.trim(), quality);
                   // 父层已提示取消／失败时保留文字，不把正常返回误认成成功。
                   if (accepted !== false) setOpen(false);
                 } catch (failure) {

@@ -721,10 +721,10 @@ if spec.get('sceneEffects'):
     scene_bindings=[]
     for actor,source_rig,_contacts,_stance,_error in rigs:
         model=next((item for item in models if item['actorId']==actor['id']),None)
-        scene_bindings.append({'actorId':actor['id'],'rig':model['rig'] if model else source_rig,
+        scene_bindings.append({'actorId':actor['id'],'shape':actor['shape'],'isRiggedModel':bool(model),'rig':model['rig'] if model else source_rig,
             'meshes':model['meshes'] if model else [obj for obj in source_rig.children if obj.type=='MESH'],
             'boneMap':model['boneMap'] if model else {name:name for name in source_rig.pose.bones.keys()}})
-    scene_effect_handles=build_scene_effects(spec['sceneEffects'],scene,scene_bindings,evidence_dir=out)
+    scene_effect_handles=build_scene_effects(spec['sceneEffects'],scene,scene_bindings,evidence_dir=out,story_props=story_prop_handles)
     # New attached objects follow the same actor visibility contract as the original meshes.
     for handle in scene_effect_handles:
         actor=next(item for item in spec['actors'] if item['id']==handle['event']['actorId'])

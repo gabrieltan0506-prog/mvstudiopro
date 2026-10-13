@@ -1,0 +1,11 @@
+
+ RUN  v2.1.9 /Users/tangenjie/Documents/Codex/2026-10-11/new-chat/work/remix-video-notes
+
+ ✓ server/services/wavespeedVoice.test.ts (15 tests) 9ms
+ ✓ server/services/canvasDialogueOperation.test.ts (24 tests) 14ms
+
+ Test Files  2 passed (2)
+      Tests  39 passed (39)
+   Start at  01:23:33
+   Duration  1.41s (transform 475ms, setup 0ms, collect 2.23s, tests 23ms, environment 0ms, prepare 132ms)
+

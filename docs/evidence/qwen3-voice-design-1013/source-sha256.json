@@ -1,0 +1,10 @@
+{
+  "shared/canvasVoiceDesign.ts": "54232d81cedc2efbac3df712b7f8bf06fc76f268a0034e87e027a11776e91d65",
+  "server/services/wavespeedVoice.ts": "3c6f48b7660ce4eb036d559a938342662ec0d34ff0318cd0c33f7c93db3ec754",
+  "server/services/canvasVoiceDesign.ts": "912b471fcdcd124b4c21044f31daaae8cd211534c071e704b5ff1ed6cc7148bf",
+  "server/services/canvasDialogueOperation.ts": "44e6a509014fcb1a992829feb585bd34bd16b77678d7c65116663283ba1dc7ef",
+  "server/services/manhuaDialogueTtsRoute.ts": "fbc9d934aa9fd1e5b6797ab879b63deb2e208d353eebb075eee577d4e0ab137c",
+  "server/routers/canvasAudio.ts": "4f12d8f8ab8a6ea1158dfe2ba5403b62a81334dae11856eaccf583216c18feb5",
+  "server/jobs/staleJobsReaper.ts": "da0696a9677c629e4ce858df0c72b986754a0c50aa8ca49369f286adefa73c43",
+  "client/src/components/canvas/CanvasAudioStudio.tsx": "112c617b896e4ecde564a647eca8ce3e0f87e0bed1265a76064eb02c0ac3585a"
+}
