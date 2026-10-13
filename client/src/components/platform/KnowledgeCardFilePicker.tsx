@@ -10,8 +10,11 @@ export const knowledgeCardFileMime = (file: File) => TYPES[file.name.split(".").
 const key = (file: File) => JSON.stringify([file.name, file.size, file.lastModified]);
 
 /** 先汇集混合资料再主动读取，选文件本身不上传、不调用模型。 */
-export function KnowledgeCardFilePicker({ disabled, onProcess, onSelectionCountChange }: {
+export function KnowledgeCardFilePicker({ disabled, onProcess, onSelectionCountChange, onCancel, cancelBusy = false, cancelRequested = false }: {
   disabled: boolean;
+  onCancel?: () => void;
+  cancelBusy?: boolean;
+  cancelRequested?: boolean;
   onProcess: (files: File[]) => Promise<boolean>;
   onSelectionCountChange?: (count: number) => void;
 }) {
@@ -51,6 +54,10 @@ export function KnowledgeCardFilePicker({ disabled, onProcess, onSelectionCountC
           catch (e) { setError(e instanceof Error ? e.message : "资料读取失败，已保留文件列表"); }
           finally { locked.current = false; setBusy(false); }
         }}>{busy ? "正在精炼…" : `开始精炼（${files.length} 个文件）`}</button>
+        <button type="button" disabled={!onCancel || cancelBusy || cancelRequested}
+          onClick={onCancel} className="rounded-full border border-rose-300/50 px-4 py-2 font-semibold text-rose-200 hover:bg-rose-400/10 disabled:opacity-40">
+          {cancelRequested ? "正在中止…" : cancelBusy ? "正在请求中止…" : "中止任务"}
+        </button>
         <span className="text-white/45">待选文件仅保留在当前页面，刷新前请先读取。</span>
       </div>
     </>}

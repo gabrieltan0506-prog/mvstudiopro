@@ -11,7 +11,7 @@ import { assertSseContentSafety, isSseContentSafetyError, isSseResponse, readGlm
 
 
 // 带图：EvoLink 侧只有 vision-exp（钥匙里没有 V4.1，0911 实弹核过）；OpenRouter 侧 V4.1 原生多模态
-export const PAGE_TRIAGE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_EVOLINK || "deepseek-v4-flash-vision-exp").trim();
+export const PAGE_TRIAGE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_EVOLINK || "deepseek-v4.1-flash").trim();
 export const PAGE_TRIAGE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_OPENROUTER || "deepseek/deepseek-v4.1-flash").trim();
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 // 带图的请求走 api.evolink.ai（direct 只给纯文本，仓库既有约定见 knowledgeCardDistill.ts）
@@ -123,10 +123,10 @@ export async function invokePageTriageJson(params: {
   if (params.fallback) {
     const fallback = params.fallback;
     attempts.push({
-      label: "qwen-fallback",
+      label: "model-fallback",
       run: async () => {
         const out = await fallback();
-        if (!looksLikeTriageJson(out)) throw new Error(`triage_bad_output:qwen:${out.slice(0, 80)}`);
+        if (!looksLikeTriageJson(out)) throw new Error(`triage_bad_output:fallback:${out.slice(0, 80)}`);
         return out;
       },
     });

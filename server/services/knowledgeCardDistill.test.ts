@@ -22,9 +22,9 @@ import {
 } from "../../shared/knowledgeCardDistillModels";
 
 describe("knowledgeCardDistill model", () => {
-  it("defaults to DeepSeek V4 Flash (0910 拍板：不用 Sol)", () => {
-    expect(resolveKnowledgeCardDistillModel(undefined)).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
-    expect(KNOWLEDGE_CARD_DISTILL_MODEL).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
+  it("默认使用 GLM FlashX 档，保留旧档位 ID", () => {
+    expect(resolveKnowledgeCardDistillModel(undefined)).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_GLM);
+    expect(KNOWLEDGE_CARD_DISTILL_MODEL).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_GLM);
   });
 
   it("only two tiers remain: DeepSeek V4.1 Flash and GLM 5.3 Flash", () => {
@@ -55,8 +55,8 @@ describe("knowledgeCardDistill model", () => {
     );
   });
 
-  it("falls back on unknown id to DeepSeek", () => {
-    expect(resolveKnowledgeCardDistillModel("not-a-model")).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
+  it("未知值使用 GLM FlashX 默认档", () => {
+    expect(resolveKnowledgeCardDistillModel("not-a-model")).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_GLM);
   });
 });
 

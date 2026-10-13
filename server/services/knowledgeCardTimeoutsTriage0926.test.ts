@@ -101,10 +101,10 @@ describe("3. 统稿 10 分钟；GLM 只试一次，失败交 DeepSeek", () => {
   it("统稿链：选 GLM → OR·GLM 一跳后直接 DeepSeek 两家，再千问；选 DeepSeek 链序不变", () => {
     keys();
     expect(knowledgeCardRefineChain(KNOWLEDGE_CARD_DISTILL_MODEL_GLM).map(label)).toEqual([
-      "openrouter:glm", "openrouter:deepseek", "evolink:deepseek", "dashscope_sg:qwen", "openrouter:qwen",
+      "openrouter:glm", "evolink:glm", "openrouter:deepseek", "evolink:deepseek",
     ]);
     expect(knowledgeCardRefineChain(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK).map(label)).toEqual([
-      "openrouter:deepseek", "evolink:deepseek", "openrouter:glm", "evolink:glm", "dashscope_sg:qwen", "openrouter:qwen",
+      "openrouter:deepseek", "evolink:deepseek", "openrouter:glm", "evolink:glm",
     ]);
   });
 
@@ -129,8 +129,9 @@ describe("3. 统稿 10 分钟；GLM 只试一次，失败交 DeepSeek", () => {
     });
     expect(refineHops.length).toBeGreaterThanOrEqual(2);
     expect(refineHops[0]!.hop).toBe("openrouter:glm");
-    expect(refineHops[1]!.hop).toBe("openrouter:deepseek");
-    expect(refineHops.some((h) => h.hop === "evolink:glm")).toBe(false);
+    expect(refineHops[1]!.hop).toBe("evolink:glm");
+    expect(refineHops[2]!.hop).toBe("openrouter:deepseek");
+    expect(refineHops.some((h) => /qwen/.test(h.hop))).toBe(false);
     expect(KNOWLEDGE_CARD_REFINE_TIMEOUT_MS).toBe(600_000);
     // group/tighten 用 10 分钟；final 仍用自己的 15 分钟（更长）
     for (const h of refineHops) expect([600_000, 900_000]).toContain(h.timeoutMs);
