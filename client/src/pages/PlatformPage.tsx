@@ -1,3 +1,4 @@
+import { ViralProductionPanel } from "@/components/platform/ViralProductionPanel";
 import { TopicSelectionPanel } from "@/components/platform/TopicSelectionPanel";
 import "@/components/platform/creation-workbench.css";
 import { ViralCreationPackageView } from "@/components/platform/ViralCreationPackageView";
@@ -4475,11 +4476,13 @@ export default function PlatformPage() {
     if (shortlistExpandRestoredForKeyRef.current === workbenchUserKey) return;
     const changedUser = Boolean(shortlistExpandRestoredForKeyRef.current);
     shortlistExpandRestoredForKeyRef.current = workbenchUserKey;
-    if (changedUser) { setTopicShortlist([]); setPlatformContent(null); setFailedExpandPicks([]); setPendingExpand(undefined); setSelectedShortlistIds([]); }
+    if (changedUser) { setTopicShortlist([]); setPlatformContent(null); setFailedExpandPicks([]); setPendingExpand(undefined); setSelectedShortlistIds([]); setCoverReferencePhotoMap({}); setGlobalCoverReferencePhotoUrl(null); }
     const saved = readShortlistExpandPersist(workbenchUserKey);
     setShortlistRestoreKey(workbenchUserKey);
     if (!saved) return;
     if (saved.viralPreferences) { setViralPlatforms(saved.viralPreferences.platforms); setXhsFormats(saved.viralPreferences.formats); }
+    setCoverReferencePhotoMap(saved.referencePhotos?.byScene || {});
+    setGlobalCoverReferencePhotoUrl(saved.referencePhotos?.global || null);
     setFailedExpandPicks(saved.failedPicks || []);
     setPendingExpand(saved.pendingExpand);
     setTopicShortlist(saved.topics);
@@ -4506,6 +4509,7 @@ export default function PlatformPage() {
       : [];
     if (shortlistRestoreKey !== workbenchUserKey) return;
     writeShortlistExpandPersist({
+      referencePhotos: { byScene: coverReferencePhotoMap, global: globalCoverReferencePhotoUrl || undefined },
       viralPreferences: { platforms: viralPlatforms, formats: xhsFormats },
       userKey: workbenchUserKey,
       topics: topicShortlist,
@@ -4513,7 +4517,7 @@ export default function PlatformPage() {
       failedPicks: failedExpandPicks,
       pendingExpand,
     });
-  }, [workbenchUserKey, topicShortlist, platformContent?.contentBlueprints, failedExpandPicks, pendingExpand, viralPlatforms, xhsFormats, shortlistRestoreKey]);
+  }, [workbenchUserKey, topicShortlist, platformContent?.contentBlueprints, failedExpandPicks, pendingExpand, viralPlatforms, xhsFormats, shortlistRestoreKey, coverReferencePhotoMap, globalCoverReferencePhotoUrl]);
 
   // 监管验收：?demoExpand=1 注入假文案，不烧积分，只验同页可见
   useEffect(() => {
@@ -10955,7 +10959,7 @@ export default function PlatformPage() {
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-white">全局主人公照片（出图前先上传）</div>
+          <div className="text-sm font-semibold text-white">全局参考人像（可选，套用全部稿件）</div>
           <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
             套用全部选题的封面、编导分镜表与图文笔记解说人物：
             <strong className="text-white/80">锁脸</strong>
@@ -11019,6 +11023,7 @@ export default function PlatformPage() {
     if (bps.length === 0) return null;
     const cards = bps.map((bp, bi) => mapContentBlueprintToExecutionCard(bp, bi));
     const genBusy =
+      globalCoverRefUploading || coverRefUploadingIds.size > 0 ||
       isSequentialCoverBatchGenerating ||
       isSequentialCompositeBatchGenerating ||
       isSequentialCoverCompositeBundleBatchGenerating ||
@@ -11038,7 +11043,7 @@ export default function PlatformPage() {
             专属选题与文案 · {cards.length} 条
           </div>
           <p className="mt-1 text-[12px] leading-snug text-emerald-100/70">
-            先上传主人公照片锁脸，再出封面 / 编导分镜或图文。文案与出图同页，刷新可恢复。
+            可上传参考人像，再生成封面 / 编导分镜或图文；不上传则按文案创作人物。文案与出图同页，刷新可恢复。
           </p>
         </div>
 
@@ -11112,7 +11117,7 @@ export default function PlatformPage() {
           </div>
         ) : null}
 
-        <div className="mt-4 max-h-[900px] space-y-4 overflow-y-auto pr-1">
+        <div className="mt-4 space-y-4">
           {cards.map((item, bi) => {
             const isGraphicFormat = item.format === "图文" || item.format === "小红书";
             const compositeKind = isGraphicFormat
@@ -11376,6 +11381,19 @@ export default function PlatformPage() {
                     </div>
                   </div>
                 ) : null}
+                {item.viralCreation && <ViralProductionPanel
+                  key={item.id} format={item.format} packageValue={item.xhsPackage}
+                  pages={item.graphicNotePages} cells={item.storyboardCells}
+                  referencePhotoUrl={coverReferencePhotoMap[item.id] || globalCoverReferencePhotoUrl || undefined}
+                  referenceIsGlobal={!coverReferencePhotoMap[item.id] && Boolean(globalCoverReferencePhotoUrl)}
+                  referenceUploading={coverRefUploadingIds.has(item.id)}
+                  onReferenceUpload={file => { void handleUploadCoverReferencePhoto(item.id, file); }}
+                  onReferenceRemove={() => setCoverReferencePhotoMap(prev => { const next = { ...prev }; delete next[item.id]; return next; })}
+                  coverUrl={coverUrl} coverCost={normalCoverCost} sheetCost={compositeCost}
+                  sheetLabel={compositeLabel} gridVariant={compositeGridVariant} onGridChange={setCompositeGridVariant} disabled={genBusy || !isAuthenticated}
+                  coverBusy={batchGeneratingCoverIds.has(item.id)} sheetBusy={isThisCompositeLoading}
+                  onCover={runSingleCover} onSheet={runSingleComposite}
+                />}
                 {item.viralCreation && <ViralCreationPackageView value={item.xhsPackage} platform={item.targetPlatform} />}
                 {item.detailedScript ? (
                   <details className="mt-3 text-xs text-gray-400">
@@ -11387,7 +11405,7 @@ export default function PlatformPage() {
                     </div>
                   </details>
                 ) : null}
-                {Array.isArray((item as any).storyboardCells) &&
+                {!item.viralCreation && Array.isArray((item as any).storyboardCells) &&
                 (item as any).storyboardCells.length > 0 &&
                 !/图文|小红书/.test(String(item.format || "")) ? (
                   <div className="mt-3 rounded-lg bg-black/30 p-3 text-xs text-gray-400">

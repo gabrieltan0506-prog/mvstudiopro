@@ -19,7 +19,17 @@ function readViralPreferences(raw: unknown): ViralCreationPreferences | undefine
   return platforms.length && formats.length ? { platforms, formats } : undefined;
 }
 
+export type CoverReferencePhotos = { byScene: Record<string, string>; global?: string };
+function readReferencePhotos(raw: unknown): CoverReferencePhotos | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const value = raw as CoverReferencePhotos;
+  const valid = (url: unknown): url is string => typeof url === "string" && url.length <= 8192 && /^https?:\/\//.test(url);
+  const byScene = Object.fromEntries(Object.entries(value.byScene && typeof value.byScene === "object" ? value.byScene : {}).filter(([id, url]) => id.length > 0 && id.length <= 128 && valid(url)));
+  return { byScene, global: valid(value.global) ? value.global : undefined };
+}
+
 export type PlatformShortlistExpandPersist = {
+  referencePhotos?: CoverReferencePhotos;
   viralPreferences?: ViralCreationPreferences;
   v: 1;
   userKey: string;
@@ -52,6 +62,7 @@ export function readShortlistExpandPersist(
       v: 1,
       userKey: parsed.userKey,
       savedAt: String(parsed.savedAt || ""),
+      referencePhotos: readReferencePhotos(parsed.referencePhotos),
       viralPreferences: readViralPreferences(parsed.viralPreferences),
       failedPicks: Array.isArray(parsed.failedPicks) ? parsed.failedPicks : [],
       pendingExpand: parsed.pendingExpand && typeof parsed.pendingExpand.jobId === "string" && Array.isArray(parsed.pendingExpand.picks) ? parsed.pendingExpand : undefined,
@@ -68,6 +79,7 @@ export function readShortlistExpandPersist(
 
 export function writeShortlistExpandPersist(
   input: {
+    referencePhotos?: CoverReferencePhotos;
     viralPreferences?: ViralCreationPreferences;
     userKey: string;
     failedPicks?: PlatformTopicShortlistItem[];
@@ -83,6 +95,7 @@ export function writeShortlistExpandPersist(
       v: 1,
       userKey: input.userKey,
       savedAt: new Date().toISOString(),
+      referencePhotos: readReferencePhotos(input.referencePhotos),
       viralPreferences: readViralPreferences(input.viralPreferences),
       failedPicks: input.failedPicks?.slice(0, 20),
       pendingExpand: input.pendingExpand,

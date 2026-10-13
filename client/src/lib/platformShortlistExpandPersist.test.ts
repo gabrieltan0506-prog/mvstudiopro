@@ -100,3 +100,13 @@ it("刷新清除旧选题但保留已经生成的正文与原任务", () => {
  const result=readShortlistExpandPersist("u1",storage)!;
  expect(result.topics).toEqual([]);expect(result.contentBlueprints[0].id).toBe("paid-draft");expect(result.pendingExpand?.jobId).toBe("running-job");
 });
+
+it("参考人像按用户和稿件恢复，移除后不复现，非法本机地址不保存", () => {
+ const storage=memoryStorage();
+ const base={userKey:"u1",topics:[],contentBlueprints:[]};
+ writeShortlistExpandPersist({...base,referencePhotos:{byScene:{scene1:"https://media.example.test/portrait.jpg",bad:"file:///private.jpg"},global:"https://media.example.test/global.png"}},storage);
+ expect(readShortlistExpandPersist("u1",storage)?.referencePhotos).toEqual({byScene:{scene1:"https://media.example.test/portrait.jpg"},global:"https://media.example.test/global.png"});
+ expect(readShortlistExpandPersist("u2",storage)).toBeNull();
+ writeShortlistExpandPersist({...base,referencePhotos:{byScene:{}}},storage);
+ expect(readShortlistExpandPersist("u1",storage)?.referencePhotos).toEqual({byScene:{},global:undefined});
+});
