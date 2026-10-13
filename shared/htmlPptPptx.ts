@@ -40,6 +40,7 @@ export type HtmlPptImageDataUrl = string;
 export type BuildHtmlPptPptxOptions = {
   /** url → data URL；缺省则该页无图 */
   imageDataByUrl?: Record<string, HtmlPptImageDataUrl>;
+  videoDataByUrl?: Record<string, string>;
   /** 风格叠底图 data URL（可选，低透明铺满） */
   styleBgDataUrl?: HtmlPptImageDataUrl;
 };
@@ -134,7 +135,10 @@ export async function buildHtmlPptPptxBlob(
 
     const imgRaw = typeof page.imageUrl === "string" ? page.imageUrl.trim() : "";
     const imgData = imgRaw && imageDataByUrl[imgRaw] ? normalizePptxImageData(imageDataByUrl[imgRaw]!) : "";
-    const hasImage = Boolean(imgData);
+    const videoData = page.videoUrl ? opts?.videoDataByUrl?.[page.videoUrl] : undefined;
+    if (page.videoSource && !page.videoUrl) throw new Error("动效视频尚未解析，未导出");
+    if (page.videoUrl && (!videoData || !/^data:video\/mp4;base64,[A-Za-z0-9+/]+=*$/.test(videoData))) throw new Error("动效视频尚未载入，未导出缺视频文件");
+    const hasImage = Boolean(imgData) || Boolean(videoData);
     const textW = hasImage ? 7.0 : 12.3;
     const imageX = 7.85;
     const imageW = 4.9;
@@ -272,7 +276,10 @@ export async function buildHtmlPptPptxBlob(
       });
     }
 
-    if (hasImage) {
+    if (videoData) {
+      slide.addMedia({ type: "video", data: videoData, extn: "mp4", x: imageX, y: 2.1, w: imageW, h: 2.76 });
+      slide.addNotes("本页嵌入已有动效MP4，不重新生成。PPT文字与图表可编辑；视频内部元素不能逐项编辑。播放行为以演示软件为准。");
+    } else if (hasImage) {
       // 卡片底衬 + 插图（对齐 HTML 右停靠态）
       slide.addShape(pptx.ShapeType.roundRect, {
         x: imageX - 0.08,

@@ -36,9 +36,7 @@ const MODE_ITEMS: Array<{
 ];
 
 const TOOL_ITEMS: Array<{ id: ToolsKey; label: string }> = [
-  { id: "htmlPpt", label: "动效 PPT" },
-  { id: "matting", label: "自定义抠像" },
-  { id: "assets", label: "素材分析" },
+  { id: "htmlPpt", label: "AI PPT" },
 ];
 
 export function PlatformModeShell({

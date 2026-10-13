@@ -623,12 +623,11 @@ export default function CodeMotionStudio() {
               setOutput("ppt");
             }}
           >
-            PPT 演示
+            AI PPT
           </button>
         </div>
         <p className="mt-3 text-xs leading-5 text-stone-500">
-          同一份想法与文字可送去做视频或演示文稿。PPTX
-          可编辑；分步动画在网页演示中播放。
+          AI PPT 只需输入一个主题，即可生成完整大纲。PPTX 可编辑，也可加入已有动效 MP4。
         </p>
       </div>
       <div className="mx-auto grid max-w-7xl gap-6 px-5 pb-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">

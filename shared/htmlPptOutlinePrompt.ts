@@ -78,7 +78,7 @@ function clampPageCount(n: unknown): number {
 }
 
 export function buildHtmlPptThemeSuggestSystemPrompt(): string {
-  return `你是 mvstudiopro「动效PPT」主题策划顾问，负责在用户已有主题基础上**补全 3–4 个互补主题**，并**润色演示总标题**。
+  return `你是 mvstudiopro「AI PPT」策划顾问。用户只需给出一个主题，你负责生成完整、可直接用于制作演示的4–6条大纲，并润色总标题。已有大纲和背景仅为可选补充；有已有大纲时补充互补章节。
 只输出 JSON（json_object），不要 Markdown 围栏。
 
 要求：
@@ -86,7 +86,7 @@ export function buildHtmlPptThemeSuggestSystemPrompt(): string {
 2. 若用户选了「前景/预测/展望」类主题，补主题时须保留或强化「未来预测」维度。
 3. polishedTitle：在原标题基础上更投屏友好（≤40 字），勿改核心语义。
 4. 每个 suggestedThemes 项含 id（英文 snake_case，≤24 字）与 title（中文主题名）。
-5. suggestedThemes 长度 3–4 条。
+5. suggestedThemes 长度4–6条，形成背景/核心观点/展开/行动或结论的完整叙事；有已有大纲时避免重复。不要编造数据，缺数据的章节写清需要核实的口径。
 
 JSON schema:
 {
@@ -110,7 +110,7 @@ export function buildHtmlPptThemeSuggestUserPrompt(input: HtmlPptThemeSuggestInp
     `【用途】${purpose}`,
     `【用户已填主题（勿重复）】${userThemes.length ? userThemes.join("；") : "（无）"}`,
     brief ? `【补充背景】\n${brief}` : "【补充背景】无；请基于标题与已有主题做专业推断。",
-    "请补 3–4 个互补主题，并给出 polishedTitle。",
+    userThemes.length ? "结合已有大纲补充4–6个互补章节，并给出polishedTitle。" : "只依据主题生成4–6条完整大纲，覆盖开篇、主体与收尾；不要要求用户先写大纲，并给出polishedTitle。",
   ].join("\n");
 }
 
@@ -140,9 +140,9 @@ export function parseHtmlPptThemeSuggestJson(raw: string): HtmlPptThemeSuggestRe
       return title ? { id, title } : null;
     })
     .filter((t): t is HtmlPptTheme => Boolean(t))
-    .slice(0, 4);
+    .slice(0, 6);
   if (suggestedThemes.length < 3) {
-    throw new Error("主题补全不足，请重试");
+    throw new Error("生成的大纲不足，请重试");
   }
   return {
     polishedTitle: String(parsed.polishedTitle || "").trim().slice(0, 80),

@@ -12898,7 +12898,7 @@ export default function PlatformPage() {
               platformMode === "trend"
                 ? "平台趋势：单选平台与窗口后点主按钮开始分析（与内容创作分开计费）。"
                 : platformMode === "tools"
-                  ? "更多工具：动效 PPT、抠像与素材分析；请按面板内步骤操作。"
+                  ? "AI PPT：输入一个主题，自动生成大纲，再确认页面内容。"
                   : "内容创作：填写人物背景 → 选题初选 → 文案/分镜；主按钮点数来自当前步骤。",
             )
           }
@@ -15910,6 +15910,7 @@ export default function PlatformPage() {
                 <div id="platform-tools-htmlppt" className="scroll-mt-24">
           {customWorkspaceTab === "htmlPpt" ? (
             <PlatformHtmlPptPanel
+              key={workbenchUserKey || "guest"} draftKey={workbenchUserKey ? `platform:ppt:v1:${workbenchUserKey}` : undefined}
               disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
             />
           ) : customWorkspaceTab === "assets" ? (

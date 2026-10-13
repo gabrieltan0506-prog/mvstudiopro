@@ -75,3 +75,31 @@ it("含图页数据超出排版容量时明确失败，不丢掉后面数据", a
   const url = "https://cdn.example.com/test.png";
   await expect(buildHtmlPptPptxBlob({title:"原始数据",styleId:"dark_research",pages:[{title:"全部六项",imageUrl:url,series:Array.from({length:6},(_,i)=>({label:`数据${i+1}`,value:i+0.25}))}]},{imageDataByUrl:{[url]:TINY_PNG}})).rejects.toThrow("未截断导出");
 });
+
+it("已有动效MP4嵌入目标页且正文仍为可编辑文字", async () => {
+  const videoUrl = "https://test.invalid/existing.mp4";
+  const data = "data:video/mp4;base64,AAAAFGZ0eXBpc29tAAAAAGlzb20=";
+  const pages = [{ title: "保留可编辑标题", bullets: ["现有成片，不重新生成"], videoUrl, videoSource: { projectId: "test-project", jobId: "test-job" } }];
+  const blob = await buildHtmlPptPptxBlob({ title: "已有动效", styleId: "dark_research", pages }, { videoDataByUrl: { [videoUrl]: data } });
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+  const mp4 = Object.keys(zip.files).find(name => /^ppt\/media\/.*\.mp4$/.test(name));
+  expect(mp4).toBeTruthy();
+  expect(await zip.file(mp4!)!.async("base64")).toBe(data.split(",")[1]);
+  const slide = await zip.file("ppt/slides/slide1.xml")!.async("string");
+  expect(slide).toContain("videoFile"); expect(slide).toContain("保留可编辑标题");
+});
+it("缺少原视频时阻止导出，不静默丢掉动效", async () => {
+  await expect(buildHtmlPptPptxBlob({ title: "缺视频", styleId: "dark_research", pages: [{ title: "原页", videoUrl: "https://test.invalid/missing.mp4", videoSource: { projectId: "test", jobId: "test-job" } }] })).rejects.toThrow(/视频/);
+});
+
+it("HTML内嵌MP4可离线保留，视频操作不触发翻页，离页暂停", async () => {
+  const { buildHtmlPptDocument, normalizeHtmlPptPages } = await import("./htmlPptMaker");
+  const videoUrl = "data:video/mp4;base64,AAAAFGZ0eXBpc29tAAAAAGlzb20=";
+  const pages = [{ title: "已有视频", videoSource: { projectId: "test", jobId: "test-job" }, videoUrl }];
+  expect(normalizeHtmlPptPages(pages)[0].videoUrl).toBe(videoUrl);
+  const html = buildHtmlPptDocument({ title: "离线演示", styleId: "dark_research", pages });
+  expect(html).toContain(`src="${videoUrl}"`);
+  expect(html).toContain("closest('#controls,video')");
+  expect(html).toContain("v.pause()");
+  expect(normalizeHtmlPptPages([{ ...pages[0], videoUrl: "javascript:alert(1)" }])[0].videoUrl).toBeUndefined();
+});

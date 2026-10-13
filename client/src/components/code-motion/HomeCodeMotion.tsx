@@ -26,7 +26,7 @@ export default function HomeCodeMotion() {
           </h2>
           <p className="mt-4 max-w-md text-sm leading-7 text-[var(--hp-muted)]">
             放入文案、图片或 Excel
-            表格，用自己的话说想法，制作可编辑的演示文稿或可播放的视频。
+            表格，用自己的话说想法。AI PPT 只需一个主题，自动生成大纲，也能加入已有动效视频。
           </p>
           <a
             href="/yingke"
@@ -35,6 +35,7 @@ export default function HomeCodeMotion() {
             打开映客 INK
             <ArrowUpRight size={17} />
           </a>
+          <a href="/platform?mode=tools&tab=htmlPpt" className="ml-3 mt-6 inline-flex rounded-full border border-[var(--hp-line)] px-5 py-3 text-sm font-medium">制作 AI PPT</a>
           <p className="mt-3 text-xs text-[var(--hp-muted)]">
             演示文稿可编辑 · 视频可播放
           </p>

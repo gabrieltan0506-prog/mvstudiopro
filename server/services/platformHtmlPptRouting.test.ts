@@ -27,3 +27,10 @@ it("内容拒绝不换模型重试", async () => {
   vi.mocked(invokeLLM).mockRejectedValue(new SseContentSafetyError());
   await expect(suggestHtmlPptThemes(themes)).rejects.toThrow();expect(invokeLLM).toHaveBeenCalledTimes(1);
 });
+
+it("只填一个主题即可由LLM生成六条完整大纲，不要求已有三条", async () => {
+  vi.mocked(invokeLLM).mockResolvedValue({ text: JSON.stringify({ polishedTitle: "新人会议表达", suggestedThemes: ["场景", "问题", "结论", "事实", "下一步", "清单"].map((title, i) => ({ id: `t${i}`, title })) }) } as never);
+  const result = await suggestHtmlPptThemes({ title: "新人会议表达", userThemes: [] });
+  expect(result.suggestedThemes).toHaveLength(6);
+  expect(JSON.stringify(vi.mocked(invokeLLM).mock.calls[0])).toContain("只依据主题生成4–6条完整大纲");
+});
