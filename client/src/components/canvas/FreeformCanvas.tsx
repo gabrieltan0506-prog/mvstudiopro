@@ -1014,6 +1014,14 @@ export default function FreeformCanvas({
     return list;
   }, [blocks, focusEpisode, mediaOnly, presentation]);
 
+  // 各成片卡共用本集声线输入；音轨面板开合等无关渲染不重读整集剧本。
+  const voiceGatePromptsByEpisode = useMemo(() => {
+    const episodes = new Set(visibleBlocks.filter(block => block.id.startsWith("clip-")).map(block => getBlockEpisodeIndex(block) ?? 1));
+    return new Map(Array.from(episodes, episode => [
+      episode, collectManhuaEpisodeSegmentPromptsForVoiceGate(blocks, episode),
+    ] as const));
+  }, [blocks, visibleBlocks]);
+
   const visibleIdSet = useMemo(() => new Set(visibleBlocks.map((b) => b.id)), [visibleBlocks]);
 
   const visibleEdges = useMemo(
@@ -2583,7 +2591,7 @@ export default function FreeformCanvas({
                         localSegmentIndex: localSeg,
                         currentPrompt: String(block.prompt || ""),
                         episodeSegmentPrompts:
-                          collectManhuaEpisodeSegmentPromptsForVoiceGate(blocks, epIdx),
+                          voiceGatePromptsByEpisode.get(epIdx) || [],
                         voiceLocks: characterVoiceLocks,
                       });
                       return (

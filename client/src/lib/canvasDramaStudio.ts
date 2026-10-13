@@ -233,6 +233,8 @@ export function collectManhuaEpisodeSegmentPromptsForVoiceGate(
   const ep = Math.max(1, Math.floor(Number(episodeIndex) || 1));
   const clipBySeg = new Map<number, string>();
   const keyartBySeg = new Map<number, string>();
+  // 同一次收集只解析整集一次，不能每张静帧都重新解析整份剧本。
+  let episodeSegments: ReturnType<typeof groupShotsIntoSegments> | undefined;
   for (const b of blocks) {
     if ((getBlockEpisodeIndex(b) ?? 1) !== ep) continue;
     if (b.id.startsWith("clip-")) {
@@ -243,9 +245,10 @@ export function collectManhuaEpisodeSegmentPromptsForVoiceGate(
     } else if (b.id.startsWith("keyart-")) {
       const shot = resolveKeyartShotIndex(b.id, b.prompt);
       const p = String(b.prompt || "");
-      for (const segment of groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(blocks, ep), {
+      episodeSegments ??= groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(blocks, ep), {
         videoModel: resolveEpisodeClipVideoModel(blocks, ep),
-      }).filter(segment => segment.shots.some(row => row.index === shot))) {
+      });
+      for (const segment of episodeSegments.filter(segment => segment.shots.some(row => row.index === shot))) {
         const prev = keyartBySeg.get(segment.index) || "";
         if (p.length >= prev.length) keyartBySeg.set(segment.index, p);
       }
