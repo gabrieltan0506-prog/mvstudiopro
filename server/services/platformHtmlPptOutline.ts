@@ -200,7 +200,6 @@ export async function suggestHtmlPptThemes(
   const title = String(input.title || "").trim();
   if (title.length < 2) throw new Error("请填写主题");
   const userThemes = (input.userThemes || []).map((t) => String(t || "").trim()).filter(Boolean);
-  if (userThemes.length < 3) throw new Error("请至少填写 3 个主题");
 
   const userBlock = buildHtmlPptThemeSuggestUserPrompt({
     title,

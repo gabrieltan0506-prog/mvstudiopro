@@ -43,7 +43,7 @@ describe("htmlPptOutlinePrompt", () => {
       userThemes: ["市场规模", "竞争格局", "政策风险"],
     });
     expect(p).toContain("市场规模");
-    expect(p).toContain("补 3–4 个互补主题");
+    expect(p).toContain("补充4–6个互补章节");
   });
 
   it("parses theme suggest json", () => {

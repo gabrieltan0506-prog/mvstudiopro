@@ -107,6 +107,9 @@ export type HtmlPptPage = {
   imageUrl?: string;
   /** 映刻本人上传图片的稳定标识；导出前重新核验并更新访问地址。 */
   imageSourceId?: string;
+  /** 本人已有动效成片，导出前按项目与任务重新核验。 */
+  videoSource?: { projectId: string; jobId: string };
+  videoUrl?: string;
   /**
    * 插图分步关键帧（可选）。有图缺省时用 DEFAULT_HTML_PPT_IMAGE_MOTION；
    * 大纲阶段可先写关键帧，生图挂上 imageUrl 后生效。
@@ -691,6 +694,8 @@ export function normalizeHtmlPptPages(pages: HtmlPptPage[]): HtmlPptPage[] {
         highlight: Array.isArray(p?.highlight)
           ? p.highlight.map((h) => scrub(h, 40)).filter(Boolean).slice(0, 6)
           : undefined,
+        videoSource: p?.videoSource && typeof p.videoSource.projectId === "string" && typeof p.videoSource.jobId === "string" ? { projectId: p.videoSource.projectId, jobId: p.videoSource.jobId } : undefined,
+        videoUrl: p?.videoSource && typeof p?.videoUrl === "string" && (/^https?:\/\//i.test(p.videoUrl) || p.videoUrl.startsWith("/api/") || /^data:video\/mp4;base64,[A-Za-z0-9+/]+=*$/.test(p.videoUrl)) ? p.videoUrl : undefined,
         imageSourceId: typeof p?.imageSourceId === "string" ? p.imageSourceId : undefined,
         imageUrl:
           typeof p?.imageUrl === "string" && /^https?:\/\//i.test(p.imageUrl.trim())
@@ -1068,10 +1073,12 @@ export function buildHtmlPptDocument(input: HtmlPptDeckInput): string {
           : Math.max(1, seriesBuildCount) + talkBullets.length + (highlightOnly ? highlights.length : 0) + 1;
       const imageMotion = resolveHtmlPptImageMotion(p);
       const hasImage = Boolean(imageMotion?.length && p.imageUrl);
-      const imagePanel = hasImage
+      const imagePanel = p.videoUrl
+        ? `<aside class="slide-image" data-build="0"><video controls preload="metadata" style="width:100%;height:100%;object-fit:contain" src="${escapeHtml(p.videoUrl)}"></video></aside>`
+        : hasImage
         ? `<aside class="slide-image anim" data-build="0" data-role="slide-image"><img src="${escapeHtml(p.imageUrl!)}" alt="" loading="lazy" decoding="async"/></aside>`
         : "";
-      const bodyClass = hasImage ? " slide-has-image" : "";
+      const bodyClass = hasImage || p.videoUrl ? " slide-has-image" : "";
       const imgMotionAttr = hasImage
         ? ` data-img-motion="${escapeHtml(JSON.stringify(imageMotion))}"`
         : "";
@@ -1461,6 +1468,7 @@ ${slidesHtml}
   }
   function go(x){
     var next=Math.max(0,Math.min(n-1,x));
+    if(next!==i && slides[i]) slides[i].querySelectorAll("video").forEach(function(v){v.pause();});
     i=next;
     if(isPortraitRead()){
       deck.style.transform='none';
@@ -1489,6 +1497,7 @@ ${slidesHtml}
   }
   playEnter(0);
   function onKey(e){
+    if(e.target && e.target.closest && e.target.closest('video')) return;
     if(e.key==='ArrowRight'||e.key==='PageDown'){e.preventDefault();go(i+1);return}
     if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();go(i-1);return}
     if(e.key===' ' ||e.key==='Enter'||e.key==='ArrowDown'){e.preventDefault();nextBuild();return}
@@ -1498,7 +1507,7 @@ ${slidesHtml}
   }
   window.addEventListener('keydown',onKey);
   window.addEventListener('click',function(e){
-    if(e.target && e.target.closest && e.target.closest('#controls')) return;
+    if(e.target && e.target.closest && e.target.closest('#controls,video')) return;
     nextBuild();
   });
   var btnPrev=document.getElementById('btnPrevPage');
@@ -1510,6 +1519,7 @@ ${slidesHtml}
   var sx=0;
   window.addEventListener('touchstart',function(e){sx=e.changedTouches[0].clientX},{passive:true});
   window.addEventListener('touchend',function(e){
+    if(e.target && e.target.closest && e.target.closest('video')) return;
     var dx=e.changedTouches[0].clientX-sx;
     if(Math.abs(dx)>56){ go(i+(dx<0?1:-1)); }
     else { nextBuild(); }

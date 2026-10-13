@@ -1,3 +1,6 @@
+import HtmlPptVideoPicker from "./HtmlPptVideoPicker";
+import { flyDownloadUrl } from "@/lib/gcsTransfer";
+import { loadPptVideoData } from "@/lib/htmlPptVideoAsset";
 import { buildHtmlPptSlideImagePrompt } from "@shared/htmlPptImagePrompt";
 import type { CodeMotionBrief } from "@shared/codeMotion";
 import { z } from "zod";
@@ -59,6 +62,7 @@ const pptDraftSchema = z.object({
     series: z.array(z.object({ label: z.string(), value: z.number().finite() })).optional(),
     themeId: z.string().optional(), themeTitle: z.string().optional(), highlight: z.array(z.string()).optional(),
     imageUrl: z.string().optional(), imageSourceId: z.string().optional(),
+    videoUrl: z.string().optional(), videoSource: z.object({ projectId: z.string(), jobId: z.string() }).optional(),
     imageMotion: z.array(z.object({ at: z.number(), pose: z.enum(["hero", "dock_right", "dock_left", "dock_bottom"]) })).optional(),
   })), dataGroups: z.record(z.string(), z.number()), patchNotes: z.record(z.string(), z.string()),
 });
@@ -66,7 +70,7 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
   const [step, setStep] = useState<StepId>("setup");
   const [title, setTitle] = useState(initialContent?.title || "");
   const [purpose, setPurpose] = useState("行业路演 / 数据洞察汇报");
-  const [pageCount, setPageCount] = useState<number | null>(null);
+  const [pageCount, setPageCount] = useState<number | null>(PLATFORM_HTML_PPT_PAGE_MIN);
   const [styleId, setStyleId] = useState<HtmlPptStyleId>(() => recommendHtmlPptStyle("数据洞察汇报"));
   const [briefZh, setBriefZh] = useState([initialContent?.request, initialContent?.text].filter(Boolean).join("\n\n"));
   const [userThemeInputs, setUserThemeInputs] = useState<string[]>(["", "", ""]);
@@ -131,8 +135,8 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
   const outlineCost = pageCount != null ? platformHtmlPptOutlineCredits(pageCount) : null;
   const patchCost = platformHtmlPptPagePatchCredits();
   const pageReady = pageCount != null && pageCount >= PLATFORM_HTML_PPT_PAGE_MIN;
-  const userThemesReady = userThemeInputs.map((t) => t.trim()).filter(Boolean).length >= 3;
 
+  const pptUtils = trpc.useUtils();
   const importedImages = trpc.codeMotion.resolveImages.useQuery({ images: initialContent?.images || [] }, { enabled: Boolean(initialContent?.images?.length), retry: false, staleTime: 30_000 });
   const pagesWithFreshImages = async () => {
     if (pages.some(page => page.series?.some(point => !Number.isFinite(point.value)))) throw new Error("图表有未填写的数值，请补充；不会把空格当成0。");
@@ -145,6 +149,16 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
         const image = result.data.find(item => item.id === page.imageSourceId);
         if (!image) throw new Error("页面引用的图片已不在本次资料中，请重新选择");
         return { ...page, imageUrl: image.url };
+      });
+    }
+    const videoProjects = Array.from(new Set(normalized.flatMap(page => page.videoSource ? [page.videoSource.projectId] : [])));
+    for (const projectId of videoProjects) {
+      const rows = await pptUtils.codeMotion.history.fetch({ projectId });
+      normalized = normalized.map(page => {
+        if (page.videoSource?.projectId !== projectId) return page;
+        const row = rows.find(item => item?.jobId === page.videoSource!.jobId);
+        if (row?.status !== "succeeded" || typeof row.output?.url !== "string") throw new Error("引用的动效视频暂不可用，未导出；请选择已有成功成片");
+        return { ...page, videoUrl: flyDownloadUrl(row.output.url) };
       });
     }
     return normalized;
@@ -181,17 +195,13 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
   const goSuggestThemes = async () => {
     if (briefZh.length > 4000) { setAiError("资料与要求合计超过4000字，请在下方选留本次内容；未截断、未提交。"); return; }
     const themes = userThemeInputs.map((t) => t.trim()).filter(Boolean);
-    if (themes.length < 3) {
-      setAiError("请至少填写 3 条大纲主题");
-      return;
-    }
-    if (!title.trim()) {
-      setAiError("请填写主题");
+    if (title.trim().length < 2) {
+      setAiError("请填写至少两个字的主题");
       return;
     }
     setAiError(null);
     setAiBusy(true);
-    setAiBusyLabel("正在补全大纲…");
+    setAiBusyLabel("正在根据主题生成完整大纲…");
     try {
       const res = await suggestThemesMutation.mutateAsync({
         title: title.trim(),
@@ -206,7 +216,7 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
         source: "user",
         selected: true,
       }));
-      const aiRows: ThemeRow[] = (res.suggestedThemes || []).slice(0, 4).map((t, i) => ({
+      const aiRows: ThemeRow[] = (res.suggestedThemes || []).map((t, i) => ({
         id: t.id || newThemeId("ai", i),
         title: t.title,
         source: "ai",
@@ -215,7 +225,7 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
       setThemeRows([...userRows, ...aiRows]);
       setStep("themes");
     } catch (e: unknown) {
-      setAiError(e instanceof Error ? e.message : "大纲补全失败");
+      setAiError(e instanceof Error ? e.message : "大纲生成失败");
     } finally {
       setAiBusy(false);
     }
@@ -422,12 +432,30 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
     }
   };
 
+  const loadVideos = async (deckPages: HtmlPptPage[]) => {
+    const dataByUrl: Record<string, string> = {};
+    let totalBytes = 0;
+    for (const url of Array.from(new Set(deckPages.flatMap(page => page.videoUrl ? [page.videoUrl] : [])))) {
+      setAiBusyLabel("正在嵌入已有动效 MP4…");
+      const video = await loadPptVideoData(url);
+      totalBytes += video.bytes;
+      if (totalBytes > 160 * 1024 * 1024) throw new Error("本份PPT视频总量超过160MB，请减少视频后导出");
+      dataByUrl[url] = video.data;
+    }
+    return dataByUrl;
+  };
+  const buildPortableHtml = async (deckPages: HtmlPptPage[]) => {
+    const videoData = await loadVideos(deckPages);
+    return buildHtmlPptDocument({ title, styleId, purposeZh: purpose,
+      pages: deckPages.map(page => page.videoUrl ? { ...page, videoUrl: videoData[page.videoUrl] } : page) });
+  };
+
   const generateFromOutline = async () => {
     setAiError(null); setAiBusy(true);
     try {
       const normalized = await pagesWithFreshImages();
       if (normalized.length < PLATFORM_HTML_PPT_PAGE_MIN) throw new Error(`清单至少 ${PLATFORM_HTML_PPT_PAGE_MIN} 页`);
-      const doc = buildHtmlPptDocument({ title, styleId, purposeZh: purpose, pages: normalized });
+      const doc = await buildPortableHtml(normalized);
       setPages(normalized); setHtml(doc);
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setPreviewUrl(URL.createObjectURL(new Blob([doc], { type: "text/html;charset=utf-8" })));
@@ -441,7 +469,7 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
     try {
       const normalized = await pagesWithFreshImages();
       if (!normalized.length) throw new Error("请先创建并核对页面，未导出示例内容。");
-      const doc = buildHtmlPptDocument({ title, styleId, purposeZh: purpose, pages: normalized });
+      const doc = await buildPortableHtml(normalized);
       const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([doc], { type: "text/html;charset=utf-8" }));
       a.download = `${title.slice(0, 24).replace(/\s+/g, "-") || "映刻演示"}.html`; a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
@@ -493,8 +521,9 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
         /* 叠底可选 */
       }
 
+      const videoDataByUrl = await loadVideos(deckPages);
       setAiBusyLabel("正在写入 PPTX…");
-      await downloadHtmlPptPptx(deck, undefined, { imageDataByUrl, styleBgDataUrl });
+      await downloadHtmlPptPptx(deck, undefined, { imageDataByUrl, styleBgDataUrl, videoDataByUrl });
     } catch (e: unknown) {
       setAiError(e instanceof Error ? e.message : "PPTX 导出失败");
     } finally {
@@ -516,12 +545,12 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
   return (
     <div className="space-y-4 rounded-2xl border border-indigo-400/25 bg-[linear-gradient(180deg,rgba(99,102,241,0.10),rgba(0,0,0,0.28))] p-4">
       <div>
-        <div className="text-sm font-semibold text-indigo-100">动效PPT</div>
+        <div className="text-sm font-semibold text-indigo-100">AI PPT</div>
         {draftError && <p role="alert" className="text-amber-300">{draftError}</p>}
         {initialContent && <button type="button" disabled={busy} onClick={useLatestMaterials} className="mt-2 rounded border border-white/20 px-3 py-2 text-sm">使用上方最新资料与要求</button>}
-        <p className="mt-2 text-xs text-white/65">同一份页面可导出带分步动画的 HTML 演示，或可编辑 PPTX（不保留分步动画）。图表请核对原始数值、单位、时间范围与来源；缺数据不会补造。</p>
+        <p className="mt-2 text-xs text-white/65">同一份页面可导出带分步动画的 HTML 演示，或可编辑 PPTX（可嵌入已有动效 MP4）。图表请核对原始数值、单位、时间范围与来源；缺数据不会补造。</p>
         <p className="mt-1 text-[11px] leading-relaxed text-white/55">
-          路演投屏专用：主题与 ≥3 条大纲 → 免费补全候选 → 勾选后按页生成（{perPageCost} 积分/页，整次只扣一次）。
+          路演投屏专用：输入一个主题 → AI 免费生成完整大纲 → 确认后按页生成（{perPageCost} 积分/页，整次只扣一次）。
           支持分步 SVG 动效、关键页插图，导出 HTML 或可编辑 PPTX。
           改数字请直接改清单再刷新预览（免费）。
         </p>
@@ -556,7 +585,7 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
               />
             </label>
             <label className="block text-[11px] text-white/60">
-              用途
+              用途（选填）
               <input
                 disabled={busy}
                 value={purpose}
@@ -569,6 +598,9 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
             </label>
           </div>
 
+          <details className="rounded-xl border border-white/10 p-3">
+            <summary className="cursor-pointer text-xs text-white/65">外观、页数与补充资料（选填）</summary>
+            <div className="mt-3 space-y-3">
           <div>
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/35">风格</div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -617,10 +649,8 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
             </label>
           </div>
 
-          <div>
-            <div className="mb-1.5 text-[11px] text-white/60">
-              大纲主题（至少 3 条，写在正文逻辑里的大标题）
-            </div>
+          <details>
+            <summary className="mb-1.5 cursor-pointer text-[11px] text-white/60">已有大纲（选填，可完全留空）</summary>
             <div className="space-y-1.5">
               {userThemeInputs.map((t, i) => (
                 <div key={`ut-${i}`} className="flex gap-2">
@@ -635,7 +665,7 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
                   />
                   <button
                     type="button"
-                    disabled={busy || userThemeInputs.length <= 3}
+                    disabled={busy || userThemeInputs.length <= 1}
                     onClick={() => setUserThemeInputs((prev) => prev.filter((_, j) => j !== i))}
                     className="text-[10px] text-white/40 disabled:opacity-30"
                   >
@@ -652,7 +682,7 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
                 + 加一条大纲
               </button>
             </div>
-          </div>
+          </details>
 
           <div>
             <div className="mb-1.5 text-[11px] text-white/60">
@@ -680,7 +710,7 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
             </div>
             {pageCount != null && outlineCost != null ? (
               <p className="mt-1.5 text-[10px] text-emerald-200/70">
-                生成页面内容：{outlineCost} 积分（{pageCount}×{perPageCost}，只扣这一次；补大纲免费）
+                生成页面内容：{outlineCost} 积分（{pageCount}×{perPageCost}，只扣这一次；生成大纲免费）
               </p>
             ) : (
               <p className="mt-1.5 text-[10px] text-amber-200/80">请先点选页数</p>
@@ -698,14 +728,17 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
             />
           </label>
 
+            </div>
+          </details>
+
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={busy || !title.trim() || !userThemesReady || !pageReady}
+              disabled={busy || title.trim().length < 2}
               onClick={() => void goSuggestThemes()}
               className="rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50 disabled:opacity-40"
             >
-              {aiBusy ? aiBusyLabel : "免费补全大纲并进入勾选"}
+              {aiBusy ? aiBusyLabel : "AI 生成完整大纲 · 免费"}
             </button>
             <button
               type="button"
@@ -841,6 +874,7 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
                     className="w-20 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-violet-100/80"
                   />
                 </div>
+                <HtmlPptVideoPicker page={p} pageIndex={i + 1} disabled={busy} onChange={patch => updatePage(i, patch)} />
                 {!!initialContent?.images?.length && <label className="block text-xs text-white/70">使用已上传图片
                   <select aria-label={`第${i + 1}页上传图片`} disabled={busy || !importedImages.data} value={p.imageSourceId || ""} onChange={event => {
                     const image = importedImages.data?.find(item => item.id === event.target.value);

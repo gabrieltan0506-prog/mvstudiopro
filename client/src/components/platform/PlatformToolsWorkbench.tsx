@@ -1,5 +1,5 @@
 import React from "react";
-import { Presentation, Scissors, Video } from "lucide-react";
+import { Presentation } from "lucide-react";
 
 export type PlatformToolsTab = "htmlPpt" | "matting" | "assets";
 
@@ -12,12 +12,10 @@ type Props = {
 };
 
 const TABS: Array<{ id: PlatformToolsTab; label: string; icon: React.ReactNode }> = [
-  { id: "htmlPpt", label: "动效 PPT", icon: <Presentation className="h-3.5 w-3.5" /> },
-  { id: "matting", label: "自定义抠像", icon: <Scissors className="h-3.5 w-3.5" /> },
-  { id: "assets", label: "素材分析", icon: <Video className="h-3.5 w-3.5" /> },
+  { id: "htmlPpt", label: "AI PPT", icon: <Presentation className="h-3.5 w-3.5" /> },
 ];
 
-/** 更多工具：动效 PPT / 抠像 / 素材分析 */
+/** 更多工具：AI PPT  */
 export function PlatformToolsWorkbench({
   activeTab,
   onTabChange,

@@ -9750,7 +9750,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           title: z.string().min(2).max(80),
           purposeZh: z.string().max(80).optional(),
           briefZh: z.string().max(4000).optional(),
-          userThemes: z.array(z.string().min(1).max(40)).min(3).max(12),
+          userThemes: z.array(z.string().min(1).max(40)).max(12).optional().default([]),
         }),
       )
       .mutation(async ({ input }) => {
