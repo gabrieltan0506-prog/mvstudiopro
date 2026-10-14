@@ -15,6 +15,7 @@ export type ManhuaNativeAudioSourceVariant =
  * 旧双路常量必须保留 —— 已入库卡的读取门还要按旧口径校验旧一代卡。
  */
 export const MANHUA_NATIVE_AUDIO_DIRECT_MODEL = "gemini-3.1-pro-preview" as const;
+export const MANHUA_NATIVE_AUDIO_ARGON_MODEL = "gemini-4-argon" as const;
 export const MANHUA_NATIVE_AUDIO_DIRECT_ROUTES = [
   "vertex_gcs_video",
   "evolink_gemini_video",
@@ -86,10 +87,11 @@ export type ManhuaNativeAudioUsage = {
 };
 
 export type ManhuaNativeAudioAnalysis = {
-  model: typeof MANHUA_NATIVE_AUDIO_MODEL | typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL;
+  model: typeof MANHUA_NATIVE_AUDIO_MODEL | typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL | typeof MANHUA_NATIVE_AUDIO_ARGON_MODEL;
   resolverModel:
     | typeof MANHUA_NATIVE_AUDIO_RESOLVER_MODEL
-    | typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL;
+    | typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL
+    | typeof MANHUA_NATIVE_AUDIO_ARGON_MODEL;
   resolverRoute: typeof MANHUA_NATIVE_AUDIO_RESOLVER_ROUTE | ManhuaNativeAudioDirectRoute;
   sourceVariants:
     | typeof MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS
@@ -421,6 +423,7 @@ export function mergeManhuaNativeDirectAudioChunks(input: {
   chunks: readonly ManhuaNativeAudioChunkAnalysis[];
   usage: ManhuaNativeAudioUsage;
   route: ManhuaNativeAudioDirectRoute;
+  model?: typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL | typeof MANHUA_NATIVE_AUDIO_ARGON_MODEL;
   coveredChunks?: readonly ManhuaNativeAudioChunk[];
 }): ManhuaNativeAudioAnalysis {
   if (!MANHUA_NATIVE_AUDIO_DIRECT_ROUTES.includes(input.route)) {
@@ -428,8 +431,8 @@ export function mergeManhuaNativeDirectAudioChunks(input: {
   }
   return {
     ...mergeManhuaNativeAudioChunksCore(input),
-    model: MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
-    resolverModel: MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
+    model: input.model ?? MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
+    resolverModel: input.model ?? MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
     resolverRoute: input.route,
     sourceVariants: MANHUA_NATIVE_AUDIO_DIRECT_SOURCE_VARIANTS,
     alignmentMethod: MANHUA_NATIVE_AUDIO_DIRECT_ALIGNMENT,
@@ -467,6 +470,7 @@ export function finalizeManhuaNativeDirectAudioAnalysis(input: {
   resolvedChunks: ReadonlyArray<{ chunkIndex: number; analysis: unknown }>;
   usage: ManhuaNativeAudioUsage;
   route: ManhuaNativeAudioDirectRoute;
+  model?: typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL | typeof MANHUA_NATIVE_AUDIO_ARGON_MODEL;
   /** 仅部分提案允许缺少其他原视频分片；整集仍要求完整覆盖。 */
   partial?: boolean;
 }): ManhuaNativeAudioAnalysis {
@@ -493,6 +497,7 @@ export function finalizeManhuaNativeDirectAudioAnalysis(input: {
     chunks,
     usage: input.usage,
     route: input.route,
+    model: input.model,
     coveredChunks: input.partial ? input.chunks : undefined,
   });
 }
@@ -501,11 +506,12 @@ export function finalizeManhuaNativeDirectAudioAnalysis(input: {
 export function noAudioManhuaNativeDirectAnalysis(
   durationSec: number,
   route: ManhuaNativeAudioDirectRoute,
+  model: typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL | typeof MANHUA_NATIVE_AUDIO_ARGON_MODEL = MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
 ): ManhuaNativeAudioAnalysis {
   return {
     ...noAudioManhuaNativeAnalysis(durationSec),
-    model: MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
-    resolverModel: MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
+    model,
+    resolverModel: model,
     resolverRoute: route,
     sourceVariants: MANHUA_NATIVE_AUDIO_DIRECT_SOURCE_VARIANTS,
     alignmentMethod: MANHUA_NATIVE_AUDIO_DIRECT_ALIGNMENT,
@@ -524,8 +530,8 @@ export function parseManhuaNativeAudioAnalysis(raw: unknown, options: { allowPar
     && o.alignmentMethod === MANHUA_NATIVE_AUDIO_ALIGNMENT
     && JSON.stringify(o.sourceVariants) === JSON.stringify(MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS);
   const isDirect =
-    o.model === MANHUA_NATIVE_AUDIO_DIRECT_MODEL
-    && o.resolverModel === MANHUA_NATIVE_AUDIO_DIRECT_MODEL
+    (o.model === MANHUA_NATIVE_AUDIO_DIRECT_MODEL || o.model === MANHUA_NATIVE_AUDIO_ARGON_MODEL)
+    && o.resolverModel === o.model
     && MANHUA_NATIVE_AUDIO_DIRECT_ROUTES.includes(o.resolverRoute as ManhuaNativeAudioDirectRoute)
     && o.alignmentMethod === MANHUA_NATIVE_AUDIO_DIRECT_ALIGNMENT
     && JSON.stringify(o.sourceVariants)
@@ -577,7 +583,8 @@ export function parseManhuaNativeAudioAnalysis(raw: unknown, options: { allowPar
     // Vertex 主线必须 >0（实测 360s 段音频 ≈9,001 tok）；EvoLink 兜底是否回报
     // modality 明细未实测，不据此拒卡。
     const callsFloor = isLegacyDual ? chunkCount * 2 : chunkCount;
-    const requireAudioTokens = isLegacyDual || o.resolverRoute === "vertex_gcs_video";
+    // Argon回执只列VIDEO/TEXT；不伪造AUDIO用量，仍校验真实音轨内容与覆盖。
+    const requireAudioTokens = isLegacyDual || (o.resolverRoute === "vertex_gcs_video" && o.model !== MANHUA_NATIVE_AUDIO_ARGON_MODEL);
     if (
       chunkCount < 1 || usage.geminiCalls < callsFloor
       || (requireAudioTokens && usage.audioInputTokens <= 0) || !usage.receiptComplete

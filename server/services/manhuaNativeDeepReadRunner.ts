@@ -5381,7 +5381,7 @@ async function executeNativeDeepReadBatch(
           if (!cached && params.structuringOnly && deps.readPermanentSegment) {
             cached = await deps.readPermanentSegment({ seriesKey: params.segmentCacheSeriesKey, episodeIndex: episode.episodeIndex,
               segmentIndex, sourceDigest: episode.cacheSourceDigest!, fingerprints: [false, true].flatMap(hasAudio => NATIVE_DEEP_READ_LEGACY_FINGERPRINT_VARIANTS.map(version => nativeDeepReadSegmentCacheFingerprint({
-                sourceDigest: episode.cacheSourceDigest!, episodeIndex: episode.episodeIndex, episodeDurationSec: episode.sourceDurationSec,
+                model: readModel === "gemini-4-argon" ? readModel : undefined, sourceDigest: episode.cacheSourceDigest!, episodeIndex: episode.episodeIndex, episodeDurationSec: episode.sourceDurationSec,
                 segment, segmentIndex, segmentCount: episode.segments.length, hasAudio, videoFps: episode.videoFps, hintZh: episode.hintZh, ...version,
               }))) });
           }
@@ -5389,6 +5389,7 @@ async function executeNativeDeepReadBatch(
           const entry = cached.entry;
           if (!params.structuringOnly && entry.relearnRequestId !== params.relearnRequestId) continue;
           const fingerprintInput = {
+            model: readModel === "gemini-4-argon" ? readModel : undefined,
             sourceDigest: episode.cacheSourceDigest!,
             episodeIndex: episode.episodeIndex,
             episodeDurationSec: episode.sourceDurationSec,
@@ -6175,7 +6176,7 @@ async function executeNativeDeepReadBatch(
             }
             if (truncated) raw.truncated = true;
             const score = scoreNativeAttempt(raw, segment.startSec, segment.endSec, hasAudio);
-            if (score && (!hasAudio || attemptAudioInput > 0)) {
+            if (score && (!hasAudio || attemptModel === "gemini-4-argon" || attemptAudioInput > 0)) {
               const candidates = rejectedAttempts.get(input.segmentIndex) ?? [];
               candidates.push({ attemptNumber: input.attemptNumber, score,
                 reasonZh: gateFailure instanceof Error ? gateFailure.message : String(gateFailure),
@@ -6655,6 +6656,7 @@ async function executeNativeDeepReadBatch(
           const entry: NativeDeepReadSegmentCacheEntry = {
             schemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
             fingerprint: nativeDeepReadSegmentCacheFingerprint({
+              model: readModel === "gemini-4-argon" ? readModel : undefined,
               sourceDigest,
               episodeIndex: episode.episodeIndex,
               episodeDurationSec: episode.sourceDurationSec,
@@ -6673,6 +6675,7 @@ async function executeNativeDeepReadBatch(
             startSec: segment.startSec,
             endSec: segment.endSec,
             hasAudio,
+            model: readModel,
             requestedFps: fps,
             visualRoute: result.visualRoute,
             degraded: result.visualRoute === NATIVE_DEEP_READ_ROUTE_EVOLINK,

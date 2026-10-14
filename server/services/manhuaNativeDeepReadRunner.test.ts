@@ -5330,8 +5330,14 @@ describe("门禁前解析稿持久化接线", () => {
     expect(badDeps.writeParsedAttemptEvidence).not.toHaveBeenCalled();
   });
 
-  it("active缓存缺失但永久raw存在时重放原证据，模型外呼为0并补齐parsed与active缓存", async () => {
+  it.each(["gemini-3.1-pro-preview", "gemini-4-argon"] as const)("%s active缓存缺失但永久raw存在时零外呼补齐缓存与截图回调", async (readModel) => {
     const response = geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 }));
+    if (readModel === "gemini-4-argon") {
+      const envelope = JSON.parse(response.text);
+      envelope.usageMetadata.promptTokensDetails = [{ modality: "VIDEO", tokenCount: 100_000 }];
+      response.text = JSON.stringify(envelope);
+    }
+    const onSegmentRead = vi.fn();
     const responseBytes = Buffer.byteLength(response.text);
     const responseSha256 = createHash("sha256").update(response.text).digest("hex");
     const parsedWrites: NativeDeepReadParsedAttemptEvidenceInput[] = [];
@@ -5359,12 +5365,16 @@ describe("门禁前解析稿持久化接线", () => {
     });
 
     const result = await runManhuaNativeDeepReadBatch({
-      ...params,
+      ...params, readModel, onSegmentRead,
       onModelReceipt: (row) => { receipts.push({ stage: row.stage, status: row.status }); },
     }, deps);
 
     expect(deps.postVertex).not.toHaveBeenCalled();
     expect(deps.writeRawAttemptEvidence).not.toHaveBeenCalled();
+    expect(onSegmentRead).toHaveBeenCalled();
+    const cached = vi.mocked(deps.writeSegmentCache).mock.calls[0]![0];
+    expect(cached.model).toBe(readModel);
+    if (readModel === "gemini-4-argon") expect(cached.paidUsage.audioInputTokens).toBe(0);
     expect(parsedWrites[0]?.visualRoute).toBe("gemini_api_files_video");
     expect(vi.mocked(deps.writeSegmentCache).mock.calls[0]?.[0].visualRoute).toBe("gemini_api_files_video");
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(1);
@@ -5378,6 +5388,12 @@ describe("门禁前解析稿持久化接线", () => {
     expect(vi.mocked(deps.writeSegmentCache).mock.calls[0]![0].paidUsage.inputTokens).toBe(100_000);
     expect(result.usage).toMatchObject({ inputTokens: 0, outputTokens: 0, costCny: 0 });
     expect(receipts.filter((row) => row.stage === "visual_model")).toEqual([]);
+    // 真正再走一次缓存消费，漏传Argon指纹会重新访问raw证据或外呼。
+    const resumed = makeRunnerDeps({ readSegmentCache: vi.fn(async () => ({ entry: cached, generation: "1" })) as never });
+    await runManhuaNativeDeepReadBatch({ ...params, readModel }, resumed);
+    expect(resumed.readRawAttemptEvidence).not.toHaveBeenCalled();
+    expect(resumed.postVertex).not.toHaveBeenCalled();
+    expect(resumed.prepareVideos).not.toHaveBeenCalled();
   });
 
   it("MAX_TOKENS低覆盖原稿逐发存档，五次后交整形并保留截断状态", async () => {
