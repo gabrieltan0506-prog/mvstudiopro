@@ -423,6 +423,17 @@ describe("段缓存写入：证据门禁与条件写", () => {
     expect(gcs.upload).not.toHaveBeenCalled();
   });
 
+  it("Argon未单列音频用量时可保存并回读，保留零值", async () => {
+    const entry = entryOf({ model: "gemini-4-argon", paidUsage: { ...entryOf().paidUsage, audioInputTokens: 0 } });
+    gcs.downloadVersioned.mockRejectedValue(new Error("gcs_stat_failed:404:not found"));
+    gcs.createIfAbsent.mockResolvedValue({ created: true });
+    const written = await writeNativeDeepReadSegmentCacheEntry(entry);
+    expect(written.entry.model).toBe("gemini-4-argon");
+    gcs.downloadVersioned.mockResolvedValue({ buffer: Buffer.from(JSON.stringify(entry)), generation: "1" });
+    const read = await readNativeDeepReadSegmentCacheEntry(entry);
+    expect(read?.entry.paidUsage.audioInputTokens).toBe(0);
+  });
+
   it("对象不存在时走 ifGenerationMatch=0 的 createIfAbsent 原子创建路径", async () => {
     const entry = entryOf();
     gcs.downloadVersioned.mockRejectedValue(

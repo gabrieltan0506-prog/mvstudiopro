@@ -5330,8 +5330,14 @@ describe("门禁前解析稿持久化接线", () => {
     expect(badDeps.writeParsedAttemptEvidence).not.toHaveBeenCalled();
   });
 
-  it("active缓存缺失但永久raw存在时重放原证据，模型外呼为0并补齐parsed与active缓存", async () => {
+  it.each([["gemini-3.1-pro-preview", false], ["gemini-4-argon", false], ["gemini-4-argon", true]] as const)("%s 历史无温度=%s active缓存缺失但永久raw存在时零外呼补齐缓存与截图回调", async (readModel, legacyTemperature) => {
     const response = geminiResponse(makeSegmentPayload({ segmentIndex: 0, startSec: 0, endSec: 60 }));
+    if (readModel === "gemini-4-argon") {
+      const envelope = JSON.parse(response.text);
+      envelope.usageMetadata.promptTokensDetails = [{ modality: "VIDEO", tokenCount: 100_000 }];
+      response.text = JSON.stringify(envelope);
+    }
+    const onSegmentRead = vi.fn();
     const responseBytes = Buffer.byteLength(response.text);
     const responseSha256 = createHash("sha256").update(response.text).digest("hex");
     const parsedWrites: NativeDeepReadParsedAttemptEvidenceInput[] = [];
@@ -5358,13 +5364,29 @@ describe("门禁前解析稿持久化接线", () => {
       }) as never,
     });
 
+    const fingerprintInput = { model: readModel, sourceDigest: episode.cacheSourceDigest,
+      episodeIndex: episode.episodeIndex, episodeDurationSec: episode.sourceDurationSec,
+      segment: episode.segments[0]!, segmentIndex: 0, segmentCount: 1, hasAudio: true };
+    const legacyFingerprint = nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, legacyArgonWithoutTemperature: true });
+    if (legacyTemperature) vi.mocked(deps.readRawAttemptEvidence).mockResolvedValueOnce(null);
     const result = await runManhuaNativeDeepReadBatch({
-      ...params,
+      ...params, readModel, onSegmentRead,
       onModelReceipt: (row) => { receipts.push({ stage: row.stage, status: row.status }); },
     }, deps);
 
     expect(deps.postVertex).not.toHaveBeenCalled();
     expect(deps.writeRawAttemptEvidence).not.toHaveBeenCalled();
+    expect(onSegmentRead).toHaveBeenCalled();
+    const cached = vi.mocked(deps.writeSegmentCache).mock.calls[0]![0];
+    expect(cached.model).toBe(readModel);
+    if (legacyTemperature) {
+      expect(vi.mocked(deps.readRawAttemptEvidence).mock.calls[1]![0].requestFingerprint).toBe(legacyFingerprint);
+      expect(parsedWrites[0]!.requestFingerprint).toBe(legacyFingerprint);
+      expect(cached.fingerprint).not.toBe(legacyFingerprint);
+      // 旧缓存也须直接命中，不能因新增温度触发模型调用。
+      cached.fingerprint = legacyFingerprint;
+    }
+    if (readModel === "gemini-4-argon") expect(cached.paidUsage.audioInputTokens).toBe(0);
     expect(parsedWrites[0]?.visualRoute).toBe("gemini_api_files_video");
     expect(vi.mocked(deps.writeSegmentCache).mock.calls[0]?.[0].visualRoute).toBe("gemini_api_files_video");
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(1);
@@ -5378,6 +5400,12 @@ describe("门禁前解析稿持久化接线", () => {
     expect(vi.mocked(deps.writeSegmentCache).mock.calls[0]![0].paidUsage.inputTokens).toBe(100_000);
     expect(result.usage).toMatchObject({ inputTokens: 0, outputTokens: 0, costCny: 0 });
     expect(receipts.filter((row) => row.stage === "visual_model")).toEqual([]);
+    // 真正再走一次缓存消费，漏传Argon指纹会重新访问raw证据或外呼。
+    const resumed = makeRunnerDeps({ readSegmentCache: vi.fn(async () => ({ entry: cached, generation: "1" })) as never });
+    await runManhuaNativeDeepReadBatch({ ...params, readModel }, resumed);
+    expect(resumed.readRawAttemptEvidence).not.toHaveBeenCalled();
+    expect(resumed.postVertex).not.toHaveBeenCalled();
+    expect(resumed.prepareVideos).not.toHaveBeenCalled();
   });
 
   it("MAX_TOKENS低覆盖原稿逐发存档，五次后交整形并保留截断状态", async () => {
@@ -6311,7 +6339,8 @@ describe("0920 读片升级档：单片五发不过 → 不报错 → 升级 Gem
     const deps = makeRunnerDeps({ postVertex: vi.fn().mockResolvedValue(geminiResponse(short)) });
     const receipts: Array<Record<string, unknown>> = [];
     const error = await runManhuaNativeDeepReadSelectedSegments({ ...selectedParams([3]), readModel: "gemini-4-argon", onModelReceipt: row => { receipts.push(row); } }, deps).catch(e => e);
-    expect(receipts.filter(r => r.model === "gemini-4-argon").every(r => r.temperature === undefined)).toBe(true);
+    expect(receipts.filter(r => r.model === "gemini-4-argon" && r.stage === "visual_model" && r.status === "started").map(r => r.temperature)).toEqual([0.7, 0.65, 0.65, 0.6, 0.6]);
+    expect((deps.postVertex as ReturnType<typeof vi.fn>).mock.calls.map(([body]) => body.generationConfig.temperature)).toEqual([0.7, 0.65, 0.65, 0.6, 0.6]);
     expect(error).toBeInstanceOf(Error);
     expect(deps.postVertex).toHaveBeenCalledTimes(5);
     expect(new Set(modelsOf(deps.postVertex))).toEqual(new Set(["gemini-4-argon"]));
@@ -6432,7 +6461,8 @@ describe("Argon复用原生音画builder", () => {
     const config = argon.generationConfig as Record<string, unknown>;
     expect(config.responseSchema).toEqual((flash.generationConfig as Record<string, unknown>).responseSchema);
     expect(config).toMatchObject({ maxOutputTokens: 32768, audioTimestamp: true, thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false } });
-    for (const field of ["temperature", "candidateCount", "topP", "topK"]) expect(config).not.toHaveProperty(field);
+    expect(config.temperature).toBe(0.7);
+    for (const field of ["candidateCount", "topP", "topK"]) expect(config).not.toHaveProperty(field);
     expect(flash.generationConfig).toMatchObject({ temperature: 0.7, maxOutputTokens: 65536, candidateCount: 1 });
     expect(nativeDeepReadFrozenContractSha256()).toBe(NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256);
   });

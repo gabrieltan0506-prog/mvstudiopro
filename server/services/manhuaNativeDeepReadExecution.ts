@@ -212,7 +212,7 @@ function frameEvidenceError(message: string): Error {
   return error;
 }
 
-function createSegmentFrameCollector(episode: NativeDeepReadEpisodeExecution, deps: NativeDeepReadExecutionDeps) {
+export function createSegmentFrameCollector(episode: NativeDeepReadEpisodeExecution, deps: NativeDeepReadExecutionDeps = defaultDeps) {
   type SegmentRead = Parameters<NonNullable<Parameters<typeof runManhuaNativeDeepRead>[0]["onSegmentRead"]>>[0];
   const bySegment = new Map<number, ManhuaViralTemplateEvidenceFrame[]>();
   const attempts = new Map<string, number>();
@@ -542,7 +542,7 @@ export type NativeDeepReadEpisodeOutcomeCost = {
  * 视觉结果 → 新一代直读音轨装配。
  *
  * ⚠️ 双计防线：音轨 token 已计入视觉调用回执，这里的 usage 计费全部为 0，
- * 只带 AUDIO modality token 数（audioInputTokens）作「真听过」的证据。
+ * AUDIO分项仅作供应商用量回执；Argon不单列该项，音轨内容仍须独立校验。
  */
 export function buildNativeDeepReadDirectAudioAnalysis(input: {
   durationSec: number;
@@ -562,7 +562,7 @@ export function buildNativeDeepReadDirectAudioAnalysis(input: {
         ? NATIVE_DEEP_READ_ROUTE_GEMINI_API
         : NATIVE_DEEP_READ_ROUTE_VERTEX;
   if (input.visualResult.hasAudio !== true) {
-    return noAudioManhuaNativeDirectAnalysis(input.durationSec, route);
+    return noAudioManhuaNativeDirectAnalysis(input.durationSec, route, input.visualResult.model === "gemini-4-argon" ? "gemini-4-argon" : undefined);
   }
   const audioInputTokens = Math.max(0, Number(input.visualResult.audioInputTokens) || 0);
   const usage: ManhuaNativeAudioUsage = {
@@ -584,6 +584,7 @@ export function buildNativeDeepReadDirectAudioAnalysis(input: {
       startSec: segment.startSec,
       endSec: segment.endSec,
     })),
+    model: input.visualResult.model === "gemini-4-argon" ? "gemini-4-argon" : undefined,
     resolvedChunks: input.visualResult.resolvedAudioChunks,
     usage,
     route,
@@ -598,7 +599,7 @@ function combinedUsageFromVisual(
   const inputTokens = Math.max(0, Number(visualResult.usage?.inputTokens) || 0);
   const outputTokens = Math.max(0, Number(visualResult.usage?.outputTokens) || 0);
   return {
-    model: NATIVE_DEEP_READ_MODEL,
+    model: visualResult.model,
     inputTokens,
     outputTokens,
     costCny: visualCostCny,
@@ -615,11 +616,11 @@ function combinedUsageFromVisual(
   };
 }
 
-function failedUsageFromError(error: unknown): NativeDeepReadEpisodeOutcomeCost["usage"] {
+function failedUsageFromError(error: unknown, model: string = NATIVE_DEEP_READ_MODEL): NativeDeepReadEpisodeOutcomeCost["usage"] {
   const nativeError = error as NativeDeepReadRunError;
   const visualCost = Number(nativeError?.nativeDeepReadCostCny) || 0;
   return {
-    model: NATIVE_DEEP_READ_MODEL,
+    model,
     inputTokens: Number(nativeError?.nativeDeepReadUsage?.inputTokens) || 0,
     outputTokens: Number(nativeError?.nativeDeepReadUsage?.outputTokens) || 0,
     costCny: visualCost,
@@ -1329,7 +1330,7 @@ export async function runNativeDeepReadBatch(input: {
       outcomes.push(ok);
       await emitProgress(ok);
     } catch (error) {
-      const usage = paidUsage || failedUsageFromError(error);
+      const usage = paidUsage || failedUsageFromError(error, input.readModel);
       const failed: NativeDeepReadBatchOutcome = {
         episodeIndex: episode.episodeIndex,
         status: input.abortSignal?.aborted ? "aborted" : "failed",

@@ -56,6 +56,8 @@ export type NativeDeepReadSegmentCacheEntry = {
   startSec: number;
   endSec: number;
   hasAudio: boolean;
+  /** 本次读片车道模型；旧缓存缺省沿用旧音频用量门禁。 */
+  model?: string;
   requestedFps: number;
   visualRoute: NativeDeepReadSegmentCacheVisualRoute;
   degraded: boolean;
@@ -570,7 +572,7 @@ function parseCacheEntry(
         NATIVE_DEEP_READ_RAW_ATTEMPT_EVIDENCE_PREFIX,
       ))
     || !numbers.every((number) => Number.isFinite(number) && Number(number) >= 0)
-    || (entry.hasAudio && Number(entry.paidUsage?.audioInputTokens) <= 0)
+    || (entry.hasAudio && entry.model !== "gemini-4-argon" && Number(entry.paidUsage?.audioInputTokens) <= 0)
     || !(entry.endSec > entry.startSec)
     || Number.isNaN(Date.parse(String(entry.savedAtIso || "")))
   ) {

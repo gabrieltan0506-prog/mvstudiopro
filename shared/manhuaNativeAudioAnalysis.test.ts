@@ -5,6 +5,7 @@ import {
   mergeManhuaNativeAudioChunks,
   mergeManhuaNativeDirectAudioChunks,
   normalizeManhuaNativeAudioChunkAnalysis,
+  noAudioManhuaNativeDirectAnalysis,
   parseManhuaNativeAudioAnalysis,
   stripClockTextZh,
   type ManhuaNativeAudioTrack,
@@ -109,6 +110,11 @@ describe("原生精读音轨合并", () => {
       durationSec, chunks: [chunk], usage: zeroAudioUsage, route: "vertex_gcs_video",
     });
     expect(parseManhuaNativeAudioAnalysis(JSON.parse(JSON.stringify(viaVertex)))).toBeUndefined();
+    expect(parseManhuaNativeAudioAnalysis(noAudioManhuaNativeDirectAnalysis(30, "vertex_gcs_video", "gemini-4-argon"))?.model).toBe("gemini-4-argon");
+    const argon = mergeManhuaNativeDirectAudioChunks({ durationSec, chunks: [chunk], usage: zeroAudioUsage, route: "vertex_gcs_video", model: "gemini-4-argon" });
+    expect(parseManhuaNativeAudioAnalysis(JSON.parse(JSON.stringify(argon)))?.model).toBe("gemini-4-argon");
+    expect(parseManhuaNativeAudioAnalysis({ ...argon, audioTrack: [] })).toBeUndefined();
+    expect(parseManhuaNativeAudioAnalysis({ ...argon, resolverModel: "gemini-3.1-pro-preview" })).toBeUndefined();
   });
 });
 

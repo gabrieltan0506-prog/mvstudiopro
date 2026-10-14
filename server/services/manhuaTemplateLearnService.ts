@@ -2029,7 +2029,7 @@ export async function runManhuaTemplateLearn(
           episodeFailNotes.push(`第 ${outcome.episodeIndex} 集未入库：${failReasonZh}`);
           await progress(
             MANHUA_LEARN_STAGE.failed,
-            `第 ${outcome.episodeIndex} 集未入库：${failReasonZh}；已停止后续请求。已通过分片进入缓存，重跑只补未终态分片`,
+            `第 ${outcome.episodeIndex} 集未入库：${failReasonZh}；已停止后续请求。已保存的原始响应保留；缓存是否可恢复须经身份与内容校验，不自动重跑`,
           );
         }
       },
