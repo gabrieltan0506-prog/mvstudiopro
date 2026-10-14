@@ -30,6 +30,8 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "manhuaViralTemplate.renderEpisodeReport",
   // 批准含锁与全库校验/GCS写入，和报告导出同走鉴权Fly，避免反代错误页。
   "manhuaViralTemplate.approve",
+  // 来源解析需要等待外站详情与已学记录，使用既有鉴权长请求通道。
+  "manhuaViralTemplate.inspectLearnSource",
   // 学习进度与导入区同走已鉴权的 Fly，避免一边直连更新、一边被反代拦截。
   "manhuaViralTemplate.listProposals",
   "manhuaViralTemplate.getProposalDetail",

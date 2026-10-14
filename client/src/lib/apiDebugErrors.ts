@@ -51,13 +51,21 @@ export function recordApiDebugError(input: Omit<ApiDebugError, "id" | "time">) {
   listeners.forEach(listener => listener());
 }
 
+class SourceCheckResponseError extends Error {
+  constructor(readonly httpStatus: number, readonly contentType: string) {
+    super(`来源检查未取得有效响应（HTTP ${httpStatus}），请稍后再试。`);
+    this.name = "SourceCheckResponseError";
+  }
+}
+
 export function recordTrpcDebugError(error: unknown, key: unknown, stage: string) {
-  const e = error as { message?: string; data?: { httpStatus?: number }; meta?: { response?: Response } };
+  const e = error as { message?: string; data?: { httpStatus?: number }; meta?: { response?: Response }; cause?: unknown };
   const parts = Array.isArray(key) ? key[0] : undefined;
   const endpoint = Array.isArray(parts) ? parts.filter(p => typeof p === "string").join(".") : "未知接口";
+  const sourceError = e?.cause instanceof SourceCheckResponseError ? e.cause : undefined;
   recordApiDebugError({ stage, endpoint, message: e?.message || String(error),
-    status: e?.data?.httpStatus ?? e?.meta?.response?.status,
-    contentType: e?.meta?.response?.headers?.get("content-type") || undefined });
+    status: e?.data?.httpStatus ?? e?.meta?.response?.status ?? sourceError?.httpStatus,
+    contentType: e?.meta?.response?.headers?.get("content-type") || sourceError?.contentType || undefined });
 }
 
 async function responseSummary(response: Response): Promise<string> {
@@ -87,7 +95,7 @@ async function responseSummary(response: Response): Promise<string> {
   } catch { return "接口返回非JSON正文，未保存原始页面内容"; }
 }
 
-/** 包裹现有传输，保留响应原对象及失败语义，不额外重试或提交。 */
+/** 包裹现有传输；来源检查的非JSON响应明确失败，不额外重试或提交。 */
 export async function withApiDebugFetch(input: RequestInfo | URL, send: () => Promise<Response>): Promise<Response> {
   const endpoint = input instanceof Request ? input.url : String(input);
   try {
@@ -100,8 +108,12 @@ export async function withApiDebugFetch(input: RequestInfo | URL, send: () => Pr
         stage: "响应错误摘要", endpoint, status: response.status, contentType, message,
       })).catch(() => {});
     }
+    if (endpointOnly(endpoint) === "manhuaViralTemplate.inspectLearnSource" && !/\bjson\b/i.test(contentType)) {
+      throw new SourceCheckResponseError(response.status, contentType);
+    }
     return response;
   } catch (error) {
+    if (error instanceof SourceCheckResponseError) throw error;
     recordApiDebugError({ stage: "网络连接", endpoint, message: error instanceof Error ? error.message : String(error) });
     throw error;
   }

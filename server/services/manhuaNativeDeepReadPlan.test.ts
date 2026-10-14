@@ -1134,3 +1134,24 @@ describe("长片切片与历史JSON兼容", () => {
     expect(plan.totalDurationSec).toBe(7200);
   });
 });
+
+describe("提交前来源检查及时失败", () => {
+  it("用户主页modal_id只解析一个视频，详情为空不进入分钟级重试或媒体处理", async () => {
+    const d = deps({ fetchAwemeDetail: vi.fn(async () => null) });
+    await expect(buildNativeDeepReadPlanPreview({
+      url: 'https://www.douyin.com/user/MS4wLjABAAAA9ARsInHogB08ESkWQLKDJ1LQdR2WIZeVXglbaDLntqU?from_tab_name=main&modal_id=7693257165578013992&vid=7693519123195743538',
+      limit: 1, inspectSourceOnly: true,
+    }, d)).rejects.toThrow('本次未建立学习任务');
+    expect(d.fetchAwemeDetail).toHaveBeenCalledTimes(1);
+    expect(d.fetchAwemeDetail).toHaveBeenCalledWith('7693257165578013992');
+    expect(d.listMixEpisodes).not.toHaveBeenCalled();
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
+    expect(d.listIngestedEpisodes).not.toHaveBeenCalled();
+  });
+  it("合集为空同样及时失败，不伪造来源或读取媒体", async () => {
+    const d = deps({ listMixEpisodes: vi.fn(async () => ({ episodes: [], complete: false })) });
+    await expect(buildNativeDeepReadPlanPreview({ url: 'https://www.douyin.com/collection/123456', limit: 1, inspectSourceOnly: true }, d)).rejects.toThrow('暂未取得可用的合集分集');
+    expect(d.listMixEpisodes).toHaveBeenCalledTimes(1);
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
+  });
+});

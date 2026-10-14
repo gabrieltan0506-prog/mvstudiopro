@@ -19,6 +19,10 @@ import {
   rotateDouyinCookieCandidates,
 } from "../../shared/manhuaLearnYtdlp.js";
 
+import { readDouyinDetailFromOfficialPage } from "./manhuaDouyinBrowserRead.js";
+
+type DetailBrowserBudget = { id: string; used: boolean };
+
 const DOUYIN_WEB_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -31,6 +35,7 @@ async function fetchDouyinJsonWithCookie(
   referer: string,
   cookie: string,
   onBlocked?: (status: number, bodyHead: string) => void,
+  browserBudget?: DetailBrowserBudget,
 ): Promise<unknown | null> {
   const response = await fetch(url, {
     headers: {
@@ -45,9 +50,13 @@ async function fetchDouyinJsonWithCookie(
   if (!response.ok) {
     // 0901 实锤：Argus 风控对 mix 列表端点回 403「Uifid Not Found」，
     // 老代码静默当失败，面板只看到「合集展开失败」——把拦截情报带出去说人话。
-    if (response.status === 403 && onBlocked) {
+    if (response.status === 403 && (onBlocked || browserBudget)) {
       const head = await response.text().catch(() => "");
-      onBlocked(response.status, head.slice(0, 80));
+      onBlocked?.(response.status, head.slice(0, 80));
+      if (browserBudget && !browserBudget.used && /ArgusSecurityPlugin/i.test(head)) {
+        browserBudget.used = true;
+        return readDouyinDetailFromOfficialPage(browserBudget.id, cookie);
+      }
     }
     return null;
   }
@@ -168,13 +177,14 @@ export async function fetchDouyinAwemeDetailViaWebApi(
   if (!cookies.length) return null;
   const url = buildDouyinAwemeDetailApiUrl(id);
   const referer = `https://www.douyin.com/video/${id}`;
+  const browserBudget: DetailBrowserBudget = { id, used: false };
   // 0905 用户令：详情接口抽风一次就把整集判「没有免费信号」太脆——全部 cookie 都失手后隔 5 秒再来，共 3 轮
   for (let round = 0; round < DOUYIN_DETAIL_FETCH_ROUNDS; round += 1) {
     if (round > 0) await new Promise((resolve) => setTimeout(resolve, DOUYIN_DETAIL_FETCH_RETRY_DELAY_MS));
     for (const cookie of cookies) {
       let payload: unknown | null = null;
       try {
-        payload = await fetchDouyinJsonWithCookie(url, referer, cookie);
+        payload = await fetchDouyinJsonWithCookie(url, referer, cookie, undefined, browserBudget);
       } catch (e) {
         console.warn(
           `[manhuaLearnDouyinWebApi] detail fetch failed (round ${round + 1}/${DOUYIN_DETAIL_FETCH_ROUNDS}):`,
@@ -210,11 +220,12 @@ export async function listDouyinAwemePlaybackUrlsViaWebApi(
   if (!cookies.length) return [];
   const url = buildDouyinAwemeDetailApiUrl(id);
   const referer = `https://www.douyin.com/video/${id}`;
+  const browserBudget: DetailBrowserBudget = { id, used: false };
   const playbackUrls: string[] = [];
   for (const cookie of cookies) {
     let payload: unknown | null = null;
     try {
-      payload = await fetchDouyinJsonWithCookie(url, referer, cookie);
+      payload = await fetchDouyinJsonWithCookie(url, referer, cookie, undefined, browserBudget);
     } catch (e) {
       console.warn(
         "[manhuaLearnDouyinWebApi] playback refresh failed:",

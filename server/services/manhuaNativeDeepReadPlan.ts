@@ -684,6 +684,10 @@ export async function buildNativeDeepReadPlanPreview(
      * 管不到这道更靠前的门，这里必须自己扛。
      */
     let detail = await deps.fetchAwemeDetail(sourceAwemeId);
+    // 提交前检查不承担后台任务的分钟级退避；无法确认来源时关闭式阻断入队。
+    if (!detail && input.inspectSourceOnly) {
+      throw new Error("抖音暂未返回这条视频的可用详情，本次未建立学习任务，请稍后再试");
+    }
     for (let retry = 0; !detail && retry < 2; retry += 1) {
       await sleepForDetailRetry(deps.detailRetryDelayMs ?? 90_000, input.abortSignal);
       detail = await deps.fetchAwemeDetail(sourceAwemeId);
@@ -731,6 +735,9 @@ export async function buildNativeDeepReadPlanPreview(
   // 0903 用户令：展开接口与详情接口同款间歇风控——空手时退避重试两次再放弃，
   // 连学批次启动不再因一次风控秒败（重试免费，该接口零模型调用）。
   if (!listed) listed = await deps.listMixEpisodes(mixId);
+  if (!listed?.episodes?.length && input.inspectSourceOnly) {
+    throw new Error("暂未取得可用的合集分集，本次未建立学习任务，请稍后再试");
+  }
   for (let retry = 0; (!listed?.episodes?.length) && retry < 2; retry += 1) {
     await sleepForDetailRetry(deps.detailRetryDelayMs ?? 90_000, input.abortSignal);
     listed = await deps.listMixEpisodes(mixId);
