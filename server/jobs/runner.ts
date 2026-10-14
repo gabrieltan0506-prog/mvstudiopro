@@ -2701,6 +2701,13 @@ async function processPlatformJob(
         ? (params.picks as Parameters<typeof expandPlatformTopicPicks>[0]["picks"])
         : [];
       const streamed: Array<Record<string, unknown>> = [];
+      const { createPlatformExpandEvidenceJournal } = await import("../services/platformTopicExpandEvidence.js");
+      const previousExpandJob = platformJobId ? await getJobByIdStrict(platformJobId) : null;
+      const previousExpandOutput = previousExpandJob?.output as Record<string, unknown> | undefined;
+      const expandEvidence = createPlatformExpandEvidenceJournal(previousExpandOutput?.expandAttemptEvidence, async (entries) => {
+        if (!platformJobId) throw new Error("扩写任务身份缺失，不能保存回执");
+        await patchJobRunningProgressStrict(platformJobId, { expandAttemptEvidence: entries });
+      });
       const expandChargedCredits = Math.max(0, Math.floor(Number(params.chargedCredits || 0)));
       const expandPerItemCredits = Math.max(0, Math.floor(Number(params.perItemCredits || 0)));
       let result: Awaited<ReturnType<typeof expandPlatformTopicPicks>>;
@@ -2714,6 +2721,7 @@ async function processPlatformJob(
           : null,
         allowBloggerTitle: params.allowBloggerTitle === true,
         engine: normalizePlatformTopicExpandEngine(params.expandEngine),
+        onAttemptEvidence: expandEvidence.record,
         onItem: platformJobId
           ? async ({ blueprint, index, total, elapsedMs }) => {
               streamed.push(blueprint);
@@ -2788,6 +2796,7 @@ async function processPlatformJob(
           expandDoneCount: result.contentBlueprints.length,
           expandTotalCount: picks.length,
           diagnostics: result.diagnostics,
+          expandAttemptEvidence: expandEvidence.entries,
           chargedCredits: expandChargedCredits,
           refundedCredits,
           // 已退款的失败条同时标记为「免费重跑已认领」：退款与免单二选一，不双重补偿

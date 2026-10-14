@@ -8439,6 +8439,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z
           .object({
             viralCreation: z.boolean().optional(),
+            singleGraphicPage: z.boolean().optional(),
             jobId: z.string().max(128).optional(),
             sceneId: z.string().min(1),
             title: z.string().min(1).max(220),
@@ -8505,6 +8506,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               .optional(),
           })
           .superRefine((data, ctx) => {
+            if (data.viralCreation && data.kind === "xiaohongshu_dual_note") {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, message: "图文笔记已改为每页独立出图，请使用稿件下方逐页生成入口", path: ["kind"] });
+            }
+            if (data.singleGraphicPage && (data.kind !== "single_page_knowledge_card" || !data.viralCreation || !data.pageRequestId || !data.notePageIndex || !data.notePageTotal || data.notePageIndex > data.notePageTotal)) {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, message: "独立图文页须绑定单页类型、爆款创作、请求编号及有效页码", path: ["singleGraphicPage"] });
+            }
             if (data.pageRequestId && data.kind !== "single_page_knowledge_card") {
               ctx.addIssue({ code: z.ZodIssueCode.custom, message: "页面请求编号仅用于知识卡", path: ["pageRequestId"] });
             }
@@ -8869,6 +8876,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
               imageUrl = await generateSheet({
                 viralCreation: input.viralCreation === true || input.enabledSkillIds?.includes("xhs-content-growth") === true,
+                singleGraphicPage: input.singleGraphicPage === true,
                 beforeImageSubmit,
                 kind: input.kind,
                 title: input.title,
@@ -8962,6 +8970,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
           imageUrl = await generateSheet({
                 viralCreation: input.viralCreation === true || input.enabledSkillIds?.includes("xhs-content-growth") === true,
+                singleGraphicPage: input.singleGraphicPage === true,
             kind: input.kind,
             title: input.title,
             scriptContext: enrichedCompositeScriptContext,

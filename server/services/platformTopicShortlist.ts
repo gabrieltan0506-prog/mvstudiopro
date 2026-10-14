@@ -1,3 +1,4 @@
+import { ExpandEvidencePersistenceError, type PlatformExpandEvidence } from "./platformTopicExpandEvidence.js";
 import { buildViralRolePrompt, buildViralMethodPlan, VIRAL_CREATION_METHODS, VIRAL_METHOD_VERSION } from "../../shared/viralCreationMethods.js";
 import { XHS_PACKAGE_OUTPUT_PROMPT, auditXhsCreationPackage, connectXhsPackageToBlueprint } from "../../shared/xhsCreationPackage.js";
 import { XHS_CONTENT_SKILL_ID, XHS_CONTENT_GUIDANCE, XHS_TEXT_MODEL, XHS_TEXT_HOPS, xhsTopicCount, buildXhsGrowthEvidence, type XhsGrowthEvidence } from "../../shared/xhsContentStrategy.js";
@@ -450,7 +451,7 @@ export async function generatePlatformTopicShortlist(params: {
 
   const system = xhsMode ? `${buildViralRolePrompt("shortlist", undefined, undefined, "database")}
 只输出json对象 {"topics":[...]}，恰好${targetCount}条互不重复选题。本次平台由user.targetPlatforms指定；参考其各自证据，不强制小红书为主。
-每条包含title(4–120字)、hookSketch(4–200字)、conveyGoal(4–240字)、skillsUsed(只用池内真实ID)、primaryLane(default或适合赛道)、formatHint(图文或短视频)、dedupeKey(≤80字)、commentHook(≤3字)、viralScore(0–100主观创意分)、viralReason(适配依据，不是概率)、commentHeat(主观讨论潜力)。linkedCampaigns仅在真实活动与需求相关时选，否则空数组。
+每条包含title(4–120字)、hookSketch(4–200字)、conveyGoal(4–240字)、skillsUsed(只用池内真实ID)、primaryLane(default或适合赛道)、formatHint(图文或短视频)、dedupeKey(≤80字)、commentHook(≤3字)、viralScore(0–100主观创意分)、viralReason(用完整句子说明适配依据，不是概率，不要写到一半)、commentHeat(主观讨论潜力)。linkedCampaigns仅在真实活动与需求相关时选，否则空数组。
 资料方法库methodLibrary须实际用于人群场景、标题承诺、可制作画面和承接动作。无相关Growth样本就给待验证创意，不能补假引用。蓝海词只是候选搜索词，不自动证明低竞争。用户要求页数/时长后续照办，本阶段不写完整稿或生成图片。
 ${XHS_CONTENT_GUIDANCE}
 ${goalPromptLine}` : `你是平台选题初选编辑。只输出 JSON，不要 Markdown。
@@ -473,7 +474,7 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
    - **改不动就别硬套**：某条热门与本人设八竿子打不着时直接放弃，不要强行嫁接成四不像。
 12. **反论文腔（硬）**：title 与 hookSketch 要像人说话——口语、有画面、有情绪。禁止「浅析／探究／指南／全解析／方法论／正确打开方式／注意事项／深度解读」这类腔调；禁止把名词堆成学术标题。写完自检一句：这条出现在信息流里，用户是会停下来还是直接划走？会划走就重写。
 13. **本轮只出选题，不写文案（硬）**：不要输出正文、脚本、分镜或封面提示词。用户先挑，挑中哪条再单独去写文案与封面。
-14. **每条必须给爆款概率**：\`viralScore\`（0–100 整数）与 \`viralReason\`（≤24 字，一句人话说清为什么可能爆）。打分只看三件事——① 是否踩中 \`trendHot\` 里正在被讨论的话题或情绪（命中越准分越高）；② 反差/好奇缺口是否够拧；③ 是否容易引起共鸣、让人想转发给朋友。**分数要拉开**，不要全给 70–80；明显平庸的就给低分。
+14. **每条必须给爆款概率**：\`viralScore\`（0–100 整数）与 \`viralReason\`（用完整句子说清选题适配依据，不要写到一半）。打分只看三件事——① 是否踩中 \`trendHot\` 里正在被讨论的话题或情绪（命中越准分越高）；② 反差/好奇缺口是否够拧；③ 是否容易引起共鸣、让人想转发给朋友。**分数要拉开**，不要全给 70–80；明显平庸的就给低分。
 15. **每条还要给评论区热度**：\`commentHeat\`（0–100 整数）——这条发出去，**评论区会不会有人抢着说话**。参考 \`trendHot[].commentHotTitles\`（按评论数排的样本，\`commentPerThousandLikes\` 是每千赞带来的评论数，这个值高说明是「大家真的想留言」而不只是点赞收藏）。
    高分特征：能站队但不撕裂、有争议但安全；有具体问题可回答；能让人晒自己的经历/家里/同款；求链接求教程求配方；有明确可对号入座的身份（久坐党/带娃的/租房的）。
    低分特征：只能「学到了」然后划走的科普；说完就没下文的结论帖；没有让人接话的口子。
@@ -637,7 +638,7 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
         const n = Math.round(Number(r.viralScore));
         return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : undefined;
       })(),
-      viralReason: String(r.viralReason || "").trim().slice(0, 24) || undefined,
+      viralReason: String(r.viralReason || "").trim() || undefined,
       commentHeat: (() => {
         const n = Math.round(Number(r.commentHeat));
         return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : undefined;
@@ -1044,6 +1045,7 @@ export async function expandPlatformTopicPicks(params: {
    * 七条串行 × 单条约 3 分钟 = 二十多分钟；等全部跑完才给结果的话，用户前二十分钟
    * 面对的是一个不动的转圈（用户 2026-08-06：这样的体验开发者自己都不爽）。
    */
+  onAttemptEvidence?: (event: PlatformExpandEvidence) => Promise<void>;
   onItem?: (item: {
     blueprint: Record<string, unknown>;
     index: number;
@@ -1090,10 +1092,16 @@ export async function expandPlatformTopicPicks(params: {
     const system = xhsMode ? `${buildViralRolePrompt("expand", pick.targetPlatform || "xiaohongshu", isVideo ? "短视频" : "图文", "database")}
 只输出json对象 {"blueprint":{...}}。生成当前已选题目的完整${isVideo ? "视频文案与分镜导演表" : "图文笔记正文与分页"}。
 blueprint必须含title、hook、format=${isVideo ? "短视频" : "图文"}、copywriting(完整可发布正文或口播)、detailedScript(完整分页或时间轴)、suitablePlatforms、actionableSteps、publishingAdvice、executionDetails{environmentAndWardrobe,lightingAndCamera,stepByStepScript}、platformVariants(只需本条目标平台)、commentHooks(1个自然主动作，不要求强制互动)。
-${isVideo ? "storyboardCells必须为真实逐镜表1–12镜，字段cellIndex(从1连续)、dialogueZh(≤200字)、sceneZh(≤60字)、shotSize(≤12字)、actionZh(≤160字)、cameraMoveZh(≤24字)、editNoteZh(≤80字)；每镜都要有可拍动作、场景、景别与运镜，不用空行或重复句凑数。台词要与口播一致，时长服从用户。graphicNotePages可以为空。" : "graphicNotePages必须为完整可读分页，每页含pageIndex(从1连续)、role(cover/audience_pain/scene/inventory_index/detail_card/share_tips/evidence/checklist/save_reason/cta)、headline(2–48字)、body(4–400字)；封面/正文/结尾层次清楚。页数以用户要求与信息量为准，本生成接口支持最多12页；无法满足更长要求时明确说明，不静默截断。storyboardCells为空数组。"}
+${isVideo ? "storyboardCells必须为真实逐镜表1–12镜，字段cellIndex(从1连续)、dialogueZh(≤200字)、sceneZh(≤60字)、shotSize(≤12字)、actionZh(≤160字)、cameraMoveZh(≤24字)、editNoteZh(≤80字)；每镜都要有可拍动作、场景、景别与运镜，不用空行或重复句凑数。台词要与口播一致，时长服从用户。graphicNotePages可以为空。" : "graphicNotePages必须为完整可读分页，每页含pageIndex(从1连续)、role(cover/audience_pain/scene/inventory_index/detail_card/share_tips/evidence/checklist/save_reason/cta)、headline(2–48字)、body(4–400字)；封面/正文/结尾层次清楚。本次整篇4–6页，包含第1页唯一cover及最后一页cta；每页是一张独立2K中画质竖图，不要拼成八格或切图，按信息量选4、5或6页，不凑页、不截正文。storyboardCells为空数组。"}
 参考资料需真实可追溯，未给出处不自动补权威；不要把运营说明、内部字段、审稿过程写成读者正文。图文不套视频篇幅，视频不套图文密度。
 ${XHS_CONTENT_GUIDANCE}
-${XHS_PACKAGE_OUTPUT_PROMPT}` : `你是平台执行文案编辑。只输出一个 json 对象：{ "blueprint": { ... } }。
+${XHS_PACKAGE_OUTPUT_PROMPT}
+【本次交付与JSON合同，适用于全部通道】
+本次选题已经确认，现在必须直接写稿，不再返回topics或要求确认。当前界面已选形式为${isVideo ? "短视频" : "图文笔记"}；personaContext和选题中提到的其他形式只提供主题素材，不能覆盖这次形式选择。
+只输出一个JSON对象，唯一根字段为blueprint。title、hook、format、copywriting、detailedScript均为非空字符串，不是数组或对象。copywriting是可独立发布的完整正文；detailedScript是${isVideo ? "完整逐镜时间轴字符串" : "完整逐页图文方案字符串，按页写清正文、人物场景、可见动作、构图与连续性"}，段落用JSON转义换行，不可因已有${isVideo ? "storyboardCells" : "graphicNotePages"}而省略。
+blueprint.methodApplications必须是数组，每项恰含methodId、quote、application；methodId使用methodLibrary实际id，quote逐字复制本次正文/分页/分镜中至少8字，application至少8字。不要将该字段放在xhsPackage内。
+xhsPackage必须放在blueprint.xhsPackage内，不能单独输出该方案对象替代正文。先写正文与分页/分镜，再从已写内容逐字复制结构/承诺/方法引用；不要编造引用或使用说明占位。
+输出前核对：blueprint.title/copywriting/detailedScript三个字符串非空，methodApplications和xhsPackage位于同一blueprint，${isVideo ? "storyboardCells" : "graphicNotePages"}完整连续，不省略、不截断。` : `你是平台执行文案编辑。只输出一个 json 对象：{ "blueprint": { ... } }。
 必须遵守挂载 Skill。本条赛道 primaryLane=${pick.primaryLane}。
 ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 硬约束：
@@ -1126,6 +1134,8 @@ conveyGoal（须兑现）：${pick.conveyGoal}
       outputFormat: "json",
     });
 
+    let contractFeedback = "";
+    const expandUser = () => contractFeedback ? `${user}\n【上一通道未交付的原因】${contractFeedback}\n请按系统中的完整JSON合同交付当前稿件，保留正文与逐页方案，不以解释文字替代。` : user;
     const invokeExpandOpenRouter = (openRouterModel: string) => async () => {
       const res = await invokeLLM({
         provider: "openai",
@@ -1177,7 +1187,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}
               named("openrouter", invokeExpandOpenRouter("qwen/qwen3.8-max")),
             ]
           : [
-              ...(xhsMode ? XHS_TEXT_HOPS : MANHUA_ADVISOR_HOPS).map(hop => named(hop.label, async () => extractFirstChoicePlainText(await invokeLLM({ provider: "openai", modelName: hop.modelName, openAiGateway: hop.gateway, reasoningEffort: manhuaAdvisorReasoningEffort(hop.modelName), max_tokens: 32_000, response_format: { type: "json_object" }, messages: [{ role: "system", content: system }, { role: "user", content: user }] })).trim())),
+              ...(xhsMode ? XHS_TEXT_HOPS : MANHUA_ADVISOR_HOPS).map(hop => named(hop.label, async () => extractFirstChoicePlainText(await invokeLLM({ provider: "openai", modelName: hop.modelName, openAiGateway: hop.gateway, reasoningEffort: manhuaAdvisorReasoningEffort(hop.modelName), max_tokens: 32_000, response_format: { type: "json_object" }, messages: [{ role: "system", content: system }, { role: "user", content: xhsMode ? expandUser() : user }] })).trim())),
             ];
 
     console.info(
@@ -1200,6 +1210,10 @@ conveyGoal（须兑现）：${pick.conveyGoal}
       const step = attempts[attempt - 1]!;
       try {
         const candidate = await step.run();
+        const evidence = { pickId: pick.id, gateway: step.gateway, attempt };
+        await params.onAttemptEvidence?.({ ...evidence, stage: "raw", value: candidate });
+        const parsedCandidate = extractJsonObject(candidate);
+        await params.onAttemptEvidence?.({ ...evidence, stage: "parsed", value: parsedCandidate });
         if (!candidate) {
           console.warn(
             `[expandPlatformTopicPicks] 空回 ${step.gateway}（${attempt}/${attempts.length}）· ${i + 1}/${uniquePicks.length}`,
@@ -1213,12 +1227,23 @@ conveyGoal（须兑现）：${pick.conveyGoal}
           const candidateBlueprint = data.blueprint && typeof data.blueprint === "object" ? data.blueprint as Record<string, unknown> : data;
           const audit = auditXhsCreationPackage(candidateBlueprint, selectedEvidence, isVideo ? "短视频" : "图文");
           if (!audit.passed) throw new Error(`小红书创作包未通过检查：${audit.findings.map(f => f.message).join("；")}`);
+          if (!isVideo) {
+            const pages = candidateBlueprint.graphicNotePages as Array<{ role: string }>;
+            if (pages.length < 4 || pages.length > 6 || pages[0]?.role !== "cover" || pages.filter(page => page.role === "cover").length !== 1 || pages.at(-1)?.role !== "cta") {
+              throw new Error("图文笔记须为4–6页，第1页为唯一封面，最后一页为结尾承接；每页独立出图，不得切成八格");
+            }
+          }
         }
+        await params.onAttemptEvidence?.({ ...evidence, stage: "accepted", value: { passed: true } });
         llmText = candidate;
         successfulGateway = step.gateway;
         break;
       } catch (e) {
+        if (e instanceof ExpandEvidencePersistenceError) throw e;
         lastErr = e;
+        const reason = e instanceof Error ? e.message : String(e);
+        await params.onAttemptEvidence?.({ pickId: pick.id, gateway: step.gateway, attempt, stage: "rejected", value: { reason } });
+        if (xhsMode) contractFeedback = reason;
         // 内层拒绝必须穿透外层重试，保留本条失败清单与既有退款路径。
         if (isSseContentSafetyError(e)) break;
         console.warn(
