@@ -11,6 +11,7 @@ import {
 import {
   bootstrapTrendHistoryFromColdStore,
   ensureGrowthStoreSplitGzipLayout,
+  warmTrendShortlistIndexes,
   readTrendSchedulerState,
   type TrendSchedulerState,
   mergeTrendCollections,
@@ -901,6 +902,9 @@ export async function bootstrapGrowthTrendScheduler() {
   await ensureGrowthStoreSplitGzipLayout().catch((error) => {
     console.warn("[growth.store] split+gzip bootstrap migration failed:", error);
   });
+
+  // 旧库只在启动后台做一次有界内存初始化，交互请求随后直接读取小索引。
+  void warmTrendShortlistIndexes();
 
   // 凭证探针独立于平台采集和 backfill；读取持久化时间戳，24 小时内不会重复请求。
   // fire-and-forget 避免登录态探针阻塞调度器启动。

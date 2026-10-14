@@ -1,3 +1,5 @@
+import { readShortlistTrendBriefs } from "./platformTopicTrends";
+import { topicDisplayText } from "../../shared/platformTopicDisplay";
 import { ExpandEvidencePersistenceError, type PlatformExpandEvidence } from "./platformTopicExpandEvidence.js";
 import { buildViralRolePrompt, buildViralMethodPlan, VIRAL_CREATION_METHODS, VIRAL_METHOD_VERSION } from "../../shared/viralCreationMethods.js";
 import { XHS_PACKAGE_OUTPUT_PROMPT, auditXhsCreationPackage, connectXhsPackageToBlueprint } from "../../shared/xhsCreationPackage.js";
@@ -188,153 +190,6 @@ function extractJsonObject(raw: string): unknown {
   }
 }
 
-/** 本机趋势读盘上限（不再打冷仓；仍加竞速以免偶发卡死） */
-const SHORTLIST_TREND_READ_TIMEOUT_MS = 5_000;
-
-type ShortlistTrendBrief = {
-  platform: "xiaohongshu" | "bilibili" | "douyin";
-  role: "主参考" | "辅参考";
-  hotTitles: string[];
-  hotTags: string[];
-  /** 评论区最热的一批：不看总热度，只看「大家有多想留言」 */
-  commentHotTitles: Array<{ title: string; comments: number; commentPerThousandLikes: number | null }>;
-};
-
-/**
- * 按用户选的时间窗口裁热门样本。
- *
- * 没有 publishedAt 的一律保留（平台改个时间格式就清空整池太脆）；裁完剩太少
- * （不足三成且不足 20 条）就退回不裁——宁可题贴得旧一点，也别让初选完全没有热点支撑。
- */
-function filterTrendRowsToWindow(
-  rows: Array<Record<string, unknown>>,
-  windowDays?: number | null,
-): Array<Record<string, unknown>> {
-  const days = Number(windowDays);
-  if (!Number.isFinite(days) || days <= 0 || !rows.length) return rows;
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-  const kept = rows.filter((r) => {
-    const raw = r.publishedAt ?? r.createdAt ?? r.collectedAt;
-    const at = raw ? new Date(String(raw)).getTime() : Number.NaN;
-    if (!Number.isFinite(at)) return true;
-    return at >= cutoff;
-  });
-  if (kept.length >= 20 || kept.length >= Math.ceil(rows.length * 0.3)) return kept;
-  return rows;
-}
-
-/**
- * 初选前先查本机热门样本：小红书主、B站+抖音辅。
- * 只读 volume 本地文件，**不打冷仓**；读失败返回空数组继续出题。
- */
-async function readShortlistTrendBriefs(windowDays?: number | null, xhsMode = false, context = "", creationPlatforms: Array<"xiaohongshu" | "douyin"> = ["xiaohongshu"]): Promise<{
-  briefs: ShortlistTrendBrief[];
-  xhsGrowthEvidence?: XhsGrowthEvidence;
-  douyinGrowthEvidence?: XhsGrowthEvidence;
-  status: "ok" | "timeout" | "error" | "empty";
-}> {
-  const platforms = [
-    { platform: "xiaohongshu" as const, role: "主参考" as const, titleCap: 30 },
-    { platform: "bilibili" as const, role: "辅参考" as const, titleCap: 20 },
-    { platform: "douyin" as const, role: "辅参考" as const, titleCap: 20 },
-  ];
-  try {
-    const { readLocalTrendCollectionsForPlatforms } = await import("../growth/trendStore.js");
-    /**
-     * 逐平台读、各自计时：库里有哪个就用哪个（用户 2026-08-06）。
-     * 旧写法是三平台一起 race 一个 5 秒闸门，小红书慢一点就把 B站 / 抖音的现成数据一起丢掉，
-     * 结果整批题都没有热点支撑。
-     */
-    const perPlatform = await Promise.all(
-      platforms.map(async ({ platform }) => {
-        try {
-          const got = await Promise.race([
-            readLocalTrendCollectionsForPlatforms([platform]),
-            new Promise<null>((resolve) =>
-              setTimeout(() => resolve(null), SHORTLIST_TREND_READ_TIMEOUT_MS),
-            ),
-          ]);
-          if (!got) {
-            console.warn(`[generatePlatformTopicShortlist] ${platform} 趋势读取超时，跳过该平台`);
-            return [platform, undefined] as const;
-          }
-          return [platform, got[platform]] as const;
-        } catch (e) {
-          console.warn(
-            `[generatePlatformTopicShortlist] ${platform} 趋势读取失败: ${
-              e instanceof Error ? e.message.slice(0, 120) : e
-            }`,
-          );
-          return [platform, undefined] as const;
-        }
-      }),
-    );
-    const collections = Object.fromEntries(perPlatform) as Record<
-      string,
-      { items?: unknown } | undefined
-    >;
-    const timedOutAll = perPlatform.every(([, c]) => !c);
-    const briefs: ShortlistTrendBrief[] = [];
-    const xhsItems = collections.xiaohongshu?.items;
-    const xhsGrowthEvidence = xhsMode && creationPlatforms.includes("xiaohongshu") ? buildXhsGrowthEvidence(Array.isArray(xhsItems) ? xhsItems : [], windowDays ?? 30, Date.now(), context) : undefined;
-    const douyinItems = collections.douyin?.items;
-    const douyinGrowthEvidence = xhsMode && creationPlatforms.includes("douyin") ? buildXhsGrowthEvidence(Array.isArray(douyinItems) ? douyinItems : [], windowDays ?? 30, Date.now(), context, "douyin") : undefined;
-    for (const { platform, role, titleCap } of platforms) {
-      if (xhsMode && !creationPlatforms.includes(platform as "xiaohongshu" | "douyin")) continue;
-      const items = collections[platform]?.items;
-      if (!Array.isArray(items) || !items.length) continue;
-      // 新能力使用自己的严格摘要；未启用时完整保留旧趋势行为。
-      const rows: Array<Record<string, unknown>> = xhsMode
-        ? ((platform === "douyin" ? douyinGrowthEvidence : xhsGrowthEvidence)?.samples || []).map(sample => ({ ...sample }))
-        : filterTrendRowsToWindow(items as Array<Record<string, unknown>>, windowDays);
-      if (!rows.length) continue;
-      const ranked = [...rows].sort(
-        (a, b) => Number(b.hotValue || b.likes || 0) - Number(a.hotValue || a.likes || 0),
-      );
-      const hotTitles = ranked
-        .map((r) => String(r.title || "").trim())
-        .filter(Boolean)
-        .slice(0, titleCap);
-      const tagFreq = new Map<string, number>();
-      for (const r of ranked.slice(0, 600)) {
-        for (const t of Array.isArray(r.tags) ? (r.tags as unknown[]) : []) {
-          const tag = String(t || "").trim();
-          if (!tag) continue;
-          tagFreq.set(tag, (tagFreq.get(tag) || 0) + 1);
-        }
-      }
-      const hotTags = Array.from(tagFreq.entries())
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 12)
-        .map(([tag]) => tag);
-      // 评论区热度：按评论数排，并给出「每千赞带来多少评论」——纯高赞但没人说话的不算热
-      const commentHotTitles = [...rows]
-        .filter((r) => Number(r.comments || 0) > 0 && String(r.title || "").trim())
-        .sort((a, b) => Number(b.comments || 0) - Number(a.comments || 0))
-        .slice(0, 12)
-        .map((r) => {
-          const comments = Number(r.comments || 0);
-          const likes = Number(r.likes || 0);
-          return {
-            title: String(r.title || "").trim(),
-            comments,
-            commentPerThousandLikes: likes > 0 ? Math.round((comments / likes) * 1000) : null,
-          };
-        });
-      if (hotTitles.length) briefs.push({ platform, role, hotTitles, hotTags, commentHotTitles });
-    }
-    if (briefs.length) return { briefs, xhsGrowthEvidence, douyinGrowthEvidence, status: "ok" };
-    return { briefs, xhsGrowthEvidence, douyinGrowthEvidence, status: timedOutAll ? "timeout" : "empty" };
-  } catch (err) {
-    console.warn(
-      `[generatePlatformTopicShortlist] 本机趋势读取失败: ${err instanceof Error ? err.message : String(err)}`.slice(
-        0,
-        200,
-      ),
-    );
-    return { briefs: [], status: "error", ...(xhsMode ? { xhsGrowthEvidence: buildXhsGrowthEvidence([], windowDays ?? 30) } : {}) };
-  }
-}
 
 async function resolvePoolAndPrompt(params: {
   userId: number | string;
@@ -415,7 +270,7 @@ export async function generatePlatformTopicShortlist(params: {
     platform: "xiaohongshu",
     featuredOnly: true,
   });
-  const { briefs: trendBriefs, status: trendStatus, xhsGrowthEvidence, douyinGrowthEvidence } = await readShortlistTrendBriefs(
+  const { briefs: trendBriefs, status: trendStatus, xhsGrowthEvidence, douyinGrowthEvidence, readDiagnostics } = await readShortlistTrendBriefs(
     params.windowDays, xhsMode, params.context || "", params.creationPlatforms,
   );
   const blueOceanGroups = (params.blueOceanGroups || [])
@@ -451,8 +306,8 @@ export async function generatePlatformTopicShortlist(params: {
 
   const system = xhsMode ? `${buildViralRolePrompt("shortlist", undefined, undefined, "database")}
 只输出json对象 {"topics":[...]}，恰好${targetCount}条互不重复选题。本次平台由user.targetPlatforms指定；参考其各自证据，不强制小红书为主。
-每条包含title(4–120字)、hookSketch(4–200字)、conveyGoal(4–240字)、skillsUsed(只用池内真实ID)、primaryLane(default或适合赛道)、formatHint(图文或短视频)、dedupeKey(≤80字)、commentHook(≤3字)、viralScore(0–100主观创意分)、viralReason(用完整句子说明适配依据，不是概率，不要写到一半)、commentHeat(主观讨论潜力)。linkedCampaigns仅在真实活动与需求相关时选，否则空数组。
-资料方法库methodLibrary须实际用于人群场景、标题承诺、可制作画面和承接动作。无相关Growth样本就给待验证创意，不能补假引用。蓝海词只是候选搜索词，不自动证明低竞争。用户要求页数/时长后续照办，本阶段不写完整稿或生成图片。
+每条包含title(4–120字)、hookSketch(完整说明切口，建议200字内，不要截断)、conveyGoal(用完整句子说明方向与承接动作，建议240字内，不要截断)、skillsUsed(只用池内真实ID)、primaryLane(default或适合赛道)、formatHint(图文或短视频)、dedupeKey(≤80字)、commentHook(≤3字)、viralScore(0–100主观创意分)、viralReason(用完整句子说明适配依据，不是概率，不要写到一半)、commentHeat(主观讨论潜力)。linkedCampaigns仅在真实活动与需求相关时选，否则空数组。
+资料方法库methodLibrary须实际用于人群场景、标题承诺、可制作画面和承接动作。Growth摘要按词召回，只是候选，不保证语义相关；逐条核对实际标题与本轮具体需求。词面相同但用途不同（教学与服饰、健康与娱乐剧情、家庭分工与技术分工等）必须舍弃，不能据此编写适配理由。引用只能证明已读到的标题、日期、来源和采集时互动，不把标题里的宣称当事实。无相关Growth样本就给待验证创意，不能补假引用。样本为空时，不要在title、hookSketch、conveyGoal或viralReason中写平台零条、无样本、读取状态或Growth诊断；内部证据字段保留真实空结果，面向用户的说明专注内容本身，不冒称数据验证。蓝海词只是候选搜索词，不自动证明低竞争。用户要求页数/时长后续照办，本阶段不写完整稿或生成图片。
 ${XHS_CONTENT_GUIDANCE}
 ${goalPromptLine}` : `你是平台选题初选编辑。只输出 JSON，不要 Markdown。
 任务：基于人设与 Skill 池，生成恰好 ${targetCount} 条**互不重复**的选题初选（不是完整长文）。
@@ -612,8 +467,8 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
       ...(xhsMode ? { creationPlatforms: params.creationPlatforms || ["xiaohongshu"] } : {}),
       id: String(r.id || nanoid(10)).slice(0, 64),
       title: title.slice(0, 120),
-      hookSketch: String(r.hookSketch || r.hook || title).slice(0, 200),
-      conveyGoal: String(r.conveyGoal || r.goal || "传达可收藏的生活方法").slice(0, 240),
+      hookSketch: String(r.hookSketch || r.hook || title).trim(),
+      conveyGoal: topicDisplayText(String(r.conveyGoal || r.goal || "传达可收藏的生活方法")),
       skillsUsed: skillsUsed.length ? skillsUsed : routed.selectedIds.slice(0, 8),
       primaryLane: lane,
       formatHint: String(r.formatHint || "").includes("短视频") ? ("短视频" as const) : ("图文" as const),
@@ -638,7 +493,7 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
         const n = Math.round(Number(r.viralScore));
         return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : undefined;
       })(),
-      viralReason: String(r.viralReason || "").trim() || undefined,
+      viralReason: topicDisplayText(String(r.viralReason || "")) || undefined,
       commentHeat: (() => {
         const n = Math.round(Number(r.commentHeat));
         return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : undefined;
@@ -682,6 +537,7 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
       targetCount,
       lanes: topics.map((t) => t.primaryLane),
       trendStatus,
+      trendRead: readDiagnostics,
       trendPlatforms: trendBriefs.map((b) => `${b.platform}:${b.hotTitles.length}`),
       trendWindowDays: Number(params.windowDays) > 0 ? Number(params.windowDays) : null,
       blueOceanWordCount: blueOceanWords.length,
@@ -1092,7 +948,7 @@ export async function expandPlatformTopicPicks(params: {
     const system = xhsMode ? `${buildViralRolePrompt("expand", pick.targetPlatform || "xiaohongshu", isVideo ? "短视频" : "图文", "database")}
 只输出json对象 {"blueprint":{...}}。生成当前已选题目的完整${isVideo ? "视频文案与分镜导演表" : "图文笔记正文与分页"}。
 blueprint必须含title、hook、format=${isVideo ? "短视频" : "图文"}、copywriting(完整可发布正文或口播)、detailedScript(完整分页或时间轴)、suitablePlatforms、actionableSteps、publishingAdvice、executionDetails{environmentAndWardrobe,lightingAndCamera,stepByStepScript}、platformVariants(只需本条目标平台)、commentHooks(1个自然主动作，不要求强制互动)。
-${isVideo ? "storyboardCells必须为真实逐镜表1–12镜，字段cellIndex(从1连续)、dialogueZh(≤200字)、sceneZh(≤60字)、shotSize(≤12字)、actionZh(≤160字)、cameraMoveZh(≤24字)、editNoteZh(≤80字)；每镜都要有可拍动作、场景、景别与运镜，不用空行或重复句凑数。台词要与口播一致，时长服从用户。graphicNotePages可以为空。" : "graphicNotePages必须为完整可读分页，每页含pageIndex(从1连续)、role(cover/audience_pain/scene/inventory_index/detail_card/share_tips/evidence/checklist/save_reason/cta)、headline(2–48字)、body(4–400字)；封面/正文/结尾层次清楚。本次整篇4–6页，包含第1页唯一cover及最后一页cta；每页是一张独立2K中画质竖图，不要拼成八格或切图，按信息量选4、5或6页，不凑页、不截正文。storyboardCells为空数组。"}
+${isVideo ? "storyboardCells必须为真实逐镜表1–12镜，字段cellIndex(从1连续)、dialogueZh(≤200字)、sceneZh(≤60字)、shotSize(≤12字)、actionZh(≤160字)、cameraMoveZh(≤24字)、editNoteZh(≤80字)；每镜都要有可拍动作、场景、景别与运镜，不用空行或重复句凑数。台词要与完整口播一致，不把重音/换气标签当成要念出的台词；少量重点词、停顿和情绪安排写入detailedScript或editNoteZh，拍摄场景/服装、视线对象、试拍自查与成片比例写入executionDetails既有字段。先定所选比例再排字幕/叠加元素，比例改变复查裁切、遮挡和动画关键位置；未试读/试拍只能称建议。时长服从用户。graphicNotePages可以为空。" : "graphicNotePages.body仅放实际印给读者的正文，不附画面、字体、色调、拍摄等制作说明；这些移入detailedScript、executionDetails或xhsPackage.cover。graphicNotePages必须为完整可读分页，每页含pageIndex(从1连续)、role(cover/audience_pain/scene/inventory_index/detail_card/share_tips/evidence/checklist/save_reason/cta)、headline(2–48字)、body(4–400字)；封面/正文/结尾层次清楚。本次整篇4–6页，包含第1页唯一cover及最后一页cta；本次独立图文图片入口固定9:16，每页画面和字体布局按9:16设计，不沿用通用3:4起点；每页是一张独立2K中画质竖图，不要拼成八格或切图，按信息量选4、5或6页，不凑页、不截正文。storyboardCells为空数组。"}
 参考资料需真实可追溯，未给出处不自动补权威；不要把运营说明、内部字段、审稿过程写成读者正文。图文不套视频篇幅，视频不套图文密度。
 ${XHS_CONTENT_GUIDANCE}
 ${XHS_PACKAGE_OUTPUT_PROMPT}
@@ -1128,7 +984,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}
 
     const user = JSON.stringify({
       personaContext: String(params.context || "").slice(0, 8000),
-      ...(xhsMode ? { methodLibrary: VIRAL_CREATION_METHODS, methodVersion: VIRAL_METHOD_VERSION, methodPlan: buildViralMethodPlan(params.context || "") } : {}),
+      ...(xhsMode ? { methodLibrary: VIRAL_CREATION_METHODS, methodVersion: VIRAL_METHOD_VERSION, methodPlan: buildViralMethodPlan([params.context || "", pick.title, pick.conveyGoal].join("\n"), undefined, { stage: "expand", format: isVideo ? "短视频" : "图文" }) } : {}),
       pick: { ...pick, xhsGrowthEvidence: selectedEvidence },
       skillsPrompt: skillsPrompt.slice(0, 14000),
       outputFormat: "json",
@@ -1225,7 +1081,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}
         if (xhsMode) {
           const data = extractJsonObject(candidate) as Record<string, unknown>;
           const candidateBlueprint = data.blueprint && typeof data.blueprint === "object" ? data.blueprint as Record<string, unknown> : data;
-          const audit = auditXhsCreationPackage(candidateBlueprint, selectedEvidence, isVideo ? "短视频" : "图文");
+          const audit = auditXhsCreationPackage(candidateBlueprint, selectedEvidence, isVideo ? "短视频" : "图文", isVideo ? undefined : "9:16", params.context || "");
           if (!audit.passed) throw new Error(`小红书创作包未通过检查：${audit.findings.map(f => f.message).join("；")}`);
           if (!isVideo) {
             const pages = candidateBlueprint.graphicNotePages as Array<{ role: string }>;
@@ -1390,14 +1246,14 @@ conveyGoal（须兑现）：${pick.conveyGoal}
     }
 
     if (xhsMode) {
-      const audit = auditXhsCreationPackage(bp, selectedEvidence, isVideo ? "短视频" : "图文");
+      const audit = auditXhsCreationPackage(bp, selectedEvidence, isVideo ? "短视频" : "图文", isVideo ? undefined : "9:16", params.context || "");
       if (!audit.passed || !audit.package) {
         failed.push({ id: pick.id, title: pick.title, reason: "小红书方案转换后检查未通过，已保留失败回执" });
         continue;
       }
       connectXhsPackageToBlueprint(bp, audit.package);
       bp.viralMethodVersion = VIRAL_METHOD_VERSION;
-      bp.xhsAudit = { passed: true, checks: ["完整字段", "主标题一致", "承诺原文引用", "来源ID", "夸大词检查"], semanticReview: "待人工确认事实与画面质量" };
+      bp.xhsAudit = { passed: true, checks: ["完整字段", "主标题一致", "承诺原文引用", "来源ID", "夸大词检查"], semanticReview: "待人工确认事实、画面质量与实际试读时长" };
     }
     results.push(bp);
     successfulGateways.push({ id: pick.id, title: pick.title, gateway: successfulGateway });

@@ -100,6 +100,7 @@ describe("growth store merge + hot-window prune", () => {
     const loaded = await m.readTrendStore();
     expect(loaded.collections.xiaohongshu?.items.map(x => x.id)).toEqual(["xhs"]);
     await m.writeTrendStore({ douyin: loaded.collections.douyin!, xiaohongshu: xhs });
+    expect((await m.readLocalTrendCollectionsForPlatforms(["xiaohongshu"])).xiaohongshu?.items.map(x => x.id)).toEqual(["xhs"]);
     const other = path.join(tempRoot, "platform-current", "xiaohongshu.current.json.gz");
     const before = await fs.readFile(other);
     const stream = await import("./growthJsonStream");
@@ -109,6 +110,7 @@ describe("growth store merge + hot-window prune", () => {
     readSpy.mockRestore();
     expect(Object.keys(updated.collections)).toEqual(["douyin"]);
     expect(updated.collections.douyin?.items.map(x => x.id).sort()).toEqual(["douyin", "next"]);
+    expect((await m.readLocalTrendCollectionsForPlatforms(["douyin"])).douyin?.items.map(x => x.id).sort()).toEqual(["douyin", "next"]);
     expect(await fs.readFile(other)).toEqual(before);
     expect((await m.readTrendStore()).collections.xiaohongshu?.items.map(x => x.id)).toEqual(["xhs"]);
   });
