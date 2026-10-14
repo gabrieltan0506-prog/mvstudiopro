@@ -7,7 +7,7 @@ import { adoptedManhuaVfxClipOptions, pendingManhuaVfxTrackedJobs, manhuaVfxImag
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import { createAdvisorScoringSourceGuard } from "@/lib/manhuaAdvisorScoringSource";
 import type { AdvisorScoringControl, AdvisorScoringRegistration, AdvisorBgmControl } from "@/lib/manhuaAdvisorWorkflowControl";
-import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
+import { manhuaProjectStorage } from "@shared/manhuaProjectScope";
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
 import { PostProdSubtitleCard } from "./PostProdSubtitleCard";
 import { SUBTITLE_EFFECT_OPTIONS, type SubtitleEffect } from "@shared/subtitleEffects";
@@ -123,19 +123,19 @@ function bgmScopeStorageKey(userId: string): string {
   return `postProd.bgmScopes.v1.u${userId}`;
 }
 
-function loadBgmJobScopes(userId: string): Record<string, string> {
+function loadBgmJobScopes(userId: string, localStorage: Storage): Record<string, string> {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(bgmScopeStorageKey(userId)) || "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(Object.entries(value).filter(([id, scope]) =>
-      id.length > 0 && typeof scope === "string" && scope.startsWith("manhua:")
+      id.length > 0 && typeof scope === "string" && (scope.startsWith("manhua:") || scope.startsWith("digital-human:"))
     ).slice(-30)) as Record<string, string>;
   } catch {
     return {};
   }
 }
 
-function loadTrackedUpscales(userId: string): TrackedUpscale[] {
+function loadTrackedUpscales(userId: string, localStorage: Storage): TrackedUpscale[] {
   try {
     const parsed = JSON.parse(
       localStorage.getItem(upscaleStorageKey(userId)) || "[]"
@@ -162,6 +162,11 @@ const POSTPROD_TOOLS = { vfx: "漫剧特效", concat: "拼接成片", enhance: "
 type PostProdTool = keyof typeof POSTPROD_TOOLS;
 
 type PostProdWorkshopCardProps = {
+  mediaInput?: { clips: Array<{ id: string; url: string; label: string }>; audio: Array<{ id: string; url: string; label: string }>; story: string };
+  storage?: Storage;
+  beforeSubmit?: () => Promise<void>;
+  acquireWork?: (label: string) => () => void;
+  disabled?: boolean;
   vfxScopeKey: string;
   vfxState?: ManhuaVfxState;
   vfxEnvironments?: ManhuaVfxEnvironmentOption[];
@@ -223,6 +228,7 @@ function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
 }
 
 export default function PostProdWorkshopCard({
+  mediaInput, storage = manhuaProjectStorage, beforeSubmit, acquireWork, disabled = false,
   vfxScopeKey,
   vfxState,
   vfxEnvironments = [],
@@ -244,8 +250,11 @@ export default function PostProdWorkshopCard({
   sceneSpaceRefs = [],
   spatialContexts = [],
 }: PostProdWorkshopCardProps) {
+  const localStorage = storage;
+  const editKey = `postProd.edit.v1.${projectScopeKey}`;
+  const [savedEdit] = useState(() => { try { return JSON.parse(localStorage.getItem(editKey) || "{}"); } catch { return {}; } });
   const studioHasFocus = useRef(false);
-  const [activeTool, setActiveTool] = useState<PostProdTool>("bgm");
+  const [activeTool, setActiveTool] = useState<PostProdTool>("concat");
   const [vfxSource, setVfxSource] = useState("");
   const [subtitleSource, setSubtitleSource] = useState("");
   const [previewResult, setPreviewResult] = useState<{url:string;label:string} | null>(null);
@@ -265,7 +274,7 @@ export default function PostProdWorkshopCard({
   /** 当前剧本版本的工厂成片；自由画布和旧剧节点不进入候选。 */
   const blockClipOptions = useMemo(
     () =>
-      currentClipBlocks
+      mediaInput?.clips ?? currentClipBlocks
         .filter(b => b.kind === "video" && focusEpisode != null && isCurrentManhuaAssemblableClipBlock(b, focusEpisode))
         .map(b => ({
           id: b.id,
@@ -276,7 +285,7 @@ export default function PostProdWorkshopCard({
               .trim()
               .slice(0, 24) || b.id.slice(0, 12)),
         })),
-    [currentClipBlocks, focusEpisode]
+    [currentClipBlocks, focusEpisode, mediaInput]
   );
 
   const vfxScenes = useMemo(() => focusEpisode == null ? [] : manhuaVfxSceneOptions(blocks, focusEpisode), [blocks, focusEpisode]);
@@ -284,6 +293,7 @@ export default function PostProdWorkshopCard({
 
   /** 当前集上传件及音轨工作台的已采用配乐。 */
   const audioOptions = useMemo(() => {
+    if (mediaInput) return mediaInput.audio;
     const out: Array<{ id: string; url: string; label: string; settings?: ReturnType<typeof adoptedPostProdBgmOptions>[number]["settings"] }> = [...adoptedPostProdBgmOptions(currentClipBlocks)];
     for (const b of currentClipBlocks) {
       for (const a of b.uploadedAssets ?? []) {
@@ -298,17 +308,17 @@ export default function PostProdWorkshopCard({
       }
     }
     return out;
-  }, [currentClipBlocks]);
+  }, [currentClipBlocks, mediaInput]);
 
   const currentStoryContext = useMemo(
-    () => blocks
+    () => mediaInput?.story ?? blocks
       .filter(block => !block.archivedFromPreviousScript &&
         Boolean(projectScopeKey) && isManhuaFactoryArtifactBlock(block) &&
         (block.kind === "text" || block.kind === "video") &&
         (focusEpisode == null || getBlockEpisodeIndex(block) === focusEpisode))
       .map(block => String(block.outputText || block.prompt || "").trim())
       .filter(Boolean).join("\n"),
-    [blocks, focusEpisode, projectScopeKey]
+    [blocks, focusEpisode, projectScopeKey, mediaInput]
   );
   const storyContextKey = JSON.stringify([focusEpisode, currentStoryContext]);
   const [scoreStoryDraft, setScoreStoryDraft] = useState<{ sourceKey: string; text: string } | null>(null);
@@ -374,12 +384,12 @@ export default function PostProdWorkshopCard({
   }, [blocks, bgmSeedNoteZh, storyEmotion, sceneSpaceRefs, spatialContexts, focusEpisode, projectScopeKey]);
   const [scoreBrief, setScoreBrief] = useState<EditableBgmBrief | null>(null);
   const bgmPendingUserKey = `${userId}:${projectScopeKey}`;
-  const [bgmJobScopes, setBgmJobScopes] = useState<Record<string, string>>(() => loadBgmJobScopes(userId));
+  const [bgmJobScopes, setBgmJobScopes] = useState<Record<string, string>>(() => loadBgmJobScopes(userId, localStorage));
   const [bgmPending, setBgmPending] = useState<ManhuaBgmPendingJob | null>(() =>
     readPendingManhuaBgmJob(localStorage, Date.now(), bgmPendingUserKey)
   );
   const saveBgmJobScope = useCallback((jobId: string) => {
-    const next = Object.fromEntries(Object.entries({ ...loadBgmJobScopes(userId), [jobId]: projectScopeKey }).slice(-30));
+    const next = Object.fromEntries(Object.entries({ ...loadBgmJobScopes(userId, localStorage), [jobId]: projectScopeKey }).slice(-30));
     try { localStorage.setItem(bgmScopeStorageKey(userId), JSON.stringify(next)); } catch { /* 当前页仍有来源记录 */ }
     setBgmJobScopes(next);
   }, [projectScopeKey, userId]);
@@ -390,8 +400,8 @@ export default function PostProdWorkshopCard({
     null
   );
   const [filmEvents, setFilmEvents] = useState<FilmEvent[]>([]);
-  const [bgmSeekSec, setBgmSeekSec] = useState(0);
-  const [bgmVolumeExpr, setBgmVolumeExpr] = useState<string | undefined>();
+  const [bgmSeekSec, setBgmSeekSec] = useState<number>(savedEdit.bgmSeekSec ?? 0);
+  const [bgmVolumeExpr, setBgmVolumeExpr] = useState<string | undefined>(savedEdit.bgmVolumeExpr);
   const [beatPreview, setBeatPreview] = useState<
     ReturnType<typeof buildBeatTable>
   >([]);
@@ -494,24 +504,35 @@ export default function PostProdWorkshopCard({
   }, [filmEvents, generatedBgmVariants, scoreDurationSec, selectedBgmVariant]);
 
   // ---- 工序表单状态 ----
-  const [concatSel, setConcatSel] = useState<string[]>([]);
-  const [concatTransition, setConcatTransition] = useState<"none" | "fade" | "dissolve" | "wipeleft">("none");
-  const [concatTransitionSec, setConcatTransitionSec] = useState(0.5);
-  const [concatRes, setConcatRes] = useState<"720p" | "1080p">("720p");
-  const [concatAspect, setConcatAspect] = useState<"9:16" | "16:9">("9:16");
-  const [bgmVideoUrl, setBgmVideoUrl] = useState("");
-  const [bgmAudioUrl, setBgmAudioUrl] = useState("");
-  const [bgmNarrativeMix, setBgmNarrativeMix] = useState<BgmNarrativeCue[]>([]);
-  const [bgmSourceSettingsKey, setBgmSourceSettingsKey] = useState("");
-  const [bgmAudioOptionId, setBgmAudioOptionId] = useState("");
-  const [bgmDurationSec, setBgmDurationSec] = useState<number | undefined>();
-  const [bgmVolume, setBgmVolume] = useState(0.48);
-  const [bgmDuckUnderDialogue, setBgmDuckUnderDialogue] = useState(false);
-  const [bgmEntrySec, setBgmEntrySec] = useState(0);
-  const [bgmFadeIn, setBgmFadeIn] = useState(0.5);
-  const [bgmFadeOut, setBgmFadeOut] = useState(1);
-  const [loudVideoUrl, setLoudVideoUrl] = useState("");
-  const [upscaleVideoUrl, setUpscaleVideoUrl] = useState("");
+  const [concatSel, setConcatSel] = useState<string[]>(() => Array.isArray(savedEdit.ids) ? savedEdit.ids.filter((v: unknown) => typeof v === "string").slice(0, 12) : []);
+  const [clipEdits, setClipEdits] = useState<Record<string, { startSec: number; endSec?: number }>>(() => savedEdit.edits && typeof savedEdit.edits === "object" ? savedEdit.edits : {});
+  const [previewClip, setPreviewClip] = useState("");
+  const [sequencePlaying, setSequencePlaying] = useState(false);
+  const [sequenceIndex, setSequenceIndex] = useState(0);
+  const editVideo = useRef<HTMLVideoElement | null>(null);
+  const [concatTransition, setConcatTransition] = useState<"none" | "fade" | "dissolve" | "wipeleft">(["fade", "dissolve", "wipeleft"].includes(savedEdit.transition) ? savedEdit.transition : "none");
+  const [concatTransitionSec, setConcatTransitionSec] = useState(Number.isFinite(savedEdit.transitionSec) ? savedEdit.transitionSec : 0.5);
+  const [concatRes, setConcatRes] = useState<"720p" | "1080p">(savedEdit.resolution === "1080p" ? "1080p" : "720p");
+  const [concatAspect, setConcatAspect] = useState<"9:16" | "16:9">(savedEdit.aspect === "16:9" ? "16:9" : "9:16");
+  const [bgmVideoUrl, setBgmVideoUrl] = useState<string>(savedEdit.bgmVideoUrl ?? "");
+  const [bgmAudioUrl, setBgmAudioUrl] = useState<string>(savedEdit.bgmAudioUrl ?? "");
+  const [bgmNarrativeMix, setBgmNarrativeMix] = useState<BgmNarrativeCue[]>(savedEdit.bgmNarrativeMix ?? []);
+  const [bgmSourceSettingsKey, setBgmSourceSettingsKey] = useState<string>(savedEdit.bgmSourceSettingsKey ?? "");
+  const [bgmAudioOptionId, setBgmAudioOptionId] = useState<string>(savedEdit.bgmAudioOptionId ?? "");
+  const [bgmDurationSec, setBgmDurationSec] = useState<number | undefined>(savedEdit.bgmDurationSec);
+  const [bgmVolume, setBgmVolume] = useState<number>(savedEdit.bgmVolume ?? 0.48);
+  const [bgmDuckUnderDialogue, setBgmDuckUnderDialogue] = useState<boolean>(savedEdit.bgmDuckUnderDialogue ?? false);
+  const [bgmEntrySec, setBgmEntrySec] = useState<number>(savedEdit.bgmEntrySec ?? 0);
+  const [bgmFadeIn, setBgmFadeIn] = useState<number>(savedEdit.bgmFadeIn ?? 0.5);
+  const [bgmFadeOut, setBgmFadeOut] = useState<number>(savedEdit.bgmFadeOut ?? 1);
+  const [loudVideoUrl, setLoudVideoUrl] = useState<string>(savedEdit.loudVideoUrl ?? "");
+  const [upscaleVideoUrl, setUpscaleVideoUrl] = useState<string>(savedEdit.upscaleVideoUrl ?? "");
+  const [editorSaveError, setEditorSaveError] = useState("");
+  useEffect(() => {
+    try { localStorage.setItem(editKey, JSON.stringify({ ids: concatSel, edits: clipEdits, transition: concatTransition, transitionSec: concatTransitionSec, resolution: concatRes, aspect: concatAspect,
+      bgmVideoUrl,bgmAudioUrl,bgmSourceSettingsKey,bgmAudioOptionId,bgmVolume,bgmDuckUnderDialogue,bgmEntrySec,bgmFadeIn,bgmFadeOut,bgmSeekSec,bgmVolumeExpr,bgmNarrativeMix,bgmDurationSec,loudVideoUrl,upscaleVideoUrl })); setEditorSaveError(""); }
+    catch (e) { setEditorSaveError(e instanceof Error ? e.message : "后期参数未保存，请保留当前页面"); }
+  }, [concatSel,clipEdits,concatTransition,concatTransitionSec,concatRes,concatAspect,bgmVideoUrl,bgmAudioUrl,bgmSourceSettingsKey,bgmAudioOptionId,bgmVolume,bgmDuckUnderDialogue,bgmEntrySec,bgmFadeIn,bgmFadeOut,bgmSeekSec,bgmVolumeExpr,bgmNarrativeMix,bgmDurationSec,loudVideoUrl,upscaleVideoUrl,editKey,localStorage]);
   const [upscaleProbedSource, setUpscaleProbedSource] = useState<VideoUpscaleSourceMetadata | null>(null);
   const upscaleSource = upscaleProbedSource?.sourceUrl === upscaleVideoUrl ? upscaleProbedSource : null;
   const upscaleProbedSec = upscaleSource?.durationSec ?? null;
@@ -519,7 +540,7 @@ export default function PostProdWorkshopCard({
   const [upscaleSubmitBusy, setUpscaleSubmitBusy] = useState(false);
   const [enhanceChoice, setEnhanceChoice] = useState<{ target: "2k" | "4k"; fps: 30 }>({ target: "2k", fps: 30 });
   const [upscaleJobs, setUpscaleJobs] = useState<TrackedUpscale[]>(() =>
-    loadTrackedUpscales(userId)
+    loadTrackedUpscales(userId, localStorage)
   );
   const upscaleJobsRef = useRef(upscaleJobs);
   upscaleJobsRef.current = upscaleJobs;
@@ -631,7 +652,7 @@ export default function PostProdWorkshopCard({
   }, [projectScopeKey]);
 
   const [jobs, setJobs] = useState<TrackedJob[]>(() =>
-    loadStoredJobs(jobsStorageKey(userId), localStorage)
+    loadStoredJobs(jobsStorageKey(userId), localStorage, mediaInput ? Number.POSITIVE_INFINITY : 30)
   );
   const scopedJobs = useMemo(() => jobs.filter(job => postProdJobMatchesScope(job, projectScopeKey)), [jobs, projectScopeKey]);
   const vfxJobs = useMemo(() => jobs.filter(job => job.action === "manhua_vfx" && postProdJobMatchesScope(job, vfxScopeKey)), [jobs, vfxScopeKey]);
@@ -641,13 +662,13 @@ export default function PostProdWorkshopCard({
 
   const updateJobs = useCallback(
     (updater: (prev: TrackedJob[]) => TrackedJob[]) => {
-      setJobs(prev => {
-        const next = updater(prev);
-        persistJobs(storageKey, next, localStorage);
-        return next;
-      });
+      const next = updater(jobsRef.current);
+      jobsRef.current = next;
+      if (mediaInput) localStorage.setItem(storageKey, JSON.stringify(next));
+      else persistJobs(storageKey, next, localStorage);
+      setJobs(next);
     },
-    [storageKey]
+    [storageKey, localStorage, Boolean(mediaInput)]
   );
 
   // Cloud-restored VFX intents remain pollable even when newer unrelated jobs fill the server's latest-30 list.
@@ -678,7 +699,8 @@ export default function PostProdWorkshopCard({
             createdAt: r.createdAt as unknown,
             scopeKey: r.scopeKey,
             sourceVideoUris: r.sourceVideoUris,
-          })), projectScopeKey, blocks.filter(block => isCurrentManhuaClipBlock(block, focusEpisode ?? 1)).flatMap(block => [block.outputUrl, ...(block.outputUrls || [])]).filter((url): url is string => Boolean(url)))
+          })), projectScopeKey, blocks.filter(block => isCurrentManhuaClipBlock(block, focusEpisode ?? 1)).flatMap(block => [block.outputUrl, ...(block.outputUrls || [])]).filter((url): url is string => Boolean(url))),
+        mediaInput ? projectScopeKey : undefined
       )
     );
   }, [jobsQuery.data, updateJobs, projectScopeKey, blocks, focusEpisode]);
@@ -801,6 +823,7 @@ export default function PostProdWorkshopCard({
             action: "concat";
             params: {
               clips: string[];
+              trims?: Array<{ startSec: number; endSec?: number }>;
               width: number;
               height: number;
               fps: number;
@@ -841,7 +864,11 @@ export default function PostProdWorkshopCard({
         if(rethrow)throw new Error("请先确认当前剧本");
         return;
       }
+      let release: (() => void) | undefined;
       try {
+        if (editorSaveError) throw new Error(editorSaveError);
+        release = acquireWork?.("后期剪辑处理中");
+        await beforeSubmit?.();
         const res = await queueMutation.mutateAsync({ ...input, scopeKey: submissionScope });
         updateJobs(prev => [
           {
@@ -854,6 +881,7 @@ export default function PostProdWorkshopCard({
           },
           ...prev.filter(job => job.jobId !== res.jobId),
         ]);
+        await beforeSubmit?.();
         void utils.mvAnalysis.listPostProdJobs.invalidate();
         toast.success(`已入队：${label}`, { description: `单号 ${res.jobId}` });
         return res.jobId;
@@ -862,12 +890,13 @@ export default function PostProdWorkshopCard({
         toast.error("入队失败", {
           description: e instanceof Error ? maskMediaProviderDetails(e.message) : "素材地址无法核对,请重新选择",
         });
-      }
+      } finally { release?.(); }
     },
-    [queueMutation, updateJobs, projectScopeKey, vfxScopeKey, utils],
+    [queueMutation, updateJobs, projectScopeKey, vfxScopeKey, utils, beforeSubmit, acquireWork, editorSaveError],
   );
 
   const submitConcat = async (rethrow = false) => {
+    if (concatSel.some(id => !clipOptions.some(c => c.id === id))) { toast.error("剪辑清单含已失效素材，请移除后重试"); return; }
     const urls = concatSel
       .map((id) => clipOptions.find((c) => c.id === id)?.url)
       .filter((u): u is string => Boolean(u));
@@ -878,7 +907,7 @@ export default function PostProdWorkshopCard({
     }
     const [width, height] = postProdConcatDimensions(concatRes, concatAspect);
     return await submit(
-      { action: "concat", params: { clips: urls, width, height, fps: 30, ...(concatTransition !== "none" ? { transition: { kind: concatTransition, durationSec: concatTransitionSec } } : {}) } },
+      { action: "concat", params: { clips: urls, trims: concatSel.map(id => clipEdits[id] || { startSec: 0 }), width, height, fps: 30, ...(concatTransition !== "none" ? { transition: { kind: concatTransition, durationSec: concatTransitionSec } } : {}) } },
       `拼接 ${urls.length} 段(${concatAspect} · ${concatRes})`, rethrow
     );
   };
@@ -936,7 +965,10 @@ export default function PostProdWorkshopCard({
         : focusEpisode;
     const quote = target ? canvasVideoEnhanceQuote(target, targetFps, upscaleProbedSec) : { units: canvasVideoEnhanceBillingUnits(upscaleProbedSec), totalCredits: canvasVideoFrameCredits(upscaleProbedSec, targetFps) };
     setUpscaleSubmitBusy(true);
+    let release: (() => void) | undefined;
     try {
+      release = acquireWork?.("高清输出提交中");
+      await beforeSubmit?.();
       const option = clipOptions.find(item => item.url === upscaleVideoUrl);
       const started = await startVideoUpscale({
         videoUrl: upscaleVideoUrl,
@@ -971,6 +1003,7 @@ export default function PostProdWorkshopCard({
     } catch (error) {
       toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "高清放大提交失败");
     } finally {
+      release?.();
       setUpscaleSubmitBusy(false);
     }
   };
@@ -1253,9 +1286,9 @@ export default function PostProdWorkshopCard({
   };
 
   const toggleConcat = (id: string) => {
-    setConcatSel(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
+    setSequencePlaying(false);
+    if (previewClip === id) setPreviewClip("");
+    setConcatSel(prev => prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 12 ? [...prev, id] : prev);
   };
 
   const bgmControl=useRef<AdvisorBgmControl|null>(null);
@@ -1292,8 +1325,8 @@ export default function PostProdWorkshopCard({
   };
   useEffect(()=>{onAdvisorControl?.(projectScopeKey,(...args)=>scoringRef.current(...args));return()=>onAdvisorControl?.(projectScopeKey,null);},[onAdvisorControl,projectScopeKey]);
 
-  const busy = queueMutation.isPending;
-  const transitionKey = advisorWorkflowRevision([vfxScopeKey, clipOptions, concatSel, concatTransition, concatTransitionSec, concatRes, concatAspect]);
+  const busy = queueMutation.isPending || disabled;
+  const transitionKey = advisorWorkflowRevision([vfxScopeKey, clipOptions, concatSel, clipEdits, concatTransition, concatTransitionSec, concatRes, concatAspect]);
   const transitionKeyRef = useRef(transitionKey); transitionKeyRef.current = transitionKey;
   const transitionControl = useRef<AdvisorEffectsControl>(async () => "");
   const transitionLock = useRef(false);
@@ -1329,7 +1362,7 @@ export default function PostProdWorkshopCard({
   const goCls =
     "inline-flex items-center gap-1.5 rounded-lg border border-cyan-300/45 bg-cyan-500/15 px-3 py-1.5 text-[12px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45";
 
-  const sourcePreview = activeTool === "vfx" ? vfxSource : activeTool === "bgm" ? bgmVideoUrl : activeTool === "enhance" ? upscaleVideoUrl : activeTool === "loudness" ? loudVideoUrl : activeTool === "subtitle" ? subtitleSource : clipOptions.find(clip => clip.id === concatSel[0])?.url || "";
+  const sourcePreview = activeTool === "vfx" ? vfxSource : activeTool === "bgm" ? bgmVideoUrl : activeTool === "enhance" ? upscaleVideoUrl : activeTool === "loudness" ? loudVideoUrl : activeTool === "subtitle" ? subtitleSource : clipOptions.find(clip => clip.id === (sequencePlaying ? concatSel[sequenceIndex] : previewClip || concatSel[0]))?.url || "";
   const sourceForTool = (tool: PostProdTool) => tool === "vfx" ? vfxSource : tool === "bgm" ? bgmVideoUrl : tool === "enhance" ? upscaleVideoUrl : tool === "loudness" ? loudVideoUrl : tool === "subtitle" ? subtitleSource : clipOptions.find(clip => clip.id === concatSel[0])?.url || "";
   const focusStudio = (tool = activeTool) => { const clipId = clipOptions.find(clip => clip.url === sourceForTool(tool))?.id; if (focusEpisode) onStudioFocus?.({tool:"postprod",task:tool,episodeIndex:focusEpisode,...(clipId ? {clipId} : {})}); };
   useEffect(() => { if (studioHasFocus.current) focusStudio(); }, [activeTool, sourcePreview, focusEpisode]);
@@ -1364,6 +1397,9 @@ export default function PostProdWorkshopCard({
     return (
       <span className="inline-flex items-center gap-2">
         <button type="button" className="text-xs text-cyan-200 underline" onClick={() => setPreviewResult({url,label:ACTION_LABEL[job.action]})}>预览结果</button>
+        <button type="button" className="text-xs text-cyan-200 underline" onClick={() => { setBgmVideoUrl(String(job.output?.gcsUri || url)); setActiveTool("bgm"); setPreviewResult(null); }}>继续混音</button>
+        <button type="button" className="text-xs text-cyan-200 underline" onClick={() => { setSubtitleSource(String(job.output?.gcsUri || url)); setActiveTool("subtitle"); setPreviewResult(null); }}>继续字幕</button>
+        <button type="button" className="text-xs text-cyan-200 underline" onClick={() => { setUpscaleVideoUrl(String(job.output?.gcsUri || url)); setActiveTool("enhance"); setPreviewResult(null); }}>高清输出</button>
         <button type="button" onClick={() => void downloadRemoteFile(url, "成片").catch(() => toast.error("下载失败，请稍后重试"))} className="text-[11px] text-cyan-200 underline underline-offset-2">
           下载成片
         </button>
@@ -1379,6 +1415,7 @@ export default function PostProdWorkshopCard({
       onBlurCapture={event => {if (!event.currentTarget.contains(event.relatedTarget as Node | null)) studioHasFocus.current = false;}}
       className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"
     >
+      {editorSaveError && <p role="alert" className="text-sm text-red-300">{editorSaveError}</p>}
       <div className="flex flex-wrap items-center gap-2">
         <Film className="h-4 w-4 text-cyan-300" />
         <span className="text-[14px] font-bold text-white">后期工坊</span>
@@ -1390,7 +1427,7 @@ export default function PostProdWorkshopCard({
         </span>
       </div>
 
-      {canUseScoringRoom ? (
+      {canUseScoringRoom && !mediaInput ? (
         <details className="mt-3 rounded-xl border border-fuchsia-300/20 bg-fuchsia-500/[0.06] p-3">
           <summary className="cursor-pointer text-sm font-semibold text-white">配乐创作 · 展开</summary>
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1728,12 +1765,15 @@ export default function PostProdWorkshopCard({
 
       <div className={`mt-4 grid min-w-0 gap-4 ${activeTool === "vfx" ? "xl:grid-cols-[140px_minmax(0,1fr)]" : "xl:grid-cols-[140px_minmax(0,1.4fr)_minmax(280px,1fr)]"}`} data-postprod-workspace>
         <nav aria-label="后期任务" className="flex flex-wrap content-start gap-2 xl:flex-col">
-          {(Object.entries(POSTPROD_TOOLS) as [PostProdTool,string][]).map(([tool,label]) => <button type="button" key={tool} aria-pressed={activeTool===tool} className={`rounded-lg border px-3 py-3 text-left text-sm ${activeTool===tool ? "border-cyan-300/50 bg-cyan-500/15 text-cyan-50" : "border-white/15 text-white/65"}`} onClick={() => {setActiveTool(tool);setPreviewResult(null);focusStudio(tool);}}>{label}</button>)}
+          {(Object.entries(POSTPROD_TOOLS) as [PostProdTool,string][]).filter(([tool]) => !mediaInput || tool !== "vfx").map(([tool,label]) => <button type="button" key={tool} aria-pressed={activeTool===tool} className={`rounded-lg border px-3 py-3 text-left text-sm ${activeTool===tool ? "border-cyan-300/50 bg-cyan-500/15 text-cyan-50" : "border-white/15 text-white/65"}`} onClick={() => {setActiveTool(tool);setPreviewResult(null);focusStudio(tool);}}>{label}</button>)}
           {onOpenAdvisor && <button type="button" className="rounded-lg border border-white/20 px-3 py-3 text-left text-xs text-cyan-100" onClick={() => {focusStudio();onOpenAdvisor();}}>与顾问讨论／语音</button>}
         </nav>
         <section hidden={activeTool === "vfx"} aria-label="后期当前预览" className="min-w-0 self-start rounded-xl border border-white/15 bg-black/30 p-3 xl:sticky xl:top-4">
           <h3 className="mb-3 text-sm font-semibold text-white">{previewResult ? `${previewResult.label} · 结果预览` : `${POSTPROD_TOOLS[activeTool]} · 原片预览`}</h3>
-          {previewResult?.url || sourcePreview ? <video key={previewResult?.url || sourcePreview} controls playsInline preload="metadata" src={gcsTransferUrl(previewResult?.url || sourcePreview)} className="aspect-video max-h-[60vh] w-full bg-black object-contain" aria-label={previewResult ? "后期结果视频" : "后期原片视频"} /> : <p className="flex min-h-64 items-center justify-center p-4 text-center text-sm text-white/55">先在右侧选择原片{activeTool === "concat" ? "；此处预览拼接清单的第一段" : ""}。</p>}
+          {previewResult?.url || sourcePreview ? <video ref={editVideo} key={`${previewResult?.url || sourcePreview}:${sequencePlaying ? sequenceIndex : "single"}`} controls playsInline preload="metadata"
+            onLoadedMetadata={e => { if (activeTool !== "concat" || previewResult) return; const id = sequencePlaying ? concatSel[sequenceIndex] : previewClip || concatSel[0]; e.currentTarget.currentTime = clipEdits[id]?.startSec || 0; if (sequencePlaying) void e.currentTarget.play().catch(() => setSequencePlaying(false)); }}
+            onTimeUpdate={e => { if (activeTool !== "concat" || previewResult) return; const id = sequencePlaying ? concatSel[sequenceIndex] : previewClip || concatSel[0]; const end = clipEdits[id]?.endSec; if (end != null && e.currentTarget.currentTime >= end) { e.currentTarget.pause(); if (sequencePlaying) { if (sequenceIndex + 1 < concatSel.length) setSequenceIndex(sequenceIndex + 1); else setSequencePlaying(false); } } }}
+            onEnded={() => { if (sequencePlaying && sequenceIndex + 1 < concatSel.length) setSequenceIndex(sequenceIndex + 1); else setSequencePlaying(false); }} src={gcsTransferUrl(previewResult?.url || sourcePreview)} className="aspect-video max-h-[60vh] w-full bg-black object-contain" aria-label={previewResult ? "后期结果视频" : "后期原片视频"} /> : <p className="flex min-h-64 items-center justify-center p-4 text-center text-sm text-white/55">先在右侧选择原片{activeTool === "concat" ? "；此处预览拼接清单的第一段" : ""}。</p>}
           <p className="mt-3 text-xs text-white/55">{previewResult ? "正在查看已有任务结果，尚未替换原片。" : "正在查看本工具选中的原片；参数修改不会直接改动影片。"}</p>
           {previewResult && <button type="button" className="mt-3 rounded border px-3 py-2 text-xs text-white" onClick={() => setPreviewResult(null)}>返回原片</button>}
         </section>
@@ -1744,12 +1784,12 @@ export default function PostProdWorkshopCard({
             <Layers className="h-3.5 w-3.5 text-cyan-300" /> 拼接成片
           </div>
           <p className="mt-1 text-[11px] leading-4 text-white/45">
-            按点选顺序拼 2–12 段;统一分辨率/帧率,无声段自动补静音轨。
+            选择 2–12 段后，在剪辑清单调整顺序和取段；统一分辨率与帧率，保留原片。
           </p>
           <div className="mt-2 max-h-36 space-y-1 overflow-auto pr-1">
             {clipOptions.length === 0 ? (
               <p className="text-[11px] text-white/35">
-                画布上还没有已出片的成片节点
+                当前制作稿还没有可用的成片
               </p>
             ) : (
               clipOptions.map(c => {
@@ -1778,6 +1818,21 @@ export default function PostProdWorkshopCard({
               })
             )}
           </div>
+          <section aria-label="剪辑时间线" className="mt-3 space-y-2">
+            <div className="flex gap-2"><strong className="text-sm text-white">剪辑清单</strong><button type="button" className={goCls} disabled={!concatSel.length} onClick={() => { setPreviewResult(null); setSequenceIndex(0); setSequencePlaying(v => !v); }}>{sequencePlaying ? "停止连播" : "按清单连播"}</button></div>
+            <p className="text-xs text-white/55">连播核对取段与顺序；转场效果以服务端生成的结果为准。</p>
+            {concatSel.map((id, index) => { const clip = clipOptions.find(c => c.id === id); const edit = clipEdits[id] || { startSec: 0 }; return <article key={id} className="rounded border border-white/20 p-2 text-xs text-white/80">
+              <div>{index + 1} · {clip?.label || "素材已失效，请移除"}</div>
+              <div className="my-2 flex flex-wrap gap-2">
+                <button type="button" onClick={() => { setSequencePlaying(false); setPreviewClip(id); setPreviewResult(null); }}>预览此段</button>
+                <button type="button" disabled={index === 0} onClick={() => { setSequencePlaying(false); setConcatSel(ids => { const next = [...ids]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; }); }}>前移</button>
+                <button type="button" disabled={index === concatSel.length - 1} onClick={() => { setSequencePlaying(false); setConcatSel(ids => { const next = [...ids]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; return next; }); }}>后移</button>
+                <button type="button" onClick={() => { setSequencePlaying(false); if (previewClip === id) setPreviewClip(""); setConcatSel(ids => ids.filter(v => v !== id)); }}>移除</button>
+              </div>
+              <label>起点秒<input aria-label={`第${index + 1}段起点`} className={numCls} type="number" min={0} step={0.01} value={edit.startSec} onChange={e => setClipEdits(v => ({ ...v, [id]: { ...edit, startSec: Number(e.target.value) } }))} /></label>
+              <label>终点秒<input aria-label={`第${index + 1}段终点`} className={numCls} type="number" min={0} step={0.01} placeholder="原片结尾" value={edit.endSec ?? ""} onChange={e => setClipEdits(v => ({ ...v, [id]: { ...edit, endSec: e.target.value === "" ? undefined : Number(e.target.value) } }))} /></label>
+            </article>; })}
+          </section>
           <div className="mt-2 space-y-2">
             <label className="block text-xs text-white/65">镜头转场<select aria-label="拼接转场" className={selectCls} value={concatTransition} onChange={e => setConcatTransition(e.target.value as typeof concatTransition)}><option value="none">直接切换</option><option value="fade">交叉淡化</option><option value="dissolve">溶解</option><option value="wipeleft">向左擦除</option></select></label>
             {concatTransition !== "none" && <><label className="text-xs text-white/65">重叠秒数 <input aria-label="转场重叠秒数" className={numCls} type="number" min={0.1} max={2} step={0.1} value={concatTransitionSec} onChange={e => setConcatTransitionSec(Number(e.target.value))} /></label><p className="text-xs text-white/50">支持2–6段、两分钟以内；每个转场重叠画面并交叉淡化声音，成片会缩短相应秒数。</p></>}
@@ -1891,7 +1946,7 @@ export default function PostProdWorkshopCard({
         </div>
 
         <div hidden={activeTool !== "vfx"}><ManhuaVfxEditor active={activeTool === "vfx"} advisorOpen={advisorOpen} onAdvisorDockChange={onVfxAdvisorDockChange} key={vfxScopeKey} scopeKey={vfxScopeKey} onOpenAdvisor={onOpenAdvisor ? () => { focusStudio(); onOpenAdvisor(); } : undefined} onAdvisorEffectsControl={onAdvisorEffectsControl} state={vfxState} onStateChange={onVfxStateChange} clips={vfxSourceClips} imageOptions={vfxImageOptions} scenes={vfxScenes} environments={vfxEnvironments} jobs={vfxJobs} busy={busy} onSourceChange={onVfxSourceChange} onPreview={(url, label) => setPreviewResult({ url, label })} onSubmit={input => submit(input, "漫剧特效候选", true)} /></div>
-        <div hidden={activeTool !== "subtitle"}><PostProdSubtitleCard effectsScopeKey={vfxScopeKey} onAdvisorEffectsControl={onAdvisorEffectsControl} onSourceChange={setSubtitleSource} key={projectScopeKey} context={advisorContext} storageKey={`${storageKey}:${projectScopeKey}:subtitle`} clips={clipOptions} busy={busy || scopedJobs.some(job => job.action === "burn_subtitle" && (job.status === "queued" || job.status === "running"))} onSubmit={async (params, label) => { return await submit({ action: "burn_subtitle", params }, label || (params.effect === "none" ? "对白字幕成片" : `对白字幕成片 · ${SUBTITLE_EFFECT_OPTIONS.find(option => option.id === params.effect)?.label ?? "字幕特效"}`),true); }} /></div>
+        <div hidden={activeTool !== "subtitle"}><PostProdSubtitleCard storage={storage} beforeSubmit={beforeSubmit} selectedSource={subtitleSource} effectsScopeKey={vfxScopeKey} onAdvisorEffectsControl={onAdvisorEffectsControl} onSourceChange={setSubtitleSource} key={projectScopeKey} context={advisorContext} storageKey={`${storageKey}:${projectScopeKey}:subtitle`} clips={clipOptions} busy={busy || scopedJobs.some(job => job.action === "burn_subtitle" && (job.status === "queued" || job.status === "running"))} onSubmit={async (params, label) => { return await submit({ action: "burn_subtitle", params }, label || (params.effect === "none" ? "对白字幕成片" : `对白字幕成片 · ${SUBTITLE_EFFECT_OPTIONS.find(option => option.id === params.effect)?.label ?? "字幕特效"}`),true); }} /></div>
 
         {/* BGM 贴装 */}
         <div hidden={activeTool !== "bgm"} className="rounded-xl border border-white/10 bg-black/25 p-3">

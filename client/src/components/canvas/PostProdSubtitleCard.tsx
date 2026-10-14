@@ -1,4 +1,4 @@
-import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
+import { manhuaProjectStorage } from "@shared/manhuaProjectScope";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AdvisorEffectsAction, AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
 import { advisorWorkflowRevision } from "@/lib/manhuaAdvisorWorkflowPlan";
@@ -15,7 +15,8 @@ import { SUBTITLE_EFFECT_OPTIONS, type SubtitleEffect } from "@shared/subtitleEf
 import { ManhuaTitleOverlayEditor } from "./ManhuaTitleOverlayEditor";
 
 /** 成片字幕使用创作者确认的对白及时间码，不调用语音识别或改写对白。 */
-export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKey, onSourceChange, effectsScopeKey = "", onAdvisorEffectsControl }:  {
+export function PostProdSubtitleCard({ storage = manhuaProjectStorage, beforeSubmit, selectedSource, clips, busy, onSubmit, context, storageKey, onSourceChange, effectsScopeKey = "", onAdvisorEffectsControl }:  {
+  storage?: Storage; beforeSubmit?: () => Promise<void>; selectedSource?: string;
   onSourceChange?: (source: string) => void;
   clips: Array<{ id: string; url: string; label: string }>;
   busy: boolean;
@@ -25,11 +26,15 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
   onAdvisorEffectsControl?: AdvisorEffectsRegistration;
   onSubmit: (params: { videoUri: string; subtitleSrt: string; effect: SubtitleEffect; styleOverride: { fontSize: number; outline: number; marginV: number; fontName: string; alignment?: 2 | 5 | 8 } }, label?: string) => Promise<string | void>;
 }) {
-  const [source, setSource] = useState("");
+  const localStorage = storage;
+  const [initial] = useState(() => { try { return JSON.parse(localStorage.getItem(`${storageKey}:edit`) || "{}"); } catch { return {}; } });
+  const [source, setSource] = useState<string>(initial.source || "");
+  useEffect(() => { if (selectedSource) setSource(selectedSource); }, [selectedSource]);
   useEffect(() => { onSourceChange?.(source); }, [source, onSourceChange]);
-  const [srt, setSrt] = useState("");
-  const [fontSize, setFontSize] = useState(16);
-  const [effect, setEffect] = useState<SubtitleEffect>("none");
+  const [srt, setSrt] = useState<string>(initial.srt || "");
+  const [fontSize, setFontSize] = useState<number>(initial.fontSize || 16);
+  const [effect, setEffect] = useState<SubtitleEffect>(initial.effect || "none");
+  useEffect(() => { try { localStorage.setItem(`${storageKey}:edit`, JSON.stringify({source,srt,fontSize,effect})); } catch (e) { toast.error(e instanceof Error ? e.message : "字幕草稿保存失败"); } }, [source,srt,fontSize,effect,storageKey,localStorage]);
   const [submitting, setSubmitting] = useState(false);
   const gate = useRef(false);
   const advisor = trpc.mvAnalysis.askPlatformSkillQa.useMutation({ retry: false });
@@ -59,11 +64,13 @@ export function PostProdSubtitleCard({ clips, busy, onSubmit, context, storageKe
         localStorage.setItem(pendingKey, JSON.stringify(request));
         setHasPending(true);
       }
+      await beforeSubmit?.();
       const result = await advisor.mutateAsync({ ...request, ...(confirmPaid ? { confirmPaid: true, confirmedCredits: quota.data?.price } : {}) });
       localStorage.setItem(`${storageKey}:report`, result.answer);
       localStorage.removeItem(pendingKey);
       setHasPending(false);
       setReport(result.answer); setPaid(false);
+      await beforeSubmit?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : "顾问核对失败";
       setAdvisorError(maskMediaProviderDetails(message));

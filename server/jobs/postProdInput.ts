@@ -10,6 +10,7 @@ import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
 import { SUBTITLE_EFFECT_IDS } from "../../shared/subtitleEffects";
 import { manhuaVfxJobSchema } from "../../shared/manhuaVfx";
 import { artMotionJobSchema } from "../../shared/artMotion";
+import { digitalHumanSplitJobSchema, digitalHumanFrameJobSchema, digitalHumanFinalJobSchema } from "../../shared/digitalHumanProduction";
 
 const mediaSourceSchema = z.string().trim().min(1).max(2048);
 
@@ -40,12 +41,16 @@ function evenDimension(min: number, max: number) {
 export const concatParamsSchema = z
   .object({
     clips: z.array(mediaSourceSchema).min(2).max(12),
+    trims: z.array(z.object({ startSec: z.number().finite().min(0), endSec: z.number().finite().positive().optional() }).strict()).min(2).max(12).optional(),
     transition: z.object({ kind: z.enum(["fade", "dissolve", "wipeleft"]), durationSec: z.number().finite().min(0.1).max(2) }).strict().optional(),
     width: evenDimension(320, 3840).default(1280),
     height: evenDimension(240, 2160).default(720),
     fps: z.number().int().min(12).max(60).default(30),
   })
-  .strict();
+  .strict().superRefine((v, ctx) => {
+    if (v.trims && v.trims.length !== v.clips.length) ctx.addIssue({ code: "custom", path: ["trims"], message: "剪辑取段须与片段一一对应" });
+    v.trims?.forEach((t, i) => { if (t.endSec != null && t.endSec - t.startSec < 0.1) ctx.addIssue({ code: "custom", path: ["trims", i], message: "取段至少保留0.1秒" }); });
+  });
 
 export const bgmMountParamsSchema = z
   .object({
@@ -175,6 +180,7 @@ export type RawAudioExtractParams = z.input<typeof audioExtractParamsSchema>;
 const postProdMetadataShape = { scopeKey: z.string().max(128).optional() };
 
 export const postProdJobInputSchema = z.discriminatedUnion("action", [
+  digitalHumanSplitJobSchema, digitalHumanFrameJobSchema, digitalHumanFinalJobSchema,
   artMotionJobSchema,
   manhuaVfxJobSchema,
   z.object({ ...postProdMetadataShape, action: z.literal("manhua_auto_rig"), params: autoRigRequestSchema }).strict(),

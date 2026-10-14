@@ -91,7 +91,7 @@ export function jobsStorageKey(userId: string): string {
 }
 
 /** 异常结构清理:非数组/坏条目一律丢弃,上限 30 条 */
-export function normalizeStoredJobs(value: unknown): TrackedJob[] {
+export function normalizeStoredJobs(value: unknown, limit = 30): TrackedJob[] {
   if (!Array.isArray(value)) return [];
   return value
     .filter((item): item is TrackedJob => {
@@ -104,15 +104,15 @@ export function normalizeStoredJobs(value: unknown): TrackedJob[] {
         (record.scopeKey == null || typeof record.scopeKey === "string")
       );
     })
-    .slice(0, 30);
+    .slice(0, limit);
 }
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">;
 
-export function loadStoredJobs(storageKey: string, storage: StorageLike): TrackedJob[] {
+export function loadStoredJobs(storageKey: string, storage: StorageLike, limit = 30): TrackedJob[] {
   try {
     const raw = storage.getItem(storageKey);
-    return normalizeStoredJobs(raw ? JSON.parse(raw) : []);
+    return normalizeStoredJobs(raw ? JSON.parse(raw) : [], limit);
   } catch {
     return [];
   }
@@ -142,7 +142,7 @@ export type RemotePostProdJob = {
  * 状态/产物/错误以服务端为准;label 本地优先(用户提交时的语义标签)。
  * 本地有但服务端没有的任务(如已被清理)不保留——服务端是主来源。
  */
-export function mergeRemoteJobs(local: TrackedJob[], remote: RemotePostProdJob[]): TrackedJob[] {
+export function mergeRemoteJobs(local: TrackedJob[], remote: RemotePostProdJob[], historyScope?: string): TrackedJob[] {
   const localById = new Map(local.map((item) => [item.jobId, item]));
   const remoteIds = new Set(remote.map((item) => item.jobId));
   const merged: TrackedJob[] = [];
@@ -176,7 +176,7 @@ export function mergeRemoteJobs(local: TrackedJob[], remote: RemotePostProdJob[]
   for (const cached of local) {
     if (
       !remoteIds.has(cached.jobId) &&
-      (cached.status === "queued" || cached.status === "running")
+      (cached.status === "queued" || cached.status === "running" || (historyScope && cached.scopeKey === historyScope))
     ) {
       merged.push(cached);
     }
@@ -189,7 +189,7 @@ export function mergeRemoteJobs(local: TrackedJob[], remote: RemotePostProdJob[]
       if (aPending !== bPending) return aPending ? -1 : 1;
       return b.createdAt - a.createdAt;
     })
-    .slice(0, 30);
+    .slice(0, historyScope ? Number.POSITIVE_INFINITY : 30);
 }
 
 export type ClipOption = { id: string; url: string; label: string };

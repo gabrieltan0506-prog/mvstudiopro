@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { digitalHumanProductionRequestSchema } from "../../shared/digitalHumanProduction";
+import { queueDigitalHumanProduction, getDigitalHumanProduction } from "../services/digitalHumanProductionTask";
+import { TRPCError } from "@trpc/server";
+import { digitalHumanDraftSchema } from "../../shared/digitalHumanStudio";
+import { DigitalHumanDraftConflict, readDigitalHumanCloudDraft, writeDigitalHumanCloudDraft } from "../services/digitalHumanDraftStore";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { digitalHumanSceneInputSchema } from "../../shared/digitalHumanStudio";
 import {
@@ -13,6 +18,14 @@ import {
 } from "../services/manhua3dTask";
 
 export const digitalHumanRouter = router({
+  queueProduction: protectedProcedure.input(digitalHumanProductionRequestSchema).mutation(({ ctx, input }) => queueDigitalHumanProduction(ctx.user.id, input)),
+  getProduction: protectedProcedure.input(z.object({ requestId: z.string().uuid() }).strict()).query(({ ctx, input }) => getDigitalHumanProduction(ctx.user.id, input.requestId)),
+  getDraft: protectedProcedure.query(({ ctx }) => readDigitalHumanCloudDraft(ctx.user.id)),
+  saveDraft: protectedProcedure.input(z.object({ draft: digitalHumanDraftSchema, expectedGeneration: z.string().regex(/^\d+$/) }).strict())
+    .mutation(async ({ ctx, input }) => {
+      try { return await writeDigitalHumanCloudDraft(ctx.user.id, input.draft, input.expectedGeneration); }
+      catch (e) { throw new TRPCError({ code: e instanceof DigitalHumanDraftConflict ? "CONFLICT" : "SERVICE_UNAVAILABLE", message: e instanceof Error ? e.message : "数字人稿件保存失败" }); }
+    }),
   getModel: adminProcedure
     .input(z.object({ taskId: z.string().trim().min(8).max(100) }))
     .query(({ ctx, input }) =>

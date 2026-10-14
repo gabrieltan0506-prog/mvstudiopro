@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   currentDigitalHumanAudio,
+  adoptDigitalHumanSource,
   digitalHumanVideoFailureStatus,
+  digitalHumanVideoIsCurrent,
   digitalHumanSpatialFingerprint,
   loadDigitalHumanDraft,
   newDigitalHumanDraft,
@@ -142,4 +144,37 @@ it("仅发送前明确失败可重试，已发但结果缺失不能重新购买"
     })
   ).toBe("unknown");
   expect(digitalHumanVideoFailureStatus()).toBe("unknown");
+});
+
+
+it("平台来源完整采用，保留既有媒体并使旧配音确认失效；跨账号和在途任务拒收", () => {
+  const draft = ready();
+  const source = { owner: "7", blueprintId: "topic-1", version: "v1", title: "咖啡点单", platform: "xiaohongshu" as const,
+    aspectRatio: "9:16" as const, script: "新稿原文。", detailedScript: "完整制作说明", sceneDescription: "咖啡厅", direction: "镜头跟随手部动作", shots: [{cellIndex: 1, dialogueZh: "新稿原文。", sceneZh: "咖啡厅", shotSize: "中景", actionZh: "拿杯", cameraMoveZh: "跟", editNoteZh: "停顿"}] };
+  const next = adoptDigitalHumanSource(draft, source);
+  expect(next.source).toEqual(source); expect(next.script).toBe(source.script);
+  expect(next.audios).toEqual(draft.audios); expect(next.approvedAudioRequestId).toBeUndefined();
+  expect(() => adoptDigitalHumanSource(draft, {...source,owner:"8"})).toThrow("账号");
+  expect(() => adoptDigitalHumanSource({...draft,audios:[{...draft.audios[0],status:"unknown"}]},source)).toThrow("原制作任务");
+});
+
+it("长稿分段保持完整原声、导演选择与前段尾帧关联，旧尾帧不冒充新片", () => {
+  const d=ready(); d.audios[0].durationSec=50;
+  const planId="00000000-0000-4000-8000-000000000001";
+  const manifest={version:1 as const,audioUri:d.audios[0].source!,audioRequestId:audioId,script:d.script,durationSec:50,segments:[{index:0,startSec:0,endSec:25,audioUri:"gs://test-bucket/part1.wav"},{index:1,startSec:25,endSec:50,audioUri:"gs://test-bucket/part2.wav"}]};
+  d.productions.push({request:{requestId:planId,input:{action:"digital_human_audio_split",params:{audioUri:manifest.audioUri,audioRequestId:audioId,script:d.script}}},fingerprint:"test-plan",status:"succeeded",manifest});
+  const first=prepareDigitalHumanVideo(d,videoId,{manifest,planRequestId:planId,index:0});
+  expect(first.audioSource).toBe(manifest.segments[0].audioUri); expect(first.prompt).toContain("全文只作语境");
+  d.videos.push({...first,status:"succeeded",source:"gs://test-bucket/first.mp4"});
+  expect(()=>prepareDigitalHumanVideo(d,"00000000-0000-4000-8000-000000000002",{manifest,planRequestId:planId,index:1})).toThrow("衔接尾帧");
+  const frame={source:"gs://test-bucket/end.png",name:"前段尾帧"};
+  d.productions.push({request:{requestId:"00000000-0000-4000-8000-000000000003",input:{action:"digital_human_continuity_frame",params:{videoUri:d.videos[0].source!,atSec:25}}},fingerprint:"test-frame",status:"succeeded",source:frame.source});
+  const second=prepareDigitalHumanVideo(d,"00000000-0000-4000-8000-000000000002",{manifest,planRequestId:planId,index:1,continuityFrame:frame});
+  expect(digitalHumanVideoIsCurrent(d,second)).toBe(true);
+  d.videos.push({...first,requestId:"00000000-0000-4000-8000-000000000004",status:"succeeded",source:"gs://test-bucket/new-first.mp4"});
+  expect(digitalHumanVideoIsCurrent(d,second)).toBe(false);
+  d.previs={reference:{updatedAt:"2026-10-14T10:00:00Z",url:"https://example.test/previs.mp4",gcsUri:"gs://test-bucket/previs.mp4",durationSec:30},sourceFingerprint:digitalHumanSpatialFingerprint(d),reviewed:true};
+  expect(()=>prepareDigitalHumanVideo(d,videoId,{manifest,planRequestId:planId,index:0})).toThrow("明确选择");
+  expect(prepareDigitalHumanVideo(d,videoId,{manifest,planRequestId:planId,index:0,useReviewedPrevis:true}).previs?.gcsUri).toContain("previs.mp4");
+  expect(prepareDigitalHumanVideo(d,videoId,{manifest,planRequestId:planId,index:0,useReviewedPrevis:false}).previs).toBeUndefined();
 });

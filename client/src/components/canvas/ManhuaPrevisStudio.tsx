@@ -87,6 +87,9 @@ export type PrevisServices = {
   ) => Promise<{ items: PrevisResponse[]; nextCursor: string | null }>;
 };
 type Props = {
+  /** 调用方确认制作稿及请求身份已持久保存后，才允许提交。 */
+  beforeSubmit?: () => Promise<void>;
+  acquireWork?: (label: string) => () => void;
   block: CanvasBlock;
   effectsScopeKey?: string;
   onAdvisorEffectsControl?: AdvisorEffectsRegistration;
@@ -155,6 +158,8 @@ export function ManhuaPrevisStudio(props: Props) {
 
 export function ManhuaPrevisStudioView({
   block,
+  beforeSubmit,
+  acquireWork,
   effectsScopeKey,
   onAdvisorEffectsControl,
   disabled,
@@ -471,13 +476,17 @@ export function ManhuaPrevisStudioView({
     }; } catch (error) {
       setError(error instanceof Error ? error.message : "请检查音轨"); lock.current = false; setBusy(false); if (advisor) throw error; return;
     }
+    let release: (() => void) | undefined;
     try {
+      release = acquireWork?.("白模提交处理中");
       // 同一段状态先保留请求，再入队。响应只入候选，不自动替换本段参考。
       if (!publish({ ...studio, pending: input })) { if (advisor) throw new Error("原白模请求未保存，未提交渲染"); return; }
+      await beforeSubmit?.();
       advisor?.assertTarget();
       const response = await services.submit(input);
       advisor?.assertTarget();
       if (!consume(response) && advisor) throw new Error("白模回执未通过校验或未保存，请查询原编号");
+      await beforeSubmit?.();
     } catch (error) {
       if (advisor) advisor.assertTarget();
       if (!mounted.current) return;
@@ -491,6 +500,7 @@ export function ManhuaPrevisStudioView({
         );
       if (advisor) throw error;
     } finally {
+      release?.();
       lock.current = false;
       if (mounted.current) setBusy(false);
     }

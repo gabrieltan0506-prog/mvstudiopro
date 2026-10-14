@@ -1,5 +1,8 @@
+import { DigitalHumanPostProduction } from "./DigitalHumanPostProduction";
+import { adoptDigitalHumanSource, type DigitalHumanSource } from "@shared/digitalHumanStudio";
 import { recoverDigitalHumanDraft } from "@/lib/digitalHumanRecovery";
 import { DigitalHumanRecorder } from "./DigitalHumanRecorder";
+import { DigitalHumanProductionPanel } from "./DigitalHumanProductionPanel";
 import { inspectDigitalHumanRecording } from "@/lib/digitalHumanRecording";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -14,6 +17,7 @@ import {
   digitalHumanDraftSchema,
   digitalHumanPending,
   digitalHumanVideoFingerprint,
+  digitalHumanVideoIsCurrent,
   loadDigitalHumanDraft,
   newDigitalHumanDraft,
   prepareDigitalHumanVideo,
@@ -105,8 +109,10 @@ export function DigitalHumanMedia({
 
 export function DigitalHumanStudio({
   initialPortrait,
+  source,
 }: {
   initialPortrait?: string;
+  source?: DigitalHumanSource;
 }) {
   const { user } = useAuth();
   return user ? (
@@ -115,6 +121,7 @@ export function DigitalHumanStudio({
       owner={String(user.id)}
       role={user.role}
       initialPortrait={initialPortrait}
+      source={source}
     />
   ) : (
     <p>请登录后使用数字人视频。</p>
@@ -125,7 +132,9 @@ function DigitalHumanWorkspace({
   owner,
   role,
   initialPortrait,
+  source,
 }: {
+  source?: DigitalHumanSource;
   owner: string;
   role: string;
   initialPortrait?: string;
@@ -177,6 +186,44 @@ function DigitalHumanWorkspace({
   const clone = trpc.canvasAudio.createReferenceVoice.useMutation();
   const dialogue = trpc.canvasAudio.generateDialogue.useMutation();
   const scene = trpc.digitalHuman.createScene.useMutation();
+  const cloudSave = trpc.digitalHuman.saveDraft.useMutation();
+  const cloudGeneration = useRef<string | undefined>(undefined);
+  const cloudQueue = useRef<Promise<void>>(Promise.resolve());
+  const [cloudStatus, setCloudStatus] = useState("正在读取云端稿件");
+  const cloudError = useRef<string | undefined>(undefined);
+  async function flushCloud() {
+    let pending: Promise<void>;
+    do { pending = cloudQueue.current; await pending; } while (pending !== cloudQueue.current);
+    if (!active.current) throw new Error("页面已切换，未提交生产");
+    if (!cloudGeneration.current || cloudError.current) throw new Error(cloudError.current || "云端稿件尚未确认，未提交生产");
+  }
+  function queueCloud(next: DigitalHumanDraft) {
+    cloudQueue.current = cloudQueue.current.then(async () => {
+      if (!cloudGeneration.current || cloudError.current) return;
+      setCloudStatus("正在保存云端稿件");
+      try {
+        const receipt = await cloudSave.mutateAsync({ draft: next, expectedGeneration: cloudGeneration.current });
+        cloudGeneration.current = receipt.generation; setCloudStatus("云端已保存");
+      } catch (e) { cloudError.current = messageOf(e); setCloudStatus(cloudError.current); }
+    });
+  }
+  async function loadCloud() {
+    const localBefore = savedRaw.current;
+    const remote = await api.digitalHuman.getDraft.fetch();
+    if (!active.current || savedRaw.current !== localBefore || localStorage.getItem(digitalHumanDraftKey(owner)) !== localBefore) throw new Error("读取期间本机稿件已变化，未覆盖");
+    if (remote.draft && localBefore && JSON.stringify(remote.draft) !== JSON.stringify(ref.current)) {
+      cloudError.current = "本机与云端稿件不同，请导出本机副本后明确选择读取云端或保存本机";
+      cloudGeneration.current = remote.generation; setCloudStatus(cloudError.current); return;
+    }
+    cloudGeneration.current = remote.generation; cloudError.current = undefined;
+    if (remote.draft) {
+      const raw = JSON.stringify(remote.draft); localStorage.setItem(digitalHumanDraftKey(owner), raw);
+      savedRaw.current = raw; ref.current = remote.draft; setDraft(remote.draft);
+    } else queueCloud(ref.current);
+    setCloudStatus(remote.draft ? "云端稿件已恢复" : "正在建立云端稿件");
+  }
+  useEffect(() => { void loadCloud().catch(e => { cloudError.current = messageOf(e); setCloudStatus(cloudError.current); }); }, []);
+
   useEffect(() => {
     active.current = true;
     return () => {
@@ -194,6 +241,7 @@ function DigitalHumanWorkspace({
     savedRaw.current = raw;
     ref.current = next;
     setDraft(next);
+    queueCloud(next);
   }
   function edit(patch: Partial<DigitalHumanDraft>) {
     try {
@@ -210,13 +258,20 @@ function DigitalHumanWorkspace({
     setError("");
     setNotice("");
     try {
+      await flushCloud();
       await work();
+      await flushCloud();
     } catch (e) {
       if (active.current) setError(messageOf(e));
     } finally {
       busyRef.current = false;
       if (active.current) setBusy("");
     }
+  }
+  function acquireWork(label: string) {
+    if (!active.current || busyRef.current || loadError) throw new Error("制作稿正在处理，请等当前操作结束");
+    busyRef.current = true; setBusy(label);
+    return () => { busyRef.current = false; if (active.current) setBusy(""); };
   }
   async function createVoiceFromRecording(file: File) {
     if (ref.current.cloneRequest)
@@ -230,6 +285,7 @@ function DigitalHumanWorkspace({
       consent: true as const,
     };
     save(d => ({ ...d, cloneRequest: request }));
+    await flushCloud();
     const r = await clone.mutateAsync(request);
     if (r.status === "ready" && r.voiceId)
       edit({ voiceId: r.voiceId, cloneRequest: undefined });
@@ -262,6 +318,7 @@ function DigitalHumanWorkspace({
     const raw = JSON.stringify(next);
     localStorage.setItem(digitalHumanDraftKey(owner), raw);
     savedRaw.current = raw;
+    queueCloud(next);
     if (active.current) {
       ref.current = next;
       setDraft(next);
@@ -286,8 +343,7 @@ function DigitalHumanWorkspace({
         const audio = currentDigitalHumanAudio(ref.current);
         if (
           !active.current ||
-          !audio ||
-          digitalHumanVideoFingerprint(ref.current, audio) !== row.fingerprint
+          !audio || !digitalHumanVideoIsCurrent(ref.current, row)
         )
           throw new Error("输入已变化，请重新预览");
       },
@@ -342,7 +398,7 @@ function DigitalHumanWorkspace({
   useEffect(() => {
     let stopped = false;
     const tick = async () => {
-      if (stopped || busyRef.current || loadError) return;
+      if (stopped || busyRef.current || loadError || !cloudGeneration.current || cloudError.current) return;
       busyRef.current = true;
       try {
         await recover();
@@ -373,6 +429,53 @@ function DigitalHumanWorkspace({
           人物、场景、声音与文案在这里组合。Seedance 2.5 · 720p 原片 → 4K 成片
         </p>
       </header>
+      <section className="dh-card">
+        <p role="status">{cloudStatus}</p>
+        <button type="button" disabled={Boolean(busy)} onClick={() => {
+          const blob = new Blob([JSON.stringify(ref.current, null, 2)], { type: "application/json" });
+          const url = URL.createObjectURL(blob); const a = document.createElement("a");
+          a.href = url; a.download = "数字人制作稿.json"; a.click(); URL.revokeObjectURL(url);
+        }}>导出本机副本</button>
+        <button type="button" disabled={Boolean(busy)} onClick={() => void (async () => {
+          if (!window.confirm("读取云端稿件将替换本页制作稿；请先导出本机副本。确认读取？")) return;
+          if (busyRef.current) return;
+          busyRef.current = true; setBusy("读取云端稿件");
+          const localBefore = savedRaw.current;
+          try {
+            await cloudQueue.current;
+            const remote = await api.digitalHuman.getDraft.fetch();
+            if (!active.current || savedRaw.current !== localBefore || localStorage.getItem(digitalHumanDraftKey(owner)) !== localBefore) throw new Error("读取期间本机稿件已变化，未覆盖");
+            if (!remote.draft) throw new Error("云端没有制作稿，未覆盖本机");
+            const raw = JSON.stringify(remote.draft); localStorage.setItem(digitalHumanDraftKey(owner), raw);
+            savedRaw.current = raw; ref.current = remote.draft; setDraft(remote.draft);
+            cloudGeneration.current = remote.generation; cloudError.current = undefined; setPreview(undefined); setCloudStatus("云端稿件已恢复");
+          } catch (e) { setError(messageOf(e)); }
+          finally { busyRef.current = false; if (active.current) setBusy(""); }
+        })()}>读取云端版本</button>
+        <button type="button" disabled={Boolean(busy)} onClick={() => void (async () => {
+          if (!window.confirm("将当前本机制作稿保存为云端版本？请先核对另一设备的修改。")) return;
+          if (busyRef.current) return;
+          busyRef.current = true; setBusy("保存本机稿件");
+          try {
+            await cloudQueue.current; const remote = await api.digitalHuman.getDraft.fetch();
+            if (!active.current || localStorage.getItem(digitalHumanDraftKey(owner)) !== savedRaw.current) throw new Error("本机稿件已在另一页面变化，未覆盖云端");
+            cloudGeneration.current = remote.generation; cloudError.current = undefined;
+            queueCloud(ref.current); await flushCloud();
+          } catch (e) { setError(messageOf(e)); }
+          finally { busyRef.current = false; if (active.current) setBusy(""); }
+        })()}>明确保存本机版本</button>
+      </section>
+      {source && <section className="dh-card">
+        <h3>平台稿件 · {source.title}</h3>
+        <p>完整正文与{source.shots.length}镜分镜将一起采用，原素材和任务记录保留。</p>
+        <details><summary>核对正文与分镜</summary><p style={{ whiteSpace: "pre-wrap" }}>{source.script}</p>
+          {source.shots.map(shot => <p key={shot.cellIndex}>{shot.cellIndex} · {shot.sceneZh} · {shot.shotSize} · {shot.actionZh} · {shot.cameraMoveZh} · {shot.dialogueZh}</p>)}</details>
+        <button type="button" disabled={Boolean(busy) || Boolean(loadError)} onClick={() => void act("采用平台稿件", async () => {
+          if (!window.confirm("采用这份稿件替换当前正文和导演说明？原音频、视频和素材记录保留，配音需重新确认。")) return;
+          save(d => adoptDigitalHumanSource(d, source)); setPreview(undefined);
+        })}>采用这份正文与分镜</button>
+      </section>}
+      {draft.source && <p>制作来源：{draft.source.title} · {draft.source.platform} · {draft.source.shots.length}镜</p>}
       {(error || loadError) && (
         <p className="dh-error" role="alert">
           {loadError || error}
@@ -488,6 +591,7 @@ function DigitalHumanWorkspace({
                   scenes: [...d.scenes, { request, status: "submitted" }],
                 }));
                 try {
+                  await flushCloud();
                   const r = await scene.mutateAsync(request);
                   save(d => ({
                     ...d,
@@ -618,7 +722,7 @@ function DigitalHumanWorkspace({
               maxLength={4000}
               value={draft.script}
               onChange={e => edit({ script: e.target.value })}
-              placeholder="写下这次要讲的话。单条配音不超过30秒。"
+              placeholder="写下完整文案。超过30秒的配音可按真实停顿分段生成视频。"
             />
           </label>
           <p>
@@ -653,6 +757,7 @@ function DigitalHumanWorkspace({
                   audios: [...d.audios, { request, status: "submitted" }],
                 }));
                 try {
+                  await flushCloud();
                   const r = await dialogue.mutateAsync(request);
                   save(d => ({
                     ...d,
@@ -773,6 +878,8 @@ function DigitalHumanWorkspace({
               setPreview(undefined);
             }}
             uploadFile={uploadFile}
+            beforeSubmit={flushCloud}
+            acquireWork={acquireWork}
           />
         </section>
         <section className="dh-card dh-wide">
@@ -857,9 +964,7 @@ function DigitalHumanWorkspace({
                     const p = preview;
                     const current = currentDigitalHumanAudio(ref.current);
                     if (
-                      !current ||
-                      digitalHumanVideoFingerprint(ref.current, current) !==
-                        p.row.fingerprint
+                      !current || !digitalHumanVideoIsCurrent(ref.current, p.row)
                     )
                       throw new Error("输入已变化，请重新预览");
                     if (
@@ -869,9 +974,10 @@ function DigitalHumanWorkspace({
                     )
                       throw new Error("请先核对已有视频任务");
                     const scope = scopeFor(p.row);
-                    save(d => ({ ...d, videos: [...d.videos, p.row] }));
+                    save(d => ({ ...d, videos: [...d.videos, { ...p.row, intentId: p.row.requestId }] }));
                     setPreview(undefined);
                     try {
+                      await flushCloud();
                       const result = await runCanvasBlock(
                         depsFor(p.row),
                         p.block,
@@ -919,6 +1025,15 @@ function DigitalHumanWorkspace({
             </div>
           )}
         </section>
+        <DigitalHumanProductionPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} uploadFile={uploadFile} acquireWork={acquireWork}
+          previewVideo={async row => {
+            const block = await digitalHumanVideoBlock(row);
+            const outbound = await previewCanvasBlockOutbound(depsFor(row), block, undefined, { videoSubmissionKey: row.requestId });
+            if (outbound.compile.blocked) throw new Error(outbound.compile.fatalZh || "本段视频输入未通过出站检查");
+            setPreview({ row, block, outbound });
+            setNotice("本段输入已准备，请在上方核对完整参考与费用后确认生成。");
+          }} />
+        {cloudGeneration.current && !cloudError.current && <DigitalHumanPostProduction draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} userRole={role} />}
         <section className="dh-card dh-wide">
           <h3>5 · 原片与4K成片</h3>
           <button type="button" onClick={() => void act("查询原任务", recover)}>
@@ -963,6 +1078,7 @@ function DigitalHumanWorkspace({
                         };
                         updateVideo(v.requestId, { upscale: pending });
                         try {
+                          await flushCloud();
                           const r = await startVideoUpscale({
                             videoUrl: v.source!,
                             target: "4k",

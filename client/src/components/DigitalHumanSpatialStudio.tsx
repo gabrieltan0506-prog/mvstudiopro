@@ -1,3 +1,6 @@
+import { DigitalHumanDirectorPanel } from "./DigitalHumanDirectorPanel";
+import { digitalHumanShotText } from "@/lib/digitalHumanAdvisor";
+import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
 import { DigitalHumanRenderReview } from "./DigitalHumanRenderReview";
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
@@ -32,6 +35,8 @@ type Props = {
   disabled: boolean;
   onChange: (patch: Partial<DigitalHumanDraft>) => void;
   uploadFile: (file: File) => Promise<DigitalHumanMedia>;
+  beforeSubmit: () => Promise<void>;
+  acquireWork: (label: string) => () => void;
 };
 const err = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export function DigitalHumanSpatialStudio({
@@ -40,6 +45,8 @@ export function DigitalHumanSpatialStudio({
   disabled,
   onChange,
   uploadFile,
+  beforeSubmit,
+  acquireWork,
 }: Props) {
   const api = trpc.useUtils();
   const worldList = trpc.manhuaWorld.listMine.useQuery(
@@ -57,6 +64,15 @@ export function DigitalHumanSpatialStudio({
     [error, setError] = useState(""),
     [rig, setRig] = useState<string>();
   const lock = useRef(false);
+  const [advisorOpen, setAdvisorOpen] = useState(false);
+  const advisorStorage: Storage = {
+    get length() { return Object.keys(latest.current.advisorStorage).length; },
+    key: i => Object.keys(latest.current.advisorStorage)[i] ?? null,
+    getItem: key => latest.current.advisorStorage[key] ?? null,
+    setItem: (key, value) => patch({ advisorStorage: { ...latest.current.advisorStorage, [key]: String(value) } }),
+    removeItem: key => { const next = { ...latest.current.advisorStorage }; delete next[key]; patch({ advisorStorage: next }); },
+    clear: () => { throw new Error("请逐项删除顾问记录，不能清空全部制作证据"); },
+  };
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const mainId = `dh-person-${draft.id}`,
     sceneId = `dh-scene-${draft.id}`,
@@ -113,11 +129,16 @@ export function DigitalHumanSpatialStudio({
     lock.current = true;
     setBusy([id]);
     setError("");
+    let release: (() => void) | undefined;
     try {
+      release = acquireWork("人物与空间素材处理中");
+      await beforeSubmit();
       await fn();
+      await beforeSubmit();
     } catch (e) {
       setError(err(e));
     } finally {
+      release?.();
       lock.current = false;
       setBusy([]);
     }
@@ -223,6 +244,13 @@ export function DigitalHumanSpatialStudio({
       w.taskId === draft.worldTaskId && w.sourceVersion === draft.scene?.source
   );
   const studio = draft.previsStudio;
+  function advisorStudio() {
+    const d = latest.current;
+    if (!d.previsStudio) throw new Error("请先建立当前人物白模");
+    return { ...d.previsStudio, advisorShotSource: buildAdvisorPrevisShotSource(clipId, [{ index: 1,
+      durationSec: d.previsStudio.spec.durationSec, actionZh: digitalHumanShotText(d) || "按当前人物站位讲述正文",
+      cameraZh: d.direction, dialogueZh: d.script }]) };
+  }
   const block: CanvasBlock = {
     ...defaultCanvasBlock("video", 0, 0),
     id: clipId,
@@ -288,19 +316,20 @@ export function DigitalHumanSpatialStudio({
           }
         : {}),
     });
+    await beforeSubmit();
   }
   if (role !== "admin")
     return (
       <p>
         3D 人物、3DGS
-        与多人白模工具沿用漫剧工厂的管理员权限。普通数字人生成仍可使用上方人像、场景与声音。
+        与多人预演工具目前需要管理员权限。数字人生成可使用上方人像、场景与声音。
       </p>
     );
   return (
     <details className="dh-spatial">
       <summary>可选：3D 人物、3DGS 场景与多人白模预演</summary>
       <p>
-        复用漫剧工厂资产与预演。白模须逐帧、常速审看后采用，再进入视频输入。
+        在本制作稿中组合人物、场景和动作。预演须逐帧、常速审看后采用，再进入视频输入。
       </p>
       {error && <p role="alert">{error}</p>}
       <button
@@ -469,6 +498,7 @@ export function DigitalHumanSpatialStudio({
                   },
                 ],
               });
+              await beforeSubmit();
               const r = await modelSubmit.mutateAsync({
                 assetRef: id,
                 sourceVersion: c.portrait.source,
@@ -628,6 +658,7 @@ export function DigitalHumanSpatialStudio({
                   submittedAt: new Date().toISOString(),
                 },
               });
+              await beforeSubmit();
               const r = await worldSubmit.mutateAsync({
                 sceneRef: sceneId,
                 sourceVersion: source,
@@ -751,8 +782,14 @@ export function DigitalHumanSpatialStudio({
       </button>
       {studio && (
         <div className="dh-factory">
+          <button type="button" disabled={disabled} onClick={() => setAdvisorOpen(v => !v)}>数字人导演：调整动作与摄影机</button>
+          {advisorOpen && <DigitalHumanDirectorPanel key={`${draft.owner}:${draft.id}`} draft={draft}
+            storage={advisorStorage} disabled={disabled || busy.length > 0} beforeSubmit={beforeSubmit} acquireWork={acquireWork}
+            currentStudio={advisorStudio} onApply={next => patch({ previsStudio: next })} />}
           <ManhuaPrevisStudio
             block={block}
+            beforeSubmit={beforeSubmit}
+            acquireWork={acquireWork}
             characters={characters.map(c => ({
               id: c.id,
               label: c.labelZh,
@@ -767,7 +804,7 @@ export function DigitalHumanSpatialStudio({
               {
                 index: 1,
                 durationSec: studio.spec.durationSec,
-                actionZh: draft.direction,
+                actionZh: digitalHumanShotText(draft) || "按当前人物站位讲述正文",
                 cameraZh: draft.direction,
                 dialogueZh: draft.script,
               },

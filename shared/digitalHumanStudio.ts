@@ -1,6 +1,30 @@
 import { z } from "zod";
+import { platformStoryboardCellsSchema } from "./platformStoryboardCells";
 import { artMotionStateSchema } from "./artMotion";
 import { manhuaPrevisStudioSchema } from "./manhuaPrevis";
+import { digitalHumanProductionReceiptSchema, digitalHumanSplitManifestSchema, digitalHumanVoiceSpaceSchema, digitalHumanMixTrackSchema, type DigitalHumanSplitManifest } from "./digitalHumanProduction";
+
+/** 平台正式稿到数字人制作的来源合同；原文与逐镜信息一并保留。 */
+export const digitalHumanSourceSchema = z.object({
+  owner: z.string().min(1), blueprintId: z.string().min(1).max(160),
+  version: z.string().min(1), title: z.string().max(200),
+  platform: z.enum(["xiaohongshu", "douyin"]), aspectRatio: z.enum(["9:16", "16:9"]),
+  script: z.string().trim().min(1).max(4000),
+  detailedScript: z.string().max(20000),
+  sceneDescription: z.string().max(2000), direction: z.string().max(1500),
+  shots: platformStoryboardCellsSchema,
+}).strict();
+export type DigitalHumanSource = z.infer<typeof digitalHumanSourceSchema>;
+
+export function adoptDigitalHumanSource(draft: DigitalHumanDraft, raw: DigitalHumanSource): DigitalHumanDraft {
+  const source = digitalHumanSourceSchema.parse(raw);
+  if (source.owner !== draft.owner) throw new Error("稿件账号不匹配，未采用");
+  if (draft.videos.some(v => digitalHumanPending(v.status)) || draft.audios.some(a => digitalHumanPending(a.status)))
+    throw new Error("原制作任务待核对，请先查询原任务");
+  return digitalHumanDraftSchema.parse({ ...draft, source, script: source.script,
+    aspectRatio: source.aspectRatio, sceneDescription: source.sceneDescription,
+    direction: source.direction || draft.direction, approvedAudioRequestId: undefined });
+}
 
 export const digitalHumanSceneInputSchema = z
   .object({
@@ -100,6 +124,8 @@ const upscaleSchema = z.object({
   message: z.string().optional(),
 });
 const videoReceiptSchema = z.object({
+  segment: z.object({ planRequestId: z.string().uuid(), index: z.number().int().min(0), startSec: z.number().min(0), endSec: z.number().positive() }).optional(),
+  continuityFrame: mediaSchema.optional(),
   requestId: z.string().uuid(),
   fingerprint: z.string(),
   status: statusSchema,
@@ -125,6 +151,11 @@ export const digitalHumanDraftSchema = z.object({
   version: z.literal(1),
   id: z.string().uuid(),
   owner: z.string().min(1),
+  source: digitalHumanSourceSchema.optional(),
+  advisorStorage: z.record(z.string(), z.string()).default({}),
+  postProdStorage: z.record(z.string(), z.string()).default({}),
+  productions: z.array(digitalHumanProductionReceiptSchema).default([]),
+  mix: z.object({ voice: digitalHumanVoiceSpaceSchema, tracks: z.array(digitalHumanMixTrackSchema).max(12) }).default({ voice: { pan: 0, room: "dry", volume: 1 }, tracks: [] }),
   portrait: mediaSchema.optional(),
   scene: mediaSchema.optional(),
   sceneDescription: z.string().max(2000),
@@ -215,6 +246,10 @@ export function newDigitalHumanDraft(
     version: 1,
     id,
     owner,
+    advisorStorage: {},
+    postProdStorage: {},
+    productions: [],
+    mix: { voice: { pan: 0, room: "dry", volume: 1 }, tracks: [] },
     sceneDescription: "",
     script: "",
     voiceId: "",
@@ -266,6 +301,7 @@ export function digitalHumanVideoFingerprint(
   return JSON.stringify({
     portrait: draft.portrait?.source,
     scene: draft.scene?.source,
+    source: draft.source,
     script: draft.script.trim(),
     voiceId: draft.voiceId,
     audio: audio.source,
@@ -280,12 +316,13 @@ export function digitalHumanVideoFingerprint(
 }
 export function prepareDigitalHumanVideo(
   draft: DigitalHumanDraft,
-  requestId: string
+  requestId: string,
+  part?: { manifest: DigitalHumanSplitManifest; planRequestId: string; index: number; continuityFrame?: DigitalHumanMedia; useReviewedPrevis?: boolean }
 ): DigitalHumanVideo {
   if (!draft.portrait || !draft.scene) throw new Error("请先选择人像和场景图");
   if (draft.videos.some(row => digitalHumanPending(row.status)))
     throw new Error("请先核对原视频任务，不能重复生成");
-  if (2 + draft.actors.length + (draft.stageFrame ? 1 : 0) > 30)
+  if (2 + draft.actors.length + (draft.stageFrame ? 1 : 0) + (part?.continuityFrame ? 1 : 0) > 30)
     throw new Error(
       "图片参考超过Seedance2.5的30张上限，请减少同场人物或参考图"
     );
@@ -296,10 +333,27 @@ export function prepareDigitalHumanVideo(
     throw new Error("请先用当前文案和所选声音生成配音并试听");
   if (draft.approvedAudioRequestId !== audio.request.billingRequestId)
     throw new Error("请先试听并确认当前配音的声音、读音和完整内容");
-  if (audio.durationSec > 30)
+  let audioSource = audio.source;
+  let audioDuration = audio.durationSec;
+  let segment: DigitalHumanVideo["segment"];
+  if (part) {
+    const manifest = digitalHumanSplitManifestSchema.parse(part.manifest);
+    if (manifest.audioRequestId !== audio.request.billingRequestId || manifest.script !== draft.script.trim() || manifest.audioUri !== audio.source || Math.abs(manifest.durationSec - audio.durationSec) > 0.05)
+      throw new Error("分段清单与当前完整配音不一致，请核对原任务");
+    const plan = draft.productions.find(p => p.request.requestId === part.planRequestId && p.status === "succeeded");
+    if (!plan?.manifest || JSON.stringify(plan.manifest) !== JSON.stringify(manifest)) throw new Error("未找到已保存的分段任务回执");
+    const selected = manifest.segments[part.index];
+    if (!selected) throw new Error("所选配音分段不存在");
+    if (part.index > 0 && !part.continuityFrame) throw new Error("请先生成前段并导出衔接尾帧");
+    audioSource = selected.audioUri; audioDuration = selected.endSec - selected.startSec;
+    segment = { planRequestId: part.planRequestId, index: part.index, startSec: selected.startSec, endSec: selected.endSec };
+  }
+  if (audioDuration > 30.001)
     throw new Error(
-      "这段配音超过30秒，请缩短文案后重新配音；原音频保留，不会截断"
+      "这段配音超过30秒，请先按停顿分段，再逐段核对生成；原文与声音完整保留"
     );
+  const selectedPrevis = part ? (part.useReviewedPrevis ? draft.previs : undefined) : draft.previs;
+  if (part && draft.previs && part.useReviewedPrevis === undefined) throw new Error("请明确选择本段是否使用已审预演，不能自动忽略已采用的导演动作");
   const spatialFingerprint = digitalHumanSpatialFingerprint(draft);
   if (
     draft.stageFrame &&
@@ -307,20 +361,20 @@ export function prepareDigitalHumanVideo(
   )
     throw new Error("人物或场景已变化，请重新导出3D视角图");
   if (
-    draft.previs &&
-    (!draft.previs.reviewed ||
-      draft.previs.sourceFingerprint !== spatialFingerprint)
+    selectedPrevis &&
+    (!selectedPrevis.reviewed ||
+      selectedPrevis.sourceFingerprint !== spatialFingerprint)
   )
     throw new Error("白模输入已变化或尚未审片，请重新审查后采用");
-  const durationSec = Math.max(4, Math.ceil(audio.durationSec));
+  const durationSec = Math.max(4, Math.min(30, Math.ceil(audioDuration)));
   if (
-    draft.previs &&
-    (!draft.previs.reference.durationSec ||
-      draft.previs.reference.durationSec < durationSec - 0.05 ||
-      draft.previs.reference.durationSec > 30)
+    selectedPrevis &&
+    (!selectedPrevis.reference.durationSec ||
+      selectedPrevis.reference.durationSec < durationSec - 0.05 ||
+      selectedPrevis.reference.durationSec > 30)
   )
     throw new Error("已采用预演的时长不能覆盖本次完整配音，请调整后重新审片");
-  const prompt = `目标时长：${durationSec}秒。真人数字人口播视频，${draft.aspectRatio}。\n@图片1只用于讲述者身份、五官与服装，不沿用它的背景。@图片2只用于场景和空间光线，${draft.actors.length ? `另有${draft.actors.length}位人物，依次由${draft.actors.map((a, i) => `@图片${i + 3}绑定${a.labelZh}`).join("、")}。保留每位人物身份与在场状态，只有讲述者说话` : "不增加其他人物"}。将讲述者自然置于该场景中，保持真实肤色与身体比例。\n@音频1是本次完整对白，时长${audio.durationSec.toFixed(2)}秒。沿用这段声音的音色、语速、停顿和原话，人物口型对齐对应发音，不另造台词，不换声音，不添加背景音乐或字幕。\n完整文案：${draft.script.trim()}\n表演与镜头：${draft.direction.trim()}\n说完后自然停留至结束，不提前切断尾音。`;
+  const prompt = `目标时长：${durationSec}秒。真人数字人口播视频，${draft.aspectRatio}。\n@图片1只用于讲述者身份、五官与服装，不沿用它的背景。@图片2只用于场景和空间光线，${draft.actors.length ? `另有${draft.actors.length}位人物，依次由${draft.actors.map((a, i) => `@图片${i + 3}绑定${a.labelZh}`).join("、")}。保留每位人物身份与在场状态，只有讲述者说话` : "不增加其他人物"}。将讲述者自然置于该场景中，保持真实肤色与身体比例。\n@音频1是本次完整对白，时长${audio.durationSec.toFixed(2)}秒。沿用这段声音的音色、语速、停顿和原话，人物口型对齐对应发音，不另造台词，不换声音，不添加背景音乐或字幕。\n完整文案：${draft.script.trim()}\n表演与镜头：${draft.direction.trim()}\n原分镜上下文：${draft.source?.shots.map(s => JSON.stringify(s)).join("\n") || "以当前人物和镜头要求为准"}\n说完后自然停留至结束，不提前切断尾音。`;
   return {
     requestId,
     fingerprint: digitalHumanVideoFingerprint(draft, audio),
@@ -328,14 +382,33 @@ export function prepareDigitalHumanVideo(
     prompt,
     portrait: draft.portrait,
     scene: draft.scene,
-    audioSource: audio.source,
+    audioSource,
     audioRequestId: audio.request.billingRequestId,
     durationSec,
     aspectRatio: draft.aspectRatio,
     extraPortraits: draft.actors.map(a => a.portrait),
     stageFrame: draft.stageFrame?.media,
-    previs: draft.previs?.reference,
+    previs: selectedPrevis?.reference,
+    ...(segment ? { segment, continuityFrame: part?.continuityFrame,
+      fingerprint: digitalHumanSegmentFingerprint(draft, audio, segment, part?.continuityFrame, selectedPrevis?.reference),
+      prompt: `目标时长：${durationSec}秒。真人数字人口播视频，${draft.aspectRatio}。这是完整口播第${part!.index + 1}段，覆盖原声${segment.startSec.toFixed(3)}–${segment.endSec.toFixed(3)}秒。\n@图片1绑定讲述者身份、服装与五官；@图片2绑定场景。${draft.actors.map((a, i) => `@图片${i + 3}绑定同场人物${a.labelZh}，保持在场但不说话。`).join("")}\n@音频1仅包含本段需要讲述的原声。口型、语速与停顿严格对应该音频，不重复其他段落，不改词，不换声音，不添加背景音乐或字幕。结束后保持自然动作。\n全文只作语境，不要完整重念：${draft.script.trim()}\n导演要求：${draft.direction.trim()}\n原分镜上下文：${draft.source?.shots.map(s => JSON.stringify(s)).join("\n") || "以当前人物和镜头要求为准"}`,
+    } : {}),
   };
+}
+
+export function digitalHumanSegmentFingerprint(draft: DigitalHumanDraft, audio: DigitalHumanAudio, segment: NonNullable<DigitalHumanVideo["segment"]>, frame?: DigitalHumanMedia, previs?: DigitalHumanVideo["previs"]) {
+  return JSON.stringify({ source: digitalHumanVideoFingerprint(draft, audio), segment, frame, previs });
+}
+export function digitalHumanVideoIsCurrent(draft: DigitalHumanDraft, row: DigitalHumanVideo): boolean {
+  const audio = currentDigitalHumanAudio(draft);
+  if (!audio) return false;
+  if (!row.segment) return row.fingerprint === digitalHumanVideoFingerprint(draft, audio);
+  const plan = draft.productions.find(p => p.request.requestId === row.segment!.planRequestId && p.status === "succeeded");
+  const part = plan?.manifest?.segments[row.segment.index];
+  if (!(part && part.audioUri === row.audioSource && part.startSec === row.segment.startSec && part.endSec === row.segment.endSec && row.fingerprint === digitalHumanSegmentFingerprint(draft, audio, row.segment, row.continuityFrame, row.previs))) return false;
+  if (row.segment.index === 0) return true;
+  const previous = [...draft.videos].reverse().find(v => v.status === "succeeded" && v.source && v.segment?.planRequestId === row.segment!.planRequestId && v.segment.index === row.segment!.index - 1 && digitalHumanVideoIsCurrent(draft, v));
+  return Boolean(previous?.segment && row.continuityFrame && draft.productions.some(p => p.status === "succeeded" && p.source === row.continuityFrame!.source && p.request.input.action === "digital_human_continuity_frame" && p.request.input.params.videoUri === previous.source && Math.abs(p.request.input.params.atSec - (previous.segment!.endSec - previous.segment!.startSec)) < 1 / 48000));
 }
 
 /** 将空间参考绑定到真实素材、人物站位及白模稿；编辑后不能继续采用旧审片。 */
@@ -359,6 +432,7 @@ export function digitalHumanSpatialFingerprint(
     mainModel: draft.mainModel?.taskId,
     spec: draft.previsStudio?.spec,
     aspect: draft.aspectRatio,
+    source: draft.source,
     script: draft.script,
     direction: draft.direction,
   });

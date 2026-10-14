@@ -350,6 +350,16 @@ export async function resolvePostProdInputSources(
     }
     return postProdJobInputSchema.parse(job);
   }
+  if (job.action === "digital_human_audio_split") {
+    return postProdJobInputSchema.parse({ ...job, params: { ...job.params, audioUri: await resolve(job.params.audioUri) } });
+  }
+  if (job.action === "digital_human_final") {
+    return postProdJobInputSchema.parse({ ...job, params: { ...job.params,
+      audioUri: await resolve(job.params.audioUri),
+      clips: await Promise.all(job.params.clips.map(async clip => ({ ...clip, videoUri: await resolve(clip.videoUri) }))),
+      tracks: await Promise.all(job.params.tracks.map(async track => ({ ...track, source: await resolve(track.source) }))),
+    } });
+  }
   if (job.action === "audio_trim") {
     return postProdJobInputSchema.parse({
       ...job, params: { ...job.params, audioUri: await resolve(job.params.audioUri) },

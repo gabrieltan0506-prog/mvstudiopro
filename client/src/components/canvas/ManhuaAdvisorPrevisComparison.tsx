@@ -1,4 +1,4 @@
-import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
+import { manhuaProjectStorage } from "@shared/manhuaProjectScope";
 import { createPortal } from "react-dom";
 import { trpc } from "@/lib/trpc";
 import { manhuaPrevisMediaUrl } from "@/lib/manhuaPrevisMediaUrl";
@@ -26,7 +26,10 @@ function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
   </div>;
 }
 export type AdvisorPrevisVoiceControl = { inspect: () => object; apply: () => Promise<string>; retry: () => Promise<string> };
-export function ManhuaAdvisorPrevisComparison({ voiceControl, candidate, storageKey, autoStart, previewHost, actionHost, disabled, onCheckReady, onPrepare, onApply, onRevise, onPreviewReady }: {
+export function ManhuaAdvisorPrevisComparison({ storage, beforeSubmit, acquireWork, voiceControl, candidate, storageKey, autoStart, previewHost, actionHost, disabled, onCheckReady, onPrepare, onApply, onRevise, onPreviewReady }: {
+  storage?: Storage;
+  beforeSubmit?: () => Promise<void>;
+  acquireWork?: (label: string) => () => void;
   voiceControl?: MutableRefObject<AdvisorPrevisVoiceControl | null>;
   previewHost?: HTMLElement | null;
   actionHost?: HTMLElement | null;
@@ -37,6 +40,7 @@ export function ManhuaAdvisorPrevisComparison({ voiceControl, candidate, storage
   onPrepare?: (value: AdvisorPrevisCandidate) => AdvisorPrevisTrial;
   onApply?: (trial: AdvisorPrevisTrial, receipt: AdvisorPrevisReceipt) => boolean;
 }) {
+  const localStorage = storage || manhuaProjectStorage;
   const submit = trpc.manhuaPrevis.submit.useMutation({ retry: false });
   const utils = trpc.useUtils();
   const [initial] = useState(() => {
@@ -80,16 +84,20 @@ export function ManhuaAdvisorPrevisComparison({ voiceControl, candidate, storage
     if (!currentHost) { setError("请在当前片段的3D页面内生成试看，视频将显示在本页预览。"); return; }
     if (!storageKey || !onPrepare) { setError("请先确认当前项目并从本段白模打开创作顾问，再生成试看。"); return; }
     busy.current = true;
+    let release: (() => void) | undefined;
     try {
+      release = acquireWork?.("导演方案试看提交");
       const next = existing || onPrepare(candidate);
       if (!existing) { setFailed(false); setReceipt(null); setWatched(false); setReviewed(false); setApplied(false); }
       // 只保存顾问试看恢复记录；不调用工作流写回或采用。
       localStorage.setItem(`${storageKey}:${next.request.requestId}`, JSON.stringify(next));
       localStorage.setItem(storageKey, next.request.requestId);
       setTrial(next); setStatus("正在提交独立试看，原场景保持原版本"); setError("");
+      await beforeSubmit?.();
       consume(await submit.mutateAsync(next.request), next);
+      await beforeSubmit?.();
     } catch (e) { if (alive.current) setError(e instanceof Error ? e.message : "提交结果未确认，请查询原任务"); }
-    finally { busy.current = false; }
+    finally { release?.(); busy.current = false; }
   }
   useEffect(() => {
     if (!autoStart || started.current || initial.trial || initial.issue || disabled || issue || readinessIssue || !currentHost) return;
@@ -110,7 +118,7 @@ export function ManhuaAdvisorPrevisComparison({ voiceControl, candidate, storage
     busy.current = true;
     try {
       const latest = validateAdvisorPrevisReceipt(trial.request, await utils.manhuaPrevis.get.fetch({ requestId: trial.request.requestId }));
-      if (onApply?.(trial, latest)) { setApplied(true); setError(""); return "已应用本段白模配置与真实试看版本，原配置保留。"; }
+      if (onApply?.(trial, latest)) { await beforeSubmit?.(); setApplied(true); setError(""); return "已应用本段白模配置与真实试看版本，原配置保留。"; }
       return "应用未完成，请查看工作区阻断提示；原配置保留。";
     } catch (e) { setError(e instanceof Error ? e.message : "原试看回执无法核验，未应用"); return "原试看回执无法核验，未应用。"; }
     finally { busy.current = false; }

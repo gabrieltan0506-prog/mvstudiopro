@@ -1,3 +1,4 @@
+import { digitalHumanSourceSchema, type DigitalHumanSource } from "@shared/digitalHumanStudio";
 import { DigitalHumanStudio } from "@/components/DigitalHumanStudio";
 import ViralGraphicPages from "@/components/platform/ViralGraphicPages";
 import { ViralProductionPanel } from "@/components/platform/ViralProductionPanel";
@@ -1757,6 +1758,8 @@ function executionCardToSnapshotBlueprint(card: PlatformContentExecutionCard): R
     copywriting: card.copywriting,
     format: card.format,
     executionDetails: card.executionDetails,
+    detailedScript: card.detailedScript,
+    storyboardCells: card.storyboardCells,
     titleVariants: card.titleVariants,
   };
 }
@@ -3263,6 +3266,7 @@ export default function PlatformPage() {
     resolvePlatformLocation().mode,
   );
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const [digitalHumanSource, setDigitalHumanSource] = useState<DigitalHumanSource>();
   const [creationTool, setCreationTool] = useState<"viral" | "knowledge" | "digital-human">("viral");
   const [createStep, setCreateStep] = useState<PlatformCreateStepId>("persona");
   /** 这轮想获客/转化/涨粉：独立参数进选题提示词，不是装饰标签（用户 2026-08-06） */
@@ -11419,6 +11423,18 @@ export default function PlatformPage() {
                   coverBusy={batchGeneratingCoverIds.has(item.id)} sheetBusy={isThisCompositeLoading}
                   onCover={runSingleCover} onSheet={runSingleComposite}
                 />}
+                {!isGraphicFormat && item.copywriting && <button type="button" disabled={genBusy || !isAuthenticated} onClick={() => {
+                  const parsed = digitalHumanSourceSchema.safeParse({
+                    owner: String(user?.id || ""), blueprintId: item.id,
+                    version: JSON.stringify(executionCardToSnapshotBlueprint(item)), title: item.title,
+                    platform: item.targetPlatform || "xiaohongshu", aspectRatio: "9:16",
+                    script: item.copywriting, detailedScript: item.detailedScript,
+                    sceneDescription: item.executionDetails.environmentAndWardrobe,
+                    direction: item.executionDetails.lightingAndCamera, shots: item.storyboardCells,
+                  });
+                  if (!parsed.success) { toast.error("稿件信息超出制作合同，请核对正文与分镜；未截断或采用。"); return; }
+                  setDigitalHumanSource(parsed.data); setCreationTool("digital-human");
+                }} className="mt-3 rounded-lg border border-cyan-300/30 px-3 py-2 text-sm text-cyan-100">用于数字人视频</button>}
                 {item.viralCreation && <ViralCreationPackageView value={item.xhsPackage} platform={item.targetPlatform} />}
                 {item.detailedScript ? (
                   <details className="mt-3 text-xs text-gray-400">
@@ -15328,7 +15344,7 @@ export default function PlatformPage() {
                   <button type="button" role="tab" aria-selected={creationTool === "knowledge"} disabled={customWorkspaceOperating} onClick={() => { setCreationTool("knowledge"); setCustomWorkspaceTab("copy"); setCustomNoteKind("single_page_knowledge_card"); setOutputType("single_page"); }}>图文知识卡片<span>上传资料 · 提炼 · 生成卡片</span></button>
                   <button type="button" role="tab" aria-selected={creationTool === "digital-human"} disabled={customWorkspaceOperating} onClick={() => setCreationTool("digital-human")}>数字人视频<span>人像 · 我的声音 · 场景 · 4K成片</span></button>
                 </div>
-          {creationTool === "digital-human" ? <DigitalHumanStudio initialPortrait={globalCoverReferencePhotoUrl || undefined}/> : null}
+          {creationTool === "digital-human" ? <DigitalHumanStudio initialPortrait={globalCoverReferencePhotoUrl || undefined} source={digitalHumanSource}/> : null}
           {creationTool === "viral" ? (
             <div className="mb-5 space-y-4">
               {renderGlobalProtagonistPhotoBlock({ className: "viral-person-upload-entry" })}

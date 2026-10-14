@@ -163,6 +163,27 @@ afterAll(async () => {
 });
 
 describe.runIf(ffmpegOk)("后期三件套本地媒体验证", () => {
+  it("手动剪辑起点晚于短音轨时保留该段完整静音，后段仍有声音", async () => {
+    installFetchStub();
+    const out=await concatClips({clips:["gs://itest/short-audio.mp4","gs://itest/land.mp4"],trims:[{startSec:1,endSec:1.5},{startSec:0,endSec:.5}],width:320,height:240,fps:30},"7");
+    const buf=h.uploads.get(out.gcsUri.replace("gs://itest/", ""))!;
+    const meta=await probeBuffer(buf);expect(meta.durationSec).toBeCloseTo(1,1);
+    expect(await probeRmsDb(buf,.1,.2)).toBeLessThan(-65);
+    expect(await probeRmsDb(buf,.6,.2)).toBeGreaterThan(-35);
+  },60_000);
+  it("手动剪辑起止点同时裁剪画面与音轨，拒绝源外取段", async () => {
+    installFetchStub();
+    const input = { clips: ["gs://itest/land.mp4", "gs://itest/port.mp4"], trims: [{ startSec: 0.5, endSec: 1.2 }, { startSec: 0.2, endSec: 0.8 }], width: 320, height: 240, fps: 30 };
+    const out = await concatClips(input, "7");
+    const buf = h.uploads.get(out.gcsUri.replace("gs://itest/", ""))!;
+    const meta = await probeBuffer(buf);
+    expect(meta.durationSec).toBeCloseTo(1.3, 1);
+    expect(meta.audioDurationSec).toBeGreaterThanOrEqual(1.29);
+    expect(await probeRmsDb(buf, 0.1, 0.3)).toBeGreaterThan(-35);
+    expect(await probeRmsDb(buf, 0.9, 0.2)).toBeLessThan(-65);
+    await expect(concatClips({ ...input, trims: [{ startSec: 0, endSec: 99 }, { startSec: 0 }] }, "7")).rejects.toThrow("原片范围");
+  }, 60_000);
+
   it("横屏有声+竖屏无声、不同帧率统一拼接;无声段补静音轨;总时长=各段画面之和", async () => {
     installFetchStub();
     const out = await concatClips(

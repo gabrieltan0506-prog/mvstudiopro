@@ -23,6 +23,7 @@ export async function digitalHumanVideoBlock(
     row.scene,
     ...row.extraPortraits,
     ...(row.stageFrame ? [row.stageFrame] : []),
+    ...(row.continuityFrame ? [row.continuityFrame] : []),
   ];
   const uploadedAssets: CanvasUploadedAsset[] = [];
   for (let index = 0; index < images.length; index++) {
@@ -68,8 +69,9 @@ export async function digitalHumanVideoBlock(
     prompt:
       row.prompt +
       (row.stageFrame
-        ? `\n@图片${images.length}是3D场景与人物的构图参考，只沿用站位、光线和机位，人物外观仍按各自身份图。`
+        ? `\n@图片${3 + row.extraPortraits.length}是3D场景与人物的构图参考，只沿用站位、光线和机位，人物外观仍按各自身份图。`
         : "") +
+      (row.continuityFrame ? `\n@图片${images.length}是上一段在配音结束处的真实尾帧，开场承接其人物站位、表情、手势和摄影机轴线，人物身份仍以各自身份图为准。` : "") +
       (row.previs
         ? `\n@视频1是已审预演，只沿用人物走位、动作节奏和机位切换；灰色白模外观不进入成片，身份按图片，声音只按@音频1。${row.previs.motionGuideZh || ""}`
         : ""),
