@@ -96,7 +96,7 @@ export async function synthesizeManhuaDialoguePreferred(
   if (input.voice.startsWith(`${REFERENCE_VOICE_MODEL}-${REFERENCE_VOICE_PREFIX}-`)) {
     const workspace = (dependencies.resolveReferenceWorkspace || resolveReferenceVoiceWorkspace)();
     const result = await (dependencies.synthesizeReference || synthesizeTokenPlanDialogueWs)({ input: input.input, voice: input.voice, ownerUserId: input.ownerUserId, signal: input.signal },
-      { routes: [{ region: "singapore", endpoint: workspace.websocketUrl, apiKey: workspace.apiKey }] });
+      { lossless48k: true, routes: [{ region: "singapore", endpoint: workspace.websocketUrl, apiKey: workspace.apiKey }] });
     return { audioUrl: result.audioUrl, gcsUri: result.gcsUri, bytes: result.bytes, voice: input.voice,
       generationId: result.generationId, provider: "bailian-singapore", voiceGate: result.voiceGate };
   }

@@ -1,0 +1,195 @@
+.dh-studio {
+  color: #1d2926;
+  max-width: 1180px;
+  margin: 24px auto;
+}
+.dh-studio header {
+  padding: 16px 0 28px;
+}
+.dh-studio h2 {
+  font-size: clamp(24px, 3vw, 36px);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  margin: 8px 0 12px;
+}
+.dh-eyebrow {
+  color: #427663;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+}
+.dh-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.dh-card {
+  background: #fffdf7;
+  border: 1px solid #deded1;
+  border-radius: 18px;
+  padding: 24px;
+  min-width: 0;
+}
+.dh-card h3 {
+  font-size: 18px;
+  font-weight: 650;
+  margin-bottom: 20px;
+}
+.dh-wide {
+  grid-column: 1/-1;
+}
+.dh-studio label {
+  display: block;
+  font-size: 13px;
+  margin: 14px 0 6px;
+}
+.dh-studio input:not([type="checkbox"]),
+.dh-studio textarea,
+.dh-studio select {
+  display: block;
+  width: 100%;
+  background: white;
+  border: 1px solid #c7cec7;
+  border-radius: 8px;
+  padding: 10px;
+  margin-top: 6px;
+  color: #24342d;
+}
+.dh-studio button {
+  background: #e5ede6;
+  color: #203f31;
+  border: 1px solid #b9cbbd;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin: 8px 8px 8px 0;
+  font-size: 13px;
+  min-height: 40px;
+}
+.dh-studio button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.dh-studio p {
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 8px 0;
+}
+.dh-studio .dh-error {
+  color: #922b23;
+  background: #fff0e9;
+  padding: 12px;
+  border-radius: 8px;
+}
+.dh-media {
+  margin: 12px 0;
+}
+.dh-media img {
+  display: block;
+  max-height: 280px;
+  max-width: 100%;
+  object-fit: contain;
+  border-radius: 10px;
+}
+.dh-media video {
+  display: block;
+  max-height: 480px;
+  width: 100%;
+  background: #101510;
+  border-radius: 10px;
+}
+.dh-media audio {
+  max-width: 100%;
+}
+.dh-media a {
+  font-size: 12px;
+  text-decoration: underline;
+  display: inline-block;
+  margin-top: 6px;
+}
+.dh-outbound pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #f1f1e9;
+  padding: 16px;
+  border-radius: 10px;
+  font-size: 12px;
+  max-height: 400px;
+  overflow: auto;
+}
+.dh-outbound > .dh-media {
+  display: inline-block;
+  width: 30%;
+  vertical-align: top;
+  margin-right: 2%;
+}
+.dh-spatial summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 16px 0;
+}
+.dh-factory {
+  background: #0d1720;
+  color: #edf4f4;
+  border-radius: 12px;
+  padding: 14px;
+  margin: 16px 0;
+  overflow: auto;
+}
+.dh-factory input,
+.dh-factory select,
+.dh-factory textarea {
+  color: #182821;
+}
+.dh-actor {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+.dh-actor label {
+  flex: 1;
+  min-width: 90px;
+}
+.dh-studio article {
+  border-top: 1px solid #dadfd5;
+  padding: 16px 0;
+}
+@media (max-width: 760px) {
+  .dh-grid {
+    grid-template-columns: 1fr;
+  }
+  .dh-card {
+    padding: 16px;
+  }
+  .dh-outbound > .dh-media {
+    width: 100%;
+  }
+}
+.dh-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: #15251ab3;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.dh-recording-dialog {
+  background: #fffdf7;
+  border-radius: 18px;
+  padding: 28px;
+  max-width: 520px;
+  box-shadow: 0 20px 90px #0004;
+}
+.dh-recording-dialog h3 {
+  font-size: 22px;
+  font-weight: 650;
+}
+.dh-recording-dialog blockquote {
+  border-left: 3px solid #66846c;
+  padding: 12px 16px;
+  margin: 16px 0;
+  line-height: 1.8;
+}

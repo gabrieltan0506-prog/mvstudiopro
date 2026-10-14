@@ -109,6 +109,20 @@ describe("synthesizeTokenPlanDialogueWs", () => {
     );
   });
 
+  it("参考音色48k无损请求与上传格式一致，保留上游原始字节", async () => {
+    const socket = new FakeSocket(happyScript);
+    const deps = baseDeps(() => socket);
+    await synthesizeTokenPlanDialogueWs(
+      { input: "你好", voice: "longanlingxin", ownerUserId: 7 },
+      { ...deps, lossless48k: true }
+    );
+    expect(socket.sent[0].payload.parameters).toMatchObject({ format: "wav", sample_rate: 48000 });
+    const uploaded = deps.uploadAudio.mock.calls[0][0];
+    expect(uploaded.objectName).toMatch(/\.wav$/);
+    expect(uploaded.contentType).toBe("audio/wav");
+    expect(uploaded.buffer).toEqual(Buffer.concat([Buffer.alloc(300, 1), Buffer.alloc(200, 2)]));
+  });
+
   it("falls back to beijing when singapore reports task-failed", async () => {
     const urls: string[] = [];
     const deps = baseDeps((url) => {

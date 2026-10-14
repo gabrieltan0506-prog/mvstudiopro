@@ -24,6 +24,7 @@ import {
 } from "@shared/manhuaNativeModelReceipt";
 import {
   MANHUA_NATIVE_CURRENT_READ_MODEL,
+  MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS,
   MANHUA_NATIVE_STRUCTURING_MODEL,
   parseNativeStructuringModel,
   type ManhuaNativeStructuringModelId,
@@ -165,15 +166,19 @@ export function writeManhuaLearnVideoFps(userKey: string, value: number): void {
   }
 }
 
-/** 1007：旧浏览器偏好也统一回到当前唯一读片模型，不改历史任务记录。 */
-export function readManhuaLearnReadModel(_userKey: string): ManhuaNativeDeepReadModelId {
-  return MANHUA_NATIVE_CURRENT_READ_MODEL;
+/** 按账号保存新读片模型；旧Pro偏好不改变当前新任务默认值。 */
+export function readManhuaLearnReadModel(userKey: string): ManhuaNativeDeepReadModelId {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_READ_MODEL, userKey);
+  try {
+    const value = key ? JSON.parse(localStorage.getItem(key) || "null") : null;
+    return (MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS as readonly unknown[]).includes(value) ? value : MANHUA_NATIVE_CURRENT_READ_MODEL;
+  } catch { return MANHUA_NATIVE_CURRENT_READ_MODEL; }
 }
 
-export function writeManhuaLearnReadModel(userKey: string, _value: ManhuaNativeDeepReadModelId): void {
+export function writeManhuaLearnReadModel(userKey: string, value: ManhuaNativeDeepReadModelId): void {
   const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_READ_MODEL, userKey);
-  if (!key) return;
-  try { localStorage.setItem(key, JSON.stringify(MANHUA_NATIVE_CURRENT_READ_MODEL)); } catch { /* 偏好不影响提交 */ }
+  if (!key || !(MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS as readonly string[]).includes(value)) return;
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* 偏好不影响提交 */ }
 }
 
 /** 0916 面板只使用 GLM-5.3；本地旧值读取时迁回 GLM。 */

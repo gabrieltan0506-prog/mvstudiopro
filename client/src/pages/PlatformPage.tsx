@@ -1,3 +1,4 @@
+import { DigitalHumanStudio } from "@/components/DigitalHumanStudio";
 import ViralGraphicPages from "@/components/platform/ViralGraphicPages";
 import { ViralProductionPanel } from "@/components/platform/ViralProductionPanel";
 import { TopicSelectionPanel } from "@/components/platform/TopicSelectionPanel";
@@ -142,6 +143,8 @@ import {
   NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
   NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
   MANHUA_NATIVE_CURRENT_READ_MODEL,
+  MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS,
+  nativeDeepReadModelForSeriesKey,
   MANHUA_NATIVE_STRUCTURING_MODEL,
   MANHUA_NATIVE_STRUCTURING_MODEL_LABELS,
   MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS,
@@ -204,6 +207,7 @@ import {
   readManhuaLearnResult,
   readManhuaLearnSegmentSeconds,
   readManhuaLearnReadModel,
+  writeManhuaLearnReadModel,
   readManhuaLearnStructuringModel,
   writeManhuaLearnStructuringModel,
   hasStoredManhuaLearnSegmentSeconds,
@@ -2666,7 +2670,7 @@ export default function PlatformPage() {
     const timer = window.setTimeout(() => setManhuaPasteTitleDebounced(trimmed), 600);
     return () => window.clearTimeout(timer);
   }, [manhuaPasteTitle]);
-  /** 1007：新读片仅使用 Gemini 3.8 Flash，旧偏好不得恢复 Pro。 */
+  /** 新读片默认Flash；显式选择Argon只影响新任务，历史任务保留原合同。 */
   const [manhuaLearnReadModel, setManhuaLearnReadModel] = useState<ManhuaNativeDeepReadModelId>(MANHUA_NATIVE_CURRENT_READ_MODEL);
   /** 0916 用户拍板：整形固定 GLM-5.3。 */
   const [manhuaLearnStructuringModel, setManhuaLearnStructuringModel] = useState<ManhuaNativeStructuringModelId>(MANHUA_NATIVE_STRUCTURING_MODEL);
@@ -3259,7 +3263,7 @@ export default function PlatformPage() {
     resolvePlatformLocation().mode,
   );
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
-  const [creationTool, setCreationTool] = useState<"viral" | "knowledge">("viral");
+  const [creationTool, setCreationTool] = useState<"viral" | "knowledge" | "digital-human">("viral");
   const [createStep, setCreateStep] = useState<PlatformCreateStepId>("persona");
   /** 这轮想获客/转化/涨粉：独立参数进选题提示词，不是装饰标签（用户 2026-08-06） */
   const [topicGoal, setTopicGoal] = useState<PlatformTopicGoalId | null>(null);
@@ -5985,6 +5989,9 @@ export default function PlatformPage() {
         await copyManhuaLocalLearnFallback(row, "当前是搜索页链接");
         return;
       }
+      const seriesModel = resumeSeriesKey ? nativeDeepReadModelForSeriesKey(resumeSeriesKey) : undefined;
+      const requestedReadModel = seriesModel && (MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS as readonly string[]).includes(seriesModel)
+        ? seriesModel : manhuaLearnReadModel;
       let nativeConfirmedParams: Record<string, unknown> = {};
       const nativePlanCandidate =
         (localVideoSource || (row.platform === "douyin" || /(?:^|\.)douyin\.com/i.test((() => {
@@ -6076,7 +6083,7 @@ export default function PlatformPage() {
           nativeSegmentSeconds,
           nativeVideoFps,
           nativeStandaloneSource: localVideoSource || manhuaLearnStandaloneSource,
-          nativeReadModel: manhuaLearnReadModel,
+          nativeReadModel: requestedReadModel,
           nativeStructuringModel: manhuaLearnStructuringModel,
         };
       }
@@ -13651,7 +13658,17 @@ export default function PlatformPage() {
                           </>
                         ) : null}
                         <span id="manhua-learn-read-model" className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white">
-                          读片模型：Gemini 3.8 Flash
+                          <label className="flex items-center gap-1.5">读片模型
+                            <select aria-label="读片模型" value={manhuaLearnReadModel} disabled={Boolean(manhuaLearnBusyKey)}
+                              onChange={event => {
+                                const model = event.target.value as ManhuaNativeDeepReadModelId;
+                                if (!(MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS as readonly string[]).includes(model)) return;
+                                setManhuaLearnReadModel(model);
+                                writeManhuaLearnReadModel(manhuaLearnUserKey, model);
+                              }} className="bg-black/40 text-white">
+                              {MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS.map(model => <option key={model} value={model}>{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[model]}</option>)}
+                            </select>
+                          </label>
                         </span>
                         <span className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white">
                           整形模型：{MANHUA_NATIVE_STRUCTURING_MODEL_LABELS["glm-5.3"]}
@@ -15309,7 +15326,9 @@ export default function PlatformPage() {
                 <div className="creation-tool-tabs" role="tablist" aria-label="创作工具">
                   <button type="button" role="tab" aria-selected={creationTool === "viral"} disabled={customWorkspaceOperating} onClick={() => { setCreationTool("viral"); setCustomWorkspaceTab("topic"); }}>爆款创作<span>选题 · 图文 · 视频文案</span></button>
                   <button type="button" role="tab" aria-selected={creationTool === "knowledge"} disabled={customWorkspaceOperating} onClick={() => { setCreationTool("knowledge"); setCustomWorkspaceTab("copy"); setCustomNoteKind("single_page_knowledge_card"); setOutputType("single_page"); }}>图文知识卡片<span>上传资料 · 提炼 · 生成卡片</span></button>
+                  <button type="button" role="tab" aria-selected={creationTool === "digital-human"} disabled={customWorkspaceOperating} onClick={() => setCreationTool("digital-human")}>数字人视频<span>人像 · 我的声音 · 场景 · 4K成片</span></button>
                 </div>
+          {creationTool === "digital-human" ? <DigitalHumanStudio initialPortrait={globalCoverReferencePhotoUrl || undefined}/> : null}
           {creationTool === "viral" ? (
             <div className="mb-5 space-y-4">
               {renderGlobalProtagonistPhotoBlock({ className: "viral-person-upload-entry" })}

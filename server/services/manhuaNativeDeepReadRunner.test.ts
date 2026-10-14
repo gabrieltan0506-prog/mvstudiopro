@@ -6306,6 +6306,22 @@ describe("0920 读片升级档：单片五发不过 → 不报错 → 升级 Gem
     expect(new Set(modelsOf(deps.postVertex))).toEqual(new Set(["gemini-3.1-pro-preview"]));
   });
 
+  it("Argon完整候选失败也不转Pro；每发MEDIUM且不透传candidateCount", async () => {
+    const short = makeSegmentPayload({ segmentIndex: 3, startSec: 957, endSec: 977 });
+    const deps = makeRunnerDeps({ postVertex: vi.fn().mockResolvedValue(geminiResponse(short)) });
+    const receipts: Array<Record<string, unknown>> = [];
+    const error = await runManhuaNativeDeepReadSelectedSegments({ ...selectedParams([3]), readModel: "gemini-4-argon", onModelReceipt: row => { receipts.push(row); } }, deps).catch(e => e);
+    expect(receipts.filter(r => r.model === "gemini-4-argon").every(r => r.temperature === undefined)).toBe(true);
+    expect(error).toBeInstanceOf(Error);
+    expect(deps.postVertex).toHaveBeenCalledTimes(5);
+    expect(new Set(modelsOf(deps.postVertex))).toEqual(new Set(["gemini-4-argon"]));
+    for (const [body] of (deps.postVertex as ReturnType<typeof vi.fn>).mock.calls) {
+      expect(body.generationConfig.thinkingConfig.thinkingLevel).toBe("MEDIUM");
+      expect(body.generationConfig).not.toHaveProperty("candidateCount");
+    }
+    expect(deps.postEvolink).not.toHaveBeenCalled();
+  });
+
   it("升级档常量按用户原话写死：3.1 Pro + 0.7/0.65/0.6 三发", () => {
     expect(NATIVE_DEEP_READ_ESCALATION_MODEL).toBe("gemini-3.1-pro-preview");
     expect([...NATIVE_DEEP_READ_ESCALATION_TEMPERATURES]).toEqual([0.7, 0.65, 0.6]);
@@ -6403,4 +6419,21 @@ it("整形准备进度按原片号上报，旁路进度失败不阻断整形", a
   await runManhuaNativeDeepReadBatch({ episodes: [{ episodeIndex: 1, segments, sourceDurationSec: 120,
     resolveNodes: async () => [] }], onMediaProgressZh: zh => { messages.push(zh); throw new Error("test-only-progress-write-failed"); } }, deps);
   expect(deps.invokeGlmStructuring).toHaveBeenCalled();
+});
+
+
+describe("Argon复用原生音画builder", () => {
+  it("保持影片/声音输入和schema，只发送兼容参数；Flash冻结配置不变", () => {
+    const input = { segmentContext: { startSec: 0, endSec: 60, segmentIndex: 0, hasAudio: true },
+      fileUri: "gs://test-bucket/real-av.mp4", fps: 12, prompt: "原生学习同一提示词" };
+    const flash = buildGeminiNativeDeepReadSegmentRequest({ ...input, model: "gemini-3.8-flash" });
+    const argon = buildGeminiNativeDeepReadSegmentRequest({ ...input, model: "gemini-4-argon" });
+    expect(argon.contents).toEqual(flash.contents);
+    const config = argon.generationConfig as Record<string, unknown>;
+    expect(config.responseSchema).toEqual((flash.generationConfig as Record<string, unknown>).responseSchema);
+    expect(config).toMatchObject({ maxOutputTokens: 32768, audioTimestamp: true, thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false } });
+    for (const field of ["temperature", "candidateCount", "topP", "topK"]) expect(config).not.toHaveProperty(field);
+    expect(flash.generationConfig).toMatchObject({ temperature: 0.7, maxOutputTokens: 65536, candidateCount: 1 });
+    expect(nativeDeepReadFrozenContractSha256()).toBe(NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256);
+  });
 });

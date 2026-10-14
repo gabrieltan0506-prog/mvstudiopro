@@ -58,7 +58,7 @@ describe("synthesizeManhuaDialoguePreferred", () => {
       synthesizeReference: synthesizeReference as any, synthesizeOpenRouter: synthesizeOpenRouter as any,
     });
     expect(result.provider).toBe("bailian-singapore");
-    expect(synthesizeReference).toHaveBeenCalledWith(expect.objectContaining({ voice }), expect.objectContaining({ routes: [expect.objectContaining({ endpoint: "wss://workspace.test/ws" })] }));
+    expect(synthesizeReference).toHaveBeenCalledWith(expect.objectContaining({ voice }), expect.objectContaining({ lossless48k: true, routes: [expect.objectContaining({ endpoint: "wss://workspace.test/ws" })] }));
     expect(synthesizeOpenRouter).not.toHaveBeenCalled();
   });
 

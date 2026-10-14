@@ -1112,3 +1112,17 @@ export function resetManhua3dTaskDependenciesForTests(): void {
   importedGlbInflight.clear();
   activeImportedGlbInspections = 0;
 }
+
+/** 数字人复用单图建模时的只读恢复；不创建或重试上游任务。 */
+export async function findExistingManhua3dImageTask(input: { userId: number; assetRef: string; sourceVersion: string }) {
+  if (!Number.isSafeInteger(input.userId) || input.userId <= 0 || !input.assetRef.trim() || !input.sourceVersion.trim()) throw new Error("invalid_manhua_3d_task_input");
+  const digest = idempotencyDigest({ userId: input.userId, assetRef: input.assetRef.trim(), sourceVersion: input.sourceVersion.trim(), options: normalizeOptions({}) });
+  return readExistingManhua3dTask(`m3d_${digest.slice(0, 24)}`, input.userId);
+}
+
+/** 查询已存在的模型回执及续签链接，不启动worker或推进供应商任务。 */
+export async function readExistingManhua3dTask(taskId: string, userId: number): Promise<Manhua3dTaskView | null> {
+  const record = await readRecord(taskId);
+  if (!record || record.userId !== userId) return null;
+  return toView(await refreshSignedUrl(record));
+}

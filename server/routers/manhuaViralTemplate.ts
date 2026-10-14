@@ -5,6 +5,7 @@ import { MANHUA_VIRAL_TEMPLATE_OPTIMIZE_REQUEST_MODELS } from "@shared/manhuaVir
  * 漫剧节奏模板：动态提案 / 批准进库 / 合并列表（GCS ∪ 种子库）。
  */
 import { z } from "zod";
+import { MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS } from "../../shared/manhuaNativeDeepReadJob.js";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
@@ -679,7 +680,7 @@ export const manhuaViralTemplateRouter = router({
         url: z.string().trim().url().max(600),
         /** 选填剧名：野生重剪合集与官方分集同剧不同源，靠剧名把旧账也亮出来 */
         titleZh: z.string().trim().max(120).optional(),
-        readModel: z.enum(["gemini-3.1-pro-preview", "gemini-3.8-flash"]).optional(),
+        readModel: z.enum(MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS).optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
@@ -712,7 +713,7 @@ export const manhuaViralTemplateRouter = router({
       z.object({
         url: z.string().trim().url().max(600),
         episodeIndex: z.number().int().min(1).max(999),
-        readModel: z.enum(["gemini-3.1-pro-preview", "gemini-3.8-flash"]).optional(),
+        readModel: z.enum(MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {

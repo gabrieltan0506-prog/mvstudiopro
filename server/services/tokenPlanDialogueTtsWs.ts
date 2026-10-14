@@ -56,6 +56,8 @@ export type TokenPlanTtsSocketFactory = (
 ) => Promise<TokenPlanTtsSocket> | TokenPlanTtsSocket;
 
 export type TokenPlanDialogueTtsWsDependencies = {
+  /** 参考音色使用无损48k输出；未指定时保持既有套餐合同。 */
+  lossless48k?: boolean;
   env?: NodeJS.ProcessEnv;
   routes?: WsRoute[];
   socketFactory?: TokenPlanTtsSocketFactory;
@@ -137,6 +139,7 @@ async function defaultSocketFactory(
  */
 export async function requestTokenPlanDialogueAudioWs(params: {
   route: WsRoute;
+  lossless48k?: boolean;
   text: string;
   voice: string;
   socketFactory: TokenPlanTtsSocketFactory;
@@ -213,8 +216,8 @@ export async function requestTokenPlanDialogueAudioWs(params: {
               parameters: {
                 text_type: "PlainText",
                 voice: params.voice,
-                format: "mp3",
-                sample_rate: 22050,
+                format: params.lossless48k ? "wav" : "mp3",
+                sample_rate: params.lossless48k ? 48000 : 22050,
                 volume: 50,
                 rate: 1,
                 pitch: 1,
@@ -349,6 +352,7 @@ export async function synthesizeTokenPlanDialogueWs(
     try {
       const audio = await requestTokenPlanDialogueAudioWs({
         route,
+        lossless48k: dependencies.lossless48k,
         text,
         voice,
         socketFactory,
@@ -391,11 +395,11 @@ export async function synthesizeTokenPlanDialogueWs(
     voice,
     (dependencies.now || (() => new Date()))(),
     (dependencies.createId || randomUUID)()
-  );
+  ).replace(/\.mp3$/, dependencies.lossless48k ? ".wav" : ".mp3");
   const { gcsUri } = await uploadAudio({
     objectName,
     buffer: selected.audio,
-    contentType: "audio/mpeg",
+    contentType: dependencies.lossless48k ? "audio/wav" : "audio/mpeg",
     signal: input.signal,
   });
   const audioUrl = signAudioUrl(gcsUri, 7 * 24 * 3600);
