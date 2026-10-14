@@ -32,6 +32,8 @@ import {
   readManhuaLearnStandalone,
   writeManhuaLearnStandalone,
   readManhuaLearnVideoFps,
+  readManhuaLearnReadModel,
+  writeManhuaLearnReadModel,
   removeManhuaLearnBasketItem,
   resolveManhuaLearnBasketFocusKey,
   resolveManhuaLearnReloadDecision,
@@ -1326,4 +1328,16 @@ it("稀疏检查点使用真实片号去重，不把完成数量猜成连续前�
       nativePartialProposalCheckpoint: { episodeIndex: 1, completedSegments: 2, totalSegments: 4, completedSegmentIndexes: [1, 2] },
       nativeModelReceipts: [{ stage: "visual_parse", route: "local_schema_gate", status: "completed", episodeIndexes: [1], chunkIndex: 2 }] } };
   expect(nativeLearnLiveProposalState(job)).toMatchObject({ completedSegments: 2, readCompletedSegments: 2 });
+});
+
+
+it("读片模型按登录账号保存Argon，旧Pro/损坏偏好不改变新任务Flash默认", () => {
+  installMemoryLocalStorage();
+  writeManhuaLearnReadModel("user_7", "gemini-4-argon");
+  expect(readManhuaLearnReadModel("user_7")).toBe("gemini-4-argon");
+  expect(readManhuaLearnReadModel("user_8")).toBe("gemini-3.8-flash");
+  writeManhuaLearnReadModel("user_7", "gemini-3.1-pro-preview");
+  expect(readManhuaLearnReadModel("user_7")).toBe("gemini-4-argon");
+  localStorage.setItem("mvs-manhua-learn-read-model-v1:user_8", JSON.stringify("gemini-3.1-pro-preview"));
+  expect(readManhuaLearnReadModel("user_8")).toBe("gemini-3.8-flash");
 });

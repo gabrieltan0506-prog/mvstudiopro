@@ -22,6 +22,12 @@ export async function processPostProdJob(
   const input = await resolvePostProdInputSources({ userId, input: parsed });
   const runOptions = { signal: options?.signal };
   switch (input.action) {
+    case "digital_human_audio_split":
+    case "digital_human_continuity_frame":
+    case "digital_human_final": {
+      const { renderDigitalHumanProduction } = await import("../services/digitalHumanProduction");
+      return { output: await renderDigitalHumanProduction(input, userId, options?.signal ?? AbortSignal.timeout(POST_PROD_DEFAULT_TIMEOUT_MS)), provider: "ffmpeg-digital-human" };
+    }
     case "art_motion": {
       const { renderArtMotion } = await import("../services/artMotionRender");
       return { output: await renderArtMotion(input, userId, options?.signal ?? AbortSignal.timeout(POST_PROD_DEFAULT_TIMEOUT_MS)), provider: "canvas-art-motion" };

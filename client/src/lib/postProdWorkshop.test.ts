@@ -308,3 +308,14 @@ describe("拼接画幅契约", () => {
     expect(mergeRemoteJobs([job({jobId:"explicit",scopeKey:"stale"})],result).find(j=>j.jobId==="explicit")?.scopeKey).toBe("episode2");
   });
 });
+
+it("独立数字人云稿保留最近列表之外的既有成片，不混入其他制作稿", () => {
+  const older = job({jobId:"older",status:"succeeded",scopeKey:"digital-human:a",output:{gcsUri:"gs://test-only/post-prod/7/older.mp4"}});
+  const another = job({jobId:"other",status:"succeeded",scopeKey:"digital-human:b"});
+  expect(mergeRemoteJobs([older,another],[],"digital-human:a")).toEqual([older]);
+  expect(mergeRemoteJobs([older],[])).toEqual([]);
+  const many=Array.from({length:40},(_,i)=>({...older,jobId:`history-${i}`}));
+  const storage=fakeStorage({key:JSON.stringify(many)});
+  expect(loadStoredJobs("key",storage,Number.POSITIVE_INFINITY)).toHaveLength(40);
+  expect(loadStoredJobs("key",storage)).toHaveLength(30);
+});

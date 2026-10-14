@@ -1,3 +1,4 @@
+import { resolvePostProdClipEdit } from "../../shared/postProdClipEdit";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,6 +10,8 @@ import { concatParamsSchema, type ConcatParams } from "../jobs/postProdInput";
 export function buildTransitionPlan(input: ConcatParams, sources: Array<{ filePath: string; durationSec: number; hasAudio: boolean }>, output: string) {
   input = concatParamsSchema.parse(input);
   if (!input.transition || sources.length < 2 || sources.length > 6) throw new Error("转场拼接支持2至6段");
+  const edits = sources.map((s, i) => resolvePostProdClipEdit(s.durationSec, input.trims?.[i]));
+  sources = sources.map((s, i) => ({ ...s, durationSec: edits[i].durationSec }));
   const { width, height, fps } = input;
   if (width * height > 1920 * 1080) throw new Error("转场拼接最高支持1080p");
   const duration = Math.round(input.transition.durationSec * fps) / fps;
@@ -20,8 +23,8 @@ export function buildTransitionPlan(input: ConcatParams, sources: Array<{ filePa
   const args = ["-y"], chains: string[] = [];
   sources.forEach(s => args.push("-i", s.filePath));
   sources.forEach((s,i) => {
-    chains.push(`[${i}:v:0]scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},format=yuv420p,trim=duration=${seconds[i]},settb=AVTB,setpts=PTS-STARTPTS[v${i}]`);
-    chains.push(s.hasAudio ? `[${i}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=${seconds[i]},asetpts=PTS-STARTPTS[a${i}]` : `anullsrc=r=48000:cl=stereo,atrim=duration=${seconds[i]},asetpts=PTS-STARTPTS[a${i}]`);
+    chains.push(`[${i}:v:0]trim=start=${edits[i].startSec}:end=${edits[i].endSec},setpts=PTS-STARTPTS,scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},format=yuv420p,trim=duration=${seconds[i]},settb=AVTB,setpts=PTS-STARTPTS[v${i}]`);
+    chains.push(s.hasAudio ? `[${i}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=start=${edits[i].startSec}:end=${edits[i].endSec},asetpts=PTS-STARTPTS,atrim=duration=${seconds[i]},asetpts=PTS-STARTPTS[a${i}]` : `anullsrc=r=48000:cl=stereo,atrim=duration=${seconds[i]},asetpts=PTS-STARTPTS[a${i}]`);
   });
   let end = seconds[0], video = "v0", audio = "a0";
   for (let i=1;i<sources.length;i++) {

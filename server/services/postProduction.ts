@@ -1,3 +1,4 @@
+import { resolvePostProdClipEdit } from "../../shared/postProdClipEdit";
 import { compileBgmNarrativeMix } from "../../shared/manhuaBgmNarrativeMix";
 import { normalizeDialogueSubtitleSrt } from "../../shared/dialogueSubtitleSrt.js";
 import { buildSubtitleEffectAss } from "./subtitleEffects.js";
@@ -350,12 +351,12 @@ export async function concatClips(
   const tmpDir = await mkdtemp(path.join(tmpdir(), "pp-concat-"));
   try {
     const budget: DownloadBudget = { remainingBytes: MAX_CONCAT_TOTAL_BYTES };
-    const locals: Array<{ filePath: string; durationSec: number; hasAudio: boolean }> = [];
+    const locals: Array<{ filePath: string; durationSec: number; startSec: number; endSec: number; hasAudio: boolean }> = [];
     for (let i = 0; i < clips.length; i++) {
       const p = path.join(tmpDir, `in-${i}.mp4`);
       await fetchPostProdSourceToFile(clips[i], p, { signal, budget });
       const meta = await probe(p, signal);
-      locals.push({ filePath: p, durationSec: meta.durationSec, hasAudio: meta.hasAudio });
+      locals.push({ filePath: p, ...resolvePostProdClipEdit(meta.durationSec, input.trims?.[i]), hasAudio: meta.hasAudio });
     }
 
     /**
@@ -380,15 +381,16 @@ export async function concatClips(
       }
     }
     const vChain = (i: number) =>
-      `[${i}:v]scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease,` +
+      `[${i}:v]trim=start=${locals[i].startSec}:end=${locals[i].endSec},setpts=PTS-STARTPTS,scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease,` +
       `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=${fps},format=yuv420p,setsar=1,` +
       `setpts=PTS-STARTPTS[v${i}]`;
     const aChain = (i: number) => {
       const sourceIndex = silentInputIndexByClip.get(i) ?? i;
       const duration = locals[i].durationSec.toFixed(3);
       return (
-        `[${sourceIndex}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,` +
-        `apad,atrim=0:${duration},asetpts=PTS-STARTPTS[a${i}]`
+        `[${sourceIndex}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,` +
+        `${locals[i].hasAudio ? `atrim=start=${locals[i].startSec}:end=${locals[i].endSec},asetpts=PTS-STARTPTS,` : ""}` +
+        `atrim=0:${duration},asetpts=PTS-STARTPTS[a${i}]`
       );
     };
     const per = locals.map((_l, i) => `${vChain(i)};${aChain(i)}`).join(";");

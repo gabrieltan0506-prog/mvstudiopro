@@ -35,6 +35,7 @@ import {
 import {
   MANHUA_NATIVE_DEEP_READ_MODEL,
   nativeDeepReadSeriesKeyForModel,
+  nativeDeepReadModelForSeriesKey,
   parseNativeDeepReadSegmentSeconds,
   parseNativeDeepReadVideoFps,
 } from "../../shared/manhuaNativeDeepReadJob.js";
@@ -508,7 +509,7 @@ export async function resolveManhuaSeriesKey(input: {
   /** 0903 双模型：同名剧匹配必须分车道——flash 只认带 -g38f 的系列，pro 只认不带的。 */
   readModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
 }): Promise<string> {
-  const wantFlashLane = input.readModel === "gemini-3.8-flash";
+  const wantedModel = input.readModel || MANHUA_NATIVE_DEEP_READ_MODEL;
   const normalizedTitle = normalizeManhuaSeriesTitle(input.title);
   if (normalizedTitle) {
     const names = await listGcsObjectNamesByPrefix({
@@ -526,8 +527,8 @@ export async function resolveManhuaSeriesKey(input: {
       const existingProvider = read.value.learnLlm || "gpt";
       if (existingProvider !== input.learnLlm) continue;
       // 车道过滤：Pro 单绝不复用 flash 系列，反之亦然（复审抓的非确定性路由雷）
-      const existingIsFlash = String(read.value.seriesKey || existingKey).endsWith("-g38f");
-      if (existingIsFlash !== wantFlashLane) continue;
+      const savedKey = String(read.value.seriesKey || existingKey);
+      if (nativeDeepReadModelForSeriesKey(savedKey) !== wantedModel) continue;
       if (normalizeManhuaSeriesTitle(read.value.titleHint) === normalizedTitle) {
         return read.value.seriesKey || existingKey;
       }

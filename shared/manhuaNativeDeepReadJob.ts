@@ -14,16 +14,21 @@ export const MANHUA_NATIVE_DEEP_READ_MODEL_LABEL = "Gemini 3.1 Pro" as const;
  * 官方规格（API 元数据实测）两者同为输入 1M tok / 输出 64K tok / generateContent+缓存+批量。
  * 不许静默扩表：加模型必须经用户拍板后同时更新冻结契约。
  */
-export const MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS = [
+export const MANHUA_NATIVE_LEGACY_READ_MODEL_OPTIONS = [
   "gemini-3.1-pro-preview",
   "gemini-3.8-flash",
 ] as const;
-/** 1007：新读片唯一模型；历史模型表保留用于已付费证据和任务恢复，不改其指纹。 */
+/** 1014：用户授权增加 Argon；历史模型集合继续用于旧付费契约身份。 */
+export const MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS = [...MANHUA_NATIVE_LEGACY_READ_MODEL_OPTIONS, "gemini-4-argon"] as const;
+export const MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS = ["gemini-3.8-flash", "gemini-4-argon"] as const;
+export const MANHUA_NATIVE_ARGON_MODEL = "gemini-4-argon" as const;
+/** 1007：新读片默认模型；历史模型表保留用于已付费证据和任务恢复，不改其指纹。 */
 export const MANHUA_NATIVE_CURRENT_READ_MODEL = "gemini-3.8-flash" as const;
 export type ManhuaNativeDeepReadModelId = (typeof MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS)[number];
 export const MANHUA_NATIVE_DEEP_READ_MODEL_LABELS: Record<ManhuaNativeDeepReadModelId, string> = {
   "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
   "gemini-3.8-flash": "Gemini 3.8 Flash",
+  "gemini-4-argon": "Gemini 4 Argon",
 } as const;
 
 /** flash 平行剧集库后缀；40 字符上限内先截基名再拼。所有 seriesKey 解析点都必须过这一层。 */
@@ -32,9 +37,14 @@ export function nativeDeepReadSeriesKeyForModel(
   readModel?: ManhuaNativeDeepReadModelId,
 ): string {
   if (!readModel || readModel === MANHUA_NATIVE_DEEP_READ_MODEL) return baseSeriesKey;
-  const suffix = "-g38f";
+  const suffix = readModel === MANHUA_NATIVE_ARGON_MODEL ? "-g4a" : "-g38f";
   if (baseSeriesKey.endsWith(suffix)) return baseSeriesKey;
   return `${baseSeriesKey.slice(0, 40 - suffix.length)}${suffix}`;
+}
+
+/** 系列持久身份决定续跑模型，不能被另一个页面的新偏好接管。 */
+export function nativeDeepReadModelForSeriesKey(seriesKey: string): ManhuaNativeDeepReadModelId {
+  return seriesKey.endsWith("-g4a") ? "gemini-4-argon" : seriesKey.endsWith("-g38f") ? "gemini-3.8-flash" : MANHUA_NATIVE_DEEP_READ_MODEL;
 }
 
 export function parseNativeDeepReadModel(value: unknown): ManhuaNativeDeepReadModelId {
@@ -43,7 +53,7 @@ export function parseNativeDeepReadModel(value: unknown): ManhuaNativeDeepReadMo
   if ((MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS as readonly string[]).includes(id)) {
     return id as ManhuaNativeDeepReadModelId;
   }
-  throw new Error("读片模型只允许 Gemini 3.1 Pro 或 Gemini 3.8 Flash");
+  throw new Error("读片模型只允许 Gemini 3.1 Pro、Gemini 3.8 Flash 或 Gemini 4 Argon");
 }
 
 /** Legacy wire selector retained for saved jobs. Actual structuring and aggregation use FlashX since 2026-10-05. */
@@ -299,10 +309,10 @@ export function parseNewNativeDeepReadJobConfirmation(
 ): NativeDeepReadJobConfirmation {
   if (params.nativeStructuringOnly === true) return parseNativeDeepReadJobConfirmation(params, options);
   const model = params.nativeReadModel;
-  if (model !== undefined && model !== null && model !== "" && model !== MANHUA_NATIVE_CURRENT_READ_MODEL) {
-    throw new Error("新读片仅支持 Gemini 3.8 Flash");
+  if (model !== undefined && model !== null && model !== "" && !(MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS as readonly unknown[]).includes(model)) {
+    throw new Error("新读片仅支持 Gemini 3.8 Flash 或 Gemini 4 Argon");
   }
-  return parseNativeDeepReadJobConfirmation({ ...params, nativeReadModel: MANHUA_NATIVE_CURRENT_READ_MODEL }, options);
+  return parseNativeDeepReadJobConfirmation({ ...params, nativeReadModel: model || MANHUA_NATIVE_CURRENT_READ_MODEL }, options);
 }
 
 export function resolveNativeDeepReadJobTimeoutMs(modelCalls: number): number {

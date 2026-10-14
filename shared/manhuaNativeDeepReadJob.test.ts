@@ -8,6 +8,7 @@ import {
   parseNativeDeepReadJobConfirmation,
   parseNewNativeDeepReadJobConfirmation,
   nativeDeepReadSeriesKeyForModel,
+  nativeDeepReadModelForSeriesKey,
   resolveNativeDeepReadJobTimeoutMs,
   sameNativeDeepReadJobConfirmation,
 } from "./manhuaNativeDeepReadJob.js";
@@ -281,4 +282,24 @@ it("指定整形路由冻结进契约，另一页不同路由不得复用同任�
   expect(selected.structuringGateway).toBe("evolink_glm");
   expect(sameNativeDeepReadJobConfirmation(selected, { ...selected, structuringGateway: "openrouter" })).toBe(false);
   expect(() => parseNativeDeepReadJobConfirmation({ ...params, nativeStructuringGateway: "qwen" })).toThrow("整形路由");
+});
+
+
+describe("Argon新读片合同与独立系列", () => {
+  const params = { url: "https://www.douyin.com/video/12345", batchSize: 1,
+    nativeDeepReadConfirmed: true, nativeMaxCalls: 200, nativePlanLimit: 1 };
+  it("明确选择Argon进入真实确认合同，缺省仍是Flash", () => {
+    const argon = parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-4-argon" });
+    expect(argon.readModel).toBe("gemini-4-argon");
+    expect(sameNativeDeepReadJobConfirmation(argon, parseNewNativeDeepReadJobConfirmation(params))).toBe(false);
+  });
+  it("系列身份不混用历史Pro与Flash缓存，重复解析不加第二个后缀", () => {
+    const key = nativeDeepReadSeriesKeyForModel("a".repeat(40), "gemini-4-argon");
+    expect(key).toHaveLength(40);
+    expect(key.endsWith("-g4a")).toBe(true);
+    expect(nativeDeepReadSeriesKeyForModel(key, "gemini-4-argon")).toBe(key);
+    expect(nativeDeepReadModelForSeriesKey(key)).toBe("gemini-4-argon");
+    expect(nativeDeepReadModelForSeriesKey("abc-g38f")).toBe("gemini-3.8-flash");
+    expect(nativeDeepReadModelForSeriesKey("abc")).toBe("gemini-3.1-pro-preview");
+  });
 });

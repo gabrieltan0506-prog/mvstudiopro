@@ -371,3 +371,24 @@ it('场景动画BGM时序每个音源按本人登记核对且保留全部裁片'
  expect(artMotionSpecSchema.safeParse({...params,audioUri:'gs://bucket-a/uploads/u7/c.wav'}).success).toBe(false);
  expect(artMotionSpecSchema.safeParse({...params,audioTimeline:undefined,audioUri:'gs://bucket-a/uploads/u7/c.wav'}).success).toBe(true);
 });
+
+describe("数字人分段和混音素材逐项归属校验", () => {
+  const audioRequestId = "00000000-0000-4000-8000-000000000001";
+  it("完整原声、所有片段和每条BGM均归一为本人持久来源", async () => {
+    const result = await resolvePostProdInputSources({ userId: "7", input: { action: "digital_human_final", params: {
+      audioUri: "/api/canvas-media/uploads/u7/voice.wav", audioRequestId,
+      clips: [{videoUri:"gs://bucket-a/post-prod/7/a.mp4",startSec:0,endSec:10}],
+      voice:{pan:0,room:"dry",volume:1},tracks:[{source:"/api/canvas-media/uploads/u7/music.wav",name:"BGM",startSec:0,sourceStartSec:0,durationSec:10,volume:.1,fadeInSec:0,fadeOutSec:0,duck:true}],aspectRatio:"9:16",
+    } } }, deps());
+    expect(result.params).toMatchObject({ audioUri: "gs://bucket-a/uploads/u7/voice.wav", tracks: [{source:"gs://bucket-a/uploads/u7/music.wav"}] });
+  });
+  it("尾帧和任一混音素材跨账号时整项拒绝", async () => {
+    await expect(resolvePostProdInputSources({ userId:"7",input:{action:"digital_human_continuity_frame",params:{videoUri:"gs://bucket-a/post-prod/8/old.mp4",atSec:10}} },deps())).rejects.toThrow("素材尚未登记");
+    await expect(resolvePostProdInputSources({ userId:"7",input:{action:"digital_human_audio_split",params:{audioUri:"gs://bucket-a/uploads/u8/voice.wav",audioRequestId,script:"完整正文"}} },deps())).rejects.toThrow("素材尚未登记");
+  });
+  it("手动剪辑顺序和取段在归属归一化后完整保留",async()=>{
+    const trims=[{startSec:1,endSec:3},{startSec:0,endSec:2}];
+    const result=await resolvePostProdInputSources({userId:"7",input:{action:"concat",params:{clips:["/api/canvas-media/uploads/u7/b.mp4","/api/canvas-media/uploads/u7/a.mp4"],trims}}},deps());
+    expect(result.params).toMatchObject({clips:["gs://bucket-a/uploads/u7/b.mp4","gs://bucket-a/uploads/u7/a.mp4"],trims});
+  });
+});

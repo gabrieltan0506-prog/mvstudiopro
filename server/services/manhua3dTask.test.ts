@@ -10,6 +10,8 @@ import {
   advanceManhua3dTask,
   assertGlbBuffer,
   createManhua3dTask,
+  findExistingManhua3dImageTask,
+  readExistingManhua3dTask,
   downloadGlb,
   getManhua3dTask,
   importExistingManhua3dAsset,
@@ -97,6 +99,18 @@ describe("manhua3dTask", () => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("数字人未知建模只按同一来源查回，不提交、不推进，也不跨账号", async () => {
+    const submit=vi.fn(async()=>({predictionId:"pred-digital-human"})),poll=vi.fn(async()=>({state:"running" as const,status:"processing"}));
+    setManhua3dTaskDependenciesForTests({isConfigured:()=>true,submit,poll});
+    const input={userId:7,assetRef:"dh-person-test",sourceVersion:"gs://test-bucket/person.png",sourceImageUrl:"https://test.invalid/person.png"};
+    expect(await findExistingManhua3dImageTask(input)).toBeNull();expect(submit).not.toHaveBeenCalled();expect(poll).not.toHaveBeenCalled();
+    const created=await createManhua3dTask(input);const calls=poll.mock.calls.length;
+    expect((await findExistingManhua3dImageTask(input))?.taskId).toBe(created.taskId);
+    expect(await readExistingManhua3dTask(created.taskId,8)).toBeNull();
+    expect(await findExistingManhua3dImageTask({...input,sourceVersion:"gs://test-bucket/other.png"})).toBeNull();
+    expect(submit).toHaveBeenCalledTimes(1);expect(poll).toHaveBeenCalledTimes(calls);
   });
 
   it("生成 GLB 按流读取并在累计超限时取消下载", async () => {

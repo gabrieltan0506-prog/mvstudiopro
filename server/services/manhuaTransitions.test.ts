@@ -31,3 +31,11 @@ it("renders real crossfade pixels and correct overlapping duration while preserv
  expect(pixel[0]).toBeGreaterThan(50);expect(pixel[2]).toBeGreaterThan(50);expect(pixel[1]).toBeLessThan(20);
  await writeFile("docs/evidence/manhua-vfx-1007/transition-receipt.json",JSON.stringify({boundary:"synthetic real ffmpeg; injected cloud; not workflow acceptance",dir,result,pixel:Array.from(pixel),archived},null,2));
 },90_000);
+
+it("手动剪辑取段进入转场的视频与音频链，并以取段长度计算重叠", () => {
+  const plan = buildTransitionPlan({ ...input, trims: [{ startSec: 2, endSec: 4 }, { startSec: 1, endSec: 3 }] }, [0, 1].map(i => ({ filePath: `${i}.mp4`, durationSec: 5, hasAudio: true })), "out.mp4");
+  expect(plan.durationSec).toBe(3.5);
+  expect(plan.args.join(" ")).toContain("trim=start=2:end=4");
+  expect(plan.args.join(" ")).toContain("atrim=start=1:end=3");
+  expect(() => buildTransitionPlan({ ...input, trims: [{ startSec: 4, endSec: 9 }, { startSec: 0 }] }, [0, 1].map(i => ({ filePath: `${i}`, durationSec: 5, hasAudio: false })), "out")).toThrow("原片范围");
+});

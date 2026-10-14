@@ -122,6 +122,7 @@ import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
 import { canvasAudioRouter } from "./routers/canvasAudio";
+import { digitalHumanRouter } from "./routers/digitalHuman";
 import { manhuaAutoRigRouter } from "./routers/manhuaAutoRig";
 import { manhuaPrevisRouter } from "./routers/manhuaPrevis";
 import { enterpriseAgentsRouter } from "./routers/enterpriseAgents";
@@ -2995,6 +2996,7 @@ export const appRouter = router({
   hunyuan3d: hunyuan3dRouter,
   suno: sunoRouter,
   canvasAudio: canvasAudioRouter,
+  digitalHuman: digitalHumanRouter,
   manhuaPrevis: manhuaPrevisRouter,
   manhuaAutoRig: manhuaAutoRigRouter,
   creations: creationsRouter,
@@ -4382,6 +4384,7 @@ export const appRouter = router({
     queuePostProd: protectedProcedure
       .input(postProdJobInputSchema)
       .mutation(async ({ ctx, input }) => {
+        if (input.action.startsWith("digital_human_")) throw new TRPCError({ code: "FORBIDDEN", message: "请从数字人工作室核对输入并提交" });
         if(input.action === "manhua_previs" || input.action === "manhua_auto_rig") throw new TRPCError({code:"FORBIDDEN",message:input.action === "manhua_auto_rig" ? "请从人物模型绑骨入口提交" : "请从本段动作白模入口提交"});
         if (input.action === "manhua_vfx") {
           const { findManhuaVfxReceipt } = await import("./services/manhuaVfxTask");

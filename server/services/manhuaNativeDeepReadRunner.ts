@@ -52,7 +52,7 @@ import {
   type ManhuaNativeStructuringModelId,
   MANHUA_NATIVE_DEEP_READ_MODEL,
   MANHUA_NATIVE_DEEP_READ_MODEL_LABELS,
-  MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS,
+  MANHUA_NATIVE_LEGACY_READ_MODEL_OPTIONS,
   parseNativeDeepReadModel,
   type ManhuaNativeDeepReadModelId,
   MANHUA_NATIVE_GLM_REASONING_EFFORT,
@@ -186,6 +186,8 @@ function resolveNativeDeepReadEvolinkBaseUrl(): string {
 const MODEL_PRICES_PER_M: Record<ManhuaNativeDeepReadModelId, { inPerM: number; outPerM: number }> = {
   "gemini-3.1-pro-preview": { inPerM: 9.0, outPerM: 72.0 },
   "gemini-3.8-flash": { inPerM: 2.16, outPerM: 18.0 },
+  // Argon按返还前标准价估算，避免把尚未到账的50%优惠当成实扣；仅用于成本展示。
+  "gemini-4-argon": { inPerM: 4.0 * 7.2, outPerM: 20.0 * 7.2 },
 };
 
 function routePrices(
@@ -1642,7 +1644,7 @@ export function nativeDeepReadFrozenContractSha256(): string {
   } as const;
   return crypto.createHash("sha256").update(JSON.stringify({
     // 0903 双模型拍板：冻结「允许的模型集合」而非单一模型；扩表需用户重新授权
-    models: MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS,
+    models: MANHUA_NATIVE_LEGACY_READ_MODEL_OPTIONS,
     generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
     retryTemperatures: NATIVE_DEEP_READ_RETRY_TEMPERATURES,
     retryIntervalMs: NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
@@ -1713,6 +1715,7 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
   fileUri: string;
   fps: number;
   prompt: string;
+  model?: ManhuaNativeDeepReadModelId;
   segmentContext: NativeDeepReadSegmentContext;
   /**
    * 只允许选择冻结梯度中的尝试序号；调用方不能覆盖 generationConfig。
@@ -1754,8 +1757,19 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
         { text: input.prompt },
       ],
     }],
-    generationConfig,
+    generationConfig: adaptNativeDeepReadGenerationConfig(generationConfig, input.model ?? NATIVE_DEEP_READ_MODEL),
   };
+}
+
+/** 与原生学习共用结构；仅适配 Argon 明确不同的供应商参数。 */
+export function adaptNativeDeepReadGenerationConfig(
+  config: Record<string, unknown>, model: ManhuaNativeDeepReadModelId,
+): Record<string, unknown> {
+  if (model !== "gemini-4-argon") return config;
+  const { candidateCount: _candidateCount, temperature: _temperature, topP: _topP, topK: _topK,
+    frequencyPenalty: _frequencyPenalty, presencePenalty: _presencePenalty, ...compatible } = config;
+  return { ...compatible, maxOutputTokens: 32_768,
+    thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false } };
 }
 
 /* ────────────────── HTTP 通道（Vertex 主线 / EvoLink 兜底） ────────────────── */
@@ -4735,9 +4749,9 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
       // Preserve the Flash-era identity so switching the text model never rereads paid video segments.
       : `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`,
     responseSchema,
-    generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
-    retryGenerationConfig: NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
-    finalRetryGenerationConfig: NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
+    generationConfig: adaptNativeDeepReadGenerationConfig(NATIVE_DEEP_READ_GENERATION_CONFIG, input.model ?? NATIVE_DEEP_READ_MODEL),
+    retryGenerationConfig: adaptNativeDeepReadGenerationConfig(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG, input.model ?? NATIVE_DEEP_READ_MODEL),
+    finalRetryGenerationConfig: adaptNativeDeepReadGenerationConfig(NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG, input.model ?? NATIVE_DEEP_READ_MODEL),
     retryIntervalMs: input.legacyBefore0920 === true
       ? NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920
       : NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
@@ -5790,6 +5804,7 @@ async function executeNativeDeepReadBatch(
         const segmentContext = { startSec: segment.startSec, endSec: segment.endSec, segmentIndex: input.segmentIndex, hasAudio };
         const body = buildGeminiNativeDeepReadSegmentRequest({
           segmentContext,
+          model: attemptModel,
           fileUri: input.fileUri,
           fps: input.fps,
           attemptIndex: (input.attemptNumber - 1) as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7,
@@ -5875,7 +5890,7 @@ async function executeNativeDeepReadBatch(
               segmentCount: episode.segments.length,
               videoCount: 1,
               attemptNumber: input.attemptNumber,
-              temperature: input.temperature,
+              temperature: attemptModel === "gemini-4-argon" ? undefined : input.temperature,
               degraded: degraded || undefined,
             }, params.onModelReceipt);
             modelCallStarted = true;
@@ -5978,7 +5993,7 @@ async function executeNativeDeepReadBatch(
               segmentCount: episode.segments.length,
               videoCount: 1,
               attemptNumber: input.attemptNumber,
-              temperature: input.temperature,
+              temperature: attemptModel === "gemini-4-argon" ? undefined : input.temperature,
               elapsedMs: Date.now() - startedAt,
               inputTokens: attemptInput,
               audioInputTokens: attemptAudioInput || undefined,
@@ -6280,7 +6295,7 @@ async function executeNativeDeepReadBatch(
               segmentCount: episode.segments.length,
               videoCount: 1,
               attemptNumber: input.attemptNumber,
-              temperature: input.temperature,
+              temperature: attemptModel === "gemini-4-argon" ? undefined : input.temperature,
               elapsedMs: Date.now() - startedAt,
               errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
               providerRequestId: providerError?.requestId,
@@ -6397,7 +6412,7 @@ async function executeNativeDeepReadBatch(
               segmentCount,
               videoCount: 1,
               attemptNumber,
-              temperature,
+              temperature: gradientModel === "gemini-4-argon" ? undefined : temperature,
               errorZh: retryReasonZh,
             }, params.onModelReceipt);
             await deps.waitForRetry(NATIVE_DEEP_READ_RETRY_INTERVAL_MS, params.abortSignal);
@@ -6434,7 +6449,7 @@ async function executeNativeDeepReadBatch(
                   segmentCount,
                   videoCount: 1,
                   attemptNumber,
-                  temperature,
+                  temperature: gradientModel === "gemini-4-argon" ? undefined : temperature,
                   resourceRetryNumber: resourceRetryCount,
                   resourceRetryMax: NATIVE_DEEP_READ_RESOURCE_RETRY_MAX,
                   errorZh,
@@ -6463,7 +6478,7 @@ async function executeNativeDeepReadBatch(
                 segmentCount,
                 videoCount: 1,
                 attemptNumber,
-                temperature,
+                temperature: gradientModel === "gemini-4-argon" ? undefined : temperature,
                 errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
               }, params.onModelReceipt);
               lastError = error;
@@ -6483,7 +6498,7 @@ async function executeNativeDeepReadBatch(
          * 0920 用户令：「單一分片如果連讀五次都不通過，就升級成Gemini 3.1 pro來讀」
          * 「保留分片，不報錯」「直接從0.7--0.65--0.6」。首读已是 3.1 Pro 时没有更高档，跳过。
          */
-        if (readModel !== NATIVE_DEEP_READ_ESCALATION_MODEL) {
+        if (readModel !== "gemini-4-argon" && readModel !== NATIVE_DEEP_READ_ESCALATION_MODEL) {
           console.warn(
             `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
             + `${NATIVE_DEEP_READ_RETRY_TEMPERATURES.length} 发均未过门禁，保留分片并升级 `
@@ -7647,7 +7662,7 @@ async function executeNativeDeepReadBatch(
         structuredRaw.provenance = {
           planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
           model: readModel,
-          temperature: NATIVE_DEEP_READ_GENERATION_CONFIG.temperature,
+          temperature: readModel === "gemini-4-argon" ? undefined : NATIVE_DEEP_READ_GENERATION_CONFIG.temperature,
           thinkingLevel: NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig.thinkingLevel,
           // 输入规格入档（0830 晚）：隔天复盘时能说清这份产物是用什么画质读出来的。
           maxFps: NATIVE_DEEP_READ_MAX_FPS,
@@ -7655,7 +7670,7 @@ async function executeNativeDeepReadBatch(
           // 0831 起不再发送 mediaResolution，走上游默认（Gemini 3 视频默认＝70 token/帧）。
           // 仍然入档，是为了让旧卡（显式 MEDIUM）与新卡（默认）在溯源上能一眼分开。
           mediaResolution: "unspecified_default",
-          retryTemperatures: [...NATIVE_DEEP_READ_RETRY_TEMPERATURES],
+          retryTemperatures: readModel === "gemini-4-argon" ? [] : [...NATIVE_DEEP_READ_RETRY_TEMPERATURES],
           segmentCount: episode.segments.length,
           sourceDurationSec: episode.sourceDurationSec,
           batchRequestId: episodeRequestId,

@@ -1757,6 +1757,9 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
 
   /** Canvas 关键静帧 / 封面：与 sync op=canvasGptImage2 同核，供短入队+轮询 */
   if (input.action === "canvas_gpt_image2") {
+    const digitalHumanScenePolicy = params.digitalHumanScene
+      ? (await import("../services/digitalHumanScene.js")).assertDigitalHumanSceneJob(Number(jobUserId), jobId || "", input)
+      : null;
     const codeMotionPolicy = params.codeMotionImage
       ? await (await import("../services/codeMotionImages.js")).resolveCodeMotionImageWorkerPolicy(jobUserId, jobId || "", params.codeMotionImage, input)
       : null;
@@ -1918,6 +1921,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
         openaiImageVariant,
         requireImageVariant: params.requireImageVariant === true,
         qualityOverride: assetStandardizeQuality || undefined,
+        ...(digitalHumanScenePolicy || {}),
         captureError,
       });
     } catch (err) {
