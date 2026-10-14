@@ -1,3 +1,4 @@
+import { readPreparedMedia, type PreparedMediaIdentity } from "./manhuaNativePreparedMediaCache.js";
 import type { ManhuaViralTemplateEvidenceFrame } from "../../shared/manhuaViralTemplateBank.js";
 import { buildManhuaLocalVideoSourceRef, parseManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
 import type { NativeDeepReadLocalVideoUpload } from "./manhuaNativeDeepReadPlan.js";
@@ -149,6 +150,7 @@ export type NativeDeepReadExecutionDeps = {
   extractKeyMomentFrames: typeof extractNativeKeyMomentEvidenceFrames;
   readFrameManifest?: (objectName: string) => Promise<ManhuaViralTemplateEvidenceFrame[] | undefined>;
   writeFrameManifest?: (objectName: string, frames: ManhuaViralTemplateEvidenceFrame[]) => Promise<void>;
+  readPreparedVideo?: (identity: PreparedMediaIdentity, signal?: AbortSignal) => Promise<PreparedNativeVideo | null>;
   readFrameSources?: (objectName: string) => Promise<PreparedNativeVideo[] | undefined>;
   writeFrameSources?: (objectName: string, videos: readonly PreparedNativeVideo[]) => Promise<void>;
   verifyFrame?: (frame: ManhuaViralTemplateEvidenceFrame) => Promise<boolean>;
@@ -180,6 +182,7 @@ const defaultDeps: NativeDeepReadExecutionDeps = {
       throw error;
     }
   },
+  readPreparedVideo: (identity, signal) => readPreparedMedia(identity, undefined, signal),
   readFrameSources: async (objectName) => {
     try {
       const { buffer } = await downloadGcsObject({ gcsUri: `gs://${getGcsBucketName()}/${objectName}` });
@@ -288,6 +291,12 @@ export function createSegmentFrameCollector(episode: NativeDeepReadEpisodeExecut
       }
       try {
         if (found.size < keyMoments.length) {
+          if (!preparedVideos.length && segment.sourceDigest && deps.readPreparedVideo) {
+            const reusable = await deps.readPreparedVideo({ seriesKey: episode.seriesKey, sourceDigest: segment.sourceDigest,
+              episodeIndex: episode.episodeIndex, sourceDurationSec: episode.durationSec,
+              startSec: span.startSec, endSec: span.endSec, legacyFrameSourceName: sourceName }, episode.abortSignal);
+            if (reusable) preparedVideos = [reusable];
+          }
           if (!preparedVideos.length) preparedVideos = await deps.readFrameSources?.(sourceName) || [];
           preparedVideos = preparedVideos.filter(video => video.gsUri?.startsWith("gs://")
             && Math.abs(video.startSec - span.startSec) < 0.01 && Math.abs(video.endSec - span.endSec) < 0.01);

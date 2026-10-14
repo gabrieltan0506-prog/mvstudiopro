@@ -1,3 +1,4 @@
+import { type PreparedMediaCacheDeps } from "./manhuaNativePreparedMediaCache";
 /**
  * 原生精读执行器（0826 Gemini 换代）：开关、format 挑选、请求契约、双密度门禁、
  * Vertex 同通道重试纪律、历史路由缓存兼容与 GLM 整集结构化接线。
@@ -353,23 +354,23 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
   });
 
-  it("503 退避与并发上限（0916 用户令）：30 秒 × 4 次、并发 4，且都不进契约哈希", () => {
-    expect(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS).toBe(30_000);
+  it("503 退避与并发上限（1015 用户令）：18 秒 × 4 次、并发 4，且都不进契约哈希", () => {
+    expect(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS).toBe(18_000);
     expect(NATIVE_DEEP_READ_RESOURCE_RETRY_MAX).toBe(4);
     // 0920 用户令「把四片並發改成五片」
     expect(NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY).toBe(5);
     // 两条线仍是两个独立常量（0920 用户令把门禁降温线也调到 30 秒，数值上恰好相同）：
     // 资源退避线**不进**契约哈希，门禁降温线**进**契约 SHA 与段缓存指纹——
     // 判据不看两个数是否相等，看契约哈希会不会因为它们变化。
-    expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(30_000);
+    expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(18_000);
     expect(nativeDeepReadFrozenContractSha256()).toBe(NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256);
   });
 
-  it("同一 Vertex 分片候选五档：0.70→0.65→0.65→0.60→0.60，间隔30秒（0920 用户令）", () => {
+  it("同一 Vertex 分片候选五档：0.70→0.65→0.65→0.60→0.60，间隔18秒（1015 用户令）", () => {
     // 0920 用户令：「降檔重試 0.7--0.65x2--0.6x2，等於0.65與0.6各重試兩次」＝共 5 发。
     // 0920 用户令：「重試改成間隔三十秒，不要六十秒了」；历史已付费分片靠 legacyBefore0920 复原旧 60 秒身份。
     expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.7, 0.65, 0.65, 0.6, 0.6]);
-    expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(30_000);
+    expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(18_000);
     expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920).toBe(60_000);
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
     expect(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG).toEqual({
@@ -2007,6 +2008,55 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+describe("视频分片恢复接线", () => {
+  function fixture() {
+    const store = new Map<string, Buffer>();
+    const cache: PreparedMediaCacheDeps = {
+      bucket: () => "test-bucket",
+      download: vi.fn(async ({ gcsUri }) => {
+        const buffer = store.get(gcsUri.replace("gs://test-bucket/", ""));
+        if (!buffer) throw new Error("gcs_stat_failed:404");
+        return { buffer, bucket: "test-bucket", objectName: "index", generation: "1" };
+      }),
+      stat: vi.fn(async () => ({ bucket: "test-bucket", objectName: "video", generation: "7", byteLength: 200_000 })),
+      upload: vi.fn(async ({ objectName, buffer }) => {
+        store.set(objectName, buffer); return { bucket: "test-bucket", objectName, gcsUri: `gs://test-bucket/${objectName}` };
+      }),
+    };
+    const deps = makePreparationDeps({ preparedMediaCache: cache });
+    const episode = { episodeIndex: 1, preparedMediaSeriesKey: "series", cacheSourceDigest: "a".repeat(64),
+      resolveNodes: vi.fn(async () => [{ url: "https://cdn.example/source.mp4" }]),
+      segments: [{ startSec: 0, endSec: 10 }, { startSec: 10, endSec: 20 }], sourceDurationSec: 20 };
+    return { store, cache, deps, episode };
+  }
+  it("第二次直接消费已上传分片，零下载零切片，并保留原段号", async () => {
+    const { deps, episode, store } = fixture();
+    const first = await prepareEpisodeVideos(episode, undefined, deps);
+    expect(store.size).toBe(2); expect(first.every(row => row.reusable)).toBe(true);
+    vi.mocked(deps.runMedia).mockClear(); vi.mocked(deps.upload).mockClear(); episode.resolveNodes.mockClear();
+    const group = vi.fn();
+    expect(await prepareEpisodeVideos(episode, undefined, deps, { onPreparedGroup: group })).toEqual(first);
+    expect(deps.runMedia).not.toHaveBeenCalled(); expect(deps.upload).not.toHaveBeenCalled(); expect(episode.resolveNodes).not.toHaveBeenCalled();
+    expect(group.mock.calls[0]![0].map((row: { segmentIndex: number }) => row.segmentIndex)).toEqual([0, 1]);
+  });
+  it("上传后调用方报错仍保存分片，下次只补缺片且重映射分组下标", async () => {
+    const { deps, episode, store } = fixture();
+    await expect(prepareEpisodeVideos(episode, undefined, deps, { preparedGroupSize: 1, uploadConcurrency: 1,
+      onPreparedGroup: () => { throw new Error("snapshot failed"); } })).rejects.toThrow("snapshot failed");
+    expect(store.size).toBe(1); expect(deps.remove).not.toHaveBeenCalled();
+    vi.mocked(deps.upload).mockClear(); const groups: number[] = [];
+    const result = await prepareEpisodeVideos(episode, undefined, deps, { onPreparedGroup: rows => { groups.push(...rows.map(row => row.segmentIndex)); } });
+    expect(deps.upload).toHaveBeenCalledTimes(1); expect(result.map(row => row.startSec)).toEqual([0, 10]);
+    expect(groups.sort()).toEqual([0, 1]);
+  });
+  it("索引读取故障先报错，不派备料或访问来源", async () => {
+    const { cache, deps, episode } = fixture();
+    vi.mocked(cache.download).mockRejectedValue(new Error("gcs_stat_failed:503"));
+    await expect(prepareEpisodeVideos(episode, undefined, deps)).rejects.toThrow("503");
+    expect(deps.runMedia).not.toHaveBeenCalled(); expect(episode.resolveNodes).not.toHaveBeenCalled();
+  });
+});
+
 describe("精确切片与实际媒体验收", () => {
   it("精确 seek 重编码保留原分辨率、帧率与音轨，不使用会前滚的流复制", () => {
     const args = buildNativeDeepReadVideoSegmentArgs({
@@ -2915,7 +2965,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     expect(deps.waitForRetry).toHaveBeenCalledTimes(4);
     // 退避间隔走 503 专用的 30 秒线，不是门禁降温那条 60 秒线
     expect(vi.mocked(deps.waitForRetry).mock.calls.map(([ms]) => ms))
-      .toEqual([30_000, 30_000, 30_000, 30_000]);
+      .toEqual([18_000, 18_000, 18_000, 18_000]);
     const resourceRetries = receipts.filter((row) => row.route === "resource_retry_pending");
     expect(resourceRetries.map((row) => [row.resourceRetryNumber, row.resourceRetryMax]))
       .toEqual([[1, 4], [2, 4], [3, 4], [4, 4]]);
@@ -3278,7 +3328,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
   });
 
-  it.each([2, 3, 5, 6, 7, 8, 10])("%i片新整形均分到两个真实调用，保留路由及分片身份", async (count) => {
+  it.each(Array.from({ length: 17 }, (_, i) => i + 2))("%i片新整形均分到两个真实调用，保留路由及分片身份", async (count) => {
     const segments = Array.from({ length: count }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3327,12 +3377,12 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
   });
 
-  it("整形双路每路最多五片，不足十片含尾组均分且不丢片不重复", async () => {
+  it("18片内均分双路且不丢片不重复，更长任务均分到两路各两批", async () => {
     const { nativeDeepReadStructuringGroups: groups } = await import("./manhuaNativeDeepReadRunner");
     const cases = [[1, [1]], [2, [1, 1]], [3, [2, 1]], [4, [2, 2]],
       [5, [3, 2]], [6, [3, 3]], [7, [4, 3]], [8, [4, 4]], [9, [5, 4]],
-      [10, [5, 5]], [11, [5, 5, 1]], [13, [5, 5, 2, 1]], [18, [5, 5, 4, 4]],
-      [20, [5, 5, 5, 5]], [26, [5, 5, 5, 5, 3, 3]]] as const;
+      [10, [5, 5]], [11, [6, 5]], [12, [6, 6]], [13, [7, 6]], [14, [7, 7]], [15, [8, 7]], [16, [8, 8]], [17, [9, 8]], [18, [9, 9]],
+      [19, [5, 5, 4, 5]], [20, [5, 5, 5, 5]], [25, [6, 7, 6, 6]], [26, [6, 7, 6, 7]]] as const;
     for (const [count, sizes] of cases) {
       const result = groups(count);
       expect(result.map(row => row.length)).toEqual(sizes);
@@ -3341,8 +3391,8 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     for (const count of [0, -1, 1.5, NaN, Infinity]) expect(() => groups(count)).toThrow("正整数");
   });
 
-  it.each(["openrouter", "evolink_glm"] as const)("超过20片保留双路动态领取：旧选择%s不能挤掉另一网关", async (legacyGateway) => {
-    const segments = Array.from({ length: 26 }, (_, index) => ({
+  it.each(["openrouter", "evolink_glm"] as const)("25片四批分属两路：旧选择%s不能挤掉另一网关", async (legacyGateway) => {
+    const segments = Array.from({ length: 25 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
     }));
@@ -3362,12 +3412,8 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       started.push({ firstStart, route });
       active += 1;
       maxActive = Math.max(maxActive, active);
-      // 首批直到尾批领取才返回，确定性证明另一条路动态领取全部后续批次。
-      if (firstStart === 0) await slowFirst.promise;
-      else {
-        if (firstStart === 1380) slowFirst.resolve();
-        await new Promise(resolve => setTimeout(resolve, 5));
-      }
+      if (started.length === 4) slowFirst.resolve();
+      await slowFirst.promise;
       const result = await base(prompt);
       active -= 1;
       return { ...result, gateway: route };
@@ -3382,32 +3428,33 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
         episodeIndex: 1,
         resolveNodes: async () => [],
         segments,
-        sourceDurationSec: 1560,
+        sourceDurationSec: 1500,
         cacheSourceDigest: "d".repeat(64),
       }],
       segmentCacheSeriesKey: "dynamic_two_lane_queue",
       structuringGateway: legacyGateway,
     }, deps);
 
-    expect(maxActive).toBe(2);
-    expect(started).toEqual([
+    expect(maxActive).toBe(4);
+    expect(started.slice().sort((a,b)=>a.firstStart-b.firstStart)).toEqual([
       { firstStart: 0, route: "openrouter" },
-      { firstStart: 300, route: "evolink_glm" },
-      { firstStart: 600, route: "evolink_glm" },
-      { firstStart: 900, route: "evolink_glm" },
-      { firstStart: 1200, route: "evolink_glm" },
-      { firstStart: 1380, route: "evolink_glm" },
+      { firstStart: 360, route: "openrouter" },
+      { firstStart: 780, route: "evolink_glm" },
+      { firstStart: 1140, route: "evolink_glm" },
     ]);
   });
 
-  it.each([18, 19, 20])("20片内四批同时在途且同路第二批错峰4秒（%s片）", async count => {
+  it.each([19, 20, 25, 26])("超过18片四批同时在途且同路第二批错峰4秒（%s片）", async count => {
     const segments = Array.from({ length: count }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const lane1 = Math.ceil(count / 2), lane2 = Math.floor(count / 2);
+    const sizes = [Math.floor(lane1 / 2), Math.ceil(lane1 / 2), Math.floor(lane2 / 2), Math.ceil(lane2 / 2)];
+    const starts = [0, sizes[0]!, lane1, lane1 + sizes[2]!].map(n => n * 60);
     const finish = deferred(), stagger = deferred();
     const started: Array<{ first: number; size: number; route: string }> = [];
     let active=0,maxActive=0;
     const harness=realStructuringHarness({invoke:async first=>{
       const row=harness.calls.at(-1)!;
-      started.push({first,size:first===0||first===300?5:first===600?Math.ceil((count-10)/2):Math.floor((count-10)/2),route:row.route});
+      started.push({first,size:sizes[starts.indexOf(first)]!,route:row.route});
       maxActive=Math.max(maxActive,++active);await finish.promise;active--;
     }});
     const invoke=harness.invoke;
@@ -3418,14 +3465,14 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segments, sourceDurationSec: count * 60, cacheSourceDigest: "a".repeat(64) }],
       segmentCacheSeriesKey: `four_batches_${count}` }, deps);
     await vi.waitFor(() => expect(deps.waitForRetry).toHaveBeenCalledTimes(2));
-    expect(started).toEqual([{ first: 0, size: 5, route: "openrouter" },
-      { first: 600, size: Math.ceil((count - 10) / 2), route: "evolink_glm" }]);
+    expect(started).toEqual([{ first: 0, size: sizes[0], route: "openrouter" },
+      { first: starts[2], size: sizes[2], route: "evolink_glm" }]);
     stagger.resolve();
     await vi.waitFor(() => expect(started).toHaveLength(4));
     expect(maxActive).toBe(4);
-    expect(started.filter(row => row.route === "openrouter").map(row => row.size)).toEqual([5, 5]);
+    expect(started.filter(row => row.route === "openrouter").map(row => row.size)).toEqual(sizes.slice(0, 2));
     expect(started.filter(row => row.route === "evolink_glm").map(row => row.size))
-      .toEqual([Math.ceil((count - 10) / 2), Math.floor((count - 10) / 2)]);
+      .toEqual(sizes.slice(2));
     finish.resolve();
     const result = await task;
     expect(result.episodes[0]!.result.completedSegmentIndexes).toEqual(Array.from({ length: count }, (_, i) => i));
@@ -3434,15 +3481,15 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
   });
 
   it.each(["recovery","request"] as const)("LEARN-DISPATCH-2：首批%s延迟，真实网关仍先发首批并错开4秒",async phase=>{
-    const segments=Array.from({length:18},(_,i)=>({startSec:i*60,endSec:(i+1)*60}));
+    const segments=Array.from({length:20},(_,i)=>({startSec:i*60,endSec:(i+1)*60}));
     const hold=deferred(),finish=deferred();let now=0;
     const clock=vi.spyOn(Date,"now").mockImplementation(()=>now);
     const harness=realStructuringHarness({[phase]:async(first:number)=>{if(first===0)await hold.promise;},invoke:async()=>{await finish.promise;}});
     const deps=makeRunnerDeps({postVertex:makeSuccessfulEpisodePostVertex(segments) as never,invokeGlmStructuring:harness.invoke as never,
       waitForRetry:vi.fn(async ms=>{now+=ms;})});
-    const task=runManhuaNativeDeepReadBatch({episodes:[{episodeIndex:1,resolveNodes:async()=>[],segments,sourceDurationSec:1080,cacheSourceDigest:"a".repeat(64)}],segmentCacheSeriesKey:"real_boundary_"+phase},deps);
+    const task=runManhuaNativeDeepReadBatch({episodes:[{episodeIndex:1,resolveNodes:async()=>[],segments,sourceDurationSec:1200,cacheSourceDigest:"a".repeat(64)}],segmentCacheSeriesKey:"real_boundary_"+phase},deps);
     try {
-      await vi.waitFor(()=>expect(harness.calls.some(row=>row.first===840)).toBe(true));
+      await vi.waitFor(()=>expect(harness.calls.some(row=>row.first===900)).toBe(true));
       expect(harness.calls.some(row=>row.first===0||row.first===300)).toBe(false);
       now=10_000;hold.resolve();await vi.waitFor(()=>expect(harness.calls).toHaveLength(4));
       const first=harness.calls.find(row=>row.first===0)!,second=harness.calls.find(row=>row.first===300)!;
@@ -3452,8 +3499,9 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
   });
 
   it.each(["cache","retry","recovery","request"] as const)("LEARN-DISPATCH-2-A：终态失败后释放%s，不再付费且在途结果保存",async phase=>{
-    const segments=Array.from({length:18},(_,i)=>({startSec:i*60,endSec:(i+1)*60}));
+    const segments=Array.from({length:20},(_,i)=>({startSec:i*60,endSec:(i+1)*60}));
     const hold=deferred(),fail=deferred(),inflight=deferred();let waiting=false;
+    const controller = new AbortController();
     const hooks:any={invoke:async(first:number)=>{
       if(first===0){await fail.promise;throw new Error("终态证据错误");}
       if(first===300)await inflight.promise;
@@ -3462,9 +3510,17 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     if(phase==="recovery"||phase==="request")hooks[phase]=async(first:number)=>{if(first===600){waiting=true;await hold.promise;}};
     const harness=realStructuringHarness(hooks);
     const deps=makeRunnerDeps({postVertex:makeSuccessfulEpisodePostVertex(segments) as never,invokeGlmStructuring:harness.invoke as never,
-      readStructuredBatchCache:vi.fn(async(input:any)=>{if(phase==="cache"&&input.segmentIndexes[0]===10&&input.segmentIndexes.length===4){waiting=true;await hold.promise;}return null;}) as never,
-      waitForRetry:vi.fn(async ms=>{if(ms===30_000){waiting=true;await hold.promise;}})});
-    const observed=runManhuaNativeDeepReadBatch({episodes:[{episodeIndex:1,resolveNodes:async()=>[],segments,sourceDurationSec:1080,cacheSourceDigest:"a".repeat(64)}],segmentCacheSeriesKey:"terminal_"+phase},deps).catch(error=>error);
+      readStructuredBatchCache:vi.fn(async(input:any)=>{if(phase==="cache"&&input.segmentIndexes[0]===10&&input.segmentIndexes.length===5){waiting=true;await hold.promise;}return null;}) as never,
+      waitForRetry:vi.fn(async ms=>{if(ms===18_000){waiting=true;await hold.promise;}})});
+    const observed=runManhuaNativeDeepReadBatch({episodes:[{episodeIndex:1,resolveNodes:async()=>[],segments,sourceDurationSec:1200,cacheSourceDigest:"a".repeat(64)}],segmentCacheSeriesKey:"terminal_"+phase,abortSignal:controller.signal},deps).catch(error=>error);
+    if (phase === "cache") {
+      await vi.waitFor(() => expect(waiting).toBe(true));
+      expect(harness.calls).toHaveLength(0);
+      controller.abort(new Error("缓存预检期间终止")); hold.resolve();
+      expect(await observed).toBeInstanceOf(Error);
+      expect(harness.calls).toHaveLength(0);
+      return;
+    }
     await vi.waitFor(()=>{expect(waiting).toBe(true);expect(harness.calls.some(row=>row.first===300)).toBe(true);});
     fail.resolve();await new Promise(resolve=>setTimeout(resolve,20));
     hold.resolve();inflight.resolve();expect(await observed).toBeInstanceOf(Error);
@@ -3517,7 +3573,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(harness.calls).toHaveLength(2);
   });
 
-  it("整形批次遇到503时每隔30秒补发三次，第四发成功后继续派发", async () => {
+  it("整形批次遇到503时每隔18秒补发三次，第四发成功后继续派发", async () => {
     const segments = Array.from({ length: 4 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3553,7 +3609,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
   });
 
   it("整形批次初发加三次补发仍为503才停派，并等待另一条已在途调用收口", async () => {
-    const segments = Array.from({ length: 26 }, (_, index) => ({
+    const segments = Array.from({ length: 18 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
     }));
@@ -3573,22 +3629,22 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     });
 
     await expect(runManhuaNativeDeepReadBatch({
-      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 1560,
+      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 1080,
         cacheSourceDigest: "6".repeat(64) }],
       segmentCacheSeriesKey: "stop_after_three_dispatch_retries",
     }, deps)).rejects.toThrow("HTTP 503");
 
     expect(started.filter((start) => start === 0)).toHaveLength(4);
-    expect(started.filter((start) => start === 300)).toHaveLength(1);
-    expect(started).not.toContain(600);
+    expect(started.filter((start) => start === 540)).toHaveLength(1);
+    expect(started.every(start => start === 0 || start === 540)).toBe(true);
     expect(deps.waitForRetry).toHaveBeenCalledTimes(3);
-    // 整形失败只停后续整形派发；此前 Gemini 已通过的 26 片段缓存必须全部保留，供下次断点续学。
-    expect(deps.writeSegmentCache).toHaveBeenCalledTimes(26);
+    // 整形失败只停后续整形派发；此前 Gemini 已通过的 18 片段缓存必须全部保留，供下次断点续学。
+    expect(deps.writeSegmentCache).toHaveBeenCalledTimes(18);
     expect(vi.mocked(deps.writeSegmentCache).mock.calls.map(([entry]) => entry.segmentIndex))
-      .toEqual(Array.from({ length: 26 }, (_, index) => index));
+      .toEqual(Array.from({ length: 18 }, (_, index) => index));
   });
 
-  it("整形缓存读取503也在同一批次边界补发三次，终态失败后不让另一条路领取新批次", async () => {
+  it("历史整形缓存读取503先退避三次，未确认付费结果前不派发新请求", async () => {
     const segments = Array.from({ length: 26 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3620,7 +3676,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
 
     expect(firstBatchCacheReads).toBe(4);
     expect(deps.waitForRetry).toHaveBeenCalledTimes(3);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(invokeGlmStructuring).not.toHaveBeenCalled();
     // 旧尾批只读探测允许；终态失败后不得领取第三个新批次。
     expect(readStructuredBatchCache.mock.calls.some(([input]) => input.segmentIndexes[0] === 10 && input.segmentIndexes.length === 5)).toBe(false);
     expect(deps.writeSegmentCache).toHaveBeenCalledTimes(26);
@@ -3766,7 +3822,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       onModelReceipt: (receipt) => { receipts.push(receipt); },
     }, deps);
 
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(1);
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(3);
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(0);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(0);
     expect(receipts.filter((row) => row.route === NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE)).toEqual([]);
@@ -3830,13 +3886,75 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       onModelReceipt: (receipt) => { receipts.push(receipt); },
     }, deps);
 
-    expect(readStructuredBatchCache.mock.calls.every(([input]) => [5, 1].includes(input.segmentIndexes.length))).toBe(true);
+    expect(readStructuredBatchCache.mock.calls.some(([input]) => input.segmentIndexes.length === 5)).toBe(true);
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
     expect(readRawSegmentsFromGlmPrompt(invokeGlmStructuring.mock.calls[0]![0].user)).toHaveLength(1);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
     expect(vi.mocked(deps.writeStructuredBatchCache).mock.calls[0]![0].segmentIndexes).toEqual([5]);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(72);
     expect(result.episodes[0]!.result.segmentCount).toBe(6);
+  });
+
+  it.each([false, true])("十二片完整缓存优先且零重复付费（新缓存=%s）", async currentComplete => {
+    const segments = Array.from({ length: 12 }, (_, index) => ({
+      startSec: index * 60,
+      endSec: (index + 1) * 60,
+    }));
+    const readStructuredBatchCache = vi.fn(async (input: {
+      segmentIndexes: readonly number[];
+      rawSegments: ReadonlyArray<Record<string, unknown>>;
+    }) => (currentComplete ? [6, 1].includes(input.segmentIndexes.length) : [5, 1].includes(input.segmentIndexes.length)) ? {
+      schemaVersion: 1 as const,
+      frozenContractSha256: "f".repeat(64),
+      seriesKey: "legacy_answer_envelope",
+      sourceDigest: "6".repeat(64),
+      episodeIndex: 1,
+      segmentIndexes: [...input.segmentIndexes],
+      inputDigest: "a".repeat(64),
+      raw: {
+        answer: JSON.stringify({ ...deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments), ...validGeneratedAnalysisFixture }),
+      },
+      gateway: "openrouter" as const,
+      model: "z-ai/glm-5.3",
+      inputTokens: 1,
+      outputTokens: 1,
+      reasoningTokens: 1,
+      costUsd: 0.01,
+      savedAtIso: "2026-09-01T00:00:00.000Z",
+      source: "formal" as const,
+    } : null);
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => ({
+      ...(await base(prompt)),
+      recoveredPaidEvidence: true,
+      inputTokens: 52_412,
+      outputTokens: 55_231,
+      reasoningTokens: 6_043,
+      costUsd: 0.31632024,
+    }));
+    const receipts: Array<{ route: string; status: string }> = [];
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+      readStructuredBatchCache: readStructuredBatchCache as never,
+    });
+
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{
+        episodeIndex: 1,
+        resolveNodes: async () => [],
+        segments,
+        sourceDurationSec: 720,
+        cacheSourceDigest: "6".repeat(64),
+      }],
+      segmentCacheSeriesKey: "legacy_answer_envelope",
+      onModelReceipt: (receipt) => { receipts.push(receipt); },
+    }, deps);
+
+    expect(invokeGlmStructuring).not.toHaveBeenCalled();
+    expect(deps.writeStructuredBatchCache).not.toHaveBeenCalled();
+    expect(result.episodes[0]!.result.beatGrid).toHaveLength(144);
+    expect(result.episodes[0]!.result.segmentCount).toBe(12);
   });
 
   it("九片5+4的两路GLM都返回answer外壳时仍生成完整整集卡", async () => {
@@ -4087,7 +4205,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     }, deps);
 
     // 9 片＝[0..4]+[5..8]；第一批命中缓存，只补第二批。
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(3);
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
     expect(invokeGlmStructuring.mock.calls.map(([prompt]) =>
       readRawSegmentsFromGlmPrompt((prompt as { user: string }).user).length)).toEqual([4]);
@@ -4984,6 +5102,32 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       expect(deps.postVertex).toHaveBeenCalledTimes(5);expect(generation).toBeGreaterThan(1);
       expect(result.episodes[0]!.result.completedSegmentIndexes).toEqual([0,1,2,3,4,5]);
     }finally{spies.forEach(spy=>spy.mockRestore());}
+  });
+
+  it("待审同步先恢复旧缓存，不等待缺片备料或截图", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    const gate = deferred(), snapshots = vi.fn(), order: string[] = [];
+    const defaults = makeRunnerDeps();
+    const deps = makeRunnerDeps({
+      readSegmentCache: vi.fn(async input => input.segmentIndex === 0 ? { entry, generation: "1" } : null) as never,
+      prepareVideos: vi.fn(async (...args: Parameters<typeof defaults.prepareVideos>) => {
+        await gate.promise; order.push("prepared"); return defaults.prepareVideos(...args);
+      }),
+      postVertex: vi.fn(async () => geminiResponse(makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 120 }))) as never,
+    });
+    const task = runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+      onSegmentSnapshotCommitted: async snapshot => { order.push("snapshot"); snapshots(snapshot); },
+      onSegmentRead: async () => { order.push("frames"); },
+    }, deps);
+    try {
+      await vi.waitFor(() => expect(snapshots).toHaveBeenCalled());
+      expect(snapshots.mock.calls[0]![0].completedSegmentIndexes).toEqual([0]);
+      expect(order[0]).toBe("snapshot"); expect(order).not.toContain("prepared");
+      expect(deps.postVertex).not.toHaveBeenCalled();
+    } finally { gate.resolve(); }
+    await task;
+    expect(deps.postVertex).toHaveBeenCalledTimes(1);
   });
 
   it("乱序保存：首片未返回，后片先缓存并保存部分提案，不等待截图或片号", async () => {

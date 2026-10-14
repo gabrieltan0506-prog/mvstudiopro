@@ -1,3 +1,4 @@
+import { defaultPreparedMediaCacheDeps, readPreparedMedia, writePreparedMedia, type PreparedMediaCacheDeps, type PreparedMediaVideo } from "./manhuaNativePreparedMediaCache.js";
 import { TEMPLATE_METHOD_BRIEF_INSTRUCTION, mergeTemplateMethodBriefs } from "../../shared/manhuaTemplateMethodBrief";
 import { buildManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
 
@@ -703,26 +704,14 @@ export const NATIVE_DEEP_READ_REQUIRED_RETRY_CODES: ReadonlySet<string> = new Se
   "audio_timeline_invalid",
 ]);
 
-/**
- * 门禁未过的降温重试间隔（进契约 SHA，非用户明令不得改）。
- * 0920 用户令：「**重試改成間隔三十秒，不要六十秒了**」→ 60 秒改 30 秒。
- */
-export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 30_000;
-/**
- * 0920 换档前的降温重试间隔（60 秒）。**只进历史身份计算，永不用于真实等待**。
- * 这个值进段缓存指纹（实测：60→30 两个指纹都变），不复原＝已买断分片全部失配重买。
- */
+/** 1015 用户指定：门禁、429/503 与整形传输失败统一等待18秒。 */
+export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 18_000;
+/** 仅用于历史缓存与冻结身份，不参与实际等待，防止已付费分片失配。 */
+const NATIVE_DEEP_READ_CACHE_RETRY_IDENTITY_MS = 30_000;
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920 = 60_000;
-/**
- * 503/429/RESOURCE_EXHAUSTED（视频服务器繁忙）专用退避：不降温、原档补发。
- * 0916 用户令：**隔 30 秒重试 4 次**；四次仍失败才停止，本次已终态分片留给下次续学。
- * 单开一条常量而不改 RETRY_INTERVAL_MS，是为了不动契约 SHA 与段缓存指纹——
- * 那条一改，已买断的分片缓存会全部失配、重复付费。
- */
-export const NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS = 30_000;
+export const NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS = 18_000;
 export const NATIVE_DEEP_READ_RESOURCE_RETRY_MAX = 4;
-/** 整形批次遇到网络抖动、429/5xx 或服务端暂时繁忙时，初次失败后再补发 3 次。 */
-export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_INTERVAL_MS = 30_000;
+export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_INTERVAL_MS = 18_000;
 /** 1008 用户指定：首发之外的三次传输失败补发温度；内容缺失仍从原稿恢复。 */
 export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_TEMPERATURES = Object.freeze([0.7, 0.65, 0.6] as const);
 export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX = NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_TEMPERATURES.length;
@@ -845,6 +834,10 @@ export type NativeDeepReadBatchRunEpisode = {
   hintZh?: string;
   /** 启用段缓存时必填：稳定来源标识的 sha256，不得使用短期 CDN/签名 URL。 */
   cacheSourceDigest?: string;
+  /** 服务端传入，用于独立于读片JSON的媒体恢复索引。 */
+  preparedMediaSeriesKey?: string;
+  /** 与本次segments一一对应，缩小补段范围时同步重映射。 */
+  preparedMediaLegacySourceNames?: readonly string[];
 };
 
 export type NativeDeepReadBatchRunResult = {
@@ -1493,11 +1486,29 @@ export function nativeDeepReadStructuringGatewayOrder(
   return odd ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"];
 }
 
-/** 每十片为一组双路负载，不足十片均分；每路最多五片，保留原片顺序。 */
+/** 18片以内均分双路；更多片数均分到两路各两批，先小批后大批。 */
 export function nativeDeepReadStructuringGroups(segmentCount: number): number[][] {
   if (!Number.isInteger(segmentCount) || segmentCount <= 0) {
     throw new Error(`整形分片数必须是正整数，收到 ${segmentCount}`);
   }
+  if (segmentCount <= 18) {
+    const firstSize = Math.ceil(segmentCount / 2);
+    return [Array.from({ length: firstSize }, (_, i) => i),
+      ...(segmentCount > firstSize ? [Array.from({ length: segmentCount - firstSize }, (_, i) => firstSize + i)] : [])];
+  }
+  const firstLane = Math.ceil(segmentCount / 2);
+  const sizes = [Math.floor(firstLane / 2), Math.ceil(firstLane / 2),
+    Math.floor((segmentCount - firstLane) / 2), Math.ceil((segmentCount - firstLane) / 2)];
+  let start = 0;
+  return sizes.map(size => {
+    const group = Array.from({ length: size }, (_, i) => start + i);
+    start += size;
+    return group;
+  });
+}
+
+/** 旧十片分组仅用于恢复已付费结果。 */
+function previousNativeDeepReadStructuringGroups(segmentCount: number): number[][] {
   const groups: number[][] = [];
   for (let start = 0; start < segmentCount; start += 10) {
     const remaining = Math.min(10, segmentCount - start);
@@ -1647,8 +1658,8 @@ export function nativeDeepReadFrozenContractSha256(): string {
     models: MANHUA_NATIVE_LEGACY_READ_MODEL_OPTIONS,
     generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
     retryTemperatures: NATIVE_DEEP_READ_RETRY_TEMPERATURES,
-    retryIntervalMs: NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
-    resourceRetry: { intervalMs: NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS, maximum: NATIVE_DEEP_READ_RESOURCE_RETRY_MAX },
+    retryIntervalMs: NATIVE_DEEP_READ_CACHE_RETRY_IDENTITY_MS,
+    resourceRetry: { intervalMs: NATIVE_DEEP_READ_CACHE_RETRY_IDENTITY_MS, maximum: NATIVE_DEEP_READ_RESOURCE_RETRY_MAX },
     requestTimeoutMs: NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS,
     acceptanceContract: {
       coverageMinimum: NATIVE_DEEP_READ_SEGMENT_COVERAGE_RETRY_RATIO,
@@ -1983,7 +1994,7 @@ export const NATIVE_DEEP_READ_MEDIA_UPLOAD_MAX_CONCURRENCY = 4;
 /**
  * 单集模型调用并发上限。0901 拍板 5 片；0904 用户令降到 4（压 503）；
  * **0920 用户令改回 5**：原话「我讀片都是五片並發的」「把四片並發改成五片」。
- * 撞 503 时不靠降并发兜，靠既有资源退避（30 秒 × 4 次、不降温）。
+ * 撞 503 时不靠降并发兜，靠既有资源退避（18 秒 × 4 次、不降温）。
  * 调用方可调低，不能抬高生产上限。
  */
 export const NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY = 5;
@@ -2106,19 +2117,10 @@ export function buildCutSegmentArgs(
   });
 }
 
-export type PreparedNativeVideo = {
-  /** GCS 对象地址（gs://）；Vertex 主线直读，EvoLink 兜底再签 https。 */
-  gsUri: string;
-  startSec: number;
-  endSec: number;
-  temporaryGcs: { bucket: string; objectName: string };
-  /** 上传分片的实际字节数。 */
-  bytes: number;
-  /** 该分片通过本地时长与音轨验收后的事实。 */
-  hasAudio: boolean;
-};
+export type PreparedNativeVideo = PreparedMediaVideo;
 
 export type NativeDeepReadMediaPreparationDeps = {
+  preparedMediaCache?: PreparedMediaCacheDeps;
   resolveLocalUpload?: (input: { userId: string; uploadId: string }) => Promise<{
     sourceRef: string; sha256: string; localPath: string; bytes: number; durationSec: number;
   }>;
@@ -2140,6 +2142,7 @@ export type NativeDeepReadMediaPreparationDeps = {
 };
 
 export const defaultMediaPreparationDeps: NativeDeepReadMediaPreparationDeps = {
+  preparedMediaCache: defaultPreparedMediaCacheDeps,
   resolveLocalUpload: async (input) => {
     const { resolveOwnedManhuaLocalVideoUpload } = await import("./manhuaLocalVideoUploadService.js");
     return resolveOwnedManhuaLocalVideoUpload(input);
@@ -2229,10 +2232,41 @@ async function probeLocalSegmentMedia(
 }
 
 /**
- * 每集统一走 切段 → GCS 上传 → 用后删；Gemini 拉不了抖音 CDN 直链，
- * 不再保留「整集直读 CDN」路径。上传后立即删本地段文件。
+ * 先核验旧媒体索引，只为缺失分片下载、切片与上传。
+ * 上传后清理本地文件；已持久化恢复索引的云端片保留供续读与截图。
  */
 export async function prepareEpisodeVideos(
+  episode: NativeDeepReadBatchRunEpisode,
+  abortSignal?: AbortSignal,
+  deps: NativeDeepReadMediaPreparationDeps = defaultMediaPreparationDeps,
+  limits?: Parameters<typeof prepareEpisodeVideosUncached>[3],
+): Promise<PreparedNativeVideo[]> {
+  if (!episode.preparedMediaSeriesKey) return prepareEpisodeVideosUncached(episode, abortSignal, deps, limits);
+  if (!episode.cacheSourceDigest || !deps.preparedMediaCache) throw new Error("视频分片恢复存储或来源摘要缺失");
+  const segments = validateNativeDeepReadSegments(episode.segments);
+  const rows = await Promise.all(segments.map((span, index) => readPreparedMedia({ seriesKey: episode.preparedMediaSeriesKey!,
+    sourceDigest: episode.cacheSourceDigest!, episodeIndex: episode.episodeIndex, sourceDurationSec: episode.sourceDurationSec,
+    startSec: span.startSec, endSec: span.endSec, legacyFrameSourceName: episode.preparedMediaLegacySourceNames?.[index] }, deps.preparedMediaCache, abortSignal)));
+  const restored = rows.flatMap((video, segmentIndex) => video ? [{ segmentIndex, video }] : []);
+  if (restored.length) {
+    await limits?.onPreparedGroup?.(restored);
+    try { await limits?.onSourceFetchProgress?.(`第${episode.episodeIndex}集 · 已核验并复用 ${restored.length}/${segments.length} 个旧视频分片`); } catch { /* 进度旁路 */ }
+  }
+  const missingIndexes = rows.flatMap((video, index) => video ? [] : [index]);
+  if (missingIndexes.length) {
+    const fresh = await prepareEpisodeVideosUncached({ ...episode, segments: missingIndexes.map(index => segments[index]!),
+      preparedMediaLegacySourceNames: episode.preparedMediaLegacySourceNames && missingIndexes.map(index => episode.preparedMediaLegacySourceNames![index]!) }, abortSignal, deps, {
+      ...limits, onPreparedGroup: async group => {
+        await limits?.onPreparedGroup?.(group.map(row => ({ segmentIndex: missingIndexes[row.segmentIndex]!, video: row.video })));
+      },
+    });
+    if (fresh.length !== missingIndexes.length) throw new Error("恢复备料数量与缺失分片不一致");
+    fresh.forEach((video, index) => { rows[missingIndexes[index]!] = video; });
+  }
+  return rows as PreparedNativeVideo[];
+}
+
+async function prepareEpisodeVideosUncached(
   episode: NativeDeepReadBatchRunEpisode,
   abortSignal?: AbortSignal,
   deps: NativeDeepReadMediaPreparationDeps = defaultMediaPreparationDeps,
@@ -2566,6 +2600,13 @@ export async function prepareEpisodeVideos(
         bytes: row.bytes,
         hasAudio: row.hasAudio,
       };
+      if (episode.preparedMediaSeriesKey) {
+        if (!episode.cacheSourceDigest || !deps.preparedMediaCache) throw new Error("视频分片恢复存储缺失");
+        prepared[index] = await writePreparedMedia({ seriesKey: episode.preparedMediaSeriesKey,
+          sourceDigest: episode.cacheSourceDigest, episodeIndex: episode.episodeIndex,
+          sourceDurationSec: episode.sourceDurationSec, startSec: row.startSec, endSec: row.endSec },
+          prepared[index]!, deps.preparedMediaCache, abortSignal);
+      }
       uploadDone += 1;
       await reportMedia(
         `第${episode.episodeIndex}集 · 上传 ${uploadDone}/${segments.length} 完成`
@@ -2644,7 +2685,7 @@ export async function prepareEpisodeVideos(
     return prepared as PreparedNativeVideo[];
   } catch (error) {
     const cleanupResults = await Promise.allSettled(
-      prepared.flatMap((row) => row ? [deps.remove(row.temporaryGcs)] : []),
+      prepared.flatMap((row) => row && !row.reusable ? [deps.remove(row.temporaryGcs)] : []),
     );
     if (cleanupResults.some((row) => row.status === "rejected")) {
       console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集备料失败后的临时对象清理待核对`);
@@ -4772,7 +4813,7 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
     finalRetryGenerationConfig: fingerprintConfig(NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG),
     retryIntervalMs: input.legacyBefore0920 === true
       ? NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920
-      : NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
+      : NATIVE_DEEP_READ_CACHE_RETRY_IDENTITY_MS,
     sourceDigest: input.sourceDigest,
     requestedFps: fps,
     prompt,
@@ -5259,8 +5300,8 @@ function routeLabelZh(route: NativeDeepReadVisualRoute, readModel: ManhuaNativeD
 
 /**
  * 一次请求读取一集（逐段调用），回传后按段合并成集卡。
- * 门禁失败按五发档位重读，间隔 30 秒（RETRY_INTERVAL_MS）；Argon 同样发送对应温度。
- * 503/429/RESOURCE_EXHAUSTED 走另一条线：隔 30 秒（RESOURCE_RETRY_INTERVAL_MS）
+ * 门禁失败按五发档位重读，间隔 18 秒（RETRY_INTERVAL_MS）；Argon 同样发送对应温度。
+ * 503/429/RESOURCE_EXHAUSTED 走另一条线：隔 18 秒（RESOURCE_RETRY_INTERVAL_MS）
  * 保持当前温度重试，最多 4 次（RESOURCE_RETRY_MAX），不消耗降档次数。
  * 用户中止、证据保存失败和其他传输错误立即终止。
  */
@@ -5500,6 +5541,10 @@ async function executeNativeDeepReadBatch(
           ) {
             throw new Error(`第${episode.episodeIndex}集第${segmentIndex + 1}段备料秒位错配，已停止`);
           }
+          const cachedAudio = cachedSegments.values().next().value?.hasAudio;
+          if (cachedAudio !== undefined && cachedAudio !== video.hasAudio) {
+            throw new Error(`第${episode.episodeIndex}集新备料与已保存分片的音轨事实不一致，已停止且不覆盖旧卡`);
+          }
           videosBySegment.set(segmentIndex, video);
           allVideos.push(video);
         }
@@ -5519,7 +5564,12 @@ async function executeNativeDeepReadBatch(
         }
         const selectedSegments = indexes.map((index) => episode.segments[index]!);
         return deps.prepareVideos(
-          { ...episode, segments: selectedSegments },
+          { ...episode, segments: selectedSegments, preparedMediaSeriesKey: params.segmentCacheSeriesKey,
+            preparedMediaLegacySourceNames: params.segmentCacheSeriesKey && episode.cacheSourceDigest
+              ? indexes.map(segmentIndex => `manhua-template-learn/native-frame-sources/${crypto.createHash("sha256").update(JSON.stringify({
+                seriesKey: params.segmentCacheSeriesKey, episodeIndex: episode.episodeIndex,
+                sourceDigest: episode.cacheSourceDigest, segmentIndex, span: episode.segments[segmentIndex],
+              })).digest("hex")}.json`) : undefined },
           params.abortSignal,
           undefined,
           {
@@ -5574,22 +5624,9 @@ async function executeNativeDeepReadBatch(
       for (const index of pendingIndexes) readyOf(index);
       const preparePromise = prepareSegmentIndexes(pendingIndexes);
       preparePromise.catch(() => undefined);
-      await firstGroupReady;
+      // 已保存内容先同步待审卡，不再等待缺片下载/切片；新媒体仍逐片等待 ready 并核对音轨。
+      if (cachedSegments.size === 0) await firstGroupReady;
 
-      // 新备段与历史缓存的音轨事实不一致时，缓存不能继续参与本次装配；只补备原缓存段。
-      if (videosBySegment.size > 0 && cachedSegments.size > 0) {
-        const preparedHasAudio = Array.from(videosBySegment.values())[0]!.hasAudio === true;
-        const cacheHasAudio = Array.from(cachedSegments.values())[0]!.hasAudio;
-        if (preparedHasAudio !== cacheHasAudio) {
-          // 纠偏路径（罕见）：整集重备，这里等备完再往下，不做先传先读
-          await preparePromise.catch(() => undefined);
-          cachedSegments.clear();
-          videosBySegment.clear();
-          allVideos.length = 0;
-          segmentReady.clear();
-          await prepareSegmentIndexes(episode.segments.map((_, index) => index));
-        }
-      }
       const resolvedAudioKinds = new Set<boolean>([
         ...Array.from(videosBySegment.values()).map((video) => video.hasAudio === true),
         ...Array.from(cachedSegments.values()).map((entry) => entry.hasAudio),
@@ -5791,7 +5828,7 @@ async function executeNativeDeepReadBatch(
         });
         await proposalCommitChain;
         // 部分提案不携带截图；先保存已通过的内容，再完成本片截图取证。
-        await params.onSegmentRead?.({ episodeIndex: episode.episodeIndex, segmentIndex,
+        if (!restoringCachedSegments) await params.onSegmentRead?.({ episodeIndex: episode.episodeIndex, segmentIndex,
           raw: entry.raw, sourceDigest: entry.sourceDigest,
           preparedVideos: videosBySegment.has(segmentIndex) ? [videosBySegment.get(segmentIndex)!] : [],
         });
@@ -6747,6 +6784,12 @@ async function executeNativeDeepReadBatch(
           && readCurrentQwenAttemptSelection(committedEntries.get(index)!.raw)?.selectedPassedGate !== false)) {
         await params.onSegmentSnapshotCommitted(buildCommittedSnapshot());
       }
+      // 恢复卡写入后再补截图；缺图不能阻挡已保存内容的可见检查点。
+      for (const [segmentIndex, entry] of Array.from(committedEntries.entries())) {
+        await params.onSegmentRead?.({ episodeIndex: episode.episodeIndex, segmentIndex,
+          raw: entry.raw, sourceDigest: entry.sourceDigest,
+          preparedVideos: videosBySegment.has(segmentIndex) ? [videosBySegment.get(segmentIndex)!] : [] });
+      }
       const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
       const scheduledSegmentIndexes = selectedSegmentIndexes ?? episode.segments.map((_, index) => index);
       let nextSegmentIndex = 0;
@@ -7319,7 +7362,7 @@ async function executeNativeDeepReadBatch(
             if (!isTransientStructuringDispatchError(error)
               || dispatchRetry >= NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX) throw error;
             const reasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 200);
-            console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}瞬时失败，30秒后补发第 ${dispatchRetry + 1}/${NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX} 次：${reasonZh}`);
+            console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}瞬时失败，18秒后补发第 ${dispatchRetry + 1}/${NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX} 次：${reasonZh}`);
             await emitVisualModelReceipt({
               callId: `${episodeRequestId}:structuring-dispatch-retry:${input.segmentIndexes.join("-")}:${dispatchRetry + 1}`,
               model: `${input.labelZh}瞬时失败，等待补发第 ${dispatchRetry + 1}/${NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX} 次`,
@@ -7434,30 +7477,39 @@ async function executeNativeDeepReadBatch(
           source: "formal",
         });
       };
+      let actualStructuringBatchSize = 0;
       const structuredEpisodeRaw = async (): Promise<Record<string, unknown>> => {
-        // 1007 用户指定：不足十片双路均分，每路最多五片；超过十片的尾组同样均分。
-        // 1009 用户确认：20片内最多四批，两条路由各承接两批，同路第二批错开4秒。
-        // 超过20片仍沿两worker动态领取；历史付费批次分组保留。
+        // 1015 用户指定：18片以内均分双路，奇数首路多一片，仅两次首发；旧付费分组继续复用。
+        // 超过18片两路各两批，同路第二批错开4秒；历史付费批次分组保留。
         const allSegmentIndexes = episode.segments.map((_, index) => index);
         let groups = nativeDeepReadStructuringGroups(segmentCount);
-        const legacyGroups = legacyNativeDeepReadStructuringGroups(segmentCount);
+        const legacyLayouts = [previousNativeDeepReadStructuringGroups(segmentCount), legacyNativeDeepReadStructuringGroups(segmentCount)];
         const recoveredLegacy = new Map<string, Record<string, unknown>>();
         if (canCacheStructuring) {
-          const currentKeys = new Set(groups.map((indexes) => indexes.join("-")));
-          for (const segmentIndexes of legacyGroups) {
-            const key = segmentIndexes.join("-");
-            if (currentKeys.has(key)) continue;
-            const rows = segmentIndexes.map((index) => glmStructuringInputs[index]!);
-            const labelZh = `历史整形批次 ${segmentIndexes.map((index) => index + 1).join("、")}`;
-            const cached = await withStructuringDispatchRetry(
-              { segmentIndexes, videoCount: segmentIndexes.length, labelZh },
-              () => readCachedStructuring(segmentIndexes, rows, labelZh),
-            );
-            if (cached) recoveredLegacy.set(key, cached);
+          const checked = new Set<string>();
+          let bestCovered = 0;
+          // 先看当前布局；旧布局只有覆盖更多已付费分片时才替换，完整命中即停止探查。
+          for (const layout of [groups, ...legacyLayouts]) {
+            let covered = 0;
+            for (const segmentIndexes of layout) {
+              const key = segmentIndexes.join("-");
+              if (!checked.has(key)) {
+                const rows = segmentIndexes.map((index) => glmStructuringInputs[index]!);
+                const labelZh = `复用整形批次 ${segmentIndexes.map((index) => index + 1).join("、")}`;
+                const cached = await withStructuringDispatchRetry(
+                  { segmentIndexes, videoCount: segmentIndexes.length, labelZh },
+                  () => readCachedStructuring(segmentIndexes, rows, labelZh),
+                );
+                checked.add(key);
+                if (cached) recoveredLegacy.set(key, cached);
+              }
+              if (recoveredLegacy.has(key)) covered += segmentIndexes.length;
+            }
+            if (covered > bestCovered) { groups = layout; bestCovered = covered; }
+            if (covered === segmentCount) break;
           }
-          // 已有旧批次付费结果时沿旧分组续跑，不能为均分丢弃成果并重买同一片。
-          if (recoveredLegacy.size > 0) groups = legacyGroups;
         }
+        actualStructuringBatchSize = Math.max(...groups.map(group => group.length));
         if (groups.length === 1) {
           const batchInput: Parameters<typeof structureBatchWithLockRetry>[0] = {
             prompt: buildNativeDeepReadGlmStructuringPrompt({
@@ -7490,7 +7542,7 @@ async function executeNativeDeepReadBatch(
         }
 
         const groupRows: Record<string, unknown>[] = new Array(groups.length);
-        const fourBatchDispatch = segmentCount <= 20 && groups.length > 2
+        const fourBatchDispatch = (groups.length === 4 || (segmentCount <= 20 && groups.length > 2))
           && structuringGatewayPolicy === "structuring_chain";
         const laneCount = Math.min(fourBatchDispatch ? 4 : 2, groups.length);
         const routeFirstLaunch = Array.from({ length: 2 }, () => {
@@ -7707,7 +7759,7 @@ async function executeNativeDeepReadBatch(
           sourceDurationSec: episode.sourceDurationSec,
           batchRequestId: episodeRequestId,
           inputShotCount: preStructuringShotCount,
-          structuringBatchSize: 4,
+          structuringBatchSize: actualStructuringBatchSize,
           glmEvidenceCallIds,
           structuringFallbackCodes: structuringFallbackAdvisories.map((row) => row.code),
         };
@@ -7850,7 +7902,7 @@ async function executeNativeDeepReadBatch(
     const cleanupTargets = params.preservePreparedVideos
       ? []
       : preparedByEpisode.filter(row => !params.beforeStructuring || frameEvidenceComplete.has(row.episode.episodeIndex))
-        .flatMap((row) => row.videos);
+        .flatMap((row) => row.videos).filter(video => !video.reusable);
     const cleanupResults = await Promise.allSettled(
       cleanupTargets.map((video) => deps.remove(video.temporaryGcs)),
     );
