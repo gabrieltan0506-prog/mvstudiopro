@@ -1498,11 +1498,29 @@ export function nativeDeepReadStructuringGatewayOrder(
   return odd ? ["evolink_glm", "openrouter"] : ["openrouter", "evolink_glm"];
 }
 
-/** 每十片为一组双路负载，不足十片均分；每路最多五片，保留原片顺序。 */
+/** 18片以内均分双路；更多片数均分到两路各两批，先小批后大批。 */
 export function nativeDeepReadStructuringGroups(segmentCount: number): number[][] {
   if (!Number.isInteger(segmentCount) || segmentCount <= 0) {
     throw new Error(`整形分片数必须是正整数，收到 ${segmentCount}`);
   }
+  if (segmentCount <= 18) {
+    const firstSize = Math.ceil(segmentCount / 2);
+    return [Array.from({ length: firstSize }, (_, i) => i),
+      ...(segmentCount > firstSize ? [Array.from({ length: segmentCount - firstSize }, (_, i) => firstSize + i)] : [])];
+  }
+  const firstLane = Math.ceil(segmentCount / 2);
+  const sizes = [Math.floor(firstLane / 2), Math.ceil(firstLane / 2),
+    Math.floor((segmentCount - firstLane) / 2), Math.ceil((segmentCount - firstLane) / 2)];
+  let start = 0;
+  return sizes.map(size => {
+    const group = Array.from({ length: size }, (_, i) => start + i);
+    start += size;
+    return group;
+  });
+}
+
+/** 旧十片分组仅用于恢复已付费结果。 */
+function previousNativeDeepReadStructuringGroups(segmentCount: number): number[][] {
   const groups: number[][] = [];
   for (let start = 0; start < segmentCount; start += 10) {
     const remaining = Math.min(10, segmentCount - start);
@@ -7471,30 +7489,35 @@ async function executeNativeDeepReadBatch(
           source: "formal",
         });
       };
+      let actualStructuringBatchSize = 0;
       const structuredEpisodeRaw = async (): Promise<Record<string, unknown>> => {
-        // 1007 用户指定：不足十片双路均分，每路最多五片；超过十片的尾组同样均分。
-        // 1009 用户确认：20片内最多四批，两条路由各承接两批，同路第二批错开4秒。
-        // 超过20片仍沿两worker动态领取；历史付费批次分组保留。
+        // 1015 用户指定：18片以内均分双路，奇数首路多一片，仅两次首发；旧付费分组继续复用。
+        // 超过18片两路各两批，同路第二批错开4秒；历史付费批次分组保留。
         const allSegmentIndexes = episode.segments.map((_, index) => index);
         let groups = nativeDeepReadStructuringGroups(segmentCount);
-        const legacyGroups = legacyNativeDeepReadStructuringGroups(segmentCount);
+        const legacyLayouts = [previousNativeDeepReadStructuringGroups(segmentCount), legacyNativeDeepReadStructuringGroups(segmentCount)];
+        let legacyGroups = legacyLayouts[0]!;
         const recoveredLegacy = new Map<string, Record<string, unknown>>();
         if (canCacheStructuring) {
           const currentKeys = new Set(groups.map((indexes) => indexes.join("-")));
-          for (const segmentIndexes of legacyGroups) {
-            const key = segmentIndexes.join("-");
-            if (currentKeys.has(key)) continue;
-            const rows = segmentIndexes.map((index) => glmStructuringInputs[index]!);
-            const labelZh = `历史整形批次 ${segmentIndexes.map((index) => index + 1).join("、")}`;
-            const cached = await withStructuringDispatchRetry(
-              { segmentIndexes, videoCount: segmentIndexes.length, labelZh },
-              () => readCachedStructuring(segmentIndexes, rows, labelZh),
-            );
-            if (cached) recoveredLegacy.set(key, cached);
+          for (const layout of legacyLayouts) {
+            for (const segmentIndexes of layout) {
+              const key = segmentIndexes.join("-");
+              if (currentKeys.has(key)) continue;
+              const rows = segmentIndexes.map((index) => glmStructuringInputs[index]!);
+              const labelZh = `历史整形批次 ${segmentIndexes.map((index) => index + 1).join("、")}`;
+              const cached = await withStructuringDispatchRetry(
+                { segmentIndexes, videoCount: segmentIndexes.length, labelZh },
+                () => readCachedStructuring(segmentIndexes, rows, labelZh),
+              );
+              if (cached) recoveredLegacy.set(key, cached);
+            }
+            if (recoveredLegacy.size > 0) { legacyGroups = layout; break; }
           }
           // 已有旧批次付费结果时沿旧分组续跑，不能为均分丢弃成果并重买同一片。
           if (recoveredLegacy.size > 0) groups = legacyGroups;
         }
+        actualStructuringBatchSize = Math.max(...groups.map(group => group.length));
         if (groups.length === 1) {
           const batchInput: Parameters<typeof structureBatchWithLockRetry>[0] = {
             prompt: buildNativeDeepReadGlmStructuringPrompt({
@@ -7527,7 +7550,7 @@ async function executeNativeDeepReadBatch(
         }
 
         const groupRows: Record<string, unknown>[] = new Array(groups.length);
-        const fourBatchDispatch = segmentCount <= 20 && groups.length > 2
+        const fourBatchDispatch = (groups.length === 4 || (segmentCount <= 20 && groups.length > 2))
           && structuringGatewayPolicy === "structuring_chain";
         const laneCount = Math.min(fourBatchDispatch ? 4 : 2, groups.length);
         const routeFirstLaunch = Array.from({ length: 2 }, () => {
@@ -7744,7 +7767,7 @@ async function executeNativeDeepReadBatch(
           sourceDurationSec: episode.sourceDurationSec,
           batchRequestId: episodeRequestId,
           inputShotCount: preStructuringShotCount,
-          structuringBatchSize: 4,
+          structuringBatchSize: actualStructuringBatchSize,
           glmEvidenceCallIds,
           structuringFallbackCodes: structuringFallbackAdvisories.map((row) => row.code),
         };

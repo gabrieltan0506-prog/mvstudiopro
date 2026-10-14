@@ -3328,7 +3328,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
   });
 
-  it.each([2, 3, 5, 6, 7, 8, 10])("%i片新整形均分到两个真实调用，保留路由及分片身份", async (count) => {
+  it.each(Array.from({ length: 17 }, (_, i) => i + 2))("%i片新整形均分到两个真实调用，保留路由及分片身份", async (count) => {
     const segments = Array.from({ length: count }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3377,12 +3377,12 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
   });
 
-  it("整形双路每路最多五片，不足十片含尾组均分且不丢片不重复", async () => {
+  it("18片内均分双路且不丢片不重复，更长任务均分到两路各两批", async () => {
     const { nativeDeepReadStructuringGroups: groups } = await import("./manhuaNativeDeepReadRunner");
     const cases = [[1, [1]], [2, [1, 1]], [3, [2, 1]], [4, [2, 2]],
       [5, [3, 2]], [6, [3, 3]], [7, [4, 3]], [8, [4, 4]], [9, [5, 4]],
-      [10, [5, 5]], [11, [5, 5, 1]], [13, [5, 5, 2, 1]], [18, [5, 5, 4, 4]],
-      [20, [5, 5, 5, 5]], [26, [5, 5, 5, 5, 3, 3]]] as const;
+      [10, [5, 5]], [11, [6, 5]], [12, [6, 6]], [13, [7, 6]], [14, [7, 7]], [15, [8, 7]], [16, [8, 8]], [17, [9, 8]], [18, [9, 9]],
+      [19, [5, 5, 4, 5]], [20, [5, 5, 5, 5]], [25, [6, 7, 6, 6]], [26, [6, 7, 6, 7]]] as const;
     for (const [count, sizes] of cases) {
       const result = groups(count);
       expect(result.map(row => row.length)).toEqual(sizes);
@@ -3391,8 +3391,8 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     for (const count of [0, -1, 1.5, NaN, Infinity]) expect(() => groups(count)).toThrow("正整数");
   });
 
-  it.each(["openrouter", "evolink_glm"] as const)("超过20片保留双路动态领取：旧选择%s不能挤掉另一网关", async (legacyGateway) => {
-    const segments = Array.from({ length: 26 }, (_, index) => ({
+  it.each(["openrouter", "evolink_glm"] as const)("25片四批分属两路：旧选择%s不能挤掉另一网关", async (legacyGateway) => {
+    const segments = Array.from({ length: 25 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
     }));
@@ -3412,12 +3412,8 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       started.push({ firstStart, route });
       active += 1;
       maxActive = Math.max(maxActive, active);
-      // 首批直到尾批领取才返回，确定性证明另一条路动态领取全部后续批次。
-      if (firstStart === 0) await slowFirst.promise;
-      else {
-        if (firstStart === 1380) slowFirst.resolve();
-        await new Promise(resolve => setTimeout(resolve, 5));
-      }
+      if (started.length === 4) slowFirst.resolve();
+      await slowFirst.promise;
       const result = await base(prompt);
       active -= 1;
       return { ...result, gateway: route };
@@ -3432,32 +3428,33 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
         episodeIndex: 1,
         resolveNodes: async () => [],
         segments,
-        sourceDurationSec: 1560,
+        sourceDurationSec: 1500,
         cacheSourceDigest: "d".repeat(64),
       }],
       segmentCacheSeriesKey: "dynamic_two_lane_queue",
       structuringGateway: legacyGateway,
     }, deps);
 
-    expect(maxActive).toBe(2);
-    expect(started).toEqual([
+    expect(maxActive).toBe(4);
+    expect(started.slice().sort((a,b)=>a.firstStart-b.firstStart)).toEqual([
       { firstStart: 0, route: "openrouter" },
-      { firstStart: 300, route: "evolink_glm" },
-      { firstStart: 600, route: "evolink_glm" },
-      { firstStart: 900, route: "evolink_glm" },
-      { firstStart: 1200, route: "evolink_glm" },
-      { firstStart: 1380, route: "evolink_glm" },
+      { firstStart: 360, route: "openrouter" },
+      { firstStart: 780, route: "evolink_glm" },
+      { firstStart: 1140, route: "evolink_glm" },
     ]);
   });
 
-  it.each([18, 19, 20])("20片内四批同时在途且同路第二批错峰4秒（%s片）", async count => {
+  it.each([19, 20, 25, 26])("超过18片四批同时在途且同路第二批错峰4秒（%s片）", async count => {
     const segments = Array.from({ length: count }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    const lane1 = Math.ceil(count / 2), lane2 = Math.floor(count / 2);
+    const sizes = [Math.floor(lane1 / 2), Math.ceil(lane1 / 2), Math.floor(lane2 / 2), Math.ceil(lane2 / 2)];
+    const starts = [0, sizes[0]!, lane1, lane1 + sizes[2]!].map(n => n * 60);
     const finish = deferred(), stagger = deferred();
     const started: Array<{ first: number; size: number; route: string }> = [];
     let active=0,maxActive=0;
     const harness=realStructuringHarness({invoke:async first=>{
       const row=harness.calls.at(-1)!;
-      started.push({first,size:first===0||first===300?5:first===600?Math.ceil((count-10)/2):Math.floor((count-10)/2),route:row.route});
+      started.push({first,size:sizes[starts.indexOf(first)]!,route:row.route});
       maxActive=Math.max(maxActive,++active);await finish.promise;active--;
     }});
     const invoke=harness.invoke;
@@ -3468,14 +3465,14 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segments, sourceDurationSec: count * 60, cacheSourceDigest: "a".repeat(64) }],
       segmentCacheSeriesKey: `four_batches_${count}` }, deps);
     await vi.waitFor(() => expect(deps.waitForRetry).toHaveBeenCalledTimes(2));
-    expect(started).toEqual([{ first: 0, size: 5, route: "openrouter" },
-      { first: 600, size: Math.ceil((count - 10) / 2), route: "evolink_glm" }]);
+    expect(started).toEqual([{ first: 0, size: sizes[0], route: "openrouter" },
+      { first: starts[2], size: sizes[2], route: "evolink_glm" }]);
     stagger.resolve();
     await vi.waitFor(() => expect(started).toHaveLength(4));
     expect(maxActive).toBe(4);
-    expect(started.filter(row => row.route === "openrouter").map(row => row.size)).toEqual([5, 5]);
+    expect(started.filter(row => row.route === "openrouter").map(row => row.size)).toEqual(sizes.slice(0, 2));
     expect(started.filter(row => row.route === "evolink_glm").map(row => row.size))
-      .toEqual([Math.ceil((count - 10) / 2), Math.floor((count - 10) / 2)]);
+      .toEqual(sizes.slice(2));
     finish.resolve();
     const result = await task;
     expect(result.episodes[0]!.result.completedSegmentIndexes).toEqual(Array.from({ length: count }, (_, i) => i));
@@ -3484,15 +3481,15 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
   });
 
   it.each(["recovery","request"] as const)("LEARN-DISPATCH-2：首批%s延迟，真实网关仍先发首批并错开4秒",async phase=>{
-    const segments=Array.from({length:18},(_,i)=>({startSec:i*60,endSec:(i+1)*60}));
+    const segments=Array.from({length:20},(_,i)=>({startSec:i*60,endSec:(i+1)*60}));
     const hold=deferred(),finish=deferred();let now=0;
     const clock=vi.spyOn(Date,"now").mockImplementation(()=>now);
     const harness=realStructuringHarness({[phase]:async(first:number)=>{if(first===0)await hold.promise;},invoke:async()=>{await finish.promise;}});
     const deps=makeRunnerDeps({postVertex:makeSuccessfulEpisodePostVertex(segments) as never,invokeGlmStructuring:harness.invoke as never,
       waitForRetry:vi.fn(async ms=>{now+=ms;})});
-    const task=runManhuaNativeDeepReadBatch({episodes:[{episodeIndex:1,resolveNodes:async()=>[],segments,sourceDurationSec:1080,cacheSourceDigest:"a".repeat(64)}],segmentCacheSeriesKey:"real_boundary_"+phase},deps);
+    const task=runManhuaNativeDeepReadBatch({episodes:[{episodeIndex:1,resolveNodes:async()=>[],segments,sourceDurationSec:1200,cacheSourceDigest:"a".repeat(64)}],segmentCacheSeriesKey:"real_boundary_"+phase},deps);
     try {
-      await vi.waitFor(()=>expect(harness.calls.some(row=>row.first===840)).toBe(true));
+      await vi.waitFor(()=>expect(harness.calls.some(row=>row.first===900)).toBe(true));
       expect(harness.calls.some(row=>row.first===0||row.first===300)).toBe(false);
       now=10_000;hold.resolve();await vi.waitFor(()=>expect(harness.calls).toHaveLength(4));
       const first=harness.calls.find(row=>row.first===0)!,second=harness.calls.find(row=>row.first===300)!;
@@ -3502,7 +3499,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
   });
 
   it.each(["cache","retry","recovery","request"] as const)("LEARN-DISPATCH-2-A：终态失败后释放%s，不再付费且在途结果保存",async phase=>{
-    const segments=Array.from({length:18},(_,i)=>({startSec:i*60,endSec:(i+1)*60}));
+    const segments=Array.from({length:20},(_,i)=>({startSec:i*60,endSec:(i+1)*60}));
     const hold=deferred(),fail=deferred(),inflight=deferred();let waiting=false;
     const hooks:any={invoke:async(first:number)=>{
       if(first===0){await fail.promise;throw new Error("终态证据错误");}
@@ -3512,9 +3509,9 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     if(phase==="recovery"||phase==="request")hooks[phase]=async(first:number)=>{if(first===600){waiting=true;await hold.promise;}};
     const harness=realStructuringHarness(hooks);
     const deps=makeRunnerDeps({postVertex:makeSuccessfulEpisodePostVertex(segments) as never,invokeGlmStructuring:harness.invoke as never,
-      readStructuredBatchCache:vi.fn(async(input:any)=>{if(phase==="cache"&&input.segmentIndexes[0]===10&&input.segmentIndexes.length===4){waiting=true;await hold.promise;}return null;}) as never,
+      readStructuredBatchCache:vi.fn(async(input:any)=>{if(phase==="cache"&&input.segmentIndexes[0]===10&&input.segmentIndexes.length===5){waiting=true;await hold.promise;}return null;}) as never,
       waitForRetry:vi.fn(async ms=>{if(ms===30_000){waiting=true;await hold.promise;}})});
-    const observed=runManhuaNativeDeepReadBatch({episodes:[{episodeIndex:1,resolveNodes:async()=>[],segments,sourceDurationSec:1080,cacheSourceDigest:"a".repeat(64)}],segmentCacheSeriesKey:"terminal_"+phase},deps).catch(error=>error);
+    const observed=runManhuaNativeDeepReadBatch({episodes:[{episodeIndex:1,resolveNodes:async()=>[],segments,sourceDurationSec:1200,cacheSourceDigest:"a".repeat(64)}],segmentCacheSeriesKey:"terminal_"+phase},deps).catch(error=>error);
     await vi.waitFor(()=>{expect(waiting).toBe(true);expect(harness.calls.some(row=>row.first===300)).toBe(true);});
     fail.resolve();await new Promise(resolve=>setTimeout(resolve,20));
     hold.resolve();inflight.resolve();expect(await observed).toBeInstanceOf(Error);
@@ -3603,7 +3600,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
   });
 
   it("整形批次初发加三次补发仍为503才停派，并等待另一条已在途调用收口", async () => {
-    const segments = Array.from({ length: 26 }, (_, index) => ({
+    const segments = Array.from({ length: 18 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
     }));
@@ -3623,22 +3620,22 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     });
 
     await expect(runManhuaNativeDeepReadBatch({
-      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 1560,
+      episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 1080,
         cacheSourceDigest: "6".repeat(64) }],
       segmentCacheSeriesKey: "stop_after_three_dispatch_retries",
     }, deps)).rejects.toThrow("HTTP 503");
 
     expect(started.filter((start) => start === 0)).toHaveLength(4);
-    expect(started.filter((start) => start === 300)).toHaveLength(1);
-    expect(started).not.toContain(600);
+    expect(started.filter((start) => start === 540)).toHaveLength(1);
+    expect(started.every(start => start === 0 || start === 540)).toBe(true);
     expect(deps.waitForRetry).toHaveBeenCalledTimes(3);
-    // 整形失败只停后续整形派发；此前 Gemini 已通过的 26 片段缓存必须全部保留，供下次断点续学。
-    expect(deps.writeSegmentCache).toHaveBeenCalledTimes(26);
+    // 整形失败只停后续整形派发；此前 Gemini 已通过的 18 片段缓存必须全部保留，供下次断点续学。
+    expect(deps.writeSegmentCache).toHaveBeenCalledTimes(18);
     expect(vi.mocked(deps.writeSegmentCache).mock.calls.map(([entry]) => entry.segmentIndex))
-      .toEqual(Array.from({ length: 26 }, (_, index) => index));
+      .toEqual(Array.from({ length: 18 }, (_, index) => index));
   });
 
-  it("整形缓存读取503也在同一批次边界补发三次，终态失败后不让另一条路领取新批次", async () => {
+  it("历史整形缓存读取503先退避三次，未确认付费结果前不派发新请求", async () => {
     const segments = Array.from({ length: 26 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3670,7 +3667,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
 
     expect(firstBatchCacheReads).toBe(4);
     expect(deps.waitForRetry).toHaveBeenCalledTimes(3);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    expect(invokeGlmStructuring).not.toHaveBeenCalled();
     // 旧尾批只读探测允许；终态失败后不得领取第三个新批次。
     expect(readStructuredBatchCache.mock.calls.some(([input]) => input.segmentIndexes[0] === 10 && input.segmentIndexes.length === 5)).toBe(false);
     expect(deps.writeSegmentCache).toHaveBeenCalledTimes(26);
@@ -3887,6 +3884,68 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(vi.mocked(deps.writeStructuredBatchCache).mock.calls[0]![0].segmentIndexes).toEqual([5]);
     expect(result.episodes[0]!.result.beatGrid).toHaveLength(72);
     expect(result.episodes[0]!.result.segmentCount).toBe(6);
+  });
+
+  it("十二片旧5+5+1+1缓存全部复用，不因6+6重新付费", async () => {
+    const segments = Array.from({ length: 12 }, (_, index) => ({
+      startSec: index * 60,
+      endSec: (index + 1) * 60,
+    }));
+    const readStructuredBatchCache = vi.fn(async (input: {
+      segmentIndexes: readonly number[];
+      rawSegments: ReadonlyArray<Record<string, unknown>>;
+    }) => [5, 1].includes(input.segmentIndexes.length) ? {
+      schemaVersion: 1 as const,
+      frozenContractSha256: "f".repeat(64),
+      seriesKey: "legacy_answer_envelope",
+      sourceDigest: "6".repeat(64),
+      episodeIndex: 1,
+      segmentIndexes: [...input.segmentIndexes],
+      inputDigest: "a".repeat(64),
+      raw: {
+        answer: JSON.stringify({ ...deterministicallyMergeNativeDeepReadRawSegments(input.rawSegments), ...validGeneratedAnalysisFixture }),
+      },
+      gateway: "openrouter" as const,
+      model: "z-ai/glm-5.3",
+      inputTokens: 1,
+      outputTokens: 1,
+      reasoningTokens: 1,
+      costUsd: 0.01,
+      savedAtIso: "2026-09-01T00:00:00.000Z",
+      source: "formal" as const,
+    } : null);
+    const base = makeGlmStructuringStub();
+    const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => ({
+      ...(await base(prompt)),
+      recoveredPaidEvidence: true,
+      inputTokens: 52_412,
+      outputTokens: 55_231,
+      reasoningTokens: 6_043,
+      costUsd: 0.31632024,
+    }));
+    const receipts: Array<{ route: string; status: string }> = [];
+    const deps = makeRunnerDeps({
+      postVertex: makeSuccessfulEpisodePostVertex(segments) as never,
+      invokeGlmStructuring: invokeGlmStructuring as never,
+      readStructuredBatchCache: readStructuredBatchCache as never,
+    });
+
+    const result = await runManhuaNativeDeepReadBatch({
+      episodes: [{
+        episodeIndex: 1,
+        resolveNodes: async () => [],
+        segments,
+        sourceDurationSec: 720,
+        cacheSourceDigest: "6".repeat(64),
+      }],
+      segmentCacheSeriesKey: "legacy_answer_envelope",
+      onModelReceipt: (receipt) => { receipts.push(receipt); },
+    }, deps);
+
+    expect(invokeGlmStructuring).not.toHaveBeenCalled();
+    expect(deps.writeStructuredBatchCache).not.toHaveBeenCalled();
+    expect(result.episodes[0]!.result.beatGrid).toHaveLength(144);
+    expect(result.episodes[0]!.result.segmentCount).toBe(12);
   });
 
   it("九片5+4的两路GLM都返回answer外壳时仍生成完整整集卡", async () => {
