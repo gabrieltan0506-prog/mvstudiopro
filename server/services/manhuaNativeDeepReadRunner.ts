@@ -704,26 +704,14 @@ export const NATIVE_DEEP_READ_REQUIRED_RETRY_CODES: ReadonlySet<string> = new Se
   "audio_timeline_invalid",
 ]);
 
-/**
- * 门禁未过的降温重试间隔（进契约 SHA，非用户明令不得改）。
- * 0920 用户令：「**重試改成間隔三十秒，不要六十秒了**」→ 60 秒改 30 秒。
- */
-export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 30_000;
-/**
- * 0920 换档前的降温重试间隔（60 秒）。**只进历史身份计算，永不用于真实等待**。
- * 这个值进段缓存指纹（实测：60→30 两个指纹都变），不复原＝已买断分片全部失配重买。
- */
+/** 1015 用户指定：门禁、429/503 与整形传输失败统一等待18秒。 */
+export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS = 18_000;
+/** 仅用于历史缓存与冻结身份，不参与实际等待，防止已付费分片失配。 */
+const NATIVE_DEEP_READ_CACHE_RETRY_IDENTITY_MS = 30_000;
 export const NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920 = 60_000;
-/**
- * 503/429/RESOURCE_EXHAUSTED（视频服务器繁忙）专用退避：不降温、原档补发。
- * 0916 用户令：**隔 30 秒重试 4 次**；四次仍失败才停止，本次已终态分片留给下次续学。
- * 单开一条常量而不改 RETRY_INTERVAL_MS，是为了不动契约 SHA 与段缓存指纹——
- * 那条一改，已买断的分片缓存会全部失配、重复付费。
- */
-export const NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS = 30_000;
+export const NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS = 18_000;
 export const NATIVE_DEEP_READ_RESOURCE_RETRY_MAX = 4;
-/** 整形批次遇到网络抖动、429/5xx 或服务端暂时繁忙时，初次失败后再补发 3 次。 */
-export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_INTERVAL_MS = 30_000;
+export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_INTERVAL_MS = 18_000;
 /** 1008 用户指定：首发之外的三次传输失败补发温度；内容缺失仍从原稿恢复。 */
 export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_TEMPERATURES = Object.freeze([0.7, 0.65, 0.6] as const);
 export const NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX = NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_TEMPERATURES.length;
@@ -1670,8 +1658,8 @@ export function nativeDeepReadFrozenContractSha256(): string {
     models: MANHUA_NATIVE_LEGACY_READ_MODEL_OPTIONS,
     generationConfig: NATIVE_DEEP_READ_GENERATION_CONFIG,
     retryTemperatures: NATIVE_DEEP_READ_RETRY_TEMPERATURES,
-    retryIntervalMs: NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
-    resourceRetry: { intervalMs: NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS, maximum: NATIVE_DEEP_READ_RESOURCE_RETRY_MAX },
+    retryIntervalMs: NATIVE_DEEP_READ_CACHE_RETRY_IDENTITY_MS,
+    resourceRetry: { intervalMs: NATIVE_DEEP_READ_CACHE_RETRY_IDENTITY_MS, maximum: NATIVE_DEEP_READ_RESOURCE_RETRY_MAX },
     requestTimeoutMs: NATIVE_DEEP_READ_REQUEST_TOTAL_TIMEOUT_MS,
     acceptanceContract: {
       coverageMinimum: NATIVE_DEEP_READ_SEGMENT_COVERAGE_RETRY_RATIO,
@@ -2006,7 +1994,7 @@ export const NATIVE_DEEP_READ_MEDIA_UPLOAD_MAX_CONCURRENCY = 4;
 /**
  * 单集模型调用并发上限。0901 拍板 5 片；0904 用户令降到 4（压 503）；
  * **0920 用户令改回 5**：原话「我讀片都是五片並發的」「把四片並發改成五片」。
- * 撞 503 时不靠降并发兜，靠既有资源退避（30 秒 × 4 次、不降温）。
+ * 撞 503 时不靠降并发兜，靠既有资源退避（18 秒 × 4 次、不降温）。
  * 调用方可调低，不能抬高生产上限。
  */
 export const NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY = 5;
@@ -4825,7 +4813,7 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
     finalRetryGenerationConfig: fingerprintConfig(NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG),
     retryIntervalMs: input.legacyBefore0920 === true
       ? NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920
-      : NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
+      : NATIVE_DEEP_READ_CACHE_RETRY_IDENTITY_MS,
     sourceDigest: input.sourceDigest,
     requestedFps: fps,
     prompt,
@@ -5312,8 +5300,8 @@ function routeLabelZh(route: NativeDeepReadVisualRoute, readModel: ManhuaNativeD
 
 /**
  * 一次请求读取一集（逐段调用），回传后按段合并成集卡。
- * 门禁失败按五发档位重读，间隔 30 秒（RETRY_INTERVAL_MS）；Argon 同样发送对应温度。
- * 503/429/RESOURCE_EXHAUSTED 走另一条线：隔 30 秒（RESOURCE_RETRY_INTERVAL_MS）
+ * 门禁失败按五发档位重读，间隔 18 秒（RETRY_INTERVAL_MS）；Argon 同样发送对应温度。
+ * 503/429/RESOURCE_EXHAUSTED 走另一条线：隔 18 秒（RESOURCE_RETRY_INTERVAL_MS）
  * 保持当前温度重试，最多 4 次（RESOURCE_RETRY_MAX），不消耗降档次数。
  * 用户中止、证据保存失败和其他传输错误立即终止。
  */
@@ -7374,7 +7362,7 @@ async function executeNativeDeepReadBatch(
             if (!isTransientStructuringDispatchError(error)
               || dispatchRetry >= NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX) throw error;
             const reasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 200);
-            console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}瞬时失败，30秒后补发第 ${dispatchRetry + 1}/${NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX} 次：${reasonZh}`);
+            console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集${input.labelZh}瞬时失败，18秒后补发第 ${dispatchRetry + 1}/${NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX} 次：${reasonZh}`);
             await emitVisualModelReceipt({
               callId: `${episodeRequestId}:structuring-dispatch-retry:${input.segmentIndexes.join("-")}:${dispatchRetry + 1}`,
               model: `${input.labelZh}瞬时失败，等待补发第 ${dispatchRetry + 1}/${NATIVE_DEEP_READ_STRUCTURING_DISPATCH_RETRY_MAX} 次`,
@@ -7496,26 +7484,30 @@ async function executeNativeDeepReadBatch(
         const allSegmentIndexes = episode.segments.map((_, index) => index);
         let groups = nativeDeepReadStructuringGroups(segmentCount);
         const legacyLayouts = [previousNativeDeepReadStructuringGroups(segmentCount), legacyNativeDeepReadStructuringGroups(segmentCount)];
-        let legacyGroups = legacyLayouts[0]!;
         const recoveredLegacy = new Map<string, Record<string, unknown>>();
         if (canCacheStructuring) {
-          const currentKeys = new Set(groups.map((indexes) => indexes.join("-")));
-          for (const layout of legacyLayouts) {
+          const checked = new Set<string>();
+          let bestCovered = 0;
+          // 先看当前布局；旧布局只有覆盖更多已付费分片时才替换，完整命中即停止探查。
+          for (const layout of [groups, ...legacyLayouts]) {
+            let covered = 0;
             for (const segmentIndexes of layout) {
               const key = segmentIndexes.join("-");
-              if (currentKeys.has(key)) continue;
-              const rows = segmentIndexes.map((index) => glmStructuringInputs[index]!);
-              const labelZh = `历史整形批次 ${segmentIndexes.map((index) => index + 1).join("、")}`;
-              const cached = await withStructuringDispatchRetry(
-                { segmentIndexes, videoCount: segmentIndexes.length, labelZh },
-                () => readCachedStructuring(segmentIndexes, rows, labelZh),
-              );
-              if (cached) recoveredLegacy.set(key, cached);
+              if (!checked.has(key)) {
+                const rows = segmentIndexes.map((index) => glmStructuringInputs[index]!);
+                const labelZh = `复用整形批次 ${segmentIndexes.map((index) => index + 1).join("、")}`;
+                const cached = await withStructuringDispatchRetry(
+                  { segmentIndexes, videoCount: segmentIndexes.length, labelZh },
+                  () => readCachedStructuring(segmentIndexes, rows, labelZh),
+                );
+                checked.add(key);
+                if (cached) recoveredLegacy.set(key, cached);
+              }
+              if (recoveredLegacy.has(key)) covered += segmentIndexes.length;
             }
-            if (recoveredLegacy.size > 0) { legacyGroups = layout; break; }
+            if (covered > bestCovered) { groups = layout; bestCovered = covered; }
+            if (covered === segmentCount) break;
           }
-          // 已有旧批次付费结果时沿旧分组续跑，不能为均分丢弃成果并重买同一片。
-          if (recoveredLegacy.size > 0) groups = legacyGroups;
         }
         actualStructuringBatchSize = Math.max(...groups.map(group => group.length));
         if (groups.length === 1) {

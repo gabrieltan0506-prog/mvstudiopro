@@ -354,23 +354,23 @@ describe("模型与通道收口", () => {
     expect(NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig).not.toHaveProperty("thinkingBudget");
   });
 
-  it("503 退避与并发上限（0916 用户令）：30 秒 × 4 次、并发 4，且都不进契约哈希", () => {
-    expect(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS).toBe(30_000);
+  it("503 退避与并发上限（1015 用户令）：18 秒 × 4 次、并发 4，且都不进契约哈希", () => {
+    expect(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS).toBe(18_000);
     expect(NATIVE_DEEP_READ_RESOURCE_RETRY_MAX).toBe(4);
     // 0920 用户令「把四片並發改成五片」
     expect(NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY).toBe(5);
     // 两条线仍是两个独立常量（0920 用户令把门禁降温线也调到 30 秒，数值上恰好相同）：
     // 资源退避线**不进**契约哈希，门禁降温线**进**契约 SHA 与段缓存指纹——
     // 判据不看两个数是否相等，看契约哈希会不会因为它们变化。
-    expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(30_000);
+    expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(18_000);
     expect(nativeDeepReadFrozenContractSha256()).toBe(NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256);
   });
 
-  it("同一 Vertex 分片候选五档：0.70→0.65→0.65→0.60→0.60，间隔30秒（0920 用户令）", () => {
+  it("同一 Vertex 分片候选五档：0.70→0.65→0.65→0.60→0.60，间隔18秒（1015 用户令）", () => {
     // 0920 用户令：「降檔重試 0.7--0.65x2--0.6x2，等於0.65與0.6各重試兩次」＝共 5 发。
     // 0920 用户令：「重試改成間隔三十秒，不要六十秒了」；历史已付费分片靠 legacyBefore0920 复原旧 60 秒身份。
     expect(NATIVE_DEEP_READ_RETRY_TEMPERATURES).toEqual([0.7, 0.65, 0.65, 0.6, 0.6]);
-    expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(30_000);
+    expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS).toBe(18_000);
     expect(NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920).toBe(60_000);
     expect(NATIVE_DEEP_READ_TEMPERATURE_MIN).toBe(0.6);
     expect(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG).toEqual({
@@ -2965,7 +2965,7 @@ describe("已有分片选段诊断：共用生产尝试器，不装配整集", (
     expect(deps.waitForRetry).toHaveBeenCalledTimes(4);
     // 退避间隔走 503 专用的 30 秒线，不是门禁降温那条 60 秒线
     expect(vi.mocked(deps.waitForRetry).mock.calls.map(([ms]) => ms))
-      .toEqual([30_000, 30_000, 30_000, 30_000]);
+      .toEqual([18_000, 18_000, 18_000, 18_000]);
     const resourceRetries = receipts.filter((row) => row.route === "resource_retry_pending");
     expect(resourceRetries.map((row) => [row.resourceRetryNumber, row.resourceRetryMax]))
       .toEqual([[1, 4], [2, 4], [3, 4], [4, 4]]);
@@ -3501,6 +3501,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
   it.each(["cache","retry","recovery","request"] as const)("LEARN-DISPATCH-2-A：终态失败后释放%s，不再付费且在途结果保存",async phase=>{
     const segments=Array.from({length:20},(_,i)=>({startSec:i*60,endSec:(i+1)*60}));
     const hold=deferred(),fail=deferred(),inflight=deferred();let waiting=false;
+    const controller = new AbortController();
     const hooks:any={invoke:async(first:number)=>{
       if(first===0){await fail.promise;throw new Error("终态证据错误");}
       if(first===300)await inflight.promise;
@@ -3510,8 +3511,16 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const harness=realStructuringHarness(hooks);
     const deps=makeRunnerDeps({postVertex:makeSuccessfulEpisodePostVertex(segments) as never,invokeGlmStructuring:harness.invoke as never,
       readStructuredBatchCache:vi.fn(async(input:any)=>{if(phase==="cache"&&input.segmentIndexes[0]===10&&input.segmentIndexes.length===5){waiting=true;await hold.promise;}return null;}) as never,
-      waitForRetry:vi.fn(async ms=>{if(ms===30_000){waiting=true;await hold.promise;}})});
-    const observed=runManhuaNativeDeepReadBatch({episodes:[{episodeIndex:1,resolveNodes:async()=>[],segments,sourceDurationSec:1200,cacheSourceDigest:"a".repeat(64)}],segmentCacheSeriesKey:"terminal_"+phase},deps).catch(error=>error);
+      waitForRetry:vi.fn(async ms=>{if(ms===18_000){waiting=true;await hold.promise;}})});
+    const observed=runManhuaNativeDeepReadBatch({episodes:[{episodeIndex:1,resolveNodes:async()=>[],segments,sourceDurationSec:1200,cacheSourceDigest:"a".repeat(64)}],segmentCacheSeriesKey:"terminal_"+phase,abortSignal:controller.signal},deps).catch(error=>error);
+    if (phase === "cache") {
+      await vi.waitFor(() => expect(waiting).toBe(true));
+      expect(harness.calls).toHaveLength(0);
+      controller.abort(new Error("缓存预检期间终止")); hold.resolve();
+      expect(await observed).toBeInstanceOf(Error);
+      expect(harness.calls).toHaveLength(0);
+      return;
+    }
     await vi.waitFor(()=>{expect(waiting).toBe(true);expect(harness.calls.some(row=>row.first===300)).toBe(true);});
     fail.resolve();await new Promise(resolve=>setTimeout(resolve,20));
     hold.resolve();inflight.resolve();expect(await observed).toBeInstanceOf(Error);
@@ -3564,7 +3573,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(harness.calls).toHaveLength(2);
   });
 
-  it("整形批次遇到503时每隔30秒补发三次，第四发成功后继续派发", async () => {
+  it("整形批次遇到503时每隔18秒补发三次，第四发成功后继续派发", async () => {
     const segments = Array.from({ length: 4 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3813,7 +3822,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       onModelReceipt: (receipt) => { receipts.push(receipt); },
     }, deps);
 
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(1);
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(3);
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(0);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(0);
     expect(receipts.filter((row) => row.route === NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE)).toEqual([]);
@@ -3877,7 +3886,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       onModelReceipt: (receipt) => { receipts.push(receipt); },
     }, deps);
 
-    expect(readStructuredBatchCache.mock.calls.every(([input]) => [5, 1].includes(input.segmentIndexes.length))).toBe(true);
+    expect(readStructuredBatchCache.mock.calls.some(([input]) => input.segmentIndexes.length === 5)).toBe(true);
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
     expect(readRawSegmentsFromGlmPrompt(invokeGlmStructuring.mock.calls[0]![0].user)).toHaveLength(1);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(1);
@@ -3886,7 +3895,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(result.episodes[0]!.result.segmentCount).toBe(6);
   });
 
-  it("十二片旧5+5+1+1缓存全部复用，不因6+6重新付费", async () => {
+  it.each([false, true])("十二片完整缓存优先且零重复付费（新缓存=%s）", async currentComplete => {
     const segments = Array.from({ length: 12 }, (_, index) => ({
       startSec: index * 60,
       endSec: (index + 1) * 60,
@@ -3894,7 +3903,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const readStructuredBatchCache = vi.fn(async (input: {
       segmentIndexes: readonly number[];
       rawSegments: ReadonlyArray<Record<string, unknown>>;
-    }) => [5, 1].includes(input.segmentIndexes.length) ? {
+    }) => (currentComplete ? [6, 1].includes(input.segmentIndexes.length) : [5, 1].includes(input.segmentIndexes.length)) ? {
       schemaVersion: 1 as const,
       frozenContractSha256: "f".repeat(64),
       seriesKey: "legacy_answer_envelope",
@@ -4196,7 +4205,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     }, deps);
 
     // 9 片＝[0..4]+[5..8]；第一批命中缓存，只补第二批。
-    expect(readStructuredBatchCache).toHaveBeenCalledTimes(2);
+    expect(readStructuredBatchCache).toHaveBeenCalledTimes(3);
     expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
     expect(invokeGlmStructuring.mock.calls.map(([prompt]) =>
       readRawSegmentsFromGlmPrompt((prompt as { user: string }).user).length)).toEqual([4]);
