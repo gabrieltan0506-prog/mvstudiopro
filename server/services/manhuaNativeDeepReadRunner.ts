@@ -1766,7 +1766,7 @@ export function adaptNativeDeepReadGenerationConfig(
   config: Record<string, unknown>, model: ManhuaNativeDeepReadModelId,
 ): Record<string, unknown> {
   if (model !== "gemini-4-argon") return config;
-  const { candidateCount: _candidateCount, temperature: _temperature, topP: _topP, topK: _topK,
+  const { candidateCount: _candidateCount, topP: _topP, topK: _topK,
     frequencyPenalty: _frequencyPenalty, presencePenalty: _presencePenalty, ...compatible } = config;
   return { ...compatible, maxOutputTokens: 32_768,
     thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: false } };
@@ -4611,12 +4611,20 @@ export type NativeDeepReadLegacyFingerprintVariant = {
   legacyBeforeRequiredBranches0906?: boolean;
   legacyBeforeStrict0906?: boolean;
   legacyBefore0920?: boolean;
+  /** 仅复原 Argon 未发送温度的历史证据身份，不用于新请求。 */
+  legacyArgonWithoutTemperature?: boolean;
 };
 export const NATIVE_DEEP_READ_LEGACY_FINGERPRINT_VARIANTS:
 ReadonlyArray<NativeDeepReadLegacyFingerprintVariant> =
   ([{}, { legacyBeforeCoverage0906: true }, { legacyBeforeExplicitShotWindows0906: true },
     { legacyBeforeRequiredBranches0906: true }, { legacyBeforeStrict0906: true }] as const)
     .flatMap((version) => [version, { ...version, legacyBefore0920: true }]);
+
+function nativeDeepReadFingerprintVariants(model: ManhuaNativeDeepReadModelId) {
+  return model === "gemini-4-argon"
+    ? NATIVE_DEEP_READ_LEGACY_FINGERPRINT_VARIANTS.flatMap(version => [version, { ...version, legacyArgonWithoutTemperature: true }])
+    : NATIVE_DEEP_READ_LEGACY_FINGERPRINT_VARIANTS;
+}
 
 export function nativeDeepReadSegmentCacheFingerprint(input: {
   sourceDigest: string;
@@ -4645,6 +4653,8 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
    * 不复原＝**已买断的分片全部失配重买**。本标记只进身份计算，永不用于发请求。
    */
   legacyBefore0920?: boolean;
+  /** 仅复原 Argon 未发送温度的历史证据身份，不用于新请求。 */
+  legacyArgonWithoutTemperature?: boolean;
 }): string {
   const legacyCoverage = input.legacyBeforeCoverage0906 === true || input.legacyBeforeExplicitShotWindows0906 === true
     || input.legacyBeforeRequiredBranches0906 === true || input.legacyBeforeStrict0906 === true;
@@ -4739,6 +4749,14 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
       .replace("重点镜18字段逐项非空，依据本镜可见内容具体填写。", "");
     if (input.hasAudio) responseSchema.properties!.audioResolution!.description = "本段有音轨，数组包含且仅包含1个分析对象，内容来自本段真实声音。";
   }
+  const fingerprintConfig = (config: Record<string, unknown>) => {
+    const adapted = adaptNativeDeepReadGenerationConfig(config, input.model ?? NATIVE_DEEP_READ_MODEL);
+    if (input.model === "gemini-4-argon" && input.legacyArgonWithoutTemperature) {
+      const { temperature: _temperature, ...legacy } = adapted;
+      return legacy;
+    }
+    return adapted;
+  };
   const __payload__ = {
     cacheSchemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
     planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
@@ -4749,9 +4767,9 @@ export function nativeDeepReadSegmentCacheFingerprint(input: {
       // Preserve the Flash-era identity so switching the text model never rereads paid video segments.
       : `${EVOLINK_GLM_MODEL}→${OPENROUTER_GLM_MODEL}`,
     responseSchema,
-    generationConfig: adaptNativeDeepReadGenerationConfig(NATIVE_DEEP_READ_GENERATION_CONFIG, input.model ?? NATIVE_DEEP_READ_MODEL),
-    retryGenerationConfig: adaptNativeDeepReadGenerationConfig(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG, input.model ?? NATIVE_DEEP_READ_MODEL),
-    finalRetryGenerationConfig: adaptNativeDeepReadGenerationConfig(NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG, input.model ?? NATIVE_DEEP_READ_MODEL),
+    generationConfig: fingerprintConfig(NATIVE_DEEP_READ_GENERATION_CONFIG),
+    retryGenerationConfig: fingerprintConfig(NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG),
+    finalRetryGenerationConfig: fingerprintConfig(NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG),
     retryIntervalMs: input.legacyBefore0920 === true
       ? NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920
       : NATIVE_DEEP_READ_RETRY_INTERVAL_MS,
@@ -5241,7 +5259,7 @@ function routeLabelZh(route: NativeDeepReadVisualRoute, readModel: ManhuaNativeD
 
 /**
  * 一次请求读取一集（逐段调用），回传后按段合并成集卡。
- * 门禁失败按五发档位重读，间隔 30 秒（RETRY_INTERVAL_MS）；Argon 不发送温度参数。
+ * 门禁失败按五发档位重读，间隔 30 秒（RETRY_INTERVAL_MS）；Argon 同样发送对应温度。
  * 503/429/RESOURCE_EXHAUSTED 走另一条线：隔 30 秒（RESOURCE_RETRY_INTERVAL_MS）
  * 保持当前温度重试，最多 4 次（RESOURCE_RETRY_MAX），不消耗降档次数。
  * 用户中止、证据保存失败和其他传输错误立即终止。
@@ -5380,7 +5398,7 @@ async function executeNativeDeepReadBatch(
           });
           if (!cached && params.structuringOnly && deps.readPermanentSegment) {
             cached = await deps.readPermanentSegment({ seriesKey: params.segmentCacheSeriesKey, episodeIndex: episode.episodeIndex,
-              segmentIndex, sourceDigest: episode.cacheSourceDigest!, fingerprints: [false, true].flatMap(hasAudio => NATIVE_DEEP_READ_LEGACY_FINGERPRINT_VARIANTS.map(version => nativeDeepReadSegmentCacheFingerprint({
+              segmentIndex, sourceDigest: episode.cacheSourceDigest!, fingerprints: [false, true].flatMap(hasAudio => nativeDeepReadFingerprintVariants(readModel).map(version => nativeDeepReadSegmentCacheFingerprint({
                 model: readModel === "gemini-4-argon" ? readModel : undefined, sourceDigest: episode.cacheSourceDigest!, episodeIndex: episode.episodeIndex, episodeDurationSec: episode.sourceDurationSec,
                 segment, segmentIndex, segmentCount: episode.segments.length, hasAudio, videoFps: episode.videoFps, hintZh: episode.hintZh, ...version,
               }))) });
@@ -5400,7 +5418,7 @@ async function executeNativeDeepReadBatch(
             videoFps: episode.videoFps,
             hintZh: episode.hintZh,
           };
-          const expectedFingerprints = NATIVE_DEEP_READ_LEGACY_FINGERPRINT_VARIANTS
+          const expectedFingerprints = nativeDeepReadFingerprintVariants(readModel)
             .map((version) => nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, ...version }));
           if (
             entry.sourceDigest !== episode.cacheSourceDigest
@@ -5824,8 +5842,9 @@ async function executeNativeDeepReadBatch(
           }),
         });
         let requestFingerprint: string | undefined;
+        let legacyRequestFingerprint: string | undefined;
         if (params.segmentCacheSeriesKey && episode.cacheSourceDigest) {
-          requestFingerprint = nativeDeepReadSegmentCacheFingerprint({
+          const fingerprintInput = {
             model: attemptModel,
             sourceDigest: episode.cacheSourceDigest,
             episodeIndex: episode.episodeIndex,
@@ -5836,14 +5855,16 @@ async function executeNativeDeepReadBatch(
             hasAudio,
             hintZh: episode.hintZh,
             videoFps: episode.videoFps,
-          });
+          };
+          requestFingerprint = nativeDeepReadSegmentCacheFingerprint(fingerprintInput);
+          if (attemptModel === "gemini-4-argon") legacyRequestFingerprint = nativeDeepReadSegmentCacheFingerprint({ ...fingerprintInput, legacyArgonWithoutTemperature: true });
         }
         try {
           let response: NativeDeepReadModelResponse | undefined;
           let rawAttemptEvidenceObjectName: string | undefined;
           let rawAttemptEvidence: Awaited<ReturnType<typeof writeNativeDeepReadRawAttemptEvidence>> | undefined;
           if (!selectedSegmentIndexes && params.segmentCacheSeriesKey && episode.cacheSourceDigest && requestFingerprint) {
-            const recovered = await deps.readRawAttemptEvidence({
+            const recoveryInput = {
               seriesKey: params.segmentCacheSeriesKey,
               relearnRequestId: params.relearnRequestId,
               episodeIndex: episode.episodeIndex,
@@ -5854,7 +5875,12 @@ async function executeNativeDeepReadBatch(
               attemptNumber: input.attemptNumber,
               temperature: input.temperature,
               visualRoute: input.route,
-            });
+            };
+            let recovered = await deps.readRawAttemptEvidence(recoveryInput);
+            if (!recovered && legacyRequestFingerprint) {
+              recovered = await deps.readRawAttemptEvidence({ ...recoveryInput, requestFingerprint: legacyRequestFingerprint });
+              if (recovered) requestFingerprint = legacyRequestFingerprint;
+            }
             if (recovered) {
               recoveredPaidEvidence = true;
               callId = recovered.callId;
@@ -5891,7 +5917,7 @@ async function executeNativeDeepReadBatch(
               segmentCount: episode.segments.length,
               videoCount: 1,
               attemptNumber: input.attemptNumber,
-              temperature: attemptModel === "gemini-4-argon" ? undefined : input.temperature,
+              temperature: input.temperature,
               degraded: degraded || undefined,
             }, params.onModelReceipt);
             modelCallStarted = true;
@@ -5994,7 +6020,7 @@ async function executeNativeDeepReadBatch(
               segmentCount: episode.segments.length,
               videoCount: 1,
               attemptNumber: input.attemptNumber,
-              temperature: attemptModel === "gemini-4-argon" ? undefined : input.temperature,
+              temperature: input.temperature,
               elapsedMs: Date.now() - startedAt,
               inputTokens: attemptInput,
               audioInputTokens: attemptAudioInput || undefined,
@@ -6296,7 +6322,7 @@ async function executeNativeDeepReadBatch(
               segmentCount: episode.segments.length,
               videoCount: 1,
               attemptNumber: input.attemptNumber,
-              temperature: attemptModel === "gemini-4-argon" ? undefined : input.temperature,
+              temperature: input.temperature,
               elapsedMs: Date.now() - startedAt,
               errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
               providerRequestId: providerError?.requestId,
@@ -6400,7 +6426,7 @@ async function executeNativeDeepReadBatch(
             console.warn(
               `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
               + `门禁未通过，${NATIVE_DEEP_READ_RETRY_INTERVAL_MS / 1_000} 秒后`
-              + (gradientModel === "gemini-4-argon" ? "使用供应商默认采样参数重读" : `使用 temperature ${temperature} 重试`)
+              + `使用 temperature ${temperature} 重试`
               + `：${retryReasonZh}`,
             );
             await emitVisualModelReceipt({
@@ -6415,7 +6441,7 @@ async function executeNativeDeepReadBatch(
               segmentCount,
               videoCount: 1,
               attemptNumber,
-              temperature: gradientModel === "gemini-4-argon" ? undefined : temperature,
+              temperature: temperature,
               errorZh: retryReasonZh,
             }, params.onModelReceipt);
             await deps.waitForRetry(NATIVE_DEEP_READ_RETRY_INTERVAL_MS, params.abortSignal);
@@ -6452,7 +6478,7 @@ async function executeNativeDeepReadBatch(
                   segmentCount,
                   videoCount: 1,
                   attemptNumber,
-                  temperature: gradientModel === "gemini-4-argon" ? undefined : temperature,
+                  temperature: temperature,
                   resourceRetryNumber: resourceRetryCount,
                   resourceRetryMax: NATIVE_DEEP_READ_RESOURCE_RETRY_MAX,
                   errorZh,
@@ -6460,7 +6486,7 @@ async function executeNativeDeepReadBatch(
                 console.warn(
                   `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段资源拥堵，`
                   + `${NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS / 1_000} 秒后`
-                  + (gradientModel === "gemini-4-argon" ? "保持供应商默认采样参数重试" : `保持 temperature ${temperature} 重试`)
+                  + `保持 temperature ${temperature} 重试`
                   + `（第 ${resourceRetryCount}/${NATIVE_DEEP_READ_RESOURCE_RETRY_MAX} 次）：${errorZh}`,
                 );
                 await deps.waitForRetry(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS, params.abortSignal);
@@ -6482,7 +6508,7 @@ async function executeNativeDeepReadBatch(
                 segmentCount,
                 videoCount: 1,
                 attemptNumber,
-                temperature: gradientModel === "gemini-4-argon" ? undefined : temperature,
+                temperature: temperature,
                 errorZh: (error instanceof Error ? error.message : String(error)).slice(0, 2_000),
               }, params.onModelReceipt);
               lastError = error;
@@ -7668,7 +7694,7 @@ async function executeNativeDeepReadBatch(
         structuredRaw.provenance = {
           planVersion: NATIVE_DEEP_READ_VISUAL_PLAN_VERSION,
           model: readModel,
-          temperature: readModel === "gemini-4-argon" ? undefined : NATIVE_DEEP_READ_GENERATION_CONFIG.temperature,
+          temperature: NATIVE_DEEP_READ_GENERATION_CONFIG.temperature,
           thinkingLevel: NATIVE_DEEP_READ_GENERATION_CONFIG.thinkingConfig.thinkingLevel,
           // 输入规格入档（0830 晚）：隔天复盘时能说清这份产物是用什么画质读出来的。
           maxFps: NATIVE_DEEP_READ_MAX_FPS,
@@ -7676,7 +7702,7 @@ async function executeNativeDeepReadBatch(
           // 0831 起不再发送 mediaResolution，走上游默认（Gemini 3 视频默认＝70 token/帧）。
           // 仍然入档，是为了让旧卡（显式 MEDIUM）与新卡（默认）在溯源上能一眼分开。
           mediaResolution: "unspecified_default",
-          retryTemperatures: readModel === "gemini-4-argon" ? [] : [...NATIVE_DEEP_READ_RETRY_TEMPERATURES],
+          retryTemperatures: [...NATIVE_DEEP_READ_RETRY_TEMPERATURES],
           segmentCount: episode.segments.length,
           sourceDurationSec: episode.sourceDurationSec,
           batchRequestId: episodeRequestId,
