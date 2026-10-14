@@ -1,3 +1,4 @@
+import ViralGraphicPages from "@/components/platform/ViralGraphicPages";
 import { ViralProductionPanel } from "@/components/platform/ViralProductionPanel";
 import { TopicSelectionPanel } from "@/components/platform/TopicSelectionPanel";
 import "@/components/platform/creation-workbench.css";
@@ -3076,6 +3077,11 @@ export default function PlatformPage() {
   const isTrial = useIsTrialUser();
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
   /** 每条选题：用户上传的人像参考图（GCS 直链）→ 生成封面时换主角。key=sceneId；可覆盖全局人像 */
+  const [viralGraphicPagesBusyCount, setViralGraphicPagesBusyCount] = useState(0);
+  const viralGraphicPagesBusy = viralGraphicPagesBusyCount > 0;
+  const setViralGraphicPagesBusy = useCallback((busy: boolean) => {
+    setViralGraphicPagesBusyCount(count => Math.max(0, count + (busy ? 1 : -1)));
+  }, []);
   const [coverReferencePhotoMap, setCoverReferencePhotoMap] = useState<Record<string, string>>({});
   /** 全局主人公照片（一键套装上方上传）→ 默认套用全部选题；单卡可覆盖 */
   const [globalCoverReferencePhotoUrl, setGlobalCoverReferencePhotoUrl] = useState<string | null>(null);
@@ -10527,6 +10533,11 @@ export default function PlatformPage() {
 
   /** 全案选题一键：依次为每条生成 2×4 分镜或八格（四题为套装总价；否则按单条价累加） */
   function onBulkCompositeOneClick() {
+    if (visibleExecutionCards.some(card => card.viralCreation && /图文|小红书/.test(card.format))) {
+      toast.error("图文笔记请在稿件下方逐页生成，每页一张独立图片");
+      return;
+    }
+
     if (!isAuthenticated) {
       toast.error("请先登录");
       return;
@@ -10698,6 +10709,11 @@ export default function PlatformPage() {
   }
 
   function onBulkCoverCompositeBundleOneClick() {
+    if (visibleExecutionCards.some(card => card.viralCreation && /图文|小红书/.test(card.format))) {
+      toast.error("图文笔记请在稿件下方逐页生成，每页一张独立图片");
+      return;
+    }
+
     if (!isAuthenticated) {
       toast.error("请先登录");
       return;
@@ -10959,7 +10975,7 @@ export default function PlatformPage() {
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-white">全局参考人像（可选，套用全部稿件）</div>
+          <div className="text-sm font-semibold text-white">上传封面人物</div>
           <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
             套用全部选题的封面、编导分镜表与图文笔记解说人物：
             <strong className="text-white/80">锁脸</strong>
@@ -10979,14 +10995,15 @@ export default function PlatformPage() {
               ) : (
                 <>
                   <UserRound className="h-3 w-3" aria-hidden />
-                  {globalCoverReferencePhotoUrl ? "更换全局照片" : "上传全局主人公照片"}
+                  {globalCoverReferencePhotoUrl ? "更换人物照片" : "选择人物照片"}
                 </>
               )}
               <input
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
-                className="hidden"
-                disabled={globalCoverRefUploading}
+                className="sr-only"
+                aria-label="上传封面人物照片"
+                disabled={globalCoverRefUploading || !isAuthenticated || viralGraphicPagesBusy}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   e.target.value = "";
@@ -11023,7 +11040,7 @@ export default function PlatformPage() {
     if (bps.length === 0) return null;
     const cards = bps.map((bp, bi) => mapContentBlueprintToExecutionCard(bp, bi));
     const genBusy =
-      globalCoverRefUploading || coverRefUploadingIds.size > 0 ||
+      viralGraphicPagesBusy || globalCoverRefUploading || coverRefUploadingIds.size > 0 ||
       isSequentialCoverBatchGenerating ||
       isSequentialCompositeBatchGenerating ||
       isSequentialCoverCompositeBundleBatchGenerating ||
@@ -11049,7 +11066,7 @@ export default function PlatformPage() {
 
         {cards.length > 0 ? (
           <div className="mt-3 space-y-3">
-            {renderGlobalProtagonistPhotoBlock()}
+            {platformMode !== "create" && renderGlobalProtagonistPhotoBlock()}
             <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap">
               <button
                 type="button"
@@ -11087,7 +11104,7 @@ export default function PlatformPage() {
                 )}
                 一键封面套装
               </button>
-              <button
+              {!cards.some(row => row.viralCreation && /图文|小红书/.test(row.format)) && <><button
                 type="button"
                 disabled={genBusy || !isAuthenticated}
                 onClick={onBulkCompositeOneClick}
@@ -11112,7 +11129,7 @@ export default function PlatformPage() {
                   <Package className="h-3.5 w-3.5" />
                 )}
                 一键封面加分镜
-              </button>
+              </button></>}
             </div>
           </div>
         ) : null}
@@ -11384,6 +11401,7 @@ export default function PlatformPage() {
                 {item.viralCreation && <ViralProductionPanel
                   key={item.id} format={item.format} packageValue={item.xhsPackage}
                   pages={item.graphicNotePages} cells={item.storyboardCells}
+                  graphicPages={isGraphicFormat && workbenchUserKey ? <ViralGraphicPages key={`${workbenchUserKey}:${item.id}`} userKey={workbenchUserKey} sceneId={item.id} pages={item.graphicNotePages || []} referencePhotoUrl={resolveReferencePhotoForScene(item.id)} visualBrief={JSON.stringify(item.xhsPackage)} disabled={genBusy || !isAuthenticated} onBusyChange={setViralGraphicPagesBusy} /> : undefined}
                   referencePhotoUrl={coverReferencePhotoMap[item.id] || globalCoverReferencePhotoUrl || undefined}
                   referenceIsGlobal={!coverReferencePhotoMap[item.id] && Boolean(globalCoverReferencePhotoUrl)}
                   referenceUploading={coverRefUploadingIds.has(item.id)}
@@ -11440,7 +11458,7 @@ export default function PlatformPage() {
                   </div>
                 )}
 
-                <div className="mt-4 flex flex-wrap gap-2 border-t border-white/10 pt-3">
+                {!(item.viralCreation && isGraphicFormat) && <div className="mt-4 flex flex-wrap gap-2 border-t border-white/10 pt-3">
                   <button
                     type="button"
                     disabled={genBusy || !isAuthenticated || batchGeneratingCoverIds.has(item.id)}
@@ -11501,7 +11519,7 @@ export default function PlatformPage() {
                       </>
                     )}
                   </button>
-                </div>
+                </div>}
               </article>
             );
           })}
@@ -15294,6 +15312,7 @@ export default function PlatformPage() {
                 </div>
           {creationTool === "viral" ? (
             <div className="mb-5 space-y-4">
+              {renderGlobalProtagonistPhotoBlock({ className: "viral-person-upload-entry" })}
               {platformMainPersonaTopicsPanel}
               <div id="platform-creation-results">{renderExpandedShortlistGenZone("platform-topic-shortlist")}</div>
             </div>

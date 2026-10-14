@@ -31,10 +31,11 @@ export function XhsContentGrowthPanel(props: {
 }
 
 export function XhsGrowthEvidenceView({ evidence }: { evidence: XhsGrowthEvidence }) {
+  if (evidence.selectedCount <= 0 || !evidence.samples.length) return null;
   return <details className="mt-3 rounded-xl border border-white/10 p-3 text-xs text-gray-300">
-    <summary className="cursor-pointer">本组选题参考 · {evidence.platform === "douyin" ? "抖音" : "小红书"}窗口内 {evidence.eligibleCount} 条样本</summary>
+    <summary className="cursor-pointer">本组选题参考 · {evidence.platform === "douyin" ? "抖音" : "小红书"}· {evidence.samples.length} 条参考样本</summary>
     <p className="mt-2 leading-5">{evidence.note}</p>
-    <p className="mt-1">窗口：{evidence.windowStart.slice(0, 10)} 至 {evidence.windowEnd.slice(0, 10)}；读取 {evidence.sourceCount} 条，日期不明 {evidence.excludedUnknownDate} 条、窗口外 {evidence.excludedOutsideWindow} 条未纳入。</p>
+    <p className="mt-1">窗口：{evidence.windowStart.slice(0, 10)} 至 {evidence.windowEnd.slice(0, 10)}；读取 {evidence.sourceCount} 条{evidence.excludedUnknownDate > 0 ? `，日期不明 ${evidence.excludedUnknownDate} 条未纳入` : ""}{evidence.excludedOutsideWindow > 0 ? `，窗口外 ${evidence.excludedOutsideWindow} 条未纳入` : ""}。</p>
     <ul className="mt-2 space-y-2">{evidence.samples.map(sample => <li key={sample.id}>{sample.url && /^https?:\/\//i.test(sample.url) ? <a href={sample.url} target="_blank" rel="noreferrer" className="text-rose-200 underline">{sample.title}</a> : sample.title}<span className="block text-gray-500">{sample.dateKind === "publishedAt" ? "发布" : "采集/记录"} {sample.date.slice(0, 10)} · 赞 {sample.likes ?? "未采集"} · 评 {sample.comments ?? "未采集"}</span></li>)}</ul>
   </details>;
 }

@@ -1,3 +1,4 @@
+import { readTrendShortlistIndex, writeTrendShortlistIndex, ensureTrendShortlistIndex, type ShortlistCollection } from "./trendShortlistIndex";
 import { buildGrowthStatusProjection, type GrowthStatusProjection } from "./growthStatusProjection";
 import { readGrowthGzipJson, writeGrowthGzipJson, mapGrowthSequential } from "./growthJsonStream";
 import { observeRuntimeMemory } from "../services/runtimeMemory";
@@ -2064,38 +2065,28 @@ export async function readTrendStoreForPlatforms(
   };
 }
 
-/**
- * 选题初选专用：只读本机 volume 上的 platform-current / platforms 文件。
- * **禁止**走 `readJsonWithGzipFallback` 冷仓下载（Fly 上会堵死 health + 把 LLM 拖到超时）。
- */
+/** 选题专用轻量参考池；索引未就绪明确报错，绝不再加载完整采集文件。 */
 export async function readLocalTrendCollectionsForPlatforms(
   platforms: GrowthPlatform[],
-): Promise<Partial<Record<GrowthPlatform, PlatformTrendCollection>>> {
-  const uniquePlatforms = Array.from(new Set(platforms.filter(Boolean)));
-  const entries = await Promise.all(
-    uniquePlatforms.map(async (platform) => {
-      const current = await readLocalJsonOrGzip<PlatformCurrentTruthFile>(getPlatformCurrentTruthFile(platform));
-      if (
-        current?.collection?.items?.length
-        && !isRecoveredCollectionSource(current.collection.source)
-      ) {
-        return [platform, current.collection] as const;
-      }
-      const derived = await readLocalJsonOrGzip<{ collection?: PlatformTrendCollection }>(
-        path.join(PLATFORM_DIR, `${platform}.json`),
-      );
-      if (
-        derived?.collection?.items?.length
-        && !isRecoveredCollectionSource(derived.collection.source)
-      ) {
-        return [platform, derived.collection] as const;
-      }
-      return [platform, undefined] as const;
-    }),
-  );
-  return Object.fromEntries(
-    entries.filter(([, collection]) => Boolean(collection)),
-  ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
+): Promise<Partial<Record<GrowthPlatform, ShortlistCollection>>> {
+  const entries = await Promise.all(Array.from(new Set(platforms)).map(async platform =>
+    [platform, await readTrendShortlistIndex(STORE_DIR, platform).catch(async () => {
+      await ensureTrendShortlistIndex(STORE_DIR, platform);
+      return readTrendShortlistIndex(STORE_DIR, platform);
+    })] as const));
+  return Object.fromEntries(entries);
+}
+
+export async function warmTrendShortlistIndexes() {
+  for (const platform of ["xiaohongshu", "douyin", "bilibili"] as const) {
+    await ensureTrendShortlistIndex(STORE_DIR, platform).catch(error =>
+      console.warn(`[growth] ${platform} 选题索引初始化未完成`, error instanceof Error ? error.message : "unknown"));
+  }
+}
+
+async function refreshShortlistIndex(collection: PlatformTrendCollection, updatedAt: string) {
+  try { await writeTrendShortlistIndex(STORE_DIR, collection, updatedAt); }
+  catch (error) { console.warn("[growth] 选题参考池更新失败，保留原采集库", error instanceof Error ? error.message : "unknown"); }
 }
 
 export async function reconcileTrendHistoryState(options?: { force?: boolean }) {
@@ -2284,6 +2275,7 @@ async function writeStoreUnlocked(
         await fs.rm(truthFile, { force: true });
         await fs.rm(`${truthFile}.gz`, { force: true });
         await fs.rm(bucketDir, { recursive: true, force: true });
+        await fs.rm(path.join(STORE_DIR, "shortlist", `${platform}.json`), { force: true });
         delete platformManifest.platforms[platform];
         return;
       }
@@ -2295,6 +2287,7 @@ async function writeStoreUnlocked(
         collection,
         history: historySummary,
       } satisfies PlatformCurrentTruthFile);
+      await refreshShortlistIndex(collection, next.updatedAt);
       platformManifest.platforms[platform] = {
         file: `${truthFile}.gz`,
         currentTotal: collection.items.length,
@@ -2807,6 +2800,7 @@ async function writeSinglePlatformCurrent(
     collection,
     history,
   } satisfies PlatformCurrentTruthFile);
+  await refreshShortlistIndex(collection, updatedAt);
   await writeJsonGzipAtomic(path.join(PLATFORM_DIR, `${platform}.json`), {
     updatedAt,
     platform,
@@ -2974,6 +2968,7 @@ export async function restoreTrendPlatformCurrentFromBaseline(
       `${truthFile}.gz`,
       path.join(PLATFORM_DIR, `${platform}.json`),
       path.join(PLATFORM_DIR, `${platform}.json.gz`),
+      path.join(STORE_DIR, "shortlist", `${platform}.json`),
       PLATFORM_CURRENT_MANIFEST_FILE,
       DEBUG_SUMMARY_FILE,
       STATUS_SNAPSHOT_FILE,

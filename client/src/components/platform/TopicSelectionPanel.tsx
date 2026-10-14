@@ -1,3 +1,4 @@
+import { topicDisplayText } from "@shared/platformTopicDisplay";
 import type { ReactNode } from "react";
 import type { PlatformTopicShortlistItem } from "@shared/platformTopicShortlist";
 
@@ -35,8 +36,8 @@ export function TopicSelectionPanel(p: Props) {
         return <article key={topic.id} className={`topic-candidate ${selected ? "is-selected" : ""}`}>
           <div className="topic-candidate-meta"><span>方向 {String(index + 1).padStart(2, "0")}</span>{topic.isTopPick && <span>推荐尝试</span>}<label className="topic-check"><input type="checkbox" checked={selected} disabled={busy} onChange={() => p.onToggle(topic.id)} aria-label={`选择选题：${topic.title}`} /><span>{selected ? "已选" : "选择"}</span></label></div>
           {editing ? <input className="topic-title-input" aria-label="修改选题标题" value={p.editingTitle} autoFocus maxLength={120} onChange={e => p.onEditingTitle(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); p.onSave(); } if (e.key === "Escape") p.onCancel(); }} /> : <h3>{topic.title}</h3>}
-          <p className="topic-candidate-value">{topic.conveyGoal}</p>
-          {topic.viralReason && <details className="topic-reason"><summary>为什么值得尝试</summary><p>{topic.viralReason}</p><small>创意判断，仅供选择参考。</small></details>}
+          <p className="topic-candidate-value">{topicDisplayText(topic.conveyGoal)}</p>
+          {topic.viralReason && topicDisplayText(topic.viralReason) && <details className="topic-reason"><summary>为什么值得尝试</summary><p>{topicDisplayText(topic.viralReason)}</p><small>创意判断，仅供选择参考。</small></details>}
           <footer>{editing ? <><button type="button" onClick={p.onCancel}>取消</button><button type="button" onClick={p.onSave}>保存标题</button></> : <><button type="button" disabled={busy} onClick={() => p.onEdit(topic)}>编辑标题</button><button type="button" disabled={busy} onClick={() => p.onExpand([topic])}>用这个方向写稿 <span aria-hidden>↗</span></button></>}</footer>
         </article>;
       })}</div>

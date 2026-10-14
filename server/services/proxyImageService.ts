@@ -1,3 +1,4 @@
+import { buildViralGraphicPagePrompt } from "../../shared/viralGraphicPage.js";
 import { XHS_IMAGE_POLICY } from "../../shared/xhsContentStrategy.js";
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
@@ -1006,7 +1007,7 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     flowLog: L,
     referenceImageUrls: refImageUrls.length ? refImageUrls : undefined,
     providerOverride: "openai",
-    ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
+    ...(options.viralCreation ? { ...XHS_IMAGE_POLICY, qualityOverride: "medium" as const, evolinkResolution: "2K" as const, openaiSize: "1152x2048" } : {}),
     captureError: options.captureError,
   });
 }
@@ -1559,6 +1560,7 @@ async function generatePlatformCompositeSheetViaNanoBanana2Primary(options: {
  */
 export async function generatePlatformCompositeSheetImage(options: {
   viralCreation?: boolean;
+  singleGraphicPage?: boolean;
   beforeImageSubmit?: () => Promise<void>;
   kind: PlatformCompositeSheetKind;
   title: string;
@@ -1624,6 +1626,9 @@ export async function generatePlatformCompositeSheetImage(options: {
    */
   gridSection?: { index: number; total: number };
 }): Promise<string | null> {
+  if (options.viralCreation && normalizeCompositeSheetKind(options.kind) === "xiaohongshu_dual_note") {
+    throw new Error("图文笔记已改为每页独立出图，请使用稿件下方逐页生成入口");
+  }
   const totalMs = resolvePlatformCompositeSheetTotalTimeoutMs();
   appendImageFlowLog(
     options.flowLog,
@@ -1645,6 +1650,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   const isStoryboard = k === "storyboard_sheet_landscape";
   const isXhs = k === "xiaohongshu_dual_note";
   const isKnowledgeCard = k === "single_page_knowledge_card";
+  const isGraphicPage = isKnowledgeCard && options.viralCreation === true && options.singleGraphicPage === true;
   if (!isStoryboard && !isXhs && !isKnowledgeCard) {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
   }
@@ -1691,7 +1697,7 @@ export async function generatePlatformCompositeSheetImage(options: {
       compositeImageEngine === "nano_banana_2" ? " · 入参曾请求 nano_banana_2（已忽略，统一走 GPT-IMAGE-2）" : ""
     }：① 中文主体（buildCompositeSheetDirectChineseBody）→ ② 英文像素锁 → ③ 送生图`,
   );
-  const compositeMaxAttempts = Math.min(
+  const compositeMaxAttempts = isGraphicPage ? 1 : Math.min(
     8,
     Math.max(1, Number(process.env.PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS) || 2),
   );
@@ -1821,7 +1827,10 @@ export async function generatePlatformCompositeSheetImage(options: {
     try {
       let promptForImage: string;
 
-      if (isKnowledgeCard) {
+      if (isGraphicPage) {
+        promptForImage = buildViralGraphicPagePrompt({ content: scriptContextForPipeline, pageIndex: options.notePageIndex, pageTotal: options.notePageTotal, visualBrief: options.executionDetails, hasPortrait: Boolean(referencePhotoUrl) });
+        appendImageFlowLog(L, `[独立图文页] 第${options.notePageIndex}/${options.notePageTotal}页 · 单页9:16 · 正文${scriptContextForPipeline.length}字`);
+      } else if (isKnowledgeCard) {
         const { buildSinglePageKnowledgeCardImagePrompt } = await import("./geminiPlatformCompositeTranslation.js");
         promptForImage = buildSinglePageKnowledgeCardImagePrompt(scriptContextForPipeline, {
           notePart: options.notePart,
@@ -1925,20 +1934,25 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       }
 
       // 像素链对齐封面：仅 OpenAI → OpenRouter GPT-IMAGE-2（有参考时 edit 脸锁）。失败不降级 NB2 / EvoLink。
-      const refImageUrls = isKnowledgeCard
+      const refImageUrls = isKnowledgeCard && !isGraphicPage
         ? knowledgeReferencePageUrls
         : [
             ...(referencePhotoUrl ? [referencePhotoUrl] : []),
             ...continuityRefs,
           ].filter((u, idx, arr) => arr.indexOf(u) === idx).slice(0, 4);
       // 知识卡的参考图是原稿版式页，不走「换脸/同人」指令
-      const hasSheetRefs = !isKnowledgeCard && refImageUrls.length > 0;
+      const hasSheetRefs = (!isKnowledgeCard || isGraphicPage) && refImageUrls.length > 0;
+      if (options.viralCreation) appendImageFlowLog(L, "[爆款图片合同] Image 2.5 Sunburst · 2K · medium · 官方与EvoLink同模型同画质；独立人像4K/high不使用此入口");
       const knowledgeCardQuality = isKnowledgeCard
         ? knowledgeCardImageQuality(Number(options.notePageTotal) || 0)
         : undefined;
       appendImageFlowLog(
         L,
-        isKnowledgeCard
+        options.viralCreation && !isGraphicPage
+          ? `[导演分镜·步骤2] Image 2.5 Sunburst · 16:9 · 2K · medium · 官方2048x1152 / EvoLink 2K`
+          : isGraphicPage
+          ? `[独立图文页·步骤2] 单页9:16 · 2K · medium · 官方1152x2048 / EvoLink 2K · 参考人像=${refImageUrls.length}张`
+          : isKnowledgeCard
           ? `[图文笔记·步骤2] GPT-IMAGE-2 · 16:9 · quality=high · EvoLink 4K / OpenAI 官方 ${KNOWLEDGE_CARD_OPENAI_SIZE} · total=${options.notePageTotal ?? "?"} · 参考原页=${refImageUrls.length}张 · gcsSubdir=${subdir}`
           : `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · ${
               hasSheetRefs ? "换脸·仅 OpenAI/OpenRouter（无 NB2）" : "仅 OpenAI/OpenRouter（无 NB2）"
@@ -1961,14 +1975,18 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       if (hasSheetRefs) {
         appendImageFlowLog(
           L,
-          isKnowledgeCard
+          options.viralCreation
+            ? `[爆款图片·参考] Image 2.5 Sunburst · 2K · medium · 参考=${refImageUrls.length}张`
+            : isKnowledgeCard
             ? `[图文笔记·换脸] ASSET→OpenRouter edit · 16:9 · 参考=${refImageUrls.length}张`
             : `[2×4·步骤2a·换脸主力] OpenAI/OpenRouter GPT-IMAGE-2 edit · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · 参考=${refImageUrls.length}张${options.referencePhotoFromApprovedCover ? "(含封面脸锁)" : ""}${continuityRefs.length ? "+上段连贯" : ""}`,
         );
       } else {
         appendImageFlowLog(
           L,
-          isKnowledgeCard
+          options.viralCreation
+            ? `[爆款图片·主路径] Image 2.5 Sunburst · 官方→EvoLink · 2K · medium`
+            : isKnowledgeCard
             ? `[图文笔记·主路径] ${options.knowledgeCardImageProvider === "evolink" ? "EvoLink 2.5（4K）→ OpenAI 官方 → WaveSpeed" : options.knowledgeCardImageProvider === "wavespeed" ? "WaveSpeed（4K）→ OpenAI 官方 → EvoLink" : `OpenAI 官方 ${options.openaiImageVariant || "flare"}（${KNOWLEDGE_CARD_OPENAI_SIZE}）→ EvoLink 2.5（4K）→ WaveSpeed（4K）`} · quality=high · 16:9`
             : `[2×4·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
         );
@@ -1982,7 +2000,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       } = {};
       let fromGpt = await generateGptImage2FromRawEnglishPrompt({
         englishPrompt: promptForPixel,
-        aspectRatio: "16:9",
+        aspectRatio: isGraphicPage ? "9:16" : "16:9",
         gcsSubdir: subdir,
         flowLog: L,
         referenceImageUrls: refImageUrls.length ? refImageUrls : undefined,
@@ -1993,10 +2011,10 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         imageLane: isKnowledgeCard ? "asset" : undefined,
         openaiImageVariant: options.openaiImageVariant ?? null,
         ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
-        qualityOverride: knowledgeCardQuality,
-        evolinkResolution: isKnowledgeCard ? "4K" : undefined,
+        qualityOverride: options.viralCreation ? "medium" : knowledgeCardQuality,
+        evolinkResolution: options.viralCreation ? "2K" : isKnowledgeCard ? "4K" : undefined,
         // 0908 用户：官方也出 3840x2160，与 EvoLink 同尺寸，PDF 合成不用补边
-        openaiSize: isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
+        openaiSize: options.viralCreation ? (isGraphicPage ? "1152x2048" : "2048x1152") : isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
         captureError: gptCapture,
         beforeImageSubmit: options.beforeImageSubmit,
       });
@@ -2004,6 +2022,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       // 良性人像误杀：与旧 EvoLink 路径一致，附澄清语境再试一次
       if (
         !fromGpt &&
+        !isGraphicPage &&
         hasSheetRefs &&
         (gptCapture.moderationBlocked || isEvolinkModerationFailure(gptCapture.message))
       ) {
@@ -2011,7 +2030,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         const retryCapture: typeof gptCapture = {};
         fromGpt = await generateGptImage2FromRawEnglishPrompt({
           englishPrompt: `${promptForPixel}\n${COVER_REFERENCE_BENIGN_CLARIFIER_EN}`,
-          aspectRatio: "16:9",
+          aspectRatio: isGraphicPage ? "9:16" : "16:9",
           gcsSubdir: subdir,
           flowLog: L,
           referenceImageUrls: refImageUrls,
@@ -2020,9 +2039,9 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           imageLane: isKnowledgeCard ? "asset" : undefined,
           openaiImageVariant: options.openaiImageVariant ?? null,
         ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
-          qualityOverride: knowledgeCardQuality,
-          evolinkResolution: isKnowledgeCard ? "4K" : undefined,
-          openaiSize: isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
+          qualityOverride: options.viralCreation ? "medium" : knowledgeCardQuality,
+          evolinkResolution: options.viralCreation ? "2K" : isKnowledgeCard ? "4K" : undefined,
+          openaiSize: options.viralCreation ? (isGraphicPage ? "1152x2048" : "2048x1152") : isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
           captureError: retryCapture,
           beforeImageSubmit: options.beforeImageSubmit,
         });

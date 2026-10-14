@@ -155,8 +155,8 @@ export const platformTopicShortlistItemSchema = z.object({
   sourceTopicId: z.string().max(64).optional(),
   id: z.string().min(4).max(64),
   title: z.string().min(4).max(120),
-  hookSketch: z.string().min(4).max(200),
-  conveyGoal: z.string().min(4).max(240),
+  hookSketch: z.string().min(4).max(4000),
+  conveyGoal: z.string().min(4).max(4000),
   skillsUsed: z.array(z.string().min(1).max(80)).min(1).max(16),
   primaryLane: z.enum(["fmcg", "forensic", "crossover", "contrast", "virtual", "default"]),
   formatHint: z.enum(["图文", "短视频"]).default("图文"),
@@ -166,8 +166,8 @@ export const platformTopicShortlistItemSchema = z.object({
   linkedCampaigns: z.array(z.string().min(1).max(80)).max(4).optional(),
   /** 爆款概率 0–100：趋势命中 + 反差 + 共鸣 的综合估计，用于排序 */
   viralScore: z.number().min(0).max(100).optional(),
-  /** 为什么可能爆（≤24 字，给人看的一句） */
-  viralReason: z.string().max(24).optional(),
+  /** 完整的选题适配依据，保留原文供用户展开查看。 */
+  viralReason: z.string().optional(),
   /** 评论区热度 0–100：这条发出去大家想不想留言（与 viralScore 分开判断） */
   commentHeat: z.number().min(0).max(100).optional(),
   /** 排序后是否进前 {@link PLATFORM_TOPIC_TOP_PICK_COUNT} */

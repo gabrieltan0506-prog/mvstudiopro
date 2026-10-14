@@ -19,11 +19,11 @@ export const XHS_CONTENT_GUIDANCE = `【小红书创作与转化】
 选题：用人群×场景×一个问题×一个可执行结果，结合相关Growth样本提出候选。拆解话题与结构，不复制原文；不相关热点放弃。每条说明受众、问题、差异化、证据与承接动作。
 Growth是采集样本，非平台全量、非本人账号数据。严格说明时间字段/窗口/样本量；无样本时只给待验证创意。点赞、评论、收藏与热度分别说明，不混算CTR、完播率、涨粉率、成交率；创意评分不是爆款概率，关键词不等于已证低竞争。
 标题与封面分工：标题说清主题+人群/场景长尾词，封面给一个值得点开的理由。提供一个主选和三个不同切口备选；数字必须可查证，不用全网最/保证涨粉/99%都不知道或虚构稀缺。正文兑现标题承诺。
-封面：明确人物/物件、生活场景、可见动作或对比、主副标题、构图、字体对比、留白与系列一致性。默认竖版3:4仅为可调设计起点，服从所选画布；用符合内容的真人与场景，避免整页小字、空背景和堆装饰。前后对比必须同条件且真实。其余图沿同一角色/风格，每页一个问题或动作。
+封面：明确人物/物件、生活场景、可见动作或对比、主副标题、构图、字体对比、留白与系列一致性。比例服从当前图片入口实际可用画布，不把平台通用比例写成已支持能力；本产品独立图文页为9:16，明确要求其他比例时先核实际入口能力与限制；按内容选择人物场景或真实授权的操作结果、清单示例、同条件测评证据，避免整页小字、空背景和堆装饰；缺证据只列待补素材或明确标示例，不造后台或业绩截图。前后对比必须同条件且真实。其余图沿同一角色/风格，每页一个问题或动作。
 图文：按问题解决、教程、测评、清单、科普或真实故事选结构；封面→具体痛点/场景→有依据的步骤/实例→可保存清单→一个自然承接动作。页数服从用户要求与信息量，不能为了凑页重复。正文可独立阅读，写明资料来源与适用边界。
 视频：开头直接进入问题或现场→按时间线/并列步骤/前后对比展开→结尾收口。逐段给时间、画面动作、口播、字幕与音效需要；时长服从用户输入，口播量与时间一致。故事可用开端—阻碍—转机—行动变化—启示，不能编造亲历或客户评价。
 转化：每篇只选一个主动作。涨粉给下一期明确收益；获客用具体问题引导站内咨询；成交讲清适用人群、真实差异、价格依据、交付与售后。允许用户不购买，避免强迫评论/关注才能获得正文答案，不藏联系方式绕规则，不主动群发或发布。
-复盘：发布前记录假设与版本；发布后同一24小时/7天窗口对比，仅改封面/标题/开头中的一个变量。只有同来源真实曝光和点击才能算CTR；关注/线索/订单需真实归因与分母，缺失就标未采集。下一轮只改证据指向的问题，不承诺增长结果。
+复盘：发布前记录假设与版本；发布后同一24小时/7天窗口对比，先区分曝光、打开、有效咨询、订单与交付问题，按已有证据仅改对应层的一项变量。只有同来源真实曝光和点击才能算CTR；关注/线索/订单需真实归因与分母，缺失就标未采集。没有曝光分母不区分没人看到与看到不打开；相关变化不证明因果，订单/咨询比不冒称客户成交率。下一轮只改证据指向的问题，不承诺增长结果。
 来源：用户提供Day2第3–19、21–22页；运营策略与Day1定位/变现部分；账号诊断SWOT与实验复盘；运营知识地图的用户价值与内容闭环。课程中的算法权重、门槛、固定时段、费用、收益案例不是当前平台事实。`;
 
 export type XhsCreativeBrief = {
@@ -89,24 +89,74 @@ export function buildXhsGrowthEvidence(rows: Array<Record<string, unknown>>, win
     samples.push({ id, title, url, date: new Date(stamp).toISOString(), dateKind, likes: metric(row.likes), comments: metric(row.comments), tags: Array.isArray(row.tags) ? row.tags.map(String).filter(Boolean).slice(0, 100).map(tag => tag.slice(0, 200)) : [] });
   }
   // 先匹配创作场景，再看采集时互动；不是平台热度公式，也不是效果预测。
-  for (const sample of samples) sample.relevance = scoreXhsSampleRelevance(context, sample);
+  const match = createXhsRelevanceMatcher(context, samples);
+  for (const sample of samples) sample.relevance = match(sample);
   samples.sort((a, b) => (b.relevance?.score ?? 0) - (a.relevance?.score ?? 0) || (b.likes ?? -1) - (a.likes ?? -1) || a.id.localeCompare(b.id));
   // 明示摘要容量与原始样本数，不称为全量统计或概率。
-  const selected = (context.trim() ? samples.filter(sample => (sample.relevance?.score ?? 0) > 0) : samples).slice(0, 12);
+  const relevant = context.trim() ? samples.filter(sample => (sample.relevance?.score ?? 0) > 0) : samples;
+  const selected: XhsGrowthSample[] = [];
+  // 明确并列主题各保留一个有来源的入口，不能由泛主题的高分样本挤走第二身份。
+  const { focus } = xhsRelevanceQuery(context);
+  for (const term of Array.from(focus)) {
+    const sample = relevant.find(row => row.relevance?.matchedTerms.includes(term));
+    if (sample && !selected.some(row => row.id === sample.id) && selected.length < 12) selected.push(sample);
+  }
+  for (const sample of relevant) if (selected.length < 12 && !selected.some(row => row.id === sample.id)) selected.push(sample);
   return { platform, version: XHS_CONTENT_VERSION, capturedAt: new Date(now).toISOString(), windowStart: new Date(cutoff).toISOString(), windowEnd: new Date(now).toISOString(), sourceCount: rows.length, eligibleCount: samples.length, excludedUnknownDate, excludedOutsideWindow, duplicateCount, selectedCount: selected.length, samples: selected, note: `Growth${platform === "douyin" ? "抖音" : "小红书"}采集样本；窗口内${samples.length}条，摘要选取${selected.length}条。发布时间优先，采集时间不能当发布时间；赞评是采集时累计值，不能推算曝光、点击、涨粉或成交。${selected.length ? "仅借题材与结构，非本人账号表现。" : samples.length ? "窗口内没有命中当前人群场景的样本，本轮创意须另行验证。" : "本窗口无可用样本，本轮创意须另行验证。"}` };
 }
 
-const XHS_MATCH_STOP = new Set(["小红", "红书", "内容", "创作", "目标", "人群", "场景", "问题", "真实", "素材", "经历", "产品", "服务", "要求", "形式", "图文", "视频", "文案", "本轮", "通过", "可以", "一个", "我们", "自己", "提供", "分享", "方法"]);
-export function scoreXhsSampleRelevance(context: string, sample: { title: string; tags?: string[] }): { matchedTerms: string[]; score: number } {
-  if (!context.trim()) return { matchedTerms: [], score: 0 };
-  const source = [sample.title, ...(sample.tags || [])].join(" ").toLowerCase();
-  const tokens = new Set<string>();
-  for (const run of context.toLowerCase().match(new RegExp("[\\p{Script=Han}]+|[a-z0-9]{3,}", "gu")) || []) {
-    if (/^[a-z0-9]/.test(run)) tokens.add(run);
-    else for (let i = 0; i < run.length - 1; i++) if (!XHS_MATCH_STOP.has(run.slice(i, i + 2))) tokens.add(run.slice(i, i + 2));
+// 中文按词切分，避免把“同一、身体、希望”等相邻二字拼片当作主题。
+const XHS_MATCH_STOP = new Set("小红书 抖音 内容 创作 目标 人群 场景 问题 真实 素材 经历 产品 服务 要求 形式 图文 视频 文案 本轮 通过 可以 一个 我们 自己 提供 分享 方法 背景 个人 特点 读者 希望 喜欢 愿意 不希望 不想 不要 不是 而是 不能 不用 不会 不愿 如何 怎么 怎样 什么 哪些 为什么 时候 时候的人 人的 大家 他们 她们 别人 有人 平时 现在 过去 后续 开始 进行 围绕 同时 相关 参考 样本 方面 普通 日常 生活 工作 时间 觉得 知道 经常 比较 需要 可能 只有 没有 还有 以及 这些 那些 这种 这样 一点 一起 每天 每周 休息 看见 看到 看过 接触 本人 关注 收藏 结果 具体 过程 经验 习惯 长期 坚持 清单 不同 重点 方式 事情 选择 表达 说话 节奏 温和 直接 喜欢 清楚 明确 寻找 查找 尽量 避免 适合 适用 边界 不断 成为 带来 更好 只有 最后 不再 时候 不一定 身体 感受 状态 不会 包装 虚构 编造 夸大 承诺 专业 影响 分享者 碎片 讲解 教学 老师 简单 相关 推荐 全部 同一 同时 个人 真实 可执行 读者 困惑 结论 清楚 单一 职业 实际 使用 新手 情况 看懂 一名 一段 记录 找回 后续 寻找 参考 内容 严格 普通人 目前 变成 不为 可以 了解 学会 人的 场景".split(" "));
+type RelevanceSample = { title: string; tags?: string[] };
+function contextTerms(context: string): string[] {
+  const segmenter = new Intl.Segmenter("zh-CN", { granularity: "word" });
+  const parts = Array.from(segmenter.segment(context.toLowerCase()));
+  const words = parts.filter(part => part.isWordLike).map(part => part.segment);
+  // ICU会把新词拆为单字（如二/胎、宝/妈、秋/招）；仅在相邻单字串内补词。
+  let singles = "";
+  const flush = () => { for (let i = 0; i + 1 < singles.length; i++) words.push(singles.slice(i, i + 2)); singles = ""; };
+  for (const part of parts) {
+    if (part.isWordLike && /^[\u3400-\u9fff]$/.test(part.segment) && !"的了与和在是我你他她它把将就也又而请能要很较须后到去来有过但为以所可不".includes(part.segment)) singles += part.segment;
+    else flush();
   }
-  const matchedTerms = Array.from(tokens).filter(term => term.length <= 200 && source.includes(term)).slice(0, 100);
-  return { matchedTerms, score: matchedTerms.length };
+  flush();
+  return Array.from(new Set(words.filter(term => term.length >= 2 && term.length <= 100 && !XHS_MATCH_STOP.has(term) && !/^\d+$/.test(term))));
+}
+export function xhsRelevanceQuery(context: string) {
+  // 排除用户明确拒绝的方向；保留完整context交给创作模型，此处仅用于检索。
+  const positive = context.split(/[。！!？?；;\n]/).map(sentence => sentence.replace(/(?:不需要|不必|不再|不希望|不想|不愿|不要|避免|不作|不承诺|不编造|不制造|不夸大|不要求|不是|不喜欢|不追求|不擅长)[^，,]*([，,]|$)/g, " ")).join("。");
+  const terms = contextTerms(positive);
+  const focusText = Array.from(positive.matchAll(/(?:本轮要求|要求|问题|主题|方向)[：:]([^。\n]*)/g)).map(match => match[1]).join(" ");
+  const focus = new Set(contextTerms(focusText));
+  return { terms, focus };
+}
+/** 仅排除明确标作娱乐剧情的样本，用户要写剧情时照常保留。 */
+export function isUnrequestedFiction(context: string, source: string) {
+  return !/短剧|漫剧|剧情|小说|影视|甜宠|爽剧/.test(context) && /短剧|漫剧|甜宠|爽剧|霸道总裁|豪门总裁|全集解说|男主|女主|一人分饰多角|演剧场/.test(source);
+}
+/** 词匹配用于找参考，不代表语义理解或创意效果。 */
+export function createXhsRelevanceMatcher(context: string, corpus: RelevanceSample[] = []) {
+  const { terms, focus } = xhsRelevanceQuery(context);
+  const sources = corpus.map(sample => [sample.title, ...(sample.tags || [])].join(" ").toLowerCase());
+  const weights = new Map(terms.map(term => {
+    const hits = sources.reduce((count, source) => count + Number(source.includes(term)), 0);
+    const rarity = corpus.length ? Math.log(1 + (corpus.length - hits + 0.5) / (hits + 0.5)) : 1;
+    return [term, rarity * (focus.has(term) ? 5 : 1)] as const;
+  }));
+  return (sample: RelevanceSample): { matchedTerms: string[]; score: number } => {
+    const source = [sample.title, ...(sample.tags || [])].join(" ").toLowerCase();
+    if (isUnrequestedFiction(context, source)) return { matchedTerms: [], score: 0 };
+    const matchedTerms = terms.filter(term => source.includes(term));
+    // 明确提出本轮主题时，个人气质或职业描述不能独自把无关热点带入参考。
+    if (focus.size && !matchedTerms.some(term => focus.has(term))) return { matchedTerms: [], score: 0 };
+    const tags = (sample.tags || []).join(" ").toLowerCase();
+    const score = Math.sqrt(matchedTerms.length) * matchedTerms.reduce((sum, term) => sum + (weights.get(term) || 1) * (tags.includes(term) ? 1.5 : 1), 0)
+      / (0.6 + 0.4 * Math.max(1, source.length / 120));
+    return { matchedTerms, score: Math.round(score * 100) };
+  };
+}
+export function scoreXhsSampleRelevance(context: string, sample: RelevanceSample) {
+  return createXhsRelevanceMatcher(context)(sample);
 }
 
 export type XhsOwnMetrics = {
