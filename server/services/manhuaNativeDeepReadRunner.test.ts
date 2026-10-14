@@ -1,3 +1,4 @@
+import { type PreparedMediaCacheDeps } from "./manhuaNativePreparedMediaCache";
 /**
  * 原生精读执行器（0826 Gemini 换代）：开关、format 挑选、请求契约、双密度门禁、
  * Vertex 同通道重试纪律、历史路由缓存兼容与 GLM 整集结构化接线。
@@ -2006,6 +2007,55 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   });
   return { promise, resolve };
 }
+
+describe("视频分片恢复接线", () => {
+  function fixture() {
+    const store = new Map<string, Buffer>();
+    const cache: PreparedMediaCacheDeps = {
+      bucket: () => "test-bucket",
+      download: vi.fn(async ({ gcsUri }) => {
+        const buffer = store.get(gcsUri.replace("gs://test-bucket/", ""));
+        if (!buffer) throw new Error("gcs_stat_failed:404");
+        return { buffer, bucket: "test-bucket", objectName: "index", generation: "1" };
+      }),
+      stat: vi.fn(async () => ({ bucket: "test-bucket", objectName: "video", generation: "7", byteLength: 200_000 })),
+      upload: vi.fn(async ({ objectName, buffer }) => {
+        store.set(objectName, buffer); return { bucket: "test-bucket", objectName, gcsUri: `gs://test-bucket/${objectName}` };
+      }),
+    };
+    const deps = makePreparationDeps({ preparedMediaCache: cache });
+    const episode = { episodeIndex: 1, preparedMediaSeriesKey: "series", cacheSourceDigest: "a".repeat(64),
+      resolveNodes: vi.fn(async () => [{ url: "https://cdn.example/source.mp4" }]),
+      segments: [{ startSec: 0, endSec: 10 }, { startSec: 10, endSec: 20 }], sourceDurationSec: 20 };
+    return { store, cache, deps, episode };
+  }
+  it("第二次直接消费已上传分片，零下载零切片，并保留原段号", async () => {
+    const { deps, episode, store } = fixture();
+    const first = await prepareEpisodeVideos(episode, undefined, deps);
+    expect(store.size).toBe(2); expect(first.every(row => row.reusable)).toBe(true);
+    vi.mocked(deps.runMedia).mockClear(); vi.mocked(deps.upload).mockClear(); episode.resolveNodes.mockClear();
+    const group = vi.fn();
+    expect(await prepareEpisodeVideos(episode, undefined, deps, { onPreparedGroup: group })).toEqual(first);
+    expect(deps.runMedia).not.toHaveBeenCalled(); expect(deps.upload).not.toHaveBeenCalled(); expect(episode.resolveNodes).not.toHaveBeenCalled();
+    expect(group.mock.calls[0]![0].map((row: { segmentIndex: number }) => row.segmentIndex)).toEqual([0, 1]);
+  });
+  it("上传后调用方报错仍保存分片，下次只补缺片且重映射分组下标", async () => {
+    const { deps, episode, store } = fixture();
+    await expect(prepareEpisodeVideos(episode, undefined, deps, { preparedGroupSize: 1, uploadConcurrency: 1,
+      onPreparedGroup: () => { throw new Error("snapshot failed"); } })).rejects.toThrow("snapshot failed");
+    expect(store.size).toBe(1); expect(deps.remove).not.toHaveBeenCalled();
+    vi.mocked(deps.upload).mockClear(); const groups: number[] = [];
+    const result = await prepareEpisodeVideos(episode, undefined, deps, { onPreparedGroup: rows => { groups.push(...rows.map(row => row.segmentIndex)); } });
+    expect(deps.upload).toHaveBeenCalledTimes(1); expect(result.map(row => row.startSec)).toEqual([0, 10]);
+    expect(groups.sort()).toEqual([0, 1]);
+  });
+  it("索引读取故障先报错，不派备料或访问来源", async () => {
+    const { cache, deps, episode } = fixture();
+    vi.mocked(cache.download).mockRejectedValue(new Error("gcs_stat_failed:503"));
+    await expect(prepareEpisodeVideos(episode, undefined, deps)).rejects.toThrow("503");
+    expect(deps.runMedia).not.toHaveBeenCalled(); expect(episode.resolveNodes).not.toHaveBeenCalled();
+  });
+});
 
 describe("精确切片与实际媒体验收", () => {
   it("精确 seek 重编码保留原分辨率、帧率与音轨，不使用会前滚的流复制", () => {
@@ -4984,6 +5034,32 @@ describe("段级产物缓存：已付费段恢复与关闭式账本", () => {
       expect(deps.postVertex).toHaveBeenCalledTimes(5);expect(generation).toBeGreaterThan(1);
       expect(result.episodes[0]!.result.completedSegmentIndexes).toEqual([0,1,2,3,4,5]);
     }finally{spies.forEach(spy=>spy.mockRestore());}
+  });
+
+  it("待审同步先恢复旧缓存，不等待缺片备料或截图", async () => {
+    const episode = makeEpisode([{ startSec: 0, endSec: 60 }, { startSec: 60, endSec: 120 }]);
+    const entry = makeCacheEntry({ episode, segmentIndex: 0 });
+    const gate = deferred(), snapshots = vi.fn(), order: string[] = [];
+    const defaults = makeRunnerDeps();
+    const deps = makeRunnerDeps({
+      readSegmentCache: vi.fn(async input => input.segmentIndex === 0 ? { entry, generation: "1" } : null) as never,
+      prepareVideos: vi.fn(async (...args: Parameters<typeof defaults.prepareVideos>) => {
+        await gate.promise; order.push("prepared"); return defaults.prepareVideos(...args);
+      }),
+      postVertex: vi.fn(async () => geminiResponse(makeSegmentPayload({ segmentIndex: 1, startSec: 60, endSec: 120 }))) as never,
+    });
+    const task = runManhuaNativeDeepReadBatch({ episodes: [episode], segmentCacheSeriesKey: cacheSeriesKey,
+      onSegmentSnapshotCommitted: async snapshot => { order.push("snapshot"); snapshots(snapshot); },
+      onSegmentRead: async () => { order.push("frames"); },
+    }, deps);
+    try {
+      await vi.waitFor(() => expect(snapshots).toHaveBeenCalled());
+      expect(snapshots.mock.calls[0]![0].completedSegmentIndexes).toEqual([0]);
+      expect(order[0]).toBe("snapshot"); expect(order).not.toContain("prepared");
+      expect(deps.postVertex).not.toHaveBeenCalled();
+    } finally { gate.resolve(); }
+    await task;
+    expect(deps.postVertex).toHaveBeenCalledTimes(1);
   });
 
   it("乱序保存：首片未返回，后片先缓存并保存部分提案，不等待截图或片号", async () => {

@@ -1,3 +1,4 @@
+import { defaultPreparedMediaCacheDeps, readPreparedMedia, writePreparedMedia, type PreparedMediaCacheDeps, type PreparedMediaVideo } from "./manhuaNativePreparedMediaCache.js";
 import { TEMPLATE_METHOD_BRIEF_INSTRUCTION, mergeTemplateMethodBriefs } from "../../shared/manhuaTemplateMethodBrief";
 import { buildManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
 
@@ -845,6 +846,10 @@ export type NativeDeepReadBatchRunEpisode = {
   hintZh?: string;
   /** 启用段缓存时必填：稳定来源标识的 sha256，不得使用短期 CDN/签名 URL。 */
   cacheSourceDigest?: string;
+  /** 服务端传入，用于独立于读片JSON的媒体恢复索引。 */
+  preparedMediaSeriesKey?: string;
+  /** 与本次segments一一对应，缩小补段范围时同步重映射。 */
+  preparedMediaLegacySourceNames?: readonly string[];
 };
 
 export type NativeDeepReadBatchRunResult = {
@@ -2106,19 +2111,10 @@ export function buildCutSegmentArgs(
   });
 }
 
-export type PreparedNativeVideo = {
-  /** GCS 对象地址（gs://）；Vertex 主线直读，EvoLink 兜底再签 https。 */
-  gsUri: string;
-  startSec: number;
-  endSec: number;
-  temporaryGcs: { bucket: string; objectName: string };
-  /** 上传分片的实际字节数。 */
-  bytes: number;
-  /** 该分片通过本地时长与音轨验收后的事实。 */
-  hasAudio: boolean;
-};
+export type PreparedNativeVideo = PreparedMediaVideo;
 
 export type NativeDeepReadMediaPreparationDeps = {
+  preparedMediaCache?: PreparedMediaCacheDeps;
   resolveLocalUpload?: (input: { userId: string; uploadId: string }) => Promise<{
     sourceRef: string; sha256: string; localPath: string; bytes: number; durationSec: number;
   }>;
@@ -2140,6 +2136,7 @@ export type NativeDeepReadMediaPreparationDeps = {
 };
 
 export const defaultMediaPreparationDeps: NativeDeepReadMediaPreparationDeps = {
+  preparedMediaCache: defaultPreparedMediaCacheDeps,
   resolveLocalUpload: async (input) => {
     const { resolveOwnedManhuaLocalVideoUpload } = await import("./manhuaLocalVideoUploadService.js");
     return resolveOwnedManhuaLocalVideoUpload(input);
@@ -2229,10 +2226,41 @@ async function probeLocalSegmentMedia(
 }
 
 /**
- * 每集统一走 切段 → GCS 上传 → 用后删；Gemini 拉不了抖音 CDN 直链，
- * 不再保留「整集直读 CDN」路径。上传后立即删本地段文件。
+ * 先核验旧媒体索引，只为缺失分片下载、切片与上传。
+ * 上传后清理本地文件；已持久化恢复索引的云端片保留供续读与截图。
  */
 export async function prepareEpisodeVideos(
+  episode: NativeDeepReadBatchRunEpisode,
+  abortSignal?: AbortSignal,
+  deps: NativeDeepReadMediaPreparationDeps = defaultMediaPreparationDeps,
+  limits?: Parameters<typeof prepareEpisodeVideosUncached>[3],
+): Promise<PreparedNativeVideo[]> {
+  if (!episode.preparedMediaSeriesKey) return prepareEpisodeVideosUncached(episode, abortSignal, deps, limits);
+  if (!episode.cacheSourceDigest || !deps.preparedMediaCache) throw new Error("视频分片恢复存储或来源摘要缺失");
+  const segments = validateNativeDeepReadSegments(episode.segments);
+  const rows = await Promise.all(segments.map((span, index) => readPreparedMedia({ seriesKey: episode.preparedMediaSeriesKey!,
+    sourceDigest: episode.cacheSourceDigest!, episodeIndex: episode.episodeIndex, sourceDurationSec: episode.sourceDurationSec,
+    startSec: span.startSec, endSec: span.endSec, legacyFrameSourceName: episode.preparedMediaLegacySourceNames?.[index] }, deps.preparedMediaCache, abortSignal)));
+  const restored = rows.flatMap((video, segmentIndex) => video ? [{ segmentIndex, video }] : []);
+  if (restored.length) {
+    await limits?.onPreparedGroup?.(restored);
+    try { await limits?.onSourceFetchProgress?.(`第${episode.episodeIndex}集 · 已核验并复用 ${restored.length}/${segments.length} 个旧视频分片`); } catch { /* 进度旁路 */ }
+  }
+  const missingIndexes = rows.flatMap((video, index) => video ? [] : [index]);
+  if (missingIndexes.length) {
+    const fresh = await prepareEpisodeVideosUncached({ ...episode, segments: missingIndexes.map(index => segments[index]!),
+      preparedMediaLegacySourceNames: episode.preparedMediaLegacySourceNames && missingIndexes.map(index => episode.preparedMediaLegacySourceNames![index]!) }, abortSignal, deps, {
+      ...limits, onPreparedGroup: async group => {
+        await limits?.onPreparedGroup?.(group.map(row => ({ segmentIndex: missingIndexes[row.segmentIndex]!, video: row.video })));
+      },
+    });
+    if (fresh.length !== missingIndexes.length) throw new Error("恢复备料数量与缺失分片不一致");
+    fresh.forEach((video, index) => { rows[missingIndexes[index]!] = video; });
+  }
+  return rows as PreparedNativeVideo[];
+}
+
+async function prepareEpisodeVideosUncached(
   episode: NativeDeepReadBatchRunEpisode,
   abortSignal?: AbortSignal,
   deps: NativeDeepReadMediaPreparationDeps = defaultMediaPreparationDeps,
@@ -2566,6 +2594,13 @@ export async function prepareEpisodeVideos(
         bytes: row.bytes,
         hasAudio: row.hasAudio,
       };
+      if (episode.preparedMediaSeriesKey) {
+        if (!episode.cacheSourceDigest || !deps.preparedMediaCache) throw new Error("视频分片恢复存储缺失");
+        prepared[index] = await writePreparedMedia({ seriesKey: episode.preparedMediaSeriesKey,
+          sourceDigest: episode.cacheSourceDigest, episodeIndex: episode.episodeIndex,
+          sourceDurationSec: episode.sourceDurationSec, startSec: row.startSec, endSec: row.endSec },
+          prepared[index]!, deps.preparedMediaCache, abortSignal);
+      }
       uploadDone += 1;
       await reportMedia(
         `第${episode.episodeIndex}集 · 上传 ${uploadDone}/${segments.length} 完成`
@@ -2644,7 +2679,7 @@ export async function prepareEpisodeVideos(
     return prepared as PreparedNativeVideo[];
   } catch (error) {
     const cleanupResults = await Promise.allSettled(
-      prepared.flatMap((row) => row ? [deps.remove(row.temporaryGcs)] : []),
+      prepared.flatMap((row) => row && !row.reusable ? [deps.remove(row.temporaryGcs)] : []),
     );
     if (cleanupResults.some((row) => row.status === "rejected")) {
       console.warn(`[nativeDeepRead] 第${episode.episodeIndex}集备料失败后的临时对象清理待核对`);
@@ -5500,6 +5535,10 @@ async function executeNativeDeepReadBatch(
           ) {
             throw new Error(`第${episode.episodeIndex}集第${segmentIndex + 1}段备料秒位错配，已停止`);
           }
+          const cachedAudio = cachedSegments.values().next().value?.hasAudio;
+          if (cachedAudio !== undefined && cachedAudio !== video.hasAudio) {
+            throw new Error(`第${episode.episodeIndex}集新备料与已保存分片的音轨事实不一致，已停止且不覆盖旧卡`);
+          }
           videosBySegment.set(segmentIndex, video);
           allVideos.push(video);
         }
@@ -5519,7 +5558,12 @@ async function executeNativeDeepReadBatch(
         }
         const selectedSegments = indexes.map((index) => episode.segments[index]!);
         return deps.prepareVideos(
-          { ...episode, segments: selectedSegments },
+          { ...episode, segments: selectedSegments, preparedMediaSeriesKey: params.segmentCacheSeriesKey,
+            preparedMediaLegacySourceNames: params.segmentCacheSeriesKey && episode.cacheSourceDigest
+              ? indexes.map(segmentIndex => `manhua-template-learn/native-frame-sources/${crypto.createHash("sha256").update(JSON.stringify({
+                seriesKey: params.segmentCacheSeriesKey, episodeIndex: episode.episodeIndex,
+                sourceDigest: episode.cacheSourceDigest, segmentIndex, span: episode.segments[segmentIndex],
+              })).digest("hex")}.json`) : undefined },
           params.abortSignal,
           undefined,
           {
@@ -5574,22 +5618,9 @@ async function executeNativeDeepReadBatch(
       for (const index of pendingIndexes) readyOf(index);
       const preparePromise = prepareSegmentIndexes(pendingIndexes);
       preparePromise.catch(() => undefined);
-      await firstGroupReady;
+      // 已保存内容先同步待审卡，不再等待缺片下载/切片；新媒体仍逐片等待 ready 并核对音轨。
+      if (cachedSegments.size === 0) await firstGroupReady;
 
-      // 新备段与历史缓存的音轨事实不一致时，缓存不能继续参与本次装配；只补备原缓存段。
-      if (videosBySegment.size > 0 && cachedSegments.size > 0) {
-        const preparedHasAudio = Array.from(videosBySegment.values())[0]!.hasAudio === true;
-        const cacheHasAudio = Array.from(cachedSegments.values())[0]!.hasAudio;
-        if (preparedHasAudio !== cacheHasAudio) {
-          // 纠偏路径（罕见）：整集重备，这里等备完再往下，不做先传先读
-          await preparePromise.catch(() => undefined);
-          cachedSegments.clear();
-          videosBySegment.clear();
-          allVideos.length = 0;
-          segmentReady.clear();
-          await prepareSegmentIndexes(episode.segments.map((_, index) => index));
-        }
-      }
       const resolvedAudioKinds = new Set<boolean>([
         ...Array.from(videosBySegment.values()).map((video) => video.hasAudio === true),
         ...Array.from(cachedSegments.values()).map((entry) => entry.hasAudio),
@@ -5791,7 +5822,7 @@ async function executeNativeDeepReadBatch(
         });
         await proposalCommitChain;
         // 部分提案不携带截图；先保存已通过的内容，再完成本片截图取证。
-        await params.onSegmentRead?.({ episodeIndex: episode.episodeIndex, segmentIndex,
+        if (!restoringCachedSegments) await params.onSegmentRead?.({ episodeIndex: episode.episodeIndex, segmentIndex,
           raw: entry.raw, sourceDigest: entry.sourceDigest,
           preparedVideos: videosBySegment.has(segmentIndex) ? [videosBySegment.get(segmentIndex)!] : [],
         });
@@ -6746,6 +6777,12 @@ async function executeNativeDeepReadBatch(
         && committedIndexes.some(index => !hasNativeAttemptSelection(committedEntries.get(index)!)
           && readCurrentQwenAttemptSelection(committedEntries.get(index)!.raw)?.selectedPassedGate !== false)) {
         await params.onSegmentSnapshotCommitted(buildCommittedSnapshot());
+      }
+      // 恢复卡写入后再补截图；缺图不能阻挡已保存内容的可见检查点。
+      for (const [segmentIndex, entry] of Array.from(committedEntries.entries())) {
+        await params.onSegmentRead?.({ episodeIndex: episode.episodeIndex, segmentIndex,
+          raw: entry.raw, sourceDigest: entry.sourceDigest,
+          preparedVideos: videosBySegment.has(segmentIndex) ? [videosBySegment.get(segmentIndex)!] : [] });
       }
       const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
       const scheduledSegmentIndexes = selectedSegmentIndexes ?? episode.segments.map((_, index) => index);
@@ -7850,7 +7887,7 @@ async function executeNativeDeepReadBatch(
     const cleanupTargets = params.preservePreparedVideos
       ? []
       : preparedByEpisode.filter(row => !params.beforeStructuring || frameEvidenceComplete.has(row.episode.episodeIndex))
-        .flatMap((row) => row.videos);
+        .flatMap((row) => row.videos).filter(video => !video.reusable);
     const cleanupResults = await Promise.allSettled(
       cleanupTargets.map((video) => deps.remove(video.temporaryGcs)),
     );

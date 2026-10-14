@@ -1249,6 +1249,20 @@ describe("分片截图持久化与不重复读片", () => {
   const event = { episodeIndex: 1, segmentIndex: 0, raw: { keyMoments: [moment] }, sourceDigest: "a".repeat(64),
     preparedVideos: [{ gsUri: "gs://b/seg0.mp4", startSec: 0, endSec: 300, temporaryGcs: { bucket: "b", objectName: "seg0.mp4" }, bytes: 100, hasAudio: false }] };
 
+  it("旧JSON缺截图来源时复用上传即保存的媒体索引，不解析原站", async () => {
+    deps.readPreparedVideo = vi.fn(async () => ({ ...event.preparedVideos[0]!, reusable: true }));
+    deps.extractKeyMomentFrames = vi.fn(async () => [frame]);
+    deps.run = vi.fn(async input => {
+      await input.onSegmentRead?.({ ...event, preparedVideos: [] });
+      return makeResult({ keyMoments: [moment] }) as never;
+    });
+    const resolveNodes = vi.fn(async () => { throw new Error("不应回源"); });
+    await executeAndIngestNativeDeepReadEpisode({ ...episode, seriesKey: "s", resolveNodes }, deps);
+    expect(deps.readPreparedVideo).toHaveBeenCalledWith(expect.objectContaining({ seriesKey: "s", sourceDigest: "a".repeat(64), startSec: 0, endSec: 300 }), undefined);
+    expect(deps.extractKeyMomentFrames).toHaveBeenCalledWith(expect.objectContaining({ preparedSegments: [expect.objectContaining({ reusable: true })], mediaNodes: [] }));
+    expect(resolveNodes).not.toHaveBeenCalled();
+  });
+
   it("同一响应及段缓存提交只截一次，先保存索引再返回runner，模型不二次调用", async () => {
     deps.extractKeyMomentFrames = vi.fn(async () => [frame]);
     deps.writeFrameManifest = vi.fn(async () => {});
