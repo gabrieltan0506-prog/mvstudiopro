@@ -480,7 +480,7 @@ export const NATIVE_DEEP_READ_SEGMENT_RETRY_MIN_FAILURES = 1;
 export const NATIVE_DEEP_READ_GATE_DEVIATION_RETRY_RATIO = 0.30;
 /**
  * 提示词/schema 里「story 至少 N 条」「平均镜长 ≤ M 秒」的参考值仍按 10% 算：这段文字进段缓存指纹，
- * 改它＝全部已付费分片失配重买。门禁放宽只改判定线（15%），提示词照旧。
+ * 改它＝全部已付费分片失配重买。门禁放宽只改判定线（当前 30%），提示词照旧。
  */
 export const NATIVE_DEEP_READ_PROMPT_SHOT_FLOOR_RATIO = 0.10;
 /** 原始镜头区间并集至少覆盖 90%；截断稿与缓存同样适用。 */
@@ -5241,7 +5241,7 @@ function routeLabelZh(route: NativeDeepReadVisualRoute, readModel: ManhuaNativeD
 
 /**
  * 一次请求读取一集（逐段调用），回传后按段合并成集卡。
- * 只有门禁失败才按 0.7→0.65→0.6 降档，每档间隔 60 秒（RETRY_INTERVAL_MS）；
+ * 门禁失败按五发档位重读，间隔 30 秒（RETRY_INTERVAL_MS）；Argon 不发送温度参数。
  * 503/429/RESOURCE_EXHAUSTED 走另一条线：隔 30 秒（RESOURCE_RETRY_INTERVAL_MS）
  * 保持当前温度重试，最多 4 次（RESOURCE_RETRY_MAX），不消耗降档次数。
  * 用户中止、证据保存失败和其他传输错误立即终止。
@@ -6399,7 +6399,9 @@ async function executeNativeDeepReadBatch(
             const retryReasonZh = rejectedReasonZh || "上一档门禁未通过";
             console.warn(
               `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
-              + `门禁未通过，60 秒后降到 temperature ${temperature} 重试：${retryReasonZh}`,
+              + `门禁未通过，${NATIVE_DEEP_READ_RETRY_INTERVAL_MS / 1_000} 秒后`
+              + (gradientModel === "gemini-4-argon" ? "使用供应商默认采样参数重读" : `使用 temperature ${temperature} 重试`)
+              + `：${retryReasonZh}`,
             );
             await emitVisualModelReceipt({
               callId: `${episodeRequestId}:segment-${input.segmentIndex}:retry-${attemptNumber}`,
@@ -6457,7 +6459,8 @@ async function executeNativeDeepReadBatch(
                 }, params.onModelReceipt);
                 console.warn(
                   `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段资源拥堵，`
-                  + `30 秒后保持 temperature ${temperature} 重试`
+                  + `${NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS / 1_000} 秒后`
+                  + (gradientModel === "gemini-4-argon" ? "保持供应商默认采样参数重试" : `保持 temperature ${temperature} 重试`)
                   + `（第 ${resourceRetryCount}/${NATIVE_DEEP_READ_RESOURCE_RETRY_MAX} 次）：${errorZh}`,
                 );
                 await deps.waitForRetry(NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS, params.abortSignal);
