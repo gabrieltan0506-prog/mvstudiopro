@@ -66,6 +66,10 @@ export type ManhuaStageFrameExport = {
 export type StageAssetFailure = { id: string; kind: "world" | "collider" | "actor"; message: string; code?: string; status?: number };
 
 type Props = {
+  lockCamera?: boolean;
+  cameraOverride?: StageCameraRig;
+  onReadyChange?: (ready: boolean) => void;
+  onConfirmGroundAnchor?: (labelZh: string, point: [number, number]) => Promise<void>;
   sceneLabelZh: string;
   world: ManhuaWorld3dAssets;
   characters: readonly ManhuaStageCharacter[];
@@ -179,27 +183,33 @@ export function ManhuaWorldStagePreview(props: Props) {
   const { sceneLabelZh, world, characters, height = "clamp(520px, 68vh, 820px)", onExportStageFrame } = props;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const revisionCounter = useRef(0);
-  const [cameraKind, setCameraKind] = useState<StageCameraKind>("establish");
+  const [cameraKind, setCameraKind] = useState<StageCameraKind>(props.cameraOverride?.kind ?? "establish");
   const [shoulderActorId, setShoulderActorId] = useState<string | undefined>();
   const [colliderVisible, setColliderVisible] = useState(false);
   const [status, setStatus] = useState<"loading" | "ready" | "partial" | "error">("loading");
   const [loadedActorCount, setLoadedActorCount] = useState(0);
+  const [loadedRevision, setLoadedRevision] = useState("");
+  const [worldLoaded, setWorldLoaded] = useState(false);
   const [noteZh, setNoteZh] = useState<string>("");
   const [failures, setFailures] = useState<StageAssetFailure[]>([]);
   const [exporting, setExporting] = useState(false);
   const [expanded, setExpanded] = useState(false);
   /** 「重新载入」：只重读同一份已生成的场景与模型文件，不提交任何生成任务 */
   const [reloadNonce, setReloadNonce] = useState(0);
+  const [anchorName, setAnchorName] = useState("");
+  const [pickedPoint, setPickedPoint] = useState<[number, number] | null>(null);
+  const [savingAnchor, setSavingAnchor] = useState(false);
   const [animationMode,setAnimationMode]=useState(false);
   const [animationLoading,setAnimationLoading]=useState(false);
   const animationRequest=useRef<AbortController|null>(null);
-  const sceneSignature = stageSceneSignature(world, characters)+JSON.stringify(props.animation??null);
+  const sceneSignature = stageSceneSignature(world, characters)+JSON.stringify([props.animation??null, props.cameraOverride??null, props.lockCamera??false]);
   // 签名覆盖场景、人物和机位的实际输入；仅引用变化不应重载高斯和 iframe。
   const scene = useMemo(() => {
     revisionCounter.current += 1;
-    return buildStageSceneConfig(world, characters, stageCameraRigs(characters, undefined, world).establish, `r${revisionCounter.current}`);
+    const next = buildStageSceneConfig(world, characters, props.cameraOverride ?? stageCameraRigs(characters, undefined, world).establish, `r${revisionCounter.current}`);
+    return next ? { ...next, ...(props.lockCamera ? { lockCamera: true } : {}) } : null;
   }, [sceneSignature, reloadNonce]);
-  const rigs = useMemo(() => stageCameraRigs(characters, shoulderActorId, world), [sceneSignature, shoulderActorId]);
+  const rigs = useMemo(() => ({ ...stageCameraRigs(characters, shoulderActorId, world), ...(props.cameraOverride ? { [props.cameraOverride.kind]: props.cameraOverride } : {}) }), [sceneSignature, shoulderActorId]);
   const config = scene;
   const revision = config?.revision ?? "";
   const liveState = useRef({ revision, cameraKind });
@@ -213,6 +223,8 @@ export function ManhuaWorldStagePreview(props: Props) {
     animationRequest.current?.abort();
     setAnimationMode(false);setAnimationLoading(false);
     setStatus("loading");
+    setPickedPoint(null);
+    if (props.cameraOverride) setCameraKind(props.cameraOverride.kind);
     setLoadedActorCount(0);
     setNoteZh("");
     setFailures([]);
@@ -233,18 +245,23 @@ export function ManhuaWorldStagePreview(props: Props) {
 
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
-      const m = (ev.data || {}) as { source?: string; revision?: string; type?: string; message?: string; dataUrl?: string; viewLabelZh?: string; cameraKind?: string; cameraRig?: StageCameraRig; requestId?: number; loaded?: string[]; failed?: StageAssetFailure[] };
+      const m = (ev.data || {}) as { source?: string; revision?: string; type?: string; point?: unknown; message?: string; dataUrl?: string; viewLabelZh?: string; cameraKind?: string; cameraRig?: StageCameraRig; requestId?: number; loaded?: string[]; failed?: StageAssetFailure[] };
       if (m.source !== "manhua-world-stage" || ev.source !== iframeRef.current?.contentWindow) return;
       // 旧实例迟到的消息：作废
       if (m.revision !== revision) return;
-      if(m.type==="animation_started"){setAnimationMode(true);setAnimationLoading(false);setNoteZh("正在播放原白模骨骼动作与逐帧相机；人物外观沿用白模，不等于正式成片或已保存视频。");}
+      if (m.type === "ground_point" && props.onConfirmGroundAnchor && Array.isArray(m.point) && m.point.length === 2 && m.point.every(v => typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= 500)) {
+        setPickedPoint(m.point as [number, number]);
+      }
+      else if(m.type==="animation_started"){setAnimationMode(true);setAnimationLoading(false);setNoteZh("正在播放原白模骨骼动作与逐帧相机；人物外观沿用白模，不等于正式成片或已保存视频。");}
       else if(m.type==="animation_error"){setAnimationLoading(false);setNoteZh(m.message||"动画载入失败");}
       else if(m.type==="animation_finished"){setNoteZh("场景动作预览播放完毕；尚未输出或采用成片。");}
       else if (m.type === "ready") {
+        setLoadedRevision(revision);
         const failed = Array.isArray(m.failed) ? m.failed : [];
         const loaded = new Set(Array.isArray(m.loaded) ? m.loaded : []);
         const missingActors = expectedActorIds.filter((id) => !loaded.has(id));
         setLoadedActorCount(expectedActorIds.length - missingActors.length);
+        setWorldLoaded(loaded.has("world"));
         setFailures(failed);
         const essentialFailures = failed.filter((item) => item.kind !== "collider");
         if (missingActors.length || essentialFailures.length) {
@@ -316,7 +333,7 @@ export function ManhuaWorldStagePreview(props: Props) {
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [cameraKind, characters, expectedActorIds, onExportStageFrame, revision]);
+  }, [cameraKind, characters, expectedActorIds, onExportStageFrame, revision, props.onConfirmGroundAnchor]);
 
   /**
    * 人物载入问题：没有模型的按页面数据说原因（绑定、建模状态、定妆图是否换过）；
@@ -331,6 +348,10 @@ export function ManhuaWorldStagePreview(props: Props) {
   }), [characters, failures]);
   const colliderFailed = failures.some((f) => f.kind === "collider");
   const loaded = status === "ready" || status === "partial";
+  useEffect(() => {
+    props.onReadyChange?.(status === "ready" && worldLoaded && loadedRevision === revision && !animationMode && !animationLoading);
+    return () => props.onReadyChange?.(false);
+  }, [status, revision, loadedRevision, worldLoaded, animationMode, animationLoading, props.onReadyChange]);
   useEffect(() => {
     if (loaded) send({ type: "camera", rig: rigs[cameraKind], cameraKind });
   }, [cameraKind, loaded, rigs, send]);
@@ -391,9 +412,20 @@ export function ManhuaWorldStagePreview(props: Props) {
         <button type="button" className={btn} aria-label={expanded ? "退出放大场景" : "放大场景"} onClick={() => setExpanded((value) => !value)}>
           {expanded ? "退出放大" : "放大场景"}
         </button>
+        {props.onConfirmGroundAnchor && <div className="space-y-2">
+          <label>场景地点名称<input aria-label="场景地点名称" maxLength={80} value={anchorName} onChange={e => setAnchorName(e.target.value)} placeholder="如窗边、吧台旁" /></label>
+          <p>点选人物脚下的地面位置，再确认地点。使用舞台地平面，不自动识别家具或楼层。</p>
+          <button type="button" className={btn} disabled={status !== "ready" || animationMode || savingAnchor || !anchorName.trim()} onClick={() => { setPickedPoint(null); send({ type: "pick_ground", enabled: true }); setNoteZh("请在3D画面中点选人物脚下的地面位置"); }}>在画面中标记地点</button>
+          {pickedPoint && <button type="button" className={btn} disabled={savingAnchor || !anchorName.trim() || status !== "ready" || animationMode} onClick={async () => {
+            setSavingAnchor(true);
+            try { await props.onConfirmGroundAnchor!(anchorName.trim(), pickedPoint); setPickedPoint(null); setAnchorName(""); setNoteZh("地点已保存，可在顾问中直接用名称描述站位"); }
+            catch (e) { setNoteZh(e instanceof Error ? e.message : String(e)); }
+            finally { setSavingAnchor(false); }
+          }}>确认「{anchorName.trim()}」地点</button>}
+        </div>}
         <span className="text-white/60">机位</span>
         {STAGE_CAMERA_KINDS.map((k) => (
-          <button key={k} type="button" className={cameraKind === k ? btnOn : btn} disabled={!loaded} onClick={() => {
+          <button key={k} type="button" className={cameraKind === k ? btnOn : btn} disabled={!loaded || props.lockCamera} onClick={() => {
             // 已开始上传的视角图无法取消；换机位也要等本次保存结束，避免并发提交。
             if (pendingExport.current?.phase !== "saving") {
               pendingExport.current?.complete?.(new Error("视角导出状态已变化，请核对原候选，未自动重试。"));
@@ -409,7 +441,7 @@ export function ManhuaWorldStagePreview(props: Props) {
         {characters.length > 1 ? (
           <label className="flex items-center gap-1 text-white/70">
             从谁肩后拍
-            <select aria-label="从谁肩后拍" className="rounded border border-cyan-300/30 bg-[#101822] px-1 py-0.5 text-white" value={characters.some((actor) => actor.id === shoulderActorId) ? shoulderActorId : characters[1]?.id} disabled={!loaded || pendingExport.current?.phase === "saving"} onChange={(event) => {
+            <select aria-label="从谁肩后拍" className="rounded border border-cyan-300/30 bg-[#101822] px-1 py-0.5 text-white" value={characters.some((actor) => actor.id === shoulderActorId) ? shoulderActorId : characters[1]?.id} disabled={!loaded || props.lockCamera || pendingExport.current?.phase === "saving"} onChange={(event) => {
               pendingExport.current?.complete?.(new Error("视角导出状态已变化，请核对原候选，未自动重试。"));
               pendingExport.current = null;
               setExporting(false);

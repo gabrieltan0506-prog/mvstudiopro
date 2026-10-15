@@ -40,6 +40,8 @@ export type ManhuaWorldLayoutSubmitOptions = { model: ManhuaWorld3dModel; textPr
 export type ManhuaWorldLayoutActor = { id: string; nameZh?: string; start: readonly [number, number]; shape?: "human" | "horse" };
 
 type Props = {
+  stageCamera?: import("@shared/manhuaWorldStage").StageCameraRig;
+  onConfirmGroundAnchor?: (labelZh: string, point: [number, number]) => Promise<void>;
   advisorSceneRequest?: { id: string; assetId: string };
   onAdvisorViewControl?: (control: AdvisorWorldControl | null, assetId: string) => void;
   scenes: ManhuaWorldStudioScene[];
@@ -227,6 +229,8 @@ export function ManhuaWorldStudio(props: Props) {
                 <div className="mt-1 w-full rounded border border-cyan-300/20 bg-black/30 p-2" data-manhua-world-preview>
                   <div>
                     <ManhuaWorldStagePreview
+                      cameraOverride={props.stageCamera}
+                      onConfirmGroundAnchor={props.onConfirmGroundAnchor}
                       onAdvisorControl={control=>props.onAdvisorViewControl?.(control ? (action,signal)=>{if(action.assetId && action.assetId!==s.id)throw new Error("载入的3D世界尚不是目标场景，未导出");return control(action,signal);} : null,s.id)}
                       sceneLabelZh={s.labelZh}
                       world={assets}
