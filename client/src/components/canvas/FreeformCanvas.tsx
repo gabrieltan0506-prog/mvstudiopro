@@ -3,6 +3,7 @@ import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { hasPendingMusicMvPlan } from "@/lib/canvasMusicMvRecovery";
 import { finishEditedMusicMvShot } from "@/lib/canvasMusicMvGuards";
 import { rememberMusicMvOutput } from "@/lib/canvasMusicMvWorkflow";
+import { CanvasMvShotControls } from "./CanvasMvShotControls";
 import { CanvasMusicMvStudio } from "./CanvasMusicMvStudio";
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -308,6 +309,7 @@ function isCanvasAssetSheetId(id: string): boolean {
 type BlocksUpdater = CanvasBlock[] | ((prev: CanvasBlock[]) => CanvasBlock[]);
 
 type FreeformCanvasProps = {
+  projectId?: string;
   /** 本项目已保存图片，仅供普通视频节点显式引用，不代替工厂资产认领。 */
   projectAssetRefs?: readonly ManhuaCustomAssetRef[];
   blocks: CanvasBlock[];
@@ -812,6 +814,7 @@ function CanvasAssetVisualBody({
 }
 
 export default function FreeformCanvas({
+  projectId,
   projectAssetRefs = [],
   blocks,
   edges,
@@ -2679,7 +2682,8 @@ export default function FreeformCanvas({
                     {!mediaOnly ? (
                     <div className="mb-2 space-y-2 overflow-auto rounded-xl border border-white/10 bg-black/25 p-2">
                       <div className="text-[10px] tracking-wider text-white/40">节点设置</div>
-                      {block.kind === "music" && <CanvasMusicMvStudio key={block.id} block={block} blocks={blocks}
+                      {block.musicMvShot && <CanvasMvShotControls block={block} onPatch={patch=>patchOne(block.id,patch)} />}
+                      {block.kind === "music" && <CanvasMusicMvStudio projectId={projectId} key={block.id} block={block} blocks={blocks}
                         onPatch={patch => patchOne(block.id, patch)} getBlocks={() => blocksRef.current}
                         runShot={runBlock}
                         onAdd={(added, links) => {

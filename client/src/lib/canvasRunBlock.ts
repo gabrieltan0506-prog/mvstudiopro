@@ -2512,8 +2512,20 @@ async function runCanvasBlockInner(
   // 出片前统一重签上传件签名链（0908 EvoLink「input media could not be downloaded」：
   // 60 分钟签名在上传与提交之间过期）。同一 gcsUri 只签一次；失败退回原链不挡提交。
   if (block.kind === "video" && block.musicMvShot) {
+    const binding=block.musicMvShot;
+    if(binding.kind==="footage") throw new Error("此镜头使用已有素材切片，请在MV中合成，不提交视频生成");
+    if(binding.kind==="singing") {
+      const audio=binding.singingAudio;
+      if(!audio || audio.startSec!==binding.startSec || audio.endSec!==binding.endSec) throw new Error("请先准备并试听本镜唱段，再生成对口型视频");
+      if(block.videoModel!=="seedance-2.5" && !isCanvasHailuoH3VideoModel(block.videoModel)) throw new Error("当前制作方式不能使用演唱音频参考，请选择支持音频参考的成片引擎");
+      const url=await resolveCanvasMaterialUrl(audio.gcsUri);
+      if(!/^https:\/\//.test(url)) throw new Error("本镜唱段地址不可用，未提交生成");
+      if(block.audioStudio?.cues.some(cue=>cue.enabled!==false) || block.manhuaSegmentRefs?.master) throw new Error("演唱镜头已绑定歌曲唱段，请先移除其他启用音轨，避免声音冲突");
+      block={...block,seedance25WorkMode:"reference_to_video",seedance25RefAudioUrls:[url],
+        uploadedAssets:[...(block.uploadedAssets||[]).filter(row=>row.id!=="mv-singing-audio"),{id:"mv-singing-audio",kind:"audio",url,previewUrl:url,gcsUri:audio.gcsUri,fileName:"本镜演唱.wav",mimeType:"audio/wav"}]};
+    }
     const fresh = new Map<string, string>();
-    for (const image of block.musicMvShot.referenceImages) {
+    for (const image of binding.referenceImages) {
       const url = image.gcsUri ? await resolveCanvasMaterialUrl(image.gcsUri) : image.url;
       if (!/^https:\/\//.test(url)) throw new Error("MV 参考图暂不可用，未提交生成");
       fresh.set(image.url.split("?")[0]!, url);
@@ -3216,11 +3228,11 @@ async function runCanvasBlockInner(
         keptEntries.find((e) => e.kind === "tail")?.url ||
         httpsImages[0] ||
         stillRef;
-      const voiceLocks = deps.characterVoiceLocks || [];
+      const voiceLocks = block.musicMvShot?.kind === "singing" ? [] : deps.characterVoiceLocks || [];
       const voicePlan = planManhuaVoiceAudioForPrompt(motionPrompt, voiceLocks);
       const voiceBlock = formatManhuaCharacterVoiceLockBlock(voiceLocks, voicePlan);
       // 参考音频·全集参考（软）：BGM/口音文本注入 + 无角色声线时口音兜底 audio_url
-      const audioRefLock = deps.audioReferenceLock || null;
+      const audioRefLock = block.musicMvShot?.kind === "singing" ? null : deps.audioReferenceLock || null;
       const audioRefBlock = formatManhuaAudioReferenceLockBlock(audioRefLock);
       const accentFallbackUrl = resolveManhuaAccentAudioUrl(audioRefLock);
       const seedanceAudioUrls = voicePlan.audioUrls.length

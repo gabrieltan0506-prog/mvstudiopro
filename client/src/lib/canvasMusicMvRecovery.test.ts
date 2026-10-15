@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   invalidateMusicMvPlan,
+  captureMusicCandidateContexts,
+  selectMusicCandidateContext,
   hasPendingMusicMvPlan,
   mergeMusicCandidates,
   musicPlanInputKey,
@@ -13,7 +15,10 @@ import {
   cloudDraftBlocksToCanvas,
 } from "./manhuaCloudDraftSync";
 import { parseManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
-import type { CanvasMusicMvState } from "@shared/canvasMusicMv";
+import {
+  canvasMusicMvStateSchema,
+  type CanvasMusicMvState,
+} from "@shared/canvasMusicMv";
 const audio = {
   id: "song",
   url: "https://test.invalid/old",
@@ -124,4 +129,67 @@ it("外层编辑与状态错误不能释放未知分镜身份，仅明确终态�
   expect(
     hasPendingMusicMvPlan({ ...state, planTerminalStatus: "failed" })
   ).toBe(false);
+});
+
+describe("歌曲候选创作内容绑定", () => {
+  it("切换旧歌恢复自己歌词，新一轮内容不覆盖旧歌", () => {
+    const state: CanvasMusicMvState = {
+      status: "music_ready",
+      candidates: [],
+      selectedCandidateId: "old",
+      lyrics: "新一轮歌词",
+      creativePrompt: "新一轮场景",
+      candidateContexts: {
+        old: { lyrics: "旧歌歌词", creativePrompt: "旧歌场景" },
+      },
+    };
+    expect(selectMusicCandidateContext(state, "old").lyrics).toBe("旧歌歌词");
+    expect(selectMusicCandidateContext(state, "imported").lyrics).toBe("");
+    const edited = {
+      ...state,
+      lyricsCandidateId: "old",
+      lyrics: "校正旧歌歌词",
+    };
+    expect(
+      selectMusicCandidateContext(edited, "other").candidateContexts.old.lyrics
+    ).toBe("校正旧歌歌词");
+  });
+  it("只有同一真实提交身份绑定歌词，云草稿保留候选上下文", () => {
+    const state: CanvasMusicMvState = {
+      status: "music_ready",
+      candidates: [],
+      musicRequestId: "11111111-1111-4111-8111-111111111111",
+      musicSubmission: {
+        model: "suno-v6",
+        custom_mode: true,
+        instrumental: false,
+        title: "歌",
+        style: "pop",
+        prompt: "原歌词",
+        negative_tags: "",
+        duration: 180,
+        style_weight: 0,
+        weirdness_constraint: 0.25,
+      },
+      musicSubmissionDirection: "原场景",
+    };
+    expect(captureMusicCandidateContexts(state, "another-job", ["x"])).toEqual(
+      {}
+    );
+    const contexts = captureMusicCandidateContexts(
+      state,
+      "bgm_11111111111141118111111111111111",
+      ["x", "y"]
+    );
+    expect(contexts.y).toEqual({ lyrics: "原歌词", creativePrompt: "原场景" });
+    const block = defaultCanvasBlock("music", 0, 0);
+    block.musicMv = { ...state, candidateContexts: contexts };
+    // 合同解析也是云草稿读取/保存的共同边界。
+    expect(
+      canvasMusicMvStateSchema.parse(block.musicMv).candidateContexts?.x.lyrics
+    ).toBe("原歌词");
+    const snapshot = buildLocalCloudDraftSnapshot({ writerSession: {}, blocks: [block], edges: [] });
+    const restored = cloudDraftBlocksToCanvas(parseManhuaCloudDraftPayload(serializeCloudDraftForUpload(snapshot))!.canvas.blocks)[0];
+    expect(restored.musicMv?.candidateContexts).toEqual(contexts);
+  });
 });

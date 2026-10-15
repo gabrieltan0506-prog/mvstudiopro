@@ -248,7 +248,7 @@ export async function postOpenAiGptImage2AndUpload(
   gcsSubdir: string,
   opts: {
     /** Internal feature contract; bypasses global model override only when explicitly supplied. */
-    exactModel?: "gpt-image-2-2026-04-21" | "gpt-image-2.5-sunburst";
+    exactModel?: "gpt-image-2-2026-04-21" | "gpt-image-2.5-sunburst" | "gpt-image-2.5-flare";
     /** Ambiguous submit/upload outcomes must never be retried or refunded as known failures. */
     strictRequest?: boolean;
     persistResponse?: PersistImageResponse;

@@ -252,7 +252,7 @@ export async function createManhuaBgmTask(
   // 旧网关的风格名单不套用：v6 保留用户风格描述（含艺人名与百分比），由上游返回实际结果。
   if (!isTtapiSunoReady()) throw new Error("配乐 v6 通道未配置（TTAPI_KEY）");
   const created = await createTtapiSunoTask(
-    { model: brief.model, prompt: brief.prompt, style: brief.style, title: brief.title, instrumental: brief.instrumental, negative_tags: brief.negative_tags, duration: brief.duration },
+    { model: brief.model, prompt: brief.prompt, style: brief.style, title: brief.title, instrumental: brief.instrumental, negative_tags: brief.negative_tags, duration: brief.duration, style_weight: brief.style_weight, weirdness_constraint: brief.weirdness_constraint },
     { abortSignal: opts.abortSignal, evidence: opts.userId && opts.jobId ? musicEvidenceSink(opts.userId, opts.jobId) : undefined },
   );
   return { taskId: created.taskId, briefDigest: digestManhuaBgmBrief(brief) };

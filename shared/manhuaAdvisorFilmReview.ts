@@ -1,5 +1,6 @@
 import { z } from "zod";
 export const advisorFilmReviewTargetSchema = z.object({
+  expectedDurationSec: z.number().finite().positive().max(3600).optional(),
   videoUri: z.string().min(1).max(8192), blockId: z.string().min(1).max(200), revision: z.string().min(1).max(20000), label: z.string().max(300),
 });
 export type AdvisorFilmReviewTarget = z.infer<typeof advisorFilmReviewTargetSchema>;

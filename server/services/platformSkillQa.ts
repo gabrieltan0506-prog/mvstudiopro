@@ -1,3 +1,4 @@
+import { creativeLearningReportSchema } from "../../shared/creativeGenerationLibrary";
 import { DIGITAL_HUMAN_SPATIAL_INSTRUCTIONS, parseDigitalHumanSpatialPlan } from "../../shared/digitalHumanSpatialAdvisor";
 import { CodeMotionPlanError } from "./codeMotionPlanFailure";
 import { codeMotionBriefSchema, type CodeMotionBrief } from "../../shared/codeMotion";
@@ -13,6 +14,8 @@ import { advisorRewriteResponseSchema, advisorTemplatePlansSchema, validateAdvis
 import { TEMPLATE_CATALOG_REQUEST_MARKER } from "../../shared/manhuaTemplateCraft";
 import { MANHUA_DIALOGUE_CRAFT_ZH } from "../../shared/manhuaDialogueCraft";
 import { MANHUA_ADVISOR_PROJECT_FREE, MANHUA_ADVISOR_PAID_CREDITS } from "../../shared/manhuaAdvisorPolicy";
+import { askMusicMvAdvisor, askSunoSongAdvisor, askCreativeLearning } from "./musicMvAdvisor";
+import { musicMvAdvisorProposalSchema, sunoSongProposalSchema } from "../../shared/canvasMusicMv";
 import { askManhuaBgmMix, MANHUA_BGM_ADVISOR_MODEL } from "./manhuaAdvisorBgmMix";
 import { askManhuaSubtitleReview } from "./manhuaAdvisorSubtitle";
 import { parseAdvisorBgmMixPlan } from "../../shared/manhuaAdvisorBgmMix";
@@ -552,7 +555,10 @@ export function parseAskJson(raw: string, previsMode = false, filmMode = false):
   const answerValue = parsed.answer;
   const kind = answerValue && typeof answerValue === "object" ? (answerValue as { kind?: unknown }).kind : undefined;
   let answer: string;
-  if(kind === "workflow_operation_v1")answer=JSON.stringify(advisorWorkflowPlanSchema.parse(answerValue));
+  if(kind === "creative_learning_v1")answer=JSON.stringify(creativeLearningReportSchema.parse(answerValue));
+  else if(kind === "suno_song_v1")answer=JSON.stringify(sunoSongProposalSchema.parse(answerValue));
+  else if(kind === "music_mv_v1")answer=JSON.stringify(musicMvAdvisorProposalSchema.parse(answerValue));
+  else if(kind === "workflow_operation_v1")answer=JSON.stringify(advisorWorkflowPlanSchema.parse(answerValue));
   else if (kind === "template-rewrite") answer = JSON.stringify(advisorRewriteResponseSchema.parse(answerValue));
   else if (kind === "template-choice") answer = JSON.stringify(advisorTemplateChoiceSchema.parse(answerValue));
   else if (kind === "template-plans") answer = JSON.stringify(advisorTemplatePlansSchema.parse(answerValue));
@@ -567,7 +573,7 @@ export function parseAskJson(raw: string, previsMode = false, filmMode = false):
       templateAnswer = candidate?.kind === "template-rewrite" || candidate?.kind === "template-plans" || candidate?.kind === "template-choice";
     } catch { /* 普通咨询保留原有答复处理，不把关键词当作结构化改稿。 */ }
   }
-  if (previsMode && !filmMode && answer.length > 12_000) throw new Error("方案超过完整处理范围，请精简后重新生成");
+  if (previsMode && !filmMode && kind !== "creative_learning_v1" && kind !== "music_mv_v1" && kind !== "suno_song_v1" && answer.length > 12_000) throw new Error("方案超过完整处理范围，请精简后重新生成");
   if (!answer || looksLikeUpstreamGarbage(answer)) {
     throw new Error("顾问返回格式不符合要求，缺少有效回答");
   }
@@ -579,7 +585,7 @@ export function parseAskJson(raw: string, previsMode = false, filmMode = false):
     throw new Error("回答偏离用户问题（策略看板腔），请重试");
   }
   return {
-    answer: filmMode || templateAnswer ? answer : answer.slice(0, 12_000),
+    answer: filmMode || templateAnswer || kind === "creative_learning_v1" || kind === "music_mv_v1" || kind === "suno_song_v1" ? answer : answer.slice(0, 12_000),
     imageIntent: Boolean(parsed.imageIntent),
     creationRelated: Boolean(parsed.creationRelated),
     suggestedImagePrompt: String(parsed.suggestedImagePrompt || "").trim().slice(0, 2000),
@@ -811,9 +817,9 @@ export async function askPlatformSkillQa(params: {
     llmMessages = [];
   } else if (manhuaContext) {
     // 漫剧上下文优先：关闭平台趋势与联网，不让无关证据挤掉完整本集正文。
-    templateReference = manhuaContext.digitalHumanSpatial || manhuaContext.workflowOperation || manhuaContext.subtitleReview ? "" : await buildManhuaTemplateAdvisorReference(manhuaContext.templateRecommendation ? TEMPLATE_CATALOG_REQUEST_MARKER : manhuaRawQuestion || question, manhuaContext.episodeBody + "\n" + manhuaContext.shotSummary);
+    templateReference = manhuaContext.digitalHumanSpatial || manhuaContext.creativeLearning || manhuaContext.sunoSong || manhuaContext.musicMv || manhuaContext.workflowOperation || manhuaContext.subtitleReview ? "" : await buildManhuaTemplateAdvisorReference(manhuaContext.templateRecommendation ? TEMPLATE_CATALOG_REQUEST_MARKER : manhuaRawQuestion || question, manhuaContext.episodeBody + "\n" + manhuaContext.shotSummary);
     if (manhuaContext.templateRecommendation) templateReference += "\n" + TEMPLATE_RECOMMENDATION_DELIVERY;
-    const canChoose = !manhuaContext.digitalHumanSpatial && !manhuaContext.templateRecommendation && !manhuaContext.workflowOperation && !manhuaContext.subtitleReview && !manhuaContext.filmReview && !manhuaContext.previsEdit && !manhuaContext.worldTarget && !manhuaContext.bgmMix && !(manhuaRawQuestion || question).startsWith("【");
+    const canChoose = !manhuaContext.digitalHumanSpatial && !manhuaContext.creativeLearning && !manhuaContext.sunoSong && !manhuaContext.musicMv && !manhuaContext.templateRecommendation && !manhuaContext.workflowOperation && !manhuaContext.subtitleReview && !manhuaContext.filmReview && !manhuaContext.previsEdit && !manhuaContext.worldTarget && !manhuaContext.bgmMix && !(manhuaRawQuestion || question).startsWith("【");
     if (canChoose && manhuaContext.templateChoiceIds?.length) {
       choiceReference = await buildAdvisorTemplateChoiceReference(manhuaContext.templateChoiceIds);
       templateReference += "\n" + choiceReference.text;
@@ -918,7 +924,7 @@ export async function askPlatformSkillQa(params: {
   // 已附视频时不向未核实支持视频的备用通道降级，也不悄悄删视频重试。
   const advisorHops = previewVideo ? MANHUA_ADVISOR_HOPS.slice(0, 1) : MANHUA_ADVISOR_HOPS;
   // 视频只走已核实可接收 MP4 的通道；规格拒绝时在同一通道反馈一次，不降级成纯文字。
-  const ASK_MAX_ATTEMPTS = codeMotionContext || manhuaContext?.filmReview || manhuaContext?.bgmMix || manhuaContext?.subtitleReview ? 1 : manhuaContext ? (previewVideo ? 2 : advisorHops.length) : 3;
+  const ASK_MAX_ATTEMPTS = manhuaContext?.creativeLearning || manhuaContext?.sunoSong || manhuaContext?.musicMv || codeMotionContext || manhuaContext?.filmReview || manhuaContext?.bgmMix || manhuaContext?.subtitleReview ? 1 : manhuaContext ? (previewVideo ? 2 : advisorHops.length) : 3;
   let parsed: ReturnType<typeof parseAskJson> | null = null;
   let lastErr = "";
   let usedModel = modelName;
@@ -948,6 +954,21 @@ export async function askPlatformSkillQa(params: {
         usedModel = MANHUA_BGM_ADVISOR_MODEL;
         lastErr = "";
         break;
+      }
+      if (manhuaContext?.creativeLearning) {
+        const raw=await askCreativeLearning(params.userId,manhuaContext.creativeLearning,manhuaRawQuestion||question);
+        parsed=parseAskJson(raw,true);usedModel=JSON.parse(raw).model;lastErr="";break;
+      }
+      if (manhuaContext?.sunoSong) {
+        const raw=await askSunoSongAdvisor(params.userId,manhuaContext.sunoSong,manhuaRawQuestion||question);
+        parsed=parseAskJson(raw,true);
+        usedModel=JSON.parse(raw).model;
+        break;
+      }
+      if (manhuaContext?.musicMv) {
+        const raw = await askMusicMvAdvisor(params.userId, manhuaContext.musicMv, manhuaRawQuestion || question);
+        parsed = parseAskJson(raw, true);
+        usedModel = JSON.parse(raw).model; lastErr = ""; break;
       }
       if (manhuaContext?.bgmMix) {
         params.onStream?.("reset", "Gemini 3.8 Flash · 音画配乐分析");

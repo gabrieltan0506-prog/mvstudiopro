@@ -74,3 +74,44 @@ export function hasPendingMusicMvPlan(
     state?.planRequestId && !state.plan && !state.planTerminalStatus
   );
 }
+
+/** 同一歌曲候选恢复自己的歌词与MV构思，未知旧来源不借用新歌内容。 */
+export function selectMusicCandidateContext(
+  state: CanvasMusicMvState,
+  id: string
+) {
+  const contexts = { ...state.candidateContexts };
+  if (
+    state.selectedCandidateId &&
+    state.lyricsCandidateId === state.selectedCandidateId
+  )
+    contexts[state.selectedCandidateId] = {
+      lyrics: state.lyrics || "",
+      creativePrompt: state.creativePrompt || "",
+    };
+  const chosen = contexts[id] || { lyrics: "", creativePrompt: "" };
+  return { candidateContexts: contexts, lyricsCandidateId: id, ...chosen };
+}
+
+export function captureMusicCandidateContexts(
+  state: CanvasMusicMvState,
+  jobId: string,
+  ids: string[]
+) {
+  const contexts = { ...state.candidateContexts };
+  if (
+    !state.musicSubmission ||
+    !state.musicRequestId ||
+    jobId !== `bgm_${state.musicRequestId.replace(/-/g, "")}`
+  )
+    return contexts;
+  for (const id of ids)
+    if (!contexts[id])
+      contexts[id] = {
+        lyrics: state.musicSubmission.instrumental
+          ? ""
+          : state.musicSubmission.prompt,
+        creativePrompt: state.musicSubmissionDirection || "",
+      };
+  return contexts;
+}

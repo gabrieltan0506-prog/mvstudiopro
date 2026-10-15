@@ -136,7 +136,6 @@ export default function CodeMotionSoundProduction({
         配乐方向
         <textarea
           className="mt-1 w-full rounded-lg border p-2"
-          maxLength={1000}
           value={direction}
           disabled={disabled || busy}
           onChange={e => { directionEdited.current = true; setDirection(e.target.value); }}

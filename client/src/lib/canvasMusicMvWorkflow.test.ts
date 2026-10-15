@@ -87,7 +87,8 @@ function fixture(selectedPlan = plan) {
     parent,
     selectedPlan,
     "00000000-0000-4000-8000-000000000001",
-    refs
+    refs,
+    parent.musicMv!.candidates[0]
   );
   return {
     blocks: [parent, ...shots],
@@ -214,5 +215,30 @@ describe("MV 分镜编译到真实视频出站请求（全离线）", () => {
       "https://test.invalid/scene.png?signature=fresh",
     ]);
     expect(JSON.stringify(requests[0])).not.toContain("signature=expired");
+  });
+});
+
+
+describe("混合MV镜头消费（离线出站）",()=>{
+  it("演唱镜头只发送对应唱段，缺少裁段时阻断",async()=>{
+    const {requests}=offline();
+    const singing={...plan,shots:plan.shots.map(s=>({...s,kind:"singing" as const}))};
+    const {shots,blocks,edges}=fixture(singing);
+    const shot=shots[0];shot.videoModel="seedance-2.5";
+    await expect(execute(shot,blocks,edges,"sing-no-audio")).rejects.toThrow("准备并试听");
+    expect(requests).toHaveLength(0);
+    shot.musicMvShot!.singingAudio={jobId:"trim-test",gcsUri:"gs://test-bucket/singing.wav",startSec:0,endSec:5.2};
+    await execute(shot,blocks,edges,"sing-ready");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].audioUrls).toEqual(["https://test.invalid/singing.wav?signature=fresh"]);
+    expect(JSON.stringify(requests[0])).not.toContain(musicUrl);
+  });
+  it("素材切片直接保留源视频，不能误点成付费生成",async()=>{
+    const {requests}=offline();
+    const sourceClip={assetId:"footage",url:"https://test.invalid/source.mp4",durationSec:30,sourceStartSec:8};
+    const {shots,blocks,edges}=fixture({...plan,shots:plan.shots.map(s=>({...s,kind:"footage" as const,sourceClip}))});
+    expect(shots[0].status).toBe("done");expect(shots[0].outputUrl).toBe(sourceClip.url);
+    await expect(execute(shots[0],blocks,edges,"footage-no-gen")).rejects.toThrow("已有素材切片");
+    expect(requests).toHaveLength(0);
   });
 });

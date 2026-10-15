@@ -22,7 +22,7 @@ vi.mock("../_core/llm.js", async (importOriginal) => ({
 
 vi.mock("./manhuaAdvisorFilmReview",()=>({askManhuaFilmReview:filmAdvisorMock}));
 
-vi.mock("./manhuaAdvisorBgmMix",()=>({askManhuaBgmMix:bgmAdvisorMock,MANHUA_BGM_ADVISOR_MODEL:"gemini-3.8-flash"}));
+vi.mock("./manhuaAdvisorBgmMix",()=>({askManhuaBgmMix:bgmAdvisorMock,generateGeminiBgmAnalysis:vi.fn(),MANHUA_BGM_ADVISOR_MODEL:"gemini-3.8-flash"}));
 
 vi.mock("./manhuaAdvisorPrevisVideo", () => ({ resolveAdvisorPrevisVideo: resolveVideoMock }));
 
@@ -811,7 +811,7 @@ it("逐镜来源完整送入顾问专用消息，能力不足原样提示且不�
 describe("映刻独立方案咨询", () => {
   const brief = { title: "季度介绍", request: "做一段清晰的视频", text: "用户真实资料", style: "words" as const, duration: 15, orientation: "landscape" as const, images: [], data: [], unit: "", chart: "bar" as const, period: "", source: "" };
   it("只调用指定规划链，保留模型名，不挂漫剧/联网/生图入口", async () => {
-    invokeLLMMock.mockResolvedValue({ choices: [{ message: { content: JSON.stringify({ version: 1, summary: "介绍资料", scenes: [{ heading: "季度介绍", body: "用户真实资料", duration: 15 }] }) } }] });
+    invokeLLMMock.mockResolvedValue({ choices: [{ message: { content: JSON.stringify({ version: 1, summary: "介绍资料", scenes: [{ heading: "季度介绍", body: "用户真实资料", duration: 15, speech: {text:"用户真实资料",role:"narration",voice:"female",emotion:"[empathetic]"} }] }) } }] });
     const value = await askPlatformSkillQa({ userId: 7, question: "请整理视频安排", isAdmin: true, codeMotionContext: brief });
     expect(invokeLLMMock).toHaveBeenCalledTimes(1);
     expect(value.modelName).toBe("z-ai/glm-5.3-flashx");
@@ -822,7 +822,7 @@ describe("映刻独立方案咨询", () => {
   });
   it("四条通道失败后没有外层三轮放大", async () => {
     invokeLLMMock.mockRejectedValue(new Error("503"));
-    await expect(askPlatformSkillQa({ userId: 7, question: "请整理视频安排", isAdmin: true, codeMotionContext: brief })).rejects.toThrow("安排未能完成");
+    await expect(askPlatformSkillQa({ userId: 7, question: "请整理视频安排", isAdmin: true, codeMotionContext: brief })).rejects.toThrow("本次内容安排失败");
     expect(invokeLLMMock).toHaveBeenCalledTimes(4);
   });
   it("两种工作区混用时在模型前拒绝", async () => {

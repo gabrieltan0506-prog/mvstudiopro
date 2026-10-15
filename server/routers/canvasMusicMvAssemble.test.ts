@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { musicMvEditKey, musicMvEditDocumentSchema } from "../../shared/canvasMusicMvEdit";
 import { musicMvRenderDurationSec } from "../../shared/canvasMusicMv";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "../_core/context";
@@ -17,6 +19,8 @@ vi.mock("../services/postProdMediaSource", () => ({
 vi.mock("../services/gcs", () => ({
   getGcsBucketName: () => "test-bucket",
   downloadGcsObjectVersioned: mocks.download,
+  uploadBufferToGcsIfAbsent:vi.fn(),
+  signGsUriV4ReadUrl:vi.fn(),
 }));
 vi.mock("../services/canvasVideoTask", () => ({
   peekCanvasVideoTask: vi.fn(),
@@ -244,4 +248,26 @@ describe("MV累计帧对齐", () => {
       musicMvRenderDurationSec({ startSec: 0, endSec: 0.2 })
     ).toThrow();
   });
+});
+
+
+describe("已有素材源时间消费",()=>{
+  it("按保存计划的源入点合成且保持歌曲镜头顺序",async()=>{
+    const selected={...plan,shots:plan.shots.map((shot,i)=>({...shot,kind:"footage" as const,sourceClip:{assetId:`source-${i}`,url:input.clips.find(c=>c.shotId===shot.id)!.url,durationSec:40,sourceStartSec:i?5:8}}))};
+    mocks.download.mockImplementation(async({gcsUri})=>({buffer:Buffer.from(JSON.stringify(gcsUri.endsWith("settled.json")?{settled:true}:{...saved(),plan:selected}))}));
+    await caller(7).queue({...input,plan:selected});
+    const payload=mocks.create.mock.calls[0][0].input;
+    expect(JSON.stringify(payload)).toContain('"trimInSec":8');
+    expect(JSON.stringify(payload)).toContain('"trimOutSec":17.5');
+    expect(JSON.stringify(payload)).toContain('"trimInSec":5');
+  });
+});
+
+
+describe("保存剪辑版本合成消费",()=>{
+ const revision="33333333-3333-4333-8333-333333333333";
+ function edited(){const document=musicMvEditDocumentSchema.parse({version:1,fps:30,basePlanRequestId:planRequestId,audioId:audio.id,audioDurationSec:20,clips:[{id:"edit-1",shotId:"s2",blockId:"block-2",title:"门",kind:"generated",sourceInFrame:90,durationFrames:300,source:{url:input.clips[0].url,durationSec:20}},{id:"edit-2",shotId:"s1",blockId:"block-1",title:"雨",kind:"generated",sourceInFrame:30,durationFrames:300,source:{url:input.clips[1].url,durationSec:20}}]});return {revisionId:revision,document,createdAt:"2026-10-15T21:00:00+08:00",sha256:createHash("sha256").update(musicMvEditKey(document)).digest("hex")};}
+ function bind(receipt:ReturnType<typeof edited>){mocks.download.mockImplementation(async({gcsUri})=>({buffer:Buffer.from(JSON.stringify(gcsUri.includes("/edits/")?receipt:gcsUri.endsWith("settled.json")?{settled:true}:saved()))}));}
+ it("消费已保存顺序及入出点，不沿用原计划裁点",async()=>{const r=edited();bind(r);await caller(7).queue({...input,editRevisionId:revision,clips:r.document.clips.map(c=>({shotId:c.id,url:c.source!.url}))});expect(mocks.create.mock.calls[0][0].input.params.clips.map((c:any)=>[c.clipUrl,c.trimInSec,c.trimOutSec])).toEqual([["gs://test-bucket/post-prod/7/2.mp4",3,13],["gs://test-bucket/post-prod/7/1.mp4",1,11]]);});
+ it("换素材、伪造版本或歌曲覆盖缺口均拒绝入队",async()=>{const r=edited();bind(r);const clips=r.document.clips.map(c=>({shotId:c.id,url:c.source!.url}));await expect(caller(7).queue({...input,editRevisionId:revision,clips:[{...clips[0],url:clips[1].url},clips[1]]})).rejects.toThrow("素材来源");r.document.clips[0].durationFrames=150;await expect(caller(7).queue({...input,editRevisionId:revision,clips})).rejects.toThrow("证据不一致");r.sha256=createHash("sha256").update(musicMvEditKey(r.document)).digest("hex");await expect(caller(7).queue({...input,editRevisionId:revision,clips})).rejects.toThrow("歌曲还缺");expect(mocks.create).not.toHaveBeenCalled();});
 });

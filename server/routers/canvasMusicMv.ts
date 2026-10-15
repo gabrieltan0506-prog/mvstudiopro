@@ -1,3 +1,7 @@
+import {readSongCraftCloudLibrary} from "../services/songCraftCloudLibrary";
+import {queueSongCover} from "../services/songCover";
+import { listCreativeLibraryEntries, saveCreativeLibraryEntry } from "../services/creativeGenerationLibrary";
+import { saveMusicMvEdit, getMusicMvEdit, saveMusicMvEditInputSchema, getMusicMvEditInputSchema } from "../services/canvasMusicMvEdit";
 /** 音乐 MV 分镜：先持久占位、原文取证，合格结果保存后按既有分镜项目结算。 */
 import { createHash } from "node:crypto";
 import { TRPCError } from "@trpc/server";
@@ -19,7 +23,17 @@ import {
   validateCanvasMusicMvPlan,
   type CanvasMusicMvDraftInput,
   type CanvasMusicMvPlan,
+  musicMvAdvisorProposalSchema,
+  musicMvAdvisorTargetSchema,
+  parseMusicMvAdvisorProposal,
 } from "../../shared/canvasMusicMv";
+import { getJobByIdStrict, createJob } from "../jobs/repository";
+import { resolveCanvasMusicMvAudio } from "../services/canvasMusicMvMedia";
+import {
+  manhuaAdvisorOperationId,
+  MANHUA_ADVISOR_DONE_ACTION,
+  MANHUA_ADVISOR_TASK_TYPE,
+} from "../services/manhuaAdvisorOperation";
 
 type Receipt = { objectName: string; bytes: number; sha256: string };
 type SavedPlan = {
@@ -224,6 +238,11 @@ export async function draftCanvasMusicMvPlan(
   d: MusicMvPlanDeps = deps
 ) {
   const input = canvasMusicMvDraftInputSchema.parse(rawInput);
+  if (input.advisorEvidenceId)
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "听音方案请从创作顾问候选采用",
+    });
   if (!d.bucket())
     throw new TRPCError({
       code: "SERVICE_UNAVAILABLE",
@@ -334,7 +353,197 @@ export async function draftCanvasMusicMvPlan(
   }
 }
 
+export const adoptMusicMvConceptInputSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    advisorRequestId: z.string().uuid(),
+    evidenceId: z.string().uuid(),
+    conceptId: z.string().min(1).max(100),
+  })
+  .strict();
+/** 采用只读本人已结算顾问结果，不重新听音或再次收分镜费用。 */
+export async function adoptMusicMvConcept(
+  userId: number,
+  raw: z.infer<typeof adoptMusicMvConceptInputSchema>,
+  d: MusicMvPlanDeps = deps,
+  job = getJobByIdStrict
+) {
+  const input = adoptMusicMvConceptInputSchema.parse(raw);
+  const operation = await job(
+    manhuaAdvisorOperationId(userId, input.advisorRequestId)
+  );
+  const output = operation?.output as
+    | { action?: string; result?: { success?: boolean; answer?: string } }
+    | undefined;
+  if (
+    !operation ||
+    String(operation.userId) !== String(userId) ||
+    operation.type !== MANHUA_ADVISOR_TASK_TYPE ||
+    operation.status !== "succeeded" ||
+    output?.action !== MANHUA_ADVISOR_DONE_ACTION ||
+    !output.result?.success
+  )
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "原顾问咨询尚未成功，请先查询原咨询",
+    });
+  const returned = musicMvAdvisorProposalSchema.parse(
+    JSON.parse(output.result.answer || "")
+  );
+  if (returned.evidenceId !== input.evidenceId)
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "候选不属于本次顾问咨询",
+    });
+  const evidence = await read<{
+    target: unknown;
+    proposal: unknown;
+    receipt: Receipt;
+  }>(d, `canvas-music-mv/advisor/${userId}/${input.evidenceId}/accepted`);
+  if (!evidence) throw new Error("MV顾问永久证据暂不可读取");
+  const target = musicMvAdvisorTargetSchema.parse(evidence.target);
+  const proposal = parseMusicMvAdvisorProposal(evidence.proposal, target);
+  if (proposal.review && proposal.review.verdict !== "approved") throw new Error("创作顾问审阅尚有待修订或复听事项，未采用分镜");
+  if (digest(proposal) !== digest(returned))
+    throw new Error("顾问回执与保存方案不一致");
+  const concept = proposal.concepts.find(c => c.id === input.conceptId);
+  if (!concept) throw new Error("所选MV方案不存在");
+  const draftInput = canvasMusicMvDraftInputSchema.parse({
+    requestId: input.requestId,
+    audio: target.audio,
+    lyrics: target.lyrics,
+    creativePrompt: target.creativePrompt,
+    referenceSummaries: target.referenceSummaries,
+    advisorEvidenceId: input.evidenceId,
+  });
+  const plan = validateCanvasMusicMvPlan(concept.plan, draftInput);
+  const path = prefix(userId, input.requestId);
+  const inputDigest = digest({ draftInput, selection: input });
+  const claim = await save(d, `${path}/request`, {
+    input: draftInput,
+    inputDigest,
+    expiresAtMs: Date.now() + 300000,
+  });
+  if (!claim.created) {
+    const previous = await read<PlanRequest>(d, `${path}/request`);
+    if (previous?.inputDigest !== inputDigest)
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "采用编号对应另一方案，原记录保留",
+      });
+  }
+  const parsed = await save(d, `${path}/parsed`, {
+    parsed: plan,
+    raw: [evidence.receipt],
+    advisorRequestId: input.advisorRequestId,
+    conceptId: input.conceptId,
+  });
+  const result: SavedPlan = {
+    plan,
+    input: draftInput,
+    evidence: { request: claim, raw: [evidence.receipt], parsed },
+  };
+  const chosen = await resolvePlan(d, path, { status: "succeeded", result });
+  if (chosen.status !== "succeeded")
+    throw new Error("原采用已确认失效，请重新选择方案");
+  await save(d, `${path}/settled`, {
+    settled: true,
+    source: "advisor",
+    advisorRequestId: input.advisorRequestId,
+  });
+  return {
+    requestId: input.requestId,
+    plan: chosen.result.plan,
+    input: chosen.result.input,
+  };
+}
+
 export const canvasMusicMvRouter = router({
+  listSongCraftTemplates: protectedProcedure.query(()=>readSongCraftCloudLibrary()),
+  queueSongCover: protectedProcedure.input(z.object({musicJobId:z.string().min(1).max(200),prompt:z.string().min(1).max(12000)}).strict()).mutation(({ctx,input})=>queueSongCover(ctx.user.id,input.musicJobId,input.prompt)),
+  listCreativeLibrary: protectedProcedure.query(({ctx})=>listCreativeLibraryEntries(ctx.user.id)),
+  saveCreativeLibrary: protectedProcedure.input(z.object({evidenceId:z.string().uuid()}).strict()).mutation(({ctx,input})=>saveCreativeLibraryEntry(ctx.user.id,input.evidenceId)),
+  saveEdit: protectedProcedure.input(saveMusicMvEditInputSchema).mutation(({ctx,input})=>saveMusicMvEdit(ctx.user.id,input)),
+  getEdit: protectedProcedure.input(getMusicMvEditInputSchema).query(({ctx,input})=>getMusicMvEdit(ctx.user.id,input)),
+  adoptConcept: protectedProcedure
+    .input(adoptMusicMvConceptInputSchema)
+    .mutation(({ ctx, input }) => adoptMusicMvConcept(ctx.user.id, input)),
+  prepareSinging: protectedProcedure
+    .input(
+      z
+        .object({
+          requestId: z.string().uuid(),
+          planRequestId: z.string().uuid(),
+          shotId: z.string().min(1).max(100),
+        })
+        .strict()
+    )
+    .mutation(async ({ ctx, input }) => {
+      const state = await getCanvasMusicMvPlan(
+        ctx.user.id,
+        input.planRequestId
+      );
+      if (state.status !== "succeeded")
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "分镜尚未确认采用",
+        });
+      const saved = await read<SavedPlan>(
+        deps,
+        `${prefix(ctx.user.id, input.planRequestId)}/result`
+      );
+      if (!saved) throw new Error("分镜来源暂不可读取");
+      const shot = saved.plan.shots.find(row => row.id === input.shotId);
+      if (shot?.kind !== "singing")
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "只有对口型镜头需要准备唱段",
+        });
+      const audioUri = await resolveCanvasMusicMvAudio(
+        ctx.user.id,
+        saved.input.audio
+      );
+      const payload = {
+        action: "audio_trim",
+        params: {
+          audioUri,
+          sourceStartSec: shot.startSec,
+          sourceEndSec: shot.endSec,
+          volume: 1,
+          fadeInSec: 0,
+          fadeOutSec: 0,
+        },
+      };
+      const jobId = `mv_singing_${digest([ctx.user.id, input.requestId]).slice(0, 40)}`;
+      const check = (job: Awaited<ReturnType<typeof getJobByIdStrict>>) => {
+        if (
+          !job ||
+          String(job.userId) !== String(ctx.user.id) ||
+          job.type !== "post_prod" ||
+          job.provider !== "ffmpeg-post-prod" ||
+          digest(job.input) !== digest(payload)
+        )
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "唱段准备编号对应另一输入，请查询原任务",
+          });
+      };
+      const existing = await getJobByIdStrict(jobId);
+      if (existing) check(existing);
+      else
+        try {
+          await createJob({
+            id: jobId,
+            userId: String(ctx.user.id),
+            type: "post_prod",
+            provider: "ffmpeg-post-prod",
+            input: payload,
+          });
+        } catch {
+          check(await getJobByIdStrict(jobId));
+        }
+      return { jobId, startSec: shot.startSec, endSec: shot.endSec };
+    }),
   draftPlan: protectedProcedure
     .input(canvasMusicMvDraftInputSchema)
     .mutation(({ ctx, input }) =>

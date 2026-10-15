@@ -1,3 +1,5 @@
+import { getMusicMvEdit } from "../services/canvasMusicMvEdit";
+import { musicMvEditIssues } from "../../shared/canvasMusicMvEdit";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../_core/trpc";
@@ -23,6 +25,7 @@ export const canvasMusicMvAssembleRouter = router({
         .object({
           requestId: z.string().uuid(),
           planRequestId: z.string().uuid(),
+          editRevisionId: z.string().uuid().optional(),
           musicJobId: z.string().trim().min(1).max(200).optional(),
           audio: canvasMusicCandidateSchema,
           plan: canvasMusicMvPlanSchema,
@@ -45,7 +48,8 @@ export const canvasMusicMvAssembleRouter = router({
       if (
         input.plan.audioId !== input.audio.id ||
         input.plan.audioDurationSec !== input.audio.durationSec ||
-        input.clips.length !== input.plan.shots.length ||
+        (!input.editRevisionId &&
+          input.clips.length !== input.plan.shots.length) ||
         new Set(input.clips.map(c => c.shotId)).size !== input.clips.length
       ) {
         throw new TRPCError({
@@ -87,6 +91,30 @@ export const canvasMusicMvAssembleRouter = router({
           message: "分镜版本或所选歌曲已经变化，请重新确认分镜",
         });
       }
+      const edit = input.editRevisionId
+        ? (
+            await getMusicMvEdit(ctx.user.id, {
+              basePlanRequestId: input.planRequestId,
+              revisionId: input.editRevisionId,
+            })
+          ).document
+        : undefined;
+      if (edit) {
+        const issues = musicMvEditIssues(edit, saved.plan);
+        if (issues.length)
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: issues.join("；"),
+          });
+        if (
+          input.clips.length !== edit.clips.length ||
+          edit.clips.some((c, i) => c.id !== input.clips[i]?.shotId)
+        )
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "合成片段与保存版本不一致",
+          });
+      }
       // 入队只保存稳定来源。所有权在服务端登记簿核对，拒绝任意外部网址、跨用户及跨桶素材。
       let musicUrl: string;
       let clipSources: string[];
@@ -105,36 +133,72 @@ export const canvasMusicMvAssembleRouter = router({
         clipSources = await Promise.all(
           input.clips.map(clip => resolveCanvasMusicMvVideo(ctx.user.id, clip))
         );
+        if (edit) {
+          for (let i = 0; i < edit.clips.length; i++)
+            if (
+              clipSources[i] !==
+              (await resolveCanvasMusicMvVideo(
+                ctx.user.id,
+                edit.clips[i].source!
+              ))
+            )
+              throw new Error("剪辑版本素材被替换");
+        } else
+          for (const shot of input.plan.shots)
+            if (shot.kind === "footage" && shot.sourceClip) {
+              const expected = await resolveCanvasMusicMvVideo(
+                ctx.user.id,
+                shot.sourceClip
+              );
+              const index = input.clips.findIndex(
+                clip => clip.shotId === shot.id
+              );
+              if (index < 0 || clipSources[index] !== expected)
+                throw new Error("素材切片已换成另一来源");
+            }
       } catch {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "素材来源不匹配或尚未登记，请从本人系统素材重新选择",
         });
       }
-      const clips = input.plan.shots.map((shot, index) => {
-        const sourceIndex = input.clips.findIndex(
-          row => row.shotId === shot.id
-        );
-        if (sourceIndex < 0)
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "缺少镜头，不能合成完整 MV",
+      const clips = edit
+        ? edit.clips.map((clip, index) => ({
+            episodeIndex: 1,
+            segmentIndex: index + 1,
+            clipUrl: clipSources[index],
+            durationSec: clip.durationFrames / 30,
+            trimInSec: clip.sourceInFrame / 30,
+            trimOutSec: (clip.sourceInFrame + clip.durationFrames) / 30,
+          }))
+        : input.plan.shots.map((shot, index) => {
+            const sourceIndex = input.clips.findIndex(
+              row => row.shotId === shot.id
+            );
+            if (sourceIndex < 0)
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "缺少镜头，不能合成完整 MV",
+              });
+            const durationSec = musicMvRenderDurationSec(shot);
+            if (durationSec < 0.5)
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "镜头短于可合成范围，请重新确认分镜",
+              });
+            return {
+              episodeIndex: 1,
+              segmentIndex: index + 1,
+              clipUrl: clipSources[sourceIndex],
+              durationSec,
+              trimInSec:
+                shot.kind === "footage" ? shot.sourceClip!.sourceStartSec : 0,
+              trimOutSec:
+                (shot.kind === "footage"
+                  ? shot.sourceClip!.sourceStartSec
+                  : 0) + durationSec,
+            };
           });
-        const durationSec = musicMvRenderDurationSec(shot);
-        if (durationSec < 0.5)
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "镜头短于可合成范围，请重新确认分镜",
-          });
-        return {
-          episodeIndex: 1,
-          segmentIndex: index + 1,
-          clipUrl: clipSources[sourceIndex],
-          durationSec,
-          trimInSec: 0,
-          trimOutSec: durationSec,
-        };
-      });
       const payload = buildManhuaAssembleJobInput({
         clips,
         expectedSegments: clips.map(({ episodeIndex, segmentIndex }) => ({

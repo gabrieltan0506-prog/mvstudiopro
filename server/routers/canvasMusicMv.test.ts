@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
+  adoptMusicMvConcept,
   draftCanvasMusicMvPlan,
   getCanvasMusicMvPlan,
   type MusicMvPlanDeps,
@@ -296,5 +297,33 @@ describe("分镜进程中断与迟到回包", () => {
     expect(f.mocks.charge).not.toHaveBeenCalled();
     expect(f.records.has(`${root}/parsed.json`)).toBe(true);
     expect(f.records.has(`${root}/result.json`)).toBe(false);
+  });
+});
+
+
+describe("顾问方案采用回执与恢复",()=>{
+  function advisorFixture(){
+    const f=fixture();const evidenceId="33333333-3333-4333-8333-333333333333";
+    const selection={requestId:input.requestId,advisorRequestId:"22222222-2222-4222-8222-222222222222",evidenceId,conceptId:"c0"};
+    const target={sourceKey:"song-version",audio:input.audio,lyrics:input.lyrics,creativePrompt:input.creativePrompt,referenceSummaries:input.referenceSummaries,referenceKeys:["gs://test-bucket/hero.png"],footage:[]};
+    const proposal={kind:"music_mv_v1",sourceKey:target.sourceKey,evidenceId,summaryZh:"雨中归家",sections:[{startSec:0,endSec:20,labelZh:"归途",heardZh:"人声"}],uncertaintiesZh:[],concepts:[0,1,2,3].map(i=>({id:`c${i}`,titleZh:`归途${i}`,rationaleZh:"情绪呼应",openingZh:"雨巷",peakZh:"拥抱",endingZh:"归家",plan:{...plan(),analysisBasis:"native_audio",shots:plan().shots.map(s=>({...s,kind:"generated"}))}}))};
+    f.records.set(`canvas-music-mv/advisor/7/${evidenceId}/accepted.json`,Buffer.from(JSON.stringify({target,proposal,receipt:{objectName:"raw.json",bytes:200,sha256:"test"}})));
+    const job=vi.fn(async()=>({userId:"7",type:"manhuaAdvisor",status:"succeeded",output:{action:"manhua_advisor_qa_done",result:{success:true,answer:JSON.stringify(proposal)}}}));
+    return {...f,selection,job};
+  }
+  it("采用及同编号恢复不重新调用模型、不另扣分镜费用",async()=>{
+    const f=advisorFixture();const job=f.job as unknown as NonNullable<Parameters<typeof adoptMusicMvConcept>[3]>;
+    const first=await adoptMusicMvConcept(7,f.selection,f.d,job);
+    const recovered=await adoptMusicMvConcept(7,f.selection,f.d,job);
+    expect(recovered).toEqual(first);
+    expect((await getCanvasMusicMvPlan(7,f.selection.requestId,f.d)).status).toBe("succeeded");
+    expect(f.mocks.llm).not.toHaveBeenCalled();expect(f.mocks.charge).not.toHaveBeenCalled();
+    await expect(adoptMusicMvConcept(7,{...f.selection,conceptId:"c1"},f.d,job)).rejects.toMatchObject({code:"CONFLICT"});
+  });
+  it("拒绝其他用户的顾问结果及假听音入口",async()=>{
+    const f=advisorFixture();const job=f.job as unknown as NonNullable<Parameters<typeof adoptMusicMvConcept>[3]>;
+    await expect(adoptMusicMvConcept(8,f.selection,f.d,job)).rejects.toMatchObject({code:"PRECONDITION_FAILED"});
+    await expect(draftCanvasMusicMvPlan(7,"user",{...input,advisorEvidenceId:f.selection.evidenceId},f.d)).rejects.toThrow();
+    expect(f.mocks.llm).not.toHaveBeenCalled();expect(f.mocks.charge).not.toHaveBeenCalled();
   });
 });

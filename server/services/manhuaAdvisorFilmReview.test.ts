@@ -58,3 +58,7 @@ it("跨集范围附言不掩盖供应商缺失的限制说明", async () => {
  expect(d.post).toHaveBeenCalledTimes(1);
  expect(d.save.mock.calls.some(c=>c[0].objectName.endsWith("/analysis.json"))).toBe(true);
 });
+
+it("参考MV时长版本不符在原生请求前拒绝", async()=>{
+ const d=fixture();await expect(askManhuaFilmReview(7,{...target,expectedDurationSec:6},"MV",d as any)).rejects.toThrow("时长");expect(d.post).not.toHaveBeenCalled();expect(d.count).not.toHaveBeenCalled();
+});

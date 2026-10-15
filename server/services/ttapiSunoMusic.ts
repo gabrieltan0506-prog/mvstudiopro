@@ -52,9 +52,14 @@ export type TtapiSunoCustomRequest = {
   /** 目标时长（秒），10–360；越界直接抛，不让上游静默忽略 */
   duration?: number;
   vocal_gender?: "Male" | "Female";
+  style_weight?: number;
+  weirdness_constraint?: number;
 };
 
 export function assertTtapiSunoRequest(req: TtapiSunoCustomRequest): void {
+  for (const value of [req.style_weight, req.weirdness_constraint]) {
+    if (value != null && (!Number.isFinite(value) || value < 0 || value > 1)) throw new Error("音乐控制参数须在0至1之间");
+  }
   if (req.duration != null && (!Number.isInteger(req.duration) || req.duration < 10 || req.duration > 360)) {
     throw new Error(`duration 必须是 10–360 的整数，收到 ${req.duration}`);
   }
@@ -202,6 +207,8 @@ export async function createTtapiSunoTask(
       negative_tags: req.negative_tags || "",
       ...(req.duration != null ? { duration: req.duration } : {}),
       ...(req.vocal_gender ? { vocal_gender: req.vocal_gender } : {}),
+      ...(req.style_weight != null ? { style_weight: req.style_weight } : {}),
+      ...(req.weirdness_constraint != null ? { weirdness_constraint: req.weirdness_constraint } : {}),
       audio_format: "mp3",
     }),
     abortSignal: opts.abortSignal,

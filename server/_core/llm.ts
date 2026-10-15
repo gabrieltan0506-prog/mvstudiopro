@@ -735,6 +735,13 @@ const resolveTarget = (
       if (!apiKey) throw new Error("顾问备用通道暂未配置");
       return { provider: "openai", apiUrl: EVOLINK_CHAT_COMPLETIONS_URL, apiKey, modelName: candidate };
     }
+    // Astra保持官方精确模型身份，不能进入旧模型别名或第三方fallback。
+    if (candidate === "gpt-6-astra") {
+      if (openAiGateway !== "official_only") throw new Error("Astra仅允许官方通道");
+      const apiKey = getOfficialOpenAiApiKey();
+      if (!apiKey) throw new Error("Astra官方通道未配置");
+      return {provider: "openai", apiUrl: OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL, apiKey, modelName: candidate};
+    }
     const officialOnly = openAiGateway === "official_only";
     const evolinkPrimary = openAiGateway === "evolink_primary";
 
@@ -1349,7 +1356,8 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   const isGlm53 = isGlm53Model(modelId);
   /** 推理模型不额外发送采样参数。 */
   const supportsSamplingControls =
-    !isDeepSeekV41Flash
+    modelId !== "gpt-6-astra"
+    && !isDeepSeekV41Flash
     && !isGlm53
     && !/^gpt-5(?:[.-]|$)/i.test(modelId)
     && !/^openai\/gpt-5/i.test(modelId);
@@ -1366,6 +1374,9 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   } else if (isGlm53) {
     // GLM 5.3 恒开思考关不掉，只有 low/high/max 真正生效（medium/xhigh 会被静默降级）
     reasoningEffort = glm53ReasoningEffort(params.reasoningEffort);
+  } else if (modelId === "gpt-6-astra") {
+    reasoningEffort = params.reasoningEffort || "medium";
+    if (!["low", "medium", "high", "xhigh", "max"].includes(reasoningEffort)) throw new Error("Astra推理档位无效");
   } else if (isGpt5Family) {
     if (params.reasoningEffort) {
       reasoningEffort = params.reasoningEffort;

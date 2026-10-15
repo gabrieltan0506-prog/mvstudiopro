@@ -19,7 +19,7 @@ export const manhuaBgmBriefSchema = z
     model: z.enum(["suno-v5.5-beta", "suno-v6-mini", "suno-v6", "suno-v6-wild"]),
     custom_mode: z.literal(true),
     instrumental: z.boolean(),
-    style: z.string().trim().min(1).max(1000),
+    style: z.string().trim().min(1),
     prompt: z.string().trim().min(1).max(5000),
     title: z.string().trim().min(1).max(80),
     duration: z.number().int().min(10).max(360),

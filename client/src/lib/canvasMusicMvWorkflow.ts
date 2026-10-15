@@ -1,6 +1,8 @@
+import { manhuaSourceVersionIdentity } from "@shared/manhuaMultiview";
 import {
   canvasMusicMvPlanSchema,
   type CanvasMusicMvPlan,
+  type CanvasMusicCandidate,
 } from "@shared/canvasMusicMv";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
 
@@ -11,7 +13,8 @@ export function createMusicMvShotBlocks(
   revision: string,
   references: Array<
     string | { id: string; url: string; gcsUri?: string; fileName: string }
-  >
+  >,
+  audio?: CanvasMusicCandidate
 ): CanvasBlock[] {
   canvasMusicMvPlanSchema.parse(plan);
   return plan.shots.map((shot, index) => {
@@ -41,7 +44,25 @@ export function createMusicMvShotBlocks(
       startSec: shot.startSec,
       endSec: shot.endSec,
       referenceImages,
+      kind: shot.kind,
+      sourceClip: shot.sourceClip,
+      ...(shot.kind === "singing" ? { audio } : {}),
     };
+    if (shot.kind === "singing") {
+      if (
+        !audio ||
+        audio.id !== plan.audioId ||
+        audio.durationSec !== plan.audioDurationSec
+      )
+        throw new Error("对口型镜头缺少对应原歌曲");
+      block.prompt = `目标时长：${Math.ceil(shot.endSec - shot.startSec)} 秒。\n${shot.visualPrompt}\n运镜：${shot.cameraPrompt}\n人物按@音频1中的真实演唱同步口型、呼吸和表情，保持原曲速度、唱法与声音；不改唱词、不另配音。仅表演本唱段，歌曲绝对时间${shot.startSec}–${shot.endSec}秒。\n歌词：${shot.lyricQuote || "以实际唱段为准"}`;
+    }
+    if (shot.kind === "footage" && shot.sourceClip) {
+      block.status = "done";
+      block.outputUrl = shot.sourceClip.url;
+      block.outputUrls = [shot.sourceClip.url];
+      block.prompt = `已有素材切片：${shot.sourceClip.sourceStartSec}–${shot.sourceClip.sourceStartSec + shot.endSec - shot.startSec}秒。\n${shot.visualPrompt}\n${shot.cameraPrompt}`;
+    }
     block.refImageUrl = referenceImages[0]?.url;
     block.editFusionUrls = referenceImages.map(row => row.url);
     block.seedance25WorkMode = referenceImages.length
@@ -62,13 +83,24 @@ export function musicMvReadyClips(
     const block = blocks.find(row => row.id === ids[i]);
     if (!block || block.status !== "done" || !block.outputUrl)
       throw new Error(`镜头 ${i + 1} 尚未出片，不能合成完整 MV`);
+    if (
+      shot.kind === "footage" &&
+      (!shot.sourceClip ||
+        !block.musicMvShot?.sourceClip ||
+        block.musicMvShot.sourceClip.assetId !== shot.sourceClip.assetId)
+    )
+      throw new Error(`镜头 ${i + 1} 的素材绑定已变化`);
     return {
       shotId: shot.id,
       url: block.outputUrl,
       taskId:
-        block.musicMvShot?.outputs?.find(
-          row => row.url.split("?")[0] === block.outputUrl?.split("?")[0]
-        )?.taskId || block.videoTaskId,
+        shot.kind === "footage"
+          ? shot.sourceClip?.taskId
+          : block.musicMvShot?.outputs?.find(
+              row =>
+                manhuaSourceVersionIdentity(row.url) ===
+                manhuaSourceVersionIdentity(block.outputUrl)
+            )?.taskId || block.videoTaskId,
     };
   });
 }

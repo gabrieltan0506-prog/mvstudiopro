@@ -96,7 +96,7 @@ export async function uploadOneCanvasAsset(params: {
     (kind === "video"
       ? "video/mp4"
       : kind === "audio"
-        ? "audio/mpeg"
+        ? (/\.wav$/i.test(file.name) ? "audio/wav" : /\.(m4a|aac)$/i.test(file.name) ? (/\.aac$/i.test(file.name) ? "audio/aac" : "audio/mp4") : "audio/mpeg")
         : kind === "document"
           ? "application/octet-stream"
           : "image/png");
