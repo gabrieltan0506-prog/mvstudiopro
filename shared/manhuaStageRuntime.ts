@@ -10,6 +10,7 @@ function escapeForScript(json: string): string {
 export type StageSceneConfig = {
   /** 本次实例版本；iframe 每条消息回带，主机只认当前值 */
   revision: string;
+  lockCamera?: boolean;
   spzUrl: string;
   colliderUrl?: string;
   transform: { scale: number; quaternionXYZW: readonly number[]; translationStage: readonly number[] };
@@ -73,8 +74,27 @@ if (THREE && SplatMesh) {
     renderer.domElement.style.cursor = "grab";
     renderer.domElement.style.touchAction = "none";
     let drag = null;
+    let pickGround = false;
+    let pickMarker = null;
     renderer.domElement.addEventListener("pointerdown", (ev) => {
       if (ev.pointerType === "mouse" && ev.button !== 0) return;
+      if (pickGround) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const ray = new THREE.Raycaster();
+        ray.setFromCamera(new THREE.Vector2((ev.clientX - rect.left) / rect.width * 2 - 1, 1 - (ev.clientY - rect.top) / rect.height * 2), camera);
+        const hit = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), new THREE.Vector3());
+        if (hit && Number.isFinite(hit.x) && Number.isFinite(hit.y) && Math.abs(hit.x) <= 500 && Math.abs(hit.y) <= 500) {
+          if (!pickMarker) {
+            pickMarker = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.22, 32), new THREE.MeshBasicMaterial({ color: 0x44ff99, side: THREE.DoubleSide, depthTest: false }));
+            pickMarker.renderOrder = 1000; scene.add(pickMarker);
+          }
+          pickMarker.position.set(hit.x, hit.y, 0.02); pickMarker.visible = true;
+          post({ type: "ground_point", point: [hit.x, hit.y] });
+          pickGround = false; renderer.domElement.style.cursor = "grab";
+        } else post({ type: "warn", message: "该位置未与舞台地面相交，请调整视角后点选脚下地面。" });
+        return;
+      }
+      if (CONFIG.lockCamera) return;
       const dir = camera.getWorldDirection(new THREE.Vector3());
       const target = camera.position.clone().addScaledVector(dir, viewDistance);
       drag = {
@@ -107,6 +127,7 @@ if (THREE && SplatMesh) {
     renderer.domElement.addEventListener("lostpointercapture", endDrag);
     renderer.domElement.addEventListener("wheel", (ev) => {
       ev.preventDefault();
+      if (CONFIG.lockCamera) return;
       const deltaPx = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? window.innerHeight : 1);
       const next = Math.max(0.6, Math.min(80, viewDistance * Math.exp(deltaPx * 0.0015)));
       const direction = camera.getWorldDirection(new THREE.Vector3());
@@ -245,18 +266,19 @@ if (THREE && SplatMesh) {
         applyCamera(CONFIG.initialCamera);
       }
 
+      if (m.type === "pick_ground") { pickGround = Boolean(m.enabled); drag = null; renderer.domElement.style.cursor = pickGround ? "crosshair" : "grab"; }
       if (m.type === "camera" && m.rig) { applyCamera(m.rig); cameraKind = String(m.cameraKind || ""); }
       if (m.type === "collider" && collider) collider.visible = Boolean(m.visible);
       if (m.type === "export" && canExport && !animation && !exportingFrame) {
         exportingFrame = true;
         const exportCamera = camera.clone(), exportRig = activeRig;
         const exportDistance = viewDistance, exportKind = String(m.cameraKind || cameraKind);
-        const gridVisible = grid.visible, colliderVisible = collider?.visible;
+        const gridVisible = grid.visible, colliderVisible = collider?.visible, markerVisible = pickMarker?.visible;
         try {
           // 解码完成不等于高斯排序完成；冻结导出机位，等待真实排序后再读取像素。
           renderer.setAnimationLoop(null);
           sparkRenderer.defaultView.setAutoUpdate(false);
-          grid.visible = false;
+          grid.visible = false; if (pickMarker) pickMarker.visible = false;
           if (collider) collider.visible = false;
           scene.updateMatrixWorld(true); exportCamera.updateMatrixWorld(true);
           await sparkRenderer.defaultView.prepare({ scene, camera: exportCamera, update: true });
@@ -273,7 +295,7 @@ if (THREE && SplatMesh) {
         }
         catch (e) { post({ type: "export_error", requestId: m.requestId, message: "视角图导出失败，请重试" }); }
         finally {
-          grid.visible = gridVisible;
+          grid.visible = gridVisible; if (pickMarker) pickMarker.visible = markerVisible;
           if (collider) collider.visible = colliderVisible;
           exportingFrame = false;
           sparkRenderer.defaultView.setAutoUpdate(!CAPTURE_ONLY);

@@ -1,3 +1,4 @@
+import { digitalHumanStageAnchorSchema, digitalHumanStageCameraSchema } from "./digitalHumanSpatialAdvisor";
 import { z } from "zod";
 import { platformStoryboardCellsSchema } from "./platformStoryboardCells";
 import { artMotionStateSchema } from "./artMotion";
@@ -187,6 +188,9 @@ export const digitalHumanDraftSchema = z.object({
     })
     .optional(),
   mainModel: modelSchema.optional(),
+  previsSpatialInvalidated: z.boolean().optional(),
+  stageCamera: digitalHumanStageCameraSchema.optional(),
+  stageAnchors: z.array(digitalHumanStageAnchorSchema).max(50).optional(),
   mainStage: z
     .object({ x: z.number(), y: z.number(), yaw: z.number() })
     .optional(),
@@ -362,7 +366,7 @@ export function prepareDigitalHumanVideo(
     throw new Error("人物或场景已变化，请重新导出3D视角图");
   if (
     selectedPrevis &&
-    (!selectedPrevis.reviewed ||
+    (draft.previsSpatialInvalidated || !selectedPrevis.reviewed ||
       selectedPrevis.sourceFingerprint !== spatialFingerprint)
   )
     throw new Error("白模输入已变化或尚未审片，请重新审查后采用");
@@ -418,6 +422,7 @@ export function digitalHumanSpatialFingerprint(
   return JSON.stringify({
     portrait: draft.portrait?.source,
     mainStage: draft.mainStage,
+    ...(draft.stageCamera ? { stageCamera: draft.stageCamera } : {}),
     scene: draft.scene?.source,
     world: draft.worldTaskId,
     actors: draft.actors.map(a => ({

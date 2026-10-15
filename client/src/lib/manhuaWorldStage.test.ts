@@ -19,8 +19,9 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 /** 执行生产 iframe 脚本，用受控加载信号取代网络/WebGL；不冒充真实画面验收。 */
-async function harness(characters = actors, failedWorldAttempts = 0, exportFailure?: "render" | "canvas" | "empty", waitForSort = false) {
+async function harness(characters = actors, failedWorldAttempts = 0, exportFailure?: "render" | "canvas" | "empty", waitForSort = false, lockCamera = false) {
   const config = buildStageSceneConfig({ spz500kUrl: "https://x/w.spz" }, characters, stageCameraRigs(characters).establish, "revision-7")!;
+  config.lockCamera = lockCamera;
   const html = buildSrcDoc(config);
   const script = html.slice(html.indexOf('const CONFIG ='), html.lastIndexOf('</script>'))
     .replaceAll('await import(', 'await loadModule(');
@@ -60,6 +61,9 @@ async function harness(characters = actors, failedWorldAttempts = 0, exportFailu
   const three = {
     Scene: Object3d, Group: Object3d, HemisphereLight: Object3d, DirectionalLight: Object3d, Vector3,
     Color: Object3d, GridHelper: Object3d,
+    Vector2: class { constructor(public x:number,public y:number) {} },
+    Plane: class {}, Raycaster: class { ray={intersectPlane:()=>new Vector3(2,3,0)}; setFromCamera() {} },
+    Mesh: Object3d, RingGeometry: class {}, MeshBasicMaterial: class {},
     PerspectiveCamera: class extends Object3d {
       up = xyz(); position = new Vector3(); direction = new Vector3(1, 0, 0);
       lookAt(x: number, y: number, z: number) {
@@ -71,7 +75,7 @@ async function harness(characters = actors, failedWorldAttempts = 0, exportFailu
     },
     Box3: class { min = { y: 0 }; max = { y: 1 }; setFromObject() { return this; } },
     WebGLRenderer: class {
-      domElement = { style: {}, setPointerCapture() {}, addEventListener(type: string, handler: (event: Record<string, unknown>) => void) { pointerHandlers.set(type, handler); }, toDataURL() {
+      domElement = { style: {}, getBoundingClientRect:()=>({left:0,top:0,width:640,height:360}), setPointerCapture() {}, addEventListener(type: string, handler: (event: Record<string, unknown>) => void) { pointerHandlers.set(type, handler); }, toDataURL() {
         if (exportFailure === "canvas") throw new Error("canvas failed");
         if (exportFailure === "empty") return "data:,";
         return "data:image/png;base64,dGVzdA==";
@@ -319,4 +323,16 @@ it("空场景初始建立机位使用真实世界原点，载入后预设与初�
  expect(buildStageSceneConfig(world,[],rig)?.initialCamera).toEqual(rig);
  expect(stageCameraRigs(actors,undefined,world)).toEqual(stageCameraRigs(actors));
  expect(stageCameraRigs([],undefined,{})).toEqual(stageCameraRigs([]));
+});
+
+it("地点点选回带当前版本且不修改机位；锁定试看禁止拖动与滚轮", async()=>{
+  const h=await harness([],0,undefined,false,true);h.world.resolve();await h.done;
+  await h.send({type:"pick_ground",enabled:true});
+  h.pointer("pointerdown",{pointerType:"mouse",button:0,clientX:320,clientY:180});
+  expect(h.messages.at(-1)).toMatchObject({type:"ground_point",revision:"revision-7",point:[2,3]});
+  h.pointer("pointerdown",{pointerType:"mouse",button:0,pointerId:1,clientX:10,clientY:10});
+  h.pointer("pointermove",{pointerId:1,clientX:100,clientY:80});
+  h.pointer("wheel",{deltaY:-300,preventDefault(){}});
+  await h.exportFrame(81);
+  expect(h.messages.at(-1)).toMatchObject({type:"frame",cameraRig:{position:h.config.initialCamera.position}});
 });

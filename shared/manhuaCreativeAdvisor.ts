@@ -1,4 +1,5 @@
 import { creativeLearningTargetSchema } from "./creativeGenerationLibrary";
+import { digitalHumanSpatialTargetSchema } from "./digitalHumanSpatialAdvisor";
 import { manhuaAdvisorStudioContextSchema } from "./manhuaAdvisorStudioContext";
 import { advisorMediaSourceSchema } from "./manhuaAdvisorMediaEdit";
 import { advisorFilmReviewTargetSchema } from "./manhuaAdvisorFilmReview";
@@ -146,6 +147,7 @@ export const manhuaCreativeAdvisorContextSchema = z
     /** 当前白模编辑规格摘要；不含媒体位置，不是实际视频审片。 */
     previsEdit: advisorPrevisTargetSchema.optional(),
     worldTarget: advisorWorldTargetSchema.optional(),
+    digitalHumanSpatial: digitalHumanSpatialTargetSchema.optional(),
     workflowOperation: z.object({workspace:contextText(30000,"工作流操作状态",true),revision:contextText(200,"工作流操作版本",true)}).strict().optional(),
     bgmMix: advisorBgmMixTargetSchema.optional(),
     musicMv: musicMvAdvisorTargetSchema.optional(),
@@ -205,9 +207,10 @@ export const manhuaCreativeAdvisorContextSchema = z
     creditsZh: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.signalChars, "积分状态").optional(),
   })
   .strict().superRefine((context, ctx) => {
-    if(context.creativeLearning && (context.sunoSong || context.musicMv || context.workflowOperation || context.bgmMix || context.filmReview || context.subtitleReview || context.previsEdit || context.worldTarget || context.studio3d || context.mediaEditTarget || context.templateRecommendation))ctx.addIssue({code:"custom",path:["creativeLearning"],message:"创意学习不能混入其他工序"});
-    if(context.sunoSong && (context.musicMv || context.workflowOperation || context.bgmMix || context.filmReview || context.subtitleReview || context.previsEdit || context.worldTarget || context.studio3d || context.mediaEditTarget || context.templateRecommendation))ctx.addIssue({code:"custom",path:["sunoSong"],message:"歌曲创作不能混入其他工序"});
-    if (context.musicMv && (context.workflowOperation || context.bgmMix || context.filmReview || context.subtitleReview || context.previsEdit || context.worldTarget || context.studio3d || context.mediaEditTarget || context.templateRecommendation)) ctx.addIssue({code:"custom",path:["musicMv"],message:"MV创作咨询不能同时执行其他工序"});
+    if(context.creativeLearning && (context.digitalHumanSpatial || context.sunoSong || context.musicMv || context.workflowOperation || context.bgmMix || context.filmReview || context.subtitleReview || context.previsEdit || context.worldTarget || context.studio3d || context.mediaEditTarget || context.templateRecommendation))ctx.addIssue({code:"custom",path:["creativeLearning"],message:"创意学习不能混入其他工序"});
+    if(context.sunoSong && (context.digitalHumanSpatial || context.musicMv || context.workflowOperation || context.bgmMix || context.filmReview || context.subtitleReview || context.previsEdit || context.worldTarget || context.studio3d || context.mediaEditTarget || context.templateRecommendation))ctx.addIssue({code:"custom",path:["sunoSong"],message:"歌曲创作不能混入其他工序"});
+    if (context.musicMv && (context.digitalHumanSpatial || context.workflowOperation || context.bgmMix || context.filmReview || context.subtitleReview || context.previsEdit || context.worldTarget || context.studio3d || context.mediaEditTarget || context.templateRecommendation)) ctx.addIssue({code:"custom",path:["musicMv"],message:"MV创作咨询不能同时执行其他工序"});
+    if (context.digitalHumanSpatial && (context.creativeLearning || context.sunoSong || context.musicMv || context.templateRecommendation || context.workflowOperation || context.previsEdit || context.worldTarget || context.studio3d || context.bgmMix || context.filmReview || context.subtitleReview || context.mediaEditTarget)) ctx.addIssue({ code: "custom", path: ["digitalHumanSpatial"], message: "数字人场景摆位不能与其他生产候选混用" });
     if(context.workflowOperation && (context.bgmMix||context.filmReview||context.subtitleReview||context.previsEdit||context.worldTarget||context.studio3d||context.mediaEditTarget))ctx.addIssue({code:"custom",path:["workflowOperation"],message:"工作流操作方案不能与媒体分析或其他生产候选混用"});
     if (context.filmReview && (context.bgmMix || context.previsEdit || context.worldTarget || context.subtitleReview || context.studio3d)) ctx.addIssue({code:"custom",path:["filmReview"],message:"影片审阅不能同时执行其他咨询工序"});
     if (context.bgmMix && (context.previsEdit || context.worldTarget)) ctx.addIssue({code:"custom",path:["bgmMix"],message:"配乐咨询不能同时修改白模或场景"});

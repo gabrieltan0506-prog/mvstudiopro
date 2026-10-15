@@ -1,3 +1,4 @@
+import { spatialTargetFixture } from "./digitalHumanSpatialAdvisor.fixtures";
 import { describe, expect, it } from "vitest";
 import {
   MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS,
@@ -215,5 +216,21 @@ describe("manhuaCreativeAdvisorContextSchema · PR-12 补喂字段兼容", () =>
     expect(manhuaCreativeAdvisorContextSchema.safeParse({ ...legacy, gateZh: Array.from({ length: 9 }, () => "错") }).success).toBe(false);
     expect(manhuaCreativeAdvisorContextSchema.safeParse({ ...legacy, gateZh: ["错".repeat(121)] }).success).toBe(false);
     expect(manhuaCreativeAdvisorContextSchema.safeParse({ ...legacy, queueZh: "https://example.com/x" }).success).toBe(false);
+  });
+});
+
+
+describe("合并后的数字人与歌曲工序隔离", () => {
+  const audio = {id:"audio-test",url:"https://example.com/test.mp3",durationSec:35};
+  const alternatives = {
+    sunoSong:{sourceKey:"song",requirements:"保留歌词"},
+    creativeLearning:{sourceKey:"learn",audio,referenceMediaKind:"audio",requirements:"提炼编曲"},
+    musicMv:{sourceKey:"mv",audio,lyrics:"歌词",creativePrompt:"构思",referenceSummaries:[],referenceKeys:[],footage:[]},
+  };
+  it.each(Object.entries(alternatives))("%s 单独可用，与数字人摆位混入时拒绝", (key, value) => {
+    expect(manhuaCreativeAdvisorContextSchema.safeParse({...validContext(),[key]:value}).success).toBe(true);
+    const result=manhuaCreativeAdvisorContextSchema.safeParse({...validContext(),[key]:value,digitalHumanSpatial:spatialTargetFixture()});
+    expect(result.success).toBe(false);
+    if(!result.success) expect(result.error.issues.some(issue=>issue.code==="custom" && issue.path[0]==="digitalHumanSpatial")).toBe(true);
   });
 });
