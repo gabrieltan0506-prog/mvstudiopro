@@ -285,8 +285,6 @@ export function CanvasMusicMvStudio({
       const source = latest.current;
       if (!block.prompt.trim())
         throw new Error("请先填写音乐风格、乐器和情绪要求");
-      if (block.prompt.length > 1000)
-        throw new Error("音乐风格说明最多 1000 字，请精简后再生成");
       if ((source.lyrics || "").length > 5000)
         throw new Error("本次歌曲歌词最多 5000 字，请精简后再生成");
       if (source.musicRequestId)
@@ -811,6 +809,13 @@ export function CanvasMusicMvStudio({
         disabled={busy || pendingPlan || Boolean(state.musicRequestId)} session={state.creativeLearning}
         onSession={(creativeLearning,isNew) => patch({creativeLearning,...(isNew && latest.current.creativeLearning ? {creativeLearningHistory:[...(latest.current.creativeLearningHistory||[]),latest.current.creativeLearning]}:{})})} />
       <CanvasSunoSongAdvisor
+        demos={state.songDemos||[]}
+        onDemos={songDemos=>patch({songDemos})}
+        selectedDemo={state.selectedSongDemo}
+        onSelectDemo={(requestId,variantIndex)=>patch({selectedSongDemo:{requestId,variantIndex}})}
+        optimizeExisting={state.songOptimizeExisting}
+        onOptimizeExisting={songOptimizeExisting=>patch({songOptimizeExisting})}
+        originalBrief={(()=>{const parsed=sunoSongBriefSchema.safeParse({model:"suno-v6",custom_mode:true,instrumental:state.instrumental!==false,title:state.songTitle?.trim()||"画布音乐",style:block.prompt,prompt:state.lyrics||"",negative_tags:state.songExcludes||"",duration:state.requestedDurationSec??200,style_weight:state.songStyleWeight??0.78,weirdness_constraint:state.songWeirdness??0.25});return parsed.success?parsed.data:undefined;})()}
         craftIds={state.songCraftIds || []}
         onCraftIds={songCraftIds => patch({ songCraftIds })}
         audio={state.songReference}
@@ -896,7 +901,6 @@ export function CanvasMusicMvStudio({
           aria-label="Suno风格与编曲"
           className={field}
           rows={3}
-          maxLength={1000}
           value={block.prompt}
           disabled={busy || pendingPlan}
           onChange={e => patch({}, { prompt: e.target.value })}

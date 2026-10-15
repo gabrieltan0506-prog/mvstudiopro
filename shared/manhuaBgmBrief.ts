@@ -20,7 +20,6 @@
 /** V5.5 硬边界（EvoLink 文档） */
 export const BGM_DURATION_MIN_SEC = 10;
 export const BGM_DURATION_MAX_SEC = 360;
-export const BGM_STYLE_MAX_CHARS = 1000;
 export const BGM_TITLE_MAX_CHARS = 80;
 export const BGM_NEGATIVE_TAGS_MAX_CHARS = 200;
 
@@ -276,8 +275,8 @@ export function buildManhuaBgmBrief(input: BgmBriefInput): BgmBrief {
   const ending = input.endingZh?.trim() || "最后两秒淡出";
 
   const style = input.styleOverrideZh?.trim()
-    ? cut(input.styleOverrideZh, BGM_STYLE_MAX_CHARS)
-    : cut(
+    ? input.styleOverrideZh.trim()
+    : (
         [
           arc,
           instruments,
@@ -289,8 +288,7 @@ export function buildManhuaBgmBrief(input: BgmBriefInput): BgmBrief {
           "纯器乐",
         ]
           .filter(Boolean)
-          .join("，"),
-        BGM_STYLE_MAX_CHARS,
+          .join("，")
       );
 
   return {

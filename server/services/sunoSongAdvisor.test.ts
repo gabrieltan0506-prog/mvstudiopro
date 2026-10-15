@@ -206,3 +206,28 @@ describe("参考MV先原生读片再创作与审阅", () => {
     expect(mocks.generate).not.toHaveBeenCalled();expect(mocks.refine).not.toHaveBeenCalled();
   });
 });
+
+it("优化现有提示词保留完整歌词和时长，初稿及Astra任一阶段改词均拒绝",async()=>{
+ const original={...proposal().concepts[0].brief,model:'suno-v6' as const,custom_mode:true as const,prompt:'【Verse 1】\n完整主歌原文\n【Chorus】\n意想愛 unexpected love\n【Outro】\nLove is brave',title:'意想爱',duration:300};
+ const rawTarget={...target,originalBrief:original};
+ const answer=proposal();answer.concepts=answer.concepts.map((c,i)=>({...c,brief:{...original,style:`73 BPM, original arrangement ${i}`}}));
+ const f=fixture();f.mocks.compose.mockImplementation(async(_instructions,input,save)=>{expect(input.target.originalBrief).toEqual(original);await save('glm-raw',answer);return {decoded:answer,model:'glm-5.3-flashx'};});
+ const result=JSON.parse(await askSunoSongAdvisor(7,rawTarget,'仅优化音乐提示词',f.deps));
+ expect(result.answer.concepts.every((c:any)=>c.brief.prompt===original.prompt&&c.brief.duration===300)).toBe(true);
+ expect(f.mocks.refine.mock.calls[0][0].sourceEvidence.originalBrief).toEqual(original);
+ const changed=structuredClone(answer);changed.concepts[1].brief.prompt+='改词';
+ expect(()=>parseSunoSongProposal(changed,rawTarget)).toThrow('不得改写');
+ f.mocks.refine.mockImplementation(async()=>({proposal:changed,review:result.answer.review}));
+ await expect(askSunoSongAdvisor(7,rawTarget,'仅优化音乐提示词',f.deps)).rejects.toThrow('不得改写');
+});
+
+it('工作流超长style自动交同一LLM服务精炼，模板引用与原词继续保留',async()=>{
+ const f=fixture();let n=0;
+ f.mocks.refine.mockImplementation(async(input:any)=>{n++;const p=structuredClone(input.candidate);p.concepts=p.concepts.map((c:any,i:number)=>({...c,brief:{...c.brief,style:n===1?'详细编曲要求'.repeat(240):'LLM精炼编曲'+i}}));return {proposal:p,review:{verdict:'approved' as const,summaryZh:'隔离审阅',findings:[],mediaReview:[],inspirationZh:['保留变化'],limitationsZh:['离线替身'],model:'gpt-6-astra'}};});
+ const result=JSON.parse(await askSunoSongAdvisor(7,target,'创作歌曲',f.deps));
+ expect(f.mocks.refine).toHaveBeenCalledTimes(2);expect(f.mocks.compose).toHaveBeenCalledTimes(1);
+ expect(f.mocks.refine.mock.calls[1][0].requirements).toContain('语义精炼');
+ expect(result.answer.concepts[0].brief.style).toBe('LLM精炼编曲0');expect(result.answer.concepts[0].brief.prompt).toBe(proposal().concepts[0].brief.prompt);
+ expect(result.answer.craftSelections).toEqual(proposal().craftSelections);
+ expect(Array.from(f.records.keys()).some(k=>k.includes('style-refinement-validated'))).toBe(true);
+});

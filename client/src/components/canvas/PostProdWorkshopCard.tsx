@@ -1566,7 +1566,6 @@ export default function PostProdWorkshopCard({
                 风格与编配
                 <UrlMaskedTextarea
                   value={scoreBrief.style}
-                  maxLength={1000}
                   rows={2}
                   onChange={event =>
                     setScoreBrief({ ...scoreBrief, style: event.target.value })

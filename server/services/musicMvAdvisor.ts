@@ -1,3 +1,4 @@
+import {refineSunoSongStyles} from './sunoStyleRefinement';
 import { MUSIC_EMOTION_INSTRUCTIONS, assertNewMusicEmotionCoverage } from "../../shared/musicEmotion";
 import { askManhuaFilmReview } from "./manhuaAdvisorFilmReview";
 import { advisorFilmReviewSchema } from "../../shared/manhuaAdvisorFilmReview";
@@ -179,7 +180,11 @@ export async function askMusicMvAdvisor(
   }
   await save("glm-draft-validated",{proposal,model:composed.model,creativeLibrary});
   const draft=proposal;
-  const refinement=await deps.refine({sourceTaskId:evidenceId,durationSec:target.audio?.durationSec,mediaKind:videoReport?"video":media?"audio":"none",sourceEvidence:{media:sourceEvidence,creativeLibrary},candidate:draft,requirements:question},composed.model,save);
+  let refinement=await deps.refine({sourceTaskId:evidenceId,durationSec:target.audio?.durationSec,mediaKind:videoReport?"video":media?"audio":"none",sourceEvidence:{media:sourceEvidence,creativeLibrary,...("originalBrief" in target?{originalBrief:target.originalBrief}:{})},candidate:draft,requirements:question+("originalBrief" in target&&target.originalBrief?"\n本次只优化音乐提示词，逐字符保留sourceEvidence.originalBrief的歌词、标题、演唱类型和完整版时长；不得改写歌词。":"")},composed.model,save);
+  if(purpose==="song"){
+    const candidate=parseSunoSongProposal(refinement.proposal,target as SunoSongTarget);
+    if(candidate.concepts.some(c=>c.brief.style.length>1000))refinement=await refineSunoSongStyles(candidate,target as SunoSongTarget,{sourceTaskId:evidenceId,durationSec:target.audio?.durationSec,mediaKind:videoReport?"video":media?"audio":"none",sourceEvidence:{media:sourceEvidence,creativeLibrary,...("originalBrief" in target?{originalBrief:target.originalBrief}:{})},candidate,requirements:question},refinement.review.model,save,deps.refine);
+  }
   proposal=purpose==="learn"?creativeLearningReportSchema.parse(refinement.proposal):purpose==="song"?parseSunoSongProposal(refinement.proposal,target as SunoSongTarget):parseMusicMvAdvisorProposal(refinement.proposal,target as MusicMvAdvisorTarget);
   if(proposal.kind==="creative_learning_v1"){
     if(proposal.sourceKey!==target.sourceKey)throw Error("联合创作学习来源不一致");

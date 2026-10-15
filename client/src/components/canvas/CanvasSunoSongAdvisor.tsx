@@ -1,3 +1,4 @@
+import {SongDemoPanel} from "./SongDemoPanel";
 import { MusicEmotionPanel } from "./MusicEmotionPanel";
 import { CreativeEvidenceReviewPanel } from "./CreativeEvidenceReviewPanel";
 import { useEffect, useRef, useState } from "react";
@@ -11,12 +12,20 @@ import {
   type CanvasMusicCandidate,
   type SunoSongSession,
   type SunoSongBrief,
+  type SongDemoRun,
 } from "@shared/canvasMusicMv";
 
 type Props = {
   audio?: CanvasMusicCandidate;
   referenceMediaKind?: "audio" | "video";
   craftIds: string[];
+  optimizeExisting?: boolean;
+  originalBrief?: SunoSongBrief;
+  onOptimizeExisting?: (value:boolean)=>void;
+  demos:SongDemoRun[];
+  selectedDemo?:{requestId:string;variantIndex:number};
+  onDemos:(records:SongDemoRun[])=>void;
+  onSelectDemo:(requestId:string,variantIndex:number)=>void;
   onCraftIds: (ids: string[]) => void;
   requirements: string;
   projectId?: string;
@@ -33,15 +42,17 @@ type Props = {
     conceptId: string
   ) => void;
 };
+const optimizationRequirements="保留完整歌词、标题和时长，优化音乐风格与编曲提示词，给出三种可试听对比的编曲方向。";
+const resolvedRequirements=(p:Props)=>p.requirements.trim()||(p.optimizeExisting?optimizationRequirements:"");
 const button =
   "rounded border border-white/20 px-2 py-1 text-xs disabled:opacity-40";
 export function sunoSongAdvisorRequest(s: SunoSongSession) {
   return {
     requestId: s.requestId,
-    question: s.target.audio
+    question: s.target.originalBrief ? "仅优化现有音乐风格提示词，保留完整歌词、标题和目标时长，输出三套不同编曲方案供Demo比较。" : s.target.audio
       ? "请读取参考音频或MV，拆解音画方法并创作三套不同曲风的原创Suno V6歌曲方案。"
       : "请按主题创作三套不同曲风的原创Suno V6歌曲方案，没有音频参考，不生成听音结论。",
-    rawQuestion: s.target.audio
+    rawQuestion: s.target.originalBrief ? "仅优化现有音乐风格提示词，保留完整歌词、标题和目标时长，输出三套不同编曲方案供Demo比较。" : s.target.audio
       ? "请读取参考音频或MV，拆解音画方法并创作三套不同曲风的原创Suno V6歌曲方案。"
       : "请按主题创作三套不同曲风的原创Suno V6歌曲方案，没有音频参考，不生成听音结论。",
     manhuaContext: manhuaCreativeAdvisorContextSchema.parse({
@@ -103,6 +114,7 @@ export function CanvasSunoSongAdvisor(p: Props) {
   const matches = (s: SunoSongSession) => {
     const now = current.current;
     return (
+      JSON.stringify(now.optimizeExisting?now.originalBrief:undefined)===JSON.stringify(s.target.originalBrief) &&
       (now.referenceMediaKind || "audio") === (s.target.referenceMediaKind || "audio") &&
       now.audio?.id === s.target.audio?.id &&
       manhuaSourceVersionIdentity(now.audio?.gcsUri || now.audio?.url) ===
@@ -110,7 +122,7 @@ export function CanvasSunoSongAdvisor(p: Props) {
           s.target.audio?.gcsUri || s.target.audio?.url
         ) &&
       now.audio?.durationSec === s.target.audio?.durationSec &&
-      now.requirements === s.target.requirements &&
+      resolvedRequirements(now) === s.target.requirements &&
       JSON.stringify(now.craftIds) ===
         JSON.stringify(s.target.craftIds || []) &&
       now.projectId === s.projectId
@@ -130,12 +142,14 @@ export function CanvasSunoSongAdvisor(p: Props) {
       if (!s || newVersion) {
         if (s?.status === "pending")
           throw new Error("请先恢复原咨询，避免重复听音收费");
-        if (!p.requirements.trim()) throw new Error("请填写新歌主题与要求");
+        if (!resolvedRequirements(p)) throw new Error("请填写新歌主题与要求");
+        if (p.optimizeExisting&&!p.originalBrief) throw new Error("请先填写完整歌词和音乐风格，并核对时长及参数范围");
         const target = {
           audio: p.audio,
           referenceMediaKind: p.referenceMediaKind || "audio",
-          requirements: p.requirements,
+          requirements: resolvedRequirements(p),
           craftIds: p.craftIds,
+          ...(p.optimizeExisting?{originalBrief:p.originalBrief}:{}),
         };
         const sourceKey = await musicMvSourceKey({
           ...target,
@@ -295,6 +309,8 @@ export function CanvasSunoSongAdvisor(p: Props) {
           </details>
         ))}
       </details>
+      <label className="flex gap-2"><input type="checkbox" aria-label="保留歌词优化音乐提示词" checked={Boolean(p.optimizeExisting)} disabled={busy||p.disabled||p.session?.status==="pending"} onChange={e=>p.onOptimizeExisting?.(e.target.checked)}/>保留歌词，优化现有音乐提示词</label>
+      {p.optimizeExisting&&<details open><summary>本次优化输入</summary><p>保留歌曲表单中的完整歌词、标题及目标时长，优化风格、配器与演唱表达；输出三个编曲方向。</p><p>{p.originalBrief?.style||"请先在歌曲表单填写音乐风格"}</p><pre className="max-h-48 overflow-auto whitespace-pre-wrap">{p.originalBrief?.prompt||"请先填写歌词"}</pre></details>}
       <textarea
         aria-label="新歌创作要求"
         className="w-full rounded bg-black/30 p-2"
@@ -317,7 +333,7 @@ export function CanvasSunoSongAdvisor(p: Props) {
         disabled={
           busy ||
           p.disabled ||
-          !p.requirements.trim() ||
+          !resolvedRequirements(p) ||
           p.session?.status === "succeeded" ||
           p.session?.status === "failed"
         }
@@ -325,7 +341,9 @@ export function CanvasSunoSongAdvisor(p: Props) {
       >
         {p.session?.status === "pending"
           ? "恢复原听音咨询"
-          : p.audio
+          : p.optimizeExisting
+            ? "优化提示词并给出三种编曲方案"
+            : p.audio
             ? "听音拆解并创作新歌方案"
             : "按主题创作新歌方案"}
       </button>
@@ -412,6 +430,7 @@ export function CanvasSunoSongAdvisor(p: Props) {
           ))}
         </>
       )}
+      <SongDemoPanel session={p.session} history={p.history} records={p.demos} disabled={p.disabled||busy} canGenerate={Boolean(p.session&&matches(p.session))} selected={p.selectedDemo} onChange={p.onDemos} onSelect={(run,variant,session)=>{p.onApply(run.fullBrief,session,run.conceptId);p.onSelectDemo(run.requestId,variant.index);}} />
       {!!p.history.length && (
         <details>
           <summary>历史咨询（{p.history.length}）</summary>

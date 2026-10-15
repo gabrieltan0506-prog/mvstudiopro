@@ -15,7 +15,7 @@ export const sunoSongBriefSchema = z
     custom_mode: z.literal(true),
     instrumental: z.boolean(),
     title: text.max(80),
-    style: text.max(1000),
+    style: text,
     prompt: text.max(5000),
     negative_tags: z.string().max(200),
     duration: z.number().int().min(10).max(360),
@@ -31,6 +31,7 @@ export const sunoSongTargetSchema = z
     referenceMediaKind: z.enum(["audio", "video"]).optional(),
     requirements: text.max(6000),
     craftIds: z.array(text.max(200)).max(3).optional(),
+    originalBrief: sunoSongBriefSchema.optional(),
   })
   .strict();
 export type SunoSongTarget = z.infer<typeof sunoSongTargetSchema>;
@@ -82,6 +83,13 @@ export function parseSunoSongProposal(raw: unknown, target: SunoSongTarget) {
     new Set(p.concepts.map(c => c.id)).size !== p.concepts.length
   )
     throw new Error("新歌方案来源或编号不一致");
+  if (target.originalBrief) {
+    const original=target.originalBrief;
+    for (const concept of p.concepts) {
+      if (concept.brief.prompt!==original.prompt || concept.brief.title!==original.title || concept.brief.instrumental!==original.instrumental || concept.brief.duration!==original.duration)
+        throw new Error("提示词优化不得改写原歌词、标题、演唱类型或完整版目标时长");
+    }
+  }
   if (!target.audio) {
     if (p.sections.length) throw new Error("未提供音频，不能生成听音时间线");
     return p;
@@ -111,6 +119,11 @@ export const sunoSongSessionSchema = z
   })
   .strict();
 export type SunoSongSession = z.infer<typeof sunoSongSessionSchema>;
+
+export const songDemoVariantSchema=z.object({index:z.number().int().nonnegative(),sourceGcsUri:text,durationSec:z.number().positive(),gcsUri:text.optional(),url:z.string().url().optional(),status:z.enum(["pending","ready","failed"]),error:z.string().optional()}).strict();
+export const songDemoRunSchema=z.object({requestId:z.string().uuid(),advisorRequestId:z.string().uuid(),conceptId:text,fullBrief:sunoSongBriefSchema,demoBrief:sunoSongBriefSchema,musicJobId:text,status:z.enum(["submitting","queued","running","processing","ready","failed"]),variants:z.array(songDemoVariantSchema),error:z.string().optional()}).strict();
+export type SongDemoRun=z.infer<typeof songDemoRunSchema>;
+export type SongDemoVariant=z.infer<typeof songDemoVariantSchema>;
 
 export const musicMvSourceClipSchema = z
   .object({
@@ -496,6 +509,9 @@ export const canvasMusicMvStateSchema = z
     creativeLearning: creativeLearningSessionSchema.optional(),
     creativeLearningHistory: z.array(creativeLearningSessionSchema).optional(),
     songAdvisor: sunoSongSessionSchema.optional(),
+    songOptimizeExisting: z.boolean().optional(),
+    songDemos: z.array(songDemoRunSchema).optional(),
+    selectedSongDemo: z.object({requestId:z.string().uuid(),variantIndex:z.number().int().nonnegative()}).strict().optional(),
     songAdvisorHistory: z.array(sunoSongSessionSchema).optional(),
     songBrief: sunoSongBriefSchema.optional(),
     songTitle: z.string().max(80).optional(),

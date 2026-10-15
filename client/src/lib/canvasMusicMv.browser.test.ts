@@ -67,7 +67,7 @@ beforeAll(async () => {
         export const trpc={useUtils:()=>utils,mvAnalysis:{
           getVideoUploadSignedUrl:{useMutation:()=>({mutateAsync:async()=>{throw new Error("离线夹具不上传媒体");}})},
           getManhuaAdvisorQuota:{useQuery:()=>({data:{remaining:2,price:12,exempt:false},refetch:async()=>{}})},
-          askPlatformSkillQa:{useMutation:()=>({mutateAsync:async input=>{f().record('advisor',input);if(input.manhuaContext.sunoSong){const t=input.manhuaContext.sunoSong;return {answer:JSON.stringify({kind:'suno_song_v1',sourceKey:t.sourceKey,evidenceId:'11111111-1111-4111-8111-111111111111',summaryZh:'按主题创作，未听音',sections:[],uncertaintiesZh:['尚未试听'],transferableCraft:['第二段推进故事'],concepts:[0,1,2].map(i=>({id:'song-'+i,rationaleZh:'符合重逢主题',differenceZh:'原创叙述',hookZh:'明天再见',lyricMethodZh:'物件写关系',mvDirectionZh:'红围巾贯穿车站与重逢',brief:{model:'suno-v6',custom_mode:true,instrumental:false,title:'重逢'+i,style:'acoustic pop, warm piano',prompt:'[Verse] 你把车票放回口袋 [Chorus] 明天再见',negative_tags:'',duration:180,style_weight:0,weirdness_constraint:0.35}}))})};}const t=input.manhuaContext.musicMv;const p=f().makePlan(t);p.analysisBasis='native_audio';p.shots=p.shots.map(s=>({...s,kind:'generated'}));return {answer:JSON.stringify({kind:'music_mv_v1',sourceKey:t.sourceKey,evidenceId:'11111111-1111-4111-8111-111111111111',summaryZh:'听音后的测试方案',sections:[{startSec:0,endSec:10,labelZh:'主段',heardZh:'人声弦乐'}],uncertaintiesZh:['离线测试不证明听音'],concepts:[0,1,2,3].map(i=>({id:'idea-'+i,titleZh:'归途'+i,rationaleZh:'情绪推进',openingZh:'林间',peakZh:'转身',endingZh:'远望',plan:p}))})};}})},
+          askPlatformSkillQa:{useMutation:()=>({mutateAsync:async input=>{f().record('advisor',input);if(input.manhuaContext.sunoSong){const t=input.manhuaContext.sunoSong;return {answer:JSON.stringify({kind:'suno_song_v1',sourceKey:t.sourceKey,evidenceId:'11111111-1111-4111-8111-111111111111',summaryZh:'按主题创作，未听音',review:{verdict:'approved',summaryZh:'离线通过',findings:[],mediaReview:[],inspirationZh:['强化副歌层次'],limitationsZh:['离线替身未听音']},sections:[],uncertaintiesZh:['尚未试听'],transferableCraft:['第二段推进故事'],concepts:[0,1,2].map(i=>({id:'song-'+i,rationaleZh:'符合重逢主题',differenceZh:'原创叙述',hookZh:'明天再见',lyricMethodZh:'物件写关系',mvDirectionZh:'红围巾贯穿车站与重逢',brief:{model:'suno-v6',custom_mode:true,instrumental:false,title:t.originalBrief?.title||'重逢'+i,style:t.originalBrief?'73 BPM, optimized arrangement '+i:'acoustic pop, warm piano',prompt:t.originalBrief?.prompt||'[Verse] 你把车票放回口袋 [Chorus] 明天再见',negative_tags:'',duration:t.originalBrief?.duration||180,style_weight:0,weirdness_constraint:0.35}}))})};}const t=input.manhuaContext.musicMv;const p=f().makePlan(t);p.analysisBasis='native_audio';p.shots=p.shots.map(s=>({...s,kind:'generated'}));return {answer:JSON.stringify({kind:'music_mv_v1',sourceKey:t.sourceKey,evidenceId:'11111111-1111-4111-8111-111111111111',summaryZh:'听音后的测试方案',sections:[{startSec:0,endSec:10,labelZh:'主段',heardZh:'人声弦乐'}],uncertaintiesZh:['离线测试不证明听音'],concepts:[0,1,2,3].map(i=>({id:'idea-'+i,titleZh:'归途'+i,rationaleZh:'情绪推进',openingZh:'林间',peakZh:'转身',endingZh:'远望',plan:p}))})};}})},
           queueManhuaBgm:{useMutation:()=>({mutateAsync:async input=>{f().record('music',input);if(f().musicError)throw f().musicError;return {jobId:'bgm_'+input.billingRequestId.replaceAll('-',''),status:'queued'};}})}},
           canvasMusicMv:{
           listSongCraftTemplates:{useQuery:()=>({data:{cards:[{id:'lin-inner-turn',title:'林夕 · 内心转折与克制留白',contributor:'林夕',basis:'interview',highlights:['内心转折'],sources:[]}],revision:'offline'},refetch:async()=>{}})},
@@ -784,3 +784,22 @@ describe("歌曲创作与可保存剪辑新入口", () => {
     }
   }, 30000);
 });
+
+
+it("保词优化→三个35秒Demo→选择回填完整歌词，不提前生成完整版",async()=>{
+ const {context,page,click}=await open();
+ try{
+  await page.evaluate(()=>{const f=(window as any).fixture;f.update([{...f.current[0],prompt:'73 BPM jazz R&B',musicMv:{...f.current[0].musicMv,instrumental:false,songTitle:'意想爱',lyrics:'【Verse 1】\n完整主歌不可删\n【Chorus】\n意想愛 unexpected love\n勇敢相爱\n【Outro】\nLove is brave',requestedDurationSec:300}}]);});
+  await page.click('[aria-label="保留歌词优化音乐提示词"]');
+  await click('优化提示词并给出三种编曲方案');
+  await page.waitForFunction(()=>(window as any).fixture.state.songAdvisor?.status==='succeeded');
+  await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent?.includes('生成3个35秒Demo')&&!b.disabled));
+  await click('生成3个35秒Demo');
+  await page.waitForFunction(()=>(window as any).fixture.state.songDemos?.length===3&&(window as any).fixture.state.songDemos.every((r:any)=>r.status==='ready'));
+  const submitted=await page.evaluate(()=>(window as any).fixture.calls.filter((x:any)=>x.kind==='music'));
+  expect(submitted).toHaveLength(3);for(const call of submitted){expect(call.input.brief.duration).toBe(35);expect(call.input.brief.prompt).not.toContain('完整主歌不可删');}
+  await click('选这个Demo，准备完整版');
+  const saved=await page.evaluate(()=>({state:(window as any).fixture.state,prompt:(window as any).fixture.current[0].prompt,calls:(window as any).fixture.calls}));
+  expect(saved.state.lyrics).toContain('完整主歌不可删');expect(saved.state.requestedDurationSec).toBe(300);expect(saved.prompt).toContain('optimized arrangement');expect(saved.state.selectedSongDemo).toBeTruthy();expect(saved.calls.filter((x:any)=>x.kind==='music')).toHaveLength(3);
+ }catch(e){console.log('OPT_FIXTURE',await page.evaluate(()=>({state:(window as any).fixture.state,calls:(window as any).fixture.calls,text:document.getElementById('root')?.textContent})));throw e;}finally{await context.close();}
+},30000);
