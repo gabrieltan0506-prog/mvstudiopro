@@ -253,7 +253,7 @@ export async function postEvolinkGptImage2AndUpload(
     /** 覆写 EvoLink quality；未传则用 EVOLINK_GPT_IMAGE2_QUALITY（默认 high） */
     quality?: string;
     /** 省略时保持旧 GPT Image 2；4K 放大显式传 Nano Banana Pro。 */
-    model?: typeof EVOLINK_MODEL | typeof EVOLINK_NANO_BANANA_PRO_MODEL | "gpt-image-2.5-sunburst";
+    model?: typeof EVOLINK_MODEL | typeof EVOLINK_NANO_BANANA_PRO_MODEL | "gpt-image-2.5-sunburst" | "gpt-image-2.5-flare";
     /**
      * 比例模式下的分辨率覆写。默认 2K（封面/分镜）；
      * 自定义图文笔记（single_page_knowledge_card）传 4K。

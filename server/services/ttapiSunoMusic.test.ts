@@ -93,6 +93,15 @@ describe("ttapiSunoMusic（Suno v6 · TTAPI 网关客户端）", () => {
 
   const request = { model: "suno-v6" as const, prompt: "结构要求", style: "弦乐", title: "测试", instrumental: true };
 
+  it("风格与随机性强度原样出站，零值保留，越界不发请求", async () => {
+    reply = () => ({ status: 200, body: { status: "SUCCESS", data: { jobId: JOB } } });
+    await createTtapiSunoTask({ ...request, style_weight: 0, weirdness_constraint: 0.65 });
+    expect(JSON.parse(String(calls[0]!.init?.body))).toMatchObject({ style_weight: 0, weirdness_constraint: 0.65 });
+    calls.length=0;
+    await expect(createTtapiSunoTask({ ...request, style_weight: 1.01 })).rejects.toThrow("0至1");
+    expect(calls).toHaveLength(0);
+  });
+
   it("duration / vocal_gender 原样带上；duration 越界在发请求前就拦", async () => {
     reply = () => ({ status: 200, body: { status: "SUCCESS", data: { jobId: JOB } } });
     await createTtapiSunoTask({ ...request, duration: 200, vocal_gender: "Male" });

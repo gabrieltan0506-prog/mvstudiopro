@@ -127,6 +127,11 @@ describe("漫剧配乐建单与恢复", () => {
     expect(bridge.create.mock.calls[0]![1].abortSignal).toBe(controller.signal);
   });
 
+  it("新歌风格参数从worker保留到TTAPI，包含零值", async()=>{
+    bridge.create.mockReset();bridge.ready.mockReturnValue(true);bridge.create.mockResolvedValue({taskId:"ttapi:testzero",jobId:"testzero",mv:"chirp-v6"});
+    await createManhuaBgmTask({...brief,model:"suno-v6",style_weight:0,weirdness_constraint:0.65});
+    expect(bridge.create.mock.calls[0][0]).toMatchObject({style_weight:0,weirdness_constraint:0.65});
+  });
   it("v6 来源：建单走 TTAPI、不碰 EvoLink；TTAPI 未配置直接拦", async () => {
     bridge.create.mockReset();
     bridge.ready.mockReturnValue(true);

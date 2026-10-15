@@ -1347,7 +1347,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
             maskUrl: hasRef ? maskUrl : undefined,
             captureError: err,
             lane: options.imageLane ?? null,
-            exactModel: options.exactSunburst ? "gpt-image-2.5-sunburst" : undefined,
+            exactModel: options.exactSunburst ? "gpt-image-2.5-sunburst" : options.requireImageVariant ? (options.openaiImageVariant === "sunburst" ? "gpt-image-2.5-sunburst" : "gpt-image-2.5-flare") : undefined,
             strictRequest: options.exactSunburst || undefined,
             variant: options.openaiImageVariant ?? null,
             inputFidelity: options.openaiInputFidelity ?? null,
@@ -1365,7 +1365,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
               captureError: err,
             })
         : postEvolinkGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
-            model: options.exactSunburst ? "gpt-image-2.5-sunburst" : undefined,
+            model: options.exactSunburst ? "gpt-image-2.5-sunburst" : options.requireImageVariant ? (options.openaiImageVariant === "sunburst" ? "gpt-image-2.5-sunburst" : "gpt-image-2.5-flare") : undefined,
             aspectRatio: options.aspectRatio,
             flowLog: L,
             // EvoLink gpt-image-2.5 与官方同档位、同 quality 口径（xhigh/max 也收）

@@ -1,11 +1,12 @@
 import { z } from "zod";
 
 export const MANHUA_ADVISOR_STUDIO_LABELS = {
+  musicMv: "MV创作",
   model3d: "3D人物与模型", world3d: "3D场景", previs: "白模视频",
   actionTimeline: "动作节奏", audio: "对白、BGM与音效", edit: "后期剪辑", postprod: "视频后期",
 } as const;
 export const manhuaAdvisorStudioContextSchema = z.object({
-  tool: z.enum(["model3d", "world3d", "previs", "actionTimeline", "audio", "edit", "postprod"]),
+  tool: z.enum(["model3d", "world3d", "previs", "actionTimeline", "audio", "edit", "postprod", "musicMv"]),
   task: z.enum(["concat", "enhance", "subtitle", "bgm", "loudness", "vfx"]).optional(),
   episodeIndex: z.number().int().positive(),
   segmentIndex: z.number().int().positive().optional(),

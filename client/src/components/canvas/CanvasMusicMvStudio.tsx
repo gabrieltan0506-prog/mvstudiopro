@@ -1,3 +1,14 @@
+import {SongCoverPanel} from "./SongCoverPanel";
+import {buildSongCoverPrompt} from "@shared/songCover";
+import {CANVAS_IMAGE_CREDITS_PER_SHOT} from "@shared/canvasGenerationPricing";
+import { CanvasCreativeLearning } from "./CanvasCreativeLearning";
+import { resolveMusicMvMediaUrl } from "@/lib/musicMvAdvisor";
+import { CanvasSunoSongAdvisor } from "./CanvasSunoSongAdvisor";
+import { uploadOneCanvasAsset } from "@/lib/canvasUpload";
+import { sunoSongBriefSchema } from "@shared/canvasMusicMv";
+import { CanvasMvTimelineEditor } from "./CanvasMvTimelineEditor";
+import { musicMvEditIssues, musicMvEditKey } from "@shared/canvasMusicMvEdit";
+import { CanvasMvCreativeAdvisor } from "./CanvasMvCreativeAdvisor";
 import {
   rejectedMusicSubmissionPatch,
   shouldSyncMusicUploadedReferences,
@@ -11,6 +22,8 @@ import {
   invalidateMusicMvPlan,
   hasPendingMusicMvPlan,
   mergeMusicCandidates,
+  selectMusicCandidateContext,
+  captureMusicCandidateContexts,
   musicPlanInputKey,
   refreshMusicCandidate,
 } from "@/lib/canvasMusicMvRecovery";
@@ -38,6 +51,7 @@ import {
 import { CREDIT_COSTS } from "@shared/plans";
 
 type Props = {
+  projectId?: string;
   block: CanvasBlock;
   blocks: CanvasBlock[];
   onPatch: (patch: Partial<CanvasBlock>) => void;
@@ -49,9 +63,9 @@ const field = "w-full rounded border border-white/20 bg-black/30 p-1.5 text-xs";
 const button =
   "rounded border border-white/20 px-2 py-1.5 text-xs disabled:opacity-40";
 
-function audioDuration(url: string): Promise<number> {
+function audioDuration(url: string, kind: "audio" | "video" = "audio"): Promise<number> {
   return new Promise((resolve, reject) => {
-    const audio = new Audio();
+    const audio = kind === "video" ? document.createElement("video") : new Audio();
     const timer = window.setTimeout(
       () => done(new Error("未能读取音乐实际时长")),
       20000
@@ -78,6 +92,7 @@ function audioDuration(url: string): Promise<number> {
 export function CanvasMusicMvStudio({
   block,
   blocks,
+  projectId,
   onPatch,
   onAdd,
   runShot,
@@ -103,6 +118,7 @@ export function CanvasMusicMvStudio({
   >([]);
   const utils = trpc.useUtils();
   const music = trpc.mvAnalysis.queueManhuaBgm.useMutation();
+  const upload = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const plan = trpc.canvasMusicMv.draftPlan.useMutation();
   const assemble = trpc.canvasMusicMvAssemble.queue.useMutation();
   const patch = (
@@ -200,6 +216,11 @@ export function CanvasMusicMvStudio({
     patch(
       {
         candidates: all,
+        candidateContexts: captureMusicCandidateContexts(
+          latest.current,
+          job.jobId,
+          candidates.map(c => c.id)
+        ),
         musicJobStatus: pending ? "media_pending" : "succeeded",
         missingVariants: Math.max(0, Number(job.missingVariants) || 0),
         status: latest.current.plan
@@ -252,6 +273,7 @@ export function CanvasMusicMvStudio({
         {
           ...invalidateMusicMvPlan(latest.current),
           candidates: mergeMusicCandidates(latest.current.candidates, [fresh]),
+          ...selectMusicCandidateContext(latest.current, fresh.id),
           selectedCandidateId: fresh.id,
           status: "music_ready",
         },
@@ -277,10 +299,30 @@ export function CanvasMusicMvStudio({
       const duration = source.requestedDurationSec ?? 200;
       if (!Number.isFinite(duration) || duration < 10 || duration > 360)
         throw new Error("目标时长须为 10 至 360 秒");
+      const brief = sunoSongBriefSchema.parse({
+        model: "suno-v6",
+        custom_mode: true,
+        instrumental,
+        style: currentBlock.current.prompt,
+        prompt:
+          source.lyrics?.trim() ||
+          (instrumental ? currentBlock.current.prompt : ""),
+        title: source.songTitle?.trim() || "画布音乐",
+        duration: Math.round(duration),
+        negative_tags:
+          source.songExcludes ??
+          (instrumental ? "vocals, singing, voice, choir, lyrics" : ""),
+        style_weight: source.songStyleWeight ?? 0.78,
+        weirdness_constraint: source.songWeirdness ?? 0.25,
+      });
       const requestId = crypto.randomUUID();
       const jobId = `bgm_${requestId.replace(/-/g, "")}`;
       patch({
         musicRequestId: requestId,
+        musicSubmission: brief,
+        songCovers: [...(source.songCovers || []), {musicJobId:jobId,prompt:buildSongCoverPrompt(brief),status:"waiting_music"}],
+        lyricsCandidateId: undefined,
+        musicSubmissionDirection: source.creativePrompt || "",
         musicJobId: jobId,
         musicJobStatus: "queued",
         missingVariants: undefined,
@@ -290,20 +332,7 @@ export function CanvasMusicMvStudio({
       try {
         await music.mutateAsync({
           billingRequestId: requestId,
-          brief: {
-            model: "suno-v6",
-            custom_mode: true,
-            instrumental,
-            style: block.prompt,
-            prompt: instrumental ? block.prompt : source.lyrics!,
-            title: "画布音乐",
-            duration: Math.round(duration),
-            negative_tags: instrumental
-              ? "vocals, singing, voice, choir, lyrics"
-              : "",
-            style_weight: 0.78,
-            weirdness_constraint: 0.25,
-          },
+          brief,
         });
       } catch (error) {
         const rejected = rejectedMusicSubmissionPatch(
@@ -312,7 +341,7 @@ export function CanvasMusicMvStudio({
           error
         );
         if (rejected && alive.current) {
-          patch(rejected);
+          patch({...rejected,songCovers:(latest.current.songCovers||[]).map(row=>row.musicJobId===jobId?{...row,status:"failed" as const,error:"歌曲未提交成功，封面未生成"}:row)});
           throw new Error(rejected.error || "音乐请求未创建，请稍后重新提交");
         }
         throw error;
@@ -531,8 +560,14 @@ export function CanvasMusicMvStudio({
         block,
         state.plan,
         state.planRequestId,
-        refs
+        refs,
+        selected
       );
+      for (const shot of shots)
+        if (shot.musicMvShot?.kind === "footage" && shot.outputUrl) {
+          shot.outputUrl = await resolveMusicMvMediaUrl(shot.outputUrl);
+          shot.outputUrls = [shot.outputUrl];
+        }
       if (
         !alive.current ||
         latest.current.planRequestId !== state.planRequestId
@@ -586,14 +621,33 @@ export function CanvasMusicMvStudio({
         );
         if (!song || !source.plan || !source.planRequestId)
           throw new Error("缺少已选择的歌曲或分镜");
-        const clips = musicMvReadyClips(
-          source.plan,
-          source.shotBlockIds || [],
-          getBlocks()
+        const edit = source.timelineEdits?.find(
+          e => e.draft.basePlanRequestId === source.planRequestId
         );
+        if (edit) {
+          if (
+            !edit.saved ||
+            musicMvEditKey(edit.saved.document) !== musicMvEditKey(edit.draft)
+          )
+            throw new Error("请先保存当前剪辑版本");
+          const issues = musicMvEditIssues(edit.draft, source.plan);
+          if (issues.length) throw new Error(issues.join("；"));
+        }
+        const clips = edit
+          ? edit.draft.clips.map(c => ({
+              shotId: c.id,
+              url: c.source!.url,
+              taskId: c.source!.taskId,
+            }))
+          : musicMvReadyClips(
+              source.plan,
+              source.shotBlockIds || [],
+              getBlocks()
+            );
         submission = {
           requestId: crypto.randomUUID(),
           planRequestId: source.planRequestId,
+          editRevisionId: edit?.saved?.revisionId,
           audio: song,
           plan: source.plan,
           clips,
@@ -694,7 +748,160 @@ export function CanvasMusicMvStudio({
       className="space-y-2 overflow-auto text-white/85"
       onPointerDown={event => event.stopPropagation()}
     >
-      <p className="text-xs">音乐 → 选版 → 分镜 → 逐镜制作 → 完整 MV</p>
+      <p className="text-xs">参考歌曲 → 新歌创作 → 选版 → MV分镜 → 剪辑</p>
+      <label className="block text-xs">
+        上传参考音频或MV（MP3 / WAV / M4A / MP4）
+        <input
+          aria-label="上传参考歌曲"
+          type="file"
+          accept=".mp3,.wav,.m4a,.mp4,audio/mpeg,audio/wav,audio/mp4,video/mp4"
+          disabled={busy}
+          onChange={e => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file)
+              void perform(async () => {
+                if (!/\.(mp3|wav|m4a|mp4)$/i.test(file.name))
+                  throw new Error("请使用MP3、WAV、M4A音频或MP4视频");
+                const mediaKind = /\.mp4$/i.test(file.name) ? "video" as const : "audio" as const;
+                if (file.size > 64 * 1024 * 1024)
+                  throw new Error("听音参考最大64MB，请先选择较小文件");
+                const asset = await uploadOneCanvasAsset({
+                  file,
+                  index: 0,
+                  getSignedUploadUrl: input => upload.mutateAsync(input),
+                });
+                if (!alive.current) return;
+                // 先保存已上传素材；即使时长读取失败，也能从原素材重新读取，避免重复上传。
+                patch(
+                  {},
+                  {
+                    uploadedAssets: [
+                      ...(currentBlock.current.uploadedAssets || []),
+                      asset,
+                    ],
+                  }
+                );
+                const durationSec = await audioDuration(asset.url, mediaKind);
+                if (!alive.current) return;
+                patch({
+                  songReferenceMediaKind: mediaKind,
+                  songReference: {
+                    id: `upload:${asset.id}`,
+                    url: asset.url,
+                    gcsUri: asset.gcsUri,
+                    durationSec,
+                    title: file.name,
+                  },
+                });
+              });
+          }}
+        />
+      </label>
+      {state.songReference && (
+        <button
+          className={button}
+          disabled={busy || state.songAdvisor?.status === "pending"}
+          onClick={() => patch({ songReference: undefined })}
+        >
+          移除参考，改按主题创作
+        </button>
+      )}
+      <CanvasCreativeLearning audio={state.songReference} mediaKind={state.songReferenceMediaKind || "audio"} projectId={projectId} videoModel={block.videoModel}
+        disabled={busy || pendingPlan || Boolean(state.musicRequestId)} session={state.creativeLearning}
+        onSession={(creativeLearning,isNew) => patch({creativeLearning,...(isNew && latest.current.creativeLearning ? {creativeLearningHistory:[...(latest.current.creativeLearningHistory||[]),latest.current.creativeLearning]}:{})})} />
+      <CanvasSunoSongAdvisor
+        craftIds={state.songCraftIds || []}
+        onCraftIds={songCraftIds => patch({ songCraftIds })}
+        audio={state.songReference}
+        referenceMediaKind={state.songReferenceMediaKind || "audio"}
+        requirements={state.songRequirements || ""}
+        projectId={projectId}
+        videoModel={block.videoModel}
+        session={state.songAdvisor}
+        history={state.songAdvisorHistory || []}
+        disabled={busy || pendingPlan || Boolean(state.musicRequestId)}
+        onRequirements={songRequirements => patch({ songRequirements })}
+        onSession={songAdvisor => patch({ songAdvisor })}
+        onNew={songAdvisor =>
+          patch({
+            songAdvisor,
+            songAdvisorHistory: latest.current.songAdvisor
+              ? [
+                  ...(latest.current.songAdvisorHistory || []),
+                  latest.current.songAdvisor,
+                ]
+              : latest.current.songAdvisorHistory,
+          })
+        }
+        onApply={(brief, session, conceptId) => {
+          if (session.proposal?.review && session.proposal.review.verdict !== "approved") {
+            patch({ error: "创作顾问审阅尚有待处理事项，未采用" });
+            return;
+          }
+          if (
+            hasPendingMusicMvPlan(latest.current) ||
+            latest.current.musicRequestId
+          )
+            return;
+          const chosenConcept = session.proposal?.concepts.find(c => c.id === conceptId);
+          const emotionNotes = chosenConcept?.emotionalArc?.map(a => `${a.sectionZh}：${a.emotion.fromZh}→${a.emotion.toZh}；触发：${a.emotion.triggerZh}；音乐：${a.emotion.musicZh}；画面：${a.emotion.visualZh}`).join("\n");
+          patch(
+            {
+              ...invalidateMusicMvPlan(latest.current),
+              candidateContexts: selectMusicCandidateContext(
+                latest.current,
+                latest.current.selectedCandidateId || ""
+              ).candidateContexts,
+              lyricsCandidateId: undefined,
+              songBrief: brief,
+              songTitle: brief.title,
+              songExcludes: brief.negative_tags,
+              songStyleWeight: brief.style_weight,
+              songWeirdness: brief.weirdness_constraint,
+              lyrics: brief.prompt,
+              instrumental: brief.instrumental,
+              requestedDurationSec: brief.duration,
+              selectedCandidateId: undefined,
+              songReference: session.target.audio,
+              songReferenceMediaKind: session.target.referenceMediaKind || "audio",
+              songRequirements: session.target.requirements,
+              songCraftIds: session.target.craftIds,
+              creativePrompt: [chosenConcept?.mvDirectionZh || latest.current.creativePrompt, emotionNotes ? `逐段情绪设计（创作建议，非实测秒位）：\n${emotionNotes}` : ""].filter(Boolean).join("\n"),
+              songAdoption: {
+                requestId: session.requestId,
+                evidenceId: session.proposal!.evidenceId!,
+                conceptId,
+                referenceAudioId: session.target.audio?.id,
+              },
+            },
+            { prompt: brief.style, outputUrl: undefined }
+          );
+        }}
+      />
+      <label className="block text-xs">
+        歌曲名称
+        <input
+          aria-label="歌曲名称"
+          className={field}
+          maxLength={80}
+          value={state.songTitle || ""}
+          disabled={busy}
+          onChange={e => patch({ songTitle: e.target.value })}
+        />
+      </label>
+      <label className="block text-xs">
+        Suno风格与编曲
+        <textarea
+          aria-label="Suno风格与编曲"
+          className={field}
+          rows={3}
+          maxLength={1000}
+          value={block.prompt}
+          disabled={busy || pendingPlan}
+          onChange={e => patch({}, { prompt: e.target.value })}
+        />
+      </label>
       <label className="block text-xs">
         音乐类型
         <select
@@ -723,11 +930,16 @@ export function CanvasMusicMvStudio({
           }
         />
       </label>
-      {state.instrumental === false && (
+      {
         <textarea
           className={field}
           rows={5}
-          placeholder="完整歌词"
+          aria-label="歌曲歌词或段落结构"
+          placeholder={
+            state.instrumental === false
+              ? "完整歌词，含段落标签"
+              : "器乐段落、演奏与收束要求（可选）"
+          }
           value={state.lyrics || ""}
           disabled={busy || pendingPlan}
           onChange={e =>
@@ -737,6 +949,72 @@ export function CanvasMusicMvStudio({
             })
           }
         />
+      }
+      <label className="block text-xs">
+        排除风格/声音
+        <input
+          aria-label="排除风格"
+          className={field}
+          maxLength={200}
+          value={
+            state.songExcludes ??
+            (state.instrumental !== false
+              ? "vocals, singing, voice, choir, lyrics"
+              : "")
+          }
+          disabled={busy}
+          onChange={e => patch({ songExcludes: e.target.value })}
+        />
+      </label>
+      <label className="block text-xs">
+        风格强度 {Math.round((state.songStyleWeight ?? 0.78) * 100)}%
+        <input
+          aria-label="风格强度"
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={Math.round((state.songStyleWeight ?? 0.78) * 100)}
+          disabled={busy}
+          onChange={e =>
+            patch({ songStyleWeight: Number(e.target.value) / 100 })
+          }
+        />
+      </label>
+      <label className="block text-xs">
+        随机性 {Math.round((state.songWeirdness ?? 0.25) * 100)}%
+        <input
+          aria-label="随机性"
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={Math.round((state.songWeirdness ?? 0.25) * 100)}
+          disabled={busy}
+          onChange={e => patch({ songWeirdness: Number(e.target.value) / 100 })}
+        />
+      </label>
+      <details className="text-xs" open><summary>本次自动封面 · Image 2.5 Flare · {CANVAS_IMAGE_CREDITS_PER_SHOT} 积分</summary><p>歌曲成功后生成一张9:16封面，同次返回的歌曲版本共用。无图片参考，不额外调用文字模型；关闭页面后回来会继续原任务。</p><pre className="max-h-48 overflow-auto whitespace-pre-wrap">{buildSongCoverPrompt({title:state.songTitle?.trim()||"画布音乐",style:block.prompt,prompt:state.lyrics?.trim()||(state.instrumental!==false?block.prompt:""),instrumental:state.instrumental!==false})}</pre></details>
+      <p className="text-xs">
+        本次音乐：Suno V6 · 标准模式 · {CANVAS_BGM_CREDITS_PER_RUN}{" "}
+        积分。提交上方完整歌词/段落与风格；参考原曲只用于听音创作，不作为Suno翻唱输入。
+      </p>
+      {state.musicSubmission && state.musicRequestId && (
+        <details>
+          <summary>原音乐提交快照</summary>
+          <p>
+            {state.musicSubmission.title} · {state.musicSubmission.duration}秒
+          </p>
+          <p>{state.musicSubmission.style}</p>
+          <pre className="whitespace-pre-wrap">
+            {state.musicSubmission.prompt}
+          </pre>
+          <p>
+            排除：{state.musicSubmission.negative_tags}；风格强度：
+            {state.musicSubmission.style_weight}；随机性：
+            {state.musicSubmission.weirdness_constraint}
+          </p>
+        </details>
       )}
       <div className="flex flex-wrap gap-1">
         <button
@@ -744,7 +1022,7 @@ export function CanvasMusicMvStudio({
           disabled={busy || pendingPlan || !!state.musicRequestId}
           onClick={generate}
         >
-          生成音乐 · {CANVAS_BGM_CREDITS_PER_RUN} 积分
+          生成音乐与封面 · {CANVAS_BGM_CREDITS_PER_RUN + CANVAS_IMAGE_CREDITS_PER_SHOT} 积分
         </button>
         {state.musicJobId && (
           <button
@@ -764,6 +1042,9 @@ export function CanvasMusicMvStudio({
             onClick={() =>
               patch({
                 musicRequestId: undefined,
+                musicSubmission: undefined,
+                lyricsCandidateId: undefined,
+                musicSubmissionDirection: undefined,
                 musicJobId: undefined,
                 musicJobStatus: undefined,
               })
@@ -842,6 +1123,7 @@ export function CanvasMusicMvStudio({
             导入 {row.fileName}
           </button>
         ))}
+      <SongCoverPanel records={state.songCovers||[]} onUpdate={(musicJobId,delta)=>patch({songCovers:(latest.current.songCovers||[]).map(row=>row.musicJobId===musicJobId?{...row,...delta}:row)})}/>
       {state.candidates.map(candidate => (
         <div key={candidate.id} className="rounded border border-white/15 p-1">
           <button
@@ -851,6 +1133,13 @@ export function CanvasMusicMvStudio({
           >
             {candidate.id === selected?.id ? "已采用" : "采用"}{" "}
             {candidate.title} · {candidate.durationSec.toFixed(2)} 秒
+          </button>
+          <button
+            className={button}
+            disabled={busy || state.songAdvisor?.status === "pending"}
+            onClick={() => patch({ songReference: candidate })}
+          >
+            作为新歌参考
           </button>
           <audio controls src={candidate.url} className="w-full" />
         </div>
@@ -893,8 +1182,109 @@ export function CanvasMusicMvStudio({
         </button>
       )}
       <p className="text-[10px] text-white/50">
-        分镜依据歌词与创意说明；未进行听音卡点分析。可上传人物、场景参考图供镜头使用。
+        MV创作顾问会听取歌曲后给出方案；下方普通分镜仅依据歌词与创意。可上传人物、场景参考图。
       </p>
+      <CanvasMvCreativeAdvisor
+        audio={selected}
+        lyrics={state.lyrics || ""}
+        creativePrompt={state.creativePrompt || block.prompt}
+        videoModel={block.videoModel}
+        projectId={projectId}
+        blocks={blocks}
+        references={references}
+        disabled={busy || pendingPlan}
+        session={state.advisor}
+        footageIds={state.advisorFootageIds || []}
+        onFootageIds={advisorFootageIds => patch({ advisorFootageIds })}
+        onSession={advisor => patch({ advisor })}
+        onNewSession={advisor =>
+          patch({
+            advisor,
+            advisorHistory: latest.current.advisor
+              ? [
+                  ...(latest.current.advisorHistory || []),
+                  latest.current.advisor,
+                ]
+              : latest.current.advisorHistory,
+          })
+        }
+        onApply={async result => {
+          const previous = latest.current;
+          const version = JSON.stringify({
+            lyrics: previous.lyrics,
+            creativePrompt: previous.creativePrompt,
+            referenceImages: previous.referenceImages,
+            selectedCandidateId: previous.selectedCandidateId,
+          });
+          const song = previous.candidates.find(
+            row => row.id === previous.selectedCandidateId
+          );
+          if (
+            !song ||
+            song.id !== result.plan.audioId ||
+            song.durationSec !== result.plan.audioDurationSec
+          )
+            throw new Error("歌曲已切换，原方案保留，未铺设镜头");
+          const refs = await Promise.all(
+            references.map(async row => ({
+              ...row,
+              url: row.gcsUri
+                ? await resolveCanvasMaterialUrl(row.gcsUri)
+                : row.url,
+            }))
+          );
+          const shots = createMusicMvShotBlocks(
+            block,
+            result.plan,
+            result.requestId,
+            refs,
+            song
+          );
+          for (const shot of shots)
+            if (shot.musicMvShot?.kind === "footage" && shot.outputUrl) {
+              shot.outputUrl = await resolveMusicMvMediaUrl(shot.outputUrl);
+              shot.outputUrls = [shot.outputUrl];
+            }
+          const now = latest.current;
+          if (
+            !alive.current ||
+            version !==
+              JSON.stringify({
+                lyrics: now.lyrics,
+                creativePrompt: now.creativePrompt,
+                referenceImages: now.referenceImages,
+                selectedCandidateId: now.selectedCandidateId,
+              })
+          )
+            throw new Error("歌曲或创意版本已变化，未采用");
+          if (
+            now.planRequestId === result.requestId &&
+            now.shotBlockIds?.length === result.plan.shots.length
+          )
+            return;
+          onAdd(
+            shots,
+            shots.map(row => ({ fromId: block.id, toId: row.id }))
+          );
+          patch({
+            ...invalidateMusicMvPlan(latest.current),
+            plan: result.plan,
+            planInput: result.input,
+            planRequestId: result.requestId,
+            shotBlockIds: shots.map(row => row.id),
+            status: "planned",
+            planHistory: previous.planRequestId
+              ? [
+                  ...(previous.planHistory || []),
+                  {
+                    requestId: previous.planRequestId,
+                    input: previous.planInput,
+                  },
+                ]
+              : previous.planHistory,
+          });
+        }}
+      />
       <button
         className={button}
         disabled={busy || !selected || !!state.plan}
@@ -968,6 +1358,32 @@ export function CanvasMusicMvStudio({
               </p>
             ))}
           </details>
+          {selected && state.planRequestId && !!state.shotBlockIds?.length && (
+            <CanvasMvTimelineEditor
+              key={state.planRequestId}
+              plan={state.plan}
+              baseId={state.planRequestId}
+              audio={selected}
+              blocks={blocks}
+              shotIds={state.shotBlockIds}
+              disabled={busy}
+              session={state.timelineEdits?.find(
+                s => s.draft.basePlanRequestId === state.planRequestId
+              )}
+              onSession={session =>
+                patch({
+                  timelineEdits: [
+                    ...(latest.current.timelineEdits || []).filter(
+                      s =>
+                        s.draft.basePlanRequestId !==
+                        session.draft.basePlanRequestId
+                    ),
+                    session,
+                  ],
+                })
+              }
+            />
+          )}
           <button
             className={button}
             disabled={busy || !!state.shotBlockIds?.length}

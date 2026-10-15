@@ -12240,6 +12240,7 @@ async function runAdvisorWriterTrial() {
                       {user?.id && <ArtMotionStudio key={artMotionScopeKey} scopeKey={artMotionScopeKey} blocks={blocks} onCreate={createArtMotionBlock} onSave={persistArtMotionBlock} />}
 </>}>
           <FreeformCanvas
+            projectId={projectScope?.projectId}
                         onSelectedBlockIdChange={setCanvasSelectedBlockId}
                         resolveManhuaOutboundGate={(blockId) => ({
                           currentScope: manhuaOutboundScope(blockId),
@@ -13802,6 +13803,7 @@ async function runAdvisorWriterTrial() {
                       {user?.id && <ImageWorldStudio key={`image-world:${artMotionScopeKey}`} scopeKey={artMotionScopeKey} blocks={blocks} enabled={canUseManhua3d} onSave={persistImageWorldBlocks} onRun={runImageWorldBlock} onAudioChange={persistClipAudioStudio} />}
           {user?.id && <ArtMotionStudio key={artMotionScopeKey} scopeKey={artMotionScopeKey} blocks={blocks} onCreate={createArtMotionBlock} onSave={persistArtMotionBlock} />}
           <FreeformCanvas
+            projectId={projectScope?.projectId}
                         onSelectedBlockIdChange={setCanvasSelectedBlockId}
                         resolveManhuaOutboundGate={(blockId) => ({
                           currentScope: manhuaOutboundScope(blockId),
@@ -14536,6 +14538,7 @@ async function runAdvisorWriterTrial() {
               </span>
             </div>
           <FreeformCanvas
+            projectId={projectScope?.projectId}
             resolveManhuaOutboundGate={(blockId) => ({
               currentScope: manhuaOutboundScope(blockId),
               confirmation: outboundConfirmationsRef.current[blockId],
