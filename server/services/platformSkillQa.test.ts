@@ -1,3 +1,4 @@
+import { spatialTargetFixture, spatialPlanFixture } from "../../shared/digitalHumanSpatialAdvisor.fixtures";
 import { buildAdvisorPrevisShotSource } from "../../shared/manhuaAdvisorPrevisShotSource";
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -232,6 +233,23 @@ describe("evidence soft heuristics", () => {
 });
 
 describe("漫剧工厂创作顾问上下文", () => {
+  it("数字人场景候选走真实顾问解析与校验，不变成平台文案或出图", async () => {
+    const plan = spatialPlanFixture();
+    invokeLLMMock.mockResolvedValue(llmJson(plan));
+    const context = manhuaContext({ digitalHumanSpatial: spatialTargetFixture() });
+    const result = await askPlatformSkillQa({ userId: 7, question: "站到窗边面向镜头", isAdmin: true, manhuaContext: context });
+    expect(JSON.parse(result.answer)).toEqual(plan);
+    expect(result.imageOffer).toBeNull();
+    const messages = buildManhuaCreativeAdvisorLlmMessages({ question: "站到窗边面向镜头", context });
+    expect(messages[0].content).toContain("不编造");
+    expect(messages[1].content).toContain("window");
+  });
+  it("数字人场景候选未知地点在服务端拒绝，不能交给采用按钮", async () => {
+    const plan = spatialPlanFixture(); (plan.actors[0].position as any).referenceId = "invented";
+    invokeLLMMock.mockResolvedValue(llmJson(plan));
+    await expect(askPlatformSkillQa({ userId: 7, question: "站到不存在的吧台", isAdmin: true,
+      manhuaContext: manhuaContext({ digitalHumanSpatial: spatialTargetFixture() }) })).rejects.toThrow();
+  });
   it("白模候选通过实际规格检查，LLM只产生候选、不获得写回权限", async () => {
     const studio = createManhuaPrevisStudio(5);
     const patch = { kind: "previs_edit_v1", summaryZh: "缓推近景", unsupportedZh: [], cameras: studio.spec.cameras.map(c => ({ ...c, endLens: 60 })) };
