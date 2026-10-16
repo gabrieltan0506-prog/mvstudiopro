@@ -1,3 +1,5 @@
+import { getSavedSongOperation } from "../services/songOperations";
+import { validateSongAlignedSubtitle, type SongAlignedSubtitle } from "../../shared/songAlignedSubtitle";
 import { getMusicMvEdit } from "../services/canvasMusicMvEdit";
 import { musicMvEditIssues } from "../../shared/canvasMusicMvEdit";
 import { z } from "zod";
@@ -26,6 +28,7 @@ export const canvasMusicMvAssembleRouter = router({
           requestId: z.string().uuid(),
           planRequestId: z.string().uuid(),
           editRevisionId: z.string().uuid().optional(),
+          alignmentRequestId: z.string().uuid().optional(),
           musicJobId: z.string().trim().min(1).max(200).optional(),
           audio: canvasMusicCandidateSchema,
           plan: canvasMusicMvPlanSchema,
@@ -199,7 +202,25 @@ export const canvasMusicMvAssembleRouter = router({
                   : 0) + durationSec,
             };
           });
+      let alignedLyrics: SongAlignedSubtitle | undefined;
+      if (input.alignmentRequestId) {
+        const alignment = await getSavedSongOperation(ctx.user.id, input.alignmentRequestId);
+        if (!alignment || alignment.requestId !== input.alignmentRequestId || alignment.status !== "succeeded" ||
+          alignment.operation !== "align" || alignment.sourceId !== input.audio.id || !alignment.alignment ||
+          alignment.draft.source.id !== input.audio.id || alignment.draft.source.durationSec !== input.audio.durationSec) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "歌词对齐回执与当前歌曲不一致，请先恢复原对齐任务" });
+        }
+        const alignedMusic = await resolveCanvasMusicMvAudio(ctx.user.id, alignment.draft.source, input.musicJobId);
+        if (alignedMusic !== musicUrl) throw new TRPCError({ code: "BAD_REQUEST", message: "歌词对齐对应的歌曲来源已经变化" });
+        try {
+          alignedLyrics = validateSongAlignedSubtitle({ requestId: alignment.requestId, sourceId: input.audio.id,
+            durationSec: input.audio.durationSec, ...alignment.alignment });
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "歌词对齐时间不可用" });
+        }
+      }
       const payload = buildManhuaAssembleJobInput({
+        ...(alignedLyrics ? { alignedLyrics } : {}),
         clips,
         expectedSegments: clips.map(({ episodeIndex, segmentIndex }) => ({
           episodeIndex,

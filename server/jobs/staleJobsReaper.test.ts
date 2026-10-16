@@ -115,7 +115,7 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
     getDb.mockResolvedValue(fakeDb(calls, [{ id: "asm-7", userId: "7", status: "running", updatedAt: new Date(0) }]));
     ledger.readActiveJob.mockResolvedValue({ userId: 7, status: "active", lastHeartbeatAt: new Date(0).toISOString() } as never);
     await reapStaleJobsOnce({ bypassDisable: true });
-    const assembleUpdate = calls.filter(call => call.kind === "update" && !/知识卡|小说改编/.test(sqlStringValues(call.payload?.error).join("\n")))[1];
+    const assembleUpdate = calls.filter(call => call.kind === "update" && !/知识卡|小说改编|歌曲处理/.test(sqlStringValues(call.payload?.error).join("\n")))[1];
     expect(assembleUpdate.payload).toEqual({ status: "failed", error: expect.stringContaining("回执已保留"), updatedAt: expect.any(Date) });
     expect(assembleUpdate.payload).not.toHaveProperty("input"); expect(assembleUpdate.payload).not.toHaveProperty("output");
     expect(ledger.refundCreditsOnFailure).toHaveBeenCalledWith("asm-7", "manhuaFinalAssemble", "process_crashed", expect.any(String));
@@ -126,7 +126,7 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
     getDb.mockResolvedValue(fakeDb(calls, [{ id: "asm-7", userId: "7", status: "running", updatedAt: new Date(0) }]));
     ledger.readActiveJob.mockResolvedValue({ userId: 7, status: "active", lastHeartbeatAt: new Date().toISOString() } as never);
     await reapStaleJobsOnce({ bypassDisable: true });
-    expect(calls.filter(call => call.kind === "update" && !/知识卡|小说改编/.test(sqlStringValues(call.payload?.error).join("\n")))).toHaveLength(1);
+    expect(calls.filter(call => call.kind === "update" && !/知识卡|小说改编|歌曲处理/.test(sqlStringValues(call.payload?.error).join("\n")))).toHaveLength(1);
     expect(ledger.refundCreditsOnFailure).not.toHaveBeenCalled();
   });
 
@@ -151,4 +151,18 @@ it('整集优化的原请求与逐集检查点不进入通用删除名单',async
  await reapStaleJobsOnce({bypassDisable:true});
  const deletes=calls.filter(c=>c.kind==='delete');expect(deletes).toHaveLength(2);
  for(const d of deletes)expect(sqlStringValues(d.condition).join(' ')).toMatch(/not in[\s\S]*manhua_episode_optimization_v1/);
+});
+
+it("歌曲操作失活只改状态且排除两条DELETE，原输入输出和费用回执不动", async () => {
+  const calls: Call[] = []; getDb.mockResolvedValue(fakeDb(calls));
+  await reapStaleJobsOnce({ bypassDisable: true });
+  const song = calls.find(c => c.kind === "update" && String(c.payload?.error || "").includes("歌曲处理任务"));
+  expect(song?.payload).toEqual({ status: "failed", error: expect.stringContaining("未自动重新提交"), updatedAt: expect.any(Date) });
+  expect(song?.payload).not.toHaveProperty("input"); expect(song?.payload).not.toHaveProperty("output");
+  const condition = sqlStringValues(song?.condition).join(" ");
+  expect(condition).toContain("song_operation"); expect(condition).toContain("audio");
+  expect(condition).toContain("running"); expect(condition).toContain("queued");
+  const deletes = calls.filter(c => c.kind === "delete");
+  expect(deletes).toHaveLength(2);
+  for (const d of deletes) expect(sqlStringValues(d.condition).join(" ")).toMatch(/not in[\s\S]*song_operation/);
 });

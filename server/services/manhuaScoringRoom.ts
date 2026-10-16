@@ -315,7 +315,11 @@ export async function resumeManhuaBgmTask(input: {
       }
       if (state.status === "completed") {
         v6Urls = state.audioUrls;
-        v6Musics = state.musics.filter(m => m.audioUrl?.startsWith("https://"));
+        // 与上游音频筛选保持同一URL语义，避免无效地址令musicId与变体错位。
+        v6Musics = state.musics.filter(m => {
+          try { return new URL(m.audioUrl || "").protocol === "https:"; }
+          catch { return false; }
+        });
         v6Missing = state.missing;
         break;
       }

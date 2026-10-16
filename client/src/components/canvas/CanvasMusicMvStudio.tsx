@@ -1,3 +1,9 @@
+import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
+import { canvasAudioPreviewKey } from "@/lib/canvasAudioStudioRecovery";
+import { musicCandidateSourceIdentity } from "@shared/songSourceIdentity";
+import { SongOperationsPanel } from "./SongOperationsPanel";
+import { CanvasAudioStudio } from "./CanvasAudioStudio";
+import { songAlignmentInputKey, songOperationCandidates, songOperationStemMix } from "@/lib/songOperationConsumers";
 import {SongCoverPanel} from "./SongCoverPanel";
 import {buildSongCoverPrompt} from "@shared/songCover";
 import {CANVAS_IMAGE_CREDITS_PER_SHOT} from "@shared/canvasGenerationPricing";
@@ -117,6 +123,9 @@ export function CanvasMusicMvStudio({
     Array<{ jobId: string; titleZh: string }>
   >([]);
   const utils = trpc.useUtils();
+  const songPrepare = trpc.songOperations.prepare.useMutation();
+  const songSubmit = trpc.songOperations.submit.useMutation();
+  const songResume = trpc.songOperations.resume.useMutation();
   const music = trpc.mvAnalysis.queueManhuaBgm.useMutation();
   const upload = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const plan = trpc.canvasMusicMv.draftPlan.useMutation();
@@ -198,6 +207,7 @@ export function CanvasMusicMvStudio({
             : await audioDuration(url);
         return {
           id: `${job.jobId}:${variant.index}`,
+          ...musicCandidateSourceIdentity(job.jobId, variant),
           url,
           gcsUri: variant.gcsUri,
           durationSec,
@@ -610,6 +620,7 @@ export function CanvasMusicMvStudio({
       const source = latest.current;
       if (newVersion && !source.assembleTerminalStatus)
         throw new Error("原合成尚无明确终态，请先查询原任务，未提交新版本");
+      if (!newVersion && source.assembleTerminalStatus && source.assembleInput && songAlignmentInputKey(source.selectedCandidateId, source.songAlignment) !== songAlignmentInputKey(source.assembleInput.audio.id, source.assembleInput.alignmentRequestId ? {sourceId:source.assembleInput.audio.id,requestId:source.assembleInput.alignmentRequestId} : undefined)) throw new Error("歌词字幕已变更，请点击合成新版本；原成片保留");
       let submission = newVersion ? undefined : source.assembleInput;
       if (!submission) {
         if (!newVersion && source.assembleRequestId)
@@ -647,6 +658,7 @@ export function CanvasMusicMvStudio({
           planRequestId: source.planRequestId,
           editRevisionId: edit?.saved?.revisionId,
           audio: song,
+          alignmentRequestId: source.songAlignment?.sourceId === song.id ? source.songAlignment.requestId : undefined,
           plan: source.plan,
           clips,
           resolution: block.aspectRatio === "9:16" ? "9:16" : "16:9",
@@ -1148,6 +1160,31 @@ export function CanvasMusicMvStudio({
           <audio controls src={candidate.url} className="w-full" />
         </div>
       ))}
+      {selected && <SongOperationsPanel key={selected.id} source={selected} lyrics={state.lyrics || ""} sessions={state.songOperations || []} disabled={busy || pendingPlan}
+        services={{prepare: input => songPrepare.mutateAsync(input), submit: input => songSubmit.mutateAsync(input), resume: input => songResume.mutateAsync(input), get: input => utils.songOperations.get.fetch(input)}}
+        onSession={session => patch({songOperations: [...(latest.current.songOperations || []).filter(s => s.requestId !== session.requestId), session]})}
+        onCandidates={receipt => {
+          const candidates = mergeMusicCandidates(latest.current.candidates, songOperationCandidates(receipt));
+          patch({candidates}, {outputUrls: candidates.map(c => c.url)});
+        }}
+        onAlignment={receipt => {
+          if (!receipt.alignment || receipt.sourceId !== latest.current.selectedCandidateId) throw new Error("请先采用本次对齐的来源歌曲");
+          patch({songAlignment: {requestId:receipt.requestId,sourceId:receipt.sourceId,...receipt.alignment}});
+        }}
+        onStems={receipt => patch({}, {audioStudio: songOperationStemMix(receipt, currentBlock.current.audioStudio)})}
+      />}
+      {block.audioStudio?.previewTake && block.audioStudio.cues.some(c => c.id.startsWith("songstem_")) && <button className={button} disabled={busy || pendingPlan} onClick={() => perform(async () => {
+        const take = currentBlock.current.audioStudio?.previewTake;
+        if (!take) throw new Error("请先生成混音试听");
+        const studio = currentBlock.current.audioStudio!;
+        const currentSong = latest.current.candidates.find(c => c.id === latest.current.selectedCandidateId);
+        if (!currentSong || take.inputKey !== await canvasAudioPreviewKey(canvasAudioMixSource(studio.cues, currentSong.durationSec))) throw new Error("音轨或歌曲已修改，请先更新混音试听，原混音仍保留");
+        const url = await resolveCanvasMaterialUrl(take.gcsUri);
+        const candidates = mergeMusicCandidates(latest.current.candidates, [{id:`songmix_${take.id}`,gcsUri:take.gcsUri,url,durationSec:take.durationSec,title:`${selected?.title || "歌曲"} · 混音`}]);
+        patch({candidates}, {outputUrls:candidates.map(c => c.url)});
+      })}>将混音保留为 MV 歌曲候选</button>}
+      {state.songAlignment?.sourceId === selected?.id && state.songAlignment && <p className="text-xs text-violet-200">已应用歌词时间，共 {state.songAlignment.words.length} 项；下次合成 MV 时使用。<button className={button} disabled={busy} onClick={() => patch({songAlignment:undefined})}>移除本次字幕</button></p>}
+      {block.audioStudio?.cues.some(c => c.id.startsWith("songstem_")) && selected && <details className="rounded-lg border border-white/15 p-2"><summary className="text-xs">歌曲分轨与混音</summary><CanvasAudioStudio block={block} musicWorkbench timelineDurationSec={selected.durationSec} disabled={busy || pendingPlan} onChange={audioStudio => patch({}, {audioStudio})}/></details>}
       <textarea
         className={field}
         rows={3}

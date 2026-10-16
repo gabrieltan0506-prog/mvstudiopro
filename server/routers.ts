@@ -1,3 +1,4 @@
+import { songOperationsRouter } from "./routers/songOperations";
 import { XHS_CONTENT_SKILL_ID, xhsTopicCount } from "../shared/xhsContentStrategy.js";
 import { codeMotionPlanFailureMessage } from "./services/codeMotionPlanFailure";
 import { buildManhuaBgmJobResponse, queueManhuaBgm } from "./services/manhuaBgmOperation";
@@ -2995,6 +2996,7 @@ export const appRouter = router({
   kling: klingRouter,
   hunyuan3d: hunyuan3dRouter,
   suno: sunoRouter,
+  songOperations: songOperationsRouter,
   canvasAudio: canvasAudioRouter,
   digitalHuman: digitalHumanRouter,
   manhuaPrevis: manhuaPrevisRouter,

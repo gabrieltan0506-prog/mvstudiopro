@@ -8,7 +8,9 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   resolve: vi.fn(),
   download: vi.fn(),
+  alignment: vi.fn(),
 }));
+vi.mock("../services/songOperations", () => ({ getSavedSongOperation: mocks.alignment }));
 vi.mock("../jobs/repository", () => ({
   createJob: mocks.create,
   getJobByIdStrict: mocks.get,
@@ -270,4 +272,28 @@ describe("保存剪辑版本合成消费",()=>{
  function bind(receipt:ReturnType<typeof edited>){mocks.download.mockImplementation(async({gcsUri})=>({buffer:Buffer.from(JSON.stringify(gcsUri.includes("/edits/")?receipt:gcsUri.endsWith("settled.json")?{settled:true}:saved()))}));}
  it("消费已保存顺序及入出点，不沿用原计划裁点",async()=>{const r=edited();bind(r);await caller(7).queue({...input,editRevisionId:revision,clips:r.document.clips.map(c=>({shotId:c.id,url:c.source!.url}))});expect(mocks.create.mock.calls[0][0].input.params.clips.map((c:any)=>[c.clipUrl,c.trimInSec,c.trimOutSec])).toEqual([["gs://test-bucket/post-prod/7/2.mp4",3,13],["gs://test-bucket/post-prod/7/1.mp4",1,11]]);});
  it("换素材、伪造版本或歌曲覆盖缺口均拒绝入队",async()=>{const r=edited();bind(r);const clips=r.document.clips.map(c=>({shotId:c.id,url:c.source!.url}));await expect(caller(7).queue({...input,editRevisionId:revision,clips:[{...clips[0],url:clips[1].url},clips[1]]})).rejects.toThrow("素材来源");r.document.clips[0].durationFrames=150;await expect(caller(7).queue({...input,editRevisionId:revision,clips})).rejects.toThrow("证据不一致");r.sha256=createHash("sha256").update(musicMvEditKey(r.document)).digest("hex");await expect(caller(7).queue({...input,editRevisionId:revision,clips})).rejects.toThrow("歌曲还缺");expect(mocks.create).not.toHaveBeenCalled();});
+});
+
+const alignmentRequestId = "33333333-3333-4333-8333-333333333333";
+const alignedReceipt = () => ({ requestId: alignmentRequestId, status: "succeeded", operation: "align", sourceId: audio.id, draft: { source: audio }, alignment: { words: [{ text: "回家", startSec: 1.25, endSec: 2.5 }], srt: "1\n00:00:01,250 --> 00:00:02,500\n回家\n" } });
+describe("歌词对齐字幕进入最终MV合成", () => {
+  it("本人原歌的已成功对齐回执冻结进幂等payload，原秒位保留", async () => {
+    mocks.alignment.mockResolvedValue(alignedReceipt());
+    await caller(7).queue({ ...input, alignmentRequestId });
+    expect(mocks.alignment).toHaveBeenCalledWith(7, alignmentRequestId);
+    expect(mocks.create.mock.calls[0][0].input.params.alignedLyrics).toMatchObject({ requestId: alignmentRequestId, sourceId: audio.id, durationSec: 20, words: [{ text: "回家", startSec: 1.25, endSec: 2.5 }] });
+  });
+  it("缺失、未完成、其他操作、换歌及越界回执禁止入队", async () => {
+    const valid = alignedReceipt();
+    for (const bad of [null, { ...valid, status: "pending" }, { ...valid, operation: "stems" }, { ...valid, sourceId: "other" }, { ...valid, alignment: { ...valid.alignment, words: [{ text: "越界", startSec: 19, endSec: 21 }] } }]) {
+      mocks.alignment.mockResolvedValue(bad);
+      await expect(caller(7).queue({ ...input, alignmentRequestId })).rejects.toThrow();
+    }
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+  it("旧合成未选择对齐字幕则不读取对齐任务", async () => {
+    await caller(7).queue(input);
+    expect(mocks.alignment).not.toHaveBeenCalled();
+    expect(mocks.create.mock.calls[0][0].input.params).not.toHaveProperty("alignedLyrics");
+  });
 });

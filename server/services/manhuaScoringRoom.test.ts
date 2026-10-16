@@ -418,3 +418,14 @@ it("正式建单归档器分别持久化请求、原文、解析及字节校验�
     expect(value.objectName).toContain("post-prod/42/music-evidence/");
   }
 });
+
+// 只验证恢复链与身份映射，不提交真实媒体任务。
+it("HTTPS地址校验与候选身份保持同序", async () => {
+  bridge.get.mockResolvedValue({ status: "completed", musics: [
+    { musicId: "invalid", audioUrl: "https://" },
+    { musicId: "actual", audioUrl: "HTTPS://audio.test/a.mp3" },
+  ], audioUrls: ["HTTPS://audio.test/a.mp3"], missing: 1 });
+  const result = await resumeManhuaBgmTask({ taskId: "ttapi:identity", userId: "42", brief: { ...brief, model: "suno-v6" } });
+  expect(result.variants).toHaveLength(1);
+  expect(result.variants[0].musicId).toBe("actual");
+});

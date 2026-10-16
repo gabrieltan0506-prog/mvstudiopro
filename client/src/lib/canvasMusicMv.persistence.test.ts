@@ -110,6 +110,17 @@ describe("音乐节点持久化与媒体交接", () => {
     expect(resolveBlockHandoffText(restored)).toContain("shot-2");
   });
 
+  it("新增歌曲操作和对齐状态经过本地精简云端序列化后完整恢复",()=>{
+    const original=source();const requestId='00000000-0000-4000-8000-000000000002';
+    original.musicMv.songOperations=[{requestId,operation:'align',sourceId:'song-0',receipt:{requestId,operation:'align',sourceId:'song-0',status:'pending',inputDigest:'a'.repeat(64),createdAt:'2026-10-16T14:00:00+08:00',creditsCost:0,draft:{operation:'align',source:original.musicMv.candidates[0]},variants:[]}}];
+    original.musicMv.songAlignment={requestId,sourceId:'song-0',srt:'1\n00:00:01,000 --> 00:00:02,000\n歌词',words:[{text:'歌词',startSec:1,endSec:2}]};
+    const snapshot=buildLocalCloudDraftSnapshot({writerSession:{},blocks:slimBlocksForLocalPersist([original]),edges:[]});
+    const parsed=parseManhuaCloudDraftPayload(serializeCloudDraftForUpload(snapshot));
+    const [restored]=cloudDraftBlocksToCanvas(parsed!.canvas.blocks);
+    expect(restored.musicMv?.songOperations).toEqual(original.musicMv.songOperations);
+    expect(restored.musicMv?.songAlignment).toEqual(original.musicMv.songAlignment);
+  });
+
   it("拒绝损坏的歌曲选择，不静默丢弃原状态", () => {
     const broken = {
       ...source(),

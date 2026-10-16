@@ -1,4 +1,5 @@
 import type { ManhuaRenderedSubtitle, ManhuaSubtitleSource } from "../../shared/manhuaRenderedSubtitle.js";
+import type { SongAlignedSubtitle } from "../../shared/songAlignedSubtitle";
 export type RenderTransition = "cut" | "fade";
 
 export interface SceneVideoInput {
@@ -24,6 +25,7 @@ export interface RenderWorkflowInput {
   preserveSourceAudio?: boolean;
   /** 仅在明确选择歌曲的 MV 中静音原片。 */
   musicOnly?: boolean;
+  alignedLyrics?: SongAlignedSubtitle;
   musicUrl?: string;
   voiceUrl?: string;
   musicStartSec?: number;

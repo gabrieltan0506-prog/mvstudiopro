@@ -1,3 +1,4 @@
+import { validateSongAlignedSubtitle } from "../../shared/songAlignedSubtitle";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { RenderWorkflowInput } from "./renderTypes.js";
@@ -99,6 +100,8 @@ export async function renderSourceAudioFinal(
   tmpDir: string
 ): Promise<string> {
   if (!input.sceneVideos.length) throw new Error("至少需要一个成片素材");
+  if (input.alignedLyrics && (!input.musicOnly || nonNegative(input.musicStartSec, 0) > 0 || nonNegative(input.musicEndSec, 0) > 0))
+    throw new Error("歌曲对齐字幕须保留原歌曲时间轴，不能同时裁切配乐");
   if (input.musicOnly === true && !String(input.musicUrl || "").trim())
     throw new Error("MV 合成缺少选定歌曲，未开始渲染");
   if (
@@ -263,6 +266,23 @@ export async function renderSourceAudioFinal(
     if (hasSubtitleSources && input.onSubtitleTimeline) {
       const actualDuration = (await inspectVideo(file)).duration;
       input.onSubtitleTimeline(buildRenderedSubtitleTimeline(normalized, input.transition, actualDuration));
+    }
+    if (input.alignedLyrics) {
+      if (!input.musicOnly || !String(input.musicUrl || "").trim()) throw new Error("歌词字幕缺少原歌曲，未开始烧录");
+      const actualDuration = (await inspectVideo(file)).duration;
+      const lyrics = validateSongAlignedSubtitle(input.alignedLyrics, actualDuration);
+      const srtPath = path.join(tmpDir, "aligned-lyrics.srt");
+      await fs.writeFile(srtPath, lyrics.srt, { encoding: "utf8", flag: "wx" });
+      const fontsDir = path.join(tmpDir, "lyrics-fonts");
+      await fs.mkdir(fontsDir);
+      await fs.copyFile(path.resolve("assets/fonts/NotoSansCJKsc-Regular.otf"), path.join(fontsDir, "NotoSansCJKsc-Regular.otf"));
+      const outPath = path.join(tmpDir, "aligned-lyrics-final.mp4");
+      const { buildBurnSubtitleArgs } = await import("../services/postProduction.js");
+      await mediaTool("ffmpeg", buildBurnSubtitleArgs({ videoPath: file, srtPath, outPath, fontsDir }, { fontName: "Noto Sans CJK SC" }));
+      const burned = await inspectVideo(outPath);
+      if (!burned.hasAudio || Math.abs(burned.duration - actualDuration) > 0.05)
+        throw new Error("字幕烧录后的音轨或时长异常，未交付成片");
+      return outPath;
     }
     return file;
   };
