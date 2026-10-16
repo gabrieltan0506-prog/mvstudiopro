@@ -3,6 +3,7 @@ import {trpc} from '@/lib/trpc';
 import {resolveCanvasMaterialUrl} from '@/lib/omniCanvasApi';
 import type {SongDemoRun,SongDemoVariant,SunoSongSession} from '@shared/canvasMusicMv';
 import {createSongDemoRuns,suggestedSongDemoLyrics,SONG_DEMO_SECONDS} from '@shared/songDemo';
+import {mergeSongDemoSourceVariants} from '@shared/songSourceIdentity';
 import {CANVAS_BGM_CREDITS_PER_RUN} from '@shared/canvasGenerationPricing';
 type Props={session?:SunoSongSession;history:SunoSongSession[];records:SongDemoRun[];disabled:boolean;canGenerate:boolean;selected?:{requestId:string;variantIndex:number};onChange:(records:SongDemoRun[])=>void;onSelect:(run:SongDemoRun,variant:SongDemoVariant,session:SunoSongSession)=>void};
 const button='rounded border border-white/20 px-2 py-1 text-xs disabled:opacity-40';
@@ -31,7 +32,7 @@ export function SongDemoPanel(p:Props){
      if(source.status!=='succeeded'){update(row.requestId,{status:source.status==='running'?'running':'queued',error:undefined});continue;}
      row=current.current.records.find(r=>r.requestId===row.requestId)!;
      if(source.variants.some(v=>!Number.isFinite(Number(v.durationSec))||Number(v.durationSec)<=0))throw Error('原Demo实测时长暂不可读取，保留原任务并等待恢复');
-     const variants=[...row.variants];for(const v of source.variants){if(!variants.some(old=>old.index===v.index))variants.push({index:v.index,sourceGcsUri:v.gcsUri,durationSec:Number(v.durationSec),status:'pending'});}
+     const variants=mergeSongDemoSourceVariants(row.variants,source.variants);
      if(!variants.length)throw Error('原Demo任务已返回，音轨仍待恢复，未重新提交');
      update(row.requestId,{variants,status:'processing',error:undefined});
      for(const variant of variants){

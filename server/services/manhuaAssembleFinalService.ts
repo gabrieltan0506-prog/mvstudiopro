@@ -1,3 +1,4 @@
+import { validateSongAlignedSubtitle, type SongAlignedSubtitle } from "../../shared/songAlignedSubtitle";
 import { signGsUriV4ReadUrl } from "./gcs";
 /**
  * 漫剧成片坞：配乐 + 同源 Final Render。
@@ -47,6 +48,7 @@ export type ManhuaAssembleFinalInput = {
   musicProvider?: string;
   musicVolume?: number;
   musicOnly?: boolean;
+  alignedLyrics?: SongAlignedSubtitle;
   musicFadeInSec?: number;
   musicFadeOutSec?: number;
   transition?: string;
@@ -55,6 +57,7 @@ export type ManhuaAssembleFinalInput = {
 
 export type ManhuaAssembleFinalResult = {
   subtitleTimeline?: ManhuaRenderedSubtitle;
+  alignedLyrics?: SongAlignedSubtitle;
   finalVideoUrl: string;
   musicUrl?: string;
   musicPrompt?: string;
@@ -211,11 +214,14 @@ export async function runManhuaAssembleFinal(
     ? Math.max(0, Number(raw.musicFadeOutSec))
     : 2;
 
+  const alignedLyrics = raw.alignedLyrics === undefined ? undefined : validateSongAlignedSubtitle(raw.alignedLyrics);
+  if (alignedLyrics && raw.musicOnly !== true) throw new Error("歌曲对齐字幕只能用于保留原歌曲的MV合成");
   let subtitleTimeline: ManhuaRenderedSubtitle | undefined;
   const finalVideoUrl = await renderWorkflowFinalVideo({
     onSubtitleTimeline: timeline => { subtitleTimeline = timeline; },
     preserveSourceAudio: true,
     musicOnly: raw.musicOnly === true,
+    alignedLyrics,
     sceneVideos: sceneVideos.map((sv) => ({
       subtitleSource: sv.subtitleSource,
       subtitleShotIndex: sv.subtitleShotIndex,
@@ -237,6 +243,7 @@ export async function runManhuaAssembleFinal(
 
   return {
     subtitleTimeline,
+    alignedLyrics,
     finalVideoUrl,
     musicUrl: musicUrl || undefined,
     musicPrompt: musicPrompt || undefined,

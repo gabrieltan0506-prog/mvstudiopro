@@ -124,7 +124,7 @@ export function decodeTtapiSunoTaskId(taskId: string): string | null {
 /** 原始响应须先持久化，再解析；调用方提供服务端归档器。 */
 export type TtapiSunoEvidenceSink = (entry: { kind: "request" | "raw" | "parsed"; body: string; path: string; httpStatus?: number }) => Promise<void>;
 
-async function ttapiFetch(path: string, init: { method?: "GET" | "POST"; body?: string; abortSignal?: AbortSignal; evidence?: TtapiSunoEvidenceSink }): Promise<unknown> {
+export async function ttapiFetch(path: string, init: { method?: "GET" | "POST"; body?: string; abortSignal?: AbortSignal; evidence?: TtapiSunoEvidenceSink }): Promise<unknown> {
   const key = getTtapiKey();
   if (!key) throw new TtapiSunoRequestError("not_configured", false);
   const submitting = init.method === "POST";

@@ -2,6 +2,7 @@
  * 漫剧合成入队 payload（www→Fly jobs worker）
  * 前台 createJobSameOrigin({ type: "video", input }) 使用。
  */
+import type { SongAlignedSubtitle } from "./songAlignedSubtitle";
 import type { ManhuaAssembleClipInput } from "./manhuaFinalAssemble";
 import type { ManhuaAssembleSegmentRef } from "./manhuaAssembleCompleteness";
 
@@ -26,6 +27,7 @@ export type ManhuaAssembleJobParams = {
   musicVolume?: number;
   /** MV 保留选定歌曲，移除生成片段原声。 */
   musicOnly?: boolean;
+  alignedLyrics?: SongAlignedSubtitle;
   musicFadeInSec?: number;
   musicFadeOutSec?: number;
   musicUrl?: string;

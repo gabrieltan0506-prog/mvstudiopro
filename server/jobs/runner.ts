@@ -2377,12 +2377,85 @@ async function processManhuaBgmJob(params: {
   }
 }
 
+/** 歌曲编辑只持有本次运行控制器；中止后由原请求回执对账，不重建付费任务。 */
+const songOperationAbortControllers = new Map<string, AbortController>();
+export function abortRunningSongOperationJob(jobId: string): boolean {
+  const controller = songOperationAbortControllers.get(jobId);
+  if (!controller) return false;
+  controller.abort(new Error("歌曲处理已中止，原任务回执已保留"));
+  return true;
+}
+
+export async function processSongOperationJob(params: {
+  input: JobEnvelope; timeoutMs: number; userId: string; jobId: string;
+}): Promise<{ output: unknown; provider: string }> {
+  const requestId = params.input.params?.requestId;
+  const userId = Number(params.userId);
+  if (typeof requestId !== "string" || !requestId.trim() || !Number.isSafeInteger(userId) || userId <= 0) throw new Error("歌曲处理任务身份无效");
+  if (songOperationAbortControllers.has(params.jobId)) throw new Error("歌曲处理任务已在执行");
+  const controller = new AbortController();
+  songOperationAbortControllers.set(params.jobId, controller);
+  const stopSilenceWatch = abortOnJobSilence(controller, params.jobId, params.timeoutMs);
+  try {
+    const job = await getJobByIdStrict(params.jobId);
+    controller.signal.throwIfAborted();
+    if (!job || job.type !== "audio" || job.status !== "running" || String(job.userId) !== params.userId || !isRecord(job.input)
+      || job.input.action !== "song_operation" || !isRecord(job.input.params) || job.input.params.requestId !== requestId) {
+      throw new Error("歌曲处理任务归属、运行状态或请求编号不一致");
+    }
+    const { runSongOperationJob } = await import("../services/songOperations.js");
+    controller.signal.throwIfAborted();
+    const receipt = await runSongOperationJob(userId, requestId, {
+      signal: controller.signal,
+      onHeartbeat: async () => {
+        controller.signal.throwIfAborted();
+        // 上层已成功存GCS才调用；数据库续租也成功后才更新有效心跳，不使用空转定时器。
+        const savedAt = Date.now();
+        if (!await touchJobRunningUpdatedAt(params.jobId)) throw new Error("歌曲处理心跳未能写入任务记录");
+        controller.signal.throwIfAborted();
+        jobHeartbeats.set(params.jobId, savedAt);
+        jobHeartbeatDbFlushed.set(params.jobId, savedAt);
+      },
+    });
+    // 只有结算成功的产物登记为可消费音频；未结算的永久产物仍由服务端证据持有。
+    const terminalOutput = receipt.status === "succeeded"
+      ? { ...receipt, audioUrls: receipt.variants.map(variant => variant.gcsUri) }
+      : { ...receipt, variants: [] };
+    if (receipt.status !== "succeeded") {
+      delete terminalOutput.persona;
+      delete terminalOutput.alignment;
+    }
+    await patchJobRunningProgressStrict(params.jobId, {
+      songOperationRequestId: requestId,
+      songOperationStatus: receipt.status,
+      terminalOutput,
+    });
+    controller.signal.throwIfAborted();
+    if (receipt.status !== "succeeded") {
+      throw new Error(receipt.status === "payment_pending"
+        ? "歌曲处理结算尚未完成，结果与费用回执已保留"
+        : receipt.status === "reconcile_required"
+          ? "歌曲处理提交结果待核对，未自动重提"
+          : "歌曲处理未完成，原任务与结果已保留");
+    }
+    return { output: terminalOutput, provider: "song-operation" };
+  } finally {
+    stopSilenceWatch();
+    songOperationAbortControllers.delete(params.jobId);
+    clearJobHeartbeat(params.jobId);
+  }
+}
+
 async function processAudioJob(
   input: JobEnvelope,
   timeoutMs: number,
   userId: string,
   jobId?: string
 ): Promise<{ output: unknown; provider?: string }> {
+  if (input.action === "song_operation") {
+    if (!jobId) throw new Error("歌曲处理任务缺少jobId");
+    return processSongOperationJob({ input, timeoutMs, userId, jobId });
+  }
   if (input.action === MANHUA_BGM_ACTION) {
     if (!jobId) throw new Error("配乐任务缺少 jobId");
     return processManhuaBgmJob({ input, timeoutMs, userId, jobId });
@@ -3855,7 +3928,8 @@ async function runClaimedJob(
       isRecord(job.input) && (job.input.action === "knowledge_card_distill" || job.input.action === "knowledge_card_derive_level")
         ? { jobId: job.id, stallMs: resolveKnowledgeCardDistillStallMs() }
         : undefined;
-    if (!distillHeartbeat) stopWorkerHeartbeat = startWorkerHeartbeat(job.id, timeoutMs);
+    const songOperationJob = jobType === "audio" && isRecord(job.input) && job.input.action === "song_operation";
+    if (!distillHeartbeat && !songOperationJob) stopWorkerHeartbeat = startWorkerHeartbeat(job.id, timeoutMs);
     const { output, provider } = await withTimeout(
       withHeavyMediaContext({ userId: String(job.userId), executionId: job.id, parentJobId: job.id }, async () => {
         const execute = () => executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id);
@@ -3869,7 +3943,13 @@ async function runClaimedJob(
       }),
       timeoutMs,
       `${job.type} job timed out after ${timeoutMs}ms`,
-      manhuaLearnJob
+      songOperationJob
+        ? {
+            heartbeat: { jobId: job.id, stallMs: timeoutMs },
+            onTimeout: () => { abortRunningSongOperationJob(job.id); },
+            cleanupGraceMs: 30_000,
+          }
+        : manhuaLearnJob
         ? {
             heartbeat: { jobId: job.id, stallMs: timeoutMs },
             onTimeout: () => {
@@ -3887,7 +3967,7 @@ async function runClaimedJob(
       ? (await markKnowledgeCardSettlementSucceeded(job.id, output as Record<string, unknown>, provider), true)
       : manhuaLearnJob
       ? await markManhuaLearnJobSucceededWithRetry(job.id, output, provider)
-      : manhuaBgmJob || manhuaAssembleJob
+      : manhuaBgmJob || manhuaAssembleJob || songOperationJob
         ? await markJobSucceededWithRetry(job.id, output, provider)
         : await markJobSucceeded(job.id, output, provider);
     if (manhuaAssembleJob) {
@@ -3909,6 +3989,11 @@ async function runClaimedJob(
       console.error(
         `[Jobs] manhua learn finished but status persistence is pending: jobId=${job.id}`
       );
+      return;
+    }
+    if (songOperationJob && !succeededPersisted) {
+      // 原服务回执与terminalOutput均已保存；只留待补写状态，绝不能重新建单。
+      console.error(`[Jobs] song operation result status persistence pending: jobId=${job.id}`);
       return;
     }
     if (manhuaBgmJob && !succeededPersisted) {
@@ -4050,6 +4135,12 @@ async function runClaimedJob(
       }
     }
   } catch (error) {
+    if (job.type === "audio" && isRecord(job.input) && job.input.action === "song_operation") {
+      abortRunningSongOperationJob(job.id);
+      // 无论超时、供应商结果待核或结算待处理，都不进入通用自动重排。
+      await markJobFailed(job.id, error instanceof Error ? error.message : "歌曲处理未完成，原回执已保留");
+      return;
+    }
     // 结算已登记时保留原稿，不走通用重排模型或失败路径。失活回收只重排结算。
     if (job.type === "platform" && isRecord(job.input)
       && (job.input.action === "knowledge_card_distill" || job.input.action === "knowledge_card_derive_level")) {

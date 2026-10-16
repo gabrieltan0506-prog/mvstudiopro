@@ -61,10 +61,12 @@ beforeAll(async () => {
               args.path === "trpc"
                 ? `
         const f=()=>globalThis.fixture;
-        const utils={mvAnalysis:{
+        const songGet=async({requestId})=>JSON.parse(localStorage.getItem('song-op-'+requestId));
+        const songMutations={prepare:{useMutation:()=>({mutateAsync:async input=>{f().record('songPrepare',input);const r={...input,operation:input.draft.operation,sourceId:input.draft.source.id,status:'prepared',inputDigest:'a'.repeat(64),createdAt:'2026-10-16T14:00:00+08:00',creditsCost:null,variants:[]};localStorage.setItem('song-op-'+input.requestId,JSON.stringify(r));return r;}})},submit:{useMutation:()=>({mutateAsync:async input=>{f().record('songSubmit',input);throw new Error('离线夹具禁止真实提交');}})},resume:{useMutation:()=>({mutateAsync:songGet})}};
+        const utils={songOperations:{get:{fetch:songGet}},mvAnalysis:{
           getManhuaBgmJob:{fetch:async({jobId})=>{f().queries.push(jobId);if(f().musicError)throw new Error('missing job');return {jobId,status:f().musicReady?'succeeded':'running',titleZh:'虚构音乐',durationSec:10,missingVariants:f().missingVariants||0,variants:f().musicReady?(f().missingVariants?[0]:[0,1]).map(index=>({index,gcsUri:'gs://test-bucket/post-prod/7/candidate-'+index+'.mp3',durationSec:10,bytes:1000})):[]};}},
           listManhuaBgmJobs:{fetch:async()=>[]}},canvasMusicMv:{getEdit:{fetch:async input=>JSON.parse(localStorage.getItem('saved-edit-'+input.revisionId))},getPlan:{fetch:async()=>({status:localStorage.getItem('plan-query-status')||'pending_or_unconfirmed'})}}};
-        export const trpc={useUtils:()=>utils,mvAnalysis:{
+        export const trpc={useUtils:()=>utils,songOperations:songMutations,mvAnalysis:{
           getVideoUploadSignedUrl:{useMutation:()=>({mutateAsync:async()=>{throw new Error("离线夹具不上传媒体");}})},
           getManhuaAdvisorQuota:{useQuery:()=>({data:{remaining:2,price:12,exempt:false},refetch:async()=>{}})},
           askPlatformSkillQa:{useMutation:()=>({mutateAsync:async input=>{f().record('advisor',input);if(input.manhuaContext.sunoSong){const t=input.manhuaContext.sunoSong;return {answer:JSON.stringify({kind:'suno_song_v1',sourceKey:t.sourceKey,evidenceId:'11111111-1111-4111-8111-111111111111',summaryZh:'按主题创作，未听音',review:{verdict:'approved',summaryZh:'离线通过',findings:[],mediaReview:[],inspirationZh:['强化副歌层次'],limitationsZh:['离线替身未听音']},sections:[],uncertaintiesZh:['尚未试听'],transferableCraft:['第二段推进故事'],concepts:[0,1,2].map(i=>({id:'song-'+i,rationaleZh:'符合重逢主题',differenceZh:'原创叙述',hookZh:'明天再见',lyricMethodZh:'物件写关系',mvDirectionZh:'红围巾贯穿车站与重逢',brief:{model:'suno-v6',custom_mode:true,instrumental:false,title:t.originalBrief?.title||'重逢'+i,style:t.originalBrief?'73 BPM, optimized arrangement '+i:'acoustic pop, warm piano',prompt:t.originalBrief?.prompt||'[Verse] 你把车票放回口袋 [Chorus] 明天再见',negative_tags:'',duration:t.originalBrief?.duration||180,style_weight:0,weirdness_constraint:0.35}}))})};}const t=input.manhuaContext.musicMv;const p=f().makePlan(t);p.analysisBasis='native_audio';p.shots=p.shots.map(s=>({...s,kind:'generated'}));return {answer:JSON.stringify({kind:'music_mv_v1',sourceKey:t.sourceKey,evidenceId:'11111111-1111-4111-8111-111111111111',summaryZh:'听音后的测试方案',sections:[{startSec:0,endSec:10,labelZh:'主段',heardZh:'人声弦乐'}],uncertaintiesZh:['离线测试不证明听音'],concepts:[0,1,2,3].map(i=>({id:'idea-'+i,titleZh:'归途'+i,rationaleZh:'情绪推进',openingZh:'林间',peakZh:'转身',endingZh:'远望',plan:p}))})};}})},
@@ -140,6 +142,23 @@ async function open() {
 }
 
 describe("独立音乐MV真实视图（虚构任务边界）", () => {
+  it("六项工具集成与未定价确认刷新恢复", async () => {
+    const {context,page,click,reload}=await open();
+    try {
+      await page.evaluate(()=>{const f=(window as any).fixture;f.update([{...f.current[0],musicMv:{...f.state,status:'music_ready',candidates:[{id:'source',title:'本次测试曲',url:'https://test.invalid/audio.mp3',gcsUri:'gs://test-bucket/audio.mp3',durationSec:120}],selectedCandidateId:'source'}}]);});
+      await page.waitForSelector('[aria-label="歌曲编辑工具"]');
+      expect(await page.$$eval('[role="tablist"][aria-label="歌曲操作"] button',els=>els.map(e=>e.textContent))).toEqual(['参考改编','续写歌曲','局部修歌','保存演唱风格','歌词对齐','分轨与混音']);
+      await click('歌词对齐');await click('查看本次发送内容与费用');
+      await page.waitForFunction(()=>document.body.textContent?.includes('价格待确认，暂不可提交'));
+      expect(await page.$$eval('button',els=>els.find(e=>e.textContent==='确认以上内容并提交')?.disabled)).toBe(true);
+      await reload();
+      await page.waitForFunction(()=>(window as any).fixture.state.songOperations?.length===1);
+      const result=await page.evaluate(()=>{const f=(window as any).fixture;return {calls:f.calls,receipt:f.state.songOperations[0].receipt};});
+      expect(result.receipt.operation).toBe('align');expect(result.receipt.creditsCost).toBeNull();
+      expect(result.calls.filter((c:any)=>c.kind==='songPrepare')).toHaveLength(1);
+      expect(result.calls.filter((c:any)=>c.kind==='songSubmit')).toHaveLength(0);
+    } finally {await context.close();}
+  });
   it("两版音乐→选版→两镜分镜→缺镜拒合成→真实铺节点与逐镜执行→最终节点回写", async () => {
     const { context, page, click, reload } = await open();
     try {

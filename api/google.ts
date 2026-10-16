@@ -24,6 +24,7 @@ import {
   isInternalGoogleMediaOp,
   isRetiredGoogleVideoOp,
 } from "../shared/internalMediaEndpointPolicy";
+import { assertSongOperationMaterialRead } from "../server/services/songOperationMediaAccess";
 import { isAllowedCanvasMaterialGcsUri } from "../shared/canvasMaterialReadPolicy";
 export { runVertexUpscaleImage, type VertexUpscaleResult };
 
@@ -373,6 +374,11 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       ];
       if (!isAllowedCanvasMaterialGcsUri(gcsUri, allowedBuckets)) {
         return res.status(403).json({ ok: false, error: "gcs_uri_not_allowed" });
+      }
+      try {
+        await assertSongOperationMaterialRead(viewer.userId, gcsUri);
+      } catch {
+        return res.status(403).json({ ok: false, error: "song_material_not_available", message: "此歌曲产物尚未结算或不属于本人，请查询原任务" });
       }
       try {
         return res.status(200).json({ ok: true, gcsUri, url: signGsUriV4ReadUrl(gcsUri, 3600) });

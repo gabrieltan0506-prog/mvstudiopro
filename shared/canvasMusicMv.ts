@@ -5,6 +5,7 @@ import { musicEmotionTurnSchema, musicEmotionArcSchema } from "./musicEmotion";
 import { z } from "zod";
 import { creativeEvidenceReviewSchema } from "./creativeEvidenceReview";
 import { musicMvEditSessionSchema } from "./canvasMusicMvEdit";
+import { songOperationSessionSchema, songAlignedWordSchema } from "./songOperations";
 
 const text = z.string().trim().min(1);
 export { canvasMusicCandidateSchema, type CanvasMusicCandidate } from "./canvasMusicMedia";
@@ -120,7 +121,7 @@ export const sunoSongSessionSchema = z
   .strict();
 export type SunoSongSession = z.infer<typeof sunoSongSessionSchema>;
 
-export const songDemoVariantSchema=z.object({index:z.number().int().nonnegative(),sourceGcsUri:text,durationSec:z.number().positive(),gcsUri:text.optional(),url:z.string().url().optional(),status:z.enum(["pending","ready","failed"]),error:z.string().optional()}).strict();
+export const songDemoVariantSchema=z.object({musicId:text.max(200).optional(),providerTaskId:text.max(200).optional(),index:z.number().int().nonnegative(),sourceGcsUri:text,durationSec:z.number().positive(),gcsUri:text.optional(),url:z.string().url().optional(),status:z.enum(["pending","ready","failed"]),error:z.string().optional()}).strict();
 export const songDemoRunSchema=z.object({requestId:z.string().uuid(),advisorRequestId:z.string().uuid(),conceptId:text,fullBrief:sunoSongBriefSchema,demoBrief:sunoSongBriefSchema,musicJobId:text,status:z.enum(["submitting","queued","running","processing","ready","failed"]),variants:z.array(songDemoVariantSchema),error:z.string().optional()}).strict();
 export type SongDemoRun=z.infer<typeof songDemoRunSchema>;
 export type SongDemoVariant=z.infer<typeof songDemoVariantSchema>;
@@ -411,6 +412,7 @@ export const canvasMusicMvAssembleSnapshotSchema = z
     requestId: z.string().uuid(),
     planRequestId: z.string().uuid(),
     editRevisionId: z.string().uuid().optional(),
+    alignmentRequestId: z.string().uuid().optional(),
     audio: canvasMusicCandidateSchema,
     plan: canvasMusicMvPlanSchema,
     clips: z
@@ -511,6 +513,8 @@ export const canvasMusicMvStateSchema = z
     songAdvisor: sunoSongSessionSchema.optional(),
     songOptimizeExisting: z.boolean().optional(),
     songDemos: z.array(songDemoRunSchema).optional(),
+    songOperations: z.array(songOperationSessionSchema).optional(),
+    songAlignment: z.object({requestId:z.string().uuid(),sourceId:z.string(),srt:z.string(),words:z.array(songAlignedWordSchema)}).strict().optional(),
     selectedSongDemo: z.object({requestId:z.string().uuid(),variantIndex:z.number().int().nonnegative()}).strict().optional(),
     songAdvisorHistory: z.array(sunoSongSessionSchema).optional(),
     songBrief: sunoSongBriefSchema.optional(),

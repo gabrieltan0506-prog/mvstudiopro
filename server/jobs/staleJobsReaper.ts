@@ -130,6 +130,16 @@ export async function reapStaleJobsOnce(
       }
     }
 
+    // 歌曲操作以永久GCS回执恢复原handle；失活只能留行改判失败，绝不删除或自动重建。
+    await db.update(jobs).set({
+      status: "failed",
+      error: "歌曲处理任务已失联或久未领取，原请求、音频与费用回执保留；请核对原任务，未自动重新提交",
+      updatedAt: new Date(),
+    }).where(and(eq(jobs.type, "audio"),
+      sql`${jobs.input}::jsonb->>'action' = 'song_operation'`,
+      or(and(eq(jobs.status, "running"), lt(jobs.updatedAt, runCutoff)),
+        and(eq(jobs.status, "queued"), lt(jobs.createdAt, qCutoff)))));
+
     // 漫剧学习与配乐都有持久检查点/上游 taskId 恢复。创作顾问 running 行还承担
     // 成功结果与退款 CAS 证据，必须交给 paidJobLedger 的专用回收器，不能先删。
     // 小说管理者测试只按最后持久化的真实流活动判失联；永久保留输入和模型证据。
@@ -143,13 +153,13 @@ export async function reapStaleJobsOnce(
 
     // 知识卡两类上面已改判 failed（保留行供前端拿终态），这里不再 DELETE。
     const nonRecoverableRunningJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'novel_workspace_test', 'manhua_episode_optimization_v1',
+      'novel_workspace_test', 'manhua_episode_optimization_v1', 'song_operation',
       'manhua_template_learn', 'manhua_bgm_v55', 'manhua_advisor_qa', 'manhua_assemble_final', 'canvas_dialogue_line', 'wavespeed_qwen_voice', 'canvas_reference_voice',
       'knowledge_card_distill', 'knowledge_card_derive_level'
     )`;
     // 尚未付费确认的顾问 queued 占位没有扣分；过期后仍按通用规则清理，避免永久堆积。
     const nonRecoverableQueuedJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'novel_workspace_test', 'manhua_episode_optimization_v1',
+      'novel_workspace_test', 'manhua_episode_optimization_v1', 'song_operation',
       'manhua_template_learn', 'manhua_bgm_v55', 'manhua_assemble_final',
       'knowledge_card_distill', 'knowledge_card_derive_level'
     )`;

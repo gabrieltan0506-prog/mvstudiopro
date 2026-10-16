@@ -280,6 +280,8 @@ type Props = {
   block: CanvasBlock;
   /** 漫剧工厂简洁模式只保留声音摘要，详细逐轨编辑由用户展开。 */
   compact?: boolean;
+  /** 歌曲工作台混音独立于视频模型的单镜时长限制。 */
+  musicWorkbench?: boolean;
   /** 漫剧工厂当前分段的真实时长；音轨必须覆盖整段，不能按模型上限静默截短。 */
   timelineDurationSec?: number;
   sourceShots?: ManhuaWorkbenchShot[];
@@ -370,6 +372,7 @@ export function CanvasAudioStudio(props: Props) {
 export function CanvasAudioStudioView({
   block,
   compact = false,
+  musicWorkbench = false,
   timelineDurationSec,
   sourceShots,
   dialogueSources = [],
@@ -407,7 +410,8 @@ export function CanvasAudioStudioView({
     }
   };
   const requestedDurationSec = Number(
-    parseManhuaClipTargetDurationSec(block.prompt) ??
+    (musicWorkbench ? timelineDurationSec : undefined) ??
+      parseManhuaClipTargetDurationSec(block.prompt) ??
       timelineDurationSec ??
       block.manhuaAutoSegment?.durationSec ??
       15,
@@ -416,7 +420,7 @@ export function CanvasAudioStudioView({
     ? Math.min(3600, Math.max(1, Math.round(requestedDurationSec * 1000) / 1000))
     : 15;
   const modelMaxDurationSec = manhuaClipMaxDurationSecForVideoModel(block.videoModel);
-  const modelDurationIssue = durationSec > modelMaxDurationSec
+  const modelDurationIssue = !musicWorkbench && durationSec > modelMaxDurationSec
     ? `当前视频生成方式单次最多 ${modelMaxDurationSec} 秒，本段声音仍按完整 ${durationSec} 秒保留。请调整生成方式或重新分段；系统不会静默截断。`
     : "";
   const suggestedMusicPrompt = useMemo(() => manhuaBgmArcFromShots(sourceShots || [], durationSec), [sourceShots, durationSec]);

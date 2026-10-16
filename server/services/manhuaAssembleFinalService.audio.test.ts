@@ -216,3 +216,10 @@ describe("漫剧成片原声入口", () => {
     expect(render).not.toHaveBeenCalled();
   });
 });
+
+it("歌曲对齐字幕经assemble服务透传到真实renderer入口", async () => {
+  const alignedLyrics = { requestId: "33333333-3333-4333-8333-333333333333", sourceId: "song", durationSec: 4, words: [{ text: "歌词", startSec: 1, endSec: 2 }], srt: "1\n00:00:01,000 --> 00:00:02,000\n歌词\n" };
+  const result = await runManhuaAssembleFinal({ clips: [{ episodeIndex: 1, clipUrl: "https://test.invalid/clip.mp4", durationSec: 4 }], musicOnly: true, musicUrl: "https://test.invalid/song.mp3", alignedLyrics });
+  expect(render.mock.calls.at(-1)?.[0]).toMatchObject({ alignedLyrics: { ...alignedLyrics, srt: expect.stringContaining("00:00:01,000 --> 00:00:02,000") } });
+  expect(result.alignedLyrics?.words).toEqual(alignedLyrics.words);
+});
