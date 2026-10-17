@@ -1,3 +1,4 @@
+import { nativeReadVertexPool, nativeReadEvolinkPool } from "./manhuaNativeReadRoutePool.js";
 import { defaultPreparedMediaCacheDeps, readPreparedMedia, writePreparedMedia, type PreparedMediaCacheDeps, type PreparedMediaVideo } from "./manhuaNativePreparedMediaCache.js";
 import { TEMPLATE_METHOD_BRIEF_INSTRUCTION, mergeTemplateMethodBriefs } from "../../shared/manhuaTemplateMethodBrief";
 import { buildManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
@@ -158,7 +159,8 @@ export const NATIVE_DEEP_READ_MODEL = MANHUA_NATIVE_DEEP_READ_MODEL;
 /** 主线：Vertex 服务账号直读 gs://（音频链路已实弹证明无需签名 URL）。 */
 export const NATIVE_DEEP_READ_ROUTE_VERTEX = "vertex_gcs_video" as const;
 /**
- * 兜底：EvoLink Gemini 3.1 Pro（Google 原生 generateContent 同构端点）。
+ * 当前3.8 Flash为并行首发通道（同构generateContent，HTTPS媒体引用）。
+ * 以下为历史3.1 Pro实测，不能推定3.8 Flash的有效采样率：
  * 0826 实弹：❌ gs:// 读不了（超时）；✅ GCS V4 签名 https URL 200/43s；
  * ⚠️ EvoLink 忽略 videoMetadata.fps（同段 fps5 输入仅 32,771 tok vs Vertex
  * 128,926）——即按默认 1fps 抽帧，兜底属**降采样降级模式**，门禁照跑，宁缺勿滥。
@@ -5293,7 +5295,7 @@ function isNativeDeepReadResourceExhausted(error: unknown): boolean {
 /** 路由标签必须反映本次任务实际读片模型，不得写死（0904：选 flash 曾显示 3.1 Pro）。 */
 function routeLabelZh(route: NativeDeepReadVisualRoute, readModel: ManhuaNativeDeepReadModelId): string {
   const model = MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[readModel] ?? readModel;
-  if (route === NATIVE_DEEP_READ_ROUTE_EVOLINK) return `EvoLink ${model} 视频精读（兜底）`;
+  if (route === NATIVE_DEEP_READ_ROUTE_EVOLINK) return `EvoLink ${model} 视频精读`;
   if (route === NATIVE_DEEP_READ_ROUTE_GEMINI_API) return `AI Studio ${model} 视频精读（Files API 兜底）`;
   return `Vertex ${model} 视频精读`;
 }
@@ -5377,6 +5379,8 @@ async function executeNativeDeepReadBatch(
     throw new Error("重学执行身份无效，未发出模型请求");
   }
   const readModel = parseNativeDeepReadModel(params.readModel);
+  // 当前用户指定的3.8 Flash双通道；Argon与历史模型保持各自已有合同。
+  const dualReadRoutes = readModel === "gemini-3.8-flash";
   if (params.structuringOnly && (!params.segmentCacheSeriesKey || params.episodes.length !== 1 || diagnosticSelection)) throw new Error("仅重新整形必须绑定单集完整证据");
   if (!params.episodes.length) throw new Error("多视频精读批次为空");
   if (diagnosticSelection && (params.episodes.length !== 1 || !params.preservePreparedVideos
@@ -5852,7 +5856,7 @@ async function executeNativeDeepReadBatch(
         const attemptModel = input.model ?? readModel;
         let callId: string = crypto.randomUUID();
         const startedAt = Date.now();
-        const degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK;
+        let degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK && attemptModel !== "gemini-3.8-flash";
         let modelCallStarted = false;
         let recoveredPaidEvidence = false;
         let evidenceBatchRequestId: string = episodeRequestId;
@@ -5914,6 +5918,7 @@ async function executeNativeDeepReadBatch(
               visualRoute: input.route,
             };
             let recovered = await deps.readRawAttemptEvidence(recoveryInput);
+            // 证据对象身份本来就不含路由，换通道仍复用同一份已付费响应。
             if (!recovered && legacyRequestFingerprint) {
               recovered = await deps.readRawAttemptEvidence({ ...recoveryInput, requestFingerprint: legacyRequestFingerprint });
               if (recovered) requestFingerprint = legacyRequestFingerprint;
@@ -5923,6 +5928,8 @@ async function executeNativeDeepReadBatch(
               callId = recovered.callId;
               evidenceBatchRequestId = recovered.batchRequestId;
               evidenceVisualRoute = recovered.visualRoute;
+              input.route = recovered.visualRoute;
+              degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK && attemptModel !== "gemini-3.8-flash";
               response = {
                 status: recovered.httpStatus,
                 text: recovered.responseText,
@@ -5942,25 +5949,37 @@ async function executeNativeDeepReadBatch(
             }
           }
           if (!recoveredPaidEvidence) {
-            await emitVisualModelReceipt({
-              callId,
-              model: attemptModel,
-              route: input.route,
-              stage: "visual_model",
-              status: "started",
-              batchRequestId: episodeRequestId,
-              episodeIndexes: [episode.episodeIndex],
-              chunkIndex: input.segmentIndex,
-              segmentCount: episode.segments.length,
-              videoCount: 1,
-              attemptNumber: input.attemptNumber,
-              temperature: input.temperature,
-              degraded: degraded || undefined,
-            }, params.onModelReceipt);
-            modelCallStarted = true;
-            response = await (input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
-              ? deps.postEvolink(body, params.abortSignal, segmentContext, attemptModel)
-              : deps.postVertex(body, params.abortSignal, segmentContext, attemptModel));
+            const pool = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK ? nativeReadEvolinkPool : nativeReadVertexPool;
+            response = await pool.run(async () => {
+              if (stopSchedulingSegments) throw new Error("兄弟分片已失败，停止尚未发出的学习请求");
+              // 等到槽位后才签名，避免排队消耗链接有效期；签名只留服务端请求内存。
+              const requestBody = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
+                ? { ...body, contents: [{ role: "user", parts: [
+                  { fileData: { fileUri: deps.signReadUrl(input.fileUri, 3600), mimeType: "video/mp4" }, videoMetadata: { fps: input.fps } },
+                  (body.contents as Array<{ parts: unknown[] }>)[0]!.parts[1],
+                ] }] }
+                : body;
+              await emitVisualModelReceipt({
+                callId,
+                model: attemptModel,
+                route: input.route,
+                stage: "visual_model",
+                status: "started",
+                batchRequestId: episodeRequestId,
+                episodeIndexes: [episode.episodeIndex],
+                chunkIndex: input.segmentIndex,
+                segmentCount: episode.segments.length,
+                videoCount: 1,
+                attemptNumber: input.attemptNumber,
+                temperature: input.temperature,
+                degraded: degraded || undefined,
+              }, params.onModelReceipt);
+              params.abortSignal?.throwIfAborted();
+              modelCallStarted = true;
+              return input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
+                ? deps.postEvolink(requestBody, params.abortSignal, segmentContext, attemptModel)
+                : deps.postVertex(requestBody, params.abortSignal, segmentContext, attemptModel);
+            }, params.abortSignal);
           }
           if (!response) throw new Error("原生精读响应缺失，已停止且不得自动重试");
           if (response.status >= 300) {
@@ -6499,6 +6518,12 @@ async function executeNativeDeepReadBatch(
             } catch (error) {
               if (params.abortSignal?.aborted) throw error;
               if (error instanceof Error && error.name === "NativeDeepReadEvidencePersistenceError") throw error;
+              if (dualReadRoutes && input.route === NATIVE_DEEP_READ_ROUTE_VERTEX
+                && [429, 503].includes(Number((error as HttpFailure)?.nativeDeepReadHttpStatus))) {
+                // Vertex槽位已释放；同一分片/温度转入共享六路池，后续门禁重试保留此路由。
+                input.route = NATIVE_DEEP_READ_ROUTE_EVOLINK;
+                continue;
+              }
               if (isNativeDeepReadResourceExhausted(error)) {
                 if (resourceRetryCount >= NATIVE_DEEP_READ_RESOURCE_RETRY_MAX) throw error;
                 resourceRetryCount += 1;
@@ -6626,7 +6651,7 @@ async function executeNativeDeepReadBatch(
         throw retryError;
       };
 
-      const processSegment = async (segmentIndex: number): Promise<void> => {
+      const processSegment = async (segmentIndex: number, initialRoute: NativeDeepReadVisualRoute = NATIVE_DEEP_READ_ROUTE_VERTEX): Promise<void> => {
         params.abortSignal?.throwIfAborted();
         const segment = episode.segments[segmentIndex]!;
         let cachedEntry = cachedSegments.get(segmentIndex);
@@ -6697,7 +6722,7 @@ async function executeNativeDeepReadBatch(
         }
         const fps = resolveNativeDeepReadRequestFps(video.endSec - video.startSec, episode.videoFps);
         const result = await attemptWithSegmentRetry({
-          route: NATIVE_DEEP_READ_ROUTE_VERTEX,
+          route: initialRoute,
           fileUri: video.gsUri,
           segmentIndex,
           fps,
@@ -6744,7 +6769,7 @@ async function executeNativeDeepReadBatch(
             model: readModel,
             requestedFps: fps,
             visualRoute: result.visualRoute,
-            degraded: result.visualRoute === NATIVE_DEEP_READ_ROUTE_EVOLINK,
+            degraded: result.visualRoute === NATIVE_DEEP_READ_ROUTE_EVOLINK && readModel !== "gemini-3.8-flash",
             raw: result.raw,
             attemptSelection: result.attemptSelection,
             rawAttemptEvidenceObjectName: result.rawAttemptEvidenceObjectName,
@@ -6793,18 +6818,19 @@ async function executeNativeDeepReadBatch(
       const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
       const scheduledSegmentIndexes = selectedSegmentIndexes ?? episode.segments.map((_, index) => index);
       let nextSegmentIndex = 0;
-      // 0904 用户令：最多同时 4 片（原 5，为压 503 下调）；调用方只能调低，不能抬高生产上限。
+      // 3.8 Flash首发五路Vertex、六路Evolink；显式诊断并发仍只允许调低。
+      const modelCap = dualReadRoutes ? 11 : NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY;
       const segmentModelCap = Math.min(
-        NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY,
-        Math.max(1, Math.floor(Number(params.segmentModelConcurrency)
-          || NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY)),
+        modelCap,
+        Math.max(1, Math.floor(Number(params.segmentModelConcurrency) || modelCap)),
       );
       const segmentConcurrency = Math.min(segmentModelCap, scheduledSegmentIndexes.length);
       console.info(
         `[nativeDeepRead] 第${episode.episodeIndex}集模型扇出并发 ${segmentConcurrency}/${scheduledSegmentIndexes.length} 片`
         + (selectedSegmentIndexes ? `（诊断原索引 ${selectedSegmentIndexes.join(",")}，全片共${segmentCount}段）` : ""),
       );
-      const segmentWorkers = Array.from({ length: segmentConcurrency }, async () => {
+      const segmentWorkers = Array.from({ length: segmentConcurrency }, async (_, workerIndex) => {
+        const route = dualReadRoutes && workerIndex >= 5 ? NATIVE_DEEP_READ_ROUTE_EVOLINK : NATIVE_DEEP_READ_ROUTE_VERTEX;
         while (!stopSchedulingSegments) {
           const position = nextSegmentIndex;
           nextSegmentIndex += 1;
@@ -6812,7 +6838,7 @@ async function executeNativeDeepReadBatch(
           const segmentIndex = scheduledSegmentIndexes[position]!;
           if (committedIndexes.includes(segmentIndex)) continue;
           try {
-            await processSegment(segmentIndex);
+            await processSegment(segmentIndex, route);
           } catch (error) {
             segmentFailures.push({ segmentIndex, error });
             // 已发出的兄弟请求必须等回执；尚未发出的长集后续段停止，避免继续烧钱。
