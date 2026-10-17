@@ -1,4 +1,4 @@
-import { nativeReadVertexPool, nativeReadEvolinkPool } from "./manhuaNativeReadRoutePool.js";
+import { nativeReadRouteScheduler } from "./manhuaNativeReadRoutePool.js";
 import { defaultPreparedMediaCacheDeps, readPreparedMedia, writePreparedMedia, type PreparedMediaCacheDeps, type PreparedMediaVideo } from "./manhuaNativePreparedMediaCache.js";
 import { TEMPLATE_METHOD_BRIEF_INSTRUCTION, mergeTemplateMethodBriefs } from "../../shared/manhuaTemplateMethodBrief";
 import { buildManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpload.js";
@@ -2279,6 +2279,8 @@ async function prepareEpisodeVideosUncached(
     onSourceFetchProgress?: (zh: string) => void | Promise<void>;
     /** 0920 用户令：切满这么多片就先传先读（缺省 5）。 */
     preparedGroupSize?: number;
+    /** 当前Flash首组5、次组6，其后逐片补位；末项用于后续全部组。 */
+    preparedGroupSizes?: readonly number[];
     /**
      * 0920 用户令：每组上传完成即回调，调用方可以立刻开始读这几片，不等整集备完。
      * 回调抛错视为备料失败（调用方已经开始读，必须让备料方停下来）。
@@ -2308,7 +2310,7 @@ async function prepareEpisodeVideosUncached(
       let consumedGroups = 0;
       let lastMessage: string | undefined;
       return dispatchHeavyMedia<PreparedNativeVideo[]>({ kind: "learn_prepare", episode: { ...serializable, localVideoUpload }, nodes, stagedSource,
-        limits: { cutConcurrency: limits?.cutConcurrency, uploadConcurrency: limits?.uploadConcurrency, preparedGroupSize: limits?.preparedGroupSize } }, {
+        limits: { cutConcurrency: limits?.cutConcurrency, uploadConcurrency: limits?.uploadConcurrency, preparedGroupSize: limits?.preparedGroupSize, preparedGroupSizes: limits?.preparedGroupSizes } }, {
         signal: abortSignal,
         onProgress: async (progress, reply) => {
           consumedGroups = Math.max(consumedGroups, progress.acknowledgedGroups ?? 0);
@@ -2640,13 +2642,18 @@ async function prepareEpisodeVideosUncached(
         segmentIndex: index, video: prepared[index]!,
       })));
     };
+    let uploadedGroupCount = 0;
     const uploadPump = (async () => {
       while (true) {
         if (uploadFailure !== undefined || cutFailed) return;
+        const configuredSizes = limits?.preparedGroupSizes;
+        const currentGroupSize = configuredSizes?.length
+          ? Math.max(1, Math.floor(configuredSizes[Math.min(uploadedGroupCount, configuredSizes.length - 1)]!)) : groupSize;
         const takeAll = cuttingFinished || stopSchedulingCuts;
-        if (readyQueue.length >= groupSize || (takeAll && readyQueue.length > 0)) {
-          const take = readyQueue.length >= groupSize ? groupSize : readyQueue.length;
+        if (readyQueue.length >= currentGroupSize || (takeAll && readyQueue.length > 0)) {
+          const take = readyQueue.length >= currentGroupSize ? currentGroupSize : readyQueue.length;
           await uploadGroup(readyQueue.splice(0, take));
+          uploadedGroupCount += 1;
           continue;
         }
         if (takeAll) return;
@@ -5581,6 +5588,7 @@ async function executeNativeDeepReadBatch(
             uploadConcurrency: process.env.JOB_WORKER_ROLE === "rig" ? Math.min(2, params.mediaUploadConcurrency || 2) : params.mediaUploadConcurrency,
             onSourceFetchProgress: params.onMediaProgressZh,
             preparedGroupSize: NATIVE_DEEP_READ_PREPARED_GROUP_SIZE,
+            preparedGroupSizes: dualReadRoutes ? [5, 6, 1] : undefined,
             onPreparedGroup: (rows) => {
               // 备料层给的是「本次请求内的段号」＝ selectedSegments 的下标，换回真实段号
               registerPreparedGroup(rows.map((row) => ({
@@ -5949,8 +5957,7 @@ async function executeNativeDeepReadBatch(
             }
           }
           if (!recoveredPaidEvidence) {
-            const pool = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK ? nativeReadEvolinkPool : nativeReadVertexPool;
-            response = await pool.run(async () => {
+            response = await (async () => {
               if (stopSchedulingSegments) throw new Error("兄弟分片已失败，停止尚未发出的学习请求");
               // 等到槽位后才签名，避免排队消耗链接有效期；签名只留服务端请求内存。
               const requestBody = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
@@ -5979,7 +5986,7 @@ async function executeNativeDeepReadBatch(
               return input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
                 ? deps.postEvolink(requestBody, params.abortSignal, segmentContext, attemptModel)
                 : deps.postVertex(requestBody, params.abortSignal, segmentContext, attemptModel);
-            }, params.abortSignal);
+            })();
           }
           if (!response) throw new Error("原生精读响应缺失，已停止且不得自动重试");
           if (response.status >= 300) {
@@ -6456,7 +6463,7 @@ async function executeNativeDeepReadBatch(
         };
       };
       const attemptWithSegmentRetry = async (input: {
-        route: NativeDeepReadVisualRoute;
+        route: NativeDeepReadVisualRoute | "available";
         fileUri: string;
         segmentIndex: number;
         fps: number;
@@ -6506,14 +6513,18 @@ async function executeNativeDeepReadBatch(
           let resourceRetryCount = 0;
           while (true) {
             try {
-              const accepted = await attemptSegment({
-                ...input,
-                attemptNumber,
-                // 0920 升级档：这一发实际用哪个读片模型由梯度决定（首读档 / 3.1 Pro 升级档）
-                model: gradientModel,
-                temperature,
-                rejectedReasonZh,
-              });
+              const accepted = await nativeReadRouteScheduler.run(
+                input.route === "available" ? undefined : input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK ? "evolink" : "vertex",
+                async (route) => {
+                  input.route = route === "evolink" ? NATIVE_DEEP_READ_ROUTE_EVOLINK : NATIVE_DEEP_READ_ROUTE_VERTEX;
+                  return attemptSegment({
+                    ...input, route: input.route,
+                    attemptNumber,
+                    model: gradientModel,
+                    temperature,
+                    rejectedReasonZh,
+                  });
+              }, params.abortSignal);
               return attemptNumber > 1 ? await applyRetryDraftMerge(input.segmentIndex, attemptNumber, accepted, true) : accepted;
             } catch (error) {
               if (params.abortSignal?.aborted) throw error;
@@ -6651,7 +6662,7 @@ async function executeNativeDeepReadBatch(
         throw retryError;
       };
 
-      const processSegment = async (segmentIndex: number, initialRoute: NativeDeepReadVisualRoute = NATIVE_DEEP_READ_ROUTE_VERTEX): Promise<void> => {
+      const processSegment = async (segmentIndex: number, initialRoute: NativeDeepReadVisualRoute | "available" = NATIVE_DEEP_READ_ROUTE_VERTEX): Promise<void> => {
         params.abortSignal?.throwIfAborted();
         const segment = episode.segments[segmentIndex]!;
         let cachedEntry = cachedSegments.get(segmentIndex);
@@ -6817,7 +6828,8 @@ async function executeNativeDeepReadBatch(
       }
       const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
       const scheduledSegmentIndexes = selectedSegmentIndexes ?? episode.segments.map((_, index) => index);
-      let nextSegmentIndex = 0;
+      const pendingSegmentIndexes = new Set(scheduledSegmentIndexes.filter(index => !committedIndexes.includes(index)));
+      let routeOrdinal = 0;
       // 3.8 Flash首发五路Vertex、六路Evolink；显式诊断并发仍只允许调低。
       const modelCap = dualReadRoutes ? 11 : NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY;
       const segmentModelCap = Math.min(
@@ -6829,15 +6841,28 @@ async function executeNativeDeepReadBatch(
         `[nativeDeepRead] 第${episode.episodeIndex}集模型扇出并发 ${segmentConcurrency}/${scheduledSegmentIndexes.length} 片`
         + (selectedSegmentIndexes ? `（诊断原索引 ${selectedSegmentIndexes.join(",")}，全片共${segmentCount}段）` : ""),
       );
-      const segmentWorkers = Array.from({ length: segmentConcurrency }, async (_, workerIndex) => {
-        const route = dualReadRoutes && workerIndex >= 5 ? NATIVE_DEEP_READ_ROUTE_EVOLINK : NATIVE_DEEP_READ_ROUTE_VERTEX;
+      const segmentWorkers = Array.from({ length: segmentConcurrency }, async () => {
         while (!stopSchedulingSegments) {
-          const position = nextSegmentIndex;
-          nextSegmentIndex += 1;
-          if (position >= scheduledSegmentIndexes.length) return;
-          const segmentIndex = scheduledSegmentIndexes[position]!;
-          if (committedIndexes.includes(segmentIndex)) continue;
+          let segmentIndex = -1;
           try {
+            // 只领取已经上传的片；不能让某个慢切片占住空闲读片通道。
+            while (pendingSegmentIndexes.size && !stopSchedulingSegments) {
+              const readyIndex = Array.from(pendingSegmentIndexes).find(index => videosBySegment.has(index));
+              if (readyIndex !== undefined) {
+                segmentIndex = readyIndex;
+                pendingSegmentIndexes.delete(readyIndex);
+                break;
+              }
+              await Promise.race(Array.from(pendingSegmentIndexes).map(index => {
+                const gate = segmentReady?.get(index);
+                if (!gate) throw new Error(`第${index + 1}段缺少备料就绪闸，已停止`);
+                return gate.promise;
+              }));
+            }
+            if (segmentIndex < 0 || stopSchedulingSegments) return;
+            const ordinal = routeOrdinal++;
+            const route = !dualReadRoutes || ordinal < 5 ? NATIVE_DEEP_READ_ROUTE_VERTEX
+              : ordinal < 11 ? NATIVE_DEEP_READ_ROUTE_EVOLINK : "available";
             await processSegment(segmentIndex, route);
           } catch (error) {
             segmentFailures.push({ segmentIndex, error });

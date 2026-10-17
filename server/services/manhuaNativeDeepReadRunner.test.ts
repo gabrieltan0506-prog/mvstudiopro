@@ -6690,3 +6690,92 @@ it("3.8双通道恢复已有Vertex原稿，零外呼且沿用真实路由", asyn
   expect(vi.mocked(deps.writeSegmentCache).mock.calls.every(([entry]) => entry.visualRoute === "vertex_gcs_video")).toBe(true);
   expect(vi.mocked(deps.readRawAttemptEvidence).mock.calls.some(([input]) => input.visualRoute === "evolink_gemini_video")).toBe(true);
 });
+
+
+it("备料首五片、次六片、其后逐片上传回调", async () => {
+  const groups: number[][] = [];
+  const segments = Array.from({ length: 13 }, (_, index) => ({ startSec: index * 10, endSec: (index + 1) * 10 }));
+  await prepareEpisodeVideos({ episodeIndex: 1, resolveNodes: async () => [{ url: "https://cdn.example/video.mp4" }],
+    segments, sourceDurationSec: 130 }, undefined, makePreparationDeps(), {
+      preparedGroupSizes: [5, 6, 1], onPreparedGroup: rows => { groups.push(rows.map(row => row.segmentIndex)); },
+    });
+  expect(groups.map(group => group.length)).toEqual([5, 6, 1, 1]);
+  expect(groups.flat().sort((a, b) => a - b)).toEqual(segments.map((_, index) => index));
+});
+
+it.each(["vertex", "evolink"] as const)("先五后六分批备料，%s先空时续片直接补该通道", async (freeRoute) => {
+  const segments = Array.from({ length: 13 }, (_, index) => ({ startSec: index * 30, endSec: (index + 1) * 30 }));
+  const second = deferred(), rest = deferred();
+  const calls: Array<{ route: string; index: number; release: () => void }> = [];
+  let open = false;
+  const post = (route: string) => vi.fn(async (_body: unknown, _signal?: AbortSignal, ctx?: any) => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    calls.push({ route, index: ctx.segmentIndex, release });
+    if (!open) await gate;
+    return geminiResponse(makeSegmentPayload({ segmentIndex: ctx.segmentIndex, ...segments[ctx.segmentIndex]! }));
+  });
+  const deps = makeRunnerDeps({ postVertex: post("vertex"), postEvolink: post("evolink"),
+    prepareVideos: vi.fn(async (_episode, _signal, _deps, limits) => {
+      expect(limits?.preparedGroupSizes).toEqual([5, 6, 1]);
+      const videos = segments.map((segment, index) => ({ ...segment, gsUri: `gs://test-bucket/seg-${index}.mp4`,
+        temporaryGcs: { bucket: "test-bucket", objectName: `seg-${index}.mp4` }, bytes: 100000, hasAudio: true }));
+      const send = async (indexes: number[]) => limits?.onPreparedGroup?.(indexes.map(index => ({ segmentIndex: index, video: videos[index]! })));
+      // 0/1切得较慢，先就绪的五片仍立即进入Vertex，不等待原索引队头。
+      await send([2, 3, 4, 5, 6]);
+      await second.promise;
+      await send([0, 1, 7, 8, 9, 10]);
+      await rest.promise;
+      await send([11]); await send([12]);
+      return videos;
+    }) });
+  const run = runManhuaNativeDeepReadBatch({ readModel: "gemini-3.8-flash",
+    episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 390 }] }, deps);
+  try {
+    await vi.waitFor(() => expect(calls).toHaveLength(5));
+    expect(calls.map(call => call.route)).toEqual(Array(5).fill("vertex"));
+    expect(calls.map(call => call.index)).toEqual([2, 3, 4, 5, 6]);
+    second.resolve();
+    await vi.waitFor(() => expect(calls).toHaveLength(11));
+    expect(calls.slice(5).map(call => call.route)).toEqual(Array(6).fill("evolink"));
+    calls.find(call => call.route === freeRoute)!.release();
+    rest.resolve();
+    await vi.waitFor(() => expect(calls).toHaveLength(12));
+    expect(calls[11]!.index).toBe(11);
+    expect(calls[11]!.route).toBe(freeRoute);
+  } finally {
+    open = true; second.resolve(); rest.resolve(); calls.forEach(call => call.release());
+    await run;
+  }
+  expect(calls).toHaveLength(13);
+});
+
+
+it("网络中断后续读只请求缺失片，五片成功缓存不重新调用模型", async () => {
+  const segments = Array.from({ length: 6 }, (_, index) => ({ startSec: index * 30, endSec: (index + 1) * 30 }));
+  const cache = new Map<number, NativeDeepReadSegmentCacheEntry>();
+  let shouldFail = true;
+  const requested: number[] = [];
+  const post = vi.fn(async (_body: unknown, _signal?: AbortSignal, context?: any) => {
+    requested.push(context.segmentIndex);
+    if (shouldFail && context.segmentIndex === 5) {
+      await vi.waitFor(() => expect(cache.size).toBe(5));
+      throw new Error("socket hang up");
+    }
+    return geminiResponse(makeSegmentPayload({ segmentIndex: context.segmentIndex, ...segments[context.segmentIndex]! }));
+  });
+  const deps = makeRunnerDeps({ postVertex: post, postEvolink: post,
+    readSegmentCache: vi.fn(async input => { const entry = cache.get(input.segmentIndex); return entry ? { entry, objectName: `test-cache/seg${input.segmentIndex}.json`, generation: "1" } : null; }),
+    writeSegmentCache: vi.fn(async entry => { cache.set(entry.segmentIndex, entry); return writeResultOf(entry); }),
+  });
+  const params = { readModel: "gemini-3.8-flash" as const, segmentCacheSeriesKey: "dual_resume",
+    episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "c".repeat(64) }] };
+  await expect(runManhuaNativeDeepReadBatch(params, deps)).rejects.toThrow("socket hang up");
+  expect(cache.size).toBe(5);
+  expect(requested.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5]);
+  shouldFail = false; requested.length = 0;
+  const result = await runManhuaNativeDeepReadBatch(params, deps);
+  expect(requested).toEqual([5]);
+  expect(cache.size).toBe(6);
+  expect(result.episodes).toHaveLength(1);
+});

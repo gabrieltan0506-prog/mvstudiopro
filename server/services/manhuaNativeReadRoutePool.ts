@@ -1,23 +1,35 @@
-/** 同一 worker 进程内所有学习任务共享容量；迁移请求也必须排队。 */
-export class NativeReadRoutePool {
-  private active = 0;
-  private readonly queue: Array<{ grant: () => void; signal?: AbortSignal; abort: () => void }> = [];
-  constructor(readonly capacity: number) {}
+export type NativeReadPoolRoute = "vertex" | "evolink";
 
-  private acquire(signal?: AbortSignal): Promise<() => void> {
+/** 同一worker进程共享两路容量；首批指定通道，续片在实际空位出现时才分配。 */
+export class NativeReadRouteScheduler {
+  private readonly active = { vertex: 0, evolink: 0 };
+  private readonly queue: Array<{
+    preferred?: NativeReadPoolRoute;
+    grant: (route: NativeReadPoolRoute) => void;
+    abort: () => void;
+  }> = [];
+  constructor(private readonly capacity = { vertex: 5, evolink: 6 }) {}
+
+  acquire(preferred?: NativeReadPoolRoute, signal?: AbortSignal): Promise<{ route: NativeReadPoolRoute; release: () => void }> {
     signal?.throwIfAborted();
     return new Promise((resolve, reject) => {
       const waiter = {
-        signal,
+        preferred,
         abort: () => {
           const index = this.queue.indexOf(waiter);
           if (index >= 0) this.queue.splice(index, 1);
           reject(signal?.reason ?? new Error("学习请求已取消"));
         },
-        grant: () => {
+        grant: (route: NativeReadPoolRoute) => {
           signal?.removeEventListener("abort", waiter.abort);
-          this.active += 1;
-          resolve(() => { this.active -= 1; this.drain(); });
+          this.active[route] += 1;
+          let released = false;
+          resolve({ route, release: () => {
+            if (released) return;
+            released = true;
+            this.active[route] -= 1;
+            this.drain();
+          } });
         },
       };
       signal?.addEventListener("abort", waiter.abort, { once: true });
@@ -27,15 +39,21 @@ export class NativeReadRoutePool {
   }
 
   private drain(): void {
-    while (this.active < this.capacity && this.queue.length) this.queue.shift()!.grant();
+    for (let index = 0; index < this.queue.length;) {
+      const waiter = this.queue[index]!;
+      const routes: NativeReadPoolRoute[] = waiter.preferred ? [waiter.preferred] : ["vertex", "evolink"];
+      const route = routes.find(name => this.active[name] < this.capacity[name]);
+      if (!route) { index += 1; continue; }
+      this.queue.splice(index, 1);
+      waiter.grant(route);
+    }
   }
 
-  async run<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    const release = await this.acquire(signal);
-    try { signal?.throwIfAborted(); return await operation(); }
-    finally { release(); }
+  async run<T>(preferred: NativeReadPoolRoute | undefined, operation: (route: NativeReadPoolRoute) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const lease = await this.acquire(preferred, signal);
+    try { signal?.throwIfAborted(); return await operation(lease.route); }
+    finally { lease.release(); }
   }
 }
 
-export const nativeReadVertexPool = new NativeReadRoutePool(5);
-export const nativeReadEvolinkPool = new NativeReadRoutePool(6);
+export const nativeReadRouteScheduler = new NativeReadRouteScheduler();
