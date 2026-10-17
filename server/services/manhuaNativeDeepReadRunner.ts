@@ -6530,7 +6530,7 @@ async function executeNativeDeepReadBatch(
               if (params.abortSignal?.aborted) throw error;
               if (error instanceof Error && error.name === "NativeDeepReadEvidencePersistenceError") throw error;
               if (dualReadRoutes && input.route === NATIVE_DEEP_READ_ROUTE_VERTEX
-                && [429, 503].includes(Number((error as HttpFailure)?.nativeDeepReadHttpStatus))) {
+                && [429, 500, 503].includes(Number((error as HttpFailure)?.nativeDeepReadHttpStatus))) {
                 // Vertex槽位已释放；同一分片/温度转入共享六路池，后续门禁重试保留此路由。
                 input.route = NATIVE_DEEP_READ_ROUTE_EVOLINK;
                 continue;

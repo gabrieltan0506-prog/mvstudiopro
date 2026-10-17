@@ -6617,7 +6617,7 @@ describe("3.8 Flash学习五加六真实调度", () => {
   const segments = Array.from({ length: 22 }, (_, index) => ({ startSec: index * 30, endSec: (index + 1) * 30 }));
   const episode = { episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 660 };
 
-  it.each([0, 429, 503])("在途峰值5+6且Vertex状态%s迁移不突破六路", async (failureStatus) => {
+  it.each([0, 429, 500, 503])("在途峰值5+6且Vertex状态%s迁移不突破六路", async (failureStatus) => {
     const active = { vertex: 0, evolink: 0 };
     const peak = { vertex: 0, evolink: 0 };
     const calls: Array<{ route: string; index: number; body: any }> = [];
