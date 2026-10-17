@@ -5289,8 +5289,8 @@ export function readCurrentQwenAttemptSelection(
   return value as NativeDeepReadQwenSelectionMarker;
 }
 
-/** 收到明确 HTTP 失败响应的错误（结果确定），可按路由铁律换通道重试。 */
-type HttpFailure = Error & { nativeDeepReadHttpStatus?: number };
+/** 外呼失败来源与HTTP状态分开记录，避免本地门禁/持久化错误触发换通道。 */
+type HttpFailure = Error & { nativeDeepReadHttpStatus?: number; nativeDeepReadUpstreamFailure?: boolean };
 
 function isNativeDeepReadResourceExhausted(error: unknown): boolean {
   const status = Number((error as HttpFailure | undefined)?.nativeDeepReadHttpStatus);
@@ -5312,9 +5312,12 @@ function routeLabelZh(route: NativeDeepReadVisualRoute, readModel: ManhuaNativeD
  * 门禁失败按五发档位重读，间隔 18 秒（RETRY_INTERVAL_MS）；Argon 同样发送对应温度。
  * 503/429/RESOURCE_EXHAUSTED 走另一条线：隔 18 秒（RESOURCE_RETRY_INTERVAL_MS）
  * 保持当前温度重试，最多 4 次（RESOURCE_RETRY_MAX），不消耗降档次数。
- * 用户中止、证据保存失败和其他传输错误立即终止。
+ * 3.8Flash的Vertex上游失败立即转Evolink；其他模型保留既有重试。
+ * 用户中止和证据保存失败立即终止。
  */
 export type NativeDeepReadBatchRunParams = {
+  /** 仅服务端核实失败恢复时使用；不参与付费证据或缓存身份。 */
+  evolinkOnly?: boolean;
   relearnRequestId?: string;
   structuringOnly?: boolean;
   episodes: readonly NativeDeepReadBatchRunEpisode[];
@@ -5388,6 +5391,8 @@ async function executeNativeDeepReadBatch(
   const readModel = parseNativeDeepReadModel(params.readModel);
   // 当前用户指定的3.8 Flash双通道；Argon与历史模型保持各自已有合同。
   const dualReadRoutes = readModel === "gemini-3.8-flash";
+  const evolinkOnly = params.evolinkOnly === true;
+  if (evolinkOnly && (!dualReadRoutes || params.relearnRequestId)) throw new Error("失败续跑Evolink通道仅限3.8Flash原任务恢复");
   if (params.structuringOnly && (!params.segmentCacheSeriesKey || params.episodes.length !== 1 || diagnosticSelection)) throw new Error("仅重新整形必须绑定单集完整证据");
   if (!params.episodes.length) throw new Error("多视频精读批次为空");
   if (diagnosticSelection && (params.episodes.length !== 1 || !params.preservePreparedVideos
@@ -5588,7 +5593,7 @@ async function executeNativeDeepReadBatch(
             uploadConcurrency: process.env.JOB_WORKER_ROLE === "rig" ? Math.min(2, params.mediaUploadConcurrency || 2) : params.mediaUploadConcurrency,
             onSourceFetchProgress: params.onMediaProgressZh,
             preparedGroupSize: NATIVE_DEEP_READ_PREPARED_GROUP_SIZE,
-            preparedGroupSizes: dualReadRoutes ? [5, 6, 1] : undefined,
+            preparedGroupSizes: evolinkOnly ? [6, 1] : dualReadRoutes ? [5, 6, 1] : undefined,
             onPreparedGroup: (rows) => {
               // 备料层给的是「本次请求内的段号」＝ selectedSegments 的下标，换回真实段号
               registerPreparedGroup(rows.map((row) => ({
@@ -5983,13 +5988,27 @@ async function executeNativeDeepReadBatch(
               }, params.onModelReceipt);
               params.abortSignal?.throwIfAborted();
               modelCallStarted = true;
-              return input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
-                ? deps.postEvolink(requestBody, params.abortSignal, segmentContext, attemptModel)
-                : deps.postVertex(requestBody, params.abortSignal, segmentContext, attemptModel);
+              try {
+                return await (input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK
+                  ? deps.postEvolink(requestBody, params.abortSignal, segmentContext, attemptModel)
+                  : deps.postVertex(requestBody, params.abortSignal, segmentContext, attemptModel));
+              } catch (error) {
+                // 只给真正外呼的失败标记来源；签名、回执、缓存和本地门禁不经过此catch。
+                if (params.abortSignal?.aborted) throw error;
+                const failure = (error instanceof Error ? error : new Error(String(error))) as HttpFailure;
+                failure.nativeDeepReadUpstreamFailure = true;
+                throw failure;
+              }
             })();
           }
           if (!response) throw new Error("原生精读响应缺失，已停止且不得自动重试");
-          if (response.status >= 300) {
+          // HTTP成功但明确返回上游error envelope也属于失败；JSON/内容门禁仍走原恢复逻辑。
+          let providerErrorEnvelope = false;
+          try {
+            const envelope = JSON.parse(response.text);
+            providerErrorEnvelope = Boolean(envelope && typeof envelope === "object" && envelope.error && !envelope.candidates?.length);
+          } catch { /* 非JSON成功响应交给后续解析，不能冒充上游HTTP失败。 */ }
+          if (response.status < 200 || response.status >= 300 || providerErrorEnvelope) {
             const providerError = parseNativeProviderErrorReceipt({
               httpStatus: response.status,
               responseText: response.text,
@@ -6000,6 +6019,7 @@ async function executeNativeDeepReadBatch(
               providerError,
             ) as HttpFailure;
             failure.nativeDeepReadHttpStatus = response.status;
+            failure.nativeDeepReadUpstreamFailure = true;
             throw failure;
           }
           if (!recoveredPaidEvidence && params.segmentCacheSeriesKey && episode.cacheSourceDigest && requestFingerprint) {
@@ -6530,7 +6550,7 @@ async function executeNativeDeepReadBatch(
               if (params.abortSignal?.aborted) throw error;
               if (error instanceof Error && error.name === "NativeDeepReadEvidencePersistenceError") throw error;
               if (dualReadRoutes && input.route === NATIVE_DEEP_READ_ROUTE_VERTEX
-                && [429, 500, 503].includes(Number((error as HttpFailure)?.nativeDeepReadHttpStatus))) {
+                && (error as HttpFailure)?.nativeDeepReadUpstreamFailure === true) {
                 // Vertex槽位已释放；同一分片/温度转入共享六路池，后续门禁重试保留此路由。
                 input.route = NATIVE_DEEP_READ_ROUTE_EVOLINK;
                 continue;
@@ -6830,8 +6850,8 @@ async function executeNativeDeepReadBatch(
       const scheduledSegmentIndexes = selectedSegmentIndexes ?? episode.segments.map((_, index) => index);
       const pendingSegmentIndexes = new Set(scheduledSegmentIndexes.filter(index => !committedIndexes.includes(index)));
       let routeOrdinal = 0;
-      // 3.8 Flash首发五路Vertex、六路Evolink；显式诊断并发仍只允许调低。
-      const modelCap = dualReadRoutes ? 11 : NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY;
+      // 3.8 Flash首次五路Vertex加六路Evolink；失败恢复仅六路Evolink，显式并发只允许调低。
+      const modelCap = evolinkOnly ? 6 : dualReadRoutes ? 11 : NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY;
       const segmentModelCap = Math.min(
         modelCap,
         Math.max(1, Math.floor(Number(params.segmentModelConcurrency) || modelCap)),
@@ -6861,7 +6881,7 @@ async function executeNativeDeepReadBatch(
             }
             if (segmentIndex < 0 || stopSchedulingSegments) return;
             const ordinal = routeOrdinal++;
-            const route = !dualReadRoutes || ordinal < 5 ? NATIVE_DEEP_READ_ROUTE_VERTEX
+            const route = evolinkOnly ? NATIVE_DEEP_READ_ROUTE_EVOLINK : !dualReadRoutes || ordinal < 5 ? NATIVE_DEEP_READ_ROUTE_VERTEX
               : ordinal < 11 ? NATIVE_DEEP_READ_ROUTE_EVOLINK : "available";
             await processSegment(segmentIndex, route);
           } catch (error) {

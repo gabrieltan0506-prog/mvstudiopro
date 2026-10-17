@@ -392,6 +392,35 @@ export async function findActiveManhuaTemplateLearnJobForSource(
   }
 }
 
+/** 失败续跑只认本人同源最新任务；成功或在途记录阻断更早失败的继承。 */
+export async function findFailedManhuaLearnResumeEpisodes(input: {
+  userId: string; currentJobId: string; sourceUrl: string; seriesKey: string;
+  episodeIndexes: readonly number[]; segmentSeconds: number; videoFps: number;
+}): Promise<number[]> {
+  const db = await getDb();
+  if (!db) throw new Error("数据库不可用，无法核实失败续跑通道");
+  const rows = await db.select().from(jobs).where(and(
+    eq(jobs.userId, input.userId), eq(jobs.type, "video"),
+    sql`${jobs.id} <> ${input.currentJobId}`,
+    sql`${jobs.input}::jsonb->>'action' = 'manhua_template_learn'`,
+    sql`${jobs.input}::jsonb->'params'->>'url' = ${input.sourceUrl}`,
+    sql`${jobs.input}::jsonb->'params'->>'nativeReadModel' = 'gemini-3.8-flash'`,
+  )).orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(1);
+  if (!rows[0] || rows[0].status !== "failed") return [];
+  const previous = normalizeJob(rows[0]);
+  const params = (previous.input as { params?: Record<string, unknown> })?.params;
+  type StoredPlan = { seriesKey?: string; segmentSeconds?: number; videoFps?: number; episodes?: Array<{ episodeIndex?: number }> };
+  const output = previous.output as { nativeStoredPlan?: StoredPlan;
+    nativeStructuringSource?: { storedPlan?: StoredPlan } } | null;
+  const plan = output?.nativeStoredPlan || output?.nativeStructuringSource?.storedPlan;
+  if (params?.nativeDeepReadConfirmed !== true || params.nativeRelearn
+    || plan?.seriesKey !== input.seriesKey
+    || Number(plan.segmentSeconds ?? 300) !== input.segmentSeconds
+    || Number(plan.videoFps ?? params.nativeVideoFps ?? 12) !== input.videoFps) return [];
+  const previousIndexes = new Set((plan.episodes || []).map(episode => episode.episodeIndex));
+  return input.episodeIndexes.filter(index => previousIndexes.has(index));
+}
+
 /**
  * 从剧集学习列表隐藏同一部剧的全部任务；运行中的任务同时落取消标记。
  * 只改 jobs 列表源，不删除 GCS 分集检查点、静帧、提案或已批准模板。

@@ -1029,6 +1029,7 @@ export type NativeDeepReadBatchResult = {
  */
 export async function runNativeDeepReadBatch(input: {
   seriesKey: string;
+  evolinkOnlyEpisodeIndexes?: readonly number[];
   structuringOnly?: boolean;
   /** 0903 双模型：读片主模型；缺省＝3.1 Pro。 */
   readModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
@@ -1198,6 +1199,7 @@ export async function runNativeDeepReadBatch(input: {
           cacheSourceDigest,
         }],
         segmentCacheSeriesKey: input.seriesKey,
+        evolinkOnly: input.evolinkOnlyEpisodeIndexes?.includes(episode.episodeIndex) === true,
         relearnRequestId: episode.relearnRequestId,
         readModel: input.readModel,
         structuringModel: input.structuringModel,
