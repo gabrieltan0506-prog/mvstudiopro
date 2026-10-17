@@ -1,3 +1,4 @@
+import { previsProxyAppearanceSchema, previsProxyAppearanceIssue, isPrevisProxyProp } from "./manhuaPrevisProxy";
 import { previsStoryPropsSchema, storyPropsIssue } from "./manhuaPrevisStoryProps";
 import { previsHandContactsSchema, handContactsIssue } from "./manhuaPrevisHandContacts";
 import { previsHumanPostureSchema, humanPostureIssue } from "./manhuaPrevisHumanPosture";
@@ -73,7 +74,7 @@ export const previsScriptSourceSchema = z
           .object({
             index: z.number().int().positive(),
             durationSec: z.number().finite().positive(),
-            actionZh: z.string().max(20000),
+            actionZh: z.string().max(40000),
           })
           .strict()
       )
@@ -193,6 +194,7 @@ export const previsActorSchema = z
     id: z.string().min(1).max(100),
     nameZh: z.string().trim().min(1).max(80),
     /** 角色在白模中的身份色；旧稿缺省时按身份分配。 */
+    proxyAppearance: previsProxyAppearanceSchema.optional(),
     colorIndex: z.number().int().min(0).max(PREVIS_MAX_ACTORS - 1).optional(),
     /** 仅标明对应的项目角色；不声称为无骨骼 GLB 自动蒙皮。 */
     assetRef: z.string().max(160).optional(),
@@ -416,8 +418,11 @@ export const PREVIS_WATER_MAX_SEC = 8;
 export function previsRenderCostUnits(spec: {
   durationSec: number;
   actors: readonly unknown[];
+  storyProps?: readonly { kind: string }[];
 }): number {
-  return Math.round(spec.durationSec * PREVIS_BUDGET_FPS * spec.actors.length);
+  // 每八个几何剧情对象保守计入一个角色等价预算，不能让附加网格绕过容量门禁。
+  const proxyUnits=Math.ceil((spec.storyProps?.filter(p=>isPrevisProxyProp(p.kind)).length ?? 0)/8);
+  return Math.round(spec.durationSec * PREVIS_BUDGET_FPS * (spec.actors.length + proxyUnits));
 }
 
 export function previsActorVisibleAtFrame(
@@ -461,6 +466,12 @@ export function previsCapacityIssueZh(
 
 export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
   (spec, ctx) => {
+    for (const actor of spec.actors) {
+      if (actor.proxyAppearance) {
+        const issue=previsProxyAppearanceIssue(actor.proxyAppearance,spec.durationSec,actor.shape,Boolean(actor.riggedModel));
+        if(issue) ctx.addIssue({code:"custom",path:["actors",actor.id,"proxyAppearance"],message:issue});
+      }
+    }
     validatePrevisEffects(spec, ctx);
     validatePrevisSceneEffects(spec, ctx);
     for (const message of previsPiggybackIssues(spec))
@@ -1130,7 +1141,7 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
       const moving=a.start.some((v,i)=>Math.abs(v-a.end[i])>1e-6);
       return fall.mode==="hold" ? `${a.nameZh}整段保持${fall.side==="left"?"左":"右"}侧卧地，四腿折叠，不自动起身。` : `${a.nameZh}${fall.startSec}秒开始屈腿，${fall.foldSec}秒开始向${fall.side==="left"?"左":"右"}侧倒，${fall.groundSec}秒躯干触地并保持至片尾，四腿折叠，不自动起身。${moving?`屈腿开始后持续减速，${a.moveEndSec}秒停止位移，落点固定在（${a.end.join("，")}）。`:""}`;
     }),
-    ...(spec.storyProps??[]).map(p=>`剧情道具${p.id}（${({needle:"飞针",blood_drop:"血滴",bowl:"碗",jar:"血坛",knife:"刀",sleeve_glow:"袖口光"} as const)[p.kind]}）按${p.keyframes.map(k=>`${k.timeSec}秒${k.visible?"显示":"隐藏"}，绑定${k.anchor.type==="bone"?`${k.anchor.actorId}/${k.anchor.bone}`:k.anchor.type==="prop"?k.anchor.propId:`固定位置（${k.anchor.position.join("，")}）`}`).join("；")}读取，落点随同一锚点保持，不重算为施术者方向。`),
+    ...(spec.storyProps??[]).map(p=>`剧情道具${p.id}（${({needle:"飞针",blood_drop:"血滴",bowl:"碗",jar:"血坛",knife:"刀",sleeve_glow:"袖口光",task_avatar:"任务化身",light_orb:"光弹",information_panel:"信息卡",code_screen:"代码幕",stage_box:"场景几何"} as const)[p.kind]}）按${p.keyframes.map(k=>`${k.timeSec}秒${k.visible?"显示":"隐藏"}，绑定${k.anchor.type==="bone"?`${k.anchor.actorId}/${k.anchor.bone}`:k.anchor.type==="prop"?k.anchor.propId:`固定位置（${k.anchor.position.join("，")}）`}`).join("；")}读取，落点随同一锚点保持，不重算为施术者方向。`),
     ...spec.actors.filter(a=>a.hitReaction).map(a=>`${a.hitReaction!.contactSec}秒，${a.nameZh}受${spec.actors.find(b=>b.id===a.hitReaction!.sourceActorId)?.nameZh}出掌击中，胸颈快速后缩下沉，支撑脚保持接地，${a.hitReaction!.endSec}秒恢复；原跛行持续。`),
     ...(spec.interactions ?? []).map(event => {
       const actor = spec.actors.find(a => a.id === event.actorId)!;

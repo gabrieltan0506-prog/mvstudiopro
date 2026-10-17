@@ -59,7 +59,7 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
         point = rig.matrix_world @ bone.head.lerp(bone.tail, anchor.get('along', 1))
         return point + matrix.to_quaternion() @ offset, matrix.to_quaternion(), actor_visible(actor, frame)
 
-    def grip_to_bowl(grip, obj, frame):
+    def grip_to_bowl(grip, obj, frame, amount=1.):
         from previs_hand_contacts import solve_hand_to_world
         actor,rig=actors[grip['actorId']]
         model=real_models.get(grip['actorId'])
@@ -67,11 +67,19 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
         if model:rig=model['rig']
         elif actor.get('riggedModel'):raise ValueError('端碗必须约束真实人物骨骼')
         target_world=obj.location+obj.rotation_quaternion @ Vector(grip.get('offset',[0,0,-.02]))
+        if amount < 1.:
+            hand=rig.pose.bones[mapping[grip['hand']] if mapping else grip['hand']]
+            target_world=(rig.matrix_world @ hand.head).lerp(target_world,amount)
         return solve_hand_to_world(rig,mapping,grip['hand'],target_world,frame)
 
     for prop in spec.get('storyProps') or []:
         kind, name = prop['kind'], '剧情道具_'+prop['id']
-        if kind == 'needle':
+        is_proxy = kind in ('task_avatar','light_orb','information_panel','code_screen','stage_box')
+        proxy_objects = None
+        if is_proxy:
+            from previs_proxy_props import build_proxy_prop, measure_proxy_prop
+            proxy_objects=build_proxy_prop(prop,scene)
+        elif kind == 'needle':
             bpy.ops.mesh.primitive_cylinder_add(vertices=8, radius=.009, depth=.18)
             color, emission = (.95, .78, .24), .7
         elif kind == 'blood_drop':
@@ -103,9 +111,10 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
             bpy.ops.mesh.primitive_uv_sphere_add(segments=12, ring_count=8, radius=.035)
             color, emission = (.7,.015,.018), 2
         obj=bpy.context.view_layer.objects.active
-        obj.name=name;obj.data.materials.append(_material(name,color,emission))
+        obj.name=name
+        if not is_proxy:obj.data.materials.append(_material(name,color,emission))
         obj['previs_animation_object']=True
-        objects=[obj]
+        objects=proxy_objects or [obj]
         liquid=None
         if kind=='knife':
             bpy.ops.mesh.primitive_cube_add(size=1)
@@ -150,17 +159,26 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
                     liquid.keyframe_insert(key,frame=frame)
             grip=prop.get('grip')
             gripping=grip and grip.get('startSec',0)<=t<grip.get('endSec',scene.frame_end/24)
-            grip_residual=grip_to_bowl(grip,obj,frame) if gripping and visible else None
+            grip_amount=1.
+            if gripping and kind=='information_panel':
+                start,end=grip.get('startSec',0),grip.get('endSec',scene.frame_end/24)
+                ramp=min(.5,(end-start)/2)
+                def smooth(v):
+                    u=max(0.,min(1.,v));return u*u*(3-2*u)
+                grip_amount=smooth((t-start)/ramp)*smooth((end-t)/ramp)
+            grip_residual=grip_to_bowl(grip,obj,frame,grip_amount) if gripping and visible else None
             for child in objects[1:]:
                 if child==liquid:continue
                 child.hide_render=not visible;child.hide_viewport=not visible
                 for key in ('hide_render','hide_viewport'):child.keyframe_insert(key,frame=frame)
             for key in ('location','rotation_quaternion','scale','hide_render','hide_viewport'):
                 obj.keyframe_insert(key,frame=frame)
+            bpy.context.view_layer.update()
             samples.append({'frame':frame,'position':list(obj.location),'visible':visible,
                             'fromAnchor':left['anchor'],'toAnchor':right['anchor'],'progress':u,
+                            **({'proxyGeometry':measure_proxy_prop(objects,scene)} if is_proxy else {}),
                             **({'fillLevel':fill} if kind in ('bowl','jar') else {}),
-                            **({'gripResidual':grip_residual} if grip_residual is not None else {})})
+                            **({'gripResidual':grip_residual,**({'gripAmount':grip_amount} if kind=='information_panel' else {})} if grip_residual is not None else {})})
         by_id[prop['id']]=handle;handles.append(handle)
     scene.frame_set(1)
     return handles

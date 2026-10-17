@@ -30,4 +30,22 @@ describe("口播生成到数字人表演消费", () => {
     expect(saved.audios[0].request.input).toBe(bp.copywriting);
     expect(saved.script).not.toContain("语气：");
   });
+  it("长导演要求超过摘要容量时，来源镜表仍完整进入顾问实际消息", async () => {
+    const { buildManhuaCreativeAdvisorLlmMessages } = await import("../../../server/services/platformSkillQa");
+    const bp = fictionalViralBlueprint("短视频");
+    const draft = adoptDigitalHumanSource(newDigitalHumanDraft("7", "00000000-0000-4000-8000-000000000001"), {
+      owner: "7", blueprintId: "test-blueprint", version: "test-v1", title: bp.title,
+      platform: "xiaohongshu", aspectRatio: "9:16", script: bp.copywriting,
+      detailedScript: bp.detailedScript, sceneDescription: "书房", direction: "长".repeat(20000), shots: bp.storyboardCells,
+    });
+    const restored = loadDigitalHumanDraft(JSON.stringify(draft), "7")!;
+    const context = buildDigitalHumanAdvisorProject(restored).context;
+    expect(context.digitalHumanProduction?.direction).toBe(draft.direction);
+    expect(context.digitalHumanProduction?.sourceShots).toEqual(bp.storyboardCells);
+    expect(context.shotSummary).not.toContain(bp.storyboardCells[0].actionZh);
+    const messages = buildManhuaCreativeAdvisorLlmMessages({ question: "保留原镜表编排", context });
+    expect(messages[1].content).toContain(JSON.stringify(bp.storyboardCells));
+    expect(messages[1].content).toContain(draft.direction);
+  });
+
 });

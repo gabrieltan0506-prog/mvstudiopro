@@ -87,6 +87,8 @@ export type PrevisServices = {
   ) => Promise<{ items: PrevisResponse[]; nextCursor: string | null }>;
 };
 type Props = {
+  /** 数字人导演工作区：保留真实渲染、播放及审片，去除技术配置表。 */
+  creatorMode?: boolean;
   /** 调用方确认制作稿及请求身份已持久保存后，才允许提交。 */
   beforeSubmit?: () => Promise<void>;
   acquireWork?: (label: string) => () => void;
@@ -157,6 +159,7 @@ export function ManhuaPrevisStudio(props: Props) {
 }
 
 export function ManhuaPrevisStudioView({
+  creatorMode = false,
   block,
   beforeSubmit,
   acquireWork,
@@ -741,6 +744,7 @@ export function ManhuaPrevisStudioView({
   return (
     <section
       data-manhua-previs-studio
+      data-creator-mode={creatorMode || undefined}
       className="w-full space-y-3 rounded-lg border border-cyan-300/25 bg-[#0c121d] p-3"
     >
       <p className="text-xs leading-5 text-white/75" data-previs-intro>
@@ -751,7 +755,7 @@ export function ManhuaPrevisStudioView({
         <button type="button" className={button} disabled={disabled || Boolean(pendingId) || busy} onClick={() => onOpenAdvisor(preview?.requestId)}>让创作顾问调整</button>
       </div>}
       <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
-      <ManhuaPrevisPlanImport clipId={block.id} getCurrentStudio={currentImportStudio} disabled={Boolean(disabled || pendingId || busy)} onApply={candidate => {
+      {!creatorMode && <ManhuaPrevisPlanImport clipId={block.id} getCurrentStudio={currentImportStudio} disabled={Boolean(disabled || pendingId || busy)} onApply={candidate => {
         try {
           const current = latest.current;
           const liveStudio=currentImportStudio();
@@ -760,8 +764,8 @@ export function ManhuaPrevisStudioView({
           setStatus("已保存确认的动作方案；尚未渲染，原配置和已采用参考均保留。");
           return true;
         } catch (e) { setError(e instanceof Error ? e.message : "方案未保存，原配置保留"); return false; }
-      }} />
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,1fr)]" data-previs-workspace>
+      }} />}
+      <div className={creatorMode ? "grid min-w-0 gap-4" : "grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,1fr)]"} data-previs-workspace>
       <div className="min-w-0 self-start xl:sticky xl:top-4">
       {!preview && (
         <section data-previs-player-empty className="rounded border border-cyan-300/30 bg-black/25 p-5 text-sm text-white/75">
@@ -824,6 +828,18 @@ export function ManhuaPrevisStudioView({
                 setPreviewTime(video.currentTime);
               }} />
           </div>
+          {creatorMode && <div className="dh-playback-timeline" aria-label="当前白模时间线">
+            <p>当前播放：{previewTime.toFixed(2)} / {preview.durationSec.toFixed(2)} 秒</p>
+            <div className="dh-timeline-track"><span>镜头</span><div>{preview.spec.cameras.map((shot, i) => <button key={i} type="button"
+              style={{ left: `${shot.startSec / preview.durationSec * 100}%`, width: `${(shot.endSec - shot.startSec) / preview.durationSec * 100}%` }}
+              aria-pressed={previewTime >= shot.startSec && previewTime < shot.endSec}
+              onClick={() => { const video = previewVideo.current; if (!video || video.readyState < 1) return; video.pause(); video.currentTime = shot.startSec; setPreviewTime(shot.startSec); }}>
+              第{i + 1}镜 · {shot.startSec}–{shot.endSec}秒</button>)}<i style={{ left: `${previewTime / preview.durationSec * 100}%` }} /></div></div>
+            {preview.spec.actors.map(actor => <div className="dh-timeline-track" key={actor.id}><span>{actor.nameZh}</span><div>{actor.actions.map((action, i) => <button key={i} type="button"
+              style={{ left: `${action.startSec / preview.durationSec * 100}%`, width: `${(action.endSec - action.startSec) / preview.durationSec * 100}%` }}
+              title={`${actor.nameZh} · ${action.startSec}–${action.endSec}秒`}
+              onClick={() => { const video = previewVideo.current; if (!video || video.readyState < 1) return; video.pause(); video.currentTime = action.startSec; setPreviewTime(action.startSec); }}>动作 {i + 1}</button>)}<i style={{ left: `${previewTime / preview.durationSec * 100}%` }} /></div></div>)}
+          </div>}
           {previsSpecKey(preview.spec) !== previsSpecKey(studio.spec) && (
             <p data-previs-preview-stale className="text-xs text-amber-200">
               配置已修改，正在播放修改前的白模。请用“确认生成动作白模”重新渲染，再预览采用；旧版仍保留。
@@ -916,7 +932,7 @@ export function ManhuaPrevisStudioView({
             } catch (error) { setError(error instanceof Error ? error.message : "模型配置未应用"); }
           }}>沿用{actor.nameZh}的已准备模型 · {profile.originLabel}</button>);
         })}
-        {studio.spec.actors.filter(actor => !actor.creature).map(actor => <details key={actor.id} className="rounded border border-white/15 p-2" data-previs-model-config={actor.id} onToggle={event => {
+        {!creatorMode && studio.spec.actors.filter(actor => !actor.creature).map(actor => <details key={actor.id} className="rounded border border-white/15 p-2" data-previs-model-config={actor.id} onToggle={event => {
           const open = event.currentTarget.open;
           setOpenModelConfigs(current => open ? current.includes(actor.id) ? current : [...current, actor.id] : current.filter(id => id !== actor.id));
         }}>
@@ -935,7 +951,7 @@ export function ManhuaPrevisStudioView({
         </details>)}
         <p className="text-xs text-white/65">人物、动作与运镜请向创作顾问描述；原配置和已采用参考保留。</p>
       </section>}
-      <ManhuaPrevisSceneEffectsEditor key={`${studio.scopeId}:${block.id}`} spec={studio.spec} disabled={disabled || busy || Boolean(pendingId)} onApply={spec => {
+      {!creatorMode && <ManhuaPrevisSceneEffectsEditor key={`${studio.scopeId}:${block.id}`} spec={studio.spec} disabled={disabled || busy || Boolean(pendingId)} onApply={spec => {
         if (disabled || busy || pendingId || lock.current) return false;
         const current = latest.current.studio;
         if (previsSpecKey(current.spec) !== previsSpecKey(studio.spec)) { setError("白模方案已更新，请重新载入当前配置再保存特效。"); return false; }
@@ -943,7 +959,7 @@ export function ManhuaPrevisStudioView({
         if (!publish(next)) return false;
         setStatus("场景特效配置已保存；原配置与已采用白模保留，请从下方渲染新候选。");
         return true;
-      }} />
+      }} />}
       {studio.specHistory?.length ? (
         <button
           className={button}

@@ -1,7 +1,7 @@
 import { assertCanvasSpeechInstruction } from "@shared/canvasDialogueControls";
 import { DigitalHumanFilmDirectorPanel } from "./DigitalHumanFilmDirectorPanel";
 import { digitalHumanAdoptedFilmPrompt } from "@shared/digitalHumanStudio";
-import { DIGITAL_HUMAN_FILM_MODELS, digitalHumanFilmModelSchema } from "@shared/digitalHumanFilmDirector";
+import { DIGITAL_HUMAN_DIRECTION_MAX_CHARS, DIGITAL_HUMAN_FILM_MODELS, digitalHumanFilmModelSchema } from "@shared/digitalHumanFilmDirector";
 import { DigitalHumanOmniPanel } from "./DigitalHumanOmniPanel";
 import { DigitalHumanPostProduction } from "./DigitalHumanPostProduction";
 import { adoptDigitalHumanSource, type DigitalHumanSource } from "@shared/digitalHumanStudio";
@@ -161,6 +161,22 @@ function DigitalHumanWorkspace({
       return newDigitalHumanDraft(owner, crypto.randomUUID());
     }
   });
+  const [workspaceStep, setWorkspaceStep] = useState("assets");
+  const workspace = useRef<HTMLElement>(null);
+  function selectWorkspaceStep(step: string) {
+    setWorkspaceStep(step);
+    // 保持同一组件挂载，切换阶段不丢未提交的顾问输入。
+    requestAnimationFrame(() => {
+      const selector = step === "preview" ? "#dh-preview" : step === "direction"
+        ? ".dh-director-assistant" : step === "production" ? "#dh-production" : "#dh-assets";
+      const target = workspace.current?.querySelector<HTMLElement>(selector);
+      if (target) {
+        target.tabIndex = -1;
+        target.focus({ preventScroll: true });
+        target.scrollIntoView({ block: "start" });
+      }
+    });
+  }
   const ref = useRef(draft);
   const savedRaw = useRef(localStorage.getItem(digitalHumanDraftKey(owner)));
   const active = useRef(true);
@@ -448,15 +464,15 @@ function DigitalHumanWorkspace({
   ];
   const currentAudio = currentDigitalHumanAudio(draft);
   return (
-    <section className="dh-studio" aria-label="数字人视频工作台">
-      <header>
-        <p className="dh-eyebrow">数字人视频</p>
-        <h2>让你的人像，用你的声音讲述。</h2>
-        <p>
-          先上传人物或角色照片，再填写文案、选择声音并试听配音。场景与产品演示按制作需要补充。
-        </p>
+    <section ref={workspace} className="dh-studio" aria-label="数字人视频工作台">
+      <header className="dh-workspace-header">
+        <div><p className="dh-eyebrow">MV STUDIO PRO</p><h2>数字人导演</h2></div>
+        <p role="status">{cloudStatus}</p>
       </header>
-      <section className="dh-card">
+      <nav className="dh-workflow-nav" aria-label="数字人制作流程">
+        {[["assets", "素材与台词"], ["direction", "动作设计"], ["preview", "白模预演"], ["production", "生成视频"]].map(([id, label], i) => <button type="button" key={id} aria-current={workspaceStep === id ? "step" : undefined} onClick={() => selectWorkspaceStep(id)}><span>{i + 1}</span>{label}</button>)}
+      </nav>
+      <details className="dh-save-menu"><summary>稿件保存与恢复</summary>
         <p role="status">{cloudStatus}</p>
         <button type="button" disabled={Boolean(busy)} onClick={() => {
           const blob = new Blob([JSON.stringify(ref.current, null, 2)], { type: "application/json" });
@@ -491,7 +507,7 @@ function DigitalHumanWorkspace({
           } catch (e) { setError(messageOf(e)); }
           finally { busyRef.current = false; if (active.current) setBusy(""); }
         })()}>明确保存本机版本</button>
-      </section>
+      </details>
       {source && <section className="dh-card">
         <h3>平台稿件 · {source.title}</h3>
         <p>完整正文与{source.shots.length}镜分镜将一起采用，原素材和任务记录保留。</p>
@@ -529,8 +545,8 @@ function DigitalHumanWorkspace({
         disabled={Boolean(busy) || Boolean(loadError)}
         className="dh-grid"
       >
-        <section className="dh-card">
-          <h3>1 · 上传人物或角色照片</h3>
+        <section id="dh-assets" hidden={workspaceStep !== "assets"} className="dh-card">
+          <h3>人物或角色照片</h3>
           <label>
             人物或角色照片
             <input
@@ -578,9 +594,12 @@ function DigitalHumanWorkspace({
                 const file = e.target.files?.[0];
                 e.target.value = "";
                 if (file)
-                  void act("上传场景", async () =>
-                    edit({ scene: await uploadFile(file) })
-                  );
+                  void act("上传场景", async () => {
+                    const previous = ref.current.scene;
+                    const scene = await uploadFile(file);
+                    // 首次上传保留用户预写要求；替换图片时不继承上一场景的描述。
+                    edit({ scene, ...(previous && previous.source !== scene.source ? { sceneDescription: "" } : {}) });
+                  });
               }}
             />
           </label>
@@ -665,7 +684,7 @@ function DigitalHumanWorkspace({
                   <button
                     type="button"
                     onClick={() =>
-                      edit({ scene: { source: s.source!, name: "生成的场景" } })
+                      edit({ scene: { source: s.source!, name: "生成的场景" }, sceneDescription: s.request.description })
                     }
                   >
                     采用此场景
@@ -676,7 +695,7 @@ function DigitalHumanWorkspace({
             </div>
           ))}
         </section>
-        <section className="dh-card">
+        <section hidden={workspaceStep !== "assets"} className="dh-card">
           <h3>2 · 我的声音与文案</h3>
           <label>
             选择已有声线
@@ -899,8 +918,8 @@ function DigitalHumanWorkspace({
             </div>
           ))}
         </section>
-        <section className="dh-card dh-wide">
-          <h3>3 · 表演、空间与镜头</h3>
+        <section id="dh-direction" hidden={workspaceStep !== "direction" && workspaceStep !== "preview"} className="dh-card dh-wide dh-director-section">
+          <details className="dh-film-settings"><summary>本片设置 · {draft.aspectRatio} · 表演与镜头要求</summary>
           <label>
             画幅
             <select
@@ -916,11 +935,14 @@ function DigitalHumanWorkspace({
           <label>
             表演与镜头要求
             <textarea
+              aria-label="完整导演要求"
               value={draft.direction}
-              maxLength={1500}
+              maxLength={DIGITAL_HUMAN_DIRECTION_MAX_CHARS}
               onChange={e => edit({ direction: e.target.value })}
             />
+            <small>{draft.direction.length} / {DIGITAL_HUMAN_DIRECTION_MAX_CHARS} 字，完整保存并用于导演、动作预演与视频生成。</small>
           </label>
+          </details>
           <DigitalHumanSpatialStudio
             draft={draft}
             role={role}
@@ -934,9 +956,9 @@ function DigitalHumanWorkspace({
             acquireWork={acquireWork}
           />
         </section>
-        {(role === "admin" || role === "supervisor") && <DigitalHumanOmniPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} updateVideo={updateVideo} />}
-        <section className="dh-card dh-wide">
-          <h3>带货视频制作 · 人物、场景与镜头</h3>
+        <div className="dh-wide" hidden={workspaceStep !== "production"}>{(role === "admin" || role === "supervisor") && <DigitalHumanOmniPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} updateVideo={updateVideo} />}</div>
+        <section id="dh-production" hidden={workspaceStep !== "production"} className="dh-card dh-wide">
+          <h3>生成正式视频</h3>
           <label>视频模型<select aria-label="数字人视频模型" value={draft.filmModel||"seedance-2.5"} disabled={Boolean(busy)} onChange={e=>edit({filmModel:digitalHumanFilmModelSchema.parse(e.target.value)})}>
             {Object.entries(DIGITAL_HUMAN_FILM_MODELS).map(([value,profile])=><option key={value} value={value}>{profile.label}</option>)}
           </select></label>
@@ -1082,7 +1104,7 @@ function DigitalHumanWorkspace({
             </div>
           )}
         </section>
-        <DigitalHumanFilmDirectorPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} />
+        <div className="dh-wide" hidden={workspaceStep !== "production"}><DigitalHumanFilmDirectorPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} />
         <DigitalHumanProductionPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} uploadFile={uploadFile} acquireWork={acquireWork}
           previewVideo={async row => {
             digitalHumanAdoptedFilmPrompt(ref.current, row.segment?.startSec || 0, row.segment?.endSec);
@@ -1093,8 +1115,9 @@ function DigitalHumanWorkspace({
             setNotice("本段输入已准备，请在上方核对完整参考与费用后确认生成。");
           }} />
         {cloudGeneration.current && !cloudError.current && <DigitalHumanPostProduction draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} userRole={role} />}
-        <section className="dh-card dh-wide">
-          <h3>5 · 原片与超分成片</h3>
+        </div>
+        <section hidden={workspaceStep !== "production"} className="dh-card dh-wide">
+          <h3>原片与超分成片</h3>
           <label>超分目标<select aria-label="超分目标" value={upscaleTarget} disabled={Boolean(busy)} onChange={e=>setUpscaleTarget(e.target.value === "2k" ? "2k" : "4k")}><option value="2k">2K</option><option value="4k">4K</option></select></label>
           <button type="button" onClick={() => void act("查询原任务", recover)}>
             刷新任务状态
