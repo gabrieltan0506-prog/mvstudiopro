@@ -1,9 +1,11 @@
+import { DIGITAL_HUMAN_WORKSPACE_HREF } from "@/lib/platformWorkbenchMode";
 import { Link } from "wouter";
 import React, { useRef, useState } from "react";
 
 /** Hero 主能力入口（视频下方横排一行；用户 2026-08-12：不许再遮视频） */
 const FLAGSHIP: { href: string; label: string; desc: string }[] = [
   { href: "/platform", label: "平台创作", desc: "趋势分析、选题文案与自定义工作台。" },
+  { href: DIGITAL_HUMAN_WORKSPACE_HREF, label: "数字人创作", desc: "本人声音、表演分镜与立体声成片。" },
   { href: "/canvas", label: "创作画布", desc: "节点式生图、分镜与成片编排。" },
 ];
 
@@ -86,8 +88,8 @@ export default function HomeHero() {
         <span role="status" className="ml-2 text-xs text-[var(--hp-muted)]">{notice || "点击或停留播放 · 默认有声 · 完整播放"}</span>
       </div>
 
-      {/* 两个工作台入口：视频下方横排一行，不占画面 */}
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      {/* 工作台独立入口：视频下方横排一行，不占画面 */}
+      <div className="mt-4 grid gap-3 lg:grid-cols-3">
         {FLAGSHIP.map((item) => (
           <Link
             key={item.href}

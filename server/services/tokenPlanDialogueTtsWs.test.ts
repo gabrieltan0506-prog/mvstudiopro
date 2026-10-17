@@ -113,10 +113,10 @@ describe("synthesizeTokenPlanDialogueWs", () => {
     const socket = new FakeSocket(happyScript);
     const deps = baseDeps(() => socket);
     await synthesizeTokenPlanDialogueWs(
-      { input: "你好", voice: "longanlingxin", ownerUserId: 7 },
+      { input: "你好", voice: "longanlingxin", ownerUserId: 7, instruction: "关键词重读，句间自然停顿" },
       { ...deps, lossless48k: true }
     );
-    expect(socket.sent[0].payload.parameters).toMatchObject({ format: "wav", sample_rate: 48000 });
+    expect(socket.sent[0].payload.parameters).toMatchObject({ format: "wav", sample_rate: 48000, instruction: "关键词重读，句间自然停顿" });
     const uploaded = deps.uploadAudio.mock.calls[0][0];
     expect(uploaded.objectName).toMatch(/\.wav$/);
     expect(uploaded.contentType).toBe("audio/wav");

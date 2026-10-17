@@ -6,7 +6,7 @@ export function fictionalViralBlueprint(format: "图文" | "短视频" = "图文
     copywriting: paragraphs.join("\n"), detailedScript: paragraphs.join("\n"),
     executionDetails: { environmentAndWardrobe: "同一年轻职员在会议室桌前，穿浅蓝色衬衣。", lightingAndCamera: "窗侧自然光，中景固定拍摄。", stepByStepScript: paragraphs },
     graphicNotePages: format === "图文" ? paragraphs.map((body, i) => ({ pageIndex: i + 1, role: i === 0 ? "cover" : i === 3 ? "cta" : "detail_card", headline: `会议表达第${i + 1}步`, body })) : [],
-    storyboardCells: format === "短视频" ? paragraphs.map((dialogueZh, i) => ({ cellIndex: i + 1, dialogueZh, sceneZh: "同一会议室桌前", shotSize: "中景", actionZh: "职员指向便签说出关键事实", cameraMoveZh: "固定", editNoteZh: "对白字幕" })) : [],
+    storyboardCells: format === "短视频" ? paragraphs.map((dialogueZh, i) => ({ cellIndex: i + 1, dialogueZh, sceneZh: "同一会议室桌前", shotSize: "中景", actionZh: "手势：右手指向便签，说完收回桌边；视线：由便签转向同事", cameraMoveZh: "固定", editNoteZh: "语气：先迟疑后笃定；重音：本句关键事实；停顿：句末停半拍" })) : [],
     methodApplications: [{ methodId: "audience-scene", quote: paragraphs[0], application: "用会议点名的具体场景切入沟通问题" }],
     xhsPackage: {
       structure: { templateId: "problem", steps: ["现状与场景", "原因与边界", "可执行方案", "落实行动"].map((name, i) => ({ name, quote: paragraphs[i] })) },

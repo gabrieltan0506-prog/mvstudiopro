@@ -1,3 +1,4 @@
+import { DIGITAL_HUMAN_FILM_MODELS } from "@shared/digitalHumanFilmDirector";
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { currentDigitalHumanAudio, digitalHumanPending, digitalHumanVideoIsCurrent, prepareDigitalHumanVideo, type DigitalHumanDraft, type DigitalHumanMedia as Media, type DigitalHumanVideo } from "@shared/digitalHumanStudio";
@@ -100,7 +101,7 @@ export function DigitalHumanProductionPanel(props: {
       <details><summary>本次完整文案与原声</summary><p style={{ whiteSpace: "pre-wrap" }}>{props.draft.script}</p>{audio?.source && <DigitalHumanMedia kind="audio" source={audio.source} name="完整配音" />}</details>
       <button type="button" disabled={!audio?.source || props.draft.approvedAudioRequestId !== audio.request.billingRequestId} onClick={() => void work(async () => {
         if (!audio?.source) throw new Error("请先生成并批准配音");
-        await submit({ action: "digital_human_audio_split", scopeKey: `digital-human:${props.draft.id}`, params: { audioUri: audio.source, audioRequestId: audio.request.billingRequestId, script: props.draft.script.trim() } });
+        await submit({ action: "digital_human_audio_split", scopeKey: `digital-human:${props.draft.id}`, params: { audioUri: audio.source, audioRequestId: audio.request.billingRequestId, script: props.draft.script.trim(), maxSegmentSec: DIGITAL_HUMAN_FILM_MODELS[props.draft.filmModel||"seedance-2.5"].maxAudioSec } });
       })}>分析停顿并准备音频分段</button>
       {plan?.manifest?.segments.map(s => {
         const video = segmentVideo(s.index), previous = segmentVideo(s.index - 1), frame = frameFor(s.index);

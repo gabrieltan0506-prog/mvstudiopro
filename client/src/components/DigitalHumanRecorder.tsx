@@ -13,11 +13,17 @@ export function DigitalHumanRecorder({
   onClose,
   onUse,
   disabled = false,
+  mode = "sample",
+  script = "",
 }: {
   onClose: () => void;
   onUse: (file: File) => Promise<void>;
   disabled?: boolean;
+  mode?: "sample" | "narration";
+  script?: string;
 }) {
+  const narration = mode === "narration";
+  const maxSec = narration ? 300 : 30;
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState("");
   useEffect(() => {
@@ -178,7 +184,7 @@ export function DigitalHumanRecorder({
             { length: decoded.numberOfChannels },
             (_, i) => decoded.getChannelData(i)
           );
-          const wav = encodeDigitalHumanWav(channels, decoded.sampleRate);
+          const wav = encodeDigitalHumanWav(channels, decoded.sampleRate, maxSec);
           if (generation.current !== seq) return;
           setFile(new File([wav], "我的声音.wav", { type: "audio/wav" }));
           setSeconds(decoded.duration);
@@ -199,7 +205,7 @@ export function DigitalHumanRecorder({
         const elapsed = (performance.now() - started) / 1000;
         setSeconds(elapsed);
         // 预留编码尾帧，确保实际文件不超过原克隆服务的30秒上限。
-        if (elapsed >= 29) release();
+        if (elapsed >= maxSec - 1) release();
       }, 100);
     } catch (e) {
       release();
@@ -230,9 +236,9 @@ export function DigitalHumanRecorder({
         className="dh-recording-dialog"
         onInteractOutside={e => e.preventDefault()}
       >
-        <DialogTitle>录下你的声音 · 内置麦克风</DialogTitle>
+        <DialogTitle>{narration ? "录制完整旁白" : "录下声线样本"} · 内置麦克风</DialogTitle>
         <DialogDescription>
-          点击“开始录音”后允许麦克风。建议15–20秒，3–30秒有效；录音先留在本页，试听后再决定是否使用。
+          {narration ? "从头读到尾，按自然语气停顿，最多5分钟。录好后试听并采用为本稿旁白，无需克隆或合成配音。" : "点击开始录音后允许麦克风。建议15–20秒，3–30秒有效；试听后再决定是否使用。"}
         </DialogDescription>
         <p>
           使用明确选定的麦克风，保留实际输入声道，不复制为双声道。目标48kHz，实际采样率以保存文件为准。
@@ -268,7 +274,8 @@ export function DigitalHumanRecorder({
               : "采样率待确认"}
           </p>
         )}
-        <blockquote>{DIGITAL_HUMAN_RECORDING_READ_TEXT}</blockquote>
+        <blockquote style={{ maxHeight: "28vh", overflowY: "auto", whiteSpace: "pre-wrap" }}>{narration ? script : DIGITAL_HUMAN_RECORDING_READ_TEXT}</blockquote>
+        {narration && <p>按句子读，句间自然停顿；重音词稍加强，转折处稍放慢。不要读出表演说明。不必自己按15秒或30秒切断，采用后按真实停顿分段并逐段试听。</p>}
         <p role="status" aria-live="polite">
           {phase === "recording"
             ? `正在录音 · ${seconds.toFixed(1)}秒`
@@ -315,7 +322,7 @@ export function DigitalHumanRecorder({
               checked={consent}
               onChange={e => setConsent(e.target.checked)}
             />
-            这是我本人的声音，我同意用于建立本人的数字人声线
+            {narration ? "这是我本人的声音，我同意用于本稿旁白和视频制作" : "这是我本人的声音，我同意用于建立本人的数字人声线"}
           </label>
         )}
         <button
@@ -336,7 +343,7 @@ export function DigitalHumanRecorder({
             }
           }}
         >
-          使用这段声音
+          {narration ? "采用为完整旁白" : "使用这段声音"}
         </button>
         <p>
           先完整试听，再确认使用。关闭弹窗会停止麦克风；尚未使用的录音不会上传。

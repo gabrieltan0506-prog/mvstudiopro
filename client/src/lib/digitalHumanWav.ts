@@ -1,7 +1,8 @@
 /** 将浏览器解码后的录音保存为保留各原始声道的PCM WAV，不调用外部转码。 */
 export function encodeDigitalHumanWav(
   channels: Float32Array[],
-  sampleRate: number
+  sampleRate: number,
+  maxDurationSec: 30 | 300 = 30
 ): ArrayBuffer {
   const frames = channels[0]?.length || 0;
   if (
@@ -10,9 +11,9 @@ export function encodeDigitalHumanWav(
     !Number.isFinite(sampleRate) ||
     sampleRate <= 0 ||
     frames / sampleRate < 3 ||
-    frames / sampleRate > 30
+    frames / sampleRate > maxDurationSec
   )
-    throw new Error("录音须为3–30秒，请重新录制");
+    throw new Error(`录音须为3–${maxDurationSec}秒，请重新录制`);
   const blockAlign = channels.length * 2;
   const buffer = new ArrayBuffer(44 + frames * blockAlign);
   const view = new DataView(buffer);

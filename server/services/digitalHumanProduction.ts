@@ -62,12 +62,12 @@ export async function renderDigitalHumanProduction(raw: DigitalHumanProductionIn
     if (duration <= 0 || duration > 1800) throw new Error("完整配音时长超出当前处理范围");
     if (input.action === "digital_human_audio_split") {
       const detected = await runMediaTool("ffmpeg", ["-i", audio, "-af", "silencedetect=noise=-38dB:d=0.12", "-f", "null", "-"], signal);
-      const plan = planDigitalHumanAudioSegments(duration, parseDigitalHumanSilences(detected.stderr, duration));
+      const plan = planDigitalHumanAudioSegments(duration, parseDigitalHumanSilences(detected.stderr, duration), input.params.maxSegmentSec);
       const segments = [];
       for (const [index, segment] of Array.from(plan.entries())) {
         signal.throwIfAborted();
         const path = join(dir, `part-${index}.wav`);
-        await runMediaTool("ffmpeg", ["-y", "-i", audio, "-af", `aresample=48000,atrim=start_sample=${Math.round(segment.startSec * 48000)}:end_sample=${Math.round(segment.endSec * 48000)},asetpts=PTS-STARTPTS`, "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", path], signal);
+        await runMediaTool("ffmpeg", ["-y", "-i", audio, "-af", `aresample=48000,atrim=start_sample=${Math.round(segment.startSec * 48000)}:end_sample=${Math.round(segment.endSec * 48000)},asetpts=PTS-STARTPTS`, "-ar", "48000", "-c:a", "pcm_s16le", path], signal);
         const actual = await probeAudio(path, signal);
         if (Math.abs(actual - (segment.endSec - segment.startSec)) > 0.03) throw new Error("音频分段长度不一致，未采用清单");
         const result = await upload(path, "dh-audio-segment", "wav", "audio/wav");

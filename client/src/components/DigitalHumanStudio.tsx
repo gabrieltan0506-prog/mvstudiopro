@@ -1,3 +1,7 @@
+import { assertCanvasSpeechInstruction } from "@shared/canvasDialogueControls";
+import { DigitalHumanFilmDirectorPanel } from "./DigitalHumanFilmDirectorPanel";
+import { digitalHumanAdoptedFilmPrompt } from "@shared/digitalHumanStudio";
+import { DIGITAL_HUMAN_FILM_MODELS, digitalHumanFilmModelSchema } from "@shared/digitalHumanFilmDirector";
 import { DigitalHumanOmniPanel } from "./DigitalHumanOmniPanel";
 import { DigitalHumanPostProduction } from "./DigitalHumanPostProduction";
 import { adoptDigitalHumanSource, type DigitalHumanSource } from "@shared/digitalHumanStudio";
@@ -140,6 +144,7 @@ function DigitalHumanWorkspace({
   role: string;
   initialPortrait?: string;
 }) {
+  const [upscaleTarget, setUpscaleTarget] = useState<"2k" | "4k">("4k");
   const [loadError, setLoadError] = useState("");
   const [draft, setDraft] = useState<DigitalHumanDraft>(() => {
     try {
@@ -164,6 +169,7 @@ function DigitalHumanWorkspace({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [recordingHelp, setRecordingHelp] = useState(false);
+  const [narrationRecorder, setNarrationRecorder] = useState(false);
   const [consent, setConsent] = useState(false);
   const [cloneLabel, setCloneLabel] = useState("我的声音");
   const [preview, setPreview] = useState<{
@@ -186,6 +192,7 @@ function DigitalHumanWorkspace({
   const upload = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const clone = trpc.canvasAudio.createReferenceVoice.useMutation();
   const dialogue = trpc.canvasAudio.generateDialogue.useMutation();
+  const inspectNarration = trpc.digitalHuman.inspectNarration.useMutation();
   const scene = trpc.digitalHuman.createScene.useMutation();
   const cloudSave = trpc.digitalHuman.saveDraft.useMutation();
   const cloudGeneration = useRef<string | undefined>(undefined);
@@ -289,9 +296,10 @@ function DigitalHumanWorkspace({
     await flushCloud();
     const r = await clone.mutateAsync(request);
     if (r.status === "ready" && r.voiceId)
-      edit({ voiceId: r.voiceId, cloneRequest: undefined });
+      save(d => ({ ...d, voiceId: r.voiceId!, approvedAudioRequestId: undefined, cloneRequest: undefined }));
     else setNotice(r.message || "声线处理中，请查询原任务");
     await referenceVoices.refetch();
+    await flushCloud();
   }
   async function uploadFile(file: File) {
     const asset = await uploadOneCanvasAsset({
@@ -301,6 +309,17 @@ function DigitalHumanWorkspace({
     });
     if (!asset.gcsUri) throw new Error("上传未返回持久素材地址，未采用");
     return { source: asset.gcsUri, name: file.name };
+  }
+  async function adoptNarration(file: File) {
+    const snapshot = { id: ref.current.id, script: ref.current.script.trim() };
+    if (!snapshot.script) throw new Error("请先写好本次完整口播文案");
+    if (file.size <= 0 || file.size > 60 * 1024 * 1024 || !/\.(wav|mp3|m4a|aac)$/i.test(file.name)) throw new Error("旁白支持WAV、MP3、M4A或AAC，最大60MB");
+    const asset = await uploadFile(file);
+    const inspected = await inspectNarration.mutateAsync({ source: asset.source });
+    if (!active.current || ref.current.id !== snapshot.id || ref.current.script.trim() !== snapshot.script) throw new Error("上传期间稿件已变化，未采用录音，请回到对应文案重新确认");
+    const request = { billingRequestId: crypto.randomUUID(), input: snapshot.script, voice: "recorded-narration", speakerZh: "本人原声", speakerId: `dh-${snapshot.id}`, voiceStateZh: "本人实际录音" };
+    save(d => ({ ...d, approvedAudioRequestId: undefined, audios: [...d.audios, { origin: "recording", fileName: file.name, request, status: "succeeded", source: inspected.source, durationSec: inspected.durationSec, creditsCost: 0 }] }));
+    await flushCloud();
   }
   // 迟到的回执仍写回原账号原草稿；不影响切换后页面，也不覆盖较新编辑。
   function updateVideo(id: string, patch: Partial<DigitalHumanVideo>) {
@@ -371,8 +390,13 @@ function DigitalHumanWorkspace({
     };
   }
   async function recover() {
+    const voiceRequestId = ref.current.cloneRequest?.requestId;
     const warnings = await recoverDigitalHumanDraft(ref.current, {
-      listVoices: () => api.canvasAudio.listReferenceVoices.fetch(),
+      listVoices: async () => {
+        const result = await referenceVoices.refetch();
+        if (result.error) throw result.error;
+        return result.data || [];
+      },
       dialogue: requestId =>
         api.canvasAudio.getDialogue.fetch({ billingRequestId: requestId }),
       scene: requestId => api.digitalHuman.getScene.fetch({ requestId }),
@@ -395,6 +419,7 @@ function DigitalHumanWorkspace({
       save,
       updateVideo,
     });
+    if (voiceRequestId && !ref.current.cloneRequest) setNotice("本人新声线已建立并选中，生成配音前请核对文案与费用。");
     if (warnings.length) throw new Error(warnings.join("；"));
   }
   useEffect(() => {
@@ -490,10 +515,16 @@ function DigitalHumanWorkspace({
           disabled={Boolean(busy) || Boolean(draft.cloneRequest)}
           onClose={() => setRecordingHelp(false)}
           onUse={async file => {
-            await createVoiceFromRecording(file);
+            const release = acquireWork("建立本人声线");
+            try { await flushCloud(); await createVoiceFromRecording(file); } finally { release(); }
           }}
         />
       )}
+      {narrationRecorder && <DigitalHumanRecorder mode="narration" script={draft.script}
+        disabled={Boolean(busy)} onClose={() => setNarrationRecorder(false)} onUse={async file => {
+          const release = acquireWork("采用完整旁白");
+          try { await flushCloud(); await adoptNarration(file); } finally { release(); }
+        }} />}
       <fieldset
         disabled={Boolean(busy) || Boolean(loadError)}
         className="dh-grid"
@@ -663,6 +694,7 @@ function DigitalHumanWorkspace({
                 ))}
             </select>
           </label>
+          <p role="status">{draft.cloneRequest ? "本人声线正在建立，完成后会自动选择；暂不使用旧音色生成。" : `当前声线：${voices.find(v => v.voiceId === draft.voiceId)?.labelZh || "尚未选择"}`}</p>
           {(referenceVoices.error || designedVoices.error) && (
             <p role="alert">声线列表暂不可用，请刷新查询。</p>
           )}
@@ -727,6 +759,21 @@ function DigitalHumanWorkspace({
               placeholder="写下完整文案。超过30秒的配音可按真实停顿分段生成视频。"
             />
           </label>
+          <details open>
+            <summary>使用本人完整录音</summary>
+            <p>先写好上方文案，再从头录完或上传已有旁白，3秒至5分钟。采用后逐段试听；原声可为单声道，最终与立体声BGM、音效混音。上传原声不收取合成配音费用。</p>
+            <button type="button" disabled={!draft.script.trim()} onClick={() => setNarrationRecorder(true)}>录制完整旁白</button>
+            <label>上传完整旁白（本人声音，确认有使用权）
+              <input aria-label="上传完整旁白" type="file" accept=".wav,.mp3,.m4a,.aac" disabled={!draft.script.trim()}
+                onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void act("采用完整旁白", () => adoptNarration(file)); }} />
+            </label>
+          </details>
+          <label>克隆配音演法
+            <textarea aria-label="克隆配音演法" rows={3} maxLength={100} value={draft.speechInstruction}
+              onChange={e => edit({ speechInstruction: e.target.value })}
+              placeholder="例如：保留本人音色，开场有力度，关键词重读，句间自然停顿。" />
+          </label>
+          <p>此处是给声音模型的指令，不作为台词朗读。当前支持百炼本人克隆声线；“嗯、你看”等要念出来的语气词请写进口播文案。表情和手势在导演方案中安排。</p>
           <p>
             配音按实际时长计费，每开始0.2秒2积分，15秒约
             {canvasTtsCreditsForDuration(15)}积分。超长音频保留，不截断。
@@ -735,11 +782,12 @@ function DigitalHumanWorkspace({
             type="button"
             disabled={
               !draft.script.trim() ||
-              !draft.voiceId ||
+              !draft.voiceId || Boolean(draft.cloneRequest) ||
               draft.audios.some(a => digitalHumanPending(a.status))
             }
             onClick={() =>
               void act("生成配音", async () => {
+                if (ref.current.cloneRequest) throw new Error("本人新声线仍在建立，请先查询原任务，不能沿用旧声线生成");
                 const request = {
                   billingRequestId: crypto.randomUUID(),
                   input: ref.current.script.trim(),
@@ -747,10 +795,12 @@ function DigitalHumanWorkspace({
                   speakerZh: "讲述者",
                   speakerId: `dh-${ref.current.id}`,
                   voiceStateZh: "",
+                  ...(ref.current.speechInstruction.trim() ? { speechInstruction: ref.current.speechInstruction.trim() } : {}),
                 };
+                assertCanvasSpeechInstruction(request.voice, request.speechInstruction);
                 if (
                   !window.confirm(
-                    "将使用当前声线生成这段完整文案的配音，按实际音频时长扣费。确认生成？"
+                    `将使用当前声线生成完整文稿，按实际时长扣费。演法：${request.speechInstruction || "自然朗读"}。确认生成？`
                   )
                 )
                   return;
@@ -801,7 +851,7 @@ function DigitalHumanWorkspace({
             <div key={a.request.billingRequestId}>
               <p>
                 {a === currentAudio ? "当前配音" : "历史配音"} ·{" "}
-                {statusLabel(a.status)}
+                {a.origin === "recording" ? "本人录音" : statusLabel(a.status)}
                 {a.durationSec ? ` · ${a.durationSec.toFixed(1)}秒` : ""}
               </p>
               {a.source && (
@@ -827,7 +877,7 @@ function DigitalHumanWorkspace({
                 </label>
               )}
               {a.message && <p>{a.message}</p>}
-              {a.canResumeSettlement && (
+              {a.origin !== "recording" && a.canResumeSettlement && (
                 <button
                   type="button"
                   onClick={() =>
@@ -887,6 +937,9 @@ function DigitalHumanWorkspace({
         {(role === "admin" || role === "supervisor") && <DigitalHumanOmniPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} updateVideo={updateVideo} />}
         <section className="dh-card dh-wide">
           <h3>带货视频制作 · 人物、场景与镜头</h3>
+          <label>视频模型<select aria-label="数字人视频模型" value={draft.filmModel||"seedance-2.5"} disabled={Boolean(busy)} onChange={e=>edit({filmModel:digitalHumanFilmModelSchema.parse(e.target.value)})}>
+            {Object.entries(DIGITAL_HUMAN_FILM_MODELS).map(([value,profile])=><option key={value} value={value}>{profile.label}</option>)}
+          </select></label>
           <p>
             先核对实际发送的文案、人物、场景和声音。原片成功后，继续本页的 4K
             超分。
@@ -895,6 +948,7 @@ function DigitalHumanWorkspace({
             type="button"
             onClick={() =>
               void act("核对视频输入", async () => {
+                digitalHumanAdoptedFilmPrompt(ref.current);
                 const row = prepareDigitalHumanVideo(
                   ref.current,
                   crypto.randomUUID()
@@ -920,11 +974,11 @@ function DigitalHumanWorkspace({
           {preview && (
             <div className="dh-outbound">
               <p>
-                Seedance 2.5 · 720p · {preview.outbound.durationSec}秒 ·{" "}
+                {DIGITAL_HUMAN_FILM_MODELS[preview.row.filmModel||"seedance-2.5"].label} · {preview.outbound.durationSec}秒 ·{" "}
                 {canvasVideoClipCredits({
-                  videoModel: "seedance-2.5",
+                  videoModel: preview.row.filmModel || "seedance-2.5",
                   durationSec: preview.outbound.durationSec,
-                  resolution: "720p",
+                  resolution: DIGITAL_HUMAN_FILM_MODELS[preview.row.filmModel||"seedance-2.5"].resolution,
                 })}
                 积分
               </p>
@@ -963,7 +1017,7 @@ function DigitalHumanWorkspace({
               <button
                 type="button"
                 onClick={() =>
-                  void act("生成720p视频", async () => {
+                  void act("生成数字人视频", async () => {
                     const p = preview;
                     const current = currentDigitalHumanAudio(ref.current);
                     if (
@@ -1023,13 +1077,15 @@ function DigitalHumanWorkspace({
                   })
                 }
               >
-                确认以上输入并生成720p原片
+                确认以上输入并生成{DIGITAL_HUMAN_FILM_MODELS[preview.row.filmModel || "seedance-2.5"].resolution}原片
               </button>
             </div>
           )}
         </section>
+        <DigitalHumanFilmDirectorPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} />
         <DigitalHumanProductionPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} uploadFile={uploadFile} acquireWork={acquireWork}
           previewVideo={async row => {
+            digitalHumanAdoptedFilmPrompt(ref.current, row.segment?.startSec || 0, row.segment?.endSec);
             const block = await digitalHumanVideoBlock(row);
             const outbound = await previewCanvasBlockOutbound(depsFor(row), block, undefined, { videoSubmissionKey: row.requestId });
             if (outbound.compile.blocked) throw new Error(outbound.compile.fatalZh || "本段视频输入未通过出站检查");
@@ -1038,56 +1094,58 @@ function DigitalHumanWorkspace({
           }} />
         {cloudGeneration.current && !cloudError.current && <DigitalHumanPostProduction draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} userRole={role} />}
         <section className="dh-card dh-wide">
-          <h3>5 · 原片与4K成片</h3>
+          <h3>5 · 原片与超分成片</h3>
+          <label>超分目标<select aria-label="超分目标" value={upscaleTarget} disabled={Boolean(busy)} onChange={e=>setUpscaleTarget(e.target.value === "2k" ? "2k" : "4k")}><option value="2k">2K</option><option value="4k">4K</option></select></label>
           <button type="button" onClick={() => void act("查询原任务", recover)}>
             刷新任务状态
           </button>
           {draft.videos.map(v => (
             <article key={v.requestId}>
-              <p>{v.engine === "omnihuman2-wavespeed" ? "数字人口播原片" : "720p 原片"} · {statusLabel(v.status)}</p>
+              <p>{v.engine === "omnihuman2-wavespeed" ? "数字人口播原片" : `${DIGITAL_HUMAN_FILM_MODELS[v.filmModel||"seedance-2.5"].label} 原片`} · {statusLabel(v.status)}</p>
               {v.message && <p>{v.message}</p>}
               {v.source && (
                 <>
                   <DigitalHumanMedia
                     source={v.source}
                     kind="video"
-                    name={v.engine === "omnihuman2-wavespeed" ? "数字人口播原片" : "720p原片"}
+                    name={v.engine === "omnihuman2-wavespeed" ? "数字人口播原片" : `${DIGITAL_HUMAN_FILM_MODELS[v.filmModel||"seedance-2.5"].resolution}原片`}
                   />
                   <button
                     type="button"
                     disabled={
-                      Boolean(v.upscale) && v.upscale!.status !== "failed"
+                      Boolean(v.upscale) && (digitalHumanPending(v.upscale!.status) || ((v.upscale!.target || "4k") === upscaleTarget && v.upscale!.status === "succeeded"))
                     }
                     onClick={() =>
-                      void act("提交4K超分", async () => {
+                      void act(`提交${upscaleTarget.toUpperCase()}超分`, async () => {
                         const metadata = await probeWorkflowVideoSource(
                           v.source!
                         );
                         const cost = canvasVideoUpscaleCredits(
-                          "4k",
+                          upscaleTarget,
                           metadata.durationSec
                         );
                         if (
                           !window.confirm(
-                            `原片${metadata.width}×${metadata.height}，${metadata.durationSec}秒。超分4K需${cost}积分，保留原片。确认？`
+                            `原片${metadata.width}×${metadata.height}，${metadata.durationSec}秒。超分${upscaleTarget.toUpperCase()}需${cost}积分，保留原片。确认？`
                           )
                         )
                           return;
                         const pending = {
+                          target: upscaleTarget,
                           status: "submitted" as const,
                           inputSource: v.source!,
                           durationSec: metadata.durationSec,
                           sourceResolution: metadata.sourceResolution,
                         };
-                        updateVideo(v.requestId, { upscale: pending });
+                        updateVideo(v.requestId, { upscale: pending, upscaleHistory: [...(v.upscaleHistory || []), ...(v.upscale ? [v.upscale] : [])] });
                         try {
                           await flushCloud();
                           const r = await startVideoUpscale({
                             videoUrl: v.source!,
-                            target: "4k",
+                            target: upscaleTarget,
                             durationSec: metadata.durationSec,
                             sourceResolution: metadata.sourceResolution,
-                            scopeKey: `digital-human:${ref.current.id}:${v.requestId}`,
+                            scopeKey: `digital-human:${ref.current.id}:${v.requestId}:${upscaleTarget}`,
                           });
                           updateVideo(v.requestId, {
                             upscale: {
@@ -1109,19 +1167,20 @@ function DigitalHumanWorkspace({
                       })
                     }
                   >
-                    超分到4K
+                    超分到{upscaleTarget.toUpperCase()}
                   </button>
                 </>
               )}
+              {v.upscaleHistory?.filter(h => h.source).map((h,i)=><DigitalHumanMedia key={i} source={h.source!} kind="video" name={`历史${(h.target||"4k").toUpperCase()}超分成片`} />)}
               {v.upscale && (
                 <div>
-                  <p>4K 成片 · {statusLabel(v.upscale.status)}</p>
+                  <p>{(v.upscale.target || "4k").toUpperCase()} 超分成片 · {statusLabel(v.upscale.status)}</p>
                   {v.upscale.message && <p>{v.upscale.message}</p>}
                   {v.upscale.source && (
                     <DigitalHumanMedia
                       source={v.upscale.source}
                       kind="video"
-                      name="4K成片"
+                      name={`${(v.upscale.target || "4k").toUpperCase()}超分成片`}
                     />
                   )}
                 </div>

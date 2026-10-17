@@ -3379,7 +3379,7 @@ async function runCanvasBlockInner(
           : undefined;
         const wanAudioUrls = Array.from(
           new Set(
-            (wanMasterUrl ? [wanMasterUrl] : seedanceAudioUrls)
+            (wanMasterUrl ? [wanMasterUrl] : [...(block.seedance25RefAudioUrls || []), ...seedanceAudioUrls])
               .map((audioUrl) => String(audioUrl || "").trim())
               .filter((audioUrl) => /^https?:\/\//i.test(audioUrl)),
           ),

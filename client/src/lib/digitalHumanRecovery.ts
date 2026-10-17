@@ -53,13 +53,14 @@ export async function recoverDigitalHumanDraft(
           v => v.requestId === snapshot.cloneRequest!.requestId
         );
       if (voice?.status === "ready" && voice.voiceId)
-        services.save(d => ({
+        services.save(d => d.cloneRequest?.requestId === snapshot.cloneRequest!.requestId ? ({
           ...d,
-          voiceId: d.voiceId || voice.voiceId!,
+          voiceId: voice.voiceId!,
+          approvedAudioRequestId: undefined,
           cloneRequest: undefined,
-        }));
+        }) : d);
     });
-  for (const row of snapshot.audios.filter(a => digitalHumanPending(a.status)))
+  for (const row of snapshot.audios.filter(a => a.origin !== "recording" && digitalHumanPending(a.status)))
     work.push(async () => {
       const receipt = await services.dialogue(row.request.billingRequestId);
       if (!receipt) return;
@@ -147,19 +148,19 @@ export async function recoverDigitalHumanDraft(
       let taskId = row.upscale!.taskId;
       if (!taskId) {
         const tasks = await services.enhancements(
-          `digital-human:${snapshot.id}:${row.requestId}`
+          `digital-human:${snapshot.id}:${row.requestId}${row.upscale!.target ? ":" + row.upscale!.target : ""}`
         );
         taskId = tasks.find(
           r =>
             sourceIdentity(r.upscaleSourceUrl || r.sourceUrl) ===
               sourceIdentity(row.upscale!.inputSource) &&
-            (r.upscaleTarget || r.target) === "4k"
+            (r.upscaleTarget || r.target) === (row.upscale!.target || "4k")
         )?.taskId;
       }
       if (!taskId) return;
       const receipt = await services.video(taskId);
       if (receipt.status === "succeeded" && !receipt.videoUrl)
-        throw new Error("4K任务缺少成片，请核对原任务");
+        throw new Error("超分任务缺少成片，请核对原任务");
       services.updateVideo(row.requestId, {
         upscale: {
           ...row.upscale!,

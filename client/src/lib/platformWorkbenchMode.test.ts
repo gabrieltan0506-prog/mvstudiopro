@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   composeFocusPromptFromPersona,
+  resolvePlatformCreationTool,
+  DIGITAL_HUMAN_WORKSPACE_HREF,
   isLegacyVideoTabAlias,
   isPlatformWorkbenchMode,
   parsePersonaFromFocusPrompt,
@@ -53,4 +55,12 @@ describe("platformWorkbenchMode", () => {
     expect(toolsTabFromMode("tools", "copy")).toBe("htmlPpt");
     expect(toolsTabFromMode("tools", "matting")).toBe("matting");
   });
+});
+
+it("首页数字人深链接明确进入创作及数字人，旧地址仍保留原入口", () => {
+ const query = DIGITAL_HUMAN_WORKSPACE_HREF.split("?")[1];
+ expect(resolvePlatformLocation(query).mode).toBe("create");
+ expect(resolvePlatformCreationTool(query)).toBe("digital-human");
+ expect(resolvePlatformCreationTool("?mode=create&tab=copy")).toBe("viral");
+ expect(resolvePlatformCreationTool("?mode=trend&createTool=digital-human")).toBe("viral");
 });

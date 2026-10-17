@@ -582,3 +582,21 @@ export function toolsTabFromMode(
   }
   return current;
 }
+
+export type PlatformCreationTool = "viral" | "knowledge" | "digital-human";
+export const DIGITAL_HUMAN_WORKSPACE_HREF = "/platform?mode=create&createTool=digital-human";
+/** 首页直达和前进后退都读取同一工具标识，不依赖上一次趋势页状态。 */
+export function resolvePlatformCreationTool(search?: string): PlatformCreationTool {
+ const q = new URLSearchParams(search ?? (typeof window !== "undefined" ? window.location.search : ""));
+ if (q.get("mode") !== "create") return "viral";
+ const value = q.get("createTool");
+ return value === "digital-human" || value === "knowledge" ? value : "viral";
+}
+export function syncPlatformCreationToolToUrl(tool: PlatformCreationTool): void {
+ if (typeof window === "undefined") return;
+ const url = new URL(window.location.href);
+ url.searchParams.set("mode", "create");url.searchParams.delete("tool");
+ if (tool === "viral") url.searchParams.delete("createTool"); else url.searchParams.set("createTool", tool);
+ const next = `${url.pathname}${url.search}${url.hash}`;
+ if (next !== `${window.location.pathname}${window.location.search}${window.location.hash}`) window.history.pushState({}, "", next);
+}

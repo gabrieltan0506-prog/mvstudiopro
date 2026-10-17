@@ -4,6 +4,7 @@ const uri = z.string().min(1).max(5000);
 const time = z.number().finite().min(0).max(1800);
 export const digitalHumanSplitParamsSchema = z.object({
   audioUri: uri, audioRequestId: z.string().uuid(), script: z.string().min(1).max(4000),
+  maxSegmentSec: z.union([z.literal(15),z.literal(30)]).optional(),
 }).strict();
 export const digitalHumanFrameParamsSchema = z.object({ videoUri: uri, atSec: time }).strict();
 export const digitalHumanMixTrackSchema = z.object({
@@ -43,12 +44,13 @@ export const digitalHumanProductionInputSchema = z.discriminatedUnion("action", 
 export const digitalHumanProductionRequestSchema = z.object({ requestId: z.string().uuid(), input: digitalHumanProductionInputSchema }).strict();
 export const digitalHumanSplitManifestSchema = z.object({
   version: z.literal(1), audioUri: uri, audioRequestId: z.string().uuid(), script: z.string().min(1).max(4000),
+  maxSegmentSec: z.union([z.literal(15),z.literal(30)]).optional(),
   durationSec: z.number().positive().max(1800),
   segments: z.array(z.object({ index: z.number().int().min(0), startSec: time, endSec: time, audioUri: uri }).strict()).min(1).max(60),
 }).strict().superRefine((v, ctx) => {
   let end = 0;
   v.segments.forEach((s, i) => {
-    if (s.index !== i || Math.abs(s.startSec - end) > 1 / 48000 || s.endSec <= s.startSec || s.endSec - s.startSec > 30.001)
+    if (s.index !== i || Math.abs(s.startSec - end) > 1 / 48000 || s.endSec <= s.startSec || s.endSec - s.startSec > (v.maxSegmentSec || 30) + 0.001)
       ctx.addIssue({ code: "custom", path: ["segments", i], message: "音频分段清单不连续" });
     end = s.endSec;
   });
@@ -67,9 +69,9 @@ export const digitalHumanProductionReceiptSchema = z.object({
 export type DigitalHumanProductionReceipt = z.infer<typeof digitalHumanProductionReceiptSchema>;
 
 /** 只在真实静音区间中寻找切点；回溯避免最后一段不足四秒。 */
-export function planDigitalHumanAudioSegments(durationSec: number, silences: Array<{ start: number; end: number }>): Array<{ startSec: number; endSec: number }> {
+export function planDigitalHumanAudioSegments(durationSec: number, silences: Array<{ start: number; end: number }>, maxSegmentSec: 15 | 30 = 30): Array<{ startSec: number; endSec: number }> {
   if (!Number.isFinite(durationSec) || durationSec <= 0 || durationSec > 1800) throw new Error("配音时长须大于零且不超过30分钟");
-  if (durationSec <= 30) return [{ startSec: 0, endSec: durationSec }];
+  if (durationSec <= maxSegmentSec) return [{ startSec: 0, endSec: durationSec }];
   const points = Array.from(new Set(silences.flatMap(s => {
     const start = Math.max(0, s.start), end = Math.min(durationSec, s.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < 0.12) return [];
@@ -80,9 +82,9 @@ export function planDigitalHumanAudioSegments(durationSec: number, silences: Arr
   }))).filter(t => t >= 4 && t <= durationSec - 4).sort((a, b) => a - b);
   const failed = new Set<number>();
   function search(start: number, depth: number): number[] | undefined {
-    if (durationSec - start >= 4 && durationSec - start <= 30) return [durationSec];
+    if (durationSec - start >= 4 && durationSec - start <= maxSegmentSec) return [durationSec];
     if (depth >= 59 || failed.has(start)) return;
-    const candidates = points.filter(t => t - start >= 4 && t - start <= 30).reverse();
+    const candidates = points.filter(t => t - start >= 4 && t - start <= maxSegmentSec).reverse();
     for (const end of candidates) { const tail = search(end, depth + 1); if (tail) return [end, ...tail]; }
     failed.add(start);
   }

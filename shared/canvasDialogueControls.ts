@@ -58,3 +58,11 @@ export function compileCanvasDialogueInput(textZh: string, emotion: string): str
   if (compiled.length > 4000) throw new Error("本句配音文本超过处理上限，请缩短后再生成");
   return compiled;
 }
+
+/** 本轮自然语言演法限用于已验证合同的百炼本人克隆声线；不向其他路由静默丢弃。 */
+export function assertCanvasSpeechInstruction(voice: string, instruction?: string): void {
+  if (!instruction?.trim()) return;
+  if (!voice.startsWith("qwen-audio-3.0-tts-plus-mvsref-")) throw new Error("当前演法指令仅支持百炼本人克隆声线，请选择兼容声线或清空指令");
+  const length = Array.from(instruction.trim()).reduce((n, ch) => n + (new RegExp("\\p{Script=Han}", "u").test(ch) ? 2 : 1), 0);
+  if (length > 100) throw new Error("演法指令过长：最多100单位，汉字按2单位计算，请精简后提交");
+}

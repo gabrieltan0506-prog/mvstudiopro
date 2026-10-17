@@ -187,3 +187,16 @@ it("数字人口播回执丢失后查原请求，不误走导演intent或重新�
   expect(f.calls).toEqual(["omni-original"]);
   expect(f.get().videos[0]).toMatchObject({ status: "succeeded", taskId: "omni-original" });
 });
+
+it("本人录音即使残留待核对状态，也不向TTS查询或结算", async () => {
+ const f=setup(); const dialogue=vi.fn(); f.services.dialogue=dialogue;
+ f.set({...f.get(),audios:[{origin:"recording",status:"unknown",source:"gs://test-only/voice.wav",durationSec:65,request:{billingRequestId:id,input:"本人完整录音",voice:"recorded-narration",speakerZh:"本人",speakerId:"speaker",voiceStateZh:"实际录音"}}]});
+ await recoverDigitalHumanDraft(f.get(),f.services); expect(dialogue).not.toHaveBeenCalled(); expect(f.get().audios[0].source).toBe("gs://test-only/voice.wav");
+});
+
+it("本人新声线异步就绪后替换旧选择并清除旧音频批准，不再保留旧音色", async () => {
+ const f=setup();f.set({...f.get(),voiceId:"old-voice",approvedAudioRequestId:"old-audio",cloneRequest:{requestId:id,gcsUri:"gs://test-only/recording.wav",labelZh:"我的声音",consent:true}});
+ f.services.listVoices=async()=>[{requestId:id,status:"ready",voiceId:"new-own-voice",labelZh:"我的声音"}];
+ await recoverDigitalHumanDraft(f.get(),f.services);
+ expect(f.get().voiceId).toBe("new-own-voice");expect(f.get().cloneRequest).toBeUndefined();expect(f.get().approvedAudioRequestId).toBeUndefined();
+});

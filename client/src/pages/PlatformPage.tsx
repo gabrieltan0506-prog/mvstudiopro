@@ -73,6 +73,9 @@ import {
   readRecentTasks,
   readWorkbenchDraft,
   resolvePlatformLocation,
+  resolvePlatformCreationTool,
+  syncPlatformCreationToolToUrl,
+  type PlatformCreationTool,
   syncPlatformModeToUrl,
   toolsTabFromMode,
   trackPlatformFunnel,
@@ -3267,7 +3270,11 @@ export default function PlatformPage() {
   );
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [digitalHumanSource, setDigitalHumanSource] = useState<DigitalHumanSource>();
-  const [creationTool, setCreationTool] = useState<"viral" | "knowledge" | "digital-human">("viral");
+  const [creationTool, setCreationToolState] = useState<PlatformCreationTool>(() => resolvePlatformCreationTool());
+  function setCreationTool(tool: PlatformCreationTool) {
+    setCreationToolState(tool);
+    syncPlatformCreationToolToUrl(tool);
+  }
   const [createStep, setCreateStep] = useState<PlatformCreateStepId>("persona");
   /** 这轮想获客/转化/涨粉：独立参数进选题提示词，不是装饰标签（用户 2026-08-06） */
   const [topicGoal, setTopicGoal] = useState<PlatformTopicGoalId | null>(null);
@@ -3410,6 +3417,7 @@ export default function PlatformPage() {
           normalizePlatformUrlInPlace(loc); // replaceState only
         }
         setPlatformMode(loc.mode);
+        setCreationToolState(resolvePlatformCreationTool(window.location.search));
         writePlatformModeToStorage(loc.mode);
         if (loc.mode === "tools") {
           setCustomWorkspaceTab(loc.tool);
