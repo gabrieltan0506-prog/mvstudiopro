@@ -175,3 +175,15 @@ describe("数字人刷新恢复", () => {
     });
   });
 });
+
+it("数字人口播回执丢失后查原请求，不误走导演intent或重新生成", async () => {
+  const f = setup();
+  f.services.omni = vi.fn(async () => ({ taskId: "omni-original", status: "running" }));
+  f.services.intent = vi.fn(async () => { throw new Error("不得走旧入口"); });
+  f.set({ ...f.get(), videos: [{ ...video, engine: "omnihuman2-wavespeed", performanceImage: video.portrait }] });
+  expect(await recoverDigitalHumanDraft(f.get(), f.services)).toEqual([]);
+  expect(f.services.omni).toHaveBeenCalledWith(id);
+  expect(f.services.intent).not.toHaveBeenCalled();
+  expect(f.calls).toEqual(["omni-original"]);
+  expect(f.get().videos[0]).toMatchObject({ status: "succeeded", taskId: "omni-original" });
+});

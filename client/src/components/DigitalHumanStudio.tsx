@@ -1,3 +1,4 @@
+import { DigitalHumanOmniPanel } from "./DigitalHumanOmniPanel";
 import { DigitalHumanPostProduction } from "./DigitalHumanPostProduction";
 import { adoptDigitalHumanSource, type DigitalHumanSource } from "@shared/digitalHumanStudio";
 import { recoverDigitalHumanDraft } from "@/lib/digitalHumanRecovery";
@@ -388,6 +389,7 @@ function DigitalHumanWorkspace({
           ? { taskId: data.taskId }
           : { message: data.error || "原任务待核对" };
       },
+      omni: requestId => api.digitalHuman.getOmni.fetch({ requestId }),
       video: fetchVideoUpscaleStatus,
       enhancements: fetchWorkflowVideoEnhanceTasks,
       save,
@@ -426,7 +428,7 @@ function DigitalHumanWorkspace({
         <p className="dh-eyebrow">数字人视频</p>
         <h2>让你的人像，用你的声音讲述。</h2>
         <p>
-          人物、场景、声音与文案在这里组合。Seedance 2.5 · 720p 原片 → 4K 成片
+          先上传人物或角色照片，再填写文案、选择声音并试听配音。场景与产品演示按制作需要补充。
         </p>
       </header>
       <section className="dh-card">
@@ -497,9 +499,9 @@ function DigitalHumanWorkspace({
         className="dh-grid"
       >
         <section className="dh-card">
-          <h3>1 · 人像与场景</h3>
+          <h3>1 · 上传人物或角色照片</h3>
           <label>
-            讲述者人像
+            人物或角色照片
             <input
               type="file"
               accept="image/png,image/jpeg,image/webp"
@@ -507,7 +509,7 @@ function DigitalHumanWorkspace({
                 const file = e.target.files?.[0];
                 e.target.value = "";
                 if (file)
-                  void act("上传人像", async () =>
+                  void act("上传人物或角色照片", async () =>
                     edit({ portrait: await uploadFile(file) })
                   );
               }}
@@ -882,8 +884,9 @@ function DigitalHumanWorkspace({
             acquireWork={acquireWork}
           />
         </section>
+        {(role === "admin" || role === "supervisor") && <DigitalHumanOmniPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} updateVideo={updateVideo} />}
         <section className="dh-card dh-wide">
-          <h3>4 · 确认输入，生成原片</h3>
+          <h3>带货视频制作 · 人物、场景与镜头</h3>
           <p>
             先核对实际发送的文案、人物、场景和声音。原片成功后，继续本页的 4K
             超分。
@@ -1041,14 +1044,14 @@ function DigitalHumanWorkspace({
           </button>
           {draft.videos.map(v => (
             <article key={v.requestId}>
-              <p>720p 原片 · {statusLabel(v.status)}</p>
+              <p>{v.engine === "omnihuman2-wavespeed" ? "数字人口播原片" : "720p 原片"} · {statusLabel(v.status)}</p>
               {v.message && <p>{v.message}</p>}
               {v.source && (
                 <>
                   <DigitalHumanMedia
                     source={v.source}
                     kind="video"
-                    name="720p原片"
+                    name={v.engine === "omnihuman2-wavespeed" ? "数字人口播原片" : "720p原片"}
                   />
                   <button
                     type="button"
@@ -1066,7 +1069,7 @@ function DigitalHumanWorkspace({
                         );
                         if (
                           !window.confirm(
-                            `原片${metadata.width}×${metadata.height}，${metadata.durationSec}秒。超分4K需${cost}积分，保留720p原片。确认？`
+                            `原片${metadata.width}×${metadata.height}，${metadata.durationSec}秒。超分4K需${cost}积分，保留原片。确认？`
                           )
                         )
                           return;

@@ -1,3 +1,5 @@
+import { digitalHumanOmniInputSchema, digitalHumanOmniSubmitSchema } from "../../shared/digitalHumanOmni";
+import { quoteDigitalHumanOmni, queueDigitalHumanOmni, getDigitalHumanOmni } from "../services/digitalHumanOmni";
 import { z } from "zod";
 import { digitalHumanProductionRequestSchema } from "../../shared/digitalHumanProduction";
 import { queueDigitalHumanProduction, getDigitalHumanProduction } from "../services/digitalHumanProductionTask";
@@ -18,6 +20,9 @@ import {
 } from "../services/manhua3dTask";
 
 export const digitalHumanRouter = router({
+  quoteOmni: adminProcedure.input(digitalHumanOmniInputSchema).mutation(({ ctx, input }) => quoteDigitalHumanOmni(ctx.user.id, input)),
+  startOmni: adminProcedure.input(digitalHumanOmniSubmitSchema).mutation(({ ctx, input }) => queueDigitalHumanOmni(ctx.user.id, input)),
+  getOmni: adminProcedure.input(z.object({ requestId: z.string().uuid() }).strict()).query(({ ctx, input }) => getDigitalHumanOmni(ctx.user.id, input.requestId)),
   queueProduction: protectedProcedure.input(digitalHumanProductionRequestSchema).mutation(({ ctx, input }) => queueDigitalHumanProduction(ctx.user.id, input)),
   getProduction: protectedProcedure.input(z.object({ requestId: z.string().uuid() }).strict()).query(({ ctx, input }) => getDigitalHumanProduction(ctx.user.id, input.requestId)),
   getDraft: protectedProcedure.query(({ ctx }) => readDigitalHumanCloudDraft(ctx.user.id)),

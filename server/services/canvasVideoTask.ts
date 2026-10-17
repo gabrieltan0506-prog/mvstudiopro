@@ -1,3 +1,5 @@
+import { submitWavespeedOmniHuman, pollWavespeedOmniHuman, quoteWavespeedOmniHuman } from "./wavespeedOmniHuman";
+import { saveDigitalHumanOmniOutput, DigitalHumanOmniOutputQualityError } from "./digitalHumanOmniOutput";
 import { isTaskHeartbeatStatus, taskHeartbeatTime } from "./taskHeartbeat.js";
 import { submitEvolinkH3, EVOLINK_H3_MODEL } from "./evolinkHailuoVideo.js";
 import { preflightH3ReferenceMedia } from "./hailuoReferencePreflight.js";
@@ -100,6 +102,7 @@ const WAN30_MAX_POLL_MS = Math.min(
 );
 
 export type CanvasVideoEngine =
+  | "omnihuman2-wavespeed"
   | "seedance-openrouter"
   | "hailuo-openrouter"
   | "hailuo-evolink"
@@ -149,6 +152,10 @@ export type CanvasVideoTaskRecord = {
   /** Paid INK BytePlus creation marker: an unknown response must not be resubmitted/refunded. */
   inkProductionByteplusSubmissionStartedAt?: string;
   inkProductionEvidence?: { raw: {objectName:string;bytes:number;sha256:string}; parsed: {objectName:string;bytes:number;sha256:string} };
+  omni?: import("./digitalHumanOmni").DigitalHumanOmniPrepared & { requestId: string; maxPriceUsd: number };
+  omniSubmissionStartedAt?: string;
+  omniQuoteEvidence?: Awaited<ReturnType<typeof quoteWavespeedOmniHuman>>["evidence"];
+  omniSubmitEvidence?: Awaited<ReturnType<typeof submitWavespeedOmniHuman>>["evidence"];
   engine: CanvasVideoEngine;
   label: string;
   prompt: string;
@@ -375,7 +382,7 @@ function usesEvolinkTaskId(engine: CanvasVideoEngine): boolean {
 export function canvasVideoTaskNeedsSubmit(task: CanvasVideoTaskRecord): boolean {
   if (usesEvolinkTaskId(task.engine)) return !task.evolinkTaskId;
   if (task.engine === "seedance25-byteplus" || task.engine === "seedance-mini-byteplus") return !task.byteplusTaskId;
-  if (task.engine === "wavespeed-upscale" || task.engine === "wan30-wavespeed") {
+  if (task.engine === "omnihuman2-wavespeed" || task.engine === "wavespeed-upscale" || task.engine === "wan30-wavespeed") {
     return !task.wavespeedPredictionId;
   }
   if (task.engine === "wan30-evolink") return !task.evolinkTaskId;
@@ -843,6 +850,27 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     const { assertCodeMotionProductionVideoTask } = await import("./codeMotionProductionVideo");
     await assertCodeMotionProductionVideoTask(task);
   }
+  if (task.engine === "omnihuman2-wavespeed") {
+    if (!task.omni) throw new Error("数字人口播缺少已确认输入");
+    const { prepareDigitalHumanOmni, omniProviderInput } = await import("./digitalHumanOmni");
+    const prepared = await prepareDigitalHumanOmni(task.userId, { image: task.omni.image, audio: task.omni.audio, prompt: task.omni.prompt });
+    if (prepared.fingerprint !== task.omni.fingerprint) throw new Error("素材内容已变化，未提交生成，请重新核对");
+    const context = { userId: task.userId, requestId: task.omni.requestId };
+    const input = omniProviderInput(prepared);
+    const quote = await quoteWavespeedOmniHuman(context, input);
+    if (quote.discountedPriceUsd > task.omni.maxPriceUsd + 0.000001) throw new Error("费用已上涨，未提交生成，请重新核价");
+    task.omniQuoteEvidence = quote.evidence;
+    task.omniSubmissionStartedAt = new Date().toISOString();
+    await writeTask(task);
+    const submitted = await submitWavespeedOmniHuman(context, input);
+    task.wavespeedPredictionId = submitted.predictionId;
+    task.omniSubmitEvidence = submitted.evidence;
+    task.provider = "wavespeed"; task.model = "bytedance/omni-human-2.0";
+    task.status = "running"; task.lastHeartbeatAt = new Date().toISOString();
+    await writeTask(task);
+    return;
+  }
+
   if (task.engine === "seedance-openrouter") {
     const body = buildOpenRouterSeedanceSubmitBody({
       variant:
@@ -1218,6 +1246,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
 
     await heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {});
 
+    if (task.engine === "omnihuman2-wavespeed" && task.omniSubmissionStartedAt && !task.wavespeedPredictionId) {
+      task.status = "reconcile_manual"; task.error = "数字人口播提交回执待核对，已停止重复提交";
+      await writeTask(task); await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {}); return task;
+    }
+
     if (task.engine === "wavespeed-upscale" && task.frameTargetFps && task.enhancePhase === "interpolate" && !task.enhancePipelineVersion) {
       task.status = "reconcile_manual";
       task.error = "旧补帧任务未自动切换至AI付费链路，请核对原任务";
@@ -1309,6 +1342,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           return after;
         }
       } catch (error) {
+        if (task.engine === "omnihuman2-wavespeed" && task.omniSubmissionStartedAt && (error as { kind?: string })?.kind !== "rejected") {
+          if (task.wavespeedPredictionId) { await writeTask(task).catch(() => {}); return task; }
+          task.status = "reconcile_manual"; task.error = "数字人口播提交结果未知，请核对原任务，不重复生成";
+          await writeTask(task).catch(() => {}); await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {}); return task;
+        }
         if (error instanceof ReferenceVideoPending) {
           task.lastTransientError = error.message;
           await writeTask(task);
@@ -1369,6 +1407,22 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
     }
 
     try {
+      if (current.engine === "omnihuman2-wavespeed") {
+        if (!current.omni || !current.wavespeedPredictionId) throw new Error("数字人口播原任务回执缺失，请核对");
+        const snap = await pollWavespeedOmniHuman({ userId: current.userId, requestId: current.omni.requestId }, current.wavespeedPredictionId);
+        if (snap.state === "failed") return failTask(current, snap.error);
+        if (snap.state === "running") {
+          if (["created", "pending", "processing", "running", "queued"].includes(snap.status)) {
+            current.lastHeartbeatAt = new Date().toISOString(); current.status = "running"; current.timedOutAt = undefined;
+          }
+          current.lastTransientError = snap.status.includes("unconfirmed") ? "原任务查询结果待核对" : undefined;
+          await writeTask(current); return current;
+        }
+        current.lastHeartbeatAt = new Date().toISOString();
+        await writeTask(current);
+        const result = await saveDigitalHumanOmniOutput(current.userId, snap.sourceUrl, current.omni.durationSec);
+        return succeedTask(current, result.url, "bytedance/omni-human-2.0", "wavespeed");
+      }
       if (current.engine === "seedance25-byteplus" || current.engine === "seedance-mini-byteplus") {
         if (!current.byteplusTaskId) {
           return failTask(current, "视频服务未返回任务编号");
@@ -1700,7 +1754,7 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
       // 真正的终态失败只认各 pollOnce 返回的 state:"failed"（2xx 明确终态）。
       // 长期起不来的由超时线 → 对账态 → 人工兜底，不会永远滚下去。
       const { VideoEnhanceOutputMismatch } = await import("./videoEnhanceOutput.js");
-      if (error instanceof VideoEnhanceOutputMismatch) return failTask(current, error.message);
+      if (error instanceof VideoEnhanceOutputMismatch || error instanceof DigitalHumanOmniOutputQualityError) return failTask(current, error.message);
       current.lastTransientError = (
         error instanceof Error ? error.message : String(error)
       ).slice(0, 280);
@@ -1748,6 +1802,7 @@ export async function createCanvasVideoTask(input: {
   userId: number;
   creditsCharged: number;
   inkProduction?: import("./codeMotionProductionGrant").CodeMotionProductionSlot;
+  omni?: CanvasVideoTaskRecord["omni"];
   engine: CanvasVideoEngine;
   label: string;
   prompt: string;
@@ -1832,6 +1887,7 @@ export async function createCanvasVideoTask(input: {
     status: "queued",
     creditsCharged: Math.max(0, Number(input.creditsCharged) || 0),
     inkProduction: input.inkProduction,
+    omni: input.omni,
     engine: input.engine,
     label: String(input.label || "画布成片").slice(0, 120),
     prompt,

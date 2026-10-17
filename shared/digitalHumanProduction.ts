@@ -19,15 +19,15 @@ export const digitalHumanVoiceSpaceSchema = z.object({
 }).strict();
 export const digitalHumanFinalParamsSchema = z.object({
   audioUri: uri, audioRequestId: z.string().uuid(),
-  clips: z.array(z.object({ videoUri: uri, startSec: time, endSec: time }).strict()).min(1).max(60),
+  clips: z.array(z.object({ videoUri: uri, startSec: time, endSec: time, sourceEngine: z.literal("omnihuman2-wavespeed").optional() }).strict()).min(1).max(60),
   voice: digitalHumanVoiceSpaceSchema,
   tracks: z.array(digitalHumanMixTrackSchema).max(12),
   aspectRatio: z.enum(["9:16", "16:9"]),
 }).strict().superRefine((v, ctx) => {
   let end = 0;
   v.clips.forEach((clip, i) => {
-    if (Math.abs(clip.startSec - end) > 1 / 48000 || clip.endSec <= clip.startSec || clip.endSec - clip.startSec > 30.001)
-      ctx.addIssue({ code: "custom", path: ["clips", i], message: "分段须从零开始连续覆盖，单段不超过30秒" });
+    if (Math.abs(clip.startSec - end) > 1 / 48000 || clip.endSec <= clip.startSec || clip.endSec - clip.startSec > (clip.sourceEngine ? 300.001 : 30.001))
+      ctx.addIssue({ code: "custom", path: ["clips", i], message: "分段须连续覆盖并符合对应视频路线的单段时长上限" });
     end = clip.endSec;
   });
   v.tracks.forEach((track, i) => {

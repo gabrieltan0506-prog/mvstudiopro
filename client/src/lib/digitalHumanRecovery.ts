@@ -14,6 +14,7 @@ export type DigitalHumanRecoveryServices = {
   scene: (requestId: string) => Promise<{ jobId: string } | null>;
   job: (jobId: string) => Promise<JobResponse>;
   intent: (intentId: string) => Promise<{ taskId?: string; message?: string }>;
+  omni?: (requestId: string) => Promise<{ taskId?: string; status: string; videoUrl?: string; error?: string } | null>;
   video: (taskId: string) => Promise<VideoUpscaleStatusSnapshot>;
   enhancements: (scope: string) => Promise<
     Array<{
@@ -114,7 +115,15 @@ export async function recoverDigitalHumanDraft(
   for (const row of snapshot.videos.filter(v => digitalHumanPending(v.status)))
     work.push(async () => {
       let taskId = row.taskId;
-      if (!taskId && row.intentId) {
+      if (row.engine === "omnihuman2-wavespeed" && !taskId) {
+        if (!services.omni) throw new Error("数字人口播恢复入口暂不可用");
+        const found = await services.omni(row.requestId);
+        if (found) {
+          taskId = found.taskId;
+          services.updateVideo(row.requestId, { taskId, status: found.status === "failed" ? "failed" : found.status === "succeeded" ? "succeeded" : "unknown", source: sourceIdentity(found.videoUrl), message: found.error });
+        }
+      }
+      if (!taskId && row.intentId && !row.engine) {
         const found = await services.intent(row.intentId);
         taskId = found.taskId;
         if (found.message)

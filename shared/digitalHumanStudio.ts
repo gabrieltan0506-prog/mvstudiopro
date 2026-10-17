@@ -1,3 +1,4 @@
+import { digitalHumanOmniQuoteSchema } from "./digitalHumanOmni";
 import { digitalHumanStageAnchorSchema, digitalHumanStageCameraSchema } from "./digitalHumanSpatialAdvisor";
 import { z } from "zod";
 import { platformStoryboardCellsSchema } from "./platformStoryboardCells";
@@ -125,6 +126,9 @@ const upscaleSchema = z.object({
   message: z.string().optional(),
 });
 const videoReceiptSchema = z.object({
+  engine: z.literal("omnihuman2-wavespeed").optional(),
+  performanceImage: mediaSchema.optional(),
+  omniQuote: digitalHumanOmniQuoteSchema.optional(),
   segment: z.object({ planRequestId: z.string().uuid(), index: z.number().int().min(0), startSec: z.number().min(0), endSec: z.number().positive() }).optional(),
   continuityFrame: mediaSchema.optional(),
   requestId: z.string().uuid(),
@@ -145,8 +149,11 @@ const videoReceiptSchema = z.object({
   scene: mediaSchema,
   audioSource: z.string(),
   audioRequestId: z.string(),
-  durationSec: z.number().min(4).max(30),
+  durationSec: z.number().min(4).max(300),
   aspectRatio: z.enum(["9:16", "16:9"]),
+}).superRefine((row, ctx) => {
+  if (!row.engine && row.durationSec > 30) ctx.addIssue({ code: "custom", message: "导演视频单段最多30秒" });
+  if (row.engine && (!row.performanceImage || row.segment)) ctx.addIssue({ code: "custom", message: "数字人口播须保留本次人物照片和完整配音" });
 });
 export const digitalHumanDraftSchema = z.object({
   version: z.literal(1),
@@ -406,6 +413,7 @@ export function digitalHumanSegmentFingerprint(draft: DigitalHumanDraft, audio: 
 export function digitalHumanVideoIsCurrent(draft: DigitalHumanDraft, row: DigitalHumanVideo): boolean {
   const audio = currentDigitalHumanAudio(draft);
   if (!audio) return false;
+  if (row.engine === "omnihuman2-wavespeed") return row.fingerprint === digitalHumanOmniFingerprint(draft, audio);
   if (!row.segment) return row.fingerprint === digitalHumanVideoFingerprint(draft, audio);
   const plan = draft.productions.find(p => p.request.requestId === row.segment!.planRequestId && p.status === "succeeded");
   const part = plan?.manifest?.segments[row.segment.index];
@@ -452,4 +460,24 @@ export function digitalHumanVideoFailureStatus(
     !row.taskId
     ? "failed"
     : "unknown";
+}
+
+export function digitalHumanOmniFingerprint(draft: DigitalHumanDraft, audio: DigitalHumanAudio): string {
+  return JSON.stringify({ engine: "omnihuman2-wavespeed", image: draft.portrait?.source,
+    script: draft.script.trim(), voice: draft.voiceId, audio: audio.source, audioRequestId: audio.request.billingRequestId,
+    approvedAudioRequestId: draft.approvedAudioRequestId, direction: draft.direction.trim() });
+}
+
+/** 入门口播只绑定照片与已确认配音；旧导演参考不会混入单图请求。 */
+export function prepareDigitalHumanOmniVideo(draft: DigitalHumanDraft, requestId: string): DigitalHumanVideo {
+  const image = draft.portrait;
+  if (!image) throw new Error("请先上传人物或角色照片");
+  if (draft.videos.some(v => digitalHumanPending(v.status))) throw new Error("请先核对原视频任务，不能重复生成");
+  const audio = currentDigitalHumanAudio(draft);
+  if (!audio?.source || !audio.durationSec || draft.approvedAudioRequestId !== audio.request.billingRequestId) throw new Error("请先试听并确认当前文案配音");
+  if (audio.durationSec < 4 || audio.durationSec > 300) throw new Error("数字人口播配音须为4至300秒");
+  return { engine: "omnihuman2-wavespeed", requestId, fingerprint: digitalHumanOmniFingerprint(draft, audio),
+    status: "submitted", performanceImage: image, portrait: image, scene: image, extraPortraits: [],
+    audioSource: audio.source, audioRequestId: audio.request.billingRequestId, durationSec: audio.durationSec, aspectRatio: draft.aspectRatio,
+    prompt: `以输入照片中的人物或角色为讲述者，保持身份、服装与背景。用所提供的完整音频驱动口型、表情和自然手势，沿用原声音色、语速、停顿和原话，不另造台词，不添加字幕或背景音乐。\n文案语境：${draft.script.trim()}\n表演要求：${draft.direction.trim()}\n自然讲述至音频结束，保留最后的语句和尾音。` };
 }

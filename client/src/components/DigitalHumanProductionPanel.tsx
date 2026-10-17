@@ -80,7 +80,8 @@ export function DigitalHumanProductionPanel(props: {
   function finalInput(): DigitalHumanProductionInput {
     const current = currentDigitalHumanAudio(latest.current.draft);
     if (!current?.source || !current.durationSec || current.request.billingRequestId !== latest.current.draft.approvedAudioRequestId) throw new Error("请先试听并批准当前完整配音");
-    const clips = plan?.manifest ? plan.manifest.segments.map(s => {
+    const fullOmni = [...latest.current.draft.videos].reverse().find(v => v.engine === "omnihuman2-wavespeed" && v.status === "succeeded" && v.source && digitalHumanVideoIsCurrent(latest.current.draft, v));
+    const clips = fullOmni ? [{ videoUri: fullOmni.source!, startSec: 0, endSec: current.durationSec!, sourceEngine: "omnihuman2-wavespeed" as const }] : plan?.manifest ? plan.manifest.segments.map(s => {
       const video = segmentVideo(s.index);
       if (!video?.source) throw new Error(`第${s.index + 1}段尚无匹配当前输入的原片`);
       return { videoUri: video.source, startSec: s.startSec, endSec: s.endSec };

@@ -18,6 +18,7 @@ export async function digitalHumanMediaUrl(source: string): Promise<string> {
 export async function digitalHumanVideoBlock(
   row: DigitalHumanVideo
 ): Promise<CanvasBlock> {
+  if (row.engine === "omnihuman2-wavespeed") throw new Error("数字人口播请使用专用提交入口，不能改走导演视频路线");
   const images = [
     row.portrait,
     row.scene,
