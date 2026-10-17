@@ -1,3 +1,4 @@
+import { proxyAppearanceReportSchema, validateProxyAppearanceReport } from "./manhuaPrevisProxyReport";
 import { riggedPiggybackReportSchema, validateRiggedPiggybackReport } from "./manhuaPrevisRiggedPiggybackReport";
 import { groundedRouteReportSchema, validateGroundedRouteReport } from "./manhuaPrevisGroundedRouteReport";
 import { storyPropsReportSchema, validateStoryPropsReport } from "./manhuaPrevisStoryPropsReport";
@@ -219,6 +220,7 @@ export const previsReportSchema = z
     cameraTiming: cameraTimingReportSchema.optional(),
     effects: effectsReportSchema.optional(),
     sceneEffects: previsSceneEffectsReportSchema.optional(),
+    proxyAppearances: proxyAppearanceReportSchema.optional(),
     weapons: z
       .array(
         z
@@ -627,6 +629,7 @@ export function validatePrevisReport(
     )
       throw new Error("白模双人交互接触检查未通过");
   }
+  validateProxyAppearanceReport(report.proxyAppearances, spec);
   validateStoryPropsReport(report.storyProps, spec);
   validateHandContactsReport(report.handContacts, spec, report.models);
   validateHumanPostureReports(report.humanPostures, spec.actors, spec.durationSec);

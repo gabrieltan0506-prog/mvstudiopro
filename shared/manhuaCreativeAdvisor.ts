@@ -1,4 +1,5 @@
-import { digitalHumanFilmTargetSchema } from "./digitalHumanFilmDirector";
+import { platformStoryboardCellsSchema } from "./platformStoryboardCells";
+import { digitalHumanDirectionSchema, digitalHumanFilmPlanSchema, digitalHumanFilmTargetSchema } from "./digitalHumanFilmDirector";
 import { creativeLearningTargetSchema } from "./creativeGenerationLibrary";
 import { digitalHumanSpatialTargetSchema } from "./digitalHumanSpatialAdvisor";
 import { manhuaAdvisorStudioContextSchema } from "./manhuaAdvisorStudioContext";
@@ -150,6 +151,12 @@ export const manhuaCreativeAdvisorContextSchema = z
     worldTarget: advisorWorldTargetSchema.optional(),
     digitalHumanSpatial: digitalHumanSpatialTargetSchema.optional(),
     digitalHumanFilm: digitalHumanFilmTargetSchema.optional(),
+    /** 完整数字人制作要求单独传递，不能通过分镜摘要容量截断。 */
+    digitalHumanProduction: z.object({
+      direction: digitalHumanDirectionSchema,
+      sourceShots: platformStoryboardCellsSchema.optional(),
+      adoptedPlan: digitalHumanFilmPlanSchema.optional(),
+    }).strict().optional(),
     workflowOperation: z.object({workspace:contextText(30000,"工作流操作状态",true),revision:contextText(200,"工作流操作版本",true)}).strict().optional(),
     bgmMix: advisorBgmMixTargetSchema.optional(),
     musicMv: musicMvAdvisorTargetSchema.optional(),

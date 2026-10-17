@@ -66,6 +66,7 @@ export type ManhuaStageFrameExport = {
 export type StageAssetFailure = { id: string; kind: "world" | "collider" | "actor"; message: string; code?: string; status?: number };
 
 type Props = {
+  hideCameraPresets?: boolean;
   lockCamera?: boolean;
   cameraOverride?: StageCameraRig;
   onReadyChange?: (ready: boolean) => void;
@@ -423,7 +424,7 @@ export function ManhuaWorldStagePreview(props: Props) {
             finally { setSavingAnchor(false); }
           }}>确认「{anchorName.trim()}」地点</button>}
         </div>}
-        <span className="text-white/60">机位</span>
+        {!props.hideCameraPresets && <><span className="text-white/60">机位</span>
         {STAGE_CAMERA_KINDS.map((k) => (
           <button key={k} type="button" className={cameraKind === k ? btnOn : btn} disabled={!loaded || props.lockCamera} onClick={() => {
             // 已开始上传的视角图无法取消；换机位也要等本次保存结束，避免并发提交。
@@ -452,6 +453,7 @@ export function ManhuaWorldStagePreview(props: Props) {
             </select>
           </label>
         ) : null}
+        </>}
         {props.animation ? <>
           <button type="button" className={btn} disabled={status!=="ready" || animationLoading || exporting} onClick={async()=>{
             if(animationMode){send({type:"animation_toggle"});return;}
@@ -489,7 +491,7 @@ export function ManhuaWorldStagePreview(props: Props) {
         ) : null}
       </div>
       <p className="text-xs text-white/55 xl:col-span-2">
-        在画面中拖动可旋转视角，滚轮可推近或推远；切换机位会回到该机位的初始角度。
+        在画面中拖动可旋转视角，滚轮可推近或推远。
         {characters.length ? `本段有 ${characters.length} 个人物；` : "本段暂未摆入人物；"}
         {rigs.ots.kind === "single" && cameraKind === "ots" ? " 缺过肩对象，过肩退为单人正面。" : ""}
         {status === "loading" ? " 场景加载中，载入完成后才能保存视角图。" : ""}

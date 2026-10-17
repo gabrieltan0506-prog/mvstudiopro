@@ -1,3 +1,4 @@
+import { PREVIS_PROXY_PROP_KINDS, isPrevisProxyProp, previsProxyPropGeometrySchema } from "./manhuaPrevisProxy";
 import { z } from "zod";
 
 const vec3 = z.tuple([z.number().finite().min(-10).max(10), z.number().finite().min(-10).max(10), z.number().finite().min(-10).max(10)]);
@@ -15,7 +16,8 @@ export const storyPropKeyframeSchema = z.object({
   fill:z.number().finite().min(0).max(1).default(0),
 }).strict();
 export const previsStoryPropSchema = z.object({
-  id, kind:z.enum(["needle","blood_drop","bowl","sleeve_glow","knife","jar"]),
+  id, kind:z.enum(["needle","blood_drop","bowl","sleeve_glow","knife","jar", ...PREVIS_PROXY_PROP_KINDS]),
+  proxy:previsProxyPropGeometrySchema.optional(),
   keyframes:z.array(storyPropKeyframeSchema).min(2).max(100),
   grip:z.object({actorId:id,hand:z.enum(["hand-1","hand1"]),offset:vec3.default([0,0,-.02]),startSec:z.number().finite().nonnegative().optional(),endSec:z.number().finite().nonnegative().optional()}).strict().optional(),
 }).strict();
@@ -30,17 +32,18 @@ export function storyPropsIssue(props:PrevisStoryProp[] | undefined, actors:{id:
     if(prop.grip){
       const holder=actors.find(a=>a.id===prop.grip!.actorId);
       const handId=prop.grip.actorId+"/"+prop.grip.hand;
-      if(!["bowl","jar","knife","needle"].includes(prop.kind) || !holder || holder.shape!=="human")return "道具握持只允许绑定真实存在的人形演员";
+      if(!["bowl","jar","knife","needle","information_panel"].includes(prop.kind) || !holder || holder.shape!=="human")return "道具握持只允许绑定真实存在的人形演员";
       const start=prop.grip.startSec??0,end=prop.grip.endSec??durationSec;
       if((prop.grip.startSec===undefined)!==(prop.grip.endSec===undefined) || start>=end || end>durationSec || [start,end].some(t=>Math.abs(t*24-Math.round(t*24))>1e-6))return "道具握持须成对提供片内24帧对齐的起止秒位";
       if(occupiedHands.some(h=>h.id===handId && h.start<end && h.end>start))return "同一只手的道具握持窗口不能重叠";
       // 取针轨迹驱动手腕，不能再由同一手骨反向驱动针而形成循环。
-      if(prop.kind==="needle" && prop.keyframes.some((frame,i,frames)=>
+      if(["needle","information_panel"].includes(prop.kind) && prop.keyframes.some((frame,i,frames)=>
         i<frames.length-1 && frame.timeSec<end && frames[i+1].timeSec>start &&
         (frame.anchor.type!=="world" || frames[i+1].anchor.type!=="world")
       ))return "持针窗口内的轨迹两端须使用独立世界锚点，释放后才可绑定身体骨锚";
       occupiedHands.push({id:handId,start,end});
     }
+    if (isPrevisProxyProp(prop.kind) !== Boolean(prop.proxy)) return `几何剧情对象 ${prop.id} 必须具有对应的尺寸与颜色配置，旧道具不得混入几何配置`;
     const frames=prop.keyframes;
     if(frames[0].timeSec!==0 || Math.abs(frames[frames.length-1].timeSec-durationSec)>1e-6) return `道具 ${prop.id} 必须明确整段首尾状态`;
     for(let i=0;i<frames.length;i++) {
@@ -60,4 +63,10 @@ export function storyPropsIssue(props:PrevisStoryProp[] | undefined, actors:{id:
     preceding.add(prop.id);
   }
   return null;
+}
+
+/** 信息界面接触前后各半秒收放手，短窗口最多各占一半。 */
+export function previsPanelGripAmount(start:number,end:number,t:number):number {
+ const ramp=Math.min(.5,(end-start)/2),smooth=(v:number)=>{const u=Math.max(0,Math.min(1,v));return u*u*(3-2*u);};
+ return smooth((t-start)/ramp)*smooth((end-t)/ramp);
 }

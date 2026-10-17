@@ -27,7 +27,7 @@ beforeAll(async () => {
       f.makeBlock=(scope='11111111-1111-4111-8111-111111111111')=>({id:'clip-e01-g01',audioStudio,previsStudio:{...createManhuaPrevisStudio(10,scope),audioEnabled:false},manhuaSegmentRefs:{previs:f.old}});
       f.response=(input)=>({jobId:'prv_test_job',status:'succeeded',params:input,output:{requestId:input.requestId,clipId:input.clipId,spec:input.spec,audio:input.audio,quality:input.quality,durationSec:input.spec.durationSec,gcsUri:'gs://test/unrelated-storage-folder/output.mp4',url:'https://offline.invalid/new.mp4',report:{warnings:['离线测试，不代表动作质量验收']},...(input.spec.exportLayers?{layerBundle:{gcsUri:'gs://test/layer-bundle.zip',url:'https://offline.invalid/layers.zip',format:'previs-layers-v1',bytes:1234,sha256:'a'.repeat(64)}}:{})}});
       const services={submit:async input=>{f.submits.push(structuredClone(input));if(f.mode==='defer')return new Promise(resolve=>f.resolveSubmit=resolve);if(f.mode==='unknown')throw Error('离线模拟断网');const response=f.response(input);if(globalThis.keyedFixture)f.getResult=response;return response;},get:async id=>{f.gets.push(id);return f.getResult;},list:async (...args)=>{f.lists.push(args);if(f.mode==='defer-list')return new Promise(resolve=>f.resolveList=resolve);return {items:[],nextCursor:null};}};
-      function App(){const [block,setBlock]=useState(()=>globalThis.keyedFixture?{...f.makeBlock(),previsStudio:undefined}:f.makeBlock());const [characters,setCharacters]=useState([{id:'character-mo',label:'墨屠'}]);const [profiles,setProfiles]=useState([]);f.setProfiles=setProfiles;const [shots,setShots]=useState([]);const [directionShots,setDirectionShots]=useState([]);f.setDirectionShots=setDirectionShots;f.block=block;f.setBlock=setBlock;f.characters=characters;f.setCharacters=setCharacters;f.shots=shots;f.setShots=setShots;return <ManhuaPrevisStudioView key={globalThis.keyedFixture?block.id+':'+(block.previsStudio?.scopeId??'new'):undefined} block={block} characters={characters} profiles={profiles} sourceShots={shots} directionShots={directionShots} services={services} onChange={(studio,reference)=>{f.updates.push({studio:structuredClone(studio),reference});if(f.rejectSave)return false;setBlock(current=>({...current,previsStudio:studio,manhuaSegmentRefs:reference?{...current.manhuaSegmentRefs,previs:reference}:current.manhuaSegmentRefs}));return true;}}/>;}
+      function App(){const [block,setBlock]=useState(()=>globalThis.keyedFixture?{...f.makeBlock(),previsStudio:undefined}:f.makeBlock());const [characters,setCharacters]=useState([{id:'character-mo',label:'墨屠'}]);const [profiles,setProfiles]=useState([]);f.setProfiles=setProfiles;const [shots,setShots]=useState([]);const [directionShots,setDirectionShots]=useState([]);f.setDirectionShots=setDirectionShots;f.block=block;f.setBlock=setBlock;f.characters=characters;f.setCharacters=setCharacters;f.shots=shots;f.setShots=setShots;return <ManhuaPrevisStudioView creatorMode={Boolean(globalThis.creatorFixture)} key={globalThis.keyedFixture?block.id+':'+(block.previsStudio?.scopeId??'new'):undefined} block={block} characters={characters} profiles={profiles} sourceShots={shots} directionShots={directionShots} services={services} onChange={(studio,reference)=>{f.updates.push({studio:structuredClone(studio),reference});if(f.rejectSave)return false;setBlock(current=>({...current,previsStudio:studio,manhuaSegmentRefs:reference?{...current.manhuaSegmentRefs,previs:reference}:current.manhuaSegmentRefs}));return true;}}/>;}
       createRoot(document.getElementById('root')).render(globalThis.strictFixture?<StrictMode><App/></StrictMode>:<App/>);
       `,
     },
@@ -67,7 +67,7 @@ afterAll(async () => {
   await browser?.close();
 });
 
-async function open(strict = false, keyed = false, reviewMedia?: Buffer, expandTune = true) {
+async function open(strict = false, keyed = false, reviewMedia?: Buffer, expandTune = true, creator = false) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5_000);
   await page.setRequestInterception(true);
@@ -97,11 +97,12 @@ async function open(strict = false, keyed = false, reviewMedia?: Buffer, expandT
   });
   await page.goto("http://localhost:41819");
   await page.evaluate(
-    ({ strict, keyed }) => {
+    ({ strict, keyed, creator }) => {
+      (window as any).creatorFixture = creator;
       (window as any).strictFixture = strict;
       (window as any).keyedFixture = keyed;
     },
-    { strict, keyed }
+    { strict, keyed, creator }
   );
   await page.addScriptTag({ content: bundle });
   await page.waitForSelector("[data-manhua-previs-studio]");
@@ -944,5 +945,46 @@ it("核对人物补娘与马形走正式保存回调，不提交渲染且保留�
       const f = (window as any).fixture;
       return { cast: f.block.previsStudio.spec.actors.map((actor: any) => [actor.nameZh, actor.shape]), submits: f.submits.length, history: f.block.previsStudio.specHistory.length, reference: f.block.manhuaSegmentRefs.previs.url };
     })).toEqual({ cast: [["墨屠", "horse"], ["娘", "human"]], submits: 0, history: 1, reference: "https://offline.invalid/old.mp4" });
+  } finally { await page.close(); }
+});
+
+
+it("数字人时间线使用实际播放版本，点击镜头定位视频且不绕过审片", async () => {
+  const page = await open(false, false, undefined, false, true);
+  try {
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const studio = f.createStudio(3, f.block.previsStudio.scopeId);
+      const camera = studio.spec.cameras[0];
+      studio.spec.cameras = [{ ...camera, startSec: 0, endSec: 1 }, { ...camera, startSec: 1, endSec: 3 }];
+      f.setBlock({ ...f.block, previsStudio: { ...studio, audioEnabled: false } });
+      const original = f.response;
+      f.response = (input: any) => { const response = original(input); response.output.url = "http://localhost:41819/review.mp4"; return response; };
+    });
+    await settle(page);
+    await click(page, "确认生成动作白模");
+    await page.waitForSelector("video");
+    // 离线只验证时间线到播放器API的接线，不冒充真实媒体播放或审片。
+    await page.evaluate(() => {
+      const video = document.querySelector("video")!;
+      let time = 0;
+      Object.defineProperties(video, {
+        readyState: { configurable: true, get: () => 4 },
+        seeking: { configurable: true, get: () => false },
+        currentTime: { configurable: true, get: () => time, set: value => { time = value; } },
+      });
+    });
+    expect(await page.$('[data-previs-model-config]')).toBeNull();
+    await click(page, "第2镜 · 1–3秒");
+    await page.waitForFunction(() => { const v = document.querySelector("video")!; return !v.seeking && Math.abs(v.currentTime - 1) < 0.05; });
+    expect(await page.evaluate(() => (window as any).fixture.block.previsStudio.selectedJobId)).toBeUndefined();
+    await page.evaluate(() => {
+      const f = (window as any).fixture;
+      f.setBlock({ ...f.block, previsStudio: { ...f.block.previsStudio, spec: { ...f.block.previsStudio.spec,
+        cameras: [{ ...f.block.previsStudio.spec.cameras[0], startSec: 0, endSec: 3 }] } } });
+    });
+    await page.waitForSelector('[data-previs-preview-stale]');
+    expect(await page.$$eval('.dh-playback-timeline .dh-timeline-track:first-of-type button', rows => rows.length)).toBe(2);
+    expect(await page.evaluate(() => (window as any).fixture.submits.length)).toBe(1);
   } finally { await page.close(); }
 });

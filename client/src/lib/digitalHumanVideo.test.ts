@@ -97,3 +97,16 @@ for (const model of ["seedance-2.0-mini", "wan-3.0"] as const) {
     expect(out.durationSec).toBe(12);expect(network).not.toHaveBeenCalled();
   });
 }
+
+it.each(["seedance-2.5", "seedance-2.0-mini", "wan-3.0"] as const)("%s的20000字导演和尾部特效环境声必须穿过真实出站编译，不能静默截断", async (filmModel) => {
+  const network = vi.fn(async () => { throw new Error("禁止真实请求"); });
+  vi.stubGlobal("fetch", network);
+  const direction = "完整表演要求".repeat(3332) + "末尾要求保留完整";
+  const tail = "视觉特效：掌心金色脉冲结束。环境底声：窗外远声连续保留。";
+  const prompt = `${row.prompt}\n导演要求：${direction}\n${tail}`;
+  const block = await digitalHumanVideoBlock({ ...row, filmModel, prompt });
+  const out = await previewCanvasBlockOutbound({ userId: "7", userRole: "admin", optimizeCopy: async () => { throw Error("禁止生成"); } }, block);
+  expect(String(out.body.prompt).includes(direction)).toBe(true);
+  expect(out.body.prompt).toContain(tail);
+  expect(network).not.toHaveBeenCalled();
+});

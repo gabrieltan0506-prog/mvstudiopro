@@ -1,3 +1,4 @@
+import { createManhuaPrevisStudio } from "./manhuaPrevis";
 import { describe, expect, it } from "vitest";
 import {
   currentDigitalHumanAudio,
@@ -181,4 +182,17 @@ it("长稿分段保持完整原声、导演选择与前段尾帧关联，旧尾�
   expect(()=>prepareDigitalHumanVideo(d,videoId,{manifest,planRequestId:planId,index:0})).toThrow("明确选择");
   expect(prepareDigitalHumanVideo(d,videoId,{manifest,planRequestId:planId,index:0,useReviewedPrevis:true}).previs?.gcsUri).toContain("previs.mp4");
   expect(prepareDigitalHumanVideo(d,videoId,{manifest,planRequestId:planId,index:0,useReviewedPrevis:false}).previs).toBeUndefined();
+  d.previsStudio=createManhuaPrevisStudio(30);
+  expect(()=>prepareDigitalHumanVideo(d,videoId,{manifest,planRequestId:planId,index:0,useReviewedPrevis:false})).toThrow("不能跳过预演");
+});
+
+
+it("已有动作方案不能绕过白模；当前确认被真实视频消费，修改后失效", () => {
+  const d=ready(); d.previsStudio=createManhuaPrevisStudio(14);
+  expect(()=>prepareDigitalHumanVideo(d,videoId)).toThrow("不能跳过预演");
+  d.previs={reference:{url:"https://example.test/reviewed.mp4",gcsUri:"gs://test-bucket/reviewed.mp4",durationSec:14,updatedAt:"2026-10-18T00:00:00Z"},sourceFingerprint:digitalHumanSpatialFingerprint(d),reviewed:true};
+  const row=prepareDigitalHumanVideo(d,videoId);
+  expect(row.previs?.gcsUri).toBe(d.previs.reference.gcsUri);
+  d.previsStudio.spec.cameras[0].lens+=1;
+  expect(()=>prepareDigitalHumanVideo(d,videoId)).toThrow("白模输入已变化");
 });
