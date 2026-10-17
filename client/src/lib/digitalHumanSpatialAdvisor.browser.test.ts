@@ -11,7 +11,7 @@ beforeAll(async () => {
     import {DigitalHumanSpatialStudio} from './client/src/components/DigitalHumanSpatialStudio';
     import {DigitalHumanSpatialAdvisorPanel} from './client/src/components/DigitalHumanSpatialAdvisorPanel';
     import {newDigitalHumanDraft,loadDigitalHumanDraft} from './shared/digitalHumanStudio';
-    const f=globalThis.fixture={calls:[],cloud:[],failAsk:false,failCloud:false,applyCount:0};
+    const f=globalThis.fixture={calls:[],worldCalls:[],cloud:[],failAsk:false,failCloud:false,applyCount:0};
     const initial=newDigitalHumanDraft('7','a51d8a78-1c90-4f1d-9c1e-324e7a3f4659');
     initial.scene={source:'gs://test-only/scene.png',name:'咖啡厅'};initial.portrait={source:'gs://test-only/person.png',name:'本人'};initial.worldTaskId='world-test';
     initial.mainModel={taskId:'model-test',status:'succeeded',sourceVersion:initial.portrait.source,sourceImageUrl:'https://example.test/person.png',glbUrl:'https://example.test/person.glb',updatedAt:1};
@@ -19,7 +19,7 @@ beforeAll(async () => {
     f.draft=initial;
     function App(){const[draft,setDraft]=React.useState(f.draft),[version,setVersion]=React.useState(0),[busy,setBusy]=React.useState(false);
       const update=p=>{f.draft=loadDigitalHumanDraft(JSON.stringify({...f.draft,...p}),'7');setDraft(f.draft);};
-      f.change=()=>update({mainStage:{x:9,y:9,yaw:0}});f.reload=()=>{f.draft=loadDigitalHumanDraft(JSON.stringify(f.draft),'7');setDraft(f.draft);setVersion(v=>v+1);};
+      f.clearWorld=()=>update({worldTaskId:undefined,mainModel:undefined,stageAnchors:[]});f.change=()=>update({mainStage:{x:9,y:9,yaw:0}});f.reload=()=>{f.draft=loadDigitalHumanDraft(JSON.stringify(f.draft),'7');setDraft(f.draft);setVersion(v=>v+1);};
       const store={getItem:k=>f.draft.advisorStorage[k]||null,setItem:(k,v)=>update({advisorStorage:{...f.draft.advisorStorage,[k]:v}}),removeItem:k=>{const n={...f.draft.advisorStorage};delete n[k];update({advisorStorage:n});},get length(){return Object.keys(f.draft.advisorStorage).length;},key:i=>Object.keys(f.draft.advisorStorage)[i],clear:()=>{throw Error('禁止清空')}};
       if(globalThis.parentMode)return <DigitalHumanSpatialStudio draft={draft} role="admin" disabled={busy} onChange={p=>{f.applyCount++;update(p);}} uploadFile={async()=>{throw Error('禁止上传')}} beforeSubmit={async()=>{f.cloud.push(JSON.stringify(f.draft));}} acquireWork={()=>{setBusy(true);return()=>setBusy(false);}}/>;
       return <DigitalHumanSpatialAdvisorPanel key={version} draft={draft} getDraft={()=>f.draft} world={{spz500kUrl:'https://example.test/world.spz'}} disabled={busy} storage={store}
@@ -38,7 +38,7 @@ beforeAll(async () => {
         const quota={remaining:5,price:12,exempt:false};
         const unused={useMutation:()=>({mutateAsync:async()=>{throw Error('禁止真实生成')}})};
         const world={taskId:'world-test',sceneRef:'scene-test',sourceVersion:'gs://test-only/scene.png',status:'succeeded',model:'marble-0.1-mini',assets:{spz500kUrl:'https://example.test/world.spz'},updatedAt:'2026-10-15T00:00:00Z'};
-        export const trpc={useUtils:()=>({manhua3d:{get:{fetch:async()=>{throw Error('禁止建模')}}}}),manhua3d:{submit:unused,importExisting:unused},manhuaWorld:{submit:unused,listMine:{useQuery:()=>({data:[world],refetch:async()=>({data:[world]})})},sceneAccess:{useQuery:()=>({data:{canGenerate:true}})}},mvAnalysis:{getVideoUploadSignedUrl:unused,queuePostProd:unused,getManhuaAdvisorQuota:{useQuery:()=>({data:quota,isError:false,refetch:async()=>({data:quota})})},askPlatformSkillQa:{useMutation:()=>({mutateAsync:async input=>{
+        export const trpc={useUtils:()=>({manhua3d:{get:{fetch:async()=>{throw Error('禁止建模')}}}}),manhua3d:{submit:unused,importExisting:unused},manhuaWorld:{submit:{useMutation:()=>({mutateAsync:async input=>{const f=globalThis.fixture;f.worldCalls.push({input,saved:JSON.parse(f.cloud.at(-1))});if(f.failWorld)throw Error('模拟提交结果不明');return {taskId:'new-world-test'};}})},listMine:{useQuery:()=>({data:[world],refetch:async()=>({data:[world]})})},sceneAccess:{useQuery:()=>({data:{canGenerate:true}})}},mvAnalysis:{getVideoUploadSignedUrl:unused,queuePostProd:unused,getManhuaAdvisorQuota:{useQuery:()=>({data:quota,isError:false,refetch:async()=>({data:quota})})},askPlatformSkillQa:{useMutation:()=>({mutateAsync:async input=>{
           const f=globalThis.fixture;f.calls.push(input);if(f.failAsk)throw Error('网络中断');const t=input.manhuaContext.digitalHumanSpatial;
           return {answer:JSON.stringify({kind:'digital_human_spatial_v1',draftId:t.draftId,sourceRevision:t.sourceRevision,summaryZh:'讲述者站到窗边，面向镜头',unresolvedZh:[],actors:[{actorId:t.actors[0].id,position:{kind:'relative',reference:'anchor',referenceId:'window',rightM:0,forwardM:0},facing:{kind:'camera'}}],camera:{kind:'single',subjectActorId:t.actors[0].id}})};
         }})}}};` }));
@@ -118,3 +118,57 @@ it("真实数字人父组件采用后，场景消费者收到同一人物位置�
     expect(await page.evaluate(()=>(window as any).fixture.draft.stageAnchors[1])).toMatchObject({labelZh:'吧台旁',point:[5,6],worldTaskId:'world-test'});
   }finally{await context.close();}
 },20000);
+
+
+it("无世界的数字人场景可从真实表单提交，云端先保存请求，回执绑定原图", async () => {
+  const { context, page } = await pageFixture(true);
+  const errors: string[] = []; page.on("pageerror", e => errors.push(String(e)));
+  try {
+    await page.evaluate(() => { (window as any).fixture.clearWorld(); window.confirm = () => true; });
+    await page.waitForSelector('textarea[aria-label="3DGS生成要求"]');
+    await page.type('textarea[aria-label="3DGS生成要求"]', "保留左侧窗户与书桌，空场景");
+    expect(await page.$eval('fieldset', e => e.textContent)).toContain("1580");
+    await click(page, "生成当前场景3DGS");
+    await page.waitForFunction(() => (window as any).fixture.draft.worldTaskId === "new-world-test");
+    const result = await page.evaluate(() => ({ calls: (window as any).fixture.worldCalls, draft: (window as any).fixture.draft }));
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0].input).toMatchObject({ sourceVersion: "gs://test-only/scene.png", sourceImageGcsUri: "gs://test-only/scene.png", model: "marble-1.1", prompt: { type: "image", isPano: false, textPrompt: "保留左侧窗户与书桌，空场景" } });
+    expect(result.calls[0].saved.worldRequest).toMatchObject({ sourceVersion: "gs://test-only/scene.png", model: "marble-1.1" });
+    expect(result.draft.worldRequest).toBeUndefined();
+    expect(errors).toEqual([]);
+  } finally { await context.close(); }
+});
+
+it("结果不明保留原场景请求，再点生成不会重复提交", async () => {
+  const { context, page } = await pageFixture(true);
+  try {
+    await page.evaluate(() => { const f=(window as any).fixture;f.clearWorld();f.failWorld=true;window.confirm=()=>true; });
+    await page.waitForSelector('textarea[aria-label="3DGS生成要求"]');
+    await click(page, "生成当前场景3DGS");
+    await page.waitForFunction(() => document.body.innerText.includes("模拟提交结果不明"));
+    await click(page, "生成当前场景3DGS");
+    await page.waitForFunction(() => document.body.innerText.includes("原场景建模请求待核对"));
+    const result=await page.evaluate(()=>({calls:(window as any).fixture.worldCalls.length,pending:!!(window as any).fixture.draft.worldRequest}));
+    expect(result).toEqual({calls:1,pending:true});
+  } finally { await context.close(); }
+});
+
+it("无音频时可建立25秒白模；改为20秒重建保留上一版动作稿", async () => {
+  const { context, page } = await pageFixture(true);
+  try {
+    const setDuration = async (value: string) => page.evaluate(value => {
+      const input=document.querySelector<HTMLInputElement>('input[aria-label="白模目标时长"]')!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(input,value);
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+    }, value);
+    await setDuration("25");
+    await click(page,"建立当前人物的白模预演");
+    await page.waitForFunction(()=>(window as any).fixture.draft.previsStudio?.spec.durationSec===25);
+    await setDuration("20");
+    await click(page,"按当前场景重建白模（保留旧稿）");
+    const result=await page.evaluate(()=>(window as any).fixture.draft.previsStudio);
+    expect(result.spec.durationSec).toBe(20);
+    expect(result.specHistory.at(-1).spec.durationSec).toBe(25);
+    expect(result.history).toEqual([]);
+  } finally { await context.close(); }
+});

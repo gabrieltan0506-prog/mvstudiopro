@@ -67,6 +67,7 @@ export function DigitalHumanSpatialStudio({
     [rig, setRig] = useState<string>();
   const lock = useRef(false);
   const [advisorOpen, setAdvisorOpen] = useState(false);
+  const [previsDuration, setPrevisDuration] = useState<number>();
   const advisorStorage: Storage = {
     get length() { return Object.keys(latest.current.advisorStorage).length; },
     key: i => Object.keys(latest.current.advisorStorage)[i] ?? null,
@@ -113,6 +114,15 @@ export function DigitalHumanSpatialStudio({
       alive = false;
     };
   }, [JSON.stringify(characters.map(c => [c.id, c.portrait.source]))]);
+  const [sceneThumb, setSceneThumb] = useState<{ source: string; url: string }>();
+  useEffect(() => {
+    let alive = true;
+    const source = draft.scene?.source;
+    if (source) void digitalHumanMediaUrl(source).then(url => {
+      if (alive) setSceneThumb({ source, url });
+    }).catch(e => { if (alive) setError(err(e)); });
+    return () => { alive = false; };
+  }, [draft.scene?.source]);
   function patch(p: Partial<DigitalHumanDraft>) {
     if (p.previsSpatialInvalidated === undefined && latest.current.previsStudio &&
       ("mainStage" in p || "actors" in p || "stageCamera" in p || "scene" in p || "worldTaskId" in p)) {
@@ -251,6 +261,8 @@ export function DigitalHumanSpatialStudio({
       w.taskId === draft.worldTaskId && w.sourceVersion === draft.scene?.source
   );
   const studio = draft.previsStudio;
+  const targetPrevisDuration = previsDuration ?? studio?.spec.durationSec ?? Math.min(30, Math.ceil(currentDigitalHumanAudio(draft)?.durationSec || 10));
+  const previsDurationChanged = Boolean(studio && studio.spec.durationSec !== targetPrevisDuration);
   const previsOutdated = !digitalHumanPrevisSceneAligned(draft);
   function advisorStudio() {
     const d = latest.current;
@@ -264,7 +276,7 @@ export function DigitalHumanSpatialStudio({
     id: clipId,
     videoModel: "seedance-2.5",
     aspectRatio: draft.aspectRatio,
-    prompt: `目标时长：${Math.min(30, Math.ceil(currentDigitalHumanAudio(draft)?.durationSec || 10))}秒。${draft.direction}`,
+    prompt: `目标时长：${studio?.spec.durationSec ?? targetPrevisDuration}秒。${draft.direction}`,
     previsStudio: studio,
   };
   const animationSource = previsOutdated ? null : manhuaPrevisAnimationSource(studio, clipId);
@@ -617,6 +629,7 @@ export function DigitalHumanSpatialStudio({
         storage={advisorStorage} disabled={disabled || busy.length > 0} beforeSubmit={beforeSubmit} acquireWork={acquireWork} onApply={patch} />
       <div className="dh-factory">
         <ManhuaWorldStudio
+          imageGeneration
           stageCamera={draft.stageCamera}
           onConfirmGroundAnchor={disabled ? undefined : async (labelZh, point) => {
             const snapshot = latest.current, key = digitalHumanSceneInputKey(snapshot);
@@ -640,6 +653,7 @@ export function DigitalHumanSpatialStudio({
                   {
                     id: world?.sceneRef || sceneId,
                     labelZh: world?.displayName || draft.scene.name,
+                    thumbUrl: sceneThumb?.source === draft.scene.source ? sceneThumb.url : undefined,
                     hintZh: draft.sceneDescription,
                     eligibility: {
                       eligible: true,
@@ -789,16 +803,17 @@ export function DigitalHumanSpatialStudio({
           }}
         />
       </div>
+      <label>白模目标时长（秒）<input type="number" aria-label="白模目标时长" min={2} max={30} step={1}
+        value={targetPrevisDuration} disabled={disabled || Boolean(studio?.pending)} onChange={e => {
+          const value = Number(e.target.value);
+          if (Number.isInteger(value) && value >= 2 && value <= 30) setPrevisDuration(value);
+        }} /></label>
+      {previsDurationChanged && <p>时长已调整，请重建并重新审片；旧方案与回执会保留。</p>}
       <button
         type="button"
-        disabled={disabled || Boolean(studio && !previsOutdated) || Boolean(studio?.pending)}
+        disabled={disabled || Boolean(studio && !previsOutdated && !previsDurationChanged) || Boolean(studio?.pending)}
         onClick={() => {
-          const next = createManhuaPrevisStudio(
-            Math.min(
-              30,
-              Math.ceil(currentDigitalHumanAudio(draft)?.durationSec || 10)
-            )
-          );
+          const next = createManhuaPrevisStudio(targetPrevisDuration);
           next.spec.aspect = draft.aspectRatio;
           next.spec.actors = characters.map(c => ({
             ...next.spec.actors[0],
@@ -827,7 +842,7 @@ export function DigitalHumanSpatialStudio({
             ...(previous ? { advisorStorage: { ...latest.current.advisorStorage, [`previs-before-rebuild:${previous.scopeId}`]: JSON.stringify(previous) } } : {}) });
         }}
       >
-        {previsOutdated ? "按当前场景重建白模（保留旧稿）" : "建立当前人物的白模预演"}
+        {previsOutdated || previsDurationChanged ? "按当前场景重建白模（保留旧稿）" : "建立当前人物的白模预演"}
       </button>
       {previsOutdated && <p role="status">场景站位或机位已改变，旧白模暂不能用于渲染和视频。旧稿已保留，请按当前场景重建并重新审片。</p>}
       {studio && !previsOutdated && (

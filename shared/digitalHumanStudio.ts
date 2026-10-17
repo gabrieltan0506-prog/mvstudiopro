@@ -385,7 +385,7 @@ export function prepareDigitalHumanVideo(
       selectedPrevis.reference.durationSec > 30)
   )
     throw new Error("已采用预演的时长不能覆盖本次完整配音，请调整后重新审片");
-  const prompt = `目标时长：${durationSec}秒。真人数字人口播视频，${draft.aspectRatio}。\n@图片1只用于讲述者身份、五官与服装，不沿用它的背景。@图片2只用于场景和空间光线，${draft.actors.length ? `另有${draft.actors.length}位人物，依次由${draft.actors.map((a, i) => `@图片${i + 3}绑定${a.labelZh}`).join("、")}。保留每位人物身份与在场状态，只有讲述者说话` : "不增加其他人物"}。将讲述者自然置于该场景中，保持真实肤色与身体比例。\n@音频1是本次完整对白，时长${audio.durationSec.toFixed(2)}秒。沿用这段声音的音色、语速、停顿和原话，人物口型对齐对应发音，不另造台词，不换声音，不添加背景音乐或字幕。\n完整文案：${draft.script.trim()}\n表演与镜头：${draft.direction.trim()}\n原分镜上下文：${draft.source?.shots.map(s => JSON.stringify(s)).join("\n") || "以当前人物和镜头要求为准"}\n说完后自然停留至结束，不提前切断尾音。`;
+  const prompt = `目标时长：${durationSec}秒。真人数字人剧情视频，${draft.aspectRatio}。\n@图片1只用于讲述者身份、五官与服装，不沿用它的背景。@图片2只用于场景和空间光线，${draft.actors.length ? `另有${draft.actors.length}位人物，依次由${draft.actors.map((a, i) => `@图片${i + 3}绑定${a.labelZh}`).join("、")}。保留每位人物身份与在场状态，只有讲述者说话` : "不增加其他人物"}。将讲述者自然置于该场景中，保持真实肤色与身体比例。\n@音频1是本次完整原声，时长${audio.durationSec.toFixed(2)}秒。沿用这段声音的音色、语速、停顿和原话。按下方表演与镜头要求区分画内对白与旁白：画内对白由讲述者对口型，旁白时人物不随音频机械张嘴；未指定旁白的部分按画内对白处理。对白段嘴部可见，不用手或特效遮嘴；动作段的旁白不改变原声。不另造台词，不换声音，不添加背景音乐或字幕。\n完整文案：${draft.script.trim()}\n表演与镜头：${draft.direction.trim()}\n原分镜上下文：${draft.source?.shots.map(s => JSON.stringify(s)).join("\n") || "以当前人物和镜头要求为准"}\n说完后自然停留至结束，不提前切断尾音。`;
   return {
     requestId,
     fingerprint: digitalHumanVideoFingerprint(draft, audio),
@@ -402,7 +402,7 @@ export function prepareDigitalHumanVideo(
     previs: selectedPrevis?.reference,
     ...(segment ? { segment, continuityFrame: part?.continuityFrame,
       fingerprint: digitalHumanSegmentFingerprint(draft, audio, segment, part?.continuityFrame, selectedPrevis?.reference),
-      prompt: `目标时长：${durationSec}秒。真人数字人口播视频，${draft.aspectRatio}。这是完整口播第${part!.index + 1}段，覆盖原声${segment.startSec.toFixed(3)}–${segment.endSec.toFixed(3)}秒。\n@图片1绑定讲述者身份、服装与五官；@图片2绑定场景。${draft.actors.map((a, i) => `@图片${i + 3}绑定同场人物${a.labelZh}，保持在场但不说话。`).join("")}\n@音频1仅包含本段需要讲述的原声。口型、语速与停顿严格对应该音频，不重复其他段落，不改词，不换声音，不添加背景音乐或字幕。结束后保持自然动作。\n全文只作语境，不要完整重念：${draft.script.trim()}\n导演要求：${draft.direction.trim()}\n原分镜上下文：${draft.source?.shots.map(s => JSON.stringify(s)).join("\n") || "以当前人物和镜头要求为准"}`,
+      prompt: `目标时长：${durationSec}秒。真人数字人剧情视频，${draft.aspectRatio}。这是完整口播第${part!.index + 1}段，覆盖原声${segment.startSec.toFixed(3)}–${segment.endSec.toFixed(3)}秒。\n@图片1绑定讲述者身份、服装与五官；@图片2绑定场景。${draft.actors.map((a, i) => `@图片${i + 3}绑定同场人物${a.labelZh}，保持在场但不说话。`).join("")}\n@音频1仅包含本段原声，语速与停顿严格对应该音频。按导演要求区分画内对白与旁白：只有画内对白由讲述者对口型，旁白时人物不随音频机械张嘴；未指定旁白的部分按画内对白处理。对白段嘴部可见，不用手或特效遮嘴。不重复其他段落，不改词，不换声音，不添加背景音乐或字幕。结束后保持自然动作。\n全文只作语境，不要完整重念：${draft.script.trim()}\n导演要求：${draft.direction.trim()}\n原分镜上下文：${draft.source?.shots.map(s => JSON.stringify(s)).join("\n") || "以当前人物和镜头要求为准"}`,
     } : {}),
   };
 }
