@@ -43,6 +43,7 @@ export type HeavyMediaRequest =
         cutConcurrency?: number;
         uploadConcurrency?: number;
         preparedGroupSize?: number;
+        preparedGroupSizes?: readonly number[];
       };
     };
 export type HeavyCommandResult = {

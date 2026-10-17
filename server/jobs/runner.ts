@@ -925,6 +925,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       let nativeReadModel: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId | undefined;
       let nativeStructuringGateway: "openrouter" | "evolink_glm" | undefined;
       let nativeStructuringModel: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeStructuringModelId | undefined;
+      let nativeEvolinkOnlyEpisodeIndexes: number[] = [];
       let nativeStructuringSource: import("../services/manhuaNativeStructuringOnly.js").NativeStructuringStoredSource | undefined;
       let nativePlanPreview: Awaited<ReturnType<
         typeof import("../services/manhuaNativeDeepReadPlanRuntime.js")["buildNativeDeepReadPlanPreviewFromServices"]
@@ -1020,6 +1021,24 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       } else if (hasNativeDeepReadJobFields(params)) {
         throw new Error("原生精读计划未获明确确认，未发出模型请求");
       }
+      // 通道身份仅由服务端真实终态与重算计划产生，不读取客户端的路由标记。
+      if (nativeReadModel === "gemini-3.8-flash" && jobId && !params.nativeRelearn) {
+        const seriesKey = nativePlanPreview?.seriesKey || nativeStructuringSource?.seriesKey;
+        const episodeIndexes = nativePlanPreview?.episodes.map(episode => episode.episodeIndex)
+          || (nativeStructuringSource ? [nativeStructuringSource.episodeIndex] : []);
+        if (seriesKey && episodeIndexes.length) {
+          const { findFailedManhuaLearnResumeEpisodes } = await import("./repository.js");
+          nativeEvolinkOnlyEpisodeIndexes = await findFailedManhuaLearnResumeEpisodes({
+            userId: String(userId || ""), currentJobId: jobId, sourceUrl: String(params.url || "").trim(),
+            seriesKey, episodeIndexes,
+            segmentSeconds: nativePlanPreview?.segmentSeconds ?? nativeStructuringSource?.segmentSeconds ?? Number(params.nativeSegmentSeconds ?? 300),
+            videoFps: nativePlanPreview?.videoFps ?? nativeStructuringSource?.videoFps ?? Number(params.nativeVideoFps ?? 12),
+          });
+          if (nativeEvolinkOnlyEpisodeIndexes.length) await patchJobRunningProgressStrict(jobId, {
+            nativeEvolinkOnlyEpisodeIndexes,
+          });
+        }
+      }
       result = await runManhuaTemplateLearn({
       url: typeof params.url === "string" ? params.url : undefined,
       gcsUri: importedGcsUri || undefined,
@@ -1034,6 +1053,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         params.learnLlm === "claude" || params.learnLlm === "deepseek" ? params.learnLlm : undefined,
       nativeDeepReadConfirmed: nativeConfirmed,
       nativeReadModel,
+      nativeEvolinkOnlyEpisodeIndexes,
       nativeStructuringModel,
       nativeStructuringGateway,
       nativeStructuringOnly: params.nativeStructuringOnly === true,

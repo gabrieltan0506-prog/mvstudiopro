@@ -1391,3 +1391,11 @@ describe("乱序保存的视频分片内容",()=>{
   expect(deps.clearSegmentCache).not.toHaveBeenCalled();
  });
 });
+
+
+it("失败恢复通道只透传到服务端指定集，不影响新集", async () => {
+  await runNativeDeepReadBatch({ seriesKey: "s", readModel: "gemini-3.8-flash",
+    episodes: [ep(1), ep(2)], evolinkOnlyEpisodeIndexes: [1] }, deps);
+  const calls = vi.mocked(deps.runBatch).mock.calls.map(([input]) => ({ index: input.episodes[0]!.episodeIndex, only: input.evolinkOnly }));
+  expect(calls).toEqual([{ index: 1, only: true }, { index: 2, only: false }]);
+});

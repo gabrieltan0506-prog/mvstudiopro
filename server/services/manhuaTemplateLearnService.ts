@@ -147,6 +147,8 @@ export type ManhuaTemplateLearnInput = {
    */
   nativeDeepReadConfirmed?: boolean;
   nativePlanPreview?: NativeDeepReadPlanPreview;
+  /** worker核实失败终态后传入，不能来自客户端。 */
+  nativeEvolinkOnlyEpisodeIndexes?: readonly number[];
   localVideoUpload?: NativeDeepReadLocalVideoSource;
   /** 0903 双模型：读片主模型；缺省＝3.1 Pro。 */
   nativeReadModel?: import("../../shared/manhuaNativeDeepReadJob.js").ManhuaNativeDeepReadModelId;
@@ -1475,6 +1477,7 @@ export async function runManhuaTemplateLearn(
     await input.onProgress?.(MANHUA_LEARN_STAGE.vision, "正在恢复已保存片段，缺片补读后继续整形…");
     let nativeUsage: ManhuaNativeDeepReadUsageReceipt | undefined;
     const batch = await runNativeDeepReadBatch({ seriesKey: source.seriesKey, structuringOnly: true,
+      evolinkOnlyEpisodeIndexes: input.nativeEvolinkOnlyEpisodeIndexes,
       readModel: input.nativeReadModel, structuringModel: input.nativeStructuringModel, structuringGateway: input.nativeStructuringGateway,
       segmentSeconds: source.segmentSeconds, episodes: [episode], abortSignal: input.abortSignal,
       onModelCheckpoint: input.onNativeModelReceipt,
@@ -1854,6 +1857,7 @@ export async function runManhuaTemplateLearn(
     );
     const batchResult = await runNativeDeepReadBatch({
       seriesKey,
+      evolinkOnlyEpisodeIndexes: input.nativeEvolinkOnlyEpisodeIndexes,
       readModel: input.nativeReadModel,
       structuringModel: input.nativeStructuringModel, structuringGateway: input.nativeStructuringGateway,
       structuringOnly: input.nativeStructuringOnly,

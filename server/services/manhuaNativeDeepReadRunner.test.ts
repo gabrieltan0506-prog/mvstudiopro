@@ -6611,3 +6611,269 @@ describe("Argon复用原生音画builder", () => {
     expect(nativeDeepReadFrozenContractSha256()).toBe(NATIVE_DEEP_READ_FROZEN_CONTRACT_SHA256);
   });
 });
+
+
+describe("3.8 Flash学习五加六真实调度", () => {
+  const segments = Array.from({ length: 22 }, (_, index) => ({ startSec: index * 30, endSec: (index + 1) * 30 }));
+  const episode = { episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 660 };
+
+  it.each([0, 429, 500, 503, 523, 400])("在途峰值5+6且Vertex状态%s迁移不突破六路", async (failureStatus) => {
+    const active = { vertex: 0, evolink: 0 };
+    const peak = { vertex: 0, evolink: 0 };
+    const calls: Array<{ route: string; index: number; body: any }> = [];
+    const releases: Array<() => void> = [];
+    let released = false;
+    let failed = false;
+    const success = makeSuccessfulEpisodePostVertex(segments);
+    const post = (route: "vertex" | "evolink") => vi.fn(async (body: any, _signal?: AbortSignal, context?: any) => {
+      const index = context.segmentIndex as number;
+      active[route] += 1;
+      peak[route] = Math.max(peak[route], active[route]);
+      calls.push({ route, index, body });
+      try {
+        if (!released) await new Promise<void>(resolve => releases.push(resolve));
+        if (route === "vertex" && index === 0 && failureStatus && !failed) {
+          failed = true;
+          return { status: failureStatus, text: JSON.stringify({ error: { message: "拥堵" } }) };
+        }
+        return await success(body);
+      } finally { active[route] -= 1; }
+    });
+    const deps = makeRunnerDeps({ postVertex: post("vertex"), postEvolink: post("evolink"),
+      signReadUrl: vi.fn((uri: string) => uri.replace("gs://test-bucket/", "https://storage.googleapis.com/test-bucket/")) });
+    const run = runManhuaNativeDeepReadBatch({ episodes: [episode], readModel: "gemini-3.8-flash" }, deps);
+    try {
+      await vi.waitFor(() => expect(active).toEqual({ vertex: 5, evolink: 6 }));
+      expect(calls).toHaveLength(11);
+      // 先释放第一路Vertex，Evolink仍满载：迁移必须等待，不能成为第七路。
+      releases[0]!();
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(peak.evolink).toBe(6);
+      released = true;
+      releases.forEach(resolve => resolve());
+      const result = await run;
+      expect(result.episodes).toHaveLength(1);
+      expect(peak).toEqual({ vertex: 5, evolink: 6 });
+      expect(calls).toHaveLength(22 + (failureStatus ? 1 : 0));
+      if (failureStatus) expect(calls.filter(call => call.index === 0).map(call => call.route)).toEqual(["vertex", "evolink"]);
+      for (const call of calls) {
+        expect(call.body.contents[0].parts[0].fileData.fileUri.startsWith(call.route === "vertex" ? "gs://" : "https://")).toBe(true);
+        expect(call.body.contents[0].parts[0].videoMetadata.fps).toBeGreaterThan(0);
+        const { responseSchema, ...config } = call.body.generationConfig;
+        const { responseSchema: _schema, ...firstConfig } = calls[0]!.body.generationConfig;
+        expect(config).toEqual(firstConfig);
+        const sameSegment = calls.find(row => row.index === call.index)!;
+        expect(responseSchema).toEqual(sameSegment.body.generationConfig.responseSchema);
+      }
+      expect(deps.waitForRetry).not.toHaveBeenCalled();
+    } finally { released = true; releases.forEach(resolve => resolve()); await run.catch(() => undefined); }
+  });
+});
+
+
+it.each([false, true])("3.8双通道恢复已有Vertex原稿，零外呼且沿用真实路由（失败恢复%s）", async (evolinkOnly) => {
+  const segments = Array.from({ length: 11 }, (_, index) => ({ startSec: index * 30, endSec: (index + 1) * 30 }));
+  const responseFor = (index: number) => geminiResponse(makeSegmentPayload({ segmentIndex: index, ...segments[index]! }));
+  const deps = makeRunnerDeps({ readRawAttemptEvidence: vi.fn(async (input: any) => {
+    const response = responseFor(input.segmentIndex);
+    return { objectName: `manhua-template-learn/segment-evidence-raw/recovered/seg${input.segmentIndex}.json`,
+      responseText: response.text, callId: `old-call-${input.segmentIndex}`, batchRequestId: "old-batch",
+      responseBytes: Buffer.byteLength(response.text), responseSha256: createHash("sha256").update(response.text).digest("hex"),
+      httpStatus: 200, visualRoute: "vertex_gcs_video" };
+  }) as never });
+  await runManhuaNativeDeepReadBatch({ evolinkOnly, readModel: "gemini-3.8-flash", segmentCacheSeriesKey: "dual_recovery",
+    episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 330, cacheSourceDigest: "c".repeat(64) }] }, deps);
+  expect(deps.postVertex).not.toHaveBeenCalled();
+  expect(deps.postEvolink).not.toHaveBeenCalled();
+  expect(deps.signReadUrl).not.toHaveBeenCalled();
+  expect(deps.writeRawAttemptEvidence).not.toHaveBeenCalled();
+  expect(vi.mocked(deps.writeSegmentCache).mock.calls.every(([entry]) => entry.visualRoute === "vertex_gcs_video")).toBe(true);
+  expect(vi.mocked(deps.readRawAttemptEvidence).mock.calls.some(([input]) => input.visualRoute === "evolink_gemini_video")).toBe(true);
+});
+
+
+it("备料首五片、次六片、其后逐片上传回调", async () => {
+  const groups: number[][] = [];
+  const segments = Array.from({ length: 13 }, (_, index) => ({ startSec: index * 10, endSec: (index + 1) * 10 }));
+  await prepareEpisodeVideos({ episodeIndex: 1, resolveNodes: async () => [{ url: "https://cdn.example/video.mp4" }],
+    segments, sourceDurationSec: 130 }, undefined, makePreparationDeps(), {
+      preparedGroupSizes: [5, 6, 1], onPreparedGroup: rows => { groups.push(rows.map(row => row.segmentIndex)); },
+    });
+  expect(groups.map(group => group.length)).toEqual([5, 6, 1, 1]);
+  expect(groups.flat().sort((a, b) => a - b)).toEqual(segments.map((_, index) => index));
+});
+
+it.each(["vertex", "evolink"] as const)("先五后六分批备料，%s先空时续片直接补该通道", async (freeRoute) => {
+  const segments = Array.from({ length: 13 }, (_, index) => ({ startSec: index * 30, endSec: (index + 1) * 30 }));
+  const second = deferred(), rest = deferred();
+  const calls: Array<{ route: string; index: number; release: () => void }> = [];
+  let open = false;
+  const post = (route: string) => vi.fn(async (_body: unknown, _signal?: AbortSignal, ctx?: any) => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    calls.push({ route, index: ctx.segmentIndex, release });
+    if (!open) await gate;
+    return geminiResponse(makeSegmentPayload({ segmentIndex: ctx.segmentIndex, ...segments[ctx.segmentIndex]! }));
+  });
+  const deps = makeRunnerDeps({ postVertex: post("vertex"), postEvolink: post("evolink"),
+    prepareVideos: vi.fn(async (_episode, _signal, _deps, limits) => {
+      expect(limits?.preparedGroupSizes).toEqual([5, 6, 1]);
+      const videos = segments.map((segment, index) => ({ ...segment, gsUri: `gs://test-bucket/seg-${index}.mp4`,
+        temporaryGcs: { bucket: "test-bucket", objectName: `seg-${index}.mp4` }, bytes: 100000, hasAudio: true }));
+      const send = async (indexes: number[]) => limits?.onPreparedGroup?.(indexes.map(index => ({ segmentIndex: index, video: videos[index]! })));
+      // 0/1切得较慢，先就绪的五片仍立即进入Vertex，不等待原索引队头。
+      await send([2, 3, 4, 5, 6]);
+      await second.promise;
+      await send([0, 1, 7, 8, 9, 10]);
+      await rest.promise;
+      await send([11]); await send([12]);
+      return videos;
+    }) });
+  const run = runManhuaNativeDeepReadBatch({ readModel: "gemini-3.8-flash",
+    episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 390 }] }, deps);
+  try {
+    await vi.waitFor(() => expect(calls).toHaveLength(5));
+    expect(calls.map(call => call.route)).toEqual(Array(5).fill("vertex"));
+    expect(calls.map(call => call.index)).toEqual([2, 3, 4, 5, 6]);
+    second.resolve();
+    await vi.waitFor(() => expect(calls).toHaveLength(11));
+    expect(calls.slice(5).map(call => call.route)).toEqual(Array(6).fill("evolink"));
+    calls.find(call => call.route === freeRoute)!.release();
+    rest.resolve();
+    await vi.waitFor(() => expect(calls).toHaveLength(12));
+    expect(calls[11]!.index).toBe(11);
+    expect(calls[11]!.route).toBe(freeRoute);
+  } finally {
+    open = true; second.resolve(); rest.resolve(); calls.forEach(call => call.release());
+    await run;
+  }
+  expect(calls).toHaveLength(13);
+});
+
+
+it("网络中断后续读只请求缺失片，五片成功缓存不重新调用模型", async () => {
+  const segments = Array.from({ length: 6 }, (_, index) => ({ startSec: index * 30, endSec: (index + 1) * 30 }));
+  const cache = new Map<number, NativeDeepReadSegmentCacheEntry>();
+  let shouldFail = true;
+  const requested: number[] = [];
+  const post = vi.fn(async (_body: unknown, _signal?: AbortSignal, context?: any) => {
+    requested.push(context.segmentIndex);
+    if (shouldFail && context.segmentIndex === 5) {
+      await vi.waitFor(() => expect(cache.size).toBe(5));
+      throw new Error("socket hang up");
+    }
+    return geminiResponse(makeSegmentPayload({ segmentIndex: context.segmentIndex, ...segments[context.segmentIndex]! }));
+  });
+  const deps = makeRunnerDeps({ postVertex: vi.fn(post), postEvolink: vi.fn(post),
+    readSegmentCache: vi.fn(async input => { const entry = cache.get(input.segmentIndex); return entry ? { entry, objectName: `test-cache/seg${input.segmentIndex}.json`, generation: "1" } : null; }),
+    writeSegmentCache: vi.fn(async entry => { cache.set(entry.segmentIndex, entry); return writeResultOf(entry); }),
+  });
+  const params = { readModel: "gemini-3.8-flash" as const, segmentCacheSeriesKey: "dual_resume",
+    episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "c".repeat(64) }] };
+  await expect(runManhuaNativeDeepReadBatch(params, deps)).rejects.toThrow("socket hang up");
+  expect(cache.size).toBe(5);
+  expect(requested.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5]);
+  shouldFail = false; requested.length = 0;
+  vi.mocked(deps.postVertex).mockClear(); vi.mocked(deps.postEvolink).mockClear();
+  const result = await runManhuaNativeDeepReadBatch({ ...params, evolinkOnly: true }, deps);
+  expect(deps.postVertex).not.toHaveBeenCalled();
+  expect(deps.postEvolink).toHaveBeenCalledTimes(1);
+  expect(requested).toEqual([5]);
+  expect(cache.size).toBe(6);
+  expect(result.episodes).toHaveLength(1);
+});
+
+
+it("失败恢复只走Evolink六路，后续补片不回Vertex", async () => {
+  const segments = Array.from({ length: 13 }, (_, index) => ({ startSec: index * 30, endSec: (index + 1) * 30 }));
+  const success = makeSuccessfulEpisodePostVertex(segments);
+  let active = 0, peak = 0, released = false;
+  const releases: Array<() => void> = [];
+  const deps = makeRunnerDeps({ postVertex: vi.fn(async () => { throw new Error("失败恢复不允许Vertex"); }),
+    postEvolink: vi.fn(async (body: any) => {
+      active += 1; peak = Math.max(peak, active);
+      try {
+        if (!released) await new Promise<void>(resolve => releases.push(resolve));
+        return await success(body);
+      } finally { active -= 1; }
+    }), signReadUrl: vi.fn((uri: string) => uri.replace("gs://test-bucket/", "https://storage.googleapis.com/test-bucket/")) });
+  const run = runManhuaNativeDeepReadBatch({ evolinkOnly: true, readModel: "gemini-3.8-flash",
+    episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 390 }] }, deps);
+  try {
+    await vi.waitFor(() => expect(active).toBe(6));
+    expect(deps.postVertex).not.toHaveBeenCalled();
+    released = true; releases.forEach(resolve => resolve());
+    expect((await run).episodes).toHaveLength(1);
+    expect(peak).toBe(6);
+    expect(deps.postEvolink).toHaveBeenCalledTimes(13);
+    expect(deps.postVertex).not.toHaveBeenCalled();
+  } finally { released = true; releases.forEach(resolve => resolve()); await run.catch(() => undefined); }
+});
+
+it("失败恢复标记不能更换历史模型合同", async () => {
+  const deps = makeRunnerDeps();
+  await expect(runManhuaNativeDeepReadBatch({ evolinkOnly: true, readModel: "gemini-4-argon", episodes: [twoSegmentEpisode] }, deps))
+    .rejects.toThrow("仅限3.8Flash");
+  expect(deps.postVertex).not.toHaveBeenCalled();
+  expect(deps.postEvolink).not.toHaveBeenCalled();
+});
+
+
+it.each(["network", "timeout", "error-envelope"])("Vertex上游%s立即切换同片Evolink", async mode => {
+  const segments = twoSegmentEpisode.segments;
+  const success = makeSuccessfulEpisodePostVertex(segments);
+  const vertex = vi.fn(async () => {
+    if (mode === "error-envelope") return { status: 200, text: JSON.stringify({ error: { code: 500, message: "upstream internal", status: "INTERNAL" } }) };
+    throw Object.assign(new Error(mode === "timeout" ? "request timed out" : "fetch failed"), { name: mode === "timeout" ? "TimeoutError" : "TypeError" });
+  });
+  const deps = makeRunnerDeps({ postVertex: vertex, postEvolink: vi.fn(success),
+    signReadUrl: vi.fn((uri: string) => uri.replace("gs://test-bucket/", "https://storage.googleapis.com/test-bucket/")) });
+  await runManhuaNativeDeepReadBatch({ readModel: "gemini-3.8-flash", episodes: [twoSegmentEpisode] }, deps);
+  expect(vertex).toHaveBeenCalledTimes(2);
+  expect(deps.postEvolink).toHaveBeenCalledTimes(2);
+  expect(deps.waitForRetry).not.toHaveBeenCalled();
+});
+
+it("Evolink上游失败不反切Vertex或无限循环", async () => {
+  const deps = makeRunnerDeps({ postVertex: vi.fn(async () => ({ status: 523, text: "origin unreachable" })),
+    postEvolink: vi.fn(async () => { throw new Error("evolink network failure"); }),
+    signReadUrl: vi.fn(() => "https://storage.googleapis.com/test/video.mp4") });
+  await expect(runManhuaNativeDeepReadBatch({ readModel: "gemini-3.8-flash", segmentModelConcurrency: 1,
+    episodes: [twoSegmentEpisode] }, deps)).rejects.toThrow();
+  expect(deps.postVertex).toHaveBeenCalledTimes(1);
+  expect(deps.postEvolink).toHaveBeenCalledTimes(1);
+});
+
+it("用户取消的Vertex调用不触发备用付费调用", async () => {
+  const controller = new AbortController();
+  const deps = makeRunnerDeps({ postVertex: vi.fn(async () => { controller.abort(); throw new Error("cancelled"); }), postEvolink: vi.fn() });
+  await expect(runManhuaNativeDeepReadBatch({ readModel: "gemini-3.8-flash", abortSignal: controller.signal,
+    segmentModelConcurrency: 1, episodes: [twoSegmentEpisode] }, deps)).rejects.toThrow();
+  expect(deps.postEvolink).not.toHaveBeenCalled();
+});
+
+
+it.each(["writeRawAttemptEvidence", "writeParsedAttemptEvidence"] as const)("本地%s失败不误切Evolink", async key => {
+  const deps = makeRunnerDeps({ postVertex: vi.fn(makeSuccessfulEpisodePostVertex(twoSegmentEpisode.segments)),
+    [key]: vi.fn(async () => { throw new Error("test persistence failure"); }) });
+  await expect(runManhuaNativeDeepReadBatch({ readModel: "gemini-3.8-flash", segmentModelConcurrency: 1,
+    segmentCacheSeriesKey: "fallback-persistence", episodes: [{ ...twoSegmentEpisode, cacheSourceDigest: "d".repeat(64) }] }, deps)).rejects.toThrow("落盘失败");
+  expect(deps.postVertex).toHaveBeenCalledTimes(1);
+  expect(deps.postEvolink).not.toHaveBeenCalled();
+});
+
+it("成功响应的本地解析门禁失败沿原梯度重试，不切Evolink", async () => {
+  const success = makeSuccessfulEpisodePostVertex(twoSegmentEpisode.segments);
+  let first = true;
+  const deps = makeRunnerDeps({ postVertex: vi.fn(async (body: any) => {
+    if (first) {
+      first = false;
+      return { status: 200, text: JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "{invalid" }] } }], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20 } }) };
+    }
+    return success(body);
+  }) });
+  await runManhuaNativeDeepReadBatch({ readModel: "gemini-3.8-flash", segmentModelConcurrency: 1, episodes: [twoSegmentEpisode] }, deps);
+  expect(deps.postVertex).toHaveBeenCalledTimes(3);
+  expect(deps.postEvolink).not.toHaveBeenCalled();
+  expect(deps.waitForRetry).toHaveBeenCalledTimes(1);
+});
