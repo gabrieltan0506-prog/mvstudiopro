@@ -14,6 +14,8 @@ const message = (e: unknown) => e instanceof Error ? e.message : String(e);
 export function DigitalHumanDirectorPanel(props: {
   draft: DigitalHumanDraft; storage: Storage; disabled: boolean;
   currentStudio: () => ManhuaPrevisStudio;
+  prepareStudio?: () => Promise<ManhuaPrevisStudio>;
+  previewHost?: HTMLElement | null;
   onApply: (studio: ManhuaPrevisStudio) => void;
   beforeSubmit: () => Promise<void>;
   acquireWork: (label: string) => () => void;
@@ -51,7 +53,8 @@ export function DigitalHumanDirectorPanel(props: {
         request = { ...request, paid: true, credits: latest.data.price };
       }
       if (!request) {
-        const target = makeAdvisorPrevisTarget(clipId, props.currentStudio());
+        const studio = props.prepareStudio ? await props.prepareStudio() : props.currentStudio();
+        const target = makeAdvisorPrevisTarget(clipId, studio);
         const context = manhuaCreativeAdvisorContextSchema.parse({ ...buildDigitalHumanAdvisorProject(props.draft).context, previsEdit: target });
         request = pendingSchema.parse({ requestId: crypto.randomUUID(), question: question.trim(), context,
           paid: quota.data?.remaining === 0 && !quota.data.exempt,
@@ -89,9 +92,10 @@ export function DigitalHumanDirectorPanel(props: {
     } catch (e) { return message(e); }
   };
   return <section className="dh-card">
-    <h4>数字人导演 · 动作与机位</h4>
+    <h4>导演助手</h4>
     <p>方案只作用于本制作稿中的人物、动作和摄影机。先生成独立试看，满意后应用；视频参考仍须逐帧与常速审片。</p>
-    <details><summary>本次导演输入</summary><p style={{ whiteSpace: "pre-wrap" }}>{props.draft.script}</p><pre>{JSON.stringify(props.currentStudio().spec, null, 2)}</pre></details>
+    <div className="dh-director-context"><span>{props.draft.portrait?.name || "待添加人物"}</span><span>{props.draft.scene?.name || "待添加场景"}</span><span>{props.draft.previsStudio?.spec.cameras.length || 0} 镜</span></div>
+    <details><summary>本次使用的台词与导演要求</summary><p style={{ whiteSpace: "pre-wrap" }}>{props.draft.script}</p><p>{props.draft.direction}</p></details>
     <p>{quota.data ? `顾问可用免费次数：${quota.data.remaining}；超出后 ${quota.data.price} 积分/次。沿用账户现有顾问计费。` : "正在核对顾问额度"}</p>
     <textarea aria-label="数字人导演要求" maxLength={1200} value={question} onChange={e => setQuestion(e.target.value)} placeholder="例如：人物从咖啡机旁走到窗边，停下后看镜头；镜头先跟随再推近。" />
     <button type="button" disabled={props.disabled || busy || loadBlocked || Boolean(pending) || question.trim().length < 2} onClick={() => void send()}>生成导演方案</button>
@@ -101,7 +105,7 @@ export function DigitalHumanDirectorPanel(props: {
     <div ref={setHost} data-clip-id={clipId} />
     {candidate && <ManhuaAdvisorPrevisComparison key={JSON.stringify(candidate)} candidate={candidate}
       storage={props.storage} beforeSubmit={props.beforeSubmit} acquireWork={props.acquireWork} storageKey="digital-human-director-trial"
-      autoStart={false} previewHost={host} disabled={props.disabled || busy} onCheckReady={ready}
+      creatorMode autoStart={false} previewHost={props.previewHost === undefined ? host : props.previewHost} disabled={props.disabled || busy} onCheckReady={ready}
       onPrepare={value => prepareAdvisorPrevisTrial(clipId, props.currentStudio(), value)}
       onApply={(trial, receipt) => {
         try { props.onApply(adoptAdvisorPrevisTrial(clipId, props.currentStudio(), trial, receipt)); return true; }

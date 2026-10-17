@@ -1,10 +1,11 @@
+import { previsPanelGripAmount } from "../../shared/manhuaPrevisStoryProps";
 import { PREVIS_PROXY_PROP_KINDS, isPrevisProxyProp, previsProxyColorSchema } from "../../shared/manhuaPrevisProxy";
 import { z } from "zod";
 import { storyPropAnchorSchema, type PrevisStoryProp } from "../../shared/manhuaPrevisStoryProps";
 const n=z.number().finite();
 export const storyPropsReportSchema=z.array(z.object({
   id:z.string().min(1),kind:z.enum(["needle","blood_drop","bowl","sleeve_glow","knife","jar",...PREVIS_PROXY_PROP_KINDS]),
-  samples:z.array(z.object({frame:z.number().int().min(1).max(720),position:z.tuple([n,n,n]),visible:z.boolean(),fromAnchor:storyPropAnchorSchema,toAnchor:storyPropAnchorSchema,progress:n.min(0).max(1),gripResidual:n.min(0).max(.005).optional(),fillLevel:n.min(0).max(1).optional(),proxyGeometry:z.object({meshVertices:z.number().int().positive(),meshes:z.array(z.string().min(1)).min(1).max(64),minimum:z.tuple([n,n,n]),maximum:z.tuple([n,n,n]),color:previsProxyColorSchema}).strict().optional()}).strict()).min(48).max(720),
+  samples:z.array(z.object({frame:z.number().int().min(1).max(720),position:z.tuple([n,n,n]),visible:z.boolean(),fromAnchor:storyPropAnchorSchema,toAnchor:storyPropAnchorSchema,progress:n.min(0).max(1),gripResidual:n.min(0).max(.005).optional(),gripAmount:n.min(0).max(1).optional(),fillLevel:n.min(0).max(1).optional(),proxyGeometry:z.object({meshVertices:z.number().int().positive(),meshes:z.array(z.string().min(1)).min(1).max(64),minimum:z.tuple([n,n,n]),maximum:z.tuple([n,n,n]),color:previsProxyColorSchema}).strict().optional()}).strict()).min(48).max(720),
 }).strict()).max(32);
 function segment(keys:PrevisStoryProp["keyframes"],t:number) {
  if(t<=keys[0].timeSec)return {left:keys[0],right:keys[0],u:0};
@@ -28,6 +29,10 @@ export function validateStoryPropsReport(raw:z.infer<typeof storyPropsReportSche
    if(left.anchor.type==="world" && right.anchor.type==="world"){const a=left.anchor.position,b=right.anchor.position;if(sample.position.some((v,j)=>Math.abs(v-(a[j]*(1-u)+b[j]*u))>1e-5))throw Error("台面道具位置与固定世界锚点不一致");}
    if(["bowl","jar"].includes(prop.kind) && (sample.fillLevel===undefined || Math.abs(sample.fillLevel-(left.fill*(1-u)+right.fill*u))>1e-6))throw Error("碗内血液量与本次状态不一致");
    if(prop.grip && i/24>=(prop.grip.startSec??0) && i/24<(prop.grip.endSec??spec.durationSec) && sample.visible && sample.gripResidual===undefined)throw Error("端碗缺少真实手腕接触回执");
+   if(prop.kind==="information_panel" && prop.grip && sample.visible && i/24>=(prop.grip.startSec??0) && i/24<(prop.grip.endSec??spec.durationSec)) {
+    const expected=previsPanelGripAmount(prop.grip.startSec??0,prop.grip.endSec??spec.durationSec,i/24);
+    if(sample.gripAmount===undefined || Math.abs(sample.gripAmount-expected)>1e-6)throw Error("信息卡双手交互缺少实际渐入渐出权重");
+   }
    const anchorVisible=(anchor:typeof left.anchor)=>{
     if(anchor.type==="world")return true;
     if(anchor.type==="prop")return raw!.find(r=>r.id===anchor.propId)?.samples[i]?.visible??false;

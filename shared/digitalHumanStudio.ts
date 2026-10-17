@@ -379,6 +379,7 @@ export function prepareDigitalHumanVideo(
     );
   const selectedPrevis = part ? (part.useReviewedPrevis ? draft.previs : undefined) : draft.previs;
   if (part && draft.previs && part.useReviewedPrevis === undefined) throw new Error("请明确选择本段是否使用已审预演，不能自动忽略已采用的导演动作");
+  if (draft.previsStudio && !selectedPrevis) throw new Error("已有动作方案，请先生成白模并审片确认，不能跳过预演生成正式视频");
   const spatialFingerprint = digitalHumanSpatialFingerprint(draft);
   if (
     draft.stageFrame &&

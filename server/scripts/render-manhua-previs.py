@@ -278,7 +278,9 @@ def points(actor, frame, contacts):
     keys = list(contacts)
     impact=hit_amount(actor,t) if horse else 0.
     # 坐下：髋下沉，脚不动 → 下面的 IK 自然把膝盖顶出来
-    hip_z = (1.02 if horse else .80)-.10*impact-.09*amounts['wind']-.08*amounts['recoil']-.30*amounts['sit']
+    # 球柱讲述者采用近直立髋高，避免静立时全程呈蹲姿；真实模型路径保持原合同。
+    human_base = .89 if actor.get('proxyAppearance') else .80
+    hip_z = (1.02 if horse else human_base)-.10*impact-.09*amounts['wind']-.08*amounts['recoil']-.30*amounts['sit']
     inv = transform(actor,frame).inverted()
     ankles = {key:inv @ contacts[key] for key in keys}
     limp = horse and any(a['kind']=='limp_front_left' for a in actor['actions'])

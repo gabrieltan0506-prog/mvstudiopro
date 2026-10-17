@@ -69,7 +69,8 @@ export function DigitalHumanSpatialStudio({
     [error, setError] = useState(""),
     [rig, setRig] = useState<string>();
   const lock = useRef(false);
-  const [advisorOpen, setAdvisorOpen] = useState(false);
+
+  const [trialHost, setTrialHost] = useState<HTMLDivElement | null>(null);
   const [previsDuration, setPrevisDuration] = useState<number>();
   const advisorStorage: Storage = {
     get length() { return Object.keys(latest.current.advisorStorage).length; },
@@ -274,6 +275,42 @@ export function DigitalHumanSpatialStudio({
   const targetPrevisDuration = previsDuration ?? studio?.spec.durationSec ?? Math.min(30, Math.ceil(currentDigitalHumanAudio(draft)?.durationSec || 10));
   const previsDurationChanged = Boolean(studio && studio.spec.durationSec !== targetPrevisDuration);
   const previsOutdated = !digitalHumanPrevisSceneAligned(draft);
+  function rebuildStudio() {
+    if (!characters.length) throw new Error("请先添加人物，再描述动作");
+          const next = createManhuaPrevisStudio(targetPrevisDuration);
+          next.spec.aspect = draft.aspectRatio;
+          next.spec.actors = characters.map(c => ({
+            ...next.spec.actors[0],
+            id: c.id,
+            assetRef: c.id,
+            nameZh: c.labelZh,
+            start: [c.x, c.y],
+            end: [c.x, c.y],
+            facingDeg: c.yaw,
+          }));
+          if (latest.current.stageCamera) {
+            const camera = latest.current.stageCamera;
+            next.spec.cameras = [{ startSec: 0, endSec: next.spec.durationSec, position: [...camera.position], target: [...camera.target], lens: camera.lens }];
+          }
+          const previous = latest.current.previsStudio;
+          if (previous) {
+            next.scopeId = previous.scopeId;
+            next.audioEnabled = previous.audioEnabled;
+            next.audioStartSec = previous.audioStartSec;
+            next.loopBgm = previous.loopBgm;
+            next.history = previous.history;
+            next.referenceHistory = previous.referenceHistory;
+            next.specHistory = [...(previous.specHistory ?? []), { spec: previous.spec, createdAt: new Date().toISOString(), reasonZh: "场景站位更新前的白模草稿" }];
+          }
+          patch({ previsStudio: next, previsSpatialInvalidated: false,
+            ...(previous ? { advisorStorage: { ...latest.current.advisorStorage, [`previs-before-rebuild:${previous.scopeId}`]: JSON.stringify(previous) } } : {}) });
+    return next;
+  }
+  async function prepareAdvisorStudio() {
+    if (!latest.current.previsStudio || !digitalHumanPrevisSceneAligned(latest.current) || previsDurationChanged) rebuildStudio();
+    await beforeSubmit();
+    return advisorStudio();
+  }
   function advisorStudio() {
     const d = latest.current;
     if (!d.previsStudio) throw new Error("请先建立当前人物白模");
@@ -357,8 +394,8 @@ export function DigitalHumanSpatialStudio({
       </p>
     );
   return (
-    <details className="dh-spatial">
-      <summary>可选：3D 人物、3DGS 场景与多人白模预演</summary>
+    <section className="dh-spatial" aria-label="数字人导演工作区">
+      <details className="dh-spatial-materials"><summary>管理人物与场景素材</summary>
       <p>
         在本制作稿中组合人物、场景和动作。预演须逐帧、常速审看后采用，再进入视频输入。
       </p>
@@ -418,33 +455,6 @@ export function DigitalHumanSpatialStudio({
           }}
         />
       </label>
-      <details><summary>高级微调：讲述者坐标与朝向</summary>
-      <div className="dh-actor">
-        <strong>讲述者站位</strong>
-        {(["x", "y", "yaw"] as const).map(key => (
-          <label key={key}>
-            {key === "yaw" ? "朝向（度）" : `${key}位置（米）`}
-            <input
-              type="number"
-              value={draft.mainStage?.[key] || 0}
-              onChange={e => {
-                const value = Number(e.target.value);
-                if (Number.isFinite(value))
-                  patch({
-                    mainStage: {
-                      x: 0,
-                      y: 0,
-                      yaw: 0,
-                      ...latest.current.mainStage,
-                      [key]: value,
-                    },
-                  });
-              }}
-            />
-          </label>
-        ))}
-      </div>
-      </details>
       {draft.actors.map(a => (
         <div className="dh-actor" key={a.id}>
           <label>
@@ -460,26 +470,6 @@ export function DigitalHumanSpatialStudio({
               }
             />
           </label>
-          <details><summary>高级微调：坐标与朝向</summary>
-          {(["x", "y", "yaw"] as const).map(key => (
-            <label key={key}>
-              {key === "yaw" ? "朝向（度）" : `${key}位置（米）`}
-              <input
-                type="number"
-                value={a[key]}
-                onChange={e => {
-                  const n = Number(e.target.value);
-                  if (Number.isFinite(n))
-                    patch({
-                      actors: latest.current.actors.map(c =>
-                        c.id === a.id ? { ...c, [key]: n } : c
-                      ),
-                    });
-                }}
-              />
-            </label>
-          ))}
-          </details>
           <button
             type="button"
             onClick={() =>
@@ -640,6 +630,7 @@ export function DigitalHumanSpatialStudio({
       <div className="dh-factory">
         <ManhuaWorldStudio
           imageGeneration
+          hideCameraPresets
           stageCamera={draft.stageCamera}
           onConfirmGroundAnchor={disabled ? undefined : async (labelZh, point) => {
             const snapshot = latest.current, key = digitalHumanSceneInputKey(snapshot);
@@ -830,55 +821,40 @@ export function DigitalHumanSpatialStudio({
           }}
         />
       </div>
+      </details>
+      <div className="dh-director-workbench">
+      <aside className="dh-project-rail" aria-label="项目素材与镜头">
+        <h3>项目素材</h3>
+        {characters.map(c => <figure key={c.id}>{thumbs[c.id] && <img src={thumbs[c.id]} alt={c.labelZh} />}<figcaption>{c.labelZh}</figcaption></figure>)}
+        {sceneThumb && <figure><img src={sceneThumb.url} alt={draft.scene?.name || "当前场景"} /><figcaption>{draft.scene?.name}</figcaption></figure>}
+        <details><summary>已关联台词</summary><p>{draft.script || "请先填写台词"}</p></details>
+        <h3>镜头安排</h3>
+        {studio?.spec.cameras.map((camera, i) => <p key={i}><strong>{String(i + 1).padStart(2, "0")}</strong> · {camera.startSec}–{camera.endSec} 秒</p>)}
+        {!studio && <p>描述动作后生成镜头方案。</p>}
+      </aside>
+      <div id="dh-preview" className="dh-previs-main">
+      <div className="dh-previs-heading"><h3>白模预演</h3><span>{draft.previs?.reviewed && draft.previs.sourceFingerprint === digitalHumanSpatialFingerprint(draft) && !previsOutdated ? "已确认当前版本" : "待预演与确认"}</span></div>
+      <div ref={setTrialHost} data-clip-id={clipId} className="dh-director-trial" />
       <label>白模目标时长（秒）<input type="number" aria-label="白模目标时长" min={2} max={30} step={1}
         value={targetPrevisDuration} disabled={disabled || Boolean(studio?.pending)} onChange={e => {
           const value = Number(e.target.value);
           if (Number.isInteger(value) && value >= 2 && value <= 30) setPrevisDuration(value);
         }} /></label>
       {previsDurationChanged && <p>时长已调整，请重建并重新审片；旧方案与回执会保留。</p>}
-      <button
+      {studio && (previsOutdated || previsDurationChanged) && <button
         type="button"
-        disabled={disabled || Boolean(studio && !previsOutdated && !previsDurationChanged) || Boolean(studio?.pending)}
+        disabled={disabled || Boolean(studio?.pending)}
         onClick={() => {
-          const next = createManhuaPrevisStudio(targetPrevisDuration);
-          next.spec.aspect = draft.aspectRatio;
-          next.spec.actors = characters.map(c => ({
-            ...next.spec.actors[0],
-            id: c.id,
-            assetRef: c.id,
-            nameZh: c.labelZh,
-            start: [c.x, c.y],
-            end: [c.x, c.y],
-            facingDeg: c.yaw,
-          }));
-          if (latest.current.stageCamera) {
-            const camera = latest.current.stageCamera;
-            next.spec.cameras = [{ startSec: 0, endSec: next.spec.durationSec, position: [...camera.position], target: [...camera.target], lens: camera.lens }];
-          }
-          const previous = latest.current.previsStudio;
-          if (previous) {
-            next.scopeId = previous.scopeId;
-            next.audioEnabled = previous.audioEnabled;
-            next.audioStartSec = previous.audioStartSec;
-            next.loopBgm = previous.loopBgm;
-            next.history = previous.history;
-            next.referenceHistory = previous.referenceHistory;
-            next.specHistory = [...(previous.specHistory ?? []), { spec: previous.spec, createdAt: new Date().toISOString(), reasonZh: "场景站位更新前的白模草稿" }];
-          }
-          patch({ previsStudio: next, previsSpatialInvalidated: false,
-            ...(previous ? { advisorStorage: { ...latest.current.advisorStorage, [`previs-before-rebuild:${previous.scopeId}`]: JSON.stringify(previous) } } : {}) });
+          rebuildStudio();
         }}
       >
-        {previsOutdated || previsDurationChanged ? "按当前场景重建白模（保留旧稿）" : "建立当前人物的白模预演"}
-      </button>
+        更新当前预演方案（保留旧稿）
+      </button>}
       {previsOutdated && <p role="status">场景站位或机位已改变，旧白模暂不能用于渲染和视频。旧稿已保留，请按当前场景重建并重新审片。</p>}
       {studio && !previsOutdated && (
         <div className="dh-factory">
-          <button type="button" disabled={disabled} onClick={() => setAdvisorOpen(v => !v)}>数字人导演：调整动作与摄影机</button>
-          {advisorOpen && <DigitalHumanDirectorPanel key={`${draft.owner}:${draft.id}`} draft={draft}
-            storage={advisorStorage} disabled={disabled || busy.length > 0} beforeSubmit={beforeSubmit} acquireWork={acquireWork}
-            currentStudio={advisorStudio} onApply={next => patch(digitalHumanPrevisScenePatch(latest.current, next))} />}
           <ManhuaPrevisStudio
+            creatorMode
             block={block}
             beforeSubmit={beforeSubmit}
             acquireWork={acquireWork}
@@ -921,6 +897,15 @@ export function DigitalHumanSpatialStudio({
           />
         </div>
       )}
+      {!studio && <div className="dh-previs-empty"><strong>先把动作演给你看</strong><p>在右侧描述人物动作、场景和镜头。导演方案会使用当前素材；渲染完成后，在这里播放并逐帧检查。</p></div>}
+      </div>
+      <aside className="dh-director-assistant">
+        <DigitalHumanDirectorPanel key={`${draft.owner}:${draft.id}`} draft={draft}
+          storage={advisorStorage} disabled={disabled || busy.length > 0 || Boolean(studio?.pending) || !characters.length} beforeSubmit={beforeSubmit} acquireWork={acquireWork}
+          previewHost={trialHost} prepareStudio={prepareAdvisorStudio} currentStudio={advisorStudio} onApply={next => patch(digitalHumanPrevisScenePatch(latest.current, next))} />
+        <p>确认预演后，再核对完整提示词、参考与费用，生成正式视频。</p>
+      </aside>
+      </div>
       {draft.spatialRenders.length > 0 && (
         <ArtMotionStudio
           scopeKey={`dh-art:${draft.owner}:${draft.id}`}
@@ -966,6 +951,6 @@ export function DigitalHumanSpatialStudio({
       {draft.previs && (
         <p>已采用审片后的预演；会随当前人物与场景版本进入视频输入。</p>
       )}
-    </details>
+    </section>
   );
 }

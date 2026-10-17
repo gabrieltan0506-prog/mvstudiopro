@@ -7,7 +7,8 @@ import { useState, useRef, useEffect, type MutableRefObject } from "react";
 import { advisorPrevisCandidateSchema, prepareAdvisorPrevisComparison, validateAdvisorPrevisReceipt, advisorPrevisTrialSchema, type AdvisorPrevisTrial, type AdvisorPrevisReceipt, type AdvisorPrevisCandidate, type AdvisorPrevisVideoSource, advisorPrevisSpecJson } from "@shared/manhuaAdvisorPrevisEdit";
 import { PREVIS_ACTION_LABELS, type ManhuaPrevisSpec } from "@shared/manhuaPrevis";
 
-function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
+function Configuration({ spec, creatorMode }: { spec: ManhuaPrevisSpec; creatorMode?: boolean }) {
+  if (creatorMode) return <div className="space-y-2 text-xs">{spec.cameras.map((c,i)=><p key={i}>第{i+1}镜 · {c.startSec}–{c.endSec}秒 · {c.orbitDeg ? "环绕" : c.endPosition ? "移动镜头" : "固定镜头"}{c.endLens && c.endLens !== c.lens ? " · 变焦" : ""}</p>)}{spec.actors.map(a=><p key={a.id}>{a.nameZh}：{a.actions.map(v=>`${v.startSec}–${v.endSec}秒 ${PREVIS_ACTION_LABELS[v.kind]}`).join("；") || "保持站位"}</p>)}</div>;
   return <div className="space-y-3 text-xs leading-5">
     {spec.piggyback?.setDown && <p>完整放下：{spec.piggyback.setDown.startSec}秒开始降低 → {spec.piggyback.setDown.groundSec}秒落地坐稳 → {spec.piggyback.setDown.releaseSec}秒松手 → {spec.piggyback.setDown.endSec}秒起身；乘员留在原地。</p>}
     {spec.interactions?.filter(e=>e.kind==="support_walk").map(e=><p key={e.id}>搀扶：{spec.actors.find(a=>a.id===e.actorId)?.nameZh}扶着{spec.actors.find(a=>a.id===e.targetActorId)?.nameZh}；{e.startSec}秒抬手，{e.contactSec}秒扶稳，保持搭肩与扶臂接触至{e.endSec}秒。</p>)}
@@ -26,7 +27,8 @@ function Configuration({ spec }: { spec: ManhuaPrevisSpec }) {
   </div>;
 }
 export type AdvisorPrevisVoiceControl = { inspect: () => object; apply: () => Promise<string>; retry: () => Promise<string> };
-export function ManhuaAdvisorPrevisComparison({ storage, beforeSubmit, acquireWork, voiceControl, candidate, storageKey, autoStart, previewHost, actionHost, disabled, onCheckReady, onPrepare, onApply, onRevise, onPreviewReady }: {
+export function ManhuaAdvisorPrevisComparison({ creatorMode, storage, beforeSubmit, acquireWork, voiceControl, candidate, storageKey, autoStart, previewHost, actionHost, disabled, onCheckReady, onPrepare, onApply, onRevise, onPreviewReady }: {
+  creatorMode?: boolean;
   storage?: Storage;
   beforeSubmit?: () => Promise<void>;
   acquireWork?: (label: string) => () => void;
@@ -172,7 +174,7 @@ export function ManhuaAdvisorPrevisComparison({ storage, beforeSubmit, acquireWo
     </section>, currentHost)}
     {trial && <p className="text-xs text-white/50">试看编号：{trial.request.requestId}</p>}
     {before && after && <details><summary className="cursor-pointer py-2 text-sm">查看修改前后 · {before.durationSec}秒 / {before.actors.length}个角色</summary>
-      <div className="grid gap-4 md:grid-cols-2"><div><h4 className="mb-2 font-semibold">修改前</h4><Configuration spec={before} /></div><div><h4 className="mb-2 font-semibold text-cyan-200">试看配置</h4><Configuration spec={after} /></div></div>
+      <div className="grid gap-4 md:grid-cols-2"><div><h4 className="mb-2 font-semibold">修改前</h4><Configuration spec={before} creatorMode={creatorMode} /></div><div><h4 className="mb-2 font-semibold text-cyan-200">试看配置</h4><Configuration spec={after} creatorMode={creatorMode} /></div></div>
     </details>}
     {onRevise && <button type="button" onClick={onRevise} className="min-h-10 rounded border border-white/30 px-3 text-sm">继续修改这版方案</button>}
     <p className="text-xs text-white/60">不满意可继续聊天修改。只有点击应用才写入本段配置与试看版本；原配置可撤销。正式视频参考仍需逐帧审片后采用。</p>

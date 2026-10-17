@@ -59,7 +59,7 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
         point = rig.matrix_world @ bone.head.lerp(bone.tail, anchor.get('along', 1))
         return point + matrix.to_quaternion() @ offset, matrix.to_quaternion(), actor_visible(actor, frame)
 
-    def grip_to_bowl(grip, obj, frame):
+    def grip_to_bowl(grip, obj, frame, amount=1.):
         from previs_hand_contacts import solve_hand_to_world
         actor,rig=actors[grip['actorId']]
         model=real_models.get(grip['actorId'])
@@ -67,6 +67,9 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
         if model:rig=model['rig']
         elif actor.get('riggedModel'):raise ValueError('端碗必须约束真实人物骨骼')
         target_world=obj.location+obj.rotation_quaternion @ Vector(grip.get('offset',[0,0,-.02]))
+        if amount < 1.:
+            hand=rig.pose.bones[mapping[grip['hand']] if mapping else grip['hand']]
+            target_world=(rig.matrix_world @ hand.head).lerp(target_world,amount)
         return solve_hand_to_world(rig,mapping,grip['hand'],target_world,frame)
 
     for prop in spec.get('storyProps') or []:
@@ -156,7 +159,14 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
                     liquid.keyframe_insert(key,frame=frame)
             grip=prop.get('grip')
             gripping=grip and grip.get('startSec',0)<=t<grip.get('endSec',scene.frame_end/24)
-            grip_residual=grip_to_bowl(grip,obj,frame) if gripping and visible else None
+            grip_amount=1.
+            if gripping and kind=='information_panel':
+                start,end=grip.get('startSec',0),grip.get('endSec',scene.frame_end/24)
+                ramp=min(.5,(end-start)/2)
+                def smooth(v):
+                    u=max(0.,min(1.,v));return u*u*(3-2*u)
+                grip_amount=smooth((t-start)/ramp)*smooth((end-t)/ramp)
+            grip_residual=grip_to_bowl(grip,obj,frame,grip_amount) if gripping and visible else None
             for child in objects[1:]:
                 if child==liquid:continue
                 child.hide_render=not visible;child.hide_viewport=not visible
@@ -168,7 +178,7 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
                             'fromAnchor':left['anchor'],'toAnchor':right['anchor'],'progress':u,
                             **({'proxyGeometry':measure_proxy_prop(objects,scene)} if is_proxy else {}),
                             **({'fillLevel':fill} if kind in ('bowl','jar') else {}),
-                            **({'gripResidual':grip_residual} if grip_residual is not None else {})})
+                            **({'gripResidual':grip_residual,**({'gripAmount':grip_amount} if kind=='information_panel' else {})} if grip_residual is not None else {})})
         by_id[prop['id']]=handle;handles.append(handle)
     scene.frame_set(1)
     return handles
