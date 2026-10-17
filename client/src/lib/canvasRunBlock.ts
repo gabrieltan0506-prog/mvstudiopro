@@ -2917,6 +2917,7 @@ async function runCanvasBlockInner(
     // 附加约束合成——不覆盖含秒轴/对白锁的正文（审计 P1 闭环）
     const compiledMotion = stripManhuaPromptSlop(
       compileI2VMotionPrompt(withContinuity, {
+        preserveFullDirectorText: block.id.startsWith("dh-"),
         pathCameraRecipeId: block.pathCameraRecipeId,
         appendRecipeAsConstraint: isClip,
       }),

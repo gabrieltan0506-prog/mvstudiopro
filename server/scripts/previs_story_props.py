@@ -71,7 +71,12 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
 
     for prop in spec.get('storyProps') or []:
         kind, name = prop['kind'], '剧情道具_'+prop['id']
-        if kind == 'needle':
+        is_proxy = kind in ('task_avatar','light_orb','information_panel','code_screen','stage_box')
+        proxy_objects = None
+        if is_proxy:
+            from previs_proxy_props import build_proxy_prop, measure_proxy_prop
+            proxy_objects=build_proxy_prop(prop,scene)
+        elif kind == 'needle':
             bpy.ops.mesh.primitive_cylinder_add(vertices=8, radius=.009, depth=.18)
             color, emission = (.95, .78, .24), .7
         elif kind == 'blood_drop':
@@ -103,9 +108,10 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
             bpy.ops.mesh.primitive_uv_sphere_add(segments=12, ring_count=8, radius=.035)
             color, emission = (.7,.015,.018), 2
         obj=bpy.context.view_layer.objects.active
-        obj.name=name;obj.data.materials.append(_material(name,color,emission))
+        obj.name=name
+        if not is_proxy:obj.data.materials.append(_material(name,color,emission))
         obj['previs_animation_object']=True
-        objects=[obj]
+        objects=proxy_objects or [obj]
         liquid=None
         if kind=='knife':
             bpy.ops.mesh.primitive_cube_add(size=1)
@@ -157,8 +163,10 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
                 for key in ('hide_render','hide_viewport'):child.keyframe_insert(key,frame=frame)
             for key in ('location','rotation_quaternion','scale','hide_render','hide_viewport'):
                 obj.keyframe_insert(key,frame=frame)
+            bpy.context.view_layer.update()
             samples.append({'frame':frame,'position':list(obj.location),'visible':visible,
                             'fromAnchor':left['anchor'],'toAnchor':right['anchor'],'progress':u,
+                            **({'proxyGeometry':measure_proxy_prop(objects,scene)} if is_proxy else {}),
                             **({'fillLevel':fill} if kind in ('bowl','jar') else {}),
                             **({'gripResidual':grip_residual} if grip_residual is not None else {})})
         by_id[prop['id']]=handle;handles.append(handle)

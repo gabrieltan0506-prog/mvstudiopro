@@ -50,7 +50,7 @@ export function DigitalHumanFilmDirectorPanel(props:{draft:DigitalHumanDraft;dis
         props.save(d=>({...d,advisorStorage:{...d.advisorStorage,[key]:JSON.stringify(pending)}}));
         await props.beforeSubmit();
       }
-      const question="为当前数字人完整文稿生成逐镜成片导演方案，逐项安排表情、演技、动作、运镜、灯光、氛围与音效；严格保留全文，BGM后期加入，字幕关闭。";
+      const question="为当前数字人完整文稿生成逐镜成片导演方案，逐项安排表情、演技、动作、运镜、灯光、氛围、视觉特效、环境底声与事件音效；严格保留全文，BGM后期加入，字幕关闭。";
       const result=await ask.mutateAsync({requestId:pending.id,question,rawQuestion:question,manhuaContext:pending.context,confirmPaid:pending.paid||undefined,confirmedCredits:pending.paid?pending.credits:undefined});
       const plan=digitalHumanFilmPlanSchema.parse(JSON.parse(result.answer.replace(/^```(?:json)?\s*|\s*```$/g,"")));
       if(plan.targetId!==pending.target.id||plan.revision!==pending.target.revision)throw new Error("导演返回了其他版本的方案，原请求已保留");
@@ -66,7 +66,7 @@ export function DigitalHumanFilmDirectorPanel(props:{draft:DigitalHumanDraft;dis
       }
     }finally{release?.();lock.current=false;setBusy(false);}
   }
-  function editShot(index:number, field:"expression"|"performance"|"action"|"camera"|"lighting"|"atmosphere"|"soundEffect", value:string) {
+  function editShot(index:number, field:"expression"|"performance"|"action"|"camera"|"lighting"|"atmosphere"|"soundEffect"|"visualEffect"|"environmentSound", value:string) {
     setListened(false);
     props.save(d=>!d.filmDirector?d:({...d,filmDirector:{...d.filmDirector,adopted:false,plan:{...d.filmDirector.plan,
       shots:d.filmDirector.plan.shots.map((shot,i)=>i===index?{...shot,[field]:value}:shot)}}}));
@@ -84,7 +84,7 @@ export function DigitalHumanFilmDirectorPanel(props:{draft:DigitalHumanDraft;dis
       {props.draft.filmDirector.plan.shots.map((shot,index)=><details key={index}>
         <summary>镜{index+1} · {shot.startSec}–{shot.endSec}秒 · 手动微调</summary>
         <p>{shot.dialogue || "无对白"}；细节中的秒数从本镜0秒起算。</p>
-        {([['expression','表情'],['performance','演技与语气'],['action','人物动作'],['camera','运镜'],['lighting','灯光'],['atmosphere','氛围'],['soundEffect','音效']] as const).map(([field,label])=><label key={field}>{label}<textarea value={shot[field]} maxLength={1200} disabled={props.disabled||busy} onChange={e=>editShot(index,field,e.target.value)}/></label>)}
+        {([['expression','表情'],['performance','演技与语气'],['action','人物动作'],['camera','运镜'],['lighting','灯光'],['atmosphere','氛围'],['visualEffect','视觉特效与受光'],['environmentSound','环境底声'],['soundEffect','事件音效']] as const).map(([field,label])=><label key={field}>{label}<textarea value={shot[field] ?? ""} maxLength={1200} disabled={props.disabled||busy} onChange={e=>editShot(index,field,e.target.value)}/></label>)}
       </details>)}
       <pre>{preview}</pre>
       <label><input type="checkbox" checked={listened} onChange={e=>setListened(e.target.checked)}/>我已对照原声核对逐句时点、表情、动作与镜头</label>

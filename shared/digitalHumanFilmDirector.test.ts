@@ -1,6 +1,6 @@
-import { describe,it,expect } from "vitest";
-import {digitalHumanFilmTarget, newDigitalHumanDraft,prepareDigitalHumanVideo,loadDigitalHumanDraft,digitalHumanAdoptedFilmPrompt} from "./digitalHumanStudio";
-import {compileDigitalHumanFilm,parseDigitalHumanFilmPlan,type DigitalHumanFilmPlan} from "./digitalHumanFilmDirector";
+import { describe,it,expect,vi } from "vitest";
+import {digitalHumanFilmTarget, newDigitalHumanDraft,prepareDigitalHumanVideo,loadDigitalHumanDraft,digitalHumanDraftSchema,digitalHumanAdoptedFilmPrompt} from "./digitalHumanStudio";
+import {DIGITAL_HUMAN_DIRECTION_MAX_CHARS, digitalHumanFilmTargetSchema, compileDigitalHumanFilm,parseDigitalHumanFilmPlan,type DigitalHumanFilmPlan} from "./digitalHumanFilmDirector";
 import {buildDigitalHumanAdvisorProject} from "../client/src/lib/digitalHumanAdvisor";
 import {planDigitalHumanAudioSegments} from "./digitalHumanProduction";
 import {buildManhuaCreativeAdvisorLlmMessages} from "../server/services/platformSkillQa";
@@ -10,7 +10,7 @@ function fixture(){
  d.portrait={source:"gs://test-only/p.png",name:"本人"};d.scene={source:"gs://test-only/s.png",name:"书房"};
  d.audios=[{request:{billingRequestId:aid,input:d.script,voice:d.voiceId,speakerZh:"本人",speakerId:"test",voiceStateZh:""},source:"gs://test-only/a.wav",durationSec:12,status:"succeeded"}];d.approvedAudioRequestId=aid;
  const t=digitalHumanFilmTarget(d);
- const shot={expression:"眉心轻收，随后放松",performance:"资料加重，句尾停顿",action:"右手抬起接住金色光弹，手臂卸力",camera:"中景小幅推近，接住前短慢动作",lighting:"左窗柔光，掌心局部金色反射",atmosphere:"紧张转为从容",soundEffect:"掌心接触时短促低鸣，随后结束",voiceMode:"onscreen" as const};
+ const shot={expression:"眉心轻收，随后放松",performance:"资料加重，句尾停顿",action:"右手抬起接住金色光弹，手臂卸力",camera:"中景小幅推近，接住前短慢动作",lighting:"左窗柔光，掌心局部金色反射",atmosphere:"紧张转为从容",soundEffect:"掌心接触时短促低鸣，随后结束",visualEffect:"光弹入画空气波，掌心接触脉冲，衣袖局部金色反射",environmentSound:"书房持续低环境声，纸页轻响，切镜连续",voiceMode:"onscreen" as const};
  const plan:DigitalHumanFilmPlan={kind:"digital-human-film",targetId:id,revision:t.revision,summary:"资料归序后核对事实",bgm:"post",subtitles:"off",shots:[{...shot,startSec:0,endSec:6,dialogue:"先整理资料。"},{...shot,startSec:6,endSec:12,dialogue:"再核对事实。"}]};
  return {d,t,plan};
 }
@@ -46,5 +46,74 @@ describe("数字人成片导演真实数据消费",()=>{
   const {d,t,plan}=fixture();d.filmDirector={target:t,plan,adopted:true};d.filmModel="wan-3.0";expect(()=>digitalHumanAdoptedFilmPrompt(d)).toThrow("版本");
   const prompt=compileDigitalHumanFilm(plan,"wan-3.0");expect(prompt).toContain("音效：");expect(prompt).not.toContain("{先整理");expect(prompt).not.toContain("[字幕");
   d.filmModel="seedance-2.0-mini";d.audios[0].durationSec=16;expect(()=>digitalHumanFilmTarget(d)).toThrow("15秒");
+ });
+ it("完整长导演文字保存恢复不截断，并穿过顾问真实输入和三模型分段生成",()=>{
+  const {d}=fixture();d.direction="环境底声与表演要求。".repeat(700)+"结尾保留窗外远声与人物嘴角放松";
+  expect(d.direction.length).toBeGreaterThan(6000);
+  const restored=loadDigitalHumanDraft(JSON.stringify(d),"7")!;expect(restored.direction).toBe(d.direction);
+  const target=digitalHumanFilmTarget(restored);expect(digitalHumanFilmTargetSchema.parse(target).direction).toBe(d.direction);
+  const project=buildDigitalHumanAdvisorProject(restored);
+  expect(project.context.digitalHumanProduction?.direction).toBe(d.direction);
+  const messages=buildManhuaCreativeAdvisorLlmMessages({question:"安排完整动作",context:project.context});
+  expect(messages[1].content).toContain(d.direction);
+  expect(prepareDigitalHumanVideo(restored,vid).prompt).toContain(d.direction);
+  expect(()=>digitalHumanDraftSchema.parse({...d,direction:"长".repeat(DIGITAL_HUMAN_DIRECTION_MAX_CHARS+1)})).toThrow();
+ });
+ it("特效和环境底声从采用保存到空间顾问和真实生成提示词，并按段保留",()=>{
+  const {d,t,plan}=fixture();plan.shots[1].voiceMode="narration";
+  d.filmDirector={target:t,plan:parseDigitalHumanFilmPlan(JSON.stringify(plan),t),adopted:true};
+  const saved=loadDigitalHumanDraft(JSON.stringify(d),"7")!;
+  const context=buildDigitalHumanAdvisorProject(saved).context;
+  expect(context.digitalHumanProduction?.adoptedPlan?.shots[0].visualEffect).toContain("空气波");
+  const messages=buildManhuaCreativeAdvisorLlmMessages({question:"按已采用导演方案调机位",context});
+  expect(messages[1].content).toContain("衣袖局部金色反射");expect(messages[1].content).toContain("切镜连续");
+  for(const model of ["seedance-2.5","seedance-2.0-mini","wan-3.0"] as const){
+    const compiled=compileDigitalHumanFilm(plan,model,6,12);
+    expect(compiled).toContain("视觉特效：光弹入画空气波");expect(compiled).toContain("环境底声");
+    expect(compiled).toContain("旁白");expect(compiled).not.toContain("{先整理资料。}");
+  }
+  expect(prepareDigitalHumanVideo(saved,vid).prompt).toContain("书房持续低环境声");
+  const absent=structuredClone(plan);delete absent.shots[0].environmentSound;
+  expect(()=>parseDigitalHumanFilmPlan(JSON.stringify(absent),t)).toThrow("环境底声");
+  absent.shots[0].environmentSound="TODO";expect(()=>parseDigitalHumanFilmPlan(JSON.stringify(absent),t)).toThrow("实际演法");
+  absent.shots[0].environmentSound="9秒播放房间底声";expect(()=>parseDigitalHumanFilmPlan(JSON.stringify(absent),t)).toThrow("本镜0秒");
+ });
+
+});
+
+
+describe("完整导演合同的云稿与旧稿恢复", () => {
+ it("20000字与逐镜新字段经真实云稿序列化函数往返，存储替身禁止外部访问", async () => {
+  const { readDigitalHumanCloudDraft, writeDigitalHumanCloudDraft } = await import("../server/services/digitalHumanDraftStore");
+  const { d, plan } = fixture();
+  d.direction = "长".repeat(19996) + "末尾保留";
+  const target = digitalHumanFilmTarget(d);
+  plan.revision = target.revision;
+  d.filmDirector = { target, plan, adopted: true };
+  let stored: Buffer = Buffer.alloc(0);
+  const write = vi.fn(async (input: { buffer: Buffer }) => { stored = input.buffer; return { generation: "12", bucket: "test-only", objectName: "draft.json", gcsUri: "gs://test-only/draft.json" }; });
+  const read = vi.fn(async () => ({ buffer: stored, generation: "12", bucket: "test-only", objectName: "draft.json" }));
+  const deps = { read, write } as Parameters<typeof writeDigitalHumanCloudDraft>[3];
+  await writeDigitalHumanCloudDraft(7, d, "11", deps);
+  const saved = (await readDigitalHumanCloudDraft(7, deps)).draft!;
+  expect(saved.direction).toBe(d.direction);
+  expect(saved.filmDirector).toEqual(d.filmDirector);
+  const prompt = prepareDigitalHumanVideo(saved, vid).prompt;
+  expect(prompt).toContain(d.direction);
+  expect(prompt).toContain(plan.shots[0].visualEffect);
+  expect(prompt).toContain(plan.shots[0].environmentSound);
+  expect(write).toHaveBeenCalledTimes(1);
+ });
+ it("旧方案无新字段仍可恢复但不能冒充新版已采用方案", () => {
+  const { d, t, plan } = fixture();
+  delete t.productionVersion;
+  t.revision = "legacy-revision";
+  plan.revision = t.revision;
+  for (const shot of plan.shots) { delete shot.visualEffect; delete shot.environmentSound; }
+  d.filmDirector = { target: t, plan, adopted: true };
+  const saved = loadDigitalHumanDraft(JSON.stringify(d), "7")!;
+  expect(saved.filmDirector?.plan).toEqual(plan);
+  expect(() => prepareDigitalHumanVideo(saved, vid)).toThrow("版本");
+  expect(buildDigitalHumanAdvisorProject(saved).context.digitalHumanProduction?.adoptedPlan).toBeUndefined();
  });
 });

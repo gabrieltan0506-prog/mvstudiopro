@@ -1,7 +1,7 @@
 import { assertCanvasSpeechInstruction } from "@shared/canvasDialogueControls";
 import { DigitalHumanFilmDirectorPanel } from "./DigitalHumanFilmDirectorPanel";
 import { digitalHumanAdoptedFilmPrompt } from "@shared/digitalHumanStudio";
-import { DIGITAL_HUMAN_FILM_MODELS, digitalHumanFilmModelSchema } from "@shared/digitalHumanFilmDirector";
+import { DIGITAL_HUMAN_DIRECTION_MAX_CHARS, DIGITAL_HUMAN_FILM_MODELS, digitalHumanFilmModelSchema } from "@shared/digitalHumanFilmDirector";
 import { DigitalHumanOmniPanel } from "./DigitalHumanOmniPanel";
 import { DigitalHumanPostProduction } from "./DigitalHumanPostProduction";
 import { adoptDigitalHumanSource, type DigitalHumanSource } from "@shared/digitalHumanStudio";
@@ -578,9 +578,12 @@ function DigitalHumanWorkspace({
                 const file = e.target.files?.[0];
                 e.target.value = "";
                 if (file)
-                  void act("上传场景", async () =>
-                    edit({ scene: await uploadFile(file) })
-                  );
+                  void act("上传场景", async () => {
+                    const previous = ref.current.scene;
+                    const scene = await uploadFile(file);
+                    // 首次上传保留用户预写要求；替换图片时不继承上一场景的描述。
+                    edit({ scene, ...(previous && previous.source !== scene.source ? { sceneDescription: "" } : {}) });
+                  });
               }}
             />
           </label>
@@ -665,7 +668,7 @@ function DigitalHumanWorkspace({
                   <button
                     type="button"
                     onClick={() =>
-                      edit({ scene: { source: s.source!, name: "生成的场景" } })
+                      edit({ scene: { source: s.source!, name: "生成的场景" }, sceneDescription: s.request.description })
                     }
                   >
                     采用此场景
@@ -916,10 +919,12 @@ function DigitalHumanWorkspace({
           <label>
             表演与镜头要求
             <textarea
+              aria-label="完整导演要求"
               value={draft.direction}
-              maxLength={1500}
+              maxLength={DIGITAL_HUMAN_DIRECTION_MAX_CHARS}
               onChange={e => edit({ direction: e.target.value })}
             />
+            <small>{draft.direction.length} / {DIGITAL_HUMAN_DIRECTION_MAX_CHARS} 字，完整保存并用于导演、动作预演与视频生成。</small>
           </label>
           <DigitalHumanSpatialStudio
             draft={draft}

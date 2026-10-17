@@ -1,4 +1,4 @@
-import { manhuaCreativeAdvisorContextSchema } from "@shared/manhuaCreativeAdvisor";
+import { MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS, manhuaCreativeAdvisorContextSchema } from "@shared/manhuaCreativeAdvisor";
 import { digitalHumanAdoptedFilmPrompt, type DigitalHumanDraft } from "@shared/digitalHumanStudio";
 import type { buildManhuaAdvisorProject } from "./manhuaAdvisorProject";
 
@@ -24,6 +24,12 @@ export function buildDigitalHumanAdvisorProject(draft: DigitalHumanDraft): Retur
     ...draft.actors.map(a => ({ id: a.id, label: a.labelZh, point: { x: a.x, y: a.y, yaw: a.yaw }, model: a.model })),
   ];
   const issues = !draft.script.trim() ? [{ id: "script", text: "请先采用或填写完整口播正文。", phase: "outline" as const, blocking: true }] : [];
+  let adoptedPlan: NonNullable<DigitalHumanDraft["filmDirector"]>["plan"] | undefined;
+  if (draft.filmDirector?.adopted) {
+    try { digitalHumanAdoptedFilmPrompt(draft); adoptedPlan = draft.filmDirector.plan; }
+    catch { /* 过期方案保留在原稿，不作为当前生成输入。 */ }
+  }
+  const shotText = digitalHumanShotText(draft);
   const context = manhuaCreativeAdvisorContextSchema.parse({
     seriesTitle: draft.source?.title || "数字人口播",
     episodeIndex: 1, episodeTitle: "当前口播", stage: "storyboard",
@@ -31,7 +37,9 @@ export function buildDigitalHumanAdvisorProject(draft: DigitalHumanDraft): Retur
     videoModel: draft.filmModel || "seedance-2.5", writerConfirmed: Boolean(draft.script.trim()),
     episodeBody: draft.script,
     assetSummary: actors.map(a => `${a.label}（${a.id}）：位置 ${JSON.stringify(a.point || { x: 0, y: 0, yaw: 0 })}；3D模型${a.model?.status || "未建立"}`).join("\n") + `\n场景：${draft.sceneDescription}；3DGS${draft.worldTaskId ? "已选择" : "未选择"}`,
-    shotSummary: digitalHumanShotText(draft),
+    shotSummary: shotText.length <= MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.shotSummaryChars
+      ? shotText : "完整数字人导演要求及已采用逐镜方案见digitalHumanProduction，未按摘要截断。",
+    digitalHumanProduction: { direction: draft.direction, ...(draft.source ? { sourceShots: draft.source.shots } : {}), ...(adoptedPlan ? { adoptedPlan } : {}) },
     previsSummary: draft.previsStudio ? `当前真实预演：${draft.previsStudio.spec.durationSec}秒、${draft.previsStudio.spec.actors.length}名人物、${draft.previsStudio.spec.cameras.length}个机位。分镜原文未提供锁秒；请在本段实际时长内编排。` : "尚未建立白模。",
     blockers: issues.map(i => i.text),
   });

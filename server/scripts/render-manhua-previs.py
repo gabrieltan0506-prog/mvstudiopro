@@ -70,10 +70,12 @@ def bone_margin_radius(actor, name):
     radius = bone_radius(actor, name)
     return radius if is_sphere_bone(name) else radius * 2 ** .5
 
-def mesh(name, a, b, radius, mat, sphere=False):
+def mesh(name, a, b, radius, mat, sphere=False, cylinder=False):
     a, b = Vector(a), Vector(b)
     if sphere:
         bpy.ops.mesh.primitive_uv_sphere_add(segments=12, ring_count=8)
+    elif cylinder:
+        bpy.ops.mesh.primitive_cylinder_add(vertices=12, radius=1, depth=2)
     else:
         bpy.ops.mesh.primitive_cube_add(size=2)
     obj = bpy.context.object
@@ -83,6 +85,7 @@ def mesh(name, a, b, radius, mat, sphere=False):
     obj.rotation_mode = 'QUATERNION'
     obj.rotation_quaternion = (b-a).to_track_quat('Z', 'Y')
     obj.data.materials.append(mat)
+    if cylinder or sphere:obj['previs_proxy_shape']='sphere' if sphere else 'cylinder'
     return obj
 
 ground = material('水面' if water_events else '地面', (.06,.22,.30) if water_events else (.23,.25,.27))
@@ -486,9 +489,14 @@ for index,actor in enumerate(spec['actors']):
     bpy.ops.object.mode_set(mode='OBJECT')
     actor_hex = actor_palette[actor_colors[actor['id']]]
     color=material(actor['nameZh'],tuple(int(actor_hex[i:i+2],16)/255 for i in (0,2,4)))
+    proxy=actor.get('proxyAppearance')
+    head_color=material(actor['id']+'_白模头部',(.72,.74,.77)) if proxy else color
+    proxy_parts=[]
     for name,(a,b) in rest.items():
         radius=bone_radius(actor,name)
-        obj=mesh(actor['id']+'_'+name,a,b,radius,color,name in ('head','body'))
+        obj=mesh(actor['id']+'_'+name,a,b,radius,head_color if proxy and name in ('head','neck') else color,
+                 name=='head' if proxy else name in ('head','body'),cylinder=bool(proxy and name!='head'))
+        if proxy:proxy_parts.append(obj)
         bpy.ops.object.select_all(action='DESELECT')
         obj.select_set(True);bpy.context.view_layer.objects.active=obj
         bpy.ops.object.transform_apply(location=True,rotation=True,scale=True)
@@ -496,6 +504,9 @@ for index,actor in enumerate(spec['actors']):
         group=obj.vertex_groups.new(name=name)
         group.add(list(range(len(obj.data.vertices))),1,'REPLACE')
         modifier=obj.modifiers.new('关节','ARMATURE');modifier.object=rig
+    if proxy:
+        from previs_proxy_appearance import bake_proxy_appearance
+        bake_proxy_appearance(actor,color,proxy_parts,scene)
     max_error=0.
     for frame in range(1,scene.frame_end+1):
         scene.frame_set(frame)
@@ -942,6 +953,9 @@ if effect_handles:
 if scene_effect_handles:
     report['sceneEffects']=measure_scene_effects(scene_effect_handles,scene)
     report['warnings'].extend(sorted(set(row['boundaryZh'] for row in report['sceneEffects'])))
+if any(actor.get('proxyAppearance') for actor in spec['actors']):
+    from previs_proxy_appearance import measure_proxy_appearances
+    report['proxyAppearances']=measure_proxy_appearances(spec,rigs,scene)
 if story_prop_handles:
     report['storyProps']=[{'id':h['spec']['id'],'kind':h['spec']['kind'],'samples':h['samples']} for h in story_prop_handles]
 if hand_contact_rows:
@@ -1000,6 +1014,9 @@ if spec.get('exportAnimation'):
     # 掌击与伤处也是实际画面对象，导出的逐帧可见表不能遗漏它们。
     for cue in hit_cues.values():
         for key in ('pulse', 'wound'): cue[key]['previs_animation_object']=True
+# 仅球柱动作示意叠加真实路线图；不进入角色动画导出身份集合。
+from previs_proxy_paths import build_proxy_paths
+build_proxy_paths(spec, rigs, camera, scene)
 frames=out/'frames';frames.mkdir(exist_ok=True)
 scene.render.filepath=str(frames/'frame-')
 bpy.ops.wm.save_as_mainfile(filepath=str(out/'scene.blend'))

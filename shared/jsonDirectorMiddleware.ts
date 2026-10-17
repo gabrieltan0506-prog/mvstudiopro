@@ -310,6 +310,8 @@ export function fallbackEnglishFromJson(lock: DirectorJsonLock): string {
 }
 
 export type CompileI2VMotionPromptOpts = {
+  /** 数字人完整导演方案不能被通用摘要上限截断或配方替换。 */
+  preserveFullDirectorText?: boolean;
   /**
    * @deprecated 已废除「有静帧就压成微动三件套」；保留字段以免旧调用崩。
    */
@@ -363,6 +365,7 @@ export function compileI2VMotionPrompt(
   rawPrompt: string,
   opts?: CompileI2VMotionPromptOpts,
 ): string {
+  if (opts?.preserveFullDirectorText) return stripDirectorNamesForDelivery(String(rawPrompt || "").trim());
   const recipeId = String(opts?.pathCameraRecipeId || "").trim();
   // 已审成片的锁定秒轴优先；刷新恢复的推荐配方不能追加另一套动作时间表。
   const lockedClipTimeline = opts?.appendRecipeAsConstraint === true &&

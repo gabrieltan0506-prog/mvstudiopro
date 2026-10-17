@@ -58,10 +58,13 @@ export function DigitalHumanSpatialStudio({
   const modelSubmit = trpc.manhua3d.submit.useMutation(),
     modelImport = trpc.manhua3d.importExisting.useMutation();
   const worldSubmit = trpc.manhuaWorld.submit.useMutation(),
+    worldRetry = trpc.manhuaWorld.retry.useMutation(),
     signed = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const queue = trpc.mvAnalysis.queuePostProd.useMutation();
   const latest = useRef(draft);
   latest.current = draft;
+  const latestWorlds = useRef(worldList.data);
+  latestWorlds.current = worldList.data;
   const [busy, setBusy] = useState<string[]>([]),
     [error, setError] = useState(""),
     [rig, setRig] = useState<string>();
@@ -241,14 +244,21 @@ export function DigitalHumanSpatialStudio({
   useEffect(() => {
     if (role !== "admin") return;
     let stopped = false;
-    const tick = async () => {
+    const tick = async (initial = false) => {
       if (stopped || lock.current) return;
+      const d = latest.current;
+      const models = [d.mainModel, ...d.actors.map(a => a.model)];
+      const activeModel = models.some(m => m && !["succeeded", "failed"].includes(m.status));
+      const currentWorld = latestWorlds.current?.find(w => w.taskId === d.worldTaskId);
+      const activeWorld = Boolean(d.worldTaskId && (!currentWorld || !["succeeded", "failed", "reconcile_manual"].includes(currentWorld.status)));
+      // 终态资产不再周期占用整份制作稿，避免白模编辑和渲染反复被锁住。
+      if (!initial && !d.modelRequests.length && !d.worldRequest && !activeModel && !activeWorld) return;
       await work("recover", async () => {
         await refreshModels();
         await worldList.refetch();
       });
     };
-    void tick();
+    void tick(true);
     const timer = setInterval(() => void tick(), 15000);
     return () => {
       stopped = true;
@@ -725,6 +735,23 @@ export function DigitalHumanSpatialStudio({
               await worldList.refetch();
             })
           }
+          onRetry={id => work(id, async () => {
+            const snapshot = latest.current;
+            const original = latestWorlds.current?.find(w => w.taskId === snapshot.worldTaskId);
+            if (snapshot.worldRequest || !snapshot.scene || !original || id !== original.sceneRef || original.sourceVersion !== snapshot.scene.source || original.status !== "failed") {
+              throw new Error("当前场景没有可重试的失败任务，请先查询原任务");
+            }
+            if (!window.confirm("按原输入重试此3DGS场景，费用沿用原模型档位；旧任务保留。确认？")) return;
+            await beforeSubmit();
+            if (latest.current.id !== snapshot.id || latest.current.scene?.source !== snapshot.scene.source || latest.current.worldTaskId !== original.taskId || latest.current.worldRequest) {
+              throw new Error("场景或任务已变化，未提交旧场景重试");
+            }
+            const result = await worldRetry.mutateAsync({ taskId: original.taskId });
+            if (latest.current.id === snapshot.id && latest.current.scene?.source === snapshot.scene.source && latest.current.worldTaskId === original.taskId) {
+              patch({ worldTaskId: result.taskId, worldRequest: undefined });
+            }
+            await worldList.refetch();
+          })}
           onExportStageFrame={async (_, blob) => {
             const sourceFingerprint = digitalHumanSpatialFingerprint(
               latest.current

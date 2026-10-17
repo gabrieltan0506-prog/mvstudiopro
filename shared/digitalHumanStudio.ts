@@ -1,4 +1,4 @@
-import { digitalHumanFilmModelSchema, digitalHumanFilmStateSchema, DIGITAL_HUMAN_FILM_MODELS, digitalHumanFilmRevision, compileDigitalHumanFilm, parseDigitalHumanFilmPlan, type DigitalHumanFilmTarget } from "./digitalHumanFilmDirector";
+import { digitalHumanDirectionSchema, digitalHumanFilmModelSchema, digitalHumanFilmStateSchema, DIGITAL_HUMAN_FILM_MODELS, digitalHumanFilmRevision, compileDigitalHumanFilm, parseDigitalHumanFilmPlan, type DigitalHumanFilmTarget } from "./digitalHumanFilmDirector";
 import { digitalHumanOmniQuoteSchema } from "./digitalHumanOmni";
 import { digitalHumanStageAnchorSchema, digitalHumanStageCameraSchema } from "./digitalHumanSpatialAdvisor";
 import { z } from "zod";
@@ -14,7 +14,7 @@ export const digitalHumanSourceSchema = z.object({
   platform: z.enum(["xiaohongshu", "douyin"]), aspectRatio: z.enum(["9:16", "16:9"]),
   script: z.string().trim().min(1).max(4000),
   detailedScript: z.string().max(20000),
-  sceneDescription: z.string().max(2000), direction: z.string().max(1500),
+  sceneDescription: z.string().max(2000), direction: digitalHumanDirectionSchema,
   shots: platformStoryboardCellsSchema,
 }).strict();
 export type DigitalHumanSource = z.infer<typeof digitalHumanSourceSchema>;
@@ -178,7 +178,7 @@ export const digitalHumanDraftSchema = z.object({
   voiceId: z.string().max(80),
   speechInstruction: z.string().max(100).default(""),
   aspectRatio: z.enum(["9:16", "16:9"]),
-  direction: z.string().max(1500),
+  direction: digitalHumanDirectionSchema,
   filmModel: digitalHumanFilmModelSchema.optional(),
   filmDirector: digitalHumanFilmStateSchema.optional(),
   modelRequests: z
@@ -508,8 +508,8 @@ export function digitalHumanFilmTarget(draft: DigitalHumanDraft): DigitalHumanFi
   const segments = manifest ? manifest.segments.map(s => ({startSec:s.startSec,endSec:s.endSec})) : [{startSec:0,endSec:audio.durationSec}];
   const model = draft.filmModel || "seedance-2.5";
   if (segments.some(s => s.endSec-s.startSec > DIGITAL_HUMAN_FILM_MODELS[model].maxAudioSec + 0.001)) throw new Error(`请先按所选模型${DIGITAL_HUMAN_FILM_MODELS[model].maxAudioSec}秒上限准备音频分段，再生成导演方案`);
-  return {id:draft.id, model, aspectRatio:draft.aspectRatio,script:draft.script.trim(),direction:draft.direction,
-    durationSec:audio.durationSec,segments,revision:digitalHumanFilmRevision({script:draft.script.trim(),direction:draft.direction,source:draft.source,audio,segments,model,ratio:draft.aspectRatio,portrait:draft.portrait,scene:draft.scene,actors:draft.actors,previs:draft.previs,stageFrame:draft.stageFrame})};
+  return {id:draft.id, productionVersion: 2, model, aspectRatio:draft.aspectRatio,script:draft.script.trim(),direction:draft.direction,
+    durationSec:audio.durationSec,segments,revision:digitalHumanFilmRevision({productionVersion:2,script:draft.script.trim(),direction:draft.direction,source:draft.source,audio,segments,model,ratio:draft.aspectRatio,portrait:draft.portrait,scene:draft.scene,actors:draft.actors,previs:draft.previs,stageFrame:draft.stageFrame})};
 }
 export function digitalHumanAdoptedFilmPrompt(draft: DigitalHumanDraft, start = 0, end?: number): string {
   const target = digitalHumanFilmTarget(draft), state = draft.filmDirector;

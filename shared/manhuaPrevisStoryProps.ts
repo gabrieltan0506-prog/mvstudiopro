@@ -1,3 +1,4 @@
+import { PREVIS_PROXY_PROP_KINDS, isPrevisProxyProp, previsProxyPropGeometrySchema } from "./manhuaPrevisProxy";
 import { z } from "zod";
 
 const vec3 = z.tuple([z.number().finite().min(-10).max(10), z.number().finite().min(-10).max(10), z.number().finite().min(-10).max(10)]);
@@ -15,7 +16,8 @@ export const storyPropKeyframeSchema = z.object({
   fill:z.number().finite().min(0).max(1).default(0),
 }).strict();
 export const previsStoryPropSchema = z.object({
-  id, kind:z.enum(["needle","blood_drop","bowl","sleeve_glow","knife","jar"]),
+  id, kind:z.enum(["needle","blood_drop","bowl","sleeve_glow","knife","jar", ...PREVIS_PROXY_PROP_KINDS]),
+  proxy:previsProxyPropGeometrySchema.optional(),
   keyframes:z.array(storyPropKeyframeSchema).min(2).max(100),
   grip:z.object({actorId:id,hand:z.enum(["hand-1","hand1"]),offset:vec3.default([0,0,-.02]),startSec:z.number().finite().nonnegative().optional(),endSec:z.number().finite().nonnegative().optional()}).strict().optional(),
 }).strict();
@@ -41,6 +43,7 @@ export function storyPropsIssue(props:PrevisStoryProp[] | undefined, actors:{id:
       ))return "持针窗口内的轨迹两端须使用独立世界锚点，释放后才可绑定身体骨锚";
       occupiedHands.push({id:handId,start,end});
     }
+    if (isPrevisProxyProp(prop.kind) !== Boolean(prop.proxy)) return `几何剧情对象 ${prop.id} 必须具有对应的尺寸与颜色配置，旧道具不得混入几何配置`;
     const frames=prop.keyframes;
     if(frames[0].timeSec!==0 || Math.abs(frames[frames.length-1].timeSec-durationSec)>1e-6) return `道具 ${prop.id} 必须明确整段首尾状态`;
     for(let i=0;i<frames.length;i++) {
