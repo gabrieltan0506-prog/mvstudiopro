@@ -1,3 +1,4 @@
+import { DIGITAL_HUMAN_FILM_MODELS } from "@shared/digitalHumanFilmDirector";
 import {
   defaultCanvasBlock,
   type CanvasBlock,
@@ -18,6 +19,7 @@ export async function digitalHumanMediaUrl(source: string): Promise<string> {
 export async function digitalHumanVideoBlock(
   row: DigitalHumanVideo
 ): Promise<CanvasBlock> {
+  if (row.engine === "omnihuman2-wavespeed") throw new Error("数字人口播请使用专用提交入口，不能改走导演视频路线");
   const images = [
     row.portrait,
     row.scene,
@@ -76,8 +78,8 @@ export async function digitalHumanVideoBlock(
         ? `\n@视频1是已审预演，只沿用人物走位、动作节奏和机位切换；灰色白模外观不进入成片，身份按图片，声音只按@音频1。${row.previs.motionGuideZh || ""}`
         : ""),
     aspectRatio: row.aspectRatio,
-    videoModel: "seedance-2.5",
-    videoResolution: "720p",
+    videoModel: row.filmModel || "seedance-2.5",
+    videoResolution: DIGITAL_HUMAN_FILM_MODELS[row.filmModel || "seedance-2.5"].resolution,
     seedance25WorkMode: "reference_to_video",
     refImageUrl: uploadedAssets[0].url,
     editFusionUrls: uploadedAssets

@@ -140,7 +140,7 @@ export type ManhuaCloudDraftCanvasBlock = {
   seedance25TimestampStoryboard?: string;
   seedance25ReshootFromSec?: number;
   seedance25ReshootToSec?: number;
-  videoResolution?: "720p" | "1080p" | "2K" | "4K";
+  videoResolution?: "480p" | "720p" | "1080p" | "2K" | "4K";
   manhuaRetake?: {
     variable:
       | "camera"
@@ -468,7 +468,7 @@ export function sanitizeManhuaCloudDraftBlock(
     ),
     archivedFromPreviousScript:
       b.archivedFromPreviousScript === true ? true : undefined,
-    videoResolution: ["720p", "1080p", "2K", "4K"].includes(
+    videoResolution: ["480p", "720p", "1080p", "2K", "4K"].includes(
       String(b.videoResolution)
     )
       ? (b.videoResolution as ManhuaCloudDraftCanvasBlock["videoResolution"])

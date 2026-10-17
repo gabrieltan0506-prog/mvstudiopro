@@ -38,6 +38,7 @@ export const TOKEN_PLAN_DIALOGUE_TTS_WS_TOTAL_TIMEOUT_MS = 120_000;
 
 export type TokenPlanDialogueTtsWsInput = {
   input: string;
+  instruction?: string;
   /** 裸音色 id（longanlingxin 等）；带 qwen-audio-3.0-tts-plus- 前缀的自动剥掉 */
   voice: string;
   ownerUserId: number;
@@ -141,6 +142,7 @@ export async function requestTokenPlanDialogueAudioWs(params: {
   route: WsRoute;
   lossless48k?: boolean;
   text: string;
+  instruction?: string;
   voice: string;
   socketFactory: TokenPlanTtsSocketFactory;
   maxAudioBytes: number;
@@ -215,6 +217,7 @@ export async function requestTokenPlanDialogueAudioWs(params: {
               model: TOKEN_PLAN_DIALOGUE_TTS_WS_MODEL,
               parameters: {
                 text_type: "PlainText",
+                ...(params.instruction ? { instruction: params.instruction } : {}),
                 voice: params.voice,
                 format: params.lossless48k ? "wav" : "mp3",
                 sample_rate: params.lossless48k ? 48000 : 22050,
@@ -354,6 +357,7 @@ export async function synthesizeTokenPlanDialogueWs(
         route,
         lossless48k: dependencies.lossless48k,
         text,
+        instruction: input.instruction,
         voice,
         socketFactory,
         maxAudioBytes,

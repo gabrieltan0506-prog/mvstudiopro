@@ -104,6 +104,11 @@ vi.mock("./wan30Channels.js", () => ({
   submitWan30ViaChannels: (...args: unknown[]) => wan30Submit(...args),
 }));
 
+const omni = vi.hoisted(() => ({ submit: vi.fn(), poll: vi.fn(), quote: vi.fn(), prepare: vi.fn(), save: vi.fn() }));
+vi.mock("./wavespeedOmniHuman", () => ({ submitWavespeedOmniHuman: omni.submit, pollWavespeedOmniHuman: omni.poll, quoteWavespeedOmniHuman: omni.quote }));
+vi.mock("./digitalHumanOmni", () => ({ prepareDigitalHumanOmni: omni.prepare, omniProviderInput: (v: unknown) => v }));
+vi.mock("./digitalHumanOmniOutput", () => ({ saveDigitalHumanOmniOutput: omni.save, DigitalHumanOmniOutputQualityError: class extends Error {} }));
+
 describe("canvasVideoTask 超时对账 + 幂等", () => {
   let tempDir = "";
   const ORIGINAL_TASK_DIR = process.env.CANVAS_VIDEO_TASK_DIR;
@@ -111,6 +116,12 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
 
   beforeEach(async () => {
     vi.resetModules();
+    Object.values(omni).forEach(mock => mock.mockReset());
+    omni.prepare.mockResolvedValue({ image: "gs://test/image.png", audio: "gs://test/audio.wav", prompt: "自然讲述", fingerprint: "same", durationSec: 45 });
+    omni.quote.mockResolvedValue({ discountedPriceUsd: 4.5 });
+    omni.submit.mockResolvedValue({ predictionId: "omni-original" });
+    omni.poll.mockResolvedValue({ state: "running", status: "processing" });
+    omni.save.mockResolvedValue({ url: "https://test.invalid/omni-original.mp4" });
     evolinkSubmit.mockReset();
     upscaleSubmit.mockReset();
     enhancement.preserve.mockReset().mockResolvedValue("gs://test-only/original.m4a");
@@ -261,6 +272,8 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
 
   it("越线且上游已受理 → 对账态不退分；晚到的成功照常入账", async () => {
     const m = await mod();
+    // 超时用例必须模拟失联；processing是有效心跳，会按现行合同续期。
+    evolinkPoll.mockResolvedValue({ state: "running", status: "transient_fetch_error" });
     const taskId = await seedRunningTask({ createdAt: agoIso(EVOLINK_MAX + 1_000) });
     let task = await m.getCanvasVideoTask(taskId, 7);
     expect(task?.status).toBe("timed_out_pending_reconcile");
@@ -276,6 +289,8 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
 
   it("对账窗口内上游明确失败 → 恰好一次退分", async () => {
     const m = await mod();
+    // 超时用例必须模拟失联；processing是有效心跳，会按现行合同续期。
+    evolinkPoll.mockResolvedValue({ state: "running", status: "transient_fetch_error" });
     const taskId = await seedRunningTask({ createdAt: agoIso(EVOLINK_MAX + 1_000) });
     let task = await m.getCanvasVideoTask(taskId, 7);
     expect(task?.status).toBe("timed_out_pending_reconcile");
@@ -544,6 +559,43 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
     await until(async () => { await m.getCanvasVideoTask(taskId,7); return (await readTaskFile(taskId)).status === "succeeded"; });
     expect(frameSubmit).not.toHaveBeenCalled();
     expect(upscaleSubmit).not.toHaveBeenCalled();
+  });
+
+  const omniInput = { image: "gs://test/image.png", audio: "gs://test/audio.wav", prompt: "自然讲述", fingerprint: "same", durationSec: 45, requestId: "test-request-omni", maxPriceUsd: 4.5 };
+  it("数字人口播提交后断线保持人工对账，不重新提交也不退费", async () => {
+    const m = await mod();
+    omni.submit.mockRejectedValue(Object.assign(new Error("connection lost"), { kind: "unknown" }));
+    const task = await m.createCanvasVideoTask({ userId: 7, creditsCharged: 0, engine: "omnihuman2-wavespeed", label: "口播", prompt: "自然讲述", duration: 45, omni: omniInput });
+    await until(async () => (await m.getCanvasVideoTask(task.taskId, 7))?.status === "reconcile_manual");
+    await m.getCanvasVideoTask(task.taskId, 7);
+    expect(omni.submit).toHaveBeenCalledTimes(1);
+    expect(omni.poll).not.toHaveBeenCalled();
+    expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+  it("数字人口播仅有发送标记时恢复绝不再次POST", async () => {
+    const m = await mod();
+    const id = await seedRunningTask({ engine: "omnihuman2-wavespeed", evolinkTaskId: undefined, omni: omniInput, omniSubmissionStartedAt: new Date().toISOString() });
+    expect((await m.getCanvasVideoTask(id, 7))?.status).toBe("reconcile_manual");
+    expect(omni.submit).not.toHaveBeenCalled();
+    expect(refundCreditsOnFailure).not.toHaveBeenCalled();
+  });
+  it("数字人口播用同一供应商编号轮询并保存原片", async () => {
+    const m = await mod();
+    omni.poll.mockResolvedValue({ state: "completed", sourceUrl: "https://static.wavespeed.ai/original.mp4" });
+    const task = await m.createCanvasVideoTask({ userId: 7, creditsCharged: 0, engine: "omnihuman2-wavespeed", label: "口播", prompt: "自然讲述", duration: 45, omni: omniInput });
+    await until(async () => (await m.getCanvasVideoTask(task.taskId, 7))?.status === "succeeded");
+    expect((await m.getCanvasVideoTask(task.taskId, 7))?.videoUrl).toBe("https://test.invalid/omni-original.mp4");
+    expect(omni.submit).toHaveBeenCalledTimes(1);
+    expect(omni.poll).toHaveBeenCalledWith({ userId: 7, requestId: "test-request-omni" }, "omni-original");
+    expect(omni.save).toHaveBeenCalledWith(7, "https://static.wavespeed.ai/original.mp4", 45);
+  });
+  it("数字人口播发送前费用上涨停止付费提交", async () => {
+    const m = await mod();
+    omni.quote.mockResolvedValue({ discountedPriceUsd: 5 });
+    const task = await m.createCanvasVideoTask({ userId: 7, creditsCharged: 0, engine: "omnihuman2-wavespeed", label: "口播", prompt: "自然讲述", duration: 45, omni: omniInput });
+    await until(async () => (await m.getCanvasVideoTask(task.taskId, 7))?.status === "failed");
+    expect(omni.submit).not.toHaveBeenCalled();
+    expect((await readTaskFile(task.taskId)).omniSubmissionStartedAt).toBeUndefined();
   });
 
 });

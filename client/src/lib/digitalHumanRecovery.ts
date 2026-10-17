@@ -14,6 +14,7 @@ export type DigitalHumanRecoveryServices = {
   scene: (requestId: string) => Promise<{ jobId: string } | null>;
   job: (jobId: string) => Promise<JobResponse>;
   intent: (intentId: string) => Promise<{ taskId?: string; message?: string }>;
+  omni?: (requestId: string) => Promise<{ taskId?: string; status: string; videoUrl?: string; error?: string } | null>;
   video: (taskId: string) => Promise<VideoUpscaleStatusSnapshot>;
   enhancements: (scope: string) => Promise<
     Array<{
@@ -52,13 +53,14 @@ export async function recoverDigitalHumanDraft(
           v => v.requestId === snapshot.cloneRequest!.requestId
         );
       if (voice?.status === "ready" && voice.voiceId)
-        services.save(d => ({
+        services.save(d => d.cloneRequest?.requestId === snapshot.cloneRequest!.requestId ? ({
           ...d,
-          voiceId: d.voiceId || voice.voiceId!,
+          voiceId: voice.voiceId!,
+          approvedAudioRequestId: undefined,
           cloneRequest: undefined,
-        }));
+        }) : d);
     });
-  for (const row of snapshot.audios.filter(a => digitalHumanPending(a.status)))
+  for (const row of snapshot.audios.filter(a => a.origin !== "recording" && digitalHumanPending(a.status)))
     work.push(async () => {
       const receipt = await services.dialogue(row.request.billingRequestId);
       if (!receipt) return;
@@ -114,7 +116,15 @@ export async function recoverDigitalHumanDraft(
   for (const row of snapshot.videos.filter(v => digitalHumanPending(v.status)))
     work.push(async () => {
       let taskId = row.taskId;
-      if (!taskId && row.intentId) {
+      if (row.engine === "omnihuman2-wavespeed" && !taskId) {
+        if (!services.omni) throw new Error("数字人口播恢复入口暂不可用");
+        const found = await services.omni(row.requestId);
+        if (found) {
+          taskId = found.taskId;
+          services.updateVideo(row.requestId, { taskId, status: found.status === "failed" ? "failed" : found.status === "succeeded" ? "succeeded" : "unknown", source: sourceIdentity(found.videoUrl), message: found.error });
+        }
+      }
+      if (!taskId && row.intentId && !row.engine) {
         const found = await services.intent(row.intentId);
         taskId = found.taskId;
         if (found.message)
@@ -138,19 +148,19 @@ export async function recoverDigitalHumanDraft(
       let taskId = row.upscale!.taskId;
       if (!taskId) {
         const tasks = await services.enhancements(
-          `digital-human:${snapshot.id}:${row.requestId}`
+          `digital-human:${snapshot.id}:${row.requestId}${row.upscale!.target ? ":" + row.upscale!.target : ""}`
         );
         taskId = tasks.find(
           r =>
             sourceIdentity(r.upscaleSourceUrl || r.sourceUrl) ===
               sourceIdentity(row.upscale!.inputSource) &&
-            (r.upscaleTarget || r.target) === "4k"
+            (r.upscaleTarget || r.target) === (row.upscale!.target || "4k")
         )?.taskId;
       }
       if (!taskId) return;
       const receipt = await services.video(taskId);
       if (receipt.status === "succeeded" && !receipt.videoUrl)
-        throw new Error("4K任务缺少成片，请核对原任务");
+        throw new Error("超分任务缺少成片，请核对原任务");
       services.updateVideo(row.requestId, {
         upscale: {
           ...row.upscale!,

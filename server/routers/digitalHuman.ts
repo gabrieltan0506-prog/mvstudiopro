@@ -1,4 +1,7 @@
+import { digitalHumanOmniInputSchema, digitalHumanOmniSubmitSchema } from "../../shared/digitalHumanOmni";
+import { quoteDigitalHumanOmni, queueDigitalHumanOmni, getDigitalHumanOmni } from "../services/digitalHumanOmni";
 import { z } from "zod";
+import { inspectDigitalHumanNarration } from "../services/digitalHumanRecording";
 import { digitalHumanProductionRequestSchema } from "../../shared/digitalHumanProduction";
 import { queueDigitalHumanProduction, getDigitalHumanProduction } from "../services/digitalHumanProductionTask";
 import { TRPCError } from "@trpc/server";
@@ -18,6 +21,10 @@ import {
 } from "../services/manhua3dTask";
 
 export const digitalHumanRouter = router({
+  inspectNarration: protectedProcedure.input(z.object({ source: z.string().min(1).max(5000) }).strict()).mutation(({ ctx, input }) => inspectDigitalHumanNarration(String(ctx.user.id), input.source)),
+  quoteOmni: adminProcedure.input(digitalHumanOmniInputSchema).mutation(({ ctx, input }) => quoteDigitalHumanOmni(ctx.user.id, input)),
+  startOmni: adminProcedure.input(digitalHumanOmniSubmitSchema).mutation(({ ctx, input }) => queueDigitalHumanOmni(ctx.user.id, input)),
+  getOmni: adminProcedure.input(z.object({ requestId: z.string().uuid() }).strict()).query(({ ctx, input }) => getDigitalHumanOmni(ctx.user.id, input.requestId)),
   queueProduction: protectedProcedure.input(digitalHumanProductionRequestSchema).mutation(({ ctx, input }) => queueDigitalHumanProduction(ctx.user.id, input)),
   getProduction: protectedProcedure.input(z.object({ requestId: z.string().uuid() }).strict()).query(({ ctx, input }) => getDigitalHumanProduction(ctx.user.id, input.requestId)),
   getDraft: protectedProcedure.query(({ ctx }) => readDigitalHumanCloudDraft(ctx.user.id)),

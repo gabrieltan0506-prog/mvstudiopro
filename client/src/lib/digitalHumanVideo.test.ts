@@ -86,3 +86,14 @@ describe("数字人到现有Seedance执行器的真实组装（禁止网络）",
     expect(out.refs.audioUrls).toEqual([row.audioSource]);
   });
 });
+
+for (const model of ["seedance-2.0-mini", "wan-3.0"] as const) {
+  it(`${model}出站保留本人原声且不会悄悄换引擎或分辨率`, async () => {
+    const network=vi.fn(async()=>{throw new Error("禁止真实请求")});vi.stubGlobal("fetch",network);
+    const block=await digitalHumanVideoBlock({...row,filmModel:model,prompt:row.prompt+"运镜：固定中景；灯光：左侧柔光。"});
+    const out=await previewCanvasBlockOutbound({userId:"7",userRole:"admin",optimizeCopy:async()=>{throw Error("禁止生成")}},block);
+    expect(out.engine).toBe(model);expect(out.refs.audioUrls).toEqual([row.audioSource]);
+    expect(out.body.resolution).toBe(model==="seedance-2.0-mini"?"480p":"720p");
+    expect(out.durationSec).toBe(12);expect(network).not.toHaveBeenCalled();
+  });
+}

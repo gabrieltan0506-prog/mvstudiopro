@@ -1,7 +1,8 @@
 import { VIRAL_COURSE_RULES, VIRAL_COURSE_BOUNDARY, selectViralCourseRules, type ViralCourseStage } from "./viralCourseRules.js";
+import { SPOKEN_PERFORMANCE_PROMPT } from "./spokenPerformance.js";
 
 /** 用户资料的版本化方法库；只给方法与出处，不把历史课程案例当实时平台规则。 */
-export const VIRAL_METHOD_VERSION = "2026-10-14.6";
+export const VIRAL_METHOD_VERSION = "2026-10-17.1";
 export const VIRAL_CREATION_METHODS = [
   { id: "audience-scene", name: "人群与场景定位", sourceIds: ["S2", "S3", "S4", "S5"], apply: "从完整背景中保留多重身份与经历，按本轮要求确定具体读者、场景和一个待解决问题；不编造职业、客户或经历。" },
   { id: "topic-evidence", name: "相关样本选题", sourceIds: ["S1", "S2", "S4"], apply: "借鉴相关样本的需求与结构，说明平台、日期和来源；不照抄标题，不为蹭热度强行改人设。" },
@@ -26,6 +27,7 @@ ${stage === "shortlist" ? "本阶段只给2–3个候选选题（免费额度有
 用户的职业、兴趣或“愿意分享”不等于已经提供具体经历：未提供具体观察、对话、行动与结果时，不补写“我常看到”“客户曾说”等本人实见或客户引语；用设问、说明性示例或一般方法组织内容。单位换算只解释原数值，不能顺带补成建议摄入量、功效或“不会有负担”等效果。尚未试拍或渲染的方案只列需要检查的项目，不称已通过小屏、声音或画面验收。
 不能把采集样本的赞评当成本人曝光/点击/完播/涨粉/成交。无相关参考时明确待验证，不编造热点、来源、案例或效果；“爆款”是目标而非保证。
 ${VIRAL_COURSE_BOUNDARY}
+${stage === "expand" && format === "短视频" ? SPOKEN_PERFORMANCE_PROMPT : ""}
 methodPlan.courseRules是按当前阶段与形式选出的实际操作卡：按inputs检查素材，按outputs写入现有正文/封面/分镜字段，按checks自检，缺资料按missingInput处理。无需全部套用，优先遵从用户要求。
 扩写时在blueprint.methodApplications输出1–7项{methodId,quote,application}，methodId取methodLibrary.id；先写完正文/分页/分镜，再从其中逐字复制至少8字到quote，禁止同义改写或先编引用再编正文；若方法用于视觉或拍摄，引用已经实际写在detailedScript或storyboardCells中的文字。application至少8字说明如何应用。选题阶段不强制该字段。`;
 }

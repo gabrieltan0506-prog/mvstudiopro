@@ -132,12 +132,13 @@ export function canvasVideoEnhanceQuote(target: "2k" | "4k", targetFps: 30 | 60,
 }
 
 /** 画布成片可选画质：默认 720p */
-export const CANVAS_VIDEO_RESOLUTIONS = ["720p", "1080p", "2K", "4K"] as const;
+export const CANVAS_VIDEO_RESOLUTIONS = ["480p", "720p", "1080p", "2K", "4K"] as const;
 export type CanvasVideoResolution = (typeof CANVAS_VIDEO_RESOLUTIONS)[number];
 export const CANVAS_VIDEO_RESOLUTION_DEFAULT: CanvasVideoResolution = "720p";
 
 export function normalizeCanvasVideoResolution(raw: unknown): CanvasVideoResolution {
   const r = String(raw || "").trim().toLowerCase();
+  if (r === "480p") return "480p";
   if (r === "1080p" || r === "1k") return "1080p";
   if (r === "2k") return "2K";
   if (r === "4k") return "4K";
@@ -178,7 +179,7 @@ const CANVAS_VIDEO_RESOLUTIONS_BY_MODEL: Readonly<
 > = {
   "seedance-2.0": ["720p", "1080p", "4K"],
   "seedance-2.0-fast": ["720p"],
-  "seedance-2.0-mini": ["720p"],
+  "seedance-2.0-mini": ["480p", "720p"],
   "seedance-2.5": ["720p"],
   "wan-3.0": ["720p"],
   "minimax-hailuo-3": ["720p", "2K"],
@@ -289,6 +290,7 @@ export type CanvasVideoPricingInput = {
 
 /** 高于 720p 的画质加价表 */
 const CANVAS_VIDEO_CREDITS_BY_RESOLUTION: Record<CanvasVideoResolution, number> = {
+  "480p": CANVAS_VIDEO_CREDITS_CLIP,
   "720p": CANVAS_VIDEO_CREDITS_CLIP,
   "1080p": CANVAS_VIDEO_CREDITS_CLIP_1080P,
   "2K": CANVAS_VIDEO_CREDITS_CLIP_2K,

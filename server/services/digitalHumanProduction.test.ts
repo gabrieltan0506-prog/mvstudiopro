@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -33,8 +33,8 @@ it("解析静音回执，保留末尾静音；混音滤镜只接受受控参数"
 });
 
 describe.skipIf(!hasFfmpeg)("真实FFmpeg本地探针（合成测试信号，不调用云端）", () => {
-  beforeAll(async () => { state.dir = await mkdtemp(join(tmpdir(), "dh-ffmpeg-test-")); });
-  afterAll(async () => { await rm(state.dir, { recursive: true, force: true }); });
+  beforeAll(async () => { const root = process.env.DH_TEST_OUTPUT_DIR || tmpdir(); await mkdir(root, { recursive: true }); state.dir = await mkdtemp(join(root, "dh-ffmpeg-test-")); });
+  afterAll(async () => { if (!process.env.DH_TEST_OUTPUT_DIR) await rm(state.dir, { recursive: true, force: true }); });
   it("66秒原声按真实静音切段，清单和每段音频完整可读", async () => {
     const path = join(state.dir, "long.wav");
     await runMediaTool("ffmpeg", ["-y", "-f", "lavfi", "-i", "aevalsrc=if(lt(mod(t\\,22)\\,20)\\,0.1*sin(2*PI*440*t)\\,0):s=48000:d=66", "-c:a", "pcm_s16le", path], signal());
@@ -50,6 +50,7 @@ describe.skipIf(!hasFfmpeg)("真实FFmpeg本地探针（合成测试信号，不
     const video = join(state.dir, "video.mp4"), voice = join(state.dir, "voice.wav"), music = join(state.dir, "music.wav");
     await runMediaTool("ffmpeg", ["-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=2", "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=2", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", video], signal());
     for (const [frequency, path] of [[440, voice], [660, music]] as const) await runMediaTool("ffmpeg", ["-y", "-f", "lavfi", "-i", `sine=frequency=${frequency}:sample_rate=48000:duration=2`, "-c:a", "pcm_s16le", path], signal());
+    await runMediaTool("ffmpeg", ["-y", "-f", "lavfi", "-i", "aevalsrc=0.1*sin(2*PI*660*t)|0.1*sin(2*PI*990*t):s=48000:d=2", "-c:a", "pcm_s16le", music], signal());
     state.files.set("gs://test-only/video", video); state.files.set("gs://test-only/voice", voice); state.files.set("gs://test-only/music", music);
     const frame = await renderDigitalHumanProduction({ action: "digital_human_continuity_frame", params: { videoUri: "gs://test-only/video", atSec: 2 } }, "7", signal());
     const png = await readFile(state.files.get(frame.gcsUri)!); expect(png.subarray(1, 4).toString()).toBe("PNG");
@@ -63,5 +64,15 @@ describe.skipIf(!hasFfmpeg)("真实FFmpeg本地探针（合成测试信号，不
     function energy(hz: number) { let re = 0, im = 0; for (let i = 12000; i < 36000; i++) { const x = bytes.readFloatLE(i * 4), angle = 2 * Math.PI * hz * i / 48000; re += x * Math.cos(angle); im += x * Math.sin(angle); } return re * re + im * im; }
     expect(energy(440)).toBeGreaterThan(energy(880) * 1000);
     expect(energy(660)).toBeGreaterThan(energy(880) * 10);
+    const stereo = join(state.dir, "final-stereo.f32");
+    await runMediaTool("ffmpeg", ["-y", "-i", target, "-vn", "-ar", "48000", "-f", "f32le", stereo], signal());
+    const raw = await readFile(stereo);
+    const metadata = await runMediaTool("ffprobe", ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=channels,sample_rate", "-of", "json", target], signal());
+    expect(JSON.parse(metadata.stdout).streams[0]).toMatchObject({channels:2,sample_rate:"48000"});
+    function stereoEnergy(hz: number, ch: number) { let re=0, im=0; for(let i=12000;i<36000;i++){ const x=raw.readFloatLE((i*2+ch)*4), phase=2*Math.PI*hz*i/48000; re+=x*Math.cos(phase);im+=x*Math.sin(phase); } return re*re+im*im; }
+    expect(stereoEnergy(660,0)).toBeGreaterThan(stereoEnergy(660,1)*10);
+    expect(stereoEnergy(990,1)).toBeGreaterThan(stereoEnergy(990,0)*10);
+    expect(stereoEnergy(440,0)/stereoEnergy(440,1)).toBeCloseTo(1,1);
+
   }, 120_000);
 });

@@ -53,12 +53,12 @@ describe("synthesizeManhuaDialoguePreferred", () => {
     const voice = "qwen-audio-3.0-tts-plus-mvsref-abc123";
     const synthesizeReference = vi.fn(async () => ({ ...planResult, voice }));
     const synthesizeOpenRouter = vi.fn();
-    const result = await synthesizeManhuaDialoguePreferred({ ...input, voice }, {
+    const result = await synthesizeManhuaDialoguePreferred({ ...input, voice, speechInstruction: "自然讲述，关键词重读" }, {
       resolveReferenceWorkspace: () => ({ apiKey: "test-key", customizationUrl: "https://workspace.test/custom", websocketUrl: "wss://workspace.test/ws" }),
       synthesizeReference: synthesizeReference as any, synthesizeOpenRouter: synthesizeOpenRouter as any,
     });
     expect(result.provider).toBe("bailian-singapore");
-    expect(synthesizeReference).toHaveBeenCalledWith(expect.objectContaining({ voice }), expect.objectContaining({ lossless48k: true, routes: [expect.objectContaining({ endpoint: "wss://workspace.test/ws" })] }));
+    expect(synthesizeReference).toHaveBeenCalledWith(expect.objectContaining({ voice, instruction: "自然讲述，关键词重读" }), expect.objectContaining({ lossless48k: true, routes: [expect.objectContaining({ endpoint: "wss://workspace.test/ws" })] }));
     expect(synthesizeOpenRouter).not.toHaveBeenCalled();
   });
 

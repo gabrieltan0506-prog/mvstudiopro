@@ -43,6 +43,8 @@ describe("数字人真实输入合同", () => {
     expect(r.audioSource).toContain("voice.wav");
     expect(r.prompt).toContain("@图片1");
     expect(r.prompt).toContain("@图片2");
+    expect(r.prompt).toContain("区分画内对白与旁白");
+    expect(r.prompt).toContain("未指定旁白的部分按画内对白处理");
     expect(r.prompt).toContain("你好，这是我的数字人声音测试。");
   });
   it("未确认试听的配音不能用于视频", () => {
@@ -165,6 +167,8 @@ it("长稿分段保持完整原声、导演选择与前段尾帧关联，旧尾�
   d.productions.push({request:{requestId:planId,input:{action:"digital_human_audio_split",params:{audioUri:manifest.audioUri,audioRequestId:audioId,script:d.script}}},fingerprint:"test-plan",status:"succeeded",manifest});
   const first=prepareDigitalHumanVideo(d,videoId,{manifest,planRequestId:planId,index:0});
   expect(first.audioSource).toBe(manifest.segments[0].audioUri); expect(first.prompt).toContain("全文只作语境");
+  expect(first.prompt).toContain("只有画内对白由讲述者对口型");
+  expect(first.prompt).toContain("旁白时人物不随音频机械张嘴");
   d.videos.push({...first,status:"succeeded",source:"gs://test-bucket/first.mp4"});
   expect(()=>prepareDigitalHumanVideo(d,"00000000-0000-4000-8000-000000000002",{manifest,planRequestId:planId,index:1})).toThrow("衔接尾帧");
   const frame={source:"gs://test-bucket/end.png",name:"前段尾帧"};

@@ -193,3 +193,13 @@
   margin: 16px 0;
   line-height: 1.8;
 }
+
+/* 弹窗通过 Portal 挂到 body，必须自带颜色，不能依赖 .dh-studio 的继承。 */
+.dh-recording-dialog { color: #1d2926; max-height: 90dvh; overflow-y: auto; }
+.dh-recording-dialog p { color: #37483f; line-height: 1.7; }
+.dh-recording-dialog button { color: #203f31; background: #e5ede6; border: 1px solid #b9cbbd; border-radius: 8px; padding: 10px 14px; min-height: 40px; }
+.dh-recording-dialog button:disabled { color: #536259; background: #edf0eb; border-color: #c7cec7; opacity: 1; cursor: not-allowed; }
+.dh-recording-dialog button:focus-visible, .dh-recording-dialog select:focus-visible { outline: 2px solid #286348; outline-offset: 3px; }
+.dh-recording-dialog select { display: block; width: 100%; color: #24342d; background: #fff; border: 1px solid #b9cbbd; border-radius: 8px; padding: 10px; }
+.dh-recording-dialog a { color: #245d43; text-decoration: underline; }
+.dh-recording-dialog [role="alert"] { color: #a12621; }

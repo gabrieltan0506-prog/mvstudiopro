@@ -1,4 +1,5 @@
 import { readShortlistTrendBriefs } from "./platformTopicTrends";
+import { assertSpokenPerformance } from "../../shared/spokenPerformance.js";
 import { topicDisplayText } from "../../shared/platformTopicDisplay";
 import { ExpandEvidencePersistenceError, type PlatformExpandEvidence } from "./platformTopicExpandEvidence.js";
 import { buildViralRolePrompt, buildViralMethodPlan, VIRAL_CREATION_METHODS, VIRAL_METHOD_VERSION } from "../../shared/viralCreationMethods.js";
@@ -948,7 +949,7 @@ export async function expandPlatformTopicPicks(params: {
     const system = xhsMode ? `${buildViralRolePrompt("expand", pick.targetPlatform || "xiaohongshu", isVideo ? "短视频" : "图文", "database")}
 只输出json对象 {"blueprint":{...}}。生成当前已选题目的完整${isVideo ? "视频文案与分镜导演表" : "图文笔记正文与分页"}。
 blueprint必须含title、hook、format=${isVideo ? "短视频" : "图文"}、copywriting(完整可发布正文或口播)、detailedScript(完整分页或时间轴)、suitablePlatforms、actionableSteps、publishingAdvice、executionDetails{environmentAndWardrobe,lightingAndCamera,stepByStepScript}、platformVariants(只需本条目标平台)、commentHooks(1个自然主动作，不要求强制互动)。
-${isVideo ? "storyboardCells必须为真实逐镜表1–12镜，字段cellIndex(从1连续)、dialogueZh(≤200字)、sceneZh(≤60字)、shotSize(≤12字)、actionZh(≤160字)、cameraMoveZh(≤24字)、editNoteZh(≤80字)；每镜都要有可拍动作、场景、景别与运镜，不用空行或重复句凑数。台词要与完整口播一致，不把重音/换气标签当成要念出的台词；少量重点词、停顿和情绪安排写入detailedScript或editNoteZh，拍摄场景/服装、视线对象、试拍自查与成片比例写入executionDetails既有字段。先定所选比例再排字幕/叠加元素，比例改变复查裁切、遮挡和动画关键位置；未试读/试拍只能称建议。时长服从用户。graphicNotePages可以为空。" : "graphicNotePages.body仅放实际印给读者的正文，不附画面、字体、色调、拍摄等制作说明；这些移入detailedScript、executionDetails或xhsPackage.cover。graphicNotePages必须为完整可读分页，每页含pageIndex(从1连续)、role(cover/audience_pain/scene/inventory_index/detail_card/share_tips/evidence/checklist/save_reason/cta)、headline(2–48字)、body(4–400字)；封面/正文/结尾层次清楚。本次整篇4–6页，包含第1页唯一cover及最后一页cta；本次独立图文图片入口固定9:16，每页画面和字体布局按9:16设计，不沿用通用3:4起点；每页是一张独立2K中画质竖图，不要拼成八格或切图，按信息量选4、5或6页，不凑页、不截正文。storyboardCells为空数组。"}
+${isVideo ? "storyboardCells必须为真实逐镜表1–12镜，字段cellIndex(从1连续)、dialogueZh(≤200字)、sceneZh(≤60字)、shotSize(≤12字)、actionZh(≤160字)、cameraMoveZh(≤24字)、editNoteZh(≤80字)；每镜都要有可拍动作、场景、景别与运镜，不用空行或重复句凑数。台词要与完整口播一致，不把重音/换气标签当成要念出的台词；每个有口播的镜头按逐句口播表演合同填写语气、重音、停顿、手势与视线，完整演法写入detailedScript，镜表中保留可执行要点，拍摄场景/服装、视线对象、试拍自查与成片比例写入executionDetails既有字段。先定所选比例再排字幕/叠加元素，比例改变复查裁切、遮挡和动画关键位置；未试读/试拍只能称建议。时长服从用户。graphicNotePages可以为空。" : "graphicNotePages.body仅放实际印给读者的正文，不附画面、字体、色调、拍摄等制作说明；这些移入detailedScript、executionDetails或xhsPackage.cover。graphicNotePages必须为完整可读分页，每页含pageIndex(从1连续)、role(cover/audience_pain/scene/inventory_index/detail_card/share_tips/evidence/checklist/save_reason/cta)、headline(2–48字)、body(4–400字)；封面/正文/结尾层次清楚。本次整篇4–6页，包含第1页唯一cover及最后一页cta；本次独立图文图片入口固定9:16，每页画面和字体布局按9:16设计，不沿用通用3:4起点；每页是一张独立2K中画质竖图，不要拼成八格或切图，按信息量选4、5或6页，不凑页、不截正文。storyboardCells为空数组。"}
 参考资料需真实可追溯，未给出处不自动补权威；不要把运营说明、内部字段、审稿过程写成读者正文。图文不套视频篇幅，视频不套图文密度。
 ${XHS_CONTENT_GUIDANCE}
 ${XHS_PACKAGE_OUTPUT_PROMPT}
@@ -1083,6 +1084,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}
           const candidateBlueprint = data.blueprint && typeof data.blueprint === "object" ? data.blueprint as Record<string, unknown> : data;
           const audit = auditXhsCreationPackage(candidateBlueprint, selectedEvidence, isVideo ? "短视频" : "图文", isVideo ? undefined : "9:16", params.context || "");
           if (!audit.passed) throw new Error(`小红书创作包未通过检查：${audit.findings.map(f => f.message).join("；")}`);
+          if (isVideo) assertSpokenPerformance(candidateBlueprint.storyboardCells);
           if (!isVideo) {
             const pages = candidateBlueprint.graphicNotePages as Array<{ role: string }>;
             if (pages.length < 4 || pages.length > 6 || pages[0]?.role !== "cover" || pages.filter(page => page.role === "cover").length !== 1 || pages.at(-1)?.role !== "cta") {

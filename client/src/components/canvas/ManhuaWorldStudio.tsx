@@ -13,6 +13,8 @@ import { trpc } from "@/lib/trpc";
  */
 import { useMemo, useState, useRef } from "react";
 import {
+  MANHUA_WORLD_3D_MODELS,
+  MANHUA_WORLD_3D_MODEL_CREDITS,
   type ManhuaWorld3dEligibility,
   type ManhuaWorld3dModel,
 } from "@shared/manhuaWorld3d";
@@ -49,6 +51,8 @@ type Props = {
   onOpenAdvisor?: (sceneRefId: string) => void;
   busyIds: readonly string[];
   disabled?: boolean;
+  /** 普通单图入口；只在明确启用的工作台显示。 */
+  imageGeneration?: boolean;
   onGenerate?: (id: string, options: ManhuaWorldGenerateOptions) => void | Promise<void>;
   onRetry?: (id: string) => void | Promise<void>;
   onRemove?: (id: string) => void | Promise<void>;
@@ -70,6 +74,39 @@ type Props = {
   savedFrameCount?: number;
   adoptedFrameCount?: number;
 };
+
+/** 没有场景顾问入口的工作台仍通过原回调提交，不直连供应商。 */
+export function ManhuaWorldImageGenerationForm({ scene, disabled, onGenerate }: {
+  scene: ManhuaWorldStudioScene;
+  disabled: boolean;
+  onGenerate: NonNullable<Props["onGenerate"]>;
+}) {
+  const [model, setModel] = useState<ManhuaWorld3dModel>("marble-1.1");
+  const [prompt, setPrompt] = useState(scene.hintZh || "");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const lock = useRef(false);
+  const cost = MANHUA_WORLD_3D_MODEL_CREDITS[model];
+  // 此入口固定使用普通单图；报价包含转全景80 credits，不包含另行导出HQ网格。
+  const min = cost.min + 80, max = cost.max + 80;
+  return <fieldset disabled={disabled || submitting} className="w-full space-y-2 rounded border border-cyan-300/30 p-3">
+    <legend>从当前场景图生成3DGS</legend>
+    <p>输入：{scene.labelZh}；保留原图，人物和动态特效在白模中安排。</p>
+    <label>场景模型<select aria-label="3DGS生成模型" value={model} onChange={e => setModel(e.target.value as ManhuaWorld3dModel)}>
+      {MANHUA_WORLD_3D_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
+    </select></label>
+    <label>空间与光照要求<textarea aria-label="3DGS生成要求" maxLength={2000} value={prompt} onChange={e => setPrompt(e.target.value)} /></label>
+    <p>上游预估：{min === max ? min : `${min}–${max}`} credits（约${(min / 1250).toFixed(3)}{min === max ? "" : `–${(max / 1250).toFixed(3)}`}美元），含普通单图转全景；按实际回执结算，不含高质量网格导出。</p>
+    {error && <p role="alert">{error}</p>}
+    <button type="button" className={btnPrimary} onClick={async () => {
+      if (disabled || lock.current) return;
+      lock.current = true; setSubmitting(true); setError("");
+      try { await onGenerate(scene.id, { model, textPrompt: prompt.trim() }); }
+      catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+      finally { lock.current = false; setSubmitting(false); }
+    }}>{submitting ? "正在提交…" : "生成当前场景3DGS"}</button>
+  </fieldset>;
+}
 
 type Stage = "blocked" | "none" | "building" | "review" | "failed" | "ready";
 
@@ -187,6 +224,9 @@ export function ManhuaWorldStudio(props: Props) {
                   </button>
                 ) : null}
               </span>
+              {props.imageGeneration && !onOpenAdvisor && onGenerate && stage === "none" ? <ManhuaWorldImageGenerationForm
+                key={`${s.id}:${s.eligibility.sourceVersion}`} scene={s}
+                disabled={Boolean(disabled || busy || !canGenerateScene)} onGenerate={onGenerate} /> : null}
               {openPreviewId !== s.id || !canView ? <div className="flex min-h-80 w-full flex-col items-center justify-center rounded-xl border border-white/10 bg-black/30 p-3" data-world-reference-preview>{s.thumbUrl ? <img src={s.thumbUrl} alt={`${s.labelZh}场景参考图`} className="max-h-[55vh] max-w-full object-contain" /> : <p>尚无场景参考图</p>}<p className="mt-3 text-xs text-white/55">当前为场景参考图{canView ? "，点击查看场景载入真实3D空间。" : "；世界就绪后可检查空间与保存机位。"}</p></div> : null}
               {canView && props.onRenderStageAnimation ? <div className="w-full space-y-2 rounded border border-cyan-300/30 p-3" data-stage-animation-submission>
                 <p className="font-medium">本次场景动画提交内容</p>

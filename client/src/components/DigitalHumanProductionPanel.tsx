@@ -1,3 +1,4 @@
+import { DIGITAL_HUMAN_FILM_MODELS } from "@shared/digitalHumanFilmDirector";
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { currentDigitalHumanAudio, digitalHumanPending, digitalHumanVideoIsCurrent, prepareDigitalHumanVideo, type DigitalHumanDraft, type DigitalHumanMedia as Media, type DigitalHumanVideo } from "@shared/digitalHumanStudio";
@@ -80,7 +81,8 @@ export function DigitalHumanProductionPanel(props: {
   function finalInput(): DigitalHumanProductionInput {
     const current = currentDigitalHumanAudio(latest.current.draft);
     if (!current?.source || !current.durationSec || current.request.billingRequestId !== latest.current.draft.approvedAudioRequestId) throw new Error("请先试听并批准当前完整配音");
-    const clips = plan?.manifest ? plan.manifest.segments.map(s => {
+    const fullOmni = [...latest.current.draft.videos].reverse().find(v => v.engine === "omnihuman2-wavespeed" && v.status === "succeeded" && v.source && digitalHumanVideoIsCurrent(latest.current.draft, v));
+    const clips = fullOmni ? [{ videoUri: fullOmni.source!, startSec: 0, endSec: current.durationSec!, sourceEngine: "omnihuman2-wavespeed" as const }] : plan?.manifest ? plan.manifest.segments.map(s => {
       const video = segmentVideo(s.index);
       if (!video?.source) throw new Error(`第${s.index + 1}段尚无匹配当前输入的原片`);
       return { videoUri: video.source, startSec: s.startSec, endSec: s.endSec };
@@ -99,7 +101,7 @@ export function DigitalHumanProductionPanel(props: {
       <details><summary>本次完整文案与原声</summary><p style={{ whiteSpace: "pre-wrap" }}>{props.draft.script}</p>{audio?.source && <DigitalHumanMedia kind="audio" source={audio.source} name="完整配音" />}</details>
       <button type="button" disabled={!audio?.source || props.draft.approvedAudioRequestId !== audio.request.billingRequestId} onClick={() => void work(async () => {
         if (!audio?.source) throw new Error("请先生成并批准配音");
-        await submit({ action: "digital_human_audio_split", scopeKey: `digital-human:${props.draft.id}`, params: { audioUri: audio.source, audioRequestId: audio.request.billingRequestId, script: props.draft.script.trim() } });
+        await submit({ action: "digital_human_audio_split", scopeKey: `digital-human:${props.draft.id}`, params: { audioUri: audio.source, audioRequestId: audio.request.billingRequestId, script: props.draft.script.trim(), maxSegmentSec: DIGITAL_HUMAN_FILM_MODELS[props.draft.filmModel||"seedance-2.5"].maxAudioSec } });
       })}>分析停顿并准备音频分段</button>
       {plan?.manifest?.segments.map(s => {
         const video = segmentVideo(s.index), previous = segmentVideo(s.index - 1), frame = frameFor(s.index);

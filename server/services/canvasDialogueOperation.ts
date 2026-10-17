@@ -7,7 +7,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { jobs } from "../../drizzle/schema";
 import { CANVAS_TTS_CREDITS_PER_LINE, canvasTtsCreditsForDuration } from "../../shared/canvasGenerationPricing";
-import { assertCanvasDialogueInputControls } from "../../shared/canvasDialogueControls";
+import { assertCanvasDialogueInputControls, assertCanvasSpeechInstruction } from "../../shared/canvasDialogueControls";
 import { getDb } from "../db";
 import { getCredits } from "../credits";
 import { settleCanvasDialogueCharge } from "./canvasDialogueCharge";
@@ -26,6 +26,7 @@ export const canvasDialogueInputSchema = z.object({
   speakerZh: z.string().trim().min(1).max(100),
   speakerId: z.string().trim().min(1).max(120).optional(),
   voiceStateZh: z.string().trim().max(200).default(""),
+  speechInstruction: z.string().trim().max(100).optional(),
 }).strict();
 const internalDialogueInputSchema = canvasDialogueInputSchema.extend({ voiceDesign: voiceDesignDefinitionSchema.optional() });
 export type CanvasDialogueInput = z.output<typeof internalDialogueInputSchema>;
@@ -149,7 +150,7 @@ export async function generateCanvasDialogue(userId: number, rawInput: CanvasDia
   if (input.voiceDesign) {
     if (input.voice !== designedVoiceId(canvasDialogueJobId(userId, input.billingRequestId))) throw new CanvasDialogueError("conflict", "设计声线编号不匹配");
   } else await (deps.checkVoiceOwner || assertReferenceVoiceOwner)(userId, input.voice);
-  try { assertCanvasDialogueInputControls(input.input); if (input.voice.startsWith(DESIGNED_VOICE_PREFIX)) assertDesignedVoiceText(input.input); }
+  try { assertCanvasSpeechInstruction(input.voice, input.speechInstruction); assertCanvasDialogueInputControls(input.input); if (input.voice.startsWith(DESIGNED_VOICE_PREFIX)) assertDesignedVoiceText(input.input); }
   catch (error) { throw new CanvasDialogueError("conflict", error instanceof Error ? error.message : "语气标签不合法"); }
   const id = canvasDialogueJobId(userId, input.billingRequestId);
   const digest = canvasDialogueDigest(input);
@@ -168,7 +169,7 @@ export async function generateCanvasDialogue(userId: number, rawInput: CanvasDia
       let upstream: ManhuaDialogueTtsRouteResult;
       try {
         const synthesize = productionSlot && !input.voice.startsWith(DESIGNED_VOICE_PREFIX) ? (deps.synthesizeProduction ?? deps.synthesize) : deps.synthesize;
-        upstream = await synthesize({ input: input.input, voice: input.voice, ownerUserId: userId, operationId: id, voiceDesign: input.voiceDesign, signal: AbortSignal.timeout(180_000) });
+        upstream = await synthesize({ input: input.input, voice: input.voice, ownerUserId: userId, operationId: id, voiceDesign: input.voiceDesign, speechInstruction: input.speechInstruction, signal: AbortSignal.timeout(180_000) });
         if (!upstream.voiceGate.accepted || upstream.bytes <= 0 || (input.voice.startsWith(DESIGNED_VOICE_PREFIX) && upstream.voice !== input.voice)) throw new Error("配音未通过验声");
       } catch (error) {
         await deps.save(id, userId, { stage: error instanceof WavespeedVoicePendingError ? "provider_pending" : error instanceof WavespeedVoiceRejectedError ? "failed" : "reconcile_manual" }).catch(() => {});
@@ -189,7 +190,7 @@ export async function generateCanvasDialogue(userId: number, rawInput: CanvasDia
   if (!row || row.userId !== String(userId) || row.input.digest !== digest) throw new CanvasDialogueError("conflict", "本次确认编号已用于其他配音内容，请核对原任务");
   if (["generating", "provider_pending"].includes(row.output?.stage || "") && input.voice.startsWith(DESIGNED_VOICE_PREFIX)) {
     try {
-      const upstream = await deps.synthesize({ input: input.input, voice: input.voice, ownerUserId: userId, operationId: id, voiceDesign: input.voiceDesign, signal: AbortSignal.timeout(90_000) });
+      const upstream = await deps.synthesize({ input: input.input, voice: input.voice, ownerUserId: userId, operationId: id, voiceDesign: input.voiceDesign, speechInstruction: input.speechInstruction, signal: AbortSignal.timeout(90_000) });
       if (!upstream.voiceGate.accepted || upstream.bytes <= 0 || (input.voice.startsWith(DESIGNED_VOICE_PREFIX) && upstream.voice !== input.voice)) throw new Error("配音未通过验声");
       await deps.save(id, userId, { stage: "audio_received", upstream });
       row = { ...row, output: { stage: "audio_received", upstream } };

@@ -126,11 +126,26 @@ describe("爆款创作真实服务入口（模型和数据读取隔离）", () =
   const result=await expandPlatformTopicPicks({userId:1,context:"吧台拍30秒咖啡演示，9:16",picks:[{...pick,id:"video-001",formatHint:"短视频",targetPlatform:"douyin"}],enabledSkillIds:[XHS_CONTENT_SKILL_ID]});
   const messages=mock.llm.mock.calls[0][0].messages;
   expect(messages[0].content).toContain("不把重音/换气标签当成要念出的台词");
+  expect(messages[0].content).toContain("每个有口播的镜头都要有表演安排");
+  expect(messages[0].content).toContain("手势：…；视线：…");
   expect(messages[0].content).toContain("字体风格/主副标题层级");
   const rule=JSON.parse(messages[1].content).methodPlan.courseRules.find((r:{id:string})=>r.id==="course-shot-plan");
   expect(rule.outputs).toContain("视线对象与试拍自查");
   expect(result.contentBlueprints[0].storyboardCells).toHaveLength(4);
+  expect(result.contentBlueprints[0].storyboardCells).toEqual(fictionalViralBlueprint("短视频").storyboardCells);
   expect(result.contentBlueprints[0].executionDetails).toBeTruthy();
+ });
+
+ it("平读式镜表拒收，备用通道收到缺失演法而非成功骨架", async () => {
+  const bad = fictionalViralBlueprint("短视频");
+  bad.storyboardCells[0].editNoteZh = "对白字幕";
+  const good = fictionalViralBlueprint("短视频");
+  mock.llm.mockResolvedValueOnce(JSON.stringify({blueprint:bad})).mockResolvedValueOnce(JSON.stringify({blueprint:good}));
+  const result = await expandPlatformTopicPicks({userId:1,picks:[{...pick,formatHint:"短视频"}],enabledSkillIds:[XHS_CONTENT_SKILL_ID]});
+  expect(mock.llm).toHaveBeenCalledTimes(2);
+  expect(mock.llm.mock.calls[1][0].messages[1].content).toContain("第1镜口播表演缺少具体语气、重音、停顿");
+  expect(result.contentBlueprints[0].copywriting).toBe(good.copywriting);
+  expect(result.contentBlueprints[0].storyboardCells).toEqual(good.storyboardCells);
  });
 
  it("图文正文混入制作说明时原文拒收，备用通道收到具体页码", async () => {

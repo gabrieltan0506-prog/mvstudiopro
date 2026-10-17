@@ -1,4 +1,5 @@
 import { DESIGNED_VOICE_PREFIX, type CanvasVoiceDesignInput } from "../../shared/canvasVoiceDesign";
+import { assertCanvasSpeechInstruction } from "../../shared/canvasDialogueControls";
 import { synthesizeWavespeedVoice } from "./wavespeedVoice";
 /**
  * 对白 TTS 路由：套餐优先（新加坡→北京，走 WebSocket 正门），OpenRouter 兜底。
@@ -30,6 +31,7 @@ export type ManhuaDialogueTtsRouteResult = {
 
 export type ManhuaDialogueTtsRouteInput = {
   input: string;
+  speechInstruction?: string;
   voice: string;
   ownerUserId: number;
   seed?: number;
@@ -87,6 +89,7 @@ export async function synthesizeManhuaDialoguePreferred(
   input: ManhuaDialogueTtsRouteInput,
   dependencies: ManhuaDialogueTtsRouteDependencies = {}
 ): Promise<ManhuaDialogueTtsRouteResult> {
+  assertCanvasSpeechInstruction(input.voice, input.speechInstruction);
   if (input.voice.startsWith(DESIGNED_VOICE_PREFIX)) return (dependencies.synthesizeDesigned || synthesizeWavespeedVoice)(input);
   const synthesizeTokenPlan =
     dependencies.synthesizeTokenPlan || synthesizeTokenPlanDialogueWs;
@@ -95,7 +98,7 @@ export async function synthesizeManhuaDialoguePreferred(
 
   if (input.voice.startsWith(`${REFERENCE_VOICE_MODEL}-${REFERENCE_VOICE_PREFIX}-`)) {
     const workspace = (dependencies.resolveReferenceWorkspace || resolveReferenceVoiceWorkspace)();
-    const result = await (dependencies.synthesizeReference || synthesizeTokenPlanDialogueWs)({ input: input.input, voice: input.voice, ownerUserId: input.ownerUserId, signal: input.signal },
+    const result = await (dependencies.synthesizeReference || synthesizeTokenPlanDialogueWs)({ input: input.input, instruction: input.speechInstruction, voice: input.voice, ownerUserId: input.ownerUserId, signal: input.signal },
       { lossless48k: true, routes: [{ region: "singapore", endpoint: workspace.websocketUrl, apiKey: workspace.apiKey }] });
     return { audioUrl: result.audioUrl, gcsUri: result.gcsUri, bytes: result.bytes, voice: input.voice,
       generationId: result.generationId, provider: "bailian-singapore", voiceGate: result.voiceGate };

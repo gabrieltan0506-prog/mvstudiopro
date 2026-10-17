@@ -185,7 +185,7 @@ export type CanvasBlock = {
    * 成片画质，默认 720p；标准档可选到 4K，单价按像素翻倍。
    * 快速档与 Seedance 2.5 固定 720p，选了也会被服务端 normalize 回去。
    */
-  videoResolution?: "720p" | "1080p" | "2K" | "4K";
+  videoResolution?: "480p" | "720p" | "1080p" | "2K" | "4K";
   /**
    * 高清放大（WaveSpeed 2K/4K）。结果写 `upscaledVideoUrl` 独立存放，
    * **绝不覆盖** `outputUrl` 原片；任务字段随画布持久化，刷新后可恢复轮询。
@@ -599,6 +599,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
           ? "zh"
           : undefined,
     videoResolution:
+      block.videoResolution === "480p" ||
       block.videoResolution === "1080p" ||
       block.videoResolution === "2K" ||
       block.videoResolution === "4K"

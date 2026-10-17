@@ -220,3 +220,17 @@ describe("映客制作预算接入原配音入口", () => {
     expect(deps.synthesize).not.toHaveBeenCalled(); expect(deps.claim).not.toHaveBeenCalled();
   });
 });
+
+it("本人声线演法进入实际合成请求与幂等摘要，原编号不能偷换演法",async()=>{
+ const {deps}=harness();deps.checkVoiceOwner=vi.fn(async()=>{});
+ const request={...input,voice:"qwen-audio-3.0-tts-plus-mvsref-test",speechInstruction:"关键词重读，句间自然停顿"};
+ await generateCanvasDialogue(7,request,deps);
+ expect(deps.synthesize).toHaveBeenCalledWith(expect.objectContaining({speechInstruction:request.speechInstruction,input:input.input}));
+ await expect(generateCanvasDialogue(7,{...request,speechInstruction:"放松自然"},deps)).rejects.toThrow();
+ expect(deps.synthesize).toHaveBeenCalledTimes(1);
+});
+it("不兼容声线不能静默丢弃演法后仍扣费",async()=>{
+ const {deps}=harness();
+ await expect(generateCanvasDialogue(7,{...input,speechInstruction:"重读"},deps)).rejects.toThrow("仅支持百炼本人");
+ expect(deps.claim).not.toHaveBeenCalled();expect(deps.synthesize).not.toHaveBeenCalled();expect(deps.charge).not.toHaveBeenCalled();
+});
