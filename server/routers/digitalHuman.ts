@@ -1,3 +1,5 @@
+import { digitalHumanBackups } from "../services/digitalHumanBackup";
+import { digitalHumanBackupIdSchema } from "../../shared/digitalHumanBackup";
 import { digitalHumanKeyframeGenerationInputSchema } from "../../shared/digitalHumanKeyframeGeneration";
 import { queueDigitalHumanKeyframeGeneration, getDigitalHumanKeyframeGeneration } from "../services/digitalHumanKeyframeGeneration";
 import { digitalHumanOmniInputSchema, digitalHumanOmniSubmitSchema } from "../../shared/digitalHumanOmni";
@@ -31,6 +33,16 @@ export const digitalHumanRouter = router({
   getOmni: adminProcedure.input(z.object({ requestId: z.string().uuid() }).strict()).query(({ ctx, input }) => getDigitalHumanOmni(ctx.user.id, input.requestId)),
   queueProduction: protectedProcedure.input(digitalHumanProductionRequestSchema).mutation(({ ctx, input }) => queueDigitalHumanProduction(ctx.user.id, input)),
   getProduction: protectedProcedure.input(z.object({ requestId: z.string().uuid() }).strict()).query(({ ctx, input }) => getDigitalHumanProduction(ctx.user.id, input.requestId)),
+  listBackups: protectedProcedure.query(({ ctx }) => digitalHumanBackups.list(ctx.user.id)),
+  createBackup: protectedProcedure.input(z.object({ expectedGeneration: z.string().regex(/^\d+$/), requestId: z.string().uuid(), localDraft: digitalHumanDraftSchema.optional() }).strict())
+    .mutation(({ ctx, input }) => digitalHumanBackups.create(ctx.user.id, { ...input, reason: input.localDraft ? "local-copy" : "manual" })),
+  advanceBackup: protectedProcedure.input(z.object({ id: digitalHumanBackupIdSchema }).strict())
+    .mutation(({ ctx, input }) => digitalHumanBackups.advance(ctx.user.id, input.id)),
+  restoreBackup: protectedProcedure.input(z.object({ id: digitalHumanBackupIdSchema, expectedGeneration: z.string().regex(/^\d+$/) }).strict())
+    .mutation(async ({ ctx, input }) => {
+      try { return await digitalHumanBackups.restore(ctx.user.id, input.id, input.expectedGeneration); }
+      catch (e) { throw new TRPCError({ code: e instanceof DigitalHumanDraftConflict ? "CONFLICT" : "SERVICE_UNAVAILABLE", message: e instanceof Error ? e.message : "云端回填未完成" }); }
+    }),
   getDraft: protectedProcedure.query(({ ctx }) => readDigitalHumanCloudDraft(ctx.user.id)),
   saveDraft: protectedProcedure.input(z.object({ draft: digitalHumanDraftSchema, expectedGeneration: z.string().regex(/^\d+$/) }).strict())
     .mutation(async ({ ctx, input }) => {

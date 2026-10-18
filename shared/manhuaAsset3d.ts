@@ -22,6 +22,8 @@ export type ManhuaAsset3dStatus = (typeof MANHUA_ASSET_3D_STATUSES)[number];
 export type ManhuaAsset3dRef = {
   status: ManhuaAsset3dStatus;
   taskId: string;
+  /** 原建模资产身份；跨段复用时不能替换为新段落编号。 */
+  assetRef?: string;
   sourceImageUrl: string;
   sourceVersion: string;
   predictionId?: string;
@@ -141,6 +143,7 @@ export function normalizeManhuaAsset3dRef(
   return {
     status,
     taskId,
+    ...(typeof input.assetRef === "string" && input.assetRef.trim() ? { assetRef: input.assetRef.trim().slice(0, 160) } : {}),
     sourceImageUrl,
     sourceVersion,
     predictionId,

@@ -760,7 +760,7 @@ export async function deleteGcsObject(params: {
 export async function statGcsObjectVersion(params: {
   gcsUri: string;
   signal?: AbortSignal;
-}): Promise<{ bucket: string; objectName: string; generation: string; etag?: string; byteLength?: number }> {
+}): Promise<{ bucket: string; objectName: string; generation: string; etag?: string; byteLength?: number; crc32c?: string }> {
   const { bucket, objectName } = parseGsUri(params.gcsUri);
   const accessToken = await awaitWithAbortSignal(
     getVertexAccessToken(),
@@ -777,7 +777,7 @@ export async function statGcsObjectVersion(params: {
     signal: params.signal,
   });
   if (!metaRes.ok) throw new Error(`gcs_stat_failed:${metaRes.status}`);
-  const meta = (await metaRes.json()) as { generation?: string; etag?: string; size?: string };
+  const meta = (await metaRes.json()) as { generation?: string; etag?: string; size?: string; crc32c?: string };
   const generation = String(meta.generation || "").trim();
   if (!generation) throw new Error("gcs_stat_no_generation");
   return {
@@ -785,6 +785,7 @@ export async function statGcsObjectVersion(params: {
     objectName,
     generation,
     etag: String(meta.etag || "").trim() || undefined,
+    crc32c: String(meta.crc32c || "").trim() || undefined,
     byteLength: /^\d+$/.test(String(meta.size || "")) ? Number(meta.size) : undefined,
   };
 }
@@ -920,4 +921,35 @@ export async function listGcsObjectVersions(prefix: string): Promise<GcsObjectVe
 export async function readGcsPrefixRevision(prefix: string): Promise<string> {
   const entries = await listGcsObjectVersions(prefix);
   return crypto.createHash("sha256").update(entries.map(item => `${item.name}:${item.generation}`).sort().join("\n")).digest("hex");
+}
+
+/** 一次有界云内复制；多轮 token 由备份清单持久化，重启后续同一复制。 */
+export async function copyGcsObjectVersion(params: {
+  sourceUri: string; sourceGeneration: string; destinationObject: string;
+  rewriteToken?: string; signal?: AbortSignal;
+}): Promise<{ gcsUri: string; generation?: string; rewriteToken?: string }> {
+  const source = parseGsUri(params.sourceUri), bucket = getGcsBucketName();
+  if (source.bucket !== bucket || !/^\d+$/.test(params.sourceGeneration) ||
+    normalizeObjectName(params.destinationObject) !== params.destinationObject ||
+    `gs://${source.bucket}/${source.objectName}` !== params.sourceUri) throw new Error("云备份对象或版本无效");
+  const signal = params.signal ?? AbortSignal.timeout(20_000);
+  const accessToken = await awaitWithAbortSignal(getVertexAccessToken(), signal);
+  const target = `gs://${bucket}/${params.destinationObject}`;
+  const url = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(source.objectName)}/rewriteTo/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(params.destinationObject)}`);
+  url.searchParams.set("sourceGeneration", params.sourceGeneration);
+  url.searchParams.set("ifSourceGenerationMatch", params.sourceGeneration);
+  url.searchParams.set("ifGenerationMatch", "0");
+  if (params.rewriteToken) url.searchParams.set("rewriteToken", params.rewriteToken);
+  if (getGcsUserProject()) url.searchParams.set("userProject", getGcsUserProject());
+  const response = await fetch(url, { method: "POST", headers: { Authorization: `Bearer ${accessToken}` }, signal, redirect: "error" });
+  if (response.status === 412) {
+    await response.body?.cancel();
+    // 只说明目标已存在；调用方必须对账清单内的字节数和校验和，不能仅凭412认成功。
+    return { gcsUri: target, generation: (await statGcsObjectVersion({ gcsUri: target, signal })).generation };
+  }
+  if (!response.ok) { await response.body?.cancel(); throw new Error(`gcs_copy_failed:${response.status}`); }
+  const result = await response.json() as { done?: boolean; rewriteToken?: string; resource?: { generation?: string } };
+  if (result.done && result.resource?.generation) return { gcsUri: target, generation: result.resource.generation };
+  if (!result.rewriteToken) throw new Error("gcs_copy_no_progress");
+  return { gcsUri: target, rewriteToken: result.rewriteToken };
 }

@@ -89,7 +89,11 @@ export async function recoverDigitalHumanDraft(
     work.push(async () => {
       const jobId =
         row.jobId || (await services.scene(row.request.requestId))?.jobId;
-      if (!jobId) return;
+      if (!jobId) {
+        services.save(d => ({ ...d, scenes: d.scenes.map(s => s.request.requestId === row.request.requestId
+          ? { ...s, status: "unknown", message: "尚未查到原场景任务。可使用原编号恢复提交，查询不会自动生成。" } : s) }));
+        return;
+      }
       const receipt = await services.job(jobId),
         source = receipt.output?.imageUrl;
       if (

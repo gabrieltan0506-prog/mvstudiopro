@@ -99,6 +99,7 @@ const referenceSchema = z.object({
 });
 const modelSchema = z.object({
   taskId: z.string(),
+  assetRef: z.string().min(1).max(160).optional(),
   status: z.enum([
     "queued",
     "running",

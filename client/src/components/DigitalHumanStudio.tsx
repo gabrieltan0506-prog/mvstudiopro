@@ -1,3 +1,5 @@
+import { DigitalHumanBackupPanel } from "./DigitalHumanBackupPanel";
+import { adoptDigitalHumanModel, digitalHumanReusableModels } from "@shared/digitalHumanModelReuse";
 import { DigitalHumanProjectPanel, type DigitalHumanProjectView } from "./DigitalHumanProjectPanel";
 import { addDigitalHumanSegment, switchDigitalHumanSegment, updateDigitalHumanSegment } from "@shared/digitalHumanProject";
 import { DigitalHumanKeyframeGenerationPanel } from "./DigitalHumanKeyframeGenerationPanel";
@@ -217,6 +219,11 @@ function DigitalHumanWorkspace({
   const dialogue = trpc.canvasAudio.generateDialogue.useMutation();
   const inspectNarration = trpc.digitalHuman.inspectNarration.useMutation();
   const scene = trpc.digitalHuman.createScene.useMutation();
+  const backupCreate = trpc.digitalHuman.createBackup.useMutation();
+  const backupAdvance = trpc.digitalHuman.advanceBackup.useMutation();
+  const backupRestore = trpc.digitalHuman.restoreBackup.useMutation();
+  const [restoredVersion, setRestoredVersion] = useState(0);
+  const backupRequest = useRef<string | undefined>(undefined);
   const cloudSave = trpc.digitalHuman.saveDraft.useMutation();
   const cloudGeneration = useRef<string | undefined>(undefined);
   const cloudQueue = useRef<Promise<void>>(Promise.resolve());
@@ -227,6 +234,48 @@ function DigitalHumanWorkspace({
     do { pending = cloudQueue.current; await pending; } while (pending !== cloudQueue.current);
     if (!active.current) throw new Error("页面已切换，未提交生产");
     if (!cloudGeneration.current || cloudError.current) throw new Error(cloudError.current || "云端稿件尚未确认，未提交生产");
+  }
+  async function createCloudBackup() {
+    await flushCloud();
+    backupRequest.current ||= crypto.randomUUID();
+    const item = await backupCreate.mutateAsync({ expectedGeneration: cloudGeneration.current!, requestId: backupRequest.current });
+    backupRequest.current = undefined;
+    await backupAdvance.mutateAsync({ id: item.id });
+  }
+  async function restoreCloudBackup(id: string) {
+    if (busyRef.current) throw new Error("当前操作尚未结束，请稍后回填");
+    busyRef.current = true; setBusy("正在回填云端版本");
+    try {
+      await flushCloud();
+      const expectedGeneration = cloudGeneration.current!;
+      const localBefore = savedRaw.current;
+      for (let step = 0; step < 100; step++) {
+        if (!active.current || localBefore !== savedRaw.current || localStorage.getItem(digitalHumanDraftKey(owner)) !== localBefore) throw new Error("本机稿件发生变化，已停止回填；请核对云端版本");
+        const result = await backupRestore.mutateAsync({ id, expectedGeneration });
+        if (result.status !== "restored") { setBusy(`正在保全并回填素材，剩余${result.remaining}项`); continue; }
+        // 服务端已经CAS保存。晚到回执不得覆盖另一页面的本机修改。
+        if (!active.current || localBefore !== savedRaw.current || localStorage.getItem(digitalHumanDraftKey(owner)) !== localBefore) {
+          cloudError.current = "云端已回填，本机期间有新修改，请重新核对版本";
+          throw new Error(cloudError.current);
+        }
+        const raw = JSON.stringify(result.draft);
+        localStorage.setItem(digitalHumanDraftKey(owner), raw);
+        savedRaw.current = raw; ref.current = result.draft; setDraft(result.draft);
+        cloudGeneration.current = result.generation; cloudError.current = undefined;
+        setPreview(undefined); setRestoredVersion(v => v + 1); setCloudStatus("云端版本已回填");
+        return;
+      }
+      throw new Error("本次回填已保存进度，请继续回填同一版本");
+    } finally { busyRef.current = false; if (active.current) setBusy(""); }
+  }
+  async function preserveCloudVersion(localDraft?: DigitalHumanDraft, generation = cloudGeneration.current!) {
+    const item = await backupCreate.mutateAsync({ expectedGeneration: generation, requestId: crypto.randomUUID(), localDraft });
+    for (let step = 0; step < 100; step++) {
+      const result = await backupAdvance.mutateAsync({ id: item.id });
+      if (result.status === "complete") return;
+      if (result.error) throw new Error(`切换前云备份未完整：${result.error}`);
+    }
+    throw new Error("切换前云备份仍在继续，请稍后重试");
   }
   function queueCloud(next: DigitalHumanDraft) {
     cloudQueue.current = cloudQueue.current.then(async () => {
@@ -243,7 +292,7 @@ function DigitalHumanWorkspace({
     const remote = await api.digitalHuman.getDraft.fetch();
     if (!active.current || savedRaw.current !== localBefore || localStorage.getItem(digitalHumanDraftKey(owner)) !== localBefore) throw new Error("读取期间本机稿件已变化，未覆盖");
     if (remote.draft && localBefore && JSON.stringify(remote.draft) !== JSON.stringify(ref.current)) {
-      cloudError.current = "本机与云端稿件不同，请导出本机副本后明确选择读取云端或保存本机";
+      cloudError.current = "本机与云端稿件不同，请选择读取云端或保存本机；切换前会先云备份";
       cloudGeneration.current = remote.generation; setCloudStatus(cloudError.current); return;
     }
     cloudGeneration.current = remote.generation; cloudError.current = undefined;
@@ -474,12 +523,13 @@ function DigitalHumanWorkspace({
   const currentAudio = currentDigitalHumanAudio(draft);
   return (
     <section ref={workspace} className="dh-studio" aria-label="数字人视频工作台">
-      <DigitalHumanProjectPanel draft={draft} view={projectView} setView={setProjectView} save={saveProject}
+      <DigitalHumanProjectPanel key={restoredVersion} draft={draft} view={projectView} setView={setProjectView} save={saveProject}
         select={selectSegment} add={chapter => selectSegment(undefined, chapter)} disabled={Boolean(busy) || Boolean(loadError)}
         beforeSubmit={flushCloud} acquireWork={acquireWork} role={role} />
       <p role="status">{cloudStatus}</p>
+      <DigitalHumanBackupPanel disabled={Boolean(busy) || Boolean(loadError)} create={createCloudBackup} restore={restoreCloudBackup} />
       {error && projectView !== "segment" && <p role="alert">{error}</p>}
-      <div key={draft.id} hidden={projectView !== "segment"}>
+      <div key={`${draft.id}:${restoredVersion}`} hidden={projectView !== "segment"}>
       <header className="dh-workspace-header">
         <div><p className="dh-eyebrow">MV STUDIO PRO</p><h2>数字人导演</h2></div>
         <p role="status">{cloudStatus}</p>
@@ -495,7 +545,7 @@ function DigitalHumanWorkspace({
           a.href = url; a.download = "数字人制作稿.json"; a.click(); URL.revokeObjectURL(url);
         }}>导出本机副本</button>
         <button type="button" disabled={Boolean(busy)} onClick={() => void (async () => {
-          if (!window.confirm("读取云端稿件将替换本页制作稿；请先导出本机副本。确认读取？")) return;
+          if (!window.confirm("读取云端稿件前会先将本机稿件和素材备份到云端。确认读取？")) return;
           if (busyRef.current) return;
           busyRef.current = true; setBusy("读取云端稿件");
           const localBefore = savedRaw.current;
@@ -504,9 +554,11 @@ function DigitalHumanWorkspace({
             const remote = await api.digitalHuman.getDraft.fetch();
             if (!active.current || savedRaw.current !== localBefore || localStorage.getItem(digitalHumanDraftKey(owner)) !== localBefore) throw new Error("读取期间本机稿件已变化，未覆盖");
             if (!remote.draft) throw new Error("云端没有制作稿，未覆盖本机");
+            await preserveCloudVersion(ref.current, remote.generation);
+            if (!active.current || savedRaw.current !== localBefore || localStorage.getItem(digitalHumanDraftKey(owner)) !== localBefore) throw new Error("备份期间本机稿件发生变化，未覆盖");
             const raw = JSON.stringify(remote.draft); localStorage.setItem(digitalHumanDraftKey(owner), raw);
             savedRaw.current = raw; ref.current = remote.draft; setDraft(remote.draft);
-            cloudGeneration.current = remote.generation; cloudError.current = undefined; setPreview(undefined); setCloudStatus("云端稿件已恢复");
+            cloudGeneration.current = remote.generation; cloudError.current = undefined; setPreview(undefined); setRestoredVersion(v => v + 1); setCloudStatus("云端稿件已恢复");
           } catch (e) { setError(messageOf(e)); }
           finally { busyRef.current = false; if (active.current) setBusy(""); }
         })()}>读取云端版本</button>
@@ -517,6 +569,7 @@ function DigitalHumanWorkspace({
           try {
             await cloudQueue.current; const remote = await api.digitalHuman.getDraft.fetch();
             if (!active.current || localStorage.getItem(digitalHumanDraftKey(owner)) !== savedRaw.current) throw new Error("本机稿件已在另一页面变化，未覆盖云端");
+            if (remote.draft) await preserveCloudVersion(undefined, remote.generation);
             cloudGeneration.current = remote.generation; cloudError.current = undefined;
             queueCloud(ref.current); await flushCloud();
           } catch (e) { setError(messageOf(e)); }
@@ -562,6 +615,22 @@ function DigitalHumanWorkspace({
       >
         <section id="dh-assets" hidden={workspaceStep !== "assets"} className="dh-card">
           <h3>人物或角色照片</h3>
+          <label>
+            复用本项目已有造型（不重新生成）
+            <select value="" onChange={e => {
+              const selected = digitalHumanReusableModels(ref.current).find(row => row.model.taskId === e.target.value);
+              if (!selected) return;
+              void act("查询并采用已有造型", async () => {
+                const result = await api.digitalHuman.getModel.fetch({ taskId: selected.model.taskId });
+                if (!result) throw new Error("未找到本人原模型，未采用");
+                save(d => adoptDigitalHumanModel(d, selected.model, { ...result, updatedAt: Date.parse(result.updatedAt) }));
+                setPreview(undefined);
+              });
+            }}>
+              <option value="">选择已生成的人物造型</option>
+              {digitalHumanReusableModels(draft).map(row => <option key={row.model.taskId} value={row.model.taskId}>{row.label}</option>)}
+            </select>
+          </label>
           <label>
             人物或角色照片
             <input
@@ -689,6 +758,26 @@ function DigitalHumanWorkspace({
               <p>
                 {statusLabel(s.status)} · {s.request.description}
               </p>
+              {s.message && <p>{s.message}</p>}
+              {!s.jobId && digitalHumanPending(s.status) && <button type="button" disabled={Boolean(busy)} onClick={() => void act("恢复原场景任务", async () => {
+                const request = s.request;
+                const found = await api.digitalHuman.getScene.fetch({ requestId: request.requestId });
+                if (found) {
+                  save(d => ({ ...d, scenes: d.scenes.map(row => row.request.requestId === request.requestId ? { ...row, jobId: found.jobId, message: undefined } : row) }));
+                  await recover();
+                  return;
+                }
+                if (!window.confirm(`尚未查到原任务。使用原编号及原场景描述恢复提交，按原价${canvasImageCredits(0)}积分计费；若服务端已有任务则只取回原单。确认继续？`)) return;
+                await flushCloud();
+                try {
+                  const receipt = await scene.mutateAsync(request);
+                  save(d => ({ ...d, scenes: d.scenes.map(row => row.request.requestId === request.requestId ? { ...row, jobId: receipt.jobId, status: "running", message: undefined } : row) }));
+                  await recover();
+                } catch (e) {
+                  save(d => ({ ...d, scenes: d.scenes.map(row => row.request.requestId === request.requestId ? { ...row, status: "unknown", message: messageOf(e) } : row) }));
+                  throw e;
+                }
+              })}>使用原编号恢复场景提交</button>}
               {s.source && (
                 <>
                   <DigitalHumanMedia

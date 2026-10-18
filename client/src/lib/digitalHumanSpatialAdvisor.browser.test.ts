@@ -30,7 +30,7 @@ beforeAll(async () => {
   ` }, bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
     plugins: [{ name: "offline-api", setup(b) {
       b.onResolve({filter:/\/(Manhua3dModelStudio|ManhuaPrevisStudio|ManhuaAutoRigEditor|ArtMotionStudio|DigitalHumanRenderReview)$/},a=>({path:a.path.split('/').at(-1)!,namespace:'unused'}));
-      b.onLoad({filter:/.*/,namespace:'unused'},a=>({loader:'js',contents:'export const '+a.path+'=()=>null;export default '+a.path+';'}));
+      b.onLoad({filter:/.*/,namespace:'unused'},a=>({loader:'tsx',resolveDir:process.cwd(),contents:a.path==='Manhua3dModelStudio'?`import React from 'react';export function Manhua3dModelStudio(p){return <button onClick={()=>p.onRig(p.characters[0].id)}>探针打开原模型绑骨</button>}export default Manhua3dModelStudio;`:`export const ${a.path}=p=>{if(globalThis.fixture)globalThis.fixture['${a.path}']=p;return null};export default ${a.path};`}));
       b.onResolve({filter:/digitalHumanVideo$/},()=>({path:'media',namespace:'media'}));
       b.onLoad({filter:/.*/,namespace:'media'},()=>({loader:'js',contents:'export const digitalHumanMediaUrl=async()=>"https://example.test/media.png";'}));
       b.onResolve({ filter: /^@\/lib\/trpc$/ }, () => ({ path: "trpc", namespace: "offline" }));
@@ -236,3 +236,21 @@ it("导演方案试看进入中央播放器，采用保存真实回执并保留�
     expect(await page.evaluate(() => (window as any).fixture.draft.previsStudio.history[0].requestId)).toBe(adopted.request);
   } finally {await context.close();}
 },20000);
+
+
+it("跨段复用保留原模型资产编号，绑骨和预演消费者同源", async()=>{
+  const {context,page}=await pageFixture(true);
+  try {
+    await page.evaluate(()=>{const f=(window as any).fixture;f.update({mainModel:{...f.draft.mainModel,assetRef:"original-person-A"}});});
+    await click(page,"探针打开原模型绑骨");
+    await page.waitForFunction(()=>Boolean((window as any).fixture.ManhuaAutoRigEditor));
+    expect(await page.evaluate(()=>(window as any).fixture.ManhuaAutoRigEditor.assetRef)).toBe("original-person-A");
+    const adopted=await page.evaluate(()=>{const f=(window as any).fixture;return f.ManhuaAutoRigEditor.onApply({...f.draft.mainModel,assetRef:"original-person-A",taskId:"rigged-original",updatedAt:new Date(2000).toISOString()},"model-test")});
+    expect(adopted).toBe(true);
+    await page.type('textarea[aria-label="数字人导演要求"]',"站稳后自然转头");await click(page,"生成导演方案");
+    await page.waitForFunction(()=>Boolean((window as any).fixture.ManhuaPrevisStudio));
+    expect(await page.evaluate(()=>(window as any).fixture.ManhuaPrevisStudio.characters[0].model)).toEqual({taskId:"rigged-original",assetRef:"original-person-A"});
+    await page.evaluate(()=>(window as any).fixture.reload());
+    expect(await page.evaluate(()=>(window as any).fixture.draft.mainModel.assetRef)).toBe("original-person-A");
+  } finally {await context.close();}
+});
