@@ -656,7 +656,7 @@ export default function PostProdWorkshopCard({
   }, [projectScopeKey]);
 
   const [jobs, setJobs] = useState<TrackedJob[]>(() =>
-    loadStoredJobs(jobsStorageKey(userId), localStorage, mediaInput ? Number.POSITIVE_INFINITY : 30)
+    loadStoredJobs(jobsStorageKey(userId), localStorage, mediaInput ? Number.POSITIVE_INFINITY : 30).filter(job => !mediaInput || postProdJobMatchesScope(job, projectScopeKey))
   );
   const scopedJobs = useMemo(() => jobs.filter(job => postProdJobMatchesScope(job, projectScopeKey)), [jobs, projectScopeKey]);
   const vfxJobs = useMemo(() => jobs.filter(job => job.action === "manhua_vfx" && postProdJobMatchesScope(job, vfxScopeKey)), [jobs, vfxScopeKey]);

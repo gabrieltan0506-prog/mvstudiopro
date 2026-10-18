@@ -253,3 +253,38 @@ it("原三维任务已删除或失权时保留现稿，不把失效任务号当�
   await expect(f.service.restore(7, item.id, "9")).rejects.toThrow("无法核实");
   expect(f.deps.saveDraft).not.toHaveBeenCalled();
 });
+
+it("按活动段、历史段与整片范围收集任务，但显式采用的跨范围媒体仍必备份", () => {
+  const storage = (scope: string, source: string) => ({ "postProd.jobs.v2.u7": JSON.stringify([
+    { scopeKey: scope, output: { gcsUri: source } },
+    { scopeKey: "manhua:other", output: { gcsUri: "gs://test-only/foreign.mp4" } },
+  ]) });
+  const value = { id: "a", postProdStorage: storage("digital-human:a", "gs://test-only/a.mp4"), project: {
+    id: "p", postProdStorage: storage("digital-human:project:p", "gs://test-only/project.mp4"),
+    segments: [{ id: "b", selectedSource: "gs://test-only/foreign.mp4", draft: { id: "b", postProdStorage: storage("digital-human:b", "gs://test-only/b.mp4") } }],
+  } };
+  const before = JSON.stringify(value);
+  expect(collectDigitalHumanBackupSources(value)).toEqual(["gs://test-only/a.mp4", "gs://test-only/project.mp4", "gs://test-only/foreign.mp4", "gs://test-only/b.mp4"]);
+  expect(JSON.stringify(value)).toBe(before);
+});
+
+it("旧pending继续备份可排除异项目404，保留原稿历史；本段404仍阻断", async () => {
+  const f = fixture();
+  const missing = "gs://test-only/uploads/u7/old.mp4";
+  f.current().draft.postProdStorage["postProd.jobs.v2.u7"] = JSON.stringify([{ scopeKey: "manhua:other", output: { gcsUri: missing } }]);
+  const item = await f.service.create(7, { expectedGeneration: "9", requestId: "foreign-history" });
+  const name = Array.from(f.objects.keys()).find(n => n.includes("/manifests/") && n.includes(item.id))!;
+  const old = JSON.parse(f.objects.get(name)!.buffer.toString());
+  old.assets.push({ source: missing, error: "gcs_stat_failed:404" });
+  old.discoveryComplete = true;
+  f.put(name, Buffer.from(JSON.stringify(old)));
+  expect((await f.service.advance(7, item.id)).status).toBe("complete");
+  const saved = (await f.service.read(7, item.id)).backup;
+  expect(saved.assets.map(a => a.source)).not.toContain(missing);
+  expect(saved.draft.postProdStorage["postProd.jobs.v2.u7"]).toContain(missing);
+  const g = fixture();
+  g.current().draft.postProdStorage["postProd.jobs.v2.u7"] = JSON.stringify([{ scopeKey: `digital-human:${g.current().draft.id}`, output: { gcsUri: missing } }]);
+  const required = await g.service.create(7, { expectedGeneration: "9", requestId: "own-history" });
+  expect((await g.service.advance(7, required.id)).status).toBe("pending");
+  await expect(g.service.restore(7, required.id, "9")).rejects.toThrow("云备份尚未完整");
+});

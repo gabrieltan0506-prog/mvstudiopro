@@ -143,6 +143,11 @@ export type RemotePostProdJob = {
  * 本地有但服务端没有的任务(如已被清理)不保留——服务端是主来源。
  */
 export function mergeRemoteJobs(local: TrackedJob[], remote: RemotePostProdJob[], historyScope?: string): TrackedJob[] {
+  // 独立制作稿只保存本范围任务；普通工坊仍保留用户级任务列表。
+  if (historyScope) {
+    local = local.filter(item => item.scopeKey === historyScope);
+    remote = remote.filter(item => (item.scopeKey ?? local.find(cached => cached.jobId === item.jobId)?.scopeKey) === historyScope);
+  }
   const localById = new Map(local.map((item) => [item.jobId, item]));
   const remoteIds = new Set(remote.map((item) => item.jobId));
   const merged: TrackedJob[] = [];
