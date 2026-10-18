@@ -319,3 +319,12 @@ it("独立数字人云稿保留最近列表之外的既有成片，不混入其�
   expect(loadStoredJobs("key",storage,Number.POSITIVE_INFINITY)).toHaveLength(40);
   expect(loadStoredJobs("key",storage)).toHaveLength(30);
 });
+
+it("独立稿件排除远端及本地其他范围任务，普通工坊不受影响", () => {
+  const own = job({ jobId: "own", scopeKey: "digital-human:a", status: "running" });
+  const other = job({ jobId: "foreign", scopeKey: "manhua:other", status: "running" });
+  const remote = [own, other, job({ jobId: "unknown", scopeKey: undefined })];
+  expect(mergeRemoteJobs([own, other], remote, "digital-human:a").map(j => j.jobId)).toEqual(["own"]);
+  expect(mergeRemoteJobs([own], [{ ...own, scopeKey: undefined }], "digital-human:a")[0].scopeKey).toBe("digital-human:a");
+  expect(mergeRemoteJobs([], remote)).toHaveLength(3);
+});

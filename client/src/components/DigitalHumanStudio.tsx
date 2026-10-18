@@ -1,3 +1,4 @@
+import { digitalHumanDraftReadError, digitalHumanDraftExport } from "@/lib/digitalHumanDraftRecovery";
 import { DigitalHumanBackupPanel } from "./DigitalHumanBackupPanel";
 import { adoptDigitalHumanModel, digitalHumanReusableModels } from "@shared/digitalHumanModelReuse";
 import { DigitalHumanProjectPanel, type DigitalHumanProjectView } from "./DigitalHumanProjectPanel";
@@ -164,7 +165,7 @@ function DigitalHumanWorkspace({
       );
     } catch (e) {
       queueMicrotask(() =>
-        setLoadError(`原草稿无法读取，已停止提交：${messageOf(e)}`)
+        setLoadError(digitalHumanDraftReadError(e))
       );
       return newDigitalHumanDraft(owner, crypto.randomUUID());
     }
@@ -188,6 +189,11 @@ function DigitalHumanWorkspace({
   }
   const ref = useRef(draft);
   const savedRaw = useRef(localStorage.getItem(digitalHumanDraftKey(owner)));
+  function exportLocalDraft() {
+    const blob = new Blob([digitalHumanDraftExport(savedRaw.current, ref.current, Boolean(loadError))], { type: "application/json" });
+    const url = URL.createObjectURL(blob); const a = document.createElement("a");
+    a.href = url; a.download = "数字人制作稿.json"; a.click(); URL.revokeObjectURL(url);
+  }
   const active = useRef(true);
   const [busy, setBusy] = useState("");
   const busyRef = useRef(false);
@@ -528,6 +534,7 @@ function DigitalHumanWorkspace({
         beforeSubmit={flushCloud} acquireWork={acquireWork} role={role} />
       <p role="status">{cloudStatus}</p>
       <DigitalHumanBackupPanel disabled={Boolean(busy) || Boolean(loadError)} create={createCloudBackup} restore={restoreCloudBackup} />
+      {loadError && <section role="alert"><p>{loadError}</p><button type="button" onClick={exportLocalDraft}>导出原始草稿</button></section>}
       {error && projectView !== "segment" && <p role="alert">{error}</p>}
       <div key={`${draft.id}:${restoredVersion}`} hidden={projectView !== "segment"}>
       <header className="dh-workspace-header">
@@ -539,12 +546,9 @@ function DigitalHumanWorkspace({
       </nav>
       <details className="dh-save-menu"><summary>稿件保存与恢复</summary>
         <p role="status">{cloudStatus}</p>
-        <button type="button" disabled={Boolean(busy)} onClick={() => {
-          const blob = new Blob([JSON.stringify(ref.current, null, 2)], { type: "application/json" });
-          const url = URL.createObjectURL(blob); const a = document.createElement("a");
-          a.href = url; a.download = "数字人制作稿.json"; a.click(); URL.revokeObjectURL(url);
-        }}>导出本机副本</button>
-        <button type="button" disabled={Boolean(busy)} onClick={() => void (async () => {
+        <button type="button" disabled={Boolean(busy)} onClick={exportLocalDraft}>导出本机副本</button>
+        <button type="button" disabled={Boolean(busy) || Boolean(loadError)} onClick={() => void (async () => {
+          if (loadError) return;
           if (!window.confirm("读取云端稿件前会先将本机稿件和素材备份到云端。确认读取？")) return;
           if (busyRef.current) return;
           busyRef.current = true; setBusy("读取云端稿件");
@@ -562,7 +566,8 @@ function DigitalHumanWorkspace({
           } catch (e) { setError(messageOf(e)); }
           finally { busyRef.current = false; if (active.current) setBusy(""); }
         })()}>读取云端版本</button>
-        <button type="button" disabled={Boolean(busy)} onClick={() => void (async () => {
+        <button type="button" disabled={Boolean(busy) || Boolean(loadError)} onClick={() => void (async () => {
+          if (loadError) return;
           if (!window.confirm("将当前本机制作稿保存为云端版本？请先核对另一设备的修改。")) return;
           if (busyRef.current) return;
           busyRef.current = true; setBusy("保存本机稿件");

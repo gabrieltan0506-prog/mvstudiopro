@@ -70,17 +70,21 @@ export function collectDigitalHumanBackupSources(value: unknown): string[] {
     /^(url|gcsUri)$/.test(key);
   const arrayKey = (key: string) =>
     /^(clips|sources|images|references|.*(?:Urls|Uris))$/.test(key);
-  const visit = (node: unknown, depth: number, parentKey = "") => {
+  const visit = (node: unknown, depth: number, parentKey = "", scope?: string) => {
     if (depth > 60) throw new Error("制作稿嵌套过深，未截断备份");
     if (Array.isArray(node)) {
       node.forEach(v =>
         typeof v === "string" && arrayKey(parentKey) && isSource(v)
           ? sources.add(v)
-          : visit(v, depth + 1)
+          : visit(v, depth + 1, "", scope)
       );
       return;
     }
     if (!node || typeof node !== "object") return;
+    const record = node as Record<string, unknown>;
+    const ownScope = typeof record.id === "string" && record.postProdStorage
+      ? `digital-human:${parentKey === "project" ? "project:" : ""}${record.id}`
+      : scope;
     for (const [key, item] of Object.entries(node)) {
       if (typeof item === "string") {
         if (mediaKey(key) && isSource(item)) sources.add(item);
@@ -89,12 +93,17 @@ export function collectDigitalHumanBackupSources(value: unknown): string[] {
           /^[\[{]/.test(item)
         ) {
           try {
-            visit(JSON.parse(item), depth + 1);
+            let parsed = JSON.parse(item);
+            // 历史云稿曾混入用户级任务列表；只备份本段/本项目任务，原历史JSON不改写。
+            if (parentKey === "postProdStorage" && /^postProd\.jobs\.v2\.u/.test(key) && ownScope && Array.isArray(parsed)) {
+              parsed = parsed.filter(row => row?.scopeKey === ownScope);
+            }
+            visit(parsed, depth + 1, "", ownScope);
           } catch (e) {
             throw new Error("素材恢复记录无法解析，未标记完整备份");
           }
         }
-      } else visit(item, depth + 1, key);
+      } else visit(item, depth + 1, key, ownScope);
     }
   };
   visit(value, 0);

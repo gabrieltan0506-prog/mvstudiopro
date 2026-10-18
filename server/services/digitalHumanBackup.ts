@@ -317,6 +317,18 @@ export function createDigitalHumanBackupService(
         backup.error = undefined;
         await save();
       }
+      // 旧pending清单可能含其他项目的任务媒体；重算所需集合，保留有效复制回执及原稿历史。
+      const required = new Set([
+        ...collectDigitalHumanBackupSources(backup.draft),
+        ...backup.resources.flatMap(r => collectDigitalHumanBackupSources(r.view).filter(s => s.startsWith("gs://"))),
+      ]);
+      const retained = backup.assets.filter(a => required.has(a.source));
+      if (retained.length !== backup.assets.length) {
+        backup.assets = retained;
+        backup.nextAsset = 0;
+        backup.error = undefined;
+        await save();
+      }
       const trusted = new Set(
         backup.resources.flatMap(r =>
           collectDigitalHumanBackupSources(r.view).filter(s =>
