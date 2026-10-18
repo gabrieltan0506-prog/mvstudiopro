@@ -53,7 +53,7 @@ it("数字人共用剪辑支持选片、排序、取段、保存恢复和云失�
     await page.evaluate(() => { (globalThis as any).failSave = true; }); await click("拼接 2 段");
     await page.waitForFunction(() => (globalThis as any).barriers === 3);
     expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(1);
-    expect(await page.$$eval('[aria-label="后期任务"] button', n => n.map(v => v.textContent))).not.toContain("漫剧特效");
+    expect(await page.$$eval('[aria-label="后期任务"] button', n => n.map(v => v.textContent))).toContain("漫剧特效");
     await page.evaluate(() => { (globalThis as any).failSave = false; });
     await click("继续字幕");
     await page.waitForFunction(() => (document.querySelector('[aria-label="字幕成片"]') as HTMLSelectElement)?.value === "gs://test-only/edited.mp4");

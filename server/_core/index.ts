@@ -1063,6 +1063,7 @@ async function startServer() {
         startJobWorker();
         return;
       }
+      (await import("../services/digitalHumanBackup")).startDigitalHumanBackupWorker();
       try {
         // 0917：把本机 3D 模型回执补镜像到 GCS（幂等），rig 进程组才读得到历史模型。
         // 目录里可能几百个 json，逐条走 GCS；后台跑，不拖住学习/配乐恢复与 worker 启动

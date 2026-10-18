@@ -1,5 +1,7 @@
+import { digitalHumanPostProdMedia } from "@/lib/digitalHumanPostProd";
 import { digitalHumanProjectSegmentOutputs as digitalHumanSegmentOutputs } from "@/lib/digitalHumanProjectMedia";
-import { useMemo, useRef, useState } from "react";
+import { useState } from "react";
+import { useDigitalHumanStorage } from "@/lib/useDigitalHumanStorage";
 import type { DigitalHumanDraft } from "@shared/digitalHumanStudio";
 import {
   currentDigitalHumanAudio,
@@ -9,7 +11,7 @@ import {
   digitalHumanProjectSegments,
   ensureDigitalHumanProject,
 } from "@shared/digitalHumanProject";
-import PostProdWorkshopCard from "./canvas/PostProdWorkshopCard";
+import { DigitalHumanPostProdWorkbench } from "./DigitalHumanPostProdWorkbench";
 
 export type DigitalHumanProjectView = "overview" | "segment" | "output";
 export function DigitalHumanProjectPanel(props: {
@@ -26,8 +28,6 @@ export function DigitalHumanProjectPanel(props: {
 }) {
   const [chapterFilter, setChapterFilter] = useState<string | null>(null);
   const [newChapter, setNewChapter] = useState("");
-  const latest = useRef(props);
-  latest.current = props;
   const [query, setQuery] = useState(""),
     [filter, setFilter] = useState("all"),
     [page, setPage] = useState(0),
@@ -66,43 +66,10 @@ export function DigitalHumanProjectPanel(props: {
       return { ...d, project: { ...d.project!, segments: rows } };
     });
   }
-  const storage = useMemo<Storage>(
-    () => ({
-      get length() {
-        return Object.keys(latest.current.draft.project?.postProdStorage || {})
-          .length;
-      },
-      key: i =>
-        Object.keys(latest.current.draft.project?.postProdStorage || {})[i] ??
-        null,
-      getItem: key =>
-        latest.current.draft.project?.postProdStorage[key] ?? null,
-      setItem: (key, value) =>
-        latest.current.save(raw => {
-          const d = ensureDigitalHumanProject(raw);
-          return {
-            ...d,
-            project: {
-              ...d.project!,
-              postProdStorage: { ...d.project!.postProdStorage, [key]: value },
-            },
-          };
-        }),
-      removeItem: key =>
-        latest.current.save(raw => {
-          const d = ensureDigitalHumanProject(raw),
-            data = { ...d.project!.postProdStorage };
-          delete data[key];
-          return { ...d, project: { ...d.project!, postProdStorage: data } };
-        }),
-      clear: () =>
-        latest.current.save(raw => {
-          const d = ensureDigitalHumanProject(raw);
-          return { ...d, project: { ...d.project!, postProdStorage: {} } };
-        }),
-    }),
-    []
-  );
+  const storage = useDigitalHumanStorage(project.postProdStorage, update => props.save(raw => {
+    const d = ensureDigitalHumanProject(raw);
+    return { ...d, project: { ...d.project!, postProdStorage: update(d.project!.postProdStorage) } };
+  }));
   const status = (d: DigitalHumanDraft) =>
     d.videos.some(v => digitalHumanPending(v.status))
       ? "生成中"
@@ -431,18 +398,16 @@ export function DigitalHumanProjectPanel(props: {
             {clips.length} / {segments.length}{" "}
             段已选。单次拼接容量以剪辑工具提示为准；较长影片可分批导出后继续拼接。
           </p>
-          <PostProdWorkshopCard
+          <DigitalHumanPostProdWorkbench
             orderedClipIds={clips.map(c => c.id)}
-            initialAspect={draft.aspectRatio}
             key={project.id}
-            blocks={[]}
-            userId={draft.owner}
+            draft={draft}
+            drafts={segments.map(s => s.draft)}
             userRole={props.role}
-            vfxScopeKey={`digital-human:project:${project.id}`}
-            projectScopeKey={`digital-human:project:${project.id}`}
-            mediaInput={{
+            scope={`digital-human:project:${project.id}`}
+            media={{
               clips,
-              audio: [],
+              audio: segments.flatMap(s => digitalHumanPostProdMedia(s.draft).audio),
               story: segments.map(s => s.draft.script).join("\n"),
             }}
             storage={storage}

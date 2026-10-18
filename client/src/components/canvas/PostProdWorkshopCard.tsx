@@ -135,7 +135,7 @@ function loadBgmJobScopes(userId: string, localStorage: Storage): Record<string,
   }
 }
 
-function loadTrackedUpscales(userId: string, localStorage: Storage): TrackedUpscale[] {
+function loadTrackedUpscales(userId: string, localStorage: Storage, all = false): TrackedUpscale[] {
   try {
     const parsed = JSON.parse(
       localStorage.getItem(upscaleStorageKey(userId)) || "[]"
@@ -152,7 +152,7 @@ function loadTrackedUpscales(userId: string, localStorage: Storage): TrackedUpsc
           typeof row.status === "string"
         );
       })
-      .slice(0, 12);
+      .slice(0, all ? undefined : 12);
   } catch {
     return [];
   }
@@ -163,6 +163,8 @@ type PostProdTool = keyof typeof POSTPROD_TOOLS;
 
 type PostProdWorkshopCardProps = {
   orderedClipIds?: string[];
+  vfxImages?: ReturnType<typeof manhuaVfxImageOptions>;
+  vfxScenesInput?: ReturnType<typeof manhuaVfxSceneOptions>;
   initialAspect?: "9:16" | "16:9";
   mediaInput?: { clips: Array<{ id: string; url: string; label: string }>; audio: Array<{ id: string; url: string; label: string }>; story: string };
   storage?: Storage;
@@ -230,7 +232,7 @@ function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
 }
 
 export default function PostProdWorkshopCard({
-  orderedClipIds, initialAspect, mediaInput, storage = manhuaProjectStorage, beforeSubmit, acquireWork, disabled = false,
+  vfxImages, vfxScenesInput, orderedClipIds, initialAspect, mediaInput, storage = manhuaProjectStorage, beforeSubmit, acquireWork, disabled = false,
   vfxScopeKey,
   vfxState,
   vfxEnvironments = [],
@@ -290,8 +292,8 @@ export default function PostProdWorkshopCard({
     [currentClipBlocks, focusEpisode, mediaInput]
   );
 
-  const vfxScenes = useMemo(() => focusEpisode == null ? [] : manhuaVfxSceneOptions(blocks, focusEpisode), [blocks, focusEpisode]);
-  const vfxImageOptions = useMemo(() => !vfxScopeKey || focusEpisode == null ? [] : manhuaVfxImageOptions(blocks, focusEpisode), [blocks, focusEpisode, vfxScopeKey]);
+  const vfxScenes = useMemo(() => vfxScenesInput ?? (focusEpisode == null ? [] : manhuaVfxSceneOptions(blocks, focusEpisode)), [vfxScenesInput, blocks, focusEpisode]);
+  const vfxImageOptions = useMemo(() => vfxImages ?? (!vfxScopeKey || focusEpisode == null ? [] : manhuaVfxImageOptions(blocks, focusEpisode)), [vfxImages, blocks, focusEpisode, vfxScopeKey]);
 
   /** 当前集上传件及音轨工作台的已采用配乐。 */
   const audioOptions = useMemo(() => {
@@ -542,7 +544,7 @@ export default function PostProdWorkshopCard({
   const [upscaleSubmitBusy, setUpscaleSubmitBusy] = useState(false);
   const [enhanceChoice, setEnhanceChoice] = useState<{ target: "2k" | "4k"; fps: 30 }>({ target: "2k", fps: 30 });
   const [upscaleJobs, setUpscaleJobs] = useState<TrackedUpscale[]>(() =>
-    loadTrackedUpscales(userId, localStorage)
+    loadTrackedUpscales(userId, localStorage, Boolean(mediaInput))
   );
   const upscaleJobsRef = useRef(upscaleJobs);
   upscaleJobsRef.current = upscaleJobs;
@@ -551,7 +553,7 @@ export default function PostProdWorkshopCard({
     try {
       localStorage.setItem(
         upscaleStorageKey(userId),
-        JSON.stringify(upscaleJobs.slice(0, 12))
+        JSON.stringify(mediaInput ? upscaleJobs : upscaleJobs.slice(0, 12))
       );
     } catch {
       /* localStorage 不可用时，当前页面仍可继续轮询。 */
@@ -1766,7 +1768,7 @@ export default function PostProdWorkshopCard({
 
       <div className={`mt-4 grid min-w-0 gap-4 ${activeTool === "vfx" ? "xl:grid-cols-[140px_minmax(0,1fr)]" : "xl:grid-cols-[140px_minmax(0,1.4fr)_minmax(280px,1fr)]"}`} data-postprod-workspace>
         <nav aria-label="后期任务" className="flex flex-wrap content-start gap-2 xl:flex-col">
-          {(Object.entries(POSTPROD_TOOLS) as [PostProdTool,string][]).filter(([tool]) => !mediaInput || tool !== "vfx").map(([tool,label]) => <button type="button" key={tool} aria-pressed={activeTool===tool} className={`rounded-lg border px-3 py-3 text-left text-sm ${activeTool===tool ? "border-cyan-300/50 bg-cyan-500/15 text-cyan-50" : "border-white/15 text-white/65"}`} onClick={() => {setActiveTool(tool);setPreviewResult(null);focusStudio(tool);}}>{label}</button>)}
+          {(Object.entries(POSTPROD_TOOLS) as [PostProdTool,string][]).map(([tool,label]) => <button type="button" key={tool} aria-pressed={activeTool===tool} className={`rounded-lg border px-3 py-3 text-left text-sm ${activeTool===tool ? "border-cyan-300/50 bg-cyan-500/15 text-cyan-50" : "border-white/15 text-white/65"}`} onClick={() => {setActiveTool(tool);setPreviewResult(null);focusStudio(tool);}}>{label}</button>)}
           {onOpenAdvisor && <button type="button" className="rounded-lg border border-white/20 px-3 py-3 text-left text-xs text-cyan-100" onClick={() => {focusStudio();onOpenAdvisor();}}>与顾问讨论／语音</button>}
         </nav>
         <section hidden={activeTool === "vfx"} aria-label="后期当前预览" className="min-w-0 self-start rounded-xl border border-white/15 bg-black/30 p-3 xl:sticky xl:top-4">
@@ -2061,7 +2063,7 @@ export default function PostProdWorkshopCard({
                 />
               </label>
             </div>
-            <BgmCreativeAdvisor onAdvisorControl={registerBgmControl} context={advisorContext} storageKey={`bgm-advisor:${userId}:${projectScopeKey}`} target={bgmVideoUrl && bgmAudioUrl && bgmDurationSec != null ? {
+            <BgmCreativeAdvisor storage={storage} beforeSubmit={beforeSubmit} disabled={disabled} onAdvisorControl={registerBgmControl} context={advisorContext} storageKey={`bgm-advisor:${userId}:${projectScopeKey}`} target={bgmVideoUrl && bgmAudioUrl && bgmDurationSec != null ? {
               sourceKey: JSON.stringify([projectScopeKey,clipOptions.find(option=>option.url===bgmVideoUrl)?.id,bgmAudioOptionId,bgmSourceSettingsKey,bgmEntrySec,bgmDurationSec,bgmVolume,bgmFadeIn,bgmFadeOut]),
               videoUri:bgmVideoUrl,bgmUri:bgmAudioUrl,entrySec:bgmEntrySec,durationSec:bgmDurationSec,volume:bgmVolume,fadeInSec:bgmFadeIn,fadeOutSec:bgmFadeOut,
             } : undefined} onApply={plan=>{setBgmNarrativeMix(plan.narrativeMix);setBgmDuckUnderDialogue(plan.duckUnderDialogue);toast.success("配乐建议已写入时间表，尚未执行混音");}} />

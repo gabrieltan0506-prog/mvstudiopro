@@ -37,12 +37,12 @@ it("总览新增17段、编辑排序搜索与刷新恢复；选片按项目顺�
       {
         name: "observe-existing-workshop-boundary",
         setup(b) {
-          b.onResolve({ filter: /\/PostProdWorkshopCard$/ }, () => ({
+          b.onResolve({ filter: /\/DigitalHumanPostProdWorkbench$/ }, () => ({
             path: "workshop",
             namespace: "boundary",
           }));
           b.onLoad({ filter: /.*/, namespace: "boundary" }, () => ({
-            contents: `import React from 'react';export default function Workshop(p){globalThis.workshopInput=p.mediaInput;globalThis.workshopOrder=p.orderedClipIds;return <p>既有后期边界：本用例只验证真实选片输入，不提交云端任务</p>}`,
+            contents: `import React from 'react';export function DigitalHumanPostProdWorkbench(p){globalThis.workshopInput=p.media;globalThis.workshopOrder=p.orderedClipIds;return <p>既有后期边界：本用例只验证真实选片输入，不提交云端任务</p>}`,
             loader: "tsx",
             resolveDir: process.cwd(),
           }));

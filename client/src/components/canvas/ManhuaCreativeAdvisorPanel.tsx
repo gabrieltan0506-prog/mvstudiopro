@@ -17,7 +17,7 @@ import { validateAdvisorRewriteBody, TEMPLATE_REWRITE_MARKER } from "@shared/man
 import { buildTemplateAdviceQuestion } from "@/lib/manhuaTemplateAdvice";
 import { Streamdown } from "streamdown";
 import { automaticAdvisorContext, automaticAdvisorRequestId, MANHUA_ADVISOR_AUTO_QUESTION, MANHUA_ADVISOR_PAID_CREDITS } from "@shared/manhuaAdvisorPolicy";
-import { manhuaProjectStorage as localStorage } from "@shared/manhuaProjectScope";
+import { manhuaProjectStorage } from "@shared/manhuaProjectScope";
 import { advisorWorldTargetSchema, advisorWorldCandidateSchema, parseAdvisorWorldPlan, type AdvisorWorldTarget, type AdvisorWorldCandidate } from "@shared/manhuaAdvisorWorld";
 import { advisorPrevisVideoSourceSchema, withAdvisorPrevisVideo, type AdvisorPrevisVideoSource } from "@shared/manhuaAdvisorPrevisEdit";
 import { requestsAdvisorPrevisRender } from "@/lib/manhuaAdvisorPrevisIntent";
@@ -54,6 +54,9 @@ function readableAdvice(text: string) {
 }
 
 export default function ManhuaCreativeAdvisorPanel(props: {
+  storage?: Storage;
+  beforeSubmit?: () => Promise<void>;
+  cloudBackupControls?: ReactNode;
   knowledgePanel?: ReactNode | ((prepareQuestion: (question: string) => void) => ReactNode);
   dockHost?: HTMLElement | null;
   previewHost?: HTMLElement | null;
@@ -95,6 +98,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   questionSeed?: { id: string; question: string; submit?: boolean } | null;
   onQuestionSeedApplied?: () => void;
 }) {
+  const localStorage = props.storage ?? manhuaProjectStorage;
   const { open, onClose, userId, confirmedProjectVersion, project, onLocate, stageZh, selectedTemplate, templates, onRequestTrial } = props;
   // Moving to another workbench dock must not remount the live voice session.
   const fallbackDock = useRef<HTMLDivElement>(null);
@@ -334,14 +338,18 @@ export default function ManhuaCreativeAdvisorPanel(props: {
       localStorage.setItem(`${capturedKey}:execution:${started.executionId}`,saved);
       if(localStorage.getItem(capturedKey)!==saved)throw new Error("操作开始记录未可靠保存，未执行");
       setOperationPlan(started);
+      await props.beforeSubmit?.();
+      if (!mounted.current || activeOperationSource.current !== operationSource) throw new Error("工作区已变化，未执行旧方案");
       const result = await executeProductionAction(started.plan.action, new AbortController().signal);
+      if (props.storage && (!mounted.current || activeOperationKey.current !== capturedKey)) throw new Error("原工作区已切换，请回原版本核对操作回执");
       const next = { ...started, result };
       localStorage.setItem(capturedKey, JSON.stringify(next));
       localStorage.setItem(`${capturedKey}:execution:${started.executionId}`,JSON.stringify(next));
+      await props.beforeSubmit?.();
       if(activeOperationKey.current===capturedKey)setOperationPlan(next);
     } catch (error) {
       const message=error instanceof Error ? error.message : "操作回执未确认，请查看原任务。";
-      try {const failed=JSON.stringify({...started,result:message});localStorage.setItem(capturedKey,failed);localStorage.setItem(`${capturedKey}:execution:${started.executionId}`,failed);}catch{}
+      try {if (props.storage && (!mounted.current || activeOperationKey.current !== capturedKey)) throw new Error("原工作区已切换"); const failed=JSON.stringify({...started,result:message});localStorage.setItem(capturedKey,failed);localStorage.setItem(`${capturedKey}:execution:${started.executionId}`,failed);}catch{}
       if(activeOperationKey.current===capturedKey)setOperationPlan({...started,result:message});
       toast.error(message);
     }
@@ -398,9 +406,12 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         }
         return;
       }
+      await props.beforeSubmit?.();
+      if (!mounted.current || activeOperationKey.current !== capturedOperationKey || activeOperationSource.current !== capturedOperationSource) throw new Error("工作区已变化，未提交旧咨询");
       const input = { requestId: request.requestId, question: request.question, rawQuestion: request.rawQuestion, manhuaContext: request.manhuaContext, confirmPaid: confirmPaid || undefined, confirmedCredits: confirmPaid ? confirmedCredits : undefined };
       let responseAttempt = 0;
       const res = await streamManhuaAdvisor(input, text => { if (mounted.current) setStreamText(text); }, () => { if (mounted.current) setRetrying(++responseAttempt > 1); });
+      if (props.storage && (!mounted.current || activeOperationKey.current !== capturedOperationKey)) throw new Error("原工作区已切换，请回原版本恢复同一咨询");
       const answer = String(res.answer || "").trim();
       if (!answer) throw new Error("本次没有收到有效回答，请重试原问题。");
       if (request.rawQuestion.startsWith(MANHUA_ADVISOR_OPERATION_REQUEST)) {
@@ -691,8 +702,12 @@ export default function ManhuaCreativeAdvisorPanel(props: {
     signal.throwIfAborted();
     if(!readOnly)productionLock.current=true;
     try {
-      if(capturedSource!==activeOperationSource.current)throw new Error("工作区已变化，未操作");
-      return await executeProductionActionInternal(action,signal);
+      if (!readOnly) await props.beforeSubmit?.();
+      signal.throwIfAborted();
+      if(!mounted.current || capturedSource!==activeOperationSource.current)throw new Error("工作区已变化，未操作");
+      const result = await executeProductionActionInternal(action,signal);
+      if (!readOnly) await props.beforeSubmit?.();
+      return result;
     } finally {if(!readOnly)productionLock.current=false;}
   };
 
@@ -833,7 +848,8 @@ export default function ManhuaCreativeAdvisorPanel(props: {
             </DialogContent>
           </Dialog>
         </section>}
-        {!creationMode && <section aria-label="旧稿备份" className="space-y-2 border-t border-white/10 pt-3 text-xs">
+        {props.cloudBackupControls}
+        {!creationMode && !props.cloudBackupControls && <section aria-label="旧稿备份" className="space-y-2 border-t border-white/10 pt-3 text-xs">
           <button type="button" disabled={!userId || !project} onClick={refreshBackups} className="rounded border border-white/20 px-3 py-2 disabled:opacity-40">查找当前项目旧稿备份</button>
           <p className="text-white/50">说错或顾问理解错，都可先查看旧版再还原。还原前也保留当前版本；已经支付的生成费用不会撤销。</p>
           {backups.map(backup => <div key={backup.key} className="flex items-center justify-between gap-2"><span>第{backup.episodeIndex}集 · {new Date(backup.createdAt).toLocaleString("zh-CN")}</span>{backup.downloadOnly ? <span className="text-white/60">完整工程备份 · 下载后可从导入备份恢复</span> : <button type="button" onClick={() => setBackupPreview(backup)}>查看并还原</button>}<button type="button" onClick={() => { try { downloadAdvisorBackup(backup); } catch { toast.error("备份下载失败，原记录未改动。"); } }} className="shrink-0 text-cyan-100">下载旧稿JSON</button></div>)}

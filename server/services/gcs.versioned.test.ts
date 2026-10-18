@@ -144,3 +144,33 @@ describe("downloadGcsObjectVersioned / deleteGcsObject 条件删除", () => {
     expect(body.includes(jpeg)).toBe(true);
   });
 });
+
+
+describe("云备份复制的不可变版本及断线续传", () => {
+  it("单步rewrite保留token并固定源版本、目标不存在条件", async () => {
+    vi.stubEnv("GCS_BUCKET_NAME", "test-only");
+    try {
+      stubFetch(() => ({ status: 200, body: { done: false, rewriteToken: "resume-1" } }));
+      const { copyGcsObjectVersion } = await import("./gcs");
+      const input = { sourceUri: "gs://test-only/source.mp4", sourceGeneration: "77", destinationObject: "backup/copy" };
+      expect(await copyGcsObjectVersion(input)).toEqual({ gcsUri: "gs://test-only/backup/copy", rewriteToken: "resume-1" });
+      expect(calls).toHaveLength(1);
+      const url = new URL(calls[0].url);
+      expect(url.searchParams.get("sourceGeneration")).toBe("77");
+      expect(url.searchParams.get("ifSourceGenerationMatch")).toBe("77");
+      expect(url.searchParams.get("ifGenerationMatch")).toBe("0");
+      stubFetch(() => ({ status: 200, body: { done: true, resource: { generation: "88" } } }));
+      expect((await copyGcsObjectVersion({ ...input, rewriteToken: "resume-1" })).generation).toBe("88");
+      expect(new URL(calls[0].url).searchParams.get("rewriteToken")).toBe("resume-1");
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it("跨桶复制在获取凭证和请求前拒绝", async () => {
+    vi.stubEnv("GCS_BUCKET_NAME", "test-only");
+    try {
+      stubFetch(() => ({ status: 200 }));
+      const { copyGcsObjectVersion } = await import("./gcs");
+      await expect(copyGcsObjectVersion({ sourceUri: "gs://other/source", sourceGeneration: "1", destinationObject: "copy" })).rejects.toThrow("版本无效");
+      expect(calls).toHaveLength(0);
+    } finally { vi.unstubAllEnvs(); }
+  });
+});
