@@ -162,6 +162,8 @@ const POSTPROD_TOOLS = { vfx: "漫剧特效", concat: "拼接成片", enhance: "
 type PostProdTool = keyof typeof POSTPROD_TOOLS;
 
 type PostProdWorkshopCardProps = {
+  orderedClipIds?: string[];
+  initialAspect?: "9:16" | "16:9";
   mediaInput?: { clips: Array<{ id: string; url: string; label: string }>; audio: Array<{ id: string; url: string; label: string }>; story: string };
   storage?: Storage;
   beforeSubmit?: () => Promise<void>;
@@ -228,7 +230,7 @@ function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
 }
 
 export default function PostProdWorkshopCard({
-  mediaInput, storage = manhuaProjectStorage, beforeSubmit, acquireWork, disabled = false,
+  orderedClipIds, initialAspect, mediaInput, storage = manhuaProjectStorage, beforeSubmit, acquireWork, disabled = false,
   vfxScopeKey,
   vfxState,
   vfxEnvironments = [],
@@ -513,7 +515,7 @@ export default function PostProdWorkshopCard({
   const [concatTransition, setConcatTransition] = useState<"none" | "fade" | "dissolve" | "wipeleft">(["fade", "dissolve", "wipeleft"].includes(savedEdit.transition) ? savedEdit.transition : "none");
   const [concatTransitionSec, setConcatTransitionSec] = useState(Number.isFinite(savedEdit.transitionSec) ? savedEdit.transitionSec : 0.5);
   const [concatRes, setConcatRes] = useState<"720p" | "1080p">(savedEdit.resolution === "1080p" ? "1080p" : "720p");
-  const [concatAspect, setConcatAspect] = useState<"9:16" | "16:9">(savedEdit.aspect === "16:9" ? "16:9" : "9:16");
+  const [concatAspect, setConcatAspect] = useState<"9:16" | "16:9">(savedEdit.aspect === "16:9" || (!savedEdit.aspect && initialAspect === "16:9") ? "16:9" : "9:16");
   const [bgmVideoUrl, setBgmVideoUrl] = useState<string>(savedEdit.bgmVideoUrl ?? "");
   const [bgmAudioUrl, setBgmAudioUrl] = useState<string>(savedEdit.bgmAudioUrl ?? "");
   const [bgmNarrativeMix, setBgmNarrativeMix] = useState<BgmNarrativeCue[]>(savedEdit.bgmNarrativeMix ?? []);
@@ -1785,6 +1787,11 @@ export default function PostProdWorkshopCard({
           <p className="mt-1 text-[11px] leading-4 text-white/45">
             选择 2–12 段后，在剪辑清单调整顺序和取段；统一分辨率与帧率，保留原片。
           </p>
+          {orderedClipIds && <button type="button" disabled={disabled || orderedClipIds.length < 2} onClick={() => {
+            if (orderedClipIds.length > 12) { toast.error("单次拼接最多12段，请先选择本批段落；所有段落仍保留在项目中"); return; }
+            if (orderedClipIds.some(id => !clipOptions.some(c => c.id === id))) { toast.error("选定成片已变化，请重新选择版本"); return; }
+            setSequencePlaying(false); setConcatSel([...orderedClipIds]);
+          }}>按项目顺序载入已选版本</button>}
           <div className="mt-2 max-h-36 space-y-1 overflow-auto pr-1">
             {clipOptions.length === 0 ? (
               <p className="text-[11px] text-white/35">

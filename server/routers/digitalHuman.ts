@@ -1,3 +1,5 @@
+import { digitalHumanKeyframeGenerationInputSchema } from "../../shared/digitalHumanKeyframeGeneration";
+import { queueDigitalHumanKeyframeGeneration, getDigitalHumanKeyframeGeneration } from "../services/digitalHumanKeyframeGeneration";
 import { digitalHumanOmniInputSchema, digitalHumanOmniSubmitSchema } from "../../shared/digitalHumanOmni";
 import { quoteDigitalHumanOmni, queueDigitalHumanOmni, getDigitalHumanOmni } from "../services/digitalHumanOmni";
 import { z } from "zod";
@@ -21,6 +23,8 @@ import {
 } from "../services/manhua3dTask";
 
 export const digitalHumanRouter = router({
+  createKeyframe: protectedProcedure.input(digitalHumanKeyframeGenerationInputSchema).mutation(({ ctx, input }) => queueDigitalHumanKeyframeGeneration(ctx.user.id, input)),
+  getKeyframe: protectedProcedure.input(z.object({ requestId: z.string().uuid() }).strict()).query(({ ctx, input }) => getDigitalHumanKeyframeGeneration(ctx.user.id, input.requestId)),
   inspectNarration: protectedProcedure.input(z.object({ source: z.string().min(1).max(5000) }).strict()).mutation(({ ctx, input }) => inspectDigitalHumanNarration(String(ctx.user.id), input.source)),
   quoteOmni: adminProcedure.input(digitalHumanOmniInputSchema).mutation(({ ctx, input }) => quoteDigitalHumanOmni(ctx.user.id, input)),
   startOmni: adminProcedure.input(digitalHumanOmniSubmitSchema).mutation(({ ctx, input }) => queueDigitalHumanOmni(ctx.user.id, input)),

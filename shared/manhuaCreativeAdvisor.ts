@@ -1,3 +1,5 @@
+import { digitalHumanKeyframeAdviceTargetSchema } from "./digitalHumanKeyframeAdvice";
+import { digitalHumanPublicationTargetSchema } from "./digitalHumanPublication";
 import { platformStoryboardCellsSchema } from "./platformStoryboardCells";
 import { digitalHumanDirectionSchema, digitalHumanFilmPlanSchema, digitalHumanFilmTargetSchema } from "./digitalHumanFilmDirector";
 import { creativeLearningTargetSchema } from "./creativeGenerationLibrary";
@@ -151,6 +153,8 @@ export const manhuaCreativeAdvisorContextSchema = z
     worldTarget: advisorWorldTargetSchema.optional(),
     digitalHumanSpatial: digitalHumanSpatialTargetSchema.optional(),
     digitalHumanFilm: digitalHumanFilmTargetSchema.optional(),
+    digitalHumanPublication: digitalHumanPublicationTargetSchema.optional(),
+    digitalHumanKeyframeAdvice: digitalHumanKeyframeAdviceTargetSchema.optional(),
     /** 完整数字人制作要求单独传递，不能通过分镜摘要容量截断。 */
     digitalHumanProduction: z.object({
       direction: digitalHumanDirectionSchema,
@@ -216,6 +220,11 @@ export const manhuaCreativeAdvisorContextSchema = z
     creditsZh: contextText(MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.signalChars, "积分状态").optional(),
   })
   .strict().superRefine((context, ctx) => {
+    if (context.digitalHumanKeyframeAdvice && (context.digitalHumanPublication || context.digitalHumanFilm || context.digitalHumanSpatial || context.creativeLearning || context.sunoSong || context.musicMv || context.workflowOperation || context.previsEdit || context.worldTarget || context.studio3d || context.bgmMix || context.filmReview || context.subtitleReview || context.mediaEditTarget || context.templateRecommendation || context.templateChoiceIds?.length)) ctx.addIssue({ code: "custom", path: ["digitalHumanKeyframeAdvice"], message: "白模审片补图建议不能同时执行其他工序" });
+    if (context.digitalHumanPublication) {
+      if (context.digitalHumanFilm || context.digitalHumanSpatial || context.creativeLearning || context.sunoSong || context.musicMv || context.workflowOperation || context.previsEdit || context.worldTarget || context.studio3d || context.bgmMix || context.filmReview || context.subtitleReview || context.mediaEditTarget || context.templateRecommendation || context.templateChoiceIds?.length) ctx.addIssue({ code: "custom", path: ["digitalHumanPublication"], message: "发布标题标签不能同时执行其他工序" });
+      if (context.digitalHumanPublication.script !== context.episodeBody.trim()) ctx.addIssue({ code: "custom", path: ["digitalHumanPublication"], message: "发布建议必须使用当前完整文稿" });
+    }
     if (context.digitalHumanFilm && (context.digitalHumanSpatial || context.creativeLearning || context.sunoSong || context.musicMv || context.workflowOperation || context.previsEdit || context.worldTarget || context.studio3d || context.bgmMix || context.filmReview || context.subtitleReview || context.mediaEditTarget || context.templateRecommendation)) ctx.addIssue({code:"custom",path:["digitalHumanFilm"],message:"数字人成片导演不能同时执行其他工序"});
     if(context.creativeLearning && (context.digitalHumanSpatial || context.sunoSong || context.musicMv || context.workflowOperation || context.bgmMix || context.filmReview || context.subtitleReview || context.previsEdit || context.worldTarget || context.studio3d || context.mediaEditTarget || context.templateRecommendation))ctx.addIssue({code:"custom",path:["creativeLearning"],message:"创意学习不能混入其他工序"});
     if(context.sunoSong && (context.digitalHumanSpatial || context.musicMv || context.workflowOperation || context.bgmMix || context.filmReview || context.subtitleReview || context.previsEdit || context.worldTarget || context.studio3d || context.mediaEditTarget || context.templateRecommendation))ctx.addIssue({code:"custom",path:["sunoSong"],message:"歌曲创作不能混入其他工序"});

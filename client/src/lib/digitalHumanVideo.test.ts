@@ -26,6 +26,23 @@ const row: DigitalHumanVideo = {
   extraPortraits: [],
 };
 afterEach(() => vi.unstubAllGlobals());
+it.each(["seedance-2.5", "seedance-2.0-mini", "wan-3.0"] as const)("%s真实出站保留关键图、尾帧编号和分段相对时点", async filmModel => {
+  const network = vi.fn(async () => { throw new Error("禁止真实请求"); });
+  vi.stubGlobal("fetch", network);
+  const candidate: DigitalHumanVideo = { ...row, filmModel,
+    continuityFrame: { source: "https://test.invalid/last.png", name: "前段尾帧" },
+    segment: { planRequestId: "test-plan", index: 1, startSec: 10, endSec: 22 },
+    keyframes: [{ id: "00000000-0000-4000-8000-000000000005", label: "前方点选", media: { source: "https://test.invalid/key.png", name: "关键图" }, useZh: "等身六板正面平行画面", startSec: 8, endSec: 14, adopted: true }],
+  };
+  const block = await digitalHumanVideoBlock(candidate);
+  expect(block.prompt).toContain("@图片3是上一段");
+  expect(block.prompt).toContain("@图片4是关键分镜");
+  expect(block.prompt).toContain("0.00–4.00秒");
+  const out = await previewCanvasBlockOutbound({ userId: "7", userRole: "admin", optimizeCopy: async () => { throw new Error("禁止文案生成"); } }, block);
+  expect(out.refs.imageUrls).toEqual([row.portrait.source, row.scene.source, candidate.continuityFrame!.source, candidate.keyframes![0].media.source]);
+  expect(out.body.prompt).toContain("等身六板正面平行画面");
+  expect(network).not.toHaveBeenCalled();
+});
 describe("数字人到现有Seedance执行器的真实组装（禁止网络）", () => {
   it("720p2.5保留人物、场景和完整配音，预览不付费", async () => {
     const network = vi.fn(async () => {

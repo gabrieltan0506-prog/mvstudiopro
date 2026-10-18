@@ -1,5 +1,7 @@
+import { digitalHumanOriginalPortraitSchema, digitalHumanKeyframeGenerationReceiptSchema, digitalHumanKeyframeImageDraftSchema } from "./digitalHumanKeyframeGeneration";
 import { digitalHumanDirectionSchema, digitalHumanFilmModelSchema, digitalHumanFilmStateSchema, DIGITAL_HUMAN_FILM_MODELS, digitalHumanFilmRevision, compileDigitalHumanFilm, parseDigitalHumanFilmPlan, type DigitalHumanFilmTarget } from "./digitalHumanFilmDirector";
 import { digitalHumanOmniQuoteSchema } from "./digitalHumanOmni";
+import { digitalHumanKeyframesSchema, selectDigitalHumanKeyframes } from "./digitalHumanKeyframes";
 import { digitalHumanStageAnchorSchema, digitalHumanStageCameraSchema } from "./digitalHumanSpatialAdvisor";
 import { z } from "zod";
 import { platformStoryboardCellsSchema } from "./platformStoryboardCells";
@@ -149,6 +151,7 @@ const videoReceiptSchema = z.object({
   upscale: upscaleSchema.optional(),
   upscaleHistory: z.array(upscaleSchema).optional(),
   extraPortraits: z.array(mediaSchema).default([]),
+  keyframes: digitalHumanKeyframesSchema.optional(),
   stageFrame: mediaSchema.optional(),
   previs: referenceSchema.optional(),
   prompt: z.string(),
@@ -162,12 +165,15 @@ const videoReceiptSchema = z.object({
   if (!row.engine && row.durationSec > 30) ctx.addIssue({ code: "custom", message: "导演视频单段最多30秒" });
   if (row.engine && (!row.performanceImage || row.segment)) ctx.addIssue({ code: "custom", message: "数字人口播须保留本次人物照片和完整配音" });
 });
-export const digitalHumanDraftSchema = z.object({
+export const digitalHumanSegmentDraftSchema = z.object({
   version: z.literal(1),
   id: z.string().uuid(),
   owner: z.string().min(1),
   source: digitalHumanSourceSchema.optional(),
   advisorStorage: z.record(z.string(), z.string()).default({}),
+  originalPortraits: z.array(digitalHumanOriginalPortraitSchema).max(5).default([]),
+  keyframeImageDraft: digitalHumanKeyframeImageDraftSchema.optional(),
+  keyframeGenerations: z.array(digitalHumanKeyframeGenerationReceiptSchema).max(100).default([]),
   postProdStorage: z.record(z.string(), z.string()).default({}),
   productions: z.array(digitalHumanProductionReceiptSchema).default([]),
   mix: z.object({ voice: digitalHumanVoiceSpaceSchema, tracks: z.array(digitalHumanMixTrackSchema).max(12) }).default({ voice: { pan: 0, room: "dry", volume: 1 }, tracks: [] }),
@@ -181,6 +187,7 @@ export const digitalHumanDraftSchema = z.object({
   direction: digitalHumanDirectionSchema,
   filmModel: digitalHumanFilmModelSchema.optional(),
   filmDirector: digitalHumanFilmStateSchema.optional(),
+  keyframes: digitalHumanKeyframesSchema.optional(),
   modelRequests: z
     .array(
       z.object({
@@ -253,6 +260,26 @@ export const digitalHumanDraftSchema = z.object({
   scenes: z.array(sceneReceiptSchema),
   videos: z.array(videoReceiptSchema),
 });
+/** 项目只保存非活动段快照，活动段沿用原有字段，旧稿无需搬移或丢弃。 */
+export const digitalHumanDraftSchema = digitalHumanSegmentDraftSchema.extend({
+  project: z.object({
+    id: z.string().uuid(), title: z.string().min(1).max(200),
+    segments: z.array(z.object({
+      id: z.string().uuid(), title: z.string().min(1).max(200), chapter: z.string().max(200),
+      selectedSource: z.string().optional(),
+      draft: digitalHumanSegmentDraftSchema.optional(),
+    }).strict()).min(1),
+    postProdStorage: z.record(z.string(), z.string()).default({}),
+  }).strict().optional(),
+}).superRefine((draft, ctx) => {
+  if (!draft.project) return;
+  const ids = draft.project.segments.map(s => s.id);
+  if (new Set(ids).size !== ids.length || !ids.includes(draft.id)) ctx.addIssue({ code: "custom", message: "段落身份重复或当前段不在项目中" });
+  for (const segment of draft.project.segments) {
+    if (segment.id === draft.id ? Boolean(segment.draft) : !segment.draft || segment.draft.id !== segment.id || segment.draft.owner !== draft.owner)
+      ctx.addIssue({ code: "custom", message: "段落快照或账号身份不匹配" });
+  }
+});
 export type DigitalHumanDraft = z.infer<typeof digitalHumanDraftSchema>;
 export type DigitalHumanMedia = z.infer<typeof mediaSchema>;
 export type DigitalHumanAudio = z.infer<typeof audioReceiptSchema>;
@@ -268,6 +295,8 @@ export function newDigitalHumanDraft(
     id,
     owner,
     advisorStorage: {},
+    originalPortraits: [],
+    keyframeGenerations: [],
     postProdStorage: {},
     productions: [],
     mix: { voice: { pan: 0, room: "dry", volume: 1 }, tracks: [] },
@@ -332,6 +361,7 @@ export function digitalHumanVideoFingerprint(
     aspectRatio: draft.aspectRatio,
     direction: draft.direction.trim(),
     filmModel: draft.filmModel, filmDirector: draft.filmDirector,
+    ...((draft.keyframes || []).some(frame => frame.adopted) ? { keyframes: draft.keyframes!.filter(frame => frame.adopted) } : {}),
     spatial: digitalHumanSpatialFingerprint(draft),
     stageFrame: draft.stageFrame,
     previs: draft.previs,
@@ -400,9 +430,10 @@ export function prepareDigitalHumanVideo(
       selectedPrevis.reference.durationSec > 30)
   )
     throw new Error("已采用预演的时长不能覆盖本次完整配音，请调整后重新审片");
-  if (2 + draft.actors.length + Number(Boolean(draft.stageFrame)) + Number(Boolean(part?.continuityFrame)) > profile.maxImages) throw new Error("参考图超过所选模型上限，请调整参考后再生成");
+  const keyframes = selectDigitalHumanKeyframes(draft, segment?.startSec || 0, segment?.endSec || audio.durationSec, audio.durationSec);
+  if (2 + draft.actors.length + Number(Boolean(draft.stageFrame)) + Number(Boolean(part?.continuityFrame)) + keyframes.length > profile.maxImages) throw new Error(`参考图超过所选模型${profile.maxImages}张上限，请减少本段采用的关键分镜或其他参考后再生成`);
   const directorText = draft.filmDirector ? digitalHumanAdoptedFilmPrompt(draft, segment?.startSec || 0, segment?.endSec || audio.durationSec) : "";
-  const prompt = `目标时长：${durationSec}秒。真人数字人剧情视频，${draft.aspectRatio}。\n@图片1只用于讲述者身份、五官与服装，不沿用它的背景。@图片2只用于场景和空间光线，${draft.actors.length ? `另有${draft.actors.length}位人物，依次由${draft.actors.map((a, i) => `@图片${i + 3}绑定${a.labelZh}`).join("、")}。保留每位人物身份与在场状态，只有讲述者说话` : "不增加其他人物"}。将讲述者自然置于该场景中，保持真实肤色与身体比例。\n@音频1是本次完整原声，时长${audio.durationSec.toFixed(2)}秒。沿用这段声音的音色、语速、停顿和原话。按下方表演与镜头要求区分画内对白与旁白：画内对白由讲述者对口型，旁白时人物不随音频机械张嘴；未指定旁白的部分按画内对白处理。对白段嘴部可见，不用手或特效遮嘴；动作段的旁白不改变原声。不另造台词，不换声音，不添加背景音乐或字幕。\n完整文案：${draft.script.trim()}\n表演与镜头：${draft.direction.trim()}\n原分镜上下文：${draft.source?.shots.map(s => JSON.stringify(s)).join("\n") || "以当前人物和镜头要求为准"}\n说完后自然停留至结束，不提前切断尾音。`;
+  const prompt = `目标时长：${durationSec}秒。真人数字人剧情视频，${draft.aspectRatio}。\n@图片1只用于讲述者身份、五官${keyframes.length ? "；服装以本段已确认关键分镜为准，不把原人像服装覆盖到分镜" : "与服装"}，不沿用它的背景。@图片2只用于场景和空间光线，${draft.actors.length ? `另有${draft.actors.length}位人物，依次由${draft.actors.map((a, i) => `@图片${i + 3}绑定${a.labelZh}`).join("、")}。保留每位人物身份与在场状态，只有讲述者说话` : "不增加其他人物"}。将讲述者自然置于该场景中，保持真实肤色与身体比例。\n@音频1是本次完整原声，时长${audio.durationSec.toFixed(2)}秒。沿用这段声音的音色、语速、停顿和原话。按下方表演与镜头要求区分画内对白与旁白：画内对白由讲述者对口型，旁白时人物不随音频机械张嘴；未指定旁白的部分按画内对白处理。对白段嘴部可见，不用手或特效遮嘴；动作段的旁白不改变原声。不另造台词，不换声音，不添加背景音乐或字幕。\n完整文案：${draft.script.trim()}\n表演与镜头：${draft.direction.trim()}\n原分镜上下文：${draft.source?.shots.map(s => JSON.stringify(s)).join("\n") || "以当前人物和镜头要求为准"}\n说完后自然停留至结束，不提前切断尾音。`;
   return {
     requestId,
     fingerprint: digitalHumanVideoFingerprint(draft, audio),
@@ -416,6 +447,7 @@ export function prepareDigitalHumanVideo(
     durationSec,
     aspectRatio: draft.aspectRatio,
     extraPortraits: draft.actors.map(a => a.portrait),
+    ...(keyframes.length ? { keyframes } : {}),
     stageFrame: draft.stageFrame?.media,
     previs: selectedPrevis?.reference,
     ...(segment ? { segment, continuityFrame: part?.continuityFrame,

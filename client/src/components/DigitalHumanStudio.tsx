@@ -1,5 +1,11 @@
+import { DigitalHumanProjectPanel, type DigitalHumanProjectView } from "./DigitalHumanProjectPanel";
+import { addDigitalHumanSegment, switchDigitalHumanSegment, updateDigitalHumanSegment } from "@shared/digitalHumanProject";
+import { DigitalHumanKeyframeGenerationPanel } from "./DigitalHumanKeyframeGenerationPanel";
+import { DigitalHumanKeyframeAdvicePanel } from "./DigitalHumanKeyframeAdvicePanel";
+import { DigitalHumanPublicationPanel } from "./DigitalHumanPublicationPanel";
 import { assertCanvasSpeechInstruction } from "@shared/canvasDialogueControls";
 import { DigitalHumanFilmDirectorPanel } from "./DigitalHumanFilmDirectorPanel";
+import { DigitalHumanKeyframePanel } from "./DigitalHumanKeyframePanel";
 import { digitalHumanAdoptedFilmPrompt } from "@shared/digitalHumanStudio";
 import { DIGITAL_HUMAN_DIRECTION_MAX_CHARS, DIGITAL_HUMAN_FILM_MODELS, digitalHumanFilmModelSchema } from "@shared/digitalHumanFilmDirector";
 import { DigitalHumanOmniPanel } from "./DigitalHumanOmniPanel";
@@ -161,6 +167,7 @@ function DigitalHumanWorkspace({
       return newDigitalHumanDraft(owner, crypto.randomUUID());
     }
   });
+  const [projectView, setProjectView] = useState<DigitalHumanProjectView>("overview");
   const [workspaceStep, setWorkspaceStep] = useState("assets");
   const workspace = useRef<HTMLElement>(null);
   function selectWorkspaceStep(step: string) {
@@ -254,7 +261,7 @@ function DigitalHumanWorkspace({
       active.current = false;
     };
   }, []);
-  function save(update: (current: DigitalHumanDraft) => DigitalHumanDraft) {
+  function saveProject(update: (current: DigitalHumanDraft) => DigitalHumanDraft) {
     if (!active.current) throw new Error("页面已切换，请回到原草稿查询任务");
     if (loadError) throw new Error(loadError);
     if (localStorage.getItem(digitalHumanDraftKey(owner)) !== savedRaw.current)
@@ -266,6 +273,16 @@ function DigitalHumanWorkspace({
     ref.current = next;
     setDraft(next);
     queueCloud(next);
+  }
+  function save(update: (current: DigitalHumanDraft) => DigitalHumanDraft) {
+    saveProject(current => updateDigitalHumanSegment(current, draft.id, update));
+  }
+  async function selectSegment(id?: string, chapter = "") {
+    if (busyRef.current || loadError) { setError("当前操作尚未保存，请稍后切换段落"); return; }
+    await act("正在保存并切换段落", async () => {
+      saveProject(current => id ? switchDigitalHumanSegment(current, id) : addDigitalHumanSegment(current, crypto.randomUUID(), chapter));
+      setPreview(undefined); setProjectView("segment"); setWorkspaceStep("assets");
+    });
   }
   function edit(patch: Partial<DigitalHumanDraft>) {
     try {
@@ -339,26 +356,16 @@ function DigitalHumanWorkspace({
   }
   // 迟到的回执仍写回原账号原草稿；不影响切换后页面，也不覆盖较新编辑。
   function updateVideo(id: string, patch: Partial<DigitalHumanVideo>) {
-    const stored = loadDigitalHumanDraft(
-      localStorage.getItem(digitalHumanDraftKey(owner)),
-      owner
-    );
-    if (!stored || stored.id !== ref.current.id)
-      throw new Error("原视频草稿已改变，保留任务编号后核对");
-    const next = digitalHumanDraftSchema.parse({
-      ...stored,
-      videos: stored.videos.map(v =>
-        v.requestId === id ? { ...v, ...patch } : v
-      ),
-    });
+    const stored = loadDigitalHumanDraft(localStorage.getItem(digitalHumanDraftKey(owner)), owner);
+    if (!stored) throw new Error("原视频草稿不存在，请核对任务编号");
+    const ownerId = stored.videos.some(v => v.requestId === id) ? stored.id
+      : stored.project?.segments.find(s => s.draft?.videos.some(v => v.requestId === id))?.id;
+    if (!ownerId) throw new Error("未找到原视频所属段落，请核对原任务编号");
+    const next = updateDigitalHumanSegment(stored, ownerId, d => ({ ...d, videos: d.videos.map(v => v.requestId === id ? { ...v, ...patch } : v) }));
     const raw = JSON.stringify(next);
     localStorage.setItem(digitalHumanDraftKey(owner), raw);
-    savedRaw.current = raw;
-    queueCloud(next);
-    if (active.current) {
-      ref.current = next;
-      setDraft(next);
-    }
+    savedRaw.current = raw; queueCloud(next);
+    if (active.current) { ref.current = next; setDraft(next); }
   }
   const scopeFor = (row: DigitalHumanVideo) => ({
     userId: owner,
@@ -368,6 +375,7 @@ function DigitalHumanWorkspace({
     epoch: 1,
   });
   function depsFor(row: DigitalHumanVideo): CanvasRunDeps {
+    const segmentId = ref.current.id;
     return {
       userId: owner,
       userRole: role,
@@ -378,16 +386,16 @@ function DigitalHumanWorkspace({
       assertCurrentSource: () => {
         const audio = currentDigitalHumanAudio(ref.current);
         if (
-          !active.current ||
+          !active.current || ref.current.id !== segmentId ||
           !audio || !digitalHumanVideoIsCurrent(ref.current, row)
         )
           throw new Error("输入已变化，请重新预览");
       },
       canvasIntentStorage: {
         getItem: key =>
-          localStorage.getItem(`dh:${owner}:${ref.current.id}:${key}`),
+          localStorage.getItem(`dh:${owner}:${segmentId}:${key}`),
         setItem: (key, value) =>
-          localStorage.setItem(`dh:${owner}:${ref.current.id}:${key}`, value),
+          localStorage.setItem(`dh:${owner}:${segmentId}:${key}`, value),
       },
       onCanvasIntentChanged: (_, intent) => {
         updateVideo(row.requestId, {
@@ -406,6 +414,7 @@ function DigitalHumanWorkspace({
     };
   }
   async function recover() {
+    const recoveryId = ref.current.id;
     const voiceRequestId = ref.current.cloneRequest?.requestId;
     const warnings = await recoverDigitalHumanDraft(ref.current, {
       listVoices: async () => {
@@ -432,7 +441,7 @@ function DigitalHumanWorkspace({
       omni: requestId => api.digitalHuman.getOmni.fetch({ requestId }),
       video: fetchVideoUpscaleStatus,
       enhancements: fetchWorkflowVideoEnhanceTasks,
-      save,
+      save: update => saveProject(current => updateDigitalHumanSegment(current, recoveryId, update)),
       updateVideo,
     });
     if (voiceRequestId && !ref.current.cloneRequest) setNotice("本人新声线已建立并选中，生成配音前请核对文案与费用。");
@@ -465,6 +474,12 @@ function DigitalHumanWorkspace({
   const currentAudio = currentDigitalHumanAudio(draft);
   return (
     <section ref={workspace} className="dh-studio" aria-label="数字人视频工作台">
+      <DigitalHumanProjectPanel draft={draft} view={projectView} setView={setProjectView} save={saveProject}
+        select={selectSegment} add={chapter => selectSegment(undefined, chapter)} disabled={Boolean(busy) || Boolean(loadError)}
+        beforeSubmit={flushCloud} acquireWork={acquireWork} role={role} />
+      <p role="status">{cloudStatus}</p>
+      {error && projectView !== "segment" && <p role="alert">{error}</p>}
+      <div key={draft.id} hidden={projectView !== "segment"}>
       <header className="dh-workspace-header">
         <div><p className="dh-eyebrow">MV STUDIO PRO</p><h2>数字人导演</h2></div>
         <p role="status">{cloudStatus}</p>
@@ -1105,6 +1120,9 @@ function DigitalHumanWorkspace({
           )}
         </section>
         <div className="dh-wide" hidden={workspaceStep !== "production"}><DigitalHumanFilmDirectorPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} />
+        <DigitalHumanKeyframeAdvicePanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} />
+        <DigitalHumanKeyframeGenerationPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} uploadFile={uploadFile} acquireWork={acquireWork} />
+        <DigitalHumanKeyframePanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} uploadFile={uploadFile} acquireWork={acquireWork} />
         <DigitalHumanProductionPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} uploadFile={uploadFile} acquireWork={acquireWork}
           previewVideo={async row => {
             digitalHumanAdoptedFilmPrompt(ref.current, row.segment?.startSec || 0, row.segment?.endSec);
@@ -1114,6 +1132,7 @@ function DigitalHumanWorkspace({
             setPreview({ row, block, outbound });
             setNotice("本段输入已准备，请在上方核对完整参考与费用后确认生成。");
           }} />
+        <DigitalHumanPublicationPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} />
         {cloudGeneration.current && !cloudError.current && <DigitalHumanPostProduction draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} userRole={role} />}
         </div>
         <section hidden={workspaceStep !== "production"} className="dh-card dh-wide">
@@ -1212,6 +1231,7 @@ function DigitalHumanWorkspace({
           ))}
         </section>
       </fieldset>
+      </div>
     </section>
   );
 }
