@@ -8,6 +8,7 @@ import {
 
 type AssetConfirmation = {
   title: string;
+  confirmLabel?: string;
   description: string;
   details: string;
 };
@@ -16,7 +17,7 @@ type PendingConfirmation = AssetConfirmation & {
   resolve: (accepted: boolean) => void;
 };
 
-/** 仅资产编辑类操作使用；确认前不调用生成，取消和卸载均按拒绝处理。 */
+/** 资产与配音费用确认共用；确认前不调用生成，取消和卸载均按拒绝处理。 */
 export function useManhuaAssetConfirmation(scope: unknown) {
   const [pending, setPending] = useState<PendingConfirmation | null>(null);
   const current = useRef<PendingConfirmation | null>(null);
@@ -88,7 +89,7 @@ export function useManhuaAssetConfirmation(scope: unknown) {
             onClick={() => settle(pending, true)}
             className="rounded-lg bg-violet-600 px-3 py-2"
           >
-            确认费用并生成
+            {pending.confirmLabel || "确认费用并生成"}
           </button>
         </div>
       </DialogContent>

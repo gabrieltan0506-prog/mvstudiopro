@@ -1,3 +1,4 @@
+import { useManhuaAssetConfirmation } from "./useManhuaAssetConfirmation";
 import { digitalHumanDraftReadError, digitalHumanDraftExport } from "@/lib/digitalHumanDraftRecovery";
 import { DigitalHumanBackupPanel } from "./DigitalHumanBackupPanel";
 import { adoptDigitalHumanModel, digitalHumanReusableModels } from "@shared/digitalHumanModelReuse";
@@ -170,6 +171,10 @@ function DigitalHumanWorkspace({
       return newDigitalHumanDraft(owner, crypto.randomUUID());
     }
   });
+  // 稿件、声线或演法变化使旧确认失效，不能把旧输入提交到新段落。
+  const { confirmAssetAction: confirmAudioAction, assetConfirmationDialog: audioConfirmationDialog } = useManhuaAssetConfirmation(
+    JSON.stringify([owner, draft.project?.id, draft.id, draft.script, draft.voiceId, draft.speechInstruction, draft.cloneRequest])
+  );
   const [projectView, setProjectView] = useState<DigitalHumanProjectView>("overview");
   const [workspaceStep, setWorkspaceStep] = useState("assets");
   const workspace = useRef<HTMLElement>(null);
@@ -529,6 +534,7 @@ function DigitalHumanWorkspace({
   const currentAudio = currentDigitalHumanAudio(draft);
   return (
     <section ref={workspace} className="dh-studio" aria-label="数字人视频工作台">
+      {audioConfirmationDialog}
       <DigitalHumanProjectPanel key={restoredVersion} draft={draft} view={projectView} setView={setProjectView} save={saveProject}
         select={selectSegment} add={chapter => selectSegment(undefined, chapter)} disabled={Boolean(busy) || Boolean(loadError)}
         beforeSubmit={flushCloud} acquireWork={acquireWork} role={role} />
@@ -927,9 +933,11 @@ function DigitalHumanWorkspace({
                 };
                 assertCanvasSpeechInstruction(request.voice, request.speechInstruction);
                 if (
-                  !window.confirm(
-                    `将使用当前声线生成完整文稿，按实际时长扣费。演法：${request.speechInstruction || "自然朗读"}。确认生成？`
-                  )
+                  !await confirmAudioAction({
+                    title: "确认生成配音",
+                    description: `将使用当前声线生成完整文稿，按实际时长扣费，每开始0.2秒2积分。演法：${request.speechInstruction || "自然朗读"}。`,
+                    details: request.input,
+                  })
                 )
                   return;
                 save(d => ({
@@ -1011,9 +1019,12 @@ function DigitalHumanWorkspace({
                   onClick={() =>
                     void act("恢复原配音结算", async () => {
                       if (
-                        window.confirm(
-                          "恢复原编号保存及结算，不重新生成声音。确认？"
-                        )
+                        await confirmAudioAction({
+                          title: "确认恢复原配音结算",
+                          description: "恢复原编号保存及结算，不重新生成声音。",
+                          details: a.request.input,
+                          confirmLabel: "确认恢复原结算",
+                        })
                       ) {
                         await dialogue.mutateAsync(a.request);
                         await recover();

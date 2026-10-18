@@ -25,7 +25,7 @@ beforeAll(async () => {
         const options = title => ({ title, description: '3 积分/张；原图保留。', details: '保留黑翼，恰好四条尾巴。' });
         function App({scope}) {
           const {confirmAssetAction, assetConfirmationDialog} = useManhuaAssetConfirmation(scope);
-          f.ask = title => confirmAssetAction(options(title)).then(value => { f.results.push([title, value]); return value; });
+          f.ask = (title, extra = {}) => confirmAssetAction({...options(title), ...extra}).then(value => { f.results.push([title, value]); return value; });
           return <><ManhuaAssetEditInput labelZh="墨屠·原图" disabled={false} busy={false}
             onSubmit={async text => {
               f.submitted.push(text);
@@ -115,6 +115,21 @@ async function startEdit(
 }
 
 describe("资产费用确认真实组件（离线）", () => {
+  it("配音完整正文和费用可读，恢复结算使用独立确认文案", async () => {
+    const s = await fixture();
+    try {
+      await s.page.evaluate("void fixture.ask('确认恢复原配音结算', { description: '原编号保存及结算，不重新生成声音。', details: '完整中文文稿\\n保留自然停顿。', confirmLabel: '确认恢复原结算' })");
+      await markConfirmation(s.page);
+      expect(await s.page.$eval(`${CONFIRM} button:last-child`, el => el.textContent)).toBe('确认恢复原结算');
+      expect(await s.page.$eval(CONFIRM, el => el.textContent)).toContain('不重新生成声音');
+      expect(await s.page.$eval(CONFIRM, el => el.textContent)).toContain('完整中文文稿');
+      await s.page.click(`${CONFIRM} button:first-child`);
+      await s.page.waitForFunction('fixture.results.length === 1');
+      expect(await s.page.evaluate('fixture.results')).toEqual([['确认恢复原配音结算', false]]);
+      expect(await s.page.evaluate('fixture.native')).toBe(0);
+    } finally { await s.context.close(); }
+  });
+
   it("嵌套确认实际鼠标可点、焦点可达；取消保留中文输入且零生成", async () => {
     const s = await fixture();
     try {

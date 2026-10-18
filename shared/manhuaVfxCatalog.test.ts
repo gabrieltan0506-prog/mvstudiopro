@@ -3,8 +3,8 @@ import { MANHUA_VFX_CATEGORIES, MANHUA_VFX_CATALOG, findManhuaVfxPreset, searchM
 
 describe("分类特效文字配方",()=>{
  it("20类至少5条，稳定编号与名称唯一，每条有完整机制与边界",()=>{
-  expect(MANHUA_VFX_CATEGORIES).toHaveLength(20);expect(MANHUA_VFX_CATALOG).toHaveLength(106);
-  expect(new Set(MANHUA_VFX_CATALOG.map(p=>p.id)).size).toBe(106);expect(new Set(MANHUA_VFX_CATALOG.map(p=>p.nameZh)).size).toBe(106);
+  expect(MANHUA_VFX_CATEGORIES).toHaveLength(20);expect(MANHUA_VFX_CATALOG).toHaveLength(156);
+  expect(new Set(MANHUA_VFX_CATALOG.map(p=>p.id)).size).toBe(156);expect(new Set(MANHUA_VFX_CATALOG.map(p=>p.nameZh)).size).toBe(156);
   for(const c of MANHUA_VFX_CATEGORIES)expect(MANHUA_VFX_CATALOG.filter(p=>p.categoryId===c.id).length).toBeGreaterThanOrEqual(5);
   for(const p of MANHUA_VFX_CATALOG){expect(p.id).toMatch(/^vfx-[a-z-]+$/);for(const k of ['sourceZh','trajectoryZh','contactZh','resultZh','integrationZh','boundaryZh'] as const)expect(p[k].trim(), `${p.id}.${k}`).not.toBe('');for(const label of ['来源：','轨迹：','接触：','结果：','受光：','遮挡：','残留：','适用边界：'])expect(p.descriptionZh).toContain(label);}
  });

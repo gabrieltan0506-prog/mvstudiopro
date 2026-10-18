@@ -1,0 +1,1001 @@
+{
+  "recipes": [
+    {
+      "id": "vfx-hologram-code-rain",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 1,
+          "anchor": "frame-1",
+          "caption": "图1 00:26 剧情 绿光代码瀑布中浮现片名《THE MATRIX 黑客帝国》，奠定全片赛博朋克基调与虚拟世界真相。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 270,
+          "anchor": "frame-270",
+          "caption": "图270 125:25 灯光 子弹悉数坠地，尼奥双眼所见的矩阵世界彻底化为绿色代码流瀑布。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-portal-symbol-dive",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 3,
+          "anchor": "frame-3",
+          "caption": "图3 01:45 切镜 追踪数字定格在506房间，镜头极速向前推入数字内部，完成虚实空间的视听穿透。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-organic-mouth-seal",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 48,
+          "anchor": "frame-48",
+          "caption": "图48 20:30 切镜 尼奥嘴唇融合后惊恐扑向桌面挣扎，特工冷眼旁观，绿墙审讯室的压迫构图强化无力感",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-mechanical-insect-deploy",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 50,
+          "anchor": "frame-50",
+          "caption": "图50 20:53 切镜 特写特工手指拨动发光红色机械虫，冷光下细节清晰，恐怖道具的仪式感镜头",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 52,
+          "anchor": "frame-52",
+          "caption": "图52 21:10 剧情 机械虫钻入尼奥肚脐，尼奥在恐慌中惊醒，现实与虚幻界限彻底模糊。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-fluid-liquid-metal",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 70,
+          "anchor": "frame-70",
+          "caption": "图70 31:18 剧情 镜子碎片化并顺着手指液化包裹尼奥的手臂，数字世界开始异化侵蚀。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 71,
+          "anchor": "frame-71",
+          "caption": "图71 31:24 切镜 镜面里尼奥的脸被拉扯扭曲成漏斗状，墨菲斯在旁静观，特效变形镜头视觉冲击极强",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 72,
+          "anchor": "frame-72",
+          "caption": "图72 32:03 情绪 银色液体蔓延吞噬尼奥喉咙，尼奥极度惊恐张嘴呼救，心跳监测骤停。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-illusion-mirror-funnel",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 71,
+          "anchor": "frame-71",
+          "caption": "图71 31:24 切镜 镜面里尼奥的脸被拉扯扭曲成漏斗状，墨菲斯在旁静观，特效变形镜头视觉冲击极强",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-environment-sphere-world",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 89,
+          "anchor": "frame-89",
+          "caption": "图89 40:35 切镜 电视屏幕内城市画面突然变为鱼眼畸变的全景球状影像，视觉上暗示世界的虚构扭曲…",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-portal-white-load",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 105,
+          "anchor": "frame-105",
+          "caption": "图105 49:01 灯光 画面瞬间爆白过曝完成向道场程序的转场，用纯白光替代传统切镜，视觉冲击强烈",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-impact-wall-run",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 7,
+          "anchor": "frame-7",
+          "caption": "图7 02:57 剧情 经典的“子弹时间”升空踢技，崔妮蒂悬停半空环绕踢飞警察，完成惊艳动作亮相手法。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 114,
+          "anchor": "frame-114",
+          "caption": "图114 51:22 切镜 尼欧被抛起后定格在半空翻滚，墨菲斯立于地面仰望，广角构图凸显虚拟空间反重力调度",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 246,
+          "anchor": "frame-246",
+          "caption": "图246 114:46 切镜 经典空中对峙子弹时间慢动作，尼欧与史密斯腾空射击并扑撞缠斗。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-mechanical-sentinel-tentacles",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 75,
+          "anchor": "frame-75",
+          "caption": "图75 34:02 剧情 多足机械章鱼巡警逼近，冰冷机械臂精准拔除尼奥颈后及身体各处的插管。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 130,
+          "anchor": "frame-130",
+          "caption": "图130 60:44 切镜 电子乌贼在管道外巡游，红眼发光触须摆动，切入舱内紧张神情，危机感拉满。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 259,
+          "anchor": "frame-259",
+          "caption": "图259 120:47 剧情 大量机械乌贼触手破洞而入扑向飞船，内外交困的危机全面爆发。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-mechanical-laser-cut",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 260,
+          "anchor": "frame-260",
+          "caption": "图260 121:16 剧情 电子乌贼机械章鱼激光切开飞船外壳，迫在眉睫的危机达到顶点。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 277,
+          "anchor": "frame-277",
+          "caption": "图277 126:47 切镜 红色激光切割船体外壳、火花四溅的仰角镜头，机械触手逼近的压迫感通过冷暖光对比拉满。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-destruction-column-strike",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 173,
+          "anchor": "frame-173",
+          "caption": "图173 82:18 切镜 浴室瓷砖墙被子弹打得碎屑飞溅、强光炸开，前景枪械剪影与爆点构图凌厉",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 219,
+          "anchor": "frame-219",
+          "caption": "图219 102:49 切镜 特工撞碎石柱穿行于漫天石屑中举枪追击，碎屑如雪崩般飞溅，慢动作视效奇观",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 222,
+          "anchor": "frame-222",
+          "caption": "图222 103:05 音轨 立柱石料在密集扫射中化为漫天碎屑尘暴，高频碎裂音效达到高潮。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-destruction-shaft-fire",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 226,
+          "anchor": "frame-226",
+          "caption": "图226 105:08 灯光 电梯轿厢在底部猛烈爆炸，橘红火球从绿色调电梯门缝中喷涌而出。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 238,
+          "anchor": "frame-238",
+          "caption": "图238 111:07 切镜 隔着碎裂玻璃看到爆炸火球，玻璃裂纹与火光叠加，构图极具冲击力",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-time-bullet-refraction",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 230,
+          "anchor": "frame-230",
+          "caption": "图230 106:24 剧情 特工闪避子弹并迅速反击，尼奥向后仰身展开经典子弹时间闪避。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 269,
+          "anchor": "frame-269",
+          "caption": "图269 125:01 剧情 尼奥复活站立抬手，以意念将特工们射出的所有子弹悬停在半空。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-time-projectile-hold",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 269,
+          "anchor": "frame-269",
+          "caption": "图269 125:01 剧情 尼奥复活站立抬手，以意念将特工们射出的所有子弹悬停在半空。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 270,
+          "anchor": "frame-270",
+          "caption": "图270 125:25 灯光 子弹悉数坠地，尼奥双眼所见的矩阵世界彻底化为绿色代码流瀑布。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-illusion-inner-light-fracture",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 273,
+          "anchor": "frame-273",
+          "caption": "图273 126:26 剧情 特工史密斯躯体因尼欧的力量发生形变，绿光爆裂撕碎其代码身躯。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-energy-emp-ring",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 279,
+          "anchor": "frame-279",
+          "caption": "图279 127:14 灯光 EMP冲击波以蓝色电弧环状扩散吞没机械章鱼，冷蓝电光与黑暗船体构成全片最具标志性的能量视觉。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-fluid-metal-emerge",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 285,
+          "anchor": "frame-285",
+          "caption": "图285 135:44 切镜 切入银色电影公司（Silver Pictures）标志动画：黑色液体泛起涟漪…",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-fluid-window-flood",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 30,
+          "anchor": "frame-30",
+          "caption": "图30 11:13 剧情 洪水瞬间冲破日本古堡的格栅窗灌入大厅，梦境物理层发生联动。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-time-suspended-fracture",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 60,
+          "anchor": "frame-60",
+          "caption": "图60 27:49 音轨 低沉悬疑音效渐起，周围水果摊与书摊突然发生慢动作粉碎爆炸。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 61,
+          "anchor": "frame-61",
+          "caption": "图61 28:18 切镜 咖啡馆剧烈爆炸冲击扑面而来，画面瞬间切换至阿丽雅德妮在现实中惊醒。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-destruction-paper-burst",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 60,
+          "anchor": "frame-60",
+          "caption": "图60 27:49 音轨 低沉悬疑音效渐起，周围水果摊与书摊突然发生慢动作粉碎爆炸。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-destruction-fruit-burst",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 60,
+          "anchor": "frame-60",
+          "caption": "图60 27:49 音轨 低沉悬疑音效渐起，周围水果摊与书摊突然发生慢动作粉碎爆炸。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-environment-hinged-city",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 63,
+          "anchor": "frame-63",
+          "caption": "图63 30:14 切镜 巴黎街区随着阿丽雅德妮的想象开始向上垂直翻折，重力法则被颠覆。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 64,
+          "anchor": "frame-64",
+          "caption": "图64 30:45 剧情 街道在重力颠倒中垂直折叠，柯布与艾莉阿德尼走在交汇立面上，展现梦境空间构建。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-environment-mirror-corridor",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 67,
+          "anchor": "frame-67",
+          "caption": "图67 31:45 剧情 艾莉阿德尼拉开并闭合巨大的镜面大桥，反射出无尽延伸的长廊空间。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 69,
+          "anchor": "frame-69",
+          "caption": "图69 32:25 切镜 镜子破碎瞬间切入梅尔回忆特写，柯布惊觉记忆侵入，情绪骤然紧张。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-environment-impossible-stair",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 82,
+          "anchor": "frame-82",
+          "caption": "图82 39:53 切镜 画面切到亚瑟与阿丽雅德妮在建筑学院测试潘洛斯阶梯。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 221,
+          "anchor": "frame-221",
+          "caption": "图221 104:52 切镜 饭店楼道重力突变，亚瑟通过潘洛斯阶梯逻辑反制敌人并将其摔下。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-environment-gravity-roll",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 210,
+          "anchor": "frame-210",
+          "caption": "图210 99:12 剧情 走廊失重打斗，亚瑟与保镖在墙壁和天花板翻滚搏击。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 232,
+          "anchor": "frame-232",
+          "caption": "图232 108:47 切镜 切至酒店无重力走廊，亚瑟在空中翻滚与敌方保镖缠斗。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 233,
+          "anchor": "frame-233",
+          "caption": "图233 108:56 切镜 走廊打斗中两人翻转到天花板仰拍视角，吊灯逆光勾勒人影，失重摄影的经典瞬间",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-time-zero-gravity-group",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 224,
+          "anchor": "frame-224",
+          "caption": "图224 106:33 剧情 亚瑟在零重力走廊中漂浮，准备在失重下执行集体踢醒机制。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 237,
+          "anchor": "frame-237",
+          "caption": "图237 112:38 切镜 电梯门在失重状态下缓缓打开，亚瑟与漂浮的人群出现在走廊深处，视觉奇观瞬间呈现。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 238,
+          "anchor": "frame-238",
+          "caption": "图238 112:46 切镜 失重电梯内众人身体横浮交错，行李箱悬空，与走廊失重镜头呼应的另一空间调度奇观",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 247,
+          "anchor": "frame-247",
+          "caption": "图247 115:52 切镜 重力失效的酒店电梯井中，亚瑟在失重环境下艰难攀爬钢缆布设炸药，空间混乱感达到顶峰。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-uncanny-gravity-liquid",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 183,
+          "anchor": "frame-183",
+          "caption": "图183 87:13 切镜 由车内沉睡的费舍硬切至吧台水杯特写，水面涟漪泄露失重前兆，用最小道具点破两层梦境联动。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 188,
+          "anchor": "frame-188",
+          "caption": "图188 88:48 切镜 吧台酒瓶后三个鱼缸水面同时晃动的空镜，用静物细节无声宣告失重已传导至第二层梦境。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-impact-intruding-train",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 138,
+          "anchor": "frame-138",
+          "caption": "图138 63:49 剧情 第一层梦境暴雨街头，一列巨型货运火车突兀冲上闹市街道撞碎车流。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 141,
+          "anchor": "frame-141",
+          "caption": "图141 66:38 切镜 雨中街道沥青路面突然撕裂翘起，失重前兆以路面碎裂视觉化呈现，特效调度独特",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-destruction-road-heave",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 141,
+          "anchor": "frame-141",
+          "caption": "图141 66:38 切镜 雨中街道沥青路面突然撕裂翘起，失重前兆以路面碎裂视觉化呈现，特效调度独特",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-disaster-coastal-collapse",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 246,
+          "anchor": "frame-246",
+          "caption": "图246 115:37 灯光 远景展现迷失境海岸线上坍塌崩解的摩天大厦群，狂浪冲击巨构，视觉冲击力极强。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-disaster-avalanche-front",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 222,
+          "anchor": "frame-222",
+          "caption": "图222 105:25 剧情 雪山发生大规模雪崩，多重梦境时间线面临崩塌与踢醒信号同步。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-time-layered-trigger",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 29,
+          "anchor": "frame-29",
+          "caption": "图29 11:08 切镜 上层梦境中柯布被推入注满水的浴缸，形成跨层梦境踢踏刺激。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 207,
+          "anchor": "frame-207",
+          "caption": "图207 97:51 剧情 下层雨中汽车翻滚，失重反应直接传递至酒店走廊。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 275,
+          "anchor": "frame-275",
+          "caption": "图275 130:00 切镜 雪山堡垒引爆与多层坠落的踢（Kick）精确同步，画面在爆炸与失重电梯间疾速切换。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 276,
+          "anchor": "frame-276",
+          "caption": "图276 130:57 切镜 第四层阿丽阿德涅后仰跳下高楼坠落，与第三层雪山堡垒轰然坍塌形成跨维度视听对冲。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-hologram-gesture-timeline",
+      "report": "minority",
+      "references": [
+        {
+          "frame": 8,
+          "anchor": "frame-8",
+          "caption": "图8 03:54 音轨 舒伯特《未完成交响曲》高昂奏响，安德顿戴上手套展开全息手势操控推演。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 13,
+          "anchor": "frame-13",
+          "caption": "图13 07:17 切镜 切至半透全息屏正面三人中景，联邦审查员维特沃突兀介入，权力博弈展开。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 15,
+          "anchor": "frame-15",
+          "caption": "图15 09:04 剧情 约翰转动影像滚轮识别出旋转木马残影，当场推断案发地为邻近公园。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-hologram-recorded-presence",
+      "report": "minority",
+      "references": [
+        {
+          "frame": 24,
+          "anchor": "frame-24",
+          "caption": "图24 18:40 灯光 全息投影亮起，虚幻暖色日光与现实冷蓝公寓形成极致的光影对照。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 26,
+          "anchor": "frame-26",
+          "caption": "图26 19:34 切镜 全息影像骤然断电乱码，冰冷的「档案结束」字样无情斩断虚幻温存。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 28,
+          "anchor": "frame-28",
+          "caption": "图28 20:59 剧情 全息投影画面中妻子影像突然闪烁消失，显出红色文字\"END OF FILE\"，终结回忆。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-hologram-identity-ad",
+      "report": "minority",
+      "references": [
+        {
+          "frame": 34,
+          "anchor": "frame-34",
+          "caption": "图34 25:02 剧情 维特沃被安全门阻拦被拒入内，约翰通过眼部识别独自步入深处神殿区域。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 66,
+          "anchor": "frame-66",
+          "caption": "图66 46:21 切镜 镜头切入未来商业长廊，全息广告精准识别路人并播报个性化推销。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 67,
+          "anchor": "frame-67",
+          "caption": "图67 47:04 切镜 安德顿走入地铁车厢，扫描装置启动，车厢动态报纸更新通缉头条。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 129,
+          "anchor": "frame-129",
+          "caption": "图129 89:05 切镜 全息广告识别出假眼身份，将约翰误认为山本先生，暴露行踪风险。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-environment-vertical-traffic",
+      "report": "minority",
+      "references": [
+        {
+          "frame": 29,
+          "anchor": "frame-29",
+          "caption": "图29 21:53 切镜 镜头切至未来立体城市高耸环形轨道，磁悬浮车辆纵向与横向穿行，展现世界观全貌。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 62,
+          "anchor": "frame-62",
+          "caption": "图62 44:03 切镜 垂直俯冲的高速镜头展现悬浮车沿摩天大楼外墙垂直飞驰，空间压迫感骤增。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-mechanical-jetpack-flight",
+      "report": "minority",
+      "references": [
+        {
+          "frame": 18,
+          "anchor": "frame-18",
+          "caption": "图18 10:17 剧情 飞行巡逻艇在市区广场中升空出发，展现庞大的执法力量。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 71,
+          "anchor": "frame-71",
+          "caption": "图71 50:00 切镜 安德顿借特警飞行器高空坠击，穿透防火梯并在巷道间高速穿梭缠斗。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-energy-sonic-pressure",
+      "report": "minority",
+      "references": [
+        {
+          "frame": 77,
+          "anchor": "frame-77",
+          "caption": "图77 53:29 音轨 声波枪发射爆裂声波将搜捕探员震飞，金属桶四处飞溅。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-mechanical-assembly-line",
+      "report": "minority",
+      "references": [
+        {
+          "frame": 77,
+          "anchor": "frame-77",
+          "caption": "图77 53:29 音轨 声波枪发射爆裂声波将搜捕探员震飞，金属桶四处飞溅。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 80,
+          "anchor": "frame-80",
+          "caption": "图80 55:07 剧情 安德顿藏入全自动生产线组装中的红色跑车，在喷漆车间绝尘而去。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-organic-reactive-vines",
+      "report": "minority",
+      "references": [
+        {
+          "frame": 82,
+          "anchor": "frame-82",
+          "caption": "图82 56:02 情绪 约翰被植物藤蔓缠绕摔倒，惊魂未定地捂住被毒刺划伤的颈部，神情痛苦。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-mechanical-spider-search",
+      "report": "minority",
+      "references": [
+        {
+          "frame": 109,
+          "anchor": "frame-109",
+          "caption": "图109 77:22 剧情 执法人员释放微型机械蜘蛛监视器，启动楼宇全面搜查。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 110,
+          "anchor": "frame-110",
+          "caption": "图110 77:53 剧情 成群的机械蜘蛛高速爬行，逐层扫描搜查，压迫感剧增。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 113,
+          "anchor": "frame-113",
+          "caption": "图113 79:57 切镜 机械蜘蛛爬入浴室地板通风口，与藏匿的男子近在咫尺。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 116,
+          "anchor": "frame-116",
+          "caption": "图116 81:39 剧情 机械蜘蛛攀附至约翰脸部，伸出扫描针强行撑开其眼睑进行虹膜扫描。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-memory-forecast-fragments",
+      "report": "minority",
+      "references": [
+        {
+          "frame": 2,
+          "anchor": "frame-2",
+          "caption": "图2 01:13 剧情 闪烁的潜意识幻象中男女激情拥吻，突然叠印出剪刀凶器，昭示即将发生的命案。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 45,
+          "anchor": "frame-45",
+          "caption": "图45 30:43 剧情 安德顿调出谋杀全息影像，在湖边溺亡画面前喊停，关键线索浮现。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 134,
+          "anchor": "frame-134",
+          "caption": "图134 93:21 切镜 阿加莎眼球震颤，大屏幕切入安德顿举枪杀害克洛的预知谋杀画面。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-mechanical-automated-token",
+      "report": "minority",
+      "references": [
+        {
+          "frame": 5,
+          "anchor": "frame-5",
+          "caption": "图5 02:04 剧情 机械核心自动雕刻出红色木球，上面刻有受害人姓名，犯罪预防机制启动。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-mechanical-spoon-bend",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 148,
+          "anchor": "frame-148",
+          "caption": "图148 71:12 剧情 小僧侣用意念让金属勺弯曲，勺面清晰映出尼欧观察的面容，构成超现实意象。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 150,
+          "anchor": "frame-150",
+          "caption": "图150 71:57 情绪 尼欧凝视勺子，勺面反光产生扭曲，尼欧若有所思，认知产生裂隙与震动。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-illusion-identity-replacement",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 124,
+          "anchor": "frame-124",
+          "caption": "图124 57:46 剧情 特工史密斯拔枪对准尼欧，墨菲斯喊出定格命令。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-destruction-glass-wave",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 238,
+          "anchor": "frame-238",
+          "caption": "图238 111:07 切镜 隔着碎裂玻璃看到爆炸火球，玻璃裂纹与火光叠加，构图极具冲击力",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-impact-powered-ascent",
+      "report": "matrix",
+      "references": [
+        {
+          "frame": 282,
+          "anchor": "frame-282",
+          "caption": "图282 127:52 剧情 俯瞰都市大远景中，尼欧如超人般冲天而起，影片迎来终极高潮。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-destruction-cup-fracture",
+      "report": "inception",
+      "references": [
+        {
+          "frame": 167,
+          "anchor": "frame-167",
+          "caption": "图167 79:01 切镜 皮鞋踏碎香槟杯，陀螺倒在碎玻璃中，预示梅尔已走向自毁。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    },
+    {
+      "id": "vfx-hologram-projection-breakup",
+      "report": "minority",
+      "references": [
+        {
+          "frame": 26,
+          "anchor": "frame-26",
+          "caption": "图26 19:34 切镜 全息影像骤然断电乱码，冰冷的「档案结束」字样无情斩断虚幻温存。",
+          "verification": "report-text; motion-unverified"
+        },
+        {
+          "frame": 28,
+          "anchor": "frame-28",
+          "caption": "图28 20:59 剧情 全息投影画面中妻子影像突然闪烁消失，显出红色文字\"END OF FILE\"，终结回忆。",
+          "verification": "report-text; motion-unverified"
+        }
+      ]
+    }
+  ],
+  "sources": {
+    "matrix": {
+      "file": "matrix.html",
+      "sha256": "7b1aac150e379ceced3ec2a16d8ceedf45cb4ad0680a8965c8ea7cf43dc35945",
+      "frameCards": 286,
+      "publishedShotRows": 227,
+      "evidenceBoundary": "报告文字为二手分析；静帧不能证明连续运动或原片制作方法；已发现截图与说明错位，未以其宣称渲染验收。"
+    },
+    "inception": {
+      "file": "inception.html",
+      "sha256": "5dff243216b380435cd346e27c9a3579b788fabcd79c8ee36c75bed1cd522c32",
+      "frameCards": 298,
+      "publishedShotRows": 274,
+      "evidenceBoundary": "报告文字为二手分析；静帧不能证明连续运动或原片制作方法；已发现截图与说明错位，未以其宣称渲染验收。"
+    },
+    "minority": {
+      "file": "minority report.html",
+      "sha256": "1494ac5fa14af9040cb5e5df6f2f26e71ac955ceed91276ddd02b3305820b3bb",
+      "frameCards": 210,
+      "publishedShotRows": 250,
+      "evidenceBoundary": "报告文字为二手分析；静帧不能证明连续运动或原片制作方法；已发现截图与说明错位，未以其宣称渲染验收。"
+    }
+  },
+  "coverageNote": "覆盖三份报告中可辨识的特殊效果机制；同类合并，不把每次出现算成新配方。不能据报告宣称全片每一特效或未展示镜头均已核验。通用天气、水花、撞击、闪电、火花、慢速和表面扫描复用旧库。",
+  "existingMappings": [
+    {
+      "id": "vfx-time-frozen-camera",
+      "reports": [
+        "matrix"
+      ],
+      "application": "腾空瞬间环绕；主体时间与摄影机时间分开"
+    },
+    {
+      "id": "vfx-time-speed-streak",
+      "reports": [
+        "matrix"
+      ],
+      "application": "高速闪避的过去位置残影"
+    },
+    {
+      "id": "vfx-hologram-surface-scan",
+      "reports": [
+        "minority"
+      ],
+      "application": "眼部或设备扫描；结果由剧情提供"
+    },
+    {
+      "id": "vfx-hologram-signal-interference",
+      "reports": [
+        "minority"
+      ],
+      "application": "设备信号短暂失真；与记录结束配方区分"
+    },
+    {
+      "id": "vfx-weather-rain-front",
+      "reports": [
+        "matrix",
+        "inception",
+        "minority"
+      ],
+      "application": "雨线、湿痕、地面积水连续"
+    },
+    {
+      "id": "vfx-weather-lightning-flash",
+      "reports": [
+        "matrix"
+      ],
+      "application": "车窗闪电瞬时照明"
+    },
+    {
+      "id": "vfx-fluid-underwater-bubbles",
+      "reports": [
+        "inception",
+        "minority"
+      ],
+      "application": "落水气泡与折射遮挡"
+    },
+    {
+      "id": "vfx-impact-glass-crack",
+      "reports": [
+        "matrix",
+        "minority"
+      ],
+      "application": "玻璃受击裂纹，先区分夹层与普通玻璃"
+    },
+    {
+      "id": "vfx-impact-side-scrape",
+      "reports": [
+        "matrix",
+        "minority"
+      ],
+      "application": "金属擦碰火花与接触受力"
+    },
+    {
+      "id": "vfx-destruction-debris-fall",
+      "reports": [
+        "inception"
+      ],
+      "application": "城堡顶棚落屑与崩塌预兆"
+    },
+    {
+      "id": "vfx-destruction-masonry-collapse",
+      "reports": [
+        "matrix",
+        "inception"
+      ],
+      "application": "墙体失去支撑后坍塌"
+    },
+    {
+      "id": "vfx-memory-object-match",
+      "reports": [
+        "inception",
+        "minority"
+      ],
+      "application": "图腾、腕表等物件引发主观记忆转场"
+    }
+  ],
+  "visualChecks": {
+    "viewedFrameCount": 78,
+    "note": "已查看8张证据拼图，仅审图不等于逐帧或常速审片。",
+    "mismatches": [
+      "matrix图7未显示腾空冻结；图226为井道人物而非爆炸；图270为人物脸部而非代码世界；图285偏黑。",
+      "inception图138为飞机座位、图210为公路车流、图221/224为雪地人物、图275为病床，不能证明各自说明的特效。",
+      "minority图109/110为屏幕，图116为浴缸旁而非完整眼部扫描。"
+    ],
+    "methodStatus": "制作方法均为本轮推导建议，未新增渲染器或执行模型生成。"
+  }
+}

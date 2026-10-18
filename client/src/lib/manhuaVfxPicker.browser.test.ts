@@ -29,11 +29,19 @@ it('特效翻页和筛选保留编辑稿，只有采用按钮才提交', async (
     const selected = await page.$eval('textarea', (el: HTMLTextAreaElement) => el.value);
     expect(selected.length).toBeGreaterThan(30);
     expect(await page.$$eval('[aria-pressed="true"]', nodes => nodes.length)).toBe(1);
+    await page.type('[aria-label="搜索特效"]', '手势拆分');
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="特效候选"] button').length === 1);
+    await page.click('[aria-label="特效候选"] button');
+    const distilled = await page.$eval('textarea', (el: HTMLTextAreaElement) => el.value);
+    expect(distilled).toContain('先跟踪手掌和视线');
+    expect(distilled).toContain('制作建议：');
+    await page.click('[aria-label="搜索特效"]', {clickCount: 3});
+    await page.keyboard.press('Backspace');
     await page.type('[aria-label="搜索特效"]', '不存在的效果XYZ');
     expect(await page.$$eval('[aria-label="特效候选"] button', nodes => nodes.length)).toBe(0);
-    expect(await page.$eval('textarea', (el: HTMLTextAreaElement) => el.value)).toBe(selected);
+    expect(await page.$eval('textarea', (el: HTMLTextAreaElement) => el.value)).toBe(distilled);
     expect(await page.evaluate(() => (window as any).applied)).toEqual([]);
     await page.evaluate(() => Array.from(document.querySelectorAll('button')).find(b => b.textContent === '采用到当前镜头')!.click());
-    expect(await page.evaluate(() => (window as any).applied)).toEqual([selected]);
+    expect(await page.evaluate(() => (window as any).applied)).toEqual([distilled]);
   } finally { await browser.close(); }
 }, 30_000);
