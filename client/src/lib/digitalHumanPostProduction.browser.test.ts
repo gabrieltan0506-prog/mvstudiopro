@@ -10,9 +10,9 @@ it("数字人共用剪辑支持选片、排序、取段、保存恢复和云失�
     import Workshop from './client/src/components/canvas/PostProdWorkshopCard';
     globalThis.calls=[];globalThis.barriers=0;globalThis.failSave=false;globalThis.remount=()=>{};
     const map=new Map();const store={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v),removeItem:k=>map.delete(k),clear:()=>map.clear(),key:i=>[...map.keys()][i],get length(){return map.size;}};
-    map.set("postProd.jobs.v2.u7", JSON.stringify([{jobId:"old-edit",action:"concat",label:"已剪辑成片",scopeKey:"digital-human:test",status:"succeeded",createdAt:1,output:{url:"https://example.test/edited.mp4",gcsUri:"gs://test-only/edited.mp4"}}]));
+    map.set("postProd.jobs.v2.u7", JSON.stringify([{jobId:"old-edit",action:"concat",label:"已剪辑成片",scopeKey:"digital-human:project:test",status:"succeeded",createdAt:1,output:{url:"https://example.test/edited.mp4",gcsUri:"gs://test-only/edited.mp4"}}]));
     globalThis.saved=map;const media={clips:[1,2,3].map(i=>({id:'clip'+i,url:'gs://test-only/clip'+i+'.mp4',label:'口播片段'+i})),audio:[],story:'完整口播正文'};
-    function App(){const[version,setVersion]=React.useState(0);globalThis.remount=()=>setVersion(v=>v+1);return <Workshop key={version} blocks={[]} userId='7' projectScopeKey='digital-human:test' vfxScopeKey='digital-human:test' mediaInput={media} storage={store} beforeSubmit={async()=>{globalThis.barriers++;if(globalThis.failSave)throw new Error('云保存冲突');}}/>;}
+    function App(){const[version,setVersion]=React.useState(0);globalThis.remount=()=>setVersion(v=>v+1);return <Workshop key={version} orderedClipIds={['clip1','clip2']} initialAspect='16:9' blocks={[]} userId='7' projectScopeKey='digital-human:project:test' vfxScopeKey='digital-human:project:test' mediaInput={media} storage={store} beforeSubmit={async()=>{globalThis.barriers++;if(globalThis.failSave)throw new Error('云保存冲突');}}/>;}
     createRoot(document.getElementById('root')).render(<App/>);
   ` }, bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic", alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
     plugins: [{ name: "offline-trpc", setup(b) {
@@ -33,7 +33,7 @@ it("数字人共用剪辑支持选片、排序、取段、保存恢复和云失�
     await page.goto("http://localhost/"); await page.setContent('<div id="root"></div>'); await page.addScriptTag({ content: bundle.outputFiles[0].text });
     await page.waitForSelector('[aria-label="剪辑时间线"]');
     const click = (text: string, selector = "button") => page.$$eval(selector, (nodes, text) => { const node = nodes.find(n => n.textContent?.trim() === text) as HTMLButtonElement | undefined; if (!node) throw new Error(`未找到${text}`); node.click(); }, text);
-    await click("口播片段1", "#manhua-post-concat button"); await click("口播片段2", "#manhua-post-concat button");
+    await click("按项目顺序载入已选版本", "#manhua-post-concat button");
     await page.waitForFunction(() => document.querySelectorAll('[aria-label="剪辑时间线"] article').length === 2);
     await click("后移", '[aria-label="剪辑时间线"] article:first-of-type button');
     await page.waitForFunction(() => document.querySelector('[aria-label="剪辑时间线"] article')?.textContent?.includes("口播片段2"));
@@ -42,7 +42,8 @@ it("数字人共用剪辑支持选片、排序、取段、保存恢复和云失�
     await click("拼接 2 段");
     await page.waitForFunction(() => (globalThis as any).calls.length === 1);
     const queued = await page.evaluate(() => (globalThis as any).calls[0]);
-    expect(queued.action).toBe("concat"); expect(queued.scopeKey).toBe("digital-human:test");
+    expect(queued.params.width).toBe(1280); expect(queued.params.height).toBe(720);
+    expect(queued.action).toBe("concat"); expect(queued.scopeKey).toBe("digital-human:project:test");
     expect(queued.params.clips).toEqual(["gs://test-only/clip2.mp4", "gs://test-only/clip1.mp4"]);
     expect(queued.params.trims).toEqual([{startSec:1,endSec:4},{startSec:0}]);
     expect(await page.evaluate(() => (globalThis as any).barriers)).toBe(2);

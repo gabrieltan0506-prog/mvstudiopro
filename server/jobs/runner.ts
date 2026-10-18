@@ -1777,6 +1777,9 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
 
   /** Canvas 关键静帧 / 封面：与 sync op=canvasGptImage2 同核，供短入队+轮询 */
   if (input.action === "canvas_gpt_image2") {
+    const digitalHumanKeyframePolicy = params.digitalHumanKeyframeGeneration
+      ? (await import("../services/digitalHumanKeyframeGeneration.js")).assertDigitalHumanKeyframeGenerationJob(Number(jobUserId), jobId || "", input)
+      : null;
     const digitalHumanScenePolicy = params.digitalHumanScene
       ? (await import("../services/digitalHumanScene.js")).assertDigitalHumanSceneJob(Number(jobUserId), jobId || "", input)
       : null;
@@ -1792,6 +1795,10 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
           .filter(Boolean)
           .slice(0, 16)
       : [];
+    if (digitalHumanKeyframePolicy) {
+      const { signGsUriV4ReadUrl } = await import("../services/gcs.js");
+      for (let i = 0; i < referenceImageUrls.length; i++) referenceImageUrls[i] = await signGsUriV4ReadUrl(referenceImageUrls[i], 3600);
+    }
     const maskUrl = typeof params.maskUrl === "string" ? params.maskUrl.trim() : "";
     const providerRaw = String(params.providerOverride || "")
       .trim()
@@ -1942,6 +1949,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
         requireImageVariant: params.requireImageVariant === true,
         qualityOverride: assetStandardizeQuality || undefined,
         ...(digitalHumanScenePolicy || {}),
+        ...(digitalHumanKeyframePolicy || {}),
         captureError,
       });
     } catch (err) {

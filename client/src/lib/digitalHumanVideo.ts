@@ -26,7 +26,13 @@ export async function digitalHumanVideoBlock(
     ...row.extraPortraits,
     ...(row.stageFrame ? [row.stageFrame] : []),
     ...(row.continuityFrame ? [row.continuityFrame] : []),
+    ...(row.keyframes || []).map(frame => frame.media),
   ];
+  if (images.length > DIGITAL_HUMAN_FILM_MODELS[row.filmModel || "seedance-2.5"].maxImages) throw new Error("本段参考图超过所选模型容量，未截断或提交");
+  const continuityIndex = 3 + row.extraPortraits.length + Number(Boolean(row.stageFrame));
+  const firstKeyframeIndex = continuityIndex + Number(Boolean(row.continuityFrame));
+  const clipStart = row.segment?.startSec || 0;
+  const clipEnd = row.segment?.endSec || row.durationSec;
   const uploadedAssets: CanvasUploadedAsset[] = [];
   for (let index = 0; index < images.length; index++) {
     const media = images[index];
@@ -73,7 +79,8 @@ export async function digitalHumanVideoBlock(
       (row.stageFrame
         ? `\n@图片${3 + row.extraPortraits.length}是3D场景与人物的构图参考，只沿用站位、光线和机位，人物外观仍按各自身份图。`
         : "") +
-      (row.continuityFrame ? `\n@图片${images.length}是上一段在配音结束处的真实尾帧，开场承接其人物站位、表情、手势和摄影机轴线，人物身份仍以各自身份图为准。` : "") +
+      (row.continuityFrame ? `\n@图片${continuityIndex}是上一段在配音结束处的真实尾帧，开场承接其人物站位、表情、手势和摄影机轴线，人物身份仍以各自身份图为准。` : "") +
+      (row.keyframes || []).map((frame, i) => `\n@图片${firstKeyframeIndex + i}是关键分镜“${frame.label}”，仅用于本段${Math.max(0, (frame.startSec ?? clipStart) - clipStart).toFixed(2)}–${(Math.min(clipEnd, frame.endSec ?? clipEnd) - clipStart).toFixed(2)}秒：${frame.useZh}。沿用图中已确认的服装、构图与画面状态，人物身份仍按身份图；图片不是新增人物，也不能代替已审预演的连续动作。`).join("") +
       (row.previs
         ? `\n@视频1是已审预演，只沿用人物走位、动作节奏和机位切换；灰色白模外观不进入成片，身份按图片，声音只按@音频1。${row.previs.motionGuideZh || ""}`
         : ""),
