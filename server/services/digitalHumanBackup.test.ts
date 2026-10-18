@@ -288,3 +288,26 @@ it("旧pending继续备份可排除异项目404，保留原稿历史；本段404
   expect((await g.service.advance(7, required.id)).status).toBe("pending");
   await expect(g.service.restore(7, required.id, "9")).rejects.toThrow("云备份尚未完整");
 });
+
+it("已核归属的三维HTTPS别名完整备份并恢复，签名变化不阻断且不放行相似外部对象", async () => {
+  const f = fixture();
+  const uri = "gs://test-only/manhua-3d/u7/model.glb";
+  const source = "https://storage.googleapis.com/test-only/manhua-3d/u7/model.glb?X-Goog-Signature=test-only-expired";
+  f.put("manhua-3d/u7/model.glb", Buffer.from("真实复制边界的虚构模型内容"));
+  f.current().draft.scene = { source, name: "已有模型" };
+  vi.mocked(f.deps.resources).mockResolvedValue([{ kind: "model", taskId: "m3d_own", view: { glbGcsUri: uri } }]);
+  const item = await f.service.create(7, { expectedGeneration: "9", requestId: "owned-https" });
+  expect((await f.service.advance(7, item.id)).status).toBe("complete");
+  const b = (await f.service.read(7, item.id)).backup;
+  expect(b.assets.find(a => a.source === source)?.resolvedSource).toBe(uri);
+  let restored = await f.service.restore(7, item.id, "9");
+  for (let i = 0; i < 10 && restored.status !== "restored"; i++) restored = await f.service.restore(7, item.id, "9");
+  expect(restored.status).toBe("restored");
+  expect(f.current().draft.scene?.source).toBe(source);
+  const g = fixture();
+  g.current().draft.scene = { source: source.replace("model.glb?", "model.glb.other?"), name: "相似地址" };
+  vi.mocked(g.deps.resources).mockResolvedValue([{ kind: "model", taskId: "m3d_own", view: { glbGcsUri: uri } }]);
+  const blocked = await g.service.create(7, { expectedGeneration: "9", requestId: "other-object" });
+  expect((await g.service.advance(7, blocked.id)).status).toBe("pending");
+  expect((await g.service.read(7, blocked.id)).backup.assets.some(a => a.error === "非本人素材")).toBe(true);
+});

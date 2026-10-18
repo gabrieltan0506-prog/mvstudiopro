@@ -250,7 +250,7 @@ function DigitalHumanWorkspace({
   }
   async function restoreCloudBackup(id: string) {
     if (busyRef.current) throw new Error("当前操作尚未结束，请稍后回填");
-    busyRef.current = true; setBusy("正在回填云端版本");
+    busyRef.current = true; setBusy("正在回填云端版本"); setError("");
     try {
       await flushCloud();
       const expectedGeneration = cloudGeneration.current!;
@@ -551,7 +551,7 @@ function DigitalHumanWorkspace({
           if (loadError) return;
           if (!window.confirm("读取云端稿件前会先将本机稿件和素材备份到云端。确认读取？")) return;
           if (busyRef.current) return;
-          busyRef.current = true; setBusy("读取云端稿件");
+          busyRef.current = true; setBusy("读取云端稿件"); setError("");
           const localBefore = savedRaw.current;
           try {
             await cloudQueue.current;
@@ -570,7 +570,7 @@ function DigitalHumanWorkspace({
           if (loadError) return;
           if (!window.confirm("将当前本机制作稿保存为云端版本？请先核对另一设备的修改。")) return;
           if (busyRef.current) return;
-          busyRef.current = true; setBusy("保存本机稿件");
+          busyRef.current = true; setBusy("保存本机稿件"); setError("");
           try {
             await cloudQueue.current; const remote = await api.digitalHuman.getDraft.fetch();
             if (!active.current || localStorage.getItem(digitalHumanDraftKey(owner)) !== savedRaw.current) throw new Error("本机稿件已在另一页面变化，未覆盖云端");
