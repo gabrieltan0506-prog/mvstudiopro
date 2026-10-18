@@ -1,4 +1,5 @@
 import { DigitalHumanBackupPanel } from "./DigitalHumanBackupPanel";
+import { adoptDigitalHumanModel, digitalHumanReusableModels } from "@shared/digitalHumanModelReuse";
 import { DigitalHumanProjectPanel, type DigitalHumanProjectView } from "./DigitalHumanProjectPanel";
 import { addDigitalHumanSegment, switchDigitalHumanSegment, updateDigitalHumanSegment } from "@shared/digitalHumanProject";
 import { DigitalHumanKeyframeGenerationPanel } from "./DigitalHumanKeyframeGenerationPanel";
@@ -614,6 +615,22 @@ function DigitalHumanWorkspace({
       >
         <section id="dh-assets" hidden={workspaceStep !== "assets"} className="dh-card">
           <h3>人物或角色照片</h3>
+          <label>
+            复用本项目已有造型（不重新生成）
+            <select value="" onChange={e => {
+              const selected = digitalHumanReusableModels(ref.current).find(row => row.model.taskId === e.target.value);
+              if (!selected) return;
+              void act("查询并采用已有造型", async () => {
+                const result = await api.digitalHuman.getModel.fetch({ taskId: selected.model.taskId });
+                if (!result) throw new Error("未找到本人原模型，未采用");
+                save(d => adoptDigitalHumanModel(d, selected.model, { ...result, updatedAt: Date.parse(result.updatedAt) }));
+                setPreview(undefined);
+              });
+            }}>
+              <option value="">选择已生成的人物造型</option>
+              {digitalHumanReusableModels(draft).map(row => <option key={row.model.taskId} value={row.model.taskId}>{row.label}</option>)}
+            </select>
+          </label>
           <label>
             人物或角色照片
             <input

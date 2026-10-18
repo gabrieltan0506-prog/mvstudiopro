@@ -14,7 +14,7 @@ it("配乐咨询原编号、候选与采用计划随数字人存储恢复，保�
  globalThis.data={};globalThis.calls=[];globalThis.fail=true;globalThis.delay=false;globalThis.applied=null;
  const target={sourceKey:'original',videoUri:'gs://test-only/v.mp4',bgmUri:'gs://test-only/m.mp3',entrySec:0,durationSec:10,volume:.6,fadeInSec:0,fadeOutSec:0};
  function App(){const[data,setData]=React.useState(globalThis.data),[key,setKey]=React.useState(0),[scope,setScope]=React.useState('first');const storage=useDigitalHumanStorage(data,fn=>{globalThis.data=fn(globalThis.data);setData(globalThis.data)});globalThis.remount=()=>setKey(k=>k+1);globalThis.switch=()=>{globalThis.data={};setData({});setScope('second');setKey(k=>k+1)};
- return <BgmCreativeAdvisor key={key} context={{projectId:'00000000-0000-4000-8000-000000000001'}} target={target} storageKey={scope} storage={storage} beforeSubmit={async()=>{if(globalThis.fail)throw Error('云端保存失败')}} onApply={p=>{globalThis.applied=p;storage.setItem('adopted',JSON.stringify(p))}}/>;}
+ return <div data-testid="active-bgm-scope" data-scope={scope}><BgmCreativeAdvisor key={key} context={{projectId:'00000000-0000-4000-8000-000000000001'}} target={target} storageKey={scope} storage={storage} beforeSubmit={async()=>{if(globalThis.fail)throw Error('云端保存失败')}} onApply={p=>{globalThis.applied=p;storage.setItem('adopted',JSON.stringify(p))}}/></div>;}
  createRoot(document.getElementById('root')).render(<App/>);
  `,
     },
@@ -110,6 +110,8 @@ it("配乐咨询原编号、候选与采用计划随数字人存储恢复，保�
     await click("让创作顾问判断配乐");
     await page.waitForFunction(() => Boolean((globalThis as any).finish));
     await page.evaluate(() => (globalThis as any).switch());
+    // 等待真实新段提交到DOM，再释放旧请求；不把调度更新当成已切段。
+    await page.waitForSelector('[data-testid="active-bgm-scope"][data-scope="second"]');
     await page.evaluate(() => (globalThis as any).finish());
     await page.waitForFunction(() =>
       Boolean(document.querySelector('[aria-label="创作顾问配乐判断"]'))

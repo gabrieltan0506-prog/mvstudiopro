@@ -566,15 +566,15 @@ export function DigitalHumanSpatialStudio({
       </div>
       {selectedRig?.model && (
         <ManhuaAutoRigEditor
-          assetRef={selectedRig.id}
+          assetRef={selectedRig.model.assetRef || selectedRig.id}
           label={selectedRig.labelZh}
           sourceJobId={selectedRig.model.taskId}
           sourceVersion={selectedRig.portrait.source}
           disabled={disabled}
           onClose={() => setRig(undefined)}
           onApply={(model, expected) => {
-            const c = characters.find(c => c.id === model.assetRef);
-            if (c?.model?.taskId !== expected) return false;
+            const c = characters.find(c => c.id === selectedRig.id);
+            if (c?.model?.taskId !== expected || model.assetRef !== (c.model.assetRef || c.id)) return false;
             setModel(c.id, {
               ...model,
               updatedAt: Date.parse(model.updatedAt),
@@ -864,7 +864,7 @@ export function DigitalHumanSpatialStudio({
               model:
                 c.model?.status === "succeeded" &&
                 c.model.sourceVersion === c.portrait.source
-                  ? { taskId: c.model.taskId, assetRef: c.id }
+                  ? { taskId: c.model.taskId, assetRef: c.model.assetRef || c.id }
                   : undefined,
             }))}
             disabled={disabled}

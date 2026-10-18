@@ -146,7 +146,7 @@ export function DigitalHumanSpatialAdvisorPanel(props: {
       <button type="button" disabled={props.disabled || busy || !props.world || candidate.plan.unresolvedZh.length > 0} onClick={() => void trial()}>在真实场景试看（免费）</button>
       {currentPreview && view && props.world && <>
         <ManhuaWorldStagePreview key={currentPreview.candidateKey} world={props.world} sceneLabelZh="场景方案试看" lockCamera cameraOverride={view.stageCamera} onReadyChange={onReady}
-          characters={digitalHumanSpatialActors(view).map(a => ({ id: a.id, assetRef: a.id, labelZh: a.labelZh, glbUrl: a.model?.glbUrl || "", stagePoint: [a.x, a.y], yawDeg: a.yaw }))} />
+          characters={digitalHumanSpatialActors(view).map(a => ({ id: a.id, assetRef: a.model?.assetRef || a.id, labelZh: a.labelZh, glbUrl: a.model?.glbUrl || "", stagePoint: [a.x, a.y], yawDeg: a.yaw }))} />
         <p>确认画面中的站位、朝向和机位。采用后需重新导出构图图，并按新站位重新建立或调整白模。</p>
         <button type="button" disabled={props.disabled || busy || !ready} onClick={() => void adopt()}>确认采用并保存</button>
         <button type="button" disabled={busy} onClick={() => { setPreview(undefined); setReady(false); }}>取消试看，保留原稿</button>
