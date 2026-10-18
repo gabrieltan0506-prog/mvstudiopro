@@ -1,3 +1,4 @@
+import { gsUriFromSignedGcsUrl } from "../../shared/manhuaMultiview";
 import { createHash } from "node:crypto";
 import {
   DIGITAL_HUMAN_BACKUP_INTERVAL_MS,
@@ -362,10 +363,12 @@ export function createDigitalHumanBackupService(
         count++;
         try {
           if (!asset.resolvedSource) {
+            // 短效HTTPS读链可能已从权威回执移除；只接受与本人任务资产精确对应的GCS对象。
+            const canonical = gsUriFromSignedGcsUrl(asset.source) || asset.source;
             const resolved =
               aliases.get(asset.source) ||
-              (trusted.has(asset.source)
-                ? asset.source
+              (trusted.has(canonical)
+                ? canonical
                 : await owned(asset.source));
             if (!resolved.startsWith(`gs://${deps.bucket()}/`))
               throw new Error(
