@@ -76,7 +76,7 @@ function metadata(raw: Buffer, spec: ManhuaPrevisSpec, sceneSha256: string) {
   )
     throw Error("分层输出配置或清单体积无效");
   const meta = layerMetaSchema.parse(JSON.parse(raw.toString("utf8")));
-  const frames = spec.durationSec * 24,
+  const frames = Math.round(spec.durationSec * 24),
     [width, height] = spec.aspect === "16:9" ? [960, 540] : [540, 960];
   if (
     meta.frameCount !== frames ||

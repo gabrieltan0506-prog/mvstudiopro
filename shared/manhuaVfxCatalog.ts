@@ -1,3 +1,5 @@
+import { MANHUA_VFX_DISTILLED } from "./manhuaVfxDistilled";
+
 /** 特效导演文字配方。只描述镜头机制，不代表白模或任一生成引擎已实现对应效果。 */
 export const MANHUA_VFX_CATEGORIES = [
   { id: "energy", nameZh: "仙侠与能量" }, { id: "impact", nameZh: "现实碰撞与载具" },
@@ -19,7 +21,7 @@ export type ManhuaVfxCategoryId = (typeof MANHUA_VFX_CATEGORIES)[number]["id"];
 export type ManhuaVfxPreset = {
   id: string; categoryId: ManhuaVfxCategoryId; nameZh: string; descriptionZh: string;
   sourceZh: string; trajectoryZh: string; contactZh: string; resultZh: string;
-  integrationZh: string; boundaryZh: string;
+  integrationZh: string; boundaryZh: string; methodZh?: string;
 };
 
 const integration: Record<ManhuaVfxCategoryId, string> = {
@@ -197,7 +199,7 @@ const rows: Record<ManhuaVfxCategoryId, readonly Row[]> = {
 
 };
 
-export const MANHUA_VFX_CATALOG: readonly ManhuaVfxPreset[] = MANHUA_VFX_CATEGORIES.flatMap(category =>
+const originalCatalog: readonly ManhuaVfxPreset[] = MANHUA_VFX_CATEGORIES.flatMap(category =>
   rows[category.id].map(([suffix, nameZh, sourceZh, trajectoryZh, contactZh, resultZh, boundaryZh]) => {
     const integrationZh = integration[category.id];
     return { id: `vfx-${category.id}-${suffix}`, categoryId: category.id, nameZh,
@@ -205,6 +207,17 @@ export const MANHUA_VFX_CATALOG: readonly ManhuaVfxPreset[] = MANHUA_VFX_CATEGOR
       descriptionZh: `来源：${sourceZh}；轨迹：${trajectoryZh}；接触：${contactZh}；结果：${resultZh}。${integrationZh}适用边界：${boundaryZh}。` };
   }),
 );
+
+
+export const MANHUA_VFX_CATALOG: readonly ManhuaVfxPreset[] = [
+  ...originalCatalog,
+  ...MANHUA_VFX_DISTILLED.map(preset => {
+    const integrationZh = integration[preset.categoryId];
+    return { ...preset, integrationZh,
+      descriptionZh: `来源：${preset.sourceZh}；轨迹：${preset.trajectoryZh}；接触：${preset.contactZh}；结果：${preset.resultZh}。${integrationZh}制作建议：${preset.methodZh}。适用边界：${preset.boundaryZh}。`,
+    };
+  }),
+];
 
 export function findManhuaVfxPreset(id: string): ManhuaVfxPreset | undefined {
   return MANHUA_VFX_CATALOG.find(preset => preset.id === id);

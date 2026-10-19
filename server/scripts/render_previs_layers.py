@@ -92,7 +92,7 @@ def render_layers(scene_path, out, frames=None, spec_path=None):
         raise ValueError('分层导出当前最多3人8秒')
     bpy.ops.wm.open_mainfile(filepath=str(scene_path))
     scene = bpy.context.scene
-    expected = spec['durationSec']*24
+    expected = round(spec['durationSec']*24)
     if scene.frame_start != 1 or scene.frame_end != expected or scene.render.fps != 24:
         raise ValueError('分层场景时间轴与配置不一致')
     width = scene.render.resolution_x*scene.render.resolution_percentage//100

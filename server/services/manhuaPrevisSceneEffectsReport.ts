@@ -24,7 +24,7 @@ export function validatePrevisSceneEffectsReport(raw: unknown, spec: ManhuaPrevi
     throw new Error("场景特效报告缺项或重复");
   for (const effect of expected) {
     const row = reports.find(item => item.id === effect.id);
-    if (!row || row.kind !== effect.kind || row.actorId !== effect.actorId || row.samples.length !== spec.durationSec * 24 ||
+    if (!row || row.kind !== effect.kind || row.actorId !== effect.actorId || row.samples.length !== Math.round(spec.durationSec * 24) ||
       row.samples.some((sample, index) => sample.frame !== index + 1))
       throw new Error("场景特效全帧证据不完整或绑定不一致");
     if(effect.kind==="needle_trail" && !row.samples.some(s=>s.active && typeof s.trailLength==="number" && s.trailLength>.001)) throw new Error("针尾没有实际飞行帧");
@@ -51,7 +51,7 @@ export function validatePrevisSceneEffectsReport(raw: unknown, spec: ManhuaPrevi
         }
       } else if (effect.kind === "cape") {
         z.object({ pinError: z.number().finite().nonnegative().max(0.03), bakedPlayback: z.literal(true),
-          bakedShapeKeyCount: z.number().int().min(spec.durationSec * 24), collisionMeshes: z.number().int().nonnegative(),
+          bakedShapeKeyCount: z.number().int().min(Math.round(spec.durationSec * 24)), collisionMeshes: z.number().int().nonnegative(),
           closedCollisionMeshes: z.number().int().nonnegative(), estimatedInsideVertices: z.number().int().nonnegative(),
           estimatedPenetration: z.number().finite().nonnegative() }).parse(sample);
       } else if (effect.kind === "explode") {

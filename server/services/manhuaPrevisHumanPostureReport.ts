@@ -12,7 +12,7 @@ export function validateHumanPostureReports(raw:unknown,actors:Actor[],durationS
   const seen=new Set<string>();
   for(const value of raw){
     const actor=expected.find(a=>a.id===value?.actorId); const p=actor?.humanPosture;
-    if(!actor||!p||seen.has(actor.id)||value.mode!==p.mode||value.frames!==durationSec*24||!Array.isArray(value.samples)||value.samples.length!==value.frames||value.meshValidated!==false||value.normalSpeedValidated!==false) throw new Error("坐卧报告身份、逐帧或验收边界错误");
+    if(!actor||!p||seen.has(actor.id)||value.mode!==p.mode||value.frames!==Math.round(durationSec * 24)||!Array.isArray(value.samples)||value.samples.length!==value.frames||value.meshValidated!==false||value.normalSpeedValidated!==false) throw new Error("坐卧报告身份、逐帧或验收边界错误");
     seen.add(actor.id);
     for(let i=0;i<value.samples.length;i++){
       const row=value.samples[i];

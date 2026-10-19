@@ -54,7 +54,7 @@ export function validateRouteReport(
   for (const actor of actors) {
     const row = raw.find(r => r.actorId === actor.id),
       nodes = actor.motionRoute!;
-    if (!row || row.samples.length !== spec.durationSec * 24)
+    if (!row || row.samples.length !== Math.round(spec.durationSec * 24))
       throw Error("运动轨逐帧回执缺失");
     if (actor.riggedModel) {
       const matches = models.filter(model => model.actorId === actor.id);

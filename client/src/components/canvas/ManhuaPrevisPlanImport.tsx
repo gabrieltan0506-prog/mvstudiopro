@@ -13,7 +13,18 @@ export function ManhuaPrevisPlanImport({ clipId, getCurrentStudio, disabled, onA
   const [proposed, setProposed] = useState("");
   return <details className="rounded border border-cyan-300/25 p-3" data-previs-plan-import>
     <summary className="cursor-pointer text-xs">导入已审动作方案</summary>
-    <p className="my-2 text-xs text-white/65">粘贴完整调度候选，先对照原方案与新方案，再确认保存。本步骤不调用模型、不提交渲染。</p>
+    <p className="my-2 text-xs text-white/65">上传或粘贴完整调度候选，先对照原方案与新方案，再确认保存。本步骤不调用模型、不提交渲染。</p>
+    <label className="my-2 block text-xs">从文件导入动作方案<input type="file" aria-label="上传动作方案文件" accept=".json,application/json" disabled={disabled} onChange={async e => {
+      const file = e.currentTarget.files?.[0];
+      if (!file) return;
+      setCandidate(null); setError("");
+      try {
+        if (file.size > 480000) throw new Error("动作方案文件过大，请只导出本段方案。");
+        const text = await file.text();
+        if (text.length > 120000) throw new Error("动作方案超过本段容量，请检查导出范围。");
+        setRaw(text);
+      } catch (e) { setError(e instanceof Error ? e.message : "文件读取失败，原方案保留"); }
+    }} /></label>
     <textarea aria-label="已审动作方案 JSON" className="min-h-28 w-full rounded bg-black/30 p-2 text-xs" value={raw} maxLength={120000} disabled={disabled} onChange={e => { setRaw(e.target.value); setCandidate(null); setError(""); }} />
     <button type="button" className="rounded border px-2 py-1 text-xs disabled:opacity-40" disabled={disabled || !raw.trim()} onClick={() => {
       try {

@@ -148,3 +148,19 @@ it("导入建立开镜已背稳关系，经原保存与恢复保留身份和旧�
   }
   expect(()=>applyAdvisorPrevisPatch(studio.spec,{...patch,actors:[{id:"mother",start:[1,0]}]})).toThrow("同一站位与路线");
 });
+
+
+it("完整多道具方案超过三万字符仍可对照导入并保持字段，超六万四明确拒绝", () => {
+  const studio = createManhuaPrevisStudio(5);
+  studio.spec.storyProps = Array.from({ length: 20 }, (_, i) => ({ id: `panel-${i}`, kind: "stage_box" as const,
+    proxy: { size: [1, .1, 1] as [number, number, number], color: [.4, .5, .6] as [number, number, number] },
+    keyframes: Array.from({ length: 14 }, (_, j) => ({ timeSec: 5 * j / 13, anchor: { type: "world" as const, position: [i / 10, 0, 1] as [number, number, number] }, visible: true, scale: 1, rotation: [0, 0, 0] as [number, number, number], fill: 0 })),
+  }));
+  const raw = advisorPrevisSpecJson(studio.spec); expect(raw.length).toBeGreaterThan(30000); expect(raw.length).toBeLessThan(64000);
+  const target = makeAdvisorPrevisTarget("clip-capacity", studio); expect(target.specJson).toBe(raw);
+  const candidate = { target, patch: advisorPrevisPatchSchema.parse({ kind: "previs_edit_v1", summaryZh: "只改镜头，保留全部道具", unsupportedZh: [], cameras: studio.spec.cameras.map(c => ({ ...c, lens: 40 })) }) };
+  expect(applyAdvisorPrevisCandidate("clip-capacity", studio, candidate).spec.storyProps).toEqual(studio.spec.storyProps);
+  const oversized = advisorPrevisTargetSchema.safeParse({ ...target, specJson: raw + "x".repeat(64001) });
+  expect(oversized.success).toBe(false);
+  if (!oversized.success) expect(oversized.error.issues.some(i => i.code === "too_big" && i.path[0] === "specJson")).toBe(true);
+});

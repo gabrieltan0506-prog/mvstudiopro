@@ -286,7 +286,7 @@ export function validatePrevisReport(
 ): PrevisRenderReport {
   const report = previsReportSchema.parse(raw);
   if (
-    report.frames !== spec.durationSec * 24 ||
+    report.frames !== Math.round(spec.durationSec * 24) ||
     report.actors.length !== spec.actors.length
   )
     throw new Error("白模帧数或角色数量不一致");

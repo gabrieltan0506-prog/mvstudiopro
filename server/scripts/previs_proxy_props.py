@@ -1,4 +1,4 @@
-"""球柱任务化身、光弹、信息板与代码幕；只读取有界几何配置，不加载外部资源。"""
+"""球柱任务化身、金属弹头、光球、信息板与代码幕；只读取有界几何配置，不加载外部资源。"""
 import math
 
 
@@ -44,6 +44,37 @@ def build_proxy_prop(prop, scene):
         for side in (-1, 1):
             part('leg'+str(side), 'cylinder', (width*.11, depth*.11, height*.17), (side*width*.18, 0, height*.17))
             part('arm'+str(side), 'cylinder', (width*.09, depth*.09, height*.2), (side*width*.47, 0, height*.53))
+    elif kind == 'bullet':
+        # X轴为前进方向；实际车旋轮廓含平底、直弹身和渐收尖弹头，不借球体代替。
+        if width < max(depth, height)*3:
+            raise ValueError('金属弹头长度至少为横径3倍，不能使用球体比例')
+        rings = [(-.5, 1.), (.08, 1.), (.25, .88), (.39, .56), (.47, .23)]
+        sides = 16
+        vertices = [(x*width, math.cos(math.tau*i/sides)*depth*.5*r,
+                     math.sin(math.tau*i/sides)*height*.5*r)
+                    for x, r in rings for i in range(sides)]
+        vertices.extend([(-width*.5, 0, 0), (width*.5, 0, 0)])
+        back, tip = len(vertices)-2, len(vertices)-1
+        faces = []
+        for row in range(len(rings)-1):
+            for i in range(sides):
+                j=(i+1)%sides
+                faces.append((row*sides+i,row*sides+j,(row+1)*sides+j,(row+1)*sides+i))
+        for i in range(sides):
+            j=(i+1)%sides
+            faces.extend([(back,j,i),((len(rings)-1)*sides+i,(len(rings)-1)*sides+j,tip)])
+        mesh=bpy.data.meshes.new(name+'_bullet_mesh');mesh.from_pydata(vertices,[],faces);mesh.update()
+        obj=bpy.data.objects.new(name+'_bullet',mesh);scene.collection.objects.link(obj)
+        obj.data.materials.append(mat);obj['previs_animation_object']=True;obj['previs_proxy_shape']='bullet'
+        for node in mat.node_tree.nodes if mat.use_nodes else []:
+            if node.type=='BSDF_PRINCIPLED':
+                node.inputs['Metallic'].default_value=.8;node.inputs['Roughness'].default_value=.25
+        objects.append(obj)
+    elif kind in ('folding_wall', 'office_chair', 'chair_burst_text'):
+        from previs_workflow_props import build_workflow_prop
+        objects = build_workflow_prop(prop, scene, mat)
+        bpy.context.view_layer.objects.active = objects[0]
+        return objects
     elif kind == 'light_orb':
         part('orb', 'sphere', (width/2, depth/2, height/2))
     else:
@@ -61,7 +92,11 @@ def build_proxy_prop(prop, scene):
         label = config.get('label')
         if label:
             curve=bpy.data.curves.new(name+'_label','FONT')
-            curve.body=label;curve.size=min(width/max(len(label),1)*1.35,height*.15)
+            curve.body=label
+            if any(ord(c)>127 for c in label):
+                from previs_scene_effects import _installed_font
+                curve.font,_font_receipt=_installed_font(label)
+            curve.size=min(width/max(len(label),1)*1.35,height*.15)
             curve.align_x='CENTER';curve.align_y='CENTER';curve.resolution_u=2
             obj=bpy.data.objects.new(name+'_label',curve);scene.collection.objects.link(obj)
             obj.parent=objects[0];obj.location=(0,-depth/2-.024,height*.37)

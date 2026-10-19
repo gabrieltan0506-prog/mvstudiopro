@@ -5,7 +5,7 @@ const point=z.tuple([z.number().finite(),z.number().finite(),z.number().finite()
 export const cameraTimingReportSchema=z.array(z.object({frame:z.number().int(),shotIndex:z.number().int(),position:point,forward:point,lens:z.number().finite()}).strict()).max(720);
 export function validateCameraTimingReport(raw:z.infer<typeof cameraTimingReportSchema>|undefined,spec:ManhuaPrevisSpec){
   if(!spec.cameras.some(c=>c.motionWindow||c.lensWindow)&&!raw)return;
-  if(!raw||raw.length!==spec.durationSec*24)throw Error("运镜卡点逐帧回执缺失");
+  if(!raw||raw.length!==Math.round(spec.durationSec * 24))throw Error("运镜卡点逐帧回执缺失");
   for(let i=0;i<raw.length;i++){
     const frame=i+1, index=spec.cameras.findIndex(c=>frame>Math.round(c.startSec*24)&&frame<=Math.round(c.endSec*24));
     const c=spec.cameras[index],s=raw[i];if(!c||s.frame!==frame||s.shotIndex!==index)throw Error("运镜卡点帧归属错误");

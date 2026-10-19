@@ -230,7 +230,7 @@ export const previsActorSchema = z
             endSec: z.number().finite().positive().max(30),
             /** kind="turn" 的目标朝向；其它动作不接受。 */
             facingDeg: z.number().finite().min(-180).max(180).optional(),
-            /** kind="look" 的注视目标：同场角色 id 或 "camera"；其它动作不接受。 */
+            /** kind="look" 的注视目标：同场角色 id、"camera" 或独立世界道具 "prop:<id>"。 */
             lookAtId: z.string().min(1).max(100).optional(),
           })
           .strict()
@@ -246,7 +246,7 @@ const cameraPoint = z.tuple([
 const manhuaPrevisSpecBaseSchema = z
   .object({
     version: z.literal(1),
-    durationSec: z.number().int().min(PREVIS_MIN_DURATION_SEC).max(30),
+    durationSec: z.number().finite().min(PREVIS_MIN_DURATION_SEC).max(30).refine(value => Math.abs(value * 10 - Math.round(value * 10)) < 1e-7, "白模目标时长须保留一位小数"),
     aspect: z.enum(["16:9", "9:16"]),
     /** 人物、接触、特效和相机统一按源时间变速；不是独立摄影机的子弹时间。 */
     timeMap: manhuaShotTimeMapSchema.optional(),
@@ -285,7 +285,7 @@ const manhuaPrevisSpecBaseSchema = z
           .strict()
       )
       .min(1)
-      .max(8),
+      .max(16),
   })
   .strict();
 // 草稿允许编辑中的空名称、零值或暂未闭合的时间轴；提交仍使用下方完整生产门禁。
@@ -421,8 +421,8 @@ export function previsRenderCostUnits(spec: {
   storyProps?: readonly { kind: string }[];
 }): number {
   // 每八个几何剧情对象保守计入一个角色等价预算，不能让附加网格绕过容量门禁。
-  const proxyUnits=Math.ceil((spec.storyProps?.filter(p=>isPrevisProxyProp(p.kind)).length ?? 0)/8);
-  return Math.round(spec.durationSec * PREVIS_BUDGET_FPS * (spec.actors.length + proxyUnits));
+  const proxyUnits=Math.ceil((spec.storyProps?.filter(p=>isPrevisProxyProp(p.kind)).reduce((sum,p)=>sum+(p.kind === "chair_burst_text" ? 4 : p.kind === "folding_wall" ? 2 : 1),0) ?? 0)/8);
+  return Math.round(spec.durationSec * PREVIS_BUDGET_FPS) * (spec.actors.length + proxyUnits);
 }
 
 export function previsActorVisibleAtFrame(
@@ -452,7 +452,7 @@ export function previsCapacityIssueZh(
   if (units <= budget) return null;
   const actorCount = spec.actors.length;
   const maxSec = previsMaxDurationSec(actorCount, budget);
-  const maxActors = Math.max(1, Math.floor(budget / (24 * spec.durationSec)));
+  const maxActors = Math.max(1, Math.floor(budget / Math.round(24 * spec.durationSec)));
   return (
     `超出单次白模渲染能力：${actorCount} 个角色 × ${spec.durationSec} 秒，` +
     `约 ${units} 单位，上限 ${budget} 单位。` +
@@ -611,10 +611,20 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
           const known =
             target === PREVIS_LOOK_AT_CAMERA ||
             spec.actors.some(other => other.id === target && other.id !== actor.id);
-          if (!known)
+          const prop = !known && target !== actor.id && target.startsWith("prop:")
+            ? spec.storyProps?.find(item => item.id === target.slice(5))
+            : undefined;
+          // 道具须独立于骨骼，避免「头看手中道具→手随上身→道具又变位」循环。
+          const worldTarget = prop?.keyframes.every(key => key.anchor.type === "world");
+          const visibleThroughout = prop?.keyframes.every((key, index, keys) =>
+            key.timeSec >= action.endSec ||
+            (keys[index + 1]?.timeSec ?? spec.durationSec) <= action.startSec ||
+            key.visible
+          );
+          if (!known && !(worldTarget && visibleThroughout))
             ctx.addIssue({
               code: "custom",
-              message: "看向目标须是同场的其他角色或镜头",
+              message: "看向目标须是同场其他角色、镜头，或动作期间可见的独立世界道具 prop:<id>",
               path: ["actors", i, "actions", j, "lookAtId"],
             });
         } else if (action.lookAtId !== undefined)
@@ -677,7 +687,7 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
           !first ||
           !last ||
           first.timeSec !== 0 ||
-          Math.abs(last.timeSec - (spec.durationSec * 24 - 1) / 24) > 1e-8 ||
+          (Math.abs(last.timeSec - (Math.round(spec.durationSec * 24) - 1) / 24) > 1e-8 && Math.abs(last.timeSec - spec.durationSec) > 1e-8) ||
           first.position.some((v, k) => v !== actor.start[k]) ||
           last.position.some((v, k) => v !== actor.end[k]) ||
           first.facingDeg !== actor.facingDeg
@@ -686,10 +696,8 @@ export const manhuaPrevisSpecSchema = manhuaPrevisSpecBaseSchema.superRefine(
             "路线首节点须为0秒并对应起点和初始朝向，末节点须对应最后一帧和终点"
           );
         route.forEach((node, j) => {
-          if (
-            Math.abs(node.timeSec * 24 - Math.round(node.timeSec * 24)) > 1e-6
-          )
-            issue("路线秒位须对齐24帧");
+          if (node.timeSec < 0 || node.timeSec > spec.durationSec)
+            issue("路线秒位须在本段时长内");
           if (!j) return;
           const previous = route[j - 1],
             dt = node.timeSec - previous.timeSec;
@@ -1050,7 +1058,7 @@ export function createManhuaPrevisStudio(
   durationSec = 10,
   scopeId = crypto.randomUUID()
 ): ManhuaPrevisStudio {
-  const duration = Math.max(2, Math.min(30, Math.round(durationSec)));
+  const duration = Math.max(2, Math.min(30, Math.round(durationSec * 10) / 10));
   return {
     version: 1,
     scopeId,
@@ -1141,7 +1149,8 @@ export function formatPrevisMotionGuide(spec: ManhuaPrevisSpec): string {
       const moving=a.start.some((v,i)=>Math.abs(v-a.end[i])>1e-6);
       return fall.mode==="hold" ? `${a.nameZh}整段保持${fall.side==="left"?"左":"右"}侧卧地，四腿折叠，不自动起身。` : `${a.nameZh}${fall.startSec}秒开始屈腿，${fall.foldSec}秒开始向${fall.side==="left"?"左":"右"}侧倒，${fall.groundSec}秒躯干触地并保持至片尾，四腿折叠，不自动起身。${moving?`屈腿开始后持续减速，${a.moveEndSec}秒停止位移，落点固定在（${a.end.join("，")}）。`:""}`;
     }),
-    ...(spec.storyProps??[]).map(p=>`剧情道具${p.id}（${({needle:"飞针",blood_drop:"血滴",bowl:"碗",jar:"血坛",knife:"刀",sleeve_glow:"袖口光",task_avatar:"任务化身",light_orb:"光弹",information_panel:"信息卡",code_screen:"代码幕",stage_box:"场景几何"} as const)[p.kind]}）按${p.keyframes.map(k=>`${k.timeSec}秒${k.visible?"显示":"隐藏"}，绑定${k.anchor.type==="bone"?`${k.anchor.actorId}/${k.anchor.bone}`:k.anchor.type==="prop"?k.anchor.propId:`固定位置（${k.anchor.position.join("，")}）`}`).join("；")}读取，落点随同一锚点保持，不重算为施术者方向。`),
+    ...(spec.storyProps??[]).map(p=>`剧情道具${p.id}（${({needle:"飞针",blood_drop:"血滴",bowl:"碗",jar:"血坛",knife:"刀",sleeve_glow:"袖口光",task_avatar:"任务化身",light_orb:"光球",bullet:"金属弹头",information_panel:"信息卡",code_screen:"代码幕",stage_box:"场景几何",folding_wall:"折叠墙体",office_chair:"完整办公椅",chair_burst_text:"爆椅聚字"} as const)[p.kind]}）按${p.keyframes.map(k=>`${k.timeSec}秒${k.visible?"显示":"隐藏"}，绑定${k.anchor.type==="bone"?`${k.anchor.actorId}/${k.anchor.bone}`:k.anchor.type==="prop"?k.anchor.propId:`固定位置（${k.anchor.position.join("，")}）`}`).join("；")}读取，落点随同一锚点保持，不重算为施术者方向。`),
+    ...(spec.storyProps ?? []).filter(p => p.proxy?.burst).map(p => { const b = p.proxy!.burst!; return `道具${p.id}在${b.startSec}—${b.burstEndSec}秒爆裂，完整椅子消失；${b.gatherStartSec}—${b.gatherEndSec}秒同一批碎片聚为“${b.text}”，此后保留文字，不再显示完整椅子。`; }),
     ...spec.actors.filter(a=>a.hitReaction).map(a=>`${a.hitReaction!.contactSec}秒，${a.nameZh}受${spec.actors.find(b=>b.id===a.hitReaction!.sourceActorId)?.nameZh}出掌击中，胸颈快速后缩下沉，支撑脚保持接地，${a.hitReaction!.endSec}秒恢复；原跛行持续。`),
     ...(spec.interactions ?? []).map(event => {
       const actor = spec.actors.find(a => a.id === event.actorId)!;

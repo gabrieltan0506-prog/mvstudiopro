@@ -20,7 +20,7 @@ export function validateGroundedRouteReport(raw: z.infer<typeof groundedRouteRep
   const report = groundedRouteReportSchema.parse(raw), quadruped = actor.shape === "horse";
   const feet = quadruped ? ["frontLeft", "frontRight", "hindLeft", "hindRight"] : ["hindLeft", "hindRight"];
   const limp = actor.actions.some(action => action.kind === "limp_front_left");
-  if (report.actorId !== actor.id || report.rigKind !== (quadruped ? "quadruped" : "human") || report.frames !== durationSec * 24 || report.samples.length !== report.frames ||
+  if (report.actorId !== actor.id || report.rigKind !== (quadruped ? "quadruped" : "human") || report.frames !== Math.round(durationSec * 24) || report.samples.length !== report.frames ||
     JSON.stringify(Object.keys(report.footVertices).sort()) !== JSON.stringify([...feet].sort())) throw new Error("落脚证据角色、骨架类型或帧数不一致");
   for (let index = 0; index < report.samples.length; index++) {
     const row = report.samples[index];

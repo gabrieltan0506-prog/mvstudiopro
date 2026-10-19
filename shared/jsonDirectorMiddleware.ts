@@ -361,6 +361,14 @@ export const MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS = 8000;
  * - 有路径配方 → 编译分阶段时段句
  * - 其余：去导演名后原样放行（含漫剧导戏单、@角色对白锁）
  */
+/** 已采用的镜头特效位于人工补充末尾，超限必须报错，不能悄悄删掉。 */
+function limitMotionPromptWithVfx(prompt: string): string {
+  if (prompt.length > MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS && /【镜头特效[:：]/.test(prompt)) {
+    throw new Error(`含已采用特效的成片提示词超过${MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS}字，请缩短正文或特效描述后再生成；本次未提交。`);
+  }
+  return prompt.slice(0, MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS);
+}
+
 export function compileI2VMotionPrompt(
   rawPrompt: string,
   opts?: CompileI2VMotionPromptOpts,
@@ -378,10 +386,7 @@ export function compileI2VMotionPrompt(
     if (recipe && opts?.appendRecipeAsConstraint) {
       const body = stripDirectorNamesForDelivery(String(rawPrompt || "").trim());
       const addon = `【运镜配方·附加约束】${compilePathCameraRecipeToMotionPrompt(recipe)}`;
-      return `${body ? `${body}\n\n` : ""}${addon}`.slice(
-        0,
-        MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS,
-      );
+      return limitMotionPromptWithVfx(`${body ? `${body}\n\n` : ""}${addon}`);
     }
   }
 
@@ -389,7 +394,7 @@ export function compileI2VMotionPrompt(
   if (!raw) {
     return "按参考静帧做可读微动；运镜与对白以提示词正文为准。";
   }
-  return raw.slice(0, MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS);
+  return limitMotionPromptWithVfx(raw);
 }
 
 /** 俯视调度组合公式（super-i 2917，成稿去名；仅文档/旧样本，不用于压扁导戏单） */

@@ -20,6 +20,7 @@ from previs_quadruped_fall import fold_points, fall_roll, validate_fall, fall_mo
 fall_contact_anchors={}
 from previs_quadruped_fall_contact import ground_and_measure_fall
 from previs_human_pose import apply_human_posture, validate_human_posture
+from previs_story_props import world_prop_look_target
 water_head_heights={}
 has_routes=any(a.get('motionRoute') for a in spec['actors'])
 if has_routes:
@@ -33,7 +34,7 @@ scene.render.engine = 'BLENDER_WORKBENCH'
 scene.render.resolution_x, scene.render.resolution_y = (960, 540) if spec['aspect'] == '16:9' else (540, 960)
 scene.render.resolution_percentage = 100
 scene.render.fps = 24
-scene.frame_start, scene.frame_end = 1, spec['durationSec'] * 24
+scene.frame_start, scene.frame_end = 1, round(spec['durationSec'] * 24)
 def actor_visible(actor, frame):
     ranges=actor.get('visibleRanges')
     return ranges is None or any(round(item['startSec']*24)<frame<=round(item['endSec']*24) for item in ranges)
@@ -94,6 +95,8 @@ obj = mesh('地面', (0,0,-.12), (0,0,0), 64 if water_events else 16, ground)
 # 看向的偏转上限（弧度）：超过就只转到上限，不做扭脖子式的非人姿态。
 LOOK_YAW_LIMIT = math.radians(55)
 LOOK_PITCH_LIMIT = math.radians(25)
+PROP_LOOK_YAW_LIMIT = math.radians(20)
+PROP_LOOK_PITCH_LIMIT = math.radians(15)
 # 0917 三轮审查：目标绕到正后方时 atan2 在 ±180° 换符号，直接夹到 ±55° 会让目标左右穿越
 # 背后时肩线在 +55/−55 之间一帧翻一次（目标带 motionRoute 或出水上升时天天发生）。
 # 选「转不过去就不转」而不是「按最短弧连续夹取」：人本来就不可能只靠头颈看向正后方，
@@ -247,18 +250,16 @@ def camera_position_at(t):
     return Vector(spec['cameras'][0]['position'])
 
 def look_target_world(actor, target_id, frame):
-    """注视目标的世界坐标（人物取头高，镜头取机位）。找不到返回 None，调用方按「不看」处理。"""
+    """注视目标世界坐标：人物头高、镜头机位或独立道具中心。未知目标不伪造朝向。"""
     if not target_id: return None
-    # 0917 三轮审查：这里原来还认 '镜头' 这个别名。lookAtId 的取值只有 PREVIS_LOOK_AT_CAMERA
-    # （="camera"）或角色 id，草案编译也只写这两种，所以 '镜头' 是死分支；但它不是无害的死
-    # 分支——角色 id 恰好是 '镜头' 时会被劫持成看镜头，schema 那边却按角色算，两边判据分叉。
-    # 删掉别名后渲染层与 schema 对 "camera" 的口径完全一致。
+    # 保留精确 camera 与原角色 ID 的优先级；不把名为「镜头」的角色当镜头别名。
     if target_id=='camera': return camera_position_at((frame-1)/24)
     for other in spec['actors']:
         if other['id']==target_id and other['id']!=actor['id']:
             base=position(other,frame)
             return Vector((base.x,base.y,base.z+(1.15 if other['shape']=='horse' else 1.45)))
-    return None
+    target = world_prop_look_target(spec.get('storyProps') or [], target_id, (frame-1)/24)
+    return Vector(target) if target is not None else None
 
 def hit_amount(actor,t):
     hit=actor.get('hitReaction')
@@ -314,8 +315,10 @@ def points(actor, frame, contacts):
         chest=pelvis+Vector((.10*amounts['strike']-.08*amounts['recoil']+.30*bow+.06*amounts['sit']+.13*cough,0,
                              .43-.11*bow-.025*cough))
         neck=chest+Vector((.05*bow+.025*cough,0,.14-.02*bow-.006*cough))
-        # 看向：上身与头朝目标偏转（棍人骨骼只有端点，纯头部偏航不可见，必须连上身一起转）
+        # 看向：人物互看带肩线，道具注视只转头；几何代理只表达头部方向，不代表眼球视线。
         look=amounts['look']
+        prop_look=bool(amounts['lookAt'] and amounts['lookAt'].startswith('prop:') and
+                       not any(other['id']==amounts['lookAt'] for other in spec['actors']))
         look_yaw=0.
         look_pitch=0.
         if look>.001:
@@ -327,8 +330,10 @@ def points(actor, frame, contacts):
             reach=1-smooth((abs(desired)-LOOK_YAW_LIMIT)/(LOOK_YAW_GIVEUP-LOOK_YAW_LIMIT))
             if local is not None and flat>.05 and reach>.001:
                 look=look*reach
-                look_yaw=max(-LOOK_YAW_LIMIT,min(LOOK_YAW_LIMIT,desired))*look
-                look_pitch=max(-LOOK_PITCH_LIMIT,min(LOOK_PITCH_LIMIT,math.atan2(local.z,flat)))*look
+                yaw_limit=PROP_LOOK_YAW_LIMIT if prop_look else LOOK_YAW_LIMIT
+                pitch_limit=PROP_LOOK_PITCH_LIMIT if prop_look else LOOK_PITCH_LIMIT
+                look_yaw=max(-yaw_limit,min(yaw_limit,desired))*look
+                look_pitch=max(-pitch_limit,min(pitch_limit,math.atan2(local.z,flat)))*look
             else:
                 # 注视目标解析不出来（被删的角色、旧存稿）：按「不看」处理，
                 # 绝不因为写了 look 就硬摆一个朝向——那会让白模撒谎。
@@ -339,8 +344,8 @@ def points(actor, frame, contacts):
         head_dir=Vector((math.cos(look_yaw),math.sin(look_yaw),0))*(.09*look+.06*bow+.03*cough)
         p['head']=(neck,neck+head_dir+Vector((-.045*amounts['recoil'],0,.28+.10*math.sin(look_pitch))))
         for s in (-1,1):
-            # 上身偏转：肩线跟着看向的偏航一起转，真模重定向时才看得出「转过去看」
-            shoulder=chest+Matrix.Rotation(look_yaw,4,'Z') @ Vector((0,s*.21,0))
+            # 前方道具操作只小幅转头，不带动肩线扭身而把手臂接触点拉远；人物互看保留旧行为。
+            shoulder=chest+Matrix.Rotation(0. if prop_look else look_yaw,4,'Z') @ Vector((0,s*.21,0))
             x=.10+.43*amounts['strike']-.25*amounts['wind'] if s==-1 else .12
             # 走位摆臂：两臂反相，周期对齐脚步（plan_contacts 每 6 帧换一只脚 = 0.5 秒一个来回）。
             # 相位必须跟同侧脚相反：plan_contacts 第 0 个 6 帧块迈的是 '-1' 脚（t∈[0,.25)），
@@ -842,7 +847,8 @@ def _bones_in_frame():
             if not (p.z>0 and .02<=p.x<=.98 and .02<=p.y<=.98): return False
     return True
 
-if scene.render.resolution_y > scene.render.resolution_x:
+# 显式故事道具构图保留作者机位：只按骨骼自动收紧会裁掉卡片/来者，并破坏跨段同镜头衔接。
+if scene.render.resolution_y > scene.render.resolution_x and not story_prop_handles:
     _before_fit,_before_h = camera.data.sensor_fit, camera.data.sensor_height
     _fit_before = _bones_in_frame()
     camera.data.sensor_fit='VERTICAL'
@@ -866,7 +872,7 @@ if any(shot.get('motionWindow') or shot.get('lensWindow') for shot in spec['came
         camera_samples.append({'frame':frame,'shotIndex':index,'position':list(camera.matrix_world.translation),
             'forward':list((camera.matrix_world.to_3x3()@Vector((0,0,-1))).normalized()),'lens':float(camera.data.lens)})
     report['cameraTiming']=camera_samples
-if report['portraitFraming']=='auto':
+if report['portraitFraming']=='auto' and not story_prop_handles:
     report['warnings'].append('竖屏未收紧构图：按当前站位与动作，收紧后会有人物被切出画，已保持原画幅。想要更饱满的竖屏构图，可让角色更靠近画面中心或缩小彼此间距。')
 for actor,rig,contacts,stance,error in rigs:
     offscreen=[]

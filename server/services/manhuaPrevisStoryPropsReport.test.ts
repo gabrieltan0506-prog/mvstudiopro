@@ -22,10 +22,21 @@ it("血坛放回台面后保持固定位置与半坛量，释放后不伪需握�
  r[0].samples[40].position[0]=.6;expect(()=>validateStoryPropsReport(r,s)).toThrow(/固定世界锚点/);
 });
 
-it("信息卡必须回报完整渐入保持渐出，不能以缺权重残差假通过",async()=>{
+it.each(["information_panel", "bullet"] as const)("%s必须回报完整渐入保持渐出，不能以缺权重残差假通过",async kind=>{
  const {previsPanelGripAmount}=await import("../../shared/manhuaPrevisStoryProps");
  expect([0,.25,.5,1,1.5,1.75,2].map(t=>previsPanelGripAmount(0,2,t))).toEqual([0,.5,1,1,1,.5,0]);
- const gripped=structuredClone(spec);const p=gripped.storyProps[0];p.kind="information_panel";p.proxy={size:[.2,.02,.2],color:[.1,.4,.8]};p.grip={actorId:"mom",hand:"hand1",offset:[0,0,0],startSec:0,endSec:2};p.keyframes.forEach(k=>k.visible=true);
+ const gripped=structuredClone(spec);const p=gripped.storyProps[0];p.kind=kind;p.proxy={size:kind==="bullet"?[.12,.025,.025]:[.2,.02,.2],color:[.1,.4,.8]};p.grip={actorId:"mom",hand:"hand1",offset:[0,0,0],startSec:0,endSec:2};p.keyframes.forEach(k=>k.visible=true);
  const r=report();r[0].kind=p.kind;r[0].samples.forEach((s,i)=>{s.visible=true;s.gripResidual=.001;s.proxyGeometry={meshVertices:8,meshes:["panel"],minimum:[0,0,0],maximum:[1,1,1],color:[.1,.4,.8]};s.gripAmount=previsPanelGripAmount(0,2,i/24);});
  expect(()=>validateStoryPropsReport(r,gripped)).not.toThrow();delete r[0].samples[8].gripAmount;expect(()=>validateStoryPropsReport(r,gripped)).toThrow(/权重/);
+});
+
+it("小数秒爆椅报告拒绝丢碎片、重现原椅及虚假聚字", () => {
+ const durationSec = 4.2, anchor = {type:"world" as const,position:[0,0,0] as [number,number,number]};
+ const storyProps = previsStoryPropsSchema.parse([{id:"chair",kind:"chair_burst_text",proxy:{size:[.5,.5,1],color:[.4,.3,.2],burst:{startSec:1.1,burstEndSec:1.7,gatherStartSec:2.1,gatherEndSec:3.3,text:"真人把关",textPosition:[0,0,1],textWidth:1.1}},keyframes:[0,durationSec].map(timeSec=>({timeSec,anchor}))}]);
+ const value = {durationSec,storyProps,actors:[]};
+ const rows=storyPropsReportSchema.parse([{id:"chair",kind:"chair_burst_text",samples:Array.from({length:101},(_,i)=>({frame:i+1,position:[0,0,0],visible:true,fromAnchor:anchor,toAnchor:i===0?anchor:anchor,progress:i===0?0:i/24/durationSec,proxyGeometry:{meshVertices:200,meshes:["test-only-mesh"],minimum:[0,0,0],maximum:[1,1,1],color:[.4,.3,.2]},workflowState:{fragmentCount:48,fragmentsVisible:i/24>=1.1&&i/24<3.3?48:0,chairPartsVisible:i/24<1.1?6:0,textVisible:i/24>=3.3,targetMaxError:i/24>=3.3?0:1}}))}]);
+ expect(()=>validateStoryPropsReport(rows,value)).not.toThrow();
+ const lost=structuredClone(rows);lost[0].samples[40].workflowState!.fragmentsVisible=47;expect(()=>validateStoryPropsReport(lost,value)).toThrow(/完整碎片/);
+ const double=structuredClone(rows);double[0].samples[40].workflowState!.chairPartsVisible=6;expect(()=>validateStoryPropsReport(double,value)).toThrow(/显隐/);
+ const fake=structuredClone(rows);fake[0].samples[90].workflowState!.targetMaxError=.1;expect(()=>validateStoryPropsReport(fake,value)).toThrow(/聚字落点/);
 });

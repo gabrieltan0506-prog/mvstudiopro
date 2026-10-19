@@ -456,6 +456,35 @@ describe("文戏动作库（0917 PR-E）", () => {
     expect(withAction({ kind: "look", startSec: 0, endSec: 2, lookAtId: PREVIS_LOOK_AT_CAMERA }).success).toBe(true);
   });
 
+  it("移动道具注视只接受持续可见的独立世界轨迹，拒绝骨骼和道具循环", () => {
+    const spec = {
+      ...base(),
+      storyProps: [{
+        id: "panel", kind: "information_panel",
+        proxy: { size: [.5, .035, 1.65], color: [.1, .4, .8] },
+        keyframes: [
+          { timeSec: 0, visible: true, anchor: { type: "world", position: [1, 0, 1] } },
+          { timeSec: 4, visible: true, anchor: { type: "world", position: [1, 2, 1] } },
+        ],
+      }],
+    };
+    spec.actors[0].actions = [{ kind: "look", startSec: 0, endSec: 2, lookAtId: "prop:panel" }];
+    expect(manhuaPrevisSpecSchema.safeParse(spec).success).toBe(true);
+    for (const anchor of [
+      { type: "bone", actorId: "a", bone: "head" },
+      { type: "prop", propId: "panel" },
+    ]) {
+      const bad = structuredClone(spec);
+      Object.assign(bad.storyProps[0].keyframes[1], { anchor });
+      expect(manhuaPrevisSpecSchema.safeParse(bad).success).toBe(false);
+    }
+    const hidden = structuredClone(spec);
+    hidden.storyProps[0].keyframes[0].visible = false;
+    expect(manhuaPrevisSpecSchema.safeParse(hidden).success).toBe(false);
+    spec.actors[0].actions[0].lookAtId = "prop:missing";
+    expect(manhuaPrevisSpecSchema.safeParse(spec).success).toBe(false);
+  });
+
   it("真实带骨坐下可进入运行时网格门禁，基础动作合同不降级", () => {
     const rigged = base();
     rigged.actors[0].riggedModel = {

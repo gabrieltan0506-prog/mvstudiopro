@@ -9,15 +9,22 @@ export const previsProxyAppearanceSchema = z.object({
   colors: z.array(z.object({ timeSec: z.number().finite().min(0).max(30), color: previsProxyColorSchema }).strict()).min(2).max(16),
 }).strict();
 export type PrevisProxyAppearance = z.infer<typeof previsProxyAppearanceSchema>;
-export const PREVIS_PROXY_PROP_KINDS = ["task_avatar", "light_orb", "information_panel", "code_screen", "stage_box"] as const;
+export const PREVIS_PROXY_PROP_KINDS = ["task_avatar", "light_orb", "bullet", "information_panel", "code_screen", "stage_box", "folding_wall", "office_chair", "chair_burst_text"] as const;
 export function isPrevisProxyProp(kind: string): boolean {
   return (PREVIS_PROXY_PROP_KINDS as readonly string[]).includes(kind);
 }
 export const previsProxyPropGeometrySchema = z.object({
   size: z.tuple([z.number().finite().min(.02).max(8), z.number().finite().min(.02).max(8), z.number().finite().min(.02).max(8)]),
   color: previsProxyColorSchema,
-  /** 拉丁短标签只用于白模定位，正式字幕仍由最终输入单独控制。 */
-  label: z.string().regex(/^[A-Za-z0-9 _:.+-]{0,40}$/).optional(),
+  burst: z.object({
+    startSec: z.number().finite().min(0), burstEndSec: z.number().finite().positive(),
+    gatherStartSec: z.number().finite().positive(), gatherEndSec: z.number().finite().positive(),
+    text: z.string().regex(/^[A-Za-z0-9\u3400-\u9fff]{1,8}$/),
+    textPosition: z.tuple([z.number().finite().min(-3).max(3), z.number().finite().min(-3).max(3), z.number().finite().min(0).max(3)]),
+    textWidth: z.number().finite().min(.3).max(3),
+  }).strict().optional(),
+  /** 中英文短标签只用于白模定位，正式字幕仍由最终输入单独控制。 */
+  label: z.string().regex(/^[A-Za-z0-9\u3400-\u9fff _:.+\-]{0,40}$/).optional(),
 }).strict();
 export function previsProxyColorAt(appearance: PrevisProxyAppearance, t: number): [number, number, number] {
   const keys = appearance.colors;
@@ -35,6 +42,6 @@ export function previsProxyAppearanceIssue(appearance: PrevisProxyAppearance, du
   if (shape!=="human" || rigged) return "球头圆柱换色只用于无真实模型的人形几何白模";
   const keys=appearance.colors;
   if (keys[0].timeSec!==0 || keys.at(-1)!.timeSec!==durationSec) return "几何白模换色须保留整段首尾状态";
-  if (keys.some((k,i)=>k.timeSec>durationSec || Math.abs(k.timeSec*24-Math.round(k.timeSec*24))>1e-6 || (i>0 && k.timeSec<=keys[i-1].timeSec))) return "几何白模换色须按24帧严格递增且不超片长";
+  if (keys.some((k,i)=>k.timeSec>durationSec || (i>0 && k.timeSec<=keys[i-1].timeSec))) return "几何白模换色须按秒严格递增且不超片长";
   return null;
 }
