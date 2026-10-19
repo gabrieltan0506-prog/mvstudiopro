@@ -37,8 +37,20 @@ it("刀坛支持固定台面与顺序换手，世界坐标有限且不接URL",()
  expect(()=>previsStoryPropsSchema.parse([{...track("j",world),kind:"jar",url:"https://example.com/model.glb"}])).toThrow();
 });
 
-it("信息卡左右手独立交互且禁止骨锚反向循环",()=>{
- const panel=(id:string,hand:"hand1"|"hand-1")=>({id,kind:"information_panel",proxy:{size:[.2,.02,.2],color:[.1,.4,.8]},grip:{actorId:"doctor",hand,startSec:0,endSec:2},keyframes:[{timeSec:0,anchor:{type:"world",position:[.3,0,1.2]}},{timeSec:2,anchor:{type:"world",position:[.4,0,1.2]}}]});
+it.each(["information_panel", "bullet"] as const)("%s左右手独立交互且禁止骨锚反向循环",kind=>{
+ const panel=(id:string,hand:"hand1"|"hand-1")=>({id,kind,proxy:{size:kind==="bullet"?[.12,.025,.025]:[.2,.02,.2],color:[.1,.4,.8]},grip:{actorId:"doctor",hand,startSec:0,endSec:2},keyframes:[{timeSec:0,anchor:{type:"world",position:[.3,0,1.2]}},{timeSec:2,anchor:{type:"world",position:[.4,0,1.2]}}]});
  const p=previsStoryPropsSchema.parse([panel("left","hand1"),panel("right","hand-1")]);expect(storyPropsIssue(p,actors,2)).toBeNull();
  p[1].keyframes[1].anchor=previsStoryPropsSchema.parse([track("t",bone())])[0].keyframes[0].anchor;expect(storyPropsIssue(p,actors,2)).toMatch(/独立世界锚点/);
+});
+
+it("金属弹头必须明确接触窗口，不能隐式占用整段手臂",()=>{
+ const p=previsStoryPropsSchema.parse([{id:"bullet",kind:"bullet",proxy:{size:[.12,.025,.025],color:[.9,.6,.1]},grip:{actorId:"doctor",hand:"hand-1"},keyframes:[{timeSec:0,anchor:{type:"world",position:[.3,0,1.2]}},{timeSec:2,anchor:{type:"world",position:[.3,0,1.2]}}]}]);
+ expect(storyPropsIssue(p,actors,2)).toMatch(/明确起止/);
+});
+
+it("旧光球保留几何但不获得接弹握持能力，弹头拒绝球体比例",()=>{
+ const base={id:"legacy-orb",kind:"light_orb",proxy:{size:[.2,.2,.2],color:[.9,.6,.1]},keyframes:[{timeSec:0,anchor:{type:"world",position:[.3,0,1.2]}},{timeSec:2,anchor:{type:"world",position:[.3,0,1.2]}}]};
+ expect(storyPropsIssue(previsStoryPropsSchema.parse([base]),actors,2)).toBeNull();
+ expect(storyPropsIssue(previsStoryPropsSchema.parse([{...base,grip:{actorId:"doctor",hand:"hand-1",startSec:0,endSec:2}}]),actors,2)).toMatch(/握持/);
+ expect(storyPropsIssue(previsStoryPropsSchema.parse([{...base,kind:"bullet"}]),actors,2)).toMatch(/球体比例/);
 });

@@ -201,7 +201,7 @@ export async function recoverPrevisResult(
       result.width !== width ||
       result.height !== height ||
       result.durationSec !== previsPlaybackDuration(input.spec) ||
-      result.report.frames !== input.spec.durationSec * 24 ||
+      result.report.frames !== Math.round(input.spec.durationSec * 24) ||
       result.report.actors.length !== input.spec.actors.length
     )
       return row;

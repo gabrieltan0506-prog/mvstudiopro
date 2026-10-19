@@ -1,3 +1,4 @@
+import { buildDigitalHumanPrevisAudio } from "@shared/digitalHumanPrevisAudio";
 import { useRef, useState } from "react";
 import { z } from "zod";
 import { trpc } from "@/lib/trpc";
@@ -106,9 +107,19 @@ export function DigitalHumanDirectorPanel(props: {
     {candidate && <ManhuaAdvisorPrevisComparison key={JSON.stringify(candidate)} candidate={candidate}
       storage={props.storage} beforeSubmit={props.beforeSubmit} acquireWork={props.acquireWork} storageKey="digital-human-director-trial"
       creatorMode autoStart={false} previewHost={props.previewHost === undefined ? host : props.previewHost} disabled={props.disabled || busy} onCheckReady={ready}
-      onPrepare={value => prepareAdvisorPrevisTrial(clipId, props.currentStudio(), value)}
+      onPrepare={value => {
+        const studio = props.currentStudio();
+        const trial = prepareAdvisorPrevisTrial(clipId, studio, value);
+        if (studio.audioEnabled === true) trial.request.audio = buildDigitalHumanPrevisAudio(props.draft, trial.request.spec);
+        return trial;
+      }}
       onApply={(trial, receipt) => {
-        try { props.onApply(adoptAdvisorPrevisTrial(clipId, props.currentStudio(), trial, receipt)); return true; }
+        try {
+          const studio = props.currentStudio();
+          const audio = studio.audioEnabled === true ? buildDigitalHumanPrevisAudio(props.draft, trial.request.spec) : undefined;
+          if (JSON.stringify(audio) !== JSON.stringify(trial.request.audio)) throw new Error("当前旁白与这次试看不同，请按当前旁白重新试看，旧版本保留。");
+          props.onApply(adoptAdvisorPrevisTrial(clipId, studio, trial, receipt)); return true;
+        }
         catch (e) { setError(message(e)); return false; }
       }} />}
   </section>;

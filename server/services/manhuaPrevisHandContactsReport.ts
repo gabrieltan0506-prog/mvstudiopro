@@ -11,7 +11,7 @@ export function validateHandContactsReport(raw:z.infer<typeof handContactsReport
  if((raw?.length??0)!==contacts.length || new Set(raw?.map(r=>r.id)).size!==(raw?.length??0))throw Error("人马接触报告数量或身份不一致");
  for(const c of contacts){
   const row=raw!.find(r=>r.id===c.id);
-  if(!row || row.actorId!==c.actorId || row.targetActorId!==c.targetActorId || row.hand!==c.hand || row.bone!==c.bone || row.samples.length!==spec.durationSec*24)throw Error("人马接触报告缺帧或对象错配");
+  if(!row || row.actorId!==c.actorId || row.targetActorId!==c.targetActorId || row.hand!==c.hand || row.bone!==c.bone || row.samples.length!==Math.round(spec.durationSec * 24))throw Error("人马接触报告缺帧或对象错配");
   const human=c.bone==="upper_arm-1"||c.bone==="upper_arm1";
   if(human){
    const pair=contacts.filter(other=>other.actorId===c.actorId&&other.targetActorId===c.targetActorId&&(["startSec","contactSec","releaseSec","endSec"] as const).every(key=>other[key]===c[key]));

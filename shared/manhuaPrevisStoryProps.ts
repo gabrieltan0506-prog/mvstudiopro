@@ -29,18 +29,23 @@ export function storyPropsIssue(props:PrevisStoryProp[] | undefined, actors:{id:
   const occupiedHands: {id:string;start:number;end:number}[] = [];
   for (const prop of props ?? []) {
     if (preceding.has(prop.id)) return `剧情道具 ID 重复：${prop.id}`;
+    if(prop.kind==="bullet" && (!prop.proxy || prop.proxy.size[0]<Math.max(prop.proxy.size[1],prop.proxy.size[2])*3))return "金属弹头须为X轴长条几何，长度至少为最大横径的3倍，不能使用球体比例";
+    const burst = prop.proxy?.burst;
+    if ((prop.kind === "chair_burst_text") !== Boolean(burst)) return "爆椅聚字必须提供完整爆裂与聚字时间窗，其他道具不得携带该配置";
+    if (burst && !(burst.startSec < burst.burstEndSec && burst.burstEndSec <= burst.gatherStartSec && burst.gatherStartSec < burst.gatherEndSec && burst.gatherEndSec <= durationSec - 1 / 24)) return "爆裂、停顿、聚字须依序位于片内，并保留结尾文字";
     if(prop.grip){
       const holder=actors.find(a=>a.id===prop.grip!.actorId);
       const handId=prop.grip.actorId+"/"+prop.grip.hand;
-      if(!["bowl","jar","knife","needle","information_panel"].includes(prop.kind) || !holder || holder.shape!=="human")return "道具握持只允许绑定真实存在的人形演员";
+      if(!["bowl","jar","knife","needle","information_panel","bullet"].includes(prop.kind) || !holder || holder.shape!=="human")return "道具握持只允许绑定真实存在的人形演员";
+      if(prop.kind==="bullet" && (prop.grip.startSec===undefined || prop.grip.endSec===undefined))return "金属弹头手部接触须明确起止秒位";
       const start=prop.grip.startSec??0,end=prop.grip.endSec??durationSec;
-      if((prop.grip.startSec===undefined)!==(prop.grip.endSec===undefined) || start>=end || end>durationSec || [start,end].some(t=>Math.abs(t*24-Math.round(t*24))>1e-6))return "道具握持须成对提供片内24帧对齐的起止秒位";
+      if((prop.grip.startSec===undefined)!==(prop.grip.endSec===undefined) || start>=end || end>durationSec)return "道具握持须成对提供片内的起止秒位";
       if(occupiedHands.some(h=>h.id===handId && h.start<end && h.end>start))return "同一只手的道具握持窗口不能重叠";
       // 取针轨迹驱动手腕，不能再由同一手骨反向驱动针而形成循环。
-      if(["needle","information_panel"].includes(prop.kind) && prop.keyframes.some((frame,i,frames)=>
+      if(["needle","information_panel","bullet"].includes(prop.kind) && prop.keyframes.some((frame,i,frames)=>
         i<frames.length-1 && frame.timeSec<end && frames[i+1].timeSec>start &&
         (frame.anchor.type!=="world" || frames[i+1].anchor.type!=="world")
-      ))return "持针窗口内的轨迹两端须使用独立世界锚点，释放后才可绑定身体骨锚";
+      ))return "道具接触窗口内的轨迹两端须使用独立世界锚点，释放后才可绑定身体骨锚";
       occupiedHands.push({id:handId,start,end});
     }
     if (isPrevisProxyProp(prop.kind) !== Boolean(prop.proxy)) return `几何剧情对象 ${prop.id} 必须具有对应的尺寸与颜色配置，旧道具不得混入几何配置`;
@@ -48,7 +53,7 @@ export function storyPropsIssue(props:PrevisStoryProp[] | undefined, actors:{id:
     if(frames[0].timeSec!==0 || Math.abs(frames[frames.length-1].timeSec-durationSec)>1e-6) return `道具 ${prop.id} 必须明确整段首尾状态`;
     for(let i=0;i<frames.length;i++) {
       const f=frames[i];
-      if(f.timeSec>durationSec || Math.abs(f.timeSec*24-Math.round(f.timeSec*24))>1e-6 || (i>0 && f.timeSec<=frames[i-1].timeSec)) return `道具 ${prop.id} 的关键帧须按24帧严格递增且不超片长`;
+      if(f.timeSec>durationSec || (i>0 && f.timeSec<=frames[i-1].timeSec)) return `道具 ${prop.id} 的关键帧须按秒严格递增且不超片长`;
       const a=f.anchor;
       if(a.type==="prop") {
         if(!preceding.has(a.propId)) return `道具 ${prop.id} 只能绑定已声明的道具，禁止自引用或循环`;

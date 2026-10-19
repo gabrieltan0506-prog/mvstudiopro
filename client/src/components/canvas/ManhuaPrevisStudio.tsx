@@ -89,6 +89,8 @@ export type PrevisServices = {
 type Props = {
   /** 数字人导演工作区：保留真实渲染、播放及审片，去除技术配置表。 */
   creatorMode?: boolean;
+  /** 数字人完整旁白沿用当前已采用回执，提交及采用时都重新核对。 */
+  resolveAudio?: (spec: ManhuaPrevisSpec) => ManhuaPrevisAudio;
   /** 调用方确认制作稿及请求身份已持久保存后，才允许提交。 */
   beforeSubmit?: () => Promise<void>;
   acquireWork?: (label: string) => () => void;
@@ -160,6 +162,7 @@ export function ManhuaPrevisStudio(props: Props) {
 
 export function ManhuaPrevisStudioView({
   creatorMode = false,
+  resolveAudio,
   block,
   beforeSubmit,
   acquireWork,
@@ -243,7 +246,7 @@ export function ManhuaPrevisStudioView({
     const issue = manhuaGeneratedPrevisCoverageIssue({
       reference, studio: next,
       autoSegment: current.block.manhuaAutoSegment,
-      durationSec: targetDuration == null ? undefined : clampManhuaClipDurationSecForVideoModel(current.block.videoModel, targetDuration),
+      durationSec: creatorMode ? next.spec.durationSec : targetDuration == null ? undefined : clampManhuaClipDurationSecForVideoModel(current.block.videoModel, targetDuration),
       shotIndexes: current.block.manhuaAutoSegment?.shotIndexes ?? sourceShots.map(shot => shot.index),
     });
     if (issue) { setError(issue); return false; }
@@ -475,7 +478,7 @@ export function ManhuaPrevisStudioView({
       clipId: block.id,
       spec: parsed.data,
       quality: "draft",
-      ...(studio.audioEnabled === true ? { audio: buildManhuaPrevisAudio(block.audioStudio, parsed.data, studio.audioStartSec ?? 0, studio.loopBgm ?? false) } : {}),
+      ...(studio.audioEnabled === true ? { audio: resolveAudio ? resolveAudio(parsed.data) : buildManhuaPrevisAudio(block.audioStudio, parsed.data, studio.audioStartSec ?? 0, studio.loopBgm ?? false) } : {}),
     }; } catch (error) {
       setError(error instanceof Error ? error.message : "请检查音轨"); lock.current = false; setBusy(false); if (advisor) throw error; return;
     }
@@ -644,7 +647,7 @@ export function ManhuaPrevisStudioView({
       return false;
     }
     try {
-      const currentAudio = studio.audioEnabled === true ? buildManhuaPrevisAudio(block.audioStudio, take.spec, studio.audioStartSec ?? 0, studio.loopBgm ?? false) : undefined;
+      const currentAudio = studio.audioEnabled === true ? (resolveAudio ? resolveAudio(take.spec) : buildManhuaPrevisAudio(block.audioStudio, take.spec, studio.audioStartSec ?? 0, studio.loopBgm ?? false)) : undefined;
       if (JSON.stringify(currentAudio) !== JSON.stringify(take.audio)) throw new Error("当前音轨与此白模版本不同，请重新试看并审片后采用；旧视频保留。");
     } catch (error) { setError(error instanceof Error ? error.message : "音轨无法核对"); return false; }
     const old = block.manhuaSegmentRefs?.previs;
@@ -755,7 +758,7 @@ export function ManhuaPrevisStudioView({
         <button type="button" className={button} disabled={disabled || Boolean(pendingId) || busy} onClick={() => onOpenAdvisor(preview?.requestId)}>让创作顾问调整</button>
       </div>}
       <p className="text-xs text-cyan-100" data-previs-source-scope>{manhuaPrevisSourceLabel(studio.spec)}</p>
-      {!creatorMode && <ManhuaPrevisPlanImport clipId={block.id} getCurrentStudio={currentImportStudio} disabled={Boolean(disabled || pendingId || busy)} onApply={candidate => {
+      {<ManhuaPrevisPlanImport clipId={block.id} getCurrentStudio={currentImportStudio} disabled={Boolean(disabled || pendingId || busy)} onApply={candidate => {
         try {
           const current = latest.current;
           const liveStudio=currentImportStudio();
@@ -778,7 +781,7 @@ export function ManhuaPrevisStudioView({
       {preview && (
         <section data-previs-player className="space-y-2 rounded border border-cyan-300/30 bg-black/20 p-2">
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-cyan-50">
-            <strong>白模渲染预览 · {preview.durationSec} 秒</strong>
+            <strong>白模渲染预览 · {preview.durationSec.toFixed(1)} 秒</strong>
             <span className="text-xs text-white/60">预览不等于采用或审片通过</span>
           </div>
           <video aria-label="白模渲染视频" key={preview.requestId} ref={previewVideo} controls preload="metadata" src={manhuaPrevisMediaUrl(preview.url)} className="max-h-[70vh] w-full bg-black object-contain"
@@ -1055,7 +1058,7 @@ export function ManhuaPrevisStudioView({
           className="flex flex-wrap items-center gap-2 text-xs text-white/70"
         >
           <span>
-            {take.durationSec} 秒 · {take.createdAt.slice(0, 19)}
+            {take.durationSec.toFixed(1)} 秒 · {take.createdAt.slice(0, 19)}
             <span data-previs-take-source> · {manhuaPrevisSourceLabel(take.spec)}</span>
             {studio.selectedJobId === take.jobId ? " · 当前采用" : ""}
             {previsSpecKey(take.spec) !== previsSpecKey(studio.spec)

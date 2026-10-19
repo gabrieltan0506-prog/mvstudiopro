@@ -14,7 +14,7 @@ export function validateQuadrupedFallReport(raw:z.infer<typeof quadrupedFallRepo
   if((raw?.length??0)!==actors.length || new Set(raw?.map(r=>r.actorId)).size!==(raw?.length??0)) throw Error("倒地逐帧报告数量或身份不一致");
   for(const actor of actors){
     const row=raw!.find(r=>r.actorId===actor.id);
-    if(!row || row.samples.length!==spec.durationSec*24) throw Error("倒地逐帧报告缺失");
+    if(!row || row.samples.length!==Math.round(spec.durationSec * 24)) throw Error("倒地逐帧报告缺失");
     if(actor.riggedModel){
       const modelsFor=models.filter(m=>m.actorId===actor.id),source=row.rootSource;
       if(source.kind!=="riggedModel" || modelsFor.length!==1 || source.sourceJobId!==actor.riggedModel.sourceJobId || modelsFor[0].sourceJobId!==source.sourceJobId || modelsFor[0].sha256!==source.sha256) throw Error("倒地报告未读取本角色实际带骨网格");

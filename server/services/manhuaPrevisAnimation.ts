@@ -4,7 +4,7 @@ import type { ManhuaPrevisSpec } from '../../shared/manhuaPrevis';
 export function validatePrevisAnimation(raw: unknown, glb: Buffer, spec: ManhuaPrevisSpec) {
   const result=previsAnimationFramesSchema.parse(raw);
   const [width,height]=spec.aspect==='9:16'?[540,960]:[960,540];
-  if (result.width!==width || result.height!==height || result.frames.length!==spec.durationSec*24
+  if (result.width!==width || result.height!==height || result.frames.length!==Math.round(spec.durationSec * 24)
     || result.frames.some((row,i)=>row.frame!==i+1 || Math.abs(row.timeSec-i/24)>1e-8
       || Math.abs(Math.hypot(...row.camera.quaternionXYZW)-1)>1e-4)) throw new Error('场景动画逐帧相机证据不完整');
   if (glb.length<20 || glb.length>64*1024*1024 || glb.toString('ascii',0,4)!=='glTF'

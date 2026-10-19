@@ -4,7 +4,7 @@ import { build } from "esbuild";
 import puppeteer from "puppeteer";
 import path from "node:path";
 
-it("已审方案经对照确认和原publish保存，保留原稿参考，拒绝过期覆盖", async () => {
+it.each([false, true])("已审方案经原publish保存并拒绝过期覆盖（creatorMode=%s）", async creatorMode => {
   const bundle = await build({ stdin: { resolveDir: process.cwd(), loader: "tsx", contents: `
     import React from 'react'; import {createRoot} from 'react-dom/client';
     import {ManhuaPrevisStudioView} from './client/src/components/canvas/ManhuaPrevisStudio';
@@ -15,7 +15,7 @@ it("已审方案经对照确认和原publish保存，保留原稿参考，拒绝
     initial.previsStudio.spec.actors=[{...actor,id:'daughter',nameZh:'阿菁'},{...actor,id:'mother',nameZh:'娘'}];
     globalThis.submits=0; globalThis.updates=[];
     const services={submit:async()=>{globalThis.submits++;throw Error('No render authorized')},get:async()=>null,list:async()=>({items:[],nextCursor:null})};
-    function App(){const [sourceShots,setSourceShots]=React.useState([{index:1,durationSec:5,actionZh:'阿菁原地观察',cameraZh:'中景',dialogueZh:'无对白'}]);globalThis.clearSource=()=>setSourceShots([]);globalThis.changeSource=()=>setSourceShots(rows=>rows.map(row=>({...row,actionZh:'阿菁退后一步'})));const [block,setBlock]=React.useState(initial);globalThis.block=block;globalThis.changeCurrent=()=>setBlock(previous=>({...previous,previsStudio:{...previous.previsStudio,spec:{...previous.previsStudio.spec,actors:previous.previsStudio.spec.actors.map(actor=>({...actor,nameZh:'新角色'}))}}}));return <ManhuaPrevisStudioView block={block} sourceShots={sourceShots} characters={[]} services={services} onChange={(studio,reference)=>{globalThis.updates.push(studio);setBlock(previous=>({...previous,previsStudio:studio,manhuaSegmentRefs:reference?{previs:reference}:previous.manhuaSegmentRefs}));return true;}}/>;}
+    function App(){const [sourceShots,setSourceShots]=React.useState([{index:1,durationSec:5,actionZh:'阿菁原地观察',cameraZh:'中景',dialogueZh:'无对白'}]);globalThis.clearSource=()=>setSourceShots([]);globalThis.changeSource=()=>setSourceShots(rows=>rows.map(row=>({...row,actionZh:'阿菁退后一步'})));const [block,setBlock]=React.useState(initial);globalThis.block=block;globalThis.changeCurrent=()=>setBlock(previous=>({...previous,previsStudio:{...previous.previsStudio,spec:{...previous.previsStudio.spec,actors:previous.previsStudio.spec.actors.map(actor=>({...actor,nameZh:'新角色'}))}}}));return <ManhuaPrevisStudioView creatorMode={${creatorMode}} block={block} sourceShots={sourceShots} characters={[]} services={services} onChange={(studio,reference)=>{globalThis.updates.push(studio);setBlock(previous=>({...previous,previsStudio:studio,manhuaSegmentRefs:reference?{previs:reference}:previous.manhuaSegmentRefs}));return true;}}/>;}
     createRoot(document.getElementById('root')).render(<App/>);
   ` }, bundle: true, write: false, platform: "browser", format: "iife", jsx: "automatic",
     alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
@@ -39,7 +39,11 @@ it("已审方案经对照确认和原publish保存，保留原稿参考，拒绝
       if (!button) throw new Error(`Missing button: ${text}`); button.click();
     }, label);
     const patch = await page.evaluate(() => ({kind:"previs_edit_v1",summaryZh:"阿菁开镜已背稳娘，镜头收紧",unsupportedZh:[],piggyback:{carrierId:"daughter",passengerId:"mother"},shotCoverage:[{index:1,status:"covered",actorIds:[],reasonZh:"保留现有动作，仅调整机位；不代表画面验收"}],cameras:(globalThis as any).block.previsStudio.spec.cameras.map((c:any)=>({...c,endLens:60}))}));
-    await page.type('[aria-label="已审动作方案 JSON"]', JSON.stringify(patch));
+    await page.$eval('[aria-label="上传动作方案文件"]', (input, raw) => {
+      const data = new DataTransfer(); data.items.add(new File([raw], "test-plan.json", { type: "application/json" }));
+      (input as HTMLInputElement).files = data.files; input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, JSON.stringify(patch));
+    await page.waitForFunction(() => (document.querySelector('[aria-label="已审动作方案 JSON"]') as HTMLTextAreaElement)?.value.includes('previs_edit_v1'));
     await click("检查并对照方案");
     await page.waitForFunction(() => document.body.textContent?.includes("拟采用动作方案"));
     expect(await page.evaluate(() => (globalThis as any).updates.length)).toBe(0);

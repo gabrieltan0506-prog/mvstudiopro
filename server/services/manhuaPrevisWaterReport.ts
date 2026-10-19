@@ -86,7 +86,7 @@ export function validateWaterReport(
     const cross = Math.round(event.crossSec * 24) + 1;
     if (
       !row ||
-      row.samples.length !== spec.durationSec * 24 ||
+      row.samples.length !== Math.round(spec.durationSec * 24) ||
       row.crossFrame !== cross ||
       !close(row.headHeight, 1.65)
     )
@@ -167,7 +167,7 @@ export function validateWaterReport(
       throw Error("头部首次破水回执不一致");
   }
   // 从完整逐帧范围重算，不能只相信渲染器给出的空 overlaps。
-  for (let f = 0; f < spec.durationSec * 24; f++)
+  for (let f = 0; f < Math.round(spec.durationSec * 24); f++)
     for (let i = 0; i < raw.events.length; i++)
       for (let j = i + 1; j < raw.events.length; j++) {
         const a = raw.events[i].samples[f],

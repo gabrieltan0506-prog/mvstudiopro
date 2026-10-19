@@ -12,6 +12,32 @@ def track_segment(keyframes, t):
     return keyframes[-1], keyframes[-1], 0.
 
 
+def world_prop_look_target(props, target_id, t):
+    """仅解析独立世界轨迹，复用道具插值与显隐；不递归读取骨骼或其他道具。"""
+    if not target_id or not target_id.startswith('prop:'):
+        return None
+    prop = next((p for p in props if p['id'] == target_id[5:]), None)
+    if not prop or not prop.get('keyframes') or any(k['anchor']['type'] != 'world' for k in prop['keyframes']):
+        return None
+    left, right, u = track_segment(prop['keyframes'], t)
+    if not left.get('visible', True):
+        return None
+    return tuple(a*(1-u)+b*u for a, b in zip(left['anchor']['position'], right['anchor']['position']))
+
+
+def grip_blend_amount(kind, start, end, t):
+    """金属弹头和信息卡短窗收放手；其余既有持物方式保持原权重。"""
+    if not start <= t < end:
+        return 0.
+    if kind not in ('information_panel', 'bullet'):
+        return 1.
+    ramp = min(.5, (end-start)/2)
+    def smooth(v):
+        u = max(0., min(1., v))
+        return u*u*(3-2*u)
+    return smooth((t-start)/ramp)*smooth((end-t)/ramp)
+
+
 def target_bone_name(shape, source_name, bone_map):
     if shape == 'horse':
         source_to_semantic={'body':'spine','neck':'neck','head':'head',
@@ -29,6 +55,7 @@ def target_bone_name(shape, source_name, bone_map):
 
 def build_story_props(spec, rigs, scene, actor_visible, models=None):
     import bpy
+    from previs_workflow_props import measure_workflow_state
     from mathutils import Vector, Euler, Matrix
     from previs_effects import _material
     actors = {a['id']:(a, rig) for a, rig, *_ in rigs}
@@ -74,7 +101,7 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
 
     for prop in spec.get('storyProps') or []:
         kind, name = prop['kind'], '剧情道具_'+prop['id']
-        is_proxy = kind in ('task_avatar','light_orb','information_panel','code_screen','stage_box')
+        is_proxy = kind in ('task_avatar','light_orb','bullet','information_panel','code_screen','stage_box','folding_wall','office_chair','chair_burst_text')
         proxy_objects = None
         if is_proxy:
             from previs_proxy_props import build_proxy_prop, measure_proxy_prop
@@ -159,26 +186,24 @@ def build_story_props(spec, rigs, scene, actor_visible, models=None):
                     liquid.keyframe_insert(key,frame=frame)
             grip=prop.get('grip')
             gripping=grip and grip.get('startSec',0)<=t<grip.get('endSec',scene.frame_end/24)
-            grip_amount=1.
-            if gripping and kind=='information_panel':
-                start,end=grip.get('startSec',0),grip.get('endSec',scene.frame_end/24)
-                ramp=min(.5,(end-start)/2)
-                def smooth(v):
-                    u=max(0.,min(1.,v));return u*u*(3-2*u)
-                grip_amount=smooth((t-start)/ramp)*smooth((end-t)/ramp)
+            grip_amount=grip_blend_amount(kind,grip.get('startSec',0),grip.get('endSec',scene.frame_end/24),t) if gripping else 0.
             grip_residual=grip_to_bowl(grip,obj,frame,grip_amount) if gripping and visible else None
             for child in objects[1:]:
                 if child==liquid:continue
                 child.hide_render=not visible;child.hide_viewport=not visible
                 for key in ('hide_render','hide_viewport'):child.keyframe_insert(key,frame=frame)
+            if kind == 'chair_burst_text':
+                from previs_workflow_props import animate_workflow_prop
+                animate_workflow_prop(prop, objects, t, frame, visible)
             for key in ('location','rotation_quaternion','scale','hide_render','hide_viewport'):
                 obj.keyframe_insert(key,frame=frame)
             bpy.context.view_layer.update()
             samples.append({'frame':frame,'position':list(obj.location),'visible':visible,
                             'fromAnchor':left['anchor'],'toAnchor':right['anchor'],'progress':u,
                             **({'proxyGeometry':measure_proxy_prop(objects,scene)} if is_proxy else {}),
+                            **({'workflowState':measure_workflow_state(objects)} if kind == 'chair_burst_text' else {}),
                             **({'fillLevel':fill} if kind in ('bowl','jar') else {}),
-                            **({'gripResidual':grip_residual,**({'gripAmount':grip_amount} if kind=='information_panel' else {})} if grip_residual is not None else {})})
+                            **({'gripResidual':grip_residual,**({'gripAmount':grip_amount} if kind in ('information_panel','bullet') else {})} if grip_residual is not None else {})})
         by_id[prop['id']]=handle;handles.append(handle)
     scene.frame_set(1)
     return handles

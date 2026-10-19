@@ -49,7 +49,7 @@ export function validateEffectsReport(
     if (
       !row ||
       row.kind !== event.kind ||
-      row.samples.length !== spec.durationSec * 24
+      row.samples.length !== Math.round(spec.durationSec * 24)
     )
       throw Error("特效事件与完整帧数不一致");
     for (let i = 0; i < row.samples.length; i++) {

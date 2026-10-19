@@ -1,3 +1,4 @@
+import { buildDigitalHumanPrevisAudio } from "@shared/digitalHumanPrevisAudio";
 import { DigitalHumanSpatialAdvisorPanel } from "./DigitalHumanSpatialAdvisorPanel";
 import { digitalHumanPrevisScenePatch, digitalHumanSceneInputKey, digitalHumanPrevisSceneAligned } from "@/lib/digitalHumanSpatialAdvisor";
 import { DigitalHumanDirectorPanel } from "./DigitalHumanDirectorPanel";
@@ -272,7 +273,7 @@ export function DigitalHumanSpatialStudio({
       w.taskId === draft.worldTaskId && w.sourceVersion === draft.scene?.source
   );
   const studio = draft.previsStudio;
-  const targetPrevisDuration = previsDuration ?? studio?.spec.durationSec ?? Math.min(30, Math.ceil(currentDigitalHumanAudio(draft)?.durationSec || 10));
+  const targetPrevisDuration = previsDuration ?? studio?.spec.durationSec ?? Math.min(30, Math.ceil((currentDigitalHumanAudio(draft)?.durationSec || 10) * 10) / 10);
   const previsDurationChanged = Boolean(studio && studio.spec.durationSec !== targetPrevisDuration);
   const previsOutdated = !digitalHumanPrevisSceneAligned(draft);
   function rebuildStudio() {
@@ -835,11 +836,12 @@ export function DigitalHumanSpatialStudio({
       <div id="dh-preview" className="dh-previs-main">
       <div className="dh-previs-heading"><h3>白模预演</h3><span>{draft.previs?.reviewed && draft.previs.sourceFingerprint === digitalHumanSpatialFingerprint(draft) && !previsOutdated ? "已确认当前版本" : "待预演与确认"}</span></div>
       <div ref={setTrialHost} data-clip-id={clipId} className="dh-director-trial" />
-      <label>白模目标时长（秒）<input type="number" aria-label="白模目标时长" min={2} max={30} step={1}
+      <label>白模目标时长（秒）<input type="number" aria-label="白模目标时长" min={2} max={30} step={0.1}
         value={targetPrevisDuration} disabled={disabled || Boolean(studio?.pending)} onChange={e => {
           const value = Number(e.target.value);
-          if (Number.isInteger(value) && value >= 2 && value <= 30) setPrevisDuration(value);
+          if (Number.isFinite(value) && value >= 2 && value <= 30 && Math.abs(value * 10 - Math.round(value * 10)) < 1e-7) setPrevisDuration(value);
         }} /></label>
+      {!studio && <button type="button" disabled={disabled || !characters.length} onClick={rebuildStudio}>建立当前人物预演方案</button>}
       {previsDurationChanged && <p>时长已调整，请重建并重新审片；旧方案与回执会保留。</p>}
       {studio && (previsOutdated || previsDurationChanged) && <button
         type="button"
@@ -853,7 +855,10 @@ export function DigitalHumanSpatialStudio({
       {previsOutdated && <p role="status">场景站位或机位已改变，旧白模暂不能用于渲染和视频。旧稿已保留，请按当前场景重建并重新审片。</p>}
       {studio && !previsOutdated && (
         <div className="dh-factory">
+          <label><input type="checkbox" aria-label="预演带上已采用完整旁白" checked={studio.audioEnabled === true}
+            disabled={disabled || Boolean(studio.pending)} onChange={e => patch({ previsStudio: { ...studio, audioEnabled: e.target.checked } })} />预演带上已采用完整旁白（原速，不另生成声音）</label>
           <ManhuaPrevisStudio
+            resolveAudio={spec => buildDigitalHumanPrevisAudio(latest.current, spec)}
             creatorMode
             block={block}
             beforeSubmit={beforeSubmit}

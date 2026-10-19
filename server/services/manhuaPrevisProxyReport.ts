@@ -11,7 +11,7 @@ export function validateProxyAppearanceReport(raw:z.infer<typeof proxyAppearance
   if((raw?.length??0)!==expected.length || new Set(raw?.map(r=>r.actorId)).size!==(raw?.length??0))throw Error("球柱白模形态与换色回执缺失或重复");
   for(const actor of expected){
     const row=raw!.find(r=>r.actorId===actor.id);
-    if(!row || row.samples.length!==spec.durationSec*24)throw Error("球柱白模缺少完整帧材质轨迹");
+    if(!row || row.samples.length!==Math.round(spec.durationSec * 24))throw Error("球柱白模缺少完整帧材质轨迹");
     row.samples.forEach((sample,i)=>{
       const color=previsProxyColorAt(actor.proxyAppearance!,i/24);
       if(sample.frame!==i+1 || sample.meshCount!==sample.cylinderBodies+sample.sphereHeads || sample.color.some((v,j)=>Math.abs(v-color[j])>.00001))throw Error("球柱白模的实际形态或材质换色与本次方案不一致");

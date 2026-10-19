@@ -27,3 +27,28 @@ class BoneMapTest(unittest.TestCase):
     def test_missing_real_mapping_fails(self):
         from previs_story_props import target_bone_name
         with self.assertRaises(ValueError):target_bone_name('human','hand1',{})
+
+class GripBlendTest(unittest.TestCase):
+    def test_bullet_short_window_returns_to_original(self):
+        from previs_story_props import grip_blend_amount
+        for kind in ('bullet', 'information_panel'):
+            self.assertEqual([grip_blend_amount(kind, .5, 2.5, t) for t in (0, .5, .75, 1, 1.5, 2, 2.25, 2.5, 3)], [0, 0, .5, 1, 1, 1, .5, 0, 0])
+        self.assertEqual(grip_blend_amount('bowl', .5, 2.5, .5), 1)
+        self.assertEqual(grip_blend_amount('needle', .5, 2.5, 2.25), 1)
+
+class WorldPropLookTest(unittest.TestCase):
+    def test_same_interpolation_and_hidden_or_cyclic_targets_rejected(self):
+        from previs_story_props import world_prop_look_target
+        import copy
+        prop = {'id': 'panel', 'keyframes': [
+            {'timeSec': 0, 'visible': False, 'anchor': {'type': 'world', 'position': [1, 0, 1]}},
+            {'timeSec': 1, 'visible': True, 'anchor': {'type': 'world', 'position': [1, 0, 1]}},
+            {'timeSec': 3, 'visible': True, 'anchor': {'type': 'world', 'position': [1, 2, 1]}},
+        ]}
+        self.assertIsNone(world_prop_look_target([prop], 'prop:panel', .99))
+        self.assertEqual(world_prop_look_target([prop], 'prop:panel', 2), (1, 1, 1))
+        self.assertIsNone(world_prop_look_target([prop], 'prop:missing', 2))
+        for anchor in ({'type': 'bone', 'actorId': 'host', 'bone': 'head'}, {'type': 'prop', 'propId': 'panel'}):
+            bad = copy.deepcopy(prop)
+            bad['keyframes'][1]['anchor'] = anchor
+            self.assertIsNone(world_prop_look_target([bad], 'prop:panel', 2))
