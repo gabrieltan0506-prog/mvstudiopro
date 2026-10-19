@@ -1448,8 +1448,8 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     // 锁放在后面：调用方偏好只能补 require_parameters / max_price 之类，不能解开 order / allow_fallbacks
     payload.provider = { ...(params.openRouterProviderPreferences || {}), ...OPENROUTER_GLM_PROVIDER_LOCK };
   } else if (modelId === "deepseek/deepseek-v4.1-flash-1017" && !evolinkFlash) {
-    // 1017快照的OpenRouter目录没有DeepSeek自营端点，不能沿旧别名锁到不存在的提供商。
-    payload.provider = { ...(params.openRouterProviderPreferences || {}), require_parameters: true };
+    // 用户指定1017也只能走DeepSeek；端点不可用时失败，不能转投其他供应商。
+    payload.provider = { ...(params.openRouterProviderPreferences || {}), require_parameters: true, ...OPENROUTER_DEEPSEEK_PROVIDER_LOCK };
   } else if (isDeepSeekV41Flash && !evolinkFlash) {
     // 沿用知识卡同款自营锁，参数与供应商保持可验证。
     payload.provider = { ...(params.openRouterProviderPreferences || {}), ...OPENROUTER_DEEPSEEK_PROVIDER_LOCK };
