@@ -1,3 +1,4 @@
+import { CINEMA_START, extractDigitalHumanCinemaBlock } from "./digitalHumanCinema.js";
 /**
  * JSON 导演中台（super-i / 刺猬星球方法论，成稿去导演名）
  *
@@ -366,6 +367,9 @@ function limitMotionPromptWithVfx(prompt: string): string {
   if (prompt.length > MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS && /【镜头特效[:：]/.test(prompt)) {
     throw new Error(`含已采用特效的成片提示词超过${MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS}字，请缩短正文或特效描述后再生成；本次未提交。`);
   }
+  if (prompt.length > MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS && prompt.includes(CINEMA_START)) {
+    throw new Error(`含已采用导演设置的提示词超过${MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS}字，请缩短正文后再生成；本次未提交。`);
+  }
   return prompt.slice(0, MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS);
 }
 
@@ -374,18 +378,20 @@ export function compileI2VMotionPrompt(
   opts?: CompileI2VMotionPromptOpts,
 ): string {
   if (opts?.preserveFullDirectorText) return stripDirectorNamesForDelivery(String(rawPrompt || "").trim());
+  const cinemaBlock = extractDigitalHumanCinemaBlock(String(rawPrompt || ""));
+  const appendRecipe = opts?.appendRecipeAsConstraint === true || Boolean(cinemaBlock);
   const recipeId = String(opts?.pathCameraRecipeId || "").trim();
   // 已审成片的锁定秒轴优先；刷新恢复的推荐配方不能追加另一套动作时间表。
   const lockedClipTimeline = opts?.appendRecipeAsConstraint === true &&
     /镜头视觉秒轴保持原稿/.test(String(rawPrompt || ""));
   if (recipeId && !lockedClipTimeline) {
     const recipe = getPathCameraRecipeById(recipeId);
-    if (recipe && !opts?.appendRecipeAsConstraint) {
+    if (recipe && !appendRecipe) {
       return compilePathCameraRecipeToMotionPrompt(recipe);
     }
-    if (recipe && opts?.appendRecipeAsConstraint) {
+    if (recipe && appendRecipe) {
       const body = stripDirectorNamesForDelivery(String(rawPrompt || "").trim());
-      const addon = `【运镜配方·附加约束】${compilePathCameraRecipeToMotionPrompt(recipe)}`;
+      const addon = `【运镜配方·附加约束】${cinemaBlock ? "与正文的时长、动作及已采用导演设置冲突时，以正文为准。\n" : ""}${compilePathCameraRecipeToMotionPrompt(recipe)}`;
       return limitMotionPromptWithVfx(`${body ? `${body}\n\n` : ""}${addon}`);
     }
   }
