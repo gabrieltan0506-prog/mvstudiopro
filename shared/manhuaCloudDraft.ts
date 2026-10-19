@@ -1,3 +1,4 @@
+import { digitalHumanCinemaSchema, type DigitalHumanCinema } from "./digitalHumanCinema";
 import { artMotionStateSchema, type ArtMotionState } from "./artMotion";
 import { imageWorldStateSchema, type ImageWorldState } from "./imageWorld";
 import { normalizeManhuaClipPromptEdit } from "./manhuaClipPromptEdit";
@@ -52,6 +53,7 @@ export const MANHUA_DRAFT_EXPORT_HINT_ZH =
   "成片出完会自动下载到本机；建议再导出工程包备份剧本与静帧。平台暂存约 30 天，不成片仓库。";
 
 export type ManhuaCloudDraftCanvasBlock = {
+  cinema?: DigitalHumanCinema;
   id: string;
   kind: string;
   musicMv?: CanvasMusicMvState;
@@ -405,6 +407,7 @@ export function sanitizeManhuaCloudDraftBlock(
     kind,
     artMotion:b.artMotion==null?undefined:artMotionStateSchema.parse(b.artMotion),
     imageWorld:b.imageWorld==null?undefined:imageWorldStateSchema.parse(b.imageWorld),
+    cinema: b.cinema == null ? undefined : digitalHumanCinemaSchema.parse(b.cinema),
     musicMv: b.musicMv == null ? undefined : normalizeCanvasMusicMvState(b.musicMv),
     musicMvShot: b.musicMvShot == null ? undefined : canvasMusicMvShotBindingSchema.parse(b.musicMvShot),
     x: Math.round(Number(b.x) || 0),

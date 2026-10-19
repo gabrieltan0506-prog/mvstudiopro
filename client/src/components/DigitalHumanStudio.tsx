@@ -1,3 +1,5 @@
+import { assertDigitalHumanCinemaApplied } from "@shared/digitalHumanCinema";
+import { DigitalHumanCinemaPanel } from "./DigitalHumanCinemaPanel";
 import { useManhuaAssetConfirmation } from "./useManhuaAssetConfirmation";
 import { digitalHumanDraftReadError, digitalHumanDraftExport } from "@/lib/digitalHumanDraftRecovery";
 import { DigitalHumanBackupPanel } from "./DigitalHumanBackupPanel";
@@ -1076,8 +1078,9 @@ function DigitalHumanWorkspace({
             acquireWork={acquireWork}
           />
         </section>
-        <div className="dh-wide" hidden={workspaceStep !== "production"}>{(role === "admin" || role === "supervisor") && <DigitalHumanOmniPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} updateVideo={updateVideo} />}</div>
-        <section id="dh-production" hidden={workspaceStep !== "production"} className="dh-card dh-wide">
+        <div id="dh-production" className="dh-wide" hidden={workspaceStep !== "production"}><DigitalHumanCinemaPanel draft={draft} disabled={Boolean(busy)} canUseOmni={role === "admin" || role === "supervisor"} onChange={edit} /></div>
+        <div className="dh-wide" hidden={workspaceStep !== "production" || draft.cinema?.mode === "reference"}>{(role === "admin" || role === "supervisor") && <DigitalHumanOmniPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} updateVideo={updateVideo} />}</div>
+        <section id="dh-reference-production" hidden={workspaceStep !== "production" || draft.cinema?.mode === "talking"} className="dh-card dh-wide">
           <h3>生成正式视频</h3>
           <label>视频模型<select aria-label="数字人视频模型" value={draft.filmModel||"seedance-2.5"} disabled={Boolean(busy)} onChange={e=>edit({filmModel:digitalHumanFilmModelSchema.parse(e.target.value)})}>
             {Object.entries(DIGITAL_HUMAN_FILM_MODELS).map(([value,profile])=><option key={value} value={value}>{profile.label}</option>)}
@@ -1160,6 +1163,7 @@ function DigitalHumanWorkspace({
                 type="button"
                 onClick={() =>
                   void act("生成数字人视频", async () => {
+                    assertDigitalHumanCinemaApplied(ref.current, "reference");
                     const p = preview;
                     const current = currentDigitalHumanAudio(ref.current);
                     if (
@@ -1224,7 +1228,7 @@ function DigitalHumanWorkspace({
             </div>
           )}
         </section>
-        <div className="dh-wide" hidden={workspaceStep !== "production"}><DigitalHumanFilmDirectorPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} />
+        <div className="dh-wide" hidden={workspaceStep !== "production"}><div hidden={draft.cinema?.mode === "talking"}><DigitalHumanFilmDirectorPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} />
         <DigitalHumanKeyframeAdvicePanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} />
         <DigitalHumanKeyframeGenerationPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} uploadFile={uploadFile} acquireWork={acquireWork} />
         <DigitalHumanKeyframePanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} uploadFile={uploadFile} acquireWork={acquireWork} />
@@ -1237,7 +1241,7 @@ function DigitalHumanWorkspace({
             setPreview({ row, block, outbound });
             setNotice("本段输入已准备，请在上方核对完整参考与费用后确认生成。");
           }} />
-        <DigitalHumanPublicationPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} />
+        </div><DigitalHumanPublicationPanel draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} />
         {cloudGeneration.current && !cloudError.current && <DigitalHumanPostProduction draft={draft} disabled={Boolean(busy)} save={save} beforeSubmit={flushCloud} acquireWork={acquireWork} userRole={role} />}
         </div>
         <section hidden={workspaceStep !== "production"} className="dh-card dh-wide">

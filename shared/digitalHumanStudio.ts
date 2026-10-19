@@ -1,3 +1,4 @@
+import { digitalHumanCinemaSchema, assertDigitalHumanCinemaApplied } from "./digitalHumanCinema";
 import { digitalHumanOriginalPortraitSchema, digitalHumanKeyframeGenerationReceiptSchema, digitalHumanKeyframeImageDraftSchema } from "./digitalHumanKeyframeGeneration";
 import { digitalHumanDirectionSchema, digitalHumanFilmModelSchema, digitalHumanFilmStateSchema, DIGITAL_HUMAN_FILM_MODELS, digitalHumanFilmRevision, compileDigitalHumanFilm, parseDigitalHumanFilmPlan, type DigitalHumanFilmTarget } from "./digitalHumanFilmDirector";
 import { digitalHumanOmniQuoteSchema } from "./digitalHumanOmni";
@@ -186,6 +187,7 @@ export const digitalHumanSegmentDraftSchema = z.object({
   speechInstruction: z.string().max(100).default(""),
   aspectRatio: z.enum(["9:16", "16:9"]),
   direction: digitalHumanDirectionSchema,
+  cinema: digitalHumanCinemaSchema.optional(),
   filmModel: digitalHumanFilmModelSchema.optional(),
   filmDirector: digitalHumanFilmStateSchema.optional(),
   keyframes: digitalHumanKeyframesSchema.optional(),
@@ -373,6 +375,7 @@ export function prepareDigitalHumanVideo(
   requestId: string,
   part?: { manifest: DigitalHumanSplitManifest; planRequestId: string; index: number; continuityFrame?: DigitalHumanMedia; useReviewedPrevis?: boolean }
 ): DigitalHumanVideo {
+  assertDigitalHumanCinemaApplied(draft, "reference");
   if (!draft.portrait || !draft.scene) throw new Error("请先选择人像和场景图");
   if (draft.videos.some(row => digitalHumanPending(row.status)))
     throw new Error("请先核对原视频任务，不能重复生成");
@@ -521,6 +524,7 @@ export function digitalHumanOmniFingerprint(draft: DigitalHumanDraft, audio: Dig
 
 /** 入门口播只绑定照片与已确认配音；旧导演参考不会混入单图请求。 */
 export function prepareDigitalHumanOmniVideo(draft: DigitalHumanDraft, requestId: string): DigitalHumanVideo {
+  assertDigitalHumanCinemaApplied(draft, "talking");
   const image = draft.portrait;
   if (!image) throw new Error("请先上传人物或角色照片");
   if (draft.videos.some(v => digitalHumanPending(v.status))) throw new Error("请先核对原视频任务，不能重复生成");
@@ -536,6 +540,7 @@ export function prepareDigitalHumanOmniVideo(draft: DigitalHumanDraft, requestId
 /** 顾问只读真实制作稿与音轨时长；地址留在生成层，修订号覆盖全部相关素材。 */
 export function digitalHumanFilmTarget(draft: DigitalHumanDraft): DigitalHumanFilmTarget {
   draft = digitalHumanDraftSchema.parse(draft);
+  assertDigitalHumanCinemaApplied(draft, "reference");
   const audio = currentDigitalHumanAudio(draft);
   if (!audio?.source || !audio.durationSec || draft.approvedAudioRequestId !== audio.request.billingRequestId) throw new Error("请先试听并采用当前配音，再生成按实际音轨安排的导演方案");
   const manifest = [...draft.productions].reverse().find(p => p.status === "succeeded" && p.manifest?.audioRequestId === audio.request.billingRequestId && p.manifest?.audioUri === audio.source && p.manifest?.script === draft.script.trim())?.manifest;

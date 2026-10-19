@@ -198,6 +198,7 @@ export function DigitalHumanPostProdWorkbench(props: {
         vfxScopeKey={props.scope}
         orderedClipIds={props.orderedClipIds}
         initialAspect={props.draft.aspectRatio}
+        subtitleDefaultMarginV={50}
         focusEpisode={1}
         vfxState={state}
         onVfxStateChange={stateError ? undefined : persistVfx}

@@ -1,3 +1,4 @@
+import { digitalHumanCinemaSchema, type DigitalHumanCinema } from "@shared/digitalHumanCinema";
 import { normalizeManhuaClipPromptEdit } from "@shared/manhuaClipPromptEdit";
 import { artMotionStateSchema, type ArtMotionState } from "@shared/artMotion";
 import { imageWorldStateSchema, type ImageWorldState } from "@shared/imageWorld";
@@ -133,6 +134,7 @@ export const CANVAS_BLOCK_MAX_WIDTH = 960;
 export const CANVAS_BLOCK_MAX_HEIGHT = 800;
 
 export type CanvasBlock = {
+  cinema?: DigitalHumanCinema;
   artMotion?: ArtMotionState;
   imageWorld?: ImageWorldState;
   id: string;
@@ -560,6 +562,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
 
   return {
     ...withVideo,
+    cinema: block.cinema == null ? undefined : digitalHumanCinemaSchema.parse(block.cinema),
     artMotion: block.artMotion == null ? undefined : artMotionStateSchema.parse(block.artMotion),
     imageWorld: block.imageWorld == null ? undefined : imageWorldStateSchema.parse(block.imageWorld),
     musicMv: block.musicMv == null ? undefined : normalizeCanvasMusicMvState(block.musicMv),

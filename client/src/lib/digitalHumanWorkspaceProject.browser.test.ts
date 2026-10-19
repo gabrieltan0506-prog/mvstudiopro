@@ -38,6 +38,18 @@ it('真实工作台切段后原回调仅写原段，云稿恢复保持全部段�
  expect(await page.$eval('textarea[maxlength="4000"]',e=>(e as HTMLTextAreaElement).value)).toBe('旧稿第一段');
  expect(await page.evaluate(()=>(globalThis as any).cloud.direction)).toBe('第一段迟到的导演答复');
  expect(await page.evaluate(()=>(globalThis as any).cloud.project.segments[1].draft.script)).toBe('第二段独立正文');
+ await click('4生成视频');
+ await page.waitForSelector('[aria-label="Cinema导演工作台"]',{visible:true});
+ await page.$$eval('[aria-label="Cinema导演工作台"] summary',nodes=>(nodes.find(n=>n.textContent?.startsWith('色彩')) as HTMLElement).click());
+ await page.select('[aria-label="Cinema色彩"]','暖金');
+ await click('采用到完整导演要求');
+ await page.waitForFunction(()=>(globalThis as any).cloud.cinema?.palette==='暖金'&&(globalThis as any).cloud.direction.includes('色彩：暖金'));
+ await page.evaluate(()=>(globalThis as any).restore());
+ await page.waitForFunction(()=>document.body.textContent?.includes('云端稿件已恢复'));
+ await click('进入编辑 →');await click('4生成视频');
+ expect(await page.$eval('[aria-label="Cinema色彩"]',n=>(n as HTMLSelectElement).value)).toBe('暖金');
+ expect(await page.evaluate(()=>(globalThis as any).cloud.direction)).toContain('第一段迟到的导演答复');
+ expect(await page.$eval('[aria-label="Cinema导演工作台"] .dh-cinema-status',n=>n.textContent)).toBe('已采用');
  expect(errors).toEqual([]);
  }finally{await browser.close()}
 },60000);

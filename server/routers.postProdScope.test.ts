@@ -34,6 +34,13 @@ describe("真实 queuePostProd 路由契约", () => {
     }
     expect(createJob).toHaveBeenCalledTimes(3);
   });
+  it("三种重点字幕经鉴权路由与JSON持久化保持字体和秒位", async () => {
+    const highlights = ["impact", "arrange", "spiral"].map((effect, index) => ({ id: `cue-${index}`, effect, text: effect === "arrange" ? "目标｜待办" : "最终决定", startSec: index * 2, endSec: index * 2 + 1, positionPercent: 70, fontSize: 13 }));
+    const request = { action: "burn_subtitle", scopeKey: "project-7", params: { videoUri: "gs://test/post-prod/7/original.mp4", subtitleSrt: "1\n00:00:00,000 --> 00:00:06,000\n已确认对白", highlights, styleOverride: { fontSize: 16, outline: 0.35, marginV: 50 } } };
+    await caller().mvAnalysis.queuePostProd(request as never);
+    expect(createJob.mock.calls[0][0].input).toEqual(request);
+    expect(postProdJobInputSchema.parse(JSON.parse(JSON.stringify(createJob.mock.calls[0][0].input)))).toEqual(request);
+  });
   it("项目拼接通过路由，来源核对后完整持久化为 worker 可复读格式", async () => {
     const result = await caller().mvAnalysis.queuePostProd(input);
     expect(result.status).toBe("queued");

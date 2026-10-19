@@ -506,6 +506,7 @@ export function cloudDraftBlocksToCanvas(
       artMotion: raw.artMotion,
       imageWorld: raw.imageWorld,
       previsStudio: raw.previsStudio,
+      cinema: raw.cinema,
       musicMv: raw.musicMv,
       musicMvShot: raw.musicMvShot,
       audioStudio: raw.audioStudio,

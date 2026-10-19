@@ -1,0 +1,20 @@
+import { afterEach, expect, it, vi } from "vitest";
+vi.mock("./jobs", () => ({ createJobSameOrigin: vi.fn(), pollJobUntilTerminal: vi.fn() }));
+import { createJobSameOrigin, pollJobUntilTerminal } from "./jobs";
+import { runCanvasBlock } from "./canvasRunBlock";
+import { defaultCanvasBlock } from "./canvasTypes";
+import { applyDigitalHumanCinema, compileDigitalHumanCinema, digitalHumanCinemaSchema } from "@shared/digitalHumanCinema";
+afterEach(()=>{vi.unstubAllGlobals();vi.clearAllMocks();});
+it.each([false,true])("图片导演翻译/回退仍将完整Cinema交给真实建单边界，翻译失败=%s",async(fails)=>{
+ const fetch=vi.fn(()=>{throw Error("禁止真实网络");});vi.stubGlobal("fetch",fetch);
+ vi.mocked(createJobSameOrigin).mockResolvedValue({jobId:"test-cinema-image"} as never);
+ vi.mocked(pollJobUntilTerminal).mockResolvedValue({status:"succeeded",output:{imageUrl:"https://example.test/image.png"}} as never);
+ const cinema=digitalHumanCinemaSchema.parse({mode:"image",palette:"暖金",customLights:[{direction:"左侧",color:"#ffffff",brightness:60,softness:80}]});
+ const block={...defaultCanvasBlock("image",0,0),cinema,prompt:applyDigitalHumanCinema("人物在书房阅读，保留人物身份",cinema)};
+ const result=await runCanvasBlock({userId:"7",userRole:"admin",optimizeCopy:async()=>{if(fails)throw Error("测试翻译失败");return "A person reading a book in the study, warm natural daylight.";}},block,{visionImages:[],texts:[]});
+ expect(result.outputUrl).toBe("https://example.test/image.png");
+ expect(createJobSameOrigin).toHaveBeenCalledTimes(1);
+ const input=vi.mocked(createJobSameOrigin).mock.calls[0][0].input as {params:{prompt:string}};
+ expect(input.params.prompt).toContain(compileDigitalHumanCinema(cinema));
+ expect(fetch).not.toHaveBeenCalled();
+});

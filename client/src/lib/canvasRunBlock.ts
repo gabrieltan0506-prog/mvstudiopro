@@ -1,3 +1,4 @@
+import { applyDigitalHumanCinema, assertDigitalHumanCinemaApplied, compileDigitalHumanCinema } from "@shared/digitalHumanCinema";
 import { manhuaProjectStorage } from "@shared/manhuaProjectScope";
 import { tryCompileManhuaVideoPromptForOutbound, type ManhuaOutboundPromptCompileInput, type ManhuaOutboundPromptCompileResult } from "@shared/manhuaOutboundPrompt";
 export { tryCompileManhuaVideoPromptForOutbound, type ManhuaOutboundPromptCompileInput, type ManhuaOutboundPromptCompileResult } from "@shared/manhuaOutboundPrompt";
@@ -1931,10 +1932,19 @@ function settleManhuaOutbound(
     | undefined,
   /** 这一次真正在提交的节点与执行账号；提交边界复核要用 */
   submitting?: {
-    block: Pick<CanvasBlock, "kind" | "id" | "videoModel" | "musicMvShot">;
+    block: Pick<CanvasBlock, "kind" | "id" | "videoModel" | "musicMvShot" | "cinema">;
     executingUserId: string;
   },
 ): OutboundSubmitGuard {
+  if (submitting?.block.cinema) {
+    // 各引擎会转换段落符号；用同一格式层编译完整区块后逐字复核内容。
+    const expected = tryCompileManhuaVideoPromptForOutbound({
+      prompt: compileDigitalHumanCinema(submitting.block.cinema), engine: prepared.engine,
+    }).text;
+    if (!String(prepared.body.prompt || "").includes(expected)) {
+      throw new Error("生成输入未保留完整导演设置，本次未提交，请检查提示词后再试");
+    }
+  }
   if (!runOptions?.previewOnly) runOptions?.onOutboundPrepared?.(prepared);
   /**
    * 最终核对。**必须在健康门等待结束之后、`fetch` 紧前同步执行**，
@@ -2328,6 +2338,9 @@ export async function runCanvasBlock(
   upstream: CanvasUpstreamContext = { visionImages: [], texts: [] },
   runOptions?: Parameters<typeof runCanvasBlockInner>[3],
 ): Promise<Awaited<ReturnType<typeof runCanvasBlockInner>>> {
+  if (block.cinema && (block.kind === "image" || block.kind === "video")) {
+    assertDigitalHumanCinemaApplied({cinema: block.cinema, direction: block.prompt}, block.kind === "image" ? "image" : "reference");
+  }
   if (block.artMotion) throw new Error("请在艺术动画工作台预览和生成此影片；此节点不调用视频模型");
   if (block.kind === "video" && block.manhuaGenerationHold && !runOptions?.previewOnly) {
     throw new Error("本段已设为保留，不生成；原片与音轨保持。请先明确取消保留再重跑。");
@@ -2774,12 +2787,14 @@ async function runCanvasBlockInner(
       : isKeyart || isAssetSheet
         ? `${String(mergedPrompt || "").trim()}\n\n${noTextTail}`
         : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, imageModel);
+    // 翻译与本地回退仍须带上已经采用的导演原文；入口已拦截未采用的改稿。
+    const directedImagePrompt = block.cinema ? applyDigitalHumanCinema(rawImagePrompt, block.cinema) : rawImagePrompt;
     // 关键静帧 / 定妆·场景禁字硬锁：直送路径已拼过则去重
     const imagePrompt = noTextTail
-      ? rawImagePrompt.includes(noTextTail)
-        ? rawImagePrompt.trim()
-        : `${rawImagePrompt.trim()}\n\n${noTextTail}`
-      : rawImagePrompt;
+      ? directedImagePrompt.includes(noTextTail)
+        ? directedImagePrompt.trim()
+        : `${directedImagePrompt.trim()}\n\n${noTextTail}`
+      : directedImagePrompt;
     // 源头短包控长；不做二次文案 API。理论上仍超硬上限则报错停住
     if (isKeyart) {
       assertOpenAiImagePromptWithinLimit(imagePrompt);
@@ -2927,6 +2942,8 @@ async function runCanvasBlockInner(
     const motionPrompt = isClip
       ? stripManhuaAssetUrlsFromPrompt(appendManhuaClipEngineOptics(compiledMotion))
       : compiledMotion;
+    // 在编译、清理与光学转换之后复核，不能只证明节点原文曾经采用过。
+    assertDigitalHumanCinemaApplied({ cinema: block.cinema, direction: motionPrompt }, "reference");
     const videoModel = normalizeCanvasVideoModel(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL);
     let manhuaPilot: ManhuaPilotSubmission | undefined;
     if (isClip && deps.authorizeManhuaClip) {

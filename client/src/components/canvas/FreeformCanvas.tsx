@@ -1,3 +1,4 @@
+import { CanvasCinemaPanel } from "./CanvasCinemaPanel";
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
 import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { hasPendingMusicMvPlan } from "@/lib/canvasMusicMvRecovery";
@@ -1821,7 +1822,7 @@ export default function FreeformCanvas({
         item.aspectRatio, item.videoResolution, item.refVideoUrl, item.uploadedAssets,
         item.seedance25WorkMode, item.seedance25RefVideoUrls, item.seedance25RefAudioUrls, item.audioStudio,
         item.seedance25TimestampStoryboard, item.seedance25ReshootFromSec, item.seedance25ReshootToSec,
-        item.pathCameraRecipeId, item.parentId, item.manhuaRetake,
+        item.pathCameraRecipeId, item.parentId, item.manhuaRetake, item.cinema,
         item.musicMvShot ? { ...item.musicMvShot, outputs: undefined, activeTask: undefined } : undefined,
       ]);
       const originalInput = inputFingerprint(block);
@@ -2682,6 +2683,7 @@ export default function FreeformCanvas({
                     {!mediaOnly ? (
                     <div className="mb-2 space-y-2 overflow-auto rounded-xl border border-white/10 bg-black/25 p-2">
                       <div className="text-[10px] tracking-wider text-white/40">节点设置</div>
+                      {(block.kind === "image" || block.kind === "video") && <CanvasCinemaPanel block={block} preparing={preparingReferenceIds.has(block.id)} onPatch={patch=>patchOne(block.id,patch)} />}
                       {block.musicMvShot && <CanvasMvShotControls block={block} onPatch={patch=>patchOne(block.id,patch)} />}
                       {block.kind === "music" && <CanvasMusicMvStudio projectId={projectId} key={block.id} block={block} blocks={blocks}
                         onPatch={patch => patchOne(block.id, patch)} getBlocks={() => blocksRef.current}

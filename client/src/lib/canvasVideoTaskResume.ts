@@ -44,6 +44,8 @@ export function canvasVideoTaskInputFingerprint(block: CanvasBlock): string {
     episodeIndex: block.episodeIndex ?? null,
     parentId: block.parentId ?? null,
     prompt: block.prompt,
+    // 无设置的旧任务保持原有序列化指纹；已采用或待采用的非空设置仍参与改稿检测。
+    ...(block.cinema ? { cinema: block.cinema } : {}),
     videoModel: block.videoModel,
     videoTaskEngine: block.videoTaskEngine ?? null,
     aspectRatio: block.aspectRatio,
