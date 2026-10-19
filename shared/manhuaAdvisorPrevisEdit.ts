@@ -21,9 +21,9 @@ function parseAdvisorContextSpec(raw:string):ManhuaPrevisSpec {
 }
 export const advisorPrevisTargetSchema = z.object({
   directionCardId: safeText(100).optional(), directionCardVersion: safeText(100).optional(),
-  clipId: safeText(160), scopeId: z.string().uuid(), specJson: safeText(30000),
+  clipId: safeText(160), scopeId: z.string().uuid(), specJson: safeText(64000),
   shotSource: advisorPrevisShotSourceSchema.optional(),
-  previousPreviewSpecJson: safeText(30000).optional(),
+  previousPreviewSpecJson: safeText(64000).optional(),
   previousPreviewRequestId: z.string().uuid().optional(),
 }).strict().superRefine((v, ctx) => {
   try {
@@ -55,7 +55,7 @@ export function makeAdvisorPrevisTarget(clipId: string, studio: ManhuaPrevisStud
 }
 /** 已完成的独立试看只作为下轮输入；不写入工作流或采用状态。 */
 export const advisorPrevisVideoSourceSchema = z.object({
-  target: advisorPrevisTargetSchema, requestId: z.string().uuid(), specJson: safeText(30000),
+  target: advisorPrevisTargetSchema, requestId: z.string().uuid(), specJson: safeText(64000),
 }).strict();
 export type AdvisorPrevisVideoSource = z.infer<typeof advisorPrevisVideoSourceSchema>;
 export function withAdvisorPrevisVideo(target: AdvisorPrevisTarget, source: AdvisorPrevisVideoSource | null): AdvisorPrevisTarget {
