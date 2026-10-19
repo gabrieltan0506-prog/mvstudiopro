@@ -9,6 +9,7 @@ import { createAdvisorScoringSourceGuard } from "@/lib/manhuaAdvisorScoringSourc
 import type { AdvisorScoringControl, AdvisorScoringRegistration, AdvisorBgmControl } from "@/lib/manhuaAdvisorWorkflowControl";
 import { manhuaProjectStorage } from "@shared/manhuaProjectScope";
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
+import type { SubtitleHighlight } from "@shared/subtitleHighlights";
 import { PostProdSubtitleCard } from "./PostProdSubtitleCard";
 import { SUBTITLE_EFFECT_OPTIONS, type SubtitleEffect } from "@shared/subtitleEffects";
 import { maskMediaUrls, maskMediaProviderDetails } from "@/lib/maskMediaUrls";
@@ -166,6 +167,7 @@ type PostProdWorkshopCardProps = {
   vfxImages?: ReturnType<typeof manhuaVfxImageOptions>;
   vfxScenesInput?: ReturnType<typeof manhuaVfxSceneOptions>;
   initialAspect?: "9:16" | "16:9";
+  subtitleDefaultMarginV?: number;
   mediaInput?: { clips: Array<{ id: string; url: string; label: string }>; audio: Array<{ id: string; url: string; label: string }>; story: string };
   storage?: Storage;
   beforeSubmit?: () => Promise<void>;
@@ -232,7 +234,7 @@ function statusBadge(status: PostProdJobStatus): { text: string; cls: string } {
 }
 
 export default function PostProdWorkshopCard({
-  vfxImages, vfxScenesInput, orderedClipIds, initialAspect, mediaInput, storage = manhuaProjectStorage, beforeSubmit, acquireWork, disabled = false,
+  vfxImages, vfxScenesInput, orderedClipIds, initialAspect, subtitleDefaultMarginV, mediaInput, storage = manhuaProjectStorage, beforeSubmit, acquireWork, disabled = false,
   vfxScopeKey,
   vfxState,
   vfxEnvironments = [],
@@ -853,7 +855,7 @@ export default function PostProdWorkshopCard({
 
         | {
             action: "burn_subtitle";
-            params: { videoUri: string; subtitleSrt: string; effect?: SubtitleEffect; styleOverride?: { fontSize: number; outline: number; marginV: number; fontName: string; alignment?: 2 | 5 | 8 } };
+            params: { videoUri: string; subtitleSrt: string; effect?: SubtitleEffect; highlights?: SubtitleHighlight[]; styleOverride?: { fontSize: number; outline: number; marginV: number; fontName: string; alignment?: 2 | 5 | 8 } };
           }
         | {
             action: "loudness_check";
@@ -1954,7 +1956,7 @@ export default function PostProdWorkshopCard({
         </div>
 
         <div hidden={activeTool !== "vfx"}><ManhuaVfxEditor active={activeTool === "vfx"} advisorOpen={advisorOpen} onAdvisorDockChange={onVfxAdvisorDockChange} key={vfxScopeKey} scopeKey={vfxScopeKey} onOpenAdvisor={onOpenAdvisor ? () => { focusStudio(); onOpenAdvisor(); } : undefined} onAdvisorEffectsControl={onAdvisorEffectsControl} state={vfxState} onStateChange={onVfxStateChange} clips={vfxSourceClips} imageOptions={vfxImageOptions} scenes={vfxScenes} environments={vfxEnvironments} jobs={vfxJobs} busy={busy} onSourceChange={onVfxSourceChange} onPreview={(url, label) => setPreviewResult({ url, label })} onSubmit={input => submit(input, "漫剧特效候选", true)} /></div>
-        <div hidden={activeTool !== "subtitle"}><PostProdSubtitleCard storage={storage} beforeSubmit={beforeSubmit} selectedSource={subtitleSource} effectsScopeKey={vfxScopeKey} onAdvisorEffectsControl={onAdvisorEffectsControl} onSourceChange={setSubtitleSource} key={projectScopeKey} context={advisorContext} storageKey={`${storageKey}:${projectScopeKey}:subtitle`} clips={clipOptions} busy={busy || scopedJobs.some(job => job.action === "burn_subtitle" && (job.status === "queued" || job.status === "running"))} onSubmit={async (params, label) => { return await submit({ action: "burn_subtitle", params }, label || (params.effect === "none" ? "对白字幕成片" : `对白字幕成片 · ${SUBTITLE_EFFECT_OPTIONS.find(option => option.id === params.effect)?.label ?? "字幕特效"}`),true); }} /></div>
+        <div hidden={activeTool !== "subtitle"}><PostProdSubtitleCard defaultMarginV={subtitleDefaultMarginV} storage={storage} beforeSubmit={beforeSubmit} selectedSource={subtitleSource} effectsScopeKey={vfxScopeKey} onAdvisorEffectsControl={onAdvisorEffectsControl} onSourceChange={setSubtitleSource} key={projectScopeKey} context={advisorContext} storageKey={`${storageKey}:${projectScopeKey}:subtitle`} clips={clipOptions} busy={busy || scopedJobs.some(job => job.action === "burn_subtitle" && (job.status === "queued" || job.status === "running"))} onSubmit={async (params, label) => { return await submit({ action: "burn_subtitle", params }, label || (params.effect === "none" ? "对白字幕成片" : `对白字幕成片 · ${SUBTITLE_EFFECT_OPTIONS.find(option => option.id === params.effect)?.label ?? "字幕特效"}`),true); }} /></div>
 
         {/* BGM 贴装 */}
         <div hidden={activeTool !== "bgm"} className="rounded-xl border border-white/10 bg-black/25 p-3">

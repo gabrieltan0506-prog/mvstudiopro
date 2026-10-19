@@ -52,6 +52,11 @@ describe("burn_subtitle 参数契约", () => {
 });
 
 describe("burn_subtitle 滤镜串构造", () => {
+  it("组合ASS保持普通与重点独立样式，不能再用force_style覆盖", () => {
+    const args = buildBurnSubtitleArgs({ videoPath: "/tmp/video.mp4", srtPath: "/tmp/sub.ass", outPath: "/tmp/output.mp4", preserveAssStyles: true }, { fontSize: 16, outline: 0.35, marginV: 50 });
+    expect(args[args.indexOf("-vf") + 1]).toBe("subtitles=filename='/tmp/sub.ass'");
+    expect(args[args.indexOf("-c:a") + 1]).toBe("copy");
+  });
   it("默认竖屏口径:白字黑边、底部居中、MarginV=35(约底部 12%)", () => {
     const filter = buildBurnSubtitleFilter("/tmp/pp-burnsub-x/sub-abc.srt");
     expect(filter).toBe(

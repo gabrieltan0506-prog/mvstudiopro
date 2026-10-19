@@ -36,7 +36,7 @@ import { processPostProdJob, runWithTaskLimit } from "./postProdJob";
 describe("processPostProdJob 强 Schema 分派", () => {
   it("字幕特效穿过队列解析与素材归属解析，完整到达烧录器", async () => {
     const signal = new AbortController().signal;
-    const params = { videoUri: "gs://test/original.mp4", subtitleSrt: "1\n00:00:01,000 --> 00:00:03,000\n已确认对白\n", effect: "pop", styleOverride: { fontSize: 16, outline: 0.35, marginV: 12 } };
+    const params = { videoUri: "gs://test/original.mp4", subtitleSrt: "1\n00:00:01,000 --> 00:00:03,000\n已确认对白\n", effect: "pop", highlights: [{id:"key1",effect:"spiral",text:"最终决定",startSec:1,endSec:3,fontSize:13,positionPercent:70}], styleOverride: { fontSize: 16, outline: 0.35, marginV: 50 } };
     const result = await processPostProdJob({ action: "burn_subtitle", scopeKey: "project-7", params }, "7", { signal });
     expect(burnSubtitle).toHaveBeenCalledTimes(1);
     expect(burnSubtitle).toHaveBeenCalledWith(params, "7", { signal });

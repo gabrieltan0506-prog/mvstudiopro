@@ -12,11 +12,14 @@ import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { importWorkflowVideoSource } from "@/lib/videoUpscaleApi";
 import { normalizeDialogueSubtitleSrt } from "@shared/dialogueSubtitleSrt";
 import { SUBTITLE_EFFECT_OPTIONS, type SubtitleEffect } from "@shared/subtitleEffects";
+import { subtitleHighlightDraftSchema, subtitleHighlightsSchema, type SubtitleHighlight } from "@shared/subtitleHighlights";
+import { SubtitleHighlightEditor } from "./SubtitleHighlightEditor";
+import { SubtitleLayoutPreview } from "./SubtitleLayoutPreview";
 import { ManhuaTitleOverlayEditor } from "./ManhuaTitleOverlayEditor";
 
 /** 成片字幕使用创作者确认的对白及时间码，不调用语音识别或改写对白。 */
-export function PostProdSubtitleCard({ storage = manhuaProjectStorage, beforeSubmit, selectedSource, clips, busy, onSubmit, context, storageKey, onSourceChange, effectsScopeKey = "", onAdvisorEffectsControl }:  {
-  storage?: Storage; beforeSubmit?: () => Promise<void>; selectedSource?: string;
+export function PostProdSubtitleCard({ storage = manhuaProjectStorage, defaultMarginV = 12, beforeSubmit, selectedSource, clips, busy, onSubmit, context, storageKey, onSourceChange, effectsScopeKey = "", onAdvisorEffectsControl }:  {
+  defaultMarginV?: number; storage?: Storage; beforeSubmit?: () => Promise<void>; selectedSource?: string;
   onSourceChange?: (source: string) => void;
   clips: Array<{ id: string; url: string; label: string }>;
   busy: boolean;
@@ -24,17 +27,25 @@ export function PostProdSubtitleCard({ storage = manhuaProjectStorage, beforeSub
   storageKey: string;
   effectsScopeKey?: string;
   onAdvisorEffectsControl?: AdvisorEffectsRegistration;
-  onSubmit: (params: { videoUri: string; subtitleSrt: string; effect: SubtitleEffect; styleOverride: { fontSize: number; outline: number; marginV: number; fontName: string; alignment?: 2 | 5 | 8 } }, label?: string) => Promise<string | void>;
+  onSubmit: (params: { videoUri: string; subtitleSrt: string; effect: SubtitleEffect; highlights?: SubtitleHighlight[]; styleOverride: { fontSize: number; outline: number; marginV: number; fontName: string; alignment?: 2 | 5 | 8 } }, label?: string) => Promise<string | void>;
 }) {
   const localStorage = storage;
-  const [initial] = useState(() => { try { return JSON.parse(localStorage.getItem(`${storageKey}:edit`) || "{}"); } catch { return {}; } });
+  const [initial] = useState(() => { try { const value = JSON.parse(localStorage.getItem(`${storageKey}:edit`) || "{}"); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("字幕草稿格式无效"); return value; } catch { return { loadError: "字幕草稿无法读取，请先从云端恢复；原记录已保留。" }; } });
   const [source, setSource] = useState<string>(initial.source || "");
   useEffect(() => { if (selectedSource) setSource(selectedSource); }, [selectedSource]);
   useEffect(() => { onSourceChange?.(source); }, [source, onSourceChange]);
   const [srt, setSrt] = useState<string>(initial.srt || "");
   const [fontSize, setFontSize] = useState<number>(initial.fontSize || 16);
   const [effect, setEffect] = useState<SubtitleEffect>(initial.effect || "none");
-  useEffect(() => { try { localStorage.setItem(`${storageKey}:edit`, JSON.stringify({source,srt,fontSize,effect})); } catch (e) { toast.error(e instanceof Error ? e.message : "字幕草稿保存失败"); } }, [source,srt,fontSize,effect,storageKey,localStorage]);
+  const [marginV, setMarginV] = useState<number>(initial.marginV ?? defaultMarginV);
+  const [highlightInitial] = useState(() => subtitleHighlightDraftSchema.safeParse(initial.highlights ?? []));
+  const draftError = initial.loadError || (!highlightInitial.success ? "重点字幕草稿格式有误，请从云端恢复；原记录已保留。" : "");
+  const [highlights, setHighlights] = useState<SubtitleHighlight[]>(highlightInitial.success ? highlightInitial.data : []);
+  useEffect(() => {
+    if (draftError) return;
+    try { localStorage.setItem(`${storageKey}:edit`, JSON.stringify({source,srt,fontSize,effect,marginV,highlights})); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "字幕草稿保存失败"); }
+  }, [source,srt,fontSize,effect,marginV,highlights,storageKey,localStorage,draftError]);
   const [submitting, setSubmitting] = useState(false);
   const gate = useRef(false);
   const advisor = trpc.mvAnalysis.askPlatformSkillQa.useMutation({ retry: false });
@@ -77,7 +88,7 @@ export function PostProdSubtitleCard({ storage = manhuaProjectStorage, beforeSub
       if (/PAYMENT_REQUIRED|免费.*用完|请确认后重试/.test(message)) setPaid(true);
     } finally { gate.current = false; setAsking(false); }
   };
-  const locked = submitting || busy || asking;
+  const locked = submitting || busy || asking || Boolean(draftError);
   const [titleInitial, setTitleInitial] = useState<{ source: string; settings: AdvisorEffectsAction["titleSettings"] }>();
   const titleControl = useRef<AdvisorEffectsControl | null>(null);
   const registerTitleControl = useCallback<AdvisorEffectsRegistration>((_scope, _tool, control) => { titleControl.current = control; }, []);
@@ -109,12 +120,13 @@ export function PostProdSubtitleCard({ storage = manhuaProjectStorage, beforeSub
     setSubmitting(true);
     try {
       const subtitleSrt = normalizeDialogueSubtitleSrt(srt);
+      const parsedHighlights = subtitleHighlightsSchema.parse(highlights);
       // 云端成品在服务端导入并登记归属，不经过用户电脑。
       const videoUri = source.startsWith("https://d2h7xmz5gqybh9.cloudfront.net/")
         ? await importWorkflowVideoSource(source) : source;
       setSource(videoUri);
       // 参考影片截图：白字、细黑边、无底框、底部居中；字号按竖屏适配。
-      await onSubmit({ videoUri, subtitleSrt, effect, styleOverride: { fontSize, outline: 0.35, marginV: 12, fontName: "Noto Sans CJK SC" } });
+      await onSubmit({ videoUri, subtitleSrt, effect, ...(parsedHighlights.length ? { highlights: parsedHighlights } : {}), styleOverride: { fontSize, outline: 0.35, marginV, fontName: "Noto Sans CJK SC" } });
     } catch (error) {
       toast.error(maskMediaProviderDetails(error instanceof Error ? error.message : "字幕提交失败"));
     } finally {
@@ -124,6 +136,7 @@ export function PostProdSubtitleCard({ storage = manhuaProjectStorage, beforeSub
   };
   return <section id="manhua-post-subtitle" className="rounded-xl border border-white/10 p-3" aria-label="成片字幕">
     <h3 className="text-sm font-medium">成片字幕与标题</h3>
+    {draftError && <p role="alert" className="text-xs text-amber-200">{draftError}</p>}
     <p className="mt-1 text-xs text-white/60">使用已确认的对白与 SRT 时间码，不自动识别或改写对白。保留成片尺寸、帧率及音轨，另存带字幕版本。</p>
     <select aria-label="字幕成片" value={source} onChange={event => setSource(event.target.value)} disabled={locked} className="mt-2 w-full rounded border bg-transparent p-2 text-xs">
       <option value="">选择成片，或粘贴云端成片链接</option>
@@ -143,10 +156,10 @@ export function PostProdSubtitleCard({ storage = manhuaProjectStorage, beforeSub
     {paid && <button type="button" disabled={locked || !quota.data} onClick={() => void ask(true)} className="mt-2 rounded border px-3 py-2 text-xs">确认本次咨询扣除 {quota.data?.price ?? "待核"} 积分</button>}
     {advisorError && <p role="alert" className="text-xs text-amber-200">{advisorError}（已有请求将沿原编号恢复，不重复创建）</p>}
     {report && <details className="mt-2 text-xs" open><summary>顾问核对报告（历史结果，以报告所选成片与对白为准）</summary><pre className="whitespace-pre-wrap">{maskMediaProviderDetails(report)}</pre></details>}
-    <UrlMaskedTextarea aria-label="对白字幕 SRT" value={srt} onChange={event => setSrt(event.target.value)} disabled={submitting || busy} rows={8} placeholder={"1\n00:00:01,000 --> 00:00:03,000\n已确认的对白"} className="mt-2 w-full rounded border bg-transparent p-2 text-xs" />
+    <UrlMaskedTextarea aria-label="对白字幕 SRT" value={srt} onChange={event => setSrt(event.target.value)} disabled={locked} rows={8} placeholder={"1\n00:00:01,000 --> 00:00:03,000\n已确认的对白"} className="mt-2 w-full rounded border bg-transparent p-2 text-xs" />
     <label className="mt-3 flex items-center gap-2 text-xs">字幕字号
       <select aria-label="字幕字号" value={fontSize} disabled={locked} onChange={event => setFontSize(Number(event.target.value))} className="rounded border bg-transparent p-2">
-        <option value={8}>小（原字号）</option><option value={12}>标准（放大50%）</option><option value={16}>大（原字号两倍）</option>
+        <option value={8}>小（原字号）</option><option value={12}>标准（放大50%）</option><option value={16}>大（原字号两倍）</option><option value={20}>加大</option><option value={24}>特大</option>
       </select>
     </label>
     <label className="mt-3 flex items-center gap-2 text-xs">字幕特效
@@ -155,10 +168,12 @@ export function PostProdSubtitleCard({ storage = manhuaProjectStorage, beforeSub
       </select>
     </label>
     <p className="mt-1 text-xs text-white/60">{SUBTITLE_EFFECT_OPTIONS.find(option => option.id === effect)?.description}</p>
-    <div aria-label="字幕字号示意" className="mt-2 rounded-lg bg-neutral-800 p-4 text-center text-white">
-      <span style={{ fontSize: fontSize * 2, fontFamily: '"Noto Sans CJK SC", sans-serif', textShadow: "0 1px 2px black" }}>先送娘去治病</span>
-      <p className="mt-2 text-[10px] text-white/60">字号示意，非成片截图；实际效果随画幅和播放器显示尺寸变化。</p>
-    </div>
+    <label className="mt-3 flex items-center gap-2 text-xs">普通字幕底部距离
+      <input aria-label="普通字幕底部距离" type="range" min={8} max={100} step={1} value={marginV} disabled={locked} onChange={e => setMarginV(Number(e.target.value))} />
+      <span>{Math.round(marginV / 288 * 100)}% 画面高度</span>
+    </label>
+    <SubtitleHighlightEditor value={highlights} onChange={setHighlights} disabled={locked} />
+    <SubtitleLayoutPreview source={source} srt={srt} fontSize={fontSize} marginV={marginV} highlights={highlights} />
     <p className="mt-2 text-xs text-white/60">白字细黑边、底部居中。特效沿用每句时间码，长句自动换行；原片保留。</p>
     <button type="button" disabled={!source || !srt.trim() || locked} onClick={() => void submit()} className="mt-2 rounded-lg border border-cyan-300/30 px-3 py-2 text-xs disabled:opacity-40">{submitting ? "正在提交字幕…" : "添加字幕 · 0积分"}</button>
     <ManhuaTitleOverlayEditor key={source} source={source} busy={locked} scopeKey={effectsScopeKey} initialSettings={titleInitial?.source === source ? titleInitial.settings : undefined} onAdvisorEffectsControl={registerTitleControl} onSubmit={async title => {

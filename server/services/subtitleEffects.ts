@@ -1,3 +1,6 @@
+import { wrapSubtitleEffectText, subtitleLayoutCues, placeSubtitleHighlights } from "../../shared/subtitleLayout.js";
+import { validateSubtitleHighlights, type SubtitleHighlight } from "../../shared/subtitleHighlights.js";
+import { buildSubtitleHighlightEvents } from "./subtitleHighlightAss.js";
 import { normalizeDialogueSubtitleSrt } from "../../shared/dialogueSubtitleSrt.js";
 import type { SubtitleEffect } from "../../shared/subtitleEffects.js";
 import { burnSubtitleStyleOverrideSchema, type BurnSubtitleStyleOverride } from "../jobs/postProdInput.js";
@@ -18,33 +21,7 @@ function assText(value: string): string {
   return value.replace(/\\/g, "＼").replace(/\{/g, "｛").replace(/\}/g, "｝");
 }
 
-const graphemes = new Intl.Segmenter("zh", { granularity: "grapheme" });
-const closingPunctuation = /^[，。！？、；：）》」』】,.!?;:]$/;
-const widthUnits = (char: string) => /^[\x20-\x7e]$/.test(char) ? (/[MW@]/.test(char) ? 1 : 0.65) : 1;
-
-/** Conservative CJK wrapping; keep explicit line breaks and every dialogue character. */
-export function wrapSubtitleEffectText(text: string, maxUnits: number): string[] {
-  const lines: string[] = [];
-  for (const original of text.split("\n")) {
-    let current: string[] = [];
-    let units = 0;
-    for (const { segment } of Array.from(graphemes.segment(original))) {
-      const width = widthUnits(segment);
-      if (current.length && units + width > maxUnits) {
-        // Carry the preceding character with punctuation instead of starting with a comma.
-        const carry = closingPunctuation.test(segment) && current.length > 1
-          && widthUnits(current[current.length - 1]) + width <= maxUnits ? current.pop()! : "";
-        lines.push(current.join(""));
-        current = carry ? [carry] : [];
-        units = carry ? widthUnits(carry) : 0;
-      }
-      current.push(segment);
-      units += width;
-    }
-    if (current.length) lines.push(current.join(""));
-  }
-  return lines;
-}
+export { wrapSubtitleEffectText } from "../../shared/subtitleLayout.js";
 
 /**
  * Generate native libass effects inside the existing ffmpeg job, with no model call.
@@ -53,15 +30,17 @@ export function wrapSubtitleEffectText(text: string, maxUnits: number): string[]
  */
 export function buildSubtitleEffectAss(input: {
   subtitleSrt: string;
-  effect: Exclude<SubtitleEffect, "none">;
+  effect: SubtitleEffect;
+  highlights?: SubtitleHighlight[];
   width: number;
   height: number;
   styleOverride?: BurnSubtitleStyleOverride;
 }): string {
-  if (!["fade", "pop"].includes(input.effect)) throw new Error("请选择有效的字幕特效");
+  if (!["none", "fade", "pop"].includes(input.effect)) throw new Error("请选择有效的字幕特效");
   if (!Number.isFinite(input.width) || !Number.isFinite(input.height) || input.width <= 0 || input.height <= 0) {
     throw new Error("无法读取成片尺寸，不能排版字幕特效");
   }
+  const highlights = validateSubtitleHighlights(input.highlights ?? []);
   const style = burnSubtitleStyleOverrideSchema.parse(input.styleOverride ?? {});
   const fontSize = style.fontSize ?? 16;
   const outline = style.outline ?? 2;
@@ -88,7 +67,7 @@ export function buildSubtitleEffectAss(input: {
     const animation = input.effect === "pop"
       ? `\\fscx94\\fscy94\\t(0,${Math.min(180, Math.floor(durationMs / 4))},\\fscx100\\fscy100)`
       : "";
-    return `Dialogue: 0,${assTime(start)},${assTime(end)},Default,,0,0,0,,{\\fad(${fadeMs},${fadeMs})${animation}}${lines.join("\\N")}`;
+    return `Dialogue: 0,${assTime(start)},${assTime(end)},Default,,0,0,0,,${input.effect === "none" ? "" : `{\\fad(${fadeMs},${fadeMs})${animation}}`}${lines.join("\\N")}`;
   });
   return [
     "[Script Info]", "ScriptType: v4.00+", `PlayResX: ${playResX}`, `PlayResY: ${playResY}`,
@@ -96,6 +75,6 @@ export function buildSubtitleEffectAss(input: {
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
     `Style: Default,${style.fontName ?? "Noto Sans CJK SC"},${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,${outline},0,${style.alignment ?? 2},${marginH},${marginH},${marginV},1`,
     "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-    ...events, "",
+    ...events, ...buildSubtitleHighlightEvents(placeSubtitleHighlights(highlights, subtitleLayoutCues(srt, playResX, fontSize, outline), {fontSize, marginV, outline, alignment: style.alignment}), playResX), "",
   ].join("\n");
 }

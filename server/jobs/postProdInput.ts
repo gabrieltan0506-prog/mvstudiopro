@@ -1,3 +1,4 @@
+import { subtitleHighlightsSchema } from "../../shared/subtitleHighlights.js";
 import { autoRigRequestSchema } from "../../shared/manhuaAutoRig";
 /**
  * 后期工坊任务输入契约:路由与 worker 共用同一份 Zod Schema。
@@ -124,6 +125,7 @@ export const burnSubtitleParamsSchema = z
     styleOverride: burnSubtitleStyleOverrideSchema.optional(),
     /** Omitted on existing jobs: preserve static subtitles. */
     effect: z.enum(SUBTITLE_EFFECT_IDS).optional(),
+    highlights: subtitleHighlightsSchema.optional(),
   })
   .strict();
 

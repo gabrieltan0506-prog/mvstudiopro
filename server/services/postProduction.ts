@@ -1,3 +1,4 @@
+import { validateSubtitleHighlights } from "../../shared/subtitleHighlights.js";
 import { resolvePostProdClipEdit } from "../../shared/postProdClipEdit";
 import { compileBgmNarrativeMix } from "../../shared/manhuaBgmNarrativeMix";
 import { normalizeDialogueSubtitleSrt } from "../../shared/dialogueSubtitleSrt.js";
@@ -617,10 +618,12 @@ export function buildBurnSubtitleFilter(
   srtPath: string,
   styleOverride?: BurnSubtitleStyleOverride,
   fontsDir?: string,
+  preserveAssStyles = false,
 ): string {
   if (!SAFE_FILTER_PATH_RE.test(srtPath) || (fontsDir != null && !SAFE_FILTER_PATH_RE.test(fontsDir))) {
     throw new Error("字幕临时文件路径包含滤镜保留字符");
   }
+  if (preserveAssStyles) return `subtitles=filename='${srtPath}'${fontsDir ? `:fontsdir='${fontsDir}'` : ""}`;
   const style = [
     `FontSize=${styleOverride?.fontSize ?? 16}`,
     "PrimaryColour=&H00FFFFFF",
@@ -640,13 +643,13 @@ export function buildBurnSubtitleFilter(
  * 画面重编码(字幕已画进像素,躲不开),音轨原样 copy 不动。
  */
 export function buildBurnSubtitleArgs(
-  paths: { videoPath: string; srtPath: string; outPath: string; fontsDir?: string },
+  paths: { videoPath: string; srtPath: string; outPath: string; fontsDir?: string; preserveAssStyles?: boolean },
   styleOverride?: BurnSubtitleStyleOverride,
 ): string[] {
   return [
     "-y",
     "-i", paths.videoPath,
-    "-vf", buildBurnSubtitleFilter(paths.srtPath, styleOverride, paths.fontsDir),
+    "-vf", buildBurnSubtitleFilter(paths.srtPath, styleOverride, paths.fontsDir, paths.preserveAssStyles),
     "-c:v", "libx264", "-preset", "medium", "-crf", "18",
     "-c:a", "copy",
     paths.outPath,
@@ -669,15 +672,17 @@ export async function burnSubtitle(
   try {
     const vPath = path.join(tmpDir, "video.mp4");
     // 随机文件名 + wx 独占创建:临时目录内也不给同名覆盖留缝
-    const hasEffect = normalized.effect != null && normalized.effect !== "none";
+    const hasEffect = (normalized.effect != null && normalized.effect !== "none") || Boolean(normalized.highlights?.length);
     const srtPath = path.join(tmpDir, `sub-${randomBytes(8).toString("hex")}.${hasEffect ? "ass" : "srt"}`);
     await fetchPostProdSourceToFile(normalized.videoUri, vPath, { signal });
     // 先探测确认素材是可用视频,坏素材在转码前失败,错误信息也更准
     const sourceMeta = await probe(vPath, signal);
     const subtitleSrt = normalizeDialogueSubtitleSrt(normalized.subtitleSrt, sourceMeta.durationSec);
+    const highlights = validateSubtitleHighlights(normalized.highlights ?? [], sourceMeta.durationSec);
     const subtitleFile = hasEffect ? buildSubtitleEffectAss({
       subtitleSrt,
-      effect: normalized.effect as "fade" | "pop",
+      effect: normalized.effect ?? "none",
+      highlights,
       width: sourceMeta.width ?? 0,
       height: sourceMeta.height ?? 0,
       styleOverride: normalized.styleOverride,
@@ -694,7 +699,7 @@ export async function burnSubtitle(
     const outPath = path.join(tmpDir, "out.mp4");
     await runMediaTool(
       "ffmpeg",
-      buildBurnSubtitleArgs({ videoPath: vPath, srtPath, outPath, fontsDir }, normalized.styleOverride),
+      buildBurnSubtitleArgs({ videoPath: vPath, srtPath, outPath, fontsDir, preserveAssStyles: hasEffect }, normalized.styleOverride),
       signal,
     );
     const outMeta = await probe(outPath, signal);
