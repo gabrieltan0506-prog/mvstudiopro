@@ -151,15 +151,22 @@ export async function reapStaleJobsOnce(
       sql`${jobs.input}::jsonb->>'action' = 'novel_workspace_test'`,
       sql`${jobs.updatedAt} < ${runCutoff}`));
 
+    // 营销三步链的原稿与结算状态是恢复依据，失联/久未领取只改终态，不删、不自动重投。
+    await db.update(jobs).set({ status: "failed",
+      error: "营销方案任务已中断，已保存原稿与回执保留；请从未完成步骤恢复。", updatedAt: new Date(),
+    }).where(and(eq(jobs.type, "platform"), sql`${jobs.input}::jsonb->>'action' = 'platform_marketing_plan'`,
+      or(and(eq(jobs.status, "running"), lt(jobs.updatedAt, runCutoff)),
+        and(eq(jobs.status, "queued"), lt(jobs.updatedAt, qCutoff)))));
+
     // 知识卡两类上面已改判 failed（保留行供前端拿终态），这里不再 DELETE。
     const nonRecoverableRunningJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'novel_workspace_test', 'manhua_episode_optimization_v1', 'song_operation',
+      'platform_marketing_plan', 'novel_workspace_test', 'manhua_episode_optimization_v1', 'song_operation',
       'manhua_template_learn', 'manhua_bgm_v55', 'manhua_advisor_qa', 'manhua_assemble_final', 'canvas_dialogue_line', 'wavespeed_qwen_voice', 'canvas_reference_voice',
       'knowledge_card_distill', 'knowledge_card_derive_level'
     )`;
     // 尚未付费确认的顾问 queued 占位没有扣分；过期后仍按通用规则清理，避免永久堆积。
     const nonRecoverableQueuedJob = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
-      'novel_workspace_test', 'manhua_episode_optimization_v1', 'song_operation',
+      'platform_marketing_plan', 'novel_workspace_test', 'manhua_episode_optimization_v1', 'song_operation',
       'manhua_template_learn', 'manhua_bgm_v55', 'manhua_assemble_final',
       'knowledge_card_distill', 'knowledge_card_derive_level'
     )`;

@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { selectMarketingMethods } from "@shared/marketingSkills";
-import { appendOfferContext, calculateOfferEconomics, formatOfferEconomics, OFFER_BRIEF_TEMPLATE, PARENT_CHILD_OFFER_EXAMPLE, type OfferEconomicsInput } from "@shared/marketingOffer";
+import { appendOfferContext, calculateOfferEconomics, formatOfferEconomics, OFFER_BRIEF_TEMPLATE, PARENT_CHILD_OFFER_EXAMPLE, WEBSITE_OFFER_EXAMPLE, type OfferEconomicsInput } from "@shared/marketingOffer";
 
 export function MarketingOfferPanel({ context, onChange }: { context: string; onChange: (value: string) => void }) {
   const id = useId();
@@ -23,6 +23,7 @@ export function MarketingOfferPanel({ context, onChange }: { context: string; on
     <p className="mt-3 leading-6">在上方需求里写清卖什么、谁会买、交付内容和已有证据。生成时会结合这些信息设计引流品、利润品与高价产品候选。</p>
     <div className="mt-3 flex flex-wrap gap-3">
       <button type="button" className="creation-text-action" onClick={() => append(OFFER_BRIEF_TEMPLATE)}>加入产品背景提纲</button>
+      <button type="button" className="creation-text-action" onClick={() => append(WEBSITE_OFFER_EXAMPLE)}>参考：网站推广</button>
       <button type="button" className="creation-text-action" onClick={() => append(PARENT_CHILD_OFFER_EXAMPLE)}>参考：亲子绘本与动画</button>
       {methods.length > 0 && <button type="button" className="creation-text-action" onClick={() => append("本轮不要营销，仅按原内容要求创作。")}>本轮不用营销方法</button>}
     </div>

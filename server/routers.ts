@@ -1,3 +1,5 @@
+import { topicDigestProcedures } from "./routers/topicDigest.js";
+import { marketingPlanProcedures } from "./routers/platformMarketingPlan.js";
 import { songOperationsRouter } from "./routers/songOperations";
 import { XHS_CONTENT_SKILL_ID, xhsTopicCount } from "../shared/xhsContentStrategy.js";
 import { codeMotionPlanFailureMessage } from "./services/codeMotionPlanFailure";
@@ -3181,6 +3183,8 @@ export const appRouter = router({
 
   // Video PK Rating - upload video frame and get AI analysis
   mvAnalysis: router({
+    ...marketingPlanProcedures,
+    ...topicDigestProcedures,
     listKnowledgeCardRecovery: protectedProcedure
       .input(z.object({ cursor: z.object({ at: z.string().datetime(), id: z.string().min(1).max(100) }).optional() }))
       .query(async ({ctx,input}) => (await import("./services/knowledgeCardRecovery")).listKnowledgeCardRecovery(String(ctx.user.id),input.cursor)),

@@ -126,7 +126,7 @@ describe("reapStaleJobsOnce 与 post_prod 记录保留", () => {
     getDb.mockResolvedValue(fakeDb(calls, [{ id: "asm-7", userId: "7", status: "running", updatedAt: new Date(0) }]));
     ledger.readActiveJob.mockResolvedValue({ userId: 7, status: "active", lastHeartbeatAt: new Date().toISOString() } as never);
     await reapStaleJobsOnce({ bypassDisable: true });
-    expect(calls.filter(call => call.kind === "update" && !/知识卡|小说改编|歌曲处理/.test(sqlStringValues(call.payload?.error).join("\n")))).toHaveLength(1);
+    expect(calls.filter(call => call.kind === "update" && /合成任务已停止/.test(sqlStringValues(call.payload?.error).join("\n")))).toHaveLength(0);
     expect(ledger.refundCreditsOnFailure).not.toHaveBeenCalled();
   });
 

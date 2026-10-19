@@ -4,7 +4,7 @@ import React, { useRef, useState } from "react";
 
 /** Hero 主能力入口（视频下方横排一行；用户 2026-08-12：不许再遮视频） */
 const FLAGSHIP: { href: string; label: string; desc: string }[] = [
-  { href: "/platform", label: "平台创作", desc: "趋势分析、选题文案与自定义工作台。" },
+  { href: "/platform?mode=create", label: "平台创作与营销指南", desc: "从推广方案到选题、内容制作与发布建议。" },
   { href: DIGITAL_HUMAN_WORKSPACE_HREF, label: "数字人创作", desc: "本人声音、表演分镜与立体声成片。" },
   { href: "/canvas", label: "创作画布", desc: "节点式生图、分镜与成片编排。" },
 ];
@@ -94,10 +94,10 @@ export default function HomeHero() {
           <Link
             key={item.href}
             href={item.href}
-            className="home-liquid-glass flex items-baseline justify-between gap-3 rounded-2xl px-5 py-3.5 text-[var(--hp-ink)] no-underline transition hover:bg-[var(--hp-card)]"
+            className="home-liquid-glass flex flex-wrap items-center justify-between gap-2 rounded-2xl px-5 py-3.5 text-[var(--hp-ink)] no-underline transition hover:bg-[var(--hp-card)]"
           >
             <span className="text-sm font-bold">{item.label}</span>
-            <span className="min-w-0 flex-1 truncate text-right text-[12px] text-[var(--hp-muted)]">{item.desc}</span>
+            <span className="order-3 w-full text-left text-[12px] text-[var(--hp-muted)]">{item.desc}</span>
             <span aria-hidden className="text-[var(--hp-muted)]">→</span>
           </Link>
         ))}

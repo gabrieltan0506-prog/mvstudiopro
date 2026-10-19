@@ -1447,6 +1447,9 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     // OpenRouter 上锁 Z.AI 自营；调用方给了偏好就并进去（0911 用户令：不落转售方）
     // 锁放在后面：调用方偏好只能补 require_parameters / max_price 之类，不能解开 order / allow_fallbacks
     payload.provider = { ...(params.openRouterProviderPreferences || {}), ...OPENROUTER_GLM_PROVIDER_LOCK };
+  } else if (modelId === "deepseek/deepseek-v4.1-flash-1017" && !evolinkFlash) {
+    // 1017快照的OpenRouter目录没有DeepSeek自营端点，不能沿旧别名锁到不存在的提供商。
+    payload.provider = { ...(params.openRouterProviderPreferences || {}), require_parameters: true };
   } else if (isDeepSeekV41Flash && !evolinkFlash) {
     // 沿用知识卡同款自营锁，参数与供应商保持可验证。
     payload.provider = { ...(params.openRouterProviderPreferences || {}), ...OPENROUTER_DEEPSEEK_PROVIDER_LOCK };

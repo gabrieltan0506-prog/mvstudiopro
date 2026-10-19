@@ -4,6 +4,21 @@ import { OPENROUTER_DEEPSEEK_V41_FLASH_MODEL as modelName } from "../services/op
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
+it("DeepSeek1017保留high与流式回执，不继承旧版本不存在的自营端点锁", async () => {
+  vi.stubEnv("OPENROUTER_API_KEY", "sk-test-only-not-real");
+  const model = "deepseek/deepseek-v4.1-flash-1017";
+  const frame = { id:"test-1017",model, choices:[{delta:{content:'{"answer":"真实测试正文"}'},finish_reason:"stop"}],
+    usage:{prompt_tokens:10,completion_tokens:20,total_tokens:30,cost:0.001,completion_tokens_details:{reasoning_tokens:5}} };
+  const fetchMock=vi.fn().mockResolvedValue(new Response(`data: ${JSON.stringify(frame)}\n\ndata: [DONE]\n\n`,{headers:{"content-type":"text/event-stream"}}));
+  vi.stubGlobal("fetch",fetchMock);
+  const result=await invokeLLM({provider:"openai",modelName:model,reasoningEffort:"high",max_tokens:24000,response_format:{type:"json_object"},messages:[{role:"user",content:"test"}]});
+  const body=JSON.parse(fetchMock.mock.calls[0][1].body);
+  expect(body).toMatchObject({model,stream:true,reasoning:{effort:"high"},max_tokens:24000,provider:{require_parameters:true}});
+  expect(body.provider.order).toBeUndefined(); expect(body.reasoning_effort).toBeUndefined();
+  expect(result.usage).toMatchObject({cost:0.001,completion_tokens_details:{reasoning_tokens:5}});
+  expect(result.choices[0].message.content).toContain("真实测试正文"); expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
 describe("漫剧顾问 DeepSeek V4.1 Flash 通道", () => {
   it("请求准确模型和 JSON，保留推理与 token 预算，不走 GPT 参数", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "sk-test-only-not-real");
