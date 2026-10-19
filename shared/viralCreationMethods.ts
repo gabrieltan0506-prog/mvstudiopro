@@ -1,9 +1,11 @@
 import { VIRAL_COURSE_RULES, VIRAL_COURSE_BOUNDARY, selectViralCourseRules, type ViralCourseStage } from "./viralCourseRules.js";
+import { MARKETING_METHODS, MARKETING_SOURCES, MARKETING_SKILLS_VERSION, isMarketingContext, buildMarketingPrompt, selectMarketingMethods } from "./marketingSkills.js";
 import { SPOKEN_PERFORMANCE_PROMPT } from "./spokenPerformance.js";
 
 /** 用户资料的版本化方法库；只给方法与出处，不把历史课程案例当实时平台规则。 */
-export const VIRAL_METHOD_VERSION = "2026-10-17.1";
+export const VIRAL_METHOD_VERSION = "2026-10-20.1";
 export const VIRAL_CREATION_METHODS = [
+  ...MARKETING_METHODS,
   { id: "audience-scene", name: "人群与场景定位", sourceIds: ["S2", "S3", "S4", "S5"], apply: "从完整背景中保留多重身份与经历，按本轮要求确定具体读者、场景和一个待解决问题；不编造职业、客户或经历。" },
   { id: "topic-evidence", name: "相关样本选题", sourceIds: ["S1", "S2", "S4"], apply: "借鉴相关样本的需求与结构，说明平台、日期和来源；不照抄标题，不为蹭热度强行改人设。" },
   { id: "promise-delivery", name: "标题承诺兑现", sourceIds: ["S1", "S4"], apply: "主选加三个不同切口备选，给读者具体收益；逐字引用正文中兑现承诺的内容，不能只有悬念没有答案。" },
@@ -49,14 +51,20 @@ export function compileViralCreatorInput(input: {
   if (stage === "expand" && (!input.selectedTopic || !platforms.includes(input.targetPlatform!) || !formats.includes(input.targetFormat!))) throw new Error("扩写需要已确认选题、目标平台与内容形式");
   return {
     version: VIRAL_METHOD_VERSION,
-    system: buildViralRolePrompt(stage, input.targetPlatform, input.targetFormat, input.sourceMode),
+    system: [buildViralRolePrompt(stage, input.targetPlatform, input.targetFormat, input.sourceMode), buildMarketingPrompt({ stage, context: [input.profile, input.requirements || ""].join("\n") })].filter(Boolean).join("\n\n"),
     user: JSON.stringify({ profile: input.profile.trim(), requirements: input.requirements || "", platforms, formats,
       count: input.count === 2 ? 2 : 3, selectedTopic: input.selectedTopic,
-      methodLibrary: VIRAL_CREATION_METHODS, methodPlan: buildViralMethodPlan([input.profile, input.requirements || ""].join("\n"), undefined, { stage, format: input.targetFormat }), ...(input.sourceMode === "database" ? { databaseEvidence: input.evidence ?? null } : { optionalReferences: input.evidence ?? null }),
+      methodLibrary: selectViralCreationMethods([input.profile, input.requirements || ""].join("\n")), methodPlan: buildViralMethodPlan([input.profile, input.requirements || ""].join("\n"), undefined, { stage, format: input.targetFormat }), ...(input.sourceMode === "database" ? { databaseEvidence: input.evidence ?? null } : { optionalReferences: input.evidence ?? null }),
       evidenceBoundary: "仅使用实际提供的参考，未提供也可依据背景写待验证创意；不能编造数据或声称读过不存在的材料。", imageGeneration: "用户单独点选并确认费用后才执行" }, null, 2),
   };
 }
 
+
+/** 请求只带本次适用方法；完整库仍供旧结果审核识别ID。 */
+export function selectViralCreationMethods(context: string) {
+  const enabledIds = new Set<string>(selectMarketingMethods(context).map(method => method.id));
+  return VIRAL_CREATION_METHODS.filter(method => !method.id.startsWith("marketing-") || enabledIds.has(method.id));
+}
 
 /** 用户资料的可选结构；课程中的流量断言与固定秒数不编入规则。 */
 export const VIRAL_CONTENT_STRUCTURES = [
@@ -69,7 +77,9 @@ export const VIRAL_CONTENT_STRUCTURES = [
 ] as const;
 
 /** 显式要求优先，再按文本命中推荐；这是可解释的结构选择，不是爆款评分。 */
-export function buildViralMethodPlan(context: string, goal?: string | null, options: { stage?: ViralCourseStage; format?: ViralFormat } = {}) {
+export function buildViralMethodPlan(context: string, goal?: string | null, options: { stage?: ViralCourseStage; format?: ViralFormat; marketingContext?: string } = {}) {
+  const marketingContext = options.marketingContext ?? context;
+  const methods = selectMarketingMethods(marketingContext);
   const ranked = VIRAL_CONTENT_STRUCTURES.map((structure, index) => ({
     ...structure, matchedTerms: structure.triggers.filter(term => context.includes(term)), index,
   })).sort((a, b) => b.matchedTerms.length - a.matchedTerms.length || a.index - b.index);
@@ -77,6 +87,7 @@ export function buildViralMethodPlan(context: string, goal?: string | null, opti
     version: VIRAL_METHOD_VERSION,
     courseRules: selectViralCourseRules({ stage: options.stage || "shortlist", context, format: options.format, goal }),
     courseBoundary: VIRAL_COURSE_BOUNDARY,
+    marketing: { enabled: isMarketingContext(marketingContext), version: MARKETING_SKILLS_VERSION, methods, sources: MARKETING_SOURCES.filter(source => methods.some(method => (method.sourceIds as readonly string[]).includes(source.id))), boundary: "仅显式商业目标下选用；候选商品不是已售事实，缺成本/售价/分母标待补，不保证成交或儿童心理治疗效果。" },
     primary: ranked[0], alternatives: ranked.slice(1, 4),
     selectionBoundary: "按明确词项推荐结构，LLM须结合完整语境复核；用户要求优先，不能把词项命中当效果证据。可从结构库改选更合适结构。",
     positioning: { sources: ["S2 定位与搜索入口", "S3 第2页及第12页", "S5 账号定位"], axes: ["复合身份与真实经历", "兴趣/技能/性格与本轮问题的交集", "本轮目标读者", "具体问题场景", "真实产品或后续价值"] },

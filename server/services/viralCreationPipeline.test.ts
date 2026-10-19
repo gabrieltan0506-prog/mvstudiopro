@@ -1,3 +1,4 @@
+import { buildMarketingPrompt, MARKETING_METHODS } from "../../shared/marketingSkills.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fictionalViralBlueprint } from "../../shared/viralCreation.fixture";
 import { createPlatformExpandEvidenceJournal } from "./platformTopicExpandEvidence";
@@ -5,7 +6,7 @@ import { XHS_CONTENT_SKILL_ID } from "../../shared/xhsContentStrategy";
 import { platformTopicShortlistItemSchema } from "../../shared/platformTopicShortlist";
 const mock = vi.hoisted(() => ({ llm: vi.fn(), trends: vi.fn(), campaigns: vi.fn() }));
 vi.mock("../_core/llm.js", () => ({ invokeLLM: mock.llm, extractFirstChoicePlainText: (v: string) => v, isTransientLlmError: () => false }));
-vi.mock("./platformSkillsService.js", () => ({ listAllPlatformSkillsForUser: async () => [{ id: "xhs-content-growth", defaultEnabled: false }], composePlatformSkillsPromptBlock: () => "用户五份资料的方法" }));
+vi.mock("./platformSkillsService.js", () => ({ listAllPlatformSkillsForUser: async () => [{ id: "xhs-content-growth", defaultEnabled: false }, { id: "sales-copy", defaultEnabled: false }], composePlatformSkillsPromptBlock: () => "用户五份资料的方法" }));
 vi.mock("../growth/trendShortlistQuery", () => ({ queryTrendShortlist: async (_root: string, platform: string) => (await mock.trends([platform]))[platform] }));
 vi.mock("../growth/trendShortlistIndex", () => ({ readTrendShortlistIndex: async (_root: string, platform: string) => (await mock.trends([platform]))[platform], ensureTrendShortlistIndex: async () => {} }));
 vi.mock("./platformOfficialCampaigns", () => ({ ensureOfficialCampaignSeedsLoaded: mock.campaigns, listOfficialCampaigns: async () => [], pickLinkedCampaignsForTopic: async () => [] }));
@@ -159,4 +160,35 @@ describe("爆款创作真实服务入口（模型和数据读取隔离）", () =
   expect(result.contentBlueprints[0].graphicNotePages).toEqual(fictionalViralBlueprint().graphicNotePages);
  });
 
+});
+
+describe("营销方法接入既有生产请求", () => {
+ beforeEach(() => { vi.clearAllMocks(); mock.trends.mockResolvedValue({}); });
+ const context = "产品/服务：亲子关系儿童绘本和动画，目标：营销获客；客户细分、成本、售价与耗时待补。";
+ it.each([{ skillIds: [XHS_CONTENT_SKILL_ID] }, { skillIds: ["sales-copy"] }])("初选入口携带同源营销方法，技能池=$skillIds", async ({ skillIds }) => {
+  mock.llm.mockResolvedValue(JSON.stringify({ topics: [1, 2].map(i => ({ ...rawTopic(i), skillsUsed: skillIds })) }));
+  await generatePlatformTopicShortlist({ userId: 1, context, count: 2, enabledSkillIds: skillIds });
+  const input = JSON.parse(mock.llm.mock.calls[0][0].messages[1].content);
+  expect(input.personaContext).toBe(context);
+  expect(input.marketingGuidance).toBe(buildMarketingPrompt({ stage: "shortlist", context }));
+  expect(input.marketingGuidance.length).toBeGreaterThan(0);
+ });
+ it("扩写主备通道使用同源方法，营销引用经过原审核，经营建议保留在原字段", async () => {
+  const bp = fictionalViralBlueprint();
+  bp.methodApplications[0].methodId = MARKETING_METHODS[0].id;
+  const advice = "引流候选：亲子共读体验；利润候选：主题绘本；高价候选：定制动画。成本、售价、交付耗时待补，尚未验证。";
+  const response = { ...bp, publishingAdvice: advice };
+  mock.llm.mockRejectedValueOnce(new Error("测试通道不可用")).mockResolvedValueOnce(JSON.stringify({ blueprint: response }));
+  const result = await expandPlatformTopicPicks({ userId: 1, context, picks: [pick], enabledSkillIds: [XHS_CONTENT_SKILL_ID] });
+  expect(mock.llm).toHaveBeenCalledTimes(2);
+  for (const [request] of mock.llm.mock.calls) {
+   const input = JSON.parse(request.messages[1].content.split("\n【上一通道未交付的原因】")[0]);
+   expect(input.marketingGuidance).toContain(buildMarketingPrompt({ stage: "expand", context }));
+   expect(input.marketingGuidance).toContain("publishingAdvice");
+   expect(input.methodLibrary.map((m: {id: string}) => m.id)).toContain(MARKETING_METHODS[0].id);
+  }
+  expect(result.contentBlueprints[0].publishingAdvice).toBe(advice);
+  expect(result.contentBlueprints[0].methodApplications).toEqual(bp.methodApplications);
+  expect(result.contentBlueprints[0].graphicNotePages).toEqual(bp.graphicNotePages);
+ });
 });

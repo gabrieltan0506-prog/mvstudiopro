@@ -49,6 +49,8 @@ import { PlatformTrendWorkbench } from "@/components/platform/PlatformTrendWorkb
 import { PlatformTrendReportRail } from "@/components/platform/PlatformTrendReportRail";
 import { PlatformToolsWorkbench } from "@/components/platform/PlatformToolsWorkbench";
 import { PlatformStructuredPersonaForm } from "@/components/platform/PlatformStructuredPersonaForm";
+import { MarketingOfferPanel } from "@/components/platform/MarketingOfferPanel";
+import { formatOptimizationAdvice } from "@shared/marketingOffer";
 import { PlatformPersonaPolishPanel } from "@/components/platform/PlatformPersonaPolishPanel";
 import {
   assessPlatformPersonaSpecificity,
@@ -5283,6 +5285,11 @@ export default function PlatformPage() {
           />
         }
       />}
+      <MarketingOfferPanel context={focusPrompt} onChange={next => {
+        setFocusPrompt(next);
+        setFreeformOverride(true);
+        setPersonaFieldErrors({});
+      }} />
       <details className="text-sm text-slate-300"><summary className="cursor-pointer py-2">需要帮助整理需求？</summary>
       <PlatformPersonaPolishPanel
         id="platform-persona-polish"
@@ -8609,7 +8616,7 @@ export default function PlatformPage() {
         pendingOptimizeVisionRef.current = undefined;
         pendingOptimizeLiveTrendsRef.current = false;
         setCustomOptimizeResult(res.result.optimizedMarkdown);
-        setCustomOptimizeSummary(res.result.summary);
+        setCustomOptimizeSummary(formatOptimizationAdvice(res.result));
         toast.success(`深度优化完成${res.cost > 0 ? `（已扣 ${res.cost} 积分）` : ""}`);
         return;
       }
@@ -8869,7 +8876,7 @@ export default function PlatformPage() {
       pendingOptimizeLiveTrendsRef.current = false;
       return {
         optimizedMarkdown: res.result.optimizedMarkdown,
-        summary: res.result.summary,
+        summary: formatOptimizationAdvice(res.result),
       };
     },
     [optimizeCustomCopyMutation, enabledPlatformSkillIds, allowBloggerTitle],
@@ -15814,8 +15821,9 @@ export default function PlatformPage() {
               {customOptimizeResult ? (
                 <div className="mt-5 space-y-3 rounded-2xl border border-[#fbbf24]/25 bg-[rgba(251,191,36,0.06)] p-5">
                   <div className="text-xs font-semibold uppercase tracking-wide text-[#fcd34d]/80">
-                    深度优化结果{customOptimizeSummary ? ` · ${customOptimizeSummary}` : ""}
+                    深度优化结果
                   </div>
+                  {customOptimizeSummary && <div className="whitespace-pre-wrap rounded-xl border border-white/10 p-3 text-sm leading-6 text-slate-300">{customOptimizeSummary}</div>}
                   <div className="whitespace-pre-wrap text-sm leading-7 text-white/88">{customOptimizeResult}</div>
                   {visibleExecutionCards.some((c) => c.publishingAdvice?.trim()) ? (
                     <div className="rounded-xl border border-[#fbbf24]/25 bg-black/20 px-3 py-2.5">
