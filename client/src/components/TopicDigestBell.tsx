@@ -39,7 +39,7 @@ export function TopicDigestBell({ userId }: { userId: string }) {
     <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
       <SheetTitle>每两天，给你新的创作选题</SheetTitle>
       <SheetDescription>推荐由平台承担费用。点击选题后先带入需求，正式创作按原有规则计费。</SheetDescription>
-      <p className="mt-2 text-sm">免费用户每期1条，付费用户每期2条。{query.data ? `当前账号每期${query.data.recommendationCount}条。` : ""}</p>
+      <p className="mt-2 text-sm">免费用户每期1条，来自DeepSeek；付费用户每期2条，由DeepSeek与GLM共同提案，再整合去重。{query.data ? `当前账号每期${query.data.recommendationCount}条。` : ""}</p>
       <div className="my-5 space-y-3 rounded-xl border p-4">
         <label className="block text-sm">我的赛道<select value={lane} onChange={e => setLane(e.target.value as TopicLane)} className="mt-1 w-full rounded border bg-background p-2">
           {Object.entries(TOPIC_LANES).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
@@ -60,15 +60,16 @@ export function TopicDigestBell({ userId }: { userId: string }) {
       {notifications.map(n => <section key={n.id} className="mb-5 rounded-xl border p-4">
         <div className="flex items-center justify-between gap-2"><h3 className="font-semibold">{TOPIC_LANES[n.digest.lane]}{!n.read ? " · 新" : ""}</h3>
           {!n.read && <button type="button" className="text-xs underline" disabled={busy} onClick={() => void act(() => read.mutateAsync({ id: n.id }))}>标为已读</button>}</div>
-        <p className="my-2 text-xs text-muted-foreground">{new Date(n.digest.createdAt).toLocaleString("zh-CN")}{Date.now() > Date.parse(n.digest.expiresAt) ? " · 历史一期，热点时效需重新核实" : " · 本期"}</p>
+        <p className="my-2 text-xs text-muted-foreground">{n.method === "dual" ? "双模型整合" : "DeepSeek选题"} · {new Date(n.digest.createdAt).toLocaleString("zh-CN")}{Date.now() > Date.parse(n.digest.expiresAt) ? " · 历史一期，热点时效需重新核实" : " · 本期"}</p>
         {selectTopicCards(n.digest.topics, query.data?.preference?.keywords || "", n.dismissed).map(t => <article key={t.id} className="border-t py-4">
           <p className="text-xs text-muted-foreground">{t.kind} · {t.format}{n.adopted.includes(t.id) ? " · 已采用" : ""}</p>
           <h4 className="my-1 font-medium">{t.title}</h4><p className="text-sm leading-6">{t.angle}</p>
           {t.sources.map(s => <a key={s.id} href={s.url} target="_blank" rel="noreferrer" className="mt-1 block text-xs underline">来源：{s.title} · {new Date(s.observedAt).toLocaleDateString("zh-CN")}</a>)}
+          <p className="mt-3 text-sm">可以做成{t.format}：从“{t.outline[0]}”开始。点击后会带入选题、角度和内容提纲，你可以继续修改再创作。</p>
           <div className="mt-3 flex gap-2"><button type="button" className={button} onClick={() => {
             setOpen(false); navigate(`/platform?mode=create&createTool=viral&topicDigest=${encodeURIComponent(n.id)}&topicId=${encodeURIComponent(t.id)}`);
             window.dispatchEvent(new Event("mvs:platform-tab"));
-          }}>用这个选题创作</button><button type="button" className={button} disabled={busy} onClick={() => void act(() => dismiss.mutateAsync({ id: n.id, topicId: t.id }))}>不感兴趣</button></div>
+          }}>用这个选题开始创作</button><button type="button" className={button} disabled={busy} onClick={() => void act(() => dismiss.mutateAsync({ id: n.id, topicId: t.id }))}>不感兴趣</button></div>
         </article>)}
         {selectTopicCards(n.digest.topics, query.data?.preference?.keywords || "", n.dismissed).length === 0 && <p className="text-sm">本期选题已隐藏，可调整关键词等待下一期。</p>}
       </section>)}

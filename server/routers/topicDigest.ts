@@ -15,8 +15,9 @@ const target = z.object({ id: z.string().min(1).max(80), topicId: z.string().min
 export const topicDigestProcedures = {
   topicDigestInbox: protectedProcedure.input(scope).query(({ ctx }) => safe(async () => {
     const preference = await readTopicPreference(ctx.user.id);
-    return { preference, notifications: await listTopicNotifications(ctx.user.id), recommendationCount: await readTopicRecommendationCount(ctx.user.id),
-      batchState: preference?.enabled ? await topicPoolState(preference.lane, topicPeriod()) : "off" as const,
+    const recommendationCount = await readTopicRecommendationCount(ctx.user.id);
+    return { preference, notifications: await listTopicNotifications(ctx.user.id), recommendationCount,
+      batchState: preference?.enabled ? await topicPoolState(preference.lane, topicPeriod(), recommendationCount) : "off" as const,
       nextAt: new Date((topicPeriod() + 1) * TOPIC_DIGEST_INTERVAL_MS).toISOString() };
   })),
   saveTopicDigestPreference: protectedProcedure.input(topicPreferenceSchema).mutation(({ ctx, input }) => safe(() => saveTopicPreference(ctx.user.id, input))),

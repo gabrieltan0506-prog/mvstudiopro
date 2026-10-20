@@ -11,8 +11,9 @@ const raw=()=>({topics:Array.from({length:5},(_,i)=>({title:`测试独立选题$
 function dependencies(){
   const claimed=new Set<string>();
   return {lanes:vi.fn(async()=>["parenting" as const]),claim:vi.fn(async(id:string)=>{if(claimed.has(id))return false;claimed.add(id);return true;}),
+    claimPaid:vi.fn(async()=>null),savePaid:vi.fn(async()=>{}),completePaid:vi.fn(async()=>{}),failPaid:vi.fn(async()=>{}),paidCall:vi.fn(),
     complete:vi.fn(async()=>{}),deliver:vi.fn(async()=>{}),fail:vi.fn(async()=>{}),sources:vi.fn(async()=>[]),previous:vi.fn(async()=>[]),
-    generate:vi.fn(async()=>({raw:raw(),receipt:{id:"test-only",model:"test-model",usage:undefined}}))};
+    generate:vi.fn(async()=>({raw:raw(),receipt:{id:"test-only",model:"test-model",provider:"DeepSeek",usage:undefined}}))};
 }
 it("同赛道同周期只调用一次，投递失败下次只补消息；48小时后才生成下一期",async()=>{
   const deps=dependencies(),now=TOPIC_DIGEST_INTERVAL_MS*100;
@@ -37,9 +38,9 @@ it("seed、过期和无链接条目不充当实时热点",async()=>{
   expect((await readTopicSources("parenting",now)).map(s=>s.id)).toEqual(["xiaohongshu:one"]);
 });
 it("平台推荐进入零用户扣费的在途账本，失败也释放活动记录且不重发",async()=>{
-  vi.mocked(invokeLLM).mockResolvedValueOnce({id:"test",created:1,model:"deepseek/deepseek-v4.1-flash-1017",choices:[{index:0,message:{role:"assistant",content:JSON.stringify(raw())},finish_reason:"stop"}]});
+  vi.mocked(invokeLLM).mockResolvedValueOnce({id:"test",provider:"DeepSeek",created:1,model:"deepseek/deepseek-v4.1-flash-1017",choices:[{index:0,message:{role:"assistant",content:JSON.stringify(raw())},finish_reason:"stop"}]});
   await generateTopicPool("parenting",[],[],"test-pool");
-  expect(registerActiveJob).toHaveBeenCalledWith(expect.objectContaining({userId:"platform",creditsBilled:0,metadata:{paidBy:"platform",lane:"parenting"}}));
+  expect(registerActiveJob).toHaveBeenCalledWith(expect.objectContaining({userId:"platform",creditsBilled:0,metadata:{paidBy:"platform",lane:"parenting",step:"deepseek"}}));
   expect(unregisterActiveJob).toHaveBeenCalledWith("test-pool","platformTopicDigest");
   vi.mocked(invokeLLM).mockRejectedValueOnce(new Error("upstream unavailable"));
   await expect(generateTopicPool("parenting",[],[],"test-other")).rejects.toThrow("upstream unavailable");

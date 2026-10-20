@@ -16,7 +16,7 @@ export const topicSourceSchema = z.object({
   observedAt: z.string(), platform: z.string(),
 });
 export type TopicSource = z.infer<typeof topicSourceSchema>;
-const candidateSchema = z.object({
+export const candidateSchema = z.object({
   title: z.string().trim().min(8).max(100), angle: z.string().trim().min(20).max(600),
   hook: z.string().trim().min(10).max(200), format: z.enum(["图文", "短视频", "故事"]),
   outline: z.array(z.string().trim().min(5).max(300)).min(3).max(5),
@@ -24,7 +24,7 @@ const candidateSchema = z.object({
   sourceIds: z.array(z.string()).max(2),
 });
 export const topicCandidatesSchema = z.object({ topics: z.array(candidateSchema).min(5).max(8) });
-export type TopicCard = z.infer<typeof candidateSchema> & { id: string; kind: "热点灵感" | "常青选题"; sources: TopicSource[] };
+export type TopicCard = z.infer<typeof candidateSchema> & { id: string; kind: "热点灵感" | "常青选题"; sources: TopicSource[]; draftRefs?: string[] };
 export type TopicDigest = { id: string; lane: TopicLane; createdAt: string; expiresAt: string; topics: TopicCard[] };
 export const topicPeriod = (now = Date.now()) => Math.floor(now / TOPIC_DIGEST_INTERVAL_MS);
 

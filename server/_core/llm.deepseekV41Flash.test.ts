@@ -11,7 +11,8 @@ it("DeepSeek1017保留high与流式回执，强制锁DeepSeek且调用偏好不�
     usage:{prompt_tokens:10,completion_tokens:20,total_tokens:30,cost:0.001,completion_tokens_details:{reasoning_tokens:5}} };
   const fetchMock=vi.fn().mockResolvedValue(new Response(`data: ${JSON.stringify(frame)}\n\ndata: [DONE]\n\n`,{headers:{"content-type":"text/event-stream"}}));
   vi.stubGlobal("fetch",fetchMock);
-  const result=await invokeLLM({provider:"openai",modelName:model,openRouterProviderPreferences:{order:["Fireworks"],allow_fallbacks:true},reasoningEffort:"high",max_tokens:24000,response_format:{type:"json_object"},messages:[{role:"user",content:"test"}]});
+  const callerPreferences={order:["Fireworks"],allow_fallbacks:true};
+  const result=await invokeLLM({provider:"openai",modelName:model,openRouterProviderPreferences:callerPreferences,reasoningEffort:"high",max_tokens:24000,response_format:{type:"json_object"},messages:[{role:"user",content:"test"}]});
   const body=JSON.parse(fetchMock.mock.calls[0][1].body);
   expect(body).toMatchObject({model,stream:true,reasoning:{effort:"high"},max_tokens:24000,provider:{require_parameters:true,order:["DeepSeek"],allow_fallbacks:false}});
   expect(body.reasoning_effort).toBeUndefined();

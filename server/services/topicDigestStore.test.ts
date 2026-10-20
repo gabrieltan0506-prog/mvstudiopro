@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
+import { newTopicWorkflow } from "../../shared/topicDigestWorkflow";
 import { verifyTopicCandidates } from "../../shared/topicDigest";
 const state=vi.hoisted(()=>({db:null as any}));
 vi.mock("../db",()=>({getDb:async()=>state.db}));
 import { saveTopicPreference, claimTopicPool, completeTopicPool, deliverTopicPool, listTopicNotifications,
-  getTopicNotification, updateTopicNotification, subscribedTopicLanes, topicPoolState, readTopicRecommendationCount } from "./topicDigestStore";
+  claimPaidTopicPool, completePaidTopicPool, failPaidTopicPool, savePaidTopicWorkflow, getTopicNotification, updateTopicNotification, subscribedTopicLanes, topicPoolState, readTopicRecommendationCount } from "./topicDigestStore";
 const pg=new PGlite();
 beforeAll(async()=>{await pg.exec(`CREATE TABLE users(id integer PRIMARY KEY,role text NOT NULL);INSERT INTO users VALUES(7,'paid'),(8,'free'),(9,'free');CREATE TABLE stripe_customers("userId" integer PRIMARY KEY,plan text);INSERT INTO stripe_customers VALUES(9,'pro')`);state.db=drizzle(pg);},30_000);
 afterAll(()=>pg.close());
@@ -18,7 +19,15 @@ it("真实数据库覆盖订阅、并发占位、幂等投递、账号隔离、�
   expect(claims.filter(Boolean)).toHaveLength(1);
   await deliverTopicPool("test-pool");expect(await listTopicNotifications(7)).toHaveLength(0);
   const topics=verifyTopicCandidates({topics:Array.from({length:5},(_,i)=>({title:`测试候选${i}：妈妈道歉后的变化`,angle:"用家长与孩子的真实动作表现情绪修复，避免泛泛的说教或效果承诺。",hook:"妈妈蹲下来时，孩子悄悄递过来一张画。",format:"图文",outline:["先交代矛盾发生的场景","再呈现家长倾听的动作","最后呈现孩子递画的变化"],tags:["亲子"],sourceIds:[]}))},[]);
-  await completeTopicPool("test-pool",{id:"test-pool",lane:"parenting",createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+3600000).toISOString(),topics},{id:"test-only"});
+  const workflow=newTopicWorkflow("parenting",[],[],{raw:{topics},receipt:{provider:"DeepSeek"}});
+  await completeTopicPool("test-pool",{id:"test-pool",lane:"parenting",createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+3600000).toISOString(),topics},{id:"test-only"},workflow);
+  await deliverTopicPool("test-pool");
+  expect(await listTopicNotifications(7)).toHaveLength(0);
+  expect(await topicPoolState("parenting",1,2)).toBe("waiting");
+  const paidClaims=await Promise.all([claimPaidTopicPool("test-pool"),claimPaidTopicPool("test-pool")]);
+  expect(paidClaims.filter(Boolean)).toHaveLength(1);
+  const paid=paidClaims.find(Boolean)!;
+  await completePaidTopicPool("test-pool",{...paid.digest,topics:topics.map(t=>({...t,title:`双模型整合${t.title}`}))},workflow);
   await Promise.all([deliverTopicPool("test-pool"),deliverTopicPool("test-pool")]);
   expect(await topicPoolState("parenting",1)).toBe("ready");
   expect(await listTopicNotifications(7)).toHaveLength(1);expect(await listTopicNotifications(8)).toHaveLength(1);expect(await listTopicNotifications(9)).toHaveLength(0);
@@ -49,4 +58,28 @@ it("真实数据库覆盖订阅、并发占位、幂等投递、账号隔离、�
   expect((await getTopicNotification(7,"test-pool")).digest.topics).toHaveLength(2);
   await pg.exec('DELETE FROM users WHERE id=7');expect(await subscribedTopicLanes()).toEqual([]);
   expect(await listTopicNotifications(7)).toHaveLength(0);
+});
+
+it("晚订阅付费复用基础稿、旧池不冒充双路、失败不重投、升级不补条",async()=>{
+  await pg.exec("INSERT INTO users VALUES(21,'free'),(22,'paid'),(23,'paid')");
+  const raw={topics:Array.from({length:5},(_,i)=>({title:`隔离边界候选${i}的创作测试`,angle:"以实际发生的具体场景编排创作结构，保留可核实的动作与情绪，不编造效果。",hook:"孩子走进房间后轻轻把门关上了。",format:"图文",outline:["建立人物所处的真实场景","展现双方具体的动作回应","用可见的变化收束故事线"],tags:["故事"],sourceIds:[]}))};
+  const topics=verifyTopicCandidates(raw,[]),w=newTopicWorkflow("storytelling",[],[],{raw,receipt:{provider:"DeepSeek"}});
+  const digest=(id:string)=>({id,lane:"storytelling" as const,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+3600000).toISOString(),topics});
+  await saveTopicPreference(21,{enabled:true,lane:"storytelling",keywords:""});
+  await claimTopicPool("late-paid","storytelling",10);await completeTopicPool("late-paid",digest("late-paid"),{},w);
+  expect(await claimPaidTopicPool("late-paid")).toBeNull();await deliverTopicPool("late-paid");
+  await pg.exec("UPDATE users SET role='paid' WHERE id=21");
+  expect(await claimPaidTopicPool("late-paid")).toBeNull();
+  expect((await getTopicNotification(21,"late-paid")).digest.topics).toHaveLength(1);
+  await saveTopicPreference(22,{enabled:true,lane:"storytelling",keywords:""});
+  const claimed=await claimPaidTopicPool("late-paid");expect(claimed?.workflow.deepseek).toEqual(w.deepseek);
+  const failed=structuredClone(w);failed.glm={status:"failed",error:"test failure"};
+  await savePaidTopicWorkflow("late-paid",failed);await failPaidTopicPool("late-paid");
+  expect(await claimPaidTopicPool("late-paid")).toBeNull();expect(await topicPoolState("storytelling",10,2)).toBe("unavailable");
+  await deliverTopicPool("late-paid");expect(await listTopicNotifications(22)).toHaveLength(0);
+  const stored=await pg.query<{pipeline:unknown}>("SELECT pipeline FROM topic_digest_pools WHERE id='late-paid'");expect(stored.rows[0].pipeline).toEqual(failed);
+  await expect(savePaidTopicWorkflow("late-paid",w)).rejects.toThrow("保存失败");
+  await claimTopicPool("legacy","storytelling",11);await completeTopicPool("legacy",digest("legacy"),{});
+  expect(await claimPaidTopicPool("legacy")).toBeNull();expect(await topicPoolState("storytelling",11,2)).toBe("unavailable");
+  await deliverTopicPool("legacy");expect(await listTopicNotifications(22)).toHaveLength(0);
 });
