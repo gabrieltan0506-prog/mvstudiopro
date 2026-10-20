@@ -38,7 +38,6 @@ import {
   completeScriptBatches,
   novelTextHash,
 } from "@/lib/novelSeries";
-import { createNovelFactoryProject } from "@/lib/novelFactoryProject";
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Link } from "wouter";
@@ -868,6 +867,9 @@ function NovelWorkspaceEditor({
         throw new Error(
           "当前浏览器无法取得作品编辑锁，请使用支持此功能的浏览器。"
         );
+      const { createNovelFactoryProject } = await import(
+        "@/lib/novelFactoryProject"
+      );
       const project = await navigator.locks.request(
         `mv-manhua-project:${userId}:${draft.roundId}`,
         { ifAvailable: true },
