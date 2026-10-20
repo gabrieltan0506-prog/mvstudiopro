@@ -1,3 +1,4 @@
+import { ManhuaOverseasLibraryButton, ManhuaOverseasMethodReference } from "@/components/canvas/ManhuaOverseasLibrary";
 import RemixProductionImport from "@/components/RemixProductionImport";
 import { remixToNovelDraft } from "@/lib/remixProductionHandoff";
 import { manhuaVfxEnvironmentOptions } from "@shared/manhuaVfxEnvironment";
@@ -10750,6 +10751,12 @@ function OmniCanvasWorkspace() {
     </button>
   );
 
+  function prepareOverseasQuestion(question: string) {
+    setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined);
+    setAdvisorFocusSection(null); chooseAdvisorVisibility(true); setAdvisorNudge(null);
+    setAdvisorQuestionSeed({ id: crypto.randomUUID(), question, projectKey: advisorComponentKey });
+  }
+
   const workspaceToolbar = (
             <div data-manhua-workspace-topbar={immersiveWorkbench ? "compact" : undefined} className={immersiveWorkbench ? "flex min-w-0 flex-1 items-center justify-between gap-3" : "flex shrink-0 flex-wrap items-center justify-between gap-3"}>
               {immersiveWorkbench ? (
@@ -10853,6 +10860,7 @@ function OmniCanvasWorkspace() {
                   )}
                 </div>
               )}
+              {canvasMode === "manhua" && <ManhuaOverseasLibraryButton enabled={Boolean(user?.id)} onPrepareQuestion={prepareOverseasQuestion} />}
               {canvasMode === "manhua" && !advisorInWorkflowRail ? creativeAdvisorAction : null}
               <details
                 key={immersiveWorkbench ? "compact-tools" : "full-tools"}
@@ -13924,6 +13932,10 @@ async function runAdvisorWriterTrial() {
                 </p>
               ) : null}
 
+              <div className="max-w-md">
+                <ManhuaOverseasMethodReference category="运镜" onPrepareQuestion={prepareOverseasQuestion} disabled={!user?.id} />
+                <ManhuaOverseasMethodReference category="人物动作" onPrepareQuestion={prepareOverseasQuestion} disabled={!user?.id} />
+              </div>
               {/* 主区只留：手法 + 运镜工作台；其余进折叠，降低侧栏密度 */}
               <div className="mt-3 max-w-md space-y-3">
                 <div>
@@ -14001,6 +14013,7 @@ async function runAdvisorWriterTrial() {
                     <div className="space-y-3 border-t border-white/8 px-3 py-3">
                       <div>
                         <label className="block text-[11px] text-white/45">叙事灯光与出场氛围</label>
+                        <ManhuaOverseasMethodReference category="灯光氛围" onPrepareQuestion={prepareOverseasQuestion} disabled={!user?.id} />
                         <select
                           value={factoryNarrativeLightingId}
                           onChange={(e) => {

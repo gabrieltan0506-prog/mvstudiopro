@@ -1,3 +1,4 @@
+import { ManhuaOverseasLibrary } from "./ManhuaOverseasLibrary";
 import { useState } from "react";
 import { MANHUA_CRAFT_CATEGORIES, MANHUA_CRAFT_LESSONS, MANHUA_CRAFT_VERSION } from "../../../../shared/manhuaCraftKnowledge";
 import { MANHUA_CRAFT_SOURCES } from "../../../../shared/manhuaCraftSources";
@@ -26,6 +27,10 @@ export function ManhuaAdvisorKnowledgePanel({ enabled, onPrepareQuestion }: { en
     {state?.changes && <p>本次新增 {state.changes.added.length}、更新 {state.changes.updated.length}、移除 {state.changes.deleted.length}；其余 {state.changes.unchangedCount} 个沿用原版本。</p>}
     <p className="text-white/55">更新已批准模板的完整创作字段索引，不调用生成模型。新导演包不会自动替换本作品已确认版本；画面质量仍需看实际成片。</p>
     {state?.snapshot && <p>已索引 {state.snapshot.templates.filter(t => (t.evidenceChunks || 0) > 0).length}/{state.snapshot.templates.length} 份模板创作内容；咨询时选读相关原文并核对版本。服务重启后会在首次咨询时重新准备。</p>}
+    <details className="mt-3 border-t border-white/10 pt-2">
+      <summary className="cursor-pointer font-medium">漫剧出海 · 32 部故事与分类技法</summary>
+      <div className="mt-3 max-h-[60vh] overflow-y-auto"><ManhuaOverseasLibrary enabled={enabled} onPrepareQuestion={onPrepareQuestion} /></div>
+    </details>
     <details className="mt-3 border-t border-white/10 pt-2">
       <summary className="cursor-pointer font-medium">创作学习资料 · {MANHUA_CRAFT_SOURCES.length} 张来源 · {MANHUA_CRAFT_LESSONS.length} 条审订知识</summary>
       <p className="my-2 text-white/60">版本 {MANHUA_CRAFT_VERSION}。可使用表示方法可参考；需补强表示应用条件已注明，仍须结合当前作品核对。资料未作为生成素材采用。</p>
