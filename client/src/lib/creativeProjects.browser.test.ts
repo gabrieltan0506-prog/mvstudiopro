@@ -18,6 +18,8 @@ it("小说新建保存切换、旧稿迁移、账号隔离与失败保留；MV�
     globalThis.backups.push(row);sessionStorage.setItem('fixture-backups',JSON.stringify(globalThis.backups));return row;
   }});
   trpc.manhuaCloudDraft={listProjects:{useQuery:()=>({data:{projects:[],hasMore:false},isLoading:false,isError:false})},upsert:{useMutation:()=>({mutateAsync:async input=>{const rows=JSON.parse(sessionStorage.getItem('fixture-mvs')||'[]');rows.push(input);sessionStorage.setItem('fixture-mvs',JSON.stringify(rows));return {generation:String(rows.length)}}})}};
+  trpc.mvAnalysis={...trpc.mvAnalysis,getVideoUploadSignedUrl:{useMutation:()=>({mutateAsync:async()=>{throw Error("禁止媒体上传")}})}};
+  trpc.coverWorkshop={list:{useQuery:()=>({data:[],refetch:async()=>({data:[]})})},get:{useQuery:()=>({data:undefined})},prepare:{useMutation:()=>({})},submit:{useMutation:()=>({})},recover:{useMutation:()=>({})}};
   trpc.homePhotoTools={restoreOldPhoto:{useMutation:()=>({mutateAsync:async()=>{throw Error('媒体禁止')}})}};
   `;
   const built = await build({
@@ -131,13 +133,13 @@ it("小说新建保存切换、旧稿迁移、账号隔离与失败保留；MV�
     expect(mvs[0].projectId).not.toBe(mvs[1].projectId);
     for(const row of mvs){const payload=JSON.parse(row.payloadJson);expect(payload.writerSession.workspaceKind).toBe('mv');expect(payload.canvas.blocks).toHaveLength(1);expect(payload.canvas.blocks[0]).toMatchObject({kind:'music',musicMv:{status:'idle',candidates:[]}});expect(row.expectedGeneration).toBe('0');}
     await goto('/mv-projects');await page.waitForFunction(()=>document.querySelectorAll('.creative-project-row').length===2);await screenshot('MV作品列表');
-    await goto('/home');await page.waitForSelector('#image-workshop');
-    await page.type('#image-workshop textarea','照片动作草稿保留');
+    await goto('/home');await page.waitForSelector('#image-workshop');await page.click('#workshop-tab-photo');
+    await page.type('#workshop-panel-photo textarea','照片动作草稿保留');
     await page.click('#workshop-tab-manhua');expect(await page.$eval('#workshop-panel-manhua',e=>!(e as HTMLElement).hidden)).toBe(true);
     expect(await page.$eval('#workshop-panel-manhua a',e=>e.getAttribute('href'))).toBe('/manhua-projects');
     await page.keyboard.press('ArrowRight');expect(await page.$eval('#workshop-tab-mv',e=>e.getAttribute('aria-selected'))).toBe('true');
     expect(await page.$eval('#workshop-panel-mv a',e=>e.getAttribute('href'))).toBe('/mv-projects');await screenshot('影像工坊MV入口');
-    await page.click('#workshop-tab-photo');expect(await page.$eval('#image-workshop textarea',e=>(e as HTMLTextAreaElement).value)).toBe('照片动作草稿保留');
+    await page.click('#workshop-tab-photo');expect(await page.$eval('#workshop-panel-photo textarea',e=>(e as HTMLTextAreaElement).value)).toBe('照片动作草稿保留');
     expect(await page.evaluate(()=>(globalThis as any).calls)).toEqual([]);
     expect(errors).toEqual([]);
   } finally { await browser.close(); await new Promise<void>(r=>server.close(()=>r())); }

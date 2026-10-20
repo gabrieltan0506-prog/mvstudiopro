@@ -1,8 +1,17 @@
-import { useEffect, useState } from "react";
-import { Camera, Clapperboard, Music2, ArrowUpRight } from "lucide-react";
+import { lazy, Suspense, useEffect, useState } from "react";
+import {
+  Camera,
+  Clapperboard,
+  Music2,
+  ArrowUpRight,
+  Image,
+} from "lucide-react";
 import HomePhotoTools from "./HomePhotoTools";
 
+const HomeCoverWorkshop = lazy(() => import("./HomeCoverWorkshop"));
+
 const workflows = [
+  { id: "cover", title: "封面", detail: "三款初稿 · 选定精修", icon: Image },
   { id: "photo", title: "照片", detail: "修复 · 放大 · 动起来", icon: Camera },
   {
     id: "manhua",
@@ -14,11 +23,13 @@ const workflows = [
 ] as const;
 
 export default function HomeImageWorkshop() {
-  const [tab, setTab] = useState<(typeof workflows)[number]["id"]>("photo");
+  const [tab, setTab] = useState<(typeof workflows)[number]["id"]>("cover");
   useEffect(() => {
     const onHash = () => {
       if (window.location.hash.startsWith("#photo-tools")) setTab("photo");
+      if (window.location.hash.startsWith("#cover-design")) setTab("cover");
     };
+    onHash();
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -37,11 +48,11 @@ export default function HomeImageWorkshop() {
           影像工坊
         </h2>
         <p className="mt-5 text-base leading-8 text-[var(--hp-muted)]">
-          一张照片、一个故事，或一首歌。选择你的创作方式，接着把作品做完。
+          一张封面、一张照片、一个故事，或一首歌。选择你的创作方式，接着把作品做完。
         </p>
       </header>
       <div
-        className="mt-9 grid grid-cols-3 gap-2 sm:gap-4"
+        className="mt-9 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-4"
         role="tablist"
         aria-label="影像工坊创作类型"
       >
@@ -85,6 +96,16 @@ export default function HomeImageWorkshop() {
             </span>
           </button>
         ))}
+      </div>
+      <div
+        role="tabpanel"
+        id="workshop-panel-cover"
+        aria-labelledby="workshop-tab-cover"
+        hidden={tab !== "cover"}
+      >
+        <Suspense fallback={<p className="mt-7">正在打开封面工坊…</p>}>
+          <HomeCoverWorkshop />
+        </Suspense>
       </div>
       <div
         role="tabpanel"
