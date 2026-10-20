@@ -1,0 +1,6 @@
+{
+  "source": "https://github.com/opencv/opencv_zoo/tree/47534e27c9851bb1128ccc0102f1145e27f23f98/models/face_detection_yunet",
+  "file": "face_detection_yunet_2026may.onnx",
+  "license": "MIT",
+  "sha256": "ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0"
+}

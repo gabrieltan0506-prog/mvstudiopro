@@ -1,3 +1,5 @@
+import { CoverCandidatePicker } from "@/components/platform/CoverCandidatePicker";
+import { readCoverCandidateSet } from "@shared/platformCoverCandidates";
 import { TopicDigestDraft, readTopicDigestLocation } from "@/components/TopicDigestBell";
 import { digitalHumanSourceSchema, type DigitalHumanSource } from "@shared/digitalHumanStudio";
 import { DigitalHumanStudio } from "@/components/DigitalHumanStudio";
@@ -270,6 +272,7 @@ import {
   PLATFORM_SKILL_QA_TERRA_DAILY_FREE,
   platformSkillQaPaidCredits,
   platformCoverBundleTotalCredits,
+  platformBundleCreditsForSlot,
   platformCompositeBundleTotalCreditsForGrid,
   platformCoverCompositeBulkBundleTotalCreditsForGrid,
   platformCoverCompositeBundleCreditsForFormatGrid,
@@ -6903,7 +6906,7 @@ export default function PlatformPage() {
     manhuaLearnJobPollTrace,
   ]);
 
-  const enqueueGenerateTopicImageMutation = trpc.mvAnalysis.enqueueGenerateTopicImage.useMutation();
+  const enqueueGenerateTopicImageMutation = trpc.mvAnalysis.enqueuePlatformCoverCandidates.useMutation();
   const uploadCoverReferencePhotoMutation = trpc.mvAnalysis.uploadCoverReferencePhoto.useMutation();
   /** 读取人像文件 → canvas 压缩为 JPEG（长边≤1280）→ 上传 GCS → 写入 coverReferencePhotoMap[sceneId]。 */
   const handleUploadCoverReferencePhoto = useCallback(
@@ -6984,6 +6987,10 @@ export default function PlatformPage() {
     },
     [coverReferencePhotoMap, globalCoverReferencePhotoUrl, platformImageMap],
   );
+
+  const resolveSelectedCoverForStoryboard = useCallback((sceneId: string) =>
+    String(platformImageMap[sceneId] || "").trim() || resolveReferencePhotoForScene(sceneId),
+    [platformImageMap, resolveReferencePhotoForScene]);
 
   const handleUploadGlobalCoverReferencePhoto = useCallback(
     async (file: File) => {
@@ -7255,29 +7262,26 @@ export default function PlatformPage() {
       sceneId: string;
       /** Debug 面板区分来源：批量兜底 / 逐张 / 手动 / 静默 */
       pollDebugLabel?: string;
-      /** 一键封面套装：40×N 按序分拆扣费 */
+      /** 每题三张精修封面：40×N 按序分拆扣费 */
       bulkCoverPack?: { packSceneIds: string[]; sequentialSlot: number };
       /** 用户上传人像照片 URL → OpenAI 官方 GPT-Image-2 edit 换封面主角 */
       referencePhotoUrl?: string;
     }) => {
       const pollLabel =
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
+      const unitCredits = inp.bulkCoverPack
+        ? platformBundleCreditsForSlot(platformCoverBundleTotalCredits(inp.bulkCoverPack.packSceneIds.length), inp.bulkCoverPack.sequentialSlot, inp.bulkCoverPack.packSceneIds.length)
+        : CREDIT_COSTS.platformTopicFrameGraphic;
       const { jobId } = await enqueueGenerateTopicImageMutation.mutateAsync({
-        topicHook: (inp.topicHook ?? "").slice(0, 500),
-        format: inp.format,
-        context: inp.context,
-        coverPersonaContext: inp.coverPersonaContext,
-        failedJobId: inp.failedJobId,
+        requestId: crypto.randomUUID().replaceAll("-", ""),
         sceneId: inp.sceneId,
-        /** 封面 topic 管线；与 2×4 合成出图开关无关。 */
-        imagePromptTranslator: "gpt54" as const,
-        ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
-          ? { enableTopicCoverDeepResearchPro: true }
-          : {}),
-        ...(inp.bulkCoverPack ? { bulkCoverPack: inp.bulkCoverPack } : {}),
-        ...(inp.referencePhotoUrl ? { referencePhotoUrl: inp.referencePhotoUrl } : {}),
+        expectedCredits: user?.role === "admin" || user?.role === "supervisor" ? 0 : unitCredits * 3,
+        coverPersonaContext: inp.coverPersonaContext,
+        referencePhotoUrl: inp.referencePhotoUrl,
         coverPlatformHint: selectedTrendPlatforms[0],
+        bulkCoverPack: inp.bulkCoverPack,
       });
+      await trpcUtils.mvAnalysis.getPlatformCoverCandidates.invalidate({ sceneId: inp.sceneId });
       setTopicImageJobPollTrace({
         jobId,
         label: pollLabel,
@@ -7363,6 +7367,15 @@ export default function PlatformPage() {
         };
       }
       const o = raw as Record<string, unknown>;
+      const candidateSet = readCoverCandidateSet(o.coverCandidateSet);
+      if (candidateSet) {
+        await trpcUtils.mvAnalysis.getPlatformCoverCandidates.invalidate({ sceneId: inp.sceneId });
+        setTopicImageJobPollTrace(null);
+        const ready = candidateSet.candidates.filter(c => c.status === "ready").length;
+        return { success: ready > 0, candidatesReady: ready, imageUrl: null as string | null, url: null as string | null,
+          creationId: undefined as number | undefined, imageGenFlowLog: [] as string[], coverClickEstimate: undefined,
+          userFacingError: ready ? undefined : "候选尚未完成，请查看后期恢复状态" };
+      }
       const finalFlowLog = Array.isArray(o.imageGenFlowLog) ? (o.imageGenFlowLog as string[]) : [];
       const imageUrl = String(o.imageUrl ?? o.url ?? "").trim() || null;
       const creationId = typeof o.creationId === "number" ? o.creationId : undefined;
@@ -7403,7 +7416,7 @@ export default function PlatformPage() {
         userFacingError,
       };
     },
-    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformImageFlowPollIntervalMs, selectedTrendPlatforms],
+    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformImageFlowPollIntervalMs, selectedTrendPlatforms, user?.role, trpcUtils],
   );
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
@@ -7633,9 +7646,9 @@ export default function PlatformPage() {
         if (serverLines.length > 0) {
           liveLines.push(...serverLines);
         }
-        if (out) {
+        if (("candidatesReady" in result && result.candidatesReady) || out) {
           successCount += 1;
-          setPlatformImageMap((prev) => ({ ...prev, [scene.id]: out }));
+          if (out) setPlatformImageMap((prev) => ({ ...prev, [scene.id]: out }));
           if (result.creationId != null) {
             setSceneJobIds((prev) => ({ ...prev, [scene.id]: String(result.creationId) }));
           }
@@ -9412,11 +9425,11 @@ export default function PlatformPage() {
                 progressJobId,
                 ...compositeSupervisorExtras,
                 bulkCompositePack: { packSceneIds, sequentialSlot: slotIndex },
-                compositeImageEngine: resolveReferencePhotoForScene(item.id)
+                compositeImageEngine: resolveSelectedCoverForStoryboard(item.id)
                   ? "gpt_image2"
                   : platformComposite2x4Engine,
-                ...(resolveReferencePhotoForScene(item.id)
-                  ? { referencePhotoUrl: resolveReferencePhotoForScene(item.id) }
+                ...(resolveSelectedCoverForStoryboard(item.id)
+                  ? { referencePhotoUrl: resolveSelectedCoverForStoryboard(item.id), referencePhotoFromApprovedCover: Boolean(platformImageMap[item.id]) }
                   : {}),
                 enabledSkillIds: Array.from(enabledPlatformSkillIds),
                 allowBloggerTitle,
@@ -10123,7 +10136,7 @@ export default function PlatformPage() {
           : platformMenuRankFallback(0),
         menu0?.whyNow || "先做最容易拿到正反馈的平台版本。",
       );
-      
+
       const sig2 = getSignal(2, "先收口一个可承接方向", "把内容先做成有人愿意继续咨询或收藏的版本。");
       const sig3 = getSignal(3, "先写出第一条内容", "先做一轮验证，再决定是否放大。");
 
@@ -10540,7 +10553,7 @@ export default function PlatformPage() {
 
   const platformTopicCount = visibleExecutionCards.length;
   const platformBulkGraphicCost = useMemo(
-    () => platformCoverBundleTotalCredits(platformTopicCount),
+    () => platformCoverBundleTotalCredits(platformTopicCount) * 3,
     [platformTopicCount],
   );
   const platformBulkCompositeCost = useMemo(
@@ -11115,7 +11128,7 @@ export default function PlatformPage() {
                   const scenes = cards.map((row) => ({ id: row.id }));
                   const discountNote = supervisorAccess
                     ? ""
-                    : `将为您一次性生成 ${cards.length} 个选题的竖版封面（套装 40×${cards.length}=${platformCoverBundleTotalCredits(cards.length)} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}）。是否继续？`;
+                    : `将为您一次性生成 ${cards.length} 个选题的竖版封面（套装 40×3×${cards.length}=${platformCoverBundleTotalCredits(cards.length) * 3} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}）。是否继续？`;
                   if (!supervisorAccess && !window.confirm(discountNote)) return;
                   void (async () => {
                     try {
@@ -11138,7 +11151,7 @@ export default function PlatformPage() {
                 ) : (
                   <Sparkles className="h-3.5 w-3.5" />
                 )}
-                一键封面套装
+                每题三张精修封面
               </button>
               {!cards.some(row => row.viralCreation && /图文|小红书/.test(row.format)) && <><button
                 type="button"
@@ -11153,19 +11166,7 @@ export default function PlatformPage() {
                 )}
                 一键分镜/图文套装
               </button>
-              <button
-                type="button"
-                disabled={genBusy || !isAuthenticated}
-                onClick={onBulkCoverCompositeBundleOneClick}
-                className="inline-flex items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
-              >
-                {isSequentialCoverCompositeBundleBatchGenerating ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Package className="h-3.5 w-3.5" />
-                )}
-                一键封面加分镜
-              </button></>}
+              </>}
             </div>
           </div>
         ) : null}
@@ -11193,7 +11194,7 @@ export default function PlatformPage() {
                 : "2×4 高定编导分镜表";
             const CompositeIcon = isGraphicFormat ? Heart : Film;
             const bundleCost = platformCoverCompositeBundleCreditsForFormatGrid(item.format, is3x4);
-            const normalCoverCost = CREDIT_COSTS.platformTopicFrameGraphic;
+            const normalCoverCost = CREDIT_COSTS.platformTopicFrameGraphic * 3;
             const isThisBundleLoading = coverCompositeBundleSceneId === item.id;
             const isThisCompositeLoading =
               compositeMutationBusy &&
@@ -11214,7 +11215,7 @@ export default function PlatformPage() {
               }
               if (
                 !supervisorAccess &&
-                !window.confirm(`将为本选题生成竖版封面，消耗 ${normalCoverCost} 积分，是否继续？`)
+                !window.confirm(`将为本选题生成三张精修候选供选择，消耗 ${normalCoverCost} 积分，是否继续？`)
               ) {
                 return;
               }
@@ -11238,7 +11239,9 @@ export default function PlatformPage() {
                   if (res.creationId != null) {
                     setSceneJobIds((prev) => ({ ...prev, [item.id]: String(res.creationId) }));
                   }
-                  if (res.success && finalUrl) {
+                  if ("candidatesReady" in res && res.candidatesReady) {
+                    toast.success(`已生成 ${res.candidatesReady} 张精修候选，请选择采用`);
+                  } else if (res.success && finalUrl) {
                     setPlatformImageMap((prev) => ({ ...prev, [item.id]: finalUrl }));
                     toast.success("单张封面已生成");
                   } else {
@@ -11304,12 +11307,12 @@ export default function PlatformPage() {
                     compositeImageEngine: resolveReferencePhotoForScene(item.id)
                       ? "gpt_image2"
                       : platformComposite2x4Engine,
-                    ...(resolveReferencePhotoForScene(item.id)
+                    ...(resolveSelectedCoverForStoryboard(item.id)
                       ? {
-                          referencePhotoUrl: resolveReferencePhotoForScene(item.id),
+                          referencePhotoUrl: resolveSelectedCoverForStoryboard(item.id),
                           referencePhotoFromApprovedCover: Boolean(
                             String(platformImageMap[item.id] || "").trim() &&
-                              resolveReferencePhotoForScene(item.id) ===
+                              resolveSelectedCoverForStoryboard(item.id) ===
                                 String(platformImageMap[item.id] || "").trim(),
                           ),
                         }
@@ -11481,6 +11484,7 @@ export default function PlatformPage() {
                   </div>
                 ) : null}
 
+                <CoverCandidatePicker sceneId={item.id} isTrial={isTrial} enabled={isAuthenticated} onAdopt={url => setPlatformImageMap(prev => ({ ...prev, [item.id]: url }))} />
                 {(coverUrl || sheetUrl) && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {coverUrl ? (
@@ -11507,26 +11511,7 @@ export default function PlatformPage() {
                 )}
 
                 {!(item.viralCreation && isGraphicFormat) && <div className="mt-4 flex flex-wrap gap-2 border-t border-white/10 pt-3">
-                  <button
-                    type="button"
-                    disabled={genBusy || !isAuthenticated || batchGeneratingCoverIds.has(item.id)}
-                    onClick={runBundle}
-                    className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-3 py-2 text-xs font-bold text-white shadow-md transition hover:brightness-110 disabled:opacity-50 ${
-                      isThisBundleLoading ? "cursor-wait ring-2 ring-[#c4b5fd]/55" : ""
-                    }`}
-                  >
-                    {isThisBundleLoading ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        套装生成中…
-                      </>
-                    ) : (
-                      <>
-                        <Package className="h-3.5 w-3.5" />
-                        {`一键套装 · ${bundleCost} 点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
-                      </>
-                    )}
-                  </button>
+
                   <button
                     type="button"
                     disabled={genBusy || !isAuthenticated || batchGeneratingCoverIds.has(item.id)}
@@ -11541,7 +11526,7 @@ export default function PlatformPage() {
                     ) : (
                       <>
                         <Image className="h-3.5 w-3.5" />
-                        {`仅封面 · ${normalCoverCost} 点`}
+                        {`三张精修候选 · ${normalCoverCost} 点`}
                       </>
                     )}
                   </button>
@@ -17552,7 +17537,7 @@ export default function PlatformPage() {
                             const scenes = visibleExecutionCards.map((row) => ({ id: row.id }));
                             const discountNote = supervisorAccess
                               ? ""
-                              : `将为您一次性生成 ${platformTopicCount} 个选题的竖版封面（套装 40×${platformTopicCount}=${platformBulkGraphicCost} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}；散买单张 ${CREDIT_COSTS.platformTopicFrameGraphic} 积分）。是否继续？`;
+                              : `将为您一次性生成 ${platformTopicCount} 个选题的竖版封面（套装 40×3×${platformTopicCount}=${platformBulkGraphicCost} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}；散买单张 ${CREDIT_COSTS.platformTopicFrameGraphic} 积分）。是否继续？`;
                             if (!supervisorAccess && !window.confirm(discountNote)) return;
                             void (async () => {
                               try {
@@ -17608,31 +17593,7 @@ export default function PlatformPage() {
                             ? "生成中…"
                             : `一键生成编导分镜套装 · ${platformBulkCompositeCost}点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
                         </button>
-                        <button
-                          type="button"
-                          disabled={
-                            isSequentialCoverBatchGenerating ||
-                            isSequentialCompositeBatchGenerating ||
-                            isSequentialCoverCompositeBundleBatchGenerating ||
-                            compositeMutationBusy ||
-                            coverCompositeBundleSceneId !== null ||
-                            isDashboardLoading ||
-                            isContentLoading ||
-                            !isAuthenticated ||
-                            platformTopicCount === 0
-                          }
-                          onClick={onBulkCoverCompositeBundleOneClick}
-                          className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100 sm:w-auto"
-                        >
-                          {isSequentialCoverCompositeBundleBatchGenerating ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Package className="h-4 w-4" />
-                          )}
-                          {isSequentialCoverCompositeBundleBatchGenerating
-                            ? "生成中…"
-                            : `一键生成封面加编导分镜 · ${platformBulkCoverCompositeCost}点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
-                        </button>
+
                         <button
                           type="button"
                           onClick={() => setCoverDecisionTrialReadOpen(true)}
@@ -17937,9 +17898,9 @@ export default function PlatformPage() {
                       const isBlackImageOrTimeout = platformCoverImageUrlLooksInvalid(currentImageUrl);
                       const isGraphicCover = item.format === "图文" || item.format === "小红书";
                       /** 单张竖版封面统一按「图文封面」定价扣点（与后端 generateTopicImage 一致），与选题是短视频还是图文无关 */
-                      const normalCoverCost = CREDIT_COSTS.platformTopicFrameGraphic;
+                      const normalCoverCost = CREDIT_COSTS.platformTopicFrameGraphic * 3;
                       const hasValidJobId = Boolean(sceneJobIds[item.id]);
-                      const isEligibleFreeRetry = isBlackImageOrTimeout && hasValidJobId;
+                      const isEligibleFreeRetry = false; // 三候选为新批次；旧单图补发凭证保留在旧接口，不冒称本批免费。
                       const actualCost = isEligibleFreeRetry ? 0 : normalCoverCost;
                       const singleCoverFooterPointsLabel =
                         isEligibleFreeRetry ? "免费补救" : `${normalCoverCost} 点`;
@@ -17955,21 +17916,7 @@ export default function PlatformPage() {
                         const displayedUrl = (platformImageMap[item.id] || "").trim();
                         const hasDisplayedUrl = displayedUrl.length > 0;
 
-                        if (isBlackImageOrTimeout && !hasValidJobId && !supervisorAccess) {
-                          const warning =
-                            "检测到超时黑图，但由于页面刷新，本地安全凭证已丢失。本次补发将作为新任务消耗积分，是否继续？(建议：勿在生图期间刷新页面)";
-                          if (!window.confirm(warning)) return;
-                        } else if (!supervisorAccess) {
-                          let confirmNote: string;
-                          if (isEligibleFreeRetry) {
-                            confirmNote = "检测到黑图，本次将免费补发，是否继续？";
-                          } else if (!hasDisplayedUrl) {
-                            confirmNote = `将为本选题生成竖版封面（单帧高精出图），消耗 ${normalCoverCost} 积分，是否继续？`;
-                          } else {
-                            confirmNote = `将为该选题重新生成竖版封面，消耗 ${normalCoverCost} 积分（沿用当前选题文案与人设锚点），是否继续？`;
-                          }
-                          if (!window.confirm(confirmNote)) return;
-                        }
+                        if (!supervisorAccess && !window.confirm(`重新生成三张精修候选将消耗 ${normalCoverCost} 积分；如已有原图但调色失败，请使用候选区的恢复按钮。是否生成新的一组？`)) return;
                         markCoverGenerationStarted(item.id);
                         void runThrottledPlatformImageRequest(`single-cover:${item.id}`, async () => {
                           await syncPlatformExecutionBlueprintsSnapshotMutation.mutateAsync({
@@ -17995,7 +17942,9 @@ export default function PlatformPage() {
                                 [item.id]: String(res.creationId),
                               }));
                             }
-                            if (res.success && finalUrl) {
+                            if ("candidatesReady" in res && res.candidatesReady) {
+                              toast.success(`已生成 ${res.candidatesReady} 张精修候选，请选择采用`);
+                            } else if (res.success && finalUrl) {
                               setPlatformImageMap((prev) => ({
                                 ...prev,
                                 [item.id]: finalUrl,
@@ -18032,7 +17981,7 @@ export default function PlatformPage() {
                             ? "检测到黑图，本次将免费补发，是否继续？"
                             : !hasValidJobId && !supervisorAccess
                               ? "凭证因刷新丢失，本次将扣分补发，是否继续？"
-                              : `重新生成此单帧将消耗 ${normalCoverCost} 积分（使用新种子算绘），是否继续？`;
+                              : `重新生成三张精修候选将消耗 ${normalCoverCost} 积分，已有采用图保持不变，是否继续？`;
                           if (!supervisorAccess && !window.confirm(confirmNote)) return;
                         }
                         markCoverGenerationStarted(item.id);
@@ -18060,7 +18009,9 @@ export default function PlatformPage() {
                                 [item.id]: String(res.creationId),
                               }));
                             }
-                            if (res.success && finalUrl) {
+                            if ("candidatesReady" in res && res.candidatesReady) {
+                              toast.success(`已生成 ${res.candidatesReady} 张精修候选，请选择采用`);
+                            } else if (res.success && finalUrl) {
                               setPlatformImageMap((prev) => ({
                                 ...prev,
                                 [item.id]: finalUrl,
@@ -18071,7 +18022,7 @@ export default function PlatformPage() {
                             } else {
                               toast.error(
                                 (res as { userFacingError?: string }).userFacingError ||
-                                  "单帧生图失败，已记录任务。可再次尝试免费或付费补发。",
+                                  "候选未完成，已有原图保留，请查看候选区的恢复状态。",
                               );
                             }
                             markCoverGenerationFinished(item.id);
@@ -18082,73 +18033,10 @@ export default function PlatformPage() {
                           });
                       };
                       const queueSilentImageLoadRetry = () => {
-                        if (coverSilentRetryIds.has(item.id) || coverLoadRetriedIds.has(item.id)) return;
-                        if (!String(item.id || "").trim()) return;
-
-                        /**
-                         * 服务端免扣补发要求 failedJobId 对应行 status ∈ {failed,timeout}。
-                         * 批量成功写入的 creationId 多为 completed — 不能当 failedJobId 传，否则 BAD_REQUEST
-                         * 且客户端已清图 → 卡片空白（见 topic-1：Nano 成功但封面不显示）。
-                         */
-                        const rawUrl = platformImageMap[item.id] || "";
-                        const urlLooksLikeServerRetryPayload = platformCoverImageUrlLooksInvalid(rawUrl);
-                        const freeRetryJobId =
-                          urlLooksLikeServerRetryPayload && sceneJobIds[item.id] ? sceneJobIds[item.id] : undefined;
-
-                        if (!freeRetryJobId) {
-                          if (!coverImageCacheBustTriedRef.current.has(item.id) && rawUrl) {
-                            coverImageCacheBustTriedRef.current.add(item.id);
-                            const sep = rawUrl.includes("?") ? "&" : "?";
-                            setPlatformImageMap((prev) => ({
-                              ...prev,
-                              [item.id]: `${rawUrl}${sep}mv_img_cb=${Date.now()}`,
-                            }));
-                            return;
-                          }
-                          toast.error("封面图无法加载。请点下方「重新生成」或稍后重试。");
-                          return;
-                        }
-
-                        setCoverLoadRetriedIds((prev) => new Set(prev).add(item.id));
-                        setPlatformImageMap((prev) => {
-                          const next = { ...prev };
-                          delete next[item.id];
-                          return next;
-                        });
-                        setCoverSilentRetryIds((prev) => new Set(prev).add(item.id));
-                        void runThrottledPlatformImageRequest(`silent-cover:${item.id}`, () =>
-                          runEnqueueTopicImageAndPoll({
-                            topicHook: "",
-                            format: isGraphicCover ? "图文" : "短视频",
-                            coverPersonaContext:
-                              buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
-                            failedJobId: freeRetryJobId,
-                            sceneId: item.id,
-                            pollDebugLabel: `静默加载失败补发 · ${item.id}`,
-                          }),
-                        )
-                          .then((res) => {
-                            if (res.creationId != null) {
-                              setSceneJobIds((prev) => ({
-                                ...prev,
-                                [item.id]: String(res.creationId),
-                              }));
-                            }
-                            if (res.success && res.imageUrl) {
-                              setPlatformImageMap((prev) => ({
-                                ...prev,
-                                [item.id]: res.imageUrl!,
-                              }));
-                            }
-                          })
-                          .catch((err) => console.warn(`[PlatformPage] silent cover retry: ${err.message}`))
-                          .finally(() => {
-                            setCoverSilentRetryIds((prev) => {
-                              const n = new Set(prev);
-                              n.delete(item.id);
-                              return n;
-                            });
-                          });
+                        if (coverImageCacheBustTriedRef.current.has(item.id)) return;
+                        coverImageCacheBustTriedRef.current.add(item.id);
+                        void trpcUtils.mvAnalysis.getPlatformCoverCandidates.invalidate({ sceneId: item.id });
+                        toast.error("封面加载失败，正在重新读取已保存图片；不会自动付费重画。");
                       };
                       const handleCoverCompositeBundleFooter = () => {
                         if (!isAuthenticated) {
@@ -18386,6 +18274,7 @@ export default function PlatformPage() {
                             ) : null}
                           </div>
                         </details>
+                        <CoverCandidatePicker sceneId={item.id} isTrial={isTrial} enabled={isAuthenticated} onAdopt={url => setPlatformImageMap(prev => ({ ...prev, [item.id]: url }))} />
                         <div className="mt-4">
                           {platformImageMap[item.id] ? (
                             <div className="overflow-hidden rounded-xl border border-white/10 shadow-2xl">
@@ -18613,37 +18502,7 @@ export default function PlatformPage() {
                             ) : null}
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              disabled={
-                                !isAuthenticated ||
-                                compositeMutationBusy ||
-                                isSequentialCompositeBatchGenerating ||
-                                isSequentialCoverCompositeBundleBatchGenerating ||
-                                coverCompositeBundleSceneId !== null ||
-                                isSequentialCoverBatchGenerating ||
-                                                                batchGeneratingCoverIds.has(item.id) ||
-                                coverSilentRetryIds.has(item.id) ||
-                                isDashboardLoading ||
-                                isContentLoading
-                              }
-                              onClick={handleCoverCompositeBundleFooter}
-                              className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-3 py-2 text-xs font-bold text-white shadow-md transition hover:brightness-110 disabled:opacity-50 ${
-                                compositeMutationBusy && !isThisCompositeLoading ? "opacity-45" : ""
-                              } ${isThisBundleLoading ? "cursor-wait ring-2 ring-[#c4b5fd]/55 [&:disabled]:opacity-95" : ""}`}
-                            >
-                              {isThisBundleLoading ? (
-                                <span className="inline-flex items-center gap-1.5">
-                                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                                  套装生成中…
-                                </span>
-                              ) : (
-                                <>
-                                  <Package className="h-3.5 w-3.5 shrink-0" />
-                                  {`一键套装 · ${bundleCost} 点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
-                                </>
-                              )}
-                            </button>
+
                             <button
                               type="button"
                               disabled={
@@ -18695,12 +18554,12 @@ export default function PlatformPage() {
                                     compositeImageEngine: resolveReferencePhotoForScene(item.id)
                                       ? "gpt_image2"
                                       : platformComposite2x4Engine,
-                                    ...(resolveReferencePhotoForScene(item.id)
+                                    ...(resolveSelectedCoverForStoryboard(item.id)
                                       ? {
-                                          referencePhotoUrl: resolveReferencePhotoForScene(item.id),
+                                          referencePhotoUrl: resolveSelectedCoverForStoryboard(item.id),
                                           referencePhotoFromApprovedCover: Boolean(
                                             String(platformImageMap[item.id] || "").trim() &&
-                                              resolveReferencePhotoForScene(item.id) ===
+                                              resolveSelectedCoverForStoryboard(item.id) ===
                                                 String(platformImageMap[item.id] || "").trim(),
                                           ),
                                         }
@@ -18751,7 +18610,7 @@ export default function PlatformPage() {
                               title={
                                 isEligibleFreeRetry
                                   ? "检测到黑图，本次可走免费补救链路（免扣积分）"
-                                  : `仅此选题生成竖版封面单帧 · ${normalCoverCost} 点`
+                                  : `为此选题生成三张精修候选 · ${normalCoverCost} 点`
                               }
                             >
                               {batchGeneratingCoverIds.has(item.id) ? (

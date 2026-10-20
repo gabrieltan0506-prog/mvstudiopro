@@ -52,7 +52,7 @@ export function ViralProductionPanel(props: Props) {
         {props.coverUrl ? <img src={props.coverUrl} alt="已生成的稿件封面"/> : <><span>封面文字预览 · 图片尚未生成</span><strong>{cover?.headline || "尚无封面方案"}</strong><p>{cover?.subline}</p></>}
       </div>
       <div className="viral-cover-description"><span className="creation-eyebrow">封面生成</span><h4>先让读者看懂这一篇</h4>{cover ? <><p>{cover.visual}</p><p><b>排版：</b>{cover.layout}</p><p><b>系列连续性：</b>{cover.continuity}</p></> : <p>当前稿件缺少完整封面方案，请检查原稿。</p>}
-      <button type="button" className="creation-primary" disabled={props.disabled || props.coverBusy || props.referenceUploading} onClick={props.onCover}>{props.coverBusy ? "封面生成中…" : `${props.coverUrl ? "重新生成封面" : "生成封面"} · ${props.coverCost} 点`}</button></div>
+      <button type="button" className="creation-primary" disabled={props.disabled || props.coverBusy || props.referenceUploading} onClick={props.onCover}>{props.coverBusy ? "封面生成中…" : `${props.coverUrl ? "再做三张精修候选" : "生成三张精修候选"} · ${props.coverCost} 点`}</button></div>
     </div>
     <div className="viral-content-production">
       <div className="viral-content-heading"><div><span className="creation-eyebrow">{graphic ? "图文笔记" : "视频文案"}</span><h4>{graphic ? `图文分页 · ${pages.length} 页` : `视频导演表 · ${props.cells?.length ?? 0} 镜`}</h4></div>{!graphic && <button type="button" className="creation-primary" disabled={props.disabled || props.sheetBusy || props.referenceUploading} onClick={props.onSheet}>{props.sheetBusy ? "配图生成中…" : `${graphic ? "生成图文配图" : "生成导演分镜图"} · ${props.sheetCost} 点`}</button>}</div>

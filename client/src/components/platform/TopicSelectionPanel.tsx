@@ -1,4 +1,4 @@
-import { topicDisplayText } from "@shared/platformTopicDisplay";
+import { topicDisplayText, topicReasonDisplay } from "@shared/platformTopicDisplay";
 import type { ReactNode } from "react";
 import type { PlatformTopicShortlistItem } from "@shared/platformTopicShortlist";
 
@@ -32,12 +32,19 @@ export function TopicSelectionPanel(p: Props) {
     {p.topics.length ? <>
       <div className="topic-selection-tools"><span>已选 {p.selectedIds.length} 个选题</span><div><button type="button" disabled={busy} onClick={p.onSelectSuggested}>选择推荐</button><button type="button" disabled={busy || !p.selectedIds.length} onClick={p.onClear}>清空选择</button></div></div>
       <div className="topic-candidate-grid">{p.topics.map((topic, index) => {
+        const reason = topicReasonDisplay(topic.viralReason);
         const selected = p.selectedIds.includes(topic.id); const editing = p.editingId === topic.id;
         return <article key={topic.id} className={`topic-candidate ${selected ? "is-selected" : ""}`}>
           <div className="topic-candidate-meta"><span>方向 {String(index + 1).padStart(2, "0")}</span>{topic.isTopPick && <span>推荐尝试</span>}<label className="topic-check"><input type="checkbox" checked={selected} disabled={busy} onChange={() => p.onToggle(topic.id)} aria-label={`选择选题：${topic.title}`} /><span>{selected ? "已选" : "选择"}</span></label></div>
           {editing ? <input className="topic-title-input" aria-label="修改选题标题" value={p.editingTitle} autoFocus maxLength={120} onChange={e => p.onEditingTitle(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); p.onSave(); } if (e.key === "Escape") p.onCancel(); }} /> : <h3>{topic.title}</h3>}
           <p className="topic-candidate-value">{topicDisplayText(topic.conveyGoal)}</p>
-          {topic.viralReason && topicDisplayText(topic.viralReason) && <details className="topic-reason"><summary>为什么值得尝试</summary><p>{topicDisplayText(topic.viralReason)}</p><small>创意判断，仅供选择参考。</small></details>}
+          {reason.text && <details className="topic-reason"><summary>为什么值得尝试</summary>
+            {reason.incomplete ? <>
+              <p role="status">这份已保存的理由可能不完整，缺失原文暂无法恢复。选题和已有稿件仍保留。</p>
+              {topicDisplayText(topic.hookSketch) && <><strong>已有切口说明</strong><p>{topicDisplayText(topic.hookSketch)}</p></>}
+              <details><summary>查看已保存的理由片段</summary><p>{reason.text}</p></details>
+            </> : <p>{reason.text}</p>}
+            <small>创意判断，仅供选择参考。</small></details>}
           <footer>{editing ? <><button type="button" onClick={p.onCancel}>取消</button><button type="button" onClick={p.onSave}>保存标题</button></> : <><button type="button" disabled={busy} onClick={() => p.onEdit(topic)}>编辑标题</button><button type="button" disabled={busy} onClick={() => p.onExpand([topic])}>用这个方向写稿 <span aria-hidden>↗</span></button></>}</footer>
         </article>;
       })}</div>

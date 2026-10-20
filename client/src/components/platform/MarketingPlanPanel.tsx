@@ -3,15 +3,18 @@ import { trpc } from "@/lib/trpc";
 import { MARKETING_PLAN_LABELS, MARKETING_PLAN_STEPS, adoptMarketingPlan, marketingPlanReady,
   type MarketingPlanResult, type MarketingPlanStep } from "@shared/marketingPlan";
 
+import { publicMarketingPlan, marketingPublicError } from "@shared/marketingPlanDisplay";
+
 const stateLabels = { pending: "待开始", running: "生成中", succeeded: "已保存", failed: "需要恢复", unknown: "回执待核对" };
 const buttonStyle = "rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-40";
 
 /** 三份内容使用服务端原始结果；第三份独立呈现，不覆盖两份模型原文。 */
-export function MarketingPlanResults({ result, busy, stale, onRetry, onApply }: {
+export function MarketingPlanResults({ result: rawResult, busy, stale, onRetry, onApply }: {
   result: MarketingPlanResult; busy: boolean; stale: boolean;
   onRetry: (step: MarketingPlanStep | "settle" | "resume") => void;
   onApply: (brief: string) => void;
 }) {
+  const result = publicMarketingPlan(rawResult);
   const [tab, setTab] = useState<MarketingPlanStep>("integrated");
   const [brief, setBrief] = useState(result.steps.integrated.adoptionBrief || "");
   const [message, setMessage] = useState("");
@@ -26,8 +29,6 @@ export function MarketingPlanResults({ result, busy, stale, onRetry, onApply }: 
     <div role="tabpanel" aria-label={MARKETING_PLAN_LABELS[tab]} className="rounded-xl border border-white/10 bg-black/20 p-4">
       {selected.status !== "succeeded" && <p className="text-sm text-amber-200">{selected.error || (tab === "integrated" ? "两份原稿保存后才开始整合。" : stateLabels[selected.status])}</p>}
       {selected.text && <div className="mt-2 max-h-[34rem] overflow-auto whitespace-pre-wrap break-words text-sm leading-7 text-slate-200">{selected.text}</div>}
-      {selected.receipt && <p className="mt-3 text-xs text-slate-400">耗时 {(selected.receipt.elapsedMs / 1000).toFixed(1)} 秒
-        {selected.receipt.reasoningTokens != null ? ` · 回执推理 ${selected.receipt.reasoningTokens} tokens` : ""}</p>}
       {selected.text && <button type="button" className={`${buttonStyle} mt-3`} onClick={async () => {
         try { await navigator.clipboard.writeText(selected.text!); setMessage("已复制当前这份内容"); }
         catch { setMessage("复制失败，可直接选中文字复制。"); }
@@ -62,7 +63,7 @@ export function MarketingPlanPanel({ value, onApply, userKey }: { value: string;
   const saved = query.data;
   const running = saved?.status === "queued" || saved?.status === "running";
   const busy = generate.isPending || retry.isPending || running;
-  const fail = (error: unknown) => setMessage(error instanceof Error ? error.message : "暂时无法处理，请稍后重试。原需求未改动。");
+  const fail = (error: unknown) => setMessage(marketingPublicError(error));
   const run = async () => {
     if (lock.current || busy || !quota.data || !userKey) return;
     lock.current = true; setMessage("");
@@ -70,7 +71,7 @@ export function MarketingPlanPanel({ value, onApply, userKey }: { value: string;
       const response = await generate.mutateAsync({ context: value.trim(), expectedCredits: quota.data.nextCredits });
       setJobId(response.jobId);
       await query.refetch();
-      setMessage(response.reused ? "已找回相同需求的原任务，没有重复调用模型。" : "任务已保存，可离开后回来查看。两份原稿分别保存，再生成整合方案。");
+      setMessage(response.reused ? "已找回相同需求的原任务，没有重复生成。" : "任务已保存，可离开后回来查看。两份原稿分别保存，再生成整合方案。");
     } catch (error) { fail(error); await quota.refetch(); }
     finally { lock.current = false; }
   };
@@ -89,7 +90,7 @@ export function MarketingPlanPanel({ value, onApply, userKey }: { value: string;
       <button type="button" className={`${buttonStyle} border-cyan-300/50 bg-cyan-400/15`} disabled={!userKey || busy || !quota.data || query.isLoading || !lengthOk} onClick={() => void run()}>
         {busy ? "方案生成中…" : "分析需求，生成推广方案"}{quota.data ? ` · ${quota.data.nextCredits === 0 ? "本次免费" : `${quota.data.nextCredits}积分`}` : ""}</button>
     </div>
-    <p className="mt-2 text-xs leading-5 text-slate-400">DeepSeek 1017 high＋GLM FlashX high 分别生成，再由 DeepSeek 1017 high 整合。三份齐备后按显示额度结算一次，失败恢复复用成功原稿。创意覆盖选题、封面、正文/脚本、制作和发布建议。</p>
+    <p className="mt-2 text-xs leading-5 text-slate-400">先生成两份独立创意，再合并重复建议并保留不同思路。三份齐备后按显示额度结算一次，失败恢复复用成功原稿。创意覆盖选题、封面、正文/脚本、制作和发布建议。</p>
     {!userKey && <p className="mt-2 text-sm text-amber-200">登录后可生成并保存方案。</p>}
     {userKey && !quota.data && <p role="alert" className="mt-2 text-sm text-amber-200">{quota.isError ? "额度读取失败，暂不提交。" : "正在读取本次额度…"}<button className="ml-2 underline" type="button" onClick={() => void quota.refetch()}>刷新额度</button></p>}
     {!lengthOk && value.trim() && <p className="mt-2 text-xs text-amber-200">需求须为8至8000字，不会截断后提交。</p>}

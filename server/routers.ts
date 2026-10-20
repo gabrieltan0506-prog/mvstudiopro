@@ -1,3 +1,4 @@
+import { coverCandidateProcedures } from "./routers/platformCoverCandidates.js";
 import { topicDigestProcedures } from "./routers/topicDigest.js";
 import { marketingPlanProcedures } from "./routers/platformMarketingPlan.js";
 import { songOperationsRouter } from "./routers/songOperations";
@@ -3184,6 +3185,7 @@ export const appRouter = router({
   // Video PK Rating - upload video frame and get AI analysis
   mvAnalysis: router({
     ...marketingPlanProcedures,
+    ...coverCandidateProcedures,
     ...topicDigestProcedures,
     listKnowledgeCardRecovery: protectedProcedure
       .input(z.object({ cursor: z.object({ at: z.string().datetime(), id: z.string().min(1).max(100) }).optional() }))

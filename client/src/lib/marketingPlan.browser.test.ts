@@ -25,8 +25,8 @@ it("三结果切换、修改摘要、采用后保留原稿并进入真实创作�
     await page.waitForSelector('[role="tabpanel"]');
     expect(await page.$eval('[role="tabpanel"]',e=>e.textContent)).toContain("两种创意均保留");
     const tabs=await page.$$('[role="tab"]');await tabs[0].click();
-    expect(await page.$eval('[role="tabpanel"]',e=>e.textContent)).toContain("DeepSeek完整原稿");
-    await tabs[1].click();expect(await page.$eval('[role="tabpanel"]',e=>e.textContent)).toContain("GLM完整原稿");
+    expect(await page.$eval('[role="tabpanel"]',e=>e.textContent)).toContain("方案一完整原稿");
+    await tabs[1].click();expect(await page.$eval('[role="tabpanel"]',e=>e.textContent)).toContain("方案二完整原稿");
     await tabs[2].click();
     await page.$eval('#marketing-adoption-brief',el=>{
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!.call(el,'修改后方案：事实只有第一页，假设共读可行，采用妈妈道歉的故事反差，标题正文封面统一。');
@@ -38,6 +38,7 @@ it("三结果切换、修改摘要、采用后保留原稿并进入真实创作�
     expect(value).toContain('已有第一页，尚无家长群');
     expect(JSON.parse((await page.evaluate(()=>(globalThis as any).compiled())).user).profile).toBe(value);
     expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='采用方案，继续选题与制作')!.disabled)).toBe(true);
+    expect(await page.$eval("body", e=>e.textContent)).not.toMatch(/DeepSeek|GLM|reasoningTokens|FlashX/);
     expect(errors).toEqual([]);
   } finally {await browser.close();}
 },60_000);

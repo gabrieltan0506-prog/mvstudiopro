@@ -29,9 +29,10 @@ it("免费1条/付费2条消息、采用保留原稿、不自动创作、切账�
     await page.setRequestInterception(true);page.on("request",r=>void r.respond({status:200,contentType:"text/html",body:'<div id="root"></div>'}));
     await page.goto("https://topic-digest.test");await page.addScriptTag({content:bundle.outputFiles[0].text});
     await page.waitForSelector('[aria-label^="选题通知"]');await page.click('[aria-label^="选题通知"]');
-    await page.waitForSelector('article');expect(await page.$$eval('article',els=>els.length)).toBe(1);
+    await page.waitForSelector('article');
+    expect(await page.$eval('[role="dialog"]',e=>e.textContent)).not.toMatch(/DeepSeek|GLM|FlashX|high/);expect(await page.$$eval('article',els=>els.length)).toBe(1);
     expect(await page.$eval('[role="dialog"]',e=>e.textContent)).toContain('当前账号每期1条');
-    await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='用这个选题创作')!.click());
+    await page.evaluate(()=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='用这个选题开始创作')!.click());
     await page.waitForSelector('[aria-label="原需求"]');
     await page.waitForFunction(()=>document.body.textContent?.includes('保留原稿，加入这个选题'));
     expect(await page.$eval('[aria-label="原需求"]',e=>(e as HTMLTextAreaElement).value)).not.toContain('通知选题');

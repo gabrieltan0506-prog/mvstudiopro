@@ -2067,6 +2067,7 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         // 报表通常 30–40 秒；给冷数据读取、三次模型重试和 Fly 短抖动留足墙钟。
         return 15 * 60_000;
       }
+      if (input.action === "platform_cover_candidates") return 30 * 60_000;
       if (input.action === "platform_topic_image") {
         const raw = Number(process.env.PLATFORM_TOPIC_IMAGE_JOB_TIMEOUT_MS);
         if (Number.isFinite(raw) && raw >= 60_000) return raw;
@@ -3282,6 +3283,12 @@ async function processPlatformJob(
       };
     }
 
+    if (input.action === "platform_cover_candidates") {
+      if (!platformJobId || !jobUserId) throw new Error("封面候选缺少任务身份");
+      const { processCoverCandidatesJob } = await import("./platformCoverCandidates.js");
+      return processCoverCandidatesJob(platformJobId, String(jobUserId));
+    }
+
     // ── platform_topic_image（平台单帧封面 · 异步 worker）──────────────────────────
     if (input.action === "platform_topic_image") {
       const { runPlatformTopicImagePipeline } = await import("../services/runPlatformTopicImagePipeline.js");
@@ -4389,6 +4396,8 @@ async function runClaimedJob(
         console.error("[Jobs] trend report refund failed:", refundError),
       );
       await markJobFailed(job.id, message);
+    } else if (job.type === "platform" && isRecord(job.input) && job.input.action === "platform_cover_candidates") {
+      await markJobFailed(job.id, "封面流程中断，已有原图和候选保留；请恢复后期或结算，不自动重新生图。");
     } else if (job.type === "platform" && isRecord(job.input) && job.input.action === "platform_marketing_plan") {
       // 不自动重排三次付费调用；原稿和步骤状态已持久化，用户定向恢复。
       await markJobFailed(job.id, "营销方案流程中断，已保存结果保留。请从失败步骤恢复。");

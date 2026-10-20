@@ -110,3 +110,11 @@ it("参考人像按用户和稿件恢复，移除后不复现，非法本机地�
  writeShortlistExpandPersist({...base,referencePhotos:{byScene:{}}},storage);
  expect(readShortlistExpandPersist("u1",storage)?.referencePhotos).toEqual({byScene:{},global:undefined});
 });
+
+it("完整长理由经过真实草稿保存恢复不丢字，旧片段也不篡改", () => {
+ const storage = memoryStorage();
+ const full = "针对新人被突然问进度的场景，以前后表达对照说明为什么可模仿。".repeat(20);
+ const topics = [{...sampleTopic("long"),viralReason:full}, {...sampleTopic("old1"),viralReason:"适配依据：人群（刚入职年轻人）×高频具体场景（会"}];
+ writeShortlistExpandPersist({userKey:"u1",topics,contentBlueprints:[]},storage);
+ expect(readShortlistExpandPersist("u1",storage)?.topics).toEqual(topics);
+});

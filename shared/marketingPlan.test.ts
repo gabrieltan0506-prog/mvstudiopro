@@ -18,6 +18,7 @@ it("超限明确拒绝而非截断原需求或方案", () => {
 it("保留未验证创意且贯穿制作发布，不把假设删成禁止清单", () => {
   for (const prompt of [buildMarketingPlanPrompt("推广亲子绘本产品"),buildMarketingIntegrationPrompt()]) {
     expect(prompt).toContain("免费试用"); expect(prompt).toContain("假设");
+    expect(prompt).toContain("购买理由");
     expect(prompt).toContain("正文"); expect(prompt).toContain("分镜"); expect(prompt).toContain("标签");
   }
 });
