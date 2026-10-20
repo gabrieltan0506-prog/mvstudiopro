@@ -1779,3 +1779,11 @@ body:has(#manhua-workbench-shell) [data-pwa-install-button] {
   [data-advisor-sidebar="open"] #manhua-workbench-shell.mh-redesign [data-manhua-storyboard-workspace] { grid-template-columns: minmax(170px, .65fr) minmax(220px, 1.2fr) minmax(220px, .8fr) !important; }
 }
 [data-manhua-creative-advisor] .streamdown { overflow-wrap: anywhere; }
+
+/* 出海资料与创作顾问并排；不被阶段栏的紧凑按钮样式缩小。 */
+#manhua-workbench-shell.mh-redesign [data-manhua-workflow-rail] [data-manhua-overseas-open] {
+  min-height: 44px;
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 700;
+}

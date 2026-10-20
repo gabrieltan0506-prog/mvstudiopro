@@ -1,3 +1,4 @@
+import { buildManhuaOverseasReference } from "../../shared/manhuaOverseasKnowledge";
 import { NOVEL_CONTINUITY_RULES } from "../../shared/novelQuality";
 import { parseNovelModelJson } from "../../shared/novelJson";
 import { buildNovelStageCraftCatalog } from "./manhuaTemplateCraftCatalog";
@@ -46,6 +47,10 @@ export function buildNovelTestPrompt(
     "continuity为前情档案，confirmedNovel在续写时只含最近两集原文；更早全文仍保留在用户草稿中，并非未发生。档案用于维持全剧连续性，不能以缺少早期全文为由改写既定人物或伏笔。每次小说输出更新完整累计continuity，不只返回本集摘要；不捏造未发生事件。",
     "若底本包含多个组合板块，先识别各板块的年代、人物与事件，说明可以连接的因果、时间跨度和冲突；排列顺序是用户的叙事意图，不等于历史先后。不得把不同时期人物硬写成同时在场。顾问assessment先浓缩各板块内容并提出衔接建议；以用户指定主角为中心，补齐目标、关系、眼前危机与代价，不替换用户设定。",
     TEMPLATE_CRAFT_APPLICATION_RULES,
+    ...(input.stage === "advice" ? [
+      buildManhuaOverseasReference(input.advisorMessage || ""),
+      "出海素材只提供叙事与表现方法，不是可推荐的模板ID；不要把overseas编号放进recommendations或templates。小说讨论把镜头语言转为叙述视角、信息顺序、动作描写和环境感受，保留现有正文与世界规则。",
+    ] : []),
     ...(input.advisorHistory?.length || input.advisorMessage
       ? [
           "顾问对话是用户与顾问的历史讨论。回应用户本轮问题，结合当前已选模板与分工解释具体用法、冲突和可替换方案；用户最新明确要求优先于顾问先前建议，顾问建议不等于用户已采用。保留用户明确指定的世界规则、人物能力和道具来源，不擅自替换成模板或底本的设定。assessment展示结论、创作依据、取舍和待用户决定的问题，不输出内部思维过程。生成提案时落实用户在对话中的明确修正；已确认大纲与小说仍为后续写作基准。",

@@ -3,13 +3,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { MANHUA_CAMERA_MOVE_BANK } from "../../../../shared/manhuaCameraMoveBank";
 import { MANHUA_OVERSEAS_CATEGORIES, MANHUA_OVERSEAS_FILMS, MANHUA_OVERSEAS_METHODS, prepareOverseasAdvisorQuestion, type OverseasCategory } from "../../../../shared/manhuaOverseasKnowledge";
 
-export function ManhuaOverseasLibrary({ onPrepareQuestion, enabled = true }: { onPrepareQuestion?: (question: string) => void; enabled?: boolean }) {
+export function ManhuaOverseasLibrary({ onPrepareQuestion, enabled = true, context = "manhua" }: { context?: "manhua" | "novel"; onPrepareQuestion?: (question: string) => void; enabled?: boolean }) {
   const [category, setCategory] = useState<OverseasCategory>("故事素材");
   const [search, setSearch] = useState("");
   const query = search.trim().toLowerCase();
   const films = MANHUA_OVERSEAS_FILMS.filter(row => [row.titleZh, row.sourceTitle, row.themeZh, row.storyZh, row.adaptationZh, row.id].join(" ").toLowerCase().includes(query));
   const methods = MANHUA_OVERSEAS_METHODS.filter(row => row.category === category && [row.titleZh, row.methodZh, row.boundaryZh, row.id].join(" ").toLowerCase().includes(query));
-  const prepare = (id: string) => onPrepareQuestion?.(prepareOverseasAdvisorQuestion(id));
+  const prepare = (id: string) => onPrepareQuestion?.(prepareOverseasAdvisorQuestion(id, context));
   return <section aria-label="漫剧出海素材库" className="space-y-3 text-sm leading-6">
     <p>32 部短片的故事结构与跨片技法。用来发展自己的角色、剧情和镜头，不作为原片素材直接生成。</p>
     <div role="group" aria-label="漫剧出海分类" className="flex flex-wrap gap-2">{MANHUA_OVERSEAS_CATEGORIES.map(name => <button key={name} type="button" aria-pressed={category === name} onClick={() => { setCategory(name); setSearch(""); }} className={`rounded-lg border px-3 py-1 ${category === name ? "border-cyan-300 bg-cyan-400/15 text-cyan-100" : "border-white/20 text-white/70"}`}>{name}</button>)}</div>
@@ -36,13 +36,13 @@ export function ManhuaOverseasLibrary({ onPrepareQuestion, enabled = true }: { o
 }
 
 /** 只打开资料和预填问题；不发起模型请求或覆盖作品。 */
-export function ManhuaOverseasLibraryButton({ onPrepareQuestion, enabled }: { onPrepareQuestion: (question: string) => void; enabled: boolean }) {
+export function ManhuaOverseasLibraryButton({ onPrepareQuestion, enabled, context = "manhua" }: { context?: "manhua" | "novel"; onPrepareQuestion: (question: string) => void; enabled: boolean }) {
   const [open, setOpen] = useState(false);
   return <Dialog open={open} onOpenChange={setOpen}>
-    <DialogTrigger asChild><button type="button" className="shrink-0 rounded-lg border border-amber-200/30 bg-amber-200/5 px-3 py-2 text-sm text-amber-100">漫剧出海</button></DialogTrigger>
+    <DialogTrigger asChild><button type="button" data-manhua-overseas-open className="shrink-0 rounded-lg border border-amber-200/30 bg-amber-200/5 px-4 py-2 text-[18px] font-bold text-amber-100 hover:bg-amber-200/15">漫剧出海</button></DialogTrigger>
     <DialogContent className="max-h-[85dvh] max-w-4xl overflow-y-auto border-white/20 bg-slate-950 text-white" aria-describedby={undefined}>
       <DialogHeader><DialogTitle>漫剧出海 · 内容与技法</DialogTitle></DialogHeader>
-      <ManhuaOverseasLibrary enabled={enabled} onPrepareQuestion={question => { setOpen(false); onPrepareQuestion(question); }} />
+      <ManhuaOverseasLibrary context={context} enabled={enabled} onPrepareQuestion={question => { setOpen(false); onPrepareQuestion(question); }} />
     </DialogContent>
   </Dialog>;
 }

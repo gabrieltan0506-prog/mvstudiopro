@@ -9,11 +9,9 @@ const FLAGSHIP: { href: string; label: string; desc: string }[] = [
   { href: "/canvas", label: "创作画布", desc: "节点式生图、分镜与成片编排。" },
 ];
 
-/**
- * 片单使用用户指定的《墨菁傳》第一集与战船完整样片（2026-10-07替换原水果茶；视频只留片名，文字别糊脸；
- * 「从洞察到成片」的话 /blog 已经讲过，这里不重复）。海洋女神/太空站观景台旧片下架。
- */
+/** 用户指定的完整样片，标题和切换按钮放在播放器外。 */
 const slides = [
+  { title: "数字人口播", videoUrl: "/home-assets/digital-human-talk-20261020.mp4", poster: "/home-assets/digital-human-talk-20261020-poster.jpg" },
   { title: "墨菁傳 · 第一集", videoUrl: "/home-assets/mojing-episode-01-20261007.mp4", poster: "/home-assets/mojing-episode-01-20261007-poster.jpg" },
   { title: "战船", videoUrl: "/home-assets/warship-2k-1.2x.mp4", poster: "/home-assets/warship-2k-poster.jpg" },
 ];
@@ -21,6 +19,7 @@ const slides = [
 export default function HomeHero() {
   const [idx, setIdx] = useState(0);
   const video = useRef<HTMLVideoElement>(null);
+  const [portrait, setPortrait] = useState(true);
   const [notice, setNotice] = useState("");
   const attempt = useRef(0);
 
@@ -55,7 +54,7 @@ export default function HomeHero() {
         </div>
       </div>
       {/* 视频全幅干净展示：片名切换条放在播放器外，不遮挡画面与播放控制 */}
-      <div className="home-product-screen relative aspect-[16/9] overflow-hidden rounded-3xl border border-[var(--hp-line)] bg-[var(--hp-input)] md:aspect-[21/9]">
+      <div className={`home-product-screen relative mx-auto overflow-hidden rounded-3xl border border-[var(--hp-line)] bg-[var(--hp-input)] ${portrait ? "aspect-[9/16] w-full max-w-[min(100%,45dvh)]" : "aspect-video w-full"}`}>
         <video
           ref={video}
           src={slides[0]!.videoUrl}
@@ -64,6 +63,7 @@ export default function HomeHero() {
           playsInline
           preload="metadata"
           onMouseEnter={() => play()}
+          onLoadedMetadata={event => setPortrait(event.currentTarget.videoHeight > event.currentTarget.videoWidth)}
           onPlay={() => setNotice("")}
           onError={() => setNotice("视频暂时无法播放，请重试")}
           aria-label={slides[idx]!.title}

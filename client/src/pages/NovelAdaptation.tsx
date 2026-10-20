@@ -1,3 +1,5 @@
+import { ManhuaOverseasLibraryButton } from "@/components/canvas/ManhuaOverseasLibrary";
+import { appendOverseasAdvisorDraft } from "@shared/manhuaOverseasKnowledge";
 import { NovelVoiceRevision } from "@/components/canvas/NovelVoiceRevision";
 import { applyNovelVoiceCandidate } from "@/lib/novelVoiceEditing";
 import { useManhuaTemplateCatalogEvents } from "@/hooks/useManhuaTemplateCatalogEvents";
@@ -1410,7 +1412,7 @@ function NovelWorkspaceEditor({
         if (!await persist(next, `voice-${candidate.id}`, true)) throw new Error("正文保存失败，未确认套用成功；候选稿保留，请先处理保存错误。");
         if (alive.current) { setActiveChapter(candidate.episode - 1); setWorkspaceTab("novel"); }
       }} scopeKey={`${userId}:${draft.roundId}`} context={JSON.stringify({ workspace: workspaceTab, activeEpisode: activeChapter + 1, title: draft.topic, direction: draft.direction, outline: draft.outline, currentChapter: draft.chapters[activeChapter], templates: draft.templates, chapterCount: draft.chapters.length })} disabled={disabled} onUse={text => { change({ advisorDraft: text }); setSideTab("advisor"); }} targets={draft.chapters.map((chapter, i) => ({ episode: i + 1, label: chapter ? `第${i + 1}集小说稿` : `第${i + 1}集尚无正文` }))} onNavigate={target => { if (disabled || !latest.current.chapters[target.episode - 1]) throw new Error("该集正文尚未生成或工作区忙，未切换。"); setActiveChapter(target.episode - 1); setWorkspaceTab("novel"); return JSON.stringify({ episode: target.episode, text: latest.current.chapters[target.episode - 1], next: "以本次返回正文为准；修改前调用novelText read获取revision。" }); }} onAskAdvisor={async question => await generate("advice", undefined, 1, question)} />
-      {advice && (
+      {(advice || draft.advisorDraft?.trim()) && (
         <div className="mt-5 space-y-3">
           <h3 className="font-semibold">与创作顾问讨论</h3>
           <div
@@ -1527,8 +1529,8 @@ function NovelWorkspaceEditor({
             </article>
           ))}
           {!adviceRun?.input.advisorMessage &&
-            !advice.variants &&
-            advice.recommendations.length < 3 && (
+            !advice?.variants &&
+            advice && advice.recommendations.length < 3 && (
               <p className="text-xs text-amber-200">
                 可推荐的库内模板不足3个，未编造补足。
               </p>
@@ -2339,6 +2341,12 @@ function NovelWorkspaceEditor({
           <MessageSquare size={16} />
           创作顾问
         </button>
+        <ManhuaOverseasLibraryButton context="novel" enabled={!disabled} onPrepareQuestion={question => {
+          try {
+            const next = appendOverseasAdvisorDraft(latest.current.advisorDraft || "", question);
+            change({ advisorDraft: next }); setSideTab("advisor"); setError("");
+          } catch (cause) { setError(cause instanceof Error ? cause.message : "未能准备问题，原稿已保留。"); }
+        }} />
         <button
           aria-pressed={sideTab === "methods"}
           onClick={() => setSideTab("methods")}
