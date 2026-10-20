@@ -4,6 +4,22 @@ import { OPENROUTER_DEEPSEEK_V41_FLASH_MODEL as modelName } from "../services/op
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
+it("DeepSeek1017保留high与流式回执，强制锁DeepSeek且调用偏好不能解锁", async () => {
+  vi.stubEnv("OPENROUTER_API_KEY", "sk-test-only-not-real");
+  const model = "deepseek/deepseek-v4.1-flash-1017";
+  const frame = { id:"test-1017",model, choices:[{delta:{content:'{"answer":"真实测试正文"}'},finish_reason:"stop"}],
+    usage:{prompt_tokens:10,completion_tokens:20,total_tokens:30,cost:0.001,completion_tokens_details:{reasoning_tokens:5}} };
+  const fetchMock=vi.fn().mockResolvedValue(new Response(`data: ${JSON.stringify(frame)}\n\ndata: [DONE]\n\n`,{headers:{"content-type":"text/event-stream"}}));
+  vi.stubGlobal("fetch",fetchMock);
+  const callerPreferences={order:["Fireworks"],allow_fallbacks:true};
+  const result=await invokeLLM({provider:"openai",modelName:model,openRouterProviderPreferences:callerPreferences,reasoningEffort:"high",max_tokens:24000,response_format:{type:"json_object"},messages:[{role:"user",content:"test"}]});
+  const body=JSON.parse(fetchMock.mock.calls[0][1].body);
+  expect(body).toMatchObject({model,stream:true,reasoning:{effort:"high"},max_tokens:24000,provider:{require_parameters:true,order:["DeepSeek"],allow_fallbacks:false}});
+  expect(body.reasoning_effort).toBeUndefined();
+  expect(result.usage).toMatchObject({cost:0.001,completion_tokens_details:{reasoning_tokens:5}});
+  expect(result.choices[0].message.content).toContain("真实测试正文"); expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
 describe("漫剧顾问 DeepSeek V4.1 Flash 通道", () => {
   it("请求准确模型和 JSON，保留推理与 token 预算，不走 GPT 参数", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "sk-test-only-not-real");
@@ -128,4 +144,14 @@ it.each(["kimi-k3", "moonshotai/kimi-k3"])("历史模型%s在真实传输前迁�
  await invokeLLM({provider:"openai",modelName,reasoningEffort:"max",messages:[{role:"user",content:"恢复旧稿"}]});
  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({model:"z-ai/glm-5.3-flashx",stream:true,reasoning:{effort:"low"},provider:{order:["Z.AI"],allow_fallbacks:false}});
  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+
+it("1017无DeepSeek端点时明确失败，不换provider或重复调用", async () => {
+  vi.stubEnv("OPENROUTER_API_KEY", "sk-test-only-not-real");
+  const fetchMock = vi.fn().mockResolvedValue(new Response('{"error":{"message":"No endpoints found"}}', {status:404}));
+  vi.stubGlobal("fetch", fetchMock);
+  await expect(invokeLLM({provider:"openai",modelName:"deepseek/deepseek-v4.1-flash-1017",messages:[{role:"user",content:"test"}]})).rejects.toThrow();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body).provider).toMatchObject({order:["DeepSeek"],allow_fallbacks:false});
 });

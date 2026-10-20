@@ -1,3 +1,4 @@
+import { buildMarketingPrompt, isMarketingContext } from "../../shared/marketingSkills.js";
 import {
   extractFirstChoicePlainText,
   extractJsonString,
@@ -72,6 +73,10 @@ function buildUserBlock(input: OptimizeCustomCopyInput, liveTrendBrief?: string)
   const vision = String(input.visionContext || "").trim();
   const skills = String(input.platformSkillsPrompt || "").trim();
   const parts = ["【待优化原文】", sourceText];
+  // 只用用户原文与优化要求判断意图，趋势或挂载技能不能替用户决定卖货。
+  const marketingContext = [sourceText, brief].filter(Boolean).join("\n");
+  parts.push(buildMarketingPrompt({ stage: "optimize", context: marketingContext }));
+  if (isMarketingContext(marketingContext)) parts.push("【营销建议与正文分离】三档商品仅作为候选放在既有platformNotes.angle中，写明价格依据与待补数据；copySnippet和optimizedMarkdown仍是用户可直接发布的文案，不混入内部成本测算或待补清单，不将未确认候选宣传成已售商品。保留用户原文事实与交付边界，不虚构客户、成交、效果或利润。");
   if (brief) parts.push("\n【用户优化要求】\n" + brief);
   if (vision) parts.push("\n【上传素材视觉分析（须紧扣，禁止忽略）】\n" + vision.slice(0, 8000));
   if (skills) parts.push("\n" + skills.slice(0, 12000));

@@ -71,8 +71,8 @@ export function buildCustomCopyPdfHtml(payload: CustomCopyPdfPayload): string {
   }
   if (payload.optimizeResult?.trim()) {
     const summary = payload.optimizeSummary?.trim();
-    const title = summary ? `深度优化结果 · ${summary}` : "深度优化结果";
-    sections.push(textBlock(title, payload.optimizeResult));
+    if (summary) sections.push(textBlock("优化说明与平台建议", summary));
+    sections.push(textBlock("深度优化结果", payload.optimizeResult));
   }
 
   const multi =

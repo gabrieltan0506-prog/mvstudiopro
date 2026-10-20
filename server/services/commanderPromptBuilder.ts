@@ -1,3 +1,4 @@
+import { buildMarketingPrompt } from "../../shared/marketingSkills.js";
 /**
  * 「指挥官指令 (Commander Prompt)」构造器
  *
@@ -267,9 +268,16 @@ ${profile?.notes ? `· 长期目标 / 备注：${profile.notes}` : ""}`
     })
     .join("\n");
 
+  const marketingGuidance = buildMarketingPrompt({
+    stage: "research",
+    context: [boundary, coreAssets, profile?.notes, args.painPoint, scenarioPayloadStr, args.freeformSupplementary].filter(Boolean).join("\n"),
+  });
+
   return `你现在是我专属的「高端商业智库 Agent」，请启动深度检索 + 思维链推理，为「${args.scenarioTitle}」交付战略蓝图。
 
 ${profileBlock}
+
+${marketingGuidance}
 
 【本次场景 · 痛点定位】
 ${args.painPoint.trim()}

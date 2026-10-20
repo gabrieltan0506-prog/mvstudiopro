@@ -1,13 +1,9 @@
+import { TopicDigestBell } from "./TopicDigestBell";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
 import { Menu, Film, LogOut, User, LayoutDashboard, Shield, ChevronDown, FolderOpen } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { hasSupervisorAccess } from "@/lib/supervisorAccess";
-import {
-  canOpenCompetitorResearch,
-  COMPETITOR_RESEARCH_BETA_NOTE_ZH,
-} from "@/lib/competitorResearchBeta";
 import { useManhuaAdvisorScope } from "@/hooks/useManhuaAdvisorScope";
 import {
   DropdownMenu,
@@ -24,11 +20,9 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 
-const NAV_ITEMS: Array<{ label: string; href: string; beta?: boolean }> = [
-  { label: "平台创作", href: "/platform" },
+const NAV_ITEMS: Array<{ label: string; href: string }> = [
+  { label: "平台创作与营销指南", href: "/platform?mode=create" },
   { label: "爆款复刻", href: "/creator-growth-camp/premium-remix" },
-  // 竞品调研内测中：一般用户只见标注不给链接，supervisor/admin 仍可进（见 competitorResearchBeta）
-  { label: "竞品调研", href: "/research", beta: true },
   { label: "一战成片", href: "/canvas" },
   { label: "小说改编", href: "/novel-adaptation" },
   { label: "我的漫剧", href: "/manhua-projects" },
@@ -65,7 +59,6 @@ export default function Navbar({ compact = false, workspaceNavigation }: { compa
   const navItems = showTestLab
     ? [...NAV_ITEMS, { label: "测试台", href: "/test-lab" }]
     : NAV_ITEMS;
-  const canOpenResearch = canOpenCompetitorResearch(user?.role) || hasSupervisorAccess();
 
   // 路由切换时自动关闭移动菜单（处理浏览器前进/后退、外部跳转回来等场景）
   useEffect(() => {
@@ -105,19 +98,7 @@ export default function Navbar({ compact = false, workspaceNavigation }: { compa
         {/* Desktop Nav */}
         <div className={`${compact ? "hidden" : "hidden xl:flex"} items-center gap-0.5`}>
           {navItems.map((item) =>
-            item.beta && !canOpenResearch ? (
-              <span
-                key={item.href}
-                title={COMPETITOR_RESEARCH_BETA_NOTE_ZH}
-                className="cursor-default px-3 py-2 text-sm font-medium text-muted-foreground/50"
-              >
-                {item.label}
-                <span className="ml-1.5 rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300/90">
-                  内测中
-                </span>
-              </span>
-            ) : (
-            <Link
+            (<Link
               key={item.href}
               href={item.href}
               onClick={() => {
@@ -136,6 +117,8 @@ export default function Navbar({ compact = false, workspaceNavigation }: { compa
             ),
           )}
         </div>
+
+        {isAuthenticated && user && <TopicDigestBell key={String(user.id)} userId={String(user.id)} />}
 
         {/* Auth (desktop) */}
         <div className="hidden xl:flex items-center gap-3 shrink-0">
@@ -224,18 +207,7 @@ export default function Navbar({ compact = false, workspaceNavigation }: { compa
                 首页
               </Link>
               {navItems.map((item) =>
-                item.beta && !canOpenResearch ? (
-                  <span
-                    key={item.href}
-                    className="block min-h-11 px-4 py-3 text-sm font-medium text-muted-foreground/50"
-                  >
-                    {item.label}
-                    <span className="ml-1.5 rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300/90">
-                      内测中
-                    </span>
-                  </span>
-                ) : (
-                <Link
+                (<Link
                   key={item.href}
                   href={item.href}
                   className={`block px-4 py-3 rounded-md text-sm font-medium no-underline min-h-11 ${
