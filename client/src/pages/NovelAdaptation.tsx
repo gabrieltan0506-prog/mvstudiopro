@@ -29,6 +29,8 @@ import {
   readNovelWorkspaceDb,
   saveNovelWorkspaceDb,
 } from "@/lib/novelWorkspaceDb";
+import { parseManhuaProjectScope } from "@shared/manhuaProjectScope";
+import { NovelProjectLibrary } from "./NovelProjects";
 import {
   batchStart,
   batchEnd,
@@ -84,47 +86,53 @@ export default function NovelAdaptation() {
         小说改编当前仅开放管理者测试。<Link href="/canvas">返回漫剧工厂</Link>
       </main>
     );
-  return (
-    <NovelAdaptationWorkspace key={String(user.id)} userId={String(user.id)} />
-  );
+  let scope;
+  try { scope = parseManhuaProjectScope(window.location.search); }
+  catch (e) { return <main className="p-8">{String(e)} <a href="/novel-projects">返回我的小说</a></main>; }
+  if (!scope) return <NovelProjectLibrary key={String(user.id)} userId={String(user.id)} />;
+  if (scope.ownerId !== String(user.id)) return <main className="p-8">请使用创建此小说的账号登录。<a href="/novel-projects">我的小说</a></main>;
+  return <NovelAdaptationWorkspace key={`${user.id}:${scope.projectId}`} userId={String(user.id)} projectId={scope.projectId} />;
 }
-export function NovelAdaptationWorkspace({ userId }: { userId: string }) {
+export function NovelAdaptationWorkspace({ userId, projectId }: { userId: string; projectId?: string }) {
   const [loaded, setLoaded] = useState<Awaited<
     ReturnType<typeof readNovelWorkspaceDb>
   > | null>(null);
   const [loadError, setLoadError] = useState("");
   useEffect(() => {
     let active = true;
-    readNovelWorkspaceDb(userId)
+    readNovelWorkspaceDb(userId, projectId)
       .then(v => {
         if (active) setLoaded(v);
       })
-      .catch(() => {
+      .catch(error => {
         if (active)
           setLoadError(
-            "本机草稿读取失败，原稿保留，未开始写入。请重试或保留浏览器数据。"
+            error instanceof Error ? error.message : "本机草稿读取失败，原稿保留，未开始写入。"
           );
       });
     return () => {
       active = false;
     };
-  }, [userId]);
+  }, [userId, projectId]);
   if (loadError)
     return (
       <main role="alert" className="p-8">
         {loadError}
+        <a href="/novel-projects">返回我的小说</a>
       </main>
     );
   if (!loaded) return <main className="p-8">正在读取小说草稿…</main>;
   return (
-    <NovelWorkspaceEditor userId={userId} initial={{ ...loaded, error: "" }} />
+    <NovelWorkspaceEditor userId={userId} projectId={projectId} initial={{ ...loaded, error: "" }} />
   );
 }
 function NovelWorkspaceEditor({
   userId,
+  projectId,
   initial,
 }: {
   userId: string;
+  projectId?: string;
   initial: Awaited<ReturnType<typeof readNovelWorkspaceDb>> & { error: string };
 }) {
   const [draft, setDraft] = useState(initial.value),
@@ -209,7 +217,8 @@ function NovelWorkspaceEditor({
             userId,
             raw.current,
             next,
-            archiveKey
+            archiveKey,
+            projectId
           );
           setSaveError("");
           return true;
@@ -273,7 +282,7 @@ function NovelWorkspaceEditor({
     });
   };
   const disabled =
-    busy || !!saveError || !!draft.pending || queueActive.current;
+    busy || backupBusy || !!saveError || !!draft.pending || queueActive.current;
   const weighted = draft.templates.some(t => t.weight !== undefined);
   const weightTotal = draft.templates.reduce(
     (sum, t) => sum + (t.weight || 0),
@@ -911,6 +920,27 @@ function NovelWorkspaceEditor({
       event.preventDefault();
   };
   const chapterCount = Math.max(batchEnd(draft), draft.chapters.length);
+  const openProjectLibrary = async () => {
+    if (busy || backupBusy || latest.current.pending || queueActive.current) {
+      setError("当前作品有任务待核对，请先查询原请求，再切换小说。");
+      return;
+    }
+    if (!(await writes.current)) { setError("本机稿尚未保存，请先处理保存错误。"); return; }
+    window.location.assign("/novel-projects");
+  };
+  const saveProject = async () => {
+    if (backupBusy) return;
+    setBackupBusy(true); setBackupMessage("");
+    try {
+      if (!(await writes.current)) throw new Error("本机稿尚未保存，请先处理保存错误。");
+      const value = latest.current;
+      const receipt = await backupMutation.mutateAsync({ workspaceJson: JSON.stringify(value) });
+      setBackupMessage(`作品已保存到当前账号 · ${new Date(receipt.createdAt).toLocaleString()}${latest.current !== value ? "；后续修改仍保存在本机" : ""}`);
+      void backupList.refetch();
+    } catch (e) {
+      setBackupMessage(e instanceof Error ? e.message : "云端保存失败，本机稿件保留。");
+    } finally { setBackupBusy(false); }
+  };
   const selectedChapter = Math.min(activeChapter, chapterCount - 1);
   const steps = [
     { id: "prepare", label: "底本与方向", icon: BookOpen },
@@ -936,13 +966,13 @@ function NovelWorkspaceEditor({
         >
           下载完整备份
         </button>
-        <button
+        {!projectId && <button
           disabled={busy || !!saveError}
           className={button}
           onClick={reset}
         >
           放弃本轮，重新开始
-        </button>
+        </button>}
       </div>
       <div className="mb-5 flex flex-wrap gap-3">
         <button
@@ -991,7 +1021,7 @@ function NovelWorkspaceEditor({
           {backupList.data?.length === 0 && (
             <p>暂无云端备份，请先点击云端备份。</p>
           )}
-          {backupList.data?.map(item => (
+          {backupList.data?.filter(item => !projectId || (item.projectId || item.roundId) === projectId).map(item => (
             <div
               key={item.backupId}
               className="my-2 flex flex-wrap items-center gap-3"
@@ -1028,10 +1058,13 @@ function NovelWorkspaceEditor({
                       throw new Error(
                         "回填期间你修改了当前稿件，已保留新修改；请重新选择回填。"
                       );
-                    const value = readNovelWorkspace(
+                    const loadedValue = readNovelWorkspace(
                       { getItem: () => restored.workspaceJson },
                       userId
                     ).value;
+                    if (projectId && (loadedValue.projectId || loadedValue.roundId) !== projectId)
+                      throw new Error("备份属于另一部小说，请从我的小说打开对应作品。");
+                    const value = { ...loadedValue, ...(projectId ? { projectId } : {}) };
                     if (
                       !(await persist(
                         value,
@@ -1234,6 +1267,7 @@ function NovelWorkspaceEditor({
             const saved = JSON.stringify({ ...draft, seasons: undefined });
             change({
               ...emptyNovelWorkspace(),
+              projectId: draft.projectId || projectId || draft.roundId,
               topic: draft.topic,
               direction: draft.direction,
               source: draft.source,
@@ -1278,6 +1312,7 @@ function NovelWorkspaceEditor({
                     const previous = JSON.parse(v.workspace) as NovelWorkspace;
                     change({
                       ...previous,
+                      projectId: draft.projectId || projectId || draft.roundId,
                       seasons: [
                         ...draft.seasons!.filter((_, n) => n !== i),
                         {
@@ -2417,15 +2452,17 @@ function NovelWorkspaceEditor({
           小说改编
         </Link>
         <div className="novel-top-actions">
-          <Link
-            href="/manhua-projects"
+          <button
             className="novel-work-link"
-            onClick={guardNavigation}
+            onClick={() => void openProjectLibrary()}
           >
             <FolderOpen size={16} />
-            <span>{draft.topic || "未命名作品"}</span>
+            <span>我的小说 · 切换作品</span>
             <ChevronRight size={14} />
-          </Link>
+          </button>
+          <button className={button} disabled={backupBusy || savePending} onClick={() => void saveProject()}>
+            {backupBusy ? "正在保存…" : "保存作品"}
+          </button>
           <span
             role="status"
             className={`novel-save ${saveError ? "novel-save-error" : ""}`}
@@ -2449,6 +2486,7 @@ function NovelWorkspaceEditor({
           </button>
         </div>
       </header>
+      {backupMessage && <p className="novel-project-save-message" role="status">{backupMessage}</p>}
       <nav className="novel-stepper" aria-label="小说改编步骤">
         {steps.map(({ id, label, icon: Icon }, i) => (
           <button

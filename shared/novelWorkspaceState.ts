@@ -19,6 +19,8 @@ const runSchema = z.object({
   }),
 });
 export const novelWorkspaceStateSchema = z.object({
+  /** 小说作品身份跨季保留；roundId 继续标识本季制作与模型回执。 */
+  projectId: z.string().uuid().optional(),
   scriptEdits: z
     .record(z.string(), z.record(z.string(), z.string().max(3500)))
     .optional(),

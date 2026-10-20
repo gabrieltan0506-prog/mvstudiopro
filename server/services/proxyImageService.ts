@@ -1143,7 +1143,7 @@ function appendStoryboardProtagonistAnchorToScript(scriptContext: string, coverP
 export async function generateGptImage2FromRawEnglishPrompt(options: {
   beforeImageSubmit?: () => Promise<void>;
   englishPrompt: string;
-  aspectRatio: "9:16" | "16:9";
+  aspectRatio: "9:16" | "16:9" | "1:1";
   gcsSubdir: string;
   /** 试读等：追加到 prompt 末尾（仅像素出图） */
   trialWatermarkPromptSuffix?: string;

@@ -1,4 +1,4 @@
-import { validateSongAlignedSubtitle, type SongAlignedSubtitle } from "../../shared/songAlignedSubtitle";
+import { cropSongAlignedSubtitle, validateSongAlignedSubtitle, type SongAlignedSubtitle } from "../../shared/songAlignedSubtitle";
 import { signGsUriV4ReadUrl } from "./gcs";
 /**
  * 漫剧成片坞：配乐 + 同源 Final Render。
@@ -48,6 +48,8 @@ export type ManhuaAssembleFinalInput = {
   musicProvider?: string;
   musicVolume?: number;
   musicOnly?: boolean;
+  musicStartSec?: number;
+  musicEndSec?: number;
   alignedLyrics?: SongAlignedSubtitle;
   musicFadeInSec?: number;
   musicFadeOutSec?: number;
@@ -221,6 +223,8 @@ export async function runManhuaAssembleFinal(
     onSubtitleTimeline: timeline => { subtitleTimeline = timeline; },
     preserveSourceAudio: true,
     musicOnly: raw.musicOnly === true,
+    musicStartSec: raw.musicStartSec,
+    musicEndSec: raw.musicEndSec,
     alignedLyrics,
     sceneVideos: sceneVideos.map((sv) => ({
       subtitleSource: sv.subtitleSource,
@@ -243,7 +247,7 @@ export async function runManhuaAssembleFinal(
 
   return {
     subtitleTimeline,
-    alignedLyrics,
+    alignedLyrics: alignedLyrics && raw.musicStartSec !== undefined && raw.musicEndSec !== undefined ? cropSongAlignedSubtitle(alignedLyrics,raw.musicStartSec,raw.musicEndSec) : alignedLyrics,
     finalVideoUrl,
     musicUrl: musicUrl || undefined,
     musicPrompt: musicPrompt || undefined,

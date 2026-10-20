@@ -1,3 +1,4 @@
+import { musicMvHighlightSchema, musicMvShotSlices } from "../../shared/musicMvHighlight";
 import { getSavedSongOperation } from "../services/songOperations";
 import { validateSongAlignedSubtitle, type SongAlignedSubtitle } from "../../shared/songAlignedSubtitle";
 import { getMusicMvEdit } from "../services/canvasMusicMvEdit";
@@ -7,7 +8,6 @@ import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../_core/trpc";
 import { createJob, getJobByIdStrict } from "../jobs/repository";
 import {
-  musicMvRenderDurationSec,
   canvasMusicCandidateSchema,
   canvasMusicMvPlanSchema,
   canvasMusicMvDraftInputSchema,
@@ -25,6 +25,7 @@ export const canvasMusicMvAssembleRouter = router({
     .input(
       z
         .object({
+          highlight: musicMvHighlightSchema.optional(),
           requestId: z.string().uuid(),
           planRequestId: z.string().uuid(),
           editRevisionId: z.string().uuid().optional(),
@@ -48,11 +49,14 @@ export const canvasMusicMvAssembleRouter = router({
         .strict()
     )
     .mutation(async ({ ctx, input }) => {
+      let slices;
+      try { slices = musicMvShotSlices(input.plan, input.highlight); } catch (error) { throw new TRPCError({code:"BAD_REQUEST",message:error instanceof Error ? error.message : "高光区间无效"}); }
+      if (input.highlight && input.editRevisionId) throw new TRPCError({code:"BAD_REQUEST",message:"高光版按原歌区间剪辑，请勿混用完整MV剪辑版本"});
       if (
         input.plan.audioId !== input.audio.id ||
         input.plan.audioDurationSec !== input.audio.durationSec ||
         (!input.editRevisionId &&
-          input.clips.length !== input.plan.shots.length) ||
+          input.clips.length !== slices.length) ||
         new Set(input.clips.map(c => c.shotId)).size !== input.clips.length
       ) {
         throw new TRPCError({
@@ -147,7 +151,7 @@ export const canvasMusicMvAssembleRouter = router({
             )
               throw new Error("剪辑版本素材被替换");
         } else
-          for (const shot of input.plan.shots)
+          for (const {shot} of slices)
             if (shot.kind === "footage" && shot.sourceClip) {
               const expected = await resolveCanvasMusicMvVideo(
                 ctx.user.id,
@@ -174,7 +178,7 @@ export const canvasMusicMvAssembleRouter = router({
             trimInSec: clip.sourceInFrame / 30,
             trimOutSec: (clip.sourceInFrame + clip.durationFrames) / 30,
           }))
-        : input.plan.shots.map((shot, index) => {
+        : slices.map(({shot,offsetSec,durationSec}, index) => {
             const sourceIndex = input.clips.findIndex(
               row => row.shotId === shot.id
             );
@@ -183,7 +187,6 @@ export const canvasMusicMvAssembleRouter = router({
                 code: "BAD_REQUEST",
                 message: "缺少镜头，不能合成完整 MV",
               });
-            const durationSec = musicMvRenderDurationSec(shot);
             if (durationSec < 0.5)
               throw new TRPCError({
                 code: "BAD_REQUEST",
@@ -195,11 +198,11 @@ export const canvasMusicMvAssembleRouter = router({
               clipUrl: clipSources[sourceIndex],
               durationSec,
               trimInSec:
-                shot.kind === "footage" ? shot.sourceClip!.sourceStartSec : 0,
+                (shot.kind === "footage" ? shot.sourceClip!.sourceStartSec : 0) + offsetSec,
               trimOutSec:
                 (shot.kind === "footage"
                   ? shot.sourceClip!.sourceStartSec
-                  : 0) + durationSec,
+                  : 0) + offsetSec + durationSec,
             };
           });
       let alignedLyrics: SongAlignedSubtitle | undefined;
@@ -228,6 +231,7 @@ export const canvasMusicMvAssembleRouter = router({
         })),
         musicUrl,
         musicOnly: true,
+        ...(input.highlight ? { musicStartSec: Math.round(input.highlight.startSec*30)/30, musicEndSec: Math.round(input.highlight.endSec*30)/30 } : {}),
         musicVolume: 1,
         musicFadeInSec: 0,
         musicFadeOutSec: 0,

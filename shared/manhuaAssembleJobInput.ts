@@ -27,6 +27,8 @@ export type ManhuaAssembleJobParams = {
   musicVolume?: number;
   /** MV 保留选定歌曲，移除生成片段原声。 */
   musicOnly?: boolean;
+  musicStartSec?: number;
+  musicEndSec?: number;
   alignedLyrics?: SongAlignedSubtitle;
   musicFadeInSec?: number;
   musicFadeOutSec?: number;

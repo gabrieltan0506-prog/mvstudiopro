@@ -39,3 +39,15 @@ describe("真实MV renderer歌词烧录接线（不运行媒体工具）", () =>
     expect(mocks.burnArgs).not.toHaveBeenCalled();
   });
 });
+
+it("高光原歌真裁切且字幕平移到成片零点，媒体命令只捕获不执行",async()=>{
+ const original={...alignedLyrics,durationSec:100,words:[{text:"回家",startSec:26,endSec:27}],srt:"1\n00:00:26,000 --> 00:00:27,000\n回家\n"};
+ mocks.exec.mockImplementation(async()=>({stdout:JSON.stringify({streams:[{codec_type:"video",duration:"40"},{codec_type:"audio",duration:"40"}],format:{duration:"40"}})}));
+ await renderSourceAudioFinal({...input,sceneVideos:[{url:"https://example.test/video",duration:40}],musicStartSec:25,musicEndSec:65,alignedLyrics:original},{width:720,height:1280},"/tmp/highlight-test");
+ expect(mocks.write).toHaveBeenCalledWith("/tmp/highlight-test/aligned-lyrics.srt",expect.stringContaining("00:00:01,000 --> 00:00:02,000"),expect.anything());
+ expect(mocks.exec.mock.calls.some(call=>call[0]==="ffmpeg" && call[1].some((arg:string)=>arg.includes("atrim=start=25:end=65")))).toBe(true);
+});
+
+it("普通BGM仍允许只指定音乐入点，新增高光校验不拦旧路径",async()=>{
+ const out=await renderSourceAudioFinal({...input,musicOnly:false,musicStartSec:1,alignedLyrics:undefined},{width:1280,height:720},"/tmp/bgm-test");expect(out).toBe("/tmp/bgm-test/source-audio-final.mp4");
+});

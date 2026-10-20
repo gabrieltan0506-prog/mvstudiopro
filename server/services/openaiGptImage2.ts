@@ -60,10 +60,10 @@ export function isOpenAiGptImage2Configured(lane?: OpenAiImageLane | null): bool
   return Boolean(getOpenAiImageApiKey(lane));
 }
 
-function resolveOpenAiSize(aspectRatio: "9:16" | "16:9", explicitSize?: string): string {
+function resolveOpenAiSize(aspectRatio: "9:16" | "16:9" | "1:1", explicitSize?: string): string {
   const custom = String(explicitSize || "").trim();
   if (custom && /^\d+x\d+$/i.test(custom)) return custom;
-  return aspectRatio === "16:9" ? "1536x1024" : "1024x1536";
+  return aspectRatio === "1:1" ? "1024x1024" : aspectRatio === "16:9" ? "1536x1024" : "1024x1536";
 }
 
 export type OpenAiImageQuality = "low" | "medium" | "high" | "xhigh" | "max";
@@ -253,7 +253,7 @@ export async function postOpenAiGptImage2AndUpload(
     strictRequest?: boolean;
     persistResponse?: PersistImageResponse;
     beforeImageSubmit?: () => Promise<void>;
-    aspectRatio?: "9:16" | "16:9";
+    aspectRatio?: "9:16" | "16:9" | "1:1";
     size?: string;
     quality?: string;
     flowLog?: string[];

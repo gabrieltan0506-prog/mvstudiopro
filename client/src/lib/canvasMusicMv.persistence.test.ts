@@ -180,3 +180,12 @@ describe("音乐节点持久化与媒体交接", () => {
     expect(collectDocumentAssets(video.id, blocks, edges)).toEqual([]);
   });
 });
+
+it("双交付范围、方形封面回执经过本机精简和云端清洗完整恢复",()=>{
+ const original=source();original.musicMv.candidates=original.musicMv.candidates.map(c=>({...c,durationSec:100}));original.musicMv.plan={...original.musicMv.plan!,audioDurationSec:100,shots:Array.from({length:10},(_,i)=>({...original.musicMv.plan!.shots[i%2],id:`shot-${i}`,startSec:i*10,endSec:(i+1)*10}))};original.musicMv.deliveryMode="highlight";original.musicMv.highlight={startSec:25,endSec:65};
+ original.musicMv.songCovers=[{musicJobId:"bgm_album",aspectRatio:"1:1",prompt:"原确认内容",status:"running",jobId:"songcover_fixed"}];
+ const snapshot=buildLocalCloudDraftSnapshot({writerSession:{},blocks:slimBlocksForLocalPersist([original]),edges:[]});
+ const parsed=parseManhuaCloudDraftPayload(serializeCloudDraftForUpload(snapshot));
+ const [restored]=cloudDraftBlocksToCanvas(parsed!.canvas.blocks);
+ expect(restored.musicMv?.deliveryMode).toBe("highlight");expect(restored.musicMv?.highlight).toEqual({startSec:25,endSec:65});expect(restored.musicMv?.songCovers).toEqual(original.musicMv.songCovers);
+});

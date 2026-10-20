@@ -1,3 +1,4 @@
+import { normalizeCanvasImageAspectRatio } from "../../shared/canvasGptImage2JobInput";
 import { startFileConversionWorker, stopFileConversionWorker, drainFileConversions, fileConversionsBusy } from "./fileConversionWorker";
 import {
   buildI2VRequest,
@@ -1788,7 +1789,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
       : null;
     const prompt = String(params.prompt ?? "").trim();
     if (!prompt) throw new Error("missing prompt");
-    const aspectRatio = String(params.aspectRatio || "9:16") === "16:9" ? "16:9" : "9:16";
+    const aspectRatio = normalizeCanvasImageAspectRatio(params.aspectRatio);
     const referenceImageUrls = Array.isArray(params.referenceImageUrls)
       ? (params.referenceImageUrls as unknown[])
           .map((u) => String(u || "").trim())

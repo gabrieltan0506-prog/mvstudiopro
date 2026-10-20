@@ -69,7 +69,7 @@ beforeAll(async () => {
         export const trpc={useUtils:()=>utils,songOperations:songMutations,mvAnalysis:{
           getVideoUploadSignedUrl:{useMutation:()=>({mutateAsync:async()=>{throw new Error("离线夹具不上传媒体");}})},
           getManhuaAdvisorQuota:{useQuery:()=>({data:{remaining:2,price:12,exempt:false},refetch:async()=>{}})},
-          askPlatformSkillQa:{useMutation:()=>({mutateAsync:async input=>{f().record('advisor',input);if(input.manhuaContext.sunoSong){const t=input.manhuaContext.sunoSong;return {answer:JSON.stringify({kind:'suno_song_v1',sourceKey:t.sourceKey,evidenceId:'11111111-1111-4111-8111-111111111111',summaryZh:'按主题创作，未听音',review:{verdict:'approved',summaryZh:'离线通过',findings:[],mediaReview:[],inspirationZh:['强化副歌层次'],limitationsZh:['离线替身未听音']},sections:[],uncertaintiesZh:['尚未试听'],transferableCraft:['第二段推进故事'],concepts:[0,1,2].map(i=>({id:'song-'+i,rationaleZh:'符合重逢主题',differenceZh:'原创叙述',hookZh:'明天再见',lyricMethodZh:'物件写关系',mvDirectionZh:'红围巾贯穿车站与重逢',brief:{model:'suno-v6',custom_mode:true,instrumental:false,title:t.originalBrief?.title||'重逢'+i,style:t.originalBrief?'73 BPM, optimized arrangement '+i:'acoustic pop, warm piano',prompt:t.originalBrief?.prompt||'[Verse] 你把车票放回口袋 [Chorus] 明天再见',negative_tags:'',duration:t.originalBrief?.duration||180,style_weight:0,weirdness_constraint:0.35}}))})};}const t=input.manhuaContext.musicMv;const p=f().makePlan(t);p.analysisBasis='native_audio';p.shots=p.shots.map(s=>({...s,kind:'generated'}));return {answer:JSON.stringify({kind:'music_mv_v1',sourceKey:t.sourceKey,evidenceId:'11111111-1111-4111-8111-111111111111',summaryZh:'听音后的测试方案',sections:[{startSec:0,endSec:10,labelZh:'主段',heardZh:'人声弦乐'}],uncertaintiesZh:['离线测试不证明听音'],concepts:[0,1,2,3].map(i=>({id:'idea-'+i,titleZh:'归途'+i,rationaleZh:'情绪推进',openingZh:'林间',peakZh:'转身',endingZh:'远望',plan:p}))})};}})},
+          askPlatformSkillQa:{useMutation:()=>({mutateAsync:async input=>{f().record('advisor',input);if(input.manhuaContext.sunoSong){const t=input.manhuaContext.sunoSong;return {answer:JSON.stringify({kind:'suno_song_v1',sourceKey:t.sourceKey,evidenceId:'11111111-1111-4111-8111-111111111111',summaryZh:'按主题创作，未听音',review:{model:'gpt-6-astra',draftModel:'GLM 5.3',verdict:'approved',summaryZh:'离线通过',findings:[],mediaReview:[],inspirationZh:['强化副歌层次'],limitationsZh:['Gemini读取的分析尚未人工验收']},sections:[],uncertaintiesZh:['尚未试听'],transferableCraft:['第二段推进故事'],concepts:[0,1,2].map(i=>({id:'song-'+i,rationaleZh:'符合重逢主题',differenceZh:'原创叙述',hookZh:'明天再见',lyricMethodZh:'物件写关系',mvDirectionZh:'红围巾贯穿车站与重逢',brief:{model:'suno-v6',custom_mode:true,instrumental:false,title:t.originalBrief?.title||'重逢'+i,style:t.originalBrief?'73 BPM, optimized arrangement '+i:'acoustic pop, warm piano',prompt:t.originalBrief?.prompt||'[Verse] 你把车票放回口袋 [Chorus] 明天再见',negative_tags:'',duration:t.originalBrief?.duration||180,style_weight:0,weirdness_constraint:0.35}}))})};}const t=input.manhuaContext.musicMv;const p=f().makePlan(t);p.analysisBasis='native_audio';p.shots=p.shots.map(s=>({...s,kind:'generated'}));return {answer:JSON.stringify({kind:'music_mv_v1',sourceKey:t.sourceKey,evidenceId:'11111111-1111-4111-8111-111111111111',summaryZh:'听音后的测试方案',sections:[{startSec:0,endSec:10,labelZh:'主段',heardZh:'人声弦乐'}],uncertaintiesZh:['离线测试不证明听音'],concepts:[0,1,2,3].map(i=>({id:'idea-'+i,titleZh:'归途'+i,rationaleZh:'情绪推进',openingZh:'林间',peakZh:'转身',endingZh:'远望',plan:p}))})};}})},
           queueManhuaBgm:{useMutation:()=>({mutateAsync:async input=>{f().record('music',input);if(f().musicError)throw f().musicError;return {jobId:'bgm_'+input.billingRequestId.replaceAll('-',''),status:'queued'};}})}},
           canvasMusicMv:{
           listSongCraftTemplates:{useQuery:()=>({data:{cards:[{id:'lin-inner-turn',title:'林夕 · 内心转折与克制留白',contributor:'林夕',basis:'interview',highlights:['内心转折'],sources:[]}],revision:'offline'},refetch:async()=>{}})},
@@ -672,7 +672,8 @@ describe("歌曲创作与可保存剪辑新入口", () => {
       await page.waitForFunction(
         () => !!(window as any).fixture.state.songAdvisor?.proposal
       );
-      await click("采用到Suno创作表单");
+      expect(await page.$eval('[aria-label="参考歌曲创作"]',e=>e.textContent)).not.toMatch(/gemini|glm|astra|suno/i);
+      await click("采用歌词与编曲方案");
       await page.waitForFunction(
         () => (window as any).fixture.state.songTitle === "重逢0"
       );
@@ -681,6 +682,7 @@ describe("歌曲创作与可保存剪辑新入口", () => {
         const f = (window as any).fixture;
         return { state: f.state, prompt: f.current[0].prompt, calls: f.calls };
       });
+      expect(saved.state.songAdvisor.proposal.review.model).toBe("gpt-6-astra");
       expect(saved.state.lyrics).toContain("车票");
       expect(saved.prompt).toContain("warm piano");
       expect(saved.state.creativePrompt).toContain("红围巾");
@@ -822,3 +824,35 @@ it("保词优化→三个35秒Demo→选择回填完整歌词，不提前生成�
   expect(saved.state.lyrics).toContain('完整主歌不可删');expect(saved.state.requestedDurationSec).toBe(300);expect(saved.prompt).toContain('optimized arrangement');expect(saved.state.selectedSongDemo).toBeTruthy();expect(saved.calls.filter((x:any)=>x.kind==='music')).toHaveLength(3);
  }catch(e){console.log('OPT_FIXTURE',await page.evaluate(()=>({state:(window as any).fixture.state,calls:(window as any).fixture.calls,text:document.getElementById('root')?.textContent})));throw e;}finally{await context.close();}
 },30000);
+
+it("双交付：歌曲模式止于音频封面，高光只制作原曲25至65秒的五个镜头并恢复原单",async()=>{
+ const {context,page,click,reload}=await open();
+ try{
+  await page.evaluate(()=>{
+   const f=(window as any).fixture;
+   const audio={id:'highlight-song',title:'完整歌曲',url:'https://test.invalid/full.mp3',durationSec:100};
+   f.update([{...f.current[0],musicMv:{status:'planned',deliveryMode:'song',instrumental:false,candidates:[audio],selectedCandidateId:audio.id,lyrics:'完整歌词',planRequestId:'22222222-2222-4222-8222-222222222222',plan:{version:1,audioId:audio.id,audioDurationSec:100,analysisBasis:'lyrics_and_user_description',shots:Array.from({length:10},(_,i)=>({id:'s'+i,startSec:i*10,endSec:(i+1)*10,visualPrompt:'沿海行走',cameraPrompt:'侧面跟随',lyricQuote:'',referenceIndices:[]}))}}}]);
+  });
+  await page.waitForSelector('[aria-label="歌曲交付"]');
+  expect(await page.$$('[data-mv-step="concept"]')).toHaveLength(0);
+  expect(await page.evaluate(()=>(window as any).fixture.calls)).toEqual([]);
+  await page.select('[aria-label="MV交付类型"]','highlight');
+  await page.$eval('[aria-label="高光开始秒数"]',e=>{(e as HTMLInputElement).value='25'});
+  await page.$eval('[aria-label="高光时长"]',e=>{(e as HTMLInputElement).value='40'});
+  await click('应用高光区间');
+  await page.waitForFunction(()=>(window as any).fixture.state.highlight?.startSec===25);
+  await click('确认分镜并铺到画布');
+  await page.waitForFunction(()=>(window as any).fixture.state.shotBlockIds?.length===10);
+  await click('生成缺失镜头（5');
+  await page.waitForFunction(()=>(window as any).fixture.calls.filter((c:any)=>c.kind==='shot').length===5);
+  await click('合成抖音高光 MV');
+  await page.waitForFunction(()=>!!(window as any).fixture.state.finalBlockId);
+  const result=await page.evaluate(()=>{const f=(window as any).fixture;return {request:f.calls.find((c:any)=>c.kind==='assemble').input,shots:f.current.filter((b:any)=>b.musicMvShot).map((b:any)=>({id:b.musicMvShot.shotId,status:b.status})),final:f.current.find((b:any)=>b.id===f.state.finalBlockId),audio:f.state.candidates[0]};});
+  expect(result.request.highlight).toEqual({startSec:25,endSec:65});expect(result.request.resolution).toBe('9:16');expect(result.request.clips.map((c:any)=>c.shotId)).toEqual(['s2','s3','s4','s5','s6']);expect(result.request.editRevisionId).toBeUndefined();
+  expect(result.shots.filter((s:any)=>s.status==='done')).toHaveLength(5);expect(result.audio.durationSec).toBe(100);expect(result.final.prompt).toContain('25–65');
+  await reload();await click('查询／恢复原合成');
+  expect(await page.evaluate(()=>(window as any).fixture.calls.filter((c:any)=>c.kind==='assemble').length)).toBe(1);
+  await page.select('[aria-label="MV交付类型"]','song');await page.waitForSelector('[aria-label="歌曲交付"]');
+  expect(await page.evaluate(()=>(window as any).fixture.state.finalBlockId)).toBe(result.final.id);
+ }finally{await context.close();}
+},30_000);

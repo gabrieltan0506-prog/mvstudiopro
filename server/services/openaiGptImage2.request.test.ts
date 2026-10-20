@@ -66,3 +66,8 @@ describe("官方图片请求体参数兼容", () => {
     expect(store).not.toHaveBeenCalled();
   });
 });
+
+it("专辑方形比例实际发送1024x1024，不调用真实供应商",async()=>{
+ const fetcher=vi.fn(async(_url:string,init?:RequestInit)=>{expect(JSON.parse(String(init?.body)).size).toBe("1024x1024");return Response.json({error:{message:"test rejection"}},{status:400});});
+ vi.stubGlobal("fetch",fetcher);await postOpenAiGptImage2AndUpload("专辑封面","song-covers",{aspectRatio:"1:1",variant:"flare"});expect(fetcher).toHaveBeenCalledTimes(1);expect(store).not.toHaveBeenCalled();
+});

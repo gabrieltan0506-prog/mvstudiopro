@@ -12,7 +12,7 @@ import { LaunchCountdownBanner } from "../components/LaunchCountdownBanner";
 import HomePlatformHighlights from "../components/HomePlatformHighlights";
 import HomeFileConversion from "../components/HomeFileConversion";
 import HomeCodeMotion from "../components/code-motion/HomeCodeMotion";
-import HomePhotoTools from "../components/HomePhotoTools";
+import HomeImageWorkshop from "../components/HomeImageWorkshop";
 import "../styles/homeProduct.css";
 
 /**
@@ -29,7 +29,7 @@ export default function HomePage() {
         <HomePresentationShowcase />
         <HomeRemixStrip />
         <HomeCodeMotion />
-        <HomePhotoTools />
+        <HomeImageWorkshop />
         <HomeFileConversion />
         <HomePlatformHighlights />
 

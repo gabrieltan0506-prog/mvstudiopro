@@ -1,3 +1,4 @@
+import { musicMvHighlightSchema } from "./musicMvHighlight";
 import {songCoverReceiptSchema} from "./songCover";
 import { canvasMusicCandidateSchema } from "./canvasMusicMedia";
 import { creativeLearningSessionSchema } from "./creativeGenerationLibrary";
@@ -409,6 +410,7 @@ export function validateCanvasMusicMvPlan(
 
 export const canvasMusicMvAssembleSnapshotSchema = z
   .object({
+    highlight: musicMvHighlightSchema.optional(),
     requestId: z.string().uuid(),
     planRequestId: z.string().uuid(),
     editRevisionId: z.string().uuid().optional(),
@@ -483,6 +485,8 @@ export type CanvasMusicMvShotBinding = z.infer<
 
 export const canvasMusicMvStateSchema = z
   .object({
+    deliveryMode: z.enum(["song", "highlight"]).optional(),
+    highlight: musicMvHighlightSchema.optional(),
     status: z.enum([
       "idle",
       "music_running",

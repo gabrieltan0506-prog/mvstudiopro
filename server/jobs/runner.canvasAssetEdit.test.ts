@@ -1,3 +1,4 @@
+import { normalizeCanvasImageAspectRatio, buildCanvasGptImage2JobInput } from "../../shared/canvasGptImage2JobInput";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
@@ -79,11 +80,12 @@ function setup() {
   };
   const run = new Function(
     "importModule",
+    "normalizeCanvasImageAspectRatio",
     "normalizeOpenAiImageLane",
     "normalizeOpenAiImageVariant",
     "deductCreditsAmount",
     `${code}\nreturn run;`
-  )(importModule, normalizeOpenAiImageLane, normalizeOpenAiImageVariant, deduct);
+  )(importModule, normalizeCanvasImageAspectRatio, normalizeOpenAiImageLane, normalizeOpenAiImageVariant, deduct);
   const input = {
     action: "canvas_gpt_image2",
     params: {
@@ -156,4 +158,10 @@ describe("真实 worker 原图续签、收费、供应商消费和退款", () =>
       expect.any(String)
     );
   });
+});
+
+it("专辑封面通过真实worker仍为1:1，沿用原收费与素材登记边界",async()=>{
+ const s=setup();await s.run(buildCanvasGptImage2JobInput({prompt:"原创歌曲专辑封面",aspectRatio:"1:1",providerOverride:"openai",openaiImageVariant:"flare",requireImageVariant:true,imageLane:"asset",gcsSubdir:"song-covers"}),"1","test-album");
+ expect(s.generate).toHaveBeenCalledWith(expect.objectContaining({aspectRatio:"1:1",gcsSubdir:"song-covers",openaiImageVariant:"flare",requireImageVariant:true}));
+ expect(s.deduct).toHaveBeenCalledWith(1,canvasImageCredits(0),"canvasGptImage2",expect.any(String),{chargeKey:"canvasGptImage2/test-album"});expect(s.refund).not.toHaveBeenCalled();
 });

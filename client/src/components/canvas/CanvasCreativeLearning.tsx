@@ -1,3 +1,4 @@
+import { creativeUserText } from "@/lib/creativeUserText";
 import { useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { musicMvSourceKey } from "@/lib/musicMvAdvisor";
@@ -67,12 +68,12 @@ export function CanvasCreativeLearning(p: Props) {
   };
   return <section aria-label="学习并扩充创意生成库" className="space-y-2 rounded border border-white/20 p-2 text-xs">
     <h4>把参考作品的方法加入创意生成库</h4>
-    <p>本次提交：{p.audio?.title||"尚未选择素材"} {p.audio?`· ${p.audio.durationSec.toFixed(2)} 秒`:""}。Gemini读取完整音视频，GLM提炼初稿，Astra联合改稿与审阅；不会生成新歌或视频。</p>
-    <p>{requirements} 学习使用顾问额度，收藏不另调用模型。入库后，新咨询读取最新模板。</p>
+    <p>本次提交：{p.audio?.title||"尚未选择素材"} {p.audio?`· ${p.audio.durationSec.toFixed(2)} 秒`:""}。完整分析参考作品，提炼可复用的创作方法。</p>
+    <p>{requirements} 分析使用顾问额度，收藏不另收费；新创作可选用已收藏方法。</p>
     <button className={button} disabled={busy||p.disabled||(!p.audio&&!p.session)||Boolean(p.session&&p.session.status!=="pending")} onClick={()=>void run()}>{busy?"处理中…":p.session?.status==="pending"?"恢复原学习请求":"读取素材并提炼方法"}</button>
     {p.session&&p.session.status!=="pending"&&<button className={button} disabled={busy||p.disabled||!p.audio} onClick={()=>void run(false,true)}>按当前素材新建学习版本</button>}
     {paid&&<button className={button} disabled={busy||p.disabled||!Number.isFinite(quota.data?.price)} onClick={()=>void run(true)}>确认本次咨询 {quota.data?.price} 积分</button>}
-    {error&&<p role="alert">{error}</p>}
+    {error&&<p role="alert">{creativeUserText(error)}</p>}
     {p.session?.report&&<div><h5>{p.session.report.titleZh}</h5><p>{p.session.report.summaryZh}</p>
       {p.session.report.methods.map(method=><details key={method.id}><summary>{method.titleZh}</summary><p>{method.principleZh}</p>{method.stepsZh.map((step,i)=><p key={i}>{i+1}. {step}</p>)}<p>适用：{method.suitableWhenZh}</p><p>不宜照搬：{method.avoidWhenZh}</p>{method.uncertaintiesZh.map((line,i)=><p key={i}>{line}</p>)}</details>)}
       {p.session.report.limitationsZh.map((line,i)=><p key={i}>{line}</p>)}

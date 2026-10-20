@@ -179,3 +179,24 @@ it("continuation appends 60 episodes to the same project without losing edited e
   expect(target.getItem("shot-proof")).toBe("已生成资产");
   expect(listLocalManhuaProjects(storage, "1")).toHaveLength(1);
 });
+
+it("MV新建只建独立音乐节点，既有作品和账号不变；配额失败不留半份项目", () => {
+  const store = memoryStorage();
+  store.setItem("mv-freeform-canvas-v1", "原作品保留");
+  const first = createEmptyManhuaProject(store, "1", "晚星", "mv");
+  const second = createEmptyManhuaProject(store, "1", "南风", "mv");
+  const scope = parseManhuaProjectScope(first.slice(first.indexOf("?")))!;
+  expect(first).toContain("workflow=mv");expect(second).not.toBe(first);
+  const target = scopedManhuaStorage(store, scope);
+  expect(loadManhuaWriterSessionFromStorage(target)?.workspaceKind).toBe("mv");
+  const canvas = JSON.parse(target.getItem("mv-freeform-canvas-v1")!);
+  expect(canvas.blocks).toHaveLength(1);
+  expect(canvas.blocks[0]).toMatchObject({ kind: "music", prompt: "", musicMv: { status: "idle", candidates: [], instrumental: false } });
+  expect(listLocalManhuaProjects(store, "1").map(p => p.kind)).toEqual(["mv", "mv"]);
+  expect(listLocalManhuaProjects(store, "2")).toEqual([]);
+  const keys = Array.from({length:store.length},(_,i)=>store.key(i));
+  const originalSet=store.setItem;store.setItem=(key,value)=>{if(key.endsWith(":mv-freeform-canvas-v1"))throw Error("quota");originalSet(key,value);};
+  expect(()=>createEmptyManhuaProject(store,"1","失败稿","mv")).toThrow("quota");
+  expect(Array.from({length:store.length},(_,i)=>store.key(i))).toEqual(keys);
+  expect(store.getItem("mv-freeform-canvas-v1")).toBe("原作品保留");
+});

@@ -1,4 +1,4 @@
-import { validateSongAlignedSubtitle } from "../../shared/songAlignedSubtitle";
+import { cropSongAlignedSubtitle, validateSongAlignedSubtitle } from "../../shared/songAlignedSubtitle";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { RenderWorkflowInput } from "./renderTypes.js";
@@ -100,8 +100,11 @@ export async function renderSourceAudioFinal(
   tmpDir: string
 ): Promise<string> {
   if (!input.sceneVideos.length) throw new Error("至少需要一个成片素材");
-  if (input.alignedLyrics && (!input.musicOnly || nonNegative(input.musicStartSec, 0) > 0 || nonNegative(input.musicEndSec, 0) > 0))
-    throw new Error("歌曲对齐字幕须保留原歌曲时间轴，不能同时裁切配乐");
+  const hasMusicRange = input.musicStartSec !== undefined || input.musicEndSec !== undefined;
+  if (hasMusicRange && input.musicOnly && (!Number.isFinite(input.musicStartSec) || !Number.isFinite(input.musicEndSec) || input.musicStartSec! < 0 || input.musicEndSec! <= input.musicStartSec!))
+    throw new Error("歌曲裁切须提供完整且有效的原时间轴区间");
+  if (input.alignedLyrics && !input.musicOnly) throw new Error("歌曲字幕须使用原歌曲音轨");
+  const outputLyrics = input.alignedLyrics && hasMusicRange ? cropSongAlignedSubtitle(input.alignedLyrics,input.musicStartSec!,input.musicEndSec!) : input.alignedLyrics;
   if (input.musicOnly === true && !String(input.musicUrl || "").trim())
     throw new Error("MV 合成缺少选定歌曲，未开始渲染");
   if (
@@ -267,10 +270,10 @@ export async function renderSourceAudioFinal(
       const actualDuration = (await inspectVideo(file)).duration;
       input.onSubtitleTimeline(buildRenderedSubtitleTimeline(normalized, input.transition, actualDuration));
     }
-    if (input.alignedLyrics) {
+    if (outputLyrics) {
       if (!input.musicOnly || !String(input.musicUrl || "").trim()) throw new Error("歌词字幕缺少原歌曲，未开始烧录");
       const actualDuration = (await inspectVideo(file)).duration;
-      const lyrics = validateSongAlignedSubtitle(input.alignedLyrics, actualDuration);
+      const lyrics = validateSongAlignedSubtitle(outputLyrics, actualDuration);
       const srtPath = path.join(tmpDir, "aligned-lyrics.srt");
       await fs.writeFile(srtPath, lyrics.srt, { encoding: "utf8", flag: "wx" });
       const fontsDir = path.join(tmpDir, "lyrics-fonts");
@@ -291,6 +294,7 @@ export async function renderSourceAudioFinal(
   await downloadSourceMedia(input.musicUrl!, music);
   const start = nonNegative(input.musicStartSec, 0);
   const end = nonNegative(input.musicEndSec, 0);
+  if (hasMusicRange && input.musicOnly && Math.abs(timeline - (end-start)) > 1/30 + 0.001) throw new Error("高光画面与原歌区间时长不一致，未交付");
   const musicFilters = [
     `atrim=start=${start}${end > start ? `:end=${end}` : ""}`,
     "asetpts=PTS-STARTPTS",

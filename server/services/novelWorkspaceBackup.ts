@@ -32,6 +32,7 @@ export async function writeNovelWorkspaceBackup(
     backupId = randomUUID();
   const metadata = {
     backupId,
+    projectId: state.projectId || state.roundId,
     roundId: state.roundId,
     title: state.topic || "小说改编草稿",
     season: state.season || 1,
@@ -69,6 +70,7 @@ export async function listNovelWorkspaceBackups(userId: number) {
     });
   const rows: Array<{
     backupId: string;
+    projectId?: string;
     roundId: string;
     title: string;
     season: number;
@@ -112,6 +114,7 @@ export async function readNovelWorkspaceBackup(
   )
     throw new Error("备份完整性校验失败，未回填");
   const state = validateNovelBackup(workspaceJson);
-  if (state.roundId !== metadata.roundId) throw new Error("备份作品身份不一致");
+  if (state.roundId !== metadata.roundId ||
+      (metadata.projectId && (state.projectId || state.roundId) !== metadata.projectId)) throw new Error("备份作品身份不一致");
   return { metadata, workspaceJson };
 }
