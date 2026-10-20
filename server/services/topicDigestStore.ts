@@ -1,3 +1,4 @@
+import { buildTopicReadingComparison } from "../../shared/topicDigestPresentation.js";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { topicPreferenceSchema, topicPeriod, topicRecommendationCount, selectTopicCards, type TopicPreference, type TopicDigest, type TopicLane } from "../../shared/topicDigest.js";
@@ -175,4 +176,12 @@ export async function updateTopicNotification(userId: number, id: string, action
   else await db.execute(sql`UPDATE topic_digest_notifications SET adopted=adopted || ${JSON.stringify([topicId])}::jsonb,read_at=coalesce(read_at,now())
     WHERE user_id=${userId} AND pool_id=${id} AND NOT adopted @> ${JSON.stringify([topicId])}::jsonb`);
   return notification;
+}
+
+/** 先核对已投递通知的归属，只投影该通知关联的原稿；不返回供应商回执或完整候选池。 */
+export async function readTopicDraftComparison(userId: number, id: string) {
+  const notification = await getTopicNotification(userId, id);
+  const db = await database();
+  const [row] = rows<{ pipeline: unknown }>(await db.execute(sql`SELECT pipeline FROM topic_digest_pools WHERE id=${id}`));
+  return buildTopicReadingComparison(row?.pipeline, { topics: notification.digest.topics, method: notification.method });
 }

@@ -33,3 +33,40 @@ base：c7d4828e600d07e00082004b3315c39a0a4a94bc；被审版本为本分支提交
 - Linux独立目录13项通过：sharp像素4、状态机5、PGlite真实SQL4；隔离进程未传生产凭证。日志work/cover-candidates-isolation.log，真实图结果work/cover-face-proof.log。已通过测试未重复执行。
 - 最终状态仍为部分完成：成片原生读片、正式原页三图生产/视觉质量/真实扣费退款未验。旧单图API为兼容保留；自定义旧工作区遗留函数没有当前UI入口，本批未将其声称为已改造入口。
 - 实际柔和版与原图目视对照：文字和几何保留，未见明显人脸蒙版边缘，色彩调整较轻且仍保留暖光；没有将此视为用户认可的高级感。三风格输出为同一原图后期验证，不是三张不同构图的生产验收。成图及参数已回收本次outputs/封面独立调色-v2验证。
+
+## READ · 原稿/整合稿阅读追加批次 R1（2026-10-20）
+
+依据：用户要求分类、排序、可直接阅读，以保存的真实稿件验证，集中追加PR1727，由用户合并。base c7d4828e600d07e00082004b3315c39a0a4a94bc；原HEAD 74689ca9077a8a6ff1f760619cb3f981db867793。该轮仅审新增阅读差异及受影响路径，旧封面通过项复用；本地未提交成片来源试接线不纳入这次提交。
+
+| ID | 状态 | 根因与处理 | 证据与边界 |
+|---|---|---|---|
+| READ-01 | FIXED | 旧展示只有原始JSON、没有分类阅读。新增共享阅读投影及实际React组件；三稿分别分组，组间按创作流程，同组保留原顺序/编号，完整正文与合并来源可展开 | 真实8+8+8题逐项比对、手机/桌面与切换/展开通过；不代表内容效果排名 |
+| READ-02 | FIXED | 新增原稿查看若直接返回pipeline会绕过每期投递限制。先读当前账号通知，只投影已投递题及draftRefs对应原稿，不返回回执或完整池 | PGlite实际保存/投递/跨账号拒绝/新连接回读/采用ID保持通过；免费1条、付费2条不变 |
+| READ-03 | CLOSED | 分组函数初始返回类型丢失通知id/kind/sources | 改为泛型保留输入字段；最终tsc --noEmit exit0；浏览器通知展开、采用原需求保留及账号切换通过 |
+| READ-04 | FIXED | 历史缺原稿不能用其他稿件或空JSON冒充 | safeParse缺失状态与明确提示；读取错误提供重试；不触发生成或额外扣费 |
+
+### 双向追链及九层审计
+
+1. 需求/边界：展示阅读整理，原始供应商JSON保留；没有改动模型、定价、免费配额、业务数据写入或生成参数。
+2. 入口：TopicDigestBell通知分组及“对照原稿与整合稿”→按需查询；原选择/隐藏/采用入口保留。真实组件无头浏览器验证，不冒充正式登录页面。
+3. 生产：已有topicDigestPipeline分别保存deepseek/glm/integrated.raw；测试夹具只含该次公开AI赛道真实正文，无请求/凭证/计费回执。没有新增模型调用。
+4. 契约：readTopicSection逐字段读取，不截取标题、角度、开场和提纲；保留原空提纲并明示。classifyTopicForReading按原标签/标题关键词给阅读分类及理由；无法归类进入其他主题。排序不重写ID，不冒充优劣评分。
+5. 服务：protectedProcedure以ctx.user.id核对通知，不信任scope作为身份；readTopicDraftComparison只读，失败不扣费、不重试模型。
+6. 保存/恢复：仍读已保存pipeline与selected_topics，不另建可失配的分类表；同内容刷新重新确定性分组，PGlite新连接验证结果一致；采用仍写原topic ID。
+7. 消费/反向：阅读卡片→对应key与originalIndex/draftRefs→账号已投递selected_topics→原pipeline.raw；附带全部角度、hook、outline/tags，不让排序改变采用对象。正式页与预览同用TopicDraftComparison。
+8. 静态/回归：真实阅读投影3项、真实DB新增1项、实际组件1项、通知采用入口1项通过；首次DB测试缺测试provider标记导致拒绝占位，修夹具后通过，保留失败日志。类型首轮泛型缺失失败后修正，最终exit0。Vite构建1m18s通过，已有chunk警告。
+9. 真实链路：原真实模型内容在本地正式组件及隔离DB验证；尚未在部署后的正式原页/真实登录账号验收，未再次调用生产模型。
+
+### 产物与仍未验证
+
+- 可交互审阅页：outputs/两日选题通知-真实模型实测/付费双模型补测/原稿与整合稿-分类阅读对照.html；由scripts/render-topic-draft-preview.ts生成，复用正式组件。
+- 日志：work/topic-reading-tests.log、topic-reading-db-retest.log、topic-reading-browser.log、topic-reading-entry-final.log、topic-reading-types-final.log、topic-reading-build.log。
+- 未完成的成片封面读片来源链仍保留原断点，不将阅读展示修复称为整项封面完成。用户本人合并，尚未上线验收。
+
+## READ · R2 定向收口
+
+- READ-01/02/04：CLOSED（开发及隔离验证范围）。Linux现有工作机Intel Xeon x64、4 vCPU、8192 MB配置，独立目录`/data/topic-reading-20261020-1252`，4项通过、2项未变旧测试跳过；测试子进程只传PATH/HOME/TMPDIR/NODE_ENV/CI，无生产凭证、无模型调用。原始日志与JSON已在目录持久保存，回执04:53:43Z；本地`work/topic-reading-linux.log`。首次隔离因压缩包未实际上传未启动测试，原错误保留`work/topic-reading-linux-upload-missing.log`，改用明确sftp put后通过。
+- READ-05：CLOSED。真实预览截图发现选中标签题数继承全局small颜色、对比度不足；修正选中状态颜色继承并增加白色计算值断言。最终真实组件交互测试1项通过，`work/topic-reading-contrast-final.log`。该CSS修正后重新生成实际HTML；此前Vite构建覆盖同一模块图，未重复全构建。
+- 实际保存的HTML用无头浏览器打开验证：8张整合卡、3个8题切换、4组标题、零页面错误、390px无横向溢出，`work/topic-reading-preview-check.json`；全24题与提纲完整性在组件测试覆盖。未将排版整理称为模型内容质量提升或效果评分。
+- 04:54:37Z结束检查：生产jobs/holds均空、隔离结果保存成功且无测试/媒体/传输子进程。工作机按原状态恢复停止，最终状态见当日交接。
+- 交付范围只有新增阅读展示及受影响路径；局部成片来源接线仍未提交。本批没有新增或唤醒代理，没有合并部署，正式原页待用户合并部署后验收。

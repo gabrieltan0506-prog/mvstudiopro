@@ -83,3 +83,30 @@ it("晚订阅付费复用基础稿、旧池不冒充双路、失败不重投、�
   expect(await claimPaidTopicPool("legacy")).toBeNull();expect(await topicPoolState("storytelling",11,2)).toBe("unavailable");
   await deliverTopicPool("legacy");expect(await listTopicNotifications(22)).toHaveLength(0);
 });
+
+it("真实三稿数据库回读：只返账号已投递题和对应来源，采用和刷新保持同一ID",async()=>{
+  const { readTopicDraftComparison } = await import("./topicDigestStore");
+  const { default: real } = await import("../../client/src/lib/fixtures/topicDigestRealDrafts.json");
+  const { verifyTopicIntegration } = await import("../../shared/topicDigestWorkflow");
+  await pg.exec("INSERT INTO users VALUES(31,'paid'),(32,'free'),(33,'free')");
+  await saveTopicPreference(31,{enabled:true,lane:"ai",keywords:""});
+  await saveTopicPreference(32,{enabled:true,lane:"ai",keywords:""});
+  const w = {version:2,lane:"ai",sources:[],previousTitles:[],...Object.fromEntries(Object.entries(real).map(([k,v])=>[k,{...v,status:"succeeded",receipt:{provider:k==="glm"?"Z.AI":"DeepSeek"}}]))} as any;
+  const base=verifyTopicCandidates(real.deepseek.raw,[]);
+  const digest={id:"reading-real",lane:"ai" as const,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+3600000).toISOString(),topics:base};
+  await claimTopicPool(digest.id,"ai",100);await completeTopicPool(digest.id,digest,{},w);
+  await claimPaidTopicPool(digest.id);await completePaidTopicPool(digest.id,{...digest,topics:verifyTopicIntegration(real.integrated.raw,w)},w);
+  await deliverTopicPool(digest.id);
+  const paid = await readTopicDraftComparison(31,digest.id);
+  expect(paid.sections.map(s=>s.rows.length)).toEqual([2,1,2]);
+  expect(JSON.stringify(paid)).not.toContain('receipt');
+  const free = await readTopicDraftComparison(32,digest.id);
+  expect(free.sections.map(s=>[s.key,s.rows.length])).toEqual([["deepseek",1]]);
+  await expect(readTopicDraftComparison(33,digest.id)).rejects.toThrow("无权访问");
+  await updateTopicNotification(31,digest.id,"adopt","topic-2");
+  state.db=drizzle(pg);
+  expect(await readTopicDraftComparison(31,digest.id)).toEqual(paid);
+  expect((await getTopicNotification(31,digest.id)).adopted).toEqual(["topic-2"]);
+  const stored=await pg.query<{pipeline:unknown}>("SELECT pipeline FROM topic_digest_pools WHERE id='reading-real'");
+  expect(stored.rows[0].pipeline).toEqual(w);
+});

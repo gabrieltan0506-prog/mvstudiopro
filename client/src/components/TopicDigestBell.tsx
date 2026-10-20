@@ -1,3 +1,5 @@
+import { TopicDraftComparison } from "./TopicDraftComparison";
+import { classifyTopicForReading, groupTopicsForReading } from "@shared/topicDigestPresentation";
 import { useEffect, useState } from "react";
 import { Bell } from "lucide-react";
 import { useLocation } from "wouter";
@@ -63,7 +65,7 @@ export function TopicDigestBell({ userId }: { userId: string }) {
         <div className="flex items-center justify-between gap-2"><h3 className="font-semibold">{TOPIC_LANES[n.digest.lane]}{!n.read ? " · 新" : ""}</h3>
           {!n.read && <button type="button" className="text-xs underline" disabled={busy} onClick={() => void act(() => read.mutateAsync({ id: n.id }))}>标为已读</button>}</div>
         <p className="my-2 text-xs text-muted-foreground">{n.method === "dual" ? "精选推荐" : "选题推荐"} · {new Date(n.digest.createdAt).toLocaleString("zh-CN")}{Date.now() > Date.parse(n.digest.expiresAt) ? " · 历史一期，热点时效需重新核实" : " · 本期"}</p>
-        {selectTopicCards(n.digest.topics, query.data?.preference?.keywords || "", n.dismissed).map(t => <article key={t.id} className="border-t py-4">
+        {groupTopicsForReading(selectTopicCards(n.digest.topics, query.data?.preference?.keywords || "", n.dismissed).map((t, i) => ({ ...t, key: t.id, originalIndex: i + 1, ...classifyTopicForReading(t) }))).map(group => <div key={group.group}><h4 className="mt-4 font-semibold">{group.group}</h4>{group.rows.map(t => <article key={t.id} className="border-t py-4">
           <p className="text-xs text-muted-foreground">{t.kind} · {t.format}{n.adopted.includes(t.id) ? " · 已采用" : ""}</p>
           <h4 className="my-1 font-medium">{t.title}</h4><p className="text-sm leading-6">{t.angle}</p>
           {t.sources.map(s => <a key={s.id} href={s.url} target="_blank" rel="noreferrer" className="mt-1 block text-xs underline">来源：{s.title} · {new Date(s.observedAt).toLocaleDateString("zh-CN")}</a>)}
@@ -72,7 +74,8 @@ export function TopicDigestBell({ userId }: { userId: string }) {
             setOpen(false); navigate(`/platform?mode=create&createTool=viral&topicDigest=${encodeURIComponent(n.id)}&topicId=${encodeURIComponent(t.id)}`);
             window.dispatchEvent(new Event("mvs:platform-tab"));
           }}>用这个选题开始创作</button><button type="button" className={button} disabled={busy} onClick={() => void act(() => dismiss.mutateAsync({ id: n.id, topicId: t.id }))}>不感兴趣</button></div>
-        </article>)}
+        </article>)}</div>)}
+        <NotificationDraftComparison userId={userId} notificationId={n.id} />
         {selectTopicCards(n.digest.topics, query.data?.preference?.keywords || "", n.dismissed).length === 0 && <p className="text-sm">本期选题已隐藏，可调整关键词等待下一期。</p>}
       </section>)}
       {message && <p role="status" className="mt-3 text-sm">{message}</p>}
@@ -103,4 +106,15 @@ export function TopicDigestDraft({ userId, value, onApply, notificationId, topic
       }}>{already ? "已加入需求" : "保留原稿，加入这个选题"}</button></>}
     {message && <p role="status" className="mt-2 text-sm">{message}</p>}
   </div>;
+}
+
+function NotificationDraftComparison({ userId, notificationId }: { userId: string; notificationId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const query = trpc.mvAnalysis.getTopicDraftComparison.useQuery({ scope: userId, id: notificationId }, { enabled: expanded, retry: false });
+  return <details className="mt-4 border-t pt-3" onToggle={event => setExpanded(event.currentTarget.open)}>
+    <summary className="cursor-pointer text-sm font-medium">对照原稿与整合稿</summary>
+    {query.isLoading && <p role="status">正在读取已保存的稿件…</p>}
+    {query.isError && <p role="alert">原稿暂时无法读取，已推荐内容仍保留。<button type="button" onClick={() => void query.refetch()}>重试读取</button></p>}
+    {query.data && <TopicDraftComparison comparison={query.data} />}
+  </details>;
 }

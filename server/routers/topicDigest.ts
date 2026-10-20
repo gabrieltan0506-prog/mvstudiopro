@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure } from "../_core/trpc.js";
 import { topicCreationBrief, topicPreferenceSchema, topicPeriod, TOPIC_DIGEST_INTERVAL_MS } from "../../shared/topicDigest.js";
-import { readTopicPreference, saveTopicPreference, listTopicNotifications, getTopicNotification, updateTopicNotification, topicPoolState, readTopicRecommendationCount } from "../services/topicDigestStore.js";
+import { readTopicPreference, saveTopicPreference, listTopicNotifications, getTopicNotification, updateTopicNotification, topicPoolState, readTopicRecommendationCount, readTopicDraftComparison } from "../services/topicDigestStore.js";
 
 async function safe<T>(fn: () => Promise<T>) {
   try { return await fn(); } catch (error) {
@@ -13,6 +13,7 @@ async function safe<T>(fn: () => Promise<T>) {
 const scope = z.object({ scope: z.string().max(64) });
 const target = z.object({ id: z.string().min(1).max(80), topicId: z.string().min(1).max(30) });
 export const topicDigestProcedures = {
+  getTopicDraftComparison: protectedProcedure.input(z.object({ id: z.string().min(1).max(80), scope: z.string().max(64) })).query(({ ctx, input }) => safe(() => readTopicDraftComparison(ctx.user.id, input.id))),
   topicDigestInbox: protectedProcedure.input(scope).query(({ ctx }) => safe(async () => {
     const preference = await readTopicPreference(ctx.user.id);
     const recommendationCount = await readTopicRecommendationCount(ctx.user.id);
