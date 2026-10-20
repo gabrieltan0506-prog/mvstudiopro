@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { MANHUA_CAMERA_MOVE_BANK } from "./manhuaCameraMoveBank";
-import { MANHUA_OVERSEAS_FILMS as films, MANHUA_OVERSEAS_METHODS as methods, MANHUA_OVERSEAS_CATEGORIES as categories, prepareOverseasAdvisorQuestion, buildManhuaOverseasReference } from "./manhuaOverseasKnowledge";
+import { MANHUA_OVERSEAS_FILMS as films, MANHUA_OVERSEAS_METHODS as methods, MANHUA_OVERSEAS_CATEGORIES as categories, prepareOverseasAdvisorQuestion, appendOverseasAdvisorDraft, buildManhuaOverseasReference } from "./manhuaOverseasKnowledge";
 import { buildManhuaCraftReference } from "./manhuaCraftKnowledge";
 
 it("32部来源、六类去重方法、时间窗和现有运镜ID形成闭环", () => {
@@ -48,4 +48,19 @@ it("泛问出海能发现全部目录，镜面具体问题能命中对应方法"
   const overview = buildManhuaCraftReference("漫剧出海有什么内容");
   for (const row of [...films, ...methods]) expect(overview).toContain(row.titleZh);
   expect(buildManhuaCraftReference("镜面特效怎么做")).toContain("镜像从同步到自主");
+});
+
+it("方法就地携带中文运镜名和来源秒窗，不要求顾问跨表猜测", () => {
+  const reference = buildManhuaOverseasReference("overseas-camera-scale");
+  const data = JSON.parse(reference.slice(reference.indexOf("\n") + 1));
+  expect(data.selected[0].cameraMoves.map((move: any) => move.nameZh)).toEqual(["特写镜头", "建立全景", "推拉结合"]);
+  const source = data.selected[0].sourceReferences.find((row: any) => row.id === "overseas-film-32");
+  expect(source).toMatchObject({ titleZh: "博物馆夜班", fromSec: 11.9, toSec: 56.8 });
+  expect(source.cautionZh).toContain("近空桶底");
+});
+it("小说预填保留原问题，超限拒绝而非截断", () => {
+  const q = prepareOverseasAdvisorQuestion("overseas-film-32", "novel");
+  expect(q).toContain("叙述视角"); expect(q).toContain("不改写正文");
+  expect(appendOverseasAdvisorDraft("原问题\n保留尾部", q)).toBe("原问题\n保留尾部\n\n" + q);
+  expect(() => appendOverseasAdvisorDraft("原".repeat(1990), q)).toThrow("原问题已保留");
 });

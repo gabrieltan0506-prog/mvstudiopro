@@ -210,3 +210,11 @@ it("完整章节尾逗号自动修复，先保存原文再校验且仅调用一�
   expect(events).toEqual(["raw", "parsed"]);
   expect(call).toHaveBeenCalledTimes(1);
 });
+
+it("小说实际服务提示读取出海条目，普通讨论和正文阶段不强灌目录", () => {
+  const prompt = buildNovelTestPrompt({ ...input, advisorMessage: "请借鉴 overseas-film-32 与 overseas-camera-scale，只讨论" }, "真实模板", []);
+  expect(prompt).toContain("近空桶底"); expect(prompt).toContain('"sourceReferences"');
+  expect(prompt).toContain("特写镜头"); expect(prompt).toContain("不要把overseas编号放进recommendations");
+  expect(buildNovelTestPrompt(input, "", [])).not.toContain("漫剧出海审订目录");
+  expect(buildNovelTestPrompt({ ...input, stage: "chapter", advisorMessage: "overseas-film-32" }, "", [])).not.toContain("漫剧出海审订目录");
+});

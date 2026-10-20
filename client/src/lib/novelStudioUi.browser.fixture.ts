@@ -33,7 +33,7 @@ export async function buildNovelStudioUiPreview() {
     jsx: "automatic",
     tsconfig: "tsconfig.json",
     external: ["pdfjs-dist", "tesseract.js"],
-    define: { "process.env.NODE_ENV": '"test"' },
+    define: { "process.env.NODE_ENV": '"test"', "import.meta.env": "{}" },
     plugins: [
       {
         name: "offline-mock",

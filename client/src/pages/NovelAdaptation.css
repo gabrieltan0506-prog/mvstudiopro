@@ -328,6 +328,7 @@
 }
 .novel-context-tabs {
   display: flex;
+  flex-wrap: wrap;
   border-bottom: 1px solid #383347;
   padding: 0 14px;
   gap: 16px;
@@ -343,6 +344,11 @@
 }
 .novel-context-tabs button[aria-pressed="true"] {
   border-color: var(--novel-gold);
+  color: var(--novel-gold);
+}
+.novel-context-tabs [data-manhua-overseas-open] {
+  font-size: 18px;
+  font-weight: 700;
   color: var(--novel-gold);
 }
 .novel-context-body {

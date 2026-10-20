@@ -10738,6 +10738,7 @@ function OmniCanvasWorkspace() {
 
   const advisorInWorkflowRail = manhuaUiMode === "workbench" && !(immersiveWorkbench && immersiveExtrasOpen);
   const creativeAdvisorAction = (
+    <div className="flex shrink-0 flex-wrap items-center gap-2" data-manhua-creative-tools>
     <button
       type="button"
       data-manhua-advisor-open
@@ -10749,6 +10750,8 @@ function OmniCanvasWorkspace() {
     >
       创作顾问<span aria-live="polite">{advisorNeedsAttention ? ` (${advisorNeedsAttention})` : ""}</span>
     </button>
+    <ManhuaOverseasLibraryButton enabled={Boolean(user?.id)} onPrepareQuestion={prepareOverseasQuestion} />
+    </div>
   );
 
   function prepareOverseasQuestion(question: string) {
@@ -10860,7 +10863,6 @@ function OmniCanvasWorkspace() {
                   )}
                 </div>
               )}
-              {canvasMode === "manhua" && <ManhuaOverseasLibraryButton enabled={Boolean(user?.id)} onPrepareQuestion={prepareOverseasQuestion} />}
               {canvasMode === "manhua" && !advisorInWorkflowRail ? creativeAdvisorAction : null}
               <details
                 key={immersiveWorkbench ? "compact-tools" : "full-tools"}
