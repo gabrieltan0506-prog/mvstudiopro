@@ -1,3 +1,4 @@
+import { TopicDigestDraft, readTopicDigestLocation } from "@/components/TopicDigestBell";
 import { digitalHumanSourceSchema, type DigitalHumanSource } from "@shared/digitalHumanStudio";
 import { DigitalHumanStudio } from "@/components/DigitalHumanStudio";
 import ViralGraphicPages from "@/components/platform/ViralGraphicPages";
@@ -49,6 +50,9 @@ import { PlatformTrendWorkbench } from "@/components/platform/PlatformTrendWorkb
 import { PlatformTrendReportRail } from "@/components/platform/PlatformTrendReportRail";
 import { PlatformToolsWorkbench } from "@/components/platform/PlatformToolsWorkbench";
 import { PlatformStructuredPersonaForm } from "@/components/platform/PlatformStructuredPersonaForm";
+import { MarketingPlanPanel } from "@/components/platform/MarketingPlanPanel";
+import { MarketingOfferPanel } from "@/components/platform/MarketingOfferPanel";
+import { formatOptimizationAdvice } from "@shared/marketingOffer";
 import { PlatformPersonaPolishPanel } from "@/components/platform/PlatformPersonaPolishPanel";
 import {
   assessPlatformPersonaSpecificity,
@@ -3299,6 +3303,7 @@ export default function PlatformPage() {
   /** 仅登录且 auth 完成后才有稳定 userKey；禁止全体 anon 共桶 */
   const workbenchUserKey = !loading && user?.id != null ? String(user.id) : null;
   const workbenchStorageReady = Boolean(workbenchUserKey);
+  const [topicDigestTarget, setTopicDigestTarget] = useState(() => readTopicDigestLocation(window.location.search));
 
   useEffect(() => {
     if (!workbenchStorageReady || !workbenchUserKey) {
@@ -3418,6 +3423,7 @@ export default function PlatformPage() {
         }
         setPlatformMode(loc.mode);
         setCreationToolState(resolvePlatformCreationTool(window.location.search));
+        setTopicDigestTarget(readTopicDigestLocation(window.location.search));
         writePlatformModeToStorage(loc.mode);
         if (loc.mode === "tools") {
           setCustomWorkspaceTab(loc.tool);
@@ -5283,6 +5289,17 @@ export default function PlatformPage() {
           />
         }
       />}
+      {workbenchUserKey && topicDigestTarget && <TopicDigestDraft key={`${workbenchUserKey}/${topicDigestTarget.id}/${topicDigestTarget.topicId}`} userId={workbenchUserKey}
+        notificationId={topicDigestTarget.id} topicId={topicDigestTarget.topicId} value={focusPrompt}
+        onApply={next => { setFocusPrompt(next); setFreeformOverride(true); setPersonaFieldErrors({}); }} />}
+      <MarketingOfferPanel context={focusPrompt} onChange={next => {
+        setFocusPrompt(next);
+        setFreeformOverride(true);
+        setPersonaFieldErrors({});
+      }} />
+      <MarketingPlanPanel key={workbenchUserKey || "anonymous"} userKey={workbenchUserKey} value={focusPrompt} onApply={next => {
+        setFocusPrompt(next); setFreeformOverride(true); setPersonaFieldErrors({});
+      }} />
       <details className="text-sm text-slate-300"><summary className="cursor-pointer py-2">需要帮助整理需求？</summary>
       <PlatformPersonaPolishPanel
         id="platform-persona-polish"
@@ -8609,7 +8626,7 @@ export default function PlatformPage() {
         pendingOptimizeVisionRef.current = undefined;
         pendingOptimizeLiveTrendsRef.current = false;
         setCustomOptimizeResult(res.result.optimizedMarkdown);
-        setCustomOptimizeSummary(res.result.summary);
+        setCustomOptimizeSummary(formatOptimizationAdvice(res.result));
         toast.success(`深度优化完成${res.cost > 0 ? `（已扣 ${res.cost} 积分）` : ""}`);
         return;
       }
@@ -8869,7 +8886,7 @@ export default function PlatformPage() {
       pendingOptimizeLiveTrendsRef.current = false;
       return {
         optimizedMarkdown: res.result.optimizedMarkdown,
-        summary: res.result.summary,
+        summary: formatOptimizationAdvice(res.result),
       };
     },
     [optimizeCustomCopyMutation, enabledPlatformSkillIds, allowBloggerTitle],
@@ -11410,7 +11427,7 @@ export default function PlatformPage() {
                 {item.publishingAdvice ? (
                   <div className="mt-3 rounded-xl border border-[#fbbf24]/30 bg-[rgba(251,191,36,0.08)] px-3 py-2.5">
                     <div className="text-[10px] font-semibold uppercase tracking-wide text-[#fcd34d]/90">
-                      发布时间 / 发布建议
+                      发布标题、标签与推广建议
                     </div>
                     <div className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[#ffe9a8]">
                       {item.publishingAdvice}
@@ -15774,7 +15791,7 @@ export default function PlatformPage() {
               {!customOptimizeResult && visibleExecutionCards.some((c) => c.publishingAdvice?.trim()) ? (
                 <div className="mt-5 rounded-xl border border-[#fbbf24]/25 bg-[rgba(251,191,36,0.06)] px-4 py-3">
                   <div className="text-[10px] font-semibold uppercase tracking-wide text-[#fcd34d]/90">
-                    发布时间 / 发布建议（来自全案选题）
+                    发布标题、标签与推广建议（来自全案选题）
                   </div>
                   <div className="mt-1.5 space-y-1.5">
                     {visibleExecutionCards
@@ -15814,13 +15831,14 @@ export default function PlatformPage() {
               {customOptimizeResult ? (
                 <div className="mt-5 space-y-3 rounded-2xl border border-[#fbbf24]/25 bg-[rgba(251,191,36,0.06)] p-5">
                   <div className="text-xs font-semibold uppercase tracking-wide text-[#fcd34d]/80">
-                    深度优化结果{customOptimizeSummary ? ` · ${customOptimizeSummary}` : ""}
+                    深度优化结果
                   </div>
+                  {customOptimizeSummary && <div className="whitespace-pre-wrap rounded-xl border border-white/10 p-3 text-sm leading-6 text-slate-300">{customOptimizeSummary}</div>}
                   <div className="whitespace-pre-wrap text-sm leading-7 text-white/88">{customOptimizeResult}</div>
                   {visibleExecutionCards.some((c) => c.publishingAdvice?.trim()) ? (
                     <div className="rounded-xl border border-[#fbbf24]/25 bg-black/20 px-3 py-2.5">
                       <div className="text-[10px] font-semibold uppercase tracking-wide text-[#fcd34d]/90">
-                        发布时间 / 发布建议（参考全案选题）
+                        发布标题、标签与推广建议（参考全案选题）
                       </div>
                       <div className="mt-1.5 space-y-1.5">
                         {visibleExecutionCards
@@ -18279,7 +18297,7 @@ export default function PlatformPage() {
                         {item.publishingAdvice ? (
                           <div className="mt-3 rounded-xl border border-[#fbbf24]/30 bg-[rgba(251,191,36,0.08)] px-3 py-2.5">
                             <div className="text-[10px] font-semibold uppercase tracking-wide text-[#fcd34d]/90">
-                              发布时间 / 发布建议
+                              发布标题、标签与推广建议
                             </div>
                             <div className="mt-1 break-words break-all [overflow-wrap:anywhere] text-sm leading-6 text-[#ffe9a8] whitespace-pre-wrap">
                               {renderSafeText(item.publishingAdvice)}

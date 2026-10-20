@@ -927,8 +927,9 @@ export default function PlatformAssetAnalysisPanel({
       {optimizedMarkdown ? (
         <div className="mt-5 space-y-3 rounded-2xl border border-[#fbbf24]/25 bg-[rgba(251,191,36,0.06)] p-5">
           <div className="text-xs font-semibold text-[#fcd34d]/85">
-            步骤 2 完成{optimizeSummary ? ` · ${optimizeSummary}` : ""}
+            步骤 2 完成
           </div>
+          {optimizeSummary && <div className="whitespace-pre-wrap text-sm leading-6 text-slate-300">{optimizeSummary}</div>}
           <div className="max-h-48 overflow-auto whitespace-pre-wrap text-sm leading-7 text-white/88">{optimizedMarkdown}</div>
           {onGenerateFromText ? (
             <div className="flex flex-wrap gap-2 pt-1">

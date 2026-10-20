@@ -2092,6 +2092,7 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         // 「不限页数与大小」是产品口径，时间也不能限；这里不读任何超时环境变量。
         return Number.MAX_SAFE_INTEGER;
       }
+      if (input.action === "platform_marketing_plan") return 25 * 60_000;
       if (input.action === "platform_topic_expand") {
         const raw = Number(process.env.PLATFORM_TOPIC_EXPAND_JOB_TIMEOUT_MS);
         if (Number.isFinite(raw) && raw >= 300_000) return raw;
@@ -2615,6 +2616,11 @@ async function processPlatformJob(
 ): Promise<{ output: unknown; provider?: string }> {
   const params = input.params ?? {};
   try {
+    if (input.action === "platform_marketing_plan") {
+      if (!platformJobId || !jobUserId) throw new Error("营销任务缺少持久化身份");
+      const { processMarketingPlanJob } = await import("./platformMarketingPlan.js");
+      return await processMarketingPlanJob(platformJobId, jobUserId);
+    }
     // 结算恢复先于所有抽取/模型工作：同一任务只重放 receipt 与幂等账本。
     if (input.action === "knowledge_card_distill" || input.action === "knowledge_card_derive_level") {
       if (!platformJobId || !jobUserId) throw new Error("知识卡任务缺少持久化身份");
@@ -4383,6 +4389,9 @@ async function runClaimedJob(
         console.error("[Jobs] trend report refund failed:", refundError),
       );
       await markJobFailed(job.id, message);
+    } else if (job.type === "platform" && isRecord(job.input) && job.input.action === "platform_marketing_plan") {
+      // 不自动重排三次付费调用；原稿和步骤状态已持久化，用户定向恢复。
+      await markJobFailed(job.id, "营销方案流程中断，已保存结果保留。请从失败步骤恢复。");
     } else if (resolveFailedJobDisposition(job, error) === "reconcile_and_fail_paid_image") {
       const { markReconciliationPending } = await import("../services/paidJobLedger.js");
       await markReconciliationPending(job.id, "canvasGptImage2").catch(e =>

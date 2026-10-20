@@ -1,3 +1,4 @@
+import { startTopicDigestScheduler, stopTopicDigestScheduler } from "../services/topicDigest.js";
 import { apiCorsMiddleware, applyApiCors, isAllowedCorsOrigin } from "./apiCors";
 import {registerManhuaStageWorldBridge} from "../services/manhuaStageWorldBridge";
 import { registerCreativeVoice } from "../routers/creativeVoice";
@@ -1158,6 +1159,7 @@ async function startServer() {
       startPaidJobLedgerReaper();
     }).catch(() => {});
     startVercelPreviewScheduler();
+    startTopicDigestScheduler();
     if (isGrowthTrendSchedulerDisabled()) {
       console.warn("[growth.scheduler] disabled by DISABLE_GROWTH_TREND_SCHEDULER");
     } else {
@@ -1178,6 +1180,7 @@ async function startServer() {
     if (shuttingDown) return;
     shuttingDown = true;
     stopVercelPreviewScheduler();
+    stopTopicDigestScheduler();
     console.warn(`[server] 收到 ${signal} 信号，开始优雅退出 + 兜底退积分…`);
     // Heavy rig must be allowed to close children and persist results within Fly's 300s window.
     // This is explicit shutdown cleanup, never the long-task/heartbeat deadline.

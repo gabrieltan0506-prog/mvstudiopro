@@ -1,8 +1,9 @@
+import { buildMarketingPrompt, isMarketingContext } from "../../shared/marketingSkills.js";
 import { readShortlistTrendBriefs } from "./platformTopicTrends";
 import { assertSpokenPerformance } from "../../shared/spokenPerformance.js";
 import { topicDisplayText } from "../../shared/platformTopicDisplay";
 import { ExpandEvidencePersistenceError, type PlatformExpandEvidence } from "./platformTopicExpandEvidence.js";
-import { buildViralRolePrompt, buildViralMethodPlan, VIRAL_CREATION_METHODS, VIRAL_METHOD_VERSION } from "../../shared/viralCreationMethods.js";
+import { buildViralRolePrompt, buildViralMethodPlan, selectViralCreationMethods, VIRAL_METHOD_VERSION } from "../../shared/viralCreationMethods.js";
 import { XHS_PACKAGE_OUTPUT_PROMPT, auditXhsCreationPackage, connectXhsPackageToBlueprint } from "../../shared/xhsCreationPackage.js";
 import { XHS_CONTENT_SKILL_ID, XHS_CONTENT_GUIDANCE, XHS_TEXT_MODEL, XHS_TEXT_HOPS, xhsTopicCount, buildXhsGrowthEvidence, type XhsGrowthEvidence } from "../../shared/xhsContentStrategy.js";
 import { MANHUA_ADVISOR_HOPS, manhuaAdvisorReasoningEffort } from "./openrouterDeepSeekV41Flash";
@@ -352,10 +353,11 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
 
   const user = JSON.stringify({
     personaContext: String(params.context || "").slice(0, xhsMode ? 8000 : 6000),
+    marketingGuidance: buildMarketingPrompt({ stage: "shortlist", context: params.context || "" }),
     skillPoolIds: poolIds,
     laneHints: laneSkillHints,
     stage1Seeds: (params.stage1Seeds || []).slice(0, 6),
-    ...(xhsMode ? { methodLibrary: VIRAL_CREATION_METHODS, methodVersion: VIRAL_METHOD_VERSION, methodPlan: buildViralMethodPlan(params.context || "", params.topicGoal) } : {}),
+    ...(xhsMode ? { methodLibrary: selectViralCreationMethods(params.context || ""), methodVersion: VIRAL_METHOD_VERSION, methodPlan: buildViralMethodPlan(params.context || "", params.topicGoal) } : {}),
     targetPlatforms: xhsMode ? (params.creationPlatforms || ["xiaohongshu"]) : undefined,
     avoidTitles: (params.existingTitles || []).slice(0, 40),
     skillsBrief: skillsBlock.slice(0, 8000),
@@ -985,7 +987,11 @@ conveyGoal（须兑现）：${pick.conveyGoal}
 
     const user = JSON.stringify({
       personaContext: String(params.context || "").slice(0, 8000),
-      ...(xhsMode ? { methodLibrary: VIRAL_CREATION_METHODS, methodVersion: VIRAL_METHOD_VERSION, methodPlan: buildViralMethodPlan([params.context || "", pick.title, pick.conveyGoal].join("\n"), undefined, { stage: "expand", format: isVideo ? "短视频" : "图文" }) } : {}),
+      marketingGuidance: [
+        buildMarketingPrompt({ stage: "expand", context: params.context || "" }),
+        isMarketingContext(params.context || "") ? "【营销方案的输出位置】引流/利润/高价三档仅作为候选，用简短自然段写入既有publishingAdvice，并说明价格依据与待补成本/售价/交付耗时；未给事实不得虚构。xhsPackage.conversion.offer和delivery仅写当前选题的一个主承接商品及交付边界，各不超过300字；尚未提供商品时明确未设商品，候选不冒充已售。正文、graphicNotePages.body及口播不得混入内部三档规划、成本测算或待补清单。methodApplications仅选择确实用于正文的方法，引用正文原句，不为凑方法引用把经营方案印给读者。" : "",
+      ].filter(Boolean).join("\n"),
+      ...(xhsMode ? { methodLibrary: selectViralCreationMethods(params.context || ""), methodVersion: VIRAL_METHOD_VERSION, methodPlan: buildViralMethodPlan([params.context || "", pick.title, pick.conveyGoal].join("\n"), undefined, { stage: "expand", format: isVideo ? "短视频" : "图文", marketingContext: params.context || "" }) } : {}),
       pick: { ...pick, xhsGrowthEvidence: selectedEvidence },
       skillsPrompt: skillsPrompt.slice(0, 14000),
       outputFormat: "json",

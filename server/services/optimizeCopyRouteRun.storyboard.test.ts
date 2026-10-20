@@ -67,3 +67,18 @@ it("原资产节点若携带模板则逐份校验消费，失败不退Kimi",asyn
  await expect(runOptimizeCustomCopyForUser({...input,storyboardCandidate:undefined,factoryTextStage:"assets",templateReferences:[]},{id:7,role:"user"})).rejects.toThrow("3–5");
  expect(m.charge).not.toHaveBeenCalled();expect(m.call).not.toHaveBeenCalled();
 });
+
+it("工厂分镜不自动挂营销方法，保留用户要求与原计费", async () => {
+ const optimizationBrief = "亲子绘本动画营销获客，商品价格成本待补。";
+ const result = await runOptimizeCustomCopyForUser({ ...input, optimizationBrief }, { id: 7, role: "user" });
+ expect(m.call.mock.calls[0][0]).toContain(optimizationBrief);
+ expect(m.call.mock.calls[0][0]).not.toContain("营销方法补充");
+ expect(m.call.mock.calls[0][0]).toContain("沿上文原分镜表合同返回完整Markdown");
+ expect(result.result.optimizedMarkdown).toBe("完整分镜原文");
+ expect(m.charge).toHaveBeenCalledTimes(1);
+ expect(m.call).toHaveBeenCalledTimes(1);
+});
+it("无商业意图的原分镜不注入营销规划", async () => {
+ await runOptimizeCustomCopyForUser(input, { id: 7, role: "user" });
+ expect(m.call.mock.calls[0][0]).not.toContain("【工厂原输出合同优先】");
+});

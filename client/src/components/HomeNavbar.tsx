@@ -1,3 +1,4 @@
+import { TopicDigestBell } from "./TopicDigestBell";
 import React, { useState, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -14,7 +15,7 @@ import {
 const nav = [
   ["首页", "Home", "/"],
   ["照片工具", "Photo", "/#photo-tools"],
-  ["平台创作", "Platform", "/platform"],
+  ["平台创作与营销指南", "Creation & Marketing", "/platform?mode=create"],
   ["爆款复刻", "Recreate", "/creator-growth-camp/premium-remix"],
   // 竞品调研内测中：首页导航暂不给链接（标注见 HomeHero 卡片）
   // 原为「Omini，Seedance 2.X画布」：Omni 拼错，且导航挂模型版本号会随版本过期，
@@ -80,6 +81,8 @@ export default function HomeNavbar() {
             MV Studio <span style={{ color: "var(--hp-accent)" }}>Pro</span>
           </div>
         </a>
+
+        {isAuthenticated && user && <TopicDigestBell key={String(user.id)} userId={String(user.id)} />}
 
         {isBelowXl ? (
           // ─── 移动分支 (< 1280px)：汉堡 + Sheet 右侧抽屉 ───
@@ -473,11 +476,11 @@ export default function HomeNavbar() {
                         📁 我的作品
                       </a>
                       <a
-                        href="/platform"
+                        href="/platform?mode=create"
                         style={{ display: "block", padding: "11px 14px", color: "var(--hp-accent)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
                         onClick={() => setMenuOpen(false)}
                       >
-                        平台创作
+                        平台创作与营销指南
                       </a>
                       {/* 竞品调研内测中：暂不给链接 */}
                       <a

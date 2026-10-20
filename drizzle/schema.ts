@@ -106,3 +106,5 @@ export const workflowRuns = pgTable("workflow_runs", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+export * from "./schema-topic-digest";

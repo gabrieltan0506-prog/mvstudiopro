@@ -1,11 +1,13 @@
 /** 漫剧顾问模型，使用固定版本；不受平台知识卡模型环境配置影响。 */
 export const OPENROUTER_DEEPSEEK_V41_FLASH_MODEL = "deepseek/deepseek-v4.1-flash";
+/** 营销分析使用用户指定的1017快照；不替换其他既有顾问路由。 */
+export const OPENROUTER_DEEPSEEK_V41_FLASH_1017_MODEL = "deepseek/deepseek-v4.1-flash-1017";
 export const MANHUA_ADVISOR_REASONING_EFFORT = "low" as const;
 /** 推理与正文共用预算；保留足够空间输出完整轨迹 JSON。 */
 export const MANHUA_ADVISOR_MAX_OUTPUT_TOKENS = 32_768;
 
 export function isOpenRouterDeepSeekV41FlashModel(model: string): boolean {
-  return model.trim().toLowerCase() === OPENROUTER_DEEPSEEK_V41_FLASH_MODEL;
+  return [OPENROUTER_DEEPSEEK_V41_FLASH_MODEL, OPENROUTER_DEEPSEEK_V41_FLASH_1017_MODEL].includes(model.trim().toLowerCase());
 }
 
 /** 0929 用户指定 GLM 优先、DeepSeek 备选；OpenRouter GLM 在传输层锁 Z.AI。一次咨询最多四跳，不另开额度或扣费。 */
