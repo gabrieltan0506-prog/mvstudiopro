@@ -1,3 +1,4 @@
+import { ManhuaOverseasMethodReference } from "./ManhuaOverseasLibrary";
 import React, { useEffect, useState } from "react";
 import { MANHUA_VFX_CATEGORIES, searchManhuaVfxPresets, formatManhuaVfxDirection } from "@shared/manhuaVfxCatalog";
 
@@ -32,6 +33,9 @@ export function ManhuaVfxPicker({ shotIndex, disabled, initialDirection = "", on
         <button type="button" aria-label="下一页特效" disabled={(currentPage + 1) * pageSize >= presets.length} onClick={() => setPage(currentPage + 1)} className="rounded border border-white/15 px-2 py-1 disabled:opacity-40">下一页</button>
       </div>}
     </div>
+    <ManhuaOverseasMethodReference category="特效" disabled={disabled} onAppendDirection={text => {
+      setDirection(previous => previous.includes(text) ? previous : [previous.trim(), text].filter(Boolean).join("\n\n")); setError("");
+    }} />
     <textarea aria-label="本镜特效描述" value={direction} onChange={e => setDirection(e.target.value)} rows={5} className="my-2 w-full rounded bg-slate-900 p-2 text-xs" placeholder="写清由谁触发、向哪里运动、影响谁、接触后发生什么。" />
     {error && <p role="alert" className="text-xs text-rose-200">{error}</p>}
     <button type="button" disabled={disabled || !direction.trim()} onClick={() => { try { onApply(direction); setError(""); } catch (e) { setError(e instanceof Error ? e.message : "采用失败，请重试"); } }} className="rounded bg-cyan-400 px-3 py-2 text-xs font-semibold text-slate-950 disabled:opacity-40">采用到当前镜头</button>

@@ -830,3 +830,13 @@ describe("映刻独立方案咨询", () => {
     expect(invokeLLMMock).not.toHaveBeenCalled();
   });
 });
+
+it("漫剧出海的真实消息构造读取指定故事及声音边界，专项空间顾问也能消费", () => {
+  const question = "请参考 overseas-film-30 和 overseas-sound-release 给当前镜头建议";
+  const messages = buildManhuaCreativeAdvisorLlmMessages({ question, context: manhuaContext() });
+  const content = messages.map(message => message.content).join("\n");
+  expect(content).toContain("土上覆土");
+  expect(content).toContain("原片具体乐器、对白和入点尚未人工听验");
+  const spatial = buildManhuaCreativeAdvisorLlmMessages({ question: "overseas-camera-scale", context: manhuaContext({ digitalHumanSpatial: spatialTargetFixture() }) });
+  expect(spatial.map(message => message.content).join("\n")).toContain("尺度揭示与情绪回落");
+});
