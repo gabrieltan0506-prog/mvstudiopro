@@ -7,15 +7,9 @@ import {
 } from "./gemini35FlashRuntime.js";
 import { isPlatformImageOpenAiAllowed } from "../config/platformSwitches.js";
 import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
-import {
-  appendFashionEditorialCharacterGuidance,
-  PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH,
-} from "../../shared/platformFashionEditorialCharacter.js";
+import { PLATFORM_SCENE_WARDROBE_LOCK_ZH, PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH } from "../../shared/platformFashionEditorialCharacter.js";
+import { buildPlatformEditorialCoverGuidance } from "../../shared/platformEditorialCover.js";
 import { STORYBOARD_ON_IMAGE_TEXT_ZH } from "../../shared/storyboardTextClarity.js";
-import {
-  composePlatformCoverShellDirective,
-  pickPlatformCoverShell,
-} from "../../shared/platformCoverShellPicker.js";
 import {
   STORYBOARD_LIGHTING_EMOTION_GUIDANCE_ZH,
   STORYBOARD_PANEL_TABLE_FIELDS_ZH,
@@ -315,7 +309,7 @@ const CHINESE_VISUAL_BRIEF_MAX_CHARS = SCRIPT_SLICE;
 /** 平台选题 **单帧封面**：附在中文直送 prompt 末尾的版式补充（含简中主标题要求）。 */
 const PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER = `
 【版式补充】
-1. 竖版 9:16 单帧满版主视觉，单一主体；避免无意做成 2×4 或多格分镜。
+1. 竖版 9:16 单帧封面，明确主视觉与独立标题区；避免无意做成 2×4 或多格分镜。
 2. 主标题为**简体中文**，大而清晰；场景随选题多样化，避免千篇一律书房/客厅套路。
 3. **不要**默认堆 2–4 个线描图标栏；最多 0–1 个极克制点缀，且不可抢主句。
 4. masterpiece、8k；屏内文字一律简体中文、印刷清晰。
@@ -682,55 +676,22 @@ export function buildPlatformTopicCoverDirectChinesePrompt(input: {
   const hook = String(input.topicHook || "").trim().slice(0, 120);
   const subline = String(input.coverSubline || "").trim().slice(0, 24);
   const ctx = focusCoverChineseContextForDirectSend(String(input.context || ""), COVER_DIRECT_CONTEXT_MAX_CHARS);
-  const persona = appendFashionEditorialCharacterGuidance(
-    String(input.coverPersonaContext || "").trim(),
-    { maxChars: 2200, lang: "zh" },
-  );
-  const personaBlock = persona
-    ? `【身份锚点】（人物服装 / 道具 / 环境须与此一致）：\n${persona}\n\n`
-    : `【身份锚点】\n${PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH}\n\n`;
+  const persona = String(input.coverPersonaContext || "").replace(PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH, "").trim().slice(0, 2200);
   const nativeDirective = composePlatformCoverNativeVisualDirective(input.coverNativePlatform, {
     format: input.variant === "graphic" ? "图文" : "短视频",
   });
-  const nativeBlock = nativeDirective ? `${nativeDirective}\n\n` : "";
-  /**
-   * 版式在这里就定死一套。
-   *
-   * 以前把 17 种壳 + 7 种手法 + 10 个色一起摆给模型让它挑，出来的封面千篇一律；
-   * 用主句当种子挑，同一条选题重出仍是同一套，不同选题之间才轮换。
-   */
-  const shellDirective = composePlatformCoverShellDirective(
-    pickPlatformCoverShell({ topicHook: hook, salt: input.variant }),
-  );
-  const sublineRule = subline
-    ? `- 副标固定为「${subline}」（≤18 字、一行），字号明显小于主句、不抢主句；禁止再另造第三条封面文案。`
-    : `- 可有一行副标（≤18 字），总共可见文案 **≤2 行**；无副标亦可。`;
-  return `${personaBlock}${nativeBlock}请直接据下方选题与语境生成**一张竖版 9:16 单帧信息流封面**（单一主体、满版主视觉，不要做成 2×4 网格或多格分镜）：
-
-【停滑封面·高点击短钩】
-- 主标题用**简体中文**，**最多 13 字**（含标点；超则精简），大而清晰、印刷级，**必须且只能**呈现「${hook}」；主句气质要对齐反差/反常识/猎奇缺口（数字拧巴、结果颠倒、信息悬念），禁止正确但无聊的论文题；字勿挤成一团抢过人脸。
-${sublineRule}
-${shellDirective}
-- **忌**俗艳番茄大红墙、荧光粉绿贴纸堆。
-- **好奇/价值钉**：可用「先做N件事」「又挖到宝了」「刷到就是赚到」等开放环；弱钩（只有禁令无下文）须拧紧。
-- **版式禁令**：忌塑料说明书墙与 CTA 墙；**【禁】**荧光绿荧光笔贴纸、划线否定作业批改感、假杂志品牌刊头、黑金土豪财富墙、医美比例对比线。
-- **已剔除·禁止复现**：飞人跳伞类抽象摆拍、立体变形花字墙（字吃画面）、把答案逐条写满的剧透封面、主句字号过小、荧光粉绿撞色侧栏、划线否定作业批改感、黑金土豪财富墙、医美比例/前后对比线。
-- **禁止**百科封面：长段论述、履历堆砌、四条以上卖点清单、多图标+多辅标栏、说明书式信息图。
-- **禁止**默认暗沉、低照度、压抑严肃、葬礼感光影；须**生活化、年轻化、健康化、杂志级高级感**；优先便利店/餐厅/家装/哄娃等烟火气场域。
-- 优先自然窗光 / 户外或生活场域、明快克制配色 + **单一**强调色；有点击欲，不要死板正装肖像海报。
-- **有人物时·表情按选题定档（硬）**：先判选题气质再决定强度，**夸张不是默认值**。平静生活向（日常记录/居家/慢节奏）→ 自然神态：认真做事、低头笑、专注放松；共鸣吐槽向（小尴尬/明知不对还是做）→ 会心一笑、无奈摊手、心虚偷瞄；反差反常识向（数字拧巴/结果颠倒/身份错位）→ 才用错愕张嘴、瞪大眼、坏笑。吃喝/减脂向可用张口大吃、鼓腮咀嚼、叉子怼嘴；主句含「三件事/N步」可竖起三指呼应好奇环。底线：主句很拧时禁止望窗外发呆/证件照微笑；主句平和时也禁止满脸用力的表演。同批姿势轮换，勿全坐着、勿全挤同一表情。
-- **清单/攻略向封面（藍海如親子旅遊清單·对标 x1/x3）**：优先 **flat lay 神器墙 / 摊开行李箱 / 备忘录怼镜头 / 手持神器特写**；主句可用「必備｜清單｜保姆級｜不踩雷｜被問爆」杀伤词 + **大数字件数** + **结果钉**（如全程安静/少带/省事）；**禁止**默认正装讲课半身像。
-- **场景服饰硬锁（防穿帮）**：动作决定服装——网球发球必须网球运动装（短袖/网球裙裤+球鞋+球拍），**禁止长大衣/西服外套打网球**；游泳用泳装；爬山用户外功能装；装箱/带娃用休闲出行装；厅堂访谈才可用西装/丝绸衬衫。锁脸时仍须丰富姿势，且衣着跟场景。
-- 可借鉴小红书网感封面的「大字停滑、关键字提亮、侧栏/竖排张力」，但人物必须有戏且与文案同档（含张口大吃线），勿正坐上课脸。
-- 场景随文案多样化、贴合选题；人物脸/上半身可读，主标题不压脸。
-- **不要**为「显得专业」强行加 2–4 个线描图标栏；最多 0–1 个极克制点缀，且不可抢主句。
-- 从语境中只保留 **1–3 个**最能辨识此人设的特色道具/场景锚点（如典籍、耳机、节拍器、旅行物件、带娃神器），**禁止**把语境关键词全部画进画面。
-- masterpiece、8k、视觉冲击力强；屏内文字一律**中国大陆简体中文、清晰不乱码**（严禁繁体）。
-
-【选题主句·coverHeadline】：「${hook}」
-${subline ? `【封面副标·coverSubline】：「${subline}」\n` : ""}【语境（只调场景与情绪与 1–3 个特色道具；勿把语境全文印上封面）】：
+  return `请据选题和语境生成一张竖版9:16单帧封面，默认自然摄影与编辑排版，不生成多格分镜或整篇教程。
+【本次文案】
+主标题为简体中文「${hook}」，遵守原有最多13字要求；主标题大而清晰、不压脸，不另造标题、数字效果或口号。
+${subline ? `副标为「${subline}」，明显小于主标题，仅一行；不加第三条文案。` : "无指定副标时不另造副标，仅呈现主标题。"}
+${nativeDirective}
+【身份与场景】
+${persona || "根据本次选题决定主体；有参考人像时使用同一身份，不借用审美参考中的人物。"}
+${PLATFORM_SCENE_WARDROBE_LOCK_ZH}
+【内容语境，仅提取场景、动作与道具，不把制作说明印在封面】
 ${ctx}
 
+${buildPlatformEditorialCoverGuidance(ctx)}
 ${PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER}`.trim();
 }
 

@@ -213,6 +213,8 @@ describe("planKnowledgeCardPages", () => {
     for (const page of polluted.pages) {
       expect(page).not.toContain("coverHeadline");
       expect(page).not.toContain("A1 壳");
+      expect(page).not.toContain("封面摄影与编辑排版");
+      expect(page).not.toContain("购买动机：商业内容");
       expect(page).not.toContain("mk3");
     }
     // 约束还会撑出额外页数：用户看到的是 1/7 而不是 1/6

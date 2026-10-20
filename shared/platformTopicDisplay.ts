@@ -6,3 +6,15 @@ export function topicDisplayText(value: string): string {
     return !(platformDiagnostic && emptySample);
   }).join("").trim();
 }
+
+/** 旧版曾硬切24字；只提示疑似缺失，不拼接或补造原文。 */
+export function topicReasonDisplay(value: string | undefined): { text: string; incomplete: boolean } {
+  const text = topicDisplayText(value || "");
+  const stack: string[] = [];
+  const pairs: Record<string, string> = { "（": "）", "(": ")", "【": "】", "[": "]", "“": "”", "‘": "’" };
+  for (const char of text) {
+    if (pairs[char]) stack.push(pairs[char]);
+    else if (stack[stack.length - 1] === char) stack.pop();
+  }
+  return { text, incomplete: Boolean(text && (stack.length || (text.length === 24 && !/[。！？.!?]$/.test(text)))) };
+}

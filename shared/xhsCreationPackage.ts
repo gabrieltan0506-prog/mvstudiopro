@@ -1,3 +1,4 @@
+import { PLATFORM_EDITORIAL_COVER_GUIDANCE } from "./platformEditorialCover";
 import { mainActionKinds, speechFeasibilityFindings, ungroundedMeasureReferences } from "./viralDraftFeasibility.js";
 import { z } from "zod";
 import { platformGraphicNotePageSchema } from "./platformTopicShortlist.js";
@@ -42,6 +43,8 @@ export const XHS_PACKAGE_OUTPUT_PROMPT = `额外输出xhsPackage，且必须与�
  "evidenceRefs":["只能用pick.xhsGrowthEvidence.samples实际id，用户素材写creator；未用则空数组"],
  "experiment":{"hypothesis":"待验证假设，不能保证结果","variable":"按证据选封面、标题、开头、正文实用性、承接入口、需求匹配、价格说明、交付范围或证据呈现中的一个，不将相关变化当因果","primaryMetric":"匹配目标的一个指标","observation":"同口径24小时和7天分别观察，说明要收集的分母及缺失时不计算"}
 }
+${PLATFORM_EDITORIAL_COVER_GUIDANCE}
+cover.visual须具体写明本题前景、主体动作、背景距离、光源与虚实；cover.layout须写明标题区、照片区、字号层级、留白及单一强调色，不能只写“高级好看”。
 titleOptions恰好4个不同标题，首个为主选。图文页body只写将印在图片上的读者正文，不能混入画面/镜头/字体/色调/构图等制作说明；制作说明写到detailedScript、executionDetails或cover的设计字段。对于摄影设计教程，读者内容可讲制作方法，但不能混入为本篇出图器下达的指令。xhsPackage是创作方案，不得把其字段名、运营说明或检查内容画进给读者看的封面/图文。`;
 
 export type XhsPackageAudit = { passed: boolean; findings: Array<{ code: string; message: string }>; package?: XhsCreationPackage };
@@ -111,7 +114,9 @@ export function connectXhsPackageToBlueprint(blueprint: Record<string, unknown>,
   const ex = blueprint.executionDetails && typeof blueprint.executionDetails === "object" ? blueprint.executionDetails as Record<string, unknown> : {};
   blueprint.executionDetails = {
     ...ex,
-    environmentAndWardrobe: [ex.environmentAndWardrobe, `【封面场景】${p.cover.visual}`, `【系列连续性】${p.cover.continuity}`].filter(Boolean).join("\n"),
+    environmentAndWardrobe: [
+      `【封面目标】${({ acquire: "获客", follow: "关注", convert: "成交" } as const)[p.conversion.goal]}；【商品或交付】${p.conversion.offer}；【交付边界】${p.conversion.delivery}；【唯一承接】${p.conversion.action}`,
+      ex.environmentAndWardrobe, `【封面场景】${p.cover.visual}`, `【系列连续性】${p.cover.continuity}`].filter(Boolean).join("\n"),
     lightingAndCamera: [ex.lightingAndCamera, `【封面构图】${p.cover.layout}`].filter(Boolean).join("\n"),
   };
   const platform = blueprint.targetPlatform === "douyin" ? "douyin" : "xiaohongshu";

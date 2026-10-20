@@ -78,6 +78,8 @@ export type ImagePromptStats = {
 
 export type RunPlatformTopicImagePipelineInput = {
   viralCreation?: boolean;
+  /** 本批候选构图差异，最后追加，避免被语境压缩丢失。 */
+  coverDesignInstruction?: string;
   topicHook: string;
   format?: "短视频" | "图文";
   context?: string;
@@ -178,13 +180,10 @@ export async function runPlatformTopicImagePipeline(
   const trendBrief = String(input.trendEngagementVisualBrief || "").trim();
   const userContext = String(input.context || "").trim();
   const ctxStr = [trendBrief, userContext].filter(Boolean).join("\n\n");
-  const { appendFashionEditorialCharacterGuidance, PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH } = await import(
+  const { PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH } = await import(
     "../../shared/platformFashionEditorialCharacter.js",
   );
-  const coverPersona = input.viralCreation ? String(input.coverPersonaContext || "").replace(PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH, "").trim() : appendFashionEditorialCharacterGuidance(
-    String(input.coverPersonaContext || "").trim(),
-    { maxChars: 3800, lang: "zh" },
-  );
+  const coverPersona = String(input.coverPersonaContext || "").replace(PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH, "").trim();
   const briefSource = [coverPersona, String(input.topicHook || "").trim(), ctxStr].filter(Boolean).join("\n\n");
 
   const topicImageCondenseLog: string[] = [];
@@ -330,7 +329,7 @@ export async function runPlatformTopicImagePipeline(
           coverPersonaContext: coverPersona || undefined,
           coverSubline: String(input.coverSubline || "").trim() || undefined,
           coverNativePlatform: String(input.coverNativePlatform || "").trim() || undefined,
-        }).trim();
+        }).trim() + (input.coverDesignInstruction ? `\n\n【本张候选构图】${input.coverDesignInstruction}\n人物、商品、场景和标题事实必须来自本题内容；差异只在构图与叙事重点，不编造新剧情。` : "");
         if (!safePrompt) {
           throw new Error("中文封面指令为空");
         }

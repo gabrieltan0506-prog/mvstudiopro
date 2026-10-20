@@ -1,9 +1,13 @@
+import { TopicDraftComparison } from "./TopicDraftComparison";
+import { classifyTopicForReading, groupTopicsForReading } from "@shared/topicDigestPresentation";
 import { useEffect, useState } from "react";
 import { Bell } from "lucide-react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Sheet, SheetContent, SheetTitle, SheetDescription, SheetTrigger } from "@/components/ui/sheet";
 import { TOPIC_LANES, selectTopicCards, type TopicLane } from "@shared/topicDigest";
+
+import { marketingPublicError } from "@shared/marketingPlanDisplay";
 
 const button = "rounded-md border px-3 py-2 text-sm disabled:opacity-50";
 export function readTopicDigestLocation(search: string) {
@@ -30,7 +34,7 @@ export function TopicDigestBell({ userId }: { userId: string }) {
   const act = async (fn: () => Promise<unknown>, success = "") => {
     setMessage("");
     try { await fn(); await query.refetch(); setMessage(success); }
-    catch (error) { setMessage(error instanceof Error ? error.message : "暂时无法保存，请稍后再试。"); }
+    catch (error) { setMessage(marketingPublicError(error, "暂时无法保存，请稍后再试。")); }
   };
   return <Sheet open={open} onOpenChange={setOpen}>
     <SheetTrigger asChild><button type="button" aria-label={`选题通知${unread ? `，${unread}条未读` : ""}`} className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border">
@@ -39,7 +43,7 @@ export function TopicDigestBell({ userId }: { userId: string }) {
     <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
       <SheetTitle>每两天，给你新的创作选题</SheetTitle>
       <SheetDescription>推荐由平台承担费用。点击选题后先带入需求，正式创作按原有规则计费。</SheetDescription>
-      <p className="mt-2 text-sm">免费用户每期1条，来自DeepSeek；付费用户每期2条，由DeepSeek与GLM共同提案，再整合去重。{query.data ? `当前账号每期${query.data.recommendationCount}条。` : ""}</p>
+      <p className="mt-2 text-sm">免费用户每期1条；付费用户每期2条，结合两份独立提案整合去重。{query.data ? `当前账号每期${query.data.recommendationCount}条。` : ""}</p>
       <div className="my-5 space-y-3 rounded-xl border p-4">
         <label className="block text-sm">我的赛道<select value={lane} onChange={e => setLane(e.target.value as TopicLane)} className="mt-1 w-full rounded border bg-background p-2">
           {Object.entries(TOPIC_LANES).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
@@ -60,8 +64,8 @@ export function TopicDigestBell({ userId }: { userId: string }) {
       {notifications.map(n => <section key={n.id} className="mb-5 rounded-xl border p-4">
         <div className="flex items-center justify-between gap-2"><h3 className="font-semibold">{TOPIC_LANES[n.digest.lane]}{!n.read ? " · 新" : ""}</h3>
           {!n.read && <button type="button" className="text-xs underline" disabled={busy} onClick={() => void act(() => read.mutateAsync({ id: n.id }))}>标为已读</button>}</div>
-        <p className="my-2 text-xs text-muted-foreground">{n.method === "dual" ? "双模型整合" : "DeepSeek选题"} · {new Date(n.digest.createdAt).toLocaleString("zh-CN")}{Date.now() > Date.parse(n.digest.expiresAt) ? " · 历史一期，热点时效需重新核实" : " · 本期"}</p>
-        {selectTopicCards(n.digest.topics, query.data?.preference?.keywords || "", n.dismissed).map(t => <article key={t.id} className="border-t py-4">
+        <p className="my-2 text-xs text-muted-foreground">{n.method === "dual" ? "精选推荐" : "选题推荐"} · {new Date(n.digest.createdAt).toLocaleString("zh-CN")}{Date.now() > Date.parse(n.digest.expiresAt) ? " · 历史一期，热点时效需重新核实" : " · 本期"}</p>
+        {groupTopicsForReading(selectTopicCards(n.digest.topics, query.data?.preference?.keywords || "", n.dismissed).map((t, i) => ({ ...t, key: t.id, originalIndex: i + 1, ...classifyTopicForReading(t) }))).map(group => <div key={group.group}><h4 className="mt-4 font-semibold">{group.group}</h4>{group.rows.map(t => <article key={t.id} className="border-t py-4">
           <p className="text-xs text-muted-foreground">{t.kind} · {t.format}{n.adopted.includes(t.id) ? " · 已采用" : ""}</p>
           <h4 className="my-1 font-medium">{t.title}</h4><p className="text-sm leading-6">{t.angle}</p>
           {t.sources.map(s => <a key={s.id} href={s.url} target="_blank" rel="noreferrer" className="mt-1 block text-xs underline">来源：{s.title} · {new Date(s.observedAt).toLocaleDateString("zh-CN")}</a>)}
@@ -70,7 +74,8 @@ export function TopicDigestBell({ userId }: { userId: string }) {
             setOpen(false); navigate(`/platform?mode=create&createTool=viral&topicDigest=${encodeURIComponent(n.id)}&topicId=${encodeURIComponent(t.id)}`);
             window.dispatchEvent(new Event("mvs:platform-tab"));
           }}>用这个选题开始创作</button><button type="button" className={button} disabled={busy} onClick={() => void act(() => dismiss.mutateAsync({ id: n.id, topicId: t.id }))}>不感兴趣</button></div>
-        </article>)}
+        </article>)}</div>)}
+        <NotificationDraftComparison userId={userId} notificationId={n.id} />
         {selectTopicCards(n.digest.topics, query.data?.preference?.keywords || "", n.dismissed).length === 0 && <p className="text-sm">本期选题已隐藏，可调整关键词等待下一期。</p>}
       </section>)}
       {message && <p role="status" className="mt-3 text-sm">{message}</p>}
@@ -97,8 +102,19 @@ export function TopicDigestDraft({ userId, value, onApply, notificationId, topic
         const next = [value.trim(), addition].filter(Boolean).join("\n\n");
         if (next.length > 8000) { setMessage("加入选题后超过8000字，请先精简需求；原稿未修改。"); return; }
         try { await adopt.mutateAsync({ id: notificationId, topicId }); onApply(next); setMessage("已加入原需求，可以继续选题与制作；尚未提交付费创作。"); }
-        catch (error) { setMessage(error instanceof Error ? error.message : "采用失败，原稿未改动。"); }
+        catch (error) { setMessage(marketingPublicError(error, "采用失败，原稿未改动。")); }
       }}>{already ? "已加入需求" : "保留原稿，加入这个选题"}</button></>}
     {message && <p role="status" className="mt-2 text-sm">{message}</p>}
   </div>;
+}
+
+function NotificationDraftComparison({ userId, notificationId }: { userId: string; notificationId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const query = trpc.mvAnalysis.getTopicDraftComparison.useQuery({ scope: userId, id: notificationId }, { enabled: expanded, retry: false });
+  return <details className="mt-4 border-t pt-3" onToggle={event => setExpanded(event.currentTarget.open)}>
+    <summary className="cursor-pointer text-sm font-medium">对照原稿与整合稿</summary>
+    {query.isLoading && <p role="status">正在读取已保存的稿件…</p>}
+    {query.isError && <p role="alert">原稿暂时无法读取，已推荐内容仍保留。<button type="button" onClick={() => void query.refetch()}>重试读取</button></p>}
+    {query.data && <TopicDraftComparison comparison={query.data} />}
+  </details>;
 }

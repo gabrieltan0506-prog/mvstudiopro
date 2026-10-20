@@ -1,3 +1,4 @@
+import { PLATFORM_EDITORIAL_COVER_GUIDANCE, buildPlatformEditorialCoverGuidance } from "../../shared/platformEditorialCover.js";
 import { buildViralGraphicPagePrompt } from "../../shared/viralGraphicPage.js";
 import { XHS_IMAGE_POLICY } from "../../shared/xhsContentStrategy.js";
 import { emitPlatformImagePipelineStat } from "./platformImagePipelineStats.js";
@@ -1001,7 +1002,7 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     `${platformFlowLogTimestamp()}  [封面·像素] OpenAI 官方 GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张` : "text→image"} · 无 OpenRouter / 无 NB…`,
   );
   return generateGptImage2FromRawEnglishPrompt({
-    englishPrompt: raw,
+    englishPrompt: raw.includes(PLATFORM_EDITORIAL_COVER_GUIDANCE) ? raw : `${raw}\n\n${buildPlatformEditorialCoverGuidance(raw)}`,
     aspectRatio: "9:16",
     gcsSubdir: "platform_topic_reference",
     flowLog: L,
