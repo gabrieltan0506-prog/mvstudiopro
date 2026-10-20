@@ -69,3 +69,17 @@ export function finishEditedMusicMvShot(
     error: undefined,
   };
 }
+
+/** 仅纯音乐默认排除人声；人声歌曲不继承器乐预设。 */
+export const INSTRUMENTAL_EXCLUSIONS = "vocals, singing, voice, choir, lyrics";
+export function musicMvExclusions(state: Pick<CanvasMusicMvState, "instrumental" | "songExcludes">) {
+  return state.songExcludes ?? (state.instrumental === false ? "" : INSTRUMENTAL_EXCLUSIONS);
+}
+export function musicMvTypePatch(state: CanvasMusicMvState, instrumental: boolean): Partial<CanvasMusicMvState> {
+  const oldPreset = state.songExcludes?.toLowerCase().replace(/\s/g, "") === INSTRUMENTAL_EXCLUSIONS.replace(/\s/g, "");
+  return { instrumental, ...(!instrumental && oldPreset ? { songExcludes: undefined } : {}) };
+}
+export function assertMusicMvVocalExclusions(state: CanvasMusicMvState) {
+  if (state.instrumental === false && musicMvExclusions(state).split(/[,，;；]/).some(tag => /^(?:vocals?|singing|voice|lyrics|no vocals?|instrumental|人声|演唱|歌声|无人声|纯音乐)$/i.test(tag.trim())))
+    throw new Error("已选择人声歌曲，但排除项仍禁用人声或演唱；请先修改排除风格/声音，再生成。");
+}

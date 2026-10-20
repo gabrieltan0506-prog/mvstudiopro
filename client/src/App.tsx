@@ -87,6 +87,8 @@ const EnterpriseAgentPlayground = lazy(() => import("./pages/EnterpriseAgentPlay
 
 const ManhuaProjects = lazy(() => import("./pages/ManhuaProjects"));
 const NovelAdaptation = lazy(() => import("./pages/NovelAdaptation"));
+const NovelProjects = lazy(() => import("./pages/NovelProjects"));
+const MusicMvProjects = lazy(() => import("./pages/MusicMvProjects"));
 
 function PageLoader() {
   return (
@@ -146,6 +148,8 @@ function Router() {
         <Route path={"/canvas"} component={OmniCanvas} />
         <Route path="/manhua-projects" component={ManhuaProjects} />
         <Route path="/novel-adaptation" component={NovelAdaptation} />
+        <Route path="/novel-projects" component={NovelProjects} />
+        <Route path="/mv-projects" component={MusicMvProjects} />
         <Route path={"/supervisor"} component={SupervisorAccess} />
         <Route path={"/my-works"} component={MyWorks} />
         <Route path={"/my-works/:id"} component={AnalysisView} />

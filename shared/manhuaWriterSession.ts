@@ -59,6 +59,8 @@ export const MANHUA_WRITER_SESSION_LS_KEY = "mv-manhua-writer-session-v1";
 const CINE_VOCAB_LOCALES: ManhuaCineVocabLocale[] = ["zh", "en", "ja", "ko", "es", "ru"];
 
 export type ManhuaWriterSession = {
+  /** 同一画布制作链上的作品类型；旧作品默认漫剧。 */
+  workspaceKind?: "mv";
   novelOrigin?: ManhuaNovelOrigin;
   format: typeof MANHUA_WRITER_SESSION_FORMAT;
   topic: string;
@@ -221,6 +223,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
   );
   return {
     format: MANHUA_WRITER_SESSION_FORMAT,
+    ...(input.workspaceKind === "mv" ? { workspaceKind: "mv" as const } : {}),
     topic: String(input.topic || "").trim(),
     brief: String(input.brief || "").trim(),
     novelDraft: parseNovelDraft(input.novelDraft),

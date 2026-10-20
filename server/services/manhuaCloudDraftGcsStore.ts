@@ -32,6 +32,7 @@ function stagedObjectName(userId: number, projectId: string, uploadId: string) {
 }
 function projectSummary(projectId: string, payload: ManhuaCloudDraftPayload, updatedAt: string) {
   return { projectId, title: payload.writerSession.writerPack?.seriesTitle || payload.writerSession.topic || "新作品",
+    kind: payload.writerSession.workspaceKind === "mv" ? "mv" as const : "manhua" as const,
     updatedAt, episodeCount: payload.writerSession.episodeCount, phase: payload.writerSession.workflowPhase };
 }
 
@@ -232,6 +233,7 @@ export async function listManhuaProjects(userId: number) {
     updatedAt: string;
     episodeCount: number;
     phase: string;
+    kind: "mv" | "manhua";
   }> = [];
   for (let i = 0; i < names.length; i += 10) {
     const page = await Promise.all(

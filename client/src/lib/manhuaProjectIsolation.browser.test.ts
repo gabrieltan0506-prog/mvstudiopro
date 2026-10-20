@@ -2,6 +2,7 @@ import { it, expect } from "vitest";
 import { build } from "esbuild";
 import puppeteer from "puppeteer";
 import path from "node:path";
+import { readFileSync } from "node:fs";
 const A = "11111111-1111-4111-8111-111111111111",
   B = "22222222-2222-4222-8222-222222222222";
 it("真实工厂两个分页面切换/刷新隔离作品，原工作区不变，错误账号不挂载工厂", async () => {
@@ -26,6 +27,13 @@ it("真实工厂两个分页面切换/刷新隔离作品，原工作区不变，
       {
         name: "auth",
         setup(b) {
+          b.onLoad({ filter: /manhuaFinalLayout\.fixture\.tsx$/ }, async () => ({
+            contents: readFileSync("client/src/lib/manhuaFinalLayout.fixture.tsx", "utf8").replace(
+              'const method = (init?.method || "GET").toUpperCase();',
+              'const method = (init?.method || "GET").toUpperCase(); if(url.includes("manhuaCloudDraft.get")) return new Response(JSON.stringify([{result:{data:{json:{draft:null,generation:"0"}}}}]),{headers:{"content-type":"application/json"}});'
+            ),
+            loader: "tsx", resolveDir: path.resolve("client/src/lib"),
+          }));
           b.onResolve({ filter: /^@\/_core\/hooks\/useAuth$/ }, () => ({
             path: "auth",
             namespace: "mock",

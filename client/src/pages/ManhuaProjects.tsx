@@ -40,6 +40,7 @@ function Projects({ userId }: { userId: string }) {
       projects.set(item.projectId, item);
   }
   const items = Array.from(projects.values())
+    .filter(p => p.kind !== "mv")
     .filter(p => p.title.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const phase: Record<string, string> = {

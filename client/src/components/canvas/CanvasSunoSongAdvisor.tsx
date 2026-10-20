@@ -1,3 +1,4 @@
+import { creativeUserText } from "@/lib/creativeUserText";
 import {SongDemoPanel} from "./SongDemoPanel";
 import { MusicEmotionPanel } from "./MusicEmotionPanel";
 import { CreativeEvidenceReviewPanel } from "./CreativeEvidenceReviewPanel";
@@ -201,12 +202,12 @@ export function CanvasSunoSongAdvisor(p: Props) {
   };
   return (
     <section
-      aria-label="Suno参考歌曲创作"
+      aria-label="参考歌曲创作"
       className="space-y-2 rounded border border-violet-300/30 p-2 text-xs"
     >
-      <strong>主题 / 参考歌曲 → 新歌创作 · Suno V6</strong>
+      <strong>按主题或参考歌曲创作新歌</strong>
       <p>
-        上传音频或MV，由Gemini 3.8 Flash读取实际音画；创作顾问审阅分析和方案，给出一个主推荐与三个不同方向。采用后进入现有BGM生成通道。
+        提供主题或参考作品，获得歌词、曲风与编曲方案；选定方案后可继续生成歌曲。
       </p>
       {p.audio ? (
         <p>
@@ -229,9 +230,9 @@ export function CanvasSunoSongAdvisor(p: Props) {
           className="w-full rounded bg-black/30 p-2"
         />
         <button type="button" className={button} disabled={library.isFetching||cloudTemplates.isFetching} onClick={() => {void library.refetch();void cloudTemplates.refetch();}}>刷新最新模板</button>
-        {cloudTemplates.error&&<p role="alert">云端歌曲模板读取失败：{cloudTemplates.error.message}</p>}
+        {cloudTemplates.error&&<p role="alert">云端歌曲模板读取失败：{creativeUserText(cloudTemplates.error.message)}</p>}
         {cloudTemplates.data&&<p>云端模板 {cloudTemplates.data.cards.length} 条 · 更新于 {cloudTemplates.data.publishedAt}</p>}
-        {library.error && <p role="alert">个人创意库读取失败：{library.error.message}</p>}
+        {library.error && <p role="alert">个人创意库读取失败：{creativeUserText(library.error.message)}</p>}
         {library.data?.filter(entry => entry.report.titleZh.toLowerCase().includes(craftQuery.trim().toLowerCase())).map(entry => (
           <details key={entry.id} className="my-1 rounded border border-white/15 p-2">
             <summary><label><input type="checkbox" checked={p.craftIds.includes(entry.id)}
@@ -272,13 +273,13 @@ export function CanvasSunoSongAdvisor(p: Props) {
                   }
                 />{" "}
                 {c.title} ·{" "}
-                {c.basis === "native_audio" ? "模型音画分析" : "访谈归纳"}
+                {c.basis === "native_audio" ? "音画分析" : "访谈归纳"}
               </label>
             </summary>
             <p>{c.contributor}</p>
             {c.evidence && (
               <p>
-                原生模型分析，尚未人工复核。精确节拍、音高与和弦未经独立测量。
+                音画分析结果尚未人工复核。精确节拍、音高与和弦未经独立测量。
               </p>
             )}
             {c.evidence && (
@@ -324,8 +325,8 @@ export function CanvasSunoSongAdvisor(p: Props) {
       <p>
         本次提交：
         {p.audio
-          ? "完整参考音视频 → Gemini读取 → GLM结合创意库给出三种曲风方案"
-          : "创作要求 → GLM结合创意库给出三种曲风方案（无音频）"}
+          ? "完整参考音视频 → 分析创作方法 → 提出不同曲风方案"
+          : "创作要求 → 提出不同曲风方案"}
         ；此按钮不生成音乐。咨询沿用现有免费额度，额度不足时显示积分确认。
       </p>
       <button
@@ -424,7 +425,7 @@ export function CanvasSunoSongAdvisor(p: Props) {
                   p.onApply(c.brief, s, c.id);
                 }}
               >
-                采用到Suno创作表单（不生成）
+                采用歌词与编曲方案
               </button>
             </details>
           ))}
@@ -460,7 +461,7 @@ export function CanvasSunoSongAdvisor(p: Props) {
       )}
       {error && (
         <p role="alert" className="text-amber-200">
-          {error}
+          {creativeUserText(error)}
         </p>
       )}
     </section>

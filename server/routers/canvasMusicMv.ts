@@ -460,7 +460,7 @@ export async function adoptMusicMvConcept(
 
 export const canvasMusicMvRouter = router({
   listSongCraftTemplates: protectedProcedure.query(()=>readSongCraftCloudLibrary()),
-  queueSongCover: protectedProcedure.input(z.object({musicJobId:z.string().min(1).max(200),prompt:z.string().min(1).max(12000)}).strict()).mutation(({ctx,input})=>queueSongCover(ctx.user.id,input.musicJobId,input.prompt)),
+  queueSongCover: protectedProcedure.input(z.object({musicJobId:z.string().min(1).max(200),prompt:z.string().min(1).max(12000),aspectRatio:z.enum(["9:16","1:1"]).optional()}).strict()).mutation(({ctx,input})=>queueSongCover(ctx.user.id,input.musicJobId,input.prompt,input.aspectRatio)),
   listCreativeLibrary: protectedProcedure.query(({ctx})=>listCreativeLibraryEntries(ctx.user.id)),
   saveCreativeLibrary: protectedProcedure.input(z.object({evidenceId:z.string().uuid()}).strict()).mutation(({ctx,input})=>saveCreativeLibraryEntry(ctx.user.id,input.evidenceId)),
   saveEdit: protectedProcedure.input(saveMusicMvEditInputSchema).mutation(({ctx,input})=>saveMusicMvEdit(ctx.user.id,input)),

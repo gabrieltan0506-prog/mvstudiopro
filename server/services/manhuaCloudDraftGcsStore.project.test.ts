@@ -113,3 +113,14 @@ it("100部以上云端作品索引全量列举，不套用草稿30天过期", as
     )?.payload.writerSession.topic
   ).toBe("剧0");
 });
+
+it("MV作品类型、选定歌曲和原任务回执经云端合同往返保留，旧漫剧仍归原类", async () => {
+  const id="33333333-3333-4333-8333-333333333333";
+  const payload=buildManhuaCloudDraftPayload({clientUpdatedAt:new Date().toISOString(),writerSession:{workspaceKind:"mv",topic:"晚星"},blocks:[{id:"mv-song",kind:"music",x:0,y:0,width:420,height:360,prompt:"",status:"idle",musicMv:{status:"music_ready",candidates:[{id:"song-original",url:"https://test.invalid/song.mp3",durationSec:90}],selectedCandidateId:"song-original",musicJobId:"original-music-job",musicRequestId:"11111111-1111-4111-8111-111111111111"}}],edges:[]});
+  await writeManhuaCloudDraftToGcs({userId:1,projectId:id,expectedGeneration:"0",payload});
+  const back=await readManhuaCloudDraftFromGcs(1,id);
+  expect(back?.payload.writerSession.workspaceKind).toBe("mv");
+  expect(back?.payload.canvas.blocks[0].musicMv).toMatchObject({selectedCandidateId:"song-original",musicJobId:"original-music-job",musicRequestId:"11111111-1111-4111-8111-111111111111"});
+  expect((await listManhuaProjects(1)).projects).toEqual([expect.objectContaining({projectId:id,title:"晚星",kind:"mv"})]);
+  expect((await listManhuaProjects(2)).projects).toEqual([]);
+});

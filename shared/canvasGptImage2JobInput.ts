@@ -12,7 +12,7 @@ export type CanvasGptImage2ProviderOverride = "openai" | "openrouter" | "auto";
 
 export type CanvasGptImage2JobParams = {
   prompt: string;
-  aspectRatio: "9:16" | "16:9";
+  aspectRatio: "9:16" | "16:9" | "1:1";
   referenceImageUrls?: string[];
   maskUrl?: string;
   generalImageEdit?: boolean;
@@ -35,6 +35,10 @@ export type CanvasGptImage2JobParams = {
   assetRefId?: string;
 };
 
+export function normalizeCanvasImageAspectRatio(raw: unknown): "9:16" | "16:9" | "1:1" {
+  return raw === "1:1" || raw === "16:9" ? raw : "9:16";
+}
+
 export function buildCanvasGptImage2JobInput(params: {
   prompt: string;
   aspectRatio?: "9:16" | "16:9" | string;
@@ -56,7 +60,7 @@ export function buildCanvasGptImage2JobInput(params: {
   params: CanvasGptImage2JobParams;
 } {
   const prompt = String(params.prompt || "").trim();
-  const aspectRatio = String(params.aspectRatio || "9:16") === "16:9" ? "16:9" : "9:16";
+  const aspectRatio = normalizeCanvasImageAspectRatio(params.aspectRatio);
   const primaryRef = String(params.referenceImageUrl || "").trim();
   const extraRefs = (params.referenceImageUrls || [])
     .map((u) => String(u || "").trim())

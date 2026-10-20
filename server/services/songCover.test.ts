@@ -29,3 +29,12 @@ it("禁止替他人歌曲或未完成歌曲产生图片费用",async()=>{
  f.music.mockResolvedValue({userId:"7",status:"running",input:{action:"manhua_bgm_v55",params:{brief}}});
  await expect(queueSongCover(7,"bgm_one",prompt)).rejects.toThrow("尚未成功");expect(f.insert).not.toHaveBeenCalled();
 });
+
+it("新专辑封面固定1:1并拥有独立身份，旧9:16任务保持原ID",async()=>{
+ const oldPrompt=buildSongCoverPrompt(brief),prompt=buildSongCoverPrompt(brief,"1:1");
+ const old=songCoverJob(7,"bgm_one",brief,oldPrompt),album=songCoverJob(7,"bgm_one",brief,prompt,"1:1");
+ expect(album.input.params.aspectRatio).toBe("1:1");expect(prompt).toContain("正方形1:1");expect(album.id).not.toBe(old.id);
+ expect(songCoverJob(7,"bgm_one",brief,oldPrompt,"9:16").id).toBe(old.id);
+ expect(()=>songCoverJob(7,"bgm_one",brief,prompt,"9:16")).toThrow("不一致");
+ const a=await queueSongCover(7,"bgm_one",prompt,"1:1"),b=await queueSongCover(7,"bgm_one",prompt,"1:1");expect(a.jobId).toBe(b.jobId);expect(f.rows.size).toBe(1);
+});

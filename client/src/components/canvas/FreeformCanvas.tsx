@@ -311,6 +311,8 @@ type BlocksUpdater = CanvasBlock[] | ((prev: CanvasBlock[]) => CanvasBlock[]);
 
 type FreeformCanvasProps = {
   projectId?: string;
+  /** MV 项目把已有音乐控制区放到不缩放的工作流面板，保留镜头画布。 */
+  musicWorkflow?: boolean;
   /** 本项目已保存图片，仅供普通视频节点显式引用，不代替工厂资产认领。 */
   projectAssetRefs?: readonly ManhuaCustomAssetRef[];
   blocks: CanvasBlock[];
@@ -816,6 +818,7 @@ function CanvasAssetVisualBody({
 
 export default function FreeformCanvas({
   projectId,
+  musicWorkflow = false,
   projectAssetRefs = [],
   blocks,
   edges,
@@ -842,6 +845,7 @@ export default function FreeformCanvas({
   const toolbarFileInputRef = useRef<HTMLInputElement>(null);
   const pendingUploadBlockIdRef = useRef<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showMvCanvas, setShowMvCanvas] = useState(false);
   // 选中态只读上报给父级（侧栏显示所选镜头）；不改选中行为本身
   const onSelectedBlockIdChangeRef = useRef(onSelectedBlockIdChange);
   onSelectedBlockIdChangeRef.current = onSelectedBlockIdChange;
@@ -2178,11 +2182,31 @@ export default function FreeformCanvas({
     );
   };
 
+  const mvWorkflowBlock = musicWorkflow
+    ? blocks.find(block => block.id === selectedId && block.kind === "music") || blocks.find(block => block.kind === "music")
+    : undefined;
+  const renderMusicStudio = (block: CanvasBlock) => (<CanvasMusicMvStudio projectId={projectId} key={block.id} block={block} blocks={blocks}
+                        onPatch={patch => patchOne(block.id, patch)} getBlocks={() => blocksRef.current}
+                        runShot={runBlock}
+                        onAdd={(added, links) => {
+                          onBlocksChange(prev => [...prev, ...added.filter(item => !prev.some(row => item.id === row.id))]);
+                          onEdgesChange([...edges.filter(edge => !links.some(link => link.fromId === edge.fromId && link.toId === edge.toId)), ...links]);
+                        }} />);
+
   return (
     <CanvasImagePreviewCtx.Provider value={openImagePreview}>
+    {mvWorkflowBlock && <section data-mv-workflow-studio className="mb-5 min-w-0 rounded-2xl border border-white/15 bg-slate-950 p-4 text-white sm:p-6 [&_input]:max-w-full [&_input]:text-sm [&_textarea]:text-sm [&_select]:max-w-full [&_select]:text-sm [&_button]:text-sm [&_label]:text-sm">
+      {blocks.filter(block => block.kind === "music").length > 1 && <label className="mb-5 block text-sm">当前歌曲工作区
+        <select className="ml-3 rounded border border-white/20 bg-slate-900 p-2" value={mvWorkflowBlock.id} onChange={event => setSelectedId(event.target.value)}>
+          {blocks.filter(block => block.kind === "music").map(block => <option key={block.id} value={block.id}>{block.musicMv?.songTitle || "音乐与 MV"}</option>)}
+        </select>
+      </label>}
+      {renderMusicStudio(mvWorkflowBlock)}
+      <button type="button" className="mt-6 rounded-lg border border-white/25 px-4 py-3 text-sm" aria-expanded={showMvCanvas} onClick={() => setShowMvCanvas(value => !value)}>{showMvCanvas ? "收起镜头画布" : "展开镜头画布"}</button>
+    </section>}
     <div
       data-freeform-canvas-root
-      className={`flex gap-0 overflow-hidden rounded-[28px] border border-white/10 bg-[#05080f]/90 ${
+      className={`${mvWorkflowBlock && !showMvCanvas ? "hidden" : "flex"} gap-0 overflow-hidden rounded-[28px] border border-white/10 bg-[#05080f]/90 ${
         fillContainer ? "h-full min-h-0 w-full" : "min-h-[720px]"
       }`}
     >
@@ -2685,13 +2709,7 @@ export default function FreeformCanvas({
                       <div className="text-[10px] tracking-wider text-white/40">节点设置</div>
                       {(block.kind === "image" || block.kind === "video") && <CanvasCinemaPanel block={block} preparing={preparingReferenceIds.has(block.id)} onPatch={patch=>patchOne(block.id,patch)} />}
                       {block.musicMvShot && <CanvasMvShotControls block={block} onPatch={patch=>patchOne(block.id,patch)} />}
-                      {block.kind === "music" && <CanvasMusicMvStudio projectId={projectId} key={block.id} block={block} blocks={blocks}
-                        onPatch={patch => patchOne(block.id, patch)} getBlocks={() => blocksRef.current}
-                        runShot={runBlock}
-                        onAdd={(added, links) => {
-                          onBlocksChange(prev => [...prev, ...added.filter(item => !prev.some(row => item.id === row.id))]);
-                          onEdgesChange([...edges.filter(edge => !links.some(link => link.fromId === edge.fromId && link.toId === edge.toId)), ...links]);
-                        }} />}
+                      {block.kind === "music" && !musicWorkflow && renderMusicStudio(block)}
                       {block.kind === "text" || block.kind === "copy_organize" ? (
                         <label className="flex items-center gap-2 text-[11px] text-white/70">
                           <span className="shrink-0 text-white/45">模型</span>

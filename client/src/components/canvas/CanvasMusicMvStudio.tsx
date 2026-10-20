@@ -1,3 +1,5 @@
+import { creativeUserText } from "@/lib/creativeUserText";
+import { musicMvShotSlices, musicMvHighlightSchema } from "@shared/musicMvHighlight";
 import { canvasAudioMixSource } from "@shared/canvasAudioStudio";
 import { canvasAudioPreviewKey } from "@/lib/canvasAudioStudioRecovery";
 import { musicCandidateSourceIdentity } from "@shared/songSourceIdentity";
@@ -17,6 +19,9 @@ import { musicMvEditIssues, musicMvEditKey } from "@shared/canvasMusicMvEdit";
 import { CanvasMvCreativeAdvisor } from "./CanvasMvCreativeAdvisor";
 import {
   rejectedMusicSubmissionPatch,
+  musicMvExclusions,
+  musicMvTypePatch,
+  assertMusicMvVocalExclusions,
   shouldSyncMusicUploadedReferences,
 } from "@/lib/canvasMusicMvGuards";
 import { parseManhuaClipTargetDurationSec } from "@shared/manhuaScriptWorkbench";
@@ -116,7 +121,12 @@ export function CanvasMusicMvStudio({
       alive.current = false;
     };
   }, []);
+  const songOnly = state.deliveryMode === "song";
+  const highlightMode = state.deliveryMode === "highlight";
+  const coverAspect = state.deliveryMode ? "1:1" as const : "9:16" as const;
   const lock = useRef(false);
+  const studio = useRef<HTMLDivElement>(null);
+  const highlightAudio = useRef<HTMLAudioElement>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [history, setHistory] = useState<
@@ -285,6 +295,7 @@ export function CanvasMusicMvStudio({
           candidates: mergeMusicCandidates(latest.current.candidates, [fresh]),
           ...selectMusicCandidateContext(latest.current, fresh.id),
           selectedCandidateId: fresh.id,
+          highlight: undefined,
           status: "music_ready",
         },
         { outputUrl: fresh.url }
@@ -302,6 +313,7 @@ export function CanvasMusicMvStudio({
           "本次音乐已有提交编号，请查询原任务；重新创作请先点击新一轮音乐"
         );
       const instrumental = source.instrumental !== false;
+      assertMusicMvVocalExclusions(source);
       if (!instrumental && !source.lyrics?.trim())
         throw new Error("歌曲需要填写完整歌词");
       const duration = source.requestedDurationSec ?? 200;
@@ -317,9 +329,7 @@ export function CanvasMusicMvStudio({
           (instrumental ? currentBlock.current.prompt : ""),
         title: source.songTitle?.trim() || "画布音乐",
         duration: Math.round(duration),
-        negative_tags:
-          source.songExcludes ??
-          (instrumental ? "vocals, singing, voice, choir, lyrics" : ""),
+        negative_tags: musicMvExclusions(source),
         style_weight: source.songStyleWeight ?? 0.78,
         weirdness_constraint: source.songWeirdness ?? 0.25,
       });
@@ -328,7 +338,7 @@ export function CanvasMusicMvStudio({
       patch({
         musicRequestId: requestId,
         musicSubmission: brief,
-        songCovers: [...(source.songCovers || []), {musicJobId:jobId,prompt:buildSongCoverPrompt(brief),status:"waiting_music"}],
+        songCovers: [...(source.songCovers || []), {musicJobId:jobId,prompt:buildSongCoverPrompt(brief,coverAspect),aspectRatio:coverAspect,status:"waiting_music"}],
         lyricsCandidateId: undefined,
         musicSubmissionDirection: source.creativePrompt || "",
         musicJobId: jobId,
@@ -587,9 +597,24 @@ export function CanvasMusicMvStudio({
       );
       patch({ shotBlockIds: shots.map(row => row.id), error: undefined });
     });
+  const highlightRange = (source: CanvasMusicMvState) => {
+    if (source.deliveryMode !== "highlight") return undefined;
+    const song = source.candidates.find(row => row.id === source.selectedCandidateId);
+    if (!song) throw new Error("请先选定歌曲");
+    const parsed = musicMvHighlightSchema.safeParse(source.highlight || {startSec:0,endSec:Math.min(45,song.durationSec)});
+    if (!parsed.success) throw new Error("高光MV须为30至60秒，请选择足够长的歌曲并调整区间");
+    if (parsed.data.endSec > song.durationSec) throw new Error("高光区间超出所选歌曲");
+    return parsed.data;
+  };
+  const activeShotIds = (source: CanvasMusicMvState) => {
+    if (source.deliveryMode !== "highlight") return source.shotBlockIds || [];
+    if (!source.plan) return [];
+    const wanted = new Set(musicMvShotSlices(source.plan, highlightRange(source)).map(row=>row.shot.id));
+    return (source.shotBlockIds || []).filter(id => wanted.has(getBlocks().find(row=>row.id === id)?.musicMvShot?.shotId || ""));
+  };
   const render = () =>
     perform(async () => {
-      const ids = state.shotBlockIds || [];
+      const ids = activeShotIds(latest.current);
       if (!ids.length) throw new Error("请先确认分镜并铺设镜头");
       patch({ status: "rendering", error: undefined });
       for (let i = 0; i < ids.length; i++) {
@@ -630,7 +655,8 @@ export function CanvasMusicMvStudio({
         );
         if (!song || !source.plan || !source.planRequestId)
           throw new Error("缺少已选择的歌曲或分镜");
-        const edit = source.timelineEdits?.find(
+        const range = highlightRange(source);
+        const edit = range ? undefined : source.timelineEdits?.find(
           e => e.draft.basePlanRequestId === source.planRequestId
         );
         if (edit) {
@@ -650,18 +676,20 @@ export function CanvasMusicMvStudio({
             }))
           : musicMvReadyClips(
               source.plan,
-              source.shotBlockIds || [],
-              getBlocks()
+              activeShotIds(source),
+              getBlocks(),
+              range
             );
         submission = {
           requestId: crypto.randomUUID(),
+          highlight: range,
           planRequestId: source.planRequestId,
           editRevisionId: edit?.saved?.revisionId,
           audio: song,
           alignmentRequestId: source.songAlignment?.sourceId === song.id ? source.songAlignment.requestId : undefined,
           plan: source.plan,
           clips,
-          resolution: block.aspectRatio === "9:16" ? "9:16" : "16:9",
+          resolution: range ? "9:16" : block.aspectRatio === "9:16" ? "9:16" : "16:9",
         };
         patch({
           assembleRequestId: submission.requestId,
@@ -724,7 +752,7 @@ export function CanvasMusicMvStudio({
         block.id
       );
       final.id = `mvfinal-${block.id}-${request.requestId}`;
-      final.prompt = "完整 MV · 采用所选歌曲原音轨";
+      final.prompt = request.highlight ? `抖音高光MV · ${request.highlight.startSec}–${request.highlight.endSec}秒 · 原歌速度` : "完整 MV · 采用所选歌曲原音轨";
       final.status = "done";
       final.outputUrl = output.finalVideoUrl;
       final.outputUrls = [output.finalVideoUrl];
@@ -739,7 +767,12 @@ export function CanvasMusicMvStudio({
       if (identityCurrent())
         patch({ finalBlockId: final.id, status: "done", error: undefined });
     });
-  const missingShots = (state.shotBlockIds || []).flatMap(id => {
+  let visibleShotIds: string[] = [];
+  let highlightError = "";
+  let planShots = state.plan?.shots || [];
+  if (highlightMode && state.plan) { try { planShots = musicMvShotSlices(state.plan, highlightRange(state)).map(row=>row.shot); } catch { planShots = []; } }
+  try { visibleShotIds = activeShotIds(state); if (highlightMode && selected) highlightRange(state); } catch(error) { highlightError = error instanceof Error ? error.message : "高光区间无效"; }
+  const missingShots = visibleShotIds.flatMap(id => {
     const shot = blocks.find(row => row.id === id);
     return shot && !(shot.status === "done" && shot.outputUrl) ? [shot] : [];
   });
@@ -755,10 +788,75 @@ export function CanvasMusicMvStudio({
   );
   return (
     <div
+      ref={studio}
+      data-mv-studio={block.id}
+      aria-busy={busy}
       className="space-y-2 overflow-auto text-white/85"
       onPointerDown={event => event.stopPropagation()}
     >
-      <p className="text-xs">参考歌曲 → 新歌创作 → 选版 → MV分镜 → 剪辑</p>
+      <label className="block text-sm font-semibold">本次交付
+        <select aria-label="MV交付类型" className={field} value={state.deliveryMode || "legacy"} disabled={busy || pendingPlan || Boolean(state.assembleRequestId && !state.assembleTerminalStatus)} onChange={e=>patch({deliveryMode:e.target.value as "song"|"highlight"})}>
+          {!state.deliveryMode && <option value="legacy">原有完整 MV 工作流</option>}
+          <option value="song">歌词、歌曲与专辑封面</option>
+          <option value="highlight">抖音高光 MV · 30–60 秒</option>
+        </select>
+      </label>
+      <p className="text-xs leading-6">{songOnly ? "创作完整歌曲，交付歌词、音频和方形专辑封面。" : highlightMode ? "从完整歌曲中选出30–60秒高光，制作竖屏MV，在抖音引流到汽水音乐。" : "参考歌曲 → 新歌创作 → 选版 → MV分镜 → 剪辑"}</p>
+      <nav aria-label="MV 制作步骤" className="mb-5 grid grid-cols-3 gap-2" style={songOnly ? {gridTemplateColumns:"repeat(2,minmax(0,1fr))"} : undefined}>
+        {(songOnly ? [{id:"song",label:"歌词与歌曲",enabled:true},{id:"delivery",label:"歌曲与封面",enabled:Boolean(selected)}] : [
+          { id: "song", label: "选定歌曲", enabled: true },
+          { id: "concept", label: "视觉方案", enabled: Boolean(selected) },
+          { id: "storyboard", label: "确认分镜", enabled: Boolean(selected) },
+          { id: "shots", label: "制作镜头", enabled: Boolean(state.plan) },
+          {
+            id: "edit",
+            label: "剪辑",
+            enabled: Boolean(
+              selected &&
+                state.plan &&
+                state.planRequestId &&
+                state.shotBlockIds?.length
+            ),
+          },
+          { id: "finish", label: "合成成片", enabled: Boolean(state.plan) },
+        ]).map((step, i) => (
+          <button
+            key={step.id}
+            type="button"
+            disabled={!step.enabled}
+            className="rounded-lg border border-white/20 bg-white/5 px-2 py-3 text-sm font-semibold disabled:opacity-35"
+            onClick={() =>
+              studio.current
+                ?.querySelector<HTMLElement>(`[data-mv-step="${step.id}"]`)
+                ?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }
+          >
+            {i + 1}. {step.label}
+          </button>
+        ))}
+      </nav>
+      <h3 data-mv-step="song" className="pt-3 text-base font-semibold">
+        1. 选定歌曲
+      </h3>
+      <p className="text-xs leading-6 text-white/60">
+        {songOnly ? "可以按主题创作人声歌曲，也可以制作纯音乐。选定版本后保留完整音频、歌词和专辑封面。" : "人声歌曲和纯音乐都可以制作 MV。上传或创作歌曲，选定版本后安排画面；需要人物唱歌时，在分镜中选择演唱镜头。"}
+      </p>
+      <label className="block text-xs">
+        音乐类型
+        <select
+          aria-label="MV音乐类型"
+          className={field}
+          value={state.instrumental === false ? "song" : "instrumental"}
+          disabled={busy || pendingPlan || Boolean(state.musicRequestId)}
+          onChange={e =>
+            patch({ ...invalidateMusicMvPlan(latest.current), ...musicMvTypePatch(latest.current, e.target.value === "instrumental") })
+          }
+        >
+          <option value="song">人声歌曲（有演唱）</option>
+          <option value="instrumental">纯音乐（无演唱）</option>
+        </select>
+      </label>
+
       <label className="block text-xs">
         上传参考音频或MV（MP3 / WAV / M4A / MP4）
         <input
@@ -827,7 +925,7 @@ export function CanvasMusicMvStudio({
         onSelectDemo={(requestId,variantIndex)=>patch({selectedSongDemo:{requestId,variantIndex}})}
         optimizeExisting={state.songOptimizeExisting}
         onOptimizeExisting={songOptimizeExisting=>patch({songOptimizeExisting})}
-        originalBrief={(()=>{const parsed=sunoSongBriefSchema.safeParse({model:"suno-v6",custom_mode:true,instrumental:state.instrumental!==false,title:state.songTitle?.trim()||"画布音乐",style:block.prompt,prompt:state.lyrics||"",negative_tags:state.songExcludes||"",duration:state.requestedDurationSec??200,style_weight:state.songStyleWeight??0.78,weirdness_constraint:state.songWeirdness??0.25});return parsed.success?parsed.data:undefined;})()}
+        originalBrief={(()=>{const parsed=sunoSongBriefSchema.safeParse({model:"suno-v6",custom_mode:true,instrumental:state.instrumental!==false,title:state.songTitle?.trim()||"画布音乐",style:block.prompt,prompt:state.lyrics||"",negative_tags:musicMvExclusions(state),duration:state.requestedDurationSec??200,style_weight:state.songStyleWeight??0.78,weirdness_constraint:state.songWeirdness??0.25});return parsed.success?parsed.data:undefined;})()}
         craftIds={state.songCraftIds || []}
         onCraftIds={songCraftIds => patch({ songCraftIds })}
         audio={state.songReference}
@@ -908,29 +1006,15 @@ export function CanvasMusicMvStudio({
         />
       </label>
       <label className="block text-xs">
-        Suno风格与编曲
+        音乐风格与编曲
         <textarea
-          aria-label="Suno风格与编曲"
+          aria-label="音乐风格与编曲"
           className={field}
           rows={3}
           value={block.prompt}
           disabled={busy || pendingPlan}
           onChange={e => patch({}, { prompt: e.target.value })}
         />
-      </label>
-      <label className="block text-xs">
-        音乐类型
-        <select
-          className={field}
-          value={state.instrumental === false ? "song" : "instrumental"}
-          disabled={busy}
-          onChange={e =>
-            patch({ instrumental: e.target.value === "instrumental" })
-          }
-        >
-          <option value="instrumental">纯音乐</option>
-          <option value="song">有歌词歌曲</option>
-        </select>
       </label>
       <label className="block text-xs">
         目标秒数
@@ -972,12 +1056,8 @@ export function CanvasMusicMvStudio({
           aria-label="排除风格"
           className={field}
           maxLength={200}
-          value={
-            state.songExcludes ??
-            (state.instrumental !== false
-              ? "vocals, singing, voice, choir, lyrics"
-              : "")
-          }
+          value={musicMvExclusions(state)}
+          placeholder={state.instrumental === false ? "可留空；仅填写不想要的风格，不默认排除演唱" : "纯音乐默认排除人声"}
           disabled={busy}
           onChange={e => patch({ songExcludes: e.target.value })}
         />
@@ -1010,10 +1090,10 @@ export function CanvasMusicMvStudio({
           onChange={e => patch({ songWeirdness: Number(e.target.value) / 100 })}
         />
       </label>
-      <details className="text-xs" open><summary>本次自动封面 · Image 2.5 Flare · {CANVAS_IMAGE_CREDITS_PER_SHOT} 积分</summary><p>歌曲成功后生成一张9:16封面，同次返回的歌曲版本共用。无图片参考，不额外调用文字模型；关闭页面后回来会继续原任务。</p><pre className="max-h-48 overflow-auto whitespace-pre-wrap">{buildSongCoverPrompt({title:state.songTitle?.trim()||"画布音乐",style:block.prompt,prompt:state.lyrics?.trim()||(state.instrumental!==false?block.prompt:""),instrumental:state.instrumental!==false})}</pre></details>
+      <details className="text-xs" open><summary>本次歌曲封面 · {CANVAS_IMAGE_CREDITS_PER_SHOT} 积分</summary><p>歌曲成功后生成一张{coverAspect === "1:1" ? "1:1专辑封面" : "9:16封面"}，同次返回的歌曲版本共用。按歌词与曲风设计；关闭页面后回来会继续原任务。</p><pre className="max-h-48 overflow-auto whitespace-pre-wrap">{buildSongCoverPrompt({title:state.songTitle?.trim()||"画布音乐",style:block.prompt,prompt:state.lyrics?.trim()||(state.instrumental!==false?block.prompt:""),instrumental:state.instrumental!==false},coverAspect)}</pre></details>
       <p className="text-xs">
-        本次音乐：Suno V6 · 标准模式 · {CANVAS_BGM_CREDITS_PER_RUN}{" "}
-        积分。提交上方完整歌词/段落与风格；参考原曲只用于听音创作，不作为Suno翻唱输入。
+        本次歌曲 · {CANVAS_BGM_CREDITS_PER_RUN}{" "}
+        积分。提交上方完整歌词/段落与风格；参考作品用于分析创作方法，本次生成原创歌曲。
       </p>
       {state.musicSubmission && state.musicRequestId && (
         <details>
@@ -1139,6 +1219,7 @@ export function CanvasMusicMvStudio({
             导入 {row.fileName}
           </button>
         ))}
+      <div data-mv-step="delivery" />
       <SongCoverPanel records={state.songCovers||[]} onUpdate={(musicJobId,delta)=>patch({songCovers:(latest.current.songCovers||[]).map(row=>row.musicJobId===musicJobId?{...row,...delta}:row)})}/>
       {state.candidates.map(candidate => (
         <div key={candidate.id} className="rounded border border-white/15 p-1">
@@ -1185,6 +1266,30 @@ export function CanvasMusicMvStudio({
       })}>将混音保留为 MV 歌曲候选</button>}
       {state.songAlignment?.sourceId === selected?.id && state.songAlignment && <p className="text-xs text-violet-200">已应用歌词时间，共 {state.songAlignment.words.length} 项；下次合成 MV 时使用。<button className={button} disabled={busy} onClick={() => patch({songAlignment:undefined})}>移除本次字幕</button></p>}
       {block.audioStudio?.cues.some(c => c.id.startsWith("songstem_")) && selected && <details className="rounded-lg border border-white/15 p-2"><summary className="text-xs">歌曲分轨与混音</summary><CanvasAudioStudio block={block} musicWorkbench timelineDurationSec={selected.durationSec} disabled={busy || pendingPlan} onChange={audioStudio => patch({}, {audioStudio})}/></details>}
+      {songOnly && selected && <section className="space-y-3 border-t border-white/15 pt-5" aria-label="歌曲交付">
+        <h3 className="text-base font-semibold">歌词、歌曲与专辑封面</h3>
+        <p className="text-sm">{selected.title || state.songTitle || "所选歌曲"} · {selected.durationSec.toFixed(1)} 秒</p>
+        <a className={button} href={selected.url} target="_blank" rel="noreferrer">打开歌曲文件</a>
+        <button className={button} disabled={!state.lyrics?.trim()} onClick={()=>{const url=URL.createObjectURL(new Blob([state.lyrics || ""],{type:"text/plain;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=`${state.songTitle || "歌曲"}-歌词.txt`;a.click();window.setTimeout(()=>URL.revokeObjectURL(url),1000);}}>下载歌词</button>
+        <p className="text-xs text-white/60">专辑封面在上方查看和打开。准备做推广时，可切换到高光 MV，沿用这首歌；汽水音乐发布需自行完成。</p>
+      </section>}
+      {!songOnly && <>
+      {highlightMode && <section className="space-y-3 border-t border-white/15 pt-5" aria-label="高光区间" data-mv-step="edit">
+        <h3 className="text-base font-semibold">抖音高光区间 · 原曲秒位</h3>
+        <p className="text-xs text-white/60">选择30–60秒精彩唱段。只制作区间内镜头，音轨保持原速；专辑版保留完整歌曲。</p>
+        <form key={selected?.id || "no-song"} className="flex flex-wrap items-end gap-3" onSubmit={e=>{e.preventDefault();const data=new FormData(e.currentTarget);void perform(async()=>{const range=musicMvHighlightSchema.parse({startSec:Number(data.get("start")),endSec:Number(data.get("start"))+Number(data.get("duration"))});if(!selected || range.endSec>selected.durationSec)throw new Error("高光区间超出所选歌曲");if(state.plan)musicMvShotSlices(state.plan,range);patch({highlight:range,error:undefined});});}}>
+          <label className="text-xs">开始秒数<input aria-label="高光开始秒数" name="start" type="number" min="0" step="0.1" defaultValue={state.highlight?.startSec || 0} className={field}/></label>
+          <label className="text-xs">高光时长<input aria-label="高光时长" name="duration" type="number" min="30" max="60" step="0.1" defaultValue={state.highlight ? state.highlight.endSec-state.highlight.startSec : 45} className={field}/></label>
+          <button className={button} disabled={busy || !selected || Boolean(state.assembleRequestId && !state.assembleTerminalStatus)}>应用高光区间</button>
+        </form>
+        {selected && <p className="text-xs">当前区间：{state.highlight?.startSec || 0}–{state.highlight?.endSec ?? Math.min(45,selected.durationSec)} 秒 · 9:16竖屏</p>}
+        {selected && <div className="space-y-2">
+          <audio ref={highlightAudio} controls src={selected.url} className="w-full" onTimeUpdate={e=>{try {const range=highlightRange(latest.current);if(range && e.currentTarget.currentTime>=range.endSec)e.currentTarget.pause();}catch{e.currentTarget.pause();}}}/>
+          <button className={button} disabled={busy || Boolean(highlightError)} onClick={()=>void perform(async()=>{const range=highlightRange(latest.current);if(!range || !highlightAudio.current)return;highlightAudio.current.currentTime=range.startSec;await highlightAudio.current.play();})}>试听高光区间</button>
+        </div>}
+        {highlightError && <p role="alert" className="text-xs text-amber-200">{highlightError}</p>}
+      </section>}
+      <h3 data-mv-step="concept" className="border-t border-white/15 pt-5 text-base font-semibold">2. 视觉方案</h3>
       <textarea
         className={field}
         rows={3}
@@ -1326,6 +1431,7 @@ export function CanvasMusicMvStudio({
           });
         }}
       />
+      <h3 data-mv-step="storyboard" className="border-t border-white/15 pt-5 text-base font-semibold">3. 确认分镜</h3>
       <button
         className={button}
         disabled={busy || !selected || !!state.plan}
@@ -1389,17 +1495,35 @@ export function CanvasMusicMvStudio({
         <>
           <details open>
             <summary className="text-xs">
-              完整分镜 · {state.plan.shots.length} 镜 /{" "}
-              {state.plan.audioDurationSec.toFixed(2)} 秒
+              {highlightMode ? "本次高光分镜" : "完整分镜"} · {planShots.length} 镜 /{" "}
+              {(highlightMode && !highlightError ? (highlightRange(state)!.endSec-highlightRange(state)!.startSec) : state.plan.audioDurationSec).toFixed(2)} 秒
             </summary>
-            {state.plan.shots.map((shot, i) => (
+            {planShots.map((shot, i) => (
               <p className="my-1 text-xs" key={shot.id}>
                 {i + 1}. {shot.startSec.toFixed(2)}–{shot.endSec.toFixed(2)}秒：
                 {shot.visualPrompt}；{shot.cameraPrompt}
+                {highlightMode && !highlightError && `；成片保留 ${Math.max(shot.startSec,highlightRange(state)!.startSec).toFixed(2)}–${Math.min(shot.endSec,highlightRange(state)!.endSec).toFixed(2)} 秒`}
               </p>
             ))}
           </details>
-          {selected && state.planRequestId && !!state.shotBlockIds?.length && (
+          <h3 data-mv-step="shots" className="border-t border-white/15 pt-5 text-base font-semibold">4. 制作镜头</h3>
+          <button
+            className={button}
+            disabled={busy || !!state.shotBlockIds?.length}
+            onClick={layOut}
+          >
+            确认分镜并铺到画布
+          </button>
+          <button
+            className={button}
+            disabled={busy || !visibleShotIds.length || Boolean(highlightError)}
+            onClick={render}
+          >
+            生成缺失镜头（{missingShots.length} 镜，预计 {missingCredits} 积分）
+          </button>
+          {!highlightMode && selected && state.planRequestId && !!state.shotBlockIds?.length && (
+            <div data-mv-step="edit">
+            <h3 className="mb-3 border-t border-white/15 pt-5 text-base font-semibold">5. 剪辑</h3>
             <CanvasMvTimelineEditor
               key={state.planRequestId}
               plan={state.plan}
@@ -1424,21 +1548,10 @@ export function CanvasMusicMvStudio({
                 })
               }
             />
+            </div>
           )}
-          <button
-            className={button}
-            disabled={busy || !!state.shotBlockIds?.length}
-            onClick={layOut}
-          >
-            确认分镜并铺到画布
-          </button>
-          <button
-            className={button}
-            disabled={busy || !state.shotBlockIds?.length}
-            onClick={render}
-          >
-            生成缺失镜头（{missingShots.length} 镜，预计 {missingCredits} 积分）
-          </button>
+          {highlightMode && <p className="text-xs">5. 剪辑：按上方已应用的高光区间裁取画面、原歌曲与对齐歌词，不变速；调整区间后先补齐缺失镜头。</p>}
+          <h3 data-mv-step="finish" className="border-t border-white/15 pt-5 text-base font-semibold">6. 合成成片</h3>
           <button
             className={button}
             disabled={busy || !state.shotBlockIds?.length}
@@ -1446,7 +1559,7 @@ export function CanvasMusicMvStudio({
           >
             {state.assembleRequestId
               ? "查询／恢复原合成"
-              : `合成完整 MV · ${CREDIT_COSTS.workflowFinalRender} 积分`}
+              : `合成${highlightMode ? "抖音高光 MV" : "完整 MV"} · ${CREDIT_COSTS.workflowFinalRender} 积分`}
           </button>
           {state.assembleTerminalStatus && (
             <button
@@ -1459,13 +1572,14 @@ export function CanvasMusicMvStudio({
           )}
         </>
       )}
+      </>}
       <p role="status" className="text-xs">
         {progress ||
           `阶段：${({ idle: "待创作", music_running: "音乐生成中", music_ready: "音乐待选版", planning: "分镜规划中", planned: "分镜已生成", rendering: "镜头制作中", assembling: "合成中", done: "成片已回写", error: "需处理" } as const)[state.status]}`}
       </p>
       {state.error && (
         <p role="alert" className="text-xs text-amber-200">
-          {state.error}
+          {creativeUserText(state.error)}
         </p>
       )}
     </div>

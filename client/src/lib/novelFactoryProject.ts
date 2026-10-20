@@ -19,6 +19,7 @@ import {
   type ManhuaWriterPack,
 } from "@shared/manhuaWriterRoom";
 import type { NovelRun } from "./novelWorkspace";
+import { defaultCanvasBlock } from "./canvasTypes";
 
 /** No model call: carry the exact selected script into a separate, editable factory project. */
 export function novelRunToWriterPack(run: NovelRun): ManhuaWriterPack {
@@ -271,6 +272,10 @@ export function listLocalManhuaProjects(storage: Storage, userId: string) {
       });
       projects.push({
         projectId,
+        kind:
+          session.workspaceKind === "mv"
+            ? ("mv" as const)
+            : ("manhua" as const),
         title: session.writerPack?.seriesTitle || session.topic || "新作品",
         episodeCount: session.episodeCount,
         phase: session.workflowPhase,
@@ -285,7 +290,8 @@ export function listLocalManhuaProjects(storage: Storage, userId: string) {
 export function createEmptyManhuaProject(
   storage: Storage,
   userId: string,
-  title: string
+  title: string,
+  kind: "manhua" | "mv" = "manhua"
 ) {
   if (!title.trim()) throw new Error("请填写作品名称");
   const projectId = crypto.randomUUID();
@@ -295,14 +301,37 @@ export function createEmptyManhuaProject(
   const target = scopedManhuaStorage(storage, scope);
   const writer = serializeManhuaWriterSession(
     buildManhuaWriterSession({
+      ...(kind === "mv" ? { workspaceKind: "mv" as const } : {}),
       topic: title.trim(),
       episodeCount: 3,
       writerPack: null,
       workflowPhase: "outline",
     })
   );
-  target.setItem(MANHUA_WRITER_SESSION_LS_KEY, writer);
-  if (target.getItem(MANHUA_WRITER_SESSION_LS_KEY) !== writer)
-    throw new Error("作品保存失败");
-  return `/canvas?project=${projectId}&owner=${userId}`;
+  if (target.length) throw new Error("作品编号已存在，未覆盖已有作品");
+  const entries = [
+    [MANHUA_WRITER_SESSION_LS_KEY, writer],
+    ["mv-manhua-cloud-draft-local-at-v1", new Date().toISOString()],
+  ];
+  if (kind === "mv") {
+    const music = defaultCanvasBlock("music", 80, 80);
+    music.prompt = "";
+    music.musicMv = { status: "idle", candidates: [], songTitle: title.trim(), instrumental: false, deliveryMode: "song" };
+    entries.push([
+      "mv-freeform-canvas-v1",
+      JSON.stringify({ blocks: [music], edges: [] }),
+    ]);
+  }
+  const written: string[] = [];
+  try {
+    for (const [key, value] of entries) {
+      written.push(key);
+      target.setItem(key, value);
+      if (target.getItem(key) !== value) throw new Error("作品保存失败");
+    }
+  } catch (e) {
+    for (const key of written) target.removeItem(key);
+    throw e;
+  }
+  return `/canvas?project=${projectId}&owner=${userId}${kind === "mv" ? "&workflow=mv" : ""}`;
 }

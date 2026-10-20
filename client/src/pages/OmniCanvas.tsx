@@ -624,6 +624,8 @@ function loadCanvasWorkspaceMode(): CanvasWorkspaceMode {
    * 0903 用户令：/canvas 一律先落双入口选择页，漫剧工厂/自由画布由用户自己点，
    * 不再按历史记录或本机存档直达（作废 2026-08-11 的直达旧规）。
    */
+  if (new URLSearchParams(window.location.search).get("workflow") === "mv" ||
+      loadManhuaWriterSessionFromStorage()?.workspaceKind === "mv") return "freeform";
   return currentManhuaProjectScope() ? "manhua" : "pick";
 }
 
@@ -777,7 +779,8 @@ export default function OmniCanvas() {
     window.location.replace(window.location.href);
     return <main className="p-8">正在切换作品…</main>;
   }
-  return <><div className="flex justify-end bg-[#0e171e] px-5 py-2 text-white"><a href="/manhua-projects">我的漫剧 · 切换作品</a></div>{scope ? <ManhuaProjectLock key={`${scope.ownerId}:${scope.projectId}`} name={`mv-manhua-project:${scope.ownerId}:${scope.projectId}`}><OmniCanvasWorkspace /></ManhuaProjectLock> : <OmniCanvasWorkspace />}</>;
+  const mvEntry = new URLSearchParams(window.location.search).get("workflow") === "mv";
+  return <><div className="flex justify-end bg-[#0e171e] px-5 py-2 text-white">{!mvEntry && <a href="/manhua-projects">我的漫剧 · 切换作品</a>}</div>{scope ? <ManhuaProjectLock key={`${scope.ownerId}:${scope.projectId}`} name={`mv-manhua-project:${scope.ownerId}:${scope.projectId}`}><OmniCanvasWorkspace /></ManhuaProjectLock> : <OmniCanvasWorkspace />}</>;
 }
 function ManhuaProjectLock({name,children}:{name:string;children:React.ReactNode}) {
   const [status,setStatus]=useState<"waiting"|"ready"|"blocked">("waiting");
@@ -787,7 +790,23 @@ function ManhuaProjectLock({name,children}:{name:string;children:React.ReactNode
       if(stopped)return;if(!lock){setStatus("blocked");return;}
       setStatus("ready");await new Promise<void>(resolve=>{release=resolve});
     }).catch(()=>{if(!stopped)setStatus("blocked")});
-    return()=>{stopped=true;release()};
+    const leave = () => {
+      stopped = true;
+      // 历史缓存不会卸载 React；先停止旧工作区，再释放作品编辑锁。
+      flushSync(() => setStatus("waiting"));
+      release();
+    };
+    const restore = (event: PageTransitionEvent) => {
+      // 回到缓存页时重新读取本机和云端，不能让旧内存覆盖后来保存的稿件。
+      if (event.persisted) window.location.reload();
+    };
+    window.addEventListener("pagehide", leave);
+    window.addEventListener("pageshow", restore);
+    return()=>{
+      stopped=true;release();
+      window.removeEventListener("pagehide", leave);
+      window.removeEventListener("pageshow", restore);
+    };
   },[name]);
   if(status!=="ready")return <main className="p-8">{status==="waiting"?"正在打开作品…":"此作品可能已在另一页面中编辑，或浏览器无法取得编辑锁。请先保存并关闭该作品的其他页面，再重新打开。"}</main>;
   return children;
@@ -859,6 +878,7 @@ function OmniCanvasWorkspace() {
   manhuaVfxByScopeRef.current = manhuaVfxByScope;
   const initialWriterBoot = useMemo(() => bootWriterSession(), []);
   const initialWriterSession = initialWriterBoot.session;
+  const isMvProject = new URLSearchParams(window.location.search).get("workflow") === "mv" || initialWriterSession?.workspaceKind === "mv";
   const initialNovelOrigin = useMemo(() => initialWriterSession?.novelOrigin || readLocalNovelOrigin(), [initialWriterSession]);
   const novelOriginRef = useRef(initialNovelOrigin);
 
@@ -1590,7 +1610,7 @@ function OmniCanvasWorkspace() {
   /** 工厂运行范围：焦点集（默认）或成片坞已勾选集 */
   const [factoryRunScope, setFactoryRunScope] = useState<"focus" | "dock">("focus");
   const [dockSelectedIds, setDockSelectedIds] = useState<Set<string>>(() => new Set());
-  const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
+  const [focusBlockId, setFocusBlockId] = useState<string | null>(() => isMvProject ? initial.blocks.find(b => b.kind === "music")?.id || null : null);
   /** 漫剧工厂画布：默认只看本集静帧/成片，避免文本节点墙 */
   const [manhuaCanvasPresentation, setManhuaCanvasPresentation] = useState<"media" | "image" | "video" | "all">(
     "media",
@@ -3337,6 +3357,7 @@ function OmniCanvasWorkspace() {
     if (projectScope && !cloudSyncReady) return;
     try {
       saveManhuaWriterSessionToStorage({
+        ...(projectScope && isMvProject && (!initialWriterSession || initialWriterSession.workspaceKind === "mv") ? { workspaceKind: "mv" as const } : {}),
         topic: factoryTopic,
         brief: writerBrief,
         novelDraft,
@@ -3410,6 +3431,10 @@ function OmniCanvasWorkspace() {
     const nextEdges = draft.canvas.edges as CanvasEdge[];
     setBlocks(nextBlocks);
     setEdges(nextEdges);
+    if (session.workspaceKind === "mv") {
+      setCanvasMode("freeform");
+      setFocusBlockId(nextBlocks.find(block => block.kind === "music")?.id || null);
+    }
     // 画布被整份换掉：旧的生成前确认一律作废，在途的预览／确认也一并失效。
     bumpManhuaOutboundEpoch();
     // 云端仍是 https：旁路写入本机库，并尽量立刻用本机 blob 回灌显示
@@ -4151,6 +4176,7 @@ function OmniCanvasWorkspace() {
       assetSelectionScopeKey: manhuaAssetSelectionScopeKey(factoryTopic, projectBible?.assetCanon),
     };
     const writerSession = {
+      ...(projectScope && isMvProject && (!initialWriterSession || initialWriterSession.workspaceKind === "mv") ? { workspaceKind: "mv" as const } : {}),
       topic: factoryTopic,
       brief: writerBrief,
       novelDraft,
@@ -10844,8 +10870,8 @@ function OmniCanvasWorkspace() {
                   ) : canvasMode === "freeform" ? (
                     <>
                       <LayoutTemplate className="h-3.5 w-3.5" />
-                      自由画布
-                      <button
+                      {isMvProject ? "MV 工作流" : "自由画布"}
+                      {!isMvProject && <button
                         type="button"
                         disabled={Boolean(factoryBusy || writerBusy || assembleBusy)}
                         onClick={() => selectCanvasMode("manhua")}
@@ -10853,7 +10879,7 @@ function OmniCanvasWorkspace() {
                         title="切到漫剧工厂"
                       >
                         ⇄ 漫剧工厂
-                      </button>
+                      </button>}
                     </>
                   ) : (
                     <>
@@ -11406,7 +11432,7 @@ async function runAdvisorWriterTrial() {
           {waitingForConfirmation && <button type="button" data-testid="manhua-confirm-recovery" className="rounded border px-3 py-2" onClick={() => {
             if (window.confirm("继续恢复可能替换当前查看的本机内容，请先导出需要保留的副本。确认继续？")) setAllowViewedDraftReplacement(true);
           }}>确认继续恢复</button>}
-          <a href="/manhua-projects" className="block text-sm underline">返回我的漫剧</a>
+          <a href={isMvProject ? "/mv-projects" : "/manhua-projects"} className="block text-sm underline">{isMvProject ? "返回我的 MV" : "返回我的漫剧"}</a>
         </section>
       </main>
     );
@@ -11483,7 +11509,7 @@ async function runAdvisorWriterTrial() {
                   {canvasMode === "manhua"
                     ? "漫剧创作"
                     : canvasMode === "freeform"
-                      ? "自由画布"
+                      ? (isMvProject ? "MV 工作流" : "自由画布")
                       : "创作画布"}
                 </h1>
                 <p className="mt-2 max-w-2xl text-sm leading-7 text-white/65">
@@ -11491,7 +11517,7 @@ async function runAdvisorWriterTrial() {
                     ? "先选工作方式：连载短剧走漫剧工作流；单次图/视频/文案任务走自由画布。"
                     : canvasMode === "manhua"
                       ? "引导路径：题材 → 编剧确认 → 自动套造型 → 工作台 → 多镜静帧 → 成片 → 成片坞合成。"
-                      : "文生图 / 文生视频 / 图生视频、提文字、文案整理等简单任务，多节点自由接线，不铺漫剧流水线。"}
+                      : isMvProject ? "从一首歌开始，把视觉方案、分镜、镜头与剪辑保存在同一部作品中。" : "文生图 / 文生视频 / 图生视频、提文字、文案整理等简单任务，多节点自由接线，不铺漫剧流水线。"}
                 </p>
               </>
             ) : null}
@@ -14547,13 +14573,28 @@ async function runAdvisorWriterTrial() {
           <div id="freeform-canvas-zone" className="scroll-mt-24">
             {workflowPhase === "edit" && <div id="manhua-freeform-finecut" data-manhua-finecut-episode={writerFocusEpisode} className="mb-4 flex max-h-[70vh] min-h-0 flex-col overflow-auto rounded-xl border border-white/15 bg-slate-950 text-white" />}
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-              <div className="text-sm font-semibold text-white/85">自由画布</div>
+              <div className="text-sm font-semibold text-white/85">{isMvProject ? "MV 制作工作区" : "自由画布"}</div>
               <span className="text-[11px] text-white/40">
-                多任务节点自由接线 · 图片 / 视频 / 音乐与 MV / 文案
+                {isMvProject ? "沿用所选歌曲与原任务，逐步完成镜头和成片" : "多任务节点自由接线 · 图片 / 视频 / 音乐与 MV / 文案"}
               </span>
             </div>
+            {isMvProject && <section data-mv-workflow-header className="mb-5 rounded-2xl border border-white/15 bg-slate-950/80 p-5 text-white">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div><p className="text-xs tracking-widest text-amber-200">音乐影像</p><h1 className="mt-2 text-2xl font-semibold">{factoryTopic || "MV 工作流"}</h1></div>
+                <div className="flex flex-wrap gap-3">
+                  <button className="rounded-lg bg-amber-200 px-4 py-3 text-sm font-semibold text-slate-950" disabled={Boolean(cloudBackupBusy) || !cloudSyncReady} onClick={() => void uploadCloudBackupNow()}>{cloudBackupBusy ? "正在保存…" : "保存作品"}</button>
+                  <a className="rounded-lg border border-white/25 px-4 py-3 text-sm" href="/mv-projects" onClick={event => {
+                    if (!cloudSyncReady || cloudBackupBusy || document.querySelector('[data-mv-studio][aria-busy="true"]') || !saveCanvasState(blocksRef.current, edges)) {
+                      event.preventDefault(); toast.error("请先等当前作品保存与恢复完成，再切换作品。");
+                    }
+                  }}>我的 MV · 切换作品</a>
+                </div>
+              </div>
+              <p className="mt-4 text-sm leading-7 text-white/65">先创作歌词、歌曲与专辑封面；需要推广时，再选30–60秒高光制作抖音MV，引流至汽水音乐。已有作品和任务会保留，每次生成仍需你确认。</p>
+            </section>}
           <FreeformCanvas
             projectId={projectScope?.projectId}
+            musicWorkflow={isMvProject}
             resolveManhuaOutboundGate={(blockId) => ({
               currentScope: manhuaOutboundScope(blockId),
               confirmation: outboundConfirmationsRef.current[blockId],

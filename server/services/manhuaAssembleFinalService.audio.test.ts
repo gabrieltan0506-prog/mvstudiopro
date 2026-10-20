@@ -223,3 +223,10 @@ it("歌曲对齐字幕经assemble服务透传到真实renderer入口", async () 
   expect(render.mock.calls.at(-1)?.[0]).toMatchObject({ alignedLyrics: { ...alignedLyrics, srt: expect.stringContaining("00:00:01,000 --> 00:00:02,000") } });
   expect(result.alignedLyrics?.words).toEqual(alignedLyrics.words);
 });
+
+it("高光音轨裁点经过worker服务清洗保留，回执字幕使用成片零点",async()=>{
+ const alignedLyrics={requestId:"33333333-3333-4333-8333-333333333333",sourceId:"song",durationSec:100,words:[{text:"歌词",startSec:26,endSec:27}],srt:"1\n00:00:26,000 --> 00:00:27,000\n歌词\n"};
+ const result=await runManhuaAssembleFinal({clips:[{episodeIndex:1,clipUrl:"https://test.invalid/clip.mp4",durationSec:40}],musicOnly:true,musicUrl:"https://test.invalid/song.mp3",musicStartSec:25,musicEndSec:65,alignedLyrics});
+ expect(render.mock.calls.at(-1)?.[0]).toMatchObject({musicStartSec:25,musicEndSec:65,alignedLyrics:{durationSec:100}});
+ expect(result.alignedLyrics?.words).toEqual([{text:"歌词",startSec:1,endSec:2}]);
+});

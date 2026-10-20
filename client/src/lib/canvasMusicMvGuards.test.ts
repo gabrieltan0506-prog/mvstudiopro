@@ -88,3 +88,17 @@ describe("MV 三个恢复断点", () => {
     expect(retained.outputUrl).toBe(selected.outputUrl);
   });
 });
+
+
+it("人声MV不默认排除演唱，切换移除旧器乐预设且保留其他声音偏好", async () => {
+  const { musicMvExclusions, musicMvTypePatch, assertMusicMvVocalExclusions, INSTRUMENTAL_EXCLUSIONS } = await import("./canvasMusicMvGuards");
+  const vocal = { status: "idle" as const, candidates: [], instrumental: false };
+  expect(musicMvExclusions(vocal)).toBe("");
+  const old = { ...vocal, instrumental: true, songExcludes: INSTRUMENTAL_EXCLUSIONS };
+  const switched = { ...old, ...musicMvTypePatch(old, false) };
+  expect(musicMvExclusions(switched)).toBe("");expect(() => assertMusicMvVocalExclusions(switched)).not.toThrow();
+  expect(musicMvExclusions({ ...vocal, instrumental: true })).toContain("vocals");
+  expect({ ...old, songExcludes: "heavy drums, choir", ...musicMvTypePatch({ ...old, songExcludes: "heavy drums, choir" }, false) }.songExcludes).toBe("heavy drums, choir");
+  expect(() => assertMusicMvVocalExclusions({ ...vocal, songExcludes: "heavy drums, choir" })).not.toThrow();
+  expect(() => assertMusicMvVocalExclusions({ ...vocal, songExcludes: "vocals, singing" })).toThrow("已选择人声歌曲");
+});

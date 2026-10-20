@@ -80,7 +80,7 @@ function resultDownloadName(label: string, extension: "png" | "mp4") {
   return `${label.replace(/\s+/g, "-")}-${Date.now()}.${extension}`;
 }
 
-export default function HomePhotoTools() {
+export default function HomePhotoTools({ embedded = false }: { embedded?: boolean }) {
   const { user, isAuthenticated, refresh } = useAuth({ autoFetch: true });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sourceUrl, setSourceUrl] = useState("");
@@ -461,9 +461,9 @@ export default function HomePhotoTools() {
   return (
     <section
       id="photo-tools"
-      className="mx-auto w-full max-w-[1120px] scroll-mt-24 px-5 py-20"
+      className={embedded ? "w-full scroll-mt-24" : "mx-auto w-full max-w-[1120px] scroll-mt-24 px-5 py-20"}
     >
-      <div className="mx-auto max-w-3xl text-center">
+      {!embedded && <div className="mx-auto max-w-3xl text-center">
         <div className="inline-flex items-center gap-2 rounded-full border border-[var(--hp-accent-line)] bg-[var(--hp-accent-soft)] px-3 py-1 text-xs font-bold tracking-[0.14em] text-[var(--hp-accent)]">
           <Sparkles className="h-3.5 w-3.5" /> 图片工具箱
         </div>
@@ -473,7 +473,7 @@ export default function HomePhotoTools() {
         <p className="mt-4 text-sm leading-7 text-[var(--hp-muted)] sm:text-base">
           上传照片后，自由选择高清放大、修复上色或照片动起来。三个功能都可以单独使用，无需按顺序操作。
         </p>
-      </div>
+      </div>}
 
       <div className="mt-10 rounded-3xl border border-[var(--hp-line)] bg-[var(--hp-card)] p-4 shadow-[0_20px_60px_rgba(82,50,29,0.06)] sm:p-6">
         <input

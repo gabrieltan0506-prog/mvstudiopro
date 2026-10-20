@@ -48,7 +48,7 @@ export function normalizeWavespeedGptImage2Resolution(raw: unknown): WavespeedGp
 /** 与 OpenAI/EvoLink 共用的画幅口径：9:16 / 16:9；WaveSpeed 两个都收 */
 export function buildWavespeedGptImage2Body(input: {
   prompt: string;
-  aspectRatio: "9:16" | "16:9";
+  aspectRatio: "9:16" | "16:9" | "1:1";
   resolution: WavespeedGptImage2Resolution;
   quality: WavespeedGptImage2Quality;
   imageUrls?: string[];
@@ -125,7 +125,7 @@ export async function postWavespeedGptImage2AndUpload(
   prompt: string,
   gcsSubdir: string,
   opts: {
-    aspectRatio?: "9:16" | "16:9";
+    aspectRatio?: "9:16" | "16:9" | "1:1";
     resolution?: WavespeedGptImage2Resolution | string;
     quality?: WavespeedGptImage2Quality | string;
     imageUrls?: string[];

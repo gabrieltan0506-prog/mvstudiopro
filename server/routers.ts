@@ -1,3 +1,4 @@
+import { coverWorkshopRouter } from "./routers/coverWorkshop";
 import { coverCandidateProcedures } from "./routers/platformCoverCandidates.js";
 import { topicDigestProcedures } from "./routers/topicDigest.js";
 import { marketingPlanProcedures } from "./routers/platformMarketingPlan.js";
@@ -2975,6 +2976,7 @@ export const appRouter = router({
   fileConversion: fileConversionRouter,
   novelWorkspace: novelWorkspaceRouter,
   canvasMusicMv: canvasMusicMvRouter,
+  coverWorkshop: coverWorkshopRouter,
   canvasMusicMvAssemble: canvasMusicMvAssembleRouter,
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,

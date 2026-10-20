@@ -1,3 +1,4 @@
+import { normalizeCanvasImageAspectRatio } from "../../shared/canvasGptImage2JobInput";
 import { startFileConversionWorker, stopFileConversionWorker, drainFileConversions, fileConversionsBusy } from "./fileConversionWorker";
 import {
   buildI2VRequest,
@@ -202,8 +203,8 @@ export function resolveFailedJobDisposition(job: {
   input: unknown;
   attempts?: number | null;
 }, error?: unknown): "refund_and_fail_paid_image" | "reconcile_and_fail_paid_image" | "requeue" | "fail" {
-  const params = (job.input as { params?: { codeMotionImage?: unknown } } | null)?.params;
-  if (job.type === "image" && isCanvasGptImage2Job(job.input) && params?.codeMotionImage &&
+  const params = (job.input as { params?: { codeMotionImage?: unknown; coverWorkshop?: unknown } } | null)?.params;
+  if (job.type === "image" && isCanvasGptImage2Job(job.input) && (params?.codeMotionImage || params?.coverWorkshop) &&
       ((error as {kind?: string} | null)?.kind === "unknown" ||
         (error instanceof Error && /^image job timed out after \d+ms$/.test(error.message))))
     return "reconcile_and_fail_paid_image";
@@ -1777,6 +1778,9 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
 
   /** Canvas 关键静帧 / 封面：与 sync op=canvasGptImage2 同核，供短入队+轮询 */
   if (input.action === "canvas_gpt_image2") {
+    const coverPolicy = params.coverWorkshop
+      ? await (await import("../services/coverWorkshop.js")).resolveCoverWorkerPolicy(jobUserId, jobId || "", input)
+      : null;
     const digitalHumanKeyframePolicy = params.digitalHumanKeyframeGeneration
       ? (await import("../services/digitalHumanKeyframeGeneration.js")).assertDigitalHumanKeyframeGenerationJob(Number(jobUserId), jobId || "", input)
       : null;
@@ -1788,7 +1792,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
       : null;
     const prompt = String(params.prompt ?? "").trim();
     if (!prompt) throw new Error("missing prompt");
-    const aspectRatio = String(params.aspectRatio || "9:16") === "16:9" ? "16:9" : "9:16";
+    const aspectRatio = normalizeCanvasImageAspectRatio(params.aspectRatio);
     const referenceImageUrls = Array.isArray(params.referenceImageUrls)
       ? (params.referenceImageUrls as unknown[])
           .map((u) => String(u || "").trim())
@@ -1848,7 +1852,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     }
     const { canvasImageCredits } = await import("../../shared/canvasGenerationPricing.js");
     const { manhuaAssetStandardizeCredits } = await import("../../shared/manhuaAssetStandardize.js");
-    const cost = codeMotionPolicy ? codeMotionPolicy.credits : assetStandardizeQuality
+    const cost = coverPolicy ? coverPolicy.credits : codeMotionPolicy ? codeMotionPolicy.credits : assetStandardizeQuality
       ? manhuaAssetStandardizeCredits(assetStandardizeQuality)
       : canvasImageCredits(typeof params.batchIndex === "number" ? params.batchIndex : 0);
     const chargeKey = assetStandardizeQuality
@@ -1921,7 +1925,9 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     };
     let imageUrl: string | null | undefined;
     try {
-      imageUrl = codeMotionPolicy
+      imageUrl = coverPolicy
+        ? await (await import("../services/coverWorkshop.js")).generateCoverImage(coverPolicy)
+        : codeMotionPolicy
         ? await (await import("../services/openaiGptImage2.js")).postOpenAiGptImage2AndUpload(prompt, gcsSubdir, {
             aspectRatio, exactModel: codeMotionPolicy.model, quality: codeMotionPolicy.quality,
             imageUrls: await Promise.all(referenceImageUrls.map(async uri =>
@@ -1958,7 +1964,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
       if ((err as { kind?: string } | null)?.kind === "unknown") {
         if (creditDeducted > 0) {
           const { markSettlementPending, markReconciliationPending } = await import("../services/paidJobLedger.js");
-          await (codeMotionPolicy ? markReconciliationPending : markSettlementPending)(
+          await (codeMotionPolicy || coverPolicy ? markReconciliationPending : markSettlementPending)(
             jobId,
             assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2",
           ).catch(() => false);
@@ -4405,7 +4411,7 @@ async function runClaimedJob(
       const { markReconciliationPending } = await import("../services/paidJobLedger.js");
       await markReconciliationPending(job.id, "canvasGptImage2").catch(e =>
         console.error("[Jobs] code motion image reconciliation pending:", e));
-      await markJobFailed(job.id, "场景图提交或保存结果尚未确认，保留原任务对账；不会再次生成或提前退款");
+      await markJobFailed(job.id, "图片提交或保存结果尚未确认，保留原任务对账；不会再次生成或提前退款");
     } else if (resolveFailedJobDisposition(job, error) === "refund_and_fail_paid_image") {
       /**
        * 七审 P0-2:canvas_gpt_image2 绝不整单重排——重排会第二次调用付费图片上游。

@@ -1,3 +1,4 @@
+import { musicMvShotSlices, type MusicMvHighlight } from "@shared/musicMvHighlight";
 import { manhuaSourceVersionIdentity } from "@shared/manhuaMultiview";
 import {
   canvasMusicMvPlanSchema,
@@ -75,11 +76,13 @@ export function createMusicMvShotBlocks(
 export function musicMvReadyClips(
   plan: CanvasMusicMvPlan,
   ids: string[],
-  blocks: CanvasBlock[]
+  blocks: CanvasBlock[],
+  highlight?: MusicMvHighlight
 ) {
-  if (ids.length !== plan.shots.length)
+  const shots = musicMvShotSlices(plan, highlight).map(row => row.shot);
+  if (ids.length !== shots.length)
     throw new Error("镜头数量与分镜不一致，请重新铺设镜头");
-  return plan.shots.map((shot, i) => {
+  return shots.map((shot, i) => {
     const block = blocks.find(row => row.id === ids[i]);
     if (!block || block.status !== "done" || !block.outputUrl)
       throw new Error(`镜头 ${i + 1} 尚未出片，不能合成完整 MV`);

@@ -15,20 +15,24 @@ export type NovelWorkspace = Omit<z.infer<typeof stateSchema>, "source"> & {
 export type NovelRun = { input: NovelTestInput; result: NovelTestResult };
 export const novelWorkspaceKey = (userId: string) =>
   `mv-novel-lab-v2:${encodeURIComponent(userId)}`;
-export const emptyNovelWorkspace = (): NovelWorkspace => ({
-  roundId: crypto.randomUUID(),
-  topic: "",
-  direction: "",
-  mode: "source",
-  source: null,
-  templates: [],
-  episodeCount: 3,
-  outline: "",
-  outlineApproved: "",
-  chapters: [],
-  novelApproved: "",
-  runs: [],
-});
+export const emptyNovelWorkspace = (): NovelWorkspace => {
+  const roundId = crypto.randomUUID();
+  return {
+    projectId: roundId,
+    roundId,
+    topic: "",
+    direction: "",
+    mode: "source",
+    source: null,
+    templates: [],
+    episodeCount: 3,
+    outline: "",
+    outlineApproved: "",
+    chapters: [],
+    novelApproved: "",
+    runs: [],
+  };
+};
 export function readNovelWorkspace(
   storage: Pick<Storage, "getItem">,
   userId: string

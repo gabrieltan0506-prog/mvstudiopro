@@ -1,3 +1,4 @@
+import { creativeUserText } from "@/lib/creativeUserText";
 import { MusicEmotionPanel } from "./MusicEmotionPanel";
 import { CreativeEvidenceReviewPanel } from "./CreativeEvidenceReviewPanel";
 import { useRef, useState } from "react";
@@ -309,7 +310,7 @@ export function CanvasMvCreativeAdvisor(props: Props) {
       )}
       {error && (
         <p role="alert" className="text-amber-200">
-          {error}
+          {creativeUserText(error)}
         </p>
       )}
       {props.session?.proposal && (

@@ -297,3 +297,22 @@ describe("歌词对齐字幕进入最终MV合成", () => {
     expect(mocks.create.mock.calls[0][0].input.params).not.toHaveProperty("alignedLyrics");
   });
 });
+
+describe("抖音高光合成仅消费所选原歌区间",()=>{
+ const song={...audio,durationSec:100};
+ const original={...plan,audioDurationSec:100,shots:Array.from({length:10},(_,i)=>({...plan.shots[0],id:`s${i}`,startSec:i*10,endSec:(i+1)*10}))};
+ function bind(){mocks.download.mockImplementation(async({gcsUri})=>({buffer:Buffer.from(JSON.stringify(gcsUri.endsWith("settled.json")?{settled:true}:{plan:original,input:{...saved().input,audio:song}}))}));}
+ const clips=original.shots.slice(2,7).map(s=>({shotId:s.id,url:`https://storage.googleapis.com/test-bucket/post-prod/7/${s.id}.mp4`}));
+ it("整曲100秒只入队40秒画面，同步原歌25–65秒，原合同与幂等不变",async()=>{
+  bind();await caller(7).queue({...input,audio:song,plan:original,clips,highlight:{startSec:25,endSec:65},resolution:"9:16"});
+  const job=mocks.create.mock.calls[0][0];expect(job.input.params).toMatchObject({musicStartSec:25,musicEndSec:65,musicOnly:true,resolution:"9:16",billingContractVersion:"manhua-assemble-v1"});
+  expect(job.input.params.clips.map((c:any)=>[c.trimInSec,c.trimOutSec,c.durationSec])).toEqual([[5,10,5],[0,10,10],[0,10,10],[0,10,10],[0,5,5]]);
+  mocks.get.mockResolvedValue(job);await caller(7).queue({...input,audio:song,plan:original,clips,highlight:{startSec:25,endSec:65},resolution:"9:16"});expect(mocks.create).toHaveBeenCalledTimes(1);
+  await expect(caller(7).queue({...input,audio:song,plan:original,clips,highlight:{startSec:26,endSec:66},resolution:"9:16"})).rejects.toMatchObject({code:"CONFLICT"});
+ });
+ it("错误时长、越界、缺镜头与混用完整剪辑均在入队前拒绝",async()=>{
+  bind();for(const range of [{startSec:20,endSec:40},{startSec:80,endSec:120}])await expect(caller(7).queue({...input,audio:song,plan:original,clips,highlight:range})).rejects.toThrow();
+  await expect(caller(7).queue({...input,audio:song,plan:original,clips:clips.slice(1),highlight:{startSec:25,endSec:65}})).rejects.toThrow();
+  await expect(caller(7).queue({...input,audio:song,plan:original,clips,highlight:{startSec:25,endSec:65},editRevisionId:requestId})).rejects.toThrow("混用");expect(mocks.create).not.toHaveBeenCalled();
+ });
+});

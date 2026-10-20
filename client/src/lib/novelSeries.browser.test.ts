@@ -8,7 +8,7 @@ import { build } from "esbuild";
 import puppeteer from "puppeteer";
 import { createServer } from "node:http";
 import { novelMockTransport } from "./novelWorkspace.browser.fixture";
-it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches through 60, resizes plans and preserves season 1", async () => {
+async function runNovelSeriesScenario(adoptionOnly = false) {
   const built = await build({
     stdin: {
       resolveDir: process.cwd(),
@@ -19,12 +19,13 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
     bundle: true,
     write: false,
     outdir: "ui-browser",
-    format: "iife",
+    format: "esm",
+    splitting: true,
     platform: "browser",
     jsx: "automatic",
     tsconfig: "tsconfig.json",
     external: ["pdfjs-dist", "tesseract.js"],
-    define: { "process.env.NODE_ENV": '"test"' },
+    define: { "process.env.NODE_ENV": '"test"', "import.meta.env": "{}" },
     plugins: [
       {
         name: "mock",
@@ -53,10 +54,24 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
     .filter(f => f.path.endsWith(".css"))
     .map(f => f.text)
     .join("\n");
-  const server = createServer((_, res) => {
+  const factoryRequests: string[] = [];
+  const server = createServer((req, res) => {
+    const asset = built.outputFiles.find(
+      f => req.url === `/${f.path.split("/").pop()}`
+    );
+    if (asset) {
+      if (req.url?.startsWith("/novelFactoryProject-"))
+        factoryRequests.push(req.url);
+      res.setHeader(
+        "Content-Type",
+        asset.path.endsWith(".css") ? "text/css" : "text/javascript"
+      );
+      res.end(asset.text);
+      return;
+    }
     res.setHeader("Content-Type", "text/html;charset=utf-8");
     res.end(
-      `<meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style><div id="root"></div><script>${built.outputFiles.find(f => f.path.endsWith(".js"))!.text.replace(/<\/script/g, "<\\/script")}</script>`
+      `<meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style><div id="root"></div><script type="module" src="/stdin.js"></script>`
     );
   });
   await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
@@ -194,12 +209,14 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
         el => (el as HTMLTextAreaElement).value
       )
     ).toBe("沈昀：先把文书留下，我们再谈条件。");
+    expect(factoryRequests).toEqual([]);
     await adoptedPage.evaluate(() =>
       Array.from(document.querySelectorAll("button"))
         .find(b => b.textContent?.includes("采用这版剧本，进入漫剧工厂"))!
         .click()
     );
     await adoptedPage.waitForFunction(() => location.pathname === "/canvas");
+    expect(factoryRequests.length).toBeGreaterThan(0);
     const imported = await adoptedPage.evaluate(() => {
       const project = new URLSearchParams(location.search).get("project");
       return JSON.parse(
@@ -219,6 +236,10 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
       "EDITOR PROOF: all 3 episode dialogue edits persisted; original paid receipts unchanged; reopening preserved edits; actual adopt button imported edited text into isolated factory writer pack."
     );
     await adoptedPage.close();
+    if (adoptionOnly) {
+      expect(errors).toEqual([]);
+      return;
+    }
     await showNovelTools(page);
     await input("全剧计划集数", "70");
     await input("全剧计划集数", "60");
@@ -447,4 +468,16 @@ it("browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches throug
     await browser.close();
     server.close();
   }
-}, 90000);
+}
+
+it(
+  "browser: one batch keeps episode 1, writes 2/3, reviews 10/20 batches through 60, resizes plans and preserves season 1",
+  () => runNovelSeriesScenario(),
+  90000
+);
+
+it(
+  "首次加载不请求工厂模块，确认采用后保留三集编辑与原始回执",
+  () => runNovelSeriesScenario(true),
+  30000
+);

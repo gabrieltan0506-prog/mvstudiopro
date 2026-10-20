@@ -60,3 +60,9 @@ describe("buildCanvasGptImage2JobInput", () => {
     expect(input.params.generalImageEdit).toBe(true);
   });
 });
+
+it("专辑方形画幅在任务与worker共用归一化中保留，旧比例不变",async()=>{
+ const {normalizeCanvasImageAspectRatio}=await import("./canvasGptImage2JobInput");
+ for(const ratio of ["1:1","9:16","16:9"] as const){expect(buildCanvasGptImage2JobInput({prompt:"测试",aspectRatio:ratio}).params.aspectRatio).toBe(ratio);expect(normalizeCanvasImageAspectRatio(ratio)).toBe(ratio);}
+ expect(normalizeCanvasImageAspectRatio("bad")).toBe("9:16");
+});
