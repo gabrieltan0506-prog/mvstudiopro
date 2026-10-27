@@ -151,6 +151,51 @@ it("首页封面入口：三款确认、选择成稿、断网同ID恢复、刷�
     await page.waitForSelector('img[alt="自然叙事初稿"]');
     await click("选择此方向");
     await page.type('[aria-label="成稿修改"]', "保留构图，让光线更柔和");
+    const draftId = await page.$eval(
+      '[aria-label="已保存的封面"]',
+      e => (e as HTMLSelectElement).value
+    );
+    await page.reload();
+    await page.waitForSelector('img[alt="自然叙事初稿"]');
+    expect(await page.$('[aria-label="成稿修改"]')).not.toBeNull();
+    expect(
+      await page.$eval(
+        '[aria-label="成稿修改"]',
+        e => (e as HTMLTextAreaElement).value
+      )
+    ).toBe("保留构图，让光线更柔和");
+    expect(await page.evaluate(() => (window as any).calls)).toEqual([]);
+    // 新设计不继承旧设计的选择或修改；返回旧设计应完整恢复。
+    await click("整理三款设计");
+    await page.waitForFunction(
+      id =>
+        (
+          document.querySelector(
+            '[aria-label="已保存的封面"]'
+          ) as HTMLSelectElement
+        ).value !== id,
+      {},
+      draftId
+    );
+    expect(await page.$('[aria-label="成稿修改"]')).toBeNull();
+    await click("确认生成三款");
+    await page.waitForSelector('img[alt="自然叙事初稿"]');
+    await click("选择此方向");
+    expect(
+      await page.$eval(
+        '[aria-label="成稿修改"]',
+        e => (e as HTMLTextAreaElement).value
+      )
+    ).toBe("");
+    await page.select('[aria-label="已保存的封面"]', draftId);
+    await page.waitForFunction(
+      () =>
+        (
+          document.querySelector(
+            '[aria-label="成稿修改"]'
+          ) as HTMLTextAreaElement
+        )?.value === "保留构图，让光线更柔和"
+    );
     if (out)
       await page.screenshot({
         path: out + "/desktop-drafts.png",
@@ -198,7 +243,32 @@ it("首页封面入口：三款确认、选择成稿、断网同ID恢复、刷�
     expect(
       await page.$eval('[aria-label="当前封面设计"]', e => e.textContent)
     ).not.toMatch(/Flare|Sunburst|Gemini|GLM|Astra/i);
+    await page.select('[aria-label="已保存的封面"]', draftId);
+    await page.waitForSelector('[aria-label="成稿修改"]');
+    // 保存成稿请求时的同步写入也必须保留原设计的本机编辑。
+    await page.reload();
+    await page.waitForSelector('[aria-label="成稿修改"]');
+    expect(
+      await page.$eval(
+        '[aria-label="成稿修改"]',
+        e => (e as HTMLTextAreaElement).value
+      )
+    ).toBe("保留构图，让光线更柔和");
+    expect(await page.evaluate(() => (window as any).calls)).toEqual([]);
+    await page.evaluate(() => {
+      const key = "cover-workshop:1";
+      const saved = JSON.parse(localStorage.getItem(key)!);
+      saved.finalEdits[saved.id].selected = 99;
+      localStorage.setItem(key, JSON.stringify(saved));
+    });
+    await page.reload();
+    await page.waitForSelector('img[alt="自然叙事初稿"]');
+    expect(await page.$('[aria-label="成稿修改"]')).toBeNull();
+    await click("选择此方向");
+    await page.waitForSelector('[aria-label="成稿修改"]');
+    expect(await page.evaluate(() => (window as any).calls)).toEqual([]);
     await page.evaluate(() => sessionStorage.setItem("user", "2"));
+    await page.evaluate(() => localStorage.setItem("cover-workshop:2", "null"));
     await page.reload();
     await page.waitForSelector('[aria-label="封面想法"]');
     expect(await page.$('[aria-label="当前封面设计"]')).toBeNull();

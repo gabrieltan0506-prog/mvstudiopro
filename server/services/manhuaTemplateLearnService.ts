@@ -980,7 +980,7 @@ async function listOrderedEpisodes(
   },
 ): Promise<ListedEpisodesResult> {
   if (isManhua0996SourceUrl(sourceUrl, readManhuaLearnExtraSourceHosts())) {
-    const page = await fetchManhua0996SeriesPage(sourceUrl);
+    const page = await fetchManhua0996SeriesPage(sourceUrl, undefined, undefined, true);
     return {
       listed: page.episodes.map((episode) => ({
         index: episode.index,
@@ -990,7 +990,7 @@ async function listOrderedEpisodes(
         sourceKind: "0996_mirror" as const,
       })),
       mixNameZh: page.titleZh,
-      reliable: true,
+      reliable: false,
     };
   }
   const id = String(mixId || "").trim();
@@ -1697,7 +1697,9 @@ export async function runManhuaTemplateLearn(
      * `sourceIdentity` 是稳定标识（GCS 导入是 gs://，不是每次都变的签名链）——
      * 拿签名链比对永远不相等，同一素材重跑会被当成新素材追加。
      */
-    listed = placeSingleSourceInExistingSeries(listed, placementSources, { sourceIdentity });
+    if (!isManhua0996SourceUrl(sourceUrl, readManhuaLearnExtraSourceHosts())) {
+      listed = placeSingleSourceInExistingSeries(listed, placementSources, { sourceIdentity });
+    }
     await progress(
       MANHUA_LEARN_STAGE.list,
       `已解析 ${listed.length} 个学习源${mixId && listed.length > 1 ? "（合集展开）" : ""}${dramaNameZh ? ` · 《${dramaNameZh}》` : ""}${placementSources.length ? " · 已并入同名剧" : ""}`,

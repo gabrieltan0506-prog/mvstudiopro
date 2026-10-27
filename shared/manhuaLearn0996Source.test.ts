@@ -118,3 +118,19 @@ describe("0902 电影单片页豁免", () => {
     expect(page.titleZh).toBe("盗梦空间");
   });
 });
+
+describe("1028 当前集独立解析", () => {
+  const source = parseManhua0996SourceUrl("https://www.gzcrkt8888.com/vod/play/147594/1/1325397")!;
+  const html = '<h1 class="title_name">嫁金钗</h1><span>第10集 共30集</span><a href="/vod/play/147594/1/1325397">第10集</a>';
+  it("目录未展开仍只返回指定第10集，不读总数", () => {
+    expect(parseManhua0996SeriesPage(html, source, true)).toMatchObject({ currentEpisodeIndex: 10, episodes: [{ index: 10, nid: "1325397", url: source.canonicalUrl }] });
+  });
+  it.each([html.replace("1325397", "999"), html.replace("147594", "999"), html.replace("第10集</a>", "播放</a>"), html + '<a href="/vod/play/147594/1/1325397">第11集</a>'])("错误身份或无可信集号阻断", value => {
+    expect(() => parseManhua0996SeriesPage(value, source, true)).toThrow();
+  });
+  it("真实嫁金钗20/30目录只取当前第10集，旧整目录模式仍拒绝", () => {
+    const html = fixture("0996-147594-current-excerpt.html");
+    expect(parseManhua0996SeriesPage(html, source, true).episodes.map(e => e.index)).toEqual([10]);
+    expect(() => parseManhua0996SeriesPage(html, source)).toThrow("目录未完整展开");
+  });
+});

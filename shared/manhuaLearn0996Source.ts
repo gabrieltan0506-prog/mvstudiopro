@@ -147,11 +147,31 @@ function decodeHtmlText(raw: string): string {
 export function parseManhua0996SeriesPage(
   html: string,
   source: Manhua0996SourceRef,
+  currentOnly = false,
 ): Manhua0996SeriesPage {
   const text = String(html || "");
   const titleMatch = /<h1\b[^>]*class=["'][^"']*\btitle_name\b[^"']*["'][^>]*>([\s\S]*?)<\/h1>/i.exec(text);
   const titleZh = decodeHtmlText(titleMatch?.[1] || "");
   if (!titleZh) throw new Error("第三方播放页缺少可信剧名，已停止");
+
+  // 单集入口只核对链接绑定的 nid，不以整部目录或更新数量作为准入条件。
+  if (currentOnly) {
+    const indexes = new Set<number>();
+    const anchors = /<a\b[^>]*href=["']\/vod\/play\/(\d{1,12})\/(?:sid|\d{1,4})\/(\d{1,12})\/?["'][^>]*>([\s\S]*?)<\/a>/gi;
+    let anchor: RegExpExecArray | null;
+    while ((anchor = anchors.exec(text)) !== null) {
+      if (anchor[1] !== source.vodId || anchor[2] !== source.nid) continue;
+      const label = decodeHtmlText(anchor[3] || "").trim();
+      const number = /^(?:第\s*)?(\d+)\s*(?:集|话|期)?$/.exec(label);
+      if (number && Number(number[1]) > 0) indexes.add(Number(number[1]));
+      else if (/^(?:HD|HD中字|正片|高清|完整版|蓝光|超清)$/i.test(label)) indexes.add(1);
+      else throw new Error("当前播放集缺少可信集号，已停止；不会按目录位置补号");
+    }
+    if (indexes.size !== 1) throw new Error("当前播放集缺失或集号冲突，已停止；不会改学其他集");
+    const index = Array.from(indexes)[0]!;
+    return { vodId: source.vodId, currentNid: source.nid, currentEpisodeIndex: index, titleZh,
+      episodes: [{ index, nid: source.nid, url: source.canonicalUrl, title: `第${index}集` }] };
+  }
 
   const episodeMap = new Map<string, Manhua0996Episode>();
   const anchorPattern = /<a\b[^>]*href=["']\/vod\/play\/(\d{1,12})\/(?:sid|\d{1,4})\/(\d{1,12})\/?["'][^>]*>([\s\S]*?)<\/a>/gi;

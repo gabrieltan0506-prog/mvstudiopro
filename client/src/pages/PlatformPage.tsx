@@ -13601,7 +13601,7 @@ export default function PlatformPage() {
                           className="w-20 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] tabular-nums text-white disabled:opacity-45"
                         />
                         <span className="text-[10px] text-[#c9c0e6]/50">
-                          单集链接只学该集；合集可选 {manhuaLearnPipelineMeta.batchMin}–{manhuaLearnPipelineMeta.batchMax} 集，默认 {manhuaLearnPipelineMeta.batchDefault}
+                          单集播放页只学链接指定的本集，无需整部更新完；合集可选 {manhuaLearnPipelineMeta.batchMin}–{manhuaLearnPipelineMeta.batchMax} 集，默认 {manhuaLearnPipelineMeta.batchDefault}
                         </span>
                         {ownerNativeDeepReadPanel ? (
                           <>
