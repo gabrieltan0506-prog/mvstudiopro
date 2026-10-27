@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { z } from "zod";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
@@ -10,6 +11,7 @@ import {
   COVER_FINAL_CREDITS,
   coverBriefSchema,
   coverBriefFieldsSchema,
+  coverRequestSchema,
   type CoverBrief,
   type CoverRequest,
 } from "@shared/coverWorkshop";
@@ -27,9 +29,31 @@ const buttonClass =
   "min-h-11 rounded-xl bg-[var(--hp-accent)] px-5 py-3 font-bold text-white disabled:opacity-50";
 const secondaryClass =
   "min-h-11 rounded-xl border border-[var(--hp-line)] px-4 py-2 text-sm text-[var(--hp-ink)] disabled:opacity-50";
+const finalEditSchema = z.object({
+  selected: z.number().int().min(0).max(2).nullable(),
+  changes: z.string().max(1500),
+});
+type FinalEdit = z.infer<typeof finalEditSchema>;
+const emptyFinalEdit: FinalEdit = { selected: null, changes: "" };
+function readFinalEdits(raw: unknown): Record<string, FinalEdit> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw).flatMap(([id, value]) => {
+      const parsed = finalEditSchema.safeParse(value);
+      return z.string().uuid().safeParse(id).success && parsed.success
+        ? [[id, parsed.data]]
+        : [];
+    })
+  );
+}
 function readLocal(userId: string) {
   try {
-    return JSON.parse(localStorage.getItem(`cover-workshop:${userId}`) || "{}");
+    const saved = JSON.parse(
+      localStorage.getItem(`cover-workshop:${userId}`) || "{}"
+    );
+    return saved && typeof saved === "object" && !Array.isArray(saved)
+      ? saved
+      : {};
   } catch {
     return {};
   }
@@ -54,11 +78,19 @@ export function CoverWorkspace({ userId }: { userId: string }) {
   const [id, setId] = useState<string>(
     typeof saved.id === "string" ? saved.id : ""
   );
-  const [pending, setPending] = useState<CoverRequest | null>(
-    saved.pending || null
+  const [pending, setPending] = useState<CoverRequest | null>(() => {
+    const parsed = coverRequestSchema.safeParse(saved.pending);
+    return parsed.success ? parsed.data : null;
+  });
+  const [finalEdits, setFinalEdits] = useState(() =>
+    readFinalEdits(saved.finalEdits)
   );
-  const [selected, setSelected] = useState<number | null>(null);
-  const [changes, setChanges] = useState("");
+  const { selected, changes } = finalEdits[id] || emptyFinalEdit;
+  const updateFinalEdit = (patch: Partial<FinalEdit>) =>
+    setFinalEdits(edits => ({
+      ...edits,
+      [id]: { ...(edits[id] || emptyFinalEdit), ...patch },
+    }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const alive = useRef(true);
@@ -93,17 +125,17 @@ export function CoverWorkspace({ userId }: { userId: string }) {
           : false,
     }
   );
-  const data = current.data;
+  const data = current.data?.id === id ? current.data : undefined;
   useEffect(() => {
     try {
       localStorage.setItem(
         `cover-workshop:${userId}`,
-        JSON.stringify({ brief, id, pending })
+        JSON.stringify({ brief, id, pending, finalEdits })
       );
     } catch {
       setError("本机保存失败，请保留本页；已确认的云端设计仍可从历史打开。");
     }
-  }, [brief, id, pending, userId]);
+  }, [brief, id, pending, finalEdits, userId]);
   const run = async (work: () => Promise<void>) => {
     if (inFlight.current) return;
     inFlight.current = true;
@@ -124,13 +156,12 @@ export function CoverWorkspace({ userId }: { userId: string }) {
     // 在网络请求之前保存身份；响应丢失后仍恢复同一设计，不创建另一份收费任务。
     localStorage.setItem(
       `cover-workshop:${userId}`,
-      JSON.stringify({ brief, id, pending: request })
+      JSON.stringify({ brief, id, pending: request, finalEdits })
     );
     const row = await prepare.mutateAsync(request);
     if (!alive.current) return;
     setId(row.id);
     setPending(null);
-    setSelected(null);
     await history.refetch();
   };
   const update = (patch: Partial<CoverBrief>) =>
@@ -146,7 +177,6 @@ export function CoverWorkspace({ userId }: { userId: string }) {
     });
   const chooseRecord = (next: string) => {
     setId(next);
-    setSelected(null);
     setError("");
   };
   const allPrepared = data?.items.every(item => item.status === "prepared");
@@ -358,6 +388,7 @@ export function CoverWorkspace({ userId }: { userId: string }) {
               aria-label="已保存的封面"
               className={`${inputClass} max-w-sm`}
               value={id}
+              disabled={busy}
               onChange={e => chooseRecord(e.target.value)}
             >
               <option value="">选择一份设计</option>
@@ -471,7 +502,8 @@ export function CoverWorkspace({ userId }: { userId: string }) {
                     <button
                       aria-pressed={selected === item.index}
                       className={secondaryClass}
-                      onClick={() => setSelected(item.index)}
+                      disabled={busy}
+                      onClick={() => updateFinalEdit({ selected: item.index })}
                     >
                       {selected === item.index ? "已选择此方向" : "选择此方向"}
                     </button>
@@ -552,42 +584,47 @@ export function CoverWorkspace({ userId }: { userId: string }) {
               </button>
             </div>
           )}
-          {data.stage === "draft" && selected !== null && (
-            <div className="mt-7 rounded-2xl border border-[var(--hp-accent-line)] p-5">
-              <h5 className="font-bold">
-                已选：{COVER_DIRECTIONS[selected].title}
-              </h5>
-              <label className="mt-3 block text-sm">
-                成稿还想调整哪里？
-                <textarea
-                  aria-label="成稿修改"
-                  className={inputClass}
-                  rows={3}
-                  maxLength={1500}
-                  value={changes}
-                  onChange={e => setChanges(e.target.value)}
-                  placeholder="例如：保留构图，人物再小一点，标题移到左侧。"
-                />
-              </label>
-              <button
-                className={`${buttonClass} mt-4`}
-                disabled={busy || Boolean(pending)}
-                onClick={() =>
-                  void run(() =>
-                    prepareRequest({
-                      id: crypto.randomUUID(),
-                      stage: "final",
-                      batchId: data.id,
-                      candidate: selected,
-                      changes,
-                    })
-                  )
-                }
-              >
-                查看成稿设计 · 生成另计 {COVER_FINAL_CREDITS} 积分
-              </button>
-            </div>
-          )}
+          {data.stage === "draft" &&
+            selected !== null &&
+            data.items.some(
+              item => item.index === selected && item.imageUrl
+            ) && (
+              <div className="mt-7 rounded-2xl border border-[var(--hp-accent-line)] p-5">
+                <h5 className="font-bold">
+                  已选：{COVER_DIRECTIONS[selected].title}
+                </h5>
+                <label className="mt-3 block text-sm">
+                  成稿还想调整哪里？
+                  <textarea
+                    aria-label="成稿修改"
+                    className={inputClass}
+                    rows={3}
+                    maxLength={1500}
+                    value={changes}
+                    disabled={busy}
+                    onChange={e => updateFinalEdit({ changes: e.target.value })}
+                    placeholder="例如：保留构图，人物再小一点，标题移到左侧。"
+                  />
+                </label>
+                <button
+                  className={`${buttonClass} mt-4`}
+                  disabled={busy || Boolean(pending)}
+                  onClick={() =>
+                    void run(() =>
+                      prepareRequest({
+                        id: crypto.randomUUID(),
+                        stage: "final",
+                        batchId: data.id,
+                        candidate: selected,
+                        changes,
+                      })
+                    )
+                  }
+                >
+                  查看成稿设计 · 生成另计 {COVER_FINAL_CREDITS} 积分
+                </button>
+              </div>
+            )}
         </section>
       )}
     </div>
