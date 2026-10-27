@@ -1155,3 +1155,31 @@ describe("提交前来源检查及时失败", () => {
     expect(d.probeDurationSec).not.toHaveBeenCalled();
   });
 });
+
+describe("1028 外部本集身份与去重", () => {
+  const url = "https://www.gzcrkt8888.com/vod/play/147594/sid/1325397";
+  function currentDeps(complete = false) {
+    return deps({
+      isExternalSource: () => true,
+      resolveExternalSeries: async () => ({ sourceIdentity: url, seriesId: "0996:147594", titleZh: "嫁金钗", currentEpisodeIndex: 10,
+        episodes: [{ index: 10, access: "free", title: "第10集", url, playbackUrl: "https://example.com/test.mp4" }] }),
+      listIngestedEpisodeRecords: async () => [
+        { episodeIndex: 2, sourceUrl: "https://www.gzcrkt8888.com/vod/play/147594/sid/999", complete: true },
+        ...(complete ? [{ episodeIndex: 10, sourceUrl: url, complete: true }] : []),
+      ],
+    });
+  }
+  it("已有同名剧不把本集第10集重新放到第3集", async () => {
+    const plan = await buildNativeDeepReadPlanPreview({ url, limit: 3 }, currentDeps());
+    expect(plan.sourceEpisodeIndex).toBe(10);
+    expect(plan.episodes.map(e => e.episodeIndex)).toEqual([10]);
+    expect(plan.episodes[0].sourceUrl).toBe(url);
+  });
+  it("本集已学习不跳到其他集也不再次读取媒体", async () => {
+    const d = currentDeps(true);
+    const plan = await buildNativeDeepReadPlanPreview({ url, limit: 3 }, d);
+    expect(plan.episodes).toEqual([]);
+    expect(plan.alreadyIngestedEpisodeIndexes).toEqual([10]);
+    expect(d.probeDurationSec).not.toHaveBeenCalled();
+  });
+});

@@ -839,7 +839,7 @@ export async function buildNativeDeepReadPlanPreview(
    * sourceUrl 改回 ep7，最终复核必然失败，GCS 段缓存也永远没有机会命中。
    * 这里同时纳入 partial 与 complete 记录，只改集号，不把 partial 当整集完成。
    */
-  if (isSingleEpisodeEntry && listed.episodes.length === 1 && ingestedState.records.length) {
+  if (!isExternal && isSingleEpisodeEntry && listed.episodes.length === 1 && ingestedState.records.length) {
     free = placeSingleSourceInExistingSeries(
       free,
       ingestedState.records.map((record) => ({

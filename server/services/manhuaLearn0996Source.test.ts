@@ -139,6 +139,8 @@ describe("第三方播放页服务端安全边界", () => {
   });
 
   it("没配凭证时保持纯匿名请求，不无中生有鉴权头", async () => {
+    vi.stubEnv(MANHUA_MIRROR_SOURCE_COOKIE_ENV, "");
+    vi.stubEnv(MANHUA_MIRROR_SOURCE_AUTHORIZATION_ENV, "");
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       expect(headers.has("cookie")).toBe(false);

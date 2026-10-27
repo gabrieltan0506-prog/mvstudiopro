@@ -357,6 +357,7 @@ export async function fetchManhua0996SeriesPage(
   rawUrl: string,
   signal?: AbortSignal,
   fetchImpl: FetchLike = defaultSourceFetch,
+  currentOnly = false,
 ): Promise<Manhua0996SeriesPage> {
   const source = parseManhua0996SourceUrl(rawUrl, readManhuaLearnExtraSourceHosts());
   if (!source) throw new Error("第三方播放页链接无效或不在可信站点内");
@@ -364,8 +365,8 @@ export async function fetchManhua0996SeriesPage(
     const html = await fetchTrustedPageHtml(candidate.canonicalUrl, signal, fetchImpl);
     // 镜像只是传输兜底；分集身份始终绑定用户原来源，避免计划与执行
     // 两次解析命中不同镜像时，把同一剧同一集误判成来源变化。
-    // 解析器仍逐项校验原 vodId、当前 nid 与完整分集目录。
-    return parseManhua0996SeriesPage(html, source);
+    // 解析器按入口校验原 vodId 与当前 nid；单集入口不要求整部目录。
+    return parseManhua0996SeriesPage(html, source, currentOnly);
   });
 }
 
@@ -446,6 +447,6 @@ export async function resolveManhua0996Series(
 }> {
   const source = parseManhua0996SourceUrl(rawUrl, readManhuaLearnExtraSourceHosts());
   if (!source) throw new Error("第三方播放页链接无效或不在可信站点内");
-  const page = await fetchManhua0996SeriesPage(source.canonicalUrl, signal);
+  const page = await fetchManhua0996SeriesPage(source.canonicalUrl, signal, undefined, true);
   return { source, page };
 }
