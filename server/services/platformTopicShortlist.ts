@@ -1,7 +1,7 @@
+import { assertCompleteTopicText, bindTopicEvidence, resolveTopicWindowDays } from "../../shared/platformTopicIntegrity";
 import { buildMarketingPrompt, isMarketingContext } from "../../shared/marketingSkills.js";
 import { readShortlistTrendBriefs } from "./platformTopicTrends";
 import { assertSpokenPerformance } from "../../shared/spokenPerformance.js";
-import { topicDisplayText } from "../../shared/platformTopicDisplay";
 import { ExpandEvidencePersistenceError, type PlatformExpandEvidence } from "./platformTopicExpandEvidence.js";
 import { buildViralRolePrompt, buildViralMethodPlan, selectViralCreationMethods, VIRAL_METHOD_VERSION } from "../../shared/viralCreationMethods.js";
 import { XHS_PACKAGE_OUTPUT_PROMPT, auditXhsCreationPackage, connectXhsPackageToBlueprint } from "../../shared/xhsCreationPackage.js";
@@ -229,6 +229,7 @@ export async function generatePlatformTopicShortlist(params: {
   /** 这轮想获客/转化/涨粉：决定钩子与结尾动作往哪落（用户 2026-08-06） */
   topicGoal?: string | null;
 }): Promise<{ topics: PlatformTopicShortlistItem[]; diagnostics: Record<string, unknown> }> {
+  params = { ...params, windowDays: resolveTopicWindowDays(params.context, params.windowDays) };
   let targetCount = clampTopicShortlistCount(params.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
   const all = await listAllPlatformSkillsForUser(params.userId);
   const fallbackPoolIds =
@@ -306,7 +307,7 @@ export async function generatePlatformTopicShortlist(params: {
     topicHooks: c.topicHooks.slice(0, 2),
   }));
 
-  const system = xhsMode ? `${buildViralRolePrompt("shortlist", undefined, undefined, "database")}
+  const baseSystem = xhsMode ? `${buildViralRolePrompt("shortlist", undefined, undefined, "database")}
 只输出json对象 {"topics":[...]}，恰好${targetCount}条互不重复选题。本次平台由user.targetPlatforms指定；参考其各自证据，不强制小红书为主。
 每条包含title(4–120字)、hookSketch(完整说明切口，建议200字内，不要截断)、conveyGoal(用完整句子说明方向与承接动作，建议240字内，不要截断)、skillsUsed(只用池内真实ID)、primaryLane(default或适合赛道)、formatHint(图文或短视频)、dedupeKey(≤80字)、commentHook(≤3字)、viralScore(0–100主观创意分)、viralReason(用完整句子说明适配依据，不是概率，不要写到一半)、commentHeat(主观讨论潜力)。linkedCampaigns仅在真实活动与需求相关时选，否则空数组。
 资料方法库methodLibrary须实际用于人群场景、标题承诺、可制作画面和承接动作。Growth摘要按词召回，只是候选，不保证语义相关；逐条核对实际标题与本轮具体需求。词面相同但用途不同（教学与服饰、健康与娱乐剧情、家庭分工与技术分工等）必须舍弃，不能据此编写适配理由。引用只能证明已读到的标题、日期、来源和采集时互动，不把标题里的宣称当事实。无相关Growth样本就给待验证创意，不能补假引用。样本为空时，不要在title、hookSketch、conveyGoal或viralReason中写平台零条、无样本、读取状态或Growth诊断；内部证据字段保留真实空结果，面向用户的说明专注内容本身，不冒称数据验证。蓝海词只是候选搜索词，不自动证明低竞争。用户要求页数/时长后续照办，本阶段不写完整稿或生成图片。
@@ -331,7 +332,7 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
    - **改不动就别硬套**：某条热门与本人设八竿子打不着时直接放弃，不要强行嫁接成四不像。
 12. **反论文腔（硬）**：title 与 hookSketch 要像人说话——口语、有画面、有情绪。禁止「浅析／探究／指南／全解析／方法论／正确打开方式／注意事项／深度解读」这类腔调；禁止把名词堆成学术标题。写完自检一句：这条出现在信息流里，用户是会停下来还是直接划走？会划走就重写。
 13. **本轮只出选题，不写文案（硬）**：不要输出正文、脚本、分镜或封面提示词。用户先挑，挑中哪条再单独去写文案与封面。
-14. **每条必须给爆款概率**：\`viralScore\`（0–100 整数）与 \`viralReason\`（用完整句子说清选题适配依据，不要写到一半）。打分只看三件事——① 是否踩中 \`trendHot\` 里正在被讨论的话题或情绪（命中越准分越高）；② 反差/好奇缺口是否够拧；③ 是否容易引起共鸣、让人想转发给朋友。**分数要拉开**，不要全给 70–80；明显平庸的就给低分。
+14. **每条必须给创意评分（不是爆款概率）**：\`viralScore\`（0–100 整数）与 \`viralReason\`（用完整句子说清选题适配依据，不要写到一半）。打分只看三件事——① 是否踩中 \`trendHot\` 里正在被讨论的话题或情绪（命中越准分越高）；② 反差/好奇缺口是否够拧；③ 是否容易引起共鸣、让人想转发给朋友。**分数要拉开**，不要全给 70–80；明显平庸的就给低分。
 15. **每条还要给评论区热度**：\`commentHeat\`（0–100 整数）——这条发出去，**评论区会不会有人抢着说话**。参考 \`trendHot[].commentHotTitles\`（按评论数排的样本，\`commentPerThousandLikes\` 是每千赞带来的评论数，这个值高说明是「大家真的想留言」而不只是点赞收藏）。
    高分特征：能站队但不撕裂、有争议但安全；有具体问题可回答；能让人晒自己的经历/家里/同款；求链接求教程求配方；有明确可对号入座的身份（久坐党/带娃的/租房的）。
    低分特征：只能「学到了」然后划走的科普；说完就没下文的结论帖；没有让人接话的口子。
@@ -350,6 +351,10 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
     blueOceanWords.length ? " / blueOceanHit" : ""
   } ] }
 `;
+
+  const system = `${baseSystem}
+【本轮交付合同】所有title、hookSketch、conveyGoal、viralReason必须完整，不为字数建议截断，不输出内部指令名称、变量名或“人设空壳禁令”等规则措辞。后三项使用完整句子并以句号、问号或叹号结束。
+每条额外输出evidenceRefs数组，每项{platform:"xiaohongshu"或"douyin",id:"已提供样本的真实id"}。只引用与该题具体场景相关、窗口内发布、有来源与互动记录的样本；找不到就空数组，理由仅谈创意适配，不能说近期热门、数据验证或保证爆款。不得自造ID、链接、日期或互动量。viralScore只是创意优先级，不是概率。`;
 
   const user = JSON.stringify({
     personaContext: String(params.context || "").slice(0, xhsMode ? 8000 : 6000),
@@ -404,6 +409,9 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
     try {
       res = await invokeShortlist();
       llmText = extractFirstChoicePlainText(res).trim();
+      if (["length", "max_tokens"].includes(String(res.choices?.[0]?.finish_reason || ""))) {
+        throw new Error("选题输出达到长度上限，未接收残缺结果，请减少本次选题数量");
+      }
       if (llmText) break;
       emptyRetried = true;
       console.warn(`[generatePlatformTopicShortlist] 空回（max）第 ${attempt} 次`);
@@ -446,10 +454,10 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
   }
   const normalized: PlatformTopicShortlistItem[] = [];
   for (const row of rawList) {
-    if (!row || typeof row !== "object") continue;
+    if (!row || typeof row !== "object") throw new Error("选题条目不完整，未替换已有结果");
     const r = row as Record<string, unknown>;
     const title = String(r.title || "").trim();
-    if (title.length < 4) continue;
+    assertCompleteTopicText(r);
     const lane = (["fmcg", "forensic", "crossover", "contrast", "virtual", "default"].includes(String(r.primaryLane))
       ? String(r.primaryLane)
       : "default") as PlatformSkillLane;
@@ -465,13 +473,14 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
       new Set([...(xhsMode ? [XHS_CONTENT_SKILL_ID] : []), ...skillsUsedRaw.filter((id) => poolIds.includes(id)), ...routed.selectedIds]),
     ).slice(0, 12);
     const item = {
-      ...(xhsGrowthEvidence ? { xhsGrowthEvidence } : {}),
-      ...(douyinGrowthEvidence ? { douyinGrowthEvidence } : {}),
+      evidenceBindingVersion: "topic-v1" as const,
+      xhsGrowthEvidence: bindTopicEvidence(r.evidenceRefs, `${title} ${r.hookSketch}`, xhsGrowthEvidence),
+      douyinGrowthEvidence: bindTopicEvidence(r.evidenceRefs, `${title} ${r.hookSketch}`, douyinGrowthEvidence),
       ...(xhsMode ? { creationPlatforms: params.creationPlatforms || ["xiaohongshu"] } : {}),
       id: String(r.id || nanoid(10)).slice(0, 64),
-      title: title.slice(0, 120),
+      title,
       hookSketch: String(r.hookSketch || r.hook || title).trim(),
-      conveyGoal: topicDisplayText(String(r.conveyGoal || r.goal || "传达可收藏的生活方法")),
+      conveyGoal: String(r.conveyGoal).trim(),
       skillsUsed: skillsUsed.length ? skillsUsed : routed.selectedIds.slice(0, 8),
       primaryLane: lane,
       formatHint: String(r.formatHint || "").includes("短视频") ? ("短视频" as const) : ("图文" as const),
@@ -496,7 +505,7 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
         const n = Math.round(Number(r.viralScore));
         return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : undefined;
       })(),
-      viralReason: topicDisplayText(String(r.viralReason || "")) || undefined,
+      viralReason: String(r.viralReason).trim(),
       commentHeat: (() => {
         const n = Math.round(Number(r.commentHeat));
         return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : undefined;
@@ -514,6 +523,8 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
               limit: 2,
             });
       normalized.push({ ...checked.data, linkedCampaigns: linked });
+    } else {
+      throw new Error("选题字段未通过完整性检查，未截断或替换已有结果");
     }
   }
 

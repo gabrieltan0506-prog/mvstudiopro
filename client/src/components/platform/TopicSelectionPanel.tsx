@@ -1,9 +1,11 @@
+import { XhsGrowthEvidenceView } from "./XhsContentGrowthPanel";
 import { topicDisplayText, topicReasonDisplay } from "@shared/platformTopicDisplay";
 import type { ReactNode } from "react";
 import type { PlatformTopicShortlistItem } from "@shared/platformTopicShortlist";
 
 type Props = {
   id: string; topics: PlatformTopicShortlistItem[]; selectedIds: string[];
+  windowDays?: 7 | 15;
   count: number; countOptions: number[]; onCount: (count: number) => void;
   generationCost: number; expansionCount: number; expansionCost: number;
   loading: boolean; expanding: boolean; authenticated: boolean; showGenerate?: boolean;
@@ -27,17 +29,24 @@ export function TopicSelectionPanel(p: Props) {
         {Boolean(p.freeTopics) && <button type="button" className="creation-text-action" disabled={!p.authenticated || busy} onClick={() => p.onGenerate(true)}>免费试用 {p.freeTopics} 个{p.freeRemaining ? ` · 剩 ${p.freeRemaining} 次` : ""}</button>}
       </div>}
     </header>
+    {p.windowDays && <p className="creation-secondary-note">本轮核对近 {p.windowDays} 天发布的样本；缺少合格依据时标为待数据验证，不扩大到更旧的内容。</p>}
     {p.error && <p role="alert" className="creation-error">{p.error}</p>}
     {(p.loading || p.expanding) && <p role="status" aria-live="polite" className="creation-progress">{p.loading ? "正在结合你的需求与相关样本准备选题…" : p.progress || "正在写稿，已生成的内容会陆续显示。"}</p>}
     {p.topics.length ? <>
-      <div className="topic-selection-tools"><span>已选 {p.selectedIds.length} 个选题</span><div><button type="button" disabled={busy} onClick={p.onSelectSuggested}>选择推荐</button><button type="button" disabled={busy || !p.selectedIds.length} onClick={p.onClear}>清空选择</button></div></div>
+      <div className="topic-selection-tools"><span>已选 {p.selectedIds.length} 个选题</span><div><button type="button" disabled={busy || !p.topics.some(topic => topic.isTopPick)} onClick={p.onSelectSuggested}>选择推荐</button><button type="button" disabled={busy || !p.selectedIds.length} onClick={p.onClear}>清空选择</button></div></div>
       <div className="topic-candidate-grid">{p.topics.map((topic, index) => {
         const reason = topicReasonDisplay(topic.viralReason);
+        const goal = topicReasonDisplay(topic.conveyGoal);
+        const hook = topicReasonDisplay(topic.hookSketch);
+        const hasEvidence = topic.evidenceBindingVersion === "topic-v1" && Boolean(topic.xhsGrowthEvidence?.samples.length || topic.douyinGrowthEvidence?.samples.length);
         const selected = p.selectedIds.includes(topic.id); const editing = p.editingId === topic.id;
         return <article key={topic.id} className={`topic-candidate ${selected ? "is-selected" : ""}`}>
-          <div className="topic-candidate-meta"><span>方向 {String(index + 1).padStart(2, "0")}</span>{topic.isTopPick && <span>推荐尝试</span>}<label className="topic-check"><input type="checkbox" checked={selected} disabled={busy} onChange={() => p.onToggle(topic.id)} aria-label={`选择选题：${topic.title}`} /><span>{selected ? "已选" : "选择"}</span></label></div>
+          <div className="topic-candidate-meta"><span>方向 {String(index + 1).padStart(2, "0")}</span><span>{topic.isTopPick ? "优先试做" : "备选方向"}</span><span>{hasEvidence ? "有近期样本" : "待数据验证"}</span><label className="topic-check"><input type="checkbox" checked={selected} disabled={busy} onChange={() => p.onToggle(topic.id)} aria-label={`选择选题：${topic.title}`} /><span>{selected ? "已选" : "选择"}</span></label></div>
           {editing ? <input className="topic-title-input" aria-label="修改选题标题" value={p.editingTitle} autoFocus maxLength={120} onChange={e => p.onEditingTitle(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); p.onSave(); } if (e.key === "Escape") p.onCancel(); }} /> : <h3>{topic.title}</h3>}
-          <p className="topic-candidate-value">{topicDisplayText(topic.conveyGoal)}</p>
+          <p className="topic-candidate-value" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{goal.text}</p>
+          {goal.incomplete && <p role="status">已保存的传达目标可能不完整；保留原文，不将片段补写成原稿。</p>}
+          <details className="topic-cut"><summary>完整切口说明</summary><p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{hook.text}</p>{hook.incomplete && <p role="status">已保存的切口说明可能不完整。</p>}</details>
+          <p className="creation-secondary-note">创意分 {topic.viralScore ?? "未提供"} · 讨论潜力 {topic.commentHeat ?? "未提供"}；主观比较，不是爆款概率。</p>
           {reason.text && <details className="topic-reason"><summary>为什么值得尝试</summary>
             {reason.incomplete ? <>
               <p role="status">这份已保存的理由可能不完整，缺失原文暂无法恢复。选题和已有稿件仍保留。</p>
@@ -45,6 +54,11 @@ export function TopicSelectionPanel(p: Props) {
               <details><summary>查看已保存的理由片段</summary><p>{reason.text}</p></details>
             </> : <p>{reason.text}</p>}
             <small>创意判断，仅供选择参考。</small></details>}
+          {topic.evidenceBindingVersion === "topic-v1" && <>
+            {topic.xhsGrowthEvidence && <XhsGrowthEvidenceView evidence={topic.xhsGrowthEvidence} topicScoped />}
+            {topic.douyinGrowthEvidence && <XhsGrowthEvidenceView evidence={topic.douyinGrowthEvidence} topicScoped />}
+            {!hasEvidence && <p className="creation-secondary-note">本题未获得可核对的近期样本，只作为待验证创意。</p>}
+          </>}
           <footer>{editing ? <><button type="button" onClick={p.onCancel}>取消</button><button type="button" onClick={p.onSave}>保存标题</button></> : <><button type="button" disabled={busy} onClick={() => p.onEdit(topic)}>编辑标题</button><button type="button" disabled={busy} onClick={() => p.onExpand([topic])}>用这个方向写稿 <span aria-hidden>↗</span></button></>}</footer>
         </article>;
       })}</div>

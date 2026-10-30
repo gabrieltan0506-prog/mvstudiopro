@@ -4,17 +4,17 @@ import { fictionalViralBlueprint } from "../../shared/viralCreation.fixture";
 import { createPlatformExpandEvidenceJournal } from "./platformTopicExpandEvidence";
 import { XHS_CONTENT_SKILL_ID } from "../../shared/xhsContentStrategy";
 import { platformTopicShortlistItemSchema } from "../../shared/platformTopicShortlist";
-const mock = vi.hoisted(() => ({ llm: vi.fn(), trends: vi.fn(), campaigns: vi.fn() }));
-vi.mock("../_core/llm.js", () => ({ invokeLLM: mock.llm, extractFirstChoicePlainText: (v: string) => v, isTransientLlmError: () => false }));
+const mock = vi.hoisted(() => ({ llm: vi.fn(), trends: vi.fn(), campaigns: vi.fn(), query: vi.fn() }));
+vi.mock("../_core/llm.js", () => ({ invokeLLM: mock.llm, extractFirstChoicePlainText: (v: any) => typeof v === "string" ? v : v.choices?.[0]?.message?.content || "", isTransientLlmError: () => false }));
 vi.mock("./platformSkillsService.js", () => ({ listAllPlatformSkillsForUser: async () => [{ id: "xhs-content-growth", defaultEnabled: false }, { id: "sales-copy", defaultEnabled: false }], composePlatformSkillsPromptBlock: () => "用户五份资料的方法" }));
-vi.mock("../growth/trendShortlistQuery", () => ({ queryTrendShortlist: async (_root: string, platform: string) => (await mock.trends([platform]))[platform] }));
+vi.mock("../growth/trendShortlistQuery", () => ({ queryTrendShortlist: async (_root: string, platform: string, context: string, days: number) => { mock.query(platform, context, days); return (await mock.trends([platform]))[platform]; } }));
 vi.mock("../growth/trendShortlistIndex", () => ({ readTrendShortlistIndex: async (_root: string, platform: string) => (await mock.trends([platform]))[platform], ensureTrendShortlistIndex: async () => {} }));
 vi.mock("./platformOfficialCampaigns", () => ({ ensureOfficialCampaignSeedsLoaded: mock.campaigns, listOfficialCampaigns: async () => [], pickLinkedCampaignsForTopic: async () => [] }));
 import { generatePlatformTopicShortlist, expandPlatformTopicPicks } from "./platformTopicShortlist";
-const rawTopic = (i: number) => ({ title: `会议沟通练习方案${i}`, hookSketch: "开会时先确认问题", conveyGoal: "给出具体可执行的沟通练习", skillsUsed: [XHS_CONTENT_SKILL_ID], primaryLane: "default", formatHint: "图文", dedupeKey: `meeting${i}`, commentHook: "分享", viralScore: 80 });
+const rawTopic = (i: number) => ({ title: `会议沟通练习方案${i}`, hookSketch: "开会时先确认问题。", conveyGoal: "给出具体可执行的沟通练习。", viralReason: "针对会议沟通中的具体困难，提供可操作的表达练习。", evidenceRefs: [{platform:"xiaohongshu",id:"xiaohongshu-sample"},{platform:"douyin",id:"douyin-sample"}], skillsUsed: [XHS_CONTENT_SKILL_ID], primaryLane: "default", formatHint: "图文", dedupeKey: `meeting${i}`, commentHook: "分享", viralScore: 80 });
 const pick = platformTopicShortlistItemSchema.parse({ ...rawTopic(1), id: "fiction-topic" });
 describe("爆款创作真实服务入口（模型和数据读取隔离）", () => {
- beforeEach(() => { vi.clearAllMocks(); mock.trends.mockImplementation(async ([platform]: string[]) => ({ [platform]: { items: [{ id: `${platform}-sample`, title: "会议沟通表达", publishedAt: new Date(Date.now() - 86400000).toISOString(), likes: 20 }] } })); });
+ beforeEach(() => { vi.clearAllMocks(); mock.trends.mockImplementation(async ([platform]: string[]) => ({ [platform]: { items: [{ id: `${platform}-sample`, title: "会议沟通表达", url: "https://example.com/fictional-meeting", publishedAt: new Date(Date.now() - 86400000).toISOString(), likes: 20 }] } })); });
  it("2–3题真实调用带五资料方法和双平台Growth，保留出处", async () => {
   mock.llm.mockResolvedValue(JSON.stringify({ topics: [rawTopic(1), rawTopic(2), rawTopic(3)] }));
   const result = await generatePlatformTopicShortlist({ userId: 1, context: "职场沟通", count: 20, enabledSkillIds: [XHS_CONTENT_SKILL_ID], creationPlatforms: ["xiaohongshu", "douyin"] });
@@ -43,6 +43,26 @@ describe("爆款创作真实服务入口（模型和数据读取隔离）", () =
   mock.trends.mockResolvedValue({}); mock.llm.mockResolvedValue(JSON.stringify({ topics: [rawTopic(1), rawTopic(2)] }));
   const result = await generatePlatformTopicShortlist({ userId: 1, context: "会议沟通", count: 2, enabledSkillIds: [XHS_CONTENT_SKILL_ID] });
   expect(result.topics).toHaveLength(2); expect(result.topics[0].xhsGrowthEvidence?.samples).toEqual([]);
+ });
+
+ it("真实服务将7天需求贯彻到读取与模型，引用只绑定本题原始样本", async () => {
+  mock.llm.mockResolvedValue(JSON.stringify({topics:[rawTopic(1), {...rawTopic(2),evidenceRefs:[{platform:"xiaohongshu",id:"伪造ID"}]}]}));
+  const result=await generatePlatformTopicShortlist({userId:1,context:"会议沟通，最近七天",windowDays:30,count:2,enabledSkillIds:[XHS_CONTENT_SKILL_ID]});
+  expect(mock.query.mock.calls[0][2]).toBe(7);
+  expect(JSON.parse(mock.llm.mock.calls[0][0].messages[1].content).trendWindowDays).toBe(7);
+  expect(result.topics[0].evidenceBindingVersion).toBe("topic-v1");
+  expect(result.topics[0].xhsGrowthEvidence?.samples[0].likes).toBe(20);
+  expect(result.topics[1].xhsGrowthEvidence?.samples).toEqual([]);
+ });
+ it.each(["hookSketch","conveyGoal","viralReason"])("新选题%s半句不能保存或交付", async field => {
+  mock.llm.mockResolvedValue(JSON.stringify({topics:[{...rawTopic(1),[field]:"承接动作：关注看下"},rawTopic(2)]}));
+  await expect(generatePlatformTopicShortlist({userId:1,count:2,enabledSkillIds:[XHS_CONTENT_SKILL_ID]})).rejects.toThrow("未完整结束");
+  expect(mock.llm).toHaveBeenCalledTimes(1);
+ });
+ it("上游标记length即使JSON可解析也不接受，不自动再买一轮",async()=>{
+  mock.llm.mockResolvedValue({choices:[{finish_reason:"length",message:{content:JSON.stringify({topics:[rawTopic(1),rawTopic(2)]})}}]});
+  await expect(generatePlatformTopicShortlist({userId:1,count:2,enabledSkillIds:[XHS_CONTENT_SKILL_ID]})).rejects.toThrow("长度上限");
+  expect(mock.llm).toHaveBeenCalledTimes(1);
  });
  it("扩写统一GLM，失败只切同款EvoLink，方案送入最终消费者字段", async () => {
   mock.llm.mockRejectedValueOnce(new Error("渠道不可用")).mockResolvedValueOnce(JSON.stringify({ blueprint: fictionalViralBlueprint() }));
