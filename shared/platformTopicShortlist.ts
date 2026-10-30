@@ -1,3 +1,4 @@
+import { topicReasonDisplay } from "./platformTopicDisplay";
 /**
  * Stage2 选题初选（默认 6 条；超出另计费）与图文笔记页结构、评论钩子、去重、权威落句验收。
  */
@@ -148,6 +149,7 @@ export const platformGraphicNotePageSchema = z.object({
 export type PlatformGraphicNotePage = z.infer<typeof platformGraphicNotePageSchema>;
 
 export const platformTopicShortlistItemSchema = z.object({
+  evidenceBindingVersion: z.literal("topic-v1").optional(),
   xhsGrowthEvidence: xhsGrowthEvidenceSchema.optional(),
   douyinGrowthEvidence: xhsGrowthEvidenceSchema.optional(),
   creationPlatforms: z.array(z.enum(["xiaohongshu", "douyin"])).min(1).max(2).optional(),
@@ -164,7 +166,7 @@ export const platformTopicShortlistItemSchema = z.object({
   commentHook: z.string().min(1).max(PLATFORM_COMMENT_HOOK_MAX_CHARS).optional(),
   /** 关联的官方活动 / 话题名（如 #城市漫步指南） */
   linkedCampaigns: z.array(z.string().min(1).max(80)).max(4).optional(),
-  /** 爆款概率 0–100：趋势命中 + 反差 + 共鸣 的综合估计，用于排序 */
+  /** 创意评分 0–100：选题适配的主观比较，用于排序，不是爆款概率 */
   viralScore: z.number().min(0).max(100).optional(),
   /** 完整的选题适配依据，保留原文供用户展开查看。 */
   viralReason: z.string().optional(),
@@ -286,12 +288,12 @@ export function ensureAuthorityCiteInCopy(params: {
 export const PLATFORM_TOPIC_COMMENT_HEAT_WEIGHT = 0.3;
 
 /**
- * 按「爆款概率 + 评论区热度」降序排序，并把前 {@link PLATFORM_TOPIC_TOP_PICK_COUNT} 条标为优先。
+ * 按主观创意分与讨论潜力排序，优先项不超过三分之一或五条；缺分、低分、边界同分与残缺草稿不强推。
  * 没给分的按 50 处理，保持原有相对顺序（稳定排序）。
  */
 export function rankTopicShortlistByViralScore<
-  T extends { viralScore?: number; commentHeat?: number; isTopPick?: boolean },
->(items: T[], topCount = PLATFORM_TOPIC_TOP_PICK_COUNT): T[] {
+  T extends { viralScore?: number; commentHeat?: number; isTopPick?: boolean; viralReason?: string; conveyGoal?: string; hookSketch?: string },
+>(items: T[], topCount = PLATFORM_TOPIC_TOP_PICK_COUNT): Array<T & { isTopPick: boolean }> {
   const scored = items.map((item, index) => {
     const viral = Number.isFinite(Number(item.viralScore)) ? Number(item.viralScore) : 50;
     const heat = Number.isFinite(Number(item.commentHeat)) ? Number(item.commentHeat) : 50;
@@ -302,7 +304,13 @@ export function rankTopicShortlistByViralScore<
     };
   });
   scored.sort((a, b) => (b.score - a.score) || (a.index - b.index));
-  return scored.map(({ item }, i) => ({ ...item, isTopPick: i < topCount }));
+  // 小批次最多推荐三分之一；缺分或低分不能因排在前面就成为推荐。
+  const limit = Math.min(topCount, Math.max(1, Math.ceil(items.length / 3)));
+  return scored.map(({ item, score }, i) => ({ ...item,
+    isTopPick: i < limit && typeof item.viralScore === "number" && score >= 65 &&
+      (scored[limit] == null || score > scored[limit].score) &&
+      ![item.viralReason, item.conveyGoal, item.hookSketch].some(value => value != null && topicReasonDisplay(value).incomplete),
+  }));
 }
 
 /**

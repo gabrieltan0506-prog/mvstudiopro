@@ -16,5 +16,5 @@ export function topicReasonDisplay(value: string | undefined): { text: string; i
     if (pairs[char]) stack.push(pairs[char]);
     else if (stack[stack.length - 1] === char) stack.pop();
   }
-  return { text, incomplete: Boolean(text && (stack.length || (text.length === 24 && !/[。！？.!?]$/.test(text)))) };
+  return { text, incomplete: Boolean(text && (stack.length || !/[。！？.!?][”’」』）)]*$/.test(text))) };
 }

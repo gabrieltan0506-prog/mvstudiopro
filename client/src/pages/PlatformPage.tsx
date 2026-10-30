@@ -1,3 +1,5 @@
+import { rankTopicShortlistByViralScore } from "@shared/platformTopicShortlist";
+import { resolveTopicWindowDays } from "@shared/platformTopicIntegrity";
 import { CoverCandidatePicker } from "@/components/platform/CoverCandidatePicker";
 import { readCoverCandidateSet } from "@shared/platformCoverCandidates";
 import { TopicDigestDraft, readTopicDigestLocation } from "@/components/TopicDigestBell";
@@ -5095,6 +5097,7 @@ export default function PlatformPage() {
             dedupeKey: p.dedupeKey,
             commentHook: p.commentHook,
             linkedCampaigns: p.linkedCampaigns,
+            evidenceBindingVersion: p.evidenceBindingVersion,
             xhsGrowthEvidence: p.xhsGrowthEvidence,
             douyinGrowthEvidence: p.douyinGrowthEvidence,
             creationPlatforms: p.creationPlatforms,
@@ -5213,22 +5216,22 @@ export default function PlatformPage() {
     const selected = topicShortlist.filter(topic => selectedShortlistIds.includes(topic.id));
     let total = selected.length;
     try { total = planViralExpansions(selected, viralPlatforms, xhsFormats).length; } catch { /* 交由点击处理器提示具体原因。 */ }
-    return <TopicSelectionPanel id={domId} topics={topicShortlist} selectedIds={selectedShortlistIds}
-      count={effectiveShortlistCount} countOptions={xhsMode ? [2, 3] : [6, 12, 20, 25, 30]} onCount={setTopicShortlistCount}
+    return <TopicSelectionPanel id={domId} topics={rankTopicShortlistByViralScore(topicShortlist)} selectedIds={selectedShortlistIds}
+      windowDays={resolveTopicWindowDays(focusPrompt, selectedWindowDays)} count={effectiveShortlistCount} countOptions={xhsMode ? [2, 3] : [6, 12, 20, 25, 30]} onCount={setTopicShortlistCount}
       generationCost={topicShortlistPrice.total} expansionCount={total} expansionCost={CREDIT_COSTS.platformTopicExpand * total}
       loading={generateTopicShortlistMutation.isPending} expanding={shortlistExpandBusy} authenticated={isAuthenticated}
       showGenerate={opts?.showGenerateButton} freeTopics={shortlistFreeQuota?.nextFree ? shortlistFreeQuota.freeTopics : undefined}
       freeRemaining={shortlistFreeQuota?.firstFreeLeft} maskedCount={shortlistMaskedCount}
       onGenerate={free => void runCreateTopicShortlist(free ? { freeTrial: true } : undefined)}
       onToggle={toggleShortlistSelection} onClear={() => setSelectedShortlistIds([])}
-      onSelectSuggested={() => setSelectedShortlistIds(topicShortlist.filter(t => t.isTopPick).map(t => t.id).slice(0, PLATFORM_TOPIC_EXPAND_MAX))}
+      onSelectSuggested={() => setSelectedShortlistIds(rankTopicShortlistByViralScore(topicShortlist).filter(t => t.isTopPick).map(t => t.id).slice(0, PLATFORM_TOPIC_EXPAND_MAX))}
       onExpand={topics => void expandShortlistPicks(topics)} editingId={editingShortlistTopicId} editingTitle={editingShortlistTitle}
       onEditingTitle={setEditingShortlistTitle} onEdit={startEditingShortlistTitle} onSave={commitEditingShortlistTitle} onCancel={cancelEditingShortlistTitle}
       error={shortlistLastError} progress={shortlistExpandProgress ? `已生成 ${shortlistExpandProgress.done} / ${shortlistExpandProgress.total} 份稿件，结果会陆续显示在下方。` : undefined}>
       {pendingExpand && !shortlistExpandBusy && <button type="button" className="creation-text-action mt-4" onClick={() => void expandShortlistPicks(pendingExpand.picks, pendingExpand.jobId)}>继续查询原扩写任务（不重复提交）</button>}
       {failedExpandPicks.length > 0 && !pendingExpand && <button type="button" className="creation-text-action mt-4" disabled={shortlistExpandBusy} onClick={() => void expandShortlistPicks(failedExpandPicks)}>重试未出稿的 {failedExpandPicks.length} 份</button>}
-      {topicShortlist[0]?.xhsGrowthEvidence && <XhsGrowthEvidenceView evidence={topicShortlist[0].xhsGrowthEvidence} />}
-      {topicShortlist[0]?.douyinGrowthEvidence && <XhsGrowthEvidenceView evidence={topicShortlist[0].douyinGrowthEvidence} />}
+      {!topicShortlist[0]?.evidenceBindingVersion && topicShortlist[0]?.xhsGrowthEvidence && <XhsGrowthEvidenceView evidence={topicShortlist[0].xhsGrowthEvidence} />}
+      {!topicShortlist[0]?.evidenceBindingVersion && topicShortlist[0]?.douyinGrowthEvidence && <XhsGrowthEvidenceView evidence={topicShortlist[0].douyinGrowthEvidence} />}
     </TopicSelectionPanel>;
   };
 
@@ -11845,7 +11848,7 @@ export default function PlatformPage() {
         allowBloggerTitle,
         existingTitles,
         count: n,
-        windowDays: selectedWindowDays,
+        windowDays: resolveTopicWindowDays(focusPrompt, selectedWindowDays),
         ...(topicGoal ? { topicGoal } : {}),
         ...buildShortlistBlueOceanInput(decisionIntelBlueOceanLexicon),
       });
@@ -12429,7 +12432,7 @@ export default function PlatformPage() {
         allowBloggerTitle,
         existingTitles,
         count,
-        windowDays: xhsMode ? 30 : selectedWindowDays,
+        windowDays: resolveTopicWindowDays(focusPrompt, selectedWindowDays),
         ...(freeTrial ? { freeTrial: true } : {}),
         ...(topicGoal ? { topicGoal } : {}),
         ...buildShortlistBlueOceanInput(decisionIntelBlueOceanLexicon),

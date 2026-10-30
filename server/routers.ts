@@ -6434,17 +6434,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               message: `Credits 不足，选题初选 ${count} 条需要 ${priced.total} 点（基础 ${CREDIT_COSTS.platformTopicShortlist} + 加量 ${priced.extraCount}×${CREDIT_COSTS.platformTopicShortlistExtra}；当前可用：${creditsInfo.totalAvailable}）`,
             });
           }
-          await deductCreditsAmount(
-            userId,
-            priced.total,
-            "platformTopicShortlist",
-            priced.extraCount > 0
-              ? `选题初选 ${count} 条（含加量 ${priced.extraCount}）`
-              : `选题初选 ${count} 条`,
-          );
         }
         const { generatePlatformTopicShortlist } = await import("./services/platformTopicShortlist.js");
-        const result = await generatePlatformTopicShortlist({
+        const { withTopicShortlistCharge } = await import("./services/platformTopicShortlistBilling.js");
+        const result = await withTopicShortlistCharge({ userId, cost: priced.total, count, exempt: isAdminUser }, () => generatePlatformTopicShortlist({
           userId,
           context: input.context,
             creationPlatforms: input.creationPlatforms,
@@ -6457,7 +6450,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           blueOceanWords: input.blueOceanWords ?? null,
           blueOceanGroups: input.blueOceanGroups ?? null,
           topicGoal: input.topicGoal ?? null,
-        });
+        }));
         const creditsInfo = await getCredits(userId);
         return {
           ...result,
@@ -6625,6 +6618,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           picks: z
             .array(
               z.object({
+                evidenceBindingVersion: z.literal("topic-v1").optional(),
                 xhsGrowthEvidence: xhsGrowthEvidenceSchema.optional(),
                 douyinGrowthEvidence: xhsGrowthEvidenceSchema.optional(),
                 creationPlatforms: z.array(z.enum(["xiaohongshu", "douyin"])).min(1).max(2).optional(),
