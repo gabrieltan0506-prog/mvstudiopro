@@ -42,10 +42,12 @@ vi.mock("./gcs.js", () => ({
 import { concatClips, loudnessCheck, mountBgm } from "./postProduction";
 
 let ffmpegOk = false;
+let subtitleFilterOk = false;
 try {
   execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
   execFileSync("ffprobe", ["-version"], { stdio: "ignore" });
   ffmpegOk = true;
+  subtitleFilterOk = execFileSync("ffmpeg", ["-filters"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).includes(" subtitles ");
 } catch {
   ffmpegOk = false;
 }
@@ -163,6 +165,23 @@ afterAll(async () => {
 });
 
 describe.runIf(ffmpegOk)("后期三件套本地媒体验证", () => {
+  it("剪辑方案单段与同源多段实际转码：画幅、音轨和下载去重", async () => {
+    installFetchStub();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const out = await concatClips({ clips: ["gs://itest/land.mp4", "gs://itest/land.mp4"], trims: [{ startSec: 0, endSec: .5 }, { startSec: 1, endSec: 1.5 }], width: 320, height: 480, fps: 30 }, "7");
+    const bytes = h.uploads.get(out.gcsUri.replace("gs://itest/", ""))!;
+    const meta = await probeBuffer(bytes);
+    expect(meta.width).toBe(320); expect(meta.height).toBe(480); expect(meta.hasAudio).toBe(true); expect(meta.durationSec).toBeCloseTo(1, 1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const single = await concatClips({ clips: ["gs://itest/land.mp4"], trims: [{ startSec: .5, endSec: 1.5 }], width: 320, height: 240, fps: 30 }, "7");
+    expect(single.clipCount).toBe(1); expect(single.durationSec).toBeCloseTo(1, 1);
+  }, 60_000);
+
+  it.runIf(subtitleFilterOk)("剪辑方案实际烧录同步字幕", async () => {
+    installFetchStub();
+    const out = await concatClips({ clips: ["gs://itest/land.mp4"], trims: [{ startSec: 0, endSec: 1 }], subtitleSrt: "1\n00:00:00,100 --> 00:00:00,400\nTest\n", width: 320, height: 480, fps: 30 }, "7");
+    expect(out.bytes).toBeGreaterThan(1000); expect(out.durationSec).toBeCloseTo(1, 1);
+  }, 60_000);
   it("手动剪辑起点晚于短音轨时保留该段完整静音，后段仍有声音", async () => {
     installFetchStub();
     const out=await concatClips({clips:["gs://itest/short-audio.mp4","gs://itest/land.mp4"],trims:[{startSec:1,endSec:1.5},{startSec:0,endSec:.5}],width:320,height:240,fps:30},"7");

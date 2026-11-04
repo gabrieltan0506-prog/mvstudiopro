@@ -30,6 +30,7 @@ import { runChildUntilClosed } from "./runChildUntilClosed";
 import { z } from "zod";
 import { signGsUriV4ReadUrl, uploadStreamToGcs } from "./gcs.js";
 import {
+  concatParamsSchema,
   audioTrimParamsSchema,
   audioTimelineParamsSchema,
   type RawAudioTrimParams,
@@ -344,20 +345,26 @@ export async function concatClips(
   options?: PostProdRunOptions,
 ): Promise<{ gcsUri: string; url: string; bytes: number; durationSec: number; clipCount: number }> {
   const signal = options?.signal ?? NEVER_ABORT;
+  input = concatParamsSchema.parse(input);
   if (input.transition) return (await import("./manhuaTransitions")).renderManhuaTransitions(input, userId, options);
   const { clips, width, height, fps } = input;
-  if (clips.length < 2) throw new Error("拼接至少需要 2 段素材");
+  if (clips.length < 1) throw new Error("剪辑至少需要 1 段素材");
   if (clips.length > MAX_CONCAT_CLIPS) throw new Error(`拼接单次最多 ${MAX_CONCAT_CLIPS} 段`);
 
   const tmpDir = await mkdtemp(path.join(tmpdir(), "pp-concat-"));
   try {
     const budget: DownloadBudget = { remainingBytes: MAX_CONCAT_TOTAL_BYTES };
     const locals: Array<{ filePath: string; durationSec: number; startSec: number; endSec: number; hasAudio: boolean }> = [];
+    const sources = new Map<string, { filePath: string; durationSec: number; hasAudio: boolean }>();
     for (let i = 0; i < clips.length; i++) {
-      const p = path.join(tmpDir, `in-${i}.mp4`);
-      await fetchPostProdSourceToFile(clips[i], p, { signal, budget });
-      const meta = await probe(p, signal);
-      locals.push({ filePath: p, ...resolvePostProdClipEdit(meta.durationSec, input.trims?.[i]), hasAudio: meta.hasAudio });
+      let source = sources.get(clips[i]);
+      if (!source) {
+        const filePath = path.join(tmpDir, `in-${i}.mp4`);
+        await fetchPostProdSourceToFile(clips[i], filePath, { signal, budget });
+        source = { filePath, ...await probe(filePath, signal) };
+        sources.set(clips[i], source);
+      }
+      locals.push({ filePath: source.filePath, ...resolvePostProdClipEdit(source.durationSec, input.trims?.[i]), hasAudio: source.hasAudio });
     }
 
     /**
@@ -397,9 +404,16 @@ export async function concatClips(
     const per = locals.map((_l, i) => `${vChain(i)};${aChain(i)}`).join(";");
     const heads = locals.map((_l, i) => `[v${i}][a${i}]`).join("");
     const outPath = path.join(tmpDir, "out.mp4");
+    let subtitleFilter = "";
+    if (input.subtitleSrt) {
+      const srtPath = path.join(tmpDir, "montage.srt");
+      const srt = normalizeDialogueSubtitleSrt(input.subtitleSrt, locals.reduce((sum, clip) => sum + clip.durationSec, 0));
+      await writeFile(srtPath, srt, { encoding: "utf8", flag: "wx" });
+      subtitleFilter = `;[vraw]${buildBurnSubtitleFilter(srtPath)}[vo]`;
+    }
     args.push(
       "-filter_complex",
-      `${per};${heads}concat=n=${locals.length}:v=1:a=1[vo][ao]`,
+      `${per};${heads}concat=n=${locals.length}:v=1:a=1[${subtitleFilter ? "vraw" : "vo"}][ao]${subtitleFilter}`,
       "-map", "[vo]", "-map", "[ao]",
       "-c:v", "libx264", "-preset", "medium", "-crf", "18",
       "-c:a", "aac", "-b:a", "256k",

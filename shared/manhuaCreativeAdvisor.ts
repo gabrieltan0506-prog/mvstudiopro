@@ -168,7 +168,7 @@ export const manhuaCreativeAdvisorContextSchema = z
     creativeLearning: creativeLearningTargetSchema.optional(),
     filmReview: advisorFilmReviewTargetSchema.optional(),
     mediaEditTarget: advisorMediaSourceSchema.optional(),
-    subtitleReview: z.object({ videoUri: z.string().min(1).max(2048), dialogue: z.string().min(1).max(40000) }).strict().optional(),
+    subtitleReview: z.object({ montageTargetSec: z.number().int().min(5).max(300).optional(), videoUri: z.string().min(1).max(2048), dialogue: z.string().min(1).max(40000) }).strict().optional(),
     /** 普通咨询的项目冻结导演包身份；与3D咨询入口独立，不能关闭模板读取。 */
     directionPackage: z.object({
       directionCardId: contextText(100, "导演包ID", true),
