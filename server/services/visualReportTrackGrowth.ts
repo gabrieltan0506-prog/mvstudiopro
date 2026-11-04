@@ -63,6 +63,7 @@ function collectIndustryWindowCounts(
     priorStart: number;
     priorEndExclusive: number;
   },
+  platform?: string,
 ): { current: Map<string, number>; prior: Map<string, number> } {
   const current = new Map<string, number>();
   const prior = new Map<string, number>();
@@ -76,7 +77,7 @@ function collectIndustryWindowCounts(
     else if (ms >= bounds.priorStart && ms < bounds.priorEndExclusive) target = prior;
     else continue;
 
-    const keys = collectItemLabelKeys(item);
+    const keys = collectItemLabelKeys(item, platform);
     for (const k of keys) {
       target.set(k, (target.get(k) || 0) + 1);
     }
@@ -102,16 +103,18 @@ function isWeakTaxonomyLabel(s: string): boolean {
  * 單條樣本對統計桶的貢獻：**僅**使用入庫時已寫好的行業/內容分類（與 {@link trendTaxonomy} 一致）；
  * 若皆無，再退回到與增長評分共用的 {@link inferTrendTrackBucketForVisualReport}（規則化大類，仍非標題碎詞）。
  */
-function collectItemLabelKeys(item: any): string[] {
+function collectItemLabelKeys(item: any, platform?: string): string[] {
+  // 用户撤回抖音旧漫剧分类；旧标签及规则兜底均不得重新进入统计。
+  const allowed = (label: string) => !(platform === "douyin" && /漫剧|动态漫/i.test(label));
   const out: string[] = [];
 
   for (const x of normalizeStringList(item?.industryLabels)) {
     const t = String(x || "").trim();
-    if (t && !isWeakTaxonomyLabel(t)) out.push(t);
+    if (t && !isWeakTaxonomyLabel(t) && allowed(t)) out.push(t);
   }
   for (const x of normalizeStringList(item?.contentLabels)) {
     const t = String(x || "").trim();
-    if (t && !isWeakTaxonomyLabel(t)) out.push(t);
+    if (t && !isWeakTaxonomyLabel(t) && allowed(t)) out.push(t);
   }
 
   const seen = new Set<string>();
@@ -129,7 +132,7 @@ function collectItemLabelKeys(item: any): string[] {
 
   try {
     const inferred = inferTrendTrackBucketForVisualReport(item as TrendItem).trim();
-    if (inferred && !isWeakTaxonomyLabel(inferred)) return [inferred];
+    if (inferred && !isWeakTaxonomyLabel(inferred) && allowed(inferred)) return [inferred];
   } catch {
     /* ignore */
   }
@@ -162,7 +165,7 @@ export function buildIndustryGrowthHintMap(
   for (const platform of Array.from(new Set(platforms))) {
     const col = store.collections?.[platform];
     const items: any[] = col?.items || [];
-    const { current, prior } = collectIndustryWindowCounts(items, bounds);
+    const { current, prior } = collectIndustryWindowCounts(items, bounds, platform);
     for (const [k, v] of Array.from(current.entries())) mergedCurrent.set(k, (mergedCurrent.get(k) || 0) + v);
     for (const [k, v] of Array.from(prior.entries())) mergedPrior.set(k, (mergedPrior.get(k) || 0) + v);
   }

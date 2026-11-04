@@ -1,19 +1,11 @@
 import { describe, expect, it } from "vitest";
-import {
-  getPlatformTrendReportCredits,
-} from "./platformTrendPricing";
+import { getPlatformTrendReportCredits } from "./platformTrendPricing";
 
-describe("platformTrendPricing", () => {
-  it("9 月 15 日北京时间结束前保持 50 分", () => {
-    const at = Date.parse("2026-09-15T23:59:59+08:00");
-    expect(getPlatformTrendReportCredits(3, at)).toBe(50);
-    expect(getPlatformTrendReportCredits(7, at)).toBe(50);
+describe("趋势报告按时间范围计费", () => {
+  it.each([[3, 50], [7, 80], [15, 120]])("近%s天为%s积分", (days, credits) => {
+    expect(getPlatformTrendReportCredits(days)).toBe(credits);
   });
-
-  it("9 月 16 日北京时间起切为 60 分", () => {
-    const at = Date.parse("2026-09-16T00:00:00+08:00");
-    expect(getPlatformTrendReportCredits(3, at)).toBe(60);
-    expect(getPlatformTrendReportCredits(7, at)).toBe(60);
-    expect(getPlatformTrendReportCredits(15, at)).toBe(50);
+  it.each([0, 1, 4, 30, 45, 90, NaN])("不把不支持的窗口%s静默按低价计费", days => {
+    expect(() => getPlatformTrendReportCredits(days)).toThrow("仅支持");
   });
 });

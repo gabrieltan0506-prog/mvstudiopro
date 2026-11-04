@@ -6,7 +6,7 @@ import { mapGenerateVisualReportResult } from "./visualReportMapper";
 import { buildIndustryGrowthHintMap, repairTrackGrowthRows, filterTrackGrowthHotOnly } from "../../../server/services/visualReportTrackGrowth";
 
 describe("趋势样本计数到报告展示", () => {
-  it("真实计数经修复、序列化与映射后显示对照证据", () => {
+  it("真实计数仍驱动百分比，图中隐藏条数和样本说明", () => {
     const items = [
       ...Array.from({ length: 3 }, () => ({ publishedAt: "2026-09-09T04:00:00Z", industryLabels: ["家居"] })),
       { publishedAt: "2026-09-05T04:00:00Z", industryLabels: ["家居"] },
@@ -20,11 +20,12 @@ describe("趋势样本计数到报告展示", () => {
     const mapped = mapGenerateVisualReportResult(result, { windowDays: "3", theme: "light" })!;
     const html = renderToStaticMarkup(React.createElement(VisualReportTemplate, { data: mapped }));
     expect(html).toContain("+200%");
-    expect(html).toContain("本期 3 条 / 前期 1 条");
+    expect(html).not.toContain("本期 3 条 / 前期 1 条");
+    expect(html).not.toContain("样本");
     expect(html).toContain("缺少对照");
     expect(html).not.toContain("+98%");
     expect(html).toContain("选题关键词");
-    expect(html).toContain("不代表播放量或平台整体流量增长");
+    expect(mapped.trackGrowth?.[0].evidence?.currentCount).toBe(3);
     expect(html.match(/2026-09-07 – 2026-09-09/g)).toHaveLength(2);
   });
 
@@ -39,4 +40,10 @@ describe("趋势样本计数到报告展示", () => {
     expect(html).not.toContain("高热");
     expect(html).not.toContain("算法推荐信号");
   });
+});
+
+it("旧报告带抖音漫剧分类也不再渲染榜单", () => {
+  const mapped = mapGenerateVisualReportResult({ report: { aiManhuaRising: { windowDays: 7, entries: [{ mixId: "old", mixName: "错误分类剧名", mixPlayCount: 300 }] } } }, { windowDays: "7", theme: "light" })!;
+  const html = renderToStaticMarkup(React.createElement(VisualReportTemplate, { data: mapped }));
+  expect(html).not.toContain("错误分类剧名"); expect(html).not.toContain("飙升榜");
 });

@@ -290,6 +290,7 @@ export function abortRunningManhuaLearnJob(jobId: string): boolean {
 type JobEnvelope = {
   action: string;
   params?: Record<string, unknown>;
+  externalEvidenceSnapshot?: import("../../shared/guaikei").GuaikeiTrendSnapshot;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -323,13 +324,15 @@ function parsePersistedNativeModelReceipts(raw: unknown): ManhuaNativeModelRecei
   return parsed;
 }
 
-function asEnvelope(value: unknown): JobEnvelope {
+export function asEnvelope(value: unknown): JobEnvelope {
   if (!isRecord(value) || typeof value.action !== "string") {
     throw new Error("Invalid job input payload");
   }
   return {
     action: value.action,
     params: isRecord(value.params) ? value.params : {},
+    externalEvidenceSnapshot: value.action === "platform_visual_report" && isRecord(value.externalEvidenceSnapshot)
+      ? value.externalEvidenceSnapshot as import("../../shared/guaikei").GuaikeiTrendSnapshot : undefined,
   };
 }
 
@@ -2660,6 +2663,7 @@ async function processPlatformJob(
         user,
         clientDisconnected: controller.signal,
         prepaidPlatformTrendJobId: platformJobId,
+        platformTrendExternalEvidence: input.externalEvidenceSnapshot as import("../../shared/guaikei").GuaikeiTrendSnapshot | undefined,
       });
       const { heartbeatActiveJob } = await import("../services/paidJobLedger.js");
       const heartbeat = platformJobId
@@ -2674,6 +2678,7 @@ async function processPlatformJob(
           platforms: params.platforms as Array<"douyin" | "xiaohongshu" | "bilibili" | "weixin_channels">,
           personaContext: typeof params.personaContext === "string" ? params.personaContext : undefined,
           billingRequestId: String(params.billingRequestId || ""),
+          externalEvidenceRefs: params.externalEvidenceRefs as import("../../shared/guaikei").GuaikeiReportRefs | undefined,
         });
         if (!result.success || !result.report) {
           throw new Error(result.error || "趋势报告生成失败");

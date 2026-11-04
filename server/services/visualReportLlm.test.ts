@@ -262,3 +262,24 @@ describe("DeepSeek 未配置零外呼(复审五轮 P1-1)", () => {
     expect(r.gateway).toBe("bailian");
   });
 });
+
+describe("具体作品合同覆盖主备通道", () => {
+  it("主攻伪造来源ID必须拒收，末档合法来源与空增长能通过", async () => {
+    const sources = ["a","b"].map(id=>({id,platform:"wechat" as const,title:"原文",description:"原文",author:`作者${id}`,authorId:id,url:null,publishedAt:"2026-11-03T08:00:00Z",likes:null,comments:null,shares:null,views:null}));
+    const concreteReport={insights:[{title:"观察一",detail:"真实文案一"},{title:"观察二",detail:"真实文案二"}],themes:[{primary:"价格",secondary:["到手价"]},{primary:"规则",secondary:["付款条件"]}],examples:sources.map(s=>({id:s.id,title:"中文摘要",description:"原文摘要",angle:"内容切口",structure:"结构建议",adaptation:"执行建议"})),audiences:[{name:"购物者",need:"比价格",direction:"比同款"},{name:"家庭",need:"看规则",direction:"核条款"}],suggestions:[{title:"同款比较",detail:"记录真实价格"},{title:"条款比较",detail:"记录真实条件"}],assignments:sources.map(s=>({id:s.id,topic:"价格"}))};
+    concreteReport.suggestions = Array.from({length:8}, (_,i)=>({title:`测试选题${i+1}`,detail:`测试执行说明${i+1}`}));
+    const good={reportTitle:"专题观察",insightSummary:[{title:"观察",description:"内容"}],trackGrowth:[],globalBlueOceanWords:[1,2,3,4].map(n=>({primary:`具体词${n}`,secondary:["真实子词"]})),platformDetails:[{platform:"weixin_channels",hotTopics:["真实问题一","真实问题二"],blueOceanWords:[{primary:"价格",secondary:["到手价"]},{primary:"规则",secondary:["付款"]}]}],concreteReport};
+    const bad=structuredClone(good);bad.concreteReport.examples[0].id="不存在的来源";
+    const primary=vi.fn(async()=>asResp(JSON.stringify(bad)));
+    const fallback=vi.fn(async()=>asResp(JSON.stringify(good)));
+    const result=await runVisualReportLlmAttempts({systemPrompt:"s",userPrompt:"u",maxTokens:40000,primaryModelName:"test",primaryInvoke:primary as any,deepSeekInvoke:fallback as any,sleepMs:noSleep,reportContract:{platforms:["weixin_channels"],allowNoGrowth:true,concreteSources:sources}});
+    expect(primary).toHaveBeenCalledTimes(2);expect(fallback).toHaveBeenCalledTimes(1);expect(result.parsed.concreteReport).toEqual(concreteReport);
+    expect(()=>parseVisualReportJson(JSON.stringify(bad),{platforms:["weixin_channels"],allowNoGrowth:true,concreteSources:sources})).toThrow("来源");
+  });
+});
+
+it("正式Flash X链失败后不调用旗舰末档，也不重复整链",async()=>{
+ const primary=vi.fn(async()=>{throw Error("两个Flash X通道均失败")});const bannedFallback=vi.fn();
+ const error=await runVisualReportLlmAttempts({systemPrompt:"s",userPrompt:"u",maxTokens:8192,primaryModelName:"z-ai/glm-5.3-flashx",flashOnly:true,primaryInvoke:primary,deepSeekInvoke:bannedFallback as any}).catch(e=>e);
+ expect(error).toBeInstanceOf(VisualReportAttemptsError);expect(error.attempts).toHaveLength(1);expect(primary).toHaveBeenCalledTimes(1);expect(bannedFallback).not.toHaveBeenCalled();
+});

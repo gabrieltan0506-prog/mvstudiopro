@@ -1160,6 +1160,9 @@ async function startServer() {
     }).catch(() => {});
     startVercelPreviewScheduler();
     startTopicDigestScheduler();
+    import("../growth/guaikei/automation").then(({ startGuaikeiAutomation }) => startGuaikeiAutomation()).catch(() => {
+      console.warn("[guaikei] 调度启动失败，未新增采集");
+    });
     if (isGrowthTrendSchedulerDisabled()) {
       console.warn("[growth.scheduler] disabled by DISABLE_GROWTH_TREND_SCHEDULER");
     } else {

@@ -5,12 +5,13 @@ import {
 } from "@shared/blueOceanLexicon";
 import type { VisualReportData } from "@/components/VisualReportTemplate";
 
-export type VisualReportPlatformKey = "douyin" | "xiaohongshu" | "bilibili" | "weixin_channels";
+export type VisualReportPlatformKey = "douyin" | "xiaohongshu" | "bilibili" | "weixin_channels" | "kuaishou" | "tiktok";
 export type VisualReportTheme = "dark" | "light";
 export type VisualReportWindowDays = "3" | "7" | "15" | "30";
 
 const PLATFORM_NAMES: Record<VisualReportPlatformKey, string> = {
   douyin: "抖音",
+  kuaishou: "快手", tiktok: "TikTok",
   xiaohongshu: "小红书",
   bilibili: "B站",
   weixin_channels: "视频号",
@@ -40,16 +41,16 @@ export function fallbackBlueOceanWords(opts: {
   }));
 }
 
-/** generateVisualReport 仅支持 3/7/15/30 天；45 天窗口映射为 30 天报表。 */
+/** 新报告仅支持3/7/15天；旧草稿的长窗口收敛到15天。 */
 export function toVisualReportWindowDays(days: PlatformWindowDays): VisualReportWindowDays {
-  if (days === 45) return "30";
+  if (days > 15) return "15";
   return String(days) as VisualReportWindowDays;
 }
 
 export function toVisualReportPlatforms(
   platforms: readonly string[],
 ): VisualReportPlatformKey[] {
-  const allowed = new Set<VisualReportPlatformKey>(["douyin", "xiaohongshu", "bilibili", "weixin_channels"]);
+  const allowed = new Set<VisualReportPlatformKey>(["douyin", "xiaohongshu", "bilibili", "weixin_channels", "kuaishou", "tiktok"]);
   return platforms.filter((p): p is VisualReportPlatformKey => allowed.has(p as VisualReportPlatformKey));
 }
 
@@ -216,6 +217,7 @@ export function mapGenerateVisualReportResult(
       ? restoredDateRange
       : `${restoredDateRange}（按任务创建日期恢复）`),
     theme: opts.theme,
+    concreteReport: report.concreteReport as VisualReportData["concreteReport"],
     insightSummary: Array.isArray(report.insightSummary)
       ? (report.insightSummary as VisualReportData["insightSummary"])
       : [],
