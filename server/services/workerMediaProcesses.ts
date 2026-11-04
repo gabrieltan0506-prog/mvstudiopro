@@ -1,6 +1,8 @@
+import { workerProbeLeasesBusy } from "./workerProbeLease";
 import {readFile,readdir} from 'node:fs/promises';
 /** Includes isolated probes that do not share the app's in-memory child counter. */
 export async function workerMediaProcessesBusy(root='/proc'):Promise<boolean> {
+ if(await workerProbeLeasesBusy())return true;
  if(process.platform!=='linux' && root==='/proc')return false;
  for(const pid of await readdir(root)){
   if(!/^\d+$/.test(pid))continue;

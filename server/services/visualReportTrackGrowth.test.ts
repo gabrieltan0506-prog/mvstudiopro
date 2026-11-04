@@ -171,3 +171,9 @@ describe("赛道样本计数与对照证据", () => {
   });
 
 });
+
+it("抖音撤回漫剧分类覆盖旧标签和规则兜底，保留作品其他有效赛道", () => {
+ const rows = [{ publishedAt: "2026-11-03T08:00:00Z", industryLabels: ["AI漫剧 · 动态漫", "影视娱乐"] }, { publishedAt: "2026-11-03T08:00:00Z", dramaKind: "ai_manhua", title: "旧误分类" }];
+ const map = buildIndustryGrowthHintMap({ collections: { douyin: { items: rows } } }, ["douyin"], 7, Date.parse("2026-11-04T12:00:00Z"));
+ expect(map.has("AI漫剧 · 动态漫")).toBe(false);expect(map.has("影视娱乐")).toBe(true);
+});

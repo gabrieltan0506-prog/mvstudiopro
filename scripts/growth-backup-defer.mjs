@@ -21,7 +21,7 @@ const maxStaleHours = Math.max(1, Number(process.argv[3]) || 24);
 
 const repo = process.env.GITHUB_REPOSITORY || "";
 const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || "";
-const workflow = process.env.GITHUB_WORKFLOW_REF?.split("/").pop()?.split("@")[0]
+const workflow = process.env.GITHUB_WORKFLOW_REF?.split("@")[0]?.split("/").pop()
   || "growth-backup.yml";
 const runId = process.env.GITHUB_RUN_ID || "";
 

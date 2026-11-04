@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { resolveCollectionCalendar, resolveCollectionMode } from "./collectionCalendar";
 import path from "node:path";
 import { GROWTH_BURST_INTERVAL_MINUTES, GROWTH_BURST_STAGGER_MINUTES, type GrowthPlatform } from "@shared/growth";
 import { collectPlatformTrends } from "./trendCollector";
@@ -56,10 +57,6 @@ const BURST_TRIGGER_GROWTH_RATIO = Math.max(0.1, Number(process.env.GROWTH_BURST
 const BURST_EXIT_DROP_RATIO = Math.max(0.05, Number(process.env.GROWTH_BURST_EXIT_DROP_RATIO || 0.3) || 0.3);
 const BURST_MIN_STABLE_RUNS = Math.max(1, Number(process.env.GROWTH_BURST_MIN_STABLE_RUNS || 2) || 2);
 const SCHEDULER_TIMEZONE = "Asia/Shanghai";
-const LIVE_WINDOW_START_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_LIVE_WINDOW_START_HOUR || 7) || 7));
-const LIVE_WINDOW_END_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_LIVE_WINDOW_END_HOUR || 1) || 1));
-const BACKFILL_WINDOW_START_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_BACKFILL_WINDOW_START_HOUR || 1) || 1));
-const BACKFILL_WINDOW_END_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_BACKFILL_WINDOW_END_HOUR || 6) || 6));
 const FORCE_BURST_PLATFORMS = new Set(
   String(process.env.GROWTH_FORCE_BURST_PLATFORMS || "")
     .split(",")
@@ -81,9 +78,6 @@ const DISABLE_BACKFILL_ON_LARGE_STORE = !/^(0|false|no)$/i.test(
 const BACKFILL_STORE_SIZE_LIMIT_MB = Math.max(
   64,
   Number(process.env.GROWTH_BACKFILL_STORE_SIZE_LIMIT_MB || 128) || 128,
-);
-const BACKFILL_FAST_START_ENABLED = !/^(0|false|no)$/i.test(
-  String(process.env.GROWTH_BACKFILL_FAST_START || "1").trim(),
 );
 const PLATFORM_RUN_TIMEOUT_MS = Math.max(
   30 * 1000,
@@ -185,60 +179,12 @@ function getPlatformBurstExitDropRatio(platform: GrowthPlatform) {
   return Number.isFinite(value) ? Math.max(0.05, value) : BURST_EXIT_DROP_RATIO;
 }
 
-function getSchedulerHour(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: SCHEDULER_TIMEZONE,
-    hour: "2-digit",
-    hour12: false,
-  }).formatToParts(now);
-  const hourPart = parts.find((part) => part.type === "hour")?.value;
-  return Number(hourPart || 0);
-}
-
-function isHourInWindow(hour: number, startHour: number, endHour: number) {
-  if (startHour === endHour) return true;
-  if (startHour < endHour) return hour >= startHour && hour < endHour;
-  return hour >= startHour || hour < endHour;
-}
-
 function isLiveWindow(now = new Date()) {
-  if (runtimeModeOverride === "live") return true;
-  if (runtimeModeOverride === "backfill") return false;
-  return isHourInWindow(getSchedulerHour(now), LIVE_WINDOW_START_HOUR, LIVE_WINDOW_END_HOUR);
+  return resolveCollectionMode(runtimeModeOverride, now) === "live";
 }
 
 function isBackfillWindow(now = new Date()) {
-  if (runtimeModeOverride === "backfill") return true;
-  if (runtimeModeOverride === "live") return false;
-  return isHourInWindow(getSchedulerHour(now), BACKFILL_WINDOW_START_HOUR, BACKFILL_WINDOW_END_HOUR);
-}
-
-function getShanghaiDateParts(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: SCHEDULER_TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-  }).formatToParts(now);
-  const get = (type: string) => parts.find((part) => part.type === type)?.value || "";
-  return {
-    year: get("year"),
-    month: get("month"),
-    day: get("day"),
-    weekday: get("weekday"),
-    isoDate: `${get("year")}-${get("month")}-${get("day")}`,
-  };
-}
-
-function isWeekendOrHoliday(now = new Date()) {
-  const { weekday, isoDate } = getShanghaiDateParts(now);
-  if (weekday === "Sat" || weekday === "Sun") return true;
-  const configured = String(process.env.GROWTH_HOLIDAY_DATES || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  return configured.includes(isoDate);
+  return resolveCollectionMode(runtimeModeOverride, now) === "backfill";
 }
 
 function getSchedulerIntervalMinutes(_now = new Date()) {
@@ -617,6 +563,12 @@ async function runPlatformTask(platform: GrowthPlatform) {
       lastFrequencyLabel: plan.frequencyLabel,
       lastError: undefined,
     });
+    if (collection.source === "live" && (platform === "douyin" || platform === "xiaohongshu")) {
+      void import("./guaikei/automation").then(({ guaikeiAutomation }) => guaikeiAutomation.nativeGrowth(
+        platform, addedCount, currentState?.lastAddedCount || 0, collection.collectedAt,
+      )).catch(() => console.warn("[guaikei] 新增数据观察未保存，不影响原Growth采集"));
+    }
+
     if (collection.source === "live" && currentCount > 0) {
       await notifyGrowthCollectionUpdate({
         platform,
@@ -707,7 +659,12 @@ async function runPlatform(platform: GrowthPlatform) {
     : runtimeModeOverride === "live"
       ? "live"
       : "scheduler";
-  return runInGrowthPlatformCollectionLane(platform, source, () => runPlatformTask(platform));
+  return runInGrowthPlatformCollectionLane(platform, source, async () => {
+    // 排队/等锁可能跨过午夜，真正开始采集前再次检查。
+    await refreshRuntimeModeOverride();
+    if (!isLiveWindow()) return;
+    return runPlatformTask(platform);
+  });
 }
 
 /** 旧排程按上一轮时间补足 burst 间隔；失败冷却沿用独立策略。 */
@@ -873,13 +830,16 @@ async function shouldBootstrapBackfill() {
 function shouldRunBackfillWorkersNow() {
   if (runtimeModeOverride === "live") return false;
   if (runtimeModeOverride === "backfill") return true;
-  return isBackfillWindow() || BACKFILL_FAST_START_ENABLED;
+  return isBackfillWindow();
 }
 
 export async function bootstrapGrowthTrendScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
   await refreshRuntimeModeOverride().catch(() => "auto");
+  if (!resolveCollectionCalendar().calendarKnown) {
+    console.warn("[growth.scheduler] 本年度节假日日历未核实，auto 暂用全天 live，需更新日历。");
+  }
 
   const deployId = String(process.env.FLY_MACHINE_VERSION || process.env.FLY_IMAGE_REF || "").trim();
   await resetTrendRuntimeForDeploy(deployId).catch((error) => {
@@ -959,7 +919,7 @@ export async function bootstrapGrowthTrendScheduler() {
       await refreshRuntimeModeOverride().catch((error) => {
         console.warn("[growth.scheduler] runtime mode refresh failed:", error);
       });
-      if (shouldRunBackfillWorkersNow()) {
+      if (shouldRunBackfillWorkersNow() && await shouldBootstrapBackfill()) {
         bootstrapGrowthTrendBackfillWorker().catch((error) => {
           console.warn("[growth.backfill] periodic bootstrap failed:", error);
         });

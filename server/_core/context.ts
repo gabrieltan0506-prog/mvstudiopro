@@ -1,5 +1,6 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import type { User } from "../../drizzle/schema";
+import type { GuaikeiTrendSnapshot } from "../../shared/guaikei";
 import { HttpError } from "@shared/_core/errors";
 import { sdk } from "./sdk";
 import { readSupervisorSession, type SupervisorSession } from "../services/supervisor-session";
@@ -27,6 +28,8 @@ export type TrpcContext = {
    * 浏览器请求无法设置该字段，防止公开 input 绕过计费。
    */
   prepaidPlatformTrendJobId?: string;
+  /** 仅由worker从已持久化任务注入；公开请求不能自行提交作品正文。 */
+  platformTrendExternalEvidence?: GuaikeiTrendSnapshot;
 };
 
 export async function createContext(

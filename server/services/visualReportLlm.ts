@@ -1,3 +1,4 @@
+import { assembleConcreteTrendReport, type ConcreteSource } from "../../shared/concreteTrendReport";
 /**
  * 趋势 PNG 报表三攻路由（2026-08-21 用户拍板改口径）：
  * attempt 1-2 走 GLM-5.3 链(北京百炼→新加坡百炼→OpenRouter→Qwen3.8-Max 末档),
@@ -127,7 +128,7 @@ type FallbackResponse = {
 };
 
 /** 报表 JSON 解析与空壳校验(GLM 主攻与 DeepSeek 兜底共用同一把尺) */
-export function parseVisualReportJson(rawText: string): { parsed: Record<string, unknown>; rawBody: string } {
+export function parseVisualReportJson(rawText: string, contract?: { platforms: string[]; allowNoGrowth?: boolean; concreteSources?: ConcreteSource[] }): { parsed: Record<string, unknown>; rawBody: string } {
   const text = String(rawText || "").trim();
   if (!text) throw new Error("上游返回空内容");
   if (/^An error\b/i.test(text) || text.startsWith("<!DOCTYPE") || text.startsWith("<html")) {
@@ -154,6 +155,18 @@ export function parseVisualReportJson(rawText: string): { parsed: Record<string,
     throw new Error("解析结果不是 JSON 对象");
   }
   const obj = parsed as Record<string, unknown>;
+  // 案例版只校验实际消费者合同；旧活动/奖励字段由已验证正文确定性派生，避免双合同打架。
+  if (contract?.concreteSources?.length) {
+    const data = assembleConcreteTrendReport(obj.concreteReport, contract.concreteSources, {
+      reportTitle: "内容分析", dateRange: "来源核验", platformLabel: contract.platforms[0], metricKind: "auto",
+    });
+    return { parsed: { ...obj,
+      reportTitle: typeof obj.reportTitle === "string" && obj.reportTitle.trim() ? obj.reportTitle : "内容分析",
+      insightSummary: data.insights!.map((row,i) => ({ role: ["判断","热点","结构","建议"][i], title: row.title, description: row.detail })),
+      trackGrowth: [], globalBlueOceanWords: data.themes,
+      platformDetails: [{ platform: contract.platforms[0], hotTopics: data.themes.map(t=>t.primary), blueOceanWords: data.themes, trafficBoosters: [], cashRewards: [] }],
+    }, rawBody: text };
+  }
   // 复审五轮 P1-2:三主键必须同时实质非空,只带标题或空数组的空壳一律拒绝并继续降级
   if (typeof obj.reportTitle !== "string" || !obj.reportTitle.trim()) {
     throw new Error("报表空壳:reportTitle 缺失或为空");
@@ -161,13 +174,27 @@ export function parseVisualReportJson(rawText: string): { parsed: Record<string,
   if (!Array.isArray(obj.insightSummary) || obj.insightSummary.length === 0) {
     throw new Error("报表空壳:insightSummary 为空");
   }
-  if (!Array.isArray(obj.trackGrowth) || obj.trackGrowth.length === 0) {
+  if (!contract?.allowNoGrowth && (!Array.isArray(obj.trackGrowth) || obj.trackGrowth.length === 0)) {
     throw new Error("报表空壳:trackGrowth 为空");
+  }
+  if (contract) {
+    const groupsValid = (value: unknown, min: number) => Array.isArray(value) && value.length >= min
+      && value.every(row => typeof row?.primary === "string" && row.primary.trim()
+        && Array.isArray(row.secondary) && row.secondary.some((word: unknown) => typeof word === "string" && word.trim()));
+    const details = Array.isArray(obj.platformDetails) ? obj.platformDetails : [];
+    for (const platform of contract.platforms) {
+      const row = details.find(row => row?.platform === platform);
+      if (!row || !Array.isArray(row.hotTopics) || row.hotTopics.length < 2 || !groupsValid(row.blueOceanWords, 2)) {
+        throw new Error(`报表内容不完整:${platform}详情或分级关键词缺失`);
+      }
+    }
+    if (!groupsValid(obj.globalBlueOceanWords, 4)) throw new Error("报表内容不完整:全局分级关键词缺失");
   }
   return { parsed: obj, rawBody: text };
 }
 
 export async function runVisualReportLlmAttempts(params: {
+  reportContract?: { platforms: string[]; allowNoGrowth?: boolean; concreteSources?: ConcreteSource[] };
   systemPrompt: string;
   userPrompt: string;
   maxTokens: number;
@@ -175,6 +202,8 @@ export async function runVisualReportLlmAttempts(params: {
   primaryModelName: string;
   abortSignal?: AbortSignal;
   maxAttempts?: number;
+  /** 正式趋势报告只运行一次同款Flash X网关链，不落旗舰模型或重复整链。 */
+  flashOnly?: boolean;
   /** 兜底注入点（测试用）；生产默认真实 DeepSeek 通道 */
   deepSeekInvoke?: (args: {
     system: string;
@@ -186,7 +215,7 @@ export async function runVisualReportLlmAttempts(params: {
   primaryInvoke: (modelName: string) => Promise<FallbackResponse>;
   sleepMs?: (ms: number) => Promise<void>;
 }): Promise<VisualReportLlmResult> {
-  const maxAttempts = Math.max(2, params.maxAttempts ?? 3);
+  const maxAttempts = params.flashOnly ? 1 : Math.max(2, params.maxAttempts ?? 3);
   const deepSeekInvoke = params.deepSeekInvoke ?? invokeDeepSeekJsonChatRaw;
   const sleep =
     params.sleepMs ??
@@ -216,7 +245,7 @@ export async function runVisualReportLlmAttempts(params: {
     // 复审 P1-3：每轮顶部先查硬截止,截止后一个通道都不许再碰
     if (params.abortSignal?.aborted) throw buildErr(true);
     // 前两攻 GLM-5.3 链(主力),末攻兜底 DeepSeek 经济档
-    const useFallback = attempt >= maxAttempts;
+    const useFallback = !params.flashOnly && attempt >= maxAttempts;
     const engine: VisualReportEngine = useFallback ? "openrouter_deepseek" : "glm_5_3";
     const modelName = useFallback ? DEEPSEEK_ECONOMY_MODEL : params.primaryModelName;
     attempts.push({ attempt, engine, modelName });
@@ -231,7 +260,7 @@ export async function runVisualReportLlmAttempts(params: {
         : await params.primaryInvoke(modelName);
       const choice0 = response.choices?.[0];
       const content = choice0?.message?.content;
-      const { parsed, rawBody } = parseVisualReportJson(typeof content === "string" ? content : "");
+      const { parsed, rawBody } = parseVisualReportJson(typeof content === "string" ? content : "", params.reportContract);
       if (response.gatewayTrace) attempts[attempts.length - 1].gatewayTrace = response.gatewayTrace;
       return {
         parsed,

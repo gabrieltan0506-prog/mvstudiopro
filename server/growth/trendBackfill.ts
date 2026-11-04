@@ -1,6 +1,7 @@
+import { resolveCollectionMode } from "./collectionCalendar";
 import type { GrowthPlatform } from "@shared/growth";
 import { collectTrendPlatforms } from "./trendCollector";
-import { mergeTrendCollectionsWithOptions, readGrowthDebugSummary, readTrendRuntimeMeta, reconcileTrendHistoryState, updateTrendBackfillProgress } from "./trendStore";
+import { mergeTrendCollectionsWithOptions, readGrowthRuntimeControl, readGrowthDebugSummary, readTrendRuntimeMeta, reconcileTrendHistoryState, updateTrendBackfillProgress } from "./trendStore";
 import { notifyGrowthCollectionUpdate } from "./trendMailDigest";
 import { nowShanghaiIso } from "./time";
 import { withAbortableTimeout } from "./collectorAbort.js";
@@ -29,15 +30,6 @@ const BACKFILL_INITIAL_DELAY_MS = Math.max(
   30 * 1000,
   Number(process.env.GROWTH_BACKFILL_INITIAL_DELAY_MS || 60 * 1000) || 60 * 1000,
 );
-const BACKFILL_FAST_START_ENABLED = !/^(0|false|no)$/i.test(
-  String(process.env.GROWTH_BACKFILL_FAST_START || "1").trim(),
-);
-const BACKFILL_FAST_START_MAX_ROUNDS = Math.max(
-  1,
-  Number(process.env.GROWTH_BACKFILL_FAST_START_MAX_ROUNDS || 2) || 2,
-);
-const BACKFILL_WINDOW_START_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_BACKFILL_WINDOW_START_HOUR || 1) || 1));
-const BACKFILL_WINDOW_END_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_BACKFILL_WINDOW_END_HOUR || 6) || 6));
 const HISTORY_BASE_INTERVAL_MS = Math.max(
   1 * 60 * 1000,
   Number(process.env.GROWTH_HISTORY_BACKFILL_INTERVAL_MS || 5 * 60 * 1000) || 5 * 60 * 1000,
@@ -102,7 +94,6 @@ type WorkerState = {
   plateau: Map<GrowthPlatform, number>;
   previous: Map<GrowthPlatform, number>;
   startedAt: string;
-  fastStartRoundsDone: number;
   lastHadPendingPlatforms: boolean;
   bootstrapStepsDone: number;
   abortController: AbortController | null;
@@ -116,7 +107,6 @@ const workerState: Record<BackfillKind, WorkerState> = {
     plateau: new Map<GrowthPlatform, number>(),
     previous: new Map<GrowthPlatform, number>(),
     startedAt: "",
-    fastStartRoundsDone: 0,
     lastHadPendingPlatforms: false,
     bootstrapStepsDone: 0,
     abortController: null,
@@ -128,7 +118,6 @@ const workerState: Record<BackfillKind, WorkerState> = {
     plateau: new Map<GrowthPlatform, number>(),
     previous: new Map<GrowthPlatform, number>(),
     startedAt: "",
-    fastStartRoundsDone: 0,
     lastHadPendingPlatforms: false,
     bootstrapStepsDone: 0,
     abortController: null,
@@ -140,10 +129,9 @@ function isStorageFullError(error: unknown) {
   return /\bENOSPC\b|no space left on device/i.test(message);
 }
 
-function canRunBackfillNow(kind: BackfillKind) {
-  if (isBackfillWindow()) return true;
-  if (!BACKFILL_FAST_START_ENABLED) return false;
-  return workerState[kind].fastStartRoundsDone < BACKFILL_FAST_START_MAX_ROUNDS;
+async function canRunBackfillNow() {
+  const control = await readGrowthRuntimeControl();
+  return resolveCollectionMode(control?.mode || "auto") === "backfill";
 }
 
 function getBackfillDelayMs(kind: BackfillKind, options?: { pendingPlatforms?: boolean; bootstrapStep?: boolean }) {
@@ -160,26 +148,6 @@ function nextHistoryDelayMs() {
 function formatMinutes(minutes: number) {
   if (minutes % 60 === 0) return `${minutes / 60} 小时`;
   return `${minutes} 分钟`;
-}
-
-function getShanghaiHour(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Shanghai",
-    hour: "2-digit",
-    hour12: false,
-  }).formatToParts(now);
-  const hourPart = parts.find((part) => part.type === "hour")?.value;
-  return Number(hourPart || 0);
-}
-
-function isHourInWindow(hour: number, startHour: number, endHour: number) {
-  if (startHour === endHour) return true;
-  if (startHour < endHour) return hour >= startHour && hour < endHour;
-  return hour >= startHour || hour < endHour;
-}
-
-function isBackfillWindow(now = new Date()) {
-  return isHourInWindow(getShanghaiHour(now), BACKFILL_WINDOW_START_HOUR, BACKFILL_WINDOW_END_HOUR);
 }
 
 function getHistoricalCadenceMs(_totalArchivedItems: number) {
@@ -202,7 +170,9 @@ async function runBackfillPlatformTasks(
 
   for (const platform of pending) {
     if (signal.aborted) throw new Error("growth_collector_aborted");
+    if (!await canRunBackfillNow()) break;
     await runInGrowthPlatformCollectionLane(platform, kind === "live" ? "live" : "backfill", async () => {
+      if (signal.aborted || !await canRunBackfillNow()) return;
       const envNames = [
         "GROWTH_BACKFILL_ACTIVE",
         "GROWTH_BACKFILL_MODE",
@@ -340,7 +310,7 @@ async function scheduleNextBackfillStep(kind: BackfillKind) {
       delayMs = HISTORY_BASE_INTERVAL_MS;
     }
   }
-  if (!isBackfillWindow() && !canRunBackfillNow(kind)) {
+  if (!await canRunBackfillNow()) {
     delayMs = Math.max(delayMs, BACKFILL_PENDING_RETRY_MS);
   }
   await updateTrendBackfillProgress({
@@ -439,8 +409,10 @@ function getPendingPlatforms(kind: BackfillKind, stats: BackfillRuntimeSnapshot)
 async function runBackfillStep(kind: BackfillKind) {
   const state = workerState[kind];
   if (state.inFlight) return;
-  if (!canRunBackfillNow(kind)) return;
+  if (!await canRunBackfillNow()) return;
   if (await hasActiveGrowthInteractiveWorkload()) return;
+  // 模式和前台检查均为异步，等待期间另一入口可能已取得本worker。
+  if (state.inFlight) return;
   state.inFlight = true;
   const abortController = new AbortController();
   state.abortController = abortController;
@@ -449,9 +421,6 @@ async function runBackfillStep(kind: BackfillKind) {
     const statsBefore = await readBackfillSnapshotFor(kind);
     const pending = getPendingPlatforms(kind, statsBefore);
     state.lastHadPendingPlatforms = pending.length > 0;
-    if (!isBackfillWindow() && BACKFILL_FAST_START_ENABLED) {
-      state.fastStartRoundsDone += 1;
-    }
     state.bootstrapStepsDone += 1;
     const label = getWorkerLabel(kind);
     const stepTarget = getWorkerStepTarget(kind);
@@ -623,11 +592,11 @@ export async function runGrowthTrendLiveBackfillStep() {
 }
 
 async function bootstrapWorker(kind: BackfillKind) {
+  if (!await canRunBackfillNow()) return;
   const state = workerState[kind];
   if (state.started) return;
   state.started = true;
   state.startedAt = nowShanghaiIso();
-  state.fastStartRoundsDone = 0;
   state.bootstrapStepsDone = 0;
   await updateTrendBackfillProgress({
     mode: kind,
@@ -660,7 +629,6 @@ function stopWorker(kind: BackfillKind) {
   }
   state.started = false;
   state.startedAt = "";
-  state.fastStartRoundsDone = 0;
   state.lastHadPendingPlatforms = false;
   state.bootstrapStepsDone = 0;
   void updateTrendBackfillProgress({

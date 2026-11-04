@@ -1,8 +1,10 @@
+import { ConcreteTrendReport, type ConcreteTrendData } from "./ConcreteTrendReport";
 import React from "react";
 import type { TrackGrowthEvidence } from "@shared/visualReportEvidence";
 
 export type VisualReportData = {
   reportTitle: string;
+  concreteReport?: ConcreteTrendData;
   dateRange: string;
   theme: "dark" | "light";
   // insightSummary: 判断/热点/结构/建议 四栏；兼容旧 string / {title, description}
@@ -149,6 +151,7 @@ function parseGrowthPercentString(growth: string): number | null {
 
 export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
   function VisualReportTemplate({ data }, ref) {
+    if (data.concreteReport) return <div ref={ref}><ConcreteTrendReport data={data.concreteReport}/></div>;
     const isDark = data.theme === "dark";
     // dark 主题在 /platform 趋势长图上改为爱马仕橙暖底（浅咖啡→浅红），正文深咖，条轨中性灰咖
     const bg      = isDark ? HERMES_PAGE_BG : "linear-gradient(168deg, #F7F1EA 0%, #F3E0D6 100%)";
@@ -196,7 +199,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
         <div style={{ display: "flex", alignItems: "baseline", gap: "16px", marginBottom: "6px", paddingBottom: "14px", borderBottom: `1px solid ${border}` }}>
           <h1 style={{ fontSize: "26px", fontWeight: 800, letterSpacing: "0.5px" }}>{data.reportTitle}</h1>
           <span style={{ fontSize: "12px", color: muted }}>数据区间 · {data.dateRange}</span>
-          <span style={{ display: "inline-block", fontSize: "11px", background: tagBg, color: tagClr, border: `1px solid ${tagBdr}`, borderRadius: "4px", padding: "2px 8px", marginLeft: "6px" }}>周期样本报告</span>
+          <span style={{ display: "inline-block", fontSize: "11px", background: tagBg, color: tagClr, border: `1px solid ${tagBdr}`, borderRadius: "4px", padding: "2px 8px", marginLeft: "6px" }}>趋势报告</span>
         </div>
 
         {/* TAG ROW */}
@@ -295,63 +298,6 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
           </div>
         </>
 
-        {/* ── AI 漫剧飙升榜（抖音 mix_info 结构化）── */}
-        {(data.aiManhuaRising?.entries?.length || 0) > 0 && (
-          <>
-            <div style={sec}>🎬 AI 漫剧 · {data.aiManhuaRising!.windowDays} 天飙升榜</div>
-            <div style={{ background: "rgba(184,92,56,0.06)", border: `1px solid rgba(184,92,56,0.22)`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
-              <div style={{ fontSize: "11px", color: muted, marginBottom: "12px", lineHeight: 1.6 }}>{data.aiManhuaRising!.note}</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                {data.aiManhuaRising!.entries.slice(0, 8).map((row, idx) => {
-                  const statusLabel =
-                    row.status === "surging" ? "飙升"
-                      : row.status === "hot" ? "高热"
-                        : row.status === "new" ? "新爆"
-                          : "稳态";
-                  const statusColor =
-                    row.status === "surging" ? C[2]
-                      : row.status === "hot" ? C[3]
-                        : row.status === "new" ? C[1]
-                          : C[6];
-                  const playTxt = row.mixPlayCount >= 10000
-                    ? `${(row.mixPlayCount / 10000).toFixed(1)}万`
-                    : String(row.mixPlayCount || 0);
-                  const deltaTxt = row.delta7d == null
-                    ? "—"
-                    : row.delta7d >= 10000
-                      ? `+${(row.delta7d / 10000).toFixed(1)}万`
-                      : `+${row.delta7d}`;
-                  return (
-                    <div key={row.mixId || idx} style={{ display: "grid", gridTemplateColumns: "28px 1fr 72px 72px 48px", gap: "10px", alignItems: "center", padding: "8px 10px", background: "rgba(255,249,242,0.7)", borderRadius: "8px" }}>
-                      <span style={{ fontSize: "12px", fontWeight: 800, color: muted }}>#{idx + 1}</span>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: "13px", fontWeight: 700, color: txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {row.url ? (
-                            <a href={row.url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>{row.mixName}</a>
-                          ) : row.mixName}
-                        </div>
-                        <div style={{ fontSize: "10px", color: muted, marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {row.author ? `${row.author} · ` : ""}{row.sampleTitle || row.dramaKind}
-                        </div>
-                      </div>
-                      <span style={{ fontSize: "12px", fontWeight: 700, color: C[0], textAlign: "right" }}>{playTxt}</span>
-                      <span style={{ fontSize: "12px", fontWeight: 700, color: statusColor, textAlign: "right" }}>{deltaTxt}</span>
-                      <span style={{ fontSize: "10px", fontWeight: 700, color: statusColor, textAlign: "right" }}>{statusLabel}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 72px 72px 48px", gap: "10px", marginTop: "8px", padding: "0 10px", fontSize: "10px", color: muted }}>
-                <span />
-                <span>剧名</span>
-                <span style={{ textAlign: "right" }}>合集播放</span>
-                <span style={{ textAlign: "right" }}>{data.aiManhuaRising!.hasBaseline ? "环比增量" : "环比(待建)"}</span>
-                <span style={{ textAlign: "right" }}>状态</span>
-              </div>
-            </div>
-          </>
-        )}
-
         {/* ── trafficSupport + hotFestivals (g2) ── */}
         {((data.trafficSupport?.length || 0) > 0 || (data.hotFestivals?.length || 0) > 0) && (
           <>
@@ -411,14 +357,13 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
         {/* ── trackGrowth + audiencesAndBiz (g2) ── */}
         {((data.trackGrowth?.length || 0) > 0 || (data.audiencesAndBiz?.length || 0) > 0) && (
           <>
-            <div style={sec}>赛道样本变化 + 目标人群与商业方向</div>
+            <div style={sec}>热门赛道 + 目标人群与商业方向</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px", marginBottom: "16px" }}>
 
               {/* Track growth */}
               {(data.trackGrowth?.length || 0) > 0 && (
                 <div style={card()}>
-                  <div style={ct(C[4])}><div style={dot(C[4])} />热门赛道 · 采集样本条数变化</div>
-                  <p style={{ fontSize: 11, color: muted, lineHeight: 1.6 }}>按所选平台已采集样本及分类统计，与前一同长度上海日历窗口比较；采集覆盖可能不同，本期含今日未结束时段。百分比不代表播放量或平台整体流量增长。条形长度最高显示100%，具体变化以数值为准。</p>
+                  <div style={ct(C[4])}><div style={dot(C[4])} />热门赛道</div>
                   {(data.trackGrowth || []).map((t, i) => {
                     const color = C[i % C.length];
                     const e = t.evidence;
@@ -459,7 +404,6 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                       undefined,
                       undefined
                     )}
-                      {hasEvidence && <div style={{ fontSize: 10, color: muted, marginBottom: 12 }}>本期 {e.currentCount} 条 / 前期 {e.priorCount} 条 · 前后各 {e.windowDays} 天 · {e.platforms.map((p) => PLATFORM_DISPLAY_NAMES[p] || p).join("、")}</div>}
                     </div>;
                   })}
                 </div>
@@ -780,7 +724,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
 
         {/* ── FOOTER ── */}
         <div style={{ marginTop: "24px", paddingTop: "14px", borderTop: `1px solid ${border}`, fontSize: "11px", color: muted, textAlign: "center" }}>
-          由 mvstudiopro Platform Intelligence 生成 · 数据基于所选平台采集样本；选题建议不代表已核实搜索量或竞争度 · {data.dateRange}
+          由 mvstudiopro Platform Intelligence 生成 · {data.dateRange}
         </div>
       </div>
     );

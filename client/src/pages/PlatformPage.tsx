@@ -1,3 +1,6 @@
+import { GuaikeiResearchPanel } from "@/components/GuaikeiResearchPanel";
+import { guaikeiReportRefsSchema, type GuaikeiReportRefs } from "@shared/guaikei";
+import { readGuaikeiReportSelection, writeGuaikeiReportSelection } from "@/lib/guaikeiReportSelection";
 import { rankTopicShortlistByViralScore } from "@shared/platformTopicShortlist";
 import { editTopicTitle, resolveTopicWindowDays } from "@shared/platformTopicIntegrity";
 import { CoverCandidatePicker } from "@/components/platform/CoverCandidatePicker";
@@ -113,6 +116,7 @@ import {
   toVisualReportPlatforms,
   toVisualReportWindowDays,
   type VisualReportTheme,
+  type VisualReportPlatformKey,
 } from "@/lib/visualReportMapper";
 import {
   clearPlatformVisualReportPersist,
@@ -663,8 +667,6 @@ const WINDOW_OPTIONS = [
   { days: 3 as const, label: "3天", description: "盯最新风向与突发热点" },
   { days: 7 as const, label: "7天", description: "一周热度与即时机会" },
   { days: 15 as const, label: "15天", description: "看短期波动、热点与即时机会" },
-  { days: 30 as const, label: "30天", description: "看平台主流结构与相对稳定方向" },
-  { days: 45 as const, label: "45天", description: "看更长窗口的沉淀与长期可做性" },
 ] as const;
 
 type TrendPlatformKey = "xiaohongshu" | "bilibili" | "douyin" | "weixin_channels";
@@ -2632,6 +2634,13 @@ export default function PlatformPage() {
   const [dashboardDebug, setDashboardDebug] = useState<Record<string, unknown> | null>(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
   const [visualReportData, setVisualReportData] = useState<VisualReportData | null>(null);
+  const [standaloneReportPlatform, setStandaloneReportPlatform] = useState<VisualReportPlatformKey | "">("");
+  const [reportExternalSelection, setReportExternalSelection] = useState<{ owner: string; refs: GuaikeiReportRefs }>({ owner: "", refs: [] });
+  const reportExternalRefs = reportExternalSelection.owner === String(user?.id || "") ? reportExternalSelection.refs : [];
+  useEffect(() => {
+    const owner = String(user?.id || "");
+    setReportExternalSelection({ owner, refs: readGuaikeiReportSelection(owner) });
+  }, [user?.id]);
   const [visualReportTheme] = useState<VisualReportTheme>("dark");
   const [isVisualReportLoading, setIsVisualReportLoading] = useState(false);
   const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
@@ -11591,17 +11600,18 @@ export default function PlatformPage() {
 
   /** 独立趋势 PNG：持久入队，浏览器断线或刷新不会取消模型任务。 */
   const handleTrendStandaloneAnalyze = async () => {
-    if (selectedTrendPlatforms.length !== 1) {
+    const requestedReportPlatforms = standaloneReportPlatform ? [standaloneReportPlatform] : selectedTrendPlatforms;
+    if (requestedReportPlatforms.length !== 1) {
       toast.error("请选择一个分析平台");
       return;
     }
-    const visualPlatforms = toVisualReportPlatforms(selectedTrendPlatforms);
+    const visualPlatforms = toVisualReportPlatforms(requestedReportPlatforms);
     if (!visualPlatforms.length) {
       toast.error("当前所选平台暂不支持图文报表");
       return;
     }
-    const selectedPlatformLabels = selectedTrendPlatforms
-      .map((key) => TREND_PLATFORM_OPTIONS.find((item) => item.key === key)?.label)
+    const selectedPlatformLabels = requestedReportPlatforms
+      .map((key) => key === "tiktok" ? "TikTok" : key === "kuaishou" ? "快手" : TREND_PLATFORM_OPTIONS.find((item) => item.key === key)?.label)
       .filter(Boolean)
       .join("、");
 
@@ -11613,7 +11623,7 @@ export default function PlatformPage() {
         : "";
     if (
       !window.confirm(
-        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天样本，后台生成趋势 PNG${windowNote}。\n\n扣除 ${cost} 积分；页面刷新后仍可继续取回结果。是否开始？`,
+        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天数据，后台生成趋势 PNG${windowNote}。${reportExternalRefs.length ? "将结合已选择的外部作品；采集、分析和长图均包含在本次报告价格内。" : ""}\n\n扣除 ${cost} 积分；页面刷新后仍可继续取回结果。是否开始？`,
       )
     ) {
       return;
@@ -11634,6 +11644,7 @@ export default function PlatformPage() {
         theme: visualReportTheme,
         platforms: visualPlatforms,
         billingRequestId,
+        externalEvidenceRefs: reportExternalRefs,
       });
       const pending: PlatformVisualReportPendingJobV1 = {
         v: 1,
@@ -13192,12 +13203,32 @@ export default function PlatformPage() {
                   onClick={() => void scrollToPaidPlatformTrends()}
                   className="text-xs font-semibold text-[#8cefff] underline-offset-4 hover:underline"
                 >
-                  跳至完整趋势区 ↓
+                  查看趋势摘要
                 </button>
               ) : null}
             </div>
 
-            <div className="mt-4 flex flex-wrap items-center gap-2">
+            {user?.role === "admin" && <GuaikeiResearchPanel onAdopt={text => {
+              const next = [focusPrompt.trim(), text].filter(Boolean).join("\n\n");
+              if (next.length > 8000) return false;
+              setFocusPrompt(next); setFreeformOverride(true); setPersonaFieldErrors({});
+              return true;
+            }} onAdoptReport={(jobId, itemIds) => {
+              const owner = String(user?.id || "");
+              const refs = guaikeiReportRefsSchema.parse([...reportExternalRefs.filter(ref => ref.jobId !== jobId), { jobId, itemIds }]);
+              writeGuaikeiReportSelection(owner, refs);
+              setReportExternalSelection({ owner, refs });
+            }} />}
+            {reportExternalRefs.length > 0 && <div className="mt-2 flex items-center gap-3 text-xs text-cyan-100">
+              <span>趋势报告已加入外部作品参考；不会重新采集。时间不符的资料会在扣费前提示。</span>
+              <button type="button" className="underline" onClick={() => {
+                const owner = String(user?.id || "");
+                try { writeGuaikeiReportSelection(owner, []); setReportExternalSelection({ owner, refs: [] }); }
+                catch { toast.error("无法清除本机选择，请检查浏览器存储权限"); }
+              }}>清除选择</button>
+            </div>}
+
+            <div id={PLATFORM_SECTION_TREND_RUN_ID} className="mt-4 flex scroll-mt-24 flex-wrap items-center gap-2">
               <span className="text-[10px] uppercase tracking-[0.14em] text-[#8cefff]/60">分析窗口</span>
               {WINDOW_OPTIONS.map((item) => {
                 const active = item.days === selectedWindowDays;
@@ -13291,6 +13322,14 @@ export default function PlatformPage() {
               </div>
             ) : null}
 
+            <label className="mt-3 flex items-center gap-2 text-xs text-cyan-100">长图报告平台
+              <select aria-label="长图报告平台" className="rounded border border-white/20 bg-slate-950 px-2 py-1" value={standaloneReportPlatform} disabled={trendStandaloneBusy || enqueueVisualReportMutation.isPending} onChange={e=>setStandaloneReportPlatform(e.target.value as VisualReportPlatformKey | "")}>
+                <option value="">跟随上方分析平台</option>
+                {[...TREND_PLATFORM_OPTIONS, {key:"tiktok",label:"TikTok"}, {key:"kuaishou",label:"快手"}].map(item=><option key={item.key} value={item.key}>{item.label}</option>)}
+              </select>
+              <span>结合近期真实作品，分析内容机会与可执行选题。</span>
+            </label>
+
             {!platformDashboard &&
             !visualReportData &&
             !trendStandaloneBusy &&
@@ -13310,10 +13349,10 @@ export default function PlatformPage() {
                     ) : (
                       <Sparkles className="h-4 w-4" />
                     )}
-                    开始平台趋势分析
+                    生成近{selectedWindowDays}天报告 · {getPlatformTrendReportCredits(selectedWindowDays)}积分
                   </button>
                   <span className="rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-1.5 text-[11px] font-black tabular-nums text-[#fef08a]">
-                    {getPlatformTrendReportCredits(selectedWindowDays)} 积分/次
+                    {getPlatformTrendReportCredits(selectedWindowDays)} 积分/平台/份
                   </span>
                   <span className="text-[11px] text-[#c9c0e6]/50">
                     {"含四格趋势摘要与可下载 PNG 长图"}
@@ -13345,7 +13384,7 @@ export default function PlatformPage() {
               </div>
             ) : null}
 
-            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div id={PLATFORM_SECTION_TREND_SIGNALS_ID} className="mt-4 grid scroll-mt-24 gap-3 md:grid-cols-2 xl:grid-cols-4">
               {resultSummaryCards.map((item, index) => (
                 <div key={`custom-ws-trend-${item.label}-${index}`} className="rounded-2xl border border-white/10 bg-black/25 p-4">
                   {item.isLoadingSkeleton ? (
@@ -13414,24 +13453,11 @@ export default function PlatformPage() {
                 || (visualReportData as { aiManhuaRisingByPlatform?: PlatformDashboard["aiManhuaRisingByPlatform"] } | null)
                   ?.aiManhuaRisingByPlatform
                 || null;
-              const douyinBoard: AiManhuaRisingBoardView | null =
-                byPlatform?.douyin
-                || (platformDashboard?.aiManhuaRising?.entries?.length
-                  ? platformDashboard.aiManhuaRising
-                  : null)
-                || (visualReportData?.aiManhuaRising?.entries?.length
-                  ? (visualReportData.aiManhuaRising as AiManhuaRisingBoardView)
-                  : null);
               const kuaishouBoard: AiManhuaRisingBoardView | null = byPlatform?.kuaishou || null;
               const rising =
-                aiManhuaPlatformTab === "kuaishou" ? kuaishouBoard : douyinBoard;
-              const overviewRising = douyinBoard?.entries?.length
-                ? douyinBoard
-                : kuaishouBoard?.entries?.length
-                  ? kuaishouBoard
-                  : null;
-              const badgeCount =
-                (douyinBoard?.entries?.length || 0) + (kuaishouBoard?.entries?.length || 0);
+                aiManhuaPlatformTab === "kuaishou" ? kuaishouBoard : null;
+              const overviewRising = kuaishouBoard?.entries?.length ? kuaishouBoard : null;
+              const badgeCount = kuaishouBoard?.entries?.length || 0;
               const fmtPlay = (n: number) =>
                 n >= 10000 ? `${(n / 10000).toFixed(1)}万` : String(n || 0);
               const categoryOf = (row: AiManhuaRisingEntryView) =>
@@ -13472,7 +13498,7 @@ export default function PlatformPage() {
                       }`}
                     >
                       <Film className="h-3.5 w-3.5 shrink-0" />
-                      AI 漫剧
+                      作品学习
                       {badgeCount ? (
                         <span className="rounded-full bg-white/15 px-1.5 py-0.5 text-[10px] tabular-nums">
                           {badgeCount}
@@ -13494,7 +13520,7 @@ export default function PlatformPage() {
                               onClick={() => setTrendInsightTab("ai_manhua")}
                               className="text-[11px] font-semibold text-[#8cefff] underline-offset-2 hover:underline"
                             >
-                              打开 AI 漫剧专区 →
+                              打开作品学习 →
                             </button>
                           </div>
                           <div className="mt-2 flex flex-wrap gap-2">
@@ -13514,7 +13540,7 @@ export default function PlatformPage() {
 
                       {visualReportData ? (
                         <p className="mt-3 text-[11px] text-[#c9c0e6]/55">
-                          完整浅色长图已在上方「浅色趋势分析报表」区；完整 AI 漫剧榜单见右侧 Tab。
+                          完整浅色长图已在上方「浅色趋势分析报表」区；作品学习入口见右侧 Tab。
                         </p>
                       ) : null}
                     </>
@@ -13523,12 +13549,11 @@ export default function PlatformPage() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <div className="text-sm font-semibold text-[#ff9fe0]">
-                            {aiManhuaPlatformTab === "kuaishou" ? "快手" : "抖音"} AI 漫剧专区 ·{" "}
-                            {rising?.windowDays || selectedWindowDays} 天飙升
+                            {aiManhuaPlatformTab === "kuaishou" ? "快手作品参考" : "作品学习"}
                           </div>
                           <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-[#c9c0e6]/60">
                             {rising?.note
-                              || "与总览报表数据同源：抖音/快手采集中的合集与漫剧样本单独聚合。其它种草、口播样本仍在「总览」里。"}
+                              || "抖音旧漫剧分类已移除。可通过真实作品链接或本地视频主动学习。"}
                             {" "}
                             {ownerNativeDeepReadPanel
                               ? "学节奏：按你设置的集数直接建立原生精读任务；模型直接读取视频，每集生成一张待审卡，你批准后才进入正式模板库。"
@@ -13556,12 +13581,8 @@ export default function PlatformPage() {
                               : "text-[#c9c0e6]/65 hover:text-white"
                           }`}
                         >
-                          抖音
-                          {douyinBoard?.entries?.length ? (
-                            <span className="ml-1 tabular-nums text-[#c9c0e6]/50">
-                              {douyinBoard.entries.length}
-                            </span>
-                          ) : null}
+                          链接与本地视频
+
                         </button>
                         <button
                           type="button"
@@ -16269,193 +16290,6 @@ export default function PlatformPage() {
           }
           aria-hidden={platformMode !== "trend" || customWorkspaceOperating}
         >
-        <section className={shellCardClasses("overflow-hidden p-5 md:p-6")}>
-          <div className="absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(73,230,255,0.55),transparent)]" />
-          <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-            <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-[#362561] bg-[rgba(23,13,53,0.9)] px-3 py-1 text-xs uppercase tracking-[0.22em] text-[#aa95dc]">
-                <TrendingUp className="h-3.5 w-3.5" />
-                平台顾问台
-              </div>
-              {/* 双入口大按钮已由顶栏模式切换替代，避免同屏两套主任务 */}
-              <div className="mt-4 hidden flex-col gap-3" aria-hidden>
-                <div className="text-sm font-bold uppercase tracking-[0.14em] text-[#8cefff] md:text-base">
-                  本页付费能力 · 一键直达
-                </div>
-                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => void scrollToPaidPlatformTrends()}
-                    className="group flex min-w-0 flex-1 items-center gap-4 rounded-2xl border-2 border-white/15 bg-[rgba(255,255,255,0.07)] px-5 py-4 text-left transition hover:border-[#49e6ff]/45 hover:bg-[rgba(73,230,255,0.12)] md:min-w-[15rem] md:px-6 md:py-5 sm:flex-none"
-                  >
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#49e6ff]/35 bg-[#49e6ff]/15 text-[#8cefff] md:h-14 md:w-14">
-                      <BarChart3 className="h-6 w-6 md:h-7 md:w-7" aria-hidden />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-base font-bold text-white md:text-lg">平台趋势分析</span>
-                        <span className="rounded-full border border-[#fef08a]/40 bg-[rgba(254,240,138,0.15)] px-2.5 py-0.5 text-xs font-semibold text-[#fef08a]">
-                          {getPlatformTrendReportCredits(selectedWindowDays)} 积分/次
-                        </span>
-                      </div>
-                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">
-                        四格趋势摘要与可下载 PNG 图文报表（不含专属文案 / 决策智库）
-                      </p>
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void scrollToPaidDecisionIntel()}
-                    className="group flex min-w-0 flex-1 items-center gap-4 rounded-2xl border-2 border-white/15 bg-[rgba(255,255,255,0.07)] px-5 py-4 text-left transition hover:border-[#ff4fb8]/45 hover:bg-[rgba(255,79,184,0.12)] md:min-w-[15rem] md:px-6 md:py-5 sm:flex-none"
-                  >
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-[#0a0a0f] p-1 md:h-14 md:w-14">
-                      <img
-                        src="/brand/mvstudiopro-strategic-intel-logo.png"
-                        alt=""
-                        className="h-full w-full object-contain"
-                        width={112}
-                        height={112}
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-base font-bold text-white md:text-lg">MV Studio Pro AI 决策智库</span>
-                        <span className="rounded-full border border-[#f472b6]/45 bg-[rgba(244,114,182,0.15)] px-2.5 py-0.5 text-xs font-semibold text-[#fbcfe8]">
-                          单独加购
-                        </span>
-                      </div>
-                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">基于全案背景生成可视化决策报告；不含在全案积分内</p>
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void scrollToPaidDeepQa()}
-                    className="group flex min-w-0 flex-1 items-center gap-4 rounded-2xl border-2 border-white/15 bg-[rgba(255,255,255,0.07)] px-5 py-4 text-left transition hover:border-[#a78bfa]/50 hover:bg-[rgba(167,139,250,0.14)] md:min-w-[15rem] md:px-6 md:py-5 sm:flex-none"
-                  >
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#a78bfa]/40 bg-[#a78bfa]/18 text-[#ddd6fe] md:h-14 md:w-14">
-                      <MessageSquareText className="h-6 w-6 md:h-7 md:w-7" aria-hidden />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-base font-bold text-white md:text-lg">深度追问</span>
-                        <span className="rounded-full border border-[#c4b5fd]/40 bg-[rgba(196,181,253,0.14)] px-2.5 py-0.5 text-xs font-semibold text-[#e9d5ff]">
-                          按次扣点
-                        </span>
-                      </div>
-                      <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">基于当前窗口数据追问到形式、节奏与承接</p>
-                    </div>
-                  </button>
-                </div>
-              </div>
-              {/* 落地页式大标题与卖点格已移除：工作台里用户要的是操作面，宣传话留在首页（用户 2026-08-06） */}
-              <p className="mt-4 max-w-3xl text-sm leading-7 text-[#c9c0e6]/70">
-                {platformDashboard?.subheadline || personaSummary}
-              </p>
-
-            </div>
-
-            <div id={PLATFORM_SECTION_TREND_RUN_ID} className="scroll-mt-20 grid gap-4">
-              <div className="rounded-[26px] border border-[#2a1c55] bg-[linear-gradient(180deg,rgba(28,16,60,0.96),rgba(12,8,28,0.96))] p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <CalendarRange className="h-4 w-4 text-[#49e6ff]" />
-                  选择分析窗口
-                </div>
-                <div className="mt-4 grid gap-3">
-                  {WINDOW_OPTIONS.map((item) => {
-                    const active = item.days === selectedWindowDays;
-                    return (
-                      <button
-                        key={item.days}
-                        type="button"
-                        onClick={() => setSelectedWindowDays(item.days)}
-                        className={`rounded-2xl border px-4 py-4 text-left transition ${
-                          active
-                            ? "border-[#49e6ff]/45 bg-[linear-gradient(135deg,rgba(73,230,255,0.14),rgba(125,115,255,0.10))] shadow-[0_0_0_1px_rgba(73,230,255,0.15)]"
-                            : "border-white/10 bg-white/5 hover:bg-white/10"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className={`text-lg font-bold ${active ? "text-[#8cefff]" : "text-white"}`}>{item.label}</div>
-                          {active ? <div className="rounded-full bg-[rgba(73,230,255,0.12)] px-2 py-1 text-[11px] text-[#8cefff]">当前窗口</div> : null}
-                        </div>
-                        <div className="mt-1 text-sm leading-6 text-[#b7add8]">{item.description}</div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {debugMode && (
-                <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-white">封面 / 分镜 · 中文直送</div>
-                      <p className="mt-1 text-xs leading-relaxed text-white/55">
-                        封面为中文直送 + Image-2 高清生图；编导分镜同为中文直送像素链。
-                      </p>
-                    </div>
-                    <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
-                      中文直送
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {debugMode && (
-                <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-white">文案引擎（战略看板 + 专属文案 + 深度追问）</div>
-                      <p className="mt-1 text-xs leading-relaxed text-white/55">
-                        战略看板、专属选题文案与深度追问走平台文案引擎；Debug 会显示实际进度与用量。
-                      </p>
-                    </div>
-                    <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
-                      文案引擎
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {canConfigureStage2CopyEngine && debugMode ? (
-                <div className="rounded-[26px] border border-amber-500/20 bg-[rgba(120,53,15,0.08)] px-5 py-3 text-xs text-white/50">
-                  监管提示：文案与深度追问已固定平台文案引擎；封面固定 OpenAI 官方 Image-2（无 Nano Banana 可选）。
-                </div>
-              ) : null}
-
-              {/*
-                旧版「人物背景与创作诉求 + 生成选题 + 选题列表 + 文案区」整段已撤除。
-                这一页曾把新工作台与旧版页面上下叠着放，同样的东西渲染两遍：两个人物背景输入框、
-                两份选题列表、两份文案区，用户点完按钮还得往下找结果（用户 2026-08-06：版面太混乱）。
-                现在只保留工作台里那一份，这里只留跑完后的下载入口。
-              */}
-              {hasAnalyzed && !isDashboardLoading && !isContentLoading ? (
-                <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.03)] px-4 py-3">
-                  <span className="text-[12px] text-[#c9c0e6]/60">当前窗口：近 {selectedWindowDays} 天</span>
-                  <button
-                    type="button"
-                    onClick={() => void handleDownloadPlatformPdf()}
-                    disabled={isDownloadingPdf}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-xs font-semibold text-[#c9c0e6] transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {isDownloadingPdf ? (
-                      <>
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        生成中…
-                      </>
-                    ) : (
-                      <>
-                        <FileText className="h-3 w-3" />
-                        下载 PDF
-                      </>
-                    )}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </section>
-
         {isAnalyzing ? (
           <section className="mt-6 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
             <div className={shellCardClasses("p-6")}>
@@ -16508,29 +16342,6 @@ export default function PlatformPage() {
 
           </section>
         ) : null}
-
-        <section
-          id={PLATFORM_SECTION_TREND_SIGNALS_ID}
-          className="scroll-mt-20 mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4"
-        >
-          {resultSummaryCards.map((item, index) => (
-            <div key={`${item.label}-${index}`} className={shellCardClasses("p-5 flex flex-col justify-center")}>
-              {item.isLoadingSkeleton ? (
-                <div className="flex h-full w-full animate-pulse flex-col justify-center rounded-lg border border-white/5 bg-[rgba(255,255,255,0.02)] p-4 text-center">
-                  <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-[#49e6ff]/50" />
-                  <div className="text-[13px] font-semibold text-[#8cefff]/70">{item.value}</div>
-                  <div className="mt-1 text-[11px] text-[#c9c0e6]/50">{item.detail}</div>
-                </div>
-              ) : (
-                <>
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-[#9ddcff]">{item.label}</div>
-                  <div className="mt-3 text-xl font-bold leading-8 text-white">{item.value}</div>
-                  <div className="mt-3 text-sm leading-7 text-[#c9c0e6]">{item.detail}</div>
-                </>
-              )}
-            </div>
-          ))}
-        </section>
 
         {/* Debug panel: show as soon as snapshot is available */}
         {snapshot && debugMode ? (
@@ -16778,7 +16589,7 @@ export default function PlatformPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-bold text-white">平台趋势分析</span>
                       <span className="rounded-full border border-[#fef08a]/40 bg-[rgba(254,240,138,0.15)] px-2 py-0.5 text-[10px] font-semibold text-[#fef08a]">
-                        {getPlatformTrendReportCredits(selectedWindowDays)} 积分/次
+                        {getPlatformTrendReportCredits(selectedWindowDays)} 积分/平台/份
                       </span>
                     </div>
                     <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">

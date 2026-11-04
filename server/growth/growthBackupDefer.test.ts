@@ -31,7 +31,7 @@ beforeAll(async () => {
       ] }] }));
       return;
     }
-    if (!/\/actions\/workflows\/.+\/runs/.test(req.url || "")) {
+    if (!/\/actions\/workflows\/growth-backup\.yml\/runs/.test(req.url || "")) {
       res.writeHead(404).end("{}");
       return;
     }
@@ -65,6 +65,7 @@ async function defer(reason: string, maxHours?: string) {
     ...process.env,
     GITHUB_API_URL: apiUrl,
     GITHUB_REPOSITORY: "owner/repo",
+    GITHUB_WORKFLOW_REF: "owner/repo/.github/workflows/growth-backup.yml@refs/heads/main",
     GH_TOKEN: "t",
     GITHUB_RUN_ID: "1",
     GITHUB_STEP_SUMMARY: summaryFile,
