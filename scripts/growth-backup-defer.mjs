@@ -31,7 +31,8 @@ async function lastSuccessAt() {
   // GITHUB_API_URL 由 Actions 注入；本地/测试可指向桩服务
   const api = (process.env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, "");
   const url = `${api}/repos/${repo}/actions/workflows/${workflow}/runs`
-    + `?status=success&per_page=1&exclude_pull_requests=true`;
+    + `?status=success&per_page=100&exclude_pull_requests=true`;
+  const deadline = Date.now() + 90_000;
   try {
     const res = await fetch(url, {
       headers: {
@@ -43,11 +44,29 @@ async function lastSuccessAt() {
     });
     if (!res.ok) return null;
     const json = await res.json();
-    const run = json?.workflow_runs?.[0];
-    // 排除本次运行自己（理论上不会是 success，稳妥起见）
-    if (!run || String(run.id) === runId) return null;
-    const at = Date.parse(run.updated_at || run.created_at || "");
-    return Number.isFinite(at) ? at : null;
+    // 让路运行本身也呈绿色；必须核到真正写出备份的步骤，避免无限续期。
+    for (const run of json?.workflow_runs || []) {
+      if (String(run.id) === runId) continue;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return null;
+      const jobsRes = await fetch(`${api}/repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "growth-backup-defer",
+        },
+        signal: AbortSignal.timeout(Math.min(30_000, remainingMs)),
+      });
+      if (!jobsRes.ok) return null;
+      const jobs = await jobsRes.json();
+      const required = ["Upload GitHub backup artifact", "Publish cold-store restore assets"];
+      const backedUp = jobs?.jobs?.some(job => required.every(name =>
+        job.steps?.some(step => step.name === name && step.conclusion === "success")));
+      if (!backedUp) continue;
+      const at = Date.parse(run.updated_at || run.created_at || "");
+      return Number.isFinite(at) ? at : null;
+    }
+    return null;
   } catch {
     return null;
   }

@@ -237,12 +237,14 @@ jobs:
           LOCK="$ROOT/.growth-platform-collection.lock"
           find "$ROOT/runtime-interactive-workloads" -type f -mmin +2 -delete 2>/dev/null || true
           if [ -n "$(find "$ROOT/runtime-interactive-workloads" -type f -mmin -2 -print -quit 2>/dev/null)" ]; then
+            echo GROWTH_BACKUP_LANE_BUSY=interactive >&2
             exit 42
           fi
           if [ -e "$LOCK" ]; then
             if find "$LOCK" -mmin +15 -print -quit 2>/dev/null | grep -q .; then
               rm -f "$LOCK"
             else
+              echo GROWTH_BACKUP_LANE_BUSY=collection >&2
               exit 43
             fi
           fi
@@ -250,13 +252,22 @@ jobs:
           SH
             local lane_attempt
             for lane_attempt in $(seq 1 60); do
-              if wait_for_started_vm && flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C 'sh -s' < /tmp/acquire-growth-backup-lane.sh; then
+              if ! wait_for_started_vm; then
+                return 1
+              fi
+              if timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C 'sh -s' < /tmp/acquire-growth-backup-lane.sh 2>/tmp/growth-backup/lane-error.log; then
                 return 0
+              fi
+              cat /tmp/growth-backup/lane-error.log >&2
+              # flyctl 将远端退出码包装为本地 1；只接受远端明确的繁忙标记。
+              if ! grep -Eq '^GROWTH_BACKUP_LANE_BUSY=(interactive|collection)$' /tmp/growth-backup/lane-error.log; then
+                echo "::error::冷备锁获取异常，不能作为正常让路处理" >&2
+                return 1
               fi
               echo "采集或前台平台任务仍在运行，冷备暂停 30 秒（${lane_attempt}/60）"
               sleep 30
             done
-            return 1
+            return 75
           }
 
           wait_for_interactive_workload() {
@@ -312,7 +323,17 @@ jobs:
             '" >/dev/null 2>&1 || true
           }
 
-          acquire_backup_lane
+          if acquire_backup_lane; then
+            :
+          else
+            lane_status=$?
+            if [ "$lane_status" -ne 75 ]; then
+              exit "$lane_status"
+            fi
+            node scripts/growth-backup-defer.mjs "采集锁或前台平台任务持续占用，等待 30 分钟仍未让开"
+            echo "BACKUP_DEFERRED=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
           BACKUP_REMOTE_WORK_STARTED=false
           (
             while sleep 60; do
