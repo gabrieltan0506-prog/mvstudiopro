@@ -477,7 +477,8 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
       xhsGrowthEvidence: bindTopicEvidence(r.evidenceRefs, `${title} ${r.hookSketch}`, xhsGrowthEvidence),
       douyinGrowthEvidence: bindTopicEvidence(r.evidenceRefs, `${title} ${r.hookSketch}`, douyinGrowthEvidence),
       ...(xhsMode ? { creationPlatforms: params.creationPlatforms || ["xiaohongshu"] } : {}),
-      id: String(r.id || nanoid(10)).slice(0, 64),
+      // 身份由服务端创建，避免模型重复ID串选题、恢复或免费重试记录。
+      id: nanoid(16),
       title,
       hookSketch: String(r.hookSketch || r.hook || title).trim(),
       conveyGoal: String(r.conveyGoal).trim(),
@@ -540,6 +541,10 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
       code: "INTERNAL_SERVER_ERROR",
       message: `选题初选过滤后为空（原始 ${rawList.length} 条 / 校验通过 ${normalized.length} 条），请调整人设或减少已有标题后重试`,
     });
+  }
+
+  if (topics.length < targetCount) {
+    throw new Error(`选题去重后数量不足：需要 ${targetCount} 条，实际 ${topics.length} 条；本次不交付残缺批次`);
   }
 
   return {
@@ -947,6 +952,8 @@ export async function expandPlatformTopicPicks(params: {
   /** 每条实际成功的通道：日志会被轮转冲掉，对账要看结构化 diagnostics */
   const successfulGateways: Array<{ id: string; title: string; gateway: string }> = [];
   const startedAt = Date.now();
+  // 浏览器恢复/扩写输入不是证据真源；每个平台/窗口只重新读取一次本地采集库。
+  const evidenceReads = new Map<string, ReturnType<typeof readShortlistTrendBriefs>>();
   for (let i = 0; i < uniquePicks.length; i++) {
     const pick = uniquePicks[i]!;
     const skillsPrompt = await resolvePoolAndPrompt({
@@ -956,7 +963,19 @@ export async function expandPlatformTopicPicks(params: {
       allowBloggerTitle: params.allowBloggerTitle,
     });
     const xhsMode = pick.skillsUsed.includes(XHS_CONTENT_SKILL_ID);
-    const selectedEvidence = pick.targetPlatform === "douyin" ? pick.douyinGrowthEvidence : pick.xhsGrowthEvidence;
+    const platform = pick.targetPlatform === "douyin" ? "douyin" : "xiaohongshu";
+    const submittedEvidence = platform === "douyin" ? pick.douyinGrowthEvidence : pick.xhsGrowthEvidence;
+    let selectedEvidence: typeof submittedEvidence;
+    if (submittedEvidence?.samples.length) {
+      const span = Date.parse(submittedEvidence.windowEnd) - Date.parse(submittedEvidence.windowStart);
+      const days = resolveTopicWindowDays(params.context, span > 0 && span <= 7 * 86400000 ? 7 : 15);
+      const key = `${platform}:${days}`;
+      if (!evidenceReads.has(key)) evidenceReads.set(key, readShortlistTrendBriefs(days, true, params.context || "", [platform]));
+      const current = await evidenceReads.get(key)!;
+      const evidence = platform === "douyin" ? current.douyinGrowthEvidence : current.xhsGrowthEvidence;
+      selectedEvidence = bindTopicEvidence(submittedEvidence.samples.map(sample => ({ platform, id: sample.id })),
+        `${pick.title} ${pick.hookSketch}`, evidence);
+    }
     const isVideo = pick.formatHint === "短视频";
     // 系统/用户消息必须含小写 json（Responses API json_object 硬门槛）
     const system = xhsMode ? `${buildViralRolePrompt("expand", pick.targetPlatform || "xiaohongshu", isVideo ? "短视频" : "图文", "database")}
@@ -1003,7 +1022,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}
         isMarketingContext(params.context || "") ? "【营销方案的输出位置】引流/利润/高价三档仅作为候选，用简短自然段写入既有publishingAdvice，并说明价格依据与待补成本/售价/交付耗时；未给事实不得虚构。xhsPackage.conversion.offer和delivery仅写当前选题的一个主承接商品及交付边界，各不超过300字；尚未提供商品时明确未设商品，候选不冒充已售。正文、graphicNotePages.body及口播不得混入内部三档规划、成本测算或待补清单。methodApplications仅选择确实用于正文的方法，引用正文原句，不为凑方法引用把经营方案印给读者。" : "",
       ].filter(Boolean).join("\n"),
       ...(xhsMode ? { methodLibrary: selectViralCreationMethods(params.context || ""), methodVersion: VIRAL_METHOD_VERSION, methodPlan: buildViralMethodPlan([params.context || "", pick.title, pick.conveyGoal].join("\n"), undefined, { stage: "expand", format: isVideo ? "短视频" : "图文", marketingContext: params.context || "" }) } : {}),
-      pick: { ...pick, xhsGrowthEvidence: selectedEvidence },
+      pick: { ...pick, xhsGrowthEvidence: selectedEvidence, douyinGrowthEvidence: undefined },
       skillsPrompt: skillsPrompt.slice(0, 14000),
       outputFormat: "json",
     });
@@ -1178,7 +1197,9 @@ conveyGoal（须兑现）：${pick.conveyGoal}
     bp.hook = String(bp.hook || pick.hookSketch);
     bp.skillsUsed = pick.skillsUsed;
     if (xhsMode) { bp.viralCreation = true; bp.targetPlatform = pick.targetPlatform || "xiaohongshu"; bp.suitablePlatforms = [bp.targetPlatform]; }
-    if (xhsMode && selectedEvidence) bp.xhsGrowthEvidence = selectedEvidence;
+    // 模型自报证据也不能成为产物来源，统一写入本轮服务端核实的样本。
+    bp.xhsGrowthEvidence = selectedEvidence;
+    delete bp.douyinGrowthEvidence;
     bp.primaryLane = pick.primaryLane;
     bp.conveyGoal = pick.conveyGoal;
     bp.dedupeKey = pick.dedupeKey;

@@ -28,7 +28,10 @@ export async function withTopicShortlistCharge<T>(
         .catch(refundError => console.error("[topicShortlist] 退还待补偿", refundError));
       throw error;
     }
-    try { await unregisterActiveJob(jobId, taskType); }
+    try {
+      const settled = await unregisterActiveJob(jobId, taskType);
+      if (!settled.ok) await markSettlementPending(jobId, taskType);
+    }
     catch { await markSettlementPending(jobId, taskType); }
     return result;
   } finally { clearInterval(timer); }

@@ -1,3 +1,4 @@
+import type { PlatformTopicShortlistItem } from "./platformTopicShortlist";
 import type { XhsGrowthEvidence } from "./xhsContentStrategy";
 import { createXhsRelevanceMatcher } from "./xhsContentStrategy";
 import { topicDisplayText, topicReasonDisplay } from "./platformTopicDisplay";
@@ -48,4 +49,14 @@ export function bindTopicEvidence(
   });
   return { ...evidence, samples, selectedCount: samples.length,
     note: `本题引用${samples.length}条有来源、发布时间和采集时互动的样本。词面匹配只能辅助核对相关性，不能证明观点或效果；赞评为采集时累计值，不是窗口内新增量。` };
+}
+
+/** 标题是证据绑定对象的一部分；编辑后清除旧依据与评分，保留已有正文供用户继续编辑。 */
+export function editTopicTitle(topic: PlatformTopicShortlistItem, title: string): PlatformTopicShortlistItem {
+  const next = title.trim();
+  if (next.length < 4 || next.length > 120) throw new Error("标题需要4至120个字");
+  if (next === topic.title) return topic;
+  return { ...topic, title: next, evidenceBindingVersion: "topic-v1",
+    xhsGrowthEvidence: undefined, douyinGrowthEvidence: undefined,
+    viralScore: undefined, commentHeat: undefined, viralReason: undefined, isTopPick: false };
 }

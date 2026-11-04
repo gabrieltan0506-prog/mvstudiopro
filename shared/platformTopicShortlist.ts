@@ -341,6 +341,7 @@ export function dedupeTopicShortlist<T extends { title: string; dedupeKey?: stri
       deriveTopicDedupeKey(item.title, item.hookSketch || "");
     if (usedKeys.has(key)) continue;
     usedKeys.add(key);
+    if (titleNorm) existing.add(titleNorm);
     out.push({ ...item, dedupeKey: key } as T);
   }
   return out;

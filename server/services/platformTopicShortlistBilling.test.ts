@@ -23,3 +23,9 @@ it("成功结算写入失败只进入待结算，不误退",async()=>{
  m.settle.mockRejectedValue(Error("暂不可写"));expect(await withTopicShortlistCharge(input,async()=>"完整结果")).toBe("完整结果");expect(m.pending).toHaveBeenCalledTimes(1);expect(m.refund).not.toHaveBeenCalled();
 });
 it("管理员保持免扣",async()=>{expect(await withTopicShortlistCharge({...input,exempt:true},async()=>"完整结果")).toBe("完整结果");expect(m.deduct).not.toHaveBeenCalled();expect(m.register).not.toHaveBeenCalled();});
+
+it("结算返回ok:false也进入待结算，保留已完成结果",async()=>{
+ m.settle.mockResolvedValue({ok:false});
+ expect(await withTopicShortlistCharge(input,async()=>"完整结果")).toBe("完整结果");
+ expect(m.pending).toHaveBeenCalledTimes(1);expect(m.refund).not.toHaveBeenCalled();
+});

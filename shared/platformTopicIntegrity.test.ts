@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertCompleteTopicText, bindTopicEvidence, resolveTopicWindowDays } from "./platformTopicIntegrity";
+import { assertCompleteTopicText, bindTopicEvidence, editTopicTitle, resolveTopicWindowDays } from "./platformTopicIntegrity";
 import { buildXhsGrowthEvidence } from "./xhsContentStrategy";
 import { rankTopicShortlistByViralScore } from "./platformTopicShortlist";
 
@@ -36,4 +36,13 @@ describe("选题窗口和完整性", () => {
     expect(rankTopicShortlistByViralScore([{viralScore:90},{viralScore:90}]).some(row=>row.isTopPick)).toBe(false);
     expect(rankTopicShortlistByViralScore([{viralScore:99,conveyGoal:"承接动作：关注看下"}]).some(row=>row.isTopPick)).toBe(false);
   });
+});
+
+it("标题改动使旧证据和评分失效，原题与正文仍保留", () => {
+ const original={...complete,id:"topic",skillsUsed:["skill"],primaryLane:"default",formatHint:"图文",dedupeKey:"meeting",evidenceBindingVersion:"topic-v1",viralScore:95,commentHeat:90,isTopPick:true,xhsGrowthEvidence:buildXhsGrowthEvidence([],7)} as const;
+ const topic={...original,skillsUsed:[...original.skillsUsed]};
+ expect(editTopicTitle(topic,topic.title)).toBe(topic);
+ const edited=editTopicTitle(topic,"周末露营准备清单");
+ expect(edited.xhsGrowthEvidence).toBeUndefined();expect(edited.viralScore).toBeUndefined();expect(edited.isTopPick).toBe(false);
+ expect(edited.hookSketch).toBe(topic.hookSketch);expect(topic.viralScore).toBe(95);
 });

@@ -1,5 +1,5 @@
 import { rankTopicShortlistByViralScore } from "@shared/platformTopicShortlist";
-import { resolveTopicWindowDays } from "@shared/platformTopicIntegrity";
+import { editTopicTitle, resolveTopicWindowDays } from "@shared/platformTopicIntegrity";
 import { CoverCandidatePicker } from "@/components/platform/CoverCandidatePicker";
 import { readCoverCandidateSet } from "@shared/platformCoverCandidates";
 import { TopicDigestDraft, readTopicDigestLocation } from "@/components/TopicDigestBell";
@@ -4393,12 +4393,12 @@ export default function PlatformPage() {
   const commitEditingShortlistTitle = useCallback(() => {
     const id = editingShortlistTopicId;
     if (!id) return;
-    const next = editingShortlistTitle.trim().slice(0, 120);
-    if (next.length < 4) {
-      toast.error("标题至少 4 个字");
+    const next = editingShortlistTitle.trim();
+    if (next.length < 4 || next.length > 120) {
+      toast.error("标题需要4至120个字");
       return;
     }
-    setTopicShortlist((prev) => prev.map((t) => (t.id === id ? { ...t, title: next } : t)));
+    setTopicShortlist((prev) => prev.map((t) => (t.id === id ? editTopicTitle(t, next) : t)));
     setEditingShortlistTopicId(null);
     setEditingShortlistTitle("");
   }, [editingShortlistTitle, editingShortlistTopicId]);

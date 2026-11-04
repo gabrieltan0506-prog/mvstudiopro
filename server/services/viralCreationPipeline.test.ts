@@ -64,6 +64,17 @@ describe("爆款创作真实服务入口（模型和数据读取隔离）", () =
   await expect(generatePlatformTopicShortlist({userId:1,count:2,enabledSkillIds:[XHS_CONTENT_SKILL_ID]})).rejects.toThrow("长度上限");
   expect(mock.llm).toHaveBeenCalledTimes(1);
  });
+ it.each(["missing", "deduped", "duplicate-title"])("不足请求数量(%s)不作为成功交付，不自动补买", async mode => {
+  mock.llm.mockResolvedValue(JSON.stringify({topics: mode === "missing" ? [rawTopic(1)] : mode === "duplicate-title" ? [rawTopic(1),{...rawTopic(2),title:rawTopic(1).title}] : [rawTopic(1),rawTopic(1)]}));
+  await expect(generatePlatformTopicShortlist({userId:1,count:2,enabledSkillIds:[XHS_CONTENT_SKILL_ID]})).rejects.toThrow("数量不足");
+  expect(mock.llm).toHaveBeenCalledTimes(1);
+ });
+ it("模型重复ID不能串选题或沿用旧扩写身份", async () => {
+  mock.llm.mockResolvedValue(JSON.stringify({topics:[{...rawTopic(1),id:"duplicate"},{...rawTopic(2),id:"duplicate"}]}));
+  const result=await generatePlatformTopicShortlist({userId:1,count:2,enabledSkillIds:[XHS_CONTENT_SKILL_ID]});
+  expect(new Set(result.topics.map(t=>t.id)).size).toBe(2);
+  expect(result.topics.every(t=>t.id!=="duplicate")).toBe(true);
+ });
  it("扩写统一GLM，失败只切同款EvoLink，方案送入最终消费者字段", async () => {
   mock.llm.mockRejectedValueOnce(new Error("渠道不可用")).mockResolvedValueOnce(JSON.stringify({ blueprint: fictionalViralBlueprint() }));
   const result = await expandPlatformTopicPicks({ userId: 1, context: "职场沟通", engine: "qwen3.8-max", enabledSkillIds: [XHS_CONTENT_SKILL_ID], picks: [{ ...pick, targetPlatform: "douyin" }] });
@@ -211,4 +222,16 @@ describe("营销方法接入既有生产请求", () => {
   expect(result.contentBlueprints[0].methodApplications).toEqual(bp.methodApplications);
   expect(result.contentBlueprints[0].graphicNotePages).toEqual(bp.graphicNotePages);
  });
+});
+
+it("扩写重新核实客户端证据，覆盖伪造指标并丢弃模型自报依据", async () => {
+ vi.clearAllMocks();mock.trends.mockImplementation(async ([platform]: string[]) => ({[platform]:{items:[{id:`${platform}-sample`,title:"会议沟通表达",url:"https://example.com/meeting",publishedAt:new Date(Date.now()-86400000).toISOString(),likes:20}]}}));
+ const fake={platform:"xiaohongshu",windowStart:new Date(Date.now()-7*86400000).toISOString(),windowEnd:new Date().toISOString(),samples:[{id:"xiaohongshu-sample",likes:999999},{id:"forged"}]} as any;
+ const bp={...fictionalViralBlueprint(),xhsGrowthEvidence:{samples:[{id:"model-forged"}]}};
+ mock.llm.mockResolvedValue(JSON.stringify({blueprint:bp}));
+ const result=await expandPlatformTopicPicks({userId:1,context:"会议沟通",picks:[{...pick,xhsGrowthEvidence:fake}],enabledSkillIds:[XHS_CONTENT_SKILL_ID]});
+ const submitted=JSON.parse(mock.llm.mock.calls[0][0].messages[1].content).pick;
+ expect(submitted.xhsGrowthEvidence.samples.map((s:any)=>s.id)).toEqual(["xiaohongshu-sample"]);
+ expect(submitted.xhsGrowthEvidence.samples[0].likes).toBe(20);
+ expect((result.contentBlueprints[0].xhsGrowthEvidence as any).samples[0].likes).toBe(20);
 });

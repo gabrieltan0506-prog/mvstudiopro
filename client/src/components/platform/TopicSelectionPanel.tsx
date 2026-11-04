@@ -29,7 +29,7 @@ export function TopicSelectionPanel(p: Props) {
         {Boolean(p.freeTopics) && <button type="button" className="creation-text-action" disabled={!p.authenticated || busy} onClick={() => p.onGenerate(true)}>免费试用 {p.freeTopics} 个{p.freeRemaining ? ` · 剩 ${p.freeRemaining} 次` : ""}</button>}
       </div>}
     </header>
-    {p.windowDays && <p className="creation-secondary-note">本轮核对近 {p.windowDays} 天发布的样本；缺少合格依据时标为待数据验证，不扩大到更旧的内容。</p>}
+    {p.windowDays && <p className="creation-secondary-note">新一轮选题将核对近 {p.windowDays} 天发布的样本；缺少合格依据时标为待数据验证，不扩大到更旧的内容。</p>}
     {p.error && <p role="alert" className="creation-error">{p.error}</p>}
     {(p.loading || p.expanding) && <p role="status" aria-live="polite" className="creation-progress">{p.loading ? "正在结合你的需求与相关样本准备选题…" : p.progress || "正在写稿，已生成的内容会陆续显示。"}</p>}
     {p.topics.length ? <>
