@@ -977,7 +977,8 @@ export async function askPlatformSkillQa(params: {
       }
       if (manhuaContext?.subtitleReview) {
         const raw = await askManhuaSubtitleReview(params.userId, manhuaContext.subtitleReview);
-        parsed = parseAskJson(raw, true);
+        // 剪辑方案含原片全量字幕，已由专用schema校验，不走普通短答的1.2万字截断。
+        parsed = parseAskJson(raw, true, Boolean(manhuaContext.subtitleReview.montageTargetSec));
         usedModel = MANHUA_BGM_ADVISOR_MODEL;
         lastErr = "";
         break;

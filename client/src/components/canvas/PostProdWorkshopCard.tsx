@@ -1,3 +1,4 @@
+import { MontagePlanner } from "./MontagePlanner";
 import type { ManhuaVfxEnvironmentOption } from "@shared/manhuaVfxEnvironment";
 import type { ManhuaVfxState } from "@shared/manhuaVfx";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
@@ -829,6 +830,7 @@ export default function PostProdWorkshopCard({
             action: "concat";
             params: {
               clips: string[];
+              subtitleSrt?: string;
               trims?: Array<{ startSec: number; endSec?: number }>;
               width: number;
               height: number;
@@ -1785,6 +1787,7 @@ export default function PostProdWorkshopCard({
         <div className="min-w-0 space-y-3" aria-label="当前后期参数">
         {/* 拼接 */}
         <div hidden={activeTool !== "concat"} id="manhua-post-concat" className="scroll-mt-24 rounded-xl border border-white/10 bg-black/25 p-3">
+          <MontagePlanner onSourceChange={id => { setPreviewClip(id); setPreviewResult(null); setSequencePlaying(false); }} key={`${userId}:${projectScopeKey}`} clips={clipOptions} context={advisorContext} story={currentStoryContext} storage={storage} storageKey={`${storageKey}:${projectScopeKey}:montage`} busy={busy || scopedJobs.some(job => job.action === "concat" && (job.status === "queued" || job.status === "running"))} beforeSubmit={beforeSubmit} onSubmit={(params, title) => submit({ action: "concat", params }, title, true)} />
           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
             <Layers className="h-3.5 w-3.5 text-cyan-300" /> 拼接成片
           </div>

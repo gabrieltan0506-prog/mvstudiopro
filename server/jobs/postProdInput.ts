@@ -41,14 +41,16 @@ function evenDimension(min: number, max: number) {
 
 export const concatParamsSchema = z
   .object({
-    clips: z.array(mediaSourceSchema).min(2).max(12),
-    trims: z.array(z.object({ startSec: z.number().finite().min(0), endSec: z.number().finite().positive().optional() }).strict()).min(2).max(12).optional(),
+    clips: z.array(mediaSourceSchema).min(1).max(12),
+    subtitleSrt: z.string().min(1).max(200_000).optional(),
+    trims: z.array(z.object({ startSec: z.number().finite().min(0), endSec: z.number().finite().positive().optional() }).strict()).min(1).max(12).optional(),
     transition: z.object({ kind: z.enum(["fade", "dissolve", "wipeleft"]), durationSec: z.number().finite().min(0.1).max(2) }).strict().optional(),
     width: evenDimension(320, 3840).default(1280),
     height: evenDimension(240, 2160).default(720),
     fps: z.number().int().min(12).max(60).default(30),
   })
   .strict().superRefine((v, ctx) => {
+    if (v.transition && (v.clips.length < 2 || v.subtitleSrt)) ctx.addIssue({ code: "custom", path: ["transition"], message: "单段或同步字幕剪辑须使用直接切换" });
     if (v.trims && v.trims.length !== v.clips.length) ctx.addIssue({ code: "custom", path: ["trims"], message: "剪辑取段须与片段一一对应" });
     v.trims?.forEach((t, i) => { if (t.endSec != null && t.endSec - t.startSec < 0.1) ctx.addIssue({ code: "custom", path: ["trims", i], message: "取段至少保留0.1秒" }); });
   });
