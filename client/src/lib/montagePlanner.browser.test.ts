@@ -90,6 +90,15 @@ it("数字人共用入口传真实文案，方案可审、整句字幕入队及�
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
     await page.waitForSelector('[aria-label="剪辑方案原片"]');
     await page.select('[aria-label="剪辑方案原片"]', "source");
+    const target = async (value: string) => page.$eval('[aria-label="剪辑目标秒数"]', (node, value) => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(node, value);
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+    }, value);
+    await target("0");
+    await page.evaluate(() => (globalThis as any).remount());
+    await page.waitForFunction(() => (document.querySelector('[aria-label="剪辑目标秒数"]') as HTMLInputElement)?.value === "0");
+    await target("30");
+
     const click = (text: string) =>
       page.$$eval(
         '[aria-label="剪辑方案工坊"] button',
@@ -140,7 +149,7 @@ it("数字人共用入口传真实文案，方案可审、整句字幕入队及�
       (globalThis as any).remount();
     });
     await page.waitForFunction(() =>
-      [...document.querySelectorAll('[aria-label="剪辑方案工坊"] button')].some(
+      Array.from(document.querySelectorAll('[aria-label="剪辑方案工坊"] button')).some(
         n =>
           n.textContent === "分析原片并提出方案" &&
           !(n as HTMLButtonElement).disabled

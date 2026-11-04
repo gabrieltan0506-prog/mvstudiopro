@@ -59,9 +59,7 @@ export function MontagePlanner(props: Props) {
           typeof value.sourceId !== "string" ||
           typeof value.sourceIdentity !== "string" ||
           typeof value.answer !== "string" ||
-          !Number.isInteger(value.target) ||
-          value.target < 5 ||
-          value.target > 300 ||
+          !Number.isFinite(value.target) ||
           !["9:16", "16:9"].includes(value.aspect) ||
           (value.pending &&
             (typeof value.pending.requestId !== "string" ||
