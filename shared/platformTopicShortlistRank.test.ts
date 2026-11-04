@@ -5,7 +5,7 @@ import {
 } from "./platformTopicShortlist";
 
 describe("rankTopicShortlistByViralScore", () => {
-  it("sorts by viral score desc and marks the first five as top picks", () => {
+  it("按创意分排序，最多三分之一进入优先组", () => {
     const ranked = rankTopicShortlistByViralScore(
       [
         { id: "a", viralScore: 40 },
@@ -18,9 +18,9 @@ describe("rankTopicShortlistByViralScore", () => {
       ] as Array<{ id: string; viralScore?: number; isTopPick?: boolean }>,
     );
     expect(ranked.map((r) => r.id)).toEqual(["f", "b", "d", "c", "e", "a", "g"]);
-    expect(ranked.filter((r) => r.isTopPick).length).toBe(PLATFORM_TOPIC_TOP_PICK_COUNT);
-    expect(ranked.slice(0, 5).every((r) => r.isTopPick)).toBe(true);
-    expect(ranked[5]?.isTopPick).toBe(false);
+    expect(ranked.filter((r) => r.isTopPick).length).toBe(3);
+    expect(ranked.slice(0, 3).every((r) => r.isTopPick)).toBe(true);
+    expect(ranked[3]?.isTopPick).toBe(false);
   });
 
   it("treats missing scores as 50 and keeps their original order", () => {

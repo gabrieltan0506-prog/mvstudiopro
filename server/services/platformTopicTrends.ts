@@ -14,27 +14,30 @@ type ShortlistTrendBrief = {
   commentHotTitles: Array<{ title: string; comments: number; commentPerThousandLikes: number | null }>;
 };
 
-/**
- * 按用户选的时间窗口裁热门样本。
- *
- * 没有 publishedAt 的一律保留（平台改个时间格式就清空整池太脆）；裁完剩太少
- * （不足三成且不足 20 条）就退回不裁——宁可题贴得旧一点，也别让初选完全没有热点支撑。
- */
-function filterTrendRowsToWindow(
-  rows: Array<Record<string, unknown>>,
-  windowDays?: number | null,
-): Array<Record<string, unknown>> {
-  const days = Number(windowDays);
-  if (!Number.isFinite(days) || days <= 0 || !rows.length) return rows;
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-  const kept = rows.filter((r) => {
-    const raw = r.publishedAt ?? r.createdAt ?? r.collectedAt;
-    const at = raw ? new Date(String(raw)).getTime() : Number.NaN;
-    if (!Number.isFinite(at)) return true;
-    return at >= cutoff;
+/** 缺失日期、未来日期与窗口外样本不能退回充当近期依据。 */
+export function filterTrendRowsToWindow(rows: Array<Record<string, unknown>>, windowDays = 15): Array<Record<string, unknown>> {
+  const now = Date.now(), cutoff = now - windowDays * 86400000;
+  return rows.filter(row => {
+    const raw = row.publishedAt;
+    const text = String(raw ?? "");
+    const at = /^\d{10}(?:\d{3})?$/.test(text) ? Number(text) * (text.length === 10 ? 1000 : 1) :
+      /^\d{4}-\d{2}-\d{2}(?:T.*(?:Z|[+-]\d{2}:?\d{2}))?$/.test(text) ? Date.parse(text) : NaN;
+    return Number.isFinite(at) && at >= cutoff && at <= now;
   });
-  if (kept.length >= 20 || kept.length >= Math.ceil(rows.length * 0.3)) return kept;
-  return rows;
+}
+
+/** 入提示词前即排除不能核对来源或没有互动记录的候选，不让模型把记录日期当发布日期。 */
+export function buildRecentTopicEvidence(rows: Array<Record<string, unknown>>, days: number, context: string, platform: "xiaohongshu" | "douyin") {
+  const usable = filterTrendRowsToWindow(rows, days).filter(row => {
+    try {
+      const url = new URL(String(row.url || row.sourceUrl || row.noteUrl || ""));
+      const hasMetric = [row.likes, row.comments].some(value => value != null && (typeof value === "number" || typeof value === "string") && String(value).trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0);
+      return ["https:", "http:"].includes(url.protocol) && hasMetric;
+    } catch { return false; }
+  });
+  const evidence = buildXhsGrowthEvidence(usable, days, Date.now(), context, platform);
+  evidence.note = `扫描候选${rows.length}条，仅保留窗口内发布、来源可核对且有互动记录的候选${usable.length}条。` + evidence.note;
+  return evidence;
 }
 
 /**
@@ -56,7 +59,7 @@ export async function readShortlistTrendBriefs(windowDays?: number | null, xhsMo
   try {
     const readLocalTrendCollectionsForPlatforms = async (platforms: Array<"xiaohongshu" | "douyin" | "bilibili">) => Object.fromEntries(await Promise.all(platforms.map(async platform => {
       const root = path.resolve(process.env.GROWTH_STORE_DIR || path.join(process.cwd(), ".cache/growth"));
-      const collection = xhsMode ? await queryTrendShortlist(root, platform as "xiaohongshu" | "douyin", context, windowDays ?? 30) : await readTrendShortlistIndex(root, platform).catch(async () => { await ensureTrendShortlistIndex(root, platform); return readTrendShortlistIndex(root, platform); });
+      const collection = xhsMode ? await queryTrendShortlist(root, platform as "xiaohongshu" | "douyin", context, windowDays ?? 15) : await readTrendShortlistIndex(root, platform).catch(async () => { await ensureTrendShortlistIndex(root, platform); return readTrendShortlistIndex(root, platform); });
       return [platform, collection] as const;
     })));
     /**
@@ -98,9 +101,9 @@ export async function readShortlistTrendBriefs(windowDays?: number | null, xhsMo
     }]));
     const briefs: ShortlistTrendBrief[] = [];
     const xhsItems = collections.xiaohongshu?.items;
-    const xhsGrowthEvidence = xhsMode && creationPlatforms.includes("xiaohongshu") ? buildXhsGrowthEvidence(Array.isArray(xhsItems) ? xhsItems : [], windowDays ?? 30, Date.now(), context) : undefined;
+    const xhsGrowthEvidence = xhsMode && creationPlatforms.includes("xiaohongshu") ? buildRecentTopicEvidence(Array.isArray(xhsItems) ? xhsItems : [], windowDays ?? 15, context, "xiaohongshu") : undefined;
     const douyinItems = collections.douyin?.items;
-    const douyinGrowthEvidence = xhsMode && creationPlatforms.includes("douyin") ? buildXhsGrowthEvidence(Array.isArray(douyinItems) ? douyinItems : [], windowDays ?? 30, Date.now(), context, "douyin") : undefined;
+    const douyinGrowthEvidence = xhsMode && creationPlatforms.includes("douyin") ? buildRecentTopicEvidence(Array.isArray(douyinItems) ? douyinItems : [], windowDays ?? 15, context, "douyin") : undefined;
     for (const evidence of [xhsGrowthEvidence, douyinGrowthEvidence]) {
       if (evidence && collections[evidence.platform || "xiaohongshu"]?.queryCoverage) {
         const coverage = collections[evidence.platform || "xiaohongshu"]!.queryCoverage!;
@@ -114,10 +117,10 @@ export async function readShortlistTrendBriefs(windowDays?: number | null, xhsMo
       if (xhsMode && !creationPlatforms.includes(platform as "xiaohongshu" | "douyin")) continue;
       const items = collections[platform]?.items;
       if (!Array.isArray(items) || !items.length) continue;
-      // 新能力使用自己的严格摘要；未启用时完整保留旧趋势行为。
+      // 新能力使用带出处的严格摘要；旧入口同样不得用窗口外数据冒充近期。
       const rows: Array<Record<string, unknown>> = xhsMode
         ? ((platform === "douyin" ? douyinGrowthEvidence : xhsGrowthEvidence)?.samples || []).map(sample => ({ ...sample }))
-        : filterTrendRowsToWindow(items as Array<Record<string, unknown>>, windowDays);
+        : filterTrendRowsToWindow(items as Array<Record<string, unknown>>, windowDays ?? 15);
       if (!rows.length) continue;
       const ranked = [...rows].sort(
         (a, b) => Number(b.hotValue || b.likes || 0) - Number(a.hotValue || a.likes || 0),
@@ -165,6 +168,6 @@ export async function readShortlistTrendBriefs(windowDays?: number | null, xhsMo
         200,
       ),
     );
-    return { briefs: [], status: "error", ...(xhsMode ? { xhsGrowthEvidence: buildXhsGrowthEvidence([], windowDays ?? 30) } : {}) };
+    return { briefs: [], status: "error", ...(xhsMode ? { xhsGrowthEvidence: buildXhsGrowthEvidence([], windowDays ?? 15) } : {}) };
   }
 }
