@@ -77,6 +77,7 @@ const MEDIA_SCALAR_FIELDS = [
   "videoUrl",
   "audioUrl",
   "imageUrl",
+  "compositeImageUrl",
   "outputUrl",
   "downloadUrl",
   "streamUrl",

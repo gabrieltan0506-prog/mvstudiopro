@@ -392,3 +392,8 @@ describe("数字人分段和混音素材逐项归属校验", () => {
     expect(result.params).toMatchObject({clips:["gs://bucket-a/uploads/u7/b.mp4","gs://bucket-a/uploads/u7/a.mp4"],trims});
   });
 });
+
+it("逐页图文的真实成功回执compositeImageUrl进入明确产物集合，普通文字仍不放行", () => {
+  expect(collectDeclaredMediaSources({ compositeImageUrl: "https://storage.googleapis.com/bucket-a/graphic/page.png", imageGenFlowLog: ["https://evil.invalid/log.png"], prompt: "https://evil.invalid/prompt.png" })).toEqual(["https://storage.googleapis.com/bucket-a/graphic/page.png"]);
+  expect(collectDeclaredMediaSources({ compositeImageUrl: { url: "https://evil.invalid/nested.png" } })).toEqual([]);
+});
