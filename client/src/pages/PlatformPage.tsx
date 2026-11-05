@@ -1,3 +1,5 @@
+import EditableLayoutStudio from "@/components/platform/EditableLayoutStudio";
+import type { LayoutSource } from "@shared/editableLayout";
 import { GuaikeiResearchPanel } from "@/components/GuaikeiResearchPanel";
 import { guaikeiReportRefsSchema, type GuaikeiReportRefs } from "@shared/guaikei";
 import { readGuaikeiReportSelection, writeGuaikeiReportSelection } from "@/lib/guaikeiReportSelection";
@@ -3105,6 +3107,7 @@ export default function PlatformPage() {
   const isTrial = useIsTrialUser();
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
   /** 每条选题：用户上传的人像参考图（GCS 直链）→ 生成封面时换主角。key=sceneId；可覆盖全局人像 */
+  const [layoutSource, setLayoutSource] = useState<LayoutSource | null>(null);
   const [viralGraphicPagesBusyCount, setViralGraphicPagesBusyCount] = useState(0);
   const viralGraphicPagesBusy = viralGraphicPagesBusyCount > 0;
   const setViralGraphicPagesBusy = useCallback((busy: boolean) => {
@@ -11449,6 +11452,19 @@ export default function PlatformPage() {
                     </div>
                   </div>
                 ) : null}
+                {isGraphicFormat && workbenchUserKey && <button type="button" className="mt-3 rounded-lg border border-[#ddbc87]/40 px-4 py-2 text-sm text-[#edd4ac]" disabled={genBusy} onClick={() => {
+                  const images: Record<number, string> = {};
+                  if (coverUrl) images[1] = coverUrl;
+                  try {
+                    const receipts = JSON.parse(localStorage.getItem(`mvstudiopro.viralGraphicPages.v1.${workbenchUserKey}.${item.id}`) || "{}");
+                    for (const [n, r] of Object.entries(receipts)) {
+                      const receipt = r as { imageUrl?: string; request?: { sceneId?: string } };
+                      if (receipt.request?.sceneId === item.id && receipt.imageUrl) images[Number(n)] = receipt.imageUrl;
+                    }
+                  } catch { toast.error("原配图记录无法读取，已导入正文；可在排版中补回图片"); }
+                  setLayoutSource({ owner: workbenchUserKey, sourceId: item.id, title: item.title, body: item.copywriting || item.detailedScript, pages: item.graphicNotePages, images });
+                  document.getElementById("editable-layout-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}>编辑排版与导出</button>}
                 {item.viralCreation && <ViralProductionPanel
                   key={item.id} format={item.format} packageValue={item.xhsPackage}
                   pages={item.graphicNotePages} cells={item.storyboardCells}
@@ -13133,6 +13149,8 @@ export default function PlatformPage() {
             />
           </div>
         ) : null}
+
+        {workbenchUserKey && <EditableLayoutStudio key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} />}
 
         {/* 三模式分流：仅渲染 active Workbench；state/hooks 留在 PlatformPage */}
         <section

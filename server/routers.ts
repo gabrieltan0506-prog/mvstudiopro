@@ -207,6 +207,7 @@ import {
 /** 封面像素仅 gpt_image2；旧 nb* 值由 resolveSupervisor 折到 gpt_image2 */
 const zPlatformTopicCoverPixelEngine = z.enum(["gpt_image2", "nano_banana_2", "nano_banana_pro"]);
 
+import { editableLayoutRouter } from "./routers/editableLayout";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { manhuaCloudDraftRouter } from "./routers/manhuaCloudDraft";
@@ -3013,6 +3014,7 @@ export const appRouter = router({
   manhuaPrevis: manhuaPrevisRouter,
   manhuaAutoRig: manhuaAutoRigRouter,
   creations: creationsRouter,
+  editableLayout: editableLayoutRouter,
   enterpriseAgents: enterpriseAgentsRouter,
   workflow: workflowRouter,
   manhuaCloudDraft: manhuaCloudDraftRouter,
