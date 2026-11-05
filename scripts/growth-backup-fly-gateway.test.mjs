@@ -40,3 +40,4 @@ test('最小实跑限定已筛选单桶，不能带入最新桶或路径穿越',
  assert.throws(()=>selectProbeSnapshot(snapshot,'2026-11-05-12'),/not_eligible/);
  assert.throws(()=>selectProbeSnapshot(snapshot,'../data'),/invalid/);
 });
+test('工作流env映射没有重复键',()=>{for(const name of ['growth-backup','growth-archive-offload']){const lines=fs.readFileSync(new URL(`../.github/workflows/${name}.yml`,import.meta.url),'utf8').split('\n');for(let i=0;i<lines.length;i++){const match=/^(\s*)env:\s*$/.exec(lines[i]);if(!match)continue;const keys=new Set();for(let j=i+1;j<lines.length;j++){if(!lines[j].trim())continue;const indentation=lines[j].match(/^\s*/)[0].length;if(indentation<=match[1].length)break;const key=/^\s*([A-Z_][A-Z_0-9]*):/.exec(lines[j])?.[1];if(key){assert(!keys.has(key),`${name}: duplicate ${key}`);keys.add(key);}}}}});
