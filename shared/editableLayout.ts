@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Marked } from "marked";
 
 // 排版稿独立保存，不反写模型原稿，也不触发任何生成请求。
 export const layoutImageSchema = z
@@ -82,6 +83,36 @@ const escapeHtml = (s: string) =>
         c
       ]!
   );
+// 只开放排版标签；原始HTML与链接地址均不可进入可执行DOM。
+const layoutMarkdown = new Marked({
+  gfm: true,
+  breaks: true,
+  renderer: {
+    html({ text }) {
+      return escapeHtml(text);
+    },
+    link({ tokens }) {
+      return this.parser.parseInline(tokens);
+    },
+    image({ text }) {
+      return escapeHtml(text);
+    },
+    text(token) {
+      return "tokens" in token && token.tokens
+        ? this.parser.parseInline(token.tokens)
+        : escapeHtml(token.text);
+    },
+    codespan({ text }) {
+      return `<code>${escapeHtml(text)}</code>`;
+    },
+    code({ text }) {
+      return `<pre><code>${escapeHtml(text)}</code></pre>`;
+    },
+  },
+});
+export function renderLayoutBody(body: string): string {
+  return layoutMarkdown.parse(body, { async: false });
+}
 export const layoutPalette = {
   paper: ["#fff9ed", "#242125", "#bd5037"],
   ink: ["#18252d", "#f4f0e8", "#efbb78"],
@@ -123,8 +154,8 @@ export function buildLayoutHtml(
       const img = data
         ? `<img src="${escapeHtml(data)}" alt="${escapeHtml(p.headline)}">`
         : "";
-      return `<article class="page"><div class="eyebrow">${escapeHtml(doc.title)} · ${String(i + 1).padStart(2, "0")}</div>${p.imagePlacement === "above" ? img : ""}<h1 contenteditable="${preview ? "false" : "true"}">${escapeHtml(p.headline)}</h1><div class="body" contenteditable="${preview ? "false" : "true"}">${escapeHtml(p.body)}</div>${p.imagePlacement === "below" ? img : ""}<footer>${i + 1} / ${doc.pages.length}</footer></article>`;
+      return `<article class="page"><div class="eyebrow">${escapeHtml(doc.title)} · ${String(i + 1).padStart(2, "0")}</div>${p.imagePlacement === "above" ? img : ""}<h1 contenteditable="${preview ? "false" : "true"}">${escapeHtml(p.headline)}</h1><div class="body" contenteditable="${preview ? "false" : "true"}">${renderLayoutBody(p.body)}</div>${p.imagePlacement === "below" ? img : ""}<footer>${i + 1} / ${doc.pages.length}</footer></article>`;
     })
     .join("\n");
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(doc.title)}</title><style>*{box-sizing:border-box}body{margin:0;padding:24px;background:#deded8;font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif}.page{width:720px;min-height:${style.minHeight}px;margin:0 auto 24px;padding:56px;background:${style.background};color:${style.color};overflow-wrap:anywhere;page-break-after:always}.eyebrow{font-size:14px;color:${style.accent};border-bottom:2px solid;padding-bottom:14px}h1{font-size:44px;line-height:1.3;margin:34px 0;white-space:pre-wrap}.body{font-size:${doc.fontSize}px;line-height:1.75;white-space:pre-wrap}img{display:block;width:100%;height:auto;margin:24px 0}footer{margin-top:40px;font-size:14px;color:${style.accent}}@media print{body{padding:0;background:white}.page{margin:0 auto;break-after:page}.page:last-child{break-after:auto}}@media(max-width:750px){.page{width:100%;min-height:0;aspect-ratio:${doc.aspect.replace(":", "/")};padding:28px}h1{font-size:32px}}</style></head><body>${pages}</body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(doc.title)}</title><style>*{box-sizing:border-box}body{margin:0;padding:24px;background:#deded8;font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif}.page{width:720px;min-height:${style.minHeight}px;margin:0 auto 24px;padding:56px;background:${style.background};color:${style.color};overflow-wrap:anywhere;page-break-after:always}.eyebrow{font-size:14px;color:${style.accent};border-bottom:2px solid;padding-bottom:14px}h1{font-size:44px;line-height:1.3;margin:34px 0;white-space:pre-wrap}.body{font-size:${doc.fontSize}px;line-height:1.75}.body p{margin:0 0 .8em}.body h1,.body h2,.body h3,.body h4,.body h5,.body h6{font-size:1.25em;line-height:1.4;margin:1em 0 .5em}.body ul,.body ol{padding-left:1.5em;margin:.6em 0}.body li{margin:.25em 0}.body li p{margin:0}.body table{width:100%;border-collapse:collapse;font-size:.85em;margin:1em 0;table-layout:fixed}.body th,.body td{border:1px solid currentColor;padding:.45em;text-align:left;vertical-align:top}.body th{font-weight:700}.body blockquote{margin:1em 0;padding-left:1em;border-left:3px solid currentColor}.body pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:.6em;border:1px solid currentColor}.body code{font-family:monospace}.body hr{border:0;border-top:1px solid currentColor;margin:1em 0}img{display:block;width:100%;height:auto;margin:24px 0}footer{margin-top:40px;font-size:14px;color:${style.accent}}@media print{body{padding:0;background:white}.page{margin:0 auto;break-after:page}.page:last-child{break-after:auto}}@media(max-width:750px){.page{width:100%;min-height:0;aspect-ratio:${doc.aspect.replace(":", "/")};padding:28px}h1{font-size:32px}}</style></head><body>${pages}</body></html>`;
 }

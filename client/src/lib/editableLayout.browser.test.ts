@@ -164,7 +164,7 @@ it(
         ) as HTMLIFrameElement;
         const d = f?.contentDocument;
         return (
-          d?.querySelector(".page:nth-of-type(2) .body")?.textContent ===
+          d?.querySelector(".page:nth-of-type(2) .body")?.textContent?.trim() ===
             "修改后的完整正文。保留末句。" &&
           f.contentWindow?.getComputedStyle(
             d.querySelector(".page:nth-of-type(1)")!
@@ -235,10 +235,12 @@ it(
       );
       const first = await zip.file("01.png")!.async("nodebuffer");
       expect(first.subarray(1, 4).toString()).toBe("PNG");
+      expect(png.readUInt16LE(8)).toBe(8); // ZIP实际使用DEFLATE。
       const pdf = Buffer.from(
         await page.evaluate(() => (window as any).exportFile("pdf"))
       );
       expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+      expect(pdf.toString("latin1")).toContain("/FlateDecode");
       expect(pdf.toString("latin1").match(/\/Type \/Page\b/g)).toHaveLength(2);
       if (out) {
         await mkdir(out, { recursive: true });

@@ -111,10 +111,15 @@ export async function exportEditableLayout(
         )
       );
       zip.file("可编辑稿.html", html);
-      return zip.generateAsync({ type: "blob" });
+      return zip.generateAsync({
+        type: "blob",
+        compression: "DEFLATE",
+        compressionOptions: { level: 6 },
+      });
     }
     const { jsPDF } = await import("jspdf");
     const pdf = new jsPDF({
+      compress: true,
       unit: "pt",
       format: [720, rendered[0].height],
       orientation: rendered[0].height >= 720 ? "portrait" : "landscape",
