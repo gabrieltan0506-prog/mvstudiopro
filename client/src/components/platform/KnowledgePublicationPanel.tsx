@@ -221,7 +221,7 @@ export default function KnowledgePublicationPanel({
       void run();
     }
   }, [autoStart, doc.id]);
-  const planPptx = async () => {
+  const planPptx = async (retryFailed = false) => {
     if(active.current)return;
     locked(true);setError("");setPptxFile(null);
     try {
@@ -231,12 +231,21 @@ export default function KnowledgePublicationPanel({
       const parsed=parseKnowledgeManuscript(pub.manuscript,pub.source.pages.map(p=>p.id));
       const previous=pub.presentationRequest;
       const reuse=previous?.manuscript===pub.manuscript&&previous.minSlides===minSlides&&previous.maxSlides===maxSlides;
-      const request=reuse?previous!:{id:crypto.randomUUID(),...range,manuscript:pub.manuscript};
+      let retryId:string|undefined;
+      let retryQuote:Awaited<ReturnType<typeof utils.editableLayout.publicationQuote.fetch>>|undefined;
+      if(retryFailed){
+        if(!reuse||pub.presentationPlan)throw Error("稿件或页数已变化，请恢复原请求后再操作");
+        const checked=await utils.editableLayout.presentationRetry.fetch({documentId:current.id,failedRequestId:previous!.id});
+        retryQuote=await utils.editableLayout.publicationQuote.fetch({documentId:current.id,purpose:"presentation"});
+        if(!window.confirm(`原请求已确认失败，退款核对与上游状态检查已通过。重新规划最多 ${retryQuote.maxCredits} 积分，将创建一次新请求，是否确认重试？`))return;
+        retryId=checked.requestId;
+      }
+      const request=retryId?{...previous!,id:retryId}:reuse?previous!:{id:crypto.randomUUID(),...range,manuscript:pub.manuscript};
       let next:EditableLayout={...current,title:parsed.title,pages:current.pages.map((p,i)=>({...p,...parsed.pages[i]})),publication:{...pub,confirmedManuscript:pub.manuscript,presentationRequest:request,presentationPlan:reuse?pub.presentationPlan:undefined,presentationRevision:reuse?pub.presentationRevision:undefined},updatedAt:new Date().toISOString()};
       await save(next);
       if(reuse&&pub.presentationPlan){setMessage("已恢复当前提纲，无需重复调用顾问。");return;}
-      const quote=await utils.editableLayout.publicationQuote.fetch({documentId:next.id,purpose:"presentation"});
-      if(quote.maxCredits>0&&!window.confirm(`将由创作顾问规划 ${minSlides}–${maxSlides} 页课件，最多 ${quote.maxCredits} 积分。仅生成逐页提纲，确认后再渲染，是否继续？`))return;
+      const quote=retryQuote??await utils.editableLayout.publicationQuote.fetch({documentId:next.id,purpose:"presentation"});
+      if(!retryFailed&&quote.maxCredits>0&&!window.confirm(`将由创作顾问规划 ${minSlides}–${maxSlides} 页课件，最多 ${quote.maxCredits} 积分。仅生成逐页提纲，确认后再渲染，是否继续？`))return;
       setMessage(`正在按 ${minSlides}–${maxSlides} 页规划重点与版式，尚未渲染…`);
       const response=await streamManhuaAdvisor({question:"按指定页数范围规划可编辑课件，提炼有答案的重点，保持字体与版式层次。",rawQuestion:"按指定页数范围规划可编辑课件，提炼有答案的重点，保持字体与版式层次。",requestId:request.id,knowledgePublicationContext:{documentId:next.id,batchIndex:0,attempt:0,purpose:"presentation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
       const plan=knowledgePresentationPlanSchema.parse(JSON.parse(response.answer));
@@ -486,6 +495,7 @@ export default function KnowledgePublicationPanel({
               <label className="text-sm">最少页数<input aria-label="PPTX最少页数" type="number" min={1} max={200} value={minSlides} disabled={busy||!!planDraft} onChange={e=>{setMinSlides(Number(e.target.value));setPptxFile(null);}} className="ml-2 w-20 rounded bg-[#f9f6ee] p-2 text-[#243a35]" /></label>
               <label className="text-sm">最多页数<input aria-label="PPTX最多页数" type="number" min={1} max={200} value={maxSlides} disabled={busy||!!planDraft} onChange={e=>{setMaxSlides(Number(e.target.value));setPptxFile(null);}} className="ml-2 w-20 rounded bg-[#f9f6ee] p-2 text-[#243a35]" /></label>
               <button className={button} disabled={busy||!!planDraft||!preview||minSlides<1||maxSlides>200||minSlides>maxSlides} onClick={()=>void planPptx()}>规划 PPTX 提纲</button>
+              {!displayedPlan&&pub.presentationRequest?.manuscript===pub.manuscript&&pub.presentationRequest.minSlides===minSlides&&pub.presentationRequest.maxSlides===maxSlides&&<button className={button} disabled={busy||!preview} onClick={()=>void planPptx(true)}>核对失败状态并重试</button>}
             </div>
             {displayedPlan&&pub.presentationRequest?.manuscript===pub.manuscript&&pub.presentationRequest.minSlides===minSlides&&pub.presentationRequest.maxSlides===maxSlides&&<>
               <p className="text-sm">共 {displayedPlan.slides.length} 页 · {displayedPlan.fontStyle==="editorial"?"宋体标题 · 黑体正文":"现代黑体层次"}</p>

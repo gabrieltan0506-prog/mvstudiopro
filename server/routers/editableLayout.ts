@@ -14,6 +14,14 @@ const publicationProcedure = protectedProcedure.use(async ({ next }) => {
   return result;
 });
 export const editableLayoutRouter = router({
+  presentationRetry: publicationProcedure.input(z.object({documentId:z.string().uuid(),failedRequestId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
+    const {readCanonicalLayoutLibrary}=await import('../services/editableLayoutStore');
+    const {checkKnowledgePresentationRetry}=await import('../services/knowledgePresentationRetry');
+    const loaded=await readCanonicalLayoutLibrary(ctx.user.id);
+    const doc=loaded.library?.documents.find(d=>d.id===input.documentId);
+    if(!doc)throw Error('排版稿不存在或无权访问');
+    return checkKnowledgePresentationRetry(ctx.user.id,doc,input.failedRequestId);
+  }),
   publicationQuote: publicationProcedure.input(z.object({documentId:z.string().uuid(),purpose:z.literal("presentation").optional()}).strict()).query(async({ctx,input})=>{
     const {loadKnowledgePublication,knowledgePublicationWorkPlan}=await import("../services/knowledgePublicationAdvisor");
     const {knowledgeReviewBatches}=await import("../../shared/knowledgePublication");

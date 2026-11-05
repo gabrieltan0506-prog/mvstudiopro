@@ -1,6 +1,17 @@
 /** 前台只收到业务提示；不拼接上游错误、请求编号、模型或通道名。 */
 export function knowledgePublicationPublicError(error: unknown): { message: string; retryable: boolean } {
   const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const retryMessages=[
+    "原提纲仍在处理中或状态未确认，请使用规划按钮恢复原任务，暂不能重新付费。",
+    "原提纲的积分退款尚未核对完成，请稍后再试，未创建新任务。",
+    "原提纲已有结果，请恢复原任务，未重新付费。",
+    "稿件或提纲已变化，请先读取云端最新稿件。",
+  ];
+  if(retryMessages.includes(raw))return {message:raw,retryable:false};
+  if(/原请求尚未确认失败|上游请求状态尚未闭合/.test(raw))return {message:retryMessages[0],retryable:false};
+  if(/原请求退款尚未确认|积分账暂不可读取|原请求积分仍在对账/.test(raw))return {message:retryMessages[1],retryable:false};
+  if(raw.includes("原请求已有结果"))return {message:retryMessages[2],retryable:false};
+  if(/稿件或提纲已变化|稿件或页数已变化/.test(raw))return {message:retryMessages[3],retryable:false};
   if (raw === "本次整理未完成，已完成的内容和原稿均已保留，可以仅重试未完成部分。") return {message:raw,retryable:true};
   if (raw.includes("REFUND_PENDING") || raw.includes("对账"))
     return { message: "本次整理未完成，积分仍在核对中。原稿已保存，请稍后继续。", retryable: false };

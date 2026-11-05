@@ -112,6 +112,10 @@ export async function writeLayoutLibrary(
     for (const doc of library.documents) {
       const old = before.documents.find(d => d.id === doc.id);
       if (!old) continue;
+      if(old.publication?.presentationRequest && doc.publication?.presentationRequest) {
+        const {validateKnowledgePresentationRetryTransition}=await import('./knowledgePresentationRetry');
+        await validateKnowledgePresentationRetryTransition(owner,old,doc);
+      }
       if (Boolean(old.publication) !== Boolean(doc.publication) || (old.publication && doc.publication &&
           (JSON.stringify(old.publication.source) !== JSON.stringify(doc.publication.source) ||
            old.publication.requestId !== doc.publication.requestId)))
