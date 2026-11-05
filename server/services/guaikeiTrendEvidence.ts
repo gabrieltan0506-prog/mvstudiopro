@@ -34,7 +34,7 @@ export async function prepareGuaikeiTrendSnapshot(args: {
       seen.add(key); items.push(item);
     }
     if (args.platforms.some(p => ["weixin_channels", "tiktok"].includes(p)) && items.length < 2) {
-      throw new Error("所选时间范围的公共作品不足，请先完成后台采集；未扣费");
+      throw new Error("所选时间范围暂时没有足够的内容生成报告，请稍后再试；未扣费");
     }
     return { owner: args.owner, anchorMs, windowDays: args.windowDays, platforms: [...args.platforms], items };
   }

@@ -1,9 +1,7 @@
 import { knowledgeCardLayoutSource } from "@shared/knowledgeCardEditableLayout";
 import EditableLayoutStudio from "@/components/platform/EditableLayoutStudio";
 import type { LayoutSource } from "@shared/editableLayout";
-import { GuaikeiResearchPanel } from "@/components/GuaikeiResearchPanel";
-import { guaikeiReportRefsSchema, type GuaikeiReportRefs } from "@shared/guaikei";
-import { readGuaikeiReportSelection, writeGuaikeiReportSelection } from "@/lib/guaikeiReportSelection";
+import { TrendReportControls } from "@/components/TrendReportControls";
 import { rankTopicShortlistByViralScore } from "@shared/platformTopicShortlist";
 import { editTopicTitle, resolveTopicWindowDays } from "@shared/platformTopicIntegrity";
 import { CoverCandidatePicker } from "@/components/platform/CoverCandidatePicker";
@@ -2592,27 +2590,6 @@ export default function PlatformPage() {
   /** 与封面进阶开关一致：supervisor 入口 / admin / supervisor，一般用户不可见 */
   const canConfigureStage2CopyEngine = hasSupervisorOpsAccess;
 
-  const canManageWeixinChannelsCollector = hasSupervisorOpsAccess;
-  const weixinChannelsCollectorStatusQuery = trpc.mvAnalysis.getWeixinChannelsCollectorStatus.useQuery(
-    undefined,
-    {
-      enabled: canManageWeixinChannelsCollector && isAuthenticated,
-      // 0912：这条原本只 gate 在监管权限 + 登录，页面开着就恒定 15 秒一发。
-      // 采集器关着时状态只会因为用户自己点这个开关而变，而那个 mutation 的 onSuccess
-      // 本来就会 refetch 一次——所以关着就完全不轮询（用户确认：只在当初测试时开过）。
-      // 开着时才需要盯心跳与安全熔断。
-      // 不判后台：react-query 在页面隐藏时本就不发请求，而这个回调也不会因切换可见性重算。
-      refetchInterval: (query) => (query.state.data?.capture.enabled ? 15_000 : false),
-      refetchOnWindowFocus: false,
-      retry: false,
-    },
-  );
-  const setWeixinChannelsCaptureEnabledMutation = trpc.mvAnalysis.setWeixinChannelsCaptureEnabled.useMutation({
-    onSuccess: async () => {
-      await weixinChannelsCollectorStatusQuery.refetch();
-    },
-  });
-
   /**
    * 图文知识卡读档两档（DeepSeek V4.1 Flash / GLM 5.3 Flash）：用户 2026-08-05 明文开放给所有登录用户自选，
    * 不再只对 supervisor 可见（页费按档位不同，见 KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS）。
@@ -2638,12 +2615,6 @@ export default function PlatformPage() {
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
   const [visualReportData, setVisualReportData] = useState<VisualReportData | null>(null);
   const [standaloneReportPlatform, setStandaloneReportPlatform] = useState<VisualReportPlatformKey | "">("");
-  const [reportExternalSelection, setReportExternalSelection] = useState<{ owner: string; refs: GuaikeiReportRefs }>({ owner: "", refs: [] });
-  const reportExternalRefs = reportExternalSelection.owner === String(user?.id || "") ? reportExternalSelection.refs : [];
-  useEffect(() => {
-    const owner = String(user?.id || "");
-    setReportExternalSelection({ owner, refs: readGuaikeiReportSelection(owner) });
-  }, [user?.id]);
   const [visualReportTheme] = useState<VisualReportTheme>("dark");
   const [isVisualReportLoading, setIsVisualReportLoading] = useState(false);
   const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
@@ -11637,13 +11608,9 @@ export default function PlatformPage() {
 
     const cost = getPlatformTrendReportCredits(selectedWindowDays);
     const reportWindowDays = toVisualReportWindowDays(selectedWindowDays);
-    const windowNote =
-      selectedWindowDays === 45
-        ? "（45 天窗口的 PNG 报表按 30 天口径生成）"
-        : "";
     if (
       !window.confirm(
-        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天数据，后台生成趋势 PNG${windowNote}。${reportExternalRefs.length ? "将结合已选择的外部作品；采集、分析和长图均包含在本次报告价格内。" : ""}\n\n扣除 ${cost} 积分；页面刷新后仍可继续取回结果。是否开始？`,
+        `生成${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天趋势报告，可下载 PNG。\n\n扣除 ${cost} 积分；刷新后可继续查看。是否开始？`,
       )
     ) {
       return;
@@ -11664,7 +11631,6 @@ export default function PlatformPage() {
         theme: visualReportTheme,
         platforms: visualPlatforms,
         billingRequestId,
-        externalEvidenceRefs: reportExternalRefs,
       });
       const pending: PlatformVisualReportPendingJobV1 = {
         v: 1,
@@ -11675,7 +11641,7 @@ export default function PlatformPage() {
         createdAt: Date.now(),
       };
       writePlatformVisualReportPendingJob(pending);
-      toast.success("趋势报告已进入后台生成，通常约 30–40 秒");
+      toast.success("正在生成趋势报告，刷新后可继续查看");
       await monitorVisualReportJob(pending, true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -13178,7 +13144,7 @@ export default function PlatformPage() {
                   </span>
                 </div>
                 <p className="mb-4 text-xs text-[#c9c0e6]/55">
-                  单选平台与分析窗口后，使用右侧（或底部）主按钮开始分析。按所选平台与窗口直接出趋势，不依赖人物背景。
+                  选择平台和天数，生成趋势分析与选题建议。
                 </p>
 <div
             id="platform-custom-workspace-trends"
@@ -13216,7 +13182,7 @@ export default function PlatformPage() {
                   )}
                 </div>
                 <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[#c9c0e6]/60">
-                  选择一个平台与时间窗口后，后台生成可下载的 PNG 趋势长图；刷新或短暂断线不会取消任务。不含决策智库全景。
+                  按所选天数生成趋势报告，支持下载 PNG。
                 </p>
               </div>
               {platformDashboard ? (
@@ -13230,165 +13196,28 @@ export default function PlatformPage() {
               ) : null}
             </div>
 
-            {user?.role === "admin" && <GuaikeiResearchPanel onAdopt={text => {
-              const next = [focusPrompt.trim(), text].filter(Boolean).join("\n\n");
-              if (next.length > 8000) return false;
-              setFocusPrompt(next); setFreeformOverride(true); setPersonaFieldErrors({});
-              return true;
-            }} onAdoptReport={(jobId, itemIds) => {
-              const owner = String(user?.id || "");
-              const refs = guaikeiReportRefsSchema.parse([...reportExternalRefs.filter(ref => ref.jobId !== jobId), { jobId, itemIds }]);
-              writeGuaikeiReportSelection(owner, refs);
-              setReportExternalSelection({ owner, refs });
-            }} />}
-            {reportExternalRefs.length > 0 && <div className="mt-2 flex items-center gap-3 text-xs text-cyan-100">
-              <span>趋势报告已加入外部作品参考；不会重新采集。时间不符的资料会在扣费前提示。</span>
-              <button type="button" className="underline" onClick={() => {
-                const owner = String(user?.id || "");
-                try { writeGuaikeiReportSelection(owner, []); setReportExternalSelection({ owner, refs: [] }); }
-                catch { toast.error("无法清除本机选择，请检查浏览器存储权限"); }
-              }}>清除选择</button>
-            </div>}
-
-            <div id={PLATFORM_SECTION_TREND_RUN_ID} className="mt-4 flex scroll-mt-24 flex-wrap items-center gap-2">
-              <span className="text-[10px] uppercase tracking-[0.14em] text-[#8cefff]/60">分析窗口</span>
-              {WINDOW_OPTIONS.map((item) => {
-                const active = item.days === selectedWindowDays;
-                return (
-                  <button
-                    key={`custom-ws-window-${item.days}`}
-                    type="button"
-                    onClick={() => setSelectedWindowDays(item.days)}
-                    disabled={isAnalyzing || isDashboardLoading}
-                    title={item.description}
-                    className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                      active
-                        ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
-                        : "border-white/10 bg-black/25 text-[#c9c0e6]/70 hover:text-white"
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <span className="text-[10px] uppercase tracking-[0.14em] text-[#8cefff]/60">分析平台</span>
-              {TREND_PLATFORM_OPTIONS.map((item) => {
-                const active = selectedTrendPlatforms.includes(item.key);
-                const isComingSoon = Boolean(item.comingSoon);
-                return (
-                  <button
-                    key={`custom-ws-platform-${item.key}`}
-                    type="button"
-                    onClick={() => {
-                      if (isComingSoon) return;
-                      setSelectedTrendPlatforms([item.key]);
-                    }}
-                    disabled={isAnalyzing || isDashboardLoading || isComingSoon}
-                    title={isComingSoon ? "即将开放视频号数据抓取" : "单选：点击切换分析平台"}
-                    className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                      isComingSoon
-                        ? "border-[#fbbf24]/30 bg-[rgba(251,191,36,0.08)] text-[#fef08a]/50"
-                        : active
-                        ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
-                        : "border-white/10 bg-black/25 text-[#c9c0e6]/70 hover:text-white"
-                    }`}
-                  >
-                    {item.label}{isComingSoon ? " ✦" : ""}
-                  </button>
-                );
-              })}
-            </div>
-
-            {canManageWeixinChannelsCollector ? (
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] px-3 py-2.5">
-                <div>
-                  <div className="text-[11px] font-semibold text-emerald-100">视频号本机采集</div>
-                  <div className="mt-0.5 text-[10px] text-emerald-100/55">
-                    {weixinChannelsCollectorStatusQuery.data?.capture.enabled
-                      ? "已开启，等待本机心跳领取任务"
-                      : weixinChannelsCollectorStatusQuery.data?.capture.pausedBy === "collector_safety_fuse"
-                        ? weixinChannelsCollectorStatusQuery.data.capture.pauseReason === "persistent_black_screen"
-                          ? "已安全暂停：连续检测到黑屏"
-                          : weixinChannelsCollectorStatusQuery.data.capture.pauseReason === "persistent_same_content"
-                            ? "已安全暂停：连续检测到相同内容"
-                            : "已安全暂停：采集环境持续异常"
-                        : "已暂停，不影响其他平台采集"}
-                    {weixinChannelsCollectorStatusQuery.data?.capture.lastHeartbeatAt
-                      ? ` · 最近心跳 ${new Date(weixinChannelsCollectorStatusQuery.data.capture.lastHeartbeatAt).toLocaleString()}`
-                      : " · 尚无本机心跳"}
-                    {` · 待整理 ${weixinChannelsCollectorStatusQuery.data?.accumulatedQualifiedCount ?? 0}/1000`}
-                    {` · DeepSeek批次 ${weixinChannelsCollectorStatusQuery.data?.deepseekCompletedBatchCount ?? 0}/${weixinChannelsCollectorStatusQuery.data?.terraCleanupBatchTarget ?? 8} 后 Terra 清洗`}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  disabled={setWeixinChannelsCaptureEnabledMutation.isPending || weixinChannelsCollectorStatusQuery.isLoading}
-                  onClick={() => setWeixinChannelsCaptureEnabledMutation.mutate({
-                    enabled: !Boolean(weixinChannelsCollectorStatusQuery.data?.capture.enabled),
-                  })}
-                  className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
-                    weixinChannelsCollectorStatusQuery.data?.capture.enabled
-                      ? "border-emerald-300/40 bg-emerald-400/15 text-emerald-100"
-                      : "border-white/15 bg-black/25 text-white/65 hover:text-white"
-                  }`}
-                >
-                  {setWeixinChannelsCaptureEnabledMutation.isPending
-                    ? "保存中…"
-                    : weixinChannelsCollectorStatusQuery.data?.capture.enabled
-                      ? "停止采集"
-                      : "开启采集"}
-                </button>
-              </div>
-            ) : null}
-
-            <label className="mt-3 flex items-center gap-2 text-xs text-cyan-100">长图报告平台
-              <select aria-label="长图报告平台" className="rounded border border-white/20 bg-slate-950 px-2 py-1" value={standaloneReportPlatform} disabled={trendStandaloneBusy || enqueueVisualReportMutation.isPending} onChange={e=>setStandaloneReportPlatform(e.target.value as VisualReportPlatformKey | "")}>
-                <option value="">跟随上方分析平台</option>
-                {[...TREND_PLATFORM_OPTIONS, {key:"tiktok",label:"TikTok"}, {key:"kuaishou",label:"快手"}].map(item=><option key={item.key} value={item.key}>{item.label}</option>)}
-              </select>
-              <span>结合近期真实作品，分析内容机会与可执行选题。</span>
-            </label>
-
-            {!platformDashboard &&
-            !visualReportData &&
-            !trendStandaloneBusy &&
-            !isAnalyzing &&
-            !isDashboardLoading &&
-            !isVisualReportLoading ? (
-              <div className="mt-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void handleTrendStandaloneAnalyze()}
-                    disabled={trendStandaloneBusy || enqueueVisualReportMutation.isPending}
-                    className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_28px_rgba(73,230,255,0.16)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {trendStandaloneBusy || enqueueVisualReportMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-4 w-4" />
-                    )}
-                    生成近{selectedWindowDays}天报告 · {getPlatformTrendReportCredits(selectedWindowDays)}积分
-                  </button>
-                  <span className="rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-1.5 text-[11px] font-black tabular-nums text-[#fef08a]">
-                    {getPlatformTrendReportCredits(selectedWindowDays)} 积分/平台/份
-                  </span>
-                  <span className="text-[11px] text-[#c9c0e6]/50">
-                    {"含四格趋势摘要与可下载 PNG 长图"}
-                  </span>
-                </div>
-              </div>
-            ) : null}
+            <TrendReportControls
+              id={PLATFORM_SECTION_TREND_RUN_ID}
+              platform={standaloneReportPlatform || selectedTrendPlatforms[0] || "xiaohongshu"}
+              windowDays={selectedWindowDays}
+              busy={trendStandaloneBusy || enqueueVisualReportMutation.isPending || isAnalyzing || isDashboardLoading || isVisualReportLoading}
+              hasReport={Boolean(visualReportData)}
+              onPlatformChange={platform => {
+                setStandaloneReportPlatform(platform);
+                if (TREND_PLATFORM_OPTIONS.some(item => item.key === platform)) {
+                  setSelectedTrendPlatforms([platform as TrendPlatformKey]);
+                }
+              }}
+              onWindowDaysChange={setSelectedWindowDays}
+              onGenerate={() => void handleTrendStandaloneAnalyze()}
+            />
 
             {(trendStandaloneBusy || isDashboardLoading || isVisualReportLoading || isAnalyzing) &&
             !visualReportData ? (
               <div className="mt-4 rounded-2xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] p-4">
                 <div className="flex items-center gap-2 text-sm text-[#8cefff]">
                   <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                  {`后台正在读取近 ${selectedWindowDays} 天样本并生成 PNG 趋势长图；通常约 30–40 秒，刷新后可继续取回…`}
+                  {`正在生成近 ${selectedWindowDays} 天趋势报告，刷新后可继续查看…`}
                 </div>
                 <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.08]">
                   <div
