@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/pr-static-site-video.yml'
+      - '.github/workflows/fly-deploy.yml'
       - 'ops/*static-site-video*'
       - 'scripts/vite-static-site-video-offload.ts'
       - 'shared/staticSiteVideo*'

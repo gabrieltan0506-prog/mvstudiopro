@@ -5,13 +5,49 @@ import { createHash } from 'node:crypto';
 import type { Plugin, ResolvedConfig } from 'vite';
 import { staticVideoReceipt, staticVideoOrigin, staticVideoEndpoint, type StaticSiteVideo } from '../shared/staticSiteVideos';
 
-export async function verifyVideoOrigin(asset: StaticSiteVideo, origin = staticVideoOrigin) {
-  const response = await fetch(origin + staticVideoEndpoint(asset), { method: 'HEAD', redirect: 'error', signal: AbortSignal.timeout(20_000) });
+export async function verifyVideoOrigin(asset: StaticSiteVideo, origin = staticVideoOrigin, signal?: AbortSignal) {
+  const response = await fetch(origin + staticVideoEndpoint(asset), { method: 'HEAD', redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000) });
   if (response.status !== 200 || Number(response.headers.get('content-length')) !== asset.bytes
     || response.headers.get('x-static-video-sha256') !== asset.sha256
     || response.headers.get('x-static-video-generation') !== asset.generation
     || response.headers.get('content-type')?.split(';')[0] !== 'video/mp4'
     || response.headers.get('accept-ranges') !== 'bytes') throw Error(`视频回源未就绪，保留旧部署：${asset.path}`);
+}
+
+
+// 为并行发布的后端留出窗口；外层GitHub检查必须覆盖此窗口和前端构建时间。
+export const VIDEO_READINESS_TIMEOUT_MS = 30 * 60_000;
+export async function waitForVideoOrigins(assets: StaticSiteVideo[], origin = staticVideoOrigin, {
+  timeoutMs = VIDEO_READINESS_TIMEOUT_MS,
+  intervalMs = 10_000,
+  check = verifyVideoOrigin,
+  log = (message: string) => console.info(message),
+}: { timeoutMs?: number; intervalMs?: number; check?: typeof verifyVideoOrigin; log?: (message: string) => void } = {}) {
+  if (!assets.length || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || !Number.isFinite(intervalMs) || intervalMs <= 0) throw Error('无效视频等待参数');
+  const controller = new AbortController();
+  let pending = assets.map(a => a.path);
+  let pause: ReturnType<typeof setTimeout> | undefined;
+  let timer: ReturnType<typeof setTimeout>;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(Error(`视频回源等待超时，保留旧部署：${pending.join('、')}`));
+    }, timeoutMs);
+  });
+  try {
+    while (true) {
+      // 每轮重验全部素材，不能拼凑不同时刻的成功结果放行。
+      const results = await Promise.race([
+        Promise.allSettled(assets.map(a => check(a, origin, controller.signal))), expired,
+      ]);
+      pending = assets.filter((_, i) => results[i].status === 'rejected').map(a => a.path);
+      if (!pending.length) return;
+      log(`[static-video-offload] 等待后端媒体入口：${pending.join('、')}`);
+      await Promise.race([new Promise<void>(resolve => { pause = setTimeout(resolve, intervalMs); }), expired]);
+    }
+  } finally {
+    clearTimeout(timer!); clearTimeout(pause); controller.abort();
+  }
 }
 
 type VideoFile = Pick<StaticSiteVideo, 'path' | 'bytes' | 'sha256'>;
@@ -81,10 +117,10 @@ export function staticSiteVideoOffload(): Plugin {
         if (test.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(test.hostname) || test.pathname !== '/' || test.search || test.username || test.password) throw Error('invalid_isolated_origin');
         origin = test.origin;
       }
-      const result = await excludeVerifiedVideoCopies(config.publicDir, path.resolve(config.root, config.build.outDir), all, async a => {
-        const kept = staticVideoReceipt.assets.find(k => k.path === a.path);
-        if (kept) await verifyVideoOrigin(kept, origin);
-      });
+      // 源与输出全部验真后只启动一个共享等待窗口，30分钟不是每片各等一次。
+      let readiness: Promise<void> | undefined;
+      const result = await excludeVerifiedVideoCopies(config.publicDir, path.resolve(config.root, config.build.outDir), all,
+        () => readiness ??= waitForVideoOrigins(staticVideoReceipt.assets, origin));
       console.info(`[static-video-offload] ${result.count}条，构建减少${result.bytes}bytes；原文件保留`);
     },
   };
