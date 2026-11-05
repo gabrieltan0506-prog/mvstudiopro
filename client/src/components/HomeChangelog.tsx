@@ -1,5 +1,5 @@
 // ─── 更新日志数据（仅展示用户可感知的功能更新）────────────────────
-// 【跑马灯专用】维护此阵列即可：首页 `HomeUpdateTicker` 会自动滚动显示全部条目；
+// 功能更新记录；供平台近期更新使用，首页不展示滚动摘要。
 // 不需在 Hero / HomeFeatureCarousel 重复贴同一段文字。
 //
 // 政策（依产品约定调整）：
@@ -34,7 +34,7 @@ export const HOME_CHANGELOG_UPDATES = [
   },
 ] as const;
 
-/** 平台页等功能区：取近 10 条更新轮播（目前与跑马灯同源） */
+/** 平台页等功能区：取近 10 条更新记录 */
 export const PLATFORM_RECENT_UPDATES = HOME_CHANGELOG_UPDATES.slice(0, 10);
 
 export const HOME_UPDATE_TAG_COLORS: Record<string, { bg: string; text: string }> = {

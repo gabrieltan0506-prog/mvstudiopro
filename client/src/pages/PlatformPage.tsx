@@ -8021,7 +8021,7 @@ export default function PlatformPage() {
   const recoveryBlocked = customNoteBusy || knowledgeCardPdfBusy || customNoteUploadBusy || customNoteLevelSwitching || Boolean(customNoteDistillJobId) || Boolean(customNotePreflight);
   const applyKnowledgeCardRecovery = (backup: RecoveredKnowledgeCard): boolean => {
     if (recoveryBlocked || customNotePendingConfirmRef.current) { toast.info("请先结束当前任务或出图确认，再恢复备份"); return false; }
-    if ((customNoteText.trim() || customNoteImages.some(Boolean) || customNotePendingFilesRef.current.length) && !window.confirm("恢复会替换当前知识卡正文与图片。确定恢复所选云端备份吗？")) return false;
+    if ((customNoteText.trim() || customNoteImages.some(Boolean) || customNotePendingFilesRef.current.length) && !window.confirm("恢复会替换当前手册正文与图片。确定恢复所选云端备份吗？")) return false;
     customNoteRevisionRef.current += 1;
     renderRunIdRef.current += 1;
     customNotePendingFilesRef.current = []; setCustomNotePendingMeta([]); setCustomNoteUploadStatus(null);
@@ -8836,7 +8836,7 @@ export default function PlatformPage() {
           toast.message(`已停止出图：完成 ${madePages}/${total} 页，按已出页计费（未出的页不扣）`);
         } else {
           setCustomNoteProgress({ status: "succeeded", percent: 100 });
-          toast.success(`已生成 ${total} 页图文笔记（${qLabel} · 约 ${credits} 积分）`);
+          toast.success(`已生成 ${total} 页手册配图（${qLabel} · 约 ${credits} 积分）`);
         }
         setCustomNoteDistillPhase("idle");
       } else {
@@ -15206,7 +15206,7 @@ export default function PlatformPage() {
                 <div className="creation-workspace-heading"><div><p className="creation-eyebrow">MV STUDIO · 创作台</p><h1>把想法，写成值得读的内容。</h1><p>从你的经验出发，完成选题、正文与视觉方案。</p></div></div>
                 <div className="creation-tool-tabs" role="tablist" aria-label="创作工具">
                   <button type="button" role="tab" aria-selected={creationTool === "viral"} disabled={customWorkspaceOperating} onClick={() => { setCreationTool("viral"); setCustomWorkspaceTab("topic"); }}>爆款创作<span>选题 · 图文 · 视频文案</span></button>
-                  <button type="button" role="tab" aria-selected={creationTool === "knowledge"} disabled={customWorkspaceOperating} onClick={() => { setCreationTool("knowledge"); setCustomWorkspaceTab("copy"); setCustomNoteKind("single_page_knowledge_card"); setOutputType("single_page"); }}>图文知识卡片<span>上传资料 · 提炼 · 生成卡片</span></button>
+                  <button type="button" role="tab" aria-selected={creationTool === "knowledge"} disabled={customWorkspaceOperating} onClick={() => { setCreationTool("knowledge"); setCustomWorkspaceTab("copy"); setCustomNoteKind("single_page_knowledge_card"); setOutputType("single_page"); }}>图文知识手册<span>上传资料 · 图解配说明 · 成册导出</span></button>
                   <button type="button" role="tab" aria-selected={creationTool === "digital-human"} disabled={customWorkspaceOperating} onClick={() => setCreationTool("digital-human")}>数字人视频<span>人像 · 我的声音 · 场景 · 4K成片</span></button>
                 </div>
           {creationTool === "digital-human" ? <DigitalHumanStudio initialPortrait={globalCoverReferencePhotoUrl || undefined} source={digitalHumanSource}/> : null}
@@ -15224,14 +15224,14 @@ export default function PlatformPage() {
                 <PlatformWorkspaceStepHint
                   step={1}
                   title="粘贴文案"
-                  lines={["粘贴正文，或上传文档与图片。", "检查提炼内容、分页和费用，再生成卡片。"]}
+                  lines={["粘贴正文，或上传文档与图片。", "确认提炼内容、分页与费用，再生成手册配图。"]}
                   active={!customNoteText.trim()}
                   done={Boolean(customNoteText.trim())}
                 />
                 <PlatformWorkspaceStepHint
                   step={2}
                   title="生成结果"
-                  lines={["点击生成按钮，等待任务完成。", "卡片在下方显示，可预览和下载。"]}
+                  lines={["点击生成按钮，等待任务完成。", "配图完成后，启动下方创作顾问补充说明、排版成册。"]}
                   active={Boolean(customNoteText.trim()) && !customNoteImages.length && !customNoteImageUpper && !customOptimizeResult}
                   done={Boolean(customNoteImages.length || customNoteImageUpper || customNoteImageLower || customOptimizeResult)}
                 />
@@ -15287,7 +15287,7 @@ export default function PlatformPage() {
                   customNoteKind === "optimize_custom_copy"
                     ? "粘贴待优化的封面文案、分镜描述或完整 Markdown…（建议 100–3000 字）"
                     : customNoteKind === "single_page_knowledge_card"
-                      ? "粘贴中文正文 / Markdown，或上传文档/图片后自动提炼…约 4–8 页图文笔记（页数随内容，第 9 页起八折）"
+                      ? "粘贴中文正文 / Markdown，或上传文档/图片后自动提炼…自动规划手册配图（页数随内容，第 9 页起八折）"
                       : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 编导分镜图…（建议 100–800 字）"
                 }
                 value={customNoteText}
@@ -15581,7 +15581,7 @@ export default function PlatformPage() {
                   ) : customNoteKind === "optimize_custom_copy" ? (
                     <><Sparkles className="h-4 w-4" />深度优化文案（{customOptimizeCopyCost} 积分）</>
                   ) : customNoteKind === "single_page_knowledge_card" ? (
-                    <><Sparkles className="h-4 w-4" />生成图文笔记（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · 4K · {customNoteKnowledgeCredits || 30} 积分）</>
+                    <><Sparkles className="h-4 w-4" />生成手册配图（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · 4K · {customNoteKnowledgeCredits || 30} 积分）</>
                   ) : (
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
@@ -15597,7 +15597,7 @@ export default function PlatformPage() {
                       setLayoutSource(knowledgeCardLayoutSource({ owner: workbenchUserKey, sourceId: knowledgeCardLayoutSourceIdRef.current, markdown, detailLevel: images.length ? renderedDetailLevelRef.current : customNoteDetailLevel, distillModel: customNoteDistillModel, infographicTemplateId: customNoteInfographicTemplateId, images }));
                       document.getElementById("editable-layout-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
                     } catch (error) { toast.error(error instanceof Error ? error.message : "排版导入失败，原稿已保留"); }
-                  }}>{customNoteImages.length || customNoteImageUpper ? "创作顾问：审校并排版" : "创作顾问：整理说明与导出"}</button>
+                  }}>{customNoteImages.length || customNoteImageUpper ? "创作顾问：整理图文知识手册" : "创作顾问：整理说明与导出"}</button>
                 )}
                 <span className="text-xs text-[#c9c0e6]/60">保留原稿与配图，开始整理前展示本次费用</span>
                 {(customNoteImageUpper || customNoteImageLower || customNoteError || customOptimizeResult) && !customNoteBusy && (
@@ -15725,7 +15725,7 @@ export default function PlatformPage() {
                       className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
                     >
                       <Image className="h-3.5 w-3.5" />
-                      用优化稿生成图文笔记（按页计费）
+                      用优化稿生成手册配图（按页计费）
                     </button>
                   </div>
                 </div>
@@ -15758,7 +15758,7 @@ export default function PlatformPage() {
                       </div>
                       <img
                         src={url}
-                        alt={`图文知识卡片第 ${idx + 1} 页`}
+                        alt={`图文知识手册配图第 ${idx + 1} 页`}
                         className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
                         onError={(e) => {
                           (e.target as HTMLImageElement).style.display = "none";

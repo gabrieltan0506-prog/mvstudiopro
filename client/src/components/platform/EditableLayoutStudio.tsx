@@ -309,7 +309,7 @@ export default function EditableLayoutStudio({
         <div>
           <h3 className="font-bold text-[#edd4ac]">排版与导出</h3>
           <p className="text-xs text-gray-400">
-            知识卡自动审校与图文阅读稿 · 云端保存恢复 · HTML / PDF
+            图文知识手册 · 自动整理与排版 · 云端保存恢复 · HTML / PDF
           </p>
         </div>
         <button className={button} onClick={() => setOpen(!open)}>

@@ -280,13 +280,13 @@ export default function KnowledgePublicationPanel({
   }
   return (
     <section
-      aria-label="知识卡自动审校与出版"
+      aria-label="图文知识手册自动审校与排版"
       className="space-y-4 rounded-2xl border border-[#b9c4ad]/40 bg-[#182721] p-5 text-[#f5f0e5]"
     >
       <div>
-        <h4 className="text-lg font-semibold">创作顾问 · 图文审校与排版</h4>
+        <h4 className="text-lg font-semibold">创作顾问 · 图文知识手册</h4>
         <p className="mt-1 text-sm text-[#c0cabb]">
-          整套 {pub.source.pages.length} 张知识卡、{pub.source.pages.filter(p => p.imageUrl).length} 张原图；按原顺序处理全部正文，阅读稿分页数另计。
+          整套 {pub.source.pages.length} 章内容、{pub.source.pages.filter(p => p.imageUrl).length} 张原图；按原顺序处理全部正文，手册按内容自动分页。
         </p>
       </div>
       <label className="block text-sm">
@@ -321,7 +321,7 @@ export default function KnowledgePublicationPanel({
       {!review ? (
         <div className="space-y-3">
           <p className="text-sm">
-            {pub.source.pages.length} 页知识卡 · 已完成 {pub.completedBatches}{" "}
+            {pub.source.pages.length} 章内容 · 已完成 {pub.completedBatches}{" "}
             批。原稿与配图保留，刷新后可以继续。
           </p>
           <button
@@ -357,7 +357,7 @@ export default function KnowledgePublicationPanel({
           </div>
           <div className="flex flex-wrap gap-3">
             <select
-              aria-label="查看知识卡页"
+              aria-label="查看手册章节"
               className="max-w-full rounded-lg bg-[#24382e] p-2"
               value={index}
               onChange={e => setPageIndex(Number(e.target.value))}
@@ -404,7 +404,7 @@ export default function KnowledgePublicationPanel({
             </label>
           )}
           <iframe
-            title="知识阅读稿预览"
+            title="图文知识手册预览"
             sandbox="allow-scripts"
             srcDoc={preview}
             className="h-[720px] w-full rounded-xl border-0 bg-[#faf7f0]"
@@ -419,7 +419,7 @@ export default function KnowledgePublicationPanel({
                 ? "正在生成…"
                 : pub.confirmedManuscript === pub.manuscript
                   ? "下载当前版 HTML 和 PDF"
-                  : "确认预览并生成 HTML 和 PDF"}
+                  : "确认生成图文知识手册"}
             </button>
             {files && (
               <>

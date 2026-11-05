@@ -37,7 +37,7 @@ const GROUPS: PriceGroup[] = [
         note: "失败自动退款",
       },
       { name: "2×4 / 3×4 编导分镜图", price: `${CREDIT_COSTS.platformStoryboardSheet} / ${CREDIT_COSTS.platformStoryboardSheet3x4} 积分` },
-      { name: "图文知识卡（4K）", price: "30 积分 / 页", note: "轻量档 24 / 页" },
+      { name: "手册配图（4K）", price: "30 积分 / 页", note: "轻量档 24 / 页" },
       { name: "深度优化文案", price: `${CREDIT_COSTS.platformOptimizeCustomCopy} 积分` },
     ],
   },

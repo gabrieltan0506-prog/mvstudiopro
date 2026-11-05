@@ -29,23 +29,23 @@ type FunctionEntry = {
 
 const FUNCTIONS: FunctionEntry[] = [
   {
-    title: "图文知识卡",
-    tagline: "把一本九万字的书，读成一叠能直接发的卡片。",
+    title: "图文知识手册",
+    tagline: "把文档与图片，整理成图解配说明的完整手册。",
     options: [
       {
         label: "精细档 · GPT-5.6 Sol",
         desc: "输出最全，长文档提炼首选",
-        href: "/platform?mode=create&tab=copy",
+        href: "/platform?mode=create&createTool=knowledge",
       },
       {
         label: "均衡档 · GLM 5.3 FlashX",
         desc: "速度与密度的折中档",
-        href: "/platform?mode=create&tab=copy",
+        href: "/platform?mode=create&createTool=knowledge",
       },
       {
         label: "轻量档 · Qwen 3.8 Max",
         desc: "单价最低，出稿最快",
-        href: "/platform?mode=create&tab=copy",
+        href: "/platform?mode=create&createTool=knowledge",
       },
     ],
   },

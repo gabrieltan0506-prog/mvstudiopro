@@ -3,6 +3,7 @@ import {
   composeFocusPromptFromPersona,
   resolvePlatformCreationTool,
   DIGITAL_HUMAN_WORKSPACE_HREF,
+  KNOWLEDGE_HANDBOOK_WORKSPACE_HREF,
   isLegacyVideoTabAlias,
   isPlatformWorkbenchMode,
   parsePersonaFromFocusPrompt,
@@ -63,4 +64,11 @@ it("首页数字人深链接明确进入创作及数字人，旧地址仍保留�
  expect(resolvePlatformCreationTool(query)).toBe("digital-human");
  expect(resolvePlatformCreationTool("?mode=create&tab=copy")).toBe("viral");
  expect(resolvePlatformCreationTool("?mode=trend&createTool=digital-human")).toBe("viral");
+});
+
+it("首页手册入口直达知识工作台，不落入爆款创作", () => {
+ const query = KNOWLEDGE_HANDBOOK_WORKSPACE_HREF.split("?")[1];
+ expect(resolvePlatformLocation(query).mode).toBe("create");
+ expect(resolvePlatformLocation(query).createTab).toBe("copy");
+ expect(resolvePlatformCreationTool(query)).toBe("knowledge");
 });

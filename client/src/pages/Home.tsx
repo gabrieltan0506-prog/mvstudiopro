@@ -2,6 +2,7 @@ import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
 import HomePresentationShowcase from "../components/HomePresentationShowcase";
 import HomeHero from "../components/HomeHero";
+import HomeKnowledgeHandbook from "../components/HomeKnowledgeHandbook";
 import HomeTrendIntro from "../components/HomeTrendIntro";
 import HomeMyWorks from "../components/HomeMyWorks";
 import HomeRedeemCode from "../components/HomeRedeemCode";
@@ -27,6 +28,7 @@ export default function HomePage() {
         <HomeNavbar />
         <HomeHero />
         <HomeTrendIntro />
+        <HomeKnowledgeHandbook />
         <LaunchCountdownBanner />
         <HomePresentationShowcase />
         <HomeRemixStrip />

@@ -5,6 +5,7 @@
  */
 
 import { Link } from "wouter";
+import { KNOWLEDGE_HANDBOOK_WORKSPACE_HREF } from "@/lib/platformWorkbenchMode";
 
 type HighlightEntry = {
   title: string;
@@ -35,13 +36,13 @@ const HIGHLIGHTS: HighlightEntry[] = [
     href: "/platform?mode=create",
   },
   {
-    title: "图文知识卡",
-    tagline: "把一本九万字的书，读成一叠能直接发的卡片。",
+    title: "图文知识手册",
+    tagline: "把文档与图片，整理成图解配说明的完整手册。",
     points: [
-      { label: "文档变卡", desc: "上传文档或图片，自动提炼多页横版知识卡" },
-      { label: "精细／均衡／轻量", desc: "同一入口三档任选，成本自己定" },
+      { label: "图解配说明", desc: "自动提炼、生成配图，创作顾问补充文字解释" },
+      { label: "预览后导出", desc: "自动选版与分页，确认后生成 HTML / PDF" },
     ],
-    href: "/platform?mode=create&tab=copy",
+    href: KNOWLEDGE_HANDBOOK_WORKSPACE_HREF,
   },
   {
     title: "封面 + 分镜套装",
@@ -65,7 +66,7 @@ export default function HomePlatformHighlights() {
           一个人，就是一个新媒体部门
         </h2>
         <p className="mx-auto mt-3 max-w-[640px] text-[13px] leading-relaxed text-[var(--hp-muted)] sm:text-sm">
-          选题、文案、拆片、图文卡、封面分镜——一条流水线跑完，不用再换五个工具。
+          选题、文案、拆片、图文知识手册、封面分镜——一条流水线跑完，不用再换五个工具。
         </p>
       </div>
 

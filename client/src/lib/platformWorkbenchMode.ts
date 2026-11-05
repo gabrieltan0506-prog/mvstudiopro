@@ -584,6 +584,7 @@ export function toolsTabFromMode(
 }
 
 export type PlatformCreationTool = "viral" | "knowledge" | "digital-human";
+export const KNOWLEDGE_HANDBOOK_WORKSPACE_HREF = "/platform?mode=create&createTool=knowledge";
 export const DIGITAL_HUMAN_WORKSPACE_HREF = "/platform?mode=create&createTool=digital-human";
 /** 首页直达和前进后退都读取同一工具标识，不依赖上一次趋势页状态。 */
 export function resolvePlatformCreationTool(search?: string): PlatformCreationTool {

@@ -121,7 +121,7 @@ it("真实单框组件自动分批、断线恢复同编号、可选手改与确�
     await page.waitForFunction(() => document.querySelector('iframe')?.srcdoc.includes('class="theme-fusion_maple_bridge"'));
     expect(await page.evaluate(() => (window as any).calls.length)).toBe(5);
     expect(await page.evaluate(() => (window as any).exports.length)).toBe(0);
-    await click("确认预览并生成 HTML 和 PDF");
+    await click("确认生成图文知识手册");
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll("a")).some(
         a => a.textContent === "下载 PDF"
