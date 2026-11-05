@@ -7,6 +7,11 @@ on:
     # 每 3 小时（UTC :30）。必须与 growth-backup 的 0 */3 同频，错开 30 分钟，减少串行排队。
     - cron: "30 */3 * * *"
   workflow_dispatch:
+    inputs:
+      archive_dir:
+        description: '可选：仅处理一个已通过候选筛选的旧归档桶'
+        required: false
+        type: string
 
 concurrency:
   group: growth-cold-store-fly
@@ -22,6 +27,7 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       GROWTH_BACKUP_TRANSPORT: fly
+      GROWTH_ARCHIVE_PROBE_DIR: ${{ inputs.archive_dir || '' }}
       GROWTH_BACKUP_REPOSITORY: ${{ vars.GROWTH_BACKUP_REPOSITORY || 'gabrieltan0506-prog/mvstudiopro-growth-data' }}
     steps:
       - uses: actions/checkout@v4

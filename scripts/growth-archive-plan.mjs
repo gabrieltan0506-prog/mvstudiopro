@@ -13,6 +13,15 @@ import {
   LEGACY_GROWTH_RELEASE,
 } from "../shared/growthColdStoreRelease.mjs";
 
+// 手动最小实跑只能选择快照中已通过安全筛选的一个桶。
+export function selectProbeSnapshot(snapshot, dir) {
+  if (!dir) return snapshot;
+  if (!/^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(dir)) throw Error("archive_probe_directory_invalid");
+  const rows = snapshot.trim().split(/\r?\n/).filter(line => line.split("\t")[0] === dir);
+  if (rows.length !== 1) throw Error("archive_probe_directory_not_eligible");
+  return rows[0] + "\n";
+}
+
 // 只复用已发布清单且 GitHub 资产摘要仍一致的归档；旧清单无源指纹时重新备份。
 export function planArchiveBatch(snapshot, assets, manifests) {
   const byName = new Map(assets.map(asset => [asset.name, asset]));
@@ -252,10 +261,10 @@ export function writeArchivePlan(directory, plan) {
 function main(directory) {
   if (!directory) throw new Error("缺少归档工作目录");
   const { gh, repository: repo } = privateGrowthBackupTarget(runBackupGh);
-  const snapshot = fs.readFileSync(
+  const snapshot = selectProbeSnapshot(fs.readFileSync(
     path.join(directory, "snapshot.tsv"),
     "utf8"
-  );
+  ), process.env.GROWTH_ARCHIVE_PROBE_DIR);
   const { assets, manifests } = loadArchiveInventory(
     directory,
     snapshot,

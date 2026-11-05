@@ -31,3 +31,12 @@ test('同名普通附件不覆盖，指针校验后才替换',async()=>{const ra
 test('客户端以文件fd传输；label不会被误当成资产名；不传GitHub令牌',()=>{const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fly-client-test-'));try{const file=path.join(dir,'growth-backup-latest.json');fs.writeFileSync(file,'{}');const args=['release','upload','growth-archive-test',file+'#generation:1-1','--clobber','--repo',repository];assert.equal(decodeBackupCommand(args,repository).name,'growth-backup-latest.json');const result=runBackupViaFly(args,{env:{GROWTH_BACKUP_REPOSITORY:repository,FLY_MACHINE_ID:'abc123',FLY_API_TOKEN:'test-fly'},execute:(bin,argv,options)=>{assert.equal(bin,'flyctl');assert.equal(argv[argv.indexOf('--machine')+1],'abc123');assert.equal(typeof options.stdio[0],'number');assert(!JSON.stringify(argv).includes('test-key'));return '{}';}});assert.equal(result,'{}');}finally{fs.rmSync(dir,{recursive:true});}});
 test('两workflow不再要求GitHub备份令牌复制到Actions',()=>{for(const name of ['growth-backup','growth-archive-offload']){const text=fs.readFileSync(new URL(`../.github/workflows/${name}.yml`,import.meta.url),'utf8');assert(!text.includes('secrets.GROWTH_BACKUP_GITHUB_TOKEN'));assert(text.includes('GROWTH_BACKUP_TRANSPORT: fly'));assert(text.indexOf('Resolve production app machine')<text.indexOf('Require authorized private backup target'));}});
 test('直接本机GitHub令牌不能替代Fly转发',async()=>{const old=process.env.GH_TOKEN,route=process.env.GROWTH_BACKUP_TRANSPORT;try{process.env.GH_TOKEN='test-key';delete process.env.GROWTH_BACKUP_TRANSPORT;const {runBackupGh}=await import('./growth-backup-target.mjs');assert.throws(()=>runBackupGh(['repo','view',repository]),/server_transport_required/);}finally{if(old===undefined)delete process.env.GH_TOKEN;else process.env.GH_TOKEN=old;if(route===undefined)delete process.env.GROWTH_BACKUP_TRANSPORT;else process.env.GROWTH_BACKUP_TRANSPORT=route;}});
+
+test('最小实跑限定已筛选单桶，不能带入最新桶或路径穿越',async()=>{
+ const {selectProbeSnapshot}=await import('./growth-archive-plan.mjs');
+ const snapshot='2026-10-01-00\tabc\t12\n2026-10-02-00\tdef\t34\n';
+ assert.equal(selectProbeSnapshot(snapshot,'2026-10-01-00'),'2026-10-01-00\tabc\t12\n');
+ assert.equal(selectProbeSnapshot(snapshot,''),snapshot);
+ assert.throws(()=>selectProbeSnapshot(snapshot,'2026-11-05-12'),/not_eligible/);
+ assert.throws(()=>selectProbeSnapshot(snapshot,'../data'),/invalid/);
+});
