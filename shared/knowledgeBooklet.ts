@@ -67,12 +67,12 @@ function readingUnits(pages: KnowledgeBookletPage[], decoration: KnowledgeDecora
             if(end>start && budget+cost>360)break;
             budget+=cost;end++;
           }
-          const html = `<table><thead><tr>${table.header.map(c=>`<th>${renderLayoutBody(c.text)}</th>`).join("")}</tr></thead><tbody>${rows.slice(start,end).map((row,n)=>`<tr data-source-row="${start+n}">${row.map(c=>`<td>${renderLayoutBody(c.text)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+          const html = `<table><thead><tr>${table.header.map(c=>`<th>${renderLayoutBody(c.text,true)}</th>`).join("")}</tr></thead><tbody>${rows.slice(start,end).map((row,n)=>`<tr data-source-row="${start+n}">${row.map(c=>`<td>${renderLayoutBody(c.text,true)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
           wrap(html,"table-unit");start=end;
         }
       } else {
         for(const part of splitLongText(token.raw,600))
-          wrap(renderLayoutBody(part),token.type === "list" ? "list-unit" : "prose-unit");
+          wrap(renderLayoutBody(part,true),token.type === "list" ? "list-unit" : "prose-unit");
       }
     }
     const visual = decoration.interleave === "original-image" ? page.imageUrl : decoration.interleave === "artwork-strip" ? KNOWLEDGE_DECORATION_ART[decoration.artworkId] : "";

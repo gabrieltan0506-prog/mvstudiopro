@@ -1,3 +1,4 @@
+import { KNOWLEDGE_RESEARCH_INSTRUCTIONS } from "../../shared/knowledgeResearch";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { planKnowledgeConsistency } from "../../shared/knowledgePublicationConsistency";
@@ -214,7 +215,7 @@ export function buildKnowledgeReviewRequest(
     );
   }
   return {
-    systemInstruction: { parts: [{ text: KNOWLEDGE_REVIEW_INSTRUCTIONS + "\n" + knowledgeExplanationInstructions(source.detailLevel) }] },
+    systemInstruction: { parts: [{ text: KNOWLEDGE_REVIEW_INSTRUCTIONS + "\n" + knowledgeExplanationInstructions(source.detailLevel) + "\n" + KNOWLEDGE_RESEARCH_INSTRUCTIONS }] },
     contents: [{ role: "user", parts }],
     generationConfig: {
       temperature: 0.3,

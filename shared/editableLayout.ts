@@ -101,16 +101,18 @@ const escapeHtml = (s: string) =>
         c
       ]!
   );
-// 只开放排版标签；原始HTML与链接地址均不可进入可执行DOM。
-const layoutMarkdown = new Marked({
+// 只开放排版标签；原始HTML转义，默认剥离链接，手册仅允许HTTP(S)来源。
+const createLayoutMarkdown = (allowSourceLinks = false) => new Marked({
   gfm: true,
   breaks: true,
   renderer: {
     html({ text }) {
       return escapeHtml(text);
     },
-    link({ tokens }) {
-      return this.parser.parseInline(tokens);
+    link({ tokens, href }) {
+      const label = this.parser.parseInline(tokens);
+      return allowSourceLinks && /^https?:\/\//i.test(href)
+        ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label}</a>` : label;
     },
     image({ text }) {
       return escapeHtml(text);
@@ -128,8 +130,11 @@ const layoutMarkdown = new Marked({
     },
   },
 });
-export function renderLayoutBody(body: string): string {
-  return layoutMarkdown.parse(body, { async: false });
+const layoutMarkdown = createLayoutMarkdown();
+const sourceMarkdown = createLayoutMarkdown(true);
+/** 只有知识手册启用来源链接，旧编辑器仍剥离链接，任意HTML/脚本继续转义。 */
+export function renderLayoutBody(body: string, allowSourceLinks = false): string {
+  return (allowSourceLinks ? sourceMarkdown : layoutMarkdown).parse(body, { async: false });
 }
 export const layoutPalette = {
   paper: ["#fff9ed", "#242125", "#bd5037"],

@@ -123,3 +123,48 @@ it('新顾问输入必须返回可用装饰配置，缺失不能冒充已经排�
  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
  expect(f.storage.get('test/0/route-openrouter.json').reason).toContain('装饰组件配置');expect(out.gateway).toBe('evolink');expect(JSON.parse(out.candidates[0].content.parts[0].text).pages[0].reading.decoration).toEqual((good.pages[0].reading as any).decoration);
 });
+
+describe('联网补充与真实来源贯穿正文',()=>{
+ const url='https://science.example.org/water';
+ const prepare=async()=>{
+  const f=make();const {KNOWLEDGE_RESEARCH_MARKER}=await import('../../shared/knowledgeResearch');f.request.systemInstruction.parts[0].text+=KNOWLEDGE_RESEARCH_MARKER;
+  const report:any=structuredClone(f.report);report.pages[0].sources=[{url,title:'水循环资料'}];report.pages[0].reading.blocks.push({type:'prose',title:'为什么会循环',note:'',text:`太阳加热水面，水蒸气随后凝结。[资料](${url})`});
+  const annotations=[{type:'url_citation',url_citation:{url,title:'水循环原始资料',content:'太阳能驱动蒸发，水汽凝结成云。'}}];
+  const response=(value=report,finish='stop')=>new Response(JSON.stringify({model:OR_MODEL,choices:[{finish_reason:finish,message:{content:JSON.stringify(value),annotations}}]}),{headers:{'Content-Type':'application/json'}});
+  return {...f,report,annotations,webResponse:response};
+ };
+ it('同一次生成启用检索，真实引用进入确认正文/云稿和HTML，恢复不重复调用',async()=>{
+  const f=await prepare();f.deps.fetch.mockResolvedValueOnce(f.webResponse());
+  const raw=await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);const report=JSON.parse(JSON.parse(raw.text).candidates[0].content.parts[0].text);
+  const sent=JSON.parse((f.deps.fetch.mock.calls[0] as any)[1].body);expect(sent.plugins).toEqual([{id:'web',engine:'exa',max_results:3}]);expect(report.pages[0].sources[0].title).toBe('水循环原始资料');expect(report.pages[0].body).toContain(url);
+  const {knowledgeReviewSchema}=await import('../../shared/knowledgePublication');expect(knowledgeReviewSchema.parse(JSON.parse(JSON.stringify(report))).pages[0].sources?.[0].url).toBe(url);
+  const {buildKnowledgeBookletHtml}=await import('../../shared/knowledgeBooklet');expect(buildKnowledgeBookletHtml({title:report.title,pages:[{...report.pages[0],imageUrl:''}]})).toContain(`href="${url}"`);
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+ });
+ it('首跳完整失败后后续通道只使用同一检索片段，不重开搜索',async()=>{
+  const f=await prepare();f.deps.fetch.mockResolvedValueOnce(f.webResponse(f.report,'length')).mockResolvedValueOnce(f.response(EVO_MODEL,f.report));
+  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);expect(result.gateway).toBe('evolink');
+  const sent=JSON.parse((f.deps.fetch.mock.calls[1] as any)[1].body);expect(sent.plugins).toBeUndefined();expect(JSON.stringify(sent.messages)).toContain('太阳能驱动蒸发');expect(f.storage.has('test/0/web-sources.json')).toBe(true);
+ });
+ it('无检索回执不能降级成无来源补写，也不再次购买',async()=>{
+  const f=await prepare();f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL,f.report));
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('未降级补写');
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('未降级补写');expect(f.deps.fetch).toHaveBeenCalledTimes(1);expect(f.deps.vertex).not.toHaveBeenCalled();
+ });
+ it('伪造引用被拒绝，完整来源片段允许下一路修正正文',async()=>{
+  const f=await prepare();const bad=structuredClone(f.report);bad.pages[0].sources[0].url='https://fake.example.org/';f.deps.fetch.mockResolvedValueOnce(f.webResponse(bad)).mockResolvedValueOnce(f.response(EVO_MODEL,f.report));
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.storage.get('test/0/route-openrouter.json').reason).toContain('不属于');
+ });
+ it('流式注释随完成回执保存，缺字流不会当成检索成功',async()=>{
+  const f=await prepare();const chunks=[{model:OR_MODEL,choices:[{delta:{content:JSON.stringify(f.report)}}]},{choices:[{delta:{annotations:f.annotations},finish_reason:'stop'}]}];
+  f.deps.fetch.mockResolvedValueOnce(new Response(chunks.map(c=>'data: '+JSON.stringify(c)+'\n\n').join('')+'data: [DONE]\n\n',{headers:{'Content-Type':'text/event-stream'}}));
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);const saved=JSON.parse(f.storage.get('test/0/openrouter-response.json').text);expect(saved.choices[0].message.annotations).toEqual(f.annotations);
+ });
+});
+
+it('流式来源超出合计容量必须拒绝，默认调用不附带来源字段',async()=>{
+ const {readGlmSseStream}=await import('./sseChatStream');
+ const stream=(text:string)=>new Response('data: '+JSON.stringify({model:'test',choices:[{delta:{content:text,annotations:[{type:'url_citation',url_citation:{url:'https://example.org',title:'来源',content:'a'.repeat(800)}}]},finish_reason:'stop'}]})+'\n\n').body!;
+ await expect(readGlmSseStream(stream('b'.repeat(700)),1024,{strictCompletion:true,preserveAnnotations:true})).rejects.toThrow('上限');
+ const result=JSON.parse(await readGlmSseStream(stream('正文'),1024,{strictCompletion:true}));expect(result.choices[0].message.annotations).toBeUndefined();
+});

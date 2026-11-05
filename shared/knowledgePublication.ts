@@ -1,3 +1,4 @@
+import { knowledgeCitationSchema } from "./knowledgeResearch";
 import { z } from "zod";
 import { knowledgeReadingSchema } from "./knowledgePublicationLayout";
 
@@ -38,6 +39,7 @@ export const knowledgeReviewPageSchema = z
     headline: z.string().trim().min(1).max(500),
     body: z.string().trim().min(1).max(12000),
     reading: knowledgeReadingSchema.optional(),
+    sources: z.array(knowledgeCitationSchema).max(12).optional(),
     imageDescription: z.string().trim().max(1500),
     imageStatus: z.enum(["consistent", "conflict", "uncertain", "absent"]),
     facts: z
