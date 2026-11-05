@@ -1,6 +1,6 @@
 ---
 title: Seedance 2.5 只有 720P？实测升到 4K，泪痕和睫毛都回来了
-description: Seedance 2.5 的官方接口目前只提供 480p 和 720p。我们不信邪，实测了哭戏、写实对白和 K-pop 舞蹈，再把成片超分到 4K。这里有原片、同帧对比、实际分辨率、音轨检查和公开价格区间。
+description: Seedance 2.5 的官方接口目前只提供 480p 和 720p。我们不信邪，实测了哭戏、写实对白和 K-pop 舞蹈，再把成片超分到 4K。这里有样片截图、同帧对比、实际分辨率、音轨检查和公开价格区间。
 date: 2026-08-10
 keywords: Seedance 2.5,Seedance 2.5 720P,Seedance 4K,720P转4K,视频超分,video upscaler,AI视频高清化,AI漫剧,AI短剧
 cover: /blog-assets/video-4k-upscale/compare-25-720p-vs-4k.jpg
@@ -21,7 +21,7 @@ cover: /blog-assets/video-4k-upscale/compare-25-720p-vs-4k.jpg
 
 看到这里，真的有点想哭晕在厕所。故事、表演、镜头都能打，画质参数却偏偏停在 720P。
 
-好在故事能力和交付分辨率不必绑死。我们想尽办法，终于实现了 **4K 视频自由**：先让 Seedance 负责把故事拍对，再把定稿成片升到 2K 或 4K。下面不讲玄学，直接放原片、同帧对比和账单。
+好在故事能力和交付分辨率不必绑死。我们想尽办法，终于实现了 **4K 视频自由**：先让 Seedance 负责把故事拍对，再把定稿成片升到 2K 或 4K。下面不讲玄学，保留样片截图、同帧对比和账单，视频样片已下架。
 
 **[前往自由画布，开启 4K 视频创作](/canvas)**
 
@@ -54,15 +54,11 @@ cover: /blog-assets/video-4k-upscale/compare-25-720p-vs-4k.jpg
 
 Seedance 2.5 原片选择的是 720P 档，文件实际为 **1178×786**，带 AAC 双声道音轨：
 
-<video controls preload="metadata" poster="/blog-assets/video-4k-upscale/poster-25-720p.jpg">
-  <source src="/blog-assets/video-4k-upscale/01-sd25-yuji-720p.mp4" type="video/mp4">
-</video>
+<img src="/blog-assets/video-4k-upscale/poster-25-720p.jpg" alt="样片留存画面" loading="lazy">
 
 本次任务记录约 187 秒，输出为 **3234×2160**。画幅没有被硬拉成 16:9，输出文件仍有 AAC 双声道音轨，片长与原片一致：
 
-<video controls preload="metadata" poster="/blog-assets/video-4k-upscale/poster-25-4k.jpg">
-  <source src="/blog-assets/video-4k-upscale/02-sd25-yuji-4k.mp4" type="video/mp4">
-</video>
+<img src="/blog-assets/video-4k-upscale/poster-25-4k.jpg" alt="样片留存画面" loading="lazy">
 
 把同一帧并排放大，差别集中在脸上。左边是原片放大，右边是 4K 超分：
 
@@ -76,15 +72,11 @@ Seedance 2.5 原片选择的是 720P 档，文件实际为 **1178×786**，带 A
 
 Seedance 2.0 原片选择的是 1080P 档，文件实际为 **1664×1248**：
 
-<video controls preload="metadata" poster="/blog-assets/video-4k-upscale/poster-20-1080p.jpg">
-  <source src="/blog-assets/video-4k-upscale/03-sd20-swordsmen-1080p.mp4" type="video/mp4">
-</video>
+<img src="/blog-assets/video-4k-upscale/poster-20-1080p.jpg" alt="样片留存画面" loading="lazy">
 
 4K 超分输出为 **2880×2160**，中文对白与 AAC 双声道音轨仍在：
 
-<video controls preload="metadata" poster="/blog-assets/video-4k-upscale/poster-20-4k.jpg">
-  <source src="/blog-assets/video-4k-upscale/04-sd20-swordsmen-4k.mp4" type="video/mp4">
-</video>
+<img src="/blog-assets/video-4k-upscale/poster-20-4k.jpg" alt="样片留存画面" loading="lazy">
 
 这组别只盯着脸，看远处的旗帜边缘、帐篷接缝和灯笼框线：
 
@@ -98,15 +90,11 @@ Seedance 2.0 原片选择的是 1080P 档，文件实际为 **1664×1248**：
 
 原片为标准 **1920×1080**：
 
-<video controls preload="metadata" poster="/blog-assets/video-4k-upscale/poster-kpop-1080p.jpg">
-  <source src="/blog-assets/video-4k-upscale/05-kpop-1080p.mp4" type="video/mp4">
-</video>
+<img src="/blog-assets/video-4k-upscale/poster-kpop-1080p.jpg" alt="样片留存画面" loading="lazy">
 
 超分后得到标准 **3840×2160** 的 16:9 视频，音轨保留：
 
-<video controls preload="metadata" poster="/blog-assets/video-4k-upscale/poster-kpop-4k.jpg">
-  <source src="/blog-assets/video-4k-upscale/06-kpop-4k.mp4" type="video/mp4">
-</video>
+<img src="/blog-assets/video-4k-upscale/poster-kpop-4k.jpg" alt="样片留存画面" loading="lazy">
 
 这段最值得看的不是暂停画面，而是播放时的手指、头发和衣服边缘。我们的样片里没有出现明显的整帧闪烁，快速动作也没有被抹成一片。三组测试中，它对时序稳定性的压力最大。
 
@@ -153,7 +141,7 @@ Seedance 2.0 原片选择的是 1080P 档，文件实际为 **1664×1248**：
 
 ### 720P 超分到 4K，等于原生 4K 吗？
 
-不等于。超分模型会根据前后帧重建边缘和纹理，让画面更适合大屏播放和后期裁切，但它无法还原源文件里从未记录的真实细节。本文同时放出原片和输出片，建议直接播放对比。
+不等于。超分模型会根据前后帧重建边缘和纹理，让画面更适合大屏播放和后期裁切，但它无法还原源文件里从未记录的真实细节。本文保留原片与输出片的同帧截图，供画质对比。
 
 ### 为什么有些 4K 输出不是 3840×2160？
 

@@ -84,7 +84,7 @@ export function startVercelPreviewScheduler() {
   const timer = setInterval(tick, 60_000);
   timer.unref();
   stopScheduler = () => { clearInterval(timer); job.stop(); };
-  console.info("[vercel.prune] 每日北京时间10:40；7天预览/1天失败保留；启动补查当天状态");
+  console.info("[vercel.prune] 每日北京时间10:40；被同分支READY取代且无alias的预览不等7天；失败至少保留1天；启动补查当天状态");
   tick();
 }
 

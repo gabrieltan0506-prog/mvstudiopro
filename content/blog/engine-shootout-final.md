@@ -12,7 +12,7 @@ cover: /blog-assets/dual-engine-night/de-12-wan-yiwang-fox.jpg
 
 ## 开场先交作业:Wan 3.0 开口唱歌
 
-<video controls preload="metadata" width="100%" src="/api/blog-media/wm_yiwang_wan3.mp4"></video>
+<p>视频样片已下架，以下保留原测试记录。</p>
 <p><em>《意网情深》兽首乐坊 Wan 3.0 版(30s,星空音乐节场景)|生成引擎:Wan 3.0</em></p>
 
 上篇只让 Wan 3.0 跑了追车戏,肯定有人要问:打打杀杀它行,那唱歌呢?这次把答卷直接摆在开头。还是那批乐手,换了个全新的舞台:露天音乐节,头顶就是星空,整首歌的参考音频原封不动喂进去。这一单排了不短的队——排队的故事下面细说——但最后,它把片子交出来了。
@@ -39,7 +39,7 @@ cover: /blog-assets/dual-engine-night/de-12-wan-yiwang-fox.jpg
 
 提交完任务,我去泡了杯茶,回来一看,还在排;干脆去剪了会儿片子,回来,还在排。到后来我干脆不看进度了,只当没这回事。每个人排到的时长都不一样,但慢这件事,用过的人都点头。
 
-<video controls preload="metadata" width="100%" src="/api/blog-media/wm_diebao_wan3.mp4"></video>
+<p>视频样片已下架，以下保留原测试记录。</p>
 <p><em>《谍报追凶》Wan 3.0 版(同素材同提示词)|生成引擎:Wan 3.0——排队很久的那一次生成</em></p>
 
 不过得替它说句公道话:Wan 3.0 眼下还是公测版,慢有慢的缘由。当初 Seedance 2.0 公测的时候,也是这副慢吞吞的样子,后来正式版一出,速度就提上来了。相信 Wan 3.0 的正式版落地之后,这个问题同样会解决。

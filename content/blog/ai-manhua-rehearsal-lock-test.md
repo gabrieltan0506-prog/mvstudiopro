@@ -13,9 +13,7 @@ cover: /blog-assets/rehearsal-lock/still-armory-wm.jpg
 最后算下来，预演花的钱就是一顿外卖的量级；换来的，是一张能避坑的地图。
 
 <figure>
-  <video controls preload="metadata" playsinline controlslist="nodownload" oncontextmenu="return false">
-    <source src="/blog-assets/rehearsal-lock/rehearsal-16s-1080p-wm.mp4" type="video/mp4">
-  </video>
+  <p>视频样片已下架，以下保留原测试记录。</p>
   <figcaption>预演成片：三人三流派、秒级配音、一次换场，16 秒。</figcaption>
 </figure>
 

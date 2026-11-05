@@ -44,9 +44,7 @@ Seedance 2.5 最懂广告节奏；2.0 mini 便宜得让人很难发脾气；2.0 
 
 ## Seedance 2.5：最会卡点，但中途真的换了片场
 
-<video controls preload="metadata" poster="/blog-assets/manhua-video-model-review/06-frame-25-pour-layers.jpg">
-  <source src="/blog-assets/manhua-video-model-review/01-seedance-25-tea-r2v-11s.mp4" type="video/mp4">
-</video>
+<img src="/blog-assets/manhua-video-model-review/06-frame-25-pour-layers.jpg" alt="样片留存画面" loading="lazy">
 
 <p>
   <img src="/blog-assets/manhua-video-model-review/05-frame-25-open-apple.jpg" alt="Seedance 2.5 开场在果园摘苹果" width="32%">
@@ -70,9 +68,7 @@ Seedance 2.5 最懂广告节奏；2.0 mini 便宜得让人很难发脾气；2.0 
 
 ## Seedance 2.0 mini：不是最好，但便宜到足以改变工作流
 
-<video controls preload="metadata" poster="/blog-assets/manhua-video-model-review/09-frame-mini-pour-layers.jpg">
-  <source src="/blog-assets/manhua-video-model-review/02-seedance-20-mini-tea-r2v-11s.mp4" type="video/mp4">
-</video>
+<img src="/blog-assets/manhua-video-model-review/09-frame-mini-pour-layers.jpg" alt="样片留存画面" loading="lazy">
 
 <p>
   <img src="/blog-assets/manhua-video-model-review/08-frame-mini-open-apple.jpg" alt="Seedance 2.0 mini 在果园摘苹果" width="32%">
@@ -96,9 +92,7 @@ mini 最大的优点，不是某一帧多惊艳，而是它从头到尾都记得
 
 ## Seedance 2.0：慢是真的，三秒也没有白送
 
-<video controls preload="metadata" poster="/blog-assets/manhua-video-model-review/12-frame-20-pour-layers.jpg">
-  <source src="/blog-assets/manhua-video-model-review/03-seedance-20-tea-r2v-14s.mp4" type="video/mp4">
-</video>
+<img src="/blog-assets/manhua-video-model-review/12-frame-20-pour-layers.jpg" alt="样片留存画面" loading="lazy">
 
 <p>
   <img src="/blog-assets/manhua-video-model-review/11-frame-20-open-apple.jpg" alt="Seedance 2.0 开场摘苹果" width="32%">
@@ -122,9 +116,7 @@ mini 最大的优点，不是某一帧多惊艳，而是它从头到尾都记得
 
 ## MiniMax H3：这次不是拍空镜，它真演了一场戏
 
-<video controls preload="metadata" poster="/blog-assets/manhua-video-model-review/15-h3-mecha-descent.jpg">
-  <source src="/blog-assets/manhua-video-model-review/04-minimax-h3-mecha-r2v-15s.mp4" type="video/mp4">
-</video>
+<img src="/blog-assets/manhua-video-model-review/15-h3-mecha-descent.jpg" alt="样片留存画面" loading="lazy">
 
 <p>
   <img src="/blog-assets/manhua-video-model-review/14-h3-reference-first-frame.jpg" alt="MiniMax H3 使用的女战士首帧参考图" width="32%">

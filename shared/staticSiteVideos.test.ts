@@ -45,3 +45,38 @@ it('回源200但版本不匹配仍必须阻断发布', async () => {
   } })));
   await expect(verifyVideoOrigin(asset)).rejects.toThrow('回源未就绪');
 });
+
+it('保留三片与退役25片清单覆盖全部静态视频，输出只保留允许发布项', async () => {
+  const { assertVideoInventory } = await import('../scripts/vite-static-site-video-offload');
+  const retired = (await import('./staticSiteVideoRetired.json')).default;
+  expect(staticVideoReceipt.assets.map(a => a.path).sort()).toEqual([
+    '/home-assets/digital-human-talk-20261020.mp4', '/home-assets/mojing-episode-01-20261007.mp4', '/home-assets/warship-2k-1.2x.mp4',
+  ]);
+  expect(retired.assets).toHaveLength(25);
+  await assertVideoInventory(path.resolve('client/public'), [...staticVideoReceipt.assets, ...retired.assets]);
+  const f = await fixture();
+  await assertVideoInventory(f.output, [f.asset]);
+  await fs.writeFile(f.output + '/new-video.mp4', 'unreviewed');
+  await expect(assertVideoInventory(f.output, [f.asset])).rejects.toThrow('清单不匹配');
+  expect((await fs.stat(f.output + f.asset.path)).size).toBe(f.asset.bytes);
+});
+it('退役项不请求回源；失败校验不提前删除其它副本', async () => {
+  const f = await fixture();
+  const missing = {...f.asset, path:'/home-assets/missing.mp4'};
+  await expect(excludeVerifiedVideoCopies(f.source, f.output, [f.asset, missing], async () => {})).rejects.toThrow();
+  expect((await fs.stat(f.output + f.asset.path)).size).toBe(f.asset.bytes);
+  const result = await excludeVerifiedVideoCopies(f.source, f.output, [f.asset], async () => {});
+  expect(result.count).toBe(1); expect((await fs.stat(f.source + f.asset.path)).size).toBe(f.asset.bytes);
+});
+it('退役片不再出现在博客展示或代理路由，用户工具入口保留', async () => {
+  const retired = (await import('./staticSiteVideoRetired.json')).default;
+  const vercel = JSON.parse(await fs.readFile('vercel.json','utf8'));
+  const routes = vercel.rewrites.filter((r: {destination:string}) => r.destination.includes('/api/static-site-video/'));
+  expect(routes).toHaveLength(3);
+  for (const row of retired.assets) expect(routes.some((r: {source:string}) => r.source === row.path)).toBe(false);
+  for (const name of await fs.readdir('content/blog')) {
+    if (!name.endsWith('.md')) continue;
+    expect(await fs.readFile(path.join('content/blog',name),'utf8')).not.toMatch(/<video\b|<source[^>]+\.mp4/);
+  }
+  expect(await fs.readFile('client/src/components/HomePhotoVideoUpscale.tsx','utf8')).toContain('<video');
+});

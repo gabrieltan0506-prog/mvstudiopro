@@ -10,6 +10,9 @@ on:
       - 'server/services/gcs.ts'
       - 'server/services/gcsStaticVideoSignature.test.ts'
       - 'vercel.json'
+      - '.vercelignore'
+      - 'content/blog/**'
+      - 'client/public/blog/**'
       - 'vite.config.ts'
 permissions:
   contents: read
