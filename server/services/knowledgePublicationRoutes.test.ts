@@ -67,3 +67,35 @@ it('自动选版的新输入必须返回有效模板与理由，旧输入仍可�
  expect(out.gateway).toBe('evolink');expect(f.storage.get('test/0/route-openrouter.json').reason).toContain('选版');
  expect(JSON.parse(out.candidates[0].content.parts[0].text).pages[0].reading.templateId).toBe('fusion_ink_mountains');
 });
+
+it('非流式正文失联会取消连接并保留unknown，重放不再付费',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=make(),cancel=vi.fn();let signal:AbortSignal|undefined;
+  f.deps.fetch.mockImplementation(async(_url?:unknown,init?:RequestInit)=>{signal=init?.signal as AbortSignal;return new Response(new ReadableStream({cancel}),{status:503,headers:{'Content-Type':'application/json'}});});
+  const pending=expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('未重复提交');
+  await vi.advanceTimersByTimeAsync(11*60_000);await pending;
+  expect(signal?.aborted).toBe(true);expect(cancel).toHaveBeenCalled();expect(f.storage.get('test/0/route-openrouter.json').state).toBe('unknown');
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('回执尚未闭合');expect(f.deps.fetch).toHaveBeenCalledTimes(1);expect(f.deps.vertex).not.toHaveBeenCalled();
+ }finally{vi.useRealTimers();}
+});
+it('非流式有效字节持续到达时按失联窗口续期，不按总时长终止',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=make();const raw=await f.response(OR_MODEL).text();let stream!:ReadableStreamDefaultController<Uint8Array>;
+  f.deps.fetch.mockResolvedValueOnce(new Response(new ReadableStream({start(c){stream=c;}}),{headers:{'Content-Type':'application/json'}}));
+  const pending=invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);await vi.advanceTimersByTimeAsync(0);
+  for(const part of [raw.slice(0,20),raw.slice(20,40),raw.slice(40)]){await vi.advanceTimersByTimeAsync(9*60_000);stream.enqueue(new TextEncoder().encode(part));await vi.advanceTimersByTimeAsync(0);}
+  stream.close();expect((await pending).status).toBe(200);expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+ }finally{vi.useRealTimers();}
+});
+it('空字节不延长非流式失联窗口，超大正文也不切换付费通道',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=make();let stream!:ReadableStreamDefaultController<Uint8Array>;
+  f.deps.fetch.mockResolvedValueOnce(new Response(new ReadableStream({start(c){stream=c;}}),{headers:{'Content-Type':'application/json'}}));
+  const pending=expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('未重复提交');await vi.advanceTimersByTimeAsync(9*60_000);stream.enqueue(new Uint8Array());await vi.advanceTimersByTimeAsync(2*60_000);await pending;
+  const oversized=make();oversized.deps.fetch.mockResolvedValueOnce(new Response(new Uint8Array(8*1024*1024+1),{headers:{'Content-Type':'application/json'}}));
+  await expect(invokeKnowledgePublicationRoutes(oversized.request,oversized.evidence,oversized.deps)).rejects.toThrow('未重复提交');expect(oversized.deps.fetch).toHaveBeenCalledTimes(1);expect(oversized.storage.get('test/0/route-openrouter.json').state).toBe('unknown');
+ }finally{vi.useRealTimers();}
+});

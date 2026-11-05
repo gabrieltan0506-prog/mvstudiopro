@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { getOpenRouterApiKey } from "./openrouterGptImage2";
 import { getEvolinkApiKey } from "./gpt56CopywritingGateway";
 import { signGsUriV4ReadUrl } from "./gcs";
-import { readGlmSseStream } from "./sseChatStream";
+import { GLM_STREAM_IDLE_TIMEOUT_MS, readGlmSseStream } from "./sseChatStream";
 import { OPENROUTER_DEEPSEEK_PROVIDER_LOCK } from "./glmModels";
 import { knowledgeReviewSchema } from "../../shared/knowledgePublication";
 import { knowledgeReadingMarkdown } from "../../shared/knowledgePublicationLayout";
@@ -24,6 +24,42 @@ export type KnowledgeRouteEvidence = {
 };
 export type KnowledgeRoute = "openrouter" | "evolink" | "vertex";
 const digest = (data: unknown) => createHash("sha256").update(JSON.stringify(data)).digest("hex");
+
+/** 普通JSON和错误正文同样按有效字节续期；读不完整时保留未知回执，不能再购下一跳。 */
+async function readKnowledgeResponseBody(response: Response, controller: AbortController, onBytes: () => Promise<void>) {
+  if (!response.body) return "";
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  let text = "", bytes = 0, lastByteAt = Date.now();
+  try {
+    while (true) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const idle = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          // 先拒绝，避免cancel使悬挂read先返回done而被当成完整响应。
+          reject(new Error("上游正文失联，未收到完整响应"));
+          controller.abort();
+          void reader.cancel("idle").catch(() => undefined);
+        }, Math.max(1, GLM_STREAM_IDLE_TIMEOUT_MS - (Date.now() - lastByteAt)));
+      });
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try { chunk = await Promise.race([reader.read(), idle]); }
+      finally { if (timer) clearTimeout(timer); }
+      if (chunk.done) return text + decoder.decode();
+      if (!chunk.value.byteLength) continue;
+      lastByteAt = Date.now();
+      bytes += chunk.value.byteLength;
+      if (bytes > 8 * 1024 * 1024) throw new Error("上游正文超过8MiB，未采用不完整结果");
+      text += decoder.decode(chunk.value, { stream: true });
+      await onBytes();
+    }
+  } catch (error) {
+    controller.abort();
+    void reader.cancel(error).catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 const real = {
   key: (route: KnowledgeRoute) => route === "openrouter" ? getOpenRouterApiKey() : getEvolinkApiKey(),
@@ -129,20 +165,21 @@ export async function invokeKnowledgePublicationRoutes(
             } finally { clearTimeout(timer); }
             status = response.status;
             let text: string;
+            let heartbeat = 0;
+            const onBytes = async () => {
+              if (Date.now() - heartbeat > 15000) {
+                await evidence.save(`${evidence.prefix}/${route}-heartbeat.json`, { at: new Date().toISOString(), requestDigest });
+                heartbeat = Date.now();
+              }
+            };
             if (response.ok && (response.headers.get("content-type") || "").includes("text/event-stream")) {
-              let heartbeat = 0;
               if (!response.body) throw new Error("上游流为空");
               text = await readGlmSseStream(response.body, 8 * 1024 * 1024, {
                 strictCompletion: true,
                 onComplete: async raw => evidence.save(`${evidence.prefix}/${route}-response.json`, { status, text: raw.split(apiKey).join("[REDACTED]") }),
-                onBytes: async () => {
-                  if (Date.now() - heartbeat > 15000) {
-                    await evidence.save(`${evidence.prefix}/${route}-heartbeat.json`, { at: new Date().toISOString(), requestDigest });
-                    heartbeat = Date.now();
-                  }
-                },
+                onBytes,
               });
-            } else text = await response.text();
+            } else text = await readKnowledgeResponseBody(response, controller, onBytes);
             receipt = { requestDigest, route, model, state: "received", response: { status, text: text.split(apiKey).join("[REDACTED]") }, imageSources: images };
           }
           await evidence.save(key, receipt);

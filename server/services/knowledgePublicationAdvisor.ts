@@ -218,7 +218,8 @@ export function buildKnowledgeReviewRequest(
     contents: [{ role: "user", parts }],
     generationConfig: {
       temperature: 0.3,
-      maxOutputTokens: 32768,
+      // 输出容量包含推理；整批四页不能共用原单页容量，否则正文会被length截断。
+      maxOutputTokens: Math.min(131072, Math.max(32768, source.pages.length * 32768)),
       responseMimeType: "application/json",
     },
   };
