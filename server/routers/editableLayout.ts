@@ -34,6 +34,11 @@ export const editableLayoutRouter = router({
       const {exportKnowledgePublication}=await import("../services/knowledgePublicationExport");
       return exportKnowledgePublication(ctx.user.id,input.documentId,input.expectedGeneration);
     }),
+  exportPublicationPptx: publicationProcedure.input(z.object({documentId:z.string().uuid(),expectedGeneration:z.string().regex(/^\d+$/)}).strict())
+    .mutation(async({ctx,input})=>{
+      const {exportKnowledgePublicationPptx}=await import("../services/knowledgePublicationPptx");
+      return exportKnowledgePublicationPptx(ctx.user.id,input.documentId,input.expectedGeneration);
+    }),
   get: protectedProcedure.query(({ ctx }) => readLayoutLibrary(ctx.user.id)),
   save: protectedProcedure
     .input(

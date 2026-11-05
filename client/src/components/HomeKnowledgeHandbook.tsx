@@ -38,9 +38,9 @@ export default function HomeKnowledgeHandbook() {
       <div className="overflow-hidden rounded-3xl border border-[var(--hp-line)] bg-[var(--hp-card)]">
         <div className="p-6 sm:p-8">
           <div>
-            <p className="text-xs font-semibold tracking-wide text-[var(--hp-accent)]">把资料读成一本手册</p>
+            <p className="text-xs font-semibold tracking-wide text-[var(--hp-accent)]">职场人汇报神器 · 教师备课好帮手</p>
             <h2 id="home-handbook-title" className="mt-3 text-2xl font-bold leading-snug text-[var(--hp-ink)] sm:text-3xl">图文知识手册</h2>
-            <p className="mt-4 text-sm leading-7 text-[var(--hp-muted)]">上传文档、图片或粘贴正文，把内容转成知识图解，再配上解释图中重点的文字说明。图文穿插、按主题排版，导出一本可阅读、可分享的手册。</p>
+            <p className="mt-4 text-sm leading-7 text-[var(--hp-muted)]">上传文档、图片或粘贴正文，把资料整理成图解、说明和表格。汇报有重点，备课有脉络：导出 PDF 图文手册，或可编辑的 PPTX 课件，按需要修改、增删和调整讲解顺序。</p>
             <p className="mt-3 text-xs leading-6 text-[var(--hp-muted)]">支持 EPUB、PDF、JPG 等多类格式上传。</p>
             <a href={KNOWLEDGE_HANDBOOK_WORKSPACE_HREF} className="mt-6 inline-flex min-h-11 items-center justify-center gap-3 rounded-full bg-[var(--hp-ink)] px-5 py-3 text-sm font-semibold text-[var(--hp-card)] transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--hp-accent)]">生成图文知识手册 <span aria-hidden="true">→</span></a>
           </div>

@@ -14,7 +14,7 @@ it("真实单框组件自动分批、断线恢复同编号、可选手改与确�
  import {layoutFromSource} from './shared/editableLayout';
  import {knowledgeReviewBatches} from './shared/knowledgePublication';
  const initial=layoutFromSource({owner:'7',sourceId:'fixture',kind:'knowledge-publication',detailLevel:'full',title:'水循环',body:'',pages:Array.from({length:5},(_,i)=>({pageIndex:i+1,headline:'水循环阶段'+(i+1),body:'原始说明'+i}))});
- window.saved=initial;window.calls=[];window.exports=[];window.generation=0;let disconnected=false;
+ window.saved=initial;window.calls=[];window.exports=[];window.pptxExports=[];window.generation=0;let disconnected=false;
  window.stream=async input=>{window.calls.push(input);const c=input.knowledgePublicationContext;const s=window.saved.publication.source;const batches=knowledgeReviewBatches(s);if(c.batchIndex===1&&!disconnected){disconnected=true;throw new Error('测试断线，恢复原请求');}const answer=c.batchIndex===batches.length?{kind:'knowledge_consistency_batch_v1',sourceDigest:'a'.repeat(64),batchIndex:2,batchCount:4}:c.batchIndex===batches.length+1?{kind:'knowledge_publication_v1',sourceDigest:'a'.repeat(64),title:s.title,pages:s.pages.map(p=>({id:p.id,headline:p.headline,body:'已补充知识解释：蒸发、凝结与降水。',imageStatus:'absent',imageDescription:'',facts:[{term:"知识要点",statement:"测试中的具体知识主张"}],cautions:[],reading:{version:1,templateId:'fusion_ink_mountains',templateReason:'自然主题适合水墨阅读风格',subtitle:'',accent:'jade',blocks:[{type:'prose',title:'知识说明',text:'已补充知识解释：蒸发、凝结与降水。',note:''}]}}))}:{kind:'knowledge_publication_batch_v1',sourceDigest:'a'.repeat(64),batchIndex:c.batchIndex,batchCount:batches.length,reviewedPages:batches[c.batchIndex].map(i=>s.pages[i].id)};return {success:true,answer:JSON.stringify(answer),creditsCharged:0};};
  function App(){const[doc,setDoc]=useState(initial);return <Panel doc={doc} onBusy={()=>{}} onChange={setDoc} commit={async next=>{window.saved=next;setDoc(next);return {generation:String(++window.generation)}}}/>};createRoot(document.getElementById('root')).render(<App/>);
  `,
@@ -40,7 +40,7 @@ it("真实单框组件自动分批、断线恢复同编号、可选手改与确�
           b.onLoad({ filter: /.*/, namespace: "fixture" }, args => ({
             loader: "js",
             contents: args.path.endsWith("/trpc")
-              ? `export const trpc={useUtils:()=>({editableLayout:{publicationQuote:{fetch:async()=>({batches:window.saved.publication.completedBatches>=2?4:3,remaining:4-window.saved.publication.completedBatches,reviewBatches:2,consistencyKnown:window.saved.publication.completedBatches>=2,paidUnit:1,maxCredits:0,estimatedCredits:0})}}}),editableLayout:{exportPublication:{useMutation:()=>({mutateAsync:async input=>{window.exports.push(input);return {htmlUrl:'https://test.invalid/book.html',pdfUrl:'https://test.invalid/book.pdf'}}})}}};`
+              ? `export const trpc={useUtils:()=>({editableLayout:{publicationQuote:{fetch:async()=>({batches:window.saved.publication.completedBatches>=2?4:3,remaining:4-window.saved.publication.completedBatches,reviewBatches:2,consistencyKnown:window.saved.publication.completedBatches>=2,paidUnit:1,maxCredits:0,estimatedCredits:0})}}}),editableLayout:{exportPublicationPptx:{useMutation:()=>({mutateAsync:async input=>{window.pptxExports.push(input);return {pptxUrl:'https://test.invalid/book.pptx',pptxBytes:12000,slides:10}}})},exportPublication:{useMutation:()=>({mutateAsync:async input=>{window.exports.push(input);return {htmlUrl:'https://test.invalid/book.html',pdfUrl:'https://test.invalid/book.pdf'}}})}}};`
               : args.path.endsWith("/manhuaAdvisorStream")
                 ? `export const streamManhuaAdvisor=(input)=>window.stream(input);`
                 : `export const flyDownloadUrl=url=>url;`,
@@ -121,7 +121,11 @@ it("真实单框组件自动分批、断线恢复同编号、可选手改与确�
     await page.waitForFunction(() => document.querySelector('iframe')?.srcdoc.includes('class="theme-fusion_maple_bridge"'));
     expect(await page.evaluate(() => (window as any).calls.length)).toBe(5);
     expect(await page.evaluate(() => (window as any).exports.length)).toBe(0);
-    await click("确认生成图文知识手册");
+    await click("导出可编辑 PPTX");
+    await page.waitForFunction(()=>Array.from(document.querySelectorAll('a')).some(a=>a.textContent?.includes('下载 PPTX')));
+    expect(await page.evaluate(()=>(window as any).pptxExports.length)).toBe(1);
+    expect(await page.evaluate(()=>(window as any).exports.length)).toBe(0);
+    await click("下载当前版 HTML 和 PDF");
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll("a")).some(
         a => a.textContent === "下载 PDF"

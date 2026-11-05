@@ -83,12 +83,12 @@ const real = {
     });
   },
 };
-export async function exportKnowledgePublication(
+export async function loadKnowledgePublicationExport(
   owner: number,
   documentId: string,
   generation: string,
   overrides: Partial<typeof real> = {}
-): Promise<KnowledgePublicationExport> {
+) {
   const deps = {...real, ...overrides};
   const loaded = await deps.load(owner);
   if (loaded.generation !== generation)
@@ -146,6 +146,13 @@ export async function exportKnowledgePublication(
     )
     .digest("hex");
   const prefix = `knowledge-publications/user-${owner}/${documentId}/exports/${digest}`;
+  return {doc,review,receipt,prefix};
+}
+export async function exportKnowledgePublication(
+  owner:number,documentId:string,generation:string,overrides:Partial<typeof real>={}
+):Promise<KnowledgePublicationExport>{
+  const deps={...real,...overrides};
+  const {doc,review,receipt,prefix}=await loadKnowledgePublicationExport(owner,documentId,generation,deps);
   const run = async () => {
     const manifest = await deps.read(`${prefix}/manifest.json`);
     if (manifest) {
@@ -304,7 +311,7 @@ export async function exportKnowledgePublication(
       await rm(folder, { recursive: true, force: true });
     }
   };
-  const key = `${owner}/${documentId}/${digest}`;
+  const key = prefix;
   if (inflight.has(key)) return inflight.get(key)!;
   const task = run().finally(() => inflight.delete(key));
   inflight.set(key, task);

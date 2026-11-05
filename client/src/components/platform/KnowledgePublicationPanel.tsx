@@ -38,6 +38,8 @@ export default function KnowledgePublicationPanel({
 }) {
   const utils = trpc.useUtils();
   const exporter = trpc.editableLayout.exportPublication.useMutation();
+  const pptxExporter = trpc.editableLayout.exportPublicationPptx.useMutation();
+  const [pptxFile,setPptxFile]=useState<{pptxUrl:string;slides:number}|null>(null);
   const latest = useRef(doc);
   latest.current = doc;
   const active = useRef(false),
@@ -63,6 +65,7 @@ export default function KnowledgePublicationPanel({
   }, []);
   useEffect(() => {
     setFiles(null);
+    setPptxFile(null);
     setPageIndex(0);
     setError("");
     setTerminal(false);
@@ -82,6 +85,7 @@ export default function KnowledgePublicationPanel({
     setError("");
     setTerminal(false);
     setFiles(null);
+    setPptxFile(null);
     try {
       let next = latest.current,
         pub = next.publication!;
@@ -209,7 +213,7 @@ export default function KnowledgePublicationPanel({
       void run();
     }
   }, [autoStart, doc.id]);
-  const publish = async () => {
+  const publish = async (format: "pdf" | "pptx" = "pdf") => {
     if (active.current) return;
     locked(true);
     setError("");
@@ -228,13 +232,15 @@ export default function KnowledgePublicationPanel({
         updatedAt: new Date().toISOString(),
       };
       const saved = await save(next);
-      setMessage("确认稿已保存，正在自动排版并生成 HTML 和 PDF…");
-      const result = await exporter.mutateAsync({
-        documentId: next.id,
-        expectedGeneration: saved.generation,
-      });
-      setFiles(result);
-      setMessage(result.pdfError || "HTML 和 PDF 已生成并保存，可直接下载。");
+      if(format==="pptx"){
+        setMessage("确认稿已保存，正在生成可编辑课件…");
+        const result=await pptxExporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});
+        setPptxFile(result);setMessage(`PPTX已生成，共${result.slides}页，可下载后编辑。`);
+      }else{
+        setMessage("确认稿已保存，正在自动排版并生成 HTML 和 PDF…");
+        const result=await exporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});
+        setFiles(result);setMessage(result.pdfError || "HTML 和 PDF 已生成并保存，可直接下载。");
+      }
     } catch (e) {
       setError(knowledgePublicationPublicError(e).message);
     } finally {
@@ -295,6 +301,7 @@ export default function KnowledgePublicationPanel({
           value={pub.infographicTemplateId || "auto"} disabled={busy}
           onChange={e => {
             setFiles(null);
+            setPptxFile(null);
             onChange({ ...doc, publication: { ...pub, infographicTemplateId: e.target.value === "auto" ? undefined : e.target.value, confirmedManuscript: undefined }, updatedAt: new Date().toISOString() });
           }}>
           <option value="auto">按内容自动匹配第一组模板</option>
@@ -390,6 +397,7 @@ export default function KnowledgePublicationPanel({
                 disabled={busy}
                 onChange={e => {
                   setFiles(null);
+            setPptxFile(null);
                   onChange({
                     ...doc,
                     publication: {
@@ -421,6 +429,10 @@ export default function KnowledgePublicationPanel({
                   ? "下载当前版 HTML 和 PDF"
                   : "确认生成图文知识手册"}
             </button>
+            <button className={button} disabled={busy || !preview} onClick={()=>void publish("pptx")}>
+              导出可编辑 PPTX
+            </button>
+            {pptxFile && <a className={button} href={flyDownloadUrl(pptxFile.pptxUrl)} download>下载 PPTX · {pptxFile.slides}页</a>}
             {files && (
               <>
                 <a
