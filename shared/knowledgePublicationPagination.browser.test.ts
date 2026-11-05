@@ -20,6 +20,10 @@ it('正式预览和PDF打印样式下原图与说明穿插，最终字体重排�
   await page.evaluate(async()=>{for(const root of Array.from(document.querySelectorAll('[data-booklet-root]')))await (root as any).__layoutBooklet();});
   const result=await page.evaluate(()=>({texts:Array.from(document.querySelectorAll('.reading-unit')).map(el=>el.textContent),order:Array.from(document.querySelectorAll('.folio')).map(el=>el.classList.contains('image-folio')?'图':'文'),overflow:Array.from(document.querySelectorAll('.folio,.reading-column')).some(el=>el.scrollHeight>el.clientHeight+2),images:Array.from(document.querySelectorAll('.main-card img')).map(el=>el.getBoundingClientRect().height),colors:Array.from(document.querySelectorAll('.image-folio')).map(el=>getComputedStyle(el).color),text:document.body.innerText}));
   expect(result.texts).toEqual(before);expect(result.overflow).toBe(false);
+  const typography=await page.evaluate(()=>({paragraph:getComputedStyle(document.querySelector('.prose-unit p')!).fontSize,table:getComputedStyle(document.querySelector('td p')!).fontSize,titles:Array.from(document.querySelectorAll('.image-title h1,.reading-title h2')).map(e=>e.textContent),running:Array.from(document.querySelectorAll('.running span:first-child')).map(e=>e.textContent)}));
+  expect(typography.paragraph).toBe('24px');expect(typography.table).toBe('22.5px');
+  expect(typography.titles[0]).toBe(doc.title);expect(typography.titles.slice(1)).not.toContain(doc.title);
+  expect(typography.running.slice(1)).not.toContain(doc.title);expect(typography.titles.slice(1).every(Boolean)).toBe(true);
   expect(result.order[0]).toBe('图');expect(result.order.indexOf('文')).toBeLessThan(result.order.lastIndexOf('图'));
   expect(result.images.every(h=>h>=760 && h<=796)).toBe(true);expect(new Set(result.colors).size).toBe(2);
   expect(result.text).toContain('尾句没有丢失。');expect(result.text).toContain('单元格结尾保留');
@@ -43,7 +47,7 @@ it('两份独立PDF片段在最终字体重排后仍使用同一全书页码',as
   const numbers=[];
   for(const [i,fragment]of Array.from(fragments.entries())){
    await page.setContent(knowledgePublicationHead('完整手册',{offset,total,count:counts[i]})+fragment+'</body></html>');
-   await finalizeKnowledgeBookletPagination(page);numbers.push(await page.$$eval('.page-number',els=>els.map(el=>el.textContent)));offset+=counts[i];
+   await finalizeKnowledgeBookletPagination(page);expect(await page.$eval('.reading-title h2',el=>el.textContent)).toBe(i===0?'完整手册':'第2章');numbers.push(await page.$$eval('.page-number',els=>els.map(el=>el.textContent)));offset+=counts[i];
   }
   expect(numbers).toEqual([['01 / 02'],['02 / 02']]);
   await page.setContent(knowledgePublicationHead('完整手册',{offset:0,total:3,count:2})+fragments[0]+'</body></html>');
