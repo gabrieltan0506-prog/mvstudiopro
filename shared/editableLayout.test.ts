@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLayoutHtml,
+  renderLayoutBody,
   layoutFromSource,
   layoutLibrarySchema,
 } from "./editableLayout";
@@ -78,5 +79,30 @@ describe("可编辑排版契约与导出", () => {
         pages: Array.from({ length: 101 }, () => source.pages[0]),
       })
     ).toThrow();
+  });
+});
+
+describe("正文安全排版", () => {
+  it("标题列表表格真实转为标签，保留全文和普通换行", () => {
+    const body =
+      "## 结构\n\n- 本纪\n- 列传\n\n| 体例 | 内容 |\n| --- | --- |\n| 本纪 | 帝王 |\n\n**读法**\n末句保留";
+    const html = renderLayoutBody(body);
+    expect(html).toContain("<h2>结构</h2>");
+    expect(html).toContain("<li>本纪</li>");
+    expect(html).toContain("<table>");
+    expect(html).toContain("<td>帝王</td>");
+    expect(html).toContain("<strong>读法</strong>");
+    expect(html).toContain("末句保留");
+    expect(renderLayoutBody("旧正文第一行\n第二行")).toContain("<br>");
+  });
+  it("恶意HTML、实体与链接不得激活脚本或额外外链图片", () => {
+    const html = renderLayoutBody(
+      "<script>alert(1)</script>\n\n[文字](javascript:alert%281%29) ![配图](https://evil.invalid/a.png)\n\n<img src=x onerror=alert(1)>\n\n&#60;svg onload=alert(1)&#62;"
+    );
+    expect(html).not.toMatch(/<(script|img|svg|a)\b/i);
+    expect(html).not.toContain("href=");
+    expect(html).toContain("文字");
+    expect(html).toContain("&lt;script");
+    expect(html).toContain("&amp;#60;");
   });
 });
