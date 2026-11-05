@@ -44,7 +44,7 @@ describe("归档断点规划", () => {
     const f = fixture();
     expect(
       planArchiveBatch(f.row, f.assets, new Map([[f.name, f.raw]]))
-    ).toMatchObject({ reused: 1, selected: [], reclaim: [expect.stringContaining(f.row.trim().split("\t")[0])], remaining: 0 });
+    ).toMatchObject({ reused: 1, selected: [], reclaim: [], remaining: 0 });
     expect(
       planArchiveBatch(
         f.row.replace("a".repeat(64), "b".repeat(64)),
@@ -99,44 +99,73 @@ describe("归档断点规划", () => {
         .selected
     ).toHaveLength(1);
   });
-  it("已回读且指纹未变的旧归档按容量与数量限制进入独立删源队列", () => {
-    const fixtures = Array.from({ length: 6 }, (_, i) =>
-      fixture(`2026-08-${String(i + 1).padStart(2, "0")}-00`)
-    );
-    const plan = planArchiveBatch(
-      fixtures.map(f => f.row).join(""),
-      fixtures.flatMap(f => f.assets),
-      new Map(fixtures.map(f => [f.name, f.raw]))
-    );
-    expect(plan).toMatchObject({ reused: 6, pending: 0, selected: [], reclaimRemaining: 2 });
-    expect(plan.reclaim).toHaveLength(4);
-    const fields = plan.reclaim[0].split("\t");
-    expect(fields).toEqual([
-      "2026-08-01-00", "a".repeat(64), "100",
-      fixtures[0].manifest.archive.assetName,
-      String(fixtures[0].manifest.archive.bytes), fixtures[0].manifest.archive.sha256,
-      fixtures[0].name, String(Buffer.byteLength(fixtures[0].raw)), sha(fixtures[0].raw),
-      expect.any(String),
-    ]);
-  });
-  it("只有reclaim时跳过新上传但继续删源；真正空批次才标记EMPTY", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "growth-archive-plan-"));
+  it("缺少逐文件清单的已备份目录只计复用，不产生清理候选", () => {
+    const f=fixture();
+    const plan=planArchiveBatch(f.row,f.assets,new Map([[f.name,f.raw]]));
+    expect(plan).toMatchObject({reused:1,reclaim:[],reclaimRemaining:0,selected:[]});
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),"growth-retain-test-"));
     try {
-      const f = fixture();
-      writeArchivePlan(root, planArchiveBatch(f.row, f.assets, new Map([[f.name, f.raw]])));
-      expect(fs.existsSync(path.join(root, "UPLOAD_EMPTY"))).toBe(true);
-      expect(fs.existsSync(path.join(root, "EMPTY"))).toBe(false);
-      expect(fs.readFileSync(path.join(root, "reclaim.tsv"), "utf8")).toContain(f.name);
-      writeArchivePlan(root, planArchiveBatch("", [], new Map()));
-      expect(fs.existsSync(path.join(root, "UPLOAD_EMPTY"))).toBe(false);
-      expect(fs.existsSync(path.join(root, "EMPTY"))).toBe(true);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
+      writeArchivePlan(root,plan);
+      expect(fs.existsSync(path.join(root,"EMPTY"))).toBe(true);
+      expect(fs.readFileSync(path.join(root,"reclaim.tsv"),"utf8")).toBe("");
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
   });
   it("非法路径/指纹/空字节数中止而非静默过滤", () => {
     for (const row of ["../bad\tx\t1", `ok\t${"a".repeat(64)}\t`, ""]) {
       if (row) expect(() => planArchiveBatch(row, [], new Map())).toThrow();
     }
   });
+});
+
+function completeFixture(dir = "2026-09-01-00", bytes = 100) {
+  const f = fixture(dir);
+  const inventory = [{path:"bilibili-feed+bilibili_ranking.json.gz",bytes,sha256:sha("source"),items:1}];
+  const fingerprint = sha(JSON.stringify(inventory.map(row=>[row.path,row.bytes,row.sha256])));
+  const manifest = {...f.manifest,sourceFingerprint:fingerprint,inventory};
+  const raw = JSON.stringify(manifest,null,"\t");
+  return {...f,manifest,raw,row:`${dir}\t${fingerprint}\t${bytes}\n`,assets:[
+    {...f.assets[0],size:Buffer.byteLength(raw),digest:`sha256:${sha(raw)}`},f.assets[1]],fingerprint};
+}
+it("完整同源复用桶形成独立清理包，原始manifest字节保留且不新上传",()=>{
+  const f=completeFixture(), plan=planArchiveBatch(f.row,f.assets,new Map([[f.name,f.raw]]));
+  expect(plan.selected).toEqual([]);expect(plan.reclaim).toHaveLength(1);
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"growth-reuse-cleanup-"));
+  try {
+    fs.writeFileSync(path.join(root,"batch-id.txt"),"123-1-backup");
+    writeArchivePlan(root,plan);
+    expect(fs.existsSync(path.join(root,"EMPTY"))).toBe(false);
+    expect(fs.existsSync(path.join(root,"UPLOAD_EMPTY"))).toBe(true);
+    const input=JSON.parse(fs.readFileSync(path.join(root,"reused-cleanup-input.json"),"utf8"));
+    expect(input.batch.archives).toEqual([{dir:f.manifest.dir,releaseTag:"growth-archive-2026-09-01",sourceFingerprint:f.fingerprint}]);
+    expect(input.publication.reused).toEqual([{dir:f.manifest.dir,releaseTag:"growth-archive-2026-09-01"}]);
+    expect(Buffer.from(input.manifests[f.name],"base64").toString()).toBe(f.raw);
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+it("复用清理最多四桶及512MiB，不影响原上传选择",()=>{
+  const fsx=Array.from({length:7},(_,i)=>completeFixture(`2026-09-${String(i+1).padStart(2,"0")}-00`,i===0?600*1024*1024:100*1024*1024));
+  const plan=planArchiveBatch(fsx.map(f=>f.row).join(""),fsx.flatMap(f=>f.assets),new Map(fsx.map(f=>[f.name,f.raw])));
+  expect(plan.reused).toBe(7);expect(plan.selected).toEqual([]);expect(plan.reclaim).toHaveLength(4);expect(plan.reclaimRemaining).toBe(3);
+  expect(plan.reclaim[0]).toContain("2026-09-02-00");
+});
+it("清单源hash不匹配或部件不在同一release时不生成清理候选",()=>{
+  const f=completeFixture();
+  const wrong={...f.manifest,inventory:f.manifest.inventory.map(row=>({...row,sha256:sha("other")}))};
+  const raw=JSON.stringify(wrong);
+  const assets=[{...f.assets[0],size:Buffer.byteLength(raw),digest:`sha256:${sha(raw)}`},f.assets[1]];
+  expect(planArchiveBatch(f.row,assets,new Map([[f.name,raw]])).reclaim).toEqual([]);
+  expect(planArchiveBatch(f.row,[f.assets[0],{...f.assets[1],releaseTag:"growth-cold-store-latest"}],new Map([[f.name,f.raw]])).reclaim).toEqual([]);
+});
+
+it("修订复用只有当前指针指向同一完整清单才进入清理候选",()=>{
+  const f=completeFixture();
+  const releaseTag=`growth-archive-revision-${f.manifest.dir}-${f.fingerprint}`;
+  const assets=f.assets.map(asset=>({...asset,releaseTag}));
+  const manifests=new Map([[f.name,f.raw]]);
+  expect(planArchiveBatch(f.row,assets,manifests).reclaim).toEqual([]);
+  const raw=JSON.stringify({schemaVersion:1,dir:f.manifest.dir,releaseTag,
+    manifest:{assetName:f.name,bytes:Buffer.byteLength(f.raw),sha256:sha(f.raw)}},null,2);
+  const pointer={name:`archive-${f.manifest.dir}.latest.json`,size:Buffer.byteLength(raw),
+    digest:`sha256:${sha(raw)}`,state:"uploaded",releaseTag:"growth-archive-2026-09-01"};
+  expect(planArchiveBatch(f.row,[...assets,pointer],manifests).reclaim).toHaveLength(1);
+  expect(planArchiveBatch(f.row,[...assets,{...pointer,digest:`sha256:${sha("stale")}`}],manifests).reclaim).toEqual([]);
 });

@@ -1,3 +1,7 @@
+import {
+  privateGrowthBackupTarget,
+  runBackupGh,
+} from "./growth-backup-target.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -66,7 +70,8 @@ export function prepareArchivePublication(root) {
   const batchId = fs
     .readFileSync(path.join(root, "batch-id.txt"), "utf8")
     .trim();
-  if (!/^[0-9]+-[0-9]+$/.test(batchId)) fail("archive_batch_invalid");
+  if (!/^[0-9]+-[0-9]+(?:-backup)?$/.test(batchId))
+    fail("archive_batch_invalid");
   const allParts = rows(root, "assets.tsv", 6);
   const assets = [],
     archives = [],
@@ -113,7 +118,7 @@ export function prepareArchivePublication(root) {
         if (actual.bytes !== integer(size) || actual.sha256 !== partSha)
           fail(`archive_part_integrity:${name}`);
         used.add(name);
-        assets.push({ name, file, ...actual });
+        assets.push({ name, file, dir, ...actual });
         return { assetName: name, ...actual, index: i };
       }
     );
@@ -131,11 +136,40 @@ export function prepareArchivePublication(root) {
     // 快照的逻辑字节必须与包内普通文件逐项总和一致，避免只打进部分文件。
     if (verified.logicalBytes !== Number(sourceBytes))
       fail(`archive_source_bytes_mismatch:${dir}`);
+    const inventoryFile = path.join(root, "source-inventory.json");
+    const expected = fs.existsSync(inventoryFile)
+      ? JSON.parse(fs.readFileSync(inventoryFile, "utf8")).inventories?.[dir]
+      : null;
+    if (process.env.GROWTH_REQUIRE_SOURCE_INVENTORY === "1" && !expected)
+      fail(`archive_source_inventory_missing:${dir}`);
+    if (
+      expected &&
+      (expected.errors.length ||
+        JSON.stringify(
+          expected.files
+            .slice()
+            .sort((a, b) => a.path.localeCompare(b.path, "en"))
+        ) !==
+          JSON.stringify(
+            verified.inventory
+              .slice()
+              .sort((a, b) => a.path.localeCompare(b.path, "en"))
+          ))
+    )
+      fail(`archive_source_inventory_mismatch:${dir}`);
+    if (
+      expected &&
+      sha(
+        JSON.stringify(expected.files.map(f => [f.path, f.bytes, f.sha256]))
+      ) !== fingerprint
+    )
+      fail(`archive_source_fingerprint_mismatch:${dir}`);
     content.push(verified);
     const manifest = {
       schemaVersion: 1,
       dir,
       sourceFingerprint: fingerprint,
+      inventory: verified.inventory,
       archive: { assetName: asset, ...actual },
       parts: descriptions,
     };
@@ -143,7 +177,7 @@ export function prepareArchivePublication(root) {
       file = path.join(root, "assets", name);
     const raw = Buffer.from(JSON.stringify(manifest, null, 2));
     fs.writeFileSync(file, raw);
-    assets.push({ name, file, bytes: raw.length, sha256: sha(raw) });
+    assets.push({ name, file, dir, bytes: raw.length, sha256: sha(raw) });
     archives.push({
       dir,
       asset,
@@ -189,24 +223,25 @@ export function prepareArchivePublication(root) {
   return assets;
 }
 
-export function publishArchiveBatch(
-  root,
-  gh = args =>
-    execFileSync("gh", args, {
-      encoding: "utf8",
-      timeout: 180_000,
-      maxBuffer: 32 * 1024 * 1024,
-    })
-) {
+export function publishArchiveBatch(root, gh = runBackupGh) {
   fs.rmSync(path.join(root, "DELETE_READY"), { force: true });
+  fs.rmSync(path.join(root, "UPLOAD_VERIFIED"), { force: true });
   const assets = prepareArchivePublication(root);
-  const repo = JSON.parse(
-    gh(["repo", "view", "--json", "nameWithOwner"])
-  ).nameWithOwner;
+  const target = privateGrowthBackupTarget(gh);
+  gh = target.gh;
+  const repo = target.repository;
   const releases = JSON.parse(
     gh(["api", "--paginate", "--slurp", `repos/${repo}/releases?per_page=100`])
   ).flat();
-  const tags = new Set([LEGACY_GROWTH_RELEASE, ...assets.map(publicationTag)]);
+  const manifestFile = path.join(root, "offload-manifest.json");
+  const batch = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+  const revisionTag = dir =>
+    `growth-archive-revision-${dir}-${batch.archives.find(a => a.dir === dir).sourceFingerprint}`;
+  const tags = new Set([
+    LEGACY_GROWTH_RELEASE,
+    ...assets.map(publicationTag),
+    ...batch.archives.map(a => revisionTag(a.dir)),
+  ]);
   const inventory = new Map();
   for (const release of releases.filter(r => tags.has(r.tag_name))) {
     const entries = JSON.parse(
@@ -219,20 +254,64 @@ export function publishArchiveBatch(
     ).flat();
     inventory.set(release.tag_name, entries);
   }
+  const releaseIds = new Map(releases.map(r => [r.tag_name, r.id]));
+  const refreshInventory = tag => {
+    if (!releaseIds.has(tag)) {
+      const rows = JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/releases?per_page=100`])).flat();
+      const found = rows.filter(r => r.tag_name === tag);
+      if (found.length !== 1) fail("archive_release_identity_unconfirmed");
+      releaseIds.set(tag, found[0].id);
+    }
+    const rows = JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/releases/${releaseIds.get(tag)}/assets?per_page=100`])).flat();
+    inventory.set(tag, rows);
+    return rows;
+  };
   const matches = (a, b) =>
     b.state === "uploaded" &&
     b.size === a.bytes &&
     b.digest === `sha256:${a.sha256}`;
-  // 同时检查旧仓，防止创建新日仓附件遮蔽旧仓中不同的有效备份。
-  for (const asset of assets) {
+  // A conflicting canonical asset is historical evidence, never overwritten. Publish
+  // a content-identified revision, then commit a small pointer after every metadata verification.
+  const revised = new Set();
+  for (const asset of assets.filter(a => a.dir)) {
     for (const tag of new Set([LEGACY_GROWTH_RELEASE, publicationTag(asset)])) {
+      // 曾有修订指针时继续显式提交修订，避免旧指针遮蔽重新出现的原版内容。
+      if ((inventory.get(tag) || []).some(a => a.name === `archive-${asset.dir}.latest.json`))
+        revised.add(asset.dir);
       const existing = (inventory.get(tag) || []).filter(
         a => a.name === asset.name
       );
       if (existing.length > 1 || existing.some(a => !matches(asset, a)))
-        fail(`archive_asset_conflict:${tag}/${asset.name}`);
+        revised.add(asset.dir);
     }
   }
+  for (const asset of assets.filter(a => a.dir)) {
+    if (revised.has(asset.dir)) asset.releaseTag = revisionTag(asset.dir);
+    const existing = (inventory.get(publicationTag(asset)) || []).filter(
+      a => a.name === asset.name
+    );
+    if (existing.length > 1 || existing.some(a => !matches(asset, a)))
+      fail(`archive_asset_conflict:${publicationTag(asset)}/${asset.name}`);
+  }
+  for (const archive of batch.archives)
+    archive.releaseTag = revised.has(archive.dir)
+      ? revisionTag(archive.dir)
+      : growthColdStoreReleaseTag(archive.asset);
+  const batchRaw = Buffer.from(JSON.stringify(batch, null, 2));
+  const batchAsset = assets.find(
+    a => a.name === `offload-manifest-${batch.batchId}.json`
+  );
+  fs.writeFileSync(manifestFile, batchRaw);
+  fs.writeFileSync(batchAsset.file, batchRaw);
+  Object.assign(batchAsset, { bytes: batchRaw.length, sha256: sha(batchRaw) });
+  const previousBatch = (
+    inventory.get(publicationTag(batchAsset)) || []
+  ).filter(a => a.name === batchAsset.name);
+  if (
+    previousBatch.length > 1 ||
+    previousBatch.some(a => !matches(batchAsset, a))
+  )
+    fail("archive_batch_manifest_conflict");
   fs.writeFileSync(path.join(root, "verified-assets.tsv"), "");
   fs.writeFileSync(path.join(root, "manifest-assets.tsv"), "");
   for (const asset of assets) {
@@ -258,23 +337,83 @@ export function publishArchiveBatch(
       // 超时/断线直接失败；下次重新枚举和回读核验，不盲目删除或重传。
       gh(["release", "upload", tag, `${asset.file}#${asset.name}`]);
     }
-    const readback = fs.mkdtempSync(path.join(root, "release-readback-"));
-    gh(["release", "download", tag, "-p", asset.name, "-D", readback]);
-    const actual = hashFiles([path.join(readback, asset.name)]);
-    if (actual.bytes !== asset.bytes || actual.sha256 !== asset.sha256)
-      fail(`archive_readback_mismatch:${asset.name}`);
+    const actual = refreshInventory(tag).filter(row => row.name === asset.name);
+    if (actual.length !== 1 || !matches(asset, actual[0]))
+      fail(`archive_upload_metadata_mismatch:${asset.name}`);
     const row = `${asset.name}\t${asset.bytes}\t${asset.sha256}\n`;
     fs.appendFileSync(path.join(root, "verified-assets.tsv"), row);
     if (asset.name.endsWith(".manifest.json"))
       fs.appendFileSync(path.join(root, "manifest-assets.tsv"), row);
   }
-  const manifestFile = path.join(root, "offload-manifest.json");
+  for (const dir of revised) {
+    const asset = assets.find(
+      a => a.dir === dir && a.name.endsWith(".manifest.json")
+    );
+    const pointer = {
+      schemaVersion: 1,
+      dir,
+      releaseTag: revisionTag(dir),
+      manifest: {
+        assetName: asset.name,
+        bytes: asset.bytes,
+        sha256: asset.sha256,
+      },
+    };
+    const name = `archive-${dir}.latest.json`,
+      file = path.join(root, name);
+    fs.writeFileSync(file, JSON.stringify(pointer, null, 2));
+    const tag = growthColdStoreReleaseTag(name);
+    if (!inventory.has(tag)) {
+      gh([
+        "release",
+        "create",
+        tag,
+        "--target",
+        process.env.GITHUB_SHA || "main",
+        "--latest=false",
+        "--title",
+        tag,
+        "--notes",
+        "Growth archive revision pointers",
+      ]);
+      inventory.set(tag, []);
+    }
+    // Only this pointer is replaceable; immutable versions remain available on failure.
+    const expected = {
+      bytes: fs.statSync(file).size,
+      sha256: sha(fs.readFileSync(file)),
+    };
+    const existing = (inventory.get(tag) || []).find(a => a.name === name);
+    if (!existing || !matches(expected, existing))
+      gh(["release", "upload", tag, `${file}#${name}`, "--clobber"]);
+    const committed = refreshInventory(tag).filter(row => row.name === name);
+    if (committed.length !== 1 || !matches(expected, committed[0])) fail("archive_pointer_commit_unverified");
+  }
   fs.writeFileSync(
-    path.join(root, "DELETE_READY"),
+    path.join(root, "publication-result.json"),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        batchId: batch.batchId,
+        uploaded: batch.archives.map(a => ({
+          dir: a.dir,
+          releaseTag: a.releaseTag,
+        })),
+        revised: [...revised],
+        sourceDeletionAuthorized: false,
+        verification: "github-uploaded-size-sha256-metadata",
+        remoteRestoreVerified: false,
+      },
+      null,
+      2
+    )
+  );
+  fs.writeFileSync(
+    path.join(root, "UPLOAD_VERIFIED"),
     `${hashFiles([manifestFile]).sha256}  ${manifestFile}\n`
   );
   console.log(
-    `本批 ${assets.length} 个附件内容验证及远端回读通过；删源仍须生产恢复和指纹保护。`
+    `本批 ${assets.length} 个附件已校验；历史版本和全部来源保留，未授权删除。`
   );
 }
 

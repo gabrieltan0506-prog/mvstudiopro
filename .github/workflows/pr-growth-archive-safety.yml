@@ -6,8 +6,23 @@ on:
       - '.github/workflows/growth-archive-offload.yml'
       - '.github/workflows/pr-growth-archive-safety.yml'
       - 'scripts/growth-archive-*'
-      - 'scripts/validate-growth-archive*'
+      - 'scripts/growth-excluded-platform-*'
+      - 'scripts/validate-growth-*'
+      - 'shared/growthPrivateAssetFetch*'
+      - 'scripts/growth-runtime-packaging*'
+      - 'scripts/growth-cold-store-routing-check.mjs'
+      - 'scripts/growth-workflow-wiring.test.mjs'
+      - 'scripts/cleanup-growth-current-snapshot.mts'
+      - 'scripts/growth-current-snapshot-cleanup.test.mjs'
       - 'shared/growthColdStoreRelease.mjs'
+      - 'shared/growthArchiveRestore*'
+      - 'shared/growthBackupGeneration*'
+      - 'scripts/growth-backup-*'
+      - 'scripts/growth-core-workflow*'
+      - 'scripts/snapshot-growth-platform-current-batch.mts'
+      - 'server/growth/trendStore.ts'
+      - 'server/growth/guaikei/**'
+      - 'server/growth/growthStoreMutationLock*'
 permissions:
   contents: read
 jobs:
@@ -22,9 +37,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: 隔离验证候选、内容、同名冲突与发布恢复
         run: |
-          node --test scripts/growth-archive-publication.test.mjs
+          node --test scripts/growth-archive-publication.test.mjs scripts/growth-archive-cleanup.test.mjs scripts/growth-archive-delete-verified.test.mjs scripts/growth-archive-staging.test.mjs scripts/growth-archive-retirement-wiring.test.mjs scripts/growth-archive-retire.test.mjs
+          node --test scripts/growth-workflow-wiring.test.mjs scripts/growth-current-snapshot-cleanup.test.mjs scripts/growth-excluded-platform-cleanup.test.mjs
+          node --test scripts/growth-backup-generation.test.mjs shared/growthArchiveRestore.test.mjs scripts/growth-backup-coverage.test.mjs scripts/growth-backup-workflows.test.mjs scripts/growth-core-workflow.test.mjs scripts/growth-runtime-packaging.test.mjs shared/growthPrivateAssetFetch.test.mjs scripts/growth-backup-target.test.mjs
+          pnpm exec vitest run --no-cache server/growth/growthArchiveWorkflowSafety.test.ts server/growth/growthArchivePlan.test.ts server/growth/growthArchiveTransfer.test.ts server/growth/growthArchiveColdStore.test.ts server/growth/growthArchiveColdRestoreCli.test.ts server/growth/growthStoreMutationLock.test.ts server/growth/growthColdStoreRelease.test.ts server/growth/growthBackupGenerationIntegration.test.ts server/growth/growthRetiredPlatformRead.test.ts server/growth/guaikei/automation.test.ts server/growth/guaikei/service.test.ts
+          pnpm exec tsc --noEmit --incremental false
+          python3 scripts/validate-growth-backup-directories.test.py
           python3 scripts/validate-growth-archive.test.py
           node --check scripts/growth-archive-publish.mjs
           sh -n scripts/growth-archive-offload-remote.sh

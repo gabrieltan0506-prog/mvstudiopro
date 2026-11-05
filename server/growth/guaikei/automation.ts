@@ -1,3 +1,4 @@
+import { assertGuaikeiLiveStore } from "./offlineRestore";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -113,6 +114,7 @@ export class GuaikeiAutomation {
     await this.locked(async () => { const state = await this.read(); state.runs.find(row => row.id === run.id)!.status = "submitted"; await this.write(state); });
   }
   async tick(now = Date.now()) {
+    await assertGuaikeiLiveStore(this.root);
     if (this.running) return;
     this.running = true;
     try {

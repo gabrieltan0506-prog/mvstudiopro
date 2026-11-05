@@ -59,3 +59,20 @@ it("调度后仍保留十天前公共来源索引以支持十五天报告", asyn
  const jobs=await automation.publicJobs(async(owner,id)=>({id,owner,status:"completed",input:request,requestId:createHash("sha256").update("old:0").digest("hex")} as any));
  expect(jobs.map(j=>j.id)).toEqual(["public"]);expect(service.submit).not.toHaveBeenCalled();
 });
+
+it("离线还原包禁止自动或手动提交和轮询，保留原台账", async () => {
+  const index = JSON.stringify({version:1,jobs:[]});
+  await fs.writeFile(path.join(root,"index.json"), index);
+  await fs.writeFile(path.join(root,".growth-offline-restore"), "offline-audit-only");
+  const request = vi.fn(async () => ({errcode:1}));
+  const service = new GuaikeiService({root,request,ready:()=>true});
+  const pending = vi.fn(async () => []);
+  const automation = new GuaikeiAutomation({root,service:{...service,
+    quote: service.quote.bind(service), submit:service.submit.bind(service),
+    poll:service.poll.bind(service),pending}});
+  await expect(automation.tick()).rejects.toThrow("离线还原");
+  await expect(service.submit(1,{platform:"tiktok",operation:"search",query:"test",limit:1},"test",100)).rejects.toThrow("离线还原");
+  await expect(service.poll(1,"test")).rejects.toThrow("离线还原");
+  expect(request).not.toHaveBeenCalled();expect(pending).not.toHaveBeenCalled();
+  expect(await fs.readFile(path.join(root,"index.json"),"utf8")).toBe(index);
+});

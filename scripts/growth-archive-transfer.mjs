@@ -71,6 +71,7 @@ child.stderr.pipe(process.stderr);
 const lines = createInterface({ input: child.stderr });
 lines.on("line", line => {
   if (line === "GROWTH_ARCHIVE_BUSY") busy = true;
+  if (line.startsWith("GROWTH_ARCHIVE_PROGRESS ") || line.startsWith("GROWTH_ARCHIVE_ANOMALY ")) lastByteAt = performance.now();
 });
 process.stdout.on("error", () => stop(74, "输出端不可写，停止传输"));
 process.on("SIGINT", () => stop(130, "收到取消信号"));
@@ -78,8 +79,7 @@ process.on("SIGTERM", () => stop(143, "收到取消信号"));
 const watchdog = setInterval(
   () => {
     const now = performance.now();
-    if (now - started >= limits["--max-ms"]) stop(124, "超过单次传输总时限");
-    else if (now - lastByteAt >= limits["--idle-ms"])
+    if (now - lastByteAt >= Math.min(limits["--max-ms"], limits["--idle-ms"]))
       stop(124, "超过无数据进度时限");
   },
   Math.min(1000, limits["--idle-ms"], limits["--max-ms"])

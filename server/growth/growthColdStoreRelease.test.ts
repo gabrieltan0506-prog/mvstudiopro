@@ -4,7 +4,7 @@ import path from "node:path";
 import { createServer, type Server } from "node:http";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { gzipSync } from "node:zlib";
+import { gzipSync, gunzipSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   growthColdStoreReleaseTag,
@@ -179,15 +179,15 @@ describe("冷备分仓路由与真实 HTTP", () => {
       ).toBe(sha(raw));
     }
   );
-  it.each(["new", "legacy"])(
+  it.each(["new", "legacy", "revision"])(
     "生产归档读取器从 %s 仓下载、校验、解包到实际 JSON",
     async mode => {
       const root = await temp(),
         dir = "2026-09-11-03";
       await fs.mkdir(path.join(root, dir));
       await fs.writeFile(
-        path.join(root, dir, "items.json"),
-        JSON.stringify([{ title: "历史内容保留" }])
+        path.join(root, dir, "items.json.gz"),
+        gzipSync(JSON.stringify({ items: [{ title: "历史内容保留" }] }))
       );
       execFileSync("tar", [
         "-czf",
@@ -195,7 +195,7 @@ describe("冷备分仓路由与真实 HTTP", () => {
         "-C",
         root,
         dir,
-      ]);
+      ], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
       const raw = await fs.readFile(path.join(root, "archive.tar.gz"));
       const assetName = `archive-${dir}.tar.gz`,
         archive = { assetName, bytes: raw.length, sha256: sha(raw) };
@@ -205,19 +205,17 @@ describe("冷备分仓路由与真实 HTTP", () => {
         archive,
         parts: [{ ...archive, index: 0 }],
       };
-      const tag =
-        mode === "new"
-          ? "growth-archive-2026-09-11"
-          : "growth-cold-store-latest";
-      const { base } = await http(
-        new Map([
-          [`/releases/download/${tag}/${assetName}`, raw],
-          [
-            `/releases/download/${tag}/archive-${dir}.manifest.json`,
-            Buffer.from(JSON.stringify(manifest)),
-          ],
-        ])
-      );
+      const tag = mode === "revision" ? `growth-archive-revision-${dir}-${sha("revision")}`
+        : mode === "new" ? "growth-archive-2026-09-11" : "growth-cold-store-latest";
+      const manifestRaw = Buffer.from(JSON.stringify(manifest));
+      const routes = new Map<string, Buffer | string | number>([
+        [`/releases/download/${tag}/${assetName}`, raw],
+        [`/releases/download/${tag}/archive-${dir}.manifest.json`, manifestRaw],
+      ]);
+      if (mode === "revision") routes.set(`/releases/download/growth-archive-2026-09-11/archive-${dir}.latest.json`,
+        Buffer.from(JSON.stringify({schemaVersion: 1, dir, releaseTag: tag,
+          manifest: {assetName: `archive-${dir}.manifest.json`, bytes: manifestRaw.length, sha256: sha(manifestRaw)}})));
+      const { base } = await http(routes);
       vi.stubEnv("GROWTH_STORE_DIR", path.join(root, "store"));
       vi.stubEnv("GROWTH_GITHUB_OFFLOAD_CACHE_DIR", path.join(root, "cache"));
       vi.stubEnv("GROWTH_GITHUB_COLD_STORE_BASE_URL", base);
@@ -225,9 +223,9 @@ describe("冷备分仓路由与真实 HTTP", () => {
       const restored = await ensureOffloadedArchiveDir(dir);
       expect(
         JSON.parse(
-          await fs.readFile(path.join(restored!, "items.json"), "utf8")
+          gunzipSync(await fs.readFile(path.join(restored!, "items.json.gz"))).toString("utf8")
         )
-      ).toEqual([{ title: "历史内容保留" }]);
+      ).toEqual({ items: [{ title: "历史内容保留" }] });
     }
   );
   it("新仓只上传 tar 尚无清单时不走旧格式免校验旁路", async () => {
@@ -319,103 +317,12 @@ describe("分仓增量盘点", () => {
   });
 });
 
-describe("真实工作流上传函数离线执行", () => {
-  it.each([
-    ".github/workflows/growth-backup.yml",
-    ".github/workflows/growth-archive-offload.yml",
-  ])("%s 归档转共用发布器，当前批次仍向新仓上传并回读", async workflow => {
-    const root = await temp(),
-      bin = path.join(root, "bin");
-    await fs.mkdir(bin);
-    const text = await fs.readFile(path.resolve(workflow), "utf8");
-    expect(text).not.toContain(
-      "run: bash scripts/prune-growth-release-batch-assets.sh"
-    );
-    const functions = Array.from(
-      text.matchAll(
-        /          upload_and_readback_asset\(\) \{[\s\S]*?\n          \}/g
-      )
-    );
-    expect(functions.length).toBe(
-      workflow.endsWith("growth-backup.yml") ? 1 : 0
-    );
-    expect(text).toContain(
-      "node scripts/growth-archive-publish.mjs /tmp/growth-archive-offload"
-    );
-    // 归档发布的容量/冲突测试由共用发布器行为测试覆盖；此处保留当前批次函数回归。
-    const gh = `#!${process.execPath}
-const fs=require('fs'),path=require('path'),a=process.argv.slice(2),root=process.env.TEST_RELEASE_ROOT;
-fs.appendFileSync(path.join(root,'calls.jsonl'),JSON.stringify(a)+'\\n');
-const dir=path.join(root,a[2]||'');
-if(a[0]!=='release')process.exit(20);
-if(a[1]==='view')process.exit(fs.existsSync(dir)?0:1);
-if(a[1]==='create'){if(!a.includes('--latest=false'))process.exit(21);fs.mkdirSync(dir,{recursive:true});process.exit(0);}
-if(a[1]==='upload'){const file=a[3].split('#')[0],name=path.basename(file);if(a[2]==='growth-cold-store-latest'&&!fs.existsSync(path.join(dir,name))){console.error('file_count limited to 1000 assets per release');process.exit(22);}fs.copyFileSync(file,path.join(dir,name));process.exit(0);}
-if(a[1]==='download'){const name=a[a.indexOf('-p')+1],dest=a[a.indexOf('-D')+1];fs.copyFileSync(path.join(dir,name),path.join(dest,name));process.exit(0);}
-process.exit(23);`;
-    await fs.writeFile(path.join(bin, "gh"), gh, { mode: 0o755 });
-    await fs.writeFile(
-      path.join(bin, "stat"),
-      `#!${process.execPath}\nconsole.log(require('fs').statSync(process.argv.at(-1)).size);`,
-      { mode: 0o755 }
-    );
-    await fs.mkdir(path.join(root, "growth-cold-store-latest"));
-    for (let i = 0; i < functions.length; i++) {
-      const name =
-        i === 0 && workflow.endsWith("growth-backup.yml")
-          ? "growth-platform-current-complete.batch-123-1.tar.part-0000"
-          : "archive-2026-09-11-03.tar.gz";
-      const file = path.join(root, name);
-      await fs.writeFile(file, "真实上传与回读正文");
-      const fn = functions[i][0]
-        .replaceAll("/tmp/growth-backup", path.join(root, "backup"))
-        .replaceAll("/tmp/growth-archive-offload", path.join(root, "offload"));
-      execFileSync(
-        "bash",
-        ["-eu", "-c", `${fn}\nupload_and_readback_asset "$1"`, "test", file],
-        {
-          cwd: process.cwd(),
-          env: {
-            ...process.env,
-            PATH: `${bin}:${process.env.PATH}`,
-            TEST_RELEASE_ROOT: root,
-            GITHUB_SHA: "test-commit",
-          },
-        }
-      );
-      expect(
-        await fs.readFile(
-          path.join(root, growthColdStoreReleaseTag(name), name),
-          "utf8"
-        )
-      ).toBe("真实上传与回读正文");
-    }
-    const calls = (
-      await fs.readFile(path.join(root, "calls.jsonl"), "utf8").catch(() => "")
-    )
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map(line => JSON.parse(line) as string[]);
-    expect(
-      calls
-        .filter(args => args[1] === "upload")
-        .every(args => args[2] !== "growth-cold-store-latest")
-    ).toBe(true);
-    expect(
-      calls.some(args => args.includes("delete") || args.includes("DELETE"))
-    ).toBe(false);
-    expect(calls.filter(args => args[1] === "download")).toHaveLength(
-      functions.length
-    );
-    if (workflow.endsWith("growth-backup.yml")) {
-      expect(
-        text.indexOf(
-          "upload_and_readback_asset /tmp/growth-backup/release-current/platform-current-batch-manifest.json"
-        )
-      ).toBeGreaterThan(
-        text.indexOf("for asset in /tmp/growth-backup/release-current/*.part-*")
-      );
-    }
-  });
+describe("真实工作流发布入口",()=>{
+ it.each([".github/workflows/growth-backup.yml",".github/workflows/growth-archive-offload.yml"])("%s 复用已做行为验收的发布器",async workflow=>{
+  const text=await fs.readFile(path.resolve(workflow),"utf8");
+  expect(text).toContain("node scripts/growth-archive-publish.mjs /tmp/growth-archive-offload");
+  expect(text).not.toContain("upload_and_readback_asset()");
+  expect(text).not.toContain("run: bash scripts/prune-growth-release-batch-assets.sh");
+  if(workflow.endsWith("growth-backup.yml"))expect(text).toContain("node scripts/growth-backup-generation.mjs");
+ });
 });

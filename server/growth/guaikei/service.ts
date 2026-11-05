@@ -1,3 +1,4 @@
+import { assertGuaikeiLiveStore } from "./offlineRestore";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -135,6 +136,7 @@ export class GuaikeiService {
     return { ...job, items, excludedByWindow: job.items.length - items.length };
   }
   async submit(owner: number, raw: GuaikeiRequest, requestId: string, confirmedReservedCents: number, refresh = false) {
+    await assertGuaikeiLiveStore(this.root);
     const input = guaikeiNewRequestSchema.parse(raw);
     let shouldCreate = false;
     const saved = await this.locked(async () => {
@@ -175,6 +177,7 @@ export class GuaikeiService {
     });
   }
   async poll(owner: number, id: string) {
+    await assertGuaikeiLiveStore(this.root);
     const current = await this.get(owner, id);
     if (!active(current) || (current.status === "submitting" && Date.now() - Date.parse(current.createdAt) < 30_000)) return current;
     let query = false;

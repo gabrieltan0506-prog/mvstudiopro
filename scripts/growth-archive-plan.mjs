@@ -1,3 +1,8 @@
+import {
+  privateGrowthBackupTarget,
+  runBackupGh,
+} from "./growth-backup-target.mjs";
+import { parseGrowthArchiveManifest } from "../shared/growthArchiveRestore.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -15,6 +20,7 @@ export function planArchiveBatch(snapshot, assets, manifests) {
     reused = [],
     selected = [],
     reclaim = [];
+  const cleanupInputs = new Map();
   const validAsset = (name, bytes, sha) => {
     const asset = byName.get(name);
     return (
@@ -39,7 +45,10 @@ export function planArchiveBatch(snapshot, assets, manifests) {
     )
       throw new Error("归档快照清单非法，停止规划");
     // 新快照输出实际文件字节；旧空快照也不得进入新上传或复用删源队列。
-    if (Number(bytes) === 0 || fingerprint === createHash("sha256").update("[]").digest("hex"))
+    if (
+      Number(bytes) === 0 ||
+      fingerprint === createHash("sha256").update("[]").digest("hex")
+    )
       continue;
     let verified = false;
     let reclaimRow = null;
@@ -57,24 +66,56 @@ export function planArchiveBatch(snapshot, assets, manifests) {
         manifest.dir === dir &&
         manifest.sourceFingerprint === fingerprint &&
         manifest.archive?.assetName === `archive-${dir}.tar.gz` &&
-        validAsset(
-          manifest.archive.assetName,
-          manifest.archive.bytes,
-          manifest.archive.sha256
+        Number.isSafeInteger(manifest.archive.bytes) &&
+        manifest.archive.bytes > 0 &&
+        /^[a-f0-9]{64}$/.test(manifest.archive.sha256) &&
+        Array.isArray(manifest.parts) &&
+        manifest.parts.length > 0 &&
+        manifest.parts.every(
+          (part, i) =>
+            part.index === i &&
+            part.assetName ===
+              (manifest.parts.length === 1
+                ? manifest.archive.assetName
+                : `${manifest.archive.assetName}.part-${String(i).padStart(4, "0")}`) &&
+            validAsset(part.assetName, part.bytes, part.sha256)
         ) &&
-        manifest.parts?.length === 1 &&
-        manifest.parts[0].index === 0 &&
-        manifest.parts[0].assetName === manifest.archive.assetName &&
-        manifest.parts[0].bytes === manifest.archive.bytes &&
-        manifest.parts[0].sha256 === manifest.archive.sha256;
+        manifest.parts.reduce((n, p) => n + p.bytes, 0) ===
+          manifest.archive.bytes &&
+        (manifest.parts.length !== 1 ||
+          manifest.parts[0].sha256 === manifest.archive.sha256);
+      // 修订附件上传完不代表已提交；消费者先读指针，必须一起核对。
+      const manifestAsset = byName.get(name);
+      const manifestTag = manifestAsset?.releaseTag || growthColdStoreReleaseTag(name);
+      const pointerName = `archive-${dir}.latest.json`;
+      if (verified && (manifestTag.startsWith("growth-archive-revision-") || byName.has(pointerName))) {
+        const expectedTag = `growth-archive-revision-${dir}-${fingerprint}`;
+        const pointer = Buffer.from(JSON.stringify({
+          schemaVersion: 1,
+          dir,
+          releaseTag: expectedTag,
+          manifest: { assetName: name, bytes: Buffer.byteLength(raw), sha256: createHash("sha256").update(raw).digest("hex") },
+        }, null, 2));
+        verified = manifestTag === expectedTag && validAsset(pointerName, pointer.length, createHash("sha256").update(pointer).digest("hex"));
+      }
       if (verified && /^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(dir)) {
-        const manifestAsset = byName.get(name);
-        reclaimRow = [
-          dir, fingerprint, bytes,
-          manifest.archive.assetName, manifest.archive.bytes, manifest.archive.sha256,
-          name, manifestAsset.size, manifestAsset.digest.slice("sha256:".length),
-          manifestAsset.releaseTag || growthColdStoreReleaseTag(name),
-        ].join("\t");
+        // 备份复用并非删除证据：旧清单还须有完整、同源的逐文件清单。
+        const checked = parseGrowthArchiveManifest(manifest, dir);
+        const files = checked.inventory;
+        const sourceMatches = files?.length
+          && files.some(f => /^bilibili-[^/]+\.json\.gz$/.test(f.path))
+          && files.reduce((n,f)=>n+f.bytes,0) === Number(bytes)
+          && createHash("sha256").update(JSON.stringify(files.map(f=>[f.path,f.bytes,f.sha256]))).digest("hex") === fingerprint;
+        const sameRelease = manifest.parts.every(part => {
+          const asset = byName.get(part.assetName);
+          return (asset?.releaseTag || growthColdStoreReleaseTag(part.assetName)) === manifestTag;
+        });
+        if (sourceMatches && sameRelease) {
+          reclaimRow = [dir,fingerprint,bytes,manifest.archive.assetName,manifest.archive.bytes,
+            manifest.archive.sha256,name,manifestAsset.size,manifestAsset.digest.slice("sha256:".length),manifestTag].join("\t");
+          cleanupInputs.set(dir, {dir,releaseTag:manifestTag,sourceFingerprint:fingerprint,
+            manifestName:name,manifestBase64:Buffer.from(raw,"utf8").toString("base64")});
+        }
       }
     } catch {
       /* 缺失或损坏的旧清单不能充当备份凭证。 */
@@ -97,7 +138,7 @@ export function planArchiveBatch(snapshot, assets, manifests) {
   let reclaimBytes = 0;
   for (const line of reclaim) {
     const bytes = Number(line.split("\t")[2]);
-    if (reclaimSelected.length && (reclaimSelected.length >= 4 || reclaimBytes + bytes > 512 * 1024 * 1024)) break;
+    if (reclaimSelected.length >= 4 || reclaimBytes + bytes > 512 * 1024 * 1024) continue;
     reclaimSelected.push(line);
     reclaimBytes += bytes;
   }
@@ -106,6 +147,7 @@ export function planArchiveBatch(snapshot, assets, manifests) {
     reused: reused.length,
     reclaim: reclaimSelected,
     reclaimRemaining: reclaim.length - reclaimSelected.length,
+    reusedCleanup: reclaimSelected.map(line => cleanupInputs.get(line.split("\t")[0])),
     pending: pending.length,
     remaining: pending.length - selected.length,
   };
@@ -123,21 +165,26 @@ export function loadArchiveInventory(directory, snapshot, repo, gh) {
         )
       )
   );
+  for (const line of snapshot.trim().split(/\r?\n/).filter(Boolean)) {
+    const [dir, fp] = line.split("\t");
+    wanted.add(`growth-archive-revision-${dir}-${fp}`);
+  }
   wanted.add(LEGACY_GROWTH_RELEASE);
   // 分页枚举实际存在的仓，不能把鉴权/网络失败误判为新仓不存在。
   const releases = JSON.parse(
     gh(["api", "--paginate", "--slurp", `repos/${repo}/releases?per_page=100`])
   ).flat();
-  if (!releases.some(release => release.tag_name === LEGACY_GROWTH_RELEASE))
-    throw new Error("缺少旧冷备 Release，停止规划");
+  // A confirmed private repository can start without a legacy release; empty inventory is not an authentication failure.
   const assets = [],
     manifests = new Map();
   const selected = releases.filter(release => wanted.has(release.tag_name));
-  selected.sort(
-    (a, b) =>
-      Number(b.tag_name === LEGACY_GROWTH_RELEASE) -
-      Number(a.tag_name === LEGACY_GROWTH_RELEASE)
-  );
+  const priority = tag =>
+    tag === LEGACY_GROWTH_RELEASE
+      ? 0
+      : tag.startsWith("growth-archive-revision-")
+        ? 2
+        : 1;
+  selected.sort((a, b) => priority(a.tag_name) - priority(b.tag_name));
   for (const release of selected) {
     const entries = JSON.parse(
       gh([
@@ -147,7 +194,9 @@ export function loadArchiveInventory(directory, snapshot, repo, gh) {
         `repos/${repo}/releases/${release.id}/assets?per_page=100`,
       ])
     ).flat();
-    assets.push(...entries.map(asset => ({ ...asset, releaseTag: release.tag_name })));
+    assets.push(
+      ...entries.map(asset => ({ ...asset, releaseTag: release.tag_name }))
+    );
     const names = entries
       .filter(asset => /^archive-.+\.manifest\.json$/.test(asset.name))
       .map(asset => asset.name);
@@ -169,6 +218,8 @@ export function loadArchiveInventory(directory, snapshot, repo, gh) {
 }
 
 export function writeArchivePlan(directory, plan) {
+  const cleanupFile = path.join(directory,"reused-cleanup-input.json");
+  fs.rmSync(cleanupFile,{force:true});
   for (const marker of ["EMPTY", "UPLOAD_EMPTY"])
     fs.rmSync(path.join(directory, marker), { force: true });
   fs.writeFileSync(
@@ -183,6 +234,15 @@ export function writeArchivePlan(directory, plan) {
     path.join(directory, "plan.json"),
     JSON.stringify(plan, null, 2)
   );
+  if (plan.reusedCleanup?.length) {
+    const batchId = fs.readFileSync(path.join(directory,"batch-id.txt"),"utf8").trim();
+    if (!/^\d+-\d+(?:-backup)?$/.test(batchId)) throw Error("archive_cleanup_batch_invalid");
+    const archives = plan.reusedCleanup.map(({dir,releaseTag,sourceFingerprint})=>({dir,releaseTag,sourceFingerprint}));
+    const manifests = Object.fromEntries(plan.reusedCleanup.map(({manifestName,manifestBase64})=>[manifestName,manifestBase64]));
+    const input = {batch:{schemaVersion:3,batchId,archives},
+      publication:{batchId,reused:archives.map(({dir,releaseTag})=>({dir,releaseTag}))},manifests};
+    fs.writeFileSync(cleanupFile,JSON.stringify(input,null,2));
+  }
   if (!plan.selected.length && !plan.reclaim.length)
     fs.writeFileSync(path.join(directory, "EMPTY"), "");
   if (!plan.selected.length && plan.reclaim.length)
@@ -191,16 +251,7 @@ export function writeArchivePlan(directory, plan) {
 
 function main(directory) {
   if (!directory) throw new Error("缺少归档工作目录");
-  const gh = args =>
-    execFileSync("gh", args, {
-      encoding: "utf8",
-      timeout: 180_000,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-  // 身份/网络失败不能伪装成空仓库；本仓库已有固定冷备 release。
-  const repo = JSON.parse(
-    gh(["repo", "view", "--json", "nameWithOwner"])
-  ).nameWithOwner;
+  const { gh, repository: repo } = privateGrowthBackupTarget(runBackupGh);
   const snapshot = fs.readFileSync(
     path.join(directory, "snapshot.tsv"),
     "utf8"
@@ -213,7 +264,7 @@ function main(directory) {
   );
   const plan = planArchiveBatch(snapshot, assets, manifests);
   writeArchivePlan(directory, plan);
-  const summary = `归档规划：已验证且未变化 ${plan.reused} 个，本批待生产恢复后清理 ${plan.reclaim.length} 个；本批新备份 ${plan.selected.length} 个；另有新备份 ${plan.remaining} 个、旧归档清理 ${plan.reclaimRemaining} 个待后续批次。计划数量不代表删除成功。`;
+  const summary = `归档规划：已验证且未变化 ${plan.reused} 个，其中 ${plan.reclaim.length} 个进入独立还原核验清理候选；本批新备份 ${plan.selected.length} 个；另有新备份 ${plan.remaining} 个待后续批次。计划数量不代表删除成功。`;
   console.log(summary);
   if (process.env.GITHUB_STEP_SUMMARY)
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + "\n");

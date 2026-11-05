@@ -23,6 +23,7 @@ jobs:
       actions: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      GROWTH_BACKUP_REPOSITORY: ${{ vars.GROWTH_BACKUP_REPOSITORY || 'gabrieltan0506-prog/mvstudiopro-growth-data' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,6 +32,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Require authorized private backup target
+        env:
+          GH_TOKEN: ${{ secrets.GROWTH_BACKUP_GITHUB_TOKEN }}
+        run: node scripts/growth-backup-target.mjs
       - uses: superfly/flyctl-actions/setup-flyctl@master
       # 🔴 0831 修：解析出 app 进程组的正式机 ID，后续所有 ssh console 都显式指定。
       #
@@ -74,7 +79,7 @@ jobs:
           ROUTING_READY=false
           for attempt in $(seq 1 20); do
             if timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-              -C "node /app/scripts/growth-cold-store-routing-check.mjs" </dev/null; then
+              -C "node /app/scripts/growth-cold-store-routing-check.mjs '$GROWTH_BACKUP_REPOSITORY'" </dev/null | jq -e '.codeAndConfigurationReady == true and .metadataReadable == true and .restoreVerified == false'; then
               ROUTING_READY=true
               break
             fi
@@ -85,45 +90,7 @@ jobs:
             node scripts/growth-backup-defer.mjs "正式机镜像比工作流旧，等待部署落地超时"
             echo "BACKUP_DEFERRED=true" >> "$GITHUB_ENV"
           fi
-      - name: Cleanup stale growth temp files from Fly
-        if: env.BACKUP_DEFERRED != 'true'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: |
-          wait_for_started_vm() {
-            local vm_attempt
-            for vm_attempt in 1 2 3 4 5 6 7 8 9 10; do
-              # 🔴 0831 修：必须检查**我们要用的那一台**，不是「有任何一台 started」。
-              # 旧写法在隔离机 started 时会误判通过，随后 ssh --machine 对着一台
-              # 不可用的正式机失败（实测 `--machine="d892541f602228" not found/started`）。
-              # 顺带主动唤醒：auto_stop_machines='off'，机器停了不会自己起来。
-              if flyctl machines list -a mvstudiopro --json </dev/null \
-                | jq -e --arg id "$FLY_MACHINE_ID" \
-                    'any(.[]; .id == $id and .state == "started")' >/dev/null; then
-                return 0
-              fi
-              flyctl machine start "$FLY_MACHINE_ID" -a mvstudiopro </dev/null >/dev/null 2>&1 || true
-              echo "No started VM yet, retrying in 15s (attempt $vm_attempt/10)"
-              sleep 15
-            done
-            echo "No started VM became available in time"
-            return 1
-          }
 
-          for attempt in 1 2 3 4 5; do
-            if wait_for_started_vm && flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc '
-              find /data/growth -type f -name \"*.next\" -mmin +15 -print -delete 2>/dev/null || true
-              find /data/growth/backups/current-batches -mindepth 1 -maxdepth 1 -type d -mmin +180 -print -exec rm -rf -- {} + 2>/dev/null || true
-            '"; then
-              exit 0
-            fi
-            echo "Cleanup retry in 20s (attempt $attempt/5)"
-            sleep 20
-          done
-          # 0902：清理是尽力而为的家务活（只删过期临时文件）；VM 忙/部署重启中
-          # 连不上 ssh 不该拖死整班备份，跳过继续，下一班自然补扫。
-          echo "::warning::Cleanup stale growth temp files skipped after retries (VM busy/restarting)"
-          exit 0
       - name: Assess Fly growth storage pressure
         if: env.BACKUP_DEFERRED != 'true'
         env:
@@ -340,7 +307,7 @@ jobs:
           BACKUP_REMOTE_WORK_STARTED=false
           (
             while sleep 60; do
-              flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C 'touch /data/growth/.growth-platform-collection.lock' >/dev/null 2>&1 || true
+              flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C 'sh -c '"'"'test "$(cat /data/growth/.growth-platform-collection.lock)" = github-growth-backup && touch /data/growth/.growth-platform-collection.lock'"'"'' >/dev/null 2>&1 || true
             done
           ) &
           BACKUP_HEARTBEAT_PID=$!
@@ -374,7 +341,7 @@ jobs:
             for attempt in 1 2 3 4 5; do
               echo "Capturing Growth directory from Fly: ${directory} (attempt ${attempt}/5)"
               if wait_for_interactive_workload && run_with_interactive_preemption timeout "${timeout_seconds}" \
-                flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -s -- stream-directory '${directory}'" \
+                flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -s -- stream-directory '${directory}' '${BATCH_ID}'" \
                 < scripts/growth-backup-stream-remote.sh > "$output_path"; then
                 return 0
               fi
@@ -385,32 +352,7 @@ jobs:
           }
 
           mkdir -p /tmp/growth-backup/store/backups /tmp/growth-backup/store/platforms /tmp/growth-backup/store/history-ledger
-          fetch_file_from_fly /data/growth/current.json /tmp/growth-backup/store/current.json true
-          fetch_file_from_fly /data/growth/runtime-meta.json /tmp/growth-backup/store/runtime-meta.json true
-          fetch_file_from_fly /data/growth/archive-index.json /tmp/growth-backup/store/archive-index.json true
-          fetch_file_from_fly /data/growth/history-summary.json /tmp/growth-backup/store/history-summary.json true
-          fetch_file_from_fly /data/growth/backups/growth-debug-summary.json /tmp/growth-backup/store/backups/growth-debug-summary.json false
-          fetch_file_from_fly /data/growth/weixin-channels-miner.json /tmp/growth-backup/store/weixin-channels-miner.json false
 
-          if [ "${EXTERNALIZE_PLATFORMS:-false}" = "true" ]; then
-            capture_directory_from_fly platforms /tmp/growth-backup/growth-platforms.tar.gz 720 || true
-          else
-            capture_directory_from_fly platforms /tmp/growth-backup/platforms.tar.gz || true
-          fi
-          if [ "${EXTERNALIZE_HISTORY_LEDGER:-false}" = "true" ]; then
-            capture_directory_from_fly history-ledger /tmp/growth-backup/growth-history-ledger.tar.gz 720 || true
-          else
-            capture_directory_from_fly history-ledger /tmp/growth-backup/history-ledger.tar.gz || true
-          fi
-          date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
-
-          if [ -s /tmp/growth-backup/platforms.tar.gz ] && [ "${EXTERNALIZE_PLATFORMS:-false}" != "true" ]; then
-            tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/platforms.tar.gz
-          fi
-          if [ -s /tmp/growth-backup/history-ledger.tar.gz ] && [ "${EXTERNALIZE_HISTORY_LEDGER:-false}" != "true" ]; then
-            tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/history-ledger.tar.gz
-          fi
-          mkdir -p /tmp/growth-backup/store/backups /tmp/growth-backup/store/platforms /tmp/growth-backup/store/history-ledger
           mkdir -p /tmp/growth-backup/platform-current
           # 四个平台先在同一把 store mutation lock 内创建 hardlink 快照，再按 32MiB
           # 顺序下载；每片大小和 SHA-256 不匹配就重试，禁止并行分片与截断拼接。
@@ -423,7 +365,36 @@ jobs:
           wait_for_interactive_workload
           run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth pnpm exec tsx scripts/snapshot-growth-platform-current-batch.mts --output=${REMOTE_BATCH_DIR} --batch-id=${BATCH_ID} --asset-generation=${ASSET_GENERATION}'"
           fetch_file_from_fly "${REMOTE_BATCH_DIR}/snapshot-manifest.json" /tmp/growth-backup/platform-current-snapshot-manifest.json true
-          test "$(jq '.files | length' /tmp/growth-backup/platform-current-snapshot-manifest.json)" -eq 4
+          test "$(jq '.files | length' /tmp/growth-backup/platform-current-snapshot-manifest.json)" -ge 4
+          # Core metadata belongs to the same mutation-locked snapshot as platform-current.
+          while IFS=$'\t' read -r relative snapshot_file expected_bytes expected_sha; do
+            case "$relative" in current.json|runtime-meta.json|archive-index.json|history-summary.json|platform-current-manifest.json|weixin-channels-miner.json|backups/growth-debug-summary.json) ;; *) exit 64 ;; esac
+            output="/tmp/growth-backup/store/$relative"
+            fetch_file_from_fly "${REMOTE_BATCH_DIR}/${snapshot_file}" "$output.next" true
+            test "$(stat -c%s "$output.next")" = "$expected_bytes"
+            test "$(sha256sum "$output.next" | awk '{print $1}')" = "$expected_sha"
+            mv "$output.next" "$output"
+          done < <(jq -r '.coreFiles[] | [.relativePath,.snapshotFile,.bytes,.sha256] | @tsv' /tmp/growth-backup/platform-current-snapshot-manifest.json)
+          fetch_file_from_fly "${REMOTE_BATCH_DIR}/coverage.json" /tmp/growth-backup/source-coverage.json true
+          node -e 'const fs=require("fs"),r=JSON.parse(fs.readFileSync("/tmp/growth-backup/source-coverage.json"));if(r.fullStoreComplete!==true){fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,"本次为已列明范围的备份；完整/data/growth覆盖尚未完成，详见source-coverage.json。\n");console.log("::warning::全量覆盖未完成，未覆盖文件明确保留，不可清理");}'
+          # Every directory is streamed from the same leased snapshot, then checked
+          # against its exact per-file inventory before extraction.
+          while IFS= read -r directory; do
+            case "$directory" in platforms|history-ledger|paid-research/guaikei) ;; *) exit 64 ;; esac
+            archive_name="$(printf '%s' "$directory" | tr / -)"
+            external=false
+            if [ "$directory" = platforms ] && [ "${EXTERNALIZE_PLATFORMS:-false}" = true ]; then external=true; fi
+            if [ "$directory" = history-ledger ] && [ "${EXTERNALIZE_HISTORY_LEDGER:-false}" = true ]; then external=true; fi
+            if [ "$external" = true ]; then
+              archive="/tmp/growth-backup/growth-${archive_name}.tar.gz"
+            else
+              archive="/tmp/growth-backup/${archive_name}.tar.gz"
+            fi
+            capture_directory_from_fly "$directory" "$archive" 720
+            python3 scripts/validate-growth-backup-directories.py /tmp/growth-backup/platform-current-snapshot-manifest.json "$directory" "$archive"
+            if [ "$external" != true ]; then tar -C /tmp/growth-backup/store -xzf "$archive"; fi
+          done < <(jq -r '.directoryRoots[]' /tmp/growth-backup/platform-current-snapshot-manifest.json)
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
           mkdir -p /tmp/growth-backup/release-current
 
           fetch_verified_part() {
@@ -513,8 +484,7 @@ jobs:
             /tmp/growth-backup/platform-current-snapshot-manifest.json \
             /tmp/growth-backup/platform-current \
             /tmp/growth-backup/release-current
-          # 此处仅完成本机重组校验；Fly hardlink 必须保留到 Release 逐片回读与清单回读全部成功。
-          # 任一上传/回读失败时，由下轮三小时 stale cleanup 回收临时快照，源 platform-current 始终保留。
+          # 本机校验完成；失败批次快照保留调查，不按年龄删除任何来源或备份。
           for ledger_file in /tmp/growth-backup/store/history-ledger/*.json; do
             [ -f "$ledger_file" ] || continue
             gzip -c "$ledger_file" > "/tmp/growth-backup/history-ledger-$(basename "$ledger_file" .json).json.gz"
@@ -522,6 +492,14 @@ jobs:
           for platform_file in /tmp/growth-backup/store/platforms/*.json; do
             [ -f "$platform_file" ] || continue
             gzip -c "$platform_file" > "/tmp/growth-backup/platform-$(basename "$platform_file" .json).json.gz"
+          done
+          for platform_file in /tmp/growth-backup/store/platforms/*.json.gz; do
+            [ -f "$platform_file" ] || continue
+            cp "$platform_file" "/tmp/growth-backup/platform-$(basename "$platform_file")"
+          done
+          for ledger_file in /tmp/growth-backup/store/history-ledger/*.json.gz; do
+            [ -f "$ledger_file" ] || continue
+            cp "$ledger_file" "/tmp/growth-backup/history-ledger-$(basename "$ledger_file")"
           done
           if [ -d /tmp/growth-backup/store/platform-current ]; then
             for platform_file in /tmp/growth-backup/store/platform-current/*.json; do
@@ -545,7 +523,9 @@ jobs:
           );
           const manifest = {
             createdAt: new Date().toISOString(),
-            baseUrl: "https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest",
+            baseUrl: `https://github.com/${process.env.GROWTH_BACKUP_REPOSITORY}/releases/download/growth-cold-store-latest`,
+            restoreMode: "offline-audit-only",
+            automaticResumeAllowed: false,
             externalSegments: {
               platforms: env.EXTERNALIZE_PLATFORMS === "true"
                 ? { asset: "growth-platforms.tar.gz", required: true }
@@ -553,6 +533,7 @@ jobs:
               historyLedger: env.EXTERNALIZE_HISTORY_LEDGER === "true"
                 ? { asset: "growth-history-ledger.tar.gz", required: false }
                 : null,
+              paidResearch: { asset: "growth-restore-bundle.tar.gz", path: "paid-research/guaikei", required: true },
               platformCurrent: { asset: "platform-current-batch-manifest.json", required: true },
             },
             thresholdsMb: {
@@ -577,121 +558,32 @@ jobs:
             if [ -d platforms ] && [ "${EXTERNALIZE_PLATFORMS:-false}" != "true" ]; then
               FILES="$FILES platforms"
             fi
+            if [ -d paid-research/guaikei ]; then
+              # 仅本批还原包写入隔离标记，不改正式采集目录或原配置。
+              printf '%s\n' 'offline-audit-only' > paid-research/guaikei/.growth-offline-restore
+              FILES="$FILES paid-research/guaikei"
+            fi
             tar -czf /tmp/growth-backup/growth-restore-bundle.tar.gz $FILES
           )
-      - name: Upload GitHub backup artifact
-        if: env.BACKUP_DEFERRED != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: growth-backup-${{ github.run_id }}
-          path: /tmp/growth-backup
-          if-no-files-found: error
-          retention-days: 30
+      # Private data is published only to the checked private repository; no public-repo artifact.
       # 旧备份不删除；新增分片与归档使用独立 Release，避免 1000 附件上限。
-      - name: Ensure cold-store release headroom
-        if: env.BACKUP_DEFERRED != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        # 0911：把「神秘 422」变成看得懂的容量数字，并回收已被分仓取代的旧批次分片。
-        # archive-* 冷存档是 Fly 端已删数据的唯一副本，永不在回收范围内。
-        run: bash scripts/growth-release-headroom.sh
-
       - name: Publish cold-store restore assets
         if: env.BACKUP_DEFERRED != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GROWTH_BACKUP_GITHUB_TOKEN }}
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          upload_and_readback_asset() {
-            local asset="$1"
-            local asset_name
-            local expected_bytes
-            local expected_sha
-            local verify_dir="/tmp/growth-backup/release-readback"
-            asset_name=$(basename "$asset")
-            local release_tag
-            release_tag=$(node scripts/growth-release-tag.mjs "$asset_name")
-            if ! gh release view "$release_tag" >/dev/null 2>&1; then
-              gh release create "$release_tag" --target "$GITHUB_SHA" --latest=false \
-                --title "$release_tag" --notes "Growth 冷备分仓；原始归档保留" || return 1
-            fi
-            expected_bytes=$(stat -c%s "$asset")
-            expected_sha=$(sha256sum "$asset" | awk '{print $1}')
-            mkdir -p "$verify_dir"
-            for attempt in 1 2 3 4 5; do
-              if gh release upload "$release_tag" "$asset#$asset_name" --clobber; then
-                rm -f "$verify_dir/$asset_name"
-                if gh release download "$release_tag" -p "$asset_name" -D "$verify_dir" --clobber; then
-                  local actual_bytes
-                  local actual_sha
-                  actual_bytes=$(stat -c%s "$verify_dir/$asset_name")
-                  actual_sha=$(sha256sum "$verify_dir/$asset_name" | awk '{print $1}')
-                  if [ "$actual_bytes" = "$expected_bytes" ] && [ "$actual_sha" = "$expected_sha" ]; then
-                    echo "Release read-back verified: $asset_name"
-                    return 0
-                  fi
-                fi
-              fi
-              echo "Release upload/read-back retry: $asset_name ($attempt/5)"
-              sleep 20
-            done
-            echo "Release upload/read-back failed: $asset_name"
-            return 1
-          }
-
-          gh release view growth-cold-store-latest >/dev/null 2>&1 || \
-            gh release create growth-cold-store-latest --title "Growth Cold Store Latest" --notes "Latest cold-store restore assets"
-          gzip -c /tmp/growth-backup/store/current.json > /tmp/growth-backup/current.json.gz
-          gzip -c /tmp/growth-backup/store/runtime-meta.json > /tmp/growth-backup/runtime-meta.json.gz
-          gzip -c /tmp/growth-backup/store/archive-index.json > /tmp/growth-backup/archive-index.json.gz
-          gzip -c /tmp/growth-backup/store/history-summary.json > /tmp/growth-backup/history-summary.json.gz
-          gzip -c /tmp/growth-backup/store/backups/growth-debug-summary.json > /tmp/growth-backup/growth-debug-summary.json.gz
-          if [ -s /tmp/growth-backup/store/weixin-channels-miner.json ]; then
+          for logical in current runtime-meta archive-index history-summary; do
+            gzip -c "/tmp/growth-backup/store/$logical.json" > "/tmp/growth-backup/$logical.json.gz"
+          done
+          if [ -f /tmp/growth-backup/store/backups/growth-debug-summary.json ]; then
+            gzip -c /tmp/growth-backup/store/backups/growth-debug-summary.json > /tmp/growth-backup/growth-debug-summary.json.gz
+          fi
+          if [ -f /tmp/growth-backup/store/weixin-channels-miner.json ]; then
             gzip -c /tmp/growth-backup/store/weixin-channels-miner.json > /tmp/growth-backup/weixin-channels-miner.json.gz
           fi
-          gh release upload growth-cold-store-latest \
-            /tmp/growth-backup/current.json.gz#current.json.gz \
-            /tmp/growth-backup/runtime-meta.json.gz#runtime-meta.json.gz \
-            /tmp/growth-backup/archive-index.json.gz#archive-index.json.gz \
-            /tmp/growth-backup/history-summary.json.gz#history-summary.json.gz \
-            /tmp/growth-backup/growth-debug-summary.json.gz#growth-debug-summary.json.gz \
-            /tmp/growth-backup/backup-manifest.json#backup-manifest.json \
-            /tmp/growth-backup/cold-restore-manifest.json#cold-restore-manifest.json \
-            /tmp/growth-backup/growth-restore-bundle.tar.gz#growth-restore-bundle.tar.gz \
-            --clobber
-          if [ -s /tmp/growth-backup/weixin-channels-miner.json.gz ]; then
-            gh release upload growth-cold-store-latest \
-              /tmp/growth-backup/weixin-channels-miner.json.gz#weixin-channels-miner.json.gz \
-              --clobber
-          fi
-          for asset in /tmp/growth-backup/growth-platforms.tar.gz /tmp/growth-backup/growth-history-ledger.tar.gz; do
-            [ -f "$asset" ] || continue
-            gh release upload growth-cold-store-latest "$asset#$(basename "$asset")" --clobber
-          done
-          for asset in /tmp/growth-backup/*.json.gz; do
-            case "$(basename "$asset")" in
-              current.json.gz|runtime-meta.json.gz|archive-index.json.gz|history-summary.json.gz|growth-debug-summary.json.gz|weixin-channels-miner.json.gz) continue ;;
-            esac
-            gh release upload growth-cold-store-latest "$asset#$(basename "$asset")" --clobber
-          done
-          for asset in /tmp/growth-backup/platforms/*.json.gz /tmp/growth-backup/history-ledger/*.json.gz; do
-            [ -f "$asset" ] || continue
-            gh release upload growth-cold-store-latest "$asset#$(basename "$asset")" --clobber
-          done
-          # 分片严格串行上传；只有四个平台和完整 bundle 的所有分片成功后才发布新批次清单。
-          # 分片名含 batchId，上传中断时旧清单仍只引用上一批完整资产，不会形成混合批次。
-          for asset in /tmp/growth-backup/release-current/*.part-*; do
-            [ -f "$asset" ] || continue
-            upload_and_readback_asset "$asset"
-          done
-          upload_and_readback_asset /tmp/growth-backup/release-current/platform-current-batch-manifest.json
-          touch /tmp/growth-backup/PLATFORM_CURRENT_RELEASE_VERIFIED
-          REMOTE_BATCH_DIR=$(cat /tmp/growth-backup/remote-current-batch-dir.txt)
-          case "$REMOTE_BATCH_DIR" in
-            /data/growth/backups/current-batches/[0-9]*-[0-9]*) ;;
-            *) echo "非法 current hardlink 批次目录: $REMOTE_BATCH_DIR"; exit 1 ;;
-          esac
-          flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc 'rm -rf -- \"$REMOTE_BATCH_DIR\"'"
+          node scripts/growth-backup-generation.mjs /tmp/growth-backup "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          touch /tmp/growth-backup/PLATFORM_CURRENT_UPLOAD_VERIFIED
       - name: Create leased archive snapshot on Fly
         if: env.BACKUP_DEFERRED != 'true'
         timeout-minutes: 15
@@ -740,6 +632,18 @@ jobs:
             touch /tmp/growth-backup/OFFLOAD_SKIP
             exit 0
           fi
+          flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+            -C "sh -s -- report '$BATCH_ID'" < scripts/growth-archive-offload-remote.sh \
+            > /tmp/growth-archive-offload/source-inventory.json
+          node -e 'const fs=require("fs"),r=JSON.parse(fs.readFileSync("/tmp/growth-archive-offload/source-inventory.json"));fs.writeFileSync("/tmp/growth-archive-offload/anomalies.jsonl",r.anomalies.map(x=>JSON.stringify(x)).join("\n"));fs.writeFileSync("/tmp/growth-archive-offload/uncovered.jsonl",(r.uncovered||[]).map(x=>JSON.stringify(x)).join("\n"))'
+          if [ -s /tmp/growth-archive-offload/anomalies.jsonl ]; then
+            echo "::warning::存在异常归档，完整保留其来源；健康目录继续备份。详见 anomalies.jsonl"
+            echo "部分完成：异常目录完整保留，未授权清理任何来源。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -s /tmp/growth-archive-offload/uncovered.jsonl ]; then
+            echo "::warning::存在未覆盖文件，来源保留；本批不是完整归档备份。详见 uncovered.jsonl"
+            echo "部分覆盖：未知平台或文件未打包，不能依据本批清理未覆盖来源。" >> "$GITHUB_STEP_SUMMARY"
+          fi
           cut -f1 /tmp/growth-archive-offload/snapshot.tsv > /tmp/growth-archive-offload/dirs.txt
           if [ ! -s /tmp/growth-archive-offload/dirs.txt ]; then
             touch /tmp/growth-archive-offload/EMPTY
@@ -748,7 +652,7 @@ jobs:
         if: env.BACKUP_DEFERRED != 'true'
         timeout-minutes: 5
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GROWTH_BACKUP_GITHUB_TOKEN }}
         run: |
           if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ]; then exit 0; fi
           node scripts/growth-archive-plan.mjs /tmp/growth-archive-offload
@@ -853,141 +757,31 @@ jobs:
         if: env.BACKUP_DEFERRED != 'true'
         timeout-minutes: 30
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GROWTH_BACKUP_GITHUB_TOKEN }}
         run: |
           if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ] || [ -f /tmp/growth-archive-offload/UPLOAD_EMPTY ]; then
             echo "No archive shards to publish"
             exit 0
           fi
-          node scripts/growth-archive-publish.mjs /tmp/growth-archive-offload
-      - name: Delete only release-verified unchanged archive shards from Fly
-        # 0928 用户授权：只删除本批 GitHub 回读、生产恢复和源指纹三重验证通过的旧归档。
-        if: ${{ success() && env.BACKUP_DEFERRED != 'true' }}
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: |
-          if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ] || [ -f /tmp/growth-archive-offload/UPLOAD_EMPTY ]; then
-            exit 0
-          fi
-          test -s /tmp/growth-archive-offload/DELETE_READY
-          test -s /tmp/growth-archive-offload/verified-assets.tsv
-          test -s /tmp/growth-archive-offload/manifest-assets.tsv
-          BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
-          while IFS=$'\t' read -r dir archive_name archive_bytes archive_sha source_fingerprint source_bytes part_count; do
-            [ -n "$dir" ] || continue
-            verified_part_count=0
-            while IFS=$'\t' read -r part_dir part_asset part_bytes part_sha part_archive part_index; do
-              [ "$part_dir" = "$dir" ] || continue
-              awk -F '\t' -v asset="$part_asset" -v bytes="$part_bytes" -v sha="$part_sha" \
-                '$1 == asset && $2 == bytes && $3 == sha { found=1 } END { exit(found ? 0 : 1) }' \
-                /tmp/growth-archive-offload/verified-assets.tsv
-              verified_part_count=$((verified_part_count + 1))
-            done < /tmp/growth-archive-offload/assets.tsv
-            test "$verified_part_count" -eq "$part_count"
-            manifest_asset="archive-$dir.manifest.json"
-            awk -F '\t' -v asset="$manifest_asset" '$1 == asset { found=1 } END { exit(found ? 0 : 1) }' \
-              /tmp/growth-archive-offload/manifest-assets.tsv
-            awk -F '\t' -v asset="$manifest_asset" '$1 == asset { found=1 } END { exit(found ? 0 : 1) }' \
-              /tmp/growth-archive-offload/verified-assets.tsv
-            direct_asset_count=$(awk -F '\t' -v dir="$dir" -v archive="$archive_name" \
-              '$1 == dir && $2 == archive && $5 == archive { count++ } END { print count+0 }' \
-              /tmp/growth-archive-offload/assets.tsv)
-            if [ "$part_count" -ne 1 ] || [ "$direct_asset_count" -ne 1 ]; then
-              echo "::warning::归档 $dir 仅有分片证据，生产冷读端尚不能直接恢复；保留 Fly 源目录"
-              continue
-            fi
-            # 与独立 offload 使用同一删除门禁：正式镜像必须先以生产读取器恢复并解析成功。
-            flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-              -C "node --input-type=module - '$dir' '$archive_bytes' '$archive_sha'" \
-              < scripts/growth-archive-restore-prefetch.mjs
-            flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-              -C "sh -lc 'export GROWTH_GITHUB_OFFLOAD_CACHE_DIR=/tmp/growth-cold-verify-$dir; export GROWTH_COLD_VERIFY_CLEANUP=1; exec pnpm exec tsx server/growth/growthArchiveColdRestoreCli.ts $dir'" </dev/null
-            # 快照已排除当时最新两桶；删源前再读正式机当前最新两桶。检查失败也保留源。
-            if ! flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-              -C "node -e 'const fs=require(\"node:fs\");const dir=process.argv[1];const names=fs.readdirSync(\"/data/growth/archive\",{withFileTypes:true}).filter(e=>e.isDirectory()&&/^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$/.test(e.name)).map(e=>e.name).sort();if(names.slice(-2).includes(dir))process.exit(45)' '$dir'" </dev/null; then
-              echo "::warning::无法确认 $dir 不在最新两桶，保留 Fly 源目录"
-              continue
-            fi
-            DELETED=false
-            for attempt in $(seq 1 20); do
-              if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-                -C "sh -s -- delete '$BATCH_ID' '$dir' '$source_fingerprint'" \
-                < scripts/growth-archive-offload-remote.sh; then
-                DELETED=true
-                break
-              fi
-              echo "采集 lease 或前台任务繁忙，删除继续让行：$dir（${attempt}/20）"
-              sleep 30
-            done
-            test "$DELETED" = "true"
-          done < /tmp/growth-archive-offload/archives.tsv
-          flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-            -C "sh -s -- cleanup '$BATCH_ID'" \
-            < scripts/growth-archive-offload-remote.sh
-      - name: Restore-verify and delete bounded reused archive shards
-        if: ${{ success() && env.BACKUP_DEFERRED != 'true' }}
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ ! -s /tmp/growth-archive-offload/reclaim.tsv ]; then exit 0; fi
-          BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
-          mkdir -p /tmp/growth-archive-offload/reclaim-readback
-          while IFS=$'\t' read -r dir source_fingerprint source_bytes archive_name archive_bytes archive_sha manifest_name manifest_bytes manifest_sha manifest_tag; do
-            [ -n "$dir" ] || continue
-            [[ "$dir" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$ ]]
-            [[ "$source_fingerprint" =~ ^[0-9a-f]{64}$ ]]
-            [[ "$archive_sha" =~ ^[0-9a-f]{64}$ ]]
-            [[ "$manifest_sha" =~ ^[0-9a-f]{64}$ ]]
-            test "$archive_name" = "archive-$dir.tar.gz"
-            test "$manifest_name" = "archive-$dir.manifest.json"
-            readback="/tmp/growth-archive-offload/reclaim-readback/$manifest_name"
-            rm -f "$readback"
-            gh release download "$manifest_tag" -p "$manifest_name" -D /tmp/growth-archive-offload/reclaim-readback --clobber
-            test "$(stat -c%s "$readback")" = "$manifest_bytes"
-            test "$(sha256sum "$readback" | awk '{print $1}')" = "$manifest_sha"
-            node - "$readback" "$dir" "$source_fingerprint" "$archive_name" "$archive_bytes" "$archive_sha" <<'NODE'
-          const fs = require("node:fs");
-          const [file, dir, fingerprint, asset, bytes, sha] = process.argv.slice(2);
-          const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
-          if (manifest.schemaVersion !== 1 || manifest.dir !== dir || manifest.sourceFingerprint !== fingerprint
-            || manifest.archive?.assetName !== asset || manifest.archive.bytes !== Number(bytes)
-            || manifest.archive.sha256 !== sha || manifest.parts?.length !== 1
-            || manifest.parts[0].assetName !== asset || manifest.parts[0].bytes !== Number(bytes)
-            || manifest.parts[0].sha256 !== sha || manifest.parts[0].index !== 0) {
-            throw new Error("reused archive manifest changed after planning");
-          }
-          NODE
-            flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-              -C "node --input-type=module - '$dir' '$archive_bytes' '$archive_sha'" \
-              < scripts/growth-archive-restore-prefetch.mjs
-            flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-              -C "sh -lc 'export GROWTH_GITHUB_OFFLOAD_CACHE_DIR=/tmp/growth-cold-verify-$dir; export GROWTH_COLD_VERIFY_CLEANUP=1; exec pnpm exec tsx server/growth/growthArchiveColdRestoreCli.ts $dir'" </dev/null
-            # 快照已排除当时最新两桶；删源前再读正式机当前最新两桶。检查失败也保留源。
-            if ! flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-              -C "node -e 'const fs=require(\"node:fs\");const dir=process.argv[1];const names=fs.readdirSync(\"/data/growth/archive\",{withFileTypes:true}).filter(e=>e.isDirectory()&&/^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$/.test(e.name)).map(e=>e.name).sort();if(names.slice(-2).includes(dir))process.exit(45)' '$dir'" </dev/null; then
-              echo "::warning::无法确认 $dir 不在最新两桶，保留 Fly 源目录"
-              continue
-            fi
-            DELETED=false
-            for attempt in $(seq 1 20); do
-              if flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-                -C "sh -s -- delete '$BATCH_ID' '$dir' '$source_fingerprint'" \
-                < scripts/growth-archive-offload-remote.sh; then
-                DELETED=true
-                break
-              fi
-              echo "采集 lease 或前台任务繁忙，已备份旧归档继续让行：$dir（${attempt}/20）"
-              sleep 30
-            done
-            test "$DELETED" = "true"
-          done < /tmp/growth-archive-offload/reclaim.tsv
+          GROWTH_REQUIRE_SOURCE_INVENTORY=1 node scripts/growth-archive-publish.mjs /tmp/growth-archive-offload
       - name: Retain platform-current on Fly after cold backup
         if: env.BACKUP_DEFERRED != 'true'
         run: |
           # 四平台 current 本轮只执行“Fly → 本机校验 → Release 回读”的冷备。
           # 禁止自动删除后再依赖 GitHub → Fly 恢复；空间回收只处理已逐包验真的 archive 分片。
           echo "platform-current retained on Fly; no automatic GitHub-to-Fly recovery path was invoked"
+      - name: Preserve archive audit and partial coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: growth-archive-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/growth-archive-offload/*.json
+            /tmp/growth-archive-offload/*.jsonl
+            /tmp/growth-archive-offload/*.tsv
+            /tmp/growth-archive-offload/UPLOAD_VERIFIED
+          if-no-files-found: warn
+          retention-days: 30
       - name: Always release archive hardlink snapshot
         timeout-minutes: 2
         if: always()
@@ -998,6 +792,92 @@ jobs:
             exit 0
           fi
           BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
-          timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+          if timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
             -C "sh -s -- cleanup '$BATCH_ID'" \
-            < scripts/growth-archive-offload-remote.sh || echo "::warning::临时快照清理未完成，保留待后续回收；未删除源归档"
+            < scripts/growth-archive-offload-remote.sh; then
+            touch /tmp/growth-archive-offload/SNAPSHOT_RELEASED
+          else
+            echo "::warning::临时快照清理未完成，保留待后续回收；未删除源归档"
+          fi
+      - name: Always release owned current snapshot
+        timeout-minutes: 2
+        if: always()
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "${FLY_MACHINE_ID:-}" ] || [ ! -s /tmp/growth-backup/remote-current-batch-dir.txt ]; then
+            exit 0
+          fi
+          BATCH_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          case "$BATCH_ID" in *[!0-9-]*|*-*-*) exit 64 ;; esac
+          test "$(cat /tmp/growth-backup/remote-current-batch-dir.txt)" = "/data/growth/backups/current-batches/${BATCH_ID}"
+          # The deployed CLI checks the owner marker, exited PID, path identity and
+          # mutation lease. Only this run's temporary hardlinks can be removed.
+          timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+            -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth pnpm exec tsx scripts/cleanup-growth-current-snapshot.mts --batch-id=${BATCH_ID}'" \
+            || echo "::warning::本批 current 临时快照未清理，来源及其他批次保留；需后续处理"
+
+      - name: Retire verified Bilibili archive sources
+        if: success()
+        timeout-minutes: 20
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          ROOT=/tmp/growth-archive-offload
+          if [ ! -s "$ROOT/publication-result.json" ] && [ ! -s "$ROOT/reused-cleanup-input.json" ]; then
+            echo "本批无已发布或已备份可复用归档，保留全部来源"
+            exit 0
+          fi
+          if [ ! -f "$ROOT/SNAPSHOT_RELEASED" ]; then
+            echo "::warning::本批临时快照尚未确认释放，跳过来源清理"
+            exit 0
+          fi
+          : "${FLY_MACHINE_ID:?缺少本批已核对的机器ID}"
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          const root="/tmp/growth-archive-offload";
+          const read=file=>JSON.parse(fs.readFileSync(path.join(root,file),"utf8"));
+          const expected=`${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`;
+          const write=(label,payload)=>{
+            const {batch,publication,manifests}=payload;
+            if (![expected,`${expected}-backup`].includes(batch?.batchId) || publication?.batchId!==batch.batchId
+                || batch.schemaVersion!==3 || !Array.isArray(batch.archives) || !batch.archives.length)
+              throw Error("retirement_batch_identity_invalid");
+            for(const entry of batch.archives){
+              if(!/^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(entry.dir)
+                  || typeof manifests?.[`archive-${entry.dir}.manifest.json`]!=="string")
+                throw Error("retirement_manifest_missing_or_invalid");
+            }
+            fs.writeFileSync(path.join(root,`retirement-request-${label}.json`),JSON.stringify(payload),{flag:"wx",mode:0o600});
+          };
+          if(fs.existsSync(path.join(root,"publication-result.json"))){
+            const batch=read("offload-manifest.json"),publication=read("publication-result.json"),manifests={};
+            for(const entry of batch.archives){
+              if(!/^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(entry.dir))throw Error("retirement_directory_invalid");
+              const name=`archive-${entry.dir}.manifest.json`;
+              manifests[name]=fs.readFileSync(path.join(root,"assets",name)).toString("base64");
+            }
+            write("new",{batch,publication,manifests});
+          }
+          if(fs.existsSync(path.join(root,"reused-cleanup-input.json")))write("reused",read("reused-cleanup-input.json"));
+          NODE
+          for kind in new reused; do
+            request="$ROOT/retirement-request-$kind.json"
+            [ -s "$request" ] || continue
+            timeout --kill-after=10s 540s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth node scripts/growth-archive-retire.mjs --scope=bilibili-archives --allow-remote-download'" \
+              < "$request" | tee "$ROOT/retirement-result-$kind.json"
+          done
+          printf '本批B站归档还原核验与逐文件清理已执行；实际删除与空间变化见retirement-result-*.json。\n' >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+      - name: Preserve archive retirement receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: growth-archive-retirement-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/growth-archive-offload/retirement-request-*.json
+            /tmp/growth-archive-offload/retirement-result-*.json
+          if-no-files-found: ignore
+          retention-days: 30

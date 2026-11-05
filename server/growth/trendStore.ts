@@ -1,3 +1,6 @@
+import { createGrowthPrivateAssetFetch } from "../../shared/growthPrivateAssetFetch.mjs";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { downloadGrowthBackupGenerationAsset, loadGrowthBackupGeneration } from "../../shared/growthBackupGeneration.mjs";
 import { readTrendShortlistIndex, writeTrendShortlistIndex, ensureTrendShortlistIndex, type ShortlistCollection } from "./trendShortlistIndex";
 import { buildGrowthStatusProjection, type GrowthStatusProjection } from "./growthStatusProjection";
 import { readGrowthGzipJson, writeGrowthGzipJson, mapGrowthSequential } from "./growthJsonStream";
@@ -26,6 +29,7 @@ import { nowShanghaiIso, toShanghaiIso } from "./time";
 import { normalizeStringList } from "./trendNormalize";
 import { withGrowthStoreMutationLock } from "./growthStoreMutationLock";
 import { fetchGrowthColdStoreAsset } from "../../shared/growthColdStoreRelease.mjs";
+import { parseGrowthArchiveManifest, restoreGrowthArchive, type GrowthArchiveColdManifest } from "../../shared/growthArchiveRestore.mjs";
 const execFileAsync = promisify(execFile);
 const FLYCTL_BIN = process.env.FLYCTL_BIN || path.join(process.env.HOME || "", ".fly/bin/flyctl");
 const FLY_APP_NAME = String(process.env.FLY_APP || "mvstudiopro").trim() || "mvstudiopro";
@@ -308,12 +312,29 @@ const PLATFORM_CURRENT_DIR = path.join(STORE_DIR, "platform-current");
 const PLATFORM_CURRENT_MANIFEST_FILE = path.join(STORE_DIR, "platform-current-manifest.json");
 const HISTORY_LEDGER_DIR = path.join(STORE_DIR, "history-ledger");
 const GITHUB_OFFLOAD_CACHE_DIR = path.resolve(process.env.GROWTH_GITHUB_OFFLOAD_CACHE_DIR || path.join(DEFAULT_STORE_ROOT, "growth-github-cache"));
-const GITHUB_COLD_STORE_BASE_URL = String(process.env.GROWTH_GITHUB_COLD_STORE_BASE_URL || "").trim().replace(/\/$/, "");
+const LEGACY_COLD_STORE_BASE_URL = String(process.env.GROWTH_GITHUB_COLD_STORE_BASE_URL || "").trim().replace(/\/$/, "");
+const GITHUB_COLD_STORE_BASE_URL = String(process.env.GROWTH_GITHUB_PRIVATE_COLD_STORE_BASE_URL || LEGACY_COLD_STORE_BASE_URL).trim().replace(/\/$/, "");
+const coldStoreFetch = createGrowthPrivateAssetFetch({
+  repository: process.env.GROWTH_BACKUP_REPOSITORY || "gabrieltan0506-prog/mvstudiopro-growth-data",
+  token: process.env.GROWTH_BACKUP_GITHUB_TOKEN,
+});
+async function fetchRoutedColdStoreAsset(assetName: string, options?: RequestInit, legacyOnly = false): Promise<Response | null> {
+  const primary = legacyOnly
+    ? await coldStoreFetch(`${GITHUB_COLD_STORE_BASE_URL}/${assetName}`, options)
+    : await fetchGrowthColdStoreAsset(GITHUB_COLD_STORE_BASE_URL, assetName, options, coldStoreFetch);
+  // A committed generation never calls this fallback. Historical archives retain
+  // their original public route only after an explicit missing response.
+  if ((!primary || primary.status === 404) && LEGACY_COLD_STORE_BASE_URL && LEGACY_COLD_STORE_BASE_URL !== GITHUB_COLD_STORE_BASE_URL)
+    return fetchGrowthColdStoreAsset(LEGACY_COLD_STORE_BASE_URL, assetName, options, coldStoreFetch);
+  return primary;
+}
 const BACKFILL_PLATFORMS = new Set<GrowthPlatform>(
   scheduledGrowthPlatformValues,
 );
 /** 当前仍会读写的正式平台；旧枚举仅保留反序列化兼容，退休平台不得再从备份回灌。 */
 const GROWTH_STORE_PLATFORM_VALUES: GrowthPlatform[] = [...activeGrowthPlatformValues];
+// 退出平台保留历史类型和远端备份，但不可通过读取路径恢复到运行数据。
+const isRetiredGrowthPlatform = (platform: GrowthPlatform) => platform === "kuaishou" || platform === "toutiao";
 const RETENTION_DAYS = 365;
 const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180, 270, 365];
 const DEFAULT_SELECTED_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
@@ -370,12 +391,6 @@ type PlatformCurrentBatchManifest = {
   }>;
 };
 
-type GrowthArchiveColdManifest = {
-  schemaVersion: number;
-  dir: string;
-  archive: { assetName: string; bytes: number; sha256: string };
-  parts: Array<{ assetName: string; bytes: number; sha256: string; index: number }>;
-};
 
 function isSafeArchiveDirName(value: string) {
   return /^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(value);
@@ -385,26 +400,7 @@ export function parseGrowthArchiveColdManifest(
   value: unknown,
   expectedDir: string,
 ): GrowthArchiveColdManifest {
-  const manifest = value as GrowthArchiveColdManifest;
-  const expectedArchive = `archive-${expectedDir}.tar.gz`;
-  if (
-    !isSafeArchiveDirName(expectedDir)
-    || manifest?.schemaVersion !== 1
-    || manifest.dir !== expectedDir
-    || manifest.archive?.assetName !== expectedArchive
-    || !Number.isSafeInteger(manifest.archive?.bytes)
-    || manifest.archive.bytes <= 0
-    || !/^[a-f0-9]{64}$/.test(String(manifest.archive?.sha256 || ""))
-    || !Array.isArray(manifest.parts)
-    || manifest.parts.length !== 1
-    || manifest.parts[0]?.assetName !== expectedArchive
-    || manifest.parts[0]?.index !== 0
-    || manifest.parts[0]?.bytes !== manifest.archive.bytes
-    || manifest.parts[0]?.sha256 !== manifest.archive.sha256
-  ) {
-    throw new Error(`growth_archive_manifest_invalid:${expectedDir}`);
-  }
-  return manifest;
+  return parseGrowthArchiveManifest(value, expectedDir);
 }
 
 export function assertSafeGrowthArchiveTarEntries(dirName: string, listing: string) {
@@ -471,11 +467,11 @@ async function downloadPlatformCurrentBatchAsset(
   if (!manifestUrl) return { attempted: false, filePath: null };
   let manifest: PlatformCurrentBatchManifest;
   try {
-    const response = await fetch(`${manifestUrl}?ts=${Date.now()}`, {
+    const response = await fetchRoutedColdStoreAsset("platform-current-batch-manifest.json", {
       cache: "no-store",
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (response.status === 404) return { attempted: false, filePath: null };
+    if (!response || response.status === 404) return { attempted: false, filePath: null };
     if (!response.ok) return { attempted: false, filePath: null };
     manifest = JSON.parse(await response.text()) as PlatformCurrentBatchManifest;
   } catch {
@@ -531,7 +527,7 @@ async function downloadPlatformCurrentBatchAsset(
       }
       for (let attempt = 1; !raw && attempt <= 3; attempt += 1) {
         try {
-          const response = await fetchGrowthColdStoreAsset(GITHUB_COLD_STORE_BASE_URL, part.assetName, {
+          const response = await fetchRoutedColdStoreAsset(part.assetName, {
             cache: "no-store",
             signal: AbortSignal.timeout(timeoutMs),
           });
@@ -560,6 +556,8 @@ async function downloadPlatformCurrentBatchAsset(
   }
 }
 
+// Pin one committed generation per store read, allowing later reads to discover a new generation.
+const backupGenerationContext = new AsyncLocalStorage<{ generation?: ReturnType<typeof loadGrowthBackupGeneration> }>();
 async function downloadColdStoreAsset(
   assetName: string,
   cacheRelativePath: string,
@@ -567,6 +565,27 @@ async function downloadColdStoreAsset(
   legacyOnly = false,
 ) {
   if (!canUseGithubColdStore()) return null;
+  if (!/^archive-\d{4}-/.test(assetName)) {
+    try {
+      const context = backupGenerationContext.getStore() || {};
+      context.generation ??= loadGrowthBackupGeneration(GITHUB_COLD_STORE_BASE_URL, {
+        fetchImpl: coldStoreFetch, signal: AbortSignal.timeout(timeoutMs),
+      }).catch(error => { context.generation = undefined; throw error; });
+      const generationAsset = await downloadGrowthBackupGenerationAsset({
+        baseUrl: GITHUB_COLD_STORE_BASE_URL, logicalName: assetName,
+        cacheDir: GITHUB_OFFLOAD_CACHE_DIR, signal: AbortSignal.timeout(timeoutMs),
+        generation: context.generation, fetchImpl: coldStoreFetch,
+      });
+      if (generationAsset.attempted) {
+        if (!generationAsset.filePath && (/^(?:current|runtime-meta|archive-index|history-summary)\.json\.gz$/.test(assetName)
+          || /^platform-current-(?:douyin|xiaohongshu|bilibili|weixin_channels)\.current\.json\.gz$/.test(assetName)))
+          throw new Error(`growth_backup_required_asset_missing:${assetName}`);
+        return generationAsset.filePath;
+      }
+    } catch (error) {
+      throw new Error(`growth_backup_unavailable:${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   const batchAsset = await downloadPlatformCurrentBatchAsset(assetName, timeoutMs);
   if (batchAsset.attempted) return batchAsset.filePath;
   const url = getColdStoreAssetUrl(assetName);
@@ -577,9 +596,7 @@ async function downloadColdStoreAsset(
     return cachePath;
   } catch {}
   const options = { signal: AbortSignal.timeout(timeoutMs) };
-  const response = legacyOnly
-    ? await fetch(url, options)
-    : await fetchGrowthColdStoreAsset(GITHUB_COLD_STORE_BASE_URL, assetName, options);
+  const response = await fetchRoutedColdStoreAsset(assetName, options, legacyOnly);
   if (!response || response.status === 404) return null;
   if (!response.ok) throw new Error(`growth_cold_store_download_failed:${assetName}:${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
@@ -616,6 +633,7 @@ async function readJsonWithGzipFallback<T>(
     const json = downloaded.endsWith(".gz") ? await gunzipAsync(raw) : raw;
     return JSON.parse(json.toString("utf8")) as T;
   } catch {
+    if (downloaded.includes(`${path.sep}generations${path.sep}`)) throw new Error(`growth_backup_content_invalid:${assetName}`);
     // 下载中断或旧缓存损坏时必须删除，否则后续启动会永久命中同一坏资产。
     await fs.unlink(downloaded).catch(() => {});
     return null;
@@ -632,64 +650,23 @@ function resolveArchiveRelativePath(filePath: string) {
 
 export async function ensureOffloadedArchiveDir(dirName: string) {
   if (!isSafeArchiveDirName(dirName) || !canUseGithubColdStore()) return null;
-  const targetDir = path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive", dirName);
   try {
-    await fs.access(targetDir);
-    return targetDir;
-  } catch {}
-  const archiveAsset = `archive-${dirName}.tar.gz`;
-  const manifestAsset = `archive-${dirName}.manifest.json`;
-  const manifestPath = await downloadColdStoreAsset(
-    manifestAsset,
-    path.join("manifests", manifestAsset),
-  );
-  let manifest: GrowthArchiveColdManifest | null = null;
-  if (manifestPath) {
-    try {
-      manifest = parseGrowthArchiveColdManifest(
-        JSON.parse(await fs.readFile(manifestPath, "utf8")),
-        dirName,
-      );
-    } catch (error) {
-      console.warn(`[growth.cold-store] archive manifest invalid: ${dirName}`, error);
-      return null;
-    }
-  }
-  // 新日仓必须有清单才能消费；上传中途只有 tar 时不得沿旧格式旁路跳过 SHA 验证。
-  let bundle = await downloadColdStoreAsset(archiveAsset, path.join("bundles", archiveAsset), 15_000, !manifest);
-  if (!bundle) return null;
-  if (manifest) {
-    let integrity = await hashLocalFile(bundle).catch(() => null);
-    if (integrity?.bytes !== manifest.archive.bytes || integrity.sha256 !== manifest.archive.sha256) {
-      await fs.unlink(bundle).catch(() => {});
-      bundle = await downloadColdStoreAsset(archiveAsset, path.join("bundles", archiveAsset), 15_000, !manifest);
-      integrity = bundle ? await hashLocalFile(bundle).catch(() => null) : null;
-    }
-    if (!bundle || integrity?.bytes !== manifest.archive.bytes || integrity.sha256 !== manifest.archive.sha256) {
-      console.warn(`[growth.cold-store] archive bundle integrity mismatch: ${dirName}`);
-      return null;
-    }
-  }
-  const archiveRoot = path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive");
-  const stageRoot = path.join(archiveRoot, `.next-${dirName}-${process.pid}-${Date.now()}`);
-  await fs.mkdir(archiveRoot, { recursive: true });
-  await fs.rm(stageRoot, { recursive: true, force: true });
-  await fs.mkdir(stageRoot, { recursive: true });
-  try {
-    const { stdout } = await execFileAsync("tar", ["-tzf", bundle], { maxBuffer: 64 * 1024 * 1024 });
-    assertSafeGrowthArchiveTarEntries(dirName, stdout);
-    await execFileAsync("tar", ["-xzf", bundle, "-C", stageRoot], { maxBuffer: 64 * 1024 * 1024 });
-    const stagedDir = path.join(stageRoot, dirName);
-    if (!(await fs.stat(stagedDir)).isDirectory()) throw new Error(`growth_archive_extract_missing:${dirName}`);
-    await fs.rename(stagedDir, targetDir).catch(async (error: NodeJS.ErrnoException) => {
-      if (error.code !== "EEXIST" && error.code !== "ENOTEMPTY") throw error;
+    return await restoreGrowthArchive({
+      dir: dirName,
+      cacheRoot: GITHUB_OFFLOAD_CACHE_DIR,
+      fetchAsset: (assetName, legacyOnly, releaseTag) => {
+        const options = { cache: "no-store" as const, signal: AbortSignal.timeout(180_000) };
+        if (releaseTag) {
+          const base = GITHUB_COLD_STORE_BASE_URL.replace(/\/$/, "");
+          if (!/\/releases\/download\/[^/]+$/.test(base)) throw new Error("growth_archive_revision_mirror_unsupported");
+          return coldStoreFetch(`${base.replace(/[^/]+$/, releaseTag)}/${assetName}`, options);
+        }
+        return fetchRoutedColdStoreAsset(assetName, options, legacyOnly);
+      },
     });
-    return targetDir;
   } catch (error) {
     console.warn(`[growth.cold-store] archive restore failed: ${dirName}`, error);
     return null;
-  } finally {
-    await fs.rm(stageRoot, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -1059,6 +1036,7 @@ function getHistoryLedgerFile(platform: GrowthPlatform) {
 }
 
 async function readHistoryLedger(platform: GrowthPlatform): Promise<Record<string, TrendHistoryLedgerEntry>> {
+  if (isRetiredGrowthPlatform(platform)) return {};
   const parsed = await readJsonWithGzipFallback<{ items?: Record<string, TrendHistoryLedgerEntry> }>(
     getHistoryLedgerFile(platform),
     `history-ledger-${platform}.json.gz`,
@@ -1069,19 +1047,11 @@ async function readHistoryLedger(platform: GrowthPlatform): Promise<Record<strin
 
 async function writeHistoryLedger(platform: GrowthPlatform, items: Record<string, TrendHistoryLedgerEntry>) {
   await ensureStoreDir();
-  await fs.writeFile(
-    getHistoryLedgerFile(platform),
-    JSON.stringify(
-      {
-        updatedAt: nowShanghaiIso(),
-        platform,
-        items,
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
+  await writeJsonAtomic(getHistoryLedgerFile(platform), {
+    updatedAt: nowShanghaiIso(),
+    platform,
+    items,
+  });
 }
 
 function mergeHistoryLedgerEntries(
@@ -1115,12 +1085,14 @@ const HISTORY_BOOTSTRAP_MIN_ARCHIVED_PER_PLATFORM = Math.max(
 );
 
 async function readHistoryLedgerFromRepoSnapshot(platform: GrowthPlatform) {
+  if (isRetiredGrowthPlatform(platform)) return {};
   const plainPath = path.join(REPO_SNAPSHOT_LEDGER_DIR, `${platform}.json`);
   const parsed = await readLocalJsonOrGzip<{ items?: Record<string, TrendHistoryLedgerEntry> }>(plainPath);
   return parsed?.items && Object.keys(parsed.items).length ? parsed.items : {};
 }
 
 async function readHistoryLedgerFromColdStoreOnly(platform: GrowthPlatform) {
+  if (isRetiredGrowthPlatform(platform)) return {};
   const assetName = `history-ledger-${platform}.json.gz`;
   const downloaded = await downloadColdStoreAsset(
     assetName,
@@ -1146,6 +1118,7 @@ export type TrendHistoryBootstrapResult = {
 };
 
 export async function bootstrapTrendHistoryFromColdStore(): Promise<TrendHistoryBootstrapResult> {
+  if (!backupGenerationContext.getStore()) return backupGenerationContext.run({}, () => bootstrapTrendHistoryFromColdStore());
   const result: TrendHistoryBootstrapResult = {
     mergedPlatforms: [],
     sources: {},
@@ -1338,15 +1311,18 @@ function resolveArchiveJsonPlainPath(filePath: string) {
 }
 
 async function readArchiveCollectionItems(entry: TrendArchiveEntry): Promise<TrendItem[]> {
+  if (isRetiredGrowthPlatform(entry.platform)) return [];
   const plainPath = resolveArchiveJsonPlainPath(entry.file);
   const parsed = await readLocalJsonOrGzip<Partial<PlatformTrendCollection>>(plainPath);
-  if (parsed?.items?.length) return parsed.items;
+  if (Array.isArray(parsed?.items)) return parsed.items;
   const relativePath = resolveArchiveRelativePath(entry.file);
   const [dirName] = relativePath.split("/");
   if (!dirName) return [];
   const archiveDir = await ensureOffloadedArchiveDir(dirName);
   if (!archiveDir) return [];
-  const localPlain = path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive", relativePath);
+  const memberPath = relativePath.split("/").slice(1).join("/");
+  if (!memberPath || memberPath.split("/").some(part => !part || part === "." || part === "..")) return [];
+  const localPlain = resolveArchiveJsonPlainPath(path.join(archiveDir, memberPath));
   const localParsed = await readLocalJsonOrGzip<Partial<PlatformTrendCollection>>(localPlain);
   return Array.isArray(localParsed?.items) ? localParsed.items : [];
 }
@@ -1361,9 +1337,9 @@ async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null
     if (!parsed) return null;
     return {
       updatedAt: parsed.updatedAt || toShanghaiIso(0),
-      collections: parsed.collections || {},
+      collections: Object.fromEntries(Object.entries(parsed.collections || {}).filter(([platform]) => !isRetiredGrowthPlatform(platform as GrowthPlatform))),
       scheduler: parsed.scheduler || {},
-      archiveIndex: (parsed.archiveIndex || []).map((entry) => ({
+      archiveIndex: (parsed.archiveIndex || []).filter(entry => !isRetiredGrowthPlatform(entry.platform)).map((entry) => ({
         ...entry,
         bucketCounts: entry.bucketCounts || {},
         industryCounts: entry.industryCounts || {},
@@ -1376,7 +1352,8 @@ async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null
       backfillHistory: parsed.backfillHistory || createEmptyStore().backfillHistory,
       mailDigest: parsed.mailDigest || {},
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("growth_backup_")) throw error;
     return null;
   }
 }
@@ -1420,6 +1397,7 @@ async function readHistorySummaryFile(): Promise<TrendHistoryState | null> {
 }
 
 async function readPlatformCollectionFile(platform: GrowthPlatform): Promise<PlatformTrendCollection | undefined> {
+  if (isRetiredGrowthPlatform(platform)) return undefined;
   const parsed = await readJsonWithGzipFallback<{ collection?: PlatformTrendCollection }>(
     path.join(PLATFORM_DIR, `${platform}.json`),
     `platform-${platform}.json.gz`,
@@ -1461,6 +1439,7 @@ async function readPlatformCurrentManifest(): Promise<PlatformCurrentManifest | 
 }
 
 async function readPlatformCurrentTruthFile(platform: GrowthPlatform): Promise<PlatformCurrentTruthFile | null> {
+  if (isRetiredGrowthPlatform(platform)) return null;
   let parsed = await readJsonWithGzipFallback<PlatformCurrentTruthFile>(
     getPlatformCurrentTruthFile(platform),
     `platform-current-${platform}.current.json.gz`,
@@ -1495,6 +1474,7 @@ async function runFlyCat(command: string): Promise<string | null> {
 }
 
 async function readFlyPlatformCurrentTruthFile(platform: GrowthPlatform): Promise<PlatformCurrentTruthFile | null> {
+  if (isRetiredGrowthPlatform(platform)) return null;
   let raw = await runFlyCat(`sh -lc 'gzip -dfc /data/growth/platform-current/${platform}.current.json.gz 2>/dev/null || true'`);
   if (!raw) {
     raw = await runFlyCat(`cat /data/growth/platform-current/${platform}.current.json`);
@@ -1514,6 +1494,8 @@ async function readFlyTrendStoreFile(): Promise<TrendStoreFile | null> {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as TrendStoreFile;
+    parsed.collections = Object.fromEntries(Object.entries(parsed.collections || {}).filter(([platform]) => !isRetiredGrowthPlatform(platform as GrowthPlatform)));
+    parsed.archiveIndex = (parsed.archiveIndex || []).filter(entry => !isRetiredGrowthPlatform(entry.platform));
     if (!storeNeedsCollectionHydration(parsed)) return parsed;
     const collections = { ...(parsed.collections || {}) };
     for (const platform of GROWTH_STORE_PLATFORM_VALUES) {
@@ -1630,8 +1612,8 @@ async function readRuntimeMeta(): Promise<TrendStoreRuntimeMeta> {
   }
 
   try {
-    const raw = await fs.readFile(META_FILE, "utf8");
-    const parsed = JSON.parse(raw) as TrendStoreRuntimeMeta;
+    const parsed = await readJsonWithGzipFallback<TrendStoreRuntimeMeta>(META_FILE,"runtime-meta.json.gz","runtime-meta.json.gz");
+    if (!parsed) return {};
     const legacyBackfill = parsed.backfill;
     const hasSplitBackfill = Boolean(parsed.backfillLive || parsed.backfillHistory);
     return {
@@ -1642,7 +1624,8 @@ async function readRuntimeMeta(): Promise<TrendStoreRuntimeMeta> {
       backfillHistory: parsed.backfillHistory,
       mailDigest: parsed.mailDigest || {},
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("growth_backup_")) throw error;
     return {};
   }
 }
@@ -1800,7 +1783,7 @@ async function fillStoreCollectionsFromFallback(
   options?: { platforms?: GrowthPlatform[]; current?: TrendStoreFile | null },
 ) {
   const raw = options?.current ?? await readRawStoreFile(STORE_FILE);
-  const targets = options?.platforms ?? GROWTH_STORE_PLATFORM_VALUES;
+  const targets = (options?.platforms ?? GROWTH_STORE_PLATFORM_VALUES).filter(platform => !isRetiredGrowthPlatform(platform));
   for (const platform of targets) {
     if ((collections[platform]?.items?.length || 0) > 0) continue;
     const truth = await readPlatformCurrentTruthFile(platform);
@@ -1907,6 +1890,7 @@ async function writeJsonGzipAtomic(plainPath: string, value: unknown) {
 }
 
 export async function readTrendStore(options?: { preferDerivedFiles?: boolean; preferFlyLive?: boolean }): Promise<TrendStoreFile> {
+  if (!backupGenerationContext.getStore()) return backupGenerationContext.run({}, () => readTrendStore(options));
   await ensureStoreDir();
   if (options?.preferFlyLive) {
     const remote = await readFlyTrendStoreFile();
@@ -1974,8 +1958,10 @@ export async function readTrendStoreForPlatforms(
   platforms: GrowthPlatform[],
   options?: { preferDerivedFiles?: boolean; preferFlyLive?: boolean },
 ): Promise<TrendStoreFile> {
+  if (!backupGenerationContext.getStore()) return backupGenerationContext.run({}, () => readTrendStoreForPlatforms(platforms, options));
   await ensureStoreDir();
-  const uniquePlatforms = Array.from(new Set(platforms.filter(Boolean)));
+  const uniquePlatforms = Array.from(new Set(platforms.filter(platform => platform && !isRetiredGrowthPlatform(platform))));
+  if (!uniquePlatforms.length) return createEmptyStore();
   const meta = await readRuntimeMeta();
   const history = await readHistorySummaryFile();
 
@@ -2340,21 +2326,9 @@ async function writeStore(
 }
 
 async function pruneOldArchives(entries: TrendArchiveEntry[]) {
-  const threshold = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
-  const kept: TrendArchiveEntry[] = [];
-  await Promise.all(
-    entries.map(async (entry) => {
-      const archivedAt = new Date(entry.archivedAt).getTime();
-      if (Number.isFinite(archivedAt) && archivedAt >= threshold) {
-        kept.push(entry);
-        return;
-      }
-      try {
-        await fs.unlink(entry.file);
-      } catch {}
-    }),
-  );
-  return kept;
+  // Age is not backup evidence or deletion authorization. Preserve source files and
+  // index records; reclamation is a separate, receipt-bound operation.
+  return entries;
 }
 
 /**
@@ -3106,7 +3080,7 @@ async function mergeTrendCollectionsWithOptionsUnlocked(
   // 同一 collectedAt 的封面回补曾把同一路径再次写入 index；只保留最新一条索引，
   // 物理归档文件不在这里删除，避免索引上限被重复项占满并丢掉较早的真实分片。
   // 必须先去重再清理过期项；否则同路径的旧重复项可能先删掉仍由新索引引用的文件。
-  next.archiveIndex = (await pruneOldArchives(dedupeGrowthArchiveIndex(next.archiveIndex))).slice(0, 5000);
+  next.archiveIndex = await pruneOldArchives(dedupeGrowthArchiveIndex(next.archiveIndex));
 
   if (!options?.deferHistoryLedger) {
     await updateHistoryFromCollections(next, collections);
@@ -3631,6 +3605,7 @@ export async function loadArchiveItemsNearDaysAgo(
   daysAgo = 7,
   toleranceDays = 2,
 ): Promise<{ archivedAt?: string; items: TrendItem[] }> {
+  if (isRetiredGrowthPlatform(platform)) return { items: [] };
   const archiveIndex = await readArchiveIndexFile();
   const targetMs = Date.now() - Math.max(1, daysAgo) * 24 * 60 * 60 * 1000;
   const toleranceMs = Math.max(1, toleranceDays) * 24 * 60 * 60 * 1000;
