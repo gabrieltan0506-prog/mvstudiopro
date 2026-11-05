@@ -291,6 +291,24 @@ prepare_snapshot() {
       exit 64
     fi
     printf '%s\n' "$probe_dir" > "$selected_dirs"
+  else
+    # 默认轮转仅做有界候选的metadata估算；整桶超限显式延后，绝不截断内容。
+    node -e '
+      const fs=require("fs"),path=require("path"),root=process.argv[1],list=process.argv[2],out=process.argv[3],batch=process.argv[4];
+      const cursorFile=path.join(root,"backups/archive-offload/.rotation-cursor.json");
+      let cursor=null;
+      if(fs.existsSync(cursorFile)){const st=fs.lstatSync(cursorFile);if(!st.isFile()||st.isSymbolicLink())throw Error("archive_rotation_cursor_type");cursor=JSON.parse(fs.readFileSync(cursorFile,"utf8"));if(cursor.schemaVersion!==1||typeof cursor.lastDir!=="string")throw Error("archive_rotation_cursor_invalid");}
+      const dirs=fs.readFileSync(list,"utf8").trim().split(/\n/).filter(Boolean),start=cursor?dirs.findIndex(d=>d>cursor.lastDir):0;
+      const offset=start<0?0:start,ordered=[...dirs.slice(offset),...dirs.slice(0,offset)],selected=[],visited=[],oversized=[];
+      const maxBytes=512*1024*1024;let estimatedBytes=0;
+      function size(dir){let bytes=0;for(const e of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,e.name);if(e.isDirectory())bytes+=size(p);else if(e.isFile())bytes+=fs.lstatSync(p).size;}return bytes;}
+      for(const dir of ordered){if(visited.length>=12)break;const bytes=size(path.join(root,"archive",dir));if(bytes>maxBytes){visited.push(dir);oversized.push({dir,reason:"oversized",estimatedBytes:bytes});continue;}if(estimatedBytes+bytes>maxBytes)break;visited.push(dir);selected.push(dir);estimatedBytes+=bytes;}
+      const deferred=ordered.filter(d=>!visited.includes(d)).map(dir=>({dir,reason:"rotation-budget"})).concat(oversized);
+      const report={schemaVersion:1,batchId:batch,eligibleCount:dirs.length,scannedCount:visited.length,selectedCount:selected.length,estimatedBytes,maxBuckets:12,maxBytes,cursorBefore:cursor?.lastDir||null,cursorAfter:visited.at(-1)||cursor?.lastDir||null,deferred,oversized};
+      fs.writeFileSync(out,JSON.stringify(report));fs.writeFileSync(list,selected.length?selected.join("\n")+"\n":"");
+      console.error("GROWTH_ARCHIVE_ROTATION "+JSON.stringify({eligible:report.eligibleCount,visited:report.scannedCount,selected:report.selectedCount,deferred:deferred.length,oversized:oversized.length,sourceRetained:true}));
+      if(deferred.length)console.error("GROWTH_ARCHIVE_DEFERRED "+JSON.stringify(deferred));
+    ' "$ROOT" "$selected_dirs" "$snapshot_next/rotation.json" "$batch_id"
   fi
 
   plan="$snapshot_next/snapshot.tsv"
@@ -351,6 +369,13 @@ prepare_snapshot() {
   rm -f -- "$all_dirs" "$archive_dirs" "$selected_dirs"
   assert_lease
   mv "$snapshot_next" "$snapshot_root"
+  # 只在完整快照已原子发布后推进；同batch重入在前面返回，不二次推进。
+  if [ -z "$probe_dir" ]; then
+    node -e '
+      const fs=require("fs"),path=require("path"),root=process.argv[1],batch=process.argv[2],r=JSON.parse(fs.readFileSync(path.join(root,batch,"rotation.json"),"utf8"));
+      if(r.cursorAfter){const file=path.join(root,".rotation-cursor.json"),next=file+"."+batch+".next";if(fs.existsSync(file)&&(!fs.lstatSync(file).isFile()||fs.lstatSync(file).isSymbolicLink()))throw Error("archive_rotation_cursor_type");const fd=fs.openSync(next,"wx",0o600);try{fs.writeFileSync(fd,JSON.stringify({schemaVersion:1,batchId:batch,lastDir:r.cursorAfter}));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(next,file);const parent=fs.openSync(root,"r");try{fs.fsyncSync(parent);}finally{fs.closeSync(parent);}}
+    ' "$SNAPSHOT_PARENT" "$batch_id"
+  fi
   cat "$snapshot_root/snapshot.tsv"
 }
 
@@ -399,7 +424,8 @@ snapshot_report() {
     const fs=require("fs"),path=require("path"),root=process.argv[1];
     const inventories=Object.fromEntries(fs.readdirSync(path.join(root,"inventories")).sort().map(n=>[n.slice(0,-5),JSON.parse(fs.readFileSync(path.join(root,"inventories",n),"utf8"))]));
     const retired=(fs.existsSync(path.join(root,"retired.jsonl"))?fs.readFileSync(path.join(root,"retired.jsonl"),"utf8"):"").trim().split(/\r?\n/).filter(Boolean).map(JSON.parse);
-    console.log(JSON.stringify({schemaVersion:1,inventories,retired,anomalies:Object.values(inventories).filter(v=>v.errors.length),
+    const rotationFile=path.join(root,"rotation.json"),rotation=fs.existsSync(rotationFile)?JSON.parse(fs.readFileSync(rotationFile,"utf8")):null;
+    console.log(JSON.stringify({schemaVersion:1,inventories,retired,rotation,deferred:rotation?.deferred||[],anomalies:Object.values(inventories).filter(v=>v.errors.length),
       uncovered:Object.values(inventories).flatMap(v=>(v.uncovered||[]).map(row=>({dir:v.dir,...row}))),
       excluded:Object.values(inventories).flatMap(v=>(v.excluded||[]).map(row=>({dir:v.dir,...row}))),fullStoreComplete:false}));
   ' "$snapshot_root"

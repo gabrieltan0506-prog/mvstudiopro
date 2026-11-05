@@ -90,3 +90,29 @@ test('workflow先校验单桶参数再传给远端prepare',()=>{
  assert(source.indexOf('archive_probe_directory_invalid')<source.indexOf('sh -s -- prepare'));
  assert(source.includes("sh -s -- prepare '$BATCH_ID' '${GROWTH_ARCHIVE_PROBE_DIR:-}'"));
 });
+
+test('默认轮转跨两轮覆盖候选、环绕且同batch重入不推进游标',t=>{
+ const f=fixture(t);for(let i=1;i<=14;i++){const dir=`2026-08-${String(i).padStart(2,'0')}-00`;fs.mkdirSync(path.join(f.root,'archive',dir));}
+ const cursorFile=path.join(f.root,'backups/archive-offload/.rotation-cursor.json');
+ const a=prepare(f,'201-1');assert.equal(a.status,0,a.stderr);const first=JSON.parse(fs.readFileSync(path.join(f.root,'backups/archive-offload/201-1/rotation.json')));assert.equal(first.scannedCount,12);assert.equal(first.deferred.length,3);
+ const saved=fs.readFileSync(cursorFile,'utf8');assert.equal(prepare(f,'201-1').status,0);assert.equal(fs.readFileSync(cursorFile,'utf8'),saved);
+ const b=prepare(f,'202-1');assert.equal(b.status,0,b.stderr);const second=JSON.parse(fs.readFileSync(path.join(f.root,'backups/archive-offload/202-1/rotation.json')));assert.equal(second.scannedCount,12);assert.equal(second.cursorBefore,first.cursorAfter);assert(second.cursorAfter<first.cursorAfter);
+ const union=new Set([...fs.readdirSync(path.join(f.root,'backups/archive-offload/201-1/inventories')),...fs.readdirSync(path.join(f.root,'backups/archive-offload/202-1/inventories'))]);assert.equal(union.size,15);
+ assert(![...union].some(d=>d.startsWith('2026-09-02')||d.startsWith('2026-09-03')));
+ const beforeProbe=fs.readFileSync(cursorFile,'utf8');assert.equal(prepare(f,'203-1','2026-09-01-00').status,0);assert.equal(fs.readFileSync(cursorFile,'utf8'),beforeProbe);
+});
+test('超大桶显式延后并推进、失败快照不提交游标',t=>{
+ const f=fixture(t),old=addOldBucket(f),huge=path.join(f.root,'archive',old,'bilibili-valid.json.gz');fs.truncateSync(huge,513*1024*1024);
+ const run=prepare(f,'210-1');assert.equal(run.status,0,run.stderr);const report=JSON.parse(spawnSync('sh',[script,'report','210-1'],{env:f.env,encoding:'utf8'}).stdout);assert.equal(report.rotation.oversized[0].dir,old);assert(report.deferred.some(r=>r.dir===old&&r.reason==='oversized'));assert(report.rotation.estimatedBytes<=512*1024*1024);assert(!fs.existsSync(path.join(f.root,'backups/archive-offload/210-1',old)));
+ const cursor=path.join(f.root,'backups/archive-offload/.rotation-cursor.json'),saved=fs.readFileSync(cursor,'utf8'),bin=path.join(f.root,'failbin');fs.mkdirSync(bin);fs.writeFileSync(path.join(bin,'node'),`#!${process.execPath}\nconst{spawnSync}=require('child_process');const a=process.argv.slice(2);if(a[0]==='-e'&&a[1].includes('report=process.argv[2]'))process.exit(70);const r=spawnSync(${JSON.stringify(process.execPath)},a,{stdio:'inherit',env:process.env});process.exit(r.status??1);\n`,{mode:0o755});
+ const bad=prepare({...f,env:{...f.env,PATH:bin+':'+f.env.PATH}},'211-1');assert.equal(bad.status,70,bad.stderr);assert.equal(fs.readFileSync(cursor,'utf8'),saved);
+});
+test('plan保留未扫描deferred且remaining零不代表无积压',async t=>{
+ const {writeArchivePlan}=await import('./growth-archive-plan.mjs');const f=fixture(t);fs.writeFileSync(path.join(f.root,'source-inventory.json'),JSON.stringify({deferred:[{dir:'2026-08-01',reason:'rotation-budget'}]}));
+ writeArchivePlan(f.root,{selected:[],reclaim:[],reusedCleanup:[],remaining:0,reused:0});const p=JSON.parse(fs.readFileSync(path.join(f.root,'plan.json')));assert.equal(p.deferredCount,1);assert.equal(p.pendingOutsideBatch,1);assert.equal(p.remaining,0);
+});
+test('全超大批次仍报告deferred并推进游标，不声称无积压',t=>{
+ const f=fixture(t),dir='2026-09-01-00';fs.truncateSync(path.join(f.root,'archive',dir,'bilibili-valid.json.gz'),513*1024*1024);
+ const run=prepare(f,'220-1');assert.equal(run.status,0,run.stderr);assert.equal(run.stdout.trim(),'');assert.match(run.stderr,/GROWTH_ARCHIVE_ROTATION.*"deferred":1/);assert.match(run.stderr,/GROWTH_ARCHIVE_DEFERRED.*oversized/);
+ const c=JSON.parse(fs.readFileSync(path.join(f.root,'backups/archive-offload/.rotation-cursor.json')));assert.equal(c.lastDir,dir);
+});
