@@ -529,6 +529,17 @@ app.post("/generate-pdf", async (req, res) => {
 
     await applyMyreportsSnapshotPrintGuarantees(page);
 
+    // 知识书册必须在最终打印字体下完成排版；失败时禁止输出半成品。
+    await page.evaluate(`(async()=>{
+      await document.fonts.ready;
+      const roots=[...document.querySelectorAll('[data-booklet-root]')];
+      for(const root of roots){
+        if(typeof root.__layoutBooklet!=='function')throw new Error('知识书册排版脚本未就绪');
+        await root.__layoutBooklet();
+        if(root.dataset.ready!=='true')throw new Error('知识书册排版未通过');
+      }
+    })()`);
+
     await logMyreportsCoverDiagnosticsBeforePdf(page, reqId);
 
     const pdfTimeout = PAGE_PDF_TIMEOUT_MS;

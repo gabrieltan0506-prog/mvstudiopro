@@ -1,3 +1,5 @@
+import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
+import KnowledgePublicationPanel from "./KnowledgePublicationPanel";
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import {
@@ -51,6 +53,7 @@ export default function EditableLayoutStudio({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
+  const [autoPublicationId,setAutoPublicationId]=useState("");
   const utils = trpc.useUtils();
   const saveMutation = trpc.editableLayout.save.useMutation();
   const install = (next: Cache) => {
@@ -145,6 +148,7 @@ export default function EditableLayoutStudio({
     });
     install({ ...old, library, dirty: true, activeId: doc.id });
     setPageIndex(0);
+    if(doc.publication)setAutoPublicationId(doc.id);
     setOpen(true);
   };
   useEffect(() => {
@@ -183,6 +187,14 @@ export default function EditableLayoutStudio({
         ),
       },
     });
+  };
+  const commitPublication = async(nextDoc:EditableLayout) => {
+    const previous=current.current;
+    const library=layoutLibrarySchema.parse({...previous.library,documents:previous.library.documents.map(d=>d.id===nextDoc.id?nextDoc:d)});
+    install({...previous,library,dirty:true});
+    const result=await saveMutation.mutateAsync({library,expectedGeneration:previous.generation});
+    if(alive.current)install({...current.current,generation:result.generation,dirty:current.current.library!==library});
+    return {generation:result.generation};
   };
   const editPage = (patch: Partial<EditableLayout["pages"][number]>) => {
     if (doc)
@@ -255,12 +267,13 @@ export default function EditableLayoutStudio({
     );
   const importBackup = (file: File) =>
     action(async () => {
-      if (file.size > 8 * 1024 * 1024) throw new Error("备份超过8MB，未读取");
+      if (file.size > 64 * 1024 * 1024) throw new Error("备份超过64MB，未读取");
       const library = layoutLibrarySchema.parse(JSON.parse(await file.text()));
       if (library.owner !== owner) throw new Error("备份属于其他账号，未导入");
       const incoming = library.documents.map(d => ({
         ...d,
         id: crypto.randomUUID(),
+        ...(d.publication ? {publication:{...d.publication,requestId:crypto.randomUUID(),completedBatches:0,attempts:{},review:undefined,confirmedManuscript:undefined}} : {}),
       }));
       const merged = layoutLibrarySchema.parse({
         ...current.current.library,
@@ -296,7 +309,7 @@ export default function EditableLayoutStudio({
         <div>
           <h3 className="font-bold text-[#edd4ac]">排版与导出</h3>
           <p className="text-xs text-gray-400">
-            现有稿件改字排版 · 云端保存恢复 · HTML / 图片 / PDF
+            知识卡自动审校与图文阅读稿 · 云端保存恢复 · HTML / PDF
           </p>
         </div>
         <button className={button} onClick={() => setOpen(!open)}>
@@ -356,7 +369,7 @@ export default function EditableLayoutStudio({
           )}
           {error && (
             <p role="alert" className="text-sm text-rose-200">
-              {error}
+              {sanitizePlatformUserMessage(error)}
             </p>
           )}
           {!doc ? (
@@ -364,7 +377,7 @@ export default function EditableLayoutStudio({
               在下方已有稿件点击“编辑排版与导出”，即可带入正文与现有配图；原稿保留。
             </p>
           ) : (
-            <fieldset disabled={busy || !ready} className="space-y-4">
+            <fieldset disabled={!ready || (busy && !doc.publication)} className="space-y-4">
               <label className="block text-sm">
                 已保存稿件
                 <select
@@ -384,6 +397,8 @@ export default function EditableLayoutStudio({
                   ))}
                 </select>
               </label>
+              {doc.publication ? <KnowledgePublicationPanel key={doc.id} doc={doc} commit={commitPublication}
+                onChange={next=>update(next)} onBusy={value=>{locked.current=value;setBusy(value);}} autoStart={doc.id===autoPublicationId}/>:<>
               <div className="grid gap-5 lg:grid-cols-2">
                 <div className="space-y-3">
                   <label className="block text-sm">
@@ -648,6 +663,7 @@ export default function EditableLayoutStudio({
               <p className="text-xs text-gray-400">
                 HTML包含完整文字和配图，可离线改字；PNG/PDF为排版成品。已生成图片中的文字仍属于图片，不能单独改字。
               </p>
+              </>}
             </fieldset>
           )}
         </div>

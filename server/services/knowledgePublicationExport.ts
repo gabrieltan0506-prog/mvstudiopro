@@ -1,0 +1,288 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, writeFile, stat, rm, open } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { readCanonicalLayoutLibrary } from "./editableLayoutStore";
+import {
+  knowledgeSourceDigest,
+  readKnowledgeImage,
+  readKnowledgePublicationReview,
+  validateKnowledgeImageReceipts,
+} from "./knowledgePublicationAdvisor";
+import {
+  parseKnowledgeManuscript,
+  validateKnowledgeReview,
+} from "../../shared/knowledgePublication";
+import {
+  KNOWLEDGE_PUBLICATION_LAYOUT_VERSION,
+  knowledgePublicationHead,
+  knowledgePublicationChapter,
+} from "../../shared/knowledgePublicationHtml";
+import {
+  downloadGcsObjectVersioned,
+  getGcsBucketName,
+  signGsUriV4ReadUrl,
+  uploadBufferToGcs,
+  uploadStreamToGcs,
+} from "./gcs";
+import { fetchPdfBufferFromWorker } from "./pdfWorkerClient";
+
+const inflight = new Map<string, Promise<KnowledgePublicationExport>>();
+export type KnowledgePublicationExport = {
+  htmlUrl: string;
+  pdfUrl?: string;
+  htmlBytes: number;
+  pdfBytes?: number;
+  chapters: number;
+  pdfError?: string;
+};
+const real = {
+  load: readCanonicalLayoutLibrary,
+  review: readKnowledgePublicationReview,
+  image: readKnowledgeImage,
+  pdf: fetchPdfBufferFromWorker,
+  read: async (name: string) => {
+    try {
+      return (
+        await downloadGcsObjectVersioned({
+          gcsUri: `gs://${getGcsBucketName()}/${name}`,
+        })
+      ).buffer;
+    } catch (e) {
+      if (e instanceof Error && e.message === "gcs_stat_failed:404")
+        return null;
+      throw e;
+    }
+  },
+  save: async (name: string, buffer: Buffer, contentType: string) => {
+    await uploadBufferToGcs({ objectName: name, buffer, contentType });
+  },
+  file: async (name: string, path: string, contentType: string) => {
+    const size = (await stat(path)).size;
+    await uploadStreamToGcs({
+      objectName: name,
+      stream: Readable.toWeb(
+        createReadStream(path)
+      ) as ReadableStream<Uint8Array>,
+      contentLength: size,
+      contentType,
+    });
+    return size;
+  },
+  sign: (name: string) =>
+    signGsUriV4ReadUrl(`gs://${getGcsBucketName()}/${name}`, 3600),
+  merge: async (paths: string[], target: string) => {
+    await promisify(execFile)("pdfunite", [...paths, target], {
+      timeout: 300000,
+      maxBuffer: 1024 * 1024,
+    });
+  },
+};
+export async function exportKnowledgePublication(
+  owner: number,
+  documentId: string,
+  generation: string,
+  overrides: Partial<typeof real> = {}
+): Promise<KnowledgePublicationExport> {
+  const deps = {...real, ...overrides};
+  const loaded = await deps.load(owner);
+  if (loaded.generation !== generation)
+    throw new Error("云稿版本已变化，请先读取当前稿件；未导出旧稿");
+  const doc = loaded.library?.documents.find(d => d.id === documentId),
+    pub = doc?.publication;
+  if (
+    !doc ||
+    !pub?.review ||
+    !pub.confirmedManuscript ||
+    pub.confirmedManuscript !== pub.manuscript
+  )
+    throw new Error("请先确认图文阅读稿后再导出");
+  const accepted = parseKnowledgeManuscript(
+    pub.confirmedManuscript,
+    pub.source.pages.map(p => p.id)
+  );
+  if (
+    accepted.title !== doc.title ||
+    accepted.pages.some(
+      (p, i) =>
+        p.id !== doc.pages[i]?.id ||
+        p.body !== doc.pages[i]?.body ||
+        p.headline !== doc.pages[i]?.headline
+    ) ||
+    doc.pages.length !== accepted.pages.length
+  )
+    throw new Error("确认稿与保存内容不一致，未导出混合版本");
+  if (doc.pages.some((p, i) => p.imageUrl !== pub.source.pages[i].imageUrl))
+    throw new Error("确认稿配图与原审校不一致，请保留原配图");
+  const receipt = await deps.review(owner, documentId, pub.requestId);
+  validateKnowledgeImageReceipts(pub.source, receipt.sourceImages);
+  const review = validateKnowledgeReview(
+    receipt.report,
+    pub.source,
+    knowledgeSourceDigest(pub.source)
+  );
+  // 客户端可以修改正文，不能抹掉模型发现的图内疑点或伪造“已审校”。
+  if (
+    JSON.stringify(review) !==
+    JSON.stringify(
+      validateKnowledgeReview(pub.review, pub.source, review.sourceDigest)
+    )
+  )
+    throw new Error("图文审校回执不一致，请重新取回原结果");
+  const digest = createHash("sha256")
+    .update(
+      JSON.stringify([
+        KNOWLEDGE_PUBLICATION_LAYOUT_VERSION,
+        pub.infographicTemplateId,
+        accepted,
+        review,
+        receipt.sourceImages,
+      ])
+    )
+    .digest("hex");
+  const prefix = `knowledge-publications/user-${owner}/${documentId}/exports/${digest}`;
+  const run = async () => {
+    const manifest = await deps.read(`${prefix}/manifest.json`);
+    if (manifest) {
+      const saved = JSON.parse(manifest.toString("utf8"));
+      if (saved.pdfBytes)
+        return {
+          htmlUrl: deps.sign(`${prefix}/阅读稿.html`),
+          pdfUrl: deps.sign(`${prefix}/阅读稿.pdf`),
+          htmlBytes: saved.htmlBytes,
+          pdfBytes: saved.pdfBytes,
+          chapters: doc.pages.length,
+        };
+    }
+    const folder = await mkdtemp(join(tmpdir(), "knowledge-publication-"));
+    const htmlPath = join(folder, "publication.html"),
+      html = await open(htmlPath, "w");
+    const head = knowledgePublicationHead(doc.title),
+      tail = "</body></html>";
+    let chunk = "",
+      chunkBytes = 0,
+      chunkIndex = 0;
+    const pdfFiles: string[] = [],
+      failures: number[] = [];
+    const expected = new Map(receipt.sourceImages.map(p => [p.uri, p.sha256]));
+    const flush = async () => {
+      if (!chunk) return;
+      const index = chunkIndex++,
+        name = `${prefix}/pdf-parts/${index}.pdf`,
+        path = join(folder, `${index}.pdf`);
+      try {
+        const cached = await deps.read(name);
+        const bytes = cached || (await deps.pdf(head + chunk + tail));
+        if (bytes.length < 100 || bytes.subarray(0, 4).toString() !== "%PDF")
+          throw new Error("导出没有返回有效PDF");
+        if (!cached) await deps.save(name, bytes, "application/pdf");
+        await writeFile(path, bytes);
+        pdfFiles.push(path);
+      } catch {
+        failures.push(index + 1);
+      }
+      chunk = "";
+      chunkBytes = 0;
+    };
+    try {
+      await html.writeFile(head);
+      for (const [index, page] of Array.from(doc.pages.entries())) {
+        let embedded = "";
+        if (page.imageUrl) {
+          const image = await deps.image(page.imageUrl);
+          if (expected.get(page.imageUrl) !== image.sha256)
+            throw new Error(`第${index + 1}页配图已变化，未导出旧审校版本`);
+          embedded = `data:${image.mimeType};base64,${image.buffer.toString("base64")}`;
+        }
+        const section = knowledgePublicationChapter(
+            doc,
+            review,
+            index,
+            embedded
+          ),
+          bytes = Buffer.byteLength(section);
+        // 内部自动分卷渲染，再合成一个PDF；用户不必拆页。HTML流式落盘，不把千页图同时装进内存。
+        if (chunkBytes + bytes > 48 * 1024 * 1024) await flush();
+        await html.writeFile(section);
+        chunk += section;
+        chunkBytes += bytes;
+      }
+      await html.writeFile(tail);
+      await html.close();
+      await flush();
+      const htmlBytes = await deps.file(
+        `${prefix}/阅读稿.html`,
+        htmlPath,
+        "text/html;charset=utf-8"
+      );
+      if (failures.length) {
+        await deps.save(
+          `${prefix}/manifest.json`,
+          Buffer.from(JSON.stringify({ htmlBytes, failedPdfParts: failures })),
+          "application/json"
+        );
+        return {
+          htmlUrl: deps.sign(`${prefix}/阅读稿.html`),
+          htmlBytes,
+          chapters: doc.pages.length,
+          pdfError: `HTML已保存，PDF有${failures.length}段未完成；可继续生成PDF，已成功部分会复用`,
+        };
+      }
+      let active = pdfFiles,
+        level = 0;
+      // 有界合并，避免操作系统参数过长；仅删除本次临时副本，不清理云端回执与原图。
+      while (active.length > 1) {
+        const next: string[] = [];
+        for (let i = 0; i < active.length; i += 24) {
+          const group = active.slice(i, i + 24);
+          if (group.length === 1) {
+            next.push(group[0]);
+            continue;
+          }
+          const target = join(folder, `merged-${level}-${i}.pdf`);
+          await deps.merge(group, target);
+          next.push(target);
+        }
+        active = next;
+        level++;
+      }
+      if (!active.length) throw new Error("未生成PDF内容");
+      const pdfBytes = await deps.file(
+        `${prefix}/阅读稿.pdf`,
+        active[0],
+        "application/pdf"
+      );
+      await deps.save(
+        `${prefix}/manifest.json`,
+        Buffer.from(
+          JSON.stringify({
+            htmlBytes,
+            pdfBytes,
+            chapters: doc.pages.length,
+            sourceDigest: review.sourceDigest,
+          })
+        ),
+        "application/json"
+      );
+      return {
+        htmlUrl: deps.sign(`${prefix}/阅读稿.html`),
+        pdfUrl: deps.sign(`${prefix}/阅读稿.pdf`),
+        htmlBytes,
+        pdfBytes,
+        chapters: doc.pages.length,
+      };
+    } finally {
+      await html.close().catch(() => undefined);
+      await rm(folder, { recursive: true, force: true });
+    }
+  };
+  const key = `${owner}/${documentId}/${digest}`;
+  if (inflight.has(key)) return inflight.get(key)!;
+  const task = run().finally(() => inflight.delete(key));
+  inflight.set(key, task);
+  return task;
+}

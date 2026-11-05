@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { appRouter } from "../routers";
 import { createContext } from "../_core/context";
+import { knowledgePublicationPublicError } from "../../shared/knowledgePublicationPublic";
 
 /** 流式入口复用原问答事务；额度、确认、幂等、退款与恢复只有一份实现。 */
 export function registerManhuaAdvisorStream(app: Express) {
@@ -10,7 +11,7 @@ export function registerManhuaAdvisorStream(app: Express) {
       res.status(ctx.authUnavailable ? 503 : 401).json({ message: ctx.authUnavailable ? "登录服务暂时不可用，请稍后重试原问题" : "请先登录" });
       return;
     }
-    if (!req.is("application/json") || !req.body?.manhuaContext) {
+    if (!req.is("application/json") || (!req.body?.manhuaContext && !req.body?.knowledgePublicationContext)) {
       res.status(400).json({ message: "请从漫剧创作顾问提交当前项目问题" });
       return;
     }
@@ -27,12 +28,15 @@ export function registerManhuaAdvisorStream(app: Express) {
       if (connected && !res.destroyed && !res.writableEnded) res.write(": heartbeat\n\n");
     }, 15_000);
     try {
-      ctx.advisorStream = (event, text) => send(event, { text: text || "" });
+      ctx.advisorStream = (event, text) => { if (!req.body?.knowledgePublicationContext) send(event, { text: text || "" }); };
       // 断开浏览器只停止发送；事务继续落库，刷新后用原请求编号恢复，不重新扣费。
       const result = await appRouter.createCaller(ctx).mvAnalysis.askPlatformSkillQa(req.body);
-      send("result", result);
+      if (req.body?.knowledgePublicationContext) {
+        const { modelName: _privateModel, ...publicResult } = result;
+        send("result", publicResult);
+      } else send("result", result);
     } catch (error) {
-      send("error", { message: error instanceof Error ? error.message : "顾问暂时无法回答，请恢复原问题" });
+      send("error", req.body?.knowledgePublicationContext ? knowledgePublicationPublicError(error) : { message: error instanceof Error ? error.message : "顾问暂时无法回答，请恢复原问题" });
     } finally {
       clearInterval(heartbeat);
       if (!res.writableEnded) res.end();

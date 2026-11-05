@@ -368,7 +368,7 @@ const PAID_TRAFFIC_PHASES = [
   },
   {
     key: "calibrate",
-    label: "模型校准",
+    label: "效果校准",
     ratio: 30,
     accent: "border-amber-400/40 bg-amber-500/10 text-amber-50",
     bar: "bg-amber-400",
@@ -989,7 +989,7 @@ export function PlatformReportDashboard({
               回本自测 · 这条赛道投不投得起
             </h3>
             <span className="rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-100/80">
-              只需 3 个真实数据，立即算盈亏线（不接广告后台）
+              只需 3 个真实数据，立即算盈亏线
             </span>
           </div>
           <div className="mt-2.5 grid grid-cols-1 gap-2.5 lg:grid-cols-12">
@@ -1488,7 +1488,7 @@ export function PlatformReportDashboard({
       <p className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-gray-700/80 bg-[linear-gradient(90deg,rgba(55,65,81,0.35),rgba(17,24,39,0.85))] px-3 py-2.5 text-center text-xs leading-relaxed text-gray-400">
         <ScanLine size={14} className="shrink-0 text-gray-500" aria-hidden />
         <span>
-          B 端智库专用视图 · 数值参考历史数据与内部模型演算 ·{" "}
+          决策参考 · 数据与分析仅供参考 ·{" "}
           <span className="font-semibold text-gray-300">不宜直接作为对一般用户的承诺指标</span>
         </span>
       </p>

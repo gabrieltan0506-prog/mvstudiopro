@@ -435,7 +435,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/platformToast";
 import {
   type ManhuaLearnSyncState,
   MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL,
@@ -1904,7 +1904,7 @@ function buildCompositeImageGenPendingLines(input: {
   const is3x4 = input.gridVariant === "3x4";
   const trLine = is3x4
     ? "3×4 十二格：中文直送主体 + 分段横排生成后拼接（多数 3～5 分钟内完成）。"
-    : "2×4／八格：中文直送主体出图；封面固定 OpenAI 官方 Image-2。";
+    : "正在生成分镜或图文，请稍候。";
   const kindLabel =
     input.kind === "xiaohongshu_dual_note"
       ? is3x4
@@ -3058,10 +3058,10 @@ export default function PlatformPage() {
     if (isContentLoading) return contentLoadingText;
     if (stage2Failed || contentJobError) return `无法完成：${contentJobError || "请重试"}`;
     if (stage2EmptyPayload) {
-      return "后台已返回，但没有有效选题（0 条）。请展开 Debug「Stage 2」或点击重试（将再次扣除积分）。";
+      return "本次未生成有效选题。可以重试，重试将再次扣除积分。";
     }
     if (platformContent && !stage2EmptyPayload) {
-      return "✅ 专属选题与文案已由后台写入（可下滑查看卡片）";
+      return "专属选题与文案已生成，可下滑查看卡片";
     }
     if (platformDashboard && !platformContent) {
       return "战略看板已就绪。若流程中断，可点下方手动「生成专属文案」继续。";
@@ -3603,8 +3603,7 @@ export default function PlatformPage() {
   const ownerNativeDeepReadPanel =
     aiManhuaPlatformTab === "douyin"
     && (ownerTemplateOptimizeAllowed || ownerTemplateCapabilityPending);
-  const canSeeManhuaLearnTechnicalDetails =
-    hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed;
+  const canSeeManhuaLearnTechnicalDetails = false;
   const manhuaLearnPipelineMeta = getManhuaLearnPipelineMeta({
     nativeDeepRead: ownerNativeDeepReadPanel,
   });
@@ -3862,7 +3861,7 @@ export default function PlatformPage() {
   /** 按 jobId 停止：实况列表与聚焦面板共用，不依赖「选中剧」 */
   const stopManhuaLearnServerJobById = useCallback(async (jobId: string) => {
     if (!jobId || manhuaLearnControlBusy) return;
-    if (!window.confirm("停止这部剧的学习？已落盘分集和静帧会保留，后续媒体流读取与模型调用将停止。")) return;
+    if (!window.confirm("停止这部剧的学习？已落盘分集和静帧会保留，后续学习将停止。")) return;
     setManhuaLearnControlBusy("cancel");
     try {
       await cancelManhuaLearnServerJob(jobId);
@@ -3879,8 +3878,7 @@ export default function PlatformPage() {
 
   const restructureManhuaEpisode = useCallback(async (job: ManhuaLearnServerJob, episodeIndex: number, model: ManhuaNativeStructuringModelId) => {
     if (manhuaRestructureBusyRef.current || !ownerTemplateOptimizeAllowed || !user?.id) return;
-    const label = "GLM 5.3";
-    if (!window.confirm(`使用 ${label} 重新整形第 ${episodeIndex} 集？先停止原任务，复用已保存的读片 JSON；缺哪片只补读哪片，再继续整形。补读与新整形按实际调用计费，旧调用可能已有费用，结果仍需批准入库。`)) return;
+    if (!window.confirm(`重新整理第 ${episodeIndex} 集？先停止原任务，复用已保存的分析内容，只补读缺失片段，再继续整理。补读与新整形按实际调用计费，旧调用可能已有费用，结果仍需批准入库。`)) return;
     const ownerKey = manhuaLearnUserKey;
     manhuaRestructureBusyRef.current = true;
     setManhuaRestructureBusy(true);
@@ -4119,8 +4117,8 @@ export default function PlatformPage() {
     );
     if (!id || promptZh.length < 2 || !selected) return;
     if (!window.confirm(
-      `确认使用「${selected.labelZh}」按你的提示词优化该模板？\n\n` +
-      "这会产生一次真实模型调用。结果只进入待审修订，不会自动覆盖正式模板；失败不自动重试。",
+      `确认按你的要求优化该模板？\n\n` +
+      "将生成一份待审修订，确认采用前保留正式模板；失败不会自动重试。",
     )) {
       return;
     }
@@ -5033,7 +5031,7 @@ export default function PlatformPage() {
         return;
       }
       setShortlistLastError(null);
-      pushShortlistDebug(`扩写开始：${picks.length} 条 · 后台任务逐条回传`);
+      pushShortlistDebug(`扩写开始：${picks.length} 条 · 逐条生成并保存`);
       picks.forEach((p, i) => pushShortlistDebug(`  ${i + 1}. ${p.title.slice(0, 48)}`));
       const t0 = Date.now();
       setShortlistExpandBusy(true);
@@ -5116,7 +5114,7 @@ export default function PlatformPage() {
               pushShortlistDebug(
                 `📄 第 ${done || rendered.size}/${total} 条已出 · ${Math.round((Date.now() - t0) / 1000)}s`,
               );
-              if (rendered.size === added) toast.success("第 1 条文案已出，其余在后台逐条生成");
+              if (rendered.size === added) toast.success("第 1 条文案已出，其余正在逐条生成");
             }
           },
         });
@@ -5211,7 +5209,7 @@ export default function PlatformPage() {
       onSelectSuggested={() => setSelectedShortlistIds(rankTopicShortlistByViralScore(topicShortlist).filter(t => t.isTopPick).map(t => t.id).slice(0, PLATFORM_TOPIC_EXPAND_MAX))}
       onExpand={topics => void expandShortlistPicks(topics)} editingId={editingShortlistTopicId} editingTitle={editingShortlistTitle}
       onEditingTitle={setEditingShortlistTitle} onEdit={startEditingShortlistTitle} onSave={commitEditingShortlistTitle} onCancel={cancelEditingShortlistTitle}
-      error={shortlistLastError} progress={shortlistExpandProgress ? `已生成 ${shortlistExpandProgress.done} / ${shortlistExpandProgress.total} 份稿件，结果会陆续显示在下方。` : undefined}>
+      error={shortlistLastError ? sanitizePlatformUserMessage(shortlistLastError) : null} progress={shortlistExpandProgress ? `已生成 ${shortlistExpandProgress.done} / ${shortlistExpandProgress.total} 份稿件，结果会陆续显示在下方。` : undefined}>
       {pendingExpand && !shortlistExpandBusy && <button type="button" className="creation-text-action mt-4" onClick={() => void expandShortlistPicks(pendingExpand.picks, pendingExpand.jobId)}>继续查询原扩写任务（不重复提交）</button>}
       {failedExpandPicks.length > 0 && !pendingExpand && <button type="button" className="creation-text-action mt-4" disabled={shortlistExpandBusy} onClick={() => void expandShortlistPicks(failedExpandPicks)}>重试未出稿的 {failedExpandPicks.length} 份</button>}
       {!topicShortlist[0]?.evidenceBindingVersion && topicShortlist[0]?.xhsGrowthEvidence && <XhsGrowthEvidenceView evidence={topicShortlist[0].xhsGrowthEvidence} />}
@@ -5625,9 +5623,9 @@ export default function PlatformPage() {
               }
             }
           }
-          if (attempt < 12) setContentLoadingText("后台正在生成专属文案（撰写与校对中）…");
-          else if (attempt < 28) setContentLoadingText("内容较长，后台仍在处理…");
-          else setContentLoadingText("已等待较久，后台仍在处理；请勿关闭页面…");
+          if (attempt < 12) setContentLoadingText("正在生成专属文案（撰写与校对中）…");
+          else if (attempt < 28) setContentLoadingText("内容较长，仍在处理…");
+          else setContentLoadingText("已等待较久，仍在处理；请勿关闭页面…");
         }
       },
     });
@@ -5738,7 +5736,7 @@ export default function PlatformPage() {
             : prev,
         );
         toast.error(
-          "专属文案没有生成有效选题（0 条）。请展开下方 Debug「Stage 2」查看 buildPlatformContent，或重新分析一次。",
+          "本次未生成有效选题，请调整需求后重试。",
         );
       } else {
         setContentJobPollTrace(null);
@@ -5782,7 +5780,7 @@ export default function PlatformPage() {
       setContentJobError(null);
       setIsContentLoading(true);
       setStage2Failed(false);
-      setContentLoadingText("正在提交专属文案后台任务…");
+      setContentLoadingText("正在提交文案生成任务…");
       setContentDebug(null);
       try {
         const ctxForJob =
@@ -5850,7 +5848,7 @@ export default function PlatformPage() {
     const cost = CREDIT_COSTS.platformStage2Copywriting;
     if (
       !window.confirm(
-        `专属文案与选题将消耗 ${cost} 积分，确认后立即扣费并由后台生成（约数分钟，请勿关闭页面）。是否继续？`,
+        `专属文案与选题将消耗 ${cost} 积分，确认后立即扣费并开始生成（约数分钟，请勿关闭页面）。是否继续？`,
       )
     ) {
       return;
@@ -6379,9 +6377,9 @@ export default function PlatformPage() {
     setManhuaLearnJobPollTrace({
       jobId,
       label: `恢复学习 · ${title.slice(0, 24) || "未命名"}`,
-      lines: [`${new Date().toISOString()} 刷新后重新接管后台任务…`],
+      lines: [`${new Date().toISOString()} 正在找回上次任务…`],
       pollCount: 0,
-      currentStep: "正在恢复后台进度…",
+      currentStep: "正在恢复任务进度…",
     });
 
     void (async () => {
@@ -6458,7 +6456,7 @@ export default function PlatformPage() {
         const msg = sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e));
         setManhuaLearnResult((prev) =>
           manhuaLearnResultFromFailure({
-            errorZh: `${msg}（后台任务记录已保留，刷新可继续恢复）`,
+            errorZh: `${msg}（任务记录已保留，刷新可继续恢复）`,
             url,
             title,
             prev,
@@ -6603,7 +6601,7 @@ export default function PlatformPage() {
       });
       if (!mapped) {
         writePlatformVisualReportPendingJob(null);
-        const message = `后台任务 ${pending.jobId} 已结束，但返回格式异常，请联系客服核对`;
+        const message = "任务已结束，但未取得有效报告，请联系客服核对";
         setVisualReportError(message);
         toast.error(message);
         return;
@@ -6623,7 +6621,7 @@ export default function PlatformPage() {
       // 轮询网络中断或页面停留超时不删除 pending；刷新页面后继续同一 job，不重复扣费。
       const message = sanitizePlatformUserMessage(
         error instanceof Error ? error.message : String(error),
-        "趋势报表仍在后台生成，可刷新页面继续查看",
+        "趋势报表仍在生成，可刷新页面继续查看",
       );
       setVisualReportError(message);
       toast.error(message);
@@ -7415,7 +7413,7 @@ export default function PlatformPage() {
           kind: "batch_topic_frames",
           lines: [
             `${new Date().toISOString()}  [客户端] 批量单帧已发起 · platformType=${variables.platformType} · sceneCount=${variables.scenes.length}`,
-            `${new Date().toISOString()}  [等待中] 进度见 Debug「Fly Jobs · 轮询」当前步骤`,
+            `${new Date().toISOString()}  正在生成，请稍候`,
           ],
           meta: {
             localOpId,
@@ -7926,10 +7924,10 @@ export default function PlatformPage() {
       const looksLikeTransport =
         /\bFailed to fetch\b|Load failed|NetworkError|ECONNRESET|ERR_NETWORK\b/i.test(fullMsg);
       const refundPhrase = looksLikeTransport
-        ? `网络层中断（常见于代理/链路抖动）；若服务端已扣款，请以页面刷新后实际结果为准；有疑问请查积分明细或 Debug 服务端流水`
+        ? `连接中断，请刷新查看原任务结果，并核对积分明细，避免重复提交`
         : `已退回 ${refunded} 积分`;
       const head = `❌ 2x4 合成失败 · kind=${variables.kind} · sceneId=${variables.sceneId} · title=${String(variables.title ?? "").slice(0, 80)} · ${refundPhrase}`;
-      const preview = fullMsg.length > 360 ? `${fullMsg.slice(0, 360)}…（完整见下方 Debug）` : fullMsg;
+      const preview = fullMsg.length > 360 ? `${fullMsg.slice(0, 360)}…` : fullMsg;
       if (!compositeBatchSilentUiRef.current) {
         toast.error(`${head}\n\n${preview}`, { duration: 14_000 });
       }
@@ -8016,6 +8014,7 @@ export default function PlatformPage() {
   const renderRunIdRef = useRef(0);
   /** 本套卡出图时用的提炼稿快照：补出单页必须用它，不用文本框里可能已改过的内容 */
   const renderedDraftRef = useRef<string>("");
+  const renderedDetailLevelRef = useRef<KnowledgeCardDetailLevel | undefined>(undefined);
   const knowledgeCardLayoutSourceIdRef = useRef<string>("");
   /** customNoteImages 的同步镜像：计数用，不在 state updater 里做副作用 */
   const customNoteImagesRef = useRef<string[]>([]);
@@ -8033,6 +8032,7 @@ export default function PlatformPage() {
     setCustomNoteSubjectPosition(backup.subjectPosition); setCustomNoteInfographicTemplateId(backup.infographicTemplateId); setCustomNoteInfographicLabelZh(null);
     const images = Array.from({length:backup.total},()=>"");
     for (const image of backup.images) images[image.page-1]=image.url;
+    renderedDetailLevelRef.current = backup.detailLevel;
     renderedDraftRef.current=backup.total?backup.markdown:""; customNoteImagesRef.current=images;
     knowledgeCardLayoutSourceIdRef.current = `knowledge-card:${backup.jobId}`;
     setCustomNoteImages(images); setCustomNoteImageUpper(images[0]||null); setCustomNoteImageLower(images[1]||null);
@@ -8332,7 +8332,7 @@ export default function PlatformPage() {
     args.onStatus?.(
       queued.sourceChars > 0
         ? `已读出约 ${queued.sourceChars.toLocaleString()} 字，正在分 ${totalHint} 段提炼…`
-        : "文件已交后台：转换 / 读原稿 / 挑参考页 / 提炼…",
+        : "正在整理文件内容…",
     );
     const stageLabel = (out: {
       distillStage?: string; distillStageDone?: number; distillStageTotal?: number; distillFileName?: string;
@@ -8571,7 +8571,7 @@ export default function PlatformPage() {
       return KNOWLEDGE_CARD_GATEWAY_PAGE_MESSAGE;
     }
     // 「模型返回格式异常 / 模型服务暂时异常」本身是中文业务句，落到这里原样给用户，不再改写成算力紧张
-    return message || "生成失败，请稍后重试";
+    return sanitizePlatformUserMessage(message, "生成失败，请稍后查看原任务结果");
   };
 
   const handleGenerateCustomNote = async (overrides?: {
@@ -8769,6 +8769,7 @@ export default function PlatformPage() {
         // 新批次：旧批次在途页返回后不得覆盖；补出单页用这份稿的快照
         const runId = ++renderRunIdRef.current;
         renderedDraftRef.current = distilled;
+        renderedDetailLevelRef.current = pendingSnapshot.detailLevel;
         knowledgeCardLayoutSourceIdRef.current = `knowledge-card:${crypto.randomUUID()}`;
         customNoteImagesRef.current = Array.from({ length: total }, () => "");
         setKnowledgeCardInflight([]);
@@ -9341,7 +9342,7 @@ export default function PlatformPage() {
         at: new Date().toISOString(),
         kind: "batch_composite_2x4",
         lines: [
-          `${new Date().toISOString()}  [客户端] 一键 ${batchIs3x4 ? "3×4 十二格" : "2×4/八格"}批量已发起 · topicCount=${cards.length} · 每题后台异步执行 · 客户端轮询至完成后再发下一题（与封面批量一致）`,
+          `${new Date().toISOString()}  [客户端] 一键 ${batchIs3x4 ? "3×4 十二格" : "2×4/八格"}批量已发起 · topicCount=${cards.length} · 按顺序逐题生成，已完成部分会保留`,
           `${new Date().toISOString()}  [等待中] 编导分镜套装合计 ${platformCompositeBundleTotalCreditsForGrid(cards.length, batchIs3x4)} 积分（${batchIs3x4 ? 108 : 54}×${cards.length}·${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}），单张约 3～5 分钟`,
         ],
         meta: {
@@ -12239,8 +12240,8 @@ export default function PlatformPage() {
   }, [snapshot, platformDashboard]);
 
 
-  /** Debug UI：优先 hasSupervisorAccess（含 ?supervisor=1），兼角色 admin/supervisor */
-  const canShowPlatformDebug = hasSupervisorOpsAccess;
+  // 产品页不提供工程诊断入口；原始日志仍留在服务端。
+  const canShowPlatformDebug = false;
 
   useEffect(() => {
     if (!canShowPlatformDebug && debugMode) setDebugMode(false);
@@ -12821,9 +12822,9 @@ export default function PlatformPage() {
               {job.status === "running" ? "运行中" : job.status === "failed" ? "刚失败" : "排队中"}
             </span>
             {reading && reading.totalSegments > 0
-              ? ` · 第${reading.reference?.episodeIndex || Number(output.currentEpisodeIndex) || 1}集 · ${reading.readCompletedSegments}/${reading.totalSegments} 片门禁通过`
+              ? ` · 第${reading.reference?.episodeIndex || Number(output.currentEpisodeIndex) || 1}集 · ${reading.readCompletedSegments}/${reading.totalSegments} 片已完成`
               : ""}
-            {job.status === "failed" && job.error ? ` · 死因：${String(job.error).slice(0, 90)}` : ""}
+            {job.status === "failed" && job.error ? ` · 原因：${sanitizePlatformUserMessage(String(job.error)).slice(0, 90)}` : ""}
           </>
         ) : null}
         {othersRunning > 0 || othersQueued > 0 ? (
@@ -12883,7 +12884,7 @@ export default function PlatformPage() {
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8cefff]">智能提醒</p>
               <p>
                 本步<strong className="text-white">先出选题初选</strong>
-                （不直接写六条文案）；同时后台补齐
+                （不直接写六条文案）；同时补齐
                 <strong className="text-white">平台优先级</strong>与
                 <strong className="text-white">商业化路径</strong>。挑选后再点「就写这条」扩写与出图。
               </p>
@@ -13231,7 +13232,7 @@ export default function PlatformPage() {
 
             {visualReportError && !isVisualReportLoading ? (
               <div className="mt-4 rounded-xl border border-red-400/25 bg-red-400/[0.08] px-4 py-3 text-xs leading-relaxed text-red-100">
-                {visualReportError}
+                {sanitizePlatformUserMessage(visualReportError || "")}
               </div>
             ) : null}
 
@@ -13294,7 +13295,7 @@ export default function PlatformPage() {
             !isDashboardLoading &&
             !isVisualReportLoading ? (
               <p className="mt-4 text-xs leading-relaxed text-[#c9c0e6]/45">
-                启动后任务在后台持续生成；完成后右侧出现摘要，下方可下载含选题关键词的 PNG 长图。
+                启动后将持续生成；完成后右侧出现摘要，下方可下载含选题关键词的 PNG 长图。
               </p>
             ) : null}
 
@@ -13407,7 +13408,7 @@ export default function PlatformPage() {
                               || "抖音旧漫剧分类已移除。可通过真实作品链接或本地视频主动学习。"}
                             {" "}
                             {ownerNativeDeepReadPanel
-                              ? "学节奏：按你设置的集数直接建立原生精读任务；模型直接读取视频，每集生成一张待审卡，你批准后才进入正式模板库。"
+                              ? "学节奏：按你设置的集数分析视频，每集生成一张待审卡，你批准后才进入正式模板库。"
                               : "学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序学习你设置的本轮集数，结果在本页展示，你看完再决定是否批准进库。"}
                           </p>
                         </div>
@@ -13558,28 +13559,7 @@ export default function PlatformPage() {
                             ) : null}
                           </>
                         ) : null}
-                        <span id="manhua-learn-read-model" className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white">
-                          <label className="flex items-center gap-1.5">读片模型
-                            <select aria-label="读片模型" value={manhuaLearnReadModel} disabled={Boolean(manhuaLearnBusyKey)}
-                              onChange={event => {
-                                const model = event.target.value as ManhuaNativeDeepReadModelId;
-                                if (!(MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS as readonly string[]).includes(model)) return;
-                                setManhuaLearnReadModel(model);
-                                writeManhuaLearnReadModel(manhuaLearnUserKey, model);
-                              }} className="bg-black/40 text-white">
-                              {MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS.map(model => <option key={model} value={model}>{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[model]}</option>)}
-                            </select>
-                          </label>
-                        </span>
-                        <span className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white">
-                          整形模型：{MANHUA_NATIVE_STRUCTURING_MODEL_LABELS["glm-5.3"]}
-                        </span>
-                        <span id="manhua-structuring-gateway" className="text-[11px] text-[#c9c0e6]/90">
-                          整形路由：OpenRouter（Z.AI）与 EvoLink 并发分流，失败后互为备用；进度显示每次实际使用的路由。
-                        </span>
-                        <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
-                          学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读 · 最多两部并发，整片时长不限、按设置切片；第二部请在另一网页开始
-                        </span>
+                        <span className="text-[11px] text-[#c9c0e6]/90">逐集分析视频并整理为待审卡，完成后可查看和采用。</span>
                       </div>
 
                       {ownerTemplateOptimizeAllowed && hasSupervisorOpsAccess ? (
@@ -13628,7 +13608,7 @@ export default function PlatformPage() {
                                 {manhuaLearnLatestFailure.atIso
                                   ? `（${manhuaLearnLatestFailure.atIso.slice(11, 16)}）`
                                   : ""}
-                                ：{manhuaLearnLatestFailure.errorZh}
+                                ：{sanitizePlatformUserMessage(manhuaLearnLatestFailure.errorZh || "")}
                               </span>
                               <button
                                 type="button"
@@ -14105,7 +14085,7 @@ export default function PlatformPage() {
                               ) : null}
                             </p>
                           ) : null}
-                          {ownerTemplateOptimizeAllowed
+                          {canSeeManhuaLearnTechnicalDetails
                             && focusedManhuaNativeModelReceipts.length > 0 ? (
                             <details className="rounded-lg border border-cyan-300/20 bg-black/25 px-2.5 py-2 text-[10px] text-cyan-50/80">
                               <summary className="cursor-pointer font-semibold text-cyan-100/90">
@@ -14225,7 +14205,7 @@ export default function PlatformPage() {
                             </div>
                           ) : null}
                           {canSeeManhuaLearnTechnicalDetails && manhuaLearnResult.messageZh ? (
-                            <p className="text-amber-100/60">{manhuaLearnResult.messageZh}</p>
+                            <p className="text-amber-100/60">{sanitizePlatformUserMessage(manhuaLearnResult.messageZh || "")}</p>
                           ) : null}
                           {manhuaLearnResult.digestsPreview.length > 0 ? (
                             <div className="max-h-96 space-y-2 overflow-y-auto rounded-lg border border-amber-300/15 bg-black/20 px-2 py-1.5 text-[10px] text-amber-50/80">
@@ -14535,7 +14515,7 @@ export default function PlatformPage() {
                                       {ownerTemplateOptimizeAllowed ? (
                                         <>
                                           <select
-                                            aria-label={`优化模型：${tpl.nameZh}`}
+                                            aria-label={`优化方式：${tpl.nameZh}`}
                                             value={ownerTemplateOptimizeModel}
                                             onChange={(event) => {
                                               setOwnerTemplateOptimizeModel(
@@ -14547,7 +14527,7 @@ export default function PlatformPage() {
                                             className="max-w-[190px] rounded-md border border-emerald-200/15 bg-black/55 px-1.5 py-0.5 text-[9px] text-emerald-50 outline-none"
                                           >
                                             {ownerTemplateOptimizeModels.map((model) => (
-                                              <option key={model.id} value={model.id}>{model.labelZh}</option>
+                                              <option key={model.id} value={model.id}>{`方式 ${ownerTemplateOptimizeModels.indexOf(model) + 1}`}</option>
                                             ))}
                                           </select>
                                           <button
@@ -14818,7 +14798,7 @@ export default function PlatformPage() {
                           detail={ownerTemplateDetailQuery.data?.card || null}
                           evidenceFrames={ownerTemplateDetailQuery.data?.evidenceFrames || []}
                           detailLoading={ownerTemplateDetailQuery.isLoading}
-                          detailError={ownerTemplateDetailQuery.error?.message || null}
+                          detailError={ownerTemplateDetailQuery.error ? sanitizePlatformUserMessage(ownerTemplateDetailQuery.error.message) : null}
                           reportEpisodeIndex={parseNativeProposalEpisodeRef({ id: ownerTemplateDetailId })?.episodeIndex ?? null}
                           onOpenReport={() => {
                             const ref = parseNativeProposalEpisodeRef({ id: ownerTemplateDetailId });
@@ -14854,11 +14834,11 @@ export default function PlatformPage() {
                                 ? !liveManhuaProposal.reference ? "本轮没有可关联的待审卡"
                                   : manhuaViralProposalsQuery.isFetching ? "正在读取已保存的待审卡" : "本轮暂无待批准卡"
                                 : liveManhuaProposal.status === "failed" ? "本轮已停止，已保存成果保留"
-                                  : liveManhuaProposal.totalSegments ? `${liveManhuaProposal.readCompletedSegments}/${liveManhuaProposal.totalSegments} 片门禁通过` : "正在准备分片"}
+                                  : liveManhuaProposal.totalSegments ? `${liveManhuaProposal.readCompletedSegments}/${liveManhuaProposal.totalSegments} 片已完成` : "正在准备分片"}
                           </div>
                           <div className="mt-1 text-[#c9c0e6]/70">{liveManhuaProposal.detailZh}</div>
                           <div className="mt-1 text-[#c9c0e6]/60">{liveManhuaProposal.status === "queued" || liveManhuaProposal.status === "running"
-                            ? "每片门禁通过即更新进度；整形完成后可批准。"
+                            ? "每片已完成即更新进度；整形完成后可批准。"
                             : "已批准的卡可在上方模板库查看；不要为恢复显示重复学习。"}</div>
                         </div>
                       ) : null}
@@ -14903,7 +14883,7 @@ export default function PlatformPage() {
                               }
                               title={
                                 selectedManhuaProposalLearningInFlight
-                                  ? "该剧学习仍在进行，GLM 整形完成后才可批准；进度会逐段刷新"
+                                  ? "该剧学习仍在进行，整理完成后才可批准；进度会逐段刷新"
                                   : undefined
                               }
                               onClick={() =>
@@ -14934,7 +14914,7 @@ export default function PlatformPage() {
                                 if (!target) return;
                                 const nativeEpisode = /^tpl_native_[A-Za-z0-9_-]+_ep\d{3}$/.test(target.id);
                                 if (!window.confirm(nativeEpisode
-                                  ? `删除学习卡「${target.nameZh}」及对应已入库模板？删除前会归档，原始学习证据与模型回执保留。`
+                                  ? `删除学习卡「${target.nameZh}」及对应已入库模板？删除前会归档，原始学习记录保留。`
                                   : `删除待审卡「${target.nameZh}」？只删这张未入库的卡，已入库模板与学习产物不动。`)) return;
                                 void discardManhuaViralProposalMutation
                                   .mutateAsync({ id: target.id, confirmDiscard: true })
@@ -15294,7 +15274,7 @@ export default function PlatformPage() {
                     />
                     {customNoteInfographicLabelZh ? (
                       <p className="mt-1.5 text-[11px] text-cyan-100/55">
-                        已选版式：{customNoteInfographicLabelZh}（生成时后台套用你的正文）
+                        已选版式：{customNoteInfographicLabelZh}（按你的正文生成）
                       </p>
                     ) : null}
                   </PlatformAdvancedSettingsFold>
@@ -15447,7 +15427,7 @@ export default function PlatformPage() {
                   </span>
                   {customNoteUploadStatus ? (
                     <span className={`w-full text-[11px] leading-5 ${/失败|不足|未探测|未抽出/.test(customNoteUploadStatus) ? "text-rose-300/90" : "text-emerald-300/85"}`}>
-                      {customNoteUploadStatus}
+                      {sanitizePlatformUserMessage(customNoteUploadStatus || "", /失败|error|不足/i.test(customNoteUploadStatus || "") ? "内容整理暂未完成，请查看原任务" : "正在整理内容，请稍候")}
                     </span>
                   ) : null}
                   {knowledgeCardEpubPdfs.length > 0 ? (
@@ -15481,7 +15461,7 @@ export default function PlatformPage() {
                   ) : null}
                   {canChooseKnowledgeCardDistillModel ? (
                     <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
-                      <span className="shrink-0">读档模型</span>
+                      <span className="shrink-0">读档方式</span>
                       <select
                         className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#ff4fb8]/50 focus:outline-none"
                         value={customNoteDistillModel}
@@ -15507,11 +15487,11 @@ export default function PlatformPage() {
                       >
                         {KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.map((o) => (
                           <option key={o.id} value={o.id}>
-                            {o.labelZh} · {o.creditsFull}积分/页
+                            {o.id === KNOWLEDGE_CARD_DISTILL_MODEL_GLM ? "标准" : "精细"} · {o.creditsFull}积分/页
                           </option>
                         ))}
                       </select>
-                      <OpenAiImageVariantSwitch compact />
+                      <OpenAiImageVariantSwitch compact hideModelNames />
                     </label>
                   ) : null}
                   <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
@@ -15553,7 +15533,7 @@ export default function PlatformPage() {
                     </select>
                   </label>
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    支持 pdf / epub / pptx / docx / png / jpg，不限页数与大小；EPUB 后台自动转 PDF；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
+                    支持 pdf / epub / pptx / docx / png / jpg，不限页数与大小；EPUB 自动转换后读取；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
                   </span>
                   <KnowledgeCardPreflight
                     summary={customNotePreflight}
@@ -15565,7 +15545,7 @@ export default function PlatformPage() {
                     onCancel={customNoteDistillJobId || customNoteRendering ? cancelCustomNoteDistill : undefined}
                     cancelBusy={customNoteCancelBusy || customNoteCancelRequested}
                   />
-                  <p className="text-xs text-muted-foreground">刷新或关闭页面会停止读档、提炼、派生及后续出图；已提交供应商的图片仍会完成。</p>
+                  <p className="text-xs text-muted-foreground">刷新或关闭页面会停止读档、提炼、派生及后续出图；已开始生成的图片仍会完成。</p>
                 </div>
               ) : null}
               {customNoteKind === "optimize_custom_copy" ? (
@@ -15614,12 +15594,12 @@ export default function PlatformPage() {
                       const markdown = images.length ? renderedDraftRef.current : customNoteText;
                       if (images.length && !markdown) throw new Error("缺少原成品正文快照，请先恢复对应成品");
                       knowledgeCardLayoutSourceIdRef.current ||= `knowledge-card:${crypto.randomUUID()}`;
-                      setLayoutSource(knowledgeCardLayoutSource({ owner: workbenchUserKey, sourceId: knowledgeCardLayoutSourceIdRef.current, markdown, distillModel: customNoteDistillModel, images }));
+                      setLayoutSource(knowledgeCardLayoutSource({ owner: workbenchUserKey, sourceId: knowledgeCardLayoutSourceIdRef.current, markdown, detailLevel: images.length ? renderedDetailLevelRef.current : customNoteDetailLevel, distillModel: customNoteDistillModel, infographicTemplateId: customNoteInfographicTemplateId, images }));
                       document.getElementById("editable-layout-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
                     } catch (error) { toast.error(error instanceof Error ? error.message : "排版导入失败，原稿已保留"); }
-                  }}>{customNoteImages.length || customNoteImageUpper ? "编辑这套成品与导出" : "编辑正文排版与导出"}</button>
+                  }}>{customNoteImages.length || customNoteImageUpper ? "创作顾问：审校并排版" : "创作顾问：整理说明与导出"}</button>
                 )}
-                <span className="text-xs text-[#c9c0e6]/60">恢复已有正文与图片，不重新生成、不扣费</span>
+                <span className="text-xs text-[#c9c0e6]/60">保留原稿与配图，开始整理前展示本次费用</span>
                 {(customNoteImageUpper || customNoteImageLower || customNoteError || customOptimizeResult) && !customNoteBusy && (
                   <button
                     type="button"
@@ -15697,7 +15677,7 @@ export default function PlatformPage() {
 
               {customNoteError && (
                 <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-                  ❌ {customNoteError}
+                  ❌ {sanitizePlatformUserMessage(customNoteError || "")}
                 </div>
               )}
 
@@ -15926,7 +15906,7 @@ export default function PlatformPage() {
               ) : null}
               {customNoteError && customWorkspaceTab === "assets" ? (
                 <div className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-                  <span className="min-w-0 flex-1">❌ {customNoteError}</span>
+                  <span className="min-w-0 flex-1">❌ {sanitizePlatformUserMessage(customNoteError || "")}</span>
                   <button
                     type="button"
                     onClick={() => void handleGenerateCustomNote()}
@@ -16057,7 +16037,7 @@ export default function PlatformPage() {
 
               {customMattingError && (
                 <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-                  ❌ {customMattingError}
+                  ❌ {sanitizePlatformUserMessage(customMattingError || "")}
                 </div>
               )}
 
@@ -16611,12 +16591,12 @@ export default function PlatformPage() {
                     <h3 className="text-base font-bold text-white md:text-lg">MV Studio Pro AI 决策智库报告</h3>
                     <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#b7add8]">
                       <strong className="text-white">单独加购模块</strong>：需先填写人物背景并生成一次选题，再付费解锁本报告。
-                      报告将把你的背景、平台优先级与选题<strong className="text-white">收敛为一页可视化决策地图</strong>（雷达、执行建议与阅读向排行；均为模型辅助推演，不构成效果承诺）。
+                      报告将把你的背景、平台优先级与选题<strong className="text-white">收敛为一页可视化决策地图</strong>（雷达、执行建议与阅读向排行；均为辅助分析，不构成效果承诺）。
                       与全案入队扣点<strong className="text-white">分开计费</strong>：首次体验{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 积分</strong>，之后每次{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 积分</strong>。
                       <strong className="text-white">不含</strong>封面图、编导分镜图（出图需在执行区另购）。
-                      扣费于后台<strong className="text-white">成功产出后结算</strong>并存档；除可验证的系统故障外，<strong className="text-red-200/95">与全案相同不因主观不满意而退点</strong>。
+                      扣费于<strong className="text-white">成功产出后结算</strong>并存档；除可验证的系统故障外，<strong className="text-red-200/95">与全案相同不因主观不满意而退点</strong>。
                     </p>
                   </div>
                 </div>
@@ -16653,13 +16633,13 @@ export default function PlatformPage() {
                           decisionIntelLatestQuery.data?.report
                         ) {
                           const okWin = window.confirm(
-                            `您已存档的战略地图为「近 ${latestWd} 天」分析窗口；目前页面选的是「近 ${selectedWindowDays} 天」。\n\n重新生成将依新窗口重算日期区间与模型指纹，并可能依价格表扣除积分（与旧报告参数不同时不会免费命中缓存）。是否继续？`,
+                            `您已存档的战略地图为「近 ${latestWd} 天」分析窗口；目前页面选的是「近 ${selectedWindowDays} 天」。\n\n重新生成将按新的日期范围生成报告，并按页面价格扣除积分。是否继续？`,
                           );
                           if (!okWin) return;
                         }
                         if (!supervisorAccess) {
                           const ok = window.confirm(
-                            `将扣除 ${next} 积分，基于你当前的全案结果（人物背景、平台优先级${platformContent ? "、已写入的选题文案与分镜" : ""}）与「近 ${selectedWindowDays} 天」窗口，生成 MV Studio Pro AI 决策智库报告并存档。\n\n本报告为单独加购，不含封面图与编导分镜图。报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
+                            `将扣除 ${next} 积分，基于你当前的全案结果（人物背景、平台优先级${platformContent ? "、已写入的选题文案与分镜" : ""}）与「近 ${selectedWindowDays} 天」窗口，生成 MV Studio Pro AI 决策智库报告并存档。\n\n本报告为单独加购，不含封面图与编导分镜图。报告为辅助分析，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
                           );
                           if (!ok) return;
                         }
@@ -17496,7 +17476,7 @@ export default function PlatformPage() {
                     role="status"
                   >
                     已启用<strong className="text-white">选题与封面一体化优化</strong>
-                    ：后台会为每条方案<strong className="text-white">择优主标题</strong>
+                    ：将为每条方案<strong className="text-white">择优主标题</strong>
                     并与出图主句对齐（正文与分镜不改编），竖版封面强调
                     <strong className="text-white">信息流缩略图可读</strong>。推荐优先使用一键套装（封面+分镜按体裁九折，见上方批量按钮
                     {PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}）或于下方卡片分步购买。

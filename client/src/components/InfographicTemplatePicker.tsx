@@ -19,7 +19,7 @@ export default function InfographicTemplatePicker({
         <div>
           <div className="text-[12px] font-semibold text-white/80">百科可视化图文模板</div>
           <p className="mt-0.5 text-[10px] text-white/40">
-            只锁定版式与信息密度风格；正文请写在下方输入框，生成时后台套用版式（不露出提示词）。
+            选择喜欢的版式，正文填写在下方；生成时会将内容融入所选模板。
           </p>
         </div>
         {selectedTemplateId ? (

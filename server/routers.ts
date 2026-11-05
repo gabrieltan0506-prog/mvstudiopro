@@ -1,3 +1,5 @@
+import { knowledgePublicationPublicError } from "../shared/knowledgePublicationPublic";
+import { knowledgePublicationContextSchema } from "../shared/knowledgePublication";
 import { assembleConcreteTrendReport } from "../shared/concreteTrendReport";
 import { guaikeiRouter } from "./routers/guaikei";
 import { guaikeiReportRefsSchema } from "../shared/guaikei";
@@ -6739,9 +6741,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           /** 漫剧工厂当前集真实上下文；strict schema 禁止夹带身份、URL 或凭证字段。 */
           manhuaContext: manhuaCreativeAdvisorContextSchema.optional(),
           codeMotionContext: codeMotionBriefSchema.optional(),
+          knowledgePublicationContext: knowledgePublicationContextSchema.optional(),
         }).superRefine((input, validationContext) => {
           if (input.codeMotionContext && (input.manhuaContext || (input.qaModel && input.qaModel !== "gpt-5.6-terra"))) validationContext.addIssue({ code: "custom", message: "映刻使用独立工作区及默认咨询档位" });
-          if ((input.manhuaContext || input.codeMotionContext) && !input.requestId) {
+          if (input.knowledgePublicationContext && (input.manhuaContext || input.codeMotionContext || (input.qaModel && input.qaModel !== "gpt-5.6-terra"))) validationContext.addIssue({code:"custom",message:"知识卡审校使用独立上下文与默认咨询档位"});
+          if ((input.manhuaContext || input.codeMotionContext || input.knowledgePublicationContext) && !input.requestId) {
             validationContext.addIssue({
               code: "custom",
               path: ["requestId"],
@@ -6761,6 +6765,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
         }),
       )
+      .use(async ({ input, next }) => {
+        const result = await next();
+        if (!input.knowledgePublicationContext) return result;
+        if (!result.ok) return { ...result, error: new TRPCError({ code: result.error.code, message: knowledgePublicationPublicError(result.error).message }) };
+        const { modelName: _privateModel, ...publicResult } = result.data as Record<string, unknown>;
+        return { ...result, data: publicResult };
+      })
       .mutation(async ({ input, ctx }) => {
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const {
@@ -6784,9 +6795,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               qaModel: string;
               manhuaContext?: NonNullable<typeof input.manhuaContext>;
               codeMotionContext?: NonNullable<typeof input.codeMotionContext>;
+              knowledgePublicationContext?: NonNullable<typeof input.knowledgePublicationContext>;
             }
           | undefined;
-        if (input.manhuaContext || input.codeMotionContext) {
+        if (input.manhuaContext || input.codeMotionContext || input.knowledgePublicationContext) {
           if (!input.requestId || !input.rawQuestion) {
             throw new TRPCError({
               code: "BAD_REQUEST",
@@ -6801,6 +6813,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             qaModel,
             manhuaContext: input.manhuaContext,
             codeMotionContext: input.codeMotionContext,
+            knowledgePublicationContext: input.knowledgePublicationContext,
           };
           const { reserveManhuaAdvisorOperation } = await import(
             "./services/manhuaAdvisorOperation.js"
@@ -6836,6 +6849,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
         }
 
+        if (input.knowledgePublicationContext) {
+          const { validateKnowledgePublicationAccess } = await import("./services/knowledgePublicationAdvisor");
+          await validateKnowledgePublicationAccess(ctx.user.id, input.knowledgePublicationContext, input.requestId!);
+        }
         if (input.codeMotionContext) {
           if (input.codeMotionContext.revisionSource) {
             const { loadCodeMotion } = await import("./services/codeMotionStore");
@@ -6934,7 +6951,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `本作品免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。` });
             }
           }
-          if (!isAdminUser && input.codeMotionContext) {
+          if (!isAdminUser && (input.codeMotionContext || input.knowledgePublicationContext)) {
             try {
               const { reserveCodeMotionConsultQuota } = await import("./services/codeMotionConsultQuota");
               const quota = await reserveCodeMotionConsultQuota(ctx.user.id, jobId, dailyLimit);
@@ -7098,6 +7115,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 qaModel,
                 manhuaContext: input.manhuaContext,
                 codeMotionContext: input.codeMotionContext,
+            knowledgePublicationContext: input.knowledgePublicationContext,
                 paidCreditsAlreadyCharged: deducted.cost,
                 freeQuotaReserved: projectFreeReserved,
                 projectQuotaUsed,

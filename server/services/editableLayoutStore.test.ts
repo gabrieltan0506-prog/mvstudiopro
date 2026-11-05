@@ -158,3 +158,17 @@ it("实际保存入口先核验本人素材归属，再落稳定对象；未登�
   );
   expect(deps.write).toHaveBeenCalledTimes(1);
 });
+
+describe("知识稿原始快照保护",()=>{
+ it("保存后禁止替换原稿或去掉publication绕过保护",async()=>{
+  const {deps}=storage();
+  const doc=layoutFromSource({kind:"knowledge-publication",owner:"7",sourceId:"knowledge",title:"原主题",body:"原说明"});
+  const lib={version:1 as const,owner:"7",documents:[doc]};
+  await writeLayoutLibrary(7,lib,"0",deps);
+  const changed=structuredClone(lib);changed.documents[0].publication!.source.pages[0].body="替换原说明";
+  await expect(writeLayoutLibrary(7,changed,"1",deps)).rejects.toThrow("原稿快照");
+  const stripped=structuredClone(lib);delete stripped.documents[0].publication;
+  await expect(writeLayoutLibrary(7,stripped,"1",deps)).rejects.toThrow("原稿快照");
+  expect((await readLayoutLibrary(7,deps)).library?.documents[0].publication?.source.pages[0].body).toBe("原说明");
+ });
+});

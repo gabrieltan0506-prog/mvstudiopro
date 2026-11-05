@@ -38,7 +38,7 @@ export function KnowledgeCardFilePicker({ disabled, onProcess, onSelectionCountC
           setError("");
         }} />
     </label>
-    <p className="mt-2 leading-5 text-white/55">PDF、Word（DOCX）、PPTX、EPUB 和图片可放在同一批；可分多次添加。点击「开始精炼」前不上传、不读取、不调用模型。</p>
+    <p className="mt-2 leading-5 text-white/55">PDF、Word（DOCX）、PPTX、EPUB 和图片可放在同一批；可分多次添加。点击「开始精炼」后才会上传并整理内容。</p>
     {files.length > 0 && <>
       <ul className="my-2 max-h-52 space-y-1 overflow-y-auto" aria-label="待读取文件">
         {files.map(file => <li key={key(file)} className="flex items-center justify-between gap-3 rounded bg-white/5 px-2 py-1.5">

@@ -1,3 +1,4 @@
+import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 /**
  * 知识卡进度（2026-09-08 用户要求第 7 条）：一条进度条贯穿
  * 上传 → 转换 → 读原稿/挑参考页 → 提炼 → 出图 i/n；终态只显示「成功」或「失败 · 停在 xx%」。
@@ -59,7 +60,7 @@ export function KnowledgeCardProgress({
     <div className="mt-3 space-y-1.5 text-sm" aria-label="知识卡进度">
       <p role={failed ? "alert" : "status"} className={`flex flex-wrap items-center gap-2 ${color}`}>
         <span className="font-semibold tabular-nums">{headline}</span>
-        {state.label && !succeeded ? <span className="text-xs opacity-80">{state.label}</span> : null}
+        {state.label && !succeeded ? <span className="text-xs opacity-80">{sanitizePlatformUserMessage(state.label, "正在处理…")}</span> : null}
         {onCancel && state.status === "running" ? (
           <button
             type="button"
@@ -83,8 +84,8 @@ export function KnowledgeCardProgress({
       >
         <div className={`h-full rounded-full transition-[width] duration-300 ${fill}`} style={{ width: `${shown}%` }} />
       </div>
-      {failed && state.error ? <p className="text-xs text-red-300/85">{state.error}</p> : null}
-      {stopped && state.error ? <p className="text-xs text-amber-200/85">{state.error}</p> : null}
+      {failed && state.error ? <p className="text-xs text-red-300/85">{sanitizePlatformUserMessage(state.error)}</p> : null}
+      {stopped && state.error ? <p className="text-xs text-amber-200/85">{sanitizePlatformUserMessage(state.error)}</p> : null}
     </div>
   );
 }

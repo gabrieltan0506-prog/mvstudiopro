@@ -296,7 +296,7 @@ export function ManhuaApprovedTemplateOwnerDrawer(props: {
         <div className="border-b border-white/10 px-5 py-4">
           <div className="grid gap-3 md:grid-cols-[260px_1fr_auto] md:items-end">
             <label className="block">
-              <span className="text-[10px] font-semibold text-emerald-100/70">优化模型</span>
+              <span className="text-[10px] font-semibold text-emerald-100/70">优化方式</span>
               <select
                 value={props.selectedModel}
                 onChange={(event) =>
@@ -304,8 +304,8 @@ export function ManhuaApprovedTemplateOwnerDrawer(props: {
                 }
                 className="mt-1 w-full rounded-lg border border-emerald-300/20 bg-black/45 px-3 py-2 text-xs text-white outline-none"
               >
-                {props.models.map((model) => (
-                  <option key={model.id} value={model.id}>{model.labelZh}</option>
+                {props.models.map((model, index) => (
+                  <option key={model.id} value={model.id}>{`方式 ${index + 1}`}</option>
                 ))}
               </select>
             </label>
@@ -330,7 +330,7 @@ export function ManhuaApprovedTemplateOwnerDrawer(props: {
             </button>
           </div>
           <p className="mt-2 text-[10px] text-amber-100/55">
-            点击会产生一次真实模型调用；失败不会写入模板库，也不会自动重试。
+            点击后生成待审修订；失败不会写入模板库，也不会自动重试。
           </p>
         </div>
 

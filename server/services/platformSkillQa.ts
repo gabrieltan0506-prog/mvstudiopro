@@ -1,3 +1,4 @@
+import { knowledgePublicationContextSchema, type KnowledgePublicationContext } from "../../shared/knowledgePublication";
 import { DIGITAL_HUMAN_KEYFRAME_ADVICE_INSTRUCTIONS, parseDigitalHumanKeyframeAdvice } from "../../shared/digitalHumanKeyframeAdvice";
 import { DIGITAL_HUMAN_PUBLICATION_INSTRUCTIONS, parseDigitalHumanPublicationPlan } from "../../shared/digitalHumanPublication";
 import { DIGITAL_HUMAN_FILM_INSTRUCTIONS, parseDigitalHumanFilmPlan } from "../../shared/digitalHumanFilmDirector";
@@ -746,6 +747,7 @@ export async function askPlatformSkillQa(params: {
   /** 漫剧工厂真实项目上下文；服务边界会再次 strict 校验。 */
   manhuaContext?: ManhuaCreativeAdvisorContext | null;
   codeMotionContext?: CodeMotionBrief | null;
+  knowledgePublicationContext?: KnowledgePublicationContext | null;
   /**
    * 超额时由路由先扣点再调用；此处仅记 usage。
    * 若未预扣且已超免费，抛错提示路由扣点。
@@ -762,6 +764,8 @@ export async function askPlatformSkillQa(params: {
     ? manhuaCreativeAdvisorContextSchema.parse(params.manhuaContext)
     : null;
   const codeMotionContext = params.codeMotionContext ? codeMotionBriefSchema.parse(params.codeMotionContext) : null;
+  const knowledgePublicationContext = params.knowledgePublicationContext ? knowledgePublicationContextSchema.parse(params.knowledgePublicationContext) : null;
+  if (knowledgePublicationContext && (codeMotionContext || manhuaContext || (params.qaModel && params.qaModel !== "gpt-5.6-terra"))) throw new Error("知识卡审校不能与其他工作区混用");
   if (codeMotionContext && manhuaContext) throw new Error("两种工作区不能混用");
   let manhuaRawQuestion: string | null = null;
   if (manhuaContext) {
@@ -792,15 +796,15 @@ export async function askPlatformSkillQa(params: {
   const qaMode = resolveSkillQaBillingMode(params.qaModel);
   const dailyLimit = manhuaContext ? MANHUA_ADVISOR_PROJECT_FREE : platformSkillQaDailyFreeLimit(qaMode);
   const paidUnit = manhuaContext ? MANHUA_ADVISOR_PAID_CREDITS : resolvePlatformSkillQaPaidCredits(qaMode);
-  if (!params.isAdmin && (manhuaContext || codeMotionContext) && params.projectQuotaUsed === undefined) throw new Error("今日顾问额度暂不可用，请稍后重试");
-  const usedToday = params.isAdmin ? 0 : (manhuaContext || codeMotionContext) ? (params.projectQuotaUsed ?? dailyLimit) : await countPlatformSkillQaToday(params.userId, qaMode, false);
-  const withinFree = params.isAdmin || ((manhuaContext || codeMotionContext) ? params.freeQuotaReserved === true : usedToday < dailyLimit);
+  if (!params.isAdmin && (manhuaContext || codeMotionContext || knowledgePublicationContext) && params.projectQuotaUsed === undefined) throw new Error("今日顾问额度暂不可用，请稍后重试");
+  const usedToday = params.isAdmin ? 0 : (manhuaContext || codeMotionContext || knowledgePublicationContext) ? (params.projectQuotaUsed ?? dailyLimit) : await countPlatformSkillQaToday(params.userId, qaMode, false);
+  const withinFree = params.isAdmin || ((manhuaContext || codeMotionContext || knowledgePublicationContext) ? params.freeQuotaReserved === true : usedToday < dailyLimit);
   const prepaidCredits = Math.max(
     0,
     Math.floor(Number(params.paidCreditsAlreadyCharged) || 0),
   );
   const paidThisTurn =
-    !params.isAdmin && Boolean(manhuaContext || codeMotionContext) && prepaidCredits > 0
+    !params.isAdmin && Boolean(manhuaContext || codeMotionContext || knowledgePublicationContext) && prepaidCredits > 0
       ? true
       : !withinFree;
   if (paidThisTurn && !(Number(params.paidCreditsAlreadyCharged) > 0)) {
@@ -818,7 +822,7 @@ export async function askPlatformSkillQa(params: {
   let llmMessages: Message[];
   let templateReference = "";
   let choiceReference: Awaited<ReturnType<typeof buildAdvisorTemplateChoiceReference>> | undefined;
-  if (codeMotionContext) {
+  if (codeMotionContext || knowledgePublicationContext) {
     llmMessages = [];
   } else if (manhuaContext?.digitalHumanKeyframeAdvice) {
     llmMessages = [
@@ -951,7 +955,7 @@ export async function askPlatformSkillQa(params: {
   // 已附视频时不向未核实支持视频的备用通道降级，也不悄悄删视频重试。
   const advisorHops = previewVideo ? MANHUA_ADVISOR_HOPS.slice(0, 1) : MANHUA_ADVISOR_HOPS;
   // 视频只走已核实可接收 MP4 的通道；规格拒绝时在同一通道反馈一次，不降级成纯文字。
-  const ASK_MAX_ATTEMPTS = manhuaContext?.creativeLearning || manhuaContext?.sunoSong || manhuaContext?.musicMv || codeMotionContext || manhuaContext?.filmReview || manhuaContext?.bgmMix || manhuaContext?.subtitleReview ? 1 : manhuaContext ? (previewVideo ? 2 : advisorHops.length) : 3;
+  const ASK_MAX_ATTEMPTS = manhuaContext?.creativeLearning || manhuaContext?.sunoSong || manhuaContext?.musicMv || codeMotionContext || knowledgePublicationContext || manhuaContext?.filmReview || manhuaContext?.bgmMix || manhuaContext?.subtitleReview ? 1 : manhuaContext ? (previewVideo ? 2 : advisorHops.length) : 3;
   let parsed: ReturnType<typeof parseAskJson> | null = null;
   let lastErr = "";
   let usedModel = modelName;
@@ -959,6 +963,12 @@ export async function askPlatformSkillQa(params: {
   for (let attempt = 1; attempt <= ASK_MAX_ATTEMPTS; attempt += 1) {
     let candidateRaw: string | undefined;
     try {
+      if (knowledgePublicationContext) {
+        const {reviewKnowledgePublication, KNOWLEDGE_VISUAL_ADVISOR_MODEL} = await import("./knowledgePublicationAdvisor");
+        const review = await reviewKnowledgePublication(params.userId, knowledgePublicationContext);
+        parsed = {answer:JSON.stringify(review), imageIntent:false, creationRelated:true, suggestedImagePrompt:"", guideMessage:""};
+        usedModel = KNOWLEDGE_VISUAL_ADVISOR_MODEL; lastErr = ""; break;
+      }
       if (codeMotionContext) {
         const planned = codeMotionContext.revisionSource
           ? await (await import("./codeMotionRevisionProposal")).generateCodeMotionRevisionProposal(String(params.userId), codeMotionContext)
@@ -1099,13 +1109,13 @@ export async function askPlatformSkillQa(params: {
       isFreeQuota: !paidThisTurn,
     });
   }
-  const usedAfter = params.isAdmin || manhuaContext || codeMotionContext ? usedToday : usedToday + 1;
+  const usedAfter = params.isAdmin || manhuaContext || codeMotionContext || knowledgePublicationContext ? usedToday : usedToday + 1;
 
   const imageCount = await countPlatformSkillQaImagesEver(params.userId);
   const { cost, isFirstDiscount } = platformSkillQaImageCredits(imageCount);
 
   let imageOffer: PlatformSkillQaAskResult["imageOffer"] = null;
-  if (!manhuaContext && !codeMotionContext && parsed.imageIntent && parsed.suggestedImagePrompt) {
+  if (!manhuaContext && !codeMotionContext && !knowledgePublicationContext && parsed.imageIntent && parsed.suggestedImagePrompt) {
     const defaultGuide = parsed.creationRelated
       ? "创作相关出图更建议走「自定义创作」或「全案分析」：先定人设与选题再出图，比在此盲盒抽卡稳得多。若仍想先试一张，可点下方确认（首张封面九折）。"
       : "可确认生成一张单页图。首张按封面九折，之后恢复封面原价。";

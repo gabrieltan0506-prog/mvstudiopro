@@ -38,3 +38,19 @@ it("支付确认错误原样返回客户端，不生成成功回执", () => endp
   const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"manhuaContext":{}}' });
   const text = await res.text(); expect(text).toContain("event: error"); expect(text).toContain("PAYMENT_REQUIRED"); expect(text).not.toContain("event: result");
 }));
+it("知识卡上下文可进入同一鉴权SSE，保留原请求与回放标记", () => endpoint(async url => {
+  const input={knowledgePublicationContext:{documentId:"11111111-1111-4111-8111-111111111111",batchIndex:0,attempt:0},requestId:"original-request"};
+  mocks.ask.mockResolvedValue({success:true,answer:'{"kind":"knowledge_publication_batch_v1"}',replayed:true});
+  const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(input)});
+  expect(res.status).toBe(200);const text=await res.text();expect(text).toContain('"replayed":true');expect(text).toContain('event: result');expect(mocks.ask).toHaveBeenCalledWith(input);
+}));
+it("知识卡不向前台发送模型、技术流或原始错误", () => endpoint(async url => {
+  mocks.ask.mockImplementationOnce(async()=>{
+    const ctx=mocks.caller.mock.calls[0][0];ctx.advisorStream('reset','DeepSeek 1017 OpenRouter');ctx.advisorStream('delta','request_id=private');
+    return {success:true,answer:'{"kind":"knowledge_publication_batch_v1"}',modelName:'private-model',remainingFreeToday:4};
+  });
+  const req={method:'POST',headers:{'Content-Type':'application/json'},body:'{"knowledgePublicationContext":{}}'};
+  const first=await (await fetch(url,req)).text();expect(first).not.toMatch(/private-model|DeepSeek|OpenRouter|request_id|event: reset|event: delta/);expect(first).toContain('event: result');
+  mocks.ask.mockRejectedValueOnce(Error('private-endpoint HTTP 503 model=test-key'));
+  const second=await (await fetch(url,req)).text();expect(second).not.toMatch(/private-endpoint|503|test-key/);expect(second).toContain('原稿');
+}));

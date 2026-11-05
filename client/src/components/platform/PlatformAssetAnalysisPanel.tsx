@@ -37,7 +37,7 @@ import type { CompletedManhuaLocalVideoUpload } from "@/lib/manhuaLocalVideoUplo
 import { formatAssetAnalysisForOptimize, formatShootingTechniqueBrief, type AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
 import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
 import { FileText, Film, FileUp, Image as ImageIcon, Loader2, Sparkles, Trash2, X } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/platformToast";
 
 type PlatformAssetAnalysisPanelProps = {
   debugMode: boolean;
@@ -833,7 +833,7 @@ export default function PlatformAssetAnalysisPanel({
 
       {error ? (
         <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-          ❌ {error}
+          ❌ {sanitizePlatformUserMessage(error)}
         </div>
       ) : null}
 

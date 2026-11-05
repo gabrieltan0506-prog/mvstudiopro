@@ -1,3 +1,4 @@
+import type { KnowledgePublicationContext } from "../../shared/knowledgePublication";
 /**
  * 漫剧创作顾问同步操作：复用 jobs 表提供请求认领、结果回放与退款对账状态。
  * jobs 只保存请求指纹，不保存原始剧本/上下文；完整项目资料仍只进入本次模型调用。
@@ -57,6 +58,7 @@ export function manhuaAdvisorRequestFingerprint(input: {
   qaModel: string;
   manhuaContext?: ManhuaCreativeAdvisorContext;
   codeMotionContext?: CodeMotionBrief;
+  knowledgePublicationContext?: KnowledgePublicationContext;
 }): string {
   return createHash("sha256")
     .update(
@@ -64,7 +66,7 @@ export function manhuaAdvisorRequestFingerprint(input: {
         input.qaModel,
         input.question,
         input.rawQuestion,
-        input.codeMotionContext ? { kind: "code-motion", brief: input.codeMotionContext } : input.manhuaContext,
+        input.knowledgePublicationContext ? {kind:"knowledge-publication",context:input.knowledgePublicationContext} : input.codeMotionContext ? { kind: "code-motion", brief: input.codeMotionContext } : input.manhuaContext,
       ]),
     )
     .digest("hex");
@@ -182,6 +184,7 @@ export async function reserveManhuaAdvisorOperation(input: {
   qaModel: string;
   manhuaContext?: ManhuaCreativeAdvisorContext;
   codeMotionContext?: CodeMotionBrief;
+  knowledgePublicationContext?: KnowledgePublicationContext;
   allowExecute: boolean;
 }): Promise<ReserveManhuaAdvisorResult> {
   const db = await getDb();

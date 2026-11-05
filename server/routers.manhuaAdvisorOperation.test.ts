@@ -89,6 +89,8 @@ vi.mock("./services/manhuaAdvisorProjectQuota",()=>({
 const reserveCodeMotionConsultQuota = vi.fn();
 vi.mock("./services/codeMotionConsultQuota", () => ({ reserveCodeMotionConsultQuota: (...args: unknown[]) => reserveCodeMotionConsultQuota(...args) }));
 
+const validateKnowledgePublicationAccess = vi.fn();
+vi.mock("./services/knowledgePublicationAdvisor",()=>({validateKnowledgePublicationAccess:(...args:unknown[])=>validateKnowledgePublicationAccess(...args)}));
 import { appRouter } from "./routers";
 
 const REQUEST_ID = "6f9619ff-8b86-4d01-b42d-00cf4fc964ff";
@@ -590,4 +592,27 @@ describe("映刻复用咨询回执但保持独立工作区", () => {
     expect(awaitManhuaAdvisorPaymentConfirmation).toHaveBeenCalledWith(JOB_ID);
     expect(askPlatformSkillQa).not.toHaveBeenCalled(); expect(deductCreditsAmount).not.toHaveBeenCalled();
   });
+});
+
+ describe("知识卡专用上下文与既有扣退事务",()=>{
+ const input={question:"核对知识图文",rawQuestion:"核对知识图文",requestId:REQUEST_ID,knowledgePublicationContext:{documentId:"11111111-1111-4111-8111-111111111111",batchIndex:0,attempt:0}};
+ it("素材授权失败不扣费、不调用模型",async()=>{
+  reserveManhuaAdvisorOperation.mockResolvedValueOnce({kind:"awaiting_confirmation",jobId:JOB_ID,requestFingerprint:FINGERPRINT});
+  validateKnowledgePublicationAccess.mockRejectedValueOnce(new Error("本人配图无法确认"));
+  await expect(caller().mvAnalysis.askPlatformSkillQa({...input,confirmPaid:true,confirmedCredits:8})).rejects.toThrow("请先保存本账号的原稿和配图");
+  expect(deductCreditsAmount).not.toHaveBeenCalled();expect(askPlatformSkillQa).not.toHaveBeenCalled();
+ });
+ it("免费原子额度和知识上下文真正传到顾问，不读取剧情作品",async()=>{
+  countPlatformSkillQaToday.mockResolvedValue(0);reserveCodeMotionConsultQuota.mockResolvedValue({reserved:true,used:1});
+  reserveManhuaAdvisorOperation.mockResolvedValueOnce({kind:"awaiting_confirmation",jobId:JOB_ID,requestFingerprint:FINGERPRINT}).mockResolvedValueOnce({kind:"execute",jobId:JOB_ID,requestFingerprint:FINGERPRINT});
+  await caller().mvAnalysis.askPlatformSkillQa(input);
+  expect(validateKnowledgePublicationAccess).toHaveBeenCalledWith(7,input.knowledgePublicationContext,REQUEST_ID);
+  expect(askPlatformSkillQa).toHaveBeenCalledWith(expect.objectContaining({knowledgePublicationContext:input.knowledgePublicationContext,freeQuotaReserved:true,paidCreditsAlreadyCharged:0}));
+  expect(assertAdvisorProject).not.toHaveBeenCalled();expect(deductCreditsAmount).not.toHaveBeenCalled();
+ });
+ it("知识卡成功回执先回放，无额外模型或扣费",async()=>{
+  reserveManhuaAdvisorOperation.mockResolvedValueOnce({kind:"replay",jobId:JOB_ID,result:{success:true,...RESULT,replayed:true}});
+  expect(await caller().mvAnalysis.askPlatformSkillQa(input)).toMatchObject({replayed:true});
+  expect(validateKnowledgePublicationAccess).not.toHaveBeenCalled();expect(askPlatformSkillQa).not.toHaveBeenCalled();expect(deductCreditsAmount).not.toHaveBeenCalled();
+ });
 });

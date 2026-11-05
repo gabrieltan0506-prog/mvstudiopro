@@ -7,6 +7,8 @@ export function knowledgeCardLayoutSource(input: {
   sourceId: string;
   markdown: string;
   distillModel?: string;
+  detailLevel?: "concise" | "full";
+  infographicTemplateId?: string | null;
   images: readonly string[];
 }): LayoutSource {
   const plan = planKnowledgeCardPages(input.markdown, input.distillModel);
@@ -17,6 +19,9 @@ export function knowledgeCardLayoutSource(input: {
   input.images.forEach((url, index) => { if (url) images[index + 1] = url; });
   const title = input.markdown.split("\n").find(line => line.trim())?.replace(/^#+\s*/, "").trim() || "知识卡排版稿";
   return {
+    kind: "knowledge-publication",
+    detailLevel: input.detailLevel,
+    infographicTemplateId: input.infographicTemplateId || undefined,
     owner: input.owner,
     sourceId: input.sourceId,
     title,
