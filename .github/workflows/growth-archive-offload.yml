@@ -7,6 +7,11 @@ on:
     # 每 3 小时（UTC :30）。必须与 growth-backup 的 0 */3 同频，错开 30 分钟，减少串行排队。
     - cron: "30 */3 * * *"
   workflow_dispatch:
+    inputs:
+      archive_dir:
+        description: '可选：仅处理一个已通过候选筛选的旧归档桶'
+        required: false
+        type: string
 
 concurrency:
   group: growth-cold-store-fly
@@ -21,6 +26,8 @@ jobs:
       contents: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      GROWTH_BACKUP_TRANSPORT: fly
+      GROWTH_ARCHIVE_PROBE_DIR: ${{ inputs.archive_dir || '' }}
       GROWTH_BACKUP_REPOSITORY: ${{ vars.GROWTH_BACKUP_REPOSITORY || 'gabrieltan0506-prog/mvstudiopro-growth-data' }}
     steps:
       - uses: actions/checkout@v4
@@ -30,10 +37,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Require authorized private backup target
-        env:
-          GH_TOKEN: ${{ secrets.GROWTH_BACKUP_GITHUB_TOKEN }}
-        run: node scripts/growth-backup-target.mjs
       - uses: superfly/flyctl-actions/setup-flyctl@master
       # 0831 修：与 growth-backup.yml 同因——未指定 --machine 时 flyctl 会往 stdout
       # 打印「No machine specified, ...」，污染被重定向当作数据用的输出。
@@ -50,6 +53,10 @@ jobs:
             exit 1
           fi
           echo "FLY_MACHINE_ID=$MACHINE_ID" >> "$GITHUB_ENV"
+      - name: Require authorized private backup target
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: node scripts/growth-backup-target.mjs
       - name: Verify deployed cold-store routing
         timeout-minutes: 2
         env:
@@ -66,11 +73,13 @@ jobs:
           mkdir -p /tmp/growth-archive-offload
           BATCH_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           printf '%s\n' "$BATCH_ID" > /tmp/growth-archive-offload/batch-id.txt
+          # 先验证再插入远端shell参数；仅日期桶或空值可进入prepare。
+          node -e 'const v=process.env.GROWTH_ARCHIVE_PROBE_DIR||"";if(v&&(!/^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(v)||/[\r\n]/.test(v)))throw Error("archive_probe_directory_invalid")'
           SNAPSHOT_READY=false
           for attempt in $(seq 1 20); do
             rm -f /tmp/growth-archive-offload/snapshot.tsv.next
             if node scripts/growth-archive-transfer.mjs --max-ms 120000 -- flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-              -C "sh -s -- prepare '$BATCH_ID'" \
+              -C "sh -s -- prepare '$BATCH_ID' '${GROWTH_ARCHIVE_PROBE_DIR:-}'" \
               < scripts/growth-archive-offload-remote.sh \
               > /tmp/growth-archive-offload/snapshot.tsv.next; then
               mv /tmp/growth-archive-offload/snapshot.tsv.next /tmp/growth-archive-offload/snapshot.tsv
@@ -114,7 +123,7 @@ jobs:
       - name: Plan bounded incremental archive batch
         timeout-minutes: 5
         env:
-          GH_TOKEN: ${{ secrets.GROWTH_BACKUP_GITHUB_TOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ]; then exit 0; fi
           node scripts/growth-archive-plan.mjs /tmp/growth-archive-offload
@@ -217,7 +226,7 @@ jobs:
       - name: Publish and read back archive bundles
         timeout-minutes: 30
         env:
-          GH_TOKEN: ${{ secrets.GROWTH_BACKUP_GITHUB_TOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           if [ -f /tmp/growth-archive-offload/EMPTY ] || [ -f /tmp/growth-archive-offload/UPLOAD_EMPTY ]; then
             echo "No archive shards to publish"

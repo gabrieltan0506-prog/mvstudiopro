@@ -11,7 +11,7 @@
 
 ## 上线前置条件（本 PR 不配置或部署）
 
-1. Actions 使用 `GROWTH_BACKUP_REPOSITORY` 与专用 `GROWTH_BACKUP_GITHUB_TOKEN`，默认仓库为 `gabrieltan0506-prog/mvstudiopro-growth-data`，必须核实私有且可写。没有凭证时明确失败，不退回公开仓库。
+1. Actions 使用 `GROWTH_BACKUP_REPOSITORY` 与 `GROWTH_BACKUP_TRANSPORT=fly`，通过既有 Fly SSH 身份转发备份操作；专用 `GROWTH_BACKUP_GITHUB_TOKEN` 只存 Fly，默认仓库为 `gabrieltan0506-prog/mvstudiopro-growth-data`，必须核实私有且可写。没有凭证时明确失败，不退回公开仓库。
 2. Fly 服务端需有同名仓库与 token 配置，以及 `GROWTH_GITHUB_PRIVATE_COLD_STORE_BASE_URL`。原公开 URL 仅作明确 404 后的历史读取回退；403/不明状态不回退。
 3. 先让正式读取器具备新格式能力，再放行备份。workflow 的服务端门禁核代码与配置、私有仓库 metadata 读取，不宣称真实还原成功。
 4. 合并前核实在途任务与部署；上线后另行做最小真实备份、还原与用户验收。既有手工分片只有大小/哈希记录，尚无实际还原证明。
@@ -40,3 +40,7 @@
 快手、头条已获单独的本地历史删除授权，远端备份保留。`growth-excluded-platform-cleanup.mjs` 默认只生成清单；执行必须指定清单哈希及源目录外的新日志。仅识别专属文件和已知历史目录层级，不删除共享账本、其他平台或目录。应用前双锁、全量预验，再逐文件核身份和哈希；来源改变时停止并留下部分结果。文件系统前后观测可能含其他任务并发写入，必须同时报告文件逻辑大小。
 
 旧平台显式查询不会再触发其专属冷备读取；历史类型与远端原件仍保留。为活动平台校验旧混合归档时，完整性缓存仍可能包含退出平台成员，不代表这些成员恢复为活动数据。
+
+## 服务端凭证转发
+
+工作流解析明确的 app 机器后才做私有仓门禁。runner上的规划与发布通过窄范围网关请求Fly：只允许目标私有仓的release metadata、manifest读取、不可变附件上传及最后的指针替换。上传使用SSH文件流，服务端临时文件经长度/摘要核验后上传；临时文件只清理本调用创建的目录。GitHub token不传回runner、不写本机、不放入Actions secret。网关不安装程序、不改机器配置、不启停机器。

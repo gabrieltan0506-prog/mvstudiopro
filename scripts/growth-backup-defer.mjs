@@ -59,7 +59,9 @@ async function lastSuccessAt() {
       });
       if (!jobsRes.ok) return null;
       const jobs = await jobsRes.json();
-      const required = ["Upload GitHub backup artifact", "Publish cold-store restore assets"];
+      // 私有 generation 发布完成并回读验证后才更新成功时钟；旧公开 artifact
+      // 步骤已移除，不能继续要求它存在，也不能仅凭 artifact 成功认可备份。
+      const required = ["Publish cold-store restore assets"];
       const backedUp = jobs?.jobs?.some(job => required.every(name =>
         job.steps?.some(step => step.name === name && step.conclusion === "success")));
       if (!backedUp) continue;

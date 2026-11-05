@@ -406,8 +406,8 @@ describe.each(workflows)("%s 发布凭证闭环", name => {
       release = path.join(result.dir, "release");
     await fs.mkdir(release);
     await executable(
-      path.join(bin, "gh"),
-      `const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');const args=process.argv.slice(2),root=${JSON.stringify(release)},metadata=${JSON.stringify(path.join(result.dir,"release-metadata.json"))};
+      path.join(bin, "flyctl"),
+      `const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');const cli=process.argv.slice(2),cmd=cli[cli.indexOf('-C')+1],encoded=cmd.split('Buffer.from(\"')[1].split('\"')[0],decoded=Buffer.from(encoded,'base64').toString(),marker='.then(m=>m.main(',request=JSON.parse(decoded.slice(decoded.indexOf(marker)+marker.length,-2));const args=request.operation==='repo'?['repo']:request.operation==='api'?['api',request.endpoint]:['release',request.operation,request.tag];const root=${JSON.stringify(release)},metadata=${JSON.stringify(path.join(result.dir,"release-metadata.json"))};
 const state=fs.existsSync(metadata)?JSON.parse(fs.readFileSync(metadata,'utf8')):{};
 const save=()=>fs.writeFileSync(metadata,JSON.stringify(state));
 if(args[0]==='repo'){console.log(JSON.stringify({nameWithOwner:'test/repo',isPrivate:true}));}
@@ -416,8 +416,8 @@ else if(args[0]==='api'){
  if(endpoint.endsWith('releases?per_page=100'))console.log(JSON.stringify([Object.entries(state).map(([tag,r])=>({tag_name:tag,id:r.id}))]));
  else {const segments=endpoint.split('/');const id=Number(segments[segments.indexOf('releases')+1]);const release=Object.values(state).find(r=>r.id===id);console.log(JSON.stringify([release.names.map(name=>{const raw=fs.readFileSync(path.join(root,name));return{name,state:'uploaded',size:raw.length,digest:'sha256:'+crypto.createHash('sha256').update(raw).digest('hex')}})]));}
 }
-else if(args[1]==='create'){state[args[2]]={id:Object.keys(state).length+1,names:[]};save();}
-else if(args[1]==='upload'){if(args.includes('--clobber'))process.exit(30);const [file,name]=args[3].split('#');if(fs.existsSync(path.join(root,name)))process.exit(31);fs.copyFileSync(file,path.join(root,name));state[args[2]].names.push(name);save();}
+else if(args[1]==='create'){state[args[2]]={id:Object.keys(state).length+1,names:[]};save();console.log('{}');}
+else if(args[1]==='upload'){if(args.includes('--clobber'))process.exit(30);const name=request.name,raw=fs.readFileSync(0);if(raw.length!==request.bytes||crypto.createHash('sha256').update(raw).digest('hex')!==request.sha256)process.exit(32);if(fs.existsSync(path.join(root,name))&&!request.replace)process.exit(31);fs.writeFileSync(path.join(root,name),raw);if(!state[args[2]].names.includes(name))state[args[2]].names.push(name);save();console.log('{}');}
 else {throw Error('Unexpected command: '+args.join(' '));}`
     );
     const text = await fs.readFile(
@@ -438,7 +438,7 @@ else {throw Error('Unexpected command: '+args.join(' '));}`
       .replaceAll("/tmp/growth-archive-offload", result.archive)
       .replaceAll("/tmp/growth-backup", path.join(result.dir, "backup"));
     const published = await run("bash", ["-eo", "pipefail", "-c", script], {
-      env: { PATH: `${bin}:${process.env.PATH}`, GH_TOKEN: "test-not-a-credential", GROWTH_BACKUP_REPOSITORY: "test/repo" },
+      env: { PATH: `${bin}:${process.env.PATH}`, GROWTH_BACKUP_TRANSPORT: "fly", FLY_API_TOKEN: "synthetic-fly-token", FLY_MACHINE_ID: "abc123", GROWTH_BACKUP_REPOSITORY: "test/repo" },
     });
     expect(published.code, published.stderr + published.stdout.toString()).toBe(
       0

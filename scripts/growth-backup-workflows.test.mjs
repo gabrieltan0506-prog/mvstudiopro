@@ -54,12 +54,22 @@ for (const workflow of workflows)
         before.set(file, sha(raw));
       }
     }
-    executable(
-      path.join(bin, "flyctl"),
-      `#!/usr/bin/env node
-const fs=require('fs'),{spawnSync}=require('child_process');const a=process.argv.slice(2),cmd=a[a.indexOf('-C')+1];fs.appendFileSync(process.env.TEST_CALLS,cmd+'\\n');if(!cmd.startsWith('sh -s -- '))throw Error('unexpected Fly command');const r=spawnSync('sh',['-c',cmd],{input:fs.readFileSync(0),env:process.env});process.stdout.write(r.stdout);process.stderr.write(r.stderr);process.exit(r.status??1);
-`
-    );
+    executable(path.join(bin, "flyctl"), `#!/usr/bin/env node
+const fs=require('fs'),path=require('path'),crypto=require('crypto'),{spawnSync}=require('child_process');
+const a=process.argv.slice(2),cmd=a[a.indexOf('-C')+1];fs.appendFileSync(process.env.TEST_CALLS,cmd+'\\n');
+if(cmd.startsWith('sh -s -- ')){const r=spawnSync('sh',['-c',cmd],{input:fs.readFileSync(0),env:process.env});process.stdout.write(r.stdout);process.stderr.write(r.stderr);process.exit(r.status??1);}
+const encoded=cmd.split('Buffer.from("')[1]?.split('"')[0];if(!encoded)throw Error('unexpected Fly command');
+const decoded=Buffer.from(encoded,'base64').toString(),marker='.then(m=>m.main(';const request=JSON.parse(decoded.slice(decoded.indexOf(marker)+marker.length,-2));
+const root=process.env.TEST_REMOTE,sha=b=>crypto.createHash('sha256').update(b).digest('hex'),tags=fs.readdirSync(root).sort();
+const assets=tag=>fs.readdirSync(path.join(root,tag)).map(name=>{const b=fs.readFileSync(path.join(root,tag,name));return{name,state:'uploaded',size:b.length,digest:'sha256:'+sha(b)};});
+let result={};
+if(request.operation==='repo')result={nameWithOwner:'gabrieltan0506-prog/mvstudiopro-growth-data',isPrivate:true};
+else if(request.operation==='api'){const e=request.endpoint;if(e.endsWith('releases?per_page=100'))result=[tags.map((tag_name,id)=>({tag_name,id:id+1}))];else result=[assets(tags[Number(e.match(/releases\\/(\\d+)/)[1])-1])];}
+else if(request.operation==='create')fs.mkdirSync(path.join(root,request.tag));
+else if(request.operation==='upload'){const target=path.join(root,request.tag,request.name),raw=fs.readFileSync(0);if(raw.length!==request.bytes||sha(raw)!==request.sha256)throw Error('stream mismatch');if(fs.existsSync(target)&&!request.replace)throw Error('immutable conflict');if(request.replace&&!request.name.endsWith('.latest.json'))throw Error('forbidden overwrite');fs.writeFileSync(target,raw);}
+else if(request.operation==='manifests')result=fs.readdirSync(path.join(root,request.tag)).filter(n=>n.endsWith('.manifest.json')).map(name=>({name,base64:fs.readFileSync(path.join(root,request.tag,name)).toString('base64')}));
+else throw Error('unexpected gateway operation');process.stdout.write(JSON.stringify(result));
+`);
     executable(path.join(bin, "sleep"), "#!/bin/sh\nexit 0\n");
     // macOS lacks GNU timeout. The outer spawnSync timeout still bounds this
     // synthetic cleanup; validate the production wrapper arguments explicitly.
@@ -70,23 +80,17 @@ const fs=require('fs'),{spawnSync}=require('child_process');const a=process.argv
 if(process.argv[2]!=='-c%s')process.exit(99);console.log(require('fs').statSync(process.argv[3]).size);
 `
     );
-    executable(
-      path.join(bin, "gh"),
-      `#!/usr/bin/env node
-const fs=require('fs'),path=require('path'),crypto=require('crypto');const a=process.argv.slice(2),root=process.env.TEST_REMOTE,sha=b=>crypto.createHash('sha256').update(b).digest('hex');const tags=fs.readdirSync(root).sort();const assets=tag=>fs.readdirSync(path.join(root,tag)).map(name=>{const b=fs.readFileSync(path.join(root,tag,name));return {name,state:'uploaded',size:b.length,digest:'sha256:'+sha(b)}});
-let result='';if(a[0]==='repo')result=JSON.stringify({nameWithOwner:'gabrieltan0506-prog/mvstudiopro-growth-data',isPrivate:true});else if(a[0]==='api'){const e=a.at(-1);if(e.endsWith('releases?per_page=100'))result=JSON.stringify([tags.map((tag_name,id)=>({tag_name,id:id+1}))]);else result=JSON.stringify([assets(tags[Number(e.match(/releases\\/(\\d+)/)[1])-1])]);}
-else if(a[0]==='release'){const [_,mode,tag]=a,target=path.join(root,tag);if(mode==='create')fs.mkdirSync(target);else if(mode==='upload'){const [file,name]=a[3].split('#');if(fs.existsSync(path.join(target,name))&&!a.includes('--clobber'))throw Error('immutable conflict');if(a.includes('--clobber')&&!name.endsWith('.latest.json'))throw Error('forbidden overwrite');fs.copyFileSync(file,path.join(target,name));}else if(mode==='download'){const pattern=a[a.indexOf('-p')+1]||a[a.indexOf('--pattern')+1];const dest=a[a.indexOf('-D')+1]||a[a.indexOf('--dir')+1];fs.mkdirSync(dest,{recursive:true});for(const name of fs.readdirSync(target)){if(pattern===name||pattern==='archive-*.manifest.json'&&name.endsWith('.manifest.json'))fs.copyFileSync(path.join(target,name),path.join(dest,name));}}else throw Error('unexpected gh');}else throw Error('unexpected gh');process.stdout.write(result);
-`
-    );
+    executable(path.join(bin, "gh"), "#!/bin/sh\necho forbidden-direct-gh >&2\nexit 99\n");
     const env = {
       ...process.env,
-      GH_TOKEN: "synthetic-backup-token",
+      GROWTH_BACKUP_TRANSPORT: "fly",
+      FLY_API_TOKEN: "synthetic-fly-token",
       PATH: `${bin}:${process.env.PATH}`,
       GROWTH_STORE_DIR: source,
       GROWTH_INTERACTIVE_FALLBACK_DIR: path.join(root, "interactive"),
       TEST_REMOTE: remote,
       TEST_CALLS: path.join(root, "calls"),
-      FLY_MACHINE_ID: "synthetic",
+      FLY_MACHINE_ID: "abc123",
       GITHUB_RUN_ID: "123",
       GITHUB_RUN_ATTEMPT: "1",
       GITHUB_STEP_SUMMARY: path.join(root, "summary"),

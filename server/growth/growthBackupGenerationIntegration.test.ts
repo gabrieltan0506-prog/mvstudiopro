@@ -20,7 +20,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.resetModules();
   await Promise.all(
-    roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))
+    roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
   );
 });
 

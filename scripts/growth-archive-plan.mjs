@@ -13,6 +13,15 @@ import {
   LEGACY_GROWTH_RELEASE,
 } from "../shared/growthColdStoreRelease.mjs";
 
+// 手动最小实跑只能选择快照中已通过安全筛选的一个桶。
+export function selectProbeSnapshot(snapshot, dir) {
+  if (!dir) return snapshot;
+  if (!/^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(dir)) throw Error("archive_probe_directory_invalid");
+  const rows = snapshot.trim().split(/\r?\n/).filter(line => line.split("\t")[0] === dir);
+  if (rows.length !== 1) throw Error("archive_probe_directory_not_eligible");
+  return rows[0] + "\n";
+}
+
 // 只复用已发布清单且 GitHub 资产摘要仍一致的归档；旧清单无源指纹时重新备份。
 export function planArchiveBatch(snapshot, assets, manifests) {
   const byName = new Map(assets.map(asset => [asset.name, asset]));
@@ -218,6 +227,12 @@ export function loadArchiveInventory(directory, snapshot, repo, gh) {
 }
 
 export function writeArchivePlan(directory, plan) {
+  const sourceFile = path.join(directory,"source-inventory.json");
+  const deferred = fs.existsSync(sourceFile) ? (JSON.parse(fs.readFileSync(sourceFile,"utf8")).deferred || []) : [];
+  if (!Array.isArray(deferred)) throw Error("archive_deferred_invalid");
+  plan.deferred = deferred;
+  plan.deferredCount = deferred.length;
+  plan.pendingOutsideBatch = plan.remaining + deferred.length;
   const cleanupFile = path.join(directory,"reused-cleanup-input.json");
   fs.rmSync(cleanupFile,{force:true});
   for (const marker of ["EMPTY", "UPLOAD_EMPTY"])
@@ -252,10 +267,10 @@ export function writeArchivePlan(directory, plan) {
 function main(directory) {
   if (!directory) throw new Error("缺少归档工作目录");
   const { gh, repository: repo } = privateGrowthBackupTarget(runBackupGh);
-  const snapshot = fs.readFileSync(
+  const snapshot = selectProbeSnapshot(fs.readFileSync(
     path.join(directory, "snapshot.tsv"),
     "utf8"
-  );
+  ), process.env.GROWTH_ARCHIVE_PROBE_DIR);
   const { assets, manifests } = loadArchiveInventory(
     directory,
     snapshot,
@@ -264,13 +279,13 @@ function main(directory) {
   );
   const plan = planArchiveBatch(snapshot, assets, manifests);
   writeArchivePlan(directory, plan);
-  const summary = `归档规划：已验证且未变化 ${plan.reused} 个，其中 ${plan.reclaim.length} 个进入独立还原核验清理候选；本批新备份 ${plan.selected.length} 个；另有新备份 ${plan.remaining} 个待后续批次。计划数量不代表删除成功。`;
+  const summary = `归档规划：已验证且未变化 ${plan.reused} 个，其中 ${plan.reclaim.length} 个进入独立还原核验清理候选；本批新备份 ${plan.selected.length} 个；已扫描中另有 ${plan.remaining} 个待后续批次；未扫描或超大待处理 ${plan.deferredCount} 个，不能视为积压清空。计划数量不代表删除成功。`;
   console.log(summary);
   if (process.env.GITHUB_STEP_SUMMARY)
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + "\n");
-  if (plan.remaining)
+  if (plan.pendingOutsideBatch)
     console.log(
-      `::warning::归档积压尚未清空：本批之外还有 ${plan.remaining} 个目录，源数据保留。`
+      `::warning::归档积压尚未清空：本批之外还有 ${plan.pendingOutsideBatch} 个目录，源数据保留。`
     );
 }
 if (

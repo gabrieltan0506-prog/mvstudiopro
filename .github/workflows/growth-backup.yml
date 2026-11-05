@@ -23,6 +23,7 @@ jobs:
       actions: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      GROWTH_BACKUP_TRANSPORT: fly
       GROWTH_BACKUP_REPOSITORY: ${{ vars.GROWTH_BACKUP_REPOSITORY || 'gabrieltan0506-prog/mvstudiopro-growth-data' }}
     steps:
       - uses: actions/checkout@v4
@@ -32,10 +33,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Require authorized private backup target
-        env:
-          GH_TOKEN: ${{ secrets.GROWTH_BACKUP_GITHUB_TOKEN }}
-        run: node scripts/growth-backup-target.mjs
       - uses: superfly/flyctl-actions/setup-flyctl@master
       # 🔴 0831 修：解析出 app 进程组的正式机 ID，后续所有 ssh console 都显式指定。
       #
@@ -64,6 +61,10 @@ jobs:
           fi
           echo "使用正式机 $MACHINE_ID"
           echo "FLY_MACHINE_ID=$MACHINE_ID" >> "$GITHUB_ENV"
+      - name: Require authorized private backup target
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: node scripts/growth-backup-target.mjs
       - name: Verify deployed cold-store routing
         timeout-minutes: 14
         env:
@@ -570,7 +571,6 @@ jobs:
       - name: Publish cold-store restore assets
         if: env.BACKUP_DEFERRED != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GROWTH_BACKUP_GITHUB_TOKEN }}
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           for logical in current runtime-meta archive-index history-summary; do
@@ -652,7 +652,7 @@ jobs:
         if: env.BACKUP_DEFERRED != 'true'
         timeout-minutes: 5
         env:
-          GH_TOKEN: ${{ secrets.GROWTH_BACKUP_GITHUB_TOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ]; then exit 0; fi
           node scripts/growth-archive-plan.mjs /tmp/growth-archive-offload
@@ -757,7 +757,7 @@ jobs:
         if: env.BACKUP_DEFERRED != 'true'
         timeout-minutes: 30
         env:
-          GH_TOKEN: ${{ secrets.GROWTH_BACKUP_GITHUB_TOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ] || [ -f /tmp/growth-archive-offload/UPLOAD_EMPTY ]; then
             echo "No archive shards to publish"
