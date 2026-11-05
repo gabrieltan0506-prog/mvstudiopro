@@ -6,7 +6,7 @@ import sharp from 'sharp';
 import { createHash } from 'node:crypto';
 import type JSZip from 'jszip';
 const Zip = createRequire(import.meta.url)('jszip') as typeof JSZip;
-import {knowledgePresentationPlanSchema,type KnowledgePresentationPlan} from '../../shared/knowledgePresentation';
+import {knowledgePresentationPlanSchema,knowledgePresentationLines as lines,assertKnowledgePresentationCapacity,type KnowledgePresentationPlan} from '../../shared/knowledgePresentation';
 import {loadVerifiedKnowledgePresentation} from './knowledgePresentationAdvisor';
 import type { EditableLayout } from '../../shared/editableLayout';
 import type { KnowledgeReview } from '../../shared/knowledgePublication';
@@ -19,16 +19,6 @@ import { downloadGcsObjectVersioned, getGcsBucketName, signGsUriV4ReadUrl, uploa
 
 export const KNOWLEDGE_PPTX_VERSION='knowledge-pptx-1105-v3-outline-range';
 const WIDTH=13.333333;
-// 按中西文宽度保守断行，正文固定字号；不缩小、不截断尾文。
-function lines(value:string,width:number):string[]{
- const result:string[]=[];
- for(const paragraph of value.split('\n')){
-  let line='',units=0;
-  for(const char of paragraph){const n=/[\u0020-\u007e]/.test(char)?0.55:1;if(units+n>width&&line){result.push(line);line='';units=0;}line+=char;units+=n;}
-  result.push(line);
- }
- return result;
-}
 // 固定文本框也必须核对断行高度，防止合法短文本中的换行造成裁切。
 function fittedText(value:string,capacity:number,size:number,spacing:number,height:number):string{
  const content=lines(value,capacity);
@@ -37,6 +27,7 @@ function fittedText(value:string,capacity:number,size:number,spacing:number,heig
 }
 export async function buildKnowledgePublicationPptx(doc:EditableLayout,review:KnowledgeReview,images:Record<string,string>,value:KnowledgePresentationPlan){
  const plan=knowledgePresentationPlanSchema.parse(value);
+ assertKnowledgePresentationCapacity(plan);
  const deck=new PptxConstructor();deck.layout='LAYOUT_WIDE';deck.author='图文知识手册';deck.subject=doc.title;deck.title=plan.title;
  const bodyFont='Noto Sans CJK',titleFont=plan.fontStyle==='editorial'?'Noto Serif CJK SC':bodyFont;
  deck.theme={headFontFace:titleFont,bodyFontFace:bodyFont};

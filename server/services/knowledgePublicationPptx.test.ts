@@ -57,3 +57,18 @@ it.each([1,2,3,4])('%d项版式的合法最长普通文本保留末字',async(co
  const r=await buildKnowledgePublicationPptx(f.doc,f.review,{},f.plan),z=await JSZip.loadAsync(r.buffer);
  expect(r.slides).toBe(2);expect(await z.file('ppt/slides/slide2.xml')!.async('string')).toContain('末');
 });
+
+it('权威提纲的文字修订进入实际PPTX并使用独立缓存，原稿和原提纲保留',async()=>{
+ const {loadVerifiedKnowledgePresentation}=await import('./knowledgePresentationAdvisor');
+ const {knowledgePresentationPlanSchema}=await import('../../shared/knowledgePresentation');
+ const f=makePresentation();f.plan=knowledgePresentationPlanSchema.parse(f.plan);f.doc.publication!.presentationPlan=f.plan;
+ const original=JSON.stringify(f.doc),storage=new Map<string,Buffer>();
+ const deps={load:async()=>f,plan:async()=>loadVerifiedKnowledgePresentation(7,f.doc,async()=>({plan:f.plan})),read:async(k:string)=>storage.get(k)||null,save:async(k:string,b:Buffer)=>{storage.set(k,b);},sign:(k:string)=>'https://test.invalid/'+k,build:vi.fn(buildKnowledgePublicationPptx)};
+ const before=await exportKnowledgePublicationPptx(7,f.doc.id,'10',deps);
+ const revision=structuredClone(f.plan);revision.slides[0].title='修订后的标题';f.doc.publication!.presentationRevision=revision;
+ const after=await exportKnowledgePublicationPptx(7,f.doc.id,'11',deps);
+ expect(after.pptxUrl).not.toBe(before.pptxUrl);expect(deps.build).toHaveBeenCalledTimes(2);
+ const bytes=storage.get(after.pptxUrl.replace('https://test.invalid/',''))!;
+ const zip=await JSZip.loadAsync(bytes);expect(await zip.file('ppt/slides/slide1.xml')!.async('string')).toContain('修订后的标题');
+ delete f.doc.publication!.presentationRevision;expect(JSON.stringify(f.doc)).toBe(original);
+});

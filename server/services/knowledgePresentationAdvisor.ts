@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import type {EditableLayout} from '../../shared/editableLayout';
 import type {KnowledgePublicationContext} from '../../shared/knowledgePublication';
-import {knowledgePresentationRequestSchema,validateKnowledgePresentationPlan} from '../../shared/knowledgePresentation';
+import {knowledgePresentationRequestSchema,validateKnowledgePresentationPlan,validateKnowledgePresentationRevision,assertKnowledgePresentationCapacity} from '../../shared/knowledgePresentation';
 import {readCanonicalLayoutLibrary} from './editableLayoutStore';
 import {loadKnowledgePublicationExport} from './knowledgePublicationExport';
 import {invokeKnowledgePublicationRoutes,type KnowledgeModelRequest} from './knowledgePublicationRoutes';
@@ -60,5 +60,8 @@ export async function loadVerifiedKnowledgePresentation(owner:number,doc:Editabl
  if(!saved)throw Error('请先让创作顾问按页数范围规划课件，并确认逐页提纲');
  const plan=validateKnowledgePresentationPlan(saved.plan,input);
  if(JSON.stringify(plan)!==JSON.stringify(doc.publication?.presentationPlan))throw Error('课件提纲尚未确认或已改变，请先确认顾问提纲');
+ const revision=doc.publication?.presentationRevision;
+ if(revision)return validateKnowledgePresentationRevision(revision,plan);
+ assertKnowledgePresentationCapacity(plan);
  return plan;
 }

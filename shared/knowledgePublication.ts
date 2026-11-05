@@ -90,6 +90,7 @@ export const knowledgePublicationSchema = z
     confirmedManuscript: z.string().optional(),
     presentationRequest: knowledgePresentationRequestSchema.optional(),
     presentationPlan: knowledgePresentationPlanSchema.optional(),
+    presentationRevision: knowledgePresentationPlanSchema.optional(),
   })
   .strict();
 export type KnowledgePublication = z.infer<typeof knowledgePublicationSchema>;

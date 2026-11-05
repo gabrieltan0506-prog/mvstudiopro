@@ -21,3 +21,49 @@ export function validateKnowledgePresentationPlan(value:unknown,expected:{reques
  if(p.slides.some(s=>s.sourcePageIds.some(id=>!ids.has(id))||(s.type==='image'&&(!s.sourcePageIds.includes(s.imagePageId)||!expected.pages.find(p=>p.id===s.imagePageId)?.imageUrl))))throw Error('课件提纲引用未知章节或缺失原图');
  return p;
 }
+
+/** 与PPTX排版共用断行算法，预检不能使用另一套字符估算。 */
+export function knowledgePresentationLines(value:string,width:number):string[]{
+ const result:string[]=[];
+ for(const paragraph of value.split('\n')){
+  let line='',units=0;
+  for(const char of paragraph){const n=/[\u0020-\u007e]/.test(char)?0.55:1;if(units+n>width&&line){result.push(line);line='';units=0;}line+=char;units+=n;}
+  result.push(line);
+ }
+ return result;
+}
+export function knowledgePresentationCapacityIssues(plan:KnowledgePresentationPlan):string[]{
+ const issues:string[]=[];
+ plan.slides.forEach((item,index)=>{
+  const fits=(value:string,width:number,size:number,spacing:number,height:number)=>knowledgePresentationLines(value,width).length*size/72*spacing+0.04<=height;
+  const opening=index===0&&item.type==='points'&&item.points.length<=3;
+  let ok=fits(item.title,opening?22:27,opening?40:31,1.03,opening?1.5:1.04);
+  const listFits=(points:string[],capacity:number,size:number,start:number)=>start+points.reduce((sum,text)=>sum+knowledgePresentationLines(text,capacity).length*size/72*1.1+0.04+0.12,0)-0.12<=6.82;
+  if(item.type==='table'){
+   const width=11.4/item.columns.length,capacity=Math.max(7,Math.floor(width*72/17.5)-1);
+   const height=[item.columns,...item.rows].reduce((sum,row)=>sum+Math.max(...row.map(c=>knowledgePresentationLines(c,capacity).length))*0.27+0.18,0);
+   ok=ok&&height<=4.35;
+  }else if(item.type==='image')ok=ok&&listFits(item.points,16,20,2.4);
+  else if(opening)ok=ok&&listFits(item.points,33,22,3.25);
+  else if(item.points.length===1)ok=ok&&fits(item.points[0],27,30,1.2,2.7);
+  else if(item.points.length<=3){
+   const count=item.points.length,w=(11.4-0.55*(count-1))/count,capacity=Math.floor((w-0.16)*72/22)-1;
+   ok=ok&&item.points.every(t=>fits(t,capacity,22,1.18,3.1));
+  }else if(item.points.length===4)ok=ok&&item.points.every(t=>fits(t,17,20,1.14,1.64));
+  else ok=ok&&listFits(item.points,35,22,2.4);
+  if(!ok)issues.push(`第 ${index+1} 页「${item.title}」单页内容超出可读版面，请修订标题、要点或表格文字后再确认。`);
+ });
+ return issues;
+}
+export function assertKnowledgePresentationCapacity(plan:KnowledgePresentationPlan){
+ const issues=knowledgePresentationCapacityIssues(plan);
+ if(issues.length)throw Error(issues.join('\n'));
+}
+/** 修订只允许改变页面文字，原请求、来源、页数及素材关系必须保持。 */
+export function validateKnowledgePresentationRevision(value:unknown,original:KnowledgePresentationPlan){
+ const revision=knowledgePresentationPlanSchema.parse(value);
+ const structure=(plan:KnowledgePresentationPlan)=>({...plan,slides:plan.slides.map(s=>s.type==='table'?{...s,title:'',columns:s.columns.map(()=>''),rows:s.rows.map(r=>r.map(()=>''))}:{...s,title:'',points:s.points.map(()=>'')})});
+ if(JSON.stringify(structure(revision))!==JSON.stringify(structure(original)))throw Error('提纲修订只能修改页面文字，不能改变请求、页数、章节或配图');
+ assertKnowledgePresentationCapacity(revision);
+ return revision;
+}
