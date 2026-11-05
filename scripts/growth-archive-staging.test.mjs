@@ -92,7 +92,7 @@ test('workflow先校验单桶参数再传给远端prepare',()=>{
 });
 
 test('默认轮转跨两轮覆盖候选、环绕且同batch重入不推进游标',t=>{
- const f=fixture(t);for(let i=1;i<=14;i++){const dir=`2026-08-${String(i).padStart(2,'0')}-00`;fs.mkdirSync(path.join(f.root,'archive',dir));}
+ const f=fixture(t);for(let i=1;i<=14;i++){const dir=`2026-08-${String(i).padStart(2,'0')}-00`;fs.mkdirSync(path.join(f.root,'archive',dir));fs.writeFileSync(path.join(f.root,'archive',dir,'bilibili-valid.json.gz'),gzipSync('{"items":[]}'));}
  const cursorFile=path.join(f.root,'backups/archive-offload/.rotation-cursor.json');
  const a=prepare(f,'201-1');assert.equal(a.status,0,a.stderr);const first=JSON.parse(fs.readFileSync(path.join(f.root,'backups/archive-offload/201-1/rotation.json')));assert.equal(first.scannedCount,12);assert.equal(first.deferred.length,3);
  const saved=fs.readFileSync(cursorFile,'utf8');assert.equal(prepare(f,'201-1').status,0);assert.equal(fs.readFileSync(cursorFile,'utf8'),saved);
@@ -115,4 +115,21 @@ test('全超大批次仍报告deferred并推进游标，不声称无积压',t=>{
  const f=fixture(t),dir='2026-09-01-00';fs.truncateSync(path.join(f.root,'archive',dir,'bilibili-valid.json.gz'),513*1024*1024);
  const run=prepare(f,'220-1');assert.equal(run.status,0,run.stderr);assert.equal(run.stdout.trim(),'');assert.match(run.stderr,/GROWTH_ARCHIVE_ROTATION.*"deferred":1/);assert.match(run.stderr,/GROWTH_ARCHIVE_DEFERRED.*oversized/);
  const c=JSON.parse(fs.readFileSync(path.join(f.root,'backups/archive-offload/.rotation-cursor.json')));assert.equal(c.lastDir,dir);
+});
+
+
+test('空目录不耗尽内容额度，零字节损坏文件仍保留并报告',t=>{
+ const f=fixture(t);for(let i=1;i<=20;i++)fs.mkdirSync(path.join(f.root,'archive',`2026-08-${String(i).padStart(2,'0')}-00`));
+ const bad='2026-08-21-00';fs.mkdirSync(path.join(f.root,'archive',bad));fs.writeFileSync(path.join(f.root,'archive',bad,'bilibili-empty.json.gz'),'');
+ const run=prepare(f,'230-1');assert.equal(run.status,0,run.stderr);
+ const root=path.join(f.root,'backups/archive-offload/230-1'),r=JSON.parse(fs.readFileSync(path.join(root,'rotation.json')));
+ assert.equal(r.emptyCount,20);assert.equal(r.nonemptyVisited,2);assert.equal(r.scannedCount,22);assert.equal(r.deferred.length,0);
+ assert.match(run.stdout,/2026-09-01-00/);assert(fs.readFileSync(path.join(root,'anomalies.jsonl'),'utf8').includes(bad));
+ assert(fs.existsSync(path.join(f.root,'archive',bad,'bilibili-empty.json.gz')));assert(fs.existsSync(path.join(f.root,'archive','2026-08-01-00')));
+});
+
+test('空目录metadata扫描仍有4096上限且下一轮到达有效桶',t=>{
+ const f=fixture(t);for(let i=0;i<4097;i++){const dir=new Date(Date.UTC(2000,0,1+i)).toISOString().slice(0,10);fs.mkdirSync(path.join(f.root,'archive',dir));}
+ const a=prepare(f,'240-1');assert.equal(a.status,0,a.stderr);const r=JSON.parse(fs.readFileSync(path.join(f.root,'backups/archive-offload/240-1/rotation.json')));assert.equal(r.scannedCount,4096);assert.equal(r.emptyCount,4096);assert.equal(r.selectedCount,0);assert.equal(r.deferred.length,2);
+ const b=prepare(f,'241-1');assert.equal(b.status,0,b.stderr);assert.match(b.stdout,/2026-09-01-00/);
 });

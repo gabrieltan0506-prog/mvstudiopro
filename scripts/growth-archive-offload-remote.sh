@@ -300,11 +300,12 @@ prepare_snapshot() {
       if(fs.existsSync(cursorFile)){const st=fs.lstatSync(cursorFile);if(!st.isFile()||st.isSymbolicLink())throw Error("archive_rotation_cursor_type");cursor=JSON.parse(fs.readFileSync(cursorFile,"utf8"));if(cursor.schemaVersion!==1||typeof cursor.lastDir!=="string")throw Error("archive_rotation_cursor_invalid");}
       const dirs=fs.readFileSync(list,"utf8").trim().split(/\n/).filter(Boolean),start=cursor?dirs.findIndex(d=>d>cursor.lastDir):0;
       const offset=start<0?0:start,ordered=[...dirs.slice(offset),...dirs.slice(0,offset)],selected=[],visited=[],oversized=[];
-      const maxBytes=512*1024*1024;let estimatedBytes=0;
-      function size(dir){let bytes=0;for(const e of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,e.name);if(e.isDirectory())bytes+=size(p);else if(e.isFile())bytes+=fs.lstatSync(p).size;}return bytes;}
-      for(const dir of ordered){if(visited.length>=12)break;const bytes=size(path.join(root,"archive",dir));if(bytes>maxBytes){visited.push(dir);oversized.push({dir,reason:"oversized",estimatedBytes:bytes});continue;}if(estimatedBytes+bytes>maxBytes)break;visited.push(dir);selected.push(dir);estimatedBytes+=bytes;}
+      const maxBytes=512*1024*1024,maxMetadataBuckets=4096;let estimatedBytes=0,nonemptyVisited=0;const empty=[];
+      function size(dir){let bytes=0,entries=0;for(const e of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,e.name);if(e.isDirectory()){const nested=size(p);bytes+=nested.bytes;entries+=nested.entries;}else{entries++;if(e.isFile())bytes+=fs.lstatSync(p).size;}}return {bytes,entries};}
+      // 空目录仅推进游标，不占内容处理额度；零字节文件和软链接仍交原校验链。
+      for(const dir of ordered){if(nonemptyVisited>=12||visited.length>=maxMetadataBuckets)break;const {bytes,entries}=size(path.join(root,"archive",dir));if(!entries){visited.push(dir);empty.push(dir);continue;}if(bytes>maxBytes){visited.push(dir);nonemptyVisited++;oversized.push({dir,reason:"oversized",estimatedBytes:bytes});continue;}if(estimatedBytes+bytes>maxBytes)break;visited.push(dir);nonemptyVisited++;selected.push(dir);estimatedBytes+=bytes;}
       const deferred=ordered.filter(d=>!visited.includes(d)).map(dir=>({dir,reason:"rotation-budget"})).concat(oversized);
-      const report={schemaVersion:1,batchId:batch,eligibleCount:dirs.length,scannedCount:visited.length,selectedCount:selected.length,estimatedBytes,maxBuckets:12,maxBytes,cursorBefore:cursor?.lastDir||null,cursorAfter:visited.at(-1)||cursor?.lastDir||null,deferred,oversized};
+      const report={schemaVersion:1,batchId:batch,eligibleCount:dirs.length,scannedCount:visited.length,nonemptyVisited,emptyCount:empty.length,maxMetadataBuckets,selectedCount:selected.length,estimatedBytes,maxBuckets:12,maxBytes,cursorBefore:cursor?.lastDir||null,cursorAfter:visited.at(-1)||cursor?.lastDir||null,deferred,oversized};
       fs.writeFileSync(out,JSON.stringify(report));fs.writeFileSync(list,selected.length?selected.join("\n")+"\n":"");
       console.error("GROWTH_ARCHIVE_ROTATION "+JSON.stringify({eligible:report.eligibleCount,visited:report.scannedCount,selected:report.selectedCount,deferred:deferred.length,oversized:oversized.length,sourceRetained:true}));
       if(deferred.length)console.error("GROWTH_ARCHIVE_DEFERRED "+JSON.stringify(deferred));
