@@ -1,18 +1,15 @@
-import { execFileSync } from "node:child_process";
+import { runBackupViaFly } from "./growth-backup-fly-client.mjs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const DEFAULT_GROWTH_BACKUP_REPOSITORY =
   "gabrieltan0506-prog/mvstudiopro-growth-data";
 export function runBackupGh(args) {
-  // A scheduled backup must use its explicit dedicated token, never ambient gh login.
+  if (process.env.GROWTH_BACKUP_TRANSPORT === "fly") return runBackupViaFly(args);
+  // 生产备份只允许显式 Fly 转发，不使用 runner 上的 GitHub 登录或令牌。
   if (!String(process.env.GH_TOKEN || "").trim())
     throw Error("growth_backup_private_token_required");
-  return execFileSync("gh", args, {
-    encoding: "utf8",
-    maxBuffer: 32 * 1024 * 1024,
-    env: { ...process.env, GH_HOST: "github.com" },
-  });
+  throw Error("growth_backup_server_transport_required");
 }
 
 export function privateGrowthBackupTarget(
