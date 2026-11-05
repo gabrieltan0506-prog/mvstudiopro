@@ -1,0 +1,390 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "fa7bf589ebe177515144020486e71cb224543790",
+  "bucket": "mv-studio-pro-vertex-video-temp",
+  "assets": [
+    {
+      "path": "/home-assets/digital-human-talk-20261020.mp4",
+      "bytes": 31842636,
+      "sha256": "eae3c9f3aed288da886d726421bd8f8903f72b57f1f8f5507ff5e1ef70bb308f",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/eae3c9f3aed288da886d726421bd8f8903f72b57f1f8f5507ff5e1ef70bb308f/digital-human-talk-20261020.mp4",
+      "generation": "1793855351412235",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:09:16.621Z",
+      "media": {
+        "duration": 80.199002,
+        "width": 1080,
+        "height": 1920
+      }
+    },
+    {
+      "path": "/home-assets/mojing-episode-01-20261007.mp4",
+      "bytes": 47636778,
+      "sha256": "42a8cf91decd94f0d1b4c6069bc38b7997adab921bbfb41c453cf8d62e691966",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/42a8cf91decd94f0d1b4c6069bc38b7997adab921bbfb41c453cf8d62e691966/mojing-episode-01-20261007.mp4",
+      "generation": "1793855363666366",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:09:29.773Z",
+      "media": {
+        "duration": 106.176009,
+        "width": 1080,
+        "height": 1920
+      }
+    },
+    {
+      "path": "/home-assets/seedance25-kpop-dance.mp4",
+      "bytes": 2586799,
+      "sha256": "3ae9a69f52bbda1e39d27cc62870bac86a8591cde710e455ff7cdfee13d6cf76",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/3ae9a69f52bbda1e39d27cc62870bac86a8591cde710e455ff7cdfee13d6cf76/seedance25-kpop-dance.mp4",
+      "generation": "1793855373133546",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:09:36.541Z",
+      "media": {
+        "duration": 5.085011,
+        "width": 1920,
+        "height": 1080
+      }
+    },
+    {
+      "path": "/home-assets/seedance25-racemow.mp4",
+      "bytes": 3036558,
+      "sha256": "c3780cdc615f204b15b88921a6fd349cd1a3e388b4bbd9ae3eec9c702c12eb8d",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/c3780cdc615f204b15b88921a6fd349cd1a3e388b4bbd9ae3eec9c702c12eb8d/seedance25-racemow.mp4",
+      "generation": "1793855379698799",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:09:43.195Z",
+      "media": {
+        "duration": 13.813991,
+        "width": 1920,
+        "height": 1080
+      }
+    },
+    {
+      "path": "/home-assets/warship-2k-1.2x.mp4",
+      "bytes": 36235298,
+      "sha256": "fb8ecd6c921bb06d72c41f000a185643f3368beea27a988b34af01f1c004067e",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/fb8ecd6c921bb06d72c41f000a185643f3368beea27a988b34af01f1c004067e/warship-2k-1.2x.mp4",
+      "generation": "1793855388600783",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:09:54.074Z",
+      "media": {
+        "duration": 18.4,
+        "width": 2560,
+        "height": 1440
+      }
+    },
+    {
+      "path": "/blog-assets/h3-2k-5s.mp4",
+      "bytes": 274856,
+      "sha256": "b47724a76f6c061beae197b84254c17d97ac64759d24e13068bcb2aad1ff72d7",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/b47724a76f6c061beae197b84254c17d97ac64759d24e13068bcb2aad1ff72d7/h3-2k-5s.mp4",
+      "generation": "1793855396238012",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:09:58.876Z",
+      "media": {
+        "duration": 5.184,
+        "width": 960,
+        "height": 540
+      }
+    },
+    {
+      "path": "/blog-assets/happyhorse-720p-3s.mp4",
+      "bytes": 111483,
+      "sha256": "e850ef6c5da44f05784b87ee0778b15a697c09b4e77b47fb288209bb03721fb7",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/e850ef6c5da44f05784b87ee0778b15a697c09b4e77b47fb288209bb03721fb7/happyhorse-720p-3s.mp4",
+      "generation": "1793855400640476",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:10:02.937Z",
+      "media": {
+        "duration": 3.2,
+        "width": 960,
+        "height": 540
+      }
+    },
+    {
+      "path": "/blog-assets/manhua-video-model-review/01-seedance-25-tea-r2v-11s.mp4",
+      "bytes": 1017338,
+      "sha256": "208ac26143733989da4f64f6ea5d0c65cfdff45a494ae08e83c83809eb912662",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/208ac26143733989da4f64f6ea5d0c65cfdff45a494ae08e83c83809eb912662/01-seedance-25-tea-r2v-11s.mp4",
+      "generation": "1793855405742967",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:10:09.753Z",
+      "media": {
+        "duration": 11.072,
+        "width": 1280,
+        "height": 720
+      }
+    },
+    {
+      "path": "/blog-assets/manhua-video-model-review/02-seedance-20-mini-tea-r2v-11s.mp4",
+      "bytes": 1552036,
+      "sha256": "584a7f01f6626b876e035371cb90948abf0c52497958979c18bafe184b6d27b7",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/584a7f01f6626b876e035371cb90948abf0c52497958979c18bafe184b6d27b7/02-seedance-20-mini-tea-r2v-11s.mp4",
+      "generation": "1793855412735091",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:10:15.909Z",
+      "media": {
+        "duration": 11.104,
+        "width": 1280,
+        "height": 720
+      }
+    },
+    {
+      "path": "/blog-assets/manhua-video-model-review/03-seedance-20-tea-r2v-14s.mp4",
+      "bytes": 1631815,
+      "sha256": "2ebe00ea089ef9ba30395607283a4e5a0897d099be45d18e358d6309039bff49",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/2ebe00ea089ef9ba30395607283a4e5a0897d099be45d18e358d6309039bff49/03-seedance-20-tea-r2v-14s.mp4",
+      "generation": "1793855418945547",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:10:22.129Z",
+      "media": {
+        "duration": 14.070998,
+        "width": 1280,
+        "height": 720
+      }
+    },
+    {
+      "path": "/blog-assets/manhua-video-model-review/04-minimax-h3-mecha-r2v-15s.mp4",
+      "bytes": 23329862,
+      "sha256": "d78c8bf7d58d4415435b78d8a3ac006eb7d4971c7c2c6bad529c1c0297dd45d3",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/d78c8bf7d58d4415435b78d8a3ac006eb7d4971c7c2c6bad529c1c0297dd45d3/04-minimax-h3-mecha-r2v-15s.mp4",
+      "generation": "1793855427144154",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:10:31.726Z",
+      "media": {
+        "duration": 15.083344,
+        "width": 2592,
+        "height": 1408
+      }
+    },
+    {
+      "path": "/blog-assets/old-photo-home-update-h3-2k-5s.mp4",
+      "bytes": 1738686,
+      "sha256": "7ccebbf31f8c189cc1d254fedc2a7c7dfb44d8e64ce84f624b3b571c1d9ed260",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/7ccebbf31f8c189cc1d254fedc2a7c7dfb44d8e64ce84f624b3b571c1d9ed260/old-photo-home-update-h3-2k-5s.mp4",
+      "generation": "1793855434715326",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:10:38.002Z",
+      "media": {
+        "duration": 5.184,
+        "width": 2144,
+        "height": 1440
+      }
+    },
+    {
+      "path": "/blog-assets/old-photo-home-update-happyhorse-5s.mp4",
+      "bytes": 761022,
+      "sha256": "f0a61d50ffafc8046856ec862e0ff73ca02509cad7b07ad08657c91c3d762179",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/f0a61d50ffafc8046856ec862e0ff73ca02509cad7b07ad08657c91c3d762179/old-photo-home-update-happyhorse-5s.mp4",
+      "generation": "1793855440752871",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:10:43.772Z",
+      "media": {
+        "duration": 5.163,
+        "width": 1176,
+        "height": 784
+      }
+    },
+    {
+      "path": "/blog-assets/pk-kimi-vs-qwen/demo-A-720p-wm.mp4",
+      "bytes": 1865507,
+      "sha256": "7b48a625855f0f1b5368f1d7b45730d0c95bbf5cdf80d9d32336dbaa25656f50",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/7b48a625855f0f1b5368f1d7b45730d0c95bbf5cdf80d9d32336dbaa25656f50/demo-A-720p-wm.mp4",
+      "generation": "1793855454406658",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:10:57.652Z",
+      "media": {
+        "duration": 5.041667,
+        "width": 784,
+        "height": 1176
+      }
+    },
+    {
+      "path": "/blog-assets/pk-kimi-vs-qwen/demo-B-480p-wm.mp4",
+      "bytes": 1316236,
+      "sha256": "bbf6a4e1cda4b29406156eb433bfcfdf15ebcdbc7e0e4b94b6b3af79b79aa3fc",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/bbf6a4e1cda4b29406156eb433bfcfdf15ebcdbc7e0e4b94b6b3af79b79aa3fc/demo-B-480p-wm.mp4",
+      "generation": "1793855460478953",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:11:03.713Z",
+      "media": {
+        "duration": 5.041667,
+        "width": 560,
+        "height": 752
+      }
+    },
+    {
+      "path": "/blog-assets/pk-kimi-vs-qwen/demo-B-4K-wm.mp4",
+      "bytes": 14614068,
+      "sha256": "a78e6f2b99037169ab49a64cd950d0d543252c70b9e107f45537d6198daa4a9c",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/a78e6f2b99037169ab49a64cd950d0d543252c70b9e107f45537d6198daa4a9c/demo-B-4K-wm.mp4",
+      "generation": "1793855467828750",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:11:11.036Z",
+      "media": {
+        "duration": 5.0,
+        "width": 2160,
+        "height": 2902
+      }
+    },
+    {
+      "path": "/blog-assets/rehearsal-lock/rehearsal-16s-1080p-wm.mp4",
+      "bytes": 8754158,
+      "sha256": "31197aab572018b8796b534510f2fb6a19e4475724c18fc444ad2be6e1fc880d",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/31197aab572018b8796b534510f2fb6a19e4475724c18fc444ad2be6e1fc880d/rehearsal-16s-1080p-wm.mp4",
+      "generation": "1793855473918022",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:11:16.831Z",
+      "media": {
+        "duration": 16.043,
+        "width": 1920,
+        "height": 1080
+      }
+    },
+    {
+      "path": "/blog-assets/seedance-1080p-4s.mp4",
+      "bytes": 159330,
+      "sha256": "a9f24d8de3772ec6c1a61c25da191422c7152c4df0d27d2d31ce1a0b05a82d6b",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/a9f24d8de3772ec6c1a61c25da191422c7152c4df0d27d2d31ce1a0b05a82d6b/seedance-1080p-4s.mp4",
+      "generation": "1793855477980182",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:11:19.503Z",
+      "media": {
+        "duration": 4.086009,
+        "width": 960,
+        "height": 540
+      }
+    },
+    {
+      "path": "/blog-assets/seedance-480p-4s.mp4",
+      "bytes": 65002,
+      "sha256": "a0e43bb8e90d7b89ff90aa2da8325a0201a9ccc71c25f01ffad553e5337553fd",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/a0e43bb8e90d7b89ff90aa2da8325a0201a9ccc71c25f01ffad553e5337553fd/seedance-480p-4s.mp4",
+      "generation": "1793855480206582",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:11:21.263Z",
+      "media": {
+        "duration": 4.062993,
+        "width": 960,
+        "height": 552
+      }
+    },
+    {
+      "path": "/blog-assets/video-4k-upscale/01-sd25-yuji-720p.mp4",
+      "bytes": 5487778,
+      "sha256": "e3b8b593931333449b909ab8885d721341c58160a799b5e0deb63f9194982876",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/e3b8b593931333449b909ab8885d721341c58160a799b5e0deb63f9194982876/01-sd25-yuji-720p.mp4",
+      "generation": "1793855483416314",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:11:25.199Z",
+      "media": {
+        "duration": 5.056,
+        "width": 1178,
+        "height": 786
+      }
+    },
+    {
+      "path": "/blog-assets/video-4k-upscale/02-sd25-yuji-4k.mp4",
+      "bytes": 12157410,
+      "sha256": "5811950c15ed226c3359ddf0cc1db38ea8d691ef70644611588a4a8a1e7027ca",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/5811950c15ed226c3359ddf0cc1db38ea8d691ef70644611588a4a8a1e7027ca/02-sd25-yuji-4k.mp4",
+      "generation": "1793855487818022",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:11:29.999Z",
+      "media": {
+        "duration": 5.056009,
+        "width": 3234,
+        "height": 2160
+      }
+    },
+    {
+      "path": "/blog-assets/video-4k-upscale/03-sd20-swordsmen-1080p.mp4",
+      "bytes": 5228998,
+      "sha256": "bcae4c364b9f6ca2a583559336768b0f6448a7b3f7ce6a1e2f8c9f88856b2fb1",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/bcae4c364b9f6ca2a583559336768b0f6448a7b3f7ce6a1e2f8c9f88856b2fb1/03-sd20-swordsmen-1080p.mp4",
+      "generation": "1793855492219568",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:11:34.894Z",
+      "media": {
+        "duration": 5.06195,
+        "width": 1664,
+        "height": 1248
+      }
+    },
+    {
+      "path": "/blog-assets/video-4k-upscale/04-sd20-swordsmen-4k.mp4",
+      "bytes": 14539274,
+      "sha256": "11f72e3b3fc6d31fbd3077eec1e8f6860bc9be4698d4c108a755f3f842bb38dc",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/11f72e3b3fc6d31fbd3077eec1e8f6860bc9be4698d4c108a755f3f842bb38dc/04-sd20-swordsmen-4k.mp4",
+      "generation": "1793855498276380",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:11:41.739Z",
+      "media": {
+        "duration": 5.06195,
+        "width": 2880,
+        "height": 2160
+      }
+    },
+    {
+      "path": "/blog-assets/video-4k-upscale/05-kpop-1080p.mp4",
+      "bytes": 17614534,
+      "sha256": "f0f60bb34a198aafd40fdb9c3c152501f57c0eb88af7a12ed4d4355b22ed800e",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/f0f60bb34a198aafd40fdb9c3c152501f57c0eb88af7a12ed4d4355b22ed800e/05-kpop-1080p.mp4",
+      "generation": "1793855505150673",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:11:48.662Z",
+      "media": {
+        "duration": 5.085011,
+        "width": 1920,
+        "height": 1080
+      }
+    },
+    {
+      "path": "/blog-assets/video-4k-upscale/06-kpop-4k.mp4",
+      "bytes": 14513789,
+      "sha256": "aeb1e2b05d83b442c9d1255c9b8c848085061bda543cbbb90c7e3c279bd152b0",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/aeb1e2b05d83b442c9d1255c9b8c848085061bda543cbbb90c7e3c279bd152b0/06-kpop-4k.mp4",
+      "generation": "1793855511922838",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:11:55.160Z",
+      "media": {
+        "duration": 5.085011,
+        "width": 3840,
+        "height": 2160
+      }
+    }
+  ],
+  "complete": true,
+  "sourceDeleted": false,
+  "excluded": [
+    {
+      "path": "/blog-assets/pk-kimi-vs-qwen/demo-A-4K-wm.mp4",
+      "reason": "原始MP4缺少moov索引，保留源文件与原有发布，不切换回源"
+    }
+  ]
+}

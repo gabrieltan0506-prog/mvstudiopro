@@ -832,6 +832,7 @@ export function signGcsObjectPathV4ReadUrl(
   /** 已解码的对象名，可含 `/` */
   objectPath: string,
   expiresSeconds = 3600,
+  options: { method?: "GET" | "HEAD"; generation?: string } = {},
 ): string {
   const credentials = getGoogleServiceAccount();
   const b = String(bucket || "").trim();
@@ -853,10 +854,12 @@ export function signGcsObjectPathV4ReadUrl(
   const host = "storage.googleapis.com";
   const headers = `host:${host}\n`;
   const signedHeaders = "host";
+  if (options.generation && !/^\d+$/.test(options.generation)) throw new Error("invalid_gcs_generation");
+  const generationQuery = options.generation ? `&generation=${options.generation}` : "";
   const canonicalRequest = [
-    "GET",
+    options.method ?? "GET",
     `/${b}/${encodedObject}`,
-    `X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=${encodeURIComponent(credential)}&X-Goog-Date=${dateIso}&X-Goog-Expires=${expiry}&X-Goog-SignedHeaders=${signedHeaders}`,
+    `X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=${encodeURIComponent(credential)}&X-Goog-Date=${dateIso}&X-Goog-Expires=${expiry}&X-Goog-SignedHeaders=${signedHeaders}${generationQuery}`,
     headers,
     signedHeaders,
     "UNSIGNED-PAYLOAD",
@@ -867,7 +870,7 @@ export function signGcsObjectPathV4ReadUrl(
   sign.update(stringToSign);
   sign.end();
   const signature = sign.sign(credentials.private_key).toString("hex");
-  return `https://${host}/${b}/${encodedObject}?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=${encodeURIComponent(credential)}&X-Goog-Date=${dateIso}&X-Goog-Expires=${expiry}&X-Goog-SignedHeaders=${signedHeaders}&X-Goog-Signature=${signature}`;
+  return `https://${host}/${b}/${encodedObject}?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=${encodeURIComponent(credential)}&X-Goog-Date=${dateIso}&X-Goog-Expires=${expiry}&X-Goog-SignedHeaders=${signedHeaders}${generationQuery}&X-Goog-Signature=${signature}`;
 }
 
 /** V4 GET 签名直链（供客户下载 PDF 等），默认 1h；最大 7 天（與 GCS V4 實務上限對齊）。 */
