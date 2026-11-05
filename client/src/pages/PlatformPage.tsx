@@ -1,3 +1,4 @@
+import { knowledgeCardLayoutSource } from "@shared/knowledgeCardEditableLayout";
 import EditableLayoutStudio from "@/components/platform/EditableLayoutStudio";
 import type { LayoutSource } from "@shared/editableLayout";
 import { GuaikeiResearchPanel } from "@/components/GuaikeiResearchPanel";
@@ -8044,6 +8045,7 @@ export default function PlatformPage() {
   const renderRunIdRef = useRef(0);
   /** 本套卡出图时用的提炼稿快照：补出单页必须用它，不用文本框里可能已改过的内容 */
   const renderedDraftRef = useRef<string>("");
+  const knowledgeCardLayoutSourceIdRef = useRef<string>("");
   /** customNoteImages 的同步镜像：计数用，不在 state updater 里做副作用 */
   const customNoteImagesRef = useRef<string[]>([]);
   const recoveryBlocked = customNoteBusy || knowledgeCardPdfBusy || customNoteUploadBusy || customNoteLevelSwitching || Boolean(customNoteDistillJobId) || Boolean(customNotePreflight);
@@ -8061,6 +8063,7 @@ export default function PlatformPage() {
     const images = Array.from({length:backup.total},()=>"");
     for (const image of backup.images) images[image.page-1]=image.url;
     renderedDraftRef.current=backup.total?backup.markdown:""; customNoteImagesRef.current=images;
+    knowledgeCardLayoutSourceIdRef.current = `knowledge-card:${backup.jobId}`;
     setCustomNoteImages(images); setCustomNoteImageUpper(images[0]||null); setCustomNoteImageLower(images[1]||null);
     setKnowledgeCardInflight([]); setKnowledgeCardPdfUrl(null); setKnowledgeCardEpubPdfs([]);
     setCustomNoteKind("single_page_knowledge_card"); setOutputType("single_page");
@@ -8795,6 +8798,7 @@ export default function PlatformPage() {
         // 新批次：旧批次在途页返回后不得覆盖；补出单页用这份稿的快照
         const runId = ++renderRunIdRef.current;
         renderedDraftRef.current = distilled;
+        knowledgeCardLayoutSourceIdRef.current = `knowledge-card:${crypto.randomUUID()}`;
         customNoteImagesRef.current = Array.from({ length: total }, () => "");
         setKnowledgeCardInflight([]);
         const publish = () => {
@@ -15774,6 +15778,18 @@ export default function PlatformPage() {
                   )}
                 </button>
                 <KnowledgeCardRecovery disabled={recoveryBlocked} onApply={applyKnowledgeCardRecovery} />
+                {customNoteKind === "single_page_knowledge_card" && workbenchUserKey && customNoteText.trim() && (
+                  <button type="button" disabled={recoveryBlocked} className="rounded-full border border-[#ddbc87]/40 px-4 py-2 text-sm text-[#edd4ac] disabled:opacity-50" onClick={() => {
+                    try {
+                      const images = customNoteImages.length ? customNoteImages : customNoteImageLower ? [customNoteImageUpper || "", customNoteImageLower] : customNoteImageUpper ? [customNoteImageUpper] : [];
+                      const markdown = images.length ? renderedDraftRef.current : customNoteText;
+                      if (images.length && !markdown) throw new Error("缺少原成品正文快照，请先恢复对应成品");
+                      knowledgeCardLayoutSourceIdRef.current ||= `knowledge-card:${crypto.randomUUID()}`;
+                      setLayoutSource(knowledgeCardLayoutSource({ owner: workbenchUserKey, sourceId: knowledgeCardLayoutSourceIdRef.current, markdown, distillModel: customNoteDistillModel, images }));
+                      document.getElementById("editable-layout-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    } catch (error) { toast.error(error instanceof Error ? error.message : "排版导入失败，原稿已保留"); }
+                  }}>{customNoteImages.length || customNoteImageUpper ? "编辑这套成品与导出" : "编辑正文排版与导出"}</button>
+                )}
                 <span className="text-xs text-[#c9c0e6]/60">恢复已有正文与图片，不重新生成、不扣费</span>
                 {(customNoteImageUpper || customNoteImageLower || customNoteError || customOptimizeResult) && !customNoteBusy && (
                   <button
@@ -15802,6 +15818,7 @@ export default function PlatformPage() {
                       setKnowledgeCardInflight([]);
                       renderRunIdRef.current += 1;
                       renderedDraftRef.current = "";
+                      knowledgeCardLayoutSourceIdRef.current = "";
                       customNoteImagesRef.current = [];
                       customNotePendingFilesRef.current = [];
                       setCustomNotePendingMeta([]);
