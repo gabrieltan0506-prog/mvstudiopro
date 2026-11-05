@@ -38,8 +38,6 @@ jobs:
         with:
           python-version: '3.12'
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10.4.1
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: 隔离验证候选、内容、同名冲突与发布恢复
         run: |
