@@ -451,6 +451,11 @@ async function getRaw(
 ) {
   let raw = await deps.read(`${prefix}/raw-${attempt}.json`);
   if (!raw) {
+    const prior = await deps.read(`${prefix}/request-${attempt}.json`);
+    if (prior) {
+      if (prior.sourceDigest !== digest) throw new Error("已保存请求的原稿版本不符");
+      request = prior.request;
+    }
     await deps.save(`${prefix}/request-${attempt}.json`, {
       model: KNOWLEDGE_VISUAL_ADVISOR_MODEL,
       sourceDigest: digest,

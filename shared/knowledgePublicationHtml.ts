@@ -18,7 +18,7 @@ export function knowledgePublicationChapter(doc: EditableLayout, review: Knowled
   const selected=resolveKnowledgePublicationTemplate(doc.publication?.infographicTemplateId,checked.reading?.templateId);
   const theme=chooseKnowledgeBookletTheme(page.headline+'\n'+page.body,selected?.id);
   const notes=checked.cautions.map(c=>`### 阅读提示\n\n${c.message}\n\n原文或图像依据：${c.evidence}`).join('\n\n');
-  return buildKnowledgeBookletHtml({title:doc.title,theme,fragment:true,pages:[{id:page.id,headline:page.headline,body:page.body+(notes?'\n\n'+notes:''),imageUrl:image}]});
+  return buildKnowledgeBookletHtml({title:doc.title,theme,fragment:true,decoration:checked.reading?.decoration,pages:[{id:page.id,headline:page.headline,body:page.body+(notes?'\n\n'+notes:''),imageUrl:image}]});
 }
 export function buildKnowledgePublicationHtml(doc:EditableLayout,review:KnowledgeReview,images:Record<string,string>,preview=false) {
   return knowledgePublicationHead(doc.title)+doc.pages.map((p,i)=>knowledgePublicationChapter(doc,review,i,images[p.imageUrl]||"",preview)).join("\n")+"</body></html>";

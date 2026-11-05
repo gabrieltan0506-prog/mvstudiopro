@@ -1,5 +1,6 @@
 import { getInfographicNoteTemplate } from "./infographicNoteTemplates";
 import { KNOWLEDGE_TEMPLATE_SELECTION_INSTRUCTIONS } from "./knowledgePublicationTemplates";
+import { knowledgeDecorationSchema, KNOWLEDGE_DECORATION_INSTRUCTIONS } from "./knowledgeDecorations";
 import { z } from "zod";
 import { Marked } from "marked";
 
@@ -17,6 +18,7 @@ export const knowledgeReadingSchema = z.object({
   version: z.literal(1),
   templateId: z.string().max(100).refine(id => Boolean(getInfographicNoteTemplate(id)), "请选择已有知识卡模板").optional(),
   templateReason: z.string().trim().min(1).max(500).optional(),
+  decoration: knowledgeDecorationSchema.optional(),
   subtitle: z.string().max(400),
   accent: z.enum(["indigo", "jade", "ochre", "rose"]),
   blocks: z.array(knowledgeReadingBlockSchema).min(1).max(40),
@@ -74,4 +76,5 @@ blocks可选：
 3. {type:"cards",title,note,items:[{title,body},...]}：分类要点、独立概念、完整清单适合卡片/矩阵。
 4. {type:"prose",title,note,text}：用短段落解释背景、因果与边界，不以表格代替必须说明的内容。
 每页可组合多个类型，避免整页长文章，也不要把不适合比较的知识硬凑表格。优先2至6个有信息量的块，内容多可增加块或行，不删重要事实。reading包含此页全部读者正文，不是body的缩略示意，body必须与reading表达相同事实；系统会从reading生成最终确认稿。每块note可为空。不得写入任意HTML/CSS，不生成假数据、空单元格占位或“待补充”。表格最多120行、卡片最多60项、单页最多40块，接近容量时明确失败，不静默丢内容。配色应服务主题与层级，跟随选中模板的配色，不固定为蓝金或墨绿色；图片来自绑定原图，不输出新图片地址。
-${KNOWLEDGE_TEMPLATE_SELECTION_INSTRUCTIONS}`;
+${KNOWLEDGE_TEMPLATE_SELECTION_INSTRUCTIONS}
+${KNOWLEDGE_DECORATION_INSTRUCTIONS}`;

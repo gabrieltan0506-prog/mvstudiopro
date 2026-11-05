@@ -1,3 +1,4 @@
+import { KNOWLEDGE_DECORATION_MARKER } from "../../shared/knowledgeDecorations";
 import { KNOWLEDGE_TEMPLATE_SELECTION_MARKER } from "../../shared/knowledgePublicationTemplates";
 import { createHash } from "node:crypto";
 import { getOpenRouterApiKey } from "./openrouterGptImage2";
@@ -93,6 +94,8 @@ function validateAnswer(content: string, request: KnowledgeModelRequest) {
       if (!page.reading) throw new Error("模型没有输出自动表格图文结构");
       if (request.systemInstruction.parts.some(p => p.text.includes(KNOWLEDGE_TEMPLATE_SELECTION_MARKER)) && (!page.reading.templateId || !page.reading.templateReason))
         throw new Error("未取得本页自动选版结果与理由");
+      if (request.systemInstruction.parts.some(p => p.text.includes(KNOWLEDGE_DECORATION_MARKER)) && !page.reading.decoration) throw new Error("未取得本页装饰组件配置");
+      if(page.reading.decoration?.interleave === "original-image" && !source.source.pages.find((p:any)=>p.id===page.id)?.imageUrl) throw new Error("无原图章节不能配置原图穿插");
       page.body = knowledgeReadingMarkdown(page.reading);
       if (page.body.length > 12000) throw new Error("本页结构化正文超出容量，未截断采用");
     }

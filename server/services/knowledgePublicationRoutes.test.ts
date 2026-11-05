@@ -114,3 +114,12 @@ it('仅兼容根对象json_object格式回显，并可零请求恢复原完整�
  const fallback=JSON.parse((await invokeKnowledgePublicationRoutes(invalid.request,invalid.evidence,invalid.deps)).text);
  expect(fallback.gateway).not.toBe('openrouter');expect(invalid.storage.get('test/0/route-openrouter.json').reason).toContain('type');
 });
+
+it('新顾问输入必须返回可用装饰配置，缺失不能冒充已经排好图文',async()=>{
+ const {KNOWLEDGE_DECORATION_MARKER,resolveKnowledgeDecoration}=await import('../../shared/knowledgeDecorations');
+ const f=make();f.request.systemInstruction.parts[0].text+=KNOWLEDGE_DECORATION_MARKER;
+ const good=structuredClone(f.report);(good.pages[0].reading as any).decoration=resolveKnowledgeDecoration(undefined,'水循环');
+ f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL)).mockResolvedValueOnce(f.response(EVO_MODEL,good));
+ const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+ expect(f.storage.get('test/0/route-openrouter.json').reason).toContain('装饰组件配置');expect(out.gateway).toBe('evolink');expect(JSON.parse(out.candidates[0].content.parts[0].text).pages[0].reading.decoration).toEqual((good.pages[0].reading as any).decoration);
+});
