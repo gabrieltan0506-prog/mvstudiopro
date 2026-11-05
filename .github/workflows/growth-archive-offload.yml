@@ -73,11 +73,13 @@ jobs:
           mkdir -p /tmp/growth-archive-offload
           BATCH_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           printf '%s\n' "$BATCH_ID" > /tmp/growth-archive-offload/batch-id.txt
+          # 先验证再插入远端shell参数；仅日期桶或空值可进入prepare。
+          node -e 'const v=process.env.GROWTH_ARCHIVE_PROBE_DIR||"";if(v&&(!/^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(v)||/[\r\n]/.test(v)))throw Error("archive_probe_directory_invalid")'
           SNAPSHOT_READY=false
           for attempt in $(seq 1 20); do
             rm -f /tmp/growth-archive-offload/snapshot.tsv.next
             if node scripts/growth-archive-transfer.mjs --max-ms 120000 -- flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-              -C "sh -s -- prepare '$BATCH_ID'" \
+              -C "sh -s -- prepare '$BATCH_ID' '${GROWTH_ARCHIVE_PROBE_DIR:-}'" \
               < scripts/growth-archive-offload-remote.sh \
               > /tmp/growth-archive-offload/snapshot.tsv.next; then
               mv /tmp/growth-archive-offload/snapshot.tsv.next /tmp/growth-archive-offload/snapshot.tsv

@@ -20,14 +20,16 @@ let apiUrl = "";
 let lastSuccessIso: string | null = null;
 let httpStatus = 200;
 let newestWasDeferred = false;
+let includeLegacyArtifact = false;
+let publicationSucceeded = true;
 
 beforeAll(async () => {
   server = createServer((req, res) => {
     if (/\/actions\/runs\/\d+\/jobs/.test(req.url || "")) {
       const deferred = newestWasDeferred && req.url?.includes("/1000/jobs");
       res.writeHead(httpStatus, { "content-type": "application/json" }).end(JSON.stringify({ jobs: [{ steps: [
-        { name: "Upload GitHub backup artifact", conclusion: deferred ? "skipped" : "success" },
-        { name: "Publish cold-store restore assets", conclusion: deferred ? "skipped" : "success" },
+        ...(includeLegacyArtifact ? [{ name: "Upload GitHub backup artifact", conclusion: deferred ? "skipped" : "success" }] : []),
+        { name: "Publish cold-store restore assets", conclusion: deferred || !publicationSucceeded ? "skipped" : "success" },
       ] }] }));
       return;
     }
@@ -84,7 +86,7 @@ async function defer(reason: string, maxHours?: string) {
 }
 
 describe("冷备让路判定", () => {
-  it("最近成功过：本轮让路（退出 0），并写清原因与距上次成功多久", async () => {
+  it("私有发布成功且没有旧artifact步骤：本轮让路并记录最近成功时间", async () => {
     lastSuccessIso = new Date(Date.now() - 3 * 3_600_000).toISOString();
     httpStatus = 200;
     const r = await defer("前台平台任务持续占用，等待 30 分钟仍未让开");
@@ -94,6 +96,30 @@ describe("冷备让路判定", () => {
     expect(r.summary).toContain("本轮让路");
     expect(r.summary).toMatch(/3\.\d 小时前/);
   }, 30_000);
+
+  it("只有旧artifact成功、私有发布跳过：不能计为成功备份", async () => {
+    lastSuccessIso = new Date().toISOString();
+    httpStatus = 200;
+    includeLegacyArtifact = true;
+    publicationSucceeded = false;
+    try {
+      const r = await defer("采集锁繁忙");
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("查不到上次成功备份的时间");
+    } finally {
+      includeLegacyArtifact = false;
+      publicationSucceeded = true;
+    }
+  });
+
+  it("历史artifact与发布均成功的备份仍可识别", async () => {
+    lastSuccessIso = new Date(Date.now() - 3 * 3_600_000).toISOString();
+    httpStatus = 200;
+    includeLegacyArtifact = true;
+    try {
+      expect((await defer("采集锁繁忙")).code).toBe(0);
+    } finally { includeLegacyArtifact = false; }
+  });
 
   it("太久没成功：仍然标红（退出 1），不许无声停摆", async () => {
     lastSuccessIso = new Date(Date.now() - 30 * 3_600_000).toISOString();

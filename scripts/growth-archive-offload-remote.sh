@@ -240,6 +240,8 @@ cleanup_failed_snapshot() {
 }
 
 prepare_snapshot() {
+  probe_dir="${1:-}"
+  node -e 'const v=process.argv[1];if(v&&(!/^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(v)||/[\r\n]/.test(v)))throw Error("archive_probe_directory_invalid");' "$probe_dir"
   acquire_collection_lease
   snapshot_next="$snapshot_root.next"
   snapshot_next_owned=false
@@ -255,6 +257,8 @@ prepare_snapshot() {
   if [ -f "$snapshot_root/snapshot.tsv" ]; then
     # SSH 在远端原子 mv 完成后断线时，本地可安全复用同一批次，避免覆盖或重复快照。
     assert_snapshot_owner
+    # 旧快照没有probeDir，只能按原默认范围复用；不可把全量或另一桶冒充本次探针。
+    node -e 'const fs=require("fs"),m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if((m.probeDir===undefined?"":m.probeDir)!==process.argv[2])throw Error("archive_snapshot_probe_scope_mismatch");' "$snapshot_root/.snapshot-owner.json" "$probe_dir"
     cat "$snapshot_root/snapshot.tsv"
     return 0
   fi
@@ -267,7 +271,7 @@ prepare_snapshot() {
     exit 65
   fi
   mkdir "$snapshot_next"
-  printf '{"schemaVersion":1,"batchId":"%s","kind":"archive-hardlink-snapshot","creationToken":"%s"}' "$batch_id" "$snapshot_creation_token" > "$snapshot_next/.snapshot-owner.json"
+  printf '{"schemaVersion":1,"batchId":"%s","kind":"archive-hardlink-snapshot","creationToken":"%s","probeDir":"%s"}' "$batch_id" "$snapshot_creation_token" "$probe_dir" > "$snapshot_next/.snapshot-owner.json"
   snapshot_next_owned=true
 
   all_dirs="$snapshot_next/.all-dirs"
@@ -280,6 +284,14 @@ prepare_snapshot() {
   awk '{ lines[NR]=$0 } END { for (i=1; i<=NR-2; i++) print lines[i] }' "$archive_dirs" > "$selected_dirs"
   # 非日期目录不在正式冷读恢复契约中，不进入自动发布/删源链。
   LC_ALL=C sort -u "$selected_dirs" -o "$selected_dirs"
+  # 只在日期及最新两桶门禁之后缩小范围，避免单桶探针仍哈希全盘。
+  if [ -n "$probe_dir" ]; then
+    if ! grep -Fxq "$probe_dir" "$selected_dirs"; then
+      echo "archive_probe_directory_not_eligible" >&2
+      exit 64
+    fi
+    printf '%s\n' "$probe_dir" > "$selected_dirs"
+  fi
 
   plan="$snapshot_next/snapshot.tsv"
   : > "$plan"
@@ -308,6 +320,10 @@ prepare_snapshot() {
         } catch(e) {state="retirement-marker-invalid";reason="manual-review-required";}
         const row=JSON.stringify({dir,state,reason});console.log(row);console.error("GROWTH_ARCHIVE_RETIRED "+row);
       ' "$ROOT" "$dir" >> "$snapshot_next/retired.jsonl"
+      if [ -n "$probe_dir" ]; then
+        echo "archive_probe_directory_retired" >&2
+        exit 64
+      fi
       continue
     fi
     inventory="$snapshot_next/inventories/$dir.json"
@@ -407,7 +423,7 @@ cleanup_current_batch() {
 }
 
 case "$mode" in
-  prepare) prepare_snapshot ;;
+  prepare) prepare_snapshot "${3:-}" ;;
   report) snapshot_report ;;
   bundle) stream_bundle "${3:-}" ;;
   delete) delete_verified_source "${3:-}" "${4:-}" ;;
