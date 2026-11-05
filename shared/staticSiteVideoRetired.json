@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "sourceDeleted": false,
+  "assets": [
+    {
+      "path": "/blog-assets/h3-2k-5s.mp4",
+      "bytes": 274856,
+      "sha256": "b47724a76f6c061beae197b84254c17d97ac64759d24e13068bcb2aad1ff72d7"
+    },
+    {
+      "path": "/blog-assets/happyhorse-720p-3s.mp4",
+      "bytes": 111483,
+      "sha256": "e850ef6c5da44f05784b87ee0778b15a697c09b4e77b47fb288209bb03721fb7"
+    },
+    {
+      "path": "/blog-assets/manhua-video-model-review/01-seedance-25-tea-r2v-11s.mp4",
+      "bytes": 1017338,
+      "sha256": "208ac26143733989da4f64f6ea5d0c65cfdff45a494ae08e83c83809eb912662"
+    },
+    {
+      "path": "/blog-assets/manhua-video-model-review/02-seedance-20-mini-tea-r2v-11s.mp4",
+      "bytes": 1552036,
+      "sha256": "584a7f01f6626b876e035371cb90948abf0c52497958979c18bafe184b6d27b7"
+    },
+    {
+      "path": "/blog-assets/manhua-video-model-review/03-seedance-20-tea-r2v-14s.mp4",
+      "bytes": 1631815,
+      "sha256": "2ebe00ea089ef9ba30395607283a4e5a0897d099be45d18e358d6309039bff49"
+    },
+    {
+      "path": "/blog-assets/manhua-video-model-review/04-minimax-h3-mecha-r2v-15s.mp4",
+      "bytes": 23329862,
+      "sha256": "d78c8bf7d58d4415435b78d8a3ac006eb7d4971c7c2c6bad529c1c0297dd45d3"
+    },
+    {
+      "path": "/blog-assets/old-photo-home-update-h3-2k-5s.mp4",
+      "bytes": 1738686,
+      "sha256": "7ccebbf31f8c189cc1d254fedc2a7c7dfb44d8e64ce84f624b3b571c1d9ed260"
+    },
+    {
+      "path": "/blog-assets/old-photo-home-update-happyhorse-5s.mp4",
+      "bytes": 761022,
+      "sha256": "f0a61d50ffafc8046856ec862e0ff73ca02509cad7b07ad08657c91c3d762179"
+    },
+    {
+      "path": "/blog-assets/pk-kimi-vs-qwen/demo-A-4K-wm.mp4",
+      "bytes": 6029360,
+      "sha256": "249dc818e601b2973d994bfafa701e00b90d5fee5251844bba7878c126d24d65"
+    },
+    {
+      "path": "/blog-assets/pk-kimi-vs-qwen/demo-A-720p-wm.mp4",
+      "bytes": 1865507,
+      "sha256": "7b48a625855f0f1b5368f1d7b45730d0c95bbf5cdf80d9d32336dbaa25656f50"
+    },
+    {
+      "path": "/blog-assets/pk-kimi-vs-qwen/demo-B-480p-wm.mp4",
+      "bytes": 1316236,
+      "sha256": "bbf6a4e1cda4b29406156eb433bfcfdf15ebcdbc7e0e4b94b6b3af79b79aa3fc"
+    },
+    {
+      "path": "/blog-assets/pk-kimi-vs-qwen/demo-B-4K-wm.mp4",
+      "bytes": 14614068,
+      "sha256": "a78e6f2b99037169ab49a64cd950d0d543252c70b9e107f45537d6198daa4a9c"
+    },
+    {
+      "path": "/blog-assets/rehearsal-lock/rehearsal-16s-1080p-wm.mp4",
+      "bytes": 8754158,
+      "sha256": "31197aab572018b8796b534510f2fb6a19e4475724c18fc444ad2be6e1fc880d"
+    },
+    {
+      "path": "/blog-assets/seedance-1080p-4s.mp4",
+      "bytes": 159330,
+      "sha256": "a9f24d8de3772ec6c1a61c25da191422c7152c4df0d27d2d31ce1a0b05a82d6b"
+    },
+    {
+      "path": "/blog-assets/seedance-480p-4s.mp4",
+      "bytes": 65002,
+      "sha256": "a0e43bb8e90d7b89ff90aa2da8325a0201a9ccc71c25f01ffad553e5337553fd"
+    },
+    {
+      "path": "/blog-assets/video-4k-upscale/01-sd25-yuji-720p.mp4",
+      "bytes": 5487778,
+      "sha256": "e3b8b593931333449b909ab8885d721341c58160a799b5e0deb63f9194982876"
+    },
+    {
+      "path": "/blog-assets/video-4k-upscale/02-sd25-yuji-4k.mp4",
+      "bytes": 12157410,
+      "sha256": "5811950c15ed226c3359ddf0cc1db38ea8d691ef70644611588a4a8a1e7027ca"
+    },
+    {
+      "path": "/blog-assets/video-4k-upscale/03-sd20-swordsmen-1080p.mp4",
+      "bytes": 5228998,
+      "sha256": "bcae4c364b9f6ca2a583559336768b0f6448a7b3f7ce6a1e2f8c9f88856b2fb1"
+    },
+    {
+      "path": "/blog-assets/video-4k-upscale/04-sd20-swordsmen-4k.mp4",
+      "bytes": 14539274,
+      "sha256": "11f72e3b3fc6d31fbd3077eec1e8f6860bc9be4698d4c108a755f3f842bb38dc"
+    },
+    {
+      "path": "/blog-assets/video-4k-upscale/05-kpop-1080p.mp4",
+      "bytes": 17614534,
+      "sha256": "f0f60bb34a198aafd40fdb9c3c152501f57c0eb88af7a12ed4d4355b22ed800e"
+    },
+    {
+      "path": "/blog-assets/video-4k-upscale/06-kpop-4k.mp4",
+      "bytes": 14513789,
+      "sha256": "aeb1e2b05d83b442c9d1255c9b8c848085061bda543cbbb90c7e3c279bd152b0"
+    },
+    {
+      "path": "/home-assets/seedance25-kpop-dance.mp4",
+      "bytes": 2586799,
+      "sha256": "3ae9a69f52bbda1e39d27cc62870bac86a8591cde710e455ff7cdfee13d6cf76"
+    },
+    {
+      "path": "/home-assets/seedance25-racemow.mp4",
+      "bytes": 3036558,
+      "sha256": "c3780cdc615f204b15b88921a6fd349cd1a3e388b4bbd9ae3eec9c702c12eb8d"
+    },
+    {
+      "path": "/migrated/home/video2.mp4",
+      "bytes": 7338786,
+      "sha256": "964defc657c4837bda43c6590a61cd29398cd1ea4c8eaa07e4a48ec1d50eea12"
+    },
+    {
+      "path": "/migrated/home/video4.mp4",
+      "bytes": 7751274,
+      "sha256": "3a120c5f4a0e1e80a42f830626c3d8989f50fe9f5f64c256973dcc48c82f2ccd"
+    }
+  ]
+}

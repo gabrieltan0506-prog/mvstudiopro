@@ -6,6 +6,8 @@ on:
     paths:
       - "scripts/vercel-prune-preview-deployments*"
       - "scripts/vercelPruneSelect*"
+      - "scripts/vercelSupersededPreview*"
+      - "ops/vercel-preview-protection.json"
       - "scripts/vercelPruneLock*"
       - "server/ops/vercelPreviewScheduler*"
       - "server/ops/vercelPreviewRuntime*"

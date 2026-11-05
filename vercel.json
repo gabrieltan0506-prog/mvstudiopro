@@ -2,7 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
     "deploymentEnabled": {
-      "feat/fly-dual-machine-1005": false
+      "feat/fly-dual-machine-1005": false,
+      "codex/static-video-offload-1105": false
     }
   },
   "github": {
@@ -25,6 +26,18 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/home-assets/digital-human-talk-20261020.mp4",
+      "destination": "https://mvstudiopro.fly.dev/api/static-site-video/eae3c9f3aed288da886d726421bd8f8903f72b57f1f8f5507ff5e1ef70bb308f"
+    },
+    {
+      "source": "/home-assets/mojing-episode-01-20261007.mp4",
+      "destination": "https://mvstudiopro.fly.dev/api/static-site-video/42a8cf91decd94f0d1b4c6069bc38b7997adab921bbfb41c453cf8d62e691966"
+    },
+    {
+      "source": "/home-assets/warship-2k-1.2x.mp4",
+      "destination": "https://mvstudiopro.fly.dev/api/static-site-video/fb8ecd6c921bb06d72c41f000a185643f3368beea27a988b34af01f1c004067e"
+    },
     {
       "source": "/api/oauth/callback",
       "destination": "https://mvstudiopro.fly.dev/api/oauth/callback"

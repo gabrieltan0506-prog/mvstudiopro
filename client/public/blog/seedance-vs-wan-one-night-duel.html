@@ -170,7 +170,7 @@
 <nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
 <article>
 <h1>Seedance 2.5 与 Wan 3.0 对决(上篇)</h1>
-<p class="meta">2026-08-19 · 约 13 分钟</p>
+<p class="meta">2026-08-19 · 约 12 分钟</p>
 <blockquote>
 <p>这是 AI 漫剧工厂实测系列的上篇。我们在同一个晚上，用同一套素材和同一份提示词，分别生成了一支 30 秒谍战短片；随后又用一支兽首乐队 MV，把三条不同的 API 路线都跑了一遍。后来，这支 MV 又补成了 50 秒完整版本。文中的耗时、费用和失误，均来自当晚的真实记录。</p>
 </blockquote>
@@ -188,7 +188,7 @@
 <li>《意网情深》：先完成 20 秒核心唱段，再延展成 50 秒完整版本。银白狐负责主唱，狗鼓手、熊猫贝斯手、墨镜鹿吉他手和兔子伴唱同时表演，后半段交给黑猫钢琴手收尾，用来观察长段演唱的口型、乐手动作、声部配合，以及模型能否把一场表演真正“演完”。</li>
 </ol>
 <p>制作流程也尽量保持一致：先用 gpt-image-2 生成角色锁定图，并给角色保留眉疤、痣、耳朵缺口等稳定特征；再配好按秒定位的对白；最后把图片、声音和提示词一起交给参考生视频模型。</p>
-<p><video controls preload="metadata" width="100%" src="/api/blog-media/wm4k_diebao.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
+<p>视频样片已下架，以下保留原测试记录。</p>
 <p><em>《谍报追凶》终稿 4K|生成引擎:Seedance 2.5 参考生视频 + video-edit 原生全息|4K 超分:字节 video-upscaler</em></p><h2>第一件事：写实面孔会产生一笔“路由税”</h2>
 <p>在这轮测试里，Seedance 2.5 的官方通道与一条低价聚合通道都拒收了写实面孔，只有兼容度更高的参考生视频通道顺利接单，代价是费用大约高出四分之一。</p>
 <p><img src="/blog-assets/dual-engine-night/de-01-holo-beidou.jpg" alt="谍报:引擎原生全息面板·北斗路线|Seedance 2.5 video-edit 成片帧" oncontextmenu="return false" draggable="false">
@@ -205,12 +205,12 @@
 <p>同一个模型，因为入口不同而出现截然不同的音频行为。只看模型名称，很容易误以为两边效果相同；真正跑一遍才知道不是这么回事。</p>
 <h2>把唱段补到 50 秒后，我反而看见了它的边界</h2>
 <p>20 秒版本更像一段能力展示：主唱亮相、乐队接力、群像收束，信息密度高，几乎没有空拍。50 秒版本则更接近一场完整演出——主唱退场后，灯光逐步熄灭，黑猫钢琴手留在舞台中央，把情绪慢慢送到结束。</p>
-<p><video controls preload="metadata" width="100%" src="/api/blog-media/wm_yiwang.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
+<p>视频样片已下架，以下保留原测试记录。</p>
 <p><em>《意网情深》50 秒完整版|生成引擎:Seedance 2.5(主唱原曲进片)+ extend 安可</em></p><p>这一段尾奏并不是简单的黑屏填时长。成片全长 <strong>50.08 秒</strong>，综合响度约 <strong>-14.7 LUFS</strong>，前后音轨没有明显断层；从热闹的群像过渡到单束顶光下的钢琴，听觉和画面都在有意识地收束。黑猫最后被幕布一点点吞没，只留下两只发亮的眼睛，这个结尾是有记忆点的。</p>
 <p>但它也暴露了一个很现实的问题：<strong>完整，不等于紧凑。</strong> 前 20 秒有主唱、鼓手、贝斯手和吉他手之间的镜头交换；进入钢琴尾奏后，画面连续二十多秒停留在相近机位，情绪降下来了，视觉信息却没有继续推进。作为模型能力样片，这种长镜头能证明角色稳定性和舞台连续性；如果直接拿去发布，我会保留 50 秒完整测试版，同时再剪一支约 32—36 秒的观看版，在钢琴段补两三个手部、琴键和观众反应的近景。这样既留住余韵，也不至于让观众误以为视频已经结束。</p>
 <h2>第三件事：Wan 3.0 很慢，但并非没有吸引力</h2>
 <p>74 分钟当然算不上轻快。该通道页面给出的公测参考中位数约为 49 分钟，而我们这一单排得更久。不过，Wan 3.0 仍有三点让我愿意继续观察：</p>
-<p><video controls preload="metadata" width="100%" src="/api/blog-media/wm_diebao_wan3.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
+<p>视频样片已下架，以下保留原测试记录。</p>
 <p><em>《谍报追凶》Wan 3.0 版(同素材同提示词)|生成引擎:Wan 3.0——文中排队 74 分钟的那一发</em></p><ol>
 <li><strong>对动作题材更宽容。</strong> 在这次测试中，机枪扫射、爆炸和兵刃命中等画面，在 Seedance 的审核环节更容易受阻；Wan 3.0 接得更顺。</li>
 <li><strong>更愿意照着参考图来。</strong> 给它什么样的底图，它通常就沿着原有画面继续生成，不太爱擅自改戏。这一点和我们的静帧锁定流程很合拍。</li>
@@ -228,7 +228,7 @@
 <p>这些步骤不如“生成一支大片”听起来有趣，却直接决定了一条生产线能不能稳定运转。</p>
 <h2>第五件事：不要把 BGM 提前混进参考对白</h2>
 <p>第二晚,我们多跑了一次几十秒的生成,真心疼——为了验证一个想法：能不能把对白和配乐提前混成一条完整音轨，再让模型一次生成成片？如果可行，就能少做一道后期。</p>
-<p><video controls preload="metadata" width="100%" src="/api/blog-media/wm_tlj_v3_bad.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
+<p>视频样片已下架，以下保留原测试记录。</p>
 <p><em>反面教材|生成引擎:Seedance 2.5——BGM 预混导致引擎重新演绎对白</em></p><p>结果并不理想：</p>
 <ul>
 <li>使用纯对白轨时，句子之间保留真正的静音，五句台词都按原声和原有时间进入成片。</li>
@@ -242,7 +242,7 @@
 <p>这些素材是纯 3D 渲染，并非照片。这说明当时的审核更在意角色看起来有多逼真，而不是文件究竟来自摄影还是渲染。好在建单失败没有扣费，也算免费换来一条经验：Q 版、兽首和强风格化角色可以先试官方通道；皮肤和五官过于写实的 3D 角色，最好直接按真人素材准备备用路线。</p>
 <h2>第七件事：画面清楚了，演员也可能变成蜡像</h2>
 <p>为了减少运动模糊，我们一度在提示词里反复强调 <code>motionless</code>、<code>frozen</code> 和“保持静止”。画面确实锐利了，但演员也失去了呼吸感：眼神不动，脸上没有细微变化，一看就不像活人。</p>
-<p><video controls preload="metadata" width="100%" src="/api/blog-media/wm_tianleijie.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
+<p>视频样片已下架，以下保留原测试记录。</p>
 <p><em>《天雷劫》v4 终稿|生成引擎:Seedance 2.5(纯对白轨+逐秒演技提示词)|配乐后期</em></p><p>后来我们把写法调整为：</p>
 <ul>
 <li>在容易漂移的段落补全身关键帧，尤其是结尾长镜头。多做一张稳定的图，往往比反复抽一条视频划算。</li>

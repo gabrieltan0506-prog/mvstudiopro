@@ -12,7 +12,10 @@ import { executePrune } from "../../scripts/vercel-prune-preview-deployments.mjs
 const PROJECT = "prj_7y3mwOmGqVDHRkQYWZLmmBinkSvI";
 function setup() {
   const root = mkdtempSync(join(tmpdir(), "vercel-runtime-test-"));
-  let active = false;
+  let active = false, deleted = false;
+  const oldCreated = Date.now() - 3600000, newCreated = Date.now() - 60000;
+  const old = {uid: 'old',target:null,readyState:'READY',created:oldCreated,meta:{githubCommitRef:'test'}};
+  const newer = {...old,uid:'new',created:newCreated};
   const requests: { method: string; url: URL }[] = [];
   const fetch = vi.fn(async (raw: URL, init: RequestInit) => {
     const url = new URL(raw); const method = init.method || "GET";
@@ -20,9 +23,12 @@ function setup() {
     init.signal?.throwIfAborted();
     if (url.pathname.startsWith("/v9/projects/")) return Response.json({ id: PROJECT, name: "mvstudiopro", targets: { production: { id: "prod" } } });
     if (url.pathname === "/v6/deployments" && url.searchParams.has("state")) return Response.json({ deployments: active ? [{ uid: "building" }] : [] });
-    if (url.pathname === "/v6/deployments") return Response.json({ deployments: [{ uid: "old", target: null, readyState: "READY", created: Date.now() - 30 * 86400000 }], pagination: { next: null } });
-    if (url.pathname === "/v13/deployments/old" && method === "GET") return Response.json({ id: "old", projectId: PROJECT, target: null, readyState: "READY", alias: [], env: { secret: "must-not-be-audited" } });
-    if (url.pathname === "/v13/deployments/old" && method === "DELETE") return Response.json({});
+    if (url.pathname === "/v4/aliases") return Response.json({ aliases: [], pagination: { next: null } });
+    if (url.pathname === "/v6/deployments") return Response.json({ deployments: [old, newer], pagination: { next: null } });
+    if (url.pathname === "/v13/deployments/new") return Response.json({...newer,id:'new',projectId:PROJECT,createdAt:newCreated,alias:[]});
+    if (url.pathname === "/v13/deployments/old" && method === "GET" && deleted) return new Response(null,{status:404});
+    if (url.pathname === "/v13/deployments/old" && method === "GET") return Response.json({ ...old, id: "old", createdAt:oldCreated, projectId: PROJECT, target: null, readyState: "READY", alias: [], env: { secret: "must-not-be-audited" } });
+    if (url.pathname === "/v13/deployments/old" && method === "DELETE") { deleted = true; return Response.json({}); }
     throw Error("未模拟请求");
   });
   vi.stubGlobal("fetch", fetch);

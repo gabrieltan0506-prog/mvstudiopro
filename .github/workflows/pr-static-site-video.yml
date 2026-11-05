@@ -1,0 +1,34 @@
+name: 首页博客视频迁移验证
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/pr-static-site-video.yml'
+      - 'ops/*static-site-video*'
+      - 'scripts/vite-static-site-video-offload.ts'
+      - 'shared/staticSiteVideo*'
+      - 'server/routers/staticSiteVideo*'
+      - 'server/services/gcs.ts'
+      - 'server/services/gcsStaticVideoSignature.test.ts'
+      - 'vercel.json'
+      - '.vercelignore'
+      - 'content/blog/**'
+      - 'client/public/blog/**'
+      - 'vite.config.ts'
+permissions:
+  contents: read
+jobs:
+  static-video-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: 离线迁移、发布保护与播放协议验证
+        run: |
+          node --check ops/migrate-static-site-videos.mjs
+          node --test ops/static-site-video-migration.test.mjs
+          pnpm exec vitest run shared/staticSiteVideos.test.ts server/routers/staticSiteVideos.test.ts server/services/gcsStaticVideoSignature.test.ts

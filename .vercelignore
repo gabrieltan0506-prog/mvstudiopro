@@ -3,9 +3,10 @@ node_modules
 .git
 .github
 server
-# Vite needs these three build-time document import entrypoints.
+# Vite 所需的文档导入与视频排除构建入口。
 scripts/*
 !scripts/vite-document-import-assets.ts
+!scripts/vite-static-site-video-offload.ts
 !scripts/document-import-doc-worker.ts
 !scripts/document-import-globals.ts
 docs

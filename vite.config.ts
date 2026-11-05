@@ -1,3 +1,4 @@
+import { staticSiteVideoOffload } from "./scripts/vite-static-site-video-offload";
 import { documentImportAssets } from "./scripts/vite-document-import-assets";
 import { jsxLocPlugin } from "@builder.io/vite-plugin-jsx-loc";
 import tailwindcss from "@tailwindcss/vite";
@@ -152,7 +153,7 @@ function vitePluginManusDebugCollector(): Plugin {
 }
 
 // 编辑器定位与调试工具仅供开发；正式页面不注入额外运行时。
-const plugins = [documentImportAssets(), react(), tailwindcss(),
+const plugins = [documentImportAssets(), staticSiteVideoOffload(), react(), tailwindcss(),
   { ...jsxLocPlugin(), apply: "serve" as const },
   { ...vitePluginManusRuntime(), apply: "serve" as const },
   { ...vitePluginManusDebugCollector(), apply: "serve" as const },

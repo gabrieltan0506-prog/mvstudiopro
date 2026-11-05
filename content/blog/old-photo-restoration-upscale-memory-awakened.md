@@ -96,18 +96,14 @@ cover: /blog-assets/old-photo-home-update-h3-poster.jpg
 开头还是一张照片。两秒以后，母亲垂下眼睛；再往后，孩子抬头，窗边的光落到脸上。到最后一秒，她真的笑了。
 
 <figure>
-  <video controls preload="metadata" playsinline poster="/blog-assets/old-photo-home-update-happyhorse-poster.jpg">
-    <source src="/blog-assets/old-photo-home-update-happyhorse-5s.mp4" type="video/mp4">
-  </video>
+  <img src="/blog-assets/old-photo-home-update-happyhorse-poster.jpg" alt="样片留存画面" loading="lazy">
   <figcaption>HappyHorse 1.1：720p档，实际1176×784、5.16秒；真实调用费用 $0.494。</figcaption>
 </figure>
 
 为了不拿一次结果就下结论，我们又把同一张4K图片交给 MiniMax H3。提示词只做了小幅调整：母亲先低头看孩子，再抬眼微笑；孩子眨眼、转头并抬起小手；镜头缓慢推近，暖光一点点亮起来。人物、服装、书架和手提包都要求留在原位。
 
 <figure>
-  <video controls preload="metadata" playsinline poster="/blog-assets/old-photo-home-update-h3-poster.jpg">
-    <source src="/blog-assets/old-photo-home-update-h3-2k-5s.mp4" type="video/mp4">
-  </video>
+  <img src="/blog-assets/old-photo-home-update-h3-poster.jpg" alt="样片留存画面" loading="lazy">
   <figcaption>MiniMax H3 对照版：实际2144×1440、5.17秒；生成耗时258秒，真实调用费用 $0.65。</figcaption>
 </figure>
 

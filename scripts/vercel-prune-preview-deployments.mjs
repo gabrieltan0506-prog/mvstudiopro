@@ -3,7 +3,8 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
-import { normalizeKeepDays, selectPrunableDeployments } from "./vercelPruneSelect.mjs";
+import { normalizeKeepDays } from "./vercelPruneSelect.mjs";
+import { deploymentBranch, selectSupersededPreviews } from "./vercelSupersededPreview.mjs";
 import { acquirePruneLock } from "./vercelPruneLock.mjs";
 
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -13,12 +14,13 @@ const preview = (value) => record(value) && Object.hasOwn(value, "target")
 
 export async function runPrune({ request, audit, project = "mvstudiopro", apply = false,
   keepDays = 7, failedKeepDays = 1, maxDeletes = 190, now = Date.now,
-  beforeDelete = async () => {} }) {
+  beforeDelete = async () => {}, protectedDeploymentIds = [] }) {
   if (typeof request !== "function" || typeof audit !== "function") throw Error("必须提供请求与审计实现");
   if (!text(project)) throw Error("项目标识为空");
   if (!Number.isInteger(maxDeletes) || maxDeletes < 1 || maxDeletes > 190) throw Error("每次最多删除 190 个部署");
   keepDays = normalizeKeepDays(keepDays, 7);
   failedKeepDays = normalizeKeepDays(failedKeepDays, 1);
+  if (!Array.isArray(protectedDeploymentIds) || protectedDeploymentIds.some(id => !text(id))) throw Error("保留部署清单无效");
   let expectedProjectId;
   const json = async (path) => {
     const response = await request(path, { method: "GET" });
@@ -47,7 +49,28 @@ export async function runPrune({ request, audit, project = "mvstudiopro", apply 
     expectedProjectId = p.id;
     return ids;
   };
+  const resolveAliasIds = async () => {
+    const ids = new Set();
+    let until;
+    for (let page = 0; page < 60; page++) {
+      const query = new URLSearchParams({ projectId: expectedProjectId, limit: "100" });
+      if (until !== undefined) query.set("until", String(until));
+      const data = await json(`/v4/aliases?${query}`);
+      if (!Array.isArray(data.aliases) || !record(data.pagination)) throw Error("别名分页结构缺失");
+      for (const alias of data.aliases) {
+        const id = alias?.deploymentId ?? alias?.deployment?.id;
+        if (!text(alias?.alias) || !text(id)) throw Error("别名目标无法确认");
+        ids.add(id); // 指向404的孤儿alias仍只是保护ID，不创建删除候选。
+      }
+      const next = data.pagination.next;
+      if (next === null) return ids;
+      if (!Number.isSafeInteger(next) || next <= 0 || (until !== undefined && next >= until)) throw Error("别名分页游标异常");
+      until = next;
+    }
+    throw Error("别名枚举超过上限");
+  };
   const initialLive = await resolveLiveProductionIds();
+  for (const id of [...await resolveAliasIds(), ...protectedDeploymentIds]) initialLive.add(id);
   const all = new Map();
   let until;
   let finished = false;
@@ -69,13 +92,9 @@ export async function runPrune({ request, audit, project = "mvstudiopro", apply 
     until = next;
   }
   if (!finished) throw Error("部署枚举超过上限，停止清理");
-  const selection = selectPrunableDeployments({ deployments: [...all.values()],
-    liveProductionIds: initialLive, keepDays, failedKeepDays, now: now() });
-  if (selection.breach.length) throw Error("候选集合闸门失败");
-  // 只输出审计必要字段，绝不持久化上游 deployment 的 env 等私密字段。
-  const candidates = selection.targets.filter(preview).map(d => ({ uid: d.uid, created: d.created }));
+  const candidates = selectSupersededPreviews([...all.values()], initialLive, now(), failedKeepDays);
   await audit({ event: "plan", projectId: expectedProjectId, apply, total: all.size,
-    keepDays, failedKeepDays, candidates });
+    policy: "superseded-preview-no-minimum-age", failedKeepDays, candidates });
   const result = { candidates: candidates.length, attempted: 0, deleted: 0, skipped: 0, remaining: 0, dryRun: !apply };
   if (!apply) return result;
   for (let i = 0; i < candidates.length; i++) {
@@ -84,6 +103,7 @@ export async function runPrune({ request, audit, project = "mvstudiopro", apply 
     await beforeDelete();
     // 必须紧邻每次删除重读，不能沿用枚举前、上一轮或前一个对象的保护集。
     const live = await resolveLiveProductionIds();
+    for (const id of [...await resolveAliasIds(), ...protectedDeploymentIds]) live.add(id);
     if (live.has(d.uid)) {
       result.skipped++;
       await audit({ event: "skip", uid: d.uid, reason: "current-target" });
@@ -100,18 +120,25 @@ export async function runPrune({ request, audit, project = "mvstudiopro", apply 
     if (!record(detail) || detail.id !== d.uid || detail.projectId !== expectedProjectId) {
       throw Error("候选部署身份或项目归属无法确认，停止清理");
     }
-    // 保留任何已绑定别名的部署，包括分支预览；详情缺失别名信息时也保留。
+    // 替代版本也必须实时存在、READY、同项目同分支，不能只信枚举快照。
+    const replacementResponse = await request(`/v13/deployments/${encodeURIComponent(d.replacementId)}`, { method: "GET" });
+    if (!replacementResponse.ok && replacementResponse.status !== 404) throw Error("替代部署读取失败");
+    const replacement = replacementResponse.status === 404 ? null : await replacementResponse.json();
     const eligible = preview(detail) && Array.isArray(detail.alias) && detail.alias.length === 0
-      && ["READY", "ERROR", "CANCELED"].includes(detail.readyState)
-      && selectPrunableDeployments({ deployments: [{ uid: d.uid, created: d.created,
-        target: detail.target, readyState: detail.readyState }], liveProductionIds: live,
-        keepDays, failedKeepDays, now: now() }).targets.length === 1;
+      && detail.readyState !== "BUILDING" && detail.createdAt === d.created
+      && deploymentBranch(detail) === d.branch
+      && record(replacement) && replacement.id === d.replacementId && replacement.projectId === expectedProjectId
+      && replacement.createdAt === d.replacementCreated && deploymentBranch(replacement) === d.branch
+      && selectSupersededPreviews([
+        { ...detail, uid: d.uid, created: detail.createdAt },
+        { ...replacement, uid: replacement.id, created: replacement.createdAt },
+      ], live, now(), failedKeepDays).some(row => row.uid === d.uid);
     if (!eligible) {
       result.skipped++;
       await audit({ event: "skip", uid: d.uid, reason: "promoted-aliased-active-or-unknown" });
       continue;
     }
-    await audit({ event: "delete-intent", uid: d.uid });
+    await audit({ event: "delete-intent", uid: d.uid, replacementId: d.replacementId, reason: d.reason });
     // 404 也消耗一次上游请求预算，不能只统计成功删除而继续无界调用。
     result.attempted++;
     // GET 与 DELETE 之间仍非原子；必须另行保持维护窗口，不能宣称消灭全部竞态。
@@ -119,6 +146,9 @@ export async function runPrune({ request, audit, project = "mvstudiopro", apply 
     await audit({ event: "delete-result", uid: d.uid, status: response.status });
     if (response.status === 404) { result.skipped++; continue; }
     if (!response.ok) throw Error(`删除未成功，停止且不自动重试：HTTP ${response.status}`);
+    const check = await request(`/v13/deployments/${encodeURIComponent(d.uid)}`, { method: "GET" });
+    await audit({ event: "delete-verification", uid: d.uid, status: check.status });
+    if (check.status !== 404) throw Error("删除结果尚未确认，不重试，请核对回执");
     result.deleted++;
   }
   await audit({ event: "finished", ...result });
@@ -168,7 +198,7 @@ export async function executePrune({ apply = false, signal, root = "/data/vercel
     await beforeDelete();
     const result = await runPrune({ request, audit, apply,
       project: "prj_7y3mwOmGqVDHRkQYWZLmmBinkSvI", beforeDelete,
-      keepDays: 7, failedKeepDays: 1 });
+      failedKeepDays: 1, protectedDeploymentIds: JSON.parse(readFileSync(new URL("../ops/vercel-preview-protection.json", import.meta.url), "utf8")).deploymentIds });
     console.log(JSON.stringify({ ...result, receipt }));
     return { ...result, receipt };
   } catch (error) {

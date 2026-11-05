@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "fa7bf589ebe177515144020486e71cb224543790",
+  "bucket": "mv-studio-pro-vertex-video-temp",
+  "assets": [
+    {
+      "path": "/home-assets/digital-human-talk-20261020.mp4",
+      "bytes": 31842636,
+      "sha256": "eae3c9f3aed288da886d726421bd8f8903f72b57f1f8f5507ff5e1ef70bb308f",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/eae3c9f3aed288da886d726421bd8f8903f72b57f1f8f5507ff5e1ef70bb308f/digital-human-talk-20261020.mp4",
+      "generation": "1793855351412235",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:09:16.621Z",
+      "media": {
+        "duration": 80.199002,
+        "width": 1080,
+        "height": 1920
+      }
+    },
+    {
+      "path": "/home-assets/mojing-episode-01-20261007.mp4",
+      "bytes": 47636778,
+      "sha256": "42a8cf91decd94f0d1b4c6069bc38b7997adab921bbfb41c453cf8d62e691966",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/42a8cf91decd94f0d1b4c6069bc38b7997adab921bbfb41c453cf8d62e691966/mojing-episode-01-20261007.mp4",
+      "generation": "1793855363666366",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:09:29.773Z",
+      "media": {
+        "duration": 106.176009,
+        "width": 1080,
+        "height": 1920
+      }
+    },
+    {
+      "path": "/home-assets/warship-2k-1.2x.mp4",
+      "bytes": 36235298,
+      "sha256": "fb8ecd6c921bb06d72c41f000a185643f3368beea27a988b34af01f1c004067e",
+      "contentType": "video/mp4",
+      "objectName": "site-static-videos/sha256/fb8ecd6c921bb06d72c41f000a185643f3368beea27a988b34af01f1c004067e/warship-2k-1.2x.mp4",
+      "generation": "1793855388600783",
+      "temporaryHold": true,
+      "verifiedAt": "2026-11-05T05:09:54.074Z",
+      "media": {
+        "duration": 18.4,
+        "width": 2560,
+        "height": 1440
+      }
+    }
+  ],
+  "complete": true,
+  "sourceDeleted": false,
+  "excluded": [
+    {
+      "path": "/blog-assets/pk-kimi-vs-qwen/demo-A-4K-wm.mp4",
+      "reason": "原始MP4缺少moov索引，保留源文件与原有发布，不切换回源"
+    }
+  ]
+}

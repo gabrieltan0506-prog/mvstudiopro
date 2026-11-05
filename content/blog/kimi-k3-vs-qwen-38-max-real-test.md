@@ -149,12 +149,7 @@ Kimi 的开场是：
   <img src="/blog-assets/pk-kimi-vs-qwen/demo-b-poster-wm.png" alt="Kimi 版第一镜海报：反而胖了十斤" draggable="false" loading="lazy" />
 </div>
 
-然后让海报动起来（5 秒，一条 720p、一条 480p），再各做一次 4K 超分放大：
-
-<div class="demo-media-grid" oncontextmenu="return false">
-  <video src="/blog-assets/pk-kimi-vs-qwen/demo-A-4K-wm.mp4" controls controlslist="nodownload noremoteplayback" disablepictureinpicture playsinline muted loop preload="metadata"></video>
-  <video src="/blog-assets/pk-kimi-vs-qwen/demo-B-4K-wm.mp4" controls controlslist="nodownload noremoteplayback" disablepictureinpicture playsinline muted loop preload="metadata"></video>
-</div>
+两版海报分别做过 720p 和 480p 的 5 秒动画，并完成 4K 超分。视频样片已下架，以下保留画质对比记录：
 
 超分到底有没有用？同一帧、同一块脸部裁切，放大到同尺寸对比（左边是原片，右边是 4K 超分）：
 

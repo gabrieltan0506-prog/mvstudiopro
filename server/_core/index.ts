@@ -1,3 +1,4 @@
+import { registerStaticSiteVideos } from "../routers/staticSiteVideos";
 import { startTopicDigestScheduler, stopTopicDigestScheduler } from "../services/topicDigest.js";
 import { apiCorsMiddleware, applyApiCors, isAllowedCorsOrigin } from "./apiCors";
 import {registerManhuaStageWorldBridge} from "../services/manhuaStageWorldBridge";
@@ -198,6 +199,7 @@ async function startServer() {
   app.use(manhuaLocalVideoUploadRouter);
   // Keep JSON/urlencoded limits aligned with larger creator uploads and long debug payloads.
   // Global CORS middleware for all API routes
+  registerStaticSiteVideos(app);
   app.use("/api", apiCorsMiddleware);
   registerFileConversionTransfer(app);
   registerGcsTransfer(app);

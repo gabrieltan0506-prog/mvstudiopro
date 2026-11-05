@@ -40,33 +40,25 @@ cover: /blog-assets/poster-h3-2k-5s.jpg
 ## 这几段是真跑出来的
 
 以下都是当天实际生成的片子，提示词一律是最简单的自然场景描述，没做任何挑选。
-为了页面加载压过码率，画质以账单和上面的表格为准。
+以下保留样片截图，视频样片已下架；分辨率与费用以账单和上面的表格为准。
 
 <figure>
-  <video controls preload="none" poster="/blog-assets/poster-h3-2k-5s.jpg">
-    <source src="/blog-assets/h3-2k-5s.mp4" type="video/mp4">
-  </video>
+  <img src="/blog-assets/poster-h3-2k-5s.jpg" alt="样片留存画面" loading="lazy">
   <figcaption>MiniMax H3 · 2K · 5 秒 · 实扣 $0.65（$0.130/秒）</figcaption>
 </figure>
 
 <figure>
-  <video controls preload="none" poster="/blog-assets/poster-seedance-1080p-4s.jpg">
-    <source src="/blog-assets/seedance-1080p-4s.mp4" type="video/mp4">
-  </video>
+  <img src="/blog-assets/poster-seedance-1080p-4s.jpg" alt="样片留存画面" loading="lazy">
   <figcaption>Seedance 2.0 · 1080p · 4 秒 · 实扣 $1.3608（$0.3402/秒，与公式推算完全一致）</figcaption>
 </figure>
 
 <figure>
-  <video controls preload="none" poster="/blog-assets/poster-seedance-480p-4s.jpg">
-    <source src="/blog-assets/seedance-480p-4s.mp4" type="video/mp4">
-  </video>
+  <img src="/blog-assets/poster-seedance-480p-4s.jpg" alt="样片留存画面" loading="lazy">
   <figcaption>Seedance 2.0 · 480p · 4 秒 · 实扣 $0.269（$0.067/秒，用它反推出了 token 单价）</figcaption>
 </figure>
 
 <figure>
-  <video controls preload="none" poster="/blog-assets/poster-happyhorse-720p-3s.jpg">
-    <source src="/blog-assets/happyhorse-720p-3s.mp4" type="video/mp4">
-  </video>
+  <img src="/blog-assets/poster-happyhorse-720p-3s.jpg" alt="样片留存画面" loading="lazy">
   <figcaption>HappyHorse 1.1 · 720p · 3 秒 · 实扣 $0.494（$0.1647/秒，是页面标价的 1.67 倍）</figcaption>
 </figure>
 

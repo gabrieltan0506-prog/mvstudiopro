@@ -26,7 +26,7 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 
 制作流程也尽量保持一致：先用 gpt-image-2 生成角色锁定图，并给角色保留眉疤、痣、耳朵缺口等稳定特征；再配好按秒定位的对白；最后把图片、声音和提示词一起交给参考生视频模型。
 
-<video controls preload="metadata" width="100%" src="/api/blog-media/wm4k_diebao.mp4"></video>
+<p>视频样片已下架，以下保留原测试记录。</p>
 <p><em>《谍报追凶》终稿 4K|生成引擎:Seedance 2.5 参考生视频 + video-edit 原生全息|4K 超分:字节 video-upscaler</em></p>
 
 
@@ -57,7 +57,7 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 
 20 秒版本更像一段能力展示：主唱亮相、乐队接力、群像收束，信息密度高，几乎没有空拍。50 秒版本则更接近一场完整演出——主唱退场后，灯光逐步熄灭，黑猫钢琴手留在舞台中央，把情绪慢慢送到结束。
 
-<video controls preload="metadata" width="100%" src="/api/blog-media/wm_yiwang.mp4"></video>
+<p>视频样片已下架，以下保留原测试记录。</p>
 <p><em>《意网情深》50 秒完整版|生成引擎:Seedance 2.5(主唱原曲进片)+ extend 安可</em></p>
 
 
@@ -69,7 +69,7 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 
 74 分钟当然算不上轻快。该通道页面给出的公测参考中位数约为 49 分钟，而我们这一单排得更久。不过，Wan 3.0 仍有三点让我愿意继续观察：
 
-<video controls preload="metadata" width="100%" src="/api/blog-media/wm_diebao_wan3.mp4"></video>
+<p>视频样片已下架，以下保留原测试记录。</p>
 <p><em>《谍报追凶》Wan 3.0 版(同素材同提示词)|生成引擎:Wan 3.0——文中排队 74 分钟的那一发</em></p>
 
 
@@ -97,7 +97,7 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 
 第二晚,我们多跑了一次几十秒的生成,真心疼——为了验证一个想法：能不能把对白和配乐提前混成一条完整音轨，再让模型一次生成成片？如果可行，就能少做一道后期。
 
-<video controls preload="metadata" width="100%" src="/api/blog-media/wm_tlj_v3_bad.mp4"></video>
+<p>视频样片已下架，以下保留原测试记录。</p>
 <p><em>反面教材|生成引擎:Seedance 2.5——BGM 预混导致引擎重新演绎对白</em></p>
 
 
@@ -122,7 +122,7 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 
 为了减少运动模糊，我们一度在提示词里反复强调 `motionless`、`frozen` 和“保持静止”。画面确实锐利了，但演员也失去了呼吸感：眼神不动，脸上没有细微变化，一看就不像活人。
 
-<video controls preload="metadata" width="100%" src="/api/blog-media/wm_tianleijie.mp4"></video>
+<p>视频样片已下架，以下保留原测试记录。</p>
 <p><em>《天雷劫》v4 终稿|生成引擎:Seedance 2.5(纯对白轨+逐秒演技提示词)|配乐后期</em></p>
 
 
