@@ -83,6 +83,8 @@ describe("知识卡实际图像输入与回执恢复", () => {
     expect(
       Array.from(f.storage.keys()).some(k => k.endsWith("raw-0.json"))
     ).toBe(true);
+    expect(request[0].systemInstruction.parts[0].text).toContain("发布内容必须由你逐项判断");
+    expect(request[0].systemInstruction.parts[0].text).toContain("不要放入body或reading");
     await reviewKnowledgePublication(7, f.context, f.deps as any);
     expect(f.deps.post).toHaveBeenCalledTimes(1);
     f.deps.post.mockImplementationOnce(async () =>

@@ -14,16 +14,16 @@ const publicationProcedure = protectedProcedure.use(async ({ next }) => {
   return result;
 });
 export const editableLayoutRouter = router({
-  publicationQuote: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
+  publicationQuote: publicationProcedure.input(z.object({documentId:z.string().uuid(),purpose:z.literal("presentation").optional()}).strict()).query(async({ctx,input})=>{
     const {loadKnowledgePublication,knowledgePublicationWorkPlan}=await import("../services/knowledgePublicationAdvisor");
     const {knowledgeReviewBatches}=await import("../../shared/knowledgePublication");
     const {resolvePlatformSkillQaPaidCredits}=await import("../config/platformSwitches");
     const {countPlatformSkillQaToday}=await import("../services/platformSkillQa");
     const {platformSkillQaDailyFreeLimit}=await import("../../shared/plans");
     const doc=await loadKnowledgePublication(ctx.user.id,{documentId:input.documentId,batchIndex:0,attempt:0});
-    const plan=await knowledgePublicationWorkPlan(ctx.user.id,doc);
+    const plan=input.purpose==="presentation"?{totalBatches:1,reviewBatches:0,consistencyKnown:true}:await knowledgePublicationWorkPlan(ctx.user.id,doc);
     const batches=plan.totalBatches;
-    const remaining=doc.publication.review?0:Math.max(0,batches-doc.publication.completedBatches);
+    const remaining=input.purpose==="presentation"?1:doc.publication.review?0:Math.max(0,batches-doc.publication.completedBatches);
     const exempt=ctx.user.role==="admin"||ctx.user.role==="supervisor";
     const paidUnit=resolvePlatformSkillQaPaidCredits("terra");
     const free=exempt?remaining:Math.max(0,platformSkillQaDailyFreeLimit("terra")-await countPlatformSkillQaToday(ctx.user.id,"terra",false));

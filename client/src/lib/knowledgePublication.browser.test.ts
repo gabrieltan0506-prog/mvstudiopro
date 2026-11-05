@@ -15,8 +15,8 @@ it("真实单框组件自动分批、断线恢复同编号、可选手改与确�
  import {knowledgeReviewBatches} from './shared/knowledgePublication';
  const initial=layoutFromSource({owner:'7',sourceId:'fixture',kind:'knowledge-publication',detailLevel:'full',title:'水循环',body:'',pages:Array.from({length:5},(_,i)=>({pageIndex:i+1,headline:'水循环阶段'+(i+1),body:'原始说明'+i}))});
  window.saved=initial;window.calls=[];window.exports=[];window.pptxExports=[];window.generation=0;let disconnected=false;
- window.stream=async input=>{window.calls.push(input);const c=input.knowledgePublicationContext;const s=window.saved.publication.source;const batches=knowledgeReviewBatches(s);if(c.batchIndex===1&&!disconnected){disconnected=true;throw new Error('测试断线，恢复原请求');}const answer=c.batchIndex===batches.length?{kind:'knowledge_consistency_batch_v1',sourceDigest:'a'.repeat(64),batchIndex:2,batchCount:4}:c.batchIndex===batches.length+1?{kind:'knowledge_publication_v1',sourceDigest:'a'.repeat(64),title:s.title,pages:s.pages.map(p=>({id:p.id,headline:p.headline,body:'已补充知识解释：蒸发、凝结与降水。',imageStatus:'absent',imageDescription:'',facts:[{term:"知识要点",statement:"测试中的具体知识主张"}],cautions:[],reading:{version:1,templateId:'fusion_ink_mountains',templateReason:'自然主题适合水墨阅读风格',subtitle:'',accent:'jade',blocks:[{type:'prose',title:'知识说明',text:'已补充知识解释：蒸发、凝结与降水。',note:''}]}}))}:{kind:'knowledge_publication_batch_v1',sourceDigest:'a'.repeat(64),batchIndex:c.batchIndex,batchCount:batches.length,reviewedPages:batches[c.batchIndex].map(i=>s.pages[i].id)};return {success:true,answer:JSON.stringify(answer),creditsCharged:0};};
- function App(){const[doc,setDoc]=useState(initial);return <Panel doc={doc} onBusy={()=>{}} onChange={setDoc} commit={async next=>{window.saved=next;setDoc(next);return {generation:String(++window.generation)}}}/>};createRoot(document.getElementById('root')).render(<App/>);
+ window.stream=async input=>{window.calls.push(input);const c=input.knowledgePublicationContext;const s=window.saved.publication.source;if(c.purpose==='presentation'){const r=window.saved.publication.presentationRequest;return {answer:JSON.stringify({kind:'knowledge_presentation_v1',requestId:r.id,sourceDigest:'b'.repeat(64),title:s.title,minSlides:r.minSlides,maxSlides:r.maxSlides,fontStyle:'editorial',slides:Array.from({length:r.minSlides},(_,i)=>({type:'points',title:'提纲主题'+(i+1),sourcePageIds:[s.pages[i%s.pages.length].id],points:['顾问选择的实质知识'],notes:''}))}),creditsCharged:0};}const batches=knowledgeReviewBatches(s);if(c.batchIndex===1&&!disconnected){disconnected=true;throw new Error('测试断线，恢复原请求');}const answer=c.batchIndex===batches.length?{kind:'knowledge_consistency_batch_v1',sourceDigest:'a'.repeat(64),batchIndex:2,batchCount:4}:c.batchIndex===batches.length+1?{kind:'knowledge_publication_v1',sourceDigest:'a'.repeat(64),title:s.title,pages:s.pages.map(p=>({id:p.id,headline:p.headline,body:'已补充知识解释：蒸发、凝结与降水。',imageStatus:'absent',imageDescription:'',facts:[{term:"知识要点",statement:"测试中的具体知识主张"}],cautions:[],reading:{version:1,templateId:'fusion_ink_mountains',templateReason:'自然主题适合水墨阅读风格',subtitle:'',accent:'jade',blocks:[{type:'prose',title:'知识说明',text:'已补充知识解释：蒸发、凝结与降水。',note:''}]}}))}:{kind:'knowledge_publication_batch_v1',sourceDigest:'a'.repeat(64),batchIndex:c.batchIndex,batchCount:batches.length,reviewedPages:batches[c.batchIndex].map(i=>s.pages[i].id)};return {success:true,answer:JSON.stringify(answer),creditsCharged:0};};
+ function App(){const[doc,setDoc]=useState(window.saved);return <Panel doc={doc} onBusy={()=>{}} onChange={setDoc} commit={async next=>{window.saved=next;setDoc(next);return {generation:String(++window.generation)}}}/>};const root=createRoot(document.getElementById('root'));window.remount=()=>root.render(<App key={Date.now()}/>);root.render(<App/>);
  `,
     },
     bundle: true,
@@ -121,7 +121,20 @@ it("真实单框组件自动分批、断线恢复同编号、可选手改与确�
     await page.waitForFunction(() => document.querySelector('iframe')?.srcdoc.includes('class="theme-fusion_maple_bridge"'));
     expect(await page.evaluate(() => (window as any).calls.length)).toBe(5);
     expect(await page.evaluate(() => (window as any).exports.length)).toBe(0);
-    await click("导出可编辑 PPTX");
+    const setNumber=async(label:string,value:string)=>page.$eval(`input[aria-label="${label}"]`,(el,value)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(el,value);el.dispatchEvent(new Event('input',{bubbles:true}));},value);
+    await setNumber("PPTX最少页数","5");await setNumber("PPTX最多页数","8");
+    await click("规划 PPTX 提纲");
+    await page.waitForFunction(()=>(window as any).saved.publication.presentationPlan?.slides.length===5);
+    expect(await page.evaluate(()=>(window as any).pptxExports.length)).toBe(0);
+    expect(await page.evaluate(()=>(window as any).calls.at(-1).knowledgePublicationContext.purpose)).toBe('presentation');
+    await page.evaluate(()=>(window as any).remount());
+    await page.waitForFunction(()=>document.querySelector<HTMLInputElement>('input[aria-label="PPTX最多页数"]')?.value==='8');
+    await click("规划 PPTX 提纲");
+    expect(await page.evaluate(()=>(window as any).calls.length)).toBe(6);
+    await setNumber("PPTX最多页数","4");
+    expect(await page.evaluate(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='确认提纲并导出 PPTX'))).toBe(false);
+    await setNumber("PPTX最多页数","8");
+    await click("确认提纲并导出 PPTX");
     await page.waitForFunction(()=>Array.from(document.querySelectorAll('a')).some(a=>a.textContent?.includes('下载 PPTX')));
     expect(await page.evaluate(()=>(window as any).pptxExports.length)).toBe(1);
     expect(await page.evaluate(()=>(window as any).exports.length)).toBe(0);

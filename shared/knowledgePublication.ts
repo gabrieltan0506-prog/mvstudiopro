@@ -1,3 +1,4 @@
+import {knowledgePresentationRequestSchema,knowledgePresentationPlanSchema} from "./knowledgePresentation";
 import { knowledgeCitationSchema } from "./knowledgeResearch";
 import { z } from "zod";
 import { knowledgeReadingSchema } from "./knowledgePublicationLayout";
@@ -7,6 +8,7 @@ export const knowledgePublicationContextSchema = z
   .object({
     documentId: z.string().uuid(),
     batchIndex: z.number().int().min(0),
+    purpose: z.literal("presentation").optional(),
     attempt: z.number().int().min(0).max(65535).default(0),
   })
   .strict();
@@ -86,6 +88,8 @@ export const knowledgePublicationSchema = z
       .default({}),
     manuscript: z.string(),
     confirmedManuscript: z.string().optional(),
+    presentationRequest: knowledgePresentationRequestSchema.optional(),
+    presentationPlan: knowledgePresentationPlanSchema.optional(),
   })
   .strict();
 export type KnowledgePublication = z.infer<typeof knowledgePublicationSchema>;

@@ -1,3 +1,4 @@
+import {validateKnowledgePresentationPlan} from "../../shared/knowledgePresentation";
 import { KNOWLEDGE_RESEARCH_MARKER } from "../../shared/knowledgeResearch";
 import { knowledgeWebSources, validateKnowledgeResearch, type KnowledgeWebSource } from "./knowledgePublicationResearch";
 import { KNOWLEDGE_DECORATION_MARKER } from "../../shared/knowledgeDecorations";
@@ -82,6 +83,8 @@ function validateAnswer(content: string, request: KnowledgeModelRequest, sources
     if (!("text" in p)) return [];
     try { return [JSON.parse(p.text)]; } catch { return []; }
   });
+  const presentation = inputs.find(p => p.presentation)?.presentation;
+  if(presentation) return validateKnowledgePresentationPlan(parsed,presentation);
   const source = inputs.find(p => p.source);
   if (source) {
     // 部分通道会把请求的response_format回显到根对象；只移除这一种无业务含义的标记。

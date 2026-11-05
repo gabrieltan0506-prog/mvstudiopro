@@ -6,6 +6,9 @@ export function knowledgePublicationPublicError(error: unknown): { message: stri
     return { message: "本次整理未完成，积分仍在核对中。原稿已保存，请稍后继续。", retryable: false };
   if (raw.includes("ADVISOR_OPERATION_FAILED"))
     return { message: "本次整理未完成，已完成的内容和原稿均已保留，可以仅重试未完成部分。", retryable: true };
+  if (/顾问提纲超出|单页内容超出|表格超出单页/.test(raw)) return {message:"顾问提纲超出页数或单页容量，尚未渲染。请调整提纲后再导出。",retryable:false};
+  if (/最少页数|最多页数|页数范围无效/.test(raw)) return {message:"请填写有效的 PPTX 页数范围，最少页数不能大于最多页数。",retryable:false};
+  if (/课件提纲|稿件已变化|当前页数范围/.test(raw)) return {message:"稿件或页数范围已改变，请先按当前设置规划并确认课件提纲。",retryable:false};
   if (/登录|UNAUTHORIZED/.test(raw)) return { message: "请先登录，再继续处理已保存的资料。", retryable: false };
   if (/积分不足|余额不足/.test(raw)) return { message: "积分不足，已完成的内容已保存。", retryable: false };
   if (/确认.*积分|积分.*变化|付费确认/.test(raw)) return { message: "本次费用需要重新确认，已保存的内容不会丢失。", retryable: false };
