@@ -28,3 +28,25 @@ it('正式预览和PDF打印样式下原图与说明穿插，最终字体重排�
   const pdf=await page.pdf({preferCSSPageSize:true,printBackground:true});expect(Buffer.from(pdf).subarray(0,4).toString()).toBe('%PDF');
  }finally{await browser.close();}
 },60000);
+
+it('两份独立PDF片段在最终字体重排后仍使用同一全书页码',async()=>{
+ const {buildKnowledgeBookletHtml}=await import('./knowledgeBooklet');
+ const {knowledgePublicationHead}=await import('./knowledgePublicationHtml');
+ const {finalizeKnowledgeBookletPagination}=await import('../pdf-worker/knowledgeBookletPagination');
+ const browser=await puppeteer.launch({headless:true,args:['--no-sandbox']});
+ try{
+  const page=await browser.newPage();await page.emulateMediaType('print');
+  const fragments=[0,1].map(i=>buildKnowledgeBookletHtml({title:'完整手册',fragment:true,pages:[{id:'chapter-'+i,headline:'第'+(i+1)+'章',body:'本章完整的说明与内容。',imageUrl:''}]}));
+  const counts:number[]=[];
+  for(const fragment of fragments){await page.setContent(knowledgePublicationHead('完整手册')+fragment+'</body></html>');counts.push(await finalizeKnowledgeBookletPagination(page));}
+  expect(counts).toEqual([1,1]);const total=counts.reduce((a,b)=>a+b,0);let offset=0;
+  const numbers=[];
+  for(const [i,fragment]of Array.from(fragments.entries())){
+   await page.setContent(knowledgePublicationHead('完整手册',{offset,total,count:counts[i]})+fragment+'</body></html>');
+   await finalizeKnowledgeBookletPagination(page);numbers.push(await page.$$eval('.page-number',els=>els.map(el=>el.textContent)));offset+=counts[i];
+  }
+  expect(numbers).toEqual([['01 / 02'],['02 / 02']]);
+  await page.setContent(knowledgePublicationHead('完整手册',{offset:0,total:3,count:2})+fragments[0]+'</body></html>');
+  await expect(finalizeKnowledgeBookletPagination(page)).rejects.toThrow('页数已变化');
+ }finally{await browser.close();}
+},60000);

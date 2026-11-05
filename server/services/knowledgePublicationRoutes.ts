@@ -81,7 +81,11 @@ function validateAnswer(content: string, request: KnowledgeModelRequest) {
   });
   const source = inputs.find(p => p.source);
   if (source) {
-    const review = knowledgeReviewSchema.parse(parsed);
+    // 部分通道会把请求的response_format回显到根对象；只移除这一种无业务含义的标记。
+    const candidate = parsed.type === "json_object" && parsed.kind === "knowledge_publication_v1"
+      ? Object.fromEntries(Object.entries(parsed).filter(([key]) => key !== "type"))
+      : parsed;
+    const review = knowledgeReviewSchema.parse(candidate);
     if (review.sourceDigest !== source.sourceDigest || review.pages.length !== source.source.pages.length ||
         review.pages.some((p, i) => p.id !== source.source.pages[i].id))
       throw new Error("图文页编号与本批原稿不符");
@@ -197,7 +201,7 @@ export async function invokeKnowledgePublicationRoutes(
         }
       }
     }
-    if (receipt.state === "failed" || receipt.state === "unavailable") {
+    if ((receipt.state === "failed" && !receipt.response) || receipt.state === "unavailable") {
       traces.push({ route, model, state: "failed", status: receipt.response?.status });
       continue;
     }
@@ -230,6 +234,10 @@ export async function invokeKnowledgePublicationRoutes(
       await evidence.save(key, receipt);
       traces.push({ route, model, state: "failed", status: receipt.response?.status });
       continue;
+    }
+    if (receipt.state === "failed") {
+      // 解析器修复后允许重验已有完整响应；不重发请求，不覆盖原始response。
+      await evidence.save(key, { ...receipt, state: "received", priorFailureReason: receipt.reason, reason: undefined, recoveredAt: new Date().toISOString() });
     }
     // 保存失败不能当成模型失败去买下一跳；已收到的原始回执可直接复用。
     await evidence.save(`${evidence.prefix}/accepted.json`, { requestDigest, normalized, traces });

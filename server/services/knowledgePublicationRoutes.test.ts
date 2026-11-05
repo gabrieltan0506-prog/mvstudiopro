@@ -99,3 +99,18 @@ it('空字节不延长非流式失联窗口，超大正文也不切换付费通�
   await expect(invokeKnowledgePublicationRoutes(oversized.request,oversized.evidence,oversized.deps)).rejects.toThrow('未重复提交');expect(oversized.deps.fetch).toHaveBeenCalledTimes(1);expect(oversized.storage.get('test/0/route-openrouter.json').state).toBe('unknown');
  }finally{vi.useRealTimers();}
 });
+
+it('仅兼容根对象json_object格式回显，并可零请求恢复原完整失败回执',async()=>{
+ const f=make();const value={...f.report,type:'json_object'};
+ f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL,value));
+ const first=await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
+ expect(JSON.parse(first.text).gateway).toBe('openrouter');
+ const key='test/0/route-openrouter.json',receipt=f.storage.get(key);
+ f.storage.set(key,{...receipt,state:'failed',reason:'旧解析器拒绝根type'});f.storage.delete('test/0/accepted.json');f.deps.fetch.mockClear();
+ const restored=await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
+ expect(JSON.parse(restored.text).gateway).toBe('openrouter');expect(f.deps.fetch).not.toHaveBeenCalled();expect(f.deps.vertex).not.toHaveBeenCalled();
+ expect(f.storage.get(key).priorFailureReason).toBe('旧解析器拒绝根type');expect(f.storage.get(key).response).toEqual(receipt.response);
+ const invalid=make();invalid.deps.fetch.mockResolvedValueOnce(invalid.response(OR_MODEL,{...invalid.report,type:'another_business_kind'}));
+ const fallback=JSON.parse((await invokeKnowledgePublicationRoutes(invalid.request,invalid.evidence,invalid.deps)).text);
+ expect(fallback.gateway).not.toBe('openrouter');expect(invalid.storage.get('test/0/route-openrouter.json').reason).toContain('type');
+});

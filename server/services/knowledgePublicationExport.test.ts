@@ -126,3 +126,34 @@ it('切换模板后预览与PDF输入一致，并且不复用旧模板成品',as
  expect(second.pdfUrl).not.toBe(first.pdfUrl);expect(f.deps.pdf).toHaveBeenCalledTimes(2);
  expect((f.deps.pdf.mock.calls[1] as unknown as [string])[0]).toBe(buildKnowledgePublicationHtml(f.doc,f.doc.publication!.review!,{}));
 });
+
+async function assertSplitRecovery(shiftCounts: boolean) {
+ const {writeFile}=await import('node:fs/promises');
+ const f=fixture(),pub=f.doc.publication!;
+ const first=f.doc.pages[0];f.doc.pages=[{...first,headline:'章一',imageUrl:'gs://test/one.png'},{...first,id:crypto.randomUUID(),headline:'章二',imageUrl:'gs://test/two.png'}];
+ pub.source.pages=f.doc.pages.map(({id,headline,body,imageUrl})=>({id,headline,body,imageUrl}));
+ pub.review={...pub.review!,sourceDigest:knowledgeSourceDigest(pub.source),pages:f.doc.pages.map(p=>({...pub.review!.pages[0],id:p.id,headline:p.headline,body:p.body,imageStatus:'consistent',imageDescription:'测试原图'}))};
+ pub.manuscript=pub.confirmedManuscript=knowledgeManuscript(pub.review);
+ const sha='a'.repeat(64);f.deps.review.mockResolvedValue({report:pub.review,sourceImages:pub.source.pages.map(p=>({uri:p.imageUrl,sha256:sha}))} as any);
+ f.deps.image.mockResolvedValue({buffer:Buffer.alloc(19*1024*1024),mimeType:'image/png',sha256:sha});
+ let shifted=false;
+ const measure=vi.fn(async(html:string)=>html.includes('章二')?(shifted?2:3):(shifted?3:2));
+ const renders:string[]=[];let failSecond=true;
+ f.deps.pdf.mockImplementation(async(html?:string)=>{renders.push(html!);if(html!.includes('data-booklet-page-offset="2"')&&failSecond){failSecond=false;throw Error('第二段测试失败');}return Buffer.from('%PDF'+ 'test-only'.repeat(20));});
+ f.deps.merge.mockImplementation(async(_paths?:string[],target?:string)=>{await writeFile(target!,Buffer.from('%PDF'+'merged-test-only'.repeat(20)));});
+ const deps={...f.deps,measure};
+ const partial=await exportKnowledgePublication(7,f.doc.id,'10',deps as any);
+ expect(partial.pdfUrl).toBeUndefined();expect(partial.htmlUrl).toBeTruthy();
+ shifted=shiftCounts;
+ const complete=await exportKnowledgePublication(7,f.doc.id,'10',deps as any);
+ expect(complete.pdfUrl).toBeTruthy();expect(f.deps.pdf).toHaveBeenCalledTimes(shiftCounts?4:3);expect(measure).toHaveBeenCalledTimes(4);
+ expect(renders[0]).toContain('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="2"');
+ expect(renders[1]).toContain('data-booklet-page-offset="2" data-booklet-total-pages="5" data-booklet-expected-pages="3"');
+ if(shiftCounts){
+  expect(renders[2]).toContain('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="3"');
+  expect(renders[3]).toContain('data-booklet-page-offset="3" data-booklet-total-pages="5" data-booklet-expected-pages="2"');
+ }else expect(renders[2]).toBe(renders[1]);
+ expect(Array.from(f.storage.keys()).filter(k=>k.endsWith('/0-0-2-5.pdf'))).toHaveLength(1);
+}
+it('大手册分段使用全书页码，失败恢复只补缺失段',()=>assertSplitRecovery(false));
+it('部分恢复总页数相同但分段页数变化时不复用旧分段',()=>assertSplitRecovery(true));

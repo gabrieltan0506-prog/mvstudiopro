@@ -1,6 +1,7 @@
 import express from "express";
 import puppeteer, { type Page } from "puppeteer";
 import { randomBytes } from "node:crypto";
+import { finalizeKnowledgeBookletPagination } from "./knowledgeBookletPagination";
 import {
   buildSubsetFaceCss,
   collectPdfSubsetChars,
@@ -306,7 +307,7 @@ app.get("/health", (_req, res) =>
 );
 
 app.post("/generate-pdf", async (req, res) => {
-  const { html, token } = req.body as { html?: string; token?: string };
+  const { html, token, measureKnowledgeBooklet } = req.body as { html?: string; token?: string; measureKnowledgeBooklet?: boolean };
 
   if (!html || html.length < 100) {
     res.status(400).json({ error: "html body is required and must be non-empty" });
@@ -530,15 +531,12 @@ app.post("/generate-pdf", async (req, res) => {
     await applyMyreportsSnapshotPrintGuarantees(page);
 
     // 知识书册必须在最终打印字体下完成排版；失败时禁止输出半成品。
-    await page.evaluate(`(async()=>{
-      await document.fonts.ready;
-      const roots=[...document.querySelectorAll('[data-booklet-root]')];
-      for(const root of roots){
-        if(typeof root.__layoutBooklet!=='function')throw new Error('知识书册排版脚本未就绪');
-        await root.__layoutBooklet();
-        if(root.dataset.ready!=='true')throw new Error('知识书册排版未通过');
-      }
-    })()`);
+    const bookletPages = await finalizeKnowledgeBookletPagination(page);
+    if (measureKnowledgeBooklet === true) {
+      if (!bookletPages) throw new Error("预分页仅支持知识书册");
+      res.json({ pages: bookletPages });
+      return;
+    }
 
     await logMyreportsCoverDiagnosticsBeforePdf(page, reqId);
 

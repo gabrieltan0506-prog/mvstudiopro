@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile, stat, rm, open } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, stat, rm, open } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { join } from "node:path";
@@ -29,7 +29,7 @@ import {
   uploadBufferToGcs,
   uploadStreamToGcs,
 } from "./gcs";
-import { fetchPdfBufferFromWorker } from "./pdfWorkerClient";
+import { fetchPdfBufferFromWorker, measureKnowledgeBookletFromWorker } from "./pdfWorkerClient";
 
 const inflight = new Map<string, Promise<KnowledgePublicationExport>>();
 export type KnowledgePublicationExport = {
@@ -45,6 +45,7 @@ const real = {
   review: readKnowledgePublicationReview,
   image: readKnowledgeImage,
   pdf: fetchPdfBufferFromWorker,
+  measure: measureKnowledgeBookletFromWorker,
   read: async (name: string) => {
     try {
       return (
@@ -164,27 +165,16 @@ export async function exportKnowledgePublication(
     const head = knowledgePublicationHead(doc.title),
       tail = "</body></html>";
     let chunk = "",
-      chunkBytes = 0,
-      chunkIndex = 0;
+      chunkBytes = 0;
+    const chunks: string[] = [];
     const pdfFiles: string[] = [],
       failures: number[] = [];
     const expected = new Map(receipt.sourceImages.map(p => [p.uri, p.sha256]));
     const flush = async () => {
       if (!chunk) return;
-      const index = chunkIndex++,
-        name = `${prefix}/pdf-parts/${index}.pdf`,
-        path = join(folder, `${index}.pdf`);
-      try {
-        const cached = await deps.read(name);
-        const bytes = cached || (await deps.pdf(head + chunk + tail));
-        if (bytes.length < 100 || bytes.subarray(0, 4).toString() !== "%PDF")
-          throw new Error("导出没有返回有效PDF");
-        if (!cached) await deps.save(name, bytes, "application/pdf");
-        await writeFile(path, bytes);
-        pdfFiles.push(path);
-      } catch {
-        failures.push(index + 1);
-      }
+      const path = join(folder, `chunk-${chunks.length}.html`);
+      await writeFile(path, chunk);
+      chunks.push(path);
       chunk = "";
       chunkBytes = 0;
     };
@@ -219,6 +209,40 @@ export async function exportKnowledgePublication(
         htmlPath,
         "text/html;charset=utf-8"
       );
+      // 分段先在最终字体下计数，再带全书页码渲染。只保留一段HTML在内存中。
+      const counts: number[] = [];
+      if (chunks.length > 1) {
+        for (const [index, path] of Array.from(chunks.entries())) {
+          try {
+            const count = await deps.measure(head + await readFile(path, "utf8") + tail);
+            if (!Number.isSafeInteger(count) || count < 1) throw new Error("预分页结果无效");
+            counts.push(count);
+          } catch {
+            failures.push(index + 1);
+          }
+        }
+      }
+      if (!failures.length) {
+        const total = counts.reduce((a, b) => a + b, 0);
+        let offset = 0;
+        for (const [index, sourcePath] of Array.from(chunks.entries())) {
+          const count = counts[index];
+          const pagination = count ? { offset, total, count } : undefined;
+          const name = `${prefix}/pdf-parts/${index}${pagination ? `-${offset}-${count}-${total}` : ""}.pdf`;
+          const path = join(folder, `${index}.pdf`);
+          try {
+            const cached = await deps.read(name);
+            const bytes = cached || await deps.pdf(knowledgePublicationHead(doc.title, pagination) + await readFile(sourcePath, "utf8") + tail);
+            if (bytes.length < 100 || bytes.subarray(0, 4).toString() !== "%PDF") throw new Error("导出没有返回有效PDF");
+            if (!cached) await deps.save(name, bytes, "application/pdf");
+            await writeFile(path, bytes);
+            pdfFiles.push(path);
+          } catch {
+            failures.push(index + 1);
+          }
+          offset += count || 0;
+        }
+      }
       if (failures.length) {
         await deps.save(
           `${prefix}/manifest.json`,

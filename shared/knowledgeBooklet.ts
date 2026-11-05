@@ -141,7 +141,8 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
       }
       const folios=[...root.querySelectorAll('.folio')];
       const allFolios=[...document.querySelectorAll('[data-booklet-root] .folio')];
-      allFolios.forEach((el,i)=>el.querySelector('.page-number').textContent=String(i+1).padStart(2,'0')+' / '+String(allFolios.length).padStart(2,'0'));
+      const offset=Number(document.body.dataset.bookletPageOffset||0),totalPages=Number(document.body.dataset.bookletTotalPages||allFolios.length);
+      allFolios.forEach((el,i)=>el.querySelector('.page-number').textContent=String(offset+i+1).padStart(2,'0')+' / '+String(totalPages).padStart(2,'0'));
       if([...root.querySelectorAll('.reading-column')].some(el=>el.scrollHeight>el.clientHeight+2))throw new Error('正文超出页面，未裁切内容，请调整版式');
       await Promise.all([...root.querySelectorAll('.art-window img')].map(i=>i.decode()));
       root.dataset.ready='true';
