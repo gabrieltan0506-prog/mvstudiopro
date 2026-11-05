@@ -6,7 +6,7 @@
 
 import { useState } from "react";
 import { copyText } from "@/lib/copyText";
-import { toast } from "sonner";
+import { toast } from "@/lib/platformToast";
 import {
   formatPlatformStoryboardCellsMarkdown,
   type PlatformStoryboardCell,

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
-import { toast } from "sonner";
+import { toast } from "@/lib/platformToast";
 import { COVER_DESIGNS } from "@shared/platformCoverCandidates";
 import TrialWatermarkImage from "@/components/TrialWatermarkImage";
 

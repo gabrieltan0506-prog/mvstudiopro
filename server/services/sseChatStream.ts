@@ -36,6 +36,8 @@ export async function readWithIdleTimeout<T>(
  * 都会带着**半截正文**返回，下游看「有正文、JSON 能解析、节数够」就当成稿——这正是要堵的口子。
  */
 export type SseReadOptions = {
+  /** 仅联网资料链保留真实来源；默认不改变其他调用输出。 */
+  preserveAnnotations?: boolean;
   /** Persist a completed stream aggregate before finish-reason validation (including exhausted budgets). */
   onComplete?: (raw: string) => Promise<void>;
   /** Durable activity hook, called only after bytes arrive. */
@@ -118,6 +120,7 @@ export async function readGlmSseStream(
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
+  const annotations: unknown[] = [];
   let finishReason: string | null = null;
   let usage: Record<string, unknown> | undefined;
   let model = "";
@@ -140,7 +143,7 @@ export async function readGlmSseStream(
       model?: string;
       provider?: string;
       error?: unknown;
-      choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+      choices?: Array<{ delta?: { content?: string; annotations?: unknown[] }; message?: { annotations?: unknown[] }; finish_reason?: string | null }>;
       usage?: Record<string, unknown>;
     };
     try {
@@ -162,9 +165,16 @@ export async function readGlmSseStream(
       options.onErrorFrame?.(chunk.error as Record<string, unknown>);
       throw incomplete("上游流中途返回错误帧", JSON.stringify(chunk.error));
     }
+    if (options.preserveAnnotations) {
+      const values = chunk.choices?.[0]?.delta?.annotations || chunk.choices?.[0]?.message?.annotations;
+      if (Array.isArray(values)) {
+        for (const value of values) if (!annotations.some(a => JSON.stringify(a) === JSON.stringify(value))) annotations.push(value);
+        if (Buffer.byteLength(JSON.stringify(annotations)) > cap) throw new Error("联网来源回执超过处理上限");
+      }
+    }
     const delta = chunk.choices?.[0]?.delta?.content;
     if (typeof delta === "string") content += delta;
-    if (Buffer.byteLength(content) > cap) throw new Error("GLM 链响应超过处理上限");
+    if (Buffer.byteLength(content) + (options.preserveAnnotations ? Buffer.byteLength(JSON.stringify(annotations)) : 0) > cap) throw new Error("GLM 链响应超过处理上限");
     if (typeof delta === "string" && delta) options.onContentDelta?.(delta);
     const fr = chunk.choices?.[0]?.finish_reason;
     if (fr) finishReason = String(fr);
@@ -208,7 +218,7 @@ export async function readGlmSseStream(
   const raw = JSON.stringify({
     model: model || undefined,
     provider: provider || undefined,
-    choices: [{ message: { content }, finish_reason: finishReason }],
+    choices: [{ message: { content, ...(options.preserveAnnotations ? { annotations } : {}) }, finish_reason: finishReason }],
     usage,
   });
   await options.onComplete?.(raw);

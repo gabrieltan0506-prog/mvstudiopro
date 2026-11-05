@@ -46,7 +46,7 @@ describe("真实接口错误", () => {
   it("用户提示不再把解析/网关错误归因为算力紧张或虚报已重试", () => {
     for(const raw of ['Unexpected token < is not valid JSON','returned HTML instead of JSON','returned empty body']){
       const message=sanitizePlatformUserMessage(raw);
-      expect(message).toContain('Debug');expect(message).not.toMatch(/算力紧张|已自动重试/);
+      expect(message).toContain('原任务');expect(message).not.toMatch(/Debug|接口|网关/);expect(message).not.toMatch(/算力紧张|已自动重试/);
     }
   });
 });

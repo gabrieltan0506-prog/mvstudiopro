@@ -306,6 +306,17 @@ async function findChargeByKey(
   return { cost: Math.max(0, Number(row.creditsCost) || 0), source: "personal" };
 }
 
+/** 只读核对原扣款和原路退款的幂等账，不触发退款或新扣款。 */
+export async function readChargeRefundState(userId: number, chargeKey: string, refundKey: string) {
+  const db=await getDb();
+  if(!db)throw new Error("积分账暂不可读取，未允许重试");
+  const charge=await findChargeByKey(db,userId,chargeKey);
+  if(!charge||charge.cost===0)return {charged:0,settled:true};
+  const [refund]=await db.select({id:stripeUsageLogs.id}).from(stripeUsageLogs)
+    .where(and(eq(stripeUsageLogs.userId,userId),eq(stripeUsageLogs.chargeKey,refundKey))).limit(1);
+  return {charged:charge.cost,settled:!!refund};
+}
+
 /**
  * 按固定数额扣费（用于放大等 = 基准单价 × 倍率的场景）。
  * opts.chargeKey：幂等扣费键——写进 stripe_usage_logs 唯一索引列，与余额 UPDATE

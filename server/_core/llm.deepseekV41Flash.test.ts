@@ -85,7 +85,7 @@ it.each([null, "length", "error"])("DeepSeek 未正常结束 %s 不返回半成�
   await expect(invokeLLM({ provider: "openai", modelName, messages: [{ role: "user", content: "test" }] })).rejects.toThrow();
 });
 
-it.each(["deepseek-v4.1-flash", "glm-5.3-flash", "glm-5.3-flashx"])("EvoLink %s 使用原生字段与固定文本入口", async modelName => {
+it.each(["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "glm-5.3-flash", "glm-5.3-flashx"])("EvoLink %s 使用原生字段与固定文本入口", async modelName => {
   vi.stubEnv("EVOLINK_API_KEY", "test-evolink-not-real");
   const frame = { model: modelName, choices: [{ delta: { content: '{"answer":"测试"}' }, finish_reason: "stop" }] };
   const fetchMock = vi.fn().mockResolvedValue(new Response(`data: ${JSON.stringify(frame)}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } }));
@@ -110,6 +110,8 @@ it.each(["z-ai/glm-5.3-flash", "z-ai/glm-5.3-flashx"])("GLM %s 保持流式 JSON
 it.each([
   [modelName, "auto", { reasoning: { enabled: false } }],
   ["deepseek-v4.1-flash", "evolink_flash_only", { thinking: { type: "disabled" } }],
+  ["deepseek-v4.1-flash-1017", "evolink_flash_only", { thinking: { type: "disabled" } }],
+  ["deepseek/deepseek-v4.1-flash-1017", "auto", { reasoning: { enabled: false } }],
 ] as const)("顾问 %s 显式关闭推理且保留流式 JSON", async (modelName, openAiGateway, expected) => {
   vi.stubEnv("OPENROUTER_API_KEY", "sk-test-only-not-real"); vi.stubEnv("EVOLINK_API_KEY", "test-key");
   const fetchMock = vi.fn().mockResolvedValue(new Response('data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } }));

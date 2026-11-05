@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Marked } from "marked";
+import { knowledgePublicationSchema, knowledgeManuscript } from "./knowledgePublication";
 
 // 排版稿独立保存，不反写模型原稿，也不触发任何生成请求。
 export const layoutImageSchema = z
@@ -26,10 +27,17 @@ export const editableLayoutSchema = z
     aspect: z.enum(["3:4", "9:16", "1:1"]),
     theme: z.enum(["paper", "ink", "sage"]),
     fontSize: z.number().int().min(18).max(36),
-    pages: z.array(layoutPageSchema).min(1).max(100),
+    pages: z.array(layoutPageSchema).min(1),
     updatedAt: z.string().datetime(),
+    publication: knowledgePublicationSchema.optional(),
   })
-  .strict();
+  .strict().superRefine((doc, ctx) => {
+    if (!doc.publication && doc.pages.length > 100)
+      ctx.addIssue({code:"custom", message:"普通排版稿最多100页"});
+    if (doc.publication && (doc.pages.length !== doc.publication.source.pages.length ||
+        doc.pages.some((page, i) => page.id !== doc.publication!.source.pages[i].id)))
+      ctx.addIssue({code:"custom", message:"知识稿与原稿页身份不一致"});
+  });
 export const layoutLibrarySchema = z
   .object({
     version: z.literal(1),
@@ -47,6 +55,9 @@ export const layoutLibrarySchema = z
 export type EditableLayout = z.infer<typeof editableLayoutSchema>;
 export type LayoutLibrary = z.infer<typeof layoutLibrarySchema>;
 export type LayoutSource = {
+  kind?: "knowledge-publication";
+  infographicTemplateId?: string;
+  detailLevel?: "concise" | "full";
   owner: string;
   sourceId: string;
   title: string;
@@ -58,6 +69,10 @@ export function layoutFromSource(source: LayoutSource): EditableLayout {
   const pages = source.pages?.length
     ? source.pages
     : [{ headline: source.title, body: source.body, pageIndex: 1 }];
+  const sourcePages = pages.map(p => ({
+    id: crypto.randomUUID(), headline: p.headline, body: p.body,
+    imageUrl: source.images?.[p.pageIndex] || "",
+  }));
   return editableLayoutSchema.parse({
     id: crypto.randomUUID(),
     sourceId: source.sourceId,
@@ -66,13 +81,16 @@ export function layoutFromSource(source: LayoutSource): EditableLayout {
     theme: "paper",
     fontSize: 24,
     updatedAt: new Date().toISOString(),
-    pages: pages.map(p => ({
-      id: crypto.randomUUID(),
-      headline: p.headline,
-      body: p.body,
-      imageUrl: source.images?.[p.pageIndex] || "",
+    pages: sourcePages.map(p => ({
+      ...p,
       imagePlacement: "below",
     })),
+    ...(source.kind === "knowledge-publication" ? { publication: {
+      version: 1, requestId: crypto.randomUUID(),
+      infographicTemplateId: source.infographicTemplateId,
+      source: { title: source.title, detailLevel: source.detailLevel, pages: sourcePages },
+      manuscript: knowledgeManuscript({title:source.title, pages:sourcePages}),
+    } } : {}),
   });
 }
 const escapeHtml = (s: string) =>
@@ -83,16 +101,18 @@ const escapeHtml = (s: string) =>
         c
       ]!
   );
-// 只开放排版标签；原始HTML与链接地址均不可进入可执行DOM。
-const layoutMarkdown = new Marked({
+// 只开放排版标签；原始HTML转义，默认剥离链接，手册仅允许HTTP(S)来源。
+const createLayoutMarkdown = (allowSourceLinks = false) => new Marked({
   gfm: true,
   breaks: true,
   renderer: {
     html({ text }) {
       return escapeHtml(text);
     },
-    link({ tokens }) {
-      return this.parser.parseInline(tokens);
+    link({ tokens, href }) {
+      const label = this.parser.parseInline(tokens);
+      return allowSourceLinks && /^https?:\/\//i.test(href)
+        ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label}</a>` : label;
     },
     image({ text }) {
       return escapeHtml(text);
@@ -110,8 +130,11 @@ const layoutMarkdown = new Marked({
     },
   },
 });
-export function renderLayoutBody(body: string): string {
-  return layoutMarkdown.parse(body, { async: false });
+const layoutMarkdown = createLayoutMarkdown();
+const sourceMarkdown = createLayoutMarkdown(true);
+/** 只有知识手册启用来源链接，旧编辑器仍剥离链接，任意HTML/脚本继续转义。 */
+export function renderLayoutBody(body: string, allowSourceLinks = false): string {
+  return (allowSourceLinks ? sourceMarkdown : layoutMarkdown).parse(body, { async: false });
 }
 export const layoutPalette = {
   paper: ["#fff9ed", "#242125", "#bd5037"],

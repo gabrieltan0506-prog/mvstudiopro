@@ -106,3 +106,11 @@ describe("正文安全排版", () => {
     expect(html).toContain("&amp;#60;");
   });
 });
+
+it('手册来源链接可点击，旧入口继续剥离链接并阻断脚本和属性注入',()=>{
+ const text='[来源](https://example.org/a) [坏链接](javascript:alert) <script>alert(1)</script>';
+ expect(renderLayoutBody(text,true)).toContain('href="https://example.org/a"');
+ expect(renderLayoutBody(text)).not.toContain('href=');
+ expect(renderLayoutBody(text,true)).not.toContain('href="javascript:');
+ expect(renderLayoutBody(text,true)).not.toContain('<script>');
+});

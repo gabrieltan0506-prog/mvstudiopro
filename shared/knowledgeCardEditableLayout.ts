@@ -7,16 +7,21 @@ export function knowledgeCardLayoutSource(input: {
   sourceId: string;
   markdown: string;
   distillModel?: string;
+  detailLevel?: "concise" | "full";
+  infographicTemplateId?: string | null;
   images: readonly string[];
 }): LayoutSource {
   const plan = planKnowledgeCardPages(input.markdown, input.distillModel);
-  if (!plan.pages.length) throw new Error("请先恢复或填写知识卡正文");
+  if (!plan.pages.length) throw new Error("请先恢复或填写手册正文");
   if (input.images.length && input.images.length !== plan.pages.length)
     throw new Error("原成品页数与当前分页不一致，未导入错配图片；请先恢复对应成品");
   const images: Record<number, string> = {};
   input.images.forEach((url, index) => { if (url) images[index + 1] = url; });
-  const title = input.markdown.split("\n").find(line => line.trim())?.replace(/^#+\s*/, "").trim() || "知识卡排版稿";
+  const title = input.markdown.split("\n").find(line => line.trim())?.replace(/^#+\s*/, "").trim() || "图文知识手册";
   return {
+    kind: "knowledge-publication",
+    detailLevel: input.detailLevel,
+    infographicTemplateId: input.infographicTemplateId || undefined,
     owner: input.owner,
     sourceId: input.sourceId,
     title,

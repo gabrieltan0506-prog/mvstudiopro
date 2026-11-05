@@ -13,6 +13,7 @@ RUN npm install
 COPY tsconfig.json ./
 COPY index.ts ./
 COPY pdfPySubset.ts ./
+COPY knowledgeBookletPagination.ts ./
 
 RUN npm run build
 

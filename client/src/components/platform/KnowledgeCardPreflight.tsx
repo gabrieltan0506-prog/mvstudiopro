@@ -44,7 +44,7 @@ export function KnowledgeCardPreflight({
         { k: "成稿档", v: summary.levelZh, accent: true },
         { k: "版式", v: summary.layoutZh, accent: true },
         { k: "模板类型", v: summary.templateZh, accent: true },
-        { k: "读档档位", v: summary.distillModelZh },
+        { k: "读档方式", v: /DeepSeek|精细/i.test(summary.distillModelZh) ? "精细" : "标准" },
         { k: "页数", v: `${summary.pageCount} 页` },
         { k: "画质", v: summary.qualityZh },
       ]

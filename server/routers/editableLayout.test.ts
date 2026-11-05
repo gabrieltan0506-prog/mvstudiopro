@@ -24,6 +24,8 @@ it("排版云稿两个入口都要求登录，账号只能来自会话", async (
       expectedGeneration: "0",
     })
   ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(anon.publicationQuote({documentId:"11111111-1111-4111-8111-111111111111"})).rejects.toMatchObject({code:"UNAUTHORIZED"});
+  await expect(anon.exportPublication({documentId:"11111111-1111-4111-8111-111111111111",expectedGeneration:"0"})).rejects.toMatchObject({code:"UNAUTHORIZED"});
   expect(readLayoutLibrary).not.toHaveBeenCalled();
   expect(writeLayoutLibrary).not.toHaveBeenCalled();
   const caller = editableLayoutRouter.createCaller({ user: { id: 8 } } as any);

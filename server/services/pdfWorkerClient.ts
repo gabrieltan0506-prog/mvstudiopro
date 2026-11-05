@@ -8,6 +8,15 @@ export function getPdfWorkerFetchTimeoutMs(): number {
 }
 
 export async function fetchPdfBufferFromWorker(html: string, token?: string): Promise<Buffer> {
+  return requestPdfWorker(html, token, false) as Promise<Buffer>;
+}
+
+/** 与正式PDF使用同一字体和排版步骤，只省略最后的PDF编码。 */
+export async function measureKnowledgeBookletFromWorker(html: string): Promise<number> {
+  return requestPdfWorker(html, undefined, true) as Promise<number>;
+}
+
+async function requestPdfWorker(html: string, token: string | undefined, measureKnowledgeBooklet: boolean): Promise<Buffer | number> {
   const cloudRunUrl = String(process.env.CLOUD_RUN_PDF_URL || "").trim();
   if (!cloudRunUrl) {
     throw new Error("CLOUD_RUN_PDF_URL env var is not set.");
@@ -20,12 +29,17 @@ export async function fetchPdfBufferFromWorker(html: string, token?: string): Pr
     const res = await fetch(proxyUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ html, token: token ?? "" }),
+      body: JSON.stringify({ html, token: token ?? "", ...(measureKnowledgeBooklet ? { measureKnowledgeBooklet: true } : {}) }),
       signal: controller.signal,
     });
     if (!res.ok) {
       const errBody = await res.text().catch(() => "");
       throw new Error(`pdf-worker returned ${res.status}: ${errBody.slice(0, 240)}`);
+    }
+    if (measureKnowledgeBooklet) {
+      const result = await res.json() as { pages?: number };
+      if (!Number.isSafeInteger(result.pages) || result.pages! < 1) throw new Error("知识书册预分页未返回有效页数");
+      return result.pages!;
     }
     return Buffer.from(await res.arrayBuffer());
   } finally {

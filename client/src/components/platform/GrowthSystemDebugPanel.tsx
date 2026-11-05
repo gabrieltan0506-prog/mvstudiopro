@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
-import { toast } from "sonner";
+import { toast } from "@/lib/platformToast";
 import {
   formatPlatformList,
   formatShanghaiDateTime,

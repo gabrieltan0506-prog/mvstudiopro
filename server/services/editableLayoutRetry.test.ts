@@ -1,0 +1,20 @@
+import {it,expect,vi} from 'vitest';
+import {layoutFromSource} from '../../shared/editableLayout';
+const check=vi.hoisted(()=>vi.fn(async()=>{}));
+vi.mock('./knowledgePresentationRetry',()=>({validateKnowledgePresentationRetryTransition:check}));
+import {writeLayoutLibrary,readLayoutLibrary} from './editableLayoutStore';
+it('真实保存入口在CAS前复核失败状态，双保存只允许一个新版本',async()=>{
+ const doc=layoutFromSource({owner:'7',sourceId:'fixture',kind:'knowledge-publication',title:'水循环',body:'完整原稿'});
+ doc.publication!.presentationRequest={id:'11111111-1111-4111-a111-111111111111',minSlides:1,maxSlides:3,manuscript:doc.publication!.manuscript};
+ const library={version:1 as const,owner:'7',documents:[doc]};let buffer=Buffer.from(''),generation='0';
+ const deps:any={read:async()=>({buffer,generation}),write:vi.fn(async(i:any)=>{if(i.ifGenerationMatch!==generation)throw Error('gcs_upload_failed:412:{}');buffer=i.buffer;generation=String(Number(generation)+1);return {generation};})};
+ await writeLayoutLibrary(7,library,'0',deps);
+ const next=structuredClone(library);next.documents[0].publication!.presentationRequest!.id='22222222-2222-4222-a222-222222222222';
+ check.mockRejectedValueOnce(Error('退款尚未闭合'));
+ await expect(writeLayoutLibrary(7,next,'1',deps)).rejects.toThrow('退款尚未闭合');expect(generation).toBe('1');
+ const results=await Promise.allSettled([writeLayoutLibrary(7,next,'1',deps),writeLayoutLibrary(7,next,'1',deps)]);
+ expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);expect(generation).toBe('2');
+ const restored=await readLayoutLibrary(7,deps);expect(restored.library).toEqual(next);
+ expect(restored.library!.documents[0].publication!.source).toEqual(doc.publication!.source);
+ expect(check).toHaveBeenCalledWith(7,doc,next.documents[0]);
+});

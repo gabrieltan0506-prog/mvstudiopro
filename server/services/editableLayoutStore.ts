@@ -21,8 +21,14 @@ const objectName = (owner: number) => {
 const real = { read: downloadGcsObjectVersioned, write: uploadBufferToGcs };
 const media = {
   async normalize(owner: number, library: LayoutLibrary) {
+    for (const doc of library.documents) {
+      if (!doc.publication) continue;
+      for (const page of [...doc.pages, ...doc.publication.source.pages])
+        if (page.imageUrl && !/^gs:\/\/|^https:\/\/storage\.googleapis\.com\//.test(page.imageUrl))
+          throw new Error("知识卡审校仅支持本人已保存的配图，请先恢复原成品");
+    }
     const candidates = library.documents
-      .flatMap(d => d.pages)
+      .flatMap(d => [...d.pages, ...(d.publication?.source.pages || [])])
       .filter(p =>
         /^gs:\/\/|^https:\/\/storage\.googleapis\.com\//.test(p.imageUrl)
       );
@@ -69,7 +75,7 @@ export async function readLayoutLibrary(
     if (library.owner !== String(owner)) throw new Error("排版稿账号不匹配");
     // 只有已通过本人产物归属校验的对象才以gs://落盘；读取时按对象重新签名。
     for (const doc of library.documents)
-      for (const page of doc.pages)
+      for (const page of [...doc.pages, ...(doc.publication?.source.pages || [])])
         if (page.imageUrl.startsWith("gs://"))
           page.imageUrl = mediaDeps.sign(page.imageUrl);
     return {
@@ -83,6 +89,10 @@ export async function readLayoutLibrary(
     throw e;
   }
 }
+/** 服务端审校使用稳定对象地址；签名刷新不改变原稿摘要或请求指纹。 */
+export function readCanonicalLayoutLibrary(owner: number, deps = real) {
+  return readLayoutLibrary(owner, deps, { ...media, sign: source => source });
+}
 export async function writeLayoutLibrary(
   owner: number,
   raw: LayoutLibrary,
@@ -95,12 +105,29 @@ export async function writeLayoutLibrary(
     throw new Error("排版稿账号不匹配，未写入");
   if (!/^\d+$/.test(generation)) throw new LayoutConflict();
   await mediaDeps.normalize(owner, library);
+  if (generation !== "0") {
+    const prior = await deps.read({gcsUri: `gs://${getGcsBucketName()}/${objectName(owner)}`});
+    if (prior.generation !== generation) throw new LayoutConflict();
+    const before = layoutLibrarySchema.parse(JSON.parse(prior.buffer.toString("utf8")).library);
+    for (const doc of library.documents) {
+      const old = before.documents.find(d => d.id === doc.id);
+      if (!old) continue;
+      if(old.publication?.presentationRequest && doc.publication?.presentationRequest) {
+        const {validateKnowledgePresentationRetryTransition}=await import('./knowledgePresentationRetry');
+        await validateKnowledgePresentationRetryTransition(owner,old,doc);
+      }
+      if (Boolean(old.publication) !== Boolean(doc.publication) || (old.publication && doc.publication &&
+          (JSON.stringify(old.publication.source) !== JSON.stringify(doc.publication.source) ||
+           old.publication.requestId !== doc.publication.requestId)))
+        throw new Error("知识卡原稿快照不能覆盖，请保留原稿并另建新稿");
+    }
+  }
   const updatedAt = new Date().toISOString();
   const buffer = Buffer.from(
     JSON.stringify({ format: "editable-layout-v1", owner, updatedAt, library })
   );
-  if (buffer.length > 8 * 1024 * 1024)
-    throw new Error("排版稿超过8MB，请导出备份后精简；未截断或覆盖");
+  if (buffer.length > 64 * 1024 * 1024)
+    throw new Error("排版库超过64MB，本次未截断或覆盖；原稿与审校回执保留，请联系支持处理存储容量");
   try {
     const result = await deps.write({
       objectName: objectName(owner),

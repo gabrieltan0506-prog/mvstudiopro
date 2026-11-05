@@ -27,7 +27,7 @@ export function KnowledgeCardFilePicker({ disabled, onProcess, onSelectionCountC
   return <div className="w-full rounded-xl border border-white/15 bg-black/20 p-3 text-xs text-[#c9c0e6]">
     <label className={`inline-flex rounded-full border border-white/20 px-3 py-2 ${unavailable ? "opacity-50" : "cursor-pointer hover:border-pink-400"}`}>
       {files.length ? "继续添加文件" : "选择文件（可多选、可混合类型）"}
-      <input aria-label="知识卡片资料文件" type="file" className="hidden" multiple
+      <input aria-label="图文知识手册资料文件" type="file" className="hidden" multiple
         accept={Object.keys(TYPES).map(ext => `.${ext}`).join(",")} disabled={unavailable}
         onChange={e => {
           const selected = Array.from(e.target.files || []); e.target.value = "";
@@ -38,7 +38,7 @@ export function KnowledgeCardFilePicker({ disabled, onProcess, onSelectionCountC
           setError("");
         }} />
     </label>
-    <p className="mt-2 leading-5 text-white/55">PDF、Word（DOCX）、PPTX、EPUB 和图片可放在同一批；可分多次添加。点击「开始精炼」前不上传、不读取、不调用模型。</p>
+    <p className="mt-2 leading-5 text-white/55">PDF、Word（DOCX）、PPTX、EPUB 和图片可放在同一批；可分多次添加。点击「开始精炼」后才会上传并整理内容。</p>
     {files.length > 0 && <>
       <ul className="my-2 max-h-52 space-y-1 overflow-y-auto" aria-label="待读取文件">
         {files.map(file => <li key={key(file)} className="flex items-center justify-between gap-3 rounded bg-white/5 px-2 py-1.5">

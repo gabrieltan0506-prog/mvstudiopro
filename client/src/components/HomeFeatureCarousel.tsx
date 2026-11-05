@@ -488,7 +488,7 @@ export default function HomeFeatureCarousel() {
               <Clock size={18} color="#a78bfa" />
               <span style={{ fontSize: 17, fontWeight: 800, color: "#fff", letterSpacing: 0.5 }}>更新日志 & 功能动态</span>
             </div>
-            <span style={{ fontSize: 12, color: "rgba(167,139,250,0.6)", background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", borderRadius: 99, padding: "3px 12px" }}>上方滚动条为最新动态摘要</span>
+            <span style={{ fontSize: 12, color: "rgba(167,139,250,0.6)", background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", borderRadius: 99, padding: "3px 12px" }}>查看功能与使用方式</span>
           </div>
 
           <div style={{ padding: "20px 24px 24px", position: "relative" }}>

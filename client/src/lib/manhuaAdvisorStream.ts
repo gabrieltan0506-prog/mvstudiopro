@@ -4,7 +4,7 @@ import { withLongJobsFlyDirect, flyHealthProbeOriginForUrl } from "./longJobsFly
 import { withFlyHealthGate } from "./flyHealthGate";
 
 type Input = inferRouterInputs<AppRouter>["mvAnalysis"]["askPlatformSkillQa"];
-type Result = inferRouterOutputs<AppRouter>["mvAnalysis"]["askPlatformSkillQa"];
+type Result = inferRouterOutputs<AppRouter>["mvAnalysis"]["askPlatformSkillQa"] & { replayed?: true };
 
 /** 只提取可读字符串的已收到部分，未闭合的转义留待下一块；绝不把它当作可应用候选。 */
 export function partialJsonString(text: string, key: string): string {
@@ -68,7 +68,11 @@ export async function streamManhuaAdvisor(input: Input, onText: (text: string) =
     const payload = lines.filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
     if (!payload) return;
     const data = JSON.parse(payload);
-    if (event === "error") throw new Error(advisorStreamErrorMessage(data.message, "顾问返回失败，请恢复原问题"));
+    if (event === "error") {
+      const error = new Error(advisorStreamErrorMessage(data.message, "顾问返回失败，请恢复原问题"));
+      if (input.knowledgePublicationContext) Object.assign(error, { retryable: data.retryable === true });
+      throw error;
+    }
     if (event === "reset") { raw = ""; onText(""); if (typeof data.text === "string" && data.text) onModel?.(data.text); }
     if (event === "delta") { raw += String(data.text || ""); if (raw.length > 4 * 1024 * 1024) throw new Error("顾问输出超过处理范围，请恢复原问题"); onText(readableAdvisorStream(raw, Boolean(input.manhuaContext?.previsEdit))); }
     if (event === "result") {

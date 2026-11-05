@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Check, Loader2, Sparkles, Wand2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/platformToast";
 import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import {

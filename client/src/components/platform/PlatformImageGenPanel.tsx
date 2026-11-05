@@ -1,9 +1,10 @@
+import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 /**
  * Platform 内容创作 · 文生图与海报：分类模板 + 提示词草稿 + 出图。
  */
 import { useEffect, useMemo, useState } from "react";
 import { Image as ImageIcon, Loader2, Sparkles, Upload, X } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/platformToast";
 import {
   PLATFORM_IMAGE_GEN_SELF_EDIT_ID,
   buildPlatformImageGenPrompt,
@@ -325,7 +326,7 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
             </span>
           </div>
           {error ? (
-            <p className="text-[11px] text-rose-300/90">{error}</p>
+            <p className="text-[11px] text-rose-300/90">{sanitizePlatformUserMessage(error)}</p>
           ) : null}
         </div>
 

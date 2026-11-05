@@ -259,7 +259,7 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
         confirmedThemes: themes,
       });
       setAiCost(typeof enqueued.cost === "number" ? enqueued.cost : outlineCost);
-      setAiBusyLabel(formatWaitLabel("后台生成页面清单", Date.now() - waitStartedAt));
+      setAiBusyLabel(formatWaitLabel("正在生成页面清单", Date.now() - waitStartedAt));
       const j = await pollJobUntilTerminal(enqueued.jobId, {
         intervalMs: 2500,
         maxWaitMs: 24 * 60_000,
@@ -291,7 +291,7 @@ export default function PlatformHtmlPptPanel({ disabled, initialContent, draftKe
           (v, i, a) => a.indexOf(v) === i,
         );
         const preview = indices.map(idx => `第${idx + 1}页\n${buildHtmlPptSlideImagePrompt({ page: nextPages[idx], deckTitle: title.trim(), templateId: imageTemplateId === "auto" ? null : imageTemplateId, styleId })}`).join("\n\n——\n\n");
-        if (!window.confirm(`本次生成${indices.length}张16:9插图；当前不扣积分。模型：GPT Image 2；无参考图片。以下为实际发送的完整提示词：\n\n${preview}\n\n确认生成？取消会保留已生成页面。`)) {
+        if (!window.confirm(`本次生成${indices.length}张16:9插图；当前不扣积分。无参考图片。以下为实际发送的完整提示词：\n\n${preview}\n\n确认生成？取消会保留已生成页面。`)) {
           setPages(nextPages); setStep("outline"); return;
         }
         const pollLabel = window.setInterval(() => {

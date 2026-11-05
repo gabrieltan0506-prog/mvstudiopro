@@ -1,6 +1,6 @@
 /** 漫剧顾问模型，使用固定版本；不受平台知识卡模型环境配置影响。 */
 export const OPENROUTER_DEEPSEEK_V41_FLASH_MODEL = "deepseek/deepseek-v4.1-flash";
-/** 营销分析使用用户指定的1017快照；不替换其他既有顾问路由。 */
+/** 营销分析与漫剧共享顾问使用用户指定的1017快照。 */
 export const OPENROUTER_DEEPSEEK_V41_FLASH_1017_MODEL = "deepseek/deepseek-v4.1-flash-1017";
 export const MANHUA_ADVISOR_REASONING_EFFORT = "low" as const;
 /** 推理与正文共用预算；保留足够空间输出完整轨迹 JSON。 */
@@ -14,12 +14,12 @@ export function isOpenRouterDeepSeekV41FlashModel(model: string): boolean {
 export const MANHUA_ADVISOR_HOPS = [
   { modelName: "z-ai/glm-5.3-flashx", gateway: "auto", label: "GLM 5.3 FlashX · OpenRouter" },
   { modelName: "glm-5.3-flashx", gateway: "evolink_flash_only", label: "GLM 5.3 FlashX · EvoLink" },
-  { modelName: OPENROUTER_DEEPSEEK_V41_FLASH_MODEL, gateway: "auto", label: "DeepSeek V4.1 Flash · OpenRouter" },
-  { modelName: "deepseek-v4.1-flash", gateway: "evolink_flash_only", label: "DeepSeek V4.1 Flash · EvoLink" },
+  { modelName: OPENROUTER_DEEPSEEK_V41_FLASH_1017_MODEL, gateway: "auto", label: "DeepSeek V4.1 Flash 1017 · OpenRouter" },
+  { modelName: "deepseek-v4.1-flash-1017", gateway: "evolink_flash_only", label: "DeepSeek V4.1 Flash 1017 · EvoLink" },
 ] as const;
 
 /** 顾问需尽快给出可验候选；DeepSeek 关闭思考，强制思考的 GLM 用低档。 */
 export function manhuaAdvisorReasoningEffort(modelName: string): "none" | "low" {
-  return modelName === OPENROUTER_DEEPSEEK_V41_FLASH_MODEL || modelName === "deepseek-v4.1-flash"
+  return isOpenRouterDeepSeekV41FlashModel(modelName) || ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"].includes(modelName)
     ? "none" : MANHUA_ADVISOR_REASONING_EFFORT;
 }

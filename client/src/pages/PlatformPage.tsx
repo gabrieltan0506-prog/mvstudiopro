@@ -1,9 +1,7 @@
 import { knowledgeCardLayoutSource } from "@shared/knowledgeCardEditableLayout";
 import EditableLayoutStudio from "@/components/platform/EditableLayoutStudio";
 import type { LayoutSource } from "@shared/editableLayout";
-import { GuaikeiResearchPanel } from "@/components/GuaikeiResearchPanel";
-import { guaikeiReportRefsSchema, type GuaikeiReportRefs } from "@shared/guaikei";
-import { readGuaikeiReportSelection, writeGuaikeiReportSelection } from "@/lib/guaikeiReportSelection";
+import { TrendReportControls } from "@/components/TrendReportControls";
 import { rankTopicShortlistByViralScore } from "@shared/platformTopicShortlist";
 import { editTopicTitle, resolveTopicWindowDays } from "@shared/platformTopicIntegrity";
 import { CoverCandidatePicker } from "@/components/platform/CoverCandidatePicker";
@@ -437,7 +435,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/platformToast";
 import {
   type ManhuaLearnSyncState,
   MANHUA_LEARN_SNAPSHOT_BASELINE_INITIAL,
@@ -1906,7 +1904,7 @@ function buildCompositeImageGenPendingLines(input: {
   const is3x4 = input.gridVariant === "3x4";
   const trLine = is3x4
     ? "3×4 十二格：中文直送主体 + 分段横排生成后拼接（多数 3～5 分钟内完成）。"
-    : "2×4／八格：中文直送主体出图；封面固定 OpenAI 官方 Image-2。";
+    : "正在生成分镜或图文，请稍候。";
   const kindLabel =
     input.kind === "xiaohongshu_dual_note"
       ? is3x4
@@ -2592,27 +2590,6 @@ export default function PlatformPage() {
   /** 与封面进阶开关一致：supervisor 入口 / admin / supervisor，一般用户不可见 */
   const canConfigureStage2CopyEngine = hasSupervisorOpsAccess;
 
-  const canManageWeixinChannelsCollector = hasSupervisorOpsAccess;
-  const weixinChannelsCollectorStatusQuery = trpc.mvAnalysis.getWeixinChannelsCollectorStatus.useQuery(
-    undefined,
-    {
-      enabled: canManageWeixinChannelsCollector && isAuthenticated,
-      // 0912：这条原本只 gate 在监管权限 + 登录，页面开着就恒定 15 秒一发。
-      // 采集器关着时状态只会因为用户自己点这个开关而变，而那个 mutation 的 onSuccess
-      // 本来就会 refetch 一次——所以关着就完全不轮询（用户确认：只在当初测试时开过）。
-      // 开着时才需要盯心跳与安全熔断。
-      // 不判后台：react-query 在页面隐藏时本就不发请求，而这个回调也不会因切换可见性重算。
-      refetchInterval: (query) => (query.state.data?.capture.enabled ? 15_000 : false),
-      refetchOnWindowFocus: false,
-      retry: false,
-    },
-  );
-  const setWeixinChannelsCaptureEnabledMutation = trpc.mvAnalysis.setWeixinChannelsCaptureEnabled.useMutation({
-    onSuccess: async () => {
-      await weixinChannelsCollectorStatusQuery.refetch();
-    },
-  });
-
   /**
    * 图文知识卡读档两档（DeepSeek V4.1 Flash / GLM 5.3 Flash）：用户 2026-08-05 明文开放给所有登录用户自选，
    * 不再只对 supervisor 可见（页费按档位不同，见 KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS）。
@@ -2638,12 +2615,6 @@ export default function PlatformPage() {
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
   const [visualReportData, setVisualReportData] = useState<VisualReportData | null>(null);
   const [standaloneReportPlatform, setStandaloneReportPlatform] = useState<VisualReportPlatformKey | "">("");
-  const [reportExternalSelection, setReportExternalSelection] = useState<{ owner: string; refs: GuaikeiReportRefs }>({ owner: "", refs: [] });
-  const reportExternalRefs = reportExternalSelection.owner === String(user?.id || "") ? reportExternalSelection.refs : [];
-  useEffect(() => {
-    const owner = String(user?.id || "");
-    setReportExternalSelection({ owner, refs: readGuaikeiReportSelection(owner) });
-  }, [user?.id]);
   const [visualReportTheme] = useState<VisualReportTheme>("dark");
   const [isVisualReportLoading, setIsVisualReportLoading] = useState(false);
   const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
@@ -3087,10 +3058,10 @@ export default function PlatformPage() {
     if (isContentLoading) return contentLoadingText;
     if (stage2Failed || contentJobError) return `无法完成：${contentJobError || "请重试"}`;
     if (stage2EmptyPayload) {
-      return "后台已返回，但没有有效选题（0 条）。请展开 Debug「Stage 2」或点击重试（将再次扣除积分）。";
+      return "本次未生成有效选题。可以重试，重试将再次扣除积分。";
     }
     if (platformContent && !stage2EmptyPayload) {
-      return "✅ 专属选题与文案已由后台写入（可下滑查看卡片）";
+      return "专属选题与文案已生成，可下滑查看卡片";
     }
     if (platformDashboard && !platformContent) {
       return "战略看板已就绪。若流程中断，可点下方手动「生成专属文案」继续。";
@@ -3632,8 +3603,7 @@ export default function PlatformPage() {
   const ownerNativeDeepReadPanel =
     aiManhuaPlatformTab === "douyin"
     && (ownerTemplateOptimizeAllowed || ownerTemplateCapabilityPending);
-  const canSeeManhuaLearnTechnicalDetails =
-    hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed;
+  const canSeeManhuaLearnTechnicalDetails = false;
   const manhuaLearnPipelineMeta = getManhuaLearnPipelineMeta({
     nativeDeepRead: ownerNativeDeepReadPanel,
   });
@@ -3891,7 +3861,7 @@ export default function PlatformPage() {
   /** 按 jobId 停止：实况列表与聚焦面板共用，不依赖「选中剧」 */
   const stopManhuaLearnServerJobById = useCallback(async (jobId: string) => {
     if (!jobId || manhuaLearnControlBusy) return;
-    if (!window.confirm("停止这部剧的学习？已落盘分集和静帧会保留，后续媒体流读取与模型调用将停止。")) return;
+    if (!window.confirm("停止这部剧的学习？已落盘分集和静帧会保留，后续学习将停止。")) return;
     setManhuaLearnControlBusy("cancel");
     try {
       await cancelManhuaLearnServerJob(jobId);
@@ -3908,8 +3878,7 @@ export default function PlatformPage() {
 
   const restructureManhuaEpisode = useCallback(async (job: ManhuaLearnServerJob, episodeIndex: number, model: ManhuaNativeStructuringModelId) => {
     if (manhuaRestructureBusyRef.current || !ownerTemplateOptimizeAllowed || !user?.id) return;
-    const label = "GLM 5.3";
-    if (!window.confirm(`使用 ${label} 重新整形第 ${episodeIndex} 集？先停止原任务，复用已保存的读片 JSON；缺哪片只补读哪片，再继续整形。补读与新整形按实际调用计费，旧调用可能已有费用，结果仍需批准入库。`)) return;
+    if (!window.confirm(`重新整理第 ${episodeIndex} 集？先停止原任务，复用已保存的分析内容，只补读缺失片段，再继续整理。补读与新整形按实际调用计费，旧调用可能已有费用，结果仍需批准入库。`)) return;
     const ownerKey = manhuaLearnUserKey;
     manhuaRestructureBusyRef.current = true;
     setManhuaRestructureBusy(true);
@@ -4148,8 +4117,8 @@ export default function PlatformPage() {
     );
     if (!id || promptZh.length < 2 || !selected) return;
     if (!window.confirm(
-      `确认使用「${selected.labelZh}」按你的提示词优化该模板？\n\n` +
-      "这会产生一次真实模型调用。结果只进入待审修订，不会自动覆盖正式模板；失败不自动重试。",
+      `确认按你的要求优化该模板？\n\n` +
+      "将生成一份待审修订，确认采用前保留正式模板；失败不会自动重试。",
     )) {
       return;
     }
@@ -5062,7 +5031,7 @@ export default function PlatformPage() {
         return;
       }
       setShortlistLastError(null);
-      pushShortlistDebug(`扩写开始：${picks.length} 条 · 后台任务逐条回传`);
+      pushShortlistDebug(`扩写开始：${picks.length} 条 · 逐条生成并保存`);
       picks.forEach((p, i) => pushShortlistDebug(`  ${i + 1}. ${p.title.slice(0, 48)}`));
       const t0 = Date.now();
       setShortlistExpandBusy(true);
@@ -5145,7 +5114,7 @@ export default function PlatformPage() {
               pushShortlistDebug(
                 `📄 第 ${done || rendered.size}/${total} 条已出 · ${Math.round((Date.now() - t0) / 1000)}s`,
               );
-              if (rendered.size === added) toast.success("第 1 条文案已出，其余在后台逐条生成");
+              if (rendered.size === added) toast.success("第 1 条文案已出，其余正在逐条生成");
             }
           },
         });
@@ -5240,7 +5209,7 @@ export default function PlatformPage() {
       onSelectSuggested={() => setSelectedShortlistIds(rankTopicShortlistByViralScore(topicShortlist).filter(t => t.isTopPick).map(t => t.id).slice(0, PLATFORM_TOPIC_EXPAND_MAX))}
       onExpand={topics => void expandShortlistPicks(topics)} editingId={editingShortlistTopicId} editingTitle={editingShortlistTitle}
       onEditingTitle={setEditingShortlistTitle} onEdit={startEditingShortlistTitle} onSave={commitEditingShortlistTitle} onCancel={cancelEditingShortlistTitle}
-      error={shortlistLastError} progress={shortlistExpandProgress ? `已生成 ${shortlistExpandProgress.done} / ${shortlistExpandProgress.total} 份稿件，结果会陆续显示在下方。` : undefined}>
+      error={shortlistLastError ? sanitizePlatformUserMessage(shortlistLastError) : null} progress={shortlistExpandProgress ? `已生成 ${shortlistExpandProgress.done} / ${shortlistExpandProgress.total} 份稿件，结果会陆续显示在下方。` : undefined}>
       {pendingExpand && !shortlistExpandBusy && <button type="button" className="creation-text-action mt-4" onClick={() => void expandShortlistPicks(pendingExpand.picks, pendingExpand.jobId)}>继续查询原扩写任务（不重复提交）</button>}
       {failedExpandPicks.length > 0 && !pendingExpand && <button type="button" className="creation-text-action mt-4" disabled={shortlistExpandBusy} onClick={() => void expandShortlistPicks(failedExpandPicks)}>重试未出稿的 {failedExpandPicks.length} 份</button>}
       {!topicShortlist[0]?.evidenceBindingVersion && topicShortlist[0]?.xhsGrowthEvidence && <XhsGrowthEvidenceView evidence={topicShortlist[0].xhsGrowthEvidence} />}
@@ -5654,9 +5623,9 @@ export default function PlatformPage() {
               }
             }
           }
-          if (attempt < 12) setContentLoadingText("后台正在生成专属文案（撰写与校对中）…");
-          else if (attempt < 28) setContentLoadingText("内容较长，后台仍在处理…");
-          else setContentLoadingText("已等待较久，后台仍在处理；请勿关闭页面…");
+          if (attempt < 12) setContentLoadingText("正在生成专属文案（撰写与校对中）…");
+          else if (attempt < 28) setContentLoadingText("内容较长，仍在处理…");
+          else setContentLoadingText("已等待较久，仍在处理；请勿关闭页面…");
         }
       },
     });
@@ -5767,7 +5736,7 @@ export default function PlatformPage() {
             : prev,
         );
         toast.error(
-          "专属文案没有生成有效选题（0 条）。请展开下方 Debug「Stage 2」查看 buildPlatformContent，或重新分析一次。",
+          "本次未生成有效选题，请调整需求后重试。",
         );
       } else {
         setContentJobPollTrace(null);
@@ -5811,7 +5780,7 @@ export default function PlatformPage() {
       setContentJobError(null);
       setIsContentLoading(true);
       setStage2Failed(false);
-      setContentLoadingText("正在提交专属文案后台任务…");
+      setContentLoadingText("正在提交文案生成任务…");
       setContentDebug(null);
       try {
         const ctxForJob =
@@ -5879,7 +5848,7 @@ export default function PlatformPage() {
     const cost = CREDIT_COSTS.platformStage2Copywriting;
     if (
       !window.confirm(
-        `专属文案与选题将消耗 ${cost} 积分，确认后立即扣费并由后台生成（约数分钟，请勿关闭页面）。是否继续？`,
+        `专属文案与选题将消耗 ${cost} 积分，确认后立即扣费并开始生成（约数分钟，请勿关闭页面）。是否继续？`,
       )
     ) {
       return;
@@ -6408,9 +6377,9 @@ export default function PlatformPage() {
     setManhuaLearnJobPollTrace({
       jobId,
       label: `恢复学习 · ${title.slice(0, 24) || "未命名"}`,
-      lines: [`${new Date().toISOString()} 刷新后重新接管后台任务…`],
+      lines: [`${new Date().toISOString()} 正在找回上次任务…`],
       pollCount: 0,
-      currentStep: "正在恢复后台进度…",
+      currentStep: "正在恢复任务进度…",
     });
 
     void (async () => {
@@ -6487,7 +6456,7 @@ export default function PlatformPage() {
         const msg = sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e));
         setManhuaLearnResult((prev) =>
           manhuaLearnResultFromFailure({
-            errorZh: `${msg}（后台任务记录已保留，刷新可继续恢复）`,
+            errorZh: `${msg}（任务记录已保留，刷新可继续恢复）`,
             url,
             title,
             prev,
@@ -6632,7 +6601,7 @@ export default function PlatformPage() {
       });
       if (!mapped) {
         writePlatformVisualReportPendingJob(null);
-        const message = `后台任务 ${pending.jobId} 已结束，但返回格式异常，请联系客服核对`;
+        const message = "任务已结束，但未取得有效报告，请联系客服核对";
         setVisualReportError(message);
         toast.error(message);
         return;
@@ -6652,7 +6621,7 @@ export default function PlatformPage() {
       // 轮询网络中断或页面停留超时不删除 pending；刷新页面后继续同一 job，不重复扣费。
       const message = sanitizePlatformUserMessage(
         error instanceof Error ? error.message : String(error),
-        "趋势报表仍在后台生成，可刷新页面继续查看",
+        "趋势报表仍在生成，可刷新页面继续查看",
       );
       setVisualReportError(message);
       toast.error(message);
@@ -7444,7 +7413,7 @@ export default function PlatformPage() {
           kind: "batch_topic_frames",
           lines: [
             `${new Date().toISOString()}  [客户端] 批量单帧已发起 · platformType=${variables.platformType} · sceneCount=${variables.scenes.length}`,
-            `${new Date().toISOString()}  [等待中] 进度见 Debug「Fly Jobs · 轮询」当前步骤`,
+            `${new Date().toISOString()}  正在生成，请稍候`,
           ],
           meta: {
             localOpId,
@@ -7955,10 +7924,10 @@ export default function PlatformPage() {
       const looksLikeTransport =
         /\bFailed to fetch\b|Load failed|NetworkError|ECONNRESET|ERR_NETWORK\b/i.test(fullMsg);
       const refundPhrase = looksLikeTransport
-        ? `网络层中断（常见于代理/链路抖动）；若服务端已扣款，请以页面刷新后实际结果为准；有疑问请查积分明细或 Debug 服务端流水`
+        ? `连接中断，请刷新查看原任务结果，并核对积分明细，避免重复提交`
         : `已退回 ${refunded} 积分`;
       const head = `❌ 2x4 合成失败 · kind=${variables.kind} · sceneId=${variables.sceneId} · title=${String(variables.title ?? "").slice(0, 80)} · ${refundPhrase}`;
-      const preview = fullMsg.length > 360 ? `${fullMsg.slice(0, 360)}…（完整见下方 Debug）` : fullMsg;
+      const preview = fullMsg.length > 360 ? `${fullMsg.slice(0, 360)}…` : fullMsg;
       if (!compositeBatchSilentUiRef.current) {
         toast.error(`${head}\n\n${preview}`, { duration: 14_000 });
       }
@@ -8045,13 +8014,14 @@ export default function PlatformPage() {
   const renderRunIdRef = useRef(0);
   /** 本套卡出图时用的提炼稿快照：补出单页必须用它，不用文本框里可能已改过的内容 */
   const renderedDraftRef = useRef<string>("");
+  const renderedDetailLevelRef = useRef<KnowledgeCardDetailLevel | undefined>(undefined);
   const knowledgeCardLayoutSourceIdRef = useRef<string>("");
   /** customNoteImages 的同步镜像：计数用，不在 state updater 里做副作用 */
   const customNoteImagesRef = useRef<string[]>([]);
   const recoveryBlocked = customNoteBusy || knowledgeCardPdfBusy || customNoteUploadBusy || customNoteLevelSwitching || Boolean(customNoteDistillJobId) || Boolean(customNotePreflight);
   const applyKnowledgeCardRecovery = (backup: RecoveredKnowledgeCard): boolean => {
     if (recoveryBlocked || customNotePendingConfirmRef.current) { toast.info("请先结束当前任务或出图确认，再恢复备份"); return false; }
-    if ((customNoteText.trim() || customNoteImages.some(Boolean) || customNotePendingFilesRef.current.length) && !window.confirm("恢复会替换当前知识卡正文与图片。确定恢复所选云端备份吗？")) return false;
+    if ((customNoteText.trim() || customNoteImages.some(Boolean) || customNotePendingFilesRef.current.length) && !window.confirm("恢复会替换当前手册正文与图片。确定恢复所选云端备份吗？")) return false;
     customNoteRevisionRef.current += 1;
     renderRunIdRef.current += 1;
     customNotePendingFilesRef.current = []; setCustomNotePendingMeta([]); setCustomNoteUploadStatus(null);
@@ -8062,6 +8032,7 @@ export default function PlatformPage() {
     setCustomNoteSubjectPosition(backup.subjectPosition); setCustomNoteInfographicTemplateId(backup.infographicTemplateId); setCustomNoteInfographicLabelZh(null);
     const images = Array.from({length:backup.total},()=>"");
     for (const image of backup.images) images[image.page-1]=image.url;
+    renderedDetailLevelRef.current = backup.detailLevel;
     renderedDraftRef.current=backup.total?backup.markdown:""; customNoteImagesRef.current=images;
     knowledgeCardLayoutSourceIdRef.current = `knowledge-card:${backup.jobId}`;
     setCustomNoteImages(images); setCustomNoteImageUpper(images[0]||null); setCustomNoteImageLower(images[1]||null);
@@ -8361,7 +8332,7 @@ export default function PlatformPage() {
     args.onStatus?.(
       queued.sourceChars > 0
         ? `已读出约 ${queued.sourceChars.toLocaleString()} 字，正在分 ${totalHint} 段提炼…`
-        : "文件已交后台：转换 / 读原稿 / 挑参考页 / 提炼…",
+        : "正在整理文件内容…",
     );
     const stageLabel = (out: {
       distillStage?: string; distillStageDone?: number; distillStageTotal?: number; distillFileName?: string;
@@ -8600,7 +8571,7 @@ export default function PlatformPage() {
       return KNOWLEDGE_CARD_GATEWAY_PAGE_MESSAGE;
     }
     // 「模型返回格式异常 / 模型服务暂时异常」本身是中文业务句，落到这里原样给用户，不再改写成算力紧张
-    return message || "生成失败，请稍后重试";
+    return sanitizePlatformUserMessage(message, "生成失败，请稍后查看原任务结果");
   };
 
   const handleGenerateCustomNote = async (overrides?: {
@@ -8798,6 +8769,7 @@ export default function PlatformPage() {
         // 新批次：旧批次在途页返回后不得覆盖；补出单页用这份稿的快照
         const runId = ++renderRunIdRef.current;
         renderedDraftRef.current = distilled;
+        renderedDetailLevelRef.current = pendingSnapshot.detailLevel;
         knowledgeCardLayoutSourceIdRef.current = `knowledge-card:${crypto.randomUUID()}`;
         customNoteImagesRef.current = Array.from({ length: total }, () => "");
         setKnowledgeCardInflight([]);
@@ -8864,7 +8836,7 @@ export default function PlatformPage() {
           toast.message(`已停止出图：完成 ${madePages}/${total} 页，按已出页计费（未出的页不扣）`);
         } else {
           setCustomNoteProgress({ status: "succeeded", percent: 100 });
-          toast.success(`已生成 ${total} 页图文笔记（${qLabel} · 约 ${credits} 积分）`);
+          toast.success(`已生成 ${total} 页手册配图（${qLabel} · 约 ${credits} 积分）`);
         }
         setCustomNoteDistillPhase("idle");
       } else {
@@ -9370,7 +9342,7 @@ export default function PlatformPage() {
         at: new Date().toISOString(),
         kind: "batch_composite_2x4",
         lines: [
-          `${new Date().toISOString()}  [客户端] 一键 ${batchIs3x4 ? "3×4 十二格" : "2×4/八格"}批量已发起 · topicCount=${cards.length} · 每题后台异步执行 · 客户端轮询至完成后再发下一题（与封面批量一致）`,
+          `${new Date().toISOString()}  [客户端] 一键 ${batchIs3x4 ? "3×4 十二格" : "2×4/八格"}批量已发起 · topicCount=${cards.length} · 按顺序逐题生成，已完成部分会保留`,
           `${new Date().toISOString()}  [等待中] 编导分镜套装合计 ${platformCompositeBundleTotalCreditsForGrid(cards.length, batchIs3x4)} 积分（${batchIs3x4 ? 108 : 54}×${cards.length}·${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}），单张约 3～5 分钟`,
         ],
         meta: {
@@ -11637,13 +11609,9 @@ export default function PlatformPage() {
 
     const cost = getPlatformTrendReportCredits(selectedWindowDays);
     const reportWindowDays = toVisualReportWindowDays(selectedWindowDays);
-    const windowNote =
-      selectedWindowDays === 45
-        ? "（45 天窗口的 PNG 报表按 30 天口径生成）"
-        : "";
     if (
       !window.confirm(
-        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天数据，后台生成趋势 PNG${windowNote}。${reportExternalRefs.length ? "将结合已选择的外部作品；采集、分析和长图均包含在本次报告价格内。" : ""}\n\n扣除 ${cost} 积分；页面刷新后仍可继续取回结果。是否开始？`,
+        `生成${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天趋势报告，可下载 PNG。\n\n扣除 ${cost} 积分；刷新后可继续查看。是否开始？`,
       )
     ) {
       return;
@@ -11664,7 +11632,6 @@ export default function PlatformPage() {
         theme: visualReportTheme,
         platforms: visualPlatforms,
         billingRequestId,
-        externalEvidenceRefs: reportExternalRefs,
       });
       const pending: PlatformVisualReportPendingJobV1 = {
         v: 1,
@@ -11675,7 +11642,7 @@ export default function PlatformPage() {
         createdAt: Date.now(),
       };
       writePlatformVisualReportPendingJob(pending);
-      toast.success("趋势报告已进入后台生成，通常约 30–40 秒");
+      toast.success("正在生成趋势报告，刷新后可继续查看");
       await monitorVisualReportJob(pending, true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -12273,8 +12240,8 @@ export default function PlatformPage() {
   }, [snapshot, platformDashboard]);
 
 
-  /** Debug UI：优先 hasSupervisorAccess（含 ?supervisor=1），兼角色 admin/supervisor */
-  const canShowPlatformDebug = hasSupervisorOpsAccess;
+  // 产品页不提供工程诊断入口；原始日志仍留在服务端。
+  const canShowPlatformDebug = false;
 
   useEffect(() => {
     if (!canShowPlatformDebug && debugMode) setDebugMode(false);
@@ -12855,9 +12822,9 @@ export default function PlatformPage() {
               {job.status === "running" ? "运行中" : job.status === "failed" ? "刚失败" : "排队中"}
             </span>
             {reading && reading.totalSegments > 0
-              ? ` · 第${reading.reference?.episodeIndex || Number(output.currentEpisodeIndex) || 1}集 · ${reading.readCompletedSegments}/${reading.totalSegments} 片门禁通过`
+              ? ` · 第${reading.reference?.episodeIndex || Number(output.currentEpisodeIndex) || 1}集 · ${reading.readCompletedSegments}/${reading.totalSegments} 片已完成`
               : ""}
-            {job.status === "failed" && job.error ? ` · 死因：${String(job.error).slice(0, 90)}` : ""}
+            {job.status === "failed" && job.error ? ` · 原因：${sanitizePlatformUserMessage(String(job.error)).slice(0, 90)}` : ""}
           </>
         ) : null}
         {othersRunning > 0 || othersQueued > 0 ? (
@@ -12917,7 +12884,7 @@ export default function PlatformPage() {
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8cefff]">智能提醒</p>
               <p>
                 本步<strong className="text-white">先出选题初选</strong>
-                （不直接写六条文案）；同时后台补齐
+                （不直接写六条文案）；同时补齐
                 <strong className="text-white">平台优先级</strong>与
                 <strong className="text-white">商业化路径</strong>。挑选后再点「就写这条」扩写与出图。
               </p>
@@ -13178,7 +13145,7 @@ export default function PlatformPage() {
                   </span>
                 </div>
                 <p className="mb-4 text-xs text-[#c9c0e6]/55">
-                  单选平台与分析窗口后，使用右侧（或底部）主按钮开始分析。按所选平台与窗口直接出趋势，不依赖人物背景。
+                  选择平台和天数，生成趋势分析与选题建议。
                 </p>
 <div
             id="platform-custom-workspace-trends"
@@ -13216,7 +13183,7 @@ export default function PlatformPage() {
                   )}
                 </div>
                 <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[#c9c0e6]/60">
-                  选择一个平台与时间窗口后，后台生成可下载的 PNG 趋势长图；刷新或短暂断线不会取消任务。不含决策智库全景。
+                  按所选天数生成趋势报告，支持下载 PNG。
                 </p>
               </div>
               {platformDashboard ? (
@@ -13230,165 +13197,28 @@ export default function PlatformPage() {
               ) : null}
             </div>
 
-            {user?.role === "admin" && <GuaikeiResearchPanel onAdopt={text => {
-              const next = [focusPrompt.trim(), text].filter(Boolean).join("\n\n");
-              if (next.length > 8000) return false;
-              setFocusPrompt(next); setFreeformOverride(true); setPersonaFieldErrors({});
-              return true;
-            }} onAdoptReport={(jobId, itemIds) => {
-              const owner = String(user?.id || "");
-              const refs = guaikeiReportRefsSchema.parse([...reportExternalRefs.filter(ref => ref.jobId !== jobId), { jobId, itemIds }]);
-              writeGuaikeiReportSelection(owner, refs);
-              setReportExternalSelection({ owner, refs });
-            }} />}
-            {reportExternalRefs.length > 0 && <div className="mt-2 flex items-center gap-3 text-xs text-cyan-100">
-              <span>趋势报告已加入外部作品参考；不会重新采集。时间不符的资料会在扣费前提示。</span>
-              <button type="button" className="underline" onClick={() => {
-                const owner = String(user?.id || "");
-                try { writeGuaikeiReportSelection(owner, []); setReportExternalSelection({ owner, refs: [] }); }
-                catch { toast.error("无法清除本机选择，请检查浏览器存储权限"); }
-              }}>清除选择</button>
-            </div>}
-
-            <div id={PLATFORM_SECTION_TREND_RUN_ID} className="mt-4 flex scroll-mt-24 flex-wrap items-center gap-2">
-              <span className="text-[10px] uppercase tracking-[0.14em] text-[#8cefff]/60">分析窗口</span>
-              {WINDOW_OPTIONS.map((item) => {
-                const active = item.days === selectedWindowDays;
-                return (
-                  <button
-                    key={`custom-ws-window-${item.days}`}
-                    type="button"
-                    onClick={() => setSelectedWindowDays(item.days)}
-                    disabled={isAnalyzing || isDashboardLoading}
-                    title={item.description}
-                    className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                      active
-                        ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
-                        : "border-white/10 bg-black/25 text-[#c9c0e6]/70 hover:text-white"
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <span className="text-[10px] uppercase tracking-[0.14em] text-[#8cefff]/60">分析平台</span>
-              {TREND_PLATFORM_OPTIONS.map((item) => {
-                const active = selectedTrendPlatforms.includes(item.key);
-                const isComingSoon = Boolean(item.comingSoon);
-                return (
-                  <button
-                    key={`custom-ws-platform-${item.key}`}
-                    type="button"
-                    onClick={() => {
-                      if (isComingSoon) return;
-                      setSelectedTrendPlatforms([item.key]);
-                    }}
-                    disabled={isAnalyzing || isDashboardLoading || isComingSoon}
-                    title={isComingSoon ? "即将开放视频号数据抓取" : "单选：点击切换分析平台"}
-                    className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                      isComingSoon
-                        ? "border-[#fbbf24]/30 bg-[rgba(251,191,36,0.08)] text-[#fef08a]/50"
-                        : active
-                        ? "border-[#49e6ff]/45 bg-[rgba(73,230,255,0.14)] text-[#8cefff]"
-                        : "border-white/10 bg-black/25 text-[#c9c0e6]/70 hover:text-white"
-                    }`}
-                  >
-                    {item.label}{isComingSoon ? " ✦" : ""}
-                  </button>
-                );
-              })}
-            </div>
-
-            {canManageWeixinChannelsCollector ? (
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] px-3 py-2.5">
-                <div>
-                  <div className="text-[11px] font-semibold text-emerald-100">视频号本机采集</div>
-                  <div className="mt-0.5 text-[10px] text-emerald-100/55">
-                    {weixinChannelsCollectorStatusQuery.data?.capture.enabled
-                      ? "已开启，等待本机心跳领取任务"
-                      : weixinChannelsCollectorStatusQuery.data?.capture.pausedBy === "collector_safety_fuse"
-                        ? weixinChannelsCollectorStatusQuery.data.capture.pauseReason === "persistent_black_screen"
-                          ? "已安全暂停：连续检测到黑屏"
-                          : weixinChannelsCollectorStatusQuery.data.capture.pauseReason === "persistent_same_content"
-                            ? "已安全暂停：连续检测到相同内容"
-                            : "已安全暂停：采集环境持续异常"
-                        : "已暂停，不影响其他平台采集"}
-                    {weixinChannelsCollectorStatusQuery.data?.capture.lastHeartbeatAt
-                      ? ` · 最近心跳 ${new Date(weixinChannelsCollectorStatusQuery.data.capture.lastHeartbeatAt).toLocaleString()}`
-                      : " · 尚无本机心跳"}
-                    {` · 待整理 ${weixinChannelsCollectorStatusQuery.data?.accumulatedQualifiedCount ?? 0}/1000`}
-                    {` · DeepSeek批次 ${weixinChannelsCollectorStatusQuery.data?.deepseekCompletedBatchCount ?? 0}/${weixinChannelsCollectorStatusQuery.data?.terraCleanupBatchTarget ?? 8} 后 Terra 清洗`}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  disabled={setWeixinChannelsCaptureEnabledMutation.isPending || weixinChannelsCollectorStatusQuery.isLoading}
-                  onClick={() => setWeixinChannelsCaptureEnabledMutation.mutate({
-                    enabled: !Boolean(weixinChannelsCollectorStatusQuery.data?.capture.enabled),
-                  })}
-                  className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
-                    weixinChannelsCollectorStatusQuery.data?.capture.enabled
-                      ? "border-emerald-300/40 bg-emerald-400/15 text-emerald-100"
-                      : "border-white/15 bg-black/25 text-white/65 hover:text-white"
-                  }`}
-                >
-                  {setWeixinChannelsCaptureEnabledMutation.isPending
-                    ? "保存中…"
-                    : weixinChannelsCollectorStatusQuery.data?.capture.enabled
-                      ? "停止采集"
-                      : "开启采集"}
-                </button>
-              </div>
-            ) : null}
-
-            <label className="mt-3 flex items-center gap-2 text-xs text-cyan-100">长图报告平台
-              <select aria-label="长图报告平台" className="rounded border border-white/20 bg-slate-950 px-2 py-1" value={standaloneReportPlatform} disabled={trendStandaloneBusy || enqueueVisualReportMutation.isPending} onChange={e=>setStandaloneReportPlatform(e.target.value as VisualReportPlatformKey | "")}>
-                <option value="">跟随上方分析平台</option>
-                {[...TREND_PLATFORM_OPTIONS, {key:"tiktok",label:"TikTok"}, {key:"kuaishou",label:"快手"}].map(item=><option key={item.key} value={item.key}>{item.label}</option>)}
-              </select>
-              <span>结合近期真实作品，分析内容机会与可执行选题。</span>
-            </label>
-
-            {!platformDashboard &&
-            !visualReportData &&
-            !trendStandaloneBusy &&
-            !isAnalyzing &&
-            !isDashboardLoading &&
-            !isVisualReportLoading ? (
-              <div className="mt-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void handleTrendStandaloneAnalyze()}
-                    disabled={trendStandaloneBusy || enqueueVisualReportMutation.isPending}
-                    className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_28px_rgba(73,230,255,0.16)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {trendStandaloneBusy || enqueueVisualReportMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-4 w-4" />
-                    )}
-                    生成近{selectedWindowDays}天报告 · {getPlatformTrendReportCredits(selectedWindowDays)}积分
-                  </button>
-                  <span className="rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-1.5 text-[11px] font-black tabular-nums text-[#fef08a]">
-                    {getPlatformTrendReportCredits(selectedWindowDays)} 积分/平台/份
-                  </span>
-                  <span className="text-[11px] text-[#c9c0e6]/50">
-                    {"含四格趋势摘要与可下载 PNG 长图"}
-                  </span>
-                </div>
-              </div>
-            ) : null}
+            <TrendReportControls
+              id={PLATFORM_SECTION_TREND_RUN_ID}
+              platform={standaloneReportPlatform || selectedTrendPlatforms[0] || "xiaohongshu"}
+              windowDays={selectedWindowDays}
+              busy={trendStandaloneBusy || enqueueVisualReportMutation.isPending || isAnalyzing || isDashboardLoading || isVisualReportLoading}
+              hasReport={Boolean(visualReportData)}
+              onPlatformChange={platform => {
+                setStandaloneReportPlatform(platform);
+                if (TREND_PLATFORM_OPTIONS.some(item => item.key === platform)) {
+                  setSelectedTrendPlatforms([platform as TrendPlatformKey]);
+                }
+              }}
+              onWindowDaysChange={setSelectedWindowDays}
+              onGenerate={() => void handleTrendStandaloneAnalyze()}
+            />
 
             {(trendStandaloneBusy || isDashboardLoading || isVisualReportLoading || isAnalyzing) &&
             !visualReportData ? (
               <div className="mt-4 rounded-2xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] p-4">
                 <div className="flex items-center gap-2 text-sm text-[#8cefff]">
                   <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                  {`后台正在读取近 ${selectedWindowDays} 天样本并生成 PNG 趋势长图；通常约 30–40 秒，刷新后可继续取回…`}
+                  {`正在生成近 ${selectedWindowDays} 天趋势报告，刷新后可继续查看…`}
                 </div>
                 <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.08]">
                   <div
@@ -13402,7 +13232,7 @@ export default function PlatformPage() {
 
             {visualReportError && !isVisualReportLoading ? (
               <div className="mt-4 rounded-xl border border-red-400/25 bg-red-400/[0.08] px-4 py-3 text-xs leading-relaxed text-red-100">
-                {visualReportError}
+                {sanitizePlatformUserMessage(visualReportError || "")}
               </div>
             ) : null}
 
@@ -13465,7 +13295,7 @@ export default function PlatformPage() {
             !isDashboardLoading &&
             !isVisualReportLoading ? (
               <p className="mt-4 text-xs leading-relaxed text-[#c9c0e6]/45">
-                启动后任务在后台持续生成；完成后右侧出现摘要，下方可下载含选题关键词的 PNG 长图。
+                启动后将持续生成；完成后右侧出现摘要，下方可下载含选题关键词的 PNG 长图。
               </p>
             ) : null}
 
@@ -13578,7 +13408,7 @@ export default function PlatformPage() {
                               || "抖音旧漫剧分类已移除。可通过真实作品链接或本地视频主动学习。"}
                             {" "}
                             {ownerNativeDeepReadPanel
-                              ? "学节奏：按你设置的集数直接建立原生精读任务；模型直接读取视频，每集生成一张待审卡，你批准后才进入正式模板库。"
+                              ? "学节奏：按你设置的集数分析视频，每集生成一张待审卡，你批准后才进入正式模板库。"
                               : "学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序学习你设置的本轮集数，结果在本页展示，你看完再决定是否批准进库。"}
                           </p>
                         </div>
@@ -13729,28 +13559,7 @@ export default function PlatformPage() {
                             ) : null}
                           </>
                         ) : null}
-                        <span id="manhua-learn-read-model" className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white">
-                          <label className="flex items-center gap-1.5">读片模型
-                            <select aria-label="读片模型" value={manhuaLearnReadModel} disabled={Boolean(manhuaLearnBusyKey)}
-                              onChange={event => {
-                                const model = event.target.value as ManhuaNativeDeepReadModelId;
-                                if (!(MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS as readonly string[]).includes(model)) return;
-                                setManhuaLearnReadModel(model);
-                                writeManhuaLearnReadModel(manhuaLearnUserKey, model);
-                              }} className="bg-black/40 text-white">
-                              {MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS.map(model => <option key={model} value={model}>{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[model]}</option>)}
-                            </select>
-                          </label>
-                        </span>
-                        <span className="rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] text-white">
-                          整形模型：{MANHUA_NATIVE_STRUCTURING_MODEL_LABELS["glm-5.3"]}
-                        </span>
-                        <span id="manhua-structuring-gateway" className="text-[11px] text-[#c9c0e6]/90">
-                          整形路由：OpenRouter（Z.AI）与 EvoLink 并发分流，失败后互为备用；进度显示每次实际使用的路由。
-                        </span>
-                        <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
-                          学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读 · 最多两部并发，整片时长不限、按设置切片；第二部请在另一网页开始
-                        </span>
+                        <span className="text-[11px] text-[#c9c0e6]/90">逐集分析视频并整理为待审卡，完成后可查看和采用。</span>
                       </div>
 
                       {ownerTemplateOptimizeAllowed && hasSupervisorOpsAccess ? (
@@ -13799,7 +13608,7 @@ export default function PlatformPage() {
                                 {manhuaLearnLatestFailure.atIso
                                   ? `（${manhuaLearnLatestFailure.atIso.slice(11, 16)}）`
                                   : ""}
-                                ：{manhuaLearnLatestFailure.errorZh}
+                                ：{sanitizePlatformUserMessage(manhuaLearnLatestFailure.errorZh || "")}
                               </span>
                               <button
                                 type="button"
@@ -14276,7 +14085,7 @@ export default function PlatformPage() {
                               ) : null}
                             </p>
                           ) : null}
-                          {ownerTemplateOptimizeAllowed
+                          {canSeeManhuaLearnTechnicalDetails
                             && focusedManhuaNativeModelReceipts.length > 0 ? (
                             <details className="rounded-lg border border-cyan-300/20 bg-black/25 px-2.5 py-2 text-[10px] text-cyan-50/80">
                               <summary className="cursor-pointer font-semibold text-cyan-100/90">
@@ -14396,7 +14205,7 @@ export default function PlatformPage() {
                             </div>
                           ) : null}
                           {canSeeManhuaLearnTechnicalDetails && manhuaLearnResult.messageZh ? (
-                            <p className="text-amber-100/60">{manhuaLearnResult.messageZh}</p>
+                            <p className="text-amber-100/60">{sanitizePlatformUserMessage(manhuaLearnResult.messageZh || "")}</p>
                           ) : null}
                           {manhuaLearnResult.digestsPreview.length > 0 ? (
                             <div className="max-h-96 space-y-2 overflow-y-auto rounded-lg border border-amber-300/15 bg-black/20 px-2 py-1.5 text-[10px] text-amber-50/80">
@@ -14706,7 +14515,7 @@ export default function PlatformPage() {
                                       {ownerTemplateOptimizeAllowed ? (
                                         <>
                                           <select
-                                            aria-label={`优化模型：${tpl.nameZh}`}
+                                            aria-label={`优化方式：${tpl.nameZh}`}
                                             value={ownerTemplateOptimizeModel}
                                             onChange={(event) => {
                                               setOwnerTemplateOptimizeModel(
@@ -14718,7 +14527,7 @@ export default function PlatformPage() {
                                             className="max-w-[190px] rounded-md border border-emerald-200/15 bg-black/55 px-1.5 py-0.5 text-[9px] text-emerald-50 outline-none"
                                           >
                                             {ownerTemplateOptimizeModels.map((model) => (
-                                              <option key={model.id} value={model.id}>{model.labelZh}</option>
+                                              <option key={model.id} value={model.id}>{`方式 ${ownerTemplateOptimizeModels.indexOf(model) + 1}`}</option>
                                             ))}
                                           </select>
                                           <button
@@ -14989,7 +14798,7 @@ export default function PlatformPage() {
                           detail={ownerTemplateDetailQuery.data?.card || null}
                           evidenceFrames={ownerTemplateDetailQuery.data?.evidenceFrames || []}
                           detailLoading={ownerTemplateDetailQuery.isLoading}
-                          detailError={ownerTemplateDetailQuery.error?.message || null}
+                          detailError={ownerTemplateDetailQuery.error ? sanitizePlatformUserMessage(ownerTemplateDetailQuery.error.message) : null}
                           reportEpisodeIndex={parseNativeProposalEpisodeRef({ id: ownerTemplateDetailId })?.episodeIndex ?? null}
                           onOpenReport={() => {
                             const ref = parseNativeProposalEpisodeRef({ id: ownerTemplateDetailId });
@@ -15025,11 +14834,11 @@ export default function PlatformPage() {
                                 ? !liveManhuaProposal.reference ? "本轮没有可关联的待审卡"
                                   : manhuaViralProposalsQuery.isFetching ? "正在读取已保存的待审卡" : "本轮暂无待批准卡"
                                 : liveManhuaProposal.status === "failed" ? "本轮已停止，已保存成果保留"
-                                  : liveManhuaProposal.totalSegments ? `${liveManhuaProposal.readCompletedSegments}/${liveManhuaProposal.totalSegments} 片门禁通过` : "正在准备分片"}
+                                  : liveManhuaProposal.totalSegments ? `${liveManhuaProposal.readCompletedSegments}/${liveManhuaProposal.totalSegments} 片已完成` : "正在准备分片"}
                           </div>
                           <div className="mt-1 text-[#c9c0e6]/70">{liveManhuaProposal.detailZh}</div>
                           <div className="mt-1 text-[#c9c0e6]/60">{liveManhuaProposal.status === "queued" || liveManhuaProposal.status === "running"
-                            ? "每片门禁通过即更新进度；整形完成后可批准。"
+                            ? "每片已完成即更新进度；整形完成后可批准。"
                             : "已批准的卡可在上方模板库查看；不要为恢复显示重复学习。"}</div>
                         </div>
                       ) : null}
@@ -15074,7 +14883,7 @@ export default function PlatformPage() {
                               }
                               title={
                                 selectedManhuaProposalLearningInFlight
-                                  ? "该剧学习仍在进行，GLM 整形完成后才可批准；进度会逐段刷新"
+                                  ? "该剧学习仍在进行，整理完成后才可批准；进度会逐段刷新"
                                   : undefined
                               }
                               onClick={() =>
@@ -15105,7 +14914,7 @@ export default function PlatformPage() {
                                 if (!target) return;
                                 const nativeEpisode = /^tpl_native_[A-Za-z0-9_-]+_ep\d{3}$/.test(target.id);
                                 if (!window.confirm(nativeEpisode
-                                  ? `删除学习卡「${target.nameZh}」及对应已入库模板？删除前会归档，原始学习证据与模型回执保留。`
+                                  ? `删除学习卡「${target.nameZh}」及对应已入库模板？删除前会归档，原始学习记录保留。`
                                   : `删除待审卡「${target.nameZh}」？只删这张未入库的卡，已入库模板与学习产物不动。`)) return;
                                 void discardManhuaViralProposalMutation
                                   .mutateAsync({ id: target.id, confirmDiscard: true })
@@ -15397,7 +15206,7 @@ export default function PlatformPage() {
                 <div className="creation-workspace-heading"><div><p className="creation-eyebrow">MV STUDIO · 创作台</p><h1>把想法，写成值得读的内容。</h1><p>从你的经验出发，完成选题、正文与视觉方案。</p></div></div>
                 <div className="creation-tool-tabs" role="tablist" aria-label="创作工具">
                   <button type="button" role="tab" aria-selected={creationTool === "viral"} disabled={customWorkspaceOperating} onClick={() => { setCreationTool("viral"); setCustomWorkspaceTab("topic"); }}>爆款创作<span>选题 · 图文 · 视频文案</span></button>
-                  <button type="button" role="tab" aria-selected={creationTool === "knowledge"} disabled={customWorkspaceOperating} onClick={() => { setCreationTool("knowledge"); setCustomWorkspaceTab("copy"); setCustomNoteKind("single_page_knowledge_card"); setOutputType("single_page"); }}>图文知识卡片<span>上传资料 · 提炼 · 生成卡片</span></button>
+                  <button type="button" role="tab" aria-selected={creationTool === "knowledge"} disabled={customWorkspaceOperating} onClick={() => { setCreationTool("knowledge"); setCustomWorkspaceTab("copy"); setCustomNoteKind("single_page_knowledge_card"); setOutputType("single_page"); }}>图文知识手册<span>上传资料 · 图解配说明 · 成册导出</span></button>
                   <button type="button" role="tab" aria-selected={creationTool === "digital-human"} disabled={customWorkspaceOperating} onClick={() => setCreationTool("digital-human")}>数字人视频<span>人像 · 我的声音 · 场景 · 4K成片</span></button>
                 </div>
           {creationTool === "digital-human" ? <DigitalHumanStudio initialPortrait={globalCoverReferencePhotoUrl || undefined} source={digitalHumanSource}/> : null}
@@ -15415,14 +15224,14 @@ export default function PlatformPage() {
                 <PlatformWorkspaceStepHint
                   step={1}
                   title="粘贴文案"
-                  lines={["粘贴正文，或上传文档与图片。", "检查提炼内容、分页和费用，再生成卡片。"]}
+                  lines={["粘贴正文，或上传文档与图片。", "确认提炼内容、分页与费用，再生成手册配图。"]}
                   active={!customNoteText.trim()}
                   done={Boolean(customNoteText.trim())}
                 />
                 <PlatformWorkspaceStepHint
                   step={2}
                   title="生成结果"
-                  lines={["点击生成按钮，等待任务完成。", "卡片在下方显示，可预览和下载。"]}
+                  lines={["点击生成按钮，等待任务完成。", "配图完成后，启动下方创作顾问补充说明、排版成册。"]}
                   active={Boolean(customNoteText.trim()) && !customNoteImages.length && !customNoteImageUpper && !customOptimizeResult}
                   done={Boolean(customNoteImages.length || customNoteImageUpper || customNoteImageLower || customOptimizeResult)}
                 />
@@ -15465,7 +15274,7 @@ export default function PlatformPage() {
                     />
                     {customNoteInfographicLabelZh ? (
                       <p className="mt-1.5 text-[11px] text-cyan-100/55">
-                        已选版式：{customNoteInfographicLabelZh}（生成时后台套用你的正文）
+                        已选版式：{customNoteInfographicLabelZh}（按你的正文生成）
                       </p>
                     ) : null}
                   </PlatformAdvancedSettingsFold>
@@ -15478,7 +15287,7 @@ export default function PlatformPage() {
                   customNoteKind === "optimize_custom_copy"
                     ? "粘贴待优化的封面文案、分镜描述或完整 Markdown…（建议 100–3000 字）"
                     : customNoteKind === "single_page_knowledge_card"
-                      ? "粘贴中文正文 / Markdown，或上传文档/图片后自动提炼…约 4–8 页图文笔记（页数随内容，第 9 页起八折）"
+                      ? "粘贴中文正文 / Markdown，或上传文档/图片后自动提炼…自动规划手册配图（页数随内容，第 9 页起八折）"
                       : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 编导分镜图…（建议 100–800 字）"
                 }
                 value={customNoteText}
@@ -15618,7 +15427,7 @@ export default function PlatformPage() {
                   </span>
                   {customNoteUploadStatus ? (
                     <span className={`w-full text-[11px] leading-5 ${/失败|不足|未探测|未抽出/.test(customNoteUploadStatus) ? "text-rose-300/90" : "text-emerald-300/85"}`}>
-                      {customNoteUploadStatus}
+                      {sanitizePlatformUserMessage(customNoteUploadStatus || "", /失败|error|不足/i.test(customNoteUploadStatus || "") ? "内容整理暂未完成，请查看原任务" : "正在整理内容，请稍候")}
                     </span>
                   ) : null}
                   {knowledgeCardEpubPdfs.length > 0 ? (
@@ -15652,7 +15461,7 @@ export default function PlatformPage() {
                   ) : null}
                   {canChooseKnowledgeCardDistillModel ? (
                     <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
-                      <span className="shrink-0">读档模型</span>
+                      <span className="shrink-0">读档方式</span>
                       <select
                         className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#ff4fb8]/50 focus:outline-none"
                         value={customNoteDistillModel}
@@ -15678,11 +15487,11 @@ export default function PlatformPage() {
                       >
                         {KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.map((o) => (
                           <option key={o.id} value={o.id}>
-                            {o.labelZh} · {o.creditsFull}积分/页
+                            {o.id === KNOWLEDGE_CARD_DISTILL_MODEL_GLM ? "标准" : "精细"} · {o.creditsFull}积分/页
                           </option>
                         ))}
                       </select>
-                      <OpenAiImageVariantSwitch compact />
+                      <OpenAiImageVariantSwitch compact hideModelNames />
                     </label>
                   ) : null}
                   <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
@@ -15724,7 +15533,7 @@ export default function PlatformPage() {
                     </select>
                   </label>
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    支持 pdf / epub / pptx / docx / png / jpg，不限页数与大小；EPUB 后台自动转 PDF；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
+                    支持 pdf / epub / pptx / docx / png / jpg，不限页数与大小；EPUB 自动转换后读取；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
                   </span>
                   <KnowledgeCardPreflight
                     summary={customNotePreflight}
@@ -15736,7 +15545,7 @@ export default function PlatformPage() {
                     onCancel={customNoteDistillJobId || customNoteRendering ? cancelCustomNoteDistill : undefined}
                     cancelBusy={customNoteCancelBusy || customNoteCancelRequested}
                   />
-                  <p className="text-xs text-muted-foreground">刷新或关闭页面会停止读档、提炼、派生及后续出图；已提交供应商的图片仍会完成。</p>
+                  <p className="text-xs text-muted-foreground">刷新或关闭页面会停止读档、提炼、派生及后续出图；已开始生成的图片仍会完成。</p>
                 </div>
               ) : null}
               {customNoteKind === "optimize_custom_copy" ? (
@@ -15772,7 +15581,7 @@ export default function PlatformPage() {
                   ) : customNoteKind === "optimize_custom_copy" ? (
                     <><Sparkles className="h-4 w-4" />深度优化文案（{customOptimizeCopyCost} 积分）</>
                   ) : customNoteKind === "single_page_knowledge_card" ? (
-                    <><Sparkles className="h-4 w-4" />生成图文笔记（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · 4K · {customNoteKnowledgeCredits || 30} 积分）</>
+                    <><Sparkles className="h-4 w-4" />生成手册配图（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · 4K · {customNoteKnowledgeCredits || 30} 积分）</>
                   ) : (
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
@@ -15785,12 +15594,12 @@ export default function PlatformPage() {
                       const markdown = images.length ? renderedDraftRef.current : customNoteText;
                       if (images.length && !markdown) throw new Error("缺少原成品正文快照，请先恢复对应成品");
                       knowledgeCardLayoutSourceIdRef.current ||= `knowledge-card:${crypto.randomUUID()}`;
-                      setLayoutSource(knowledgeCardLayoutSource({ owner: workbenchUserKey, sourceId: knowledgeCardLayoutSourceIdRef.current, markdown, distillModel: customNoteDistillModel, images }));
+                      setLayoutSource(knowledgeCardLayoutSource({ owner: workbenchUserKey, sourceId: knowledgeCardLayoutSourceIdRef.current, markdown, detailLevel: images.length ? renderedDetailLevelRef.current : customNoteDetailLevel, distillModel: customNoteDistillModel, infographicTemplateId: customNoteInfographicTemplateId, images }));
                       document.getElementById("editable-layout-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
                     } catch (error) { toast.error(error instanceof Error ? error.message : "排版导入失败，原稿已保留"); }
-                  }}>{customNoteImages.length || customNoteImageUpper ? "编辑这套成品与导出" : "编辑正文排版与导出"}</button>
+                  }}>{customNoteImages.length || customNoteImageUpper ? "创作顾问：整理图文知识手册" : "创作顾问：整理说明与导出"}</button>
                 )}
-                <span className="text-xs text-[#c9c0e6]/60">恢复已有正文与图片，不重新生成、不扣费</span>
+                <span className="text-xs text-[#c9c0e6]/60">保留原稿与配图，开始整理前展示本次费用</span>
                 {(customNoteImageUpper || customNoteImageLower || customNoteError || customOptimizeResult) && !customNoteBusy && (
                   <button
                     type="button"
@@ -15868,7 +15677,7 @@ export default function PlatformPage() {
 
               {customNoteError && (
                 <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-                  ❌ {customNoteError}
+                  ❌ {sanitizePlatformUserMessage(customNoteError || "")}
                 </div>
               )}
 
@@ -15916,7 +15725,7 @@ export default function PlatformPage() {
                       className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
                     >
                       <Image className="h-3.5 w-3.5" />
-                      用优化稿生成图文笔记（按页计费）
+                      用优化稿生成手册配图（按页计费）
                     </button>
                   </div>
                 </div>
@@ -15949,7 +15758,7 @@ export default function PlatformPage() {
                       </div>
                       <img
                         src={url}
-                        alt={`图文知识卡片第 ${idx + 1} 页`}
+                        alt={`图文知识手册配图第 ${idx + 1} 页`}
                         className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
                         onError={(e) => {
                           (e.target as HTMLImageElement).style.display = "none";
@@ -16097,7 +15906,7 @@ export default function PlatformPage() {
               ) : null}
               {customNoteError && customWorkspaceTab === "assets" ? (
                 <div className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-                  <span className="min-w-0 flex-1">❌ {customNoteError}</span>
+                  <span className="min-w-0 flex-1">❌ {sanitizePlatformUserMessage(customNoteError || "")}</span>
                   <button
                     type="button"
                     onClick={() => void handleGenerateCustomNote()}
@@ -16228,7 +16037,7 @@ export default function PlatformPage() {
 
               {customMattingError && (
                 <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-                  ❌ {customMattingError}
+                  ❌ {sanitizePlatformUserMessage(customMattingError || "")}
                 </div>
               )}
 
@@ -16782,12 +16591,12 @@ export default function PlatformPage() {
                     <h3 className="text-base font-bold text-white md:text-lg">MV Studio Pro AI 决策智库报告</h3>
                     <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#b7add8]">
                       <strong className="text-white">单独加购模块</strong>：需先填写人物背景并生成一次选题，再付费解锁本报告。
-                      报告将把你的背景、平台优先级与选题<strong className="text-white">收敛为一页可视化决策地图</strong>（雷达、执行建议与阅读向排行；均为模型辅助推演，不构成效果承诺）。
+                      报告将把你的背景、平台优先级与选题<strong className="text-white">收敛为一页可视化决策地图</strong>（雷达、执行建议与阅读向排行；均为辅助分析，不构成效果承诺）。
                       与全案入队扣点<strong className="text-white">分开计费</strong>：首次体验{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 积分</strong>，之后每次{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReport} 积分</strong>。
                       <strong className="text-white">不含</strong>封面图、编导分镜图（出图需在执行区另购）。
-                      扣费于后台<strong className="text-white">成功产出后结算</strong>并存档；除可验证的系统故障外，<strong className="text-red-200/95">与全案相同不因主观不满意而退点</strong>。
+                      扣费于<strong className="text-white">成功产出后结算</strong>并存档；除可验证的系统故障外，<strong className="text-red-200/95">与全案相同不因主观不满意而退点</strong>。
                     </p>
                   </div>
                 </div>
@@ -16824,13 +16633,13 @@ export default function PlatformPage() {
                           decisionIntelLatestQuery.data?.report
                         ) {
                           const okWin = window.confirm(
-                            `您已存档的战略地图为「近 ${latestWd} 天」分析窗口；目前页面选的是「近 ${selectedWindowDays} 天」。\n\n重新生成将依新窗口重算日期区间与模型指纹，并可能依价格表扣除积分（与旧报告参数不同时不会免费命中缓存）。是否继续？`,
+                            `您已存档的战略地图为「近 ${latestWd} 天」分析窗口；目前页面选的是「近 ${selectedWindowDays} 天」。\n\n重新生成将按新的日期范围生成报告，并按页面价格扣除积分。是否继续？`,
                           );
                           if (!okWin) return;
                         }
                         if (!supervisorAccess) {
                           const ok = window.confirm(
-                            `将扣除 ${next} 积分，基于你当前的全案结果（人物背景、平台优先级${platformContent ? "、已写入的选题文案与分镜" : ""}）与「近 ${selectedWindowDays} 天」窗口，生成 MV Studio Pro AI 决策智库报告并存档。\n\n本报告为单独加购，不含封面图与编导分镜图。报告为模型辅助阅读与推演，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
+                            `将扣除 ${next} 积分，基于你当前的全案结果（人物背景、平台优先级${platformContent ? "、已写入的选题文案与分镜" : ""}）与「近 ${selectedWindowDays} 天」窗口，生成 MV Studio Pro AI 决策智库报告并存档。\n\n本报告为单独加购，不含封面图与编导分镜图。报告为辅助分析，非效果保证；成功出货后恕不因主观不满意退点（与全案说明一致）。是否继续？`,
                           );
                           if (!ok) return;
                         }
@@ -17667,7 +17476,7 @@ export default function PlatformPage() {
                     role="status"
                   >
                     已启用<strong className="text-white">选题与封面一体化优化</strong>
-                    ：后台会为每条方案<strong className="text-white">择优主标题</strong>
+                    ：将为每条方案<strong className="text-white">择优主标题</strong>
                     并与出图主句对齐（正文与分镜不改编），竖版封面强调
                     <strong className="text-white">信息流缩略图可读</strong>。推荐优先使用一键套装（封面+分镜按体裁九折，见上方批量按钮
                     {PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}）或于下方卡片分步购买。
