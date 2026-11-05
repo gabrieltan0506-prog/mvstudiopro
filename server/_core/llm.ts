@@ -730,7 +730,7 @@ const resolveTarget = (
   if (preferredProvider === "openai" || modelTier === "gpt5" || modelTier === "gpt54") {
     const candidate = String(explicitModelName || getOpenAiModelName(modelTier)).trim();
     if (openAiGateway === "evolink_flash_only") {
-      if (!["deepseek-v4.1-flash", "glm-5.3-flash", "glm-5.3-flashx"].includes(candidate)) throw new Error("不支持的顾问备用模型");
+      if (!["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017", "glm-5.3-flash", "glm-5.3-flashx"].includes(candidate)) throw new Error("不支持的顾问备用模型");
       const apiKey = getEvolinkApiKey();
       if (!apiKey) throw new Error("顾问备用通道暂未配置");
       return { provider: "openai", apiUrl: EVOLINK_CHAT_COMPLETIONS_URL, apiKey, modelName: candidate };
@@ -1349,7 +1349,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const modelId = String(target.modelName || "").trim();
 
-  const isDeepSeekV41Flash = isOpenRouterDeepSeekV41FlashModel(modelId) || modelId === "deepseek-v4.1-flash";
+  const isDeepSeekV41Flash = isOpenRouterDeepSeekV41FlashModel(modelId) || ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"].includes(modelId);
   const isFlashStream = isDeepSeekV41Flash || modelId === "glm-5.3-flash" || modelId === "z-ai/glm-5.3-flash" || modelId === "glm-5.3-flashx" || modelId === "z-ai/glm-5.3-flashx";
   const evolinkFlash = params.openAiGateway === "evolink_flash_only";
   // 0911：deepseek/deepseek-v4-pro-0813 三天后下架，这条 reasoning 型分支改由 GLM 5.3 系走

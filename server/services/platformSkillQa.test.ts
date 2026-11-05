@@ -638,7 +638,7 @@ it("顾问按 GLM OR→Evo→DeepSeek OR→Evo 自动切换，四跳失败即终
   await expect(askPlatformSkillQa({ userId: 1, isAdmin: true, question: "请优化这一镜", manhuaContext: manhuaContext(), onStream: (event, text) => { if (event === "reset") events.push(text || ""); } })).rejects.toThrow();
   expect(invokeLLMMock.mock.calls.map(([p]) => [p.modelName, p.openAiGateway])).toEqual([
     ["z-ai/glm-5.3-flashx", "auto"], ["glm-5.3-flashx", "evolink_flash_only"],
-    ["deepseek/deepseek-v4.1-flash", "auto"], ["deepseek-v4.1-flash", "evolink_flash_only"],
+    ["deepseek/deepseek-v4.1-flash-1017", "auto"], ["deepseek-v4.1-flash-1017", "evolink_flash_only"],
   ]);
   expect(events).toHaveLength(4);
   for (const [p] of invokeLLMMock.mock.calls) expect(p.response_format).toEqual({ type: "json_object" });
@@ -646,7 +646,7 @@ it("顾问按 GLM OR→Evo→DeepSeek OR→Evo 自动切换，四跳失败即终
 it("GLM 两跳失败后 DeepSeek 成功即停止，沿用同一上下文", async () => {
   invokeLLMMock.mockRejectedValueOnce(new Error("timeout")).mockRejectedValueOnce(new Error("timeout")).mockResolvedValue(llmJson());
   const result = await askPlatformSkillQa({ userId: 1, isAdmin: true, question: "请优化这一镜", manhuaContext: manhuaContext() });
-  expect(result.modelName).toBe("deepseek/deepseek-v4.1-flash");
+  expect(result.modelName).toBe("deepseek/deepseek-v4.1-flash-1017");
   expect(invokeLLMMock).toHaveBeenCalledTimes(3);
   expect(invokeLLMMock.mock.calls[2][0].messages).toEqual(invokeLLMMock.mock.calls[0][0].messages);
 });
