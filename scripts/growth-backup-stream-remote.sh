@@ -76,13 +76,16 @@ case "$mode" in
     ;;
   stream-directory)
     dir="${2:-}"
-    case "$dir" in platforms|history-ledger) ;; *) echo "非法 Growth 目录" >&2; exit 64 ;; esac
-    if [ -d "$ROOT/$dir" ]; then
-      run_monitored nice -n 15 tar -C "$ROOT" -czf - "$dir"
-    fi
+    case "$dir" in platforms|history-ledger|paid-research/guaikei) ;; *) echo "非法 Growth 目录" >&2; exit 64 ;; esac
+    batch="${3:-}"
+    case "$batch" in ''|.|..|*[!A-Za-z0-9_-]*) echo "非法快照批次" >&2; exit 64 ;; esac
+    snapshot="$ROOT/backups/current-batches/$batch/directories"
+    [ -d "$snapshot/$dir" ] || { echo "快照目录缺失" >&2; exit 1; }
+    [ ! -L "$snapshot/$dir" ] || exit 64
+    run_monitored nice -n 15 tar -C "$snapshot" -czf - "$dir"
     ;;
   *)
-    echo "用法: $0 {stream-file PATH BLOCK_BYTES SKIP_BLOCKS COUNT_BLOCKS|stream-directory DIR}" >&2
+    echo "用法: $0 {stream-file PATH BLOCK_BYTES SKIP_BLOCKS COUNT_BLOCKS|stream-directory DIR BATCH}" >&2
     exit 64
     ;;
 esac

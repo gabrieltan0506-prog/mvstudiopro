@@ -119,14 +119,13 @@ describe("归档传输实际子进程保护", () => {
     await new Promise(resolve => setTimeout(resolve, 150));
     expect((await fs.stat(ticks)).size).toBe(size);
   });
-  it("持续有字节可超过空闲时限，仍受总时限约束", async () => {
+  it("持续真实进度超过旧总时限仍可成功", async () => {
     const result = await guarded(
-      `setInterval(()=>process.stdout.write('x'),40);`,
+      `let n=0;const t=setInterval(()=>{process.stdout.write('x');if(++n===20)clearInterval(t)},40);`,
       ["--idle-ms", "250", "--max-ms", "650"]
     );
-    expect(result.code).toBe(124);
     expect(result.stdout.length).toBeGreaterThan(5);
-    expect(result.stderr).toContain("总时限");
+    expect(result.code).toBe(0);
   });
   it("健康慢流持续超过空闲时限仍完整成功", async () => {
     const result = await guarded(
@@ -175,6 +174,9 @@ describe("归档传输实际子进程保护", () => {
     );
     expect(busy.code).toBe(75);
     await fs.unlink(path.join(dir, "runtime-interactive-workloads", "busy"));
+    const owned = path.join(dir, "backups/archive-offload/test-batch");
+    await fs.mkdir(owned, { recursive: true });
+    await fs.writeFile(path.join(owned, ".snapshot-owner.json"), JSON.stringify({ schemaVersion: 1, batchId: "test-batch", kind: "archive-hardlink-snapshot" }));
     const missing = await run(
       process.execPath,
       [guard, "--", "sh", remote, "bundle", "test-batch", "missing"],
@@ -182,13 +184,13 @@ describe("归档传输实际子进程保护", () => {
     );
     expect(missing.code).toBe(66);
   });
-  it("删源在采集 lease 内保留最新两桶，且只接受日期归档", async () => {
+  it("计划保留最新两桶，旧自动删源入口始终拒绝", async () => {
     const root = await temp();
     const archive = path.join(root, "archive");
     for (const dir of ["2026-08-01-00", "2026-08-02-00", "2026-08-03-00"]) {
       await fs.mkdir(path.join(archive, dir), { recursive: true });
       await fs.writeFile(
-        path.join(archive, dir, "record.json.gz"),
+        path.join(archive, dir, "bilibili-record.json.gz"),
         gzipSync(JSON.stringify({ items: [{ id: dir }] }))
       );
     }
@@ -205,7 +207,7 @@ describe("归档传输实际子进程保护", () => {
       { env }
     );
     expect(recent.code).not.toBe(0);
-    expect(recent.stderr).toContain("最新两桶");
+    expect(recent.stderr).toContain("requires_explicit_file_receipt");
     await expect(
       fs.stat(path.join(archive, "2026-08-03-00"))
     ).resolves.toBeTruthy();
@@ -276,6 +278,18 @@ else {const cp=require('node:child_process');const command=process.argv[process.
       gzipSync('{"items":[{"id":"test-item"}]}')
     );
   }
+  const inventories: Record<string, unknown>={};
+  for(const d of ["2026-09-01-00","2026-09-01-01"]) {
+    const raw=await fs.readFile(path.join(dir,d,"bilibili-test.json.gz"));
+    inventories[d]={dir:d,errors:[],files:[{path:"bilibili-test.json.gz",bytes:raw.length,sha256:createHash("sha256").update(raw).digest("hex"),items:1}]};
+  }
+  await fs.writeFile(path.join(archive,"source-inventory.json"),JSON.stringify({schemaVersion:1,inventories}));
+  const rows=Object.entries(inventories).map(([d,value])=>{
+    const files=(value as {files:Array<{path:string;bytes:number;sha256:string}>}).files;
+    const fp=createHash("sha256").update(JSON.stringify(files.map(f=>[f.path,f.bytes,f.sha256]))).digest("hex");
+    return `${d}\t${fp}\t${files.reduce((n,f)=>n+f.bytes,0)}`;
+  });
+  await fs.writeFile(path.join(archive,"selected.tsv"),rows.join("\n")+"\n");
   const text = await fs.readFile(
     path.resolve(".github/workflows", name),
     "utf8"
@@ -319,7 +333,7 @@ describe.each(workflows)("%s 真实步骤离线回归", name => {
         fs.stat(path.join(result.archive, "archives.tsv"))
       ).rejects.toThrow();
       await expect(
-        fs.stat(path.join(result.archive, "DELETE_READY"))
+        fs.stat(path.join(result.archive, "UPLOAD_VERIFIED"))
       ).rejects.toThrow();
       expect(
         gunzipSync(
@@ -341,7 +355,7 @@ describe.each(workflows)("%s 真实步骤离线回归", name => {
     await fs.stat(path.join(result.archive, "EMPTY"));
     await fs.stat(path.join(result.archive, "DEFERRED"));
     await expect(
-      fs.stat(path.join(result.archive, "DELETE_READY"))
+      fs.stat(path.join(result.archive, "UPLOAD_VERIFIED"))
     ).rejects.toThrow();
   });
   it("中途繁忙保留已校验子集供发布，不从头作废", async () => {
@@ -383,9 +397,9 @@ describe.each(workflows)("%s 真实步骤离线回归", name => {
   });
 });
 
-// 用真实发布步骤回读到独立目录，检验下轮规划所消费的凭证确实由成功链产生。
+// 执行真实发布步骤并提供隔离的远端metadata边界，验证下一轮复用证据。
 describe.each(workflows)("%s 发布凭证闭环", name => {
-  it("真实打包→发布回读→每目录源指纹→下一轮跳过", async () => {
+  it("真实打包→发布metadata核验→每目录源指纹→下一轮跳过", async () => {
     const result = await workflowDownload(name, "success");
     expect(result.code).toBe(0);
     const bin = path.join(result.dir, "bin"),
@@ -393,13 +407,18 @@ describe.each(workflows)("%s 发布凭证闭环", name => {
     await fs.mkdir(release);
     await executable(
       path.join(bin, "gh"),
-      `const fs=require('node:fs'),path=require('node:path');const args=process.argv.slice(2),root=${JSON.stringify(release)};
-if(args[0]==='repo'){console.log(JSON.stringify({nameWithOwner:'test/repo'}));}
-else if(args[0]==='api'){console.log('[]');}
-else if(args[1]==='create'){}
-else if(args[1]==='upload'){if(args.includes('--clobber'))process.exit(30);const [file,name]=args[3].split('#');if(fs.existsSync(path.join(root,name)))process.exit(31);fs.copyFileSync(file,path.join(root,name));}
-else if(args[1]==='download'){fs.copyFileSync(path.join(root,args[args.indexOf('-p')+1]),path.join(args[args.indexOf('-D')+1],args[args.indexOf('-p')+1]));}
-else if(args[1]!=='view'){process.exit(1);}`
+      `const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');const args=process.argv.slice(2),root=${JSON.stringify(release)},metadata=${JSON.stringify(path.join(result.dir,"release-metadata.json"))};
+const state=fs.existsSync(metadata)?JSON.parse(fs.readFileSync(metadata,'utf8')):{};
+const save=()=>fs.writeFileSync(metadata,JSON.stringify(state));
+if(args[0]==='repo'){console.log(JSON.stringify({nameWithOwner:'test/repo',isPrivate:true}));}
+else if(args[0]==='api'){
+ const endpoint=args.at(-1);
+ if(endpoint.endsWith('releases?per_page=100'))console.log(JSON.stringify([Object.entries(state).map(([tag,r])=>({tag_name:tag,id:r.id}))]));
+ else {const segments=endpoint.split('/');const id=Number(segments[segments.indexOf('releases')+1]);const release=Object.values(state).find(r=>r.id===id);console.log(JSON.stringify([release.names.map(name=>{const raw=fs.readFileSync(path.join(root,name));return{name,state:'uploaded',size:raw.length,digest:'sha256:'+crypto.createHash('sha256').update(raw).digest('hex')}})]));}
+}
+else if(args[1]==='create'){state[args[2]]={id:Object.keys(state).length+1,names:[]};save();}
+else if(args[1]==='upload'){if(args.includes('--clobber'))process.exit(30);const [file,name]=args[3].split('#');if(fs.existsSync(path.join(root,name)))process.exit(31);fs.copyFileSync(file,path.join(root,name));state[args[2]].names.push(name);save();}
+else {throw Error('Unexpected command: '+args.join(' '));}`
     );
     const text = await fs.readFile(
       path.resolve(".github/workflows", name),
@@ -419,12 +438,12 @@ else if(args[1]!=='view'){process.exit(1);}`
       .replaceAll("/tmp/growth-archive-offload", result.archive)
       .replaceAll("/tmp/growth-backup", path.join(result.dir, "backup"));
     const published = await run("bash", ["-eo", "pipefail", "-c", script], {
-      env: { PATH: `${bin}:${process.env.PATH}` },
+      env: { PATH: `${bin}:${process.env.PATH}`, GH_TOKEN: "test-not-a-credential", GROWTH_BACKUP_REPOSITORY: "test/repo" },
     });
     expect(published.code, published.stderr + published.stdout.toString()).toBe(
       0
     );
-    await fs.stat(path.join(result.archive, "DELETE_READY"));
+    await fs.stat(path.join(result.archive, "UPLOAD_VERIFIED"));
     const { planArchiveBatch } = await import(
       "../../scripts/growth-archive-plan.mjs"
     );

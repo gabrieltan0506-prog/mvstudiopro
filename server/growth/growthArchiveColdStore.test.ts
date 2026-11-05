@@ -1,5 +1,3 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assertSafeGrowthArchiveTarEntries,
@@ -11,7 +9,7 @@ const ARCHIVE = `archive-${DIR}.tar.gz`;
 const SHA = "a".repeat(64);
 
 describe("growth archive cold-store contract", () => {
-  it("只接受可由生产端直接恢复的单一稳定名资产", () => {
+  it("接受历史单一稳定名资产", () => {
     expect(parseGrowthArchiveColdManifest({
       schemaVersion: 1,
       dir: DIR,
@@ -20,7 +18,7 @@ describe("growth archive cold-store contract", () => {
     }, DIR).archive.bytes).toBe(123);
   });
 
-  it("拒绝分片、错 SHA、错目录与路径穿越", () => {
+  it("拒绝不连续分片、错 SHA、错目录与路径穿越", () => {
     expect(() => parseGrowthArchiveColdManifest({
       schemaVersion: 1,
       dir: DIR,
@@ -37,17 +35,8 @@ describe("growth archive cold-store contract", () => {
     expect(() => assertSafeGrowthArchiveTarEntries("../../data", "../../data/file")).toThrow("growth_archive_dir_invalid");
   });
 
-  it("两条工作流都上传原名包、逐目录 manifest，并对分片关闭删除", async () => {
-    for (const relative of [
-      ".github/workflows/growth-archive-offload.yml",
-      ".github/workflows/growth-backup.yml",
-    ]) {
-      const text = await fs.readFile(path.join(process.cwd(), relative), "utf8");
-      expect(text).toContain('parts=("$output")');
-      expect(text).toContain("manifest-assets.tsv");
-      expect(text).toContain('manifest_asset="archive-$dir.manifest.json"');
-      expect(text).toContain('if [ "$part_count" -ne 1 ] || [ "$direct_asset_count" -ne 1 ]');
-      expect(text).toContain("growthArchiveColdRestoreCli.ts");
-    }
+  it("接受连续分片且总字节匹配的清单", () => {
+    const parts = [0, 1].map(index => ({ assetName: `${ARCHIVE}.part-${String(index).padStart(4, "0")}`, bytes: 50, sha256: SHA, index }));
+    expect(parseGrowthArchiveColdManifest({schemaVersion: 1, dir: DIR, archive: {assetName: ARCHIVE, bytes: 100, sha256: SHA}, parts}, DIR).parts).toHaveLength(2);
   });
 });

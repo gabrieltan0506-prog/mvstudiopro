@@ -7,5 +7,6 @@ export function growthColdStoreAssetUrls(
 export function fetchGrowthColdStoreAsset(
   baseUrl: string,
   assetName: string,
-  options?: RequestInit
+  options?: RequestInit,
+  fetchImpl?: typeof fetch
 ): Promise<Response | null>;

@@ -12,34 +12,43 @@ if (!storeDirArg || !outputPathArg) {
 
 const storeDir = path.resolve(storeDirArg);
 const outputPath = path.resolve(outputPathArg);
-/** 与 shared/growth growthPlatformValues 保持一致（含视频号） */
-const PLATFORM_ORDER = ["douyin", "weixin_channels", "xiaohongshu", "bilibili", "kuaishou", "toutiao"];
+/** 本次用户授权的四平台备份范围；快手、头条来源和历史备份保留。 */
+const PLATFORM_ORDER = ["douyin", "weixin_channels", "xiaohongshu", "bilibili"];
 
 async function readJsonIfExists(filePath, fallback) {
-  try {
-    return JSON.parse(await fs.readFile(filePath, "utf8"));
-  } catch {
-    try {
-      const { gunzipSync } = await import("node:zlib");
-      const raw = await fs.readFile(`${filePath}.gz`);
-      return JSON.parse(gunzipSync(raw).toString("utf8"));
-    } catch {
-      return fallback;
+  for (const candidate of [filePath, `${filePath}.gz`]) {
+    let raw;
+    try { raw = await fs.readFile(candidate); }
+    catch (error) { if (error.code === "ENOENT") continue; throw error; }
+    if (candidate.endsWith(".gz")) {
+      const { gunzipSync } = await import("node:zlib"); raw = gunzipSync(raw);
     }
+    return JSON.parse(raw.toString("utf8"));
   }
+  if (["current.json", "runtime-meta.json", "archive-index.json", "history-summary.json"].includes(path.basename(filePath)))
+    throw new Error(`growth_backup_required_missing:${path.basename(filePath)}`);
+  return fallback;
 }
 
 async function statIfExists(filePath) {
   try {
     const stat = await fs.stat(filePath);
-    return stat.isFile() ? stat.size : 0;
-  } catch {
-    return 0;
+    if (!stat.isFile()) throw new Error(`growth_backup_invalid_file:${filePath}`);
+    return stat.size;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return null;
   }
 }
 
 function number(value) {
-  return Number(value || 0);
+  if (value === undefined || value === null || value === "") return null;
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n < 0) throw new Error("growth_backup_count_invalid");
+  return n;
+}
+function total(rows, key) {
+  return rows.every(row => row[key] !== null) ? rows.reduce((n, row) => n + row[key], 0) : null;
 }
 
 async function main() {
@@ -48,7 +57,10 @@ async function main() {
   const runtimeMeta = await readJsonIfExists(path.join(storeDir, "runtime-meta.json"), {});
   const currentStore = await readJsonIfExists(path.join(storeDir, "current.json"), {});
   const platformCurrentManifest = await readJsonIfExists(path.join(storeDir, "platform-current-manifest.json"), null);
+  await readJsonIfExists(path.join(storeDir, "weixin-channels-miner.json"), null);
   const archiveIndex = await readJsonIfExists(path.join(storeDir, "archive-index.json"), []);
+
+  if (!Array.isArray(archiveIndex)) throw new Error("growth_backup_archive_index_invalid");
 
   const platforms = Object.fromEntries(
     PLATFORM_ORDER.map((platform) => {
@@ -73,7 +85,8 @@ async function main() {
       await Promise.all(
         PLATFORM_ORDER.map(async (platform) => [
           platform,
-          await statIfExists(path.join(storeDir, "platforms", `${platform}.json`)),
+          (await statIfExists(path.join(storeDir, "platforms", `${platform}.json.gz`)))
+            ?? await statIfExists(path.join(storeDir, "platforms", `${platform}.json`)),
         ]),
       ),
     ),
@@ -81,16 +94,21 @@ async function main() {
       await Promise.all(
         PLATFORM_ORDER.map(async (platform) => [
           platform,
-          Math.max(
-            await statIfExists(path.join(storeDir, "platform-current", `${platform}.current.json.gz`)),
-            await statIfExists(path.join(storeDir, "platform-current", `${platform}.current.json`)),
-          ),
+          (await statIfExists(path.join(storeDir, "platform-current", `${platform}.current.json.gz`)))
+            ?? await statIfExists(path.join(storeDir, "platform-current", `${platform}.current.json`)),
         ]),
       ),
     ),
   };
 
   const manifest = {
+    schemaVersion: 2,
+    scope: "scheduled-core-backup",
+    fullStoreComplete: false,
+    excludedPlatforms: ["kuaishou", "toutiao"],
+    dataPlatforms: ["douyin", "xiaohongshu", "bilibili", "weixin_channels", "tiktok"],
+    tiktokSource: "paid-research/guaikei/index.json and associated receipts; see snapshot manifest",
+    missingCountsAreUnknown: true,
     createdAt: new Date().toISOString(),
     storeDir,
     truthSource: {
@@ -99,8 +117,8 @@ async function main() {
     },
     updatedAt: runtimeMeta?.updatedAt || currentStore?.updatedAt || debugSummary?.updatedAt || null,
     totals: {
-      currentItems: Object.values(platforms).reduce((sum, item) => sum + number(item.currentTotal), 0),
-      archivedItems: Object.values(platforms).reduce((sum, item) => sum + number(item.archivedTotal), 0),
+      currentItems: total(Object.values(platforms), "currentTotal"),
+      archivedItems: total(Object.values(platforms), "archivedTotal"),
       archiveRuns: Array.isArray(archiveIndex) ? archiveIndex.length : 0,
     },
     schedulerTrackedPlatforms: Object.keys(runtimeMeta?.scheduler || {}).length,

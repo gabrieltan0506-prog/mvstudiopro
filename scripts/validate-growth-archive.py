@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """只读验证归档或顺序分片；不解包到磁盘，不访问网络。"""
+import hashlib
 import gzip
 import io
 import json
@@ -40,6 +41,7 @@ def validate(directory, paths):
         raise ValueError("archive_directory_invalid")
     seen = set()
     files = items = logical_bytes = 0
+    inventory = []
     with PartsReader(paths) as parts, io.BufferedReader(parts) as raw, gzip.GzipFile(fileobj=raw) as zipped:
         with tarfile.open(fileobj=zipped, mode="r|") as archive:
             for member in archive:
@@ -57,11 +59,14 @@ def validate(directory, paths):
                     continue
                 if not member.isfile() or not name.endswith(".json.gz") or member.size <= 0:
                     raise ValueError("archive_member_invalid:" + name)
-                with archive.extractfile(member) as source, gzip.GzipFile(fileobj=source) as payload:
+                with archive.extractfile(member) as source:
+                    compressed = source.read()
+                with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as payload:
                     # 与生产恢复器相同的 items 数组契约；空数组可合法表示该平台无结果。
                     value = json.load(io.TextIOWrapper(payload, encoding="utf-8"))
                 if not isinstance(value, dict) or not isinstance(value.get("items"), list):
                     raise ValueError("archive_json_invalid:" + name)
+                inventory.append({"path": name[len(directory)+1:], "bytes": member.size, "sha256": hashlib.sha256(compressed).hexdigest(), "items": len(value["items"])})
                 files += 1
                 items += len(value["items"])
                 logical_bytes += member.size
@@ -74,7 +79,7 @@ def validate(directory, paths):
                 raise ValueError("archive_trailing_content")
     if files == 0:
         raise ValueError("archive_content_empty:" + directory)
-    return {"dir": directory, "files": files, "items": items, "logicalBytes": logical_bytes}
+    return {"dir": directory, "files": files, "items": items, "logicalBytes": logical_bytes, "inventory": sorted(inventory, key=lambda row: row["path"])}
 
 
 if __name__ == "__main__":

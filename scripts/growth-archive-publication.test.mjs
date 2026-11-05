@@ -87,13 +87,19 @@ function remote(options = {}) {
   }
   const gh = args => {
     calls.push(args);
-    assert(!args.includes("--clobber"), "发布不能覆盖");
+    assert(
+      !args.includes("--clobber") || args[3].endsWith(".latest.json"),
+      "仅最后提交的指针可以替换"
+    );
     assert(
       !args.includes("delete") && !args.includes("DELETE"),
       "发布不能删除"
     );
     if (args[0] === "repo")
-      return JSON.stringify({ nameWithOwner: "test/repo" });
+      return JSON.stringify({
+        nameWithOwner: "gabrieltan0506-prog/mvstudiopro-growth-data",
+        isPrivate: true,
+      });
     if (args[0] === "api") {
       const endpoint = args.at(-1);
       if (endpoint.endsWith("releases?per_page=100"))
@@ -107,7 +113,7 @@ function remote(options = {}) {
           name,
           state: "uploaded",
           size: b.length,
-          digest: `sha256:${digest(b)}`,
+          digest: options.corruptReadback ? "sha256:" + "0".repeat(64) : `sha256:${digest(b)}`,
         })),
       ]);
     }
@@ -123,7 +129,7 @@ function remote(options = {}) {
         r.files.set(name, Buffer.from("concurrent-original"));
         throw Error("already_exists");
       }
-      if (r.files.has(name)) throw Error("already_exists");
+      if (r.files.has(name) && !args.includes("--clobber")) throw Error("already_exists");
       r.files.set(name, fs.readFileSync(file));
       if (options.interrupt && name.endsWith(".tar.gz")) {
         options.interrupt = false;
@@ -132,6 +138,7 @@ function remote(options = {}) {
       return "";
     }
     if (action === "download") {
+      assert.fail("发布阶段不得再次下载备份");
       const name = args[args.indexOf("-p") + 1],
         target = args[args.indexOf("-D") + 1];
       fs.writeFileSync(
@@ -164,13 +171,13 @@ for (const mode of ["empty", "bad-gzip", "bad-json", "bad-schema", "symlink"])
       ),
     });
     assert.equal(r.calls.length, 0);
-    assert(!fs.existsSync(path.join(root, "DELETE_READY")));
+    assert(!fs.existsSync(path.join(root, "UPLOAD_VERIFIED")));
   });
 test("正常归档发布、实际回读、同名完全一致重跑零上传", () => {
   const root = fixture(),
     r = remote();
   publishArchiveBatch(root, r.gh);
-  assert(fs.existsSync(path.join(root, "DELETE_READY")));
+  assert(fs.existsSync(path.join(root, "UPLOAD_VERIFIED")));
   const before = writes(r).length;
   publishArchiveBatch(root, r.gh);
   assert.equal(writes(r).length, before);
@@ -191,37 +198,36 @@ for (const tag of [
   LEGACY_GROWTH_RELEASE,
   growthColdStoreReleaseTag(`archive-${dir}.tar.gz`),
 ])
-  test(`保留${tag}同名不同内容，整批零写入`, () => {
+  test(`保留${tag}同名不同内容，另存不可变版本后提交指针`, () => {
     const root = fixture(),
       r = remote(),
       name = `archive-${dir}.tar.gz`;
     r.add(tag, name, "original-valid-backup");
-    assert.throws(
-      () => publishArchiveBatch(root, r.gh),
-      /archive_asset_conflict/
-    );
-    assert.equal(writes(r).length, 0);
+    publishArchiveBatch(root, r.gh);
+    assert(writes(r).length > 0);
+    assert(r.releases.has(`growth-archive-revision-${dir}-${fingerprint}`));
     assert.equal(
       r.releases.get(tag).files.get(name).toString(),
       "original-valid-backup"
     );
   });
-test("manifest冲突也在tar上传前拒绝", () => {
+test("manifest冲突保留原件并使用独立revision", () => {
   const root = fixture(),
     r = remote(),
     name = `archive-${dir}.manifest.json`;
   r.add(growthColdStoreReleaseTag(name), name, "old-manifest");
-  assert.throws(
-    () => publishArchiveBatch(root, r.gh),
-    /archive_asset_conflict/
+  publishArchiveBatch(root, r.gh);
+  assert.equal(
+    r.releases.get(growthColdStoreReleaseTag(name)).files.get(name).toString(),
+    "old-manifest"
   );
-  assert.equal(writes(r).length, 0);
+  assert(r.releases.has(`growth-archive-revision-${dir}-${fingerprint}`));
 });
 test("预检后同名竞态不覆盖且不生成删源凭证", () => {
   const root = fixture(),
     r = remote({ race: true });
   assert.throws(() => publishArchiveBatch(root, r.gh), /already_exists/);
-  assert(!fs.existsSync(path.join(root, "DELETE_READY")));
+  assert(!fs.existsSync(path.join(root, "UPLOAD_VERIFIED")));
   assert.equal(
     r.releases
       .get(growthColdStoreReleaseTag(`archive-${dir}.tar.gz`))
@@ -237,22 +243,22 @@ test("上传成功但回执丢失，下轮复核继续且不重传旧附件", ()
     () => publishArchiveBatch(root, r.gh),
     /upload_connection_lost/
   );
-  assert(!fs.existsSync(path.join(root, "DELETE_READY")));
+  assert(!fs.existsSync(path.join(root, "UPLOAD_VERIFIED")));
   publishArchiveBatch(root, r.gh);
   assert.equal(
     r.calls.filter(a => a[1] === "upload" && a[3].endsWith(".tar.gz")).length,
     1
   );
-  assert(fs.existsSync(path.join(root, "DELETE_READY")));
+  assert(fs.existsSync(path.join(root, "UPLOAD_VERIFIED")));
 });
-test("回读内容损坏不生成删源凭证", () => {
+test("上传metadata不符不能确认成功或生成删源凭证", () => {
   const root = fixture(),
     r = remote({ corruptReadback: true });
   assert.throws(
     () => publishArchiveBatch(root, r.gh),
-    /archive_readback_mismatch/
+    /archive_upload_metadata_mismatch/
   );
-  assert(!fs.existsSync(path.join(root, "DELETE_READY")));
+  assert(!fs.existsSync(path.join(root, "UPLOAD_VERIFIED")));
 });
 test("分片顺序拼接验证gzip与JSON内容，保持分片删源保护", () => {
   const root = fixture("valid", true),
@@ -313,7 +319,7 @@ test("真实remote跳过空目录、嵌套空目录，保留最新两桶与正�
     fs.mkdirSync(path.join(source, d));
   fs.mkdirSync(path.join(source, "2026-09-02-00", "nested"));
   fs.writeFileSync(
-    path.join(source, "2026-09-03-00", "data.json.gz"),
+    path.join(source, "2026-09-03-00", "bilibili-feed+bilibili_ranking.json.gz"),
     gzipSync('{"items":[{}]}')
   );
   const env = {
@@ -332,7 +338,7 @@ test("真实remote跳过空目录、嵌套空目录，保留最新两桶与正�
   assert(!result.stdout.includes("2026-09-01-00"));
   assert(!result.stdout.includes("2026-09-04-00"));
   assert(fs.existsSync(path.join(source, "2026-09-01-00")));
-  assert(fs.existsSync(path.join(source, "2026-09-03-00", "data.json.gz")));
+  assert(fs.existsSync(path.join(source, "2026-09-03-00", "bilibili-feed+bilibili_ranking.json.gz")));
   const empty = path.join(root, "backups/archive-offload/123-1/2026-09-01-00");
   fs.mkdirSync(empty);
   const bundle = spawnSync("sh", [script, "bundle", "123-1", "2026-09-01-00"], {
@@ -368,7 +374,7 @@ test("远端鉴权或清单读取错误不能当成不存在而上传", () => {
     /403 denied/
   );
   assert.equal(calls.length, 1);
-  assert(!fs.existsSync(path.join(root, "DELETE_READY")));
+  assert(!fs.existsSync(path.join(root, "UPLOAD_VERIFIED")));
 });
 test("真实remote拒绝快照后源改变与忙锁，保留全部测试来源", () => {
   const root = temp(),
@@ -398,8 +404,8 @@ test("真实remote拒绝快照后源改变与忙锁，保留全部测试来源",
     env,
     encoding: "utf8",
   });
-  assert.equal(changed.status, 45);
-  assert.match(changed.stderr, /发生变化/);
+  assert.equal(changed.status, 64);
+  assert.match(changed.stderr, /requires_explicit_file_receipt/);
   assert(fs.existsSync(path.join(source, dir)));
   const lock = path.join(root, ".growth-platform-collection.lock");
   fs.writeFileSync(lock, "other-owner");
@@ -409,4 +415,152 @@ test("真实remote拒绝快照后源改变与忙锁，保留全部测试来源",
   });
   assert.equal(busy.status, 43);
   assert.equal(fs.readFileSync(lock, "utf8"), "other-owner");
+});
+
+test("backup suffix accepted and invalid batch paths rejected before remote writes", () => {
+  const root = fixture(),
+    r = remote();
+  fs.writeFileSync(path.join(root, "batch-id.txt"), "123-1-backup");
+  publishArchiveBatch(root, r.gh);
+  assert(fs.existsSync(path.join(root, "UPLOAD_VERIFIED")));
+  for (const id of ["..", ".", "../123", "123-1-backup-more"]) {
+    fs.writeFileSync(path.join(root, "batch-id.txt"), id);
+    assert.throws(
+      () => prepareArchivePublication(root),
+      /archive_batch_invalid/
+    );
+  }
+});
+test("exact source inventory rejects changed content even with matching byte totals", () => {
+  const root = fixture(),
+    file = path.join(root, "source", dir, "items.json.gz"),
+    raw = fs.readFileSync(file);
+  fs.writeFileSync(
+    path.join(root, "source-inventory.json"),
+    JSON.stringify({
+      inventories: {
+        [dir]: {
+          errors: [],
+          files: [
+            {
+              path: "items.json.gz",
+              bytes: raw.length,
+              sha256: "0".repeat(64),
+              items: 1,
+            },
+          ],
+        },
+      },
+    })
+  );
+  assert.throws(
+    () => prepareArchivePublication(root),
+    /archive_source_inventory_mismatch/
+  );
+});
+test("verified multipart generation is reused without starvation or automatic reclamation", () => {
+  const root = fixture("valid", true),
+    r = remote();
+  publishArchiveBatch(root, r.gh);
+  const assets = [],
+    manifests = new Map();
+  for (const [tag, release] of r.releases)
+    for (const [name, raw] of release.files) {
+      assets.push({
+        name,
+        size: raw.length,
+        digest: "sha256:" + digest(raw),
+        state: "uploaded",
+        releaseTag: tag,
+      });
+      if (name.endsWith(".manifest.json")) manifests.set(name, raw.toString());
+    }
+  const plan = planArchiveBatch(
+    `${dir}\t${fingerprint}\t100\n`,
+    assets,
+    manifests
+  );
+  assert.equal(plan.reused, 1);
+  assert.deepEqual(plan.selected, []);
+  assert.deepEqual(plan.reclaim, []);
+});
+test("low-level snapshot cleanup rejects dot batch traversal", () => {
+  const root = temp();
+  fs.mkdirSync(path.join(root, "backups"));
+  fs.writeFileSync(path.join(root, "backups", "keep"), "evidence");
+  for (const id of [".", ".."]) {
+    const run = spawnSync(
+      "sh",
+      [path.resolve("scripts/growth-archive-offload-remote.sh"), "cleanup", id],
+      { env: { ...process.env, GROWTH_STORE_DIR: root }, encoding: "utf8" }
+    );
+    assert.equal(run.status, 64);
+  }
+  assert.equal(
+    fs.readFileSync(path.join(root, "backups", "keep"), "utf8"),
+    "evidence"
+  );
+});
+
+test("archive publisher refuses public and unconfirmed repository before any remote mutation", () => {
+  for (const isPrivate of [false, undefined]) {
+    const calls = [];
+    assert.throws(
+      () =>
+        publishArchiveBatch(fixture(), args => {
+          calls.push(args);
+          return JSON.stringify({
+            nameWithOwner: "gabrieltan0506-prog/mvstudiopro-growth-data",
+            isPrivate,
+          });
+        }),
+      /confirmed_private/
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], "repo");
+  }
+});
+
+function publishedInventory(remote) {
+  const assets = [], manifests = new Map();
+  const order = tag => tag === LEGACY_GROWTH_RELEASE ? 0 : tag.startsWith("growth-archive-revision-") ? 2 : 1;
+  for (const [tag, release] of [...remote.releases].sort((a,b)=>order(a[0])-order(b[0]))) {
+    for (const [name, raw] of release.files) {
+      assets.push({name,size:raw.length,digest:`sha256:${digest(raw)}`,state:"uploaded",releaseTag:tag});
+      if(name.endsWith(".manifest.json")) manifests.set(name,raw.toString());
+    }
+  }
+  return {assets,manifests};
+}
+test("修订附件已上传但指针失败，下轮不能误复用且可补提交",()=>{
+  const root=fixture(), r=remote(), tag=growthColdStoreReleaseTag(`archive-${dir}.tar.gz`);
+  r.add(tag,`archive-${dir}.tar.gz`,Buffer.from("historical-original"));
+  assert.throws(()=>publishArchiveBatch(root,args=>{
+    if(args[0]==="release"&&args[1]==="upload"&&args[3].endsWith(".latest.json"))throw Error("pointer-interrupted");
+    return r.gh(args);
+  }),/pointer-interrupted/);
+  const inventory=publishedInventory(r);
+  const plan=planArchiveBatch(`${dir}\t${fingerprint}\t100\n`,inventory.assets,inventory.manifests);
+  assert.equal(plan.reused,0);assert.equal(plan.selected.length,1);
+  assert(!fs.existsSync(path.join(root,"UPLOAD_VERIFIED")));
+  const uploadsBefore=r.calls.filter(a=>a[1]==="upload"&&!a[3].endsWith(".latest.json")).length;
+  publishArchiveBatch(root,r.gh);
+  assert.equal(r.calls.filter(a=>a[1]==="upload"&&!a[3].endsWith(".latest.json")).length,uploadsBefore);
+  const after=publishedInventory(r);
+  assert.equal(planArchiveBatch(`${dir}\t${fingerprint}\t100\n`,after.assets,after.manifests).reused,1);
+});
+test("原版内容重新出现时必须更新旧修订指针，不能仅报告原版已发布",()=>{
+  const root=fixture(),r=remote(),tag=growthColdStoreReleaseTag(`archive-${dir}.tar.gz`);
+  publishArchiveBatch(root,r.gh);
+  const original=Buffer.from(r.releases.get(tag).files.get(`archive-${dir}.tar.gz`));
+  r.add(tag,`archive-${dir}.latest.json`,JSON.stringify({schemaVersion:1,dir,releaseTag:`growth-archive-revision-${dir}-${"b".repeat(64)}`}));
+  const before=publishedInventory(r);
+  assert.equal(planArchiveBatch(`${dir}\t${fingerprint}\t100\n`,before.assets,before.manifests).selected.length,1);
+  fs.writeFileSync(path.join(root,"batch-id.txt"),"124-1");
+  publishArchiveBatch(root,r.gh);
+  const pointer=JSON.parse(r.releases.get(tag).files.get(`archive-${dir}.latest.json`).toString());
+  assert.equal(pointer.releaseTag,`growth-archive-revision-${dir}-${fingerprint}`);
+  assert.deepEqual(r.releases.get(tag).files.get(`archive-${dir}.tar.gz`),original);
+  const after=publishedInventory(r);
+  assert.equal(planArchiveBatch(`${dir}\t${fingerprint}\t100\n`,after.assets,after.manifests).reused,1);
 });

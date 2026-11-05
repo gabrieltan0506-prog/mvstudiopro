@@ -8,6 +8,8 @@ ROOT="${GROWTH_STORE_DIR:-/data/growth}"
 ARCHIVE_ROOT="$ROOT/archive"
 SNAPSHOT_PARENT="$ROOT/backups/archive-offload"
 COLLECTION_LOCK="$ROOT/.growth-platform-collection.lock"
+MUTATION_LOCK="$ROOT/.growth-store-mutation.lock"
+mutation_acquired=false
 INTERACTIVE_DIR="$ROOT/runtime-interactive-workloads"
 LOCK_STALE_MINUTES=15
 
@@ -15,16 +17,40 @@ mode="${1:-}"
 batch_id="${2:-}"
 
 case "$batch_id" in
-  ""|*[!0-9A-Za-z._-]*)
+  ""|.|..|*[!0-9A-Za-z._-]*)
     echo "非法 archive offload batch id" >&2
     exit 64
     ;;
 esac
 
 snapshot_root="$SNAPSHOT_PARENT/$batch_id"
-lock_owner="github-growth-archive:$batch_id:$mode"
+lock_owner="github-growth-archive:$batch_id:$mode:$$"
 lock_acquired=false
 heartbeat_pid=""
+
+# A safe basename is insufficient when an owned parent was replaced by a symlink.
+# Inspect only our known hierarchy; never traverse a link into unrelated data.
+assert_owned_paths() {
+  node -e '
+    const fs=require("fs"),path=require("path"),root=process.argv[1],batch=process.argv[2];
+    for(const file of [root,path.join(root,"archive"),path.join(root,"backups"),path.join(root,"backups/archive-offload"),path.join(root,"backups/archive-offload",batch),path.join(root,"backups/archive-offload",batch+".next")]) {
+      let st;try{st=fs.lstatSync(file)}catch(e){if(e.code==="ENOENT")continue;throw e}
+      if(!st.isDirectory()||st.isSymbolicLink())throw Error("archive_snapshot_path_type_invalid:"+file);
+    }
+  ' "$ROOT" "$batch_id"
+}
+
+assert_snapshot_owner() {
+  node -e '
+    const fs=require("fs"),path=require("path"),root=process.argv[1],batch=process.argv[2];
+    const file=path.join(root,".snapshot-owner.json"),st=fs.lstatSync(file);
+    if(!st.isFile()||st.isSymbolicLink())throw Error("archive_snapshot_owner_type_invalid");
+    const owner=JSON.parse(fs.readFileSync(file,"utf8"));
+    if(owner.schemaVersion!==1||owner.batchId!==batch||owner.kind!=="archive-hardlink-snapshot")throw Error("archive_snapshot_owner_invalid");
+  ' "$snapshot_root" "$batch_id"
+}
+
+assert_owned_paths
 
 has_interactive_workload() {
   for lease_dir in "$INTERACTIVE_DIR" "${GROWTH_INTERACTIVE_FALLBACK_DIR:-${TMPDIR:-/tmp}/mvstudiopro-growth-runtime-interactive-workloads}"; do
@@ -44,7 +70,21 @@ release_collection_lease() {
   if [ "$lock_acquired" = "true" ] && [ "$(cat "$COLLECTION_LOCK" 2>/dev/null || true)" = "$lock_owner" ]; then
     rm -f -- "$COLLECTION_LOCK"
   fi
+  if [ "$mutation_acquired" = "true" ] && mutation_owned; then
+    rm -f -- "$MUTATION_LOCK"
+  fi
+  mutation_acquired=false
   lock_acquired=false
+}
+
+mutation_owned() {
+  node -e 'try { process.exit(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).token === process.argv[2] ? 0 : 1) } catch { process.exit(1) }' "$MUTATION_LOCK" "$lock_owner"
+}
+assert_lease() {
+  if [ "$(cat "$COLLECTION_LOCK" 2>/dev/null || true)" != "$lock_owner" ] || ! mutation_owned; then
+    echo "growth_archive_lease_lost" >&2
+    exit 46
+  fi
 }
 
 acquire_collection_lease() {
@@ -54,21 +94,19 @@ acquire_collection_lease() {
     echo "GROWTH_ARCHIVE_BUSY" >&2
     exit 42
   fi
-  if [ -e "$COLLECTION_LOCK" ]; then
-    if find "$COLLECTION_LOCK" -mmin "+$LOCK_STALE_MINUTES" -print -quit 2>/dev/null | grep -q .; then
-      rm -f -- "$COLLECTION_LOCK"
-    else
-      echo "采集 lease 正在使用，archive offload 主动让行" >&2
-      echo "GROWTH_ARCHIVE_BUSY" >&2
-      exit 43
-    fi
-  fi
+  # Never steal a lease based only on age: a paused owner may still be writing.
   if ! (set -C; umask 077; printf '%s' "$lock_owner" > "$COLLECTION_LOCK") 2>/dev/null; then
     echo "采集 lease 竞争失败，archive offload 主动让行" >&2
     echo "GROWTH_ARCHIVE_BUSY" >&2
     exit 43
   fi
   lock_acquired=true
+  if ! (set -C; umask 077; printf '{"token":"%s","operation":"archive-snapshot"}' "$lock_owner" > "$MUTATION_LOCK") 2>/dev/null; then
+    release_collection_lease
+    echo "GROWTH_ARCHIVE_BUSY" >&2
+    exit 43
+  fi
+  mutation_acquired=true
   if has_interactive_workload; then
     release_collection_lease
     echo "取得 lease 后检测到前台交互任务，archive offload 主动让行" >&2
@@ -80,7 +118,8 @@ acquire_collection_lease() {
       if [ "$(cat "$COLLECTION_LOCK" 2>/dev/null || true)" != "$lock_owner" ]; then
         exit 0
       fi
-      touch "$COLLECTION_LOCK"
+      mutation_owned || exit 0
+      touch "$COLLECTION_LOCK" "$MUTATION_LOCK" || exit 1
     done
   ) >/dev/null 2>&1 &
   heartbeat_pid=$!
@@ -117,37 +156,95 @@ archive_content_bytes() {
   ' "$1"
 }
 
-metadata_fingerprint() {
-  target="$1"
-  if [ ! -d "$target" ]; then
-    printf '%s\n' "missing"
-    return 0
-  fi
+# Content identity excludes mutable timestamps. It is also the exact member inventory.
+content_inventory() {
   node -e '
-    const crypto = require("node:crypto");
-    const fs = require("node:fs");
-    const path = require("node:path");
-    const root = path.resolve(process.argv[1]);
-    const rows = [];
-    function visit(dir, relativeDir = "") {
-      for (const name of fs.readdirSync(dir).sort((a, b) => a.localeCompare(b, "en"))) {
-        const absolute = path.join(dir, name);
-        const relative = path.posix.join(relativeDir, name);
-        const stat = fs.lstatSync(absolute);
-        const type = stat.isDirectory() ? "d" : stat.isFile() ? "f" : stat.isSymbolicLink() ? "l" : "o";
-        rows.push([type, relative, stat.size, Math.trunc(stat.mtimeMs), stat.mode, type === "l" ? fs.readlinkSync(absolute) : ""]);
-        if (type === "d") visit(absolute, relative);
+    const fs=require("fs"),path=require("path"),crypto=require("crypto"),zlib=require("zlib");
+    const root=process.argv[1], report=process.argv[2], rows=[], errors=[], excluded=[], uncovered=[];
+    const hash=b=>crypto.createHash("sha256").update(b).digest("hex");
+    function visit(dir) {
+      for(const name of fs.readdirSync(dir).sort()) {
+        const file=path.join(dir,name),relative=path.relative(root,file).split(path.sep).join("/");
+        const st=fs.lstatSync(file);
+        if(st.isDirectory()){visit(file);continue;}
+        const metadata={path:relative,bytes:st.size,type:st.isFile()?"file":st.isSymbolicLink()?"symlink":"special"};
+        if(/^(kuaishou|toutiao)[-_.]/i.test(name)){excluded.push({...metadata,reason:"user-excluded-platform"});continue;}
+        if(name.startsWith("._")){excluded.push({...metadata,reason:"filesystem-metadata"});continue;}
+        if(!/^(douyin|xiaohongshu|bilibili|weixin_channels|wechat|tiktok)[-_.]/.test(name)) {
+          uncovered.push({...metadata,reason:"unknown-platform-prefix"});continue;
+        }
+        try {
+          if(!st.isFile()||!name.endsWith(".json.gz")||/[\\\t\r\n]/.test(relative)) throw Error("invalid_type_or_name");
+          if(!st.size) throw Error("zero_bytes");
+          const raw=fs.readFileSync(file), value=JSON.parse(zlib.gunzipSync(raw,{maxOutputLength:512*1024*1024}));
+          if(!value||!Array.isArray(value.items)) throw Error("items_not_array");
+          const after=fs.lstatSync(file);
+          if(after.ino!==st.ino||after.size!==st.size||after.mtimeMs!==st.mtimeMs) throw Error("source_changed");
+          rows.push({path:relative,bytes:raw.length,sha256:hash(raw),items:value.items.length});
+        } catch(e) {
+          if(e.code && ["EACCES","EIO","ENOSPC","EMFILE"].includes(e.code)) throw e;
+          errors.push({path:relative,reason:e.message});
+        }
       }
     }
     visit(root);
-    process.stdout.write(`${crypto.createHash("sha256").update(JSON.stringify(rows)).digest("hex")}\n`);
-  ' "$target"
+    const result={dir:path.basename(root),scope:"authorized-platform-files",files:rows,errors,excluded,uncovered};
+    fs.writeFileSync(report,JSON.stringify(result));
+    if(uncovered.length) console.error("GROWTH_ARCHIVE_UNCOVERED "+JSON.stringify({dir:result.dir,files:uncovered}));
+    if(errors.length){console.error("GROWTH_ARCHIVE_ANOMALY "+JSON.stringify(result));process.exit(65);}
+    const identity=rows.map(({path,bytes,sha256})=>[path,bytes,sha256]);
+    console.log(hash(JSON.stringify(identity))+"\t"+rows.reduce((n,f)=>n+f.bytes,0));
+  ' "$1" "$2"
+}
+
+# Link only the content-verified allowlist. Never copy a mixed-platform bucket wholesale.
+link_inventory_files() {
+  node -e '
+    const fs=require("fs"),path=require("path"),crypto=require("crypto");
+    const [sourceRoot,targetRoot,manifest]=process.argv.slice(1);
+    const inventory=JSON.parse(fs.readFileSync(manifest,"utf8"));
+    if(inventory.errors.length) throw Error("archive_snapshot_contains_errors");
+    fs.mkdirSync(targetRoot);
+    for(const row of inventory.files) {
+      const parts=row.path.split("/");
+      if(!row.path || path.isAbsolute(row.path) || /[\\\t\r\n]/.test(row.path) || parts.some(p=>!p||p==="."||p==="..")) throw Error("archive_snapshot_path_invalid");
+      let ancestor=sourceRoot;
+      if(!fs.lstatSync(ancestor).isDirectory()) throw Error("archive_snapshot_root_invalid");
+      for(const part of parts.slice(0,-1)){ancestor=path.join(ancestor,part);if(!fs.lstatSync(ancestor).isDirectory())throw Error("archive_snapshot_parent_invalid");}
+      const source=path.join(sourceRoot,...parts),target=path.join(targetRoot,...parts);
+      const before=fs.lstatSync(source);
+      if(!before.isFile() || before.size!==row.bytes) throw Error("archive_snapshot_source_changed");
+      fs.mkdirSync(path.dirname(target),{recursive:true});
+      fs.linkSync(source,target);
+      const linked=fs.lstatSync(target);
+      if(!linked.isFile() || linked.ino!==before.ino || linked.dev!==before.dev) throw Error("archive_snapshot_source_changed");
+      const raw=fs.readFileSync(target),after=fs.lstatSync(target);
+      if(raw.length!==row.bytes || crypto.createHash("sha256").update(raw).digest("hex")!==row.sha256
+          || after.ino!==linked.ino || after.size!==linked.size || after.mtimeMs!==linked.mtimeMs) throw Error("archive_snapshot_source_changed");
+    }
+  ' "$1" "$2" "$3"
+}
+
+# 失败只能回收本次创建并仍持有标记的临时目录；旧证据一律保留。
+cleanup_failed_snapshot() {
+  [ "${snapshot_next_owned:-false}" = "true" ] || return 0
+  node -e '
+    const fs=require("fs"),path=require("path"),root=process.argv[1],token=process.argv[2];
+    let st;try{st=fs.lstatSync(root)}catch(e){if(e.code==="ENOENT")process.exit(0);throw e}
+    if(!st.isDirectory()||st.isSymbolicLink())throw Error("archive_failed_snapshot_type_changed");
+    const marker=path.join(root,".snapshot-owner.json"),ms=fs.lstatSync(marker);
+    if(!ms.isFile()||ms.isSymbolicLink())throw Error("archive_failed_snapshot_owner_changed");
+    if(JSON.parse(fs.readFileSync(marker,"utf8")).creationToken!==token)throw Error("archive_failed_snapshot_owner_changed");
+    fs.rmSync(root,{recursive:true});
+  ' "$snapshot_next" "$snapshot_creation_token"
 }
 
 prepare_snapshot() {
   acquire_collection_lease
   snapshot_next="$snapshot_root.next"
-  trap 'rm -rf -- "$snapshot_next"; release_collection_lease' EXIT HUP INT TERM
+  snapshot_next_owned=false
+  snapshot_creation_token=$(node -e 'console.log(require("crypto").randomUUID())')
+  trap 'cleanup_failed_snapshot || echo "临时快照所有权变化，保留证据" >&2; release_collection_lease' EXIT HUP INT TERM
   if [ ! -d "$ARCHIVE_ROOT" ]; then
     exit 0
   fi
@@ -155,20 +252,23 @@ prepare_snapshot() {
   mkdir -p "$SNAPSHOT_PARENT"
   # workflow 被强制取消时 always 清理可能来不及执行；下个串行批次只回收旧临时快照，
   # 该目录全部是 hardlink 副本，绝不触碰 ARCHIVE_ROOT 源目录。
-  find "$SNAPSHOT_PARENT" -mindepth 1 -maxdepth 1 -type d -mmin +180 -exec rm -rf -- {} + 2>/dev/null || true
   if [ -f "$snapshot_root/snapshot.tsv" ]; then
     # SSH 在远端原子 mv 完成后断线时，本地可安全复用同一批次，避免覆盖或重复快照。
+    assert_snapshot_owner
     cat "$snapshot_root/snapshot.tsv"
     return 0
   fi
   if [ -e "$snapshot_next" ]; then
-    rm -rf -- "$snapshot_next"
+    echo "archive 临时目录已存在，保留旧证据，拒绝覆盖: $batch_id" >&2
+    exit 65
   fi
   if [ -e "$snapshot_root" ]; then
     echo "archive offload 快照批次已存在，拒绝覆盖: $batch_id" >&2
     exit 65
   fi
   mkdir "$snapshot_next"
+  printf '{"schemaVersion":1,"batchId":"%s","kind":"archive-hardlink-snapshot","creationToken":"%s"}' "$batch_id" "$snapshot_creation_token" > "$snapshot_next/.snapshot-owner.json"
+  snapshot_next_owned=true
 
   all_dirs="$snapshot_next/.all-dirs"
   archive_dirs="$snapshot_next/.archive-dirs"
@@ -183,6 +283,9 @@ prepare_snapshot() {
 
   plan="$snapshot_next/snapshot.tsv"
   : > "$plan"
+  mkdir "$snapshot_next/inventories"
+  : > "$snapshot_next/anomalies.jsonl"
+  : > "$snapshot_next/retired.jsonl"
   while IFS= read -r dir; do
     [ -n "$dir" ] || continue
     validate_dir_name "$dir"
@@ -191,19 +294,46 @@ prepare_snapshot() {
       echo "GROWTH_ARCHIVE_BUSY" >&2
       exit 42
     fi
-    bytes=$(archive_content_bytes "$ARCHIVE_ROOT/$dir")
-    if [ "$bytes" -eq 0 ]; then
-      echo "跳过空归档目录，保留来源与已有冷备: $dir" >&2
+    assert_lease
+    # B站已退役后，剩余平台子集不能发布为新的整桶版本。
+    if [ -e "$ROOT/.growth-archive-retired/$dir.json" ] || [ -L "$ROOT/.growth-archive-retired/$dir.json" ]; then
+      node -e '
+        const fs=require("fs"),path=require("path"),root=process.argv[1],dir=process.argv[2];
+        let state="retired",reason="complete-cold-backup-retained";
+        try {
+          const parent=path.join(root,".growth-archive-retired"),file=path.join(parent,dir+".json");
+          if(!fs.lstatSync(parent).isDirectory()||!fs.lstatSync(file).isFile())throw Error("marker-type");
+          const m=JSON.parse(fs.readFileSync(file,"utf8"));
+          if(m.schemaVersion!==1||m.dir!==dir||m.platform!=="bilibili"||!/^[a-f0-9]{64}$/.test(m.receiptSha256)||m.restore?.dir!==dir)throw Error("marker-contract");
+        } catch(e) {state="retirement-marker-invalid";reason="manual-review-required";}
+        const row=JSON.stringify({dir,state,reason});console.log(row);console.error("GROWTH_ARCHIVE_RETIRED "+row);
+      ' "$ROOT" "$dir" >> "$snapshot_next/retired.jsonl"
       continue
     fi
-    cp -al -- "$ARCHIVE_ROOT/$dir" "$snapshot_next/$dir"
-    fingerprint=$(metadata_fingerprint "$snapshot_next/$dir")
-    bytes=$(archive_content_bytes "$snapshot_next/$dir")
-    [ "$bytes" -gt 0 ] || exit 65
-    printf '%s\t%s\t%s\n' "$dir" "$fingerprint" "${bytes:-0}" >> "$plan"
+    inventory="$snapshot_next/inventories/$dir.json"
+    if identity=$(content_inventory "$ARCHIVE_ROOT/$dir" "$inventory"); then
+      :
+    else
+      status=$?
+      [ "$status" -eq 65 ] || exit "$status"
+      cat "$inventory" >> "$snapshot_next/anomalies.jsonl"
+      printf '\n' >> "$snapshot_next/anomalies.jsonl"
+      continue
+    fi
+    fingerprint=$(printf '%s' "$identity" | cut -f1)
+    bytes=$(printf '%s' "$identity" | cut -f2)
+    if [ "$bytes" -eq 0 ]; then
+      echo "跳过无本次范围内容的归档目录，保留来源与已有冷备: $dir" >&2
+      continue
+    fi
+    link_inventory_files "$ARCHIVE_ROOT/$dir" "$snapshot_next/$dir" "$inventory"
+    assert_lease
+    printf '%s\t%s\t%s\n' "$dir" "$fingerprint" "$bytes" >> "$plan"
+    echo "GROWTH_ARCHIVE_PROGRESS $dir" >&2
   done < "$selected_dirs"
 
   rm -f -- "$all_dirs" "$archive_dirs" "$selected_dirs"
+  assert_lease
   mv "$snapshot_next" "$snapshot_root"
   cat "$snapshot_root/snapshot.tsv"
 }
@@ -211,6 +341,10 @@ prepare_snapshot() {
 stream_bundle() {
   dir="${1:-}"
   validate_dir_name "$dir"
+  # Serialize streaming with snapshot cleanup and cooperative source writers.
+  acquire_collection_lease
+  trap 'release_collection_lease' EXIT HUP INT TERM
+  assert_snapshot_owner
   if has_interactive_workload; then
     echo "前台交互任务运行中，archive 压缩主动让行" >&2
     echo "GROWTH_ARCHIVE_BUSY" >&2
@@ -227,68 +361,54 @@ stream_bundle() {
     exit 65
   fi
 
-  # 压缩只读 lease 内创建的 hardlink 快照；nice/ionice 让实时采集优先使用 CPU 与磁盘。
-  if command -v ionice >/dev/null 2>&1 && ionice -c 3 true >/dev/null 2>&1; then
-    nice -n 19 ionice -c 3 tar -C "$snapshot_root" -cf - -- "$dir" | nice -n 19 gzip -1
-  else
-    nice -n 19 tar -C "$snapshot_root" -cf - -- "$dir" | nice -n 19 gzip -1
-  fi
+  # gzip success must not hide a tar failure. The snapshot is immutable under atomic writers.
+  node -e '
+    const {spawn}=require("child_process"),{pipeline}=require("stream/promises"),{createGzip}=require("zlib");
+    const child=spawn("nice",["-n","19","tar","-C",process.argv[1],"-cf","-","--",process.argv[2]],{stdio:["ignore","pipe","inherit"],env:{...process.env,COPYFILE_DISABLE:"1"}});
+    const exit=new Promise((resolve,reject)=>{child.on("error",reject);child.on("close",code=>code===0?resolve():reject(Error("archive_tar_failed:"+code)));});
+    Promise.all([pipeline(child.stdout,createGzip({level:1}),process.stdout),exit]).catch(e=>{console.error(e.message);child.kill();process.exitCode=1;});
+  ' "$snapshot_root" "$dir"
+
 }
 
 delete_verified_source() {
-  dir="${1:-}"
-  expected_fingerprint="${2:-}"
-  validate_dir_name "$dir"
-  if ! printf '%s\n' "$dir" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$'; then
-    echo "只允许删除旧的日期归档目录: $dir" >&2
-    exit 64
-  fi
-  if [ "${#expected_fingerprint}" -ne 64 ]; then
-    echo "非法源指纹: $dir" >&2
-    exit 64
-  fi
-  case "$expected_fingerprint" in
-    *[!0-9a-f]*) echo "非法源指纹: $dir" >&2; exit 64 ;;
-  esac
-  acquire_collection_lease
-  trap 'release_collection_lease' EXIT HUP INT TERM
-  # 在同一把采集 lease 内复查最新两桶，避免外部检查与实际删除之间出现新桶。
-  newest_two=$(find "$ARCHIVE_ROOT" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; \
-    | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$' | LC_ALL=C sort | tail -n 2) || true
-  if printf '%s\n' "$newest_two" | grep -Fxq -- "$dir"; then
-    echo "归档目录属于当前最新两桶，拒绝删除: $dir" >&2
-    exit 45
-  fi
-  source_dir="$ARCHIVE_ROOT/$dir"
-  if [ ! -e "$source_dir" ]; then
-    rm -rf -- "$snapshot_root/$dir"
-    return 0
-  fi
-  current_fingerprint=$(metadata_fingerprint "$source_dir")
-  if [ "$current_fingerprint" != "$expected_fingerprint" ]; then
-    echo "archive 源目录在快照后发生变化，拒绝删除: $dir" >&2
-    exit 45
-  fi
-  rm -rf -- "$source_dir"
-  rm -rf -- "$snapshot_root/$dir"
+  # Scheduled backups never authorize deletion. A separate reviewed receipt must name
+  # exact Bilibili files, source hashes and a completed restore, not a whole bucket.
+  echo "growth_archive_delete_requires_explicit_file_receipt" >&2
+  exit 64
+}
+
+snapshot_report() {
+  node -e '
+    const fs=require("fs"),path=require("path"),root=process.argv[1];
+    const inventories=Object.fromEntries(fs.readdirSync(path.join(root,"inventories")).sort().map(n=>[n.slice(0,-5),JSON.parse(fs.readFileSync(path.join(root,"inventories",n),"utf8"))]));
+    const retired=(fs.existsSync(path.join(root,"retired.jsonl"))?fs.readFileSync(path.join(root,"retired.jsonl"),"utf8"):"").trim().split(/\r?\n/).filter(Boolean).map(JSON.parse);
+    console.log(JSON.stringify({schemaVersion:1,inventories,retired,anomalies:Object.values(inventories).filter(v=>v.errors.length),
+      uncovered:Object.values(inventories).flatMap(v=>(v.uncovered||[]).map(row=>({dir:v.dir,...row}))),
+      excluded:Object.values(inventories).flatMap(v=>(v.excluded||[]).map(row=>({dir:v.dir,...row}))),fullStoreComplete:false}));
+  ' "$snapshot_root"
 }
 
 cleanup_snapshot() {
   # 这里只清理已验证批次的临时 hardlink；不触碰 archive 源目录。
   acquire_collection_lease
   trap 'release_collection_lease' EXIT HUP INT TERM
+  [ -e "$snapshot_root" ] || return 0
+  assert_owned_paths
+  assert_snapshot_owner
+  assert_lease
   rm -rf -- "$snapshot_root"
 }
 
 cleanup_current_batch() {
-  # batch_id 已经过严格字符校验；目标固定在 current-batches 单一批次下。
-  acquire_collection_lease
-  trap 'release_collection_lease' EXIT HUP INT TERM
-  rm -rf -- "$ROOT/backups/current-batches/$batch_id"
+  # Legacy bypass had no owner checks. Use the dedicated owner-aware CLI instead.
+  echo "growth_current_cleanup_requires_owned_snapshot_cli" >&2
+  exit 64
 }
 
 case "$mode" in
   prepare) prepare_snapshot ;;
+  report) snapshot_report ;;
   bundle) stream_bundle "${3:-}" ;;
   delete) delete_verified_source "${3:-}" "${4:-}" ;;
   cleanup) cleanup_snapshot ;;

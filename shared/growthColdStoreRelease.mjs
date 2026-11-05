@@ -14,7 +14,7 @@ export function growthColdStoreReleaseTag(assetName) {
   );
   if (batch) return `growth-current-batch-${batch[1]}`;
   const archive = assetName.match(
-    /^archive-(\d{4}-\d{2}-\d{2})(?:-\d{2})?\.(?:manifest\.json|tar\.gz(?:\.part-\d+)?)$/
+    /^archive-(\d{4}-\d{2}-\d{2})(?:-\d{2})?\.(?:manifest\.json|latest\.json|tar\.gz(?:\.part-\d+)?)$/
   );
   if (archive) return `growth-archive-${archive[1]}`;
   return LEGACY_GROWTH_RELEASE;
@@ -37,9 +37,9 @@ export function growthColdStoreAssetUrls(baseUrl, assetName) {
   ];
 }
 
-export async function fetchGrowthColdStoreAsset(baseUrl, assetName, options) {
+export async function fetchGrowthColdStoreAsset(baseUrl, assetName, options, fetchImpl = fetch) {
   for (const url of growthColdStoreAssetUrls(baseUrl, assetName)) {
-    const response = await fetch(url, options);
+    const response = await fetchImpl(url, options);
     // 只有明确不存在才读旧仓；鉴权/限流/网络故障不能伪装成旧数据。
     if (response.status !== 404) return response;
   }
