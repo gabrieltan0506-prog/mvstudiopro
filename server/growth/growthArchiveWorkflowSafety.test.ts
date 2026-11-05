@@ -152,3 +152,112 @@ describe("归档阶段有界执行", () => {
     expect(text).toContain("cancel-in-progress: false");
   });
 });
+
+describe("实际删源步骤的恢复与循环保护", () => {
+  it.each(WORKFLOWS)(
+    "%s 恢复失败零删源，SSH读取stdin也不漏掉后续目录",
+    async relative => {
+      const root = await fs.mkdtemp(
+        path.join(os.tmpdir(), "growth-restore-delete-guard-")
+      );
+      try {
+        const archive = path.join(root, "archive"),
+          bin = path.join(root, "bin"),
+          calls = path.join(root, "calls");
+        await fs.mkdir(archive);
+        await fs.mkdir(bin);
+        const dirs = ["2026-09-01-00", "2026-09-01-01"],
+          sha = "a".repeat(64);
+        await fs.writeFile(path.join(archive, "batch-id.txt"), "123-1");
+        await fs.writeFile(path.join(archive, "DELETE_READY"), "fixture");
+        await fs.writeFile(
+          path.join(archive, "archives.tsv"),
+          dirs
+            .map(d =>
+              [d, `archive-${d}.tar.gz`, 100, sha, sha, 100, 1].join("\t")
+            )
+            .join("\n") + "\n"
+        );
+        await fs.writeFile(
+          path.join(archive, "assets.tsv"),
+          dirs
+            .map(d =>
+              [
+                d,
+                `archive-${d}.tar.gz`,
+                100,
+                sha,
+                `archive-${d}.tar.gz`,
+                0,
+              ].join("\t")
+            )
+            .join("\n") + "\n"
+        );
+        await fs.writeFile(
+          path.join(archive, "manifest-assets.tsv"),
+          dirs
+            .map(d => [`archive-${d}.manifest.json`, 100, sha].join("\t"))
+            .join("\n") + "\n"
+        );
+        await fs.writeFile(
+          path.join(archive, "verified-assets.tsv"),
+          dirs
+            .flatMap(d =>
+              [`.tar.gz`, `.manifest.json`].map(ext =>
+                [`archive-${d}${ext}`, 100, sha].join("\t")
+              )
+            )
+            .join("\n") + "\n"
+        );
+        await fs.writeFile(
+          path.join(bin, "flyctl"),
+          `#!/bin/sh
+printf '%s\\n' "$*" >> "$TEST_CALLS"
+cat >/dev/null
+case "$*" in *growthArchiveColdRestoreCli*) if [ "$TEST_RESTORE_FAIL" = 1 ]; then echo growth_archive_restore_empty:fixture >&2; exit 73; fi ;; esac
+`,
+          { mode: 0o755 }
+        );
+        const text = await fs.readFile(path.resolve(relative), "utf8");
+        const step = text.match(
+          /- name: Delete only release-verified unchanged(?: archive)? shards from Fly[\s\S]*?(?=\n {6}- name:)/
+        )![0];
+        const script = step
+          .split("        run: |\n")[1]
+          .replace(/^ {10}/gm, "")
+          .replaceAll("/tmp/growth-archive-offload", archive)
+          .replaceAll("/tmp/growth-backup", path.join(root, "backup"));
+        const env = {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          FLY_MACHINE_ID: "fake-machine",
+          TEST_CALLS: calls,
+        };
+        const failed = spawnSync("bash", ["-eo", "pipefail", "-c", script], {
+          encoding: "utf8",
+          env: { ...env, TEST_RESTORE_FAIL: "1" },
+        });
+        expect(failed.status).toBe(73);
+        expect(failed.stderr).toContain("growth_archive_restore_empty");
+        expect(await fs.readFile(calls, "utf8")).not.toContain(
+          "sh -s -- delete"
+        );
+        await fs.writeFile(calls, "");
+        const normal = spawnSync("bash", ["-eo", "pipefail", "-c", script], {
+          encoding: "utf8",
+          env: { ...env, TEST_RESTORE_FAIL: "0" },
+        });
+        expect(normal.status, normal.stderr).toBe(0);
+        const all = (await fs.readFile(calls, "utf8")).split("\n");
+        expect(
+          all.filter(line => line.includes("growthArchiveColdRestoreCli"))
+        ).toHaveLength(2);
+        expect(
+          all.filter(line => line.includes("sh -s -- delete"))
+        ).toHaveLength(2);
+      } finally {
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    }
+  );
+});

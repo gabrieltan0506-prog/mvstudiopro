@@ -323,7 +323,7 @@ describe("真实工作流上传函数离线执行", () => {
   it.each([
     ".github/workflows/growth-backup.yml",
     ".github/workflows/growth-archive-offload.yml",
-  ])("%s 在旧仓满 1000 附件时仍向新仓上传并回读", async workflow => {
+  ])("%s 归档转共用发布器，当前批次仍向新仓上传并回读", async workflow => {
     const root = await temp(),
       bin = path.join(root, "bin");
     await fs.mkdir(bin);
@@ -337,9 +337,12 @@ describe("真实工作流上传函数离线执行", () => {
       )
     );
     expect(functions.length).toBe(
-      workflow.endsWith("growth-backup.yml") ? 2 : 1
+      workflow.endsWith("growth-backup.yml") ? 1 : 0
     );
-    // 仅测试夹具实现 gh；实际执行工作流内的 shell 函数，不调用远端、不接触凭证。
+    expect(text).toContain(
+      "node scripts/growth-archive-publish.mjs /tmp/growth-archive-offload"
+    );
+    // 归档发布的容量/冲突测试由共用发布器行为测试覆盖；此处保留当前批次函数回归。
     const gh = `#!${process.execPath}
 const fs=require('fs'),path=require('path'),a=process.argv.slice(2),root=process.env.TEST_RELEASE_ROOT;
 fs.appendFileSync(path.join(root,'calls.jsonl'),JSON.stringify(a)+'\\n');
@@ -387,9 +390,12 @@ process.exit(23);`;
         )
       ).toBe("真实上传与回读正文");
     }
-    const calls = (await fs.readFile(path.join(root, "calls.jsonl"), "utf8"))
+    const calls = (
+      await fs.readFile(path.join(root, "calls.jsonl"), "utf8").catch(() => "")
+    )
       .trim()
       .split("\n")
+      .filter(Boolean)
       .map(line => JSON.parse(line) as string[]);
     expect(
       calls
