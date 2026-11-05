@@ -95,6 +95,28 @@ validate_dir_name() {
   esac
 }
 
+# du 的目录块大小不能证明有备份内容；只接受正式恢复器可读取的普通文件。
+# 返回逻辑字节数，空目录（含仅有子目录）返回 0；链接/特殊文件直接拒绝。
+archive_content_bytes() {
+  node -e '
+    const fs = require("node:fs"), path = require("node:path");
+    let bytes = 0, jsonFiles = 0;
+    function visit(dir) {
+      for (const name of fs.readdirSync(dir)) {
+        const file = path.join(dir, name), st = fs.lstatSync(file);
+        if (st.isDirectory()) visit(file);
+        else if (st.isFile()) {
+          if (!name.endsWith(".json.gz") || st.size === 0) throw new Error(`archive_content_invalid:${file}`);
+          bytes += st.size; jsonFiles++;
+        } else throw new Error(`archive_content_type_invalid:${file}`);
+      }
+    }
+    visit(process.argv[1]);
+    if (!Number.isSafeInteger(bytes)) throw new Error("archive_content_size_invalid");
+    console.log(jsonFiles ? bytes : 0);
+  ' "$1"
+}
+
 metadata_fingerprint() {
   target="$1"
   if [ ! -d "$target" ]; then
@@ -156,7 +178,7 @@ prepare_snapshot() {
   # 绝不再把仍由采集写入的活动目录拿去上传；否则上传完成后的源指纹必然变化。
   grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$' "$all_dirs" | LC_ALL=C sort > "$archive_dirs" || true
   awk '{ lines[NR]=$0 } END { for (i=1; i<=NR-2; i++) print lines[i] }' "$archive_dirs" > "$selected_dirs"
-  grep -v -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$' "$all_dirs" >> "$selected_dirs" || true
+  # 非日期目录不在正式冷读恢复契约中，不进入自动发布/删源链。
   LC_ALL=C sort -u "$selected_dirs" -o "$selected_dirs"
 
   plan="$snapshot_next/snapshot.tsv"
@@ -169,9 +191,15 @@ prepare_snapshot() {
       echo "GROWTH_ARCHIVE_BUSY" >&2
       exit 42
     fi
+    bytes=$(archive_content_bytes "$ARCHIVE_ROOT/$dir")
+    if [ "$bytes" -eq 0 ]; then
+      echo "跳过空归档目录，保留来源与已有冷备: $dir" >&2
+      continue
+    fi
     cp -al -- "$ARCHIVE_ROOT/$dir" "$snapshot_next/$dir"
     fingerprint=$(metadata_fingerprint "$snapshot_next/$dir")
-    bytes=$(du -sk "$snapshot_next/$dir" 2>/dev/null | awk '{printf "%.0f\n", $1 * 1024}')
+    bytes=$(archive_content_bytes "$snapshot_next/$dir")
+    [ "$bytes" -gt 0 ] || exit 65
     printf '%s\t%s\t%s\n' "$dir" "$fingerprint" "${bytes:-0}" >> "$plan"
   done < "$selected_dirs"
 
@@ -192,6 +220,11 @@ stream_bundle() {
   if [ ! -d "$source_dir" ]; then
     echo "archive 快照目录不存在: $dir" >&2
     exit 66
+  fi
+  bytes=$(archive_content_bytes "$source_dir")
+  if [ "$bytes" -eq 0 ]; then
+    echo "archive_content_empty:$dir" >&2
+    exit 65
   fi
 
   # 压缩只读 lease 内创建的 hardlink 快照；nice/ionice 让实时采集优先使用 CPU 与磁盘。

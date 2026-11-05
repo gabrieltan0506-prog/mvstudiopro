@@ -1,0 +1,30 @@
+name: Growth Archive Safety
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/growth-backup.yml'
+      - '.github/workflows/growth-archive-offload.yml'
+      - '.github/workflows/pr-growth-archive-safety.yml'
+      - 'scripts/growth-archive-*'
+      - 'scripts/validate-growth-archive*'
+      - 'shared/growthColdStoreRelease.mjs'
+permissions:
+  contents: read
+jobs:
+  archive-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 隔离验证候选、内容、同名冲突与发布恢复
+        run: |
+          node --test scripts/growth-archive-publication.test.mjs
+          python3 scripts/validate-growth-archive.test.py
+          node --check scripts/growth-archive-publish.mjs
+          sh -n scripts/growth-archive-offload-remote.sh

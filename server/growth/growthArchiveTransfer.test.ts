@@ -32,7 +32,7 @@ function run(
   return new Promise<{ code: number | null; stdout: Buffer; stderr: string }>(
     (resolve, reject) => {
       const child = spawn(command, args, {
-        env: { ...process.env, ...options.env },
+        env: { ...process.env, COPYFILE_DISABLE: "1", ...options.env },
         stdio: "pipe",
       });
       const stdout: Buffer[] = [];
@@ -187,20 +187,37 @@ describe("归档传输实际子进程保护", () => {
     const archive = path.join(root, "archive");
     for (const dir of ["2026-08-01-00", "2026-08-02-00", "2026-08-03-00"]) {
       await fs.mkdir(path.join(archive, dir), { recursive: true });
-      await fs.writeFile(path.join(archive, dir, "record.json"), dir);
+      await fs.writeFile(
+        path.join(archive, dir, "record.json.gz"),
+        gzipSync(JSON.stringify({ items: [{ id: dir }] }))
+      );
     }
     const env = { GROWTH_STORE_DIR: root };
-    const prepared = await run("sh", [remote, "prepare", "test-batch"], { env });
+    const prepared = await run("sh", [remote, "prepare", "test-batch"], {
+      env,
+    });
     expect(prepared.code, prepared.stderr).toBe(0);
     const fingerprint = prepared.stdout.toString().trim().split("\t")[1];
     expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
-    const recent = await run("sh", [remote, "delete", "test-batch", "2026-08-03-00", fingerprint], { env });
+    const recent = await run(
+      "sh",
+      [remote, "delete", "test-batch", "2026-08-03-00", fingerprint],
+      { env }
+    );
     expect(recent.code).not.toBe(0);
     expect(recent.stderr).toContain("最新两桶");
-    await expect(fs.stat(path.join(archive, "2026-08-03-00"))).resolves.toBeTruthy();
-    const invalid = await run("sh", [remote, "delete", "test-batch", "platform-current", fingerprint], { env });
+    await expect(
+      fs.stat(path.join(archive, "2026-08-03-00"))
+    ).resolves.toBeTruthy();
+    const invalid = await run(
+      "sh",
+      [remote, "delete", "test-batch", "platform-current", fingerprint],
+      { env }
+    );
     expect(invalid.code).not.toBe(0);
-    await expect(fs.stat(path.join(archive, "2026-08-01-00"))).resolves.toBeTruthy();
+    await expect(
+      fs.stat(path.join(archive, "2026-08-01-00"))
+    ).resolves.toBeTruthy();
   });
 });
 
@@ -228,10 +245,10 @@ async function workflowDownload(name: string, mode: string) {
   const backup = path.join(dir, "backup");
   const bin = path.join(dir, "bin");
   await Promise.all([fs.mkdir(archive), fs.mkdir(backup), fs.mkdir(bin)]);
-  await fs.writeFile(path.join(archive, "batch-id.txt"), "test-batch");
+  await fs.writeFile(path.join(archive, "batch-id.txt"), "123-1");
   await fs.writeFile(
     path.join(archive, "selected.tsv"),
-    `2026-09-01-00\t${"a".repeat(64)}\t100\n2026-09-01-01\t${"b".repeat(64)}\t100\n`
+    `2026-09-01-00\t${"a".repeat(64)}\t${gzipSync('{"items":[{"id":"test-item"}]}').length}\n2026-09-01-01\t${"b".repeat(64)}\t${gzipSync('{"items":[{"id":"test-item"}]}').length}\n`
   );
   await executable(
     path.join(bin, "flyctl"),
@@ -377,7 +394,10 @@ describe.each(workflows)("%s 发布凭证闭环", name => {
     await executable(
       path.join(bin, "gh"),
       `const fs=require('node:fs'),path=require('node:path');const args=process.argv.slice(2),root=${JSON.stringify(release)};
-if(args[1]==='upload'){const [file,name]=args[3].split('#');fs.copyFileSync(file,path.join(root,name));}
+if(args[0]==='repo'){console.log(JSON.stringify({nameWithOwner:'test/repo'}));}
+else if(args[0]==='api'){console.log('[]');}
+else if(args[1]==='create'){}
+else if(args[1]==='upload'){if(args.includes('--clobber'))process.exit(30);const [file,name]=args[3].split('#');if(fs.existsSync(path.join(root,name)))process.exit(31);fs.copyFileSync(file,path.join(root,name));}
 else if(args[1]==='download'){fs.copyFileSync(path.join(root,args[args.indexOf('-p')+1]),path.join(args[args.indexOf('-D')+1],args[args.indexOf('-p')+1]));}
 else if(args[1]!=='view'){process.exit(1);}`
     );
@@ -398,7 +418,9 @@ else if(args[1]!=='view'){process.exit(1);}`
       .replaceAll("sleep ", `${process.execPath} ${path.join(bin, "sleep")} `)
       .replaceAll("/tmp/growth-archive-offload", result.archive)
       .replaceAll("/tmp/growth-backup", path.join(result.dir, "backup"));
-    const published = await run("bash", ["-eo", "pipefail", "-c", script]);
+    const published = await run("bash", ["-eo", "pipefail", "-c", script], {
+      env: { PATH: `${bin}:${process.env.PATH}` },
+    });
     expect(published.code, published.stderr + published.stdout.toString()).toBe(
       0
     );

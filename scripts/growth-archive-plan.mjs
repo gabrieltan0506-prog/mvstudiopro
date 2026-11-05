@@ -38,6 +38,9 @@ export function planArchiveBatch(snapshot, assets, manifests) {
       extra !== undefined
     )
       throw new Error("归档快照清单非法，停止规划");
+    // 新快照输出实际文件字节；旧空快照也不得进入新上传或复用删源队列。
+    if (Number(bytes) === 0 || fingerprint === createHash("sha256").update("[]").digest("hex"))
+      continue;
     let verified = false;
     let reclaimRow = null;
     try {
