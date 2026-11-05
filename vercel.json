@@ -3,7 +3,8 @@
   "git": {
     "deploymentEnabled": {
       "feat/fly-dual-machine-1005": false,
-      "codex/static-video-offload-1105": false
+      "codex/static-video-offload-1105": false,
+      "fix/vercel-video-readiness-1105": false
     }
   },
   "github": {

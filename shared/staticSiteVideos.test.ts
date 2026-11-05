@@ -4,9 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { staticVideoReceipt, validateStaticVideoReceipt } from './staticSiteVideos';
-import { excludeVerifiedVideoCopies, verifyVideoOrigin } from '../scripts/vite-static-site-video-offload';
+import { excludeVerifiedVideoCopies, verifyVideoOrigin, waitForVideoOrigins, VIDEO_READINESS_TIMEOUT_MS } from '../scripts/vite-static-site-video-offload';
 const dirs: string[] = [];
-afterEach(async () => { vi.unstubAllGlobals(); for (const p of dirs.splice(0)) await fs.rm(p, { recursive: true }); });
+afterEach(async () => { vi.useRealTimers(); vi.unstubAllGlobals(); for (const p of dirs.splice(0)) await fs.rm(p, { recursive: true }); });
 async function fixture() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'static-video-test-')); dirs.push(dir);
   const source = path.join(dir, 'source'), output = path.join(dir, 'output');
@@ -79,4 +79,69 @@ it('退役片不再出现在博客展示或代理路由，用户工具入口保�
     expect(await fs.readFile(path.join('content/blog',name),'utf8')).not.toMatch(/<video\b|<source[^>]+\.mp4/);
   }
   expect(await fs.readFile('client/src/components/HomePhotoVideoUpscale.tsx','utf8')).toContain('<video');
+});
+
+
+it('后端已就绪直接放行，不固定等满窗口', async () => {
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','Date']});
+  const check = vi.fn(async () => {});
+  await waitForVideoOrigins(staticVideoReceipt.assets, undefined, {check});
+  expect(check).toHaveBeenCalledTimes(3); expect(vi.getTimerCount()).toBe(0);
+});
+it('首次迁移旧SPA返回200，五分钟后全部真实元数据就绪才能通过', async () => {
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','Date']}); const start=Date.now();
+  vi.stubGlobal('fetch',vi.fn(async (url: string) => {
+    const a=staticVideoReceipt.assets.find(a=>url.endsWith(a.sha256))!;
+    if(Date.now()-start<5*60_000) return new Response(null,{headers:{'content-type':'text/html','content-length':'11789'}});
+    return new Response(null,{headers:{'content-type':'video/mp4','content-length':String(a.bytes),
+      'x-static-video-sha256':a.sha256,'x-static-video-generation':a.generation,'accept-ranges':'bytes'}});
+  }));
+  let finished=false;
+  const done=waitForVideoOrigins(staticVideoReceipt.assets,undefined,{log:()=>{}}).then(()=>{finished=true});
+  await vi.advanceTimersByTimeAsync(4*60_000); expect(finished).toBe(false);
+  await vi.advanceTimersByTimeAsync(60_000); await done; expect(finished).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it('同轮验证全部三片，不能拿过期成功结果拼凑通过', async () => {
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','Date']}); let round=0;
+  const check=vi.fn(async (a: typeof staticVideoReceipt.assets[number])=>{
+    if(a===staticVideoReceipt.assets[0]) round++;
+    if((round===1&&a===staticVideoReceipt.assets[1])||(round===2&&a===staticVideoReceipt.assets[0])) throw Error('not-ready');
+  });
+  let finished=false;const done=waitForVideoOrigins(staticVideoReceipt.assets,undefined,{check,intervalMs:10,log:()=>{}}).then(()=>{finished=true});
+  await vi.advanceTimersByTimeAsync(10);expect(finished).toBe(false);
+  await vi.advanceTimersByTimeAsync(10);await done;expect(round).toBe(3);expect(check).toHaveBeenCalledTimes(9);
+});
+it('持续版本错误到期失败，不能删除任何源或输出', async () => {
+  const f=await fixture();vi.useFakeTimers({toFake:['setTimeout','clearTimeout','Date']});
+  const waiting=excludeVerifiedVideoCopies(f.source,f.output,[f.asset],()=>waitForVideoOrigins([f.asset],undefined,{
+    timeoutMs:25,intervalMs:10,check:async()=>{throw Error('wrong-generation')},log:()=>{},
+  }));
+  const rejected=expect(waiting).rejects.toThrow('视频回源等待超时');
+  // 文件读取使用真实I/O；先让校验结束、等待计时器确实建好。
+  while(vi.getTimerCount()===0) await new Promise(resolve=>setImmediate(resolve));
+  await vi.advanceTimersByTimeAsync(25);await rejected;
+  expect((await fs.stat(f.source+f.asset.path)).size).toBe(f.asset.bytes);
+  expect((await fs.stat(f.output+f.asset.path)).size).toBe(f.asset.bytes);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it('挂起请求受全局截止保护并取消，不在每片上重置窗口', async () => {
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','Date']});const signals:AbortSignal[]=[];
+  const waiting=waitForVideoOrigins(staticVideoReceipt.assets,undefined,{timeoutMs:25,check:async(_a,_o,signal)=>{
+    signals.push(signal!);await new Promise<void>((_resolve,reject)=>signal!.addEventListener('abort',()=>reject(Error('aborted')),{once:true}));
+  },log:()=>{}});
+  const rejected=expect(waiting).rejects.toThrow('等待超时');await vi.advanceTimersByTimeAsync(25);await rejected;
+  expect(signals).toHaveLength(3);expect(signals.every(s=>s.aborted)).toBe(true);expect(vi.getTimerCount()).toBe(0);
+});
+it('网络错误和404恢复后可继续，外层检查时限覆盖媒体等待与构建', async () => {
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','Date']});let calls=0;
+  const waiting=waitForVideoOrigins([staticVideoReceipt.assets[0]],undefined,{intervalMs:10,check:async()=>{if(++calls<3)throw Error(calls===1?'network':'404')},log:()=>{}});
+  await vi.advanceTimersByTimeAsync(20);await waiting;expect(calls).toBe(3);
+  const workflow=await fs.readFile('.github/workflows/fly-deploy.yml','utf8');
+  const frontend=workflow.split('  frontend:')[1];
+  const jobMinutes=Number(frontend.match(/timeout-minutes: (\d+)/)![1]);
+  const polls=Number(frontend.match(/seq 1 (\d+)/)![1]);
+  const sleepSeconds=Number(frontend.match(/sleep (\d+)/)![1]);
+  expect(polls*sleepSeconds*1000).toBeGreaterThan(VIDEO_READINESS_TIMEOUT_MS+5*60_000);
+  expect(jobMinutes*60).toBeGreaterThan(polls*sleepSeconds+60);
 });
