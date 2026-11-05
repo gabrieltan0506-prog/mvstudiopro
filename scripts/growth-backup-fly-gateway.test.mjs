@@ -41,3 +41,16 @@ test('最小实跑限定已筛选单桶，不能带入最新桶或路径穿越',
  assert.throws(()=>selectProbeSnapshot(snapshot,'../data'),/invalid/);
 });
 test('工作流env映射没有重复键',()=>{for(const name of ['growth-backup','growth-archive-offload']){const lines=fs.readFileSync(new URL(`../.github/workflows/${name}.yml`,import.meta.url),'utf8').split('\n');for(let i=0;i<lines.length;i++){const match=/^(\s*)env:\s*$/.exec(lines[i]);if(!match)continue;const keys=new Set();for(let j=i+1;j<lines.length;j++){if(!lines[j].trim())continue;const indentation=lines[j].match(/^\s*/)[0].length;if(indentation<=match[1].length)break;const key=/^\s*([A-Z_][A-Z_0-9]*):/.exec(lines[j])?.[1];if(key){assert(!keys.has(key),`${name}: duplicate ${key}`);keys.add(key);}}}}});
+test('manifest跨域下载不携带GitHub凭证且校验原始字节',async()=>{
+ const raw=Buffer.from('{"probe":"synthetic"}'),calls=[];
+ const fetchImpl=async(url,init)=>{calls.push(url);
+  if(url===`https://api.github.com/repos/${repository}`)return Response.json({full_name:repository,private:true});
+  if(url.includes('/releases/tags/'))return Response.json({id:1,tag_name:'growth-archive-test'});
+  if(url.includes('/assets?'))return Response.json([{id:2,name:'archive-2026-10-01-00.manifest.json',size:raw.length,digest:`sha256:${hash(raw)}`}]);
+  if(url.endsWith('/assets/2'))return new Response(null,{status:302,headers:{location:'https://storage.example/probe'}});
+  assert.equal(url,'https://storage.example/probe');assert.equal(init.headers.Authorization,undefined);return new Response(raw);
+ };
+ const result=await executeBackupRequest({repository,operation:'manifests',tag:'growth-archive-test'},{env,fetchImpl});
+ assert.equal(Buffer.from(result[0].base64,'base64').toString(),raw.toString());assert.equal(calls.length,5);
+});
+test('release标签metadata读取保持协议兼容',async()=>{const f=fixture();const result=await executeBackupRequest({repository,operation:'api',endpoint:`repos/${repository}/releases/tags/growth-archive-test`},{env,...f});assert.equal(result.id,1);});
