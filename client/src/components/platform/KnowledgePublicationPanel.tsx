@@ -41,8 +41,10 @@ export default function KnowledgePublicationPanel({
   waitForImages,
   onPagination,
   onSupplement,
+  compact = false,
 }: {
   doc: EditableLayout;
+  compact?: boolean;
   commit: (doc: EditableLayout) => Promise<Saved>;
   onChange: (doc: EditableLayout) => void;
   onBusy: (value: boolean) => void;
@@ -482,7 +484,7 @@ export default function KnowledgePublicationPanel({
   return (
     <section
       aria-label="图文知识手册自动审校与排版"
-      className="space-y-4 rounded-2xl border border-[#b9c4ad]/40 bg-[#182721] p-5 text-[#f5f0e5]"
+      className={`space-y-4 rounded-2xl border border-[#b9c4ad]/40 bg-[#182721] ${compact ? "p-3" : "p-5"} text-[#f5f0e5]`}
     >
       <div>
         <h4 className="text-lg font-semibold">创作顾问 · 图文知识手册</h4>
@@ -490,6 +492,8 @@ export default function KnowledgePublicationPanel({
           整套 {pub.source.pages.length} 章内容、{pub.source.pages.filter(p => p.imageUrl).length} 张原图；按原顺序处理全部正文，手册按内容自动分页。
         </p>
       </div>
+      <details open={!compact} className="space-y-3">
+      <summary className="cursor-pointer text-sm text-[#c0cabb]">手册与阅读设置</summary>
       <p className="text-sm text-[#c0cabb]">需要重新编排时，使用下方“让顾问重新排版并导出 PDF”。顾问决定整册章节顺序、配色、表格、边框和纹样，原图与完整正文保留。</p>
       <label className="block text-sm">
         阅读模板
@@ -511,6 +515,7 @@ export default function KnowledgePublicationPanel({
         {selectedTemplate ? "已应用所选版式" : "已按内容匹配版式"}
         {!pub.infographicTemplateId && review.pages[index]?.reading?.templateReason ? ` · ${review.pages[index].reading!.templateReason}` : ""}
       </p>}
+      </details>
       {message && (
         <p role="status" className="text-sm text-[#d6e4bd]">
           {message}

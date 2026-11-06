@@ -37,14 +37,16 @@ export type EditableLayoutStudioHandle = {
   attachImage: (originalJobId: string, replacementJobId: string, resume: boolean) => Promise<void>;
 };
 /** 按账号恢复，条件写入防止旧会话覆盖新稿。 */
-const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null; onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void }>(function EditableLayoutStudio({
+const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null; compact?: boolean; onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void }>(function EditableLayoutStudio({
   owner,
   source,
   onPagination,
   onSupplement,
+  compact = false,
 }: {
   owner: string;
   source: LayoutSource | null;
+  compact?: boolean;
   onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
 }, ref) {
   const key = `mvstudiopro.editableLayout.v1.${owner}`;
@@ -407,8 +409,8 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-bold text-[#edd4ac]">排版与导出</h3>
-          <p className="text-xs text-gray-400">
+          <h3 className="font-bold text-[#edd4ac]">{compact ? "创作顾问与排版" : "排版与导出"}</h3>
+          <p className={compact ? "hidden" : "text-xs text-gray-400"}>
             图文知识手册 · 自动整理与排版 · 云端保存恢复 · HTML / PDF
           </p>
         </div>
@@ -421,6 +423,8 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       {open && (
         <div className="mt-4 space-y-4">
           {!ready && <p role="status">正在读取稿件…</p>}
+          <details open={!compact}>
+            <summary className="mb-2 cursor-pointer text-sm text-[#edd4ac]">稿件保存与备份{state.dirty ? " · 有修改尚未保存云端" : ""}</summary>
           <div className="flex flex-wrap gap-2">
             <button
               className={button}
@@ -462,6 +466,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
               {state.dirty ? "有修改尚未保存云端" : "无未保存修改"}
             </span>
           </div>
+          </details>
           {message && (
             <p role="status" className="text-sm text-emerald-200">
               {message}
@@ -497,7 +502,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
                   ))}
                 </select>
               </label>
-              {doc.publication ? <KnowledgePublicationPanel key={doc.id} doc={doc} commit={commitPublication}
+              {doc.publication ? <KnowledgePublicationPanel compact={compact} key={doc.id} doc={doc} commit={commitPublication}
                 onChange={next=>update(next)} onPagination={onPagination} onSupplement={onSupplement} onBusy={value=>{locked.current=value;setBusy(value);}} autoStart={doc.id===autoPublicationId} autoStartToken={autoStartToken}
                 preauthorizedCredits={synchronizedRun?.documentId === doc.id ? synchronizedRun.authorizedCredits : undefined}
                 waitForImages={synchronizedRun?.documentId === doc.id ? synchronizedRun.waitForImages : undefined}/>:<>

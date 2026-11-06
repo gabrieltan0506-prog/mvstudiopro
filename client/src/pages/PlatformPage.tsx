@@ -1,3 +1,4 @@
+import { KnowledgeAuthoringRow, StableStudioDock } from "@/components/platform/KnowledgeAuthoringDock";
 import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
 import { knowledgeCardFullManuscript, knowledgeCardInputKey, knowledgeCardInputFingerprint } from "@shared/knowledgeCardSourceIdentity";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
@@ -3085,6 +3086,7 @@ export default function PlatformPage() {
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
   /** 每条选题：用户上传的人像参考图（GCS 直链）→ 生成封面时换主角。key=sceneId；可覆盖全局人像 */
   const layoutStudioRef = useRef<EditableLayoutStudioHandle>(null);
+  const [knowledgeAdvisorDock, setKnowledgeAdvisorDock] = useState<HTMLElement | null>(null);
   const [layoutSource, setLayoutSource] = useState<LayoutSource | null>(null);
   const [customNotePagination, setCustomNotePagination] = useState<(KnowledgePublicationPagination & { sourceId: string; inputKey: string }) | null>(null);
   const [viralGraphicPagesBusyCount, setViralGraphicPagesBusyCount] = useState(0);
@@ -13236,12 +13238,12 @@ export default function PlatformPage() {
           </div>
         ) : null}
 
-        {workbenchUserKey && <EditableLayoutStudio ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} onSupplement={async(supplementOf,text)=>{await handleGenerateCustomNote({text,kind:"single_page_knowledge_card",supplementOf});}} onPagination={(doc, pagination) => {
+        {workbenchUserKey && <StableStudioDock target={knowledgeAdvisorDock}><EditableLayoutStudio compact={Boolean(knowledgeAdvisorDock)} ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} onSupplement={async(supplementOf,text)=>{await handleGenerateCustomNote({text,kind:"single_page_knowledge_card",supplementOf});}} onPagination={(doc, pagination) => {
           if (doc.sourceId !== knowledgeCardLayoutSourceIdRef.current) return;
           if (!pagination) { setCustomNotePagination(null); return; }
           if (!doc.publication?.inputFingerprint || paginationFingerprint?.key !== customNotePaginationKey || doc.publication.inputFingerprint !== paginationFingerprint.hash) return;
           setCustomNotePagination({ ...pagination, sourceId: doc.sourceId, inputKey: paginationFingerprint.key });
-        }} />}
+        }} /></StableStudioDock>}
 
         {/* 三模式分流：仅渲染 active Workbench；state/hooks 留在 PlatformPage */}
         <section
@@ -15416,7 +15418,9 @@ export default function PlatformPage() {
                 )}
                 <span className="text-xs text-[#c9c0e6]/60">配图张数不等于最终 PDF 页数；文字说明会按内容另行分页。整理前展示费用</span>
               </div>}
+              <KnowledgeAuthoringRow enabled={customNoteKind === "single_page_knowledge_card" && Boolean(workbenchUserKey)} onDock={setKnowledgeAdvisorDock}>
               <textarea
+                aria-label="创作正文"
                 className="w-full min-h-[140px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#ff4fb8]/60 focus:outline-none focus:ring-1 focus:ring-[#ff4fb8]/30 transition"
                 placeholder={
                   customNoteKind === "optimize_custom_copy"
@@ -15438,6 +15442,7 @@ export default function PlatformPage() {
                 // 派生中文本框只读：此刻框里是完整版，编辑会被派生结果覆盖（审查 P1）
                 disabled={customNoteBusy || customNoteLevelSwitching}
               />
+              </KnowledgeAuthoringRow>
               {customNoteKind === "single_page_knowledge_card" ? (
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <KnowledgeCardFilePicker
