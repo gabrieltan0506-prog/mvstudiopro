@@ -27,3 +27,39 @@ it('修订不能替换权威原提纲或改变请求身份',async()=>{
  f.doc.publication!.presentationPlan={...f.plan,title:'冒充顾问'} as any;
  await expect(loadVerifiedKnowledgePresentation(7,f.doc,async()=>({plan:f.plan}))).rejects.toThrow('尚未确认');
 });
+
+it('提前规划绑定完整原稿及稳定任务身份，图片就绪和审校说明不触发重买',async()=>{
+ const f=make(),pub=f.doc.publication!;
+ const {knowledgePresentationSourceManuscript}=await import('../../shared/knowledgePresentation');
+ pub.source.pages[0].imageJobId='stable-image-task';pub.source.pages[0].imageUrl='';
+ pub.review=undefined;pub.confirmedManuscript=undefined;
+ pub.presentationRequest={...pub.presentationRequest!,basis:'source',manuscript:knowledgePresentationSourceManuscript(pub.source)};
+ const before=knowledgePresentationInput(f.doc);
+ expect(JSON.stringify(buildKnowledgePresentationRequest(f.doc))).toContain('尚未读取任何实际图片');
+ expect(before.pages[0].body).toContain('完整正文');
+ pub.source.pages[0].imageUrl='https://test.invalid/ready.png';pub.manuscript='最终解释文字';
+ expect(knowledgePresentationInput(f.doc).sourceDigest).toBe(before.sourceDigest);
+ pub.source.pages[0].imageJobId='different-task';
+ expect(()=>knowledgePresentationInput(f.doc)).toThrow('稿件已变化');
+});
+it('提前图页必须等最终审校、真实图片及确认，疑点或替图不得绕过',async()=>{
+ const f=make(),pub=f.doc.publication!;
+ const {knowledgePresentationSourceManuscript}=await import('../../shared/knowledgePresentation');
+ pub.source.pages[0].imageJobId='stable-image-task';pub.source.pages[0].imageUrl='';
+ pub.presentationRequest={...pub.presentationRequest!,basis:'source',manuscript:knowledgePresentationSourceManuscript(pub.source)};
+ const input=knowledgePresentationInput(f.doc);
+ const plan=validateKnowledgePresentationPlan({...f.plan,sourceDigest:input.sourceDigest,slides:[{type:'image',title:'实质知识',points:['文字中的依据'],sourcePageIds:[f.doc.pages[0].id],imagePageId:f.doc.pages[0].id,notes:''}]},input);
+ pub.presentationPlan=plan;
+ const read=async()=>({plan});
+ pub.confirmedManuscript=undefined;
+ await expect(loadVerifiedKnowledgePresentation(7,f.doc,read)).rejects.toThrow('全稿审校结束');
+ pub.confirmedManuscript=pub.manuscript;
+ await expect(loadVerifiedKnowledgePresentation(7,f.doc,read)).rejects.toThrow('图片尚未就绪');
+ f.doc.pages[0].imageUrl='https://test.invalid/final.png';
+ pub.review!.pages[0].imageStatus='uncertain';
+ await expect(loadVerifiedKnowledgePresentation(7,f.doc,read)).rejects.toThrow('实际图片尚未通过');
+ pub.review!.pages[0].imageStatus='consistent';
+ expect(await loadVerifiedKnowledgePresentation(7,f.doc,read)).toEqual(plan);
+ pub.review!.pages[0].cautions=[{kind:'text',evidence:'该事实有冲突',message:'待核对'}];
+ await expect(loadVerifiedKnowledgePresentation(7,f.doc,read)).rejects.toThrow('最终审校疑点');
+});

@@ -47,6 +47,7 @@ export function KnowledgeCardPreflight({
         { k: "模板类型", v: summary.templateZh, accent: true },
         { k: "读档模型", v: summary.distillModelZh },
         { k: "配图数量", v: `${summary.pageCount} 张` },
+        { k: "同步准备", v: "顾问边出图边读图排版，并提前规划15–20页可编辑PPTX；完成后仍需核对确认导出" },
         { k: "画质", v: summary.qualityZh },
         ...(summary.advisorCredits === undefined ? [] : [{ k: "同步整理完整文字", v: `最多 ${summary.advisorCredits} 积分` }]),
       ]

@@ -80,8 +80,8 @@ it("KP-04失败重试需核对与确认，恢复后只调用一个新编号", as
     await page.waitForSelector("button").catch(error => {
       throw new Error(String(error) + "; 页面错误:" + errors.join(";"));
     });
-    expect(await page.$("textarea")).toBeNull();
-    expect(await page.$eval("body",el=>el.textContent)).toContain("完整版图卡 · 顾问精简重复说明");
+    expect(await page.$('textarea[aria-label="整套说明确认框"]')).toBeNull();
+    expect(await page.$eval("body",el=>el.textContent)).toContain("完整版图卡 · 减少图上重复说明，保留完整知识");
     await click("开始自动审校");
     await page.waitForFunction(() =>
       document
@@ -104,12 +104,12 @@ it("KP-04失败重试需核对与确认，恢复后只调用一个新编号", as
     expect(ids).toHaveLength(5);
     expect(await page.evaluate(() => (window as any).calls.some((c: any) => c.qaModel))).toBe(false);
     expect(await page.$eval("body", el => el.textContent)).not.toMatch(/DeepSeek|OpenRouter|EvoLink|Gemini|requestId/);
-    expect(await page.$("textarea")).toBeNull();
+    expect(await page.$('textarea[aria-label="整套说明确认框"]')).toBeNull();
     await click("查看或手动修改说明（可选）");
-    await page.waitForSelector("textarea");
-    expect(await page.$$eval("textarea", els => els.length)).toBe(1);
+    await page.waitForSelector('textarea[aria-label="整套说明确认框"]');
+    expect(await page.$$eval('textarea[aria-label="整套说明确认框"]', els => els.length)).toBe(1);
     expect(
-      await page.$eval("textarea", el => (el as HTMLTextAreaElement).value)
+      await page.$eval('textarea[aria-label="整套说明确认框"]', el => (el as HTMLTextAreaElement).value)
     ).toContain("已补充知识解释");
     expect(await page.evaluate(() => (window as any).exports.length)).toBe(0);
     expect(await page.$eval('iframe', el => (el as HTMLIFrameElement).getAttribute('sandbox'))).toBe('allow-scripts');

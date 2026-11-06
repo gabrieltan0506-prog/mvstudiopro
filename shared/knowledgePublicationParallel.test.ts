@@ -40,3 +40,33 @@ it("旧连续进度与新乱序集合合并，离开页面不领取新批次", a
   });
   expect(calls).toEqual([]);
 });
+it("慢图与读档准备不占通道，后到的快图立即审校", async () => {
+  const slow = deferred(), text = deferred(), fast = deferred(), fastStarted = deferred();
+  const calls:number[] = [], complete:number[] = [], channels:Record<string,KnowledgePublicationChannel> = {};
+  const run=runKnowledgeParallelBatches({count:3,completed:new Set(),channels,active:()=>true,
+    prepare:i=>[slow.promise,text.promise,fast.promise][i],
+    assign:async(i,channel)=>{channels[i]=channel;},
+    execute:async i=>{calls.push(i);if(i===2)fastStarted.resolve();return i;},
+    complete:async i=>{complete.push(i);},
+  });
+  fast.resolve();await fastStarted.promise;
+  expect(calls).toEqual([2]);expect(channels[0]).toBeUndefined();expect(channels[1]).toBeUndefined();
+  text.resolve();slow.resolve();expect(await run).toEqual([]);
+  expect(complete.sort()).toEqual([0,1,2]);
+});
+it("单张图准备失败不阻挡其他就绪批，也不为失败批分配付费通道",async()=>{
+  const calls:number[]=[],assigned:number[]=[];
+  const errors=await runKnowledgeParallelBatches({count:3,completed:new Set(),channels:{},active:()=>true,
+    prepare:async i=>{if(i===0)throw Error("原图失败");},assign:async i=>{assigned.push(i);},
+    execute:async i=>{calls.push(i);},complete:async()=>{},
+  });
+  expect(errors.map(e=>e.index)).toEqual([0]);expect((errors[0].error as Error).message).toBe("原图失败");
+  expect(calls.sort()).toEqual([1,2]);expect(assigned.sort()).toEqual([1,2]);
+});
+it("就绪后恢复原通道，准备期间离开不会发出顾问请求",async()=>{
+  const gate=deferred(),calls:number[]=[];let active=true;
+  const run=runKnowledgeParallelBatches({count:1,completed:new Set(),channels:{0:"evolink"},active:()=>active,
+    prepare:()=>gate.promise,assign:async()=>{},execute:async i=>{calls.push(i);},complete:async()=>{},
+  });
+  active=false;gate.resolve();expect(await run).toEqual([]);expect(calls).toEqual([]);
+});

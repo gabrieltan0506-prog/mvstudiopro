@@ -121,3 +121,19 @@ describe("0923 派生额度：8.5 万字的书不再被思考吃光输出", () =
     expect((err as Error).message).toMatch(/截断/);
   });
 });
+
+
+describe("重点配图真实分页预算，全文不变", () => {
+ it("少标题长正文也调用重点选择，不把全文原样当选图", async () => {
+  const full = "# 全文\n\n" + Array.from({length:12},(_,i)=>`## 第${i+1}章\n\n${"事实与详细说明。".repeat(1000)}`).join("\n\n");
+  const original = full;
+  const chat=vi.fn(async()=>"## 主要事件\n\n图：事件关系。\n\n- 事实依据。\n\n| 项目 | 说明 |\n|---|---|\n| 事件 | 主线 |");
+  const out=await deriveKnowledgeCardCompact({fullMarkdown:full,chat:chat as never});
+  expect(chat).toHaveBeenCalled();expect(full).toBe(original);expect(out.markdown).not.toBe(full);
+  expect(chat.mock.calls.length).toBeGreaterThan(0);
+ });
+ it("无法减少重点时明确失败，不截前20页伪成功", async () => {
+  const full = "# 全文\n\n## 长章\n\n"+"事实与详细说明。".repeat(12000);
+  await expect(deriveKnowledgeCardCompact({fullMarkdown:full,chat:(async(p:any)=>p.user) as never})).rejects.toThrow("重点配图没有减少");
+ });
+});

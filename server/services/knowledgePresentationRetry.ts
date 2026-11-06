@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import {knowledgePresentationRequestMatches} from '../../shared/knowledgePresentation';
 import type { EditableLayout } from '../../shared/editableLayout';
 import { canonicalRefundKey } from './paidJobLedger';
 import { getJobByIdStrict } from '../jobs/repository';
@@ -22,7 +23,7 @@ export function knowledgePresentationRetryId(owner: number, documentId: string, 
 }
 export async function checkKnowledgePresentationRetry(owner: number, doc: EditableLayout, failedId: string, overrides: Partial<typeof real>={}) {
   const deps={...real,...overrides}, pub=doc.publication, req=pub?.presentationRequest;
-  if(!req||req.id!==failedId||req.manuscript!==pub?.manuscript||pub.presentationPlan)
+  if(!req||req.id!==failedId||!pub||!knowledgePresentationRequestMatches(req,pub)||pub.presentationPlan)
     throw Error('稿件或提纲已变化，请读取原请求结果后再操作');
   const jobId=manhuaAdvisorOperationId(owner,failedId),job=await deps.job(jobId);
   const output=job?.output as Record<string,unknown>|null;
@@ -49,7 +50,7 @@ export async function checkKnowledgePresentationRetry(owner: number, doc: Editab
 /** 保存时再次核验，不信任前端检查结果；对象版本CAS继续负责并发写入。 */
 export async function validateKnowledgePresentationRetryTransition(owner:number, before:EditableLayout, after:EditableLayout, check=checkKnowledgePresentationRetry) {
   const old=before.publication?.presentationRequest,next=after.publication?.presentationRequest;
-  if(!old||!next||old.id===next.id||old.manuscript!==next.manuscript||old.minSlides!==next.minSlides||old.maxSlides!==next.maxSlides)return;
+  if(!old||!next||old.id===next.id||old.basis!==next.basis||old.manuscript!==next.manuscript||old.minSlides!==next.minSlides||old.maxSlides!==next.maxSlides)return;
   const expected=await check(owner,before,old.id);
   if(next.id!==expected.requestId)throw Error('请先核对失败与退款状态，再确认重试；未保存新请求');
 }

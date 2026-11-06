@@ -1,3 +1,4 @@
+import { knowledgeReadingPreparationSchema } from "./knowledgeReadingPreparation";
 import { validateKnowledgeDesignBatch } from "./knowledgeDecorations";
 import {knowledgeSupplementSelectionSchema} from "./knowledgeSupplement";
 import { knowledgeConversationTurnSchema } from "./knowledgeConversation";
@@ -13,7 +14,8 @@ export const knowledgePublicationContextSchema = z
   .object({
     documentId: z.string().uuid(),
     batchIndex: z.number().int().min(0),
-    purpose: z.enum(["presentation", "conversation"]).optional(),
+    purpose: z.enum(["presentation", "conversation", "reading"]).optional(),
+    readingJobId: z.string().regex(/^kc_[a-zA-Z0-9_-]+$/).optional(),
     attempt: z.number().int().min(0).max(65535).default(0),
   })
   .strict();
@@ -34,6 +36,8 @@ export const knowledgeSourceSchema = z
   .object({
     title: z.string().min(1).max(500),
     detailLevel: z.enum(["concise", "full"]).optional(),
+    readingPreparation: knowledgeReadingPreparationSchema.optional(),
+    reviewBatchMode: z.literal("ready-images").optional(),
     pages: z.array(knowledgeSourcePageSchema).min(1),
   })
   .strict()
@@ -207,7 +211,7 @@ export function knowledgeReviewBatches(source: KnowledgeSource): number[][] {
   for (const [i, page] of Array.from(source.pages.entries())) {
     if (
       current.length &&
-      (current.length >= 4 || chars + page.body.length > 24000 || Boolean(source.pages[current[0]].imageJobId) !== Boolean(page.imageJobId))
+      (current.length >= 4 || chars + page.body.length > 24000 || Boolean(source.pages[current[0]].imageJobId) !== Boolean(page.imageJobId) || (source.reviewBatchMode === "ready-images" && Boolean(page.imageJobId)))
     ) {
       batches.push(current);
       current = [];

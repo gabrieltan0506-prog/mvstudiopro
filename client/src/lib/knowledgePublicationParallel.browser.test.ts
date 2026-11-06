@@ -29,3 +29,32 @@ it('真实组件双路重叠、空闲补位、乱序保存及失败后原编号�
  expect(await page.evaluate(()=>(window as any).maxSaves)).toBe(1);expect(errors).toEqual([]);
  }finally{await browser.close();}
 },30000);
+it('真实组件后图先就绪即读图，文字等待读档顾问且不阻塞图片',async()=>{
+ const bundle=await build({stdin:{resolveDir:process.cwd(),sourcefile:'ready-fixture.tsx',loader:'tsx',contents:`
+ import React,{useState} from 'react';import{createRoot}from'react-dom/client';
+ import Panel from './client/src/components/platform/KnowledgePublicationPanel';
+ import {layoutFromSource} from './shared/editableLayout';import{knowledgeReviewBatches}from'./shared/knowledgePublication';
+ window.saved=layoutFromSource({owner:'7',sourceId:'ready',kind:'knowledge-publication',title:'完整底稿',body:'',pages:Array.from({length:4},(_,i)=>({pageIndex:i+1,headline:'章节'+i,body:'完整正文'+i}))});
+ window.saved.publication.source.pages.forEach((p,i)=>{if(i%2){p.imageJobId=i===1?'slow':'fast';p.role='illustration';}else p.role='reading';});
+ window.saved.publication.synchronizedStarted=false;
+ window.calls=[];window.gates={};window.resolve={};window.waited=[];
+ for(const key of ['slow','fast','reading'])window.gates[key]=new Promise(resolve=>window.resolve[key]=resolve);
+ window.stream=async input=>{const i=input.knowledgePublicationContext.batchIndex;window.calls.push(i);const s=window.saved.publication.source,b=knowledgeReviewBatches(s);return {success:true,creditsCharged:0,answer:JSON.stringify({kind:'knowledge_publication_batch_v1',batchIndex:i,batchCount:b.length,sourceDigest:'a'.repeat(64),reviewedPages:b[i].map(n=>s.pages[n].id)})};};
+ function App(){const[doc,setDoc]=useState(window.saved);return <Panel doc={doc} autoStart preauthorizedCredits={0} waitForReading={()=>{window.waited.push('reading');return window.gates.reading;}} waitForImages={ids=>{window.waited.push(...ids);return Promise.all(ids.map(id=>window.gates[id]));}} onBusy={()=>{}} onChange={setDoc} commit={async next=>{window.saved=structuredClone(next);setDoc(next);return {generation:'1'}}}/>};createRoot(document.getElementById('root')).render(<App/>);
+ `},bundle:true,write:false,format:'iife',platform:'browser',jsx:'automatic',alias:{'@':path.resolve('client/src'),'@shared':path.resolve('shared')},define:{'process.env.NODE_ENV':'"production"','import.meta.env':'{}'},plugins:[{name:'ready-boundaries',setup(b){b.onResolve({filter:/^@\/lib\/(trpc|manhuaAdvisorStream|gcsTransfer)$/},a=>({path:a.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},a=>({loader:'js',contents:a.path.endsWith('/trpc')?`export const trpc={useUtils:()=>({editableLayout:{publicationQuote:{fetch:async()=>({batches:5,remaining:5,consistencyKnown:false,paidUnit:1,maxCredits:0,estimatedCredits:0})}}}),editableLayout:{exportPublication:{useMutation:()=>({})},exportPublicationPptx:{useMutation:()=>({})}}};`:a.path.endsWith('/manhuaAdvisorStream')?`export const streamManhuaAdvisor=input=>window.stream(input);`:`export const flyDownloadUrl=u=>u;`}));}}]});
+ const browser=await puppeteer.launch({headless:true,args:['--no-sandbox']});
+ try{const page=await browser.newPage(),errors:string[]=[];page.on('pageerror',e=>errors.push(String(e)));
+ await page.setRequestInterception(true);page.on('request',r=>void r.respond({status:200,contentType:'text/html',body:'<div id="root"></div>'}));await page.goto('https://fixture.invalid');await page.addScriptTag({content:bundle.outputFiles[0].text});
+ await page.waitForFunction(()=>(window as any).waited.length===4);
+ expect(await page.evaluate(()=>(window as any).calls)).toEqual([]);
+ await page.evaluate(()=>(window as any).resolve.fast());
+ await page.waitForFunction(()=>(window as any).saved.publication.parallel.completed.length===1);
+ expect(await page.evaluate(()=>(window as any).calls)).toEqual([3]);
+ expect(await page.evaluate(()=>(window as any).saved.publication.parallel.channels[1])).toBeUndefined();
+ await page.evaluate(()=>(window as any).resolve.reading());
+ await page.waitForFunction(()=>(window as any).saved.publication.parallel.completed.length===3);
+ expect(await page.evaluate(()=>(window as any).calls.slice().sort())).toEqual([0,2,3]);
+ expect(await page.evaluate(()=>(window as any).saved.publication.source.pages.map((p:any)=>p.body))).toEqual(['完整正文0','完整正文1','完整正文2','完整正文3']);
+ expect(errors).toEqual([]);expect(await page.$('[role="alert"]')).toBeNull();
+ }finally{await browser.close();}
+},30000);

@@ -47,8 +47,11 @@ export function synchronizedKnowledgeCardSource(input: {
   const illustrations = planKnowledgeCardPages(input.illustrationMarkdown, input.distillModel).pages;
   if (!illustrations.length || illustrations.length !== input.imageJobIds.length || new Set(input.imageJobIds).size !== input.imageJobIds.length)
     throw new Error("配图任务与原稿页数不一致，尚未开始生成");
+  if (input.detailLevel === "full") {
+    return {...reading,inputFingerprint:input.inputFingerprint,reviewBatchMode:"ready-images",pages:illustrations.map((body,i)=>({pageIndex:i+1,headline:reading.pages![i]?.headline||`配图 ${i+1}`,body,imageJobId:input.imageJobIds[i],knowledgeRole:"illustration" as const}))};
+  }
   const textPages = reading.pages!.map(p => ({ ...p, knowledgeRole: "reading" as const }));
-  return { ...reading, inputFingerprint: input.inputFingerprint, detailLevel: input.detailLevel, pages: [
+  return { ...reading, inputFingerprint: input.inputFingerprint, detailLevel: input.detailLevel, reviewBatchMode:"ready-images", pages: [
     ...textPages,
     ...illustrations.map((body, i) => ({
       pageIndex: textPages.length + i + 1,

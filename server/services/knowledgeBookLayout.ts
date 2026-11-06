@@ -25,9 +25,10 @@ export function knowledgeBookLayoutInput(source:Source):KnowledgeBookLayoutInput
   const pages=doc.pages.map((p,i)=>({
     id:p.id,headline:p.headline,body:p.body,hasImage:!!p.imageUrl,
     imageDescription:review.pages[i].imageDescription,cautions:review.pages[i].cautions,
+    imageStatus:review.pages[i].imageStatus,facts:review.pages[i].facts,
     previousDesign:review.pages[i].reading?.decoration?.design,
   }));
-  const input={sourceDigest,title:doc.title,pages};
+  const input={sourceDigest,title:doc.title,detailLevel:doc.publication?.source.detailLevel,pages};
   if(Buffer.byteLength(JSON.stringify(input),"utf8")>650000)throw Error("整册排版超出单次容量，未截断正文或提交请求");
   return input;
 }

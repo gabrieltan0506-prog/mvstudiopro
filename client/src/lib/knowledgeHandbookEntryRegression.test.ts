@@ -85,6 +85,7 @@ function entryContext(full: string | null = null) {
   const ctx: any = {
     ...pagination, ...source, ...identity, ...selection, ...lifecycle, console, crypto: webcrypto, TextEncoder, Set, Map, readOpenAiImageVariantPref:()=>"sunburst", useCallback: (fn: any) => fn,
     customNoteBusy: false, knowledgeCardInflight: [], customNoteLevelSwitching: false, customNoteKind: "single_page_knowledge_card", customNoteSelectedFileCount: 0,
+    readingControllerRef: {current:null}, readingFullMarkdownRef: {current:""},
     renderedDetailLevelRef: {current:null}, renderedDraftRef: {current:""}, renderedFullManuscriptRef: {current:""},
     customNoteText: "# 新稿B\n\n海洋潮汐受月球引力影响。", customNotePendingFilesRef: { current: [] }, customNoteFullMarkdown: full, customNoteCompactMarkdownRef: { current: null }, customNoteDistillPhase: "idle",
     customNoteDistillModel: "deepseek-v4.1-flash-1017", customNoteDetailLevel: "concise", customNoteSubjectPosition: "left", customNoteInfographicTemplateId: null, customNoteRevisionRef: { current: 0 }, workbenchUserKey: "7",
@@ -246,7 +247,7 @@ describe("两档同稿只改配图 KH-SAME-MANUSCRIPT-01", () => {
     expect(ctx.trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch.mock.calls[0][0].markdown).toBe(level === "concise" ? compact : full);
     const received = ctx.layoutStudioRef.current.prepare.mock.calls[0][0];
     expect(received.body).toBe(full);
-    expect(received.pages.filter((p: any) => p.knowledgeRole === "reading").map((p: any) => p.body).join("\n")).toContain("未配图的完整说明必须保留");
+    expect(received.pages.filter((p: any) => p.knowledgeRole === "reading" || level === "full").map((p: any) => p.body).join("\n")).toContain("未配图的完整说明必须保留");
   });
   it("重点选图失败时保留全文且不报价不出图", async () => {
     const ctx = entryContext(full); ctx.customNoteText = full;
@@ -256,4 +257,18 @@ describe("两档同稿只改配图 KH-SAME-MANUSCRIPT-01", () => {
     expect(ctx.trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch).not.toHaveBeenCalled();
     expect(ctx.generateCustomNoteOne).not.toHaveBeenCalled();
   });
+});
+
+it("缺全文的旧精华备份拒绝新整册且不清图片", async () => {
+ const ctx=entryContext();ctx.renderedDetailLevelRef.current="concise";ctx.renderedDraftRef.current=ctx.customNoteText;
+ ctx.renderedFullManuscriptRef.current="";ctx.setCustomNoteImages=vi.fn();ctx.setCustomNoteImageUpper=vi.fn();
+ await ctx.generate();expect(ctx.setCustomNoteImages).not.toHaveBeenCalled();expect(ctx.setCustomNoteImageUpper).not.toHaveBeenCalled();expect(ctx.layoutStudioRef.current.prepare).not.toHaveBeenCalled();
+});
+
+it("已成功统稿不被同步顾问状态查询失败阻断",async()=>{
+ const full="## 完整稿\n最后一句仍然保留。",update=vi.fn(async()=>{throw Error("顾问状态暂时不可用");});
+ const ctx:any={startReadingAdvisor:()=>({update}),readingFullMarkdownRef:{current:""},bumpCustomNoteRevision:noop,customNoteDistillModel:"deepseek-v4.1-flash-1017",customNoteUploadStopRef:{current:false},knowledgeCardPageTasks:{begin:()=>randomUUID(),finish:noop,assertLive:noop},prepareKnowledgeCardCopyMutation:{mutateAsync:async()=>({isAsync:true,progressJobId:"kc_original",estimatedChunks:1})},pollJobUntilTerminal:async()=>({status:"succeeded",output:{distilledMarkdown:full,readingPreparation:{jobId:"kc_original",documentId:randomUUID(),batches:1,ready:[0]}}}),knowledgeCardProgressFromDistill:(n:number)=>n};
+ for(const name of ["setCustomNoteProgress","setCustomNoteFullMarkdown","setCustomNotePreparedModel","setCustomNoteCompactMarkdown","setKnowledgeCardEpubPdfs","setCustomNoteCancelRequested","setCustomNoteDistillJobId","setReadingAdvisorStatus"])ctx[name]=vi.fn();
+ run(take("  const runKnowledgeCardDistill = async", "\n  /**\n   * 终止后台读档")+"\nglobalThis.distill=runKnowledgeCardDistill;",ctx);
+ expect(await ctx.distill({sourceText:"原始全文"})).toBe(full);expect(ctx.readingFullMarkdownRef.current).toBe(full);expect(ctx.setReadingAdvisorStatus).toHaveBeenCalled();
 });

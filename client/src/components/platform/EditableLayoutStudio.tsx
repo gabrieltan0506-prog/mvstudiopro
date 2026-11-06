@@ -1,3 +1,4 @@
+import { knowledgePresentationSourceManuscript } from "@shared/knowledgePresentation";
 import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { planKnowledgeCardPages } from "@shared/knowledgeCardPagination";
@@ -30,7 +31,7 @@ const button =
 const field =
   "w-full rounded-lg border border-white/20 bg-[#201b32] p-2 text-white";
 export type EditableLayoutStudioHandle = {
-  prepare: (source: LayoutSource, waitForImages: (ids: string[]) => Promise<void>, supplementOf?: KnowledgeSupplementSelection) => Promise<{ documentId: string; maxCredits: number; estimatedCredits: number }>;
+  prepare: (source: LayoutSource, waitForImages: (ids: string[]) => Promise<void>, supplementOf?: KnowledgeSupplementSelection, options?: {waitForReading?:()=>Promise<void>;preparePresentation?:boolean}) => Promise<{ documentId: string; maxCredits: number; estimatedCredits: number; presentationCredits?:number }>;
   start: (documentId: string, authorizedCredits: number) => Promise<void>;
   imageJobs: (markdown: string, model: string, template: string | null) => string[] | null;
   beginImageAttempt: (originalJobId: string, requestId: string, jobId: string) => Promise<void>;
@@ -70,8 +71,8 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
   const [pageIndex, setPageIndex] = useState(0);
   const [autoPublicationId,setAutoPublicationId]=useState("");
   const [autoStartToken, setAutoStartToken] = useState(0);
-  const [synchronizedRun, setSynchronizedRun] = useState<{ documentId: string; authorizedCredits: number; waitForImages: (ids: string[]) => Promise<void> } | null>(null);
-  const preparedRun = useRef<{ documentId: string; waitForImages: (ids: string[]) => Promise<void> } | null>(null);
+  const [synchronizedRun, setSynchronizedRun] = useState<{ documentId: string; authorizedCredits: number; presentationCredits?:number; preparePresentation?:boolean; waitForReading?:()=>Promise<void>; waitForImages: (ids: string[]) => Promise<void> } | null>(null);
+  const preparedRun = useRef<{ documentId: string; presentationCredits?:number; preparePresentation?:boolean; waitForReading?:()=>Promise<void>; waitForImages: (ids: string[]) => Promise<void> } | null>(null);
   const utils = trpc.useUtils();
   const saveMutation = trpc.editableLayout.save.useMutation();
   const install = (next: Cache) => {
@@ -222,19 +223,24 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
     return {generation:result.generation};
   };
   useImperativeHandle(ref, () => ({
-    async prepare(source, waitForImages, supplementOf) {
+    async prepare(source, waitForImages, supplementOf, options) {
       if (!ready || !cloudReady || locked.current || source.owner !== owner) throw new Error("云端稿件尚未就绪或正在整理，请稍后开始");
       const nextDoc = layoutFromSource(source);
-      if (nextDoc.publication) {nextDoc.publication.synchronizedStarted = false;nextDoc.publication.supplementOf=supplementOf;}
+      if (nextDoc.publication) {
+        nextDoc.publication.synchronizedStarted = false;nextDoc.publication.supplementOf=supplementOf;
+        if(options?.preparePresentation)nextDoc.publication.presentationRequest={id:crypto.randomUUID(),basis:"source",minSlides:15,maxSlides:20,manuscript:knowledgePresentationSourceManuscript(nextDoc.publication.source)};
+      }
       const previous = current.current;
       const library = layoutLibrarySchema.parse({ ...previous.library, documents: [...previous.library.documents, nextDoc] });
       // 先保存完整底稿和全部图片任务身份，再允许任何收费请求。
       const result = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
       install({ library, generation: result.generation, dirty: false, activeId: nextDoc.id });
-      preparedRun.current = { documentId: nextDoc.id, waitForImages };
+      preparedRun.current = { documentId: nextDoc.id, waitForImages,waitForReading:options?.waitForReading,preparePresentation:options?.preparePresentation };
       setOpen(true);
       const quote = await utils.editableLayout.publicationQuote.fetch({ documentId: nextDoc.id });
-      return { documentId: nextDoc.id, maxCredits: quote.maxCredits, estimatedCredits: quote.estimatedCredits };
+      const presentation = options?.preparePresentation ? await utils.editableLayout.publicationQuote.fetch({documentId:nextDoc.id,purpose:"presentation"}) : null;
+      preparedRun.current.presentationCredits=presentation?.maxCredits||0;
+      return { documentId: nextDoc.id, maxCredits: quote.maxCredits+(presentation?.maxCredits||0), estimatedCredits: quote.estimatedCredits+(presentation?.estimatedCredits||0),presentationCredits:presentation?.maxCredits||0 };
     },
     imageJobs(markdown, model, template) {
       const bodies = planKnowledgeCardPages(markdown, model).pages;
@@ -293,7 +299,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === documentId ? { ...doc, publication: { ...doc.publication!, synchronizedStarted: true } } : doc.id===parentId?{...doc,publication:{...doc.publication!,supplementDocumentId:documentId}}:doc) });
       const saved = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
       install({ library, generation: saved.generation, dirty: false, activeId: documentId });
-      setSynchronizedRun({ ...pending, authorizedCredits });
+      setSynchronizedRun({ ...pending, authorizedCredits:Math.max(0,authorizedCredits-(pending.presentationCredits||0)) });
       setAutoPublicationId(documentId);
       preparedRun.current = null;
     },
@@ -505,6 +511,9 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
               {doc.publication ? <KnowledgePublicationPanel compact={compact} key={doc.id} doc={doc} commit={commitPublication}
                 onChange={next=>update(next)} onPagination={onPagination} onSupplement={onSupplement} onBusy={value=>{locked.current=value;setBusy(value);}} autoStart={doc.id===autoPublicationId} autoStartToken={autoStartToken}
                 preauthorizedCredits={synchronizedRun?.documentId === doc.id ? synchronizedRun.authorizedCredits : undefined}
+                waitForReading={synchronizedRun?.documentId === doc.id ? synchronizedRun.waitForReading : undefined}
+                autoPreparePresentation={synchronizedRun?.documentId === doc.id && synchronizedRun.preparePresentation}
+                preauthorizedPresentationCredits={synchronizedRun?.documentId === doc.id ? synchronizedRun.presentationCredits : undefined}
                 waitForImages={synchronizedRun?.documentId === doc.id ? synchronizedRun.waitForImages : undefined}/>:<>
               <div className="grid gap-5 lg:grid-cols-2">
                 <div className="space-y-3">
