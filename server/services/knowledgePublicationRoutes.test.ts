@@ -11,7 +11,7 @@ const make=()=>{
  const deps={key:()=> 'test-key',sign:()=> 'https://example.invalid/image.png',fetch:vi.fn(async()=>response(OR_MODEL)),vertex:vi.fn(async()=>({status:200,text:JSON.stringify({modelVersion:'gemini-3.8-flash',usageMetadata:{promptTokensDetails:[{modality:'IMAGE',tokenCount:100}]},candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(report)}]}}]})}))};
  return{request,evidence,deps,report,response,storage};
 };
-const researchReport=(f:ReturnType<typeof make>,urls:string[]=[])=>({kind:'knowledge_research_v1',pages:f.report.pages.map(p=>({pageId:p.id,topic:p.headline,queries:[p.headline],findings:urls.map(url=>({url,summary:'原始来源对本页主题的解释',relevance:'补充本页原稿事实的背景'}))}))});
+const researchReport=(f:ReturnType<typeof make>,urls:string[]=[])=>({kind:'knowledge_research_v1',pages:f.report.pages.map(p=>({pageId:p.id,topic:p.headline,queries:[p.headline],findings:urls.map(url=>({url,summary:'原始来源对本页主题的解释',relevance:'补充本页原稿事实的背景',purpose:'fill_explanation',sourceQuote:'蒸发、凝结、降水',question:'蒸发的能量来源是什么'}))}))});
 describe('图文手册限定模型与同款通道恢复',()=>{
  it('第一路成功不调用其他路，实际图片与表格结构进入同一回执，重放不再付费',async()=>{
   const f=make();const r=await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);const env=JSON.parse(r.text);
@@ -148,7 +148,7 @@ describe('联网补充与真实来源贯穿正文',()=>{
  it('首跳完整失败后后续通道只使用同一检索片段，不重开搜索',async()=>{
   const f=await prepare();f.deps.fetch.mockResolvedValueOnce(f.webResponse(f.report,'length')).mockResolvedValueOnce(f.response(EVO_MODEL,f.report));
   const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);expect(result.gateway).toBe('evolink');
-  const sent=JSON.parse((f.deps.fetch.mock.calls[1] as any)[1].body);expect(sent.plugins).toBeUndefined();expect(JSON.stringify(sent.messages)).toContain('太阳能驱动蒸发');expect(f.storage.has('test/0/web-sources.json')).toBe(true);
+  const sent=JSON.parse((f.deps.fetch.mock.calls[1] as any)[1].body);expect(sent.plugins).toBeUndefined();expect(JSON.stringify(sent.messages)).toContain('原始来源对本页主题的解释');expect(f.storage.has('test/0/web-sources.json')).toBe(true);
  });
  it('无检索回执也保留原文整理，不因来源缺失重买，恢复零新增调用',async()=>{
   const f=await prepare();f.deps.fetch.mockReset().mockResolvedValueOnce(f.response('z-ai/glm-5.3-flashx',{})).mockResolvedValueOnce(f.response(OR_MODEL,f.report));
@@ -325,7 +325,7 @@ it('EvoLink并发批次先保留真实检索资料再整理，恢复不重复检
  expect(answer.gateway).toBe('evolink');expect(f.deps.fetch).toHaveBeenCalledTimes(2);
  expect(f.storage.has('test/0/research/accepted.json')).toBe(true);
  const body=JSON.parse((f.deps.fetch.mock.calls[1] as any)[1].body);
- expect(body.messages.at(-1).content).toEqual(expect.arrayContaining([expect.objectContaining({text:expect.stringContaining('水蒸发后形成水蒸气')})]));
+ expect(body.messages.at(-1).content).toEqual(expect.arrayContaining([expect.objectContaining({text:expect.stringContaining('原始来源对本页主题的解释')})]));
  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
 });
 
@@ -350,7 +350,7 @@ describe('GLM独立搜索的恢复与通道契约',()=>{
   expect(search.model).toBe('glm-5.3-flashx');expect(search.plugins).toBeUndefined();
   expect(search.tools).toEqual([{type:'web_search',web_search:{enable:true,search_result:true,count:12,require_search:false}}]);
   expect(search.tools[0].web_search.search_query).toBeUndefined();expect(JSON.stringify(search)).not.toContain('image_url');
-  expect(organize.model).toBe(EVO_MODEL);expect(organize.tools).toBeUndefined();expect(JSON.stringify(organize)).toContain(source.content);expect(JSON.stringify(organize)).toContain('image_url');
+  expect(organize.model).toBe(EVO_MODEL);expect(organize.tools).toBeUndefined();expect(JSON.stringify(organize)).toContain('原始来源对本页主题的解释');expect(JSON.stringify(organize)).toContain('image_url');
   expect(out.research).toMatchObject({status:'succeeded',model:'glm-5.3-flashx',usage:{server_tool_use_details:{web_search_requests:1}}});
   expect(JSON.parse(f.storage.get('test/0/research/glm-evolink-response.json').text).web_search).toEqual([source]);
   await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
@@ -467,4 +467,13 @@ it('旧搜索回执没有request快照时沿用原输入恢复，不换成新版
 it('正文仍严格拒绝围栏，不因搜索兼容规则放宽正文合同',async()=>{
  const f=make();f.deps.fetch.mockImplementation(async(_url?:unknown,init?:RequestInit)=>new Response(JSON.stringify({model:JSON.parse(String(init?.body)).model,choices:[{finish_reason:'stop',message:{content:'```json\n'+JSON.stringify(f.report)+'\n```'}}]}),{headers:{'Content-Type':'application/json'}}));
  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('所有已配置通道均失败');expect(f.storage.has('test/0/accepted.json')).toBe(false);
+});
+
+it.each(['gemini-3.8-flash','gpt-5','deepseek/unknown'])('付费出口%s未获授权时密钥与网络调用均为零',async model=>{
+ const capability=await import('./knowledgeModelCapabilities');
+ const spy=vi.spyOn(capability,'knowledgeModelCapabilities').mockReturnValue({model,contextTokens:100000,outputTokens:10000,provider:{order:['Z.AI'],allow_fallbacks:false,require_parameters:true}} as any);
+ try{const f=make(),key=vi.fn(()=> 'test-key');await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,{...f.deps,key})).rejects.toThrow('模型未获授权');expect(key).not.toHaveBeenCalled();expect(f.deps.fetch).not.toHaveBeenCalled();}finally{spy.mockRestore();}
+});
+it('搜索阶段不能因整理允许DeepSeek而调用DeepSeek搜索',async()=>{
+ const {assertKnowledgePaidModel}=await import('./knowledgePublicationRoutes');expect(()=>assertKnowledgePaidModel('openrouter',OR_MODEL,true)).toThrow('模型未获授权');expect(()=>assertKnowledgePaidModel('evolink','glm-5.3-flashx',true)).not.toThrow();
 });
