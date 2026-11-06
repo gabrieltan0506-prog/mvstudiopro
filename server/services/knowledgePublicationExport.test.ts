@@ -1,3 +1,4 @@
+import {settleKnowledgeInterior} from "./knowledgePublicationBilling";
 import { describe, it, expect, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import { layoutFromSource } from "../../shared/editableLayout";
@@ -13,6 +14,7 @@ function fixture() {
     body: "水蒸发后形成水汽，凝结形成云。",
   });
   const pub = doc.publication!;
+  pub.billing!.confirmed=true;
   pub.review = {
     kind: "knowledge_publication_v1",
     title: doc.title,
@@ -30,11 +32,13 @@ function fixture() {
   pub.manuscript = knowledgeManuscript(pub.review);
   pub.confirmedManuscript = pub.manuscript;
   const storage = new Map<string, Buffer>();
+  const deduct=vi.fn(async (_owner:number,cost:number)=>({success:true,cost,remainingBalance:100,source:"personal" as const}));
   const deps = {
+    settle: (owner:number,doc:any,total:number,images:number)=>settleKnowledgeInterior(owner,doc,total,images,deduct),
     load: vi.fn(async () => ({
       library: { version: 1 as const, owner: "7", documents: [doc] },
       generation: "10",
-      updatedAt: null,
+      updatedAt: "2026-11-07T00:00:00+08:00",
     })),
     review: vi.fn(async () => ({ report: pub.review, sourceImages: [] })),
     image: vi.fn(),
@@ -52,7 +56,7 @@ function fixture() {
     merge: vi.fn(),
     countPages: vi.fn(async () => 7),
   };
-  return { doc, deps, storage };
+  return { doc, deps, storage, deduct };
 }
 describe("出版确认版本与恢复", () => {
   it("同一确认稿导出成功后复用永久成品，不再提交PDF", async () => {
@@ -66,6 +70,7 @@ describe("出版确认版本与恢复", () => {
     expect(result.pdfUrl).toBeTruthy();
     expect(result.chapters).toBe(1);
     expect(result.totalPages).toBe(7);
+    expect(result.billing).toMatchObject({readingPages:7,unitCredits:8,chargedCredits:56});
     expect(result.imagePages).toBe(0);
     const html = Array.from(f.storage.entries())
       .find(([k]) => k.endsWith("阅读稿.html"))![1]
@@ -105,6 +110,7 @@ describe("出版确认版本与恢复", () => {
     );
     expect(partial.htmlUrl).toBeTruthy();
     expect(partial.pdfUrl).toBeUndefined();
+    expect(f.deduct).not.toHaveBeenCalled();
     expect(partial.totalPages).toBeUndefined();
     expect(partial.imagePages).toBeUndefined();
     expect(partial.pdfError).toContain("未完成");
@@ -212,4 +218,25 @@ it("补充稿分别验真后才合册，保留两册正文并拒绝未确认、�
  expect(result.doc.pages.map(p=>p.id)).toEqual([parent.doc.pages[0].id,extra.doc.pages[0].id]);expect(result.review.pages).toHaveLength(2);expect(result.receipt.sourceImages).toHaveLength(1);
  expect((await loadKnowledgePublicationExport(7,parent.doc.id,"10",deps)).doc.pages).toHaveLength(1);
  ep.confirmedManuscript=undefined;await expect(loadKnowledgePublicationExport(7,parent.doc.id,"10",deps,true)).rejects.toThrow("确认");ep.confirmedManuscript=ep.manuscript;ep.supplementDocumentId=parent.doc.id;await expect(loadKnowledgePublicationExport(7,parent.doc.id,"10",deps,true)).rejects.toThrow("归属");
+});
+
+it('扣费回包丢失后复用已存PDF和同一账本键，不再渲染或重复扣款',async()=>{
+ const f=fixture(),charges=new Map<string,number>();let lose=true;
+ const deduct=vi.fn(async(_owner:number,cost:number,_action:string,_description?:string,options?:{chargeKey?:string})=>{
+  const key=options!.chargeKey!;
+  if(charges.has(key))return {success:true,cost:charges.get(key)!,source:'personal' as const,remainingBalance:0,alreadyCharged:true};
+  charges.set(key,cost);if(lose){lose=false;throw Error('模拟扣款成功后回包丢失');}
+  return {success:true,cost,source:'personal' as const,remainingBalance:0};
+ });
+ f.deps.settle=(owner,doc,total,images)=>settleKnowledgeInterior(owner,doc,total,images,deduct);
+ await expect(exportKnowledgePublication(7,f.doc.id,'10',f.deps)).rejects.toThrow('回包丢失');
+ const result=await exportKnowledgePublication(7,f.doc.id,'10',f.deps);
+ expect(result.billing).toMatchObject({chargedCredits:56,alreadyCharged:true});expect(result.pdfUrl).toBeTruthy();
+ expect(charges.size).toBe(1);expect(f.deps.pdf).toHaveBeenCalledTimes(1);expect(f.deps.countPages).toHaveBeenCalledTimes(1);
+});
+it('新稿未确认费率不能渲染收费；旧稿恢复下载不追溯扣款',async()=>{
+ const f=fixture();f.doc.publication!.billing!.confirmed=false;
+ await expect(exportKnowledgePublication(7,f.doc.id,'10',f.deps)).rejects.toThrow('确认内文');expect(f.deps.pdf).not.toHaveBeenCalled();expect(f.deduct).not.toHaveBeenCalled();
+ delete f.doc.publication!.billing;
+ expect((await exportKnowledgePublication(7,f.doc.id,'10',f.deps)).pdfUrl).toBeTruthy();expect(f.deduct).not.toHaveBeenCalled();
 });

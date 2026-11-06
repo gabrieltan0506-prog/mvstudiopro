@@ -9,7 +9,7 @@ import {knowledgePresentationInput} from './knowledgePresentationAdvisor';
 import type {KnowledgePresentationPlan} from '../../shared/knowledgePresentation';
 export const makePresentation=()=>{
  const doc=layoutFromSource({kind:'knowledge-publication',owner:'7',sourceId:'pptx-test',title:'史记导读',body:'没有统一标准，应按具体条件比较。原稿最后一句。'});
- const pub=doc.publication!;const review:any={kind:'knowledge_publication_v1',title:doc.title,sourceDigest:knowledgeSourceDigest(pub.source),pages:doc.pages.map(p=>({id:p.id,headline:p.headline,body:p.body,imageDescription:'',imageStatus:'absent',facts:[{term:'比较',statement:'具体条件'}],cautions:[{kind:'uncertain',evidence:'原文证据',message:'原文没有答案，待核对'}]}))};
+ const pub=doc.publication!;delete pub.billing;const review:any={kind:'knowledge_publication_v1',title:doc.title,sourceDigest:knowledgeSourceDigest(pub.source),pages:doc.pages.map(p=>({id:p.id,headline:p.headline,body:p.body,imageDescription:'',imageStatus:'absent',facts:[{term:'比较',statement:'具体条件'}],cautions:[{kind:'uncertain',evidence:'原文证据',message:'原文没有答案，待核对'}]}))};
  pub.review=review;pub.manuscript=knowledgeManuscript(review);pub.confirmedManuscript=pub.manuscript;pub.presentationRequest={id:'00000000-0000-4000-8000-000000000002',minSlides:2,maxSlides:3,manuscript:pub.manuscript};
  const input=knowledgePresentationInput(doc);
  const plan:KnowledgePresentationPlan={kind:'knowledge_presentation_v1',requestId:input.requestId,sourceDigest:input.sourceDigest,minSlides:2,maxSlides:3,title:doc.title,fontStyle:'editorial',slides:[{type:'points',title:'核心知识',sourcePageIds:[doc.pages[0].id],points:['没有统一标准，应按具体条件比较。','原稿最后一句。'],notes:''},{type:'table',title:'知识对照',sourcePageIds:[doc.pages[0].id],columns:['对象','特征'],rows:[['本纪','以帝王为中心'],['列传','以人物为中心']],notes:''}]};
@@ -71,4 +71,12 @@ it('权威提纲的文字修订进入实际PPTX并使用独立缓存，原稿和
  const bytes=storage.get(after.pptxUrl.replace('https://test.invalid/',''))!;
  const zip=await JSZip.loadAsync(bytes);expect(await zip.file('ppt/slides/slide1.xml')!.async('string')).toContain('修订后的标题');
  delete f.doc.publication!.presentationRevision;expect(JSON.stringify(f.doc)).toBe(original);
+});
+it('新计费稿的PPT入口先核对手册实际页数结算，不按幻灯片页数再收费',async()=>{
+ const f=makePresentation();f.doc.publication!.billing={version:'interior-pages-v1',confirmed:true};
+ const publication=vi.fn().mockRejectedValueOnce(Error('实际内文尚未计页')).mockResolvedValue({pdfUrl:'https://test.invalid/book.pdf',billing:{readingPages:11,chargedCredits:66,alreadyCharged:true}});
+ const build=vi.fn(buildKnowledgePublicationPptx);
+ const deps={publication,load:async()=>f,plan:async()=>f.plan,read:async()=>null,save:async()=>{},sign:(s:string)=>s,build};
+ await expect(exportKnowledgePublicationPptx(7,f.doc.id,'10',deps)).rejects.toThrow('尚未计页');expect(build).not.toHaveBeenCalled();
+ expect((await exportKnowledgePublicationPptx(7,f.doc.id,'10',deps)).slides).toBe(2);expect(publication).toHaveBeenLastCalledWith(7,f.doc.id,'10');
 });

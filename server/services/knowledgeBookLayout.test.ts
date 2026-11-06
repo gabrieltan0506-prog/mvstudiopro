@@ -24,6 +24,7 @@ function fixture() {
   const image=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=","base64"),sha=createHash("sha256").update(image).digest("hex");
   for(const doc of [parent,child]) {
     const pub=doc.publication!;
+    delete pub.billing; // 此组验证历史稿的内容与排版回执，不执行计费。
     pub.review={kind:"knowledge_publication_v1",title:doc.title,sourceDigest:knowledgeSourceDigest(pub.source),pages:doc.pages.map(p=>({id:p.id,headline:p.headline,body:p.body,imageStatus:p.imageUrl?"consistent":"absent",imageDescription:p.imageUrl?"已验测试原图":"",facts:[{term:p.headline,statement:p.body}],cautions:[]}))};
     pub.manuscript=knowledgeManuscript(pub.review);
     // 新布局动作绑定当前完整稿，不能要求用户先导出补充稿才能规划。

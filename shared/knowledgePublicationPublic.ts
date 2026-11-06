@@ -14,6 +14,7 @@ export function knowledgePublicationFailureMessage(error: unknown): string | nul
 /** 前台只收到业务提示；不拼接上游错误、请求编号、模型或通道名。 */
 export function knowledgePublicationPublicError(error: unknown): { message: string; retryable: boolean } {
   const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if(raw==="当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务"||raw==="请先确认内文按实际页数计费，未扣费"||raw==="实际内文页数无法核对，未扣费")return {message:raw,retryable:false};
   const retryMessages=[
     "原提纲仍在处理中或状态未确认，请使用规划按钮恢复原任务，暂不能重新付费。",
     "原提纲的积分退款尚未核对完成，请稍后再试，未创建新任务。",

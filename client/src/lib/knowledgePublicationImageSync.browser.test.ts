@@ -18,7 +18,7 @@ it('实际顾问组件在图片未齐时处理全文，首批图完成即审图�
       ]});
       window.saved.publication.synchronizedStarted=true;window.calls=[];window.pending={};window.savedBatches=[];
       window.stream=input=>{const i=input.knowledgePublicationContext.batchIndex;window.calls.push(i);return new Promise(resolve=>{
-        window.pending[i]=()=>{const s=window.saved.publication.source,b=knowledgeReviewBatches(s);resolve({success:true,creditsCharged:0,answer:JSON.stringify({kind:'knowledge_publication_batch_v1',batchIndex:i,batchCount:b.length,sourceDigest:'a'.repeat(64),reviewedPages:b[i].map(n=>s.pages[n].id)})})};
+        window.pending[i]=()=>{const s=window.saved.publication.source,b=knowledgeReviewBatches(s);resolve({success:true,creditsCharged:0,answer:JSON.stringify({kind:'knowledge_publication_batch_v1',batchIndex:i,batchCount:b.length,sourceDigest:'a'.repeat(64),reviewedPages:b[i].map(n=>s.pages[n].id),pages:b[i].map(n=>({id:s.pages[n].id,headline:s.pages[n].headline,body:'审校后的实际正文'+n,imageStatus:'absent',imageDescription:'',facts:[{term:'知识',statement:'真实审校内容'+n}],cautions:[]}))})})};
       })};
       function App(){const[doc,setDoc]=useState(window.saved);return <Panel doc={doc} autoStart preauthorizedCredits={0} waitForImages={window.images.wait} onBusy={()=>{}} onChange={setDoc} commit={async next=>{window.saved=structuredClone(next);window.savedBatches=[...next.publication.parallel?.completed||[]];setDoc(next);return{generation:'1'}}}/>}
       createRoot(document.getElementById('root')).render(<App/>);
@@ -43,13 +43,16 @@ it('实际顾问组件在图片未齐时处理全文，首批图完成即审图�
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
     await page.waitForFunction(() => (window as any).calls.length === 1);
     expect(await page.evaluate(() => (window as any).calls)).toEqual([0]);
-    expect(await page.evaluate(() => document.body.innerText)).toContain('顾问完整整理文字底稿');
+    expect(await page.evaluate(() => document.body.innerText)).toContain('创作顾问');
     // 全文仍在处理；只完成前四图，末图保持在途。
     await page.evaluate(() => { for (let i = 0; i < 4; i++) (window as any).images.done('image-' + i); });
     await page.waitForFunction(() => (window as any).calls.length === 2);
     expect(await page.evaluate(() => (window as any).calls)).toEqual([0, 1]);
     await page.evaluate(() => (window as any).pending[1]());
     await page.waitForFunction(() => (window as any).savedBatches.includes(1));
+    expect(await page.evaluate(() => document.body.innerText)).toContain('审校后的实际正文1');
+    expect(await page.$$eval('iframe',frames=>frames.some(f=>f.srcdoc.includes('审校后的实际正文1')))).toBe(true);
+    expect(await page.evaluate(() => (window as any).saved.publication.review)).toBeUndefined();
     await page.evaluate(() => (window as any).pending[0]());
     await page.waitForFunction(() => (window as any).savedBatches.includes(0));
     expect(await page.evaluate(() => (window as any).calls)).toEqual([0, 1]);

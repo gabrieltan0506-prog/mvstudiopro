@@ -248,8 +248,13 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       setOpen(true);
       const quote = await utils.editableLayout.publicationQuote.fetch({ documentId: nextDoc.id });
       const presentation = options?.preparePresentation ? await utils.editableLayout.publicationQuote.fetch({documentId:nextDoc.id,purpose:"presentation"}) : null;
+      const layoutQuote = !supplementOf ? await utils.editableLayout.publicationQuote.fetch({documentId:nextDoc.id,purpose:"conversation"}) : null;
+      if(layoutQuote && nextDoc.publication){
+        nextDoc.publication.automaticLayout={requestId:crypto.randomUUID(),maxCredits:layoutQuote.maxCredits};
+        await commitPublication(nextDoc);
+      }
       preparedRun.current.presentationCredits=presentation?.maxCredits||0;
-      return { documentId: nextDoc.id, maxCredits: quote.maxCredits+(presentation?.maxCredits||0), estimatedCredits: quote.estimatedCredits+(presentation?.estimatedCredits||0),presentationCredits:presentation?.maxCredits||0 };
+      return { documentId: nextDoc.id, maxCredits: quote.maxCredits+(presentation?.maxCredits||0)+(layoutQuote?.maxCredits||0), estimatedCredits: quote.estimatedCredits+(presentation?.estimatedCredits||0)+(layoutQuote?.estimatedCredits||0),presentationCredits:presentation?.maxCredits||0 };
     },
     imageJobs(markdown, model, template) {
       const bodies = planKnowledgeCardPages(markdown, model).pages;
@@ -305,7 +310,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       const child=previous.library.documents.find(d=>d.id===documentId),parentId=child?.publication?.supplementOf?.documentId;
       const parent=previous.library.documents.find(d=>d.id===parentId);
       if(parentId&&(!parent?.publication||parent.publication.supplementDocumentId&&parent.publication.supplementDocumentId!==documentId))throw Error("本册已有补图批次，请恢复原补充稿");
-      const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === documentId ? { ...doc, publication: { ...doc.publication!, synchronizedStarted: true } } : doc.id===parentId?{...doc,publication:{...doc.publication!,supplementDocumentId:documentId}}:doc) });
+      const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === documentId ? { ...doc, publication: { ...doc.publication!, synchronizedStarted: true, billing:{version:"interior-pages-v1",confirmed:true} } } : doc.id===parentId?{...doc,publication:{...doc.publication!,supplementDocumentId:documentId}}:doc) });
       const saved = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
       install({ library, generation: saved.generation, dirty: false, activeId: documentId });
       setSynchronizedRun({ ...pending, authorizedCredits:Math.max(0,authorizedCredits-(pending.presentationCredits||0)) });

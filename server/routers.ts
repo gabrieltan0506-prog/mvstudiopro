@@ -6873,10 +6873,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
         // 已有回执先按账户/请求指纹回放；云存储临时不可用不应阻止取回已付费结果。
         if (input.manhuaContext) await assertAdvisorProject(ctx.user.id, input.manhuaContext.projectId);
-        const usedToday = isAdminUser
+        const usedToday = isAdminUser || Boolean(input.knowledgePublicationContext)
           ? 0
           : input.manhuaContext ? (await readAdvisorProjectQuota(ctx.user.id, input.manhuaContext.projectId)).used : await countPlatformSkillQaToday(ctx.user.id, qaMode, false);
-        let needPay = !isAdminUser && usedToday >= dailyLimit;
+        let needPay = !isAdminUser && !input.knowledgePublicationContext && usedToday >= dailyLimit;
 
         if (needPay && (!input.confirmPaid || (advisorOperationInput && input.confirmedCredits !== paidUnit))) {
           throw new TRPCError({
@@ -6934,7 +6934,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
 
           const jobId = operation.jobId;
-          let projectFreeReserved = false;
+          let projectFreeReserved = Boolean(input.knowledgePublicationContext);
           let projectQuotaUsed = usedToday;
           if (!isAdminUser && input.manhuaContext) {
             let quota: Awaited<ReturnType<typeof reserveAdvisorProjectQuota>>;
@@ -6954,7 +6954,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `本作品免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次，请确认后重试。` });
             }
           }
-          if (!isAdminUser && (input.codeMotionContext || input.knowledgePublicationContext)) {
+          if (!isAdminUser && input.codeMotionContext) {
             try {
               const { reserveCodeMotionConsultQuota } = await import("./services/codeMotionConsultQuota");
               const quota = await reserveCodeMotionConsultQuota(ctx.user.id, jobId, dailyLimit);
@@ -8264,6 +8264,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
            * 提炼后 4 页 120 积分保住 4K）。上传文档的提炼是抽文的必要环节，成本已含页费，不另收。
            */
           chargeDistillFee: z.boolean().optional(),
+          billingPolicy: z.literal("interior-pages-v1").optional(),
           /** 两档：deepseek-v4.1-flash / glm-5.3-flash；旧值（sol / terra / qwen / OR-qwen / deepseek-v4 / claude / kimi）服务端迁到两档 */
           distillModel: z.string().max(64).optional(),
           /** 成稿档：精华版（优先重点+简单解说）/ 完整版（第一重点+详细解说） */
@@ -8363,7 +8364,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               detailLevel,
               imageDataUrls: [] as string[],
               extractionMethods: [] as string[],
-              chargeDistillFee: input.chargeDistillFee === true,
+              chargeDistillFee: input.chargeDistillFee === true && input.billingPolicy !== "interior-pages-v1",
             },
           });
           return {
@@ -8409,7 +8410,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         let distillFeeCharged = 0;
         const uidForDistillFee = Number(ctx.user?.id);
         if (
-          input.chargeDistillFee === true &&
+          input.chargeDistillFee === true && input.billingPolicy !== "interior-pages-v1" &&
           !prepared.skippedDistill &&
           Number.isFinite(uidForDistillFee) &&
           uidForDistillFee > 0

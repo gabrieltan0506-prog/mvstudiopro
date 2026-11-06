@@ -13,7 +13,7 @@ import type { KnowledgeReview } from '../../shared/knowledgePublication';
 import { resolveKnowledgeDecoration } from '../../shared/knowledgeDecorations';
 import { KNOWLEDGE_DECORATION_ART } from '../../shared/knowledgeDecorationAssets';
 import { chooseKnowledgeBookletTheme, KNOWLEDGE_BOOKLET_THEMES } from '../../shared/knowledgeBooklet';
-import { loadKnowledgePublicationExport } from './knowledgePublicationExport';
+import { exportKnowledgePublication, loadKnowledgePublicationExport } from './knowledgePublicationExport';
 import { readKnowledgeImage } from './knowledgePublicationAdvisor';
 import { downloadGcsObjectVersioned, getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcs } from './gcs';
 
@@ -118,7 +118,7 @@ export async function buildKnowledgePublicationPptx(doc:EditableLayout,review:Kn
 }
 
 const real={
- load:loadKnowledgePublicationExport,plan:loadVerifiedKnowledgePresentation,image:readKnowledgeImage,build:buildKnowledgePublicationPptx,
+ publication:exportKnowledgePublication,load:loadKnowledgePublicationExport,plan:loadVerifiedKnowledgePresentation,image:readKnowledgeImage,build:buildKnowledgePublicationPptx,
  read:async(name:string)=>{try{return (await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${name}`})).buffer;}catch(e){if(e instanceof Error&&e.message==='gcs_stat_failed:404')return null;throw e;}},
  save:async(name:string,buffer:Buffer,type:string)=>{await uploadBufferToGcs({objectName:name,buffer,contentType:type});},
  sign:(name:string)=>signGsUriV4ReadUrl(`gs://${getGcsBucketName()}/${name}`,3600),
@@ -126,6 +126,10 @@ const real={
 const active=new Map<string,Promise<{pptxUrl:string;pptxBytes:number;slides:number}>>();
 export async function exportKnowledgePublicationPptx(owner:number,documentId:string,generation:string,overrides:Partial<typeof real>={}){
  const deps={...real,...overrides};const {doc,review,receipt,prefix}=await deps.load(owner,documentId,generation);
+ if(doc.publication?.billing){
+  const publication=await deps.publication(owner,documentId,generation);
+  if(!publication.pdfUrl)throw Error('手册实际内文页数尚未核实，请先完成PDF排版，未重复扣费');
+ }
  const plan=await deps.plan(owner,doc);
  const planDigest=createHash("sha256").update(JSON.stringify(plan)).digest("hex");
  const folder=`${prefix}/${KNOWLEDGE_PPTX_VERSION}/${planDigest}`;

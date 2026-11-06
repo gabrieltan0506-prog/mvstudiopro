@@ -1,3 +1,4 @@
+import {KNOWLEDGE_INTERIOR_PRICE_COPY} from "@shared/knowledgePublicationPricing";
 import {knowledgeSupplementPlan,type KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
 import { useRef, useState } from "react";
 import type { EditableLayout } from "@shared/editableLayout";
@@ -22,18 +23,23 @@ export default function KnowledgeConversationPanel({doc,busy,save,lock,onSupplem
     }
     inFlight.current=true;lock(true);setError("");
     try {
+      let base=doc;
+      if((action==="layout"||pending?.request.action==="layout")&&doc.publication?.billing&&!doc.publication.billing.confirmed){
+        if(!window.confirm(KNOWLEDGE_INTERIOR_PRICE_COPY+" 是否确认排版后自动结算？"))return;
+        base={...doc,publication:{...doc.publication,billing:{...doc.publication.billing,confirmed:true}}};
+      }
       let layoutInput:{sourceDigest:string;chapters:number;images:number}|undefined;
       if(action === "layout" && !pending){
         // 先保存用户眼前的完整稿件，服务端按同一版父子稿件生成摘要。
-        await save(doc);
+        await save(base);
         layoutInput=await utils.editableLayout.bookLayoutInput.fetch({documentId:doc.id});
       }
       const quote=await utils.editableLayout.publicationQuote.fetch({documentId:doc.id,purpose:"conversation"});
-      if(quote.maxCredits>0&&!window.confirm(layoutInput ? `本次让顾问规划 ${layoutInput.chapters} 个图文章节、${layoutInput.images} 张原图的顺序和样式，通过校验后自动导出PDF。最多 ${quote.maxCredits} 积分，是否继续？` : `本次交流最多 ${quote.maxCredits} 积分，是否继续？`))return;
+      if(quote.maxCredits!==0)throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");
       const retryId=retry&&pending?(await utils.editableLayout.conversationRetry.fetch({documentId:doc.id,failedRequestId:pending.request.id})).requestId:null;
       const turn=retryId&&pending?{request:{...pending.request,id:retryId,retryOf:pending.request.id}}:pending||{request:{id:crypto.randomUUID(),question:prompt.trim(),imagePageIds:action === "layout" ? [] : images,manuscript:doc.publication!.manuscript,...(layoutInput?{action:"layout" as const,layoutSourceDigest:layoutInput.sourceDigest}:{})}};
       const history=pending&&!retryId?turns:[...turns,turn];
-      let next:EditableLayout={...doc,publication:{...doc.publication!,conversation:history},updatedAt:new Date().toISOString()};
+      let next:EditableLayout={...base,publication:{...base.publication!,conversation:history},updatedAt:new Date().toISOString()};
       await save(next);
       const response=await streamManhuaAdvisor({question:turn.request.question,rawQuestion:turn.request.question,requestId:turn.request.id,knowledgePublicationContext:{documentId:doc.id,batchIndex:history.length-1,attempt:0,purpose:"conversation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
       const answer=knowledgeConversationAnswerSchema.parse(JSON.parse(response.answer));

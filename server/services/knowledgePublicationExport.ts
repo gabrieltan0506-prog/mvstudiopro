@@ -1,3 +1,4 @@
+import {assertKnowledgeInteriorConsent,settleKnowledgeInterior} from "./knowledgePublicationBilling";
 import type {EditableLayout} from "../../shared/editableLayout";
 import type {KnowledgeReview} from "../../shared/knowledgePublication";
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
@@ -44,8 +45,10 @@ export type KnowledgePublicationExport = {
   imagePages?: number;
   totalPages?: number;
   pdfError?: string;
+  billing?: Awaited<ReturnType<typeof settleKnowledgeInterior>>;
 };
 const real = {
+  settle: settleKnowledgeInterior,
   load: readCanonicalLayoutLibrary,
   review: readKnowledgePublicationReview,
   image: readKnowledgeImage,
@@ -184,6 +187,8 @@ export async function exportKnowledgePublication(
   const deps={...real,...overrides};
   const { loadKnowledgeBookLayoutView } = await import("./knowledgeBookLayout");
   const {doc,review,receipt,prefix}=await loadKnowledgeBookLayoutView(owner,documentId,generation,deps);
+  if(doc.publication?.supplementOf && doc.publication.billing)return exportKnowledgePublication(owner,doc.publication.supplementOf.documentId,generation,overrides);
+  assertKnowledgeInteriorConsent(doc);
   const run = async () => {
     const manifest = await deps.read(`${prefix}/manifest.json`);
     if (manifest) {
@@ -204,7 +209,9 @@ export async function exportKnowledgePublication(
             await rm(folder, { recursive: true, force: true });
           }
         }
+        const billing=await deps.settle(owner,doc,saved.totalPages,doc.pages.filter(page=>page.imageUrl).length);
         return {
+          billing,
           htmlUrl: deps.sign(`${prefix}/阅读稿.html`),
           pdfUrl: deps.sign(`${prefix}/阅读稿.pdf`),
           htmlBytes: saved.htmlBytes,
@@ -353,7 +360,9 @@ export async function exportKnowledgePublication(
         ),
         "application/json"
       );
+      const billing=await deps.settle(owner,doc,totalPages,imagePages);
       return {
+        billing,
         htmlUrl: deps.sign(`${prefix}/阅读稿.html`),
         pdfUrl: deps.sign(`${prefix}/阅读稿.pdf`),
         htmlBytes,

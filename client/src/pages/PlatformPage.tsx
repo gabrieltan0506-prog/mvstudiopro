@@ -8367,10 +8367,10 @@ export default function PlatformPage() {
     readingControllerRef.current?.stop();
     const controller = createKnowledgeReadingController({
       state: jobId => trpcUtils.editableLayout.readingPreparation.fetch({jobId}),
-      confirm: async state => state.maxCredits === 0 || window.confirm(`读档将同步让创作顾问整理当前已读取的原文和页面结构，预计 ${state.estimatedCredits} 积分，最多 ${state.maxCredits} 积分。已有结果会交给后续图文顾问复用；出图与末尾核对另按确认报价。是否开始同步整理？`),
+      confirm: async state => {if(state.maxCredits!==0)throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");return true;},
       execute: async (link,index,requestId,paidUnit) => {
         try {
-          return await streamManhuaAdvisor({question:"读档期间同步整理知识与页面结构",rawQuestion:"读档期间同步整理知识与页面结构",requestId,knowledgePublicationContext:{documentId:link.documentId,readingJobId:link.jobId,purpose:"reading",batchIndex:index,attempt:0},confirmPaid:true,confirmedCredits:paidUnit},()=>undefined);
+          return await streamManhuaAdvisor({question:"读档期间同步整理知识与页面结构",rawQuestion:"读档期间同步整理知识与页面结构",requestId,knowledgePublicationContext:{documentId:link.documentId,readingJobId:link.jobId,purpose:"reading",batchIndex:index,attempt:0},confirmPaid:false,confirmedCredits:paidUnit},()=>undefined);
         } catch (error) {
           // 结果未知只查同一事务，绝不换请求编号重复购买。
           const hash = await knowledgeCardInputFingerprint(`${workbenchUserKey}:${requestId}`);
@@ -8414,6 +8414,7 @@ export default function PlatformPage() {
       sourceText: args.sourceText,
       files: args.files?.length ? args.files : undefined,
       forceDistill: true,
+      billingPolicy: "interior-pages-v1",
       distillModel: customNoteDistillModel,
       // 提炼一律出完整版长稿当真源；精华版之后从长稿派生，两档随时切
       detailLevel: "full",
@@ -8774,7 +8775,7 @@ export default function PlatformPage() {
           setCustomNoteUploadStatus(null);
           setCustomNoteDistillPhase("ready");
           await new Promise<void>((r) => requestAnimationFrame(() => r()));
-        } else if (!overrides?.supplementOf && customNoteDistillPhase !== "ready" && distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
+        } else if (!overrides?.supplementOf && !hasFullReceipt && customNoteDistillPhase !== "ready" && distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
           /**
            * 纯文本长文（本轮尚未提炼过；上传路径已提炼的稿子直接进出图确认，不二次提炼、不二次收费、不丢〔参考原页〕标记）：
            * 先把「提炼 vs 直接出图」的账摆给用户看。
@@ -8784,7 +8785,7 @@ export default function PlatformPage() {
             distilled,
             customNoteDistillModel,
             (chars) => suggestKnowledgeCardMinSections(chars, customNoteDetailLevel),
-            knowledgeCardDistillFeeForModel(customNoteDistillModel),
+            0,
           );
           if (tradeoff.saved > 0) {
             setCustomNoteBusy(false);
@@ -8793,7 +8794,7 @@ export default function PlatformPage() {
                 `这段文字约 ${distilled.length.toLocaleString()} 字。`,
                 "",
                 `直接出图：约 ${tradeoff.full.pages} 页 · ${tradeoff.full.credits} 积分 · 4K`,
-                `先做提炼：约 ${tradeoff.distilled.pages} 页 · ${tradeoff.distilled.credits} 积分 + 提炼费 ${tradeoff.distilled.distillFee} · 4K`,
+                `先做提炼：约 ${tradeoff.distilled.pages} 页 · ${tradeoff.distilled.credits} 积分 · 4K（整理不另收费）`,
                 "",
                 `提炼可省约 ${tradeoff.saved} 积分。`,
                 "",

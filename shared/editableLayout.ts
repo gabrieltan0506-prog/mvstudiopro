@@ -92,6 +92,7 @@ export function layoutFromSource(source: LayoutSource): EditableLayout {
     })),
     ...(source.kind === "knowledge-publication" ? { publication: {
       version: 1, requestId: crypto.randomUUID(),
+      billing: {version:"interior-pages-v1",confirmed:false},
       inputFingerprint: source.inputFingerprint,
       infographicTemplateId: source.infographicTemplateId,
       source: { title: source.title, detailLevel: source.detailLevel, pages: sourcePages, readingPreparation: source.readingPreparation, reviewBatchMode: source.reviewBatchMode },

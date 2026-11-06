@@ -272,3 +272,10 @@ it("已成功统稿不被同步顾问状态查询失败阻断",async()=>{
  run(take("  const runKnowledgeCardDistill = async", "\n  /**\n   * 终止后台读档")+"\nglobalThis.distill=runKnowledgeCardDistill;",ctx);
  expect(await ctx.distill({sourceText:"原始全文"})).toBe(full);expect(ctx.readingFullMarkdownRef.current).toBe(full);expect(ctx.setReadingAdvisorStatus).toHaveBeenCalled();
 });
+it('保有完整统稿回执时取消过报价也不再提炼长文',async()=>{
+ const full='完整原文与结尾。'.repeat(1600),ctx=entryContext(full);
+ ctx.customNoteText=full;ctx.customNoteDetailLevel='full';ctx.customNoteDistillPhase='idle';
+ ctx.window={confirm:vi.fn(()=>true)};ctx.runKnowledgeCardDistill=vi.fn(async()=>{throw Error('不应重复提炼');});
+ await ctx.generate();expect(ctx.runKnowledgeCardDistill).not.toHaveBeenCalled();expect(ctx.window.confirm).not.toHaveBeenCalled();
+ expect(ctx.layoutStudioRef.current.prepare.mock.calls[0][0].body).toBe(full);
+});
