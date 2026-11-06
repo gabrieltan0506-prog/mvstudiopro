@@ -1,3 +1,4 @@
+import { validateKnowledgeImageReplacements } from "./knowledgePublicationImages";
 import {
   layoutLibrarySchema,
   type LayoutLibrary,
@@ -111,16 +112,25 @@ export async function writeLayoutLibrary(
     const before = layoutLibrarySchema.parse(JSON.parse(prior.buffer.toString("utf8")).library);
     for (const doc of library.documents) {
       const old = before.documents.find(d => d.id === doc.id);
+      if (doc.publication) await validateKnowledgeImageReplacements(owner, old?.publication, doc.publication);
       if (!old) continue;
       if(old.publication?.presentationRequest && doc.publication?.presentationRequest) {
         const {validateKnowledgePresentationRetryTransition}=await import('./knowledgePresentationRetry');
         await validateKnowledgePresentationRetryTransition(owner,old,doc);
+      }
+      if (old.publication && doc.publication) {
+        const { validateKnowledgePublicationRetryTransition } = await import("./knowledgePublicationRetry");
+        await validateKnowledgePublicationRetryTransition(owner, old, doc);
       }
       if (Boolean(old.publication) !== Boolean(doc.publication) || (old.publication && doc.publication &&
           (JSON.stringify(old.publication.source) !== JSON.stringify(doc.publication.source) ||
            old.publication.requestId !== doc.publication.requestId)))
         throw new Error("知识卡原稿快照不能覆盖，请保留原稿并另建新稿");
     }
+  }
+  if (generation === "0") {
+    for (const doc of library.documents)
+      if (doc.publication) await validateKnowledgeImageReplacements(owner, undefined, doc.publication);
   }
   const updatedAt = new Date().toISOString();
   const buffer = Buffer.from(

@@ -21,6 +21,8 @@ export const knowledgeSourcePageSchema = z
     headline: z.string().max(500),
     body: z.string().max(50000),
     imageUrl: z.string().max(6000),
+    imageJobId: z.string().min(1).max(200).optional(),
+    role: z.enum(["reading", "illustration"]).optional(),
   })
   .strict();
 export const knowledgeSourceSchema = z
@@ -78,6 +80,8 @@ export type KnowledgeReview = z.infer<typeof knowledgeReviewSchema>;
 export const knowledgePublicationSchema = z
   .object({
     version: z.literal(1),
+    synchronizedStarted: z.boolean().optional(),
+    imageReplacements: z.record(z.string(), z.string()).optional(),
     requestId: z.string().uuid(),
     infographicTemplateId: z.string().max(100).optional(),
     source: knowledgeSourceSchema,
@@ -175,7 +179,7 @@ export function knowledgeReviewBatches(source: KnowledgeSource): number[][] {
   for (const [i, page] of Array.from(source.pages.entries())) {
     if (
       current.length &&
-      (current.length >= 4 || chars + page.body.length > 24000)
+      (current.length >= 4 || chars + page.body.length > 24000 || Boolean(source.pages[current[0]].imageJobId) !== Boolean(page.imageJobId))
     ) {
       batches.push(current);
       current = [];
@@ -216,9 +220,20 @@ export const knowledgeBatchResultSchema = z
     batchCount: z.number().int().positive(),
     sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
     reviewedPages: z.array(z.string().uuid()),
+    images: z.array(z.object({ id: z.string().uuid(), url: z.string() }).strict()).optional(),
   })
   .strict();
 
 export const knowledgeConsistencyBatchResultSchema = z.object({
   kind:z.literal("knowledge_consistency_batch_v1"),batchIndex:z.number().int().min(0),batchCount:z.number().int().positive(),sourceDigest:z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+
+/** 路由接收与最终整套核对共用合同，防止先接受后拒收。 */
+export const knowledgeConsistencySchema = z.object({
+  sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  findings: z.array(z.object({
+    pageIds: z.array(z.string().uuid()).min(1),
+    evidence: z.string().trim().min(1).max(2000),
+    message: z.string().trim().min(1).max(2000),
+  }).strict()),
 }).strict();

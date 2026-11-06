@@ -62,7 +62,7 @@ export type LayoutSource = {
   sourceId: string;
   title: string;
   body: string;
-  pages?: { headline: string; body: string; pageIndex: number }[];
+  pages?: { headline: string; body: string; pageIndex: number; imageJobId?: string; knowledgeRole?: "reading" | "illustration" }[];
   images?: Record<number, string>;
 };
 export function layoutFromSource(source: LayoutSource): EditableLayout {
@@ -72,6 +72,8 @@ export function layoutFromSource(source: LayoutSource): EditableLayout {
   const sourcePages = pages.map(p => ({
     id: crypto.randomUUID(), headline: p.headline, body: p.body,
     imageUrl: source.images?.[p.pageIndex] || "",
+    ...(p.imageJobId ? { imageJobId: p.imageJobId } : {}),
+    ...(p.knowledgeRole ? { role: p.knowledgeRole } : {}),
   }));
   return editableLayoutSchema.parse({
     id: crypto.randomUUID(),
@@ -81,7 +83,7 @@ export function layoutFromSource(source: LayoutSource): EditableLayout {
     theme: "paper",
     fontSize: 24,
     updatedAt: new Date().toISOString(),
-    pages: sourcePages.map(p => ({
+    pages: sourcePages.map(({ imageJobId, role, ...p }) => ({
       ...p,
       imagePlacement: "below",
     })),

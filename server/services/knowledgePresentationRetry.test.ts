@@ -53,3 +53,8 @@ describe('KP-04 无提纲终态重试',()=>{
   check.mockRejectedValueOnce(Error('退款仍在对账'));await expect(validateKnowledgePresentationRetryTransition(7,f.doc,after,check)).rejects.toThrow('退款仍在对账');
  });
 });
+
+it.each(['glm-openrouter','glm-evolink','openrouter-retry-2','glm-evolink-retry-3'])('新增%s回执未闭合时拒绝换号重购',async route=>{
+ const f=fixture();f.records['route-'+route+'.json']={state:'unknown'};
+ await expect(checkKnowledgePresentationRetry(7,f.doc,f.id,f.deps)).rejects.toThrow('上游请求状态尚未闭合');
+});

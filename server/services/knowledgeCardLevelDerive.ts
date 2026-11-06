@@ -25,10 +25,9 @@ import {
 export const KNOWLEDGE_CARD_DERIVE_MODEL_GLM_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_GLM_EVOLINK || GLM_53_FLASHX_EVOLINK_MODEL).trim();
 export const KNOWLEDGE_CARD_DERIVE_MODEL_GLM_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_GLM_OPENROUTER || GLM_53_FLASHX_OPENROUTER_MODEL).trim();
 
-/** 网关顺序（0911：同模型先换供应商）：EvoLink(DeepSeek) → OpenRouter(DeepSeek) → 新加坡(Qwen) → OpenRouter(Qwen) */
-// 使用 2026-10-13 真实 API 探针通过的 EvoLink 正式模型 ID。
-export const KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK || "deepseek-v4.1-flash").trim();
-export const KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER || "deepseek/deepseek-v4.1-flash").trim();
+/** 2026-11-06 指定 1017；实际顺序复用两模型共用路由，历史常量不代表启用第三模型。 */
+export const KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_EVOLINK || "deepseek-v4.1-flash-1017").trim();
+export const KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_OPENROUTER || "deepseek/deepseek-v4.1-flash-1017").trim();
 export const KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG = String(process.env.KNOWLEDGE_CARD_DERIVE_MODEL_DASHSCOPE_SG || "qwen3.8-max").trim();
 const EVOLINK_DIRECT_CHAT_URL = String(process.env.EVOLINK_DIRECT_CHAT_URL || "https://direct.evolink.ai/v1/chat/completions").trim();
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";

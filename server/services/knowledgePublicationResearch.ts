@@ -19,7 +19,7 @@ export function knowledgeWebSources(envelope:any):KnowledgeWebSource[]{
 export function validateKnowledgeResearch(review:KnowledgeReview,sources:KnowledgeWebSource[]){
  if(!sources.length)throw new Error('未取得真实联网来源，不能采用联网补充');
  for(const page of review.pages){
-  if(!page.sources?.length)throw new Error('本页补充缺少来源');
+  if(!page.sources?.length)throw new Error(`本页补充缺少来源：${page.id}（${page.headline}）`);
   for(const citation of page.sources){
    const actual=sources.find(s=>s.url===citation.url);
    if(!actual)throw new Error('补充引用不属于本次检索来源');

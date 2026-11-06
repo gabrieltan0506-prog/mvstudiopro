@@ -1,4 +1,7 @@
-import { knowledgePublicationPublicError } from "../shared/knowledgePublicationPublic";
+import { markKnowledgeImageFailed } from "./services/knowledgeImageFailure";
+import type { KnowledgeImageRetryReason } from "../shared/knowledgeImageRetry";
+import { resolveKnowledgeCardDistillModel } from "../shared/knowledgeCardDistillModels";
+import { knowledgePublicationPublicError, knowledgePublicationFailureMessage } from "../shared/knowledgePublicationPublic";
 import { knowledgePublicationContextSchema } from "../shared/knowledgePublication";
 import { assembleConcreteTrendReport } from "../shared/concreteTrendReport";
 import { guaikeiRouter } from "./routers/guaikei";
@@ -6844,7 +6847,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           if (existing.kind === "failed") {
             throw new TRPCError({
               code: "PRECONDITION_FAILED",
-              message: "ADVISOR_OPERATION_FAILED：本次问答未完成，请重新提问",
+              message: input.knowledgePublicationContext ? (knowledgePublicationFailureMessage(existing.message) || "ADVISOR_OPERATION_FAILED：本次问答未完成，请重新提问") : "ADVISOR_OPERATION_FAILED：本次问答未完成，请重新提问",
             });
           }
         }
@@ -6920,7 +6923,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           if (operation.kind === "failed") {
             throw new TRPCError({
               code: "PRECONDITION_FAILED",
-              message: "ADVISOR_OPERATION_FAILED：本次问答未完成，请重新提问",
+              message: input.knowledgePublicationContext ? (knowledgePublicationFailureMessage(operation.message) || "ADVISOR_OPERATION_FAILED：本次问答未完成，请重新提问") : "ADVISOR_OPERATION_FAILED：本次问答未完成，请重新提问",
             });
           }
           if (operation.kind !== "execute") {
@@ -7131,6 +7134,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               return completed;
             });
           } catch (operationError) {
+            const publicationFailure = input.knowledgePublicationContext ? knowledgePublicationFailureMessage(operationError) : null;
             console.error(
               `[askPlatformSkillQa] operation failed jobId=${jobId}`,
               operationError,
@@ -7138,7 +7142,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             try {
               const terminal = await claimManhuaAdvisorRefundPending(
                 jobId,
-                codeMotionPlanFailureMessage(operationError) || "顾问回答未完成，积分对账处理中",
+                publicationFailure || codeMotionPlanFailureMessage(operationError) || "顾问回答未完成，积分对账处理中",
               );
               if (terminal === "succeeded") {
                 const replay = await reserveManhuaAdvisorOperation({
@@ -7170,7 +7174,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               } else if (refund.status !== "refunded") {
                 throw new Error(`advisor_refund_not_terminal:${refund.status}`);
               }
-              const planFailure = codeMotionPlanFailureMessage(operationError);
+              const planFailure = publicationFailure || codeMotionPlanFailureMessage(operationError);
               const reconciled = planFailure
                 ? await markManhuaAdvisorRefundReconciled(jobId, creditsRefunded, planFailure)
                 : await markManhuaAdvisorRefundReconciled(jobId, creditsRefunded);
@@ -7185,7 +7189,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `ADVISOR_OPERATION_FAILED：${codeMotionPlanFailureMessage(operationError) || (operationError instanceof Error && operationError.message === "素材尚未登记,请从画布/成片里重新选择站内素材" ? "素材尚未登记，本次未发送影片" : "本次问答未完成")}${deducted.cost > 0 ? "；积分已原路退回" : ""}，请重新提问`,
+              message: publicationFailure || `ADVISOR_OPERATION_FAILED：${codeMotionPlanFailureMessage(operationError) || (operationError instanceof Error && operationError.message === "素材尚未登记,请从画布/成片里重新选择站内素材" ? "素材尚未登记，本次未发送影片" : "本次问答未完成")}${deducted.cost > 0 ? "；积分已原路退回" : ""}，请重新提问`,
             });
           }
 
@@ -8456,6 +8460,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         };
       }),
 
+    quoteKnowledgeCard: protectedProcedure.input(z.object({
+      markdown: z.string().min(1).max(50000),
+      distillModel: z.string().max(64).optional(),
+    }).strict()).query(async ({ ctx, input }) => {
+      const { quoteKnowledgeCard } = await import("./services/knowledgeCardPricing");
+      return quoteKnowledgeCard(Number(ctx.user.id), input.markdown, input.distillModel);
+    }),
+
     generatePlatformCompositeSheet: protectedProcedure
       .input(
         z
@@ -8479,6 +8491,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             notePageTotal: z.number().int().min(1).max(100_000).optional(),
             /** 仅 single_page_knowledge_card：提炼模型（决定页费档位）；两档，旧值服务端迁 */
             distillModel: z.string().max(64).optional(),
+            confirmedPageCredits: z.number().int().min(0).optional(),
             /** 仅 single_page_knowledge_card：主体偏左 / 居中（横版 16:9 固定） */
             subjectPosition: z.enum(["left", "center"]).optional(),
             /** 仅 single_page_knowledge_card：本页首发供应商（多页并发时页轮流分给两家；另一家自动兜底） */
@@ -8572,6 +8585,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           return { success: true as const, imageUrl: null, totalCost: 0, kind: input.kind,
             imageGenFlowLog: [], isAsync: true, progressJobId: imageReservation.id };
         }
+        let knowledgeImageRetryReason: KnowledgeImageRetryReason = "not_charged";
+        const failCompositeProgress = async (id: string, message: string) => {
+          if (input.kind === "single_page_knowledge_card") await markKnowledgeImageFailed(id, String(userId), message, knowledgeImageRetryReason);
+          else await markJobFailed(id, message);
+        };
         const beforeImageSubmit = imageReservation
           ? () => checkKnowledgeCardImageMaySubmit(imageReservation.id) : undefined;
         try {
@@ -8601,8 +8619,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             userId,
             String(input.scriptContext || ""),
           );
-          if (receiptModel) {
-            effectiveDistillModel = receiptModel as typeof input.distillModel;
+          effectiveDistillModel = receiptModel || (input.viralCreation
+            ? input.distillModel
+            : resolveKnowledgeCardDistillModel(input.distillModel));
+          if (!input.viralCreation) {
+            const { assertKnowledgeCardConfirmedPrice, assertKnowledgeCardPageSelection } = await import("./services/knowledgeCardPricing");
+            assertKnowledgeCardPageSelection(input.scriptContext, effectiveDistillModel!, input.notePageIndex, input.notePageTotal);
+            assertKnowledgeCardConfirmedPrice(effectiveDistillModel!, input.notePageIndex ?? (input.notePart === "lower" ? 2 : 1), input.confirmedPageCredits);
           }
         }
         const cost = compositePack
@@ -8643,6 +8666,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             ? ` · 编导分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
             : "";
           await beforeImageSubmit?.();
+          knowledgeImageRetryReason = "pending";
           compositeChargeReceipt = await deductCreditsAmount(
             userId,
             cost,
@@ -8720,6 +8744,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               compositeChargeReceipt,
               "platformCompositeSheet",
             );
+            knowledgeImageRetryReason = "refunded";
             throw new TRPCError({
               code: "INTERNAL_SERVER_ERROR",
               message: "任务账本暂不可用，费用已退回，请稍后重试",
@@ -8730,6 +8755,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         /** 结果未知（异步供应商可能已建单照扣）：不退款，账本转 settlement_pending 交对账 */
         const holdCompositeForReconcile = async (error: unknown): Promise<boolean> => {
           if ((error as { kind?: string } | null)?.kind !== "unknown") return false;
+          knowledgeImageRetryReason = "pending";
           if (compositeChargeReceipt && compositeChargeReceipt.cost > 0 && compositeHoldRegistered) {
             const { markSettlementPending } = await import("./services/paidJobLedger.js");
             await markSettlementPending(compositeHoldJobId, "platformCompositeSheet").catch(() => false);
@@ -8737,7 +8763,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           return true;
         };
         const refundCompositeCharge = async (why: string): Promise<boolean> => {
-          if (!compositeChargeReceipt || compositeChargeReceipt.cost <= 0) return true;
+          if (!compositeChargeReceipt || compositeChargeReceipt.cost <= 0) { knowledgeImageRetryReason = "not_charged"; return true; }
           try {
             if (compositeHoldRegistered) {
               const { refundCreditsOnFailure } = await import("./services/paidJobLedger.js");
@@ -8747,7 +8773,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 "task_failed",
                 why,
               );
-              return out.refunded || out.status === "refunded" || out.status === "settled";
+              const confirmed = out.refunded || out.status === "refunded";
+              knowledgeImageRetryReason = confirmed ? "refunded" : "pending";
+              return confirmed;
             }
             const { refundCreditsForDeductAmount } = await import("./credits.js");
             await refundCreditsForDeductAmount(
@@ -8756,8 +8784,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               compositeChargeReceipt,
               "platformCompositeSheet",
             );
+            knowledgeImageRetryReason = "refunded";
             return true;
           } catch (re) {
+            knowledgeImageRetryReason = "pending";
             console.error(
               `[mvAnalysis.generatePlatformCompositeSheet] refund failed userId=${userId} hold=${compositeHoldJobId}:`,
               re,
@@ -8933,6 +8963,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 imageGenFlowLog,
                 compositeSheetProgress: true,
                 compositeImageUrl: imageUrl,
+                knowledgeCardBillingModel: input.kind === "single_page_knowledge_card" ? effectiveDistillModel : undefined,
+                creditsCharged: compositeChargeReceipt?.cost || 0,
                 done: true,
               });
               await settleCompositeHold();
@@ -8953,7 +8985,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                     ? "\n（积分已退回）"
                     : "\n（退款受阻已记录，账本会自动补退，请勿重复重试）";
               const tail = imageGenFlowLog.filter((s) => String(s).trim()).slice(-24).join("\n").slice(0, 1200);
-              await markJobFailed(
+              await failCompositeProgress(
                 progressJobId,
                 (tail ? `${rawMessage}\n── log ──\n${tail}` : rawMessage) + refundNote,
               );
@@ -9022,7 +9054,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           detachLiveProgress = undefined;
           if (progressJobId) {
             const tail = imageGenFlowLog.filter((s) => String(s).trim()).slice(-24).join("\n").slice(0, 1200);
-            await markJobFailed(
+            await failCompositeProgress(
               progressJobId,
               tail ? `${error instanceof Error ? error.message : String(error)}\n── log ──\n${tail}` : String(error),
             );
@@ -9073,7 +9105,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           stopSyncHeartbeat();
           detachLiveProgress?.();
           if (progressJobId) {
-            await markJobFailed(progressJobId, "imageUrl 为空");
+            await failCompositeProgress(progressJobId, "imageUrl 为空");
           }
           const refunded = await refundCompositeCharge("platformCompositeSheet 生图失败退还");
           const refundLabel = refunded ? "积分已退回" : "退款受阻已记录，账本会自动补退";
@@ -9138,7 +9170,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         };
         } catch (error) {
           // Before the background worker starts, all errors still need a terminal progress row.
-          if (imageReservation) await markJobFailed(imageReservation.id, error instanceof Error ? error.message : String(error));
+          if (imageReservation) await failCompositeProgress(imageReservation.id, error instanceof Error ? error.message : String(error));
           throw error;
         }
       }),

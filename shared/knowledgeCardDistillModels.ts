@@ -1,20 +1,19 @@
 /**
- * 图文读档保留 GLM 5.3 FlashX 与 DeepSeek V4.1 Flash 两档。
- * Flash 档历史 ID 保持不变，服务端实际请求 FlashX；旧回执与价格不变。
+ * 图文读档保留 GLM 5.3 FlashX 与 DeepSeek V4.1 Flash 1017 两档。
+ * 新读档记录精确型号；历史ID不改写，旧回执与价格保持。
  * 每档只走 OpenRouter / EvoLink，两档均失败即报错，不再调用 Qwen。
  */
 
 /** DeepSeek V4.1 Flash（EvoLink id；原生多模态，图文共用一个模型） */
-export const KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK = "deepseek-v4.1-flash" as const;
+export const KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK = "deepseek-v4.1-flash-1017" as const;
 /** GLM 5.3 Flash（EvoLink id；原生视觉，OpenRouter 侧 slug 见 server） */
-export const KNOWLEDGE_CARD_DISTILL_MODEL_GLM = "glm-5.3-flash" as const;
+export const KNOWLEDGE_CARD_DISTILL_MODEL_GLM = "glm-5.3-flashx" as const;
 /** @deprecated 旧 DeepSeek V4 Flash（0911 换 V4.1）；resolve 时迁到 V4.1 */
 export const KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK_V4 = "deepseek-v4-flash" as const;
 /** @deprecated GPT-5.6 Sol 已下架（0910 用户令：不要用 Sol）；resolve 时迁到 DeepSeek */
 export const KNOWLEDGE_CARD_DISTILL_MODEL_SOL = "gpt-5.6-sol" as const;
 /**
- * Qwen3.8 Max：0911 起只做两档都失败后的最后兜底，不再是可选档位。
- * 常量保留：兜底链要用它当模型名，历史 receipt / localStorage 也要能解析。
+ * Qwen3.8 Max 已停用；只保留历史 receipt / localStorage 的识别，不允许调用。
  */
 export const KNOWLEDGE_CARD_DISTILL_MODEL_QWEN = "qwen3.8-max" as const;
 
@@ -31,6 +30,8 @@ export const KNOWLEDGE_CARD_DISTILL_MODEL_KIMI_RETIRED = "moonshotai/kimi-k3" as
 export const KNOWLEDGE_CARD_DISTILL_MODEL_ACCEPTED_INPUTS = [
   KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
   KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
+  "deepseek-v4.1-flash",
+  "glm-5.3-flash",
   KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK_V4,
   KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
@@ -41,12 +42,10 @@ export const KNOWLEDGE_CARD_DISTILL_MODEL_ACCEPTED_INPUTS = [
 ] as const;
 
 /**
- * 每页积分：前 8 页满价 / 第 9 页起折扣。价目不变（0908 只减档不改价）。
+ * 每页积分：2026-11-06确认标准30/24、优良34/28；旧ID单独保留历史价。
  */
 export const KNOWLEDGE_CARD_PAGE_CREDITS_BY_MODEL = {
-  // 0911：档位换模型不改价——GLM 档接的是原「轻量」价位，DeepSeek 档接原「精细」价位。
-  // 页费大头是出图，读档只占零头；调价是用户的事。
-  [KNOWLEDGE_CARD_DISTILL_MODEL_GLM]: { full: 24, discount: 19 },
+  [KNOWLEDGE_CARD_DISTILL_MODEL_GLM]: { full: 34, discount: 28 },
   [KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK]: { full: 30, discount: 24 },
 } as const;
 
@@ -68,12 +67,12 @@ export function knowledgeCardDistillFeeForModel(raw?: string | null): number {
 export const KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS = [
   {
     id: KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK,
-    labelZh: "读档·DeepSeek V4.1 Flash",
+    labelZh: "标准 · DeepSeek V4.1 Flash 1017",
     creditsFull: KNOWLEDGE_CARD_PAGE_CREDITS_BY_MODEL[KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK].full,
   },
   {
     id: KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
-    labelZh: "读档·GLM 5.3 FlashX",
+    labelZh: "优良 · GLM 5.3 FlashX",
     creditsFull: KNOWLEDGE_CARD_PAGE_CREDITS_BY_MODEL[KNOWLEDGE_CARD_DISTILL_MODEL_GLM].full,
   },
 ] as const;
@@ -96,6 +95,8 @@ export function isKnowledgeCardDistillEvolinkTerra(modelId?: string | null): boo
 }
 
 function mapKnownModelId(v: string): KnowledgeCardDistillModelId | null {
+  if (v === "deepseek-v4.1-flash") return KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK;
+  if (v === "glm-5.3-flash") return KNOWLEDGE_CARD_DISTILL_MODEL_GLM;
   if (v === KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK) return KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK;
   if (v === KNOWLEDGE_CARD_DISTILL_MODEL_GLM) return KNOWLEDGE_CARD_DISTILL_MODEL_GLM;
   // 0911：DeepSeek V4 → V4.1（同档换版本）；Qwen 档下架 → 迁到同价位的 GLM 档
@@ -116,11 +117,14 @@ export function resolveKnowledgeCardDistillModel(raw?: string | null): Knowledge
   const envDefault = String(
     (typeof process !== "undefined" && process.env?.KNOWLEDGE_CARD_DISTILL_MODEL) || "",
   ).trim();
-  return mapKnownModelId(envDefault) || KNOWLEDGE_CARD_DISTILL_MODEL_GLM;
+  return mapKnownModelId(envDefault) || KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK;
 }
 
 /** 已下架档位的历史页价：旧 receipt 出图仍按原档结算，不因下架改价 */
 const RETIRED_PAGE_CREDITS: Record<string, { full: number; discount: number }> = {
+  "deepseek-v4.1-flash": { full: 30, discount: 24 },
+  "glm-5.3-flash": { full: 24, discount: 19 },
+  "qwen/qwen3.8-max": { full: 24, discount: 19 },
   [KNOWLEDGE_CARD_DISTILL_MODEL_SOL]: { full: 30, discount: 24 },
   // 旧「轻量」（Qwen）与旧 DeepSeek V4 的历史 receipt 按原价结算，不因换档改价
   [KNOWLEDGE_CARD_DISTILL_MODEL_QWEN]: { full: 24, discount: 19 },
@@ -134,4 +138,19 @@ export function knowledgeCardPageCreditsForModel(raw?: string | null): { full: n
   if (retired) return retired;
   const id = resolveKnowledgeCardDistillModel(raw);
   return KNOWLEDGE_CARD_PAGE_CREDITS_BY_MODEL[id];
+}
+
+/** 仅用于服务端已保存的任务/回执：保留原档位价格身份，不用于新请求选档。 */
+export function preserveStoredKnowledgeCardModel(stored: unknown, fallback?: string | null): string {
+  const value = typeof stored === "string" ? stored.trim() : "";
+  return KNOWLEDGE_CARD_DISTILL_MODEL_ACCEPTED_INPUTS.some(id => id === value)
+    ? value
+    : resolveKnowledgeCardDistillModel(fallback);
+}
+
+/** 当前稿件展示原记录，不把旧模型名称伪装为新模型。 */
+export function knowledgeCardRecordedModelLabel(raw?: string | null): string {
+  const value = String(raw || "").trim();
+  const current = KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.find(option => option.id === value);
+  return current?.labelZh || (value ? `原读档模型：${value}` : "未记录读档模型");
 }

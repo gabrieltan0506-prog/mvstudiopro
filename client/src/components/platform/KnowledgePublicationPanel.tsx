@@ -1,3 +1,4 @@
+import { pollJobUntilTerminal } from "@/lib/jobs";
 import {knowledgePresentationRangeSchema,knowledgePresentationPlanSchema,knowledgePresentationCapacityIssues,assertKnowledgePresentationCapacity,validateKnowledgePresentationRevision,type KnowledgePresentationPlan} from "@shared/knowledgePresentation";
 import { knowledgePublicationTemplates, resolveKnowledgePublicationTemplate } from "@shared/knowledgePublicationTemplates";
 import { useEffect, useRef, useState } from "react";
@@ -30,12 +31,18 @@ export default function KnowledgePublicationPanel({
   onChange,
   onBusy,
   autoStart = false,
+  autoStartToken = 0,
+  preauthorizedCredits,
+  waitForImages,
 }: {
   doc: EditableLayout;
   commit: (doc: EditableLayout) => Promise<Saved>;
   onChange: (doc: EditableLayout) => void;
   onBusy: (value: boolean) => void;
   autoStart?: boolean;
+  autoStartToken?: number;
+  preauthorizedCredits?: number;
+  waitForImages?: (ids: string[]) => Promise<void>;
 }) {
   const utils = trpc.useUtils();
   const exporter = trpc.editableLayout.exportPublication.useMutation();
@@ -50,6 +57,7 @@ export default function KnowledgePublicationPanel({
   const active = useRef(false),
     started = useRef("");
   const alive = useRef(true);
+  const authorizationConsumed = useRef(false);
   const [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
@@ -95,8 +103,13 @@ export default function KnowledgePublicationPanel({
     setFiles(null);
     setPptxFile(null);
     try {
+      const beforeRetry = latest.current;
       let next = latest.current,
         pub = next.publication!;
+      const initialAuthorization = !retryFailed && !authorizationConsumed.current ? preauthorizedCredits : undefined;
+      authorizationConsumed.current = true;
+      if (pub.synchronizedStarted === false && initialAuthorization === undefined) throw new Error("这份同步草稿尚未确认生成，请返回配图入口核对后开始；没有发起图片或文字收费任务");
+      if (pub.synchronizedStarted === false) { pub = { ...pub, synchronizedStarted: true }; next = { ...next, publication: pub }; }
       const batches = knowledgeReviewBatches(pub.source);
       let total = batches.length + 1;
       if (retryFailed) {
@@ -110,19 +123,23 @@ export default function KnowledgePublicationPanel({
         };
         next = { ...next, publication: pub };
       }
-      await save(next);
+      try { await save(next); }
+      catch (error) {
+        if (retryFailed) { latest.current = beforeRetry; onChange(beforeRetry); }
+        throw error;
+      }
       let quote = await utils.editableLayout.publicationQuote.fetch({
         documentId: next.id,
       });
       // 费用只按现有顾问单批费率计算，不用短问答免费名义暗中发起整套付费请求。
       if (
-        quote.maxCredits > 0 &&
+        quote.maxCredits > (initialAuthorization ?? 0) &&
         !window.confirm(
           `将自动整理剩余${quote.remaining}组内容，预计${quote.estimatedCredits}积分，最多${quote.maxCredits}积分。整套核对若需增加费用，会先向你确认。无需逐页修改，是否开始？`
         )
       )
         return;
-      let charged = 0, authorizedCredits = quote.maxCredits;
+      let charged = 0, authorizedCredits = Math.max(quote.maxCredits, initialAuthorization ?? 0);
       total = quote.batches;
       for (let i = pub.completedBatches; i < total; i++) {
         if (!alive.current) return;
@@ -139,6 +156,17 @@ export default function KnowledgePublicationPanel({
             ? "全部配图已检查，正在核对整套知识说明的一致性…"
             : `正在自动审校第 ${i + 1} / ${batches.length} 批 · 已完成部分已保存`
         );
+        if (i < batches.length) {
+          const imageJobs = batches[i].map(n => pub.source.pages[n].imageJobId).filter((id): id is string => Boolean(id)).map(id => pub.imageReplacements?.[id] || id);
+          if (imageJobs.length) {
+            setMessage("完整文字已保存，正在等待本次配图完成并自动继续审校…");
+            if (waitForImages && initialAuthorization !== undefined) await waitForImages(imageJobs);
+            else for (const jobId of imageJobs) {
+              const job = await pollJobUntilTerminal(jobId, { intervalMs: 3000, maxWaitMs: 28 * 60_000 });
+              if (job.status !== "succeeded") throw new Error("原配图任务未成功，文字已保存；请先恢复配图，不会自动重新购买");
+            }
+          }
+        }
         const attempt = pub.attempts[String(i)] || 0;
         const response = await streamManhuaAdvisor(
           {
@@ -200,7 +228,8 @@ export default function KnowledgePublicationPanel({
           )
             throw new Error("本批审校回执页号不一致，已暂停");
           pub = { ...pub, completedBatches: i + 1 };
-          next = { ...next, publication: pub };
+          const imageUrls = new Map((result.images || []).map(image => [image.id, image.url]));
+          next = { ...next, pages: next.pages.map(page => imageUrls.has(page.id) ? { ...page, imageUrl: imageUrls.get(page.id)! } : page), publication: pub };
         }
         await save({ ...next, updatedAt: new Date().toISOString() });
       }
@@ -216,11 +245,12 @@ export default function KnowledgePublicationPanel({
     }
   };
   useEffect(() => {
-    if (autoStart && started.current !== doc.id && !doc.publication?.review) {
-      started.current = doc.id;
+    const key = `${doc.id}:${autoStartToken}`;
+    if (autoStart && started.current !== key && !doc.publication?.review) {
+      started.current = key;
       void run();
     }
-  }, [autoStart, doc.id]);
+  }, [autoStart, autoStartToken, doc.id]);
   const planPptx = async (retryFailed = false) => {
     if(active.current)return;
     locked(true);setError("");setPptxFile(null);

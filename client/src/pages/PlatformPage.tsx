@@ -1,5 +1,6 @@
-import { knowledgeCardLayoutSource } from "@shared/knowledgeCardEditableLayout";
-import EditableLayoutStudio from "@/components/platform/EditableLayoutStudio";
+import { knowledgeIllustrationRun, knowledgeIllustrationJobId, inspectKnowledgeIllustrationRetry } from "@/lib/knowledgeIllustrationRun";
+import { knowledgeCardLayoutSource, synchronizedKnowledgeCardSource } from "@shared/knowledgeCardEditableLayout";
+import EditableLayoutStudio, { type EditableLayoutStudioHandle } from "@/components/platform/EditableLayoutStudio";
 import type { LayoutSource } from "@shared/editableLayout";
 import { TrendReportControls } from "@/components/TrendReportControls";
 import { rankTopicShortlistByViralScore } from "@shared/platformTopicShortlist";
@@ -304,6 +305,7 @@ import {
 import { suggestKnowledgeCardMinSections } from "@shared/knowledgeCardDistillSections";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS,
+  knowledgeCardRecordedModelLabel,
 } from "@shared/knowledgeCardDistillModels";
 import {
   KNOWLEDGE_CARD_DEFAULT_DETAIL_LEVEL,
@@ -3079,6 +3081,7 @@ export default function PlatformPage() {
   const isTrial = useIsTrialUser();
   const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
   /** 每条选题：用户上传的人像参考图（GCS 直链）→ 生成封面时换主角。key=sceneId；可覆盖全局人像 */
+  const layoutStudioRef = useRef<EditableLayoutStudioHandle>(null);
   const [layoutSource, setLayoutSource] = useState<LayoutSource | null>(null);
   const [viralGraphicPagesBusyCount, setViralGraphicPagesBusyCount] = useState(0);
   const viralGraphicPagesBusy = viralGraphicPagesBusyCount > 0;
@@ -3121,9 +3124,10 @@ export default function PlatformPage() {
       // 旧值（Sol / Terra / OR-qwen / 已下架的 Qwen 轻量档 / DeepSeek V4）由 resolve 迁到现行两档
       return resolveKnowledgeCardDistillModel(raw);
     } catch {
-      return KNOWLEDGE_CARD_DISTILL_MODEL_GLM;
+      return KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK;
     }
   });
+  const [customNotePreparedModel, setCustomNotePreparedModel] = useState<string | null>(null);
   /** 成稿档：精华版（优先重点+简单解说）/ 完整版（第一重点+详细解说，不限页数）；0911 用户定名 */
   const [customNoteDetailLevel, setCustomNoteDetailLevel] = useState<KnowledgeCardDetailLevel>(() => {
     try {
@@ -8016,6 +8020,9 @@ export default function PlatformPage() {
   const renderedDraftRef = useRef<string>("");
   const renderedDetailLevelRef = useRef<KnowledgeCardDetailLevel | undefined>(undefined);
   const knowledgeCardLayoutSourceIdRef = useRef<string>("");
+  const renderedImageJobsRef = useRef<string[] | null>(null);
+  const renderedSubmittedImageJobsRef = useRef<Set<string> | null>(null);
+  const renderedSettingsRef = useRef<{ distillModel: KnowledgeCardDistillModelId; billingModel: string; subjectPosition: KnowledgeCardSubjectPosition; infographicTemplateId: string | null } | null>(null);
   /** customNoteImages 的同步镜像：计数用，不在 state updater 里做副作用 */
   const customNoteImagesRef = useRef<string[]>([]);
   const recoveryBlocked = customNoteBusy || knowledgeCardPdfBusy || customNoteUploadBusy || customNoteLevelSwitching || Boolean(customNoteDistillJobId) || Boolean(customNotePreflight);
@@ -8029,6 +8036,10 @@ export default function PlatformPage() {
     setCustomNoteCompactMarkdown(backup.detailLevel === "concise" ? backup.markdown : null);
     setCustomNoteDetailLevel(backup.detailLevel); setCustomNoteDistillPhase("ready");
     setCustomNoteDistillModel(resolveKnowledgeCardDistillModel(backup.distillModel));
+    setCustomNotePreparedModel(backup.distillModel || null);
+    renderedImageJobsRef.current = null;
+    renderedSubmittedImageJobsRef.current = null;
+    renderedSettingsRef.current = { distillModel: resolveKnowledgeCardDistillModel(backup.distillModel), billingModel: backup.distillModel, subjectPosition: backup.subjectPosition, infographicTemplateId: backup.infographicTemplateId };
     setCustomNoteSubjectPosition(backup.subjectPosition); setCustomNoteInfographicTemplateId(backup.infographicTemplateId); setCustomNoteInfographicLabelZh(null);
     const images = Array.from({length:backup.total},()=>"");
     for (const image of backup.images) images[image.page-1]=image.url;
@@ -8049,6 +8060,7 @@ export default function PlatformPage() {
   const knowledgeCardDraftChanged = () => Boolean(renderedDraftRef.current) && customNoteText.trim() !== renderedDraftRef.current;
   /** 单页补出：只重出失败/缺失的那一页，按该页页费确认后扣费；不动其它页 */
   const retryKnowledgeCardPage = async (idx: number) => {
+    if (!workbenchUserKey) { toast.error("请先登录再补出图片"); return; }
     if (customNoteBusy) { toast.info("上一个生成任务还在进行中，请稍候"); return; }
     const total = customNoteImagesRef.current.length;
     // 必须用出图时的提炼稿快照：文本框改过再按新文本出第 N 页，会拿到另一份稿的页还照旧计费
@@ -8056,8 +8068,6 @@ export default function PlatformPage() {
     if (!text || idx < 0 || idx >= total) return;
     if (knowledgeCardDraftChanged()) { toast.error("文案已改动，补出会对不上这套卡；请重新整套生成"); return; }
     if (knowledgeCardInflight.includes(idx)) { toast.info(`第 ${idx + 1} 页仍在生成中，请稍候`); return; }
-    const price = knowledgeCardCreditsForPageIndex(idx + 1, customNoteDistillModel);
-    if (!window.confirm(`补出第 ${idx + 1}/${total} 页，${price} 积分，是否继续？`)) return;
     const runId = renderRunIdRef.current;
     setCustomNoteBusy(true);
     setCustomNoteError(null);
@@ -8065,15 +8075,34 @@ export default function PlatformPage() {
     setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(customNoteImagesRef.current.filter(Boolean).length, total), label: `补出第 ${idx + 1}/${total} 页` });
     markInflight(runId, idx, true);
     try {
-      const url = await generateCustomNoteOne(text, "single_page_knowledge_card", undefined, { index: idx + 1, total });
+      const settings = renderedSettingsRef.current;
+      if (!settings) throw new Error("缺少原成品的读档与版式记录，请先恢复对应云端备份");
+      const originalJobs = renderedImageJobsRef.current || layoutStudioRef.current?.imageJobs(text, settings.distillModel, settings.infographicTemplateId);
+      const originalJobId = originalJobs?.[idx];
+      let url = "", replacementJobId = originalJobId || "";
+      if (originalJobId) {
+        const knownUnsubmitted = renderedImageJobsRef.current?.[idx] === originalJobId && renderedSubmittedImageJobsRef.current !== null && !renderedSubmittedImageJobsRef.current.has(originalJobId);
+        url = await inspectKnowledgeIllustrationRetry(originalJobId, knownUnsubmitted, getJob) || "";
+      }
+      const reusedOriginal = Boolean(url);
+      if (!url) {
+        const quote = await trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch({ markdown: text, distillModel: settings.distillModel });
+        const price = knowledgeCardCreditsForPageIndex(idx + 1, quote.billingModel);
+        if (!window.confirm(`补出第 ${idx + 1}/${total} 页，${price} 积分，是否继续？`)) return;
+        const replacementRequestId = knowledgeCardPageTasks.begin("platform_composite_sheet_progress");
+        replacementJobId = await knowledgeIllustrationJobId(workbenchUserKey, replacementRequestId);
+        url = await generateCustomNoteOne(text, "single_page_knowledge_card", undefined, { index: idx + 1, total }, undefined, { ...settings, billingModel: quote.billingModel }, { requestId: replacementRequestId, jobId: replacementJobId });
+      }
       if (runId !== renderRunIdRef.current) return; // 期间已重新整套生成，旧结果丢弃
       const next = customNoteImagesRef.current.slice();
       next[idx] = url;
       customNoteImagesRef.current = next;
       setCustomNoteImages(next);
       const ready = next.filter(Boolean).length;
-      setCustomNoteProgress(ready >= total ? { status: "succeeded", percent: 100 } : { status: "running", percent: knowledgeCardProgressFromRender(ready, total), label: `出图 ${ready}/${total} 页` });
-      toast.success(`第 ${idx + 1} 页已补出`);
+      if (originalJobId) await layoutStudioRef.current?.attachImage(originalJobId, replacementJobId, ready >= total);
+      if (renderedImageJobsRef.current) renderedImageJobsRef.current[idx] = replacementJobId;
+      setCustomNoteProgress(ready >= total ? { status: "succeeded", percent: 100, successLabel: "配图完成", label: "完整文字与整套审校以创作顾问进度为准" } : { status: "running", percent: knowledgeCardProgressFromRender(ready, total), label: `出图 ${ready}/${total} 页` });
+      toast.success(reusedOriginal ? `第 ${idx + 1} 页已恢复，未重复购买` : `第 ${idx + 1} 页已补出并保存`);
     } catch (e) {
       const msg = mapCustomNoteError(e);
       setCustomNoteError(msg);
@@ -8138,8 +8167,8 @@ export default function PlatformPage() {
   const optimizeCustomCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
   const customOptimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy;
   const customNoteKnowledgePlan = useMemo(
-    () => planKnowledgeCardPages(customNoteText, customNoteDistillModel),
-    [customNoteText, customNoteDistillModel],
+    () => planKnowledgeCardPages(customNoteText, customNotePreparedModel || customNoteDistillModel),
+    [customNoteText, customNotePreparedModel, customNoteDistillModel],
   );
   const customNoteKnowledgeCredits =
     customNoteKnowledgePlan.credits ||
@@ -8188,13 +8217,14 @@ export default function PlatformPage() {
       knowledgeCardPageTasks.finish(pageRequestId);
       knowledgeCardPageTasks.assertLive();
       if (job.status === "failed") throw new Error(job.error || "精华版派生失败，请稍后重试");
-      const out = (job.output || {}) as { distilledMarkdown?: string };
+      const out = (job.output || {}) as { distilledMarkdown?: string; distillModel?: string };
       const compact = String(out.distilledMarkdown || "").trim();
       if (!compact) throw new Error("精华版派生结果为空");
       // 审查 P1：稿子在派生期间被换过（清空/重新提炼/换书）→ 这份结果作废，不许覆盖新稿
       if (revision !== customNoteRevisionRef.current) {
         throw new Error(KNOWLEDGE_CARD_DERIVE_STALE_MESSAGE);
       }
+      if (out.distillModel) setCustomNotePreparedModel(out.distillModel);
       setCustomNoteCompactMarkdown(compact);
       setCustomNoteProgress({ status: "running", percent: 60, label: "精华版已就绪，等待出图" });
       return compact;
@@ -8304,7 +8334,7 @@ export default function PlatformPage() {
     setCustomNoteProgress((prev) => ({ status: "running", percent: Math.max(prev.status === "running" ? prev.percent : 0, 1), label: "提交提炼任务…" }));
     // 新一轮提炼开始：旧书的真源作废，避免切档把上一本写回来；版本 +1 让在途派生的回写失效
     bumpCustomNoteRevision();
-    setCustomNoteFullMarkdown(null);
+    setCustomNoteFullMarkdown(null); setCustomNotePreparedModel(null);
     setCustomNoteCompactMarkdown(null);
     // 新一轮提炼：上一本 EPUB 的 PDF 按钮不再挂着（本轮转档成功会重新出现）
     setKnowledgeCardEpubPdfs([]);
@@ -8325,6 +8355,7 @@ export default function PlatformPage() {
       knowledgeCardPageTasks.finish(pageRequestId);
       knowledgeCardPageTasks.assertLive();
       setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
+      setCustomNotePreparedModel(queued.distillModel || customNoteDistillModel);
       return String(queued.distilledMarkdown || "").trim();
     }
 
@@ -8395,7 +8426,8 @@ export default function PlatformPage() {
     knowledgeCardPageTasks.assertLive();
     if (job.status === "failed") throw new Error(job.error || "提炼失败，请稍后重试");
     setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
-    const out = (job.output || {}) as { distilledMarkdown?: string; epubPdfs?: Array<{ fileName: string; url: string }> };
+    const out = (job.output || {}) as { distilledMarkdown?: string; distillModel?: string; epubPdfs?: Array<{ fileName: string; url: string }> };
+    setCustomNotePreparedModel(out.distillModel || queued.distillModel || customNoteDistillModel);
     if (Array.isArray(out.epubPdfs) && out.epubPdfs.length) showKnowledgeCardEpubPdfs(out.epubPdfs);
     return String(out.distilledMarkdown || "").trim();
     } finally {
@@ -8467,15 +8499,17 @@ export default function PlatformPage() {
      */
     snapshot?: {
       distillModel: typeof customNoteDistillModel;
+      billingModel: string;
       subjectPosition: typeof customNoteSubjectPosition;
       infographicTemplateId: string | null;
     },
+    assignedImageRequest?: { requestId: string; jobId: string },
   ): Promise<string> => {
     knowledgeCardPageTasks.assertLive();
     const pageRequestId = kind === "single_page_knowledge_card"
-      ? knowledgeCardPageTasks.begin("platform_composite_sheet_progress") : undefined;
+      ? assignedImageRequest?.requestId || knowledgeCardPageTasks.begin("platform_composite_sheet_progress") : undefined;
     const sceneId = `custom-note-${notePage?.index ?? notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const progressJobId = newPlatformCompositeProgressJobId();
+    const progressJobId = assignedImageRequest?.jobId || newPlatformCompositeProgressJobId();
     const title = extractInfographicSubjectFromUserCopy(trimmed);
     /**
      * 知识卡的 scriptContext 会被 `planKnowledgeCardPages` 逐页切开当**正文**渲染，
@@ -8499,6 +8533,7 @@ export default function PlatformPage() {
       ...(kind === "single_page_knowledge_card"
         ? {
             distillModel: snapshot?.distillModel ?? customNoteDistillModel,
+            confirmedPageCredits: snapshot ? knowledgeCardCreditsForPageIndex(notePage?.index ?? 1, snapshot.billingModel) : undefined,
             subjectPosition: snapshot?.subjectPosition ?? customNoteSubjectPosition,
             ...(imageProvider ? { imageProvider } : {}),
             // 0909：OpenAI 官方优先，档位随开关；WaveSpeed / EvoLink 由服务端按固定序兜底
@@ -8639,6 +8674,7 @@ export default function PlatformPage() {
         setKnowledgeCardPdfUrl(null);
         const pendingFiles = customNotePendingFilesRef.current.slice();
         let distilled = trimmed;
+        let completeManuscript = customNoteFullMarkdown;
         // 上传路径已提炼进文本框时，生成只出图；仅当仍有待处理文件或无文案时再提炼
         if (pendingFiles.length > 0 || !distilled) {
           setCustomNoteDistillPhase("distilling");
@@ -8648,6 +8684,7 @@ export default function PlatformPage() {
             onStatus: setCustomNoteUploadStatus,
           });
           if (!distilled) throw new Error("提炼结果为空，请调整文案后重试");
+          completeManuscript = distilled;
           try {
             distilled = await adoptDistilledFullMarkdown(distilled);
           } catch (adoptErr) {
@@ -8695,6 +8732,7 @@ export default function PlatformPage() {
                 chargeDistillFee: true,
               });
               if (!refined) throw new Error("提炼结果为空，请调整文案后重试");
+              completeManuscript = refined;
               try {
                 distilled = await adoptDistilledFullMarkdown(refined);
               } catch (adoptErr) {
@@ -8712,7 +8750,9 @@ export default function PlatformPage() {
         const pages = plan.pages.length ? plan.pages : [distilled];
         const total = pages.length;
         const qLabel = "4K";
-        const credits = plan.credits || knowledgeCardCreditsForPages(total, customNoteDistillModel);
+        const priceQuote = await trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch({ markdown: distilled, distillModel: customNoteDistillModel });
+        if (priceQuote.pageCount !== total) throw new Error("报价页数与当前稿件不一致，请重新确认");
+        const credits = priceQuote.credits;
         /**
          * 复审 P1：等确认期间**不解锁** busy。以前这里 setCustomNoteBusy(false) 之后才 await，
          * 正文、成稿档、版式、模板、生成按钮全是活的，改完再点确认，
@@ -8723,6 +8763,7 @@ export default function PlatformPage() {
           distilled,
           revision: confirmRevision,
           distillModel: customNoteDistillModel,
+          billingModel: priceQuote.billingModel,
           detailLevel: customNoteDetailLevel,
           subjectPosition: customNoteSubjectPosition,
           infographicTemplateId: customNoteInfographicTemplateId,
@@ -8730,18 +8771,43 @@ export default function PlatformPage() {
           qualityZh: qLabel,
           credits,
         } as const;
+        if (!workbenchUserKey) throw new Error("请先登录再生成手册");
+        const studio = layoutStudioRef.current;
+        if (!studio) throw new Error("请等待云端稿件就绪");
+        const sourceId = `knowledge-card:${crypto.randomUUID()}`;
+        const fullMarkdown = pendingSnapshot.detailLevel === "full" ? distilled : completeManuscript || "";
+        if (!fullMarkdown.trim()) throw new Error("缺少完整版文字底稿，请先恢复完整稿；尚未开始出图或整理");
+        const { pageRequestIds, imageJobIds, illustrationRun, publicationQuote } = await (async () => {
+          const pageRequestIds: string[] = [];
+          try {
+            for (let i = 0; i < pages.length; i++) pageRequestIds.push(knowledgeCardPageTasks.begin("platform_composite_sheet_progress"));
+            const imageJobIds = await Promise.all(pageRequestIds.map(id => knowledgeIllustrationJobId(workbenchUserKey, id)));
+            const illustrationRun = knowledgeIllustrationRun(imageJobIds);
+            const synchronizedSource = synchronizedKnowledgeCardSource({
+              owner: workbenchUserKey, sourceId, fullMarkdown, illustrationMarkdown: distilled,
+              detailLevel: pendingSnapshot.detailLevel, distillModel: pendingSnapshot.distillModel,
+              infographicTemplateId: pendingSnapshot.infographicTemplateId, imageJobIds,
+            });
+            const publicationQuote = await studio.prepare(synchronizedSource, illustrationRun.wait);
+            return { pageRequestIds, imageJobIds, illustrationRun, publicationQuote };
+          } catch (error) {
+            pageRequestIds.forEach(id => knowledgeCardPageTasks.finish(id));
+            throw error;
+          }
+        })();
         const continueGen = await askKnowledgeCardPreflight({
           levelZh: KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH[pendingSnapshot.detailLevel],
           layoutZh: KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[pendingSnapshot.subjectPosition],
           templateZh: customNoteInfographicLabelZh || "未选（按正文自动）",
           distillModelZh:
-            KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.find((o) => o.id === pendingSnapshot.distillModel)?.labelZh
-            || String(pendingSnapshot.distillModel),
+            knowledgeCardRecordedModelLabel(pendingSnapshot.billingModel),
           pageCount: pendingSnapshot.pageCount,
           qualityZh: pendingSnapshot.qualityZh,
           credits: pendingSnapshot.credits,
+          advisorCredits: publicationQuote.maxCredits,
         }, confirmRevision);
         if (!continueGen) {
+          pageRequestIds.forEach(id => knowledgeCardPageTasks.finish(id));
           toast.success(`已保留提炼稿（约 ${total} 页），未出图`);
           setCustomNoteDistillPhase("idle");
           setCustomNoteProgress({ status: "idle", percent: 0 });
@@ -8749,13 +8815,17 @@ export default function PlatformPage() {
         }
         // 确认期间稿件版本变了（换了稿/切了档）：这次确认作废，不拿旧快照去付费出图
         if (customNoteRevisionRef.current !== confirmRevision) {
+          pageRequestIds.forEach(id => knowledgeCardPageTasks.finish(id));
           toast.message("稿件已变化，这次确认作废；请重新点生成");
           setCustomNoteDistillPhase("idle");
           setCustomNoteProgress({ status: "idle", percent: 0 });
           return;
         }
+        try { await studio.start(publicationQuote.documentId, publicationQuote.maxCredits); }
+        catch (error) { pageRequestIds.forEach(id => knowledgeCardPageTasks.finish(id)); throw error; }
         const renderSnapshot = {
           distillModel: pendingSnapshot.distillModel,
+          billingModel: pendingSnapshot.billingModel,
           subjectPosition: pendingSnapshot.subjectPosition,
           infographicTemplateId: pendingSnapshot.infographicTemplateId,
         };
@@ -8768,9 +8838,12 @@ export default function PlatformPage() {
         let done = 0;
         // 新批次：旧批次在途页返回后不得覆盖；补出单页用这份稿的快照
         const runId = ++renderRunIdRef.current;
+        renderedSettingsRef.current = renderSnapshot;
+        renderedImageJobsRef.current = imageJobIds;
+        renderedSubmittedImageJobsRef.current = new Set();
         renderedDraftRef.current = distilled;
         renderedDetailLevelRef.current = pendingSnapshot.detailLevel;
-        knowledgeCardLayoutSourceIdRef.current = `knowledge-card:${crypto.randomUUID()}`;
+        knowledgeCardLayoutSourceIdRef.current = sourceId;
         customNoteImagesRef.current = Array.from({ length: total }, () => "");
         setKnowledgeCardInflight([]);
         const publish = () => {
@@ -8799,6 +8872,7 @@ export default function PlatformPage() {
             setCustomNotePageProgress({ i: Math.min(total, done + 1), n: total });
             markInflight(runId, i, true);
             try {
+              renderedSubmittedImageJobsRef.current?.add(imageJobIds[i]);
               const url = await generateCustomNoteOne(
                 pendingSnapshot.distilled,
                 "single_page_knowledge_card",
@@ -8806,8 +8880,10 @@ export default function PlatformPage() {
                 { index: i + 1, total },
                 undefined,
                 renderSnapshot,
+                { jobId: imageJobIds[i], requestId: pageRequestIds[i] },
               );
               urls[i] = url;
+              illustrationRun.done(imageJobIds[i]);
             } finally {
               markInflight(runId, i, false);
             }
@@ -8819,7 +8895,11 @@ export default function PlatformPage() {
             }
           }
         };
-        await Promise.all(Array.from({ length: Math.min(KNOWLEDGE_CARD_RENDER_CONCURRENCY, total) }, () => worker()));
+        try {
+          await Promise.all(Array.from({ length: Math.min(KNOWLEDGE_CARD_RENDER_CONCURRENCY, total) }, () => worker()));
+        } finally {
+          if (urls.some(url => !url)) illustrationRun.stop();
+        }
         setCustomNoteRendering(false);
         const stoppedByUser = customNoteStopRenderRef.current;
         customNoteStopRenderRef.current = false;
@@ -8835,7 +8915,7 @@ export default function PlatformPage() {
           });
           toast.message(`已停止出图：完成 ${madePages}/${total} 页，按已出页计费（未出的页不扣）`);
         } else {
-          setCustomNoteProgress({ status: "succeeded", percent: 100 });
+          setCustomNoteProgress({ status: "succeeded", percent: 100, successLabel: "配图完成", label: "完整文字整理与整套审校仍以创作顾问进度为准" });
           toast.success(`已生成 ${total} 页手册配图（${qLabel} · 约 ${credits} 积分）`);
         }
         setCustomNoteDistillPhase("idle");
@@ -13121,7 +13201,7 @@ export default function PlatformPage() {
           </div>
         ) : null}
 
-        {workbenchUserKey && <EditableLayoutStudio key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} />}
+        {workbenchUserKey && <EditableLayoutStudio ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} />}
 
         {/* 三模式分流：仅渲染 active Workbench；state/hooks 留在 PlatformPage */}
         <section
@@ -15224,16 +15304,16 @@ export default function PlatformPage() {
                 <PlatformWorkspaceStepHint
                   step={1}
                   title="粘贴文案"
-                  lines={["粘贴正文，或上传文档与图片。", "确认提炼内容、分页与费用，再生成手册配图。"]}
+                  lines={["粘贴正文，或上传文档与图片。", "确认完整底稿、配图张数与费用，一次生成图文知识手册。"]}
                   active={!customNoteText.trim()}
                   done={Boolean(customNoteText.trim())}
                 />
                 <PlatformWorkspaceStepHint
                   step={2}
-                  title="生成结果"
-                  lines={["点击生成按钮，等待任务完成。", "配图完成后，启动下方创作顾问补充说明、排版成册。"]}
+                  title="配图结果"
+                  lines={["确认一次，同时生成配图并整理完整文字。", "配图就绪后自动审校；完整手册以创作顾问的整套审校结果为准。"]}
                   active={Boolean(customNoteText.trim()) && !customNoteImages.length && !customNoteImageUpper && !customOptimizeResult}
-                  done={Boolean(customNoteImages.length || customNoteImageUpper || customNoteImageLower || customOptimizeResult)}
+                  done={Boolean(customNoteImages.length && customNoteImages.every(Boolean))}
                 />
               </div>
 
@@ -15244,7 +15324,7 @@ export default function PlatformPage() {
                 if ((customNoteText.trim() || customNotePendingFilesRef.current.length) && !window.confirm("采用会替换当前正文和待处理文档，已有图片暂时保留。确认已备份当前内容？")) return false;
                 customNoteRevisionRef.current += 1; renderRunIdRef.current += 1;
                 customNotePendingFilesRef.current = []; setCustomNotePendingMeta([]); setCustomNoteUploadStatus(null);
-                setCustomNoteText(content); setCustomNoteFullMarkdown(null); setCustomNoteCompactMarkdown(null);
+                setCustomNoteText(content); setCustomNoteFullMarkdown(null); setCustomNotePreparedModel(null); setCustomNoteCompactMarkdown(null);
                 setCustomNoteDistillPhase("ready"); setCustomNoteKind("single_page_knowledge_card"); setOutputType("single_page");
                 setCustomOptimizeResult(null); setCustomOptimizeSummary(null); setCustomNoteError(null);
                 toast.success(`已载入第${index + 1}页正文，请核对分页与费用后生成；旧图片未重做`); return true;
@@ -15281,6 +15361,21 @@ export default function PlatformPage() {
                 ) : null}
               </div>
 
+              {customNoteKind === "single_page_knowledge_card" && <div className="mb-2 flex flex-wrap items-center gap-2">
+                {workbenchUserKey && customNoteText.trim() && (
+                  <button type="button" disabled={recoveryBlocked} className="rounded-full border border-[#ddbc87]/40 px-4 py-2 text-sm text-[#edd4ac] disabled:opacity-50" onClick={() => {
+                    try {
+                      const images = customNoteImages.length ? customNoteImages : customNoteImageLower ? [customNoteImageUpper || "", customNoteImageLower] : customNoteImageUpper ? [customNoteImageUpper] : [];
+                      const markdown = images.length ? renderedDraftRef.current : customNoteText;
+                      if (images.length && !markdown) throw new Error("缺少原成品正文快照，请先恢复对应成品");
+                      knowledgeCardLayoutSourceIdRef.current ||= `knowledge-card:${crypto.randomUUID()}`;
+                      setLayoutSource(knowledgeCardLayoutSource({ owner: workbenchUserKey, sourceId: knowledgeCardLayoutSourceIdRef.current, markdown, detailLevel: images.length ? renderedDetailLevelRef.current : customNoteDetailLevel, distillModel: customNoteDistillModel, infographicTemplateId: customNoteInfographicTemplateId, images }));
+                      document.getElementById("editable-layout-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    } catch (error) { toast.error(error instanceof Error ? error.message : "排版导入失败，原稿已保留"); }
+                  }}>{customNoteImages.length || customNoteImageUpper ? "创作顾问：整理图文知识手册" : "创作顾问：整理说明与导出"}</button>
+                )}
+                <span className="text-xs text-[#c9c0e6]/60">配图张数不等于最终 PDF 页数；文字说明会按内容另行分页。整理前展示费用</span>
+              </div>}
               <textarea
                 className="w-full min-h-[140px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#ff4fb8]/60 focus:outline-none focus:ring-1 focus:ring-[#ff4fb8]/30 transition"
                 placeholder={
@@ -15468,15 +15563,17 @@ export default function PlatformPage() {
                         disabled={
                           customNoteBusy
                           || customNoteUploadBusy
-                          || customNoteDistillPhase !== "idle"
+                          || customNoteLevelSwitching
+                          || customNoteDistillPhase === "distilling"
                         }
                         title={
-                          customNoteDistillPhase !== "idle"
-                            ? "本次读档按当前档位计费，出图完成后才能换档"
-                            : undefined
+                          customNotePreparedModel
+                            ? "选择影响下一次读档；当前稿件仍保留原读档模型和计费依据"
+                            : "选择本次读档模型"
                         }
                         onChange={(e) => {
                           const next = e.target.value as KnowledgeCardDistillModelId;
+                          if (blockedByPendingConfirm("切换读档模型")) return;
                           setCustomNoteDistillModel(next);
                           try {
                             localStorage.setItem("mvs-knowledge-card-distill-model", next);
@@ -15487,10 +15584,11 @@ export default function PlatformPage() {
                       >
                         {KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.map((o) => (
                           <option key={o.id} value={o.id}>
-                            {o.id === KNOWLEDGE_CARD_DISTILL_MODEL_GLM ? "标准" : "精细"} · {o.creditsFull}积分/页
+                            {o.labelZh} · {o.creditsFull}积分/页
                           </option>
                         ))}
                       </select>
+                      {customNotePreparedModel && <span>当前稿件：{knowledgeCardRecordedModelLabel(customNotePreparedModel)}；选择框用于下次读档</span>}
                       <OpenAiImageVariantSwitch compact hideModelNames />
                     </label>
                   ) : null}
@@ -15581,25 +15679,12 @@ export default function PlatformPage() {
                   ) : customNoteKind === "optimize_custom_copy" ? (
                     <><Sparkles className="h-4 w-4" />深度优化文案（{customOptimizeCopyCost} 积分）</>
                   ) : customNoteKind === "single_page_knowledge_card" ? (
-                    <><Sparkles className="h-4 w-4" />生成手册配图（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · 4K · {customNoteKnowledgeCredits || 30} 积分）</>
+                    <><Sparkles className="h-4 w-4" />生成图文知识手册（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 张配图 · 4K）</>
                   ) : (
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
                 </button>
                 <KnowledgeCardRecovery disabled={recoveryBlocked} onApply={applyKnowledgeCardRecovery} />
-                {customNoteKind === "single_page_knowledge_card" && workbenchUserKey && customNoteText.trim() && (
-                  <button type="button" disabled={recoveryBlocked} className="rounded-full border border-[#ddbc87]/40 px-4 py-2 text-sm text-[#edd4ac] disabled:opacity-50" onClick={() => {
-                    try {
-                      const images = customNoteImages.length ? customNoteImages : customNoteImageLower ? [customNoteImageUpper || "", customNoteImageLower] : customNoteImageUpper ? [customNoteImageUpper] : [];
-                      const markdown = images.length ? renderedDraftRef.current : customNoteText;
-                      if (images.length && !markdown) throw new Error("缺少原成品正文快照，请先恢复对应成品");
-                      knowledgeCardLayoutSourceIdRef.current ||= `knowledge-card:${crypto.randomUUID()}`;
-                      setLayoutSource(knowledgeCardLayoutSource({ owner: workbenchUserKey, sourceId: knowledgeCardLayoutSourceIdRef.current, markdown, detailLevel: images.length ? renderedDetailLevelRef.current : customNoteDetailLevel, distillModel: customNoteDistillModel, infographicTemplateId: customNoteInfographicTemplateId, images }));
-                      document.getElementById("editable-layout-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
-                    } catch (error) { toast.error(error instanceof Error ? error.message : "排版导入失败，原稿已保留"); }
-                  }}>{customNoteImages.length || customNoteImageUpper ? "创作顾问：整理图文知识手册" : "创作顾问：整理说明与导出"}</button>
-                )}
-                <span className="text-xs text-[#c9c0e6]/60">保留原稿与配图，开始整理前展示本次费用</span>
                 {(customNoteImageUpper || customNoteImageLower || customNoteError || customOptimizeResult) && !customNoteBusy && (
                   <button
                     type="button"
@@ -15616,7 +15701,7 @@ export default function PlatformPage() {
                       setCustomOptimizeSummary(null);
                       setCustomNoteText("");
                       bumpCustomNoteRevision();
-                      setCustomNoteFullMarkdown(null);
+                      setCustomNoteFullMarkdown(null); setCustomNotePreparedModel(null);
                       setCustomNoteCompactMarkdown(null);
                       setCustomOptimizeBrief("");
                       setCustomNoteInfographicTemplateId(null);
@@ -15627,6 +15712,9 @@ export default function PlatformPage() {
                       setKnowledgeCardInflight([]);
                       renderRunIdRef.current += 1;
                       renderedDraftRef.current = "";
+                      renderedImageJobsRef.current = null;
+                      renderedSubmittedImageJobsRef.current = null;
+                      renderedSettingsRef.current = null;
                       knowledgeCardLayoutSourceIdRef.current = "";
                       customNoteImagesRef.current = [];
                       customNotePendingFilesRef.current = [];
@@ -15791,7 +15879,7 @@ export default function PlatformPage() {
                         onClick={() => void retryKnowledgeCardPage(idx)}
                         className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                       >
-                        补出本页（{knowledgeCardCreditsForPageIndex(idx + 1, customNoteDistillModel)} 积分）
+                        补出本页（{knowledgeCardCreditsForPageIndex(idx + 1, renderedSettingsRef.current?.billingModel || customNotePreparedModel || customNoteDistillModel)} 积分）
                       </button>
                     </div>
                   ))}

@@ -34,3 +34,25 @@ export function knowledgeCardLayoutSource(input: {
     images,
   };
 }
+
+/** 全文和配图分别保留稳定章节；精华配图绝不冒充完整文字底稿。 */
+export function synchronizedKnowledgeCardSource(input: {
+  owner: string; sourceId: string; fullMarkdown: string; illustrationMarkdown: string;
+  detailLevel: "concise" | "full"; distillModel?: string;
+  infographicTemplateId?: string | null; imageJobIds: readonly string[];
+}): LayoutSource {
+  if (!input.fullMarkdown.trim()) throw new Error("缺少完整版文字底稿，请先恢复完整稿；尚未开始出图或整理");
+  const reading = knowledgeCardLayoutSource({ ...input, markdown: input.fullMarkdown, images: [] });
+  const illustrations = planKnowledgeCardPages(input.illustrationMarkdown, input.distillModel).pages;
+  if (!illustrations.length || illustrations.length !== input.imageJobIds.length || new Set(input.imageJobIds).size !== input.imageJobIds.length)
+    throw new Error("配图任务与原稿页数不一致，尚未开始生成");
+  const textPages = reading.pages!.map(p => ({ ...p, knowledgeRole: "reading" as const }));
+  return { ...reading, detailLevel: input.detailLevel, pages: [
+    ...textPages,
+    ...illustrations.map((body, i) => ({
+      pageIndex: textPages.length + i + 1,
+      headline: `配图 ${i + 1}｜${body.match(/^##\s+(.+)$/m)?.[1] || reading.title}`,
+      body, imageJobId: input.imageJobIds[i], knowledgeRole: "illustration" as const,
+    })),
+  ] };
+}

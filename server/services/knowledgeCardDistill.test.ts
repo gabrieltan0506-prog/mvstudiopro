@@ -22,9 +22,10 @@ import {
 } from "../../shared/knowledgeCardDistillModels";
 
 describe("knowledgeCardDistill model", () => {
-  it("默认使用 GLM FlashX 档，保留旧档位 ID", () => {
-    expect(resolveKnowledgeCardDistillModel(undefined)).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_GLM);
-    expect(KNOWLEDGE_CARD_DISTILL_MODEL).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_GLM);
+  it("默认使用标准 DeepSeek1017，旧ID仍可显式解析", () => {
+    expect(resolveKnowledgeCardDistillModel(undefined)).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
+    expect(KNOWLEDGE_CARD_DISTILL_MODEL).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
+    expect(resolveKnowledgeCardDistillModel("glm-5.3-flash")).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_GLM);
   });
 
   it("only two tiers remain: DeepSeek V4.1 Flash and GLM 5.3 Flash", () => {
@@ -55,8 +56,8 @@ describe("knowledgeCardDistill model", () => {
     );
   });
 
-  it("未知值使用 GLM FlashX 默认档", () => {
-    expect(resolveKnowledgeCardDistillModel("not-a-model")).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_GLM);
+  it("未知值使用标准 DeepSeek1017 默认档", () => {
+    expect(resolveKnowledgeCardDistillModel("not-a-model")).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_DEEPSEEK);
   });
 });
 

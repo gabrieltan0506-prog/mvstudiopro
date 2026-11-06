@@ -1,3 +1,4 @@
+import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
 import { createHash } from "node:crypto";
 import { mkdtemp, writeFile, readFile, stat, rm, open } from "node:fs/promises";
 import { createReadStream } from "node:fs";
@@ -102,6 +103,7 @@ export async function loadKnowledgePublicationExport(
     pub.confirmedManuscript !== pub.manuscript
   )
     throw new Error("请先确认图文阅读稿后再导出");
+  pub.source = await resolveKnowledgePublicationImages(owner, pub.source, undefined, undefined, pub.imageReplacements);
   const accepted = parseKnowledgeManuscript(
     pub.confirmedManuscript,
     pub.source.pages.map(p => p.id)

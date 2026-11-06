@@ -28,7 +28,7 @@ describe("挑参考页模型链（0911：OpenRouter DS → EvoLink DS → 降档
       return '{"pages":[{"page":7,"reason":"表格"}]}';
     });
     expect(out).toContain('"page":7');
-    expect(tried).toEqual(["openrouter:deepseek/deepseek-v4.1-flash"]);
+    expect(tried).toEqual(["openrouter:deepseek/deepseek-v4.1-flash-1017"]);
 
     // OpenRouter 坏 → EvoLink 同款 DeepSeek 接住，降档兜底不动
     tried.length = 0;
@@ -43,16 +43,16 @@ describe("挑参考页模型链（0911：OpenRouter DS → EvoLink DS → 降档
 
     // 两家 DeepSeek 都坏 → 才轮到降档兜底
     tried.length = 0;
-    const viaQwen = await run(
+    const viaFallback = await run(
       async (gw) => { tried.push(gw.name); throw new Error("down"); },
       async () => { fallbackCalls += 1; return '{"pages":[]}'; },
     );
-    expect(viaQwen).toBe('{"pages":[]}');
+    expect(viaFallback).toBe('{"pages":[]}');
     expect(fallbackCalls).toBe(1);
     expect(tried).toEqual(["openrouter", "evolink"]);
 
     // 全坏 → 抛最后一跳（降档兜底）的错
-    await expect(run(async (gw) => { throw new Error(`down:${gw.name}`); }, async () => "乱码")).rejects.toThrow(/triage_bad_output:qwen/);
+    await expect(run(async (gw) => { throw new Error(`down:${gw.name}`); }, async () => "乱码")).rejects.toThrow(/triage_bad_output:fallback/);
     await expect(run(async (gw) => { throw new Error(`down:${gw.name}`); })).rejects.toThrow("down:evolink");
   });
 });

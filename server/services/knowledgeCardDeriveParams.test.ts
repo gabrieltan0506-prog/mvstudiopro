@@ -108,7 +108,7 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     expect("enable_thinking" in evoGlm).toBe(false);
     // 第三跳（OpenRouter DeepSeek）：锁 DeepSeek 自营，max_tokens 翻倍留给思维链
     const orDs = calls[2]!.body;
-    expect(orDs.model).toBe("deepseek/deepseek-v4.1-flash");
+    expect(orDs.model).toBe("deepseek/deepseek-v4.1-flash-1017");
     expect(orDs.provider).toEqual({ order: ["DeepSeek"], allow_fallbacks: false });
     expect(orDs.reasoning).toEqual({ effort: "high" });
     expect(orDs.max_tokens).toBe(128_000);
@@ -126,7 +126,7 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     const r = await deriveKnowledgeCardCompact({ fullMarkdown: FULL, targetSections: 3, model: "glm-5.3-flash" });
     expect(r.sections).toBe(3);
     expect(calls.map(c => c.body.model)).toEqual([
-      "z-ai/glm-5.3-flashx", "glm-5.3-flashx", "deepseek/deepseek-v4.1-flash", "deepseek-v4.1-flash",
+      "z-ai/glm-5.3-flashx", "glm-5.3-flashx", "deepseek/deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1017",
     ]);
   });
 
@@ -138,7 +138,7 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     expect(r.sections).toBe(3);
     expect(new URL(calls[1]!.url).hostname).toBe("direct.evolink.ai");
     const body = calls[1]!.body;
-    expect(body.model).toBe("deepseek-v4.1-flash");
+    expect(body.model).toBe("deepseek-v4.1-flash-1017");
     expect(body.thinking).toEqual({ type: "enabled" });
     expect(body.reasoning_effort).toBe("high");
     // maxTokens=64000（0923 保底）→ DeepSeek 档翻倍 128000 留给思维链
@@ -156,7 +156,7 @@ describe("派生链真实适配层参数契约（终审 P2）", () => {
     expect(r.sections).toBe(3);
     expect(new URL(calls[0]!.url).hostname).toBe("openrouter.ai");
     const body = calls[0]!.body;
-    expect(body.model).toBe("deepseek/deepseek-v4.1-flash");
+    expect(body.model).toBe("deepseek/deepseek-v4.1-flash-1017");
     expect(body.provider).toEqual({ order: ["DeepSeek"], allow_fallbacks: false });
     expect(body.reasoning).toEqual({ effort: "high" });
     expect(body.max_tokens).toBe(128_000);

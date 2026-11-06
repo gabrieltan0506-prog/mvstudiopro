@@ -5,6 +5,8 @@ import { getDb } from "../db";
 import { getGcsBucketName, signGcsObjectPathV4ReadUrl } from "./gcs";
 
 type Row = { id: string; userId: string; status: string; input: unknown; output: unknown; createdAt: Date };
+const recordedModel = (params: Record<string, any>, output: Record<string, any>) =>
+  String(output.knowledgeCardBillingModel || output.distillModel || params.distillModel || "");
 const object = (v: unknown): Record<string, any> => { if (typeof v === "string") { try { return object(JSON.parse(v)); } catch { return {}; } } return v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, any> : {}; };
 export function recoveryDraft(row: Row) {
   const input = object(row.input), output = object(row.output), params = object(input.params);
@@ -12,7 +14,7 @@ export function recoveryDraft(row: Row) {
     ? String(params.scriptContext || "") : ["knowledge_card_distill", "knowledge_card_derive_level"].includes(input.action) ? String(output.distilledMarkdown || "") : "";
   if (row.status !== "succeeded" || !markdown.trim()) return null;
   const image = input.action === "platform_composite_sheet_progress";
-  const settings = image ? [params.notePageTotal, params.distillModel, params.subjectPosition, params.openaiImageVariant, params.infographicTemplateId].map(v => v ?? null) : [];
+  const settings = image ? [params.notePageTotal, recordedModel(params, output), params.subjectPosition, params.openaiImageVariant, params.infographicTemplateId].map(v => v ?? null) : [];
   return { markdown, input, output, params, image, key: createHash("sha256").update(JSON.stringify([markdown, settings])).digest("hex") };
 }
 export function assembleRecovery(userId: string, anchor: Row, rows: Row[]) {
@@ -36,7 +38,7 @@ export function assembleRecovery(userId: string, anchor: Row, rows: Row[]) {
   const level = textSource?.output.detailLevel === "full" ? "full" as const : "concise" as const;
   return { jobId:anchor.id, markdown:draft.markdown, detailLevel:level,
     fullMarkdown: textSource?.input.action === "knowledge_card_derive_level" ? String(textSource.params.fullMarkdown || "") || null : level === "full" ? draft.markdown : null,
-    distillModel:String(draft.params.distillModel || draft.output.distillModel || ""),
+    distillModel:recordedModel(draft.params, draft.output),
     subjectPosition:draft.params.subjectPosition === "center" ? "center" as const : "left" as const,
     infographicTemplateId:typeof draft.params.infographicTemplateId === "string" ? draft.params.infographicTemplateId : null,
     total, images };
@@ -46,7 +48,7 @@ const eligible = sql`(${jobs.input}->>'action' in ('knowledge_card_distill','kno
 export async function listKnowledgeCardRecovery(userId: string, cursor?: { at: string; id: string }) {
   const db = await database();
   const rows = await db.select({id:jobs.id,userId:jobs.userId,status:jobs.status,input:jobs.input,createdAt:jobs.createdAt,
-    output:sql<unknown>`jsonb_build_object('distilledMarkdown',${jobs.output}->'distilledMarkdown','detailLevel',${jobs.output}->'detailLevel')`})
+    output:sql<unknown>`jsonb_build_object('distilledMarkdown',${jobs.output}->'distilledMarkdown','detailLevel',${jobs.output}->'detailLevel','distillModel',${jobs.output}->'distillModel','knowledgeCardBillingModel',${jobs.output}->'knowledgeCardBillingModel')`})
     .from(jobs).where(and(eq(jobs.userId,userId),eq(jobs.status,"succeeded"),eligible,
       ...(cursor ? [sql`(${jobs.createdAt},${jobs.id}) < (${new Date(cursor.at)},${cursor.id})`] : [])))
     .orderBy(desc(jobs.createdAt),desc(jobs.id)).limit(41);
@@ -59,7 +61,7 @@ export async function getKnowledgeCardRecovery(userId: string, jobId: string) {
   const [anchor]=await db.select().from(jobs).where(and(eq(jobs.id,jobId),eq(jobs.userId,userId))).limit(1);
   if(!anchor)throw new Error("无法读取这份备份");const draft=recoveryDraft(anchor);if(!draft)throw new Error("这份任务没有可恢复的成品");
   const rows=await db.select({id:jobs.id,userId:jobs.userId,status:jobs.status,input:jobs.input,createdAt:jobs.createdAt,
-    output:sql<unknown>`jsonb_build_object('distilledMarkdown',${jobs.output}->'distilledMarkdown','detailLevel',${jobs.output}->'detailLevel','compositeImageUrl',${jobs.output}->'compositeImageUrl')`})
+    output:sql<unknown>`jsonb_build_object('distilledMarkdown',${jobs.output}->'distilledMarkdown','detailLevel',${jobs.output}->'detailLevel','distillModel',${jobs.output}->'distillModel','compositeImageUrl',${jobs.output}->'compositeImageUrl','knowledgeCardBillingModel',${jobs.output}->'knowledgeCardBillingModel')`})
     .from(jobs).where(and(eq(jobs.userId,userId),eq(jobs.status,"succeeded"),eligible,
       sql`(${jobs.input}->'params'->>'scriptContext' = ${draft.markdown} or ${jobs.output}->>'distilledMarkdown' = ${draft.markdown})`));
   const result=assembleRecovery(userId,anchor,rows);

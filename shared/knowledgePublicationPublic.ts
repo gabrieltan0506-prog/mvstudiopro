@@ -1,3 +1,16 @@
+/** 固定业务原因可保存和重放；不把模型原文、网址或凭证返回前台。 */
+const knowledgeFailureCategories = [
+  { pattern: /回执尚未闭合|结果尚待核实|传输或回执|原请求.*状态.*未确认/, message: "原请求的结果尚未确认，已保留原稿与任务；请恢复原任务，不要重新付费。", retryable: false },
+  { pattern: /缺少来源|未取得真实联网来源|引用不属于本次检索|来源未融入|缺少可复用检索片段/, message: "本次整理缺少可核实的来源，未采用这份补充内容；原稿和已完成部分已保留。", retryable: true },
+  { pattern: /装饰组件配置|自动选版结果|自动表格图文结构/, message: "本次整理未返回完整的排版内容，未采用不完整结果；原稿和已完成部分已保留。", retryable: true },
+  { pattern: /JSON|输出合同不符|页编号.*不符|缺少实际配图审校|图文疑点没有说明|跨页核对返回未知页号|一致性核对未返回完整合同/, message: "本次整理返回的格式不完整或与原稿不符，未采用错误内容；原稿和已完成部分已保留。", retryable: true },
+  { pattern: /容量|输出未完整结束/, message: "本批内容超过处理容量或输出未完整结束，未采用截断内容；原稿和已完成部分已保留。", retryable: true },
+] as const;
+export function knowledgePublicationFailureMessage(error: unknown): string | null {
+  const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return knowledgeFailureCategories.find(item => raw.includes(item.message) || item.pattern.test(raw))?.message || null;
+}
+
 /** 前台只收到业务提示；不拼接上游错误、请求编号、模型或通道名。 */
 export function knowledgePublicationPublicError(error: unknown): { message: string; retryable: boolean } {
   const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
@@ -15,6 +28,8 @@ export function knowledgePublicationPublicError(error: unknown): { message: stri
   if (raw === "本次整理未完成，已完成的内容和原稿均已保留，可以仅重试未完成部分。") return {message:raw,retryable:true};
   if (raw.includes("REFUND_PENDING") || raw.includes("对账"))
     return { message: "本次整理未完成，积分仍在核对中。原稿已保存，请稍后继续。", retryable: false };
+  const category = knowledgeFailureCategories.find(item => raw.includes(item.message));
+  if (category) return { message: category.message, retryable: category.retryable };
   if (raw.includes("ADVISOR_OPERATION_FAILED"))
     return { message: "本次整理未完成，已完成的内容和原稿均已保留，可以仅重试未完成部分。", retryable: true };
   if (/顾问提纲超出|单页内容超出|表格超出单页/.test(raw)) return {message:"顾问提纲超出页数或单页容量，尚未渲染。请调整提纲后再导出。",retryable:false};
