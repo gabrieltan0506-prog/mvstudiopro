@@ -15,6 +15,20 @@ const publicationProcedure = protectedProcedure.use(async ({ next }) => {
   return result;
 });
 export const editableLayoutRouter = router({
+  bookLayoutInput: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
+    const {loadKnowledgeBookLayoutInput}=await import("../services/knowledgeBookLayout");
+    const book=await loadKnowledgeBookLayoutInput(ctx.user.id,input.documentId);
+    return {sourceDigest:book.sourceDigest,chapters:book.pages.length,images:book.pages.filter(p=>p.hasImage).length};
+  }),
+  bookLayoutPreview: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
+    const {readCanonicalLayoutLibrary}=await import("../services/editableLayoutStore");
+    const {loadKnowledgeBookLayoutView}=await import("../services/knowledgeBookLayout");
+    const {signGsUriV4ReadUrl}=await import("../services/gcs");
+    const loaded=await readCanonicalLayoutLibrary(ctx.user.id);
+    const view=await loadKnowledgeBookLayoutView(ctx.user.id,input.documentId,loaded.generation,{load:async()=>loaded});
+    const images=Object.fromEntries(view.doc.pages.filter(p=>p.imageUrl).map(p=>[p.imageUrl,signGsUriV4ReadUrl(p.imageUrl,3600)]));
+    return {doc:view.doc,review:view.review,images};
+  }),
   conversationRetry: publicationProcedure.input(z.object({documentId:z.string().uuid(),failedRequestId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
     const {readCanonicalLayoutLibrary}=await import('../services/editableLayoutStore');
     const {checkKnowledgeConversationRetry}=await import('../services/knowledgeConversationRetry');

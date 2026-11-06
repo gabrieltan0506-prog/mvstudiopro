@@ -95,6 +95,7 @@ export const knowledgePublicationSchema = z
     imageReplacements: z.record(z.string(), z.string()).optional(),
     requestId: z.string().uuid(),
     infographicTemplateId: z.string().max(100).optional(),
+    layoutConversationId: z.string().uuid().optional(),
     designMode: z.enum(["content"]).optional(),
     source: knowledgeSourceSchema,
     review: knowledgeReviewSchema.optional(),

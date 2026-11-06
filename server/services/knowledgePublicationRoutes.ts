@@ -1,3 +1,4 @@
+import { validateKnowledgeBookLayoutPlan } from "../../shared/knowledgeBookLayout";
 import { knowledgeConversationAnswerSchema } from "../../shared/knowledgeConversation";
 import {validateKnowledgePresentationPlan} from "../../shared/knowledgePresentation";
 import { KNOWLEDGE_RESEARCH_MARKER, KNOWLEDGE_RESEARCH_SCHEMA_INSTRUCTION } from "../../shared/knowledgeResearch";
@@ -103,6 +104,12 @@ function validateAnswer(content: string, request: KnowledgeModelRequest, sources
   if (conversation) {
     const answer = knowledgeConversationAnswerSchema.parse(parsed);
     if (answer.requestId !== conversation.requestId) throw new Error("对话请求编号不符");
+    if (conversation.action === "layout") {
+      const book = inputs.find(p => p.bookLayout)?.bookLayout;
+      if (!book) throw new Error("整册排版缺少原文输入");
+      validateKnowledgeBookLayoutPlan(answer.layoutPlan,book);
+      if (answer.sources.length || answer.supplementalImages.length) throw new Error("整册排版不得新增来源或图卡");
+    } else if (answer.layoutPlan) throw new Error("普通交流不能擅自执行整册排版");
     const ids = new Set(conversation.pageIds);
     if (answer.supplementalImages.some(p => p.sourcePageIds.some(id => !ids.has(id)))) throw new Error("补图依据页号不符");
     if (!conversation.reviewComplete && answer.supplementalImages.length) throw new Error("整册未整理完成，不能提前规划补图");

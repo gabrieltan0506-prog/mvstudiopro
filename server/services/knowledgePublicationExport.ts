@@ -101,26 +101,27 @@ export async function loadKnowledgePublicationExport(
   documentId: string,
   generation: string,
   overrides: Partial<typeof real> = {},
-  includeSupplement = false
+  includeSupplement = false,
+  allowCurrentManuscript = false
 ): Promise<{doc:EditableLayout;review:KnowledgeReview;receipt:Awaited<ReturnType<typeof readKnowledgePublicationReview>>;prefix:string}> {
   const deps = {...real, ...overrides};
   const loaded = await deps.load(owner);
   if (loaded.generation !== generation)
     throw new Error("云稿版本已变化，请先读取当前稿件；未导出旧稿");
-  const doc = loaded.library?.documents.find(d => d.id === documentId),
+  let doc = loaded.library?.documents.find(d => d.id === documentId),
     pub = doc?.publication;
   if (
     !doc ||
     !pub?.review ||
-    !pub.confirmedManuscript ||
-    pub.confirmedManuscript !== pub.manuscript
+    (!allowCurrentManuscript && (!pub.confirmedManuscript || pub.confirmedManuscript !== pub.manuscript))
   )
     throw new Error("请先确认图文阅读稿后再导出");
   pub.source = await resolveKnowledgePublicationImages(owner, pub.source, undefined, undefined, pub.imageReplacements);
   const accepted = parseKnowledgeManuscript(
-    pub.confirmedManuscript,
+    allowCurrentManuscript ? pub.manuscript : pub.confirmedManuscript!,
     pub.source.pages.map(p => p.id)
   );
+  if (allowCurrentManuscript) doc = {...doc,title:accepted.title,pages:accepted.pages.map(p=>({...doc!.pages.find(old=>old.id===p.id)!,...p}))};
   if (
     accepted.title !== doc.title ||
     accepted.pages.some(
@@ -165,7 +166,7 @@ export async function loadKnowledgePublicationExport(
   if(includeSupplement&&pub.supplementDocumentId){
     const child=loaded.library?.documents.find(d=>d.id===pub.supplementDocumentId);
     if(child?.publication?.supplementOf?.documentId!==doc.id||child.publication.supplementDocumentId)throw Error("补充稿归属不一致，未导出混合版本");
-    const extra=await loadKnowledgePublicationExport(owner,child.id,generation,{...deps,load:async()=>loaded},false);
+    const extra=await loadKnowledgePublicationExport(owner,child.id,generation,{...deps,load:async()=>loaded},false,allowCurrentManuscript);
     const imageCount=extra.doc.pages.filter(p=>p.imageUrl).length;
     if(imageCount<1||imageCount>8)throw Error("补充稿图片数量必须为1至8张");
     if(new Set([...doc.pages,...extra.doc.pages].map(p=>p.id)).size!==doc.pages.length+extra.doc.pages.length)throw Error("补充稿页号与原册重复");
@@ -181,7 +182,8 @@ export async function exportKnowledgePublication(
   owner:number,documentId:string,generation:string,overrides:Partial<typeof real>={}
 ):Promise<KnowledgePublicationExport>{
   const deps={...real,...overrides};
-  const {doc,review,receipt,prefix}=await loadKnowledgePublicationExport(owner,documentId,generation,deps,true);
+  const { loadKnowledgeBookLayoutView } = await import("./knowledgeBookLayout");
+  const {doc,review,receipt,prefix}=await loadKnowledgeBookLayoutView(owner,documentId,generation,deps);
   const run = async () => {
     const manifest = await deps.read(`${prefix}/manifest.json`);
     if (manifest) {

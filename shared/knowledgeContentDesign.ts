@@ -5,40 +5,10 @@ export const knowledgeVisualDesignPlanSchema=z.array(z.object({pageId:z.string()
  if(new Set(items.map(x=>x.pageId)).size!==items.length)ctx.addIssue({code:'custom',message:'设计计划页号重复'});
  try{validateKnowledgeDesignBatch(items.map(x=>({reading:{decoration:{design:x.design}}})));}catch(e){ctx.addIssue({code:'custom',message:e instanceof Error?e.message:'整册设计重复'});}
 });
-type Topic='war'|'law'|'thought'|'literature'|'medicine'|'people'|'history';
-function topic(text:string):Topic{
- if(/医|扁鹊|仓公|诊|植物|生态/.test(text))return 'medicine';
- if(/屈原|贾谊|文学|诗|赋/.test(text))return 'literature';
- if(/老庄|孔|思想|哲学|道德|学术/.test(text))return 'thought';
- if(/制度|建制|变法|郡县|五体|法令|集权/.test(text))return 'law';
- if(/战争|战场|北击|灭六国|项羽|垓下|路线|连横|灭楚/.test(text))return 'war';
- if(/人物|世家|霸业|诸侯|韩信|谋主/.test(text))return 'people';
- return 'history';
-}
-const choices:Record<Topic,KnowledgeVisualDesign['motif'][]>={war:['route-array','bronze-geometric','relation-lines'],law:['bamboo-seal','bronze-geometric','book-scroll'],thought:['book-scroll','relation-lines','bamboo-seal'],literature:['book-scroll','herb-leaf','relation-lines'],medicine:['herb-leaf','bamboo-seal','book-scroll'],people:['relation-lines','bamboo-seal','bronze-geometric'],history:['bronze-geometric','bamboo-seal','relation-lines']};
-const palette:Record<Topic,KnowledgeVisualDesign['palette']>={war:'ink-cinnabar',law:'bronze-sand',thought:'jade-paper',literature:'plum-ink',medicine:'jade-paper',people:'slate-blue',history:'bronze-sand'};
-const reasons:Record<Topic,string>={war:'以路线和节点表达战场推进，朱砂只突出关键方向；深色表头便于比较战役。',law:'以简牍、印章和几何秩序对应制度条目，表格使用清晰细线与克制边框。',thought:'竹青与书卷关系线对应思想流派，叙事区舒展留白，减轻表格边框。',literature:'灰紫墨色与书卷留白对应文学和人物情绪，正文优先，不用战争箭头。',medicine:'草木纹与青绿辅助色对应医案阅读，简洁表格明确区分史料与说明。',people:'关系节点对应人物、封国和势力，分组色带帮助识别人物与事件。',history:'青铜几何与年代目录对应历史结构，保持表格顺序与原文完整。'};
-/** 读取LLM真实设计，再仅在重复或旧稿缺省时按题材调整；不改正文和审校回执。 */
-export function knowledgeContentDesignPlan(review:KnowledgeReview,force=false){
- const counts=new Map<string,number>();let last='';const max=Math.ceil(review.pages.length/2);
- const plans=review.pages.map(page=>{
-  const suggested=page.reading?.decoration?.design;
-  const kind=topic(page.headline),candidates=choices[kind];
-  let design:KnowledgeVisualDesign=suggested?{...suggested}:{palette:palette[kind],layout:kind==='war'||kind==='law'?'catalog':kind==='thought'||kind==='literature'?'narrative':'editorial',table:kind==='people'?'bands':kind==='thought'||kind==='literature'?'minimal':'rules',frame:kind==='law'?'corners':kind==='thought'||kind==='medicine'?'none':'rule',motif:candidates[0],reason:'按内容重排：'+reasons[kind]};
-  let adjusted=!suggested;
-  if(design.motif!=='none'&&(design.motif===last||(counts.get(design.motif)||0)>=max)){
-   design={...design,motif:candidates.find(m=>m!==last&&(counts.get(m)||0)<max)||'none'};adjusted=true;
-  }
-  counts.set(design.motif,(counts.get(design.motif)||0)+1);last=design.motif;
-  if(adjusted&&suggested)design.reason+=' 整册检查避开相邻或高频重复纹样，按本章题材选择兼容图案。';
-  return {pageId:page.id,design,origin:suggested?(adjusted?'model-adjusted':'model'):'content-rule'};
- });
- // 三种组合不足时，保留语义配色与纹样，只让适合长文的布局和表格承担差异。
- if(plans.length>=4&&new Set(plans.map(p=>JSON.stringify([p.design.palette,p.design.layout,p.design.table,p.design.frame,p.design.motif]))).size<3){
-  const candidate=plans.find((p,i)=>i>0&&p.design.layout!=='narrative');if(candidate)candidate.design={...candidate.design,layout:'narrative',table:'minimal',reason:candidate.design.reason+' 长文采用叙事留白，与相邻目录页区分。'};
- }
- knowledgeVisualDesignPlanSchema.parse(plans.map(({pageId,design})=>({pageId,design})));
- return plans;
+/** 只读取顾问已返回的设计；缺失或不合格时明确失败，不替模型补选或调整。 */
+export function knowledgeContentDesignPlan(review:KnowledgeReview){
+ const designs=validateKnowledgeDesignBatch(review.pages);
+ return review.pages.map((page,i)=>({pageId:page.id,design:designs[i],origin:'model' as const}));
 }
 const palettes:Record<KnowledgeVisualDesign['palette'],string[]>={
  'ink-cinnabar':['#fbfaf6','#173644','#b34332','#c9d1d2','#eaf0f1'],

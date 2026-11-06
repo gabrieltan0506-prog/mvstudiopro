@@ -8,6 +8,7 @@ import { knowledgePublicationTemplates, resolveKnowledgePublicationTemplate } fr
 import { useEffect, useRef, useState } from "react";
 import type { EditableLayout } from "@shared/editableLayout";
 import {
+  type KnowledgeReview,
   knowledgeReviewBatches,
   knowledgeBatchRequestId,
   knowledgeBatchResultSchema,
@@ -55,6 +56,8 @@ export default function KnowledgePublicationPanel({
   const utils = trpc.useUtils();
   const exporter = trpc.editableLayout.exportPublication.useMutation();
   const pptxExporter = trpc.editableLayout.exportPublicationPptx.useMutation();
+  const [layoutView,setLayoutView]=useState<{doc:EditableLayout;review:KnowledgeReview;images:Record<string,string>}|null>(null);
+  const [layoutPreviewError,setLayoutPreviewError]=useState("");
   const [minSlides,setMinSlides]=useState(doc.publication?.presentationRequest?.minSlides ?? 15);
   const [maxSlides,setMaxSlides]=useState(doc.publication?.presentationRequest?.maxSlides ?? 20);
   const [planDraft,setPlanDraft]=useState<KnowledgePresentationPlan|null>(null);
@@ -99,8 +102,19 @@ export default function KnowledgePublicationPanel({
   const paginationVersion = (value: EditableLayout) => JSON.stringify([
     value.id, value.title, value.aspect, value.theme, value.fontSize, value.pages,
     value.publication?.manuscript, value.publication?.infographicTemplateId, value.publication?.designMode, value.publication?.review,
+    value.publication?.layoutConversationId, value.publication?.supplementDocumentId,
   ]);
   const currentPaginationVersion = paginationVersion(doc);
+  useEffect(()=>{
+    let current=true;
+    setLayoutView(null);setLayoutPreviewError("");
+    if(doc.publication?.layoutConversationId){
+      void utils.editableLayout.bookLayoutPreview.fetch({documentId:doc.id}).then(view=>{
+        if(current)setLayoutView(view);
+      }).catch(error=>{if(current)setLayoutPreviewError(knowledgePublicationPublicError(error).message);});
+    }
+    return ()=>{current=false;};
+  },[currentPaginationVersion]);
   useEffect(() => {
     setFiles(null);
     onPagination?.(doc, null);
@@ -412,8 +426,19 @@ export default function KnowledgePublicationPanel({
       locked(false);
     }
   };
+  const exportLayout=async(next:EditableLayout,saved:Saved)=>{
+    setFiles(null);setError("");
+    setMessage("顾问方案已保存，正在按指定章节顺序和设计生成 PDF…");
+    const result=await exporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});
+    if(latest.current.id!==next.id)return;
+    setFiles(result);
+    if(result.pdfUrl&&result.totalPages&&result.imagePages!==undefined){
+      onPagination?.(next,{imagePages:result.imagePages,totalPages:result.totalPages});
+      setMessage(`已按顾问方案排版：图片 ${result.imagePages} 页｜手册共 ${result.totalPages} 页。`);
+    }else setMessage(result.pdfError||"排版方案已保存，可继续导出，无需重新调用顾问。");
+  };
   const pub = doc.publication!,
-    review = pub.review;
+    review = pub.layoutConversationId ? layoutView?.review ?? pub.review : pub.review;
   const reviewBatchCount = knowledgeReviewBatches(pub.source).length;
   const completedCount = Math.max(pub.completedBatches, completedKnowledgeBatches(pub, reviewBatchCount).size);
   const displayedPlan=pub.presentationRevision??pub.presentationPlan;
@@ -429,13 +454,13 @@ export default function KnowledgePublicationPanel({
     : visible[0]?.i || 0;
   const selectedTemplate = resolveKnowledgePublicationTemplate(pub.infographicTemplateId, review?.pages[index]?.reading?.templateId);
   let preview = "";
-  if (review) {
+  if (review && (!pub.layoutConversationId || layoutView)) {
     try {
       const parsed = parseKnowledgeManuscript(
         pub.manuscript,
         pub.source.pages.map(p => p.id)
       );
-      const current = {
+      const current = pub.layoutConversationId && layoutView ? layoutView.doc : {
         ...doc,
         title: parsed.title,
         pages: doc.pages.map((p, i) => ({ ...p, ...parsed.pages[i] })),
@@ -446,7 +471,7 @@ export default function KnowledgePublicationPanel({
           current,
           review,
           index,
-          current.pages[index].imageUrl,
+          layoutView?.images[current.pages[index].imageUrl] || current.pages[index].imageUrl,
           true
         ) +
         "</body></html>";
@@ -465,12 +490,7 @@ export default function KnowledgePublicationPanel({
           整套 {pub.source.pages.length} 章内容、{pub.source.pages.filter(p => p.imageUrl).length} 张原图；按原顺序处理全部正文，手册按内容自动分页。
         </p>
       </div>
-      <label className="block text-sm">手册设计
-        <select aria-label="手册设计" value={pub.designMode||"model"} disabled={busy} className="ml-2 rounded bg-[#f9f6ee] p-2 text-[#243a35]" onChange={e=>{
-          setFiles(null);setPptxFile(null);onChange({...doc,publication:{...pub,designMode:e.target.value==="content"?"content":undefined},updatedAt:new Date().toISOString()});
-        }}><option value="model">采用顾问设计</option><option value="content">按内容重排配色与纹样</option></select>
-        <p className="mt-2 text-xs text-[#c0cabb]">保留图片和完整正文，按章节内容搭配配色、版式、表格、边框与纹样；续页使用简洁页眉。</p>
-      </label>
+      <p className="text-sm text-[#c0cabb]">需要重新编排时，使用下方“让顾问重新排版并导出 PDF”。顾问决定整册章节顺序、配色、表格、边框和纹样，原图与完整正文保留。</p>
       <label className="block text-sm">
         阅读模板
         <select aria-label="阅读模板" className="ml-3 max-w-full rounded-lg bg-[#24382e] p-2"
@@ -484,7 +504,7 @@ export default function KnowledgePublicationPanel({
           {pub.infographicTemplateId && !knowledgePublicationTemplates.some(t => t.id === pub.infographicTemplateId) && <option value={pub.infographicTemplateId} disabled>旧模板已停用，请选择第一组模板</option>}
           {knowledgePublicationTemplates.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
-        <p className="mt-2 text-xs text-[#c0cabb]">基础模板保留原图；新顾问设计与内容重排会按章节调整配色和装饰。先预览，再确认生成 PDF；换样式不重新整理正文。</p>
+        <p className="mt-2 text-xs text-[#c0cabb]">基础模板保留原图；顾问整册方案会按章节调整配色和装饰。采用方案后修改正文、原图或模板，需要重新规划；不会自动再次收费。</p>
       </label>
       <p className="text-sm text-[#c0cabb]">{pub.source.detailLevel === "concise" ? "精华版图卡 · 顾问补充详尽说明" : pub.source.detailLevel === "full" ? "完整版图卡 · 顾问完整整理文字底稿" : "旧稿未记录图卡版本 · 保留现有说明密度"}</p>
       {review && <p className="text-sm text-[#c0cabb]">
@@ -501,7 +521,7 @@ export default function KnowledgePublicationPanel({
           {error}
         </p>
       )}
-      <KnowledgeConversationPanel onSupplement={onSupplement} key={doc.id} doc={doc} busy={busy} save={save} lock={locked} />
+      <KnowledgeConversationPanel onLayout={exportLayout} onSupplement={onSupplement} key={doc.id} doc={doc} busy={busy} save={save} lock={locked} />
       {!review ? (
         <div className="space-y-3">
           <p className="text-sm">
@@ -588,6 +608,8 @@ export default function KnowledgePublicationPanel({
               />
             </label>
           )}
+          {layoutPreviewError&&<p role="alert" className="text-rose-200">{layoutPreviewError}</p>}
+          {pub.layoutConversationId&&!layoutView&&!layoutPreviewError&&<p role="status">正在读取顾问排版后的整册预览…</p>}
           <iframe
             title="图文知识手册预览"
             sandbox="allow-scripts"

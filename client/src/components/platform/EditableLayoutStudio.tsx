@@ -373,7 +373,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       const incoming = library.documents.map(d => ({
         ...d,
         id: crypto.randomUUID(),
-        ...(d.publication ? {publication:{...d.publication,requestId:crypto.randomUUID(),conversation:undefined,supplementOf:undefined,supplementDocumentId:undefined,completedBatches:0,parallel:undefined,attempts:{},review:undefined,confirmedManuscript:undefined}} : {}),
+        ...(d.publication ? {publication:{...d.publication,requestId:crypto.randomUUID(),conversation:undefined,layoutConversationId:undefined,supplementOf:undefined,supplementDocumentId:undefined,completedBatches:0,parallel:undefined,attempts:{},review:undefined,confirmedManuscript:undefined}} : {}),
       }));
       const merged = layoutLibrarySchema.parse({
         ...current.current.library,

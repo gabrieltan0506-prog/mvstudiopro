@@ -158,6 +158,9 @@ export async function writeLayoutLibrary(
   if(library.documents.some(d=>d.publication?.supplementOf||d.publication?.supplementDocumentId)||priorLibrary?.documents.some(d=>d.publication?.supplementOf||d.publication?.supplementDocumentId)){
     await (await import("./knowledgeSupplement")).validateKnowledgeSupplements(owner,priorLibrary,library);
   }
+  if (library.documents.some(d => d.publication?.layoutConversationId || d.publication?.conversation?.some(t => t.request.action === "layout"))) {
+    await (await import("./knowledgeBookLayout")).validateKnowledgeBookLayoutTransition(owner, priorLibrary, library);
+  }
   const updatedAt = new Date().toISOString();
   const buffer = Buffer.from(
     JSON.stringify({ format: "editable-layout-v1", owner, updatedAt, library })
