@@ -1,3 +1,4 @@
+import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { knowledgeIllustrationRun, knowledgeIllustrationJobId, inspectKnowledgeIllustrationRetry } from "@/lib/knowledgeIllustrationRun";
 import { knowledgeCardLayoutSource, synchronizedKnowledgeCardSource } from "@shared/knowledgeCardEditableLayout";
 import EditableLayoutStudio, { type EditableLayoutStudioHandle } from "@/components/platform/EditableLayoutStudio";
@@ -3083,6 +3084,7 @@ export default function PlatformPage() {
   /** 每条选题：用户上传的人像参考图（GCS 直链）→ 生成封面时换主角。key=sceneId；可覆盖全局人像 */
   const layoutStudioRef = useRef<EditableLayoutStudioHandle>(null);
   const [layoutSource, setLayoutSource] = useState<LayoutSource | null>(null);
+  const [customNotePagination, setCustomNotePagination] = useState<(KnowledgePublicationPagination & { sourceId: string; inputKey: string }) | null>(null);
   const [viralGraphicPagesBusyCount, setViralGraphicPagesBusyCount] = useState(0);
   const viralGraphicPagesBusy = viralGraphicPagesBusyCount > 0;
   const setViralGraphicPagesBusy = useCallback((busy: boolean) => {
@@ -8179,6 +8181,8 @@ export default function PlatformPage() {
    * 上传后与「点生成时仍有待处理文件」两条路径共用，避免逻辑分叉。
    */
   /** 完整版长稿 → 精华版：后台任务（DeepSeek，几美分，不扣积分），带进度；结果缓存，切回完整版不再重算 */
+  const customNotePaginationKey = JSON.stringify([workbenchUserKey, customNoteText, customNoteFullMarkdown, customNoteDetailLevel, customNoteInfographicTemplateId, customNoteDistillModel]);
+  const currentNotePagination = customNotePagination?.sourceId === knowledgeCardLayoutSourceIdRef.current && customNotePagination.inputKey === customNotePaginationKey ? customNotePagination : null;
   const deriveCompactFromFull = async (full: string): Promise<string> => {
     const cached = customNoteCompactMarkdownRef.current;
     if (cached) return cached;
@@ -13201,7 +13205,10 @@ export default function PlatformPage() {
           </div>
         ) : null}
 
-        {workbenchUserKey && <EditableLayoutStudio ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} />}
+        {workbenchUserKey && <EditableLayoutStudio ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} onPagination={(doc, pagination) => {
+          if (doc.sourceId !== knowledgeCardLayoutSourceIdRef.current) return;
+          setCustomNotePagination(pagination ? { ...pagination, sourceId: doc.sourceId, inputKey: customNotePaginationKey } : null);
+        }} />}
 
         {/* 三模式分流：仅渲染 active Workbench；state/hooks 留在 PlatformPage */}
         <section
@@ -15679,7 +15686,7 @@ export default function PlatformPage() {
                   ) : customNoteKind === "optimize_custom_copy" ? (
                     <><Sparkles className="h-4 w-4" />深度优化文案（{customOptimizeCopyCost} 积分）</>
                   ) : customNoteKind === "single_page_knowledge_card" ? (
-                    <><Sparkles className="h-4 w-4 shrink-0" /><span className="text-left">生成图文知识手册<span className="mt-0.5 block text-xs font-normal">图片约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · 手册总页数：待排版 · 4K</span></span></>
+                    <><Sparkles className="h-4 w-4 shrink-0" /><span className="text-left">生成图文知识手册 · 4K{currentNotePagination && <span className="mt-0.5 block text-xs font-normal">图片 {currentNotePagination.imagePages} 页｜手册共 {currentNotePagination.totalPages} 页</span>}</span></>
                   ) : (
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}

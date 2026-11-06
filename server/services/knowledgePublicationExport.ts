@@ -39,6 +39,8 @@ export type KnowledgePublicationExport = {
   htmlBytes: number;
   pdfBytes?: number;
   chapters: number;
+  imagePages?: number;
+  totalPages?: number;
   pdfError?: string;
 };
 const real = {
@@ -47,6 +49,14 @@ const real = {
   image: readKnowledgeImage,
   pdf: fetchPdfBufferFromWorker,
   measure: measureKnowledgeBookletFromWorker,
+  countPages: async (path: string) => {
+    const { stdout } = await promisify(execFile)("pdfinfo", [path], {
+      timeout: 30000, maxBuffer: 1024 * 1024, env: { ...process.env, LC_ALL: "C" },
+    });
+    const count = Number(/^Pages:\s+(\d+)/m.exec(stdout)?.[1]);
+    if (!Number.isSafeInteger(count) || count < 1) throw new Error("无法读取手册实际总页数，请重试导出");
+    return count;
+  },
   read: async (name: string) => {
     try {
       return (
@@ -159,14 +169,32 @@ export async function exportKnowledgePublication(
     const manifest = await deps.read(`${prefix}/manifest.json`);
     if (manifest) {
       const saved = JSON.parse(manifest.toString("utf8"));
-      if (saved.pdfBytes)
+      if (saved.pdfBytes) {
+        if (!Number.isSafeInteger(saved.totalPages) || saved.totalPages < 1) {
+          // 历史成品只读取原PDF补计页数，不重做模型或排版。
+          const bytes = await deps.read(`${prefix}/阅读稿.pdf`);
+          if (!bytes) throw new Error("原PDF暂时无法读取，未显示推测页数");
+          const folder = await mkdtemp(join(tmpdir(), "knowledge-page-count-"));
+          try {
+            const path = join(folder, "original.pdf");
+            await writeFile(path, bytes);
+            saved.totalPages = await deps.countPages(path);
+            if (!Number.isSafeInteger(saved.totalPages) || saved.totalPages < 1) throw new Error("手册实际总页数无效");
+            await deps.save(`${prefix}/manifest.json`, Buffer.from(JSON.stringify(saved)), "application/json");
+          } finally {
+            await rm(folder, { recursive: true, force: true });
+          }
+        }
         return {
           htmlUrl: deps.sign(`${prefix}/阅读稿.html`),
           pdfUrl: deps.sign(`${prefix}/阅读稿.pdf`),
           htmlBytes: saved.htmlBytes,
           pdfBytes: saved.pdfBytes,
           chapters: doc.pages.length,
+          imagePages: doc.pages.filter(page => page.imageUrl).length,
+          totalPages: saved.totalPages,
         };
+      }
     }
     const folder = await mkdtemp(join(tmpdir(), "knowledge-publication-"));
     const htmlPath = join(folder, "publication.html"),
@@ -284,6 +312,9 @@ export async function exportKnowledgePublication(
         level++;
       }
       if (!active.length) throw new Error("未生成PDF内容");
+      const totalPages = await deps.countPages(active[0]);
+      if (!Number.isSafeInteger(totalPages) || totalPages < 1) throw new Error("手册实际总页数无效");
+      const imagePages = doc.pages.filter(page => page.imageUrl).length;
       const pdfBytes = await deps.file(
         `${prefix}/阅读稿.pdf`,
         active[0],
@@ -296,6 +327,8 @@ export async function exportKnowledgePublication(
             htmlBytes,
             pdfBytes,
             chapters: doc.pages.length,
+            imagePages,
+            totalPages,
             sourceDigest: review.sourceDigest,
           })
         ),
@@ -307,6 +340,8 @@ export async function exportKnowledgePublication(
         htmlBytes,
         pdfBytes,
         chapters: doc.pages.length,
+        imagePages,
+        totalPages,
       };
     } finally {
       await html.close().catch(() => undefined);

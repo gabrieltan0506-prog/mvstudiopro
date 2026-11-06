@@ -1,3 +1,4 @@
+import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { pollJobUntilTerminal } from "@/lib/jobs";
 import {knowledgePresentationRangeSchema,knowledgePresentationPlanSchema,knowledgePresentationCapacityIssues,assertKnowledgePresentationCapacity,validateKnowledgePresentationRevision,type KnowledgePresentationPlan} from "@shared/knowledgePresentation";
 import { knowledgePublicationTemplates, resolveKnowledgePublicationTemplate } from "@shared/knowledgePublicationTemplates";
@@ -34,6 +35,7 @@ export default function KnowledgePublicationPanel({
   autoStartToken = 0,
   preauthorizedCredits,
   waitForImages,
+  onPagination,
 }: {
   doc: EditableLayout;
   commit: (doc: EditableLayout) => Promise<Saved>;
@@ -43,6 +45,7 @@ export default function KnowledgePublicationPanel({
   autoStartToken?: number;
   preauthorizedCredits?: number;
   waitForImages?: (ids: string[]) => Promise<void>;
+  onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
 }) {
   const utils = trpc.useUtils();
   const exporter = trpc.editableLayout.exportPublication.useMutation();
@@ -69,6 +72,8 @@ export default function KnowledgePublicationPanel({
     htmlUrl: string;
     pdfUrl?: string;
     pdfError?: string;
+    imagePages?: number;
+    totalPages?: number;
   } | null>(null);
   useEffect(() => {
     alive.current = true;
@@ -86,6 +91,15 @@ export default function KnowledgePublicationPanel({
     setError("");
     setTerminal(false);
   }, [doc.id]);
+  const paginationVersion = (value: EditableLayout) => JSON.stringify([
+    value.id, value.title, value.aspect, value.theme, value.fontSize, value.pages,
+    value.publication?.manuscript, value.publication?.infographicTemplateId, value.publication?.review,
+  ]);
+  const currentPaginationVersion = paginationVersion(doc);
+  useEffect(() => {
+    setFiles(null);
+    onPagination?.(doc, null);
+  }, [currentPaginationVersion]);
   const locked = (value: boolean) => {
     active.current = value;
     setBusy(value);
@@ -338,7 +352,12 @@ export default function KnowledgePublicationPanel({
       }else{
         setMessage("确认稿已保存，正在自动排版并生成 HTML 和 PDF…");
         const result=await exporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});
-        setFiles(result);setMessage(result.pdfError || "HTML 和 PDF 已生成并保存，可直接下载。");
+        if (paginationVersion(latest.current) !== paginationVersion(next)) return;
+        setFiles(result);
+        if (result.pdfUrl && result.totalPages && result.imagePages !== undefined) {
+          onPagination?.(next, { imagePages: result.imagePages, totalPages: result.totalPages });
+          setMessage(`排版完成：图片 ${result.imagePages} 页｜手册共 ${result.totalPages} 页。可直接下载。`);
+        } else setMessage(result.pdfError || "HTML 和 PDF 已生成并保存，可直接下载。");
       }
     } catch (e) {
       setError(knowledgePublicationPublicError(e).message);
@@ -580,7 +599,7 @@ export default function KnowledgePublicationPanel({
                     href={flyDownloadUrl(files.pdfUrl)}
                     download
                   >
-                    下载 PDF
+                    下载 PDF{files.totalPages ? ` · 手册共 ${files.totalPages} 页` : ""}
                   </a>
                 )}
               </>

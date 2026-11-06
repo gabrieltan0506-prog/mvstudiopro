@@ -3,6 +3,8 @@ import { knowledgeCitationSchema } from "./knowledgeResearch";
 import { z } from "zod";
 import { knowledgeReadingSchema } from "./knowledgePublicationLayout";
 
+export type KnowledgePublicationPagination = { imagePages: number; totalPages: number };
+
 /** 知识卡专用合同；学习报告只提供视觉参考，不携带剧情、镜头或音轨字段。 */
 export const knowledgePublicationContextSchema = z
   .object({

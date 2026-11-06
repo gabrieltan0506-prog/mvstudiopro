@@ -1,3 +1,4 @@
+import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { planKnowledgeCardPages } from "@shared/knowledgeCardPagination";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import KnowledgePublicationPanel from "./KnowledgePublicationPanel";
@@ -34,12 +35,14 @@ export type EditableLayoutStudioHandle = {
   attachImage: (originalJobId: string, replacementJobId: string, resume: boolean) => Promise<void>;
 };
 /** 按账号恢复，条件写入防止旧会话覆盖新稿。 */
-const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null }>(function EditableLayoutStudio({
+const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void }>(function EditableLayoutStudio({
   owner,
   source,
+  onPagination,
 }: {
   owner: string;
   source: LayoutSource | null;
+  onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
 }, ref) {
   const key = `mvstudiopro.editableLayout.v1.${owner}`;
   const [state, setState] = useState<Cache>({
@@ -467,7 +470,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
                 </select>
               </label>
               {doc.publication ? <KnowledgePublicationPanel key={doc.id} doc={doc} commit={commitPublication}
-                onChange={next=>update(next)} onBusy={value=>{locked.current=value;setBusy(value);}} autoStart={doc.id===autoPublicationId} autoStartToken={autoStartToken}
+                onChange={next=>update(next)} onPagination={onPagination} onBusy={value=>{locked.current=value;setBusy(value);}} autoStart={doc.id===autoPublicationId} autoStartToken={autoStartToken}
                 preauthorizedCredits={synchronizedRun?.documentId === doc.id ? synchronizedRun.authorizedCredits : undefined}
                 waitForImages={synchronizedRun?.documentId === doc.id ? synchronizedRun.waitForImages : undefined}/>:<>
               <div className="grid gap-5 lg:grid-cols-2">
