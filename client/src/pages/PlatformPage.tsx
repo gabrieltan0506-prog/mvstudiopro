@@ -16335,11 +16335,6 @@ export default function PlatformPage() {
           {platformSkillsAccessoryPanel}
         </PlatformSkillDrawer>
 
-        {customWorkspaceOperating && platformMode === "create" ? (
-          <p className="mb-4 text-center text-xs text-[#c9c0e6]/45">
-            自定义文案/选题/抠像进行中，下方选题区已收起；平台趋势报表与视频深度拆解仍可在上方工作台查看。
-          </p>
-        ) : null}
         <div
           className={
             platformMode !== "trend" || customWorkspaceOperating
