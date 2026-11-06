@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertKnowledgeCardDeriveTablesComplete } from "./knowledgeCardDeriveIntegrity";
+import { assertKnowledgeCardDeriveTablesComplete } from "../../shared/knowledgeCardDeriveIntegrity";
 import { deriveKnowledgeCardCompact } from "./knowledgeCardLevelDerive";
 
 const complete = "## 收藏\n\n图：收藏时间线\n\n- 由私藏到公藏\n\n| 编目 | 成书时间 | 要点 |\n|---|---|---|\n| 《宣和书谱》 | 北宋 | 书法目录 |";

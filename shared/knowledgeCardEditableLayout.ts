@@ -57,3 +57,19 @@ export function synchronizedKnowledgeCardSource(input: {
     })),
   ] };
 }
+
+/** 已有图片的手动导入也保留全文，不能只把选图段落交给顾问。 */
+export function illustratedKnowledgeCardSource(input: {
+  owner: string; sourceId: string; fullMarkdown: string; illustrationMarkdown: string;
+  detailLevel?: "concise" | "full"; distillModel?: string;
+  infographicTemplateId?: string | null; images: readonly string[];
+}): LayoutSource {
+  const reading = knowledgeCardLayoutSource({ ...input, markdown: input.fullMarkdown, images: [] });
+  if (!input.images.length) return reading;
+  const illustrations = knowledgeCardLayoutSource({ ...input, markdown: input.illustrationMarkdown });
+  const offset = reading.pages!.length;
+  return { ...reading, pages: [
+    ...reading.pages!.map(page => ({ ...page, knowledgeRole: "reading" as const })),
+    ...illustrations.pages!.map(page => ({ ...page, pageIndex: offset + page.pageIndex, knowledgeRole: "illustration" as const })),
+  ], images: Object.fromEntries(Object.entries(illustrations.images || {}).map(([page, url]) => [offset + Number(page), url])) };
+}

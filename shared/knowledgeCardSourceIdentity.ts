@@ -5,6 +5,14 @@ export function knowledgeCardFullManuscript(text: string, full: string | null | 
   return original && (current === original || current === concise?.trim()) ? original : current;
 }
 
+/** 正文与选图分开：精华选段只参与配图，不能替换完整正文。 */
+export function knowledgeCardIllustrationMarkdown(text: string, full: string | null | undefined, concise: string | null | undefined, level: "concise" | "full"): string {
+  if (level === "full") return knowledgeCardFullManuscript(text, full, concise);
+  const current = text.trim();
+  if (full?.trim() && (current === full.trim() || current === concise?.trim())) return concise?.trim() || "";
+  return current;
+}
+
 export function knowledgeCardInputKey(input: {
   owner: string | null; text: string; full: string; level: string; template: string | null | undefined; model: string;
 }): string {

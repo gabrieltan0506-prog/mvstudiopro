@@ -6,7 +6,7 @@
  */
 import { countMarkdownSections, mergeDistilledMarkdownChunks } from "./knowledgeCardDistill.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
-import { assertKnowledgeCardDeriveTablesComplete } from "./knowledgeCardDeriveIntegrity.js";
+import { assertKnowledgeCardDeriveTablesComplete } from "../../shared/knowledgeCardDeriveIntegrity.js";
 import { retryKnowledgeCardChain } from "./knowledgeCardChainRetry.js";
 import {
   KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
