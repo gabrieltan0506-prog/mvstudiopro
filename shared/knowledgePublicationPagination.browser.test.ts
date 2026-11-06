@@ -54,3 +54,27 @@ it('两份独立PDF片段在最终字体重排后仍使用同一全书页码',as
   await expect(finalizeKnowledgeBookletPagination(page)).rejects.toThrow('页数已变化');
  }finally{await browser.close();}
 },60000);
+
+it('正文超过估计页数时按真实整页重新均分，不把孤段留在空白尾页',async()=>{
+ const {buildKnowledgeBookletHtml}=await import('./knowledgeBooklet');
+ const paragraphs=Array.from({length:45},(_,i)=>`第${i}段：完整内容按原序保留，不得删减。`);
+ const html=buildKnowledgeBookletHtml({title:'实际容量分页',readingPages:1,pages:[{id:'overflow-estimate',headline:'容量不足后的均分',body:paragraphs.join('\n\n'),imageUrl:''}]});
+ const browser=await puppeteer.launch({headless:true,args:['--no-sandbox']});
+ try{
+  const page=await browser.newPage();await page.setContent(html);
+  await page.waitForFunction(()=>document.body.getAttribute('data-ready')==='true');
+  const result=await page.evaluate(()=>({
+   pages:document.querySelectorAll('.reading-folio').length,
+   columns:Array.from(document.querySelectorAll('.reading-column')).map(el=>({count:el.children.length,height:Array.from(el.children).reduce((n,e)=>n+(e as HTMLElement).offsetHeight+16,0),capacity:el.clientHeight})),
+   text:Array.from(document.querySelectorAll('.reading-unit p')).map(el=>el.textContent),
+  }));
+  expect(result.pages).toBeGreaterThan(1);expect(result.text).toEqual(paragraphs);
+  expect(result.columns.every(c=>c.count>0&&c.height<=c.capacity+2)).toBe(true);
+  expect(Math.min(...result.columns.map(c=>c.height))/Math.max(...result.columns.map(c=>c.height))).toBeGreaterThan(0.6);
+  // 在独立页面恢复旧算法，证明相同输入会产生稀疏尾栏。
+  await page.setContent(html.replace('countColumns(mid)>balancedColumns','countColumns(mid)>desired*2'));
+  await page.waitForFunction(()=>document.body.getAttribute('data-ready')==='true');
+  const oldCounts=await page.$$eval('.reading-column',els=>els.map(e=>e.children.length));
+  expect(Math.min(...oldCounts)/Math.max(...oldCounts)).toBeLessThan(0.6);
+ }finally{await browser.close();}
+},60000);
