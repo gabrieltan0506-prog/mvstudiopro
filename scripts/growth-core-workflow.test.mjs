@@ -50,6 +50,8 @@ function prepare() {
   ]}));
   fs.writeFileSync(path.join(paid,"automation.json"),JSON.stringify({version:1,runs:[{platform:"tiktok",jobIds:[tiktokId]}]}));
   fs.writeFileSync(path.join(paid,`${tiktokId}.raw.json`),JSON.stringify({errcode:0,data:[{id:"tiktok-one"}]}));
+  // 正式回执保留任务名与请求版本名，二者可能共享同一 inode。
+  fs.linkSync(path.join(paid,`${tiktokId}.raw.json`),path.join(paid,`${tiktokId}.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.raw.json`));
   fs.writeFileSync(path.join(paid,`${tiktokId}.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.normalized.json`),JSON.stringify({items:[{id:"tiktok-one"}]}));
   fs.writeFileSync(path.join(paid,`${excludedId}.raw.json`),"{}");
   fs.writeFileSync(path.join(source,"platforms/._douyin.json"),"AppleDouble metadata");
@@ -123,7 +125,7 @@ test("actual backup YAML snapshots same-generation core and four authorized plat
     }
   }
   assert.deepEqual(manifest.directoryRoots,["platforms","history-ledger","paid-research/guaikei"]);
-  assert.equal(manifest.directoryFiles.length,12);
+  assert.equal(manifest.directoryFiles.length,13);
   for(const file of manifest.directoryFiles) {
     const raw=fs.readFileSync(path.join(fixture.output,"store",file.relativePath));
     assert.equal(raw.length,file.bytes); assert.equal(sha(raw),file.sha256);
@@ -176,6 +178,10 @@ test("actual backup YAML snapshots same-generation core and four authorized plat
   const restoredIndex=JSON.parse(fs.readFileSync(path.join(paidRestored,"index.json")));
   assert.equal(restoredIndex.jobs.find(job=>job.input.platform==="tiktok").items[0].id,"tiktok-one");
   assert.equal(JSON.parse(fs.readFileSync(path.join(paidRestored,"11111111-1111-4111-8111-111111111111.raw.json"))).data[0].id,"tiktok-one");
+  const rawReceipt=path.join(paidRestored,"11111111-1111-4111-8111-111111111111.raw.json");
+  const versionedReceipt=path.join(paidRestored,"11111111-1111-4111-8111-111111111111.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.raw.json");
+  assert.deepEqual(fs.readFileSync(rawReceipt),fs.readFileSync(versionedReceipt));
+  assert.notEqual(fs.statSync(rawReceipt).ino,fs.statSync(versionedReceipt).ino);
   assert.equal(JSON.parse(fs.readFileSync(path.join(paidRestored,"11111111-1111-4111-8111-111111111111.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.normalized.json"))).items[0].id,"tiktok-one");
   assert.equal(JSON.parse(fs.readFileSync(path.join(paidRestored,"automation.json"))).runs[0].platform,"tiktok");
   assert(!fs.existsSync(path.join(paidRestored,"22222222-2222-4222-8222-222222222222.raw.json")));
