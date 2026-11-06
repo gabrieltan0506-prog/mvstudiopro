@@ -15,6 +15,18 @@ const publicationProcedure = protectedProcedure.use(async ({ next }) => {
   return result;
 });
 export const editableLayoutRouter = router({
+  readingPreparation: publicationProcedure.input(z.object({jobId:z.string().regex(/^kc_[a-zA-Z0-9_-]+$/)}).strict()).query(async({ctx,input})=>{
+    const {knowledgeReadingPreparationState}=await import("../services/knowledgeReadingPreparation");
+    const {resolvePlatformSkillQaPaidCredits}=await import("../config/platformSwitches");
+    const {countPlatformSkillQaToday}=await import("../services/platformSkillQa");
+    const {platformSkillQaDailyFreeLimit}=await import("../../shared/plans");
+    const state=await knowledgeReadingPreparationState(ctx.user.id,input.jobId);
+    const remaining=Math.max(0,state.batches-state.completed.length),paidUnit=resolvePlatformSkillQaPaidCredits("terra");
+    const exempt=ctx.user.role==="admin"||ctx.user.role==="supervisor";
+    const free=exempt?remaining:Math.max(0,platformSkillQaDailyFreeLimit("terra")-await countPlatformSkillQaToday(ctx.user.id,"terra",false));
+    return {...state,paidUnit,maxCredits:exempt?0:remaining*paidUnit,estimatedCredits:exempt?0:Math.max(0,remaining-free)*paidUnit};
+  }),
+
   bookLayoutInput: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
     const {loadKnowledgeBookLayoutInput}=await import("../services/knowledgeBookLayout");
     const book=await loadKnowledgeBookLayoutInput(ctx.user.id,input.documentId);

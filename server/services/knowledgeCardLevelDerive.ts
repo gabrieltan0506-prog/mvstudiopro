@@ -1,11 +1,9 @@
-/**
- * 知识卡成稿档派生（用户 0910 拍板）：
- * 提炼只做一次、以「完整版」长稿为真源；「精华版」从长稿按需派生，两档到最后阶段仍可切换，不设页数上限。
- * 派生是纯文本压缩，链序与读档链同一份定义（0911：选中的档两家供应商 → 另一档两家 → 最后才 Qwen3.8）；
- * 约 $0.09/M 进、$0.18/M 出），23 万字长稿派生一次约 3 美分。与读档链同序（0910 用户令：EvoLink 与新加坡任一失效都可落 OpenRouter）。
- */
+/** 完整文字稿保持不变；本模块只产生内部重点配图选段。 */
 import { countMarkdownSections, mergeDistilledMarkdownChunks } from "./knowledgeCardDistill.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
+import { assertKnowledgeCardDeriveTablesComplete } from "../../shared/knowledgeCardDeriveIntegrity.js";
+import { planKnowledgeCardPages } from "../../shared/knowledgeCardPagination.js";
+import { assertKnowledgeCardIllustrationSelection, KNOWLEDGE_CARD_MAX_KEY_ILLUSTRATIONS } from "../../shared/knowledgeCardIllustrationSelection.js";
 import { retryKnowledgeCardChain } from "./knowledgeCardChainRetry.js";
 import {
   KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
@@ -129,11 +127,12 @@ export function batchSections(sections: string[], maxChars = DERIVE_BATCH_MAX_CH
   return batches;
 }
 
-function buildDeriveSystem(keep: number, given: number): string {
+function buildDeriveSystem(keep: number, given: number, imageBudget: number): string {
   return [
     "你是知识卡片主编。下面是一本书的完整版提炼稿的一部分，由若干「## 标题」小节组成，每节含「图：」示意说明、要点列表与表格。",
     `请从这 ${given} 节里挑出最能代表全书主线、对读者最有用的 ${keep} 节，**原样保留**每节的「## 标题」「图：」「要点」「表格」四件套格式，不要改写成散文。`,
-    "允许把两节强相关的内容合并成一节（标题可重拟），但合并后仍要保留图示说明、要点与表格。",
+    "这是配图选择，不是重写或缩短完整文字稿。完整文字将原样另存并全部交给顾问；本次仅挑选值得单独配图的主要事件、关系或结构。",
+    `本批配图最多 ${imageBudget} 张。长章节只取最值得画的重点与所需上下文，不必把该章节全部说明搬进图卡；未选内容仍由完整文字说明保留。每节只安排一张重点图。`,
     "去掉重复、只有细节没有结论的节。不要输出任何前言、说明或总结，只输出 Markdown 小节。",
     `严格控制在 ${keep} 节以内。`,
   ].join("\n");
@@ -226,6 +225,7 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
   const out = typeof content === "string" ? content.trim() : "";
   if (!out) throw new Error(`精华版派生：${gw.name} 没有返回内容`);
   if (json.choices?.[0]?.finish_reason === "length") throw new Error(`精华版派生：${gw.name} 输出被截断，请缩小批次`);
+  assertKnowledgeCardDeriveTablesComplete(out);
   return out;
 }
 
@@ -272,7 +272,7 @@ export const __testDeriveGateways = deriveGateways;
 export type DeriveProgress = { doneBatches: number; totalBatches: number; pass: number };
 
 /**
- * 长稿 → 精华版：按批挑节压缩，一批一次模型调用；批数多时再做一轮全局挑选。
+ * 从完整稿挑选重点配图；全文始终由调用方独立保留。
  * 任何一批输出坏了（节数为 0 或远超要求）整次失败，不把半成品当成稿。
  */
 export async function deriveKnowledgeCardCompact(params: {
@@ -288,13 +288,15 @@ export async function deriveKnowledgeCardCompact(params: {
   const model = params.model;
   const { head, sections } = splitMarkdownSections(params.fullMarkdown);
   if (!sections.length) throw new Error("完整版稿子里没有「## 」小节，无法派生精华版");
-  const target = Math.max(3, Math.floor(params.targetSections || compactTargetSections(sections.length)));
-  if (sections.length <= target) {
+  const target = Math.min(KNOWLEDGE_CARD_MAX_KEY_ILLUSTRATIONS, Math.max(3, Math.floor(params.targetSections || compactTargetSections(sections.length))));
+  const pageCount = (parts: string[]) => planKnowledgeCardPages([head.trim(), parts.join("\n\n")].filter(Boolean).join("\n\n"), model).pageCount;
+  if (sections.length <= target && pageCount(sections) <= KNOWLEDGE_CARD_MAX_KEY_ILLUSTRATIONS) {
+    assertKnowledgeCardDeriveTablesComplete(params.fullMarkdown);
     return { markdown: params.fullMarkdown.trim(), sections: sections.length, targetSections: target, passes: 0 };
   }
   let current = sections;
   let passes = 0;
-  while (current.length > target && passes < 3) {
+  while ((current.length > target || pageCount(current) > KNOWLEDGE_CARD_MAX_KEY_ILLUSTRATIONS) && passes < 3) {
     passes += 1;
     const batches = batchSections(current);
     const outputs: string[] = [];
@@ -304,13 +306,14 @@ export async function deriveKnowledgeCardCompact(params: {
       const keep = Math.max(2, Math.ceil((target * batch.length) / current.length));
       params.abortSignal?.throwIfAborted();
       const raw = await chat({
-        system: buildDeriveSystem(keep, batch.length),
+        system: buildDeriveSystem(keep, batch.length, Math.max(1, Math.floor(KNOWLEDGE_CARD_MAX_KEY_ILLUSTRATIONS * batch.length / current.length))),
         user: batch.join("\n\n"),
         model,
         abortSignal: params.abortSignal,
         maxTokens: Math.min(120_000, Math.max(DERIVE_MIN_OUTPUT_TOKENS, Math.ceil(batch.join("").length / 2))),
       });
       const got = countMarkdownSections(raw);
+      assertKnowledgeCardDeriveTablesComplete(raw);
       if (got < 1 || got > keep * 2 + 2) {
         throw new Error(`精华版派生第 ${passes} 轮第 ${i + 1}/${batches.length} 批输出异常（要 ${keep} 节，回 ${got} 节）`);
       }
@@ -319,9 +322,10 @@ export async function deriveKnowledgeCardCompact(params: {
     await params.onProgress?.({ doneBatches: batches.length, totalBatches: batches.length, pass: passes });
     const merged = mergeDistilledMarkdownChunks(outputs);
     const next = splitMarkdownSections(merged).sections;
-    if (next.length >= current.length) throw new Error("精华版派生没有压缩效果，已停止");
+    if (next.length >= current.length && pageCount(next) >= pageCount(current)) throw new Error("重点配图没有减少，已停止；完整文字稿不变");
     current = next;
   }
   const markdown = [head.trim(), current.join("\n\n")].filter(Boolean).join("\n\n");
+  assertKnowledgeCardIllustrationSelection(markdown, model);
   return { markdown, sections: current.length, targetSections: target, passes };
 }

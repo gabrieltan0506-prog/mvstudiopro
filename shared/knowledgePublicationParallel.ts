@@ -28,15 +28,33 @@ export async function runKnowledgeParallelBatches<T>(options: {
   channels: Record<string, KnowledgePublicationChannel>;
   active: () => boolean;
   assign: (index: number, channel: KnowledgePublicationChannel) => Promise<void>;
+  /** 等待输入就绪，不占用顾问通道；只读等待不改变事务身份。 */
+  prepare?: (index: number) => Promise<void>;
   execute: (index: number, channel: KnowledgePublicationChannel) => Promise<T>;
   complete: (index: number, result: T) => Promise<void>;
 }) {
   const pending = new Set(Array.from({ length: options.count }, (_, i) => i).filter(i => !options.completed.has(i)));
   const errors: { index: number; error: unknown }[] = [];
+  const ready = new Set(options.prepare ? [] : pending);
+  const preparing = new Map<number, Promise<void>>();
+  if (options.prepare) for (const index of Array.from(pending)) {
+    const promise = Promise.resolve().then(() => options.prepare!(index)).then(() => {
+      ready.add(index);
+    }, error => {
+      pending.delete(index);
+      errors.push({ index, error });
+    });
+    preparing.set(index, promise);
+  }
   await Promise.all((["openrouter", "evolink"] as const).map(async channel => {
     while (options.active()) {
-      const index = Array.from(pending).find(i => !options.channels[String(i)] || options.channels[String(i)] === channel);
-      if (index === undefined) return;
+      const eligible = Array.from(pending).filter(i => !options.channels[String(i)] || options.channels[String(i)] === channel);
+      if (!eligible.length) return;
+      const index = eligible.find(i => ready.has(i));
+      if (index === undefined) {
+        await Promise.race(eligible.map(i => preparing.get(i)!));
+        continue;
+      }
       pending.delete(index);
       try {
         await options.assign(index, channel);

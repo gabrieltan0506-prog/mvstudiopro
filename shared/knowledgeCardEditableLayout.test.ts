@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { knowledgeCardLayoutSource } from "./knowledgeCardEditableLayout";
+import { illustratedKnowledgeCardSource, knowledgeCardLayoutSource } from "./knowledgeCardEditableLayout";
 import { planKnowledgeCardPages } from "./knowledgeCardPagination";
 import { layoutFromSource } from "./editableLayout";
 
@@ -27,4 +27,16 @@ describe("知识卡真实分页进入独立排版稿", () => {
     expect(layoutFromSource(source).pages[0].body).toContain("完整正文末句");
     expect(source.images).toEqual({});
   });
+});
+
+it("手动导入精华图片仍保留完整文字和图片对应页", () => {
+  const full = "# 全文\n\n## 主线\n第一章。\n\n## 尾章\n没有配图也不能删掉的说明。";
+  const selected = "# 选图\n\n## 主线\n第一章。";
+  const image = "https://test.invalid/one.png";
+  const source = illustratedKnowledgeCardSource({owner:"7", sourceId:"same", fullMarkdown:full, illustrationMarkdown:selected, detailLevel:"concise", images:[image]});
+  const doc = layoutFromSource(source);
+  expect(source.body).toBe(full);
+  expect(doc.publication!.source.pages.filter(p=>p.role === "reading").map(p=>p.body).join("\n")).toContain("没有配图也不能删掉的说明");
+  expect(doc.publication!.source.pages.filter(p=>p.role === "illustration")).toHaveLength(1);
+  expect(doc.pages.at(-1)?.imageUrl).toBe(image);
 });

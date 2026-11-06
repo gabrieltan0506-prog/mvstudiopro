@@ -53,8 +53,24 @@ function fixture() {
   const makePlan=(sourceDigest:string):KnowledgeBookLayoutPlan=>({kind:"knowledge_book_layout_v1",sourceDigest,chapters:order.map((pageId,i)=>({pageId,design:{palette:i===1?"jade-paper":"ink-cinnabar",layout:i===1?"narrative":"editorial",table:i===2?"bands":"rules",frame:"none",motif:(["bamboo-seal","relation-lines","route-array","bronze-geometric"] as const)[i],reason:"依据本章具体内容组织层次，保持完整正文可读。"}}))});
   return {parent,child,library,objects,models,deps,order,makePlan};
 }
-async function planned() {
-  const f=fixture(),before=structuredClone(f.library),input=await loadKnowledgeBookLayoutInput(7,f.parent.id,f.deps);
+async function planned(presentation?: "full" | "concise") {
+  const f=fixture();
+  if(presentation) {
+    const pub=f.parent.publication!,duplicate="周本纪年代细节原图重复说明",unique="末句一必须保留";
+    pub.source.detailLevel=presentation;
+    const originalBody=duplicate+"。"+unique+"。";
+    f.parent.pages[0].body=originalBody;pub.source.pages[0].body=originalBody;pub.review!.pages[0].body=originalBody;
+    pub.review!.pages[0].facts=[{term:"年代",statement:duplicate},{term:"限定",statement:unique}];
+    pub.review!.pages[2].imageDescription=duplicate+"。已验测试原图";
+    pub.review!.sourceDigest=knowledgeSourceDigest(pub.source);pub.manuscript=knowledgeManuscript(pub.review!);
+    const originalPlan=f.makePlan;
+    f.makePlan=digest=>{
+      const plan=originalPlan(digest),imagePageId=f.parent.pages[2].id;
+      plan.chapters[0].presentation={reading:{version:1,subtitle:"",accent:"jade",blocks:[{type:"prose",title:"读图与补充",note:"",text:presentation==="full"?unique+"。制度结构参见秦汉制度图；本文保留图中未说明的适用边界。":duplicate+"。"+unique+"。完整解释制度关系、背景与适用边界；少量图卡之外的知识保留文字说明。"}]},imageEvidencePageIds:presentation==="full"?[imagePageId]:[],reason:"制度结构由已审校原图承载，文字说明其适用边界。"};
+      return plan;
+    };
+  }
+  const before=structuredClone(f.library),input=await loadKnowledgeBookLayoutInput(7,f.parent.id,f.deps);
   const id=randomUUID(),request={id,question:"请重新排版完整手册",imagePageIds:[],manuscript:f.parent.publication!.manuscript,action:"layout" as const,layoutSourceDigest:input.sourceDigest};
   f.parent.publication!.conversation=[{request}];
   await validateKnowledgeBookLayoutTransition(7,before,f.library,f.deps);
@@ -150,3 +166,33 @@ it("实际Chromium打印按顾问顺序保留全部章节、图卡、正文与�
     expect(result.imagePages).toBe(2);
   }finally{await browser.close();}
 },60000);
+
+it("顾问两档展示方案实际进入PDF正文，底稿与原审校保持完整",async()=>{
+  for(const level of ["full","concise"] as const){
+    const f=await planned(level),original=JSON.stringify(f.library);
+    expect(f.input.detailLevel).toBe(level);
+    expect(f.input.pages[2].imageStatus).toBe("consistent");
+    expect(f.input.pages[0].facts?.length).toBeGreaterThan(0);
+    const view=await loadKnowledgeBookLayoutView(7,f.parent.id,"10",f.deps);
+    expect(view.doc.pages[0].body).toContain(level==="full"?"制度结构参见秦汉制度图":"完整解释制度关系");
+    expect(view.review.pages[0].body).toBe(view.doc.pages[0].body);
+    expect(view.doc.publication!.source.pages[0].body).toContain("末句一必须保留");
+    await exportKnowledgePublication(7,f.parent.id,"10",f.deps);
+    expect(f.deps.pdf.mock.calls[0][0]).toContain(level==="full"?"制度结构参见秦汉制度图":"完整解释制度关系");
+    expect(f.deps.pdf.mock.calls[0][0]).toContain("末句一必须保留");
+    if(level==="full")expect(f.deps.pdf.mock.calls[0][0]).not.toContain("周本纪年代细节原图重复说明");
+    else expect(f.deps.pdf.mock.calls[0][0]).toContain("周本纪年代细节原图重复说明");
+    expect(JSON.stringify(f.library)).toBe(original);
+  }
+});
+it("完整版去重不接受未看图、未知图、不确定图或无图片依据",async()=>{
+  const f=await planned("full"),plan=f.makePlan(f.input.sourceDigest);
+  for(const ids of [[],[f.parent.pages[0].id],[randomUUID()],[f.parent.pages[2].id,f.parent.pages[2].id]]){
+    const bad=structuredClone(plan);bad.chapters[0].presentation!.imageEvidencePageIds=ids;
+    expect(()=>validateKnowledgeBookLayoutPlan(bad,f.input)).toThrow(/原图|承载知识/);
+  }
+  const uncertain=structuredClone(f.input);uncertain.pages[2].imageStatus="uncertain";
+  expect(()=>validateKnowledgeBookLayoutPlan(plan,uncertain)).toThrow("已实际审校且一致");
+  const empty=structuredClone(f.input);empty.pages[2].imageDescription="";
+  expect(()=>validateKnowledgeBookLayoutPlan(plan,empty)).toThrow("已实际审校且一致");
+});

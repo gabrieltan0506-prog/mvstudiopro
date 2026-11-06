@@ -132,8 +132,10 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
       const heights=units.map(unit=>{measure.append(unit);const height=unit.offsetHeight+16;staging.append(unit);return height;});
       const total=heights.reduce((a,b)=>a+b,0);
       const countColumns=limit=>{let count=1,used=0;for(const h of heights){if(used&&used+h>limit){count++;used=0;}used+=h;}return count;};
+      // 估计页数不足时，按真实容量补足整页，再均分全部栏，避免孤段尾页。
+      const balancedColumns=Math.max(desired*2,Math.ceil(countColumns(capacity)/2)*2);
       let low=Math.max(...heights),high=total;
-      for(let step=0;step<30;step++){const mid=(low+high)/2;if(countColumns(mid)>desired*2)low=mid;else high=mid;}
+      for(let step=0;step<30;step++){const mid=(low+high)/2;if(countColumns(mid)>balancedColumns)low=mid;else high=mid;}
       const target=Math.min(capacity,high+1);let page=first,col=0,used=0;
       for(let i=0;i<units.length;i++){
         const unit=units[i],height=heights[i];

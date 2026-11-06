@@ -29,8 +29,15 @@ export const knowledgeVisualDesignSchema = z.object({
 export type KnowledgeVisualDesign=z.infer<typeof knowledgeVisualDesignSchema>;
 export const KNOWLEDGE_DESIGN_MARKER='【内容驱动设计合同v1】';
 export const KNOWLEDGE_DESIGN_INSTRUCTIONS=`${KNOWLEDGE_DESIGN_MARKER}
-每章decoration必须增加design对象，六个字段全部必填，不接受空值或未知枚举：
-${JSON.stringify({palette:['ink-cinnabar','jade-paper','bronze-sand','plum-ink','slate-blue'],layout:['editorial','catalog','narrative'],table:['rules','bands','minimal'],frame:['rule','corners','none'],motif:['bamboo-seal','route-array','relation-lines','book-scroll','bronze-geometric','herb-leaf','none'],reason:'说明本章具体内容为何适合此组合，不能仅写美观、统一、换颜色'})}。
+每章decoration必须增加design对象，六个字段全部必填。每个字段的值都是单个字符串，不是数组或对象；前五项每项只选一个值，即使只选一项也不得加方括号，不接受空值或未知枚举。
+以下是单选候选目录，不是返回JSON的结构：
+- palette：${knowledgeVisualDesignSchema.shape.palette.options.map(v=>JSON.stringify(v)).join('、')}。
+- layout：${knowledgeVisualDesignSchema.shape.layout.options.map(v=>JSON.stringify(v)).join('、')}。
+- table：${knowledgeVisualDesignSchema.shape.table.options.map(v=>JSON.stringify(v)).join('、')}。
+- frame：${knowledgeVisualDesignSchema.shape.frame.options.map(v=>JSON.stringify(v)).join('、')}。
+- motif：${knowledgeVisualDesignSchema.shape.motif.options.map(v=>JSON.stringify(v)).join('、')}。
+- reason：说明本章具体内容为何适合此组合，不能仅写美观、统一、换颜色。
+合法结构示例（仅说明字段类型，各章应按内容重新选择，不得整批照抄）：${JSON.stringify({palette:'bronze-sand',layout:'catalog',table:'rules',frame:'corners',motif:'bamboo-seal',reason:'本章对照制度沿革与年代，青铜纸色和目录式布局突出年份关系，简牍纹样呼应史料。'})}。
 先按本批所有章节的内容统筹分配，再逐章输出：战争/地理可选黛蓝朱砂、路线或阵列；制度/年代可选青铜纸色、简牍印章与规整表格；人物/关系可选关系线及舒展叙事；学术/文学可选竹青或灰紫、书卷；医药/自然可选叶脉或简牍。以上为语义参考而非固定套用，其他内容按实际含义搭配。没有匹配纹样时选none，不能用山水填空。
 禁止相邻章节重复同一非none主纹样；四章及以上至少三种设计组合；任何非none纹样全册占比不超过一半（向上取整）。不能只换颜色来逃避纹样重复。相同主题可用兼容的关系线、几何纹或留白产生区别，不为求变化搭配无关图案。续页只用简洁页眉，不重复大幅插画；表头根据表格内容采用细线、分组色带或极简，不在每个表格重复山水花纹。装饰不能压住正文、改变数字或代替知识图。完整文字、原图及事实校核必须保留。`;
 /** 新合同严格要求设计字段；旧稿只在不带新合同标记时允许缺省。 */

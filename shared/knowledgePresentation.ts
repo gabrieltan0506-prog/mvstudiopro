@@ -1,7 +1,15 @@
 import {z} from 'zod';
+import type {KnowledgeSource} from './knowledgePublication';
 const short=(max:number)=>z.string().trim().min(1).max(max);
 export const knowledgePresentationRangeSchema=z.object({minSlides:z.number().int().min(1).max(200),maxSlides:z.number().int().min(1).max(200)}).strict().refine(v=>v.minSlides<=v.maxSlides,'最少页数不能大于最多页数');
-export const knowledgePresentationRequestSchema=z.object({id:z.string().uuid(),minSlides:z.number().int().min(1).max(200),maxSlides:z.number().int().min(1).max(200),manuscript:short(1000000)}).strict().refine(v=>v.minSlides<=v.maxSlides,'页数范围无效');
+export const knowledgePresentationRequestSchema=z.object({id:z.string().uuid(),basis:z.literal('source').optional(),minSlides:z.number().int().min(1).max(200),maxSlides:z.number().int().min(1).max(200),manuscript:short(1000000)}).strict().refine(v=>v.minSlides<=v.maxSlides,'页数范围无效');
+/** 完整原稿和稳定配图任务构成早期规划身份，图片就绪不改变身份。 */
+export function knowledgePresentationSourceManuscript(source:KnowledgeSource){
+ return JSON.stringify({title:source.title,detailLevel:source.detailLevel,pages:source.pages.map(p=>({id:p.id,headline:p.headline,body:p.body,role:p.role,image:p.imageJobId?{jobId:p.imageJobId}:{url:p.imageUrl}}))});
+}
+export function knowledgePresentationRequestMatches(request:KnowledgePresentationRequest|undefined,pub:{source:KnowledgeSource;manuscript:string}){
+ return !!request&&request.manuscript===(request.basis==='source'?knowledgePresentationSourceManuscript(pub.source):pub.manuscript);
+}
 const common={title:short(40),sourcePageIds:z.array(z.string().uuid()).min(1),notes:z.string().max(2000).default('')};
 export const knowledgePresentationSlideSchema=z.discriminatedUnion('type',[
  z.object({...common,type:z.literal('points'),points:z.array(short(60)).min(1).max(5)}).strict(),

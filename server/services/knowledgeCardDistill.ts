@@ -1,3 +1,4 @@
+import type { KnowledgeReadingChunk } from "../../shared/knowledgeReadingPreparation";
 /**
  * 图文知识卡片：上传/长文 → 读文/读图 + 提炼 → Markdown。
  *
@@ -1581,6 +1582,8 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
   minSectionsTotal: number;
   detailLevel: KnowledgeCardDetailLevel;
   onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
+  onReadingPlan?: (totalChunks: number) => Promise<void>;
+  onReadingChunk?: (chunk: KnowledgeReadingChunk) => Promise<void>;
   /** 单段提炼跳过等非致命情况的提醒；上层写进 extractionMethods 的 `:notice:`，前端会弹 */
   onNotice?: (noticeZh: string) => void;
   /** 用户点「终止」：在途请求立刻断，段与段之间也不再往下跑 */
@@ -1598,7 +1601,8 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
   const hasOcrPages = params.documents.some((d) => d.pages.some((p) => p.ocrImageUrl));
   // 短文单发；但参考页图超过单请求上限时仍走分段，避免整本页图塞进一个请求
   if (!hasOcrPages && (!text || text.length <= profile.chunkThreshold) && urls.length <= 1 && urls.length + allPageImages.length <= DISTILL_MAX_PAGE_IMAGES_PER_CALL) {
-    return invokeDistillLlm({
+    await params.onReadingPlan?.(1);
+    const single = await invokeDistillLlm({
       abortSignal: params.abortSignal,
       sourceText: text,
       imageUrls: urls,
@@ -1609,6 +1613,8 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
       docKeys: allPageImages.length ? Array.from(new Set(allPageImages.map((p) => p.docKey))) : [],
       detailLevel: params.detailLevel,
     });
+    await params.onReadingChunk?.({index:0,total:1,markdown:single});
+    return single;
   }
 
   // 有逐页备料的文档按页对齐分段（补充文字单独成段，不与逐页正文重复）；否则按字数切
@@ -1629,6 +1635,7 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
       `(model=${params.modelName} chunkChars=${profile.chunkChars} concurrency=${KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE}×2路 effort=${profile.effortChunk} level=${params.detailLevel} refPages=${allPageImages.length} docs=${params.documents.length})`,
   );
 
+  await params.onReadingPlan?.(chunks.length);
   const outputs: DistillChunkResult[] = new Array(chunks.length);
   // 分段只是给统稿备料：按总目标节数分摊 + 六成冗余留出取舍空间（完整版不留冗余，全部保留）
   const minSectionsPerChunk = Math.max(
@@ -1674,6 +1681,8 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
         stopped = true;
         throw err;
       }
+      const ready = outputs[idx];
+      await params.onReadingChunk?.({index:idx,total:chunks.length,markdown:ready?.ok ? ready.markdown : "",...(!ready?.ok ? {error:"本段未读取成功"} : {})});
       done += 1;
       await params.onProgress?.({ doneChunks: done, totalChunks: chunks.length, phase: "distilling" });
     }
@@ -1841,6 +1850,8 @@ export async function prepareKnowledgeCardCopy(input: {
   /** 已备好的逐页资料（后台任务里先抽好再传进来，避免重复渲染） */
   extracted?: KnowledgeCardExtractResult;
   onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
+  onReadingPlan?: (totalChunks: number) => Promise<void>;
+  onReadingChunk?: (chunk: KnowledgeReadingChunk) => Promise<void>;
   onExtractProgress?: (p: KnowledgeCardExtractProgress) => void | Promise<void>;
   /** EPUB 一转完就回调，调用方写进任务进度让前端立刻出下载按钮 */
   onConvertedPdf?: (all: KnowledgeCardConvertedPdf[]) => void | Promise<void>;
@@ -1924,6 +1935,8 @@ export async function prepareKnowledgeCardCopy(input: {
       minSectionsTotal,
       detailLevel,
       onProgress: input.onProgress,
+      onReadingPlan: input.onReadingPlan,
+      onReadingChunk: input.onReadingChunk,
       onNotice: (noticeZh) => extracted.methods.push(`长书:notice:${noticeZh}`),
     });
     if (mergedRaw.length >= 8000 && distilled.length < Math.min(800, mergedRaw.length * 0.02)) {

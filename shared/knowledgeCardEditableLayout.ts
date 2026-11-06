@@ -47,8 +47,11 @@ export function synchronizedKnowledgeCardSource(input: {
   const illustrations = planKnowledgeCardPages(input.illustrationMarkdown, input.distillModel).pages;
   if (!illustrations.length || illustrations.length !== input.imageJobIds.length || new Set(input.imageJobIds).size !== input.imageJobIds.length)
     throw new Error("配图任务与原稿页数不一致，尚未开始生成");
+  if (input.detailLevel === "full") {
+    return {...reading,inputFingerprint:input.inputFingerprint,reviewBatchMode:"ready-images",pages:illustrations.map((body,i)=>({pageIndex:i+1,headline:reading.pages![i]?.headline||`配图 ${i+1}`,body,imageJobId:input.imageJobIds[i],knowledgeRole:"illustration" as const}))};
+  }
   const textPages = reading.pages!.map(p => ({ ...p, knowledgeRole: "reading" as const }));
-  return { ...reading, inputFingerprint: input.inputFingerprint, detailLevel: input.detailLevel, pages: [
+  return { ...reading, inputFingerprint: input.inputFingerprint, detailLevel: input.detailLevel, reviewBatchMode:"ready-images", pages: [
     ...textPages,
     ...illustrations.map((body, i) => ({
       pageIndex: textPages.length + i + 1,
@@ -56,4 +59,20 @@ export function synchronizedKnowledgeCardSource(input: {
       body, imageJobId: input.imageJobIds[i], knowledgeRole: "illustration" as const,
     })),
   ] };
+}
+
+/** 已有图片的手动导入也保留全文，不能只把选图段落交给顾问。 */
+export function illustratedKnowledgeCardSource(input: {
+  owner: string; sourceId: string; fullMarkdown: string; illustrationMarkdown: string;
+  detailLevel?: "concise" | "full"; distillModel?: string;
+  infographicTemplateId?: string | null; images: readonly string[];
+}): LayoutSource {
+  const reading = knowledgeCardLayoutSource({ ...input, markdown: input.fullMarkdown, images: [] });
+  if (!input.images.length) return reading;
+  const illustrations = knowledgeCardLayoutSource({ ...input, markdown: input.illustrationMarkdown });
+  const offset = reading.pages!.length;
+  return { ...reading, pages: [
+    ...reading.pages!.map(page => ({ ...page, knowledgeRole: "reading" as const })),
+    ...illustrations.pages!.map(page => ({ ...page, pageIndex: offset + page.pageIndex, knowledgeRole: "illustration" as const })),
+  ], images: Object.fromEntries(Object.entries(illustrations.images || {}).map(([page, url]) => [offset + Number(page), url])) };
 }

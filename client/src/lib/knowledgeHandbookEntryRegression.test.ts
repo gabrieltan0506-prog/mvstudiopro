@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from "vitest";
 import * as pagination from "../../../shared/knowledgeCardPagination";
 import * as source from "../../../shared/knowledgeCardEditableLayout";
 import * as identity from "../../../shared/knowledgeCardSourceIdentity";
+import * as selection from "../../../shared/knowledgeCardIllustrationSelection";
 import * as lifecycle from "./knowledgeIllustrationRun";
 
 // 执行生产处理函数，避免只测辅助函数而遗漏按钮之间的真实组合。
@@ -82,8 +83,10 @@ describe("补图实际入口定向回归 KH-SYNC-02", () => {
 });
 function entryContext(full: string | null = null) {
   const ctx: any = {
-    ...pagination, ...source, ...identity, ...lifecycle, console, crypto: webcrypto, TextEncoder, Set, Map, readOpenAiImageVariantPref:()=>"sunburst", useCallback: (fn: any) => fn,
+    ...pagination, ...source, ...identity, ...selection, ...lifecycle, console, crypto: webcrypto, TextEncoder, Set, Map, readOpenAiImageVariantPref:()=>"sunburst", useCallback: (fn: any) => fn,
     customNoteBusy: false, knowledgeCardInflight: [], customNoteLevelSwitching: false, customNoteKind: "single_page_knowledge_card", customNoteSelectedFileCount: 0,
+    readingControllerRef: {current:null}, readingFullMarkdownRef: {current:""},
+    renderedDetailLevelRef: {current:null}, renderedDraftRef: {current:""}, renderedFullManuscriptRef: {current:""},
     customNoteText: "# 新稿B\n\n海洋潮汐受月球引力影响。", customNotePendingFilesRef: { current: [] }, customNoteFullMarkdown: full, customNoteCompactMarkdownRef: { current: null }, customNoteDistillPhase: "idle",
     customNoteDistillModel: "deepseek-v4.1-flash-1017", customNoteDetailLevel: "concise", customNoteSubjectPosition: "left", customNoteInfographicTemplateId: null, customNoteRevisionRef: { current: 0 }, workbenchUserKey: "7",
     layoutStudioRef: { current: { prepare: vi.fn(async () => { throw Error("TEST_STOP_AFTER_PREPARE"); }) } },
@@ -91,6 +94,7 @@ function entryContext(full: string | null = null) {
     knowledgeCardPageTasks: { begin: () => randomUUID(), finish: noop },
     trpcUtils: { mvAnalysis: { quoteKnowledgeCard: { fetch: vi.fn(async ({ markdown, distillModel }: any) => ({ ...pagination.planKnowledgeCardPages(markdown, distillModel), billingModel: distillModel })) } } },
     mapCustomNoteError: (e: Error) => e.message, toast: { error: noop, success: noop, info: noop, message: noop },
+    deriveCompactFromFull: async () => ctx.customNoteCompactMarkdownRef.current,
     generateCustomNoteOne: vi.fn(),
     bumpCustomNoteRevision: noop, setCustomNoteFullMarkdown: noop, setCustomNoteCompactMarkdown: noop, setCustomNoteText: noop, setCustomNoteKind: noop,
   };
@@ -123,7 +127,7 @@ describe("原稿和另一入口 KH-SYNC-03/KH-PRICE-04", () => {
   });
 });
 describe("PDF回调来源身份 KH-PAGE-01", () => {
-  const callback = take("onPagination={(doc, pagination) => {", "\n        }} />}").slice("onPagination={".length) + "\n}";
+  const callback = take("onPagination={(doc, pagination) => {", "\n        }} /></StableStudioDock>}").slice("onPagination={".length) + "\n}";
   for (const fingerprint of [undefined, "a".repeat(64), "b".repeat(64)]) it(`只接受文档创建时的来源指纹:${fingerprint?.[0] || "旧稿"}`, () => {
     const ctx: any = { knowledgeCardLayoutSourceIdRef: { current: "source-A" }, customNotePaginationKey: "input-B", paginationFingerprint: { key: "input-B", hash: "b".repeat(64) }, setCustomNotePagination: vi.fn() };
     run("globalThis.callback = " + callback, ctx);
@@ -151,7 +155,7 @@ it("素材按钮到实际单图请求保持同一报价和一次确认 KH-PRICE-
       return { imageUrl: "https://test.invalid/image.png" };
     }) },
   });
-  for (const name of ["renderRunIdRef", "renderedSettingsRef", "renderedImageJobsRef", "renderedSubmittedImageJobsRef", "renderedDraftRef", "renderedDetailLevelRef", "knowledgeCardLayoutSourceIdRef"]) ctx[name] = { current: name === "renderRunIdRef" ? 0 : null };
+  for (const name of ["renderRunIdRef", "renderedSettingsRef", "renderedImageJobsRef", "renderedSubmittedImageJobsRef", "renderedDraftRef", "renderedFullManuscriptRef", "renderedDetailLevelRef", "knowledgeCardLayoutSourceIdRef"]) ctx[name] = { current: name === "renderRunIdRef" ? 0 : null };
   ctx.knowledgeCardPageTasks.assertLive = noop;
   ctx.layoutStudioRef.current.prepare = vi.fn(async () => ({ documentId: "doc", maxCredits: 3 }));
   ctx.layoutStudioRef.current.start = vi.fn(async () => {});
@@ -227,4 +231,44 @@ it("采用优化稿先失效旧全文并使用新文字 KH-SYNC-03", async () =>
   expect(ctx.setCustomNoteFullMarkdown).toHaveBeenCalledWith(null);
   expect(ctx.setCustomNoteCompactMarkdown).toHaveBeenCalledWith(null);
   expect(ctx.layoutStudioRef.current.prepare.mock.calls[0][0].body).toBe(ctx.customOptimizeResult);
+});
+
+
+describe("两档同稿只改配图 KH-SAME-MANUSCRIPT-01", () => {
+  const full = "# 完整书稿\n\n## 主线\n主要事件。\n\n## 末章\n未配图的完整说明必须保留。";
+  const compact = "# 重点配图\n\n## 主线\n主要事件。";
+  for (const level of ["full", "concise"]) it(`${level}报价与顾问分离且正文逐字保留`, async () => {
+    const ctx = entryContext(full);
+    ctx.customNoteText = full; ctx.customNoteDetailLevel = level;
+    ctx.customNoteCompactMarkdownRef.current = compact;
+    ctx.setCustomNoteText = vi.fn();
+    await ctx.generate();
+    expect(ctx.setCustomNoteText).not.toHaveBeenCalled();
+    expect(ctx.trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch.mock.calls[0][0].markdown).toBe(level === "concise" ? compact : full);
+    const received = ctx.layoutStudioRef.current.prepare.mock.calls[0][0];
+    expect(received.body).toBe(full);
+    expect(received.pages.filter((p: any) => p.knowledgeRole === "reading" || level === "full").map((p: any) => p.body).join("\n")).toContain("未配图的完整说明必须保留");
+  });
+  it("重点选图失败时保留全文且不报价不出图", async () => {
+    const ctx = entryContext(full); ctx.customNoteText = full;
+    ctx.deriveCompactFromFull = async () => { throw Error("选图失败"); };
+    await ctx.generate();
+    expect(ctx.customNoteText).toBe(full);
+    expect(ctx.trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch).not.toHaveBeenCalled();
+    expect(ctx.generateCustomNoteOne).not.toHaveBeenCalled();
+  });
+});
+
+it("缺全文的旧精华备份拒绝新整册且不清图片", async () => {
+ const ctx=entryContext();ctx.renderedDetailLevelRef.current="concise";ctx.renderedDraftRef.current=ctx.customNoteText;
+ ctx.renderedFullManuscriptRef.current="";ctx.setCustomNoteImages=vi.fn();ctx.setCustomNoteImageUpper=vi.fn();
+ await ctx.generate();expect(ctx.setCustomNoteImages).not.toHaveBeenCalled();expect(ctx.setCustomNoteImageUpper).not.toHaveBeenCalled();expect(ctx.layoutStudioRef.current.prepare).not.toHaveBeenCalled();
+});
+
+it("已成功统稿不被同步顾问状态查询失败阻断",async()=>{
+ const full="## 完整稿\n最后一句仍然保留。",update=vi.fn(async()=>{throw Error("顾问状态暂时不可用");});
+ const ctx:any={startReadingAdvisor:()=>({update}),readingFullMarkdownRef:{current:""},bumpCustomNoteRevision:noop,customNoteDistillModel:"deepseek-v4.1-flash-1017",customNoteUploadStopRef:{current:false},knowledgeCardPageTasks:{begin:()=>randomUUID(),finish:noop,assertLive:noop},prepareKnowledgeCardCopyMutation:{mutateAsync:async()=>({isAsync:true,progressJobId:"kc_original",estimatedChunks:1})},pollJobUntilTerminal:async()=>({status:"succeeded",output:{distilledMarkdown:full,readingPreparation:{jobId:"kc_original",documentId:randomUUID(),batches:1,ready:[0]}}}),knowledgeCardProgressFromDistill:(n:number)=>n};
+ for(const name of ["setCustomNoteProgress","setCustomNoteFullMarkdown","setCustomNotePreparedModel","setCustomNoteCompactMarkdown","setKnowledgeCardEpubPdfs","setCustomNoteCancelRequested","setCustomNoteDistillJobId","setReadingAdvisorStatus"])ctx[name]=vi.fn();
+ run(take("  const runKnowledgeCardDistill = async", "\n  /**\n   * 终止后台读档")+"\nglobalThis.distill=runKnowledgeCardDistill;",ctx);
+ expect(await ctx.distill({sourceText:"原始全文"})).toBe(full);expect(ctx.readingFullMarkdownRef.current).toBe(full);expect(ctx.setReadingAdvisorStatus).toHaveBeenCalled();
 });

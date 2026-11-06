@@ -1,0 +1,12 @@
+.knowledge-authoring-row { container-type: inline-size; }
+.knowledge-authoring-grid { display: grid; gap: 16px; align-items: start; }
+.knowledge-authoring-text, .knowledge-authoring-advisor { min-width: 0; }
+.knowledge-authoring-text > textarea { min-height: 360px; }
+.knowledge-authoring-advisor { overflow-wrap: anywhere; }
+.knowledge-authoring-advisor #editable-layout-studio { margin-bottom: 0; }
+.knowledge-authoring-advisor select { min-width: 0; max-width: 100%; }
+@container (min-width: 880px) {
+  .knowledge-authoring-grid { grid-template-columns: minmax(0, 1.2fr) minmax(360px, 1fr); }
+  .knowledge-authoring-text > textarea { min-height: 640px; }
+  .knowledge-authoring-advisor { max-height: 760px; overflow: auto; scrollbar-gutter: stable; }
+}

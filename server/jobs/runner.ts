@@ -3814,6 +3814,8 @@ async function processPlatformJob(
       try {
       await cancel.check({ force: true });
       const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
+      const { createKnowledgeReadingPreparation } = await import("../services/knowledgeReadingPreparation");
+      const readingPreparation = createKnowledgeReadingPreparation(Number(jobUserId), platformJobId!);
       const prepared = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => prepareKnowledgeCardCopy({
         sourceText,
         files: jobFiles,
@@ -3822,6 +3824,8 @@ async function processPlatformJob(
         distillModel,
         detailLevel,
         userId: Number(jobUserId),
+        onReadingPlan: async total => { await readingPreparation.onPlan(total); await patchProgress({readingPreparation:readingPreparation.progress()}); },
+        onReadingChunk: async chunk => { await readingPreparation.onChunk(chunk); await patchProgress({readingPreparation:readingPreparation.progress()}); },
         onExtractProgress: async (p) => {
           const base = p.stage === "converting" ? 0 : p.stage === "reading" ? 5 : p.stage === "selecting" ? 20 : 30;
           const span = p.stage === "converting" ? 5 : p.stage === "reading" ? 15 : 10;
@@ -3865,8 +3869,10 @@ async function processPlatformJob(
       const plan = planKnowledgeCardPages(prepared.distilledMarkdown, billingModel);
 
       const { knowledgeCardDistillFeeForModel } = await import("../../shared/knowledgeCardDistillModels.js");
+      const readingPreparationResult = await readingPreparation.finish(prepared.distilledMarkdown);
       const output = {
         success: true,
+        readingPreparation: readingPreparationResult,
         detailLevel: prepared.detailLevel,
         documents: prepared.documents,
         distilledMarkdown: prepared.distilledMarkdown,

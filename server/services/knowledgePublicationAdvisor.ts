@@ -62,6 +62,7 @@ export async function validateKnowledgePublicationAccess(
   load = loadKnowledgePublication,
   read = real.read,
 ) {
+  if(context.purpose === "reading") return (await import("./knowledgeReadingPreparation")).validateKnowledgeReadingAccess(owner,context,requestId);
   if(context.purpose === "conversation") return (await import("./knowledgeConversationAdvisor")).validateKnowledgeConversationAccess(owner,context,requestId);
   if(context.purpose === "presentation") return (await import("./knowledgePresentationAdvisor")).validateKnowledgePresentationAccess(owner,context,requestId);
   const document = await load(owner, context);
@@ -85,6 +86,7 @@ export async function validateKnowledgePublicationAccess(
     const { checkKnowledgePublicationRetry } = await import("./knowledgePublicationRetry");
     await checkKnowledgePublicationRetry(owner, document, context.batchIndex, context.attempt - 1, { read });
   }
+  if (document.publication.source.readingPreparation) await (await import("./knowledgeReadingPreparation")).loadVerifiedKnowledgeReadingNotes(owner,document.publication.source.readingPreparation,document.publication.source,undefined,false);
   const selected = knowledgeReviewBatches(document.publication.source)[context.batchIndex];
   const resolvedSource = await resolveKnowledgePublicationImages(owner, document.publication.source, selected, undefined, document.publication.imageReplacements);
   const sources = await loadSucceededJobOutputSources(
@@ -170,7 +172,7 @@ ${KNOWLEDGE_READING_INSTRUCTIONS}`;
 /** 档位来自已保存原图批次，调整的是配套说明，不改变图卡本身。 */
 export function knowledgeExplanationInstructions(level?: "concise" | "full") {
   if (level === "concise") return "本套为精华版图卡：role=reading为独立保留的完整文字底稿，必须完整整理；role=illustration仅检查实际配图并补充读图说明，不按配图页号猜测全文对应。配套文字应详尽，补足图内省略的概念、因果、边界与有依据的例子；按需增加说明块，不机械重复图中文字，不编造原资料未支持的事实。";
-  if (level === "full") return "本套为完整版图卡：完整保留文字底稿中的知识、数字、因果、边界和必要例子，不因配图已含内容而缩减文字说明。role=reading的章节是完整文字说明；role=illustration的章节检查实际配图并补充简短读图说明，不把配图页号当作全文章节对应关系。";
+  if (level === "full") return "本套为完整版图卡：两档使用同一完整文字底稿，本档以更多配图承载知识。必须实际读取图片后判断：图中已经清楚表达的知识不在配套说明中逐字重复，文字重点保留图上未讲清的因果、边界、必要例子和读图提示，因此文字版面可以少于精华版。不得未读图就删减知识、不能漏掉图文双方都未说明的关键事实。role=reading先保留完整知识依据；role=illustration读实际配图、补充简短说明，并在整册排版时减少重复呈现。不把配图页号当作全文章节对应关系。";
   return "本套旧稿未记录图卡档位：保留现有说明密度，不推测精华或完整版；以必要解释和不重复图文为原则。";
 }
 
@@ -178,8 +180,8 @@ export function buildKnowledgeReviewRequest(
   source: KnowledgeSource,
   digest: string,
   images: Map<string, { mimeType: string }>
-) {
-  const parts: Record<string, unknown>[] = [
+): KnowledgeModelRequest {
+  const parts: KnowledgeModelRequest["contents"][number]["parts"] = [
     { text: JSON.stringify({ sourceDigest: digest, source }) },
   ];
   for (const [index, page] of Array.from(source.pages.entries())) {
@@ -282,6 +284,7 @@ export async function reviewKnowledgePublication(
   context: KnowledgePublicationContext,
   overrides: Partial<typeof real> = {}
 ) {
+  if(context.purpose === "reading") return (await import("./knowledgeReadingPreparation")).reviewKnowledgeReading(owner,context);
   if(context.purpose === "conversation") return (await import("./knowledgeConversationAdvisor")).reviewKnowledgeConversation(owner,context);
   if(context.purpose === "presentation") return (await import("./knowledgePresentationAdvisor")).reviewKnowledgePresentation(owner,context);
   const deps = {...real, ...overrides};
@@ -372,6 +375,16 @@ export async function reviewKnowledgePublication(
   // 分配保存在原稿中；旧请求恢复时 getRaw 仍以原始永久请求为准。
   const channel = document.publication.parallel?.channels[String(context.batchIndex)];
   const request = { ...buildKnowledgeReviewRequest(batchSource, digest, images), ...(channel ? { executionChannel: channel } : {}) };
+  if (source.readingPreparation) {
+    const notes = await (await import("./knowledgeReadingPreparation")).loadVerifiedKnowledgeReadingNotes(owner,source.readingPreparation,source,undefined,false);
+    // 已读分段是前期工作，最终稿仍是真源；不拿旧段落覆盖统稿修订。
+    const batchText=batchSource.pages.map(p=>p.body).join("\n");
+    const relevant=notes.flatMap(note=>note.pages).flatMap(page=>{
+      const facts=page.facts.filter(fact=>fact.term.trim().length>=2 && batchText.includes(fact.term.trim()));
+      return facts.length ? [{headline:page.headline,facts,cautions:page.cautions,design:page.reading?.decoration?.design}] : [];
+    });
+    if(relevant.length)request.contents[0].parts.unshift({text:JSON.stringify({readingPreparation:relevant,instruction:"这些是同一本原稿读档期间已完成、与本批明确同名知识相关的事实整理和页面建议，仅作辅助。完整本批原稿仍已全部提供；以最终统稿为准修正变化，实际读取新图片并安排当前档位图文比例，不能把早期内容覆盖最终修订。未命中的内容正常按原稿审校，不代表漏读。"})});
+  }
   // 邻页作为文字上下文；全书关系另由完整事实索引统一复核。
   const before = source.pages[Math.max(0, indices[0] - 1)],
     after = source.pages[indices.at(-1)! + 1];

@@ -3,7 +3,7 @@ import KnowledgeConversationPanel from "./KnowledgeConversationPanel";
 import { completedKnowledgeBatches, knowledgeCompletedPrefix, runKnowledgeParallelBatches } from "@shared/knowledgePublicationParallel";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { pollJobUntilTerminal } from "@/lib/jobs";
-import {knowledgePresentationRangeSchema,knowledgePresentationPlanSchema,knowledgePresentationCapacityIssues,assertKnowledgePresentationCapacity,validateKnowledgePresentationRevision,type KnowledgePresentationPlan} from "@shared/knowledgePresentation";
+import {knowledgePresentationSourceManuscript,knowledgePresentationRequestMatches,knowledgePresentationRangeSchema,knowledgePresentationPlanSchema,knowledgePresentationCapacityIssues,assertKnowledgePresentationCapacity,validateKnowledgePresentationRevision,type KnowledgePresentationPlan} from "@shared/knowledgePresentation";
 import { knowledgePublicationTemplates, resolveKnowledgePublicationTemplate } from "@shared/knowledgePublicationTemplates";
 import { useEffect, useRef, useState } from "react";
 import type { EditableLayout } from "@shared/editableLayout";
@@ -38,18 +38,26 @@ export default function KnowledgePublicationPanel({
   autoStart = false,
   autoStartToken = 0,
   preauthorizedCredits,
+  autoPreparePresentation = false,
+  preauthorizedPresentationCredits,
   waitForImages,
+  waitForReading,
   onPagination,
   onSupplement,
+  compact = false,
 }: {
   doc: EditableLayout;
+  compact?: boolean;
   commit: (doc: EditableLayout) => Promise<Saved>;
   onChange: (doc: EditableLayout) => void;
   onBusy: (value: boolean) => void;
   autoStart?: boolean;
   autoStartToken?: number;
   preauthorizedCredits?: number;
+  autoPreparePresentation?: boolean;
+  preauthorizedPresentationCredits?: number;
   waitForImages?: (ids: string[]) => Promise<void>;
+  waitForReading?: () => Promise<void>;
   onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>;
   onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
 }) {
@@ -60,11 +68,20 @@ export default function KnowledgePublicationPanel({
   const [layoutPreviewError,setLayoutPreviewError]=useState("");
   const [minSlides,setMinSlides]=useState(doc.publication?.presentationRequest?.minSlides ?? 15);
   const [maxSlides,setMaxSlides]=useState(doc.publication?.presentationRequest?.maxSlides ?? 20);
+  const [presentationBusy,setPresentationBusy]=useState(false);
+  const presentationActive=useRef(false), presentationStarted=useRef("");
+  const saveQueue=useRef<Promise<unknown>>(Promise.resolve());
   const [planDraft,setPlanDraft]=useState<KnowledgePresentationPlan|null>(null);
   const [revisionError,setRevisionError]=useState("");
   const [pptxFile,setPptxFile]=useState<{pptxUrl:string;slides:number}|null>(null);
   const latest = useRef(doc);
-  latest.current = doc;
+  const observedDocument = useRef(doc);
+  const pendingSaves = useRef(0);
+  // 本地进度状态刷新不能把正在保存的新请求退回上一次父组件快照。
+  if(observedDocument.current!==doc){
+    observedDocument.current=doc;
+    if(pendingSaves.current===0||doc.id!==latest.current.id)latest.current=doc;
+  }
   const active = useRef(false),
     started = useRef("");
   const alive = useRef(true);
@@ -122,11 +139,17 @@ export default function KnowledgePublicationPanel({
   const locked = (value: boolean) => {
     active.current = value;
     setBusy(value);
-    onBusy(value);
+    onBusy(value||presentationActive.current);
   };
   const save = async (next: EditableLayout) => {
     latest.current = next;
-    return commit(next);
+    pendingSaves.current+=1;
+    const saving=saveQueue.current.catch(()=>undefined).then(()=>{
+      if(latest.current.id!==next.id)throw Error("已切换稿件，未覆盖当前稿；请返回原任务恢复结果");
+      return commit(next);
+    }).finally(()=>{pendingSaves.current-=1;});
+    saveQueue.current=saving;
+    return saving;
   };
   const run = async (retryFailed = false) => {
     if (active.current) return;
@@ -185,10 +208,26 @@ export default function KnowledgePublicationPanel({
         const saving = saves.then(async () => {
           if (!stillHere()) throw new Error("已切换稿件，结果保留在原任务，请返回原稿恢复");
           change();
+          // 并发课件规划可先完成，审校保存不可用旧快照覆盖其回执。
+          const presentation = latest.current.publication;
+          pub = { ...pub, presentationRequest: presentation?.presentationRequest, presentationPlan: presentation?.presentationPlan, presentationRevision: presentation?.presentationRevision };
+          next = { ...next, publication: pub };
           await save({ ...next, updatedAt: new Date().toISOString() });
         });
         saves = saving;
         return saving;
+      };
+      const prepare = async (i: number) => {
+        if (i < batches.length) {
+          const imageJobs = batches[i].map(n => pub.source.pages[n].imageJobId).filter((id): id is string => Boolean(id)).map(id => pub.imageReplacements?.[id] || id);
+          if (imageJobs.length) {
+            if (waitForImages && initialAuthorization !== undefined) await waitForImages(imageJobs);
+            else await Promise.all(imageJobs.map(async jobId => {
+              const job = await pollJobUntilTerminal(jobId, { intervalMs: 3000, maxWaitMs: 28 * 60_000 });
+              if (job.status !== "succeeded") throw new Error("原配图任务未成功，文字已保存；请先恢复配图，不会自动重新购买");
+            }));
+          } else if (waitForReading) await waitForReading();
+        }
       };
       const execute = async (i: number) => {
         setMessage(
@@ -196,17 +235,6 @@ export default function KnowledgePublicationPanel({
             ? "全部配图已检查，正在核对整套知识说明的一致性…"
             : `正在自动审校第 ${i + 1} / ${batches.length} 批 · 已完成部分已保存`
         );
-        if (i < batches.length) {
-          const imageJobs = batches[i].map(n => pub.source.pages[n].imageJobId).filter((id): id is string => Boolean(id)).map(id => pub.imageReplacements?.[id] || id);
-          if (imageJobs.length) {
-            setMessage("完整文字已保存，正在等待本次配图完成并自动继续审校…");
-            if (waitForImages && initialAuthorization !== undefined) await waitForImages(imageJobs);
-            else for (const jobId of imageJobs) {
-              const job = await pollJobUntilTerminal(jobId, { intervalMs: 3000, maxWaitMs: 28 * 60_000 });
-              if (job.status !== "succeeded") throw new Error("原配图任务未成功，文字已保存；请先恢复配图，不会自动重新购买");
-            }
-          }
-        }
         const attempt = pub.attempts[String(i)] || 0;
         const response = await streamManhuaAdvisor(
           {
@@ -290,6 +318,7 @@ export default function KnowledgePublicationPanel({
           pub = { ...pub, parallel: { ...pub.parallel!, channels: { ...pub.parallel!.channels, [i]: channel } } };
           next = { ...next, publication: pub };
         }),
+        prepare,
         execute: i => execute(i),
         complete: consume,
       });
@@ -326,16 +355,16 @@ export default function KnowledgePublicationPanel({
       void run();
     }
   }, [autoStart, autoStartToken, doc.id]);
-  const planPptx = async (retryFailed = false) => {
-    if(active.current)return;
-    locked(true);setError("");setPptxFile(null);
+  const planPptx = async (retryFailed = false, automatic = false, finalReview = false) => {
+    if(presentationActive.current)return;
+    presentationActive.current=true;setPresentationBusy(true);onBusy(true);setError("");setPptxFile(null);
     try {
       setPlanDraft(null);setRevisionError("");
       const range=knowledgePresentationRangeSchema.parse({minSlides,maxSlides});
-      const current=latest.current,pub=current.publication!;
-      const parsed=parseKnowledgeManuscript(pub.manuscript,pub.source.pages.map(p=>p.id));
+      const current=latest.current,pub=current.publication!,documentId=current.id;
       const previous=pub.presentationRequest;
-      const reuse=previous?.manuscript===pub.manuscript&&previous.minSlides===minSlides&&previous.maxSlides===maxSlides;
+      const reuse=knowledgePresentationRequestMatches(previous,pub)&&previous!.minSlides===minSlides&&previous!.maxSlides===maxSlides&&!(finalReview&&pub.review&&pub.presentationPlan&&previous?.basis==='source');
+      const early=!pub.review || (reuse && previous?.basis==='source');
       let retryId:string|undefined;
       let retryQuote:Awaited<ReturnType<typeof utils.editableLayout.publicationQuote.fetch>>|undefined;
       if(retryFailed){
@@ -345,26 +374,37 @@ export default function KnowledgePublicationPanel({
         if(!window.confirm(`原请求已确认失败，退款核对与上游状态检查已通过。重新规划最多 ${retryQuote.maxCredits} 积分，将创建一次新请求，是否确认重试？`))return;
         retryId=checked.requestId;
       }
-      const request=retryId?{...previous!,id:retryId}:reuse?previous!:{id:crypto.randomUUID(),...range,manuscript:pub.manuscript};
-      let next:EditableLayout={...current,title:parsed.title,pages:current.pages.map((p,i)=>({...p,...parsed.pages[i]})),publication:{...pub,confirmedManuscript:pub.manuscript,presentationRequest:request,presentationPlan:reuse?pub.presentationPlan:undefined,presentationRevision:reuse?pub.presentationRevision:undefined},updatedAt:new Date().toISOString()};
+      const request=retryId?{...previous!,id:retryId}:reuse?previous!:{id:crypto.randomUUID(),...range,...(early?{basis:'source' as const}:{}),manuscript:early?knowledgePresentationSourceManuscript(pub.source):pub.manuscript};
+      const parsed=early?null:parseKnowledgeManuscript(pub.manuscript,pub.source.pages.map(p=>p.id));
+      let next:EditableLayout={...current,...(parsed?{title:parsed.title,pages:current.pages.map((p,i)=>({...p,...parsed.pages[i]}))}:{}),publication:{...pub,...(early?{}:{confirmedManuscript:pub.manuscript}),presentationRequest:request,presentationPlan:reuse?pub.presentationPlan:undefined,presentationRevision:reuse?pub.presentationRevision:undefined},updatedAt:new Date().toISOString()};
       await save(next);
       if(reuse&&pub.presentationPlan){setMessage("已恢复当前提纲，无需重复调用顾问。");return;}
       const quote=retryQuote??await utils.editableLayout.publicationQuote.fetch({documentId:next.id,purpose:"presentation"});
-      if(!retryFailed&&quote.maxCredits>0&&!window.confirm(`将由创作顾问规划 ${minSlides}–${maxSlides} 页课件，最多 ${quote.maxCredits} 积分。仅生成逐页提纲，确认后再渲染，是否继续？`))return;
-      setMessage(`正在按 ${minSlides}–${maxSlides} 页规划重点与版式，尚未渲染…`);
+      if(automatic && (preauthorizedPresentationCredits===undefined||quote.maxCredits>preauthorizedPresentationCredits))throw Error("提前课件规划尚未获得本次费用确认，请使用规划按钮核对费用后继续。");
+      if(!automatic&&!retryFailed&&quote.maxCredits>0&&!window.confirm(`将由创作顾问规划 ${minSlides}–${maxSlides} 页课件，最多 ${quote.maxCredits} 积分。仅生成逐页提纲，确认后再渲染，是否继续？`))return;
+      setMessage(`正在按 ${minSlides}–${maxSlides} 页提前规划重点与版式，实际配图仍须最终审校…`);
       const response=await streamManhuaAdvisor({question:"按指定页数范围规划可编辑课件，提炼有答案的重点，保持字体与版式层次。",rawQuestion:"按指定页数范围规划可编辑课件，提炼有答案的重点，保持字体与版式层次。",requestId:request.id,knowledgePublicationContext:{documentId:next.id,batchIndex:0,attempt:0,purpose:"presentation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
       const plan=knowledgePresentationPlanSchema.parse(JSON.parse(response.answer));
       if(plan.requestId!==request.id||plan.minSlides!==minSlides||plan.maxSlides!==maxSlides)throw Error("提纲与指定页数范围不一致，未采用");
-      next={...next,publication:{...next.publication!,presentationPlan:plan},updatedAt:new Date().toISOString()};
-      await save(next);setMessage(`已规划 ${plan.slides.length} 页，请查看逐页提纲后确认导出。`);
-    }catch(e){setError(knowledgePublicationPublicError(e).message);}finally{locked(false);}
+      const fresh=latest.current;
+      if(fresh.id!==documentId||fresh.publication?.presentationRequest?.id!==request.id||!knowledgePresentationRequestMatches(request,fresh.publication))throw Error("已切换稿件或原稿变化，请返回原请求恢复提纲");
+      next={...fresh,publication:{...fresh.publication!,presentationPlan:plan},updatedAt:new Date().toISOString()};
+      await save(next);setMessage(`已提前规划 ${plan.slides.length} 页；全部图片和文字审校结束后，可核对提纲并导出。`);
+    }catch(e){setError(knowledgePublicationPublicError(e).message);}finally{presentationActive.current=false;setPresentationBusy(false);onBusy(active.current);}
   };
+  useEffect(()=>{
+    const key=`${doc.id}:${autoStartToken}`;
+    if(autoPreparePresentation&&doc.publication?.synchronizedStarted!==false&&doc.publication?.presentationRequest?.basis==='source'&&presentationStarted.current!==key){
+      presentationStarted.current=key;
+      void planPptx(false,true);
+    }
+  },[autoPreparePresentation,autoStartToken,doc.id,doc.publication?.synchronizedStarted,doc.publication?.presentationRequest?.id]);
   const savePlanRevision = async () => {
     if(active.current||!planDraft)return;
     locked(true);setRevisionError("");
     try {
       const current=latest.current,pub=current.publication!;
-      if(!pub.presentationPlan||pub.presentationRequest?.manuscript!==pub.manuscript||pub.presentationRequest.minSlides!==minSlides||pub.presentationRequest.maxSlides!==maxSlides)throw Error("稿件或页数范围已改变，请重新规划提纲。");
+      if(!pub.presentationPlan||!knowledgePresentationRequestMatches(pub.presentationRequest,pub)||pub.presentationRequest!.minSlides!==minSlides||pub.presentationRequest!.maxSlides!==maxSlides)throw Error("稿件或页数范围已改变，请重新规划提纲。");
       const revision=validateKnowledgePresentationRevision(planDraft,pub.presentationPlan);
       await save({...current,publication:{...pub,presentationRevision:revision},updatedAt:new Date().toISOString()});
       setPlanDraft(null);setPptxFile(null);setError("");setMessage("提纲修订已保存，请确认后导出。原稿与原提纲均保留，未调用顾问。");
@@ -406,7 +446,7 @@ export default function KnowledgePublicationPanel({
       };
       const saved = await save(next);
       if(format==="pptx"){
-        if(!pub.presentationPlan||pub.presentationRequest?.manuscript!==pub.manuscript||pub.presentationRequest.minSlides!==minSlides||pub.presentationRequest.maxSlides!==maxSlides)throw Error("请先按当前页数范围规划并确认提纲");
+        if(!pub.presentationPlan||!knowledgePresentationRequestMatches(pub.presentationRequest,pub)||pub.presentationRequest!.minSlides!==minSlides||pub.presentationRequest!.maxSlides!==maxSlides)throw Error("请先按当前页数范围规划并确认提纲");
         setMessage("确认稿已保存，正在生成可编辑课件…");
         const result=await pptxExporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});
         setPptxFile(result);setMessage(`PPTX已生成，共${result.slides}页，可下载后编辑。`);
@@ -482,7 +522,7 @@ export default function KnowledgePublicationPanel({
   return (
     <section
       aria-label="图文知识手册自动审校与排版"
-      className="space-y-4 rounded-2xl border border-[#b9c4ad]/40 bg-[#182721] p-5 text-[#f5f0e5]"
+      className={`space-y-4 rounded-2xl border border-[#b9c4ad]/40 bg-[#182721] ${compact ? "p-3" : "p-5"} text-[#f5f0e5]`}
     >
       <div>
         <h4 className="text-lg font-semibold">创作顾问 · 图文知识手册</h4>
@@ -490,6 +530,8 @@ export default function KnowledgePublicationPanel({
           整套 {pub.source.pages.length} 章内容、{pub.source.pages.filter(p => p.imageUrl).length} 张原图；按原顺序处理全部正文，手册按内容自动分页。
         </p>
       </div>
+      <details open={!compact} className="space-y-3">
+      <summary className="cursor-pointer text-sm text-[#c0cabb]">手册与阅读设置</summary>
       <p className="text-sm text-[#c0cabb]">需要重新编排时，使用下方“让顾问重新排版并导出 PDF”。顾问决定整册章节顺序、配色、表格、边框和纹样，原图与完整正文保留。</p>
       <label className="block text-sm">
         阅读模板
@@ -506,11 +548,12 @@ export default function KnowledgePublicationPanel({
         </select>
         <p className="mt-2 text-xs text-[#c0cabb]">基础模板保留原图；顾问整册方案会按章节调整配色和装饰。采用方案后修改正文、原图或模板，需要重新规划；不会自动再次收费。</p>
       </label>
-      <p className="text-sm text-[#c0cabb]">{pub.source.detailLevel === "concise" ? "精华版图卡 · 顾问补充详尽说明" : pub.source.detailLevel === "full" ? "完整版图卡 · 顾问完整整理文字底稿" : "旧稿未记录图卡版本 · 保留现有说明密度"}</p>
+      <p className="text-sm text-[#c0cabb]">{pub.source.detailLevel === "concise" ? "精华版图卡 · 顾问补充详尽说明" : pub.source.detailLevel === "full" ? "完整版图卡 · 减少图上重复说明，保留完整知识" : "旧稿未记录图卡版本 · 保留现有说明密度"}</p>
       {review && <p className="text-sm text-[#c0cabb]">
         {selectedTemplate ? "已应用所选版式" : "已按内容匹配版式"}
         {!pub.infographicTemplateId && review.pages[index]?.reading?.templateReason ? ` · ${review.pages[index].reading!.templateReason}` : ""}
       </p>}
+      </details>
       {message && (
         <p role="status" className="text-sm text-[#d6e4bd]">
           {message}
@@ -522,6 +565,39 @@ export default function KnowledgePublicationPanel({
         </p>
       )}
       <KnowledgeConversationPanel onLayout={exportLayout} onSupplement={onSupplement} key={doc.id} doc={doc} busy={busy} save={save} lock={locked} />
+          <section className="space-y-3 rounded-xl border border-[#b9c4ad]/40 p-4" aria-label="PPTX课件规划">
+            <div><h3 className="font-semibold">PPTX 页数与提纲</h3><p className="text-sm text-[#c0cabb]">可在出图期间按完整文字稿提前规划；待生成图片只预留位置，实际图片与整稿审校通过后确认导出。标题、总结也计入总页数。</p></div>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="text-sm">最少页数<input aria-label="PPTX最少页数" type="number" min={1} max={200} value={minSlides} disabled={presentationBusy||!!planDraft} onChange={e=>{setMinSlides(Number(e.target.value));setPptxFile(null);}} className="ml-2 w-20 rounded bg-[#f9f6ee] p-2 text-[#243a35]" /></label>
+              <label className="text-sm">最多页数<input aria-label="PPTX最多页数" type="number" min={1} max={200} value={maxSlides} disabled={presentationBusy||!!planDraft} onChange={e=>{setMaxSlides(Number(e.target.value));setPptxFile(null);}} className="ml-2 w-20 rounded bg-[#f9f6ee] p-2 text-[#243a35]" /></label>
+              <button className={button} disabled={presentationBusy||!!planDraft||pub.synchronizedStarted===false||minSlides<1||maxSlides>200||minSlides>maxSlides} onClick={()=>void planPptx()}>{presentationBusy?"正在提前规划…":"规划 PPTX 提纲"}</button>
+              {review&&displayedPlan&&pub.presentationRequest?.basis==='source'&&<button className={button} disabled={busy||presentationBusy||!!planDraft} onClick={()=>void planPptx(false,false,true)}>按最终审校稿重新规划</button>}
+              {!displayedPlan&&knowledgePresentationRequestMatches(pub.presentationRequest,pub)&&pub.presentationRequest!.minSlides===minSlides&&pub.presentationRequest!.maxSlides===maxSlides&&<button className={button} disabled={presentationBusy} onClick={()=>void planPptx(true)}>核对失败状态并重试</button>}
+            </div>
+            {displayedPlan&&knowledgePresentationRequestMatches(pub.presentationRequest,pub)&&pub.presentationRequest!.minSlides===minSlides&&pub.presentationRequest!.maxSlides===maxSlides&&<>
+              <p className="text-sm">共 {displayedPlan.slides.length} 页 · {displayedPlan.fontStyle==="editorial"?"宋体标题 · 黑体正文":"现代黑体层次"}</p>
+              <ol className="max-h-96 space-y-3 overflow-y-auto">
+                {displayedPlan.slides.map((slide,i)=><li key={i} className="border-b border-[#b9c4ad]/20 pb-3"><strong>{i+1}. {slide.title}</strong><div className="mt-1 whitespace-pre-wrap text-sm text-[#d5ddcf]">{slide.type==="table"?[slide.columns.join(" · "),...slide.rows.map(r=>r.join(" · "))].join("\n"):slide.points.join("\n")}</div>{slide.type==="image"&&<span className="text-xs">配原稿图解</span>}</li>)}
+              </ol>
+              {capacityIssues.length>0&&<div role="alert" className="text-sm text-amber-200">{capacityIssues.map(text=><p key={text}>{text}</p>)}</div>}
+              {!planDraft&&<button className={button} disabled={busy} onClick={()=>{setPlanDraft(structuredClone(displayedPlan));setRevisionError("");setPptxFile(null);}}>修订提纲（不调用顾问）</button>}
+              {planDraft&&<section aria-label="修订PPTX提纲" className="space-y-4">
+                <p className="text-sm">可缩短页面文字或减少换行；原稿、原提纲、页数和配图均保留。保存后再确认导出，不产生顾问费用。</p>
+                {planDraft.slides.map((slide,i)=><div key={i} className="space-y-2 border-b border-[#b9c4ad]/20 pb-3">
+                  <label className="block">第 {i+1} 页标题<input aria-label={`第${i+1}页标题`} disabled={busy} value={slide.title} onChange={e=>editPlanField(i,"title",e.target.value)} className="block w-full rounded p-2 text-[#243a35]" /></label>
+                  {slide.type!=="table"?slide.points.map((point,j)=><label key={j} className="block">要点 {j+1}<textarea aria-label={`第${i+1}页要点${j+1}`} disabled={busy} value={point} onChange={e=>editPlanField(i,"point",e.target.value,j)} className="block w-full rounded p-2 text-[#243a35]" /></label>):<>
+                    {slide.columns.map((text,j)=><label key={`h${j}`} className="block">表头 {j+1}<input aria-label={`第${i+1}页表头${j+1}`} disabled={busy} value={text} onChange={e=>editPlanField(i,"column",e.target.value,j)} className="block w-full rounded p-2 text-[#243a35]" /></label>)}
+                    {slide.rows.map((row,j)=>row.map((text,k)=><label key={`${j}-${k}`} className="block">第 {j+1} 行第 {k+1} 列<textarea aria-label={`第${i+1}页表格${j+1}行${k+1}列`} disabled={busy} value={text} onChange={e=>editPlanField(i,"cell",e.target.value,j,k)} className="block w-full rounded p-2 text-[#243a35]" /></label>))}
+                  </>}
+                </div>)}
+                {draftIssues.map(text=><p key={text} role="alert" className="text-sm text-amber-200">{text}</p>)}
+                {revisionError&&<p role="alert" className="text-sm text-amber-200">{revisionError}</p>}
+                <button className={button} disabled={busy||draftIssues.length>0||!knowledgePresentationPlanSchema.safeParse(planDraft).success} onClick={()=>void savePlanRevision()}>保存提纲修订</button>
+                <button className={button} disabled={busy} onClick={()=>{setPlanDraft(null);setRevisionError("");}}>取消修订</button>
+              </section>}
+              <button className={button} disabled={busy||presentationBusy||!review||!!planDraft||capacityIssues.length>0} onClick={()=>void publish("pptx")}>确认提纲并导出 PPTX</button>
+            </>}
+          </section>
       {!review ? (
         <div className="space-y-3">
           <p className="text-sm">
@@ -616,38 +692,7 @@ export default function KnowledgePublicationPanel({
             srcDoc={preview}
             className="h-[720px] w-full rounded-xl border-0 bg-[#faf7f0]"
           />
-          <section className="space-y-3 rounded-xl border border-[#b9c4ad]/40 p-4" aria-label="PPTX课件规划">
-            <div><h3 className="font-semibold">PPTX 页数与提纲</h3><p className="text-sm text-[#c0cabb]">先指定总页数范围，顾问提炼重点。标题、总结也计入总页数；确认提纲后才渲染。</p></div>
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="text-sm">最少页数<input aria-label="PPTX最少页数" type="number" min={1} max={200} value={minSlides} disabled={busy||!!planDraft} onChange={e=>{setMinSlides(Number(e.target.value));setPptxFile(null);}} className="ml-2 w-20 rounded bg-[#f9f6ee] p-2 text-[#243a35]" /></label>
-              <label className="text-sm">最多页数<input aria-label="PPTX最多页数" type="number" min={1} max={200} value={maxSlides} disabled={busy||!!planDraft} onChange={e=>{setMaxSlides(Number(e.target.value));setPptxFile(null);}} className="ml-2 w-20 rounded bg-[#f9f6ee] p-2 text-[#243a35]" /></label>
-              <button className={button} disabled={busy||!!planDraft||!preview||minSlides<1||maxSlides>200||minSlides>maxSlides} onClick={()=>void planPptx()}>规划 PPTX 提纲</button>
-              {!displayedPlan&&pub.presentationRequest?.manuscript===pub.manuscript&&pub.presentationRequest.minSlides===minSlides&&pub.presentationRequest.maxSlides===maxSlides&&<button className={button} disabled={busy||!preview} onClick={()=>void planPptx(true)}>核对失败状态并重试</button>}
-            </div>
-            {displayedPlan&&pub.presentationRequest?.manuscript===pub.manuscript&&pub.presentationRequest.minSlides===minSlides&&pub.presentationRequest.maxSlides===maxSlides&&<>
-              <p className="text-sm">共 {displayedPlan.slides.length} 页 · {displayedPlan.fontStyle==="editorial"?"宋体标题 · 黑体正文":"现代黑体层次"}</p>
-              <ol className="max-h-96 space-y-3 overflow-y-auto">
-                {displayedPlan.slides.map((slide,i)=><li key={i} className="border-b border-[#b9c4ad]/20 pb-3"><strong>{i+1}. {slide.title}</strong><div className="mt-1 whitespace-pre-wrap text-sm text-[#d5ddcf]">{slide.type==="table"?[slide.columns.join(" · "),...slide.rows.map(r=>r.join(" · "))].join("\n"):slide.points.join("\n")}</div>{slide.type==="image"&&<span className="text-xs">配原稿图解</span>}</li>)}
-              </ol>
-              {capacityIssues.length>0&&<div role="alert" className="text-sm text-amber-200">{capacityIssues.map(text=><p key={text}>{text}</p>)}</div>}
-              {!planDraft&&<button className={button} disabled={busy} onClick={()=>{setPlanDraft(structuredClone(displayedPlan));setRevisionError("");setPptxFile(null);}}>修订提纲（不调用顾问）</button>}
-              {planDraft&&<section aria-label="修订PPTX提纲" className="space-y-4">
-                <p className="text-sm">可缩短页面文字或减少换行；原稿、原提纲、页数和配图均保留。保存后再确认导出，不产生顾问费用。</p>
-                {planDraft.slides.map((slide,i)=><div key={i} className="space-y-2 border-b border-[#b9c4ad]/20 pb-3">
-                  <label className="block">第 {i+1} 页标题<input aria-label={`第${i+1}页标题`} disabled={busy} value={slide.title} onChange={e=>editPlanField(i,"title",e.target.value)} className="block w-full rounded p-2 text-[#243a35]" /></label>
-                  {slide.type!=="table"?slide.points.map((point,j)=><label key={j} className="block">要点 {j+1}<textarea aria-label={`第${i+1}页要点${j+1}`} disabled={busy} value={point} onChange={e=>editPlanField(i,"point",e.target.value,j)} className="block w-full rounded p-2 text-[#243a35]" /></label>):<>
-                    {slide.columns.map((text,j)=><label key={`h${j}`} className="block">表头 {j+1}<input aria-label={`第${i+1}页表头${j+1}`} disabled={busy} value={text} onChange={e=>editPlanField(i,"column",e.target.value,j)} className="block w-full rounded p-2 text-[#243a35]" /></label>)}
-                    {slide.rows.map((row,j)=>row.map((text,k)=><label key={`${j}-${k}`} className="block">第 {j+1} 行第 {k+1} 列<textarea aria-label={`第${i+1}页表格${j+1}行${k+1}列`} disabled={busy} value={text} onChange={e=>editPlanField(i,"cell",e.target.value,j,k)} className="block w-full rounded p-2 text-[#243a35]" /></label>))}
-                  </>}
-                </div>)}
-                {draftIssues.map(text=><p key={text} role="alert" className="text-sm text-amber-200">{text}</p>)}
-                {revisionError&&<p role="alert" className="text-sm text-amber-200">{revisionError}</p>}
-                <button className={button} disabled={busy||draftIssues.length>0||!knowledgePresentationPlanSchema.safeParse(planDraft).success} onClick={()=>void savePlanRevision()}>保存提纲修订</button>
-                <button className={button} disabled={busy} onClick={()=>{setPlanDraft(null);setRevisionError("");}}>取消修订</button>
-              </section>}
-              <button className={button} disabled={busy||!!planDraft||capacityIssues.length>0} onClick={()=>void publish("pptx")}>确认提纲并导出 PPTX</button>
-            </>}
-          </section>
+
           <div className="flex flex-wrap gap-3">
             <button
               className="rounded-lg bg-[#d7e6c4] px-5 py-3 font-semibold text-[#20372b] disabled:opacity-40"
