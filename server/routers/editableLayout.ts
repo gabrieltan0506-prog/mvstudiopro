@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { completedKnowledgeBatches } from "../../shared/knowledgePublicationParallel";
 import { knowledgePublicationPublicError } from "../../shared/knowledgePublicationPublic";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
@@ -14,6 +15,28 @@ const publicationProcedure = protectedProcedure.use(async ({ next }) => {
   return result;
 });
 export const editableLayoutRouter = router({
+  bookLayoutInput: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
+    const {loadKnowledgeBookLayoutInput}=await import("../services/knowledgeBookLayout");
+    const book=await loadKnowledgeBookLayoutInput(ctx.user.id,input.documentId);
+    return {sourceDigest:book.sourceDigest,chapters:book.pages.length,images:book.pages.filter(p=>p.hasImage).length};
+  }),
+  bookLayoutPreview: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
+    const {readCanonicalLayoutLibrary}=await import("../services/editableLayoutStore");
+    const {loadKnowledgeBookLayoutView}=await import("../services/knowledgeBookLayout");
+    const {signGsUriV4ReadUrl}=await import("../services/gcs");
+    const loaded=await readCanonicalLayoutLibrary(ctx.user.id);
+    const view=await loadKnowledgeBookLayoutView(ctx.user.id,input.documentId,loaded.generation,{load:async()=>loaded});
+    const images=Object.fromEntries(view.doc.pages.filter(p=>p.imageUrl).map(p=>[p.imageUrl,signGsUriV4ReadUrl(p.imageUrl,3600)]));
+    return {doc:view.doc,review:view.review,images};
+  }),
+  conversationRetry: publicationProcedure.input(z.object({documentId:z.string().uuid(),failedRequestId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
+    const {readCanonicalLayoutLibrary}=await import('../services/editableLayoutStore');
+    const {checkKnowledgeConversationRetry}=await import('../services/knowledgeConversationRetry');
+    const loaded=await readCanonicalLayoutLibrary(ctx.user.id);
+    const doc=loaded.library?.documents.find(d=>d.id===input.documentId);
+    if(!doc)throw Error('排版稿不存在或无权访问');
+    return checkKnowledgeConversationRetry(ctx.user.id,doc,input.failedRequestId);
+  }),
   presentationRetry: publicationProcedure.input(z.object({documentId:z.string().uuid(),failedRequestId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
     const {readCanonicalLayoutLibrary}=await import('../services/editableLayoutStore');
     const {checkKnowledgePresentationRetry}=await import('../services/knowledgePresentationRetry');
@@ -22,16 +45,17 @@ export const editableLayoutRouter = router({
     if(!doc)throw Error('排版稿不存在或无权访问');
     return checkKnowledgePresentationRetry(ctx.user.id,doc,input.failedRequestId);
   }),
-  publicationQuote: publicationProcedure.input(z.object({documentId:z.string().uuid(),purpose:z.literal("presentation").optional()}).strict()).query(async({ctx,input})=>{
+  publicationQuote: publicationProcedure.input(z.object({documentId:z.string().uuid(),purpose:z.enum(["presentation","conversation"]).optional()}).strict()).query(async({ctx,input})=>{
     const {loadKnowledgePublication,knowledgePublicationWorkPlan}=await import("../services/knowledgePublicationAdvisor");
     const {knowledgeReviewBatches}=await import("../../shared/knowledgePublication");
     const {resolvePlatformSkillQaPaidCredits}=await import("../config/platformSwitches");
     const {countPlatformSkillQaToday}=await import("../services/platformSkillQa");
     const {platformSkillQaDailyFreeLimit}=await import("../../shared/plans");
     const doc=await loadKnowledgePublication(ctx.user.id,{documentId:input.documentId,batchIndex:0,attempt:0});
-    const plan=input.purpose==="presentation"?{totalBatches:1,reviewBatches:0,consistencyKnown:true}:await knowledgePublicationWorkPlan(ctx.user.id,doc);
+    const plan=input.purpose?{totalBatches:1,reviewBatches:0,consistencyKnown:true}:await knowledgePublicationWorkPlan(ctx.user.id,doc);
     const batches=plan.totalBatches;
-    const remaining=input.purpose==="presentation"?1:doc.publication.review?0:Math.max(0,batches-doc.publication.completedBatches);
+    const completed = doc.publication.completedBatches >= plan.reviewBatches ? doc.publication.completedBatches : completedKnowledgeBatches(doc.publication, plan.reviewBatches).size;
+    const remaining=input.purpose?1:doc.publication.review?0:Math.max(0,batches-completed);
     const exempt=ctx.user.role==="admin"||ctx.user.role==="supervisor";
     const paidUnit=resolvePlatformSkillQaPaidCredits("terra");
     const free=exempt?remaining:Math.max(0,platformSkillQaDailyFreeLimit("terra")-await countPlatformSkillQaToday(ctx.user.id,"terra",false));

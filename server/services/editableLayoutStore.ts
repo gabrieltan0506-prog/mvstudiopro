@@ -1,3 +1,4 @@
+import { validateKnowledgeImageReplacements } from "./knowledgePublicationImages";
 import {
   layoutLibrarySchema,
   type LayoutLibrary,
@@ -19,6 +20,15 @@ const objectName = (owner: number) => {
   return `editable-layouts/user-${owner}/library.json`;
 };
 const real = { read: downloadGcsObjectVersioned, write: uploadBufferToGcs };
+/** 并发保存可能在metadata与body读取之间替换旧generation；只重读同一稿件，不重放写入。 */
+async function readCurrentLayoutVersion(gcsUri: string, deps: typeof real) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await deps.read({ gcsUri }); }
+    catch (error) {
+      if (!(error instanceof Error) || error.message !== "gcs_download_failed:404" || attempt >= 2) throw error;
+    }
+  }
+}
 const media = {
   async normalize(owner: number, library: LayoutLibrary) {
     for (const doc of library.documents) {
@@ -65,9 +75,7 @@ export async function readLayoutLibrary(
 ) {
   const name = objectName(owner);
   try {
-    const value = await deps.read({
-      gcsUri: `gs://${getGcsBucketName()}/${name}`,
-    });
+    const value = await readCurrentLayoutVersion(`gs://${getGcsBucketName()}/${name}`, deps);
     const envelope = JSON.parse(value.buffer.toString("utf8"));
     if (envelope.format !== "editable-layout-v1" || envelope.owner !== owner)
       throw new Error("云端排版稿身份无法校验");
@@ -105,22 +113,53 @@ export async function writeLayoutLibrary(
     throw new Error("排版稿账号不匹配，未写入");
   if (!/^\d+$/.test(generation)) throw new LayoutConflict();
   await mediaDeps.normalize(owner, library);
+  let priorLibrary: LayoutLibrary | undefined;
   if (generation !== "0") {
-    const prior = await deps.read({gcsUri: `gs://${getGcsBucketName()}/${objectName(owner)}`});
+    const prior = await readCurrentLayoutVersion(`gs://${getGcsBucketName()}/${objectName(owner)}`, deps);
     if (prior.generation !== generation) throw new LayoutConflict();
     const before = layoutLibrarySchema.parse(JSON.parse(prior.buffer.toString("utf8")).library);
+    priorLibrary = before;
     for (const doc of library.documents) {
       const old = before.documents.find(d => d.id === doc.id);
+      if (doc.publication) await validateKnowledgeImageReplacements(owner, old?.publication, doc.publication);
+      if (JSON.stringify(old?.publication?.conversation) !== JSON.stringify(doc.publication?.conversation)) {
+        const { validateKnowledgeConversationTransition } = await import("./knowledgeConversationAdvisor");
+        await validateKnowledgeConversationTransition(owner,old,doc);
+      }
       if (!old) continue;
       if(old.publication?.presentationRequest && doc.publication?.presentationRequest) {
         const {validateKnowledgePresentationRetryTransition}=await import('./knowledgePresentationRetry');
         await validateKnowledgePresentationRetryTransition(owner,old,doc);
       }
+      if (old.publication && doc.publication) {
+        const oldParallel = old.publication.parallel, parallel = doc.publication.parallel;
+        if (oldParallel && (!parallel || oldParallel.completed.some(i => !parallel.completed.includes(i)) ||
+            Object.entries(oldParallel.channels).some(([i, channel]) => parallel.channels[i] !== channel)))
+          throw new Error("已分配通道或已完成批次不能删除、改派；请恢复原任务");
+        const { validateKnowledgePublicationRetryTransition } = await import("./knowledgePublicationRetry");
+        await validateKnowledgePublicationRetryTransition(owner, old, doc);
+      }
       if (Boolean(old.publication) !== Boolean(doc.publication) || (old.publication && doc.publication &&
           (JSON.stringify(old.publication.source) !== JSON.stringify(doc.publication.source) ||
-           old.publication.requestId !== doc.publication.requestId)))
+           old.publication.requestId !== doc.publication.requestId ||
+           old.publication.inputFingerprint !== doc.publication.inputFingerprint)))
         throw new Error("知识卡原稿快照不能覆盖，请保留原稿并另建新稿");
     }
+  }
+  if (generation === "0") {
+    for (const doc of library.documents) {
+      if (doc.publication) await validateKnowledgeImageReplacements(owner, undefined, doc.publication);
+      if (doc.publication?.conversation?.length) {
+        const { validateKnowledgeConversationTransition } = await import("./knowledgeConversationAdvisor");
+        await validateKnowledgeConversationTransition(owner,undefined,doc);
+      }
+    }
+  }
+  if(library.documents.some(d=>d.publication?.supplementOf||d.publication?.supplementDocumentId)||priorLibrary?.documents.some(d=>d.publication?.supplementOf||d.publication?.supplementDocumentId)){
+    await (await import("./knowledgeSupplement")).validateKnowledgeSupplements(owner,priorLibrary,library);
+  }
+  if (library.documents.some(d => d.publication?.layoutConversationId || d.publication?.conversation?.some(t => t.request.action === "layout"))) {
+    await (await import("./knowledgeBookLayout")).validateKnowledgeBookLayoutTransition(owner, priorLibrary, library);
   }
   const updatedAt = new Date().toISOString();
   const buffer = Buffer.from(

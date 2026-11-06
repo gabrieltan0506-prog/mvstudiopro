@@ -5,6 +5,7 @@ import { getJobByIdStrict } from '../jobs/repository';
 import { readChargeRefundState } from '../credits';
 import { downloadGcsObjectVersioned, getGcsBucketName } from './gcs';
 import { manhuaAdvisorOperationId, MANHUA_ADVISOR_FAILED_ACTION, MANHUA_ADVISOR_REFUND_RECONCILED_ACTION } from './manhuaAdvisorOperation';
+import { KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES } from './knowledgeModelCapabilities';
 
 const real = {
   job: getJobByIdStrict,
@@ -36,7 +37,7 @@ export async function checkKnowledgePresentationRetry(owner: number, doc: Editab
   const prefix=`knowledge-publications/user-${owner}/${doc.id}/${failedId}/presentation`;
   for(const name of ['report.json','accepted.json','raw.json'])
     if(await deps.read(`${prefix}/${name}`))throw Error('原请求已有结果，请恢复原结果，不能再次付费规划');
-  for(const route of ['openrouter','evolink','vertex']) {
+  for(const route of KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES) {
     const receipt=await deps.read(`${prefix}/route-${route}.json`);
     if(!receipt)continue;
     if(receipt.state==='unavailable')continue;

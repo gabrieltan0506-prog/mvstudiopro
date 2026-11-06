@@ -1,3 +1,4 @@
+import { recordWorkerActivity } from "./workerActivity";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -23,6 +24,7 @@ export async function workerProbeLeasesBusy(root = workerProbeLeaseDirectory(), 
 }
 export async function acquireWorkerProbeLease(root = workerProbeLeaseDirectory(), now = Date.now) {
   await fs.mkdir(root, { recursive: true, mode: 0o700 });
+  await recordWorkerActivity("request",path.join(root,"activity"),now());
   const id = randomUUID(), file = path.join(root, `${id}.json`);
   let released = false;
   // 串行化刷新与释放，防止finally删除后在途心跳又把租约写回来。
@@ -35,6 +37,7 @@ export async function acquireWorkerProbeLease(root = workerProbeLeaseDirectory()
       try { await handle.writeFile(JSON.stringify({ id, pid: process.pid, expiresAt: now() + WORKER_PROBE_LEASE_TTL_MS })); await handle.sync(); }
       finally { await handle.close(); }
       await fs.rename(temporary, file);
+      await recordWorkerActivity("progress",path.join(root,"activity"),now());
     });
     return pending;
   };
@@ -42,6 +45,7 @@ export async function acquireWorkerProbeLease(root = workerProbeLeaseDirectory()
   return { id, renew, async release() {
     released = true;
     await pending.catch(() => {});
+    await recordWorkerActivity("progress",path.join(root,"activity"),now());
     await fs.rm(file, { force: true });
   } };
 }
@@ -52,4 +56,5 @@ export async function assertWorkerProbeLease() {
   if (!/^[a-f0-9-]{36}$/i.test(id)) throw Error("请使用 with-worker-probe-lease 包装器执行工作机探针");
   const lease = JSON.parse(await fs.readFile(path.join(workerProbeLeaseDirectory(), `${id}.json`), "utf8"));
   if (lease.id !== id || !Number.isFinite(lease.expiresAt) || lease.expiresAt <= Date.now()) throw Error("探针租约已失效，禁止开始新请求");
+  await recordWorkerActivity("request");
 }

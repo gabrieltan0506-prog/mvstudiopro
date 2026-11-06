@@ -1,6 +1,9 @@
+import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
+import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
+import { planKnowledgeCardPages } from "@shared/knowledgeCardPagination";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import KnowledgePublicationPanel from "./KnowledgePublicationPanel";
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import {
   buildLayoutHtml,
@@ -26,14 +29,24 @@ const button =
   "rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-40";
 const field =
   "w-full rounded-lg border border-white/20 bg-[#201b32] p-2 text-white";
+export type EditableLayoutStudioHandle = {
+  prepare: (source: LayoutSource, waitForImages: (ids: string[]) => Promise<void>, supplementOf?: KnowledgeSupplementSelection) => Promise<{ documentId: string; maxCredits: number; estimatedCredits: number }>;
+  start: (documentId: string, authorizedCredits: number) => Promise<void>;
+  imageJobs: (markdown: string, model: string, template: string | null) => string[] | null;
+  beginImageAttempt: (originalJobId: string, requestId: string, jobId: string) => Promise<void>;
+  attachImage: (originalJobId: string, replacementJobId: string, resume: boolean) => Promise<void>;
+};
 /** 按账号恢复，条件写入防止旧会话覆盖新稿。 */
-export default function EditableLayoutStudio({
+const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null; onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void }>(function EditableLayoutStudio({
   owner,
   source,
+  onPagination,
+  onSupplement,
 }: {
   owner: string;
   source: LayoutSource | null;
-}) {
+  onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
+}, ref) {
   const key = `mvstudiopro.editableLayout.v1.${owner}`;
   const [state, setState] = useState<Cache>({
     library: { version: 1, owner, documents: [] },
@@ -54,6 +67,9 @@ export default function EditableLayoutStudio({
   const [error, setError] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
   const [autoPublicationId,setAutoPublicationId]=useState("");
+  const [autoStartToken, setAutoStartToken] = useState(0);
+  const [synchronizedRun, setSynchronizedRun] = useState<{ documentId: string; authorizedCredits: number; waitForImages: (ids: string[]) => Promise<void> } | null>(null);
+  const preparedRun = useRef<{ documentId: string; waitForImages: (ids: string[]) => Promise<void> } | null>(null);
   const utils = trpc.useUtils();
   const saveMutation = trpc.editableLayout.save.useMutation();
   const install = (next: Cache) => {
@@ -162,6 +178,13 @@ export default function EditableLayoutStudio({
       return;
     sourceSeen.current = source;
     try {
+      const existing = current.current.library.documents.find(doc => doc.sourceId === source.sourceId && doc.publication?.synchronizedStarted === true);
+      if (existing) {
+        install({ ...current.current, activeId: existing.id });
+        setOpen(true);
+        setMessage("已打开这次同步生成的手册，原稿与整理进度均已保留。");
+        return;
+      }
       add(layoutFromSource(source));
       setMessage("已导入现有稿件，原稿保留。修改后请保存云端。");
     } catch (e) {
@@ -196,6 +219,83 @@ export default function EditableLayoutStudio({
     if(alive.current)install({...current.current,generation:result.generation,dirty:current.current.library!==library});
     return {generation:result.generation};
   };
+  useImperativeHandle(ref, () => ({
+    async prepare(source, waitForImages, supplementOf) {
+      if (!ready || !cloudReady || locked.current || source.owner !== owner) throw new Error("云端稿件尚未就绪或正在整理，请稍后开始");
+      const nextDoc = layoutFromSource(source);
+      if (nextDoc.publication) {nextDoc.publication.synchronizedStarted = false;nextDoc.publication.supplementOf=supplementOf;}
+      const previous = current.current;
+      const library = layoutLibrarySchema.parse({ ...previous.library, documents: [...previous.library.documents, nextDoc] });
+      // 先保存完整底稿和全部图片任务身份，再允许任何收费请求。
+      const result = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
+      install({ library, generation: result.generation, dirty: false, activeId: nextDoc.id });
+      preparedRun.current = { documentId: nextDoc.id, waitForImages };
+      setOpen(true);
+      const quote = await utils.editableLayout.publicationQuote.fetch({ documentId: nextDoc.id });
+      return { documentId: nextDoc.id, maxCredits: quote.maxCredits, estimatedCredits: quote.estimatedCredits };
+    },
+    imageJobs(markdown, model, template) {
+      const bodies = planKnowledgeCardPages(markdown, model).pages;
+      const documents = [...current.current.library.documents].reverse();
+      const found = documents.find(doc => {
+        const pub = doc.publication;
+        if (!pub || pub.synchronizedStarted !== true || (pub.infographicTemplateId || "") !== (template || "")) return false;
+        const images = pub.source.pages.filter(page => page.imageJobId);
+        return images.length === bodies.length && images.every((page, i) => page.body === bodies[i]);
+      });
+      return found?.publication?.source.pages.filter(page => page.imageJobId).map(page => found.publication!.imageAttempts?.[page.imageJobId!]?.jobId || found.publication!.imageReplacements?.[page.imageJobId!] || page.imageJobId!) || null;
+    },
+    async beginImageAttempt(originalJobId, requestId, jobId) {
+      while (locked.current && alive.current) await new Promise(resolve => setTimeout(resolve, 100));
+      if (!alive.current || !cloudReady) throw new Error("请先恢复云端稿件，未开始补图");
+      locked.current = true;
+      try {
+        const previous = current.current;
+        const target = [...previous.library.documents].reverse().find(doc => doc.publication?.source.pages.some(page => page.imageJobId === originalJobId) || Object.values(doc.publication?.imageAttempts || {}).some(attempt => attempt.jobId === originalJobId));
+        if (!target?.publication) throw new Error("缺少原配图的云端稿件，未开始补图");
+        const pub = target.publication;
+        const root = pub.source.pages.find(page => page.imageJobId === originalJobId)?.imageJobId || Object.entries(pub.imageAttempts || {}).find(([, attempt]) => attempt.jobId === originalJobId)?.[0];
+        if (!root || (pub.imageAttempts?.[root]?.jobId || root) !== originalJobId) throw new Error("补图尝试已变化，请恢复当前任务");
+        const next = { ...target, publication: { ...pub, imageAttempts: { ...pub.imageAttempts, [root]: { requestId, jobId } } } };
+        const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === target.id ? next : doc) });
+        const saved = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
+        install({ library, generation: saved.generation, dirty: false, activeId: target.id });
+      } finally { locked.current = false; }
+    },
+    async attachImage(originalJobId, replacementJobId, resume) {
+      while (locked.current && alive.current) await new Promise(resolve => setTimeout(resolve, 100));
+      if (!alive.current) throw new Error("页面已离开，补图已保留，请重新读取云稿");
+      locked.current = true;
+      try {
+        const previous = current.current;
+        const target = [...previous.library.documents].reverse().find(doc => doc.publication?.source.pages.some(page => page.imageJobId === originalJobId) || Object.values(doc.publication?.imageAttempts || {}).some(attempt => attempt.jobId === originalJobId) || Object.values(doc.publication?.imageReplacements || {}).includes(originalJobId));
+        if (!target?.publication) throw new Error("缺少原稿，补图已保留，请先恢复云稿");
+        const pub = target.publication;
+        const root = pub.source.pages.find(page => page.imageJobId === originalJobId)?.imageJobId || Object.entries(pub.imageAttempts || {}).find(([, attempt]) => attempt.jobId === originalJobId)?.[0] || Object.entries(pub.imageReplacements || {}).find(([, job]) => job === originalJobId)?.[0];
+        if (!root) throw new Error("补图原稿身份不匹配");
+        const next = root === replacementJobId ? target : { ...target, publication: { ...pub, imageReplacements: { ...pub.imageReplacements, [root]: replacementJobId } } };
+        const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === target.id ? next : doc) });
+        const saved = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
+        install({ library, generation: saved.generation, dirty: false, activeId: target.id });
+        setSynchronizedRun(null);
+        if (resume) { setAutoPublicationId(target.id); setAutoStartToken(token => token + 1); setOpen(true); }
+      } finally { locked.current = false; }
+    },
+    async start(documentId, authorizedCredits) {
+      const pending = preparedRun.current;
+      if (!pending || pending.documentId !== documentId) throw new Error("同步稿件已变化，未开始生成");
+      const previous = current.current;
+      const child=previous.library.documents.find(d=>d.id===documentId),parentId=child?.publication?.supplementOf?.documentId;
+      const parent=previous.library.documents.find(d=>d.id===parentId);
+      if(parentId&&(!parent?.publication||parent.publication.supplementDocumentId&&parent.publication.supplementDocumentId!==documentId))throw Error("本册已有补图批次，请恢复原补充稿");
+      const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === documentId ? { ...doc, publication: { ...doc.publication!, synchronizedStarted: true } } : doc.id===parentId?{...doc,publication:{...doc.publication!,supplementDocumentId:documentId}}:doc) });
+      const saved = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
+      install({ library, generation: saved.generation, dirty: false, activeId: documentId });
+      setSynchronizedRun({ ...pending, authorizedCredits });
+      setAutoPublicationId(documentId);
+      preparedRun.current = null;
+    },
+  }));
   const editPage = (patch: Partial<EditableLayout["pages"][number]>) => {
     if (doc)
       update({
@@ -273,7 +373,7 @@ export default function EditableLayoutStudio({
       const incoming = library.documents.map(d => ({
         ...d,
         id: crypto.randomUUID(),
-        ...(d.publication ? {publication:{...d.publication,requestId:crypto.randomUUID(),completedBatches:0,attempts:{},review:undefined,confirmedManuscript:undefined}} : {}),
+        ...(d.publication ? {publication:{...d.publication,requestId:crypto.randomUUID(),conversation:undefined,layoutConversationId:undefined,supplementOf:undefined,supplementDocumentId:undefined,completedBatches:0,parallel:undefined,attempts:{},review:undefined,confirmedManuscript:undefined}} : {}),
       }));
       const merged = layoutLibrarySchema.parse({
         ...current.current.library,
@@ -398,7 +498,9 @@ export default function EditableLayoutStudio({
                 </select>
               </label>
               {doc.publication ? <KnowledgePublicationPanel key={doc.id} doc={doc} commit={commitPublication}
-                onChange={next=>update(next)} onBusy={value=>{locked.current=value;setBusy(value);}} autoStart={doc.id===autoPublicationId}/>:<>
+                onChange={next=>update(next)} onPagination={onPagination} onSupplement={onSupplement} onBusy={value=>{locked.current=value;setBusy(value);}} autoStart={doc.id===autoPublicationId} autoStartToken={autoStartToken}
+                preauthorizedCredits={synchronizedRun?.documentId === doc.id ? synchronizedRun.authorizedCredits : undefined}
+                waitForImages={synchronizedRun?.documentId === doc.id ? synchronizedRun.waitForImages : undefined}/>:<>
               <div className="grid gap-5 lg:grid-cols-2">
                 <div className="space-y-3">
                   <label className="block text-sm">
@@ -670,4 +772,5 @@ export default function EditableLayoutStudio({
       )}
     </section>
   );
-}
+});
+export default EditableLayoutStudio;

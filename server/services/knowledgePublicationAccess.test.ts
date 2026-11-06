@@ -3,6 +3,7 @@ import {layoutFromSource} from "../../shared/editableLayout";
 import {knowledgeBatchRequestId} from "../../shared/knowledgePublication";
 const state=vi.hoisted(()=>({doc:null as any,previous:null as any}));
 vi.mock("./editableLayoutStore",()=>({readCanonicalLayoutLibrary:vi.fn(async(owner:number)=>({library:owner===7?{documents:[state.doc]}:{documents:[]}}))}));
+vi.mock("../credits",()=>({readChargeRefundState:vi.fn(async()=>({charged:0,settled:true}))}));
 vi.mock("../jobs/repository",()=>({getJobByIdStrict:vi.fn(async()=>state.previous)}));
 vi.mock("./postProdMediaSource",()=>({loadSucceededJobOutputSources:vi.fn(async()=>({objects:new Set(),urls:new Set()})),resolveRegisteredPostProdMediaSource:vi.fn(async()=>{throw new Error("配图不属于本人");})}));
 import {validateKnowledgePublicationAccess} from "./knowledgePublicationAdvisor";
@@ -20,13 +21,13 @@ describe("审校归属与重试扣费门禁",()=>{
   for(const previous of [null,{status:"running"},{status:"failed",output:{action:"manhua_advisor_qa_refund_pending"}}]){
    state.previous=previous;await expect(validateKnowledgePublicationAccess(7,context,request)).rejects.toThrow("退款未闭合");
   }
-  state.previous={status:"failed",output:{action:"manhua_advisor_qa_refund_reconciled"}};
+  state.previous={userId:"7",status:"failed",input:{requestId:knowledgeBatchRequestId(state.doc.publication.requestId,0,0)},output:{action:"manhua_advisor_qa_refund_reconciled"}};
   expect((await validateKnowledgePublicationAccess(7,context,request,undefined,async()=>null)).id).toBe(state.doc.id);
  });
  it("上游结果不明即使事务已退款也不能新开付费请求",async()=>{
-  state.doc.publication.attempts={0:1};state.previous={status:"failed",output:{action:"manhua_advisor_qa_refund_reconciled"}};
+  state.doc.publication.attempts={0:1};state.previous={userId:"7",status:"failed",input:{requestId:knowledgeBatchRequestId(state.doc.publication.requestId,0,0)},output:{action:"manhua_advisor_qa_refund_reconciled"}};
   const context={documentId:state.doc.id,batchIndex:0,attempt:1};
-  await expect(validateKnowledgePublicationAccess(7,context,knowledgeBatchRequestId(state.doc.publication.requestId,0,1),undefined,async()=>({state:"unknown"}))).rejects.toThrow("结果尚待核实");
+  await expect(validateKnowledgePublicationAccess(7,context,knowledgeBatchRequestId(state.doc.publication.requestId,0,1),undefined,async(key)=>key.includes("/route-")?({state:"unknown"}):null)).rejects.toThrow("结果尚待核实");
  });
  it("任意客户图片URL不能跳过本人素材登记",async()=>{
   state.doc.publication.source.pages[0].imageUrl="gs://test/other.png";

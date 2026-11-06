@@ -45,6 +45,7 @@ export async function cancelKnowledgeCardPageRequest(args: {
   await db.insert(jobs).values({
     id, userId: args.userId, type: "platform", provider: "evolink", status: "failed", attempts: 0,
     input: { action: args.action, cancelRequestedAt: new Date().toISOString() },
+    ...(args.action === "platform_composite_sheet_progress" ? { output: { knowledgeImageRetry: { version: 1, reason: "not_charged", checkedAt: new Date().toISOString() } } } : {}),
     error: "页面已刷新或关闭，已停止知识卡后续处理",
   }).onConflictDoNothing({ target: jobs.id });
   return requestPlatformJobCancel({ jobId: id, userId: args.userId, actions: [args.action], queuedError: "页面已刷新或关闭，已停止知识卡后续处理" });

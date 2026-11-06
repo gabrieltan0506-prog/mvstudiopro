@@ -73,3 +73,10 @@ it('新选版严格限定选择器第一组，旧稿非第一组模板不再冒�
  expect(resolveKnowledgePublicationTemplate('fusion_maple_bridge','fusion_ink_mountains')?.id).toBe('fusion_maple_bridge');
  expect(KNOWLEDGE_TEMPLATE_SELECTION_INSTRUCTIONS).toContain('不能选择结构层解构');
 });
+
+it('固定失败原因经过多次脱敏保持类别，退款未闭合优先于可重试原因',()=>{
+ const source='本次整理缺少可核实的来源，未采用这份补充内容；原稿和已完成部分已保留。';
+ expect(knowledgePublicationPublicError(source)).toEqual({message:source,retryable:true});
+ expect(knowledgePublicationPublicError('ADVISOR_OPERATION_REFUND_PENDING '+source).retryable).toBe(false);
+ expect(knowledgePublicationPublicError('原请求的结果尚未确认，已保留原稿与任务；请恢复原任务，不要重新付费。').retryable).toBe(false);
+});

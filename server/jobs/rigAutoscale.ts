@@ -1,3 +1,4 @@
+import { readWorkerActivity, WORKER_QUIET_WINDOW_MS, type WorkerActivity } from "../services/workerActivity";
 import {workerMediaProcessesBusy} from "../services/workerMediaProcesses";
 /**
  * 0917 PR-B：rig 进程组按需启停（策略层，纯函数 + 注入 IO，可单测）。
@@ -43,7 +44,7 @@ export function resolveRigIdleStopMs(env: NodeJS.ProcessEnv = process.env): numb
   const raw = Number(rawText);
   if (!Number.isFinite(raw)) return DEFAULT_RIG_IDLE_STOP_MS;
   if (raw <= 0) return 0; // 0 = 关闭自动停机
-  return Math.max(60_000, Math.floor(raw));
+  return Math.max(WORKER_QUIET_WINDOW_MS, Math.floor(raw));
 }
 /** 自动启停总开关：默认开；置 0 可在不回滚代码的前提下关掉（rig 保持常驻）。 */
 export function rigAutoscaleEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -57,6 +58,7 @@ export type RigAutoscaleDeps = {
   /** queued + running：判「这台能不能停」。绑定跑 12 分钟期间队列为空但机器不能停。 */
   pendingBlenderJobs(): Promise<number>;
   externalMediaBusy?():Promise<boolean>;
+  workerActivity?():Promise<WorkerActivity>;
   /** 停机命令发出前的回调：runner 用它把本进程的领单闸关掉，避免停机窗口内又领一单。 */
   onStopDecided?(): void;
   /** 停机失败时复位上面的闸。 */
@@ -86,7 +88,7 @@ export type RigAutoscaleDeps = {
 };
 
 export type RigStartState = { lastAttemptAt: number; unavailableSince?: number };
-export type RigIdleState = { lastBusyAt: number };
+export type RigIdleState = { lastBusyAt: number; lastRequestAt?: number; lastProgressAt?: number };
 
 export type RigStartOutcome =
   | { action: "idle" }
@@ -284,8 +286,18 @@ export async function maybeStopIdleRig(
     state.lastBusyAt = deps.now();
     return { action: "busy" };
   }
+  const quietWindow = Math.max(WORKER_QUIET_WINDOW_MS,deps.idleStopMs);
+  const readActivity = async () => {
+    const activity = await deps.workerActivity?.();
+    if (!activity) return;
+    if (![activity.lastRequestAt,activity.lastProgressAt].every(t=>Number.isFinite(t)&&t>=0)) throw Error("工作机活动时间无效");
+    state.lastRequestAt=Math.max(state.lastRequestAt||0,activity.lastRequestAt);
+    state.lastProgressAt=Math.max(state.lastProgressAt||0,activity.lastProgressAt);
+  };
+  const quietFor = () => deps.now()-Math.max(state.lastBusyAt,state.lastRequestAt||0,state.lastProgressAt||0);
   let pending = 0;
   try {
+    await readActivity();
     if(await deps.externalMediaBusy?.()){state.lastBusyAt=deps.now();return {action:"busy"};}
     pending = await deps.pendingBlenderJobs();
   } catch (error) {
@@ -297,8 +309,8 @@ export async function maybeStopIdleRig(
     state.lastBusyAt = deps.now();
     return { action: "busy" };
   }
-  const idleMs = deps.now() - state.lastBusyAt;
-  if (idleMs < deps.idleStopMs) return { action: "waiting", idleMs };
+  const idleMs = quietFor();
+  if (idleMs < quietWindow) return { action: "waiting", idleMs };
   // 停机前再确认一次「我这台确实是 rig」。停错机器＝把 app 机停掉＝站点下线，
   // 这条保险的代价只是停机时多一次 list 调用。
   try {
@@ -327,6 +339,9 @@ export async function maybeStopIdleRig(
     if (await deps.externalMediaBusy?.() || await deps.pendingBlenderJobs() > 0 || isBusy()) {
       deps.onStopAborted?.(); state.lastBusyAt = deps.now(); return { action: "busy" };
     }
+    await readActivity();
+    const finalIdleMs=quietFor();
+    if(finalIdleMs<quietWindow){deps.onStopAborted?.();return {action:"waiting",idleMs:finalIdleMs};}
   } catch (error) {
     deps.onStopAborted?.(); state.lastBusyAt = deps.now();
     return { action: "error", message: `final queue check failed: ${String(error)}` };
@@ -368,6 +383,7 @@ export function resolveRigAutoscaleDeps(
     queuedBlenderJobs: counters.queuedBlenderJobs,
     pendingBlenderJobs: counters.pendingBlenderJobs,
     externalMediaBusy: workerMediaProcessesBusy,
+    workerActivity: readWorkerActivity,
     onStopDecided: hooks.onStopDecided,
     onStopAborted: hooks.onStopAborted,
     failQueuedBlenderJobs: hooks.failQueuedBlenderJobs,

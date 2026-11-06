@@ -1,3 +1,6 @@
+import type {EditableLayout} from "../../shared/editableLayout";
+import type {KnowledgeReview} from "../../shared/knowledgePublication";
+import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
 import { createHash } from "node:crypto";
 import { mkdtemp, writeFile, readFile, stat, rm, open } from "node:fs/promises";
 import { createReadStream } from "node:fs";
@@ -38,6 +41,8 @@ export type KnowledgePublicationExport = {
   htmlBytes: number;
   pdfBytes?: number;
   chapters: number;
+  imagePages?: number;
+  totalPages?: number;
   pdfError?: string;
 };
 const real = {
@@ -46,6 +51,14 @@ const real = {
   image: readKnowledgeImage,
   pdf: fetchPdfBufferFromWorker,
   measure: measureKnowledgeBookletFromWorker,
+  countPages: async (path: string) => {
+    const { stdout } = await promisify(execFile)("pdfinfo", [path], {
+      timeout: 30000, maxBuffer: 1024 * 1024, env: { ...process.env, LC_ALL: "C" },
+    });
+    const count = Number(/^Pages:\s+(\d+)/m.exec(stdout)?.[1]);
+    if (!Number.isSafeInteger(count) || count < 1) throw new Error("无法读取手册实际总页数，请重试导出");
+    return count;
+  },
   read: async (name: string) => {
     try {
       return (
@@ -87,25 +100,28 @@ export async function loadKnowledgePublicationExport(
   owner: number,
   documentId: string,
   generation: string,
-  overrides: Partial<typeof real> = {}
-) {
+  overrides: Partial<typeof real> = {},
+  includeSupplement = false,
+  allowCurrentManuscript = false
+): Promise<{doc:EditableLayout;review:KnowledgeReview;receipt:Awaited<ReturnType<typeof readKnowledgePublicationReview>>;prefix:string}> {
   const deps = {...real, ...overrides};
   const loaded = await deps.load(owner);
   if (loaded.generation !== generation)
     throw new Error("云稿版本已变化，请先读取当前稿件；未导出旧稿");
-  const doc = loaded.library?.documents.find(d => d.id === documentId),
+  let doc = loaded.library?.documents.find(d => d.id === documentId),
     pub = doc?.publication;
   if (
     !doc ||
     !pub?.review ||
-    !pub.confirmedManuscript ||
-    pub.confirmedManuscript !== pub.manuscript
+    (!allowCurrentManuscript && (!pub.confirmedManuscript || pub.confirmedManuscript !== pub.manuscript))
   )
     throw new Error("请先确认图文阅读稿后再导出");
+  pub.source = await resolveKnowledgePublicationImages(owner, pub.source, undefined, undefined, pub.imageReplacements);
   const accepted = parseKnowledgeManuscript(
-    pub.confirmedManuscript,
+    allowCurrentManuscript ? pub.manuscript : pub.confirmedManuscript!,
     pub.source.pages.map(p => p.id)
   );
+  if (allowCurrentManuscript) doc = {...doc,title:accepted.title,pages:accepted.pages.map(p=>({...doc!.pages.find(old=>old.id===p.id)!,...p}))};
   if (
     accepted.title !== doc.title ||
     accepted.pages.some(
@@ -139,6 +155,7 @@ export async function loadKnowledgePublicationExport(
       JSON.stringify([
         KNOWLEDGE_PUBLICATION_LAYOUT_VERSION,
         pub.infographicTemplateId,
+        pub.designMode,
         accepted,
         review,
         receipt.sourceImages,
@@ -146,25 +163,57 @@ export async function loadKnowledgePublicationExport(
     )
     .digest("hex");
   const prefix = `knowledge-publications/user-${owner}/${documentId}/exports/${digest}`;
+  if(includeSupplement&&pub.supplementDocumentId){
+    const child=loaded.library?.documents.find(d=>d.id===pub.supplementDocumentId);
+    if(child?.publication?.supplementOf?.documentId!==doc.id||child.publication.supplementDocumentId)throw Error("补充稿归属不一致，未导出混合版本");
+    const extra=await loadKnowledgePublicationExport(owner,child.id,generation,{...deps,load:async()=>loaded},false,allowCurrentManuscript);
+    const imageCount=extra.doc.pages.filter(p=>p.imageUrl).length;
+    if(imageCount<1||imageCount>8)throw Error("补充稿图片数量必须为1至8张");
+    if(new Set([...doc.pages,...extra.doc.pages].map(p=>p.id)).size!==doc.pages.length+extra.doc.pages.length)throw Error("补充稿页号与原册重复");
+    const combinedReview={...review,pages:[...review.pages,...extra.review.pages]};
+    const combinedDoc={...doc,pages:[...doc.pages,...extra.doc.pages]};
+    const combinedReceipt={...receipt,sourceImages:[...receipt.sourceImages,...extra.receipt.sourceImages]};
+    const combinedHash=createHash("sha256").update(JSON.stringify([prefix,extra.prefix])).digest("hex");
+    return {doc:combinedDoc,review:combinedReview,receipt:combinedReceipt,prefix:`knowledge-publications/user-${owner}/${documentId}/exports/${combinedHash}`};
+  }
   return {doc,review,receipt,prefix};
 }
 export async function exportKnowledgePublication(
   owner:number,documentId:string,generation:string,overrides:Partial<typeof real>={}
 ):Promise<KnowledgePublicationExport>{
   const deps={...real,...overrides};
-  const {doc,review,receipt,prefix}=await loadKnowledgePublicationExport(owner,documentId,generation,deps);
+  const { loadKnowledgeBookLayoutView } = await import("./knowledgeBookLayout");
+  const {doc,review,receipt,prefix}=await loadKnowledgeBookLayoutView(owner,documentId,generation,deps);
   const run = async () => {
     const manifest = await deps.read(`${prefix}/manifest.json`);
     if (manifest) {
       const saved = JSON.parse(manifest.toString("utf8"));
-      if (saved.pdfBytes)
+      if (saved.pdfBytes) {
+        if (!Number.isSafeInteger(saved.totalPages) || saved.totalPages < 1) {
+          // 历史成品只读取原PDF补计页数，不重做模型或排版。
+          const bytes = await deps.read(`${prefix}/阅读稿.pdf`);
+          if (!bytes) throw new Error("原PDF暂时无法读取，未显示推测页数");
+          const folder = await mkdtemp(join(tmpdir(), "knowledge-page-count-"));
+          try {
+            const path = join(folder, "original.pdf");
+            await writeFile(path, bytes);
+            saved.totalPages = await deps.countPages(path);
+            if (!Number.isSafeInteger(saved.totalPages) || saved.totalPages < 1) throw new Error("手册实际总页数无效");
+            await deps.save(`${prefix}/manifest.json`, Buffer.from(JSON.stringify(saved)), "application/json");
+          } finally {
+            await rm(folder, { recursive: true, force: true });
+          }
+        }
         return {
           htmlUrl: deps.sign(`${prefix}/阅读稿.html`),
           pdfUrl: deps.sign(`${prefix}/阅读稿.pdf`),
           htmlBytes: saved.htmlBytes,
           pdfBytes: saved.pdfBytes,
           chapters: doc.pages.length,
+          imagePages: doc.pages.filter(page => page.imageUrl).length,
+          totalPages: saved.totalPages,
         };
+      }
     }
     const folder = await mkdtemp(join(tmpdir(), "knowledge-publication-"));
     const htmlPath = join(folder, "publication.html"),
@@ -282,6 +331,9 @@ export async function exportKnowledgePublication(
         level++;
       }
       if (!active.length) throw new Error("未生成PDF内容");
+      const totalPages = await deps.countPages(active[0]);
+      if (!Number.isSafeInteger(totalPages) || totalPages < 1) throw new Error("手册实际总页数无效");
+      const imagePages = doc.pages.filter(page => page.imageUrl).length;
       const pdfBytes = await deps.file(
         `${prefix}/阅读稿.pdf`,
         active[0],
@@ -294,6 +346,8 @@ export async function exportKnowledgePublication(
             htmlBytes,
             pdfBytes,
             chapters: doc.pages.length,
+            imagePages,
+            totalPages,
             sourceDigest: review.sourceDigest,
           })
         ),
@@ -305,6 +359,8 @@ export async function exportKnowledgePublication(
         htmlBytes,
         pdfBytes,
         chapters: doc.pages.length,
+        imagePages,
+        totalPages,
       };
     } finally {
       await html.close().catch(() => undefined);

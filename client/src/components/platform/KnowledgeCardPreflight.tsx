@@ -28,6 +28,7 @@ export type KnowledgeCardPreflightSummary = {
   pageCount: number;
   qualityZh: string;
   credits: number;
+  advisorCredits?: number;
 };
 
 export function KnowledgeCardPreflight({
@@ -44,9 +45,10 @@ export function KnowledgeCardPreflight({
         { k: "成稿档", v: summary.levelZh, accent: true },
         { k: "版式", v: summary.layoutZh, accent: true },
         { k: "模板类型", v: summary.templateZh, accent: true },
-        { k: "读档方式", v: /DeepSeek|精细/i.test(summary.distillModelZh) ? "精细" : "标准" },
-        { k: "页数", v: `${summary.pageCount} 页` },
+        { k: "读档模型", v: summary.distillModelZh },
+        { k: "配图数量", v: `${summary.pageCount} 张` },
         { k: "画质", v: summary.qualityZh },
+        ...(summary.advisorCredits === undefined ? [] : [{ k: "同步整理完整文字", v: `最多 ${summary.advisorCredits} 积分` }]),
       ]
     : [];
   return (
@@ -62,7 +64,7 @@ export function KnowledgeCardPreflight({
         className="max-w-md border-white/12 bg-[#161226]"
       >
         <DialogHeader>
-          <DialogTitle className="text-base text-white">确认无误再出图</DialogTitle>
+          <DialogTitle className="text-base text-white">确认图文生成</DialogTitle>
           <DialogDescription className="text-xs text-[#c9c0e6]/60">
             选错版式或成稿档，要等整套图出完才看得出来，先核一遍。
           </DialogDescription>
@@ -82,7 +84,8 @@ export function KnowledgeCardPreflight({
         </dl>
         {summary ? (
           <p className="rounded-xl border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-[11px] leading-5 text-amber-100/85">
-            约 <span className="font-semibold tabular-nums">{summary.credits}</span> 积分，逐页扣费。
+            配图 <span className="font-semibold tabular-nums">{summary.credits}</span> 积分，逐页扣费。
+            {summary.advisorCredits !== undefined && <>同步整理最多 {summary.advisorCredits} 积分，合计最多 {summary.credits + summary.advisorCredits} 积分；后续整套核对如需超出，会先确认。</>}
             出图途中可以点「终止」：已出的页保留并计费，未出的页不扣。
           </p>
         ) : null}

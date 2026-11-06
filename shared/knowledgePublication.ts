@@ -1,14 +1,19 @@
+import { validateKnowledgeDesignBatch } from "./knowledgeDecorations";
+import {knowledgeSupplementSelectionSchema} from "./knowledgeSupplement";
+import { knowledgeConversationTurnSchema } from "./knowledgeConversation";
 import {knowledgePresentationRequestSchema,knowledgePresentationPlanSchema} from "./knowledgePresentation";
 import { knowledgeCitationSchema } from "./knowledgeResearch";
 import { z } from "zod";
 import { knowledgeReadingSchema } from "./knowledgePublicationLayout";
+
+export type KnowledgePublicationPagination = { imagePages: number; totalPages: number };
 
 /** 知识卡专用合同；学习报告只提供视觉参考，不携带剧情、镜头或音轨字段。 */
 export const knowledgePublicationContextSchema = z
   .object({
     documentId: z.string().uuid(),
     batchIndex: z.number().int().min(0),
-    purpose: z.literal("presentation").optional(),
+    purpose: z.enum(["presentation", "conversation"]).optional(),
     attempt: z.number().int().min(0).max(65535).default(0),
   })
   .strict();
@@ -21,6 +26,8 @@ export const knowledgeSourcePageSchema = z
     headline: z.string().max(500),
     body: z.string().max(50000),
     imageUrl: z.string().max(6000),
+    imageJobId: z.string().min(1).max(200).optional(),
+    role: z.enum(["reading", "illustration"]).optional(),
   })
   .strict();
 export const knowledgeSourceSchema = z
@@ -74,25 +81,50 @@ export const knowledgeReviewSchema = z
     pages: z.array(knowledgeReviewPageSchema).min(1),
   })
   .strict();
+/** 新生成走强制设计schema，旧回执仍可用基础schema读取。 */
+export const knowledgeDesignedReviewSchema=knowledgeReviewSchema.superRefine((review,ctx)=>{
+ try{validateKnowledgeDesignBatch(review.pages);}catch(e){ctx.addIssue({code:"custom",message:e instanceof Error?e.message:"章节设计合同不合格",path:["pages"]});}
+});
 export type KnowledgeReview = z.infer<typeof knowledgeReviewSchema>;
 export const knowledgePublicationSchema = z
   .object({
     version: z.literal(1),
+    synchronizedStarted: z.boolean().optional(),
+    inputFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    imageAttempts: z.record(z.string(), z.object({ requestId: z.string().uuid(), jobId: z.string().min(1).max(200) }).strict()).optional(),
+    imageReplacements: z.record(z.string(), z.string()).optional(),
     requestId: z.string().uuid(),
     infographicTemplateId: z.string().max(100).optional(),
+    layoutConversationId: z.string().uuid().optional(),
+    designMode: z.enum(["content"]).optional(),
     source: knowledgeSourceSchema,
     review: knowledgeReviewSchema.optional(),
     completedBatches: z.number().int().min(0).default(0),
+    parallel: z.object({
+      channels: z.record(z.string().regex(/^(0|[1-9]\d*)$/), z.enum(["openrouter", "evolink"])),
+      completed: z.array(z.number().int().min(0)),
+    }).strict().optional(),
     attempts: z
       .record(z.string(), z.number().int().min(0).max(65535))
       .default({}),
     manuscript: z.string(),
     confirmedManuscript: z.string().optional(),
+    conversation: z.array(knowledgeConversationTurnSchema).optional(),
+    supplementOf: knowledgeSupplementSelectionSchema.optional(),
+    supplementDocumentId: z.string().uuid().optional(),
     presentationRequest: knowledgePresentationRequestSchema.optional(),
     presentationPlan: knowledgePresentationPlanSchema.optional(),
     presentationRevision: knowledgePresentationPlanSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (!value.parallel) return;
+    const count = knowledgeReviewBatches(value.source).length;
+    if (new Set(value.parallel.completed).size !== value.parallel.completed.length ||
+        value.parallel.completed.some(i => i >= count) ||
+        Object.keys(value.parallel.channels).some(i => !Number.isSafeInteger(Number(i)) || Number(i) >= count))
+      ctx.addIssue({ code: "custom", message: "并发批次编号与原稿不符" });
+  });
 export type KnowledgePublication = z.infer<typeof knowledgePublicationSchema>;
 
 export function validateKnowledgeReview(
@@ -175,7 +207,7 @@ export function knowledgeReviewBatches(source: KnowledgeSource): number[][] {
   for (const [i, page] of Array.from(source.pages.entries())) {
     if (
       current.length &&
-      (current.length >= 4 || chars + page.body.length > 24000)
+      (current.length >= 4 || chars + page.body.length > 24000 || Boolean(source.pages[current[0]].imageJobId) !== Boolean(page.imageJobId))
     ) {
       batches.push(current);
       current = [];
@@ -216,9 +248,20 @@ export const knowledgeBatchResultSchema = z
     batchCount: z.number().int().positive(),
     sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
     reviewedPages: z.array(z.string().uuid()),
+    images: z.array(z.object({ id: z.string().uuid(), url: z.string() }).strict()).optional(),
   })
   .strict();
 
 export const knowledgeConsistencyBatchResultSchema = z.object({
   kind:z.literal("knowledge_consistency_batch_v1"),batchIndex:z.number().int().min(0),batchCount:z.number().int().positive(),sourceDigest:z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+
+/** 路由接收与最终整套核对共用合同，防止先接受后拒收。 */
+export const knowledgeConsistencySchema = z.object({
+  sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  findings: z.array(z.object({
+    pageIds: z.array(z.string().uuid()).min(1),
+    evidence: z.string().trim().min(1).max(2000),
+    message: z.string().trim().min(1).max(2000),
+  }).strict()),
 }).strict();

@@ -462,7 +462,7 @@ export function planKnowledgeCardPages(
   return {
     pages: finalPages,
     pageCount: finalPages.length,
-    credits: knowledgeCardCreditsForPages(finalPages.length, model),
+    credits: knowledgeCardCreditsForPages(finalPages.length, distillModel),
     roundText: full,
     distillModel: model,
   };

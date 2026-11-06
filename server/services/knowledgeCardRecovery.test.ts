@@ -15,3 +15,14 @@ it("重出仅替换同一页最新成功记录，精华正文恢复不猜选图�
  expect(assembleRecovery("1",draft,[draft,old]).images).toEqual([]);
  expect(recoveryDraft({...draft,status:"running"})).toBeNull();expect(recoveryDraft({...draft,input:{action:"unrelated"}})).toBeNull();
 });
+
+it("恢复优先使用服务端真实读档回执，不把客户端所选档冒充成原模型", () => {
+ const row={...image("derive",1),input:{action:"knowledge_card_derive_level",params:{fullMarkdown:"原完整稿",distillModel:"glm-5.3-flashx"}},output:{distilledMarkdown:text,detailLevel:"concise",distillModel:"claude-opus-5"}};
+ expect(assembleRecovery("1",row,[row]).distillModel).toBe("claude-opus-5");
+});
+it("同文同版式但不同真实计费档位的图片不会混成一套", () => {
+ const one={...image("one",1),output:{...image("one",1).output,knowledgeCardBillingModel:"glm-5.3-flash"}};
+ const two={...image("two",2),output:{...image("two",2).output,knowledgeCardBillingModel:"glm-5.3-flashx"}};
+ expect(assembleRecovery("1",one,[one,two]).images.map(p=>p.page)).toEqual([1]);
+ expect(recoveryDraft(one)?.key).not.toBe(recoveryDraft(two)?.key);
+});

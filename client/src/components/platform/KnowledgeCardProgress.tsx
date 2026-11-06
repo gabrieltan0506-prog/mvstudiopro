@@ -16,6 +16,7 @@ export type KnowledgeCardProgressState = {
   /** 阶段短语，如「读原稿 12/276 页」「出图 2/5 页」 */
   label?: string;
   error?: string;
+  successLabel?: string;
 };
 
 export function KnowledgeCardProgress({
@@ -38,7 +39,7 @@ export function KnowledgeCardProgress({
   const headline = failed
     ? `失败 · 停在 ${shown}%`
     : succeeded
-      ? "成功 · 100%"
+      ? `${state.successLabel || "成功"} · 100%`
       : stopped
         ? `已停止 · ${shown}%`
         : `${shown}%`;
@@ -60,7 +61,7 @@ export function KnowledgeCardProgress({
     <div className="mt-3 space-y-1.5 text-sm" aria-label="知识卡进度">
       <p role={failed ? "alert" : "status"} className={`flex flex-wrap items-center gap-2 ${color}`}>
         <span className="font-semibold tabular-nums">{headline}</span>
-        {state.label && !succeeded ? <span className="text-xs opacity-80">{sanitizePlatformUserMessage(state.label, "正在处理…")}</span> : null}
+        {state.label ? <span className="text-xs opacity-80">{sanitizePlatformUserMessage(state.label, "正在处理…")}</span> : null}
         {onCancel && state.status === "running" ? (
           <button
             type="button"

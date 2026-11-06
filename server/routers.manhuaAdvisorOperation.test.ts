@@ -615,4 +615,22 @@ describe("映刻复用咨询回执但保持独立工作区", () => {
   expect(await caller().mvAnalysis.askPlatformSkillQa(input)).toMatchObject({replayed:true});
   expect(validateKnowledgePublicationAccess).not.toHaveBeenCalled();expect(askPlatformSkillQa).not.toHaveBeenCalled();expect(deductCreditsAmount).not.toHaveBeenCalled();
  });
+ it('知识整理失败原因贯穿退款账本和首次响应，恢复不重购且不泄露原文',async()=>{
+  countPlatformSkillQaToday.mockResolvedValue(0);reserveCodeMotionConsultQuota.mockResolvedValue({reserved:true,used:1});
+  reserveManhuaAdvisorOperation.mockResolvedValueOnce({kind:'awaiting_confirmation',jobId:JOB_ID,requestFingerprint:FINGERPRINT}).mockResolvedValueOnce({kind:'execute',jobId:JOB_ID,requestFingerprint:FINGERPRINT});
+  askPlatformSkillQa.mockRejectedValueOnce(Error('本页补充缺少来源：private-id secret-key'));
+  const first=await caller().mvAnalysis.askPlatformSkillQa(input).catch(e=>e);
+  expect(first.message).toContain('缺少可核实的来源');expect(first.message).not.toMatch(/private-id|secret-key/);
+  expect(markManhuaAdvisorRefundReconciled).toHaveBeenCalledWith(JOB_ID,12,first.message);
+  reserveManhuaAdvisorOperation.mockResolvedValueOnce({kind:'failed',jobId:JOB_ID,message:first.message+'；积分对账已完成'});
+  const replay=await caller().mvAnalysis.askPlatformSkillQa(input).catch(e=>e);
+  expect(replay.message).toBe(first.message);expect(askPlatformSkillQa).toHaveBeenCalledTimes(1);expect(deductCreditsAmount).not.toHaveBeenCalled();
+ });
+ it('知识整理未知态经过错误脱敏仍保留禁止新购提示',async()=>{
+  reserveManhuaAdvisorOperation.mockResolvedValueOnce({kind:'failed',jobId:JOB_ID,message:'openrouter传输或回执尚未闭合，private-key'});
+  const error=await caller().mvAnalysis.askPlatformSkillQa(input).catch(e=>e);
+  expect(error.message).toContain('不要重新付费');expect(error.message).not.toMatch(/openrouter|private-key/);
+  expect(askPlatformSkillQa).not.toHaveBeenCalled();
+ });
+
 });

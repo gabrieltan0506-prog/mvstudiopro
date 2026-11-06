@@ -10,9 +10,9 @@ import { OPENROUTER_DEEPSEEK_PROVIDER_LOCK } from "./knowledgeCardGatewayOrder.j
 import { assertSseContentSafety, isSseContentSafetyError, isSseResponse, readGlmSseStream } from "./sseChatStream.js";
 
 
-// 带图：EvoLink 侧只有 vision-exp（钥匙里没有 V4.1，0911 实弹核过）；OpenRouter 侧 V4.1 原生多模态
-export const PAGE_TRIAGE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_EVOLINK || "deepseek-v4.1-flash").trim();
-export const PAGE_TRIAGE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_OPENROUTER || "deepseek/deepseek-v4.1-flash").trim();
+// 2026-11-06 用户指定 DeepSeek 1017，两个供应商使用各自精确模型 ID。
+export const PAGE_TRIAGE_MODEL_EVOLINK = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_EVOLINK || "deepseek-v4.1-flash-1017").trim();
+export const PAGE_TRIAGE_MODEL_OPENROUTER = String(process.env.KNOWLEDGE_CARD_TRIAGE_MODEL_OPENROUTER || "deepseek/deepseek-v4.1-flash-1017").trim();
 const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 // 带图的请求走 api.evolink.ai（direct 只给纯文本，仓库既有约定见 knowledgeCardDistill.ts）
 const EVOLINK_VISION_CHAT_URL = String(process.env.EVOLINK_CHAT_URL || "https://api.evolink.ai/v1/chat/completions").trim();

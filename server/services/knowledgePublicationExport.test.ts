@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { layoutFromSource } from "../../shared/editableLayout";
 import { knowledgeManuscript } from "../../shared/knowledgePublication";
 import { knowledgeSourceDigest } from "./knowledgePublicationAdvisor";
-import { exportKnowledgePublication } from "./knowledgePublicationExport";
+import { exportKnowledgePublication, loadKnowledgePublicationExport } from "./knowledgePublicationExport";
 function fixture() {
   const doc = layoutFromSource({
     kind: "knowledge-publication",
@@ -50,6 +50,7 @@ function fixture() {
     sign: (name: string) => `https://test.invalid/${name}`,
     pdf: vi.fn(async () => Buffer.from("%PDF" + "test-only".repeat(20))),
     merge: vi.fn(),
+    countPages: vi.fn(async () => 7),
   };
   return { doc, deps, storage };
 }
@@ -64,12 +65,15 @@ describe("出版确认版本与恢复", () => {
     );
     expect(result.pdfUrl).toBeTruthy();
     expect(result.chapters).toBe(1);
+    expect(result.totalPages).toBe(7);
+    expect(result.imagePages).toBe(0);
     const html = Array.from(f.storage.entries())
       .find(([k]) => k.endsWith("阅读稿.html"))![1]
       .toString();
     expect(html).toContain("凝结形成云");
     await exportKnowledgePublication(7, f.doc.id, "10", f.deps as any);
     expect(f.deps.pdf).toHaveBeenCalledTimes(1);
+    expect(f.deps.countPages).toHaveBeenCalledTimes(1);
   });
   it("版本冲突、手改未确认、审校伪造均在PDF之前拒绝", async () => {
     const f = fixture();
@@ -101,6 +105,8 @@ describe("出版确认版本与恢复", () => {
     );
     expect(partial.htmlUrl).toBeTruthy();
     expect(partial.pdfUrl).toBeUndefined();
+    expect(partial.totalPages).toBeUndefined();
+    expect(partial.imagePages).toBeUndefined();
     expect(partial.pdfError).toContain("未完成");
     const recovered = await exportKnowledgePublication(
       7,
@@ -146,6 +152,7 @@ async function assertSplitRecovery(shiftCounts: boolean) {
  expect(partial.pdfUrl).toBeUndefined();expect(partial.htmlUrl).toBeTruthy();
  shifted=shiftCounts;
  const complete=await exportKnowledgePublication(7,f.doc.id,'10',deps as any);
+ expect(complete.imagePages).toBe(2);expect(complete.totalPages).toBe(7);
  expect(complete.pdfUrl).toBeTruthy();expect(f.deps.pdf).toHaveBeenCalledTimes(shiftCounts?4:3);expect(measure).toHaveBeenCalledTimes(4);
  expect(renders[0]).toContain('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="2"');
  expect(renders[1]).toContain('data-booklet-page-offset="2" data-booklet-total-pages="5" data-booklet-expected-pages="3"');
@@ -157,3 +164,52 @@ async function assertSplitRecovery(shiftCounts: boolean) {
 }
 it('大手册分段使用全书页码，失败恢复只补缺失段',()=>assertSplitRecovery(false));
 it('部分恢复总页数相同但分段页数变化时不复用旧分段',()=>assertSplitRecovery(true));
+
+ it("旧PDF补读实际页数并保存，恢复不重新生成", async () => {
+   const f = fixture();
+   await exportKnowledgePublication(7, f.doc.id, "10", f.deps as any);
+   const key = Array.from(f.storage.keys()).find(key => key.endsWith("/manifest.json"))!;
+   const manifest = JSON.parse(f.storage.get(key)!.toString());
+   delete manifest.totalPages; delete manifest.imagePages;
+   f.storage.set(key, Buffer.from(JSON.stringify(manifest)));
+   f.deps.countPages.mockResolvedValueOnce(9);
+   const recovered = await exportKnowledgePublication(7, f.doc.id, "10", f.deps as any);
+   expect(recovered.totalPages).toBe(9);
+   expect(f.deps.pdf).toHaveBeenCalledTimes(1);
+   expect(JSON.parse(f.storage.get(key)!.toString()).totalPages).toBe(9);
+ });
+
+ it("从实际PDF读取总页数，不把章节数当页数", async () => {
+   const f = fixture();
+   const objects = [
+     "<< /Type /Catalog /Pages 2 0 R >>",
+     "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R] /Count 4 >>",
+     ...Array.from({ length: 4 }, () => "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>"),
+   ];
+   let pdf = "%PDF-1.4\n";
+   const offsets = [0];
+   objects.forEach((body, index) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${index + 1} 0 obj\n${body}\nendobj\n`; });
+   const xref = Buffer.byteLength(pdf);
+   pdf += `xref\n0 7\n0000000000 65535 f \n${offsets.slice(1).map(offset => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+   f.deps.pdf.mockResolvedValue(Buffer.from(pdf));
+   const { countPages: _unused, ...deps } = f.deps;
+   const result = await exportKnowledgePublication(7, f.doc.id, "10", deps as any);
+   expect(result.chapters).toBe(1);
+   expect(result.totalPages).toBe(4);
+   expect(result.imagePages).toBe(0);
+ });
+
+it("补充稿分别验真后才合册，保留两册正文并拒绝未确认、错归属及递归",async()=>{
+ const parent=fixture(),extra=fixture();extra.doc.id="00000000-0000-4000-8000-000000000099";
+ const ep=extra.doc.publication!;extra.doc.pages[0].id="00000000-0000-4000-8000-000000000098";ep.source.pages[0].id=extra.doc.pages[0].id;ep.review!.pages[0].id=extra.doc.pages[0].id;
+ // 使用一张有明确SHA的测试图片；图片源读取和供应商不在此离线用例中。
+ const uri="gs://test-bucket/supplement.png";extra.doc.pages[0].imageUrl=uri;ep.source.pages[0].imageUrl=uri;
+ ep.review!.pages[0].imageStatus="consistent";ep.review!.pages[0].imageDescription="已读取的蒸发与凝结对照测试图片";ep.review!.sourceDigest=knowledgeSourceDigest(ep.source);ep.manuscript=knowledgeManuscript(ep.review!);ep.confirmedManuscript=ep.manuscript;
+ ep.supplementOf={documentId:parent.doc.id,conversationId:"00000000-0000-4000-8000-000000000097",indexes:[0]};ep.synchronizedStarted=true;parent.doc.publication!.supplementDocumentId=extra.doc.id;
+ const sourceImages=[{id:extra.doc.pages[0].id,uri,sha256:"a".repeat(64),mimeType:"image/png",width:10,height:10}];
+ const deps={...parent.deps,load:async()=>({library:{version:1 as const,owner:"7",documents:[parent.doc,extra.doc]},generation:"10",updatedAt:parent.doc.updatedAt}),review:async(_owner:number,id:string)=>id===parent.doc.id?{report:parent.doc.publication!.review!,sourceImages:[]}:{report:ep.review!,sourceImages}};
+ const result=await loadKnowledgePublicationExport(7,parent.doc.id,"10",deps,true);
+ expect(result.doc.pages.map(p=>p.id)).toEqual([parent.doc.pages[0].id,extra.doc.pages[0].id]);expect(result.review.pages).toHaveLength(2);expect(result.receipt.sourceImages).toHaveLength(1);
+ expect((await loadKnowledgePublicationExport(7,parent.doc.id,"10",deps)).doc.pages).toHaveLength(1);
+ ep.confirmedManuscript=undefined;await expect(loadKnowledgePublicationExport(7,parent.doc.id,"10",deps,true)).rejects.toThrow("确认");ep.confirmedManuscript=ep.manuscript;ep.supplementDocumentId=parent.doc.id;await expect(loadKnowledgePublicationExport(7,parent.doc.id,"10",deps,true)).rejects.toThrow("归属");
+});

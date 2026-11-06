@@ -75,7 +75,7 @@ export const KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE =
 
 /** @deprecated 用 resolveKnowledgeCardDistillModel */
 export const KNOWLEDGE_CARD_DISTILL_MODEL = resolveKnowledgeCardDistillModel(
-  process.env.KNOWLEDGE_CARD_DISTILL_MODEL || KNOWLEDGE_CARD_DISTILL_MODEL_GLM,
+  process.env.KNOWLEDGE_CARD_DISTILL_MODEL,
 );
 
 const DISTILL_MAX_TOKENS = Math.min(
@@ -186,7 +186,7 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
 export function knowledgeCardDistillProfile(
   modelName: KnowledgeCardDistillModelId,
 ): KnowledgeCardDistillProfile {
-  return DISTILL_PROFILES[modelName];
+  return DISTILL_PROFILES[resolveKnowledgeCardDistillModel(modelName)];
 }
 
 /**
@@ -204,7 +204,7 @@ export function estimateKnowledgeCardDistillChunks(
   modelName: KnowledgeCardDistillModelId,
   textLength: number,
 ): number {
-  const profile = DISTILL_PROFILES[modelName];
+  const profile = DISTILL_PROFILES[resolveKnowledgeCardDistillModel(modelName)];
   const n = Math.max(0, Number(textLength) || 0);
   if (n <= profile.chunkThreshold) return 1;
   return Math.max(1, Math.ceil(n / profile.chunkChars));
@@ -302,11 +302,11 @@ function officialFallbackKey(_modelName: KnowledgeCardDistillModelId): string {
   return getOpenRouterApiKey();
 }
 
-/** 2026-10-13：EvoLink V4.1 Flash 当前正式 ID，文本与图片 API 探针均已返回正确正文。 */
-const DEEPSEEK_EVOLINK_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_VISION_MODEL", "deepseek-v4.1-flash");
+/** 2026-11-06 用户指定精确 1017 版本；历史档位 ID 与实际模型名分离。 */
+const DEEPSEEK_EVOLINK_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_VISION_MODEL", "deepseek-v4.1-flash-1017");
 const DEEPSEEK_EVOLINK_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_EVOLINK_MODEL", DEEPSEEK_EVOLINK_VISION_MODEL);
 /** OpenRouter 同款（锁 DeepSeek 自营，见 openRouterProviderLockForTier）：一样图文同模型 */
-const DEEPSEEK_OPENROUTER_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_TEXT_MODEL", "deepseek/deepseek-v4.1-flash");
+const DEEPSEEK_OPENROUTER_TEXT_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_TEXT_MODEL", "deepseek/deepseek-v4.1-flash-1017");
 const DEEPSEEK_OPENROUTER_VISION_MODEL = envStr("KNOWLEDGE_CARD_DEEPSEEK_OPENROUTER_VISION_MODEL", DEEPSEEK_OPENROUTER_TEXT_MODEL);
 const QWEN_OPENROUTER_MODEL = envStr("KNOWLEDGE_CARD_QWEN_OPENROUTER_MODEL", KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR);
 /** 0911 用户令：降档第一手换成 GLM 5.3 FlashX（原生视觉、图文都吃） */
@@ -642,7 +642,7 @@ function distillFetchTimeoutMs(
   }
   const override = Number(process.env.KNOWLEDGE_CARD_DISTILL_TIMEOUT_MS);
   if (Number.isFinite(override) && override >= 60_000) return Math.min(override, 480_000);
-  return DISTILL_PROFILES[modelName].requestTimeoutMs;
+  return DISTILL_PROFILES[resolveKnowledgeCardDistillModel(modelName)].requestTimeoutMs;
 }
 
 /**
@@ -1308,6 +1308,7 @@ async function refineOnce(params: {
   /** 用户点「终止」：统稿这步也要能立刻断 */
   abortSignal?: AbortSignal;
 }): Promise<string> {
+  params = { ...params, modelName: resolveKnowledgeCardDistillModel(params.modelName) };
   const profile = DISTILL_PROFILES[params.modelName];
   try {
     const refined = await invokeDistillLlm({
@@ -1367,6 +1368,7 @@ async function refineMergedDistill(params: {
   minSections: number;
   detailLevel?: KnowledgeCardDetailLevel;
 }): Promise<string> {
+  params = { ...params, modelName: resolveKnowledgeCardDistillModel(params.modelName) };
   const profile = DISTILL_PROFILES[params.modelName];
   let current = params.merged.trim();
   if (!current) return current;
@@ -1569,13 +1571,13 @@ export const KNOWLEDGE_CARD_OCR_CHUNK_TIMEOUT_MS = 6 * 60_000;
 export const KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE = 5;
 export const KNOWLEDGE_CARD_ROUTE_STAGGER_MS = 3_500;
 
-export async function invokeDistillLlmPossiblyChunked(params: {
+export async function invokeDistillLlmPossiblyChunked(rawParams: {
   sourceText: string;
   /** 逐页文档之外的文字（docx/pptx 抽字 + 用户贴的文本）；有逐页文档时只把它当补充段，不与逐页正文重复 */
   extraText: string;
   imageUrls: string[];
   documents: KnowledgeCardDocumentPageSet[];
-  modelName: KnowledgeCardDistillModelId;
+  modelName: string;
   minSectionsTotal: number;
   detailLevel: KnowledgeCardDetailLevel;
   onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
@@ -1584,6 +1586,7 @@ export async function invokeDistillLlmPossiblyChunked(params: {
   /** 用户点「终止」：在途请求立刻断，段与段之间也不再往下跑 */
   abortSignal?: AbortSignal;
 }): Promise<string> {
+  const params = { ...rawParams, modelName: resolveKnowledgeCardDistillModel(rawParams.modelName) };
   const profile = DISTILL_PROFILES[params.modelName];
   const text = String(params.sourceText || "").trim();
   const urls = params.imageUrls;
@@ -1753,7 +1756,7 @@ const TRIAGE_SHEETS_PER_CALL = 8;
  * 目录页扫读挑页：用所选档位模型看缩略图目录，返回值得参考的页码。
  * 扫读失败不阻断整体提炼（退回无参考页）。
  */
-export function makeKnowledgeCardPageSelector(modelName: KnowledgeCardDistillModelId, abortSignal?: AbortSignal) {
+export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: AbortSignal) {
   // 终审第五条：挑页也按档位走同一份顺序——
   // 轻量档不从 DeepSeek 视觉起跳，直接走轻量 Qwen 全链；
   // 精细档降档尾段只走精细顺序里的 Qwen 两跳（新加坡→OpenRouter），不多出第 5 跳。

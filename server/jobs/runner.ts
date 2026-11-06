@@ -3859,7 +3859,10 @@ async function processPlatformJob(
        * 由 worker 按已完成结算；用户拿到的是「已完成，无法取消」，不是假的「未开始计费」。
        */
       await cancel.check({ force: true });
-      const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
+      // 已入队旧任务沿用原页费身份；实际调用仍由 prepare 适配到支持的模型。
+      const { preserveStoredKnowledgeCardModel } = await import("../../shared/knowledgeCardDistillModels.js");
+      const billingModel = prepared.skippedDistill ? null : preserveStoredKnowledgeCardModel(params.distillModel, prepared.distillModel);
+      const plan = planKnowledgeCardPages(prepared.distilledMarkdown, billingModel);
 
       const { knowledgeCardDistillFeeForModel } = await import("../../shared/knowledgeCardDistillModels.js");
       const output = {
@@ -3870,7 +3873,7 @@ async function processPlatformJob(
         skippedDistill: prepared.skippedDistill,
         extractionMethods: extractionMethods.length ? extractionMethods : prepared.extractionMethods,
         sourceChars: prepared.sourceChars,
-        distillModel: prepared.distillModel,
+        distillModel: billingModel,
         pageCount: plan.pageCount,
         credits: plan.credits,
         pages: plan.pages,
@@ -3879,8 +3882,8 @@ async function processPlatformJob(
       return await finishKnowledgeCardProduction(platformJobId!, Number(jobUserId), {
         version: 1, output,
         fee: params.chargeDistillFee === true && !prepared.skippedDistill
-          ? knowledgeCardDistillFeeForModel(prepared.distillModel) : 0,
-        receiptModel: !prepared.skippedDistill ? prepared.distillModel : null,
+          ? knowledgeCardDistillFeeForModel(billingModel) : 0,
+        receiptModel: billingModel,
         markdown: prepared.distilledMarkdown,
       }, cancel);
       } catch (error) {

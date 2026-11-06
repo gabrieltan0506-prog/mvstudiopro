@@ -16,7 +16,7 @@ import { knowledgeCardDistillReceipts } from "../../drizzle/schema-stripe";
 import {
   knowledgeCardPageCreditsForModel,
   resolveKnowledgeCardDistillModel,
-  type KnowledgeCardDistillModelId,
+  KNOWLEDGE_CARD_DISTILL_MODEL_ACCEPTED_INPUTS,
 } from "../../shared/knowledgeCardDistillModels";
 
 function hashDistilledText(text: string): string {
@@ -44,7 +44,7 @@ export async function recordKnowledgeCardDistillReceipt(
   const db = await getDb();
   if (!db) throw new Error("Database not available (distill receipt not recorded)");
   const textHash = hashDistilledText(text);
-  const resolvedModel = resolveKnowledgeCardDistillModel(model);
+  const resolvedModel = KNOWLEDGE_CARD_DISTILL_MODEL_ACCEPTED_INPUTS.some(id => id === model) ? model : resolveKnowledgeCardDistillModel(model);
   // 同一份稿可能被不同档位产出：三元组都留存，查询时取页费最高档，
   // 防止后跑一次低档 receipt 覆盖高档 receipt 后降价。
   await db
@@ -57,7 +57,7 @@ export async function recordKnowledgeCardDistillReceipt(
 export async function lookupKnowledgeCardDistillReceiptModel(
   userId: number,
   distilledMarkdown: string,
-): Promise<KnowledgeCardDistillModelId | null> {
+): Promise<string | null> {
   const uid = Number(userId);
   if (!Number.isFinite(uid) || uid <= 0) {
     throw new Error("Invalid user id (distill receipt unavailable)");
@@ -77,7 +77,8 @@ export async function lookupKnowledgeCardDistillReceiptModel(
       ),
     );
   if (!rows.length) return null;
-  const models = rows.map((row) => resolveKnowledgeCardDistillModel(row.model));
+  // 历史模型ID同时标识原页价，不能resolve成新价再比较。
+  const models = rows.map((row) => row.model);
   return models.reduce((highest, model) =>
     knowledgeCardPageCreditsForModel(model).full > knowledgeCardPageCreditsForModel(highest).full
       ? model

@@ -12,10 +12,10 @@ describe("gpt-image 供应商顺序接线（0910：OpenAI 官方 → EvoLink 2.5
     expect(src).not.toContain('|| "evolink") : undefined');
     expect(src).toContain("variant: options.openaiImageVariant ?? null");
   });
-  it("知识卡前端不再奇偶页轮流分给 EvoLink/OpenAI", () => {
-    expect(platform).not.toContain('idx % 2 === 0 ? "evolink" : "openai"');
-    expect(platform).not.toContain('i % 2 === 0 ? "evolink" : "openai"');
-    expect(platform).toContain("openaiImageVariant: readOpenAiImageVariantPref()");
+  it("知识卡四路并发显式分配官方与EvoLink，单页恢复保留分流", () => {
+    expect(platform).toContain('worker(lane % 2 === 0 ? "openai" : "evolink")');
+    expect(platform).toContain('idx % 2 === 0 ? "openai" : "evolink"');
+    expect(platform).toContain("openaiImageVariant: snapshot?.imageVariant ?? readOpenAiImageVariantPref()");
   });
   it("主路径为官方时不竞速；unknown 结果停止回落", () => {
     expect(src).toContain('provider !== "openai"');

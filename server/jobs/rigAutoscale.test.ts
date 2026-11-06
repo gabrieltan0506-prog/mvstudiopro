@@ -572,7 +572,7 @@ describe("配置与安全边界", () => {
   it("总开关默认开，阈值可调但有下限，<=0 表示关闭", () => {
     expect(rigAutoscaleEnabled({} as NodeJS.ProcessEnv)).toBe(true);
     expect(resolveRigIdleStopMs({} as NodeJS.ProcessEnv)).toBe(DEFAULT_RIG_IDLE_STOP_MS);
-    expect(resolveRigIdleStopMs({ MANHUA_RIG_IDLE_STOP_MS: "1000" } as NodeJS.ProcessEnv)).toBe(60_000);
+    expect(resolveRigIdleStopMs({ MANHUA_RIG_IDLE_STOP_MS: "1000" } as NodeJS.ProcessEnv)).toBe(DEFAULT_RIG_IDLE_STOP_MS);
     expect(resolveRigIdleStopMs({ MANHUA_RIG_IDLE_STOP_MS: "1800000" } as NodeJS.ProcessEnv)).toBe(1_800_000);
     expect(resolveRigIdleStopMs({ MANHUA_RIG_IDLE_STOP_MS: "0" } as NodeJS.ProcessEnv)).toBe(0);
     // 空串＝没设（secret 设过又清空），必须走默认值而不是静默关掉停机

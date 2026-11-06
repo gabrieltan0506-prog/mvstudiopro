@@ -71,3 +71,46 @@ it("专辑方形比例实际发送1024x1024，不调用真实供应商",async()=
  const fetcher=vi.fn(async(_url:string,init?:RequestInit)=>{expect(JSON.parse(String(init?.body)).size).toBe("1024x1024");return Response.json({error:{message:"test rejection"}},{status:400});});
  vi.stubGlobal("fetch",fetcher);await postOpenAiGptImage2AndUpload("专辑封面","song-covers",{aspectRatio:"1:1",variant:"flare"});expect(fetcher).toHaveBeenCalledTimes(1);expect(store).not.toHaveBeenCalled();
 });
+
+it.each(["gpt-image-2.6-flare", "gpt-image-2.6-sunburst"] as const)("手册%s精确型号不被旧环境覆盖，实际发送4K/high", async exactModel => {
+  vi.stubEnv("OPENAI_GPT_IMAGE2_MODEL", "gpt-image-2");
+  const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+    expect(JSON.parse(String(init!.body))).toMatchObject({ model: exactModel, size: "3840x2160", quality: "high", n: 1, output_format: "png" });
+    return Response.json({ data: [{ b64_json: "dGVzdA==" }] });
+  });
+  vi.stubGlobal("fetch", fetcher); store.mockResolvedValue("https://test.invalid/image26.png");
+  expect(await postOpenAiGptImage2AndUpload("手册配图", "test", { exactModel, size: "3840x2160", quality: "high", strictRequest: true })).toBe("https://test.invalid/image26.png");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+it("手册2.6官方断线标未知，不能当失败继续购买", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("test connection lost"); }));
+  await expect(postOpenAiGptImage2AndUpload("手册配图", "test", { exactModel: "gpt-image-2.6-sunburst", strictRequest: true })).rejects.toMatchObject({ kind: "unknown" });
+  expect(store).not.toHaveBeenCalled();
+});
+
+it("手册2.6参考图下载失败尚未付费提交，不能锁成未知", async () => {
+  const fetcher = vi.fn(async (url: string) => {
+    expect(url).toBe("https://test.invalid/missing-ref.png");
+    return new Response("test missing", { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const captureError: { message?: string } = {};
+  expect(await postOpenAiGptImage2AndUpload("手册配图", "test", { exactModel: "gpt-image-2.6-sunburst", strictRequest: true, imageUrls: ["https://test.invalid/missing-ref.png"], captureError })).toBeNull();
+  expect(fetcher).toHaveBeenCalledTimes(1); expect(captureError.message).toContain("ref download HTTP 404"); expect(store).not.toHaveBeenCalled();
+});
+it.each(["提交断线", "存储失败"])("手册2.6带原稿编辑%s保持未知，不重新购买", async failure => {
+  const png = await sharp({ create: { width: 64, height: 64, channels: 4, background: "red" } }).png().toBuffer();
+  let posts = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === "https://test.invalid/ref.png") return new Response(new Uint8Array(png));
+    posts++;
+    const form = await new Response(init!.body, { headers: init!.headers }).formData();
+    expect(form.get("model")).toBe("gpt-image-2.6-sunburst");
+    expect(form.get("quality")).toBe("high");
+    if (failure === "提交断线") throw new Error("test lost reply");
+    return Response.json({ data: [{ b64_json: png.toString("base64") }] });
+  }));
+  store.mockRejectedValue(new Error("test store unavailable"));
+  await expect(postOpenAiGptImage2AndUpload("手册配图", "test", { exactModel: "gpt-image-2.6-sunburst", strictRequest: true, size: "1024x1024", quality: "high", imageUrls: ["https://test.invalid/ref.png"] })).rejects.toMatchObject({ kind: "unknown" });
+  expect(posts).toBe(1);
+});
