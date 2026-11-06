@@ -1,7 +1,8 @@
+import { knowledgeConversationAnswerSchema } from "../../shared/knowledgeConversation";
 import {validateKnowledgePresentationPlan} from "../../shared/knowledgePresentation";
 import { KNOWLEDGE_RESEARCH_MARKER, KNOWLEDGE_RESEARCH_SCHEMA_INSTRUCTION } from "../../shared/knowledgeResearch";
 import { knowledgeWebSources, validateKnowledgeResearch, validateKnowledgeResearchResult, type KnowledgeWebSource } from "./knowledgePublicationResearch";
-import { KNOWLEDGE_DECORATION_MARKER } from "../../shared/knowledgeDecorations";
+import { KNOWLEDGE_DESIGN_MARKER, KNOWLEDGE_DECORATION_MARKER } from "../../shared/knowledgeDecorations";
 import { KNOWLEDGE_TEMPLATE_SELECTION_MARKER } from "../../shared/knowledgePublicationTemplates";
 import { createHash } from "node:crypto";
 import { getOpenRouterApiKey } from "./openrouterGptImage2";
@@ -9,7 +10,7 @@ import { getEvolinkApiKey } from "./gpt56CopywritingGateway";
 import { signGsUriV4ReadUrl } from "./gcs";
 import { GLM_STREAM_IDLE_TIMEOUT_MS, readGlmSseStream } from "./sseChatStream";
 import { knowledgeModelCapabilities, knowledgeOutputBudget, KNOWLEDGE_PUBLICATION_ROUTE_ORDER, KNOWLEDGE_PUBLICATION_ALL_ROUTES, knowledgePublicationRoutesForChannel, type KnowledgeModelChannel } from "./knowledgeModelCapabilities";
-import { knowledgeReviewSchema, validateKnowledgeReview, knowledgeConsistencySchema } from "../../shared/knowledgePublication";
+import { knowledgeReviewSchema, knowledgeDesignedReviewSchema, validateKnowledgeReview, knowledgeConsistencySchema } from "../../shared/knowledgePublication";
 import { knowledgeReadingMarkdown } from "../../shared/knowledgePublicationLayout";
 
 export const KNOWLEDGE_PUBLICATION_MODEL = "deepseek/deepseek-v4.1-flash-1017";
@@ -98,15 +99,31 @@ function validateAnswer(content: string, request: KnowledgeModelRequest, sources
     if (!("text" in p)) return [];
     try { return [JSON.parse(p.text)]; } catch { return []; }
   });
+  const conversation = inputs.find(p => p.conversation)?.conversation;
+  if (conversation) {
+    const answer = knowledgeConversationAnswerSchema.parse(parsed);
+    if (answer.requestId !== conversation.requestId) throw new Error("对话请求编号不符");
+    const ids = new Set(conversation.pageIds);
+    if (answer.supplementalImages.some(p => p.sourcePageIds.some(id => !ids.has(id)))) throw new Error("补图依据页号不符");
+    if (!conversation.reviewComplete && answer.supplementalImages.length) throw new Error("整册未整理完成，不能提前规划补图");
+    const urls = new Set(sources.map(s => s.url));
+    if (answer.sources.some(s => !urls.has(s.url))) throw new Error("对话引用不属于本次检索");
+    const links = Array.from(answer.answer.matchAll(/\[[^\]]+\]\((https?:[^)]+)\)/g)).map(m=>m[1]);
+    if (links.some(url => !answer.sources.some(s=>s.url===url))) throw new Error("对话引用不属于本次检索");
+    return answer;
+  }
   const presentation = inputs.find(p => p.presentation)?.presentation;
   if(presentation) return validateKnowledgePresentationPlan(parsed,presentation);
   const source = inputs.find(p => p.source);
   if (source) {
     // 部分通道会把请求的response_format回显到根对象；只移除这一种无业务含义的标记。
-    const candidate = parsed.type === "json_object" && parsed.kind === "knowledge_publication_v1"
+    let candidate = parsed.type === "json_object" && parsed.kind === "knowledge_publication_v1"
       ? Object.fromEntries(Object.entries(parsed).filter(([key]) => key !== "type"))
       : parsed;
-    const review = knowledgeReviewSchema.parse(candidate);
+    // 旧提示词未明确来源层级。仅空根数组没有内容可丢失；非空来源仍由严格合同拒收。
+    if (candidate.kind === "knowledge_publication_v1" && Array.isArray(candidate.sources) && candidate.sources.length === 0)
+      candidate = Object.fromEntries(Object.entries(candidate).filter(([key]) => key !== "sources"));
+    const review = (request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_DESIGN_MARKER))?knowledgeDesignedReviewSchema:knowledgeReviewSchema).parse(candidate);
     if (review.sourceDigest !== source.sourceDigest || review.pages.length !== source.source.pages.length ||
         review.pages.some((p, i) => p.id !== source.source.pages[i].id))
       throw new Error("图文页编号与本批原稿不符");
@@ -178,6 +195,7 @@ export async function invokeKnowledgePublicationRoutes(
     throw new Error("历史整理请求回执尚未闭合，保留原任务；不会再调用已停用模型");
   // 先检查并回放所有已有请求，防止扩充重试顺序后在旧成功/未知回执前重新购买。
   const existing = new Set<string>();
+  const unresolved = new Set<string>();
   const availableRoutes = request.executionChannel ? knowledgePublicationRoutesForChannel(request.executionChannel) : KNOWLEDGE_PUBLICATION_ROUTE_ORDER;
   // 搜索阶段只允许 FlashX；正文继续按已有整理路由恢复。
   const plannedRoutes = request.researchOnly ? availableRoutes.filter(route => route.id.startsWith("glm-")) : availableRoutes;
@@ -187,10 +205,12 @@ export async function invokeKnowledgePublicationRoutes(
     existing.add(target.id);
     if (receipt.requestDigest !== requestDigest) throw new Error("模型输入版本变化，不能复用旧路由回执");
     if (["pending", "unknown"].includes(receipt.state) && !await evidence.read(`${evidence.prefix}/${target.id}-response.json`))
-      throw new Error(`${target.id}请求回执尚未闭合，保留原任务，不重复提交或切换通道`);
+      unresolved.add(target.id);
   }
   const routeOrder = [
-    ...KNOWLEDGE_PUBLICATION_ALL_ROUTES.filter(target => existing.has(target.id)),
+    // 可重验的完整回包优先。未知费用记录仍保留，只允许零调用恢复已有正文。
+    ...KNOWLEDGE_PUBLICATION_ALL_ROUTES.filter(target => existing.has(target.id) && !unresolved.has(target.id)),
+    ...KNOWLEDGE_PUBLICATION_ALL_ROUTES.filter(target => unresolved.has(target.id)),
     ...plannedRoutes.filter(target => !existing.has(target.id)),
   ];
   const savedSources = await evidence.read(`${evidence.prefix}/web-sources.json`);
@@ -257,6 +277,7 @@ export async function invokeKnowledgePublicationRoutes(
       await evidence.save(key, receipt);
     }
     if (!receipt) {
+      if (unresolved.size) throw new Error("原请求回执尚未闭合，保留原任务，不重复提交或切换通道");
       assertKnowledgePaidModel(channel, model, request.researchOnly === true);
       const apiKey = deps.key(channel);
       if (!apiKey) {

@@ -1,3 +1,5 @@
+import type {EditableLayout} from "../../shared/editableLayout";
+import type {KnowledgeReview} from "../../shared/knowledgePublication";
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
 import { createHash } from "node:crypto";
 import { mkdtemp, writeFile, readFile, stat, rm, open } from "node:fs/promises";
@@ -98,8 +100,9 @@ export async function loadKnowledgePublicationExport(
   owner: number,
   documentId: string,
   generation: string,
-  overrides: Partial<typeof real> = {}
-) {
+  overrides: Partial<typeof real> = {},
+  includeSupplement = false
+): Promise<{doc:EditableLayout;review:KnowledgeReview;receipt:Awaited<ReturnType<typeof readKnowledgePublicationReview>>;prefix:string}> {
   const deps = {...real, ...overrides};
   const loaded = await deps.load(owner);
   if (loaded.generation !== generation)
@@ -151,6 +154,7 @@ export async function loadKnowledgePublicationExport(
       JSON.stringify([
         KNOWLEDGE_PUBLICATION_LAYOUT_VERSION,
         pub.infographicTemplateId,
+        pub.designMode,
         accepted,
         review,
         receipt.sourceImages,
@@ -158,13 +162,26 @@ export async function loadKnowledgePublicationExport(
     )
     .digest("hex");
   const prefix = `knowledge-publications/user-${owner}/${documentId}/exports/${digest}`;
+  if(includeSupplement&&pub.supplementDocumentId){
+    const child=loaded.library?.documents.find(d=>d.id===pub.supplementDocumentId);
+    if(child?.publication?.supplementOf?.documentId!==doc.id||child.publication.supplementDocumentId)throw Error("补充稿归属不一致，未导出混合版本");
+    const extra=await loadKnowledgePublicationExport(owner,child.id,generation,{...deps,load:async()=>loaded},false);
+    const imageCount=extra.doc.pages.filter(p=>p.imageUrl).length;
+    if(imageCount<1||imageCount>8)throw Error("补充稿图片数量必须为1至8张");
+    if(new Set([...doc.pages,...extra.doc.pages].map(p=>p.id)).size!==doc.pages.length+extra.doc.pages.length)throw Error("补充稿页号与原册重复");
+    const combinedReview={...review,pages:[...review.pages,...extra.review.pages]};
+    const combinedDoc={...doc,pages:[...doc.pages,...extra.doc.pages]};
+    const combinedReceipt={...receipt,sourceImages:[...receipt.sourceImages,...extra.receipt.sourceImages]};
+    const combinedHash=createHash("sha256").update(JSON.stringify([prefix,extra.prefix])).digest("hex");
+    return {doc:combinedDoc,review:combinedReview,receipt:combinedReceipt,prefix:`knowledge-publications/user-${owner}/${documentId}/exports/${combinedHash}`};
+  }
   return {doc,review,receipt,prefix};
 }
 export async function exportKnowledgePublication(
   owner:number,documentId:string,generation:string,overrides:Partial<typeof real>={}
 ):Promise<KnowledgePublicationExport>{
   const deps={...real,...overrides};
-  const {doc,review,receipt,prefix}=await loadKnowledgePublicationExport(owner,documentId,generation,deps);
+  const {doc,review,receipt,prefix}=await loadKnowledgePublicationExport(owner,documentId,generation,deps,true);
   const run = async () => {
     const manifest = await deps.read(`${prefix}/manifest.json`);
     if (manifest) {

@@ -1,3 +1,4 @@
+import { recordWorkerActivity } from "../services/workerActivity";
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import type { User } from "../../drizzle/schema";
 import type { GuaikeiTrendSnapshot } from "../../shared/guaikei";
@@ -60,6 +61,10 @@ export async function createContext(
     authUnavailable = error instanceof HttpError && error.statusCode >= 500;
   }
 
+  if (user && process.env.FLY_PROCESS_GROUP === "rig") {
+    await recordWorkerActivity("request");
+    opts.res.once("finish",()=>{void recordWorkerActivity("progress").catch(error=>console.error("[worker-activity] 请求收尾记录失败",error));});
+  }
   return {
     req: opts.req,
     res: opts.res,

@@ -1,3 +1,5 @@
+import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
+import KnowledgeConversationPanel from "./KnowledgeConversationPanel";
 import { completedKnowledgeBatches, knowledgeCompletedPrefix, runKnowledgeParallelBatches } from "@shared/knowledgePublicationParallel";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { pollJobUntilTerminal } from "@/lib/jobs";
@@ -37,6 +39,7 @@ export default function KnowledgePublicationPanel({
   preauthorizedCredits,
   waitForImages,
   onPagination,
+  onSupplement,
 }: {
   doc: EditableLayout;
   commit: (doc: EditableLayout) => Promise<Saved>;
@@ -46,6 +49,7 @@ export default function KnowledgePublicationPanel({
   autoStartToken?: number;
   preauthorizedCredits?: number;
   waitForImages?: (ids: string[]) => Promise<void>;
+  onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>;
   onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
 }) {
   const utils = trpc.useUtils();
@@ -94,7 +98,7 @@ export default function KnowledgePublicationPanel({
   }, [doc.id]);
   const paginationVersion = (value: EditableLayout) => JSON.stringify([
     value.id, value.title, value.aspect, value.theme, value.fontSize, value.pages,
-    value.publication?.manuscript, value.publication?.infographicTemplateId, value.publication?.review,
+    value.publication?.manuscript, value.publication?.infographicTemplateId, value.publication?.designMode, value.publication?.review,
   ]);
   const currentPaginationVersion = paginationVersion(doc);
   useEffect(() => {
@@ -461,6 +465,12 @@ export default function KnowledgePublicationPanel({
           整套 {pub.source.pages.length} 章内容、{pub.source.pages.filter(p => p.imageUrl).length} 张原图；按原顺序处理全部正文，手册按内容自动分页。
         </p>
       </div>
+      <label className="block text-sm">手册设计
+        <select aria-label="手册设计" value={pub.designMode||"model"} disabled={busy} className="ml-2 rounded bg-[#f9f6ee] p-2 text-[#243a35]" onChange={e=>{
+          setFiles(null);setPptxFile(null);onChange({...doc,publication:{...pub,designMode:e.target.value==="content"?"content":undefined},updatedAt:new Date().toISOString()});
+        }}><option value="model">采用顾问设计</option><option value="content">按内容重排配色与纹样</option></select>
+        <p className="mt-2 text-xs text-[#c0cabb]">保留图片和完整正文，按章节内容搭配配色、版式、表格、边框与纹样；续页使用简洁页眉。</p>
+      </label>
       <label className="block text-sm">
         阅读模板
         <select aria-label="阅读模板" className="ml-3 max-w-full rounded-lg bg-[#24382e] p-2"
@@ -474,9 +484,9 @@ export default function KnowledgePublicationPanel({
           {pub.infographicTemplateId && !knowledgePublicationTemplates.some(t => t.id === pub.infographicTemplateId) && <option value={pub.infographicTemplateId} disabled>旧模板已停用，请选择第一组模板</option>}
           {knowledgePublicationTemplates.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
-        <p className="mt-2 text-xs text-[#c0cabb]">只使用第一组人景物融合模板，按内容匹配；也可手动指定整套模板。先预览，再确认生成 PDF；换模板不重新整理正文。</p>
+        <p className="mt-2 text-xs text-[#c0cabb]">基础模板保留原图；新顾问设计与内容重排会按章节调整配色和装饰。先预览，再确认生成 PDF；换样式不重新整理正文。</p>
       </label>
-      <p className="text-sm text-[#c0cabb]">{pub.source.detailLevel === "concise" ? "精华版图卡 · 顾问补充详尽说明" : pub.source.detailLevel === "full" ? "完整版图卡 · 顾问精简重复说明" : "旧稿未记录图卡版本 · 保留现有说明密度"}</p>
+      <p className="text-sm text-[#c0cabb]">{pub.source.detailLevel === "concise" ? "精华版图卡 · 顾问补充详尽说明" : pub.source.detailLevel === "full" ? "完整版图卡 · 顾问完整整理文字底稿" : "旧稿未记录图卡版本 · 保留现有说明密度"}</p>
       {review && <p className="text-sm text-[#c0cabb]">
         {selectedTemplate ? "已应用所选版式" : "已按内容匹配版式"}
         {!pub.infographicTemplateId && review.pages[index]?.reading?.templateReason ? ` · ${review.pages[index].reading!.templateReason}` : ""}
@@ -491,6 +501,7 @@ export default function KnowledgePublicationPanel({
           {error}
         </p>
       )}
+      <KnowledgeConversationPanel onSupplement={onSupplement} key={doc.id} doc={doc} busy={busy} save={save} lock={locked} />
       {!review ? (
         <div className="space-y-3">
           <p className="text-sm">

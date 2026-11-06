@@ -1,3 +1,4 @@
+import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
 import { knowledgeCardFullManuscript, knowledgeCardInputKey, knowledgeCardInputFingerprint } from "@shared/knowledgeCardSourceIdentity";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { knowledgeIllustrationRun, knowledgeIllustrationJobId, inspectKnowledgeIllustrationRetry } from "@/lib/knowledgeIllustrationRun";
@@ -8025,7 +8026,7 @@ export default function PlatformPage() {
   const knowledgeCardLayoutSourceIdRef = useRef<string>("");
   const renderedImageJobsRef = useRef<string[] | null>(null);
   const renderedSubmittedImageJobsRef = useRef<Set<string> | null>(null);
-  const renderedSettingsRef = useRef<{ distillModel: KnowledgeCardDistillModelId; billingModel: string; subjectPosition: KnowledgeCardSubjectPosition; infographicTemplateId: string | null } | null>(null);
+  const renderedSettingsRef = useRef<{ imageVariant?: ReturnType<typeof readOpenAiImageVariantPref>; distillModel: KnowledgeCardDistillModelId; billingModel: string; subjectPosition: KnowledgeCardSubjectPosition; infographicTemplateId: string | null } | null>(null);
   /** customNoteImages 的同步镜像：计数用，不在 state updater 里做副作用 */
   const customNoteImagesRef = useRef<string[]>([]);
   const recoveryBlocked = customNoteBusy || knowledgeCardPdfBusy || customNoteUploadBusy || customNoteLevelSwitching || Boolean(customNoteDistillJobId) || Boolean(customNotePreflight);
@@ -8103,7 +8104,7 @@ export default function PlatformPage() {
         renderedImageJobsRef.current = originalJobs!.slice();
         renderedImageJobsRef.current[idx] = replacementJobId;
         renderedSubmittedImageJobsRef.current?.add(replacementJobId);
-        url = await generateCustomNoteOne(text, "single_page_knowledge_card", undefined, { index: idx + 1, total }, undefined, { ...settings, billingModel: quote.billingModel }, { requestId: replacementRequestId, jobId: replacementJobId });
+        url = await generateCustomNoteOne(text, "single_page_knowledge_card", undefined, { index: idx + 1, total }, idx % 2 === 0 ? "openai" : "evolink", { ...settings, billingModel: quote.billingModel }, { requestId: replacementRequestId, jobId: replacementJobId });
       }
       if (runId !== renderRunIdRef.current) return; // 期间已重新整套生成，旧结果丢弃
       const next = customNoteImagesRef.current.slice();
@@ -8521,6 +8522,7 @@ export default function PlatformPage() {
      * 实测：确认期间改了正文/版式，付费请求发的仍是旧闭包的稿，用户看到的和买到的对不上。
      */
     snapshot?: {
+      imageVariant?: ReturnType<typeof readOpenAiImageVariantPref>;
       distillModel: typeof customNoteDistillModel;
       billingModel: string;
       subjectPosition: typeof customNoteSubjectPosition;
@@ -8559,8 +8561,8 @@ export default function PlatformPage() {
             confirmedPageCredits: snapshot ? knowledgeCardCreditsForPageIndex(notePage?.index ?? 1, snapshot.billingModel) : undefined,
             subjectPosition: snapshot?.subjectPosition ?? customNoteSubjectPosition,
             ...(imageProvider ? { imageProvider } : {}),
-            // 0909：OpenAI 官方优先，档位随开关；WaveSpeed / EvoLink 由服务端按固定序兜底
-            openaiImageVariant: readOpenAiImageVariantPref(),
+            // 多页入口显式分配官方/EvoLink；未指定通道的旧入口仍使用服务端默认。
+            openaiImageVariant: snapshot?.imageVariant ?? readOpenAiImageVariantPref(),
             // 版式走独立字段进出图指令；拼进 scriptContext 会被当正文印出来
             ...((snapshot ? snapshot.infographicTemplateId : customNoteInfographicTemplateId)
               ? { infographicTemplateId: (snapshot ? snapshot.infographicTemplateId : customNoteInfographicTemplateId)! }
@@ -8633,6 +8635,7 @@ export default function PlatformPage() {
   };
 
   const handleGenerateCustomNote = async (overrides?: {
+    supplementOf?: KnowledgeSupplementSelection;
     text?: string;
     kind?: typeof customNoteKind;
     skipClearOptimize?: boolean;
@@ -8720,7 +8723,7 @@ export default function PlatformPage() {
           setCustomNoteUploadStatus(null);
           setCustomNoteDistillPhase("ready");
           await new Promise<void>((r) => requestAnimationFrame(() => r()));
-        } else if (customNoteDistillPhase !== "ready" && distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
+        } else if (!overrides?.supplementOf && customNoteDistillPhase !== "ready" && distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
           /**
            * 纯文本长文（本轮尚未提炼过；上传路径已提炼的稿子直接进出图确认，不二次提炼、不二次收费、不丢〔参考原页〕标记）：
            * 先把「提炼 vs 直接出图」的账摆给用户看。
@@ -8772,6 +8775,7 @@ export default function PlatformPage() {
         const plan = planKnowledgeCardPages(distilled, customNoteDistillModel);
         const pages = plan.pages.length ? plan.pages : [distilled];
         const total = pages.length;
+        if(overrides?.supplementOf&&total>8)throw new Error("补充图卡实际分页超过8页，未提交生成");
         const qLabel = "4K";
         const priceQuote = await trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch({ markdown: distilled, distillModel: customNoteDistillModel });
         if (priceQuote.pageCount !== total) throw new Error("报价页数与当前稿件不一致，请重新确认");
@@ -8783,6 +8787,7 @@ export default function PlatformPage() {
          */
         const confirmRevision = customNoteRevisionRef.current;
         const pendingSnapshot = {
+          imageVariant: readOpenAiImageVariantPref(),
           distilled,
           revision: confirmRevision,
           distillModel: customNoteDistillModel,
@@ -8812,7 +8817,7 @@ export default function PlatformPage() {
               detailLevel: pendingSnapshot.detailLevel, distillModel: pendingSnapshot.distillModel,
               infographicTemplateId: pendingSnapshot.infographicTemplateId, imageJobIds,
             });
-            const publicationQuote = await studio.prepare(synchronizedSource, illustrationRun.wait);
+            const publicationQuote = await studio.prepare(synchronizedSource, illustrationRun.wait,overrides?.supplementOf);
             return { pageRequestIds, imageJobIds, illustrationRun, publicationQuote };
           } catch (error) {
             pageRequestIds.forEach(id => knowledgeCardPageTasks.finish(id));
@@ -8848,6 +8853,7 @@ export default function PlatformPage() {
         try { await studio.start(publicationQuote.documentId, publicationQuote.maxCredits); }
         catch (error) { pageRequestIds.forEach(id => knowledgeCardPageTasks.finish(id)); throw error; }
         const renderSnapshot = {
+          imageVariant: pendingSnapshot.imageVariant,
           distillModel: pendingSnapshot.distillModel,
           billingModel: pendingSnapshot.billingModel,
           subjectPosition: pendingSnapshot.subjectPosition,
@@ -8855,8 +8861,8 @@ export default function PlatformPage() {
         };
         toast.success(`开始出图 · ${total} 页 · ${qLabel} · ${KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[customNoteSubjectPosition]}`);
         /**
-         * 0908 用户令：多页并发出图。页按序轮流分给 EvoLink（奇数页）与 OpenAI 官方（偶数页）同时打，
-         * 每家 2 路，共 4 路；某页首发失败由服务端自动换另一家。结果按页序回填，任一页失败整体报失败（已成功页保留展示）。
+         * 官方与 EvoLink 同时首发，各两个 worker，共四路；空闲 worker 领取下一页。
+         * 每页只发一次，明确失败由服务端同型号回落，结果未知保留原任务；按原页序回填。
          */
         const urls: (string | null)[] = Array.from({ length: total }, () => null);
         let done = 0;
@@ -8888,7 +8894,7 @@ export default function PlatformPage() {
         let aborted = false;
         customNoteStopRenderRef.current = false;
         setCustomNoteRendering(true);
-        const worker = async () => {
+        const worker = async (provider: "openai" | "evolink") => {
           // 用户点「终止」同样只停发新页：在途那张跑完并计费，不制造「扣了钱没图」
           while (next < total && !aborted && !customNoteStopRenderRef.current) {
             const i = next++;
@@ -8902,7 +8908,7 @@ export default function PlatformPage() {
                 "single_page_knowledge_card",
                 undefined,
                 { index: i + 1, total },
-                undefined,
+                provider,
                 renderSnapshot,
                 { jobId: imageJobIds[i], requestId: pageRequestIds[i] },
               );
@@ -8920,7 +8926,7 @@ export default function PlatformPage() {
           }
         };
         try {
-          await Promise.all(Array.from({ length: Math.min(KNOWLEDGE_CARD_RENDER_CONCURRENCY, total) }, () => worker()));
+          await Promise.all(Array.from({ length: Math.min(KNOWLEDGE_CARD_RENDER_CONCURRENCY, total) }, (_, lane) => worker(lane % 2 === 0 ? "openai" : "evolink")));
         } finally {
           if (urls.some(url => !url)) illustrationRun.stop();
         }
@@ -13230,7 +13236,7 @@ export default function PlatformPage() {
           </div>
         ) : null}
 
-        {workbenchUserKey && <EditableLayoutStudio ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} onPagination={(doc, pagination) => {
+        {workbenchUserKey && <EditableLayoutStudio ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} onSupplement={async(supplementOf,text)=>{await handleGenerateCustomNote({text,kind:"single_page_knowledge_card",supplementOf});}} onPagination={(doc, pagination) => {
           if (doc.sourceId !== knowledgeCardLayoutSourceIdRef.current) return;
           if (!pagination) { setCustomNotePagination(null); return; }
           if (!doc.publication?.inputFingerprint || paginationFingerprint?.key !== customNotePaginationKey || doc.publication.inputFingerprint !== paginationFingerprint.hash) return;

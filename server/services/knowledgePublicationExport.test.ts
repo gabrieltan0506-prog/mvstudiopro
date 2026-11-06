@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { layoutFromSource } from "../../shared/editableLayout";
 import { knowledgeManuscript } from "../../shared/knowledgePublication";
 import { knowledgeSourceDigest } from "./knowledgePublicationAdvisor";
-import { exportKnowledgePublication } from "./knowledgePublicationExport";
+import { exportKnowledgePublication, loadKnowledgePublicationExport } from "./knowledgePublicationExport";
 function fixture() {
   const doc = layoutFromSource({
     kind: "knowledge-publication",
@@ -198,3 +198,18 @@ it('部分恢复总页数相同但分段页数变化时不复用旧分段',()=>a
    expect(result.totalPages).toBe(4);
    expect(result.imagePages).toBe(0);
  });
+
+it("补充稿分别验真后才合册，保留两册正文并拒绝未确认、错归属及递归",async()=>{
+ const parent=fixture(),extra=fixture();extra.doc.id="00000000-0000-4000-8000-000000000099";
+ const ep=extra.doc.publication!;extra.doc.pages[0].id="00000000-0000-4000-8000-000000000098";ep.source.pages[0].id=extra.doc.pages[0].id;ep.review!.pages[0].id=extra.doc.pages[0].id;
+ // 使用一张有明确SHA的测试图片；图片源读取和供应商不在此离线用例中。
+ const uri="gs://test-bucket/supplement.png";extra.doc.pages[0].imageUrl=uri;ep.source.pages[0].imageUrl=uri;
+ ep.review!.pages[0].imageStatus="consistent";ep.review!.pages[0].imageDescription="已读取的蒸发与凝结对照测试图片";ep.review!.sourceDigest=knowledgeSourceDigest(ep.source);ep.manuscript=knowledgeManuscript(ep.review!);ep.confirmedManuscript=ep.manuscript;
+ ep.supplementOf={documentId:parent.doc.id,conversationId:"00000000-0000-4000-8000-000000000097",indexes:[0]};ep.synchronizedStarted=true;parent.doc.publication!.supplementDocumentId=extra.doc.id;
+ const sourceImages=[{id:extra.doc.pages[0].id,uri,sha256:"a".repeat(64),mimeType:"image/png",width:10,height:10}];
+ const deps={...parent.deps,load:async()=>({library:{version:1 as const,owner:"7",documents:[parent.doc,extra.doc]},generation:"10",updatedAt:parent.doc.updatedAt}),review:async(_owner:number,id:string)=>id===parent.doc.id?{report:parent.doc.publication!.review!,sourceImages:[]}:{report:ep.review!,sourceImages}};
+ const result=await loadKnowledgePublicationExport(7,parent.doc.id,"10",deps,true);
+ expect(result.doc.pages.map(p=>p.id)).toEqual([parent.doc.pages[0].id,extra.doc.pages[0].id]);expect(result.review.pages).toHaveLength(2);expect(result.receipt.sourceImages).toHaveLength(1);
+ expect((await loadKnowledgePublicationExport(7,parent.doc.id,"10",deps)).doc.pages).toHaveLength(1);
+ ep.confirmedManuscript=undefined;await expect(loadKnowledgePublicationExport(7,parent.doc.id,"10",deps,true)).rejects.toThrow("确认");ep.confirmedManuscript=ep.manuscript;ep.supplementDocumentId=parent.doc.id;await expect(loadKnowledgePublicationExport(7,parent.doc.id,"10",deps,true)).rejects.toThrow("归属");
+});

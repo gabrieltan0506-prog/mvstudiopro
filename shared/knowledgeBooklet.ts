@@ -1,3 +1,4 @@
+import {knowledgeMotifSvg,knowledgeContentDesignCss,knowledgeContentDesignKey} from "./knowledgeContentDesign";
 import { resolveKnowledgeDecoration, type KnowledgeDecoration } from "./knowledgeDecorations";
 import { KNOWLEDGE_DECORATION_ART } from "./knowledgeDecorationAssets";
 import { knowledgeDecorationClass, knowledgeDecorationCss, knowledgeDividerSvg } from "./knowledgeDecorationRenderer";
@@ -6,7 +7,7 @@ import { renderLayoutBody } from "./editableLayout";
 
 export type KnowledgeBookletPage = { id: string; headline: string; body: string; imageUrl: string };
 export type KnowledgeBookletTheme = "fusion_chinese_garden" | "fusion_ink_mountains" | "fusion_coastal_lighthouse" | "fusion_glasshouse_garden" | "fusion_maple_bridge" | "fusion_snow_monastery";
-export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1105-v7-decoration-components";
+export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1106-v8-content-design";
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 export const KNOWLEDGE_BOOKLET_THEMES: Record<KnowledgeBookletTheme, { name: string; paper: string; ink: string; accent: string; line: string; mark: string }> = {
   fusion_chinese_garden: { name:"中式园林融合",paper:"#fff2df",ink:"#713e2b",accent:"#b64632",line:"#d8ac83",mark:"园" },
@@ -42,7 +43,7 @@ const splitLongText = (text: string, limit: number): string[] => {
 };
 
 /** 按原 Markdown 块排版，表格按原行顺序拆段；不总结、不校改、不增加知识。 */
-function readingUnits(pages: KnowledgeBookletPage[], decoration: KnowledgeDecoration): Unit[] {
+function readingUnits(pages: KnowledgeBookletPage[], decoration: KnowledgeDecoration, chapterOffset = 0): Unit[] {
   const lexer = new Marked();
   const result: Unit[] = [];
   for (const [index, page] of Array.from(pages.entries())) {
@@ -51,7 +52,7 @@ function readingUnits(pages: KnowledgeBookletPage[], decoration: KnowledgeDecora
     for (const token of lexer.lexer(page.body)) {
       if (token.type === "space" || token.type === "hr") continue;
       if (token.type === "heading") { heading = token.text; continue; }
-      const title = heading === lastHeading ? "" : `<div class="unit-heading"><span>${String(index + 1).padStart(2,"0")}</span><h3>${escape(heading)}</h3></div>`;
+      const title = heading === lastHeading ? "" : `<div class="unit-heading"><span>${String(chapterOffset + index + 1).padStart(2,"0")}</span><h3>${escape(heading)}</h3></div>`;
       const wrap = (html: string, kind: string) => { lastHeading = heading; result.push({ source: page.id, html: `<section class="reading-unit ${kind}" data-source-id="${escape(page.id)}" data-source-headline="${escape(page.headline)}" data-unit="${index}-${ordinal++}">${title}${html}${title ? knowledgeDividerSvg(decoration.divider) : ""}</section>` }); };
       if (token.type === "table") {
         const table = token as typeof token & {header:{text:string}[]; rows:{text:string}[][]};
@@ -91,7 +92,7 @@ function ornament(theme: KnowledgeBookletTheme) {
   return `<svg class="botanical" viewBox="0 0 600 160" fill="none" stroke="currentColor" stroke-width="1.25" aria-hidden="true">${path}</svg>`;
 }
 
-export function buildKnowledgeBookletHtml(input: { title: string; pages: KnowledgeBookletPage[]; theme?: KnowledgeBookletTheme; readingPages?: number; fragment?: boolean; decoration?: KnowledgeDecoration }) {
+export function buildKnowledgeBookletHtml(input: { title: string; pages: KnowledgeBookletPage[]; theme?: KnowledgeBookletTheme; readingPages?: number; fragment?: boolean; decoration?: KnowledgeDecoration; chapterOffset?: number }) {
   if (!input.pages.length || input.pages.some(p=>!p.body.trim())) throw new Error("请保留每张卡片的图片和完整正文");
   if (new Set(input.pages.map(p=>p.id)).size !== input.pages.length) throw new Error("知识卡页编号重复");
   if (input.pages.some(p=>p.imageUrl && !/^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$|^https:\/\//.test(p.imageUrl))) throw new Error("配图地址无效");
@@ -100,14 +101,16 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
   if (!style) throw new Error("请选择已有融合模板");
   const decoration = resolveKnowledgeDecoration(input.decoration,input.title + input.pages.map(p=>p.headline).join(" "));
   const decorationClass = knowledgeDecorationClass(decoration);
-  const units = readingUnits(input.pages,decoration);
+  const design=decoration.design;
+  const designAttribute=design?` data-content-design="${knowledgeContentDesignKey(design)}"`:"";
+  const units = readingUnits(input.pages,decoration,input.chapterOffset ?? 0);
   const desired = input.readingPages || Math.max(1,Math.ceil(input.pages.reduce((n,p)=>n+p.body.length,0)/1600));
   const ornamentHtml = ornament(theme);
   const artwork = KNOWLEDGE_DECORATION_ART[decoration.artworkId] || "";
   const run = (label: string, n: string) => `<div class="running"><span>${escape(input.title)}</span><span>${label}</span><b>${n}</b></div>`;
   const foot = (label: string) => `<footer><span>${escape(input.title)} <i>·</i> ${label}</span><span class="page-number"></span></footer>`;
-  const images = input.pages.map((p,i)=>p.imageUrl ? `<article class="folio image-folio" data-card-id="${escape(p.id)}" data-focus="${escape(p.headline)}">${run("图文原卡",String(i+1).padStart(2,"0"))}<header class="image-title"><div><p class="eyebrow">图文知识图册</p><h1>${escape(p.headline)}</h1></div></header><figure class="main-card"><img style="width:100%!important;height:100%!important;max-height:796px!important;max-width:100%!important;object-fit:contain!important" src="${escape(p.imageUrl)}" alt="${escape(p.headline)}"></figure><div class="image-caption"><span class="caption-index">${String(i+1).padStart(2,"0")}</span><p>图解与文字相互参照<span>对应说明穿插于图卡之间</span></p>${ornamentHtml}</div>${foot("图文原卡")}</article>` : "").join("");
-  const readingHeader = `<header class="reading-title"><div><p class="eyebrow">图文对照 <span>／</span> 知识阅读</p><h2>${escape(input.title)}</h2><p class="reading-subtitle">${input.pages.map((p,i)=>`${String(i+1).padStart(2,"0")} ${escape(p.headline)}`).join("　·　")}</p></div><div class="art-window" aria-hidden="true"><img alt="" style="width:1200px!important;max-width:none!important;height:675px!important;max-height:none!important;object-fit:fill!important">${ornamentHtml}</div></header>`;
+  const images = input.pages.map((p,i)=>p.imageUrl ? `<article class="folio image-folio" data-card-id="${escape(p.id)}" data-focus="${escape(p.headline)}">${run("图文原卡",String((input.chapterOffset ?? 0)+i+1).padStart(2,"0"))}<header class="image-title"><div><p class="eyebrow">图文知识图册</p><h1>${escape(p.headline)}</h1></div></header><figure class="main-card"><img style="width:100%!important;height:100%!important;max-height:796px!important;max-width:100%!important;object-fit:contain!important" src="${escape(p.imageUrl)}" alt="${escape(p.headline)}"></figure><div class="image-caption"><span class="caption-index">${String((input.chapterOffset ?? 0)+i+1).padStart(2,"0")}</span><p>图解与文字相互参照<span>对应说明穿插于图卡之间</span></p>${ornamentHtml}</div>${foot("图文原卡")}</article>` : "").join("");
+  const readingHeader = `<header class="reading-title"><div><p class="eyebrow">图文对照 <span>／</span> 知识阅读</p><h2>${escape(input.title)}</h2><p class="reading-subtitle">${input.pages.map((p,i)=>`${String((input.chapterOffset ?? 0)+i+1).padStart(2,"0")} ${escape(p.headline)}`).join("　·　")}</p></div><div class="art-window" aria-hidden="true"><img alt="" style="width:1200px!important;max-width:none!important;height:675px!important;max-height:none!important;object-fit:fill!important">${ornamentHtml}</div>${design?knowledgeMotifSvg(design.motif):""}</header>`;
   // 同一脚本在预览和PDF环境中测量实际字体与块高，不以overflow:hidden强塞固定页数。
   const pagination = String.raw`
   (()=>{
@@ -124,7 +127,7 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
       host.replaceChildren();
       await Promise.all([...root.querySelectorAll('.main-card img,.staging img,.decoration-resource')].map(i=>i.decode()));
       const desired=Number(staging.dataset.pages);let pages=[];
-      const add=()=>{const page=template.content.firstElementChild.cloneNode(true);host.append(page);pages.push(page);return page;};
+      const add=()=>{const page=template.content.firstElementChild.cloneNode(true);host.append(page);if(pages.length)page.classList.add('reading-continuation');pages.push(page);return page;};
       const first=add(),measure=first.querySelector('.reading-column'),capacity=measure.clientHeight;
       const heights=units.map(unit=>{measure.append(unit);const height=unit.offsetHeight+16;staging.append(unit);return height;});
       const total=heights.reduce((a,b)=>a+b,0);
@@ -183,11 +186,12 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
 .reading-title{border-bottom:7px double var(--accent);background:linear-gradient(110deg,color-mix(in srgb,var(--accent) 14%,var(--paper)),transparent 70%);padding:20px 26px;border-radius:32px 0 32px 0}.reading-title h2{border-left:12px solid var(--accent);padding-left:22px}.reading-title .botanical{opacity:.85;stroke-width:3}.reading-unit{border:2px solid var(--line);border-radius:14px 0 14px 0;overflow:hidden}.unit-heading{margin:-14px -18px 14px;padding:13px 18px;background:var(--ink);color:var(--white);border:0}.unit-heading h3{color:var(--white)}.unit-heading>span{background:var(--paper);color:var(--ink);border:0}.table-unit{padding:24px 26px 22px!important;border:3px solid var(--accent)!important;box-shadow:7px 7px 0 color-mix(in srgb,var(--accent) 23%,transparent)!important}.table-unit .unit-heading{margin:-24px -26px 18px;padding:17px 26px;background:var(--accent);border:0}.table-unit:before{inset:9px;border:2px solid var(--line);border-top:0}.table-unit:after{content:"✦";position:absolute;right:14px;top:auto;bottom:12px;width:28px;height:28px;font:28px Georgia;color:var(--accent);border:0;opacity:.8}.prose-unit blockquote{border-left:7px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--paper));padding:16px 20px}.reading-folio footer{border-top:4px double var(--accent)}
 
 ${knowledgeDecorationCss(decoration)}
+${design?knowledgeContentDesignCss(design):""}
 @media screen and (max-width:1656px){[data-ready="true"] .folio{zoom:calc((100vw - 32px) / 1600px)}}
 @page{size:1600px 1200px;margin:0}@page reading{size:1600px 2240px;margin:0}.reading-folio{page:reading}@media print{[data-booklet-root]+[data-booklet-root]{break-before:page}html,body{margin:0;background:var(--paper);print-color-adjust:exact;-webkit-print-color-adjust:exact}.folio{margin:0;zoom:1!important;box-shadow:none;break-after:page;break-inside:avoid}.folio:last-child{break-after:auto}.layout-error{display:block}.staging{display:none}}
-</style></head><body data-booklet-root data-book-title="${escape(input.title)}" class="theme-${theme}" data-decoration="${decorationClass}" data-booklet-version="${KNOWLEDGE_BOOKLET_VERSION}">${images}${artwork ? `<img class="decoration-resource" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" alt="" src="${artwork}">` : ""}<div id="reading-pages"></div><template id="reading-template"><article class="folio reading-folio">${run("正文阅读","文")}${readingHeader}<div class="reading-columns"><div class="reading-column"></div><div class="reading-column"></div></div>${foot("图文对照 · 正文阅读")}</article></template><div id="reading-source" class="staging" data-pages="${desired}">${units.map(u=>u.html).join("")}</div><script>${pagination}</script></body></html>`;
+</style></head><body data-booklet-root data-book-title="${escape(input.title)}" class="theme-${theme}" data-decoration="${decorationClass}"${designAttribute} data-booklet-version="${KNOWLEDGE_BOOKLET_VERSION}">${images}${artwork ? `<img class="decoration-resource" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" alt="" src="${artwork}">` : ""}<div id="reading-pages"></div><template id="reading-template"><article class="folio reading-folio">${run("正文阅读","文")}${readingHeader}<div class="reading-columns"><div class="reading-column"></div><div class="reading-column"></div></div>${foot("图文对照 · 正文阅读")}</article></template><div id="reading-source" class="staging" data-pages="${desired}">${units.map(u=>u.html).join("")}</div><script>${pagination}</script></body></html>`;
   if (!input.fragment) return html;
   const css = html.match(/<style>([\s\S]*?)<\/style>/)![1];
   const content = html.match(/<body[^>]*>([\s\S]*)<\/body>/)![1];
-  return `<section data-booklet-root data-book-title="${escape(input.title)}" class="theme-${theme}" data-decoration="${decorationClass}" data-booklet-version="${KNOWLEDGE_BOOKLET_VERSION}"><style>${css}</style>${content}</section>`;
+  return `<section data-booklet-root data-book-title="${escape(input.title)}" class="theme-${theme}" data-decoration="${decorationClass}"${designAttribute} data-booklet-version="${KNOWLEDGE_BOOKLET_VERSION}"><style>${css}</style>${content}</section>`;
 }

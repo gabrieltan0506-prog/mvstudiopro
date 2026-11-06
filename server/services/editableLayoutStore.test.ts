@@ -57,6 +57,40 @@ function storage() {
   };
 }
 describe("完整稿件云端保存与恢复", () => {
+  it("metadata版本被并发保存替换时重读最新稿，不把下载404当作空稿", async () => {
+    const { deps } = storage();
+    await writeLayoutLibrary(7, library, "0", deps);
+    const updated = { ...library, documents: [] };
+    await writeLayoutLibrary(7, updated, "1", deps);
+    deps.read.mockClear();
+    deps.read.mockRejectedValueOnce(new Error("gcs_download_failed:404"));
+    expect(await readLayoutLibrary(7, deps)).toMatchObject({ generation: "2", library: updated });
+    expect(deps.read).toHaveBeenCalledTimes(2);
+    expect(deps.read.mock.calls[0]).toEqual(deps.read.mock.calls[1]);
+  });
+  it("持续下载404只读三次后失败，不无限重试或返回空稿", async () => {
+    const { deps } = storage();
+    deps.read.mockRejectedValue(new Error("gcs_download_failed:404"));
+    await expect(readLayoutLibrary(7, deps)).rejects.toThrow("gcs_download_failed:404");
+    expect(deps.read).toHaveBeenCalledTimes(3);
+  });
+  it("写前重读发现新版仍拒绝旧generation，不能覆盖并发保存", async () => {
+    const { deps } = storage();
+    await writeLayoutLibrary(7, library, "0", deps);
+    const updated = { ...library, documents: [] };
+    await writeLayoutLibrary(7, updated, "1", deps);
+    deps.write.mockClear();
+    deps.read.mockRejectedValueOnce(new Error("gcs_download_failed:404"));
+    await expect(writeLayoutLibrary(7, library, "1", deps)).rejects.toThrow("已变化");
+    expect(deps.write).not.toHaveBeenCalled();
+    expect((await readLayoutLibrary(7, deps)).library).toEqual(updated);
+  });
+  it.each(["gcs_download_failed:401", "gcs_download_failed:403", "gcs_download_failed:503"])("%s不能作为版本竞态吞掉", async message => {
+    const { deps } = storage();
+    deps.read.mockRejectedValue(new Error(message));
+    await expect(readLayoutLibrary(7, deps)).rejects.toThrow(message);
+    expect(deps.read).toHaveBeenCalledTimes(1);
+  });
   it("真实序列化保留内容、配图、版式和所有稿件，按账号隔离", async () => {
     const { deps } = storage();
     expect(await readLayoutLibrary(7, deps)).toMatchObject({

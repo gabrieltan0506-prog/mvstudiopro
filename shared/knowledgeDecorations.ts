@@ -18,6 +18,29 @@ export const knowledgeDecorationCatalog = {
   table: [{id:'floral-corner',label:'插画角饰表格'},{id:'double-rule',label:'双线题签表格'},{id:'plain',label:'简洁表格'}],
   interleave: [{id:'original-image',label:'完整原图穿插正文，禁止裁切图中文字'},{id:'artwork-strip',label:'主题插画穿插段落，不替代知识图'},{id:'none',label:'仅章节插画，不增加段间图'}],
 } as const;
+export const knowledgeVisualDesignSchema = z.object({
+  palette:z.enum(['ink-cinnabar','jade-paper','bronze-sand','plum-ink','slate-blue']),
+  layout:z.enum(['editorial','catalog','narrative']),
+  table:z.enum(['rules','bands','minimal']),
+  frame:z.enum(['rule','corners','none']),
+  motif:z.enum(['bamboo-seal','route-array','relation-lines','book-scroll','bronze-geometric','herb-leaf','none']),
+  reason:z.string().trim().min(8).max(600),
+}).strict();
+export type KnowledgeVisualDesign=z.infer<typeof knowledgeVisualDesignSchema>;
+export const KNOWLEDGE_DESIGN_MARKER='【内容驱动设计合同v1】';
+export const KNOWLEDGE_DESIGN_INSTRUCTIONS=`${KNOWLEDGE_DESIGN_MARKER}
+每章decoration必须增加design对象，六个字段全部必填，不接受空值或未知枚举：
+${JSON.stringify({palette:['ink-cinnabar','jade-paper','bronze-sand','plum-ink','slate-blue'],layout:['editorial','catalog','narrative'],table:['rules','bands','minimal'],frame:['rule','corners','none'],motif:['bamboo-seal','route-array','relation-lines','book-scroll','bronze-geometric','herb-leaf','none'],reason:'说明本章具体内容为何适合此组合，不能仅写美观、统一、换颜色'})}。
+先按本批所有章节的内容统筹分配，再逐章输出：战争/地理可选黛蓝朱砂、路线或阵列；制度/年代可选青铜纸色、简牍印章与规整表格；人物/关系可选关系线及舒展叙事；学术/文学可选竹青或灰紫、书卷；医药/自然可选叶脉或简牍。以上为语义参考而非固定套用，其他内容按实际含义搭配。没有匹配纹样时选none，不能用山水填空。
+禁止相邻章节重复同一非none主纹样；四章及以上至少三种设计组合；任何非none纹样全册占比不超过一半（向上取整）。不能只换颜色来逃避纹样重复。相同主题可用兼容的关系线、几何纹或留白产生区别，不为求变化搭配无关图案。续页只用简洁页眉，不重复大幅插画；表头根据表格内容采用细线、分组色带或极简，不在每个表格重复山水花纹。装饰不能压住正文、改变数字或代替知识图。完整文字、原图及事实校核必须保留。`;
+/** 新合同严格要求设计字段；旧稿只在不带新合同标记时允许缺省。 */
+export function validateKnowledgeDesignBatch(pages: {reading?:{decoration?:{design?:KnowledgeVisualDesign}}}[]) {
+ const designs=pages.map((p,i)=>{const d=p.reading?.decoration?.design;if(!d)throw Error(`第${i+1}章缺少内容驱动设计字段`);return knowledgeVisualDesignSchema.parse(d);});
+ for(let i=1;i<designs.length;i++)if(designs[i].motif!=='none'&&designs[i].motif===designs[i-1].motif)throw Error('相邻章节重复主纹样，必须按内容重新分配');
+ if(designs.length>=4&&new Set(designs.map(d=>JSON.stringify([d.palette,d.layout,d.table,d.frame,d.motif]))).size<3)throw Error('整批设计组合不足，不能整册套同一版式');
+ for(const d of designs)if(d.motif!=='none'&&designs.filter(x=>x.motif===d.motif).length>Math.ceil(designs.length/2))throw Error('单一纹样占比超过一半');
+ return designs;
+}
 export const knowledgeDecorationSchema = z.object({
   artworkId:z.enum(['shiji-watercolor','cinema-blue','cinema-autumn','cinema-rose','none']),
   header:z.enum(['illustrated','source-inset','plain']),
@@ -25,6 +48,7 @@ export const knowledgeDecorationSchema = z.object({
   table:z.enum(['floral-corner','double-rule','plain']),
   interleave:z.enum(['original-image','artwork-strip','none']),
   reason:z.string().trim().min(1).max(600),
+  design:knowledgeVisualDesignSchema.optional(),
 }).strict().superRefine((v,c)=>{
   if(v.artworkId==='none'&&(v.header==='illustrated'||v.interleave==='artwork-strip'||v.table==='floral-corner'))
     c.addIssue({code:'custom',message:'没有匹配插画时不能选择依赖插画的组件'});
@@ -32,7 +56,8 @@ export const knowledgeDecorationSchema = z.object({
 export type KnowledgeDecoration = z.infer<typeof knowledgeDecorationSchema>;
 export const KNOWLEDGE_DECORATION_MARKER='【按内容组合真实装饰组件】';
 export const KNOWLEDGE_DECORATION_INSTRUCTIONS=`${KNOWLEDGE_DECORATION_MARKER}
-每页reading必须输出decoration={artworkId,header,divider,table,interleave,reason}，按以下真实目录组合，不只是改颜色与文字表格。header可选illustrated(大幅插画页眉)、source-inset(完整原知识图小窗)、plain(无插画页眉)。选择题材匹配的插画和纹样；相机、电影胶片、西方建筑不能放进史记、医学等不相关主题。没有匹配插画选none，不编造不存在的素材，不触发新付费生成。每章选择一种主插画，纹样与原图可穿插，避免全部堆满；装饰永远不是知识证据。原图不改字、不裁掉图内信息。reason写具体内容适配理由，不写模型或后台术语。目录：${JSON.stringify(knowledgeDecorationCatalog)}`;
+每页reading必须输出decoration={artworkId,header,divider,table,interleave,reason}，按以下真实目录组合，不只是改颜色与文字表格。header可选illustrated(大幅插画页眉)、source-inset(完整原知识图小窗)、plain(无插画页眉)。选择题材匹配的插画和纹样；相机、电影胶片、西方建筑不能放进史记、医学等不相关主题。没有匹配插画选none，不编造不存在的素材，不触发新付费生成。每章选择一种主插画，纹样与原图可穿插，避免全部堆满；装饰永远不是知识证据。原图不改字、不裁掉图内信息。reason写具体内容适配理由，不写模型或后台术语。目录：${JSON.stringify(knowledgeDecorationCatalog)}
+${KNOWLEDGE_DESIGN_INSTRUCTIONS}`;
 export function resolveKnowledgeDecoration(value:unknown,text:string):KnowledgeDecoration {
   if(value!==undefined)return knowledgeDecorationSchema.parse(value);
   // 旧稿仅作明确的本地版式兼容，不冒称模型已经选择；新请求必须输出配置。

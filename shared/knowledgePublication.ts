@@ -1,3 +1,6 @@
+import { validateKnowledgeDesignBatch } from "./knowledgeDecorations";
+import {knowledgeSupplementSelectionSchema} from "./knowledgeSupplement";
+import { knowledgeConversationTurnSchema } from "./knowledgeConversation";
 import {knowledgePresentationRequestSchema,knowledgePresentationPlanSchema} from "./knowledgePresentation";
 import { knowledgeCitationSchema } from "./knowledgeResearch";
 import { z } from "zod";
@@ -10,7 +13,7 @@ export const knowledgePublicationContextSchema = z
   .object({
     documentId: z.string().uuid(),
     batchIndex: z.number().int().min(0),
-    purpose: z.literal("presentation").optional(),
+    purpose: z.enum(["presentation", "conversation"]).optional(),
     attempt: z.number().int().min(0).max(65535).default(0),
   })
   .strict();
@@ -78,6 +81,10 @@ export const knowledgeReviewSchema = z
     pages: z.array(knowledgeReviewPageSchema).min(1),
   })
   .strict();
+/** 新生成走强制设计schema，旧回执仍可用基础schema读取。 */
+export const knowledgeDesignedReviewSchema=knowledgeReviewSchema.superRefine((review,ctx)=>{
+ try{validateKnowledgeDesignBatch(review.pages);}catch(e){ctx.addIssue({code:"custom",message:e instanceof Error?e.message:"章节设计合同不合格",path:["pages"]});}
+});
 export type KnowledgeReview = z.infer<typeof knowledgeReviewSchema>;
 export const knowledgePublicationSchema = z
   .object({
@@ -88,6 +95,7 @@ export const knowledgePublicationSchema = z
     imageReplacements: z.record(z.string(), z.string()).optional(),
     requestId: z.string().uuid(),
     infographicTemplateId: z.string().max(100).optional(),
+    designMode: z.enum(["content"]).optional(),
     source: knowledgeSourceSchema,
     review: knowledgeReviewSchema.optional(),
     completedBatches: z.number().int().min(0).default(0),
@@ -100,6 +108,9 @@ export const knowledgePublicationSchema = z
       .default({}),
     manuscript: z.string(),
     confirmedManuscript: z.string().optional(),
+    conversation: z.array(knowledgeConversationTurnSchema).optional(),
+    supplementOf: knowledgeSupplementSelectionSchema.optional(),
+    supplementDocumentId: z.string().uuid().optional(),
     presentationRequest: knowledgePresentationRequestSchema.optional(),
     presentationPlan: knowledgePresentationPlanSchema.optional(),
     presentationRevision: knowledgePresentationPlanSchema.optional(),

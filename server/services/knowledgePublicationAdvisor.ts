@@ -62,6 +62,7 @@ export async function validateKnowledgePublicationAccess(
   load = loadKnowledgePublication,
   read = real.read,
 ) {
+  if(context.purpose === "conversation") return (await import("./knowledgeConversationAdvisor")).validateKnowledgeConversationAccess(owner,context,requestId);
   if(context.purpose === "presentation") return (await import("./knowledgePresentationAdvisor")).validateKnowledgePresentationAccess(owner,context,requestId);
   const document = await load(owner, context);
   if (document.publication.synchronizedStarted === false) throw new Error("这份同步草稿尚未确认生成，请回到配图入口确认后开始");
@@ -281,6 +282,7 @@ export async function reviewKnowledgePublication(
   context: KnowledgePublicationContext,
   overrides: Partial<typeof real> = {}
 ) {
+  if(context.purpose === "conversation") return (await import("./knowledgeConversationAdvisor")).reviewKnowledgeConversation(owner,context);
   if(context.purpose === "presentation") return (await import("./knowledgePresentationAdvisor")).reviewKnowledgePresentation(owner,context);
   const deps = {...real, ...overrides};
   const document = await deps.load(owner, context);

@@ -82,7 +82,7 @@ describe("补图实际入口定向回归 KH-SYNC-02", () => {
 });
 function entryContext(full: string | null = null) {
   const ctx: any = {
-    ...pagination, ...source, ...identity, ...lifecycle, console, crypto: webcrypto, TextEncoder, Set, Map, useCallback: (fn: any) => fn,
+    ...pagination, ...source, ...identity, ...lifecycle, console, crypto: webcrypto, TextEncoder, Set, Map, readOpenAiImageVariantPref:()=>"sunburst", useCallback: (fn: any) => fn,
     customNoteBusy: false, knowledgeCardInflight: [], customNoteLevelSwitching: false, customNoteKind: "single_page_knowledge_card", customNoteSelectedFileCount: 0,
     customNoteText: "# 新稿B\n\n海洋潮汐受月球引力影响。", customNotePendingFilesRef: { current: [] }, customNoteFullMarkdown: full, customNoteCompactMarkdownRef: { current: null }, customNoteDistillPhase: "idle",
     customNoteDistillModel: "deepseek-v4.1-flash-1017", customNoteDetailLevel: "concise", customNoteSubjectPosition: "left", customNoteInfographicTemplateId: null, customNoteRevisionRef: { current: 0 }, workbenchUserKey: "7",

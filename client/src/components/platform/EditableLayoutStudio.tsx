@@ -1,3 +1,4 @@
+import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { planKnowledgeCardPages } from "@shared/knowledgeCardPagination";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
@@ -29,21 +30,22 @@ const button =
 const field =
   "w-full rounded-lg border border-white/20 bg-[#201b32] p-2 text-white";
 export type EditableLayoutStudioHandle = {
-  prepare: (source: LayoutSource, waitForImages: (ids: string[]) => Promise<void>) => Promise<{ documentId: string; maxCredits: number; estimatedCredits: number }>;
+  prepare: (source: LayoutSource, waitForImages: (ids: string[]) => Promise<void>, supplementOf?: KnowledgeSupplementSelection) => Promise<{ documentId: string; maxCredits: number; estimatedCredits: number }>;
   start: (documentId: string, authorizedCredits: number) => Promise<void>;
   imageJobs: (markdown: string, model: string, template: string | null) => string[] | null;
   beginImageAttempt: (originalJobId: string, requestId: string, jobId: string) => Promise<void>;
   attachImage: (originalJobId: string, replacementJobId: string, resume: boolean) => Promise<void>;
 };
 /** 按账号恢复，条件写入防止旧会话覆盖新稿。 */
-const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void }>(function EditableLayoutStudio({
+const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null; onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void }>(function EditableLayoutStudio({
   owner,
   source,
   onPagination,
+  onSupplement,
 }: {
   owner: string;
   source: LayoutSource | null;
-  onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
+  onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
 }, ref) {
   const key = `mvstudiopro.editableLayout.v1.${owner}`;
   const [state, setState] = useState<Cache>({
@@ -218,10 +220,10 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
     return {generation:result.generation};
   };
   useImperativeHandle(ref, () => ({
-    async prepare(source, waitForImages) {
+    async prepare(source, waitForImages, supplementOf) {
       if (!ready || !cloudReady || locked.current || source.owner !== owner) throw new Error("云端稿件尚未就绪或正在整理，请稍后开始");
       const nextDoc = layoutFromSource(source);
-      if (nextDoc.publication) nextDoc.publication.synchronizedStarted = false;
+      if (nextDoc.publication) {nextDoc.publication.synchronizedStarted = false;nextDoc.publication.supplementOf=supplementOf;}
       const previous = current.current;
       const library = layoutLibrarySchema.parse({ ...previous.library, documents: [...previous.library.documents, nextDoc] });
       // 先保存完整底稿和全部图片任务身份，再允许任何收费请求。
@@ -283,7 +285,10 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       const pending = preparedRun.current;
       if (!pending || pending.documentId !== documentId) throw new Error("同步稿件已变化，未开始生成");
       const previous = current.current;
-      const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === documentId ? { ...doc, publication: { ...doc.publication!, synchronizedStarted: true } } : doc) });
+      const child=previous.library.documents.find(d=>d.id===documentId),parentId=child?.publication?.supplementOf?.documentId;
+      const parent=previous.library.documents.find(d=>d.id===parentId);
+      if(parentId&&(!parent?.publication||parent.publication.supplementDocumentId&&parent.publication.supplementDocumentId!==documentId))throw Error("本册已有补图批次，请恢复原补充稿");
+      const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === documentId ? { ...doc, publication: { ...doc.publication!, synchronizedStarted: true } } : doc.id===parentId?{...doc,publication:{...doc.publication!,supplementDocumentId:documentId}}:doc) });
       const saved = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
       install({ library, generation: saved.generation, dirty: false, activeId: documentId });
       setSynchronizedRun({ ...pending, authorizedCredits });
@@ -368,7 +373,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       const incoming = library.documents.map(d => ({
         ...d,
         id: crypto.randomUUID(),
-        ...(d.publication ? {publication:{...d.publication,requestId:crypto.randomUUID(),completedBatches:0,parallel:undefined,attempts:{},review:undefined,confirmedManuscript:undefined}} : {}),
+        ...(d.publication ? {publication:{...d.publication,requestId:crypto.randomUUID(),conversation:undefined,supplementOf:undefined,supplementDocumentId:undefined,completedBatches:0,parallel:undefined,attempts:{},review:undefined,confirmedManuscript:undefined}} : {}),
       }));
       const merged = layoutLibrarySchema.parse({
         ...current.current.library,
@@ -493,7 +498,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
                 </select>
               </label>
               {doc.publication ? <KnowledgePublicationPanel key={doc.id} doc={doc} commit={commitPublication}
-                onChange={next=>update(next)} onPagination={onPagination} onBusy={value=>{locked.current=value;setBusy(value);}} autoStart={doc.id===autoPublicationId} autoStartToken={autoStartToken}
+                onChange={next=>update(next)} onPagination={onPagination} onSupplement={onSupplement} onBusy={value=>{locked.current=value;setBusy(value);}} autoStart={doc.id===autoPublicationId} autoStartToken={autoStartToken}
                 preauthorizedCredits={synchronizedRun?.documentId === doc.id ? synchronizedRun.authorizedCredits : undefined}
                 waitForImages={synchronizedRun?.documentId === doc.id ? synchronizedRun.waitForImages : undefined}/>:<>
               <div className="grid gap-5 lg:grid-cols-2">

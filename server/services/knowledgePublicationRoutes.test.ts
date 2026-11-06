@@ -477,3 +477,40 @@ it.each(['gemini-3.8-flash','gpt-5','deepseek/unknown'])('付费出口%s未获�
 it('搜索阶段不能因整理允许DeepSeek而调用DeepSeek搜索',async()=>{
  const {assertKnowledgePaidModel}=await import('./knowledgePublicationRoutes');expect(()=>assertKnowledgePaidModel('openrouter',OR_MODEL,true)).toThrow('模型未获授权');expect(()=>assertKnowledgePaidModel('evolink','glm-5.3-flashx',true)).not.toThrow();
 });
+
+describe('旧完整正文的严格零调用恢复',()=>{
+ it('只归一化空根sources并保留逐页来源和正文',async()=>{
+  const f=make(),answer={...f.report,sources:[]};
+  f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL,answer));
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  const adopted=JSON.parse(out.candidates[0].content.parts[0].text);
+  expect(adopted.sources).toBeUndefined();expect(adopted.pages).toHaveLength(1);
+  expect(adopted.pages[0].body).toContain('液态变气态');expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(f.storage.get('test/0/route-openrouter.json').response.text).choices[0].message.content).toContain('"sources":[]');
+ });
+ it.each([{sources:[{url:'https://example.org/real',title:'非空来源'}]},{sources:'错误类型'},{sources:[],unexpected:true}])('不丢弃非空来源或其他未知业务字段 %j',async extra=>{
+  const f=make();f.deps.fetch.mockImplementation(async(_url?:unknown,init?:RequestInit)=>f.response(JSON.parse(String(init?.body)).model,{...f.report,...extra}));
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('输出合同不符');
+  expect(f.storage.has('test/0/accepted.json')).toBe(false);
+ });
+ it('后跳unknown保留不动，已有完整合格响应可零调用恢复',async()=>{
+  const f=make();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
+  const first=f.storage.get('test/0/route-openrouter.json');
+  f.storage.set('test/0/route-openrouter.json',{...first,state:'failed',reason:'历史解析失败',response:{...first.response,text:await f.response(OR_MODEL,{...f.report,sources:[]}).text()}});
+  const unknown={...first,route:'evolink-retry-1',model:EVO_MODEL,state:'unknown',response:undefined};
+  f.storage.set('test/0/route-evolink-retry-1.json',unknown);f.storage.delete('test/0/accepted.json');f.deps.fetch.mockClear();
+  expect((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).status).toBe(200);
+  expect(f.deps.fetch).not.toHaveBeenCalled();expect(f.storage.get('test/0/route-evolink-retry-1.json')).toEqual(unknown);
+  expect(f.storage.get('test/0/route-openrouter.json').priorFailureReason).toBe('历史解析失败');
+ });
+ it('旧完整响应仍无效且后跳unknown时不能购买下一跳',async()=>{
+  const f=make();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);const first=f.storage.get('test/0/route-openrouter.json');
+  f.storage.set('test/0/route-openrouter.json',{...first,response:{...first.response,text:await f.response(OR_MODEL,{...f.report,pages:[]}).text()}});
+  f.storage.set('test/0/route-evolink-retry-1.json',{...first,state:'pending',response:undefined});f.deps.fetch.mockClear();
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('回执尚未闭合');expect(f.deps.fetch).not.toHaveBeenCalled();
+ });
+ it('新提示明确逐页sources与根对象字段',async()=>{
+  const {KNOWLEDGE_RESEARCH_INSTRUCTIONS}=await import('../../shared/knowledgeResearch');
+  expect(KNOWLEDGE_RESEARCH_INSTRUCTIONS).toContain('pages[i]对象内');expect(KNOWLEDGE_RESEARCH_INSTRUCTIONS).toContain('禁止在根对象输出sources');
+ });
+});
