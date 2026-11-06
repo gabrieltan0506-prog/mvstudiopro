@@ -1,3 +1,5 @@
+import { KnowledgeReadingLive } from "@/components/platform/KnowledgeReadingLive";
+import type { ReadingDraft } from "@/lib/knowledgeReadingPreparation";
 import { createKnowledgeReadingController } from "@/lib/knowledgeReadingPreparation";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
 import type { KnowledgeReadingProgress } from "@shared/knowledgeReadingPreparation";
@@ -3244,11 +3246,12 @@ export default function PlatformPage() {
   const readingControllerRef = useRef<ReturnType<typeof createKnowledgeReadingController> | null>(null);
   const readingFullMarkdownRef = useRef("");
   const [readingAdvisorStatus, setReadingAdvisorStatus] = useState("");
+  const [readingAdvisorDrafts, setReadingAdvisorDrafts] = useState<ReadingDraft[]>([]);
   const customNoteRevisionRef = useRef(0);
   const bumpCustomNoteRevision = () => {
     customNoteRevisionRef.current += 1;
     readingControllerRef.current?.stop(); readingControllerRef.current=null;
-    readingFullMarkdownRef.current=""; setReadingAdvisorStatus("");
+    readingFullMarkdownRef.current=""; setReadingAdvisorStatus(""); setReadingAdvisorDrafts([]);
     return customNoteRevisionRef.current;
   };
   /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖 or 深度优化文案（自定義文案專用） */
@@ -8363,7 +8366,7 @@ export default function PlatformPage() {
     readingControllerRef.current?.stop();
     const controller = createKnowledgeReadingController({
       state: jobId => trpcUtils.editableLayout.readingPreparation.fetch({jobId}),
-      confirm: async state => state.maxCredits === 0 || window.confirm(`读档将同步让创作顾问整理 ${state.batches} 组知识和页面结构，预计 ${state.estimatedCredits} 积分，最多 ${state.maxCredits} 积分。已有结果会交给后续图文顾问复用；出图与末尾核对另按确认报价。是否开始同步整理？`),
+      confirm: async state => state.maxCredits === 0 || window.confirm(`读档将同步让创作顾问整理当前已读取的原文和页面结构，预计 ${state.estimatedCredits} 积分，最多 ${state.maxCredits} 积分。已有结果会交给后续图文顾问复用；出图与末尾核对另按确认报价。是否开始同步整理？`),
       execute: async (link,index,requestId,paidUnit) => {
         try {
           return await streamManhuaAdvisor({question:"读档期间同步整理知识与页面结构",rawQuestion:"读档期间同步整理知识与页面结构",requestId,knowledgePublicationContext:{documentId:link.documentId,readingJobId:link.jobId,purpose:"reading",batchIndex:index,attempt:0},confirmPaid:true,confirmedCredits:paidUnit},()=>undefined);
@@ -8380,9 +8383,11 @@ export default function PlatformPage() {
         }
       },
       progress: setReadingAdvisorStatus,
+      content: setReadingAdvisorDrafts,
     });
     readingControllerRef.current=controller;
-    setReadingAdvisorStatus("读档顾问等待首组稳定内容…");
+    setReadingAdvisorDrafts([]);
+    setReadingAdvisorStatus("读档顾问已接入：正在读取原文，可用内容读出后自动整理…");
     return controller;
   };
 
@@ -15757,7 +15762,7 @@ export default function PlatformPage() {
                     onConfirm={() => closeKnowledgeCardPreflight(true)}
                     onCancel={() => closeKnowledgeCardPreflight(false)}
                   />
-                  {readingAdvisorStatus && <p role="status" className="w-full text-xs text-[#c9c0e6]">{readingAdvisorStatus}</p>}
+                  <KnowledgeReadingLive status={readingAdvisorStatus} drafts={readingAdvisorDrafts} />
                   <KnowledgeCardProgress
                     state={customNoteProgress}
                     onCancel={customNoteDistillJobId || customNoteRendering ? cancelCustomNoteDistill : undefined}

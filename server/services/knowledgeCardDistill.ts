@@ -418,6 +418,7 @@ export async function extractKnowledgeCardUploads(
     abortSignal?: AbortSignal;
     selectPages?: (sheets: KnowledgeCardContactSheet[], pageCount: number) => Promise<KnowledgeCardPageSelection[]>;
     onProgress?: (p: KnowledgeCardExtractProgress) => void | Promise<void>;
+    onReadingSource?: (sourceKey: string, parts: string[]) => Promise<void>;
     /** EPUB 一转完就回调（后面提炼失败也能下载转好的 PDF） */
     onConvertedPdf?: (all: KnowledgeCardConvertedPdf[]) => void | Promise<void>;
   } = {},
@@ -501,6 +502,10 @@ export async function extractKnowledgeCardUploads(
         fileName: name,
         userId: options.userId!,
         selectPages: options.selectPages!,
+        onTextReady: async document => {
+          const text = document.pages.map(p => p.text).filter(Boolean).join("\n\n").trim();
+          if (text) await options.onReadingSource?.(`file-${fileIndex}:${document.docKey}`, splitSourceTextForDistill(text, 6000));
+        },
         onProgress: async (stage, done, total) => {
           const mapped = stage === "text" ? "reading" : stage === "thumbs" ? "reading" : stage === "select" ? "selecting" : "rendering";
           await report(mapped, done, total);
@@ -529,6 +534,7 @@ export async function extractKnowledgeCardUploads(
     });
     if (extracted.text.trim()) {
       const part = `【文件·${name}】\n${extracted.text.trim()}`;
+      await options.onReadingSource?.(`file-${fileIndex}`, splitSourceTextForDistill(part, 6000));
       docParts.push(part);
       nonPageParts.push(part);
       methods.push(`${name}:${extracted.method}`);
@@ -1852,6 +1858,7 @@ export async function prepareKnowledgeCardCopy(input: {
   onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
   onReadingPlan?: (totalChunks: number) => Promise<void>;
   onReadingChunk?: (chunk: KnowledgeReadingChunk) => Promise<void>;
+  onReadingSource?: (sourceKey: string, parts: string[]) => Promise<void>;
   onExtractProgress?: (p: KnowledgeCardExtractProgress) => void | Promise<void>;
   /** EPUB 一转完就回调，调用方写进任务进度让前端立刻出下载按钮 */
   onConvertedPdf?: (all: KnowledgeCardConvertedPdf[]) => void | Promise<void>;
@@ -1863,6 +1870,9 @@ export async function prepareKnowledgeCardCopy(input: {
   const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
   const detailLevel = resolveKnowledgeCardDetailLevel(input.detailLevel);
   const files = Array.isArray(input.files) ? input.files : [];
+  if (!files.length && !input.extracted && input.sourceText?.trim()) {
+    await input.onReadingSource?.("pasted", splitSourceTextForDistill(input.sourceText, 6000));
+  }
   const extracted: KnowledgeCardExtractResult =
     input.extracted ??
     (files.length
@@ -1871,6 +1881,7 @@ export async function prepareKnowledgeCardCopy(input: {
           userId: input.userId,
           selectPages: input.userId ? makeKnowledgeCardPageSelector(modelName, input.abortSignal) : undefined,
           onProgress: input.onExtractProgress,
+          onReadingSource: input.onReadingSource,
           onConvertedPdf: input.onConvertedPdf,
         })
       : { documentText: "", nonPageDocumentText: "", imageUrls: [], methods: [], documents: [] });

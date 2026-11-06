@@ -3824,6 +3824,7 @@ async function processPlatformJob(
         distillModel,
         detailLevel,
         userId: Number(jobUserId),
+        onReadingSource: async (key,parts) => { await readingPreparation.onSource(key,parts); await patchProgress({readingPreparation:readingPreparation.progress()}); },
         onReadingPlan: async total => { await readingPreparation.onPlan(total); await patchProgress({readingPreparation:readingPreparation.progress()}); },
         onReadingChunk: async chunk => { await readingPreparation.onChunk(chunk); await patchProgress({readingPreparation:readingPreparation.progress()}); },
         onExtractProgress: async (p) => {

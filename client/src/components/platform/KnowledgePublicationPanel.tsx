@@ -195,7 +195,7 @@ export default function KnowledgePublicationPanel({
       if (
         quote.maxCredits > (initialAuthorization ?? 0) &&
         !window.confirm(
-          `将自动整理剩余${quote.remaining}组内容，预计${quote.estimatedCredits}积分，最多${quote.maxCredits}积分。整套核对若需增加费用，会先向你确认。无需逐页修改，是否开始？`
+          `将自动整理未完成章节并核对整册内容，预计${quote.estimatedCredits}积分，最多${quote.maxCredits}积分。整套核对若需增加费用，会先向你确认。无需逐页修改，是否开始？`
         )
       )
         return;
@@ -233,7 +233,7 @@ export default function KnowledgePublicationPanel({
         setMessage(
           i >= batches.length
             ? "全部配图已检查，正在核对整套知识说明的一致性…"
-            : `正在自动审校第 ${i + 1} / ${batches.length} 批 · 已完成部分已保存`
+            : `正在整理第 ${batches[i].map(n=>n+1).join("、")} 章 · 已完成内容已保存`
         );
         const attempt = pub.attempts[String(i)] || 0;
         const response = await streamManhuaAdvisor(
@@ -256,7 +256,7 @@ export default function KnowledgePublicationPanel({
       const consume = async (i: number, response: Awaited<ReturnType<typeof streamManhuaAdvisor>>) => {
         if (!response.replayed) charged += response.creditsCharged;
         if (charged > authorizedCredits)
-          throw new Error("费用回执超出本次确认范围，已暂停后续批次");
+          throw new Error("费用回执超出本次确认范围，后续整理已暂停");
         return update(() => {
         const answer = JSON.parse(response.answer);
         if (i >= batches.length && answer.kind === "knowledge_consistency_batch_v1") {
@@ -298,7 +298,7 @@ export default function KnowledgePublicationPanel({
             result.reviewedPages.join(",") !==
               batches[i].map(n => pub.source.pages[n].id).join(",")
           )
-            throw new Error("本批审校回执页号不一致，已暂停");
+            throw new Error("整理结果与原章节不一致，已暂停");
           const completed = completedKnowledgeBatches(pub, batches.length);
           completed.add(i);
           pub = { ...pub, parallel: { channels: pub.parallel!.channels, completed: Array.from(completed).sort((a, b) => a - b) }, completedBatches: knowledgeCompletedPrefix(completed, batches.length) };
@@ -314,7 +314,7 @@ export default function KnowledgePublicationPanel({
         active: stillHere,
         assign: (i, channel) => update(() => {
           const assigned = pub.parallel!.channels[String(i)];
-          if (assigned && assigned !== channel) throw new Error("批次通道已固定，请恢复原任务");
+          if (assigned && assigned !== channel) throw new Error("原整理请求已固定，请继续原任务");
           pub = { ...pub, parallel: { ...pub.parallel!, channels: { ...pub.parallel!.channels, [i]: channel } } };
           next = { ...next, publication: pub };
         }),
@@ -324,13 +324,13 @@ export default function KnowledgePublicationPanel({
       });
       if (failures.length) throw failures[0].error;
       if (!stillHere()) return;
-      if (completedKnowledgeBatches(pub, batches.length).size !== batches.length) throw new Error("仍有未完成批次，已完成内容已保存");
+      if (completedKnowledgeBatches(pub, batches.length).size !== batches.length) throw new Error("仍有未完成章节，已完成内容已保存");
       for (let i = Math.max(batches.length, pub.completedBatches); i < total; i++) {
         if (!stillHere()) return;
         if (i === batches.length && !quote.consistencyKnown) {
           const updated = await utils.editableLayout.publicationQuote.fetch({ documentId: next.id });
           const extra = Math.max(0, charged + updated.maxCredits - authorizedCredits);
-          if (extra > 0 && !window.confirm(`内容已整理保存。整套核对还需处理${updated.remaining}组，最多新增${extra}积分，是否继续？`)) return;
+          if (extra > 0 && !window.confirm(`内容已整理保存。整册核对尚未结束，最多新增${extra}积分，是否继续？`)) return;
           authorizedCredits += extra;
           quote = updated;
           total = updated.batches;
@@ -480,7 +480,10 @@ export default function KnowledgePublicationPanel({
   const pub = doc.publication!,
     review = pub.layoutConversationId ? layoutView?.review ?? pub.review : pub.review;
   const reviewBatchCount = knowledgeReviewBatches(pub.source).length;
-  const completedCount = Math.max(pub.completedBatches, completedKnowledgeBatches(pub, reviewBatchCount).size);
+  const completedGroups = completedKnowledgeBatches(pub, reviewBatchCount);
+  const chapterBatches = knowledgeReviewBatches(pub.source);
+  const completedCount = chapterBatches.filter((_,i)=>completedGroups.has(i)).reduce((n,pages)=>n+pages.length,0);
+  const pendingChapters = chapterBatches.flatMap((pages,i)=>completedGroups.has(i)?[]:pages.map(n=>n+1));
   const displayedPlan=pub.presentationRevision??pub.presentationPlan;
   const capacityIssues=displayedPlan?knowledgePresentationCapacityIssues(displayedPlan):[];
   const draftIssues=planDraft?knowledgePresentationCapacityIssues(planDraft):[];
@@ -601,8 +604,9 @@ export default function KnowledgePublicationPanel({
       {!review ? (
         <div className="space-y-3">
           <p className="text-sm">
-            {pub.source.pages.length} 章内容 · 已完成 {completedCount}{" "}
-            批。原稿与配图保留，刷新后可以继续。
+            已完成 {completedCount}/{pub.source.pages.length} 章。原稿与配图已保留。
+            {pendingChapters.length>0 && <span>第 {pendingChapters.join("、")} 章{error ? "尚未成功，已完成章节不会重做。" : "正在等待或整理。"}</span>}
+            {completedCount===pub.source.pages.length && <span>正在核对整册内容。</span>}
           </p>
           <button
             className={button}
@@ -612,7 +616,7 @@ export default function KnowledgePublicationPanel({
             {busy
               ? "正在自动处理…"
               : terminal
-                ? "仅重试失败批次并继续"
+                ? "仅恢复失败章节并继续"
                 : completedCount
                   ? "继续自动审校"
                   : "开始自动审校"}

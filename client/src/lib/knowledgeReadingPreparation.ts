@@ -1,8 +1,10 @@
 import { knowledgeBatchRequestId } from "@shared/knowledgePublication";
 import type { KnowledgeReadingPreparation, KnowledgeReadingProgress } from "@shared/knowledgeReadingPreparation";
 
+export type ReadingDraft = {index:number;pages:Array<{headline:string;body:string}>};
 export type ReadingPreparationState = KnowledgeReadingPreparation & {
   status: string; ready: number[]; completed: number[]; failed: number[];
+  drafts?: ReadingDraft[];
   paidUnit: number; maxCredits: number; estimatedCredits: number;
 };
 /** 与读档轮询解耦的两通道队列；每个稳定请求只发一次，未知结果仅查询原任务。 */
@@ -11,10 +13,11 @@ export function createKnowledgeReadingController(deps: {
   confirm: (state: ReadingPreparationState) => Promise<boolean>;
   execute: (link: KnowledgeReadingPreparation, index: number, requestId: string, paidUnit: number) => Promise<{creditsCharged:number;replayed?:boolean}>;
   progress: (message: string) => void;
+  content?: (drafts: ReadingDraft[]) => void;
 }) {
   let link: KnowledgeReadingPreparation | undefined, state: ReadingPreparationState | undefined;
   let accepted: boolean | undefined, stopped = false, failure: Error | undefined, checking: Promise<void> | undefined;
-  let authorized = 0, charged = 0;
+  let authorized = 0, charged = 0, authorizedBatches = 0;
   const completed = new Set<number>(), running = new Map<number,Promise<void>>();
   let latestSignature = "";
   const pump = () => {
@@ -22,6 +25,7 @@ export function createKnowledgeReadingController(deps: {
     for(const index of state.ready) {
       if(running.size>=2)break;
       if(completed.has(index)||running.has(index))continue;
+      deps.progress("读档顾问正在整理已读取的内容，整理结果将自动显示在下方…");
       const requestId=knowledgeBatchRequestId(link.documentId,index,0);
       const work=(async()=>{
         try {
@@ -29,7 +33,11 @@ export function createKnowledgeReadingController(deps: {
           if(!result.replayed)charged+=result.creditsCharged;
           if(charged>authorized)throw Error("读档顾问费用超出确认范围，已停止后续请求");
           completed.add(index);
-          if(!stopped)deps.progress(`读档顾问已整理 ${completed.size}/${link!.batches} 组，正在与读档同步工作`);
+          if(!stopped) {
+            try { const latest=await deps.state(link!.jobId); if(!stopped)deps.content?.(latest.drafts||[]); }
+            catch { if(!stopped)deps.progress("已保存整理结果，内容暂未载入；不会重复购买，请保留当前页面"); }
+          }
+          if(!stopped)deps.progress("读档顾问已有整理结果，内容已保存并显示在下方；后续继续自动处理");
         }catch(e){failure=e instanceof Error?e:new Error(String(e));if(!stopped)deps.progress(`读档顾问暂停：${failure.message}。原读档继续，已完成工作保留`);}
         finally{running.delete(index);pump();}
       })();
@@ -46,7 +54,11 @@ export function createKnowledgeReadingController(deps: {
       state=await deps.state(value.jobId);
       if(stopped)return;
       link={jobId:state.jobId,documentId:state.documentId,batches:state.batches};
-      if(accepted===undefined){authorized=state.maxCredits;accepted=await deps.confirm(state);}
+      if(accepted===undefined || (accepted && state.batches>authorizedBatches)) {
+        accepted=await deps.confirm(state);
+        if(accepted){authorized=Math.max(authorized,charged+state.maxCredits);authorizedBatches=state.batches;}
+      }
+      deps.content?.(state.drafts||[]);
       if(stopped)return;
       state.completed.forEach(i=>completed.add(i));
       if(state.failed.length)failure=Error("部分原文没有读取成功，不能把缺段资料当完整稿交给顾问");
