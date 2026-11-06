@@ -1,3 +1,4 @@
+import { completedKnowledgeBatches, knowledgeCompletedPrefix, runKnowledgeParallelBatches } from "@shared/knowledgePublicationParallel";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { pollJobUntilTerminal } from "@/lib/jobs";
 import {knowledgePresentationRangeSchema,knowledgePresentationPlanSchema,knowledgePresentationCapacityIssues,assertKnowledgePresentationCapacity,validateKnowledgePresentationRevision,type KnowledgePresentationPlan} from "@shared/knowledgePresentation";
@@ -137,6 +138,10 @@ export default function KnowledgePublicationPanel({
         };
         next = { ...next, publication: pub };
       }
+      if (!pub.parallel) {
+        pub = { ...pub, parallel: { channels: {}, completed: Array.from(completedKnowledgeBatches(pub, batches.length)) } };
+        next = { ...next, publication: pub };
+      }
       try { await save(next); }
       catch (error) {
         if (retryFailed) { latest.current = beforeRetry; onChange(beforeRetry); }
@@ -155,16 +160,19 @@ export default function KnowledgePublicationPanel({
         return;
       let charged = 0, authorizedCredits = Math.max(quote.maxCredits, initialAuthorization ?? 0);
       total = quote.batches;
-      for (let i = pub.completedBatches; i < total; i++) {
-        if (!alive.current) return;
-        if (i === batches.length && !quote.consistencyKnown) {
-          const updated = await utils.editableLayout.publicationQuote.fetch({ documentId: next.id });
-          const extra = Math.max(0, charged + updated.maxCredits - authorizedCredits);
-          if (extra > 0 && !window.confirm(`内容已整理保存。整套核对还需处理${updated.remaining}组，最多新增${extra}积分，是否继续？`)) return;
-          authorizedCredits += extra;
-          quote = updated;
-          total = updated.batches;
-        }
+      const documentId = next.id;
+      const stillHere = () => alive.current && latest.current.id === documentId;
+      let saves = Promise.resolve();
+      const update = (change: () => void) => {
+        const saving = saves.then(async () => {
+          if (!stillHere()) throw new Error("已切换稿件，结果保留在原任务，请返回原稿恢复");
+          change();
+          await save({ ...next, updatedAt: new Date().toISOString() });
+        });
+        saves = saving;
+        return saving;
+      };
+      const execute = async (i: number) => {
         setMessage(
           i >= batches.length
             ? "全部配图已检查，正在核对整套知识说明的一致性…"
@@ -197,9 +205,13 @@ export default function KnowledgePublicationPanel({
           },
           () => undefined
         );
+        return response;
+      };
+      const consume = async (i: number, response: Awaited<ReturnType<typeof streamManhuaAdvisor>>) => {
         if (!response.replayed) charged += response.creditsCharged;
         if (charged > authorizedCredits)
           throw new Error("费用回执超出本次确认范围，已暂停后续批次");
+        return update(() => {
         const answer = JSON.parse(response.answer);
         if (i >= batches.length && answer.kind === "knowledge_consistency_batch_v1") {
           const result = knowledgeConsistencyBatchResultSchema.parse(answer);
@@ -241,11 +253,42 @@ export default function KnowledgePublicationPanel({
               batches[i].map(n => pub.source.pages[n].id).join(",")
           )
             throw new Error("本批审校回执页号不一致，已暂停");
-          pub = { ...pub, completedBatches: i + 1 };
+          const completed = completedKnowledgeBatches(pub, batches.length);
+          completed.add(i);
+          pub = { ...pub, parallel: { channels: pub.parallel!.channels, completed: Array.from(completed).sort((a, b) => a - b) }, completedBatches: knowledgeCompletedPrefix(completed, batches.length) };
           const imageUrls = new Map((result.images || []).map(image => [image.id, image.url]));
           next = { ...next, pages: next.pages.map(page => imageUrls.has(page.id) ? { ...page, imageUrl: imageUrls.get(page.id)! } : page), publication: pub };
         }
-        await save({ ...next, updatedAt: new Date().toISOString() });
+        });
+      };
+      const failures = await runKnowledgeParallelBatches({
+        count: batches.length,
+        completed: completedKnowledgeBatches(pub, batches.length),
+        channels: pub.parallel!.channels,
+        active: stillHere,
+        assign: (i, channel) => update(() => {
+          const assigned = pub.parallel!.channels[String(i)];
+          if (assigned && assigned !== channel) throw new Error("批次通道已固定，请恢复原任务");
+          pub = { ...pub, parallel: { ...pub.parallel!, channels: { ...pub.parallel!.channels, [i]: channel } } };
+          next = { ...next, publication: pub };
+        }),
+        execute: i => execute(i),
+        complete: consume,
+      });
+      if (failures.length) throw failures[0].error;
+      if (!stillHere()) return;
+      if (completedKnowledgeBatches(pub, batches.length).size !== batches.length) throw new Error("仍有未完成批次，已完成内容已保存");
+      for (let i = Math.max(batches.length, pub.completedBatches); i < total; i++) {
+        if (!stillHere()) return;
+        if (i === batches.length && !quote.consistencyKnown) {
+          const updated = await utils.editableLayout.publicationQuote.fetch({ documentId: next.id });
+          const extra = Math.max(0, charged + updated.maxCredits - authorizedCredits);
+          if (extra > 0 && !window.confirm(`内容已整理保存。整套核对还需处理${updated.remaining}组，最多新增${extra}积分，是否继续？`)) return;
+          authorizedCredits += extra;
+          quote = updated;
+          total = updated.batches;
+        }
+        await consume(i, await execute(i));
       }
       setMessage(
         "已完成整套图文审校与说明整理。可直接确认生成；手动修改是可选项。"
@@ -367,6 +410,8 @@ export default function KnowledgePublicationPanel({
   };
   const pub = doc.publication!,
     review = pub.review;
+  const reviewBatchCount = knowledgeReviewBatches(pub.source).length;
+  const completedCount = Math.max(pub.completedBatches, completedKnowledgeBatches(pub, reviewBatchCount).size);
   const displayedPlan=pub.presentationRevision??pub.presentationPlan;
   const capacityIssues=displayedPlan?knowledgePresentationCapacityIssues(displayedPlan):[];
   const draftIssues=planDraft?knowledgePresentationCapacityIssues(planDraft):[];
@@ -449,7 +494,7 @@ export default function KnowledgePublicationPanel({
       {!review ? (
         <div className="space-y-3">
           <p className="text-sm">
-            {pub.source.pages.length} 章内容 · 已完成 {pub.completedBatches}{" "}
+            {pub.source.pages.length} 章内容 · 已完成 {completedCount}{" "}
             批。原稿与配图保留，刷新后可以继续。
           </p>
           <button
@@ -461,7 +506,7 @@ export default function KnowledgePublicationPanel({
               ? "正在自动处理…"
               : terminal
                 ? "仅重试失败批次并继续"
-                : pub.completedBatches
+                : completedCount
                   ? "继续自动审校"
                   : "开始自动审校"}
           </button>

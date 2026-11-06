@@ -367,7 +367,9 @@ export async function reviewKnowledgePublication(
   for (const page of batchSource.pages)
     if (page.imageUrl && !images.has(page.imageUrl))
       images.set(page.imageUrl, await deps.image(page.imageUrl));
-  const request = buildKnowledgeReviewRequest(batchSource, digest, images);
+  // 分配保存在原稿中；旧请求恢复时 getRaw 仍以原始永久请求为准。
+  const channel = document.publication.parallel?.channels[String(context.batchIndex)];
+  const request = { ...buildKnowledgeReviewRequest(batchSource, digest, images), ...(channel ? { executionChannel: channel } : {}) };
   // 邻页作为文字上下文；全书关系另由完整事实索引统一复核。
   const before = source.pages[Math.max(0, indices[0] - 1)],
     after = source.pages[indices.at(-1)! + 1];

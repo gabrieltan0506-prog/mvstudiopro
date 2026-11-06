@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { completedKnowledgeBatches } from "../../shared/knowledgePublicationParallel";
 import { knowledgePublicationPublicError } from "../../shared/knowledgePublicationPublic";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
@@ -31,7 +32,8 @@ export const editableLayoutRouter = router({
     const doc=await loadKnowledgePublication(ctx.user.id,{documentId:input.documentId,batchIndex:0,attempt:0});
     const plan=input.purpose==="presentation"?{totalBatches:1,reviewBatches:0,consistencyKnown:true}:await knowledgePublicationWorkPlan(ctx.user.id,doc);
     const batches=plan.totalBatches;
-    const remaining=input.purpose==="presentation"?1:doc.publication.review?0:Math.max(0,batches-doc.publication.completedBatches);
+    const completed = doc.publication.completedBatches >= plan.reviewBatches ? doc.publication.completedBatches : completedKnowledgeBatches(doc.publication, plan.reviewBatches).size;
+    const remaining=input.purpose==="presentation"?1:doc.publication.review?0:Math.max(0,batches-completed);
     const exempt=ctx.user.role==="admin"||ctx.user.role==="supervisor";
     const paidUnit=resolvePlatformSkillQaPaidCredits("terra");
     const free=exempt?remaining:Math.max(0,platformSkillQaDailyFreeLimit("terra")-await countPlatformSkillQaToday(ctx.user.id,"terra",false));

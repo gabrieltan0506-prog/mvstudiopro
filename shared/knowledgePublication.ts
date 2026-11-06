@@ -91,6 +91,10 @@ export const knowledgePublicationSchema = z
     source: knowledgeSourceSchema,
     review: knowledgeReviewSchema.optional(),
     completedBatches: z.number().int().min(0).default(0),
+    parallel: z.object({
+      channels: z.record(z.string().regex(/^(0|[1-9]\d*)$/), z.enum(["openrouter", "evolink"])),
+      completed: z.array(z.number().int().min(0)),
+    }).strict().optional(),
     attempts: z
       .record(z.string(), z.number().int().min(0).max(65535))
       .default({}),
@@ -100,7 +104,15 @@ export const knowledgePublicationSchema = z
     presentationPlan: knowledgePresentationPlanSchema.optional(),
     presentationRevision: knowledgePresentationPlanSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (!value.parallel) return;
+    const count = knowledgeReviewBatches(value.source).length;
+    if (new Set(value.parallel.completed).size !== value.parallel.completed.length ||
+        value.parallel.completed.some(i => i >= count) ||
+        Object.keys(value.parallel.channels).some(i => !Number.isSafeInteger(Number(i)) || Number(i) >= count))
+      ctx.addIssue({ code: "custom", message: "并发批次编号与原稿不符" });
+  });
 export type KnowledgePublication = z.infer<typeof knowledgePublicationSchema>;
 
 export function validateKnowledgeReview(

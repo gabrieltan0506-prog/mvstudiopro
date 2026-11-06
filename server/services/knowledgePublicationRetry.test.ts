@@ -83,3 +83,18 @@ describe("KH-ROUTE-02 保存前验证真实失败和恢复边界", () => {
     await expect(validateKnowledgePublicationRetryTransition(7, before, doc)).rejects.toThrow("不能跳号");
   });
 });
+
+it('并发检索子阶段的未知回执不能通过退款后另开请求绕过',async()=>{
+ const doc=fixture();
+ const read=vi.fn(async(name:string)=>name.endsWith('/research/route-openrouter-retry-1.json')?{state:'unknown'}:null);
+ await expect(checkKnowledgePublicationRetry(7,doc,0,0,{read})).rejects.toThrow('结果尚待核实');
+});
+it('并发通道分配与乱序完成集合不能被后续保存删除或改派',async()=>{
+ const doc=fixture(),deps=storage();doc.publication!.parallel={channels:{0:'evolink'},completed:[]};
+ const library:LayoutLibrary={version:1,owner:'7',documents:[doc]};await writeLayoutLibrary(7,library,'0',deps);
+ const changed=structuredClone(library);changed.documents[0].publication!.parallel!.channels[0]='openrouter';
+ await expect(writeLayoutLibrary(7,changed,'1',deps)).rejects.toThrow('不能删除、改派');
+ const complete=structuredClone(library);complete.documents[0].publication!.parallel!.completed=[0];complete.documents[0].publication!.completedBatches=1;
+ await writeLayoutLibrary(7,complete,'1',deps);
+ await expect(writeLayoutLibrary(7,library,'2',deps)).rejects.toThrow('不能删除、改派');
+});

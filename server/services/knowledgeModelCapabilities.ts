@@ -21,8 +21,28 @@ export const KNOWLEDGE_PUBLICATION_ROUTE_ORDER = [
   { id: "glm-evolink-retry-3", channel: "evolink", model: GLM_53_FLASHX_EVOLINK_MODEL },
 ] as const;
 
+/** 新并发批次固定通道，避免两条消费者抢同一条供应商通道；每模型仍最多四次。 */
+export function knowledgePublicationRoutesForChannel(channel: KnowledgeModelChannel) {
+  return [
+    ...Array.from({ length: 4 }, (_, attempt) => ({
+      id: attempt === 0 ? channel : `${channel}-retry-${attempt}`,
+      channel,
+      model: channel === "openrouter" ? KNOWLEDGE_DEEPSEEK_OPENROUTER_MODEL : KNOWLEDGE_DEEPSEEK_EVOLINK_MODEL,
+    })),
+    ...Array.from({ length: 4 }, (_, attempt) => ({
+      id: attempt === 0 ? `glm-${channel}` : `glm-${channel}-retry-${attempt}`,
+      channel,
+      model: channel === "openrouter" ? GLM_53_FLASHX_OPENROUTER_MODEL : GLM_53_FLASHX_EVOLINK_MODEL,
+    })),
+  ];
+}
+export const KNOWLEDGE_PUBLICATION_ALL_ROUTES = Array.from(new Map([
+  ...KNOWLEDGE_PUBLICATION_ROUTE_ORDER,
+  ...knowledgePublicationRoutesForChannel("openrouter"),
+  ...knowledgePublicationRoutesForChannel("evolink"),
+].map(route => [route.id, route])).values());
 export const KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES = [
-  ...KNOWLEDGE_PUBLICATION_ROUTE_ORDER.map(route => route.id),
+  ...KNOWLEDGE_PUBLICATION_ALL_ROUTES.map(route => route.id),
   "vertex", // 只读历史未知回执，不再调用。
 ] as const;
 

@@ -287,3 +287,28 @@ describe('接受回执前闭合最终消费者合同（KH-ROUTE-01）', () => {
   expect(f.deps.fetch).toHaveBeenCalledTimes(2);
  });
 });
+
+it('并发分配的EvoLink批次固定该通道，DeepSeek四次耗尽才GLM且恢复零新调用',async()=>{
+ const f=make();f.request.executionChannel='evolink';
+ for(let i=0;i<4;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
+ f.deps.fetch.mockResolvedValueOnce(f.response('glm-5.3-flashx'));
+ const answer=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+ expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual([EVO_MODEL,EVO_MODEL,EVO_MODEL,EVO_MODEL,'glm-5.3-flashx']);
+ expect(f.deps.fetch.mock.calls.every(c=>(c as any)[0]==='https://api.evolink.ai/v1/chat/completions')).toBe(true);
+ expect(answer.gateway).toBe('glm-evolink');
+ await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(5);
+});
+it('EvoLink并发批次先保留真实检索资料再整理，恢复不重复检索或整理',async()=>{
+ const f=make();f.request.executionChannel='evolink';f.request.systemInstruction.parts.push({text:'【联网资料融入正文】'});
+ const url='https://example.org/water';const report=structuredClone(f.report) as any;
+ report.pages[0].sources=[{url,title:'真实来源'}];report.pages[0].reading.blocks[0].note='根据[真实来源]('+url+')';
+ const annotation={type:'url_citation',url_citation:{url,title:'真实来源',content:'水蒸发后形成水蒸气。'}};
+ f.deps.fetch.mockResolvedValueOnce(new Response(JSON.stringify({model:OR_MODEL,choices:[{finish_reason:'stop',message:{content:'{}',annotations:[annotation]}}],usage:{cost:0.01}}),{headers:{'Content-Type':'application/json'}}));
+ f.deps.fetch.mockResolvedValueOnce(f.response(EVO_MODEL,report));
+ const answer=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+ expect(answer.gateway).toBe('evolink');expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+ expect(f.storage.has('test/0/research/accepted.json')).toBe(true);
+ const body=JSON.parse((f.deps.fetch.mock.calls[1] as any)[1].body);
+ expect(body.messages.at(-1).content).toEqual(expect.arrayContaining([expect.objectContaining({text:expect.stringContaining('水蒸发后形成水蒸气')})]));
+ await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+});

@@ -49,13 +49,16 @@ export async function checkKnowledgePublicationRetry(
   for (const key of [`${root}/report.json`, `${root}/raw-${previousAttempt}.json`, `${prefix}/accepted.json`]) {
     if (await deps.read(key)) throw new Error("原请求已有结果，请恢复原请求，不能再次付费整理");
   }
-  for (const route of KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES) {
-    const receipt = await deps.read(`${prefix}/route-${route}.json`);
+  const researchAccepted = await deps.read(`${prefix}/research/accepted.json`);
+  for (const routePrefix of researchAccepted ? [prefix] : [prefix, `${prefix}/research`]) {
+   for (const route of KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES) {
+    const receipt = await deps.read(`${routePrefix}/route-${route}.json`);
     if (!receipt) continue;
     if (receipt.state === "unavailable" && receipt.sent !== true) continue;
     if (receipt.state === "failed" && (receipt.sent === false ||
         (Number.isInteger(receipt.response?.status) && typeof receipt.response?.text === "string"))) continue;
     throw new Error("上一次整理结果尚待核实，不能新开付费重试；原稿已保留");
+   }
   }
 }
 

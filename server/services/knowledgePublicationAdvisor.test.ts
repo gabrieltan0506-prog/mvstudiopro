@@ -52,7 +52,7 @@ const make = () => {
     }),
   });
   const deps = {
-    load: vi.fn(async () => doc),
+    load: vi.fn(async () => ({ ...doc, publication: doc.publication! })),
     image: vi.fn(async () => ({
       buffer: Buffer.from("test"),
       sha256: sha,
@@ -64,7 +64,7 @@ const make = () => {
     save: vi.fn(async (name: string, value: any) => {
       storage.set(name, structuredClone(value));
     }),
-    count: vi.fn(async () => ({ totalTokens: 500 })),
+    count: vi.fn(async () => ({ totalTokens: 500, method: "test-estimate" })),
     post: vi.fn(async () => envelope(report)),
   };
   const context = { documentId: doc.id, batchIndex: 0, attempt: 0 };
@@ -127,7 +127,7 @@ describe("知识卡实际图像输入与回执恢复", () => {
       )
     ).rejects.toThrow("尚未完成");
     expect(f.deps.post).not.toHaveBeenCalled();
-    f.deps.count.mockResolvedValueOnce({ totalTokens: 800001 });
+    f.deps.count.mockResolvedValueOnce({ totalTokens: 800001, method: "test-estimate" });
     await expect(
       reviewKnowledgePublication(7, f.context, f.deps as any)
     ).rejects.toThrow("超过");
@@ -154,4 +154,19 @@ it.each(['concise','full'] as const)('真实分批构造保留%s档位，回放�
  expect(payload.source.detailLevel).toBe(level);
  expect(request.systemInstruction.parts[0].text).toContain(level==='full'?'本套为完整版图卡':'本套为精华版图卡');
  await reviewKnowledgePublication(7,f.context,f.deps as any);expect(f.deps.post).toHaveBeenCalledTimes(1);
+});
+
+it('并发批次把权威云稿分配的通道传给真实路由，原请求恢复不改通道',async()=>{
+ const f=make();f.doc.publication!.parallel={channels:{0:'evolink'},completed:[]};
+ await reviewKnowledgePublication(7,f.context,f.deps);
+ expect((f.deps.post.mock.calls[0] as any)[0].executionChannel).toBe('evolink');
+ await reviewKnowledgePublication(7,f.context,f.deps);expect(f.deps.post).toHaveBeenCalledTimes(1);
+});
+it('旧请求加入并发调度后仍复用原永久请求，不改变已提交模型输入',async()=>{
+ const f=make();f.deps.post.mockRejectedValueOnce(Error('原通道回执待恢复'));
+ await expect(reviewKnowledgePublication(7,f.context,f.deps)).rejects.toThrow('待恢复');
+ f.doc.publication!.parallel={channels:{0:'evolink'},completed:[]};
+ await reviewKnowledgePublication(7,f.context,f.deps);
+ expect((f.deps.post.mock.calls[1] as any)[0].executionChannel).toBeUndefined();
+ expect((f.deps.post.mock.calls[1] as any)[0]).toEqual((f.deps.post.mock.calls[0] as any)[0]);
 });

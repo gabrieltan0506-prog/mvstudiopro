@@ -119,6 +119,10 @@ export async function writeLayoutLibrary(
         await validateKnowledgePresentationRetryTransition(owner,old,doc);
       }
       if (old.publication && doc.publication) {
+        const oldParallel = old.publication.parallel, parallel = doc.publication.parallel;
+        if (oldParallel && (!parallel || oldParallel.completed.some(i => !parallel.completed.includes(i)) ||
+            Object.entries(oldParallel.channels).some(([i, channel]) => parallel.channels[i] !== channel)))
+          throw new Error("已分配通道或已完成批次不能删除、改派；请恢复原任务");
         const { validateKnowledgePublicationRetryTransition } = await import("./knowledgePublicationRetry");
         await validateKnowledgePublicationRetryTransition(owner, old, doc);
       }
