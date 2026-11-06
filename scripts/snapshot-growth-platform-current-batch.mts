@@ -97,7 +97,12 @@ async function main() {
       if (!stat.isFile() || stat.size === 0) throw new Error(`growth_core_snapshot_invalid:${relativePath}`);
       const raw = await fs.readFile(sourcePath);
       const parsed = JSON.parse(raw.toString("utf8"));
-      if (relativePath === "archive-index.json" ? !Array.isArray(parsed) : !parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      const isObject = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+      // 与正式写入器和读取器兼容：旧数组或含 archiveIndex 数组的包装对象；原始字节保持不变。
+      const validSchema = relativePath === "archive-index.json"
+        ? Array.isArray(parsed) || (isObject && Array.isArray(parsed.archiveIndex))
+        : isObject;
+      if (!validSchema)
         throw new Error(`growth_core_snapshot_schema:${relativePath}`);
       const after = await fs.lstat(sourcePath);
       if (after.ino !== stat.ino || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs)

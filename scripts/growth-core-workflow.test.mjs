@@ -38,7 +38,10 @@ function prepare() {
   }
   for (const name of ["current.json", "runtime-meta.json", "history-summary.json", "weixin-channels-miner.json", "platform-current-manifest.json", "backups/growth-debug-summary.json"])
     fs.writeFileSync(path.join(source, name), JSON.stringify({ epoch: "before", platforms: {} }));
-  fs.writeFileSync(path.join(source, "archive-index.json"), "[]");
+  fs.writeFileSync(path.join(source, "archive-index.json"), JSON.stringify({
+    updatedAt: "2026-11-06T00:00:00.000Z",
+    archiveIndex: [{ platform: "bilibili", file: "archive/2026-11-04-15/bilibili.json.gz", itemCount: 1 }],
+  }, null, 2) + "\n");
   const paid=path.join(source,"paid-research/guaikei"); fs.mkdirSync(paid,{recursive:true});
   const tiktokId="11111111-1111-4111-8111-111111111111", excludedId="22222222-2222-4222-8222-222222222222";
   fs.writeFileSync(path.join(paid,"index.json"),JSON.stringify({version:1,jobs:[
@@ -142,7 +145,16 @@ test("actual backup YAML snapshots same-generation core and four authorized plat
   assert.equal(sha(bundle), finalized.bundle.sha256); assert.equal(bundle.length, finalized.bundle.bytes);
   const restored = path.join(fixture.root, "restored-core"); fs.mkdirSync(restored);
   execFileSync("tar", ["-xzf", path.join(fixture.output, "growth-restore-bundle.tar.gz"), "-C", restored]);
+  for (const file of manifest.coreFiles) {
+    const raw = fs.readFileSync(path.join(restored, file.relativePath));
+    assert.equal(raw.length, file.bytes); assert.equal(sha(raw), file.sha256);
+  }
   assert.equal(JSON.parse(fs.readFileSync(path.join(restored, "current.json"))).epoch, "snapshot-epoch");
+  const indexRaw = fs.readFileSync(path.join(fixture.source, "archive-index.json"));
+  assert.deepEqual(fs.readFileSync(path.join(restored, "archive-index.json")), indexRaw);
+  assert.equal(finalized.coreFiles.find(file => file.relativePath === "archive-index.json").sha256, sha(indexRaw));
+  assert.equal(JSON.parse(indexRaw).archiveIndex[0].itemCount, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(fixture.output, "backup-manifest.json"))).totals.archiveRuns, 1);
   assert.equal(JSON.parse(fs.readFileSync(path.join(fixture.source, "current.json"))).epoch, "after-snapshot");
   assert.equal(fs.existsSync(path.join(restored, "platforms/toutiao.json")), false);
   assert.equal(fs.existsSync(path.join(restored, "history-ledger/kuaishou.json")), false);
