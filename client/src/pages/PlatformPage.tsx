@@ -15679,7 +15679,7 @@ export default function PlatformPage() {
                   ) : customNoteKind === "optimize_custom_copy" ? (
                     <><Sparkles className="h-4 w-4" />深度优化文案（{customOptimizeCopyCost} 积分）</>
                   ) : customNoteKind === "single_page_knowledge_card" ? (
-                    <><Sparkles className="h-4 w-4" />生成图文知识手册（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 张配图 · 4K）</>
+                    <><Sparkles className="h-4 w-4 shrink-0" /><span className="text-left">生成图文知识手册<span className="mt-0.5 block text-xs font-normal">图片约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · 手册总页数：待排版 · 4K</span></span></>
                   ) : (
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
