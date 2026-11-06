@@ -253,7 +253,9 @@ export async function postEvolinkGptImage2AndUpload(
     /** 覆写 EvoLink quality；未传则用 EVOLINK_GPT_IMAGE2_QUALITY（默认 high） */
     quality?: string;
     /** 省略时保持旧 GPT Image 2；4K 放大显式传 Nano Banana Pro。 */
-    model?: typeof EVOLINK_MODEL | typeof EVOLINK_NANO_BANANA_PRO_MODEL | "gpt-image-2.5-sunburst" | "gpt-image-2.5-flare";
+    model?: typeof EVOLINK_MODEL | typeof EVOLINK_NANO_BANANA_PRO_MODEL | "gpt-image-2.5-sunburst" | "gpt-image-2.5-flare" | "gpt-image-2.6-sunburst" | "gpt-image-2.6-flare";
+    /** 提交/轮询/保存不明时保留原任务，不继续购买。 */
+    strictRequest?: boolean;
     /**
      * 比例模式下的分辨率覆写。默认 2K（封面/分镜）；
      * 自定义图文笔记（single_page_knowledge_card）传 4K。
@@ -322,12 +324,14 @@ export async function postEvolinkGptImage2AndUpload(
       appendImageFlowLog(L, `[GPT-IMAGE-2·EvoLink] 创建任务失败 · HTTP ${createRes.status} · ${msg}`);
       console.warn("[evolinkGptImage2] create failed:", createRes.status, msg);
       if (opts.captureError) opts.captureError.message = String(msg);
+      if (opts.strictRequest && createRes.status >= 500) throw new SubmitUnknownError("EvoLink创建结果尚未确认，请恢复原任务核对");
       return null;
     }
 
     const taskId = String(createJson.id || "").trim();
     if (!taskId) {
       appendImageFlowLog(L, "[GPT-IMAGE-2·EvoLink] 创建响应无 task id");
+      if (opts.strictRequest) throw new SubmitUnknownError("EvoLink创建响应缺少任务ID，请核对原请求");
       return null;
     }
     appendImageFlowLog(L, `[GPT-IMAGE-2·EvoLink] 任务已创建 · id=${taskId} · 开始轮询…`);
@@ -346,6 +350,9 @@ export async function postEvolinkGptImage2AndUpload(
     if ((e as { kind?: string } | null)?.kind === "unknown") {
       appendImageFlowLog(L, `[GPT-IMAGE-2·EvoLink] 结果未知（任务可能仍在跑）· 不回落 · ${msg}`);
       throw e;
+    }
+    if (opts.strictRequest && !msg.startsWith("EvoLink task failed:")) {
+      throw new SubmitUnknownError("EvoLink提交或保存结果尚未确认，请恢复原任务核对");
     }
     appendImageFlowLog(L, `[GPT-IMAGE-2·EvoLink] 异常 · ${msg}`);
     console.warn("[evolinkGptImage2] exception:", msg);

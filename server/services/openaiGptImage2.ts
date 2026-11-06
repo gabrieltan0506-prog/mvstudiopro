@@ -248,7 +248,7 @@ export async function postOpenAiGptImage2AndUpload(
   gcsSubdir: string,
   opts: {
     /** Internal feature contract; bypasses global model override only when explicitly supplied. */
-    exactModel?: "gpt-image-2-2026-04-21" | "gpt-image-2.5-sunburst" | "gpt-image-2.5-flare";
+    exactModel?: "gpt-image-2-2026-04-21" | "gpt-image-2.5-sunburst" | "gpt-image-2.5-flare" | "gpt-image-2.6-sunburst" | "gpt-image-2.6-flare";
     /** Ambiguous submit/upload outcomes must never be retried or refunded as known failures. */
     strictRequest?: boolean;
     persistResponse?: PersistImageResponse;
@@ -304,9 +304,14 @@ export async function postOpenAiGptImage2AndUpload(
   for (let i = 0; i < keyChain.length; i++) {
     await opts.beforeImageSubmit?.();
     const slot = keyChain[i]!;
+    // 参考图下载/垫图发生在付费提交前，失败不能误记为待对账。
+    let submitted = refs.length === 0;
     try {
       const buffer = refs.length
-        ? await postEdits(slot.key, promptTrimmed, size, quality, refs, maskUrl, model, L, opts.beforeImageSubmit, opts.persistResponse)
+        ? await postEdits(slot.key, promptTrimmed, size, quality, refs, maskUrl, model, L, async () => {
+            await opts.beforeImageSubmit?.();
+            submitted = true;
+          }, opts.persistResponse)
         : await postGenerations(slot.key, promptTrimmed, size, quality, model, opts.persistResponse);
       const publicUrl = await uploadBufferToPlatformStorage(buffer, gcsSubdir, L);
       appendImageFlowLog(
@@ -324,7 +329,7 @@ export async function postOpenAiGptImage2AndUpload(
       appendImageFlowLog(L, `[GPT-IMAGE-2·OpenAI] 异常 · 钥=${slot.slot} · ${lastMessage}`);
       console.warn("[openaiGptImage2]", slot.slot, lastMessage);
       if (opts.strictRequest) {
-        if (!/^OpenAI (?:generations|edits) HTTP 4\d\d:/.test(lastMessage)) {
+        if (submitted && !/^OpenAI (?:generations|edits) HTTP 4\d\d:/.test(lastMessage)) {
           throw Object.assign(new Error("图片提交或保存结果尚未确认，请恢复原任务核对"), { kind: "unknown" });
         }
         break;

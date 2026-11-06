@@ -1188,7 +1188,9 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   imageLane?: OpenAiImageLane | null;
   /** OpenAI 官方模型档位：flare（默认）/ sunburst；只影响官方通道 */
   openaiImageVariant?: OpenAiImageVariant | null;
-  /** Explicit advisor Flare/Sunburst comparison must not silently downgrade to image-2. */
+  /** 图文知识手册专用版本；不改变其他业务的默认模型。 */
+  imageModelVersion?: "2.6";
+  /** 显式档位不可静默降到 image-2。 */
   requireImageVariant?: boolean;
   /** 本专项固定模型，不受旧全局模型覆盖影响。 */
   exactSunburst?: boolean;
@@ -1258,7 +1260,13 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
    */
   const openrouterFallbackAllowed =
     String(process.env.GPT_IMAGE2_ALLOW_OPENROUTER_FALLBACK || "").trim() === "1";
-  const tryOpenRouter = !options.requireImageVariant && (
+  const requireExactVariant = options.requireImageVariant || options.imageModelVersion === "2.6";
+  const exactModel = options.imageModelVersion === "2.6"
+    ? (options.openaiImageVariant === "sunburst" ? "gpt-image-2.6-sunburst" : "gpt-image-2.6-flare")
+    : options.exactSunburst ? "gpt-image-2.5-sunburst"
+    : options.requireImageVariant ? (options.openaiImageVariant === "sunburst" ? "gpt-image-2.5-sunburst" : "gpt-image-2.5-flare")
+    : undefined;
+  const tryOpenRouter = !requireExactVariant && (
     providerMode === "openrouter"
       ? openrouterReady
       : providerMode !== "openai" &&
@@ -1270,7 +1278,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   /** 0910 拍板：OpenAI 官方 → EvoLink → WaveSpeed 兜底；显式 providerOverride 只换主路径。 */
   const priceOrder = resolveGptImage2ProviderOrder(providerMode);
   const providersInOrder = priceOrder.filter((p) => {
-    if (options.requireImageVariant && p === "wavespeed") return false;
+    if (requireExactVariant && p === "wavespeed") return false;
     if (providerMode === "openrouter") return false;
     if (p === "openai") return openaiReady;
     if (p === "wavespeed") return wavespeedReady;
@@ -1326,7 +1334,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     const tag = provider === "openai" ? "OpenAI" : provider === "wavespeed" ? "WaveSpeed" : "EvoLink";
     appendImageFlowLog(
       L,
-      `[单帧·${tag}] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · quality=${qualityForCall}${
+      `[单帧·${tag}] ${exactModel || "GPT-IMAGE-2"}${hasRef ? " edit" : ""} · ${options.aspectRatio} · quality=${qualityForCall}${
         options.imageLane && provider === "openai" ? ` · lane=${options.imageLane}` : ""
       }${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}${
         isPrimary
@@ -1348,8 +1356,8 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
             maskUrl: hasRef ? maskUrl : undefined,
             captureError: err,
             lane: options.imageLane ?? null,
-            exactModel: options.exactSunburst ? "gpt-image-2.5-sunburst" : options.requireImageVariant ? (options.openaiImageVariant === "sunburst" ? "gpt-image-2.5-sunburst" : "gpt-image-2.5-flare") : undefined,
-            strictRequest: options.exactSunburst || undefined,
+            exactModel: exactModel,
+            strictRequest: options.exactSunburst || options.imageModelVersion === "2.6" || undefined,
             variant: options.openaiImageVariant ?? null,
             inputFidelity: options.openaiInputFidelity ?? null,
             beforeImageSubmit: options.beforeImageSubmit,
@@ -1366,7 +1374,8 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
               captureError: err,
             })
         : postEvolinkGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
-            model: options.exactSunburst ? "gpt-image-2.5-sunburst" : options.requireImageVariant ? (options.openaiImageVariant === "sunburst" ? "gpt-image-2.5-sunburst" : "gpt-image-2.5-flare") : undefined,
+            model: exactModel,
+            strictRequest: options.imageModelVersion === "2.6" || undefined,
             aspectRatio: options.aspectRatio,
             flowLog: L,
             // EvoLink gpt-image-2.5 与官方同档位、同 quality 口径（xhigh/max 也收）
@@ -1386,7 +1395,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
        */
       const batchLane = options.imageLane === "asset" || options.imageLane === "keyart";
       // 0909：主路径是 OpenAI 官方（最贵一家）时不竞速——弃赛不取消上游，照扣照跑，再烧备胎=双花
-      const raceAllowed = !options.requireImageVariant && isPrimary && !isLast && !batchLane && provider !== "openai";
+      const raceAllowed = !requireExactVariant && isPrimary && !isLast && !batchLane && provider !== "openai";
       const url = raceAllowed
         ? await racePrimaryTimeout(run, primaryTimeoutMs, `GPT-image-2·${tag}`)
         : await run;
@@ -1651,6 +1660,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   const isStoryboard = k === "storyboard_sheet_landscape";
   const isXhs = k === "xiaohongshu_dual_note";
   const isKnowledgeCard = k === "single_page_knowledge_card";
+  const isKnowledgeHandbook = isKnowledgeCard && !options.viralCreation;
   const isGraphicPage = isKnowledgeCard && options.viralCreation === true && options.singleGraphicPage === true;
   if (!isStoryboard && !isXhs && !isKnowledgeCard) {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
@@ -1988,7 +1998,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           options.viralCreation
             ? `[爆款图片·主路径] Image 2.5 Sunburst · 官方→EvoLink · 2K · medium`
             : isKnowledgeCard
-            ? `[图文笔记·主路径] ${options.knowledgeCardImageProvider === "evolink" ? "EvoLink 2.5（4K）→ OpenAI 官方 → WaveSpeed" : options.knowledgeCardImageProvider === "wavespeed" ? "WaveSpeed（4K）→ OpenAI 官方 → EvoLink" : `OpenAI 官方 ${options.openaiImageVariant || "flare"}（${KNOWLEDGE_CARD_OPENAI_SIZE}）→ EvoLink 2.5（4K）→ WaveSpeed（4K）`} · quality=high · 16:9`
+            ? `[图文知识手册·主路径] GPT Image 2.6 ${options.openaiImageVariant || "flare"} · ${options.knowledgeCardImageProvider === "evolink" ? "EvoLink → OpenAI 官方" : "OpenAI 官方 → EvoLink"} · 4K · quality=high · 16:9`
             : `[2×4·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
         );
       }
@@ -2007,10 +2017,11 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         referenceImageUrls: refImageUrls.length ? refImageUrls : undefined,
         // 分镜/图文锁脸指令已写入 promptForPixel；勿再叠封面换人 directive
         generalImageEdit: true,
-        // 知识卡（0910 拍板，覆盖 0908/0909）：OpenAI 官方优先 → EvoLink 2.5 → WaveSpeed；一律 high + 4K，不按页数降档
+        // 图文知识手册：官方优先，同档2.6回落EvoLink；固定high/4K。
         providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "openai") : undefined,
         imageLane: isKnowledgeCard ? "asset" : undefined,
         openaiImageVariant: options.openaiImageVariant ?? null,
+        imageModelVersion: isKnowledgeHandbook ? "2.6" : undefined,
         ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
         qualityOverride: options.viralCreation ? "medium" : knowledgeCardQuality,
         evolinkResolution: options.viralCreation ? "2K" : isKnowledgeCard ? "4K" : undefined,
@@ -2039,7 +2050,8 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "openai") : undefined,
           imageLane: isKnowledgeCard ? "asset" : undefined,
           openaiImageVariant: options.openaiImageVariant ?? null,
-        ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
+          imageModelVersion: isKnowledgeHandbook ? "2.6" : undefined,
+          ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
           qualityOverride: options.viralCreation ? "medium" : knowledgeCardQuality,
           evolinkResolution: options.viralCreation ? "2K" : isKnowledgeCard ? "4K" : undefined,
           openaiSize: options.viralCreation ? (isGraphicPage ? "1152x2048" : "2048x1152") : isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
