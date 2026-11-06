@@ -82,7 +82,8 @@ case "$mode" in
     snapshot="$ROOT/backups/current-batches/$batch/directories"
     [ -d "$snapshot/$dir" ] || { echo "快照目录缺失" >&2; exit 1; }
     [ ! -L "$snapshot/$dir" ] || exit 64
-    run_monitored nice -n 15 tar -C "$snapshot" -czf - "$dir"
+    # 版本名与当前回执可共享 inode；传输包必须逐文件携带内容，恢复校验继续拒绝链接。
+    run_monitored nice -n 15 tar --hard-dereference -C "$snapshot" -czf - "$dir"
     ;;
   *)
     echo "用法: $0 {stream-file PATH BLOCK_BYTES SKIP_BLOCKS COUNT_BLOCKS|stream-directory DIR BATCH}" >&2
