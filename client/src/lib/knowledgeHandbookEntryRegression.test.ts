@@ -40,7 +40,7 @@ function retryContext(mode: string) {
     setCustomNoteBusy: (value: boolean) => { ctx.customNoteBusy = value; },
     setCustomNoteError: noop, setKnowledgeCardPdfUrl: noop, setCustomNoteProgress: noop, markInflight: noop, setCustomNoteImages: noop,
     knowledgeCardProgressFromRender: () => 0, knowledgeCardCreditsForPageIndex: () => 30,
-    trpcUtils: { mvAnalysis: { quoteKnowledgeCard: { fetch: async () => ({ billingModel: "deepseek-v4.1-flash-1017" }) } } },
+    trpcUtils: { client: { mvAnalysis: { quoteKnowledgeCardForGeneration: { mutate: async () => ({ billingModel: "deepseek-v4.1-flash-1017" }) } } } },
     window: { confirm: () => true }, knowledgeCardPageTasks: { begin: () => randomUUID(), finish: noop },
     getJob: vi.fn(async (id: string) => { if (!jobs.has(id)) throw Error("(404) Job not found"); return jobs.get(id); }),
     generateCustomNoteOne: vi.fn(async (...args: any[]) => {
@@ -92,7 +92,7 @@ function entryContext(full: string | null = null) {
     layoutStudioRef: { current: { prepare: vi.fn(async () => { throw Error("TEST_STOP_AFTER_PREPARE"); }) } },
     customNoteImagesRef: { current: [] }, customNoteStopRenderRef: { current: false }, lastShootingTechniqueBriefRef: { current: "" }, enabledPlatformSkillIds: new Set(), allowBloggerTitle: false,
     knowledgeCardPageTasks: { begin: () => randomUUID(), finish: noop },
-    trpcUtils: { mvAnalysis: { quoteKnowledgeCard: { fetch: vi.fn(async ({ markdown, distillModel }: any) => ({ ...pagination.planKnowledgeCardPages(markdown, distillModel), billingModel: distillModel })) } } },
+    trpcUtils: { client: { mvAnalysis: { quoteKnowledgeCardForGeneration: { mutate: vi.fn(async ({ markdown, distillModel }: any) => ({ ...pagination.planKnowledgeCardPages(markdown, distillModel), billingModel: distillModel })) } } } },
     mapCustomNoteError: (e: Error) => e.message, toast: { error: noop, success: noop, info: noop, message: noop },
     deriveCompactFromFull: async () => ctx.customNoteCompactMarkdownRef.current,
     generateCustomNoteOne: vi.fn(),
@@ -120,7 +120,7 @@ describe("原稿和另一入口 KH-SYNC-03/KH-PRICE-04", () => {
   it("素材入口经过统一报价和prepare，不绕过确认直接请求单图", async () => {
     const ctx = entryContext(); ctx.customNotePendingFilesRef.current = [{ fileName: "另一任务文件" }]; ctx.customNoteSelectedFileCount = 1;
     await ctx.asset("素材优化稿：月球影响潮汐。", "single_page_knowledge_card");
-    expect(ctx.trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch).toHaveBeenCalledTimes(1);
+    expect(ctx.trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate).toHaveBeenCalledTimes(1);
     expect(ctx.layoutStudioRef.current.prepare).toHaveBeenCalledTimes(1);
     expect(ctx.generateCustomNoteOne).not.toHaveBeenCalled();
     expect(ctx.layoutStudioRef.current.prepare.mock.calls[0][0].pages.every((p: any) => p.body.includes("月球影响潮汐"))).toBe(true);
@@ -244,7 +244,7 @@ describe("两档同稿只改配图 KH-SAME-MANUSCRIPT-01", () => {
     ctx.setCustomNoteText = vi.fn();
     await ctx.generate();
     expect(ctx.setCustomNoteText).not.toHaveBeenCalled();
-    expect(ctx.trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch.mock.calls[0][0].markdown).toBe(level === "concise" ? compact : full);
+    expect(ctx.trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate.mock.calls[0][0].markdown).toBe(level === "concise" ? compact : full);
     const received = ctx.layoutStudioRef.current.prepare.mock.calls[0][0];
     expect(received.body).toBe(full);
     expect(received.pages.filter((p: any) => p.knowledgeRole === "reading" || level === "full").map((p: any) => p.body).join("\n")).toContain("未配图的完整说明必须保留");
@@ -254,7 +254,7 @@ describe("两档同稿只改配图 KH-SAME-MANUSCRIPT-01", () => {
     ctx.deriveCompactFromFull = async () => { throw Error("选图失败"); };
     await ctx.generate();
     expect(ctx.customNoteText).toBe(full);
-    expect(ctx.trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch).not.toHaveBeenCalled();
+    expect(ctx.trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate).not.toHaveBeenCalled();
     expect(ctx.generateCustomNoteOne).not.toHaveBeenCalled();
   });
 });

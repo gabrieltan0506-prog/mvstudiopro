@@ -8468,6 +8468,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       return quoteKnowledgeCard(Number(ctx.user.id), input.markdown, input.distillModel);
     }),
 
+    // 长正文必须放在请求体，避免报价 GET 超过网关 URL 上限。
+    quoteKnowledgeCardForGeneration: protectedProcedure.input(z.object({
+      markdown: z.string().min(1).max(50000),
+      distillModel: z.string().max(64).optional(),
+    }).strict()).mutation(async ({ ctx, input }) => {
+      const { quoteKnowledgeCard } = await import("./services/knowledgeCardPricing");
+      return quoteKnowledgeCard(Number(ctx.user.id), input.markdown, input.distillModel);
+    }),
+
     generatePlatformCompositeSheet: protectedProcedure
       .input(
         z

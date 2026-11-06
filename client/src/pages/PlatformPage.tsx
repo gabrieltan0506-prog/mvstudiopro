@@ -8111,7 +8111,7 @@ export default function PlatformPage() {
       }
       const reusedOriginal = Boolean(url);
       if (!url) {
-        const quote = await trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch({ markdown: text, distillModel: settings.distillModel });
+        const quote = await trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate({ markdown: text, distillModel: settings.distillModel });
         const price = knowledgeCardCreditsForPageIndex(idx + 1, quote.billingModel);
         if (!window.confirm(`补出第 ${idx + 1}/${total} 页，${price} 积分，是否继续？`)) return;
         const replacementRequestId = knowledgeCardPageTasks.begin("platform_composite_sheet_progress");
@@ -8835,7 +8835,7 @@ export default function PlatformPage() {
         const total = pages.length;
         if(overrides?.supplementOf&&total>8)throw new Error("补充图卡实际分页超过8页，未提交生成");
         const qLabel = "4K";
-        const priceQuote = await trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch({ markdown: distilled, distillModel: customNoteDistillModel });
+        const priceQuote = await trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate({ markdown: distilled, distillModel: customNoteDistillModel });
         if (priceQuote.pageCount !== total) throw new Error("报价页数与当前稿件不一致，请重新确认");
         const credits = priceQuote.credits;
         /**
