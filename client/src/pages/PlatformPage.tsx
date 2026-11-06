@@ -3250,6 +3250,7 @@ export default function PlatformPage() {
   const customNoteRevisionRef = useRef(0);
   const bumpCustomNoteRevision = () => {
     customNoteRevisionRef.current += 1;
+    setLayoutSource(null);layoutStudioRef.current?.beginNewSource();
     readingControllerRef.current?.stop(); readingControllerRef.current=null;
     readingFullMarkdownRef.current=""; setReadingAdvisorStatus(""); setReadingAdvisorDrafts([]);
     return customNoteRevisionRef.current;
@@ -13301,7 +13302,7 @@ export default function PlatformPage() {
           </div>
         ) : null}
 
-        {workbenchUserKey && <StableStudioDock target={knowledgeAdvisorDock}><EditableLayoutStudio compact={Boolean(knowledgeAdvisorDock)} ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} onSupplement={async(supplementOf,text)=>{await handleGenerateCustomNote({text,kind:"single_page_knowledge_card",supplementOf});}} onPagination={(doc, pagination) => {
+        {workbenchUserKey && <StableStudioDock target={knowledgeAdvisorDock}><EditableLayoutStudio compact={Boolean(knowledgeAdvisorDock)} ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} readingView={<KnowledgeReadingLive status={readingAdvisorStatus} drafts={readingAdvisorDrafts} />} onSupplement={async(supplementOf,text)=>{await handleGenerateCustomNote({text,kind:"single_page_knowledge_card",supplementOf});}} onPagination={(doc, pagination) => {
           if (doc.sourceId !== knowledgeCardLayoutSourceIdRef.current) return;
           if (!pagination) { setCustomNotePagination(null); return; }
           if (!doc.publication?.inputFingerprint || paginationFingerprint?.key !== customNotePaginationKey || doc.publication.inputFingerprint !== paginationFingerprint.hash) return;
@@ -15762,7 +15763,6 @@ export default function PlatformPage() {
                     onConfirm={() => closeKnowledgeCardPreflight(true)}
                     onCancel={() => closeKnowledgeCardPreflight(false)}
                   />
-                  <KnowledgeReadingLive status={readingAdvisorStatus} drafts={readingAdvisorDrafts} />
                   <KnowledgeCardProgress
                     state={customNoteProgress}
                     onCancel={customNoteDistillJobId || customNoteRendering ? cancelCustomNoteDistill : undefined}

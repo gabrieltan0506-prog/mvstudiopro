@@ -504,7 +504,7 @@ export async function extractKnowledgeCardUploads(
         selectPages: options.selectPages!,
         onTextReady: async document => {
           const text = document.pages.map(p => p.text).filter(Boolean).join("\n\n").trim();
-          if (text) await options.onReadingSource?.(`file-${fileIndex}:${document.docKey}`, splitSourceTextForDistill(text, 6000));
+          if (text) await options.onReadingSource?.(`file-${fileIndex}:${document.docKey}`, splitSourceTextForDistill(text, 5999));
         },
         onProgress: async (stage, done, total) => {
           const mapped = stage === "text" ? "reading" : stage === "thumbs" ? "reading" : stage === "select" ? "selecting" : "rendering";
@@ -534,7 +534,7 @@ export async function extractKnowledgeCardUploads(
     });
     if (extracted.text.trim()) {
       const part = `【文件·${name}】\n${extracted.text.trim()}`;
-      await options.onReadingSource?.(`file-${fileIndex}`, splitSourceTextForDistill(part, 6000));
+      await options.onReadingSource?.(`file-${fileIndex}`, splitSourceTextForDistill(part, 5999));
       docParts.push(part);
       nonPageParts.push(part);
       methods.push(`${name}:${extracted.method}`);
@@ -1871,7 +1871,7 @@ export async function prepareKnowledgeCardCopy(input: {
   const detailLevel = resolveKnowledgeCardDetailLevel(input.detailLevel);
   const files = Array.isArray(input.files) ? input.files : [];
   if (!files.length && !input.extracted && input.sourceText?.trim()) {
-    await input.onReadingSource?.("pasted", splitSourceTextForDistill(input.sourceText, 6000));
+    await input.onReadingSource?.("pasted", splitSourceTextForDistill(input.sourceText, 5999));
   }
   const extracted: KnowledgeCardExtractResult =
     input.extracted ??

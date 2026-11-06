@@ -30,7 +30,7 @@ export function createKnowledgeReadingPreparation(owner: number, jobId: string, 
   return {
     progress,
     async onSource(key: string, parts: string[]) {
-      if (!parts.length || parts.some(p => !p.trim() || p.length > 6001)) throw Error("原文分段为空或超出容量");
+      if (!parts.length || parts.some(p => !p.trim() || p.length > 6000)) throw Error("原文分段为空或超出容量");
       const digest = hash(JSON.stringify(parts));
       const prior = plan || await deps.read(`${root}/plan.json`);
       if (prior && !prior.rawSources) throw Error("已有提炼顾问计划，不能覆盖为另一份原稿");
@@ -44,7 +44,7 @@ export function createKnowledgeReadingPreparation(owner: number, jobId: string, 
       const start = plan?.batches || 0;
       for (let offset=0;offset<parts.length;offset+=4) {
         const index=start+Math.floor(offset/4);
-        const source=knowledgeSourceSchema.parse({title:"读档中的知识整理",pages:parts.slice(offset,offset+4).map((body,i)=>({id:stableId(`${jobId}:${key}:${offset+i}`),headline:`原文 ${key} · 第 ${offset+i+1} 段`,body,imageUrl:"",role:"reading"}))});
+        const source=knowledgeSourceSchema.parse({title:"读档中的知识整理",pages:parts.slice(offset,offset+4).map((body,i)=>({id:stableId(`${jobId}:${key}:${offset+i}`),headline:body.split(/\r?\n/).find(line=>line.trim())!.replace(/^#+\s*/, "").slice(0,100),body,imageUrl:"",role:"reading"}))});
         const value=batchSchema.parse({index,source,sourceDigest:hash(JSON.stringify(source))});
         const old=await deps.read(`${root}/batch-${index}/input.json`);
         if(old && JSON.stringify(old)!==JSON.stringify(value))throw Error("原顾问分段内容已改变，未重复提交");

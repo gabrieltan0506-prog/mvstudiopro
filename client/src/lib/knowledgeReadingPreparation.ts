@@ -20,6 +20,12 @@ export function createKnowledgeReadingController(deps: {
   let authorized = 0, charged = 0, authorizedBatches = 0;
   const completed = new Set<number>(), running = new Map<number,Promise<void>>();
   let latestSignature = "";
+  const drafts = new Map<number, ReadingDraft>();
+  const publish = (incoming: ReadingDraft[]) => {
+    if(stopped)return;
+    incoming.forEach(draft=>drafts.set(draft.index,draft));
+    deps.content?.(Array.from(drafts.values()).sort((a,b)=>a.index-b.index));
+  };
   const pump = () => {
     if(!accepted || stopped || failure || !state || !link)return;
     for(const index of state.ready) {
@@ -34,10 +40,13 @@ export function createKnowledgeReadingController(deps: {
           if(charged>authorized)throw Error("读档顾问费用超出确认范围，已停止后续请求");
           completed.add(index);
           if(!stopped) {
-            try { const latest=await deps.state(link!.jobId); if(!stopped)deps.content?.(latest.drafts||[]); }
+            try {
+              const latest=await deps.state(link!.jobId);
+              publish(latest.drafts||[]);
+              if(!stopped)deps.progress(drafts.size ? "整理结果已保存并显示在下方，后续内容将自动更新" : "顾问已返回，正在读取已保存的整理内容");
+            }
             catch { if(!stopped)deps.progress("已保存整理结果，内容暂未载入；不会重复购买，请保留当前页面"); }
           }
-          if(!stopped)deps.progress("读档顾问已有整理结果，内容已保存并显示在下方；后续继续自动处理");
         }catch(e){failure=e instanceof Error?e:new Error(String(e));if(!stopped)deps.progress(`读档顾问暂停：${failure.message}。原读档继续，已完成工作保留`);}
         finally{running.delete(index);pump();}
       })();
@@ -58,7 +67,7 @@ export function createKnowledgeReadingController(deps: {
         accepted=await deps.confirm(state);
         if(accepted){authorized=Math.max(authorized,charged+state.maxCredits);authorizedBatches=state.batches;}
       }
-      deps.content?.(state.drafts||[]);
+      publish(state.drafts||[]);
       if(stopped)return;
       state.completed.forEach(i=>completed.add(i));
       if(state.failed.length)failure=Error("部分原文没有读取成功，不能把缺段资料当完整稿交给顾问");

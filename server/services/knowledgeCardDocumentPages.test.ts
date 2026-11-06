@@ -170,3 +170,22 @@ describe("按小节归属收集参考页（抗分页硬切）", () => {
     expect(urls.map((u) => u.pageNumber)).toEqual([5]);
   });
 });
+
+it("真实PDF原文在选页仍阻塞时已交顾问处理，不等参考图或提炼",async()=>{
+ const {createKnowledgeReadingPreparation}=await import("./knowledgeReadingPreparation");
+ const {createKnowledgeReadingController}=await import("../../client/src/lib/knowledgeReadingPreparation");
+ const {splitSourceTextForDistill}=await import("./knowledgeCardDistill");
+ const data=new Map<string,any>();
+ const preparation=createKnowledgeReadingPreparation(7,"kc_raw_pdf",{read:async k=>data.get(k)||null,save:async(k,v)=>{data.set(k,v);}});
+ const calls:string[]=[];
+ const controller=createKnowledgeReadingController({state:async()=>({...preparation.progress()!,status:"running",completed:[],failed:[],paidUnit:0,maxCredits:0,estimatedCredits:0}),confirm:async()=>true,progress:()=>undefined,execute:async(_link,index)=>{calls.push(data.get(`knowledge-reading/user-7/kc_raw_pdf/batch-${index}/input.json`).source.pages.map((p:any)=>p.body).join("\n"));return {creditsCharged:0};}});
+ const pdf=await renderHtmlToPdf(`<html><body><h1>First chapter</h1><p>${'Evidence from original text. '.repeat(50)}</p><p>Final source sentence.</p></body></html>`);
+ let release!:()=>void,selected!:()=>void;
+ const selecting=new Promise<void>(resolve=>selected=resolve);
+ const result=prepareKnowledgeCardDocumentPages({buffer:pdf,fileName:"early.pdf",userId:7,
+  onTextReady:async document=>{await preparation.onSource(document.docKey,splitSourceTextForDistill(document.pages.map(p=>p.text).join("\n"),6000));await controller.update(preparation.progress()!);},
+  selectPages:async()=>{selected();await new Promise<void>(resolve=>release=resolve);return [];},
+  uploadPage:async name=>({gcsUri:`gs://test/${name}`,url:`https://example.invalid/${name}`})});
+ try {await selecting;expect(calls.length).toBeGreaterThan(0);expect(calls.join("\n")).toContain("Final source sentence.");}
+ finally {release();await result;await controller.wait();}
+},60000);

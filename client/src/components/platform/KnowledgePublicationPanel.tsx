@@ -341,6 +341,7 @@ export default function KnowledgePublicationPanel({
         "已完成整套图文审校与说明整理。可直接确认生成；手动修改是可选项。"
       );
     } catch (e) {
+      setMessage("");
       const safe = knowledgePublicationPublicError(e);
       setTerminal(safe.retryable || (e as { retryable?: boolean })?.retryable === true);
       setError(safe.message);

@@ -4,7 +4,7 @@ import type { KnowledgePublicationPagination } from "@shared/knowledgePublicatio
 import { planKnowledgeCardPages } from "@shared/knowledgeCardPagination";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import KnowledgePublicationPanel from "./KnowledgePublicationPanel";
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc";
 import {
   buildLayoutHtml,
@@ -31,6 +31,7 @@ const button =
 const field =
   "w-full rounded-lg border border-white/20 bg-[#201b32] p-2 text-white";
 export type EditableLayoutStudioHandle = {
+  beginNewSource: () => void;
   prepare: (source: LayoutSource, waitForImages: (ids: string[]) => Promise<void>, supplementOf?: KnowledgeSupplementSelection, options?: {waitForReading?:()=>Promise<void>;preparePresentation?:boolean}) => Promise<{ documentId: string; maxCredits: number; estimatedCredits: number; presentationCredits?:number }>;
   start: (documentId: string, authorizedCredits: number) => Promise<void>;
   imageJobs: (markdown: string, model: string, template: string | null) => string[] | null;
@@ -38,15 +39,17 @@ export type EditableLayoutStudioHandle = {
   attachImage: (originalJobId: string, replacementJobId: string, resume: boolean) => Promise<void>;
 };
 /** 按账号恢复，条件写入防止旧会话覆盖新稿。 */
-const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null; compact?: boolean; onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void }>(function EditableLayoutStudio({
+const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: string; source: LayoutSource | null; readingView?:ReactNode; compact?: boolean; onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void }>(function EditableLayoutStudio({
   owner,
   source,
+  readingView,
   onPagination,
   onSupplement,
   compact = false,
 }: {
   owner: string;
   source: LayoutSource | null;
+  readingView?:ReactNode;
   compact?: boolean;
   onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
 }, ref) {
@@ -103,7 +106,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
           library,
           generation: value.generation,
           dirty: Boolean(value.dirty),
-          activeId: String(value.activeId || ""),
+          activeId: "",
         };
         current.current = local;
         setState(local);
@@ -195,9 +198,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       setError(e instanceof Error ? e.message : "稿件导入失败，未截断内容");
     }
   }, [source, ready, busy]);
-  const doc =
-    state.library.documents.find(d => d.id === state.activeId) ||
-    state.library.documents[0];
+  const doc = state.library.documents.find(d => d.id === state.activeId);
   const index = doc ? Math.min(pageIndex, doc.pages.length - 1) : 0;
   const page = doc?.pages[index];
   const update = (patch: Partial<EditableLayout>) => {
@@ -223,6 +224,14 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
     return {generation:result.generation};
   };
   useImperativeHandle(ref, () => ({
+    beginNewSource() {
+      sourceSeen.current = source;
+      preparedRun.current = null;
+      setSynchronizedRun(null);setAutoPublicationId("");
+      setMessage("本次使用新资料，旧稿仅在你明确恢复后打开。");setError("");
+      locked.current=false;setBusy(false);
+      install({...current.current,activeId:""});
+    },
     async prepare(source, waitForImages, supplementOf, options) {
       if (!ready || !cloudReady || locked.current || source.owner !== owner) throw new Error("云端稿件尚未就绪或正在整理，请稍后开始");
       const nextDoc = layoutFromSource(source);
@@ -426,6 +435,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
             : `打开稿件库（${state.library.documents.length}）`}
         </button>
       </div>
+      {readingView && <div className="mt-3">{readingView}</div>}
       {open && (
         <div className="mt-4 space-y-4">
           {!ready && <p role="status">正在读取稿件…</p>}
@@ -483,24 +493,19 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
               {sanitizePlatformUserMessage(error)}
             </p>
           )}
-          {!doc ? (
-            <p className="text-sm text-gray-300">
-              在下方已有稿件点击“编辑排版与导出”，即可带入正文与现有配图；原稿保留。
-            </p>
-          ) : (
-            <fieldset disabled={!ready || (busy && !doc.publication)} className="space-y-4">
               <label className="block text-sm">
-                已保存稿件
+                恢复已保存稿件
                 <select
                   aria-label="选择排版稿件"
                   className={field}
-                  value={doc.id}
+                  value={doc?.id || ""}
                   disabled={busy}
                   onChange={e => {
                     install({ ...current.current, activeId: e.target.value });
                     setPageIndex(0);
                   }}
                 >
+                  <option value="">不引用旧稿；选择稿件后恢复</option>
                   {state.library.documents.map(d => (
                     <option key={d.id} value={d.id}>
                       {d.title}
@@ -508,6 +513,12 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
                   ))}
                 </select>
               </label>
+          {!doc ? (
+            <p className="text-sm text-gray-300">
+              当前未引用旧资料。本次整理内容就绪后自动呈现；如需使用旧稿，请在上方明确选择恢复。
+            </p>
+          ) : (
+            <fieldset disabled={!ready || (busy && !doc.publication)} className="space-y-4">
               {doc.publication ? <KnowledgePublicationPanel compact={compact} key={doc.id} doc={doc} commit={commitPublication}
                 onChange={next=>update(next)} onPagination={onPagination} onSupplement={onSupplement} onBusy={value=>{locked.current=value;setBusy(value);}} autoStart={doc.id===autoPublicationId} autoStartToken={autoStartToken}
                 preauthorizedCredits={synchronizedRun?.documentId === doc.id ? synchronizedRun.authorizedCredits : undefined}
