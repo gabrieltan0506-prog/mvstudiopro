@@ -133,29 +133,44 @@ describe('联网补充与真实来源贯穿正文',()=>{
   const report:any=structuredClone(f.report);report.pages[0].sources=[{url,title:'水循环资料'}];report.pages[0].reading.blocks.push({type:'prose',title:'为什么会循环',note:'',text:`太阳加热水面，水蒸气随后凝结。[资料](${url})`});
   const annotations=[{type:'url_citation',url_citation:{url,title:'水循环原始资料',content:'太阳能驱动蒸发，水汽凝结成云。'}}];
   const response=(value=report,finish='stop')=>new Response(JSON.stringify({model:OR_MODEL,choices:[{finish_reason:finish,message:{content:JSON.stringify(value),annotations}}]}),{headers:{'Content-Type':'application/json'}});
+  f.deps.fetch.mockResolvedValueOnce(new Response(JSON.stringify({model:'z-ai/glm-5.3-flashx',choices:[{finish_reason:'stop',message:{content:'{}',annotations}}],usage:{cost:0.01}}),{headers:{'Content-Type':'application/json'}}));
   return {...f,report,annotations,webResponse:response};
  };
- it('同一次生成启用检索，真实引用进入确认正文/云稿和HTML，恢复不重复调用',async()=>{
+ it('FlashX自主搜索后DeepSeek整理，真实引用进入正文/云稿和HTML，恢复不重复调用',async()=>{
   const f=await prepare();f.deps.fetch.mockResolvedValueOnce(f.webResponse());
   const raw=await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);const report=JSON.parse(JSON.parse(raw.text).candidates[0].content.parts[0].text);
-  const sent=JSON.parse((f.deps.fetch.mock.calls[0] as any)[1].body);expect(sent.plugins).toEqual([{id:'web',engine:'exa',max_results:3}]);expect(report.pages[0].sources[0].title).toBe('水循环原始资料');expect(report.pages[0].body).toContain(url);
+  const sent=JSON.parse((f.deps.fetch.mock.calls[0] as any)[1].body);expect(sent.model).toBe('z-ai/glm-5.3-flashx');expect(sent.plugins).toBeUndefined();expect(sent.tools).toEqual([{type:'openrouter:web_search',parameters:{max_results:3,max_total_results:12}}]);const organize=JSON.parse((f.deps.fetch.mock.calls[1] as any)[1].body);expect(organize.model).toBe(OR_MODEL);expect(organize.tools).toBeUndefined();expect(organize.plugins).toBeUndefined();expect(report.pages[0].sources[0].title).toBe('水循环原始资料');expect(report.pages[0].body).toContain(url);
   const {knowledgeReviewSchema}=await import('../../shared/knowledgePublication');expect(knowledgeReviewSchema.parse(JSON.parse(JSON.stringify(report))).pages[0].sources?.[0].url).toBe(url);
   const {buildKnowledgeBookletHtml}=await import('../../shared/knowledgeBooklet');expect(buildKnowledgeBookletHtml({title:report.title,pages:[{...report.pages[0],imageUrl:''}]})).toContain(`href="${url}"`);
-  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
  });
  it('首跳完整失败后后续通道只使用同一检索片段，不重开搜索',async()=>{
   const f=await prepare();f.deps.fetch.mockResolvedValueOnce(f.webResponse(f.report,'length')).mockResolvedValueOnce(f.response(EVO_MODEL,f.report));
   const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);expect(result.gateway).toBe('evolink');
   const sent=JSON.parse((f.deps.fetch.mock.calls[1] as any)[1].body);expect(sent.plugins).toBeUndefined();expect(JSON.stringify(sent.messages)).toContain('太阳能驱动蒸发');expect(f.storage.has('test/0/web-sources.json')).toBe(true);
  });
- it('无检索回执只在有检索能力的授权模型内重试，耗尽后恢复不再次购买',async()=>{
-  const f=await prepare();f.deps.fetch.mockImplementation(async(_url?:unknown,init?:RequestInit)=>f.response(JSON.parse(String(init?.body)).model,f.report));
-  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('未取得真实联网来源');
-  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('未取得真实联网来源');expect(f.deps.fetch).toHaveBeenCalledTimes(4);expect(f.deps.vertex).not.toHaveBeenCalled();
+ it('无检索回执也保留原文整理，不因来源缺失重买，恢复零新增调用',async()=>{
+  const f=await prepare();f.deps.fetch.mockReset().mockResolvedValueOnce(f.response('z-ai/glm-5.3-flashx',{})).mockResolvedValueOnce(f.response(OR_MODEL,f.report));
+  const answer=JSON.parse(JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text).candidates[0].content.parts[0].text);
+  expect(answer.pages[0].sources).toEqual([]);expect(answer.pages[0].body).toContain('太阳加热水面');
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);expect(f.deps.vertex).not.toHaveBeenCalled();
  });
- it('伪造引用被拒绝，完整来源片段允许下一路修正正文',async()=>{
-  const f=await prepare();const bad=structuredClone(f.report);bad.pages[0].sources[0].url='https://fake.example.org/';f.deps.fetch.mockResolvedValueOnce(f.webResponse(bad)).mockResolvedValueOnce(f.response(EVO_MODEL,f.report));
-  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.storage.get('test/0/route-openrouter.json').reason).toContain('不属于');
+ it('不匹配的引用从来源列表排除，正文不被整批拒收',async()=>{
+  const f=await prepare();const bad=structuredClone(f.report);bad.pages[0].sources[0].url='https://fake.example.org/';f.deps.fetch.mockResolvedValueOnce(f.webResponse(bad));
+  const answer=JSON.parse(JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text).candidates[0].content.parts[0].text);
+  expect(answer.pages[0].sources).toEqual([]);expect(answer.pages[0].body).toContain('太阳加热水面');expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+ });
+ it('章节无来源字段时正常采用，旧来源失败回执可直接重验不重购',async()=>{
+  const f=await prepare();const noSources=structuredClone(f.report);delete noSources.pages[0].sources;f.deps.fetch.mockResolvedValueOnce(f.webResponse(noSources));
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
+  const old=f.storage.get('test/0/route-openrouter.json');old.state='failed';old.reason='本页补充缺少来源';f.storage.delete('test/0/accepted.json');
+  const answer=JSON.parse(JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text).candidates[0].content.parts[0].text);
+  expect(answer.pages).toHaveLength(1);expect(f.deps.fetch).toHaveBeenCalledTimes(2);expect(f.storage.get('test/0/route-openrouter.json').priorFailureReason).toBe('本页补充缺少来源');
+ });
+ it('首跳结构失败且无来源，EvoLink仍可依据原文完成整理',async()=>{
+  const f=await prepare();f.deps.fetch.mockReset().mockResolvedValueOnce(f.response('z-ai/glm-5.3-flashx',{})).mockResolvedValueOnce(f.response(OR_MODEL,{})).mockResolvedValueOnce(f.response(EVO_MODEL,f.report));
+  const answer=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(answer.gateway).toBe('evolink');expect(f.deps.fetch).toHaveBeenCalledTimes(3);
  });
  it('流式注释随完成回执保存，缺字流不会当成检索成功',async()=>{
   const f=await prepare();const chunks=[{model:OR_MODEL,choices:[{delta:{content:JSON.stringify(f.report)}}]},{choices:[{delta:{annotations:f.annotations},finish_reason:'stop'}]}];
@@ -237,7 +252,7 @@ it('较后路由有未知回执时不能购买任何缺失的早期重试',async
  expect(f.deps.fetch).not.toHaveBeenCalled();
 });
 
-it('四页只找到部分来源时，后续搜索补齐缺页证据，不在旧片段中空转',async()=>{
+it('四页只有部分检索来源也完整采用四页，不为缺来源重复购买',async()=>{
  const {KNOWLEDGE_RESEARCH_MARKER}=await import('../../shared/knowledgeResearch');
  const f=make();f.request.systemInstruction.parts[0].text+=KNOWLEDGE_RESEARCH_MARKER;
  const original=JSON.parse((f.request.contents[0].parts[0] as {text:string}).text);
@@ -247,14 +262,14 @@ it('四页只找到部分来源时，后续搜索补齐缺页证据，不在旧�
  const a='https://science.example.org/part-one',b='https://science.example.org/part-two';
  const pages=ids.map((id,i)=>({...structuredClone(f.report.pages[0]),id,headline:`主题${i+1}`,sources:i===3?[{url:b,title:'来源二'}]:[{url:a,title:'来源一'}],reading:{...structuredClone(f.report.pages[0].reading),blocks:[{type:'prose',title:'解释',note:'',text:`原始资料说明。[来源](${i===3?b:a})`}]}}));
  const good={...f.report,pages};const missing=structuredClone(good);missing.pages[3].sources=[];
- const web=(report:any,urls:string[])=>new Response(JSON.stringify({model:OR_MODEL,choices:[{finish_reason:'stop',message:{content:JSON.stringify(report),annotations:urls.map(url=>({type:'url_citation',url_citation:{url,title:'真实检索来源',content:'本次查得的原始片段'}}))}}]}),{headers:{'Content-Type':'application/json'}});
- f.deps.fetch.mockResolvedValueOnce(web(missing,[a])).mockResolvedValueOnce(f.response(EVO_MODEL,missing)).mockResolvedValueOnce(web(good,[b]));
+ const web=(report:any,urls:string[])=>new Response(JSON.stringify({model:'z-ai/glm-5.3-flashx',choices:[{finish_reason:'stop',message:{content:JSON.stringify(report),annotations:urls.map(url=>({type:'url_citation',url_citation:{url,title:'真实检索来源',content:'本次查得的原始片段'}}))}}]}),{headers:{'Content-Type':'application/json'}});
+ f.deps.fetch.mockResolvedValueOnce(web({},[a])).mockResolvedValueOnce(f.response(OR_MODEL,missing));
  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
- expect(result.gateway).toBe('openrouter-retry-2');expect(f.deps.fetch).toHaveBeenCalledTimes(3);
- const retry=JSON.parse((f.deps.fetch.mock.calls[2] as any)[1].body);
- expect(retry.plugins).toEqual([{id:'web',engine:'exa',max_results:3}]);expect(retry.messages.at(-1).content).toContain(ids[3]);
- expect(f.storage.get('test/0/web-sources.json').sources.map((s:any)=>s.url)).toEqual([a,b]);
- await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(3);
+ expect(result.gateway).toBe('openrouter');expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+ const adopted=JSON.parse(result.candidates[0].content.parts[0].text);
+ expect(adopted.pages.map((p:any)=>p.id)).toEqual(ids);expect(adopted.pages[3].sources).toEqual([]);
+ expect(adopted.pages[3].body).toContain('原始资料说明');
+ await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
 });
 
 
@@ -303,7 +318,7 @@ it('EvoLink并发批次先保留真实检索资料再整理，恢复不重复检
  const url='https://example.org/water';const report=structuredClone(f.report) as any;
  report.pages[0].sources=[{url,title:'真实来源'}];report.pages[0].reading.blocks[0].note='根据[真实来源]('+url+')';
  const annotation={type:'url_citation',url_citation:{url,title:'真实来源',content:'水蒸发后形成水蒸气。'}};
- f.deps.fetch.mockResolvedValueOnce(new Response(JSON.stringify({model:OR_MODEL,choices:[{finish_reason:'stop',message:{content:'{}',annotations:[annotation]}}],usage:{cost:0.01}}),{headers:{'Content-Type':'application/json'}}));
+ f.deps.fetch.mockResolvedValueOnce(new Response(JSON.stringify({model:'glm-5.3-flashx',choices:[{finish_reason:'stop',message:{content:'{}'}}],web_search:[{link:url,title:'真实来源',content:'水蒸发后形成水蒸气。'}],usage:{cost:0.01}}),{headers:{'Content-Type':'application/json'}}));
  f.deps.fetch.mockResolvedValueOnce(f.response(EVO_MODEL,report));
  const answer=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
  expect(answer.gateway).toBe('evolink');expect(f.deps.fetch).toHaveBeenCalledTimes(2);
@@ -311,4 +326,100 @@ it('EvoLink并发批次先保留真实检索资料再整理，恢复不重复检
  const body=JSON.parse((f.deps.fetch.mock.calls[1] as any)[1].body);
  expect(body.messages.at(-1).content).toEqual(expect.arrayContaining([expect.objectContaining({text:expect.stringContaining('水蒸发后形成水蒸气')})]));
  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+});
+
+it('并发Evo检索预备无来源不拒收，仍继续原文整理',async()=>{
+ const f=make();f.request.executionChannel='evolink';f.request.systemInstruction.parts.push({text:'【联网资料融入正文】'});
+ f.deps.fetch.mockResolvedValueOnce(f.response('glm-5.3-flashx',{})).mockResolvedValueOnce(f.response(EVO_MODEL));
+ const answer=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+ expect(answer.gateway).toBe('evolink');expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+ expect(JSON.parse(answer.candidates[0].content.parts[0].text).pages[0].sources).toEqual([]);
+});
+
+describe('GLM独立搜索的恢复与通道契约',()=>{
+ const prepare=()=>{const f=make();f.request.systemInstruction.parts.push({text:'【联网资料融入正文】'});return f;};
+ it('Evo原生工具由模型选查询词，SSE来源和费用保留到正文回执',async()=>{
+  const f=prepare();f.request.executionChannel='evolink';
+  const source={link:'https://example.org/water',title:'水循环资料',content:'太阳辐射驱动水的循环。'};
+  const chunks=[{model:'glm-5.3-flashx',choices:[{delta:{content:'{}'},finish_reason:'stop'}]},
+   {web_search:[source],usage:{prompt_tokens:101,completion_tokens:12,server_tool_use_details:{web_search_requests:1}}}];
+  f.deps.fetch.mockResolvedValueOnce(new Response(chunks.map(c=>'data: '+JSON.stringify(c)+'\n\n').join('')+'data: [DONE]\n\n',{headers:{'Content-Type':'text/event-stream'}})).mockResolvedValueOnce(f.response(EVO_MODEL));
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  const search=JSON.parse((f.deps.fetch.mock.calls[0] as any)[1].body),organize=JSON.parse((f.deps.fetch.mock.calls[1] as any)[1].body);
+  expect(search.model).toBe('glm-5.3-flashx');expect(search.plugins).toBeUndefined();
+  expect(search.tools).toEqual([{type:'web_search',web_search:{enable:true,search_result:true,count:12,require_search:false}}]);
+  expect(search.tools[0].web_search.search_query).toBeUndefined();expect(JSON.stringify(search)).not.toContain('image_url');
+  expect(organize.model).toBe(EVO_MODEL);expect(organize.tools).toBeUndefined();expect(JSON.stringify(organize)).toContain(source.content);expect(JSON.stringify(organize)).toContain('image_url');
+  expect(out.research).toMatchObject({status:'succeeded',model:'glm-5.3-flashx',usage:{server_tool_use_details:{web_search_requests:1}}});
+  expect(JSON.parse(f.storage.get('test/0/research/glm-evolink-response.json').text).web_search).toEqual([source]);
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+ });
+ it('搜索四次明确失败后原文仍可整理，不把搜索回退成DeepSeek',async()=>{
+  const f=prepare();f.request.executionChannel='openrouter';
+  for(let i=0;i<4;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
+  f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL));
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(out.research.status).toBe('failed');expect(out.research.traces).toHaveLength(4);
+  expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual([...Array(4).fill('z-ai/glm-5.3-flashx'),OR_MODEL]);
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(5);
+ });
+ it('搜索断流unknown禁止进入正文或重买搜索',async()=>{
+  const f=prepare();f.request.executionChannel='evolink';f.deps.fetch.mockRejectedValueOnce(Error('connection lost'));
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('未重复提交');
+  expect(f.storage.get('test/0/research/route-glm-evolink.json').state).toBe('unknown');
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('回执尚未闭合');
+  expect(f.deps.fetch).toHaveBeenCalledTimes(1);expect(f.storage.has('test/0/route-evolink.json')).toBe(false);
+ });
+ it('搜索accepted保存失败从同一原始回执恢复，不重购搜索',async()=>{
+  const f=prepare(),saved=f.evidence.save;let first=true;
+  f.deps.fetch.mockResolvedValueOnce(f.response('z-ai/glm-5.3-flashx',{})).mockResolvedValueOnce(f.response(OR_MODEL));
+  f.evidence.save=vi.fn(async(k,v)=>{if(k==='test/0/research/accepted.json'&&first){first=false;throw Error('保存失败');}await saved(k,v);});
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('保存失败');
+  expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(out.modelVersion).toBe(OR_MODEL);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+ });
+ it('旧正文完整失败回执恢复不额外购买新版搜索',async()=>{
+  const f=prepare();f.deps.fetch.mockResolvedValueOnce(f.response('z-ai/glm-5.3-flashx',{})).mockResolvedValueOnce(f.response(OR_MODEL));
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
+  for(const k of Array.from(f.storage.keys()))if(k.includes('/research/')||k.endsWith('/accepted.json')||k.endsWith('/web-sources.json'))f.storage.delete(k);
+  const old=f.storage.get('test/0/route-openrouter.json');old.state='failed';old.reason='本页补充缺少来源';f.deps.fetch.mockClear();
+  expect((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).status).toBe(200);
+  expect(f.deps.fetch).not.toHaveBeenCalled();expect(f.storage.get('test/0/route-openrouter.json').priorFailureReason).toBe('本页补充缺少来源');
+ });
+ it('旧版搜索unknown不能因切换FlashX而丢失防重购保护',async()=>{
+  const f=prepare();f.storage.set('test/0/research/route-openrouter.json',{state:'unknown',requestDigest:'旧版请求'});
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('版本变化');expect(f.deps.fetch).not.toHaveBeenCalled();
+ });
+ it('Evo来源正文合计超限拒绝，默认SSE调用不新增来源字段',async()=>{
+  const {readGlmSseStream}=await import('./sseChatStream');
+  const stream=()=>new Response('data: '+JSON.stringify({model:'test',web_search:[{link:'https://example.org',title:'资料',content:'b'.repeat(600)}],choices:[{delta:{content:'a'.repeat(600)},finish_reason:'stop'}]})+'\n\n').body!;
+  await expect(readGlmSseStream(stream(),1024,{strictCompletion:true,preserveAnnotations:true})).rejects.toThrow('上限');
+  expect(JSON.parse(await readGlmSseStream(stream(),1024,{strictCompletion:true})).web_search).toBeUndefined();
+ });
+});
+
+it.each(['openrouter','evolink'] as const)('不同路由%s的搜索、整理和回退均使用各自参数及供应商约束',async channel=>{
+ const f=make();f.request.executionChannel=channel;f.request.systemInstruction.parts.push({text:'【联网资料融入正文】'});
+ const glm=channel==='openrouter'?'z-ai/glm-5.3-flashx':'glm-5.3-flashx',ds=channel==='openrouter'?OR_MODEL:EVO_MODEL;
+ f.deps.fetch.mockResolvedValueOnce(f.response(glm,{}));
+ for(let i=0;i<4;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
+ f.deps.fetch.mockResolvedValueOnce(f.response(glm));
+ const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+ const sent=f.deps.fetch.mock.calls.map(c=>({url:(c as any)[0],body:JSON.parse((c as any)[1].body)}));
+ expect(sent.map(x=>x.body.model)).toEqual([glm,ds,ds,ds,ds,glm]);expect(out.modelVersion).toBe(glm);
+ for(const [index,{url,body}] of Array.from(sent.entries())){
+  const search=index===0;expect(body.stream).toBe(true);expect(body.plugins).toBeUndefined();expect(body.max_tokens).toBe(search?8192:32768);
+  if(channel==='openrouter'){
+   expect(url).toBe('https://openrouter.ai/api/v1/chat/completions');expect(body.reasoning).toEqual({effort:'high'});
+   expect(body.provider).toEqual(body.model===OR_MODEL?{order:['DeepSeek'],allow_fallbacks:false}:{order:['Z.AI'],allow_fallbacks:false,require_parameters:true});
+   expect(body.thinking).toBeUndefined();expect(body.reasoning_effort).toBeUndefined();
+   expect(body.tools).toEqual(search?[{type:'openrouter:web_search',parameters:{max_results:3,max_total_results:12}}]:undefined);
+  }else{
+   expect(url).toBe('https://api.evolink.ai/v1/chat/completions');expect(body.provider).toBeUndefined();expect(body.reasoning).toBeUndefined();expect(body.reasoning_effort).toBe('high');
+   expect(body.thinking).toEqual(body.model===EVO_MODEL?{type:'enabled'}:undefined);
+   expect(body.tools).toEqual(search?[{type:'web_search',web_search:{enable:true,search_result:true,count:12,require_search:false}}]:undefined);
+  }
+ }
+ await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(6);
 });

@@ -170,3 +170,12 @@ it('旧请求加入并发调度后仍复用原永久请求，不改变已提交�
  expect((f.deps.post.mock.calls[1] as any)[0].executionChannel).toBeUndefined();
  expect((f.deps.post.mock.calls[1] as any)[0]).toEqual((f.deps.post.mock.calls[0] as any)[0]);
 });
+
+it('GLM搜索的模型费用随同一批报告持久化，恢复不丢失也不重购',async()=>{
+ const f=make();const research={status:'succeeded',model:'glm-5.3-flashx',gateway:'glm-evolink',usage:{prompt_tokens:12,server_tool_use_details:{web_search_requests:1}},traces:[]};
+ const raw=f.envelope(f.report);const env=JSON.parse(raw.text);env.research=research;raw.text=JSON.stringify(env);f.deps.post.mockResolvedValueOnce(raw);
+ await reviewKnowledgePublication(7,f.context,f.deps as any);
+ const reports=Array.from(f.storage.entries()).filter(([key])=>key.endsWith('/report.json'));
+ expect(reports).toHaveLength(1);expect(reports[0][1].research).toEqual(research);
+ await reviewKnowledgePublication(7,f.context,f.deps as any);expect(f.deps.post).toHaveBeenCalledTimes(1);
+});

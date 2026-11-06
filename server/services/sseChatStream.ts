@@ -121,6 +121,7 @@ export async function readGlmSseStream(
   let buffer = "";
   let content = "";
   const annotations: unknown[] = [];
+  const webSearch: unknown[] = [];
   let finishReason: string | null = null;
   let usage: Record<string, unknown> | undefined;
   let model = "";
@@ -145,6 +146,7 @@ export async function readGlmSseStream(
       error?: unknown;
       choices?: Array<{ delta?: { content?: string; annotations?: unknown[] }; message?: { annotations?: unknown[] }; finish_reason?: string | null }>;
       usage?: Record<string, unknown>;
+      web_search?: unknown[];
     };
     try {
       chunk = JSON.parse(payload);
@@ -166,6 +168,10 @@ export async function readGlmSseStream(
       throw incomplete("上游流中途返回错误帧", JSON.stringify(chunk.error));
     }
     if (options.preserveAnnotations) {
+      if (Array.isArray(chunk.web_search)) {
+        for (const value of chunk.web_search) if (!webSearch.some(item => JSON.stringify(item) === JSON.stringify(value))) webSearch.push(value);
+        if (Buffer.byteLength(JSON.stringify(webSearch)) > cap) throw new Error("联网来源回执超过处理上限");
+      }
       const values = chunk.choices?.[0]?.delta?.annotations || chunk.choices?.[0]?.message?.annotations;
       if (Array.isArray(values)) {
         for (const value of values) if (!annotations.some(a => JSON.stringify(a) === JSON.stringify(value))) annotations.push(value);
@@ -174,7 +180,7 @@ export async function readGlmSseStream(
     }
     const delta = chunk.choices?.[0]?.delta?.content;
     if (typeof delta === "string") content += delta;
-    if (Buffer.byteLength(content) + (options.preserveAnnotations ? Buffer.byteLength(JSON.stringify(annotations)) : 0) > cap) throw new Error("GLM 链响应超过处理上限");
+    if (Buffer.byteLength(content) + (options.preserveAnnotations ? Buffer.byteLength(JSON.stringify(annotations)) + Buffer.byteLength(JSON.stringify(webSearch)) : 0) > cap) throw new Error("GLM 链响应超过处理上限");
     if (typeof delta === "string" && delta) options.onContentDelta?.(delta);
     const fr = chunk.choices?.[0]?.finish_reason;
     if (fr) finishReason = String(fr);
@@ -220,6 +226,7 @@ export async function readGlmSseStream(
     provider: provider || undefined,
     choices: [{ message: { content, ...(options.preserveAnnotations ? { annotations } : {}) }, finish_reason: finishReason }],
     usage,
+    ...(options.preserveAnnotations && webSearch.length ? { web_search: webSearch } : {}),
   });
   await options.onComplete?.(raw);
   if (!content && parseFailures > 0) {

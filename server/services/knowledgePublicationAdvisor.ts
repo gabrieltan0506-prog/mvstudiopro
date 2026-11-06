@@ -414,6 +414,7 @@ export async function reviewKnowledgePublication(
     report,
     sourceImages,
     usage: JSON.parse(raw.response.text).usageMetadata,
+    research: JSON.parse(raw.response.text).research,
     model: KNOWLEDGE_VISUAL_ADVISOR_MODEL,
     reportedModelVersion: JSON.parse(raw.response.text).modelVersion,
   });
