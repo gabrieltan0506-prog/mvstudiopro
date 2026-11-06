@@ -553,6 +553,9 @@ jobs:
             if [ -f weixin-channels-miner.json ]; then
               FILES="$FILES weixin-channels-miner.json"
             fi
+            if [ -f platform-current-manifest.json ]; then
+              FILES="$FILES platform-current-manifest.json"
+            fi
             if [ -d history-ledger ] && [ "${EXTERNALIZE_HISTORY_LEDGER:-false}" != "true" ]; then
               FILES="$FILES history-ledger"
             fi

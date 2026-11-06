@@ -145,6 +145,10 @@ test("actual backup YAML snapshots same-generation core and four authorized plat
   assert.equal(sha(bundle), finalized.bundle.sha256); assert.equal(bundle.length, finalized.bundle.bytes);
   const restored = path.join(fixture.root, "restored-core"); fs.mkdirSync(restored);
   execFileSync("tar", ["-xzf", path.join(fixture.output, "growth-restore-bundle.tar.gz"), "-C", restored]);
+  for (const file of manifest.coreFiles) {
+    const raw = fs.readFileSync(path.join(restored, file.relativePath));
+    assert.equal(raw.length, file.bytes); assert.equal(sha(raw), file.sha256);
+  }
   assert.equal(JSON.parse(fs.readFileSync(path.join(restored, "current.json"))).epoch, "snapshot-epoch");
   const indexRaw = fs.readFileSync(path.join(fixture.source, "archive-index.json"));
   assert.deepEqual(fs.readFileSync(path.join(restored, "archive-index.json")), indexRaw);
