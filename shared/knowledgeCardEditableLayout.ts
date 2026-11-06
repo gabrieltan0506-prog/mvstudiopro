@@ -37,6 +37,7 @@ export function knowledgeCardLayoutSource(input: {
 
 /** 全文和配图分别保留稳定章节；精华配图绝不冒充完整文字底稿。 */
 export function synchronizedKnowledgeCardSource(input: {
+  inputFingerprint?: string;
   owner: string; sourceId: string; fullMarkdown: string; illustrationMarkdown: string;
   detailLevel: "concise" | "full"; distillModel?: string;
   infographicTemplateId?: string | null; imageJobIds: readonly string[];
@@ -47,7 +48,7 @@ export function synchronizedKnowledgeCardSource(input: {
   if (!illustrations.length || illustrations.length !== input.imageJobIds.length || new Set(input.imageJobIds).size !== input.imageJobIds.length)
     throw new Error("配图任务与原稿页数不一致，尚未开始生成");
   const textPages = reading.pages!.map(p => ({ ...p, knowledgeRole: "reading" as const }));
-  return { ...reading, detailLevel: input.detailLevel, pages: [
+  return { ...reading, inputFingerprint: input.inputFingerprint, detailLevel: input.detailLevel, pages: [
     ...textPages,
     ...illustrations.map((body, i) => ({
       pageIndex: textPages.length + i + 1,

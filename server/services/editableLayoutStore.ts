@@ -124,7 +124,8 @@ export async function writeLayoutLibrary(
       }
       if (Boolean(old.publication) !== Boolean(doc.publication) || (old.publication && doc.publication &&
           (JSON.stringify(old.publication.source) !== JSON.stringify(doc.publication.source) ||
-           old.publication.requestId !== doc.publication.requestId)))
+           old.publication.requestId !== doc.publication.requestId ||
+           old.publication.inputFingerprint !== doc.publication.inputFingerprint)))
         throw new Error("知识卡原稿快照不能覆盖，请保留原稿并另建新稿");
     }
   }

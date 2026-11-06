@@ -1,3 +1,4 @@
+import { knowledgeCardPageJobId } from "../jobs/knowledgeCardPageTask";
 import { knowledgeImageMayRetry } from "../../shared/knowledgeImageRetry";
 import { planKnowledgeCardPages } from "../../shared/knowledgeCardPagination";
 import type { KnowledgeSource, KnowledgePublication } from "../../shared/knowledgePublication";
@@ -34,6 +35,21 @@ export async function resolveKnowledgePublicationImages(owner: number, source: K
 
 /** 补图只能首次绑定到失败/尚未提交的原任务，且必须是同一正文页与版式。 */
 export async function validateKnowledgeImageReplacements(owner: number, before: KnowledgePublication | undefined, next: KnowledgePublication, read = getJobByIdStrict) {
+  const previousAttempts = before?.imageAttempts || {}, attempts = next.imageAttempts || {};
+  for (const original of Object.keys(previousAttempts))
+    if (!attempts[original]) throw new Error("补图尝试记录不能删除，请先恢复原任务");
+  for (const [original, attempt] of Object.entries(attempts)) {
+    if (!next.source.pages.some(page => page.imageJobId === original) ||
+        attempt.jobId !== knowledgeCardPageJobId(String(owner), "platform_composite_sheet_progress", attempt.requestId) || attempt.jobId === original)
+      throw new Error("补图尝试与当前账号或原稿不一致");
+    const prior = previousAttempts[original];
+    if (prior?.requestId === attempt.requestId && prior.jobId === attempt.jobId) continue;
+    if (before?.imageReplacements?.[original] || next.imageReplacements?.[original]) throw new Error("已成功绑定的配图不能重新购买");
+    const old = await read(prior?.jobId || original);
+    // 未查询到已登记的补图不是未扣费证明，禁止重新分配购买编号。
+    if ((!old && prior) || (old && (String(old.userId) !== String(owner) || !knowledgeImageMayRetry(old))))
+      throw new Error("当前配图尝试尚未确认失败及退款，不能再次购买");
+  }
   const previous = before?.imageReplacements || {}, replacements = next.imageReplacements || {};
   for (const [original, replacement] of Object.entries(previous))
     if (replacements[original] !== replacement) throw new Error("已绑定的补图不能覆盖，请保留原稿");
@@ -41,6 +57,7 @@ export async function validateKnowledgeImageReplacements(owner: number, before: 
     if (previous[original] === replacement) continue;
     const page = next.source.pages.find(p => p.imageJobId === original);
     if (!page || original === replacement) throw new Error("补图未对应原稿中的配图任务");
+    if (attempts[original] && attempts[original].jobId !== replacement) throw new Error("补图不是当前已登记尝试");
     const old = await read(original);
     if (old && (String(old.userId) !== String(owner) || !knowledgeImageMayRetry(old))) throw new Error("原配图任务尚未确认失败，不可替换或重复购买");
     const job = await read(replacement);

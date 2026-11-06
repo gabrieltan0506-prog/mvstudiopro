@@ -83,6 +83,8 @@ export const knowledgePublicationSchema = z
   .object({
     version: z.literal(1),
     synchronizedStarted: z.boolean().optional(),
+    inputFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    imageAttempts: z.record(z.string(), z.object({ requestId: z.string().uuid(), jobId: z.string().min(1).max(200) }).strict()).optional(),
     imageReplacements: z.record(z.string(), z.string()).optional(),
     requestId: z.string().uuid(),
     infographicTemplateId: z.string().max(100).optional(),

@@ -56,6 +56,7 @@ export type EditableLayout = z.infer<typeof editableLayoutSchema>;
 export type LayoutLibrary = z.infer<typeof layoutLibrarySchema>;
 export type LayoutSource = {
   kind?: "knowledge-publication";
+  inputFingerprint?: string;
   infographicTemplateId?: string;
   detailLevel?: "concise" | "full";
   owner: string;
@@ -89,6 +90,7 @@ export function layoutFromSource(source: LayoutSource): EditableLayout {
     })),
     ...(source.kind === "knowledge-publication" ? { publication: {
       version: 1, requestId: crypto.randomUUID(),
+      inputFingerprint: source.inputFingerprint,
       infographicTemplateId: source.infographicTemplateId,
       source: { title: source.title, detailLevel: source.detailLevel, pages: sourcePages },
       manuscript: knowledgeManuscript({title:source.title, pages:sourcePages}),

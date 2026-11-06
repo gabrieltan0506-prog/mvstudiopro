@@ -32,6 +32,7 @@ export type EditableLayoutStudioHandle = {
   prepare: (source: LayoutSource, waitForImages: (ids: string[]) => Promise<void>) => Promise<{ documentId: string; maxCredits: number; estimatedCredits: number }>;
   start: (documentId: string, authorizedCredits: number) => Promise<void>;
   imageJobs: (markdown: string, model: string, template: string | null) => string[] | null;
+  beginImageAttempt: (originalJobId: string, requestId: string, jobId: string) => Promise<void>;
   attachImage: (originalJobId: string, replacementJobId: string, resume: boolean) => Promise<void>;
 };
 /** 按账号恢复，条件写入防止旧会话覆盖新稿。 */
@@ -240,21 +241,43 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
         const images = pub.source.pages.filter(page => page.imageJobId);
         return images.length === bodies.length && images.every((page, i) => page.body === bodies[i]);
       });
-      return found?.publication?.source.pages.filter(page => page.imageJobId).map(page => found.publication!.imageReplacements?.[page.imageJobId!] || page.imageJobId!) || null;
+      return found?.publication?.source.pages.filter(page => page.imageJobId).map(page => found.publication!.imageAttempts?.[page.imageJobId!]?.jobId || found.publication!.imageReplacements?.[page.imageJobId!] || page.imageJobId!) || null;
+    },
+    async beginImageAttempt(originalJobId, requestId, jobId) {
+      while (locked.current && alive.current) await new Promise(resolve => setTimeout(resolve, 100));
+      if (!alive.current || !cloudReady) throw new Error("请先恢复云端稿件，未开始补图");
+      locked.current = true;
+      try {
+        const previous = current.current;
+        const target = [...previous.library.documents].reverse().find(doc => doc.publication?.source.pages.some(page => page.imageJobId === originalJobId) || Object.values(doc.publication?.imageAttempts || {}).some(attempt => attempt.jobId === originalJobId));
+        if (!target?.publication) throw new Error("缺少原配图的云端稿件，未开始补图");
+        const pub = target.publication;
+        const root = pub.source.pages.find(page => page.imageJobId === originalJobId)?.imageJobId || Object.entries(pub.imageAttempts || {}).find(([, attempt]) => attempt.jobId === originalJobId)?.[0];
+        if (!root || (pub.imageAttempts?.[root]?.jobId || root) !== originalJobId) throw new Error("补图尝试已变化，请恢复当前任务");
+        const next = { ...target, publication: { ...pub, imageAttempts: { ...pub.imageAttempts, [root]: { requestId, jobId } } } };
+        const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === target.id ? next : doc) });
+        const saved = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
+        install({ library, generation: saved.generation, dirty: false, activeId: target.id });
+      } finally { locked.current = false; }
     },
     async attachImage(originalJobId, replacementJobId, resume) {
-      // 当前批保存结束后再更新映射，避免两路覆盖同一云稿版本。
       while (locked.current && alive.current) await new Promise(resolve => setTimeout(resolve, 100));
       if (!alive.current) throw new Error("页面已离开，补图已保留，请重新读取云稿");
-      const previous = current.current;
-      const target = [...previous.library.documents].reverse().find(doc => doc.publication?.source.pages.some(page => page.imageJobId === originalJobId) || Object.values(doc.publication?.imageReplacements || {}).includes(originalJobId));
-      if (!target?.publication) return;
-      const next = originalJobId === replacementJobId ? target : { ...target, publication: { ...target.publication, imageReplacements: { ...target.publication.imageReplacements, [originalJobId]: replacementJobId } } };
-      const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === target.id ? next : doc) });
-      const saved = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
-      install({ library, generation: saved.generation, dirty: false, activeId: target.id });
-      setSynchronizedRun(null);
-      if (resume) { setAutoPublicationId(target.id); setAutoStartToken(token => token + 1); setOpen(true); }
+      locked.current = true;
+      try {
+        const previous = current.current;
+        const target = [...previous.library.documents].reverse().find(doc => doc.publication?.source.pages.some(page => page.imageJobId === originalJobId) || Object.values(doc.publication?.imageAttempts || {}).some(attempt => attempt.jobId === originalJobId) || Object.values(doc.publication?.imageReplacements || {}).includes(originalJobId));
+        if (!target?.publication) throw new Error("缺少原稿，补图已保留，请先恢复云稿");
+        const pub = target.publication;
+        const root = pub.source.pages.find(page => page.imageJobId === originalJobId)?.imageJobId || Object.entries(pub.imageAttempts || {}).find(([, attempt]) => attempt.jobId === originalJobId)?.[0] || Object.entries(pub.imageReplacements || {}).find(([, job]) => job === originalJobId)?.[0];
+        if (!root) throw new Error("补图原稿身份不匹配");
+        const next = root === replacementJobId ? target : { ...target, publication: { ...pub, imageReplacements: { ...pub.imageReplacements, [root]: replacementJobId } } };
+        const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === target.id ? next : doc) });
+        const saved = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
+        install({ library, generation: saved.generation, dirty: false, activeId: target.id });
+        setSynchronizedRun(null);
+        if (resume) { setAutoPublicationId(target.id); setAutoStartToken(token => token + 1); setOpen(true); }
+      } finally { locked.current = false; }
     },
     async start(documentId, authorizedCredits) {
       const pending = preparedRun.current;

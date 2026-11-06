@@ -34,3 +34,36 @@ describe("失败配图的恢复绑定", () => {
     await expect(validateKnowledgeImageReplacements(7, next, publication({ "existing-job": "another" }))).rejects.toThrow("不能覆盖");
   });
 });
+
+import { knowledgeCardPageJobId } from "../jobs/knowledgeCardPageTask";
+describe("当前补图尝试必须持久保存并对账 KH-SYNC-02", () => {
+  const attempt = (n: number) => { const requestId = `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`; return { requestId, jobId: knowledgeCardPageJobId("7", "platform_composite_sheet_progress", requestId) }; };
+  const pub = (n?: number): KnowledgePublication => ({ version: 1, requestId: "33333333-3333-4333-8333-333333333333", source, completedBatches: 1, attempts: {}, manuscript: "原稿", ...(n ? { imageAttempts: { "existing-job": attempt(n) } } : {}) });
+  const refunded = { userId: "7", status: "failed", output: { knowledgeImageRetry: { version: 1, reason: "refunded" } } };
+  for (const [name, job] of Object.entries({ running: { userId: "7", status: "running" }, unknown: { userId: "7", status: "failed", output: { knowledgeImageRetry: { version: 1, reason: "pending" } } }, missing: null, otherOwner: { ...refunded, userId: "8" }, succeeded: { userId: "7", status: "succeeded" } })) it(`${name}不能分配下一次补图`, async () => {
+    const read = vi.fn(async () => job as any);
+    await expect(validateKnowledgeImageReplacements(7, pub(1), pub(2), read)).rejects.toThrow("不能再次购买");
+    expect(read).toHaveBeenCalledWith(attempt(1).jobId);
+  });
+  it("首次保存和明确退款后的下一次可以通过", async () => {
+    const read = vi.fn(async () => refunded as any);
+    await expect(validateKnowledgeImageReplacements(7, pub(), pub(1), read)).resolves.toBeUndefined();
+    await expect(validateKnowledgeImageReplacements(7, pub(1), pub(2), read)).resolves.toBeUndefined();
+    expect(read.mock.calls.map((call: any[]) => call[0])).toEqual(["existing-job", attempt(1).jobId]);
+  });
+  it("删除、错owner哈希、错原稿及错成功映射都拒绝", async () => {
+    await expect(validateKnowledgeImageReplacements(7, pub(1), pub())).rejects.toThrow("不能删除");
+    const wrong = pub(1); wrong.imageAttempts!["existing-job"].jobId = "kc_wrong";
+    await expect(validateKnowledgeImageReplacements(7, pub(), wrong)).rejects.toThrow("不一致");
+    const sourceWrong = pub(1); sourceWrong.imageAttempts = { other: attempt(1) };
+    await expect(validateKnowledgeImageReplacements(7, pub(), sourceWrong)).rejects.toThrow("不一致");
+    const mappingWrong = pub(1); mappingWrong.imageReplacements = { "existing-job": attempt(2).jobId };
+    await expect(validateKnowledgeImageReplacements(7, pub(1), mappingWrong)).rejects.toThrow("当前已登记尝试");
+  });
+  it("成功映射绑定当前尝试，重复保存不重读或更换任务", async () => {
+    const next = pub(1); next.imageReplacements = { "existing-job": attempt(1).jobId };
+    const read = vi.fn(async (id: string) => id === "existing-job" ? refunded as any : { userId: "7", status: "succeeded", input: { action: "platform_composite_sheet_progress", params: { kind: "single_page_knowledge_card", scriptContext: "图中内容", notePageIndex: 1 } } } as any);
+    await expect(validateKnowledgeImageReplacements(7, pub(1), next, read)).resolves.toBeUndefined();
+    read.mockClear(); await expect(validateKnowledgeImageReplacements(7, next, next, read)).resolves.toBeUndefined(); expect(read).not.toHaveBeenCalled();
+  });
+});

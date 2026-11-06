@@ -21,3 +21,22 @@ describe("同步补图映射所有写入路径保护", () => {
     expect(write).not.toHaveBeenCalled();
   });
 });
+
+describe("云稿来源身份与当前尝试保护", () => {
+  it("原稿指纹不能被新输入覆盖或删除", async () => {
+    const old = document(); old.publication!.inputFingerprint = "a".repeat(64);
+    const doc = structuredClone(old); doc.publication!.inputFingerprint = "b".repeat(64);
+    const write = vi.fn(), deps = { write, read: vi.fn(async () => ({ generation: "1", buffer: Buffer.from(JSON.stringify({ library: { version: 1, owner: "7", documents: [old] } })) })) };
+    await expect(writeLayoutLibrary(7, { version: 1, owner: "7", documents: [doc] }, "1", deps as any)).rejects.toThrow("原稿快照不能覆盖");
+    delete doc.publication!.inputFingerprint;
+    await expect(writeLayoutLibrary(7, { version: 1, owner: "7", documents: [doc] }, "1", deps as any)).rejects.toThrow("原稿快照不能覆盖");
+    expect(write).not.toHaveBeenCalled();
+  });
+  it("恢复后的新保存不能省略在途尝试记录", async () => {
+    const doc = document(), old = structuredClone(doc);
+    old.publication!.imageAttempts = { original: { requestId: "11111111-1111-4111-8111-111111111111", jobId: "kc_attempt" } };
+    const write = vi.fn(), deps = { write, read: vi.fn(async () => ({ generation: "1", buffer: Buffer.from(JSON.stringify({ library: { version: 1, owner: "7", documents: [old] } })) })) };
+    await expect(writeLayoutLibrary(7, { version: 1, owner: "7", documents: [doc] }, "1", deps as any)).rejects.toThrow("不能删除");
+    expect(write).not.toHaveBeenCalled();
+  });
+});
