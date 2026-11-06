@@ -1,3 +1,5 @@
+import {KNOWLEDGE_INTERIOR_PRICE_COPY} from "@shared/knowledgePublicationPricing";
+import {knowledgeConversationAnswerSchema} from "@shared/knowledgeConversation";
 import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
 import KnowledgeConversationPanel from "./KnowledgeConversationPanel";
 import { completedKnowledgeBatches, knowledgeCompletedPrefix, runKnowledgeParallelBatches } from "@shared/knowledgePublicationParallel";
@@ -99,6 +101,7 @@ export default function KnowledgePublicationPanel({
     pdfError?: string;
     imagePages?: number;
     totalPages?: number;
+    billing?: {readingPages:number;unitCredits:number;chargedCredits:number;alreadyCharged:boolean};
   } | null>(null);
   useEffect(() => {
     alive.current = true;
@@ -151,6 +154,43 @@ export default function KnowledgePublicationPanel({
     saveQueue.current=saving;
     return saving;
   };
+  const arrangeBook = async () => {
+    const initial=latest.current,pub=initial.publication!,intent=pub.automaticLayout;
+    if(!intent||!pub.review||pub.synchronizedStarted!==true)return;
+    const documentId=initial.id;
+    const current=()=>{
+      const value=latest.current;
+      if(!alive.current||value.id!==documentId||value.publication?.automaticLayout?.requestId!==intent.requestId||value.publication.manuscript!==pub.manuscript)throw Error("稿件已变化，排版结果保留在原请求，请恢复原稿");
+      return value;
+    };
+    if(pub.layoutConversationId)return;
+    const history=pub.conversation||[];
+    let turn=history.find(t=>t.request.id===intent.requestId);
+    if(!turn){
+      if(history.some(t=>!t.response))throw Error("原交流尚未结束，请先恢复该请求；整册排版尚未重复提交");
+      const input=await utils.editableLayout.bookLayoutInput.fetch({documentId});
+      turn={request:{id:intent.requestId,question:"请根据完整正文和现有全部图卡重新安排整册顺序与设计，将图片放到相关内容附近，保留每段文字和每张图片，做好精美排版。",imagePageIds:[],manuscript:pub.manuscript,action:"layout",layoutSourceDigest:input.sourceDigest}};
+      const fresh=current();
+      await save({...fresh,publication:{...fresh.publication!,conversation:[...history,turn]},updatedAt:new Date().toISOString()});
+    }
+    if(turn.request.manuscript!==pub.manuscript)throw Error("排版请求对应另一版正文，未重复调用");
+    // 恢复本地待保存请求时先补齐云端版本，再查询原请求；绝不更换ID。
+    if(history.some(t=>t.request.id===intent.requestId))await save(current());
+    let answer=turn.response;
+    if(!answer){
+      const quote=await utils.editableLayout.publicationQuote.fetch({documentId,purpose:"conversation"});
+      if(quote.maxCredits!==0)throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");
+      current();setMessage("正在将全部图片安排到对应正文，统一整册顺序、配色和版式…");
+      const response=await streamManhuaAdvisor({question:turn.request.question,rawQuestion:turn.request.question,requestId:intent.requestId,knowledgePublicationContext:{documentId,batchIndex:current().publication!.conversation!.findIndex(t=>t.request.id===intent.requestId),attempt:0,purpose:"conversation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
+      answer=knowledgeConversationAnswerSchema.parse(JSON.parse(response.answer));
+    }
+    if(answer.requestId!==intent.requestId||!answer.layoutPlan||answer.layoutPlan.sourceDigest!==turn.request.layoutSourceDigest)throw Error("整册排版方案与本次完整稿件不符，未采用");
+    const fresh=current();
+    const next={...fresh,publication:{...fresh.publication!,confirmedManuscript:pub.manuscript,layoutConversationId:intent.requestId,conversation:fresh.publication!.conversation!.map(t=>t.request.id===intent.requestId?{...t,response:answer}:t)},updatedAt:new Date().toISOString()};
+    let saved:Saved;
+    try{saved=await save(next);}catch(error){latest.current=fresh;onChange(fresh);throw error;}
+    await exportLayout(next,saved);
+  };
   const run = async (retryFailed = false) => {
     if (active.current) return;
     locked(true);
@@ -162,7 +202,7 @@ export default function KnowledgePublicationPanel({
       const beforeRetry = latest.current;
       let next = latest.current,
         pub = next.publication!;
-      const initialAuthorization = !retryFailed && !authorizationConsumed.current ? preauthorizedCredits : undefined;
+      const initialAuthorization = !retryFailed && !authorizationConsumed.current && preauthorizedCredits!==undefined ? Math.max(0,preauthorizedCredits-(pub.automaticLayout?.maxCredits||0)) : undefined;
       authorizationConsumed.current = true;
       if (pub.synchronizedStarted === false && initialAuthorization === undefined) throw new Error("这份同步草稿尚未确认生成，请返回配图入口核对后开始；没有发起图片或文字收费任务");
       if (pub.synchronizedStarted === false) { pub = { ...pub, synchronizedStarted: true }; next = { ...next, publication: pub }; }
@@ -191,14 +231,8 @@ export default function KnowledgePublicationPanel({
       let quote = await utils.editableLayout.publicationQuote.fetch({
         documentId: next.id,
       });
-      // 费用只按现有顾问单批费率计算，不用短问答免费名义暗中发起整套付费请求。
-      if (
-        quote.maxCredits > (initialAuthorization ?? 0) &&
-        !window.confirm(
-          `将自动整理剩余${quote.remaining}组内容，预计${quote.estimatedCredits}积分，最多${quote.maxCredits}积分。整套核对若需增加费用，会先向你确认。无需逐页修改，是否开始？`
-        )
-      )
-        return;
+      // 顾问已包含在最终内文页费中；旧报价不能触发额外扣费。
+      if(quote.maxCredits!==0)throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");
       let charged = 0, authorizedCredits = Math.max(quote.maxCredits, initialAuthorization ?? 0);
       total = quote.batches;
       const documentId = next.id;
@@ -233,7 +267,7 @@ export default function KnowledgePublicationPanel({
         setMessage(
           i >= batches.length
             ? "全部配图已检查，正在核对整套知识说明的一致性…"
-            : `正在自动审校第 ${i + 1} / ${batches.length} 批 · 已完成部分已保存`
+            : `正在整理第 ${batches[i].map(n=>n+1).join("、")} 章 · 已完成内容已保存`
         );
         const attempt = pub.attempts[String(i)] || 0;
         const response = await streamManhuaAdvisor(
@@ -256,7 +290,7 @@ export default function KnowledgePublicationPanel({
       const consume = async (i: number, response: Awaited<ReturnType<typeof streamManhuaAdvisor>>) => {
         if (!response.replayed) charged += response.creditsCharged;
         if (charged > authorizedCredits)
-          throw new Error("费用回执超出本次确认范围，已暂停后续批次");
+          throw new Error("费用回执超出本次确认范围，后续整理已暂停");
         return update(() => {
         const answer = JSON.parse(response.answer);
         if (i >= batches.length && answer.kind === "knowledge_consistency_batch_v1") {
@@ -298,7 +332,9 @@ export default function KnowledgePublicationPanel({
             result.reviewedPages.join(",") !==
               batches[i].map(n => pub.source.pages[n].id).join(",")
           )
-            throw new Error("本批审校回执页号不一致，已暂停");
+            throw new Error("整理结果与原章节不一致，已暂停");
+          if(result.pages && result.pages.map(page=>page.id).join(",")!==result.reviewedPages.join(","))throw Error("章节正文与原稿编号不一致，未采用");
+          pub = {...pub,chapterReviewDigest:result.sourceDigest,chapterReviews:{...pub.chapterReviews,...Object.fromEntries((result.pages||[]).map(page=>[page.id,page]))}};
           const completed = completedKnowledgeBatches(pub, batches.length);
           completed.add(i);
           pub = { ...pub, parallel: { channels: pub.parallel!.channels, completed: Array.from(completed).sort((a, b) => a - b) }, completedBatches: knowledgeCompletedPrefix(completed, batches.length) };
@@ -314,7 +350,7 @@ export default function KnowledgePublicationPanel({
         active: stillHere,
         assign: (i, channel) => update(() => {
           const assigned = pub.parallel!.channels[String(i)];
-          if (assigned && assigned !== channel) throw new Error("批次通道已固定，请恢复原任务");
+          if (assigned && assigned !== channel) throw new Error("原整理请求已固定，请继续原任务");
           pub = { ...pub, parallel: { ...pub.parallel!, channels: { ...pub.parallel!.channels, [i]: channel } } };
           next = { ...next, publication: pub };
         }),
@@ -324,23 +360,23 @@ export default function KnowledgePublicationPanel({
       });
       if (failures.length) throw failures[0].error;
       if (!stillHere()) return;
-      if (completedKnowledgeBatches(pub, batches.length).size !== batches.length) throw new Error("仍有未完成批次，已完成内容已保存");
+      if (completedKnowledgeBatches(pub, batches.length).size !== batches.length) throw new Error("仍有未完成章节，已完成内容已保存");
       for (let i = Math.max(batches.length, pub.completedBatches); i < total; i++) {
         if (!stillHere()) return;
         if (i === batches.length && !quote.consistencyKnown) {
           const updated = await utils.editableLayout.publicationQuote.fetch({ documentId: next.id });
           const extra = Math.max(0, charged + updated.maxCredits - authorizedCredits);
-          if (extra > 0 && !window.confirm(`内容已整理保存。整套核对还需处理${updated.remaining}组，最多新增${extra}积分，是否继续？`)) return;
+          if (extra > 0) throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");
           authorizedCredits += extra;
           quote = updated;
           total = updated.batches;
         }
         await consume(i, await execute(i));
       }
-      setMessage(
-        "已完成整套图文审校与说明整理。可直接确认生成；手动修改是可选项。"
-      );
+      if(latest.current.publication?.automaticLayout)await arrangeBook();
+      else setMessage("已完成整套图文审校与说明整理。可直接确认生成；手动修改是可选项。");
     } catch (e) {
+      setMessage("");
       const safe = knowledgePublicationPublicError(e);
       setTerminal(safe.retryable || (e as { retryable?: boolean })?.retryable === true);
       setError(safe.message);
@@ -350,7 +386,7 @@ export default function KnowledgePublicationPanel({
   };
   useEffect(() => {
     const key = `${doc.id}:${autoStartToken}`;
-    if (autoStart && started.current !== key && !doc.publication?.review) {
+    if (autoStart && started.current !== key && (!doc.publication?.review || (doc.publication.automaticLayout && !doc.publication.layoutConversationId))) {
       started.current = key;
       void run();
     }
@@ -381,7 +417,7 @@ export default function KnowledgePublicationPanel({
       if(reuse&&pub.presentationPlan){setMessage("已恢复当前提纲，无需重复调用顾问。");return;}
       const quote=retryQuote??await utils.editableLayout.publicationQuote.fetch({documentId:next.id,purpose:"presentation"});
       if(automatic && (preauthorizedPresentationCredits===undefined||quote.maxCredits>preauthorizedPresentationCredits))throw Error("提前课件规划尚未获得本次费用确认，请使用规划按钮核对费用后继续。");
-      if(!automatic&&!retryFailed&&quote.maxCredits>0&&!window.confirm(`将由创作顾问规划 ${minSlides}–${maxSlides} 页课件，最多 ${quote.maxCredits} 积分。仅生成逐页提纲，确认后再渲染，是否继续？`))return;
+      if(quote.maxCredits!==0)throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");
       setMessage(`正在按 ${minSlides}–${maxSlides} 页提前规划重点与版式，实际配图仍须最终审校…`);
       const response=await streamManhuaAdvisor({question:"按指定页数范围规划可编辑课件，提炼有答案的重点，保持字体与版式层次。",rawQuestion:"按指定页数范围规划可编辑课件，提炼有答案的重点，保持字体与版式层次。",requestId:request.id,knowledgePublicationContext:{documentId:next.id,batchIndex:0,attempt:0,purpose:"presentation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
       const plan=knowledgePresentationPlanSchema.parse(JSON.parse(response.answer));
@@ -433,6 +469,7 @@ export default function KnowledgePublicationPanel({
         const plan=pub.presentationRevision??pub.presentationPlan;
         if(plan)assertKnowledgePresentationCapacity(plan);
       }
+      if(pub.billing&&!pub.billing.confirmed&&!window.confirm(KNOWLEDGE_INTERIOR_PRICE_COPY+" 是否确认？"))return;
       const parsed = parseKnowledgeManuscript(
         pub.manuscript,
         pub.source.pages.map(p => p.id)
@@ -441,7 +478,7 @@ export default function KnowledgePublicationPanel({
         ...current,
         title: parsed.title,
         pages: current.pages.map((p, i) => ({ ...p, ...parsed.pages[i] })),
-        publication: { ...pub, confirmedManuscript: pub.manuscript },
+        publication: { ...pub, confirmedManuscript: pub.manuscript,...(pub.billing?{billing:{...pub.billing,confirmed:true}}:{}) },
         updatedAt: new Date().toISOString(),
       };
       const saved = await save(next);
@@ -480,7 +517,10 @@ export default function KnowledgePublicationPanel({
   const pub = doc.publication!,
     review = pub.layoutConversationId ? layoutView?.review ?? pub.review : pub.review;
   const reviewBatchCount = knowledgeReviewBatches(pub.source).length;
-  const completedCount = Math.max(pub.completedBatches, completedKnowledgeBatches(pub, reviewBatchCount).size);
+  const completedGroups = completedKnowledgeBatches(pub, reviewBatchCount);
+  const chapterBatches = knowledgeReviewBatches(pub.source);
+  const completedCount = chapterBatches.filter((_,i)=>completedGroups.has(i)).reduce((n,pages)=>n+pages.length,0);
+  const pendingChapters = chapterBatches.flatMap((pages,i)=>completedGroups.has(i)?[]:pages.map(n=>n+1));
   const displayedPlan=pub.presentationRevision??pub.presentationPlan;
   const capacityIssues=displayedPlan?knowledgePresentationCapacityIssues(displayedPlan):[];
   const draftIssues=planDraft?knowledgePresentationCapacityIssues(planDraft):[];
@@ -530,6 +570,7 @@ export default function KnowledgePublicationPanel({
           整套 {pub.source.pages.length} 章内容、{pub.source.pages.filter(p => p.imageUrl).length} 张原图；按原顺序处理全部正文，手册按内容自动分页。
         </p>
       </div>
+      <p className="text-xs text-[#c0cabb]">{KNOWLEDGE_INTERIOR_PRICE_COPY}</p>
       <details open={!compact} className="space-y-3">
       <summary className="cursor-pointer text-sm text-[#c0cabb]">手册与阅读设置</summary>
       <p className="text-sm text-[#c0cabb]">需要重新编排时，使用下方“让顾问重新排版并导出 PDF”。顾问决定整册章节顺序、配色、表格、边框和纹样，原图与完整正文保留。</p>
@@ -601,9 +642,20 @@ export default function KnowledgePublicationPanel({
       {!review ? (
         <div className="space-y-3">
           <p className="text-sm">
-            {pub.source.pages.length} 章内容 · 已完成 {completedCount}{" "}
-            批。原稿与配图保留，刷新后可以继续。
+            已完成 {completedCount}/{pub.source.pages.length} 章。原稿与配图已保留。
+            {pendingChapters.length>0 && <span>第 {pendingChapters.join("、")} 章{error ? "尚未成功，已完成章节不会重做。" : "正在等待或整理。"}</span>}
+            {completedCount===pub.source.pages.length && <span>正在核对整册内容。</span>}
           </p>
+          <div aria-label="已整理章节" aria-live="polite" className="max-h-[720px] space-y-4 overflow-y-auto">
+            {pub.source.pages.map((source,i)=>{const chapter=pub.chapterReviews?.[source.id];if(!chapter || !pub.chapterReviewDigest)return null;
+              const page=doc.pages.find(p=>p.id===source.id);
+              const partialDoc={...doc,pages:[{...page!,headline:chapter.headline,body:chapter.body}]};
+              const partialReview:KnowledgeReview={kind:"knowledge_publication_v1",sourceDigest:pub.chapterReviewDigest,title:doc.title,pages:[chapter]};
+              return <article key={source.id}><h5>第 {i+1} 章 · {chapter.headline}</h5><p className="whitespace-pre-wrap">{chapter.body}</p>
+                <iframe title={`第 ${i+1} 章图文预览`} sandbox="" className="h-[520px] w-full rounded-lg bg-[#faf7f0]" srcDoc={knowledgePublicationHead(doc.title)+knowledgePublicationChapter(partialDoc,partialReview,0,page?.imageUrl||"",true)+"</body></html>"}/>
+              </article>;
+            })}
+          </div>
           <button
             className={button}
             disabled={busy}
@@ -612,7 +664,7 @@ export default function KnowledgePublicationPanel({
             {busy
               ? "正在自动处理…"
               : terminal
-                ? "仅重试失败批次并继续"
+                ? "仅恢复失败章节并继续"
                 : completedCount
                   ? "继续自动审校"
                   : "开始自动审校"}
@@ -620,6 +672,7 @@ export default function KnowledgePublicationPanel({
         </div>
       ) : (
         <>
+          {pub.automaticLayout&&!pub.layoutConversationId&&<button className={button} disabled={busy} onClick={()=>void run()}>恢复整册自动排版（沿用原请求）</button>}
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-sm">
               全套 {review.pages.length} 页已检查 ·{" "}
@@ -707,6 +760,7 @@ export default function KnowledgePublicationPanel({
             </button>
 
             {pptxFile && <a className={button} href={flyDownloadUrl(pptxFile.pptxUrl)} download>下载 PPTX · {pptxFile.slides}页</a>}
+            {files?.billing&&<p className="text-sm">纯内文 {files.billing.readingPages} 页 · 本稿已结算 {files.billing.chargedCredits} 积分{files.billing.alreadyCharged?"，本次未重复扣费":""} · 顾问不另收费</p>}
             {files && (
               <>
                 <a

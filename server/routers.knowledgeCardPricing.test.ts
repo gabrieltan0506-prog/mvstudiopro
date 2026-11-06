@@ -9,6 +9,11 @@ vi.mock("./services/proxyImageService.js", async original => ({
   ...await original<Record<string, unknown>>(), generatePlatformCompositeSheetImage: mocks.image,
 }));
 import { appRouter } from "./routers";
+import { createHTTPServer } from "@trpc/server/adapters/standalone";
+import { createTRPCUntypedClient, httpLink, httpBatchLink, splitLink } from "@trpc/client";
+import superjson from "superjson";
+import { useLongTrpcHttpLink } from "../client/src/lib/trpcTransportRouting";
+
 const caller = () => appRouter.createCaller({ user: { id: 7, role: "user" } } as never);
 const base = {
   sceneId: "pricing-test", title: "水循环", scriptContext: "# 水循环\n\n蒸发后凝结成雨。",
@@ -46,4 +51,37 @@ describe("手册真实API报价与扣费前门禁", () => {
       .rejects.toThrow("需要 24 点");
     expect(mocks.deduct).not.toHaveBeenCalled(); expect(mocks.image).not.toHaveBeenCalled();
   });
+});
+
+it("真实HTTP长中文报价通过POST到原服务，鉴权和全文保留且零扣费", async () => {
+  const markdown = "# 长文报价\n" + "完整中文正文".repeat(8000);
+  const calls: Array<{url:string;method:string;body:string;credentials:unknown}> = [];
+  const server = createHTTPServer({ router: appRouter, createContext: async () => ({user:{id:7,role:"user"}} as never) });
+  await new Promise<void>(resolve => server.listen(0,"127.0.0.1",resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw Error("本地HTTP未就绪");
+  const url = `http://127.0.0.1:${address.port}`;
+  const fetcher:typeof fetch = async (input,init) => {
+    calls.push({url:String(input),method:init?.method||"GET",body:String(init?.body||""),credentials:"include"});
+    return fetch(input,{...init,credentials:"include"});
+  };
+  const client=createTRPCUntypedClient({links:[splitLink({condition:useLongTrpcHttpLink,
+    true:httpLink({url,transformer:superjson,fetch:fetcher}),
+    false:httpBatchLink({url:url+"/wrong-proxy",transformer:superjson,fetch:fetcher})})]});
+  try {
+    const expected = await caller().mvAnalysis.quoteKnowledgeCard({markdown,distillModel:base.distillModel});
+    const actual = await client.mutation("mvAnalysis.quoteKnowledgeCardForGeneration",{markdown,distillModel:base.distillModel});
+    expect(actual).toEqual(expected);
+    expect(calls).toHaveLength(1);expect(calls[0].method).toBe("POST");
+    expect(calls[0].url).toBe(url+"/mvAnalysis.quoteKnowledgeCardForGeneration");
+    expect(superjson.parse(calls[0].body)).toEqual({markdown,distillModel:base.distillModel});
+    expect(mocks.lookup).toHaveBeenLastCalledWith(7,markdown);
+    expect(mocks.deduct).not.toHaveBeenCalled();expect(mocks.image).not.toHaveBeenCalled();
+  } finally { server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(e=>e?reject(e):resolve())); }
+},20000);
+
+it("POST报价仍拒绝匿名和超长输入，不调用模型与扣费",async()=>{
+  await expect(appRouter.createCaller({user:null} as never).mvAnalysis.quoteKnowledgeCardForGeneration({markdown:"正文"})).rejects.toThrow();
+  await expect(caller().mvAnalysis.quoteKnowledgeCardForGeneration({markdown:"字".repeat(50001)})).rejects.toThrow();
+  expect(mocks.lookup).not.toHaveBeenCalled();expect(mocks.deduct).not.toHaveBeenCalled();expect(mocks.image).not.toHaveBeenCalled();
 });

@@ -155,6 +155,7 @@ export async function writeLayoutLibrary(
       }
     }
   }
+  (await import("./knowledgePublicationBilling")).validateKnowledgeBillingTransition(priorLibrary,library);
   if(library.documents.some(d=>d.publication?.supplementOf||d.publication?.supplementDocumentId)||priorLibrary?.documents.some(d=>d.publication?.supplementOf||d.publication?.supplementDocumentId)){
     await (await import("./knowledgeSupplement")).validateKnowledgeSupplements(owner,priorLibrary,library);
   }

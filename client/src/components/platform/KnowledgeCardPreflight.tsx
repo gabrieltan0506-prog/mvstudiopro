@@ -1,3 +1,4 @@
+import {KNOWLEDGE_INTERIOR_PRICE_COPY} from "@shared/knowledgePublicationPricing";
 /**
  * 出图前确认（0911 用户令：出图之前先弹窗，显示版式、完整版或精华版、模板类型，确认无误再生成）。
  * 以前这里是一句 window.confirm，只报页数和积分——版式选错、成稿档选错，要等二十多张图出完才发现。
@@ -49,7 +50,7 @@ export function KnowledgeCardPreflight({
         { k: "配图数量", v: `${summary.pageCount} 张` },
         { k: "同步准备", v: "顾问边出图边读图排版，并提前规划15–20页可编辑PPTX；完成后仍需核对确认导出" },
         { k: "画质", v: summary.qualityZh },
-        ...(summary.advisorCredits === undefined ? [] : [{ k: "同步整理完整文字", v: `最多 ${summary.advisorCredits} 积分` }]),
+        { k: "顾问整理与排版", v: "包含在内文页费中，不另收费" },
       ]
     : [];
   return (
@@ -86,7 +87,7 @@ export function KnowledgeCardPreflight({
         {summary ? (
           <p className="rounded-xl border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-[11px] leading-5 text-amber-100/85">
             配图 <span className="font-semibold tabular-nums">{summary.credits}</span> 积分，逐页扣费。
-            {summary.advisorCredits !== undefined && <>同步整理最多 {summary.advisorCredits} 积分，合计最多 {summary.credits + summary.advisorCredits} 积分；后续整套核对如需超出，会先确认。</>}
+            {KNOWLEDGE_INTERIOR_PRICE_COPY} 确认生成即同意按上述费率自动结算。
             出图途中可以点「终止」：已出的页保留并计费，未出的页不扣。
           </p>
         ) : null}

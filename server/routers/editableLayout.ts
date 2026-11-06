@@ -18,13 +18,9 @@ export const editableLayoutRouter = router({
   readingPreparation: publicationProcedure.input(z.object({jobId:z.string().regex(/^kc_[a-zA-Z0-9_-]+$/)}).strict()).query(async({ctx,input})=>{
     const {knowledgeReadingPreparationState}=await import("../services/knowledgeReadingPreparation");
     const {resolvePlatformSkillQaPaidCredits}=await import("../config/platformSwitches");
-    const {countPlatformSkillQaToday}=await import("../services/platformSkillQa");
-    const {platformSkillQaDailyFreeLimit}=await import("../../shared/plans");
     const state=await knowledgeReadingPreparationState(ctx.user.id,input.jobId);
     const remaining=Math.max(0,state.batches-state.completed.length),paidUnit=resolvePlatformSkillQaPaidCredits("terra");
-    const exempt=ctx.user.role==="admin"||ctx.user.role==="supervisor";
-    const free=exempt?remaining:Math.max(0,platformSkillQaDailyFreeLimit("terra")-await countPlatformSkillQaToday(ctx.user.id,"terra",false));
-    return {...state,paidUnit,maxCredits:exempt?0:remaining*paidUnit,estimatedCredits:exempt?0:Math.max(0,remaining-free)*paidUnit};
+    return {...state,paidUnit,maxCredits:0,estimatedCredits:0};
   }),
 
   bookLayoutInput: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
@@ -61,17 +57,13 @@ export const editableLayoutRouter = router({
     const {loadKnowledgePublication,knowledgePublicationWorkPlan}=await import("../services/knowledgePublicationAdvisor");
     const {knowledgeReviewBatches}=await import("../../shared/knowledgePublication");
     const {resolvePlatformSkillQaPaidCredits}=await import("../config/platformSwitches");
-    const {countPlatformSkillQaToday}=await import("../services/platformSkillQa");
-    const {platformSkillQaDailyFreeLimit}=await import("../../shared/plans");
     const doc=await loadKnowledgePublication(ctx.user.id,{documentId:input.documentId,batchIndex:0,attempt:0});
     const plan=input.purpose?{totalBatches:1,reviewBatches:0,consistencyKnown:true}:await knowledgePublicationWorkPlan(ctx.user.id,doc);
     const batches=plan.totalBatches;
     const completed = doc.publication.completedBatches >= plan.reviewBatches ? doc.publication.completedBatches : completedKnowledgeBatches(doc.publication, plan.reviewBatches).size;
     const remaining=input.purpose?1:doc.publication.review?0:Math.max(0,batches-completed);
-    const exempt=ctx.user.role==="admin"||ctx.user.role==="supervisor";
     const paidUnit=resolvePlatformSkillQaPaidCredits("terra");
-    const free=exempt?remaining:Math.max(0,platformSkillQaDailyFreeLimit("terra")-await countPlatformSkillQaToday(ctx.user.id,"terra",false));
-    return {batches,remaining,reviewBatches:plan.reviewBatches,consistencyKnown:plan.consistencyKnown,paidUnit,maxCredits:exempt?0:remaining*paidUnit,estimatedCredits:exempt?0:Math.max(0,remaining-free)*paidUnit,freeBatches:Math.min(free,remaining)};
+    return {batches,remaining,reviewBatches:plan.reviewBatches,consistencyKnown:plan.consistencyKnown,paidUnit,maxCredits:0,estimatedCredits:0,freeBatches:remaining};
   }),
   exportPublication: publicationProcedure.input(z.object({documentId:z.string().uuid(),expectedGeneration:z.string().regex(/^\d+$/)}).strict())
     .mutation(async({ctx,input})=>{

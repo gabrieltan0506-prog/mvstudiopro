@@ -21,7 +21,7 @@ const store = {
     await uploadBufferToGcs({objectName:name, buffer:Buffer.from(JSON.stringify(value)), contentType:"application/json"});
   },
 };
-const planSchema = knowledgeReadingPreparationSchema.extend({ totalChunks: z.number().int().min(1) }).strict();
+const planSchema = knowledgeReadingPreparationSchema.extend({ totalChunks: z.number().int().min(1), rawSources: z.array(z.object({key:z.string(),digest:z.string()}).strict()).optional() }).strict();
 const batchSchema = z.object({ index:z.number().int().min(0), source:knowledgeSourceSchema, sourceDigest:z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export function createKnowledgeReadingPreparation(owner: number, jobId: string, deps = store) {
   const root = prefix(owner, jobId), chunks = new Map<number, KnowledgeReadingChunk>(), pending = new Map<number, Promise<void>>(), ready = new Set<number>();
@@ -29,13 +29,40 @@ export function createKnowledgeReadingPreparation(owner: number, jobId: string, 
   const progress = (): KnowledgeReadingProgress | undefined => plan && ({jobId,documentId:plan.documentId,batches:plan.batches,ready:Array.from(ready).sort((a,b)=>a-b)});
   return {
     progress,
+    async onSource(key: string, parts: string[]) {
+      if (!parts.length || parts.some(p => !p.trim() || p.length > 6000)) throw Error("原文分段为空或超出容量");
+      const digest = hash(JSON.stringify(parts));
+      const prior = plan || await deps.read(`${root}/plan.json`);
+      if (prior && !prior.rawSources) throw Error("已有提炼顾问计划，不能覆盖为另一份原稿");
+      if (prior) plan = planSchema.parse(prior);
+      const previous = plan?.rawSources?.find(item => item.key === key);
+      if (previous) {
+        if (previous.digest !== digest) throw Error("原读档内容已改变，禁止重复购买");
+        for (let i=0;i<plan!.batches;i++) ready.add(i);
+        return;
+      }
+      const start = plan?.batches || 0;
+      for (let offset=0;offset<parts.length;offset+=4) {
+        const index=start+Math.floor(offset/4);
+        const source=knowledgeSourceSchema.parse({title:"读档中的知识整理",pages:parts.slice(offset,offset+4).map((body,i)=>({id:stableId(`${jobId}:${key}:${offset+i}`),headline:body.split(/\r?\n/).find(line=>line.trim())!.replace(/^#+\s*/, "").slice(0,100),body,imageUrl:"",role:"reading"}))});
+        const value=batchSchema.parse({index,source,sourceDigest:hash(JSON.stringify(source))});
+        const old=await deps.read(`${root}/batch-${index}/input.json`);
+        if(old && JSON.stringify(old)!==JSON.stringify(value))throw Error("原顾问分段内容已改变，未重复提交");
+        if(!old)await deps.save(`${root}/batch-${index}/input.json`,value);
+        ready.add(index);
+      }
+      plan=planSchema.parse({jobId,documentId:stableId(jobId),totalChunks:(plan?.totalChunks||0)+parts.length,batches:start+Math.ceil(parts.length/4),rawSources:[...(plan?.rawSources||[]),{key,digest}]});
+      await deps.save(`${root}/plan.json`,plan);
+    },
     async onPlan(total: number) {
+      if (plan?.rawSources) return;
       plan = planSchema.parse({jobId,documentId:stableId(jobId),totalChunks:total,batches:Math.ceil(total/4)});
       const prior = await deps.read(`${root}/plan.json`);
       if (prior && JSON.stringify(prior) !== JSON.stringify(plan)) throw Error("原读档分段计划已改变，禁止覆盖已有顾问任务");
       if (!prior) await deps.save(`${root}/plan.json`,plan);
     },
     async onChunk(chunk: KnowledgeReadingChunk) {
+      if (plan?.rawSources) return;
       if (!plan || chunk.total !== plan.totalChunks || chunk.index < 0 || chunk.index >= plan.totalChunks) throw Error("读档分段与顾问计划不一致");
       const old = chunks.get(chunk.index);
       if (old && JSON.stringify(old) !== JSON.stringify(chunk)) throw Error("已读取分段不能覆盖");
@@ -78,9 +105,10 @@ export async function knowledgeReadingPreparationState(owner:number,jobId:string
   const {job,plan}=await loadKnowledgeReadingPreparation(owner,jobId,deps),root=prefix(owner,jobId);
   const entries=await Promise.all(Array.from({length:plan.batches},async(_,i)=>{
     const [input,report,failure]=await Promise.all([deps.read(`${root}/batch-${i}/input.json`),deps.read(`${root}/batch-${i}/report.json`),deps.read(`${root}/batch-${i}/failure.json`)]);
-    return {index:i,ready:Boolean(input),complete:Boolean(report),failed:Boolean(failure)};
+    const draft = input && report ? validateKnowledgeReview(report.report, batchSchema.parse(input).source, input.sourceDigest) : undefined;
+    return {index:i,ready:Boolean(input),complete:Boolean(draft),failed:Boolean(failure),draft};
   }));
-  return {...plan,status:job.status,ready:entries.filter(e=>e.ready).map(e=>e.index),completed:entries.filter(e=>e.complete).map(e=>e.index),failed:entries.filter(e=>e.failed).map(e=>e.index)};
+  return {...plan,status:job.status,ready:entries.filter(e=>e.ready).map(e=>e.index),completed:entries.filter(e=>e.complete).map(e=>e.index),failed:entries.filter(e=>e.failed).map(e=>e.index),drafts:entries.filter(e=>e.draft).map(e=>({index:e.index,pages:e.draft!.pages.map(p=>({headline:p.headline,body:p.body}))}))};
 }
 export async function validateKnowledgeReadingAccess(owner:number,context:KnowledgePublicationContext,requestId:string,deps=real) {
   if(context.purpose!=="reading"||!context.readingJobId||context.attempt!==0)throw Error("读档顾问请求无效，请恢复原任务");

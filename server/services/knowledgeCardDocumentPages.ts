@@ -188,6 +188,8 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     onProgress?: (doneSheets: number, totalSheets: number) => void | Promise<void>,
   ) => Promise<KnowledgeCardPageSelection[]>;
   onProgress?: (stage: "text" | "thumbs" | "select" | "render", done: number, total: number) => void | Promise<void>;
+  /** 原文一读出就交给顾问，不等待缩略图、选页或参考图渲染。 */
+  onTextReady?: (document: KnowledgeCardDocumentPageSet) => Promise<void>;
   /** 测试注入：不传则真实上传 GCS 并返回 { gcsUri, url(签名 https) } */
   uploadPage?: (objectName: string, jpeg: Buffer) => Promise<{ gcsUri: string; url: string }>;
 }): Promise<KnowledgeCardDocumentPageSet> {
@@ -216,6 +218,8 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     const texts = splitPdfTextByPage(textRaw);
     const pages: KnowledgeCardDocumentPage[] = Array.from({ length: total }, (_, i) => ({ pageNumber: i + 1, text: texts[i] || "" }));
 
+    await params.onTextReady?.({docKey, fileName:params.fileName, pageCount:total, pages, selectedPages:[]});
+    await params.onProgress?.("text", total, total);
     await params.onProgress?.("thumbs", 0, total);
     // 分批渲染缩略图并即拼即弃，千页书也不把整本缩略图驻留内存
     const sheets: KnowledgeCardContactSheet[] = [];

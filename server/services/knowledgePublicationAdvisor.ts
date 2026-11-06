@@ -354,7 +354,7 @@ export async function reviewKnowledgePublication(
   const prefix = `${root}/batch-${context.batchIndex}`;
   const previous = await deps.read(`${prefix}/report.json`);
   if (previous) {
-    validateKnowledgeReview(previous.report, batchSource, digest);
+    const report = validateKnowledgeReview(previous.report, batchSource, digest);
     validateKnowledgeImageReceipts(batchSource, previous.sourceImages);
     return {
       kind: "knowledge_publication_batch_v1" as const,
@@ -362,6 +362,7 @@ export async function reviewKnowledgePublication(
       batchCount: batches.length,
       sourceDigest: digest,
       reviewedPages: batchSource.pages.map(p => p.id),
+      pages: report.pages,
     images: batchSource.pages.filter(p => p.imageJobId && p.imageUrl).map(p => ({ id: p.id, url: signGsUriV4ReadUrl(p.imageUrl, 7 * 24 * 3600) })),
     };
   }
@@ -439,6 +440,7 @@ export async function reviewKnowledgePublication(
     batchCount: batches.length,
     sourceDigest: digest,
     reviewedPages: batchSource.pages.map(p => p.id),
+    pages: report.pages,
     images: batchSource.pages.filter(p => p.imageJobId && p.imageUrl).map(p => ({ id: p.id, url: signGsUriV4ReadUrl(p.imageUrl, 7 * 24 * 3600) })),
   };
 }

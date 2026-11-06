@@ -47,3 +47,25 @@ describe("读档稳定分段与原顾问回执",()=>{
   source.pages[0].body="另一份文件";await expect(loadVerifiedKnowledgeReadingNotes(7,link,source,f.deps)).rejects.toThrow("不一致");
  });
 });
+
+it("原文未开始挑页即持久化；多文件追加不覆盖旧结果，后置提炼不重复整理",async()=>{
+ const f=fixture(),p=createKnowledgeReadingPreparation(7,"kc_early",f.deps);
+ await p.onSource("file-0",["第一章原文", "第二章完整末句"]);
+ const first=structuredClone(f.data.get("knowledge-reading/user-7/kc_early/batch-0/input.json"));
+ expect(p.progress()?.ready).toEqual([0]);
+ await p.onSource("file-1",["第三章"]);
+ expect(p.progress()?.batches).toBe(2);
+ expect(f.data.get("knowledge-reading/user-7/kc_early/batch-0/input.json")).toEqual(first);
+ await p.onPlan(71);await p.onChunk({index:0,total:71,markdown:"后置提炼结果"});
+ expect(p.progress()?.batches).toBe(2);
+ expect(f.data.get("knowledge-reading/user-7/kc_early/batch-0/input.json")).toEqual(first);
+ const recovered=createKnowledgeReadingPreparation(7,"kc_early",f.deps);
+ await recovered.onSource("file-0",["第一章原文", "第二章完整末句"]);
+ expect(recovered.progress()?.ready).toEqual([0,1]);
+ await expect(recovered.onSource("file-0",["替换正文"])).rejects.toThrow("原读档内容已改变");
+ await expect(recovered.onSource("file-empty",[""])).rejects.toThrow("为空");
+ const link=p.progress()!;
+ await reviewKnowledgeReading(7,{documentId:link.documentId,readingJobId:link.jobId,purpose:"reading",batchIndex:0,attempt:0},f.deps);
+ const state=await knowledgeReadingPreparationState(7,link.jobId,f.deps);
+ expect(state.drafts[0].pages[1].body).toBe("第二章完整末句");
+});

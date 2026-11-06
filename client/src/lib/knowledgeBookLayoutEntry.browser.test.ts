@@ -50,6 +50,7 @@ it("真实排版按钮保存完整稿、获取方案、采用方案后使用该�
   try{
     const page=await browser.newPage(),errors:string[]=[];
     page.on('pageerror',e=>errors.push(String(e)));
+    page.on("dialog",dialog=>{expect(dialog.message()).toContain("顾问不另收费");void dialog.accept();});
     await page.setRequestInterception(true);
     page.on('request',r=>void r.respond({status:200,contentType:'text/html',body:'<div id="root"></div>'}));
     await page.goto('https://fixture.invalid');await page.addScriptTag({content:bundle.outputFiles[0].text});

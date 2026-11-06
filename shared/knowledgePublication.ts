@@ -103,6 +103,10 @@ export const knowledgePublicationSchema = z
     designMode: z.enum(["content"]).optional(),
     source: knowledgeSourceSchema,
     review: knowledgeReviewSchema.optional(),
+    chapterReviewDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    chapterReviews: z.record(z.string().uuid(), knowledgeReviewPageSchema).optional(),
+    billing: z.object({version:z.literal("interior-pages-v1"),confirmed:z.boolean()}).strict().optional(),
+    automaticLayout: z.object({requestId:z.string().uuid(),maxCredits:z.number().nonnegative()}).strict().optional(),
     completedBatches: z.number().int().min(0).default(0),
     parallel: z.object({
       channels: z.record(z.string().regex(/^(0|[1-9]\d*)$/), z.enum(["openrouter", "evolink"])),
@@ -252,6 +256,7 @@ export const knowledgeBatchResultSchema = z
     batchCount: z.number().int().positive(),
     sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
     reviewedPages: z.array(z.string().uuid()),
+    pages: z.array(knowledgeReviewPageSchema).optional(),
     images: z.array(z.object({ id: z.string().uuid(), url: z.string() }).strict()).optional(),
   })
   .strict();

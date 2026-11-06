@@ -798,7 +798,7 @@ export async function askPlatformSkillQa(params: {
   const paidUnit = manhuaContext ? MANHUA_ADVISOR_PAID_CREDITS : resolvePlatformSkillQaPaidCredits(qaMode);
   if (!params.isAdmin && (manhuaContext || codeMotionContext || knowledgePublicationContext) && params.projectQuotaUsed === undefined) throw new Error("今日顾问额度暂不可用，请稍后重试");
   const usedToday = params.isAdmin ? 0 : (manhuaContext || codeMotionContext || knowledgePublicationContext) ? (params.projectQuotaUsed ?? dailyLimit) : await countPlatformSkillQaToday(params.userId, qaMode, false);
-  const withinFree = params.isAdmin || ((manhuaContext || codeMotionContext || knowledgePublicationContext) ? params.freeQuotaReserved === true : usedToday < dailyLimit);
+  const withinFree = Boolean(knowledgePublicationContext) || params.isAdmin || ((manhuaContext || codeMotionContext || knowledgePublicationContext) ? params.freeQuotaReserved === true : usedToday < dailyLimit);
   const prepaidCredits = Math.max(
     0,
     Math.floor(Number(params.paidCreditsAlreadyCharged) || 0),
@@ -1100,7 +1100,7 @@ export async function askPlatformSkillQa(params: {
     : paidThisTurn
       ? prepaidCredits || paidUnit
       : 0;
-  if (!params.isAdmin) {
+  if (!params.isAdmin && !knowledgePublicationContext) {
     await logPlatformSkillQaUse({
       userId: params.userId,
       question,

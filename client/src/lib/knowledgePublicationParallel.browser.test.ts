@@ -23,6 +23,7 @@ it('真实组件双路重叠、空闲补位、乱序保存及失败后原编号�
  await page.evaluate(()=>(window as any).pending[2].resolve());await page.waitForFunction(()=>(window as any).calls.length===4);
  await page.evaluate(()=>(window as any).pending[3].resolve());await page.waitForFunction(()=>(window as any).saved.publication.parallel.completed.length===3);
  expect(await page.evaluate(()=>(window as any).saved.publication.completedBatches)).toBe(0);
+ expect(await page.$eval("section",e=>e.textContent)).toContain("已完成 9/13 章");
  await page.evaluate(()=>(window as any).pending[0].reject());await page.waitForFunction(()=>document.querySelector('[role="alert"]'));
  const firstId=await page.evaluate(()=>(window as any).calls[0].id);await page.evaluate(()=>(window as any).remount());await click();await page.waitForFunction(()=>(window as any).calls.length===5);
  expect(await page.evaluate(()=>(window as any).calls[4])).toEqual({i:0,channel:'openrouter',id:firstId});

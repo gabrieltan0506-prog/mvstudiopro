@@ -1,3 +1,5 @@
+import { KnowledgeReadingLive } from "@/components/platform/KnowledgeReadingLive";
+import type { ReadingDraft } from "@/lib/knowledgeReadingPreparation";
 import { createKnowledgeReadingController } from "@/lib/knowledgeReadingPreparation";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
 import type { KnowledgeReadingProgress } from "@shared/knowledgeReadingPreparation";
@@ -3244,11 +3246,13 @@ export default function PlatformPage() {
   const readingControllerRef = useRef<ReturnType<typeof createKnowledgeReadingController> | null>(null);
   const readingFullMarkdownRef = useRef("");
   const [readingAdvisorStatus, setReadingAdvisorStatus] = useState("");
+  const [readingAdvisorDrafts, setReadingAdvisorDrafts] = useState<ReadingDraft[]>([]);
   const customNoteRevisionRef = useRef(0);
   const bumpCustomNoteRevision = () => {
     customNoteRevisionRef.current += 1;
+    setLayoutSource(null);layoutStudioRef.current?.beginNewSource();
     readingControllerRef.current?.stop(); readingControllerRef.current=null;
-    readingFullMarkdownRef.current=""; setReadingAdvisorStatus("");
+    readingFullMarkdownRef.current=""; setReadingAdvisorStatus(""); setReadingAdvisorDrafts([]);
     return customNoteRevisionRef.current;
   };
   /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖 or 深度优化文案（自定義文案專用） */
@@ -8107,7 +8111,7 @@ export default function PlatformPage() {
       }
       const reusedOriginal = Boolean(url);
       if (!url) {
-        const quote = await trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch({ markdown: text, distillModel: settings.distillModel });
+        const quote = await trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate({ markdown: text, distillModel: settings.distillModel });
         const price = knowledgeCardCreditsForPageIndex(idx + 1, quote.billingModel);
         if (!window.confirm(`补出第 ${idx + 1}/${total} 页，${price} 积分，是否继续？`)) return;
         const replacementRequestId = knowledgeCardPageTasks.begin("platform_composite_sheet_progress");
@@ -8363,10 +8367,10 @@ export default function PlatformPage() {
     readingControllerRef.current?.stop();
     const controller = createKnowledgeReadingController({
       state: jobId => trpcUtils.editableLayout.readingPreparation.fetch({jobId}),
-      confirm: async state => state.maxCredits === 0 || window.confirm(`读档将同步让创作顾问整理 ${state.batches} 组知识和页面结构，预计 ${state.estimatedCredits} 积分，最多 ${state.maxCredits} 积分。已有结果会交给后续图文顾问复用；出图与末尾核对另按确认报价。是否开始同步整理？`),
+      confirm: async state => {if(state.maxCredits!==0)throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");return true;},
       execute: async (link,index,requestId,paidUnit) => {
         try {
-          return await streamManhuaAdvisor({question:"读档期间同步整理知识与页面结构",rawQuestion:"读档期间同步整理知识与页面结构",requestId,knowledgePublicationContext:{documentId:link.documentId,readingJobId:link.jobId,purpose:"reading",batchIndex:index,attempt:0},confirmPaid:true,confirmedCredits:paidUnit},()=>undefined);
+          return await streamManhuaAdvisor({question:"读档期间同步整理知识与页面结构",rawQuestion:"读档期间同步整理知识与页面结构",requestId,knowledgePublicationContext:{documentId:link.documentId,readingJobId:link.jobId,purpose:"reading",batchIndex:index,attempt:0},confirmPaid:false,confirmedCredits:paidUnit},()=>undefined);
         } catch (error) {
           // 结果未知只查同一事务，绝不换请求编号重复购买。
           const hash = await knowledgeCardInputFingerprint(`${workbenchUserKey}:${requestId}`);
@@ -8380,9 +8384,11 @@ export default function PlatformPage() {
         }
       },
       progress: setReadingAdvisorStatus,
+      content: setReadingAdvisorDrafts,
     });
     readingControllerRef.current=controller;
-    setReadingAdvisorStatus("读档顾问等待首组稳定内容…");
+    setReadingAdvisorDrafts([]);
+    setReadingAdvisorStatus("读档顾问已接入：正在读取原文，可用内容读出后自动整理…");
     return controller;
   };
 
@@ -8408,6 +8414,7 @@ export default function PlatformPage() {
       sourceText: args.sourceText,
       files: args.files?.length ? args.files : undefined,
       forceDistill: true,
+      billingPolicy: "interior-pages-v1",
       distillModel: customNoteDistillModel,
       // 提炼一律出完整版长稿当真源；精华版之后从长稿派生，两档随时切
       detailLevel: "full",
@@ -8768,7 +8775,7 @@ export default function PlatformPage() {
           setCustomNoteUploadStatus(null);
           setCustomNoteDistillPhase("ready");
           await new Promise<void>((r) => requestAnimationFrame(() => r()));
-        } else if (!overrides?.supplementOf && customNoteDistillPhase !== "ready" && distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
+        } else if (!overrides?.supplementOf && !hasFullReceipt && customNoteDistillPhase !== "ready" && distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
           /**
            * 纯文本长文（本轮尚未提炼过；上传路径已提炼的稿子直接进出图确认，不二次提炼、不二次收费、不丢〔参考原页〕标记）：
            * 先把「提炼 vs 直接出图」的账摆给用户看。
@@ -8778,7 +8785,7 @@ export default function PlatformPage() {
             distilled,
             customNoteDistillModel,
             (chars) => suggestKnowledgeCardMinSections(chars, customNoteDetailLevel),
-            knowledgeCardDistillFeeForModel(customNoteDistillModel),
+            0,
           );
           if (tradeoff.saved > 0) {
             setCustomNoteBusy(false);
@@ -8787,7 +8794,7 @@ export default function PlatformPage() {
                 `这段文字约 ${distilled.length.toLocaleString()} 字。`,
                 "",
                 `直接出图：约 ${tradeoff.full.pages} 页 · ${tradeoff.full.credits} 积分 · 4K`,
-                `先做提炼：约 ${tradeoff.distilled.pages} 页 · ${tradeoff.distilled.credits} 积分 + 提炼费 ${tradeoff.distilled.distillFee} · 4K`,
+                `先做提炼：约 ${tradeoff.distilled.pages} 页 · ${tradeoff.distilled.credits} 积分 · 4K（整理不另收费）`,
                 "",
                 `提炼可省约 ${tradeoff.saved} 积分。`,
                 "",
@@ -8829,7 +8836,7 @@ export default function PlatformPage() {
         const total = pages.length;
         if(overrides?.supplementOf&&total>8)throw new Error("补充图卡实际分页超过8页，未提交生成");
         const qLabel = "4K";
-        const priceQuote = await trpcUtils.mvAnalysis.quoteKnowledgeCard.fetch({ markdown: distilled, distillModel: customNoteDistillModel });
+        const priceQuote = await trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate({ markdown: distilled, distillModel: customNoteDistillModel });
         if (priceQuote.pageCount !== total) throw new Error("报价页数与当前稿件不一致，请重新确认");
         const credits = priceQuote.credits;
         /**
@@ -13296,7 +13303,7 @@ export default function PlatformPage() {
           </div>
         ) : null}
 
-        {workbenchUserKey && <StableStudioDock target={knowledgeAdvisorDock}><EditableLayoutStudio compact={Boolean(knowledgeAdvisorDock)} ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} onSupplement={async(supplementOf,text)=>{await handleGenerateCustomNote({text,kind:"single_page_knowledge_card",supplementOf});}} onPagination={(doc, pagination) => {
+        {workbenchUserKey && <StableStudioDock target={knowledgeAdvisorDock}><EditableLayoutStudio compact={Boolean(knowledgeAdvisorDock)} ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} readingView={<KnowledgeReadingLive status={readingAdvisorStatus} drafts={readingAdvisorDrafts} />} onSupplement={async(supplementOf,text)=>{await handleGenerateCustomNote({text,kind:"single_page_knowledge_card",supplementOf});}} onPagination={(doc, pagination) => {
           if (doc.sourceId !== knowledgeCardLayoutSourceIdRef.current) return;
           if (!pagination) { setCustomNotePagination(null); return; }
           if (!doc.publication?.inputFingerprint || paginationFingerprint?.key !== customNotePaginationKey || doc.publication.inputFingerprint !== paginationFingerprint.hash) return;
@@ -15757,7 +15764,6 @@ export default function PlatformPage() {
                     onConfirm={() => closeKnowledgeCardPreflight(true)}
                     onCancel={() => closeKnowledgeCardPreflight(false)}
                   />
-                  {readingAdvisorStatus && <p role="status" className="w-full text-xs text-[#c9c0e6]">{readingAdvisorStatus}</p>}
                   <KnowledgeCardProgress
                     state={customNoteProgress}
                     onCancel={customNoteDistillJobId || customNoteRendering ? cancelCustomNoteDistill : undefined}
@@ -16330,11 +16336,6 @@ export default function PlatformPage() {
           {platformSkillsAccessoryPanel}
         </PlatformSkillDrawer>
 
-        {customWorkspaceOperating && platformMode === "create" ? (
-          <p className="mb-4 text-center text-xs text-[#c9c0e6]/45">
-            自定义文案/选题/抠像进行中，下方选题区已收起；平台趋势报表与视频深度拆解仍可在上方工作台查看。
-          </p>
-        ) : null}
         <div
           className={
             platformMode !== "trend" || customWorkspaceOperating
