@@ -6,6 +6,7 @@
  */
 import { countMarkdownSections, mergeDistilledMarkdownChunks } from "./knowledgeCardDistill.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
+import { assertKnowledgeCardDeriveTablesComplete } from "./knowledgeCardDeriveIntegrity.js";
 import { retryKnowledgeCardChain } from "./knowledgeCardChainRetry.js";
 import {
   KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
@@ -226,6 +227,7 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
   const out = typeof content === "string" ? content.trim() : "";
   if (!out) throw new Error(`精华版派生：${gw.name} 没有返回内容`);
   if (json.choices?.[0]?.finish_reason === "length") throw new Error(`精华版派生：${gw.name} 输出被截断，请缩小批次`);
+  assertKnowledgeCardDeriveTablesComplete(out);
   return out;
 }
 
@@ -290,6 +292,7 @@ export async function deriveKnowledgeCardCompact(params: {
   if (!sections.length) throw new Error("完整版稿子里没有「## 」小节，无法派生精华版");
   const target = Math.max(3, Math.floor(params.targetSections || compactTargetSections(sections.length)));
   if (sections.length <= target) {
+    assertKnowledgeCardDeriveTablesComplete(params.fullMarkdown);
     return { markdown: params.fullMarkdown.trim(), sections: sections.length, targetSections: target, passes: 0 };
   }
   let current = sections;
@@ -311,6 +314,7 @@ export async function deriveKnowledgeCardCompact(params: {
         maxTokens: Math.min(120_000, Math.max(DERIVE_MIN_OUTPUT_TOKENS, Math.ceil(batch.join("").length / 2))),
       });
       const got = countMarkdownSections(raw);
+      assertKnowledgeCardDeriveTablesComplete(raw);
       if (got < 1 || got > keep * 2 + 2) {
         throw new Error(`精华版派生第 ${passes} 轮第 ${i + 1}/${batches.length} 批输出异常（要 ${keep} 节，回 ${got} 节）`);
       }
@@ -323,5 +327,6 @@ export async function deriveKnowledgeCardCompact(params: {
     current = next;
   }
   const markdown = [head.trim(), current.join("\n\n")].filter(Boolean).join("\n\n");
+  assertKnowledgeCardDeriveTablesComplete(markdown);
   return { markdown, sections: current.length, targetSections: target, passes };
 }
