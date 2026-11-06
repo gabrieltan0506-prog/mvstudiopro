@@ -58,7 +58,9 @@ async function main() {
   const currentStore = await readJsonIfExists(path.join(storeDir, "current.json"), {});
   const platformCurrentManifest = await readJsonIfExists(path.join(storeDir, "platform-current-manifest.json"), null);
   await readJsonIfExists(path.join(storeDir, "weixin-channels-miner.json"), null);
-  const archiveIndex = await readJsonIfExists(path.join(storeDir, "archive-index.json"), []);
+  const archiveIndexValue = await readJsonIfExists(path.join(storeDir, "archive-index.json"), []);
+  // 读取正式包装对象与历史数组，计数取索引数组，不改写备份源文件。
+  const archiveIndex = Array.isArray(archiveIndexValue) ? archiveIndexValue : archiveIndexValue?.archiveIndex;
 
   if (!Array.isArray(archiveIndex)) throw new Error("growth_backup_archive_index_invalid");
 
@@ -119,7 +121,7 @@ async function main() {
     totals: {
       currentItems: total(Object.values(platforms), "currentTotal"),
       archivedItems: total(Object.values(platforms), "archivedTotal"),
-      archiveRuns: Array.isArray(archiveIndex) ? archiveIndex.length : 0,
+      archiveRuns: archiveIndex.length,
     },
     schedulerTrackedPlatforms: Object.keys(runtimeMeta?.scheduler || {}).length,
     platforms,

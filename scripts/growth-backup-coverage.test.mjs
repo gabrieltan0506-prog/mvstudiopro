@@ -32,6 +32,48 @@ function snapshot(root, id = "1-1") {
   return { result, output };
 }
 
+for (const [label, value] of [
+  ["正式包装对象", { updatedAt: "2026-11-06T00:00:00.000Z", archiveIndex: [{ platform: "bilibili", file: "archive/2026-11-04-15/bilibili.json.gz", itemCount: 1 }] }],
+  ["旧数组", [{ platform: "douyin", file: "archive/2026-11-04-15/douyin.json.gz", itemCount: 2 }]],
+  ["空包装对象", { updatedAt: "2026-11-06T00:00:00.000Z", archiveIndex: [] }],
+]) {
+  test(`archive-index ${label}保留原始字节和快照哈希`, t => {
+    const root = fixture(); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const source = path.join(root, "archive-index.json");
+    const raw = Buffer.from(JSON.stringify(value, null, 2) + "\n");
+    fs.writeFileSync(source, raw);
+    const { result, output } = snapshot(root);
+    assert.equal(result.status, 0, result.stderr);
+    const manifest = JSON.parse(fs.readFileSync(path.join(output, "snapshot-manifest.json")));
+    const entry = manifest.coreFiles.find(file => file.relativePath === "archive-index.json");
+    assert.equal(entry.bytes, raw.length); assert.equal(entry.sha256, hash(raw));
+    assert.deepEqual(fs.readFileSync(path.join(output, entry.snapshotFile)), raw);
+    assert.deepEqual(fs.readFileSync(source), raw);
+    const summaryPath = path.join(root, "backup-manifest.json");
+    execFileSync(process.execPath, ["scripts/build-growth-backup-manifest.mjs", root, summaryPath]);
+    const summary = JSON.parse(fs.readFileSync(summaryPath));
+    assert.equal(summary.totals.archiveRuns, (Array.isArray(value) ? value : value.archiveIndex).length);
+    assert.deepEqual(fs.readFileSync(source), raw);
+  });
+}
+
+for (const [label, value] of [["缺失数组", {}], ["null数组", { archiveIndex: null }], ["对象数组", { archiveIndex: {} }], ["标量", 1], ["null", null]]) {
+  test(`archive-index 拒绝${label}，不发布清单且保留源文件`, t => {
+    const root = fixture(); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const source = path.join(root, "archive-index.json"), raw = Buffer.from(JSON.stringify(value));
+    fs.writeFileSync(source, raw);
+    const { result, output } = snapshot(root);
+    assert.notEqual(result.status, 0); assert.match(result.stderr, /growth_core_snapshot_schema:archive-index.json/);
+    assert(!fs.existsSync(path.join(output, "snapshot-manifest.json")));
+    assert.deepEqual(fs.readFileSync(source), raw);
+    assert(!fs.existsSync(path.join(root, ".growth-store-mutation.lock")));
+    const summaryPath = path.join(root, "backup-manifest.json");
+    const summary = spawnSync(process.execPath, ["scripts/build-growth-backup-manifest.mjs", root, summaryPath], { encoding: "utf8" });
+    assert.notEqual(summary.status, 0); assert.match(summary.stderr, /growth_backup_archive_index_invalid/);
+    assert(!fs.existsSync(summaryPath));
+  });
+}
+
 test("metadata coverage lists uncovered business data, external exports, temporary files and archive anomalies without following links", async t => {
   const root = fixture(); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "paid-research"),{recursive:true}); fs.writeFileSync(path.join(root, "paid-research", "keep.json"), "{}");
