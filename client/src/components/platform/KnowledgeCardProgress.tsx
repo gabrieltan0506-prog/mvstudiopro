@@ -15,6 +15,9 @@ export type KnowledgeCardProgressState = {
   percent: number;
   /** 阶段短语，如「读原稿 12/276 页」「出图 2/5 页」 */
   label?: string;
+  /** 当前阶段实际计数，独立于总体阶段权重。 */
+  stageDone?: number;
+  stageTotal?: number;
   error?: string;
   successLabel?: string;
 };
@@ -31,6 +34,10 @@ export function KnowledgeCardProgress({
 }) {
   if (state.status === "idle") return null;
   const percent = Math.max(0, Math.min(100, Math.round(Number.isFinite(state.percent) ? state.percent : 0)));
+  const stageTotal = state.stageTotal;
+  const stageDone = state.stageDone;
+  const counted = Number.isFinite(stageTotal) && Number(stageTotal) > 0 && Number.isFinite(stageDone) && Number(stageDone) >= 0;
+  const stagePercent = counted ? Math.round(Math.min(1, Number(stageDone) / Number(stageTotal)) * 1000) / 10 : undefined;
   const failed = state.status === "failed";
   const succeeded = state.status === "succeeded";
   const stopped = state.status === "stopped";
@@ -60,8 +67,10 @@ export function KnowledgeCardProgress({
   return (
     <div className="mt-3 space-y-1.5 text-sm" aria-label="知识卡进度">
       <p role={failed ? "alert" : "status"} className={`flex flex-wrap items-center gap-2 ${color}`}>
-        <span className="font-semibold tabular-nums">{headline}</span>
-        {state.label ? <span className="text-xs opacity-80">{sanitizePlatformUserMessage(state.label, "正在处理…")}</span> : null}
+        <span className="grid min-w-0 flex-1 grid-cols-2 gap-4">
+          <span className="min-w-0"><span className="block text-xs opacity-70">总体完成度</span><span className="font-semibold tabular-nums">{headline}</span></span>
+          <span className="min-w-0 break-words"><span className="block text-xs opacity-70">当前阶段</span><span className="block text-xs">{sanitizePlatformUserMessage(state.label || (succeeded ? "本步已结束" : "正在处理…"), "正在处理…")}</span><span className="block text-xs tabular-nums">{counted ? `${stageDone}/${stageTotal} · ${stagePercent}%` : "暂无阶段计数"}</span></span>
+        </span>
         {onCancel && state.status === "running" ? (
           <button
             type="button"
@@ -99,4 +108,17 @@ export function knowledgeCardProgressFromDistill(distillPercent: number): number
 export function knowledgeCardProgressFromRender(done: number, total: number): number {
   if (!Number.isFinite(total) || total <= 0) return 60;
   return Math.round(60 + 40 * Math.max(0, Math.min(1, done / total)));
+}
+
+/** 老任务会保留上一阶段计数；按阶段选字段，避免统稿误显参考页已完成。 */
+export function knowledgeCardStageCounts(out: {
+  distillStage?: string; distillPhase?: string;
+  distillStageDone?: number; distillStageTotal?: number;
+  distillDoneChunks?: number; distillTotalChunks?: number;
+}): Pick<KnowledgeCardProgressState, "stageDone" | "stageTotal"> {
+  const stage = out.distillStage || out.distillPhase;
+  if (stage === "refining" || stage === "finishing") return {};
+  if (["converting", "reading", "selecting", "rendering", "deriving", "merging", "verifying", "revising"].includes(stage || ""))
+    return { stageDone: out.distillStageDone, stageTotal: out.distillStageTotal };
+  return { stageDone: out.distillDoneChunks, stageTotal: out.distillTotalChunks };
 }

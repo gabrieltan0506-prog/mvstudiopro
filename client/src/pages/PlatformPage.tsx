@@ -336,6 +336,7 @@ import {
 } from "@shared/knowledgeCardSubjectPosition";
 import {
   KnowledgeCardProgress,
+  knowledgeCardStageCounts,
   knowledgeCardProgressFromDistill,
   knowledgeCardProgressFromRender,
   type KnowledgeCardProgressState,
@@ -8083,7 +8084,7 @@ export default function PlatformPage() {
     setKnowledgeCardInflight([]); setKnowledgeCardPdfUrl(null); setKnowledgeCardEpubPdfs([]);
     setCustomNoteKind("single_page_knowledge_card"); setOutputType("single_page");
     setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); setCustomNotePageProgress(null);
-    setCustomNoteProgress(backup.total ? {status:backup.images.length===backup.total?"succeeded":"stopped",percent:Math.round(backup.images.length/backup.total*100),label:`云端恢复 ${backup.images.length}/${backup.total} 页`} : {status:"idle",percent:0});
+    setCustomNoteProgress(backup.total ? {status:backup.images.length===backup.total?"succeeded":"stopped",percent:Math.round(backup.images.length/backup.total*100),stageDone:backup.images.length,stageTotal:backup.total,label:`云端恢复 ${backup.images.length}/${backup.total} 页`} : {status:"idle",percent:0});
     if (backup.detailLevel === "concise" && !backup.fullMarkdown) toast.warning("这份旧备份只有配图选段，缺少完整文字稿；请恢复原完整稿后再整理全文");
     else toast.success(`已恢复完整正文与 ${backup.images.length} 张图片，未重新生成`);
     return true;
@@ -8107,7 +8108,7 @@ export default function PlatformPage() {
     setCustomNoteBusy(true);
     setCustomNoteError(null);
     setKnowledgeCardPdfUrl(null);
-    setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(customNoteImagesRef.current.filter(Boolean).length, total), label: `补出第 ${idx + 1}/${total} 页` });
+    setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(customNoteImagesRef.current.filter(Boolean).length, total), stageDone: customNoteImagesRef.current.filter(Boolean).length, stageTotal: total, label: `补出第 ${idx + 1}/${total} 页` });
     markInflight(runId, idx, true);
     try {
       const settings = renderedSettingsRef.current;
@@ -8146,12 +8147,12 @@ export default function PlatformPage() {
       customNoteImagesRef.current = next;
       setCustomNoteImages(next);
       if (renderedImageJobsRef.current) renderedImageJobsRef.current[idx] = replacementJobId;
-      setCustomNoteProgress(ready >= total ? { status: "succeeded", percent: 100, successLabel: "配图完成", label: "正在自动整理正文与版面" } : { status: "running", percent: knowledgeCardProgressFromRender(ready, total), label: `出图 ${ready}/${total} 页` });
+      setCustomNoteProgress(ready >= total ? { status: "succeeded", percent: 100, successLabel: "配图完成", label: "正在自动整理正文与版面" } : { status: "running", percent: knowledgeCardProgressFromRender(ready, total), stageDone: ready, stageTotal: total, label: `出图 ${ready}/${total} 页` });
       toast.success(reusedOriginal ? `第 ${idx + 1} 页已恢复，未重复购买` : `第 ${idx + 1} 页已补出并保存`);
     } catch (e) {
       const msg = mapCustomNoteError(e);
       setCustomNoteError(msg);
-      setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
+      setCustomNoteProgress((prev) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
       toast.error(`补出失败：${msg.slice(0, 120)}`);
     } finally {
       markInflight(runId, idx, false);
@@ -8284,6 +8285,7 @@ export default function PlatformPage() {
             status: "running",
             percent: Math.max(1, Math.min(97, Number(out.distillPercent) || 1)),
             label,
+            ...knowledgeCardStageCounts(out),
           });
         },
       });
@@ -8392,7 +8394,7 @@ export default function PlatformPage() {
       setCustomNoteDetailLevel(previousLevel);
       try { localStorage.setItem("mvs-knowledge-card-detail-level", previousLevel); } catch { /* ignore */ }
       toast.error(`${msg}；正文未改变，未开始出图`);
-      setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
+      setCustomNoteProgress((prev) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
     }
   };
 
@@ -8520,6 +8522,7 @@ export default function PlatformPage() {
           status: "running",
           percent: knowledgeCardProgressFromDistill(Number(out.distillPercent) || 2),
           label,
+          ...knowledgeCardStageCounts(out),
         });
       },
     });
@@ -8994,9 +8997,9 @@ export default function PlatformPage() {
           setCustomNoteImageUpper(urls[0] ?? null);
           setCustomNoteImageLower(urls[1] ?? null);
           // 已判失败的终态不被在途页的回填覆盖回「运行中」
-          setCustomNoteProgress((prev) => prev.status === "failed" ? prev : { status: "running", percent: knowledgeCardProgressFromRender(ready.length, total), label: `出图 ${ready.length}/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
+          setCustomNoteProgress((prev) => prev.status === "failed" ? prev : { status: "running", percent: knowledgeCardProgressFromRender(ready.length, total), stageDone: ready.length, stageTotal: total, label: `出图 ${ready.length}/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
         };
-        setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), label: `出图 0/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
+        setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), stageDone: 0, stageTotal: total, label: `出图 0/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
         let next = 0;
         // 某页失败即停发新页（在途的跑完），不让其它 worker 继续扣费出图
         let aborted = false;
@@ -9049,6 +9052,7 @@ export default function PlatformPage() {
             status: "stopped",
             percent: knowledgeCardProgressFromRender(madePages, total),
             label: `已停止 · 出图 ${madePages}/${total} 页`,
+            stageDone: madePages, stageTotal: total,
             error: `未出的 ${total - madePages} 页不扣费；需要的话可以逐页补出`,
           });
           toast.message(`已停止出图：完成 ${madePages}/${total} 页，按已出页计费（未出的页不扣）`);
@@ -9069,7 +9073,7 @@ export default function PlatformPage() {
       const msg = mapCustomNoteError(e);
       setCustomNoteError(msg);
       if (kind === "single_page_knowledge_card") {
-        setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
+        setCustomNoteProgress((prev) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
         // 在途页会继续出图并回填，这里如实告知已完成页数与对应页费（读同步镜像，不在 updater 里做副作用）
         const doneCount = customNoteImagesRef.current.filter(Boolean).length;
         toast.error(doneCount > 0
@@ -15587,7 +15591,7 @@ export default function PlatformPage() {
                                     const pct = Number(/(\d{1,3})%/.exec(text)?.[1]);
                                     // 上传占总进度 0–5%（提炼任务 5–60，出图 60–100）
                                     // 多文件按 (已传完数 + 本文件进度) / 总数 折算到 0–5%，不倒退
-                                    if (Number.isFinite(pct)) setCustomNoteProgress({ status: "running", percent: Math.round(((doneFiles + pct / 100) / list.length) * 5), label: `上传 ${file.name}（${doneFiles + 1}/${list.length}）${pct}%` });
+                                    if (Number.isFinite(pct)) setCustomNoteProgress({ status: "running", percent: Math.round(((doneFiles + pct / 100) / list.length) * 5), stageDone: doneFiles + (pct >= 100 ? 1 : 0), stageTotal: list.length, label: `上传 ${file.name}（${doneFiles + 1}/${list.length}）${pct}%` });
                                   },
                                   label: `${file.name}（${mb}MB）`,
                                 });
@@ -15670,7 +15674,7 @@ export default function PlatformPage() {
                               ? `${completedDirectUploads} 个大文件已上传到云端，但读取或提炼失败`
                               : "文件读取或提炼失败";
                             setCustomNoteUploadStatus(`${failedStage}：${failMsg}（已保留本批文件，请核对错误后再决定是否重试）`);
-                            setCustomNoteProgress((prev) => ({ status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: failMsg }));
+                            setCustomNoteProgress((prev) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: failMsg }));
                             toast.error(failMsg);
                             return false;
                           } finally {
