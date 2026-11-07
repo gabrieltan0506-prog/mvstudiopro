@@ -68,3 +68,13 @@ describe("原任务连接恢复",()=>{
   const costly=createKnowledgeReadingController({state:async()=>base,execute:async()=>({creditsCharged:1}),confirm:async()=>true,progress:vi.fn()});await costly.update({...link,ready:[0]});await expect(costly.wait()).rejects.toThrow('超出');await expect(costly.update({...link,jobId:'kc_other',ready:[0]})).rejects.toThrow('另一份');costly.stop();
  });
 });
+
+it("超过并发窗口的五批必须全部完成，wait不能在前两批后提前失败",async()=>{
+ const completed:number[]=[];
+ const state=async()=>({...base,batches:5,ready:[0,1,2,3,4],completed:[...completed],drafts:completed.map(index=>({...draft,index}))});
+ const execute=vi.fn(async(_link:unknown,index:number)=>{await new Promise(r=>setTimeout(r,5));completed.push(index);return {creditsCharged:0};});
+ const content=vi.fn();
+ const control=createKnowledgeReadingController({state,execute,content,confirm:async()=>true,progress:vi.fn()});
+ await control.update({...link,batches:5,ready:[0,1,2,3,4]});await control.wait();
+ expect(execute).toHaveBeenCalledTimes(5);expect(completed.sort()).toEqual([0,1,2,3,4]);expect(content.mock.calls.at(-1)![0]).toHaveLength(5);control.stop();
+});

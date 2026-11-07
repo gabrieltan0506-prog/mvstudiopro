@@ -159,6 +159,7 @@ export function createKnowledgeReadingController(deps: {
           continue;
         }
         if (!accepted) return;
+        if (running.size) continue;
         const missingContent = Boolean(deps.content && Array.from(completed).some(i => !drafts.has(i)));
         if (!uncertain.size && !missingContent) break;
         if ((!deps.recover && uncertain.size) || !latestValue) throw Error("顾问回执尚未确认，未重新提交");
