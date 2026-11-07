@@ -23,8 +23,8 @@ export const KNOWLEDGE_PUBLICATION_ROUTE_ORDER = [
   { id: "glm-evolink-retry-3", channel: "evolink", model: GLM_53_FLASHX_EVOLINK_MODEL },
 ] as const;
 
-/** 新并发批次固定通道，避免两条消费者抢同一条供应商通道；每模型仍最多四次。 */
-export function knowledgePublicationRoutesForChannel(channel: KnowledgeModelChannel) {
+/** 仅用于读取旧版锁定供应商的回执，不再按此顺序购买。 */
+function legacyKnowledgePublicationRoutesForChannel(channel: KnowledgeModelChannel) {
   return [
     ...Array.from({ length: 4 }, (_, attempt) => ({
       id: attempt === 0 ? channel : `${channel}-retry-${attempt}`,
@@ -38,10 +38,16 @@ export function knowledgePublicationRoutesForChannel(channel: KnowledgeModelChan
     })),
   ];
 }
+/** 批次通道仅是首选；同款模型交替供应商，仍为首次加最多三次重试。 */
+export function knowledgePublicationRoutesForChannel(channel: KnowledgeModelChannel) {
+  const preferred = KNOWLEDGE_PUBLICATION_ROUTE_ORDER.filter(route => route.channel === channel);
+  const alternate = KNOWLEDGE_PUBLICATION_ROUTE_ORDER.filter(route => route.channel !== channel);
+  return preferred.flatMap((route, index) => [route, alternate[index]!]);
+}
 export const KNOWLEDGE_PUBLICATION_ALL_ROUTES = Array.from(new Map([
   ...KNOWLEDGE_PUBLICATION_ROUTE_ORDER,
-  ...knowledgePublicationRoutesForChannel("openrouter"),
-  ...knowledgePublicationRoutesForChannel("evolink"),
+  ...legacyKnowledgePublicationRoutesForChannel("openrouter"),
+  ...legacyKnowledgePublicationRoutesForChannel("evolink"),
 ].map(route => [route.id, route])).values());
 export const KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES = [
   ...KNOWLEDGE_PUBLICATION_ALL_ROUTES.map(route => route.id),

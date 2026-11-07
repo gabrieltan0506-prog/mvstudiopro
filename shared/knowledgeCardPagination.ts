@@ -227,17 +227,19 @@ function packSectionsIntoPages(
  * 结果页数最少、每页贴着上限，不会出现几十字的碎页。
  */
 function packByCap(full: string, h1: string, cap: number): string[] {
-  const head = h1 ? `${h1}\n\n` : "";
-  const room = Math.max(200, cap - head.length);
+  // 总标题本身已占满一页时按正文切分，完整保留且不在每页重复。
+  const repeatedTitle = h1.length + 2 < cap ? h1 : "";
+  const head = repeatedTitle ? `${repeatedTitle}\n\n` : "";
+  const room = cap - head.length;
   const units: string[] = [];
   for (const para of full.split(/\n\s*\n/)) {
     const t = para.trim();
-    if (!t || t === h1) continue;
+    if (!t || t === repeatedTitle) continue;
     if (t.length <= room) { units.push(t); continue; }
     // 超长段：按行，再按句切
     let buf = "";
     for (const line of t.split(/\r?\n/)) {
-      const pieces = line.length <= room ? [line] : (line.match(/[^。！？；\n]+[。！？；]?/g) || [line]);
+      const pieces = line.length <= room ? [line] : (line.match(/[^。！？；\n]+[。！？；]?|[。！？；]+/g) || [line]);
       for (const piece of pieces) {
         const chunk = piece.length > room ? (piece.match(new RegExp(`[\\s\\S]{1,${room}}`, "g")) || []) : [piece];
         for (const c of chunk) {
@@ -261,7 +263,7 @@ function packByCap(full: string, h1: string, cap: number): string[] {
     current += (current ? "\n\n" : "") + unit;
   }
   if (current) pages.push(current);
-  return pages.map((p, i) => (i === 0 || !h1 ? (i === 0 && h1 && !p.startsWith(h1) ? `${head}${p}` : p) : `${head}${p}`));
+  return pages.map((p) => `${head}${p}`);
 }
 
 function resolveDesiredPageCount(charCount: number, sectionCount: number): number {

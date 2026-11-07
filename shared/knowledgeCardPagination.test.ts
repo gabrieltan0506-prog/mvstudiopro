@@ -77,6 +77,22 @@ describe("单页硬顶 1200 字（0908：超过会乱码/字糊）", () => {
   });
 });
 
+describe("1200字上限包含总标题，超长标题与长句不丢内容", () => {
+  it.each([998, 1100, 1197, 1198, 1300, 2400])("总标题%d字时所有页仍不超限", (titleChars) => {
+    const title = `# ${"题".repeat(titleChars)}`;
+    const body = `## 章节\n\n${"正文。！！".repeat(360)}${"长句".repeat(700)}末尾`;
+    const full = `${title}\n\n${body}`;
+    const plan = planKnowledgeCardPages(full);
+    expect(plan.pages.length).toBeGreaterThan(0);
+    expect(plan.pages.every(p => p.length <= KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE)).toBe(true);
+    const repeatedTitle = title.length + 2 < KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE;
+    const actual = plan.pages.map(p => repeatedTitle ? p.slice(`${title}\n\n`.length) : p).join("").replace(/\s/g, "");
+    const expected = (repeatedTitle ? body : full).replace(/\s/g, "");
+    expect(actual).toBe(expected);
+    if (!repeatedTitle) expect(plan.pages.join("").split("题").length - 1).toBe(titleChars);
+  });
+});
+
 describe("分页不把 ## 标题与其「图：」行切开，也不造只剩标题的空页", () => {
   const noHeadingOnlyPages = (pages: string[]) => {
     for (const page of pages) {

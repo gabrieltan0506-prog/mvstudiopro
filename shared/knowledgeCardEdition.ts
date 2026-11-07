@@ -1,11 +1,45 @@
 export type KnowledgeEditionModule = { headline: string; body: string; priority: 'primary' | 'secondary' };
 const editionMarker = /^<!-- knowledge-edition:v2:(full|concise) -->\s*/;
 
-/** 版本由程序写入；旧稿不猜测、不静默重购。两版共享知识模块，只切换承载媒介。 */
+/** 图示稿的图、要点与整张表保留配图，独立解说进入阅读正文。 */
+function splitKnowledgeModuleMedia(body: string) {
+  const paragraphs = body.trim().split(/\n\s*\n/).filter(Boolean);
+  const diagram = /^(?:\*\*)?图(?:示)?[：:]/;
+  const structured = paragraphs.some(p => diagram.test(p));
+  const noteStart = /^(?:#{3,6}\s*|[-*]\s*)?(?:\*\*)?(?:注|注意|说明|提醒|风险提示|禁忌|适用条件|前提条件|补充说明)[：:]/;
+  const table = (p: string) => {
+    const lines = p.split(/\r?\n/);
+    // 表头可省外侧竖线；以分隔行识别整表，不拆表头和数据行。
+    return lines.length > 1 && lines[0]!.includes('|') && /^\s*\|?\s*:?-+:?\s*\|/.test(lines[1]!);
+  };
+  const visual = (p: string) => diagram.test(p) || table(p) || /^\s*[-*+]\s|^\s*\d+[.)、]\s/.test(p);
+  const image: string[] = [], reading: string[] = [];
+  for (let i = 0; i < paragraphs.length; i++) {
+    const p = paragraphs[i]!;
+    // 原页引用只服务图像定位，不把它算作“必要文字”。
+    if (/^〔参考原页/.test(p) || /^(?:<!--[^]*?-->\s*)+$/.test(p)) { image.push(p); continue; }
+    if (structured) {
+      // 小标题跟随下一段的媒介；不会仅凭标题制造独立空阅读页。
+      const heading = /^#{3,6}\s+[^\n]+$/.test(p);
+      if (heading && !paragraphs[i + 1]) { image.push(p); continue; }
+      const content = heading ? paragraphs[i + 1]! : p;
+      if (visual(content) && !noteStart.test(content)) image.push(p);
+      else reading.push(p);
+    } else if (noteStart.test(p)) reading.push(p);
+    else image.push(p);
+  }
+  return { image, reading };
+}
+
+/** 完整稿保留原章，精华只切换配图章节；原有说明/条件进入真实文字页。 */
 export function compileKnowledgeEditions(title: string, modules: KnowledgeEditionModule[]) {
-  const render = (level:'full'|'concise') => `<!-- knowledge-edition:v2:${level} -->\n# ${title}\n\n` + modules.map(m =>
-    `## ${level==='full'||m.priority==='primary'?'图解':'文字'}｜${m.headline}\n\n${m.body.trim()}`
-  ).join('\n\n');
+  const render = (level:'full'|'concise') => `<!-- knowledge-edition:v2:${level} -->\n# ${title}\n\n` + modules.map(m => {
+    const textOnly=/^(阅读提示|图书信息|参考(?:资料|文献|来源)|附注|说明|注意事项|适用条件|风险提示|禁忌)(?:$|[：:｜|])/.test(m.headline);
+    if(textOnly || (level==='concise'&&m.priority!=='primary'))return `## 文字｜${m.headline}\n\n${m.body.trim()}`;
+    const {image, reading:notes}=splitKnowledgeModuleMedia(m.body);
+    if(!image.join('').trim()&&notes.length)return `## 文字｜${m.headline}\n\n${m.body.trim()}`;
+    return `## 图解｜${m.headline}\n\n${image.join('\n\n')}`+(notes.length?`\n\n## 文字｜${m.headline} · 说明\n\n${notes.join('\n\n')}`:'');
+  }).join('\n\n');
   return {full:render('full'),concise:render('concise')};
 }
 

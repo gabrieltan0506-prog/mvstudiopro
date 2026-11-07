@@ -8338,7 +8338,7 @@ export default function PlatformPage() {
     setCustomNoteText(distilled);
     setCustomNoteCompactMarkdown(null);
     // 选图失败保留全文并停止本次出图，不能按全文自动继续购买配图。
-    setCustomNoteUploadStatus("底稿已保留，正在浓缩知识并安排两版图文…");
+    setCustomNoteUploadStatus("完整底稿已保留，正在核实疑点并选择精华配图…");
     try {
       const compact=await deriveCompactFromFull(distilled);
       return customNoteDetailLevel==='full'?(customNoteFullMarkdownRef.current||distilled):compact;
@@ -8859,14 +8859,13 @@ export default function PlatformPage() {
             }
           }
         }
-        // 两档先共享浓缩知识，再分配主图/次图/文字；旧长稿不直接当完整版出图。
+        // 两档共享完整原稿；精华只选择配图章节，未选知识保留为文字。
         if (!overrides?.supplementOf) {
           if (hasFullReceipt) {
             const compact=await deriveCompactFromFull(completeManuscript);
             completeManuscript=customNoteFullMarkdownRef.current||completeManuscript;
             distilled=customNoteDetailLevel==='full'?completeManuscript:compact;
           }
-          else if (planKnowledgeCardPages(distilled, customNoteDistillModel).pageCount > 20) throw new Error("这份文字已修改或尚未提炼，缺少对应的完整稿记录；请先提炼再选择重点配图，正文不会被自动截短");
           if(customNoteDetailLevel==='concise')assertKnowledgeCardIllustrationSelection(distilled, customNoteDistillModel);
         }
         const plan = planKnowledgeCardPages(distilled, customNoteDistillModel);

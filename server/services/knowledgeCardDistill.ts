@@ -267,20 +267,20 @@ const DISTILL_NO_META_ZH = `**不要写审稿旁白**：不得出现「材料认
 function buildDistillSystem(minSections: number, modelName?: string | null, docKeys?: string[], detailLevel?: KnowledgeCardDetailLevel): string {
   const bullets = resolveDistillBullets(modelName);
   const levelRule = detailLevel === "full"
-    ? `\n0. **完整版：主要与次要重点都先浓缩提炼，再适合成图**。保留有用知识与必要条件，不逐段复述原文，不要求所有数字和例子原样搬运。相关细项合并成对照表或流程图，一页容纳多个相关模块；多图少字来自媒介分配，不来自铺开长文。`
-    : `\n0. **精华版：主要重点成图，次要知识用精练文字和表格**。先提炼全部有用知识，不能只留下主线而丢掉次要内容；随后由图文方案安排媒介。两版都要白话、精练，不逐段搬运。`;
+    ? `\n0. **成稿档：完整版（第一重点 + 详细解说）**：本材料的每个章节、方法、表格/清单都要落进成稿，第一重点逐条给出详细解说（为什么、怎么做、什么条件下成立），次要内容也不因「取重点」被舍弃；数字、步骤、条件全部保留。**优先级**：要点条数仍按第 3 条（每条 ≤16 字、条数不超上限），装不下的信息**一律进 Markdown 表格或「图：」行**，不靠加长列表。**能表格化的一律表格化**：分类/对比/参数/时辰-经脉-做法这类多维内容写成 Markdown 表格（表头清楚、每格一句短语，不超过 6 列）；步骤/流程写成「A → B → C」一行流程链；同类清单合并成一张表而不是散成多节。表格承载信息量，小节数量不要为了铺开而增加。原文中已有的必要解说、适用条件、操作注意与例外另起独立普通段落，与图示/要点/表格之间空一行，供手册文字说明使用；不要把这些解释全部塞进「图：」行或表格，也不要重复已在图表中表达的信息，不编造原文没有的补白。`
+    : `\n0. **成稿档：精华版（优先重点 + 简单解说）**：只取优先级最高的重点，每条配一句到位的简单解说（说清是什么、怎么用即可），不铺陈次要分支、不展开长论证；篇幅短、页数少是这档的目的。`;
   const refRule = docKeys?.length
     ? `\n7. **参考原页标记**：用户会附上原稿中版式有特色的页（表格、思维导图、分式图解、左右对比），每张图前都标了「原稿 docKey 第 N 页」。某小节的内容对应这些页时，在该小节末尾单独一行写标记，格式 \`${docKeys.map((k) => formatKnowledgeCardPageRef(k, [1])).join("\` 或 \`")}\`（docKey 照抄该图前标注的那个，页码写该图标注的真实页码，多页用逗号）。只能引用本次附带的图；没有对应参考页的小节不写标记；不得编造 docKey 或页码。`
     : `\n7. **没有原稿参考页时自己出表格**（0926 用户令）：本次没有附带值得重画的原稿页，凡是分类、对比、参数、时间线、步骤、优缺点这类有结构的内容，都由你整理成 Markdown 表格（表头清楚、每格一句短语、不超过 6 列）承载，不要散成长列表。`;
   return `你是知识卡片内容主编。任务：把用户提供的文稿/幻灯片抽字/图片 OCR 结果，提炼成可直接做「疏朗图文知识卡片」的简体中文 Markdown（读图 OCR 与提炼同时完成，不要只吐生文本）。
 
-**目标**：让没读过原文的人在几分钟内读懂这份材料**讲了什么、关键结论是什么、怎么用**。${detailLevel === "full" ? "是**主要与次要知识都提炼**：去重归类，用简句和表格压实。" : "是**精华版：主图次文**，主要次要知识都保留有价值的部分。"}
+**目标**：让没读过原文的人在几分钟内读懂这份材料**讲了什么、关键结论是什么、怎么用**。${detailLevel === "full" ? "是**主要与次要重点全收**：宁多勿漏，用表格压实。" : "是**精华版：只提炼主要重点**，不是逐段搬运。"}
 
 硬性要求：${levelRule}
 1. **抓主干**：优先保留核心论点、关键结论、可操作方法、决定性数据与对比、反直觉洞察。删掉铺垫、重复、寒暄、案例复述、广告水词、与主题无关的枝节。
 2. 结构：以 \`# 总标题\` 开头（总标题要点出全文主旨，不是书名照抄），下文用 \`## 小节\` 承载重点；小节标题本身就是一句有信息量的判断，不用「概述 / 背景介绍」这类空标题。
 3. ${distillSectionShape(bullets)}
-4. **篇幅**：参考 **${minSections}** 个主题模块，实际按知识关系合并，不设必须保留的节数比例。宁可少而精，**禁止**为凑数把同一论点拆成多节，也禁止把整本压成两三节总括。
+4. **篇幅**：约 **${minSections}** 个 \`## 小节\`（可上下浮动 2 个）。宁可少而精，**禁止**为凑数把同一论点拆成多节，也禁止把整本压成两三节总括。
 5. **不要**把原文长段落原样倒进输出；**不要**注水扩写；**不要**「首先其次综上所述」公文腔。
 6. 只输出 Markdown 正文，不要 JSON、不要前言后记、不要解释你做了什么。
 7. ${DISTILL_NO_META_ZH}\n${KNOWLEDGE_NARRATIVE_STYLE}${refRule.replace("\n7. ", "\n8. ")}`;
@@ -1215,18 +1215,18 @@ function buildRefineSystem(
 ): string {
   const bullets = resolveDistillBullets(modelName);
   if (detailLevel === "full" && stage !== "tighten") {
-    // 1107样例校准：完整指知识覆盖，允许浓缩、合并和去重。
+    // 完整版：只去重、理主线，不压缩（0908 探针 79 节被压到 60 节、字数少四成，用户判「比纯文字还少」）
     return `你是知识卡片内容主编。下面这份 Markdown 由同一份长文档**分段提炼后机械拼接**而成，段与段之间可能重复、粒度不齐、缺少全局主线。请把它整理成一份连贯的**完整版**知识卡片 Markdown。
 
 硬性要求：
-1. **先浓缩再编排**：完整指保留主要与次要的有用知识，不是逐字保留。不按原小节数量保留九成，不让碎片和重复解释撑大页数。同类细项合并为主题表格，几个相关知识点可合成一组图解。
-2. **保留意义与条件**：压缩重复铺垫、例子和长论证，保留关键结论、可操作方法、决定性数据与必要限定。表格每格短句，步骤用流程链；不为凑数字拆小节，也不靠含糊概括抹掉有用知识。
-${KNOWLEDGE_NARRATIVE_STYLE}
+1. **不压缩**：这是完整版，内容要完整。只合并**讲同一件事**的重复小节，其余小节全部保留；合并后总节数不少于 ${Math.max(2, Math.floor((currentSections || minSections) * 0.9))} 个 \`## 小节\`（当前 ${currentSections || "?"} 个）。
+2. **不删要点，但要压实**：每节的要点、数字、步骤、条件、例子一条不少；合并小节时把两边要点合在一起，不挑选。能表格化的一律改成 Markdown 表格（分类/对比/参数/时辰-经脉-做法等多维内容），步骤写成「A → B → C」流程链，同类清单并成一张表；用表格承载而不是拉长列表。
 3. **理主线**：\`# 总标题\` 点出主旨，小节按「是什么 → 为什么 → 怎么做 → 边界与例外」之类的自然顺序重排，读下来是一条线。
 4. ${distillSectionShape(bullets)}
 5. 去掉分段痕迹：「本段 / 以上 / 续上」这类过渡语、重复标题、空节。${DISTILL_NO_META_ZH}
 6. 已有的「〔参考原页 …〕」标记随所属小节保留（合并小节时把页码合到一行），不要新造、不要丢。
-7. 只输出 Markdown 正文，不要前言后记、不要解释取舍过程。`;
+7. 原稿已有的独立解说、适用条件、注意与例外保留为独立普通段落，与图示/要点/表格之间空一行；不得全部并入「图：」行或表格，不重复已有图表内容，不编造补白。
+8. 只输出 Markdown 正文，不要前言后记、不要解释取舍过程。`;
   }
   if (stage === "tighten") {
     return `你是知识卡片内容主编。下面这份知识卡片 Markdown **小节太多了**${
@@ -1340,7 +1340,7 @@ async function refineOnce(params: {
       maxTokens: params.stage === "final" ? DISTILL_FINAL_MAX_TOKENS : undefined,
       // 坏内容当失败换下一家网关，而不是在这里默默保留原稿
       validate: (text) =>
-        (params.detailLevel === "full" ? !text.trim() || countMarkdownSections(text)<1 : refinedOutputLooksBroken(text, params.minSections, countMarkdownSections(params.body)))
+        refinedOutputLooksBroken(text, params.minSections, countMarkdownSections(params.body))
           ? `${params.body.length} 字只回 ${text.trim().length} 字 / ${countMarkdownSections(text)} 节`
           : null,
     });
@@ -1477,7 +1477,7 @@ async function refineMergedDistill(params: {
     body: current,
     modelName: params.modelName,
     // 完整版：目标节数不低于合并稿节数（统稿不压缩）
-    minSections: params.minSections,
+    minSections: params.detailLevel === "full" ? Math.max(params.minSections, countMarkdownSections(current)) : params.minSections,
     stage: "final",
     detailLevel: params.detailLevel,
   });

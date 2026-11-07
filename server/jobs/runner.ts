@@ -3756,7 +3756,7 @@ async function processPlatformJob(
         if(params.editionVersion!==2)return deriveKnowledgeCardCompact(deriveOptions);
         const {prepareKnowledgeCardEditions}=await import('../services/knowledgeCardEditionPreparation.js');
         const {downloadGcsObjectVersioned,uploadBufferToGcs,getGcsBucketName}=await import('../services/gcs.js');
-        return prepareKnowledgeCardEditions({sourceMarkdown:fullMarkdown,abortSignal:cancel.signal,onProgress:deriveOptions.onProgress,
+        return prepareKnowledgeCardEditions({sourceMarkdown:fullMarkdown,model:receiptModel,targetSections,abortSignal:cancel.signal,onProgress:deriveOptions.onProgress,
           evidence:{prefix:`knowledge-editions/user-${jobUserId}/${platformJobId}`,
             read:async key=>{try{return JSON.parse((await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${key}`})).buffer.toString());}catch(error){if((error as Error).message==='gcs_stat_failed:404')return null;throw error;}},
             save:async(key,value)=>{await uploadBufferToGcs({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json'});},

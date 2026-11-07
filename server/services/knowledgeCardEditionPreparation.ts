@@ -1,39 +1,24 @@
 import {buildKnowledgeBookletHtml} from '../../shared/knowledgeBooklet';
 import {measureKnowledgeBookletFromWorker} from './pdfWorkerClient';
-import {guardKnowledgeEditionEvidence,rethrowKnowledgeEditionInvariant,knowledgeEditionErrorMessage,isKnowledgeReceiptUnknown} from './knowledgeEditionRecovery';
-import {hasKnowledgeBody,markKnowledgeEditionGap} from '../../shared/knowledgeEditionIssues';
+import {guardKnowledgeEditionEvidence,rethrowKnowledgeEditionInvariant,knowledgeEditionErrorMessage} from './knowledgeEditionRecovery';
+import {hasKnowledgeBody} from '../../shared/knowledgeEditionIssues';
 import {knowledgeEditionParts} from '../../shared/knowledgeCardEdition';
 import {planKnowledgeCardPages} from '../../shared/knowledgeCardPagination';
 import {KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST} from './knowledgeModelCapabilities';
 import {verifyKnowledgeEditionManuscripts} from './knowledgeEditionFinalVerification';
-import {knowledgeVerificationTriggers} from './knowledgeVerificationPolicy';
-import {KNOWLEDGE_MODULE_PRESENTATION_GUIDANCE} from '../../shared/knowledgeDesignInspiration';
+
+import {deriveKnowledgeCardCompact} from './knowledgeCardLevelDerive';
 import {createHash} from 'node:crypto';
 import {compileKnowledgeEditions,knowledgeModulesFromMarkdown} from '../../shared/knowledgeCardEdition';
-import {KNOWLEDGE_NARRATIVE_STYLE} from '../../shared/knowledgeNarrativeStyle';
+
 import {invokeKnowledgePublicationRoutes,type KnowledgeRouteEvidence,type KnowledgeModelRequest} from './knowledgePublicationRoutes';
 
-export const KNOWLEDGE_EDITION_INSTRUCTIONS = `你是图文知识手册编辑。只输出简体中文Markdown，不输出JSON、装饰配置、处理过程或页号。
-将主要与次要的有用知识去重、浓缩为主题模块，再确定知识优先级。完整是知识覆盖完整，不是原文逐句详写；删除铺垫、重复案例、广告和无意义复述，重要限定与风险不丢。几个相关知识点合在一个模块，用短句、对照表、流程链承载，禁止每个食材、每个动作都拆成一页。优先讲清可操作结论，不靠塞满原文字数增加图片。
-标题为# 总标题；每个模块以## 主要重点｜有信息量的标题 或 ## 次要重点｜有信息量的标题 开始。主要重点是全书核心框架、关键行动和决定性判断；次要重点是分类细项、补充方法、例子、边界和支撑知识。不是全部标为主要，也不能只留主要而丢掉有用次要内容。程序将主要做成两版共用图片；次要在精华版用文字/表格呈现，在完整版浓缩成图。每个模块内容必须独立可读，适合被组合到同主题图卡，图示建议用“图：”单行说明。
-一般把冗长底稿压实为约四分之一到三分之一的表达量，这是编辑参考而非字数硬门槛；短稿不必强压。医学条件、数值单位和必要解释优先于篇幅。不要为了凑页数丢知识，也不要把完整等同于逐字保留。保留真实参考页标记与来源，不造事实。仅在发现实际疑点、前后矛盾或含义不明确时，在对应段落后写<!-- 待核：具体原句与疑问 -->；没有疑点不添加标注、不强制联网。已有尚未解决的待核标注在合并时保留，不假装已查证。
-${KNOWLEDGE_MODULE_PRESENTATION_GUIDANCE}
-${KNOWLEDGE_NARRATIVE_STYLE}`;
-
-function batches(markdown:string) {
-  const out:string[]=[];let rest=markdown;
-  while(rest.length>24000){
-    const cut=rest.lastIndexOf('\n\n',24000);
-    const end=cut>12000?cut:24000;
-    out.push(rest.slice(0,end));rest=rest.slice(end);
-  }
-  if(rest.trim())out.push(rest);
-  return out;
-}
+const EDITION_COMPOSITION_VERSION='original-sections-v1';
+export const KNOWLEDGE_EDITION_INSTRUCTIONS = `只从完整稿挑选已有重点章节，原文逐字保留，不改写、不归并、不再次浓缩。只输出简体中文Markdown，不输出JSON。`;
 
 /** 同一底稿只整理一次；两版由同一份模块确定性编译，恢复读取原回执。 */
 export async function prepareKnowledgeCardEditions(params:{
-  sourceMarkdown:string;evidence:KnowledgeRouteEvidence;abortSignal?:AbortSignal;
+  sourceMarkdown:string;model?:string;targetSections?:number;evidence:KnowledgeRouteEvidence;abortSignal?:AbortSignal;
   onProgress?:(p:{doneBatches:number;totalBatches:number;pass:number})=>void|Promise<void>;
   invoke?:typeof invokeKnowledgePublicationRoutes;
   measure?:typeof measureKnowledgeBookletFromWorker;
@@ -43,90 +28,77 @@ export async function prepareKnowledgeCardEditions(params:{
   if(!sourceMarkdown.trim())throw Error('缺少知识底稿，未启动整理');
   const inputDigest=createHash('sha256').update(sourceMarkdown).digest('hex');
   const prior=await evidence.read(`${evidence.prefix}/editions.json`);
-  if(prior){if(prior.inputDigest!==inputDigest)throw Error('原稿版本变化，保留原回执');return prior.result;}
+  if(prior){
+    if(prior.inputDigest!==inputDigest)throw Error('原稿版本变化，保留原回执');
+    if(prior.compositionVersion!==EDITION_COMPOSITION_VERSION)throw Error('此任务保存的是旧版浓缩结果，已保留原回执；不能当作原逻辑恢复结果或自动重新购买');
+    return prior.result;
+  }
   const invoke=params.invoke||invokeKnowledgePublicationRoutes;
-  const requestOne=async(body:string,index:number,stage:'modules'|'merge')=>{
+  // 完整底稿先保存；精华只选择原节，不能用选择结果覆盖完整版。
+  await evidence.save(`${evidence.prefix}/source.json`,{inputDigest,markdown:sourceMarkdown});
+  const selectChat:NonNullable<Parameters<typeof deriveKnowledgeCardCompact>[0]['chat']>=async call=>{
     params.abortSignal?.throwIfAborted();
-    const hash=createHash('sha256').update(`${inputDigest}/${stage}/${index}`).digest('hex');
+    const hash=createHash('sha256').update(`${inputDigest}/selection/${call.selectionKey}/${call.executionChannel}/${call.system}/${call.user}`).digest('hex');
     const id=`${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
-    const request:KnowledgeModelRequest={executionChannel:index%2?'evolink':'openrouter',
-      systemInstruction:{parts:[{text:KNOWLEDGE_EDITION_INSTRUCTIONS+(stage==='merge'?'\n本次输入已经分批提炼。只做跨批去重与主题归并，保留主要/次要知识的覆盖、条件与来源，不再次大幅删减。':'')}]},
-      contents:[{role:'user',parts:[{text:JSON.stringify({sourceDigest:hash,source:{title:'图文知识手册',pages:[{id,headline:'知识模块整理',body,imageUrl:''}]}})}]}],
+    const request:KnowledgeModelRequest={executionChannel:call.executionChannel||'openrouter',
+      systemInstruction:{parts:[{text:call.system+'\n'+KNOWLEDGE_EDITION_INSTRUCTIONS}]},
+      contents:[{role:'user',parts:[{text:JSON.stringify({sourceDigest:hash,source:{title:'精华重点选择',pages:[{id,headline:'完整稿原节选择',body:call.user,imageUrl:''}]}})}]}],
       generationConfig:{temperature:0.2,maxOutputTokens:KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST,responseMimeType:'text/markdown'}};
-    const prefix=`${evidence.prefix}/${stage}-${index}`;
-    const old=await evidence.read(`${prefix}/request.json`);
-    if(!old)await evidence.save(`${prefix}/request.json`,{request,inputDigest});
-    if(old&&old.inputDigest!==inputDigest)throw Error('原稿版本变化，保留原任务');
-    const response=await invoke(old?.request||request,{...evidence,prefix},params.abortSignal?{
-      fetch:(url,init)=>fetch(url,{...init,signal:init?.signal?AbortSignal.any([init.signal,params.abortSignal!]):params.abortSignal}),
-    }:{});
+    const scope={...evidence,prefix:`${evidence.prefix}/selection-${hash}`};
+    const completed=await scope.read(`${scope.prefix}/result.json`);
+    if(completed){
+      if(completed.inputDigest!==inputDigest)throw Error('原稿版本变化，保留原回执');
+      return String(completed.body);
+    }
+    const old=await scope.read(`${scope.prefix}/request.json`);
+    if(old&&old.inputDigest!==inputDigest)throw Error('原稿版本变化，保留原回执');
+    if(!old)await scope.save(`${scope.prefix}/request.json`,{inputDigest,request});
+    const response=await invoke(old?.request||request,scope,params.abortSignal?{fetch:(url,init)=>fetch(url,{...init,signal:init?.signal?AbortSignal.any([init.signal,params.abortSignal!]):params.abortSignal})}:{});
     params.abortSignal?.throwIfAborted();
     const report=JSON.parse(JSON.parse(response.text).candidates[0].content.parts[0].text);
-    const result=String(report.pages?.[0]?.body||'').trim();
-    if(!result)throw Error('本批没有返回知识模块，原稿和回执已保留');
-    await evidence.save(`${prefix}/verification-candidates.json`,{inputDigest,triggers:knowledgeVerificationTriggers([{pageId:id,headline:"知识模块",term:"原文疑点",statement:result}]),stage:"等待全册整理后联网"});
-    // Markdown解析已把待核注释移入cautions，向后续合并传递时还原内部标注。
-    const questions=(report.pages?.[0]?.cautions||[]).filter((c:any)=>c.kind==='uncertain'&&c.message==='已标注疑点，等待全册整理后统一联网核实。').map((c:any)=>String(c.evidence).replace(/-->/g,'—'));
-    return [result,...Array.from(new Set<string>(questions)).map(q=>`<!-- 待核：${q} -->`)].join('\n');
+    const body=String(report.pages?.[0]?.body||'').trim();
+    if(!body)throw Error('精华选择返回空内容，完整稿已保留');
+    await scope.save(`${scope.prefix}/result.json`,{inputDigest,body});
+    return body;
   };
-  const safeRequest=async(body:string,index:number,stage:'modules'|'merge')=>{
-    const key=`${evidence.prefix}/${stage}-${index}/page.json`;
-    const saved=await evidence.read(key);
-    if(saved&&saved.inputDigest!==inputDigest)throw Error('章节输入变化，保留原回执');
-    if(saved?.status==='saved')return String(saved.body);
-    await evidence.save(key,{inputDigest,original:body,body,status:'pending'});
-    let output:string,issue:string|null=null;
-    try{output=await requestOne(body,index,stage);}
-    catch(error){
-      params.abortSignal?.throwIfAborted();rethrowKnowledgeEditionInvariant(error);
-      issue=knowledgeEditionErrorMessage(error);
-      output=markKnowledgeEditionGap(body,`本段整理失败，保留原文，在末段依据原文补齐：${issue}`);
-      if(isKnowledgeReceiptUnknown(error))output+='\n<!-- 回执待确认：原请求未闭合，不新增同内容请求 -->';
-    }
-    await evidence.save(key,{inputDigest,original:body,body:output,status:'saved',issue});
-    return output;
-  };
-  const chunks=batches(sourceMarkdown),outputs:string[]=new Array(chunks.length);let done=0;
-  const settled=await Promise.allSettled(Array.from({length:Math.min(10,chunks.length)},async(_,worker)=>{
-    for(let i=worker;i<chunks.length;i+=Math.min(10,chunks.length)){
-      outputs[i]=await safeRequest(chunks[i],i,'modules');
-      await params.onProgress?.({doneBatches:++done,totalBatches:chunks.length,pass:1});
-    }
-  }));
-  const failed=settled.find((r):r is PromiseRejectedResult=>r.status==='rejected');if(failed)throw failed.reason;
-  // 合并容量以内统一去重；超大书按有界组归并，不无限串行缩稿、不强制固定页数。
-  const combined=outputs.join('\n\n'),groups=batches(combined);
-  const merged:string[]=new Array(groups.length);
-  if(chunks.length===1)merged[0]=outputs[0];
-  else {
-    let mergedDone=0;
-    const results=await Promise.allSettled(Array.from({length:Math.min(10,groups.length)},async(_,worker)=>{
-      for(let i=worker;i<groups.length;i+=Math.min(10,groups.length)){
-        merged[i]=await safeRequest(groups[i],i,'merge');
-        await params.onProgress?.({doneBatches:++mergedDone,totalBatches:groups.length,pass:2});
-      }
-    }));
-    const failure=results.find((r):r is PromiseRejectedResult=>r.status==='rejected');if(failure)throw failure.reason;
-  }
   const finalInvoke:typeof invokeKnowledgePublicationRoutes=async(request,scope)=>{
     params.abortSignal?.throwIfAborted();
     const result=await invoke(request,scope,params.abortSignal?{fetch:(url,init)=>fetch(url,{...init,signal:init?.signal?AbortSignal.any([init.signal,params.abortSignal!]):params.abortSignal})}:{});
     params.abortSignal?.throwIfAborted();return result;
   };
-  const finalPages=merged.flatMap(body=>{
-    const parsed=knowledgeModulesFromMarkdown(body);
-    const unknown=/<!-- 回执待确认：/.test(body)?'\n<!-- 回执待确认：原请求未闭合，不新增同内容请求 -->':'';
-    return parsed.modules.map(module=>`# ${parsed.title}\n\n## ${module.priority==='primary'?'主要重点':'次要重点'}｜${module.headline}\n\n${module.body}${unknown}`);
-  });
+  const original=knowledgeModulesFromMarkdown(sourceMarkdown);
+  const modules=original.modules;
+  const fullSource=`# ${original.title}\n\n`+modules.map(m=>`## ${m.headline}\n\n${m.body}`).join('\n\n');
+  let selection={markdown:'',sections:0,targetSections:0,passes:0};
+  const selectionIssues:{kind:string;message:string}[]=[];
+  try{
+    selection=await deriveKnowledgeCardCompact({fullMarkdown:fullSource,model:params.model,targetSections:params.targetSections,
+      abortSignal:params.abortSignal,onProgress:params.onProgress,chat:selectChat});
+    const selected=knowledgeModulesFromMarkdown(selection.markdown).modules;
+    const selectedIndices=new Set<number>();
+    for(const choice of selected){
+      const candidates=modules.map((m,i)=>({m,i})).filter(({m,i})=>m.headline===choice.headline&&!selectedIndices.has(i));
+      const exact=candidates.find(({m})=>m.body===choice.body);
+      const matched=exact||(candidates.length===1?candidates[0]:null);
+      if(!matched)throw Error('精华选择无法唯一对应原稿章节，完整稿已保存，不能据此出图');
+      selectedIndices.add(matched.i);
+    }
+    // 只采纳章节选择；即使模型改写了段落，也使用原章正文。
+    modules.forEach((module,index)=>{module.priority=selectedIndices.has(index)?'primary':'secondary';});
+  }catch(error){
+    params.abortSignal?.throwIfAborted();rethrowKnowledgeEditionInvariant(error);
+    for(const module of modules)module.priority='secondary';
+    selectionIssues.push({kind:'selection',message:knowledgeEditionErrorMessage(error)});
+  }
+  // 选节不改写知识；内容整理结束后，再统一处理真正的疑点与空章。
+  const finalPages=modules.map(module=>`# ${original.title}\n\n## ${module.priority==='primary'?'主要重点':'次要重点'}｜${module.headline}\n\n${module.body}`);
   const verified=await verifyKnowledgeEditionManuscripts(finalPages,{...evidence,prefix:`${evidence.prefix}/final-verification`},finalInvoke,params.onProgress);
-  const parsed=verified.map(knowledgeModulesFromMarkdown);
-  // 只去除逐字相同的模块，不能用模糊标题匹配吞掉不同条件。
-  const modules=Array.from(new Map(parsed.flatMap(p=>p.modules).map(m=>[JSON.stringify(m),m])).values());
-  const editions=compileKnowledgeEditions(parsed[0]?.title||'图文知识手册',modules);
+  const verifiedModules=verified.flatMap((body,index)=>knowledgeModulesFromMarkdown(body).modules.map(module=>({...module,priority:modules[index]!.priority})));
+  const editions=compileKnowledgeEditions(original.title,verifiedModules);
   // 正式分页检查点：两档原稿先保存，再逐个实际图片页及文字章节保存。
   // 这里的图片页是实际出图分页；文字物理页仍由正式Booklet/PDF渲染器测量。
   const verification=await evidence.read(`${evidence.prefix}/final-verification/verified.json`);
-  const issues=[...(verification?.issues||[])];
+  const issues=[...(verification?.issues||[]),...selectionIssues];
   const editionPageCounts:Record<string,{imagePages:number|null;readingPages:number|null}>={};
   for(const [level,markdown] of [['full',editions.full],['concise',editions.concise]] as const){
     await evidence.save(`${evidence.prefix}/pages/${level}/manuscript.json`,{inputDigest,markdown});
@@ -135,12 +107,13 @@ export async function prepareKnowledgeCardEditions(params:{
     for(const [index,module] of Array.from(parts.modules.entries()))
       await evidence.save(`${evidence.prefix}/pages/${level}/chapters/${index}.json`,{inputDigest,...module,status:hasKnowledgeBody(module.body)?'saved':'pending_content'});
     try{
-      const plan=planKnowledgeCardPages(markdown,'deepseek-v4.1-flash-1017');
+      const plan=planKnowledgeCardPages(markdown,params.model);
       editionPageCounts[level].imagePages=plan.pageCount;
       for(const [index,body] of Array.from(plan.pages.entries()))await evidence.save(`${evidence.prefix}/pages/${level}/images/${index}.json`,{inputDigest,pageIndex:index,body,status:'saved'});
     }catch(error){rethrowKnowledgeEditionInvariant(error);issues.push({kind:'pagination',message:knowledgeEditionErrorMessage(error),level});}
     try{
       const text=parts.modules.filter(m=>m.medium==='text');
+      if(level==='full'&&!text.some(m=>hasKnowledgeBody(m.body)))issues.push({kind:'missing_reading',message:'完整版尚无独立文字说明，原稿已保存，不能视为两档整理完成',level});
       const html=text.length?buildKnowledgeBookletHtml({title:parts.title,pages:text.map(m=>({...m,imageUrl:''}))}):'';
       await evidence.save(`${evidence.prefix}/pages/${level}/reading-layout.json`,{inputDigest,html});
       const readingPages=html?await (params.measure||measureKnowledgeBookletFromWorker)(html):0;
@@ -148,9 +121,9 @@ export async function prepareKnowledgeCardEditions(params:{
       await evidence.save(`${evidence.prefix}/pages/${level}/counts.json`,{inputDigest,...editionPageCounts[level]});
     }catch(error){rethrowKnowledgeEditionInvariant(error);issues.push({kind:'pagination',message:knowledgeEditionErrorMessage(error),level});}
   }
-  const result={markdown:editions.concise,fullEditionMarkdown:editions.full,sections:modules.length,
-    targetSections:modules.length,passes:chunks.length>1?2:1,editionVersion:2,verificationProcessed:verification?.complete!==false&&issues.length===0,editionIssues:issues,editionPageCounts,
-    unclassifiedModules:modules.filter(m=>m.priority==='secondary').length};
-  await evidence.save(`${evidence.prefix}/editions.json`,{inputDigest,original:sourceMarkdown,modules,result});
+  const result={markdown:editions.concise,fullEditionMarkdown:editions.full,sections:verifiedModules.length,
+    targetSections:selection.targetSections,passes:selection.passes,editionVersion:2,verificationProcessed:verification?.complete!==false&&issues.length===0,editionIssues:issues,editionPageCounts,
+    unclassifiedModules:verifiedModules.filter(m=>m.priority==='secondary').length};
+  await evidence.save(`${evidence.prefix}/editions.json`,{inputDigest,compositionVersion:EDITION_COMPOSITION_VERSION,original:sourceMarkdown,modules:verifiedModules,result});
   return result;
 }

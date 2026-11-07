@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import { getOpenRouterApiKey } from "./openrouterGptImage2";
 import { getEvolinkApiKey } from "./gpt56CopywritingGateway";
 import { signGsUriV4ReadUrl } from "./gcs";
-import { GLM_STREAM_IDLE_TIMEOUT_MS, readGlmSseStream } from "./sseChatStream";
+import { GLM_STREAM_IDLE_TIMEOUT_MS, readGlmSseStream, assertSseContentSafety, isSseContentSafetyError, SseContentSafetyError } from "./sseChatStream";
 import { knowledgeModelCapabilities, knowledgeOutputBudget, KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST, KNOWLEDGE_PUBLICATION_ROUTE_ORDER, KNOWLEDGE_PUBLICATION_ALL_ROUTES, knowledgePublicationRoutesForChannel, type KnowledgeModelChannel } from "./knowledgeModelCapabilities";
 import { knowledgeReviewSchema, validateKnowledgeReview, knowledgeConsistencySchema } from "../../shared/knowledgePublication";
 import { knowledgeReadingMarkdown } from "../../shared/knowledgePublicationLayout";
@@ -25,6 +25,7 @@ export const KNOWLEDGE_PUBLICATION_MODEL = "deepseek/deepseek-v4.1-flash-1017";
 export const KNOWLEDGE_PUBLICATION_EVOLINK_MODEL = "deepseek-v4.1-flash-1017";
 export const KNOWLEDGE_PUBLICATION_ROUTE_VERSION = "knowledge-1017-structured-v2";
 export type KnowledgeModelRequest = {
+  /** 首选供应商；明确失败可按同模型跨供应商回退，不改变批次并发。 */
   executionChannel?: KnowledgeModelChannel;
   researchOnly?: true;
   researchRequired?: boolean;
@@ -44,6 +45,27 @@ class KnowledgeRoutesExhaustedError extends Error {
   constructor(message: string, readonly traces: unknown[]) { super(message); }
 }
 const digest = (data: unknown) => createHash("sha256").update(JSON.stringify(data)).digest("hex");
+
+/** 仅采用明确的上游分类，不把余额、普通403或限流误判为内容拒答。 */
+function inspectKnowledgeRouteResponse(response: {status:number;text:string} | undefined) {
+  let envelope:any;
+  try { envelope=JSON.parse(response?.text || '{}'); } catch { envelope={}; }
+  const error=envelope.error || {};
+  const finish=envelope.choices?.[0]?.finish_reason;
+  const safetyCode=String(error.code || error.type || '');
+  const safetyHttp=Boolean(response && [400,403,422].includes(response.status) &&
+    (/^(?:content_filter|sensitive|safety_violation|content_policy_violation|moderation_blocked)$/i.test(safetyCode) ||
+     /content policy|content filter|blocked by.*(?:safety|moderation)|guardrail.*(?:block|reject)/i.test(String(error.message || ''))));
+  const keyLimit=Boolean(response?.status===403 &&
+    (error.metadata?.limit_source==='openrouter_key_limit' || /key limit exceeded/i.test(String(error.message || ''))));
+  return {finish,safetyHttp,keyLimit};
+}
+function assertKnowledgeRouteContentAllowed(response: {status:number;text:string} | undefined) {
+  const inspection=inspectKnowledgeRouteResponse(response);
+  assertSseContentSafety(inspection.finish);
+  if(inspection.safetyHttp)throw new SseContentSafetyError();
+}
+const routeModelFamily=(model:string)=>model.includes('deepseek')?'deepseek':'glm';
 
 /** 普通JSON和错误正文同样按有效字节续期；读不完整时保留未知回执，不能再购下一跳。 */
 async function readKnowledgeResponseBody(response: Response, controller: AbortController, onBytes: () => Promise<void>) {
@@ -314,6 +336,8 @@ export async function invokeKnowledgePublicationRoutes(
   // 先检查并回放所有已有请求，防止扩充重试顺序后在旧成功/未知回执前重新购买。
   const existing = new Set<string>();
   const unresolved = new Set<string>();
+  const keyLimitedChannels = new Set<KnowledgeModelChannel>();
+  const attempts = {deepseek:0,glm:0};
   const availableRoutes = request.executionChannel ? knowledgePublicationRoutesForChannel(request.executionChannel) : KNOWLEDGE_PUBLICATION_ROUTE_ORDER;
   // 搜索阶段只允许 FlashX；正文继续按已有整理路由恢复。
   const plannedRoutes = request.researchOnly ? availableRoutes.filter(route => route.id.startsWith("glm-")) : availableRoutes;
@@ -322,6 +346,11 @@ export async function invokeKnowledgePublicationRoutes(
     if (!receipt) continue;
     existing.add(target.id);
     if (receipt.requestDigest !== requestDigest) throw new Error("模型输入版本变化，不能复用旧路由回执");
+    if(receipt.safetyBlocked)throw new SseContentSafetyError();
+    assertKnowledgeRouteContentAllowed(receipt.response);
+    if(inspectKnowledgeRouteResponse(receipt.response).keyLimit)keyLimitedChannels.add(target.channel);
+    if(receipt.sent!==false && (receipt.request || receipt.response || ['pending','unknown'].includes(receipt.state)))
+      attempts[routeModelFamily(target.model)]+=1;
     if (["pending", "unknown"].includes(receipt.state) && !await evidence.read(`${evidence.prefix}/${target.id}-response.json`))
       unresolved.add(target.id);
   }
@@ -414,6 +443,8 @@ export async function invokeKnowledgePublicationRoutes(
     }
     if (!receipt) {
       if (unresolved.size) throw new Error("原请求回执尚未闭合，保留原任务，不重复提交或切换通道");
+      // 旧已发送回执也计入上限；改变首选通道不会再获得额外四次购买。
+      if(keyLimitedChannels.has(channel) || attempts[routeModelFamily(model)]>=4)continue;
       assertKnowledgePaidModel(channel, model, request.researchOnly === true);
       const apiKey = deps.key(channel);
       if (!apiKey) {
@@ -441,6 +472,7 @@ export async function invokeKnowledgePublicationRoutes(
         const storedBody = { ...body, messages: messages.map(m => ({ ...m, content: typeof m.content === "string" ? m.content :
           m.content.map(p => p.type === "image_url" ? { type: "image_url", image_url: { url: "[服务端即时签名]", detail: "high" } } : p) })) };
         await evidence.save(key, { requestDigest, route, model, state: "pending", startedAt: new Date().toISOString(), request: storedBody, imageSources: images });
+        attempts[routeModelFamily(model)]+=1;
         let status: number | undefined;
         try {
             const controller = new AbortController();
@@ -498,11 +530,13 @@ export async function invokeKnowledgePublicationRoutes(
       traces.push({ route, model, state: "failed", status: receipt.response?.status });
       continue;
     }
+    if(inspectKnowledgeRouteResponse(receipt.response).keyLimit)keyLimitedChannels.add(channel);
     let normalized: { status: number; text: string };
     const adjustments: unknown[] = [];
     let completeAnswerReceived=false;
     try {
       const response = receipt.response;
+      assertKnowledgeRouteContentAllowed(response);
       if (!(response.status >= 200 && response.status < 300)) throw new Error(`HTTP ${response.status}`);
       const envelope = JSON.parse(response.text);
       let answer: unknown;
@@ -521,8 +555,9 @@ export async function invokeKnowledgePublicationRoutes(
         inputEvidence: { imageSources: images, imageInputCount: images.length, requestDigest, imageTokenReporting: "provider_specific" } }) };
     } catch (error) {
       // HTTP错误、版本不符或完整响应校验失败均有原始回执，不以成功掩盖缺页。
-      receipt = { ...receipt, state: "failed", adjustments, reason: error instanceof Error ? `${error.name === "ZodError" ? "输出合同不符：" : ""}${error.message}` : "输出合同不符" };
+      receipt = { ...receipt, state: "failed", ...(isSseContentSafetyError(error)?{safetyBlocked:true}:{}), adjustments, reason: error instanceof Error ? `${error.name === "ZodError" ? "输出合同不符：" : ""}${error.message}` : "输出合同不符" };
       await evidence.save(key, receipt);
+      if(isSseContentSafetyError(error))throw error;
       lastFailure = receipt.reason;
       traces.push({ route, model, state: "failed", status: receipt.response?.status });
       if(completeAnswerReceived&&request.generationConfig.responseMimeType==='text/markdown')markdownFailure=error instanceof Error?error:new Error(String(error));

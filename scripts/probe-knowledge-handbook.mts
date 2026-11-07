@@ -6,10 +6,13 @@ import {getJobByIdStrict} from '../server/jobs/repository';
 import {knowledgeCardPageJobId} from '../server/jobs/knowledgeCardPageTask';
 import {getDb} from '../server/db';
 import {jobs} from '../drizzle/schema';
+import {KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS} from '../shared/knowledgeCardDistillModels';
 import {downloadGcsObjectVersioned,getGcsBucketName} from '../server/services/gcs';
 
 if(process.env.FLY_PROCESS_GROUP!=='rig')throw Error('真实集成测试只能在隔离工作机运行');
 const config=JSON.parse(await readFile(process.argv[2],'utf8'));
+const distillModel=KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.find(option=>option.id===config.distillModel)?.id;
+if(!distillModel)throw Error('必须显式选择本次读档模型：glm-5.3-flashx 或 deepseek-v4.1-flash-1017');
 const original=await getJobByIdStrict(config.ownerSourceJobId);
 if(!original)throw Error('缺少原任务所有权证据');
 const owner=String(original.userId),db=await getDb();if(!db)throw Error('数据库不可用');
@@ -17,7 +20,7 @@ const sourceUri=`gs://${getGcsBucketName()}/${config.sourceObject}`;
 const source=await downloadGcsObjectVersioned({gcsUri:sourceUri});
 if(createHash('sha256').update(source.buffer).digest('hex')!==config.sourceSha256)throw Error('原文件指纹不符');
 const ids={distill:knowledgeCardPageJobId(owner,'knowledge_card_distill',config.distillRequestId),derive:knowledgeCardPageJobId(owner,'knowledge_card_derive_level',config.deriveRequestId)};
-await writeFile(config.statusPath,JSON.stringify({at:new Date().toISOString(),head:config.head,status:'running',ids}));
+await writeFile(config.statusPath,JSON.stringify({at:new Date().toISOString(),head:config.head,distillModel,status:'running',ids}));
 async function execute(id:string,action:string,params:Record<string,unknown>){
  const existing=await getJobByIdStrict(id);
  if(existing){
@@ -32,7 +35,7 @@ async function execute(id:string,action:string,params:Record<string,unknown>){
  return done.output as Record<string,any>;
 }
 try{
- const extracted=await execute(ids.distill,'knowledge_card_distill',{files:[{gcsUri:sourceUri,mimeType:'application/epub+zip',fileName:config.fileName}],distillModel:'deepseek-v4.1-flash-1017',detailLevel:'full',billingPolicy:'interior-pages-v1',chargeDistillFee:false});
- const derived=await execute(ids.derive,'knowledge_card_derive_level',{fullMarkdown:extracted.distilledMarkdown,distillModel:'deepseek-v4.1-flash-1017',editionVersion:2});
- await writeFile(config.statusPath,JSON.stringify({at:new Date().toISOString(),head:config.head,status:derived.verificationProcessed?'returned':'partial',ids,issues:derived.editionIssues||[],counts:derived.editionPageCounts,sourceChars:extracted.sourceChars}));
-}catch(error){await writeFile(config.statusPath,JSON.stringify({at:new Date().toISOString(),head:config.head,status:'failed',ids,error:String((error as Error).message).replace(/(?:https?|gs):\/\/[^\s]+/g,'[地址]')}));process.exitCode=1;}
+ const extracted=await execute(ids.distill,'knowledge_card_distill',{files:[{gcsUri:sourceUri,mimeType:'application/epub+zip',fileName:config.fileName}],distillModel,detailLevel:'full',billingPolicy:'interior-pages-v1',chargeDistillFee:false});
+ const derived=await execute(ids.derive,'knowledge_card_derive_level',{fullMarkdown:extracted.distilledMarkdown,distillModel:extracted.distillModel||distillModel,editionVersion:2});
+ await writeFile(config.statusPath,JSON.stringify({at:new Date().toISOString(),head:config.head,distillModel,status:derived.verificationProcessed?'returned':'partial',ids,issues:derived.editionIssues||[],counts:derived.editionPageCounts,sourceChars:extracted.sourceChars}));
+}catch(error){await writeFile(config.statusPath,JSON.stringify({at:new Date().toISOString(),head:config.head,distillModel,status:'failed',ids,error:String((error as Error).message).replace(/(?:https?|gs):\/\/[^\s]+/g,'[地址]')}));process.exitCode=1;}
