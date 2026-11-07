@@ -43,6 +43,13 @@ export function parseKnowledgeModelJson(content: string): { value: unknown; repa
       if (trailingComma >= 0) { edit(trailingComma, ',', '', '移除容器结尾的多余逗号，不删除内容'); continue; }
       const position = Number(/position (\d+)/.exec(detail)?.[1]);
       const prefix = Number.isInteger(position) ? current.slice(0, position) : '';
+      if (/Unexpected non-whitespace character after JSON/.test(detail) && /^[\s}\]]+$/.test(current.slice(position))) {
+        let complete: unknown;
+        try { complete = JSON.parse(prefix); } catch { /* 前缀不完整时不能剥离尾部 */ }
+        if (complete && typeof complete === 'object') {
+          edit(position,current.slice(position),'','移除完整JSON对象之后的多余结束括号，不删除正文或另一对象');continue;
+        }
+      }
       const before = prefix.trimEnd().at(-1), next = current[position];
       const state = Number.isInteger(position) ? structure(current, position) : structure(current);
       if (!state) throw new KnowledgeJsonSyntaxError(detail);
@@ -50,6 +57,12 @@ export function parseKnowledgeModelJson(content: string): { value: unknown; repa
         edit(position, next, JSON.stringify(next).slice(1,-1), '转义字符串内控制字符，解码后的正文字符保持不变'); continue;
       }
       if (!state.quoted && Number.isInteger(position)) {
+        // 完整末项后只有闭合符号：补齐内层容器，不补正文或字段值。
+        const expectedCloser = state.stack.at(-1) === '{' ? '}' : state.stack.at(-1) === '[' ? ']' : '';
+        if (expectedCloser && [']','}'].includes(next) && next !== expectedCloser &&
+            /^[\s}\]]+$/.test(current.slice(position)) && ['}',']'].includes(before || '')) {
+          edit(position, '', expectedCloser, '补齐末项与外层结束符之间缺失的容器括号，不改变正文'); continue;
+        }
         if ((next === ']' || next === '}') && before === ',') {
           const comma = prefix.lastIndexOf(',');
           if (['[','{',',',':'].includes(prefix.slice(0,comma).trimEnd().at(-1) || '')) throw new KnowledgeJsonSyntaxError(detail);

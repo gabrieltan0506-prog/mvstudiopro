@@ -1,4 +1,32 @@
 import { knowledgeImageMayRetry } from "@shared/knowledgeImageRetry";
+
+/** 首错停领新页；已领取任务必须收妥，调用方才能停止缺图等待并解锁。 */
+export async function runKnowledgeIllustrationBatch(options: {
+  count: number;
+  concurrency: number;
+  active: () => boolean;
+  execute: (index: number, lane: number) => Promise<void>;
+}): Promise<void> {
+  let next = 0;
+  let failed = false;
+  let firstError: unknown;
+  const workers = Array.from({ length: Math.min(options.concurrency, options.count) }, async (_, lane) => {
+    while (next < options.count && !failed && options.active()) {
+      const index = next++;
+      try {
+        await options.execute(index, lane);
+      } catch (error) {
+        if (!failed) firstError = error;
+        failed = true;
+      }
+    }
+  });
+  const settled = await Promise.allSettled(workers);
+  if (failed) throw firstError;
+  const rejected = settled.find(result => result.status === "rejected");
+  if (rejected?.status === "rejected") throw rejected.reason;
+}
+
 /** 本次页面内只等待已经分配的图片任务；刷新后由保存的 jobId 继续查询。 */
 export function knowledgeIllustrationRun(ids: readonly string[]) {
   const slots = new Map(ids.map(id => {

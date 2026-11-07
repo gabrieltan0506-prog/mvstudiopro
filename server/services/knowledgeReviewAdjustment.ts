@@ -31,6 +31,11 @@ export function adjustKnowledgeReviewPresentation(value: any, source: KnowledgeS
       set(reading,'decoration',{},'reading.decoration','根据正文结构和真实素材补齐可渲染装饰，不重新购买正文');
     }
     const decoration = reading.decoration;
+    if (Object.prototype.hasOwnProperty.call(page, 'design')) {
+      if (!object(decoration.design)) set(decoration, 'design', page.design, 'reading.decoration.design', '页级设计配置归入已有正文装饰结构');
+      adjustments.push({pageId:page.id,field:'design',before:structuredClone(page.design),after:structuredClone(decoration.design),reason:'采用正文内设计配置，外层原值保留在回执'});
+      delete page.design;
+    }
     if (!Object.prototype.hasOwnProperty.call(decoration,'artworkId') && Object.prototype.hasOwnProperty.call(decoration,'artwork'))
       set(decoration,'artworkId',decoration.artwork,'reading.decoration.artworkId','采用已有插画选择字段，不重新购买正文');
     for (const key of Object.keys(decoration)) if (!Object.prototype.hasOwnProperty.call(knowledgeDecorationFields,key)) {

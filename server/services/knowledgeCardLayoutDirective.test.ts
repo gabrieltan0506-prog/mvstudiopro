@@ -109,7 +109,8 @@ describe("buildSinglePageKnowledgeCardImagePrompt · 主体位置与参考原页
     const prompt = buildSinglePageKnowledgeCardImagePrompt(md, { notePageIndex: 1, notePageTotal: 5 });
     expect(prompt).toContain("书法楷书");
     expect(prompt).toContain("4–6 个模块");
-    expect(prompt).toContain("（第 1/5 页）");
+    expect(prompt).toContain("【图片不标页码】");
+    expect(prompt).not.toContain("（第 1/5 页）");
     expect(prompt).toContain("Wide 16:9 landscape");
   });
 });
@@ -126,5 +127,10 @@ describe("resolveKnowledgeCardPageSource · 路由与出图共用切片", () => 
     expect(upper.mode).toBe("part");
     expect(upper.source).not.toBe(lower.source);
     expect(buildSinglePageKnowledgeCardImagePrompt(md, { notePart: "lower" })).toContain(lower.source.slice(0, 60));
+    for (const paging of [{ notePageIndex: 2, notePageTotal: 4 }, { notePart: "upper" as const }, { notePart: "lower" as const }, {}]) {
+      const imagePrompt = buildSinglePageKnowledgeCardImagePrompt(md, paging);
+      expect(imagePrompt).toContain("【图片不标页码】");
+      expect(imagePrompt).not.toMatch(/请在文档大标题末尾追加|本页标注|第 2\/4 页/);
+    }
   });
 });

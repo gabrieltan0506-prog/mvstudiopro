@@ -36,6 +36,15 @@ describe("参考原页标记", () => {
     expect(parseKnowledgeCardPageRefs("〔参考原页 abc:p1〕 〔参考原页 0123456789abcdef:x9〕")).toEqual([]);
   });
 
+  it("兼容真实JSON回包的数字页码和docKey标签，解析与印前剥离一致", () => {
+    const text = `正文〔参考原页 ${DOC_KEY}:9、p10〕\n〔参考原页 docKey:${DOC_KEY}:p195〕`;
+    expect(parseKnowledgeCardPageRefs(text)).toEqual([
+      {docKey:DOC_KEY,pageNumber:9},{docKey:DOC_KEY,pageNumber:10},{docKey:DOC_KEY,pageNumber:195},
+    ]);
+    expect(stripKnowledgeCardPageRefs(text)).toBe("正文");
+    expect(parseKnowledgeCardPageRefs(`〔参考原页 docKey:../other:p1〕〔参考原页 ${DOC_KEY}:x9〕`)).toEqual([]);
+  });
+
   it("resolves only existing pages under the user's prefix, in marker order, capped", async () => {
     const seen: string[] = [];
     const urls = await resolveKnowledgeCardReferencePageUrls({

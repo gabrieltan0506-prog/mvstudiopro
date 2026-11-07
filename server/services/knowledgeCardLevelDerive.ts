@@ -229,7 +229,7 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
 }
 
 /** 按网关链调用；整条链都失败时隔 20 秒重跑，最多 4 次（0923 用户令） */
-async function deriveChat(params: { selectionKey?: string; system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal; executionChannel?: "openrouter" | "evolink" }): Promise<string> {
+async function deriveChat(params: { selectionKey?: string; selectionKeep?: number; system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal; executionChannel?: "openrouter" | "evolink" }): Promise<string> {
   return retryKnowledgeCardChain(() => deriveChainOnce(params), {
     label: "knowledgeCardLevelDerive",
     abortSignal: params.abortSignal,
@@ -308,6 +308,7 @@ export async function deriveKnowledgeCardCompact(params: {
       params.abortSignal?.throwIfAborted();
       const raw = await chat({
         selectionKey: `${passes}-${i}`,
+        selectionKeep: keep,
         system: buildDeriveSystem(keep, batch.length),
         user: batch.join("\n\n"),
         executionChannel:i%2===0?"openrouter":"evolink",

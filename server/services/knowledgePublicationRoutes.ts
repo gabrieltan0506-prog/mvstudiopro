@@ -3,6 +3,7 @@ import { knowledgeVerificationSourceEvidence } from './knowledgeVerificationPoli
 import { knowledgeLayoutFromMarkdown } from './knowledgeMarkdownLayout';
 import { knowledgeReviewFromMarkdown } from './knowledgeMarkdownReview';
 import { adjustKnowledgeReviewPresentation } from './knowledgeReviewAdjustment';
+import { restoreKnowledgeReviewStructure } from './knowledgeReviewStructure';
 import { supplementKnowledgeReview } from './knowledgeReviewSupplement';
 import { KnowledgeJsonSyntaxError, parseKnowledgeModelJson } from './knowledgeModelJson';
 import { validateKnowledgeBookLayoutPlan } from "../../shared/knowledgeBookLayout";
@@ -27,6 +28,7 @@ export const KNOWLEDGE_PUBLICATION_ROUTE_VERSION = "knowledge-1017-structured-v2
 export type KnowledgeModelRequest = {
   /** 首选供应商；同模型同通道首次加三次明确失败重试后才跨供应商，不改变批次并发。 */
   executionChannel?: KnowledgeModelChannel;
+  executionFamily?: "deepseek" | "glm";
   researchOnly?: true;
   researchRequired?: boolean;
   researchAfterReview?: true;
@@ -203,7 +205,9 @@ function validateAnswer(content: string, request: KnowledgeModelRequest, sources
     // 旧提示词未明确来源层级。仅空根数组没有内容可丢失；非空来源仍由严格合同拒收。
     if (candidate.kind === "knowledge_publication_v1" && Array.isArray(candidate.sources) && candidate.sources.length === 0)
       candidate = Object.fromEntries(Object.entries(candidate).filter(([key]) => key !== "sources"));
-    const adjusted = adjustKnowledgeReviewPresentation(candidate, source.source, request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_DESIGN_MARKER)), request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_DECORATION_MARKER)));
+    const restored = restoreKnowledgeReviewStructure(candidate, source.source, inputs.some(p=>Array.isArray(p.finalVerification)) && source.source.pages.every((p:any)=>!p.imageUrl));
+    adjustments.push(...restored.adjustments);
+    const adjusted = adjustKnowledgeReviewPresentation(restored.value, source.source, request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_DESIGN_MARKER)), request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_DECORATION_MARKER)));
     adjustments.push(...adjusted.adjustments);
     // 装饰分配不再整批拒收；结构、身份、非空正文及真实图片审校仍校验。
     const review = knowledgeReviewSchema.parse(adjusted.value);
@@ -212,11 +216,11 @@ function validateAnswer(content: string, request: KnowledgeModelRequest, sources
       throw new Error("图文页编号与本批原稿不符");
     for (const page of review.pages) {
       if (!page.reading) throw new Error("模型没有输出自动表格图文结构");
-      if (request.systemInstruction.parts.some(p => p.text.includes(KNOWLEDGE_TEMPLATE_SELECTION_MARKER)) && (!page.reading.templateId || !page.reading.templateReason))
+      if (!restored.bodyReadingIds.has(page.id) && request.systemInstruction.parts.some(p => p.text.includes(KNOWLEDGE_TEMPLATE_SELECTION_MARKER)) && (!page.reading.templateId || !page.reading.templateReason))
         throw new Error("未取得本页自动选版结果与理由");
       if (request.systemInstruction.parts.some(p => p.text.includes(KNOWLEDGE_DECORATION_MARKER)) && !page.reading.decoration) throw new Error("未取得本页装饰组件配置");
       if(page.reading.decoration?.interleave === "original-image" && !source.source.pages.find((p:any)=>p.id===page.id)?.imageUrl) throw new Error("无原图章节不能配置原图穿插");
-      page.body = knowledgeReadingMarkdown(page.reading);
+      if (!restored.bodyReadingIds.has(page.id)) page.body = knowledgeReadingMarkdown(page.reading);
       if (page.body.length > 12000) throw new Error("本页结构化正文超出容量，未截断采用");
     }
     if (request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_RESEARCH_MARKER))) validateKnowledgeResearch(review,sources);
@@ -340,7 +344,8 @@ export async function invokeKnowledgePublicationRoutes(
   const attempts = {deepseek:{openrouter:0,evolink:0},glm:{openrouter:0,evolink:0}};
   const availableRoutes = request.executionChannel ? knowledgePublicationRoutesForChannel(request.executionChannel) : KNOWLEDGE_PUBLICATION_ROUTE_ORDER;
   // 搜索阶段只允许 FlashX；正文继续按已有整理路由恢复。
-  const plannedRoutes = request.researchOnly ? availableRoutes.filter(route => route.id.startsWith("glm-")) : availableRoutes;
+  const plannedRoutes = request.researchOnly ? availableRoutes.filter(route => route.id.startsWith("glm-"))
+    : request.executionFamily ? [...availableRoutes.filter(route=>routeModelFamily(route.model)===request.executionFamily),...availableRoutes.filter(route=>routeModelFamily(route.model)!==request.executionFamily)] : availableRoutes;
   for (const target of KNOWLEDGE_PUBLICATION_ALL_ROUTES) {
     const receipt = await evidence.read(`${evidence.prefix}/route-${target.id}.json`);
     if (!receipt) continue;

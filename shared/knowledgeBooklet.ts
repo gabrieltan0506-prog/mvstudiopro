@@ -8,7 +8,7 @@ import { renderLayoutBody } from "./editableLayout";
 
 export type KnowledgeBookletPage = { id: string; headline: string; body: string; imageUrl: string };
 export type KnowledgeBookletTheme = "fusion_chinese_garden" | "fusion_ink_mountains" | "fusion_coastal_lighthouse" | "fusion_glasshouse_garden" | "fusion_maple_bridge" | "fusion_snow_monastery";
-export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1106-v8-content-design";
+export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1107-v9-measured-pagination";
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 export const KNOWLEDGE_BOOKLET_THEMES: Record<KnowledgeBookletTheme, { name: string; paper: string; ink: string; accent: string; line: string; mark: string }> = {
   fusion_chinese_garden: { name:"中式园林融合",paper:"#fff2df",ink:"#713e2b",accent:"#b64632",line:"#d8ac83",mark:"园" },
@@ -107,7 +107,8 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
   const design=decoration.design;
   const designAttribute=design?` data-content-design="${knowledgeContentDesignKey(design)}"`:"";
   const units = readingUnits(input.pages,decoration,input.chapterOffset ?? 0);
-  const desired = input.readingPages || Math.max(1,Math.ceil(input.pages.reduce((n,p)=>n+p.body.length,0)/1600));
+  // 默认只按真实块高分页；Markdown语法长度不作为最少页数。显式页数仍保留为目标。
+  const desired = input.readingPages || 1;
   const ornamentHtml = ornament(theme);
   const artwork = KNOWLEDGE_DECORATION_ART[decoration.artworkId] || "";
   const run = (label: string, n: string) => `<div class="running"><span>${escape(input.title)}</span><span>${label}</span><b>${n}</b></div>`;

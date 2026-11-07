@@ -3827,7 +3827,14 @@ async function processPlatformJob(
       const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
       const { createKnowledgeReadingPreparation } = await import("../services/knowledgeReadingPreparation");
       const readingPreparation = createKnowledgeReadingPreparation(Number(jobUserId), platformJobId!);
+      const {downloadGcsObjectVersioned:readDistillObject,uploadBufferToGcs:saveDistillObject,getGcsBucketName:distillBucket}=await import('../services/gcs.js');
+      const publicationEvidence=params.billingPolicy==='interior-pages-v1'?{
+        prefix:`knowledge-card-distill/user-${jobUserId}/${platformJobId}`,
+        read:async(key:string)=>{try{return JSON.parse((await readDistillObject({gcsUri:`gs://${distillBucket()}/${key}`})).buffer.toString());}catch(error){if((error as Error).message==='gcs_stat_failed:404')return null;throw error;}},
+        save:async(key:string,value:unknown)=>{await saveDistillObject({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json'});},
+      }:undefined;
       const prepared = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => prepareKnowledgeCardCopy({
+        publicationEvidence,
         sourceText,
         files: jobFiles,
         abortSignal: cancel.signal,

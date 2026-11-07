@@ -255,7 +255,7 @@ import {
   buildOldPhotoRestorePrompt,
   isHomePhotoResultBrowserReadable,
 } from "../shared/homePhotoTools.js";
-import { knowledgeCardCreditsForPageIndex } from "../shared/knowledgeCardPagination";
+import { knowledgeCardCreditsForPageIndex, KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS } from "../shared/knowledgeCardPagination";
 import { extractDocumentText } from "./growth/documentExtract";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
@@ -8334,6 +8334,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               sourceText: pasted.length <= 3200 ? pasted : "",
               distillModel: modelName,
               detailLevel,
+              billingPolicy: input.billingPolicy,
               files: stored,
               chargeDistillFee: false,
             },
@@ -8367,6 +8368,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               sourceText: mergedRaw,
               distillModel: modelName,
               detailLevel,
+              billingPolicy: input.billingPolicy,
               imageDataUrls: [] as string[],
               extractionMethods: [] as string[],
               chargeDistillFee: input.chargeDistillFee === true && input.billingPolicy !== "interior-pages-v1",
@@ -8467,7 +8469,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     quoteKnowledgeCard: protectedProcedure.input(z.object({
-      markdown: z.string().min(1).max(50000),
+      markdown: z.string().min(1).max(KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS),
       distillModel: z.string().max(64).optional(),
     }).strict()).query(async ({ ctx, input }) => {
       const { quoteKnowledgeCard } = await import("./services/knowledgeCardPricing");
@@ -8476,7 +8478,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
     // 长正文必须放在请求体，避免报价 GET 超过网关 URL 上限。
     quoteKnowledgeCardForGeneration: protectedProcedure.input(z.object({
-      markdown: z.string().min(1).max(50000),
+      markdown: z.string().min(1).max(KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS),
       distillModel: z.string().max(64).optional(),
     }).strict()).mutation(async ({ ctx, input }) => {
       const { quoteKnowledgeCard } = await import("./services/knowledgeCardPricing");
@@ -8492,7 +8494,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             jobId: z.string().max(128).optional(),
             sceneId: z.string().min(1),
             title: z.string().min(1).max(220),
-            scriptContext: z.string().min(1).max(50000),
+            scriptContext: z.string().min(1).max(KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS),
             kind: z.enum([
               "storyboard_sheet_portrait",
               "storyboard_sheet_landscape",
@@ -8556,6 +8558,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               .optional(),
           })
           .superRefine((data, ctx) => {
+            if ((data.kind !== "single_page_knowledge_card" || data.viralCreation) && data.scriptContext.length > 50000) {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, message: "分镜与独立图文正文不能超过50000字符", path: ["scriptContext"] });
+            }
             if (data.viralCreation && data.kind === "xiaohongshu_dual_note") {
               ctx.addIssue({ code: z.ZodIssueCode.custom, message: "图文笔记已改为每页独立出图，请使用稿件下方逐页生成入口", path: ["kind"] });
             }

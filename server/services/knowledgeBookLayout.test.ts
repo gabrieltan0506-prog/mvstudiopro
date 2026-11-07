@@ -81,6 +81,12 @@ async function planned(presentation?: "full" | "concise") {
     f.makePlan=digest=>{
       const plan=originalPlan(digest),imagePageId=f.parent.pages[2].id;
       plan.chapters[0].presentation={reading:{version:1,subtitle:"",accent:"jade",blocks:[{type:"prose",title:"读图与补充",note:"",text:presentation==="full"?unique+"。制度结构参见秦汉制度图；本文保留图中未说明的适用边界。":duplicate+"。"+unique+"。完整解释制度关系、背景与适用边界；少量图卡之外的知识保留文字说明。"}]},imageEvidencePageIds:presentation==="full"?[imagePageId]:[],reason:"制度结构由已审校原图承载，文字说明其适用边界。"};
+      for (const chapter of plan.chapters.slice(1)) {
+        const page=[...f.parent.pages,...f.child.pages].find(page=>page.id===chapter.pageId)!;
+        if(presentation==="concise"||page.imageUrl) chapter.presentation={
+          reading:{version:1,subtitle:"",accent:"jade",blocks:[{type:"prose",title:page.headline,note:"",text:page.body}]},
+          imageEvidencePageIds:presentation==="full"?[page.id]:[],reason:"测试夹具保留这一章全部知识与必要说明。"};
+      }
       return plan;
     };
   }

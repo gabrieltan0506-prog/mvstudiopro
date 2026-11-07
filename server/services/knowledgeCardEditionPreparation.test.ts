@@ -9,9 +9,10 @@ it('正式两档只选择原章，完整知识不二次浓缩；逐页保存且�
  const sourceMarkdown='# 原书\n\n'+chapters.join('\n\n')+'\n\n## 注意事项\n\n此处保留原书适用条件，不能遗漏。';
  const invoke=vi.fn(async(request:any)=>{
   expect(request.researchOnly).not.toBe(true);
+  expect(request.generationConfig.responseMimeType).toBe('application/json');
   const prompt=request.systemInstruction.parts.map((p:any)=>p.text).join('');
   expect(prompt).not.toContain('四分之一');expect(prompt).not.toContain('归并主题');
-  return {status:200,text:JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify({pages:[{body:'# 原书\n\n'+chapters.slice(0,3).map(s=>s.replace(/保留数值\d+克/,'模型错误改写')).join('\n\n')}]})}]}}]})};
+  return {status:200,text:JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify({pages:[{body:'模型错误改写',reading:{blocks:[0,1,2].map(i=>({title:`原始主题${i}`,type:'prose',text:'只选身份，不采用模型改写内容',note:''}))}}]})}]}}]})};
  });
  const evidence={prefix:'test/edition',read:async(k:string)=>storage.get(k)||null,save:async(k:string,v:any)=>{storage.set(k,v);}};
  const result=await prepareKnowledgeCardEditions({sourceMarkdown,evidence,measure:async()=>2,invoke:invoke as any,targetSections:3});
@@ -79,7 +80,7 @@ it('选节后存储中断恢复沿用稳定回执，不再调用同一选择',as
  const storage=new Map<string,any>();let fail=true;
  const chapters=Array.from({length:15},(_,i)=>`## 原章${i}\n\n完整内容${i}。`);
  const sourceMarkdown='# 原书\n\n'+chapters.join('\n\n')+'\n\n## 注意事项\n\n原有操作条件。';
- const invoke=vi.fn(async()=>({status:200,text:JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify({pages:[{body:chapters.slice(0,3).join('\n\n')}]})}]}}]})}));
+ const invoke=vi.fn(async()=>({status:200,text:JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify({pages:[{reading:{blocks:[0,1,2].map(i=>({title:`原章${i}`,type:'prose',text:'选择理由',note:''}))}}]})}]}}]})}));
  const evidence={prefix:'resume',read:async(k:string)=>storage.get(k)||null,save:async(k:string,v:any)=>{
   if(k==='resume/final-verification/verified.json'&&fail){fail=false;throw Error('模拟存储失败');}storage.set(k,v);
  }};
@@ -109,4 +110,53 @@ it('无搜索结果的待验证稿件正式两档放行，状态与可见标记�
  expect(result.verificationProcessed).toBe(true);expect(result.editionIssues).toEqual([]);
  expect(result.editionPendingVerification).toHaveLength(1);
  expect(result.fullEditionMarkdown).toContain('待验证：');expect(result.markdown).toContain('待验证：');expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+it('旧成功缓存仍有未闭合原章疑点时降级，不重买、不改原缓存；可见待验证仍允许',async()=>{
+ const {createHash}=await import('node:crypto');
+ const sourceMarkdown='# 原稿';
+ const markdown='<!-- knowledge-edition:v2:full -->\n# 原稿\n\n## 图解｜原章\n\n原表换算已列疑点。';
+ const prior={inputDigest:createHash('sha256').update(sourceMarkdown).digest('hex'),compositionVersion:'original-sections-json-selection-v4',result:{fullEditionMarkdown:markdown,markdown:markdown.replace('v2:full','v2:concise'),verificationProcessed:true,editionIssues:[]}};
+ const invoke=vi.fn(),save=vi.fn();
+ const run=()=>prepareKnowledgeCardEditions({sourceMarkdown,invoke,evidence:{prefix:'cached',read:async()=>prior,save}});
+ const result=await run();
+ expect(result.verificationProcessed).toBe(false);expect(result.editionIssues).toHaveLength(1);
+ expect(result.fullEditionMarkdown).toBe(markdown);expect(prior.result.verificationProcessed).toBe(true);
+ expect(invoke).not.toHaveBeenCalled();expect(save).not.toHaveBeenCalled();
+ prior.result.fullEditionMarkdown+='\n\n待验证：原表单位尚未核实。';
+ expect((await run()).verificationProcessed).toBe(true);
+});
+
+it('仅移动疑点注释时按原知识身份复用选节，真正改正文则拒绝缓存',async()=>{
+ const {knowledgeEditionSelectionDigest}=await import('./knowledgeCardEditionPreparation');
+ const chapters=Array.from({length:15},(_,i)=>`## 章节${i}\n\n原知识${i}。\n\n说明：必要条件${i}。`);
+ const note='<!-- 待核：原句「原知识0」；问题：单位无法确认 -->';
+ const old='# 手册\n\n'+chapters.join('\n\n')+'\n\n'+note;
+ const source='# 手册\n\n'+chapters.map((s,i)=>s+(i===0?'\n\n'+note:'')).join('\n\n');
+ const manifest={knowledgeDigest:knowledgeEditionSelectionDigest(old,3),selectedIndices:[0,1,2],targetSections:3,passes:1,pendingResearch:[]};
+ expect(knowledgeEditionSelectionDigest(source,3)).toBe(manifest.knowledgeDigest);
+ const storage=new Map<string,any>([['moved/selected-sections.json',manifest]]);
+ const invoke=vi.fn(async(request:any)=>{
+  expect(request.researchOnly).toBe(true);
+  return {status:200,text:JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify({evidenceState:'missing',sources:[]})}]}}]})};
+ });
+ const evidence={prefix:'moved',read:async(k:string)=>storage.get(k)||null,save:async(k:string,v:any)=>{storage.set(k,v);}};
+ const result=await prepareKnowledgeCardEditions({sourceMarkdown:source,targetSections:3,evidence,invoke:invoke as any,measure:async()=>1});
+ expect(invoke).toHaveBeenCalledTimes(1);expect(result.verificationProcessed).toBe(true);
+ expect(knowledgeEditionParts(result.markdown)!.modules.filter(m=>m.medium==='image').map(m=>m.headline)).toEqual(['章节0','章节1','章节2']);
+ const changed={prefix:'changed',read:async(k:string)=>k.endsWith('/selected-sections.json')?manifest:null,save:async()=>{}};
+ await expect(prepareKnowledgeCardEditions({sourceMarkdown:source.replace('原知识0','知识实际变化'),targetSections:3,evidence:changed,invoke:invoke as any,measure:async()=>1})).rejects.toThrow('原稿版本变化');
+ expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+
+it('恢复缓存用当前分页器刷新图片计数但保留文字实测与原回执',async()=>{
+ const {createHash}=await import('node:crypto');
+ const sourceMarkdown='# 原稿';
+ const markdown='<!-- knowledge-edition:v2:full -->\n# 原稿\n\n## 图解｜原章\n\n具体内容。';
+ const prior={inputDigest:createHash('sha256').update(sourceMarkdown).digest('hex'),compositionVersion:'original-sections-json-selection-v4',result:{fullEditionMarkdown:markdown,markdown:markdown.replace('v2:full','v2:concise'),verificationProcessed:true,editionIssues:[],editionPageCounts:{full:{imagePages:99,readingPages:10},concise:{imagePages:88,readingPages:47}}}};
+ const invoke=vi.fn(),save=vi.fn();
+ const result=await prepareKnowledgeCardEditions({sourceMarkdown,invoke,evidence:{prefix:'counts',read:async()=>prior,save}});
+ expect(result.editionPageCounts).toEqual({full:{imagePages:1,readingPages:10},concise:{imagePages:1,readingPages:47}});
+ expect(prior.result.editionPageCounts.full.imagePages).toBe(99);expect(invoke).not.toHaveBeenCalled();expect(save).not.toHaveBeenCalled();
 });

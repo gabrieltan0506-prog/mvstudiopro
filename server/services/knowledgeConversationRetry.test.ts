@@ -9,3 +9,11 @@ it("对话重试只有明确失败退款闭合才派发固定后继ID",async()=>
 it("保存成功结果或正文与嵌套检索unknown均阻止新购",async()=>{const f=fixture();for(const name of ["report.json","route-openrouter.json","research/route-glm-openrouter.json"]){f.entries.set(f.prefix+"/"+name,{state:"unknown"});await expect(checkKnowledgeConversationRetry(7,f.doc,id,f.deps)).rejects.toThrow();f.entries.clear();}f.entries.set(f.prefix+"/research/route-glm-openrouter.json",{state:"received",response:{status:200,text:"已收到搜索"}});await expect(checkKnowledgeConversationRetry(7,f.doc,id,f.deps)).resolves.toBeTruthy();});
 it("云稿保存再验固定后继身份，旧问题保留且不得偷换内容",async()=>{const f=fixture(),after=structuredClone(f.doc),requestId=knowledgeConversationRetryId(7,f.doc.id,id),check=vi.fn(async()=>({requestId}));after.publication!.conversation!.push({request:{...f.doc.publication!.conversation![0].request,id:requestId,retryOf:id}});await validateKnowledgeConversationTransition(7,f.doc,after,async()=>null,check);expect(check).toHaveBeenCalledTimes(1);after.publication!.conversation![1].request.question="换问题";await expect(validateKnowledgeConversationTransition(7,f.doc,after,async()=>null,check)).rejects.toThrow("保留原问题");});
 it("未知对话不能被删除或者用新问题绕过，成功答复必须匹配永久回执",async()=>{const f=fixture(),after=structuredClone(f.doc);after.publication!.conversation=[];await expect(validateKnowledgeConversationTransition(7,f.doc,after,async()=>null)).rejects.toThrow("保留");after.publication!.conversation=[...f.doc.publication!.conversation!,{request:{...f.doc.publication!.conversation![0].request,id:knowledgeConversationRetryId(7,f.doc.id,id)}}];await expect(validateKnowledgeConversationTransition(7,f.doc,after,async()=>null)).rejects.toThrow("尚未确认");});
+it('新布局重试识别子批次未知回执，已成功批次可保留复用',async()=>{
+ const f=fixture();f.entries.set(f.prefix+'/batches.json',{batches:[{index:0},{index:1}]});
+ f.entries.set(f.prefix+'/batch-0/report.json',{answer:{}});
+ f.entries.set(f.prefix+'/batch-1/route-openrouter.json',{state:'unknown'});
+ await expect(checkKnowledgeConversationRetry(7,f.doc,id,f.deps)).rejects.toThrow('批次上游状态尚未闭合');
+ f.entries.set(f.prefix+'/batch-1/route-openrouter.json',{state:'failed',response:{status:400,text:'明确失败'}});
+ await expect(checkKnowledgeConversationRetry(7,f.doc,id,f.deps)).resolves.toBeTruthy();
+});

@@ -39,9 +39,11 @@ const health = /血脂|胆固醇|甘油三酯|血压|糖尿病|血糖|疾病|癌
 export function knowledgeVerificationTriggers(facts: KnowledgeFactEntry[]) {
   return facts.flatMap((fact, factIndex) => {
     const annotated=Array.from(fact.statement.matchAll(/<!--\s*待核[：:]([\s\S]*?)-->/g)).map(m=>m[1].trim()).filter(Boolean);
-    const statements=annotated.length?annotated:fact.statement.split(/(?<=[。！？])|\n/).filter(s=>
-      /待核实|待核[：:]|存疑|含义不明|含义不清|条件不明确|前后矛盾|说法不一|无法确认|疑点[：:]/.test(s)
+    // 结构化注释与正文中的明确疑点都要消费，不能由其中一种遮住另一种。
+    const explicit=fact.statement.replace(/<!--[\s\S]*?-->/g,'').split(/(?<=[。！？])|\n/).filter(s=>
+      /待核实|待核[：:]|存疑|含义不明|含义不清|条件不明确|前后矛盾|说法不一|无法确认|疑点[：:]|已列(?:入)?(?:待核)?疑点/.test(s)
       && !/没有疑点|无疑点|不存在.*矛盾|已消除.*疑点/.test(s));
+    const statements=Array.from(new Set([...annotated,...explicit]));
     return statements.map((quote,sentenceIndex)=>({pageId:fact.pageId,factIndex,sentenceIndex,quote,reasons:['uncertainty_or_conflict']}));
   });
 }

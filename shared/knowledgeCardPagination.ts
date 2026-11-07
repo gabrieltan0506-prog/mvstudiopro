@@ -22,6 +22,8 @@ export const KNOWLEDGE_CARD_TARGET_MAX_PAGES = 8;
  * 在横版下每页只填约 220 字，白白多出好几倍页数。
  */
 export const KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE = 1200;
+/** 整册传输容量与单张图容量分开；不为通过接口裁掉全文或原页参考。 */
+export const KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS = 200_000;
 /** 一页横版卡片最多承载几个 `##` 小节（对齐样张密度） */
 export const KNOWLEDGE_CARD_MAX_SECTIONS_PER_PAGE = 6;
 /** 低于此字数不强行拆成 4 页 */
@@ -254,8 +256,8 @@ function packByCap(full: string, h1: string, cap: number): string[] {
   let current = "";
   for (let i = 0; i < units.length; i++) {
     const unit = units[i]!;
-    // `##` 标题不孤悬页尾：装它时连同下一单元（通常是「图：」行/首段）一起算，装不下就整体换页
-    const isHeading = /^##\s+\S/.test(unit);
+    // 二至六级标题不孤悬页尾：装它时连同下一单元（通常是「图：」行/首段）一起算，装不下就整体换页
+    const isHeading = /^#{2,6}\s+\S/.test(unit);
     // 只在「标题+下一单元」装得进一页时才粘连；下一单元本身接近整页时不粘，避免造出只剩标题的空页
     const gluedLen = i + 1 < units.length ? unit.length + 2 + units[i + 1]!.length : unit.length;
     const glued = isHeading && gluedLen <= room ? gluedLen : unit.length;

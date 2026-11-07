@@ -78,3 +78,44 @@ it('正文超过估计页数时按真实整页重新均分，不把孤段留在�
   expect(Math.min(...oldCounts)/Math.max(...oldCounts)).toBeLessThan(0.6);
  }finally{await browser.close();}
 },60000);
+
+it('默认页数由真实排版容量决定，Markdown分隔线长度不增加物理页',async()=>{
+ const {buildKnowledgeBookletHtml}=await import('./knowledgeBooklet');
+ const body=(separator:string)=>Array.from({length:8},(_,i)=>`### 第${i}项\n\n|项目|说明|\n|${separator}|---|\n|保留${i}|原始事实${i}完整保留。|`).join('\n\n');
+ const normal=body('---'),verbose=body('-'.repeat(1800));
+ expect(verbose.length).toBeGreaterThan(1600*8);
+ const browser=await puppeteer.launch({headless:true,args:['--no-sandbox']});
+ try{
+  const page=await browser.newPage();
+  const inspect=async(markdown:string)=>{
+   await page.setContent(buildKnowledgeBookletHtml({title:'语法不占页',pages:[{id:'source',headline:'原始知识',body:markdown,imageUrl:''}]}));
+   await page.waitForFunction(()=>document.body.getAttribute('data-ready')==='true');
+   return page.evaluate(()=>({pages:document.querySelectorAll('.reading-folio').length,texts:Array.from(document.querySelectorAll('.reading-unit')).map(el=>el.textContent),overflow:Array.from(document.querySelectorAll('.reading-column')).some(el=>el.scrollHeight>el.clientHeight+2)}));
+  };
+  const before=await inspect(normal),after=await inspect(verbose);
+  expect(after).toEqual(before);expect(after.pages).toBeLessThan(4);expect(after.overflow).toBe(false);
+  for(let i=0;i<8;i++)expect(after.texts.join('')).toContain(`原始事实${i}完整保留。`);
+ }finally{await browser.close();}
+},60000);
+
+it('默认短Markdown多块和长表按实际容量扩页，显式页数仍控制均分目标',async()=>{
+ const {buildKnowledgeBookletHtml}=await import('./knowledgeBooklet');
+ const paragraphs=Array.from({length:45},(_,i)=>`第${i}段原文完整保留。`);
+ const table='|编号|解释|\n|---|---|\n'+Array.from({length:90},(_,i)=>`|序号${i}|本行解释${i}。|`).join('\n');
+ const browser=await puppeteer.launch({headless:true,args:['--no-sandbox']});
+ try{
+  const page=await browser.newPage();
+  const inspect=async(body:string,readingPages?:number)=>{
+   await page.setContent(buildKnowledgeBookletHtml({title:'内容容量',readingPages,pages:[{id:'source',headline:'全部原文',body,imageUrl:''}]}));
+   await page.waitForFunction(()=>document.body.getAttribute('data-ready')==='true');
+   return page.evaluate(()=>({pages:document.querySelectorAll('.reading-folio').length,paragraphs:Array.from(document.querySelectorAll('.prose-unit p')).map(el=>el.textContent),rows:Array.from(document.querySelectorAll('tbody tr')).map(el=>el.textContent),overflow:Array.from(document.querySelectorAll('.reading-column')).some(el=>el.scrollHeight>el.clientHeight+2)}));
+  };
+  const many=await inspect(paragraphs.join('\n\n'));
+  expect(paragraphs.join('\n\n').length).toBeLessThan(1600);expect(many.pages).toBeGreaterThan(1);expect(many.paragraphs).toEqual(paragraphs);expect(many.overflow).toBe(false);
+  const longTable=await inspect(table);
+  expect(longTable.pages).toBeGreaterThan(1);expect(longTable.rows).toHaveLength(90);expect(longTable.overflow).toBe(false);
+  for(let i=0;i<90;i++)expect(longTable.rows[i]).toContain(`本行解释${i}。`);
+  const short=paragraphs.slice(0,12).join('\n\n'),automatic=await inspect(short),explicit=await inspect(short,3);
+  expect(automatic.pages).toBe(1);expect(explicit.pages).toBe(3);expect(explicit.paragraphs).toEqual(paragraphs.slice(0,12));expect(explicit.overflow).toBe(false);
+ }finally{await browser.close();}
+},60000);

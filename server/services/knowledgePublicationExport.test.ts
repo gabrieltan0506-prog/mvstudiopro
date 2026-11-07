@@ -140,6 +140,32 @@ it('切换模板后预览与PDF输入一致，并且不复用旧模板成品',as
  expect((f.deps.pdf.mock.calls[1] as unknown as [string])[0]).toBe(buildKnowledgePublicationHtml(f.doc,f.doc.publication!.review!,{}));
 });
 
+it('任一分段计页失败时先保留HTML，全部计页成功后才打印正确全册页码',async()=>{
+ const {writeFile}=await import('node:fs/promises');
+ const f=fixture(),pub=f.doc.publication!;
+ const first=f.doc.pages[0];
+ f.doc.pages=[{...first,headline:'第一章'},{...first,id:crypto.randomUUID(),headline:'第二章'}];
+ pub.source.pages=f.doc.pages.map(({id,headline,body,imageUrl})=>({id,headline,body,imageUrl}));
+ pub.review={...pub.review!,sourceDigest:knowledgeSourceDigest(pub.source),pages:f.doc.pages.map(p=>({...pub.review!.pages[0],id:p.id,headline:p.headline,body:p.body}))};
+ pub.manuscript=pub.confirmedManuscript=knowledgeManuscript(pub.review);
+ f.deps.review.mockResolvedValue({report:pub.review,sourceImages:[]});
+ const measure=vi.fn().mockResolvedValueOnce(2).mockRejectedValueOnce(Error('第二章计页暂时失败')).mockResolvedValueOnce(2).mockResolvedValueOnce(3);
+ f.deps.merge.mockImplementation(async(_paths?:string[],target?:string)=>{await writeFile(target!,Buffer.from('%PDF'+'merged-test-only'.repeat(20)));});
+ f.deps.countPages.mockResolvedValue(5);
+ const partial=await exportKnowledgePublication(7,f.doc.id,'10',{...f.deps,measure} as any);
+ expect(partial.htmlUrl).toBeTruthy();expect(partial.pdfUrl).toBeUndefined();
+ expect(partial.pdfError).toContain('未完成');
+ expect(f.deps.pdf).not.toHaveBeenCalled();expect(f.deduct).not.toHaveBeenCalled();
+ expect(Array.from(f.storage.keys()).some(k=>k.includes('/pdf-parts/'))).toBe(false);
+ const complete=await exportKnowledgePublication(7,f.doc.id,'10',{...f.deps,measure} as any);
+ expect(complete.totalPages).toBe(5);expect(complete.pdfUrl).toBeTruthy();
+ const renders=f.deps.pdf.mock.calls as unknown as [string][];
+ expect(renders).toHaveLength(2);
+ expect(renders[0][0]).toContain('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="2"');
+ expect(renders[1][0]).toContain('data-booklet-page-offset="2" data-booklet-total-pages="5" data-booklet-expected-pages="3"');
+ expect(complete.billing?.readingPages).toBe(5);
+});
+
 async function assertSplitRecovery(shiftCounts: boolean) {
  const {writeFile}=await import('node:fs/promises');
  const f=fixture(),pub=f.doc.publication!;

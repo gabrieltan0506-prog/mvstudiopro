@@ -83,8 +83,8 @@ describe("知识卡实际图像输入与回执恢复", () => {
     expect(
       Array.from(f.storage.keys()).some(k => k.endsWith("raw-0.json"))
     ).toBe(true);
-    expect(request[0].generationConfig.responseMimeType).toBe("text/markdown");
-    expect(request[0].systemInstruction.parts[0].text).toContain("留待整册最后统一检索核实");
+    expect(request[0].generationConfig.responseMimeType).toBe("application/json");
+    expect(request[0].systemInstruction.parts[0].text).toContain("已标注疑点，等待全册整理后统一联网核实。");
     await reviewKnowledgePublication(7, f.context, f.deps as any);
     expect(f.deps.post).toHaveBeenCalledTimes(1);
     f.deps.post.mockImplementationOnce(async () =>
@@ -101,7 +101,7 @@ describe("知识卡实际图像输入与回执恢复", () => {
       { ...f.context, batchIndex: 1 },
       f.deps as any
     );
-    expect(f.deps.post).toHaveBeenCalledTimes(2);
+    expect(f.deps.post).toHaveBeenCalledTimes(1);
   });
   it("无读图token或错误模型不得冒充图文完成，失败raw仍永久保留", async () => {
     const f = make();
@@ -152,7 +152,7 @@ it.each(['concise','full'] as const)('真实分批构造保留%s档位，回放�
  const request=(f.deps.post.mock.calls[0] as unknown as [any])[0];
  const payload=request.contents[0].parts.map((p:any)=>p.text).filter(Boolean).map((t:string)=>{try{return JSON.parse(t)}catch{return null}}).find((p:any)=>p?.source);
  expect(payload.source.detailLevel).toBe(level);
- expect(request.systemInstruction.parts[0].text).toContain(level==='full'?'主要与次要重点均先去重、浓缩':'次要重点以文字、表格及适量配饰保留');
+ expect(request.systemInstruction.parts[0].text).toContain(level==='full'?'主要与次要重点均先去重、浓缩':'次要重点以文字、表格保留');
  await reviewKnowledgePublication(7,f.context,f.deps as any);expect(f.deps.post).toHaveBeenCalledTimes(1);
 });
 
@@ -184,6 +184,7 @@ it('最终Markdown核实后修订正文和事实索引，原稿保留且恢复�
  const f=make();
  f.report.pages[0].body='已确认的水循环知识。未经证实的矛盾主张。';
  f.report.pages[0].facts=[{term:'水循环',statement:f.report.pages[0].body}];
+ (f.report.pages[0].cautions as any[]).push({kind:'uncertain',evidence:'原句「未经证实的矛盾主张」；问题：前后说法不一',message:'已标注疑点，等待全册整理后统一联网核实。'});
  const original=JSON.stringify(f.source);
  await reviewKnowledgePublication(7,f.context,f.deps as any);
  f.deps.post.mockImplementationOnce(async()=>f.envelope({sourceDigest:f.digest,findings:[],verificationMarkdown:'未经证实的矛盾主张没有可靠资料，删除该主张，保留水循环知识。',sources:[]},false));
@@ -205,6 +206,7 @@ it('旧核对回执的卖书来源不再作为佐证，新修订保留作者独�
  const f=make();
  f.report.pages[0].body='作者独家经验：用小碟预先分好调味料，做菜时不容易手重。';
  f.report.pages[0].facts=[{term:'备菜经验',statement:f.report.pages[0].body}];
+ (f.report.pages[0].cautions as any[]).push({kind:'uncertain',evidence:'原句「用小碟预先分好调味料」；问题：适用条件不明确',message:'已标注疑点，等待全册整理后统一联网核实。'});
  await reviewKnowledgePublication(7,f.context,f.deps as any);
  const low={url:'https://mbook.kongfz.com/1/2/',title:'独家经验手册',content:'出版社：测试出版社。加入购物车。'};
  f.deps.post.mockImplementationOnce(async()=>f.envelope({sourceDigest:f.digest,findings:[],verificationMarkdown:'旧记录自称已证实。',sources:[low],evidenceState:'available'},false));

@@ -300,7 +300,8 @@ export async function exportKnowledgePublication(
           }
         }
       }
-      {
+      // 全册计页成功后才打印；缺段时的临时总页数会污染页脚和分片缓存身份。
+      if (!failures.length) {
         const total = counts.reduce((a, b) => a + b, 0);
         let offset = 0;
         for (const [index, sourcePath] of Array.from(chunks.entries())) {
@@ -336,7 +337,9 @@ export async function exportKnowledgePublication(
           htmlUrl: deps.sign(`${prefix}/阅读稿.html`),
           htmlBytes,
           chapters: doc.pages.length,
-          pdfError: `HTML已保存，PDF有${failures.length}段未完成；可继续生成PDF，已成功部分会复用`,
+          pdfError: counts.some(count => count === 0)
+            ? `HTML已保存，PDF有${failures.length}段预分页未完成；未开始本次打印，可继续原任务`
+            : `HTML已保存，PDF有${failures.length}段未完成；可继续生成PDF，已成功部分会复用`,
         };
       }
       let active = pdfFiles,

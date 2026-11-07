@@ -1,3 +1,5 @@
+import { knowledgeStructuredDistillContext, invokeKnowledgeStructuredDistill } from './knowledgeCardStructuredDistill';
+import type { KnowledgeRouteEvidence } from './knowledgePublicationRoutes';
 import { KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION, preserveKnowledgePendingResearch } from './knowledgeVerificationPolicy';
 import { KNOWLEDGE_NARRATIVE_STYLE } from '../../shared/knowledgeNarrativeStyle';
 import type { KnowledgeReadingChunk } from "../../shared/knowledgeReadingPreparation";
@@ -1009,6 +1011,7 @@ async function invokeDistillLlm(params: {
   /** 不套提炼外壳（挑页用，见 invokeDistillViaGateway） */
   plainUserContent?: boolean;
 }): Promise<string> {
+  if (knowledgeStructuredDistillContext.getStore() && !params.plainUserContent) return invokeKnowledgeStructuredDistill(params);
   if (params.chainRetry === false) return invokeDistillChainOnce(params);
   // 0923 用户令：整条通道链都失败（模型服务异常）隔 20 秒重跑，最多 4 次，不直接报到前端
   return retryKnowledgeCardChain(() => invokeDistillChainOnce(params), {
@@ -1137,6 +1140,7 @@ async function distillOneChunkWithRetry(params: {
         detailLevel: params.detailLevel,
       });
     } catch (err) {
+      if (knowledgeStructuredDistillContext.getStore()) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
       // 用户终止：不退避、不细切，直接收口
       if (isKnowledgeCardCancelledError(err, params.abortSignal)) throw lastError;
@@ -1191,6 +1195,7 @@ async function distillOneChunkOrSkip(
     }
     return { ok: true, markdown };
   } catch (err) {
+    if (knowledgeStructuredDistillContext.getStore()) throw err;
     const message = err instanceof Error ? err.message : String(err);
     // 用户终止不能被「跳过该段」吞掉：整本立刻停
     if (isKnowledgeCardCancelledError(err)) throw err;
@@ -1353,6 +1358,7 @@ async function refineOnce(params: {
     });
     return preserveKnowledgePendingResearch(params.body, refined);
   } catch (err) {
+    if (knowledgeStructuredDistillContext.getStore()) throw err;
     // 复审 P1：取消必须先判。否则统稿期间点停 → 这里「保留输入稿」→ prepare 一路返回成功，
     // 用户点了终止，服务层却交了一份稿
     if (isKnowledgeCardCancelledError(err, params.abortSignal)) throw err;
@@ -1702,13 +1708,16 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
       await params.onProgress?.({ doneChunks: done, totalChunks: chunks.length, phase: "distilling" });
     }
   };
-  await Promise.all(
+  const chunkOutcomes = await Promise.allSettled(
     routes.flatMap(({ chain, delay }) => Array.from({ length: KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE }, async () => {
       await waitAbortable(delay, params.abortSignal);
       params.abortSignal?.throwIfAborted();
       if (!stopped) await worker(chain);
     })),
   );
+
+  const failedWorker=chunkOutcomes.find((outcome):outcome is PromiseRejectedResult=>outcome.status === "rejected");
+  if(failedWorker)throw failedWorker.reason;
 
   // 审查 P1：只有真正成功的段进正文；全失败＝本次没有稿子，按失败结算
   const failedChunks = outputs.filter((o): o is Extract<DistillChunkResult, { ok: false }> => !o?.ok);
@@ -1720,6 +1729,8 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
     );
   }
   const merged = mergeDistilledMarkdownChunks(successMarkdowns);
+  // 新手册各批已经按同一JSON合同提炼；沿视频学习方式确定性合并，不再整本重写。
+  if (knowledgeStructuredDistillContext.getStore()) return merged;
   await params.onProgress?.({
     doneChunks: chunks.length,
     totalChunks: chunks.length,
@@ -1871,6 +1882,7 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
  * 长书（>~12k 字）后台分段提炼再合并；产品面仍是一次上传自动写框。
  */
 export async function prepareKnowledgeCardCopy(input: {
+  publicationEvidence?: KnowledgeRouteEvidence;
   sourceText?: string;
   files?: KnowledgeCardUploadFile[];
   forceDistill?: boolean;
@@ -1890,6 +1902,8 @@ export async function prepareKnowledgeCardCopy(input: {
   /** 用户点「终止」：在途请求立刻断，段与段之间也不再往下跑 */
   abortSignal?: AbortSignal;
 }): Promise<PrepareKnowledgeCardCopyResult> {
+  if (input.publicationEvidence && !knowledgeStructuredDistillContext.getStore())
+    return knowledgeStructuredDistillContext.run({evidence:input.publicationEvidence},()=>prepareKnowledgeCardCopy({...input,publicationEvidence:undefined}));
   // 已经取消就别起步：抽取、挑页、提炼一律不做
   input.abortSignal?.throwIfAborted();
   const modelName = resolveKnowledgeCardDistillModel(input.distillModel);

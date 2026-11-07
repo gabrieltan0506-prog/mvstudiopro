@@ -306,3 +306,15 @@ describe("stripKnowledgeCardInternalDirectives", () => {
     expect(out).not.toContain("内容锁定");
   });
 });
+
+
+it.each([3,4,5,6])('JSON正文%d级标题与首段同页，正文不丢且仍不超1200',depth=>{
+ const heading='#'.repeat(depth)+' 章节续文';
+ const text='# 手册\n\n## 大章\n\n'+('前文。'.repeat(370))+'\n\n'+heading+'\n\n'+('首段。'.repeat(90))+'\n\n'+('尾段。'.repeat(200));
+ const plan=planKnowledgeCardPages(text);
+ expect(plan.pages.length).toBeGreaterThan(1);
+ expect(plan.pages.find(page=>page.includes(heading))).toContain('首段。');
+ expect(plan.pages.every(page=>page.length<=1200&&!/^#{2,6}\s/.test(page.trim().split('\n').at(-1)||''))).toBe(true);
+ const normalize=(s:string)=>s.replace(/^# 手册\s*/gm,'').replace(/\s/g,'');
+ expect(normalize(plan.pages.join('\n'))).toBe(normalize(text));
+});

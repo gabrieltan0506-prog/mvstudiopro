@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {buildKnowledgeConsistencyRequest,buildKnowledgeFinalRevisionRequest} from './knowledgePublicationAdvisor';
-import {knowledgeVerificationTriggers} from './knowledgeVerificationPolicy';
+import {knowledgeVerificationTriggers,knowledgePendingResearchNotes} from './knowledgeVerificationPolicy';
 import {invokeKnowledgePublicationRoutes,type KnowledgeRouteEvidence} from './knowledgePublicationRoutes';
 import {knowledgeModulesFromMarkdown} from '../../shared/knowledgeCardEdition';
 import {hasKnowledgeBody,markKnowledgeEditionGap,type KnowledgeEditionIssue} from '../../shared/knowledgeEditionIssues';
@@ -9,7 +9,16 @@ import {guardKnowledgeEditionEvidence,rethrowKnowledgeEditionInvariant,knowledge
 /** 正式末段：仅处理疑点、空正文和已记录失败；每页独立保存，局部失败保留原稿继续。 */
 export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:KnowledgeRouteEvidence,invoke=invokeKnowledgePublicationRoutes,onProgress?:(p:{doneBatches:number;totalBatches:number;pass:number})=>void|Promise<void>){
  const evidence=guardKnowledgeEditionEvidence(storage);
+ const manifest=await evidence.read(`${evidence.prefix}/input.json`);
+ if(manifest){
+  if(!Array.isArray(manifest.bodies)||JSON.stringify([...manifest.bodies].sort())!==JSON.stringify([...bodies].sort()))
+   throw Error('最终核实原稿变化，保留旧回执');
+  // 并发回包顺序不能改变已派发章节的身份；只接受逐字相同的多重集合。
+  bodies=manifest.bodies;
+ }
  const digest=createHash('sha256').update(JSON.stringify(bodies)).digest('hex');
+ if(manifest&&manifest.digest!==digest)throw Error('最终核实输入清单损坏，保留旧回执');
+ if(!manifest)await evidence.save(`${evidence.prefix}/input.json`,{digest,bodies});
  const prior=await evidence.read(`${evidence.prefix}/verified.json`);
  if(prior){if(prior.digest!==digest)throw Error('最终核实原稿变化，保留旧回执');return prior.bodies as string[];}
  const prepared=bodies.map(body=>{
@@ -81,6 +90,12 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
      const envelope=JSON.parse((await invoke(old?.request||request,{...evidence,prefix:revisionPrefix})).text);
      const revisedPage=JSON.parse(envelope.candidates[0].content.parts[0].text).pages?.[0];
      body=String(revisedPage?.body||'');
+     // 每个请求对应一个原章；JSON正文的###块是章内结构，不能当作原章消失。
+     const originalChapter=knowledgeModulesFromMarkdown(bodies[i]);
+     if(revisedPage?.reading && originalChapter.modules.length===1 && /^##[ \t]+/m.test(bodies[i])){
+      const chapter=originalChapter.modules[0];
+      body=`# ${originalChapter.title}\n\n## ${chapter.priority==='primary'?'主要重点':'次要重点'}｜${chapter.headline}\n\n${body.replace(/^#{1,2}[ \t]+/gm,'### ')}`;
+     }
      // 正式Markdown解析器把待核注释转入cautions；必须还原后再判定是否解决。
      const pending=(revisedPage?.cautions||[]).filter((c:any)=>c.kind==='uncertain'&&c.message==='已标注疑点，等待全册整理后统一联网核实。');
      for(const caution of pending)body+=`\n\n<!-- 待核：${String(caution.evidence).replace(/-->/g,'—')} -->`;
@@ -105,8 +120,15 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
   }
   // 搜索已得到正常回执；未解决项按用户要求显式待验证并放行，异常回执不冒充无结果。
   if(required[i]&&verification&&!localIssues.length){
+   // 检索逐项结论优先于修订模型省略的标记；只能保留本章实际输入的疑点。
+   const originalNotes=knowledgePendingResearchNotes(bodies[i]);
+   for(const question of verification.unresolvedQuestions||[]){
+    if(typeof question!=='string'||!originalNotes.includes(question))throw Error('检索未解决项不属于本章原始疑点');
+    if(!body.includes(`待验证：${question}`))body+=`\n\n待验证：${question}`;
+    localPending.push({pageIndex:i,message:question});
+   }
    const outstanding=knowledgeVerificationTriggers([{pageId:`section-${i}`,headline:'疑点',term:'正文',statement:body}]);
-   for(const item of outstanding)localPending.push({pageIndex:i,message:item.quote});
+   for(const item of outstanding)if(!localPending.some(p=>p.message===item.quote))localPending.push({pageIndex:i,message:item.quote});
    body=body.replace(/<!--\s*待核[：:]([\s\S]*?)-->/g,(_,note:string)=>`待验证：${note.trim()}`);
    if(outstanding.length&&!body.includes('待验证：'))body+='\n\n'+outstanding.map(item=>`待验证：${item.quote}`).join('\n\n');
   }

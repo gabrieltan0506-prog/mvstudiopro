@@ -4,6 +4,16 @@ import {buildKnowledgeConsistencyRequest} from './knowledgePublicationAdvisor';
 
 const fact=(statement:string,headline='血脂管理')=>({pageId:'p1',term:headline,headline,statement});
 describe('最终事实查证触发条件',()=>{
+  it('新稿已列疑点写法必须进入末稿候选，注释不能遮住正文疑点',()=>{
+    for(const marker of ['已列疑点','已列入疑点','已列入待核疑点']){
+      const body=`原表两处换算不一致，${marker}。`;
+      expect(knowledgeVerificationTriggers([fact(body)])).toHaveLength(1);
+      expect(buildKnowledgeConsistencyRequest('手册','digest',[fact(body)]).researchRequired).toBe(true);
+    }
+    const body='原表换算已列疑点。\n<!-- 待核：另一项原句的单位无法确认 -->';
+    expect(knowledgeVerificationTriggers([fact(body)]).map(t=>t.quote)).toEqual(['另一项原句的单位无法确认','原表换算已列疑点。']);
+    expect(knowledgeVerificationTriggers([fact('已消除先前已列疑点。没有疑点。血脂值为3.12。')])).toEqual([]);
+  });
   it('药名数值或健康话题本身不触发，只有实际疑问触发',()=>{
     const facts=[fact('他汀每天3毫克可降低血脂。LDL正常参考值＜3.12毫摩尔/升。')];
     expect(knowledgeVerificationTriggers(facts)).toEqual([]);

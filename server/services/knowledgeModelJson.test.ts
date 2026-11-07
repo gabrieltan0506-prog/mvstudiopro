@@ -23,3 +23,14 @@ it.each([
 it('合法JSON不改写',()=>{
  expect(parseKnowledgeModelJson('{"text":"数组 ],[ 只是正文","value":4.2}')).toEqual({value:{text:'数组 ],[ 只是正文',value:4.2},repairs:[]});
 });
+it('只剥完整对象后的多余闭合符号，不丢弃后续对象或正文',()=>{
+ expect(parseKnowledgeModelJson('{"text":"原文"}]}').value).toEqual({text:'原文'});
+ for(const raw of ['{"text":"原文"}{"text":"另一段"}','{"text":"原文"}尾部正文'])
+  expect(()=>parseKnowledgeModelJson(raw)).toThrow(KnowledgeJsonSyntaxError);
+});
+it('完整JSON末项已闭合但page对象少一个结束括号时无损恢复',()=>{
+ const raw='{"pages":[{"body":"原句与数字12.5完整保留","reading":{"blocks":[{"text":"完整内容"}],"design":{"reason":"完整理由"}}]}';
+ const out=parseKnowledgeModelJson(raw);
+ expect(out.value).toEqual({pages:[{body:'原句与数字12.5完整保留',reading:{blocks:[{text:'完整内容'}],design:{reason:'完整理由'}}}]});
+ expect(out.repairs).toEqual([expect.objectContaining({removed:'',inserted:'}'})]);
+});

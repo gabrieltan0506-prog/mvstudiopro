@@ -11,7 +11,7 @@ import { KnowledgeAuthoringRow, StableStudioDock } from "@/components/platform/K
 import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
 import { knowledgeCardFullManuscript, knowledgeCardIllustrationMarkdown, knowledgeCardInputKey, knowledgeCardInputFingerprint } from "@shared/knowledgeCardSourceIdentity";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
-import { knowledgeIllustrationRun, knowledgeIllustrationJobId, inspectKnowledgeIllustrationRetry } from "@/lib/knowledgeIllustrationRun";
+import { knowledgeIllustrationRun, knowledgeIllustrationJobId, inspectKnowledgeIllustrationRetry, runKnowledgeIllustrationBatch } from "@/lib/knowledgeIllustrationRun";
 import { illustratedKnowledgeCardSource, synchronizedKnowledgeCardSource } from "@shared/knowledgeCardEditableLayout";
 import { assertKnowledgeCardIllustrationSelection } from "@shared/knowledgeCardIllustrationSelection";
 import EditableLayoutStudio, { type EditableLayoutStudioHandle } from "@/components/platform/EditableLayoutStudio";
@@ -9000,44 +9000,37 @@ export default function PlatformPage() {
           setCustomNoteProgress((prev) => prev.status === "failed" ? prev : { status: "running", percent: knowledgeCardProgressFromRender(ready.length, total), stageDone: ready.length, stageTotal: total, label: `出图 ${ready.length}/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
         };
         setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), stageDone: 0, stageTotal: total, label: `出图 0/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
-        let next = 0;
-        // 某页失败即停发新页（在途的跑完），不让其它 worker 继续扣费出图
-        let aborted = false;
         customNoteStopRenderRef.current = false;
         setCustomNoteRendering(true);
-        const worker = async (provider: "openai" | "evolink") => {
-          // 用户点「终止」同样只停发新页：在途那张跑完并计费，不制造「扣了钱没图」
-          while (next < total && !aborted && !customNoteStopRenderRef.current) {
-            const i = next++;
-            try {
-            setCustomNotePageProgress({ i: Math.min(total, done + 1), n: total });
-            markInflight(runId, i, true);
-            try {
-              renderedSubmittedImageJobsRef.current?.add(imageJobIds[i]);
-              const url = await generateCustomNoteOne(
-                pendingSnapshot.distilled,
-                "single_page_knowledge_card",
-                undefined,
-                { index: i + 1, total },
-                provider,
-                renderSnapshot,
-                { jobId: imageJobIds[i], requestId: pageRequestIds[i] },
-              );
-              urls[i] = url;
-              illustrationRun.done(imageJobIds[i]);
-            } finally {
-              markInflight(runId, i, false);
-            }
-            done += 1;
-            publish();
-            } catch (e) {
-              aborted = true;
-              throw e;
-            }
-          }
-        };
         try {
-          await Promise.all(Array.from({ length: Math.min(KNOWLEDGE_CARD_RENDER_CONCURRENCY, total) }, (_, lane) => worker(lane % 2 === 0 ? "openai" : "evolink")));
+          await runKnowledgeIllustrationBatch({
+            count: total,
+            concurrency: KNOWLEDGE_CARD_RENDER_CONCURRENCY,
+            active: () => !customNoteStopRenderRef.current,
+            execute: async (i, lane) => {
+              const provider = lane % 2 === 0 ? "openai" : "evolink";
+              setCustomNotePageProgress({ i: Math.min(total, done + 1), n: total });
+              markInflight(runId, i, true);
+              try {
+                renderedSubmittedImageJobsRef.current?.add(imageJobIds[i]);
+                const url = await generateCustomNoteOne(
+                  pendingSnapshot.distilled,
+                  "single_page_knowledge_card",
+                  undefined,
+                  { index: i + 1, total },
+                  provider,
+                  renderSnapshot,
+                  { jobId: imageJobIds[i], requestId: pageRequestIds[i] },
+                );
+                urls[i] = url;
+                illustrationRun.done(imageJobIds[i]);
+              } finally {
+                markInflight(runId, i, false);
+              }
+              done += 1;
+              publish();
+            },
+          });
         } finally {
           if (urls.some(url => !url)) illustrationRun.stop();
         }

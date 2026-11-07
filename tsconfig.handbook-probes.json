@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "target": "ES2022"
+  },
+  "include": [
+    "scripts/probe-knowledge-handbook-fresh.mts",
+    "scripts/probe-knowledge-handbook-finalize.mts",
+    "scripts/probe-knowledge-handbook-image-input.mts",
+    "server/**/*.d.ts",
+    "shared/**/*.d.ts",
+    "client/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

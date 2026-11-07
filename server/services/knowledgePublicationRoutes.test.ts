@@ -14,6 +14,27 @@ const make=()=>{
 };
 const researchReport=(f:ReturnType<typeof make>,urls:string[]=[])=>({kind:'knowledge_research_v1',pages:f.report.pages.map(p=>({pageId:p.id,topic:p.headline,queries:[p.headline],findings:urls.map(url=>({url,summary:'原始来源对本页主题的解释',relevance:'补充本页原稿事实的背景',purpose:'fill_explanation',sourceQuote:'蒸发、凝结、降水',question:'蒸发的能量来源是什么'}))}))});
 
+describe('无图末稿原回包恢复',()=>{
+ it('仅最终文字修订使用完整body恢复结构，重入零调用且原回包不改',async()=>{
+  const f=make(),input=JSON.parse((f.request.contents[0].parts[0] as any).text);
+  input.source.pages[0].imageUrl='';f.request.contents[0].parts=[{text:JSON.stringify(input)},{text:JSON.stringify({finalVerification:[]})}];
+  const page:any=f.report.pages[0];delete page.reading;page.imageStatus='absent';page.imageDescription='';page.body='## 原章\n\n完整正文 **12.5克**，保留限定。';
+  const raw=JSON.stringify(f.report),response=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  const result=JSON.parse(response.candidates[0].content.parts[0].text);
+  expect(result.pages[0].body).toBe(page.body);expect(result.pages[0].reading.blocks[0].text).toContain('12.5克');
+  expect(response.adjustments.some((a:any)=>a.reason.includes('非模型排版'))).toBe(true);
+  expect(JSON.parse(f.storage.get('test/0/route-openrouter.json').response.text).choices[0].message.content).toBe(raw);
+  f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).not.toHaveBeenCalled();
+ });
+ it('普通图片审校缺reading仍拒绝，不能用body冒充图文结构',async()=>{
+  const f=make();delete (f.report.pages[0] as any).reading;
+  // 只允许一次测试返回，后续候选明确拒绝；避免测试购买或掩盖原拒因。
+  f.deps.fetch.mockImplementation(async(...args:any[])=>f.response(JSON.parse(args[1].body).model));
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow();
+  expect(f.storage.get('test/0/route-openrouter.json').reason).toContain('模型没有输出自动表格图文结构');
+ });
+});
+
 describe('JSON语法阻断不自动购买下一次',()=>{
  it('完整数组间漏逗号本地恢复，原响应保留并可零请求重放',async()=>{
   const f=make(),raw=JSON.stringify(f.report).replace('],["凝结"',']["凝结"');
