@@ -14,6 +14,8 @@ import {
   musicMvEditPositions,
   musicMvEditKey,
   musicMvEditIssues,
+  bindMusicMvStockFootage,
+  isMusicMvStockSource,
   type MusicMvEditDocument,
   type MusicMvEditSession,
 } from "@shared/canvasMusicMvEdit";
@@ -23,6 +25,8 @@ import {
 } from "@/lib/canvasMusicMvEditWorkflow";
 import { resolveMusicMvMediaUrl } from "@/lib/musicMvAdvisor";
 import { trpc } from "@/lib/trpc";
+import { StockFootagePanel } from "@/components/stockFootage/StockFootagePanel";
+import type { StockFootageAssetView } from "@shared/stockFootage";
 
 type Props = {
   plan: CanvasMusicMvPlan;
@@ -33,6 +37,9 @@ type Props = {
   session?: MusicMvEditSession;
   onSession: (s: MusicMvEditSession) => void;
   disabled: boolean;
+  /** 仅作图库采用记录的归属筛选，不作权限依据。 */
+  projectId?: string;
+  orientation?: "landscape" | "portrait";
 };
 const button =
   "rounded border border-white/20 px-2 py-1 text-xs disabled:opacity-40";
@@ -51,6 +58,7 @@ export function CanvasMvTimelineEditor(p: Props) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
+  const [stockFor, setStockFor] = useState("");
   const [preview, setPreview] = useState<{ id: string; url: string }>();
   const [songUrl, setSongUrl] = useState("");
   const [playing, setPlaying] = useState(false);
@@ -157,6 +165,25 @@ export function CanvasMvTimelineEditor(p: Props) {
   useEffect(() => {
     setPlaying(false);
   }, [musicMvEditKey(s.draft)]);
+  // 采用成功后写入剪辑草稿（可撤销）；保存时服务端凭 assetId 核对本人采用记录。
+  const adoptStock = (clipId: string, asset: StockFootageAssetView) => {
+    if (current.current.p.disabled || lock.current) {
+      setError("正在保存或处理中，素材已采用，请稍后在面板中重新选用");
+      return;
+    }
+    try {
+      const next = bindMusicMvStockFootage(
+        current.current.s.draft,
+        clipId,
+        asset
+      );
+      put(commitMusicMvEdit(current.current.s, next));
+      setStockFor("");
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   const seek = (f: number) => {
     const next = Math.max(0, Math.min(Math.round(p.audio.durationSec * 30), f));
     frameRef.current = next;
@@ -387,7 +414,11 @@ export function CanvasMvTimelineEditor(p: Props) {
                   {c.title.slice(0, 25)}
                   <br />
                   {(c.durationFrames / 30).toFixed(2)}秒{" "}
-                  {c.source ? "" : "·待素材"}
+                  {c.source
+                    ? isMusicMvStockSource(c.source)
+                      ? "·图库"
+                      : ""
+                    : "·待素材"}
                 </span>
                 <span
                   role="slider"
@@ -495,6 +526,35 @@ export function CanvasMvTimelineEditor(p: Props) {
           >
             移除片段（保留原片）
           </button>
+          {clip.kind !== "singing" && (
+            <button
+              className={button}
+              aria-expanded={stockFor === clip.id}
+              onClick={() => setStockFor(stockFor === clip.id ? "" : clip.id)}
+            >
+              {stockFor === clip.id ? "收起图库" : "用图库视频替换此片段"}
+            </button>
+          )}
+          {stockFor === clip.id && clip.kind !== "singing" && (
+            <StockFootagePanel
+              purpose="mv"
+              usage="insert"
+              defaultKind="video"
+              defaultOrientation={p.orientation}
+              minDurationSec={Math.min(
+                600,
+                Math.max(1, Math.ceil(clip.durationFrames / 30))
+              )}
+              initialQuery={clip.title.slice(0, 100)}
+              context={{
+                projectId: p.projectId || undefined,
+                shotId: clip.shotId,
+                segmentId: clip.id,
+              }}
+              compact
+              onAdopted={asset => adoptStock(clip.id, asset)}
+            />
+          )}
         </fieldset>
       )}
       <details>

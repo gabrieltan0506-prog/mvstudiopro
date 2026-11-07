@@ -170,3 +170,58 @@ describe("MV 按实际音乐/视频生产者授权", () => {
     expect(extractSystemObjectName(audio.url, bucket)).toBe(musicObject);
   });
 });
+
+describe("MV 图库素材凭本人采用记录授权", () => {
+  const assetId = `sf_${"c".repeat(48)}`;
+  const gcsUri = `gs://${bucket}/stock-footage/7/${assetId}.mp4`;
+  const owned = {
+    assetId,
+    kind: "video",
+    purpose: "mv",
+    usage: "insert",
+    gcsUri,
+    durationSec: 8,
+  };
+  const withStock = (asset: Record<string, unknown> | Error) => {
+    const { d } = fixture();
+    const stock = vi.fn(async (userId: number, id: string) => {
+      if (asset instanceof Error) throw asset;
+      if (userId !== 7 || id !== assetId) throw new Error("not owned");
+      return asset;
+    });
+    return { d: { ...d, stock }, stock };
+  };
+  it("正向：assetId 查到本人MV入片资产，返回资产gcsUri（签名地址也归一）", async () => {
+    const { d, stock } = withStock(owned);
+    expect(
+      await resolveCanvasMusicMvVideo(7, { url: gcsUri, taskId: assetId, durationSec: 8 }, d as any)
+    ).toBe(gcsUri);
+    expect(
+      await resolveCanvasMusicMvVideo(
+        7,
+        { url: `https://storage.googleapis.com/${bucket}/stock-footage/7/${assetId}.mp4?sig=1`, taskId: assetId },
+        d as any
+      )
+    ).toBe(gcsUri);
+    expect(stock).toHaveBeenCalledWith(7, assetId);
+  });
+  it("反向：他人/未采用、换URL、改时长、参考用途、非MV、照片均拒绝", async () => {
+    await expect(
+      resolveCanvasMusicMvVideo(8, { url: gcsUri, taskId: assetId }, withStock(owned).d as any)
+    ).rejects.toThrow();
+    await expect(
+      resolveCanvasMusicMvVideo(7, { url: gcsUri, taskId: assetId }, withStock(new Error("未成功采用")).d as any)
+    ).rejects.toThrow("未成功采用");
+    for (const url of [`gs://${bucket}/uploads/u7/other.mp4`, "https://videos.pexels.com/x.mp4", `gs://other/stock.mp4`])
+      await expect(
+        resolveCanvasMusicMvVideo(7, { url, taskId: assetId }, withStock(owned).d as any)
+      ).rejects.toThrow();
+    await expect(
+      resolveCanvasMusicMvVideo(7, { url: gcsUri, taskId: assetId, durationSec: 9 }, withStock(owned).d as any)
+    ).rejects.toThrow("时长");
+    for (const bad of [{ usage: "reference" }, { purpose: "marketing" }, { kind: "photo" }, { gcsUri: `gs://other/${assetId}.mp4` }])
+      await expect(
+        resolveCanvasMusicMvVideo(7, { url: gcsUri, taskId: assetId }, withStock({ ...owned, ...bad }).d as any)
+      ).rejects.toThrow();
+  });
+});

@@ -9,6 +9,8 @@ import {
   musicMvEditDocumentSchema,
   musicMvEditReceiptSchema,
   musicMvEditKey,
+  musicMvClipMatchesShot,
+  isMusicMvStockSource,
   type MusicMvEditDocument,
 } from "../../shared/canvasMusicMvEdit";
 import {
@@ -137,7 +139,7 @@ export async function saveMusicMvEdit(
   )
     throw new Error("剪辑歌曲与原计划不一致");
   await d.resolveAudio(userId, savedInput.audio);
-  const cache = new Map<string, Promise<void>>();
+  const cache = new Map<string, Promise<number>>();
   const controller = new AbortController();
   const signal = AbortSignal.any([
     AbortSignal.timeout(45000),
@@ -150,11 +152,15 @@ export async function saveMusicMvEdit(
       signal.throwIfAborted();
       const clip = doc.clips[next++];
       const shot = plan.shots.find(s => s.id === clip.shotId);
-      if (!shot || (shot.kind || "generated") !== clip.kind)
+      if (!shot || !musicMvClipMatchesShot(shot, clip))
         throw new Error("剪辑引用了原计划之外的镜头");
       if (!clip.source) continue;
+      // 图库素材：resolveVideo 凭 assetId 查本人采用记录并核对 gcsUri/时长；
+      // 它是对原计划镜头的显式替换，不再要求与原计划 sourceClip 同源。
+      const stock = isMusicMvStockSource(clip.source);
       const actual = await d.resolveVideo(userId, clip.source);
       if (
+        !stock &&
         shot.kind === "footage" &&
         shot.sourceClip &&
         actual !== (await d.resolveVideo(userId, shot.sourceClip))
@@ -169,13 +175,20 @@ export async function saveMusicMvEdit(
             !info.width ||
             !info.height ||
             !Number.isFinite(info.durationSec) ||
-            Math.abs(info.durationSec - clip.source!.durationSec) > 0.1
+            info.durationSec <= 0
           )
             throw new Error("源视频时长或媒体身份已变化，请重新同步素材");
+          return info.durationSec;
         })();
         cache.set(key, pending);
       }
-      await pending;
+      const probed = await pending;
+      if (stock) {
+        // 采用记录时长来自上游元数据，可能与实测有小数差；只要求实测文件覆盖所选裁段。
+        if ((clip.sourceInFrame + clip.durationFrames) / 30 > probed + 1 / 30)
+          throw new Error("图库素材实际时长短于所选裁段，请缩短片段");
+      } else if (Math.abs(probed - clip.source.durationSec) > 0.1)
+        throw new Error("源视频时长或媒体身份已变化，请重新同步素材");
     }
   };
   const inspections = Array.from(

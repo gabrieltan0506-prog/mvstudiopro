@@ -156,3 +156,50 @@ describe("剪辑不可变保存与来源核对", () => {
     ).rejects.toThrow("尚未采用");
   });
 });
+
+describe("图库素材替换镜头的保存核对", () => {
+  const assetId = `sf_${"b".repeat(48)}`;
+  const stockDoc = () => {
+    const d = doc();
+    d.clips[0] = {
+      ...d.clips[0],
+      sourceInFrame: 0,
+      durationFrames: 150,
+      source: { url: "gs://test/stock-footage/7/clip.mp4", taskId: assetId, durationSec: 6 },
+    };
+    return musicMvEditDocumentSchema.parse(d);
+  };
+  it("正向：本人已采用的图库素材可替换原计划素材切片，实测覆盖裁段即可保存并恢复", async () => {
+    const { d, mocks } = fixture();
+    mocks.probe.mockResolvedValue({ durationSec: 5.9, width: 1920, height: 1080 });
+    const r = await saveMusicMvEdit(7, { revisionId: revision, document: stockDoc() }, d);
+    expect(r.document.clips[0].source).toEqual(stockDoc().clips[0].source);
+    // 资产核对交给 resolveVideo（含 taskId=assetId 与 durationSec），不再要求与原计划 sourceClip 同源。
+    expect(mocks.resolveVideo).toHaveBeenCalledTimes(1);
+    expect(mocks.resolveVideo).toHaveBeenCalledWith(7, stockDoc().clips[0].source);
+    expect(
+      await getMusicMvEdit(7, { revisionId: revision, basePlanRequestId: base }, d)
+    ).toEqual(r);
+  });
+  it("反向：实测文件短于裁段、所有权核对失败均不写入", async () => {
+    const { d, mocks } = fixture();
+    mocks.probe.mockResolvedValue({ durationSec: 4.5, width: 1920, height: 1080 });
+    await expect(
+      saveMusicMvEdit(7, { revisionId: revision, document: stockDoc() }, d)
+    ).rejects.toThrow("短于所选裁段");
+    mocks.probe.mockResolvedValue({ durationSec: 6, width: 1920, height: 1080 });
+    mocks.resolveVideo.mockRejectedValueOnce(new Error("图库素材不属于本人"));
+    await expect(
+      saveMusicMvEdit(7, { revisionId: revision, document: stockDoc() }, d)
+    ).rejects.toThrow("不属于本人");
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+  it("反向：非图库 taskId 的换源仍按原计划素材身份拒绝", async () => {
+    const { d } = fixture();
+    const other = stockDoc();
+    other.clips[0].source!.taskId = "canvas-task";
+    await expect(
+      saveMusicMvEdit(7, { revisionId: revision, document: other }, d)
+    ).rejects.toThrow("身份");
+  });
+});

@@ -7,18 +7,23 @@ import {
   resolveRegisteredPostProdMediaSource,
 } from "./postProdMediaSource";
 import type { CanvasMusicCandidate } from "../../shared/canvasMusicMv";
+import { MV_STOCK_ASSET_ID } from "../../shared/canvasMusicMvEdit";
+import { isStockAssetInsertable } from "../../shared/stockFootage";
+import { loadOwnedStockAsset } from "./stockFootage/ownership";
 
 type MediaDeps = {
   bucket: typeof getGcsBucketName;
   job: typeof getJobByIdStrict;
   video: typeof peekCanvasVideoTask;
   registered: typeof resolveRegisteredPostProdMediaSource;
+  stock: typeof loadOwnedStockAsset;
 };
 const real: MediaDeps = {
   bucket: getGcsBucketName,
   job: getJobByIdStrict,
   video: peekCanvasVideoTask,
   registered: resolveRegisteredPostProdMediaSource,
+  stock: loadOwnedStockAsset,
 };
 function systemSource(source: string, d: MediaDeps): string | null {
   const objectName = extractSystemObjectName(source, d.bucket());
@@ -32,9 +37,31 @@ function record(value: unknown): Record<string, unknown> {
 
 export async function resolveCanvasMusicMvVideo(
   userId: number,
-  clip: { url: string; taskId?: string },
+  clip: { url: string; taskId?: string; durationSec?: number },
   d: MediaDeps = real
 ): Promise<string> {
+  if (clip.taskId && MV_STOCK_ASSET_ID.test(clip.taskId)) {
+    // 图库素材：凭 assetId 查本人成功采用记录；客户端 url 只用于核对，不作所有权证据。
+    const asset = await d.stock(userId, clip.taskId);
+    if (
+      asset.assetId !== clip.taskId ||
+      asset.kind !== "video" ||
+      asset.purpose !== "mv" ||
+      !isStockAssetInsertable(asset)
+    )
+      throw new Error("图库素材未为 MV 入片采用");
+    const actual = systemSource(asset.gcsUri, d);
+    const requested = systemSource(clip.url, d);
+    if (!actual || actual !== requested)
+      throw new Error("所选图库素材与采用记录不一致");
+    if (
+      clip.durationSec !== undefined &&
+      (!asset.durationSec ||
+        Math.abs(asset.durationSec - clip.durationSec) > 0.001)
+    )
+      throw new Error("图库素材时长与采用记录不一致");
+    return actual;
+  }
   if (!clip.taskId)
     return d.registered({ userId: String(userId), source: clip.url });
   // peek 只读取已持久化记录；合成权限检查绝不推进上游，也不触发新任务。
