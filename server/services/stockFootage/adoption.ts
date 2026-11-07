@@ -222,7 +222,7 @@ async function resolveUpstream(params: StockFootageAdoptParams, deps: StockAdopt
   };
 }
 
-const PERMANENT: ReadonlySet<StockFootageError["kind"]> = new Set(["not_found", "invalid", "too_large"]);
+const PERMANENT: ReadonlySet<StockFootageError["kind"]> = new Set<StockFootageError["kind"]>(["not_found", "invalid", "too_large"]);
 
 export async function adoptStockFootage(
   userId: number,
