@@ -110,16 +110,15 @@ export async function invokePageTriageJson(params: {
   userText: string;
   imageUrls: string[];
   fallback?: () => Promise<string>;
+  primary?: "openrouter" | "evolink";
   abortSignal?: AbortSignal;
 }): Promise<string> {
   const chat = pageTriageTestHooks.getStore()?.chat || visionChatOnce;
-  // 顺序（0911）：EvoLink DeepSeek Vision → OpenRouter DeepSeek Vision → Qwen 兜底（调用方传入，内部再走 Qwen 全链）
+  // 并发批次可指定首选供应商；失败仍先换同模型供应商，再进入降档尾链。
   const attempts: Array<{ label: string; run: () => Promise<string> }> = [];
-  // 0911 用户令：同模型先走 OpenRouter 路由，失败才落 EvoLink
-  const or = openRouterVisionGateway();
-  if (or) attempts.push({ label: `${or.name}/${or.model}`, run: () => chat(or, params) });
-  const evo = evolinkVisionGateway();
-  if (evo) attempts.push({ label: `${evo.name}/${evo.model}`, run: () => chat(evo, params) });
+  const gateways = [openRouterVisionGateway(), evolinkVisionGateway()].filter((gw): gw is TriageGateway => Boolean(gw));
+  gateways.sort((a,b) => Number(b.name === (params.primary || 'openrouter')) - Number(a.name === (params.primary || 'openrouter')));
+  for (const gw of gateways) attempts.push({label:`${gw.name}/${gw.model}`,run:()=>chat(gw,params)});
   if (params.fallback) {
     const fallback = params.fallback;
     attempts.push({

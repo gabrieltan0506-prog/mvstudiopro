@@ -19,18 +19,26 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
  const factsByBody=prepared.map((body,i)=>[{pageId:`section-${i}`,headline:'章节待补齐与疑点',term:'知识及图片说明',statement:body}]);
  const required=factsByBody.map(facts=>knowledgeVerificationTriggers(facts).length>0);
  const total=required.filter(Boolean).length;
- const result:string[]=[],verifications:unknown[]=[],issues:KnowledgeEditionIssue[]=[],pendingVerification:{pageIndex:number;message:string}[]=[];
+ const result:string[]=new Array(bodies.length),verifications:unknown[]=new Array(bodies.length);
+ const pageIssues:KnowledgeEditionIssue[][]=bodies.map(()=>[]);
+ const pagePending:{pageIndex:number;message:string}[][]=bodies.map(()=>[]);
  let done=0;
+ let progress=Promise.resolve();
+ const completed=async()=>{
+  const count=++done;
+  progress=progress.then(async()=>{await onProgress?.({doneBatches:count,totalBatches:total,pass:3});});
+  await progress;
+ };
  if(total)await onProgress?.({doneBatches:0,totalBatches:total,pass:3});
- for(let i=0;i<bodies.length;i++){
+ const processPage=async(i:number,channel:'openrouter'|'evolink')=>{
   // 原页在任何请求之前保存，已经完成的页在恢复时零调用复用。
   const pageKey=`${evidence.prefix}/pages/${i}.json`;
   const checkpoint=await evidence.read(pageKey);
   if(checkpoint&&checkpoint.digest!==digest)throw Error('章节输入变化，保留原回执');
   if(checkpoint?.status==='saved'){
-   result.push(checkpoint.body);verifications.push(checkpoint.verification||null);issues.push(...(checkpoint.issues||[]));pendingVerification.push(...(checkpoint.pendingVerification||[]));
-   if(required[i])await onProgress?.({doneBatches:++done,totalBatches:total,pass:3});
-   continue;
+   result[i]=checkpoint.body;verifications[i]=checkpoint.verification||null;pageIssues[i]=checkpoint.issues||[];pagePending[i]=checkpoint.pendingVerification||[];
+   if(required[i])await completed();
+   return;
   }
   await evidence.save(pageKey,{digest,pageIndex:i,original:bodies[i],body:bodies[i],status:'pending'});
   let body=bodies[i],verification:any=null;
@@ -44,7 +52,7 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
     await evidence.save(`${evidence.prefix}/candidates-${i}.json`,{digest,facts,triggers:knowledgeVerificationTriggers(facts)});
     verification=await evidence.read(`${prefix}/report.json`);
     if(!verification){
-     const request=buildKnowledgeConsistencyRequest('图文知识手册',digest,facts);request.executionChannel='evolink';
+     const request=buildKnowledgeConsistencyRequest('图文知识手册',digest,facts);request.executionChannel=channel;
      request.systemInstruction.parts.push({text:'对只有标题、空正文或已标记失败的章节，围绕原章主题与已有上下文检索可用资料。保留原有内容，只补缺口、解决具体疑点；找不到依据就保留问题，不编造正文。'});
      const old=await evidence.read(`${prefix}/request.json`);
      if(old&&old.digest!==digest)throw Error('核实输入变化，不能重新购买');
@@ -58,7 +66,6 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
      // 已完成检索但无可用资料：保留原稿标待验证，不再购买一次无依据的改写。
      body=prepared[i];
     }else{
-    await onProgress?.({doneBatches:done,totalBatches:total,pass:4});
     const revisionPrefix=`${evidence.prefix}/revision-${i}`;
     const saved=await evidence.read(`${revisionPrefix}/report.json`);
     if(saved){if(saved.digest!==digest)throw Error('修订输入变化，不能复用');body=saved.body;}
@@ -66,7 +73,7 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
      const hash=createHash('sha256').update(`${digest}/${i}`).digest('hex');
      const id=`${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
      const source={title:'图文知识手册',pages:[{id,headline:'章节补齐与疑点修订',body:prepared[i],imageUrl:''}]};
-     const request=buildKnowledgeFinalRevisionRequest(source,digest,[verification],i%2?'evolink':'openrouter');
+     const request=buildKnowledgeFinalRevisionRequest(source,digest,[verification],channel);
      request.systemInstruction.parts.push({text:'保留原有内容、章节标题、主要/次要标记及图说明；只补齐本页缺失正文并处理实际疑点。不得删除空章节来伪装补齐，不虚构原书内容或来源。不能补齐的章节保留原样并保留待核注释。'});
      const old=await evidence.read(`${revisionPrefix}/request.json`);
      if(old&&old.digest!==digest)throw Error('修订输入变化，不能重新购买');
@@ -109,9 +116,27 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
    localIssues.push({pageIndex:i,kind:'unresolved',message:'仍有待核疑点，原文及回执保留'});
   // 同页原文与结果一起落盘；失败不会回滚之前已保存页。
   await evidence.save(pageKey,{digest,pageIndex:i,original:bodies[i],body,status:'saved',verification,issues:localIssues,pendingVerification:localPending});
-  result.push(body);verifications.push(verification);issues.push(...localIssues);pendingVerification.push(...localPending);
-  if(required[i])await onProgress?.({doneBatches:++done,totalBatches:total,pass:3});
- }
+  result[i]=body;verifications[i]=verification;pageIssues[i]=localIssues;pagePending[i]=localPending;
+  if(required[i])await completed();
+ };
+ // 章与章之间可独立检索/修订；同章仍须先拿到检索结果。各首选供应商最多5个工位。
+ let questionIndex=0;
+ const routeByPage=required.map((needs,i)=>needs?questionIndex++%2:i%2);
+ let stopped=false;
+ const work=(['openrouter','evolink'] as const).flatMap((channel,routeIndex)=>{
+  const indices=bodies.map((_,i)=>i).filter(i=>routeByPage[i]===routeIndex);
+  let next=0;
+  return Array.from({length:Math.min(5,indices.length)},async()=>{
+   while(!stopped&&next<indices.length){
+    try{await processPage(indices[next++]!,channel);}catch(error){stopped=true;throw error;}
+   }
+  });
+ });
+ const settled=await Promise.allSettled(work);
+ const failed=settled.find((r):r is PromiseRejectedResult=>r.status==='rejected');
+ if(failed)throw failed.reason;
+ const issues=pageIssues.flat(),pendingVerification=pagePending.flat();
+ if(total)await onProgress?.({doneBatches:total,totalBatches:total,pass:4});
  await evidence.save(`${evidence.prefix}/verified.json`,{digest,bodies:result,verifications,issues,pendingVerification,complete:issues.length===0,skipped:total===0});
  return result;
 }

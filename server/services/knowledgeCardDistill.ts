@@ -1781,11 +1781,7 @@ const TRIAGE_SHEETS_PER_CALL = 8;
  * 扫读失败不阻断整体提炼（退回无参考页）。
  */
 export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: AbortSignal) {
-  // 终审第五条：挑页也按档位走同一份顺序——
-  // 轻量档不从 DeepSeek 视觉起跳，直接走轻量 Qwen 全链；
-  // 精细档降档尾段只走精细顺序里的 Qwen 两跳（新加坡→OpenRouter），不多出第 5 跳。
-  // 选 GLM：不打 DeepSeek 视觉专链，整条 GLM 起跳的链自己走完（GLM 两家 → DeepSeek 两家 → Qwen 两家）；
-  // 选 DeepSeek：视觉专链已经打过两家 DeepSeek，这里只接它之后的尾段，不重复起跳
+  // GLM与DeepSeek均保持既有模型合同，各批首选通道独立分流。
   const glmTier = resolveKnowledgeCardDistillModel(modelName) === KNOWLEDGE_CARD_DISTILL_MODEL_GLM;
   const fallbackChain = glmTier ? KNOWLEDGE_CARD_GLM_FIRST_ORDER : KNOWLEDGE_CARD_PREMIUM_FALLBACK_TAIL;
   return async (
@@ -1793,19 +1789,24 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
     pageCount: number,
     onProgress?: (doneSheets: number, totalSheets: number) => void | Promise<void>,
   ): Promise<KnowledgeCardPageSelection[]> => {
-    const picked: KnowledgeCardPageSelection[] = [];
-    for (let i = 0; i < sheets.length; i += TRIAGE_SHEETS_PER_CALL) {
+    const groups = Array.from({length:Math.ceil(sheets.length/TRIAGE_SHEETS_PER_CALL)},(_,index)=>sheets.slice(index*TRIAGE_SHEETS_PER_CALL,(index+1)*TRIAGE_SHEETS_PER_CALL));
+    const picked: KnowledgeCardPageSelection[][] = groups.map(()=>[]);
+    const stop = new AbortController();
+    const signal = abortSignal ? AbortSignal.any([abortSignal,stop.signal]) : stop.signal;
+    let doneSheets=0;
+    let progress=Promise.resolve();
+    const runGroup = async (groupIndex:number,primary:'openrouter'|'evolink') => {
+      const i=groupIndex*TRIAGE_SHEETS_PER_CALL;
       // 每组开始前先看有没有被叫停：不靠进度回调，也不等本组跑完
-      abortSignal?.throwIfAborted();
-      if (i > 0) await onProgress?.(i, sheets.length);
-      const group = sheets.slice(i, i + TRIAGE_SHEETS_PER_CALL);
+      signal.throwIfAborted();
+      const group=groups[groupIndex]!;
       const pageNumbers = group.flatMap((sheet) => sheet.pageNumbers);
       try {
         const userText = `全书共 ${pageCount} 页；本次目录页覆盖第 ${pageNumbers[0]}–${pageNumbers[pageNumbers.length - 1]} 页（共 ${group.length} 张目录页）。`;
         const imageUrls = group.map((sheet) => sheet.imageUrl);
         const chainFallback = () =>
           invokeDistillLlm({
-            abortSignal,
+            abortSignal:signal,
             sourceText: userText,
             imageUrls,
             modelName: resolveKnowledgeCardDistillModel(modelName),
@@ -1814,7 +1815,7 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
             effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "high"),
             systemOverride: buildPageTriageSystem(),
             timeoutMs: 180_000,
-            chainOverride: fallbackChain,
+            chainOverride: knowledgeCardChainForPrimary(fallbackChain,primary),
             // 0923 热修：挑页要 JSON，OpenRouter 跳开 json_object（选 GLM 时这里是整条挑页链）
             jsonObject: true,
             // 0926：用户消息只发挑页原话 + 目录页图，不套提炼外壳
@@ -1833,19 +1834,34 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
               userText,
               imageUrls,
               // 复审 P1：主通道以前根本没拿到取消信号，已取消还会照打一次 fetch
-              abortSignal,
+              abortSignal:signal,
+              primary,
               fallback: chainFallback,
             });
         const allowed = new Set(pageNumbers);
-        for (const item of parsePageTriage(raw)) if (allowed.has(item.pageNumber)) picked.push(item);
+        for (const item of parsePageTriage(raw)) if (allowed.has(item.pageNumber)) picked[groupIndex]!.push(item);
       } catch (err) {
         // 取消原样抛：不能被「本组不选参考页」这条容错吞掉（复审 P1）
-        if (isKnowledgeCardCancelledError(err, abortSignal)) throw err;
-        if (isSseContentSafetyError(err)) throw err;
+        if (isKnowledgeCardCancelledError(err, signal) || isSseContentSafetyError(err)) { stop.abort(err); throw err; }
         console.warn(`[knowledgeCardDistill] 目录页扫读失败（第 ${Math.floor(i / TRIAGE_SHEETS_PER_CALL) + 1}/${Math.ceil(sheets.length / TRIAGE_SHEETS_PER_CALL)} 组，目录页 ${i + 1}–${Math.min(sheets.length, i + TRIAGE_SHEETS_PER_CALL)}），本组不选参考页：${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`);
       }
-    }
-    return picked;
+      doneSheets+=group.length;
+      const completed=doneSheets;
+      progress=progress.then(async()=>{ await onProgress?.(completed,sheets.length); });
+      await progress;
+    };
+    // 两通道同时领取不同批次，各最多5个在途；完成即补位，已成功组不重发。
+    const work=(['openrouter','evolink'] as const).flatMap((primary,routeIndex)=>{
+      const indices=groups.map((_,i)=>i).filter(i=>i%2===routeIndex);
+      let next=0;
+      return Array.from({length:Math.min(KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE,indices.length)},async()=>{
+        while(next<indices.length){ signal.throwIfAborted(); await runGroup(indices[next++]!,primary); }
+      });
+    });
+    const settled=await Promise.allSettled(work);
+    const failed=settled.find((r):r is PromiseRejectedResult=>r.status==='rejected');
+    if(failed)throw failed.reason;
+    return picked.flat();
   };
 }
 

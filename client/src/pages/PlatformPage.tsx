@@ -8277,7 +8277,7 @@ export default function PlatformPage() {
           if (revision !== customNoteRevisionRef.current) return;
           const out = (output || {}) as { distillPercent?: number; distillStage?: string; distillStageDone?: number; distillStageTotal?: number };
           const total = Number(out.distillStageTotal) || 0;
-          const stage=out.distillStage==="verifying"?"联网校验搜索":out.distillStage==="revising"?"修订统稿与图片说明":out.distillStage==="merging"?"汇总知识与疑点":"提炼整理";
+          const stage=out.distillStage==="verifying"?"联网核实与修订":out.distillStage==="revising"?"保存核实结果":out.distillStage==="merging"?"汇总知识与疑点":"提炼整理";
           const label=total?`${stage} ${Number(out.distillStageDone)||0}/${total} 批`:stage+"…";
           setCustomNoteUploadStatus(label);
           setCustomNoteProgress({
