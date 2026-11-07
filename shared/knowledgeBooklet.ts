@@ -1,3 +1,4 @@
+import {hasKnowledgeBody} from './knowledgeEditionIssues';
 import {knowledgeMotifSvg,knowledgeContentDesignCss,knowledgeContentDesignKey} from "./knowledgeContentDesign";
 import { resolveKnowledgeDecoration, type KnowledgeDecoration } from "./knowledgeDecorations";
 import { KNOWLEDGE_DECORATION_ART } from "./knowledgeDecorationAssets";
@@ -76,6 +77,8 @@ function readingUnits(pages: KnowledgeBookletPage[], decoration: KnowledgeDecora
           wrap(renderLayoutBody(part,true),token.type === "list" ? "list-unit" : "prose-unit");
       }
     }
+    // 空章节保留标题及原始结构，只标记待补齐；不制造正文、不丢掉整册。
+    if (result.length === start) result.push({source:page.id,html:`<section class="reading-unit pending-content" data-source-id="${escape(page.id)}" data-source-headline="${escape(page.headline)}"><div class="unit-heading"><h3>${escape(page.headline)}</h3></div>${renderLayoutBody(page.body,true)}<p role="status">本节正文待补齐</p></section>`});
     const visual = decoration.interleave === "original-image" ? page.imageUrl : decoration.interleave === "artwork-strip" ? KNOWLEDGE_DECORATION_ART[decoration.artworkId] : "";
     if (decoration.interleave === "original-image" && !page.imageUrl) throw new Error("正文穿插选择了原图，但该章没有配图");
     if (visual) result.splice(Math.min(start + 2, result.length), 0, {source:page.id,html:`<figure class="reading-unit interleaved-visual ${decoration.interleave === "artwork-strip" ? "interleaved-art" : ""}" data-source-id="${escape(page.id)}" data-source-headline="${escape(page.headline)}"><img src="${escape(visual)}" alt="${decoration.interleave === "original-image" ? escape(page.headline) : "主题装饰插画"}"><figcaption>${decoration.interleave === "original-image" ? "图解回看 · " + escape(page.headline) : ""}</figcaption></figure>`});
@@ -93,7 +96,7 @@ function ornament(theme: KnowledgeBookletTheme) {
 }
 
 export function buildKnowledgeBookletHtml(input: { title: string; pages: KnowledgeBookletPage[]; theme?: KnowledgeBookletTheme; readingPages?: number; fragment?: boolean; decoration?: KnowledgeDecoration; chapterOffset?: number }) {
-  if (!input.pages.length || input.pages.some(p=>!p.body.trim())) throw new Error("请保留每张卡片的图片和完整正文");
+  if (!input.pages.length) throw new Error("没有可分页的章节，原稿保留");
   if (new Set(input.pages.map(p=>p.id)).size !== input.pages.length) throw new Error("知识卡页编号重复");
   if (input.pages.some(p=>p.imageUrl && !/^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$|^https:\/\//.test(p.imageUrl))) throw new Error("配图地址无效");
   const theme = input.theme || chooseKnowledgeBookletTheme(input.title+input.pages.map(p=>p.body).join("\n"));
@@ -169,7 +172,7 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
       if([...root.querySelectorAll('.reading-column')].some(el=>el.scrollHeight>el.clientHeight+2))throw new Error('正文超出页面，未裁切内容，请调整版式');
       await Promise.all([...root.querySelectorAll('.art-window img')].map(i=>i.decode()));
       root.dataset.ready='true';
-      root.__knowledgeBooklet={ready:true,imagePages:cards.length,readingPages:pages.length,pages:folios.length,units:units.length,totalHeight:total,columnCapacity:capacity,targetHeight:target,overflow:false};
+      root.__knowledgeBooklet={ready:true,imagePages:cards.length,readingPages:pages.length,pages:folios.length,units:units.length,totalHeight:total,columnCapacity:capacity,targetHeight:target,overflow:false,pendingContent:${JSON.stringify(input.pages.filter(p=>!hasKnowledgeBody(p.body)).map(p=>({id:p.id,headline:p.headline})))}};
       window.__knowledgeBooklet=root.__knowledgeBooklet;
     };
     root.__layoutBooklet=()=>busy=busy.catch(()=>{}).then(layout).catch(e=>{

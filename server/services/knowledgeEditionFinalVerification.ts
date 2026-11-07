@@ -2,50 +2,98 @@ import {createHash} from 'node:crypto';
 import {buildKnowledgeConsistencyRequest,buildKnowledgeFinalRevisionRequest} from './knowledgePublicationAdvisor';
 import {knowledgeVerificationTriggers} from './knowledgeVerificationPolicy';
 import {invokeKnowledgePublicationRoutes,type KnowledgeRouteEvidence} from './knowledgePublicationRoutes';
+import {knowledgeModulesFromMarkdown} from '../../shared/knowledgeCardEdition';
+import {hasKnowledgeBody,markKnowledgeEditionGap,type KnowledgeEditionIssue} from '../../shared/knowledgeEditionIssues';
+import {guardKnowledgeEditionEvidence,rethrowKnowledgeEditionInvariant,knowledgeEditionErrorMessage,isKnowledgeReceiptUnknown} from './knowledgeEditionRecovery';
 
-/** 全部模块就绪后集中校验；前期没有联网副作用，最终正文确认后才编译两档张数。 */
-export async function verifyKnowledgeEditionManuscripts(bodies:string[],evidence:KnowledgeRouteEvidence,invoke=invokeKnowledgePublicationRoutes,onProgress?:(p:{doneBatches:number;totalBatches:number;pass:number})=>void|Promise<void>){
+/** 正式末段：仅处理疑点、空正文和已记录失败；每页独立保存，局部失败保留原稿继续。 */
+export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:KnowledgeRouteEvidence,invoke=invokeKnowledgePublicationRoutes,onProgress?:(p:{doneBatches:number;totalBatches:number;pass:number})=>void|Promise<void>){
+ const evidence=guardKnowledgeEditionEvidence(storage);
  const digest=createHash('sha256').update(JSON.stringify(bodies)).digest('hex');
  const prior=await evidence.read(`${evidence.prefix}/verified.json`);
  if(prior){if(prior.digest!==digest)throw Error('最终核实原稿变化，保留旧回执');return prior.bodies as string[];}
- const verifications:unknown[]=[];
- await onProgress?.({doneBatches:0,totalBatches:bodies.length,pass:3});
+ const prepared=bodies.map(body=>{
+  const empty=knowledgeModulesFromMarkdown(body).modules.filter(m=>!hasKnowledgeBody(m.body));
+  return empty.length?markKnowledgeEditionGap(body,`以下章节只有标题或正文为空，请围绕原章节及原稿上下文联网补齐，不删除章节：${empty.map(m=>m.headline).join('；')}`):body;
+ });
+ const factsByBody=prepared.map((body,i)=>[{pageId:`section-${i}`,headline:'章节待补齐与疑点',term:'知识及图片说明',statement:body}]);
+ const required=factsByBody.map(facts=>knowledgeVerificationTriggers(facts).length>0);
+ const total=required.filter(Boolean).length;
+ const result:string[]=[],verifications:unknown[]=[],issues:KnowledgeEditionIssue[]=[];
+ let done=0;
+ if(total)await onProgress?.({doneBatches:0,totalBatches:total,pass:3});
  for(let i=0;i<bodies.length;i++){
-  const facts=[{pageId:`section-${i}`,headline:'全册统稿前核实',term:'知识及图片说明',statement:bodies[i]}];
-  await evidence.save(`${evidence.prefix}/candidates-${i}.json`,{digest,facts,triggers:knowledgeVerificationTriggers(facts)});
-  const prefix=`${evidence.prefix}/search-${i}`;
-  let saved=await evidence.read(`${prefix}/report.json`);
-  if(!saved){
-   const request=buildKnowledgeConsistencyRequest('图文知识手册',digest,facts);request.executionChannel='evolink';
-   const old=await evidence.read(`${prefix}/request.json`);
-   if(!old)await evidence.save(`${prefix}/request.json`,{digest,request});
-   else if(old.digest!==digest)throw Error('核实输入变化，不能重新购买');
-   const envelope=JSON.parse((await invoke(old?.request||request,{...evidence,prefix})).text);
-   saved=JSON.parse(envelope.candidates[0].content.parts[0].text);
-   await evidence.save(`${prefix}/report.json`,saved);
+  // 原页在任何请求之前保存，已经完成的页在恢复时零调用复用。
+  const pageKey=`${evidence.prefix}/pages/${i}.json`;
+  const checkpoint=await evidence.read(pageKey);
+  if(checkpoint&&checkpoint.digest!==digest)throw Error('章节输入变化，保留原回执');
+  if(checkpoint?.status==='saved'){
+   result.push(checkpoint.body);verifications.push(checkpoint.verification||null);issues.push(...(checkpoint.issues||[]));
+   if(required[i])await onProgress?.({doneBatches:++done,totalBatches:total,pass:3});
+   continue;
   }
-  verifications.push(saved);await onProgress?.({doneBatches:i+1,totalBatches:bodies.length,pass:3});
- }
- const result:string[]=[];
- await onProgress?.({doneBatches:0,totalBatches:bodies.length,pass:4});
- for(let i=0;i<bodies.length;i++){
-  const prefix=`${evidence.prefix}/revision-${i}`;
-  const saved=await evidence.read(`${prefix}/report.json`);
-  if(saved)result.push(saved.body);
-  else{
-   const hash=createHash('sha256').update(`${digest}/${i}`).digest('hex');
-   const id=`${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
-   const source={title:'图文知识手册',pages:[{id,headline:'统稿与图片说明修订',body:bodies[i],imageUrl:''}]};
-   const request=buildKnowledgeFinalRevisionRequest(source,digest,verifications,i%2?'evolink':'openrouter');
-   request.systemInstruction.parts.push({text:'保留所有## 主要重点｜标题、## 次要重点｜标题。此处是生图前统稿，保留并优化每段“图：”说明，不声称看过未生成图片。核实标注已处理后不进入读者正文。'});
-   const old=await evidence.read(`${prefix}/request.json`);
-   if(!old)await evidence.save(`${prefix}/request.json`,{digest,request});else if(old.digest!==digest)throw Error('修订输入变化，不能重新购买');
-   const envelope=JSON.parse((await invoke(old?.request||request,{...evidence,prefix})).text);
-   const body=String(JSON.parse(envelope.candidates[0].content.parts[0].text).pages?.[0]?.body||'');
-   if(!body.trim())throw Error('核实修订正文为空，原稿保留');
-   await evidence.save(`${prefix}/report.json`,{body,digest});result.push(body);
+  await evidence.save(pageKey,{digest,pageIndex:i,original:bodies[i],body:bodies[i],status:'pending'});
+  let body=bodies[i],verification:any=null;
+  const localIssues:KnowledgeEditionIssue[]=[];
+  if(required[i]){
+   try{
+    // 未知回执不另买替代请求；其他页继续，问题留在清单。
+    if(/<!-- 回执待确认：/.test(body))throw Error('原请求回执尚未闭合，保留原页，不新增请求');
+    const facts=factsByBody[i],prefix=`${evidence.prefix}/search-${i}`;
+    await evidence.save(`${evidence.prefix}/candidates-${i}.json`,{digest,facts,triggers:knowledgeVerificationTriggers(facts)});
+    verification=await evidence.read(`${prefix}/report.json`);
+    if(!verification){
+     const request=buildKnowledgeConsistencyRequest('图文知识手册',digest,facts);request.executionChannel='evolink';
+     request.systemInstruction.parts.push({text:'对只有标题、空正文或已标记失败的章节，围绕原章主题与已有上下文检索可用资料。保留原有内容，只补缺口、解决具体疑点；找不到依据就保留问题，不编造正文。'});
+     const old=await evidence.read(`${prefix}/request.json`);
+     if(old&&old.digest!==digest)throw Error('核实输入变化，不能重新购买');
+     if(!old)await evidence.save(`${prefix}/request.json`,{digest,request});
+     const envelope=JSON.parse((await invoke(old?.request||request,{...evidence,prefix})).text);
+     verification=JSON.parse(envelope.candidates[0].content.parts[0].text);
+     await evidence.save(`${prefix}/report.json`,verification);
+    }
+    await onProgress?.({doneBatches:done,totalBatches:total,pass:4});
+    const revisionPrefix=`${evidence.prefix}/revision-${i}`;
+    const saved=await evidence.read(`${revisionPrefix}/report.json`);
+    if(saved){if(saved.digest!==digest)throw Error('修订输入变化，不能复用');body=saved.body;}
+    else{
+     const hash=createHash('sha256').update(`${digest}/${i}`).digest('hex');
+     const id=`${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
+     const source={title:'图文知识手册',pages:[{id,headline:'章节补齐与疑点修订',body:prepared[i],imageUrl:''}]};
+     const request=buildKnowledgeFinalRevisionRequest(source,digest,[verification],i%2?'evolink':'openrouter');
+     request.systemInstruction.parts.push({text:'保留原有内容、章节标题、主要/次要标记及图说明；只补齐本页缺失正文并处理实际疑点。不得删除空章节来伪装补齐，不虚构原书内容或来源。不能补齐的章节保留原样并保留待核注释。'});
+     const old=await evidence.read(`${revisionPrefix}/request.json`);
+     if(old&&old.digest!==digest)throw Error('修订输入变化，不能重新购买');
+     if(!old)await evidence.save(`${revisionPrefix}/request.json`,{digest,request});
+     const envelope=JSON.parse((await invoke(old?.request||request,{...evidence,prefix:revisionPrefix})).text);
+     body=String(JSON.parse(envelope.candidates[0].content.parts[0].text).pages?.[0]?.body||'');
+     if(!hasKnowledgeBody(body))throw Error('补齐结果仍无正文，保留原章节');
+     // 模型漏掉原章时恢复该章，不能以删空章冒充补齐。
+     const original=knowledgeModulesFromMarkdown(bodies[i]);
+     const revised=knowledgeModulesFromMarkdown(body);
+     for(const module of original.modules){
+      if(/^##[ \t]+/m.test(bodies[i])&&!revised.modules.some(m=>m.headline===module.headline)){
+       body+=`\n\n## ${module.priority==='primary'?'主要重点':'次要重点'}｜${module.headline}\n\n${module.body}`;
+       localIssues.push({pageIndex:i,kind:'unresolved',message:`修订遗漏章节“${module.headline}”，已保留原章`});
+      }
+     }
+     await evidence.save(`${revisionPrefix}/report.json`,{body,digest});
+    }
+   }catch(error){
+    rethrowKnowledgeEditionInvariant(error);
+    body=bodies[i];
+    localIssues.push({pageIndex:i,kind:isKnowledgeReceiptUnknown(error)?'unknown_receipt':'content_error',message:knowledgeEditionErrorMessage(error)});
+   }
   }
-  await onProgress?.({doneBatches:i+1,totalBatches:bodies.length,pass:4});
+  const empty=knowledgeModulesFromMarkdown(body).modules.filter(m=>!hasKnowledgeBody(m.body));
+  for(const module of empty)localIssues.push({pageIndex:i,kind:'empty_body',message:`“${module.headline}”正文仍待补齐，原章保留`});
+  if(knowledgeVerificationTriggers([{pageId:`section-${i}`,headline:'疑点',term:'正文',statement:body}]).length&&!localIssues.length)
+   localIssues.push({pageIndex:i,kind:'unresolved',message:'仍有待核疑点，原文及回执保留'});
+  // 同页原文与结果一起落盘；失败不会回滚之前已保存页。
+  await evidence.save(pageKey,{digest,pageIndex:i,original:bodies[i],body,status:'saved',verification,issues:localIssues});
+  result.push(body);verifications.push(verification);issues.push(...localIssues);
+  if(required[i])await onProgress?.({doneBatches:++done,totalBatches:total,pass:3});
  }
- await evidence.save(`${evidence.prefix}/verified.json`,{digest,bodies:result,verifications});return result;
+ await evidence.save(`${evidence.prefix}/verified.json`,{digest,bodies:result,verifications,issues,complete:issues.length===0,skipped:total===0});
+ return result;
 }

@@ -3769,7 +3769,7 @@ async function processPlatformJob(
       const output = {
           success: true,
           distilledMarkdown: derived.markdown,
-          ...('fullEditionMarkdown' in derived ? {fullEditionMarkdown:derived.fullEditionMarkdown,editionVersion:2,verificationProcessed:'verificationProcessed' in derived&&derived.verificationProcessed===true} : {}),
+          ...('fullEditionMarkdown' in derived ? {fullEditionMarkdown:derived.fullEditionMarkdown,editionVersion:2,verificationProcessed:'verificationProcessed' in derived&&derived.verificationProcessed===true,editionIssues:'editionIssues' in derived?derived.editionIssues:[],editionPageCounts:'editionPageCounts' in derived?derived.editionPageCounts:null} : {}),
           distillModel,
           detailLevel: "concise",
           sections: derived.sections,
@@ -3956,7 +3956,7 @@ export function resolveJobGrowthInteractiveLeaseLabel(job: {
   return `${isManhuaLearn ? "manhua-learn-job" : "platform-job"}:${String(job.id)}`;
 }
 
-async function runClaimedJob(
+export async function runClaimedJob(
   job: Awaited<ReturnType<typeof claimNextQueuedJob>> & object
 ) {
   if (!job) return;

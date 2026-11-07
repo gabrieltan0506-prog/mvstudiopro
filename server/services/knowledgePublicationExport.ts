@@ -3,7 +3,7 @@ import type {EditableLayout} from "../../shared/editableLayout";
 import type {KnowledgeReview} from "../../shared/knowledgePublication";
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile, readFile, stat, rm, open } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, stat, rm, open, readdir } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { join } from "node:path";
@@ -54,6 +54,17 @@ const real = {
   image: readKnowledgeImage,
   pdf: fetchPdfBufferFromWorker,
   measure: measureKnowledgeBookletFromWorker,
+  // 使用镜像已有poppler，按真实PDF物理页保存，不用估算页数。
+  savePages: async (bytes: Buffer, save: (index:number,page:Buffer)=>Promise<void>) => {
+    const folder=await mkdtemp(join(tmpdir(),'knowledge-pdf-pages-'));
+    try{
+      const source=join(folder,'source.pdf');await writeFile(source,bytes);
+      await promisify(execFile)('pdfseparate',[source,join(folder,'page-%d.pdf')],{timeout:300000,maxBuffer:1024*1024});
+      const names=(await readdir(folder)).filter(n=>/^page-\d+\.pdf$/.test(n)).sort((a,b)=>Number(a.match(/\d+/)![0])-Number(b.match(/\d+/)![0]));
+      if(!names.length)throw Error('未取得PDF分页，原分片已保留');
+      for(const name of names)await save(Number(name.match(/\d+/)![0])-1,await readFile(join(folder,name)));
+    }finally{await rm(folder,{recursive:true,force:true});}
+  },
   countPages: async (path: string) => {
     const { stdout } = await promisify(execFile)("pdfinfo", [path], {
       timeout: 30000, maxBuffer: 1024 * 1024, env: { ...process.env, LC_ALL: "C" },
@@ -263,6 +274,9 @@ export async function exportKnowledgePublication(
         await html.writeFile(section);
         chunk += section;
         chunkBytes += bytes;
+        // 每个源页立即写检查点，不等后续章节或整册PDF完成。
+        await deps.save(`${prefix}/source-pages/${index}.html`,Buffer.from(head+section+tail),'text/html;charset=utf-8');
+        await flush();
       }
       await html.writeFile(tail);
       await html.close();
@@ -281,11 +295,12 @@ export async function exportKnowledgePublication(
             if (!Number.isSafeInteger(count) || count < 1) throw new Error("预分页结果无效");
             counts.push(count);
           } catch {
+            counts[index]=0;
             failures.push(index + 1);
           }
         }
       }
-      if (!failures.length) {
+      {
         const total = counts.reduce((a, b) => a + b, 0);
         let offset = 0;
         for (const [index, sourcePath] of Array.from(chunks.entries())) {
@@ -293,11 +308,16 @@ export async function exportKnowledgePublication(
           const pagination = count ? { offset, total, count } : undefined;
           const name = `${prefix}/pdf-parts/${index}${pagination ? `-${offset}-${count}-${total}` : ""}.pdf`;
           const path = join(folder, `${index}.pdf`);
+          if(failures.includes(index+1))continue;
           try {
             const cached = await deps.read(name);
             const bytes = cached || await deps.pdf(knowledgePublicationHead(doc.title, pagination) + await readFile(sourcePath, "utf8") + tail);
             if (bytes.length < 100 || bytes.subarray(0, 4).toString() !== "%PDF") throw new Error("导出没有返回有效PDF");
             if (!cached) await deps.save(name, bytes, "application/pdf");
+            await deps.savePages(bytes,async(pageIndex,page)=>{
+              const key=`${name}.pages/${pageIndex}.pdf`;
+              if(!await deps.read(key))await deps.save(key,page,'application/pdf');
+            });
             await writeFile(path, bytes);
             pdfFiles.push(path);
           } catch {

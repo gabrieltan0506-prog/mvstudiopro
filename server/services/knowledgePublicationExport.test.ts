@@ -54,6 +54,7 @@ function fixture() {
     sign: (name: string) => `https://test.invalid/${name}`,
     pdf: vi.fn(async () => Buffer.from("%PDF" + "test-only".repeat(20))),
     merge: vi.fn(),
+    savePages: vi.fn(async(bytes:Buffer,save:(i:number,b:Buffer)=>Promise<void>)=>{await save(0,bytes);}),
     countPages: vi.fn(async () => 7),
   };
   return { doc, deps, storage, deduct };

@@ -4,16 +4,13 @@ import {buildKnowledgeConsistencyRequest} from './knowledgePublicationAdvisor';
 
 const fact=(statement:string,headline='血脂管理')=>({pageId:'p1',term:headline,headline,statement});
 describe('最终事实查证触发条件',()=>{
-  it('无前后矛盾的医疗疗效、数值和替代治疗也触发，保留原句身份',()=>{
-    const facts=[fact('香菇能溶解胆固醇。他汀每天3毫克可降低血脂。'),fact('这样能少用药。'),fact('LDL正常参考值＜3.12毫摩尔/升。')];
-    const triggers=knowledgeVerificationTriggers(facts);
-    expect(triggers).toHaveLength(4);
-    expect(triggers[0]).toMatchObject({pageId:'p1',factIndex:0,quote:'香菇能溶解胆固醇。',reasons:expect.arrayContaining(['absolute_or_mechanism'])});
-    expect(triggers[2].reasons).toContain('treatment_replacement');
-    expect(triggers[3].reasons).toContain('clinical_number');
-    const request=buildKnowledgeConsistencyRequest('血脂管理','digest',facts);
-    expect(request).toMatchObject({researchOnly:true,researchRequired:true,generationConfig:{responseMimeType:'text/markdown'}});
-    expect(JSON.parse((request.contents[0].parts[0] as {text:string}).text).verificationTriggers).toEqual(triggers);
+  it('药名数值或健康话题本身不触发，只有实际疑问触发',()=>{
+    const facts=[fact('他汀每天3毫克可降低血脂。LDL正常参考值＜3.12毫摩尔/升。')];
+    expect(knowledgeVerificationTriggers(facts)).toEqual([]);
+    expect(buildKnowledgeConsistencyRequest('血脂管理','digest',facts).researchRequired).toBe(false);
+    const questions=[fact('原文。<!-- 待核：两处LDL参考值不同，适用条件不明确 -->')];
+    expect(knowledgeVerificationTriggers(questions)[0]).toMatchObject({pageId:'p1',factIndex:0,quote:'两处LDL参考值不同，适用条件不明确',reasons:['uncertainty_or_conflict']});
+    expect(buildKnowledgeConsistencyRequest('血脂管理','digest',questions).researchRequired).toBe(true);
   });
   it('菜谱用量、版式和一般叙述不强制搜索，不因关键词直接改正文',()=>{
     const source='材料：香菇100克，水300毫升。切片煮熟。';
@@ -25,7 +22,7 @@ describe('最终事实查证触发条件',()=>{
   it('正常否定也只交给核实顾问判断，检测函数不删句或改义',()=>{
     const statement='不能自行停药。没有证据证明按摩能降低血脂。';
     const input=[fact(statement)];
-    expect(knowledgeVerificationTriggers(input).length).toBeGreaterThan(0);
+    expect(knowledgeVerificationTriggers(input)).toEqual([]);
     expect(input[0].statement).toBe(statement);
   });
 });
@@ -35,7 +32,7 @@ import {invokeKnowledgePublicationRoutes} from './knowledgePublicationRoutes';
 import {vi} from 'vitest';
 
 it('检索原句不只搜书名；查不到保留作者经验且不捏造治疗建议',()=>{
- const facts=[fact('作者认为香菇能溶解胆固醇。')];
+ const facts=[fact('疑点：作者认为香菇能溶解胆固醇，作用含义不清。')];
  const request=buildKnowledgeConsistencyRequest('独家配方手册','digest',facts);
  const payload=JSON.parse((request.contents[0].parts[0] as {text:string}).text);
  expect(payload.verificationQueries).toEqual(knowledgeVerificationQueries(facts));
@@ -64,9 +61,9 @@ it('销售和转载保留追溯但不独立作证，来源缺失不删原书或�
 });
 
 
-it('普通食品和日常科普不逐条强制医疗核查，药品效果与治疗承诺仍核实',()=>{
+it('无疑点不搜索，明确指出的疑点才核实',()=>{
  expect(knowledgeVerificationTriggers([fact('燕麦含膳食纤维，有助改善血脂。每天吃水果200克。作者独家经验：做菜先分好调味料。')])).toEqual([]);
  expect(buildKnowledgeConsistencyRequest('饮食科普','digest',[fact('每天吃水果200克。')]).researchRequired).toBe(false);
- expect(knowledgeVerificationTriggers([fact('他汀每天10毫克，影响药物代谢。')]).length).toBeGreaterThan(0);
- expect(knowledgeVerificationTriggers([fact('这种食品能治愈高血脂，替代药物。')]).length).toBeGreaterThan(0);
+ expect(knowledgeVerificationTriggers([fact('他汀每天10毫克，影响药物代谢。')])).toEqual([]);
+ expect(knowledgeVerificationTriggers([fact('疑点：这种食品被称可替代药物，原文依据无法确认。')]).length).toBeGreaterThan(0);
 });
