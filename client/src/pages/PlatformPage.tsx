@@ -8922,7 +8922,7 @@ export default function PlatformPage() {
             const readingController = readingControllerRef.current;
             const readingPreparation = readingFullMarkdownRef.current === fullMarkdown.trim() ? readingController?.link() : undefined;
             if(readingPreparation && !overrides?.supplementOf) synchronizedSource.readingPreparation = readingPreparation;
-            const publicationQuote = await studio.prepare(synchronizedSource, illustrationRun.wait,overrides?.supplementOf,{waitForReading:readingPreparation?()=>readingController!.wait():undefined,preparePresentation:!overrides?.supplementOf});
+            const publicationQuote = await studio.prepare(synchronizedSource, illustrationRun.wait,overrides?.supplementOf,{waitForReading:readingPreparation?()=>readingController!.wait():undefined,preparePresentation:false});
             return { pageRequestIds, imageJobIds, illustrationRun, publicationQuote };
           } catch (error) {
             pageRequestIds.forEach(id => knowledgeCardPageTasks.finish(id));

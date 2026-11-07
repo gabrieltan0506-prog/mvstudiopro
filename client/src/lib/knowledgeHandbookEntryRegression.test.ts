@@ -286,3 +286,10 @@ it("读档连接恢复时另一生成入口拒绝重复创建",async()=>{
  const ctx=entryContext("原稿");ctx.customNoteDistillJobId="kc_original";ctx.customNoteUploadBusy=false;
  await ctx.generate();expect(ctx.layoutStudioRef.current.prepare).not.toHaveBeenCalled();expect(ctx.generateCustomNoteOne).not.toHaveBeenCalled();
 });
+
+it('手册正式生成入口只准备PDF，不自动发起PPTX规划',async()=>{
+ const ctx=entryContext();await ctx.generate();
+ expect(ctx.layoutStudioRef.current.prepare).toHaveBeenCalledTimes(1);
+ expect(ctx.layoutStudioRef.current.prepare.mock.calls[0][3].preparePresentation).toBe(false);
+ expect(ctx.generateCustomNoteOne).not.toHaveBeenCalled();
+});
