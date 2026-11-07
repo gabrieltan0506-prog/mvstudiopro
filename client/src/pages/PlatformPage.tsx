@@ -15751,7 +15751,7 @@ export default function PlatformPage() {
                     </select>
                   </label>
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    支持 pdf / epub / pptx / docx / png / jpg，不限页数与大小；EPUB 自动转换后读取；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
+                    支持 pdf / epub / pptx / docx / png / jpg，不限页数与大小；EPUB 自动转换后读取；读档、提炼与顾问排版不另收费，纯内文按最终 PDF 实际页数结算
                   </span>
                   {customNoteFullMarkdown && customNoteText.trim() === customNoteFullMarkdown.trim() && (
                     <KnowledgeCardEditionChoice full={customNoteFullMarkdown} concise={customNoteCompactMarkdown}
