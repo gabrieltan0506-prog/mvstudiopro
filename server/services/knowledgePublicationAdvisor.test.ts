@@ -83,8 +83,8 @@ describe("知识卡实际图像输入与回执恢复", () => {
     expect(
       Array.from(f.storage.keys()).some(k => k.endsWith("raw-0.json"))
     ).toBe(true);
-    expect(request[0].systemInstruction.parts[0].text).toContain("发布内容必须由你逐项判断");
-    expect(request[0].systemInstruction.parts[0].text).toContain("不要放入body或reading");
+    expect(request[0].generationConfig.responseMimeType).toBe("text/markdown");
+    expect(request[0].systemInstruction.parts[0].text).toContain("留待整册最后统一检索核实");
     await reviewKnowledgePublication(7, f.context, f.deps as any);
     expect(f.deps.post).toHaveBeenCalledTimes(1);
     f.deps.post.mockImplementationOnce(async () =>
@@ -152,7 +152,7 @@ it.each(['concise','full'] as const)('真实分批构造保留%s档位，回放�
  const request=(f.deps.post.mock.calls[0] as unknown as [any])[0];
  const payload=request.contents[0].parts.map((p:any)=>p.text).filter(Boolean).map((t:string)=>{try{return JSON.parse(t)}catch{return null}}).find((p:any)=>p?.source);
  expect(payload.source.detailLevel).toBe(level);
- expect(request.systemInstruction.parts[0].text).toContain(level==='full'?'本套为完整版图卡':'本套为精华版图卡');
+ expect(request.systemInstruction.parts[0].text).toContain(level==='full'?'主要与次要重点均先去重、浓缩':'次要重点以文字、表格及适量配饰保留');
  await reviewKnowledgePublication(7,f.context,f.deps as any);expect(f.deps.post).toHaveBeenCalledTimes(1);
 });
 
@@ -178,4 +178,45 @@ it('GLM搜索的模型费用随同一批报告持久化，恢复不丢失也不�
  const reports=Array.from(f.storage.entries()).filter(([key])=>key.endsWith('/report.json'));
  expect(reports).toHaveLength(1);expect(reports[0][1].research).toEqual(research);
  await reviewKnowledgePublication(7,f.context,f.deps as any);expect(f.deps.post).toHaveBeenCalledTimes(1);
+});
+
+it('最终Markdown核实后修订正文和事实索引，原稿保留且恢复不重新购买',async()=>{
+ const f=make();
+ f.report.pages[0].body='已确认的水循环知识。未经证实的矛盾主张。';
+ f.report.pages[0].facts=[{term:'水循环',statement:f.report.pages[0].body}];
+ const original=JSON.stringify(f.source);
+ await reviewKnowledgePublication(7,f.context,f.deps as any);
+ f.deps.post.mockImplementationOnce(async()=>f.envelope({sourceDigest:f.digest,findings:[],verificationMarkdown:'未经证实的矛盾主张没有可靠资料，删除该主张，保留水循环知识。',sources:[]},false));
+ f.deps.post.mockImplementationOnce(async()=>f.envelope({...f.report,pages:[{...f.report.pages[0],body:'已确认的水循环知识。',reading:undefined,imageDescription:'',imageStatus:'absent',facts:[{term:'水循环',statement:'已确认的水循环知识。'}]}]},false));
+ const result:any=await reviewKnowledgePublication(7,{...f.context,batchIndex:1},f.deps as any);
+ expect(result.pages[0].body).toBe('已确认的水循环知识。');
+ expect(result.pages[0].facts[0].statement).not.toContain('未经证实');
+ expect(JSON.stringify(f.source)).toBe(original);
+ const requests=f.deps.post.mock.calls as unknown as [any][];
+ expect(requests[1][0]).toMatchObject({researchOnly:true,generationConfig:{responseMimeType:'text/markdown'}});
+ expect(requests[2][0].systemInstruction.parts.map((p:any)=>p.text).join('\n')).toContain('查不到公开依据或只有转载/卖书资料');
+ expect(requests[2][0].systemInstruction.parts.at(-1).text).toContain('evidenceState=missing');
+ expect(Array.from(f.storage.keys()).some(k=>k.endsWith('final-markdown-0/report.json'))).toBe(true);
+ await reviewKnowledgePublication(7,{...f.context,batchIndex:1},f.deps as any);
+ expect(f.deps.post).toHaveBeenCalledTimes(3);
+});
+
+it('旧核对回执的卖书来源不再作为佐证，新修订保留作者独家经验并保存前后稿',async()=>{
+ const f=make();
+ f.report.pages[0].body='作者独家经验：用小碟预先分好调味料，做菜时不容易手重。';
+ f.report.pages[0].facts=[{term:'备菜经验',statement:f.report.pages[0].body}];
+ await reviewKnowledgePublication(7,f.context,f.deps as any);
+ const low={url:'https://mbook.kongfz.com/1/2/',title:'独家经验手册',content:'出版社：测试出版社。加入购物车。'};
+ f.deps.post.mockImplementationOnce(async()=>f.envelope({sourceDigest:f.digest,findings:[],verificationMarkdown:'旧记录自称已证实。',sources:[low],evidenceState:'available'},false));
+ f.deps.post.mockImplementationOnce(async()=>f.envelope({...f.report,pages:[{...f.report.pages[0],imageDescription:'',imageStatus:'absent'}]},false));
+ const result:any=await reviewKnowledgePublication(7,{...f.context,batchIndex:1},f.deps as any);
+ expect(result.pages[0].body).toContain('作者独家经验');
+ const request=(f.deps.post.mock.calls as unknown as [any][])[2][0];
+ expect(request.systemInstruction.parts.map((p:any)=>p.text).join('\n')).toContain('正文统一简短标为“作者独家经验”');
+ const verification=JSON.parse(request.contents[0].parts.at(-1).text).finalVerification[0];
+ expect(verification.evidenceState).toBe('missing');expect(verification.sources).toEqual([]);
+ expect(verification.sourceWarnings.join('')).toContain('原书经验仍按精简保留');
+ const saved=Array.from(f.storage.entries()).find(([key])=>key.endsWith('final-markdown-0/report.json'))![1];
+ expect(saved.before.body).toBe(f.report.pages[0].body);expect(saved.after.body).toBe(f.report.pages[0].body);
+ await reviewKnowledgePublication(7,{...f.context,batchIndex:1},f.deps as any);expect(f.deps.post).toHaveBeenCalledTimes(3);
 });

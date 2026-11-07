@@ -130,7 +130,8 @@ export async function reviewKnowledgeReading(owner:number,context:KnowledgePubli
   request.systemInstruction.parts.push({text:"当前是读档同步预整理，最终统稿尚未完成。先理清本段知识、因果、证据和可读的页面结构；不要假装看过尚未生成的图片。该记录随后交给正式图文顾问复用，未确认任何最终页数或档位。"});
   const raw=await deps.post(request,{prefix:path,read:deps.read,save:deps.save});
   const envelope=JSON.parse(raw.text),report=validateKnowledgeReview(JSON.parse(envelope.candidates[0].content.parts[0].text),batch.source,batch.sourceDigest);
-  await deps.save(`${path}/report.json`,{report,model:envelope.modelVersion,usage:envelope.usageMetadata});
+  await deps.save(`${path}/verification-candidates.json`,{sourceDigest:batch.sourceDigest,pages:report.pages.map(p=>({id:p.id,cautions:p.cautions})),stage:"等待全册整理后统一联网"});
+  await deps.save(`${path}/report.json`,{report,model:envelope.modelVersion,usage:envelope.usageMetadata,research:envelope.research,supplementation:envelope.supplementation,adjustments:envelope.adjustments});
   return report;
 }
 /** 后续顾问只能读取同一本、已成功统稿、真实保存的预整理，不信客户端提供的摘要。 */

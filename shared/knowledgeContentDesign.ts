@@ -5,7 +5,7 @@ export const knowledgeVisualDesignPlanSchema=z.array(z.object({pageId:z.string()
  if(new Set(items.map(x=>x.pageId)).size!==items.length)ctx.addIssue({code:'custom',message:'设计计划页号重复'});
  try{validateKnowledgeDesignBatch(items.map(x=>({reading:{decoration:{design:x.design}}})));}catch(e){ctx.addIssue({code:'custom',message:e instanceof Error?e.message:'整册设计重复'});}
 });
-/** 只读取顾问已返回的设计；缺失或不合格时明确失败，不替模型补选或调整。 */
+/** 读取顾问已整理的设计；只校验可渲染结构，风格重复不阻断正文。 */
 export function knowledgeContentDesignPlan(review:KnowledgeReview){
  const designs=validateKnowledgeDesignBatch(review.pages);
  return review.pages.map((page,i)=>({pageId:page.id,design:designs[i],origin:'model' as const}));

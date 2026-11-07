@@ -14,6 +14,39 @@ const make=()=>{
 };
 const researchReport=(f:ReturnType<typeof make>,urls:string[]=[])=>({kind:'knowledge_research_v1',pages:f.report.pages.map(p=>({pageId:p.id,topic:p.headline,queries:[p.headline],findings:urls.map(url=>({url,summary:'原始来源对本页主题的解释',relevance:'补充本页原稿事实的背景',purpose:'fill_explanation',sourceQuote:'蒸发、凝结、降水',question:'蒸发的能量来源是什么'}))}))});
 
+describe('JSON语法阻断不自动购买下一次',()=>{
+ it('完整数组间漏逗号本地恢复，原响应保留并可零请求重放',async()=>{
+  const f=make(),raw=JSON.stringify(f.report).replace('],["凝结"',']["凝结"');
+  expect(()=>JSON.parse(raw)).toThrow();
+  f.deps.fetch.mockImplementation(async()=>new Response(JSON.stringify({model:OR_MODEL,choices:[{finish_reason:'stop',message:{content:raw}}]})));
+  const first=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  const review=JSON.parse(first.candidates[0].content.parts[0].text);
+  expect(review.pages[0].reading.blocks).toEqual(f.report.pages[0].reading.blocks);
+  expect(first.adjustments.some((v:any)=>v.field==='json.syntax')).toBe(true);
+  const receipt=f.storage.get('test/0/route-openrouter.json');
+  expect(JSON.parse(receipt.response.text).choices[0].message.content).toBe(raw);
+  f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
+  expect(f.deps.fetch).not.toHaveBeenCalled();
+ });
+ it('无法无损修复的JSON只发送一次；再次处理仍不付费重试',async()=>{
+  const f=make(),raw='{"pages":[{"body":"缺失结尾';
+  f.deps.fetch.mockImplementation(async()=>new Response(JSON.stringify({model:OR_MODEL,choices:[{finish_reason:'stop',message:{content:raw}}]})));
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toMatchObject({code:'knowledge_json_syntax'});
+  expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+  expect(f.storage.get('test/0/route-openrouter.json').response.text).toContain('缺失结尾');
+  f.deps.fetch.mockClear();await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toMatchObject({code:'knowledge_json_syntax'});
+  expect(f.deps.fetch).not.toHaveBeenCalled();
+ });
+ it('语法坏回包后仍可采用已有完整回执，不新增请求',async()=>{
+  const f=make();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
+  const good=f.storage.get('test/0/route-openrouter.json');
+  f.storage.set('test/0/route-evolink.json',{...good,route:'evolink',model:EVO_MODEL,response:{status:200,text:JSON.stringify({model:EVO_MODEL,choices:[{finish_reason:'stop',message:{content:JSON.stringify(f.report)}}]})}});
+  f.storage.set('test/0/route-openrouter.json',{...good,response:{status:200,text:JSON.stringify({model:OR_MODEL,choices:[{finish_reason:'stop',message:{content:'{"broken":['}}]})}});
+  f.deps.fetch.mockClear();const recovered=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(recovered.gateway).toBe('evolink');expect(f.deps.fetch).not.toHaveBeenCalled();
+ });
+});
+
 describe('已有设计字段的无损归位',()=>{
  const misplaced=()=>{
   const f=make();f.request.systemInstruction.parts.push({text:KNOWLEDGE_DESIGN_MARKER});
@@ -41,19 +74,122 @@ describe('已有设计字段的无损归位',()=>{
   expect(f.deps.fetch).not.toHaveBeenCalled();
   expect(f.storage.get('test/0/route-openrouter.json').response).toEqual(receipt.response);
  });
- it.each(['conflict','invalid','missing','extra-page'] as const)('仍拒收%s，不删内容或代选设计来通过',async(kind)=>{
+ it.each(['page-decoration','both-levels'] as const)('无损归位%s，完整正文块与原响应保留',async(kind)=>{
+  const f=misplaced(),page:any=f.report.pages[0],reading=page.reading;
+  const design=structuredClone(reading.design);
+  page.decoration=reading.decoration;
+  delete reading.decoration;
+  if(kind==='page-decoration'){page.decoration.design=reading.design;delete reading.design;}
+  const original=JSON.stringify(f.report);
+  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  const adopted=JSON.parse(result.candidates[0].content.parts[0].text).pages[0];
+  expect(adopted.decoration).toBeUndefined();
+  expect(adopted.reading.design).toBeUndefined();
+  expect(adopted.reading.decoration.design).toEqual(design);
+  expect(adopted.reading.blocks).toEqual(reading.blocks);
+  expect(JSON.stringify(f.report)).toBe(original);
+  expect(JSON.parse(f.storage.get('test/0/route-openrouter.json').response.text).choices[0].message.content).toBe(original);
+ });
+ it.each(['missing-reading','extra-page'] as const)('仍拒收%s，不删内容或代选设计来通过',async(kind)=>{
   const f=misplaced(),reading:any=f.report.pages[0].reading;
-  if(kind==='conflict')reading.decoration.design={...reading.design,palette:'plum-ink'};
-  if(kind==='invalid')reading.design.palette=['jade-paper'];
-  if(kind==='missing')delete reading.design;
+  if(kind==='missing-reading'){(f.report.pages[0] as any).decoration=reading.decoration;delete (f.report.pages[0] as any).reading;}
   if(kind==='extra-page')f.report.pages.push(structuredClone(f.report.pages[0]));
   const original=JSON.stringify(f.report);
   f.deps.fetch.mockImplementation(async()=>f.response(OR_MODEL));
   await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('所有已配置通道均失败');
   const firstFailure=f.storage.get('test/0/route-openrouter.json').reason;
-  expect(firstFailure).toMatch({conflict:/Unrecognized key.*design/,invalid:/palette/,missing:/缺少内容驱动设计字段/, 'extra-page':/图文页编号与本批原稿不符/}[kind]);
+  expect(firstFailure).toMatch({'missing-reading':/Unrecognized key.*decoration/, 'extra-page':/图文页编号与本批原稿不符/}[kind]);
   expect(JSON.stringify(f.report)).toBe(original);
   expect(f.storage.has('test/0/accepted.json')).toBe(false);
+ });
+});
+describe('先采用正文再补检索，不因设计矛盾拒收',()=>{
+ const setup=()=>{const f=make();f.request.researchAfterReview=true;f.request.systemInstruction.parts.push({text:'【联网资料融入正文】'});return f;};
+ const search=(f:ReturnType<typeof make>,url='https://example.org/water')=>new Response(JSON.stringify({model:'z-ai/glm-5.3-flashx',choices:[{finish_reason:'stop',message:{content:JSON.stringify(researchReport(f,[url])),annotations:[{type:'url_citation',url_citation:{url,title:'水循环资料',content:'太阳提供蒸发所需能量。'}}]}}]}),{headers:{'Content-Type':'application/json'}});
+ it('无插画组件调整后一次采用，正文与原始回执保留',async()=>{
+  const f=make(),reading:any=f.report.pages[0].reading;
+  reading.decoration={artworkId:'none',header:'illustrated',divider:'geometric',table:'floral-corner',interleave:'artwork-strip',reason:'通过表格说明水的变化',design:{palette:['jade-paper']}};
+  const raw=JSON.stringify(f.report);
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text),report=JSON.parse(out.candidates[0].content.parts[0].text);
+  expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+  expect(report.pages[0].reading.decoration).toMatchObject({artworkId:'none',header:'source-inset',table:'double-rule',interleave:'original-image',design:{palette:'jade-paper',layout:'catalog'}});
+  expect(report.pages[0].reading.blocks).toEqual(reading.blocks);
+  expect(out.adjustments.length).toBeGreaterThan(0);
+  expect(JSON.parse(f.storage.get('test/0/route-openrouter.json').response.text).choices[0].message.content).toBe(raw);
+ });
+ it('实际回执中的artwork别名和额外设计字段只调整版式，不拒收正文',async()=>{
+  const f=make();const reading:any=f.report.pages[0].reading;
+  reading.decoration={artwork:'none',header:'illustrated',divider:'geometric',table:'plain',interleave:'none',reason:'水循环说明',design:{palette:'blue',annotation:'模型额外样式说明'}};
+  const original=JSON.stringify(f.report);
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text),page=JSON.parse(out.candidates[0].content.parts[0].text).pages[0];
+  expect(page.reading.decoration.artworkId).toBe('none');expect(page.reading.decoration.artwork).toBeUndefined();
+  expect(page.reading.blocks).toEqual(reading.blocks);expect(out.adjustments.some((a:any)=>a.before==='模型额外样式说明')).toBe(true);
+  expect(f.deps.fetch).toHaveBeenCalledTimes(1);expect(JSON.stringify(f.report)).toBe(original);
+ });
+ it('正文先保存，检索后补入同一正文及事实，恢复零新增调用',async()=>{
+  const f=setup();f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL)).mockImplementationOnce(async()=>{
+   expect(f.storage.has('test/0/accepted.json')).toBe(true);
+   return search(f);
+  });
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text),report=JSON.parse(out.candidates[0].content.parts[0].text);
+  const sent=f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body));
+  expect(sent.map(s=>s.model)).toEqual([OR_MODEL,'z-ai/glm-5.3-flashx']);
+  expect(sent[0].tools).toBeUndefined();expect(sent[1].tools).toHaveLength(1);
+  expect(report.pages[0].body).toContain('原始来源对本页主题的解释');expect(report.pages[0].body).toContain('https://example.org/water');
+  expect(report.pages[0].body).not.toMatch(/第\s*\d+\s*页|页号/);
+  expect(report.pages[0].facts.at(-1).statement).toBe('原始来源对本页主题的解释');
+  expect(report.pages[0].reading.blocks.slice(0,1)).toEqual(f.report.pages[0].reading.blocks);
+  expect(out.supplementation.status).toBe('completed');
+  const again=await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(JSON.parse(again.text)).toEqual(out);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(f.storage.get('test/0/accepted.json').normalized.text)).toEqual(out);
+ });
+ it('Markdown正文实际后置检索补充进入回执，恢复不重复购买',async()=>{
+  const f=setup();f.request.generationConfig.responseMimeType='text/markdown';
+  f.deps.fetch.mockResolvedValueOnce(new Response(JSON.stringify({model:OR_MODEL,choices:[{finish_reason:'stop',message:{content:'## 水循环\n\n蒸发、凝结、降水\n\n作者独家经验：先看水的去向。'}}]}))).mockImplementationOnce(async()=>search(f));
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  const page=JSON.parse(out.candidates[0].content.parts[0].text).pages[0];
+  expect(page.reading).toBeUndefined();expect(page.body).toContain('原始来源对本页主题的解释');
+  expect(page.body).toContain('作者独家经验');expect(page.sources[0].url).toBe('https://example.org/water');
+  expect(page.facts.at(-1).statement).toBe('原始来源对本页主题的解释');
+  expect(out.supplementation.status).toBe('completed');
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+ });
+ it('搜索断流保留已完成正文及未核实说明，不重购正文或搜索',async()=>{
+  const f=setup();f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL)).mockRejectedValueOnce(Error('断流'));
+  const first=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(first.supplementation.status).toBe('pending');
+  expect(JSON.parse(first.candidates[0].content.parts[0].text).pages[0].cautions[0].message).toContain('尚未补入');
+  expect(f.storage.has('test/0/accepted.json')).toBe(true);
+  const again=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(again.supplementation.status).toBe('pending');expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+  f.storage.set('test/0/after-review-research/glm-openrouter-response.json',{status:200,text:await search(f).text()});
+  const recovered=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(recovered.supplementation.status).toBe('completed');expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(recovered.candidates[0].content.parts[0].text).pages[0].body).toContain('原始来源对本页主题的解释');
+ });
+ it('旧正文恢复不因新顺序补购搜索',async()=>{
+  const f=make();f.request.systemInstruction.parts.push({text:'【联网资料融入正文】'});
+  f.deps.fetch.mockResolvedValueOnce(new Response(JSON.stringify({model:'z-ai/glm-5.3-flashx',choices:[{finish_reason:'stop',message:{content:JSON.stringify(researchReport(f))}}]}),{headers:{'Content-Type':'application/json'}})).mockResolvedValueOnce(f.response(OR_MODEL));
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);f.deps.fetch.mockClear();f.request.researchAfterReview=true;
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
+  expect(f.deps.fetch).not.toHaveBeenCalled();expect(f.storage.has('test/0/post-review-research.json')).toBe(false);
+ });
+ it('升级时旧前置搜索未知仍只查原事务，不另买后置搜索',async()=>{
+  const f=make();f.request.systemInstruction.parts.push({text:'【联网资料融入正文】'});
+  f.deps.fetch.mockRejectedValueOnce(Error('原搜索断流'));
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('未重复提交');
+  f.request.researchAfterReview=true;f.deps.fetch.mockClear();
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('回执尚未闭合');
+  expect(f.deps.fetch).not.toHaveBeenCalled();expect(f.storage.has('test/0/post-review-research.json')).toBe(false);
+ });
+ it('检索全部明确失败仍保留正文，不把正文重新发送其他通道',async()=>{
+  const f=setup();f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL));
+  for(let i=0;i<4;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(out.research.status).toBe('failed');expect(out.supplementation.status).toBe('failed');
+  expect(JSON.parse(out.candidates[0].content.parts[0].text).pages[0].reading.blocks).toEqual(f.report.pages[0].reading.blocks);
+  expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model).filter(m=>m===OR_MODEL)).toHaveLength(1);
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(5);
  });
 });
 describe('图文手册限定模型与同款通道恢复',()=>{
@@ -162,13 +298,15 @@ it('仅兼容根对象json_object格式回显，并可零请求恢复原完整�
  expect(fallback.gateway).not.toBe('openrouter');expect(invalid.storage.get('test/0/route-openrouter.json').reason).toContain('type');
 });
 
-it('新顾问输入必须返回可用装饰配置，缺失不能冒充已经排好图文',async()=>{
- const {KNOWLEDGE_DECORATION_MARKER,resolveKnowledgeDecoration}=await import('../../shared/knowledgeDecorations');
+it('新顾问装饰缺失按真实素材和正文结构调整，不重购整批',async()=>{
+ const {KNOWLEDGE_DECORATION_MARKER}=await import('../../shared/knowledgeDecorations');
  const f=make();f.request.systemInstruction.parts[0].text+=KNOWLEDGE_DECORATION_MARKER;
- const good=structuredClone(f.report);(good.pages[0].reading as any).decoration=resolveKnowledgeDecoration(undefined,'水循环');
- f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL)).mockResolvedValueOnce(f.response(EVO_MODEL,good));
- const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
- expect(f.storage.get('test/0/route-openrouter.json').reason).toContain('装饰组件配置');expect(out.gateway).toBe('evolink');expect(JSON.parse(out.candidates[0].content.parts[0].text).pages[0].reading.decoration).toEqual((good.pages[0].reading as any).decoration);
+ const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+ const answer=JSON.parse(result.candidates[0].content.parts[0].text);
+ expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+ expect(answer.pages[0].reading.decoration).toMatchObject({artworkId:'none',header:'source-inset',table:'double-rule'});
+ expect(answer.pages[0].reading.blocks).toEqual(f.report.pages[0].reading.blocks);
+ expect(result.adjustments.length).toBeGreaterThan(0);
 });
 
 describe('联网补充与真实来源贯穿正文',()=>{
@@ -508,9 +646,11 @@ it('旧搜索回执没有request快照时沿用原输入恢复，不换成新版
  expect(out.modelVersion).toBe(OR_MODEL);expect(f.deps.fetch).toHaveBeenCalledTimes(1);expect(f.storage.get('test/0/research/route-glm-openrouter.json').priorFailureReason).toBe('旧围栏错误');
  expect(f.storage.has('test/0/research/request.json')).toBe(false);
 });
-it('正文仍严格拒绝围栏，不因搜索兼容规则放宽正文合同',async()=>{
+it('完整JSON围栏本地剥离后仍核验正文合同，不为围栏重复购买',async()=>{
  const f=make();f.deps.fetch.mockImplementation(async(_url?:unknown,init?:RequestInit)=>new Response(JSON.stringify({model:JSON.parse(String(init?.body)).model,choices:[{finish_reason:'stop',message:{content:'```json\n'+JSON.stringify(f.report)+'\n```'}}]}),{headers:{'Content-Type':'application/json'}}));
- await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('所有已配置通道均失败');expect(f.storage.has('test/0/accepted.json')).toBe(false);
+ const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+ expect(JSON.parse(out.candidates[0].content.parts[0].text).pages[0].reading.blocks).toEqual(f.report.pages[0].reading.blocks);
+ expect(f.deps.fetch).toHaveBeenCalledTimes(1);expect(f.storage.has('test/0/accepted.json')).toBe(true);
 });
 
 it.each(['gemini-3.8-flash','gpt-5','deepseek/unknown'])('付费出口%s未获授权时密钥与网络调用均为零',async model=>{
@@ -558,3 +698,15 @@ describe('旧完整正文的严格零调用恢复',()=>{
   expect(KNOWLEDGE_RESEARCH_INSTRUCTIONS).toContain('pages[i]对象内');expect(KNOWLEDGE_RESEARCH_INSTRUCTIONS).toContain('禁止在根对象输出sources');
  });
 });
+
+
+describe('Markdown明确上游失败遵守正式重试链',()=>{
+ const setup=()=>{const f=make();f.request.executionChannel='openrouter';f.request.generationConfig.responseMimeType='text/markdown';f.request.contents[0].parts=f.request.contents[0].parts.filter(p=>'text' in p);return f;};
+ const reply=(model:string,finish:string)=>new Response(JSON.stringify({model,choices:[{finish_reason:finish,message:{content:'# 水循环\n\n## 主要重点｜蒸发\n\n太阳提供能量，水从液态转变为水蒸气。'}}]}),{headers:{'Content-Type':'application/json'}});
+ it('明确error后下一次成功，恢复不再请求',async()=>{const f=setup();f.deps.fetch.mockResolvedValueOnce(reply(OR_MODEL,'error')).mockResolvedValueOnce(reply(OR_MODEL,'stop'));await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).not.toHaveBeenCalled();});
+ it('DeepSeek四次明确失败才进入既有GLM兜底',async()=>{const f=setup();f.deps.fetch.mockImplementation(async(_url?:unknown,init?:RequestInit)=>{const body=JSON.parse(String(init?.body));return reply(body.model,body.model===OR_MODEL?'error':'stop');});await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(5);});
+ it('未知网络回执不能因允许重试而重购',async()=>{const f=setup();f.deps.fetch.mockRejectedValue(new Error('connection lost'));await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow();expect(f.deps.fetch).toHaveBeenCalledTimes(1);await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow();expect(f.deps.fetch).toHaveBeenCalledTimes(1);});
+});
+
+
+it('Markdown旧32k请求恢复时实际发送采用模型容量而非应用额度',async()=>{const f=make();f.request.executionChannel='openrouter';f.request.generationConfig.responseMimeType='text/markdown';f.request.contents[0].parts=f.request.contents[0].parts.filter(p=>'text' in p);f.deps.fetch.mockImplementation(async(_url?:unknown,init?:RequestInit)=>{const body=JSON.parse(String(init?.body));expect(body.max_tokens).toBe(393216);return new Response(JSON.stringify({model:OR_MODEL,choices:[{finish_reason:'stop',message:{content:'# 水循环\n\n太阳提供能量，水从液态转变为水蒸气。'}}]}));});await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(1);});

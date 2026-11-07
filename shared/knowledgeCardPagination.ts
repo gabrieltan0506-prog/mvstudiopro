@@ -9,6 +9,7 @@ import {
   type KnowledgeCardDistillModelId,
 } from "./knowledgeCardDistillModels.js";
 import { stripKnowledgeCardPageRefs } from "./knowledgeCardPageRefs.js";
+import { knowledgeEditionParts } from './knowledgeCardEdition';
 
 export const KNOWLEDGE_CARD_TARGET_MIN_PAGES = 4;
 export const KNOWLEDGE_CARD_TARGET_MAX_PAGES = 8;
@@ -431,7 +432,8 @@ export function planKnowledgeCardPages(
 ): KnowledgeCardPagePlan {
   const model = resolveKnowledgeCardDistillModel(distillModel);
   // 〔参考原页〕标记只供服务端定位页图，不计入页数与页费
-  const full = stripKnowledgeCardInternalDirectives(stripKnowledgeCardPageRefs(String(text || ""))).trim();
+  const edition=knowledgeEditionParts(String(text||''));
+  const full = stripKnowledgeCardInternalDirectives(stripKnowledgeCardPageRefs(edition?edition.images:String(text || ""))).trim();
   if (!full) {
     return { pages: [], pageCount: 0, credits: 0, roundText: "", distillModel: model };
   }

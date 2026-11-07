@@ -1,3 +1,10 @@
+import {knowledgeSupplementRefinementFromMarkdown} from '../../shared/knowledgeSupplementRefinement';
+import { knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
+import { knowledgeLayoutFromMarkdown } from './knowledgeMarkdownLayout';
+import { knowledgeReviewFromMarkdown } from './knowledgeMarkdownReview';
+import { adjustKnowledgeReviewPresentation } from './knowledgeReviewAdjustment';
+import { supplementKnowledgeReview } from './knowledgeReviewSupplement';
+import { KnowledgeJsonSyntaxError, parseKnowledgeModelJson } from './knowledgeModelJson';
 import { validateKnowledgeBookLayoutPlan } from "../../shared/knowledgeBookLayout";
 import { knowledgeConversationAnswerSchema } from "../../shared/knowledgeConversation";
 import {validateKnowledgePresentationPlan} from "../../shared/knowledgePresentation";
@@ -10,8 +17,8 @@ import { getOpenRouterApiKey } from "./openrouterGptImage2";
 import { getEvolinkApiKey } from "./gpt56CopywritingGateway";
 import { signGsUriV4ReadUrl } from "./gcs";
 import { GLM_STREAM_IDLE_TIMEOUT_MS, readGlmSseStream } from "./sseChatStream";
-import { knowledgeModelCapabilities, knowledgeOutputBudget, KNOWLEDGE_PUBLICATION_ROUTE_ORDER, KNOWLEDGE_PUBLICATION_ALL_ROUTES, knowledgePublicationRoutesForChannel, type KnowledgeModelChannel } from "./knowledgeModelCapabilities";
-import { knowledgeReviewSchema, knowledgeDesignedReviewSchema, validateKnowledgeReview, knowledgeConsistencySchema } from "../../shared/knowledgePublication";
+import { knowledgeModelCapabilities, knowledgeOutputBudget, KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST, KNOWLEDGE_PUBLICATION_ROUTE_ORDER, KNOWLEDGE_PUBLICATION_ALL_ROUTES, knowledgePublicationRoutesForChannel, type KnowledgeModelChannel } from "./knowledgeModelCapabilities";
+import { knowledgeReviewSchema, validateKnowledgeReview, knowledgeConsistencySchema } from "../../shared/knowledgePublication";
 import { knowledgeReadingMarkdown } from "../../shared/knowledgePublicationLayout";
 
 export const KNOWLEDGE_PUBLICATION_MODEL = "deepseek/deepseek-v4.1-flash-1017";
@@ -20,6 +27,8 @@ export const KNOWLEDGE_PUBLICATION_ROUTE_VERSION = "knowledge-1017-structured-v2
 export type KnowledgeModelRequest = {
   executionChannel?: KnowledgeModelChannel;
   researchOnly?: true;
+  researchRequired?: boolean;
+  researchAfterReview?: true;
   researchPages?: { id: string; headline: string; body?: string }[];
   systemInstruction: { parts: { text: string }[] };
   contents: { role: string; parts: ({ text: string } | { fileData: { mimeType: string; fileUri: string } })[] }[];
@@ -79,11 +88,53 @@ const real = {
 };
 
 /** 完整原稿合同验证后才采用该跳；修订后的版式内容成为唯一确认正文。 */
-function validateAnswer(content: string, request: KnowledgeModelRequest, sources: KnowledgeWebSource[] = [], sourceWarnings: string[] = []) {
+function validateAnswer(content: string, request: KnowledgeModelRequest, sources: KnowledgeWebSource[] = [], sourceWarnings: string[] = [], adjustments: unknown[] = []) {
+  if (request.generationConfig.responseMimeType === 'text/markdown' && !request.researchPages) {
+    const layoutInput=request.contents.flatMap(c=>c.parts).flatMap(p=>{
+      if(!('text' in p))return [];try{return [JSON.parse(p.text)];}catch{return [];}
+    }).find(v=>v.conversation?.action==='layout');
+    const supplementInput=request.contents.flatMap(c=>c.parts).flatMap(p=>{
+      if(!('text' in p))return [];try{return [JSON.parse(p.text)];}catch{return [];}
+    }).find(v=>v.conversation?.action==='supplement');
+    if(supplementInput)return knowledgeSupplementRefinementFromMarkdown(content,supplementInput.conversation.requestId,supplementInput.conversation.pageIds);
+    if(layoutInput){
+      // 旧请求/旧回包兼容：只采用完整有效旧合同，解析失败仍按普通Markdown处理。
+      try {
+        const legacy=knowledgeConversationAnswerSchema.safeParse(JSON.parse(content));
+        if(legacy.success && legacy.data.requestId===layoutInput.conversation.requestId && legacy.data.layoutPlan){
+          validateKnowledgeBookLayoutPlan(legacy.data.layoutPlan,layoutInput.bookLayout);
+          if(!legacy.data.sources.length && !legacy.data.supplementalImages.length)return legacy.data;
+        }
+      }catch { /* 普通Markdown无需JSON解析成功。 */ }
+      const {retained,...answer}=knowledgeLayoutFromMarkdown(content,layoutInput.bookLayout,layoutInput.conversation.requestId,layoutInput.conversation.layout?.templateId);
+      if(retained.length)adjustments.push({field:'layout',preservedTemplateChapters:retained});
+      return answer;
+    }
+    if (request.researchOnly) {
+      const input=request.contents.flatMap(c=>c.parts).flatMap(p=>{
+        if (!('text' in p)) return [];
+        try {return [JSON.parse(p.text)];} catch{return [];}
+      }).find(p=>p.sourceDigest);
+      const assessed=knowledgeVerificationSourceEvidence(sources);
+      return {sourceDigest:input?.sourceDigest,findings:[],verificationMarkdown:content,
+        verificationTriggers:input?.verificationTriggers||[],...assessed,
+        sourceWarnings:[...sourceWarnings,...assessed.sourceWarnings,...(request.researchRequired&&!assessed.sources.length?['本次未取得可用独立依据，不能将模型自述当核实通过；原书经验去营销后精简保留。']:[])]};
+    }
+    const input = request.contents.flatMap(c=>c.parts).flatMap(p=>{
+      if (!('text' in p)) return [];
+      try { const v=JSON.parse(p.text); return v.source ? [v] : []; } catch { return []; }
+    })[0];
+    if (!input) throw Error('Markdown正文缺少原稿身份');
+    return knowledgeReviewFromMarkdown(content,input.source,input.sourceDigest);
+  }
   // 搜索工具的完整回答可能带单个 JSON 代码围栏；仅剥离整段围栏，不从混杂说明中猜取 JSON。
   const researchJson = request.researchOnly && content.trim().match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
   let parsed: any;
-  try { parsed = JSON.parse(researchJson ? researchJson[1] : content); }
+  try {
+    const result = parseKnowledgeModelJson(researchJson ? researchJson[1] : content);
+    parsed = result.value;
+    adjustments.push(...result.repairs.map(repair => ({ field: 'json.syntax', ...repair })));
+  }
   catch (error) {
     if (request.researchOnly && request.researchPages) return validateKnowledgeResearchResult(null, request.researchPages, sources);
     throw error;
@@ -130,20 +181,10 @@ function validateAnswer(content: string, request: KnowledgeModelRequest, sources
     // 旧提示词未明确来源层级。仅空根数组没有内容可丢失；非空来源仍由严格合同拒收。
     if (candidate.kind === "knowledge_publication_v1" && Array.isArray(candidate.sources) && candidate.sources.length === 0)
       candidate = Object.fromEntries(Object.entries(candidate).filter(([key]) => key !== "sources"));
-    // 只归位模型已经提供的设计对象；不补字段、不改页号、不丢正文。
-    // 两处同时存在或缺少装饰对象时仍交严格合同拒收，不能猜测应采用哪一份。
-    if (candidate.kind === "knowledge_publication_v1" && Array.isArray(candidate.pages)) {
-      candidate = { ...candidate, pages: candidate.pages.map((page: any) => {
-        const reading = page?.reading, decoration = reading?.decoration;
-        if (!reading || typeof reading !== "object" || Array.isArray(reading) ||
-            !Object.prototype.hasOwnProperty.call(reading, "design") ||
-            !decoration || typeof decoration !== "object" || Array.isArray(decoration) ||
-            Object.prototype.hasOwnProperty.call(decoration, "design")) return page;
-        const { design, ...rest } = reading;
-        return { ...page, reading: { ...rest, decoration: { ...decoration, design } } };
-      }) };
-    }
-    const review = (request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_DESIGN_MARKER))?knowledgeDesignedReviewSchema:knowledgeReviewSchema).parse(candidate);
+    const adjusted = adjustKnowledgeReviewPresentation(candidate, source.source, request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_DESIGN_MARKER)), request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_DECORATION_MARKER)));
+    adjustments.push(...adjusted.adjustments);
+    // 装饰分配不再整批拒收；结构、身份、非空正文及真实图片审校仍校验。
+    const review = knowledgeReviewSchema.parse(adjusted.value);
     if (review.sourceDigest !== source.sourceDigest || review.pages.length !== source.source.pages.length ||
         review.pages.some((p, i) => p.id !== source.source.pages[i].id))
       throw new Error("图文页编号与本批原稿不符");
@@ -182,7 +223,8 @@ export function buildKnowledgeResearchRequest(request: KnowledgeModelRequest): K
   researchPages:pages.map(({id,headline,body}:any)=>({id,headline,body})),
   systemInstruction:{parts:[{text:`${KNOWLEDGE_RESEARCH_MARKER}\n${KNOWLEDGE_RESEARCH_SCHEMA_INSTRUCTION}`}]},
   contents:[{role:"user",parts:[{text:JSON.stringify({input:{sourceDigest:sourceInput.sourceDigest,pages}})}]}],
-  generationConfig:{...request.generationConfig,maxOutputTokens:8192},
+  // 旧逐页检索是短来源回执，不能继承正文MD并误走整册核实解析；正文仍是Markdown。
+  generationConfig:{...request.generationConfig,maxOutputTokens:8192,responseMimeType:"application/json"},
  };
 }
 
@@ -200,13 +242,69 @@ export async function invokeKnowledgePublicationRoutes(
   evidence: KnowledgeRouteEvidence,
   overrides: Partial<typeof real> = {},
 ): Promise<{ status: number; text: string }> {
+  // 每段 Markdown 单独绑定身份，不要求模型输出脆弱的章节分隔符或页号。
+  if (request.generationConfig.responseMimeType === 'text/markdown') {
+    const input = request.contents.flatMap(c=>c.parts).flatMap(p=>{
+      if (!('text' in p)) return [];
+      try { const v=JSON.parse(p.text); return v.source ? [v] : []; } catch { return []; }
+    })[0];
+    if (input?.source.pages.length > 1 && !input.conversation) {
+      const results:any[] = new Array(input.source.pages.length);
+      const workerCount=Math.min(10,input.source.pages.length);
+      const settled=await Promise.allSettled(Array.from({length:workerCount},async(_,worker)=>{
+        for(let index=worker;index<input.source.pages.length;index+=workerCount){
+          const channel=index%2===0?'openrouter':'evolink';
+          const page=input.source.pages[index];
+          const source={...input.source,pages:[page]};
+          const context=request.contents.flatMap(c=>c.parts).filter(p=>{
+            if(!('text' in p))return false;
+            try{return !JSON.parse(p.text).source;}catch{return true;}
+          });
+          const parts:KnowledgeModelRequest['contents'][number]['parts']=[...context,{text:JSON.stringify({sourceDigest:input.sourceDigest,source})}];
+          if(page.imageUrl){
+            const image=request.contents.flatMap(c=>c.parts).find(p=>'fileData' in p && p.fileData.fileUri===page.imageUrl);
+            if(image)parts.push(image);
+          }
+          const next:KnowledgeModelRequest={...request,executionChannel:request.executionChannel || channel as KnowledgeModelChannel,contents:[{role:'user',parts}]};
+          const raw=await invokeKnowledgePublicationRoutes(next,{...evidence,prefix:`${evidence.prefix}/markdown-${index}`},overrides);
+          results[index]=JSON.parse(raw.text);
+        }
+      }));
+      const failed=settled.find((r):r is PromiseRejectedResult=>r.status==='rejected');
+      if(failed)throw failed.reason;
+      const reviews=results.map(result=>JSON.parse(result.candidates[0].content.parts[0].text));
+      const review={...reviews[0],pages:reviews.flatMap(r=>r.pages)};
+      const imageSources=input.source.pages.filter((p:any)=>p.imageUrl).map((p:any)=>p.imageUrl);
+      const normalized={status:200,text:JSON.stringify({...results[0],
+        candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(review)}]}}],
+        // 多通道费用并非都回传，不能把第一段费用冒充整批总费用。
+        usageMetadata:{
+          prompt_tokens:results.reduce((n,r)=>n+Number(r.usageMetadata?.prompt_tokens||0),0),
+          completion_tokens:results.reduce((n,r)=>n+Number(r.usageMetadata?.completion_tokens||0),0),
+          total_tokens:results.reduce((n,r)=>n+Number(r.usageMetadata?.total_tokens||0),0),
+          known_cost:results.reduce((n,r)=>n+Number(r.usageMetadata?.cost||0),0),
+          cost_complete:results.every(r=>typeof r.usageMetadata?.cost==='number'),
+          batches:results.map(r=>({model:r.modelVersion,gateway:r.gateway,usage:r.usageMetadata})),
+        },
+        markdownBatches:results.map(r=>({model:r.modelVersion,gateway:r.gateway,usage:r.usageMetadata})),
+        inputEvidence:{imageSources,imageInputCount:imageSources.length},
+      })};
+      await evidence.save(`${evidence.prefix}/markdown-accepted.json`,{requestDigest:digest(request),normalized});
+      return normalized;
+    }
+  }
   const deps = { ...real, ...overrides };
   const research = request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_RESEARCH_MARKER));
   let webSources: KnowledgeWebSource[] = [];
   const sourceWarnings: string[] = [];
-  const requestDigest = digest([KNOWLEDGE_PUBLICATION_ROUTE_VERSION, request]);
+  // 后置检索是执行顺序，不改变原稿身份；旧完整回执仍可零请求恢复。
+  const {researchAfterReview, ...identityRequest} = request;
+  const requestDigest = digest([KNOWLEDGE_PUBLICATION_ROUTE_VERSION, identityRequest]);
+  let postResearch = researchAfterReview === true && research && !request.researchOnly;
   const traces: { route: KnowledgeRoute; state: string; model: string; status?: number }[] = [];
   let lastFailure = "";
+  let syntaxFailure: KnowledgeJsonSyntaxError | undefined;
+  let markdownFailure: Error | undefined;
   let researchEvidence: { status: "succeeded" | "failed"; model?: string; gateway?: string; usage?: unknown; traces: unknown; validation?: unknown; pages?: unknown } | undefined;
   const images = request.contents.flatMap(c => c.parts).flatMap(p => "fileData" in p ? [p.fileData.fileUri] : []);
   // 已撤回模型只读历史回执；未知结果不能因为删除旧路由就变成可重新购买。
@@ -239,9 +337,24 @@ export async function invokeKnowledgePublicationRoutes(
     webSources = savedSources.sources;
     researchEvidence = savedSources.research;
   }
+  if (postResearch && !existing.size) {
+    // 升级时尚在旧前置搜索的事务沿原顺序恢复，不能另起后置搜索重复付费。
+    let priorSearch = Boolean(await evidence.read(`${evidence.prefix}/research/request.json`));
+    if (!priorSearch) for (const target of KNOWLEDGE_PUBLICATION_ALL_ROUTES) {
+      if (await evidence.read(`${evidence.prefix}/research/route-${target.id}.json`)) { priorSearch = true; break; }
+    }
+    if (priorSearch) postResearch = false;
+  }
+  const workflowKey = `${evidence.prefix}/post-review-research.json`;
+  let postWorkflow = postResearch ? await evidence.read(workflowKey) : null;
+  if (postWorkflow && postWorkflow.requestDigest !== requestDigest) throw new Error("后置检索原稿版本变化，保留原请求");
+  if (postResearch && !existing.size && !postWorkflow) {
+    postWorkflow = {requestDigest, state:"planned"};
+    await evidence.save(workflowKey, postWorkflow);
+  }
   // 旧正文已发送时只回放原回执，不为恢复已有结果补购搜索。
   // 两条并发通道各用 FlashX 自主搜索，再把真实来源交本通道的正文整理请求。
-  if (research && !request.researchOnly && !existing.size) {
+  if (research && !postResearch && !request.researchOnly && !existing.size) {
     let researchRequest: KnowledgeModelRequest = {
       ...(request.executionChannel ? { executionChannel: request.executionChannel } : {}),
       researchOnly: true,
@@ -288,6 +401,9 @@ export async function invokeKnowledgePublicationRoutes(
     } : request;
     const key = `${evidence.prefix}/route-${route}.json`;
     let receipt = await evidence.read(key);
+    // 已有其他完整回包仍可零调用复验；语法阻断之后不再购买新路由。
+    if (syntaxFailure && !receipt) throw syntaxFailure;
+    if (markdownFailure && !receipt) throw markdownFailure;
     if (receipt && receipt.requestDigest !== requestDigest)
       throw new Error("模型输入版本变化，不能复用旧路由回执");
     if (receipt?.state === "pending" || receipt?.state === "unknown") {
@@ -305,7 +421,7 @@ export async function invokeKnowledgePublicationRoutes(
         await evidence.save(key, receipt);
       } else {
         const messages = [
-          { role: "system", content: request.systemInstruction.parts.map(p => p.text).join("\n") },
+          { role: "system", content: request.systemInstruction.parts.map(p => p.text).join("\n") + (postResearch && postWorkflow ? "\n本次先完成已有原文和实际配图的整理，检索在正文保存后独立执行并补入。当前没有检索结果时sources=[]，不虚构外部事实；设计矛盾按正文与可用素材调整，不为装饰问题丢掉整批内容。" : "") },
           ...routeRequest.contents.map(c => ({ role: c.role, content: c.parts.map(p => "text" in p ?
             { type: "text", text: p.text } : { type: "image_url", image_url: { url: deps.sign(p.fileData.fileUri), detail: "high" } }) })),
         ];
@@ -314,10 +430,10 @@ export async function invokeKnowledgePublicationRoutes(
         const body = {
           ...(needsSearch ? { tools: channel === "openrouter"
             ? [{ type: "openrouter:web_search", parameters: { max_results: 3, max_total_results: 12 } }]
-            : [{ type: "web_search", web_search: { enable: true, search_result: true, count: 12, require_search: false } }],
+            : [{ type: "web_search", web_search: { enable: true, search_result: true, count: 12, require_search: request.researchRequired === true } }],
           } : {}),
-          model, messages, max_tokens: knowledgeOutputBudget(model, channel, request.generationConfig.maxOutputTokens, inputBudget),
-          stream: true, stream_options: { include_usage: true }, response_format: { type: "json_object" },
+          model, messages, max_tokens: knowledgeOutputBudget(model, channel, request.generationConfig.responseMimeType === 'text/markdown' ? KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST : request.generationConfig.maxOutputTokens, inputBudget),
+          stream: true, stream_options: { include_usage: true }, ...(request.generationConfig.responseMimeType === "text/markdown" ? {} : {response_format: { type: "json_object" }}),
           ...(channel === "openrouter" ? { provider: capability.provider, reasoning: { effort: "high" } } :
             { ...(model.startsWith("deepseek") ? { thinking: { type: "enabled" } } : {}), reasoning_effort: "high" }),
         };
@@ -383,6 +499,8 @@ export async function invokeKnowledgePublicationRoutes(
       continue;
     }
     let normalized: { status: number; text: string };
+    const adjustments: unknown[] = [];
+    let completeAnswerReceived=false;
     try {
       const response = receipt.response;
       if (!(response.status >= 200 && response.status < 300)) throw new Error(`HTTP ${response.status}`);
@@ -390,10 +508,12 @@ export async function invokeKnowledgePublicationRoutes(
       let answer: unknown;
       let output: Record<string, unknown>;
         const choice = envelope.choices?.[0];
-        if (choice?.finish_reason !== "stop" || envelope.model !== model) throw new Error("实际模型版本不符或输出未完整结束");
-        answer = validateAnswer(choice.message.content, request, webSources, sourceWarnings);
+        if (envelope.model !== model) throw new Error("实际模型版本不符，原回包已保留，未采用");
+        if (choice?.finish_reason !== "stop") throw new Error(`模型输出未完整结束（finish_reason=${String(choice?.finish_reason||"missing").replace(/[^a-z_]/gi,"").slice(0,40)}），原稿与回包已保留，未采用不完整正文`);
+        completeAnswerReceived=true;
+        answer = validateAnswer(choice.message.content, request, webSources, sourceWarnings, adjustments);
         output = {
-          modelVersion: envelope.model, usageMetadata: envelope.usage,
+          modelVersion: envelope.model, usageMetadata: envelope.usage, adjustments,
           candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(answer) }] } }],
         };
       traces.push({ route, model: String(output.modelVersion), state: "succeeded", status: response.status });
@@ -401,10 +521,14 @@ export async function invokeKnowledgePublicationRoutes(
         inputEvidence: { imageSources: images, imageInputCount: images.length, requestDigest, imageTokenReporting: "provider_specific" } }) };
     } catch (error) {
       // HTTP错误、版本不符或完整响应校验失败均有原始回执，不以成功掩盖缺页。
-      receipt = { ...receipt, state: "failed", reason: error instanceof Error ? `${error.name === "ZodError" ? "输出合同不符：" : ""}${error.message}` : "输出合同不符" };
+      receipt = { ...receipt, state: "failed", adjustments, reason: error instanceof Error ? `${error.name === "ZodError" ? "输出合同不符：" : ""}${error.message}` : "输出合同不符" };
       await evidence.save(key, receipt);
       lastFailure = receipt.reason;
       traces.push({ route, model, state: "failed", status: receipt.response?.status });
+      if(completeAnswerReceived&&request.generationConfig.responseMimeType==='text/markdown')markdownFailure=error instanceof Error?error:new Error(String(error));
+      if (error instanceof KnowledgeJsonSyntaxError) syntaxFailure = error;
+      else if (adjustments.some(item => (item as {field?:string}).field === 'json.syntax'))
+        syntaxFailure = new KnowledgeJsonSyntaxError('格式修复后未通过原稿身份或内容合同校验，保留正文与修复记录待处理');
       continue;
     }
     if (receipt.state === "failed") {
@@ -412,8 +536,48 @@ export async function invokeKnowledgePublicationRoutes(
       await evidence.save(key, { ...receipt, state: "received", priorFailureReason: receipt.reason, reason: undefined, recoveredAt: new Date().toISOString() });
     }
     // 保存失败不能当成模型失败去买下一跳；已收到的原始回执可直接复用。
+    if (postResearch && postWorkflow) {
+      const saved = await evidence.read(`${evidence.prefix}/supplemented.json`);
+      if (saved) {
+        if (saved.requestDigest !== requestDigest) throw new Error("补充结果原稿版本变化");
+        return saved.normalized;
+      }
+    }
     await evidence.save(`${evidence.prefix}/accepted.json`, { requestDigest, normalized, traces });
+    if (postResearch && postWorkflow) {
+      // 原正文先永久保存；检索失败/未知不能把它退回模型重购。
+      const envelope = JSON.parse(normalized.text);
+      const original = knowledgeReviewSchema.parse(JSON.parse(envelope.candidates[0].content.parts[0].text));
+      const searchRequest = buildKnowledgeResearchRequest(request);
+      const researchPrefix = `${evidence.prefix}/after-review-research`;
+      await evidence.save(`${researchPrefix}/request.json`, {parentDigest:requestDigest,request:searchRequest});
+      let checked: ReturnType<typeof validateKnowledgeResearchResult> | undefined;
+      let researchMeta: Record<string, unknown>;
+      try {
+        const raw = await invokeKnowledgePublicationRoutes(searchRequest,{...evidence,prefix:researchPrefix},overrides);
+        const out = JSON.parse(raw.text);
+        checked = JSON.parse(out.candidates[0].content.parts[0].text);
+        researchMeta = {status:"succeeded",model:out.modelVersion,gateway:out.gateway,usage:out.usageMetadata,traces:out.gatewayTrace,validation:checked!.validation};
+      } catch (error) {
+        // 后置搜索只允许原回执恢复；未知结果不触发新搜索或正文回退。
+        researchMeta = {status:error instanceof KnowledgeRoutesExhaustedError ? "failed" : "pending",message:error instanceof Error?error.message:"检索未闭合"};
+      }
+      const supplemented = checked ? supplementKnowledgeReview(original,checked) : {review:original,pending:[]};
+      if (!checked) for (const page of supplemented.review.pages)
+        page.cautions.push({kind:"uncertain",evidence:"联网核实尚未取得可用结果。",message:"原正文已保留，待核实内容尚未补入，不视为已经查证。"});
+      if (checked && checked.validation.status !== "validated") for (const page of supplemented.review.pages)
+        page.cautions.push({kind:"uncertain",evidence:"部分检索资料尚未通过来源或内容核对。",message:"已核实资料已补入；其余资料保留在检索回执，不冒称核实完整。"});
+      envelope.candidates[0].content.parts[0].text = JSON.stringify(supplemented.review);
+      envelope.research = researchMeta;
+      envelope.supplementation = {status:!checked ? researchMeta.status : supplemented.pending.length || checked.validation.status !== "validated" ? "partial" : "completed",pending:supplemented.pending};
+      normalized = {status:200,text:JSON.stringify(envelope)};
+      await evidence.save(workflowKey,{requestDigest,state:envelope.supplementation.status,research:researchMeta,pending:supplemented.pending});
+      // 未闭合搜索不写完成缓存；再次恢复只重验同一搜索回执。
+      if (checked || researchMeta.status === "failed") await evidence.save(`${evidence.prefix}/supplemented.json`,{requestDigest,normalized});
+      await evidence.save(`${evidence.prefix}/accepted.json`,{requestDigest,normalized,traces});
+    }
     return normalized;
   }
+  if (syntaxFailure) throw syntaxFailure;
   throw new KnowledgeRoutesExhaustedError(`图文整理的所有已配置通道均失败，原稿与各跳回执已保存${lastFailure ? `：${lastFailure}` : ""}`, traces);
 }

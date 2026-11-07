@@ -9,6 +9,7 @@ import {
   KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
   KNOWLEDGE_CARD_GLM_FIRST_ORDER,
   openRouterProviderLockForTier,
+  knowledgeCardChainForPrimary,
   type KnowledgeCardTier,
 } from "./knowledgeCardGatewayOrder.js";
 import { GLM_53_FLASHX_EVOLINK_MODEL, GLM_53_FLASHX_OPENROUTER_MODEL } from "./glmModels.js";
@@ -49,15 +50,16 @@ type DeriveGateway = {
   key: string;
   model: string;
 };
-function deriveGateways(model?: string): DeriveGateway[] {
+function deriveGateways(model?: string, primary?: "openrouter" | "evolink"): DeriveGateway[] {
   const evo = String(process.env.EVOLINK_API_KEY || "").trim();
   const sg = String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim();
   const or = String(process.env.OPENROUTER_API_KEY || "").trim();
   // 终审第五条：派生与主链共用同一份顺序；receipt 选了哪档，派生就从哪档起跳
-  const order =
+  const defaultOrder =
     resolveKnowledgeCardDistillModel(model) === KNOWLEDGE_CARD_DISTILL_MODEL_GLM
       ? KNOWLEDGE_CARD_GLM_FIRST_ORDER
       : KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER;
+  const order = primary ? knowledgeCardChainForPrimary(defaultOrder,primary) : defaultOrder;
   const out: DeriveGateway[] = [];
   for (const step of order) {
     if (step.gateway === "evolink" && evo) {
@@ -230,7 +232,7 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
 }
 
 /** 按网关链调用；整条链都失败时隔 20 秒重跑，最多 4 次（0923 用户令） */
-async function deriveChat(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
+async function deriveChat(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal; executionChannel?: "openrouter" | "evolink" }): Promise<string> {
   return retryKnowledgeCardChain(() => deriveChainOnce(params), {
     label: "knowledgeCardLevelDerive",
     abortSignal: params.abortSignal,
@@ -239,9 +241,9 @@ async function deriveChat(params: { system: string; user: string; model?: string
 }
 
 /** 按网关链调用一遍：一家坏了（HTTP 错 / 空内容 / 截断）换下一家 */
-async function deriveChainOnce(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
+async function deriveChainOnce(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal; executionChannel?: "openrouter" | "evolink" }): Promise<string> {
   // 终审第五条：model（来自服务端 receipt）决定链序，不再丢弃
-  const gateways = deriveGateways(params.model);
+  const gateways = deriveGateways(params.model,params.executionChannel);
   if (!gateways.length) throw new Error("精华版派生未配置（EVOLINK_API_KEY / OPENROUTER_API_KEY）");
   let lastError: Error | null = null;
   // 如实报错：只有每一跳都是截断，才说「所有通道都没写完」
@@ -299,15 +301,19 @@ export async function deriveKnowledgeCardCompact(params: {
   while ((current.length > target || pageCount(current) > KNOWLEDGE_CARD_MAX_KEY_ILLUSTRATIONS) && passes < 3) {
     passes += 1;
     const batches = batchSections(current);
-    const outputs: string[] = [];
-    for (let i = 0; i < batches.length; i++) {
-      await params.onProgress?.({ doneBatches: i, totalBatches: batches.length, pass: passes });
+    const outputs: string[] = new Array(batches.length);
+    let doneBatches=0;
+    await params.onProgress?.({doneBatches,totalBatches:batches.length,pass:passes});
+    const workerCount=Math.min(10,batches.length);
+    const settled=await Promise.allSettled(Array.from({length:workerCount},async(_,worker)=>{
+    for (let i = worker; i < batches.length; i+=workerCount) {
       const batch = batches[i]!;
       const keep = Math.max(2, Math.ceil((target * batch.length) / current.length));
       params.abortSignal?.throwIfAborted();
       const raw = await chat({
         system: buildDeriveSystem(keep, batch.length, Math.max(1, Math.floor(KNOWLEDGE_CARD_MAX_KEY_ILLUSTRATIONS * batch.length / current.length))),
         user: batch.join("\n\n"),
+        executionChannel:i%2===0?"openrouter":"evolink",
         model,
         abortSignal: params.abortSignal,
         maxTokens: Math.min(120_000, Math.max(DERIVE_MIN_OUTPUT_TOKENS, Math.ceil(batch.join("").length / 2))),
@@ -317,8 +323,12 @@ export async function deriveKnowledgeCardCompact(params: {
       if (got < 1 || got > keep * 2 + 2) {
         throw new Error(`精华版派生第 ${passes} 轮第 ${i + 1}/${batches.length} 批输出异常（要 ${keep} 节，回 ${got} 节）`);
       }
-      outputs.push(raw);
+      outputs[i]=raw;
+      await params.onProgress?.({doneBatches:++doneBatches,totalBatches:batches.length,pass:passes});
     }
+    }));
+    const failed=settled.find((r):r is PromiseRejectedResult=>r.status==='rejected');
+    if(failed)throw failed.reason;
     await params.onProgress?.({ doneBatches: batches.length, totalBatches: batches.length, pass: passes });
     const merged = mergeDistilledMarkdownChunks(outputs);
     const next = splitMarkdownSections(merged).sections;

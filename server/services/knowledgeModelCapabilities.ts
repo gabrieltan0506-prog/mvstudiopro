@@ -7,6 +7,8 @@ import {
 
 export const KNOWLEDGE_DEEPSEEK_OPENROUTER_MODEL = "deepseek/deepseek-v4.1-flash-1017";
 export const KNOWLEDGE_DEEPSEEK_EVOLINK_MODEL = "deepseek-v4.1-flash-1017";
+// 不设应用层输出额度；实际发送前按模型容量和剩余上下文收敛。
+export const KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST = Number.MAX_SAFE_INTEGER;
 export type KnowledgeModelChannel = "openrouter" | "evolink";
 
 /** 每模型首次加最多三次重试；保留旧回执键，跨通道仍计入同一模型次数。 */

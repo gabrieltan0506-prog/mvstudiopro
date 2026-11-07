@@ -137,3 +137,16 @@ describe("重点配图真实分页预算，全文不变", () => {
   await expect(deriveKnowledgeCardCompact({fullMarkdown:full,chat:(async(p:any)=>p.user) as never})).rejects.toThrow("重点配图没有减少");
  });
 });
+
+it('重点配图独立批次双通道同时处理，原稿不改写且合并保留批次顺序',async()=>{
+ const full='# 完整稿\n\n'+Array.from({length:90},(_,i)=>`## 内容${i}\n\n${'详细原文内容。'.repeat(130)}`).join('\n\n');
+ const original=full;let active=0,peak=0;const channels:string[]=[];
+ const out=await deriveKnowledgeCardCompact({fullMarkdown:full,chat:async p=>{
+  active++;peak=Math.max(peak,active);channels.push(p.executionChannel!);
+  await new Promise(r=>setTimeout(r,10));active--;
+  const keep=Number(/挑出[^0-9]*(\d+)\s*节/.exec(p.system)?.[1]||2);
+  return splitMarkdownSections(p.user).sections.slice(0,keep).map(s=>s.split('\n')[0]+'\n\n重点知识保留。').join('\n\n');
+ }});
+ expect(peak).toBeGreaterThan(1);expect(new Set(channels)).toEqual(new Set(['openrouter','evolink']));
+ expect(full).toBe(original);expect(out.markdown).toContain('内容0');expect(out.markdown.length).toBeLessThan(full.length);
+});

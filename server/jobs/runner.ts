@@ -3736,22 +3736,32 @@ async function processPlatformJob(
       await cancel.check({ force: true });
       await patchProgress({ distillStage: "deriving", distillPercent: 1 });
       const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
-      const derived = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => deriveKnowledgeCardCompact({
+      const deriveOptions = {
         fullMarkdown,
         targetSections,
         abortSignal: cancel.signal,
         // 终审第五条：链序按服务端 receipt 档位走，不信客户端声明
         model: receiptModel,
-        onProgress: async (p) => {
+        onProgress: async (p: {doneBatches:number;totalBatches:number;pass:number}) => {
           const frac = p.totalBatches > 0 ? Math.min(1, p.doneBatches / p.totalBatches) : 0;
           await patchProgress({
-            distillStage: "deriving",
+            distillStage: params.editionVersion===2 ? (p.pass===3?"verifying":p.pass===4?"revising":p.pass===2?"merging":"deriving") : "deriving",
             distillStageDone: p.doneBatches,
             distillStageTotal: p.totalBatches,
-            distillPercent: Math.round(5 + 90 * frac),
+            distillPercent: params.editionVersion===2 ? Math.round(p.pass===1?5+35*frac:p.pass===2?40+10*frac:p.pass===3?50+20*frac:70+25*frac) : Math.round(5 + 90 * frac),
           });
         },
-      }));
+      };
+      const derived = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), async () => {
+        if(params.editionVersion!==2)return deriveKnowledgeCardCompact(deriveOptions);
+        const {prepareKnowledgeCardEditions}=await import('../services/knowledgeCardEditionPreparation.js');
+        const {downloadGcsObjectVersioned,uploadBufferToGcs,getGcsBucketName}=await import('../services/gcs.js');
+        return prepareKnowledgeCardEditions({sourceMarkdown:fullMarkdown,abortSignal:cancel.signal,onProgress:deriveOptions.onProgress,
+          evidence:{prefix:`knowledge-editions/user-${jobUserId}/${platformJobId}`,
+            read:async key=>{try{return JSON.parse((await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${key}`})).buffer.toString());}catch(error){if((error as Error).message==='gcs_stat_failed:404')return null;throw error;}},
+            save:async(key,value)=>{await uploadBufferToGcs({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json'});},
+          }});
+      });
       await patchProgress({ distillStage: "finishing", distillPercent: 98 });
       // 落库之前强制查一次（跳过轮询间隔缓存）：取消赢了就不写 receipt、不交稿
       await cancel.check({ force: true });
@@ -3759,6 +3769,7 @@ async function processPlatformJob(
       const output = {
           success: true,
           distilledMarkdown: derived.markdown,
+          ...('fullEditionMarkdown' in derived ? {fullEditionMarkdown:derived.fullEditionMarkdown,editionVersion:2,verificationProcessed:'verificationProcessed' in derived&&derived.verificationProcessed===true} : {}),
           distillModel,
           detailLevel: "concise",
           sections: derived.sections,

@@ -21,7 +21,7 @@ export function KnowledgeAuthoringRow({ enabled, onDock, children }: {
   return <div className={enabled ? "knowledge-authoring-row" : undefined}>
     <div className={enabled ? "knowledge-authoring-grid" : undefined}>
       <div className={enabled ? "knowledge-authoring-text" : undefined}>{children}</div>
-      {enabled && <aside ref={onDock} className="knowledge-authoring-advisor" aria-label="正文旁的创作顾问" />}
+      {enabled && <aside ref={onDock} className="knowledge-authoring-advisor" aria-label="图文手册预览" />}
     </div>
   </div>;
 }
