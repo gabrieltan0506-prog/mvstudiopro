@@ -1,5 +1,6 @@
 import { cropSongAlignedSubtitle, validateSongAlignedSubtitle, type SongAlignedSubtitle } from "../../shared/songAlignedSubtitle";
 import { signGsUriV4ReadUrl } from "./gcs";
+import { resolveManhuaAssembleStockClips, type ManhuaStockGuardDeps } from "./manhuaStockFootageGuard";
 /**
  * 漫剧成片坞：配乐 + 同源 Final Render。
  * 供 Fly jobs worker 异步执行；前端经 Vercel→Fly 短请求入队后轮询 GET /api/jobs/:id。
@@ -71,6 +72,7 @@ export type ManhuaAssembleFinalResult = {
 
 export async function runManhuaAssembleFinal(
   raw: ManhuaAssembleFinalInput,
+  opts: { userId?: number; stockDeps?: ManhuaStockGuardDeps } = {},
 ): Promise<ManhuaAssembleFinalResult> {
   let sceneVideos: ManhuaAssembleSceneVideo[] = [];
   let skippedEpisodes: ManhuaAssembleFinalResult["skippedEpisodes"] = [];
@@ -93,7 +95,13 @@ export async function runManhuaAssembleFinal(
       })
       .filter((row) => Boolean(row.url));
   } else {
-    const clipsRaw = Array.isArray(raw.clips) ? raw.clips : [];
+    // 1108 图库空镜：按 assetId 核对本人漫剧空镜、裁点不越过素材时长，读链由服务端按 gcsUri 现签；
+    // 未声明却指向图库对象的段成片（如场景参考图）在渲染前拒绝。
+    const clipsRaw = await resolveManhuaAssembleStockClips(
+      Array.isArray(raw.clips) ? raw.clips : [],
+      opts.userId,
+      opts.stockDeps,
+    );
     const clips: ManhuaAssembleClipInput[] = clipsRaw.map((row) => {
       const piecesRaw = Array.isArray((row as { shotPieces?: unknown[] }).shotPieces)
         ? (row as { shotPieces: unknown[] }).shotPieces

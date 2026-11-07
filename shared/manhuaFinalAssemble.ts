@@ -33,6 +33,8 @@ export type ManhuaAssembleClipInput = {
   trimOutSec?: number;
   /** 按镜绝对秒切片（优先；同源 URL 多段裁切） */
   shotPieces?: ManhuaAssembleShotPieceInput[];
+  /** 1108 本段成片是图库无人物空镜：服务端按此 assetId 核对归属/用法/时长并现签读链 */
+  stockAssetId?: string;
 };
 
 export type ManhuaAssembleSceneVideo = {

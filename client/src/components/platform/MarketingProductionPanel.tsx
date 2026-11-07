@@ -222,7 +222,7 @@ export function MarketingProductionPanel({ userKey, seedMarkdown }: { userKey: s
         try {
           const response = await utils.mvAnalysis.getPostProdJob.fetch({ jobId: job.jobId! });
           const latest = target === "final" ? ref.current.final : ref.current.mounts[target];
-          if (latest?.jobId === job.jobId) setJob(target, applyPostProdJobResult(latest, response));
+          if (latest && latest.jobId === job.jobId) setJob(target, applyPostProdJobResult(latest, response));
         } catch { /* 下一轮重试 */ }
       }
       if (!stopped && Object.keys(ref.current.mounts).length) await advanceExport(false).catch(error => setMessage(errorText(error)));

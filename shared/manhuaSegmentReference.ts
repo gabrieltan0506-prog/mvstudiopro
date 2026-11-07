@@ -16,6 +16,8 @@
  * 登记进本段后与工厂生成的成片同等对待（可质检放行、可局部编辑、可进成片坞）。
  */
 
+import { normalizeManhuaStockFootageMark, type ManhuaStockFootageMark } from "./manhuaStockFootage.js";
+
 export type ManhuaSegmentReferenceSlot = "previs" | "master" | "registered";
 
 export type ManhuaSegmentReferenceEntry = {
@@ -30,6 +32,8 @@ export type ManhuaSegmentReferenceEntry = {
   motionGuideZh?: string;
   /** 工厂预混采用的完整声音用料，上传母轨不伪造此证据。 */
   audioStudioSource?: string;
+  /** 1108 只在 registered 位：本段登记的是图库无人物空镜（assetId + 署名 + 无人物确认）。 */
+  stockFootage?: ManhuaStockFootageMark;
   updatedAt: string;
 };
 
@@ -87,6 +91,10 @@ export function normalizeManhuaSegmentReferenceEntry(
     updatedAt: updatedAt || new Date(0).toISOString(),
     ...(typeof r.audioStudioSource === "string" && r.audioStudioSource ? { audioStudioSource: r.audioStudioSource } : {}),
     ...(typeof r.motionGuideZh === "string" && r.motionGuideZh.trim() ? {motionGuideZh:r.motionGuideZh.trim()} : {}),
+    ...(() => {
+      const stockFootage = normalizeManhuaStockFootageMark(r.stockFootage, "empty_shot");
+      return stockFootage ? { stockFootage } : {};
+    })(),
   };
 }
 
@@ -99,7 +107,10 @@ export function normalizeManhuaSegmentReferences(
   const out: ManhuaSegmentReferences = {};
   for (const slot of SLOTS) {
     const entry = normalizeManhuaSegmentReferenceEntry(r[slot]);
-    if (entry) out[slot] = entry;
+    if (!entry) continue;
+    // 图库空镜标记只属于登记成片位；白模/母轨位不承载图库素材
+    if (entry.stockFootage && slot !== "registered") delete entry.stockFootage;
+    out[slot] = entry;
   }
   return Object.keys(out).length ? out : undefined;
 }

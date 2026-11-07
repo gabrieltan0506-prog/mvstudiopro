@@ -5,6 +5,7 @@ import { manhuaVfxMediaIdentity } from "@/lib/manhuaVfxWorkflow";
  * 剪辑阶段 · 多轨：细剪 / 字幕 / 包装 / 质检返工 / 导出勾选。
  */
 import { useCallback, useMemo, useState } from "react";
+import { ManhuaStockEmptyShotRegister, type ManhuaStockEmptyShotPick } from "./manhua/ManhuaStockEmptyShotRegister";
 import { toast } from "sonner";
 import { copyText } from "@/lib/copyText";
 import {
@@ -108,6 +109,11 @@ type Props = {
   onRegisterSegmentClip?: (segmentIndex: number, file: File) => void;
   registerClipBusy?: boolean;
   registerClipProgress?: number | null;
+  /** 1108 图库无人物空镜登记为本段成片（裁点 + 无人物确认）；父组件走既有登记链落档 */
+  onRegisterStockEmptyShot?: (segmentIndex: number, pick: ManhuaStockEmptyShotPick) => void | Promise<void>;
+  /** 1108 已登记为图库空镜的来源段 → 署名（展示「空镜·无人物」标记） */
+  stockEmptyShotCreditBySegment?: Record<number, string>;
+  stockProjectId?: string;
   editTransition?: "cut" | "fade";
   onEditTransitionChange?: (next: "cut" | "fade") => void;
   deliveryPackage?: ManhuaDeliveryPackage | null;
@@ -208,6 +214,9 @@ export default function ManhuaEditMultitrackPanel({
   currentVersionCredits,
   onRegisterSegmentClip,
   registerClipBusy = false,
+  onRegisterStockEmptyShot,
+  stockEmptyShotCreditBySegment,
+  stockProjectId,
   registerClipProgress = null,
   editTransition = "fade",
   onEditTransitionChange,
@@ -406,6 +415,17 @@ export default function ManhuaEditMultitrackPanel({
             </button>
             <p className="text-xs text-white/45">选用已有原片，不重新生成或配音；登记后仍须检查画面和声音。</p>
           </div> : null}
+          {!selectedSegmentMedia && onRegisterStockEmptyShot ? <div className="mt-2">
+            <ManhuaStockEmptyShotRegister
+              key={selectedSegment.sourceIndex}
+              segmentIndex={selectedSegment.sourceIndex}
+              plannedDurationSec={segmentGroups?.find((segment) => segment.index === selectedSegment.sourceIndex)?.durationSec ?? Math.round(selectedSegment.durationSec * 10) / 10}
+              projectId={stockProjectId}
+              disabled={Boolean(factoryBusy) || registerClipBusy}
+              onRegister={(pick) => onRegisterStockEmptyShot(selectedSegment.sourceIndex, pick)}
+            />
+          </div> : null}
+          {selectedSegmentMedia && stockEmptyShotCreditBySegment?.[selectedSegment.sourceIndex] ? <p data-manhua-edit-stock-empty-shot-badge={selectedSegment.sourceIndex} className="mt-2 text-[11px] text-emerald-200/80">空镜·无人物 · {stockEmptyShotCreditBySegment[selectedSegment.sourceIndex]} · Pexels License（只作场景过渡，不替代角色）</p> : null}
           {selectedSegmentMedia ? <p className="mt-2 text-[11px] text-white/45">预览的是本段已生成源片；剪辑顺序、转场和字幕以「生成成片」后的当前版本为准。</p> : null}
         </div>
         <div className="flex min-h-0 min-w-0 flex-col rounded-xl border border-white/10 bg-white/[0.025] p-3">

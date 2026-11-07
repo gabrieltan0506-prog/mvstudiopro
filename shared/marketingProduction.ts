@@ -505,7 +505,7 @@ export function marketingConcatInput(draft: MarketingProductionDraft): Marketing
   const clips: string[] = [];
   const trims: Array<{ startSec: number; endSec: number }> = [];
   const cues: Array<{ text: string; voiceSec: number; clipSec: number }> = [];
-  for (const [i, segment] of draft.segments.entries()) {
+  for (const [i, segment] of Array.from(draft.segments.entries())) {
     if (!marketingMountDone(draft, segment)) throw new Error(`第 ${i + 1} 段的配音贴装尚未完成`);
     const clipSec = marketingSegmentClipSec(segment);
     if (!clipSec || !marketingVoiceReady(segment)) throw new Error(`第 ${i + 1} 段时长无效`);
