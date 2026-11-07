@@ -123,6 +123,7 @@ function setup() {
     access: vi.fn(async () => doc),
     billing: vi.fn(async () => billing),
     read: vi.fn(async (k: string) => store.get(k) || null),
+    save: vi.fn(async (k:string,v:any)=>{store.set(k,v);}),
     persist: vi.fn(async () => undefined),
     review: vi.fn(async (_u: any, _c: any, d: any) => {
       expect(await d.read(`${prefix}/report.json`)).toBeNull();
@@ -154,6 +155,24 @@ function setup() {
 }
 const meta = { qaMode: "terra" as const, dailyLimit: 3, paidUnitCredits: 8 };
 describe("正式出版失败事务恢复", () => {
+  it("整册核对失败同样重验原回包并交回正式统稿，不依赖旧整册报告", async()=>{
+    const f=setup();f.input.knowledgePublicationContext.batchIndex=1;
+    f.job.input.requestFingerprint=manhuaAdvisorRequestFingerprint(f.input);
+    const root=f.prefix.replace('/batch-0',''),prefix=root+'/consistency-0';
+    const request:any={systemInstruction:{parts:[{text:'核对原事实'}]},contents:[{role:'user',parts:[{text:JSON.stringify({sourceDigest:f.sourceDigest,facts:[{pageId:uuid,headline:'原章',term:'原章',statement:'完整正文'}]})}]}],generationConfig:{temperature:0.2,maxOutputTokens:32768,responseMimeType:'application/json'}};
+    const requestDigest=createHash('sha256').update(JSON.stringify([KNOWLEDGE_PUBLICATION_ROUTE_VERSION,request])).digest('hex');
+    const original=JSON.parse(JSON.parse(f.store.get(f.route).response.text).choices[0].message.content);original.kind='knowledge_publication_v1';delete original.type;original.pages[0].cautions=[{kind:'uncertain',evidence:'原文两处说法冲突',message:'已标注疑点，等待全册整理后统一联网核实。'}];
+    f.store.set(f.prefix+'/report.json',{report:original,sourceImages:[]});
+    f.store.set(root+'/report.json',{fake:'不能使用旧整册报告'});
+    f.store.set(prefix+'/request-0.json',{sourceDigest:f.sourceDigest,request});
+    f.store.set(prefix+'/attempt-0/route-openrouter.json',{state:'failed',requestDigest,response:{status:200,text:JSON.stringify({model:KNOWLEDGE_PUBLICATION_MODEL,choices:[{finish_reason:'stop',message:{content:JSON.stringify({type:'json_object',sourceDigest:f.sourceDigest,findings:[{pageIds:[uuid],evidence:'原文证据',message:'保留核对说明'}]})}}]})}});
+    f.deps.review=(_u:any,_c:any,d:any)=>reviewKnowledgePublication(_u,_c,{...d,load:async()=>f.doc,save:d.save,count:async()=>({totalTokens:100,method:'test'})});
+    const response=await recoverKnowledgePublicationOperation(f.input,meta,f.deps),review=JSON.parse(response!.answer);
+    expect(review.kind).toBe('knowledge_publication_v1');expect(review.pages[0].cautions.some((c:any)=>c.message==='保留核对说明')).toBe(true);
+    expect(response?.creditsCharged).toBe(0);expect(f.deps.persist).toHaveBeenCalledOnce();
+    expect(f.store.get(root+'/report.json').report.pages).toEqual(review.pages);
+  });
+
   it("正式审校函数重读原请求，批次返回可由出版面板合同消费", async () => {
     const f = setup();
     f.store.set(f.prefix + "/request-0.json", {

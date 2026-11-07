@@ -229,7 +229,12 @@ function validateAnswer(content: string, request: KnowledgeModelRequest, sources
   const input = inputs.find(p => p.sourceDigest);
   if (!input || parsed.sourceDigest !== input.sourceDigest || !Array.isArray(input.facts))
     throw new Error("一致性核对未返回完整合同");
-  const consistency = knowledgeConsistencySchema.parse(parsed);
+  // 与章节分支一致，只移除供应商回显的响应格式标记；事实与原始回包不改。
+  const candidate = parsed.type === "json_object"
+    ? Object.fromEntries(Object.entries(parsed).filter(([key]) => key !== "type"))
+    : parsed;
+  if (candidate !== parsed) adjustments.push({field:"type",before:"json_object",reason:"移除响应格式回显，不改变核对内容"});
+  const consistency = knowledgeConsistencySchema.parse(candidate);
   const pageIds = new Set(input.facts.map((fact: { pageId: string }) => fact.pageId));
   if (consistency.findings.some(finding => finding.pageIds.some(id => !pageIds.has(id))))
     throw new Error("跨页核对返回未知页号，未采用");

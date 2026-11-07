@@ -8,7 +8,7 @@ import { getDb } from "../db";
 import { getJobByIdStrict } from "../jobs/repository";
 import { readChargeRefundState } from "../credits";
 import { canonicalRefundKey } from "./paidJobLedger";
-import { downloadGcsObjectVersioned, getGcsBucketName } from "./gcs";
+import { downloadGcsObjectVersioned, getGcsBucketName, uploadBufferToGcs } from "./gcs";
 import {
   validateKnowledgePublicationAccess,
   reviewKnowledgePublication,
@@ -56,6 +56,9 @@ const real = {
         return null;
       throw e;
     }
+  },
+  save: async (name: string, value: unknown) => {
+    await uploadBufferToGcs({objectName:name,buffer:Buffer.from(JSON.stringify(value)),contentType:"application/json"});
   },
   persist: async (
     jobId: string,
@@ -141,10 +144,7 @@ export async function recoverKnowledgePublicationOperation(
   const doc = await deps.access(input.userId, context, input.requestId);
   if (!("publication" in doc) || !doc.publication)
     throw Error("原稿出版信息缺失，未恢复");
-  if (
-    context.batchIndex >= knowledgeReviewBatches(doc.publication.source).length
-  )
-    return null;
+  const reviewBatches = knowledgeReviewBatches(doc.publication.source).length;
   const billing = await deps.billing(
     input.userId,
     `manhuaAdvisor/${jobId}`,
@@ -157,19 +157,26 @@ export async function recoverKnowledgePublicationOperation(
         !(Number(output.creditsRefunded) >= billing.charged)))
   )
     throw Error("原任务退款未闭合，未恢复");
-  const prefix =
-    knowledgeEvidencePrefix(input.userId, doc.id, doc.publication.requestId) +
-    `/batch-${context.batchIndex}`;
+  const root = knowledgeEvidencePrefix(input.userId, doc.id, doc.publication.requestId);
+  const consistency = context.batchIndex >= reviewBatches;
+  const prefix = root + (consistency ? `/consistency-${context.batchIndex - reviewBatches}` : `/batch-${context.batchIndex}`);
   // 重新校验原始模型响应，不能用代理曾补写的规范化报告替代自动恢复验证。
   const ignored = new Set([
+    ...(consistency ? [`${root}/report.json`] : []),
     `${prefix}/report.json`,
     `${prefix}/raw-${context.attempt}.json`,
     `${prefix}/attempt-${context.attempt}/accepted.json`,
   ]);
+  const fresh = new Map<string, unknown>();
   const read = (name: string) =>
-    ignored.has(name) ? Promise.resolve(null) : deps.read(name);
+    ignored.has(name) ? Promise.resolve(fresh.get(name) ?? null) : deps.read(name);
+  const save = async (name: string, value: unknown) => {
+    await deps.save(name,value);
+    fresh.set(name,value);
+  };
   const review = await deps.review(input.userId, context, {
     read,
+    save,
     post: (request, evidence) =>
       invokeKnowledgePublicationRoutes(
         request as KnowledgeModelRequest,

@@ -822,3 +822,26 @@ describe('已有出版回包判别字段恢复',()=>{
   expect(f.storage.get('test/0/route-evolink.json').state).toBe('unknown');expect(f.deps.fetch).not.toHaveBeenCalled();
  });
 });
+
+
+describe('整册核对响应格式回显',()=>{
+ it('只移除json_object标记，原回包零调用恢复且不丢核对内容',async()=>{
+  const f=make(),sourceDigest=f.report.sourceDigest,pageId=f.report.pages[0].id;
+  f.request.contents=[{role:'user',parts:[{text:JSON.stringify({sourceDigest,facts:[{pageId,term:'水',statement:'原文'}]})}]}];
+  const value={type:'json_object',sourceDigest,findings:[{pageIds:[pageId],evidence:'原文证据',message:'保留核对说明'}]};
+  f.deps.fetch.mockImplementation(async()=>f.response(OR_MODEL,value));
+  const first=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(JSON.parse(first.candidates[0].content.parts[0].text).findings).toEqual(value.findings);expect(f.deps.fetch).toHaveBeenCalledOnce();
+  const receipt=f.storage.get('test/0/route-openrouter.json');f.storage.set('test/0/route-openrouter.json',{...receipt,state:'failed'});f.deps.fetch.mockClear();
+  const recovered=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(recovered.adjustments.some((v:any)=>v.field==='type')).toBe(true);expect(f.deps.fetch).not.toHaveBeenCalled();
+  expect(JSON.parse(f.storage.get('test/0/route-openrouter.json').response.text).choices[0].message.content).toBe(JSON.stringify(value));
+ });
+ it('未知type不自动删除或接受',async()=>{
+  const f=make(),sourceDigest=f.report.sourceDigest,pageId=f.report.pages[0].id;
+  f.request.contents=[{role:'user',parts:[{text:JSON.stringify({sourceDigest,facts:[{pageId,term:'水',statement:'原文'}]})}]}];
+  f.deps.fetch.mockImplementation(async(...args:any[])=>f.response(JSON.parse(args[1].body).model,{type:'unknown',sourceDigest,findings:[]}));
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow();
+  expect(f.storage.get('test/0/route-openrouter.json').reason).toContain('type');
+ });
+});
