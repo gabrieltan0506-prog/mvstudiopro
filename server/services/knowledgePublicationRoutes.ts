@@ -25,7 +25,7 @@ export const KNOWLEDGE_PUBLICATION_MODEL = "deepseek/deepseek-v4.1-flash-1017";
 export const KNOWLEDGE_PUBLICATION_EVOLINK_MODEL = "deepseek-v4.1-flash-1017";
 export const KNOWLEDGE_PUBLICATION_ROUTE_VERSION = "knowledge-1017-structured-v2";
 export type KnowledgeModelRequest = {
-  /** 首选供应商；明确失败可按同模型跨供应商回退，不改变批次并发。 */
+  /** 首选供应商；同模型同通道首次加三次明确失败重试后才跨供应商，不改变批次并发。 */
   executionChannel?: KnowledgeModelChannel;
   researchOnly?: true;
   researchRequired?: boolean;
@@ -337,7 +337,7 @@ export async function invokeKnowledgePublicationRoutes(
   const existing = new Set<string>();
   const unresolved = new Set<string>();
   const keyLimitedChannels = new Set<KnowledgeModelChannel>();
-  const attempts = {deepseek:0,glm:0};
+  const attempts = {deepseek:{openrouter:0,evolink:0},glm:{openrouter:0,evolink:0}};
   const availableRoutes = request.executionChannel ? knowledgePublicationRoutesForChannel(request.executionChannel) : KNOWLEDGE_PUBLICATION_ROUTE_ORDER;
   // 搜索阶段只允许 FlashX；正文继续按已有整理路由恢复。
   const plannedRoutes = request.researchOnly ? availableRoutes.filter(route => route.id.startsWith("glm-")) : availableRoutes;
@@ -350,7 +350,7 @@ export async function invokeKnowledgePublicationRoutes(
     assertKnowledgeRouteContentAllowed(receipt.response);
     if(inspectKnowledgeRouteResponse(receipt.response).keyLimit)keyLimitedChannels.add(target.channel);
     if(receipt.sent!==false && (receipt.request || receipt.response || ['pending','unknown'].includes(receipt.state)))
-      attempts[routeModelFamily(target.model)]+=1;
+      attempts[routeModelFamily(target.model)][target.channel]+=1;
     if (["pending", "unknown"].includes(receipt.state) && !await evidence.read(`${evidence.prefix}/${target.id}-response.json`))
       unresolved.add(target.id);
   }
@@ -443,8 +443,8 @@ export async function invokeKnowledgePublicationRoutes(
     }
     if (!receipt) {
       if (unresolved.size) throw new Error("原请求回执尚未闭合，保留原任务，不重复提交或切换通道");
-      // 旧已发送回执也计入上限；改变首选通道不会再获得额外四次购买。
-      if(keyLimitedChannels.has(channel) || attempts[routeModelFamily(model)]>=4)continue;
+      // 旧已发送回执计入对应模型/通道的四次上限；改变首选通道不重置已用次数。
+      if(keyLimitedChannels.has(channel) || attempts[routeModelFamily(model)][channel]>=4)continue;
       assertKnowledgePaidModel(channel, model, request.researchOnly === true);
       const apiKey = deps.key(channel);
       if (!apiKey) {
@@ -472,7 +472,7 @@ export async function invokeKnowledgePublicationRoutes(
         const storedBody = { ...body, messages: messages.map(m => ({ ...m, content: typeof m.content === "string" ? m.content :
           m.content.map(p => p.type === "image_url" ? { type: "image_url", image_url: { url: "[服务端即时签名]", detail: "high" } } : p) })) };
         await evidence.save(key, { requestDigest, route, model, state: "pending", startedAt: new Date().toISOString(), request: storedBody, imageSources: images });
-        attempts[routeModelFamily(model)]+=1;
+        attempts[routeModelFamily(model)][channel]+=1;
         let status: number | undefined;
         try {
             const controller = new AbortController();

@@ -11,44 +11,23 @@ export const KNOWLEDGE_DEEPSEEK_EVOLINK_MODEL = "deepseek-v4.1-flash-1017";
 export const KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST = Number.MAX_SAFE_INTEGER;
 export type KnowledgeModelChannel = "openrouter" | "evolink";
 
-/** 每模型首次加最多三次重试；保留旧回执键，跨通道仍计入同一模型次数。 */
-export const KNOWLEDGE_PUBLICATION_ROUTE_ORDER = [
-  { id: "openrouter", channel: "openrouter", model: KNOWLEDGE_DEEPSEEK_OPENROUTER_MODEL },
-  { id: "evolink", channel: "evolink", model: KNOWLEDGE_DEEPSEEK_EVOLINK_MODEL },
-  { id: "openrouter-retry-2", channel: "openrouter", model: KNOWLEDGE_DEEPSEEK_OPENROUTER_MODEL },
-  { id: "evolink-retry-3", channel: "evolink", model: KNOWLEDGE_DEEPSEEK_EVOLINK_MODEL },
-  { id: "glm-openrouter", channel: "openrouter", model: GLM_53_FLASHX_OPENROUTER_MODEL },
-  { id: "glm-evolink", channel: "evolink", model: GLM_53_FLASHX_EVOLINK_MODEL },
-  { id: "glm-openrouter-retry-2", channel: "openrouter", model: GLM_53_FLASHX_OPENROUTER_MODEL },
-  { id: "glm-evolink-retry-3", channel: "evolink", model: GLM_53_FLASHX_EVOLINK_MODEL },
-] as const;
-
-/** 仅用于读取旧版锁定供应商的回执，不再按此顺序购买。 */
-function legacyKnowledgePublicationRoutesForChannel(channel: KnowledgeModelChannel) {
-  return [
-    ...Array.from({ length: 4 }, (_, attempt) => ({
-      id: attempt === 0 ? channel : `${channel}-retry-${attempt}`,
-      channel,
-      model: channel === "openrouter" ? KNOWLEDGE_DEEPSEEK_OPENROUTER_MODEL : KNOWLEDGE_DEEPSEEK_EVOLINK_MODEL,
-    })),
-    ...Array.from({ length: 4 }, (_, attempt) => ({
-      id: attempt === 0 ? `glm-${channel}` : `glm-${channel}-retry-${attempt}`,
-      channel,
-      model: channel === "openrouter" ? GLM_53_FLASHX_OPENROUTER_MODEL : GLM_53_FLASHX_EVOLINK_MODEL,
-    })),
-  ];
-}
-/** 批次通道仅是首选；同款模型交替供应商，仍为首次加最多三次重试。 */
+/** 同一模型、同一通道首次加最多三次重试，耗尽后才切另一通道。 */
 export function knowledgePublicationRoutesForChannel(channel: KnowledgeModelChannel) {
-  const preferred = KNOWLEDGE_PUBLICATION_ROUTE_ORDER.filter(route => route.channel === channel);
-  const alternate = KNOWLEDGE_PUBLICATION_ROUTE_ORDER.filter(route => route.channel !== channel);
-  return preferred.flatMap((route, index) => [route, alternate[index]!]);
+  const alternate: KnowledgeModelChannel = channel === "openrouter" ? "evolink" : "openrouter";
+  return (["deepseek", "glm"] as const).flatMap(family =>
+    [channel, alternate].flatMap(provider => Array.from({ length: 4 }, (_, attempt) => ({
+      id: `${family === "glm" ? "glm-" : ""}${provider}${attempt === 0 ? "" : `-retry-${attempt}`}`,
+      channel: provider,
+      model: family === "deepseek"
+        ? (provider === "openrouter" ? KNOWLEDGE_DEEPSEEK_OPENROUTER_MODEL : KNOWLEDGE_DEEPSEEK_EVOLINK_MODEL)
+        : (provider === "openrouter" ? GLM_53_FLASHX_OPENROUTER_MODEL : GLM_53_FLASHX_EVOLINK_MODEL),
+    }))),
+  );
 }
-export const KNOWLEDGE_PUBLICATION_ALL_ROUTES = Array.from(new Map([
-  ...KNOWLEDGE_PUBLICATION_ROUTE_ORDER,
-  ...legacyKnowledgePublicationRoutesForChannel("openrouter"),
-  ...legacyKnowledgePublicationRoutesForChannel("evolink"),
-].map(route => [route.id, route])).values());
+
+export const KNOWLEDGE_PUBLICATION_ROUTE_ORDER = knowledgePublicationRoutesForChannel("openrouter");
+// 包含旧交替路由及旧锁定路由全部ID；恢复时先回放已有成功/未知回执。
+export const KNOWLEDGE_PUBLICATION_ALL_ROUTES = KNOWLEDGE_PUBLICATION_ROUTE_ORDER;
 export const KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES = [
   ...KNOWLEDGE_PUBLICATION_ALL_ROUTES.map(route => route.id),
   "vertex", // 只读历史未知回执，不再调用。

@@ -184,12 +184,12 @@ describe('先采用正文再补检索，不因设计矛盾拒收',()=>{
  });
  it('检索全部明确失败仍保留正文，不把正文重新发送其他通道',async()=>{
   const f=setup();f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL));
-  for(let i=0;i<4;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
+  for(let i=0;i<8;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
   const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
   expect(out.research.status).toBe('failed');expect(out.supplementation.status).toBe('failed');
   expect(JSON.parse(out.candidates[0].content.parts[0].text).pages[0].reading.blocks).toEqual(f.report.pages[0].reading.blocks);
   expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model).filter(m=>m===OR_MODEL)).toHaveLength(1);
-  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(5);
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(9);
  });
 });
 describe('图文手册限定模型与同款通道恢复',()=>{
@@ -201,16 +201,16 @@ describe('图文手册限定模型与同款通道恢复',()=>{
   expect(f.deps.vertex).not.toHaveBeenCalled();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(1);
   expect(JSON.stringify(Array.from(f.storage.values()))).not.toContain('test-key');
  });
- it('OpenRouter明确503后只进入EvoLink精确1017图像入口',async()=>{
-  const f=make();f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(f.response(EVO_MODEL));
+ it('OpenRouter首次加三次重试均503才进入EvoLink精确1017图像入口',async()=>{
+  const f=make();for(let i=0;i<4;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));f.deps.fetch.mockResolvedValueOnce(f.response(EVO_MODEL));
   const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
-  expect(result.gatewayTrace.map((v:any)=>v.route+':'+v.state)).toEqual(['openrouter:failed','evolink:succeeded']);expect(f.deps.vertex).not.toHaveBeenCalled();
-  const call=f.deps.fetch.mock.calls[1] as any;expect(call[0]).toBe('https://api.evolink.ai/v1/chat/completions');expect(JSON.parse(call[1].body).model).toBe(EVO_MODEL);
+  expect(result.gatewayTrace.map((v:any)=>v.route+':'+v.state)).toEqual(['openrouter:failed','openrouter-retry-1:failed','openrouter-retry-2:failed','openrouter-retry-3:failed','evolink:succeeded']);expect(f.deps.vertex).not.toHaveBeenCalled();
+  const call=f.deps.fetch.mock.calls[4] as any;expect(call[0]).toBe('https://api.evolink.ai/v1/chat/completions');expect(JSON.parse(call[1].body).model).toBe(EVO_MODEL);
  });
  it('两个允许模型的通道均失败即报错，不调用未授权第三模型',async()=>{
   const f=make();f.deps.fetch.mockImplementation(async()=>new Response('{}',{status:503}));
   await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('所有已配置通道均失败');
-  expect(f.deps.fetch).toHaveBeenCalledTimes(8);expect(f.deps.vertex).not.toHaveBeenCalled();
+  expect(f.deps.fetch).toHaveBeenCalledTimes(16);expect(f.deps.vertex).not.toHaveBeenCalled();
   expect(f.storage.has('test/0/route-vertex.json')).toBe(false);
  });
  it('断线结果未知时不切换、不重投，后续原请求只读断点',async()=>{
@@ -231,10 +231,10 @@ describe('图文手册限定模型与同款通道恢复',()=>{
   await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('storage failure');
   expect(f.deps.fetch).toHaveBeenCalledTimes(1);expect(f.deps.vertex).not.toHaveBeenCalled();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(1);
  });
- it('收到明确length结束帧会保留原回执再切下一路，不把已知失败当未知断流',async()=>{
+ it('收到明确length结束帧会保留原回执并在原通道重试，不把已知失败当未知断流',async()=>{
   const f=make();const chunk={id:'test',model:OR_MODEL,choices:[{index:0,delta:{content:'不完整'},finish_reason:'length'}]};
-  f.deps.fetch.mockResolvedValueOnce(new Response('data: '+JSON.stringify(chunk)+'\n\ndata: [DONE]\n\n',{status:200,headers:{'Content-Type':'text/event-stream'}})).mockResolvedValueOnce(f.response(EVO_MODEL));
-  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);expect(result.gateway).toBe('evolink');expect(f.storage.has('test/0/openrouter-response.json')).toBe(true);expect(f.deps.vertex).not.toHaveBeenCalled();
+  f.deps.fetch.mockResolvedValueOnce(new Response('data: '+JSON.stringify(chunk)+'\n\ndata: [DONE]\n\n',{status:200,headers:{'Content-Type':'text/event-stream'}})).mockResolvedValueOnce(f.response(OR_MODEL));
+  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);expect(result.gateway).toBe('openrouter-retry-1');expect(f.storage.has('test/0/openrouter-response.json')).toBe(true);expect(f.deps.vertex).not.toHaveBeenCalled();
  });
  it('模型输入变化不能回放另一版原始回执',async()=>{
   const f=make();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);f.request.systemInstruction.parts[0].text='new';await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('版本变化');expect(f.deps.fetch).toHaveBeenCalledTimes(1);
@@ -245,9 +245,9 @@ it('自动选版的新输入必须返回有效模板与理由，旧输入仍可�
  const {KNOWLEDGE_TEMPLATE_SELECTION_MARKER}=await import('../../shared/knowledgePublicationTemplates');
  const f=make();f.request.systemInstruction.parts[0].text+=KNOWLEDGE_TEMPLATE_SELECTION_MARKER;
  const selected=structuredClone(f.report);Object.assign(selected.pages[0].reading,{templateId:'fusion_ink_mountains',templateReason:'配图与知识主题适合清雅水墨'});
- f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL)).mockResolvedValueOnce(f.response(EVO_MODEL,selected));
+ f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL)).mockResolvedValueOnce(f.response(OR_MODEL,selected));
  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
- expect(out.gateway).toBe('evolink');expect(f.storage.get('test/0/route-openrouter.json').reason).toContain('选版');
+ expect(out.gateway).toBe('openrouter-retry-1');expect(f.storage.get('test/0/route-openrouter.json').reason).toContain('选版');
  expect(JSON.parse(out.candidates[0].content.parts[0].text).pages[0].reading.templateId).toBe('fusion_ink_mountains');
 });
 
@@ -327,9 +327,9 @@ describe('联网补充与真实来源贯穿正文',()=>{
   const {buildKnowledgeBookletHtml}=await import('../../shared/knowledgeBooklet');expect(buildKnowledgeBookletHtml({title:report.title,pages:[{...report.pages[0],imageUrl:''}]})).toContain(`href="${url}"`);
   await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
  });
- it('首跳完整失败后后续通道只使用同一检索片段，不重开搜索',async()=>{
-  const f=await prepare();f.deps.fetch.mockResolvedValueOnce(f.webResponse(f.report,'length')).mockResolvedValueOnce(f.response(EVO_MODEL,f.report));
-  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);expect(result.gateway).toBe('evolink');
+ it('首跳完整失败后原通道重试使用同一检索片段，不重开搜索',async()=>{
+  const f=await prepare();f.deps.fetch.mockResolvedValueOnce(f.webResponse(f.report,'length')).mockResolvedValueOnce(f.response(OR_MODEL,f.report));
+  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);expect(result.gateway).toBe('openrouter-retry-1');
   const sent=JSON.parse((f.deps.fetch.mock.calls[1] as any)[1].body);expect(sent.plugins).toBeUndefined();expect(JSON.stringify(sent.messages)).toContain('原始来源对本页主题的解释');expect(f.storage.has('test/0/web-sources.json')).toBe(true);
  });
  it('无检索回执也保留原文整理，不因来源缺失重买，恢复零新增调用',async()=>{
@@ -350,10 +350,10 @@ describe('联网补充与真实来源贯穿正文',()=>{
   const answer=JSON.parse(JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text).candidates[0].content.parts[0].text);
   expect(answer.pages).toHaveLength(1);expect(f.deps.fetch).toHaveBeenCalledTimes(2);expect(f.storage.get('test/0/route-openrouter.json').priorFailureReason).toBe('本页补充缺少来源');
  });
- it('首跳结构失败且无来源，EvoLink仍可依据原文完成整理',async()=>{
-  const f=await prepare();f.deps.fetch.mockReset().mockResolvedValueOnce(f.response('z-ai/glm-5.3-flashx',{})).mockResolvedValueOnce(f.response(OR_MODEL,{})).mockResolvedValueOnce(f.response(EVO_MODEL,f.report));
+ it('首跳结构失败且无来源，原通道重试仍可依据原文完成整理',async()=>{
+  const f=await prepare();f.deps.fetch.mockReset().mockResolvedValueOnce(f.response('z-ai/glm-5.3-flashx',{})).mockResolvedValueOnce(f.response(OR_MODEL,{})).mockResolvedValueOnce(f.response(OR_MODEL,f.report));
   const answer=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
-  expect(answer.gateway).toBe('evolink');expect(f.deps.fetch).toHaveBeenCalledTimes(3);
+  expect(answer.gateway).toBe('openrouter-retry-1');expect(f.deps.fetch).toHaveBeenCalledTimes(3);
  });
  it('流式注释随完成回执保存，缺字流不会当成检索成功',async()=>{
   const f=await prepare();const chunks=[{model:OR_MODEL,choices:[{delta:{content:JSON.stringify(f.report)}}]},{choices:[{delta:{annotations:f.annotations},finish_reason:'stop'}]}];
@@ -370,27 +370,27 @@ it('流式来源超出合计容量必须拒绝，默认调用不附带来源字�
 });
 
 
-it('每模型首次加三次重试，DeepSeek耗尽才进入GLM且按通道限制输出',async()=>{
+it('每模型每通道首次加三次重试，DeepSeek耗尽才进入GLM且按通道限制输出',async()=>{
  const f=make();f.request.generationConfig.maxOutputTokens=500000;
- for(let i=0;i<7;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
+ for(let i=0;i<15;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
  f.deps.fetch.mockResolvedValueOnce(f.response('glm-5.3-flashx'));
  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
  const bodies=f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body));
  expect(bodies.map(b=>[b.model,b.max_tokens])).toEqual([
-  [OR_MODEL,393216],[EVO_MODEL,384000],[OR_MODEL,393216],[EVO_MODEL,384000],
-  ['z-ai/glm-5.3-flashx',131072],['glm-5.3-flashx',131072],['z-ai/glm-5.3-flashx',131072],['glm-5.3-flashx',131072],
+  ...Array(4).fill([OR_MODEL,393216]),...Array(4).fill([EVO_MODEL,384000]),
+  ...Array(4).fill(['z-ai/glm-5.3-flashx',131072]),...Array(4).fill(['glm-5.3-flashx',131072]),
  ]);
  expect(bodies[0].provider).toMatchObject({order:['DeepSeek'],allow_fallbacks:false});
- expect(bodies[4].provider).toMatchObject({order:['Z.AI'],allow_fallbacks:false});
+ expect(bodies[8].provider).toMatchObject({order:['Z.AI'],allow_fallbacks:false});
  expect(result.modelVersion).toBe('glm-5.3-flashx');expect(result.gateway).toBe('glm-evolink-retry-3');
- expect(result.gatewayTrace.map((t:any)=>t.route)).toEqual(['openrouter','evolink','openrouter-retry-2','evolink-retry-3','glm-openrouter','glm-evolink','glm-openrouter-retry-2','glm-evolink-retry-3']);
+ expect(result.gatewayTrace.map((t:any)=>t.route)).toEqual(['openrouter','openrouter-retry-1','openrouter-retry-2','openrouter-retry-3','evolink','evolink-retry-1','evolink-retry-2','evolink-retry-3','glm-openrouter','glm-openrouter-retry-1','glm-openrouter-retry-2','glm-openrouter-retry-3','glm-evolink','glm-evolink-retry-1','glm-evolink-retry-2','glm-evolink-retry-3']);
  expect(f.deps.vertex).not.toHaveBeenCalled();
- await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(8);
+ await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(16);
 });
 it('GLM首跳成功立即停止，回执独立保留，不调用第二条GLM通道',async()=>{
- const f=make();for(let i=0;i<4;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));f.deps.fetch.mockResolvedValueOnce(f.response('z-ai/glm-5.3-flashx'));
+ const f=make();for(let i=0;i<8;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));f.deps.fetch.mockResolvedValueOnce(f.response('z-ai/glm-5.3-flashx'));
  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
- expect(result.modelVersion).toBe('z-ai/glm-5.3-flashx');expect(f.deps.fetch).toHaveBeenCalledTimes(5);
+ expect(result.modelVersion).toBe('z-ai/glm-5.3-flashx');expect(f.deps.fetch).toHaveBeenCalledTimes(9);
  expect(f.storage.get('test/0/route-glm-openrouter.json').state).toBe('received');
  expect(f.storage.has('test/0/route-glm-evolink.json')).toBe(false);
 });
@@ -402,7 +402,7 @@ it('已停用模型的历史未知回执仍阻止新购，不会抹去或调用�
 
 it('DeepSeek第三次调用成功不再重试或切换GLM，失败原因进入修正输入',async()=>{
  const f=make();const bad=structuredClone(f.report);delete (bad.pages[0] as any).reading;
- f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL,bad)).mockResolvedValueOnce(f.response(EVO_MODEL,bad)).mockResolvedValueOnce(f.response(OR_MODEL));
+ f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL,bad)).mockResolvedValueOnce(f.response(OR_MODEL,bad)).mockResolvedValueOnce(f.response(OR_MODEL));
  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
  expect(result.gateway).toBe('openrouter-retry-2');expect(f.deps.fetch).toHaveBeenCalledTimes(3);
  expect(JSON.parse((f.deps.fetch.mock.calls[2] as any)[1].body).messages.at(-1).content).toContain('自动表格图文结构');
@@ -464,9 +464,9 @@ describe('接受回执前闭合最终消费者合同（KH-ROUTE-01）', () => {
  ] as const)('%s必须在路由内失败并使用下一次获准重试', async (_name, patch, reason) => {
   const f = make(), invalid = structuredClone(f.report);
   Object.assign(invalid.pages[0], patch);
-  f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL, invalid)).mockResolvedValueOnce(f.response(EVO_MODEL));
+  f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL, invalid)).mockResolvedValueOnce(f.response(OR_MODEL));
   const output = JSON.parse((await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).text);
-  expect(output.gateway).toBe('evolink');
+  expect(output.gateway).toBe('openrouter-retry-1');
   expect(f.storage.get('test/0/route-openrouter.json').reason).toContain(reason);
   expect(f.storage.get('test/0/accepted.json').normalized.text).toBe(JSON.stringify(output));
   await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps);
@@ -477,24 +477,24 @@ describe('接受回执前闭合最终消费者合同（KH-ROUTE-01）', () => {
   f.request.contents = [{ role:'user', parts:[{ text:JSON.stringify({ sourceDigest, facts:[{ pageId, term:'水循环', statement:'蒸发后凝结' }] }) }] }];
   const invalid = { sourceDigest, findings:[{ pageIds:[problem === 'unknown-page' ? randomUUID() : pageId], message:'核对两页的数字', ...(problem === 'missing-evidence' ? {} : { evidence:'两页原文数字不同' }) }] };
   const corrected = { sourceDigest, findings:[] };
-  f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL, invalid)).mockResolvedValueOnce(f.response(EVO_MODEL, corrected));
+  f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL, invalid)).mockResolvedValueOnce(f.response(OR_MODEL, corrected));
   const output = JSON.parse((await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).text);
-  expect(output.gateway).toBe('evolink');
+  expect(output.gateway).toBe('openrouter-retry-1');
   expect(f.storage.get('test/0/route-openrouter.json').reason).toContain(problem === 'missing-evidence' ? '输出合同不符' : '未知页号');
   expect(JSON.parse(output.candidates[0].content.parts[0].text)).toEqual(corrected);
   expect(f.deps.fetch).toHaveBeenCalledTimes(2);
  });
 });
 
-it('并发分配的EvoLink批次优先该通道，同模型跨供应商四次后才GLM且恢复零新调用',async()=>{
+it('并发分配的EvoLink批次优先该通道，同模型每通道四次后才GLM且恢复零新调用',async()=>{
  const f=make();f.request.executionChannel='evolink';
- for(let i=0;i<4;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
+ for(let i=0;i<8;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
  f.deps.fetch.mockResolvedValueOnce(f.response('glm-5.3-flashx'));
  const answer=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
- expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual([EVO_MODEL,OR_MODEL,EVO_MODEL,OR_MODEL,'glm-5.3-flashx']);
- expect(f.deps.fetch.mock.calls.map(c=>(c as any)[0])).toEqual(['https://api.evolink.ai/v1/chat/completions','https://openrouter.ai/api/v1/chat/completions','https://api.evolink.ai/v1/chat/completions','https://openrouter.ai/api/v1/chat/completions','https://api.evolink.ai/v1/chat/completions']);
+ expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual([...Array(4).fill(EVO_MODEL),...Array(4).fill(OR_MODEL),'glm-5.3-flashx']);
+ expect(f.deps.fetch.mock.calls.map(c=>(c as any)[0])).toEqual([...Array(4).fill('https://api.evolink.ai/v1/chat/completions'),...Array(4).fill('https://openrouter.ai/api/v1/chat/completions'),'https://api.evolink.ai/v1/chat/completions']);
  expect(answer.gateway).toBe('glm-evolink');
- await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(5);
+ await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(9);
 });
 it('EvoLink并发批次先保留真实检索资料再整理，恢复不重复检索或整理',async()=>{
  const f=make();f.request.executionChannel='evolink';f.request.systemInstruction.parts.push({text:'【联网资料融入正文】'});
@@ -537,14 +537,14 @@ describe('GLM独立搜索的恢复与通道契约',()=>{
   expect(JSON.parse(f.storage.get('test/0/research/glm-evolink-response.json').text).web_search).toEqual([source]);
   await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
  });
- it('搜索四次明确失败后原文仍可整理，不把搜索回退成DeepSeek',async()=>{
+ it('搜索每通道四次明确失败后原文仍可整理，不把搜索回退成DeepSeek',async()=>{
   const f=prepare();f.request.executionChannel='openrouter';
-  for(let i=0;i<4;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
+  for(let i=0;i<8;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
   f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL));
   const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
-  expect(out.research.status).toBe('failed');expect(out.research.traces).toHaveLength(4);
-  expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual(['z-ai/glm-5.3-flashx','glm-5.3-flashx','z-ai/glm-5.3-flashx','glm-5.3-flashx',OR_MODEL]);
-  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(5);
+  expect(out.research.status).toBe('failed');expect(out.research.traces).toHaveLength(8);
+  expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual([...Array(4).fill('z-ai/glm-5.3-flashx'),...Array(4).fill('glm-5.3-flashx'),OR_MODEL]);
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(9);
  });
  it('搜索断流unknown禁止进入正文或重买搜索',async()=>{
   const f=prepare();f.request.executionChannel='evolink';f.deps.fetch.mockRejectedValueOnce(Error('connection lost'));
@@ -586,12 +586,12 @@ it.each(['openrouter','evolink'] as const)('不同路由%s的搜索、整理和�
  const f=make();f.request.executionChannel=channel;f.request.systemInstruction.parts.push({text:'【联网资料融入正文】'});
  const glm=channel==='openrouter'?'z-ai/glm-5.3-flashx':'glm-5.3-flashx',ds=channel==='openrouter'?OR_MODEL:EVO_MODEL;
  f.deps.fetch.mockResolvedValueOnce(f.response(glm,{}));
- for(let i=0;i<4;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
+ for(let i=0;i<8;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));
  f.deps.fetch.mockResolvedValueOnce(f.response(glm));
  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
  const sent=f.deps.fetch.mock.calls.map(c=>({url:(c as any)[0],body:JSON.parse((c as any)[1].body)}));
  const alternate=channel==='openrouter'?EVO_MODEL:OR_MODEL;
- expect(sent.map(x=>x.body.model)).toEqual([glm,ds,alternate,ds,alternate,glm]);expect(out.modelVersion).toBe(glm);
+ expect(sent.map(x=>x.body.model)).toEqual([glm,...Array(4).fill(ds),...Array(4).fill(alternate),glm]);expect(out.modelVersion).toBe(glm);
  for(const [index,{url,body}] of Array.from(sent.entries())){
   const search=index===0;expect(body.stream).toBe(true);expect(body.plugins).toBeUndefined();expect(body.max_tokens).toBe(search?8192:32768);
   if(url==='https://openrouter.ai/api/v1/chat/completions'){
@@ -605,7 +605,7 @@ it.each(['openrouter','evolink'] as const)('不同路由%s的搜索、整理和�
    expect(body.tools).toEqual(search?[{type:'web_search',web_search:{enable:true,search_result:true,count:12,require_search:false}}]:undefined);
   }
  }
- await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(6);
+ await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(10);
 });
 
 
@@ -704,8 +704,8 @@ describe('旧完整正文的严格零调用恢复',()=>{
 describe('Markdown明确上游失败遵守正式重试链',()=>{
  const setup=()=>{const f=make();f.request.executionChannel='openrouter';f.request.generationConfig.responseMimeType='text/markdown';f.request.contents[0].parts=f.request.contents[0].parts.filter(p=>'text' in p);return f;};
  const reply=(model:string,finish:string)=>new Response(JSON.stringify({model,choices:[{finish_reason:finish,message:{content:'# 水循环\n\n## 主要重点｜蒸发\n\n太阳提供能量，水从液态转变为水蒸气。'}}]}),{headers:{'Content-Type':'application/json'}});
- it('明确error后下一次成功，恢复不再请求',async()=>{const f=setup();f.deps.fetch.mockResolvedValueOnce(reply(OR_MODEL,'error')).mockResolvedValueOnce(reply(EVO_MODEL,'stop'));await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).not.toHaveBeenCalled();});
- it('DeepSeek四次明确失败才进入既有GLM兜底',async()=>{const f=setup();f.deps.fetch.mockImplementation(async(_url?:unknown,init?:RequestInit)=>{const body=JSON.parse(String(init?.body));return reply(body.model,[OR_MODEL,EVO_MODEL].includes(body.model)?'error':'stop');});await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(5);});
+ it('明确error后下一次成功，恢复不再请求',async()=>{const f=setup();f.deps.fetch.mockResolvedValueOnce(reply(OR_MODEL,'error')).mockResolvedValueOnce(reply(OR_MODEL,'stop'));await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).not.toHaveBeenCalled();});
+ it('DeepSeek每通道四次明确失败才进入既有GLM兜底',async()=>{const f=setup();f.deps.fetch.mockImplementation(async(_url?:unknown,init?:RequestInit)=>{const body=JSON.parse(String(init?.body));return reply(body.model,[OR_MODEL,EVO_MODEL].includes(body.model)?'error':'stop');});await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(9);});
  it('未知网络回执不能因允许重试而重购',async()=>{const f=setup();f.deps.fetch.mockRejectedValue(new Error('connection lost'));await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow();expect(f.deps.fetch).toHaveBeenCalledTimes(1);await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow();expect(f.deps.fetch).toHaveBeenCalledTimes(1);});
 });
 
@@ -714,18 +714,18 @@ it('Markdown旧32k请求恢复时实际发送采用模型容量而非应用额�
 
 describe('首选通道跨供应商回退与旧回执保护',()=>{
  const keyLimit=()=>new Response(JSON.stringify({error:{message:'Key limit exceeded (total limit)',metadata:{limit_source:'openrouter_key_limit'}}}),{status:403});
- it.each(['openrouter','evolink'] as const)('%s明确失败后先走另一供应商同模型',async channel=>{
+ it.each(['openrouter','evolink'] as const)('%s首次加三次重试明确失败后才走另一供应商同模型',async channel=>{
   const f=make();f.request.executionChannel=channel;
-  f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(f.response(channel==='openrouter'?EVO_MODEL:OR_MODEL));
+  for(let i=0;i<4;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));f.deps.fetch.mockResolvedValueOnce(f.response(channel==='openrouter'?EVO_MODEL:OR_MODEL));
   const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
-  expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual(channel==='openrouter'?[OR_MODEL,EVO_MODEL]:[EVO_MODEL,OR_MODEL]);
+  expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual(channel==='openrouter'?[...Array(4).fill(OR_MODEL),EVO_MODEL]:[...Array(4).fill(EVO_MODEL),OR_MODEL]);
   expect(out.gateway).toBe(channel==='openrouter'?'evolink':'openrouter');
  });
  it('key限额403跳过同供应商所有模型的无效重试，其他供应商仍可用',async()=>{
   const f=make();f.request.executionChannel='openrouter';
-  f.deps.fetch.mockResolvedValueOnce(keyLimit()).mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(f.response('glm-5.3-flashx'));
+  f.deps.fetch.mockResolvedValueOnce(keyLimit()).mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(f.response('glm-5.3-flashx'));
   const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
-  expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual([OR_MODEL,EVO_MODEL,EVO_MODEL,'glm-5.3-flashx']);
+  expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual([OR_MODEL,...Array(4).fill(EVO_MODEL),'glm-5.3-flashx']);
   expect(out.gateway).toBe('glm-evolink');
   expect(f.storage.has('test/0/route-openrouter-retry-2.json')).toBe(false);
   expect(f.storage.has('test/0/route-glm-openrouter.json')).toBe(false);
@@ -733,9 +733,9 @@ describe('首选通道跨供应商回退与旧回执保护',()=>{
  });
  it.each(['openrouter','evolink'] as const)('%s的GLM搜索可跨通道但绝不落DeepSeek',async channel=>{
   const f=make();f.request.executionChannel=channel;f.request.researchOnly=true;f.request.systemInstruction.parts.push({text:'【联网资料融入正文】'});
-  f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(f.response(channel==='openrouter'?'glm-5.3-flashx':'z-ai/glm-5.3-flashx',{}));
+  for(let i=0;i<4;i++)f.deps.fetch.mockResolvedValueOnce(new Response('{}',{status:503}));f.deps.fetch.mockResolvedValueOnce(f.response(channel==='openrouter'?'glm-5.3-flashx':'z-ai/glm-5.3-flashx',{}));
   await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
-  expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual(channel==='openrouter'?['z-ai/glm-5.3-flashx','glm-5.3-flashx']:['glm-5.3-flashx','z-ai/glm-5.3-flashx']);
+  expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual(channel==='openrouter'?[...Array(4).fill('z-ai/glm-5.3-flashx'),'glm-5.3-flashx']:[...Array(4).fill('glm-5.3-flashx'),'z-ai/glm-5.3-flashx']);
  });
  it('另一供应商旧锁定retry-1成功回执优先零调用恢复',async()=>{
   const f=make();f.request.executionChannel='openrouter';await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
@@ -745,13 +745,13 @@ describe('首选通道跨供应商回退与旧回执保护',()=>{
   expect(JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text).gateway).toBe('evolink-retry-1');
   expect(f.deps.fetch).not.toHaveBeenCalled();expect(f.storage.get('test/0/route-evolink-retry-1.json')).toEqual(legacy);
  });
- it('旧锁定同模型四次失败已耗尽次数，不借新跨通道链增购',async()=>{
+ it('旧首选通道四次失败已耗尽，恢复不重购该通道并进入同模型另一通道',async()=>{
   const f=make();f.request.executionChannel='openrouter';await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
   const receipt=f.storage.get('test/0/route-openrouter.json');f.storage.clear();
   for(const route of ['openrouter','openrouter-retry-1','openrouter-retry-2','openrouter-retry-3'])f.storage.set(`test/0/route-${route}.json`,{...receipt,route,state:'failed',response:{status:503,text:'{}'}});
-  f.deps.fetch.mockClear();f.deps.fetch.mockResolvedValueOnce(f.response('z-ai/glm-5.3-flashx'));
+  f.deps.fetch.mockClear();f.deps.fetch.mockResolvedValueOnce(f.response(EVO_MODEL));
   await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
-  expect(f.deps.fetch).toHaveBeenCalledTimes(1);expect(JSON.parse((f.deps.fetch.mock.calls[0] as any)[1].body).model).toBe('z-ai/glm-5.3-flashx');
+  expect(f.deps.fetch).toHaveBeenCalledTimes(1);expect(JSON.parse((f.deps.fetch.mock.calls[0] as any)[1].body).model).toBe(EVO_MODEL);
  });
  it('key限额后跨通道未知回执立即停止，恢复不重购',async()=>{
   const f=make();f.request.executionChannel='openrouter';f.deps.fetch.mockResolvedValueOnce(keyLimit()).mockRejectedValueOnce(Error('connection lost'));
@@ -768,4 +768,17 @@ describe('首选通道跨供应商回退与旧回执保护',()=>{
   expect(f.deps.fetch).toHaveBeenCalledTimes(1);f.deps.fetch.mockClear();
   await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toMatchObject({code:'sse_content_safety'});expect(f.deps.fetch).not.toHaveBeenCalled();
  });
+});
+
+it.each(['openrouter','evolink'] as const)('%s图片400在原通道重试，第三次重试成功后不切通道且恢复零新调用',async channel=>{
+ const f=make();f.request.executionChannel=channel;
+ const model=channel==='openrouter'?OR_MODEL:EVO_MODEL;
+ for(let i=0;i<3;i++)f.deps.fetch.mockResolvedValueOnce(new Response(JSON.stringify({error:{code:'400002',param:'image_url',message:'image_url is invalid or missing'}}),{status:400}));
+ f.deps.fetch.mockResolvedValueOnce(f.response(model));
+ const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+ expect(f.deps.fetch.mock.calls.map(c=>JSON.parse((c as any)[1].body).model)).toEqual([model,model,model,model]);
+ expect(new Set(f.deps.fetch.mock.calls.map(c=>(c as any)[0])).size).toBe(1);
+ expect(out.gateway).toBe(`${channel}-retry-3`);
+ expect(out.gatewayTrace.map((v:any)=>v.route)).toEqual([channel,`${channel}-retry-1`,`${channel}-retry-2`,`${channel}-retry-3`]);
+ f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).not.toHaveBeenCalled();
 });

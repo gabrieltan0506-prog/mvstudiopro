@@ -1,21 +1,25 @@
 import { expect, it } from "vitest";
 import { completedKnowledgeBatches, knowledgeCompletedPrefix, runKnowledgeParallelBatches, type KnowledgePublicationChannel } from "./knowledgePublicationParallel";
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; };
-it("两路真实重叠，快路立即补位，乱序完成不跳过慢批次", async () => {
-  const slow = deferred(), fast = deferred(), third = deferred();
+it("四路真实重叠且每通道两工位，快路补位，乱序完成不跳慢批次", async () => {
+  const gates=Array.from({length:6},deferred),fifth=deferred();
   const started: [number, KnowledgePublicationChannel][] = [], completed = new Set<number>(), channels: Record<string, KnowledgePublicationChannel> = {};
-  const pending = runKnowledgeParallelBatches({ count: 4, completed, channels, active: () => true,
+  let active=0,maximum=0;const perChannel={openrouter:0,evolink:0},peaks={openrouter:0,evolink:0};
+  const pending = runKnowledgeParallelBatches({ count: 6, completed, channels, active: () => true,
     assign: async (i, route) => { channels[i] = route; },
-    execute: async (i, route) => { started.push([i, route]); if (i === 0) await slow.promise; if (i === 1) await fast.promise; if (i === 2) third.resolve(); return i; },
+    execute: async (i, route) => {
+      started.push([i, route]);maximum=Math.max(maximum,++active);peaks[route]=Math.max(peaks[route],++perChannel[route]);
+      if(i===4)fifth.resolve();await gates[i].promise;active--;perChannel[route]--;return i;
+    },
     complete: async i => { completed.add(i); },
   });
   await Promise.resolve(); await Promise.resolve();
-  expect(started).toEqual([[0, "openrouter"], [1, "evolink"]]);
-  fast.resolve(); await third.promise;
-  expect(started[2]).toEqual([2, "evolink"]);
-  expect(knowledgeCompletedPrefix(completed, 4)).toBe(0);
-  slow.resolve(); expect(await pending).toEqual([]);
-  expect(Array.from(completed).sort()).toEqual([0, 1, 2, 3]);
+  expect(started).toEqual([[0,"openrouter"],[1,"evolink"],[2,"openrouter"],[3,"evolink"]]);
+  gates[1].resolve();await fifth.promise;
+  expect(started[4]).toEqual([4,"evolink"]);expect(knowledgeCompletedPrefix(completed,6)).toBe(0);
+  gates.forEach(g=>g.resolve());expect(await pending).toEqual([]);
+  expect(maximum).toBe(4);expect(peaks).toEqual({openrouter:2,evolink:2});
+  expect(Array.from(completed).sort()).toEqual([0,1,2,3,4,5]);expect(new Set(started.map(([i])=>i)).size).toBe(6);
 });
 it("单路失败保留另一条在途请求，恢复跳过乱序完成且保留原通道", async () => {
   const success = new Set<number>(), channels: Record<string, KnowledgePublicationChannel> = {};
