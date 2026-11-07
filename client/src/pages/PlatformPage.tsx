@@ -74,6 +74,7 @@ import { PlatformToolsWorkbench } from "@/components/platform/PlatformToolsWorkb
 import { PlatformStructuredPersonaForm } from "@/components/platform/PlatformStructuredPersonaForm";
 import { MarketingPlanPanel } from "@/components/platform/MarketingPlanPanel";
 import { MarketingOfferPanel } from "@/components/platform/MarketingOfferPanel";
+import { MarketingProductionPanel } from "@/components/platform/MarketingProductionPanel";
 import { formatOptimizationAdvice } from "@shared/marketingOffer";
 import { PlatformPersonaPolishPanel } from "@/components/platform/PlatformPersonaPolishPanel";
 import {
@@ -2578,6 +2579,8 @@ export default function PlatformPage() {
     "xiaohongshu",
   ]);
   const [focusPrompt, setFocusPrompt] = useState("");
+  /** 营销整合方案正文：带入口播制作区（制作稿 → 剪辑 → 导出） */
+  const [marketingIntegratedText, setMarketingIntegratedText] = useState("");
   const [voiceDebugLog, setVoiceDebugLog] = useState<string[]>([]);
   const addVoiceDebug = (msg: string) => setVoiceDebugLog((prev) => [...prev.slice(-30), msg]);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
@@ -5316,9 +5319,10 @@ export default function PlatformPage() {
         setFreeformOverride(true);
         setPersonaFieldErrors({});
       }} />
-      <MarketingPlanPanel key={workbenchUserKey || "anonymous"} userKey={workbenchUserKey} value={focusPrompt} onApply={next => {
+      <MarketingPlanPanel key={workbenchUserKey || "anonymous"} userKey={workbenchUserKey} value={focusPrompt} onIntegratedText={setMarketingIntegratedText} onApply={next => {
         setFocusPrompt(next); setFreeformOverride(true); setPersonaFieldErrors({});
       }} />
+      {workbenchUserKey && <MarketingProductionPanel key={workbenchUserKey} userKey={workbenchUserKey} seedMarkdown={marketingIntegratedText} />}
       <details className="text-sm text-slate-300"><summary className="cursor-pointer py-2">需要帮助整理需求？</summary>
       <PlatformPersonaPolishPanel
         id="platform-persona-polish"

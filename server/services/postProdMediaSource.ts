@@ -27,6 +27,7 @@ import {
   type PostProdJobInput,
   type RawPostProdJobInput,
 } from "../jobs/postProdInput";
+import { isStockAssetInsertable, type StockFootageAsset, type StockFootagePurpose, type StockFootageUsage } from "../../shared/stockFootage";
 
 export function sanitizePostProdUserId(userId: string): string {
   return String(userId).replace(/[^0-9a-zA-Z_-]/g, "");
@@ -224,6 +225,12 @@ export type PostProdMediaDeps = {
   loadSucceededJobOutputSources?: (userId: string, bucket: string) => Promise<{ objects: ReadonlySet<string>; urls: ReadonlySet<string> }>;
   /** 可选（测试注入用）：只给 https 直链；缺省不放行任何外链 */
   loadSucceededJobOutputUrls?: (userId: string, bucket: string) => Promise<ReadonlySet<string>>;
+  /** 共用素材检索：按 assetId 核对本人已采用资产（不是本人/未采用成功即抛错）；缺省不放行任何图库素材 */
+  loadOwnedStockAsset?: (
+    userId: number,
+    assetId: string,
+    expect: { purpose?: StockFootagePurpose; usages?: readonly StockFootageUsage[]; kind?: "video" | "photo" },
+  ) => Promise<StockFootageAsset>;
 };
 
 const realDeps: PostProdMediaDeps = {
@@ -231,6 +238,43 @@ const realDeps: PostProdMediaDeps = {
   verifyOwnership: (uid, p) => verifyCanvasMediaOwnership(uid, p),
   loadSucceededJobOutputObjects: (uid, bucket) => loadSucceededJobOutputObjects(uid, bucket),
   loadSucceededJobOutputSources: (uid, bucket) => loadSucceededJobOutputSources(uid, bucket),
+  loadOwnedStockAsset: async (uid, assetId, expect) => (await import("./stockFootage/ownership.js")).loadOwnedStockAsset(uid, assetId, expect),
+};
+
+/**
+ * 图库素材引用：任务里只存 `stock:sf_<48hex>`（资产身份 = 署名证据锚点），
+ * 不存客户端给的地址。入队与 worker 各自按 assetId 重新核对本人已采用资产；
+ * 只有 worker 执行前才把引用换成该资产的 gcsUri（见 materializeStock）。
+ */
+export const STOCK_POST_PROD_SOURCE_RE = /^stock:(sf_[0-9a-f]{48})$/;
+/** 后期入片目前只有营销口播段落画面使用图库引用：营销用途 + 插入 + 视频。 */
+export const STOCK_POST_PROD_EXPECT = { purpose: "marketing", usages: ["insert"], kind: "video" } as const;
+export function stockPostProdSource(assetId: string): string {
+  return `stock:${assetId}`;
+}
+
+async function resolveStockVideoSource(
+  userId: string,
+  source: string,
+  deps: PostProdMediaDeps,
+): Promise<{ ref: string; gcsUri: string }> {
+  const match = source.match(STOCK_POST_PROD_SOURCE_RE);
+  if (!match) throw new Error(UNREGISTERED_HINT);
+  const uid = Number(userId);
+  if (!Number.isSafeInteger(uid) || uid <= 0 || !deps.loadOwnedStockAsset) throw new Error("图库素材暂时无法核对,请稍后再试");
+  const asset = await deps.loadOwnedStockAsset(uid, match[1], STOCK_POST_PROD_EXPECT);
+  if (!asset || asset.assetId !== match[1]) throw new Error("图库素材身份不一致");
+  if (!isStockAssetInsertable(asset)) throw new Error("参考图用途的图库素材不能直接入片");
+  if (asset.kind !== "video") throw new Error("图库照片暂不能直接作为视频片段入片,请选择视频素材");
+  const bucket = deps.getBucket();
+  const parsed = parseGsUri(asset.gcsUri);
+  if (!parsed || parsed.bucket !== bucket || !normalizePostProdObjectName(parsed.objectName)) throw new Error("图库素材不在当前存储范围内");
+  return { ref: source, gcsUri: asset.gcsUri };
+}
+
+export type ResolvePostProdOptions = {
+  /** worker 执行前为 true：把已核对的 stock:引用换成 gcsUri 交给 ffmpeg；入队时保持引用原样落库 */
+  materializeStock?: boolean;
 };
 
 const UNREGISTERED_HINT = "素材尚未登记,请从画布/成片里重新选择站内素材";
@@ -325,6 +369,7 @@ export async function resolveRegisteredPostProdMediaSource(
 export async function resolvePostProdInputSources(
   input: { userId: string; input: RawPostProdJobInput },
   deps: PostProdMediaDeps = realDeps,
+  options: ResolvePostProdOptions = {},
 ): Promise<PostProdJobInput> {
   // 预演/绑骨只携带受控参数和本人模型任务ID；专用渲染器重新核对来源，拒绝外部URL或脚本。
   if((input.input.action === "manhua_previs" && !input.input.params.audio) || input.input.action === "manhua_auto_rig") return postProdJobInputSchema.parse(input.input);
@@ -333,6 +378,12 @@ export async function resolvePostProdInputSources(
   const context: PostProdMediaContext = await buildPostProdMediaContext(userId, bucket, deps);
   const resolve = (source: string) =>
     resolveRegisteredPostProdMediaSource({ userId, source }, deps, context);
+  // 只有「画面片段」位置（拼接片段、配乐贴装的视频）接受图库视频引用；音频等位置仍按原登记规则
+  const resolveVisual = async (source: string) => {
+    if (!String(source || "").trim().startsWith("stock:")) return resolve(source);
+    const stock = await resolveStockVideoSource(userId, String(source).trim(), deps);
+    return options.materializeStock ? stock.gcsUri : stock.ref;
+  };
 
   const job = input.input;
   if (job.action === "art_motion") {
@@ -382,7 +433,7 @@ export async function resolvePostProdInputSources(
   if (job.action === "concat") {
     return postProdJobInputSchema.parse({
       ...job,
-      params: { ...job.params, clips: await Promise.all(job.params.clips.map(resolve)) },
+      params: { ...job.params, clips: await Promise.all(job.params.clips.map(resolveVisual)) },
     });
   }
   if (job.action === "bgm_mount") {
@@ -390,7 +441,7 @@ export async function resolvePostProdInputSources(
       ...job,
       params: {
         ...job.params,
-        videoUri: await resolve(job.params.videoUri),
+        videoUri: await resolveVisual(job.params.videoUri),
         bgmUri: await resolve(job.params.bgmUri),
       },
     });
