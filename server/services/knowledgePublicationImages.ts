@@ -6,15 +6,21 @@ import { getJobByIdStrict } from "../jobs/repository";
 import { getGcsBucketName } from "./gcs";
 import { resolveRegisteredPostProdMediaSource, loadSucceededJobOutputSources } from "./postProdMediaSource";
 
+/** 权威登记仅在单次解析调用内复用，不跨用户或跨请求缓存。 */
+function createKnowledgePublicationImageDeps() {
+  let pending: ReturnType<typeof loadSucceededJobOutputSources> | undefined;
+  return {
+    job: getJobByIdStrict,
+    canonical: async (owner: number, url: string) => {
+      pending ??= loadSucceededJobOutputSources(String(owner), getGcsBucketName());
+      const sources = await pending;
+      return resolveRegisteredPostProdMediaSource({userId:String(owner),source:url},undefined,{jobObjects:sources.objects,jobUrls:sources.urls});
+    },
+  };
+}
+
 /** 只读取已保存的本人图片任务；绝不从整理链新建/重试图片任务。 */
-export async function resolveKnowledgePublicationImages(owner: number, source: KnowledgeSource, indexes?: readonly number[], deps = {
-  job: getJobByIdStrict,
-  canonical: async (owner: number, url: string) => {
-    const sources = await loadSucceededJobOutputSources(String(owner), getGcsBucketName());
-    return resolveRegisteredPostProdMediaSource({ userId: String(owner), source: url }, undefined,
-      { jobObjects: sources.objects, jobUrls: sources.urls });
-  },
-}, replacements: Record<string, string> = {}): Promise<KnowledgeSource> {
+export async function resolveKnowledgePublicationImages(owner: number, source: KnowledgeSource, indexes?: readonly number[], deps = createKnowledgePublicationImageDeps(), replacements: Record<string, string> = {}): Promise<KnowledgeSource> {
   const pages = await Promise.all(source.pages.map(async (page, i) => {
     if (!page.imageJobId || (indexes && !indexes.includes(i))) return page;
     const job = await deps.job(replacements[page.imageJobId] || page.imageJobId);

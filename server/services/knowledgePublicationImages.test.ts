@@ -67,3 +67,19 @@ describe("当前补图尝试必须持久保存并对账 KH-SYNC-02", () => {
     read.mockClear(); await expect(validateKnowledgeImageReplacements(7, next, next, read)).resolves.toBeUndefined(); expect(read).not.toHaveBeenCalled();
   });
 });
+
+import * as imageJobs from '../jobs/repository';
+import * as sourceRegistry from './postProdMediaSource';
+import * as imageStore from './gcs';
+it('整册图片共享本次权威登记读取，不跨下一次请求缓存', async()=>{
+ const job=vi.spyOn(imageJobs,'getJobByIdStrict').mockImplementation(async id=>({userId:'7',status:'succeeded',input:{action:'platform_composite_sheet_progress',params:{kind:'single_page_knowledge_card'}},output:{imageUrl:'gs://test/generated/7/'+id+'.png'}}) as any);
+ const bucket=vi.spyOn(imageStore,'getGcsBucketName').mockReturnValue('test');
+ const sources=vi.spyOn(sourceRegistry,'loadSucceededJobOutputSources').mockResolvedValue({objects:new Set(),urls:new Set()});
+ const canonical=vi.spyOn(sourceRegistry,'resolveRegisteredPostProdMediaSource').mockImplementation(async input=>input.source);
+ try{
+  const many={...source,pages:Array.from({length:48},(_,i)=>({...source.pages[0],id:String(i),imageJobId:'job-'+i}))};
+  const out=await resolveKnowledgePublicationImages(7,many);
+  expect(out.pages).toHaveLength(48);expect(job).toHaveBeenCalledTimes(48);expect(sources).toHaveBeenCalledTimes(1);expect(canonical).toHaveBeenCalledTimes(48);
+  await resolveKnowledgePublicationImages(7,many,[0]);expect(sources).toHaveBeenCalledTimes(2);
+ }finally{job.mockRestore();bucket.mockRestore();sources.mockRestore();canonical.mockRestore();}
+});

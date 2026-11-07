@@ -261,6 +261,8 @@ async function assertObjectAllowed(
 ): Promise<void> {
   if (objectName.startsWith(postProdOutputPrefix(userId))) return;
   if (objectName.startsWith(userUploadsPrefix(userId))) return;
+  // 本人成功任务的完整产物登记本就是独立授权证明；不先依赖另一登记源的网络可用性。
+  if (context.jobObjects.has(objectName)) return;
   const uidNum = Number(userId);
   if (
     CANVAS_MEDIA_OBJECT_RE.test(objectName) &&
@@ -269,8 +271,6 @@ async function assertObjectAllowed(
   ) {
     return;
   }
-  // 完整对象名全等比较,不做子串匹配(abc.mp4 不许命中 abc.mp4.backup)
-  if (context.jobObjects.has(objectName)) return;
   throw new Error(UNREGISTERED_HINT);
 }
 
