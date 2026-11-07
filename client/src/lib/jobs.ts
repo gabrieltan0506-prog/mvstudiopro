@@ -205,6 +205,8 @@ function jobApiPath(jobId: string): string {
 function resolveJobPollUrl(jobId: string): string {
   const path = jobApiPath(jobId);
   const directUrl = withLongJobsFlyDirect(path);
+  // 读档及顾问与提交共用已鉴权 API 域，不能回绕前台代理。
+  if (/^(kc_|manhua_advisor_)/.test(jobId)) return directUrl;
   if (typeof window === "undefined") return directUrl;
   try {
     const resolved = directUrl.startsWith("http")
@@ -230,27 +232,44 @@ function formatJobFetchError(status: number, detail: string): Error {
   return new Error(`(${status}) ${detail || "Failed to fetch job"}`);
 }
 
-async function fetchJob(url: string): Promise<JobResponse> {
-  const response = await withFlyHealthGate(flyHealthProbeOriginForUrl(url), () =>
-    fetch(url, {
-      method: "GET",
-      credentials: "include",
-    }),
-  );
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw formatJobFetchError(response.status, detail);
-  }
-
-  return response.json() as Promise<JobResponse>;
+export class JobReceiptUnavailableError extends Error {
+  constructor() { super("任务状态暂未取回，正在恢复连接；不会重新提交"); this.name = "JobReceiptUnavailableError"; }
 }
 
-export async function getJob(jobId: string): Promise<JobResponse> {
+async function fetchJob(url: string, signal?: AbortSignal): Promise<JobResponse> {
+  return withFlyHealthGate(flyHealthProbeOriginForUrl(url), async () => {
+    signal?.throwIfAborted();
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal?.reason);
+    signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const response = await fetch(url, { method: "GET", credentials: "include", cache: "no-store", signal: controller.signal });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw formatJobFetchError(response.status, detail);
+      }
+      let receipt: JobResponse;
+      try { receipt = await response.json(); }
+      catch { throw new JobReceiptUnavailableError(); }
+      if (!receipt || !["queued", "running", "succeeded", "failed"].includes(receipt.status)) throw new JobReceiptUnavailableError();
+      return receipt;
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (controller.signal.aborted) throw new JobReceiptUnavailableError();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    }
+  });
+}
+
+export async function getJob(jobId: string, signal?: AbortSignal): Promise<JobResponse> {
   const path = jobApiPath(jobId);
   const pollUrl = resolveJobPollUrl(jobId);
   try {
-    return await fetchJob(pollUrl);
+    return await fetchJob(pollUrl, signal);
   } catch (error) {
     // 同源 404 时回退直连（Job 可能刚写入 Fly、尚未经 rewrite 可见）
     const directUrl = withLongJobsFlyDirect(path);
@@ -258,18 +277,25 @@ export async function getJob(jobId: string): Promise<JobResponse> {
       error instanceof Error &&
       (/\(404\)/.test(error.message) || /Job not found/i.test(error.message));
     if (is404 && pollUrl !== directUrl) {
-      return fetchJob(directUrl);
+      return fetchJob(directUrl, signal);
     }
     throw error;
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const finish = () => { signal?.removeEventListener("abort", abort); resolve(); };
+    const timer = setTimeout(finish, ms);
+    const abort = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); reject(signal?.reason || new Error("已停止等待原任务")); };
+    signal?.addEventListener("abort", abort, {once:true});
+  });
 }
 
 /** 闸道 502、上游抖动、浏览器层网路失败：轮询时应退避重试，避免误判任务失败 */
 function isTransientJobPollError(err: unknown): boolean {
+  if (err instanceof JobReceiptUnavailableError) return true;
   if (!(err instanceof Error)) return false;
   const m = err.message;
   const paren = m.match(/\((\d{3})\)/);
@@ -299,21 +325,23 @@ const MAX_401_RETRIES = 3;
 /**
  * 供轮询使用：对单次 GET 做有限次退避重试（不 increment poll attempt，由 pollJobUntilTerminal 外层计数）
  */
-export async function getJobForPoll(jobId: string): Promise<JobResponse> {
+export async function getJobForPoll(jobId: string, signal?: AbortSignal): Promise<JobResponse> {
   const maxAttempts = 6;
   let notFoundRetries = 0;
   let unauthorizedRetries = 0;
   let lastErr: Error | undefined;
   for (let a = 1; a <= maxAttempts; a++) {
     try {
-      return await getJob(jobId);
+      signal?.throwIfAborted();
+      return await getJob(jobId, signal);
     } catch (e) {
+      signal?.throwIfAborted();
       lastErr = e instanceof Error ? e : new Error(String(e));
       if (/\(401\)/.test(lastErr.message)) {
         unauthorizedRetries += 1;
         if (unauthorizedRetries < MAX_401_RETRIES) {
           // 401 重试时间: 1s, 2s
-          await sleep(1000 * 2 ** (unauthorizedRetries - 1));
+          await sleep(1000 * 2 ** (unauthorizedRetries - 1), signal);
           continue;
         }
         // 连续 3 次仍 401：认定登录确实失效，抛去掉状态码前缀的人话
@@ -324,7 +352,7 @@ export async function getJobForPoll(jobId: string): Promise<JobResponse> {
         notFoundRetries += 1;
         if (notFoundRetries <= MAX_404_RETRIES) {
           // 404 重试时间: 1s, 2s, 4s
-          await sleep(Math.min(4000, 1000 * 2 ** (notFoundRetries - 1)));
+          await sleep(Math.min(4000, 1000 * 2 ** (notFoundRetries - 1)), signal);
           continue;
         }
         // 超过 3 次 404 仍未找到，改抛友好错误
@@ -333,7 +361,7 @@ export async function getJobForPoll(jobId: string): Promise<JobResponse> {
       if (!isTransientJobPollError(lastErr) || a === maxAttempts) {
         throw lastErr;
       }
-      await sleep(Math.min(4000, 500 * 2 ** (a - 1)));
+      await sleep(Math.min(4000, 500 * 2 ** (a - 1)), signal);
     }
   }
   throw lastErr ?? new Error("getJobForPoll: unknown error");
@@ -364,6 +392,9 @@ export async function pollJobUntilTerminal(
     maxIntervalMs?: number;
     /** 每次拉取 job 后触发（含尚未进入终态的中间状态） */
     onPoll?: (tick: PollJobTick) => void;
+    /** 仅恢复原 GET：查询失败不是任务失败，不创建、重跑或更换任务身份。 */
+    onUnavailable?: (error: Error) => void;
+    signal?: AbortSignal;
   },
 ): Promise<JobResponse> {
   const interval = opts?.intervalMs ?? 2500;
@@ -375,7 +406,17 @@ export async function pollJobUntilTerminal(
   let lastStatus: JobStatus = "queued";
   while (Date.now() - t0 < maxWait) {
     attempt += 1;
-    const j = await getJobForPoll(jobId);
+    opts?.signal?.throwIfAborted();
+    let j: JobResponse;
+    try { j = await getJobForPoll(jobId, opts?.signal); }
+    catch (error) {
+      opts?.signal?.throwIfAborted();
+      if (!opts?.onUnavailable) throw error;
+      opts.onUnavailable(error instanceof Error ? error : new Error(String(error)));
+      await sleep(maxInterval, opts.signal);
+      continue;
+    }
+    opts?.signal?.throwIfAborted();
     lastStatus = j.status;
     const out =
       j.output && typeof j.output === "object" && !Array.isArray(j.output)
@@ -391,7 +432,7 @@ export async function pollJobUntilTerminal(
     if (j.status === "succeeded" || j.status === "failed") return j;
     const spacing =
       attempt >= adaptiveAfter ? Math.min(maxInterval, interval * 2) : interval;
-    await sleep(spacing);
+    await sleep(spacing, opts?.signal);
   }
   const elapsedSec = Math.max(1, Math.round((Date.now() - t0) / 1000));
   const elapsedMin = Math.floor(elapsedSec / 60);

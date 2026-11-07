@@ -13,7 +13,7 @@ beforeAll(async () => {
     const tasks = new KnowledgeCardPageTasks('1');
     window.tasks = tasks; window.errors = []; window.left = 0;
     window.detach = tasks.attach(() => window.left++, message => window.errors.push(message));
-  ` }, bundle: true, write: false, format: "iife", platform: "browser" });
+  ` }, bundle: true, write: false, format: "iife", platform: "browser", define: { "import.meta.env.VITE_FLY_API_ORIGIN": '""' } });
   bundle = result.outputFiles[0]!.text;
   server = createServer((req, res) => {
     const url = new URL(req.url || "/", 'http://local');

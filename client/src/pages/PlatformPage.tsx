@@ -1,3 +1,5 @@
+import { knowledgeCardTrackedJobId, submitKnowledgeCardOnce } from "@/lib/knowledgeCardTrackedSubmission";
+import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { KnowledgeReadingLive } from "@/components/platform/KnowledgeReadingLive";
 import type { ReadingDraft } from "@/lib/knowledgeReadingPreparation";
 import { createKnowledgeReadingController } from "@/lib/knowledgeReadingPreparation";
@@ -3164,6 +3166,8 @@ export default function PlatformPage() {
   const [customNoteCancelBusy, setCustomNoteCancelBusy] = useState(false);
   const [customNoteCancelRequested, setCustomNoteCancelRequested] = useState(false);
   const customNoteUploadStopRef = useRef(false);
+  const knowledgePollingRef = useRef<AbortController | null>(null);
+  const customNoteTrackedRequestRef = useRef<{jobId:string;requestId:string;action:"knowledge_card_distill"|"knowledge_card_derive_level"} | null>(null);
 
   /**
    * 出图阶段的停止标记（0911 用户令：中途停了，出几张就扣几张）。
@@ -3172,10 +3176,13 @@ export default function PlatformPage() {
    */
   const customNoteStopRenderRef = useRef(false);
   const knowledgeCardPageTasks = useMemo(() => new KnowledgeCardPageTasks(String(user?.id ?? "current")), [user?.id]);
-  useEffect(() => knowledgeCardPageTasks.attach(
-    () => { customNoteStopRenderRef.current = true; },
-    (message) => toast.error(message),
-  ), [knowledgeCardPageTasks]);
+  useEffect(() => {
+    const detach=knowledgeCardPageTasks.attach(
+      () => { customNoteStopRenderRef.current = true; knowledgePollingRef.current?.abort(); readingControllerRef.current?.stop(); },
+      (message) => toast.error(message),
+    );
+    return ()=>{detach();knowledgePollingRef.current?.abort();readingControllerRef.current?.stop();};
+  }, [knowledgeCardPageTasks]);
   const [customNoteRendering, setCustomNoteRendering] = useState(false);
   /**
    * 出图前确认弹窗（0911 用户令）：把版式、成稿档、模板类型摆出来核一遍再出图。
@@ -8237,16 +8244,26 @@ export default function PlatformPage() {
     setCustomNoteCancelRequested(false);
     setCustomNoteProgress({ status: "running", percent: 1, label: "选择重点配图…" });
     try {
-      const queued = await enqueueKnowledgeCardLevelDeriveMutation.mutateAsync({
+      const pollController=new AbortController();
+      knowledgePollingRef.current?.abort();knowledgePollingRef.current=pollController;
+      const derivedJobId = await knowledgeCardTrackedJobId(workbenchUserKey,"knowledge_card_derive_level",pageRequestId);
+      customNoteTrackedRequestRef.current={jobId:derivedJobId,requestId:pageRequestId,action:"knowledge_card_derive_level"};
+      setCustomNoteDistillJobId(derivedJobId);
+      deriveOwnedJobIdRef.current = derivedJobId;
+      const queued = await submitKnowledgeCardOnce(() => enqueueKnowledgeCardLevelDeriveMutation.mutateAsync({
         pageRequestId,
         fullMarkdown: full,
         distillModel: customNoteDistillModel,
-      });
-      // 复审 P2：派生也要登记任务身份，否则「派生精华版…」跑着却看不到终止按钮
-      const derivedJobId = String(queued.progressJobId || "");
-      setCustomNoteDistillJobId(derivedJobId);
-      deriveOwnedJobIdRef.current = derivedJobId;
-      const job = await pollJobUntilTerminal(queued.progressJobId, {
+      })).catch(error=>{knowledgeCardPageTasks.finish(pageRequestId);throw error;});
+      knowledgeCardPageTasks.assertLive();
+      if(queued && queued.progressJobId!==derivedJobId)throw Error("任务回执身份不一致，已停止后续处理");
+      const job = await pollJobUntilTerminal(derivedJobId, {
+        signal:pollController.signal,
+        onUnavailable: () => {
+          const message="连接暂时中断，正在恢复原任务；请勿重复提交";
+          setCustomNoteProgress(prev=>({...prev,status:"running",label:message}));
+          setCustomNoteUploadStatus(message);
+        },
         intervalMs: 3000,
         // 服务端不设总时长（只按连续无进度判死），前端也不设：轮询到终态为止
         maxWaitMs: Number.MAX_SAFE_INTEGER,
@@ -8291,6 +8308,7 @@ export default function PlatformPage() {
       if (owned) {
         setCustomNoteDistillJobId((prev) => (prev === owned ? "" : prev));
         deriveOwnedJobIdRef.current = "";
+        if(customNoteTrackedRequestRef.current?.jobId===owned)customNoteTrackedRequestRef.current=null;
         setCustomNoteCancelRequested(false);
       }
     }
@@ -8366,22 +8384,16 @@ export default function PlatformPage() {
   const startReadingAdvisor = () => {
     readingControllerRef.current?.stop();
     const controller = createKnowledgeReadingController({
-      state: jobId => trpcUtils.editableLayout.readingPreparation.fetch({jobId}),
+      state: jobId => trpcUtils.client.editableLayout.readingPreparation.query({jobId},{signal:AbortSignal.timeout(30_000)}),
       confirm: async state => {if(state.maxCredits!==0)throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");return true;},
-      execute: async (link,index,requestId,paidUnit) => {
-        try {
-          return await streamManhuaAdvisor({question:"读档期间同步整理知识与页面结构",rawQuestion:"读档期间同步整理知识与页面结构",requestId,knowledgePublicationContext:{documentId:link.documentId,readingJobId:link.jobId,purpose:"reading",batchIndex:index,attempt:0},confirmPaid:false,confirmedCredits:paidUnit},()=>undefined);
-        } catch (error) {
-          // 结果未知只查同一事务，绝不换请求编号重复购买。
-          const hash = await knowledgeCardInputFingerprint(`${workbenchUserKey}:${requestId}`);
-          const jobId = `manhua_advisor_${hash.slice(0,40)}`;
-          const original = await getJob(jobId).catch(()=>null);
-          if (!original) throw error;
-          const job = original.status === "running" || original.status === "queued" ? await pollJobUntilTerminal(jobId,{intervalMs:5000,maxWaitMs:60*60_000,maxIntervalMs:10000}) : original;
-          const result = (job.output as any)?.result;
-          if(job.status!=="succeeded"||!result?.success)throw error;
-          return {...result,replayed:true};
-        }
+      execute: (link,index,requestId,paidUnit) => streamManhuaAdvisor({question:"读档期间同步整理知识与页面结构",rawQuestion:"读档期间同步整理知识与页面结构",requestId,knowledgePublicationContext:{documentId:link.documentId,readingJobId:link.jobId,purpose:"reading",batchIndex:index,attempt:0},confirmPaid:false,confirmedCredits:paidUnit},()=>undefined),
+      recover: async (_link,_index,requestId) => {
+        const hash = await knowledgeCardInputFingerprint(`${workbenchUserKey}:${requestId}`);
+        const original = await getJob(`manhua_advisor_${hash.slice(0,40)}`);
+        const result = (original.output as any)?.result;
+        if(original.status==="succeeded" && result?.success)return {...result,replayed:true};
+        if(original.status==="failed")return {failed:original.error || "原顾问任务已失败"};
+        return undefined;
       },
       progress: setReadingAdvisorStatus,
       content: setReadingAdvisorDrafts,
@@ -8409,7 +8421,10 @@ export default function PlatformPage() {
     setKnowledgeCardEpubPdfs([]);
     setCustomNoteCancelRequested(false);
     const pageRequestId = knowledgeCardPageTasks.begin("knowledge_card_distill");
-    const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
+    const trackedJobId = await knowledgeCardTrackedJobId(workbenchUserKey,"knowledge_card_distill",pageRequestId);
+    customNoteTrackedRequestRef.current={jobId:trackedJobId,requestId:pageRequestId,action:"knowledge_card_distill"};
+    setCustomNoteDistillJobId(trackedJobId);
+    const queued = await submitKnowledgeCardOnce(() => prepareKnowledgeCardCopyMutation.mutateAsync({
       pageRequestId,
       sourceText: args.sourceText,
       files: args.files?.length ? args.files : undefined,
@@ -8419,9 +8434,16 @@ export default function PlatformPage() {
       // 提炼一律出完整版长稿当真源；精华版之后从长稿派生，两档随时切
       detailLevel: "full",
       ...(args.chargeDistillFee ? { chargeDistillFee: true } : {}),
+    })).catch(error=>{
+      knowledgeCardPageTasks.finish(pageRequestId);
+      readingController.stop();
+      setCustomNoteDistillJobId(prev=>prev===trackedJobId?"":prev);
+      if(customNoteTrackedRequestRef.current?.jobId===trackedJobId)customNoteTrackedRequestRef.current=null;
+      throw error;
     });
 
-    if (!queued.isAsync || !queued.progressJobId) {
+    knowledgeCardPageTasks.assertLive();
+    if (queued && (!queued.isAsync || !queued.progressJobId)) {
       knowledgeCardPageTasks.finish(pageRequestId);
       knowledgeCardPageTasks.assertLive();
       setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
@@ -8429,9 +8451,10 @@ export default function PlatformPage() {
       return String(queued.distilledMarkdown || "").trim();
     }
 
-    const totalHint = Math.max(1, queued.estimatedChunks || 1);
+    if(queued?.progressJobId && queued.progressJobId!==trackedJobId)throw Error("任务回执身份不一致，已停止后续处理");
+    const totalHint = Math.max(1, queued?.estimatedChunks || 1);
     args.onStatus?.(
-      queued.sourceChars > 0
+      queued && queued.sourceChars > 0
         ? `已读出约 ${queued.sourceChars.toLocaleString()} 字，正在分 ${totalHint} 段提炼…`
         : "正在整理文件内容…",
     );
@@ -8452,11 +8475,11 @@ export default function PlatformPage() {
       const tc = Number(out.distillTotalChunks) || totalHint;
       return `分段提炼 ${dc}/${tc} 段`;
     };
-    setCustomNoteDistillJobId(String(queued.progressJobId || ""));
+    setCustomNoteDistillJobId(trackedJobId);
     // 提交请求在途时点中止：取得同一任务 ID 后请求停止，失败仍继续轮询并允许重试中止。
     if (customNoteUploadStopRef.current && args.files?.length) {
       try {
-        const response = await fetch(`/api/jobs/knowledge-card/${encodeURIComponent(queued.progressJobId)}/cancel`, { method: "POST", credentials: "include" });
+        const response = await fetch(withLongJobsFlyDirect(`/api/jobs/knowledge-card/${encodeURIComponent(trackedJobId)}/cancel`), { method: "POST", credentials: "include" });
         const result = await response.json();
         if (!response.ok) throw new Error("中止请求未确认，请再点中止任务；不要重复提交精炼");
         setCustomNoteCancelRequested(Boolean(result.cancelled));
@@ -8466,9 +8489,17 @@ export default function PlatformPage() {
         toast.error(error instanceof Error ? error.message : "中止请求未确认，请再点中止任务");
       }
     }
-    const ownedJobId = String(queued.progressJobId || "");
+    const ownedJobId = trackedJobId;
+    const pollController=new AbortController();
+    knowledgePollingRef.current?.abort();knowledgePollingRef.current=pollController;
     try {
-    const job = await pollJobUntilTerminal(queued.progressJobId, {
+    const job = await pollJobUntilTerminal(trackedJobId, {
+        signal:pollController.signal,
+        onUnavailable: () => {
+          const message="连接暂时中断，正在恢复原任务；请勿重复提交";
+          setCustomNoteProgress(prev=>({...prev,status:"running",label:message}));
+          setCustomNoteUploadStatus(message);
+        },
       intervalMs: 3000,
       // 服务端不设总时长（只按连续无进度判死），前端也不设：轮询到终态为止
       maxWaitMs: Number.MAX_SAFE_INTEGER,
@@ -8496,17 +8527,18 @@ export default function PlatformPage() {
     });
     knowledgeCardPageTasks.finish(pageRequestId);
     knowledgeCardPageTasks.assertLive();
-    if (job.status === "failed") throw new Error(job.error || "提炼失败，请稍后重试");
+    if (job.status === "failed") { readingController.stop(); throw new Error(job.error || "提炼失败，请查看原任务"); }
     setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
     const out = (job.output || {}) as { distilledMarkdown?: string; distillModel?: string; epubPdfs?: Array<{ fileName: string; url: string }>; readingPreparation?:KnowledgeReadingProgress };
     readingFullMarkdownRef.current=String(out.distilledMarkdown||"").trim();
     if(out.readingPreparation)await readingController.update(out.readingPreparation).catch(error=>setReadingAdvisorStatus(`完整稿已保留，同步顾问状态暂未恢复：${String(error?.message||error)}`));
-    setCustomNotePreparedModel(out.distillModel || queued.distillModel || customNoteDistillModel);
+    setCustomNotePreparedModel(out.distillModel || queued?.distillModel || customNoteDistillModel);
     if (Array.isArray(out.epubPdfs) && out.epubPdfs.length) showKnowledgeCardEpubPdfs(out.epubPdfs);
     return String(out.distilledMarkdown || "").trim();
     } finally {
       // 只清自己那单：迟到的旧轮询不许把新任务的终止按钮抹掉
       setCustomNoteDistillJobId((prev) => (prev === ownedJobId ? "" : prev));
+      if(customNoteTrackedRequestRef.current?.jobId===ownedJobId)customNoteTrackedRequestRef.current=null;
       setCustomNoteCancelRequested(false);
     }
   };
@@ -8543,7 +8575,11 @@ export default function PlatformPage() {
     if (!jobId) return;
     setCustomNoteCancelBusy(true);
     try {
-      const res = await fetch(`/api/jobs/knowledge-card/${encodeURIComponent(jobId)}/cancel`, {
+      const tracked=customNoteTrackedRequestRef.current;
+      const path=tracked?.jobId===jobId
+        ? `/api/jobs/knowledge-card/request/${encodeURIComponent(tracked.requestId)}/cancel?action=${tracked.action}`
+        : `/api/jobs/knowledge-card/${encodeURIComponent(jobId)}/cancel`;
+      const res = await fetch(withLongJobsFlyDirect(path), {
         method: "POST",
         credentials: "include",
       });
@@ -8691,8 +8727,8 @@ export default function PlatformPage() {
     kind?: typeof customNoteKind;
     skipClearOptimize?: boolean;
   }) => {
-    // 连点/续航进行中兜底：busy 期间一切入口直接弹提示，不叠任务
-    if (customNoteBusy) {
+    // 同一原稿仍在读档或恢复查询时，另一生成入口也不能再建任务。
+    if (customNoteBusy || customNoteUploadBusy || customNoteDistillJobId) {
       toast.info("上一个生成任务还在进行中，请稍候");
       return;
     }
@@ -15500,7 +15536,7 @@ export default function PlatformPage() {
                 value={customNoteText}
                 onChange={(e) => {
                   // 复审 P1：光靠 disabled 挡不住键盘/脚本绕行——等确认期间 handler 自己也要拒
-                  if (customNotePendingConfirmRef.current) return;
+                  if (customNotePendingConfirmRef.current || customNoteUploadBusy || customNoteLevelSwitching) return;
                   bumpCustomNoteRevision();
                   readingControllerRef.current?.stop(); readingControllerRef.current = null;
                   setReadingAdvisorStatus("");
@@ -15510,7 +15546,7 @@ export default function PlatformPage() {
                   setCustomNoteText(e.target.value);
                 }}
                 // 派生中文本框只读：此刻框里是完整版，编辑会被派生结果覆盖（审查 P1）
-                disabled={customNoteBusy || customNoteLevelSwitching}
+                disabled={customNoteBusy || customNoteUploadBusy || customNoteLevelSwitching}
               />
               </KnowledgeAuthoringRow>
               {customNoteKind === "single_page_knowledge_card" ? (

@@ -450,7 +450,7 @@ export function ImageWorldStudio({
       throw new Error(
         "提交结果未确认且尚无任务编号，请在任务面板核对原提交，禁止重复生成"
       );
-    const jobs = await Promise.all(g.jobIds.map(getJob));
+    const jobs = await Promise.all(g.jobIds.map(jobId => getJob(jobId)));
     c.assert();
     if (jobs.some(j => j.status !== "succeeded")) {
       toast.message(

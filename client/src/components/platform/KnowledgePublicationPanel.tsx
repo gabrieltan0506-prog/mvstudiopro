@@ -25,6 +25,7 @@ import {
   knowledgePublicationChapter,
 } from "@shared/knowledgePublicationHtml";
 import { trpc } from "@/lib/trpc";
+import { withKnowledgeAdvisorRecovery } from "@/lib/knowledgeAdvisorRecovery";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
 import { flyDownloadUrl } from "@/lib/gcsTransfer";
 import { knowledgePublicationPublicError } from "@shared/knowledgePublicationPublic";
@@ -64,6 +65,11 @@ export default function KnowledgePublicationPanel({
   onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
 }) {
   const utils = trpc.useUtils();
+  const streamKnowledgeAdvisor: typeof streamManhuaAdvisor = (input, onText, onModel) => {
+    const documentId = input.knowledgePublicationContext?.documentId;
+    return withKnowledgeAdvisorRecovery(input.requestId, () => streamManhuaAdvisor(input, onText, onModel),
+      () => utils.client.auth.me.query(), () => alive.current && latest.current.id === documentId);
+  };
   const exporter = trpc.editableLayout.exportPublication.useMutation();
   const pptxExporter = trpc.editableLayout.exportPublicationPptx.useMutation();
   const [layoutView,setLayoutView]=useState<{doc:EditableLayout;review:KnowledgeReview;images:Record<string,string>}|null>(null);
@@ -181,7 +187,7 @@ export default function KnowledgePublicationPanel({
       const quote=await utils.editableLayout.publicationQuote.fetch({documentId,purpose:"conversation"});
       if(quote.maxCredits!==0)throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");
       current();setMessage("正在将全部图片安排到对应正文，统一整册顺序、配色和版式…");
-      const response=await streamManhuaAdvisor({question:turn.request.question,rawQuestion:turn.request.question,requestId:intent.requestId,knowledgePublicationContext:{documentId,batchIndex:current().publication!.conversation!.findIndex(t=>t.request.id===intent.requestId),attempt:0,purpose:"conversation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
+      const response=await streamKnowledgeAdvisor({question:turn.request.question,rawQuestion:turn.request.question,requestId:intent.requestId,knowledgePublicationContext:{documentId,batchIndex:current().publication!.conversation!.findIndex(t=>t.request.id===intent.requestId),attempt:0,purpose:"conversation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
       answer=knowledgeConversationAnswerSchema.parse(JSON.parse(response.answer));
     }
     if(answer.requestId!==intent.requestId||!answer.layoutPlan||answer.layoutPlan.sourceDigest!==turn.request.layoutSourceDigest)throw Error("整册排版方案与本次完整稿件不符，未采用");
@@ -270,7 +276,7 @@ export default function KnowledgePublicationPanel({
             : `正在整理第 ${batches[i].map(n=>n+1).join("、")} 章 · 已完成内容已保存`
         );
         const attempt = pub.attempts[String(i)] || 0;
-        const response = await streamManhuaAdvisor(
+        const response = await streamKnowledgeAdvisor(
           {
             question: KNOWLEDGE_PUBLICATION_QUESTION,
             rawQuestion: KNOWLEDGE_PUBLICATION_QUESTION,
@@ -419,7 +425,7 @@ export default function KnowledgePublicationPanel({
       if(automatic && (preauthorizedPresentationCredits===undefined||quote.maxCredits>preauthorizedPresentationCredits))throw Error("提前课件规划尚未获得本次费用确认，请使用规划按钮核对费用后继续。");
       if(quote.maxCredits!==0)throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");
       setMessage(`正在按 ${minSlides}–${maxSlides} 页提前规划重点与版式，实际配图仍须最终审校…`);
-      const response=await streamManhuaAdvisor({question:"按指定页数范围规划可编辑课件，提炼有答案的重点，保持字体与版式层次。",rawQuestion:"按指定页数范围规划可编辑课件，提炼有答案的重点，保持字体与版式层次。",requestId:request.id,knowledgePublicationContext:{documentId:next.id,batchIndex:0,attempt:0,purpose:"presentation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
+      const response=await streamKnowledgeAdvisor({question:"按指定页数范围规划可编辑课件，提炼有答案的重点，保持字体与版式层次。",rawQuestion:"按指定页数范围规划可编辑课件，提炼有答案的重点，保持字体与版式层次。",requestId:request.id,knowledgePublicationContext:{documentId:next.id,batchIndex:0,attempt:0,purpose:"presentation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
       const plan=knowledgePresentationPlanSchema.parse(JSON.parse(response.answer));
       if(plan.requestId!==request.id||plan.minSlides!==minSlides||plan.maxSlides!==maxSlides)throw Error("提纲与指定页数范围不一致，未采用");
       const fresh=latest.current;

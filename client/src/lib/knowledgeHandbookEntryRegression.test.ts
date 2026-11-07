@@ -1,3 +1,4 @@
+import { knowledgeCardTrackedJobId, submitKnowledgeCardOnce } from "./knowledgeCardTrackedSubmission";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { webcrypto, randomUUID } from "node:crypto";
@@ -84,7 +85,7 @@ describe("补图实际入口定向回归 KH-SYNC-02", () => {
 function entryContext(full: string | null = null) {
   const ctx: any = {
     ...pagination, ...source, ...identity, ...selection, ...lifecycle, console, crypto: webcrypto, TextEncoder, Set, Map, readOpenAiImageVariantPref:()=>"sunburst", useCallback: (fn: any) => fn,
-    customNoteBusy: false, knowledgeCardInflight: [], customNoteLevelSwitching: false, customNoteKind: "single_page_knowledge_card", customNoteSelectedFileCount: 0,
+    customNoteBusy: false, customNoteUploadBusy:false, customNoteDistillJobId:"", knowledgeCardInflight: [], customNoteLevelSwitching: false, customNoteKind: "single_page_knowledge_card", customNoteSelectedFileCount: 0,
     setReadingAdvisorDrafts: vi.fn(), readingControllerRef: {current:null}, readingFullMarkdownRef: {current:""},
     renderedDetailLevelRef: {current:null}, renderedDraftRef: {current:""}, renderedFullManuscriptRef: {current:""},
     customNoteText: "# 新稿B\n\n海洋潮汐受月球引力影响。", customNotePendingFilesRef: { current: [] }, customNoteFullMarkdown: full, customNoteCompactMarkdownRef: { current: null }, customNoteDistillPhase: "idle",
@@ -267,7 +268,8 @@ it("缺全文的旧精华备份拒绝新整册且不清图片", async () => {
 
 it("已成功统稿不被同步顾问状态查询失败阻断",async()=>{
  const full="## 完整稿\n最后一句仍然保留。",update=vi.fn(async()=>{throw Error("顾问状态暂时不可用");});
- const ctx:any={startReadingAdvisor:()=>({update}),readingFullMarkdownRef:{current:""},bumpCustomNoteRevision:noop,customNoteDistillModel:"deepseek-v4.1-flash-1017",customNoteUploadStopRef:{current:false},knowledgeCardPageTasks:{begin:()=>randomUUID(),finish:noop,assertLive:noop},prepareKnowledgeCardCopyMutation:{mutateAsync:async()=>({isAsync:true,progressJobId:"kc_original",estimatedChunks:1})},pollJobUntilTerminal:async()=>({status:"succeeded",output:{distilledMarkdown:full,readingPreparation:{jobId:"kc_original",documentId:randomUUID(),batches:1,ready:[0]}}}),knowledgeCardProgressFromDistill:(n:number)=>n};
+ const requestId=randomUUID(),trackedJobId=await knowledgeCardTrackedJobId("1","knowledge_card_distill",requestId);
+ const ctx:any={AbortController,knowledgePollingRef:{current:null},knowledgeCardTrackedJobId,submitKnowledgeCardOnce,workbenchUserKey:"1",customNoteTrackedRequestRef:{current:null},startReadingAdvisor:()=>({update}),readingFullMarkdownRef:{current:""},bumpCustomNoteRevision:noop,customNoteDistillModel:"deepseek-v4.1-flash-1017",customNoteUploadStopRef:{current:false},knowledgeCardPageTasks:{begin:()=>requestId,finish:noop,assertLive:noop},prepareKnowledgeCardCopyMutation:{mutateAsync:async()=>({isAsync:true,progressJobId:trackedJobId,estimatedChunks:1})},pollJobUntilTerminal:async()=>({status:"succeeded",output:{distilledMarkdown:full,readingPreparation:{jobId:"kc_original",documentId:randomUUID(),batches:1,ready:[0]}}}),knowledgeCardProgressFromDistill:(n:number)=>n};
  for(const name of ["setCustomNoteProgress","setCustomNoteFullMarkdown","setCustomNotePreparedModel","setCustomNoteCompactMarkdown","setKnowledgeCardEpubPdfs","setCustomNoteCancelRequested","setCustomNoteDistillJobId","setReadingAdvisorStatus"])ctx[name]=vi.fn();
  run(take("  const runKnowledgeCardDistill = async", "\n  /**\n   * 终止后台读档")+"\nglobalThis.distill=runKnowledgeCardDistill;",ctx);
  expect(await ctx.distill({sourceText:"原始全文"})).toBe(full);expect(ctx.readingFullMarkdownRef.current).toBe(full);expect(ctx.setReadingAdvisorStatus).toHaveBeenCalled();
@@ -278,4 +280,9 @@ it('保有完整统稿回执时取消过报价也不再提炼长文',async()=>{
  ctx.window={confirm:vi.fn(()=>true)};ctx.runKnowledgeCardDistill=vi.fn(async()=>{throw Error('不应重复提炼');});
  await ctx.generate();expect(ctx.runKnowledgeCardDistill).not.toHaveBeenCalled();expect(ctx.window.confirm).not.toHaveBeenCalled();
  expect(ctx.layoutStudioRef.current.prepare.mock.calls[0][0].body).toBe(full);
+});
+
+it("读档连接恢复时另一生成入口拒绝重复创建",async()=>{
+ const ctx=entryContext("原稿");ctx.customNoteDistillJobId="kc_original";ctx.customNoteUploadBusy=false;
+ await ctx.generate();expect(ctx.layoutStudioRef.current.prepare).not.toHaveBeenCalled();expect(ctx.generateCustomNoteOne).not.toHaveBeenCalled();
 });

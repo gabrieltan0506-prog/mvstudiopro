@@ -108,12 +108,12 @@ export async function knowledgeReadingPreparationState(owner:number,jobId:string
     const draft = input && report ? validateKnowledgeReview(report.report, batchSchema.parse(input).source, input.sourceDigest) : undefined;
     return {index:i,ready:Boolean(input),complete:Boolean(draft),failed:Boolean(failure),draft};
   }));
-  return {...plan,status:job.status,ready:entries.filter(e=>e.ready).map(e=>e.index),completed:entries.filter(e=>e.complete).map(e=>e.index),failed:entries.filter(e=>e.failed).map(e=>e.index),drafts:entries.filter(e=>e.draft).map(e=>({index:e.index,pages:e.draft!.pages.map(p=>({headline:p.headline,body:p.body}))}))};
+  return {...plan,status:(job.input as any)?.cancelRequestedAt && job.status!=="succeeded" ? "cancelled" : job.status,ready:entries.filter(e=>e.ready).map(e=>e.index),completed:entries.filter(e=>e.complete).map(e=>e.index),failed:entries.filter(e=>e.failed).map(e=>e.index),drafts:entries.filter(e=>e.draft).map(e=>({index:e.index,pages:e.draft!.pages.map(p=>({headline:p.headline,body:p.body}))}))};
 }
 export async function validateKnowledgeReadingAccess(owner:number,context:KnowledgePublicationContext,requestId:string,deps=real) {
   if(context.purpose!=="reading"||!context.readingJobId||context.attempt!==0)throw Error("读档顾问请求无效，请恢复原任务");
   const {job,plan}=await loadKnowledgeReadingPreparation(owner,context.readingJobId,deps);
-  if(job.status==="failed"||job.status==="cancelled")throw Error("读档已停止，未发起后续顾问请求");
+  if(job.status==="failed"||job.status==="cancelled"||(job.input as any)?.cancelRequestedAt)throw Error("读档已停止，未发起后续顾问请求");
   if(plan.documentId!==context.documentId||context.batchIndex>=plan.batches||knowledgeBatchRequestId(plan.documentId,context.batchIndex,0)!==requestId)throw Error("读档顾问请求与原分段不符");
   const batch=batchSchema.parse(await deps.read(`${prefix(owner,plan.jobId)}/batch-${context.batchIndex}/input.json`));
   if(batch.index!==context.batchIndex||batch.sourceDigest!==hash(JSON.stringify(batch.source)))throw Error("读档分段内容校验失败");
