@@ -23,6 +23,6 @@ export default function KnowledgeCardEditionChoice({ full, concise, model, selec
         </button>;
       })}
     </div>
-    <p className="mt-2 text-xs text-muted-foreground">切档不会改写完整底稿。这里是图片张数，文字页不计入；顾问费用在开始前单独列明。</p>
+    <p className="mt-2 text-xs text-muted-foreground">切档不会改写完整底稿。这里是图片张数，文字页不计入；顾问不另收费，纯内文按最终 PDF 实际页数结算。</p>
   </fieldset>;
 }
