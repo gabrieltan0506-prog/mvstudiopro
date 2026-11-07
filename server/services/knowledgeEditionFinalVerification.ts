@@ -19,7 +19,7 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
  const factsByBody=prepared.map((body,i)=>[{pageId:`section-${i}`,headline:'章节待补齐与疑点',term:'知识及图片说明',statement:body}]);
  const required=factsByBody.map(facts=>knowledgeVerificationTriggers(facts).length>0);
  const total=required.filter(Boolean).length;
- const result:string[]=[],verifications:unknown[]=[],issues:KnowledgeEditionIssue[]=[];
+ const result:string[]=[],verifications:unknown[]=[],issues:KnowledgeEditionIssue[]=[],pendingVerification:{pageIndex:number;message:string}[]=[];
  let done=0;
  if(total)await onProgress?.({doneBatches:0,totalBatches:total,pass:3});
  for(let i=0;i<bodies.length;i++){
@@ -28,13 +28,14 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
   const checkpoint=await evidence.read(pageKey);
   if(checkpoint&&checkpoint.digest!==digest)throw Error('章节输入变化，保留原回执');
   if(checkpoint?.status==='saved'){
-   result.push(checkpoint.body);verifications.push(checkpoint.verification||null);issues.push(...(checkpoint.issues||[]));
+   result.push(checkpoint.body);verifications.push(checkpoint.verification||null);issues.push(...(checkpoint.issues||[]));pendingVerification.push(...(checkpoint.pendingVerification||[]));
    if(required[i])await onProgress?.({doneBatches:++done,totalBatches:total,pass:3});
    continue;
   }
   await evidence.save(pageKey,{digest,pageIndex:i,original:bodies[i],body:bodies[i],status:'pending'});
   let body=bodies[i],verification:any=null;
   const localIssues:KnowledgeEditionIssue[]=[];
+  const localPending:{pageIndex:number;message:string}[]=[];
   if(required[i]){
    try{
     // 未知回执不另买替代请求；其他页继续，问题留在清单。
@@ -52,6 +53,11 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
      verification=JSON.parse(envelope.candidates[0].content.parts[0].text);
      await evidence.save(`${prefix}/report.json`,verification);
     }
+    const noEvidence=verification.evidenceState==='missing'||(Array.isArray(verification.sources)&&verification.sources.length===0);
+    if(noEvidence){
+     // 已完成检索但无可用资料：保留原稿标待验证，不再购买一次无依据的改写。
+     body=prepared[i];
+    }else{
     await onProgress?.({doneBatches:done,totalBatches:total,pass:4});
     const revisionPrefix=`${evidence.prefix}/revision-${i}`;
     const saved=await evidence.read(`${revisionPrefix}/report.json`);
@@ -66,7 +72,11 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
      if(old&&old.digest!==digest)throw Error('修订输入变化，不能重新购买');
      if(!old)await evidence.save(`${revisionPrefix}/request.json`,{digest,request});
      const envelope=JSON.parse((await invoke(old?.request||request,{...evidence,prefix:revisionPrefix})).text);
-     body=String(JSON.parse(envelope.candidates[0].content.parts[0].text).pages?.[0]?.body||'');
+     const revisedPage=JSON.parse(envelope.candidates[0].content.parts[0].text).pages?.[0];
+     body=String(revisedPage?.body||'');
+     // 正式Markdown解析器把待核注释转入cautions；必须还原后再判定是否解决。
+     const pending=(revisedPage?.cautions||[]).filter((c:any)=>c.kind==='uncertain'&&c.message==='已标注疑点，等待全册整理后统一联网核实。');
+     for(const caution of pending)body+=`\n\n<!-- 待核：${String(caution.evidence).replace(/-->/g,'—')} -->`;
      if(!hasKnowledgeBody(body))throw Error('补齐结果仍无正文，保留原章节');
      // 模型漏掉原章时恢复该章，不能以删空章冒充补齐。
      const original=knowledgeModulesFromMarkdown(bodies[i]);
@@ -79,21 +89,29 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
      }
      await evidence.save(`${revisionPrefix}/report.json`,{body,digest});
     }
+    }
    }catch(error){
     rethrowKnowledgeEditionInvariant(error);
     body=bodies[i];
     localIssues.push({pageIndex:i,kind:isKnowledgeReceiptUnknown(error)?'unknown_receipt':'content_error',message:knowledgeEditionErrorMessage(error)});
    }
   }
+  // 搜索已得到正常回执；未解决项按用户要求显式待验证并放行，异常回执不冒充无结果。
+  if(required[i]&&verification&&!localIssues.length){
+   const outstanding=knowledgeVerificationTriggers([{pageId:`section-${i}`,headline:'疑点',term:'正文',statement:body}]);
+   for(const item of outstanding)localPending.push({pageIndex:i,message:item.quote});
+   body=body.replace(/<!--\s*待核[：:]([\s\S]*?)-->/g,(_,note:string)=>`待验证：${note.trim()}`);
+   if(outstanding.length&&!body.includes('待验证：'))body+='\n\n'+outstanding.map(item=>`待验证：${item.quote}`).join('\n\n');
+  }
   const empty=knowledgeModulesFromMarkdown(body).modules.filter(m=>!hasKnowledgeBody(m.body));
   for(const module of empty)localIssues.push({pageIndex:i,kind:'empty_body',message:`“${module.headline}”正文仍待补齐，原章保留`});
-  if(knowledgeVerificationTriggers([{pageId:`section-${i}`,headline:'疑点',term:'正文',statement:body}]).length&&!localIssues.length)
+  if(knowledgeVerificationTriggers([{pageId:`section-${i}`,headline:'疑点',term:'正文',statement:body}]).length&&!localIssues.length&&!localPending.length)
    localIssues.push({pageIndex:i,kind:'unresolved',message:'仍有待核疑点，原文及回执保留'});
   // 同页原文与结果一起落盘；失败不会回滚之前已保存页。
-  await evidence.save(pageKey,{digest,pageIndex:i,original:bodies[i],body,status:'saved',verification,issues:localIssues});
-  result.push(body);verifications.push(verification);issues.push(...localIssues);
+  await evidence.save(pageKey,{digest,pageIndex:i,original:bodies[i],body,status:'saved',verification,issues:localIssues,pendingVerification:localPending});
+  result.push(body);verifications.push(verification);issues.push(...localIssues);pendingVerification.push(...localPending);
   if(required[i])await onProgress?.({doneBatches:++done,totalBatches:total,pass:3});
  }
- await evidence.save(`${evidence.prefix}/verified.json`,{digest,bodies:result,verifications,issues,complete:issues.length===0,skipped:total===0});
+ await evidence.save(`${evidence.prefix}/verified.json`,{digest,bodies:result,verifications,issues,pendingVerification,complete:issues.length===0,skipped:total===0});
  return result;
 }

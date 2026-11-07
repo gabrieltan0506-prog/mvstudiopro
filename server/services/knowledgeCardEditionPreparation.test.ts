@@ -67,7 +67,7 @@ it('旧浓缩缓存不能冒充本轮恢复结果，也不自动重新购买',as
 it('末段修订省略优先级标签时仍保留原选节身份',async()=>{
  const storage=new Map<string,any>();
  const invoke=vi.fn(async(request:any)=>({status:200,text:JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify(request.researchOnly
- ?{sourceDigest:'test',findings:[],verificationMarkdown:'未补充外部事实',sources:[]}
+ ?{sourceDigest:'test',findings:[],verificationMarkdown:'已取得对应原句资料',sources:[{title:'测试资料',url:'https://example.invalid/source',content:'原章条件资料'}]}
  :{pages:[{body:'# 原书\n\n## 原章\n\n原内容，已保留。'}]})}]}}]})}));
  const result=await prepareKnowledgeCardEditions({sourceMarkdown:'# 原书\n\n## 原章\n\n原内容。\n<!-- 待核：原句存在疑点 -->',invoke:invoke as any,
  evidence:{prefix:'priority',read:async k=>storage.get(k)||null,save:async(k,v)=>{storage.set(k,v);}},measure:async()=>1});
@@ -99,4 +99,14 @@ it('没有真实文字说明时不得把完整版标记为整理成功',async()=
  expect(result.verificationProcessed).toBe(false);
  expect(result.editionIssues.some((issue:any)=>issue.kind==='missing_reading')).toBe(true);
  expect(result.editionPageCounts.full.readingPages).toBe(0);
+});
+
+it('无搜索结果的待验证稿件正式两档放行，状态与可见标记一致',async()=>{
+ const storage=new Map<string,any>();
+ const invoke=vi.fn(async()=>({status:200,text:JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify({verificationMarkdown:'无可用资料',evidenceState:'missing',sources:[]})}]}}]})}));
+ const result=await prepareKnowledgeCardEditions({sourceMarkdown:'# 原书\n\n## 方法\n\n图：步骤图。\n\n原书方法。\n\n说明：原书条件。\n\n<!-- 待核：原句「原书方法」；问题：说明不清楚 -->',invoke:invoke as any,
+ evidence:{prefix:'pending',read:async k=>storage.get(k)||null,save:async(k,v)=>{storage.set(k,v);}},measure:async()=>1});
+ expect(result.verificationProcessed).toBe(true);expect(result.editionIssues).toEqual([]);
+ expect(result.editionPendingVerification).toHaveLength(1);
+ expect(result.fullEditionMarkdown).toContain('待验证：');expect(result.markdown).toContain('待验证：');expect(invoke).toHaveBeenCalledTimes(1);
 });

@@ -1,3 +1,4 @@
+import { KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION, preserveKnowledgePendingResearch } from './knowledgeVerificationPolicy';
 import { KNOWLEDGE_NARRATIVE_STYLE } from '../../shared/knowledgeNarrativeStyle';
 import type { KnowledgeReadingChunk } from "../../shared/knowledgeReadingPreparation";
 /**
@@ -264,7 +265,7 @@ function resolveDistillBullets(modelName?: string | null): { min: number; max: n
 /** 模型旁白禁令：0908 探针里「第 17 页配对与前文冲突」「材料认为」这类审稿口吻被印上了卡片 */
 const DISTILL_NO_META_ZH = `**不要写审稿旁白**：不得出现「材料认为 / 原文提到 / 第 N 页 / 与前文冲突 / 以前文为准 / 本段 / 以上」这类指向原稿或提炼过程的话；直接陈述知识本身。`;
 
-function buildDistillSystem(minSections: number, modelName?: string | null, docKeys?: string[], detailLevel?: KnowledgeCardDetailLevel): string {
+export function buildDistillSystem(minSections: number, modelName?: string | null, docKeys?: string[], detailLevel?: KnowledgeCardDetailLevel): string {
   const bullets = resolveDistillBullets(modelName);
   const levelRule = detailLevel === "full"
     ? `\n0. **成稿档：完整版（第一重点 + 详细解说）**：本材料的每个章节、方法、表格/清单都要落进成稿，第一重点逐条给出详细解说（为什么、怎么做、什么条件下成立），次要内容也不因「取重点」被舍弃；数字、步骤、条件全部保留。**优先级**：要点条数仍按第 3 条（每条 ≤16 字、条数不超上限），装不下的信息**一律进 Markdown 表格或「图：」行**，不靠加长列表。**能表格化的一律表格化**：分类/对比/参数/时辰-经脉-做法这类多维内容写成 Markdown 表格（表头清楚、每格一句短语，不超过 6 列）；步骤/流程写成「A → B → C」一行流程链；同类清单合并成一张表而不是散成多节。表格承载信息量，小节数量不要为了铺开而增加。原文中已有的必要解说、适用条件、操作注意与例外另起独立普通段落，与图示/要点/表格之间空一行，供手册文字说明使用；不要把这些解释全部塞进「图：」行或表格，也不要重复已在图表中表达的信息，不编造原文没有的补白。`
@@ -275,6 +276,8 @@ function buildDistillSystem(minSections: number, modelName?: string | null, docK
   return `你是知识卡片内容主编。任务：把用户提供的文稿/幻灯片抽字/图片 OCR 结果，提炼成可直接做「疏朗图文知识卡片」的简体中文 Markdown（读图 OCR 与提炼同时完成，不要只吐生文本）。
 
 **目标**：让没读过原文的人在几分钟内读懂这份材料**讲了什么、关键结论是什么、怎么用**。${detailLevel === "full" ? "是**主要与次要重点全收**：宁多勿漏，用表格压实。" : "是**精华版：只提炼主要重点**，不是逐段搬运。"}
+
+${KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION}
 
 硬性要求：${levelRule}
 1. **抓主干**：优先保留核心论点、关键结论、可操作方法、决定性数据与对比、反直觉洞察。删掉铺垫、重复、寒暄、案例复述、广告水词、与主题无关的枝节。
@@ -1206,7 +1209,7 @@ export const KNOWLEDGE_CARD_ALL_CHUNKS_FAILED_MESSAGE =
 
 type RefineStage = "group" | "final" | "tighten";
 
-function buildRefineSystem(
+function buildRefineSystemBody(
   minSections: number,
   stage: RefineStage,
   currentSections?: number,
@@ -1266,6 +1269,10 @@ ${mainline}
 5. 去掉分段痕迹：「本段 / 以上 / 续上」这类过渡语、重复标题、空节。${DISTILL_NO_META_ZH}
 6. 已有的「〔参考原页 …〕」标记随所属小节保留（合并小节时把页码合到一行），不要新造、不要丢。
 7. 只输出 Markdown 正文，不要前言后记、不要解释取舍过程。`;
+}
+
+export function buildRefineSystem(...args: Parameters<typeof buildRefineSystemBody>): string {
+  return buildRefineSystemBody(...args) + '\n' + KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION;
 }
 
 /** 统稿要求大幅精选，只在「结构崩塌」时才回退输入稿。 */
@@ -1344,7 +1351,7 @@ async function refineOnce(params: {
           ? `${params.body.length} 字只回 ${text.trim().length} 字 / ${countMarkdownSections(text)} 节`
           : null,
     });
-    return refined;
+    return preserveKnowledgePendingResearch(params.body, refined);
   } catch (err) {
     // 复审 P1：取消必须先判。否则统稿期间点停 → 这里「保留输入稿」→ prepare 一路返回成功，
     // 用户点了终止，服务层却交了一份稿

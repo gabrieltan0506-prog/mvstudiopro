@@ -5,6 +5,35 @@ export const KNOWLEDGE_VERIFICATION_POLICY = `联网只由实际疑点触发：�
 没有疑点就直接跳过联网，不因为出现药名、数字、食品、健康知识、指南或缺少出处而自动搜索；不为了核查再制造一轮全册审查。疑点判定来自整理阶段对实际内容的理解，不用关键词命中代替事实判断。
 查到的资料只处理对应疑点及必要上下文，不重审无疑点章节。查不到不等于原书错误，按既有精简保留规则处理，不编造结论、剂量或来源；保留原意、条件及图片说明的一致性。`;
 
+/** 在已有读档/整理调用中发现问题，末段才联网；不新增整册审查调用。 */
+export const KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION = `整理原文时必须判断是否存在实际疑点、前后矛盾、内容不全或说明不清楚（包括影响理解的条件、步骤、单位或因果解释缺失）。发现后在对应小节末尾写 <!-- 待核：原句「逐字引用相关原句」；问题：具体疑问、矛盾双方或缺失内容 -->。跨段统稿时也要识别跨段矛盾。这里仅标注，不自行联网、不凭记忆解决，不把不确定内容写成确定事实；全部标注保留到最后阶段统一针对性联网检索、核实或补充。已有待核注释逐条原样保留，不能因合并、选节、精简、禁止审稿旁白而删除。此内部HTML注释是正文无审稿旁白规则的例外。没有上述问题不制造标注，不因药名、数字或健康话题本身强制搜索。`;
+
+export function knowledgePendingResearchNotes(markdown: string): string[] {
+  return Array.from(new Set(Array.from(markdown.matchAll(/<!--\s*待核[：:]([\s\S]*?)-->/g), m => m[1].trim()).filter(Boolean)));
+}
+
+/** 统稿不能凭未联网的改写消除疑点；模型漏回的注释确定性带到末段。 */
+export function preserveKnowledgePendingResearch(source: string, output: string): string {
+  const present = new Set(knowledgePendingResearchNotes(output));
+  const missing = knowledgePendingResearchNotes(source).filter(note => !present.has(note));
+  const parts = output.split(/(?=^##\s+)/m);
+  const originalParts = source.split(/(?=^##\s+)/m);
+  for (const note of missing) {
+    const quote = note.match(/原句[：:]?\s*[「“]([^」”]+)[」”]/)?.[1];
+    const original = originalParts.find(part => knowledgePendingResearchNotes(part).includes(note));
+    const heading = original?.match(/^##\s+(.+)$/m)?.[1];
+    let index = quote ? parts.findIndex(part => part.includes(quote)) : -1;
+    if (index < 0 && heading) index = parts.findIndex(part => part.match(/^##\s+(.+)$/m)?.[1] === heading);
+    if (index < 0) {
+      // 标题和原句都被改写时，单独保留带来源的核对说明，末段照常检索，不误改其他章。
+      parts.push(`\n\n## 说明：${heading || '原文'}待核补充\n\n原文核对：${quote || note}\n\n<!-- 待核：${note} -->`);
+      continue;
+    }
+    parts[index] = parts[index].trimEnd() + `\n\n<!-- 待核：${note} -->\n\n`;
+  }
+  return missing.length ? parts.join('').trimEnd() : output;
+}
+
 const health = /血脂|胆固醇|甘油三酯|血压|糖尿病|血糖|疾病|癌|心血管|动脉|药物|剂量|服药|治疗|疗效|LDL|HDL|BMI/i;
 /** 只消费整理阶段已经指出的实际疑问；药名、数值或话题本身不是搜索触发器。 */
 export function knowledgeVerificationTriggers(facts: KnowledgeFactEntry[]) {

@@ -3769,7 +3769,7 @@ async function processPlatformJob(
       const output = {
           success: true,
           distilledMarkdown: derived.markdown,
-          ...('fullEditionMarkdown' in derived ? {fullEditionMarkdown:derived.fullEditionMarkdown,editionVersion:2,verificationProcessed:'verificationProcessed' in derived&&derived.verificationProcessed===true,editionIssues:'editionIssues' in derived?derived.editionIssues:[],editionPageCounts:'editionPageCounts' in derived?derived.editionPageCounts:null} : {}),
+          ...('fullEditionMarkdown' in derived ? {fullEditionMarkdown:derived.fullEditionMarkdown,editionVersion:2,verificationProcessed:'verificationProcessed' in derived&&derived.verificationProcessed===true,editionIssues:'editionIssues' in derived?derived.editionIssues:[],editionPageCounts:'editionPageCounts' in derived?derived.editionPageCounts:null,editionPendingVerification:'editionPendingVerification' in derived?derived.editionPendingVerification:[]} : {}),
           distillModel,
           detailLevel: "concise",
           sections: derived.sections,

@@ -1,3 +1,4 @@
+import { KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION, knowledgePendingResearchNotes } from './knowledgeVerificationPolicy';
 import {buildKnowledgeBookletHtml} from '../../shared/knowledgeBooklet';
 import {measureKnowledgeBookletFromWorker} from './pdfWorkerClient';
 import {guardKnowledgeEditionEvidence,rethrowKnowledgeEditionInvariant,knowledgeEditionErrorMessage} from './knowledgeEditionRecovery';
@@ -13,8 +14,8 @@ import {compileKnowledgeEditions,knowledgeModulesFromMarkdown} from '../../share
 
 import {invokeKnowledgePublicationRoutes,type KnowledgeRouteEvidence,type KnowledgeModelRequest} from './knowledgePublicationRoutes';
 
-const EDITION_COMPOSITION_VERSION='original-sections-v1';
-export const KNOWLEDGE_EDITION_INSTRUCTIONS = `只从完整稿挑选已有重点章节，原文逐字保留，不改写、不归并、不再次浓缩。只输出简体中文Markdown，不输出JSON。`;
+const EDITION_COMPOSITION_VERSION='original-sections-pending-release-v3';
+export const KNOWLEDGE_EDITION_INSTRUCTIONS = `只从完整稿挑选已有重点章节，原文逐字保留，不改写、不归并、不再次浓缩。只输出简体中文Markdown，不输出JSON。\n${KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION}`;
 
 /** 同一底稿只整理一次；两版由同一份模块确定性编译，恢复读取原回执。 */
 export async function prepareKnowledgeCardEditions(params:{
@@ -35,7 +36,11 @@ export async function prepareKnowledgeCardEditions(params:{
   }
   const invoke=params.invoke||invokeKnowledgePublicationRoutes;
   // 完整底稿先保存；精华只选择原节，不能用选择结果覆盖完整版。
-  await evidence.save(`${evidence.prefix}/source.json`,{inputDigest,markdown:sourceMarkdown});
+  const previousSource = await evidence.read(`${evidence.prefix}/source.json`);
+  if (previousSource && previousSource.compositionVersion !== EDITION_COMPOSITION_VERSION)
+    throw Error('旧任务缺少疑点识别版本证据，保留原回执，不自动复用或重新购买');
+  await evidence.save(`${evidence.prefix}/source.json`,{inputDigest,markdown:sourceMarkdown,compositionVersion:EDITION_COMPOSITION_VERSION});
+  const selectionQuestions = new Set<string>();
   const selectChat:NonNullable<Parameters<typeof deriveKnowledgeCardCompact>[0]['chat']>=async call=>{
     params.abortSignal?.throwIfAborted();
     const hash=createHash('sha256').update(`${inputDigest}/selection/${call.selectionKey}/${call.executionChannel}/${call.system}/${call.user}`).digest('hex');
@@ -48,6 +53,7 @@ export async function prepareKnowledgeCardEditions(params:{
     const completed=await scope.read(`${scope.prefix}/result.json`);
     if(completed){
       if(completed.inputDigest!==inputDigest)throw Error('原稿版本变化，保留原回执');
+      for (const note of completed.pendingResearch || []) selectionQuestions.add(String(note));
       return String(completed.body);
     }
     const old=await scope.read(`${scope.prefix}/request.json`);
@@ -58,7 +64,12 @@ export async function prepareKnowledgeCardEditions(params:{
     const report=JSON.parse(JSON.parse(response.text).candidates[0].content.parts[0].text);
     const body=String(report.pages?.[0]?.body||'').trim();
     if(!body)throw Error('精华选择返回空内容，完整稿已保留');
-    await scope.save(`${scope.prefix}/result.json`,{inputDigest,body});
+    const pendingResearch = Array.from(new Set([
+      ...knowledgePendingResearchNotes(body),
+      ...(report.pages?.[0]?.cautions || []).filter((c: any) => c.kind === 'uncertain' && c.message === '已标注疑点，等待全册整理后统一联网核实。').map((c: any) => String(c.evidence).replace(/-->/g, '—')),
+    ]));
+    for (const note of pendingResearch) selectionQuestions.add(note);
+    await scope.save(`${scope.prefix}/result.json`,{inputDigest,body,pendingResearch});
     return body;
   };
   const finalInvoke:typeof invokeKnowledgePublicationRoutes=async(request,scope)=>{
@@ -92,8 +103,18 @@ export async function prepareKnowledgeCardEditions(params:{
   }
   // 选节不改写知识；内容整理结束后，再统一处理真正的疑点与空章。
   const finalPages=modules.map(module=>`# ${original.title}\n\n## ${module.priority==='primary'?'主要重点':'次要重点'}｜${module.headline}\n\n${module.body}`);
+  // 选节只采用原章身份，另传疑点，不能因舍弃模型改写正文而吞掉标注。
+  const existingNotes = new Set(knowledgePendingResearchNotes(finalPages.join('\n')));
+  for (const note of Array.from(selectionQuestions)) {
+    if (existingNotes.has(note)) continue;
+    const quote = note.match(/原句[：:]?\s*[「“]([^」”]+)[」”]/)?.[1];
+    const matched = quote ? modules.findIndex(module => module.body.includes(quote)) : -1;
+    if (matched < 0) finalPages.push(`# ${original.title}\n\n## 次要重点｜说明：原文待核补充\n\n原文核对：${quote || note}\n\n<!-- 待核：${note} -->`);
+    else finalPages[matched] += `\n\n<!-- 待核：${note} -->`;
+    existingNotes.add(note);
+  }
   const verified=await verifyKnowledgeEditionManuscripts(finalPages,{...evidence,prefix:`${evidence.prefix}/final-verification`},finalInvoke,params.onProgress);
-  const verifiedModules=verified.flatMap((body,index)=>knowledgeModulesFromMarkdown(body).modules.map(module=>({...module,priority:modules[index]!.priority})));
+  const verifiedModules=verified.flatMap((body,index)=>knowledgeModulesFromMarkdown(body).modules.map(module=>({...module,priority:modules[index]?.priority||'secondary'})));
   const editions=compileKnowledgeEditions(original.title,verifiedModules);
   // 正式分页检查点：两档原稿先保存，再逐个实际图片页及文字章节保存。
   // 这里的图片页是实际出图分页；文字物理页仍由正式Booklet/PDF渲染器测量。
@@ -122,7 +143,7 @@ export async function prepareKnowledgeCardEditions(params:{
     }catch(error){rethrowKnowledgeEditionInvariant(error);issues.push({kind:'pagination',message:knowledgeEditionErrorMessage(error),level});}
   }
   const result={markdown:editions.concise,fullEditionMarkdown:editions.full,sections:verifiedModules.length,
-    targetSections:selection.targetSections,passes:selection.passes,editionVersion:2,verificationProcessed:verification?.complete!==false&&issues.length===0,editionIssues:issues,editionPageCounts,
+    targetSections:selection.targetSections,passes:selection.passes,editionVersion:2,verificationProcessed:verification?.complete!==false&&issues.length===0,editionIssues:issues,editionPendingVerification:verification?.pendingVerification||[],editionPageCounts,
     unclassifiedModules:verifiedModules.filter(m=>m.priority==='secondary').length};
   await evidence.save(`${evidence.prefix}/editions.json`,{inputDigest,compositionVersion:EDITION_COMPOSITION_VERSION,original:sourceMarkdown,modules:verifiedModules,result});
   return result;

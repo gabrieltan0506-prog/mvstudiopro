@@ -8290,7 +8290,7 @@ export default function PlatformPage() {
       knowledgeCardPageTasks.finish(pageRequestId);
       knowledgeCardPageTasks.assertLive();
       if (job.status === "failed") throw new Error(job.error || "精华版派生失败，请稍后重试");
-      const out = (job.output || {}) as { distilledMarkdown?: string; distillModel?: string; fullEditionMarkdown?:string;verificationProcessed?:boolean;editionIssues?:{message:string}[] };
+      const out = (job.output || {}) as { distilledMarkdown?: string; distillModel?: string; fullEditionMarkdown?:string;verificationProcessed?:boolean;editionIssues?:{message:string}[];editionPendingVerification?:{pageIndex:number;message:string}[] };
       const compact = String(out.distilledMarkdown || "").trim();
       if (!compact) throw new Error("精华版派生结果为空");
       assertKnowledgeCardIllustrationSelection(compact, out.distillModel || customNoteDistillModel);
@@ -8306,7 +8306,8 @@ export default function PlatformPage() {
       }
       setCustomNoteCompactMarkdown(compact);
       const remaining=out.editionIssues||[];
-      setCustomNoteProgress({ status: "succeeded", percent: 100, successLabel:remaining.length?"稿件已保存，部分章节待补齐":"生图前整理完成", label: remaining.length?`已保留全部章节，${remaining.length}项待处理：${remaining.map(i=>i.message).join('；')}`:"统稿与必要的疑点处理已结束，请核对图片张数和文字说明页数" });
+      const pendingVerification=out.editionPendingVerification||[];
+      setCustomNoteProgress({ status: "succeeded", percent: 100, successLabel:remaining.length?"稿件已保存，部分章节待补齐":"生图前整理完成", label: remaining.length?`已保留全部章节，${remaining.length}项待处理：${remaining.map(i=>i.message).join('；')}`:`整理已结束${pendingVerification.length?`，${pendingVerification.length}项已标待验证并保留，可继续制作`:""}，请核对图片张数和文字说明页数` });
       return compact;
     } catch (error) {
       // 审查 P2：稿子换过之后才失败的，同样与当前文本框无关——统一标成 stale，
