@@ -5,6 +5,8 @@ import {
   digitalHumanProductionInputSchema, digitalHumanSplitManifestSchema, planDigitalHumanAudioSegments,
   type DigitalHumanProductionInput, type DigitalHumanFinalParams,
 } from "../../shared/digitalHumanProduction";
+import { STOCK_PHOTO_MAX_BYTES, STOCK_VIDEO_MAX_BYTES } from "../../shared/stockFootage";
+import { digitalHumanOverlayCredits, digitalHumanOverlayFfmpegArgs, digitalHumanOverlayFileExt, resolveDigitalHumanOverlays, type ResolvedDigitalHumanOverlay } from "./digitalHumanOverlay";
 import { fetchPostProdSourceToFile, runMediaTool, probe, probeAudio, uploadResult, MAX_SOURCE_BYTES, MAX_CONCAT_TOTAL_BYTES } from "./postProduction";
 
 export function parseDigitalHumanSilences(stderr: string, duration: number) {
@@ -41,9 +43,9 @@ export async function renderDigitalHumanProduction(raw: DigitalHumanProductionIn
   const input = digitalHumanProductionInputSchema.parse(raw);
   const dir = await mkdtemp(join(tmpdir(), "digital-human-"));
   const budget = { remainingBytes: MAX_CONCAT_TOTAL_BYTES };
-  const download = async (uri: string, name: string) => {
+  const download = async (uri: string, name: string, maxBytes = MAX_SOURCE_BYTES) => {
     const path = join(dir, name);
-    await fetchPostProdSourceToFile(uri, path, { signal, budget, maxBytes: MAX_SOURCE_BYTES });
+    await fetchPostProdSourceToFile(uri, path, { signal, budget, maxBytes });
     return path;
   };
   const upload = (path: string, kind: string, ext: string, contentType: string) => uploadResult({ filePath: path, userId, kind, ext, contentType, signal });
@@ -97,8 +99,14 @@ export async function renderDigitalHumanProduction(raw: DigitalHumanProductionIn
     }
     const list = join(dir, "concat.txt");
     await writeFile(list, normalized.map(path => `file '${path}'`).join("\n"));
-    const picture = join(dir, "picture.mp4");
+    let picture = join(dir, "picture.mp4");
     await runMediaTool("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", picture], signal);
+    // 补充画面覆盖/回切轨：只换画面，素材自带音轨不映射；之后仍用口播母轨混音。
+    let overlays: ResolvedDigitalHumanOverlay[] = [];
+    if (p.overlays?.length) {
+      overlays = await resolveDigitalHumanOverlays(Number(userId), p.overlays, end);
+      picture = await renderDigitalHumanOverlayPicture(picture, overlays, { width, height, dir, signal, download });
+    }
     const args = ["-y", "-i", picture, "-i", audio];
     for (const [i, track] of Array.from(p.tracks.entries())) {
       const path = await download(track.source, `mix-${i}`);
@@ -111,6 +119,33 @@ export async function renderDigitalHumanProduction(raw: DigitalHumanProductionIn
     await runMediaTool("ffmpeg", args, signal);
     const result = await probe(target, signal);
     if (!result.hasAudio || result.durationSec + 0.04 < duration || result.durationSec - duration > 0.1) throw new Error("合成结果音画时长校验失败");
-    return { ...(await upload(target, "dh-final", "mp4", "video/mp4")), durationSec: duration, width, height, audioRequestId: p.audioRequestId, clips: p.clips, mix: { voice: p.voice, tracks: p.tracks } };
+    return { ...(await upload(target, "dh-final", "mp4", "video/mp4")), durationSec: duration, width, height, audioRequestId: p.audioRequestId, clips: p.clips, mix: { voice: p.voice, tracks: p.tracks }, ...(overlays.length ? { overlays: digitalHumanOverlayCredits(overlays) } : {}) };
   } finally { await rm(dir, { recursive: true, force: true }); }
+}
+
+/** 把已核验的覆盖素材叠到口播母轨画面上（缩放补边到成片画幅、按 startSec 延时），输出无音轨画面。 */
+export async function renderDigitalHumanOverlayPicture(
+  picture: string,
+  overlays: ReadonlyArray<ResolvedDigitalHumanOverlay>,
+  opts: { width: number; height: number; dir: string; signal: AbortSignal; download: (uri: string, name: string, maxBytes?: number) => Promise<string> },
+): Promise<string> {
+  const { signal } = opts;
+  const base = await probe(picture, signal);
+  const inputs: Parameters<typeof digitalHumanOverlayFfmpegArgs>[0]["inputs"][number][] = [];
+  for (const [i, o] of Array.from(overlays.entries())) {
+    const isPhoto = o.asset.kind === "photo";
+    const path = await opts.download(o.asset.gcsUri, `overlay-${i}.${digitalHumanOverlayFileExt(o.asset)}`, isPhoto ? STOCK_PHOTO_MAX_BYTES : STOCK_VIDEO_MAX_BYTES);
+    if (!isPhoto) {
+      // 以实际下载文件复核选段，元数据时长不准时也不会取到黑帧
+      const info = await probe(path, signal);
+      if (o.sourceInSec + o.durationSec > info.durationSec + 0.05) throw new Error(`第${i + 1}条补充画面选段超过素材实际长度`);
+    }
+    inputs.push({ path, kind: o.asset.kind, startSec: o.startSec, durationSec: o.durationSec, sourceInSec: o.sourceInSec });
+  }
+  const target = join(opts.dir, "picture-overlay.mp4");
+  const args = digitalHumanOverlayFfmpegArgs({ picture, inputs, width: opts.width, height: opts.height, target });
+  await runMediaTool("ffmpeg", args, signal);
+  const checked = await probe(target, signal);
+  if (checked.hasAudio || Math.abs(checked.durationSec - base.durationSec) > 0.05) throw new Error("补充画面叠加后画面时长校验失败，未合成");
+  return target;
 }
