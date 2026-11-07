@@ -1,3 +1,4 @@
+import { withLongJobsFlyDirect } from "./longJobsFlyOrigin";
 import { KNOWLEDGE_CARD_PAGE_ACTIONS, KNOWLEDGE_CARD_REQUEST_ID, type KnowledgeCardPageAction } from "../../../shared/knowledgeCardPageTask";
 
 type PendingRequest = { requestId: string; action: KnowledgeCardPageAction };
@@ -37,7 +38,7 @@ export class KnowledgeCardPageTasks {
     try { this.write(this.read().filter(r => r.requestId !== requestId)); } catch { /* harmless extra cancel on next reload */ }
   }
   private url(r: PendingRequest): string {
-    return `/api/jobs/knowledge-card/request/${encodeURIComponent(r.requestId)}/cancel?action=${r.action}`;
+    return withLongJobsFlyDirect(`/api/jobs/knowledge-card/request/${encodeURIComponent(r.requestId)}/cancel?action=${r.action}`);
   }
   private async cancel(r: PendingRequest): Promise<void> {
     const response = await fetch(this.url(r), { method: "POST", credentials: "include", keepalive: true });

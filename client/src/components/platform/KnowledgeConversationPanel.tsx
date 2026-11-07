@@ -1,15 +1,22 @@
 import {KNOWLEDGE_INTERIOR_PRICE_COPY} from "@shared/knowledgePublicationPricing";
 import {knowledgeSupplementPlan,type KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { EditableLayout } from "@shared/editableLayout";
 import { knowledgeConversationAnswerSchema, knowledgeConversationRequestSchema } from "@shared/knowledgeConversation";
+import { withKnowledgeAdvisorRecovery } from "@/lib/knowledgeAdvisorRecovery";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
 import { trpc } from "@/lib/trpc";
 import { knowledgePublicationPublicError } from "@shared/knowledgePublicationPublic";
 
 export default function KnowledgeConversationPanel({doc,busy,save,lock,onSupplement,onLayout}:{onLayout?:(doc:EditableLayout,saved:{generation:string})=>Promise<void>;onSupplement?:(selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>;doc:EditableLayout;busy:boolean;save:(doc:EditableLayout)=>Promise<{generation:string}>;lock:(value:boolean)=>void}) {
   const utils=trpc.useUtils(),[question,setQuestion]=useState(""),[images,setImages]=useState<string[]>([]),[error,setError]=useState("");
-  const inFlight=useRef(false);
+  const inFlight=useRef(false), alive=useRef(true), currentId=useRef(doc.id);
+  currentId.current=doc.id;
+  useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
+  const streamKnowledgeAdvisor: typeof streamManhuaAdvisor = (input,onText,onModel) => withKnowledgeAdvisorRecovery(
+    input.requestId,()=>streamManhuaAdvisor(input,onText,onModel),()=>utils.client.auth.me.query(),
+    ()=>alive.current && currentId.current===input.knowledgePublicationContext?.documentId);
+
   const [selected,setSelected]=useState<Record<string,number[]>>({});
   const turns=doc.publication?.conversation||[],pending=turns.at(-1)?.response?null:turns.at(-1);
   const send=async(retry=false,action?:"layout")=>{
@@ -41,7 +48,7 @@ export default function KnowledgeConversationPanel({doc,busy,save,lock,onSupplem
       const history=pending&&!retryId?turns:[...turns,turn];
       let next:EditableLayout={...base,publication:{...base.publication!,conversation:history},updatedAt:new Date().toISOString()};
       await save(next);
-      const response=await streamManhuaAdvisor({question:turn.request.question,rawQuestion:turn.request.question,requestId:turn.request.id,knowledgePublicationContext:{documentId:doc.id,batchIndex:history.length-1,attempt:0,purpose:"conversation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
+      const response=await streamKnowledgeAdvisor({question:turn.request.question,rawQuestion:turn.request.question,requestId:turn.request.id,knowledgePublicationContext:{documentId:doc.id,batchIndex:history.length-1,attempt:0,purpose:"conversation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
       const answer=knowledgeConversationAnswerSchema.parse(JSON.parse(response.answer));
       if(answer.requestId!==turn.request.id)throw Error("对话请求编号不符");
       if(turn.request.action === "layout" && (!answer.layoutPlan || answer.layoutPlan.sourceDigest!==turn.request.layoutSourceDigest))throw Error("顾问排版方案与本次稿件不符");

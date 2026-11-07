@@ -69,3 +69,17 @@ it("原文未开始挑页即持久化；多文件追加不覆盖旧结果，后�
  const state=await knowledgeReadingPreparationState(7,link.jobId,f.deps);
  expect(state.drafts[0].pages[1].body).toBe("第二章完整末句");
 });
+
+
+it("停止标记已登记但worker未收口时，顾问不能再发新请求，原报告仍可读",async()=>{
+ const f=fixture(),p=createKnowledgeReadingPreparation(7,"kc_cancel",f.deps);
+ await p.onSource("file-0",["已读出的原文与最后一句"]);
+ const link=p.progress()!,ctx:any={documentId:link.documentId,readingJobId:link.jobId,purpose:"reading",batchIndex:0,attempt:0};
+ await reviewKnowledgeReading(7,ctx,f.deps);
+ f.job.input.cancelRequestedAt=new Date().toISOString();
+ expect(f.job.status).toBe("running");
+ const state=await knowledgeReadingPreparationState(7,link.jobId,f.deps);
+ expect(state.status).toBe("cancelled");expect(state.drafts[0].pages[0].body).toBe("已读出的原文与最后一句");
+ await expect(reviewKnowledgeReading(7,ctx,f.deps)).rejects.toThrow("读档已停止");
+ expect(f.deps.post).toHaveBeenCalledTimes(1);
+});

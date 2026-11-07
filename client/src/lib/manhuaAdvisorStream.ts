@@ -49,13 +49,27 @@ export function advisorStreamErrorMessage(value: unknown, fallback: string): str
 }
 
 export async function streamManhuaAdvisor(input: Input, onText: (text: string) => void, onModel?: (label: string) => void): Promise<Result> {
+  // 服务器每15秒发送心跳；只按无数据窗口断开读端，不用总时长打断正常顾问。
+  const controller = input.knowledgePublicationContext ? new AbortController() : undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const heartbeat = () => {
+    if (!controller) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(), 60_000);
+  };
+  heartbeat();
+  try { return await consumeManhuaAdvisorStream(input, onText, onModel, controller?.signal, heartbeat); }
+  finally { if (timer) clearTimeout(timer); }
+}
+
+async function consumeManhuaAdvisorStream(input: Input, onText: (text: string) => void, onModel: ((label: string) => void) | undefined, signal: AbortSignal | undefined, heartbeat: () => void): Promise<Result> {
   const url = withLongJobsFlyDirect("/api/manhua-advisor/stream");
   const response = await withFlyHealthGate(flyHealthProbeOriginForUrl(url), () => fetch(url, {
-    method: "POST", credentials: "include", headers: { "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify(input),
+    method: "POST", signal, credentials: "include", headers: { "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify(input),
   }));
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new Error(advisorStreamErrorMessage(body?.message, `顾问连接失败（${response.status}），请恢复原问题`));
+    throw Object.assign(new Error(advisorStreamErrorMessage(body?.message, `顾问连接失败（${response.status}），请恢复原问题`)), { advisorRejected: [400,401,403,422].includes(response.status) });
   }
   if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) throw new Error("顾问流式连接未建立，请恢复原问题");
   const reader = response.body.getReader();
@@ -70,7 +84,7 @@ export async function streamManhuaAdvisor(input: Input, onText: (text: string) =
     const data = JSON.parse(payload);
     if (event === "error") {
       const error = new Error(advisorStreamErrorMessage(data.message, "顾问返回失败，请恢复原问题"));
-      if (input.knowledgePublicationContext) Object.assign(error, { retryable: data.retryable === true });
+      if (input.knowledgePublicationContext) Object.assign(error, { retryable: data.retryable === true, advisorRejected: true });
       throw error;
     }
     if (event === "reset") { raw = ""; onText(""); if (typeof data.text === "string" && data.text) onModel?.(data.text); }
@@ -83,6 +97,7 @@ export async function streamManhuaAdvisor(input: Input, onText: (text: string) =
   try {
     while (!result) {
       const { done, value } = await reader.read();
+      heartbeat();
       buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
       buffer = buffer.replace(/\r\n/g, "\n");
       let boundary: number;

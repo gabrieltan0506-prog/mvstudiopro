@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 vi.mock("./flyHealthGate", () => ({ withFlyHealthGate: (_: unknown, fn: () => unknown) => fn() }));
 vi.mock("./longJobsFlyOrigin", () => ({ withLongJobsFlyDirect: (p: string) => `https://api.test.invalid${p}`, flyHealthProbeOriginForUrl: () => "https://api.test.invalid" }));
 import { partialJsonString, readableAdvisorStream, streamManhuaAdvisor } from "./manhuaAdvisorStream";
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 it("未闭合转义与嵌套调度摘要可逐步显示", () => {
   expect(partialJsonString('{"answer":"第一行\\n下一句\\u4', "answer")).toBe("第一行\n下一句");
   const raw = JSON.stringify({ answer: JSON.stringify({ summaryZh: "下沉后切近景", cameras: [] }) });
@@ -39,4 +39,18 @@ it("FlashX直接候选可流式显示摘要，但普通回答不泄露候选JSON
   expect(readableAdvisorStream(raw, true)).toBe("镜头拉开，保留四人位置");
   expect(readableAdvisorStream(raw, false)).toBe("");
   expect(readableAdvisorStream('{"kind":"other","summaryZh":"错误类型"}', true)).toBe("");
+});
+
+it("知识顾问只有失联才切换查询：心跳持续超过一分钟仍读取同一响应",async()=>{
+ vi.useFakeTimers();let ctrl!:ReadableStreamDefaultController<Uint8Array>;
+ const fetchMock=vi.fn(async(_url:string,init:RequestInit)=>{
+  const body=new ReadableStream<Uint8Array>({start(c){ctrl=c;init.signal?.addEventListener("abort",()=>c.error(Error("连接失联")),{once:true});}});
+  return new Response(body,{headers:{"content-type":"text/event-stream"}});
+ });vi.stubGlobal("fetch",fetchMock);
+ const call=streamManhuaAdvisor({knowledgePublicationContext:{},requestId:"same"}as any,()=>{});
+ await vi.advanceTimersByTimeAsync(0);
+ for(let i=0;i<6;i++){ctrl.enqueue(new TextEncoder().encode(": heartbeat\n\n"));await vi.advanceTimersByTimeAsync(15000);}
+ expect((fetchMock.mock.calls[0][1].signal as AbortSignal).aborted).toBe(false);
+ const assertion=expect(call).rejects.toThrow("连接失联");await vi.advanceTimersByTimeAsync(60000);await assertion;
+ expect(fetchMock).toHaveBeenCalledTimes(1);
 });
