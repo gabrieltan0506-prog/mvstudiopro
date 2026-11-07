@@ -1,5 +1,6 @@
 import { describe,it,expect,vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { KNOWLEDGE_DESIGN_MARKER } from '../../shared/knowledgeDecorations';
 import { invokeKnowledgePublicationRoutes, KNOWLEDGE_PUBLICATION_MODEL as OR_MODEL, KNOWLEDGE_PUBLICATION_EVOLINK_MODEL as EVO_MODEL, type KnowledgeModelRequest } from './knowledgePublicationRoutes';
 const make=()=>{
  const id=randomUUID(),sourceDigest='a'.repeat(64),storage=new Map<string,any>();
@@ -12,6 +13,49 @@ const make=()=>{
  return{request,evidence,deps,report,response,storage};
 };
 const researchReport=(f:ReturnType<typeof make>,urls:string[]=[])=>({kind:'knowledge_research_v1',pages:f.report.pages.map(p=>({pageId:p.id,topic:p.headline,queries:[p.headline],findings:urls.map(url=>({url,summary:'原始来源对本页主题的解释',relevance:'补充本页原稿事实的背景',purpose:'fill_explanation',sourceQuote:'蒸发、凝结、降水',question:'蒸发的能量来源是什么'}))}))});
+
+describe('已有设计字段的无损归位',()=>{
+ const misplaced=()=>{
+  const f=make();f.request.systemInstruction.parts.push({text:KNOWLEDGE_DESIGN_MARKER});
+  const reading:any=f.report.pages[0].reading;
+  reading.decoration={artworkId:'none',header:'plain',divider:'geometric',table:'plain',interleave:'none',reason:'以留白与几何分隔呈现水的状态变化'};
+  reading.design={palette:'jade-paper',layout:'editorial',table:'rules',frame:'rule',motif:'none',reason:'水的状态对照使用竹青纸色与细线表格，不添加无关纹样'};
+  return f;
+ };
+ it('归位后通过完整合同，缓存原响应不变，重复读取不发新请求',async()=>{
+  const f=misplaced(),original=JSON.stringify(f.report);
+  const first=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  const report=JSON.parse(first.candidates[0].content.parts[0].text);
+  expect(report.pages[0].reading.design).toBeUndefined();
+  expect(report.pages[0].reading.decoration.design).toEqual((f.report.pages[0].reading as any).design);
+  expect(report.pages[0].reading.blocks).toEqual(f.report.pages[0].reading.blocks);
+  expect(report.pages[0].id).toBe(f.report.pages[0].id);
+  expect(JSON.stringify(f.report)).toBe(original);
+  const receipt=f.storage.get('test/0/route-openrouter.json');
+  expect(JSON.parse(receipt.response.text).choices[0].message.content).toBe(original);
+  // 模拟旧解析器曾将这份完整回执拒收，新版本只能重验原回执。
+  f.storage.set('test/0/route-openrouter.json',{...receipt,state:'failed',reason:'Unrecognized key: design'});
+  f.storage.delete('test/0/accepted.json');f.deps.fetch.mockClear();
+  const replay=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(replay.candidates).toEqual(first.candidates);
+  expect(f.deps.fetch).not.toHaveBeenCalled();
+  expect(f.storage.get('test/0/route-openrouter.json').response).toEqual(receipt.response);
+ });
+ it.each(['conflict','invalid','missing','extra-page'] as const)('仍拒收%s，不删内容或代选设计来通过',async(kind)=>{
+  const f=misplaced(),reading:any=f.report.pages[0].reading;
+  if(kind==='conflict')reading.decoration.design={...reading.design,palette:'plum-ink'};
+  if(kind==='invalid')reading.design.palette=['jade-paper'];
+  if(kind==='missing')delete reading.design;
+  if(kind==='extra-page')f.report.pages.push(structuredClone(f.report.pages[0]));
+  const original=JSON.stringify(f.report);
+  f.deps.fetch.mockImplementation(async()=>f.response(OR_MODEL));
+  await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('所有已配置通道均失败');
+  const firstFailure=f.storage.get('test/0/route-openrouter.json').reason;
+  expect(firstFailure).toMatch({conflict:/Unrecognized key.*design/,invalid:/palette/,missing:/缺少内容驱动设计字段/, 'extra-page':/图文页编号与本批原稿不符/}[kind]);
+  expect(JSON.stringify(f.report)).toBe(original);
+  expect(f.storage.has('test/0/accepted.json')).toBe(false);
+ });
+});
 describe('图文手册限定模型与同款通道恢复',()=>{
  it('第一路成功不调用其他路，实际图片与表格结构进入同一回执，重放不再付费',async()=>{
   const f=make();const r=await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);const env=JSON.parse(r.text);

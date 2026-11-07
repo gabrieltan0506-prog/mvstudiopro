@@ -130,6 +130,19 @@ function validateAnswer(content: string, request: KnowledgeModelRequest, sources
     // 旧提示词未明确来源层级。仅空根数组没有内容可丢失；非空来源仍由严格合同拒收。
     if (candidate.kind === "knowledge_publication_v1" && Array.isArray(candidate.sources) && candidate.sources.length === 0)
       candidate = Object.fromEntries(Object.entries(candidate).filter(([key]) => key !== "sources"));
+    // 只归位模型已经提供的设计对象；不补字段、不改页号、不丢正文。
+    // 两处同时存在或缺少装饰对象时仍交严格合同拒收，不能猜测应采用哪一份。
+    if (candidate.kind === "knowledge_publication_v1" && Array.isArray(candidate.pages)) {
+      candidate = { ...candidate, pages: candidate.pages.map((page: any) => {
+        const reading = page?.reading, decoration = reading?.decoration;
+        if (!reading || typeof reading !== "object" || Array.isArray(reading) ||
+            !Object.prototype.hasOwnProperty.call(reading, "design") ||
+            !decoration || typeof decoration !== "object" || Array.isArray(decoration) ||
+            Object.prototype.hasOwnProperty.call(decoration, "design")) return page;
+        const { design, ...rest } = reading;
+        return { ...page, reading: { ...rest, decoration: { ...decoration, design } } };
+      }) };
+    }
     const review = (request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_DESIGN_MARKER))?knowledgeDesignedReviewSchema:knowledgeReviewSchema).parse(candidate);
     if (review.sourceDigest !== source.sourceDigest || review.pages.length !== source.source.pages.length ||
         review.pages.some((p, i) => p.id !== source.source.pages[i].id))
