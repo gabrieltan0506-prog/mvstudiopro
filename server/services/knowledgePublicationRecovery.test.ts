@@ -1,0 +1,315 @@
+import { describe, it, expect, vi } from "vitest";
+import { createHash } from "node:crypto";
+import {
+  knowledgeSourceDigest,
+  reviewKnowledgePublication,
+} from "./knowledgePublicationAdvisor";
+import { knowledgeBatchResultSchema } from "../../shared/knowledgePublication";
+import { getDb } from "../db";
+import { getJobByIdStrict } from "../jobs/repository";
+vi.mock("../db", () => ({ getDb: vi.fn() }));
+vi.mock("../jobs/repository", () => ({ getJobByIdStrict: vi.fn() }));
+import { recoverKnowledgePublicationOperation } from "./knowledgePublicationRecovery";
+import {
+  manhuaAdvisorRequestFingerprint,
+  MANHUA_ADVISOR_JOB_ACTION,
+  MANHUA_ADVISOR_REFUND_RECONCILED_ACTION,
+} from "./manhuaAdvisorOperation";
+import {
+  KNOWLEDGE_PUBLICATION_ROUTE_VERSION,
+  KNOWLEDGE_PUBLICATION_MODEL,
+} from "./knowledgePublicationRoutes";
+const uuid = "11111111-1111-4111-8111-111111111111";
+function setup() {
+  const context = { documentId: uuid, batchIndex: 0, attempt: 0 },
+    input = {
+      userId: 7,
+      requestId: uuid,
+      question: "整理",
+      rawQuestion: "整理",
+      qaModel: "gpt-5.6-terra",
+      knowledgePublicationContext: context,
+    };
+  const source = {
+      title: "原稿",
+      pages: [{ id: uuid, headline: "原章", body: "完整正文", imageUrl: "" }],
+    },
+    sourceDigest = knowledgeSourceDigest(source);
+  const report = {
+    type: "knowledge_publication_v1",
+    sourceDigest,
+    title: "原稿",
+    pages: [
+      {
+        id: uuid,
+        headline: "原章",
+        body: "完整正文",
+        imageDescription: "",
+        imageStatus: "absent",
+        facts: [{ term: "原章", statement: "完整正文" }],
+        cautions: [],
+        reading: {
+          version: 1,
+          subtitle: "",
+          accent: "jade",
+          blocks: [
+            { type: "prose", title: "原章", note: "", text: "完整正文" },
+          ],
+        },
+      },
+    ],
+  };
+  const request: any = {
+    systemInstruction: { parts: [{ text: "整理" }] },
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: JSON.stringify({ source, sourceDigest }) }],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 32768,
+      responseMimeType: "application/json",
+    },
+  };
+  const digest = createHash("sha256")
+    .update(JSON.stringify([KNOWLEDGE_PUBLICATION_ROUTE_VERSION, request]))
+    .digest("hex");
+  const prefix = `knowledge-publications/user-7/${uuid}/${uuid}/batch-0`,
+    route = `${prefix}/attempt-0/route-openrouter.json`;
+  const store = new Map<string, any>([
+    [
+      route,
+      {
+        state: "failed",
+        requestDigest: digest,
+        response: {
+          status: 200,
+          text: JSON.stringify({
+            model: KNOWLEDGE_PUBLICATION_MODEL,
+            choices: [
+              {
+                finish_reason: "stop",
+                message: { content: JSON.stringify(report) },
+              },
+            ],
+          }),
+        },
+      },
+    ],
+  ]);
+  const job: any = {
+    userId: "7",
+    status: "failed",
+    input: {
+      action: MANHUA_ADVISOR_JOB_ACTION,
+      requestId: uuid,
+      requestFingerprint: manhuaAdvisorRequestFingerprint(input),
+    },
+    error: "旧失败",
+    output: {
+      action: MANHUA_ADVISOR_REFUND_RECONCILED_ACTION,
+      creditsRefunded: 12,
+    },
+  };
+  const doc: any = {
+    id: uuid,
+    publication: { requestId: uuid, source, attempts: {}, completedBatches: 0 },
+  };
+  const billing = { charged: 12, settled: true };
+  const deps: any = {
+    job: vi.fn(async () => job),
+    access: vi.fn(async () => doc),
+    billing: vi.fn(async () => billing),
+    read: vi.fn(async (k: string) => store.get(k) || null),
+    persist: vi.fn(async () => undefined),
+    review: vi.fn(async (_u: any, _c: any, d: any) => {
+      expect(await d.read(`${prefix}/report.json`)).toBeNull();
+      expect(await d.read(`${prefix}/raw-0.json`)).toBeNull();
+      const out = await d.post(request, {
+        prefix: `${prefix}/attempt-0`,
+        read: d.read,
+        save: async (k: string, v: any) => {
+          store.set(k, v);
+        },
+      });
+      return JSON.parse(
+        JSON.parse(out.text).candidates[0].content.parts[0].text
+      );
+    }),
+  };
+  return {
+    input,
+    deps,
+    job,
+    billing,
+    store,
+    route,
+    prefix,
+    doc,
+    request,
+    sourceDigest,
+  };
+}
+const meta = { qaMode: "terra" as const, dailyLimit: 3, paidUnitCredits: 8 };
+describe("正式出版失败事务恢复", () => {
+  it("正式审校函数重读原请求，批次返回可由出版面板合同消费", async () => {
+    const f = setup();
+    f.store.set(f.prefix + "/request-0.json", {
+      sourceDigest: f.sourceDigest,
+      request: f.request,
+    });
+    f.store.set(f.prefix + "/report.json", { fake: "禁止采用" });
+    f.deps.review = (_u: any, _c: any, d: any) =>
+      reviewKnowledgePublication(_u, _c, {
+        ...d,
+        load: async () => f.doc,
+        save: async (k: string, v: any) => {
+          f.store.set(k, v);
+        },
+        count: async () => ({ totalTokens: 100, method: "test" }),
+      });
+    const response = await recoverKnowledgePublicationOperation(
+      f.input,
+      meta,
+      f.deps
+    );
+    const result = knowledgeBatchResultSchema.parse(
+      JSON.parse(response!.answer)
+    );
+    expect(result.reviewedPages).toEqual([uuid]);
+    expect(result.pages?.[0].body).toBe("### 原章\n\n完整正文");
+    expect(f.store.get(f.prefix + "/report.json").report.pages[0].id).toBe(
+      uuid
+    );
+    expect(f.deps.persist).toHaveBeenCalledOnce();
+  });
+
+  it.each(["saved", "same", "changed"])("正式持久化CAS：%s", async mode => {
+    const f = setup();
+    delete f.deps.persist;
+    let saved: any;
+    const returning = vi.fn(async () =>
+      mode === "saved" ? [{ id: "original" }] : []
+    );
+    const where = vi.fn(() => ({ returning }));
+    const set = vi.fn(value => {
+      saved = value;
+      return { where };
+    });
+    vi.mocked(getDb).mockResolvedValue({ update: () => ({ set }) } as any);
+    vi.mocked(getJobByIdStrict).mockImplementation(
+      async () =>
+        ({
+          status: "succeeded",
+          output: {
+            requestFingerprint: manhuaAdvisorRequestFingerprint(f.input),
+            result: {
+              answer: mode === "same" ? saved.output.result.answer : "other",
+            },
+          },
+        }) as any
+    );
+    if (mode === "changed")
+      await expect(
+        recoverKnowledgePublicationOperation(f.input, meta, f.deps)
+      ).rejects.toThrow("状态已变化");
+    else
+      expect(
+        (await recoverKnowledgePublicationOperation(f.input, meta, f.deps))
+          ?.success
+      ).toBe(true);
+    expect(saved.output.recovery.previousOutput).toEqual(f.job.output);
+    expect(saved.output.recovery.billing).toEqual(f.billing);
+    expect(saved.output.recovery.modelRequests).toBe(0);
+    expect(returning).toHaveBeenCalledOnce();
+  });
+
+  it("重新解析原回包而不采用旁路报告，保留退款审计并零费用返回", async () => {
+    const f = setup();
+    f.store.set(f.prefix + "/report.json", { fake: "不得采用" });
+    f.store.set(f.prefix + "/raw-0.json", { fake: "不得采用" });
+    const result = await recoverKnowledgePublicationOperation(
+      f.input,
+      meta,
+      f.deps
+    );
+    expect(result?.creditsCharged).toBe(0);
+    expect(result?.replayed).toBe(true);
+    expect(JSON.parse(result!.answer).pages[0].body).toContain("完整正文");
+    expect(f.deps.persist).toHaveBeenCalledOnce();
+    expect(f.deps.persist.mock.calls[0][4]).toBe(f.job);
+    expect(f.deps.persist.mock.calls[0][5]).toBe(f.billing);
+  });
+  it.each(["owner", "request", "fingerprint", "action"])(
+    "%s不符拒绝，不读模型回包",
+    async field => {
+      const f = setup();
+      if (field === "owner") f.job.userId = "8";
+      else
+        f.job.input[
+          field === "request"
+            ? "requestId"
+            : field === "fingerprint"
+              ? "requestFingerprint"
+              : "action"
+        ] = "wrong";
+      await expect(
+        recoverKnowledgePublicationOperation(f.input, meta, f.deps)
+      ).rejects.toThrow("身份");
+      expect(f.deps.review).not.toHaveBeenCalled();
+    }
+  );
+  it.each(["unsettled", "missing", "partial"])(
+    "退款%s拒绝恢复",
+    async state => {
+      const f = setup();
+      if (state === "unsettled") f.billing.settled = false;
+      else if (state === "missing") delete f.job.output.creditsRefunded;
+      else f.job.output.creditsRefunded = 1;
+      await expect(
+        recoverKnowledgePublicationOperation(f.input, meta, f.deps)
+      ).rejects.toThrow("退款");
+      expect(f.deps.review).not.toHaveBeenCalled();
+    }
+  );
+  it.each(["unknown", "missing", "invalid"])(
+    "原回包%s不发新请求、不保存成功",
+    async state => {
+      const f = setup();
+      if (state === "missing") f.store.clear();
+      else if (state === "unknown")
+        f.store.set(f.route, {
+          requestDigest: f.store.get(f.route).requestDigest,
+          state: "unknown",
+        });
+      else
+        f.store.get(f.route).response.text = JSON.stringify({
+          model: KNOWLEDGE_PUBLICATION_MODEL,
+          choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+        });
+      await expect(
+        recoverKnowledgePublicationOperation(f.input, meta, f.deps)
+      ).rejects.toThrow();
+      expect(f.deps.persist).not.toHaveBeenCalled();
+    }
+  );
+  it("权限拒绝、运行中和退款待核均不能从此入口恢复", async () => {
+    const f = setup();
+    f.deps.access.mockRejectedValueOnce(Error("无权限"));
+    await expect(
+      recoverKnowledgePublicationOperation(f.input, meta, f.deps)
+    ).rejects.toThrow("无权限");
+    f.job.status = "running";
+    expect(
+      await recoverKnowledgePublicationOperation(f.input, meta, f.deps)
+    ).toBeNull();
+    f.job.status = "failed";
+    f.job.output.action = "manhua_advisor_qa_refund_pending";
+    expect(
+      await recoverKnowledgePublicationOperation(f.input, meta, f.deps)
+    ).toBeNull();
+    expect(f.deps.review).not.toHaveBeenCalled();
+  });
+});

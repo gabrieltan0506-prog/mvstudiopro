@@ -6850,6 +6850,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             });
           }
           if (existing.kind === "failed") {
+            if (input.knowledgePublicationContext) {
+              const { recoverKnowledgePublicationOperation } = await import("./services/knowledgePublicationRecovery");
+              const recovered = await recoverKnowledgePublicationOperation({...advisorOperationInput,knowledgePublicationContext:input.knowledgePublicationContext},{qaMode,dailyLimit,paidUnitCredits:paidUnit});
+              if (recovered) return recovered;
+            }
             throw new TRPCError({
               code: "PRECONDITION_FAILED",
               message: input.knowledgePublicationContext ? (knowledgePublicationFailureMessage(existing.message) || "ADVISOR_OPERATION_FAILED：本次问答未完成，请重新提问") : "ADVISOR_OPERATION_FAILED：本次问答未完成，请重新提问",
@@ -6926,6 +6931,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             });
           }
           if (operation.kind === "failed") {
+            if (input.knowledgePublicationContext) {
+              const { recoverKnowledgePublicationOperation } = await import("./services/knowledgePublicationRecovery");
+              const recovered = await recoverKnowledgePublicationOperation({...advisorOperationInput!,knowledgePublicationContext:input.knowledgePublicationContext},{qaMode,dailyLimit,paidUnitCredits:paidUnit});
+              if (recovered) return recovered;
+            }
             throw new TRPCError({
               code: "PRECONDITION_FAILED",
               message: input.knowledgePublicationContext ? (knowledgePublicationFailureMessage(operation.message) || "ADVISOR_OPERATION_FAILED：本次问答未完成，请重新提问") : "ADVISOR_OPERATION_FAILED：本次问答未完成，请重新提问",

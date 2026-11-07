@@ -803,3 +803,22 @@ it.each(['openrouter','evolink'] as const)('%s图片400在原通道重试，第�
  expect(out.gatewayTrace.map((v:any)=>v.route)).toEqual([channel,`${channel}-retry-1`,`${channel}-retry-2`,`${channel}-retry-3`]);
  f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).not.toHaveBeenCalled();
 });
+
+describe('已有出版回包判别字段恢复',()=>{
+ it.each(['type','translated'])('%s写法复用原回包，不重购未知后续路由',async variant=>{
+  const f=make();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
+  const receipt=f.storage.get('test/0/route-openrouter.json');
+  const original:any=structuredClone(f.report);
+  if(variant==='type'){original.type=original.kind;delete original.kind;}else original.kind='知识发布_v1';
+  const raw=JSON.stringify(original);
+  f.storage.set('test/0/route-openrouter.json',{...receipt,state:'failed',response:{status:200,text:JSON.stringify({model:OR_MODEL,choices:[{finish_reason:'stop',message:{content:raw}}]})}});
+  f.storage.set('test/0/route-evolink.json',{requestDigest:receipt.requestDigest,state:'unknown',route:'evolink',model:EVO_MODEL});
+  f.deps.fetch.mockClear();
+  const output=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  const got=JSON.parse(output.candidates[0].content.parts[0].text);
+  expect(got.kind).toBe('knowledge_publication_v1');expect(got.pages[0].reading).toEqual(f.report.pages[0].reading);
+  expect(output.adjustments.some((a:any)=>a.field==='kind')).toBe(true);
+  expect(JSON.parse(f.storage.get('test/0/route-openrouter.json').response.text).choices[0].message.content).toBe(raw);
+  expect(f.storage.get('test/0/route-evolink.json').state).toBe('unknown');expect(f.deps.fetch).not.toHaveBeenCalled();
+ });
+});

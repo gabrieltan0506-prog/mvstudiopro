@@ -32,3 +32,8 @@ it('无图末稿可把完整Markdown识别为结构，原body逐字保留',()=>{
  expect(restoreKnowledgeReviewStructure(input,source,false).value.pages[0].reading).toBeUndefined();
  expect(restoreKnowledgeReviewStructure(input,{...source,pages:[{...source.pages[0],imageUrl:'gs://test/image'}]},true).value.pages[0].reading).toBeUndefined();
 });
+
+it.each([{kind:'other'},{kind:'other',type:'knowledge_publication_v1'},{kind:'知识发布_v1',type:'other'},{kind:null,type:'knowledge_publication_v1'}])('错误或冲突判别字段不猜测恢复 %j',fields=>{
+ const input={...report(),...fields};const got=restoreKnowledgeReviewStructure(input,source);
+ expect(knowledgeReviewSchema.safeParse(got.value).success).toBe(false);expect(got.adjustments).toEqual([]);
+});

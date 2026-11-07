@@ -6,6 +6,15 @@ const object = (v: unknown): v is Record<string, any> => Boolean(v) && typeof v 
 /** 只归位可唯一绑定的已有正文；原回包与每项调整由路由分别保存。 */
 export function restoreKnowledgeReviewStructure(value: any, source: KnowledgeSource, finalTextRevision = false) {
   const result = structuredClone(value), adjustments: unknown[] = [], bodyReadingIds = new Set<string>();
+  // 仅恢复真实回包中见到的判别字段写法；后续仍完整校验正文、原页和摘要。
+  if (object(result) && !Object.prototype.hasOwnProperty.call(result, 'kind') && result.type === 'knowledge_publication_v1') {
+    result.kind = result.type;
+    delete result.type;
+    adjustments.push({field:'kind',before:'type=knowledge_publication_v1',after:'knowledge_publication_v1',reason:'原回包判别字段归位，正文未改'});
+  } else if (object(result) && result.kind === '知识发布_v1' && !Object.prototype.hasOwnProperty.call(result, 'type')) {
+    result.kind = 'knowledge_publication_v1';
+    adjustments.push({field:'kind',before:'知识发布_v1',after:'knowledge_publication_v1',reason:'原回包判别值归一，正文未改'});
+  }
   if (!object(result) || result.kind !== 'knowledge_publication_v1' || !Array.isArray(result.pages))
     return { value: result, adjustments, bodyReadingIds };
   const attach = (id: string, reading: any, field: string) => {
