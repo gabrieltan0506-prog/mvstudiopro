@@ -3205,6 +3205,9 @@ export const appRouter = router({
     listKnowledgeCardRecovery: protectedProcedure
       .input(z.object({ cursor: z.object({ at: z.string().datetime(), id: z.string().min(1).max(100) }).optional() }))
       .query(async ({ctx,input}) => (await import("./services/knowledgeCardRecovery")).listKnowledgeCardRecovery(String(ctx.user.id),input.cursor)),
+    deleteKnowledgeCardRecovery: protectedProcedure
+      .input(z.object({jobId:z.string().min(1).max(100)}))
+      .mutation(async ({ctx,input}) => (await import("./services/knowledgeCardRecovery")).deleteKnowledgeCardRecovery(String(ctx.user.id),input.jobId)),
     getKnowledgeCardRecovery: protectedProcedure
       .input(z.object({ jobId:z.string().min(1).max(100) }))
       .query(async ({ctx,input}) => (await import("./services/knowledgeCardRecovery")).getKnowledgeCardRecovery(String(ctx.user.id),input.jobId)),
@@ -4480,6 +4483,7 @@ export const appRouter = router({
           fullMarkdown: z.string().min(200, "完整版稿子太短").max(5_000_000, "完整版稿子超过 500 万字，请分册提炼"),
           distillModel: z.string().max(64).optional(),
           targetSections: z.number().int().min(3).max(300).optional(),
+          editionVersion: z.literal(2).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -4501,6 +4505,7 @@ export const appRouter = router({
             fullMarkdown: input.fullMarkdown,
             distillModel: input.distillModel || "",
             targetSections: input.targetSections ?? null,
+            ...(input.editionVersion ? {editionVersion:input.editionVersion} : {}),
           },
         });
         return { success: true as const, progressJobId: jobId };

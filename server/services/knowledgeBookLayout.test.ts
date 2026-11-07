@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import puppeteer from "puppeteer";
+import PDFDocument from "pdfkit";
 import { createHash, randomUUID } from "node:crypto";
 import { layoutFromSource, type LayoutLibrary } from "../../shared/editableLayout";
 import { knowledgeManuscript } from "../../shared/knowledgePublication";
@@ -13,6 +14,17 @@ import { invokeKnowledgePublicationRoutes } from "./knowledgePublicationRoutes";
 import { exportKnowledgePublication } from "./knowledgePublicationExport";
 import { loadKnowledgeBookLayoutInput, loadKnowledgeBookLayoutView, validateKnowledgeBookLayoutTransition } from "./knowledgeBookLayout";
 import { buildKnowledgePublicationHtml } from "../../shared/knowledgePublicationHtml";
+
+// 本组非视觉用例使用有效测试PDF，仍经过正式pdfseparate/pdfunite，不能用伪PDF字节跳过分片合同。
+const fixturePageCount = (html:string) => html.includes('<figure class="main-card">') ? 2 : 1;
+const fixturePdf = (html:string) => new Promise<Buffer>((resolve,reject)=>{
+  const pdf=new PDFDocument({autoFirstPage:false}),chunks:Buffer[]=[];
+  pdf.on("data",chunk=>chunks.push(Buffer.from(chunk)));pdf.on("error",reject);
+  pdf.on("end",()=>resolve(Buffer.concat(chunks)));
+  for(let i=0;i<fixturePageCount(html);i++){pdf.addPage();pdf.text("test-only PDF fixture");}
+  pdf.end();
+});
+const countPdfPages=async(path:string)=>Number(/^Pages:\s+(\d+)/m.exec((await promisify(execFile)('pdfinfo',[path])).stdout)?.[1]);
 
 function fixture() {
   const parent=layoutFromSource({kind:"knowledge-publication",owner:"7",sourceId:"layout-test",title:"历史章节",body:"",pages:[
@@ -47,8 +59,9 @@ function fixture() {
     save:async(name:string,data:Buffer)=>{objects.set(name,data);},
     file:async(name:string,path:string)=>{const bytes=await readFile(path);objects.set(name,bytes);return bytes.length;},
     sign:(name:string)=>`https://example.invalid/${name}`,
-    pdf:vi.fn(async(_html:string)=>Buffer.from("%PDF"+"test-only".repeat(20))),
-    countPages:async()=>6,
+    measure:async(html:string)=>fixturePageCount(html),
+    pdf:vi.fn(fixturePdf),
+    countPages:countPdfPages,
   };
   const order=[parent.pages[0].id,parent.pages[1].id,child.pages[0].id,parent.pages[2].id];
   const makePlan=(sourceDigest:string):KnowledgeBookLayoutPlan=>({kind:"knowledge_book_layout_v1",sourceDigest,chapters:order.map((pageId,i)=>({pageId,design:{palette:i===1?"jade-paper":"ink-cinnabar",layout:i===1?"narrative":"editorial",table:i===2?"bands":"rules",frame:"none",motif:(["bamboo-seal","relation-lines","route-array","bronze-geometric"] as const)[i],reason:"依据本章具体内容组织层次，保持完整正文可读。"}}))});
@@ -102,10 +115,13 @@ it("真实顾问路由产出方案，经永久回执与保存校验后控制合�
   const result=await exportKnowledgePublication(7,f.parent.id,"10",f.deps);
   expect(result.imagePages).toBe(2);expect(result.totalPages).toBe(6);
   const images=Object.fromEntries(view.doc.pages.filter(p=>p.imageUrl).map(p=>[p.imageUrl,`data:image/png;base64,${Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=","base64").toString("base64")}`]));
-  expect(f.deps.pdf.mock.calls[0][0].replace(/>\s+</g, "><")).toBe(buildKnowledgePublicationHtml(view.doc,view.review,images).replace(/>\s+</g, "><"));
-  for(const end of ["末句一必须保留","末句二必须保留","末句三必须保留","末句四必须保留"])expect(f.deps.pdf.mock.calls[0][0]).toContain(end);
+  const savedHtml=Array.from(f.objects.entries()).find(([name])=>name.endsWith('/阅读稿.html'))![1].toString('utf8');
+  expect(savedHtml.replace(/>\s+</g, "><")).toBe(buildKnowledgePublicationHtml(view.doc,view.review,images).replace(/>\s+</g, "><"));
+  const sentHtml=f.deps.pdf.mock.calls.map(([html])=>html).join('\n');
+  for(const end of ["末句一必须保留","末句二必须保留","末句三必须保留","末句四必须保留"])expect(sentHtml).toContain(end);
+  expect(Array.from(f.objects.keys()).filter(name=>/\.pdf\.pages\/\d+\.pdf$/.test(name))).toHaveLength(6);
   await f.run();await exportKnowledgePublication(7,f.parent.id,"10",f.deps);
-  expect(f.fetch).toHaveBeenCalledTimes(1);expect(f.deps.pdf).toHaveBeenCalledTimes(1);
+  expect(f.fetch).toHaveBeenCalledTimes(1);expect(f.deps.pdf).toHaveBeenCalledTimes(4);
   expect(Array.from(f.models.keys()).some(k=>k.endsWith("/raw.json"))).toBe(true);
   expect(Array.from(f.models.keys()).some(k=>k.endsWith("/report.json"))).toBe(true);
 });
@@ -120,7 +136,7 @@ it("补充稿正文改变后拒绝旧方案",async()=>{
   const f=await planned();await exportKnowledgePublication(7,f.parent.id,"10",f.deps);
   f.child.publication!.manuscript=f.child.publication!.manuscript.replace("末句四必须保留","末句四追加新内容");
   await expect(loadKnowledgeBookLayoutView(7,f.parent.id,"10",f.deps)).rejects.toThrow("已变化");
-  expect(f.fetch).toHaveBeenCalledTimes(1);expect(f.deps.pdf).toHaveBeenCalledTimes(1);
+  expect(f.fetch).toHaveBeenCalledTimes(1);expect(f.deps.pdf).toHaveBeenCalledTimes(4);
 });
 it("未得到顾问方案的旧内容重排明确失败，不从标题猜选配色与纹样",async()=>{
   const f=fixture();f.parent.publication!.designMode="content";
@@ -136,9 +152,14 @@ it("实际Chromium打印按顾问顺序保留全部章节、图卡、正文与�
     await page.setViewport({width:1800,height:1000});
     const errors:string[]=[];
     page.on("pageerror",e=>errors.push(String(e)));
-    const pdf=async(html:string)=>{
+    const render=async(html:string)=>{
       await page.setContent(html,{waitUntil:"load"});
       await page.waitForFunction(()=>Array.from(document.querySelectorAll('[data-booklet-root]')).every(root=>root.getAttribute('data-ready')==='true'),{timeout:30000});
+    };
+    const measure=async(html:string)=>{await render(html);return page.$$eval('[data-booklet-root] .folio',pages=>pages.length);};
+    const parts:{chapters:(string|null|undefined)[];images:number;pages:(string|null)[];texts:(string|null)[];overflow:boolean;palettes:string[]}[]=[];
+    const pdf=async(html:string)=>{
+      await render(html);
       const result=await page.evaluate(()=>({
         chapters:Array.from(document.querySelectorAll('[data-booklet-root]')).map(root=>root.querySelector('[data-source-id]')?.getAttribute('data-source-id')),
         images:document.querySelectorAll('.main-card img').length,
@@ -147,24 +168,30 @@ it("实际Chromium打印按顾问顺序保留全部章节、图卡、正文与�
         overflow:Array.from(document.querySelectorAll('.folio,.reading-column')).some(e=>e.scrollHeight>e.clientHeight+2),
         palettes:Array.from(document.querySelectorAll('[data-booklet-root]')).map(e=>getComputedStyle(e).getPropertyValue('--paper')),
       }));
-      expect(result.chapters).toEqual(f.order);expect(result.images).toBe(2);expect(result.overflow).toBe(false);
-      expect(result.pages).toEqual(Array.from({length:6},(_,i)=>String(i+1).padStart(2,'0')+' / 06'));
-      for(const [i,n] of Array.from(["一","二","四","三"].entries()))expect(result.texts[i]).toContain('末句'+n+'必须保留');
-      expect(new Set(result.palettes).size).toBe(2);expect(errors).toEqual([]);
+      parts.push(result);
+      expect(result.overflow).toBe(false);expect(errors).toEqual([]);
       const bytes=Buffer.from(await page.pdf({preferCSSPageSize:true,printBackground:true}));
       if(process.env.KNOWLEDGE_LAYOUT_EVIDENCE){
         await mkdir(process.env.KNOWLEDGE_LAYOUT_EVIDENCE,{recursive:true});
-        await writeFile(process.env.KNOWLEDGE_LAYOUT_EVIDENCE+'/fixture.pdf',bytes);
-        await writeFile(process.env.KNOWLEDGE_LAYOUT_EVIDENCE+'/measurements.json',JSON.stringify(result,null,2));
-        const extra=await page.$('[data-booklet-root]:nth-of-type(3) .reading-folio');
+        await writeFile(process.env.KNOWLEDGE_LAYOUT_EVIDENCE+`/fixture-part-${parts.length}.pdf`,bytes);
+        await writeFile(process.env.KNOWLEDGE_LAYOUT_EVIDENCE+'/measurements.json',JSON.stringify(parts,null,2));
+        const extra=result.chapters.includes(f.child.pages[0].id)?await page.$('.reading-folio'):null;
         await extra?.screenshot({path:process.env.KNOWLEDGE_LAYOUT_EVIDENCE+'/supplement-reading.png'});
       }
       return bytes;
     };
-    const countPages=async(path:string)=>Number(/^Pages:\s+(\d+)/m.exec((await promisify(execFile)('pdfinfo',[path])).stdout)?.[1]);
-    const result=await exportKnowledgePublication(7,f.parent.id,'10',{...f.deps,pdf,countPages});
+    const result=await exportKnowledgePublication(7,f.parent.id,'10',{...f.deps,pdf,measure});
     expect(result.pdfError).toBeUndefined();expect(result.totalPages).toBe(6);expect(result.pdfBytes).toBeGreaterThan(10000);
     expect(result.imagePages).toBe(2);
+    expect(parts.flatMap(p=>p.chapters)).toEqual(f.order);
+    expect(parts.reduce((sum,p)=>sum+p.images,0)).toBe(2);
+    expect(parts.flatMap(p=>p.pages)).toEqual(Array.from({length:6},(_,i)=>String(i+1).padStart(2,'0')+' / 06'));
+    const texts=parts.flatMap(p=>p.texts);
+    for(const [i,n] of Array.from(["一","二","四","三"].entries()))expect(texts[i]).toContain('末句'+n+'必须保留');
+    expect(new Set(parts.flatMap(p=>p.palettes)).size).toBe(2);
+    const savedPdf=Array.from(f.objects.entries()).find(([name])=>name.endsWith('/阅读稿.pdf'))![1];
+    expect(savedPdf.length).toBe(result.pdfBytes);
+    if(process.env.KNOWLEDGE_LAYOUT_EVIDENCE)await writeFile(process.env.KNOWLEDGE_LAYOUT_EVIDENCE+'/fixture.pdf',savedPdf);
   }finally{await browser.close();}
 },60000);
 

@@ -1,5 +1,6 @@
 import { planKnowledgeCardPages } from "./knowledgeCardPagination";
 import type { LayoutSource } from "./editableLayout";
+import {knowledgeEditionParts} from './knowledgeCardEdition';
 
 // 复用实际出图分页；缺图保留原页位置，不将后页配图前移。
 export function knowledgeCardLayoutSource(input: {
@@ -43,6 +44,20 @@ export function synchronizedKnowledgeCardSource(input: {
   infographicTemplateId?: string | null; imageJobIds: readonly string[];
 }): LayoutSource {
   if (!input.fullMarkdown.trim()) throw new Error("缺少完整版文字底稿，请先恢复完整稿；尚未开始出图或整理");
+  const edition=knowledgeEditionParts(input.illustrationMarkdown);
+  if(edition){
+    if(edition.level!==input.detailLevel)throw Error('当前两版方案与所选档位不一致，未开始出图');
+    const images=planKnowledgeCardPages(input.illustrationMarkdown,input.distillModel).pages;
+    if(!images.length||images.length!==input.imageJobIds.length||new Set(input.imageJobIds).size!==images.length)
+      throw Error('配图任务与实际知识模块不一致，尚未开始生成');
+    const text=edition.reading?planKnowledgeCardPages(edition.reading,input.distillModel).pages:[];
+    return {kind:'knowledge-publication',owner:input.owner,sourceId:input.sourceId,title:edition.title,
+      body:edition.knowledge,detailLevel:input.detailLevel,infographicTemplateId:input.infographicTemplateId||undefined,
+      inputFingerprint:input.inputFingerprint,reviewBatchMode:'ready-images',images:{},pages:[
+        ...text.map((body,i)=>({pageIndex:i+1,headline:body.match(/^##\s+(.+)$/m)?.[1]||edition.title,body,knowledgeRole:'reading' as const})),
+        ...images.map((body,i)=>({pageIndex:text.length+i+1,headline:body.match(/^##\s+(.+)$/m)?.[1]||edition.title,body,imageJobId:input.imageJobIds[i],knowledgeRole:'illustration' as const})),
+      ]};
+  }
   const reading = knowledgeCardLayoutSource({ ...input, markdown: input.fullMarkdown, images: [] });
   const illustrations = planKnowledgeCardPages(input.illustrationMarkdown, input.distillModel).pages;
   if (!illustrations.length || illustrations.length !== input.imageJobIds.length || new Set(input.imageJobIds).size !== input.imageJobIds.length)
@@ -67,6 +82,16 @@ export function illustratedKnowledgeCardSource(input: {
   detailLevel?: "concise" | "full"; distillModel?: string;
   infographicTemplateId?: string | null; images: readonly string[];
 }): LayoutSource {
+  const edition=knowledgeEditionParts(input.illustrationMarkdown);
+  if(edition){
+    if(!input.images.length)return knowledgeCardLayoutSource({...input,markdown:edition.knowledge,images:[]});
+    const source=synchronizedKnowledgeCardSource({...input,detailLevel:input.detailLevel||edition.level,imageJobIds:input.images.map((_,i)=>`import-${i}`)});
+    const images:Record<number,string>={};let imageIndex=0;
+    return {...source,pages:source.pages!.map(page=>{
+      if(page.knowledgeRole==='illustration'){const url=input.images[imageIndex++];if(url)images[page.pageIndex]=url;}
+      const {imageJobId,...saved}=page;return saved;
+    }),images};
+  }
   const reading = knowledgeCardLayoutSource({ ...input, markdown: input.fullMarkdown, images: [] });
   if (!input.images.length) return reading;
   const illustrations = knowledgeCardLayoutSource({ ...input, markdown: input.illustrationMarkdown });

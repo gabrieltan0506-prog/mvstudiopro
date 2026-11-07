@@ -21,7 +21,7 @@ export function knowledgeCompletedPrefix(completed: ReadonlySet<number>, count: 
   return next;
 }
 
-/** 两条通道消费同一待办队列；单路失败只停该路，已发出的另一批必须收妥回执。 */
+/** 四个工位（每通道两个）消费同一待办队列；失败只停该工位，其他在途必须收妥回执。 */
 export async function runKnowledgeParallelBatches<T>(options: {
   count: number;
   completed: ReadonlySet<number>;
@@ -46,7 +46,7 @@ export async function runKnowledgeParallelBatches<T>(options: {
     });
     preparing.set(index, promise);
   }
-  await Promise.all((["openrouter", "evolink"] as const).map(async channel => {
+  await Promise.all((["openrouter", "evolink", "openrouter", "evolink"] as const).map(async channel => {
     while (options.active()) {
       const eligible = Array.from(pending).filter(i => !options.channels[String(i)] || options.channels[String(i)] === channel);
       if (!eligible.length) return;

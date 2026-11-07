@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 vi.mock("@/lib/flyHealthGate", () => ({withFlyHealthGate: (_origin: string, run:()=>Promise<Response>)=>run()}));
 import { getJob, pollJobUntilTerminal, JobReceiptUnavailableError } from "./jobs";
 import { createKnowledgeReadingController } from "./knowledgeReadingPreparation";
-import { knowledgeCardTrackedJobId, submitKnowledgeCardOnce } from "./knowledgeCardTrackedSubmission";
+import { knowledgeCardTrackedJobId, submitKnowledgeCardOnce, knowledgeCardRecoveryMessage } from "./knowledgeCardTrackedSubmission";
 import { useLongTrpcHttpLink } from "./trpcTransportRouting";
 const link={jobId:"kc_original",documentId:"11111111-1111-4111-a111-111111111111",batches:1};
 const draft={index:0,pages:[{headline:"从原稿整理的标题",body:"非空正文与最后一句，必须完整恢复。"}]};
@@ -13,6 +13,21 @@ const base={...link,status:"running",ready:[0],completed:[] as number[],failed:[
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.unstubAllEnvs();});
 
 describe("原任务连接恢复",()=>{
+ it("任务不存在、鉴权失败与断网分别提示，不虚报后台正在恢复",()=>{
+  expect(knowledgeCardRecoveryMessage(Error('素材分析任务不存在（Job not found）'))).toContain('尚未查到本次任务');
+  expect(knowledgeCardRecoveryMessage(Error('登录状态已失效'))).toContain('登录验证未通过');
+  expect(knowledgeCardRecoveryMessage(Error('(403) Forbidden'))).toContain('登录验证未通过');
+  expect(knowledgeCardRecoveryMessage(Error('Failed to fetch'))).toContain('正在查询原任务');
+ });
+ it("30秒后才返回的明确拒绝仍通知原查询停止，不重发提交",async()=>{
+  vi.useFakeTimers();let reject!:(error:unknown)=>void;
+  const post=vi.fn(()=>new Promise((_resolve,no)=>{reject=no;})),late=vi.fn();
+  const submitted=submitKnowledgeCardOnce(post,late);
+  await vi.advanceTimersByTimeAsync(30_000);expect(await submitted).toBeUndefined();
+  const refusal=Object.assign(Error('原稿凭证暂不匹配'),{data:{code:'PRECONDITION_FAILED'}});
+  reject(refusal);await vi.advanceTimersByTimeAsync(1);
+  expect(late).toHaveBeenCalledWith(refusal);expect(post).toHaveBeenCalledTimes(1);
+ });
  it("HTTP实际返回HTML/错误schema时不伪装成任务终态；两类任务直达既有API",async()=>{
   const requests:string[]=[];
   const server=createServer((req,res)=>{requests.push(req.url!);res.writeHead(200,{'Content-Type':'text/html'});res.end('<!DOCTYPE html><title>gateway</title>');});

@@ -17,7 +17,7 @@ export async function validateKnowledgeSupplements(owner:number,before:LayoutLib
   const plan=knowledgeSupplementPlan(parent,selection);
   const imagePages=child.publication!.source.pages.filter(p=>p.imageJobId);
   const textPages=child.publication!.source.pages.filter(p=>!p.imageJobId);
-  if(imagePages.length!==plan.pages.length||imagePages.some((p,i)=>p.body!==plan.pages[i])||textPages.length!==plan.pages.length||textPages.some((p,i)=>p.body!==plan.pages[i]))throw Error("补充稿必须保留选定建议及实际分页，不得超过8张新图");
+  if(imagePages.length!==plan.pages.length||imagePages.some((p,i)=>p.body!==plan.pages[i])||(textPages.length!==plan.pages.length&&!(child.publication!.source.detailLevel==="full"&&textPages.length===0))||textPages.some((p,i)=>p.body!==plan.pages[i]))throw Error("补充稿必须保留选定建议及实际分页，不得超过8张新图");
   if(child.publication!.synchronizedStarted!==false&&parent.publication.supplementDocumentId!==child.id)throw Error("请先关联原手册后再启动补图");
   const old=before?.documents.find(d=>d.id===child.id);
   if(!old){

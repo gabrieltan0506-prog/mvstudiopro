@@ -16,6 +16,9 @@ export async function settleKnowledgeCardCheckpoint(
   }
   if (checkpoint.receiptModel) {
     await recordKnowledgeCardDistillReceipt(userId, checkpoint.receiptModel, checkpoint.markdown);
+    // 同一次持久化产出的两版沿用原档位；恢复仅补回执，不重新整理或收费。
+    if(checkpoint.output.editionVersion===2 && typeof checkpoint.output.fullEditionMarkdown==='string')
+      await recordKnowledgeCardDistillReceipt(userId,checkpoint.receiptModel,checkpoint.output.fullEditionMarkdown);
   }
   let distillFeeCharged = 0;
   if (checkpoint.fee > 0) {

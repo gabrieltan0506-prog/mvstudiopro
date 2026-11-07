@@ -4,8 +4,8 @@
  * 成稿分两档（0911 用户定名与定义，覆盖 0908 的「高级版」叫法）：
  * - 精华版（concise）：取优先重点 + 简单解说。字数每翻一倍才多约 5 节：1 万字≈10 节 /
  *   3 万字≈19 节 / 9.5 万字≈28 节，上限 36 节（2026-08-05 口径）。
- * - 完整版（full）：取第一重点 + 详细解说，不限页数，**尽量表格化/图表化**承载压实。
- *   目标节数按约每 1,400 字 1 节，且不少于精华版的两倍，上限 96 节。
+ * - 完整版（full）：主要与次要知识都浓缩，用更多图解呈现；不按原文字数线性拆节。
+ *   这里仅提供编辑参考，不能用小节数替代知识覆盖或锁定出图页数。
  *
  * 注意：小节数 ≠ 页数。一页横版卡片可容纳数个小节，见 `planKnowledgeCardPages`。
  *
@@ -15,7 +15,7 @@
 export const KNOWLEDGE_CARD_DETAIL_LEVELS = ["concise", "full"] as const;
 export type KnowledgeCardDetailLevel = (typeof KNOWLEDGE_CARD_DETAIL_LEVELS)[number];
 export const KNOWLEDGE_CARD_DEFAULT_DETAIL_LEVEL: KnowledgeCardDetailLevel = "concise";
-/** 0911 用户定名：精华版 = 优先重点 + 简单解说；完整版 = 第一重点 + 详细解说，不限页数，靠表格化压实 */
+/** 1107定义：精华主图次文；完整主次都浓缩成图。 */
 export const KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH: Record<KnowledgeCardDetailLevel, string> = {
   concise: "精华版",
   full: "完整版",
@@ -36,5 +36,5 @@ export function suggestKnowledgeCardMinSections(
   else if (n <= 3_000) concise = Math.max(3, Math.ceil(n / 700));
   else concise = Math.min(36, Math.max(5, Math.round(10 + 5.5 * Math.log2(n / 10_000))));
   if (detailLevel !== "full" || n <= 3_000) return concise;
-  return Math.min(96, Math.max(concise * 2, Math.ceil(n / 1_400)));
+  return Math.min(60, Math.ceil(concise * 1.5));
 }

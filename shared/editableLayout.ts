@@ -55,6 +55,7 @@ export const layoutLibrarySchema = z
 export type EditableLayout = z.infer<typeof editableLayoutSchema>;
 export type LayoutLibrary = z.infer<typeof layoutLibrarySchema>;
 export type LayoutSource = {
+  verificationJobId?: string;
   readingPreparation?: import("./knowledgeReadingPreparation").KnowledgeReadingPreparation;
   reviewBatchMode?: "ready-images";
   kind?: "knowledge-publication";
@@ -95,7 +96,7 @@ export function layoutFromSource(source: LayoutSource): EditableLayout {
       billing: {version:"interior-pages-v1",confirmed:false},
       inputFingerprint: source.inputFingerprint,
       infographicTemplateId: source.infographicTemplateId,
-      source: { title: source.title, detailLevel: source.detailLevel, pages: sourcePages, readingPreparation: source.readingPreparation, reviewBatchMode: source.reviewBatchMode },
+      source: { title: source.title, detailLevel: source.detailLevel, pages: sourcePages, readingPreparation: source.readingPreparation, verificationJobId:source.verificationJobId, reviewBatchMode: source.reviewBatchMode },
       manuscript: knowledgeManuscript({title:source.title, pages:sourcePages}),
     } } : {}),
   });

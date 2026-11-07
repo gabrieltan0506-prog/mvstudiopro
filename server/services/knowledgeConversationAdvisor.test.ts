@@ -44,8 +44,8 @@ it("付费路由拒绝整册未完成时提前补图，并沿既有路由采用�
  expect(count).toBe(2);expect(store.get("test/chat/route-openrouter.json").reason).toContain("整册未整理完成");
  expect(JSON.parse(result.text).candidates[0].content.parts[0].text).toContain(f.answer.answer);
 });
-it("单章渲染保留全册编号，原稿和审校提示不被编号修复改动",()=>{
+it("单章渲染保留全册编号和原稿，作者审校疑点不写入读者正文",()=>{
  const f=fixture(),other={...f.doc.pages[0],id:"00000000-0000-4000-8000-000000000099",headline:"第二章"};f.doc.pages.push(other);
  const review={pages:f.doc.pages.map(p=>({...p,cautions:[{message:"保留的提示",evidence:"原文证据"}]}))} as any;
- const html=knowledgePublicationChapter(f.doc,review,1,"");expect(html).toContain('<span>02</span>');expect(html).toContain("最末尾不可丢失");expect(html).toContain("保留的提示");
+ const html=knowledgePublicationChapter(f.doc,review,1,"");expect(html).toContain('<span>02</span>');expect(html).toContain("最末尾不可丢失");expect(html).not.toContain("保留的提示");expect(review.pages[1].cautions[0].message).toBe("保留的提示");
 });

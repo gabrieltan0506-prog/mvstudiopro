@@ -86,9 +86,9 @@ function entryContext(full: string | null = null) {
   const ctx: any = {
     ...pagination, ...source, ...identity, ...selection, ...lifecycle, console, crypto: webcrypto, TextEncoder, Set, Map, readOpenAiImageVariantPref:()=>"sunburst", useCallback: (fn: any) => fn,
     customNoteBusy: false, customNoteUploadBusy:false, customNoteDistillJobId:"", knowledgeCardInflight: [], customNoteLevelSwitching: false, customNoteKind: "single_page_knowledge_card", customNoteSelectedFileCount: 0,
-    setReadingAdvisorDrafts: vi.fn(), readingControllerRef: {current:null}, readingFullMarkdownRef: {current:""},
+    knowledgeVerifiedEditionRef:{current:null}, setReadingAdvisorDrafts: vi.fn(), readingControllerRef: {current:null}, readingFullMarkdownRef: {current:""},
     renderedDetailLevelRef: {current:null}, renderedDraftRef: {current:""}, renderedFullManuscriptRef: {current:""},
-    customNoteText: "# 新稿B\n\n海洋潮汐受月球引力影响。", customNotePendingFilesRef: { current: [] }, customNoteFullMarkdown: full, customNoteCompactMarkdownRef: { current: null }, customNoteDistillPhase: "idle",
+    customNoteText: "# 新稿B\n\n海洋潮汐受月球引力影响。", customNotePendingFilesRef: { current: [] }, customNoteFullMarkdown: full, customNoteFullMarkdownRef:{current:full}, customNoteCompactMarkdownRef: { current: null }, customNoteDistillPhase: "idle",
     customNoteDistillModel: "deepseek-v4.1-flash-1017", customNoteDetailLevel: "concise", customNoteSubjectPosition: "left", customNoteInfographicTemplateId: null, customNoteRevisionRef: { current: 0 }, workbenchUserKey: "7",
     layoutStudioRef: { current: { prepare: vi.fn(async () => { throw Error("TEST_STOP_AFTER_PREPARE"); }) } },
     customNoteImagesRef: { current: [] }, customNoteStopRenderRef: { current: false }, lastShootingTechniqueBriefRef: { current: "" }, enabledPlatformSkillIds: new Set(), allowBloggerTitle: false,
@@ -269,10 +269,10 @@ it("缺全文的旧精华备份拒绝新整册且不清图片", async () => {
 it("已成功统稿不被同步顾问状态查询失败阻断",async()=>{
  const full="## 完整稿\n最后一句仍然保留。",update=vi.fn(async()=>{throw Error("顾问状态暂时不可用");});
  const requestId=randomUUID(),trackedJobId=await knowledgeCardTrackedJobId("1","knowledge_card_distill",requestId);
- const ctx:any={AbortController,knowledgePollingRef:{current:null},knowledgeCardTrackedJobId,submitKnowledgeCardOnce,workbenchUserKey:"1",customNoteTrackedRequestRef:{current:null},startReadingAdvisor:()=>({update}),readingFullMarkdownRef:{current:""},bumpCustomNoteRevision:noop,customNoteDistillModel:"deepseek-v4.1-flash-1017",customNoteUploadStopRef:{current:false},knowledgeCardPageTasks:{begin:()=>requestId,finish:noop,assertLive:noop},prepareKnowledgeCardCopyMutation:{mutateAsync:async()=>({isAsync:true,progressJobId:trackedJobId,estimatedChunks:1})},pollJobUntilTerminal:async()=>({status:"succeeded",output:{distilledMarkdown:full,readingPreparation:{jobId:"kc_original",documentId:randomUUID(),batches:1,ready:[0]}}}),knowledgeCardProgressFromDistill:(n:number)=>n};
- for(const name of ["setCustomNoteProgress","setCustomNoteFullMarkdown","setCustomNotePreparedModel","setCustomNoteCompactMarkdown","setKnowledgeCardEpubPdfs","setCustomNoteCancelRequested","setCustomNoteDistillJobId","setReadingAdvisorStatus"])ctx[name]=vi.fn();
+ const ctx:any={AbortController,readingControllerRef:{current:null},setReadingAdvisorDrafts:noop,knowledgePollingRef:{current:null},knowledgeCardTrackedJobId,submitKnowledgeCardOnce,workbenchUserKey:"1",customNoteTrackedRequestRef:{current:null},startReadingAdvisor:()=>({update}),readingFullMarkdownRef:{current:""},bumpCustomNoteRevision:noop,customNoteDistillModel:"deepseek-v4.1-flash-1017",customNoteUploadStopRef:{current:false},knowledgeCardPageTasks:{begin:()=>requestId,finish:noop,assertLive:noop},prepareKnowledgeCardCopyMutation:{mutateAsync:async()=>({isAsync:true,progressJobId:trackedJobId,estimatedChunks:1})},pollJobUntilTerminal:async()=>({status:"succeeded",output:{distilledMarkdown:full,readingPreparation:{jobId:"kc_original",documentId:randomUUID(),batches:1,ready:[0]}}}),knowledgeCardProgressFromDistill:(n:number)=>n};
+ for(const name of ["setCustomNoteProgress","setCustomNoteFullMarkdown","setCustomNotePreparedModel","setCustomNoteCompactMarkdown","setKnowledgeCardEpubPdfs","setCustomNoteCancelRequested","setCustomNoteDistillJobId","setReadingAdvisorStatus","setCustomNoteUploadStatus"])ctx[name]=vi.fn();
  run(take("  const runKnowledgeCardDistill = async", "\n  /**\n   * 终止后台读档")+"\nglobalThis.distill=runKnowledgeCardDistill;",ctx);
- expect(await ctx.distill({sourceText:"原始全文"})).toBe(full);expect(ctx.readingFullMarkdownRef.current).toBe(full);expect(ctx.setReadingAdvisorStatus).toHaveBeenCalled();
+ expect(await ctx.distill({sourceText:"原始全文"})).toBe(full);expect(ctx.readingFullMarkdownRef.current).toBe(full);expect(update).not.toHaveBeenCalled();
 });
 it('保有完整统稿回执时取消过报价也不再提炼长文',async()=>{
  const full='完整原文与结尾。'.repeat(1600),ctx=entryContext(full);
@@ -285,4 +285,11 @@ it('保有完整统稿回执时取消过报价也不再提炼长文',async()=>{
 it("读档连接恢复时另一生成入口拒绝重复创建",async()=>{
  const ctx=entryContext("原稿");ctx.customNoteDistillJobId="kc_original";ctx.customNoteUploadBusy=false;
  await ctx.generate();expect(ctx.layoutStudioRef.current.prepare).not.toHaveBeenCalled();expect(ctx.generateCustomNoteOne).not.toHaveBeenCalled();
+});
+
+it('手册正式生成入口只准备PDF，不自动发起PPTX规划',async()=>{
+ const ctx=entryContext();await ctx.generate();
+ expect(ctx.layoutStudioRef.current.prepare).toHaveBeenCalledTimes(1);
+ expect(ctx.layoutStudioRef.current.prepare.mock.calls[0][3].preparePresentation).toBe(false);
+ expect(ctx.generateCustomNoteOne).not.toHaveBeenCalled();
 });

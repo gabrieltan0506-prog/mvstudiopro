@@ -10,7 +10,8 @@ export const knowledgeBookLayoutPlanSchema = z.object({
   sourceDigest: z.string().regex(/^[a-f0-9]{64}$/),
   chapters: z.array(z.object({
     pageId: z.string().uuid(),
-    design: knowledgeVisualDesignSchema,
+    design: knowledgeVisualDesignSchema.optional(),
+    templateId: z.string().max(100).optional(),
     presentation: z.object({
       reading: knowledgeReadingSchema,
       imageEvidencePageIds: z.array(z.string().uuid()),
@@ -51,7 +52,7 @@ export function validateKnowledgeBookLayoutPlan(value: unknown, input: Pick<Know
     if (knowledgeReadingMarkdown(presentation.reading).length > 12000)
       throw Error("排版展示正文超出章节容量，未截断或覆盖完整底稿");
   }
-  validateKnowledgeDesignBatch(plan.chapters.map(p => ({reading:{decoration:{design:p.design}}})));
+  validateKnowledgeDesignBatch(plan.chapters.filter(p=>p.design).map(p => ({reading:{decoration:{design:p.design}}})));
   return plan;
 }
 export function selectedKnowledgeBookLayout(doc: EditableLayout) {

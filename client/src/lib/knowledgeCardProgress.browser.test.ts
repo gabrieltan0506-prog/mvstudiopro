@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { build } from "esbuild";
 import { createServer, type Server } from "node:http";
 import puppeteer, { type Browser } from "puppeteer";
-import { knowledgeCardProgressFromDistill, knowledgeCardProgressFromRender } from "../components/platform/KnowledgeCardProgress";
+import { knowledgeCardStageCounts, knowledgeCardProgressFromDistill, knowledgeCardProgressFromRender } from "../components/platform/KnowledgeCardProgress";
 
 let browser: Browser;
 let server: Server;
@@ -59,6 +59,25 @@ describe("KnowledgeCardProgress（真实浏览器）", () => {
     const r = await render({ status: "succeeded", percent: 80 });
     expect(r.text).toContain("成功 · 100%");
     expect(r.now).toBe("100");
+  });
+  it("总体权重与当前阶段计数分列显示", async () => {
+    const r = await render({ status: "running", percent: 73, label: "联网核实与修订", stageDone: 3, stageTotal: 18 });
+    expect(r.text).toContain("总体完成度");
+    expect(r.text).toContain("当前阶段");
+    expect(r.text).toContain("73%");
+    expect(r.text).toContain("3/18 · 16.7%");
+    expect(r.now).toBe("73");
+  });
+  it("缺少计数时不借总体百分比伪造阶段进度", async () => {
+    const r = await render({ status: "running", percent: 90, label: "统稿合并…" });
+    expect(r.text).toContain("暂无阶段计数");
+    expect(r.text).not.toContain("undefined");
+  });
+  it("旧任务阶段切换不读取残留的参考页计数", () => {
+    const saved = { distillStageDone: 21, distillStageTotal: 21, distillDoneChunks: 2, distillTotalChunks: 6 };
+    expect(knowledgeCardStageCounts({ ...saved, distillStage: "distilling" })).toEqual({stageDone: 2, stageTotal: 6});
+    expect(knowledgeCardStageCounts({ ...saved, distillStage: "refining" })).toEqual({});
+    expect(knowledgeCardStageCounts({ ...saved, distillStage: "verifying" })).toEqual({stageDone: 21, stageTotal: 21});
   });
   it("mapping: distill occupies 0–60, rendering 60–100", () => {
     expect(knowledgeCardProgressFromDistill(0)).toBe(0);

@@ -37,6 +37,7 @@ export const knowledgeSourceSchema = z
     title: z.string().min(1).max(500),
     detailLevel: z.enum(["concise", "full"]).optional(),
     readingPreparation: knowledgeReadingPreparationSchema.optional(),
+    verificationJobId: z.string().min(1).max(100).optional(),
     reviewBatchMode: z.literal("ready-images").optional(),
     pages: z.array(knowledgeSourcePageSchema).min(1),
   })
@@ -50,7 +51,7 @@ export const knowledgeReviewPageSchema = z
   .object({
     id: z.string().uuid(),
     headline: z.string().trim().min(1).max(500),
-    body: z.string().trim().min(1).max(12000),
+    body: z.string().trim().min(1).max(50000),
     reading: knowledgeReadingSchema.optional(),
     sources: z.array(knowledgeCitationSchema).max(12).optional(),
     imageDescription: z.string().trim().max(1500),
@@ -197,7 +198,7 @@ export function parseKnowledgeManuscript(
     const body = text
       .slice(m.index! + m[0].length, markers[i + 1]?.index ?? text.length)
       .trim();
-    if (!body || body.length > 12000 || m[2].length > 500)
+    if (!body || body.length > 50000 || m[2].length > 500)
       throw new Error(`第${i + 1}页正文为空或过长，请核对后确认`);
     return { id: pageIds[i], headline: m[2].trim(), body };
   });

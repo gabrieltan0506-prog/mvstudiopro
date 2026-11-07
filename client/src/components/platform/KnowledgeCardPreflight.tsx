@@ -27,6 +27,7 @@ export type KnowledgeCardPreflightSummary = {
   /** 读档档位，如「读档·DeepSeek V4.1 Flash」 */
   distillModelZh: string;
   pageCount: number;
+  pageContents?: string[];
   qualityZh: string;
   credits: number;
   advisorCredits?: number;
@@ -84,6 +85,7 @@ export function KnowledgeCardPreflight({
             </div>
           ))}
         </dl>
+        {summary?.pageContents&&<details className="text-sm"><summary>查看本次实际图片内容与说明（{summary.pageContents.length} 张）</summary><div className="max-h-64 overflow-auto">{summary.pageContents.map((text,i)=><article key={i} className="my-3"><strong>第 {i+1} 张</strong><pre className="whitespace-pre-wrap text-xs">{text}</pre></article>)}</div></details>}
         {summary ? (
           <p className="rounded-xl border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-[11px] leading-5 text-amber-100/85">
             配图 <span className="font-semibold tabular-nums">{summary.credits}</span> 积分，逐页扣费。
