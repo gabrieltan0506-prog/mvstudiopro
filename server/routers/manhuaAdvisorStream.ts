@@ -36,6 +36,11 @@ export function registerManhuaAdvisorStream(app: Express) {
         send("result", publicResult);
       } else send("result", result);
     } catch (error) {
+      // 前台只给业务提示；服务端日志保留真实原因（含根因链），排查不再只看到兜底文案。
+      if (req.body?.knowledgePublicationContext) {
+        const cause = error instanceof Error && error.cause instanceof Error ? ` ← ${error.cause.message}` : "";
+        console.warn("[knowledgePublication] 顾问流失败：", String(error instanceof Error ? error.message : error).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 800) + cause.slice(0, 400));
+      }
       send("error", req.body?.knowledgePublicationContext ? knowledgePublicationPublicError(error) : { message: error instanceof Error ? error.message : "顾问暂时无法回答，请恢复原问题" });
     } finally {
       clearInterval(heartbeat);
