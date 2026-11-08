@@ -1,8 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { STOCK_FOOTAGE_PURPOSES, stockFootageAdoptInputSchema, stockFootageSearchInputSchema } from "../../shared/stockFootage";
+import { stockFootageSuggestKeywordsInputSchema } from "../../shared/stockFootageKeywords";
 import { protectedProcedure, router } from "../_core/trpc";
 import { adoptStockFootage, getStockAdoption, listStockAdoptions } from "../services/stockFootage/adoption";
+import { assertStockKeywordQuota, suggestStockKeywords } from "../services/stockFootage/keywords";
 import { StockFootageError, searchPexels } from "../services/stockFootage/pexelsClient";
 
 async function safely<T>(operation: () => Promise<T>): Promise<T> {
@@ -27,6 +29,15 @@ async function safely<T>(operation: () => Promise<T>): Promise<T> {
 export const stockFootageRouter = router({
   /** 服务端代查 Pexels；只返回预览候选，不入库。 */
   search: protectedProcedure.input(stockFootageSearchInputSchema).query(({ input }) => safely(() => searchPexels(input))),
+  /** 镜头/段落中文描述 → 英文搜索词（LLM 优先、规则兜底，不计费）；每用户每分钟 ≤30 次。 */
+  suggestKeywords: protectedProcedure
+    .input(stockFootageSuggestKeywordsInputSchema)
+    .query(({ ctx, input }) =>
+      safely(async () => {
+        assertStockKeywordQuota(ctx.user.id);
+        return suggestStockKeywords(input);
+      })
+    ),
   /** 采用：幂等（requestId），断线后用同一编号再次调用即续做。 */
   adopt: protectedProcedure.input(stockFootageAdoptInputSchema).mutation(({ ctx, input }) => safely(() => adoptStockFootage(ctx.user.id, input))),
   getAdoption: protectedProcedure
