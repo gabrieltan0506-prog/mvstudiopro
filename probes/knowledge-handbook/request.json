@@ -1,14 +1,17 @@
 {
-  "id": "diagnose-xuezhi-1108d",
-  "action": "prepare",
-  "script": "scripts/probe-knowledge-handbook-diagnose.mts",
+  "id": "xuezhi-relayout-1108i",
+  "action": "start",
+  "script": "scripts/probe-knowledge-handbook-relayout.mts",
   "machine": "7812595b294778",
   "collect": [
-    "diagnose.json"
+    "handbook.pdf",
+    "live.json",
+    "run.log",
+    "ui-errors.log"
   ],
   "config": {
-    "documentId": "0dcb5641-ad69-40fc-bde2-59ef2e20444d",
+    "level": "full",
     "ownerJobId": "kc_f7e6e69c3c946ee107f170f6b93d4f0bb77e3c6427db7889adec4d4d",
-    "scan": "conversation/"
+    "resumeDocumentId": "0dcb5641-ad69-40fc-bde2-59ef2e20444d"
   }
 }

@@ -71,6 +71,21 @@ export function parseKnowledgeModelJson(content: string): { value: unknown; repa
         if (next === '，' || next === '：') {
           edit(position, next, next === '，' ? ',' : ':', '将字符串外的全角结构标点改为JSON标点'); continue;
         }
+        // 数组中的对象元素少写了一个结束括号，紧接着开始下一个元素（如 ...]}},{"pageId"...）：
+        // 在逗号前补齐缺失的 }，直到所在容器回到数组；只补结构符，不改任何字段或正文。（2026-11-08 血脂本排版真实阻断）
+        if (/Expected double-quoted property name/.test(detail) && next === '{' && before === ',') {
+          const comma = prefix.lastIndexOf(',');
+          const at = structure(current, comma);
+          if (at && !at.quoted && at.stack.at(-1) === '{' && at.stack.includes('[')) {
+            const closers: string[] = [];
+            for (let i = at.stack.length - 1; i >= 0 && at.stack[i] === '{'; i--) closers.push('}');
+            const containerBelow = at.stack[at.stack.length - 1 - closers.length];
+            // 只有闭合一层对象后回到数组时才唯一确定；多层缺失有歧义，拒收。
+            if (closers.length === 1 || containerBelow === '[') {
+              if (closers.length === 1 && containerBelow === '[') { edit(comma, '', '}', '补齐数组对象元素缺失的结束括号，不改变正文'); continue; }
+            }
+          }
+        }
         // 模型偶发在空字符串值后重复输出 `:""`（如 "note":"":"","items"）：多出的片段只含空值、无键名，
         // 删除它不丢任何正文；若多出的不是空字符串则仍拒收。（2026-11-08 血脂本第18章真实阻断）
         if (/Expected ',' or '}' after property value/.test(detail) && prefix.endsWith('""') && next === ':') {

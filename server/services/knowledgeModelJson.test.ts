@@ -55,3 +55,10 @@ it('2026-11-08 真实回包：空字符串值后多出无键的 :"" 片段可删
  expect(repairs).toHaveLength(1);
  expect(()=>parseKnowledgeModelJson('{"note":"":"有内容","items":[]}')).toThrow(KnowledgeJsonSyntaxError);
 });
+
+it('2026-11-08 排版真实回包：数组中对象元素少一个结束括号后紧接下一元素，补齐结构不改正文',()=>{
+ const raw='{"chapters":[{"pageId":"a","presentation":{"reading":{"blocks":[{"type":"prose","text":"喝奶属于日常饮食安排。"}]}},{"pageId":"b","design":{"palette":"ink-cinnabar"}}]}';
+ const {value,repairs}=parseKnowledgeModelJson(raw) as any;
+ expect(value.chapters).toHaveLength(2);expect(value.chapters[0].presentation.reading.blocks[0].text).toBe('喝奶属于日常饮食安排。');
+ expect(value.chapters[1].pageId).toBe('b');expect(repairs).toHaveLength(1);
+});
