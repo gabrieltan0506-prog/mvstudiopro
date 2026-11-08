@@ -1,0 +1,101 @@
+name: Knowledge Handbook Probe
+
+# 图文知识手册隔离探针（2026-11-08 用户授权）：只在既有 rig 工作机运行本分支打包的正式代码。
+# 公开仓库：日志只输出阶段与页数等计数，不输出书籍正文；成品留在用户云稿与 GCS，不上传 Actions 附件。
+on:
+  push:
+    branches: [fix/knowledge-review-contract-1107]
+    paths: ["probes/knowledge-handbook/request.json"]
+
+concurrency:
+  group: knowledge-handbook-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: read
+    env:
+      APP: mvstudiopro
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read request
+        id: req
+        run: |
+          set -euo pipefail
+          R=probes/knowledge-handbook/request.json
+          ID=$(jq -r '.id' $R); ACTION=$(jq -r '.action' $R); SCRIPT=$(jq -r '.script // empty' $R)
+          MACHINE=$(jq -r '.machine // "7812595b294778"' $R)
+          [[ "$ID" =~ ^[a-z0-9-]{6,60}$ ]] || { echo "请求ID无效"; exit 1; }
+          [[ "$ACTION" =~ ^(prepare|start|status)$ ]] || { echo "动作无效"; exit 1; }
+          echo "id=$ID" >> $GITHUB_OUTPUT; echo "action=$ACTION" >> $GITHUB_OUTPUT
+          echo "script=$SCRIPT" >> $GITHUB_OUTPUT; echo "machine=$MACHINE" >> $GITHUB_OUTPUT
+          echo "DIR=/app/isolated/$ID" >> $GITHUB_ENV
+      - uses: pnpm/action-setup@v4
+        if: steps.req.outputs.action != 'status'
+      - uses: actions/setup-node@v4
+        if: steps.req.outputs.action != 'status'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Build probe bundle from this branch
+        if: steps.req.outputs.action != 'status'
+        env:
+          YOUTUBE_DL_SKIP_DOWNLOAD: "true"
+          PUPPETEER_SKIP_DOWNLOAD: "1"
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          node scripts/build-knowledge-probe.mjs "${{ steps.req.outputs.script }}" /tmp/kp
+          cp scripts/knowledge-probe-launch.mjs /tmp/kp/launch.mjs
+          jq '.config' probes/knowledge-handbook/request.json > /tmp/kp/config.json
+          echo "commit=$GITHUB_SHA" ; sha256sum /tmp/kp/* | sed 's#/tmp/kp/##'
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Ensure isolated rig machine is started
+        run: |
+          set -euo pipefail
+          M=${{ steps.req.outputs.machine }}
+          GROUP=$(flyctl machines list -a "$APP" --json | jq -r ".[] | select(.id==\"$M\") | .config.metadata.fly_process_group")
+          [ "$GROUP" = "rig" ] || { echo "目标机器不是 rig 工作机（$GROUP），中止"; exit 1; }
+          STATE=$(flyctl machines list -a "$APP" --json | jq -r ".[] | select(.id==\"$M\") | .state")
+          echo "rig state=$STATE"
+          if [ "$STATE" != "started" ]; then flyctl machine start "$M" -a "$APP"; fi
+          for i in $(seq 1 30); do
+            STATE=$(flyctl machines list -a "$APP" --json | jq -r ".[] | select(.id==\"$M\") | .state")
+            [ "$STATE" = "started" ] && break; sleep 5
+          done
+          [ "$STATE" = "started" ] || { echo "工作机未启动"; exit 1; }
+      - name: Upload and launch
+        if: steps.req.outputs.action != 'status'
+        run: |
+          set -euo pipefail
+          M=${{ steps.req.outputs.machine }}
+          flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'test ! -e $DIR/started.json && mkdir -p $DIR'"
+          for f in entry.mjs lease.mjs panel.js launch.mjs config.json; do
+            printf 'put /tmp/kp/%s %s/%s\n' "$f" "$DIR" "$f" | flyctl ssh sftp shell -a "$APP" --machine "$M" >/dev/null
+          done
+          flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'cd $DIR && sha256sum entry.mjs lease.mjs panel.js launch.mjs config.json'"
+          MODE=run; [ "${{ steps.req.outputs.action }}" = "prepare" ] && MODE=prepare
+          flyctl ssh console -a "$APP" --machine "$M" -C "node $DIR/launch.mjs $DIR $MODE"
+      - name: Follow status (counts only)
+        run: |
+          set -uo pipefail
+          M=${{ steps.req.outputs.machine }}
+          END=$(( $(date +%s) + 330*60 ))
+          while :; do
+            J=$(flyctl ssh console -a "$APP" --machine "$M" -C "cat $DIR/live.json" 2>/dev/null | tr -d '\r' | sed -n '/^{/,$p')
+            echo "[$(date -u +%H:%M:%SZ)] $(echo "$J" | jq -c '{at,stage,documentId,imagePages,summary,error,budget:(.budget.totalPages // null)}' 2>/dev/null || echo 'live.json 尚未生成')"
+            STAGE=$(echo "$J" | jq -r '.stage // empty' 2>/dev/null)
+            ACTION="${{ steps.req.outputs.action }}"
+            if [ "$STAGE" = "pdf_returned" ] || [ "$STAGE" = "publication_failed" ]; then break; fi
+            if [ "$ACTION" = "prepare" ] && [ "$STAGE" = "prepared" ]; then break; fi
+            if [ "$ACTION" = "status" ]; then break; fi
+            [ $(date +%s) -ge $END ] && { echo "跟踪时间到，探针仍在机内继续运行"; break; }
+            sleep 120
+          done
+          ERRS=$(flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'test -f $DIR/ui-errors.log && wc -l < $DIR/ui-errors.log || echo 0'" 2>/dev/null | tail -1)
+          echo "ui-errors 行数=$ERRS"
+          [ "$STAGE" = "publication_failed" ] && exit 1 || true

@@ -1,0 +1,11 @@
+{
+  "id": "xuezhi-relayout-1108a",
+  "action": "prepare",
+  "script": "scripts/probe-knowledge-handbook-relayout.mts",
+  "machine": "7812595b294778",
+  "config": {
+    "level": "full",
+    "ownerJobId": "kc_f7e6e69c3c946ee107f170f6b93d4f0bb77e3c6427db7889adec4d4d",
+    "previousDocumentId": "9b395592-2cbe-4e25-b85a-87d6da68f3f3"
+  }
+}
