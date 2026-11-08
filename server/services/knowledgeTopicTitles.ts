@@ -19,7 +19,7 @@ import {
   type KnowledgeRouteEvidence,
 } from "./knowledgePublicationRoutes";
 
-export const KNOWLEDGE_TOPIC_TITLES_VERSION = "topic-titles-v2";
+export const KNOWLEDGE_TOPIC_TITLES_VERSION = "topic-titles-v3";
 const MAX_TITLE = 24;
 const usable = (v: unknown) => {
   const t = typeof v === "string" ? v.replace(/^#+\s*/, "").trim() : "";
@@ -34,12 +34,13 @@ export function parseKnowledgeTopicTitles(report: any, topics: { id: string; hea
   for (const topic of topics) {
     const page = pages.find(p => p?.id === topic.id);
     const blocks: any[] = Array.isArray(page?.reading?.blocks) ? page.reading.blocks : [];
-    const image = usable(blocks[0]?.title), reading = usable(blocks[1]?.title);
+    const distinct = (t?: string) => (t && !topic.headlines.some(h => h.trim() === t) ? t : undefined);
+    const image = distinct(usable(blocks[0]?.title)), reading = distinct(usable(blocks[1]?.title));
     const sectionBlocks = blocks.slice(2);
     const sections: Record<string, string> = {};
     // 小节标题数量必须与原小节一一对应；对不上整组回退原标题，不猜位置。
     if (sectionBlocks.length === topic.headlines.length) {
-      topic.headlines.forEach((h, i) => { const t = usable(sectionBlocks[i]?.title); if (t) sections[h] = t; });
+      topic.headlines.forEach((h, i) => { const t = usable(sectionBlocks[i]?.title); if (t && t !== h.trim()) sections[h] = t; });
     } else rejected.push(`${topic.id}: 小节标题${sectionBlocks.length}项与原小节${topic.headlines.length}项不符，回退原标题`);
     if (!image) rejected.push(`${topic.id}: 图片标题缺失或不合格，回退机械标题`);
     if (!reading) rejected.push(`${topic.id}: 内文标题缺失或不合格，回退图片标题`);
@@ -79,7 +80,8 @@ export async function nameKnowledgeEditionTopics(params: {
 为每个主题写出三类具体标题（都要是概括内容的实际短语，不能写字段名，不能写“图片标题”“内文标题”“小标题”这类字样）：
 1. 图片标题：≤16字，概括本主题核心，不用“等N节”。
 2. 图下内文标题：≤20字，概括图下详细内文讲什么，与图片标题互补、不重复。
-3. 每个原小节的内文小标题：≤16字，忠实原意，不新增事实、不加编号；原标题已很好时可沿用。
+3. 每个原小节的内文小标题：≤16字，忠实原意，不新增事实、不加编号；必须改写，不得与原小节标题相同。
+图片标题与图下内文标题也不得与任何原小节标题相同。
 只依据给定文字，不编造。标题不含#、|、换行。
 输出格式：knowledge_publication_v1 JSON，pages与输入同id同顺序、一个不少。每页reading.blocks依次为：第1项=图片标题，第2项=图下内文标题，第3项起按原小节顺序每节一项=该节内文小标题；每项是{type:"prose",title:<标题>,note:"",text:<说明>}，第1项text写"image"，第2项text写"reading"，其后各项text逐字写对应的原小节标题。blocks数量=2+原小节数。
 示例（虚构主题，仅示意格式，不要照抄其中字词）：输入原小节“蒸发｜凝结｜降水”，则blocks为[{type:"prose",title:"太阳驱动的水循环",note:"",text:"image"},{type:"prose",title:"三种相变的条件与去向",note:"",text:"reading"},{type:"prose",title:"受热升空的水汽",note:"",text:"蒸发"},{type:"prose",title:"冷却成云",note:"",text:"凝结"},{type:"prose",title:"雨雪回到地面",note:"",text:"降水"}]。

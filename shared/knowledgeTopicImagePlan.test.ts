@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compileKnowledgeEditions } from "./knowledgeCardEdition";
 import { knowledgeEditionImagePlan, planKnowledgeCardPages, knowledgeCardCreditsForPages } from "./knowledgeCardPagination";
+import { auditKnowledgeTopicTitles, readKnowledgeTopicTitles, embedKnowledgeTopicTitles, knowledgeTopicKey } from "./knowledgeTopicImagePlan";
 import { synchronizedKnowledgeCardSource } from "./knowledgeCardEditableLayout";
 import {
   KNOWLEDGE_TOPIC_IMAGE_CAP,
@@ -99,5 +100,19 @@ describe("主题出图：图数按主题定、图内≤1200字、其余进内文
     expect(plan.images.every(i => i.title !== "图片标题" && i.readingTitle !== "图下内文标题")).toBe(true);
     expect(plan.images[0]!.title).toMatch(/（等\d+节）$/);
     expect(planKnowledgeCardPages(titled).pages.join("")).not.toContain("该节内文小标题");
+  });
+
+  it("命题核查：全部命名且均不同于原标题才放行；机械或占位标题拦下", () => {
+    const base = knowledgeEditionImagePlan(book.full)!;
+    expect(auditKnowledgeTopicTitles(base.images, readKnowledgeTopicTitles(book.full)).ok).toBe(false);
+    const titles = Object.fromEntries(base.images.map((i, n) => [knowledgeTopicKey(i.headlines), { image: `主题图${n}`, reading: `主题内文${n}`, sections: Object.fromEntries(i.headlines.map(h => [h, `改写${h}`])) }]));
+    const named = embedKnowledgeTopicTitles(book.full, titles);
+    const plan = knowledgeEditionImagePlan(named)!;
+    const audit = auditKnowledgeTopicTitles(plan.images, readKnowledgeTopicTitles(named));
+    expect(audit).toMatchObject({ ok: true, named: plan.images.length, placeholder: 0, sameAsHeadline: 0 });
+    expect(audit.sectionRenamed).toBe(audit.sectionTotal);
+    const firstKey = knowledgeTopicKey(plan.images[0]!.headlines);
+    const partial = embedKnowledgeTopicTitles(book.full, { ...titles, [firstKey]: { ...titles[firstKey]!, sections: {} } });
+    expect(auditKnowledgeTopicTitles(knowledgeEditionImagePlan(partial)!.images, readKnowledgeTopicTitles(partial)).ok).toBe(false);
   });
 });

@@ -245,3 +245,24 @@ export function planKnowledgeTopicImages(
     return { headlines, title: imageTitle, readingTitle, body, overflow: overflowParts.join("\n\n") };
   });
 }
+
+/**
+ * 命题核查（出图前门禁）：图片标题与图下内文标题必须是模型命题且不同于原小节标题，
+ * 各小节内文小标题须改写（不同于原标题），且不得出现照抄字段名的占位值。
+ */
+export function auditKnowledgeTopicTitles(images: readonly Pick<KnowledgeTopicImage, "headlines" | "title" | "readingTitle">[], titles: KnowledgeTopicTitles) {
+  let named = 0, placeholder = 0, sameAsHeadline = 0, sectionTotal = 0, sectionRenamed = 0;
+  for (const image of images) {
+    const entry = titles[knowledgeTopicKey(image.headlines)];
+    if (entry?.image && entry?.reading && entry.image !== entry.reading) named++;
+    for (const t of [image.title, image.readingTitle]) if (KNOWLEDGE_TOPIC_TITLE_PLACEHOLDER.test(t)) placeholder++;
+    if (image.headlines.includes(image.title) || image.headlines.includes(image.readingTitle)) sameAsHeadline++;
+    for (const h of image.headlines) {
+      sectionTotal++;
+      const renamed = entry?.sections?.[h.trim()];
+      if (renamed && renamed !== h.trim()) sectionRenamed++;
+    }
+  }
+  const ok = images.length > 0 && named === images.length && placeholder === 0 && sameAsHeadline === 0 && sectionRenamed === sectionTotal;
+  return { topics: images.length, named, placeholder, sameAsHeadline, sectionTotal, sectionRenamed, ok };
+}

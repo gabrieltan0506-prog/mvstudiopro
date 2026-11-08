@@ -31,6 +31,7 @@ import {resolveKnowledgeCardReferencePageUrls} from '../server/services/knowledg
 import {synchronizedKnowledgeCardSource} from '../shared/knowledgeCardEditableLayout';
 import {layoutFromSource,layoutLibrarySchema} from '../shared/editableLayout';
 import {knowledgeCardCreditsForPageIndex,knowledgeEditionImagePlan,planKnowledgeCardPages} from '../shared/knowledgeCardPagination';
+import {auditKnowledgeTopicTitles,readKnowledgeTopicTitles} from '../shared/knowledgeTopicImagePlan';
 import {knowledgeEditionParts} from '../shared/knowledgeCardEdition';
 import {knowledgeEditionBudgetCheck} from '../shared/knowledgeEditionBudget';
 import {getGraphicNoteFusionTemplate} from '../shared/graphicNoteFusionTemplates';
@@ -114,7 +115,17 @@ async function prepare(){
   const manuscriptSha256=createHash('sha256').update(markdown).digest('hex');
   await fs.writeFile(path.join(root,'image-preview.md'),`# ${parts.title} · ${level==='full'?'完整版':'精华版'}逐页生图输入\n\n模板：${template.labelZh}；主体居中；${plan.pageCount}张，产品报价${quote.credits}积分。\n\n出图规则：每张图为一个主题的核心图解，图内≤1200字；图数按主题定（完整版≤16、精华版≤8）；图外细节全部进内文（图在上、内文在下及续页），不受1200字限制。\n\n页数预算：图文同页${budget.budget.imagePages}页 · 内文约${budget.plannedTextPages}页（建议${budget.budget.textPages.min}–${budget.budget.textPages.max}）· 合计约${budget.plannedTotalPages}页；内文资料约${topics.readingChars}字\n${budget.warnings.map(w=>`- ${w}`).join('\n')}\n\n`+pages.map(p=>`## 第${p.pageIndex}页 · ${p.chars}字（不含空白${p.visibleChars}字）· 含${p.sections}节 · 图外细节${p.overflowChars}字进内文 · 参考原页${p.referencePages}张\n\n图片标题：${p.imageTitle}；图下内文标题：${p.readingTitle}\n\n### 图内文字\n\n${p.body}\n\n### 实际生图指令\n\n\`\`\`\n${p.prompt}\n\`\`\``).join('\n\n'));
   await fs.writeFile(path.join(root,'editions.json'),JSON.stringify({full:derived.fullEditionMarkdown,concise:derived.distilledMarkdown,counts:derived.editionPageCounts,issues:derived.editionIssues,pending:derived.editionPendingVerification}));
-  await write('live.json',{stage:'awaiting_image_confirmation',ids,title:parts.title,level,template:template.id,pageCount:plan.pageCount,credits:quote.credits,manuscriptSha256,readingChars:topics.readingChars,imageChars:pages.map(p=>p.chars),budget:{plannedTextPages:budget.plannedTextPages,totalPages:budget.budget.totalPages,plannedTotalPages:budget.plannedTotalPages,warnings:budget.warnings.length}});
+  const titleAudit=auditKnowledgeTopicTitles(topics.images,readKnowledgeTopicTitles(markdown));
+  const prepared={ids,title:parts.title,level,template:template.id,pageCount:plan.pageCount,credits:quote.credits,manuscriptSha256,readingChars:topics.readingChars,imageChars:pages.map(p=>p.chars),budget:{plannedTextPages:budget.plannedTextPages,totalPages:budget.budget.totalPages,plannedTotalPages:budget.plannedTotalPages,warnings:budget.warnings.length},titleAudit};
+  // 开发者自用 autoConfirm：只在本探针内把准备与出图接成一步（应用内计费与用户确认不变）；命题核查不通过则停在出图前，不提交图片。
+  if(config.autoConfirm===true){
+    if(!titleAudit.ok){await write('live.json',{...prepared,stage:'failed',mode:'prepare',error:'主题命题核查未通过，未出图'});process.exitCode=1;return;}
+    Object.assign(config,{confirmed:true,confirmedPageCount:plan.pageCount,confirmedCredits:quote.credits,confirmedManuscriptSha256:manuscriptSha256});
+    await write('live.json',{...prepared,stage:'auto_confirmed'});
+    await write('prepared.json',prepared);
+    return run();
+  }
+  await write('live.json',{...prepared,stage:'awaiting_image_confirmation'});
 }
 
 async function run(){
@@ -181,8 +192,15 @@ page.on('console',m=>{const t=m.text();if(t.includes('[knowledgePublication]'))v
   await Promise.allSettled(workers);
   let final:any;
   if(failed)final={stage:'image_failed',errors};
-  else for(;;){
-    const progress=await page.evaluate(()=>({finished:(window as any).__handbookFinished,error:(window as any).__handbookError}));
+  else for(let reloads=0;;){
+    let progress:any;
+    try{progress=await page.evaluate(()=>({finished:(window as any).__handbookFinished,error:(window as any).__handbookError}));}
+    catch(error){
+      // 页面框架被拆（重载/部署）时重新打开同一文档的正式面板，由正式代码按回执续接；最多三次，不另起新单。
+      if(reloads>=3||!/detached Frame|Execution context was destroyed|Target closed|Session closed/i.test(String((error as Error).message)))throw error;
+      reloads++;await fs.appendFile(path.join(root,'ui-errors.log'),`${new Date().toISOString()} 页面重开第${reloads}次：${scrub((error as Error).message)}\n`);
+      await page.goto(base,{waitUntil:'domcontentloaded'}).catch(()=>{});await new Promise(r=>setTimeout(r,5000));continue;
+    }
     if(progress.finished){final={stage:'pdf_returned',result:progress.finished};break;}
     if(progress.error){final={stage:'publication_failed',error:scrub(progress.error)};break;}
     await write('live.json',{stage:'interior_layout_pdf',documentId:state.documentId,done,total});
