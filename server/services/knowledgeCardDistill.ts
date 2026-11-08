@@ -609,6 +609,14 @@ function isTimeoutUpstream(status: number, body: string): boolean {
   return /524:\s*A timeout|timeout occurred|Gateway Time-out|Cloudflare/i.test(String(body || ""));
 }
 
+/** 把非上游容量类的失败如实转成用户可读原因；含供应商/英文技术细节的只给通用说明，原文留在 cause 与日志。 */
+export function knowledgeCardDistillFailure(message: string, cause?: unknown): Error {
+  if (message === KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE || message === KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE) return new Error(message, { cause });
+  const technical = /https?:|[A-Za-z]{4,}|\{|\}/.test(message);
+  const reason = technical ? "整理步骤内部出错，详情已记录" : message.slice(0, 120);
+  return new Error(`读档整理未完成：${reason}。原文件已保留，可重新开始读档`, { cause });
+}
+
 function mapDistillUpstreamError(status: number, body: string): Error {
   const t = String(body || "");
   if (status === 402 || /insufficient|credit|余额|积分不足|quota/i.test(t)) {
@@ -2014,6 +2022,9 @@ export async function prepareKnowledgeCardCopy(input: {
     if (/过短|未能从文件|请先输入|额度不足|通道不可用|未配置|超时/.test(msg)) {
       throw new Error(msg);
     }
-    throw new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
+    // 只有上游真实容量/限流/5xx 才报「算力紧张」（这些在调用处已映射成该文案）。
+    // 其余是本系统整理步骤自身的失败（如章节关联、结构校验），必须如实说明是哪一步出错，
+    // 不能伪装成算力紧张让用户反复重试、也让排查找不到根因（2026-11-08 用户要求深挖根因）。
+    throw knowledgeCardDistillFailure(msg, err);
   }
 }

@@ -148,3 +148,12 @@ describe("buildPageAlignedChunks", () => {
     expect(chunks.every((c) => c.label !== "补充文字")).toBe(true);
   });
 });
+
+import {knowledgeCardDistillFailure as _distillFailure,KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE as _capacity} from './knowledgeCardDistill';
+it('整理步骤自身失败如实说明，不伪装成算力紧张；技术细节只进cause（2026-11-08）',()=>{
+ const own=_distillFailure('疑点关联包含未知章节或疑点，未改正文');
+ expect(own.message).toContain('读档整理未完成：疑点关联包含未知章节或疑点');expect(own.message).not.toContain('算力紧张');
+ const tech=_distillFailure('TypeError: Cannot read properties of undefined (reading x)',new Error('root'));
+ expect(tech.message).toContain('整理步骤内部出错');expect(tech.message).not.toMatch(/TypeError/);expect((tech.cause as Error).message).toBe('root');
+ expect(_distillFailure(_capacity).message).toBe(_capacity);
+});

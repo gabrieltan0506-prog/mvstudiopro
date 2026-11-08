@@ -660,7 +660,9 @@ function getPlatformJobErrorMessage(error: unknown): string {
 function buildPlatformJobError(error: unknown): Error {
   // 用户终止原样上抛：包一层会丢掉错误码，终态判定就只能回去猜文案（复审 P2）
   if (isKnowledgeCardCancelledJobError(error)) return error as Error;
-  const originalMsg = error instanceof Error ? error.message : String(error ?? "unknown");
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
+  // 保留根因：业务失败若包装过（如读档整理），把底层原因一并写进 job.error 供排查。
+  const originalMsg = (error instanceof Error ? error.message : String(error ?? "unknown")) + (cause && !String(error).includes(cause) ? ` ← ${cause}` : "");
   const userMsg = getPlatformJobErrorMessage(error);
   // Embed original message (≤400 chars) so operators can see actual cause in job.error
   const enriched = new Error(`${userMsg} [原始错误: ${originalMsg.slice(0, 400)}]`);
