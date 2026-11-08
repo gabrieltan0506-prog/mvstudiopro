@@ -34,7 +34,7 @@ for(const batchIndex of config.batchIndexes as number[]){
     const job=await getJobByIdStrict(manhuaAdvisorOperationId(user.id,requestId));
     if(job)entry.jobs.push({attempt,status:job.status,action:(job.output as any)?.action,refunded:(job.output as any)?.creditsRefunded,error:String(job.error||'').slice(0,600)});
   }
-  const names=await listGcsObjectNamesByPrefix(`${prefix}/batch-${batchIndex}/`);
+  const names=await listGcsObjectNamesByPrefix({prefix:`${prefix}/batch-${batchIndex}/`,allPages:true});
   entry.objects=names.map(n=>n.slice(prefix.length));
   for(const name of names.filter(n=>/route-[^/]+\.json$|raw-\d+\.json$/.test(n))){
     let r:any;try{r=await read(name);}catch(e){entry.receipts.push({name:name.slice(prefix.length),readError:String(e)});continue;}

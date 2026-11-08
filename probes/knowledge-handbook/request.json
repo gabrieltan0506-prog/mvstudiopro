@@ -1,5 +1,5 @@
 {
-  "id": "diagnose-xuezhi-1108a",
+  "id": "diagnose-xuezhi-1108b",
   "action": "prepare",
   "script": "scripts/probe-knowledge-handbook-diagnose.mts",
   "machine": "7812595b294778",
