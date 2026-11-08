@@ -156,6 +156,8 @@ const realDeps: StockAdoptionDeps = {
 };
 
 export const stockAdoptionLoader: StockAdoptionDeps["load"] = (id, userId) => realDeps.load(id, userId);
+/** 隔离探针用：真实数据库与存储依赖（只读引用，探针可替换上游一环）。 */
+export const realStockAdoptionDeps: Readonly<StockAdoptionDeps> = realDeps;
 
 export function stockAdoptionResponseFor(row: StockAdoptionRecord, deps: Pick<StockAdoptionDeps, "sign" | "now"> = realDeps): StockFootageAdoptionResponse {
   const base = { assetId: row.id, requestId: row.input.params.requestId };
