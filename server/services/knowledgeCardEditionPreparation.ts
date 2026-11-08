@@ -97,12 +97,17 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
     const candidates=knowledgeModulesFromMarkdown(call.user).modules;
     const blocks=report.pages?.[0]?.reading?.blocks;
     if(!Array.isArray(blocks)||!blocks.length)throw Error('精华JSON选择未返回章节，完整稿已保留');
-    const seen=new Set<string>();
-    const chosen=blocks.map((block:any)=>{
-      const matches=candidates.filter(module=>module.headline===block.title);
-      if(matches.length!==1||seen.has(block.title))throw Error('精华JSON选择包含未知、重复或歧义章节');
-      seen.add(block.title);return matches[0];
+    // 按规范化标题对应原章（空白/全半角/首尾标点差异都能对上）；未知与重复条目跳过并记录，同名多章按顺序取未选过的一章。
+    // 只选原章、不改写；一章都对不上才报错（2026-11-08 敦煌本真实阻断：个别标题对不上即整份精华选择作废）。
+    const norm=(t:unknown)=>String(t??'').normalize('NFKC').replace(/\s+/g,'').replace(/^[#\d.、:：\-—]+|[。.!！?？]+$/g,'');
+    const used=new Set<number>();let skipped=0;
+    const chosen=blocks.flatMap((block:any)=>{
+      const index=candidates.findIndex((module,i)=>!used.has(i)&&norm(module.headline)===norm(block?.title));
+      if(index<0){skipped++;return [];}
+      used.add(index);return [candidates[index]!];
     });
+    if(!chosen.length)throw Error('精华JSON选择包含未知、重复或歧义章节');
+    if(skipped)console.warn(`[knowledgeEdition] 精华选择跳过${skipped}条无法对应原章的条目，已选${chosen.length}章`);
     const body=chosen.map(module=>`## ${module.headline}\n\n${module.body}`).join('\n\n');
     const pendingResearch = Array.from(new Set([
       ...knowledgePendingResearchNotes(body),
