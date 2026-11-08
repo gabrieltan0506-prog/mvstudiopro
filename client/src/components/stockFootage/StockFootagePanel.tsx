@@ -120,12 +120,12 @@ export function StockFootagePanel(props: StockFootagePanelProps) {
 
   const myPending = pending.filter(p => p.purpose === props.purpose);
 
+  // 本机待办必须同步落盘：采用成功后业务方常会立即关闭面板（卸载），
+  // 若把写入放在 setState 更新函数里，卸载后更新被丢弃，已完成的采用会一直显示「待继续」。
   const updatePending = useCallback((fn: (list: PendingAdoption[]) => PendingAdoption[]) => {
-    setPending(prev => {
-      const next = fn(prev);
-      writePending(next);
-      return next;
-    });
+    const next = fn(readPending());
+    writePending(next);
+    setPending(next);
   }, []);
 
   const runAdopt = useCallback(
@@ -189,6 +189,8 @@ export function StockFootagePanel(props: StockFootagePanelProps) {
     let cancelled = false;
     (async () => {
       for (const p of myPending) {
+        // 刚发起的采用由 runAdopt 自己收尾；此时查询会与占位抢跑，得到「没有找到」的误报。
+        if (Date.now() - p.startedAt < 2 * 60_000) continue;
         try {
           const res = await utils.stockFootage.getAdoption.fetch({ requestId: p.requestId });
           if (!cancelled) setPendingStatus(s => ({ ...s, [p.requestId]: res.status }));
