@@ -1,5 +1,5 @@
 {
-  "id": "dunhuang-full-1108g",
+  "id": "dunhuang-full-1108g2",
   "action": "prepare",
   "script": "scripts/probe-knowledge-handbook-book.mts",
   "machine": "7812595b294778",
