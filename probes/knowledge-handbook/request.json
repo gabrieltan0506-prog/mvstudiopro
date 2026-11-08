@@ -1,29 +1,17 @@
 {
-  "id": "dunhuang-full-1108c",
-  "action": "prepare",
-  "script": "scripts/probe-knowledge-handbook-book.mts",
+  "id": "xuezhi-relayout-1108b",
+  "action": "start",
+  "script": "scripts/probe-knowledge-handbook-relayout.mts",
   "machine": "7812595b294778",
-  "inputs": [
-    {
-      "ref": "inputs/dunhuang-epub",
-      "name": "source.epub"
-    }
-  ],
   "collect": [
-    "image-preview.md",
-    "editions.json",
+    "handbook.pdf",
     "live.json",
-    "run.log"
+    "run.log",
+    "ui-final.png"
   ],
   "config": {
     "level": "full",
-    "template": "fusion_chinese_garden",
-    "distillModel": "glm-5.3-flashx",
-    "distillRequestId": "5362919f-b14f-4239-b711-94cb38c2c9ac",
-    "deriveRequestId": "fd9a1864-45ab-4e90-bbde-6e6171d75985",
     "ownerJobId": "kc_f7e6e69c3c946ee107f170f6b93d4f0bb77e3c6427db7889adec4d4d",
-    "localSource": "source.epub",
-    "fileName": "我心归处是敦煌：樊锦诗自述.epub",
-    "sourceSha256": "bd6c44d63a5724ae5a4e8eb5cb8cdc711b72907be2ba725f58904501029e4eb9"
+    "resumeDocumentId": "0dcb5641-ad69-40fc-bde2-59ef2e20444d"
   }
 }
