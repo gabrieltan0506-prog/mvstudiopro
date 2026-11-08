@@ -57,6 +57,8 @@ it('只指向图中位置的编辑提示不印出；读者正文引用照常保�
   expect(isImagePointerNote('图中已列营养表、真假鳕鱼对比与“低脂、高蛋白、汞低”图标。')).toBe(true);
   expect(isImagePointerNote('图中对比表已列脂肪、EPA/DHA、汞值、儿童食用和价格定位；此处补判断条件。')).toBe(true);
   expect(isImagePointerNote('每周吃鱼两次，每次约150克。')).toBe(false);
+  expect(isImagePointerNote('图中待验证框与原表缺行信息如下')).toBe(false);
+  expect(isImagePointerNote('图中未列的服用条件：')).toBe(false);
   expect(isImagePointerNote('鱼类'+'很好'.repeat(80))).toBe(false);
   const body=`## 鳕鱼\n\n真鳕鱼是低脂高蛋白白肉鱼。\n\n> 图中右下栏已给出杯量与间隔，此处说明道理。\n\n> 每周吃鱼两次，每次约150克。`;
   const out=await render(buildKnowledgeBookletHtml({title:'控脂手册',pages:[{id:'fish',headline:'鳕鱼',body,imageUrl:img}]}));

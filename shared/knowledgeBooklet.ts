@@ -8,7 +8,7 @@ import { renderLayoutBody } from "./editableLayout";
 
 export type KnowledgeBookletPage = { id: string; headline: string; body: string; imageUrl: string };
 export type KnowledgeBookletTheme = "fusion_chinese_garden" | "fusion_ink_mountains" | "fusion_coastal_lighthouse" | "fusion_glasshouse_garden" | "fusion_maple_bridge" | "fusion_snow_monastery";
-export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1108-v12-tail-pullback-pointer-notes";
+export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1108-v13-tail-pullback-pointer-notes";
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 export const KNOWLEDGE_BOOKLET_THEMES: Record<KnowledgeBookletTheme, { name: string; paper: string; ink: string; accent: string; line: string; mark: string }> = {
   fusion_chinese_garden: { name:"中式园林融合",paper:"#fff2df",ink:"#713e2b",accent:"#b64632",line:"#d8ac83",mark:"园" },
@@ -48,6 +48,8 @@ const SELF_REFERENCE = /此处(?:补|说明|解释|只|再|另|展开|讲)/;
 /** 只说明“图中已列什么、此处补什么”的编辑提示（版式块 note），不是读者正文。 */
 export function isImagePointerNote(text: string): boolean {
   const t = text.replace(/^[>\s]+/gm, "").replace(/\s+/g, "").trim();
+  // 以“如下/：”引出后文的是导语，不算编辑提示。
+  if (/(?:如下|[:：])$/.test(t)) return false;
   return t.length > 0 && t.length <= 120 && (IMAGE_POINTER.test(t) || SELF_REFERENCE.test(t));
 }
 

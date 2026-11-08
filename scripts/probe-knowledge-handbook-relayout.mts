@@ -126,6 +126,13 @@ let final:any;
 for(;;){
   const progress=await page.evaluate(()=>({finished:(window as any).__handbookFinished,error:(window as any).__handbookError}));
   if(progress.finished){final={stage:'pdf_returned',result:progress.finished};break;}
+  // “下载当前版”路径在保存后若分页版本变化会提前返回、不回调页数；以正式导出回执为准收尾，避免无限等待。
+  if(config.exportOnly&&existsSync(path.join(root,'export-response.json'))){
+    try{const data=JSON.parse(await fs.readFile(path.join(root,'export-response.json'),'utf8'));const r=data?.result?.data?.json||data?.result?.data;
+      if(r?.pdfUrl&&r.totalPages){final={stage:'pdf_returned',result:{totalPages:r.totalPages,imagePages:r.imagePages}};break;}
+      if(data?.error){final={stage:'publication_failed',error:scrub(JSON.stringify(data.error))};break;}
+    }catch{}
+  }
   if(progress.error){final={stage:'publication_failed',error:scrub(progress.error)};break;}
   await new Promise(r=>setTimeout(r,10000));
 }
