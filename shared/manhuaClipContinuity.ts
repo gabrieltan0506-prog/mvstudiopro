@@ -10,6 +10,7 @@ import {
   resolveClipSegmentIndex,
   resolveClipLocalSegmentIndex,
 } from "./manhuaScriptWorkbench.js";
+import { isManhuaStockEmptyShotClip } from "./manhuaStockFootage.js";
 
 /** 从片尾窗口均匀抽帧张数（送 Seedance 多图参考，配额内） */
 export const MANHUA_CLIP_TAIL_FRAME_COUNT = 4;
@@ -35,6 +36,7 @@ export type ContinuityClipLike = {
   outputUrl?: string | null;
   status?: string;
   archivedFromPreviousScript?: boolean;
+  manhuaSegmentRefs?: { registered?: { url?: string; gcsUri?: string; stockFootage?: unknown } };
 };
 
 function episodeOf(block: ContinuityClipLike): number | null {
@@ -60,6 +62,8 @@ function httpsDoneUrl(block: ContinuityClipLike): string | undefined {
   const url = String(block.outputUrl || "").trim();
   if (!url || !/^https?:\/\//i.test(url)) return undefined;
   if (block.status && block.status !== "done") return undefined;
+  // 图库无人物空镜不是人物/服装连续性锚点：下一段不拿它的片尾当「同一张脸」起幅
+  if (isManhuaStockEmptyShotClip(block)) return undefined;
   return url;
 }
 

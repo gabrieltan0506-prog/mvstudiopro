@@ -16,6 +16,7 @@ import { normalizeManhuaAsset3dRef } from "./manhuaAsset3d.js";
 import { normalizeManhuaMultiviewDraft } from "./manhuaMultiview.js";
 import { normalizeManhuaStageFrameBinding, normalizeManhuaWorld3dRef } from "./manhuaWorld3d.js";
 import { normalizeManhuaStageFrameAdoptions } from "./manhuaStageFrameAdoption.js";
+import { normalizeManhuaStockFootageMark, type ManhuaStockFootageMark } from "./manhuaStockFootage.js";
 
 export const MANHUA_CUSTOM_ASSET_ROLES = [
   "character",
@@ -138,6 +139,11 @@ export type ManhuaCustomAssetRef = {
    * 绑骨/白模/场景预览用那张图的模型；原定妆与高模保留。不指向时按「锁脸图优先，否则候选图」自动解析。
    */
   rigSourceRefId?: string;
+  /**
+   * 1108 图库场景参考：来源标记（assetId + 署名）。有标记的图恒为「场景」·空间/画风参考，
+   * 不能改成人物、不能认领为人物当前图、不能直接入片（见 shared/manhuaStockFootage.ts）。
+   */
+  stockFootage?: ManhuaStockFootageMark;
 };
 
 const SCENE_TILE_SLOTS: ManhuaSceneTileSlot[] = [
@@ -410,11 +416,18 @@ export function normalizeManhuaCustomAssetRefs(
     const sourceWidth = Math.max(0, Math.floor(Number(o.sourceWidth) || 0)) || undefined;
     const sourceHeight = Math.max(0, Math.floor(Number(o.sourceHeight) || 0)) || undefined;
     const refDutyRaw = String(o.refDuty || "").trim();
-    const role = inferManhuaCustomAssetRole({
-      role: o.role,
-      seedLibraryId,
-      labelZh,
-    });
+    // 图库参考图只能是场景：草稿被手改成人物/道具也拉回场景，不进角色资产与锁脸门禁
+    const stockFootage = normalizeManhuaStockFootageMark(
+      (o as { stockFootage?: unknown }).stockFootage,
+      "reference",
+    );
+    const role: ManhuaCustomAssetRoleOrUnset = stockFootage
+      ? "scene"
+      : inferManhuaCustomAssetRole({
+          role: o.role,
+          seedLibraryId,
+          labelZh,
+        });
     const parsedDuty = (
       [
         "identity",
@@ -428,7 +441,11 @@ export function normalizeManhuaCustomAssetRefs(
     ).includes(refDutyRaw as ManhuaCustomAssetRefDuty)
       ? (refDutyRaw as ManhuaCustomAssetRefDuty)
       : null;
-    const finalDuty = parsedDuty || defaultManhuaCustomAssetRefDuty(role);
+    const finalDuty = stockFootage
+      ? parsedDuty === "style"
+        ? "style"
+        : "space"
+      : parsedDuty || defaultManhuaCustomAssetRefDuty(role);
     const parsePrimaryBindings = (raw: unknown): ManhuaCharacterPrimaryBinding[] => {
       if (role !== "character" || (finalDuty !== "identity" && finalDuty !== "look")) {
         return [] as ManhuaCharacterPrimaryBinding[];
@@ -485,6 +502,7 @@ export function normalizeManhuaCustomAssetRefs(
       ...(String((o as { rigSourceRefId?: unknown }).rigSourceRefId || "").trim()
         ? { rigSourceRefId: String((o as { rigSourceRefId?: unknown }).rigSourceRefId).trim().slice(0, 100) }
         : {}),
+      ...(stockFootage ? { stockFootage } : {}),
     });
     if (out.length >= max) break;
   }

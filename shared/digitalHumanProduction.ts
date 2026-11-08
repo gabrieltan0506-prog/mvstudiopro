@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DIGITAL_HUMAN_OVERLAY_MAX_COUNT, digitalHumanOverlayIssues, digitalHumanOverlaySchema } from "./digitalHumanOverlay";
 
 const uri = z.string().min(1).max(5000);
 const time = z.number().finite().min(0).max(1800);
@@ -24,6 +25,8 @@ export const digitalHumanFinalParamsSchema = z.object({
   voice: digitalHumanVoiceSpaceSchema,
   tracks: z.array(digitalHumanMixTrackSchema).max(12),
   aspectRatio: z.enum(["9:16", "16:9"]),
+  /** 补充画面覆盖/回切轨：独立于人物分段 clips，只替换画面，音轨始终用口播母轨。旧任务无此字段。 */
+  overlays: z.array(digitalHumanOverlaySchema).min(1).max(DIGITAL_HUMAN_OVERLAY_MAX_COUNT).optional(),
 }).strict().superRefine((v, ctx) => {
   let end = 0;
   v.clips.forEach((clip, i) => {
@@ -35,6 +38,8 @@ export const digitalHumanFinalParamsSchema = z.object({
     if (track.startSec + track.durationSec > end + 1 / 48000)
       ctx.addIssue({ code: "custom", path: ["tracks", i], message: "音轨选段超出成片时长" });
   });
+  for (const issue of digitalHumanOverlayIssues(v.overlays ?? [], end))
+    ctx.addIssue({ code: "custom", path: issue.index === undefined ? ["overlays"] : ["overlays", issue.index], message: issue.message });
 });
 const metadata = { scopeKey: z.string().max(128).optional() };
 export const digitalHumanSplitJobSchema = z.object({ ...metadata, action: z.literal("digital_human_audio_split"), params: digitalHumanSplitParamsSchema }).strict();

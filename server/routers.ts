@@ -136,6 +136,7 @@ import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
 import { canvasAudioRouter } from "./routers/canvasAudio";
+import { stockFootageRouter } from "./routers/stockFootage";
 import { digitalHumanRouter } from "./routers/digitalHuman";
 import { manhuaAutoRigRouter } from "./routers/manhuaAutoRig";
 import { manhuaPrevisRouter } from "./routers/manhuaPrevis";
@@ -3015,6 +3016,7 @@ export const appRouter = router({
   suno: sunoRouter,
   songOperations: songOperationsRouter,
   canvasAudio: canvasAudioRouter,
+  stockFootage: stockFootageRouter,
   digitalHuman: digitalHumanRouter,
   manhuaPrevis: manhuaPrevisRouter,
   manhuaAutoRig: manhuaAutoRigRouter,

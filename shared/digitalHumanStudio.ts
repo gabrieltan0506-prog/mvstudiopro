@@ -5,6 +5,7 @@ import { digitalHumanOmniQuoteSchema } from "./digitalHumanOmni";
 import { digitalHumanKeyframesSchema, selectDigitalHumanKeyframes } from "./digitalHumanKeyframes";
 import { digitalHumanStageAnchorSchema, digitalHumanStageCameraSchema } from "./digitalHumanSpatialAdvisor";
 import { z } from "zod";
+import { DIGITAL_HUMAN_OVERLAY_MAX_COUNT, digitalHumanOverlayDraftSchema } from "./digitalHumanOverlay";
 import { platformStoryboardCellsSchema } from "./platformStoryboardCells";
 import { artMotionStateSchema } from "./artMotion";
 import { manhuaPrevisStudioSchema } from "./manhuaPrevis";
@@ -178,7 +179,8 @@ export const digitalHumanSegmentDraftSchema = z.object({
   keyframeGenerations: z.array(digitalHumanKeyframeGenerationReceiptSchema).max(100).default([]),
   postProdStorage: z.record(z.string(), z.string()).default({}),
   productions: z.array(digitalHumanProductionReceiptSchema).default([]),
-  mix: z.object({ voice: digitalHumanVoiceSpaceSchema, tracks: z.array(digitalHumanMixTrackSchema).max(12) }).default({ voice: { pan: 0, room: "dry", volume: 1 }, tracks: [] }),
+  /** overlays：补充画面覆盖/回切轨（独立于人物分段与音轨；旧稿缺省为空）。 */
+  mix: z.object({ voice: digitalHumanVoiceSpaceSchema, tracks: z.array(digitalHumanMixTrackSchema).max(12), overlays: z.array(digitalHumanOverlayDraftSchema).max(DIGITAL_HUMAN_OVERLAY_MAX_COUNT).default([]) }).default({ voice: { pan: 0, room: "dry", volume: 1 }, tracks: [], overlays: [] }),
   portrait: mediaSchema.optional(),
   scene: mediaSchema.optional(),
   sceneDescription: z.string().max(2000),
@@ -302,7 +304,7 @@ export function newDigitalHumanDraft(
     keyframeGenerations: [],
     postProdStorage: {},
     productions: [],
-    mix: { voice: { pan: 0, room: "dry", volume: 1 }, tracks: [] },
+    mix: { voice: { pan: 0, room: "dry", volume: 1 }, tracks: [], overlays: [] },
     sceneDescription: "",
     script: "",
     voiceId: "",

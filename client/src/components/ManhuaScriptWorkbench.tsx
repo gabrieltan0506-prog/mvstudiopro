@@ -42,7 +42,9 @@ import type { AutoRigAdoptedModel } from "@shared/manhuaAutoRig";
 import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference";
 import type { ManhuaDirectionCanon, ManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
 import { listManhuaDirectionCards, MANHUA_DIRECTION_SCENE_TYPES, MANHUA_DIRECTION_SCENE_TYPE_LABEL_ZH } from "@shared/manhuaDirectionCanonLibrary";
-import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { StockFootagePanel } from "@/components/stockFootage/StockFootagePanel";
+import type { StockFootageAssetView } from "@shared/stockFootage";
 import { ManhuaSecondaryStudioSurface as SecondaryStudioSurface } from "./canvas/ManhuaSecondaryStudioSurface";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import type { BgmBriefModel } from "@shared/manhuaBgmBrief";
@@ -721,6 +723,12 @@ type Props = {
   }) => void;
   /** 将已有视频登记到当前原稿的指定段；不依赖预先生成静帧节点。 */
   onRegisterSegmentClip?: (segmentIndex: number, file: File) => void;
+  /** 1108 图库无人物空镜登记为本段成片（多轨剪辑台当前片段处） */
+  onRegisterStockEmptyShot?: ComponentProps<typeof ManhuaEditMultitrackPanel>["onRegisterStockEmptyShot"];
+  stockEmptyShotCreditBySegment?: Record<number, string>;
+  stockProjectId?: string;
+  /** 1108 图库照片采用为「我的场景」场景参考图（只当空间/画风参考，不入片、不进角色） */
+  onAdoptStockSceneReference?: (asset: StockFootageAssetView) => void;
   segmentReferenceBusy?: boolean;
   segmentReferenceProgress?: number | null;
   /** 本集缺成片/质检失败的段号依次生成 */
@@ -1391,6 +1399,10 @@ export default function ManhuaScriptWorkbench({
   onGenerateFragment,
   onGenerateSelectedClips,
   onRegisterSegmentClip,
+  onRegisterStockEmptyShot,
+  stockEmptyShotCreditBySegment,
+  stockProjectId,
+  onAdoptStockSceneReference,
   segmentReferenceBusy = false,
   segmentReferenceProgress = null,
   onGenerateMissingFragments,
@@ -1619,6 +1631,7 @@ export default function ManhuaScriptWorkbench({
    * 工具区默认收起，用到才展开；已经传过参考图的那一栏保持展开，不替用户收走他在用的东西。
    */
   const [openCustomRefRoles, setOpenCustomRefRoles] = useState<Record<string, boolean>>({});
+  const [stockSceneOpen, setStockSceneOpen] = useState(false);
   const [activeAssetRole, setActiveAssetRole] = useState<ManhuaCustomAssetRole>("character");
   const [moreToolsOpen, setMoreToolsOpen] = useState(false);
   const workbenchToolsRef = useRef<HTMLDetailsElement | null>(null);
@@ -6508,6 +6521,18 @@ clipPromptReviewOpen ? (
                             />
                           </label>
                         ) : null}
+                        {sec.role === "scene" && onAdoptStockSceneReference ? (
+                          <button
+                            type="button"
+                            data-manhua-action="stock-scene-reference"
+                            aria-expanded={stockSceneOpen}
+                            onClick={() => setStockSceneOpen((v) => !v)}
+                            className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${sec.btnCls}`}
+                            title="从图库挑一张照片作本集场景的空间/画风参考；不入片、不进角色"
+                          >
+                            图库场景参考
+                          </button>
+                        ) : null}
                         {onGenerateCustomAssetFromLibrary ? (
                           <button
                             type="button"
@@ -6526,6 +6551,22 @@ clipPromptReviewOpen ? (
                         ) : null}
                       </div>
                     </div>
+                    {expanded && sec.role === "scene" && stockSceneOpen && onAdoptStockSceneReference ? (
+                      <div className="mt-2 rounded-lg border border-white/10 p-2" data-manhua-stock-scene-panel>
+                        <p className="mb-1 text-[10px] text-white/45">图库照片只作场景参考（空间/画风），不直接入片、不能当人物或角色卡；署名随参考图保存。</p>
+                        <StockFootagePanel
+                          purpose="manhua"
+                          usage="reference"
+                          defaultKind="photo"
+                          compact
+                          context={{ projectId: stockProjectId, note: "漫剧场景参考图" }}
+                          onAdopted={(asset) => {
+                            onAdoptStockSceneReference(asset);
+                            setStockSceneOpen(false);
+                          }}
+                        />
+                      </div>
+                    ) : null}
                     {expanded && refs.length ? (
                       <div
                         className="mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3"
@@ -9206,6 +9247,9 @@ clipPromptReviewOpen ? (
             effectsScopeKey={effectsScopeKey} onAdvisorEffectsControl={onAdvisorEffectsControl}
             compactLayout={immersive}
             onRegisterSegmentClip={onRegisterSegmentClip}
+            onRegisterStockEmptyShot={onRegisterStockEmptyShot}
+            stockEmptyShotCreditBySegment={stockEmptyShotCreditBySegment}
+            stockProjectId={stockProjectId}
             registerClipBusy={segmentReferenceBusy}
             registerClipProgress={segmentReferenceProgress}
             segmentGroups={segments.map((segment) => ({

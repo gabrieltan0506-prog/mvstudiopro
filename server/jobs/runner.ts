@@ -780,7 +780,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       musicFadeOutSec: typeof params.musicFadeOutSec === "number" ? params.musicFadeOutSec : undefined,
       transition: typeof params.transition === "string" ? params.transition : undefined,
       resolution: typeof params.resolution === "string" ? params.resolution : undefined,
-    }) });
+    }, { userId: numericUserId }) });
     return {
       provider: "manhua-assemble",
       output: {

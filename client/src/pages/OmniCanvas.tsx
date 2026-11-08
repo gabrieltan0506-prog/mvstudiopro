@@ -235,7 +235,15 @@ import {
   probeMediaFileDurationSec,
   createManhuaRegisteredSegmentClip,
   registerManhuaExistingClip,
+  registerManhuaStockEmptyShotClip,
 } from "@/lib/manhuaSegmentRefs";
+import {
+  buildManhuaSceneReferenceFromStock,
+  buildManhuaStockEmptyShotRegistration,
+  manhuaStockEmptyShotMarkOf,
+} from "@shared/manhuaStockFootage";
+import type { StockFootageAssetView } from "@shared/stockFootage";
+import type { ManhuaStockEmptyShotPick } from "@/components/manhua/ManhuaStockEmptyShotRegister";
 import {
   MANHUA_SEGMENT_REFERENCE_LABEL_ZH,
   setManhuaSegmentReference,
@@ -10167,6 +10175,92 @@ function OmniCanvasWorkspace() {
     },
     [factoryBusy, writerConfirmed, writerFocusEpisode, activePilotVideoModel, writerPack, getSignedUrlMutation, patchClipBlockPersist, segmentRefBusyId],
   );
+  /**
+   * 1108 图库无人物空镜 → 本段登记成片：与「登记已有成片」同一条链（同段修订身份、同一节点/新建登记节点），
+   * 额外落「空镜·无人物」标记（assetId + 署名 + 勾选时间）与登记裁点；合成时按 assetId 由服务端核对并现签。
+   */
+  const handleRegisterStockEmptyShot = useCallback(
+    async (segmentIndex: number, pick: ManhuaStockEmptyShotPick) => {
+      if (factoryBusy) {
+        toast.message("请等待当前生成结束");
+        return;
+      }
+      if (!writerConfirmed) {
+        toast.error("请先确认当前剧本，再登记空镜");
+        return;
+      }
+      try {
+        const currentBlocks = blocksRef.current;
+        const segment = groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(currentBlocks, writerFocusEpisode), {
+          videoModel: activePilotVideoModel,
+        }).find((row) => row.index === segmentIndex);
+        if (!segment) throw new Error("当前原稿找不到此段，请重新打开工作台");
+        const registration = buildManhuaStockEmptyShotRegistration({
+          asset: pick.asset,
+          inSec: pick.inSec,
+          outSec: pick.outSec,
+          plannedDurationSec: segment.durationSec,
+          noPersonConfirmed: pick.noPersonConfirmed,
+          nowIso: new Date().toISOString(),
+        });
+        const revision = buildManhuaAutoSegmentBinding(writerFocusEpisode, segment, activePilotVideoModel).revision;
+        const existing = queuedManhuaClipBlocks(currentBlocks, writerFocusEpisode, activePilotVideoModel).find((block) => {
+          const binding = normalizeManhuaAutoSegmentBinding(block.manhuaAutoSegment);
+          return binding?.segmentIndex === segment.index && binding.revision === revision;
+        });
+        if (existing) {
+          patchClipBlockPersist(existing.id, (block) => registerManhuaStockEmptyShotClip(block, registration));
+        } else {
+          const parent = currentBlocks.find((block) => block.id.startsWith(`story-e${String(writerFocusEpisode).padStart(2, "0")}`) && !block.archivedFromPreviousScript);
+          const created = registerManhuaStockEmptyShotClip(
+            createManhuaRegisteredSegmentClip({
+              episodeIndex: writerFocusEpisode,
+              episodeTitle: writerPack?.episodes.find((episode) => episode.index === writerFocusEpisode)?.title,
+              segment,
+              videoModel: activePilotVideoModel,
+              parent,
+              entry: registration.entry,
+            }),
+            registration,
+          );
+          setBlocks((prev) => {
+            const next = [...prev, created];
+            setEdges((eds) => {
+              saveCanvasState(next, eds);
+              return eds;
+            });
+            return next;
+          });
+        }
+        toast.message(`已登记为第 ${segment.index} 段空镜·无人物`, {
+          description: `${registration.entry.stockFootage?.attributionZh} · 裁点 ${registration.window.inSec}–${registration.window.outSec} 秒；${MANHUA_REGISTERED_CLIP_SUMMARY_ZH}`,
+        });
+      } catch (error) {
+        toast.error(`空镜未登记：${error instanceof Error ? maskMediaProviderDetails(error.message) : String(error)}`);
+      }
+    },
+    [factoryBusy, writerConfirmed, writerFocusEpisode, activePilotVideoModel, writerPack, patchClipBlockPersist],
+  );
+  const stockEmptyShotCreditBySegment = useMemo(() => {
+    const out: Record<number, string> = {};
+    for (const block of blocks) {
+      if (block.kind !== "video" || block.archivedFromPreviousScript || (getBlockEpisodeIndex(block) ?? 1) !== writerFocusEpisode) continue;
+      const mark = manhuaStockEmptyShotMarkOf(block);
+      const segmentIndex = normalizeManhuaAutoSegmentBinding(block.manhuaAutoSegment)?.segmentIndex;
+      if (mark && segmentIndex) out[segmentIndex] = mark.attributionZh;
+    }
+    return out;
+  }, [blocks, writerFocusEpisode]);
+  /** 1108 图库照片 → 「我的场景」场景参考图（恒为 scene·空间参考；标记让它不能被改成人物、不进角色卡）。 */
+  const handleAdoptStockSceneReference = useCallback((asset: StockFootageAssetView) => {
+    try {
+      const ref = buildManhuaSceneReferenceFromStock(asset, makeManhuaCustomAssetId());
+      setCustomAssetRefs((prev) => normalizeManhuaCustomAssetRefs([...prev.filter((r) => r.stockFootage?.assetId !== asset.assetId), ref]));
+      toast.message("已挂为场景参考图", { description: `${ref.stockFootage.attributionZh} · 只作空间/画风参考，不入片` });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
   const handleSegmentReferenceClear = useCallback(
     (clipBlockId: string, slot: ManhuaSegmentReferenceSlot) => {
       patchClipBlockPersist(clipBlockId, (b) => setManhuaSegmentReference(b, slot, null));
@@ -12747,6 +12841,9 @@ async function runAdvisorWriterTrial() {
                     void runFactory("clip", { episodeIndexes: [writerFocusEpisode], targetBlockIds: targets.map(b => b.id),
                       preparedTargetBlocks: targets, preservePreparedTargetBlocks: true, forceFromStage: "clip", maxRetries: 0, stopOnError: false });
                   }}
+                  onRegisterStockEmptyShot={handleRegisterStockEmptyShot}
+                  stockEmptyShotCreditBySegment={stockEmptyShotCreditBySegment}
+                  onAdoptStockSceneReference={handleAdoptStockSceneReference}
                   onRegisterSegmentClip={(segmentIndex, file) => {
                     void handleSegmentReferenceUpload(
                       `clip-e${String(writerFocusEpisode).padStart(2, "0")}-g${String(segmentIndex).padStart(2, "0")}-planned`,

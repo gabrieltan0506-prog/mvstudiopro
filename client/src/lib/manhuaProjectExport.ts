@@ -20,6 +20,7 @@ import {
 } from "@shared/manhuaFinalPostProd";
 import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import type { CanvasBlock } from "./canvasTypes";
+import { withManhuaStockEmptyShotAssemble } from "@shared/manhuaStockFootage";
 import {
   getBlockEpisodeIndex,
   isManhuaFinalVideoBlockId,
@@ -243,6 +244,8 @@ export type ManhuaDockAssembleClip = {
     trimOutSec: number;
     durationSec: number;
   }>;
+  /** 1108 本段成片是图库无人物空镜时的资产编号（服务端按它核对并现签） */
+  stockAssetId?: string;
 };
 
 /** 成片坞 → 长片合成入参（同集多段按段序；携带细剪 trim） */
@@ -336,10 +339,12 @@ export function collectManhuaAssembleClipsFromDock(
       }
       byEp.set(it.episodeIndex, cur);
     }
-    return Array.from(byEp.values()).sort((a, b) => a.episodeIndex - b.episodeIndex);
+    return Array.from(byEp.values())
+      .map((clip) => withManhuaStockEmptyShotAssemble(clip, clip.blockId ? blockById.get(clip.blockId) : undefined))
+      .sort((a, b) => a.episodeIndex - b.episodeIndex);
   }
 
-  return clips.sort(
+  return clips.map((clip) => withManhuaStockEmptyShotAssemble(clip, clip.blockId ? blockById.get(clip.blockId) : undefined)).sort(
     (a, b) =>
       a.episodeIndex - b.episodeIndex ||
       (a.segmentIndex || 0) - (b.segmentIndex || 0),

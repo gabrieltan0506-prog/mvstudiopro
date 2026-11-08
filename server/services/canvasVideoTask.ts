@@ -71,6 +71,7 @@ import {
 } from "./bailianHappyHorseVideo.js";
 import { getGcsBucketName, signGcsObjectPathV4ReadUrl } from "./gcs.js";
 import { verifyCanvasMediaOwnership } from "./canvasMediaOwnership.js";
+import { assertManhuaStockReferenceObject } from "./manhuaStockFootageGuard.js";
 import { resolveCanvasVideoAudioUrls } from "./canvasVideoAudioReference.js";
 import {
   normalizePostProdObjectName,
@@ -776,6 +777,10 @@ async function resolveProtectedTaskMediaUrl(
     }
     if (/^https?:\/\//i.test(source)) return source;
     throw new Error("视频模型参考素材必须使用可读取的 URL,已在提交前停止生成");
+  }
+  // 1108 图库素材：只有本人为漫剧采用的场景参考图可作生成参考（空镜/其他用途在此拒绝）
+  if (await assertManhuaStockReferenceObject(task.userId, objectPath)) {
+    return signGcsObjectPathV4ReadUrl(getGcsBucketName(), objectPath, 24 * 3600);
   }
   const userId = String(task.userId);
   const isOwnUpload = objectPath.startsWith(userUploadsPrefix(userId));

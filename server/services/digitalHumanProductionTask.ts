@@ -13,6 +13,11 @@ export function digitalHumanProductionJobId(userId: number, requestId: string) {
 export async function queueDigitalHumanProduction(userId: number, raw: DigitalHumanProductionRequest) {
   const request = digitalHumanProductionRequestSchema.parse(raw);
   const id = digitalHumanProductionJobId(userId, request.requestId);
+  // 补充画面只保存 assetId+时间；入队前用 loadOwnedStockAsset 核对所有权与选段，不合格不建任务。
+  if (request.input.action === "digital_human_final" && request.input.params.overlays?.length) {
+    const { resolveDigitalHumanOverlays } = await import("./digitalHumanOverlay");
+    await resolveDigitalHumanOverlays(userId, request.input.params.overlays, request.input.params.clips[request.input.params.clips.length - 1].endSec);
+  }
   const input = await resolvePostProdInputSources({ userId: String(userId), input: request.input });
   const db = await getDb();
   if (!db) throw new Error("后期任务记录暂不可用，未创建任务");

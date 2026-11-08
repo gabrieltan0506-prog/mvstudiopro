@@ -1532,6 +1532,8 @@ export function CanvasMusicMvStudio({
               blocks={blocks}
               shotIds={state.shotBlockIds}
               disabled={busy}
+              projectId={projectId}
+              orientation={block.aspectRatio === "9:16" ? "portrait" : "landscape"}
               session={state.timelineEdits?.find(
                 s => s.draft.basePlanRequestId === state.planRequestId
               )}

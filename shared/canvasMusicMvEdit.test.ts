@@ -10,6 +10,9 @@ import {
   redoMusicMvEdit,
   musicMvEditIssues,
   musicMvEditPositions,
+  bindMusicMvStockFootage,
+  isMusicMvStockSource,
+  musicMvClipMatchesShot,
   type MusicMvEditSession,
 } from "./canvasMusicMvEdit";
 import { canvasMusicMvPlanSchema } from "./canvasMusicMv";
@@ -133,5 +136,72 @@ describe("真实剪辑决定", () => {
     expect(musicMvEditPositions(next.draft).map(x => x.startFrame)).toEqual([
       0, 120,
     ]);
+  });
+});
+
+const stockAsset = {
+  assetId: `sf_${"a".repeat(48)}`,
+  gcsUri: "gs://bucket/stock-footage/7/sf_a.mp4",
+  kind: "video" as const,
+  purpose: "mv" as const,
+  usage: "insert" as const,
+  durationSec: 12.4,
+};
+describe("图库素材绑定到MV片段", () => {
+  it("正向：生成镜头换成素材切片，绑定资产身份与源时长内裁点，可JSON往返", () => {
+    const next = bindMusicMvStockFootage(doc(), "b", stockAsset);
+    const clip = next.clips[1];
+    expect(clip.kind).toBe("footage");
+    expect(clip.source).toEqual({
+      url: stockAsset.gcsUri,
+      taskId: stockAsset.assetId,
+      durationSec: 12.4,
+    });
+    expect(clip.sourceInFrame).toBe(0);
+    expect(clip.durationFrames).toBe(150);
+    expect(next.clips[0]).toEqual(doc().clips[0]);
+    expect(isMusicMvStockSource(clip.source)).toBe(true);
+    expect(musicMvEditDocumentSchema.parse(JSON.parse(JSON.stringify(next)))).toEqual(next);
+    // 计划里是 generated，仍视为同一镜头；剪辑问题清单不报来源不一致。
+    expect(musicMvEditIssues(next, plan).join()).not.toContain("来源不一致");
+  });
+  it("正向：素材短于片段时收缩到素材可用帧，缺口交给剪辑问题提示", () => {
+    const next = bindMusicMvStockFootage(doc(), "b", { ...stockAsset, durationSec: 3.99 });
+    expect(next.clips[1].durationFrames).toBe(119);
+    expect(musicMvEditIssues(next, plan).join()).toContain("还缺");
+  });
+  it("反向：裁点超出图库素材向下取整帧数被拒绝", () => {
+    const next = bindMusicMvStockFootage(doc(), "b", { ...stockAsset, durationSec: 5.01 });
+    expect(next.clips[1].durationFrames).toBe(150);
+    expect(() => trimMusicMvClip(next, "b", 1, 150)).toThrow("裁点超出");
+  });
+  it("反向：对口型、参考图、非MV用途、照片、缺时长、过短或非gs地址一律拒绝", () => {
+    expect(() => bindMusicMvStockFootage(doc(), "a", stockAsset)).toThrow("对口型");
+    expect(() => bindMusicMvStockFootage(doc(), "x", stockAsset)).toThrow("不存在");
+    for (const bad of [
+      { usage: "reference" as const },
+      { purpose: "marketing" as const },
+      { kind: "photo" as const },
+      { assetId: "sf_123" },
+      { gcsUri: "https://videos.pexels.com/a.mp4" },
+    ])
+      expect(() => bindMusicMvStockFootage(doc(), "b", { ...stockAsset, ...bad })).toThrow("MV");
+    expect(() => bindMusicMvStockFootage(doc(), "b", { ...stockAsset, durationSec: undefined })).toThrow("时长");
+    expect(() => bindMusicMvStockFootage(doc(), "b", { ...stockAsset, durationSec: 0.4 })).toThrow("0.5秒");
+  });
+  it("反向：文档层拒绝图库源挂在非素材片段或存签名地址", () => {
+    const raw = JSON.parse(JSON.stringify(doc()));
+    raw.clips[1].source = { url: stockAsset.gcsUri, taskId: stockAsset.assetId, durationSec: 12 };
+    expect(() => musicMvEditDocumentSchema.parse(raw)).toThrow("素材切片");
+    raw.clips[1].kind = "footage";
+    raw.clips[1].source.url = "https://storage.googleapis.com/bucket/a.mp4?X-Goog-Signature=1";
+    expect(() => musicMvEditDocumentSchema.parse(raw)).toThrow("永久存储");
+  });
+  it("镜头匹配：只有非对口型镜头可被图库素材替换", () => {
+    const stockClip = { kind: "footage" as const, source: { url: stockAsset.gcsUri, taskId: stockAsset.assetId, durationSec: 12 } };
+    expect(musicMvClipMatchesShot({}, stockClip)).toBe(true);
+    expect(musicMvClipMatchesShot({ kind: "footage" }, stockClip)).toBe(true);
+    expect(musicMvClipMatchesShot({ kind: "singing" }, stockClip)).toBe(false);
+    expect(musicMvClipMatchesShot({}, { kind: "footage", source: { url: "gs://b/x.mp4", taskId: "canvas-task", durationSec: 5 } })).toBe(false);
   });
 });

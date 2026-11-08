@@ -18,8 +18,8 @@ export async function processPostProdJob(
 ): Promise<{ output: unknown; provider: string }> {
   const parsed = postProdJobInputSchema.parse(rawInput);
   if (parsed.action === "manhua_vfx") assertManhuaVfxWorker();
-  // worker 执行前重新核对素材登记约束(与入队同一把尺)
-  const input = await resolvePostProdInputSources({ userId, input: parsed });
+  // worker 执行前重新核对素材登记约束(与入队同一把尺);图库引用 stock:sf_… 在此才换成本人资产 gcsUri
+  const input = await resolvePostProdInputSources({ userId, input: parsed }, undefined, { materializeStock: true });
   const runOptions = { signal: options?.signal };
   switch (input.action) {
     case "digital_human_audio_split":

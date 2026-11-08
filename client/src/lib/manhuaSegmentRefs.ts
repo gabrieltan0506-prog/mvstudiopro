@@ -120,6 +120,27 @@ export function registerManhuaExistingClip(
   };
 }
 
+/**
+ * 1108 图库无人物空镜登记：沿用「登记已有成片」同一条链（版本历史/未质检放行/上传记录续签），
+ * 再把登记裁点写进 manhuaEditTrim（源片绝对秒，合成按它裁）。标记随 registered 位落草稿。
+ */
+export function registerManhuaStockEmptyShotClip(
+  block: CanvasBlock,
+  registration: {
+    entry: ManhuaSegmentReferenceEntry;
+    editTrim: { sourceDurationSec: number; inSec: number; outSec: number; updatedAt: number };
+  },
+): CanvasBlock {
+  if (!registration.entry.stockFootage || registration.entry.stockFootage.usage !== "empty_shot") {
+    throw new Error("图库空镜登记缺少「空镜·无人物」标记");
+  }
+  const registered = registerManhuaExistingClip(block, registration.entry);
+  return {
+    ...registered,
+    manhuaEditTrim: { ...registration.editTrim },
+  };
+}
+
 export function manhuaSegmentReferenceSummary(block: Pick<CanvasBlock, "manhuaSegmentRefs">): {
   previs?: ManhuaSegmentReferenceEntry;
   master?: ManhuaSegmentReferenceEntry;

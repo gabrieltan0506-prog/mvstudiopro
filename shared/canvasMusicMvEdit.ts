@@ -1,6 +1,11 @@
 import { z } from "zod";
 import type { CanvasMusicMvPlan } from "./canvasMusicMv";
 import { manhuaSourceVersionIdentity } from "./manhuaMultiview";
+import {
+  isStockAssetInsertable,
+  stockDurationFrames,
+  type StockFootageAsset,
+} from "./stockFootage";
 
 export const MV_EDIT_FPS = 30;
 export const MV_EDIT_MIN_FRAMES = 15;
@@ -42,10 +47,25 @@ export const musicMvEditDocumentSchema = z
         message: "剪辑片段编号重复",
       });
     doc.clips.forEach((c, i) => {
+      const stock = isMusicMvStockSource(c.source);
+      if (stock && c.kind !== "footage")
+        ctx.addIssue({
+          code: "custom",
+          path: ["clips", i, "kind"],
+          message: "图库素材只能作为素材切片入片",
+        });
+      if (stock && !MV_STOCK_GCS_URI.test(c.source!.url))
+        ctx.addIssue({
+          code: "custom",
+          path: ["clips", i, "source", "url"],
+          message: "图库素材只保存永久存储地址，不保存临时签名或第三方直链",
+        });
       if (
         c.source &&
         c.sourceInFrame + c.durationFrames >
-          Math.round(c.source.durationSec * MV_EDIT_FPS)
+          (stock
+            ? stockDurationFrames(c.source.durationSec, MV_EDIT_FPS)
+            : Math.round(c.source.durationSec * MV_EDIT_FPS))
       )
         ctx.addIssue({
           code: "custom",
@@ -55,6 +75,85 @@ export const musicMvEditDocumentSchema = z
     });
   });
 export type MusicMvEditClip = z.infer<typeof musicMvEditClipSchema>;
+export type MusicMvEditSource = z.infer<typeof musicMvEditSourceSchema>;
+
+/**
+ * 图库素材绑定合同：source.url 存采用资产的 gcsUri，source.taskId 存 assetId，
+ * durationSec 为资产时长。服务端凭 assetId 查本人采用记录核对，url 本身不作所有权证据。
+ */
+export const MV_STOCK_ASSET_ID = /^sf_[0-9a-f]{48}$/;
+const MV_STOCK_GCS_URI = /^gs:\/\/[^/?#]+\/[^?#]+$/;
+export function isMusicMvStockSource(
+  source: Pick<MusicMvEditSource, "taskId"> | undefined
+): boolean {
+  return !!source?.taskId && MV_STOCK_ASSET_ID.test(source.taskId);
+}
+/**
+ * 片段与原计划镜头的制作方式是否一致。唯一例外：非对口型镜头可被本人已采用的
+ * 图库素材替换为素材切片（对口型必须保留原唱段与人物）。
+ */
+export function musicMvClipMatchesShot(
+  shot: { kind?: "generated" | "singing" | "footage" },
+  clip: Pick<MusicMvEditClip, "kind" | "source">
+): boolean {
+  const planned = shot.kind || "generated";
+  if (planned === clip.kind) return true;
+  return (
+    clip.kind === "footage" &&
+    planned !== "singing" &&
+    isMusicMvStockSource(clip.source)
+  );
+}
+export type MusicMvStockBinding = Pick<
+  StockFootageAsset,
+  "assetId" | "gcsUri" | "kind" | "purpose" | "usage" | "durationSec"
+>;
+/**
+ * 把已采用的图库视频绑定到某片段：改为素材切片，入点归零，时长保持原片段
+ * （素材较短时收缩到素材可用帧数，缺口由剪辑问题提示），不改其他片段。
+ */
+export function bindMusicMvStockFootage(
+  doc: MusicMvEditDocument,
+  clipId: string,
+  asset: MusicMvStockBinding
+): MusicMvEditDocument {
+  const clip = doc.clips.find(c => c.id === clipId);
+  if (!clip) throw new Error("片段不存在");
+  if (clip.kind === "singing")
+    throw new Error("对口型镜头须保留原唱段，不能替换为图库素材");
+  if (
+    asset.kind !== "video" ||
+    asset.purpose !== "mv" ||
+    !isStockAssetInsertable(asset) ||
+    !MV_STOCK_ASSET_ID.test(asset.assetId) ||
+    !MV_STOCK_GCS_URI.test(asset.gcsUri)
+  )
+    throw new Error("只能使用为 MV 采用、可直接入片的图库视频");
+  const durationSec = asset.durationSec;
+  if (!durationSec || !Number.isFinite(durationSec) || durationSec <= 0)
+    throw new Error("图库视频缺少时长，无法裁切");
+  const available = stockDurationFrames(durationSec, MV_EDIT_FPS);
+  if (available < MV_EDIT_MIN_FRAMES)
+    throw new Error("图库视频短于0.5秒，不能入片");
+  return musicMvEditDocumentSchema.parse({
+    ...doc,
+    clips: doc.clips.map(c =>
+      c.id === clipId
+        ? {
+            ...c,
+            kind: "footage",
+            sourceInFrame: 0,
+            durationFrames: Math.min(c.durationFrames, available),
+            source: {
+              url: asset.gcsUri,
+              taskId: asset.assetId,
+              durationSec,
+            },
+          }
+        : c
+    ),
+  });
+}
 export type MusicMvEditDocument = z.infer<typeof musicMvEditDocumentSchema>;
 export const musicMvEditReceiptSchema = z
   .object({
@@ -128,7 +227,7 @@ export function musicMvEditIssues(
     );
   for (const { clip, startFrame } of musicMvEditPositions(doc)) {
     const shot = plan.shots.find(s => s.id === clip.shotId);
-    if (!shot || (shot.kind || "generated") !== clip.kind) {
+    if (!shot || !musicMvClipMatchesShot(shot, clip)) {
       issues.push(`「${clip.title}」镜头来源不一致`);
       continue;
     }
