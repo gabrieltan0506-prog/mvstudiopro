@@ -1,7 +1,7 @@
 {
   "monitor": {
-    "at": "2026-11-08T08:10:22.318Z",
-    "round": 2,
+    "at": "2026-11-08T08:12:30.043Z",
+    "round": 4,
     "stage": "layout_running",
     "batches": {
       "done": 50,
@@ -411,10 +411,10 @@
     ]
   },
   "live": {
-    "at": "2026-11-08T08:08:41.188Z",
-    "stage": "interior_layout_pdf",
+    "at": "2026-11-08T08:12:41.624Z",
+    "stage": "publication_failed",
     "summary": null,
-    "error": null,
+    "error": "暂时未能完成，请继续已保存的任务。原稿和已完成内容均已保留。",
     "done": null,
     "total": null
   }
