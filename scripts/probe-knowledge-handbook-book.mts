@@ -102,7 +102,11 @@ async function prepare(){
     const slice=resolveKnowledgeCardPageSource(markdown,paging).source;
     const refs=await resolveKnowledgeCardReferencePageUrls({userId:Number(owner),pageText:slice,fullMarkdown:markdown});
     const prompt=buildSinglePageKnowledgeCardImagePrompt(markdown,{...paging,referencePageCount:refs.length});
-    if(!prompt.includes(template!.labelZh)||prompt.includes('〔参考原页'))throw Error('模板或参考标记消费异常');
+    if(!prompt.includes(template!.labelZh)||prompt.includes('〔参考原页')){
+      const marker=prompt.match(/〔参考原页[^〕\n]{0,80}〕?/)?.[0]||'';
+      await fs.appendFile(path.join(root,'preview-issues.log'),JSON.stringify({page:index+1,hasTemplate:prompt.includes(template!.labelZh),marker,sliceMarker:slice.match(/〔参考原页[^〕\n]{0,80}〕?/)?.[0]||''})+'\n');
+      throw Error(`第${index+1}页生图输入异常：${prompt.includes(template!.labelZh)?'参考原页标记未剥离':'模板未注入'}`);
+    }
     pages[index]={pageIndex:index+1,chars:slice.length,body:slice,referencePages:refs.length,prompt};
   }}));
   const manuscriptSha256=createHash('sha256').update(markdown).digest('hex');
