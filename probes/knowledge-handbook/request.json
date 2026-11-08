@@ -1,6 +1,6 @@
 {
   "id": "xuezhi-relayout-1108a",
-  "action": "status",
+  "action": "start",
   "script": "scripts/probe-knowledge-handbook-relayout.mts",
   "machine": "7812595b294778",
   "config": {
