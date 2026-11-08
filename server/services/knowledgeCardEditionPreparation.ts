@@ -5,9 +5,10 @@ import {measureKnowledgeBookletFromWorker} from './pdfWorkerClient';
 import {guardKnowledgeEditionEvidence,rethrowKnowledgeEditionInvariant,knowledgeEditionErrorMessage} from './knowledgeEditionRecovery';
 import {hasKnowledgeBody} from '../../shared/knowledgeEditionIssues';
 import {knowledgeEditionParts} from '../../shared/knowledgeCardEdition';
-import {planKnowledgeCardPages} from '../../shared/knowledgeCardPagination';
+import {knowledgeEditionImagePlan,planKnowledgeCardPages} from '../../shared/knowledgeCardPagination';
 import {KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST} from './knowledgeModelCapabilities';
 import {verifyKnowledgeEditionManuscripts} from './knowledgeEditionFinalVerification';
+import {nameKnowledgeEditionTopics} from './knowledgeTopicTitles';
 
 import {deriveKnowledgeCardCompact} from './knowledgeCardLevelDerive';
 import {createHash} from 'node:crypto';
@@ -54,13 +55,18 @@ export async function prepareKnowledgeCardEditions(params:{
   if(prior){
     if(prior.inputDigest!==inputDigest)throw Error('原稿版本变化，保留原回执');
     if(prior.compositionVersion!==EDITION_COMPOSITION_VERSION)throw Error('此任务保存的是旧版浓缩结果，已保留原回执；不能当作原逻辑恢复结果或自动重新购买');
-    const result=auditEditionResult(prior.result);
-    // 缓存正文不重购；图片计数由当前共用分页器重算，文字物理页保持原实测值。
+    const cached=auditEditionResult(prior.result);
+    // 缓存正文不重购；主题命题按已存回执回放，缺回执时只补一次廉价命题（失败回退机械标题）。
+    const [fullTitled,conciseTitled]=await Promise.all([cached.fullEditionMarkdown,cached.markdown].map(markdown=>
+      nameKnowledgeEditionTopics({markdown,model:params.model,evidence,invoke:params.invoke,abortSignal:params.abortSignal})));
+    const result={...cached,fullEditionMarkdown:fullTitled!.markdown,markdown:conciseTitled!.markdown};
+    // 图片计数由当前共用分页器重算，文字物理页保持原实测值。
     if(!result.editionPageCounts)return result;
     return {...result,editionPageCounts:Object.fromEntries((['full','concise'] as const).map(level=>{
       const markdown=level==='full'?result.fullEditionMarkdown:result.markdown;
       const imagePages=planKnowledgeCardPages(markdown,params.model).pageCount;
-      const textChars=(knowledgeEditionParts(markdown)?.modules||[]).filter(m=>m.medium==='text').reduce((sum,m)=>sum+m.body.replace(/\s+/g,'').length,0);
+      // 内文 = 独立文字模块 + 各主题图的图外细节（图内≤1200字，其余全部进内文）。
+      const textChars=knowledgeEditionImagePlan(markdown)?.readingChars||0;
       return [level,{...result.editionPageCounts[level],imagePages,pageBudget:knowledgeEditionBudgetCheck(level,imagePages,textChars)}];
     }))};
   }
@@ -175,7 +181,11 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
   }
   const verified=await verifyKnowledgeEditionManuscripts(finalPages,{...evidence,prefix:`${evidence.prefix}/final-verification`},finalInvoke,params.onProgress);
   const verifiedModules=verified.flatMap((body,index)=>knowledgeModulesFromMarkdown(body).modules.map(module=>({...module,priority:modules[index]?.priority||'secondary'})));
-  const editions=compileKnowledgeEditions(original.title,verifiedModules);
+  const compiled=compileKnowledgeEditions(original.title,verifiedModules);
+  // 主题图命题：两档并发各一次廉价批量调用，原始/解析回包永久保存；失败回退机械标题，不阻断。
+  const [fullTitled,conciseTitled]=await Promise.all([compiled.full,compiled.concise].map(markdown=>
+    nameKnowledgeEditionTopics({markdown,model:params.model,evidence,invoke:finalInvoke,abortSignal:params.abortSignal})));
+  const editions={full:fullTitled!.markdown,concise:conciseTitled!.markdown};
   // 正式分页检查点：两档原稿先保存，再逐个实际图片页及文字章节保存。
   // 这里的图片页是实际出图分页；文字物理页仍由正式Booklet/PDF渲染器测量。
   const verification=await evidence.read(`${evidence.prefix}/final-verification/verified.json`);
@@ -190,8 +200,8 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
     try{
       const plan=planKnowledgeCardPages(markdown,params.model);
       editionPageCounts[level].imagePages=plan.pageCount;
-      // 生图前按图文比例预检（完整版图:文≈3:1–2:1，精华版1:2–1:3）；只提示不阻断，略超无妨。
-      const textChars=parts.modules.filter(m=>m.medium==='text').reduce((sum,m)=>sum+m.body.replace(/\s+/g,'').length,0);
+      // 生图前预检（完整版≤16张主题图、总页数≤72；精华版≤8张、图:文1:2–1:3）；只提示不阻断，略超无妨。
+      const textChars=knowledgeEditionImagePlan(markdown)?.readingChars||0;
       editionPageCounts[level].pageBudget=knowledgeEditionBudgetCheck(level,plan.pageCount,textChars);
       for(const [index,body] of Array.from(plan.pages.entries()))await evidence.save(`${evidence.prefix}/pages/${level}/images/${index}.json`,{inputDigest,pageIndex:index,body,status:'saved'});
     }catch(error){rethrowKnowledgeEditionInvariant(error);issues.push({kind:'pagination',message:knowledgeEditionErrorMessage(error),level});}

@@ -46,7 +46,8 @@ export function compileKnowledgeEditions(title: string, modules: KnowledgeEditio
 export function knowledgeEditionParts(markdown: string) {
   const match = markdown.match(editionMarker);
   if (!match) return null;
-  const clean=markdown.slice(match[0].length);
+  // 主题图标题注释只供出图规划读取，不属于正文。
+  const clean=markdown.slice(match[0].length).replace(/<!-- knowledge-topic-titles:v1 \{[\s\S]*?\} -->\n?/,'');
   const title=clean.match(/^#\s+(.+)$/m)?.[1]||'图文知识手册';
   const parts=clean.split(/(?=^##\s+)/m);
   const modules=parts.filter(s=>/^##\s+/.test(s)).map((s,index)=>{

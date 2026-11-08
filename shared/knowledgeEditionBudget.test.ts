@@ -3,11 +3,12 @@ import { knowledgeBudgetInstructions, knowledgeEditionBudgetCheck, knowledgeEdit
 import { attachKnowledgeTextModules } from "./knowledgeTextAttachment";
 
 describe("图文比例页数预算（用户2026-11-08确认）", () => {
-  it("完整版48图：内文16–24页，目标22页，总页数不超过72", () => {
-    const b = knowledgeEditionPageBudget("full", 48);
-    expect(b.textPages).toEqual({ min: 16, target: 22, max: 24 });
+  it("完整版改按主题出图后守总页数≤72：16图时内文5–56页，按图外细节实际需要排", () => {
+    const b = knowledgeEditionPageBudget("full", 16);
+    expect(b.textPages).toEqual({ min: 5, target: 56, max: 56 });
     expect(b.totalPages.max).toBe(72);
-    expect(b.totalPages.target).toBe(70);
+    // 旧 48 图稿仍不超过 72 页
+    expect(knowledgeEditionPageBudget("full", 48).totalPages.max).toBe(72);
   });
   it("精华版图:内文1:2–1:3", () => {
     expect(knowledgeEditionPageBudget("concise", 8).textPages).toEqual({ min: 16, target: 20, max: 24 });
@@ -16,10 +17,16 @@ describe("图文比例页数预算（用户2026-11-08确认）", () => {
     const thin = knowledgeEditionBudgetCheck("concise", 8, 3000);
     expect(thin.warnings.join("")).toContain("不硬凑篇幅");
     expect(thin.plannedTextPages).toBe(16);
-    const heavy = knowledgeEditionBudgetCheck("full", 48, 200000);
-    expect(heavy.plannedTextPages).toBe(22);
-    expect(heavy.plannedTotalPages).toBe(70);
+    const heavy = knowledgeEditionBudgetCheck("full", 16, 200000);
+    expect(heavy.plannedTextPages).toBe(56);
+    expect(heavy.plannedTotalPages).toBe(72);
     expect(heavy.warnings.join("")).toContain("合并去重");
+    // 敦煌量级：16张主题图、约7.3万字图外细节 → 内文约48页，总页数在72内且无超额提示
+    const dunhuang = knowledgeEditionBudgetCheck("full", 16, 73000);
+    expect(dunhuang.plannedTextPages).toBe(48);
+    expect(dunhuang.plannedTotalPages).toBeLessThanOrEqual(72);
+    expect(dunhuang.warnings).toEqual([]);
+    expect(knowledgeEditionBudgetCheck("concise", 8, 76000).warnings.join("")).toContain("不重复图中内容");
   });
   it("按图外资料多少分配整页，完整版总预算不超过上限", () => {
     const pages = Array.from({ length: 48 }, (_, i) => ({ id: `p${i}`, headline: `章${i}`, body: "图中文字".repeat(250), imageJobId: `job-${i}`, supplement: i % 4 === 0 ? "图外资料".repeat(1500) : "" }));

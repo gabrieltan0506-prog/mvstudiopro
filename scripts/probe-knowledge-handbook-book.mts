@@ -30,7 +30,7 @@ import {buildSinglePageKnowledgeCardImagePrompt,resolveKnowledgeCardPageSource} 
 import {resolveKnowledgeCardReferencePageUrls} from '../server/services/knowledgeCardDocumentPages';
 import {synchronizedKnowledgeCardSource} from '../shared/knowledgeCardEditableLayout';
 import {layoutFromSource,layoutLibrarySchema} from '../shared/editableLayout';
-import {knowledgeCardCreditsForPageIndex,planKnowledgeCardPages} from '../shared/knowledgeCardPagination';
+import {knowledgeCardCreditsForPageIndex,knowledgeEditionImagePlan,planKnowledgeCardPages} from '../shared/knowledgeCardPagination';
 import {knowledgeEditionParts} from '../shared/knowledgeCardEdition';
 import {knowledgeEditionBudgetCheck} from '../shared/knowledgeEditionBudget';
 import {getGraphicNoteFusionTemplate} from '../shared/graphicNoteFusionTemplates';
@@ -93,8 +93,8 @@ async function prepare(){
   const parts=knowledgeEditionParts(markdown);if(!parts||parts.level!==level)throw Error('档位身份不符');
   const plan=planKnowledgeCardPages(markdown,distillModel),quote=await quoteKnowledgeCard(Number(owner),markdown,distillModel);
   if(quote.pageCount!==plan.pageCount)throw Error('分页与报价不一致');
-  const textChars=parts.modules.filter(m=>m.medium==='text').reduce((n,m)=>n+m.body.replace(/\s+/g,'').length,0);
-  const budget=knowledgeEditionBudgetCheck(level,plan.pageCount,textChars);
+  const topics=knowledgeEditionImagePlan(markdown)!;
+  const budget=knowledgeEditionBudgetCheck(level,plan.pageCount,topics.readingChars);
   // 正式生成器逐页编译实际输入（并发），供用户确认；不提交图片。
   const pages:any[]=new Array(plan.pageCount);let next=0;
   await Promise.all(Array.from({length:6},async()=>{while(next<plan.pageCount){const index=next++;
@@ -107,12 +107,14 @@ async function prepare(){
       await fs.appendFile(path.join(root,'preview-issues.log'),JSON.stringify({page:index+1,hasTemplate:prompt.includes(template!.labelZh),marker,sliceMarker:slice.match(/〔参考原页[^〕\n]{0,80}〕?/)?.[0]||''})+'\n');
       throw Error(`第${index+1}页生图输入异常：${prompt.includes(template!.labelZh)?'参考原页标记未剥离':'模板未注入'}`);
     }
-    pages[index]={pageIndex:index+1,chars:slice.length,body:slice,referencePages:refs.length,prompt};
+    const topic=topics.images[index]!;
+    if(topic.body!==slice)throw Error(`第${index+1}页主题图切片与规划不一致`);
+    pages[index]={pageIndex:index+1,chars:slice.length,visibleChars:slice.replace(/\s+/g,'').length,sections:topic.headlines.length,imageTitle:topic.title,readingTitle:topic.readingTitle,overflowChars:topic.overflow.replace(/\s+/g,'').length,body:slice,referencePages:refs.length,prompt};
   }}));
   const manuscriptSha256=createHash('sha256').update(markdown).digest('hex');
-  await fs.writeFile(path.join(root,'image-preview.md'),`# ${parts.title} · ${level==='full'?'完整版':'精华版'}逐页生图输入\n\n模板：${template.labelZh}；主体居中；${plan.pageCount}张，产品报价${quote.credits}积分。\n\n页数预算：图文同页${budget.budget.imagePages}页 · 内文约${budget.plannedTextPages}页（建议${budget.budget.textPages.min}–${budget.budget.textPages.max}）· 合计约${budget.plannedTotalPages}页\n${budget.warnings.map(w=>`- ${w}`).join('\n')}\n\n`+pages.map(p=>`## 第${p.pageIndex}页 · ${p.chars}字 · 参考原页${p.referencePages}张\n\n### 图内文字\n\n${p.body}\n\n### 实际生图指令\n\n\`\`\`\n${p.prompt}\n\`\`\``).join('\n\n'));
+  await fs.writeFile(path.join(root,'image-preview.md'),`# ${parts.title} · ${level==='full'?'完整版':'精华版'}逐页生图输入\n\n模板：${template.labelZh}；主体居中；${plan.pageCount}张，产品报价${quote.credits}积分。\n\n出图规则：每张图为一个主题的核心图解，图内≤1200字；图数按主题定（完整版≤16、精华版≤8）；图外细节全部进内文（图在上、内文在下及续页），不受1200字限制。\n\n页数预算：图文同页${budget.budget.imagePages}页 · 内文约${budget.plannedTextPages}页（建议${budget.budget.textPages.min}–${budget.budget.textPages.max}）· 合计约${budget.plannedTotalPages}页；内文资料约${topics.readingChars}字\n${budget.warnings.map(w=>`- ${w}`).join('\n')}\n\n`+pages.map(p=>`## 第${p.pageIndex}页 · ${p.chars}字（不含空白${p.visibleChars}字）· 含${p.sections}节 · 图外细节${p.overflowChars}字进内文 · 参考原页${p.referencePages}张\n\n图片标题：${p.imageTitle}；图下内文标题：${p.readingTitle}\n\n### 图内文字\n\n${p.body}\n\n### 实际生图指令\n\n\`\`\`\n${p.prompt}\n\`\`\``).join('\n\n'));
   await fs.writeFile(path.join(root,'editions.json'),JSON.stringify({full:derived.fullEditionMarkdown,concise:derived.distilledMarkdown,counts:derived.editionPageCounts,issues:derived.editionIssues,pending:derived.editionPendingVerification}));
-  await write('live.json',{stage:'awaiting_image_confirmation',ids,title:parts.title,level,template:template.id,pageCount:plan.pageCount,credits:quote.credits,manuscriptSha256,budget:{totalPages:budget.budget.totalPages,plannedTotalPages:budget.plannedTotalPages,warnings:budget.warnings.length}});
+  await write('live.json',{stage:'awaiting_image_confirmation',ids,title:parts.title,level,template:template.id,pageCount:plan.pageCount,credits:quote.credits,manuscriptSha256,readingChars:topics.readingChars,imageChars:pages.map(p=>p.chars),budget:{plannedTextPages:budget.plannedTextPages,totalPages:budget.budget.totalPages,plannedTotalPages:budget.plannedTotalPages,warnings:budget.warnings.length}});
 }
 
 async function run(){
