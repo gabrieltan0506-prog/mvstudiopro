@@ -47,7 +47,8 @@ if(config.scan){
   const base=`knowledge-publications/user-${user.id}/${doc.id}/${config.scan}`;
   const names=(await listGcsObjectNamesByPrefix({prefix:base,allPages:true})).filter(n=>/route-[^/]+\.json$/.test(n));
   const failing:any[]=[];
-  for(const name of names){const rec=await inspect(name,name.slice(base.length));if(rec.parseOk===false)failing.push(rec);}
+  const all:any[]=[];for(const name of names){const rec=await inspect(name,name.slice(base.length));all.push({name:rec.name,state:rec.state,parseOk:rec.parseOk,model:rec.model});if(rec.parseOk===false)failing.push(rec);}
+  (out as any).allReceipts=all;
   out.scan={base:config.scan,routeReceipts:names.length,failing};
 }
 for(const batchIndex of (config.batchIndexes||[]) as number[]){
