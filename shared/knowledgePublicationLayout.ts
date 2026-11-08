@@ -7,6 +7,23 @@ import { Marked } from "marked";
 const text = (max: number) => z.string().trim().min(1).max(max);
 const base = { title: text(160), note: z.string().max(1500).default("") };
 const item = z.object({ title: text(160), body: text(3000) }).strict();
+export const KNOWLEDGE_READING_ACCENTS = ["indigo", "jade", "ochre", "rose"] as const;
+const ACCENT_HINTS: [RegExp, (typeof KNOWLEDGE_READING_ACCENTS)[number]][] = [
+  [/indigo|blue|navy|azure|cyan|teal|slate|ink|靛|蓝|藍|青|墨|黛/i, "indigo"],
+  [/jade|green|emerald|olive|sage|mint|翠|绿|綠|玉|松|竹/i, "jade"],
+  [/ochre|gold|amber|yellow|brown|earth|sand|tan|bronze|copper|orange|赭|金|黄|黃|褐|土|铜|銅|橙/i, "ochre"],
+  [/rose|red|pink|crimson|cinnabar|vermilion|coral|plum|magenta|purple|violet|朱|红|紅|粉|绛|絳|紫|胭脂/i, "rose"],
+];
+/**
+ * accent 只是四选一的强调色，不承载知识。排版批次约半数首发失败都因模型写了 "teal"/"cinnabar" 之类近义色名
+ * （2026-11-08 血脂本诊断），按色系归入最近的允许值；无法判断时用 indigo，不因装饰色整批重购。
+ */
+export function normalizeKnowledgeAccent(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const raw = value.trim().toLowerCase();
+  if ((KNOWLEDGE_READING_ACCENTS as readonly string[]).includes(raw)) return raw;
+  return ACCENT_HINTS.find(([pattern]) => pattern.test(raw))?.[1] ?? "indigo";
+}
 /** 模型只组织知识结构，不能提供 HTML、样式或可执行代码。 */
 export const knowledgeReadingBlockSchema = z.discriminatedUnion("type", [
   z.object({ ...base, type: z.literal("prose"), text: text(12000) }).strict(),
@@ -20,7 +37,7 @@ export const knowledgeReadingSchema = z.object({
   templateReason: z.string().trim().min(1).max(500).optional(),
   decoration: knowledgeDecorationSchema.optional(),
   subtitle: z.string().max(400),
-  accent: z.enum(["indigo", "jade", "ochre", "rose"]),
+  accent: z.preprocess(normalizeKnowledgeAccent, z.enum(KNOWLEDGE_READING_ACCENTS)),
   blocks: z.array(knowledgeReadingBlockSchema).min(1).max(40),
 }).strict().superRefine((reading, ctx) => {
   for (const block of reading.blocks) {

@@ -4,6 +4,17 @@ import type { EditableLayout } from "./editableLayout";
 import type { KnowledgeReview } from "./knowledgePublication";
 import { knowledgeReadingSchema, knowledgeReadingMarkdown } from "./knowledgePublicationLayout";
 
+/** 模型偶尔把 reading.subtitle 写到 presentation 层；归位到 reading（已有则保留 reading 的），其余未知字段仍按合同拒收。 */
+function liftPresentationSubtitle(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !("subtitle" in value)) return value;
+  const { subtitle, ...rest } = value as Record<string, unknown>;
+  const reading = rest.reading;
+  if (typeof subtitle === "string" && reading && typeof reading === "object" && !Array.isArray(reading)) {
+    const r = reading as Record<string, unknown>;
+    if (typeof r.subtitle !== "string" || !r.subtitle.trim()) return { ...rest, reading: { ...r, subtitle } };
+  }
+  return rest;
+}
 /** 顾问只安排已保存章节；展示正文独立保存，完整底稿、原图和原审校不覆盖。 */
 export const knowledgeBookLayoutPlanSchema = z.object({
   kind: z.literal("knowledge_book_layout_v1"),
@@ -12,11 +23,11 @@ export const knowledgeBookLayoutPlanSchema = z.object({
     pageId: z.string().uuid(),
     design: knowledgeVisualDesignSchema.optional(),
     templateId: z.string().max(100).optional(),
-    presentation: z.object({
+    presentation: z.preprocess(liftPresentationSubtitle, z.object({
       reading: knowledgeReadingSchema,
       imageEvidencePageIds: z.array(z.string().uuid()),
       reason: z.string().trim().min(1).max(1500),
-    }).strict().optional(),
+    }).strict()).optional(),
   }).strict()).min(1),
 }).strict();
 export type KnowledgeBookLayoutPlan = z.infer<typeof knowledgeBookLayoutPlanSchema>;
