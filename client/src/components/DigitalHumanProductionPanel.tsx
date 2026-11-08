@@ -4,9 +4,9 @@ import { trpc } from "@/lib/trpc";
 import { currentDigitalHumanAudio, digitalHumanPending, digitalHumanVideoIsCurrent, prepareDigitalHumanVideo, type DigitalHumanDraft, type DigitalHumanMedia as Media, type DigitalHumanVideo } from "@shared/digitalHumanStudio";
 import { digitalHumanProductionInputSchema, digitalHumanSplitManifestSchema, type DigitalHumanProductionInput, type DigitalHumanProductionReceipt as Receipt } from "@shared/digitalHumanProduction";
 import { DigitalHumanMedia } from "./DigitalHumanStudio";
-import { StockFootagePanel } from "@/components/stockFootage/StockFootagePanel";
-import { isStockAssetInsertable, stockAttributionText, type StockFootageAssetView } from "@shared/stockFootage";
-import { DIGITAL_HUMAN_OVERLAY_MODE_LABEL, DIGITAL_HUMAN_OVERLAY_MAX_COUNT, DIGITAL_HUMAN_PHOTO_OVERLAY_MAX_SEC, DIGITAL_HUMAN_PHOTO_OVERLAY_MIN_SEC, assertDigitalHumanOverlays, digitalHumanOverlayIssues, digitalHumanOverlayRequest, placeDigitalHumanOverlay, type DigitalHumanOverlayDraft } from "@shared/digitalHumanOverlay";
+import { StockFootageDrawer, type StockFootagePick } from "@/components/stockFootage/StockFootageDrawer";
+import { DIGITAL_HUMAN_OVERLAY_MODE_LABEL, DIGITAL_HUMAN_OVERLAY_MAX_COUNT, DIGITAL_HUMAN_PHOTO_OVERLAY_MAX_SEC, DIGITAL_HUMAN_PHOTO_OVERLAY_MIN_SEC, assertDigitalHumanOverlays, digitalHumanOverlayIssues, digitalHumanOverlayRequest, type DigitalHumanOverlayDraft } from "@shared/digitalHumanOverlay";
+import { digitalHumanOverlayFromPick, digitalHumanOverlayGaps, digitalHumanOverlayTargetSec, digitalHumanSegmentAt, digitalHumanSpeechSegments } from "@/lib/digitalHumanOverlayTimeline";
 
 const message = (e: unknown) => e instanceof Error ? e.message : String(e);
 const labels = { digital_human_audio_split: "配音分段", digital_human_continuity_frame: "衔接尾帧", digital_human_final: "最终混音成片" };
@@ -23,7 +23,7 @@ export function DigitalHumanProductionPanel(props: {
   const alive = useRef(true), lock = useRef(false);
   const [segmentPrevis, setSegmentPrevis] = useState<Record<number, boolean>>({});
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
-  const [stockOpen, setStockOpen] = useState(false), [placeAt, setPlaceAt] = useState(0), [overlayUrls, setOverlayUrls] = useState<Record<string, string>>({});
+  const [stockTarget, setStockTarget] = useState<{ startSec: number; endSec?: number } | null>(null), [placeAt, setPlaceAt] = useState(0), [overlayUrls, setOverlayUrls] = useState<Record<string, string>>({});
   const api = trpc.useUtils();
   const queue = trpc.digitalHuman.queueProduction.useMutation({ retry: false });
   const audio = currentDigitalHumanAudio(props.draft);
@@ -92,18 +92,22 @@ export function DigitalHumanProductionPanel(props: {
   function saveOverlays(fn: (rows: DigitalHumanOverlayDraft[]) => DigitalHumanOverlayDraft[]) {
     try { latest.current.save(d => ({ ...d, mix: { ...d.mix, overlays: fn(d.mix.overlays ?? []) } })); } catch (e) { setError(message(e)); }
   }
-  function adoptOverlay(asset: StockFootageAssetView) {
+  // 口播时间轴条：口播段（有分段清单按清单，否则按句读估算）+ 覆盖轨空档；空档可直接打开抽屉找补充画面。
+  const speechSegments = approvedSec ? digitalHumanSpeechSegments(props.draft.script, approvedSec, plan?.manifest?.segments) : [];
+  const overlayGaps = approvedSec ? digitalHumanOverlayGaps(overlays, speechSegments, approvedSec) : [];
+  const stockSegment = stockTarget ? digitalHumanSegmentAt(speechSegments, stockTarget.startSec) : undefined;
+  /** 抽屉「采用并绑定」：裁点写进覆盖条目（视频 sourceInSec/durationSec，照片沿用固定展示时长），随制作稿 mix.overlays 保存。 */
+  async function pickOverlay(pick: StockFootagePick) {
     try {
-      if (asset.purpose !== "digital_human" || !isStockAssetInsertable(asset)) throw new Error("该素材不是为数字人补充画面采用的可入片素材");
       if (!approvedSec) throw new Error("请先试听并批准当前完整配音，再放置补充画面");
       const rows = latest.current.draft.mix.overlays ?? [];
-      const placed = placeDigitalHumanOverlay(rows, { kind: asset.kind, durationSec: asset.durationSec }, approvedSec, placeAt);
-      const row: DigitalHumanOverlayDraft = { assetId: asset.assetId, ...placed, mode: "overlay", kind: asset.kind, ...(asset.durationSec ? { sourceDurationSec: asset.durationSec } : {}), width: asset.width, height: asset.height, attribution: stockAttributionText(asset.source), pageUrl: asset.source.pageUrl };
-      setOverlayUrls(v => ({ ...v, [asset.assetId]: asset.url }));
+      const row = digitalHumanOverlayFromPick(rows, pick, approvedSec, stockTarget?.startSec ?? placeAt);
+      setOverlayUrls(v => ({ ...v, [pick.asset.assetId]: pick.asset.url }));
       saveOverlays(list => [...list, row].sort((a, b) => a.startSec - b.startSec));
-      setPlaceAt(Math.round((placed.startSec + placed.durationSec) * 1000) / 1000);
+      setPlaceAt(Math.round((row.startSec + row.durationSec) * 1000) / 1000);
+      setStockTarget(null);
       setError("");
-    } catch (e) { setError(message(e)); }
+    } catch (e) { setError(message(e)); throw e; }
   }
   function changeMix(next: DigitalHumanDraft["mix"]) { try { props.save(d => ({ ...d, mix: next })); } catch (e) { setError(message(e)); } }
   function finalInput(): DigitalHumanProductionInput {
@@ -175,11 +179,26 @@ export function DigitalHumanProductionPanel(props: {
       <p>在口播时间轴上叠加图库画面：覆盖期间只替换画面，口播声、字幕与混音保持不变；素材自带声音不会进入成片。照片按固定展示时长（{DIGITAL_HUMAN_PHOTO_OVERLAY_MIN_SEC}–{DIGITAL_HUMAN_PHOTO_OVERLAY_MAX_SEC}秒）显示。</p>
       {!approvedSec ? <p>请先批准当前完整配音，再放置补充画面。</p> : <>
         <p>口播总时长 {approvedSec.toFixed(2)} 秒 · 已放置 {overlays.length}/{DIGITAL_HUMAN_OVERLAY_MAX_COUNT} 条</p>
+        <div data-dh-overlay-timeline aria-label="口播时间轴" style={{ position: "relative", margin: "8px 0", userSelect: "none" }}>
+          <div style={{ position: "relative", height: 22, borderRadius: 4, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+            {speechSegments.map(s => <div key={s.index} title={s.text || `口播第${s.index + 1}段`} style={{ position: "absolute", top: 0, bottom: 0, left: `${(s.startSec / approvedSec) * 100}%`, width: `${((s.endSec - s.startSec) / approvedSec) * 100}%`, borderLeft: s.index ? "1px solid rgba(255,255,255,0.25)" : undefined, fontSize: 11, lineHeight: "22px", paddingLeft: 4, whiteSpace: "nowrap", overflow: "hidden", opacity: 0.75 }}>口播 {s.index + 1}</div>)}
+          </div>
+          <div style={{ position: "relative", height: 30, marginTop: 4 }}>
+            {overlays.map((o, i) => <div key={`${o.assetId}:${i}`} data-dh-overlay-block={i} title={`${o.kind === "photo" ? "照片" : "视频"} · ${o.startSec.toFixed(2)}–${(o.startSec + o.durationSec).toFixed(2)}秒`} style={{ position: "absolute", top: 0, bottom: 0, left: `${(o.startSec / approvedSec) * 100}%`, width: `${(o.durationSec / approvedSec) * 100}%`, borderRadius: 4, background: o.mode === "cutaway" ? "rgba(245,158,11,0.45)" : "rgba(16,185,129,0.45)", fontSize: 11, lineHeight: "30px", paddingLeft: 4, whiteSpace: "nowrap", overflow: "hidden" }}>已采用 {i + 1}</div>)}
+            {overlayGaps.map(g => <button key={`${g.startSec}-${g.endSec}`} type="button" data-dh-overlay-gap={g.segmentIndex} disabled={overlays.length >= DIGITAL_HUMAN_OVERLAY_MAX_COUNT} title={`口播第${g.segmentIndex + 1}段 · ${g.startSec.toFixed(2)}–${g.endSec.toFixed(2)}秒空档`}
+              onClick={() => setStockTarget({ startSec: g.startSec, endSec: g.endSec })}
+              style={{ position: "absolute", top: 0, bottom: 0, left: `${(g.startSec / approvedSec) * 100}%`, width: `${((g.endSec - g.startSec) / approvedSec) * 100}%`, borderRadius: 4, border: "1px dashed rgba(255,255,255,0.3)", background: "transparent", fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", padding: "0 4px" }}>＋找补充画面</button>)}
+          </div>
+        </div>
         <label>下一条放置起点（秒）<input type="number" min={0} max={approvedSec} step={0.1} value={placeAt} onChange={e => setPlaceAt(Math.max(0, Number(e.target.value) || 0))} /></label>
-        <button type="button" disabled={overlays.length >= DIGITAL_HUMAN_OVERLAY_MAX_COUNT} onClick={() => setStockOpen(v => !v)}>{stockOpen ? "收起素材面板" : "打开素材面板选补充画面"}</button>
-        {stockOpen && <StockFootagePanel purpose="digital_human" usage="insert" compact defaultOrientation={props.draft.aspectRatio === "9:16" ? "portrait" : "landscape"}
-          initialQuery={props.draft.sceneDescription.trim().slice(0, 100) || undefined}
-          context={{ projectId: overlayProjectId, segmentId: props.draft.id, note: "数字人补充画面覆盖/回切" }} onAdopted={adoptOverlay} />}
+        <button type="button" disabled={overlays.length >= DIGITAL_HUMAN_OVERLAY_MAX_COUNT} onClick={() => setStockTarget({ startSec: placeAt })}>从放置起点找补充画面</button>
+        <StockFootageDrawer open={Boolean(stockTarget)} onClose={() => setStockTarget(null)}
+          title={`为口播 第 ${(stockSegment?.index ?? 0) + 1} 段 找补充画面`}
+          purpose="digital_human" usage="insert" orientation={props.draft.aspectRatio === "9:16" ? "portrait" : "landscape"}
+          targetDurationSec={digitalHumanOverlayTargetSec(stockTarget?.endSec !== undefined ? { startSec: stockTarget.startSec, endSec: stockTarget.endSec } : undefined)}
+          sourceText={(stockSegment?.text || props.draft.sceneDescription).trim().slice(0, 1000) || undefined}
+          context={{ projectId: overlayProjectId, segmentId: props.draft.id, note: `数字人补充画面 · 口播第${(stockSegment?.index ?? 0) + 1}段` }}
+          onPick={pickOverlay} />
       </>}
       {overlayIssues.map((issue, i) => <p key={i} role="alert">{issue.message}</p>)}
       {overlays.map((o, i) => { const url = overlayUrl(o.assetId); return <article key={`${o.assetId}:${i}`}>
