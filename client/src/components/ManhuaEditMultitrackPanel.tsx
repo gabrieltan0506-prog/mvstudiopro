@@ -422,10 +422,15 @@ export default function ManhuaEditMultitrackPanel({
               plannedDurationSec={segmentGroups?.find((segment) => segment.index === selectedSegment.sourceIndex)?.durationSec ?? Math.round(selectedSegment.durationSec * 10) / 10}
               projectId={stockProjectId}
               disabled={Boolean(factoryBusy) || registerClipBusy}
+              sourceText={selectedSegment.shots
+                .map((clip) => shots.find((shot) => shot.index === clip.shotIndex))
+                .map((shot) => [shot?.cameraZh, shot?.actionZh].filter(Boolean).join("，"))
+                .filter(Boolean)
+                .join("；") || undefined}
               onRegister={(pick) => onRegisterStockEmptyShot(selectedSegment.sourceIndex, pick)}
             />
           </div> : null}
-          {selectedSegmentMedia && stockEmptyShotCreditBySegment?.[selectedSegment.sourceIndex] ? <p data-manhua-edit-stock-empty-shot-badge={selectedSegment.sourceIndex} className="mt-2 text-[11px] text-emerald-200/80">空镜·无人物 · {stockEmptyShotCreditBySegment[selectedSegment.sourceIndex]} · Pexels License（只作场景过渡，不替代角色）</p> : null}
+          {selectedSegmentMedia && stockEmptyShotCreditBySegment?.[selectedSegment.sourceIndex] ? <p data-manhua-edit-stock-empty-shot-badge={selectedSegment.sourceIndex} className="mt-2 text-[11px] text-emerald-200/80">空镜·无人物（只作场景过渡，不替代角色）</p> : null}
           {selectedSegmentMedia ? <p className="mt-2 text-[11px] text-white/45">预览的是本段已生成源片；剪辑顺序、转场和字幕以「生成成片」后的当前版本为准。</p> : null}
         </div>
         <div className="flex min-h-0 min-w-0 flex-col rounded-xl border border-white/10 bg-white/[0.025] p-3">
