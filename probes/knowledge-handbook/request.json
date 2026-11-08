@@ -1,19 +1,5 @@
 {
-  "id": "xuezhi-reexport-1108n",
-  "action": "start",
-  "script": "scripts/probe-knowledge-handbook-relayout.mts",
-  "machine": "7812595b294778",
-  "collect": [
-    "handbook.pdf",
-    "live.json",
-    "run.log",
-    "ui-errors.log",
-    "export-response.json"
-  ],
-  "config": {
-    "level": "full",
-    "ownerJobId": "kc_f7e6e69c3c946ee107f170f6b93d4f0bb77e3c6427db7889adec4d4d",
-    "resumeDocumentId": "0dcb5641-ad69-40fc-bde2-59ef2e20444d",
-    "exportOnly": true
-  }
+  "id": "keygen-rig-1108g",
+  "action": "keygen",
+  "machine": "7812595b294778"
 }
