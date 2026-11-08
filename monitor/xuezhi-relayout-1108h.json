@@ -1,7 +1,7 @@
 {
   "monitor": {
-    "at": "2026-11-08T07:35:50.829Z",
-    "round": 6,
+    "at": "2026-11-08T07:37:57.806Z",
+    "round": 8,
     "stage": "layout_running",
     "batches": {
       "done": 50,
@@ -411,10 +411,10 @@
     ]
   },
   "live": {
-    "at": "2026-11-08T07:30:02.533Z",
-    "stage": "interior_layout_pdf",
+    "at": "2026-11-08T07:36:33.272Z",
+    "stage": "publication_failed",
     "summary": null,
-    "error": null,
+    "error": "本次整理返回的格式不完整或与原稿不符，未采用错误内容；原稿和已完成部分已保留。",
     "done": null,
     "total": null
   }
