@@ -88,4 +88,16 @@ describe("主题出图：图数按主题定、图内≤1200字、其余进内文
     expect(source.pages!.every(p => p.knowledgeRole === "illustration" && (p.supplement || "").length > 0)).toBe(true);
     source.pages!.forEach((page, i) => { if (plan.images[i]!.overflow) expect(page.supplement!.startsWith(plan.images[i]!.overflow)).toBe(true); });
   });
+
+  it("模型照抄字段名的占位标题不采用，回退机械标题与原小节标题", () => {
+    const titled = book.full.replace(/^(<!-- knowledge-edition:v2:full -->\n)/, (m) => {
+      const plan = knowledgeEditionImagePlan(book.full)!;
+      const map = Object.fromEntries(plan.images.map(i => [i.headlines.join("｜"), { image: "图片标题", reading: "图下内文标题", sections: Object.fromEntries(i.headlines.map(h => [h, "该节内文小标题"])) }]));
+      return `${m}<!-- knowledge-topic-titles:v1 ${JSON.stringify(map)} -->\n`;
+    });
+    const plan = knowledgeEditionImagePlan(titled)!;
+    expect(plan.images.every(i => i.title !== "图片标题" && i.readingTitle !== "图下内文标题")).toBe(true);
+    expect(plan.images[0]!.title).toMatch(/（等\d+节）$/);
+    expect(planKnowledgeCardPages(titled).pages.join("")).not.toContain("该节内文小标题");
+  });
 });

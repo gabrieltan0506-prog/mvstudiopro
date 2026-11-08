@@ -130,7 +130,10 @@ const TOPIC_TITLES_COMMENT = /<!-- knowledge-topic-titles:v1 (\{[\s\S]*?\}) -->\
 /** 每个主题：图片标题、图下内文标题，以及按原小节标题对应的内文小标题。 */
 export type KnowledgeTopicTitle = { image?: string; reading?: string; sections?: Record<string, string> };
 export type KnowledgeTopicTitles = Record<string, KnowledgeTopicTitle>;
-const cleanTitle = (v: unknown) => typeof v === "string" && v.trim() && !/[\n#]/.test(v) && v.trim().length <= 40 ? v.trim() : undefined;
+/** 模型照抄格式说明里的字段名（1108g2 实测全部回“图片标题/图下内文标题”）视为未命题，回退机械标题。 */
+export const KNOWLEDGE_TOPIC_TITLE_PLACEHOLDER = /^(?:图片标题|图下内文标题|内文标题|该节内文小标题|内文小标题|小节标题|主题标题|主题命题|标题|title)$/i;
+const cleanTitle = (v: unknown) => typeof v === "string" && v.trim() && !/[\n#]/.test(v) && v.trim().length <= 40
+  && !KNOWLEDGE_TOPIC_TITLE_PLACEHOLDER.test(v.trim()) ? v.trim() : undefined;
 export function readKnowledgeTopicTitles(markdown: string): KnowledgeTopicTitles {
   const raw = String(markdown || "").match(TOPIC_TITLES_COMMENT)?.[1];
   if (!raw) return {};

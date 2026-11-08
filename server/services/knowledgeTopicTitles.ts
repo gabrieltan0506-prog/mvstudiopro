@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 import { knowledgeEditionImagePlan } from "../../shared/knowledgeCardPagination";
 import {
+  KNOWLEDGE_TOPIC_TITLE_PLACEHOLDER,
   embedKnowledgeTopicTitles,
   knowledgeTopicKey,
   stripKnowledgeTopicTitles,
@@ -22,7 +23,7 @@ export const KNOWLEDGE_TOPIC_TITLES_VERSION = "topic-titles-v1";
 const MAX_TITLE = 24;
 const usable = (v: unknown) => {
   const t = typeof v === "string" ? v.replace(/^#+\s*/, "").trim() : "";
-  return t && t.length <= MAX_TITLE && !/[\n#|｜]/.test(t) ? t : undefined;
+  return t && t.length <= MAX_TITLE && !/[\n#|｜]/.test(t) && !KNOWLEDGE_TOPIC_TITLE_PLACEHOLDER.test(t) ? t : undefined;
 };
 
 /** 解析模型回包：blocks[0]=图片标题，blocks[1]=图下内文标题，其后按原顺序为各小节内文小标题。 */
