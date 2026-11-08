@@ -55,10 +55,22 @@ beforeAll(async () => {
               namespace: "offline",
             })
           );
+          // 找素材抽屉由共用组件负责检索与采用；此处以虚构抽屉只验证 MV 接线（入口→onPick→绑定写入）。
+          builder.onResolve(
+            { filter: /^@\/components\/stockFootage\/StockFootageDrawer$/ },
+            () => ({ path: "drawer", namespace: "offline" })
+          );
           builder.onLoad({ filter: /.*/, namespace: "offline" }, args => ({
             loader: "js",
+            resolveDir: process.cwd(),
             contents:
-              args.path === "trpc"
+              args.path === "drawer"
+                ? `import React from 'react';
+        export function StockFootageDrawer(p){const f=globalThis.fixture;f.drawer={open:p.open,title:p.title,purpose:p.purpose,usage:p.usage,kind:p.kind,orientation:p.orientation,targetDurationSec:p.targetDurationSec,sourceText:p.sourceText,context:p.context};if(!p.open)return null;
+          return React.createElement('div',{role:'dialog','aria-label':p.title},
+            React.createElement('button',{onClick:()=>{Promise.resolve(p.onPick({asset:f.stockAsset,inSec:2,outSec:7})).catch(e=>{f.pickError=String(e);});}},'采用测试素材'),
+            React.createElement('button',{onClick:p.onClose},'关闭抽屉'));}`
+                : args.path === "trpc"
                 ? `
         const f=()=>globalThis.fixture;
         const songGet=async({requestId})=>JSON.parse(localStorage.getItem('song-op-'+requestId));
@@ -176,12 +188,17 @@ describe("独立音乐MV真实视图（虚构任务边界）", () => {
       await page.waitForFunction(
         () => (window as any).fixture.state.shotBlockIds?.length === 2
       );
-      await click("合成完整 MV");
+      // 缺镜时合成按钮禁用并提示缺口，不发起合成。
       await page.waitForFunction(() =>
-        Array.from(document.querySelectorAll('[role="alert"]')).some(el =>
-          el.textContent?.includes("尚未出片")
-        )
+        document.body.textContent?.includes("还缺 2 个镜头素材")
       );
+      expect(
+        await page.evaluate(() =>
+          Array.from(document.querySelectorAll("button")).find(b =>
+            b.textContent?.includes("合成完整 MV")
+          )?.disabled
+        )
+      ).toBe(true);
       expect(
         await page.evaluate(() =>
           (window as any).fixture.calls.filter(
@@ -739,7 +756,8 @@ describe("歌曲创作与可保存剪辑新入口", () => {
         {},
         original[0]
       );
-      await page.click('[data-testid^="mv-clip-"]');
+      // 经镜头清单选中首个片段（点待素材占位会打开找素材抽屉）。
+      await page.click('[data-testid^="mv-shot-row-"] button');
       await page.addStyleTag({
         content:
           "[role=slider]{display:inline-block;width:8px;height:64px;touch-action:none;}",
@@ -800,6 +818,116 @@ describe("歌曲创作与可保存剪辑新入口", () => {
           () => (window as any).fixture.state.timelineEdits[0].versions.length
         )
       ).toBe(2);
+    } finally {
+      await context.close();
+    }
+  }, 30000);
+  it("待素材镜头→找素材抽屉→按入出点绑定→撤销重做→保存刷新恢复→合成缺口提示", async () => {
+    const { context, page, click, reload } = await open();
+    try {
+      await click("生成音乐");
+      await page.waitForFunction(
+        () => (window as any).fixture.state.candidates.length === 2
+      );
+      await click("采用 虚构音乐 · 版本 1");
+      await click("生成 MV 分镜");
+      await page.waitForFunction(() => !!(window as any).fixture.state.plan);
+      await click("确认分镜并铺到画布");
+      await page.waitForSelector('[aria-label="镜头清单"]');
+      // 时间线缺画面镜头显示虚线占位。
+      expect(
+        await page.$$eval('[data-testid^="mv-clip-"]', rows =>
+          rows.map(r => r.textContent)
+        )
+      ).toEqual([
+        expect.stringContaining("＋ 镜头01"),
+        expect.stringContaining("＋ 镜头02"),
+      ]);
+      expect(
+        await page.$eval('[aria-label="镜头清单"]', el => el.textContent)
+      ).toContain("待素材");
+      await page.evaluate(() => {
+        (window as any).fixture.stockAsset = {
+          assetId: "sf_" + "a".repeat(48),
+          gcsUri: "gs://test-bucket/stock-footage/7/sf_a.mp4",
+          kind: "video",
+          purpose: "mv",
+          usage: "insert",
+          durationSec: 12,
+          width: 1920,
+          height: 1080,
+          url: "https://test.invalid/sf_a.mp4",
+        };
+      });
+      await click("找素材");
+      await page.waitForSelector('[role="dialog"]');
+      const drawer = await page.evaluate(() => (window as any).fixture.drawer);
+      expect(drawer).toMatchObject({
+        open: true,
+        title: "为镜头01找素材",
+        purpose: "mv",
+        usage: "insert",
+        kind: "video",
+        // 离线夹具的音乐块默认 9:16，MV 画幅随之为竖屏。
+        orientation: "portrait",
+        targetDurationSec: 5,
+        context: { shotId: "shot-a" },
+      });
+      expect(drawer.sourceText).toContain("主角站在林间");
+      await click("采用测试素材");
+      await page.waitForFunction(
+        () => (window as any).fixture.state.timelineEdits?.[0]?.draft.clips[0].kind === "footage"
+      );
+      const bound = await page.evaluate(
+        () => (window as any).fixture.state.timelineEdits[0].draft.clips[0]
+      );
+      expect([bound.sourceInFrame, bound.durationFrames]).toEqual([60, 150]);
+      expect(bound.source).toEqual({
+        url: "gs://test-bucket/stock-footage/7/sf_a.mp4",
+        taskId: "sf_" + "a".repeat(48),
+        durationSec: 12,
+      });
+      expect(await page.$('[role="dialog"]')).toBeNull();
+      // 缩略画面需服务端签名读地址，离线夹具拦截全部网络请求，此处只验证图库标记。
+      expect(
+        await page.$eval('[data-testid^="mv-clip-"]', el => el.textContent)
+      ).toContain("图库");
+      expect(
+        await page.$eval('[aria-label="镜头清单"]', el => el.textContent)
+      ).toContain("已就绪");
+      expect(
+        await page.evaluate(() => document.body.textContent)
+      ).toContain("还缺 1 个镜头素材");
+      await click("撤销");
+      await page.waitForFunction(
+        () => !(window as any).fixture.state.timelineEdits[0].draft.clips[0].source
+      );
+      await click("重做");
+      await page.waitForFunction(
+        () => (window as any).fixture.state.timelineEdits[0].draft.clips[0].source?.taskId?.startsWith("sf_")
+      );
+      await click("保存剪辑版本");
+      await page.waitForFunction(
+        () => !!(window as any).fixture.state.timelineEdits?.[0]?.saved
+      );
+      await reload();
+      const restored = await page.evaluate(
+        () => (window as any).fixture.state.timelineEdits[0]
+      );
+      expect(restored.draft.clips[0].sourceInFrame).toBe(60);
+      expect(restored.saved.document.clips[0].source.taskId).toBe("sf_" + "a".repeat(48));
+      expect(
+        await page.evaluate(() =>
+          Array.from(document.querySelectorAll("button")).find(b =>
+            b.textContent?.includes("合成完整 MV")
+          )?.disabled
+        )
+      ).toBe(true);
+      expect(
+        await page.evaluate(() =>
+          (window as any).fixture.calls.filter((c: any) => c.kind === "assemble")
+        )
+      ).toHaveLength(0);
     } finally {
       await context.close();
     }

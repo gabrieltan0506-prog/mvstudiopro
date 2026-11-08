@@ -13,6 +13,8 @@ import {
   bindMusicMvStockFootage,
   isMusicMvStockSource,
   musicMvClipMatchesShot,
+  musicMvClipReadiness,
+  musicMvEditMaterialGap,
   type MusicMvEditSession,
 } from "./canvasMusicMvEdit";
 import { canvasMusicMvPlanSchema } from "./canvasMusicMv";
@@ -165,6 +167,17 @@ describe("图库素材绑定到MV片段", () => {
     // 计划里是 generated，仍视为同一镜头；剪辑问题清单不报来源不一致。
     expect(musicMvEditIssues(next, plan).join()).not.toContain("来源不一致");
   });
+  it("正向：抽屉窗口取整少 1 帧时保持整镜帧数，不让时间线少帧（审查阻断 1108）", () => {
+    expect(bindMusicMvStockFootage(doc(), "b", stockAsset, { sourceInFrame: 0, durationFrames: 149 }).clips[1].durationFrames).toBe(150);
+    const shifted = bindMusicMvStockFootage(doc(), "b", stockAsset, { sourceInFrame: 30, durationFrames: 149 });
+    expect(shifted.clips[1]).toMatchObject({ sourceInFrame: 30, durationFrames: 150 });
+    expect(musicMvEditIssues(shifted, plan).join()).not.toContain("还缺");
+  });
+  it("反向：用户明确收窄 2 帧以上的窗口仍按窗口写入；入点后素材不足时仍按可用帧收缩", () => {
+    expect(bindMusicMvStockFootage(doc(), "b", stockAsset, { sourceInFrame: 0, durationFrames: 148 }).clips[1].durationFrames).toBe(148);
+    // 12.4 秒 = 372 帧；入点 300 后只剩 72 帧
+    expect(bindMusicMvStockFootage(doc(), "b", stockAsset, { sourceInFrame: 300, durationFrames: 149 }).clips[1].durationFrames).toBe(72);
+  });
   it("正向：素材短于片段时收缩到素材可用帧，缺口交给剪辑问题提示", () => {
     const next = bindMusicMvStockFootage(doc(), "b", { ...stockAsset, durationSec: 3.99 });
     expect(next.clips[1].durationFrames).toBe(119);
@@ -203,5 +216,55 @@ describe("图库素材绑定到MV片段", () => {
     expect(musicMvClipMatchesShot({ kind: "footage" }, stockClip)).toBe(true);
     expect(musicMvClipMatchesShot({ kind: "singing" }, stockClip)).toBe(false);
     expect(musicMvClipMatchesShot({}, { kind: "footage", source: { url: "gs://b/x.mp4", taskId: "canvas-task", durationSec: 5 } })).toBe(false);
+  });
+});
+
+describe("抽屉裁点绑定（入点+时长）", () => {
+  it("正向：非零入点与所选窗口写入草稿，入点+时长不越过源时长，可撤销", () => {
+    const next = bindMusicMvStockFootage(doc(), "b", stockAsset, { sourceInFrame: 60, durationFrames: 150 });
+    expect([next.clips[1].sourceInFrame, next.clips[1].durationFrames]).toEqual([60, 150]);
+    expect(musicMvEditIssues(next, plan)).toEqual([]);
+    const s = commitMusicMvEdit({ draft: doc(), undo: [], redo: [], versions: [] }, next);
+    expect(undoMusicMvEdit(s).draft).toEqual(doc());
+  });
+  it("正向：入点靠后时收缩到入点后剩余帧数；窗口长于片段时不超出原片段", () => {
+    const short = bindMusicMvStockFootage(doc(), "b", { ...stockAsset, durationSec: 6 }, { sourceInFrame: 90, durationFrames: 150 });
+    expect([short.clips[1].sourceInFrame, short.clips[1].durationFrames]).toEqual([90, 90]);
+    expect(short.clips[1].sourceInFrame + short.clips[1].durationFrames).toBeLessThanOrEqual(180);
+    expect(musicMvEditIssues(short, plan).join()).toContain("还缺 2.00 秒");
+    const long = bindMusicMvStockFootage(doc(), "b", stockAsset, { sourceInFrame: 30, durationFrames: 300 });
+    expect(long.clips[1].durationFrames).toBe(150);
+    const narrow = bindMusicMvStockFootage(doc(), "b", stockAsset, { sourceInFrame: 30, durationFrames: 90 });
+    expect(narrow.clips[1].durationFrames).toBe(90);
+  });
+  it("反向：入点越过源时长、入点后不足0.5秒、负数/小数入点、过短窗口均拒绝且原文档不变", () => {
+    const original = doc();
+    const asset = { ...stockAsset, durationSec: 6 };
+    expect(() => bindMusicMvStockFootage(original, "b", asset, { sourceInFrame: 200 })).toThrow("入点");
+    expect(() => bindMusicMvStockFootage(original, "b", asset, { sourceInFrame: 170 })).toThrow("入点");
+    expect(() => bindMusicMvStockFootage(original, "b", asset, { sourceInFrame: -1 })).toThrow("入点无效");
+    expect(() => bindMusicMvStockFootage(original, "b", asset, { sourceInFrame: 1.5 })).toThrow("入点无效");
+    expect(() => bindMusicMvStockFootage(original, "b", asset, { sourceInFrame: 0, durationFrames: 10 })).toThrow("0.5秒");
+    expect(() => bindMusicMvStockFootage(original, "a", asset, { sourceInFrame: 30 })).toThrow("对口型");
+    expect(original).toEqual(doc());
+  });
+});
+
+describe("镜头画面状态与合成缺口", () => {
+  it("已绑定=已就绪；画布已有成片未同步=待同步；其余=待素材", () => {
+    const d = doc();
+    const bare = { ...d.clips[1], source: undefined };
+    expect(musicMvClipReadiness(d.clips[1])).toBe("ready");
+    expect(musicMvClipReadiness(bare, [{ id: "block-b", status: "done", outputUrl: "gs://x/b.mp4" }])).toBe("syncable");
+    expect(musicMvClipReadiness(bare, [{ id: "block-b", status: "running" }])).toBe("missing");
+    expect(musicMvClipReadiness(bare, [])).toBe("missing");
+  });
+  it("缺口计数：待同步也计入缺口（合成只消费已绑定源），全部就绪时为零", () => {
+    expect(musicMvEditMaterialGap(doc())).toEqual({ missing: 0, syncable: 0 });
+    const raw = JSON.parse(JSON.stringify(doc()));
+    delete raw.clips[0].source;
+    delete raw.clips[1].source;
+    const gap = musicMvEditMaterialGap(musicMvEditDocumentSchema.parse(raw), [{ id: "block-a", status: "done", outputUrl: "gs://x/a.mp4" }]);
+    expect(gap).toEqual({ missing: 2, syncable: 1 });
   });
 });

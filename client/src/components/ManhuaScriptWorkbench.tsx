@@ -43,7 +43,7 @@ import type { ManhuaSegmentReferenceEntry } from "@shared/manhuaSegmentReference
 import type { ManhuaDirectionCanon, ManhuaDirectionSceneType } from "@shared/manhuaDirectionCanon";
 import { listManhuaDirectionCards, MANHUA_DIRECTION_SCENE_TYPES, MANHUA_DIRECTION_SCENE_TYPE_LABEL_ZH } from "@shared/manhuaDirectionCanonLibrary";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
-import { StockFootagePanel } from "@/components/stockFootage/StockFootagePanel";
+import { StockFootageDrawer } from "@/components/stockFootage/StockFootageDrawer";
 import type { StockFootageAssetView } from "@shared/stockFootage";
 import { ManhuaSecondaryStudioSurface as SecondaryStudioSurface } from "./canvas/ManhuaSecondaryStudioSurface";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
@@ -6552,20 +6552,23 @@ clipPromptReviewOpen ? (
                       </div>
                     </div>
                     {expanded && sec.role === "scene" && stockSceneOpen && onAdoptStockSceneReference ? (
-                      <div className="mt-2 rounded-lg border border-white/10 p-2" data-manhua-stock-scene-panel>
-                        <p className="mb-1 text-[10px] text-white/45">图库照片只作场景参考（空间/画风），不直接入片、不能当人物或角色卡；署名随参考图保存。</p>
-                        <StockFootagePanel
-                          purpose="manhua"
-                          usage="reference"
-                          defaultKind="photo"
-                          compact
-                          context={{ projectId: stockProjectId, note: "漫剧场景参考图" }}
-                          onAdopted={(asset) => {
-                            onAdoptStockSceneReference(asset);
-                            setStockSceneOpen(false);
-                          }}
-                        />
-                      </div>
+                      <p className="mt-2 text-[10px] text-white/45" data-manhua-stock-scene-panel>图库照片只作场景参考（空间/画风），不直接入片、不能当人物或角色卡。</p>
+                    ) : null}
+                    {sec.role === "scene" && onAdoptStockSceneReference ? (
+                      <StockFootageDrawer
+                        open={expanded && stockSceneOpen}
+                        onClose={() => setStockSceneOpen(false)}
+                        title="为本集场景找参考图"
+                        purpose="manhua"
+                        usage="reference"
+                        kind="photo"
+                        context={{ projectId: stockProjectId, note: "漫剧场景参考图" }}
+                        confirmLabel="采用为场景参考"
+                        onPick={({ asset }) => {
+                          onAdoptStockSceneReference(asset);
+                          setStockSceneOpen(false);
+                        }}
+                      />
                     ) : null}
                     {expanded && refs.length ? (
                       <div

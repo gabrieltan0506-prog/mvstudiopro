@@ -167,8 +167,8 @@ export function stockAdoptionResponseFor(row: StockAdoptionRecord, deps: Pick<St
     return { ...base, status: "failed", message: row.output?.message || "素材未能采用，请换一个素材或重新采用" };
   const stale = deps.now().getTime() - new Date(row.updatedAt).getTime() > STOCK_ADOPT_STALE_MS;
   if (row.output?.lastError || stale)
-    return { ...base, status: "reconcile_manual", message: "素材入库未完成，可用同一采用编号继续，不会重复入库" };
-  return { ...base, status: "running", message: "素材正在入库" };
+    return { ...base, status: "reconcile_manual", message: "素材还在处理，可稍后继续，不会重复保存" };
+  return { ...base, status: "running", message: "素材正在处理" };
 }
 
 function extFor(mimeType: string, kind: "video" | "photo") {
@@ -237,7 +237,7 @@ export async function adoptStockFootage(
   let row = await deps.load(id, userId);
 
   if (row) {
-    if (row.input.digest !== digest) throw new StockFootageError("conflict", "该采用编号已用于其他素材，请重新发起采用");
+    if (row.input.digest !== digest) throw new StockFootageError("conflict", "这次采用与原素材不一致，请重新采用");
     const current = stockAdoptionResponseFor(row, deps);
     if (current.status === "succeeded" || current.status === "failed" || current.status === "running") return current;
     if (!(await deps.takeover(id, userId, new Date(row.updatedAt)))) {
@@ -256,7 +256,7 @@ export async function adoptStockFootage(
     if (!(await deps.claim(record))) {
       const latest = await deps.load(id, userId);
       if (!latest) throw new StockFootageError("upstream", "采用回执尚未保存，请稍后用同一编号查询");
-      if (latest.input.digest !== digest) throw new StockFootageError("conflict", "该采用编号已用于其他素材，请重新发起采用");
+      if (latest.input.digest !== digest) throw new StockFootageError("conflict", "这次采用与原素材不一致，请重新采用");
       return stockAdoptionResponseFor(latest, deps);
     }
     row = record;
@@ -309,7 +309,7 @@ export async function adoptStockFootage(
     const message = error instanceof Error ? error.message : String(error);
     await deps.save(id, userId, { ...output, lastError: message.slice(0, 500) }).catch(() => {});
     if (error instanceof StockFootageError && (error.kind === "not_configured" || error.kind === "rate_limited")) throw error;
-    return { assetId: id, requestId: params.requestId, status: "reconcile_manual", message: "素材入库未完成，可用同一采用编号继续，不会重复入库" };
+    return { assetId: id, requestId: params.requestId, status: "reconcile_manual", message: "素材还在处理，可稍后继续，不会重复保存" };
   }
 }
 

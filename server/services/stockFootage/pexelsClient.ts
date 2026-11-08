@@ -57,7 +57,7 @@ export type PexelsFetch = (url: string, init: RequestInit) => Promise<Response>;
 
 export function getPexelsApiKey(env: NodeJS.ProcessEnv = process.env): string {
   const key = (env.PEXELS_API_KEY || "").trim();
-  if (!key) throw new StockFootageError("not_configured", "素材检索尚未启用（服务端未配置 Pexels 密钥）");
+  if (!key) throw new StockFootageError("not_configured", "素材检索暂未开放，请稍后再试");
   return key;
 }
 
@@ -74,7 +74,7 @@ async function pexelsGet<T>(path: string, params: Record<string, string | number
   if (response.status === 429) throw new StockFootageError("rate_limited", "素材检索额度已用完，请稍后再试");
   if (response.status === 404) throw new StockFootageError("not_found", "素材不存在或已下架");
   if (response.status === 401 || response.status === 403)
-    throw new StockFootageError("not_configured", "素材检索密钥无效或尚未激活");
+    throw new StockFootageError("not_configured", "素材检索暂未开放，请稍后再试");
   if (!response.ok) throw new StockFootageError("upstream", `素材服务暂不可用（${response.status}）`);
   const json = (await response.json()) as T;
   return { json, rateLimitRemaining: Number.isFinite(remaining) ? remaining : undefined };

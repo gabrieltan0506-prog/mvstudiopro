@@ -260,7 +260,7 @@ export function buildManhuaSceneReferenceFromStock(
     gcsUri,
     role: "scene",
     refDuty: "space",
-    labelZh: `图库场景·${mark.authorName || "Pexels"}`.slice(0, 40),
+    labelZh: "图库场景",
     source: "upload",
     sourceWidth: asset.width,
     sourceHeight: asset.height,

@@ -476,7 +476,8 @@ export function normalizeManhuaCustomAssetRefs(
       id,
       url,
       role,
-      labelZh,
+      // 1108 图库参考：旧数据名称带作者/供应商（「图库场景·作者」），读出时统一为「图库场景」，前端不显示署名
+      labelZh: stockFootage && /^图库场景·/.test(labelZh || "") ? "图库场景" : labelZh,
       source,
       seedLibraryId,
       claimedAnchorIds,
