@@ -1,6 +1,8 @@
 /**
  * 营销 / 知识口播「制作稿 → 段落 → 画面 + 配音 → 后期导出」工作区（/platform?mode=create，营销方案下方）。
- * - 画面：共用素材面板（purpose=marketing, usage=insert）或本人上传的产品视频，数据上区分 stock / upload；
+ * - 画面：共用找素材抽屉（purpose=marketing, usage=insert，带入点/出点）或本人上传的产品视频，数据上区分 stock / upload；
+ *   「整稿找素材」只为无画面段落预取关键词与候选数（最多 3 段并发），不自动采用；
+ * - 时间线：段落下方「画面 / 旁白」双轨，按段落时长排布；
  * - 配音：复用 canvasAudio.generateDialogue / getDialogue（不改 TTS 与计费）；
  * - 导出：复用后期工坊 queuePostProd（bgm_mount 逐段贴配音 → concat 取段 + 同步字幕），getPostProdJob 查询；
  * - 恢复：草稿（编号、绑定、任务号）按登录用户存本机；任务与配音以服务端记录为准，刷新后续查不重复扣费。
@@ -9,27 +11,34 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { publicMarketingPlan } from "@shared/marketingPlanDisplay";
 import { uploadOneCanvasAsset } from "@/lib/canvasUpload";
-import { inspectDigitalHumanRecording } from "@/lib/digitalHumanRecording";
-import { StockFootagePanel } from "@/components/stockFootage/StockFootagePanel";
+import { StockFootageDrawer, type StockFootagePick } from "@/components/stockFootage/StockFootageDrawer";
+import { defaultMinDurationSec, keywordSourceText } from "@/components/stockFootage/stockFootageModel";
 import { canvasTtsCreditsForDuration } from "@shared/canvasGenerationPricing";
-import { QWEN_TTS_VOICE_CATALOG, buildQwenTtsVoiceId } from "@shared/qwenTtsVoiceCatalog";
+import { MarketingVoicePicker } from "./MarketingVoicePicker";
+import { MarketingSegmentTimeline, MarketingThumb } from "./MarketingSegmentTimeline";
 import {
   applyPostProdJobResult,
   auditMarketingExport,
   carryOverSegmentBindings,
   extractMarketingScriptSection,
   findRecoveredPostProdJob,
+  mapWithConcurrency,
   marketingConcatInput,
   marketingCreditLines,
   marketingDialogueRequest,
   marketingMountInput,
   marketingMountKey,
   marketingProductionStorageKey,
-  marketingStockQuery,
+  marketingSegmentTargetSec,
+  marketingSegmentTitle,
+  marketingStockSourceText,
+  marketingTrimOverrunSec,
   marketingVisualRef,
+  marketingVisualStartSec,
   marketingVoiceFromDialogue,
   marketingVoicePending,
   marketingVoiceReady,
+  marketingVoiceTrackState,
   newMarketingProductionDraft,
   nextMarketingExportStep,
   parseMarketingProductionDraft,
@@ -42,12 +51,14 @@ import {
 } from "@shared/marketingProduction";
 
 const buttonStyle = "rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-40";
-const MARKETING_CLONE_KEY = "mvs.marketing.cloneVoice.v1";
-const VOICES = QWEN_TTS_VOICE_CATALOG.filter(row => row.lang.includes("中文")).map(row => ({
-  id: buildQwenTtsVoiceId("plus", row.suffix),
-  label: `${row.nameZh} · ${row.gender} · ${row.traitZh}`,
-}));
 const ACTIVE_JOB = ["queued", "running"];
+/** 整稿找素材的并发上限。 */
+const PREFETCH_CONCURRENCY = 3;
+/** 与抽屉首屏同参（第 1 页、每页 18、默认最短时长），抽屉打开时直接命中同一份候选缓存。 */
+const PREFETCH_PER_PAGE = 18;
+
+/** 整稿找素材的预取结果（只在本次会话内，供抽屉直接带入关键词；不入稿、不自动采用）。 */
+type Prefetch = { sourceText: string; status: "loading" | "done" | "failed"; query?: string; queryZh?: string; count?: number };
 
 function newId(): string {
   return crypto.randomUUID();
@@ -85,27 +96,21 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
   const [draft, setDraft] = useState<MarketingProductionDraft>(() => loadDraft(userKey));
   const ref = useRef(draft);
   const [message, setMessage] = useState("");
-  const [openStock, setOpenStock] = useState<string | null>(null);
+  const [drawerSegmentId, setDrawerSegmentId] = useState<string | null>(null);
+  const [prefetch, setPrefetch] = useState<Record<string, Prefetch>>({});
+  const [prefetching, setPrefetching] = useState(false);
+  /** 本次会话上传素材的本机预览（刷新后不保留，只显示文件名占位）。 */
+  const [localPreview, setLocalPreview] = useState<Record<string, string>>({});
   const [finalUrl, setFinalUrl] = useState<string>();
   const [busy, setBusy] = useState(false);
   const utils = trpc.useUtils();
   const dialogue = trpc.canvasAudio.generateDialogue.useMutation();
   const queue = trpc.mvAnalysis.queuePostProd.useMutation();
   const upload = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
-  // 声线：本人克隆 / 自己设计 / 系统声线，三者都走现有 canvasAudio 服务，不另建 TTS 通道。
-  const referenceVoices = trpc.canvasAudio.listReferenceVoices.useQuery(undefined, { retry: false });
-  const designedVoices = trpc.canvasAudio.listDesignedVoices.useQuery(undefined, { retry: false });
-  const cloneVoice = trpc.canvasAudio.createReferenceVoice.useMutation();
-  const [cloneLabel, setCloneLabel] = useState("我的声音");
-  const [cloneConsent, setCloneConsent] = useState(false);
-  const [cloneBusy, setCloneBusy] = useState(false);
-  const [pendingClone, setPendingClone] = useState<{ requestId: string; gcsUri: string; labelZh: string } | null>(() => {
-    try { const raw = window.localStorage.getItem(MARKETING_CLONE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
-  });
-  const rememberClone = (value: { requestId: string; gcsUri: string; labelZh: string } | null) => {
-    try { if (value) window.localStorage.setItem(MARKETING_CLONE_KEY, JSON.stringify(value)); else window.localStorage.removeItem(MARKETING_CLONE_KEY); } catch { /* 仅失去本机续做提示 */ }
-    setPendingClone(value);
-  };
+  // 已采用图库素材的缩略：按本稿编号列出本人采用记录（服务端现签读地址，只在本次会话使用，不入稿）
+  const hasStockVisual = draft.segments.some(s => s.visual?.source === "stock");
+  const adoptions = trpc.stockFootage.listAdoptions.useQuery({ purpose: "marketing", projectId: draft.draftId, limit: 100 }, { retry: false, enabled: hasStockVisual });
+  const adoptedUrl = useMemo(() => new Map((adoptions.data || []).map(a => [a.assetId, a.url] as const)), [adoptions.data]);
 
   /** 所有修改都经此落本机，刷新后从同一草稿续做。 */
   const save = useCallback((update: (d: MarketingProductionDraft) => MarketingProductionDraft) => {
@@ -147,8 +152,70 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
     if (!asset.gcsUri) throw new Error("上传未返回持久素材地址，未采用");
     const visual = uploadVisualFromFile({ gcsUri: asset.gcsUri, fileName: file.name, mimeType: asset.mimeType || file.type, durationSec });
     patchSegment(segment.segmentId, s => ({ ...s, visual }));
+    setLocalPreview(prev => {
+      if (prev[segment.segmentId]) URL.revokeObjectURL(prev[segment.segmentId]);
+      return { ...prev, [segment.segmentId]: URL.createObjectURL(file) };
+    });
     setMessage("已采用本人上传的产品素材。");
   });
+
+  /**
+   * 抽屉「采用并绑定」→ 段落画面（含入点/出点）。校验不过抛错：抽屉提示并保持打开，
+   * 重试只重新绑定已采用的同一素材，不重复保存。成功后由这里关闭抽屉。
+   */
+  const adoptPick = async (segmentId: string, pick: StockFootagePick) => {
+    const index = ref.current.segments.findIndex(s => s.segmentId === segmentId);
+    if (index < 0) throw new Error("这一段已不在当前制作稿里，未绑定");
+    const visual = stockVisualFromAsset(pick.asset, { inSec: pick.inSec, outSec: pick.outSec });
+    patchSegment(segmentId, s => ({ ...s, visual }));
+    setDrawerSegmentId(null);
+    setMessage(`第 ${index + 1} 段已采用素材（取 ${visual.trim ? `${visual.trim.inSec.toFixed(1)}–${visual.trim.outSec.toFixed(1)} 秒` : "整段"}）。`);
+    void adoptions.refetch();
+  };
+
+  /** 整稿找素材：只为没有画面的段落预取关键词 + 候选数（最多 3 段并发），不自动采用。 */
+  const prefetchAll = async () => {
+    if (prefetching) return;
+    const d = ref.current;
+    const targets = d.segments.filter(s => !s.visual && s.narration.trim());
+    if (!targets.length) { setMessage("所有段落都已有画面。"); return; }
+    setPrefetching(true); setMessage("");
+    setPrefetch(prev => ({ ...prev, ...Object.fromEntries(targets.map(s => [s.segmentId, { sourceText: marketingStockSourceText(s), status: "loading" as const }])) }));
+    const results = await mapWithConcurrency(targets, PREFETCH_CONCURRENCY, async segment => {
+      const sourceText = marketingStockSourceText(segment);
+      const keywords = await utils.stockFootage.suggestKeywords.fetch({ text: keywordSourceText(sourceText), purpose: "marketing", orientation: d.orientation });
+      const query = keywords.query.trim().slice(0, 100);
+      if (!query) throw new Error("没有生成关键词");
+      const minDurationSec = defaultMinDurationSec(marketingSegmentTargetSec(segment));
+      const found = await utils.stockFootage.search.fetch({ query, kind: "video", orientation: d.orientation, page: 1, perPage: PREFETCH_PER_PAGE, purpose: "marketing", ...(minDurationSec ? { minDurationSec } : {}) });
+      const value: Prefetch = { sourceText, status: "done", query, queryZh: keywords.queryZh, count: found.candidates.length };
+      setPrefetch(prev => ({ ...prev, [segment.segmentId]: value }));
+      return value;
+    });
+    const failed = targets.filter((_, i) => !results[i].ok);
+    if (failed.length) setPrefetch(prev => ({ ...prev, ...Object.fromEntries(failed.map(s => [s.segmentId, { sourceText: marketingStockSourceText(s), status: "failed" as const }])) }));
+    const found = results.filter(r => r.ok && (r.value.count || 0) > 0).length;
+    setMessage(`已为 ${targets.length} 段找候选：${found} 段有候选${failed.length ? `，${failed.length} 段暂未找到，可点「找素材」重试` : ""}。点开各段挑选并采用。`);
+    setPrefetching(false);
+  };
+
+  /** 预取结果只在口播/画面提示未变时有效。 */
+  const prefetchFor = (segment: MarketingSegment): Prefetch | undefined => {
+    const p = prefetch[segment.segmentId];
+    return p && p.sourceText === marketingStockSourceText(segment) ? p : undefined;
+  };
+
+  const thumbFor = (segment: MarketingSegment) => {
+    const visual = segment.visual;
+    if (!visual) return { label: "待配画面" };
+    if (visual.source === "stock") return { url: adoptedUrl.get(visual.assetId), startSec: marketingVisualStartSec(visual), label: "素材已采用" };
+    return { url: localPreview[segment.segmentId], label: "我的素材" };
+  };
+
+  // 卸载时释放本机预览地址
+  const previewRef = useRef(localPreview);
+  previewRef.current = localPreview;
+  useEffect(() => () => { for (const url of Object.values(previewRef.current)) URL.revokeObjectURL(url); }, []);
 
   // ------------------------------------------------------------ 配音
   const generateVoice = (segment: MarketingSegment) => act("生成配音", async () => {
@@ -267,39 +334,10 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
   const issues = useMemo(() => auditMarketingExport(draft), [draft]);
   const step = useMemo(() => nextMarketingExportStep(draft), [draft]);
   const credits = useMemo(() => marketingCreditLines(draft), [draft]);
-  const myVoices = (referenceVoices.data || []).filter(v => v.status === "ready" && v.voiceId);
-  const myDesigned = (designedVoices.data || []).filter(v => v.status === "ready" && v.voiceId);
-
-  /** 本人录音 → 现有本人声线服务；同一请求编号可查询续做，不重复建立。 */
-  async function createMyVoice(file?: File) {
-    if (cloneBusy) return;
-    setCloneBusy(true);
-    try {
-      let request = pendingClone;
-      if (!request) {
-        if (!file) return;
-        await inspectDigitalHumanRecording(file);
-        const asset = await uploadOneCanvasAsset({ file, index: 0, getSignedUploadUrl: input => upload.mutateAsync(input) });
-        if (!asset.gcsUri) throw new Error("录音上传未完成，请重试");
-        request = { requestId: newId(), gcsUri: asset.gcsUri, labelZh: cloneLabel.trim() || "我的声音" };
-        rememberClone(request);
-      }
-      const result = await cloneVoice.mutateAsync({ ...request, consent: true });
-      await referenceVoices.refetch();
-      if (result.status === "ready" && result.voiceId) {
-        save(d => ({ ...d, voiceId: result.voiceId! }));
-        rememberClone(null);
-        setMessage(`已建立并选用「${request.labelZh}」。`);
-      } else {
-        setMessage(result.message || "声音正在建立，稍后点「查询进度」");
-      }
-    } catch (error) {
-      setMessage(errorText(error));
-    } finally {
-      setCloneBusy(false);
-    }
-  }
   const seedScript = seedMarkdown ? extractMarketingScriptSection(seedMarkdown) : "";
+  const drawerIndex = drawerSegmentId ? draft.segments.findIndex(s => s.segmentId === drawerSegmentId) : -1;
+  const drawerSegment = drawerIndex >= 0 ? draft.segments[drawerIndex] : undefined;
+  const trialSegment = draft.segments.find(s => s.narration.trim());
 
   return <section className="mt-4 rounded-2xl border border-emerald-300/25 bg-[#0f1a1a] p-4 text-slate-100" aria-label="口播制作稿与成片导出">
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -324,83 +362,69 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
         onChange={event => { const orientation = event.target.value as MarketingProductionDraft["orientation"]; save(d => ({ ...d, orientation })); }}>
         <option value="portrait">竖屏 1080×1920</option><option value="landscape">横屏 1920×1080</option>
       </select>
-      <select aria-label="配音声线" className={buttonStyle} value={draft.voiceId || ""}
-        onChange={event => { const voiceId = event.target.value; save(d => ({ ...d, voiceId: voiceId || undefined })); }}>
-        <option value="">选择配音声线</option>
-        {myVoices.length > 0 && <optgroup label="我的声音">
-          {myVoices.map(v => <option key={v.requestId} value={v.voiceId}>{v.labelZh}</option>)}
-        </optgroup>}
-        {myDesigned.length > 0 && <optgroup label="我设计的声线">
-          {myDesigned.map(v => <option key={v.requestId} value={v.voiceId}>{v.labelZh}</option>)}
-        </optgroup>}
-        <optgroup label="系统声线">
-          {VOICES.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
-        </optgroup>
-      </select>
     </div>
 
-    <details className="mt-3 rounded-lg border border-white/10 p-3 text-sm">
-      <summary className="cursor-pointer">用本人录音建立我的声音</summary>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-2">声音名称
-          <input className={buttonStyle} value={cloneLabel} maxLength={80} onChange={e => setCloneLabel(e.target.value)} />
-        </label>
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked={cloneConsent} onChange={e => setCloneConsent(e.target.checked)} />
-          我拥有这段录音及声音的使用权
-        </label>
-      </div>
-      <p className="mt-1 text-xs text-slate-400">上传 3–30 秒清晰录音（MP3 / WAV / M4A / AAC，最大 20 MB）。建好后会出现在「我的声音」里，并自动选为本稿配音。</p>
-      <input aria-label="上传声音参考" type="file" accept=".mp3,.wav,.m4a,.aac" className="mt-2"
-        disabled={!cloneConsent || cloneBusy || Boolean(pendingClone)}
-        onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void createMyVoice(file); }} />
-      {pendingClone && <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-        <span>「{pendingClone.labelZh}」正在建立，完成后自动选用；请勿重复上传。</span>
-        <button type="button" className={buttonStyle} disabled={cloneBusy} onClick={() => void createMyVoice()}>查询进度</button>
-      </div>}
-    </details>
+    <MarketingVoicePicker draftId={draft.draftId} voiceId={draft.voiceId} disabled={busy}
+      onSelect={voiceId => save(d => ({ ...d, voiceId }))} onMessage={setMessage}
+      trialSegment={trialSegment ? { index: draft.segments.indexOf(trialSegment), narration: trialSegment.narration } : undefined} />
 
-    {draft.segments.length > 0 && <ol className="mt-4 space-y-3">
+    {draft.segments.length > 0 && <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+      <span className="text-sm font-semibold">段落（{draft.segments.length}）· 已配画面 {draft.segments.filter(s => s.visual).length} 段</span>
+      <button type="button" className={`${buttonStyle} bg-emerald-400/15`} disabled={busy || prefetching || draft.segments.every(s => s.visual)}
+        title="为所有还没有画面的段落找候选素材，不会自动采用"
+        onClick={() => void prefetchAll()}>{prefetching ? "正在整稿找素材…" : "整稿找素材"}</button>
+    </div>}
+
+    {draft.segments.length > 0 && <ol className="mt-2 space-y-3">
       {draft.segments.map((segment, index) => {
         const voice = segment.voice;
         const voiceStale = Boolean(voice && voice.narration !== segment.narration);
         const mount = draft.mounts[segment.segmentId];
+        const thumb = thumbFor(segment);
+        const found = prefetchFor(segment);
+        const overrun = marketingTrimOverrunSec(segment);
+        const voiceState = marketingVoiceTrackState(segment);
+        const isPortrait = draft.orientation === "portrait";
         return <li key={segment.segmentId} className="rounded-xl border border-white/10 bg-black/20 p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-            <span className="font-semibold text-slate-200">第 {index + 1} 段 · 预估 {segment.estimatedSec} 秒</span>
-            {mount && <span>贴装：{mount.status}{mount.error ? `（${mount.error}）` : ""}</span>}
+          <div className="flex gap-3">
+            <button type="button" aria-label={`第 ${index + 1} 段画面，点击找素材`} disabled={busy}
+              className={`shrink-0 overflow-hidden rounded-lg ${isPortrait ? "h-28 w-16" : "h-16 w-28"}`}
+              onClick={() => setDrawerSegmentId(segment.segmentId)}>
+              <MarketingThumb url={thumb.url} startSec={thumb.startSec} label={thumb.label} className="h-full w-full rounded-lg" />
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="truncate text-sm font-semibold text-slate-100">
+                  <span className="mr-2 text-emerald-200">{String(index + 1).padStart(2, "0")}</span>{marketingSegmentTitle(segment)}
+                  <span className="ml-2 text-xs font-normal text-slate-400">约 {marketingSegmentTargetSec(segment).toFixed(1)} 秒</span>
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <label className={`${buttonStyle} cursor-pointer py-1 text-xs`}>上传素材
+                    <input type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden" disabled={busy}
+                      onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void adoptUpload(segment, file); }} /></label>
+                  <button type="button" className={`${buttonStyle} py-1 text-xs`} disabled={busy} onClick={() => setDrawerSegmentId(segment.segmentId)}>找素材</button>
+                  {segment.visual && <button type="button" className={`${buttonStyle} py-1 text-xs`} disabled={busy} onClick={() => patchSegment(segment.segmentId, s => ({ ...s, visual: undefined }))}>移除画面</button>}
+                </div>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">
+                {segment.visual?.source === "stock" && <span>画面：已采用素材{segment.visual.trim ? ` · 取 ${segment.visual.trim.inSec.toFixed(1)}–${segment.visual.trim.outSec.toFixed(1)} 秒` : ""} · 素材 {segment.visual.durationSec.toFixed(1)} 秒</span>}
+                {segment.visual?.source === "upload" && <span>画面：我的素材 · {segment.visual.fileName} · {segment.visual.durationSec.toFixed(1)} 秒</span>}
+                {!segment.visual && <span className="text-amber-200">待配画面</span>}
+                {!segment.visual && found?.status === "loading" && <span>正在找候选…</span>}
+                {!segment.visual && found?.status === "done" && <span className="text-emerald-200">{found.count ? `已找到 ${found.count} 个候选` : "没有找到候选，可改关键词再找"}{found.queryZh ? ` · ${found.queryZh}` : ""}</span>}
+                {!segment.visual && found?.status === "failed" && <span>候选暂未找到，可点「找素材」重试</span>}
+                {overrun > 0 && <span className="text-amber-200">配音比选段长，成片将从出点顺延 {overrun.toFixed(1)} 秒</span>}
+                {mount && <span>贴装：{mount.status}{mount.error ? `（${mount.error}）` : ""}</span>}
+              </div>
+              {segment.visualHint && <p className="mt-1 text-xs text-slate-400">画面提示：{segment.visualHint}</p>}
+            </div>
           </div>
           <textarea aria-label={`第 ${index + 1} 段口播`} value={segment.narration} rows={2} maxLength={4000}
             onChange={event => { const narration = event.target.value; patchSegment(segment.segmentId, s => ({ ...s, narration })); }}
             className="mt-2 w-full rounded-lg border border-white/15 bg-black/20 p-2 text-sm" />
-          {segment.visualHint && <p className="mt-1 text-xs text-slate-400">画面提示：{segment.visualHint}</p>}
-
-          <div className="mt-2 text-sm">
-            {segment.visual?.source === "stock" && <p>画面：图库素材 · {segment.visual.durationSec.toFixed(1)} 秒</p>}
-            {segment.visual?.source === "upload" && <p>画面：我上传的产品素材 · {segment.visual.fileName} · {segment.visual.durationSec.toFixed(1)} 秒</p>}
-            {!segment.visual && <p className="text-amber-200">还没有画面</p>}
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button type="button" className={buttonStyle} disabled={busy} onClick={() => setOpenStock(openStock === segment.segmentId ? null : segment.segmentId)}>
-                {openStock === segment.segmentId ? "收起图库" : "从图库选补充画面"}</button>
-              <label className={`${buttonStyle} cursor-pointer`}>上传产品视频
-                <input type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden" disabled={busy}
-                  onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void adoptUpload(segment, file); }} /></label>
-              {segment.visual && <button type="button" className={buttonStyle} disabled={busy} onClick={() => patchSegment(segment.segmentId, s => ({ ...s, visual: undefined }))}>移除画面</button>}
-            </div>
-            {openStock === segment.segmentId && <StockFootagePanel compact purpose="marketing" usage="insert" defaultKind="video"
-              defaultOrientation={draft.orientation} minDurationSec={Math.max(1, Math.ceil(voice?.durationSec || segment.estimatedSec))}
-              initialQuery={marketingStockQuery(segment)} context={{ projectId: draft.draftId, segmentId: segment.segmentId, note: "营销口播段落补充画面" }}
-              onAdopted={asset => {
-                try {
-                  const visual = stockVisualFromAsset(asset);
-                  patchSegment(segment.segmentId, s => ({ ...s, visual }));
-                  setOpenStock(null); setMessage(`第 ${index + 1} 段已采用图库素材。`);
-                } catch (error) { setMessage(errorText(error)); }
-              }} />}
-          </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-            {voice && <span className="text-xs text-slate-300">配音：{voiceStale ? "口播已修改，需重新配音" : marketingVoiceReady(segment) ? `已完成 ${voice.durationSec?.toFixed(1)} 秒` : voice.status}{voice.message ? ` · ${voice.message}` : ""}</span>}
+            <span className="text-xs text-slate-300">配音：{voiceState.label}{voice?.message && !marketingVoiceReady(segment) ? ` · ${voice.message}` : ""}</span>
             <button type="button" className={buttonStyle} disabled={busy || !draft.voiceId || !segment.narration.trim() || (marketingVoicePending(segment) && !voiceStale)}
               onClick={() => void generateVoice(segment)}>{voice && !voiceStale ? "重新生成配音" : "生成本段配音"}</button>
             {voice && (marketingVoicePending(segment) || (voice.status === "succeeded" && !marketingVoiceReady(segment) && !voiceStale)) &&
@@ -409,6 +433,15 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
         </li>;
       })}
     </ol>}
+
+    <MarketingSegmentTimeline segments={draft.segments} thumbFor={thumbFor} disabled={busy} onOpenSegment={setDrawerSegmentId} />
+
+    {drawerSegment && <StockFootageDrawer key={drawerSegment.segmentId} open onClose={() => setDrawerSegmentId(null)}
+      title={`为第 ${drawerIndex + 1} 段找素材`} purpose="marketing" usage="insert" kind="video" orientation={draft.orientation}
+      targetDurationSec={marketingSegmentTargetSec(drawerSegment)} sourceText={marketingStockSourceText(drawerSegment)}
+      initialQuery={prefetchFor(drawerSegment)?.query}
+      context={{ projectId: draft.draftId, segmentId: drawerSegment.segmentId, note: "营销口播段落画面" }}
+      onPick={pick => adoptPick(drawerSegment.segmentId, pick)} />}
 
     {draft.segments.length > 0 && <div className="mt-4 rounded-xl border border-emerald-300/25 p-3">
       {issues.length > 0 && <ul className="mb-2 list-disc pl-5 text-xs text-amber-200">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul>}

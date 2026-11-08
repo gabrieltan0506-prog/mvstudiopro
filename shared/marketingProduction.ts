@@ -34,6 +34,19 @@ export const MARKETING_OUTPUT_SIZE = {
 export type MarketingOrientation = keyof typeof MARKETING_OUTPUT_SIZE;
 
 const STOCK_ASSET_ID_RE = /^sf_[0-9a-f]{48}$/;
+/** 取段至少保留秒数（与后期 concat 取段下限一致）。 */
+export const MARKETING_TRIM_MIN_SEC = 0.1;
+
+/** 入点/出点校验：0 ≤ in < out ≤ 素材时长，且至少 0.1 秒；合法返回 null。 */
+export function marketingTrimIssue(trim: { inSec: number; outSec: number }, durationSec: number): string | null {
+  const { inSec, outSec } = trim;
+  if (!Number.isFinite(inSec) || !Number.isFinite(outSec) || !Number.isFinite(durationSec) || durationSec <= 0) return "选段数值无效";
+  if (inSec < 0) return "入点不能小于 0 秒";
+  if (outSec <= inSec) return "出点必须晚于入点";
+  if (outSec > durationSec + 1e-3) return `出点超出素材时长 ${durationSec.toFixed(1)} 秒`;
+  if (outSec - inSec < MARKETING_TRIM_MIN_SEC - 1e-9) return "选段至少保留 0.1 秒";
+  return null;
+}
 const USER_UPLOAD_GS_RE = /^gs:\/\/[^/]+\/uploads\/u\d+\/[^?#]+$/;
 
 const stockVisualSchema = z.object({
@@ -53,7 +66,15 @@ const stockVisualSchema = z.object({
     licenseUrl: z.string().url(),
   }).strict(),
   adoptedAt: z.string().max(64),
-}).strict();
+  /**
+   * 抽屉里选定的入点/出点（素材自身时间轴，秒）。缺省 = 从 0 秒起取（旧草稿兼容）。
+   * 导出时真实消费：bgm_mount 的 entrySec = inSec（配音从入点开始贴），concat 的 trims.startSec = inSec。
+   */
+  trim: z.object({ inSec: z.number().finite().min(0), outSec: z.number().finite().positive() }).strict().optional(),
+}).strict().superRefine((visual, ctx) => {
+  const issue = visual.trim ? marketingTrimIssue(visual.trim, visual.durationSec) : null;
+  if (issue) ctx.addIssue({ code: "custom", path: ["trim"], message: issue });
+});
 
 const uploadVisualSchema = z.object({
   source: z.literal("upload"),
@@ -328,13 +349,19 @@ export function marketingStockQuery(segment: Pick<MarketingSegment, "visualHint"
 
 // ---------------------------------------------------------------- 画面绑定
 
-/** 共用素材面板 onAdopted → 段落画面。只收营销 insert 视频，持久化不含签名地址。 */
-export function stockVisualFromAsset(asset: StockFootageAssetView): MarketingStockVisual {
+/**
+ * 共用素材抽屉 onPick / 面板 onAdopted → 段落画面。只收营销 insert 视频，持久化不含签名地址。
+ * trim 为抽屉选定的入点/出点；非法选段直接拒绝（不悄悄夹取）。
+ */
+export function stockVisualFromAsset(asset: StockFootageAssetView, trim?: { inSec: number; outSec: number }): MarketingStockVisual {
   if (!STOCK_ASSET_ID_RE.test(asset.assetId)) throw new Error("图库素材编号无效");
   if (asset.purpose !== "marketing") throw new Error("该素材不是为营销口播采用的，请在本段重新采用");
   if (!isStockAssetInsertable(asset) || asset.usage !== "insert") throw new Error("该素材是参考用途，不能直接入片");
   if (asset.kind !== "video") throw new Error("口播成片的段落画面需要视频素材");
   if (!asset.durationSec || asset.durationSec <= 0) throw new Error("图库视频缺少时长信息，无法排进时间线");
+  const trimIssue = trim ? marketingTrimIssue(trim, asset.durationSec) : null;
+  if (trimIssue) throw new Error(trimIssue);
+  const roundedTrim = trim ? { inSec: roundMs(trim.inSec), outSec: Math.min(roundMs(trim.outSec), asset.durationSec) } : undefined;
   return {
     source: "stock",
     assetId: asset.assetId,
@@ -352,7 +379,22 @@ export function stockVisualFromAsset(asset: StockFootageAssetView): MarketingSto
       licenseUrl: asset.source.license.url || PEXELS_LICENSE.url,
     },
     adoptedAt: asset.adoptedAt,
+    ...(roundedTrim ? { trim: roundedTrim } : {}),
   };
+}
+
+function roundMs(sec: number): number {
+  return Math.round(sec * 1000) / 1000;
+}
+
+/** 画面在素材自身时间轴上的起点（入点）；无选段从 0 秒起。 */
+export function marketingVisualStartSec(visual: MarketingVisual): number {
+  return visual.source === "stock" && visual.trim ? visual.trim.inSec : 0;
+}
+
+/** 选定窗口（入点→出点）；无选段 = 整条素材。 */
+export function marketingVisualWindow(visual: MarketingVisual): { inSec: number; outSec: number } {
+  return visual.source === "stock" && visual.trim ? visual.trim : { inSec: 0, outSec: visual.durationSec };
 }
 
 /** 用户上传的产品视频 → 段落画面。只认服务端生成的本人上传对象名（uploads/u<id>/…）。 */
@@ -381,12 +423,84 @@ export function marketingVoicePending(segment: MarketingSegment): boolean {
   return s === "submitted" || s === "running" || s === "unknown";
 }
 
-/** 这段画面实际入片秒数：配音时长 + 余量，但不超过素材本身。 */
+/**
+ * 这段画面实际入片秒数（从入点算起）：配音时长 + 余量。
+ * - 配音落在选段内：不越过出点（也不越过素材本身）；
+ * - 配音长于选段：从入点顺延到配音结束 + 余量（不越过素材本身），界面用 marketingTrimOverrunSec 提示；
+ * - 入点之后剩余素材短于配音：返回 null（导出前拦截）。
+ */
 export function marketingSegmentClipSec(segment: MarketingSegment): number | null {
   if (!segment.visual || !marketingVoiceReady(segment)) return null;
   const voice = segment.voice.durationSec;
-  if (segment.visual.durationSec + 1e-6 < voice) return null;
-  return Math.round(Math.min(segment.visual.durationSec, voice + MARKETING_SEGMENT_TAIL_SEC) * 1000) / 1000;
+  const start = marketingVisualStartSec(segment.visual);
+  const available = segment.visual.durationSec - start;
+  if (available + 1e-6 < voice) return null;
+  const window = marketingVisualWindow(segment.visual);
+  const windowSec = window.outSec - start;
+  const cap = voice <= windowSec + 1e-6 ? Math.min(windowSec, available) : available;
+  return roundMs(Math.min(cap, voice + MARKETING_SEGMENT_TAIL_SEC));
+}
+
+/** 配音长于所选窗口时，成片从出点继续顺延的秒数（0 = 未越过出点）。 */
+export function marketingTrimOverrunSec(segment: MarketingSegment): number {
+  if (!segment.visual || segment.visual.source !== "stock" || !segment.visual.trim) return 0;
+  const clip = marketingSegmentClipSec(segment);
+  if (clip == null) return 0;
+  const over = segment.visual.trim.inSec + clip - segment.visual.trim.outSec;
+  return over > 1e-3 ? roundMs(over) : 0;
+}
+
+/** 抽屉的目标时长：本段已有有效配音用实测时长，否则用口播预估。 */
+export function marketingSegmentTargetSec(segment: MarketingSegment): number {
+  return marketingVoiceReady(segment) ? segment.voice.durationSec : segment.estimatedSec;
+}
+
+/** 抽屉自动关键词的原文：画面提示 + 口播（上限 1000 字，与关键词接口一致）。 */
+export function marketingStockSourceText(segment: Pick<MarketingSegment, "visualHint" | "narration">): string {
+  return [segment.visualHint ? `画面：${segment.visualHint}` : "", segment.narration ? `口播：${segment.narration}` : ""]
+    .filter(Boolean).join("\n").slice(0, 1000);
+}
+
+/** 段落标题：画面提示优先，其次口播前 16 字。 */
+export function marketingSegmentTitle(segment: Pick<MarketingSegment, "visualHint" | "narration">): string {
+  const base = (segment.visualHint || segment.narration).replace(/\s+/g, " ").trim();
+  const chars = Array.from(base);
+  return chars.length > 16 ? `${chars.slice(0, 16).join("")}…` : base || "未命名段落";
+}
+
+/** 有上限的并发执行（整稿找素材：最多 3 段同时检索）；结果与输入同序，单项失败不影响其他项。 */
+export async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, run: (item: T, index: number) => Promise<R>): Promise<Array<{ ok: true; value: R } | { ok: false; error: unknown }>> {
+  const results: Array<{ ok: true; value: R } | { ok: false; error: unknown }> = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      try { results[index] = { ok: true, value: await run(items[index], index) }; }
+      catch (error) { results[index] = { ok: false, error }; }
+    }
+  };
+  const width = Math.max(1, Math.min(Math.floor(limit) || 1, items.length));
+  await Promise.all(Array.from({ length: width }, worker));
+  return results;
+}
+
+export type MarketingVoiceTrackState = { tone: "ready" | "pending" | "stale" | "failed" | "empty"; label: string };
+
+/** 旁白轨状态（时间线与段落行共用一套口径）。 */
+export function marketingVoiceTrackState(segment: MarketingSegment): MarketingVoiceTrackState {
+  const voice = segment.voice;
+  if (!voice) return { tone: "empty", label: "待配音" };
+  if (voice.narration !== segment.narration) return { tone: "stale", label: "口播已改，需重配" };
+  if (marketingVoiceReady(segment)) return { tone: "ready", label: `已配音 ${segment.voice.durationSec.toFixed(1)} 秒` };
+  if (voice.status === "failed") return { tone: "failed", label: "配音未成功" };
+  if (voice.status === "unknown") return { tone: "pending", label: "配音待核对" };
+  if (voice.status === "succeeded") return { tone: "pending", label: "配音回执待补全" };
+  return { tone: "pending", label: "配音生成中" };
+}
+
+/** 时间线排布用的段落时长：有效配音按实测，否则按口播预估。 */
+export function marketingTimelineSec(segment: MarketingSegment): number {
+  return marketingSegmentTargetSec(segment);
 }
 
 // ---------------------------------------------------------------- 导出
@@ -402,8 +516,14 @@ export function auditMarketingExport(draft: MarketingProductionDraft): string[] 
     else if (segment.voice.status === "failed") issues.push(`${label}：配音未成功，请重新生成。`);
     else if (segment.voice.narration !== segment.narration) issues.push(`${label}：口播已修改，请重新配音。`);
     else if (!segment.voice.gcsUri || !segment.voice.durationSec) issues.push(`${label}：配音回执缺少音频或时长，请查询原任务。`);
-    if (segment.visual && marketingVoiceReady(segment) && segment.visual.durationSec + 1e-6 < segment.voice.durationSec)
-      issues.push(`${label}：画面 ${segment.visual.durationSec.toFixed(1)} 秒短于配音 ${segment.voice.durationSec.toFixed(1)} 秒，请换更长的素材或拆分口播。`);
+    if (segment.visual && marketingVoiceReady(segment)) {
+      const start = marketingVisualStartSec(segment.visual);
+      const available = segment.visual.durationSec - start;
+      if (available + 1e-6 < segment.voice.durationSec)
+        issues.push(start > 0
+          ? `${label}：画面从第 ${start.toFixed(1)} 秒起只剩 ${available.toFixed(1)} 秒，短于配音 ${segment.voice.durationSec.toFixed(1)} 秒，请提前入点、换更长的素材或拆分口播。`
+          : `${label}：画面 ${segment.visual.durationSec.toFixed(1)} 秒短于配音 ${segment.voice.durationSec.toFixed(1)} 秒，请换更长的素材或拆分口播。`);
+    }
   });
   return issues;
 }
@@ -417,7 +537,10 @@ export type MarketingMountInput = {
   };
 };
 
-/** 第一步：每段把配音贴到画面上（复用 bgm_mount；配音满音量、不做避让、不淡入淡出）。 */
+/**
+ * 第一步：每段把配音贴到画面上（复用 bgm_mount；配音满音量、不做避让、不淡入淡出）。
+ * 有选段时配音从入点进场（entrySec = inSec），第二步 concat 再从入点取段，配音与所选画面对齐。
+ */
 export function marketingMountInput(draft: MarketingProductionDraft, segment: MarketingSegment): MarketingMountInput {
   if (!segment.visual || !marketingVoiceReady(segment)) throw new Error("本段画面或配音尚未就绪");
   return {
@@ -427,7 +550,7 @@ export function marketingMountInput(draft: MarketingProductionDraft, segment: Ma
       videoUri: marketingVisualRef(segment.visual),
       bgmUri: segment.voice.gcsUri,
       bgmVolume: 1,
-      entrySec: 0,
+      entrySec: marketingVisualStartSec(segment.visual),
       bgmSeekSec: 0,
       bgmDurationSec: segment.voice.durationSec,
       fadeInSec: 0,
@@ -508,10 +631,16 @@ export function marketingConcatInput(draft: MarketingProductionDraft): Marketing
   for (const [i, segment] of Array.from(draft.segments.entries())) {
     if (!marketingMountDone(draft, segment)) throw new Error(`第 ${i + 1} 段的配音贴装尚未完成`);
     const clipSec = marketingSegmentClipSec(segment);
-    if (!clipSec || !marketingVoiceReady(segment)) throw new Error(`第 ${i + 1} 段时长无效`);
-    clips.push(draft.mounts[segment.segmentId].gcsUri!);
-    trims.push({ startSec: 0, endSec: clipSec });
-    cues.push({ text: segment.narration, voiceSec: segment.voice.durationSec, clipSec });
+    if (!clipSec || !marketingVoiceReady(segment) || !segment.visual) throw new Error(`第 ${i + 1} 段时长无效`);
+    const mount = draft.mounts[segment.segmentId];
+    const startSec = marketingVisualStartSec(segment.visual);
+    // 贴装产物有实测时长时以它为准（素材元数据可能略长于实片），不越界取段
+    if (mount.durationSec != null && startSec + segment.voice.durationSec > mount.durationSec + 1e-3)
+      throw new Error(`第 ${i + 1} 段画面实际只有 ${mount.durationSec.toFixed(1)} 秒，入点后不足以放下配音，请调整选段`);
+    const endSec = mount.durationSec != null ? Math.min(startSec + clipSec, mount.durationSec) : startSec + clipSec;
+    clips.push(mount.gcsUri!);
+    trims.push({ startSec, endSec: roundMs(endSec) });
+    cues.push({ text: segment.narration, voiceSec: segment.voice.durationSec, clipSec: roundMs(endSec - startSec) });
   }
   const size = MARKETING_OUTPUT_SIZE[draft.orientation];
   return {
