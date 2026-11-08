@@ -6776,7 +6776,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .use(async ({ input, next }) => {
         const result = await next();
         if (!input.knowledgePublicationContext) return result;
-        if (!result.ok) return { ...result, error: new TRPCError({ code: result.error.code, message: knowledgePublicationPublicError(result.error).message }) };
+        if (!result.ok) {
+          // 前台只给业务提示；服务端日志保留真实原因与根因链，避免排查只看到兜底文案。
+          const cause = result.error.cause instanceof Error ? ` ← ${result.error.cause.message}` : "";
+          console.warn("[knowledgePublication] 顾问请求失败：", String(result.error.message).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 800) + cause.slice(0, 400));
+          return { ...result, error: new TRPCError({ code: result.error.code, message: knowledgePublicationPublicError(result.error).message, cause: result.error }) };
+        }
         const { modelName: _privateModel, ...publicResult } = result.data as Record<string, unknown>;
         return { ...result, data: publicResult };
       })
