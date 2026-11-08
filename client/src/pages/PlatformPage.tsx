@@ -5323,7 +5323,9 @@ export default function PlatformPage() {
       <MarketingPlanPanel key={workbenchUserKey || "anonymous"} userKey={workbenchUserKey} value={focusPrompt} onApply={next => {
         setFocusPrompt(next); setFreeformOverride(true); setPersonaFieldErrors({});
       }} />
-      {workbenchUserKey && <MarketingProductionPanel key={workbenchUserKey} userKey={workbenchUserKey} />}
+      {/* 兄弟节点 key 不能与上方 MarketingPlanPanel（key=用户 id）相同：重复 key 会让 React 按 key 错配，
+          每次重渲染都新建方案面板却不删旧 DOM（线上出现 6–11 份「从需求到营销推广方案」卡片）。 */}
+      {workbenchUserKey && <MarketingProductionPanel key={`marketing-production:${workbenchUserKey}`} userKey={workbenchUserKey} />}
       <details className="text-sm text-slate-300"><summary className="cursor-pointer py-2">需要帮助整理需求？</summary>
       <PlatformPersonaPolishPanel
         id="platform-persona-polish"
