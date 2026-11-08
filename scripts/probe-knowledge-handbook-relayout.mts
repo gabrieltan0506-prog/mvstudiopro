@@ -49,6 +49,8 @@ if(!state&&config.resumeDocumentId){
   const saved=await caller.editableLayout.get();
   const doc=saved.library?.documents.find(d=>d.id===config.resumeDocumentId);
   if(!doc?.publication)throw Error('续跑云稿不存在');
+  // 只重出PDF：须已采用整册排版（自动排版不会再启动、零模型调用），由用户同款“下载当前版”按钮走正式导出。
+  if(config.exportOnly&&(!doc.publication.layoutConversationId||!doc.publication.review||doc.publication.confirmedManuscript!==doc.publication.manuscript))throw Error('云稿尚未采用整册排版与确认稿，不能只重出PDF');
   state={level:doc.publication.source.detailLevel||config.level,imageJobIds:doc.publication.source.pages.filter(p=>p.imageJobId).map(p=>p.imageJobId),documentId:doc.id,resumed:true,createdAt:new Date().toISOString()};
   await fs.writeFile(statePath,JSON.stringify(state));
 }
@@ -109,6 +111,17 @@ page.on('console',m=>{const t=m.text();if(t.includes('[knowledgePublication]'))v
 page.on('pageerror',e=>{void fs.appendFile(path.join(root,'ui-errors.log'),scrub(e)+'\n');});
 await page.goto(base,{waitUntil:'domcontentloaded'});
 await write('live.json',{stage:'interior_layout_pdf',documentId:state.documentId,imagePages:state.imageJobIds.length,budget});
+if(config.exportOnly){
+  const label='下载当前版 HTML 和 PDF';
+  try{
+    await page.waitForFunction((text:string)=>[...document.querySelectorAll('button')].some(b=>b.textContent?.trim()===text&&!(b as HTMLButtonElement).disabled),{timeout:600000},label);
+    await page.evaluate((text:string)=>{[...document.querySelectorAll('button')].find(b=>b.textContent?.trim()===text)!.click();},label);
+  }catch(error){
+    await page.screenshot({path:path.join(root,'ui-final.png'),fullPage:true}).catch(()=>{});
+    await write('live.json',{stage:'publication_failed',documentId:state.documentId,budget,error:scrub('未出现可用的导出按钮：'+(error as Error).message)});
+    await browser.close();server.close();process.exit(1);
+  }
+}
 let final:any;
 for(;;){
   const progress=await page.evaluate(()=>({finished:(window as any).__handbookFinished,error:(window as any).__handbookError}));
