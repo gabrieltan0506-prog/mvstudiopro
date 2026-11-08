@@ -1,7 +1,7 @@
 {
   "monitor": {
-    "at": "2026-11-08T09:33:51.762Z",
-    "round": 30,
+    "at": "2026-11-08T09:35:58.988Z",
+    "round": 32,
     "stage": "layout_selected",
     "batches": {
       "done": 50,
@@ -413,9 +413,14 @@
     ]
   },
   "live": {
-    "at": "2026-11-08T08:55:14.357Z",
-    "stage": "interior_layout_pdf",
-    "summary": null,
+    "at": "2026-11-08T09:34:56.257Z",
+    "stage": "pdf_returned",
+    "summary": {
+      "totalPages": 59,
+      "imagePages": 48,
+      "readingPages": 11,
+      "withinBudget": true
+    },
     "error": null,
     "done": null,
     "total": null
