@@ -115,6 +115,8 @@ jobs:
           while :; do
             J=$(flyctl ssh console -a "$APP" --machine "$M" -C "cat $DIR/live.json" 2>/dev/null | tr -d '\r' | sed -n '/^{/,$p')
             echo "[$(date -u +%H:%M:%SZ)] $(echo "$J" | jq -c 'del(.ids)' 2>/dev/null || echo 'live.json 尚未生成')"
+            P=$(flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'cat $DIR/client-progress.json 2>/dev/null; echo; ls $DIR | wc -l'" 2>/dev/null | tr -d '\r' | sed -n '/^{/p' | jq -c '[paths(scalars) as $p | {k:($p|map(tostring)|join(".")),v:getpath($p)} | select((.v|type)=="number" or (.v|type)=="boolean" or ((.v|type)=="string" and (.v|length)<=24))] | from_entries? // .' 2>/dev/null)
+            [ -n "$P" ] && echo "  进度：$P"
             STAGE=$(echo "$J" | jq -r '.stage // empty' 2>/dev/null)
             case "$STAGE" in pdf_returned|publication_failed|image_failed|failed|awaiting_image_confirmation) break;; esac
             if [ "$ACTION" = "prepare" ] && [ "$STAGE" = "prepared" ]; then break; fi
