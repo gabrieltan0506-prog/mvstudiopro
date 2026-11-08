@@ -105,6 +105,7 @@ const page=await browser.newPage();await page.setViewport({width:1440,height:100
 await page.setCookie({name:COOKIE_NAME,value:await sdk.createSessionToken(user.openId,{expiresInMs:6*3600000}),url:base,httpOnly:true});
 page.on('response',async response=>{if(response.url().includes('editableLayout.exportPublication')){try{await fs.writeFile(path.join(root,'export-response.json'),await response.text());}catch{}}});
 page.on('dialog',d=>{void d.accept();});
+page.on('console',m=>{const t=m.text();if(t.includes('[knowledgePublication]'))void fs.appendFile(path.join(root,'ui-errors.log'),new Date().toISOString()+' '+t.slice(0,1200)+'\n');});
 page.on('pageerror',e=>{void fs.appendFile(path.join(root,'ui-errors.log'),scrub(e)+'\n');});
 await page.goto(base,{waitUntil:'domcontentloaded'});
 await write('live.json',{stage:'interior_layout_pdf',documentId:state.documentId,imagePages:state.imageJobIds.length,budget});

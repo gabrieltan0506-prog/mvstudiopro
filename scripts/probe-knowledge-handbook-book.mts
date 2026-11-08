@@ -157,6 +157,7 @@ async function run(){
   await page.setCookie({name:COOKIE_NAME,value:await sdk.createSessionToken(user.openId,{expiresInMs:8*3600000}),url:base,httpOnly:true});
   page.on('response',async response=>{if(response.url().includes('editableLayout.exportPublication')){try{await fs.writeFile(path.join(root,'export-response.json'),await response.text());}catch{}}});
   page.on('dialog',d=>{void d.accept();});
+page.on('console',m=>{const t=m.text();if(t.includes('[knowledgePublication]'))void fs.appendFile(path.join(root,'ui-errors.log'),new Date().toISOString()+' '+t.slice(0,1200)+'\n');});
   page.on('pageerror',e=>{void fs.appendFile(path.join(root,'ui-errors.log'),scrub(e)+'\n');});
   // 与正式页面一致：图片任务与章节审校并发，就绪的图先进入审校。
   await page.goto(base,{waitUntil:'domcontentloaded'});

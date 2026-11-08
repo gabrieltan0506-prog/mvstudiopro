@@ -1,15 +1,13 @@
 {
-  "id": "xuezhi-relayout-1108c",
+  "id": "xuezhi-relayout-1108d",
   "action": "start",
   "script": "scripts/probe-knowledge-handbook-relayout.mts",
   "machine": "7812595b294778",
   "collect": [
     "handbook.pdf",
     "live.json",
-    "run.log",
     "server-errors.log",
-    "ui-errors.log",
-    "ui-final.png"
+    "ui-errors.log"
   ],
   "config": {
     "level": "full",

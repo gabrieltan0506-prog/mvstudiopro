@@ -382,6 +382,8 @@ export default function KnowledgePublicationPanel({
       else setMessage("已完成整套图文审校与说明整理。可直接确认生成；手动修改是可选项。");
     } catch (e) {
       setMessage("");
+      // 诊断：前台只显示业务提示，真实原因写入浏览器控制台（去掉地址），便于定位根因而不是只看到兜底文案。
+      console.warn("[knowledgePublication] 整理失败原因：", String((e as Error)?.message ?? e).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 800));
       const safe = knowledgePublicationPublicError(e);
       setTerminal(safe.retryable || (e as { retryable?: boolean })?.retryable === true);
       setError(safe.message);
@@ -503,6 +505,7 @@ export default function KnowledgePublicationPanel({
         } else setMessage(result.pdfError || "HTML 和 PDF 已生成并保存，可直接下载。");
       }
     } catch (e) {
+      console.warn("[knowledgePublication] 导出失败原因：", String((e as Error)?.message ?? e).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 800));
       setError(knowledgePublicationPublicError(e).message);
     } finally {
       locked(false);
