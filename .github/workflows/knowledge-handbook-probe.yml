@@ -29,8 +29,8 @@ jobs:
           ID=$(jq -r '.id' $R); ACTION=$(jq -r '.action' $R); SCRIPT=$(jq -r '.script // empty' $R)
           MACHINE=$(jq -r '.machine // "7812595b294778"' $R)
           [[ "$ID" =~ ^[a-z0-9-]{6,60}$ ]] || { echo "请求ID无效"; exit 1; }
-          [[ "$ACTION" =~ ^(keygen|prepare|start|status)$ ]] || { echo "动作无效"; exit 1; }
-          BUILD=false; [[ "$ACTION" =~ ^(prepare|start)$ ]] && BUILD=true
+          [[ "$ACTION" =~ ^(keygen|prepare|start|status|watch|stop)$ ]] || { echo "动作无效"; exit 1; }
+          BUILD=false; [[ "$ACTION" =~ ^(prepare|start|watch)$ ]] && BUILD=true
           { echo "id=$ID"; echo "action=$ACTION"; echo "script=$SCRIPT"; echo "machine=$MACHINE"; echo "build=$BUILD"; } >> $GITHUB_OUTPUT
           echo "DIR=/app/isolated/$ID" >> $GITHUB_ENV
           mkdir -p /tmp/kp
@@ -106,8 +106,33 @@ jobs:
           flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'cd $DIR && sha256sum entry.mjs lease.mjs panel.js launch.mjs config.json'"
           MODE=run; [ "${{ steps.req.outputs.action }}" = "prepare" ] && MODE=prepare
           flyctl ssh console -a "$APP" --machine "$M" -C "node $DIR/launch.mjs $DIR $MODE"
+      - name: Stop a running probe (user-visible decision)
+        if: steps.req.outputs.action == 'stop'
+        run: |
+          set +e
+          M=${{ steps.req.outputs.machine }}; T=$(jq -r '.config.targetId' probes/knowledge-handbook/request.json)
+          [[ "$T" =~ ^[a-z0-9-]{6,60}$ ]] || { echo "目标ID无效"; exit 1; }
+          flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'pkill -TERM -f /app/isolated/$T/entry.mjs; sleep 3; pgrep -fl /app/isolated/$T/ || echo stopped'"
+      - name: Watch every step (numbers only, pushed to probe-transfer/monitor)
+        if: steps.req.outputs.action == 'watch'
+        run: |
+          set +e
+          M=${{ steps.req.outputs.machine }}; ID=${{ steps.req.outputs.id }}; T=$(jq -r '.config.targetId // empty' probes/knowledge-handbook/request.json)
+          git fetch -q origin probe-transfer && git worktree add -q /tmp/wt FETCH_HEAD && cd /tmp/wt && git checkout -q -B probe-transfer
+          mkdir -p monitor
+          END=$(( $(date +%s) + 330*60 ))
+          while [ $(date +%s) -lt $END ]; do
+            M1=$(flyctl ssh console -a "$APP" --machine "$M" -C "cat $DIR/monitor.json" 2>/dev/null | tr -d '\r' | sed -n '/^{/,$p')
+            L1=$(flyctl ssh console -a "$APP" --machine "$M" -C "cat /app/isolated/$T/live.json" 2>/dev/null | tr -d '\r' | sed -n '/^{/,$p' | jq -c '{at,stage,summary,error,done,total}' 2>/dev/null)
+            echo "$M1" | jq -c '{at,round,stage,batches,chapters,layout,chars,estimatedTotalPages,flags}' 2>/dev/null
+            echo "$L1"
+            jq -n --argjson m "${M1:-null}" --argjson l "${L1:-null}" '{monitor:$m,live:$l}' > "monitor/$T.json" 2>/dev/null && git add monitor && git -c user.name=probe-bot -c user.email=probe-bot@users.noreply.github.com commit -qm "监看 $T" && git push -q origin HEAD:refs/heads/probe-transfer || git pull -q --rebase origin probe-transfer
+            STAGE=$(echo "$L1" | jq -r '.stage // empty' 2>/dev/null)
+            case "$STAGE" in pdf_returned|publication_failed|image_failed|failed|awaiting_image_confirmation) echo "目标到达终态 $STAGE"; break;; esac
+            sleep 110
+          done
       - name: Follow status (counts only)
-        if: steps.req.outputs.action != 'keygen'
+        if: steps.req.outputs.action != 'keygen' && steps.req.outputs.action != 'watch' && steps.req.outputs.action != 'stop'
         run: |
           set +e
           M=${{ steps.req.outputs.machine }}; ACTION="${{ steps.req.outputs.action }}"
@@ -129,7 +154,7 @@ jobs:
           # 只输出错误行（去地址、截断），不输出正文。
           flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'grep -E \"Error|错误|失败|拒\" $DIR/run.log | tail -5'" 2>/dev/null | sed -E 's#(https?|gs)://[^ ]+#[地址]#g' | cut -c1-300
       - name: Collect requested outputs as ciphertext to probe-transfer branch
-        if: always() && steps.req.outputs.action != 'keygen'
+        if: always() && steps.req.outputs.action != 'keygen' && steps.req.outputs.action != 'watch' && steps.req.outputs.action != 'stop'
         run: |
           set +e
           M=${{ steps.req.outputs.machine }}; ID=${{ steps.req.outputs.id }}
