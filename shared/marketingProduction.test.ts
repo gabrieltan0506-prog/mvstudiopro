@@ -20,6 +20,7 @@ import {
   marketingStockSourceText,
   marketingTrimIssue,
   marketingTrimOverrunSec,
+  marketingVoiceTrackState,
   marketingConcatInput,
   marketingCreditLines,
   marketingDialogueRequest,
@@ -399,5 +400,20 @@ describe("找素材入口辅助", () => {
     expect(peak).toBe(3);
     expect(results.map(r => (r.ok ? r.value : "x"))).toEqual([10, 20, 30, "x", 50, 60, 70]);
     expect(await mapWithConcurrency([], 3, async () => 1)).toEqual([]);
+  });
+});
+
+describe("旁白轨状态", () => {
+  it("正向：已配音显示实测时长；待配音/生成中", () => {
+    const seg = readySegment("s", "你好", undefined, 4.25);
+    expect(marketingVoiceTrackState(seg)).toEqual({ tone: "ready", label: "已配音 4.3 秒" });
+    expect(marketingVoiceTrackState({ ...seg, voice: undefined })).toEqual({ tone: "empty", label: "待配音" });
+    expect(marketingVoiceTrackState({ ...seg, voice: { ...seg.voice!, status: "running" } }).tone).toBe("pending");
+  });
+  it("反向：口播改过、失败、成功却缺音频都不算已配音", () => {
+    const seg = readySegment("s", "你好", undefined, 4);
+    expect(marketingVoiceTrackState({ ...seg, narration: "改了" }).tone).toBe("stale");
+    expect(marketingVoiceTrackState({ ...seg, voice: { ...seg.voice!, status: "failed" } }).tone).toBe("failed");
+    expect(marketingVoiceTrackState({ ...seg, voice: { ...seg.voice!, gcsUri: undefined } }).tone).toBe("pending");
   });
 });

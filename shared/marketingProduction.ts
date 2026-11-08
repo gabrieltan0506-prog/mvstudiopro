@@ -484,6 +484,25 @@ export async function mapWithConcurrency<T, R>(items: readonly T[], limit: numbe
   return results;
 }
 
+export type MarketingVoiceTrackState = { tone: "ready" | "pending" | "stale" | "failed" | "empty"; label: string };
+
+/** 旁白轨状态（时间线与段落行共用一套口径）。 */
+export function marketingVoiceTrackState(segment: MarketingSegment): MarketingVoiceTrackState {
+  const voice = segment.voice;
+  if (!voice) return { tone: "empty", label: "待配音" };
+  if (voice.narration !== segment.narration) return { tone: "stale", label: "口播已改，需重配" };
+  if (marketingVoiceReady(segment)) return { tone: "ready", label: `已配音 ${segment.voice.durationSec.toFixed(1)} 秒` };
+  if (voice.status === "failed") return { tone: "failed", label: "配音未成功" };
+  if (voice.status === "unknown") return { tone: "pending", label: "配音待核对" };
+  if (voice.status === "succeeded") return { tone: "pending", label: "配音回执待补全" };
+  return { tone: "pending", label: "配音生成中" };
+}
+
+/** 时间线排布用的段落时长：有效配音按实测，否则按口播预估。 */
+export function marketingTimelineSec(segment: MarketingSegment): number {
+  return marketingSegmentTargetSec(segment);
+}
+
 // ---------------------------------------------------------------- 导出
 
 export function auditMarketingExport(draft: MarketingProductionDraft): string[] {
