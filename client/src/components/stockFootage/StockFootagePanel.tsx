@@ -4,7 +4,7 @@
  * 断点恢复：采用前先把 requestId 写进本机待办；断线/刷新后在「未完成的采用」里用同一编号继续，
  * 服务端幂等，不会重复入库。已采用素材可在「已采用」页直接复用，不重新下载。
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Loader2, Search, RotateCw, Check, Film, Image as ImageIcon } from "lucide-react";
 import { trpc } from "@/lib/trpc";
@@ -18,6 +18,8 @@ import {
   type StockFootagePurpose,
   type StockFootageUsage,
 } from "@shared/stockFootage";
+import { fmtDuration } from "./stockFootageModel";
+import { useStockFootageAdoption } from "./useStockFootageAdoption";
 
 export type StockFootagePanelProps = {
   purpose: StockFootagePurpose;
@@ -32,51 +34,6 @@ export type StockFootagePanelProps = {
   compact?: boolean;
   className?: string;
 };
-
-type PendingAdoption = {
-  requestId: string;
-  providerAssetId: string;
-  kind: StockFootageKind;
-  purpose: StockFootagePurpose;
-  usage: StockFootageUsage;
-  orientation?: StockFootageOrientation;
-  context: NonNullable<StockFootagePanelProps["context"]>;
-  previewImageUrl?: string;
-  startedAt: number;
-};
-
-const PENDING_KEY = "mvs.stockFootage.pending.v1";
-const PENDING_MAX_AGE_MS = 7 * 24 * 3600_000;
-
-function readPending(): PendingAdoption[] {
-  try {
-    const raw = window.localStorage.getItem(PENDING_KEY);
-    const list = raw ? (JSON.parse(raw) as PendingAdoption[]) : [];
-    return Array.isArray(list) ? list.filter(p => p && p.requestId && Date.now() - p.startedAt < PENDING_MAX_AGE_MS) : [];
-  } catch {
-    return [];
-  }
-}
-function writePending(list: PendingAdoption[]) {
-  try {
-    window.localStorage.setItem(PENDING_KEY, JSON.stringify(list.slice(-50)));
-  } catch {
-    /* 存储不可用时仅失去本机续做提示，服务端回执仍在 */
-  }
-}
-
-function newRequestId(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c => (Number(c) ^ (Math.random() * 16) >> (Number(c) / 4)).toString(16));
-}
-
-function fmtDuration(sec?: number) {
-  if (!sec) return "";
-  const m = Math.floor(sec / 60);
-  const s = Math.round(sec % 60);
-  return m ? `${m}:${String(s).padStart(2, "0")}` : `${s}秒`;
-}
 
 export function StockFootagePanel(props: StockFootagePanelProps) {
   const usage: StockFootageUsage = props.usage ?? (props.purpose === "manhua" ? "reference" : "insert");
@@ -95,9 +52,6 @@ export function StockFootagePanel(props: StockFootagePanelProps) {
   const [draftQuery, setDraftQuery] = useState(props.initialQuery ?? "");
   const [query, setQuery] = useState(props.initialQuery?.trim() ?? "");
   const [page, setPage] = useState(1);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [pending, setPending] = useState<PendingAdoption[]>(() => (typeof window === "undefined" ? [] : readPending()));
-  const utils = trpc.useUtils();
 
   const search = trpc.stockFootage.search.useQuery(
     {
@@ -116,95 +70,21 @@ export function StockFootagePanel(props: StockFootagePanelProps) {
     { purpose: props.purpose, ...(props.context?.projectId ? { projectId: props.context.projectId } : {}), limit: 60 },
     { enabled: tab === "adopted" }
   );
-  const adopt = trpc.stockFootage.adopt.useMutation();
+  const adoption = useStockFootageAdoption({ purpose: props.purpose });
+  const { pending: myPending, pendingStatus, busyId, removePending } = adoption;
 
-  const myPending = pending.filter(p => p.purpose === props.purpose);
-
-  // 本机待办必须同步落盘：采用成功后业务方常会立即关闭面板（卸载），
-  // 若把写入放在 setState 更新函数里，卸载后更新被丢弃，已完成的采用会一直显示「待继续」。
-  const updatePending = useCallback((fn: (list: PendingAdoption[]) => PendingAdoption[]) => {
-    const next = fn(readPending());
-    writePending(next);
-    setPending(next);
-  }, []);
-
-  const runAdopt = useCallback(
-    async (item: PendingAdoption) => {
-      setBusyId(item.requestId);
-      try {
-        const res = await adopt.mutateAsync({
-          requestId: item.requestId,
-          provider: "pexels",
-          providerAssetId: item.providerAssetId,
-          kind: item.kind,
-          purpose: item.purpose,
-          usage: item.usage,
-          ...(item.orientation ? { orientation: item.orientation } : {}),
-          context: item.context,
-        });
-        if (res.status === "succeeded" && res.asset) {
-          updatePending(list => list.filter(p => p.requestId !== item.requestId));
-          void utils.stockFootage.listAdoptions.invalidate();
-          toast.success("素材已采用");
-          props.onAdopted(res.asset);
-        } else if (res.status === "failed") {
-          updatePending(list => list.filter(p => p.requestId !== item.requestId));
-          toast.error(res.message || "素材未能采用");
-        } else {
-          toast.message(res.message || "素材还在处理，可稍后点「继续」");
-        }
-      } catch (error) {
-        // 网络中断：保留待办，同一编号可继续；参数冲突/未启用等明确错误才移除。
-        const message = (error as { message?: string })?.message || "素材服务暂不可用";
-        const code = (error as { data?: { code?: string } })?.data?.code;
-        if (code === "CONFLICT" || code === "BAD_REQUEST") updatePending(list => list.filter(p => p.requestId !== item.requestId));
-        toast.error(message);
-      } finally {
-        setBusyId(null);
-      }
-    },
-    [adopt, props, updatePending, utils]
-  );
-
-  const onAdoptCandidate = (c: StockFootageCandidate) => {
-    const item: PendingAdoption = {
-      requestId: newRequestId(),
-      providerAssetId: c.providerAssetId,
-      kind: c.kind,
-      purpose: props.purpose,
-      usage,
-      orientation,
-      context: props.context ?? {},
-      previewImageUrl: c.previewImageUrl,
-      startedAt: Date.now(),
-    };
-    // 先落本机待办再发请求：请求回包丢失也能用原编号续做，不会重复入库。
-    updatePending(list => [...list, item]);
-    void runAdopt(item);
+  const deliver = (asset: StockFootageAssetView | null) => {
+    if (!asset) return;
+    try {
+      props.onAdopted(asset);
+    } catch (error) {
+      toast.error((error as { message?: string })?.message || "素材服务暂不可用");
+    }
   };
 
-  // 刷新后查询未完成待办在服务端的真实状态（只查询，不自动绑定到当前编辑位置）。
-  const [pendingStatus, setPendingStatus] = useState<Record<string, string>>({});
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      for (const p of myPending) {
-        // 刚发起的采用由 runAdopt 自己收尾；此时查询会与占位抢跑，得到「没有找到」的误报。
-        if (Date.now() - p.startedAt < 2 * 60_000) continue;
-        try {
-          const res = await utils.stockFootage.getAdoption.fetch({ requestId: p.requestId });
-          if (!cancelled) setPendingStatus(s => ({ ...s, [p.requestId]: res.status }));
-        } catch {
-          if (!cancelled) setPendingStatus(s => ({ ...s, [p.requestId]: "unknown" }));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // 仅在挂载与待办数量变化时核对
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myPending.length]);
+  const onAdoptCandidate = (c: StockFootageCandidate) => {
+    void adoption.startAdoption(c, { usage, orientation, context: props.context ?? {} }).then(deliver);
+  };
 
   if (usageError) return <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">{usageError}</div>;
 
@@ -232,11 +112,11 @@ export function StockFootagePanel(props: StockFootagePanelProps) {
               <div key={p.requestId} className="flex items-center gap-2 rounded bg-white/5 px-2 py-1">
                 {p.previewImageUrl && <img src={p.previewImageUrl} alt="" className="h-8 w-12 rounded object-cover" />}
                 <span className="text-xs opacity-80">{pendingStatus[p.requestId] === "succeeded" ? "已完成" : pendingStatus[p.requestId] === "running" ? "处理中" : "待继续"}</span>
-                <button type="button" disabled={busyId === p.requestId} className="flex items-center gap-1 rounded bg-white/10 px-2 py-0.5 text-xs" onClick={() => void runAdopt(p)}>
+                <button type="button" disabled={busyId === p.requestId} className="flex items-center gap-1 rounded bg-white/10 px-2 py-0.5 text-xs" onClick={() => void adoption.resumeAdoption(p).then(deliver)}>
                   {busyId === p.requestId ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
                   {pendingStatus[p.requestId] === "succeeded" ? "使用" : "继续"}
                 </button>
-                <button type="button" className="text-xs opacity-60" onClick={() => updatePending(list => list.filter(x => x.requestId !== p.requestId))}>移除</button>
+                <button type="button" className="text-xs opacity-60" onClick={() => removePending(p.requestId)}>移除</button>
               </div>
             ))}
           </div>
@@ -279,7 +159,7 @@ export function StockFootagePanel(props: StockFootagePanelProps) {
 
           <div className={`grid gap-2 ${props.compact ? "grid-cols-3" : "grid-cols-2 md:grid-cols-3 lg:grid-cols-4"}`}>
             {search.data?.candidates.map(c => (
-              <CandidateCard key={`${c.kind}-${c.providerAssetId}`} candidate={c} busy={adopt.isPending} onAdopt={() => onAdoptCandidate(c)} />
+              <CandidateCard key={`${c.kind}-${c.providerAssetId}`} candidate={c} busy={adoption.isAdopting} onAdopt={() => onAdoptCandidate(c)} />
             ))}
           </div>
 
