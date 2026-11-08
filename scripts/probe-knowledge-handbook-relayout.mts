@@ -32,7 +32,7 @@ const root=path.dirname(process.argv[2]);
 const write=(name:string,value:unknown)=>fs.writeFile(path.join(root,name),JSON.stringify({at:new Date().toISOString(),...(value as object)}));
 const scrub=(s:unknown)=>String(s).replace(/(?:https?|gs):\/\/[^\s"']+/g,'[地址]').slice(0,600);
 if(!['full','concise'].includes(config.level))throw Error('档位无效');
-if(!/^[0-9a-f-]{36}$/.test(config.previousDocumentId||''))throw Error('缺少原云稿ID');
+if(!/^[0-9a-f-]{36}$/.test(config.previousDocumentId||config.resumeDocumentId||''))throw Error('缺少原云稿ID');
 
 // 原云稿只用于取已成功的配图任务及生图前核实任务身份；不复用其审校、排版或导出结果。
 const db=await getDb();if(!db)throw Error('数据库不可用');
@@ -43,6 +43,14 @@ if(!user)throw Error('所有者不存在');
 const caller=appRouter.createCaller({req:{headers:{}},res:{},user,clientDisconnected:new AbortController().signal} as any);
 const statePath=path.join(root,'state.json');
 let state:any=existsSync(statePath)?JSON.parse(await fs.readFile(statePath,'utf8')):null;
+if(!state&&config.resumeDocumentId){
+  // 续跑同一正式云稿：只重新挂载正式出版组件，由正式恢复入口按原回执继续；不新建云稿、不改状态。
+  const saved=await caller.editableLayout.get();
+  const doc=saved.library?.documents.find(d=>d.id===config.resumeDocumentId);
+  if(!doc?.publication)throw Error('续跑云稿不存在');
+  state={level:doc.publication.source.detailLevel||config.level,imageJobIds:doc.publication.source.pages.filter(p=>p.imageJobId).map(p=>p.imageJobId),documentId:doc.id,resumed:true,createdAt:new Date().toISOString()};
+  await fs.writeFile(statePath,JSON.stringify(state));
+}
 if(!state){
   const saved=await caller.editableLayout.get();
   const previous=saved.library?.documents.find(d=>d.id===config.previousDocumentId);

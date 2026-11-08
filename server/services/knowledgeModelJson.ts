@@ -71,6 +71,14 @@ export function parseKnowledgeModelJson(content: string): { value: unknown; repa
         if (next === '，' || next === '：') {
           edit(position, next, next === '，' ? ',' : ':', '将字符串外的全角结构标点改为JSON标点'); continue;
         }
+        // 字符串值里出现未转义的英文双引号（如 "他说"好"的"）：解析器在内层引号处提前结束字符串，
+        // 随后报“属性值/数组元素后缺逗号”。若该位置紧跟在刚闭合的引号之后且后面仍是正文而非结构符，
+        // 把这颗内层引号转义（\"），正文逐字不变；修后若不再合法会在下一轮继续定位或拒绝。
+        if (/Expected ',' or '[}\]]' after (property value|array element)/.test(detail) && prefix.endsWith('"') && next && !/[\s,:}\]"]/.test(next)) {
+          const quote = prefix.length - 1;
+          const opener = structure(current, quote);
+          if (opener && opener.quoted) { edit(quote, '"', '\\"', '转义字符串内未转义的英文双引号，正文字符不变'); continue; }
+        }
         const arrayGap = /Expected ',' or '\]' after array element/.test(detail) && ['{','[','"'].includes(next);
         const propertyGap = /Expected ',' or '}' after property value/.test(detail) && next === '"' && /^"(?:[^"\\]|\\.)*"\s*:/.test(current.slice(position));
         const separated = /\s$/.test(prefix);

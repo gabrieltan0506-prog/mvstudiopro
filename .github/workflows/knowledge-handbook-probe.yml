@@ -118,6 +118,7 @@ jobs:
         run: |
           set +e
           M=${{ steps.req.outputs.machine }}; ID=${{ steps.req.outputs.id }}; T=$(jq -r '.config.targetId // empty' probes/knowledge-handbook/request.json)
+          git config --global user.name probe-bot && git config --global user.email probe-bot@users.noreply.github.com
           git fetch -q origin probe-transfer && git worktree add -q /tmp/wt FETCH_HEAD && cd /tmp/wt && git checkout -q -B probe-transfer
           mkdir -p monitor
           END=$(( $(date +%s) + 330*60 ))

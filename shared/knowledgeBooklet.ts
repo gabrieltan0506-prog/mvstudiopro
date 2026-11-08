@@ -8,7 +8,7 @@ import { renderLayoutBody } from "./editableLayout";
 
 export type KnowledgeBookletPage = { id: string; headline: string; body: string; imageUrl: string };
 export type KnowledgeBookletTheme = "fusion_chinese_garden" | "fusion_ink_mountains" | "fusion_coastal_lighthouse" | "fusion_glasshouse_garden" | "fusion_maple_bridge" | "fusion_snow_monastery";
-export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1108-v10-portrait-image-notes";
+export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1108-v11-sparse-notes";
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 export const KNOWLEDGE_BOOKLET_THEMES: Record<KnowledgeBookletTheme, { name: string; paper: string; ink: string; accent: string; line: string; mark: string }> = {
   fusion_chinese_garden: { name:"中式园林融合",paper:"#fff2df",ink:"#713e2b",accent:"#b64632",line:"#d8ac83",mark:"园" },
@@ -165,6 +165,21 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
       };
       const ordered=[...host.querySelectorAll('.folio')];
       ordered.forEach((folio,i)=>{const next=ordered[i+1];if(!next||next.classList.contains('lead-folio'))balance(folio);});
+      // 图文同页要点偏少时放大字号与行距（不改内容），仍放不下则还原；避免图下大片空白。
+      for(const card of cards){
+        const columns=columnsOf(card),next=card.nextElementSibling;
+        if(next&&next.classList.contains('reading-folio')&&!next.classList.contains('lead-folio'))continue;
+        const used=Math.max(...columns.map(c=>[...c.children].reduce((n,u)=>n+u.offsetHeight+16,0)));
+        const room=columns[0].clientHeight;
+        if(!used||used>room*0.62)continue;
+        for(const level of ['roomy','airy']){
+          card.dataset.density=level;
+          if(columns.some(c=>c.scrollHeight>c.clientHeight+2)){delete card.dataset.density;break;}
+          const now=Math.max(...columns.map(c=>[...c.children].reduce((n,u)=>n+u.offsetHeight+16,0)));
+          if(now>room*0.62)break;
+        }
+        if(card.dataset.density){balance(card);if(columns.some(c=>c.scrollHeight>c.clientHeight+2)){delete card.dataset.density;balance(card);}}
+      }
       for(const reading of readingPages){
         const ids=[...new Set([...reading.querySelectorAll('[data-source-id]')].map(el=>el.dataset.sourceId))];
         reading.dataset.focus=reading.querySelector('.unit-heading h3')?.textContent || reading.querySelector('[data-source-headline]')?.dataset.sourceHeadline || '';
@@ -204,6 +219,7 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
 
 /* 直式图文同页：图在上，本章要点两栏在下，余下高度全部给要点。 */
 .lead-folio .image-title{margin:18px 0 18px;min-height:0}.lead-folio .image-title h1{font-size:46px}.lead-folio .eyebrow .chapter-no{display:inline-grid;place-items:center;width:34px;height:34px;margin-right:12px;border:3px double var(--accent);border-radius:50%;font:15px/1 Georgia,serif;letter-spacing:0;color:var(--accent)}.image-title .content-motif,.image-title .botanical{width:260px!important;height:120px!important;flex:none;opacity:.6;color:var(--accent)}.reading-title .botanical{width:300px;height:110px;flex:none}.lead-columns{flex:1 1 auto!important;height:auto!important;min-height:0;margin:26px 0 19px!important}.lead-columns .reading-column{height:100%!important}
+.lead-columns{position:relative;padding:22px 22px 6px;border:1px solid color-mix(in srgb,var(--line) 70%,transparent);border-radius:16px;background:color-mix(in srgb,var(--paper) 55%,#fff)}.lead-folio[data-density=roomy] .reading-unit p,.lead-folio[data-density=roomy] .reading-unit li{font-size:26px!important;line-height:1.95!important}.lead-folio[data-density=roomy] .unit-heading h3{font-size:31px!important}.lead-folio[data-density=airy] .reading-unit p,.lead-folio[data-density=airy] .reading-unit li{font-size:28px!important;line-height:2.05!important}.lead-folio[data-density=airy] .unit-heading h3{font-size:33px!important}.lead-folio[data-density] .reading-unit{padding:22px 28px 24px!important;margin-bottom:22px}
 ${knowledgeDecorationCss(decoration)}
 ${design?knowledgeContentDesignCss(design):""}
 @media screen and (max-width:1656px){[data-ready="true"] .folio{zoom:calc((100vw - 32px) / 1600px)}}

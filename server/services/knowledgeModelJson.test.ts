@@ -7,7 +7,7 @@ it('仅补完整容器之间的逗号，中文、引号和字段值保持原样'
  expect(out.repairs).toHaveLength(2);
  expect(out.value).toEqual({pages:[{body:'原文"引号"'},{body:'末句不丢'}],reading:{blocks:[],title:'正文'}});
 });
-it.each(['{"body":"未结束', '{"body":"未转义的"引号"}', '{"reading":{"blocks":[]},{"id":"下一章"}}', '[1,,]', '[,]', '{"body":'])('不补丢失正文、值或有歧义的结构：%s',raw=>{
+it.each(['{"body":"未结束', '{"a":"x"b":1}', '{"reading":{"blocks":[]},{"id":"下一章"}}', '[1,,]', '[,]', '{"body":'])('不补丢失正文、值或有歧义的结构：%s',raw=>{
  expect(()=>parseKnowledgeModelJson(raw)).toThrow(KnowledgeJsonSyntaxError);
 });
 it.each([
@@ -33,4 +33,17 @@ it('完整JSON末项已闭合但page对象少一个结束括号时无损恢复',
  const out=parseKnowledgeModelJson(raw);
  expect(out.value).toEqual({pages:[{body:'原句与数字12.5完整保留',reading:{blocks:[{text:'完整内容'}],design:{reason:'完整理由'}}}]});
  expect(out.repairs).toEqual([expect.objectContaining({removed:'',inserted:'}'})]);
+});
+
+it('字符串内未转义的英文双引号逐颗转义，正文逐字保留；缺逗号的相邻键不受影响',()=>{
+ const raw='{"pages":[{"body":"作者说"每天走一万步"即可，"并非"医嘱","n":1}],"k":"v"}';
+ const {value,repairs}=parseKnowledgeModelJson(raw) as any;
+ expect(value.pages[0].body).toBe('作者说"每天走一万步"即可，"并非"医嘱');expect(value.k).toBe('v');
+ expect(repairs.every((r:any)=>r.inserted==='\\"')).toBe(true);
+ const gap=parseKnowledgeModelJson('{"a":"x" "b":1}') as any;
+ expect(gap.value).toEqual({a:'x',b:1});
+});
+
+it('2026-11-08 血脂本真实阻断：字符串内未转义引号可无损转义（旧规则视为歧义拒收，导致整批审校失败）',()=>{
+ expect((parseKnowledgeModelJson('{"body":"未转义的"引号"}') as any).value).toEqual({body:'未转义的"引号'});
 });
