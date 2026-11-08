@@ -9,13 +9,16 @@ const mocks = vi.hoisted(() => ({
   resolve: vi.fn(),
   download: vi.fn(),
   alignment: vi.fn(),
+  stock: vi.fn(),
 }));
+vi.mock("../services/stockFootage/ownership", () => ({ loadOwnedStockAsset: mocks.stock }));
 vi.mock("../services/songOperations", () => ({ getSavedSongOperation: mocks.alignment }));
 vi.mock("../jobs/repository", () => ({
   createJob: mocks.create,
   getJobByIdStrict: mocks.get,
 }));
-vi.mock("../services/postProdMediaSource", () => ({
+vi.mock("../services/postProdMediaSource", async importOriginal => ({
+  ...(await importOriginal<typeof import("../services/postProdMediaSource")>()),
   resolveRegisteredPostProdMediaSource: mocks.resolve,
 }));
 vi.mock("../services/gcs", () => ({
@@ -271,6 +274,10 @@ describe("保存剪辑版本合成消费",()=>{
  function edited(){const document=musicMvEditDocumentSchema.parse({version:1,fps:30,basePlanRequestId:planRequestId,audioId:audio.id,audioDurationSec:20,clips:[{id:"edit-1",shotId:"s2",blockId:"block-2",title:"门",kind:"generated",sourceInFrame:90,durationFrames:300,source:{url:input.clips[0].url,durationSec:20}},{id:"edit-2",shotId:"s1",blockId:"block-1",title:"雨",kind:"generated",sourceInFrame:30,durationFrames:300,source:{url:input.clips[1].url,durationSec:20}}]});return {revisionId:revision,document,createdAt:"2026-10-15T21:00:00+08:00",sha256:createHash("sha256").update(musicMvEditKey(document)).digest("hex")};}
  function bind(receipt:ReturnType<typeof edited>){mocks.download.mockImplementation(async({gcsUri})=>({buffer:Buffer.from(JSON.stringify(gcsUri.includes("/edits/")?receipt:gcsUri.endsWith("settled.json")?{settled:true}:saved()))}));}
  it("消费已保存顺序及入出点，不沿用原计划裁点",async()=>{const r=edited();bind(r);await caller(7).queue({...input,editRevisionId:revision,clips:r.document.clips.map(c=>({shotId:c.id,url:c.source!.url}))});expect(mocks.create.mock.calls[0][0].input.params.clips.map((c:any)=>[c.clipUrl,c.trimInSec,c.trimOutSec])).toEqual([["gs://test-bucket/post-prod/7/2.mp4",3,13],["gs://test-bucket/post-prod/7/1.mp4",1,11]]);});
+ const stockId=`sf_${"d".repeat(48)}`,stockUri=`gs://test-bucket/stock-footage/7/${stockId}.mp4`;
+ function stockEdited(sourceInFrame:number){const r=edited();r.document=musicMvEditDocumentSchema.parse({...r.document,clips:[{...r.document.clips[0],kind:"footage",sourceInFrame,durationFrames:300,source:{url:stockUri,taskId:stockId,durationSec:15}},r.document.clips[1]]});r.sha256=createHash("sha256").update(musicMvEditKey(r.document)).digest("hex");mocks.stock.mockImplementation(async(userId:number,id:string)=>{if(userId!==7||id!==stockId)throw new Error("not owned");return {assetId:stockId,kind:"video",purpose:"mv",usage:"insert",gcsUri:stockUri,durationSec:15};});return r;}
+ it("图库素材非零入点：凭采用记录核对后按保存的入出点入队",async()=>{const r=stockEdited(120);bind(r);await caller(7).queue({...input,editRevisionId:revision,clips:r.document.clips.map(c=>({shotId:c.id,url:c.source!.url,taskId:c.source!.taskId}))});expect(mocks.stock).toHaveBeenCalledWith(7,stockId);expect(mocks.create.mock.calls[0][0].input.params.clips.map((c:any)=>[c.clipUrl,c.trimInSec,c.trimOutSec])).toEqual([[stockUri,4,14],["gs://test-bucket/post-prod/7/1.mp4",1,11]]);});
+ it("反向：图库素材非本人采用、或客户端换成他人图库地址均不入队",async()=>{const r=stockEdited(120);bind(r);const clips=r.document.clips.map(c=>({shotId:c.id,url:c.source!.url,taskId:c.source!.taskId}));mocks.stock.mockRejectedValueOnce(new Error("not owned"));await expect(caller(7).queue({...input,editRevisionId:revision,clips})).rejects.toThrow("素材来源");await expect(caller(7).queue({...input,editRevisionId:revision,clips:[{...clips[0],url:"gs://test-bucket/stock-footage/8/other.mp4"},clips[1]]})).rejects.toThrow("素材来源");expect(mocks.create).not.toHaveBeenCalled();});
  it("换素材、伪造版本或歌曲覆盖缺口均拒绝入队",async()=>{const r=edited();bind(r);const clips=r.document.clips.map(c=>({shotId:c.id,url:c.source!.url}));await expect(caller(7).queue({...input,editRevisionId:revision,clips:[{...clips[0],url:clips[1].url},clips[1]]})).rejects.toThrow("素材来源");r.document.clips[0].durationFrames=150;await expect(caller(7).queue({...input,editRevisionId:revision,clips})).rejects.toThrow("证据不一致");r.sha256=createHash("sha256").update(musicMvEditKey(r.document)).digest("hex");await expect(caller(7).queue({...input,editRevisionId:revision,clips})).rejects.toThrow("歌曲还缺");expect(mocks.create).not.toHaveBeenCalled();});
 });
 

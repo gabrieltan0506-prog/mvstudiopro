@@ -15,7 +15,7 @@ import { CanvasSunoSongAdvisor } from "./CanvasSunoSongAdvisor";
 import { uploadOneCanvasAsset } from "@/lib/canvasUpload";
 import { sunoSongBriefSchema } from "@shared/canvasMusicMv";
 import { CanvasMvTimelineEditor } from "./CanvasMvTimelineEditor";
-import { musicMvEditIssues, musicMvEditKey } from "@shared/canvasMusicMvEdit";
+import { musicMvEditIssues, musicMvEditKey, musicMvEditMaterialGap } from "@shared/canvasMusicMvEdit";
 import { CanvasMvCreativeAdvisor } from "./CanvasMvCreativeAdvisor";
 import {
   rejectedMusicSubmissionPatch,
@@ -776,6 +776,15 @@ export function CanvasMusicMvStudio({
     const shot = blocks.find(row => row.id === id);
     return shot && !(shot.status === "done" && shot.outputUrl) ? [shot] : [];
   });
+  // 合成前素材缺口：有剪辑会话时按草稿已绑定源计（合成只消费草稿），否则按画布镜头成片计。
+  const editSession = highlightMode
+    ? undefined
+    : state.timelineEdits?.find(
+        e => e.draft.basePlanRequestId === state.planRequestId
+      );
+  const materialGap = editSession
+    ? musicMvEditMaterialGap(editSession.draft, blocks).missing
+    : missingShots.length;
   const missingCredits = missingShots.reduce(
     (sum, shot) =>
       sum +
@@ -1556,7 +1565,11 @@ export function CanvasMusicMvStudio({
           <h3 data-mv-step="finish" className="border-t border-white/15 pt-5 text-base font-semibold">6. 合成成片</h3>
           <button
             className={button}
-            disabled={busy || !state.shotBlockIds?.length}
+            disabled={
+              busy ||
+              !state.shotBlockIds?.length ||
+              (!state.assembleRequestId && materialGap > 0)
+            }
             onClick={() => finish()}
           >
             {state.assembleRequestId
@@ -1566,11 +1579,19 @@ export function CanvasMusicMvStudio({
           {state.assembleTerminalStatus && (
             <button
               className={button}
-              disabled={busy || !state.shotBlockIds?.length}
+              disabled={busy || !state.shotBlockIds?.length || materialGap > 0}
               onClick={() => finish(true)}
             >
               合成新版本 · {CREDIT_COSTS.workflowFinalRender} 积分
             </button>
+          )}
+          {!!state.shotBlockIds?.length && materialGap > 0 && (
+            <p className="text-xs text-amber-200">
+              还缺 {materialGap} 个镜头素材
+              {editSession
+                ? "，请在剪辑中为待素材镜头找素材或同步已有镜头"
+                : "，请生成缺失镜头或在剪辑中找素材"}
+            </p>
           )}
         </>
       )}

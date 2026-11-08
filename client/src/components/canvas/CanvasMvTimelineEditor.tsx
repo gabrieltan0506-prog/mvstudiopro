@@ -16,6 +16,9 @@ import {
   musicMvEditIssues,
   bindMusicMvStockFootage,
   isMusicMvStockSource,
+  musicMvClipReadiness,
+  musicMvEditMaterialGap,
+  type MusicMvEditClip,
   type MusicMvEditDocument,
   type MusicMvEditSession,
 } from "@shared/canvasMusicMvEdit";
@@ -25,8 +28,11 @@ import {
 } from "@/lib/canvasMusicMvEditWorkflow";
 import { resolveMusicMvMediaUrl } from "@/lib/musicMvAdvisor";
 import { trpc } from "@/lib/trpc";
-import { StockFootagePanel } from "@/components/stockFootage/StockFootagePanel";
-import type { StockFootageAssetView } from "@shared/stockFootage";
+import {
+  StockFootageDrawer,
+  type StockFootagePick,
+} from "@/components/stockFootage/StockFootageDrawer";
+import { stockTrimToFrames } from "@shared/stockFootageTrim";
 
 type Props = {
   plan: CanvasMusicMvPlan;
@@ -43,6 +49,38 @@ type Props = {
 };
 const button =
   "rounded border border-white/20 px-2 py-1 text-xs disabled:opacity-40";
+const READINESS_LABEL = {
+  ready: "已就绪",
+  syncable: "待同步",
+  missing: "待素材",
+} as const;
+/** 已采用图库片段的缩略画面：按入点取一帧，签名地址只在本机临时使用，不写回草稿。 */
+function StockClipThumb({ url, inFrame }: { url: string; inFrame: number }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => {
+    let stop = false;
+    setSrc("");
+    resolveMusicMvMediaUrl(url)
+      .then(u => {
+        if (!stop) setSrc(u);
+      })
+      .catch(() => undefined);
+    return () => {
+      stop = true;
+    };
+  }, [url]);
+  if (!src) return null;
+  return (
+    <video
+      aria-hidden
+      src={`${src}#t=${(inFrame / 30).toFixed(2)}`}
+      preload="metadata"
+      muted
+      playsInline
+      className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-50"
+    />
+  );
+}
 export function CanvasMvTimelineEditor(p: Props) {
   const [initial] = useState(() =>
     initialMusicMvEdit(p.plan, p.baseId, p.shotIds)
@@ -58,7 +96,7 @@ export function CanvasMvTimelineEditor(p: Props) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
-  const [stockFor, setStockFor] = useState("");
+  const [drawerFor, setDrawerFor] = useState("");
   const [preview, setPreview] = useState<{ id: string; url: string }>();
   const [songUrl, setSongUrl] = useState("");
   const [playing, setPlaying] = useState(false);
@@ -165,23 +203,57 @@ export function CanvasMvTimelineEditor(p: Props) {
   useEffect(() => {
     setPlaying(false);
   }, [musicMvEditKey(s.draft)]);
-  // 采用成功后写入剪辑草稿（可撤销）；保存时服务端凭 assetId 核对本人采用记录。
-  const adoptStock = (clipId: string, asset: StockFootageAssetView) => {
+  const shotNo = (shotId: string) =>
+    String(Math.max(1, p.plan.shots.findIndex(x => x.id === shotId) + 1)).padStart(2, "0");
+  const shotText = (c: MusicMvEditClip) => {
+    const shot = p.plan.shots.find(x => x.id === c.shotId);
+    return (
+      (shot
+        ? [shot.visualPrompt, shot.cameraPrompt, shot.lyricQuote]
+            .filter(Boolean)
+            .join("；")
+        : "") || c.title
+    ).slice(0, 1000);
+  };
+  // 尚无剪辑会话时合成直接取画布已完成镜头，「待同步」即等同已就绪；有会话后合成只认草稿中已绑定的源。
+  const readiness = (c: MusicMvEditClip) => {
+    const r = musicMvClipReadiness(c, p.blocks);
+    return !p.session && r === "syncable" ? "ready" : r;
+  };
+  const rawGap = musicMvEditMaterialGap(s.draft, p.blocks);
+  const gap = p.session
+    ? rawGap
+    : { missing: rawGap.missing - rawGap.syncable, syncable: 0 };
+  const drawerClip = s.draft.clips.find(
+    c => c.id === drawerFor && c.kind !== "singing"
+  );
+  const openDrawer = (c: MusicMvEditClip) => {
+    if (c.kind === "singing" || busy || p.disabled) return;
+    setSelected(c.id);
+    setDrawerFor(c.id);
+  };
+  // 抽屉采用成功后按所选入出点写入剪辑草稿（可撤销）；保存时服务端凭 assetId 核对本人采用记录与实测时长。
+  const pickStock = async (clipId: string, pick: StockFootagePick) => {
     if (current.current.p.disabled || lock.current) {
-      setError("正在保存或处理中，素材已采用，请稍后在面板中重新选用");
-      return;
+      const message = "正在保存或处理中，素材已采用，请稍后重新选用";
+      setError(message);
+      throw new Error(message);
     }
     try {
+      const trim = stockTrimToFrames({ inSec: pick.inSec, outSec: pick.outSec }, 30);
       const next = bindMusicMvStockFootage(
         current.current.s.draft,
         clipId,
-        asset
+        pick.asset,
+        trim
       );
       put(commitMusicMvEdit(current.current.s, next));
-      setStockFor("");
+      setDrawerFor("");
       setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      throw new Error(message);
     }
   };
   const seek = (f: number) => {
@@ -307,7 +379,55 @@ export function CanvasMvTimelineEditor(p: Props) {
           ? "当前剪辑已保存"
           : "有未保存剪辑"}{" "}
         · {s.draft.clips.length} 个片段
+        {gap.missing > 0 && (
+          <span className="text-amber-200">
+            {" "}· 还缺 {gap.missing} 个镜头素材
+            {gap.syncable > 0 && `（其中 ${gap.syncable} 个已有画面，点「同步已有镜头」）`}
+          </span>
+        )}
       </p>
+      <ol aria-label="镜头清单" className="space-y-1">
+        {s.draft.clips.map(c => {
+          const ready = readiness(c);
+          return (
+            <li
+              key={c.id}
+              data-testid={`mv-shot-row-${c.id}`}
+              className={`flex flex-wrap items-center gap-1 rounded px-1 ${selected === c.id ? "bg-cyan-900/40" : ""}`}
+            >
+              <button
+                type="button"
+                className="text-left underline-offset-2 hover:underline"
+                onClick={() => {
+                  setSelected(c.id);
+                  const pos = positions.find(r => r.clip.id === c.id);
+                  if (pos) seek(pos.startFrame);
+                }}
+              >
+                镜头{shotNo(c.shotId)} · {c.title.slice(0, 24)} ·{" "}
+                {(c.durationFrames / 30).toFixed(1)}秒
+                {c.kind === "singing" ? " · 对口型" : ""}
+              </button>
+              <span
+                className={`rounded px-1 ${ready === "ready" ? "bg-emerald-700/60" : ready === "syncable" ? "bg-sky-700/60" : "bg-amber-700/60"}`}
+              >
+                {READINESS_LABEL[ready]}
+                {ready === "ready" && isMusicMvStockSource(c.source) ? " · 图库" : ""}
+              </span>
+              {c.kind !== "singing" && (
+                <button
+                  type="button"
+                  className={button}
+                  disabled={busy || p.disabled}
+                  onClick={() => openDrawer(c)}
+                >
+                  {isMusicMvStockSource(c.source) ? "换素材" : "找素材"}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ol>
       <label>
         时间轴缩放{" "}
         <input
@@ -397,29 +517,49 @@ export function CanvasMvTimelineEditor(p: Props) {
                       )
                     );
                 }}
-                onClick={() => {
+                onClick={e => {
                   setSelected(c.id);
                   seek(startFrame);
+                  // 拖边裁切结束时的点击不弹抽屉；点占位本身才打开找素材。
+                  if (
+                    !c.source &&
+                    (e.target as HTMLElement).getAttribute("role") !== "slider"
+                  )
+                    openDrawer(c);
                 }}
+                title={
+                  c.source
+                    ? undefined
+                    : c.kind === "singing"
+                      ? "对口型镜头待素材，请生成或同步原唱段"
+                      : "点击为此镜头找素材"
+                }
                 style={{ width: (c.durationFrames / 30) * zoom, minWidth: 4 }}
-                className={`relative shrink-0 overflow-hidden border p-2 ${selected === c.id ? "border-cyan-200 bg-cyan-800/60" : "border-white/20 bg-slate-700"}`}
+                className={`relative shrink-0 overflow-hidden p-2 ${c.source ? "border" : "border-2 border-dashed"} ${selected === c.id ? "border-cyan-200 bg-cyan-800/60" : c.source ? "border-white/20 bg-slate-700" : "cursor-pointer border-amber-300/60 bg-slate-900/60"}`}
               >
+                {c.source && isMusicMvStockSource(c.source) && (
+                  <StockClipThumb url={c.source.url} inFrame={c.sourceInFrame} />
+                )}
                 <span
                   role="slider"
                   aria-label={`${c.title}入点拖柄`}
                   onPointerDown={e => edge(e, "left", c.id)}
                   className="absolute left-0 top-0 h-full w-2 cursor-ew-resize bg-white/20"
                 />
-                <span className="pointer-events-none">
-                  {c.title.slice(0, 25)}
-                  <br />
-                  {(c.durationFrames / 30).toFixed(2)}秒{" "}
-                  {c.source
-                    ? isMusicMvStockSource(c.source)
-                      ? "·图库"
-                      : ""
-                    : "·待素材"}
-                </span>
+                {c.source ? (
+                  <span className="pointer-events-none relative">
+                    {c.title.slice(0, 25)}
+                    <br />
+                    {(c.durationFrames / 30).toFixed(2)}秒
+                    {isMusicMvStockSource(c.source) ? " ·图库" : ""}
+                  </span>
+                ) : (
+                  <span className="pointer-events-none relative text-amber-100">
+                    {c.kind === "singing" ? "" : "＋ "}镜头{shotNo(c.shotId)}{" "}
+                    {c.title.slice(0, 12)}…
+                    <br />（{(c.durationFrames / 30).toFixed(1)} 秒，待素材）
+                  </span>
+                )}
                 <span
                   role="slider"
                   aria-label={`${c.title}出点拖柄`}
@@ -529,31 +669,11 @@ export function CanvasMvTimelineEditor(p: Props) {
           {clip.kind !== "singing" && (
             <button
               className={button}
-              aria-expanded={stockFor === clip.id}
-              onClick={() => setStockFor(stockFor === clip.id ? "" : clip.id)}
+              aria-haspopup="dialog"
+              onClick={() => openDrawer(clip)}
             >
-              {stockFor === clip.id ? "收起图库" : "用图库视频替换此片段"}
+              {isMusicMvStockSource(clip.source) ? "换素材" : "找素材"}
             </button>
-          )}
-          {stockFor === clip.id && clip.kind !== "singing" && (
-            <StockFootagePanel
-              purpose="mv"
-              usage="insert"
-              defaultKind="video"
-              defaultOrientation={p.orientation}
-              minDurationSec={Math.min(
-                600,
-                Math.max(1, Math.ceil(clip.durationFrames / 30))
-              )}
-              initialQuery={clip.title.slice(0, 100)}
-              context={{
-                projectId: p.projectId || undefined,
-                shotId: clip.shotId,
-                segmentId: clip.id,
-              }}
-              compact
-              onAdopted={asset => adoptStock(clip.id, asset)}
-            />
           )}
         </fieldset>
       )}
@@ -660,6 +780,24 @@ export function CanvasMvTimelineEditor(p: Props) {
         <p role="alert" className="text-amber-200">
           {error}
         </p>
+      )}
+      {drawerClip && (
+        <StockFootageDrawer
+          open
+          onClose={() => setDrawerFor("")}
+          title={`为镜头${shotNo(drawerClip.shotId)}找素材`}
+          purpose="mv"
+          usage="insert"
+          kind="video"
+          orientation={p.orientation}
+          targetDurationSec={drawerClip.durationFrames / 30}
+          sourceText={shotText(drawerClip)}
+          context={{
+            projectId: p.projectId || undefined,
+            shotId: drawerClip.shotId,
+          }}
+          onPick={pick => pickStock(drawerClip.id, pick)}
+        />
       )}
     </section>
   );

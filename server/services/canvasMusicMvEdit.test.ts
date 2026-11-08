@@ -194,6 +194,24 @@ describe("图库素材替换镜头的保存核对", () => {
     ).rejects.toThrow("不属于本人");
     expect(mocks.upload).not.toHaveBeenCalled();
   });
+  it("正向：抽屉选定的非零入点在实测覆盖内可保存，入点原样保留", async () => {
+    const { d, mocks } = fixture();
+    mocks.probe.mockResolvedValue({ durationSec: 5.9, width: 1920, height: 1080 });
+    const withIn = stockDoc();
+    withIn.clips[0].sourceInFrame = 15;
+    const r = await saveMusicMvEdit(7, { revisionId: revision, document: withIn }, d);
+    expect([r.document.clips[0].sourceInFrame, r.document.clips[0].durationFrames]).toEqual([15, 150]);
+  });
+  it("反向：非零入点使裁段越过实测时长时不写入", async () => {
+    const { d, mocks } = fixture();
+    mocks.probe.mockResolvedValue({ durationSec: 5.9, width: 1920, height: 1080 });
+    const late = stockDoc();
+    late.clips[0].sourceInFrame = 29;
+    await expect(
+      saveMusicMvEdit(7, { revisionId: revision, document: late }, d)
+    ).rejects.toThrow("短于所选裁段");
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
   it("反向：非图库 taskId 的换源仍按原计划素材身份拒绝", async () => {
     const { d } = fixture();
     const other = stockDoc();

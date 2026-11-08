@@ -108,14 +108,18 @@ export type MusicMvStockBinding = Pick<
   StockFootageAsset,
   "assetId" | "gcsUri" | "kind" | "purpose" | "usage" | "durationSec"
 >;
+/** 抽屉裁点换算后的源入点与窗口帧数（stockTrimToFrames 的输出）。 */
+export type MusicMvStockTrim = { sourceInFrame: number; durationFrames?: number };
 /**
- * 把已采用的图库视频绑定到某片段：改为素材切片，入点归零，时长保持原片段
- * （素材较短时收缩到素材可用帧数，缺口由剪辑问题提示），不改其他片段。
+ * 把已采用的图库视频绑定到某片段：改为素材切片，入点默认归零（可传抽屉选定的入点），
+ * 时长不超过原片段与所选窗口（素材较短时收缩到入点后剩余可用帧数，缺口由剪辑问题提示），
+ * 入点+时长永不越过源时长，不改其他片段。
  */
 export function bindMusicMvStockFootage(
   doc: MusicMvEditDocument,
   clipId: string,
-  asset: MusicMvStockBinding
+  asset: MusicMvStockBinding,
+  trim?: MusicMvStockTrim
 ): MusicMvEditDocument {
   const clip = doc.clips.find(c => c.id === clipId);
   if (!clip) throw new Error("片段不存在");
@@ -135,6 +139,22 @@ export function bindMusicMvStockFootage(
   const available = stockDurationFrames(durationSec, MV_EDIT_FPS);
   if (available < MV_EDIT_MIN_FRAMES)
     throw new Error("图库视频短于0.5秒，不能入片");
+  const sourceInFrame = trim?.sourceInFrame ?? 0;
+  if (!Number.isInteger(sourceInFrame) || sourceInFrame < 0)
+    throw new Error("图库视频入点无效");
+  if (
+    trim?.durationFrames !== undefined &&
+    (!Number.isInteger(trim.durationFrames) ||
+      trim.durationFrames < MV_EDIT_MIN_FRAMES)
+  )
+    throw new Error("所选裁段短于0.5秒，不能入片");
+  if (available - sourceInFrame < MV_EDIT_MIN_FRAMES)
+    throw new Error("入点之后的图库视频短于0.5秒，请把入点前移");
+  const durationFrames = Math.min(
+    clip.durationFrames,
+    trim?.durationFrames ?? clip.durationFrames,
+    available - sourceInFrame
+  );
   return musicMvEditDocumentSchema.parse({
     ...doc,
     clips: doc.clips.map(c =>
@@ -142,8 +162,8 @@ export function bindMusicMvStockFootage(
         ? {
             ...c,
             kind: "footage",
-            sourceInFrame: 0,
-            durationFrames: Math.min(c.durationFrames, available),
+            sourceInFrame,
+            durationFrames,
             source: {
               url: asset.gcsUri,
               taskId: asset.assetId,
@@ -204,6 +224,35 @@ export function musicMvEditPositions(doc: MusicMvEditDocument) {
 }
 export function musicMvEditTotalFrames(doc: MusicMvEditDocument) {
   return doc.clips.reduce((sum, c) => sum + c.durationFrames, 0);
+}
+
+/**
+ * 片段画面状态：已绑定可播放源 = ready；未绑定但对应画布镜头已有成片 = syncable
+ * （点「同步已有镜头」即可写入）；其余 = missing（待素材）。
+ */
+export type MusicMvClipReadiness = "ready" | "syncable" | "missing";
+export function musicMvClipReadiness(
+  clip: Pick<MusicMvEditClip, "source" | "blockId">,
+  blocks: ReadonlyArray<{ id: string; status?: string; outputUrl?: string }> = []
+): MusicMvClipReadiness {
+  if (clip.source) return "ready";
+  const block = blocks.find(b => b.id === clip.blockId);
+  return block?.status === "done" && block.outputUrl ? "syncable" : "missing";
+}
+/** 合成前的素材缺口：missing 含待同步片段（合成只消费已绑定源），syncable 单列便于提示。 */
+export function musicMvEditMaterialGap(
+  doc: MusicMvEditDocument,
+  blocks: ReadonlyArray<{ id: string; status?: string; outputUrl?: string }> = []
+): { missing: number; syncable: number } {
+  let missing = 0,
+    syncable = 0;
+  for (const clip of doc.clips) {
+    const r = musicMvClipReadiness(clip, blocks);
+    if (r === "ready") continue;
+    missing++;
+    if (r === "syncable") syncable++;
+  }
+  return { missing, syncable };
 }
 
 /** 草稿可短于原歌；输出必须完整覆盖，演唱片必须仍对齐原唱段。 */
