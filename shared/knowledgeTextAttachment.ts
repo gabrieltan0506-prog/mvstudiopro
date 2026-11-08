@@ -43,3 +43,14 @@ export function attachKnowledgeTextModules(images: readonly string[], texts: rea
   });
   return result.map(parts => parts.join("\n\n"));
 }
+
+/** 在候选文本中找与查询内容最相近的一项（同一套二字片段 TF-IDF 相似度）；无候选返回 -1。 */
+export function bestKnowledgeTextMatch(candidates: readonly string[], query: string): number {
+  if (!candidates.length) return -1;
+  const grams = candidates.map(bigrams), q = bigrams(query);
+  const df = new Map<string, number>();
+  for (const g of [...grams, q]) for (const key of Array.from(g.keys())) df.set(key, (df.get(key) || 0) + 1);
+  let best = 0, score = -1;
+  grams.forEach((g, i) => { const s = similarity(q, g, df, grams.length + 1); if (s > score) { best = i; score = s; } });
+  return best;
+}

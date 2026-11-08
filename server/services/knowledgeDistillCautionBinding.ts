@@ -1,3 +1,4 @@
+import {bestKnowledgeTextMatch} from '../../shared/knowledgeTextAttachment';
 import {createHash} from 'node:crypto';
 import {knowledgeReadingMarkdown} from '../../shared/knowledgePublicationLayout';
 import {validateKnowledgeReview,type KnowledgeReview,type KnowledgeSource} from '../../shared/knowledgePublication';
@@ -37,7 +38,7 @@ export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:K
       throw Error('疑点关联包含未知章节或疑点，未改正文');
     return {type:'prose' as const,title:block.title,text:block.text,note:''};
    });
-   if(missing.some(q=>!pairs.some(p=>p.text===`疑点${q.index}`)))throw Error('疑点章节关联未覆盖全部问题，未挂到末章');
+   // 模型漏关联的疑点不让整本读档失败：下面按疑点原句与各章内容相似度归位（不是默认挂末章）。
    return pairs;
   };
   const recover=async(request:KnowledgeModelRequest)=>{
@@ -116,8 +117,14 @@ export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:K
    if(!target||!question)throw Error('疑点关联包含未知章节或疑点，未改正文');
    if(!associations[question.index].includes(target.index))associations[question.index].push(target.index);
   }
-  if(associations.some(a=>!a.length))throw Error('疑点章节关联未覆盖全部问题，未挂到末章');
-  await evidence.save(`${evidence.prefix}/bindings.json`,{digest,associations});
+  // 关联回包漏掉的疑点：按疑点证据原句与各原章内容的相似度确定性归位，保留全部疑点、不改正文、不重购。
+  const fallback:number[]=[];
+  for(const [index,targets] of associations.entries()){
+   if(targets.length)continue;
+   const best=bestKnowledgeTextMatch(chapters.map(c=>c.text),`${cautions[index].evidence}\n${cautions[index].message}`);
+   targets.push(chapters[best].index);fallback.push(index);
+  }
+  await evidence.save(`${evidence.prefix}/bindings.json`,{digest,associations,similarityFallback:fallback});
  }
  for(const [index,caution] of Array.from(cautions.entries())){
   const note=`<!-- 待核：${caution.evidence.replace(/-->/g,'—')}；${caution.message.replace(/-->/g,'—')} -->`;

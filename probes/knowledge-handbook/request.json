@@ -3,6 +3,7 @@
   "action": "status",
   "machine": "7812595b294778",
   "collect": [
-    "run.log"
+    "run.log",
+    "monitor.json"
   ]
 }
