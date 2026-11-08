@@ -71,6 +71,12 @@ export function parseKnowledgeModelJson(content: string): { value: unknown; repa
         if (next === '，' || next === '：') {
           edit(position, next, next === '，' ? ',' : ':', '将字符串外的全角结构标点改为JSON标点'); continue;
         }
+        // 模型偶发在空字符串值后重复输出 `:""`（如 "note":"":"","items"）：多出的片段只含空值、无键名，
+        // 删除它不丢任何正文；若多出的不是空字符串则仍拒收。（2026-11-08 血脂本第18章真实阻断）
+        if (/Expected ',' or '}' after property value/.test(detail) && prefix.endsWith('""') && next === ':') {
+          const stray = /^:\s*""(?=\s*[,}])/.exec(current.slice(position));
+          if (stray) { edit(position, stray[0], '', '删除空字符串值后多余的无键空值片段，不删除正文'); continue; }
+        }
         // 字符串值里出现未转义的英文双引号（如 "他说"好"的"）：解析器在内层引号处提前结束字符串，
         // 随后报“属性值/数组元素后缺逗号”。若该位置紧跟在刚闭合的引号之后且后面仍是正文而非结构符，
         // 把这颗内层引号转义（\"），正文逐字不变；修后若不再合法会在下一轮继续定位或拒绝。

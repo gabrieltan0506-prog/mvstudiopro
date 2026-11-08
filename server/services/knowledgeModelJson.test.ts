@@ -47,3 +47,11 @@ it('字符串内未转义的英文双引号逐颗转义，正文逐字保留；�
 it('2026-11-08 血脂本真实阻断：字符串内未转义引号可无损转义（旧规则视为歧义拒收，导致整批审校失败）',()=>{
  expect((parseKnowledgeModelJson('{"body":"未转义的"引号"}') as any).value).toEqual({body:'未转义的"引号'});
 });
+
+it('2026-11-08 真实回包：空字符串值后多出无键的 :"" 片段可删除，正文不丢；非空多余值仍拒收',()=>{
+ const raw='{"blocks":[{"type":"cards","title":"表中自带的边界提示","note":"":"","items":[{"title":"苦瓜+带鱼","body":"“护肝”为传统说法。"}]}]}';
+ const {value,repairs}=parseKnowledgeModelJson(raw) as any;
+ expect(value.blocks[0].note).toBe('');expect(value.blocks[0].items[0].body).toBe('“护肝”为传统说法。');
+ expect(repairs).toHaveLength(1);
+ expect(()=>parseKnowledgeModelJson('{"note":"":"有内容","items":[]}')).toThrow(KnowledgeJsonSyntaxError);
+});

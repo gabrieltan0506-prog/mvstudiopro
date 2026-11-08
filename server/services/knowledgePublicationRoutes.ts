@@ -335,6 +335,7 @@ export async function invokeKnowledgePublicationRoutes(
   const traces: { route: KnowledgeRoute; state: string; model: string; status?: number }[] = [];
   let lastFailure = "";
   let syntaxFailure: KnowledgeJsonSyntaxError | undefined;
+  let syntaxRetryUsed = false, routesWithReceipt = 0;
   let markdownFailure: Error | undefined;
   let researchEvidence: { status: "succeeded" | "failed"; model?: string; gateway?: string; usage?: unknown; traces: unknown; validation?: unknown; pages?: unknown } | undefined;
   const images = request.contents.flatMap(c => c.parts).flatMap(p => "fileData" in p ? [p.fileData.fileUri] : []);
@@ -440,8 +441,14 @@ export async function invokeKnowledgePublicationRoutes(
     } : request;
     const key = `${evidence.prefix}/route-${route}.json`;
     let receipt = await evidence.read(key);
-    // 已有其他完整回包仍可零调用复验；语法阻断之后不再购买新路由。
-    if (syntaxFailure && !receipt) throw syntaxFailure;
+    // 已有其他完整回包仍可零调用复验。完整回包无法无损解析属于“明确失败”，按用户既定规则走正式已配置重试链：
+    // 只允许再购买一条下一路由；该路由仍失败则停止（2026-11-08，原“语法阻断后一律不再购买”导致整册卡死）。
+    if (syntaxFailure && !receipt) {
+      // 跨多次处理也只补买一条：已有两份及以上路由回执即停止。
+      if (syntaxRetryUsed || routesWithReceipt >= 2) throw syntaxFailure;
+      syntaxRetryUsed = true;
+    }
+    routesWithReceipt++;
     if (markdownFailure && !receipt) throw markdownFailure;
     if (receipt && receipt.requestDigest !== requestDigest)
       throw new Error("模型输入版本变化，不能复用旧路由回执");

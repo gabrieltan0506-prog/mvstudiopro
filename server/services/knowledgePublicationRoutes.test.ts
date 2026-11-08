@@ -49,11 +49,11 @@ describe('JSON语法阻断不自动购买下一次',()=>{
   f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
   expect(f.deps.fetch).not.toHaveBeenCalled();
  });
- it('无法无损修复的JSON只发送一次；再次处理仍不付费重试',async()=>{
+ it('无法无损修复的JSON按已配置重试链只再买一条下一路由；再次处理不再付费重试',async()=>{
   const f=make(),raw='{"pages":[{"body":"缺失结尾';
   f.deps.fetch.mockImplementation(async()=>new Response(JSON.stringify({model:OR_MODEL,choices:[{finish_reason:'stop',message:{content:raw}}]})));
   await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toMatchObject({code:'knowledge_json_syntax'});
-  expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+  expect(f.deps.fetch).toHaveBeenCalledTimes(2);
   expect(f.storage.get('test/0/route-openrouter.json').response.text).toContain('缺失结尾');
   f.deps.fetch.mockClear();await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toMatchObject({code:'knowledge_json_syntax'});
   expect(f.deps.fetch).not.toHaveBeenCalled();
