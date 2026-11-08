@@ -8,6 +8,7 @@
 import fs from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import path from 'node:path';
+const path_join=path.join;
 import {randomUUID,createHash} from 'node:crypto';
 import express from 'express';
 import {createExpressMiddleware} from '@trpc/server/adapters/express';
@@ -142,7 +143,7 @@ async function run(){
   await write('started.json',{documentId:state.documentId});
   const total=quote.pageCount;
   const app=express();app.use(express.json({limit:'30mb'}));
-  app.use('/api/trpc',createExpressMiddleware({router:appRouter,createContext}));
+  app.use('/api/trpc',createExpressMiddleware({router:appRouter,createContext,onError:({path,error})=>{void fs.appendFile(path_join(root,'server-errors.log'),`${new Date().toISOString()} ${path} ${error.code} ${String(error.message).slice(0,500)}${error.cause?` ← ${String((error.cause as Error).message||error.cause).slice(0,500)}`:''}\n`);}}));
   registerManhuaAdvisorStream(app);
   app.get('/api/jobs/:id',async(req,res)=>{const c=await createContext({req,res,info:undefined as never});const job=await getJobByIdStrict(req.params.id);if(!c.user||!job||String(job.userId)!==String(c.user.id)){res.status(404).json({message:'任务不可用'});return;}res.json(job);});
   app.get('/bootstrap',async(req,res)=>{const c=await createContext({req,res,info:undefined as never});if(c.user?.id!==user.id){res.sendStatus(401);return;}res.json({documentId:state.documentId});});
