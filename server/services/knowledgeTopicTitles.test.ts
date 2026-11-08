@@ -111,6 +111,22 @@ describe("主题图与内文命题：每档一次廉价批量调用", () => {
   });
 });
 
+describe("1108g2 回归：模型照抄字段名", () => {
+  it("回包全是“图片标题/图下内文标题”时不采用，出图与内文回退机械标题和原小节标题；提示词不再含占位值", async () => {
+    const { evidence } = memoryEvidence();
+    const invoke = titleInvoke(page => {
+      page.reading.blocks = page.reading.blocks.map((b: any, i: number) => ({ ...b, title: i === 0 ? "图片标题" : i === 1 ? "图下内文标题" : "该节内文小标题" }));
+    });
+    const result = await nameKnowledgeEditionTopics({ markdown: book.full, evidence, invoke });
+    const prompt = (invoke.mock.calls[0]![0] as any).systemInstruction.parts[0].text as string;
+    expect(prompt).not.toMatch(/title:"(?:图片标题|图下内文标题|该节内文小标题)"/);
+    const plan = knowledgeEditionImagePlan(result.markdown)!;
+    expect(plan.images.every(i => /（等\d+节）$|^原小节\d+$/.test(i.title))).toBe(true);
+    expect(plan.images.every(i => i.readingTitle === i.title)).toBe(true);
+    expect(knowledgeEditionIllustratedPages(result.markdown)!.map(p => p.supplement).join("")).not.toContain("该节内文小标题");
+  });
+});
+
 describe("经真实知识整理路由合同校验", () => {
   it("命题回包通过路由结构校验后标题仍可取回", async () => {
     const { invokeKnowledgePublicationRoutes } = await import("./knowledgePublicationRoutes");

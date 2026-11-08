@@ -19,7 +19,7 @@ import {
   type KnowledgeRouteEvidence,
 } from "./knowledgePublicationRoutes";
 
-export const KNOWLEDGE_TOPIC_TITLES_VERSION = "topic-titles-v1";
+export const KNOWLEDGE_TOPIC_TITLES_VERSION = "topic-titles-v2";
 const MAX_TITLE = 24;
 const usable = (v: unknown) => {
   const t = typeof v === "string" ? v.replace(/^#+\s*/, "").trim() : "";
@@ -75,10 +75,15 @@ export async function nameKnowledgeEditionTopics(params: {
   const request: KnowledgeModelRequest = {
     executionChannel: "openrouter",
     executionFamily: String(params.model || "").includes("glm") ? "glm" : "deepseek",
-    systemInstruction: { parts: [{ text: `你为图文知识手册的每个主题图拟定标题。每个主题含若干原小节（见body首行“原小节”）与图内要点。
-为每个主题给出：①图片标题：≤16字，概括本主题核心，不用“等N节”；②图下内文标题：≤20字，概括图下详细内文讲什么，可与图片标题互补；③每个原小节的内文小标题：≤16字，忠实原意，不新增事实、不加编号。
+    systemInstruction: { parts: [{ text: `你为图文知识手册的每个主题图拟定标题。每个主题含若干原小节（见body首行“原小节：”后以｜分隔）与图内要点。
+为每个主题写出三类具体标题（都要是概括内容的实际短语，不能写字段名，不能写“图片标题”“内文标题”“小标题”这类字样）：
+1. 图片标题：≤16字，概括本主题核心，不用“等N节”。
+2. 图下内文标题：≤20字，概括图下详细内文讲什么，与图片标题互补、不重复。
+3. 每个原小节的内文小标题：≤16字，忠实原意，不新增事实、不加编号；原标题已很好时可沿用。
 只依据给定文字，不编造。标题不含#、|、换行。
-只输出JSON：{kind:"knowledge_publication_v1",sourceDigest:原值,title:"主题命题",pages:[{id:原id,headline:原headline,body:"一句话说明本主题",imageDescription:"",imageStatus:"absent",facts:[{term:"主题",statement:"一句话说明"}],cautions:[],reading:{version:1,subtitle:"",accent:"jade",blocks:[{type:"prose",title:"图片标题",note:"",text:"图片标题"},{type:"prose",title:"图下内文标题",note:"",text:"内文标题"},然后按原小节顺序每节一项{type:"prose",title:"该节内文小标题",note:"",text:"原小节标题逐字"}]}}]}。pages与输入同id同顺序、一个不少；每页blocks数量=2+原小节数。` }] },
+输出格式：knowledge_publication_v1 JSON，pages与输入同id同顺序、一个不少。每页reading.blocks依次为：第1项=图片标题，第2项=图下内文标题，第3项起按原小节顺序每节一项=该节内文小标题；每项是{type:"prose",title:<标题>,note:"",text:<说明>}，第1项text写"image"，第2项text写"reading"，其后各项text逐字写对应的原小节标题。blocks数量=2+原小节数。
+示例（虚构主题，仅示意格式，不要照抄其中字词）：输入原小节“蒸发｜凝结｜降水”，则blocks为[{type:"prose",title:"太阳驱动的水循环",note:"",text:"image"},{type:"prose",title:"三种相变的条件与去向",note:"",text:"reading"},{type:"prose",title:"受热升空的水汽",note:"",text:"蒸发"},{type:"prose",title:"冷却成云",note:"",text:"凝结"},{type:"prose",title:"雨雪回到地面",note:"",text:"降水"}]。
+每页其余字段：headline照抄输入headline，body写一句话说明本主题，imageDescription:"",imageStatus:"absent",facts:[{term:"主题",statement:一句话说明}],cautions:[]，reading.version=1，reading.subtitle=""，reading.accent="jade"。顶层：kind:"knowledge_publication_v1"，sourceDigest照抄输入值，title:"主题命题"。` }] },
     contents: [{ role: "user", parts: [{ text: JSON.stringify({ sourceDigest, source: { title: plan.title, pages: topics.map((t, i) => ({ id: t.id, headline: `主题${i + 1}`, body: `原小节：${t.headlines.join("｜")}\n\n${t.body}`, imageUrl: "" })) } }) }] }],
     generationConfig: { temperature: 0.3, maxOutputTokens: KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST, responseMimeType: "application/json" },
   };
