@@ -39,13 +39,14 @@ describe("knowledgeCard detail level (精简版 / 高级版)", () => {
     expect(resolveKnowledgeCardDetailLevel("balanced")).toBe("concise");
   });
 
-  it("full keeps far more sections than concise for a book, identical for short posts", () => {
+  it("完整版按主题提供温和编辑参考，不按原文字数线性铺开", () => {
     expect(suggestKnowledgeCardMinSections(2_000, "full")).toBe(suggestKnowledgeCardMinSections(2_000, "concise"));
     const concise = suggestKnowledgeCardMinSections(95_000, "concise");
     const full = suggestKnowledgeCardMinSections(95_000, "full");
     expect(concise).toBeLessThanOrEqual(30);
-    expect(full).toBeGreaterThanOrEqual(concise * 2);
-    expect(full).toBeLessThanOrEqual(96);
+    expect(full).toBeGreaterThan(concise);
+    expect(full).toBeLessThanOrEqual(concise * 1.5 + 1);
+    expect(full).toBeLessThanOrEqual(60);
     // 单参数调用等价精简版（旧调用方不变）
     expect(suggestKnowledgeCardMinSections(95_000)).toBe(concise);
   });

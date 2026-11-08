@@ -397,3 +397,16 @@ it("逐页图文的真实成功回执compositeImageUrl进入明确产物集合�
   expect(collectDeclaredMediaSources({ compositeImageUrl: "https://storage.googleapis.com/bucket-a/graphic/page.png", imageGenFlowLog: ["https://evil.invalid/log.png"], prompt: "https://evil.invalid/prompt.png" })).toEqual(["https://storage.googleapis.com/bucket-a/graphic/page.png"]);
   expect(collectDeclaredMediaSources({ compositeImageUrl: { url: "https://evil.invalid/nested.png" } })).toEqual([]);
 });
+
+
+describe("权威任务产物不依赖另一登记源可用性", () => {
+  it("本人成功任务精确匹配时不请求图片登记，保留原规范化结果", async () => {
+    const d=deps({loadSucceededJobOutputObjects:vi.fn(async()=>new Set(['generated/7/known.png'])),verifyOwnership:vi.fn(async()=>{throw new TypeError('fetch failed');})});
+    await expect(resolveRegisteredPostProdMediaSource({userId:'7',source:'gs://bucket-a/generated/7/known.png'},d)).resolves.toBe('gs://bucket-a/generated/7/known.png');
+    expect(d.verifyOwnership).not.toHaveBeenCalled();
+  });
+  it.each(['generated/7/unknown.png','generated/7/known.png.backup','generated/8/known.png'])("未精确命中任务的%s仍拒绝登记故障", async objectName => {
+    const d=deps({loadSucceededJobOutputObjects:vi.fn(async()=>new Set(['generated/7/known.png'])),verifyOwnership:vi.fn(async()=>{throw new TypeError('fetch failed');})});
+    await expect(resolveRegisteredPostProdMediaSource({userId:'7',source:'gs://bucket-a/'+objectName},d)).rejects.toThrow();
+  });
+});

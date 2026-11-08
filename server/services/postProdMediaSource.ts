@@ -14,7 +14,7 @@
  * 以及本人 succeeded 任务 output 明确产物字段里逐字全等的 https 直链
  * (整集合成落 Vercel Blob、第三方引擎 CDN 产物都在此列;仍限本人产物,下载禁跳转、有体积上限)。
  */
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, gt } from "drizzle-orm";
 import { jobs } from "../../drizzle/schema";
 import { getDb } from "../db";
 import {
@@ -184,24 +184,34 @@ export async function loadSucceededJobOutputObjects(
  * （整集合成落在 Vercel Blob 的 renders/…，不在系统桶；交付包抽音轨要能读到，只按全等匹配放行）。
  * 入队与 worker 各调一次解析，这里不再各扫一遍库。
  */
+const SUCCEEDED_OUTPUT_PAGE_SIZE = 150;
 export async function loadSucceededJobOutputSources(
   userId: string,
   bucket: string,
 ): Promise<{ objects: ReadonlySet<string>; urls: ReadonlySet<string> }> {
   const db = await getDb();
   if (!db) throw new Error("数据库暂时不可用,请稍后再试");
-  const rows = await db
-    .select({ output: jobs.output })
-    .from(jobs)
-    .where(and(eq(jobs.userId, userId), eq(jobs.status, "succeeded")));
   const objects = new Set<string>();
   const urls = new Set<string>();
-  for (const row of rows) {
-    for (const source of collectDeclaredMediaSources(row.output)) {
-      const objectName = extractSystemObjectName(source, bucket);
-      if (objectName) objects.add(objectName);
-      else if (/^https:\/\//i.test(source)) urls.add(source);
+  // 按主键分页读取：任务多的账号一次取回全部 output 会超出数据库单次响应上限而整体失败
+  // （2026-11-08 血脂本整册核对真实阻断：Failed query select "output" from "jobs" ...）。
+  let after = "";
+  for (;;) {
+    const rows = await db
+      .select({ id: jobs.id, output: jobs.output })
+      .from(jobs)
+      .where(and(eq(jobs.userId, userId), eq(jobs.status, "succeeded"), gt(jobs.id, after)))
+      .orderBy(asc(jobs.id))
+      .limit(SUCCEEDED_OUTPUT_PAGE_SIZE);
+    for (const row of rows) {
+      for (const source of collectDeclaredMediaSources(row.output)) {
+        const objectName = extractSystemObjectName(source, bucket);
+        if (objectName) objects.add(objectName);
+        else if (/^https:\/\//i.test(source)) urls.add(source);
+      }
     }
+    if (rows.length < SUCCEEDED_OUTPUT_PAGE_SIZE) break;
+    after = rows[rows.length - 1]!.id;
   }
   // 画布视频使用独立持久任务登记簿，不在 jobs 表中；只接收本人成功任务的明确视频产物。
   const uid = Number(userId);
@@ -305,6 +315,8 @@ async function assertObjectAllowed(
 ): Promise<void> {
   if (objectName.startsWith(postProdOutputPrefix(userId))) return;
   if (objectName.startsWith(userUploadsPrefix(userId))) return;
+  // 本人成功任务的完整产物登记本就是独立授权证明；不先依赖另一登记源的网络可用性。
+  if (context.jobObjects.has(objectName)) return;
   const uidNum = Number(userId);
   if (
     CANVAS_MEDIA_OBJECT_RE.test(objectName) &&
@@ -313,8 +325,6 @@ async function assertObjectAllowed(
   ) {
     return;
   }
-  // 完整对象名全等比较,不做子串匹配(abc.mp4 不许命中 abc.mp4.backup)
-  if (context.jobObjects.has(objectName)) return;
   throw new Error(UNREGISTERED_HINT);
 }
 

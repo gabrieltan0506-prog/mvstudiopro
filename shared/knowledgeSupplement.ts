@@ -12,6 +12,7 @@ export function knowledgeSupplementPlan(doc:EditableLayout,selection:KnowledgeSu
  const proposals=selection.indexes.map(i=>{const p=turn.response!.supplementalImages[i];if(!p)throw Error("补图建议不存在");return p;});
  const markdown=`# ${doc.title} · 补充图解\n\n`+proposals.map(p=>`## ${p.title}\n\n${p.content}`).join("\n\n");
  const plan=planKnowledgeCardPages(markdown,model);
+ if(turn.request.action==="supplement" && plan.pages.length<5)throw Error("补充提炼不足5页，原图保留，未提交出图");
  if(plan.pages.length<1||plan.pages.length>8)throw Error("选定内容实际分页超过8页，请减少补图内容后再确认");
  return {markdown,pages:plan.pages,proposals};
 }

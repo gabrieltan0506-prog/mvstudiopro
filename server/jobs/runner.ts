@@ -660,7 +660,9 @@ function getPlatformJobErrorMessage(error: unknown): string {
 function buildPlatformJobError(error: unknown): Error {
   // 用户终止原样上抛：包一层会丢掉错误码，终态判定就只能回去猜文案（复审 P2）
   if (isKnowledgeCardCancelledJobError(error)) return error as Error;
-  const originalMsg = error instanceof Error ? error.message : String(error ?? "unknown");
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
+  // 保留根因：业务失败若包装过（如读档整理），把底层原因一并写进 job.error 供排查。
+  const originalMsg = (error instanceof Error ? error.message : String(error ?? "unknown")) + (cause && !String(error).includes(cause) ? ` ← ${cause}` : "");
   const userMsg = getPlatformJobErrorMessage(error);
   // Embed original message (≤400 chars) so operators can see actual cause in job.error
   const enriched = new Error(`${userMsg} [原始错误: ${originalMsg.slice(0, 400)}]`);
@@ -3736,22 +3738,32 @@ async function processPlatformJob(
       await cancel.check({ force: true });
       await patchProgress({ distillStage: "deriving", distillPercent: 1 });
       const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
-      const derived = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => deriveKnowledgeCardCompact({
+      const deriveOptions = {
         fullMarkdown,
         targetSections,
         abortSignal: cancel.signal,
         // 终审第五条：链序按服务端 receipt 档位走，不信客户端声明
         model: receiptModel,
-        onProgress: async (p) => {
+        onProgress: async (p: {doneBatches:number;totalBatches:number;pass:number}) => {
           const frac = p.totalBatches > 0 ? Math.min(1, p.doneBatches / p.totalBatches) : 0;
           await patchProgress({
-            distillStage: "deriving",
+            distillStage: params.editionVersion===2 ? (p.pass===3?"verifying":p.pass===4?"revising":p.pass===2?"merging":"deriving") : "deriving",
             distillStageDone: p.doneBatches,
             distillStageTotal: p.totalBatches,
-            distillPercent: Math.round(5 + 90 * frac),
+            distillPercent: params.editionVersion===2 ? Math.round(p.pass===1?5+35*frac:p.pass===2?40+10*frac:p.pass===3?50+20*frac:70+25*frac) : Math.round(5 + 90 * frac),
           });
         },
-      }));
+      };
+      const derived = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), async () => {
+        if(params.editionVersion!==2)return deriveKnowledgeCardCompact(deriveOptions);
+        const {prepareKnowledgeCardEditions}=await import('../services/knowledgeCardEditionPreparation.js');
+        const {downloadGcsObjectVersioned,uploadBufferToGcs,getGcsBucketName}=await import('../services/gcs.js');
+        return prepareKnowledgeCardEditions({sourceMarkdown:fullMarkdown,model:receiptModel,targetSections,abortSignal:cancel.signal,onProgress:deriveOptions.onProgress,
+          evidence:{prefix:`knowledge-editions/user-${jobUserId}/${platformJobId}`,
+            read:async key=>{try{return JSON.parse((await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${key}`})).buffer.toString());}catch(error){if((error as Error).message==='gcs_stat_failed:404')return null;throw error;}},
+            save:async(key,value)=>{await uploadBufferToGcs({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json'});},
+          }});
+      });
       await patchProgress({ distillStage: "finishing", distillPercent: 98 });
       // 落库之前强制查一次（跳过轮询间隔缓存）：取消赢了就不写 receipt、不交稿
       await cancel.check({ force: true });
@@ -3759,6 +3771,7 @@ async function processPlatformJob(
       const output = {
           success: true,
           distilledMarkdown: derived.markdown,
+          ...('fullEditionMarkdown' in derived ? {fullEditionMarkdown:derived.fullEditionMarkdown,editionVersion:2,verificationProcessed:'verificationProcessed' in derived&&derived.verificationProcessed===true,editionIssues:'editionIssues' in derived?derived.editionIssues:[],editionPageCounts:'editionPageCounts' in derived?derived.editionPageCounts:null,editionPendingVerification:'editionPendingVerification' in derived?derived.editionPendingVerification:[]} : {}),
           distillModel,
           detailLevel: "concise",
           sections: derived.sections,
@@ -3816,7 +3829,14 @@ async function processPlatformJob(
       const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
       const { createKnowledgeReadingPreparation } = await import("../services/knowledgeReadingPreparation");
       const readingPreparation = createKnowledgeReadingPreparation(Number(jobUserId), platformJobId!);
+      const {downloadGcsObjectVersioned:readDistillObject,uploadBufferToGcs:saveDistillObject,getGcsBucketName:distillBucket}=await import('../services/gcs.js');
+      const publicationEvidence=params.billingPolicy==='interior-pages-v1'?{
+        prefix:`knowledge-card-distill/user-${jobUserId}/${platformJobId}`,
+        read:async(key:string)=>{try{return JSON.parse((await readDistillObject({gcsUri:`gs://${distillBucket()}/${key}`})).buffer.toString());}catch(error){if((error as Error).message==='gcs_stat_failed:404')return null;throw error;}},
+        save:async(key:string,value:unknown)=>{await saveDistillObject({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json'});},
+      }:undefined;
       const prepared = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => prepareKnowledgeCardCopy({
+        publicationEvidence,
         sourceText,
         files: jobFiles,
         abortSignal: cancel.signal,
@@ -3945,7 +3965,7 @@ export function resolveJobGrowthInteractiveLeaseLabel(job: {
   return `${isManhuaLearn ? "manhua-learn-job" : "platform-job"}:${String(job.id)}`;
 }
 
-async function runClaimedJob(
+export async function runClaimedJob(
   job: Awaited<ReturnType<typeof claimNextQueuedJob>> & object
 ) {
   if (!job) return;

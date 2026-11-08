@@ -45,5 +45,23 @@ export async function checkKnowledgeConversationRetry(owner: number, doc: Editab
     if(receipt.state==='failed' && (receipt.sent===false || (Number.isInteger(receipt.response?.status)&&typeof receipt.response?.text==='string')))continue;
     throw Error('上游请求状态尚未闭合，请恢复原请求，未创建新请求');
   }
+  const batches=await deps.read(`${prefix}/batches.json`);
+  if(batches){
+    if(!Array.isArray(batches.batches))throw Error('排版批次计划损坏，请先恢复原记录');
+    for(const batch of batches.batches){
+      if(!Number.isSafeInteger(batch.index)||batch.index<0)throw Error('排版批次编号无效');
+      const batchPrefix=`${prefix}/batch-${batch.index}`;
+      // 已成功批次在后继请求中复用，不能让一批失败导致整册重购。
+      if(await deps.read(`${batchPrefix}/report.json`))continue;
+      for(const name of ['raw.json','accepted.json'])
+        if(await deps.read(`${batchPrefix}/${name}`))throw Error('排版批次已有回包，请恢复原结果，未创建重复购买');
+      for(const route of KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES){
+        const receipt=await deps.read(`${batchPrefix}/route-${route}.json`);
+        if(!receipt||receipt.state==='unavailable')continue;
+        if(receipt.state==='failed'&&(receipt.sent===false||(Number.isInteger(receipt.response?.status)&&typeof receipt.response?.text==='string')))continue;
+        throw Error('排版批次上游状态尚未闭合，请恢复原请求，未创建新请求');
+      }
+    }
+  }
   return {requestId:knowledgeConversationRetryId(owner,doc.id,failedId)};
 }

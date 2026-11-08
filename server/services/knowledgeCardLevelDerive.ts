@@ -2,13 +2,12 @@
 import { countMarkdownSections, mergeDistilledMarkdownChunks } from "./knowledgeCardDistill.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
 import { assertKnowledgeCardDeriveTablesComplete } from "../../shared/knowledgeCardDeriveIntegrity.js";
-import { planKnowledgeCardPages } from "../../shared/knowledgeCardPagination.js";
-import { assertKnowledgeCardIllustrationSelection, KNOWLEDGE_CARD_MAX_KEY_ILLUSTRATIONS } from "../../shared/knowledgeCardIllustrationSelection.js";
 import { retryKnowledgeCardChain } from "./knowledgeCardChainRetry.js";
 import {
   KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER,
   KNOWLEDGE_CARD_GLM_FIRST_ORDER,
   openRouterProviderLockForTier,
+  knowledgeCardChainForPrimary,
   type KnowledgeCardTier,
 } from "./knowledgeCardGatewayOrder.js";
 import { GLM_53_FLASHX_EVOLINK_MODEL, GLM_53_FLASHX_OPENROUTER_MODEL } from "./glmModels.js";
@@ -49,15 +48,16 @@ type DeriveGateway = {
   key: string;
   model: string;
 };
-function deriveGateways(model?: string): DeriveGateway[] {
+function deriveGateways(model?: string, primary?: "openrouter" | "evolink"): DeriveGateway[] {
   const evo = String(process.env.EVOLINK_API_KEY || "").trim();
   const sg = String(process.env.DASHSCOPE_SG_PLAN_KEY || "").trim();
   const or = String(process.env.OPENROUTER_API_KEY || "").trim();
   // 终审第五条：派生与主链共用同一份顺序；receipt 选了哪档，派生就从哪档起跳
-  const order =
+  const defaultOrder =
     resolveKnowledgeCardDistillModel(model) === KNOWLEDGE_CARD_DISTILL_MODEL_GLM
       ? KNOWLEDGE_CARD_GLM_FIRST_ORDER
       : KNOWLEDGE_CARD_DEEPSEEK_FIRST_ORDER;
+  const order = primary ? knowledgeCardChainForPrimary(defaultOrder,primary) : defaultOrder;
   const out: DeriveGateway[] = [];
   for (const step of order) {
     if (step.gateway === "evolink" && evo) {
@@ -127,12 +127,11 @@ export function batchSections(sections: string[], maxChars = DERIVE_BATCH_MAX_CH
   return batches;
 }
 
-function buildDeriveSystem(keep: number, given: number, imageBudget: number): string {
+function buildDeriveSystem(keep: number, given: number): string {
   return [
     "你是知识卡片主编。下面是一本书的完整版提炼稿的一部分，由若干「## 标题」小节组成，每节含「图：」示意说明、要点列表与表格。",
     `请从这 ${given} 节里挑出最能代表全书主线、对读者最有用的 ${keep} 节，**原样保留**每节的「## 标题」「图：」「要点」「表格」四件套格式，不要改写成散文。`,
-    "这是配图选择，不是重写或缩短完整文字稿。完整文字将原样另存并全部交给顾问；本次仅挑选值得单独配图的主要事件、关系或结构。",
-    `本批配图最多 ${imageBudget} 张。长章节只取最值得画的重点与所需上下文，不必把该章节全部说明搬进图卡；未选内容仍由完整文字说明保留。每节只安排一张重点图。`,
+    "允许把两节强相关的内容合并成一节（标题可重拟），但合并后仍要保留图示说明、要点与表格。",
     "去掉重复、只有细节没有结论的节。不要输出任何前言、说明或总结，只输出 Markdown 小节。",
     `严格控制在 ${keep} 节以内。`,
   ].join("\n");
@@ -230,7 +229,7 @@ async function chatOnceInner(gw: DeriveGateway, params: { system: string; user: 
 }
 
 /** 按网关链调用；整条链都失败时隔 20 秒重跑，最多 4 次（0923 用户令） */
-async function deriveChat(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
+async function deriveChat(params: { selectionKey?: string; selectionKeep?: number; system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal; executionChannel?: "openrouter" | "evolink" }): Promise<string> {
   return retryKnowledgeCardChain(() => deriveChainOnce(params), {
     label: "knowledgeCardLevelDerive",
     abortSignal: params.abortSignal,
@@ -239,9 +238,9 @@ async function deriveChat(params: { system: string; user: string; model?: string
 }
 
 /** 按网关链调用一遍：一家坏了（HTTP 错 / 空内容 / 截断）换下一家 */
-async function deriveChainOnce(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal }): Promise<string> {
+async function deriveChainOnce(params: { system: string; user: string; model?: string; maxTokens: number; abortSignal?: AbortSignal; executionChannel?: "openrouter" | "evolink" }): Promise<string> {
   // 终审第五条：model（来自服务端 receipt）决定链序，不再丢弃
-  const gateways = deriveGateways(params.model);
+  const gateways = deriveGateways(params.model,params.executionChannel);
   if (!gateways.length) throw new Error("精华版派生未配置（EVOLINK_API_KEY / OPENROUTER_API_KEY）");
   let lastError: Error | null = null;
   // 如实报错：只有每一跳都是截断，才说「所有通道都没写完」
@@ -288,26 +287,31 @@ export async function deriveKnowledgeCardCompact(params: {
   const model = params.model;
   const { head, sections } = splitMarkdownSections(params.fullMarkdown);
   if (!sections.length) throw new Error("完整版稿子里没有「## 」小节，无法派生精华版");
-  const target = Math.min(KNOWLEDGE_CARD_MAX_KEY_ILLUSTRATIONS, Math.max(3, Math.floor(params.targetSections || compactTargetSections(sections.length))));
-  const pageCount = (parts: string[]) => planKnowledgeCardPages([head.trim(), parts.join("\n\n")].filter(Boolean).join("\n\n"), model).pageCount;
-  if (sections.length <= target && pageCount(sections) <= KNOWLEDGE_CARD_MAX_KEY_ILLUSTRATIONS) {
+  const target = Math.max(3, Math.floor(params.targetSections || compactTargetSections(sections.length)));
+  if (sections.length <= target) {
     assertKnowledgeCardDeriveTablesComplete(params.fullMarkdown);
     return { markdown: params.fullMarkdown.trim(), sections: sections.length, targetSections: target, passes: 0 };
   }
   let current = sections;
   let passes = 0;
-  while ((current.length > target || pageCount(current) > KNOWLEDGE_CARD_MAX_KEY_ILLUSTRATIONS) && passes < 3) {
+  while (current.length > target && passes < 3) {
     passes += 1;
     const batches = batchSections(current);
-    const outputs: string[] = [];
-    for (let i = 0; i < batches.length; i++) {
-      await params.onProgress?.({ doneBatches: i, totalBatches: batches.length, pass: passes });
+    const outputs: string[] = new Array(batches.length);
+    let doneBatches=0;
+    await params.onProgress?.({doneBatches,totalBatches:batches.length,pass:passes});
+    const workerCount=Math.min(10,batches.length);
+    const settled=await Promise.allSettled(Array.from({length:workerCount},async(_,worker)=>{
+    for (let i = worker; i < batches.length; i+=workerCount) {
       const batch = batches[i]!;
       const keep = Math.max(2, Math.ceil((target * batch.length) / current.length));
       params.abortSignal?.throwIfAborted();
       const raw = await chat({
-        system: buildDeriveSystem(keep, batch.length, Math.max(1, Math.floor(KNOWLEDGE_CARD_MAX_KEY_ILLUSTRATIONS * batch.length / current.length))),
+        selectionKey: `${passes}-${i}`,
+        selectionKeep: keep,
+        system: buildDeriveSystem(keep, batch.length),
         user: batch.join("\n\n"),
+        executionChannel:i%2===0?"openrouter":"evolink",
         model,
         abortSignal: params.abortSignal,
         maxTokens: Math.min(120_000, Math.max(DERIVE_MIN_OUTPUT_TOKENS, Math.ceil(batch.join("").length / 2))),
@@ -317,15 +321,18 @@ export async function deriveKnowledgeCardCompact(params: {
       if (got < 1 || got > keep * 2 + 2) {
         throw new Error(`精华版派生第 ${passes} 轮第 ${i + 1}/${batches.length} 批输出异常（要 ${keep} 节，回 ${got} 节）`);
       }
-      outputs.push(raw);
+      outputs[i]=raw;
+      await params.onProgress?.({doneBatches:++doneBatches,totalBatches:batches.length,pass:passes});
     }
+    }));
+    const failed=settled.find((r):r is PromiseRejectedResult=>r.status==='rejected');
+    if(failed)throw failed.reason;
     await params.onProgress?.({ doneBatches: batches.length, totalBatches: batches.length, pass: passes });
     const merged = mergeDistilledMarkdownChunks(outputs);
     const next = splitMarkdownSections(merged).sections;
-    if (next.length >= current.length && pageCount(next) >= pageCount(current)) throw new Error("重点配图没有减少，已停止；完整文字稿不变");
+    if (next.length >= current.length) throw new Error("精华版派生没有压缩效果，已停止");
     current = next;
   }
   const markdown = [head.trim(), current.join("\n\n")].filter(Boolean).join("\n\n");
-  assertKnowledgeCardIllustrationSelection(markdown, model);
   return { markdown, sections: current.length, targetSections: target, passes };
 }

@@ -551,18 +551,17 @@ export function buildSinglePageKnowledgeCardImagePrompt(
   let partDirective = `\n【收尾】本页不生成诗词、金句或书法点睛横幅；版面全部用于知识点模块。`;
 
   if (resolved.mode === "page") {
-    const { idx, total, isLast } = resolved;
-    partDirective = `\n【分页】本页是该主题图文笔记的第 ${idx}/${total} 页。请在文档大标题末尾追加「（第 ${idx}/${total} 页）」；**只**呈现下方本页切片，把切片里的每个小节都做成版面上的一个模块（分栏铺排、图重于文、每节一个图解模块、不要画其他页内容）。\n${
+    const { isLast } = resolved;
+    partDirective = `\n【内容范围】**只**呈现下方本页切片，把切片里的每个小节都做成版面上的一个模块（分栏铺排、图重于文、每节一个图解模块、不要画其他页内容）。\n${
       isLast
         ? "【收尾·末页】可选生成 **一句** 短诗词或书法点睛横幅收束全文（不要长诗占版）；也可不写诗词。"
         : "【收尾】本页不要生成诗词或书法点睛横幅；底部版面留给知识点模块。"
     }`;
   } else if (resolved.mode === "part") {
-    const label = opts.notePart === "upper" ? "上篇" : "下篇";
     partDirective =
       opts.notePart === "upper"
-        ? `\n【分页·兼容】本页标注「（${label}）」。只呈现下方切片；分栏铺排、模块整齐；不要诗词横幅。`
-        : `\n【分页·兼容】本页标注「（${label}）」。只呈现下方切片；分栏铺排、模块整齐。\n【收尾】可选一句短诗词点睛，勿占满版。`;
+        ? `\n【内容范围】只呈现下方切片；分栏铺排、模块整齐；不要诗词横幅。`
+        : `\n【内容范围】只呈现下方切片；分栏铺排、模块整齐。\n【收尾】可选一句短诗词点睛，勿占满版。`;
   }
 
   // 「〔参考原页 …〕」标记只供服务端定位参考图，不得印到卡片上
@@ -571,6 +570,7 @@ export function buildSinglePageKnowledgeCardImagePrompt(
   const referenceDirective = buildKnowledgeCardReferencePagesDirective(opts.referencePageCount);
 
   return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}${partDirective}${layoutDirective}${referenceDirective}
+【图片不标页码】图片会与文字共同编入手册；标题、页眉、页脚及画面其他位置均不要绘制页码、总页数、图片序号或上下篇标记。页序由手册排版统一处理。
 
 【以下为 Markdown 文稿内容，请按上述要求生成单页连贯图文知识卡片（而非 2×4 八格）】：
 ${slice}

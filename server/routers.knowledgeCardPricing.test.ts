@@ -13,6 +13,7 @@ import { createHTTPServer } from "@trpc/server/adapters/standalone";
 import { createTRPCUntypedClient, httpLink, httpBatchLink, splitLink } from "@trpc/client";
 import superjson from "superjson";
 import { useLongTrpcHttpLink } from "../client/src/lib/trpcTransportRouting";
+import { KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS, planKnowledgeCardPages } from '../shared/knowledgeCardPagination';
 
 const caller = () => appRouter.createCaller({ user: { id: 7, role: "user" } } as never);
 const base = {
@@ -54,7 +55,7 @@ describe("手册真实API报价与扣费前门禁", () => {
 });
 
 it("真实HTTP长中文报价通过POST到原服务，鉴权和全文保留且零扣费", async () => {
-  const markdown = "# 长文报价\n" + "完整中文正文".repeat(8000);
+  const markdown = "# 长文报价\n" + "完整中文正文".repeat(11000);
   const calls: Array<{url:string;method:string;body:string;credentials:unknown}> = [];
   const server = createHTTPServer({ router: appRouter, createContext: async () => ({user:{id:7,role:"user"}} as never) });
   await new Promise<void>(resolve => server.listen(0,"127.0.0.1",resolve));
@@ -82,6 +83,17 @@ it("真实HTTP长中文报价通过POST到原服务，鉴权和全文保留且�
 
 it("POST报价仍拒绝匿名和超长输入，不调用模型与扣费",async()=>{
   await expect(appRouter.createCaller({user:null} as never).mvAnalysis.quoteKnowledgeCardForGeneration({markdown:"正文"})).rejects.toThrow();
-  await expect(caller().mvAnalysis.quoteKnowledgeCardForGeneration({markdown:"字".repeat(50001)})).rejects.toThrow();
+  await expect(caller().mvAnalysis.quoteKnowledgeCardForGeneration({markdown:"字".repeat(KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS+1)})).rejects.toThrow();
   expect(mocks.lookup).not.toHaveBeenCalled();expect(mocks.deduct).not.toHaveBeenCalled();expect(mocks.image).not.toHaveBeenCalled();
+});
+
+it('五万以上手册原文到达真实分页及计费门禁，其他图片入口仍保持五万上限',async()=>{
+ const markdown='# 长手册\n\n'+'保留原文与知识条件。'.repeat(5500);
+ const plan=planKnowledgeCardPages(markdown,base.distillModel);
+ expect(markdown.length).toBeGreaterThan(50000);expect(plan.pages.every(p=>p.length<=1200)).toBe(true);
+ await expect(caller().mvAnalysis.generatePlatformCompositeSheet({...base,scriptContext:markdown,notePageTotal:plan.pageCount})).rejects.toThrow('需要 30 点');
+ expect(mocks.lookup).toHaveBeenCalledWith(7,markdown);expect(mocks.credits).toHaveBeenCalled();
+ mocks.lookup.mockClear();mocks.credits.mockClear();
+ await expect(caller().mvAnalysis.generatePlatformCompositeSheet({...base,kind:'storyboard_sheet_landscape',scriptContext:markdown})).rejects.toThrow('50000');
+ expect(mocks.lookup).not.toHaveBeenCalled();expect(mocks.credits).not.toHaveBeenCalled();expect(mocks.deduct).not.toHaveBeenCalled();expect(mocks.image).not.toHaveBeenCalled();
 });

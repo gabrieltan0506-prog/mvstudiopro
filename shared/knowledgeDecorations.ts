@@ -1,3 +1,4 @@
+import { KNOWLEDGE_LAYOUT_INSPIRATION } from './knowledgeDesignInspiration';
 import { z } from 'zod';
 
 /** 组件是可组合的真实视觉单元，不等于整套模板；候选描述同时供顾问选择与人工预览。 */
@@ -39,16 +40,15 @@ export const KNOWLEDGE_DESIGN_INSTRUCTIONS=`${KNOWLEDGE_DESIGN_MARKER}
 - reason：说明本章具体内容为何适合此组合，不能仅写美观、统一、换颜色。
 合法结构示例（仅说明字段类型，各章应按内容重新选择，不得整批照抄）：${JSON.stringify({palette:'bronze-sand',layout:'catalog',table:'rules',frame:'corners',motif:'bamboo-seal',reason:'本章对照制度沿革与年代，青铜纸色和目录式布局突出年份关系，简牍纹样呼应史料。'})}。
 先按本批所有章节的内容统筹分配，再逐章输出：战争/地理可选黛蓝朱砂、路线或阵列；制度/年代可选青铜纸色、简牍印章与规整表格；人物/关系可选关系线及舒展叙事；学术/文学可选竹青或灰紫、书卷；医药/自然可选叶脉或简牍。以上为语义参考而非固定套用，其他内容按实际含义搭配。没有匹配纹样时选none，不能用山水填空。
-禁止相邻章节重复同一非none主纹样；四章及以上至少三种设计组合；任何非none纹样全册占比不超过一半（向上取整）。不能只换颜色来逃避纹样重复。相同主题可用兼容的关系线、几何纹或留白产生区别，不为求变化搭配无关图案。续页只用简洁页眉，不重复大幅插画；表头根据表格内容采用细线、分组色带或极简，不在每个表格重复山水花纹。装饰不能压住正文、改变数字或代替知识图。完整文字、原图及事实校核必须保留。`;
+禁止相邻章节重复同一非none主纹样；四章及以上至少三种设计组合；任何非none纹样全册占比不超过一半（向上取整）。不能只换颜色来逃避纹样重复。相同主题可用兼容的关系线、几何纹或留白产生区别，不为求变化搭配无关图案。续页只用简洁页眉，不重复大幅插画；表头根据表格内容采用细线、分组色带或极简，不在每个表格重复山水花纹。装饰不能压住正文、改变数字或代替知识图。完整文字、原图及事实校核必须保留。
+${KNOWLEDGE_LAYOUT_INSPIRATION}`;
 /** 新合同严格要求设计字段；旧稿只在不带新合同标记时允许缺省。 */
 export function validateKnowledgeDesignBatch(pages: {reading?:{decoration?:{design?:KnowledgeVisualDesign}}}[]) {
  const designs=pages.map((p,i)=>{const d=p.reading?.decoration?.design;if(!d)throw Error(`第${i+1}章缺少内容驱动设计字段`);return knowledgeVisualDesignSchema.parse(d);});
- for(let i=1;i<designs.length;i++)if(designs[i].motif!=='none'&&designs[i].motif===designs[i-1].motif)throw Error('相邻章节重复主纹样，必须按内容重新分配');
- if(designs.length>=4&&new Set(designs.map(d=>JSON.stringify([d.palette,d.layout,d.table,d.frame,d.motif]))).size<3)throw Error('整批设计组合不足，不能整册套同一版式');
- for(const d of designs)if(d.motif!=='none'&&designs.filter(x=>x.motif===d.motif).length>Math.ceil(designs.length/2))throw Error('单一纹样占比超过一半');
+ // 重复纹样与组合数量是排版调整项，不再阻断正文、预览或导出。
  return designs;
 }
-export const knowledgeDecorationSchema = z.object({
+export const knowledgeDecorationFields = {
   artworkId:z.enum(['shiji-watercolor','cinema-blue','cinema-autumn','cinema-rose','none']),
   header:z.enum(['illustrated','source-inset','plain']),
   divider:z.enum(['botanical','cloud-scroll','geometric','none']),
@@ -56,7 +56,8 @@ export const knowledgeDecorationSchema = z.object({
   interleave:z.enum(['original-image','artwork-strip','none']),
   reason:z.string().trim().min(1).max(600),
   design:knowledgeVisualDesignSchema.optional(),
-}).strict().superRefine((v,c)=>{
+};
+export const knowledgeDecorationSchema = z.object(knowledgeDecorationFields).strict().superRefine((v,c)=>{
   if(v.artworkId==='none'&&(v.header==='illustrated'||v.interleave==='artwork-strip'||v.table==='floral-corner'))
     c.addIssue({code:'custom',message:'没有匹配插画时不能选择依赖插画的组件'});
 });

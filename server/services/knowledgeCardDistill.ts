@@ -1,3 +1,7 @@
+import { knowledgeStructuredDistillContext, invokeKnowledgeStructuredDistill } from './knowledgeCardStructuredDistill';
+import type { KnowledgeRouteEvidence } from './knowledgePublicationRoutes';
+import { KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION, preserveKnowledgePendingResearch } from './knowledgeVerificationPolicy';
+import { KNOWLEDGE_NARRATIVE_STYLE } from '../../shared/knowledgeNarrativeStyle';
 import type { KnowledgeReadingChunk } from "../../shared/knowledgeReadingPreparation";
 /**
  * 图文知识卡片：上传/长文 → 读文/读图 + 提炼 → Markdown。
@@ -263,10 +267,10 @@ function resolveDistillBullets(modelName?: string | null): { min: number; max: n
 /** 模型旁白禁令：0908 探针里「第 17 页配对与前文冲突」「材料认为」这类审稿口吻被印上了卡片 */
 const DISTILL_NO_META_ZH = `**不要写审稿旁白**：不得出现「材料认为 / 原文提到 / 第 N 页 / 与前文冲突 / 以前文为准 / 本段 / 以上」这类指向原稿或提炼过程的话；直接陈述知识本身。`;
 
-function buildDistillSystem(minSections: number, modelName?: string | null, docKeys?: string[], detailLevel?: KnowledgeCardDetailLevel): string {
+export function buildDistillSystem(minSections: number, modelName?: string | null, docKeys?: string[], detailLevel?: KnowledgeCardDetailLevel): string {
   const bullets = resolveDistillBullets(modelName);
   const levelRule = detailLevel === "full"
-    ? `\n0. **成稿档：完整版（第一重点 + 详细解说）**：本材料的每个章节、方法、表格/清单都要落进成稿，第一重点逐条给出详细解说（为什么、怎么做、什么条件下成立），次要内容也不因「取重点」被舍弃；数字、步骤、条件全部保留。**优先级**：要点条数仍按第 3 条（每条 ≤16 字、条数不超上限），装不下的信息**一律进 Markdown 表格或「图：」行**，不靠加长列表。**能表格化的一律表格化**：分类/对比/参数/时辰-经脉-做法这类多维内容写成 Markdown 表格（表头清楚、每格一句短语，不超过 6 列）；步骤/流程写成「A → B → C」一行流程链；同类清单合并成一张表而不是散成多节。表格承载信息量，小节数量不要为了铺开而增加。`
+    ? `\n0. **成稿档：完整版（第一重点 + 详细解说）**：本材料的每个章节、方法、表格/清单都要落进成稿，第一重点逐条给出详细解说（为什么、怎么做、什么条件下成立），次要内容也不因「取重点」被舍弃；数字、步骤、条件全部保留。**优先级**：要点条数仍按第 3 条（每条 ≤16 字、条数不超上限），装不下的信息**一律进 Markdown 表格或「图：」行**，不靠加长列表。**能表格化的一律表格化**：分类/对比/参数/时辰-经脉-做法这类多维内容写成 Markdown 表格（表头清楚、每格一句短语，不超过 6 列）；步骤/流程写成「A → B → C」一行流程链；同类清单合并成一张表而不是散成多节。表格承载信息量，小节数量不要为了铺开而增加。原文中已有的必要解说、适用条件、操作注意与例外另起独立普通段落，与图示/要点/表格之间空一行，供手册文字说明使用；不要把这些解释全部塞进「图：」行或表格，也不要重复已在图表中表达的信息，不编造原文没有的补白。`
     : `\n0. **成稿档：精华版（优先重点 + 简单解说）**：只取优先级最高的重点，每条配一句到位的简单解说（说清是什么、怎么用即可），不铺陈次要分支、不展开长论证；篇幅短、页数少是这档的目的。`;
   const refRule = docKeys?.length
     ? `\n7. **参考原页标记**：用户会附上原稿中版式有特色的页（表格、思维导图、分式图解、左右对比），每张图前都标了「原稿 docKey 第 N 页」。某小节的内容对应这些页时，在该小节末尾单独一行写标记，格式 \`${docKeys.map((k) => formatKnowledgeCardPageRef(k, [1])).join("\` 或 \`")}\`（docKey 照抄该图前标注的那个，页码写该图标注的真实页码，多页用逗号）。只能引用本次附带的图；没有对应参考页的小节不写标记；不得编造 docKey 或页码。`
@@ -275,6 +279,8 @@ function buildDistillSystem(minSections: number, modelName?: string | null, docK
 
 **目标**：让没读过原文的人在几分钟内读懂这份材料**讲了什么、关键结论是什么、怎么用**。${detailLevel === "full" ? "是**主要与次要重点全收**：宁多勿漏，用表格压实。" : "是**精华版：只提炼主要重点**，不是逐段搬运。"}
 
+${KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION}
+
 硬性要求：${levelRule}
 1. **抓主干**：优先保留核心论点、关键结论、可操作方法、决定性数据与对比、反直觉洞察。删掉铺垫、重复、寒暄、案例复述、广告水词、与主题无关的枝节。
 2. 结构：以 \`# 总标题\` 开头（总标题要点出全文主旨，不是书名照抄），下文用 \`## 小节\` 承载重点；小节标题本身就是一句有信息量的判断，不用「概述 / 背景介绍」这类空标题。
@@ -282,7 +288,7 @@ function buildDistillSystem(minSections: number, modelName?: string | null, docK
 4. **篇幅**：约 **${minSections}** 个 \`## 小节\`（可上下浮动 2 个）。宁可少而精，**禁止**为凑数把同一论点拆成多节，也禁止把整本压成两三节总括。
 5. **不要**把原文长段落原样倒进输出；**不要**注水扩写；**不要**「首先其次综上所述」公文腔。
 6. 只输出 Markdown 正文，不要 JSON、不要前言后记、不要解释你做了什么。
-7. ${DISTILL_NO_META_ZH}${refRule.replace("\n7. ", "\n8. ")}`;
+7. ${DISTILL_NO_META_ZH}\n${KNOWLEDGE_NARRATIVE_STYLE}${refRule.replace("\n7. ", "\n8. ")}`;
 }
 
 export type KnowledgeCardUploadFile = {
@@ -601,6 +607,14 @@ export function mergeDistilledMarkdownChunks(parts: string[]): string {
 function isTimeoutUpstream(status: number, body: string): boolean {
   if (status === 524 || status === 504 || status === 408) return true;
   return /524:\s*A timeout|timeout occurred|Gateway Time-out|Cloudflare/i.test(String(body || ""));
+}
+
+/** 把非上游容量类的失败如实转成用户可读原因；含供应商/英文技术细节的只给通用说明，原文留在 cause 与日志。 */
+export function knowledgeCardDistillFailure(message: string, cause?: unknown): Error {
+  if (message === KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE || message === KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE) return new Error(message, { cause });
+  const technical = /https?:|[A-Za-z]{4,}|\{|\}/.test(message);
+  const reason = technical ? "整理步骤内部出错，详情已记录" : message.slice(0, 120);
+  return new Error(`读档整理未完成：${reason}。原文件已保留，可重新开始读档`, { cause });
 }
 
 function mapDistillUpstreamError(status: number, body: string): Error {
@@ -1005,6 +1019,7 @@ async function invokeDistillLlm(params: {
   /** 不套提炼外壳（挑页用，见 invokeDistillViaGateway） */
   plainUserContent?: boolean;
 }): Promise<string> {
+  if (knowledgeStructuredDistillContext.getStore() && !params.plainUserContent) return invokeKnowledgeStructuredDistill(params);
   if (params.chainRetry === false) return invokeDistillChainOnce(params);
   // 0923 用户令：整条通道链都失败（模型服务异常）隔 20 秒重跑，最多 4 次，不直接报到前端
   return retryKnowledgeCardChain(() => invokeDistillChainOnce(params), {
@@ -1133,6 +1148,7 @@ async function distillOneChunkWithRetry(params: {
         detailLevel: params.detailLevel,
       });
     } catch (err) {
+      if (knowledgeStructuredDistillContext.getStore()) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
       // 用户终止：不退避、不细切，直接收口
       if (isKnowledgeCardCancelledError(err, params.abortSignal)) throw lastError;
@@ -1187,6 +1203,7 @@ async function distillOneChunkOrSkip(
     }
     return { ok: true, markdown };
   } catch (err) {
+    if (knowledgeStructuredDistillContext.getStore()) throw err;
     const message = err instanceof Error ? err.message : String(err);
     // 用户终止不能被「跳过该段」吞掉：整本立刻停
     if (isKnowledgeCardCancelledError(err)) throw err;
@@ -1205,7 +1222,7 @@ export const KNOWLEDGE_CARD_ALL_CHUNKS_FAILED_MESSAGE =
 
 type RefineStage = "group" | "final" | "tighten";
 
-function buildRefineSystem(
+function buildRefineSystemBody(
   minSections: number,
   stage: RefineStage,
   currentSections?: number,
@@ -1224,7 +1241,8 @@ function buildRefineSystem(
 4. ${distillSectionShape(bullets)}
 5. 去掉分段痕迹：「本段 / 以上 / 续上」这类过渡语、重复标题、空节。${DISTILL_NO_META_ZH}
 6. 已有的「〔参考原页 …〕」标记随所属小节保留（合并小节时把页码合到一行），不要新造、不要丢。
-7. 只输出 Markdown 正文，不要前言后记、不要解释取舍过程。`;
+7. 原稿已有的独立解说、适用条件、注意与例外保留为独立普通段落，与图示/要点/表格之间空一行；不得全部并入「图：」行或表格，不重复已有图表内容，不编造补白。
+8. 只输出 Markdown 正文，不要前言后记、不要解释取舍过程。`;
   }
   if (stage === "tighten") {
     return `你是知识卡片内容主编。下面这份知识卡片 Markdown **小节太多了**${
@@ -1264,6 +1282,10 @@ ${mainline}
 5. 去掉分段痕迹：「本段 / 以上 / 续上」这类过渡语、重复标题、空节。${DISTILL_NO_META_ZH}
 6. 已有的「〔参考原页 …〕」标记随所属小节保留（合并小节时把页码合到一行），不要新造、不要丢。
 7. 只输出 Markdown 正文，不要前言后记、不要解释取舍过程。`;
+}
+
+export function buildRefineSystem(...args: Parameters<typeof buildRefineSystemBody>): string {
+  return buildRefineSystemBody(...args) + '\n' + KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION;
 }
 
 /** 统稿要求大幅精选，只在「结构崩塌」时才回退输入稿。 */
@@ -1342,8 +1364,9 @@ async function refineOnce(params: {
           ? `${params.body.length} 字只回 ${text.trim().length} 字 / ${countMarkdownSections(text)} 节`
           : null,
     });
-    return refined;
+    return preserveKnowledgePendingResearch(params.body, refined);
   } catch (err) {
+    if (knowledgeStructuredDistillContext.getStore()) throw err;
     // 复审 P1：取消必须先判。否则统稿期间点停 → 这里「保留输入稿」→ prepare 一路返回成功，
     // 用户点了终止，服务层却交了一份稿
     if (isKnowledgeCardCancelledError(err, params.abortSignal)) throw err;
@@ -1693,13 +1716,16 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
       await params.onProgress?.({ doneChunks: done, totalChunks: chunks.length, phase: "distilling" });
     }
   };
-  await Promise.all(
+  const chunkOutcomes = await Promise.allSettled(
     routes.flatMap(({ chain, delay }) => Array.from({ length: KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE }, async () => {
       await waitAbortable(delay, params.abortSignal);
       params.abortSignal?.throwIfAborted();
       if (!stopped) await worker(chain);
     })),
   );
+
+  const failedWorker=chunkOutcomes.find((outcome):outcome is PromiseRejectedResult=>outcome.status === "rejected");
+  if(failedWorker)throw failedWorker.reason;
 
   // 审查 P1：只有真正成功的段进正文；全失败＝本次没有稿子，按失败结算
   const failedChunks = outputs.filter((o): o is Extract<DistillChunkResult, { ok: false }> => !o?.ok);
@@ -1711,6 +1737,8 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
     );
   }
   const merged = mergeDistilledMarkdownChunks(successMarkdowns);
+  // 新手册各批已经按同一JSON合同提炼；沿视频学习方式确定性合并，不再整本重写。
+  if (knowledgeStructuredDistillContext.getStore()) return merged;
   await params.onProgress?.({
     doneChunks: chunks.length,
     totalChunks: chunks.length,
@@ -1772,11 +1800,7 @@ const TRIAGE_SHEETS_PER_CALL = 8;
  * 扫读失败不阻断整体提炼（退回无参考页）。
  */
 export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: AbortSignal) {
-  // 终审第五条：挑页也按档位走同一份顺序——
-  // 轻量档不从 DeepSeek 视觉起跳，直接走轻量 Qwen 全链；
-  // 精细档降档尾段只走精细顺序里的 Qwen 两跳（新加坡→OpenRouter），不多出第 5 跳。
-  // 选 GLM：不打 DeepSeek 视觉专链，整条 GLM 起跳的链自己走完（GLM 两家 → DeepSeek 两家 → Qwen 两家）；
-  // 选 DeepSeek：视觉专链已经打过两家 DeepSeek，这里只接它之后的尾段，不重复起跳
+  // GLM与DeepSeek均保持既有模型合同，各批首选通道独立分流。
   const glmTier = resolveKnowledgeCardDistillModel(modelName) === KNOWLEDGE_CARD_DISTILL_MODEL_GLM;
   const fallbackChain = glmTier ? KNOWLEDGE_CARD_GLM_FIRST_ORDER : KNOWLEDGE_CARD_PREMIUM_FALLBACK_TAIL;
   return async (
@@ -1784,19 +1808,24 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
     pageCount: number,
     onProgress?: (doneSheets: number, totalSheets: number) => void | Promise<void>,
   ): Promise<KnowledgeCardPageSelection[]> => {
-    const picked: KnowledgeCardPageSelection[] = [];
-    for (let i = 0; i < sheets.length; i += TRIAGE_SHEETS_PER_CALL) {
+    const groups = Array.from({length:Math.ceil(sheets.length/TRIAGE_SHEETS_PER_CALL)},(_,index)=>sheets.slice(index*TRIAGE_SHEETS_PER_CALL,(index+1)*TRIAGE_SHEETS_PER_CALL));
+    const picked: KnowledgeCardPageSelection[][] = groups.map(()=>[]);
+    const stop = new AbortController();
+    const signal = abortSignal ? AbortSignal.any([abortSignal,stop.signal]) : stop.signal;
+    let doneSheets=0;
+    let progress=Promise.resolve();
+    const runGroup = async (groupIndex:number,primary:'openrouter'|'evolink') => {
+      const i=groupIndex*TRIAGE_SHEETS_PER_CALL;
       // 每组开始前先看有没有被叫停：不靠进度回调，也不等本组跑完
-      abortSignal?.throwIfAborted();
-      if (i > 0) await onProgress?.(i, sheets.length);
-      const group = sheets.slice(i, i + TRIAGE_SHEETS_PER_CALL);
+      signal.throwIfAborted();
+      const group=groups[groupIndex]!;
       const pageNumbers = group.flatMap((sheet) => sheet.pageNumbers);
       try {
         const userText = `全书共 ${pageCount} 页；本次目录页覆盖第 ${pageNumbers[0]}–${pageNumbers[pageNumbers.length - 1]} 页（共 ${group.length} 张目录页）。`;
         const imageUrls = group.map((sheet) => sheet.imageUrl);
         const chainFallback = () =>
           invokeDistillLlm({
-            abortSignal,
+            abortSignal:signal,
             sourceText: userText,
             imageUrls,
             modelName: resolveKnowledgeCardDistillModel(modelName),
@@ -1805,7 +1834,7 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
             effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "high"),
             systemOverride: buildPageTriageSystem(),
             timeoutMs: 180_000,
-            chainOverride: fallbackChain,
+            chainOverride: knowledgeCardChainForPrimary(fallbackChain,primary),
             // 0923 热修：挑页要 JSON，OpenRouter 跳开 json_object（选 GLM 时这里是整条挑页链）
             jsonObject: true,
             // 0926：用户消息只发挑页原话 + 目录页图，不套提炼外壳
@@ -1824,19 +1853,34 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
               userText,
               imageUrls,
               // 复审 P1：主通道以前根本没拿到取消信号，已取消还会照打一次 fetch
-              abortSignal,
+              abortSignal:signal,
+              primary,
               fallback: chainFallback,
             });
         const allowed = new Set(pageNumbers);
-        for (const item of parsePageTriage(raw)) if (allowed.has(item.pageNumber)) picked.push(item);
+        for (const item of parsePageTriage(raw)) if (allowed.has(item.pageNumber)) picked[groupIndex]!.push(item);
       } catch (err) {
         // 取消原样抛：不能被「本组不选参考页」这条容错吞掉（复审 P1）
-        if (isKnowledgeCardCancelledError(err, abortSignal)) throw err;
-        if (isSseContentSafetyError(err)) throw err;
+        if (isKnowledgeCardCancelledError(err, signal) || isSseContentSafetyError(err)) { stop.abort(err); throw err; }
         console.warn(`[knowledgeCardDistill] 目录页扫读失败（第 ${Math.floor(i / TRIAGE_SHEETS_PER_CALL) + 1}/${Math.ceil(sheets.length / TRIAGE_SHEETS_PER_CALL)} 组，目录页 ${i + 1}–${Math.min(sheets.length, i + TRIAGE_SHEETS_PER_CALL)}），本组不选参考页：${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`);
       }
-    }
-    return picked;
+      doneSheets+=group.length;
+      const completed=doneSheets;
+      progress=progress.then(async()=>{ await onProgress?.(completed,sheets.length); });
+      await progress;
+    };
+    // 两通道同时领取不同批次，各最多5个在途；完成即补位，已成功组不重发。
+    const work=(['openrouter','evolink'] as const).flatMap((primary,routeIndex)=>{
+      const indices=groups.map((_,i)=>i).filter(i=>i%2===routeIndex);
+      let next=0;
+      return Array.from({length:Math.min(KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE,indices.length)},async()=>{
+        while(next<indices.length){ signal.throwIfAborted(); await runGroup(indices[next++]!,primary); }
+      });
+    });
+    const settled=await Promise.allSettled(work);
+    const failed=settled.find((r):r is PromiseRejectedResult=>r.status==='rejected');
+    if(failed)throw failed.reason;
+    return picked.flat();
   };
 }
 
@@ -1846,6 +1890,7 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
  * 长书（>~12k 字）后台分段提炼再合并；产品面仍是一次上传自动写框。
  */
 export async function prepareKnowledgeCardCopy(input: {
+  publicationEvidence?: KnowledgeRouteEvidence;
   sourceText?: string;
   files?: KnowledgeCardUploadFile[];
   forceDistill?: boolean;
@@ -1865,6 +1910,8 @@ export async function prepareKnowledgeCardCopy(input: {
   /** 用户点「终止」：在途请求立刻断，段与段之间也不再往下跑 */
   abortSignal?: AbortSignal;
 }): Promise<PrepareKnowledgeCardCopyResult> {
+  if (input.publicationEvidence && !knowledgeStructuredDistillContext.getStore())
+    return knowledgeStructuredDistillContext.run({evidence:input.publicationEvidence},()=>prepareKnowledgeCardCopy({...input,publicationEvidence:undefined}));
   // 已经取消就别起步：抽取、挑页、提炼一律不做
   input.abortSignal?.throwIfAborted();
   const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
@@ -1975,6 +2022,9 @@ export async function prepareKnowledgeCardCopy(input: {
     if (/过短|未能从文件|请先输入|额度不足|通道不可用|未配置|超时/.test(msg)) {
       throw new Error(msg);
     }
-    throw new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
+    // 只有上游真实容量/限流/5xx 才报「算力紧张」（这些在调用处已映射成该文案）。
+    // 其余是本系统整理步骤自身的失败（如章节关联、结构校验），必须如实说明是哪一步出错，
+    // 不能伪装成算力紧张让用户反复重试、也让排查找不到根因（2026-11-08 用户要求深挖根因）。
+    throw knowledgeCardDistillFailure(msg, err);
   }
 }

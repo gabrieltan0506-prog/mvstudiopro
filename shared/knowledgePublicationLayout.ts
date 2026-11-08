@@ -7,6 +7,23 @@ import { Marked } from "marked";
 const text = (max: number) => z.string().trim().min(1).max(max);
 const base = { title: text(160), note: z.string().max(1500).default("") };
 const item = z.object({ title: text(160), body: text(3000) }).strict();
+export const KNOWLEDGE_READING_ACCENTS = ["indigo", "jade", "ochre", "rose"] as const;
+const ACCENT_HINTS: [RegExp, (typeof KNOWLEDGE_READING_ACCENTS)[number]][] = [
+  [/indigo|blue|navy|azure|cyan|teal|slate|ink|靛|蓝|藍|青|墨|黛/i, "indigo"],
+  [/jade|green|emerald|olive|sage|mint|翠|绿|綠|玉|松|竹/i, "jade"],
+  [/ochre|gold|amber|yellow|brown|earth|sand|tan|bronze|copper|orange|赭|金|黄|黃|褐|土|铜|銅|橙/i, "ochre"],
+  [/rose|red|pink|crimson|cinnabar|vermilion|coral|plum|magenta|purple|violet|朱|红|紅|粉|绛|絳|紫|胭脂/i, "rose"],
+];
+/**
+ * accent 只是四选一的强调色，不承载知识。排版批次约半数首发失败都因模型写了 "teal"/"cinnabar" 之类近义色名
+ * （2026-11-08 血脂本诊断），按色系归入最近的允许值；无法判断时用 indigo，不因装饰色整批重购。
+ */
+export function normalizeKnowledgeAccent(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const raw = value.trim().toLowerCase();
+  if ((KNOWLEDGE_READING_ACCENTS as readonly string[]).includes(raw)) return raw;
+  return ACCENT_HINTS.find(([pattern]) => pattern.test(raw))?.[1] ?? "indigo";
+}
 /** 模型只组织知识结构，不能提供 HTML、样式或可执行代码。 */
 export const knowledgeReadingBlockSchema = z.discriminatedUnion("type", [
   z.object({ ...base, type: z.literal("prose"), text: text(12000) }).strict(),
@@ -20,7 +37,7 @@ export const knowledgeReadingSchema = z.object({
   templateReason: z.string().trim().min(1).max(500).optional(),
   decoration: knowledgeDecorationSchema.optional(),
   subtitle: z.string().max(400),
-  accent: z.enum(["indigo", "jade", "ochre", "rose"]),
+  accent: z.preprocess(normalizeKnowledgeAccent, z.enum(KNOWLEDGE_READING_ACCENTS)),
   blocks: z.array(knowledgeReadingBlockSchema).min(1).max(40),
 }).strict().superRefine((reading, ctx) => {
   for (const block of reading.blocks) {
@@ -71,10 +88,10 @@ export function readingFromMarkdown(body: string): KnowledgeReading {
 
 export const KNOWLEDGE_READING_INSTRUCTIONS = `同时为每页输出reading={version:1,subtitle:简短引导语,accent:"indigo"|"jade"|"ochre"|"rose",blocks:[...]}。根据真实知识关系自动设计，不让用户逐页手排。
 blocks可选：
-1. {type:"table",title,note,columns:[2至6个表头],rows:[[单元格,...],...]}：可比较的概念、人物、参数、职责、优缺点优先整理成表格；每行列数与表头严格一致。表中单元格保留关键数字、单位、限定，不编造缺失值。
+1. {type:"table",title,note,columns:[2至6个表头],rows:[[单元格,...],...]}：可比较的概念、人物、参数、职责、优缺点优先整理成表格（图中已画出的表格不再重复）；每行列数与表头严格一致。表中单元格保留关键数字、单位、限定，不编造缺失值。
 2. {type:"sequence",title,note,relation:"chronology"|"process"|"comparison",items:[{title,body},...]}：时间顺序或真实步骤才用前两种关系；并列或世系不明用comparison，不能凭箭头捏造父子关系或因果。
 3. {type:"cards",title,note,items:[{title,body},...]}：分类要点、独立概念、完整清单适合卡片/矩阵。
 4. {type:"prose",title,note,text}：用短段落解释背景、因果与边界，不以表格代替必须说明的内容。
-每页可组合多个类型，避免整页长文章，也不要把不适合比较的知识硬凑表格。优先2至6个有信息量的块，内容多可增加块或行，不删重要事实。reading包含此页全部读者正文，不是body的缩略示意，body必须与reading表达相同事实；系统会从reading生成最终确认稿。每块note可为空。不得写入任意HTML/CSS，不生成假数据、空单元格占位或“待补充”。表格最多120行、卡片最多60项、单页最多40块，接近容量时明确失败，不静默丢内容。配色应服务主题与层级，跟随选中模板的配色，不固定为蓝金或墨绿色；图片来自绑定原图，不输出新图片地址。
+每页可组合多个类型，避免整页长文章，也不要把不适合比较的知识硬凑表格。块数与篇幅服从篇幅预算：资料多时先合并去重，不删重要事实。有配图的页，reading排在图片下方同一页及其续页，只承载图外的读者正文——图中已画出的表格、数字清单与步骤不在reading里重打，可用一句话指向图中位置；无图页reading包含此页全部读者正文。body必须与reading表达相同事实；系统会从reading生成最终确认稿。每块note可为空。不得写入任意HTML/CSS，不生成假数据、空单元格占位或“待补充”。表格最多120行、卡片最多60项、单页最多40块，接近容量时明确失败，不静默丢内容。配色应服务主题与层级，跟随选中模板的配色，不固定为蓝金或墨绿色；图片来自绑定原图，不输出新图片地址。
 ${KNOWLEDGE_TEMPLATE_SELECTION_INSTRUCTIONS}
 ${KNOWLEDGE_DECORATION_INSTRUCTIONS}`;

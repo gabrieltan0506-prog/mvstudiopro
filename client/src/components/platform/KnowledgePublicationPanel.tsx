@@ -1,7 +1,6 @@
 import {KNOWLEDGE_INTERIOR_PRICE_COPY} from "@shared/knowledgePublicationPricing";
 import {knowledgeConversationAnswerSchema} from "@shared/knowledgeConversation";
 import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
-import KnowledgeConversationPanel from "./KnowledgeConversationPanel";
 import { completedKnowledgeBatches, knowledgeCompletedPrefix, runKnowledgeParallelBatches } from "@shared/knowledgePublicationParallel";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { pollJobUntilTerminal } from "@/lib/jobs";
@@ -272,7 +271,7 @@ export default function KnowledgePublicationPanel({
       const execute = async (i: number) => {
         setMessage(
           i >= batches.length
-            ? "全部配图已检查，正在核对整套知识说明的一致性…"
+            ? "联网校验搜索：全册疑点集中核实，随后修订统稿…"
             : `正在整理第 ${batches[i].map(n=>n+1).join("、")} 章 · 已完成内容已保存`
         );
         const attempt = pub.attempts[String(i)] || 0;
@@ -383,6 +382,8 @@ export default function KnowledgePublicationPanel({
       else setMessage("已完成整套图文审校与说明整理。可直接确认生成；手动修改是可选项。");
     } catch (e) {
       setMessage("");
+      // 诊断：前台只显示业务提示，真实原因写入浏览器控制台（去掉地址），便于定位根因而不是只看到兜底文案。
+      console.warn("[knowledgePublication] 整理失败原因：", String((e as Error)?.message ?? e).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 800));
       const safe = knowledgePublicationPublicError(e);
       setTerminal(safe.retryable || (e as { retryable?: boolean })?.retryable === true);
       setError(safe.message);
@@ -504,6 +505,7 @@ export default function KnowledgePublicationPanel({
         } else setMessage(result.pdfError || "HTML 和 PDF 已生成并保存，可直接下载。");
       }
     } catch (e) {
+      console.warn("[knowledgePublication] 导出失败原因：", String((e as Error)?.message ?? e).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 800));
       setError(knowledgePublicationPublicError(e).message);
     } finally {
       locked(false);
@@ -571,7 +573,7 @@ export default function KnowledgePublicationPanel({
       className={`space-y-4 rounded-2xl border border-[#b9c4ad]/40 bg-[#182721] ${compact ? "p-3" : "p-5"} text-[#f5f0e5]`}
     >
       <div>
-        <h4 className="text-lg font-semibold">创作顾问 · 图文知识手册</h4>
+        <h4 className="text-lg font-semibold">图文知识手册</h4>
         <p className="mt-1 text-sm text-[#c0cabb]">
           整套 {pub.source.pages.length} 章内容、{pub.source.pages.filter(p => p.imageUrl).length} 张原图；按原顺序处理全部正文，手册按内容自动分页。
         </p>
@@ -579,7 +581,7 @@ export default function KnowledgePublicationPanel({
       <p className="text-xs text-[#c0cabb]">{KNOWLEDGE_INTERIOR_PRICE_COPY}</p>
       <details open={!compact} className="space-y-3">
       <summary className="cursor-pointer text-sm text-[#c0cabb]">手册与阅读设置</summary>
-      <p className="text-sm text-[#c0cabb]">需要重新编排时，使用下方“让顾问重新排版并导出 PDF”。顾问决定整册章节顺序、配色、表格、边框和纹样，原图与完整正文保留。</p>
+      <p className="text-sm text-[#c0cabb]">内容整理后自动排版，保留原图与完整正文；需要时可以调整阅读模板。</p>
       <label className="block text-sm">
         阅读模板
         <select aria-label="阅读模板" className="ml-3 max-w-full rounded-lg bg-[#24382e] p-2"
@@ -593,9 +595,9 @@ export default function KnowledgePublicationPanel({
           {pub.infographicTemplateId && !knowledgePublicationTemplates.some(t => t.id === pub.infographicTemplateId) && <option value={pub.infographicTemplateId} disabled>旧模板已停用，请选择第一组模板</option>}
           {knowledgePublicationTemplates.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
-        <p className="mt-2 text-xs text-[#c0cabb]">基础模板保留原图；顾问整册方案会按章节调整配色和装饰。采用方案后修改正文、原图或模板，需要重新规划；不会自动再次收费。</p>
+        <p className="mt-2 text-xs text-[#c0cabb]">模板保留原图，按章节组织配色与表格；更换模板后会重新生成版面。</p>
       </label>
-      <p className="text-sm text-[#c0cabb]">{pub.source.detailLevel === "concise" ? "精华版图卡 · 顾问补充详尽说明" : pub.source.detailLevel === "full" ? "完整版图卡 · 减少图上重复说明，保留完整知识" : "旧稿未记录图卡版本 · 保留现有说明密度"}</p>
+      <p className="text-sm text-[#c0cabb]">{pub.source.detailLevel === "concise" ? "精华版 · 主要知识成图，次要知识用文字和表格" : pub.source.detailLevel === "full" ? "完整版 · 主次知识浓缩成图，配简练说明" : "旧稿未记录图卡版本 · 保留现有说明密度"}</p>
       {review && <p className="text-sm text-[#c0cabb]">
         {selectedTemplate ? "已应用所选版式" : "已按内容匹配版式"}
         {!pub.infographicTemplateId && review.pages[index]?.reading?.templateReason ? ` · ${review.pages[index].reading!.templateReason}` : ""}
@@ -611,7 +613,6 @@ export default function KnowledgePublicationPanel({
           {error}
         </p>
       )}
-      <KnowledgeConversationPanel onLayout={exportLayout} onSupplement={onSupplement} key={doc.id} doc={doc} busy={busy} save={save} lock={locked} />
           <section className="space-y-3 rounded-xl border border-[#b9c4ad]/40 p-4" aria-label="PPTX课件规划">
             <div><h3 className="font-semibold">PPTX 页数与提纲</h3><p className="text-sm text-[#c0cabb]">可在出图期间按完整文字稿提前规划；待生成图片只预留位置，实际图片与整稿审校通过后确认导出。标题、总结也计入总页数。</p></div>
             <div className="flex flex-wrap items-end gap-3">
@@ -648,9 +649,9 @@ export default function KnowledgePublicationPanel({
       {!review ? (
         <div className="space-y-3">
           <p className="text-sm">
-            已完成 {completedCount}/{pub.source.pages.length} 章。原稿与配图已保留。
+            正文整理 {Math.round(completedCount/Math.max(1,pub.source.pages.length)*100)}% · 已完成 {completedCount}/{pub.source.pages.length} 章。原稿与配图已保留。
             {pendingChapters.length>0 && <span>第 {pendingChapters.join("、")} 章{error ? "尚未成功，已完成章节不会重做。" : "正在等待或整理。"}</span>}
-            {completedCount===pub.source.pages.length && <span>正在核对整册内容。</span>}
+            {completedCount===pub.source.pages.length && <span>联网校验搜索进行中，尚未完成最终统稿。</span>}
           </p>
           <div aria-label="已整理章节" aria-live="polite" className="max-h-[720px] space-y-4 overflow-y-auto">
             {pub.source.pages.map((source,i)=>{const chapter=pub.chapterReviews?.[source.id];if(!chapter || !pub.chapterReviewDigest)return null;
@@ -744,7 +745,7 @@ export default function KnowledgePublicationPanel({
             </label>
           )}
           {layoutPreviewError&&<p role="alert" className="text-rose-200">{layoutPreviewError}</p>}
-          {pub.layoutConversationId&&!layoutView&&!layoutPreviewError&&<p role="status">正在读取顾问排版后的整册预览…</p>}
+          {pub.layoutConversationId&&!layoutView&&!layoutPreviewError&&<p role="status">正在读取整册预览…</p>}
           <iframe
             title="图文知识手册预览"
             sandbox="allow-scripts"

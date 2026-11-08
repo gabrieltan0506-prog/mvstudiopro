@@ -123,17 +123,45 @@ describe("0923 派生额度：8.5 万字的书不再被思考吃光输出", () =
 });
 
 
-describe("重点配图真实分页预算，全文不变", () => {
- it("少标题长正文也调用重点选择，不把全文原样当选图", async () => {
-  const full = "# 全文\n\n" + Array.from({length:12},(_,i)=>`## 第${i+1}章\n\n${"事实与详细说明。".repeat(1000)}`).join("\n\n");
-  const original = full;
-  const chat=vi.fn(async()=>"## 主要事件\n\n图：事件关系。\n\n- 事实依据。\n\n| 项目 | 说明 |\n|---|---|\n| 事件 | 主线 |");
-  const out=await deriveKnowledgeCardCompact({fullMarkdown:full,chat:chat as never});
-  expect(chat).toHaveBeenCalled();expect(full).toBe(original);expect(out.markdown).not.toBe(full);
-  expect(chat.mock.calls.length).toBeGreaterThan(0);
- });
- it("无法减少重点时明确失败，不截前20页伪成功", async () => {
-  const full = "# 全文\n\n## 长章\n\n"+"事实与详细说明。".repeat(12000);
-  await expect(deriveKnowledgeCardCompact({fullMarkdown:full,chat:(async(p:any)=>p.user) as never})).rejects.toThrow("重点配图没有减少");
- });
+describe("恢复原精华挑节，页数不额外压缩正文", () => {
+  it("达到原目标的长章节原样保留，不因超过20图再调用模型", async () => {
+    const full = "# 全文\n\n" + Array.from({ length: 12 }, (_, i) => `## 第${i + 1}章\n\n${"事实与详细说明。".repeat(1000)}`).join("\n\n");
+    const chat = vi.fn(async () => { throw new Error("不应调用模型"); });
+    const out = await deriveKnowledgeCardCompact({ fullMarkdown: full, chat });
+    expect(chat).not.toHaveBeenCalled();
+    expect(out.markdown).toBe(full);
+    expect(out.sections).toBe(12);
+    expect(out.passes).toBe(0);
+  });
+
+  it("原目标可超过20节，保留选中原节的完整说明", async () => {
+    const full = book(180);
+    const systems: string[] = [];
+    const out = await deriveKnowledgeCardCompact({ fullMarkdown: full, chat: async p => {
+      systems.push(p.system);
+      const keep = Number(/挑出[^0-9]*(\d+)\s*节/.exec(p.system)?.[1]);
+      return splitMarkdownSections(p.user).sections.slice(0, keep).join("\n\n");
+    } });
+    expect(out.targetSections).toBe(30);
+    expect(out.sections).toBe(30);
+    expect(out.markdown).toContain(sec(30).trim());
+    expect(systems.every(s => !s.includes("本批配图最多") && !s.includes("不必把该章节全部说明"))).toBe(true);
+  });
+
+  it("未减少原节时明确失败，不截断原稿伪造派生结果", async () => {
+    await expect(deriveKnowledgeCardCompact({ fullMarkdown: book(14), chat: async p => p.user })).rejects.toThrow("精华版派生没有压缩效果");
+  });
+});
+
+it('重点配图独立批次双通道同时处理，原稿不改写且合并保留批次顺序',async()=>{
+ const full='# 完整稿\n\n'+Array.from({length:90},(_,i)=>`## 内容${i}\n\n${'详细原文内容。'.repeat(130)}`).join('\n\n');
+ const original=full;let active=0,peak=0;const channels:string[]=[];
+ const out=await deriveKnowledgeCardCompact({fullMarkdown:full,chat:async p=>{
+  active++;peak=Math.max(peak,active);channels.push(p.executionChannel!);
+  await new Promise(r=>setTimeout(r,10));active--;
+  const keep=Number(/挑出[^0-9]*(\d+)\s*节/.exec(p.system)?.[1]||2);
+  return splitMarkdownSections(p.user).sections.slice(0,keep).map(s=>s.split('\n')[0]+'\n\n重点知识保留。').join('\n\n');
+ }});
+ expect(peak).toBeGreaterThan(1);expect(new Set(channels)).toEqual(new Set(['openrouter','evolink']));
+ expect(full).toBe(original);expect(out.markdown).toContain('内容0');expect(out.markdown.length).toBeLessThan(full.length);
 });

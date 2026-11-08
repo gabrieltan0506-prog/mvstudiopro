@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { assembleRecovery, recoveryDraft } from "./knowledgeCardRecovery";
+import { assembleRecovery, recoveryDraft, markKnowledgeRecoveryDeleted } from "./knowledgeCardRecovery";
 const text="# 同名作品\n这份正文只属于当前备份。";
 function image(id:string,page:number,changes:Record<string,unknown>={}) { return {id,userId:"1",status:"succeeded",createdAt:new Date("2026-10-05T01:00:00Z"),input:{action:"platform_composite_sheet_progress",params:{kind:"single_page_knowledge_card",scriptContext:text,notePageIndex:page,notePageTotal:3,distillModel:"glm-5.3-flash",subjectPosition:"left",...changes}},output:{compositeImageUrl:`https://storage.googleapis.com/test/${id}.png`}}; }
 it("仅恢复本人同正文同版式成品，保留缺页并按真实页码排序",()=>{
@@ -25,4 +25,15 @@ it("同文同版式但不同真实计费档位的图片不会混成一套", () =
  const two={...image("two",2),output:{...image("two",2).output,knowledgeCardBillingModel:"glm-5.3-flashx"}};
  expect(assembleRecovery("1",one,[one,two]).images.map(p=>p.page)).toEqual([1]);
  expect(recoveryDraft(one)?.key).not.toBe(recoveryDraft(two)?.key);
+});
+
+it("删除仅写本人指定备份指纹，不删除任务或图片，越权在写入前拒绝",async()=>{
+ const paths:string[]=[];const row=image("delete",1);const original=JSON.stringify(row);
+ const store={read:async()=>false,save:async(path:string)=>{paths.push(path);}};
+ const result=await markKnowledgeRecoveryDeleted("1",row,store);
+ expect(paths).toEqual([`knowledge-recovery/user-1/deleted/${result.key}.json`]);
+ expect(JSON.stringify(row)).toBe(original);
+ await expect(markKnowledgeRecoveryDeleted("2",row,store)).rejects.toThrow("无法删除");
+ expect(paths).toHaveLength(1);
+ await expect(markKnowledgeRecoveryDeleted("1",{...row,status:"running"},store)).rejects.toThrow("没有可删除");
 });

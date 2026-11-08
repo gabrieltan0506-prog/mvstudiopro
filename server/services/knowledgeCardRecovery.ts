@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { jobs } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { getGcsBucketName, signGcsObjectPathV4ReadUrl } from "./gcs";
+import { downloadGcsObjectVersioned, uploadBufferToGcs, getGcsBucketName, signGcsObjectPathV4ReadUrl } from "./gcs";
 
 type Row = { id: string; userId: string; status: string; input: unknown; output: unknown; createdAt: Date };
 const recordedModel = (params: Record<string, any>, output: Record<string, any>) =>
@@ -21,7 +21,7 @@ export function assembleRecovery(userId: string, anchor: Row, rows: Row[]) {
   if (anchor.userId !== userId) throw new Error("无法读取这份备份");
   const draft = recoveryDraft(anchor);
   if (!draft) throw new Error("这份任务没有可恢复的成品");
-  const candidates = rows.filter(r => r.userId === userId).map(row => ({row,draft:recoveryDraft(row)})).filter(x => x.draft?.markdown === draft.markdown);
+  const candidates = rows.filter(r => r.userId === userId).map(row => ({row,draft:recoveryDraft(row)})).filter(x => x.draft && (x.draft.markdown === draft.markdown || (!x.draft.image && x.draft.output.fullEditionMarkdown === draft.markdown)));
   // Text-only recovery must not silently pick a different layout/model. Image sets are separate choices.
   const imageRows = draft.image ? candidates.filter(x => x.draft?.image && x.draft.key === draft.key).sort((a,b) => +new Date(b.row.createdAt)- +new Date(a.row.createdAt) || b.row.id.localeCompare(a.row.id)) : [];
   const total = draft.image ? Number(draft.params.notePageTotal) : 0;
@@ -34,10 +34,13 @@ export function assembleRecovery(userId: string, anchor: Row, rows: Row[]) {
     seen.add(page); images.push({page, jobId:x.row.id, url});
   }
   images.sort((a,b)=>a.page-b.page);
-  const textSource = draft.image ? candidates.find(x=>!x.draft!.image)?.draft : draft;
-  const level = textSource?.output.detailLevel === "full" ? "full" as const : "concise" as const;
+  const textEntry = draft.image ? candidates.find(x=>!x.draft!.image) : {row:anchor,draft};
+  const textSource=textEntry?.draft;
+  const level = textSource?.output.detailLevel === "full" || (draft.image&&textSource?.output.fullEditionMarkdown===draft.markdown) ? "full" as const : "concise" as const;
   return { jobId:anchor.id, markdown:draft.markdown, detailLevel:level,
-    fullMarkdown: textSource?.input.action === "knowledge_card_derive_level" ? String(textSource.params.fullMarkdown || "") || null : level === "full" ? draft.markdown : null,
+    fullMarkdown: String(textSource?.output.fullEditionMarkdown || "") || (textSource?.input.action === "knowledge_card_derive_level" ? String(textSource.params.fullMarkdown || "") || null : level === "full" ? draft.markdown : null),
+    conciseMarkdown: typeof textSource?.output.fullEditionMarkdown=== "string" ? String(textSource.output.distilledMarkdown||"") : null,
+    verificationJobId:textSource?.output.verificationProcessed===true?textEntry!.row.id:null,
     distillModel:recordedModel(draft.params, draft.output),
     subjectPosition:draft.params.subjectPosition === "center" ? "center" as const : "left" as const,
     infographicTemplateId:typeof draft.params.infographicTemplateId === "string" ? draft.params.infographicTemplateId : null,
@@ -45,25 +48,44 @@ export function assembleRecovery(userId: string, anchor: Row, rows: Row[]) {
 }
 async function database() { const db = await getDb(); if (!db) throw new Error("暂时无法读取云端备份，请稍后重试"); return db; }
 const eligible = sql`(${jobs.input}->>'action' in ('knowledge_card_distill','knowledge_card_derive_level') or (${jobs.input}->>'action' = 'platform_composite_sheet_progress' and ${jobs.input}->'params'->>'kind' = 'single_page_knowledge_card'))`;
+// 删除恢复入口使用本人备份指纹；原任务、计费凭证和已采用的图片不受影响。
+const deletionPath=(userId:string,key:string)=>`knowledge-recovery/user-${userId}/deleted/${key}.json`;
+const deletionStore={
+  read:async(path:string)=>{try{await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${path}`});return true;}catch(e){if(e instanceof Error&&e.message==="gcs_stat_failed:404")return false;throw e;}},
+  save:async(path:string)=>{await uploadBufferToGcs({objectName:path,buffer:Buffer.from(JSON.stringify({deletedAt:new Date().toISOString()})),contentType:"application/json"});},
+};
+export async function markKnowledgeRecoveryDeleted(userId:string,anchor:Row,store=deletionStore){
+  if(anchor.userId!==userId)throw Error("无法删除这份备份");
+  const draft=recoveryDraft(anchor);if(!draft)throw Error("这份任务没有可删除的备份");
+  await store.save(deletionPath(userId,draft.key));return {key:draft.key};
+}
+export async function deleteKnowledgeCardRecovery(userId:string,jobId:string){
+  const db=await database();
+  const [anchor]=await db.select().from(jobs).where(and(eq(jobs.id,jobId),eq(jobs.userId,userId))).limit(1);
+  if(!anchor)throw Error("无法删除这份备份");
+  return markKnowledgeRecoveryDeleted(userId,anchor);
+}
 export async function listKnowledgeCardRecovery(userId: string, cursor?: { at: string; id: string }) {
   const db = await database();
   const rows = await db.select({id:jobs.id,userId:jobs.userId,status:jobs.status,input:jobs.input,createdAt:jobs.createdAt,
-    output:sql<unknown>`jsonb_build_object('distilledMarkdown',${jobs.output}->'distilledMarkdown','detailLevel',${jobs.output}->'detailLevel','distillModel',${jobs.output}->'distillModel','knowledgeCardBillingModel',${jobs.output}->'knowledgeCardBillingModel')`})
+    output:sql<unknown>`jsonb_build_object('distilledMarkdown',${jobs.output}->'distilledMarkdown','detailLevel',${jobs.output}->'detailLevel','fullEditionMarkdown',${jobs.output}->'fullEditionMarkdown','verificationProcessed',${jobs.output}->'verificationProcessed','distillModel',${jobs.output}->'distillModel','knowledgeCardBillingModel',${jobs.output}->'knowledgeCardBillingModel')`})
     .from(jobs).where(and(eq(jobs.userId,userId),eq(jobs.status,"succeeded"),eligible,
       ...(cursor ? [sql`(${jobs.createdAt},${jobs.id}) < (${new Date(cursor.at)},${cursor.id})`] : [])))
     .orderBy(desc(jobs.createdAt),desc(jobs.id)).limit(41);
   const page=rows.slice(0,40), seen=new Set<string>();
   const items=page.flatMap(row=>{const d=recoveryDraft(row);if(!d||seen.has(d.key))return [];seen.add(d.key);return [{jobId:row.id,key:d.key,title:d.markdown.split('\n').find(x=>x.trim())?.replace(/^#+\s*/,"").slice(0,100)||"知识卡成品",createdAt:row.createdAt.toISOString(),kind:d.image?"图文成品":"正文备份",total:d.image?Number(d.params.notePageTotal)||0:0}];});
-  const last=page.at(-1);return {items,nextCursor:rows.length>40&&last?{at:last.createdAt.toISOString(),id:last.id}:null};
+  const visible=await Promise.all(items.map(async item=>await deletionStore.read(deletionPath(userId,item.key))?null:item));
+  const last=page.at(-1);return {items:visible.filter((item):item is typeof items[number]=>item!==null),nextCursor:rows.length>40&&last?{at:last.createdAt.toISOString(),id:last.id}:null};
 }
 export async function getKnowledgeCardRecovery(userId: string, jobId: string) {
   const db = await database();
   const [anchor]=await db.select().from(jobs).where(and(eq(jobs.id,jobId),eq(jobs.userId,userId))).limit(1);
   if(!anchor)throw new Error("无法读取这份备份");const draft=recoveryDraft(anchor);if(!draft)throw new Error("这份任务没有可恢复的成品");
+  if(await deletionStore.read(deletionPath(userId,draft.key)))throw Error("这份备份已删除，不能恢复");
   const rows=await db.select({id:jobs.id,userId:jobs.userId,status:jobs.status,input:jobs.input,createdAt:jobs.createdAt,
-    output:sql<unknown>`jsonb_build_object('distilledMarkdown',${jobs.output}->'distilledMarkdown','detailLevel',${jobs.output}->'detailLevel','distillModel',${jobs.output}->'distillModel','compositeImageUrl',${jobs.output}->'compositeImageUrl','knowledgeCardBillingModel',${jobs.output}->'knowledgeCardBillingModel')`})
+    output:sql<unknown>`jsonb_build_object('distilledMarkdown',${jobs.output}->'distilledMarkdown','detailLevel',${jobs.output}->'detailLevel','fullEditionMarkdown',${jobs.output}->'fullEditionMarkdown','verificationProcessed',${jobs.output}->'verificationProcessed','distillModel',${jobs.output}->'distillModel','compositeImageUrl',${jobs.output}->'compositeImageUrl','knowledgeCardBillingModel',${jobs.output}->'knowledgeCardBillingModel')`})
     .from(jobs).where(and(eq(jobs.userId,userId),eq(jobs.status,"succeeded"),eligible,
-      sql`(${jobs.input}->'params'->>'scriptContext' = ${draft.markdown} or ${jobs.output}->>'distilledMarkdown' = ${draft.markdown})`));
+      sql`(${jobs.input}->'params'->>'scriptContext' = ${draft.markdown} or ${jobs.output}->>'distilledMarkdown' = ${draft.markdown} or ${jobs.output}->>'fullEditionMarkdown' = ${draft.markdown})`));
   const result=assembleRecovery(userId,anchor,rows);
   result.images=result.images.map(image=>{
     const u=new URL(image.url);const [bucket,...segments]=u.pathname.slice(1).split('/');

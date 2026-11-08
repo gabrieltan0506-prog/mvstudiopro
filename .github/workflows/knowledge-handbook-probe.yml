@@ -1,0 +1,180 @@
+name: Knowledge Handbook Probe
+
+# 图文知识手册隔离探针（2026-11-08 用户授权）：只在既有 rig 工作机运行本分支打包的正式代码。
+# 公开仓库：日志只输出阶段与页数等计数，不输出书籍正文；私有文件只以 RSA+AES 密文经 probe-transfer 分支往返，
+# 入站私钥只在工作机内，出站用请求方公钥加密。
+on:
+  push:
+    branches: [fix/knowledge-review-contract-1107]
+    paths: ["probes/knowledge-handbook/request.json"]
+
+# 不同请求ID各用独立目录与租约，允许并行；同一ID的重复启动由 started.json 拒绝。
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: write
+    env:
+      APP: mvstudiopro
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      KEY: /app/isolated/.transfer-key.pem
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read request
+        id: req
+        run: |
+          set -euo pipefail
+          R=probes/knowledge-handbook/request.json
+          ID=$(jq -r '.id' $R); ACTION=$(jq -r '.action' $R); SCRIPT=$(jq -r '.script // empty' $R)
+          MACHINE=$(jq -r '.machine // "7812595b294778"' $R)
+          [[ "$ID" =~ ^[a-z0-9-]{6,60}$ ]] || { echo "请求ID无效"; exit 1; }
+          [[ "$ACTION" =~ ^(keygen|prepare|start|status|watch|stop)$ ]] || { echo "动作无效"; exit 1; }
+          BUILD=false; [[ "$ACTION" =~ ^(prepare|start|watch)$ ]] && BUILD=true
+          { echo "id=$ID"; echo "action=$ACTION"; echo "script=$SCRIPT"; echo "machine=$MACHINE"; echo "build=$BUILD"; } >> $GITHUB_OUTPUT
+          echo "DIR=/app/isolated/$ID" >> $GITHUB_ENV
+          mkdir -p /tmp/kp
+          cp scripts/knowledge-probe-transfer.mjs /tmp/kp/transfer.mjs
+          cp scripts/knowledge-probe-fetch-pdf.mjs /tmp/kp/fetch-pdf.mjs
+      - uses: pnpm/action-setup@v4
+        if: steps.req.outputs.build == 'true'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: ${{ steps.req.outputs.build == 'true' && 'pnpm' || '' }}
+      - name: Build probe bundle from this branch
+        if: steps.req.outputs.build == 'true'
+        env:
+          YOUTUBE_DL_SKIP_DOWNLOAD: "true"
+          PUPPETEER_SKIP_DOWNLOAD: "1"
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          node scripts/build-knowledge-probe.mjs "${{ steps.req.outputs.script }}" /tmp/kp
+          cp scripts/knowledge-probe-launch.mjs /tmp/kp/launch.mjs
+          jq '.config' probes/knowledge-handbook/request.json > /tmp/kp/config.json
+          echo "commit=$GITHUB_SHA"; sha256sum /tmp/kp/* | sed 's#/tmp/kp/##'
+      - name: Fetch encrypted private inputs
+        if: steps.req.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          N=$(jq '.inputs // [] | length' probes/knowledge-handbook/request.json)
+          [ "$N" = "0" ] && exit 0
+          git fetch --depth=1 origin probe-transfer
+          for row in $(jq -c '.inputs[]' probes/knowledge-handbook/request.json); do
+            REF=$(echo "$row" | jq -r .ref); NAME=$(echo "$row" | jq -r .name)
+            [[ "$NAME" =~ ^[a-z0-9._-]+$ && "$REF" =~ ^[a-z0-9/._-]+$ ]] || { echo "输入名无效"; exit 1; }
+            git show "FETCH_HEAD:$REF.enc" > "/tmp/kp/$NAME.enc"; git show "FETCH_HEAD:$REF.key" > "/tmp/kp/$NAME.key"
+            echo "密文输入 $NAME $(stat -c %s /tmp/kp/$NAME.enc) bytes"
+          done
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Ensure isolated rig machine is started
+        run: |
+          set -euo pipefail
+          M=${{ steps.req.outputs.machine }}
+          LIST=$(flyctl machines list -a "$APP" --json)
+          GROUP=$(echo "$LIST" | jq -r ".[] | select(.id==\"$M\") | .config.metadata.fly_process_group")
+          [ "$GROUP" = "rig" ] || { echo "目标机器不是 rig 工作机（$GROUP），中止"; exit 1; }
+          STATE=$(echo "$LIST" | jq -r ".[] | select(.id==\"$M\") | .state"); echo "rig state=$STATE"
+          if [ "$STATE" != "started" ]; then flyctl machine start "$M" -a "$APP"; fi
+          for i in $(seq 1 30); do
+            STATE=$(flyctl machines list -a "$APP" --json | jq -r ".[] | select(.id==\"$M\") | .state")
+            [ "$STATE" = "started" ] && break; sleep 5
+          done
+          [ "$STATE" = "started" ] || { echo "工作机未启动"; exit 1; }
+      - name: Transfer key (private key stays on rig; public key printed)
+        if: steps.req.outputs.action == 'keygen'
+        run: |
+          set -euo pipefail
+          M=${{ steps.req.outputs.machine }}
+          flyctl ssh console -a "$APP" --machine "$M" -C "mkdir -p /app/isolated"
+          printf 'put /tmp/kp/transfer.mjs /app/isolated/transfer.mjs\n' | flyctl ssh sftp shell -a "$APP" --machine "$M" >/dev/null
+          flyctl ssh console -a "$APP" --machine "$M" -C "node /app/isolated/transfer.mjs keygen $KEY"
+      - name: Upload, decrypt inputs on rig, launch
+        if: steps.req.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          M=${{ steps.req.outputs.machine }}
+          flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'test ! -e $DIR/started.json && mkdir -p $DIR'"
+          for f in $(ls /tmp/kp); do
+            printf 'put /tmp/kp/%s %s/%s\n' "$f" "$DIR" "$f" | flyctl ssh sftp shell -a "$APP" --machine "$M" >/dev/null
+          done
+          for row in $(jq -c '.inputs // [] | .[]' probes/knowledge-handbook/request.json); do
+            NAME=$(echo "$row" | jq -r .name)
+            flyctl ssh console -a "$APP" --machine "$M" -C "node $DIR/transfer.mjs decrypt $KEY $DIR/$NAME $DIR/$NAME"
+          done
+          flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'cd $DIR && sha256sum entry.mjs lease.mjs panel.js launch.mjs config.json'"
+          MODE=run; [ "${{ steps.req.outputs.action }}" = "prepare" ] && MODE=prepare
+          flyctl ssh console -a "$APP" --machine "$M" -C "node $DIR/launch.mjs $DIR $MODE"
+      - name: Stop a running probe (user-visible decision)
+        if: steps.req.outputs.action == 'stop'
+        run: |
+          set +e
+          M=${{ steps.req.outputs.machine }}; T=$(jq -r '.config.targetId' probes/knowledge-handbook/request.json)
+          [[ "$T" =~ ^[a-z0-9-]{6,60}$ ]] || { echo "目标ID无效"; exit 1; }
+          flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'pkill -TERM -f /app/isolated/$T/entry.mjs; sleep 3; pgrep -fl /app/isolated/$T/ || echo stopped'"
+      - name: Watch every step (numbers only, pushed to probe-transfer/monitor)
+        if: steps.req.outputs.action == 'watch'
+        run: |
+          set +e
+          M=${{ steps.req.outputs.machine }}; ID=${{ steps.req.outputs.id }}; T=$(jq -r '.config.targetId // empty' probes/knowledge-handbook/request.json)
+          git config --global user.name probe-bot && git config --global user.email probe-bot@users.noreply.github.com
+          git fetch -q origin probe-transfer && git worktree add -q /tmp/wt FETCH_HEAD && cd /tmp/wt && git checkout -q -B probe-transfer
+          mkdir -p monitor
+          END=$(( $(date +%s) + 330*60 ))
+          while [ $(date +%s) -lt $END ]; do
+            M1=$(flyctl ssh console -a "$APP" --machine "$M" -C "cat $DIR/monitor.json" 2>/dev/null | tr -d '\r' | sed -n '/^{/,$p')
+            L1=$(flyctl ssh console -a "$APP" --machine "$M" -C "cat /app/isolated/$T/live.json" 2>/dev/null | tr -d '\r' | sed -n '/^{/,$p' | jq -c '{at,stage,summary,error,done,total}' 2>/dev/null)
+            echo "$M1" | jq -c '{at,round,stage,batches,chapters,layout,chars,estimatedTotalPages,flags}' 2>/dev/null
+            echo "$L1"
+            jq -n --argjson m "${M1:-null}" --argjson l "${L1:-null}" '{monitor:$m,live:$l}' > "monitor/$T.json" 2>/dev/null && git add monitor && git -c user.name=probe-bot -c user.email=probe-bot@users.noreply.github.com commit -qm "监看 $T" && { git push -q origin HEAD:refs/heads/probe-transfer || { git fetch -q origin probe-transfer && git rebase -q FETCH_HEAD && git push -q origin HEAD:refs/heads/probe-transfer; }; }
+            STAGE=$(echo "$L1" | jq -r '.stage // empty' 2>/dev/null)
+            case "$STAGE" in pdf_returned|publication_failed|image_failed|failed|awaiting_image_confirmation) echo "目标到达终态 $STAGE"; break;; esac
+            sleep 110
+          done
+      - name: Follow status (counts only)
+        if: steps.req.outputs.action != 'keygen' && steps.req.outputs.action != 'watch' && steps.req.outputs.action != 'stop'
+        run: |
+          set +e
+          M=${{ steps.req.outputs.machine }}; ACTION="${{ steps.req.outputs.action }}"
+          END=$(( $(date +%s) + 330*60 ))
+          while :; do
+            J=$(flyctl ssh console -a "$APP" --machine "$M" -C "cat $DIR/live.json" 2>/dev/null | tr -d '\r' | sed -n '/^{/,$p')
+            echo "[$(date -u +%H:%M:%SZ)] $(echo "$J" | jq -c 'del(.ids)' 2>/dev/null || echo 'live.json 尚未生成')"
+            P=$(flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'cat $DIR/client-progress.json 2>/dev/null; echo; ls $DIR | wc -l'" 2>/dev/null | tr -d '\r' | sed -n '/^{/p' | jq -c '[paths(scalars) as $p | {k:($p|map(tostring)|join(".")),v:getpath($p)} | select((.v|type)=="number" or (.v|type)=="boolean" or ((.v|type)=="string" and (.v|length)<=24))] | from_entries? // .' 2>/dev/null)
+            [ -n "$P" ] && echo "  进度：$P"
+            STAGE=$(echo "$J" | jq -r '.stage // empty' 2>/dev/null)
+            case "$STAGE" in pdf_returned|publication_failed|image_failed|failed|awaiting_image_confirmation|diagnosed) break;; esac
+            if [ "$ACTION" = "prepare" ] && [ "$STAGE" = "prepared" ]; then break; fi
+            if [ "$ACTION" = "status" ]; then break; fi
+            [ $(date +%s) -ge $END ] && { echo "跟踪时间到，探针仍在机内继续运行"; break; }
+            sleep 120
+          done
+          ERRS=$(flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'test -f $DIR/ui-errors.log && wc -l < $DIR/ui-errors.log || echo 0'" 2>/dev/null | tail -1)
+          echo "ui-errors 行数=$ERRS"
+          # 只输出错误行（去地址、截断），不输出正文。
+          flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'grep -E \"Error|错误|失败|拒\" $DIR/run.log | tail -5'" 2>/dev/null | sed -E 's#(https?|gs)://[^ ]+#[地址]#g' | cut -c1-300
+      - name: Collect requested outputs as ciphertext to probe-transfer branch
+        if: always() && steps.req.outputs.action != 'keygen' && steps.req.outputs.action != 'watch' && steps.req.outputs.action != 'stop'
+        run: |
+          set +e
+          M=${{ steps.req.outputs.machine }}; ID=${{ steps.req.outputs.id }}
+          N=$(jq '.collect // [] | length' probes/knowledge-handbook/request.json); [ "$N" = "0" ] && exit 0
+          printf 'put /tmp/kp/fetch-pdf.mjs %s/fetch-pdf.mjs\n' "$DIR" | flyctl ssh sftp shell -a "$APP" --machine "$M" >/dev/null
+          flyctl ssh console -a "$APP" --machine "$M" -C "node $DIR/fetch-pdf.mjs $DIR" 2>/dev/null | grep '^{'
+          mkdir -p /tmp/out /tmp/transfer/enc
+          for f in $(jq -r '.collect[]' probes/knowledge-handbook/request.json); do
+            [[ "$f" =~ ^[a-z0-9._-]+$ ]] || continue
+            printf 'get %s/%s /tmp/out/%s\n' "$DIR" "$f" "$f" | flyctl ssh sftp shell -a "$APP" --machine "$M" >/dev/null 2>&1
+            [ -s "/tmp/out/$f" ] || { echo "未取得 $f"; continue; }
+            node scripts/knowledge-probe-transfer.mjs encrypt probes/knowledge-handbook/recipient.pub.pem "/tmp/out/$f" "/tmp/transfer/enc/$f"
+            echo "已加密 $f ($(stat -c %s /tmp/out/$f) bytes)"
+          done
+          # 与监看推送并发：每次在最新分支头上提交，失败重试。
+          for attempt in 1 2 3 4 5 6; do
+            rm -rf /tmp/transfer/wt; git worktree prune
+            git fetch -q origin probe-transfer && git worktree add -q --detach /tmp/transfer/wt FETCH_HEAD || continue
+            mkdir -p /tmp/transfer/wt/outputs/$ID && cp /tmp/transfer/enc/* /tmp/transfer/wt/outputs/$ID/ 2>/dev/null
+            (cd /tmp/transfer/wt && git add -A outputs && git -c user.name=probe-bot -c user.email=probe-bot@users.noreply.github.com commit -qm "探针密文输出 $ID" && git push -q origin HEAD:refs/heads/probe-transfer) && { echo "密文已推送 probe-transfer/outputs/$ID"; break; }
+            sleep $((attempt*3))
+          done

@@ -1,3 +1,6 @@
+import {refineKnowledgeSupplement} from '@/lib/knowledgeSupplementRefine';
+import {withKnowledgeAdvisorRecovery} from '@/lib/knowledgeAdvisorRecovery';
+import {streamManhuaAdvisor} from '@/lib/manhuaAdvisorStream';
 import { knowledgePresentationSourceManuscript } from "@shared/knowledgePresentation";
 import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
@@ -31,6 +34,7 @@ const button =
 const field =
   "w-full rounded-lg border border-white/20 bg-[#201b32] p-2 text-white";
 export type EditableLayoutStudioHandle = {
+  refineSupplement: (sourceId:string)=>Promise<{selection:KnowledgeSupplementSelection;markdown:string}>;
   beginNewSource: () => void;
   prepare: (source: LayoutSource, waitForImages: (ids: string[]) => Promise<void>, supplementOf?: KnowledgeSupplementSelection, options?: {waitForReading?:()=>Promise<void>;preparePresentation?:boolean}) => Promise<{ documentId: string; maxCredits: number; estimatedCredits: number; presentationCredits?:number }>;
   start: (documentId: string, authorizedCredits: number) => Promise<void>;
@@ -224,6 +228,22 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
     return {generation:result.generation};
   };
   useImperativeHandle(ref, () => ({
+    async refineSupplement(sourceId){
+      if(!ready||!cloudReady||locked.current)throw Error("原稿尚在整理，请稍候");
+      const parent=current.current.library.documents.find(d=>d.sourceId===sourceId&&d.publication?.source.detailLevel==='concise'&&d.publication?.synchronizedStarted===true);
+      if(!parent)throw Error("请先生成并整理原精华版，再提炼补充页");
+      locked.current=true;setBusy(true);
+      const stillHere=()=>alive.current&&current.current.library.documents.some(d=>d.id===parent.id&&d.publication?.manuscript===parent.publication?.manuscript);
+      try{return await refineKnowledgeSupplement(parent,{
+        current:()=>{if(!stillHere())throw Error("原稿已变化，请恢复原请求");return current.current.library.documents.find(d=>d.id===parent.id)!;},
+        save:commitPublication,
+        quote:()=>utils.editableLayout.publicationQuote.fetch({documentId:parent.id,purpose:'conversation'}),
+        send:async(requestId,question,batchIndex)=>{
+          const response=await withKnowledgeAdvisorRecovery(requestId,()=>streamManhuaAdvisor({requestId,question,rawQuestion:question,knowledgePublicationContext:{documentId:parent.id,batchIndex,attempt:0,purpose:'conversation'},confirmPaid:false,confirmedCredits:0},()=>undefined),()=>utils.client.auth.me.query(),stillHere);
+          return response.answer;
+        },
+      });}finally{locked.current=false;if(alive.current)setBusy(false);}
+    },
     beginNewSource() {
       sourceSeen.current = source;
       preparedRun.current = null;
@@ -429,7 +449,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-bold text-[#edd4ac]">{compact ? "创作顾问与排版" : "排版与导出"}</h3>
+          <h3 className="font-bold text-[#edd4ac]">{compact ? "图文知识手册" : "排版与导出"}</h3>
           <p className={compact ? "hidden" : "text-xs text-gray-400"}>
             图文知识手册 · 自动整理与排版 · 云端保存恢复 · HTML / PDF
           </p>

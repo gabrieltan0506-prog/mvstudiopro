@@ -18,16 +18,17 @@ export function knowledgePublicationChapter(doc: EditableLayout, review: Knowled
   if(!page || !checked || page.id!==checked.id) throw new Error("图文页身份不一致");
   if(page.imageUrl && !image) throw new Error(`第${index+1}页图片未载入，未输出缺图文件`);
   if(!preview && image && !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(image)) throw new Error("导出配图必须完整内嵌");
-  const selected=resolveKnowledgePublicationTemplate(doc.publication?.infographicTemplateId,checked.reading?.templateId);
   const layout=selectedKnowledgeBookLayout(doc);
+  const chapter=layout?.chapters.find(p=>p.pageId===page.id);
+  const selected=resolveKnowledgePublicationTemplate(doc.publication?.infographicTemplateId,chapter?.templateId||checked.reading?.templateId);
   // 已采用顾问方案时不再根据标题关键词补选主题。
   const theme=chooseKnowledgeBookletTheme(layout ? '' : page.headline+'\n'+page.body,selected?.id);
   const design=layout?layout.chapters.find(p=>p.pageId===page.id)?.design:checked.reading?.decoration?.design;
-  if (layout && !design) throw new Error("顾问排版方案缺少当前章节，未使用自动补选样式");
+  if (layout && !chapter) throw new Error("顾问排版方案缺少当前章节");
   if (!layout && doc.publication?.designMode === "content") throw new Error("请先让创作顾问重新排版；未用本地规则替代顾问方案");
   const decoration=design?contentDecoration(resolveKnowledgeDecoration(checked.reading?.decoration,page.headline),design):checked.reading?.decoration;
-  const notes=checked.cautions.map(c=>`### 阅读提示\n\n${c.message}\n\n原文或图像依据：${c.evidence}`).join('\n\n');
-  return buildKnowledgeBookletHtml({title:doc.title,theme,fragment:true,chapterOffset:index,decoration,pages:[{id:page.id,headline:page.headline,body:page.body+(notes?'\n\n'+notes:''),imageUrl:image}]});
+  // 审查疑点只保留在作者面板；最终读者正文不重新附加已删除或待核的主张。
+  return buildKnowledgeBookletHtml({title:doc.title,theme,fragment:true,chapterOffset:index,decoration,pages:[{id:page.id,headline:page.headline,body:page.body,imageUrl:image}]});
 }
 export function buildKnowledgePublicationHtml(doc:EditableLayout,review:KnowledgeReview,images:Record<string,string>,preview=false) {
   return knowledgePublicationHead(doc.title)+doc.pages.map((p,i)=>knowledgePublicationChapter(doc,review,i,images[p.imageUrl]||"",preview)).join("\n")+"</body></html>";

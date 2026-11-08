@@ -21,3 +21,7 @@ it('成稿档位随原稿保存恢复，旧稿保持未知而不伪装成完整�
   expect(doc.publication?.source.detailLevel).toBe(detailLevel);
  }
 });
+it('只有标题的章节仍进入预览，保留其他全文并标记待补齐，不因空正文中断',()=>{
+ const html=buildKnowledgeBookletHtml({title:'原稿',pages:[{id:'empty',headline:'只有标题',body:'',imageUrl:''},{id:'good',headline:'已有正文',body:'保留原有内容123。',imageUrl:''}]});
+ expect(html).toContain('只有标题');expect(html).toContain('保留原有内容123。');expect(html).toContain('本节正文待补齐');expect(html).toContain('pendingContent');
+});

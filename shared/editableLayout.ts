@@ -55,6 +55,7 @@ export const layoutLibrarySchema = z
 export type EditableLayout = z.infer<typeof editableLayoutSchema>;
 export type LayoutLibrary = z.infer<typeof layoutLibrarySchema>;
 export type LayoutSource = {
+  verificationJobId?: string;
   readingPreparation?: import("./knowledgeReadingPreparation").KnowledgeReadingPreparation;
   reviewBatchMode?: "ready-images";
   kind?: "knowledge-publication";
@@ -65,7 +66,7 @@ export type LayoutSource = {
   sourceId: string;
   title: string;
   body: string;
-  pages?: { headline: string; body: string; pageIndex: number; imageJobId?: string; knowledgeRole?: "reading" | "illustration" }[];
+  pages?: { headline: string; body: string; pageIndex: number; imageJobId?: string; knowledgeRole?: "reading" | "illustration"; supplement?: string }[];
   images?: Record<number, string>;
 };
 export function layoutFromSource(source: LayoutSource): EditableLayout {
@@ -77,6 +78,7 @@ export function layoutFromSource(source: LayoutSource): EditableLayout {
     imageUrl: source.images?.[p.pageIndex] || "",
     ...(p.imageJobId ? { imageJobId: p.imageJobId } : {}),
     ...(p.knowledgeRole ? { role: p.knowledgeRole } : {}),
+    ...(p.supplement ? { supplement: p.supplement } : {}),
   }));
   return editableLayoutSchema.parse({
     id: crypto.randomUUID(),
@@ -86,7 +88,7 @@ export function layoutFromSource(source: LayoutSource): EditableLayout {
     theme: "paper",
     fontSize: 24,
     updatedAt: new Date().toISOString(),
-    pages: sourcePages.map(({ imageJobId, role, ...p }) => ({
+    pages: sourcePages.map(({ imageJobId, role, supplement, ...p }) => ({
       ...p,
       imagePlacement: "below",
     })),
@@ -95,7 +97,7 @@ export function layoutFromSource(source: LayoutSource): EditableLayout {
       billing: {version:"interior-pages-v1",confirmed:false},
       inputFingerprint: source.inputFingerprint,
       infographicTemplateId: source.infographicTemplateId,
-      source: { title: source.title, detailLevel: source.detailLevel, pages: sourcePages, readingPreparation: source.readingPreparation, reviewBatchMode: source.reviewBatchMode },
+      source: { title: source.title, detailLevel: source.detailLevel, pages: sourcePages, readingPreparation: source.readingPreparation, verificationJobId:source.verificationJobId, reviewBatchMode: source.reviewBatchMode },
       manuscript: knowledgeManuscript({title:source.title, pages:sourcePages}),
     } } : {}),
   });
