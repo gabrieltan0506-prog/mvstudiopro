@@ -99,11 +99,14 @@ describe("normalizeStockKeywordQuery（LLM 输出校验）", () => {
     expect(normalizeStockKeywordQuery("city night stock footage 4k")).toBe("city night");
     expect(normalizeStockKeywordQuery(["rain", "street"])).toBe("rain street");
   });
-  it("反向：中文、数字符号、词数不足或超 6、非字符串一律拒收（不截断冒充）", () => {
+  it("正向：模型给出 7–10 个合格词时保留前 6 个（线上实测常见）", () => {
+    expect(normalizeStockKeywordQuery("rainy city night neon reflections wet street")).toBe("rainy city night neon reflections wet");
+  });
+  it("反向：中文、数字符号、词数不足或超 10、非字符串一律拒收", () => {
     expect(normalizeStockKeywordQuery("城市 夜景")).toBeNull();
     expect(normalizeStockKeywordQuery("city night!!")).toBeNull();
     expect(normalizeStockKeywordQuery("rain")).toBeNull();
-    expect(normalizeStockKeywordQuery("a b c d e f g".replace(/[a-g]/g, "word"))).toBeNull();
+    expect(normalizeStockKeywordQuery(Array(11).fill("word").join(" "))).toBeNull();
     expect(normalizeStockKeywordQuery("Here are keywords: city night")).toBeNull();
     expect(normalizeStockKeywordQuery(42)).toBeNull();
     expect(normalizeStockKeywordQuery("")).toBeNull();

@@ -74,7 +74,7 @@ describe("suggestStockKeywords", () => {
   it.each([
     ["乱码", "@@##不是JSON"],
     ["中文词", JSON.stringify({ query: "城市 夜景", queryZh: "城市夜景" })],
-    ["词数超限", JSON.stringify({ query: "one two three four five six seven", queryZh: "太长" })],
+    ["词数超限（超过 10 个视为成句）", JSON.stringify({ query: "one two three four five six seven eight nine ten eleven", queryZh: "太长" })],
     ["只有一个词", JSON.stringify({ query: "rain", queryZh: "雨" })],
     ["带解释", "Here you go: city night"],
   ])("格式不合格（反向：%s）→ 两跳都不合格后退回规则版", async (_name, content) => {

@@ -15,6 +15,8 @@ import {
 export const STOCK_KEYWORD_MIN_WORDS = 2;
 export const STOCK_KEYWORD_MAX_WORDS = 6;
 export const STOCK_KEYWORD_MAX_CHARS = 60;
+/** LLM 输出可接受的最多词数（超过 6 个时只保留前 6 个）；再多视为成句。 */
+export const STOCK_KEYWORD_LLM_MAX_TOKENS = 10;
 export const STOCK_KEYWORD_ZH_MAX_CHARS = 20;
 export const STOCK_KEYWORD_TEXT_MAX_CHARS = 1000;
 
@@ -355,7 +357,7 @@ export function suggestStockKeywordsByRules(
 const FILLER_WORDS = new Set(["a", "an", "the", "stock", "footage", "video", "videos", "clip", "clips", "photo", "photos", "image", "images", "hd", "4k", "free"]);
 
 /**
- * 校验并规范化 LLM 给出的英文搜索词：只允许英文小写单词（含 ' -），去掉填充词后 2–6 词、≤60 字符。
+ * 校验并规范化 LLM 给出的英文搜索词：只允许英文小写单词（含 ' -），去掉填充词后 2–10 词（保留前 6 个）、≤60 字符。
  * 不合格返回 null（调用方退回规则版），绝不截断冒充合格。
  */
 export function normalizeStockKeywordQuery(raw: unknown): string | null {
@@ -364,8 +366,10 @@ export function normalizeStockKeywordQuery(raw: unknown): string | null {
   const tokens = source.toLowerCase().replace(/[,，;；、/|]+/g, " ").trim().split(/\s+/).filter(Boolean);
   const words = tokens.filter(t => !FILLER_WORDS.has(t));
   if (words.some(t => !/^[a-z][a-z'-]*$/.test(t))) return null;
-  if (words.length < STOCK_KEYWORD_MIN_WORDS || words.length > STOCK_KEYWORD_MAX_WORDS) return null;
-  const query = words.join(" ");
+  // 线上实测（1108）：模型常给 7–8 个合格关键词。关键词是检索词袋，保留前 6 个不改变语义；
+  // 超过 STOCK_KEYWORD_LLM_MAX_TOKENS 视为成句/解释，仍拒收。
+  if (words.length < STOCK_KEYWORD_MIN_WORDS || words.length > STOCK_KEYWORD_LLM_MAX_TOKENS) return null;
+  const query = words.slice(0, STOCK_KEYWORD_MAX_WORDS).join(" ");
   return query.length <= STOCK_KEYWORD_MAX_CHARS ? query : null;
 }
 
