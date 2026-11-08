@@ -167,13 +167,17 @@ export async function recoverKnowledgePublicationOperation(
       fetch: async () => { throw Error("原回包不足以恢复，未提交新模型请求"); },
     };
     const { reviewKnowledgeConversation } = await import("./knowledgeConversationAdvisor");
-    // 已发出过的批次只用原回执重验，绝不重购；因前一批失败而从未发出的批次按正式路由正常发送（不是重复购买）。
+    // 已收到的回执先用当前解析器零调用重验；从未发出的批次按正式路由首次发送。
     const answer = await (deps.conversation || reviewKnowledgeConversation)(input.userId, context, {
       post: async (request: unknown, evidence: any) => {
-        let sent = false;
-        for (const route of KNOWLEDGE_PUBLICATION_ALL_ROUTES)
-          if (await evidence.read(`${evidence.prefix}/route-${route.id}.json`)) { sent = true; break; }
-        return invokeKnowledgePublicationRoutes(request as KnowledgeModelRequest, evidence, sent ? noNewRequest : undefined);
+        // 有未闭合（pending/unknown）回执时只查原请求，不新购；已发出的都是明确失败时，按正式已配置重试链继续
+        // （用户既定规则：未知回执不新购，明确失败走正式重试链；重试次数仍由路由的上限与语法补买规则约束）。
+        let unresolved = false;
+        for (const route of KNOWLEDGE_PUBLICATION_ALL_ROUTES) {
+          const receipt = await evidence.read(`${evidence.prefix}/route-${route.id}.json`);
+          if (receipt && ["pending", "unknown"].includes(receipt.state)) { unresolved = true; break; }
+        }
+        return invokeKnowledgePublicationRoutes(request as KnowledgeModelRequest, evidence, unresolved ? noNewRequest : undefined);
       },
     });
     const recovered: ManhuaAdvisorQaResponse = {
