@@ -636,7 +636,7 @@ export function marketingConcatInput(draft: MarketingProductionDraft): Marketing
     const startSec = marketingVisualStartSec(segment.visual);
     // 贴装产物有实测时长时以它为准（素材元数据可能略长于实片），不越界取段
     if (mount.durationSec != null && startSec + segment.voice.durationSec > mount.durationSec + 1e-3)
-      throw new Error(`第 ${i + 1} 段画面实际只有 ${mount.durationSec.toFixed(1)} 秒，入点后不足以放下配音，请调整选段`);
+      throw new Error(`第 ${i + 1} 段画面实际只有 ${mount.durationSec.toFixed(2)} 秒，入点后不足以放下配音，请重新选段（入点前移）`);
     const endSec = mount.durationSec != null ? Math.min(startSec + clipSec, mount.durationSec) : startSec + clipSec;
     clips.push(mount.gcsUri!);
     trims.push({ startSec, endSec: roundMs(endSec) });
@@ -677,7 +677,10 @@ export function nextMarketingExportStep(draft: MarketingProductionDraft): Market
   }
   if (pendingMounts.length) return { kind: "mount", segmentIds: pendingMounts };
   if (marketingFinalDone(draft)) return { kind: "done" };
-  const key = JSON.stringify(marketingConcatInput(draft));
+  // 拼接参数可能因贴装实测时长不足而无法生成：作为阻断项返回，不能在渲染期抛错。
+  let key: string;
+  try { key = JSON.stringify(marketingConcatInput(draft)); }
+  catch (error) { return { kind: "blocked", issues: [error instanceof Error ? error.message : String(error)] }; }
   if (draft.final && draft.final.key === key && ["submitting", "queued", "running"].includes(draft.final.status))
     return { kind: "wait", reason: "成片拼接处理中" };
   return { kind: "concat" };

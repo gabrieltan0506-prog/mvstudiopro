@@ -103,7 +103,8 @@ export function DigitalHumanProductionPanel(props: {
       const rows = latest.current.draft.mix.overlays ?? [];
       const row = digitalHumanOverlayFromPick(rows, pick, approvedSec, stockTarget?.startSec ?? placeAt);
       setOverlayUrls(v => ({ ...v, [pick.asset.assetId]: pick.asset.url }));
-      saveOverlays(list => [...list, row].sort((a, b) => a.startSec - b.startSec));
+      // 直接保存并让错误上抛给抽屉提示（saveOverlays 会吞错，导致保存失败仍当作绑定成功）。
+      latest.current.save(d => ({ ...d, mix: { ...d.mix, overlays: [...(d.mix.overlays ?? []), row].sort((a, b) => a.startSec - b.startSec) } }));
       setPlaceAt(Math.round((row.startSec + row.durationSec) * 1000) / 1000);
       setStockTarget(null);
       setError("");

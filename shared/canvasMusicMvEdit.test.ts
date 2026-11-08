@@ -167,6 +167,17 @@ describe("图库素材绑定到MV片段", () => {
     // 计划里是 generated，仍视为同一镜头；剪辑问题清单不报来源不一致。
     expect(musicMvEditIssues(next, plan).join()).not.toContain("来源不一致");
   });
+  it("正向：抽屉窗口取整少 1 帧时保持整镜帧数，不让时间线少帧（审查阻断 1108）", () => {
+    expect(bindMusicMvStockFootage(doc(), "b", stockAsset, { sourceInFrame: 0, durationFrames: 149 }).clips[1].durationFrames).toBe(150);
+    const shifted = bindMusicMvStockFootage(doc(), "b", stockAsset, { sourceInFrame: 30, durationFrames: 149 });
+    expect(shifted.clips[1]).toMatchObject({ sourceInFrame: 30, durationFrames: 150 });
+    expect(musicMvEditIssues(shifted, plan).join()).not.toContain("还缺");
+  });
+  it("反向：用户明确收窄 2 帧以上的窗口仍按窗口写入；入点后素材不足时仍按可用帧收缩", () => {
+    expect(bindMusicMvStockFootage(doc(), "b", stockAsset, { sourceInFrame: 0, durationFrames: 148 }).clips[1].durationFrames).toBe(148);
+    // 12.4 秒 = 372 帧；入点 300 后只剩 72 帧
+    expect(bindMusicMvStockFootage(doc(), "b", stockAsset, { sourceInFrame: 300, durationFrames: 149 }).clips[1].durationFrames).toBe(72);
+  });
   it("正向：素材短于片段时收缩到素材可用帧，缺口交给剪辑问题提示", () => {
     const next = bindMusicMvStockFootage(doc(), "b", { ...stockAsset, durationSec: 3.99 });
     expect(next.clips[1].durationFrames).toBe(119);

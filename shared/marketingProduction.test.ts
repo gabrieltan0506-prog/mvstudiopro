@@ -32,6 +32,7 @@ import {
   marketingVoiceFromDialogue,
   newMarketingProductionDraft,
   nextMarketingExportStep,
+  marketingFinalDone,
   parseMarketingProductionDraft,
   segmentMarketingScript,
   stockVisualFromAsset,
@@ -226,6 +227,16 @@ describe("导出：逐段贴装配音 → 拼接 + 同步字幕（复用 bgm_mou
     expect(JSON.stringify(done.final)).not.toContain("https://signed");
   });
 
+  it("反向：贴装实测时长短于入点+配音时，编排返回阻断而不是抛错（审查阻断 1108，防面板渲染崩溃）", () => {
+    const mounted = withMountsDone(readyDraft());
+    const first = mounted.segments[0];
+    const short = { ...mounted, mounts: { ...mounted.mounts, [first.segmentId]: { ...mounted.mounts[first.segmentId], durationSec: 3.96 } } };
+    const step = nextMarketingExportStep(short);
+    expect(step.kind).toBe("blocked");
+    expect(step.kind === "blocked" && step.issues[0]).toContain("3.96 秒");
+    expect(marketingFinalDone(short)).toBe(false);
+  });
+
   it("字幕时间不越过本段取段时长，第二段从第一段结束处开始", () => {
     const srt = buildMarketingSubtitleSrt([{ text: "你好", voiceSec: 2, clipSec: 2.3 }, { text: "再见", voiceSec: 1, clipSec: 1.3 }]);
     expect(srt).toBe("1\n00:00:00,000 --> 00:00:02,000\n你好\n\n2\n00:00:02,300 --> 00:00:03,300\n再见\n");
@@ -372,7 +383,8 @@ describe("图库选段（抽屉入点/出点）→ 贴装与拼接真实取段",
     const draft = trimmedDraft({ inSec: 8, outSec: 12 }, 4);
     const mounted = withMountsDone(draft);
     mounted.mounts.seg_1 = { ...mounted.mounts.seg_1, durationSec: 11.5 };
-    expect(() => marketingConcatInput(mounted)).toThrow("请调整选段");
+    expect(() => marketingConcatInput(mounted)).toThrow("请重新选段");
+    expect(nextMarketingExportStep(mounted)).toMatchObject({ kind: "blocked" });
   });
 });
 

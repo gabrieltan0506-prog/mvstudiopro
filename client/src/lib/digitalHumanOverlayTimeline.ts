@@ -98,9 +98,12 @@ export function digitalHumanOverlayGaps(
   return gaps;
 }
 
-/** 抽屉的目标时长：选了空档就是空档时长，否则用默认覆盖时长。 */
+/** 单条补充画面的默认窗口上限（秒）：长空档（如整段 60 秒口播）不能默认整段盖住人物，也会让「至少 N 秒」筛选几乎无候选。 */
+export const DIGITAL_HUMAN_OVERLAY_TARGET_MAX_SEC = 8;
+
+/** 抽屉的目标时长：选了空档取 min(空档时长, 8 秒)，否则用默认覆盖时长。 */
 export function digitalHumanOverlayTargetSec(gap?: Pick<DigitalHumanOverlayGap, "startSec" | "endSec">): number {
-  if (gap && gap.endSec > gap.startSec) return round3(gap.endSec - gap.startSec);
+  if (gap && gap.endSec > gap.startSec) return round3(Math.min(gap.endSec - gap.startSec, DIGITAL_HUMAN_OVERLAY_TARGET_MAX_SEC));
   return DIGITAL_HUMAN_VIDEO_OVERLAY_DEFAULT_SEC;
 }
 

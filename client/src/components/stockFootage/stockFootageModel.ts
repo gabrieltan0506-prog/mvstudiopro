@@ -119,8 +119,10 @@ export function fallbackQueryFromText(text?: string): string {
 }
 
 /** 关键词接口的输入原文（1–1000 字），无内容时返回空串表示不调用。 */
+/** 关键词原文上限：suggestKeywords 是 GET 查询且会被批量合并，中文 URL 编码约 9 倍，过长会撞 431。 */
+export const KEYWORD_SOURCE_MAX_CHARS = 300;
 export function keywordSourceText(text?: string): string {
-  return (text ?? "").replace(/\s+/g, " ").trim().slice(0, 1000);
+  return (text ?? "").replace(/\s+/g, " ").trim().slice(0, KEYWORD_SOURCE_MAX_CHARS);
 }
 
 export const STOCK_PHOTO_DEFAULT_SEC = 3;

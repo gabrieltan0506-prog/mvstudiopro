@@ -224,8 +224,18 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
 
   // ── 抽屉外壳：Esc 关闭，打开时聚焦、关闭后归还焦点 ──
   const panelRef = useRef<HTMLElement | null>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  // 保存/绑定进行中不允许关闭：否则旧的 onPick 会在抽屉关闭后仍写入绑定，并关掉用户新开的抽屉。
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const guardedClose = () => {
+    if (busyRef.current) {
+      toast.info("正在保存素材，完成后会自动绑定，请稍候");
+      return;
+    }
+    onClose();
+  };
+  const onCloseRef = useRef(guardedClose);
+  onCloseRef.current = guardedClose;
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     panelRef.current?.focus();
@@ -252,7 +262,7 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
 
   return (
     <div className="fixed inset-0 z-[90] flex justify-end" data-stock-footage-drawer>
-      <button type="button" tabIndex={-1} aria-label="关闭找素材" className="absolute inset-0 cursor-default bg-black/60 backdrop-blur-[1px]" onClick={onClose} />
+      <button type="button" tabIndex={-1} aria-label="关闭找素材" className="absolute inset-0 cursor-default bg-black/60 backdrop-blur-[1px]" onClick={guardedClose} />
       <section
         ref={panelRef}
         role="dialog"
@@ -271,7 +281,7 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
               {usage === "empty_shot" && <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-violet-200">空镜·无人物</span>}
             </div>
           </div>
-          <button type="button" aria-label="关闭" onClick={onClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-white/10">
+          <button type="button" aria-label="关闭" disabled={busy} onClick={guardedClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-white/10">
             <X className="h-5 w-5" />
           </button>
         </header>
@@ -522,7 +532,7 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
               {selected && !busy && <div className="text-xs text-amber-200">正在预览候选，尚未替换；点「{confirmLabel}」后才会替换当前画面。</div>}
               {busy && <div className="flex items-center gap-1 text-xs opacity-80"><Loader2 className="h-3 w-3 animate-spin" />{binding ? "正在绑定…" : "正在保存素材，完成后自动绑定…"}</div>}
               <div className="flex gap-2">
-                <button type="button" onClick={onClose} className="min-h-11 rounded-md bg-white/10 px-4 hover:bg-white/15">取消</button>
+                <button type="button" disabled={busy} onClick={guardedClose} className="min-h-11 rounded-md bg-white/10 px-4 hover:bg-white/15 disabled:opacity-40">取消</button>
                 <button
                   type="button"
                   disabled={!selected || busy}

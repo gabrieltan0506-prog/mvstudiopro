@@ -48,6 +48,7 @@ describe("覆盖轨空档", () => {
     ]);
     expect(digitalHumanOverlayTargetSec({ startSec: 4, endSec: 5 })).toBe(1);
     expect(digitalHumanOverlayTargetSec()).toBe(4);
+    expect(digitalHumanOverlayTargetSec({ startSec: 0, endSec: 60 })).toBe(8);
   });
   it("反向：短于最短覆盖时长的缝隙不给入口；占满时没有空档", () => {
     expect(digitalHumanOverlayGaps([row(A, 0.3, 9.7)], segs, 10)).toEqual([]);

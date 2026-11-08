@@ -150,9 +150,13 @@ export function bindMusicMvStockFootage(
     throw new Error("所选裁段短于0.5秒，不能入片");
   if (available - sourceInFrame < MV_EDIT_MIN_FRAMES)
     throw new Error("入点之后的图库视频短于0.5秒，请把入点前移");
+  // 抽屉窗口按毫秒/帧向下取整，镜头帧数不是 3 的倍数时会比镜头短 1 帧；
+  // 差 1 帧以内视为「整镜」，保持原片段帧数，避免整条时间线少 1 帧、后续对口型错位。
+  const wanted = trim?.durationFrames ?? clip.durationFrames;
+  const snapped = wanted >= clip.durationFrames - 1 ? clip.durationFrames : wanted;
   const durationFrames = Math.min(
     clip.durationFrames,
-    trim?.durationFrames ?? clip.durationFrames,
+    snapped,
     available - sourceInFrame
   );
   return musicMvEditDocumentSchema.parse({

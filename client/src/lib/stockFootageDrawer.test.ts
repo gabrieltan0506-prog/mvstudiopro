@@ -133,7 +133,7 @@ describe("抽屉展示与裁点交付", () => {
     expect(fallbackQueryFromText("  雨夜  城市\n街道 ")).toBe("雨夜 城市 街道");
     expect(fallbackQueryFromText("字".repeat(300))).toHaveLength(100);
     expect(fallbackQueryFromText(undefined)).toBe("");
-    expect(keywordSourceText("a".repeat(2000))).toHaveLength(1000);
+    expect(keywordSourceText("a".repeat(2000))).toHaveLength(300);
     expect(keywordSourceText("   ")).toBe("");
   });
   it("视频交付按资产时长再夹一次；照片固定 0→目标（缺省 3 秒）", () => {
