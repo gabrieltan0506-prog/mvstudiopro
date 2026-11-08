@@ -27,7 +27,30 @@ const pub=doc.publication!;
 const prefix=knowledgeEvidencePrefix(user.id,doc.id,pub.requestId);
 const read=async(name:string)=>JSON.parse((await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${name}`})).buffer.toString('utf8'));
 const out:any={documentId:doc.id,completedBatches:pub.completedBatches,attempts:pub.attempts,batches:[]};
-for(const batchIndex of config.batchIndexes as number[]){
+async function inspect(name:string,label:string){
+  let r:any;try{r=await read(name);}catch(e){return {name:label,readError:String(e)};}
+  const text=r.response?.text??r.text;
+  const rec:any={name:label,state:r.state,status:r.response?.status??r.status,model:r.model};
+  try{
+    const env=JSON.parse(text);
+    const content=env.choices?.[0]?.message?.content??env.candidates?.[0]?.content?.parts?.map((p:any)=>p.text||'').join('');
+    rec.finish=env.choices?.[0]?.finish_reason??env.candidates?.[0]?.finishReason;
+    if(typeof content==='string'){
+      rec.contentChars=content.length;
+      try{const p=parseKnowledgeModelJson(content);rec.parseOk=true;rec.repairs=p.repairs.length;}
+      catch(e){rec.parseOk=false;rec.error=String((e as Error).message);const pos=Number(/position (\d+)/.exec(rec.error)?.[1]);if(Number.isInteger(pos))rec.context=JSON.stringify(content.slice(Math.max(0,pos-200),pos+200));}
+    }
+  }catch(e){rec.envelopeError=String(e).slice(0,200);}
+  return rec;
+}
+if(config.scan){
+  const base=`knowledge-publications/user-${user.id}/${doc.id}/${config.scan}`;
+  const names=(await listGcsObjectNamesByPrefix({prefix:base,allPages:true})).filter(n=>/route-[^/]+\.json$/.test(n));
+  const failing:any[]=[];
+  for(const name of names){const rec=await inspect(name,name.slice(base.length));if(rec.parseOk===false)failing.push(rec);}
+  out.scan={base:config.scan,routeReceipts:names.length,failing};
+}
+for(const batchIndex of (config.batchIndexes||[]) as number[]){
   const entry:any={batchIndex,jobs:[],receipts:[]};
   for(let attempt=0;attempt<=(pub.attempts?.[String(batchIndex)]||0)+1;attempt++){
     const requestId=knowledgeBatchRequestId(pub.requestId,batchIndex,attempt);
