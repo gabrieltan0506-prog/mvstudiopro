@@ -42,6 +42,7 @@ const real = {
   billing: readChargeRefundState,
   access: validateKnowledgePublicationAccess,
   review: reviewKnowledgePublication,
+  conversation: undefined as undefined | ((owner: number, context: KnowledgePublicationContext, overrides: { post: (request: unknown, evidence: any) => Promise<unknown> }) => Promise<unknown>),
   read: async (name: string): Promise<any> => {
     try {
       return JSON.parse(
@@ -117,8 +118,8 @@ export async function recoverKnowledgePublicationOperation(
   overrides: Partial<typeof real> = {}
 ) {
   const context = input.knowledgePublicationContext;
-  // 课件、读档、交流各有独立合同；不能从此入口启动其模型。
-  if (context.purpose) return null;
+  // 课件、读档有独立合同，不从此入口恢复。整册排版（交流合同中的 layout）失败时，可按原回执零调用重验（2026-11-08 血脂本排版真实阻断）。
+  if (context.purpose && context.purpose !== "conversation") return null;
   const deps = { ...real, ...overrides },
     jobId = manhuaAdvisorOperationId(input.userId, input.requestId),
     fingerprint = manhuaAdvisorRequestFingerprint(input);
@@ -157,6 +158,24 @@ export async function recoverKnowledgePublicationOperation(
         !(Number(output.creditsRefunded) >= billing.charged)))
   )
     throw Error("原任务退款未闭合，未恢复");
+  if (context.purpose === "conversation") {
+    const turn = doc.publication.conversation?.[context.batchIndex];
+    if (turn?.request.action !== "layout") return null;
+    const noNewRequest = {
+      key: () => { throw Error("原回包不足以恢复，未提交新模型请求"); },
+      fetch: async () => { throw Error("原回包不足以恢复，未提交新模型请求"); },
+    };
+    const { reviewKnowledgeConversation } = await import("./knowledgeConversationAdvisor");
+    const answer = await (deps.conversation || reviewKnowledgeConversation)(input.userId, context, {
+      post: (request: unknown, evidence: any) => invokeKnowledgePublicationRoutes(request as KnowledgeModelRequest, evidence, noNewRequest),
+    });
+    const recovered: ManhuaAdvisorQaResponse = {
+      success: true, replayed: true, answer: JSON.stringify(answer), ...metadata,
+      usedToday: 0, remainingFreeToday: metadata.dailyLimit, creditsCharged: 0, paidThisTurn: false, imageOffer: null,
+    };
+    await deps.persist(jobId, input.userId, fingerprint, recovered, job, billing);
+    return recovered;
+  }
   const root = knowledgeEvidencePrefix(input.userId, doc.id, doc.publication.requestId);
   const consistency = context.batchIndex >= reviewBatches;
   const prefix = root + (consistency ? `/consistency-${context.batchIndex - reviewBatches}` : `/batch-${context.batchIndex}`);
