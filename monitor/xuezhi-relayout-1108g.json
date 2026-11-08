@@ -1,10 +1,10 @@
 {
   "monitor": {
-    "at": "2026-11-08T07:15:40.122Z",
-    "round": 2,
+    "at": "2026-11-08T07:17:47.282Z",
+    "round": 4,
     "stage": "reviewing",
     "batches": {
-      "done": 48,
+      "done": 49,
       "total": 48
     },
     "chapters": {
