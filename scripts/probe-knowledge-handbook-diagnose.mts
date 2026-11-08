@@ -30,7 +30,7 @@ const out:any={documentId:doc.id,completedBatches:pub.completedBatches,attempts:
 async function inspect(name:string,label:string){
   let r:any;try{r=await read(name);}catch(e){return {name:label,readError:String(e)};}
   const text=r.response?.text??r.text;
-  const rec:any={name:label,state:r.state,status:r.response?.status??r.status,model:r.model};
+  const rec:any={name:label,state:r.state,status:r.response?.status??r.status,model:r.model,reason:typeof r.reason==='string'?r.reason.slice(0,400):undefined,priorFailureReason:typeof r.priorFailureReason==='string'?r.priorFailureReason.slice(0,400):undefined,adjustments:Array.isArray(r.adjustments)?r.adjustments.map((a:any)=>({field:a?.field,reason:String(a?.reason??a?.message??'').slice(0,160)})).slice(0,20):undefined};
   try{
     const env=JSON.parse(text);
     const content=env.choices?.[0]?.message?.content??env.candidates?.[0]?.content?.parts?.map((p:any)=>p.text||'').join('');
@@ -47,7 +47,7 @@ if(config.scan){
   const base=`knowledge-publications/user-${user.id}/${doc.id}/${config.scan}`;
   const names=(await listGcsObjectNamesByPrefix({prefix:base,allPages:true})).filter(n=>/route-[^/]+\.json$/.test(n));
   const failing:any[]=[];
-  const all:any[]=[];for(const name of names){const rec=await inspect(name,name.slice(base.length));all.push({name:rec.name,state:rec.state,parseOk:rec.parseOk,model:rec.model});if(rec.parseOk===false)failing.push(rec);}
+  const all:any[]=[];for(const name of names){const rec=await inspect(name,name.slice(base.length));all.push({name:rec.name,state:rec.state,parseOk:rec.parseOk,model:rec.model,finish:rec.finish,contentChars:rec.contentChars,reason:rec.reason,priorFailureReason:rec.priorFailureReason,adjustments:rec.adjustments});if(rec.parseOk===false)failing.push(rec);}
   (out as any).allReceipts=all;
   out.scan={base:config.scan,routeReceipts:names.length,failing};
 }
