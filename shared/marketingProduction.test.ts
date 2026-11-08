@@ -14,6 +14,12 @@ import {
   carryOverSegmentBindings,
   extractMarketingScriptSection,
   findRecoveredPostProdJob,
+  mapWithConcurrency,
+  marketingSegmentTargetSec,
+  marketingSegmentTitle,
+  marketingStockSourceText,
+  marketingTrimIssue,
+  marketingTrimOverrunSec,
   marketingConcatInput,
   marketingCreditLines,
   marketingDialogueRequest,
@@ -283,5 +289,115 @@ describe("成片说明：署名与用户素材分列", () => {
     const credits = marketingCreditLines(readyDraft());
     expect(credits.stock).toEqual(["Ann / Pexels（https://www.pexels.com/video/123/，Pexels License https://www.pexels.com/license/）"]);
     expect(credits.uploads).toEqual(["product.mp4"]);
+  });
+});
+
+describe("图库选段（抽屉入点/出点）→ 贴装与拼接真实取段", () => {
+  function trimmedDraft(trim: { inSec: number; outSec: number }, voiceSec = 4): MarketingProductionDraft {
+    const draft = newMarketingProductionDraft(DRAFT_ID, "2026-11-08T00:00:00Z");
+    return { ...draft, segments: [readySegment("seg_1", "每天一杯好咖啡，从选豆开始。", stockVisualFromAsset(stockAsset(), trim), voiceSec)] };
+  }
+
+  it("正向：选段写入画面并可原样读回，不含签名地址", () => {
+    const visual = stockVisualFromAsset(stockAsset(), { inSec: 3.25, outSec: 7.25 });
+    expect(visual.trim).toEqual({ inSec: 3.25, outSec: 7.25 });
+    const draft = trimmedDraft({ inSec: 3.25, outSec: 7.25 });
+    expect(parseMarketingProductionDraft(JSON.parse(JSON.stringify(draft)))).toEqual(draft);
+    expect(JSON.stringify(draft)).not.toContain("X-Goog-Signature");
+  });
+
+  it("正向：贴装 entrySec = 入点，拼接 trims 从入点取到配音结束 + 余量", () => {
+    const draft = trimmedDraft({ inSec: 3, outSec: 8 });
+    expect(marketingMountInput(draft, draft.segments[0]).params.entrySec).toBe(3);
+    const concat = marketingConcatInput(withMountsDone(draft));
+    expect(concat.params.trims).toEqual([{ startSec: 3, endSec: 7.3 }]);
+    expect(concat.params.subtitleSrt).toContain("00:00:00,000 -->");
+  });
+
+  it("正向：配音落在窗口内时不越过出点", () => {
+    const draft = trimmedDraft({ inSec: 2, outSec: 6.1 });
+    expect(marketingSegmentClipSec(draft.segments[0])).toBe(4.1);
+    expect(marketingTrimOverrunSec(draft.segments[0])).toBe(0);
+    expect(marketingConcatInput(withMountsDone(draft)).params.trims).toEqual([{ startSec: 2, endSec: 6.1 }]);
+  });
+
+  it("正向：配音长于窗口时从入点顺延（不越过素材），并报告顺延秒数", () => {
+    const draft = trimmedDraft({ inSec: 2, outSec: 4 }, 4);
+    expect(marketingSegmentClipSec(draft.segments[0])).toBe(4.3);
+    expect(marketingTrimOverrunSec(draft.segments[0])).toBe(2.3);
+  });
+
+  it("正向：贴装产物实测时长更短时取段不越界", () => {
+    const draft = trimmedDraft({ inSec: 7.5, outSec: 12 }, 4.3);
+    const mounted = withMountsDone(draft);
+    mounted.mounts.seg_1 = { ...mounted.mounts.seg_1, durationSec: 11.9 };
+    expect(marketingConcatInput(mounted).params.trims).toEqual([{ startSec: 7.5, endSec: 11.9 }]);
+  });
+
+  it("兼容：无选段的旧草稿贴装与拼接参数不变（旧任务指纹仍有效）", () => {
+    const draft = readyDraft();
+    expect(marketingMountInput(draft, draft.segments[0]).params.entrySec).toBe(0);
+    expect(marketingConcatInput(withMountsDone(draft)).params.trims[0]).toEqual({ startSec: 0, endSec: 4.3 });
+  });
+
+  it("反向：入点 < 0、出点 ≤ 入点、出点超过素材时长、短于 0.1 秒都被拒", () => {
+    expect(marketingTrimIssue({ inSec: -1, outSec: 3 }, 12)).toContain("入点");
+    expect(marketingTrimIssue({ inSec: 3, outSec: 3 }, 12)).toContain("晚于入点");
+    expect(marketingTrimIssue({ inSec: 3, outSec: 12.5 }, 12)).toContain("超出素材时长");
+    expect(marketingTrimIssue({ inSec: 3, outSec: 3.05 }, 12)).toContain("0.1");
+    expect(marketingTrimIssue({ inSec: Number.NaN, outSec: 3 }, 12)).toContain("无效");
+    expect(marketingTrimIssue({ inSec: 0, outSec: 12 }, 12)).toBeNull();
+    expect(() => stockVisualFromAsset(stockAsset(), { inSec: 5, outSec: 4 })).toThrow("晚于入点");
+    expect(() => stockVisualFromAsset(stockAsset(), { inSec: 0, outSec: 20 })).toThrow("超出素材时长");
+  });
+
+  it("反向：篡改的草稿选段（出点越界）不恢复", () => {
+    const draft = trimmedDraft({ inSec: 1, outSec: 5 });
+    const bad = JSON.parse(JSON.stringify(draft));
+    bad.segments[0].visual.trim = { inSec: 1, outSec: 99 };
+    expect(parseMarketingProductionDraft(bad)).toBeNull();
+    bad.segments[0].visual.trim = { inSec: 1, outSec: 5, url: "https://x" };
+    expect(parseMarketingProductionDraft(bad)).toBeNull();
+  });
+
+  it("反向：入点之后剩余素材短于配音，导出前拦截", () => {
+    const draft = trimmedDraft({ inSec: 9, outSec: 12 }, 4);
+    expect(marketingSegmentClipSec(draft.segments[0])).toBeNull();
+    expect(auditMarketingExport(draft).join("")).toContain("从第 9.0 秒起只剩 3.0 秒");
+    expect(nextMarketingExportStep(draft).kind).toBe("blocked");
+  });
+
+  it("反向：贴装产物实测时长放不下配音时拒绝拼接", () => {
+    const draft = trimmedDraft({ inSec: 8, outSec: 12 }, 4);
+    const mounted = withMountsDone(draft);
+    mounted.mounts.seg_1 = { ...mounted.mounts.seg_1, durationSec: 11.5 };
+    expect(() => marketingConcatInput(mounted)).toThrow("请调整选段");
+  });
+});
+
+describe("找素材入口辅助", () => {
+  it("目标时长：有效配音用实测，否则用预估；口播改过后回到预估", () => {
+    const seg = readySegment("s", "你好", undefined, 4.6);
+    expect(marketingSegmentTargetSec(seg)).toBe(4.6);
+    expect(marketingSegmentTargetSec({ ...seg, narration: "改了" })).toBe(3);
+  });
+  it("关键词原文含画面提示与口播，且不超过 1000 字；标题取画面提示", () => {
+    expect(marketingStockSourceText({ visualHint: "咖啡豆特写", narration: "选豆很关键" })).toBe("画面：咖啡豆特写\n口播：选豆很关键");
+    expect(marketingStockSourceText({ visualHint: "", narration: "长".repeat(2000) }).length).toBe(1000);
+    expect(marketingSegmentTitle({ visualHint: "咖啡豆特写", narration: "x" })).toBe("咖啡豆特写");
+    expect(marketingSegmentTitle({ visualHint: "", narration: "一二三四五六七八九十一二三四五六七八" })).toBe("一二三四五六七八九十一二三四五六…");
+  });
+  it("并发上限：同时进行不超过 3 个，结果保序，单项失败不影响其他", async () => {
+    let active = 0; let peak = 0;
+    const results = await mapWithConcurrency([1, 2, 3, 4, 5, 6, 7], 3, async n => {
+      active++; peak = Math.max(peak, active);
+      await new Promise(r => setTimeout(r, 5));
+      active--;
+      if (n === 4) throw new Error("boom");
+      return n * 10;
+    });
+    expect(peak).toBe(3);
+    expect(results.map(r => (r.ok ? r.value : "x"))).toEqual([10, 20, 30, "x", 50, 60, 70]);
+    expect(await mapWithConcurrency([], 3, async () => 1)).toEqual([]);
   });
 });
