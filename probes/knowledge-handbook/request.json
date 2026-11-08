@@ -1,6 +1,6 @@
 {
   "id": "diagnose-xuezhi-1108b",
-  "action": "prepare",
+  "action": "status",
   "script": "scripts/probe-knowledge-handbook-diagnose.mts",
   "machine": "7812595b294778",
   "collect": [

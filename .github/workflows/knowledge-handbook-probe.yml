@@ -144,7 +144,7 @@ jobs:
             P=$(flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'cat $DIR/client-progress.json 2>/dev/null; echo; ls $DIR | wc -l'" 2>/dev/null | tr -d '\r' | sed -n '/^{/p' | jq -c '[paths(scalars) as $p | {k:($p|map(tostring)|join(".")),v:getpath($p)} | select((.v|type)=="number" or (.v|type)=="boolean" or ((.v|type)=="string" and (.v|length)<=24))] | from_entries? // .' 2>/dev/null)
             [ -n "$P" ] && echo "  进度：$P"
             STAGE=$(echo "$J" | jq -r '.stage // empty' 2>/dev/null)
-            case "$STAGE" in pdf_returned|publication_failed|image_failed|failed|awaiting_image_confirmation) break;; esac
+            case "$STAGE" in pdf_returned|publication_failed|image_failed|failed|awaiting_image_confirmation|diagnosed) break;; esac
             if [ "$ACTION" = "prepare" ] && [ "$STAGE" = "prepared" ]; then break; fi
             if [ "$ACTION" = "status" ]; then break; fi
             [ $(date +%s) -ge $END ] && { echo "跟踪时间到，探针仍在机内继续运行"; break; }
