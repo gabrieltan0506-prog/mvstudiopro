@@ -12,6 +12,7 @@ import { trpc } from "@/lib/trpc";
 import { publicMarketingPlan } from "@shared/marketingPlanDisplay";
 import { uploadOneCanvasAsset } from "@/lib/canvasUpload";
 import { StockFootageDrawer, type StockFootagePick } from "@/components/stockFootage/StockFootageDrawer";
+import { defaultMinDurationSec, keywordSourceText } from "@/components/stockFootage/stockFootageModel";
 import { canvasTtsCreditsForDuration } from "@shared/canvasGenerationPricing";
 import { MarketingVoicePicker } from "./MarketingVoicePicker";
 import { MarketingSegmentTimeline, MarketingThumb } from "./MarketingSegmentTimeline";
@@ -53,7 +54,8 @@ const buttonStyle = "rounded-lg border border-white/20 px-3 py-2 text-sm disable
 const ACTIVE_JOB = ["queued", "running"];
 /** 整稿找素材的并发上限。 */
 const PREFETCH_CONCURRENCY = 3;
-const PREFETCH_PER_PAGE = 12;
+/** 与抽屉首屏同参（第 1 页、每页 18、默认最短时长），抽屉打开时直接命中同一份候选缓存。 */
+const PREFETCH_PER_PAGE = 18;
 
 /** 整稿找素材的预取结果（只在本次会话内，供抽屉直接带入关键词；不入稿、不自动采用）。 */
 type Prefetch = { sourceText: string; status: "loading" | "done" | "failed"; query?: string; queryZh?: string; count?: number };
@@ -157,17 +159,18 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
     setMessage("已采用本人上传的产品素材。");
   });
 
-  /** 抽屉「采用并绑定」→ 段落画面（含入点/出点）；校验不过不写入、抽屉保持打开。 */
+  /**
+   * 抽屉「采用并绑定」→ 段落画面（含入点/出点）。校验不过抛错：抽屉提示并保持打开，
+   * 重试只重新绑定已采用的同一素材，不重复保存。成功后由这里关闭抽屉。
+   */
   const adoptPick = async (segmentId: string, pick: StockFootagePick) => {
     const index = ref.current.segments.findIndex(s => s.segmentId === segmentId);
-    if (index < 0) { setMessage("这一段已不在当前制作稿里，未绑定。"); return; }
-    try {
-      const visual = stockVisualFromAsset(pick.asset, { inSec: pick.inSec, outSec: pick.outSec });
-      patchSegment(segmentId, s => ({ ...s, visual }));
-      setDrawerSegmentId(null);
-      setMessage(`第 ${index + 1} 段已采用素材（${visual.trim ? `${visual.trim.inSec.toFixed(1)}–${visual.trim.outSec.toFixed(1)} 秒` : "整段"}）。`);
-      void adoptions.refetch();
-    } catch (error) { setMessage(`第 ${index + 1} 段未绑定：${errorText(error)}`); }
+    if (index < 0) throw new Error("这一段已不在当前制作稿里，未绑定");
+    const visual = stockVisualFromAsset(pick.asset, { inSec: pick.inSec, outSec: pick.outSec });
+    patchSegment(segmentId, s => ({ ...s, visual }));
+    setDrawerSegmentId(null);
+    setMessage(`第 ${index + 1} 段已采用素材（取 ${visual.trim ? `${visual.trim.inSec.toFixed(1)}–${visual.trim.outSec.toFixed(1)} 秒` : "整段"}）。`);
+    void adoptions.refetch();
   };
 
   /** 整稿找素材：只为没有画面的段落预取关键词 + 候选数（最多 3 段并发），不自动采用。 */
@@ -180,9 +183,12 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
     setPrefetch(prev => ({ ...prev, ...Object.fromEntries(targets.map(s => [s.segmentId, { sourceText: marketingStockSourceText(s), status: "loading" as const }])) }));
     const results = await mapWithConcurrency(targets, PREFETCH_CONCURRENCY, async segment => {
       const sourceText = marketingStockSourceText(segment);
-      const keywords = await utils.stockFootage.suggestKeywords.fetch({ text: sourceText, purpose: "marketing", orientation: d.orientation });
-      const found = await utils.stockFootage.search.fetch({ query: keywords.query, kind: "video", orientation: d.orientation, purpose: "marketing", perPage: PREFETCH_PER_PAGE });
-      const value: Prefetch = { sourceText, status: "done", query: keywords.query, queryZh: keywords.queryZh, count: found.candidates.length };
+      const keywords = await utils.stockFootage.suggestKeywords.fetch({ text: keywordSourceText(sourceText), purpose: "marketing", orientation: d.orientation });
+      const query = keywords.query.trim().slice(0, 100);
+      if (!query) throw new Error("没有生成关键词");
+      const minDurationSec = defaultMinDurationSec(marketingSegmentTargetSec(segment));
+      const found = await utils.stockFootage.search.fetch({ query, kind: "video", orientation: d.orientation, page: 1, perPage: PREFETCH_PER_PAGE, purpose: "marketing", ...(minDurationSec ? { minDurationSec } : {}) });
+      const value: Prefetch = { sourceText, status: "done", query, queryZh: keywords.queryZh, count: found.candidates.length };
       setPrefetch(prev => ({ ...prev, [segment.segmentId]: value }));
       return value;
     });
@@ -430,7 +436,7 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
 
     <MarketingSegmentTimeline segments={draft.segments} thumbFor={thumbFor} disabled={busy} onOpenSegment={setDrawerSegmentId} />
 
-    {drawerSegment && <StockFootageDrawer open onClose={() => setDrawerSegmentId(null)}
+    {drawerSegment && <StockFootageDrawer key={drawerSegment.segmentId} open onClose={() => setDrawerSegmentId(null)}
       title={`为第 ${drawerIndex + 1} 段找素材`} purpose="marketing" usage="insert" kind="video" orientation={draft.orientation}
       targetDurationSec={marketingSegmentTargetSec(drawerSegment)} sourceText={marketingStockSourceText(drawerSegment)}
       initialQuery={prefetchFor(drawerSegment)?.query}

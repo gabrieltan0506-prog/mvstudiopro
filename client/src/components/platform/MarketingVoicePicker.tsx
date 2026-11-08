@@ -154,7 +154,7 @@ export function MarketingVoicePicker(props: {
     <p className="mt-3 text-xs font-semibold text-slate-300">我的声音</p>
     <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
       {myVoices.map(v => {
-        const ready = v.status === "ready" && v.voiceId;
+        const ready = v.status === "ready" && Boolean(v.voiceId);
         const selected = ready && v.voiceId === voiceId;
         return <div key={v.requestId} className={`rounded-lg border p-2 ${selected ? "border-emerald-300 bg-emerald-400/10" : "border-white/15 bg-black/20"}`}>
           <div className="flex items-center justify-between gap-2">
