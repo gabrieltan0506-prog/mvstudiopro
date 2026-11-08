@@ -6,7 +6,6 @@
 import { useState } from "react";
 import { StockFootagePanel } from "@/components/stockFootage/StockFootagePanel";
 import type { StockFootageAssetView } from "@shared/stockFootage";
-import { stockAttributionText } from "@shared/stockFootage";
 import { MANHUA_STOCK_EMPTY_SHOT_TOLERANCE_SEC, clampManhuaStockEmptyShotTrim } from "@shared/manhuaStockFootage";
 
 export type ManhuaStockEmptyShotPick = {
@@ -79,7 +78,7 @@ export function ManhuaStockEmptyShotRegister(props: {
         <div className="space-y-2">
           <video src={asset.url} controls muted playsInline preload="metadata" className="max-h-48 w-full rounded-lg bg-black object-contain" aria-label="图库空镜预览" />
           <p className="text-[11px] text-white/55" data-manhua-stock-attribution>
-            空镜·无人物 · {stockAttributionText(asset.source)} · Pexels License · 素材长 {dur.toFixed(1)} 秒
+            空镜·无人物 · 素材长 {dur.toFixed(1)} 秒
           </p>
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/70">
             <label>入点(秒)<input type="number" min={0} max={dur} step={0.1} value={inSec} onChange={(e) => setInSec(Math.max(0, Number(e.target.value) || 0))} className="ml-1 w-20 rounded bg-black/40 px-1" /></label>

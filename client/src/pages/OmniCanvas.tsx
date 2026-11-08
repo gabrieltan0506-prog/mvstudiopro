@@ -10233,7 +10233,7 @@ function OmniCanvasWorkspace() {
           });
         }
         toast.message(`已登记为第 ${segment.index} 段空镜·无人物`, {
-          description: `${registration.entry.stockFootage?.attributionZh} · 裁点 ${registration.window.inSec}–${registration.window.outSec} 秒；${MANHUA_REGISTERED_CLIP_SUMMARY_ZH}`,
+          description: `图库空镜 · 裁点 ${registration.window.inSec}–${registration.window.outSec} 秒；${MANHUA_REGISTERED_CLIP_SUMMARY_ZH}`,
         });
       } catch (error) {
         toast.error(`空镜未登记：${error instanceof Error ? maskMediaProviderDetails(error.message) : String(error)}`);
@@ -10247,7 +10247,7 @@ function OmniCanvasWorkspace() {
       if (block.kind !== "video" || block.archivedFromPreviousScript || (getBlockEpisodeIndex(block) ?? 1) !== writerFocusEpisode) continue;
       const mark = manhuaStockEmptyShotMarkOf(block);
       const segmentIndex = normalizeManhuaAutoSegmentBinding(block.manhuaAutoSegment)?.segmentIndex;
-      if (mark && segmentIndex) out[segmentIndex] = mark.attributionZh;
+      if (mark && segmentIndex) out[segmentIndex] = "图库空镜";
     }
     return out;
   }, [blocks, writerFocusEpisode]);
@@ -10256,7 +10256,7 @@ function OmniCanvasWorkspace() {
     try {
       const ref = buildManhuaSceneReferenceFromStock(asset, makeManhuaCustomAssetId());
       setCustomAssetRefs((prev) => normalizeManhuaCustomAssetRefs([...prev.filter((r) => r.stockFootage?.assetId !== asset.assetId), ref]));
-      toast.message("已挂为场景参考图", { description: `${ref.stockFootage.attributionZh} · 只作空间/画风参考，不入片` });
+      toast.message("已挂为场景参考图", { description: "只作空间/画风参考，不入片" });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     }

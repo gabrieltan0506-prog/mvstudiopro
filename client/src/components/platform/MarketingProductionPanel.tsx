@@ -294,8 +294,7 @@ export function MarketingProductionPanel({ userKey, seedMarkdown }: { userKey: s
           {segment.visualHint && <p className="mt-1 text-xs text-slate-400">画面提示：{segment.visualHint}</p>}
 
           <div className="mt-2 text-sm">
-            {segment.visual?.source === "stock" && <p>画面：图库素材 · {segment.visual.durationSec.toFixed(1)} 秒 · 署名 {segment.visual.attribution}
-              <a className="ml-2 underline" href={segment.visual.evidence.pageUrl} target="_blank" rel="noreferrer">来源</a></p>}
+            {segment.visual?.source === "stock" && <p>画面：图库素材 · {segment.visual.durationSec.toFixed(1)} 秒</p>}
             {segment.visual?.source === "upload" && <p>画面：我上传的产品素材 · {segment.visual.fileName} · {segment.visual.durationSec.toFixed(1)} 秒</p>}
             {!segment.visual && <p className="text-amber-200">还没有画面</p>}
             <div className="mt-2 flex flex-wrap gap-2">
@@ -313,7 +312,7 @@ export function MarketingProductionPanel({ userKey, seedMarkdown }: { userKey: s
                 try {
                   const visual = stockVisualFromAsset(asset);
                   patchSegment(segment.segmentId, s => ({ ...s, visual }));
-                  setOpenStock(null); setMessage(`第 ${index + 1} 段已采用图库素材（${visual.attribution}）。`);
+                  setOpenStock(null); setMessage(`第 ${index + 1} 段已采用图库素材。`);
                 } catch (error) { setMessage(errorText(error)); }
               }} />}
           </div>
@@ -340,8 +339,7 @@ export function MarketingProductionPanel({ userKey, seedMarkdown }: { userKey: s
       {draft.final?.status === "failed" && <p role="alert" className="mt-2 text-xs text-amber-200">拼接未成功：{draft.final.error}</p>}
       {finalUrl && <video className="mt-3 max-h-[28rem] w-full rounded-lg" src={finalUrl} controls />}
       {finalUrl && <a className={`${buttonStyle} mt-2 inline-block`} href={finalUrl} download>下载成片</a>}
-      {(credits.stock.length > 0 || credits.uploads.length > 0) && <div className="mt-3 text-xs text-slate-400">
-        {credits.stock.length > 0 && <p>图库素材署名：{credits.stock.join("；")}</p>}
+      {credits.uploads.length > 0 && <div className="mt-3 text-xs text-slate-400">
         {credits.uploads.length > 0 && <p>自有素材：{credits.uploads.join("、")}</p>}
       </div>}
     </div>}

@@ -11,7 +11,6 @@ import { trpc } from "@/lib/trpc";
 import {
   STOCK_FOOTAGE_PURPOSE_LABEL,
   assertStockUsageAllowed,
-  stockAttributionText,
   type StockFootageAssetView,
   type StockFootageCandidate,
   type StockFootageKind,
@@ -146,13 +145,13 @@ export function StockFootagePanel(props: StockFootagePanelProps) {
         if (res.status === "succeeded" && res.asset) {
           updatePending(list => list.filter(p => p.requestId !== item.requestId));
           void utils.stockFootage.listAdoptions.invalidate();
-          toast.success("素材已入库，已交给当前编辑位置");
+          toast.success("素材已采用");
           props.onAdopted(res.asset);
         } else if (res.status === "failed") {
           updatePending(list => list.filter(p => p.requestId !== item.requestId));
           toast.error(res.message || "素材未能采用");
         } else {
-          toast.message(res.message || "素材入库未完成，可稍后点「继续」");
+          toast.message(res.message || "素材还在处理，可稍后点「继续」");
         }
       } catch (error) {
         // 网络中断：保留待办，同一编号可继续；参数冲突/未启用等明确错误才移除。
@@ -225,7 +224,7 @@ export function StockFootagePanel(props: StockFootagePanelProps) {
 
       {myPending.length > 0 && (
         <div className="rounded-md border border-white/10 p-2">
-          <div className="mb-1 text-xs opacity-70">未完成的采用（同一编号继续，不会重复入库）</div>
+          <div className="mb-1 text-xs opacity-70">未完成的采用（可继续，不会重复保存）</div>
           <div className="flex flex-wrap gap-2">
             {myPending.map(p => (
               <div key={p.requestId} className="flex items-center gap-2 rounded bg-white/5 px-2 py-1">
@@ -289,7 +288,6 @@ export function StockFootagePanel(props: StockFootagePanelProps) {
               <button type="button" disabled={!search.data.hasMore} className="rounded bg-white/10 px-2 py-1 disabled:opacity-40" onClick={() => setPage(p => p + 1)}>下一页</button>
             </div>
           )}
-          <div className="text-xs opacity-50">素材来自 Pexels（Pexels License）；采用后保存到你的作品库并记录作者与来源。</div>
         </>
       ) : (
         <div className={`grid gap-2 ${props.compact ? "grid-cols-3" : "grid-cols-2 md:grid-cols-3 lg:grid-cols-4"}`}>
@@ -299,7 +297,7 @@ export function StockFootagePanel(props: StockFootagePanelProps) {
             <div key={a.assetId} className="overflow-hidden rounded border border-white/10">
               {a.kind === "video" ? <video src={a.url} muted playsInline preload="metadata" className="aspect-video w-full object-cover" /> : <img src={a.url} alt="" className="aspect-video w-full object-cover" />}
               <div className="flex items-center justify-between gap-1 p-1.5 text-xs">
-                <span className="truncate opacity-70">{stockAttributionText(a.source)}{a.durationSec ? ` · ${fmtDuration(a.durationSec)}` : ""}</span>
+                <span className="truncate opacity-70">{a.kind === "video" ? "视频" : "照片"}{a.durationSec ? ` · ${fmtDuration(a.durationSec)}` : ""}</span>
                 <button type="button" className="flex shrink-0 items-center gap-1 rounded bg-white/15 px-2 py-0.5" onClick={() => props.onAdopted(a)} disabled={a.usage !== usage}>
                   <Check className="h-3 w-3" />使用
                 </button>
@@ -328,7 +326,7 @@ function CandidateCard({ candidate: c, busy, onAdopt }: { candidate: StockFootag
         </span>
       </div>
       <div className="flex items-center justify-between gap-1 p-1.5 text-xs">
-        <a href={c.pageUrl} target="_blank" rel="noreferrer noopener" className="truncate opacity-70 hover:underline">{c.author.name}</a>
+        <span className="truncate opacity-70">{c.kind === "video" ? "视频" : "照片"}</span>
         <button type="button" disabled={busy} onClick={onAdopt} className="shrink-0 rounded bg-white/15 px-2 py-0.5 disabled:opacity-40">采用</button>
       </div>
     </div>

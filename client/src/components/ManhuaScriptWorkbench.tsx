@@ -6553,7 +6553,7 @@ clipPromptReviewOpen ? (
                     </div>
                     {expanded && sec.role === "scene" && stockSceneOpen && onAdoptStockSceneReference ? (
                       <div className="mt-2 rounded-lg border border-white/10 p-2" data-manhua-stock-scene-panel>
-                        <p className="mb-1 text-[10px] text-white/45">图库照片只作场景参考（空间/画风），不直接入片、不能当人物或角色卡；署名随参考图保存。</p>
+                        <p className="mb-1 text-[10px] text-white/45">图库照片只作场景参考（空间/画风），不直接入片、不能当人物或角色卡。</p>
                         <StockFootagePanel
                           purpose="manhua"
                           usage="reference"

@@ -184,8 +184,8 @@ export function DigitalHumanProductionPanel(props: {
       {overlayIssues.map((issue, i) => <p key={i} role="alert">{issue.message}</p>)}
       {overlays.map((o, i) => { const url = overlayUrl(o.assetId); return <article key={`${o.assetId}:${i}`}>
         <strong>{o.kind === "photo" ? "照片" : "视频"} · {o.startSec.toFixed(2)}–{(o.startSec + o.durationSec).toFixed(2)}秒</strong>
-        <p>{o.attribution}（Pexels License）{o.sourceDurationSec ? ` · 素材长 ${o.sourceDurationSec.toFixed(1)} 秒` : ""}</p>
-        {url && (o.kind === "video" ? <video src={url} muted playsInline controls preload="metadata" style={{ maxWidth: 240 }} /> : <img src={url} alt={o.attribution} style={{ maxWidth: 240 }} />)}
+        <p>图库素材{o.sourceDurationSec ? ` · 素材长 ${o.sourceDurationSec.toFixed(1)} 秒` : ""}</p>
+        {url && (o.kind === "video" ? <video src={url} muted playsInline controls preload="metadata" style={{ maxWidth: 240 }} /> : <img src={url} alt="补充画面" style={{ maxWidth: 240 }} />)}
         {([ ["startSec", "片内起点"], ["durationSec", o.kind === "photo" ? "展示时长" : "覆盖时长"], ["sourceInSec", "素材入点"] ] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min={0} step={0.1} disabled={key === "sourceInSec" && o.kind === "photo"} value={o[key]} onChange={e => saveOverlays(rows => rows.map((r, n) => n === i ? { ...r, [key]: Math.max(0, Number(e.target.value) || 0) } : r))} /></label>)}
         <label>方式<select value={o.mode} onChange={e => saveOverlays(rows => rows.map((r, n) => n === i ? { ...r, mode: e.target.value as typeof r.mode } : r))}>{(["overlay", "cutaway"] as const).map(m => <option key={m} value={m}>{DIGITAL_HUMAN_OVERLAY_MODE_LABEL[m]}</option>)}</select></label>
         {o.mode === "cutaway" && <label>回切点备注<input type="text" maxLength={200} value={o.returnNote ?? ""} placeholder={`${(o.startSec + o.durationSec).toFixed(2)}秒回到人物`} onChange={e => saveOverlays(rows => rows.map((r, n) => n === i ? { ...r, returnNote: e.target.value } : r))} /></label>}

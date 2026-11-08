@@ -20,7 +20,7 @@ async function safely<T>(operation: () => Promise<T>): Promise<T> {
         : "SERVICE_UNAVAILABLE";
       throw new TRPCError({ code, message: error.message });
     }
-    throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "素材服务暂不可用，请稍后用同一采用编号查询" });
+    throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "素材服务暂不可用，请稍后再试" });
   }
 }
 
