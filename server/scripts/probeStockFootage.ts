@@ -167,7 +167,8 @@ async function probeKeywordRules() {
     const text = "城市夜景雨天";
     const tried: Array<{ fn: string; query?: string; error?: string }> = [];
     for (const [name, fn] of candidates) {
-      for (const args of [[{ text, purpose: "mv" }], [text, "mv"]] as unknown[][]) {
+      // 规则版签名为 (text, purpose)；先试位置参数，避免对象参数被当作文本落到默认词。
+      for (const args of [[text, "mv"], [{ text, purpose: "mv" }]] as unknown[][]) {
         try {
           const out = await fn(...args);
           const o = (out && typeof out === "object" ? out : {}) as Record<string, unknown>;
@@ -205,15 +206,13 @@ async function probeMvTrimBinding(userId: number, owned: StockFootageAsset) {
       version: 1, fps: 30, basePlanRequestId: randomUUID(), audioId: "probe-audio", audioDurationSec: 30,
       clips: [{ id: "probe-clip-1", shotId: "probe-shot-1", blockId: "probe-block-1", title: "probe", kind: "generated", sourceInFrame: 0, durationFrames: 120 }],
     };
-    // 第二期绑定可带裁点（第4参数）；旧签名会忽略多余参数，此时只核对不越界，并把「入点写入」记 SKIP。
-    const bind = bindMusicMvStockFootage as unknown as (d: MusicMvEditDocument, id: string, a: StockFootageAsset, t?: { inSec: number; outSec: number }) => MusicMvEditDocument;
-    const bound = bind(doc, "probe-clip-1", owned, { inSec: trim.inSec, outSec: trim.outSec });
+    // 第二期绑定第4参数为帧：{ sourceInFrame, durationFrames }（由抽屉裁点经 stockTrimToFrames 换算）。
+    const bound = bindMusicMvStockFootage(doc, "probe-clip-1", owned, expected);
     const clip = bound.clips[0];
     const available = stockDurationFrames(sourceSec, MV_EDIT_FPS);
     const inBounds = clip.sourceInFrame >= 0 && clip.sourceInFrame + clip.durationFrames <= available && clip.kind === "footage";
     record("MV 非0入点绑定：sourceInFrame 不越界", inBounds, { trim, expected, sourceInFrame: clip.sourceInFrame, durationFrames: clip.durationFrames, available });
     if (clip.sourceInFrame === expected.sourceInFrame) record("MV 绑定写入抽屉入点", true, { sourceInFrame: clip.sourceInFrame });
-    else if (clip.sourceInFrame === 0) skip("MV 绑定写入抽屉入点", "bindMusicMvStockFootage 尚未接收裁点（MV 分支未合入）");
     else record("MV 绑定写入抽屉入点", false, { expected: expected.sourceInFrame, actual: clip.sourceInFrame });
     const resolved = await resolveCanvasMusicMvVideo(userId, clip.source!);
     record("MV 非0入点绑定后 resolveCanvasMusicMvVideo 通过", resolved === owned.gcsUri, { resolved });
