@@ -1,7 +1,7 @@
 {
   "monitor": {
-    "at": "2026-11-08T09:26:28.168Z",
-    "round": 23,
+    "at": "2026-11-08T09:28:35.388Z",
+    "round": 25,
     "stage": "layout_selected",
     "batches": {
       "done": 50,
