@@ -82,7 +82,7 @@ jobs:
           flyctl ssh console -a "$APP" --machine "$M" -C "node $DIR/launch.mjs $DIR $MODE"
       - name: Follow status (counts only)
         run: |
-          set -uo pipefail
+          set +e
           M=${{ steps.req.outputs.machine }}
           END=$(( $(date +%s) + 330*60 ))
           while :; do
@@ -98,4 +98,6 @@ jobs:
           done
           ERRS=$(flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'test -f $DIR/ui-errors.log && wc -l < $DIR/ui-errors.log || echo 0'" 2>/dev/null | tail -1)
           echo "ui-errors 行数=$ERRS"
+          # 只输出错误行（去地址、截断），不输出正文。
+          flyctl ssh console -a "$APP" --machine "$M" -C "sh -c 'grep -E \"Error|错误|失败|拒\" $DIR/run.log | tail -5'" 2>/dev/null | sed -E 's#(https?|gs)://[^ ]+#[地址]#g' | cut -c1-300
           [ "$STAGE" = "publication_failed" ] && exit 1 || true
