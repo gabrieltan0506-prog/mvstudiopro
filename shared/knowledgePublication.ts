@@ -27,6 +27,8 @@ export const knowledgeSourcePageSchema = z
     id: z.string().uuid(),
     headline: z.string().max(500),
     body: z.string().max(50000),
+    /** 并入本章的图外文字资料（原独立文字模块），不在图中；只供审校整合为该章内文。 */
+    supplement: z.string().max(50000).optional(),
     imageUrl: z.string().max(6000),
     imageJobId: z.string().min(1).max(200).optional(),
     role: z.enum(["reading", "illustration"]).optional(),
@@ -216,14 +218,14 @@ export function knowledgeReviewBatches(source: KnowledgeSource): number[][] {
   for (const [i, page] of Array.from(source.pages.entries())) {
     if (
       current.length &&
-      (current.length >= 4 || chars + page.body.length > 24000 || Boolean(source.pages[current[0]].imageJobId) !== Boolean(page.imageJobId) || (source.reviewBatchMode === "ready-images" && Boolean(page.imageJobId)))
+      (current.length >= 4 || chars + page.body.length + (page.supplement?.length || 0) > 24000 || Boolean(source.pages[current[0]].imageJobId) !== Boolean(page.imageJobId) || (source.reviewBatchMode === "ready-images" && Boolean(page.imageJobId)))
     ) {
       batches.push(current);
       current = [];
       chars = 0;
     }
     current.push(i);
-    chars += page.body.length;
+    chars += page.body.length + (page.supplement?.length || 0);
   }
   if (current.length) batches.push(current);
   return batches;

@@ -1,4 +1,5 @@
 import { planKnowledgeCardPages } from "./knowledgeCardPagination";
+import {attachKnowledgeTextModules} from "./knowledgeTextAttachment";
 import type { LayoutSource } from "./editableLayout";
 import {knowledgeEditionParts} from './knowledgeCardEdition';
 
@@ -50,13 +51,14 @@ export function synchronizedKnowledgeCardSource(input: {
     const images=planKnowledgeCardPages(input.illustrationMarkdown,input.distillModel).pages;
     if(!images.length||images.length!==input.imageJobIds.length||new Set(input.imageJobIds).size!==images.length)
       throw Error('配图任务与实际知识模块不一致，尚未开始生成');
-    const text=edition.reading?planKnowledgeCardPages(edition.reading,input.distillModel).pages:[];
+    // 图文知识手册取其精华，不按原书顺序：无图文字模块并入内容最相关的图章，作为该章图外补充。
+    const textModules=edition.modules.filter(m=>m.medium==='text'&&m.body.trim());
+    const supplements=attachKnowledgeTextModules(images,textModules);
     return {kind:'knowledge-publication',owner:input.owner,sourceId:input.sourceId,title:edition.title,
       body:edition.knowledge,detailLevel:input.detailLevel,infographicTemplateId:input.infographicTemplateId||undefined,
-      inputFingerprint:input.inputFingerprint,reviewBatchMode:'ready-images',images:{},pages:[
-        ...text.map((body,i)=>({pageIndex:i+1,headline:body.match(/^##\s+(.+)$/m)?.[1]||edition.title,body,knowledgeRole:'reading' as const})),
-        ...images.map((body,i)=>({pageIndex:text.length+i+1,headline:body.match(/^##\s+(.+)$/m)?.[1]||edition.title,body,imageJobId:input.imageJobIds[i],knowledgeRole:'illustration' as const})),
-      ]};
+      inputFingerprint:input.inputFingerprint,reviewBatchMode:'ready-images',images:{},pages:
+        images.map((body,i)=>({pageIndex:i+1,headline:body.match(/^##\s+(.+)$/m)?.[1]||edition.title,body,imageJobId:input.imageJobIds[i],knowledgeRole:'illustration' as const,...(supplements[i]?{supplement:supplements[i]}:{})})),
+    };
   }
   const reading = knowledgeCardLayoutSource({ ...input, markdown: input.fullMarkdown, images: [] });
   const illustrations = planKnowledgeCardPages(input.illustrationMarkdown, input.distillModel).pages;

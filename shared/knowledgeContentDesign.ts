@@ -28,48 +28,66 @@ export function knowledgeMotifSvg(motif:KnowledgeVisualDesign['motif']){
  return motif==='none'?'':`<svg class="content-motif" data-motif="${motif}" viewBox="0 0 350 190" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">${paths[motif]}</svg>`;
 }
 export const knowledgeContentDesignKey=(d:KnowledgeVisualDesign)=>[d.palette,d.layout,d.table,d.frame,d.motif].join("-");
+/** 纹样水印：同一SVG线稿以极淡描边放在页角，按章节内容选择，不做大幅页眉。 */
+function motifWatermark(motif:KnowledgeVisualDesign['motif'],color:string){
+ const svg=knowledgeMotifSvg(motif);
+ if(!svg)return 'none';
+ const tinted=svg.replace('stroke="currentColor"',`stroke="${color}" stroke-opacity="0.16"`).replace(/ class="[^"]*"| data-motif="[^"]*"| aria-hidden="true"/g,'');
+ return `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(tinted)}")`;
+}
 export function knowledgeContentDesignCss(d:KnowledgeVisualDesign){
  const [paper,ink,accent,line,tint]=palettes[d.palette];
+ const frame=d.frame==='corners'
+  ? `[data-content-design] .reading-unit:before,[data-content-design] .reading-unit:after{content:"";position:absolute;width:26px;height:26px;pointer-events:none;border-color:var(--accent);opacity:.75}
+[data-content-design] .reading-unit:before{left:6px;top:6px;border-left:2px solid;border-top:2px solid}
+[data-content-design] .reading-unit:after{right:6px;bottom:6px;border-right:2px solid;border-bottom:2px solid}`
+  : d.frame==='rule'
+  ? `[data-content-design] .reading-unit{border-left:5px solid var(--accent)!important}`
+  : `[data-content-design] .reading-unit{border-color:transparent!important;background:var(--tint)!important}`;
+ const header=d.table==='minimal'?`background:var(--tint);color:var(--ink)`:`background:var(--ink);color:#fff`;
  return `
-[data-content-design]{--paper:${paper};--ink:${ink};--accent:${accent};--line:${line};--tint:${tint};--white:#fff;color:var(--ink)}
-[data-content-design] .folio{background:var(--paper);border:0;outline:0;box-shadow:none;padding:42px 66px 34px}
-[data-content-design] .folio:before{display:none}
-[data-content-design] .running{border-bottom:1px solid var(--line);color:var(--ink);font-size:13px;letter-spacing:1px}
+[data-content-design]{--paper:${paper};--ink:${ink};--accent:${accent};--line:${line};--tint:${tint};--white:#fffdf9;color:var(--ink)}
+[data-content-design] .folio{background:var(--paper) ${motifWatermark(d.motif,accent)} no-repeat right 70px bottom 70px/420px auto;border:0;outline:0;box-shadow:none;padding:46px 70px 36px}
+[data-content-design] .folio:before{display:block;inset:20px;border:1px solid var(--line);border-image:none}
+[data-content-design] .folio:after{content:"";position:absolute;inset:27px;border:1px solid color-mix(in srgb,var(--line) 55%,transparent);pointer-events:none}
+[data-content-design] .running{border-bottom:1px solid var(--line);color:var(--accent);font-size:13px;letter-spacing:3px}
 [data-content-design] .running b{color:var(--accent);font-weight:700}
-[data-content-design] .main-card{border:1px solid var(--line);border-radius:0;padding:8px;background:#fff;box-shadow:none}
-[data-content-design] .image-title h1{font-family:'Songti SC','Noto Serif CJK SC',serif;letter-spacing:1px;color:var(--ink)}
-[data-content-design] .image-caption .botanical{display:none}
-[data-content-design] .reading-title{height:250px!important;margin:0 0 28px!important;padding:26px 0 20px!important;display:flex!important;flex-direction:${d.layout==='narrative'?'row-reverse':'row'}!important;border:0!important;border-bottom:2px solid var(--ink)!important;position:relative;gap:40px}
-[data-content-design] .reading-title:before{display:none!important}
+[data-content-design] .image-title{flex-direction:${d.layout==='narrative'?'row-reverse':'row'};border-bottom:2px solid var(--ink);padding-bottom:14px}
+[data-content-design] .image-title h1{font:700 46px/1.35 'Songti SC','Noto Serif CJK SC',serif;letter-spacing:2px;color:var(--ink);text-shadow:none}
+[data-content-design] .image-title .eyebrow{color:var(--accent)}
+[data-content-design] .main-card{border:1px solid var(--line);border-radius:${d.layout==='catalog'?'4px':'14px'};padding:10px;background:#fff;box-shadow:0 3px 0 var(--tint)}
+[data-content-design] .content-motif{display:block;color:var(--accent);opacity:.6;flex:none}
+[data-content-design] .reading-title{height:200px!important;margin:0 0 26px!important;padding:24px 30px!important;display:flex!important;flex-direction:${d.layout==='narrative'?'row-reverse':'row'}!important;align-items:center;gap:40px;border:0!important;border-bottom:2px solid var(--ink)!important;border-radius:0!important;background:linear-gradient(100deg,var(--tint),transparent 75%)!important}
 [data-content-design] .reading-title>div:first-child{max-width:1120px!important;padding:0!important;border:0!important}
-[data-content-design] .reading-title h2{font:700 48px/1.35 'Songti SC','Noto Serif CJK SC',serif!important;letter-spacing:1px!important;margin:0 0 14px!important;color:var(--ink)}
+[data-content-design] .reading-title h2{font:700 44px/1.35 'Songti SC','Noto Serif CJK SC',serif!important;letter-spacing:2px!important;margin:0 0 10px!important;color:var(--ink);border:0!important;padding:0!important}
 [data-content-design] .reading-title .eyebrow{display:block!important;font-size:13px;letter-spacing:3px;color:var(--accent)}
-[data-content-design] .reading-subtitle{display:none}
-[data-content-design] .reading-title .art-window{display:none!important}
-[data-content-design] .content-motif{display:block;width:340px;height:190px;color:var(--accent);opacity:.65;flex:none}
-[data-content-design] .reading-columns,[data-content-design] .reading-column{height:1770px!important}
-[data-content-design] .reading-columns{gap:44px}
-[data-content-design] .reading-unit{border:0!important;border-radius:0!important;box-shadow:none!important;background:transparent!important;padding:12px 4px 20px;margin-bottom:16px;color:var(--ink)}
-[data-content-design] .unit-heading{border:0;background:transparent;padding:0 0 12px;margin:0 0 12px;align-items:flex-start}
+[data-content-design] .reading-subtitle{font-size:20px;opacity:.75}
+[data-content-design] .reading-title .content-motif{width:300px;height:150px}
+[data-content-design] .reading-folio .reading-columns,[data-content-design] .reading-folio .reading-column{height:1720px!important}
+[data-content-design] .reading-columns{gap:40px}
+[data-content-design] .reading-unit{position:relative;border:1px solid var(--line)!important;border-radius:${d.layout==='catalog'?'6px':'14px'}!important;box-shadow:0 2px 0 var(--tint)!important;background:var(--white)!important;padding:18px 24px 20px!important;margin-bottom:16px;color:var(--ink);overflow:visible}
+[data-content-design] .unit-heading{border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);padding:0 0 12px;margin:0 0 14px;align-items:center}
 [data-content-design] .unit-heading h3{font:700 29px/1.45 'Songti SC','Noto Serif CJK SC',serif!important;color:var(--ink)}
-[data-content-design] .unit-heading>span{border:0;border-radius:0;width:30px;height:30px;background:var(--tint);color:var(--accent);font:700 15px/30px Georgia,serif}
+[data-content-design] .unit-heading>span{width:36px;height:36px;border-radius:50%;border:3px double var(--accent);background:var(--white);color:var(--accent);font:700 15px/30px Georgia,serif}
 [data-content-design] .reading-unit p,[data-content-design] .reading-unit li{font-size:24px;line-height:1.8}
-[data-content-design] .reading-unit strong{color:var(--accent)}
+[data-content-design] .reading-unit strong{color:var(--ink);background:linear-gradient(transparent 58%,color-mix(in srgb,var(--accent) 24%,transparent) 58%)}
 [data-content-design] .list-unit ul{columns:1}
 [data-content-design] .decoration-divider{display:none}
-[data-content-design] .table-unit{padding:0 0 16px!important;border:0!important;box-shadow:none!important;background:transparent!important}
-[data-content-design] .table-unit .unit-heading{padding:12px 4px;background:transparent;border:0}
-[data-content-design] .table-unit .unit-heading:after,[data-content-design] .table-unit:before{display:none!important}
-[data-content-design] table{font-size:22px!important;line-height:1.65!important}
-[data-content-design] .table-unit th{background:${d.table==='minimal'?'var(--tint)':'var(--ink)'};color:${d.table==='minimal'?'var(--ink)':'#fff'};padding:11px 12px;border:0;font-weight:600}
+[data-content-design] .table-unit{padding:18px 20px 16px!important}
+[data-content-design] .table-unit .unit-heading{margin:0 0 14px;padding:0 0 12px;background:transparent;border-bottom:1px solid var(--line)}
+[data-content-design] .table-unit .unit-heading h3{color:var(--ink)}
+[data-content-design] table{font-size:22px!important;line-height:1.65!important;border-radius:8px;overflow:hidden}
+[data-content-design] .table-unit th{${header};padding:11px 12px;border:0;font-weight:600}
 [data-content-design] .table-unit td{padding:11px 12px;border-bottom:1px solid var(--line);background:transparent}
 [data-content-design] .table-unit tr:nth-child(even) td{background:${d.table==='bands'?'var(--tint)':'transparent'}}
-[data-content-design] .prose-unit blockquote{border-left:3px solid var(--accent);background:var(--tint);padding:15px 18px;margin:8px 0}
-[data-content-design] footer{border-color:var(--line);color:var(--ink)}
-${d.frame==='corners'?'[data-content-design] .reading-unit{border-left:2px solid var(--line)!important;padding-left:18px!important}':d.frame==='rule'?'[data-content-design] .prose-unit{border-bottom:1px solid var(--line)!important}':''}
-[data-content-design] .reading-continuation .reading-title{height:145px!important}
+[data-content-design] .prose-unit blockquote{border-left:4px solid var(--accent);background:var(--tint);padding:14px 18px;margin:8px 0;border-radius:0 10px 10px 0}
+[data-content-design] footer{border-color:var(--line);color:var(--accent)}
+${frame}
+[data-content-design] .reading-continuation .reading-title{height:130px!important;padding:16px 26px!important}
 [data-content-design] .reading-continuation .content-motif{display:none}
-[data-content-design] .reading-continuation .reading-title h2{font-size:34px!important}
+[data-content-design] .folio.reading-continuation{background-image:none}
+[data-content-design] .reading-continuation .reading-title h2{font-size:32px!important}
+[data-content-design] .reading-continuation .reading-subtitle{display:none}
 `.replaceAll("[data-content-design]",`[data-booklet-root][data-content-design="${knowledgeContentDesignKey(d)}"]`);
 }
 export function contentDecoration(base:KnowledgeDecoration,design:KnowledgeVisualDesign):KnowledgeDecoration{

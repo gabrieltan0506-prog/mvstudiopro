@@ -1,3 +1,4 @@
+import { knowledgeBudgetInstructions, knowledgeReadingCharBudgets } from "../../shared/knowledgeEditionBudget";
 import {KNOWLEDGE_SUPPLEMENT_REFINEMENT_INSTRUCTIONS} from '../../shared/knowledgeSupplementRefinement';
 import { KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST } from "./knowledgeModelCapabilities";
 import { KNOWLEDGE_BOOK_LAYOUT_INSTRUCTIONS, validateKnowledgeBookLayoutPlan, type KnowledgeBookLayoutInput } from "../../shared/knowledgeBookLayout";
@@ -162,6 +163,13 @@ async function reviewKnowledgeLayoutBatches(
         const batchPrefix=`${prefix}/batch-${index}`;
         const request=buildKnowledgeConversationRequest(doc,context,[],book,indexes);
         request.executionChannel=index%2===0?"openrouter":"evolink";
+        // 展示正文同样服从生图前确定的篇幅预算，排版不得把已压缩的内文重新扩写。
+        const pubSource=doc.publication?.source;
+        if(pubSource?.detailLevel&&pubSource.reviewBatchMode==="ready-images"){
+          const ids=new Set(batchBook.pages.map(p=>p.id));
+          const budget=knowledgeBudgetInstructions(pubSource.detailLevel,knowledgeReadingCharBudgets(pubSource.detailLevel,pubSource.pages).pages.filter(p=>ids.has(p.id)));
+          if(budget)request.systemInstruction.parts.push({text:budget+"\npresentation.reading不得长于对应预算；预算以内也不要比原body更长。"});
+        }
         // 重试只复用同一内容、模板、档位和批次；不把新请求ID/历史失败提示当作正文变更。
         const identity=createHash("sha256").update(JSON.stringify({book:batchBook,question:input.conversation.question,layout:input.conversation.layout.templateId,theme:doc.theme,fontSize:doc.fontSize})).digest("hex");
         let saved=await deps.read(`${batchPrefix}/report.json`);

@@ -23,9 +23,10 @@ describe('两档共享浓缩知识，采用不同媒介',()=>{
         detailLevel:level,infographicTemplateId:'fusion_glasshouse_garden',imageJobIds:plan.pages.map((_,i)=>`job-${i}`)});
       expect(source.infographicTemplateId).toBe('fusion_glasshouse_garden');
       expect(source.pages!.filter(p=>p.knowledgeRole==='illustration').map(p=>p.body)).toEqual(plan.pages);
-      const reading=source.pages!.filter(p=>p.knowledgeRole==='reading');
-      if(level==='full')expect(reading).toHaveLength(0);
-      else {expect(reading.map(p=>p.body).join('')).toContain('次要知识7');expect(reading.map(p=>p.body).join('')).not.toContain('主要知识与必要风险提示');}
+      // 2026-11-08：无图文字模块并入最相关的图章（supplement），不再单独成页。
+      expect(source.pages!.filter(p=>p.knowledgeRole==='reading')).toHaveLength(0);
+      const supplements=source.pages!.map(p=>p.supplement||'').join('');
+      if(level==='concise'){expect(supplements).toContain('次要知识7');expect(supplements).not.toContain('主要知识与必要风险提示');}
       expect(source.body).toContain('次要知识7');
     }
   });
@@ -52,7 +53,8 @@ it('完整版的原有条件说明真实进入阅读页，不靠改计数补文�
   const plan=planKnowledgeCardPages(md);
   const source=synchronizedKnowledgeCardSource({owner:'7',sourceId:'notes',fullMarkdown:editions.full,illustrationMarkdown:md,detailLevel:level,imageJobIds:plan.pages.map((_,i)=>`job-${i}`)});
   expect(parts.images).toContain('每天12次');expect(parts.images).not.toContain('原有适用条件');
-  const reading=source.pages!.filter(p=>p.knowledgeRole==='reading').map(p=>p.body).join('');
+  const reading=source.pages!.map(p=>p.supplement||'').join('');
+  expect(source.pages!.every(p=>p.knowledgeRole==='illustration')).toBe(true);
   expect(reading).toContain('原有适用条件');expect(reading).toContain('原有禁忌');
  }
 });
@@ -78,7 +80,7 @@ it('旧图示格式的无标签解说与真实注段进入文字，图表原样�
   const plan=planKnowledgeCardPages(result[level]);
   expect(plan.pages.every(p=>p.length<=1200)).toBe(true);
   const layout=synchronizedKnowledgeCardSource({owner:'7',sourceId:'original-format',fullMarkdown:result.full,illustrationMarkdown:result[level],detailLevel:level,imageJobIds:plan.pages.map((_,i)=>`job-${i}`)});
-  const reading=layout.pages!.filter(p=>p.knowledgeRole==='reading').map(p=>p.body).join('\n');
+  const reading=layout.pages!.map(p=>p.supplement||'').join('\n');
   expect(reading).toContain(explanation);expect(reading).toContain(note);
  }
  expect(input[0]!.body).toBe(body);

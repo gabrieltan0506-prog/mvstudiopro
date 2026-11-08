@@ -16,7 +16,7 @@ import { loadKnowledgeBookLayoutInput, loadKnowledgeBookLayoutView, validateKnow
 import { buildKnowledgePublicationHtml } from "../../shared/knowledgePublicationHtml";
 
 // 本组非视觉用例使用有效测试PDF，仍经过正式pdfseparate/pdfunite，不能用伪PDF字节跳过分片合同。
-const fixturePageCount = (html:string) => html.includes('<figure class="main-card">') ? 2 : 1;
+const fixturePageCount = (_html:string) => 1;
 const fixturePdf = (html:string) => new Promise<Buffer>((resolve,reject)=>{
   const pdf=new PDFDocument({autoFirstPage:false}),chunks:Buffer[]=[];
   pdf.on("data",chunk=>chunks.push(Buffer.from(chunk)));pdf.on("error",reject);
@@ -119,13 +119,13 @@ it("真实顾问路由产出方案，经永久回执与保存校验后控制合�
   expect(view.doc.pages.map(p=>p.imageUrl)).toEqual(["","","gs://test/extra.png","gs://test/old.png"]);
   expect(JSON.stringify(f.library)).toBe(original);
   const result=await exportKnowledgePublication(7,f.parent.id,"10",f.deps);
-  expect(result.imagePages).toBe(2);expect(result.totalPages).toBe(6);
+  expect(result.imagePages).toBe(2);expect(result.totalPages).toBe(4);
   const images=Object.fromEntries(view.doc.pages.filter(p=>p.imageUrl).map(p=>[p.imageUrl,`data:image/png;base64,${Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=","base64").toString("base64")}`]));
   const savedHtml=Array.from(f.objects.entries()).find(([name])=>name.endsWith('/阅读稿.html'))![1].toString('utf8');
   expect(savedHtml.replace(/>\s+</g, "><")).toBe(buildKnowledgePublicationHtml(view.doc,view.review,images).replace(/>\s+</g, "><"));
   const sentHtml=f.deps.pdf.mock.calls.map(([html])=>html).join('\n');
   for(const end of ["末句一必须保留","末句二必须保留","末句三必须保留","末句四必须保留"])expect(sentHtml).toContain(end);
-  expect(Array.from(f.objects.keys()).filter(name=>/\.pdf\.pages\/\d+\.pdf$/.test(name))).toHaveLength(6);
+  expect(Array.from(f.objects.keys()).filter(name=>/\.pdf\.pages\/\d+\.pdf$/.test(name))).toHaveLength(4);
   await f.run();await exportKnowledgePublication(7,f.parent.id,"10",f.deps);
   expect(f.fetch).toHaveBeenCalledTimes(1);expect(f.deps.pdf).toHaveBeenCalledTimes(4);
   expect(Array.from(f.models.keys()).some(k=>k.endsWith("/raw.json"))).toBe(true);
@@ -187,11 +187,12 @@ it("实际Chromium打印按顾问顺序保留全部章节、图卡、正文与�
       return bytes;
     };
     const result=await exportKnowledgePublication(7,f.parent.id,'10',{...f.deps,pdf,measure});
-    expect(result.pdfError).toBeUndefined();expect(result.totalPages).toBe(6);expect(result.pdfBytes).toBeGreaterThan(10000);
+    // 2026-11-08 直式图文同页：两张图各与要点同页，不再单独成图页，4章共4页。
+    expect(result.pdfError).toBeUndefined();expect(result.totalPages).toBe(4);expect(result.pdfBytes).toBeGreaterThan(10000);
     expect(result.imagePages).toBe(2);
     expect(parts.flatMap(p=>p.chapters)).toEqual(f.order);
     expect(parts.reduce((sum,p)=>sum+p.images,0)).toBe(2);
-    expect(parts.flatMap(p=>p.pages)).toEqual(Array.from({length:6},(_,i)=>String(i+1).padStart(2,'0')+' / 06'));
+    expect(parts.flatMap(p=>p.pages)).toEqual(Array.from({length:4},(_,i)=>String(i+1).padStart(2,'0')+' / 04'));
     const texts=parts.flatMap(p=>p.texts);
     for(const [i,n] of Array.from(["一","二","四","三"].entries()))expect(texts[i]).toContain('末句'+n+'必须保留');
     expect(new Set(parts.flatMap(p=>p.palettes)).size).toBe(2);

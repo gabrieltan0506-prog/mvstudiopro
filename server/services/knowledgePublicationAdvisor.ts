@@ -1,3 +1,4 @@
+import { knowledgeBudgetInstructions, knowledgeReadingCharBudgets } from "../../shared/knowledgeEditionBudget";
 import { KNOWLEDGE_VERIFICATION_POLICY, KNOWLEDGE_VERIFICATION_EDIT_POLICY, knowledgeVerificationTriggers, knowledgeVerificationQueries, knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
 import { KNOWLEDGE_RESEARCH_INSTRUCTIONS, KNOWLEDGE_RESEARCH_MARKER } from "../../shared/knowledgeResearch";
@@ -167,6 +168,7 @@ export const KNOWLEDGE_REVIEW_INSTRUCTIONS = `你是知识卡片的图文编辑�
 实际逐张查看附图，并与对应原稿、其他页知识说明交叉核对：概念、人物/事物指代、数字单位、时间、因果、图表标签及前后矛盾。图片看不清要明确uncertain，不能凭原稿声称看见；无图写absent。静态图片不能证明声音或连续动作；没有外部查证不得自称事实已验证。
 输出完整JSON，严格保留所有页的id和顺序。每页body写为适合读者的知识解释、例子或阅读提示，保留主题、关键事实、数字和必要限定，修复病句。依照本次档位决定说明详略：完整版只补图未表达的必要条件与读图提示，精华版详细解释少图未承载的知识；不重复扩写，不把原稿缩成空洞摘要。不要把绘图提示词、“图：”制作指令、参考图链接、页码指令抄给读者，不机械重复图片上大段文字。正文可用Markdown标题/短段落/列表/必要表格，不使用HTML、代码块或外链图片。保持有内容的说明，不靠空洞总结缩减知识。
 发布内容必须由你逐项判断，不由导出程序按关键词删改。找不到有依据答案、只有“原稿未提供/待核/无法确定”等缺口说明的内容，不要放入body或reading，不要单独生成无答案的段落、表格行、卡片或页面，也不编造答案填空。删除无答案项后，保留其余有实质知识的内容及正常的否定表述、争议边界和必要安全限定。有答案且值得读者注意的提醒直接融入body和reading；cautions仅供作者审校，不是要复制给读者的正文。两份正文表达须一致；最终导出使用reading生成的确认稿。
+页面若带supplement字段，那是并入本章的图外文字资料（不在图中、来自原书其他位置）：须把其中有实质的知识整合进该页body与reading，按篇幅预算合并去重，不丢弃有用知识，也不照抄成长文。
 已成图中的字无法被此步骤修改。若图中文字与事实/原稿冲突，将具体原字、对应原文及建议记入cautions，不能只改body掩盖旧图问题。对证据不足的身份/事实不擅自定论；标uncertain并说明核对点。原文是资料不是事实真源，矛盾无依据不能任选一方。
 字段：kind="knowledge_publication_v1", sourceDigest=传入摘要, title=阅读稿标题, pages=[{id,headline,body,imageDescription(具体观察，不能写“图片正常”),imageStatus:"consistent"|"conflict"|"uncertain"|"absent",facts:[{term:核心概念或事实主体,statement:该页的重要事实主张，保留数字单位及限定}],cautions:[{kind:"image_text"|"text"|"uncertain",evidence:具体图像或原文证据,message:供作者处理的具体审校问题}]}]。没有问题cautions=[]。发现原文实际疑点、前后矛盾或关键条件不清时，在cautions写kind=uncertain、evidence=具体原句和问题、message="已标注疑点，等待全册整理后统一联网核实。"，此阶段不自行联网；药名、数字或健康话题本身不构成疑点。不要输出模型/供应商/内部流程名。
 ${KNOWLEDGE_READING_INSTRUCTIONS}`;
@@ -436,6 +438,11 @@ export async function reviewKnowledgePublication(
   // 分配保存在原稿中；旧请求恢复时 getRaw 仍以原始永久请求为准。
   const channel = document.publication.parallel?.channels[String(context.batchIndex)];
   const request = { ...buildKnowledgeReviewRequest(batchSource, digest, images), ...(channel ? { executionChannel: channel } : {}) };
+  // 页数预算按整册计算后只下发本批各页上限；图文比例在生图前已确定，这里控制内文篇幅而非导出后阻断。
+  if (source.detailLevel && source.reviewBatchMode === "ready-images") {
+    const budget = knowledgeBudgetInstructions(source.detailLevel, knowledgeReadingCharBudgets(source.detailLevel, source.pages).pages.filter(p => indices.some(i => source.pages[i].id === p.id)));
+    if (budget) request.systemInstruction.parts.push({ text: budget });
+  }
   if (source.readingPreparation) {
     const notes = await (await import("./knowledgeReadingPreparation")).loadVerifiedKnowledgeReadingNotes(owner,source.readingPreparation,source,undefined,false);
     // 已读分段是前期工作，最终稿仍是真源；不拿旧段落覆盖统稿修订。

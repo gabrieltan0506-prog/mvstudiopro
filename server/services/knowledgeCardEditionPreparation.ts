@@ -1,3 +1,4 @@
+import { knowledgeEditionBudgetCheck } from "../../shared/knowledgeEditionBudget";
 import { KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION, knowledgePendingResearchNotes } from './knowledgeVerificationPolicy';
 import {buildKnowledgeBookletHtml} from '../../shared/knowledgeBooklet';
 import {measureKnowledgeBookletFromWorker} from './pdfWorkerClient';
@@ -56,9 +57,12 @@ export async function prepareKnowledgeCardEditions(params:{
     const result=auditEditionResult(prior.result);
     // 缓存正文不重购；图片计数由当前共用分页器重算，文字物理页保持原实测值。
     if(!result.editionPageCounts)return result;
-    return {...result,editionPageCounts:Object.fromEntries((['full','concise'] as const).map(level=>[level,{
-      ...result.editionPageCounts[level],imagePages:planKnowledgeCardPages(level==='full'?result.fullEditionMarkdown:result.markdown,params.model).pageCount,
-    }]))};
+    return {...result,editionPageCounts:Object.fromEntries((['full','concise'] as const).map(level=>{
+      const markdown=level==='full'?result.fullEditionMarkdown:result.markdown;
+      const imagePages=planKnowledgeCardPages(markdown,params.model).pageCount;
+      const textChars=(knowledgeEditionParts(markdown)?.modules||[]).filter(m=>m.medium==='text').reduce((sum,m)=>sum+m.body.replace(/\s+/g,'').length,0);
+      return [level,{...result.editionPageCounts[level],imagePages,pageBudget:knowledgeEditionBudgetCheck(level,imagePages,textChars)}];
+    }))};
   }
   const invoke=params.invoke||invokeKnowledgePublicationRoutes;
   // 完整底稿先保存；精华只选择原节，不能用选择结果覆盖完整版。
@@ -171,7 +175,7 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
   // 这里的图片页是实际出图分页；文字物理页仍由正式Booklet/PDF渲染器测量。
   const verification=await evidence.read(`${evidence.prefix}/final-verification/verified.json`);
   const issues=[...(verification?.issues||[]),...selectionIssues];
-  const editionPageCounts:Record<string,{imagePages:number|null;readingPages:number|null}>={};
+  const editionPageCounts:Record<string,{imagePages:number|null;readingPages:number|null;pageBudget?:ReturnType<typeof knowledgeEditionBudgetCheck>}>={};
   for(const [level,markdown] of [['full',editions.full],['concise',editions.concise]] as const){
     await evidence.save(`${evidence.prefix}/pages/${level}/manuscript.json`,{inputDigest,markdown});
     const parts=knowledgeEditionParts(markdown)!;
@@ -181,6 +185,9 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
     try{
       const plan=planKnowledgeCardPages(markdown,params.model);
       editionPageCounts[level].imagePages=plan.pageCount;
+      // 生图前按图文比例预检（完整版图:文≈3:1–2:1，精华版1:2–1:3）；只提示不阻断，略超无妨。
+      const textChars=parts.modules.filter(m=>m.medium==='text').reduce((sum,m)=>sum+m.body.replace(/\s+/g,'').length,0);
+      editionPageCounts[level].pageBudget=knowledgeEditionBudgetCheck(level,plan.pageCount,textChars);
       for(const [index,body] of Array.from(plan.pages.entries()))await evidence.save(`${evidence.prefix}/pages/${level}/images/${index}.json`,{inputDigest,pageIndex:index,body,status:'saved'});
     }catch(error){rethrowKnowledgeEditionInvariant(error);issues.push({kind:'pagination',message:knowledgeEditionErrorMessage(error),level});}
     try{

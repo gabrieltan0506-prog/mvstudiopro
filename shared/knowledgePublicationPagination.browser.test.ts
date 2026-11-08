@@ -18,14 +18,15 @@ it('正式预览和PDF打印样式下原图与说明穿插，最终字体重排�
   const before=await page.$$eval('.reading-unit',els=>els.map(el=>el.textContent));
   await page.emulateMediaType('print');await page.addStyleTag({content:workerCss+'\n@media print{html body *:not(img){font-family:Arial,"PingFang SC",sans-serif!important}}'});
   await page.evaluate(async()=>{for(const root of Array.from(document.querySelectorAll('[data-booklet-root]')))await (root as any).__layoutBooklet();});
-  const result=await page.evaluate(()=>({texts:Array.from(document.querySelectorAll('.reading-unit')).map(el=>el.textContent),order:Array.from(document.querySelectorAll('.folio')).map(el=>el.classList.contains('image-folio')?'图':'文'),overflow:Array.from(document.querySelectorAll('.folio,.reading-column')).some(el=>el.scrollHeight>el.clientHeight+2),images:Array.from(document.querySelectorAll('.main-card img')).map(el=>el.getBoundingClientRect().height),colors:Array.from(document.querySelectorAll('.image-folio')).map(el=>getComputedStyle(el).color),text:document.body.innerText}));
+  const result=await page.evaluate(()=>({texts:Array.from(document.querySelectorAll('.reading-unit')).map(el=>el.textContent),order:Array.from(document.querySelectorAll('.folio')).map(el=>el.classList.contains('lead-folio')?'图':'文'),overflow:Array.from(document.querySelectorAll('.folio,.reading-column')).some(el=>el.scrollHeight>el.clientHeight+2),images:Array.from(document.querySelectorAll('.main-card img')).map(el=>el.getBoundingClientRect().height),colors:Array.from(document.querySelectorAll('.lead-folio')).map(el=>getComputedStyle(el).color),text:document.body.innerText}));
   expect(result.texts).toEqual(before);expect(result.overflow).toBe(false);
   const typography=await page.evaluate(()=>({paragraph:getComputedStyle(document.querySelector('.prose-unit p')!).fontSize,table:getComputedStyle(document.querySelector('td p')!).fontSize,titles:Array.from(document.querySelectorAll('.image-title h1,.reading-title h2')).map(e=>e.textContent),running:Array.from(document.querySelectorAll('.running span:first-child')).map(e=>e.textContent)}));
   expect(typography.paragraph).toBe('24px');expect(typography.table).toBe('22.5px');
-  expect(typography.titles[0]).toBe(doc.title);expect(typography.titles.slice(1)).not.toContain(doc.title);
+  // 2026-11-08 直式图文同页：首页图题保留章节标题，书名在页眉。
+  expect(typography.titles[0]).toBe('第一卡');expect(typography.titles.slice(1)).not.toContain(doc.title);
   expect(typography.running.slice(1)).not.toContain(doc.title);expect(typography.titles.slice(1).every(Boolean)).toBe(true);
   expect(result.order[0]).toBe('图');expect(result.order.indexOf('文')).toBeLessThan(result.order.lastIndexOf('图'));
-  expect(result.images.every(h=>h>=760 && h<=796)).toBe(true);expect(new Set(result.colors).size).toBe(2);
+  expect(result.images.every(h=>h>0 && h<=900)).toBe(true);expect(new Set(result.colors).size).toBe(2);
   expect(result.text).toContain('尾句没有丢失。');expect(result.text).toContain('单元格结尾保留');
   expect(result.text).not.toMatch(/中式园林融合|海岸灯塔融合/);
   for(let i=0;i<40;i++)expect(result.text).toContain('完整知识内容'+i);
@@ -55,27 +56,26 @@ it('两份独立PDF片段在最终字体重排后仍使用同一全书页码',as
  }finally{await browser.close();}
 },60000);
 
-it('正文超过估计页数时按真实整页重新均分，不把孤段留在空白尾页',async()=>{
+it('正文顺序填满整页，末页两栏再平衡，不把少量内容均摊成两半空栏',async()=>{
  const {buildKnowledgeBookletHtml}=await import('./knowledgeBooklet');
  const paragraphs=Array.from({length:45},(_,i)=>`第${i}段：完整内容按原序保留，不得删减。`);
- const html=buildKnowledgeBookletHtml({title:'实际容量分页',readingPages:1,pages:[{id:'overflow-estimate',headline:'容量不足后的均分',body:paragraphs.join('\n\n'),imageUrl:''}]});
+ const html=buildKnowledgeBookletHtml({title:'实际容量分页',pages:[{id:'overflow-estimate',headline:'顺序填栏',body:paragraphs.join('\n\n'),imageUrl:''}]});
  const browser=await puppeteer.launch({headless:true,args:['--no-sandbox']});
  try{
   const page=await browser.newPage();await page.setContent(html);
   await page.waitForFunction(()=>document.body.getAttribute('data-ready')==='true');
   const result=await page.evaluate(()=>({
-   pages:document.querySelectorAll('.reading-folio').length,
-   columns:Array.from(document.querySelectorAll('.reading-column')).map(el=>({count:el.children.length,height:Array.from(el.children).reduce((n,e)=>n+(e as HTMLElement).offsetHeight+16,0),capacity:el.clientHeight})),
+   pages:Array.from(document.querySelectorAll('.reading-folio')).map(folio=>Array.from(folio.querySelectorAll('.reading-column')).map(el=>({count:el.children.length,height:Array.from(el.children).reduce((n,e)=>n+(e as HTMLElement).offsetHeight+16,0),capacity:el.clientHeight}))),
    text:Array.from(document.querySelectorAll('.reading-unit p')).map(el=>el.textContent),
   }));
-  expect(result.pages).toBeGreaterThan(1);expect(result.text).toEqual(paragraphs);
-  expect(result.columns.every(c=>c.count>0&&c.height<=c.capacity+2)).toBe(true);
-  expect(Math.min(...result.columns.map(c=>c.height))/Math.max(...result.columns.map(c=>c.height))).toBeGreaterThan(0.6);
-  // 在独立页面恢复旧算法，证明相同输入会产生稀疏尾栏。
-  await page.setContent(html.replace('countColumns(mid)>balancedColumns','countColumns(mid)>desired*2'));
-  await page.waitForFunction(()=>document.body.getAttribute('data-ready')==='true');
-  const oldCounts=await page.$$eval('.reading-column',els=>els.map(e=>e.children.length));
-  expect(Math.min(...oldCounts)/Math.max(...oldCounts)).toBeLessThan(0.6);
+  expect(result.pages.length).toBeGreaterThan(1);expect(result.text).toEqual(paragraphs);
+  const columns=result.pages.flat();
+  expect(columns.every(c=>c.height<=c.capacity+2)).toBe(true);
+  // 非末页两栏都接近填满
+  for(const page of result.pages.slice(0,-1))for(const c of page)expect(c.height/c.capacity).toBeGreaterThan(0.85);
+  // 末页两栏平衡
+  const last=result.pages.at(-1)!;
+  if(last[1].count)expect(Math.min(last[0].height,last[1].height)/Math.max(last[0].height,last[1].height)).toBeGreaterThan(0.6);
  }finally{await browser.close();}
 },60000);
 
@@ -98,7 +98,7 @@ it('默认页数由真实排版容量决定，Markdown分隔线长度不增加�
  }finally{await browser.close();}
 },60000);
 
-it('默认短Markdown多块和长表按实际容量扩页，显式页数仍控制均分目标',async()=>{
+it('默认短Markdown多块和长表按实际容量扩页，显式页数不制造空白页',async()=>{
  const {buildKnowledgeBookletHtml}=await import('./knowledgeBooklet');
  const paragraphs=Array.from({length:45},(_,i)=>`第${i}段原文完整保留。`);
  const table='|编号|解释|\n|---|---|\n'+Array.from({length:90},(_,i)=>`|序号${i}|本行解释${i}。|`).join('\n');
@@ -115,7 +115,8 @@ it('默认短Markdown多块和长表按实际容量扩页，显式页数仍控�
   const longTable=await inspect(table);
   expect(longTable.pages).toBeGreaterThan(1);expect(longTable.rows).toHaveLength(90);expect(longTable.overflow).toBe(false);
   for(let i=0;i<90;i++)expect(longTable.rows[i]).toContain(`本行解释${i}。`);
+  // 2026-11-08：不再按预估页数均摊，显式页数参数不增加空白页。
   const short=paragraphs.slice(0,12).join('\n\n'),automatic=await inspect(short),explicit=await inspect(short,3);
-  expect(automatic.pages).toBe(1);expect(explicit.pages).toBe(3);expect(explicit.paragraphs).toEqual(paragraphs.slice(0,12));expect(explicit.overflow).toBe(false);
+  expect(automatic.pages).toBe(1);expect(explicit.pages).toBe(1);expect(explicit.paragraphs).toEqual(paragraphs.slice(0,12));expect(explicit.overflow).toBe(false);
  }finally{await browser.close();}
 },60000);
