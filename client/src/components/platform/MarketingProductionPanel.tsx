@@ -7,7 +7,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { publicMarketingPlan } from "@shared/marketingPlanDisplay";
 import { uploadOneCanvasAsset } from "@/lib/canvasUpload";
+import { inspectDigitalHumanRecording } from "@/lib/digitalHumanRecording";
 import { StockFootagePanel } from "@/components/stockFootage/StockFootagePanel";
 import { canvasTtsCreditsForDuration } from "@shared/canvasGenerationPricing";
 import { QWEN_TTS_VOICE_CATALOG, buildQwenTtsVoiceId } from "@shared/qwenTtsVoiceCatalog";
@@ -40,6 +42,7 @@ import {
 } from "@shared/marketingProduction";
 
 const buttonStyle = "rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-40";
+const MARKETING_CLONE_KEY = "mvs.marketing.cloneVoice.v1";
 const VOICES = QWEN_TTS_VOICE_CATALOG.filter(row => row.lang.includes("中文")).map(row => ({
   id: buildQwenTtsVoiceId("plus", row.suffix),
   label: `${row.nameZh} · ${row.gender} · ${row.traitZh}`,
@@ -74,7 +77,11 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : "操作未完成，请稍后重试";
 }
 
-export function MarketingProductionPanel({ userKey, seedMarkdown }: { userKey: string; seedMarkdown?: string }) {
+export function MarketingProductionPanel({ userKey }: { userKey: string }) {
+  // 直接读与营销方案面板同一份查询（共用缓存，不多发请求），不再经父页状态回写：
+  // 线上验收发现子组件挂载时回写父页状态会导致方案卡片 DOM 残留重复。
+  const latestPlan = trpc.mvAnalysis.getPlatformMarketingPlan.useQuery({ jobId: undefined, scope: userKey }, { retry: false });
+  const seedMarkdown = latestPlan.data ? publicMarketingPlan(latestPlan.data.result).steps.integrated.text || "" : "";
   const [draft, setDraft] = useState<MarketingProductionDraft>(() => loadDraft(userKey));
   const ref = useRef(draft);
   const [message, setMessage] = useState("");
@@ -85,6 +92,20 @@ export function MarketingProductionPanel({ userKey, seedMarkdown }: { userKey: s
   const dialogue = trpc.canvasAudio.generateDialogue.useMutation();
   const queue = trpc.mvAnalysis.queuePostProd.useMutation();
   const upload = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
+  // 声线：本人克隆 / 自己设计 / 系统声线，三者都走现有 canvasAudio 服务，不另建 TTS 通道。
+  const referenceVoices = trpc.canvasAudio.listReferenceVoices.useQuery(undefined, { retry: false });
+  const designedVoices = trpc.canvasAudio.listDesignedVoices.useQuery(undefined, { retry: false });
+  const cloneVoice = trpc.canvasAudio.createReferenceVoice.useMutation();
+  const [cloneLabel, setCloneLabel] = useState("我的声音");
+  const [cloneConsent, setCloneConsent] = useState(false);
+  const [cloneBusy, setCloneBusy] = useState(false);
+  const [pendingClone, setPendingClone] = useState<{ requestId: string; gcsUri: string; labelZh: string } | null>(() => {
+    try { const raw = window.localStorage.getItem(MARKETING_CLONE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
+  });
+  const rememberClone = (value: { requestId: string; gcsUri: string; labelZh: string } | null) => {
+    try { if (value) window.localStorage.setItem(MARKETING_CLONE_KEY, JSON.stringify(value)); else window.localStorage.removeItem(MARKETING_CLONE_KEY); } catch { /* 仅失去本机续做提示 */ }
+    setPendingClone(value);
+  };
 
   /** 所有修改都经此落本机，刷新后从同一草稿续做。 */
   const save = useCallback((update: (d: MarketingProductionDraft) => MarketingProductionDraft) => {
@@ -246,6 +267,38 @@ export function MarketingProductionPanel({ userKey, seedMarkdown }: { userKey: s
   const issues = useMemo(() => auditMarketingExport(draft), [draft]);
   const step = useMemo(() => nextMarketingExportStep(draft), [draft]);
   const credits = useMemo(() => marketingCreditLines(draft), [draft]);
+  const myVoices = (referenceVoices.data || []).filter(v => v.status === "ready" && v.voiceId);
+  const myDesigned = (designedVoices.data || []).filter(v => v.status === "ready" && v.voiceId);
+
+  /** 本人录音 → 现有本人声线服务；同一请求编号可查询续做，不重复建立。 */
+  async function createMyVoice(file?: File) {
+    if (cloneBusy) return;
+    setCloneBusy(true);
+    try {
+      let request = pendingClone;
+      if (!request) {
+        if (!file) return;
+        await inspectDigitalHumanRecording(file);
+        const asset = await uploadOneCanvasAsset({ file, index: 0, getSignedUploadUrl: input => upload.mutateAsync(input) });
+        if (!asset.gcsUri) throw new Error("录音上传未完成，请重试");
+        request = { requestId: newId(), gcsUri: asset.gcsUri, labelZh: cloneLabel.trim() || "我的声音" };
+        rememberClone(request);
+      }
+      const result = await cloneVoice.mutateAsync({ ...request, consent: true });
+      await referenceVoices.refetch();
+      if (result.status === "ready" && result.voiceId) {
+        save(d => ({ ...d, voiceId: result.voiceId! }));
+        rememberClone(null);
+        setMessage(`已建立并选用「${request.labelZh}」。`);
+      } else {
+        setMessage(result.message || "声音正在建立，稍后点「查询进度」");
+      }
+    } catch (error) {
+      setMessage(errorText(error));
+    } finally {
+      setCloneBusy(false);
+    }
+  }
   const seedScript = seedMarkdown ? extractMarketingScriptSection(seedMarkdown) : "";
 
   return <section className="mt-4 rounded-2xl border border-emerald-300/25 bg-[#0f1a1a] p-4 text-slate-100" aria-label="口播制作稿与成片导出">
@@ -274,9 +327,38 @@ export function MarketingProductionPanel({ userKey, seedMarkdown }: { userKey: s
       <select aria-label="配音声线" className={buttonStyle} value={draft.voiceId || ""}
         onChange={event => { const voiceId = event.target.value; save(d => ({ ...d, voiceId: voiceId || undefined })); }}>
         <option value="">选择配音声线</option>
-        {VOICES.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
+        {myVoices.length > 0 && <optgroup label="我的声音">
+          {myVoices.map(v => <option key={v.requestId} value={v.voiceId}>{v.labelZh}</option>)}
+        </optgroup>}
+        {myDesigned.length > 0 && <optgroup label="我设计的声线">
+          {myDesigned.map(v => <option key={v.requestId} value={v.voiceId}>{v.labelZh}</option>)}
+        </optgroup>}
+        <optgroup label="系统声线">
+          {VOICES.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
+        </optgroup>
       </select>
     </div>
+
+    <details className="mt-3 rounded-lg border border-white/10 p-3 text-sm">
+      <summary className="cursor-pointer">用本人录音建立我的声音</summary>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-2">声音名称
+          <input className={buttonStyle} value={cloneLabel} maxLength={80} onChange={e => setCloneLabel(e.target.value)} />
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={cloneConsent} onChange={e => setCloneConsent(e.target.checked)} />
+          我拥有这段录音及声音的使用权
+        </label>
+      </div>
+      <p className="mt-1 text-xs text-slate-400">上传 3–30 秒清晰录音（MP3 / WAV / M4A / AAC，最大 20 MB）。建好后会出现在「我的声音」里，并自动选为本稿配音。</p>
+      <input aria-label="上传声音参考" type="file" accept=".mp3,.wav,.m4a,.aac" className="mt-2"
+        disabled={!cloneConsent || cloneBusy || Boolean(pendingClone)}
+        onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void createMyVoice(file); }} />
+      {pendingClone && <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+        <span>「{pendingClone.labelZh}」正在建立，完成后自动选用；请勿重复上传。</span>
+        <button type="button" className={buttonStyle} disabled={cloneBusy} onClick={() => void createMyVoice()}>查询进度</button>
+      </div>}
+    </details>
 
     {draft.segments.length > 0 && <ol className="mt-4 space-y-3">
       {draft.segments.map((segment, index) => {

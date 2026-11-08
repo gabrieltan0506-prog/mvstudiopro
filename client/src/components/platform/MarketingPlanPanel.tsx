@@ -49,7 +49,7 @@ export function MarketingPlanResults({ result: rawResult, busy, stale, onRetry, 
   </div>;
 }
 
-export function MarketingPlanPanel({ value, onApply, userKey, onIntegratedText }: { value: string; onApply: (next: string) => void; userKey: string | null; onIntegratedText?: (text: string) => void }) {
+export function MarketingPlanPanel({ value, onApply, userKey }: { value: string; onApply: (next: string) => void; userKey: string | null }) {
   const [jobId, setJobId] = useState<string>();
   const [message, setMessage] = useState("");
   const lock = useRef(false);
@@ -83,9 +83,6 @@ export function MarketingPlanPanel({ value, onApply, userKey, onIntegratedText }
     finally { lock.current = false; }
   };
   useEffect(() => { if (saved?.result.billing === "succeeded") void quota.refetch(); }, [saved?.jobId, saved?.result.billing]);
-  // 整合方案正文交给下方口播制作区（只读带入，不改方案任务）
-  const integratedText = saved ? publicMarketingPlan(saved.result).steps.integrated.text || "" : "";
-  useEffect(() => { onIntegratedText?.(integratedText); }, [integratedText, onIntegratedText]);
   const lengthOk = value.trim().length >= 8 && value.trim().length <= 8000;
   return <section className="mt-4 rounded-2xl border border-cyan-300/25 bg-[#131024] p-4 text-slate-100" aria-label="营销分析与推广方案">
     <div className="flex flex-wrap items-center justify-between gap-3">
