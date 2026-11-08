@@ -1,3 +1,4 @@
+import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
 import {createHash} from 'node:crypto';
 import {buildKnowledgeConsistencyRequest,buildKnowledgeFinalRevisionRequest} from './knowledgePublicationAdvisor';
 import {knowledgeVerificationTriggers,knowledgePendingResearchNotes} from './knowledgeVerificationPolicy';
@@ -141,14 +142,14 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
   result[i]=body;verifications[i]=verification;pageIssues[i]=localIssues;pagePending[i]=localPending;
   if(required[i])await completed();
  };
- // 章与章之间可独立检索/修订；同章仍须先拿到检索结果。各首选供应商最多5个工位。
+ // 章与章之间可独立检索/修订；同章仍须先拿到检索结果。各首选供应商按本通道章数动态并发（≤通道上限）。
  let questionIndex=0;
  const routeByPage=required.map((needs,i)=>needs?questionIndex++%2:i%2);
  let stopped=false;
  const work=(['openrouter','evolink'] as const).flatMap((channel,routeIndex)=>{
   const indices=bodies.map((_,i)=>i).filter(i=>routeByPage[i]===routeIndex);
   let next=0;
-  return Array.from({length:Math.min(5,indices.length)},async()=>{
+  return Array.from({length:knowledgeStageConcurrency(indices.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX[channel]})},async()=>{
    while(!stopped&&next<indices.length){
     try{await processPage(indices[next++]!,channel);}catch(error){stopped=true;throw error;}
    }

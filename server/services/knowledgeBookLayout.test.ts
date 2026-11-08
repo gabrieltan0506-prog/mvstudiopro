@@ -162,9 +162,12 @@ it("实际Chromium打印按顾问顺序保留全部章节、图卡、正文与�
       await page.setContent(html,{waitUntil:"load"});
       await page.waitForFunction(()=>Array.from(document.querySelectorAll('[data-booklet-root]')).every(root=>root.getAttribute('data-ready')==='true'),{timeout:30000});
     };
-    const measure=async(html:string)=>{await render(html);return page.$$eval('[data-booklet-root] .folio',pages=>pages.length);};
-    const parts:{chapters:(string|null|undefined)[];images:number;pages:(string|null)[];texts:(string|null)[];overflow:boolean;palettes:string[]}[]=[];
-    const pdf=async(html:string)=>{
+    // 导出各段现为并发计页/渲染；本测试只有一个浏览器标签，按调用串行占用，结果按全书页码偏移排序后核对。
+    let lock:Promise<unknown>=Promise.resolve();
+    const exclusive=<T,>(fn:()=>Promise<T>)=>{const run=lock.then(fn,fn);lock=run.catch(()=>undefined);return run;};
+    const measure=(html:string)=>exclusive(async()=>{await render(html);return page.$$eval('[data-booklet-root] .folio',pages=>pages.length);});
+    const parts:{offset:number;chapters:(string|null|undefined)[];images:number;pages:(string|null)[];texts:(string|null)[];overflow:boolean;palettes:string[]}[]=[];
+    const pdf=(html:string)=>exclusive(async()=>{
       await render(html);
       const result=await page.evaluate(()=>({
         chapters:Array.from(document.querySelectorAll('[data-booklet-root]')).map(root=>root.querySelector('[data-source-id]')?.getAttribute('data-source-id')),
@@ -174,7 +177,7 @@ it("实际Chromium打印按顾问顺序保留全部章节、图卡、正文与�
         overflow:Array.from(document.querySelectorAll('.folio,.reading-column')).some(e=>e.scrollHeight>e.clientHeight+2),
         palettes:Array.from(document.querySelectorAll('[data-booklet-root]')).map(e=>getComputedStyle(e).getPropertyValue('--paper')),
       }));
-      parts.push(result);
+      parts.push({offset:Number(html.match(/data-booklet-page-offset="(\d+)"/)?.[1]||0),...result});
       expect(result.overflow).toBe(false);expect(errors).toEqual([]);
       const bytes=Buffer.from(await page.pdf({preferCSSPageSize:true,printBackground:true}));
       if(process.env.KNOWLEDGE_LAYOUT_EVIDENCE){
@@ -185,8 +188,9 @@ it("实际Chromium打印按顾问顺序保留全部章节、图卡、正文与�
         await extra?.screenshot({path:process.env.KNOWLEDGE_LAYOUT_EVIDENCE+'/supplement-reading.png'});
       }
       return bytes;
-    };
+    });
     const result=await exportKnowledgePublication(7,f.parent.id,'10',{...f.deps,pdf,measure});
+    parts.sort((x,y)=>x.offset-y.offset);
     // 2026-11-08 直式图文同页：两张图各与要点同页，不再单独成图页，4章共4页。
     expect(result.pdfError).toBeUndefined();expect(result.totalPages).toBe(4);expect(result.pdfBytes).toBeGreaterThan(10000);
     expect(result.imagePages).toBe(2);
@@ -213,10 +217,11 @@ it("顾问两档展示方案实际进入PDF正文，底稿与原审校保持完�
     expect(view.review.pages[0].body).toBe(view.doc.pages[0].body);
     expect(view.doc.publication!.source.pages[0].body).toContain("末句一必须保留");
     await exportKnowledgePublication(7,f.parent.id,"10",f.deps);
-    expect(f.deps.pdf.mock.calls[0][0]).toContain(level==="full"?"制度结构参见秦汉制度图":"完整解释制度关系");
-    expect(f.deps.pdf.mock.calls[0][0]).toContain("末句一必须保留");
-    if(level==="full")expect(f.deps.pdf.mock.calls[0][0]).not.toContain("周本纪年代细节原图重复说明");
-    else expect(f.deps.pdf.mock.calls[0][0]).toContain("周本纪年代细节原图重复说明");
+    // 各段并发渲染：按内容取第一章所在段，不依赖调用顺序。
+    const firstPart=(f.deps.pdf.mock.calls as unknown as [string][]).map(c=>c[0]).find(h=>h.includes("末句一必须保留"))!;
+    expect(firstPart.includes(level==="full"?"制度结构参见秦汉制度图":"完整解释制度关系")).toBe(true);
+    if(level==="full")expect(firstPart.includes("周本纪年代细节原图重复说明")).toBe(false);
+    else expect(firstPart.includes("周本纪年代细节原图重复说明")).toBe(true);
     expect(JSON.stringify(f.library)).toBe(original);
   }
 });

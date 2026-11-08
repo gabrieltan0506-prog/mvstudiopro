@@ -1,3 +1,4 @@
+import { KNOWLEDGE_MODEL_CHANNEL_MAX, knowledgeStageConcurrency } from "../../shared/knowledgeConcurrency";
 import {knowledgeSupplementRefinementFromMarkdown} from '../../shared/knowledgeSupplementRefinement';
 import { knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
 import { knowledgeLayoutFromMarkdown } from './knowledgeMarkdownLayout';
@@ -281,7 +282,7 @@ export async function invokeKnowledgePublicationRoutes(
     })[0];
     if (input?.source.pages.length > 1 && !input.conversation) {
       const results:any[] = new Array(input.source.pages.length);
-      const workerCount=Math.min(10,input.source.pages.length);
+      const workerCount=knowledgeStageConcurrency(input.source.pages.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter+KNOWLEDGE_MODEL_CHANNEL_MAX.evolink});
       const settled=await Promise.allSettled(Array.from({length:workerCount},async(_,worker)=>{
         for(let index=worker;index<input.source.pages.length;index+=workerCount){
           const channel=index%2===0?'openrouter':'evolink';

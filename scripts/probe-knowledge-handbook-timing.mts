@@ -9,7 +9,7 @@ import {getDb} from '../server/db';
 import {users} from '../drizzle/schema';
 import {jobs} from '../drizzle/schema-jobs';
 import {getJobByIdStrict} from '../server/jobs/repository';
-import {getGcsBucketName} from '../server/services/gcs';
+import {getGcsBucketName,downloadGcsObjectVersioned} from '../server/services/gcs';
 import {getVertexAccessToken} from '../server/utils/vertex';
 import {knowledgeCardPageJobId} from '../server/jobs/knowledgeCardPageTask';
 
@@ -63,6 +63,16 @@ try{
     publicationReceipts:docPrefix?groups(await list(docPrefix)):[],
     runStartedAt:runState?.createdAt||null};
   await fs.writeFile(path.join(root,'timing.json'),JSON.stringify(out,null,1));
+  // 主题命题回执原样带回（请求、原始回包、解析结果、失败记录），供本地零调用重放；只读。
+  if(config.fetchTitleReceipts&&derivePrefix){
+    const items=(await list(`${derivePrefix}topic-titles/`)).filter(i=>i.name.endsWith('.json'));
+    const receipts:Record<string,unknown>={};
+    for(const item of items){
+      const object=await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${derivePrefix}topic-titles/${item.name}`});
+      receipts[item.name]=JSON.parse(object.buffer.toString('utf8'));
+    }
+    await fs.writeFile(path.join(root,'title-receipts.json'),JSON.stringify(receipts));
+  }
   await write('live.json',{stage:'diagnosed',images:images.length,deriveGroups:out.deriveReceipts.length,publicationGroups:out.publicationReceipts.length});
 }catch(error){
   await write('live.json',{stage:'failed',error:String((error as Error).message).replace(/(?:https?|gs):\/\/[^\s"']+/g,'[地址]').slice(0,400)});

@@ -145,7 +145,7 @@ it("素材按钮到实际单图请求保持同一报价和一次确认 KH-PRICE-
   const ctx = entryContext();
   Object.assign(ctx, {
     KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH, KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH, knowledgeCardRecordedModelLabel,
-    KNOWLEDGE_CARD_RENDER_CONCURRENCY: 4, customNoteInfographicLabelZh: "", knowledgeCardProgressFromRender: () => 50,
+    knowledgeCardRenderConcurrency: (n: number) => Math.min(n, 32), customNoteInfographicLabelZh: "", knowledgeCardProgressFromRender: () => 50,
     askKnowledgeCardPreflight: vi.fn(async () => true), markInflight: noop, setKnowledgeCardInflight: noop,
     newPlatformCompositeProgressJobId: randomUUID, extractInfographicSubjectFromUserCopy: () => "素材稿",
     readOpenAiImageVariantPref: () => "standard", COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR: "gpt54",

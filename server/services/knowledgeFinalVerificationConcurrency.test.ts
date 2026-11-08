@@ -22,7 +22,8 @@ it('不同章节同时检索，同章先搜索再修订，乱序结束仍按原�
  expect(f.data.get('parallel/verified.json').complete).toBe(true);
  const count=invoke.mock.calls.length;await verifyKnowledgeEditionManuscripts(source,f.evidence,invoke as any);expect(invoke).toHaveBeenCalledTimes(count);
 });
-it('12个问题章每供应商最多5个工位，无资料各自标待验证且整册放行',async()=>{
+// 2026-11-08 动态并发：12个问题章两供应商各6路一轮全部在途。
+it('12个问题章按章数动态并发一轮发完，无资料各自标待验证且整册放行',async()=>{
  const f=setup();const waiting:{channel:string;resolve:()=>void}[]=[];const active:Record<string,number>={},peak:Record<string,number>={};
  const invoke=vi.fn(async(req:any)=>new Promise(resolve=>{
   expect(req.researchOnly).toBe(true);const channel=req.executionChannel;
@@ -30,9 +31,8 @@ it('12个问题章每供应商最多5个工位，无资料各自标待验证且�
   waiting.push({channel,resolve:()=>{active[channel]--;resolve(envelope({evidenceState:'missing',sources:[],verificationMarkdown:'无可用资料'}));}});
  }));
  const result=verifyKnowledgeEditionManuscripts(Array.from({length:12},(_,i)=>page(i)),f.evidence,invoke as any);
- await vi.waitFor(()=>expect(waiting).toHaveLength(10));for(const item of [...waiting])item.resolve();
- await vi.waitFor(()=>expect(waiting).toHaveLength(12));for(const item of waiting.slice(10))item.resolve();
+ await vi.waitFor(()=>expect(waiting).toHaveLength(12));for(const item of [...waiting])item.resolve();
  const out=await result;expect(out).toHaveLength(12);expect(out.every(s=>s.includes('待验证：'))).toBe(true);
- expect(peak).toEqual({openrouter:5,evolink:5});expect(invoke).toHaveBeenCalledTimes(12);
+ expect(peak).toEqual({openrouter:6,evolink:6});expect(invoke).toHaveBeenCalledTimes(12);
  expect(f.data.get('parallel/verified.json').pendingVerification).toHaveLength(12);expect(f.data.get('parallel/verified.json').complete).toBe(true);
 });

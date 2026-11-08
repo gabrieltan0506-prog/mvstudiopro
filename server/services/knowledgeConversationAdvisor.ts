@@ -1,3 +1,4 @@
+import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
 import { knowledgeBudgetInstructions, knowledgeReadingCharBudgets } from "../../shared/knowledgeEditionBudget";
 import {KNOWLEDGE_SUPPLEMENT_REFINEMENT_INSTRUCTIONS} from '../../shared/knowledgeSupplementRefinement';
 import { KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST } from "./knowledgeModelCapabilities";
@@ -154,7 +155,8 @@ async function reviewKnowledgeLayoutBatches(
     ancestor = previous.request.retryOf;
   }
   let cursor=0,stopped=false;
-  const outcomes=await Promise.allSettled(Array.from({length:Math.min(4,groups.length)},async()=>{
+  // 排版各批一轮发完（按批数动态并发，两通道上限之和），通道仍按批序交替。
+  const outcomes=await Promise.allSettled(Array.from({length:knowledgeStageConcurrency(groups.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter+KNOWLEDGE_MODEL_CHANNEL_MAX.evolink})},async()=>{
     while(!stopped){
       const index=cursor++;
       if(index>=groups.length)return;

@@ -5,7 +5,8 @@ it("四路真实重叠且每通道两工位，快路补位，乱序完成不跳�
   const gates=Array.from({length:6},deferred),fifth=deferred();
   const started: [number, KnowledgePublicationChannel][] = [], completed = new Set<number>(), channels: Record<string, KnowledgePublicationChannel> = {};
   let active=0,maximum=0;const perChannel={openrouter:0,evolink:0},peaks={openrouter:0,evolink:0};
-  const pending = runKnowledgeParallelBatches({ count: 6, completed, channels, active: () => true,
+  // 固定四工位验证补位语义；默认工位数改为按批次数动态计算（见下一条）。
+  const pending = runKnowledgeParallelBatches({ count: 6, completed, channels, active: () => true, lanes: ["openrouter","evolink","openrouter","evolink"], staggerMs: 0,
     assign: async (i, route) => { channels[i] = route; },
     execute: async (i, route) => {
       started.push([i, route]);maximum=Math.max(maximum,++active);peaks[route]=Math.max(peaks[route],++perChannel[route]);
@@ -73,4 +74,22 @@ it("就绪后恢复原通道，准备期间离开不会发出顾问请求",async
     prepare:()=>gate.promise,assign:async()=>{},execute:async i=>{calls.push(i);},complete:async()=>{},
   });
   active=false;gate.resolve();expect(await run).toEqual([]);expect(calls).toEqual([]);
+});
+
+it("默认动态工位：16批一轮全部在途，OpenRouter份额更大，同通道错峰首发；限流只降该通道并发", async () => {
+  const gates=Array.from({length:16},deferred);
+  const started: [number, KnowledgePublicationChannel][] = [], channels: Record<string, KnowledgePublicationChannel> = {};
+  const sleeps:number[]=[];
+  const pending = runKnowledgeParallelBatches({ count: 16, completed: new Set(), channels, active: () => true,
+    sleep: async ms => { sleeps.push(ms); },
+    assign: async (i, route) => { channels[i] = route; },
+    execute: async (i, route) => { started.push([i, route]); await gates[i].promise; return i; },
+    complete: async () => {},
+  });
+  for(let k=0;k<20;k++)await Promise.resolve();
+  expect(started).toHaveLength(16);
+  const or=started.filter(([,c])=>c==="openrouter").length;
+  expect(or).toBeGreaterThan(16-or);
+  expect(sleeps.length).toBe(14);
+  gates.forEach(g=>g.resolve());expect(await pending).toEqual([]);
 });

@@ -1,4 +1,5 @@
 /** 完整文字稿保持不变；本模块只产生内部重点配图选段。 */
+import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
 import { countMarkdownSections, mergeDistilledMarkdownChunks } from "./knowledgeCardDistill.js";
 import { touchKnowledgeCardDistillActivity } from "./knowledgeCardDistillActivity.js";
 import { assertKnowledgeCardDeriveTablesComplete } from "../../shared/knowledgeCardDeriveIntegrity.js";
@@ -300,7 +301,7 @@ export async function deriveKnowledgeCardCompact(params: {
     const outputs: string[] = new Array(batches.length);
     let doneBatches=0;
     await params.onProgress?.({doneBatches,totalBatches:batches.length,pass:passes});
-    const workerCount=Math.min(10,batches.length);
+    const workerCount=knowledgeStageConcurrency(batches.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter+KNOWLEDGE_MODEL_CHANNEL_MAX.evolink});
     const settled=await Promise.allSettled(Array.from({length:workerCount},async(_,worker)=>{
     for (let i = worker; i < batches.length; i+=workerCount) {
       const batch = batches[i]!;

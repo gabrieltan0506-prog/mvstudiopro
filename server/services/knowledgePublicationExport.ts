@@ -34,6 +34,14 @@ import {
   uploadStreamToGcs,
 } from "./gcs";
 import { fetchPdfBufferFromWorker, measureKnowledgeBookletFromWorker } from "./pdfWorkerClient";
+import { knowledgeStageConcurrency, runKnowledgeStaggeredPool } from "../../shared/knowledgeConcurrency";
+
+/** 导出分段池：按段数动态并发（≤16），每段自行捕获错误。 */
+async function knowledgeExportPool(count: number, worker: (index: number) => Promise<void>) {
+  const lanes = Array.from({ length: knowledgeStageConcurrency(count, { max: 16 }) }, () => "pdf" as const);
+  await runKnowledgeStaggeredPool(Array.from({ length: count }, (_, i) => i), { lanes, staggerMs: 0, worker: async i => { await worker(i); } });
+}
+
 
 const inflight = new Map<string, Promise<KnowledgePublicationExport>>();
 export type KnowledgePublicationExport = {
@@ -254,10 +262,16 @@ export async function exportKnowledgePublication(
     };
     try {
       await html.writeFile(head);
+      // 配图先并发取回（按页数动态并发），装配仍按页序；校验与原逻辑相同。
+      const prefetched = new Map<number, Promise<Awaited<ReturnType<typeof deps.image>>>>();
+      await knowledgeExportPool(doc.pages.length, async index => {
+        const url = doc.pages[index]!.imageUrl;
+        if (url) { const p = deps.image(url); prefetched.set(index, p); await p.catch(() => undefined); }
+      });
       for (const [index, page] of Array.from(doc.pages.entries())) {
         let embedded = "";
         if (page.imageUrl) {
-          const image = await deps.image(page.imageUrl);
+          const image = await (prefetched.get(index) ?? deps.image(page.imageUrl));
           if (expected.get(page.imageUrl) !== image.sha256)
             throw new Error(`第${index + 1}页配图已变化，未导出旧审校版本`);
           embedded = `data:${image.mimeType};base64,${image.buffer.toString("base64")}`;
@@ -289,27 +303,32 @@ export async function exportKnowledgePublication(
       // 分段先在最终字体下计数，再带全书页码渲染。只保留一段HTML在内存中。
       const counts: number[] = [];
       if (chunks.length > 1) {
-        for (const [index, path] of Array.from(chunks.entries())) {
+        // 各段预分页互不依赖：同时计数（按段数动态并发），结果按原段序写回。
+        await knowledgeExportPool(chunks.length, async index => {
           try {
-            const count = await deps.measure(head + await readFile(path, "utf8") + tail);
+            const count = await deps.measure(head + await readFile(chunks[index]!, "utf8") + tail);
             if (!Number.isSafeInteger(count) || count < 1) throw new Error("预分页结果无效");
-            counts.push(count);
+            counts[index] = count;
           } catch {
             counts[index]=0;
             failures.push(index + 1);
           }
-        }
+        });
       }
       // 全册计页成功后才打印；缺段时的临时总页数会污染页脚和分片缓存身份。
       if (!failures.length) {
         const total = counts.reduce((a, b) => a + b, 0);
-        let offset = 0;
-        for (const [index, sourcePath] of Array.from(chunks.entries())) {
+        // 页码偏移由全部计数先定，再各段同时渲染（按段数动态并发）；合并仍按原段序。
+        const offsets = counts.map((_, i) => counts.slice(0, i).reduce((a, b) => a + (b || 0), 0));
+        const rendered: (string | undefined)[] = new Array(chunks.length);
+        await knowledgeExportPool(chunks.length, async index => {
+          const sourcePath = chunks[index]!;
           const count = counts[index];
+          const offset = offsets[index]!;
           const pagination = count ? { offset, total, count } : undefined;
           const name = `${prefix}/pdf-parts/${index}${pagination ? `-${offset}-${count}-${total}` : ""}.pdf`;
           const path = join(folder, `${index}.pdf`);
-          if(failures.includes(index+1))continue;
+          if(failures.includes(index+1))return;
           try {
             const cached = await deps.read(name);
             const bytes = cached || await deps.pdf(knowledgePublicationHead(doc.title, pagination) + await readFile(sourcePath, "utf8") + tail);
@@ -320,12 +339,13 @@ export async function exportKnowledgePublication(
               if(!await deps.read(key))await deps.save(key,page,'application/pdf');
             });
             await writeFile(path, bytes);
-            pdfFiles.push(path);
+            rendered[index] = path;
           } catch {
             failures.push(index + 1);
           }
-          offset += count || 0;
-        }
+        });
+        for (const path of rendered) if (path) pdfFiles.push(path);
+        failures.sort((a, b) => a - b);
       }
       if (failures.length) {
         await deps.save(

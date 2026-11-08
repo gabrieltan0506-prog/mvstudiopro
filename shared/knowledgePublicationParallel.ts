@@ -1,3 +1,5 @@
+import { KNOWLEDGE_MODEL_CHANNEL_MAX, KNOWLEDGE_STAGGER_MS, KnowledgeRateGate, isKnowledgeRateLimited, knowledgeChannelLanes } from "./knowledgeConcurrency";
+
 export type KnowledgePublicationChannel = "openrouter" | "evolink";
 export type KnowledgePublicationParallel = {
   channels: Record<string, KnowledgePublicationChannel>;
@@ -21,7 +23,10 @@ export function knowledgeCompletedPrefix(completed: ReadonlySet<number>, count: 
   return next;
 }
 
-/** 四个工位（每通道两个）消费同一待办队列；失败只停该工位，其他在途必须收妥回执。 */
+/**
+ * 动态工位（按待办批次数一轮发完，每通道≤上限，OpenRouter 份额略大，同通道错峰首发）消费同一待办队列；
+ * 失败只停该工位，其他在途必须收妥回执；遇限流信号该通道闸门减半。已固定通道的批次仍只由原通道处理。
+ */
 export async function runKnowledgeParallelBatches<T>(options: {
   count: number;
   completed: ReadonlySet<number>;
@@ -32,6 +37,10 @@ export async function runKnowledgeParallelBatches<T>(options: {
   prepare?: (index: number) => Promise<void>;
   execute: (index: number, channel: KnowledgePublicationChannel) => Promise<T>;
   complete: (index: number, result: T) => Promise<void>;
+  /** 测试或诊断时指定工位；默认按待办数动态计算。 */
+  lanes?: readonly KnowledgePublicationChannel[];
+  staggerMs?: number;
+  sleep?: (ms: number) => Promise<void>;
 }) {
   const pending = new Set(Array.from({ length: options.count }, (_, i) => i).filter(i => !options.completed.has(i)));
   const errors: { index: number; error: unknown }[] = [];
@@ -46,7 +55,16 @@ export async function runKnowledgeParallelBatches<T>(options: {
     });
     preparing.set(index, promise);
   }
-  await Promise.all((["openrouter", "evolink", "openrouter", "evolink"] as const).map(async channel => {
+  const lanes: KnowledgePublicationChannel[] = [...(options.lanes ?? knowledgeChannelLanes(pending.size, KNOWLEDGE_MODEL_CHANNEL_MAX, ["openrouter", "evolink"] as const))];
+  // 续跑时已固定通道的批次必须有对应工位。
+  for (const channel of ["openrouter", "evolink"] as const)
+    if (!lanes.includes(channel) && Array.from(pending).some(i => options.channels[String(i)] === channel)) lanes.push(channel);
+  const gates = { openrouter: new KnowledgeRateGate(KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter), evolink: new KnowledgeRateGate(KNOWLEDGE_MODEL_CHANNEL_MAX.evolink) };
+  const sleep = options.sleep ?? (ms => new Promise<void>(r => setTimeout(r, ms)));
+  const ordinals = { openrouter: 0, evolink: 0 };
+  await Promise.all(lanes.map(async channel => {
+    const ordinal = ordinals[channel]++;
+    let staggered = false;
     while (options.active()) {
       const eligible = Array.from(pending).filter(i => !options.channels[String(i)] || options.channels[String(i)] === channel);
       if (!eligible.length) return;
@@ -56,10 +74,18 @@ export async function runKnowledgeParallelBatches<T>(options: {
         continue;
       }
       pending.delete(index);
+      let outcome: "ok" | "rate_limited" | "error" = "ok";
       try {
         await options.assign(index, channel);
         if (!options.active()) return;
-        const result = await options.execute(index, channel);
+        const wait = staggered ? 0 : ordinal * (options.staggerMs ?? KNOWLEDGE_STAGGER_MS);
+        if (wait) await sleep(wait);
+        staggered = true;
+        await gates[channel].acquire();
+        let result: T;
+        try { result = await options.execute(index, channel); }
+        catch (error) { outcome = isKnowledgeRateLimited(error) ? "rate_limited" : "error"; throw error; }
+        finally { gates[channel].release(outcome); }
         // 请求开始后即使页面离开也收妥回执；停止只影响尚未发出的请求。
         await options.complete(index, result);
       } catch (error) {

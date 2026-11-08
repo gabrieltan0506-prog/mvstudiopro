@@ -1,3 +1,4 @@
+import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
 import { knowledgeBudgetInstructions, knowledgeReadingCharBudgets } from "../../shared/knowledgeEditionBudget";
 import { KNOWLEDGE_VERIFICATION_POLICY, KNOWLEDGE_VERIFICATION_EDIT_POLICY, knowledgeVerificationTriggers, knowledgeVerificationQueries, knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
@@ -281,7 +282,7 @@ async function readKnowledgeBatchReports(source:KnowledgeSource,digest:string,ro
   const batches=knowledgeReviewBatches(source);
   const results: {report:ReturnType<typeof validateKnowledgeReview>;sourceImages:{uri:string;sha256:string}[]}[]=new Array(batches.length);
   let cursor=0;
-  await Promise.all(Array.from({length:Math.min(8,batches.length)},async()=>{
+  await Promise.all(Array.from({length:Math.min(32,batches.length)},async()=>{
     while(cursor<batches.length){
       const i=cursor++,indexes=batches[i],saved=await read(`${root}/batch-${i}/report.json`);
       if(!saved)throw new Error(`第${i+1}组内容尚未完成，不能把部分内容当整套通过`);
@@ -384,7 +385,7 @@ export async function reviewKnowledgePublication(
     if(verifications.length) {
       // 核对记录全部收齐后才修订正文；原始稿、原图、每次回包与删改前稿永久保留。
       const revised:typeof pages=new Array(pages.length);
-      const workerCount=Math.min(10,pages.length);
+      const workerCount=knowledgeStageConcurrency(pages.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter+KNOWLEDGE_MODEL_CHANNEL_MAX.evolink});
       const settled=await Promise.allSettled(Array.from({length:workerCount},async(_,worker)=>{
         for(let index=worker;index<pages.length;index+=workerCount){
           const channel=index%2===0?'openrouter':'evolink';

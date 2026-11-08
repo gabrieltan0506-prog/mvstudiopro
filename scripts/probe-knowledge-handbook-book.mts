@@ -32,6 +32,7 @@ import {synchronizedKnowledgeCardSource} from '../shared/knowledgeCardEditableLa
 import {layoutFromSource,layoutLibrarySchema} from '../shared/editableLayout';
 import {knowledgeCardCreditsForPageIndex,knowledgeEditionImagePlan,planKnowledgeCardPages} from '../shared/knowledgeCardPagination';
 import {auditKnowledgeTopicTitles,readKnowledgeTopicTitles} from '../shared/knowledgeTopicImagePlan';
+import {KNOWLEDGE_IMAGE_CHANNEL_MAX,knowledgeStageConcurrency} from '../shared/knowledgeConcurrency';
 import {knowledgeEditionParts} from '../shared/knowledgeCardEdition';
 import {knowledgeEditionBudgetCheck} from '../shared/knowledgeEditionBudget';
 import {getGraphicNoteFusionTemplate} from '../shared/graphicNoteFusionTemplates';
@@ -180,7 +181,8 @@ page.on('console',m=>{const t=m.text();if(t.includes('[knowledgePublication]'))v
   await page.goto(base,{waitUntil:'domcontentloaded'});
   let next=0,done=0,failed=false;const errors:any[]=[];
   await write('live.json',{stage:'images_and_interior',documentId:state.documentId,done,total});
-  const workers=Array.from({length:4},(_,lane)=>(async()=>{
+  // 与正式页面一致：全部页同时在途（官方/EvoLink 按路序交替），不再固定 4 路。
+  const workers=Array.from({length:knowledgeStageConcurrency(total,{max:KNOWLEDGE_IMAGE_CHANNEL_MAX.openai+KNOWLEDGE_IMAGE_CHANNEL_MAX.evolink})},(_,lane)=>(async()=>{
     while(!failed&&next<total){const i=next++;const id=state.imageJobIds[i];
       try{
         if(!await getJobByIdStrict(id))await caller.mvAnalysis.generatePlatformCompositeSheet({sceneId:`handbook-${level}-${state.requestIds[i]}`,pageRequestId:state.requestIds[i],progressJobId:id,title:'图文知识手册',scriptContext:markdown,kind:'single_page_knowledge_card',notePageIndex:i+1,notePageTotal:total,distillModel:out.distillModel,confirmedPageCredits:knowledgeCardCreditsForPageIndex(i+1,quote.billingModel),subjectPosition:'center',infographicTemplateId:template!.id,imageProvider:lane%2===0?'openai':'evolink',openaiImageVariant:'sunburst',imagePromptTranslator:'gpt54',enabledSkillIds:[],allowBloggerTitle:false} as any);
