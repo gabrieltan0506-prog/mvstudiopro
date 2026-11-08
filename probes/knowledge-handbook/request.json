@@ -1,13 +1,17 @@
 {
-  "id": "watch-xuezhi-1108j",
-  "action": "watch",
-  "script": "scripts/probe-knowledge-handbook-monitor.mts",
+  "id": "xuezhi-relayout-1108k",
+  "action": "start",
+  "script": "scripts/probe-knowledge-handbook-relayout.mts",
   "machine": "7812595b294778",
+  "collect": [
+    "handbook.pdf",
+    "live.json",
+    "run.log",
+    "ui-errors.log"
+  ],
   "config": {
-    "targetId": "xuezhi-relayout-1108j",
-    "documentId": "0dcb5641-ad69-40fc-bde2-59ef2e20444d",
+    "level": "full",
     "ownerJobId": "kc_f7e6e69c3c946ee107f170f6b93d4f0bb77e3c6427db7889adec4d4d",
-    "rounds": 330,
-    "intervalSeconds": 60
+    "resumeDocumentId": "0dcb5641-ad69-40fc-bde2-59ef2e20444d"
   }
 }

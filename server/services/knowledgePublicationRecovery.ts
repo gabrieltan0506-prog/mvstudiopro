@@ -14,6 +14,7 @@ import {
   reviewKnowledgePublication,
   knowledgeEvidencePrefix,
 } from "./knowledgePublicationAdvisor";
+import { KNOWLEDGE_PUBLICATION_ALL_ROUTES } from "./knowledgeModelCapabilities";
 import {
   invokeKnowledgePublicationRoutes,
   type KnowledgeModelRequest,
@@ -166,8 +167,14 @@ export async function recoverKnowledgePublicationOperation(
       fetch: async () => { throw Error("原回包不足以恢复，未提交新模型请求"); },
     };
     const { reviewKnowledgeConversation } = await import("./knowledgeConversationAdvisor");
+    // 已发出过的批次只用原回执重验，绝不重购；因前一批失败而从未发出的批次按正式路由正常发送（不是重复购买）。
     const answer = await (deps.conversation || reviewKnowledgeConversation)(input.userId, context, {
-      post: (request: unknown, evidence: any) => invokeKnowledgePublicationRoutes(request as KnowledgeModelRequest, evidence, noNewRequest),
+      post: async (request: unknown, evidence: any) => {
+        let sent = false;
+        for (const route of KNOWLEDGE_PUBLICATION_ALL_ROUTES)
+          if (await evidence.read(`${evidence.prefix}/route-${route.id}.json`)) { sent = true; break; }
+        return invokeKnowledgePublicationRoutes(request as KnowledgeModelRequest, evidence, sent ? noNewRequest : undefined);
+      },
     });
     const recovered: ManhuaAdvisorQaResponse = {
       success: true, replayed: true, answer: JSON.stringify(answer), ...metadata,
