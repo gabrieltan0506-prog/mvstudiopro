@@ -24,7 +24,8 @@ it('摘要不能逐字匹配时只让原JSON合同选关联，恢复零调用且
  expect(await run()).toBe(result);expect(invoke).toHaveBeenCalledTimes(1);
  const reportKey=Array.from(f.data.keys()).find(k=>k.endsWith('/report.json'))!;
  f.data.get(reportKey).report.pages[0].reading.blocks[0].title='未存在的章节';
- await expect(run()).rejects.toThrow('未知章节');expect(invoke).toHaveBeenCalledTimes(1);
+ // 对应表中无法识别的条目只跳过，漏掉的疑点按内容相似度归位；不重购、不报整本失败。
+ const tolerant=await run();expect(tolerant).toContain(p.cautions[0].evidence);expect(tolerant.split('## 末章')[1]).not.toContain('待核');expect(invoke).toHaveBeenCalledTimes(1);
 });
 
 it('已收完整对应表仅补固定外层合同，保留未知回执且恢复不重购',async()=>{
@@ -61,4 +62,36 @@ it('关联回包漏掉部分疑点时按内容相似度归位，不让整本读�
  expect(invoke).toHaveBeenCalledTimes(1);
  const bindings=Array.from(f.data.entries()).find(([k])=>k.endsWith('/bindings.json'))![1];
  expect(bindings.similarityFallback).toEqual([1]);
+});
+
+it('对应表标签有空白/全角/只写章节号等差异时仍能对上，未知条目跳过',async()=>{
+ const p=structuredClone(page);
+ p.reading.blocks=[{type:'prose',title:'甲章',text:'膳食纤维来源与每日摄入量说明。',note:''},{type:'prose',title:'乙章',text:'快走心率与运动强度的自查方法。',note:''},{type:'prose',title:'末章',text:'其他附录内容。',note:''}];
+ p.cautions=[{kind:'uncertain',evidence:'第一条需核对的说法',message:'已标注疑点'},{kind:'uncertain',evidence:'第二条需核对的说法',message:'已标注疑点'}];
+ const f=setup();const invoke=vi.fn(async(request:any)=>{
+  const input=JSON.parse(request.contents[0].parts[0].text),identity=JSON.parse(input.source.pages[0].body);
+  const [a,b]=identity.chapters.map((c:any)=>c.label);
+  const report={kind:'knowledge_publication_v1',sourceDigest:input.sourceDigest,title:'关联表',pages:[{...p,id:input.source.pages[0].id,cautions:[],reading:{version:1,subtitle:'',accent:'jade',blocks:[
+   {type:'prose',title:' '+a.replace('｜',' | ')+' ',text:'疑点 0',note:''},
+   {type:'prose',title:b.split('｜')[0],text:'疑点１',note:''},
+   {type:'prose',title:'不存在的章节',text:'疑点9',note:''}]}}]};
+  return {status:200,text:JSON.stringify({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(report)}]}}]})};
+ });
+ const result=await bindKnowledgeDistillCautions(p,{evidence:f.evidence,invoke:invoke as any,family:'glm',channel:'openrouter'});
+ const [x,y,z]=result.split(/(?=^## )/m);
+ expect(x).toContain('第一条需核对');expect(y).toContain('第二条需核对');expect(z).not.toContain('待核');
+ const bindings=Array.from(f.data.entries()).find(([k])=>k.endsWith('/bindings.json'))![1];
+ expect(bindings.similarityFallback).toEqual([]);expect(bindings.skippedBlocks).toBe(1);
+});
+
+it('关联请求失败或回包截断时不让整本读档失败，不重购，全部按内容相似度归位',async()=>{
+ const p=structuredClone(page);
+ p.reading.blocks=[{type:'prose',title:'甲章',text:'膳食纤维来源与每日摄入量说明。',note:''},{type:'prose',title:'乙章',text:'快走心率与运动强度的自查方法。',note:''},{type:'prose',title:'末章',text:'其他附录内容。',note:''}];
+ p.cautions=[{kind:'uncertain',evidence:'快走心率区间的计算方法存疑',message:'已标注疑点'}];
+ const f=setup();const invoke=vi.fn(async()=>({status:200,text:JSON.stringify({candidates:[{finishReason:'MAX_TOKENS',content:{parts:[{text:'{'}]}}]})}));
+ const result=await bindKnowledgeDistillCautions(p,{evidence:f.evidence,invoke:invoke as any,family:'glm',channel:'openrouter'});
+ const [x,y,z]=result.split(/(?=^## )/m);
+ expect(y).toContain('快走心率区间');expect(x).not.toContain('待核');expect(z).not.toContain('待核');expect(invoke).toHaveBeenCalledTimes(1);
+ const bindings=Array.from(f.data.entries()).find(([k])=>k.endsWith('/bindings.json'))![1];
+ expect(bindings.modelError).toContain('未完整结束');expect(bindings.similarityFallback).toEqual([0]);
 });

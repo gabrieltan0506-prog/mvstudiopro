@@ -30,15 +30,22 @@ export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:K
   const id=`${digest.slice(0,8)}-${digest.slice(8,12)}-4${digest.slice(13,16)}-8${digest.slice(17,20)}-${digest.slice(20,32)}`;
   const source:KnowledgeSource={title:'已有疑点对应原章',pages:[{id,headline:'只关联，不改内容',body:JSON.stringify(identity),imageUrl:''}]};
   const evidence={...options.evidence,prefix:`${options.evidence.prefix}/caution-binding-${digest}`};
+  // 模型回包的对应表按规范化标签解析：大小写/空白/全半角差异、只写章节号或只写章节标题都能对上；
+  // 对不上的条目只跳过（不改正文、不臆测），漏掉的疑点稍后按内容相似度归位，不让整本读档失败。
+  const norm=(text:unknown)=>String(text??'').normalize('NFKC').replace(/\s+/g,'').replace(/[|｜:：]/g,'|');
+  const resolveChapter=(title:unknown)=>{
+   const t=norm(title);if(!t)return undefined;
+   return chapters.find(c=>norm(`章节${c.index}｜${c.title}`)===t)||chapters.find(c=>t===norm(`章节${c.index}`)||t.startsWith(norm(`章节${c.index}|`)))||chapters.find(c=>norm(c.title)===t);
+  };
+  const resolveQuestion=(text:unknown)=>{const m=norm(text).match(/^疑点(\d+)$/);return m?missing.find(q=>q.index===Number(m[1])):undefined;};
   const validateBlocks=(blocks:unknown)=>{
-   if(!Array.isArray(blocks)||!blocks.length)throw Error('疑点关联缺少对应表');
-   const pairs=blocks.map(block=>{
-    if(block?.type!=='prose'||typeof block.title!=='string'||typeof block.text!=='string'||
-      !chapters.some(c=>`章节${c.index}｜${c.title}`===block.title)||!missing.some(q=>`疑点${q.index}`===block.text))
-      throw Error('疑点关联包含未知章节或疑点，未改正文');
-    return {type:'prose' as const,title:block.title,text:block.text,note:''};
-   });
-   // 模型漏关联的疑点不让整本读档失败：下面按疑点原句与各章内容相似度归位（不是默认挂末章）。
+   if(!Array.isArray(blocks))throw Error('疑点关联缺少对应表');
+   const pairs:{type:'prose';title:string;text:string;note:string}[]=[];
+   for(const block of blocks as any[]){
+    const target=resolveChapter(block?.title),question=resolveQuestion(block?.text);
+    if(!target||!question)continue;
+    pairs.push({type:'prose',title:`章节${target.index}｜${target.title}`,text:`疑点${question.index}`,note:''});
+   }
    return pairs;
   };
   const recover=async(request:KnowledgeModelRequest)=>{
@@ -68,6 +75,8 @@ export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:K
    }
    return null;
   };
+  let skipped=0,modelError='';
+  try{
   let saved=await evidence.read(`${evidence.prefix}/report.json`)||await evidence.read(`${evidence.prefix}/recovered-report.json`);
   if(!saved){
    const example={kind:'knowledge_publication_v1',sourceDigest:digest,title:source.title,pages:[{id,headline:'只关联，不改内容',body:'已有疑点的章节对应关系',imageStatus:'absent',imageDescription:'',facts:[{term:'章节关联',statement:'定位已有疑点'}],cautions:[],reading:{version:1,subtitle:'',accent:'jade',blocks:[{type:'prose',title:'逐字原章节label',text:'逐字疑点id',note:''}]}}]};
@@ -111,20 +120,24 @@ export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:K
   if(saved.digest!==digest)throw Error('疑点章节关联结果身份变化');
   const report=validateKnowledgeReview(saved.report,source,digest);
   for(const block of report.pages[0].reading?.blocks||[]){
-   if(block.type!=='prose')throw Error('疑点章节关联必须是明确对应表');
-   const target=chapters.find(c=>`章节${c.index}｜${c.title}`===block.title);
-   const question=missing.find(q=>`疑点${q.index}`===block.text);
-   if(!target||!question)throw Error('疑点关联包含未知章节或疑点，未改正文');
+   const target=block.type==='prose'?resolveChapter(block.title):undefined;
+   const question=block.type==='prose'?resolveQuestion(block.text):undefined;
+   if(!target||!question){skipped++;continue;}
    if(!associations[question.index].includes(target.index))associations[question.index].push(target.index);
+  }
+  }catch(error){
+   options.abortSignal?.throwIfAborted();
+   // 关联只决定疑点注释放在哪一章：回包缺失/截断/格式不符时不让整本读档失败，也不重购，全部改按内容相似度归位。
+   modelError=String((error as Error)?.message||error).slice(0,200);
   }
   // 关联回包漏掉的疑点：按疑点证据原句与各原章内容的相似度确定性归位，保留全部疑点、不改正文、不重购。
   const fallback:number[]=[];
-  for(const [index,targets] of associations.entries()){
+  for(const [index,targets] of Array.from(associations.entries())){
    if(targets.length)continue;
    const best=bestKnowledgeTextMatch(chapters.map(c=>c.text),`${cautions[index].evidence}\n${cautions[index].message}`);
    targets.push(chapters[best].index);fallback.push(index);
   }
-  await evidence.save(`${evidence.prefix}/bindings.json`,{digest,associations,similarityFallback:fallback});
+  await evidence.save(`${evidence.prefix}/bindings.json`,{digest,associations,similarityFallback:fallback,skippedBlocks:skipped,...(modelError?{modelError}:{})});
  }
  for(const [index,caution] of Array.from(cautions.entries())){
   const note=`<!-- 待核：${caution.evidence.replace(/-->/g,'—')}；${caution.message.replace(/-->/g,'—')} -->`;
