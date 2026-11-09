@@ -267,14 +267,32 @@ describe('图文手册限定模型与同款通道恢复',()=>{
    expect(result.gateway).toBe('openrouter');expect(f.deps.fetch).toHaveBeenCalledTimes(1);
    expect(f.storage.get('test/0/route-openrouter.json').state).toBe('received');expect(f.storage.has('test/0/interrupted-repurchase.json')).toBe(false);
   });
-  it('补买再失败（再次中断或明确失败）→章失败，不再购买；再次恢复也不买',async()=>{
+  it('补买再次断流→章失败，不再购买；再次恢复也不买',async()=>{
    const f=make();f.deps.fetch.mockRejectedValueOnce(new Error('stream reset')).mockRejectedValueOnce(new Error('stream reset again'));
-   await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('已补买一次');
+   await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('传输中断已发生两次');
    expect(f.deps.fetch).toHaveBeenCalledTimes(2);
    expect(f.storage.get('test/0/route-openrouter.json').state).toBe('interrupted');expect(f.storage.get('test/0/route-evolink.json').state).toBe('interrupted');
-   f.deps.fetch.mockClear();await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('已补买一次');expect(f.deps.fetch).not.toHaveBeenCalled();
-   const g=make();g.deps.fetch.mockRejectedValueOnce(new Error('stream reset')).mockResolvedValueOnce(new Response('{}',{status:503}));
-   await expect(invokeKnowledgePublicationRoutes(g.request,g.evidence,g.deps)).rejects.toThrow('已补买一次');expect(g.deps.fetch).toHaveBeenCalledTimes(2);
+   f.deps.fetch.mockClear();await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('传输中断已发生两次');expect(f.deps.fetch).not.toHaveBeenCalled();
+  });
+  it('补买得到明确回执（HTTP 503 / 合同不符）后按正式重试链继续，下一通道成功',async()=>{
+   // OR 断流 → 补买 DeepSeek@EvoLink 返回 503（明确失败）→ 正式链继续：evolink-retry-1 合同不符 → evolink-retry-2 成功。
+   const f=make();const bad=structuredClone(f.report);(bad.pages[0] as any).reading.blocks=[];
+   f.deps.fetch.mockRejectedValueOnce(new Error('stream reset')).mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(f.response(EVO_MODEL,bad)).mockResolvedValueOnce(f.response(EVO_MODEL));
+   const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+   expect(result.gateway).toBe('evolink-retry-2');expect(f.deps.fetch).toHaveBeenCalledTimes(4);
+   expect(result.gatewayTrace.map((t:any)=>t.route+':'+t.state)).toEqual(['openrouter:interrupted','openrouter-retry-1:skipped_interrupted_channel','openrouter-retry-2:skipped_interrupted_channel','openrouter-retry-3:skipped_interrupted_channel','evolink:failed','evolink-retry-1:failed','evolink-retry-2:succeeded']);
+   expect(f.storage.get('test/0/interrupted-repurchase.json').route).toBe('evolink');
+   // 同通道四次用尽后仍可跨通道到下一模型（用户规则：写坏算失败要切下一跳）。
+   const g=make();g.deps.fetch.mockRejectedValueOnce(new Error('stream reset'));for(let i=0;i<4;i++)g.deps.fetch.mockResolvedValueOnce(g.response(EVO_MODEL,bad));g.deps.fetch.mockResolvedValueOnce(g.response('glm-5.3-flashx'));
+   const out=JSON.parse((await invokeKnowledgePublicationRoutes(g.request,g.evidence,g.deps)).text);expect(out.gateway).toBe('glm-evolink');expect(g.deps.fetch).toHaveBeenCalledTimes(6);
+  });
+  it('reading 内误放的 cautions 由修复层上移到页级，不拒收不重买',async()=>{
+   const f=make();const shifted=structuredClone(f.report) as any;shifted.pages[0].reading.cautions=[{kind:'uncertain',evidence:'原文两处说法冲突',message:'已标注疑点'}];shifted.pages[0].cautions=[];
+   f.deps.fetch.mockResolvedValueOnce(f.response(OR_MODEL,shifted));
+   const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+   expect(f.deps.fetch).toHaveBeenCalledTimes(1);const review=JSON.parse(result.candidates[0].content.parts[0].text);
+   expect(review.pages[0].cautions).toEqual([{kind:'uncertain',evidence:'原文两处说法冲突',message:'已标注疑点'}]);expect(review.pages[0].reading.cautions).toBeUndefined();
+   expect(result.adjustments.some((a:any)=>a.field==='reading.cautions')).toBe(true);
   });
   it('旧 unknown 回执恢复：按心跳时刻计等待，到期归档后补买一次',async()=>{
    const f=make();f.deps.lateReceiptWaitMs=KNOWLEDGE_LATE_RECEIPT_WAIT_MS;f.deps.sleep=vi.fn(async()=>{throw Error('模拟进程中断');});f.deps.fetch.mockRejectedValueOnce(new Error('timeout'));
@@ -829,7 +847,7 @@ describe('Markdown明确上游失败遵守正式重试链',()=>{
  const reply=(model:string,finish:string)=>new Response(JSON.stringify({model,choices:[{finish_reason:finish,message:{content:'# 水循环\n\n## 主要重点｜蒸发\n\n太阳提供能量，水从液态转变为水蒸气。'}}]}),{headers:{'Content-Type':'application/json'}});
  it('明确error后下一次成功，恢复不再请求',async()=>{const f=setup();f.deps.fetch.mockResolvedValueOnce(reply(OR_MODEL,'error')).mockResolvedValueOnce(reply(OR_MODEL,'stop'));await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).not.toHaveBeenCalled();});
  it('DeepSeek每通道四次明确失败才进入既有GLM兜底',async()=>{const f=setup();f.deps.fetch.mockImplementation(async(_url?:unknown,init?:RequestInit)=>{const body=JSON.parse(String(init?.body));return reply(body.model,[OR_MODEL,EVO_MODEL].includes(body.model)?'error':'stop');});await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(9);});
- it('未知网络回执归档后只补买一次，再中断即章失败不再购买',async()=>{const f=setup();f.deps.fetch.mockRejectedValue(new Error('connection lost'));await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('已补买一次');expect(f.deps.fetch).toHaveBeenCalledTimes(2);await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('已补买一次');expect(f.deps.fetch).toHaveBeenCalledTimes(2);});
+ it('未知网络回执归档后只补买一次，再中断即章失败不再购买',async()=>{const f=setup();f.deps.fetch.mockRejectedValue(new Error('connection lost'));await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('传输中断已发生两次');expect(f.deps.fetch).toHaveBeenCalledTimes(2);await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('传输中断已发生两次');expect(f.deps.fetch).toHaveBeenCalledTimes(2);});
 });
 
 

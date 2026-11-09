@@ -319,7 +319,7 @@ describe("正式出版失败事务恢复", () => {
     expect(fetch).not.toHaveBeenCalled();
     // 到期：归档 interrupted，换通道补买一次；再断 → 章失败，不保存成功。
     f.deps.routes = { key: () => "k", fetch, sleep: vi.fn(async () => {}), lateReceiptWaitMs: 0 } as any;
-    await expect(recoverKnowledgePublicationOperation(f.input, meta, f.deps)).rejects.toThrow("已补买一次");
+    await expect(recoverKnowledgePublicationOperation(f.input, meta, f.deps)).rejects.toThrow("传输中断已发生两次");
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(f.store.get(f.route).state).toBe("interrupted");
     expect(f.deps.persist).not.toHaveBeenCalled();

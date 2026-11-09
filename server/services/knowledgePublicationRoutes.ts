@@ -544,11 +544,11 @@ export async function invokeKnowledgePublicationRoutes(
       if (images.length && !degradedTextOnly && !visionRoutes.has(route)) { traces.push({ route, model, state: "skipped_no_vision" }); continue; }
       // image_url 400：同通道已失败两次（首发+补一次）即跳过该通道其余重试，切下一通道。
       if (images.length && imageRejections[channel] >= 2) { traces.push({ route, model, state: "skipped_image_rejected" }); continue; }
+      // 补买只用于闭合「断流不确定性」：同章第二次断流即判失败不再买；补买得到明确回执（HTTP 错/合同不符）后按正式重试链继续（四次上限、跨通道）。
+      if (interrupted.size >= 2) throw new Error(`传输中断已发生两次（${Array.from(interrupted).join("、")}），本章判失败，不再购买`);
       if (interrupted.size) {
-        if (repurchase) throw new Error(`传输中断后已补买一次（${repurchase.route}）仍未成功，本章判失败，不再购买`);
         if (interruptedChannels.has(channel) && purchasableElsewhere(routeIndex, channel)) { traces.push({ route, model, state: "skipped_interrupted_channel" }); continue; }
-        repurchase = { requestDigest, after: Array.from(interrupted), route, at: new Date().toISOString() };
-        await evidence.save(repurchaseKey, repurchase);
+        if (!repurchase) { repurchase = { requestDigest, after: Array.from(interrupted), route, at: new Date().toISOString() }; await evidence.save(repurchaseKey, repurchase); }
       }
       purchased.add(route);
       assertKnowledgePaidModel(channel, model, request.researchOnly === true);
