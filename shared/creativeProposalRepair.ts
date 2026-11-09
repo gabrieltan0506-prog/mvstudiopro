@@ -160,6 +160,8 @@ function pathKey(path: ReadonlyArray<PropertyKey>): string {
 }
 
 const MAX_SHAPE_ROUNDS = 6;
+/** 只有这些键缺失时才补 ""：都是合同里允许为空的文本，不含 visualPrompt/heardZh 等必须有内容的字段。 */
+const EMPTY_STRING_DEFAULT_KEYS = new Set(["lyricQuote"]);
 
 /**
  * 以 zod issues 驱动的确定性形状修复：
@@ -206,6 +208,10 @@ export function repairJsonShape(value: unknown, schema: ZodType): { value: unkno
           if (typeof before === "number" || typeof before === "boolean") {
             after = String(before);
             reasonZh = "数字/布尔转字符串";
+          } else if ((before === undefined || before === null) && EMPTY_STRING_DEFAULT_KEYS.has(String(path[path.length - 1]))) {
+            // lyricQuote 语义上允许为空（无歌词/非唱段）；1109 第四次重跑 GLM 整份省略该键，72 处 invalid_type。
+            after = "";
+            reasonZh = "缺失的可空文本补为空字符串";
           } else continue;
         } else continue;
         if (!setAt(current, path, after)) continue;
@@ -331,4 +337,93 @@ export function normalizeMediaSections(value: unknown, durationSec: number | und
     value: { ...value, sections: kept.map(row => ({ ...row.section, startSec: row.startSec, endSec: row.endSec })) },
     fixes,
   };
+}
+
+export type ShotFix = {
+  concept: number;
+  shot: number;
+  id: unknown;
+  action: "split" | "merge";
+  before: { startSec: number; endSec: number };
+  after: Array<{ id: string; startSec: number; endSec: number }>;
+  reasonZh: string;
+};
+
+const round3 = (n: number) => Math.round(n * 1000) / 1000;
+
+/**
+ * 分镜时长确定性修复（校验前，MV 方案四个 concepts 全部处理）：
+ * - 任一 shot 时长 > maxSec → 等分为 ceil(len/maxSec) 段，边界连续；kind/lyricQuote/referenceIndices 沿用，
+ *   visualPrompt/cameraPrompt 沿用并从第二段起加「（续）」，footage 的 sourceStartSec 顺延；id 加 -2/-3 后缀保证唯一
+ * - 时长 < minSec 的镜头并入前一镜（首镜并入后一镜），不保留其文案
+ * 不改任何镜头的画面内容；2026-11-09 第四次重跑：GLM 两次 compose 都不肯把 15.5–17.5s 的镜头切短。
+ */
+export function normalizeShotDurations(value: unknown, maxSec = 15, minSec = 0.5): { value: unknown; fixes: ShotFix[] } {
+  const fixes: ShotFix[] = [];
+  if (!isRecord(value) || !Array.isArray(value.concepts)) return { value, fixes };
+  let changed = false;
+  const concepts = value.concepts.map((concept, conceptIndex) => {
+    if (!isRecord(concept) || !isRecord(concept.plan) || !Array.isArray(concept.plan.shots)) return concept;
+    const shots = concept.plan.shots;
+    if (shots.some(shot => !isRecord(shot) || !Number.isFinite(toNumber(shot.startSec)) || !Number.isFinite(toNumber(shot.endSec)))) return concept;
+    type TimedShot = Record<string, unknown> & { startSec: number; endSec: number };
+    const rows: TimedShot[] = (shots as Array<Record<string, unknown>>).map(shot => ({ ...shot, startSec: toNumber(shot.startSec), endSec: toNumber(shot.endSec) }));
+    // 先并短镜，再拆长镜：并入后变长的镜头也要受 maxSec 约束。
+    const merged: TimedShot[] = [];
+    rows.forEach((shot, index) => {
+      const len = shot.endSec - shot.startSec;
+      if (len + 1e-9 >= minSec) {
+        merged.push(shot);
+        return;
+      }
+      if (merged.length) {
+        const prev = merged[merged.length - 1];
+        const before = { startSec: shot.startSec, endSec: shot.endSec };
+        prev.endSec = Math.max(prev.endSec, shot.endSec);
+        fixes.push({ concept: conceptIndex, shot: index, id: shot.id, action: "merge", before, after: [{ id: String(prev.id), startSec: prev.startSec, endSec: prev.endSec }], reasonZh: `镜头不足 ${minSec} 秒，并入前一镜` });
+      } else if (rows[index + 1]) {
+        const next = rows[index + 1];
+        const before = { startSec: shot.startSec, endSec: shot.endSec };
+        next.startSec = Math.min(next.startSec, shot.startSec);
+        fixes.push({ concept: conceptIndex, shot: index, id: shot.id, action: "merge", before, after: [{ id: String(next.id), startSec: next.startSec, endSec: next.endSec }], reasonZh: `首镜不足 ${minSec} 秒，并入后一镜` });
+      } else merged.push(shot);
+    });
+    const ids = new Set(merged.map(shot => String(shot.id)));
+    const out: Array<Record<string, unknown>> = [];
+    merged.forEach((shot, index) => {
+      const len = shot.endSec - shot.startSec;
+      if (len <= maxSec + 1e-9) {
+        out.push(shot);
+        return;
+      }
+      const parts = Math.ceil(len / maxSec - 1e-9);
+      const pieces: Array<{ id: string; startSec: number; endSec: number }> = [];
+      for (let k = 0; k < parts; k += 1) {
+        const startSec = k === 0 ? shot.startSec : round3(shot.startSec + (len * k) / parts);
+        const endSec = k === parts - 1 ? shot.endSec : round3(shot.startSec + (len * (k + 1)) / parts);
+        let id = k === 0 ? String(shot.id) : `${String(shot.id)}-${k + 1}`;
+        while (k > 0 && ids.has(id)) id = `${id}x`;
+        ids.add(id);
+        const cont = k > 0 ? "（续）" : "";
+        const piece: Record<string, unknown> = {
+          ...shot,
+          id,
+          startSec,
+          endSec,
+          visualPrompt: typeof shot.visualPrompt === "string" ? shot.visualPrompt + cont : shot.visualPrompt,
+          cameraPrompt: typeof shot.cameraPrompt === "string" ? shot.cameraPrompt + cont : shot.cameraPrompt,
+        };
+        if (k > 0 && isRecord(shot.sourceClip) && Number.isFinite(toNumber(shot.sourceClip.sourceStartSec)))
+          piece.sourceClip = { ...shot.sourceClip, sourceStartSec: round3(toNumber(shot.sourceClip.sourceStartSec) + (startSec - shot.startSec)) };
+        pieces.push({ id, startSec, endSec });
+        out.push(piece);
+      }
+      fixes.push({ concept: conceptIndex, shot: index, id: shot.id, action: "split", before: { startSec: shot.startSec, endSec: shot.endSec }, after: pieces, reasonZh: `镜头 ${round3(len)} 秒超过 ${maxSec} 秒，等分为 ${parts} 镜` });
+    });
+    if (out.length === rows.length && fixes.every(f => f.concept !== conceptIndex)) return concept;
+    changed = true;
+    return { ...concept, plan: { ...concept.plan, shots: out } };
+  });
+  if (!changed) return { value, fixes: [] };
+  return { value: { ...value, concepts }, fixes };
 }

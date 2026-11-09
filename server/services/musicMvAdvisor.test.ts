@@ -279,6 +279,29 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
     expect((second.mocks.refine.mock.calls as unknown as [any][])[1][0].requirements).toContain("联合创作不得改写媒体观察区间和证据");
     expect(Array.from(second.records.keys()).map(k => k.split("/").at(-1))).toContain("astra-rejected.json");
   });
+  it("线上第四次重跑：镜头 15.5s 超限 → 确定性等分，不重 compose，落 glm-draft-shots-split", async () => {
+    const { d, mocks, records } = fixture();
+    const bad = JSON.parse(JSON.stringify({ ...proposal(), sections: [{ ...proposal().sections[0], endSec: 20 }] }));
+    for (const c of bad.concepts) {
+      c.plan.audioDurationSec = 20;
+      // 0–15.5 生成镜（超 15s，GLM 两次都不切）+ 15.5–20 对口型镜（4.5s 合法）
+      c.plan.shots = [
+        { id: "long", startSec: 0, endSec: 15.5, kind: "generated", visualPrompt: "长镜", cameraPrompt: "推", lyricQuote: "", referenceIndices: [] },
+        { ...c.plan.shots[0], startSec: 15.5, endSec: 20 },
+      ];
+    }
+    const wide = { ...target, audio: { ...target.audio, durationSec: 20 } };
+    mocks.read.mockResolvedValue({ buffer: Buffer.from("test-audio"), mimeType: "audio/wav", durationSec: 20 });
+    mocks.generate.mockResolvedValue({ text: JSON.stringify({ kind: "native_music_evidence_v1", sourceKey: target.sourceKey, summaryZh: "持续人声", sections: bad.sections, uncertaintiesZh: [] }), candidates: [{ finishReason: "STOP" }], modelVersion: "gemini-3.8-flash", usageMetadata: { promptTokensDetails: [{ modality: "AUDIO", tokenCount: 30 }] } });
+    mocks.compose.mockResolvedValueOnce({ decoded: bad, model: "glm-5.3-flashx" });
+    const accepted = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, wide, "设计MV", d), true).answer, wide);
+    expect(mocks.compose).toHaveBeenCalledTimes(1);
+    expect(accepted.concepts[0].plan.shots.map(s => [s.id, s.startSec, s.endSec])).toEqual([["long", 0, 7.75], ["long-2", 7.75, 15.5], ["sing", 15.5, 20]]);
+    expect(accepted.concepts[0].plan.shots[1].visualPrompt).toBe("长镜（续）");
+    const split = records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/glm-draft-shots-split.json") as any;
+    expect(split.fixes).toHaveLength(4);
+    expect(split.fixes.map((f: any) => [f.concept, f.id, f.action])).toEqual([[0, "long", "split"], [1, "long", "split"], [2, "long", "split"], [3, "long", "split"]]);
+  });
   it("四份完整方案超过旧12000字限制仍原样消费", () => {
     const p = proposal();
     for (const c of p.concepts)

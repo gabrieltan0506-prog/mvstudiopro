@@ -7,7 +7,7 @@ import { composeCreativeJson } from "./creativeGlmComposer";
 import { readCreativeLibraryContext, assertCreativeSelections, CREATIVE_LIBRARY_SELECTION_INSTRUCTIONS } from "./creativeLibraryRetrieval";
 import { creativeLearningTargetSchema, creativeLearningReportSchema, assertCreativeMethodEvidence, CREATIVE_LEARNING_INSTRUCTIONS, type CreativeLearningTarget } from "../../shared/creativeGenerationLibrary";
 import { parseCreativeAudioEvidence, creativeAudioEvidenceSchema, CREATIVE_AUDIO_READ_INSTRUCTIONS } from "../../shared/creativeMediaEvidence";
-import { repairJsonShape, normalizeMediaSections } from "../../shared/creativeProposalRepair";
+import { repairJsonShape, normalizeMediaSections, normalizeShotDurations } from "../../shared/creativeProposalRepair";
 import { toCreativeProposalError } from "./creativeProposalFailure";
 import { SUNO_SONG_CRAFT } from "../../shared/sunoSongCraft";
 import {
@@ -181,7 +181,10 @@ export async function askMusicMvAdvisor(
     const shape=repairJsonShape(raw,proposalSchema);
     const sections=target.audio?normalizeMediaSections(shape.value,target.audio.durationSec,sectionTolerance):{value:shape.value,fixes:[]};
     if(shape.fixes.length||sections.fixes.length)await save(`${stage}-normalized`,{before:raw,after:sections.value,fixes:{shape:shape.fixes,sections:sections.fixes},remainingIssues:shape.issues});
-    return sections.value;
+    // MV 分镜：>15s 的镜头确定性等分、<0.5s 的并入相邻镜，四个方案都处理；GLM 两次 compose 都不肯自己切短（1109 第四次重跑）。
+    const shots=purpose==="mv"?normalizeShotDurations(sections.value):{value:sections.value,fixes:[]};
+    if(shots.fixes.length)await save(`${stage}-shots-split`,{before:sections.value,after:shots.value,fixes:shots.fixes});
+    return shots.value;
   };
   const validateDraft=(candidate:unknown)=>{
     const parsed=purpose==="learn"?creativeLearningReportSchema.parse(candidate):purpose==="song"?parseSunoSongProposal(candidate,target as SunoSongTarget):parseMusicMvAdvisorProposal(candidate,target as MusicMvAdvisorTarget);
