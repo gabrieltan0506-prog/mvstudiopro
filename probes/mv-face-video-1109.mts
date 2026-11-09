@@ -21,6 +21,12 @@ const PROBE_USER = 999999001;
 const SONG_GCS = "gs://mv-studio-pro-vertex-video-temp/uploads/u1/c48f203e-a20e-45a2-9e2d-777107c97bfd-1-.mp3";
 const HL = { startSec: 18.2, endSec: 77.5 };
 const LIP_END_IN_P1 = 17.8; // 36.0 秒前为真歌词演唱段（成片里镜头自带声静音）
+/**
+ * 镜头自带声静音窗（段内秒）：演唱段 + 抽查（melody.py：逐秒谐波性>0.6 且响度高）疑似音乐/人声旋律的部分。
+ * P1 0–20.0：演唱段 0–17.8 + 17.8–20.0 谐波性 0.54–0.79；P2 9–12、16–23：谐波性 0.48–0.90。其余 −20 dB 环境层。
+ */
+const MUTE: Record<string, Array<[number, number]>> = { P1: [[0, 20.0]], P2: [[9, 12], [16, 23]] };
+const volExpr = (id: string) => `volume='if(${MUTE[id]!.map(([a, b]) => `between(t,${a},${b})`).join("+")},0,0.1)':eval=frame`;
 const FADE_IN = 0.3, FADE_OUT = 2.0; // 1109 蝴蝶落唇结尾：淡出 75.5–77.5
 const [runId, picksArg = "", mode = "all"] = process.argv.slice(2);
 /** 用户选图：如 K1e,K2,K4e,K7e（未列出的用纯生成版）。 */
@@ -120,7 +126,7 @@ const submitted: Record<string, Sub> = (await getJson("checkpoints/b2-submitted.
 const finals: Record<string, Fin> = (await getJson("checkpoints/b3-final.json")) || {};
 for (const seg of prompts.segments) {
   if (submitted[seg.id]) continue;
-  if (mode === "poll") throw Error(`${seg.id} 无提交记录，poll 模式不新建任务`);
+  if (mode !== "all") throw Error(`${seg.id} 无提交记录，${mode} 模式不新建任务`);
   const refs = REFS[seg.id]!;
   const vidSec = refs.videos.reduce((a, g) => a + (Object.values(motions).find(m => m.gcsUri === g)?.durationSec || 0), 0);
   if (vidSec > 30) throw Error(`${seg.id} 参考视频合计 ${vidSec}s > 30s`);
@@ -196,14 +202,14 @@ if (!s4) {
     `[1:v]trim=start_frame=0,setpts=PTS-STARTPTS,fps=${fps},scale=720:1280:flags=lanczos,setsar=1,trim=end_frame=${F2},setpts=PTS-STARTPTS[v1]`,
     `[v0][v1]concat=n=2:v=1:a=0,fade=t=in:st=0:d=${FADE_IN},fade=t=out:st=${(T - FADE_OUT).toFixed(3)}:d=${FADE_OUT}[v]`,
     `[2:a]atrim=start=${HL.startSec}:end=${HL.endSec},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[song]`,
-    hasA("P1") ? `[0:a]atrim=0:${T1},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,volume='if(lt(t,${LIP_END_IN_P1}),0,0.1)':eval=frame[a0]` : `anullsrc=r=48000:cl=stereo,atrim=0:${T1}[a0]`,
-    hasA("P2") ? `[1:a]atrim=0:${T2},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,volume=0.1[a1]` : `anullsrc=r=48000:cl=stereo,atrim=0:${T2}[a1]`,
+    hasA("P1") ? `[0:a]atrim=0:${T1},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,${volExpr("P1")}[a0]` : `anullsrc=r=48000:cl=stereo,atrim=0:${T1}[a0]`,
+    hasA("P2") ? `[1:a]atrim=0:${T2},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,${volExpr("P2")}[a1]` : `anullsrc=r=48000:cl=stereo,atrim=0:${T2}[a1]`,
     `[a0][a1]concat=n=2:v=0:a=1[amb]`,
     `[song][amb]amix=inputs=2:duration=first:normalize=0,afade=t=in:st=0:d=${FADE_IN},afade=t=out:st=${(T - FADE_OUT).toFixed(3)}:d=${FADE_OUT}[a]`,
   ].join(";");
   const out = path.join(work, "final.mp4");
   const args = ["-y", "-v", "error", "-i", files[0]!, "-i", files[1]!, "-i", song, "-filter_complex", vf, "-map", "[v]", "-map", "[a]", "-t", String(T), "-c:v", "libx264", "-crf", "17", "-preset", "medium", "-pix_fmt", "yuv420p", "-r", String(fps), "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out];
-  await putJson("raw/assemble-ffmpeg.json", { args, filter: vf, T1, T2, F1, F2, fps, lipEndInP1: LIP_END_IN_P1, fadeIn: FADE_IN, fadeOut: FADE_OUT, ambientGainDb: -20 });
+  await putJson("raw/assemble-ffmpeg.json", { args, filter: vf, T1, T2, F1, F2, fps, lipEndInP1: LIP_END_IN_P1, muteWindows: MUTE, fadeIn: FADE_IN, fadeOut: FADE_OUT, ambientGainDb: -20 });
   await run("ffmpeg", args, { maxBuffer: 64 << 20 });
   const buf = await readFile(out);
   const objectName = `${base}/final/mv-highlight-18.2-77.5-face-2p5.mp4`;
@@ -214,9 +220,49 @@ if (!s4) {
   log("ASSEMBLED", JSON.stringify(s4));
 }
 
+// ── 5. 断言：总长、主轨=原歌、剪点、淡出 ──
+let s5 = await getJson<any>("checkpoints/b5-verify.json");
+if (!s5 || mode === "reverify") {
+  const fin = path.join(work, "final-check.mp4");
+  await writeFile(fin, (await downloadGcsObject({ gcsUri: s4.gcsUri })).buffer);
+  const song = path.join(work, "song-check.mp3");
+  await writeFile(song, (await downloadGcsObject({ gcsUri: SONG_GCS })).buffer);
+  const T = Math.round((HL.endSec - HL.startSec) * 1000) / 1000, R = 8000, FR = 1 / 30;
+  const pcm = async (args: string[]) => { const b = (await run("ffmpeg", ["-v", "error", ...args, "-ac", "1", "-ar", String(R), "-f", "f32le", "-"], { maxBuffer: 256 << 20, encoding: "buffer" } as any)).stdout as unknown as Buffer; return new Float32Array(b.buffer, b.byteOffset, Math.floor(b.length / 4)); };
+  const a = await pcm(["-i", fin, "-map", "0:a:0"]);
+  const b = await pcm(["-ss", String(HL.startSec), "-t", String(T), "-i", song]);
+  const env = (x: Float32Array, t1: number) => { const w = R / 100, o: number[] = []; for (let i = 0; i + w <= Math.min(x.length, t1 * R); i += w) { let q = 0; for (let j = i; j < i + w; j++) q += x[j]! * x[j]!; o.push(Math.sqrt(q / w)); } return o; };
+  const pearson = (p: number[], q: number[]) => { const n = Math.min(p.length, q.length); const mp = p.slice(0, n).reduce((u, v) => u + v, 0) / n, mq = q.slice(0, n).reduce((u, v) => u + v, 0) / n; let c = 0, vp = 0, vq = 0; for (let i = 0; i < n; i++) { c += (p[i]! - mp) * (q[i]! - mq); vp += (p[i]! - mp) ** 2; vq += (q[i]! - mq) ** 2; } return c / Math.sqrt(vp * vq || 1); };
+  const ea = env(a, T - FADE_OUT), eb = env(b, T - FADE_OUT);
+  let bestLag = 0, bestC = -2;
+  for (let lag = -20; lag <= 20; lag++) { const c = pearson(lag >= 0 ? ea.slice(lag) : ea, lag >= 0 ? eb : eb.slice(-lag)); if (c > bestC) { bestC = c; bestLag = lag; } }
+  const rmsDb = (x: Float32Array, t0: number, t1: number) => { let q = 0, n = 0; for (let i = Math.floor(t0 * R); i < Math.min(x.length, Math.floor(t1 * R)); i++) { q += x[i]! * x[i]!; n++; } return n ? 10 * Math.log10(q / n + 1e-12) : -120; };
+  const gain: number[] = []; for (let t = T - FADE_OUT; t + 0.25 <= T + 1e-6; t += 0.25) gain.push(rmsDb(a, t, t + 0.25) - rmsDb(b, t, t + 0.25));
+  const tailDb = rmsDb(a, T - 0.1, T);
+  const pr = await probe(fin);
+  const v = (pr.streams || []).find((x: any) => x.codec_type === "video"), au = (pr.streams || []).find((x: any) => x.codec_type === "audio");
+  const frames = Number((await run("ffprobe", ["-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", fin])).stdout.trim());
+  const lastPng = path.join(work, "last.png");
+  await run("ffmpeg", ["-y", "-v", "error", "-sseof", "-0.1", "-i", fin, "-update", "1", lastPng]);
+  const yavg = Number(/YAVG=([\d.]+)/.exec((await run("ffmpeg", ["-v", "error", "-i", lastPng, "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", "-f", "null", "-"])).stdout)?.[1] ?? NaN);
+  // 剪点：两侧帧差（场景分）在 29.6 s 处应为局部峰
+  const sc = (await run("ffmpeg", ["-v", "error", "-ss", "28.6", "-t", "2", "-i", fin, "-vf", "scale=160:-2,select='gte(scene,0)',metadata=print:key=lavfi.scene_score:file=-", "-an", "-f", "null", "-"], { maxBuffer: 16 << 20 })).stdout;
+  const scenes: Array<[number, number]> = []; let tt = NaN;
+  for (const line of sc.split("\n")) { const m1 = /pts_time:([\d.]+)/.exec(line); if (m1) tt = 28.6 + Number(m1[1]); const m2 = /scene_score=([\d.]+)/.exec(line); if (m2 && Number.isFinite(tt)) scenes.push([Math.round(tt * 1000) / 1000, Number(m2[1])]); }
+  const peak = scenes.reduce((p, c) => (c[1] > p[1] ? c : p), [0, -1] as [number, number]);
+  const cutSec = s4.trims.P1.usedSec;
+  s5 = {
+    totalLength: { pass: Math.abs(Number(v?.duration) - T) <= FR + 1e-3 && Math.abs(Number(au?.duration) - T) <= 0.05 && frames === Math.round(T * 30), videoSec: Number(v?.duration), audioSec: Number(au?.duration), frames, expectFrames: Math.round(T * 30), targetSec: T },
+    mainTrackIsSong: { pass: bestC >= 0.9 && Math.abs(bestLag) * 0.01 <= FR + 1e-6, rmsEnvelopeCorr: Number(bestC.toFixed(4)), lagSec: bestLag * 0.01, audioStreams: (pr.streams || []).filter((x: any) => x.codec_type === "audio").length },
+    cut: { pass: Math.abs(cutSec - 29.6) < 1e-6 && Math.abs(peak[0] - cutSec) <= FR + 1e-3, cutInFinalSec: cutSec, cutSongSec: Math.round((HL.startSec + cutSec) * 1000) / 1000, sceneScorePeakAt: peak[0], sceneScorePeak: peak[1], frameExact: Number.isInteger(Math.round(cutSec * 30)) && Math.abs(cutSec * 30 - Math.round(cutSec * 30)) < 1e-6 },
+    fadeOut: { pass: gain.length >= 4 && gain.every((g, i) => i === 0 || g <= gain[i - 1]! + 2) && tailDb < -40 && yavg < 24, fromSec: T - FADE_OUT, gainVsSongDb: gain.map(g => Number(g.toFixed(1))), tailLast100msDb: Number(tailDb.toFixed(1)), lastFrameYavg: yavg },
+  };
+  await putJson("checkpoints/b5-verify.json", s5);
+  log("VERIFY", JSON.stringify(s5));
+}
 const delivery = {
   runId, at: new Date().toISOString(),
-  final: { url24h: sign(s4.gcsUri, 24 * 3600), gcsUri: s4.gcsUri, probe: s4.probe, trims: s4.trims, cutSongSec: s4.cutSongSec },
+  final: { url24h: sign(s4.gcsUri, 24 * 3600), gcsUri: s4.gcsUri, probe: s4.probe, trims: s4.trims, cutSongSec: s4.cutSongSec, verify: s5, muteWindows: MUTE },
   segments: prompts.segments.map(s => ({ id: s.id, song: [s.songStart, s.songEnd], targetSec: s.targetSec, requestedSec: submitted[s.id]!.duration, taskId: submitted[s.id]!.taskId, model: submitted[s.id]!.model, measuredSec: finals[s.id]!.durationSec, size: `${finals[s.id]!.width}x${finals[s.id]!.height}`, fps: finals[s.id]!.fps, hasAudio: finals[s.id]!.hasAudio, usage: finals[s.id]!.usage, url24h: sign(finals[s.id]!.gcsUri!, 24 * 3600), references: submitted[s.id]!.body.image_urls, videoReferences: submitted[s.id]!.body.video_urls })),
   motion: motions,
 };
