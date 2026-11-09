@@ -717,6 +717,12 @@ export async function geminiAudioJsonWithFallback<T>(input: {
   media?: { vertexFileUri: string; evolinkFileUri: () => string };
   /** 两跳统一模型覆盖（如 gemini-3.8-flash）；缺省沿用听音通道配置。 */
   model?: string;
+  /** 1109：系统指令（MV 独立听歌 / 剪辑方案分析）。 */
+  systemInstruction?: string;
+  /** 1109：音频时间戳；缺省 = 内联时开、引用媒体时不发（保持旧行为）。 */
+  audioTimestamp?: boolean;
+  /** 1109：原始回包级校验（如必须有 AUDIO token、finishReason=STOP）；返回拒因即按写坏换下一跳。 */
+  checkPayload?: (payload: unknown) => string | undefined;
   prompt: string;
   /** Gemini 原生 responseSchema（大写类型）；不给则只要求 application/json。 */
   nativeSchema?: Record<string, unknown>;
@@ -725,14 +731,15 @@ export async function geminiAudioJsonWithFallback<T>(input: {
   save: (name: string, value: unknown) => Promise<unknown>;
   maxOutputTokens?: number;
   timeoutMs?: number;
-}): Promise<{ value: T; channel: GeminiAudioJsonChannel; model: string; failuresZh: string[] }> {
+}): Promise<{ value: T; channel: GeminiAudioJsonChannel; model: string; failuresZh: string[]; payload: unknown }> {
   const timeoutMs = input.timeoutMs ?? 180_000;
   const maxOutputTokens = input.maxOutputTokens ?? 8192;
   const nativeBody = (fileUri?: string) => ({
+    ...(input.systemInstruction ? { systemInstruction: { parts: [{ text: input.systemInstruction }] } } : {}),
     contents: [{ role: "user", parts: fileUri
       ? [{ fileData: { mimeType: input.mimeType, fileUri } }, { text: input.prompt }]
       : [{ text: input.prompt }, { inlineData: { data: input.audioBase64 ?? "", mimeType: input.mimeType } }] }],
-    generationConfig: { maxOutputTokens, responseMimeType: "application/json", ...(fileUri ? {} : { audioTimestamp: true }), ...(input.nativeSchema ? { responseSchema: input.nativeSchema } : {}), temperature: 0.2 },
+    generationConfig: { maxOutputTokens, responseMimeType: "application/json", ...((input.audioTimestamp ?? !fileUri) ? { audioTimestamp: true } : {}), ...(input.nativeSchema ? { responseSchema: input.nativeSchema } : {}), temperature: 0.2 },
   });
   const native = async (url: string, headers: Record<string, string>, fileUri?: string) => {
     const response = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify(nativeBody(fileUri)) });
@@ -760,7 +767,7 @@ export async function geminiAudioJsonWithFallback<T>(input: {
     const slug = `hop-${i + 1}-${ch.name.toLowerCase().replace(/\s+/g, "_")}`;
     if (!ch.available()) { failures.push(`${ch.name}（未配置，跳过）`); await input.save(`${slug}-skipped`, { channel: ch.name, reasonZh: "未配置" }); continue; }
     const model = ch.model();
-    await input.save(`${slug}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt: input.prompt, mimeType: input.mimeType, ...(input.media ? { mediaGsUri: input.media.vertexFileUri } : { audioBytes: Math.floor(((input.audioBase64 ?? "").length * 3) / 4) }), maxOutputTokens, timeoutMs });
+    await input.save(`${slug}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt: input.prompt, mimeType: input.mimeType, ...(input.media ? { mediaGsUri: input.media.vertexFileUri } : { audioBytes: Math.floor(((input.audioBase64 ?? "").length * 3) / 4) }), ...(input.systemInstruction ? { systemInstruction: input.systemInstruction } : {}), maxOutputTokens, timeoutMs });
     let result: Awaited<ReturnType<typeof ch.run>>;
     try {
       result = await ch.run();
@@ -772,6 +779,8 @@ export async function geminiAudioJsonWithFallback<T>(input: {
     }
     await input.save(`${slug}-raw`, { channel: ch.name, model, status: result.status, payload: result.payload });
     if (!result.ok) { failures.push(`${ch.name}（HTTP ${result.status}）`); continue; }
+    const payloadReject = input.checkPayload?.(result.payload);
+    if (payloadReject) { failures.push(`${ch.name}（${payloadReject}）`); await input.save(`${slug}-rejected`, { channel: ch.name, model, reasonZh: payloadReject }); continue; }
     if (!String(result.text || "").trim()) { failures.push(`${ch.name}（空回）`); await input.save(`${slug}-rejected`, { channel: ch.name, model, reasonZh: "空回" }); continue; }
     try {
       const decoded = JSON.parse(String(result.text || "").replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim());
@@ -779,7 +788,7 @@ export async function geminiAudioJsonWithFallback<T>(input: {
       const value = input.validate(decoded);
       await input.save(`${slug}-parsed`, value);
       await input.save("hop-used", { channel: ch.name, model, hop: i + 1, failuresZh: failures });
-      return { value, channel: ch.name, model, failuresZh: failures };
+      return { value, channel: ch.name, model, failuresZh: failures, payload: result.payload };
     } catch (error) {
       const reason = `写坏：${error instanceof Error ? error.message.slice(0, 300) : String(error)}`;
       failures.push(`${ch.name}（${reason}）`);

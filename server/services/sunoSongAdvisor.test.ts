@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { hearSongIndependently } from "./musicMvSongHearing";
 import { askSunoSongAdvisor } from "./musicMvAdvisor";
 import {
   parseSunoSongProposal,
@@ -163,15 +164,32 @@ describe("原创歌曲与参考听音分开", () => {
       ...target,
       audio: { id: "s", url: "https://example.test/s.wav", durationSec: 12 },
     };
-    mocks.generate.mockResolvedValueOnce({
+    mocks.generate.mockResolvedValue({
       text: JSON.stringify(proposal(true)),
       usageMetadata: { promptTokensDetails: [] },
+    });
+    // 1109：参考听音走独立听歌两跳（Vertex gs:// → EvoLink 签名 URL）；两跳都无 AUDIO 回执 → 失败，不退回主题创作。
+    const listen = vi.fn(async (input: any) => {
+      const failures: string[] = [];
+      for (const [hop, fileUri] of [["Vertex", input.media.vertexFileUri], ["EvoLink", input.media.evolinkFileUri()]]) {
+        const payload = await (mocks.generate as any)({ fileUri, prompt: input.prompt, model: input.model });
+        const reject = input.checkPayload?.(payload);
+        if (reject) { failures.push(`${hop}（${reject}）`); continue; }
+        return { value: input.validate(JSON.parse(payload.text)), channel: hop, model: input.model, failuresZh: failures, payload };
+      }
+      throw new Error(`听音识别全部通道失败：${failures.join("；")}`);
+    });
+    (deps as any).hear = (input: any) => hearSongIndependently(input, {
+      listen: listen as any, sign: (u: string) => `https://signed.example/${u.slice(5)}`, upload: mocks.upload as any,
+      readJson: async () => undefined, bucket: () => "test-bucket", uuid: () => "33333333-3333-4333-8333-333333333333",
     });
     await expect(
       askSunoSongAdvisor(7, audioTarget, "听歌", deps)
     ).rejects.toThrow("音频处理回执");
-    expect(mocks.generate).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(mocks.generate.mock.calls)).toContain("inlineData");
+    expect(mocks.generate).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(mocks.generate.mock.calls)).toContain("gs://test/song.wav");
+    expect(JSON.stringify(mocks.generate.mock.calls)).toContain("https://signed.example/test/song.wav");
+    expect(JSON.stringify(mocks.generate.mock.calls)).not.toContain("inlineData");
     expect(
       Array.from(records.keys()).some(k => k.endsWith("accepted.json"))
     ).toBe(false);

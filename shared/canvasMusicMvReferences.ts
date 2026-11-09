@@ -328,6 +328,22 @@ export function detectPerformerGender(text: string | undefined): "男" | "女" |
   return male && !female ? "男" : female && !male ? "女" : undefined;
 }
 
+/**
+ * 用户是否以本人形象作演唱者：按现有字段判断（创作要求文字与参考图文件名），不写死。
+ * 例：「我本人出镜演唱」「歌手是我自己」「演唱者用我的照片」、参考图名「本人.jpg」「我自己-歌手.png」。
+ */
+export function isPerformerTheUser(target: { creativePrompt?: string; referenceSummaries?: string[] }): boolean {
+  const prompt = String(target.creativePrompt || "");
+  const self = /(?:我|本人|用户本人|我自己)/;
+  if (/(?:我本人|我自己|用户本人|本人)[^。；\n]{0,10}(?:演唱|唱|歌手|出镜|形象|照片)|(?:演唱者|歌手|主唱)[^。；\n]{0,8}(?:是|为|用|就是)[^。；\n]{0,4}(?:我|本人)/.test(prompt)) return true;
+  return (target.referenceSummaries || []).some(name => self.test(name) && /(?:歌手|演唱|本人|自拍|我自己)/.test(name));
+}
+
+/** 演唱者标签：本人上传形象作歌手时为「男歌手（用户本人）」，否则沿用「男歌手（演唱者，与叙事主角分开）」。 */
+export function performerLabelZh(gender: "男" | "女", target: { creativePrompt?: string; referenceSummaries?: string[] }): string {
+  return isPerformerTheUser(target) ? `${gender}歌手（用户本人）` : `${gender}歌手（演唱者，与叙事主角分开）`;
+}
+
 /** 演唱者定妆帧（演唱镜 @图片1）：与叙事主角分开，性别按声线；同一生图链（Sunburst / 资产线 / 禁字）。 */
 export function mvSingerKeyframePrompt(gender: "男" | "女", styleText: string | undefined, aspectRatio: "9:16" | "16:9" = "9:16"): string {
   const who = gender === "男" ? "a male singer in his twenties, clean restrained look" : "a female singer in her twenties, clean restrained look";

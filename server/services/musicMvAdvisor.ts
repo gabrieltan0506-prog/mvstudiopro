@@ -8,13 +8,13 @@ import { buildLyricReviewContext } from "../../shared/lyricCraftReview";
 import type { CreativeEvidenceReviewInput } from "../../shared/creativeEvidenceReview";
 import { readCreativeLibraryContext, assertCreativeSelections, CREATIVE_LIBRARY_SELECTION_INSTRUCTIONS } from "./creativeLibraryRetrieval";
 import { creativeLearningTargetSchema, creativeLearningReportSchema, assertCreativeMethodEvidence, CREATIVE_LEARNING_INSTRUCTIONS, type CreativeLearningTarget } from "../../shared/creativeGenerationLibrary";
-import { parseCreativeAudioEvidence, creativeAudioEvidenceSchema, CREATIVE_AUDIO_READ_INSTRUCTIONS } from "../../shared/creativeMediaEvidence";
+import { parseCreativeAudioEvidence } from "../../shared/creativeMediaEvidence";
 import { repairJsonShape, normalizeMediaSections, normalizeShotDurations } from "../../shared/creativeProposalRepair";
 import { runCreativeHopChain } from "./creativeHopChain";
 import { computeSongBeatGrid } from "./musicMvBeatGrid";
 import { composeMusicMvShotBeats } from "./musicMvShotBeats";
 import { snapShotCutsToBeats } from "../../shared/canvasMusicMvBeats";
-import { detectPerformerGender } from "../../shared/canvasMusicMvReferences";
+import { detectPerformerGender, performerLabelZh } from "../../shared/canvasMusicMvReferences";
 import type { MusicMvBeatGrid } from "../../shared/canvasMusicMv";
 import { SUNO_SONG_CRAFT } from "../../shared/sunoSongCraft";
 import {
@@ -37,10 +37,7 @@ import {
   resolveCanvasMusicMvAudio,
   resolveCanvasMusicMvVideo,
 } from "./canvasMusicMvMedia";
-import {
-  generateGeminiBgmAnalysis,
-  MANHUA_BGM_ADVISOR_MODEL,
-} from "./manhuaAdvisorBgmMix";
+import { hearSongIndependently, SONG_HEARING_MODEL } from "./musicMvSongHearing";
 import { probeAudio } from "./postProduction";
 import {
   musicMvAdvisorTargetSchema,
@@ -93,7 +90,8 @@ const real = {
   resolveAudio: resolveCanvasMusicMvAudio,
   resolveVideo: resolveCanvasMusicMvVideo,
   read: readAudio,
-  generate: generateGeminiBgmAnalysis,
+  /** 独立听歌（Vertex gs:// → EvoLink 签名 URL 两跳；按歌曲 SHA 永久存档并复用）。 */
+  hear: hearSongIndependently as (input: { gcsUri: string; mimeType: string; durationSec: number; audioSha256: string }) => ReturnType<typeof hearSongIndependently>,
   upload: uploadBufferToGcsIfAbsent,
   bucket: getGcsBucketName,
   uuid: randomUUID,
@@ -186,32 +184,18 @@ export async function askMusicMvAdvisor(
       sha256: createHash("sha256").update(bytes).digest("hex"),
     };
   };
-  const request = {
-    model: MANHUA_BGM_ADVISOR_MODEL,
-    contents: [{ role: "user", parts: [
-      { text: JSON.stringify({sourceKey:target.sourceKey,audioId:target.audio?.id,audioDurationSec:target.audio?.durationSec,task:"读取本次完整音频的声音证据与逐段情绪，不生成创作方案"}) },
-      ...(buffer && mimeType ? [{inlineData:{mimeType,data:buffer.toString("base64")}}] : []),
-    ]}],
-    config: {systemInstruction:CREATIVE_AUDIO_READ_INSTRUCTIONS,responseMimeType:"application/json",maxOutputTokens:32768,httpOptions:{timeout:240_000}},
-  };
-  await save("request",{target,purpose,question,audioUri,durationSec,analysisBasis:videoReport?"native_video_audio":media?"native_audio":"user_brief",nativeVideoEvidence:videoReport,audioSha256:buffer?createHash("sha256").update(buffer).digest("hex"):undefined,model:media?MANHUA_BGM_ADVISOR_MODEL:undefined,config:media?request.config:undefined,textParts:request.contents.flatMap(c=>c.parts).filter(p=>"text" in p),audioMimeType:mimeType,audioBytes:buffer?.length});
+  const audioSha256=buffer?createHash("sha256").update(buffer).digest("hex"):undefined;
+  await save("request",{target,purpose,question,audioUri,durationSec,analysisBasis:videoReport?"native_video_audio":media?"native_audio":"user_brief",nativeVideoEvidence:videoReport,audioSha256,model:media?SONG_HEARING_MODEL:undefined,hearingScope:media?"song_only_no_story":undefined,audioMimeType:mimeType,audioBytes:buffer?.length});
   let sourceEvidence: unknown=videoReport || {basis:"user_brief",noteZh:"无参考媒体，不声称听过或看过"};
   let audioTokens=videoReport?.nativeEvidence?.audioTokens || 0;
   let receipt: unknown;
-  if(media){
-    const response=await deps.generate(request);
-    receipt=await save("raw",response);
-    audioTokens=response.usageMetadata?.promptTokensDetails?.filter(row=>String(row.modality)==="AUDIO").reduce((sum,row)=>sum+(row.tokenCount||0),0)||0;
+  if(media&&audioUri&&mimeType&&audioSha256){
+    // 1109：先「不看剧情」独立听歌（只送歌曲），结果按歌曲永久存档复用；剧情只在后续 GLM 编排阶段合入。
+    const hearing=await deps.hear({gcsUri:audioUri,mimeType,durationSec:target.audio!.durationSec,audioSha256});
+    receipt=await save("hearing",{reused:hearing.reused,cacheObject:hearing.cacheObject,evidencePrefix:hearing.evidencePrefix,channel:hearing.channel,model:hearing.model,audioTokens:hearing.audioTokens});
+    audioTokens=hearing.audioTokens;
     if(!audioTokens)throw Error("未取得歌曲音频处理回执，未以文字分析冒充听音");
-    if(response.candidates?.[0]?.finishReason!=="STOP" || !String(response.modelVersion||"").startsWith(MANHUA_BGM_ADVISOR_MODEL))throw Error("媒体读取模型或结束状态不符，原始回执保留");
-    if(!response.text?.trim())throw Error("歌曲分析未返回内容，原回执保留");
-    const decoded:unknown=JSON.parse(response.text);
-    await save("decoded",decoded);
-    // 听音分段先做确定性修复（形状 + 时间边界），修复过程落永久证据，再进严格校验；不动 heardZh/emotion。
-    const evidenceShape=repairJsonShape(decoded,creativeAudioEvidenceSchema);
-    const evidenceSections=normalizeMediaSections(evidenceShape.value,target.audio!.durationSec,0.1);
-    if(evidenceShape.fixes.length||evidenceSections.fixes.length)await save("evidence-normalized",{before:decoded,after:evidenceSections.value,fixes:{shape:evidenceShape.fixes,sections:evidenceSections.fixes}});
-    sourceEvidence=parseCreativeAudioEvidence(evidenceSections.value,target.sourceKey,target.audio!.durationSec);
+    sourceEvidence=parseCreativeAudioEvidence({...(hearing.evidence as object),sourceKey:target.sourceKey},target.sourceKey,target.audio!.durationSec);
   }
   // 1109 拍点网格：剪点吸附与逐窗节拍的依据（只在 MV 且真实听音时计算）
   const beatGrid=purpose==="mv"&&media&&buffer&&deps.beatGrid?await deps.beatGrid(buffer,(target as MusicMvAdvisorTarget).creativePrompt,((sourceEvidence as {sections?:Array<{startSec:number;endSec:number}>}).sections)||undefined):undefined;
@@ -319,13 +303,13 @@ export async function askMusicMvAdvisor(
     const mvTarget=target as MusicMvAdvisorTarget;
     const main=proposal.concepts[0]!;
     const gender=detectPerformerGender(mvTarget.creativePrompt);
-    const beats=await composeMusicMvShotBeats({plan:main.plan,beatGrid,lyrics:mvTarget.lyrics,creativePrompt:mvTarget.creativePrompt,concept:{titleZh:main.titleZh,rationaleZh:main.rationaleZh},sections:proposal.sections,...(gender?{performer:{genderZh:gender,descZh:`${gender}歌手（演唱者，与叙事主角分开）`}}:{})},{hops:deps.hops,compose:deps.compose,save});
+    const beats=await composeMusicMvShotBeats({plan:main.plan,beatGrid,lyrics:mvTarget.lyrics,creativePrompt:mvTarget.creativePrompt,concept:{titleZh:main.titleZh,rationaleZh:main.rationaleZh},sections:proposal.sections,...(gender?{performer:{genderZh:gender,descZh:performerLabelZh(gender,mvTarget)}}:{})},{hops:deps.hops,compose:deps.compose,save});
     beatsReport={filledShotIds:beats.filledShotIds,failedShotIds:beats.failedShotIds,failuresZh:beats.failuresZh};
     proposal=validateRefined({...proposal,concepts:proposal.concepts.map((c,i)=>i===0?{...c,plan:beats.plan}:c)});
   }
   const review=refinement.review;
   const answer={...proposal,evidenceId,review};
-  await save("accepted",{target,proposal:answer,sourceEvidence,creativeLibrary,receipt,model:review.model,draftModel:composed.model,hopsUsed,beatGrid,beatsReport,mediaModel:target.audio?MANHUA_BGM_ADVISOR_MODEL:undefined,audioTokens});
+  await save("accepted",{target,proposal:answer,sourceEvidence,creativeLibrary,receipt,model:review.model,draftModel:composed.model,hopsUsed,beatGrid,beatsReport,mediaModel:target.audio?SONG_HEARING_MODEL:undefined,audioTokens});
   return JSON.stringify({
     answer,
     model: review.model,
