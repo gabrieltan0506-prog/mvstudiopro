@@ -753,6 +753,22 @@ export const canvasMusicMvFinalGradeSchema = z
   .strict();
 export type CanvasMusicMvFinalGrade = z.infer<typeof canvasMusicMvFinalGradeSchema>;
 
+/** 成片局部修改记录：任务与计价在服务端（VideoEditPanel 报价确认后提交），这里只存结果与版本块；原成片不动。 */
+export const canvasMusicMvFinalEditSchema = z
+  .object({
+    id: z.string().uuid(),
+    finalBlockId: text.max(200),
+    sourceUrl: z.string().max(4000),
+    jobId: text.max(200),
+    videoUrl: z.string().url().max(4000),
+    gcsUri: z.string().max(4000).optional(),
+    durationSec: z.number().positive().max(3600).optional(),
+    editedRange: z.object({ startSec: z.number().min(0), endSec: z.number().positive() }).strict().optional(),
+    versionBlockId: text.max(200).optional(),
+  })
+  .strict();
+export type CanvasMusicMvFinalEdit = z.infer<typeof canvasMusicMvFinalEditSchema>;
+
 export const canvasMusicMvStateSchema = z
   .object({
     deliveryMode: z.enum(["song", "highlight"]).optional(),
@@ -888,6 +904,8 @@ export const canvasMusicMvStateSchema = z
     finalUpscales: z.array(canvasMusicMvFinalUpscaleSchema).max(40).optional(),
     /** 1109 成片调色：结果作为新版本块挂在成片旁，原片不动。 */
     finalGrades: z.array(canvasMusicMvFinalGradeSchema).max(40).optional(),
+    /** 1109 成片局部修改：结果作为新版本块挂在成片旁，原片不动。 */
+    finalEdits: z.array(canvasMusicMvFinalEditSchema).max(40).optional(),
     error: z.string().max(2000).optional(),
   })
   .strict()

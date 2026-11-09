@@ -69,7 +69,8 @@ import { CanvasMvLyricTableEditor } from "./CanvasMvLyricTableEditor";
 import { planMvHighlightFades } from "@shared/canvasMusicMvLyricKinds";
 import { recommendMusicMvHighlight } from "@shared/musicMvHighlight";
 import { CanvasMvShotReferencePicker } from "./CanvasMvShotReferencePicker";
-import type { CanvasMusicMvFinalGrade, CanvasMusicMvFinalUpscale } from "@shared/canvasMusicMv";
+import type { CanvasMusicMvFinalEdit, CanvasMusicMvFinalGrade, CanvasMusicMvFinalUpscale } from "@shared/canvasMusicMv";
+import { VideoEditPanel, type VideoEditResult } from "./VideoEditPanel";
 import { VideoGradePanel } from "./VideoGradePanel";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
 import type { MontageGrade } from "@/lib/montageFinish";
@@ -204,6 +205,7 @@ export function CanvasMusicMvStudio({
   const [gradeOpen, setGradeOpen] = useState(false);
   const [gradeDraft, setGradeDraft] = useState<MontageGrade | undefined>(undefined);
   const [gradeOutputSec, setGradeOutputSec] = useState<{ url: string; sec: number } | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
   const patch = (
     delta: Partial<CanvasMusicMvState>,
     extra: Partial<CanvasBlock> = {}
@@ -1101,6 +1103,56 @@ export function CanvasMusicMvStudio({
         throw e;
       }
     });
+  const openFinalEdit = () =>
+    perform(async () => {
+      const src = finalSource;
+      if (!state.finalBlockId || !/^https:\/\//i.test(src))
+        throw new Error("请先完成合成成片再局部修改");
+      setEditOpen(true);
+      if (gradeOutputSec?.url === src) return;
+      setProgress("读取成片实测时长…");
+      const meta = await probeWorkflowVideoSource(src);
+      setGradeOutputSec({ url: src, sec: meta.durationExactSec ?? meta.durationSec });
+      setProgress("");
+    });
+  /** 局部修改完成：记录随 MV 块保存（同任务号只记一次），并在成片旁挂「局部修改版」版本块；原成片不动。 */
+  const applyFinalEdit = (finalId: string, sourceUrl: string, result: VideoEditResult) => {
+    const url = String(result?.url || "").trim();
+    if (!/^https:\/\//i.test(url) || !result.jobId) return;
+    if ((latest.current.finalEdits || []).some(r => r.jobId === result.jobId)) return;
+    const recordId = crypto.randomUUID();
+    const id = `mvedit-${finalId}-${recordId}`.slice(0, 200);
+    const source = getBlocks().find(b => b.id === finalId);
+    const anchorBlock = source || block;
+    const version = defaultCanvasBlock(
+      "video",
+      anchorBlock.x,
+      anchorBlock.y + anchorBlock.height * 2 + 120,
+      anchorBlock.id
+    );
+    version.id = id;
+    const range = result.editedRange;
+    version.prompt = `${source?.prompt || "MV 成片"} · 局部修改版${range ? `（${range.startSec}–${range.endSec}秒）` : ""}`;
+    version.status = "done";
+    version.outputUrl = url;
+    version.outputUrls = [url];
+    version.aspectRatio = source?.aspectRatio || version.aspectRatio;
+    onAdd([version], source ? [{ fromId: source.id, toId: id }] : []);
+    const record: CanvasMusicMvFinalEdit = {
+      id: recordId,
+      finalBlockId: finalId,
+      sourceUrl,
+      jobId: result.jobId,
+      videoUrl: url,
+      ...(result.gcsUri ? { gcsUri: result.gcsUri } : {}),
+      ...(result.durationSec ? { durationSec: result.durationSec } : {}),
+      ...(range ? { editedRange: range } : {}),
+      versionBlockId: id,
+    };
+    patch({ finalEdits: [...(latest.current.finalEdits || []), record] });
+    setEditOpen(false);
+    setProgress("局部修改完成，已作为新版本放在成片旁");
+  };
   // 调色任务轮询（刷新恢复：记录随 MV 块持久化，挂载即接管）；成功后挂成成片旁的新版本块。
   const gradeNeedsPoll = (r: CanvasMusicMvFinalGrade) =>
     Boolean(r.jobId) && (r.status === "queued" || r.status === "running");
@@ -2152,6 +2204,16 @@ export function CanvasMusicMvStudio({
                   >
                     {gradeOpen ? "收起调色" : "调色"}
                   </button>
+                  <button
+                    type="button"
+                    className={button}
+                    disabled={busy}
+                    title="选一段描述要改的内容；先报价再确认，结果作为新版本放在成片旁，原成片保留"
+                    onClick={() => (editOpen ? setEditOpen(false) : openFinalEdit())}
+                    data-mv-final-edit-entry
+                  >
+                    {editOpen ? "收起局部修改" : "局部修改"}
+                  </button>
                   <span className="text-xs text-white/60">建议先调色再超分</span>
                 </div>
                 {gradeOpen && gradeOutputSec?.url === finalSource && (
@@ -2172,6 +2234,28 @@ export function CanvasMusicMvStudio({
                     </button>
                   </div>
                 )}
+                {editOpen && gradeOutputSec?.url === finalSource && state.finalBlockId && (
+                  <div data-mv-final-edit>
+                    <VideoEditPanel
+                      key={`edit:${finalSource.split("?")[0]}`}
+                      source={finalSource}
+                      durationSec={gradeOutputSec.sec}
+                      previewUrl={finalSource}
+                      onDone={result => applyFinalEdit(state.finalBlockId!, finalSource, result)}
+                    />
+                  </div>
+                )}
+                {(state.finalEdits || []).map(r => (
+                  <div key={r.id} className="flex flex-wrap items-center gap-2 text-xs">
+                    <span>
+                      局部修改版{r.finalBlockId !== state.finalBlockId ? "（旧成片）" : ""}
+                      {r.editedRange ? ` · ${r.editedRange.startSec}–${r.editedRange.endSec}秒` : ""}
+                    </span>
+                    <a className="underline" href={r.videoUrl} target="_blank" rel="noreferrer">
+                      打开局部修改版
+                    </a>
+                  </div>
+                ))}
                 {(state.finalGrades || []).map(r => (
                   <div key={r.id} className="flex flex-wrap items-center gap-2 text-xs">
                     <span>

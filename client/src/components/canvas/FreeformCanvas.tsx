@@ -127,6 +127,7 @@ import { canvasVideoUpscaleCredits } from "@shared/canvasGenerationPricing";
 import { canUpscaleNow } from "@/lib/manhuaDeliveryOrder";
 import { trpc } from "@/lib/trpc";
 import { VideoGradePanel } from "./VideoGradePanel";
+import { VideoEditPanel, type VideoEditResult } from "./VideoEditPanel";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
 import type { MontageGrade } from "@/lib/montageFinish";
 import {
@@ -894,6 +895,8 @@ export default function FreeformCanvas({
   const [gradeUseUpscaled, setGradeUseUpscaled] = useState(false);
   const [gradeProbedSec, setGradeProbedSec] = useState<Record<string, number>>({});
   const [gradeBusyId, setGradeBusyId] = useState<string | null>(null);
+  // 局部修改：面板展开的 block（报价/提交/轮询在 VideoEditPanel 内）；完成后新版本写入 outputUrls，原片保留
+  const [editPanelBlockId, setEditPanelBlockId] = useState<string | null>(null);
   const [maskBusyId, setMaskBusyId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{
     blockId: string;
@@ -1504,6 +1507,49 @@ export default function FreeformCanvas({
       }
     },
     [blocks, gradeProbedSec, upscaleProbedSources]
+  );
+
+  /** 局部修改面板：读实测时长（选区间按成片秒）。 */
+  const openEditPanel = useCallback(
+    async (blockId: string) => {
+      const block = blocks.find(b => b.id === blockId);
+      const src = String(block?.outputUrl || "").trim();
+      if (!block || !/^https:\/\//i.test(src)) {
+        toast.error("请先生成成片再局部修改");
+        return;
+      }
+      setEditPanelBlockId(blockId);
+      if (gradeProbedSec[src]) return;
+      const measured = upscaleProbedSources[src] || (await probeVideoUpscaleSource(src));
+      const sec = measured?.durationExactSec ?? measured?.durationSec;
+      if (sec) setGradeProbedSec(prev => ({ ...prev, [src]: sec }));
+      else toast.error("读取视频时长失败，请稍后重试");
+    },
+    [blocks, gradeProbedSec, upscaleProbedSources]
+  );
+
+  /** 局部修改完成：同 eraseCornerMarkForBlock 写法加新版本，原片留在 outputUrls 不覆盖。 */
+  const applyVideoEditForBlock = useCallback(
+    (blockId: string, sourceUrl: string, result: VideoEditResult) => {
+      const url = String(result?.url || "").trim();
+      const live = blocksRef.current.find(b => b.id === blockId);
+      if (!live || !/^https:\/\//i.test(url)) return;
+      const prevUrls = Array.isArray(live.outputUrls) ? live.outputUrls : [];
+      const current = String(live.outputUrl || "").trim();
+      if (current === url) return;
+      patchOne(blockId, {
+        outputUrl: url,
+        outputUrls: capManhuaMediaHistory(
+          [url, ...prevUrls, ...[current, sourceUrl].filter(Boolean)],
+          url,
+        ),
+        status: "done",
+        error: undefined,
+      });
+      setEditPanelBlockId(null);
+      toast.success("局部修改完成，已作为新版本加入，原片保留");
+    },
+    [patchOne]
   );
 
   /** 单片调色：提交后期 concat（单片 + grade）→ 等结果 → 新版本写入 outputUrls，原片留在历史不覆盖。 */
@@ -3591,6 +3637,35 @@ export default function FreeformCanvas({
                                         : "高清放大（2K / 4K）"}
                                     </button>
                                   ) : null}
+                                  {/* 局部修改：选区间描述要改的内容，完成后作为新版本写入 outputUrls，原片保留 */}
+                                  {editPanelBlockId === block.id ? (
+                                    (() => {
+                                      const editSrc = String(block.outputUrl || "").trim();
+                                      const editSec = gradeProbedSec[editSrc];
+                                      return (
+                                        <div className="space-y-1 rounded-lg border border-teal-300/30 bg-teal-500/[0.06] p-2" data-canvas-edit-panel>
+                                          {editSec ? (
+                                            <VideoEditPanel
+                                              key={`edit:${editSrc.split("?")[0]}`}
+                                              source={editSrc}
+                                              durationSec={editSec}
+                                              previewUrl={editSrc}
+                                              onDone={result => applyVideoEditForBlock(block.id, editSrc, result)}
+                                            />
+                                          ) : (
+                                            <div className="text-[10px] text-white/60">读取视频时长中…</div>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => setEditPanelBlockId(null)}
+                                            className="w-full rounded-lg border border-white/15 px-2 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.06]"
+                                          >
+                                            收起局部修改
+                                          </button>
+                                        </div>
+                                      );
+                                    })()
+                                  ) : null}
                                   {/* 调色：单片后期调色，结果作为新版本写入 outputUrls，原片保留；高清版也可调色 */}
                                   {gradePanelBlockId === block.id ? (
                                     (() => {
@@ -3656,6 +3731,17 @@ export default function FreeformCanvas({
                                       {gradeBusyId === block.id ? "调色处理中…" : "调色"}
                                     </button>
                                   )}
+                                  {editPanelBlockId !== block.id ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => void openEditPanel(block.id)}
+                                      className="w-full rounded-lg border border-teal-300/35 bg-teal-500/10 px-2 py-1.5 text-[11px] text-teal-50/90 hover:bg-teal-500/15"
+                                      title="选一段描述要改的内容；先报价再确认，结果作为新版本加入，原片保留"
+                                      data-canvas-edit-entry
+                                    >
+                                      局部修改
+                                    </button>
+                                  ) : null}
                                 </div>
                               ) : null}
                               {block.seedance25WebThreadLink ? (

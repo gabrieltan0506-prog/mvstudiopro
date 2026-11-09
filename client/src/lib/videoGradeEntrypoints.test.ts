@@ -4,7 +4,7 @@ import ts from "typescript";
 import { expect, it, vi } from "vitest";
 import { submitVideoGrade } from "./videoGradeSubmit";
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
-import { canvasMusicMvFinalGradeSchema } from "@shared/canvasMusicMv";
+import { canvasMusicMvFinalEditSchema, canvasMusicMvFinalGradeSchema } from "@shared/canvasMusicMv";
 
 /** 从真实组件源码取同名表达式（useCallback 取回调本体），在受控上下文里执行，不起浏览器。 */
 function production(file: string) {
@@ -38,7 +38,8 @@ it("两处入口按钮都在：自由画布紧挨高清放大、MV 第 6 步在�
   const gradeBtn = free.source.indexOf("data-canvas-grade-entry");
   expect(upscaleBtn).toBeGreaterThan(0);
   expect(gradeBtn).toBeGreaterThan(upscaleBtn);
-  expect(gradeBtn - upscaleBtn).toBeLessThan(6000);
+  // 与高清放大同在成片操作区：位于该区结束（创作记录链接）之前
+  expect(gradeBtn).toBeLessThan(free.source.indexOf("block.seedance25WebThreadLink ?", upscaleBtn));
   expect(free.source).toContain("<VideoGradePanel");
   const block = mv.source.indexOf("data-mv-final-upscale");
   const gradeArea = mv.source.indexOf("data-mv-final-grade");
@@ -123,5 +124,61 @@ it("MV 成片调色：记录 finalGrades（schema 合法）、单片 grade 透�
   const [record] = latest.current.finalGrades as Array<Record<string, unknown>>;
   expect(record).toMatchObject({ finalBlockId: "mvfinal-1", sourceUrl: original, grade, status: "queued", jobId: "mv-grade-job" });
   expect(canvasMusicMvFinalGradeSchema.safeParse(record).success).toBe(true);
+  expect(finalBlock.outputUrl).toBe(original);
+});
+
+it("局部修改入口：自由画布紧挨调色、MV 第 6 步在调色旁，均挂 VideoEditPanel", () => {
+  const gradeBtn = free.source.indexOf("data-canvas-grade-entry");
+  const editBtn = free.source.indexOf("data-canvas-edit-entry");
+  expect(editBtn).toBeGreaterThan(gradeBtn);
+  expect(editBtn - gradeBtn).toBeLessThan(1500);
+  expect(free.source).toContain("<VideoEditPanel");
+  const gradeArea = mv.source.indexOf("data-mv-final-grade");
+  const mvEdit = mv.source.indexOf("data-mv-final-edit-entry");
+  expect(mvEdit).toBeGreaterThan(gradeArea);
+  expect(mvEdit - gradeArea).toBeLessThan(1500);
+  expect(mv.source).toContain("<VideoEditPanel");
+});
+
+it("自由画布局部修改 onDone：新版本写 outputUrls 最前，原片保留", () => {
+  const block = { id: "v4", kind: "video", outputUrl: original, outputUrls: [original] };
+  const patchOne = vi.fn();
+  const ctx = { blocksRef: { current: [block] }, patchOne, capManhuaMediaHistory, setEditPanelBlockId: vi.fn(), toast: { success: vi.fn(), error: vi.fn() }, Array, String, Boolean };
+  const edited = "https://video.test/edited.mp4";
+  free.run("applyVideoEditForBlock", ctx)("v4", original, { url: edited, jobId: "edit-job", editedRange: { startSec: 2, endSec: 4 } });
+  const [id, patch] = patchOne.mock.calls[0];
+  expect(id).toBe("v4");
+  expect(patch.outputUrl).toBe(edited);
+  expect(patch.outputUrls[0]).toBe(edited);
+  expect(patch.outputUrls).toContain(original);
+  expect(block.outputUrl).toBe(original);
+  free.run("applyVideoEditForBlock", ctx)("v4", original, { url: "not-a-url", jobId: "x" });
+  expect(patchOne).toHaveBeenCalledTimes(1);
+});
+
+it("MV 成片局部修改 onDone：挂局部修改版版本块、记录随块保存（schema 合法、同任务只记一次）、原成片不动", () => {
+  const finalBlock = { id: "mvfinal-1", kind: "video", outputUrl: original, x: 0, y: 0, width: 300, height: 200, prompt: "完整 MV", aspectRatio: "9:16" };
+  const latest = { current: { finalBlockId: "mvfinal-1", finalEdits: [] as unknown[] } };
+  const patch = vi.fn((delta: Record<string, unknown>) => { latest.current = { ...latest.current, ...delta }; });
+  const onAdd = vi.fn();
+  const edited = "https://video.test/edited.mp4";
+  const ctx = {
+    latest, patch, onAdd, getBlocks: () => [finalBlock], block: { id: "mv-studio", x: 0, y: 0, width: 1, height: 1 },
+    defaultCanvasBlock: (kind: string, x: number, y: number) => ({ id: "tmp", kind, x, y, width: 300, height: 200, aspectRatio: "16:9" }),
+    crypto: { randomUUID: () => "22222222-2222-4222-8222-222222222222" }, setEditOpen: vi.fn(), setProgress: vi.fn(), String,
+  };
+  const apply = mv.run("applyFinalEdit", ctx);
+  const result = { url: edited, jobId: "edit-job", durationSec: 12, editedRange: { startSec: 2, endSec: 4 } };
+  apply("mvfinal-1", original, result);
+  apply("mvfinal-1", original, result);
+  expect(onAdd).toHaveBeenCalledTimes(1);
+  const [[version], edges] = onAdd.mock.calls[0];
+  expect(version.outputUrl).toBe(edited);
+  expect(version.prompt).toContain("局部修改版");
+  expect(edges).toEqual([{ fromId: "mvfinal-1", toId: version.id }]);
+  const records = latest.current.finalEdits as Array<Record<string, unknown>>;
+  expect(records).toHaveLength(1);
+  expect(records[0]).toMatchObject({ finalBlockId: "mvfinal-1", sourceUrl: original, jobId: "edit-job", videoUrl: edited, versionBlockId: version.id });
+  expect(canvasMusicMvFinalEditSchema.safeParse(records[0]).success).toBe(true);
   expect(finalBlock.outputUrl).toBe(original);
 });
