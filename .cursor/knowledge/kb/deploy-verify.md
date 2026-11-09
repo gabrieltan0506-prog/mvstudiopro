@@ -12,6 +12,10 @@
 2. 同时核对真实任务列表的 queued/running 与相关日志；不能仅凭日志没有输出判空闲。单机换版存在中断风险，恢复与退款按具体任务链分别验证，不笼统声称全站无退款。
 3. 存在在途学习、运行中生成或冲突部署时不执行合并/部署；状态无法确认也不执行，不取消用户任务腾窗口。
 
+## 合并前问探针（2026-11-09）
+- 每张 PR 合并前先问用户「要不要跑隔离探针」，拿到跑/不跑的明确答复才能合并；规则正文见 `.cursor/rules/ship-always.mdc` 第四节。
+- 问法模板：「PR #N（改了什么，一句话）。建议：跑/不跑（理由一句）。要跑探针吗？」
+
 ## 部署间隔（2026-11-08）
 - 相邻两次触发部署（合并 main / 直推 main / rerun Fly Deploy / Vercel Redeploy / 手动 fly deploy）至少隔 30 分钟，从上一次触发时刻起算。规则正文见 `.cursor/rules/ship-always.mdc` 第四节。
 - 核对命令：`gh api repos/<r>/commits/main --jq .commit.committer.date`；`gh api "repos/<r>/actions/runs?branch=main&per_page=1" --jq '.workflow_runs[0].created_at'`；`gh api "repos/<r>/deployments?environment=Production&per_page=1" --jq '.[0].created_at'`。
