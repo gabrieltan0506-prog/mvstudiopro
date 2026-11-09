@@ -8,9 +8,8 @@ import type {
   AdvisorEditRegistration,
   AdvisorScoringControl,
   AdvisorScoringRegistration,
-  AdvisorVideoEditControl,
-  AdvisorVideoEditRegistration,
 } from "@/lib/manhuaAdvisorWorkflowControl";
+import { createAdvisorVideoEditHub } from "@/lib/advisorVideoEditControl";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import {
   MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS,
@@ -40,6 +39,8 @@ export function CanvasMvPostProdWorkbench(props: {
   storage: Storage;
   disabled: boolean;
   beforeSubmit: () => Promise<void>;
+  /** 同页其他「局部修改」入口（如第 6 步成片）共用的顾问 videoEdit 汇总；缺省本工作台自建。 */
+  advisorVideoEditHub?: ReturnType<typeof createAdvisorVideoEditHub>;
 }) {
   const [advisorOpen, setAdvisorOpen] = useState(false),
     [dock, setDock] = useState<HTMLDivElement | null>(null);
@@ -50,9 +51,10 @@ export function CanvasMvPostProdWorkbench(props: {
   });
   const effects = useRef(new Map<string, AdvisorEffectsControl>()),
     scoring = useRef<AdvisorScoringControl | null>(null),
-    edit = useRef<AdvisorEditControl | null>(null),
-    /** 视频局部修改面板挂载后经此注册（只预填，不提交）。 */
-    videoEdit = useRef<AdvisorVideoEditControl | null>(null);
+    edit = useRef<AdvisorEditControl | null>(null);
+  /** 视频局部修改各入口经此汇总登记（只预填，不提交）。 */
+  const ownVideoEditHub = useMemo(() => createAdvisorVideoEditHub(), []);
+  const videoEditHub = props.advisorVideoEditHub ?? ownVideoEditHub;
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
@@ -77,9 +79,7 @@ export function CanvasMvPostProdWorkbench(props: {
   const registerEdit = useCallback<AdvisorEditRegistration>(control => {
     edit.current = control;
   }, []);
-  const registerVideoEdit = useCallback<AdvisorVideoEditRegistration>(control => {
-    videoEdit.current = control;
-  }, []);
+  const registerVideoEdit = useMemo(() => videoEditHub.register("postprod"), [videoEditHub]);
   const latest = useRef(props);
   latest.current = props;
   const advisorProject = useMemo(() => {
@@ -191,9 +191,7 @@ export function CanvasMvPostProdWorkbench(props: {
             });
           // 视频局部修改：只打开面板预填，不经 beforeSubmit、不提交
           if (action.action === "videoEdit") {
-            if (!videoEdit.current)
-              throw new Error("视频局部修改尚未就绪，请先打开后期工坊的视频局部修改");
-            return await videoEdit.current(action, signal);
+            return await videoEditHub.control(action, signal);
           }
           if (
             action.action !== "effects" &&

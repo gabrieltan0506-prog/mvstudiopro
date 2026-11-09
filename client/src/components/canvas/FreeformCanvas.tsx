@@ -128,6 +128,8 @@ import { canUpscaleNow } from "@/lib/manhuaDeliveryOrder";
 import { trpc } from "@/lib/trpc";
 import { VideoGradePanel } from "./VideoGradePanel";
 import { VideoEditPanel, type VideoEditResult } from "./VideoEditPanel";
+import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
+import type { AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
 import type { MontageGrade } from "@/lib/montageFinish";
 import {
@@ -284,6 +286,11 @@ export function CanvasWanVideoReferencePicker({
   );
 }
 
+/** 画布视频块是否挂「局部修改 / 调色 / 高清放大」入口（与渲染条件同一处；顾问 videoEdit 清单只列有入口的块）。 */
+function canvasBlockHasVideoTools(block: CanvasBlock): boolean {
+  return block.videoModel === "seedance-2.5" && Boolean(block.outputUrl) && /\.(mp4|mov|webm|m4v)(\?|$)/i.test(String(block.outputUrl));
+}
+
 /** 左栏节点列表标题（学参考画布：可读名 + 类型，不泄供应商） */
 function freeformNodeListLabel(block: CanvasBlock): string {
   const id = String(block.id || "");
@@ -316,6 +323,8 @@ type BlocksUpdater = CanvasBlock[] | ((prev: CanvasBlock[]) => CanvasBlock[]);
 
 type FreeformCanvasProps = {
   projectId?: string;
+  /** 顾问 videoEdit 登记口：清单为本画布已出片的视频块（targetId=块 id），prefill 打开该块「局部修改」并预填，不提交。 */
+  onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
   /** 1110 MV 多人互动镜头自动白模：页面注入的创作顾问白模入口。 */
   mvPrevis?: import("./CanvasMvShotReferencePicker").MvPrevisBridge;
   /** MV 项目把已有音乐控制区放到不缩放的工作流面板，保留镜头画布。 */
@@ -825,6 +834,7 @@ function CanvasAssetVisualBody({
 
 export default function FreeformCanvas({
   projectId,
+  onAdvisorVideoEditControl,
   mvPrevis,
   musicWorkflow = false,
   projectAssetRefs = [],
@@ -1508,6 +1518,44 @@ export default function FreeformCanvas({
     },
     [blocks, gradeProbedSec, upscaleProbedSources]
   );
+
+  /** 顾问 videoEdit 预填（按块；nonce 变化即覆盖面板内容）。 */
+  const [editPrefill, setEditPrefill] = useState<{ blockId: string; startSec: number; endSec: number; promptZh: string; nonce: number }>();
+  const advisorEditLive = useRef({ blocks, sec: gradeProbedSec, probed: upscaleProbedSources });
+  advisorEditLive.current = { blocks, sec: gradeProbedSec, probed: upscaleProbedSources };
+  useEffect(() => {
+    if (!onAdvisorVideoEditControl) return;
+    const cur = () => advisorEditLive.current;
+    const srcOf = (b: CanvasBlock) => String(b.outputUrl || "").trim();
+    // 只列画布上真有「局部修改」入口且为 https 成片的块（同 openEditPanel 条件），预填才能打开对应面板
+    const videos = () => cur().blocks.filter(b => canvasBlockHasVideoTools(b) && /^https:\/\//i.test(srcOf(b)));
+    const known: Record<string, number> = {};
+    const base = createAdvisorVideoEditControl({
+      targets: () =>
+        videos().flatMap((b, i) => {
+          const sec = cur().sec[srcOf(b)] ?? known[srcOf(b)];
+          return sec ? [{ id: b.id, label: `画布视频块${i + 1}·${freeformNodeListLabel(b)}`, url: srcOf(b), durationSec: sec }] : [];
+        }),
+      open: p => {
+        setEditPanelBlockId(p.targetId);
+        setEditPrefill({ blockId: p.targetId, startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, nonce: Date.now() });
+      },
+    });
+    onAdvisorVideoEditControl(async (action, signal) => {
+      // 未读过时长的已出片视频块先读实测时长（只读元数据，不扣费）
+      const missing = videos().map(srcOf).filter(src => !cur().sec[src] && !known[src]);
+      const measured = await Promise.all(missing.map(async src => [src, cur().probed[src] || (await probeVideoUpscaleSource(src).catch(() => null))] as const));
+      signal.throwIfAborted();
+      const got: Record<string, number> = {};
+      for (const [src, m] of measured) {
+        const sec = m?.durationExactSec ?? m?.durationSec;
+        if (sec) got[src] = known[src] = sec;
+      }
+      if (Object.keys(got).length) setGradeProbedSec(prev => ({ ...prev, ...got }));
+      return base(action, signal);
+    });
+    return () => onAdvisorVideoEditControl(null);
+  }, [onAdvisorVideoEditControl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 局部修改面板：读实测时长（选区间按成片秒）。 */
   const openEditPanel = useCallback(
@@ -3532,8 +3580,7 @@ export default function FreeformCanvas({
                                   </div>
                                 );
                               })()}
-                              {block.videoModel === "seedance-2.5" && block.outputUrl &&
-                              /\.(mp4|mov|webm|m4v)(\?|$)/i.test(block.outputUrl) ? (
+                              {canvasBlockHasVideoTools(block) ? (
                                 <div className="space-y-1.5">
                                   <button
                                     type="button"
@@ -3650,6 +3697,7 @@ export default function FreeformCanvas({
                                               source={editSrc}
                                               durationSec={editSec}
                                               previewUrl={editSrc}
+                                              prefill={editPrefill?.blockId === block.id ? editPrefill : undefined}
                                               onDone={result => applyVideoEditForBlock(block.id, editSrc, result)}
                                             />
                                           ) : (

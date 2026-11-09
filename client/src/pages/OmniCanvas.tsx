@@ -26,6 +26,7 @@ import { splitManhuaEpisodeStoryText } from "@shared/manhuaAdvisorRewrite";
 import { readVoiceStoryboardRaw, saveVoiceStoryboardDurable, archiveVoiceStoryboardDurable } from "@/lib/creativeVoiceStoryboardStore";
 import { voiceStoryboardResultState, normalizeVoiceStoryboardSource, requireVoiceStoryboardCandidate, voiceStoryboardSource, type VoiceStoryboardCandidate } from "@/lib/creativeVoiceStoryboard";
 import { resolveAdvisorMediaReferenceUrl } from "@/lib/advisorMediaImageJob";
+import { createAdvisorVideoEditHub } from "@/lib/advisorVideoEditControl";
 import { CANVAS_IMAGE_CREDITS_PER_SHOT, CANVAS_IMAGE_CREDITS_BATCH } from "@shared/canvasGenerationPricing";
 import { isAdvisorMediaSourceUrl, assertAdvisorMediaSource, type AdvisorMediaPlan, type AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
 import { useManhuaTemplateCatalogEvents } from "@/hooks/useManhuaTemplateCatalogEvents";
@@ -10712,6 +10713,8 @@ function OmniCanvasWorkspace() {
   const registerAdvisorModelControl=useCallback<AdvisorModelRegistration>((assetId,control)=>{if(control)advisorModelControls.current.set(assetId,control);else advisorModelControls.current.delete(assetId);},[]);
   const advisorEditControl=useRef<AdvisorEditControl|null>(null);
   const registerAdvisorEditControl=useCallback((control:AdvisorEditControl|null)=>{advisorEditControl.current=control;},[]);
+  /** 顾问 videoEdit：画布视频块与后期工坊「局部修改」各自登记，汇总后按 targetId 预填；只打开面板，不提交。 */
+  const advisorVideoEditHub=useMemo(()=>createAdvisorVideoEditHub(),[]);
   const advisorWorldControl=useRef<AdvisorWorldControl|null>(null);
   const registerAdvisorWorldControl=useCallback((control:AdvisorWorldControl|null)=>{advisorWorldControl.current=control;},[]);
   const advisorEffectsControls=useRef(new Map<string,AdvisorEffectsControl>());
@@ -11352,8 +11355,8 @@ async function runAdvisorWriterTrial() {
             }
             throw new Error("原场景工作台尚未就绪，未导出或采用。");
           }
-          // 视频局部修改面板挂在后期工坊；此处不预填、不提交
-          if (action.action === "videoEdit") throw new Error("视频局部修改请在后期工坊打开后再让顾问预填，未改动");
+          // 视频局部修改：只打开对应面板并预填；报价与提交须用户在面板确认
+          if (action.action === "videoEdit") return advisorVideoEditHub.control(action, signal);
           if (action.action === "edit") {
             if (action.episode !== writerFocusEpisode) throw new Error("请先切换到目标集，再读取剪辑清单");
             const scope = voiceStoryboardScope;
@@ -12412,6 +12415,7 @@ async function runAdvisorWriterTrial() {
                       {user?.id && <ArtMotionStudio key={artMotionScopeKey} scopeKey={artMotionScopeKey} blocks={blocks} onCreate={createArtMotionBlock} onSave={persistArtMotionBlock} />}
 </>}>
           <FreeformCanvas
+            onAdvisorVideoEditControl={advisorVideoEditHub.register("canvas-1")}
             projectId={projectScope?.projectId}
                         onSelectedBlockIdChange={setCanvasSelectedBlockId}
                         resolveManhuaOutboundGate={(blockId) => ({
@@ -13978,6 +13982,7 @@ async function runAdvisorWriterTrial() {
                       {user?.id && <ImageWorldStudio key={`image-world:${artMotionScopeKey}`} scopeKey={artMotionScopeKey} blocks={blocks} enabled={canUseManhua3d} onSave={persistImageWorldBlocks} onRun={runImageWorldBlock} onAudioChange={persistClipAudioStudio} />}
           {user?.id && <ArtMotionStudio key={artMotionScopeKey} scopeKey={artMotionScopeKey} blocks={blocks} onCreate={createArtMotionBlock} onSave={persistArtMotionBlock} />}
           <FreeformCanvas
+            onAdvisorVideoEditControl={advisorVideoEditHub.register("canvas-2")}
             projectId={projectScope?.projectId}
                         onSelectedBlockIdChange={setCanvasSelectedBlockId}
                         resolveManhuaOutboundGate={(blockId) => ({
@@ -14538,6 +14543,7 @@ async function runAdvisorWriterTrial() {
               {/* 后期工坊(蓝图二):三件套已上线,卡内只挂真实工序;按用户挂载防串单 */}
               {user?.id ? (
                 <PostProdWorkshopCard
+                  onAdvisorVideoEditControl={advisorVideoEditHub.register("postprod")}
                   advisorOpen={advisorOpen}
                   onVfxAdvisorDockChange={setVfxAdvisorDockHost}
                   onStudioFocus={reportPostprodStudio}
@@ -14732,6 +14738,7 @@ async function runAdvisorWriterTrial() {
               <p className="mt-4 text-sm leading-7 text-white/65">先创作歌词、歌曲与专辑封面；需要推广时，再选30–60秒高光制作抖音MV，引流至汽水音乐。已有作品和任务会保留，每次生成仍需你确认。</p>
             </section>}
           <FreeformCanvas
+            onAdvisorVideoEditControl={advisorVideoEditHub.register("canvas-3")}
             projectId={projectScope?.projectId}
             musicWorkflow={isMvProject}
             mvPrevis={mvPrevisBridge}

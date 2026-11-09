@@ -1378,7 +1378,7 @@ export default function PostProdWorkshopCard({
         targets: () => {
           const { url, source } = cur();
           const sec = source ? source.durationExactSec ?? source.durationSec : 0;
-          return url && sec > 0 ? [{ id: "current", label: "所选这一条成片", url, durationSec: sec }] : [];
+          return url && sec > 0 ? [{ id: "postprod-selected", label: "后期工坊所选这一条成片", url, durationSec: sec }] : [];
         },
         busy: () => cur().busy,
         open: p => {

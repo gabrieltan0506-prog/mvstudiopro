@@ -26,7 +26,7 @@ import {
   shouldSyncMusicUploadedReferences,
 } from "@/lib/canvasMusicMvGuards";
 import { parseManhuaClipTargetDurationSec } from "@shared/manhuaScriptWorkbench";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
 import { pollJobUntilTerminal } from "@/lib/jobs";
@@ -71,6 +71,7 @@ import { recommendMusicMvHighlight } from "@shared/musicMvHighlight";
 import { CanvasMvShotReferencePicker } from "./CanvasMvShotReferencePicker";
 import type { CanvasMusicMvFinalEdit, CanvasMusicMvFinalGrade, CanvasMusicMvFinalUpscale } from "@shared/canvasMusicMv";
 import { VideoEditPanel, type VideoEditResult } from "./VideoEditPanel";
+import { createAdvisorVideoEditControl, createAdvisorVideoEditHub } from "@/lib/advisorVideoEditControl";
 import { VideoGradePanel } from "./VideoGradePanel";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
 import type { MontageGrade } from "@/lib/montageFinish";
@@ -205,6 +206,9 @@ export function CanvasMusicMvStudio({
   const [gradeOpen, setGradeOpen] = useState(false);
   const [gradeDraft, setGradeDraft] = useState<MontageGrade | undefined>(undefined);
   const [gradeOutputSec, setGradeOutputSec] = useState<{ url: string; sec: number } | null>(null);
+  /** 顾问 videoEdit：第 5 步后期工坊与第 6 步成片共用一个汇总；预填只打开面板，提交仍须用户在面板确认。 */
+  const advisorVideoEditHub = useMemo(() => createAdvisorVideoEditHub(), []);
+  const [finalEditPrefill, setFinalEditPrefill] = useState<{ startSec: number; endSec: number; promptZh: string; nonce: number }>();
   const [editOpen, setEditOpen] = useState(false);
   const patch = (
     delta: Partial<CanvasMusicMvState>,
@@ -1115,6 +1119,35 @@ export function CanvasMusicMvStudio({
       setGradeOutputSec({ url: src, sec: meta.durationExactSec ?? meta.durationSec });
       setProgress("");
     });
+  const finalEditLive = useRef({ finalSource, finalBlockId: state.finalBlockId, sec: gradeOutputSec, busy });
+  finalEditLive.current = { finalSource, finalBlockId: state.finalBlockId, sec: gradeOutputSec, busy };
+  useEffect(() => {
+    const cur = () => finalEditLive.current;
+    const base = createAdvisorVideoEditControl({
+      targets: () => {
+        const { finalSource: url, finalBlockId, sec } = cur();
+        return finalBlockId && /^https:\/\//i.test(url) && sec?.url === url && sec.sec > 0 ? [{ id: "mv-final", label: "MV 合成成片", url, durationSec: sec.sec }] : [];
+      },
+      busy: () => cur().busy,
+      open: p => {
+        setEditOpen(true);
+        setFinalEditPrefill({ startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, nonce: Date.now() });
+      },
+    });
+    const register = advisorVideoEditHub.register("mv-final");
+    register(async (action, signal) => {
+      // 成片时长未读过：先读实测时长（只读元数据，不扣费），清单才列出本成片
+      const { finalSource: url, finalBlockId, sec } = cur();
+      if (finalBlockId && /^https:\/\//i.test(url) && sec?.url !== url) {
+        const meta = await probeWorkflowVideoSource(url);
+        signal.throwIfAborted();
+        setGradeOutputSec({ url, sec: meta.durationExactSec ?? meta.durationSec });
+        finalEditLive.current = { ...cur(), sec: { url, sec: meta.durationExactSec ?? meta.durationSec } };
+      }
+      return base(action, signal);
+    });
+    return () => register(null);
+  }, [advisorVideoEditHub]); // eslint-disable-line react-hooks/exhaustive-deps
   /** 局部修改完成：记录随 MV 块保存（同任务号只记一次），并在成片旁挂「局部修改版」版本块；原成片不动。 */
   const applyFinalEdit = (finalId: string, sourceUrl: string, result: VideoEditResult) => {
     const url = String(result?.url || "").trim();
@@ -2144,6 +2177,7 @@ export function CanvasMusicMvStudio({
                   storage={window.localStorage}
                   disabled={busy}
                   beforeSubmit={async () => {}}
+                  advisorVideoEditHub={advisorVideoEditHub}
                 />
               );
             })()}
@@ -2241,6 +2275,7 @@ export function CanvasMusicMvStudio({
                       source={finalSource}
                       durationSec={gradeOutputSec.sec}
                       previewUrl={finalSource}
+                      prefill={finalEditPrefill}
                       onDone={result => applyFinalEdit(state.finalBlockId!, finalSource, result)}
                     />
                   </div>

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { creativeVoiceProductionSchema } from "@shared/creativeVoiceProduction";
 import { MANHUA_ADVISOR_WORKFLOW_HELP } from "@shared/manhuaAdvisorWorkflow";
 import { prepareAdvisorVideoEditPrefill } from "@shared/advisorVideoEdit";
-import { createAdvisorVideoEditControl } from "./advisorVideoEditControl";
+import { createAdvisorVideoEditControl, createAdvisorVideoEditHub } from "./advisorVideoEditControl";
 
 const targets = [{ id: "clip-1", label: "第1段成片", url: "https://cdn.test/a.mp4", durationSec: 40 }];
 const refs = [{ id: "ref-1", label: "商店门口", url: "https://cdn.test/shop.png" }];
@@ -66,10 +66,69 @@ describe("顾问 videoEdit 接线", () => {
     const card = readFileSync("client/src/components/canvas/PostProdWorkshopCard.tsx", "utf8");
     const mv = readFileSync("client/src/components/canvas/CanvasMvPostProdWorkbench.tsx", "utf8");
     expect(mv).toContain("onAdvisorVideoEditControl={registerVideoEdit}");
-    expect(mv).toMatch(/action\.action === "videoEdit"[\s\S]{0,200}videoEdit\.current\(action, signal\)/);
+    expect(mv).toMatch(/action\.action === "videoEdit"[\s\S]{0,200}videoEditHub\.control\(action, signal\)/);
     expect(card).toContain("createAdvisorVideoEditControl(");
     expect(card).toMatch(/open: p => \{\s*setQuickEditOpen\(true\);\s*setAdvisorEditPrefill\(/);
     expect(card).toContain("prefill={advisorEditPrefill}");
     expect(card.indexOf("const busy = queueMutation.isPending || disabled;")).toBeLessThan(card.indexOf("const advisorVideoEditLive"));
+  });
+});
+
+describe("多个「局部修改」入口汇总", () => {
+  const mk = (id: string, label: string, durationSec: number, open: (p: unknown) => void) =>
+    createAdvisorVideoEditControl({ targets: () => [{ id, label, url: `https://cdn.test/${id}.mp4`, durationSec }], open });
+  it("inspect 合并去重、prefill 按 targetId 只开对应面板；无入口给中文原因", async () => {
+    const hub = createAdvisorVideoEditHub();
+    expect(await hub.control({ action: "videoEdit", operation: "inspect" }, sig()).then(() => "ok", (e: Error) => e.message)).toContain("没有可局部修改的成片");
+    const openA = vi.fn(), openB = vi.fn();
+    hub.register("postprod")(mk("postprod-selected", "后期工坊所选这一条成片", 20, openA));
+    hub.register("mv-final")(mk("mv-final", "MV 合成成片", 60, openB));
+    hub.register("dup")(mk("mv-final", "MV 合成成片", 60, vi.fn()));
+    const inv = JSON.parse(await hub.control({ action: "videoEdit", operation: "inspect" }, sig()));
+    expect(inv.videos.map((v: { targetId: string }) => v.targetId)).toEqual(["postprod-selected", "mv-final"]);
+    const r = JSON.parse(await hub.control({ action: "videoEdit", operation: "prefill", targetId: "mv-final", startSec: 40, endSec: 50, promptZh: "结尾天空更亮" }, sig()));
+    expect(r).toMatchObject({ status: "prefilled", targetId: "mv-final" });
+    expect(openB).toHaveBeenCalledTimes(1);
+    expect(openA).not.toHaveBeenCalled();
+    // 超出该片时长：按目标片校验（20 秒片不接受 40–50）
+    expect(await hub.control({ action: "videoEdit", operation: "prefill", targetId: "postprod-selected", startSec: 40, endSec: 50, promptZh: "改背景" }, sig()).then(() => "ok", (e: Error) => e.message)).toContain("超出视频时长 20 秒");
+    expect(await hub.control({ action: "videoEdit", operation: "prefill", targetId: "nope", startSec: 0, endSec: 5, promptZh: "改背景" }, sig()).then(() => "ok", (e: Error) => e.message)).toContain("不在当前可编辑清单");
+    hub.register("mv-final")(null);
+    hub.register("dup")(null);
+    expect(JSON.parse(await hub.control({ action: "videoEdit", operation: "inspect" }, sig())).videos).toHaveLength(1);
+    expect(hub.register("postprod")).toBe(hub.register("postprod"));
+  });
+  it("各入口接线：画布视频块、MV 第 6 步成片、漫剧页汇总；预填只开面板", async () => {
+    const { readFileSync } = await import("node:fs");
+    const canvas = readFileSync("client/src/components/canvas/FreeformCanvas.tsx", "utf8");
+    const studio = readFileSync("client/src/components/canvas/CanvasMusicMvStudio.tsx", "utf8");
+    const omni = readFileSync("client/src/pages/OmniCanvas.tsx", "utf8");
+    expect(canvas).toMatch(/open: p => \{\s*setEditPanelBlockId\(p\.targetId\);\s*setEditPrefill\(/);
+    expect(canvas).toContain("prefill={editPrefill?.blockId === block.id ? editPrefill : undefined}");
+    expect(studio).toContain('advisorVideoEditHub.register("mv-final")');
+    expect(studio).toMatch(/open: p => \{\s*setEditOpen\(true\);\s*setFinalEditPrefill\(/);
+    expect(studio).toContain("prefill={finalEditPrefill}");
+    expect(studio).toContain("advisorVideoEditHub={advisorVideoEditHub}");
+    expect(omni).toContain('if (action.action === "videoEdit") return advisorVideoEditHub.control(action, signal);');
+    for (const k of ["canvas-1", "canvas-2", "canvas-3", "postprod"]) expect(omni).toContain(`advisorVideoEditHub.register("${k}")`);
+    // 画布清单只列真有「局部修改」入口的块（与渲染条件同一谓词），防预填了却打不开面板
+    expect(canvas).toContain("{canvasBlockHasVideoTools(block) ? (");
+    expect(canvas).toMatch(/const videos = \(\) => cur\(\)\.blocks\.filter\(b => canvasBlockHasVideoTools\(b\)/);
+    for (const src of [canvas, studio]) expect(src).not.toMatch(/queueVideoPartialEdit/);
+  });
+  it("代码动画与营销成片：登记口 + advisorTarget 唯一，预填只开面板", async () => {
+    const { readFileSync } = await import("node:fs");
+    const upscale = readFileSync("client/src/components/HomePhotoVideoUpscale.tsx", "utf8");
+    const marketing = readFileSync("client/src/components/platform/MarketingProductionPanel.tsx", "utf8");
+    expect(upscale).toContain('{ id: `code-motion:${projectKey}`.slice(0, 200), label: "代码动画成片" }');
+    expect(upscale).toContain('{ id: "home-video-tool", label: "首页视频工具当前视频" }');
+    expect(marketing).toContain('advisorTarget = { id: "marketing-final", label: "营销成片" }');
+    for (const src of [upscale, marketing]) {
+      expect(src).toContain("createAdvisorVideoEditControl(");
+      expect(src).toMatch(/open: p => \{\s*setTool\("edit"\);\s*setEditPrefill\(/);
+      expect(src).toContain("prefill={editPrefill}");
+      expect(src).toContain("return () => onAdvisorVideoEditControl(null);");
+      expect(src).not.toMatch(/queueVideoPartialEdit/);
+    }
   });
 });

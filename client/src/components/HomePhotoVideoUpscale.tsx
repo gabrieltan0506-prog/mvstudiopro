@@ -19,6 +19,12 @@ import type { MontageGrade } from "@/lib/montageFinish";
 import { VideoGradePanel } from "@/components/canvas/VideoGradePanel";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
 import { VideoEditPanel } from "@/components/canvas/VideoEditPanel";
+import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
+import type { AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
+
+/** 顾问 videoEdit 清单里本工具当前视频的 targetId 与名称（同页多处挂载时须各自唯一）。 */
+export type AdvisorVideoTarget = { id: string; label: string };
+type VideoEditPrefill = { startSec: number; endSec: number; promptZh: string; referenceImageUrls?: string[]; nonce: number };
 
 type Target = "2k" | "4k";
 export type VideoMetadata = {
@@ -195,10 +201,16 @@ const labels: Record<RecordStatus, string> = {
 export default function HomePhotoVideoUpscale({
   generatedVideoUrl,
   projectKey,
+  onAdvisorVideoEditControl,
+  advisorTarget,
 }: {
   generatedVideoUrl?: string;
   /** 映客复用首页正式提交/计费/恢复链路，仅固定为当前成片。 */
   projectKey?: string;
+  /** 顾问 videoEdit 登记口：清单为当前已读时长的视频，prefill 打开「局部修改」并预填；报价与提交仍须用户在面板确认。 */
+  onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
+  /** 缺省：代码动画按作品编号、首页为「首页视频工具」。 */
+  advisorTarget?: AdvisorVideoTarget;
 }) {
   const { user, isAuthenticated } = useAuth();
   const [identity, setIdentity] = useState<{
@@ -242,6 +254,13 @@ export default function HomePhotoVideoUpscale({
       generatedVideoUrl={generatedVideoUrl}
       fixedSource={!!projectKey}
       gradeScopeKey={projectKey ? `code-motion-grade:${projectKey}`.slice(0, 128) : "home-video-grade"}
+      onAdvisorVideoEditControl={onAdvisorVideoEditControl}
+      advisorTarget={
+        advisorTarget ??
+        (projectKey
+          ? { id: `code-motion:${projectKey}`.slice(0, 200), label: "代码动画成片" }
+          : { id: "home-video-tool", label: "首页视频工具当前视频" })
+      }
     />
   );
 }
@@ -252,14 +271,19 @@ function UpscalePanel({
   generatedVideoUrl,
   fixedSource = false,
   gradeScopeKey,
+  onAdvisorVideoEditControl,
+  advisorTarget,
 }: {
   storageKey?: string;
   authenticated: boolean;
   generatedVideoUrl?: string;
   fixedSource?: boolean;
   gradeScopeKey?: string;
+  onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
+  advisorTarget: AdvisorVideoTarget;
 }) {
   const [tool, setTool] = useState<VideoTool | null>(null);
+  const [editPrefill, setEditPrefill] = useState<VideoEditPrefill>();
   const [uploaded, setUploaded] = useState("");
   const [choice, setChoice] = useState<"uploaded" | "generated" | "cloud">(
     "uploaded"
@@ -297,6 +321,28 @@ function UpscalePanel({
       mounted.current = false;
     };
   }, []);
+  // 顾问 videoEdit：清单 = 当前已读时长、可局部修改的这条（同「局部修改」按钮条件）；prefill 打开面板并预填，不提交
+  const advisorVideoEditLive = useRef({ source, metadata, authenticated, busy, advisorTarget });
+  advisorVideoEditLive.current = { source, metadata, authenticated, busy, advisorTarget };
+  useEffect(() => {
+    if (!onAdvisorVideoEditControl) return;
+    const cur = () => advisorVideoEditLive.current;
+    onAdvisorVideoEditControl(
+      createAdvisorVideoEditControl({
+        targets: () => {
+          const { source: playable, metadata: meta, authenticated: authed, advisorTarget: target } = cur();
+          const url = gradeSourceFromPlayableUrl(playable);
+          return authed && meta && meta.durationSec > 0 && url ? [{ ...target, url, durationSec: meta.durationSec }] : [];
+        },
+        busy: () => cur().busy,
+        open: p => {
+          setTool("edit");
+          setEditPrefill({ startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, ...(p.referenceImageUrl ? { referenceImageUrls: [p.referenceImageUrl] } : {}), nonce: Date.now() });
+        },
+      })
+    );
+    return () => onAdvisorVideoEditControl(null);
+  }, [onAdvisorVideoEditControl]);
   function save(next: UpscaleRecord[]) {
     recordsRef.current = next;
     if (storageKey) {
@@ -592,6 +638,7 @@ function UpscalePanel({
           source={gradeSourceFromPlayableUrl(source)}
           durationSec={metadata.durationSec}
           previewUrl={source}
+          prefill={editPrefill}
         />
       )}
       {metadata && !canWavespeedUpscale(metadata.sourceResolution, "4k") && (
