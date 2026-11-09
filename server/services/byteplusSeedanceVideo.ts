@@ -370,3 +370,22 @@ export {
   POLL_INTERVAL_MS as BYTEPLUS_SEEDANCE_POLL_INTERVAL_MS,
   MAX_POLL_MS as BYTEPLUS_SEEDANCE_MAX_POLL_MS,
 };
+
+export type {
+  RunVideoEditInput,
+  RunVideoEditResult,
+  VideoEditAttempt,
+  VideoEditChannel,
+  VideoEditEvidenceObject,
+} from "./videoEditFallback.js";
+
+/**
+ * 视频局部修改通道层入口（实现见 ./videoEditFallback.ts）：BytePlus 优先，真人/隐私拒绝转 EvoLink video-edit。
+ * 动态导入避免与 videoEditFallback 互相引用时的初始化顺序问题。失败抛 VideoEditFailedError（error.attempts 同形）。
+ */
+export async function runVideoEditWithFallback(
+  input: import("./videoEditFallback.js").RunVideoEditInput,
+): Promise<import("./videoEditFallback.js").RunVideoEditResult> {
+  const { runVideoEditWithFallback: run } = await import("./videoEditFallback.js");
+  return run(input);
+}
