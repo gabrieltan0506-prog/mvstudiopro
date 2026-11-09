@@ -3,12 +3,24 @@ import { knowledgeBudgetInstructions, knowledgeEditionBudgetCheck, knowledgeEdit
 import { attachKnowledgeTextModules } from "./knowledgeTextAttachment";
 
 describe("图文比例页数预算（用户2026-11-08确认）", () => {
-  it("完整版改按主题出图后守总页数≤72：16图时内文5–56页，按图外细节实际需要排", () => {
+  it("完整版图:内文 3:1–2:1，72 只是总页数硬顶：16图时内文5–8页（目标7，总23），不再撑到56页", () => {
     const b = knowledgeEditionPageBudget("full", 16);
-    expect(b.textPages).toEqual({ min: 5, target: 56, max: 56 });
-    expect(b.totalPages.max).toBe(72);
-    // 旧 48 图稿仍不超过 72 页
+    expect(b.textPages).toEqual({ min: 5, target: 7, max: 8 });
+    expect(b.totalPages).toEqual({ min: 21, target: 23, max: 24 });
+    // 旧 48 图稿：内文 16–22–24 页，总页数仍不超过 72
+    expect(knowledgeEditionPageBudget("full", 48).textPages).toEqual({ min: 16, target: 22, max: 24 });
     expect(knowledgeEditionPageBudget("full", 48).totalPages.max).toBe(72);
+    // 图极多时由 72 硬顶夹住比例上限
+    expect(knowledgeEditionPageBudget("full", 60).textPages.max).toBe(12);
+    expect(knowledgeEditionPageBudget("full", 72).textPages).toEqual({ min: 0, target: 0, max: 0 });
+  });
+  it("1108g2 敦煌复盘：16张图、7.5万字图外细节不得再排成66–72页；预检给出压缩比例", () => {
+    const dunhuang = knowledgeEditionBudgetCheck("full", 16, 75475);
+    expect(dunhuang.estimatedTextPages).toBe(50);
+    expect(dunhuang.plannedTextPages).toBe(7);
+    expect(dunhuang.plannedTotalPages).toBe(23);
+    expect(dunhuang.warnings.join("")).toContain("超出8页上限");
+    expect(dunhuang.warnings.join("")).toMatch(/压缩至约\d+%/);
   });
   it("精华版图:内文1:2–1:3", () => {
     expect(knowledgeEditionPageBudget("concise", 8).textPages).toEqual({ min: 16, target: 20, max: 24 });
@@ -18,14 +30,14 @@ describe("图文比例页数预算（用户2026-11-08确认）", () => {
     expect(thin.warnings.join("")).toContain("不硬凑篇幅");
     expect(thin.plannedTextPages).toBe(16);
     const heavy = knowledgeEditionBudgetCheck("full", 16, 200000);
-    expect(heavy.plannedTextPages).toBe(56);
-    expect(heavy.plannedTotalPages).toBe(72);
+    expect(heavy.plannedTextPages).toBe(7);
+    expect(heavy.plannedTotalPages).toBe(23);
     expect(heavy.warnings.join("")).toContain("合并去重");
-    // 敦煌量级：16张主题图、约7.3万字图外细节 → 内文约48页，总页数在72内且无超额提示
-    const dunhuang = knowledgeEditionBudgetCheck("full", 16, 73000);
-    expect(dunhuang.plannedTextPages).toBe(48);
-    expect(dunhuang.plannedTotalPages).toBeLessThanOrEqual(72);
-    expect(dunhuang.warnings).toEqual([]);
+    // 资料在比例内：16 图、1.6 万字图外细节 → 4 页内文、总 20 页、无提示
+    const fit = knowledgeEditionBudgetCheck("full", 16, 16000);
+    expect(fit.plannedTextPages).toBe(4);
+    expect(fit.plannedTotalPages).toBe(20);
+    expect(fit.warnings).toEqual([]);
     expect(knowledgeEditionBudgetCheck("concise", 8, 76000).warnings.join("")).toContain("不重复图中内容");
   });
   it("按图外资料多少分配整页，完整版总预算不超过上限", () => {

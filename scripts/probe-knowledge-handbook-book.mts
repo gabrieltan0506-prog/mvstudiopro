@@ -24,7 +24,8 @@ import {runClaimedJob} from '../server/jobs/runner';
 import {getJobByIdStrict} from '../server/jobs/repository';
 import {knowledgeCardPageJobId} from '../server/jobs/knowledgeCardPageTask';
 import {assertWorkerProbeLease} from '../server/services/workerProbeLease';
-import {getGcsBucketName,uploadBufferToGcs} from '../server/services/gcs';
+import {downloadGcsObjectVersioned,getGcsBucketName,uploadBufferToGcs} from '../server/services/gcs';
+import {nameKnowledgeEditionTopics} from '../server/services/knowledgeTopicTitles';
 import {quoteKnowledgeCard} from '../server/services/knowledgeCardPricing';
 import {buildSinglePageKnowledgeCardImagePrompt,resolveKnowledgeCardPageSource} from '../server/services/geminiPlatformCompositeTranslation';
 import {resolveKnowledgeCardReferencePageUrls} from '../server/services/knowledgeCardDocumentPages';
@@ -77,21 +78,41 @@ async function execute(id:string,action:string,params:Record<string,unknown>){
   return done.output as Record<string,any>;
 }
 
+/**
+ * 主题命题补缺：派生任务回执一经成功即固定，命题若有批次失败（1108g2：GLM 截断只回 6/16 页）不会随任务重跑。
+ * 这里用与派生任务相同的证据前缀再调一次命题服务：已成功批次零调用回放，只对失败批次重试（有上限），
+ * 原始/解析回包永久保存在原前缀下。prepare 与 run 都走同一函数，稿件指纹由此保持一致。
+ */
+async function retitle(markdown:string,model:string|undefined){
+  const prefix=`knowledge-editions/user-${owner}/${ids.derive}`;
+  const result=await nameKnowledgeEditionTopics({markdown,model,evidence:{prefix,
+    read:async key=>{try{return JSON.parse((await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${key}`})).buffer.toString());}catch(error){if((error as Error).message==='gcs_stat_failed:404')return null;throw error;}},
+    save:async(key,value)=>{await uploadBufferToGcs({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json'});}}});
+  await fs.appendFile(path.join(root,'titles.log'),JSON.stringify({at:new Date().toISOString(),status:result.status,message:result.message?scrub(result.message):undefined})+'\n');
+  return result;
+}
+
 async function prepare(){
-  const file=path.join(root,config.localSource);
-  const buffer=await fs.readFile(file);
-  const sha=createHash('sha256').update(buffer).digest('hex');
-  if(sha!==config.sourceSha256)throw Error('原档指纹不符');
   // 与网站直传相同的本人上传前缀；内容寻址，重复上传同一对象。
-  const objectName=`uploads/u${owner}/knowledge-card/${sha}.epub`;
-  await uploadBufferToGcs({objectName,buffer,contentType:'application/epub+zip'});
+  // 原档已在本人上传区时（1108g2 已上传），只核对云端对象指纹，不再要求本机密文输入。
+  const objectName=`uploads/u${owner}/knowledge-card/${config.sourceSha256}.epub`;
   const gcsUri=`gs://${getGcsBucketName()}/${objectName}`;
+  let buffer:Buffer;
+  if(existsSync(path.join(root,config.localSource))){
+    buffer=await fs.readFile(path.join(root,config.localSource));
+    if(createHash('sha256').update(buffer).digest('hex')!==config.sourceSha256)throw Error('原档指纹不符');
+    await uploadBufferToGcs({objectName,buffer,contentType:'application/epub+zip'});
+  }else{
+    buffer=(await downloadGcsObjectVersioned({gcsUri})).buffer;
+    if(createHash('sha256').update(buffer).digest('hex')!==config.sourceSha256)throw Error('云端原档指纹不符');
+  }
   await write('live.json',{stage:'distilling',ids,sourceBytes:buffer.length});
   const extracted=await execute(ids.distill,'knowledge_card_distill',{files:[{gcsUri,mimeType:'application/epub+zip',fileName:config.fileName}],distillModel,detailLevel:'full',billingPolicy:'interior-pages-v1',chargeDistillFee:false});
   await write('live.json',{stage:'editions',ids});
   const derived=await execute(ids.derive,'knowledge_card_derive_level',{fullMarkdown:extracted.distilledMarkdown,distillModel:extracted.distillModel||distillModel,editionVersion:2});
   if(!derived.verificationProcessed)throw Error(`两档末稿门禁未通过：${scrub(JSON.stringify(derived.editionIssues||[]))}`);
-  const markdown=String(level==='full'?derived.fullEditionMarkdown:derived.distilledMarkdown);
+  const titled=await retitle(String(level==='full'?derived.fullEditionMarkdown:derived.distilledMarkdown),derived.distillModel||distillModel);
+  const markdown=titled.markdown;
   const parts=knowledgeEditionParts(markdown);if(!parts||parts.level!==level)throw Error('档位身份不符');
   const plan=planKnowledgeCardPages(markdown,distillModel),quote=await quoteKnowledgeCard(Number(owner),markdown,distillModel);
   if(quote.pageCount!==plan.pageCount)throw Error('分页与报价不一致');
@@ -117,7 +138,7 @@ async function prepare(){
   await fs.writeFile(path.join(root,'image-preview.md'),`# ${parts.title} · ${level==='full'?'完整版':'精华版'}逐页生图输入\n\n模板：${template.labelZh}；主体居中；${plan.pageCount}张，产品报价${quote.credits}积分。\n\n出图规则：每张图为一个主题的核心图解，图内≤1200字；图数按主题定（完整版≤16、精华版≤8）；图外细节全部进内文（图在上、内文在下及续页），不受1200字限制。\n\n页数预算：图文同页${budget.budget.imagePages}页 · 内文约${budget.plannedTextPages}页（建议${budget.budget.textPages.min}–${budget.budget.textPages.max}）· 合计约${budget.plannedTotalPages}页；内文资料约${topics.readingChars}字\n${budget.warnings.map(w=>`- ${w}`).join('\n')}\n\n`+pages.map(p=>`## 第${p.pageIndex}页 · ${p.chars}字（不含空白${p.visibleChars}字）· 含${p.sections}节 · 图外细节${p.overflowChars}字进内文 · 参考原页${p.referencePages}张\n\n图片标题：${p.imageTitle}；图下内文标题：${p.readingTitle}\n\n### 图内文字\n\n${p.body}\n\n### 实际生图指令\n\n\`\`\`\n${p.prompt}\n\`\`\``).join('\n\n'));
   await fs.writeFile(path.join(root,'editions.json'),JSON.stringify({full:derived.fullEditionMarkdown,concise:derived.distilledMarkdown,counts:derived.editionPageCounts,issues:derived.editionIssues,pending:derived.editionPendingVerification}));
   const titleAudit=auditKnowledgeTopicTitles(topics.images,readKnowledgeTopicTitles(markdown));
-  const prepared={ids,title:parts.title,level,template:template.id,pageCount:plan.pageCount,credits:quote.credits,manuscriptSha256,readingChars:topics.readingChars,imageChars:pages.map(p=>p.chars),budget:{plannedTextPages:budget.plannedTextPages,totalPages:budget.budget.totalPages,plannedTotalPages:budget.plannedTotalPages,warnings:budget.warnings.length},titleAudit};
+  const prepared={ids,title:parts.title,level,template:template.id,pageCount:plan.pageCount,credits:quote.credits,manuscriptSha256,readingChars:topics.readingChars,imageChars:pages.map(p=>p.chars),budget:{plannedTextPages:budget.plannedTextPages,estimatedTextPages:budget.estimatedTextPages,textPages:budget.budget.textPages,totalPages:budget.budget.totalPages,plannedTotalPages:budget.plannedTotalPages,warnings:budget.warnings},sections:pages.map(p=>p.sections),overflowChars:pages.map(p=>p.overflowChars),titleAudit,titles:{status:titled.status,message:titled.message?scrub(titled.message):undefined}};
   // 开发者自用 autoConfirm：只在本探针内把准备与出图接成一步（应用内计费与用户确认不变）；命题核查不通过则停在出图前，不提交图片。
   if(config.autoConfirm===true){
     if(!titleAudit.ok){await write('live.json',{...prepared,stage:'failed',mode:'prepare',error:'主题命题核查未通过，未出图'});process.exitCode=1;return;}
@@ -132,7 +153,8 @@ async function prepare(){
 async function run(){
   const derived=await getJobByIdStrict(ids.derive),out:any=derived?.output;
   if(!derived||derived.status!=='succeeded'||!out?.verificationProcessed)throw Error('两档任务尚未成功');
-  const markdown=String(level==='full'?out.fullEditionMarkdown:out.distilledMarkdown);
+  // 与 prepare 同一命题补缺（已存回执零调用回放）；若稿件指纹变化由下方核对拦下，需重新 prepare 确认。
+  const markdown=(await retitle(String(level==='full'?out.fullEditionMarkdown:out.distilledMarkdown),out.distillModel)).markdown;
   const digest=createHash('sha256').update(markdown).digest('hex');
   const quote=await caller.mvAnalysis.quoteKnowledgeCardForGeneration({markdown,distillModel:out.distillModel});
   if(config.confirmed!==true)throw Error('用户尚未确认本次生图输入与费用');
@@ -146,7 +168,7 @@ async function run(){
     await fs.writeFile(statePath,JSON.stringify(state));
   }
   if(!state.documentId){
-    const source=synchronizedKnowledgeCardSource({owner,sourceId:`knowledge-card:${ids.derive}:${level}`,fullMarkdown:out.fullEditionMarkdown,illustrationMarkdown:markdown,detailLevel:level,distillModel:out.distillModel,infographicTemplateId:template!.id,imageJobIds:state.imageJobIds});
+    const source=synchronizedKnowledgeCardSource({owner,sourceId:`knowledge-card:${ids.derive}:${level}`,fullMarkdown:level==='full'?markdown:out.fullEditionMarkdown,illustrationMarkdown:markdown,detailLevel:level,distillModel:out.distillModel,infographicTemplateId:template!.id,imageJobIds:state.imageJobIds});
     source.verificationJobId=ids.derive;
     const doc=layoutFromSource(source);
     doc.publication!.synchronizedStarted=true;
