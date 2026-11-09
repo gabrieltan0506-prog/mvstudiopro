@@ -18,6 +18,7 @@ import { flyDownloadUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import type { MontageGrade } from "@/lib/montageFinish";
 import { VideoGradePanel } from "@/components/canvas/VideoGradePanel";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
+import { VideoEditPanel } from "@/components/canvas/VideoEditPanel";
 
 type Target = "2k" | "4k";
 export type VideoMetadata = {
@@ -258,7 +259,7 @@ function UpscalePanel({
   fixedSource?: boolean;
   gradeScopeKey?: string;
 }) {
-  const [gradeOpen, setGradeOpen] = useState(false);
+  const [tool, setTool] = useState<VideoTool | null>(null);
   const [uploaded, setUploaded] = useState("");
   const [choice, setChoice] = useState<"uploaded" | "generated" | "cloud">(
     "uploaded"
@@ -570,24 +571,27 @@ function UpscalePanel({
               : ""}
           </button>
         ))}
-        {gradeSourceFromPlayableUrl(source) && (
-          <button
-            type="button"
-            className="rounded-lg border px-4 py-2"
-            aria-expanded={gradeOpen}
-            disabled={busy || !metadata || !authenticated}
-            onClick={() => setGradeOpen(open => !open)}
-          >
-            调色
-          </button>
-        )}
+        <VideoToolToggles
+          source={source}
+          open={tool}
+          disabled={busy || !metadata || !authenticated}
+          onToggle={setTool}
+        />
       </div>
-      {gradeOpen && metadata && gradeSourceFromPlayableUrl(source) && (
+      {tool === "grade" && metadata && gradeSourceFromPlayableUrl(source) && (
         <VideoGradeEntry
           key={source}
           source={gradeSourceFromPlayableUrl(source)}
           outputSec={metadata.durationSec}
           scopeKey={gradeScopeKey}
+        />
+      )}
+      {tool === "edit" && metadata && gradeSourceFromPlayableUrl(source) && (
+        <VideoEditPanel
+          key={`edit:${source}`}
+          source={gradeSourceFromPlayableUrl(source)}
+          durationSec={metadata.durationSec}
+          previewUrl={source}
         />
       )}
       {metadata && !canWavespeedUpscale(metadata.sourceResolution, "4k") && (
@@ -635,6 +639,36 @@ function UpscalePanel({
 }
 
 const GRADE_ACTIVE = ["queued", "running", "processing", "pending"];
+
+export type VideoTool = "grade" | "edit";
+
+/** 成片旁「调色」「局部修改」：只对可登记为本人后期素材的来源显示（首页临时空间不显示）。 */
+export function VideoToolToggles({
+  source,
+  open,
+  disabled,
+  onToggle,
+  className = "rounded-lg border px-4 py-2",
+}: {
+  source: string | undefined;
+  open: VideoTool | null;
+  disabled?: boolean;
+  onToggle: (next: VideoTool | null) => void;
+  className?: string;
+}) {
+  if (!gradeSourceFromPlayableUrl(source)) return null;
+  const items: [VideoTool, string][] = [["grade", "调色"], ["edit", "局部修改"]];
+  return (
+    <>
+      {items.map(([id, label]) => (
+        <button key={id} type="button" className={className} aria-expanded={open === id} disabled={disabled}
+          onClick={() => onToggle(open === id ? null : id)}>
+          {label}
+        </button>
+      ))}
+    </>
+  );
+}
 
 /** 调色提交参数（首页/代码动画/营销成片共用）：只传已核对的来源与本入口的任务归属。 */
 export function videoGradeEntryRequest(source: string, grade: MontageGrade | undefined, scopeKey?: string) {

@@ -15,7 +15,8 @@ import { StockFootageDrawer, type StockFootagePick } from "@/components/stockFoo
 import { STOCK_DRAWER_PER_PAGE, defaultMinDurationSec, keywordSourceText } from "@/components/stockFootage/stockFootageModel";
 import { canvasTtsCreditsForDuration } from "@shared/canvasGenerationPricing";
 import { MarketingVoicePicker } from "./MarketingVoicePicker";
-import { VideoGradeEntry, gradeSourceFromPlayableUrl } from "@/components/HomePhotoVideoUpscale";
+import { VideoGradeEntry, VideoToolToggles, gradeSourceFromPlayableUrl, type VideoTool } from "@/components/HomePhotoVideoUpscale";
+import { VideoEditPanel } from "@/components/canvas/VideoEditPanel";
 import { MarketingSegmentTimeline, MarketingThumb } from "./MarketingSegmentTimeline";
 import {
   applyPostProdJobResult,
@@ -108,7 +109,7 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
   const [localPreview, setLocalPreview] = useState<Record<string, string>>({});
   const [finalUrl, setFinalUrl] = useState<string>();
   const [finalSec, setFinalSec] = useState(0);
-  const [gradeOpen, setGradeOpen] = useState(false);
+  const [tool, setTool] = useState<VideoTool | null>(null);
   const [busy, setBusy] = useState(false);
   const utils = trpc.useUtils();
   const dialogue = trpc.canvasAudio.generateDialogue.useMutation();
@@ -462,9 +463,11 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
       {finalUrl && <video className="mt-3 max-h-[28rem] w-full rounded-lg" src={finalUrl} controls
         onLoadedMetadata={event => { const sec = event.currentTarget.duration; if (Number.isFinite(sec) && sec > 0) setFinalSec(sec); }} />}
       {finalUrl && <a className={`${buttonStyle} mt-2 inline-block`} href={finalUrl} download>下载成片</a>}
-      {finalUrl && gradeSourceFromPlayableUrl(finalUrl) && <button type="button" className={`${buttonStyle} ml-2 mt-2`} aria-expanded={gradeOpen}
-        disabled={busy || !finalSec} onClick={() => setGradeOpen(open => !open)}>调色</button>}
-      {gradeOpen && finalUrl && finalSec > 0 && gradeSourceFromPlayableUrl(finalUrl) && <div className="mt-3">
+      {finalUrl && <VideoToolToggles source={finalUrl} open={tool} disabled={busy || !finalSec} onToggle={setTool} className={`${buttonStyle} ml-2 mt-2`} />}
+      {tool === "edit" && finalUrl && finalSec > 0 && gradeSourceFromPlayableUrl(finalUrl) && <div className="mt-3">
+        <VideoEditPanel key={`edit:${finalUrl.split("?")[0]}`} source={gradeSourceFromPlayableUrl(finalUrl)} durationSec={finalSec} previewUrl={finalUrl} />
+      </div>}
+      {tool === "grade" && finalUrl && finalSec > 0 && gradeSourceFromPlayableUrl(finalUrl) && <div className="mt-3">
         <VideoGradeEntry key={finalUrl.split("?")[0]} source={gradeSourceFromPlayableUrl(finalUrl)} outputSec={finalSec} scopeKey={marketingGradeScopeKey(draft.draftId)} />
       </div>}
       {credits.uploads.length > 0 && <div className="mt-3 text-xs text-slate-400">

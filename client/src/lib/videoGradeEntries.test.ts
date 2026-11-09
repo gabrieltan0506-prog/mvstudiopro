@@ -20,7 +20,12 @@ vi.mock("@/components/canvas/VideoGradePanel", () => ({
   VideoGradePanel: (props: { outputSec: number }) => createElement("div", { "data-grade-panel": props.outputSec }),
 }));
 
-import { VideoGradeEntry, gradeSourceFromPlayableUrl, videoGradeEntryRequest } from "../components/HomePhotoVideoUpscale";
+vi.mock("@/components/canvas/VideoEditPanel", () => ({
+  VideoEditPanel: (props: { source: string; durationSec: number }) => createElement("div", { "data-edit-panel": props.source }),
+}));
+
+import { VideoGradeEntry, VideoToolToggles, gradeSourceFromPlayableUrl, videoGradeEntryRequest } from "../components/HomePhotoVideoUpscale";
+import { submitVideoEdit } from "./videoEditSubmit";
 import { marketingGradeScopeKey } from "../components/platform/MarketingProductionPanel";
 import { submitVideoGrade } from "./videoGradeSubmit";
 
@@ -84,5 +89,38 @@ describe("调色入口：提交参数", () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>生成调色版（新文件，原片保留）<\/button>/);
     expect(html).not.toMatch(/ffmpeg|Seedance|WaveSpeed|Gemini|GPT/i);
     expect(queued).toHaveLength(0);
+  });
+});
+
+describe("局部修改入口：挂在调色旁，来源判定同调色", () => {
+  const toggles = (source: string, open: "grade" | "edit" | null = null) =>
+    renderToStaticMarkup(createElement(VideoToolToggles, { source, open, onToggle: () => undefined }));
+
+  it("代码动画/营销成片（本桶签名链或 Fly 包装）显示「调色」「局部修改」两个按钮", () => {
+    for (const source of [SIGNED, `/api/gcs-transfer?url=${encodeURIComponent(SIGNED)}`]) {
+      const html = toggles(source, "edit");
+      expect(html).toMatch(/>调色<\/button>/);
+      expect(html).toMatch(/aria-expanded="true"[^>]*>局部修改<\/button>/);
+    }
+  });
+
+  it("首页 12 小时临时空间与第三方 CDN 不显示任何按钮", () => {
+    expect(toggles("https://api.mvstudiopro.com/api/photo-media/1762000000000_00000000-0000-0000-0000-000000000000.mp4")).toBe("");
+    expect(toggles("https://p1.kling-cdn.example/video.mp4")).toBe("");
+  });
+
+  it("提交参数：sourceUrl 为还原后的原签名链，区间/描述/报价原样，不导入", async () => {
+    const submit = vi.fn(async () => ({ jobId: "edit-1" }));
+    const importSource = vi.fn();
+    const source = gradeSourceFromPlayableUrl(`/api/gcs-transfer?url=${encodeURIComponent(SIGNED)}`);
+    const res = await submitVideoEdit(
+      { videoUrl: source, startSec: 2, endSec: 6, promptZh: "把杯子换成红色", expectedCredits: 60, durationSec: 11 },
+      { submit, importSource, newRequestId: () => "req-1" },
+    );
+    expect(res).toEqual({ jobId: "edit-1", requestId: "req-1" });
+    expect(importSource).not.toHaveBeenCalled();
+    expect((submit.mock.calls[0] as unknown[])[0]).toEqual({
+      sourceUrl: SIGNED, startSec: 2, endSec: 6, promptZh: "把杯子换成红色", requestId: "req-1", expectedCredits: 60,
+    });
   });
 });
