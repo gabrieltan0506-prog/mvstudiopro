@@ -20,4 +20,5 @@
 - 扩写按条 20 点/条（旧整批 48 一价勾满 20 条净亏，已废）。
 - 单页知识卡四档：超凡 36/精细 30/均衡 27/轻量 24（前 8 满价，其后折扣）。
 - 4K 成片限时 688、2K 388；超分 2K 2 积分/s、4K 4 积分/s，不足 5s 按 5s、600s 封顶，自由画布 ×1.1 进位；漫剧整集 688（172/段×4）。
+- 成片调色建议（MV「AI 调色建议」）20 积分/次（用户 2026-11-09 定价）：常量 `CREDIT_COSTS.montageGradeAdvice` 两处同步（shared/plans.ts + server/plans.ts），前端按钮读 `@shared/plans` 同一常量；扣费 action=`montageGradeAdvice`、说明「成片调色建议」、chargeKey `canvas-montage-grade:${userId}:${requestId}`；管理员/supervisor 0 扣；模型失败不扣。同 requestId 已有结果直接返回已存结果并按同 chargeKey 幂等补扣、不再调模型；已登记无结果（处理中/失败）拒绝并提示重新发起。
 - 待批新价：长文提炼 25 点/次（提案见 `~/Downloads/2026Aug12/功能提案-长文转知识卡.md`）。

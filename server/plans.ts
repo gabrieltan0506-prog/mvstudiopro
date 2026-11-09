@@ -210,6 +210,7 @@ export const CREDIT_COSTS = {
 
   // ─── 基础功能 ───────────────────────────────────
   mvAnalysis: 8,              // 每次视频 PK 评分消耗 8 credits
+  montageGradeAdvice: 20,     // 成片调色建议（AI 调色建议）：20 cr/次（用户 2026-11-09 定价）；管理员/supervisor 0 扣
   idolGeneration: 3,          // 每次 Forge 偶像生成消耗 3 credits
   storyboard: 15,             // 每次分镜脚本 Gemini 3.0 Pro 消耗 15 credits
   storyboardFlash: 8,           // 每次分镜脚本 Gemini 3.0 Flash 消耗 8 credits

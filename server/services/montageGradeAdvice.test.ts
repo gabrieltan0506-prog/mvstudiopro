@@ -7,8 +7,13 @@ vi.mock("./vertexMedia.js", () => ({
 }));
 
 import { geminiAudioJsonWithFallback } from "../gemini-audio";
+import { readFileSync } from "node:fs";
+import { CREDIT_COSTS as SHARED_CREDIT_COSTS } from "../../shared/plans";
+import { CREDIT_COSTS as SERVER_CREDIT_COSTS } from "../plans";
+import { adviseCanvasMontageGrade } from "../routers/canvasMusicMv";
 import {
   MONTAGE_GRADE_ADVICE_MODEL,
+  MontageGradeAdviceRequestUsedError,
   adviceToGradeSegments,
   adviseMontageGrade,
   buildMontageGradePrompt,
@@ -102,6 +107,7 @@ describe("成片调色建议 · 两跳 fallback（替身，不真调模型）", 
         uploads.push({ objectName: p.objectName, body: JSON.parse(p.buffer.toString("utf8")) });
         return { created: true };
       }) as never,
+      download: (async () => { throw new Error("gcs_stat_failed:404"); }) as never,
     });
     expect(res.usedBy.channel).toBe("EvoLink");
     expect(res.usedBy.model).toBe(MONTAGE_GRADE_ADVICE_MODEL);
@@ -149,5 +155,162 @@ describe("成片调色建议 · 两跳 fallback（替身，不真调模型）", 
     expect(r.channel).toBe("Vertex");
     expect(sign).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** GCS 替身：upload 照 ifGenerationMatch=0 只增不覆盖；download 缺对象抛 404。 */
+function memGcs() {
+  const objects = new Map<string, Buffer>();
+  const writes: string[] = [];
+  return {
+    objects,
+    writes,
+    upload: (async (p: { objectName: string; buffer: Buffer }) => {
+      writes.push(p.objectName);
+      if (objects.has(p.objectName)) return { created: false };
+      objects.set(p.objectName, p.buffer);
+      return { created: true };
+    }) as never,
+    download: (async ({ gcsUri }: { gcsUri: string }) => {
+      const name = gcsUri.replace(/^gs:\/\/b\//, "");
+      const buffer = objects.get(name);
+      if (!buffer) throw new Error("gcs_stat_failed:404");
+      return { buffer, bucket: "b", objectName: name, generation: "1" };
+    }) as never,
+  };
+}
+const RID = "22222222-2222-4222-8222-222222222222";
+const baseInput = { requestId: RID, videoGsUri: "gs://b/post-prod/7/final.mp4", durationSec: 10 };
+const okCall = () => vi.fn(async (o: { validate: (v: unknown) => unknown; save: (n: string, v: unknown) => Promise<unknown> }) => {
+  const value = o.validate(ok());
+  await o.save("hop-1-vertex-raw", { payload: "raw" });
+  await o.save("hop-1-vertex-parsed", value);
+  return { value, channel: "Vertex", model: MONTAGE_GRADE_ADVICE_MODEL, failuresZh: [] };
+});
+const svcDeps = (gcs: ReturnType<typeof memGcs>, call: ReturnType<typeof vi.fn>) => ({
+  bucket: () => "b",
+  sign: () => "https://signed.test/x",
+  luts: async () => Array.from(LUTS).map(id => ({ id, labelZh: id })),
+  upload: gcs.upload,
+  download: gcs.download,
+  call: call as never,
+});
+
+describe("成片调色建议 · 防重放（替身，不真调模型）", () => {
+  it("同 requestId 第二次不调用模型，返回同一已存结果；证据只写一次", async () => {
+    const gcs = memGcs();
+    const call = okCall();
+    const first = await adviseMontageGrade(7, baseInput, svcDeps(gcs, call));
+    const writesAfterFirst = gcs.writes.length;
+    const second = await adviseMontageGrade(7, baseInput, svcDeps(gcs, call), { beforeModelCall: async () => { throw new Error("不应预检"); } });
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(second.replayed).toBe(true);
+    expect(second.segments).toEqual(first.segments);
+    expect(second.advice).toEqual(first.advice);
+    expect(second.usedBy).toEqual(first.usedBy);
+    expect(gcs.writes.length).toBe(writesAfterFirst);
+    expect(Array.from(gcs.objects.keys()).map(k => k.split("/").pop())).toEqual(["request.json", "hop-1-vertex-raw.json", "hop-1-vertex-parsed.json", "segments.json"]);
+  });
+
+  it("失败的 requestId 不可复用：再次调用拒绝且不调模型", async () => {
+    const gcs = memGcs();
+    const call = vi.fn(async () => { throw new Error("全部通道失败"); });
+    await expect(adviseMontageGrade(7, baseInput, svcDeps(gcs, call))).rejects.toThrow(/全部通道失败/);
+    await expect(adviseMontageGrade(7, baseInput, svcDeps(gcs, okCall()))).rejects.toBeInstanceOf(MontageGradeAdviceRequestUsedError);
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(gcs.objects.has(`canvas-montage/grade-advice/7/${RID}/segments.json`)).toBe(false);
+  });
+
+  it("余额预检不过：什么都不写、不调模型，同编号之后仍可正常发起", async () => {
+    const gcs = memGcs();
+    const call = okCall();
+    await expect(adviseMontageGrade(7, baseInput, svcDeps(gcs, call), { beforeModelCall: async () => { throw new Error("余额不足"); } })).rejects.toThrow(/余额不足/);
+    expect(gcs.objects.size).toBe(0);
+    expect(call).not.toHaveBeenCalled();
+  });
+});
+
+describe("成片调色建议 · 计费 20 积分（router，替身）", () => {
+  const user = { id: 7, role: "user" };
+  const routerDeps = () => ({
+    bucket: () => "b",
+    balance: vi.fn(async () => ({ totalAvailable: 100 })) as never,
+    charge: vi.fn(async (_u: number, amount: number) => ({ success: true, cost: amount })) as never,
+  });
+  /** 登记核验替身：本人成功任务产物 = canvas/jobs/7/out.mp4；画布归属一律否。 */
+  const media = () => ({
+    getBucket: () => "b",
+    verifyOwnership: vi.fn(async () => false),
+    loadSucceededJobOutputObjects: vi.fn(async (uid: string) => new Set(uid === "7" ? ["video-jobs/7/out.mp4"] : [])),
+  });
+
+  it("普通用户扣 20、action/说明/chargeKey 正确；同 requestId 重放不调模型、按同 chargeKey 补扣（幂等）", async () => {
+    const gcs = memGcs();
+    const call = okCall();
+    const d = routerDeps();
+    const r1 = await adviseCanvasMontageGrade(user, baseInput, d, svcDeps(gcs, call), media());
+    expect(r1.creditsCost).toBe(20);
+    const chargeKey = `canvas-montage-grade:7:${RID}`;
+    expect(d.charge).toHaveBeenCalledWith(7, 20, "montageGradeAdvice", "成片调色建议", { chargeKey });
+    const r2 = await adviseCanvasMontageGrade(user, baseInput, d, svcDeps(gcs, call), media());
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(r2.segments).toEqual(r1.segments);
+    expect(d.charge).toHaveBeenCalledTimes(2);
+    expect((d.charge as unknown as ReturnType<typeof vi.fn>).mock.calls[1]).toEqual([7, 20, "montageGradeAdvice", "成片调色建议", { chargeKey }]);
+  });
+
+  it("管理员：跳过余额预检，扣费返回 0 则交付 creditsCost 0", async () => {
+    const gcs = memGcs();
+    const d = { ...routerDeps(), charge: vi.fn(async () => ({ success: true, cost: 0 })) as never };
+    const r = await adviseCanvasMontageGrade({ id: 9, role: "admin" }, baseInput, d, svcDeps(gcs, okCall()));
+    expect(r.creditsCost).toBe(0);
+    expect(d.balance).not.toHaveBeenCalled();
+  });
+
+  it("失败编号重放 → CONFLICT 提示重新发起，不扣费", async () => {
+    const gcs = memGcs();
+    const d = routerDeps();
+    await expect(adviseCanvasMontageGrade(user, baseInput, d, svcDeps(gcs, vi.fn(async () => { throw new Error("x"); })), media())).rejects.toMatchObject({ code: "BAD_GATEWAY" });
+    await expect(adviseCanvasMontageGrade(user, baseInput, d, svcDeps(gcs, okCall()), media())).rejects.toMatchObject({ code: "CONFLICT", message: expect.stringMatching(/请重新发起/) });
+    expect(d.charge).not.toHaveBeenCalled();
+  });
+
+  it("余额不足 → PAYMENT_REQUIRED，不调模型、不落档", async () => {
+    const gcs = memGcs();
+    const call = okCall();
+    const d = { ...routerDeps(), balance: vi.fn(async () => ({ totalAvailable: 19 })) as never };
+    await expect(adviseCanvasMontageGrade(user, baseInput, d, svcDeps(gcs, call), media())).rejects.toMatchObject({ code: "PAYMENT_REQUIRED" });
+    expect(call).not.toHaveBeenCalled();
+    expect(gcs.objects.size).toBe(0);
+  });
+
+  it("来源登记核验：他人对象被拒（不调模型、不扣费）；本人成功任务产物通过；管理员豁免", async () => {
+    const gcs = memGcs();
+    const call = okCall();
+    const d = routerDeps();
+    const other = { ...baseInput, videoGsUri: "gs://b/post-prod/8/final.mp4" };
+    await expect(adviseCanvasMontageGrade(user, other, d, svcDeps(gcs, call), media())).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    // 路径第二段伪装成本人 id 但不在任何登记源
+    const fake = { ...baseInput, videoGsUri: "gs://b/video-jobs/7/not-mine.mp4" };
+    await expect(adviseCanvasMontageGrade(user, fake, d, svcDeps(gcs, call), media())).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(call).not.toHaveBeenCalled();
+    expect(d.charge).not.toHaveBeenCalled();
+    const job = { ...baseInput, videoGsUri: "gs://b/video-jobs/7/out.mp4" };
+    const r = await adviseCanvasMontageGrade(user, job, d, svcDeps(gcs, call), media());
+    expect(r.creditsCost).toBe(20);
+    expect((call.mock.calls[0]![0] as unknown as { media: { vertexFileUri: string } }).media.vertexFileUri).toBe("gs://b/video-jobs/7/out.mp4");
+    const adminMedia = media();
+    const RID2 = "33333333-3333-4333-8333-333333333333";
+    await adviseCanvasMontageGrade({ id: 9, role: "admin" }, { ...other, requestId: RID2 }, d, svcDeps(gcs, call), adminMedia);
+    expect(adminMedia.loadSucceededJobOutputObjects).not.toHaveBeenCalled();
+  });
+
+  it("单价常量双源同为 20，且前端按钮读同一常量", () => {
+    expect(SHARED_CREDIT_COSTS.montageGradeAdvice).toBe(20);
+    expect(SERVER_CREDIT_COSTS.montageGradeAdvice).toBe(20);
+    const src = readFileSync(new URL("../../client/src/components/canvas/MontageGradeAdvice.tsx", import.meta.url), "utf8");
+    expect(src).toMatch(/import \{ CREDIT_COSTS \} from "@shared\/plans"/);
+    expect(src).toMatch(/CREDIT_COSTS\.montageGradeAdvice/);
+    expect(src).not.toMatch(/mvAnalysis/);
   });
 });

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { trpc } from "@/lib/trpc";
+import { CREDIT_COSTS } from "@shared/plans";
 
 /** 与服务端 GradeSegment 同形：可直接喂 concat grade.segments。 */
 export type MontageGradeSegment = {
@@ -48,6 +49,8 @@ export type MontageGradeAdviceProps = {
   triggerRef?: MutableRefObject<MontageGradeAdviceTrigger | null>;
 };
 
+/** 单价与服务端扣费同一常量（shared/plans CREDIT_COSTS.montageGradeAdvice）。 */
+export const MONTAGE_GRADE_ADVICE_PRICE = CREDIT_COSTS.montageGradeAdvice;
 const fmt = (n: number) => n.toFixed(1);
 function paramsZh(s: MontageGradeSegment): string {
   const out: string[] = [];
@@ -112,7 +115,7 @@ export function MontageGradeAdvice(props: MontageGradeAdviceProps) {
         disabled={props.disabled || advise.isPending || !props.videoGsUri || !(props.durationSec > 0)}
         onClick={() => void run().catch(() => {})}
       >
-        {advise.isPending ? "正在分析成片…" : props.debugMode ? "AI 调色建议（Gemini 3.8 Flash）" : "AI 调色建议"}
+        {advise.isPending ? "正在分析成片…" : `AI 调色建议 · ${MONTAGE_GRADE_ADVICE_PRICE} 积分${props.debugMode ? "（Gemini 3.8 Flash）" : ""}`}
       </button>
       {error && <p className="text-sm text-red-500">{error}</p>}
       {data && (

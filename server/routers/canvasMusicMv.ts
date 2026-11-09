@@ -479,6 +479,70 @@ export async function adoptMusicMvConcept(
   };
 }
 
+export const adviseMontageGradeInputSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    videoGsUri: z.string().regex(/^gs:\/\/[^/]+\/.+\.(?:mp4|mov|webm)$/i),
+    durationSec: z.number().finite().positive().max(600),
+    aspect: z.enum(["9:16", "16:9", "1:1"]).optional(),
+    storyZh: z.string().max(8000).optional(),
+    seamSecs: z.array(z.number().finite().min(0)).max(40).optional(),
+  })
+  .strict();
+
+/**
+ * 1110 成片调色建议计费与防重放（沿用本 router 分镜写法）：
+ * - 单价 CREDIT_COSTS.montageGradeAdvice（20），扣费 action=montageGradeAdvice、说明「成片调色建议」，chargeKey 按 requestId 幂等；
+ *   管理员/supervisor 跳过余额预检，deductCreditsAmount 内 0 扣。
+ * - 同 requestId 已有最终结果：不再调模型，直接返回已存结果，并按同 chargeKey 补扣（已扣过则幂等命中、不重复扣）。
+ * - 同 requestId 已登记但无结果（处理中/失败）：拒绝，提示重新发起（前端每次点击生成新 requestId）。
+ * - 模型失败不扣、无需退。
+ */
+export async function adviseCanvasMontageGrade(
+  user: { id: number; role?: string | null },
+  input: z.infer<typeof adviseMontageGradeInputSchema>,
+  d: Pick<MusicMvPlanDeps, "bucket" | "balance" | "charge"> = deps,
+  serviceDeps: Partial<import("../services/montageGradeAdvice").MontageGradeAdviceDeps> = {},
+  /** 来源登记核验替身（测试注入）；缺省走 postProdMediaSource 真实登记源。 */
+  mediaDeps?: import("../services/postProdMediaSource").PostProdMediaDeps,
+) {
+  const privileged = user.role === "admin" || user.role === "supervisor";
+  const bucket = d.bucket();
+  const m = /^gs:\/\/([^/]+)\/(.+)$/.exec(input.videoGsUri)!;
+  if (m[1] !== bucket)
+    throw new TRPCError({ code: "BAD_REQUEST", message: "成片来源不属于本人，请重新选择成片" });
+  // 来源归属与后期 concat 同一套登记核验（本桶 post-prod/、uploads/、本人成功任务产物、画布素材归属）；管理员/supervisor 豁免。
+  if (!privileged) {
+    const { resolveRegisteredPostProdMediaSource } = await import("../services/postProdMediaSource");
+    try {
+      input = { ...input, videoGsUri: await resolveRegisteredPostProdMediaSource({ userId: String(user.id), source: input.videoGsUri }, mediaDeps) };
+    } catch {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "成片来源不属于本人或尚未登记，请重新选择成片" });
+    }
+  }
+  const cost = CREDIT_COSTS.montageGradeAdvice;
+  const { adviseMontageGrade, MontageGradeAdviceRequestUsedError } = await import("../services/montageGradeAdvice");
+  let result: Awaited<ReturnType<typeof adviseMontageGrade>>;
+  try {
+    result = await adviseMontageGrade(user.id, input, serviceDeps, {
+      beforeModelCall: async () => {
+        if (!privileged && (await d.balance(user.id)).totalAvailable < cost)
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `调色建议需要 ${cost} 积分` });
+      },
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    if (error instanceof MontageGradeAdviceRequestUsedError)
+      throw new TRPCError({ code: "CONFLICT", message: "这次调色建议未完成或已失败，请重新发起" });
+    console.error("[adviseMontageGrade]", error);
+    throw new TRPCError({ code: "BAD_GATEWAY", message: "调色建议暂不可用，请稍后重试（未扣积分）" });
+  }
+  const deduction = await d.charge(user.id, cost, "montageGradeAdvice", "成片调色建议", { chargeKey: `canvas-montage-grade:${user.id}:${input.requestId}` });
+  if (!deduction.success)
+    throw new TRPCError({ code: "PAYMENT_REQUIRED", message: "积分不足，调色建议未交付，请充值后重新生成" });
+  return { ...result, creditsCost: deduction.cost };
+}
+
 export const canvasMusicMvRouter = router({
   listSongCraftTemplates: protectedProcedure.query(()=>readSongCraftCloudLibrary()),
   queueSongCover: protectedProcedure.input(z.object({musicJobId:z.string().min(1).max(200),prompt:z.string().min(1).max(12000),aspectRatio:z.enum(["9:16","1:1"]).optional()}).strict()).mutation(({ctx,input})=>queueSongCover(ctx.user.id,input.musicJobId,input.prompt,input.aspectRatio)),
@@ -553,44 +617,11 @@ export const canvasMusicMvRouter = router({
     }),
   /**
    * 1110 成片调色建议（Gemini 3.8 Flash：Vertex gs:// → EvoLink 签名 URL，两跳）。只出建议与 grade.segments，不改草稿。
-   * 计费沿用本 router 分镜写法：非管理/监督先查余额，成功后按 chargeKey 幂等扣（管理员 deductCreditsAmount 内 0 扣）；失败不扣、无需退。
-   * 单价暂借 CREDIT_COSTS.mvAnalysis（视频分析同类），待用户拍板。
+   * 计费：CREDIT_COSTS.montageGradeAdvice（20 积分/次），流程见 adviseCanvasMontageGrade。
    */
   adviseMontageGrade: protectedProcedure
-    .input(
-      z
-        .object({
-          requestId: z.string().uuid(),
-          videoGsUri: z.string().regex(/^gs:\/\/[^/]+\/.+\.(?:mp4|mov|webm)$/i),
-          durationSec: z.number().finite().positive().max(600),
-          aspect: z.enum(["9:16", "16:9", "1:1"]).optional(),
-          storyZh: z.string().max(8000).optional(),
-          seamSecs: z.array(z.number().finite().min(0)).max(40).optional(),
-        })
-        .strict()
-    )
-    .mutation(async ({ ctx, input }) => {
-      const privileged = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-      const bucket = getGcsBucketName();
-      const m = /^gs:\/\/([^/]+)\/(.+)$/.exec(input.videoGsUri)!;
-      if (m[1] !== bucket || (!privileged && m[2]!.split("/")[1] !== String(ctx.user.id)))
-        throw new TRPCError({ code: "BAD_REQUEST", message: "成片来源不属于本人，请重新选择成片" });
-      const cost = CREDIT_COSTS.mvAnalysis;
-      if (!privileged && (await deps.balance(ctx.user.id)).totalAvailable < cost)
-        throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `调色建议需要 ${cost} 积分` });
-      const { adviseMontageGrade } = await import("../services/montageGradeAdvice");
-      let result: Awaited<ReturnType<typeof adviseMontageGrade>>;
-      try {
-        result = await adviseMontageGrade(ctx.user.id, input);
-      } catch (error) {
-        console.error("[adviseMontageGrade]", error);
-        throw new TRPCError({ code: "BAD_GATEWAY", message: "调色建议暂不可用，请稍后重试（未扣积分）" });
-      }
-      const deduction = await deps.charge(ctx.user.id, cost, "mvAnalysis", "成片调色建议", { chargeKey: `canvas-montage-grade:${ctx.user.id}:${input.requestId}` });
-      if (!deduction.success)
-        throw new TRPCError({ code: "PAYMENT_REQUIRED", message: "积分不足，调色建议未交付，请充值后重新生成" });
-      return { ...result, creditsCost: deduction.cost };
-    }),
+    .input(adviseMontageGradeInputSchema)
+    .mutation(({ ctx, input }) => adviseCanvasMontageGrade(ctx.user, input)),
   /** 1109 参考片送出前自动裁切：min(本镜时长, 所选模型单条上限)，入点用户指定优先否则取运动最强段。 */
   trimShotMotionClip: protectedProcedure
     .input(

@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { colorCorrectionSchema, type ColorCorrection } from "../../shared/colorGrade";
 import { geminiAudioJsonWithFallback } from "../gemini-audio";
-import { getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcsIfAbsent } from "./gcs";
+import { downloadGcsObjectVersioned, getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcsIfAbsent } from "./gcs";
 
 export const MONTAGE_GRADE_ADVICE_MODEL = "gemini-3.8-flash";
 const LUT_MANIFEST_PATH = fileURLToPath(new URL("../assets/luts/manifest.json", import.meta.url));
@@ -138,11 +138,22 @@ export type MontageGradeAdviceResult = {
   segments: GradeSegment[];
   usedBy: { channel: string; model: string; failuresZh: string[] };
   evidencePrefix: string;
+  /** true＝同 requestId 已有最终结果，直接返回已存结果、未再调模型。 */
+  replayed?: boolean;
 };
+
+/** 同 requestId 已登记但无最终结果（处理中/失败）：编号不可复用，须换新 requestId 重新发起。 */
+export class MontageGradeAdviceRequestUsedError extends Error {
+  constructor(requestId: string) {
+    super(`调色建议请求 ${requestId} 已登记但无最终结果（处理中或已失败），编号不可复用`);
+    this.name = "MontageGradeAdviceRequestUsedError";
+  }
+}
 
 export type MontageGradeAdviceDeps = {
   call: typeof geminiAudioJsonWithFallback;
   upload: typeof uploadBufferToGcsIfAbsent;
+  download: typeof downloadGcsObjectVersioned;
   bucket: () => string;
   sign: typeof signGsUriV4ReadUrl;
   luts: () => Promise<LutOption[]>;
@@ -150,23 +161,58 @@ export type MontageGradeAdviceDeps = {
 const realDeps: MontageGradeAdviceDeps = {
   call: geminiAudioJsonWithFallback,
   upload: uploadBufferToGcsIfAbsent,
+  download: downloadGcsObjectVersioned,
   bucket: getGcsBucketName,
   sign: signGsUriV4ReadUrl,
   luts: () => loadGradeLutOptions(),
 };
 
-export async function adviseMontageGrade(userId: number, input: MontageGradeAdviceInput, deps: Partial<MontageGradeAdviceDeps> = {}): Promise<MontageGradeAdviceResult> {
+/** 最终产物 segments.json（含 advice/usedBy）；缺失返回 null，形状不全视为无结果。 */
+async function readStoredResult(d: MontageGradeAdviceDeps, bucket: string, prefix: string): Promise<MontageGradeAdviceResult | null> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse((await d.download({ gcsUri: `gs://${bucket}/${prefix}/segments.json` })).buffer.toString("utf8"));
+  } catch (error) {
+    if (error instanceof Error && /^gcs_(?:stat|download)_failed:404(?:$|:)/.test(error.message)) return null;
+    throw error;
+  }
+  const r = raw as Partial<MontageGradeAdviceResult> | null;
+  if (!r || !Array.isArray(r.segments) || !r.advice || !r.usedBy || typeof r.requestId !== "string") return null;
+  return { requestId: r.requestId, advice: r.advice, segments: r.segments, usedBy: r.usedBy, evidencePrefix: String(r.evidencePrefix || `gs://${bucket}/${prefix}`) };
+}
+
+/**
+ * 防重放：同 requestId 只调一次模型。
+ * 1) 已有最终结果 → 直接返回已存结果（replayed），不调模型；扣费由调用方按同 chargeKey 幂等补扣。
+ * 2) 否则先跑 beforeModelCall（余额预检，抛错则什么都不写），再以 request.json 条件创建（ifGenerationMatch=0）原子占号；
+ *    占号失败 = 已登记：有结果则返回已存结果，无结果（处理中/失败）抛 MontageGradeAdviceRequestUsedError。
+ * 因此每个 requestId 的原始/解析回包只落一次，证据只增不覆盖、永不删除。
+ */
+export async function adviseMontageGrade(
+  userId: number,
+  input: MontageGradeAdviceInput,
+  deps: Partial<MontageGradeAdviceDeps> = {},
+  opts: { beforeModelCall?: () => Promise<void> } = {},
+): Promise<MontageGradeAdviceResult> {
   const d = { ...realDeps, ...deps };
   const bucket = d.bucket();
   const prefix = `canvas-montage/grade-advice/${userId}/${input.requestId}`;
+  const stored = await readStoredResult(d, bucket, prefix);
+  if (stored) return { ...stored, replayed: true };
+  await opts.beforeModelCall?.();
   // 原始/解析 JSON 只增不覆盖、永不删除。
   const save = async (name: string, value: unknown) => {
-    await d.upload({ bucket, objectName: `${prefix}/${name}.json`, buffer: Buffer.from(JSON.stringify(value)), contentType: "application/json" });
+    return d.upload({ bucket, objectName: `${prefix}/${name}.json`, buffer: Buffer.from(JSON.stringify(value)), contentType: "application/json" });
   };
+  const claim = await save("request", { userId, ...input, model: MONTAGE_GRADE_ADVICE_MODEL });
+  if (!claim.created) {
+    const raced = await readStoredResult(d, bucket, prefix);
+    if (raced) return { ...raced, replayed: true };
+    throw new MontageGradeAdviceRequestUsedError(input.requestId);
+  }
   const luts = await d.luts();
   const lutIds = new Set(luts.map(l => l.id));
   const prompt = buildMontageGradePrompt({ ...input, luts });
-  await save("request", { userId, ...input, model: MONTAGE_GRADE_ADVICE_MODEL });
   const out = await d.call({
     media: { vertexFileUri: input.videoGsUri, evolinkFileUri: () => d.sign(input.videoGsUri, 2 * 3600) },
     mimeType: "video/mp4",
@@ -179,12 +225,14 @@ export async function adviseMontageGrade(userId: number, input: MontageGradeAdvi
     timeoutMs: 240_000,
   });
   const segments = adviceToGradeSegments(out.value, input.durationSec);
-  await save("segments", { segments, channel: out.channel, model: out.model });
-  return {
+  const result: MontageGradeAdviceResult = {
     requestId: input.requestId,
     advice: out.value,
     segments,
     usedBy: { channel: out.channel, model: out.model, failuresZh: out.failuresZh },
     evidencePrefix: `gs://${bucket}/${prefix}`,
   };
+  // 最终产物（重放据此原样返回）；channel/model 顶层保留旧字段。
+  await save("segments", { ...result, channel: out.channel, model: out.model });
+  return result;
 }
