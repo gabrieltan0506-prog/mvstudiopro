@@ -821,7 +821,7 @@ jobs:
             || echo "::warning::本批 current 临时快照未清理，来源及其他批次保留；需后续处理"
 
       - name: Retire verified Bilibili archive sources
-        if: success()
+        if: ${{ success() && env.BACKUP_DEFERRED != 'true' }}
         timeout-minutes: 20
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
