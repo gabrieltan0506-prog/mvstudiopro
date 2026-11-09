@@ -60,6 +60,13 @@ import {
   CANVAS_BGM_CREDITS_PER_RUN,
 } from "@shared/canvasGenerationPricing";
 import { CREDIT_COSTS } from "@shared/plans";
+import { CanvasMvShotReferencePicker } from "./CanvasMvShotReferencePicker";
+import {
+  EMPTY_MV_SHOT_REFERENCES,
+  mvShotReferenceGaps,
+  mvShotReferencesSchema,
+  type MvShotReferences,
+} from "@shared/canvasMusicMvReferences";
 
 type Props = {
   projectId?: string;
@@ -69,6 +76,8 @@ type Props = {
   onAdd: (blocks: CanvasBlock[], edges: CanvasEdge[]) => void;
   runShot: (id: string) => Promise<boolean | undefined>;
   getBlocks: () => CanvasBlock[];
+  /** 1109：把参考槽位同步到已铺的镜头块（出片真源是镜头块 musicMvShot.references）。 */
+  onPatchBlock?: (id: string, patch: Partial<CanvasBlock>) => void;
 };
 const field = "w-full rounded border border-white/20 bg-black/30 p-1.5 text-xs";
 const button =
@@ -108,6 +117,7 @@ export function CanvasMusicMvStudio({
   onAdd,
   runShot,
   getBlocks,
+  onPatchBlock,
 }: Props) {
   const state = block.musicMv || { status: "idle", candidates: [] };
   const latest = useRef(state);
@@ -579,7 +589,8 @@ export function CanvasMusicMvStudio({
         state.plan,
         state.planRequestId,
         refs,
-        selected
+        selected,
+        effectiveShotReferences(latest.current)
       );
       for (const shot of shots)
         if (shot.musicMvShot?.kind === "footage" && shot.outputUrl) {
@@ -612,10 +623,57 @@ export function CanvasMusicMvStudio({
     const wanted = new Set(musicMvShotSlices(source.plan, highlightRange(source)).map(row=>row.shot.id));
     return (source.shotBlockIds || []).filter(id => wanted.has(getBlocks().find(row=>row.id === id)?.musicMvShot?.shotId || ""));
   };
+  /** 每镜有效参考 = 本镜槽位 + 未单独设定时继承全片主锚图。 */
+  const effectiveShotReferences = (source: CanvasMusicMvState): Record<string, MvShotReferences> => {
+    const out: Record<string, MvShotReferences> = {};
+    for (const shot of source.plan?.shots || []) {
+      const own = source.shotReferences?.[shot.id];
+      if (!own && !source.anchorImage) continue;
+      out[shot.id] = mvShotReferencesSchema.parse({
+        ...EMPTY_MV_SHOT_REFERENCES,
+        ...(own || {}),
+        ...(!own?.anchorImage && source.anchorImage ? { anchorImage: source.anchorImage } : {}),
+      });
+    }
+    return out;
+  };
+  /** 参考变更：写入音乐块状态，并同步到已铺镜头块（出片读镜头块）。已出片镜头不改。 */
+  const updateReferences = (next: { anchorImage?: CanvasMusicMvState["anchorImage"]; shotReferences: Record<string, MvShotReferences> }) => {
+    patch({ anchorImage: next.anchorImage, shotReferences: next.shotReferences });
+    const effective = effectiveShotReferences(latest.current);
+    for (const id of latest.current.shotBlockIds || []) {
+      const shotBlock = getBlocks().find(row => row.id === id);
+      const binding = shotBlock?.musicMvShot;
+      if (!shotBlock || !binding || binding.kind === "footage") continue;
+      if (shotBlock.status === "running" || (shotBlock.videoTaskId && shotBlock.videoTaskStatus !== "failed")) continue;
+      const refs = effective[binding.shotId];
+      if (!refs) continue;
+      const gaps = mvShotReferenceGaps(refs).blocking;
+      onPatchBlock?.(id, {
+        musicMvShot: { ...binding, references: refs },
+        seedance25WorkMode: "reference_to_video",
+        error: gaps.length ? `参考素材不完整：${gaps.map(g => g.messageZh).join("；")}` : undefined,
+      });
+    }
+  };
   const render = () =>
     perform(async () => {
       const ids = activeShotIds(latest.current);
       if (!ids.length) throw new Error("请先确认分镜并铺设镜头");
+      // 1109 硬规则：整批先核参考，任一镜缺项即全部不发（无参考不得退回文生）。
+      const gapLines: string[] = [];
+      ids.forEach((id, i) => {
+        const shotBlock = getBlocks().find(row => row.id === id);
+        const binding = shotBlock?.musicMvShot;
+        if (!shotBlock || !binding || binding.kind === "footage" || (shotBlock.status === "done" && shotBlock.outputUrl)) return;
+        if (!binding.references) {
+          if (!binding.referenceImages.length) gapLines.push(`镜头 ${i + 1}：未选参考素材`);
+          return;
+        }
+        const gaps = mvShotReferenceGaps(binding.references).blocking;
+        if (gaps.length) gapLines.push(`镜头 ${i + 1}：${gaps.map(g => g.messageZh).join("、")}`);
+      });
+      if (gapLines.length) throw new Error(`请先为镜头选参考素材，本次未提交、未扣费。${gapLines.join("；")}`);
       patch({ status: "rendering", error: undefined });
       for (let i = 0; i < ids.length; i++) {
         if (
@@ -1515,6 +1573,30 @@ export function CanvasMusicMvStudio({
               </p>
             ))}
           </details>
+          <CanvasMvShotReferencePicker
+            projectId={projectId}
+            planRequestId={state.planRequestId}
+            shots={planShots}
+            anchorImage={state.anchorImage}
+            shotReferences={state.shotReferences}
+            shotBlocks={(state.shotBlockIds || []).flatMap(id => {
+              const row = blocks.find(b => b.id === id);
+              const shotId = row?.musicMvShot?.shotId;
+              if (!row || !shotId) return [];
+              const adopted = row.manhuaSegmentRefs?.previs;
+              const last = row.previsStudio?.history?.[row.previsStudio.history.length - 1];
+              const previs = adopted?.gcsUri && adopted.durationSec
+                ? { gcsUri: adopted.gcsUri, durationSec: adopted.durationSec }
+                : last?.gcsUri
+                  ? { gcsUri: last.gcsUri, durationSec: last.durationSec, requestId: last.requestId }
+                  : undefined;
+              return [{ shotId, blockId: id, previs }];
+            })}
+            orientation={block.aspectRatio === "9:16" || highlightMode ? "portrait" : "landscape"}
+            cinemaHintZh={state.creativePrompt}
+            disabled={busy}
+            onChange={updateReferences}
+          />
           <h3 data-mv-step="shots" className="border-t border-white/15 pt-5 text-base font-semibold">4. 制作镜头</h3>
           <button
             className={button}

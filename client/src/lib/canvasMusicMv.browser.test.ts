@@ -20,6 +20,8 @@ beforeAll(async () => {
       const initial={...defaultCanvasBlock('music',0,0),id:'music-root',prompt:'中国风叙事音乐，温暖弦乐',musicMv:{status:'idle',candidates:[],requestedDurationSec:10}};
       const f=globalThis.fixture={current:saved||[initial],calls:JSON.parse(localStorage.getItem('offline-calls')||'[]'),musicReady:true,queries:[],adds:[]};
       f.record=(kind,input)=>{f.calls.push({kind,input});localStorage.setItem('offline-calls',JSON.stringify(f.calls));};
+      // 1109：MV 镜头无参考拒发；夹具为每个镜头块写入完整参考槽位（主锚图+场景图+参考片+歌曲切片）。
+      f.fillRefs=()=>{const sf=n=>'sf_'+n.toString(16).padStart(48,'0');f.update(f.current.map(b=>b.musicMvShot&&b.musicMvShot.kind!=='footage'?{...b,error:undefined,musicMvShot:{...b.musicMvShot,references:{anchorImage:{assetId:sf(1),gcsUri:'gs://test-bucket/stock/anchor.jpg'},sceneImages:[{assetId:sf(2),gcsUri:'gs://test-bucket/stock/scene.jpg'}],motionVideos:[],songSlice:{jobId:'slice-'+b.musicMvShot.shotId,gcsUri:'gs://test-bucket/slices/'+b.musicMvShot.shotId+'.wav',startSec:b.musicMvShot.startSec,endSec:b.musicMvShot.endSec}}}}:b));};
       f.makePlan=input=>({version:1,audioId:input.audio.id,audioDurationSec:input.audio.durationSec,analysisBasis:'lyrics_and_user_description',shots:[
         {id:'shot-a',startSec:0,endSec:5,visualPrompt:'主角站在林间',cameraPrompt:'缓慢推进',lyricQuote:input.lyrics?'夜雨落在旧城墙':'',referenceIndices:[]},
         {id:'shot-b',startSec:5,endSec:10,visualPrompt:'主角转身看向远处',cameraPrompt:'轻微横移',lyricQuote:'',referenceIndices:[]}]});
@@ -30,7 +32,7 @@ beforeAll(async () => {
         const onPatch=patch=>update(f.current.map((b,i)=>i===0?{...b,...patch}:b));
         const onAdd=(added,edges)=>{f.adds.push({ids:added.map(b=>b.id),edges});update([...f.current.filter(b=>!added.some(a=>a.id===b.id)),...added]);};
         const runShot=async id=>{f.record('shot',id);update(f.current.map(b=>b.id===id?{...b,status:'done',outputUrl:'https://test.invalid/'+id+'.mp4'}:b));return true;};
-        return <CanvasMusicMvStudio block={blocks[0]} blocks={blocks} onPatch={onPatch} onAdd={onAdd} runShot={runShot} getBlocks={()=>f.current}/>;
+        return <CanvasMusicMvStudio block={blocks[0]} blocks={blocks} onPatch={onPatch} onAdd={onAdd} runShot={runShot} getBlocks={()=>f.current} onPatchBlock={(id,patch)=>update(f.current.map(b=>b.id===id?{...b,...patch}:b))}/>;
       }
       createRoot(document.getElementById('root')).render(<App/>);
     `,
@@ -90,6 +92,7 @@ beforeAll(async () => {
           queueSongCover:{useMutation:()=>({mutateAsync:async()=>({jobId:'cover-offline',status:'queued'})})},
           saveEdit:{useMutation:()=>({mutateAsync:async input=>{f().record('saveEdit',input);const receipt={...input,sha256:'test-hash',createdAt:'2026-10-15T21:00:00+08:00'};localStorage.setItem('saved-edit-'+input.revisionId,JSON.stringify(receipt));return receipt;}})},
           adoptConcept:{useMutation:()=>({mutateAsync:async input=>{f().record('adopt',input);const a=f().state.advisor;const c=a.proposal.concepts.find(c=>c.id===input.conceptId);return {requestId:input.requestId,plan:c.plan,input:{requestId:input.requestId,audio:a.target.audio,lyrics:a.target.lyrics,creativePrompt:a.target.creativePrompt,referenceSummaries:a.target.referenceSummaries,advisorEvidenceId:input.evidenceId}};}})},
+          prepareShotSongSlice:{useMutation:()=>({isPending:false,mutateAsync:async input=>{f().record('songSlice',input);return {jobId:'slice-'+input.shotId,startSec:0,endSec:5,kind:'generated'};}})},
           draftPlan:{useMutation:()=>({mutateAsync:async input=>{f().record('plan',input);if(f().planError)throw new Error(f().planError);return {plan:f().makePlan(input)};}})}},
           canvasMusicMvAssemble:{queue:{useMutation:()=>({mutateAsync:async input=>{f().record('assemble',input);return {jobId:'assemble-fictional'};}})}}};
       `
@@ -206,6 +209,18 @@ describe("独立音乐MV真实视图（虚构任务边界）", () => {
           )
         )
       ).toHaveLength(0);
+      // 1109 硬规则：无参考时整批拒发、零调用，错误逐镜列出
+      await click("生成缺失镜头");
+      await page.waitForFunction(() =>
+        String((window as any).fixture.state.error || "").includes("请先为镜头选参考素材")
+      );
+      expect(
+        await page.evaluate(() =>
+          (window as any).fixture.calls.filter((c: any) => c.kind === "shot")
+        )
+      ).toHaveLength(0);
+      expect(await page.$$('[data-mv-shot-refs]')).toHaveLength(2);
+      await page.evaluate(() => (window as any).fixture.fillRefs());
       await click("生成缺失镜头");
       await page.waitForFunction(() =>
         (window as any).fixture.current
@@ -394,6 +409,7 @@ describe("独立音乐MV真实视图（虚构任务边界）", () => {
         );
       });
       await reload();
+      await page.evaluate(() => (window as any).fixture.fillRefs());
       await click("生成缺失镜头");
       await page.waitForFunction(() =>
         (window as any).fixture.current
@@ -971,6 +987,7 @@ it("双交付：歌曲模式止于音频封面，高光只制作原曲25至65秒
   await page.waitForFunction(()=>(window as any).fixture.state.highlight?.startSec===25);
   await click('确认分镜并铺到画布');
   await page.waitForFunction(()=>(window as any).fixture.state.shotBlockIds?.length===10);
+  await page.evaluate(()=>(window as any).fixture.fillRefs());
   await click('生成缺失镜头（5');
   await page.waitForFunction(()=>(window as any).fixture.calls.filter((c:any)=>c.kind==='shot').length===5);
   await click('合成抖音高光 MV');

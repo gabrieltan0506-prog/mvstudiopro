@@ -2187,6 +2187,7 @@ export default function FreeformCanvas({
     : undefined;
   const renderMusicStudio = (block: CanvasBlock) => (<CanvasMusicMvStudio projectId={projectId} key={block.id} block={block} blocks={blocks}
                         onPatch={patch => patchOne(block.id, patch)} getBlocks={() => blocksRef.current}
+                        onPatchBlock={(id, patch) => patchOne(id, patch)}
                         runShot={runBlock}
                         onAdd={(added, links) => {
                           onBlocksChange(prev => [...prev, ...added.filter(item => !prev.some(row => item.id === row.id))]);
