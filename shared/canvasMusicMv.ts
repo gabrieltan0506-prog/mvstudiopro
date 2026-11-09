@@ -700,6 +700,38 @@ export type CanvasMusicMvShotBinding = z.infer<
   typeof canvasMusicMvShotBindingSchema
 >;
 
+/** 成片超分记录：任务真源在服务端（同源同档幂等、失败退分），这里只存任务号与结果版本。 */
+export const canvasMusicMvFinalUpscaleSchema = z
+  .object({
+    id: z.string().uuid(),
+    finalBlockId: text.max(200),
+    sourceUrl: z.string().url().max(4000),
+    target: z.enum(["2k", "4k"]),
+    status: z.enum([
+      "submitting",
+      "submission_unknown",
+      "queued",
+      "running",
+      "succeeded",
+      "failed",
+      "timed_out_pending_reconcile",
+      "reconcile_manual",
+    ]),
+    taskId: text.max(200).optional(),
+    durationSec: z.number().int().positive().max(600),
+    width: z.number().int().positive().optional(),
+    height: z.number().int().positive().optional(),
+    creditsQuoted: z.number().int().nonnegative(),
+    creditsUsed: z.number().nonnegative().optional(),
+    videoUrl: z.string().url().max(4000).optional(),
+    versionBlockId: text.max(200).optional(),
+    error: z.string().max(2000).optional(),
+  })
+  .strict();
+export type CanvasMusicMvFinalUpscale = z.infer<
+  typeof canvasMusicMvFinalUpscaleSchema
+>;
+
 export const canvasMusicMvStateSchema = z
   .object({
     deliveryMode: z.enum(["song", "highlight"]).optional(),
@@ -831,6 +863,8 @@ export const canvasMusicMvStateSchema = z
       )
       .optional(),
     finalBlockId: text.max(200).optional(),
+    /** 1109 成片超分：复用画布/首页同一超分任务与计价；结果作为新版本块挂在成片旁，原片不动。 */
+    finalUpscales: z.array(canvasMusicMvFinalUpscaleSchema).max(40).optional(),
     error: z.string().max(2000).optional(),
   })
   .strict()

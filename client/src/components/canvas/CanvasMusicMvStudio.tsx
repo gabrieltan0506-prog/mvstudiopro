@@ -68,6 +68,27 @@ import { CanvasMvLyricTableEditor } from "./CanvasMvLyricTableEditor";
 import { planMvHighlightFades } from "@shared/canvasMusicMvLyricKinds";
 import { recommendMusicMvHighlight } from "@shared/musicMvHighlight";
 import { CanvasMvShotReferencePicker } from "./CanvasMvShotReferencePicker";
+import type { CanvasMusicMvFinalUpscale } from "@shared/canvasMusicMv";
+import {
+  fetchVideoUpscaleStatus,
+  probeWorkflowVideoSource,
+  startVideoUpscale,
+  VideoUpscaleSubmitError,
+} from "@/lib/videoUpscaleApi";
+import {
+  MV_FINAL_UPSCALE_TARGETS,
+  mvFinalUpscaleBlocker,
+  mvFinalUpscaleConfirmText,
+  mvFinalUpscaleDownloadName,
+  mvFinalUpscaleNeedsPoll,
+  mvFinalUpscaleNeedsVersionBlock,
+  mvFinalUpscaleQuote,
+  mvFinalUpscaleScopeKey,
+  mvFinalUpscaleStatusText,
+  mvFinalUpscaleSupported,
+  mvFinalUpscaleVersionBlockId,
+  type MvUpscaleTarget,
+} from "@/lib/musicMvFinalUpscale";
 import {
   EMPTY_MV_SHOT_REFERENCES,
   mvShotReferenceGaps,
@@ -849,6 +870,150 @@ export function CanvasMusicMvStudio({
       if (identityCurrent())
         patch({ finalBlockId: final.id, status: "done", error: undefined });
     });
+  /** 1109 成片超分：只改本记录，其他字段以 latest 为准，避免轮询与按钮并发互相覆盖。 */
+  const patchUpscale = (id: string, delta: Partial<CanvasMusicMvFinalUpscale>) =>
+    patch({
+      finalUpscales: (latest.current.finalUpscales || []).map(r =>
+        r.id === id ? { ...r, ...delta } : r
+      ),
+    });
+  const finalBlock = state.finalBlockId
+    ? blocks.find(b => b.id === state.finalBlockId)
+    : undefined;
+  const finalSource = String(finalBlock?.outputUrl || "").trim();
+  const upscaleFinal = (target: MvUpscaleTarget) =>
+    perform(async () => {
+      const finalId = latest.current.finalBlockId;
+      const fb = finalId ? getBlocks().find(b => b.id === finalId) : undefined;
+      const src = String(fb?.outputUrl || "").trim();
+      if (!finalId || !/^https:\/\//i.test(src))
+        throw new Error("请先完成合成成片再超分");
+      const blocker = mvFinalUpscaleBlocker(latest.current.finalUpscales, finalId, target);
+      if (blocker) throw new Error(blocker);
+      setProgress("读取成片实测规格…");
+      const meta = await probeWorkflowVideoSource(src);
+      if (!mvFinalUpscaleSupported(meta.sourceResolution, target))
+        throw new Error(
+          meta.sourceResolution === "480p"
+            ? "该成片最高可超分到 2K"
+            : "该成片已达到目标档位，无需超分"
+        );
+      const credits = mvFinalUpscaleQuote(target, meta.durationSec);
+      if (
+        !window.confirm(
+          mvFinalUpscaleConfirmText({ target, width: meta.width, height: meta.height, durationSec: meta.durationSec, credits })
+        )
+      )
+        return;
+      // 提交结果未确认的旧记录复用同一条（服务端同源同档幂等），不另起记录。
+      const unknown = (latest.current.finalUpscales || []).find(
+        r => r.finalBlockId === finalId && r.target === target && r.status === "submission_unknown"
+      );
+      const record: CanvasMusicMvFinalUpscale = {
+        id: unknown?.id || crypto.randomUUID(),
+        finalBlockId: finalId,
+        sourceUrl: src,
+        target,
+        status: "submitting",
+        durationSec: meta.durationSec,
+        width: meta.width,
+        height: meta.height,
+        creditsQuoted: credits,
+      };
+      patch({
+        finalUpscales: [
+          ...(latest.current.finalUpscales || []).filter(r => r.id !== record.id),
+          record,
+        ],
+      });
+      try {
+        const started = await startVideoUpscale({
+          videoUrl: src,
+          target,
+          durationSec: meta.durationSec,
+          sourceResolution: meta.sourceResolution,
+          scopeKey: mvFinalUpscaleScopeKey(block.id, finalId, target),
+        });
+        patchUpscale(record.id, {
+          taskId: started.taskId,
+          status: started.status === "succeeded" ? "running" : started.status,
+          creditsUsed: started.creditsUsed,
+          error: undefined,
+        });
+        setProgress(`${target.toUpperCase()} 超分已提交`);
+      } catch (e) {
+        if (e instanceof VideoUpscaleSubmitError && e.definitelyNotStarted) {
+          patch({ finalUpscales: (latest.current.finalUpscales || []).filter(r => r.id !== record.id) });
+        } else {
+          patchUpscale(record.id, {
+            status: "submission_unknown",
+            error: e instanceof Error ? e.message : "提交结果未确认",
+          });
+        }
+        throw e;
+      }
+    });
+  // 超分任务轮询（刷新恢复：记录随 MV 块持久化，挂载即接管）；成功后把结果挂成成片旁的新版本块。
+  const upscalePollKey = (state.finalUpscales || [])
+    .filter(mvFinalUpscaleNeedsPoll)
+    .map(r => `${r.id}:${r.taskId}`)
+    .join(",");
+  useEffect(() => {
+    if (!upscalePollKey) return;
+    let cancelled = false;
+    const tick = async () => {
+      for (const r of (latest.current.finalUpscales || []).filter(mvFinalUpscaleNeedsPoll)) {
+        try {
+          const snap = await fetchVideoUpscaleStatus(r.taskId!);
+          if (cancelled || !alive.current) return;
+          patchUpscale(r.id, {
+            status: snap.status === "succeeded" && !snap.videoUrl ? "running" : snap.status,
+            ...(snap.videoUrl ? { videoUrl: snap.videoUrl } : {}),
+            ...(snap.creditsUsed ? { creditsUsed: snap.creditsUsed } : {}),
+            error: snap.status === "failed" ? snap.error : undefined,
+          });
+        } catch {
+          // 查询失败按瞬态处理，下一轮再查；终态只信服务端
+        }
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 8_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upscalePollKey]);
+  const versionKey = (state.finalUpscales || [])
+    .filter(mvFinalUpscaleNeedsVersionBlock)
+    .map(r => r.id)
+    .join(",");
+  useEffect(() => {
+    if (!versionKey) return;
+    for (const r of (latest.current.finalUpscales || []).filter(mvFinalUpscaleNeedsVersionBlock)) {
+      const source = getBlocks().find(b => b.id === r.finalBlockId);
+      const id = mvFinalUpscaleVersionBlockId(r.finalBlockId, r);
+      if (!getBlocks().some(b => b.id === id)) {
+        const anchorBlock = source || block;
+        const version = defaultCanvasBlock(
+          "video",
+          anchorBlock.x + (r.target === "4k" ? anchorBlock.width + 60 : 0),
+          anchorBlock.y + anchorBlock.height + 60,
+          anchorBlock.id
+        );
+        version.id = id;
+        version.prompt = `${source?.prompt || "MV 成片"} · ${r.target.toUpperCase()} 超分版`;
+        version.status = "done";
+        version.outputUrl = r.videoUrl;
+        version.outputUrls = [r.videoUrl!];
+        version.aspectRatio = source?.aspectRatio || version.aspectRatio;
+        onAdd([version], source ? [{ fromId: source.id, toId: id }] : []);
+      }
+      patchUpscale(r.id, { versionBlockId: id });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versionKey]);
   /** 歌词表变化 → 未出片的演唱镜同步唱句（只有确认版会写入；改动后回到待确认即清空，出片前拦）。 */
   const syncSingingLyrics = (table: CanvasMusicMvState["lyricTable"]) => {
     for (const id of latest.current.shotBlockIds || []) {
@@ -1770,6 +1935,50 @@ export function CanvasMusicMvStudio({
             >
               合成新版本 · {CREDIT_COSTS.workflowFinalRender} 积分
             </button>
+          )}
+          {state.assembleTerminalStatus === "succeeded" && /^https:\/\//i.test(finalSource) && state.finalBlockId && (
+            <div className="space-y-1.5 rounded border border-white/15 p-2" data-mv-final-upscale>
+              <p className="text-xs">成片超分（结果作为新版本放在成片旁，原成片保留；点击后先显示预估积分再确认）</p>
+              <div className="flex gap-2">
+                {MV_FINAL_UPSCALE_TARGETS.map(t => {
+                  const blocker = mvFinalUpscaleBlocker(state.finalUpscales, state.finalBlockId!, t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      className={button}
+                      disabled={busy || Boolean(blocker)}
+                      title={blocker || `按成片实测时长计费，确认前显示预估积分`}
+                      onClick={() => upscaleFinal(t)}
+                    >
+                      {t.toUpperCase()} 超分
+                    </button>
+                  );
+                })}
+              </div>
+              {(state.finalUpscales || []).map(r => (
+                <div key={r.id} className="flex flex-wrap items-center gap-2 text-xs">
+                  <span>
+                    {r.target.toUpperCase()} 超分{r.finalBlockId !== state.finalBlockId ? "（旧成片）" : ""} · {mvFinalUpscaleStatusText(r)}
+                    {r.creditsUsed !== undefined ? ` · ${r.creditsUsed} 积分` : ` · 预估 ${r.creditsQuoted} 积分`}
+                  </span>
+                  {r.videoUrl && (
+                    <a
+                      className="underline"
+                      href={r.videoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      download={mvFinalUpscaleDownloadName(state.songTitle, r.target)}
+                    >
+                      下载 {r.target.toUpperCase()} 版
+                    </a>
+                  )}
+                  {r.error && r.status !== "succeeded" && (
+                    <span className="text-amber-200">{creativeUserText(r.error)}</span>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
           {!!state.shotBlockIds?.length && materialGap > 0 && (
             <p className="text-xs text-amber-200">
