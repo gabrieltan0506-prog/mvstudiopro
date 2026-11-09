@@ -16,6 +16,7 @@ import { digitalHumanAdoptedFilmPrompt } from "@shared/digitalHumanStudio";
 import { DIGITAL_HUMAN_DIRECTION_MAX_CHARS, DIGITAL_HUMAN_FILM_MODELS, digitalHumanFilmModelSchema } from "@shared/digitalHumanFilmDirector";
 import { DigitalHumanOmniPanel } from "./DigitalHumanOmniPanel";
 import { DigitalHumanPostProduction } from "./DigitalHumanPostProduction";
+import { requestPostProdGrade } from "@/lib/postProdQuickGrade";
 import { adoptDigitalHumanSource, type DigitalHumanSource } from "@shared/digitalHumanStudio";
 import { recoverDigitalHumanDraft } from "@/lib/digitalHumanRecovery";
 import { DigitalHumanRecorder } from "./DigitalHumanRecorder";
@@ -1320,6 +1321,13 @@ function DigitalHumanWorkspace({
                   >
                     超分到{upscaleTarget.toUpperCase()}
                   </button>
+                  <a
+                    href="#manhua-post-enhance"
+                    data-digital-human-grade
+                    onClick={event => { event.preventDefault(); requestPostProdGrade({ url: v.upscale?.status === "succeeded" && v.upscale.source ? v.upscale.source : v.source!, label: "数字人成片" }); }}
+                  >
+                    去后期调色
+                  </a>
                 </>
               )}
               {v.upscaleHistory?.filter(h => h.source).map((h,i)=><DigitalHumanMedia key={i} source={h.source!} kind="video" name={`历史${(h.target||"4k").toUpperCase()}超分成片`} />)}

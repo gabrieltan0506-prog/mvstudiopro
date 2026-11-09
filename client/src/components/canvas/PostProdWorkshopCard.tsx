@@ -1,5 +1,9 @@
 import { MontagePlanner } from "./MontagePlanner";
 import type { ConcatGrade } from "@shared/colorGrade";
+import { POSTPROD_GRADE_EVENT, type PostProdGradeRequest } from "@/lib/postProdQuickGrade";
+import { VideoGradePanel } from "./VideoGradePanel";
+import { submitVideoGrade } from "@/lib/videoGradeSubmit";
+import type { MontageGrade } from "@/lib/montageFinish";
 import type { ManhuaVfxEnvironmentOption } from "@shared/manhuaVfxEnvironment";
 import type { ManhuaVfxState } from "@shared/manhuaVfx";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
@@ -550,6 +554,21 @@ export default function PostProdWorkshopCard({
   const [upscaleProbeBusy, setUpscaleProbeBusy] = useState(false);
   const [upscaleSubmitBusy, setUpscaleSubmitBusy] = useState(false);
   const [enhanceChoice, setEnhanceChoice] = useState<{ target: "2k" | "4k"; fps: 30 }>({ target: "2k", fps: 30 });
+  /** 「调色这条」快捷入口：对超分页签所选单条直接调色，不必先出剪辑方案。 */
+  const [quickGradeOpen, setQuickGradeOpen] = useState(false);
+  const [quickGrade, setQuickGrade] = useState<MontageGrade | undefined>(undefined);
+  const [quickGradeBusy, setQuickGradeBusy] = useState(false);
+  useEffect(() => {
+    const onGrade = (event: Event) => {
+      const detail = (event as CustomEvent<PostProdGradeRequest>).detail;
+      if (!detail?.url) return;
+      setActiveTool("enhance");
+      setUpscaleVideoUrl(detail.url);
+      setQuickGradeOpen(true);
+    };
+    window.addEventListener(POSTPROD_GRADE_EVENT, onGrade);
+    return () => window.removeEventListener(POSTPROD_GRADE_EVENT, onGrade);
+  }, []);
   const [upscaleJobs, setUpscaleJobs] = useState<TrackedUpscale[]>(() =>
     loadTrackedUpscales(userId, localStorage, Boolean(mediaInput))
   );
@@ -1938,6 +1957,31 @@ export default function PostProdWorkshopCard({
             <button type="button" disabled={!upscaleSource || upscaleSubmitBusy || busy || !upscaleSource.fps || !canWavespeedUpscale(upscaleSource.sourceResolution, enhanceChoice.target)} onClick={() => void submitUpscale(enhanceChoice.target, enhanceChoice.fps)} className={goCls}>
               {upscaleSubmitBusy ? "正在提交…" : `提交${enhanceChoice.target.toUpperCase()}／${enhanceChoice.fps}帧${upscaleProbedSec ? ` · 扣${canvasVideoEnhanceQuote(enhanceChoice.target, enhanceChoice.fps, upscaleProbedSec).totalCredits}积分` : ""}`}
             </button>
+            <button type="button" data-postprod-quick-grade aria-expanded={quickGradeOpen} disabled={!upscaleVideoUrl} onClick={() => setQuickGradeOpen(open => !open)} className={goCls}>调色这条</button>
+            {quickGradeOpen ? (
+              <div data-postprod-quick-grade-panel className="space-y-1.5 rounded-lg border border-white/10 p-2">
+                <p className="text-[11px] text-white/55">对所选这一条直接全片或分段调色，生成新成片，原片保留；云端成片自动先导入本人工作流。</p>
+                {upscaleSource ? (
+                  <VideoGradePanel
+                    value={quickGrade}
+                    onChange={setQuickGrade}
+                    outputSec={upscaleSource.durationExactSec ?? upscaleSource.durationSec}
+                    disabled={quickGradeBusy || busy}
+                    adviceVideoGsUri={upscaleVideoUrl.startsWith("gs://") ? upscaleVideoUrl : undefined}
+                    adviceAspect={upscaleSource.width === upscaleSource.height ? "1:1" : upscaleSource.width > upscaleSource.height ? "16:9" : "9:16"}
+                    storyZh={currentStoryContext}
+                    onError={message => toast.error(message)}
+                  />
+                ) : <p className="text-[11px] text-white/50">先读取真实尺寸与时长，再设置调色。</p>}
+                <button type="button" data-postprod-quick-grade-submit disabled={!upscaleSource || !quickGrade || quickGradeBusy || busy} onClick={() => {
+                  const label = clipOptions.find(clip => clip.url === upscaleVideoUrl)?.label || "所选成片";
+                  setQuickGradeBusy(true);
+                  void submitVideoGrade({ videoUrl: upscaleVideoUrl, grade: quickGrade }, { queue: input => submit(input, `调色 · ${label}`, true) })
+                    .catch(error => toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "调色提交失败"))
+                    .finally(() => setQuickGradeBusy(false));
+                }} className={goCls}>{quickGradeBusy ? "正在提交…" : "提交调色（新成片，原片保留）"}</button>
+              </div>
+            ) : null}
             {upscaleSource && (upscaleSource.sourceResolution === "2k" || upscaleSource.sourceResolution === "4k") ? <p className="text-xs text-amber-200">补帧请选择未超分原视频；先AI补帧并恢复原音轨，最后再超分。</p> : null}
             <p className="text-[10px] text-white/50">每30秒：2K超分100积分，4K超分180积分；30帧补帧19积分。不足30秒按30秒计，一次合计扣分。</p>
             {scopedUpscaleJobs.slice(0, 3).map(job => (
