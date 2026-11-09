@@ -55,6 +55,7 @@ import {
   type EvolinkSeedanceRunInput,
 } from "./evolinkSeedanceVideo.js";
 import { mirrorSeedanceMp4ToGcsSignedUrl } from "./seedanceVideo.js";
+import { persistMvShotReceipt, type MvShotEvidencePair, type MvShotTaskIdentity } from "./canvasMusicMvShotEvidence.js";
 import {
   pollWavespeedUpscaleOnce,
   submitWavespeedVideoUpscale,
@@ -176,6 +177,9 @@ export type CanvasVideoTaskRecord = {
   seedanceVersion?: "2.0" | "2.0-fast" | "2.0-mini" | "2.5";
   /** Seedance 2.5 工作模式 */
   workMode?: SeedanceEvolinkMode;
+  /** 1109 MV 镜头身份：reference_to_video 硬锁 + 回执永久证据 */
+  mvShot?: MvShotTaskIdentity;
+  mvShotEvidence?: { submit?: Record<string, MvShotEvidencePair>; terminal?: Record<string, MvShotEvidencePair> };
   openRouterJobId?: string;
   pollingUrl?: string;
   evolinkTaskId?: string;
@@ -575,6 +579,7 @@ async function submitSeedanceEvolinkVersioned(
   if (task.inkProduction) { task.inkProductionSubmissionStartedAt = new Date().toISOString(); await writeTask(task); }
   const submitted = await submitEvolinkSeedanceVideo({
     ...(task.inkProduction ? { persistSubmitReceipt: (receipt: { status: number; body: string }) => persistInkVideoSubmitReceipt(task, receipt) } : {}),
+    ...(task.mvShot ? { persistSubmitReceipt: (receipt: { status: number; body: string }) => persistMvShotSubmitReceipt(task, "evolink", receipt) } : {}),
     mode: task.workMode,
     prompt: task.prompt,
     ...references,
@@ -615,6 +620,7 @@ async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<vo
   }
   try {
     const submitted = await submitByteplusSeedance25Video({
+      ...(task.mvShot ? { persistSubmitReceipt: (receipt: { status: number; body: string }) => persistMvShotSubmitReceipt(task, "byteplus", receipt) } : {}),
       prompt: task.prompt,
       version: mini ? "2.0-mini" : "2.5",
       ...references,
@@ -1435,6 +1441,7 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         const snap = await pollByteplusVideoTaskOnce(
           current.byteplusTaskId,
           `Seedance ${current.seedanceVersion || "2.5"}`,
+          current.mvShot ? async receipt => { await persistMvShotTerminalReceipt(current, "byteplus", receipt); } : undefined,
         );
         if (snap.state === "running") {
           if (isTaskHeartbeatStatus(snap.status)) {
@@ -1495,6 +1502,8 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           current.inkProduction ? async receipt => {
             const {persistCodeMotionRevisionTerminal}=await import("./codeMotionRevisionPricing.js");
             await persistCodeMotionRevisionTerminal(current,receipt);
+          } : current.mvShot ? async receipt => {
+            await persistMvShotTerminalReceipt(current, "evolink", receipt);
           } : undefined,
         );
         if (snap.state === "running") {
@@ -1821,6 +1830,7 @@ export async function createCanvasVideoTask(input: {
   generateAudio?: boolean;
   seedanceVersion?: "2.0" | "2.0-fast" | "2.0-mini";
   workMode?: SeedanceEvolinkMode;
+  mvShot?: MvShotTaskIdentity;
   /** 客户端提交的稳定幂等键：同键并发/重试返回同一任务（文件 wx 原子排他当唯一约束） */
   idempotencyKey?: string;
   manhuaPilot?: ManhuaPilotSubmission & { videoModel: string };
@@ -1907,6 +1917,7 @@ export async function createCanvasVideoTask(input: {
     generateAudio: input.generateAudio !== false,
     seedanceVersion: input.seedanceVersion,
     workMode: input.workMode,
+    mvShot: input.mvShot,
     idempotencyKey: idemKey || undefined,
     manhuaPilot: input.manhuaPilot,
     deduct: input.deduct,
@@ -2053,6 +2064,27 @@ export async function listVideoEnhanceTasks(userId: number, scopeKey: string) {
   }));
 }
 
+/** MV 镜头：提交回执原始/解析分存，失败不阻断提交（证据缺失记日志，由终态回执补）。 */
+async function persistMvShotSubmitReceipt(task: CanvasVideoTaskRecord, provider: string, receipt: {status:number;body:string}) {
+  if (!task.mvShot) return;
+  try {
+    const pair = await persistMvShotReceipt({ userId: task.userId, taskId: task.taskId, identity: task.mvShot, phase: "submit", provider, receipt });
+    task.mvShotEvidence = { ...(task.mvShotEvidence || {}), submit: { ...(task.mvShotEvidence?.submit || {}), [provider]: pair } };
+    await writeTask(task);
+  } catch (error) {
+    console.error(`[canvasVideoTask] MV 镜头提交回执落盘失败 · task=${task.taskId} · ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+async function persistMvShotTerminalReceipt(task: CanvasVideoTaskRecord, provider: string, receipt: {status:number;body:string}) {
+  if (!task.mvShot || task.mvShotEvidence?.terminal?.[provider]) return;
+  try {
+    const pair = await persistMvShotReceipt({ userId: task.userId, taskId: task.taskId, identity: task.mvShot, phase: "terminal", provider, receipt });
+    task.mvShotEvidence = { ...(task.mvShotEvidence || {}), terminal: { ...(task.mvShotEvidence?.terminal || {}), [provider]: pair } };
+    await writeTask(task);
+  } catch (error) {
+    console.error(`[canvasVideoTask] MV 镜头终态回执落盘失败 · task=${task.taskId} · ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 async function persistInkVideoSubmitReceipt(task: CanvasVideoTaskRecord, receipt: {status:number;body:string}) {
  const slot=task.inkProduction;if(!slot)return;
  const {codeMotionStorage}=await import("./codeMotionStore");

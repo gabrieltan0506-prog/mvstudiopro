@@ -488,6 +488,10 @@ export const canvasMusicMvRouter = router({
   adoptConcept: protectedProcedure
     .input(adoptMusicMvConceptInputSchema)
     .mutation(({ ctx, input }) => adoptMusicMvConcept(ctx.user.id, input)),
+  /**
+   * 1109：任意镜头都可按分镜秒位裁歌曲切片（@audio1 节奏参考）；对口型镜头沿用同一条链作唱段。
+   * 旧名 prepareSinging 保留（仅接受对口型镜头），新名 prepareShotSongSlice 对全部 kind 开放。
+   */
   prepareSinging: protectedProcedure
     .input(
       z
@@ -498,11 +502,37 @@ export const canvasMusicMvRouter = router({
         })
         .strict()
     )
-    .mutation(async ({ ctx, input }) => {
-      const state = await getCanvasMusicMvPlan(
-        ctx.user.id,
-        input.planRequestId
-      );
+    .mutation(({ ctx, input }) => prepareMvShotSongSlice(ctx.user.id, input, { singingOnly: true })),
+  prepareShotSongSlice: protectedProcedure
+    .input(
+      z
+        .object({
+          requestId: z.string().uuid(),
+          planRequestId: z.string().uuid(),
+          shotId: z.string().min(1).max(100),
+        })
+        .strict()
+    )
+    .mutation(({ ctx, input }) => prepareMvShotSongSlice(ctx.user.id, input, { singingOnly: false })),
+  draftPlan: protectedProcedure
+    .input(canvasMusicMvDraftInputSchema)
+    .mutation(({ ctx, input }) =>
+      draftCanvasMusicMvPlan(ctx.user.id, ctx.user.role, input)
+    ),
+  getPlan: protectedProcedure
+    .input(z.object({ requestId: z.string().uuid() }).strict())
+    .query(({ ctx, input }) =>
+      getCanvasMusicMvPlan(ctx.user.id, input.requestId)
+    ),
+});
+
+async function prepareMvShotSongSlice(
+  userId: number,
+  input: { requestId: string; planRequestId: string; shotId: string },
+  opts: { singingOnly: boolean }
+) {
+  {
+      const state = await getCanvasMusicMvPlan(userId, input.planRequestId);
       if (state.status !== "succeeded")
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
@@ -510,19 +540,20 @@ export const canvasMusicMvRouter = router({
         });
       const saved = await read<SavedPlan>(
         deps,
-        `${prefix(ctx.user.id, input.planRequestId)}/result`
+        `${prefix(userId, input.planRequestId)}/result`
       );
       if (!saved) throw new Error("分镜来源暂不可读取");
       const shot = saved.plan.shots.find(row => row.id === input.shotId);
-      if (shot?.kind !== "singing")
+      if (!shot)
+        throw new TRPCError({ code: "BAD_REQUEST", message: "分镜里没有这个镜头" });
+      if (opts.singingOnly && shot.kind !== "singing")
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "只有对口型镜头需要准备唱段",
         });
-      const audioUri = await resolveCanvasMusicMvAudio(
-        ctx.user.id,
-        saved.input.audio
-      );
+      if (shot.kind === "footage")
+        throw new TRPCError({ code: "BAD_REQUEST", message: "已有素材切片镜头不生成视频，无需歌曲切片" });
+      const audioUri = await resolveCanvasMusicMvAudio(userId, saved.input.audio);
       const payload = {
         action: "audio_trim",
         params: {
@@ -534,11 +565,12 @@ export const canvasMusicMvRouter = router({
           fadeOutSec: 0,
         },
       };
-      const jobId = `mv_singing_${digest([ctx.user.id, input.requestId]).slice(0, 40)}`;
+      // 同一 payload 两条入口共用同一 jobId 前缀规则：切片内容只由（用户，requestId）决定。
+      const jobId = `mv_singing_${digest([userId, input.requestId]).slice(0, 40)}`;
       const check = (job: Awaited<ReturnType<typeof getJobByIdStrict>>) => {
         if (
           !job ||
-          String(job.userId) !== String(ctx.user.id) ||
+          String(job.userId) !== String(userId) ||
           job.type !== "post_prod" ||
           job.provider !== "ffmpeg-post-prod" ||
           digest(job.input) !== digest(payload)
@@ -554,7 +586,7 @@ export const canvasMusicMvRouter = router({
         try {
           await createJob({
             id: jobId,
-            userId: String(ctx.user.id),
+            userId: String(userId),
             type: "post_prod",
             provider: "ffmpeg-post-prod",
             input: payload,
@@ -562,16 +594,6 @@ export const canvasMusicMvRouter = router({
         } catch {
           check(await getJobByIdStrict(jobId));
         }
-      return { jobId, startSec: shot.startSec, endSec: shot.endSec };
-    }),
-  draftPlan: protectedProcedure
-    .input(canvasMusicMvDraftInputSchema)
-    .mutation(({ ctx, input }) =>
-      draftCanvasMusicMvPlan(ctx.user.id, ctx.user.role, input)
-    ),
-  getPlan: protectedProcedure
-    .input(z.object({ requestId: z.string().uuid() }).strict())
-    .query(({ ctx, input }) =>
-      getCanvasMusicMvPlan(ctx.user.id, input.requestId)
-    ),
-});
+      return { jobId, startSec: shot.startSec, endSec: shot.endSec, kind: shot.kind ?? "generated" };
+  }
+}
