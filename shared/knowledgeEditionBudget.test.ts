@@ -18,13 +18,17 @@ describe("图文比例页数预算（用户2026-11-08确认；2026-11-09 完整�
     expect(dunhuang.plannedTotalPages).toBe(16);
     expect(dunhuang.compression).toEqual({
       readingCapacityChars: 11200, targetReadingChars: 11200, excessChars: 56877,
-      ratio: 11200 / 68077, imagesForNoLoss: Math.ceil((68077 + 15551) / 1900), imageCap: 16,
+      ratio: 11200 / 68077, imagesForNoLoss: Math.ceil((68077 + 15551) / 1900), imageCap: 48,
     });
     expect(dunhuang.compression!.imagesForNoLoss).toBe(45);
     const text = dunhuang.warnings.join("");
     expect(text).toContain("不排独立内文页");
     expect(text).toContain("压缩至约11200字（约16%");
-    expect(text).toContain("不压缩需约45张图，超过完整版上限16张，只能压缩");
+    // 1109 档位上限改完整版 48：敦煌 45 张不超上限，改为给出改图数方案（需用户拍板）而不是只能压缩。
+    expect(text).toContain("或改为45张图（≤上限48张）可不丢内容，需用户拍板，不自行加图");
+    const beyond = knowledgeEditionBudgetCheck("full", 16, 100000, 15551);
+    expect(beyond.compression!.imagesForNoLoss).toBeGreaterThan(48);
+    expect(beyond.warnings.join("")).toContain("超过完整版上限48张，只能压缩");
   });
   it("完整版内文装得进图下栏时无压缩提示；略超但加图可容时给出改图数方案而不自行加图", () => {
     const fit = knowledgeEditionBudgetCheck("full", 16, 11000, 15000);
@@ -33,7 +37,7 @@ describe("图文比例页数预算（用户2026-11-08确认；2026-11-09 完整�
     expect(fit.plannedTotalPages).toBe(16);
     const slight = knowledgeEditionBudgetCheck("full", 10, 8000, 12000);
     expect(slight.compression!.imagesForNoLoss).toBe(11);
-    expect(slight.warnings.join("")).toContain("或改为11张图（≤上限16张）可不丢内容，需用户拍板，不自行加图");
+    expect(slight.warnings.join("")).toContain("或改为11张图（≤上限48张）可不丢内容，需用户拍板，不自行加图");
     expect(slight.plannedTotalPages).toBe(10);
   });
   it("精华版图:内文1:2–1:3", () => {
@@ -70,25 +74,26 @@ describe("图文比例页数预算（用户2026-11-08确认；2026-11-09 完整�
 });
 
 describe("完整版膨胀稿端到端：排版源页数 = 图数，无独立内文页，溢出只报压缩目标", () => {
-  it("40 节 × 1500 字的完整版稿：16 张图 → 16 个图文同页，每页 reading 预算 700 字，预检报出压缩字数与图数方案", () => {
+  it("40 节 × 2400 字的完整版稿：40 张图（1109 上限 48 内按节成图）→ 40 个图文同页，每页 reading 预算 700 字，预检报出压缩字数与图数方案", () => {
     const sentence = (i: number, j: number) => `第${i}节第${j}句记述一件具体史实，以及它前后的经过与影响。`;
     const book = compileKnowledgeEditions("膨胀测试", Array.from({ length: 40 }, (_, i) => ({
-      headline: `原小节${i}`, body: Array.from({ length: 50 }, (_, j) => sentence(i, j)).join(""), priority: "primary" as const,
+      headline: `原小节${i}`, body: Array.from({ length: 80 }, (_, j) => sentence(i, j)).join(""), priority: "primary" as const,
     })));
     const plan = knowledgeEditionImagePlan(book.full)!;
-    expect(plan.images.length).toBe(16);
-    expect(planKnowledgeCardPages(book.full).pageCount).toBe(16);
-    // 排版源只有 16 个图文同页：独立文字模块全部并入图下 supplement，没有单独文字页。
+    const n = plan.images.length;
+    expect(n).toBe(40);
+    expect(planKnowledgeCardPages(book.full).pageCount).toBe(n);
+    // 排版源只有 n 个图文同页：独立文字模块全部并入图下 supplement，没有单独文字页。
     const pages = knowledgeEditionIllustratedPages(book.full)!;
-    expect(pages.length).toBe(16);
+    expect(pages.length).toBe(n);
     const budgets = knowledgeReadingCharBudgets("full", pages.map((p, i) => ({ id: `p${i}`, headline: p.headline, body: p.body, supplement: p.supplement, role: "illustration" as const })));
-    expect(budgets.budget.totalPages).toEqual({ min: 16, target: 16, max: 16 });
+    expect(budgets.budget.totalPages).toEqual({ min: n, target: n, max: n });
     expect(budgets.pages.every(p => p.readingPages === 0 && p.maxChars === KNOWLEDGE_LEAD_PAGE_CHARS)).toBe(true);
-    const check = knowledgeEditionBudgetCheck("full", 16, plan.readingChars, knowledgeEditionImageChars(plan));
-    expect(check.plannedTotalPages).toBe(16);
-    expect(check.compression!.targetReadingChars).toBe(16 * KNOWLEDGE_LEAD_PAGE_CHARS);
-    expect(check.compression!.excessChars).toBe(plan.readingChars - 16 * KNOWLEDGE_LEAD_PAGE_CHARS);
-    expect(check.compression!.imagesForNoLoss).toBeGreaterThan(16);
+    const check = knowledgeEditionBudgetCheck("full", n, plan.readingChars, knowledgeEditionImageChars(plan));
+    expect(check.plannedTotalPages).toBe(n);
+    expect(check.compression!.targetReadingChars).toBe(n * KNOWLEDGE_LEAD_PAGE_CHARS);
+    expect(check.compression!.excessChars).toBe(plan.readingChars - n * KNOWLEDGE_LEAD_PAGE_CHARS);
+    expect(check.compression!.imagesForNoLoss).toBeGreaterThan(n);
     expect(check.warnings.join("")).toContain("只能压缩");
   });
 });

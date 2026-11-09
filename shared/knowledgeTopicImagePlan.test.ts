@@ -6,6 +6,8 @@ import { synchronizedKnowledgeCardSource } from "./knowledgeCardEditableLayout";
 import {
   KNOWLEDGE_TOPIC_IMAGE_CAP,
   KNOWLEDGE_TOPIC_IMAGE_MAX_CHARS,
+  knowledgeEditionLevelForImageCount,
+  knowledgeTopicImageCount,
   partitionKnowledgeTopics,
 } from "./knowledgeTopicImagePlan";
 
@@ -23,7 +25,7 @@ const section = (i: number, sentences: number) => ({
 const book = compileKnowledgeEditions("整本书", Array.from({ length: 200 }, (_, i) => section(i, 8 + (i % 7) * 3)));
 
 describe("主题出图：图数按主题定、图内≤1200字、其余进内文", () => {
-  it("整本书完整版不超过16张图，精华版不超过8张，每张图≤1200字", () => {
+  it("整本书完整版不超过48张图，精华版不超过30张，每张图≤1200字；7万余字整本书完整版正好封顶48张", () => {
     for (const level of ["full", "concise"] as const) {
       const plan = knowledgeEditionImagePlan(book[level])!;
       expect(plan.images.length).toBeGreaterThan(0);
@@ -31,13 +33,24 @@ describe("主题出图：图数按主题定、图内≤1200字、其余进内文
       for (const image of plan.images) expect(image.body.length).toBeLessThanOrEqual(KNOWLEDGE_TOPIC_IMAGE_MAX_CHARS);
       expect(plan.readingChars).toBeGreaterThan(plan.images.length * 1000);
     }
-    expect(knowledgeEditionImagePlan(book.full)!.images.length).toBe(16);
+    expect(knowledgeEditionImagePlan(book.full)!.images.length).toBe(48);
+  });
+
+  it("档位只以图片张数区分：精华版 ≤30 张封顶，31 张即为完整版", () => {
+    expect(KNOWLEDGE_TOPIC_IMAGE_CAP).toEqual({ full: 48, concise: 30 });
+    const modules = Array.from({ length: 60 }, (_, i) => ({ headline: `节${i}`, body: sentence(i, 0).repeat(60) }));
+    expect(knowledgeTopicImageCount("concise", modules)).toBe(30);
+    expect(knowledgeTopicImageCount("full", modules)).toBe(48);
+    expect(knowledgeTopicImageCount("concise", modules.slice(0, 12))).toBe(12);
+    expect(knowledgeEditionLevelForImageCount(30)).toBe("concise");
+    expect(knowledgeEditionLevelForImageCount(31)).toBe("full");
+    expect(knowledgeEditionLevelForImageCount(48)).toBe("full");
   });
 
   it("报价按主题图张数计，与出图分页一致", () => {
     const plan = planKnowledgeCardPages(book.full, "glm-5.3-flashx");
-    expect(plan.pageCount).toBe(16);
-    expect(plan.credits).toBe(knowledgeCardCreditsForPages(16, "glm-5.3-flashx"));
+    expect(plan.pageCount).toBe(48);
+    expect(plan.credits).toBe(knowledgeCardCreditsForPages(48, "glm-5.3-flashx"));
     expect(plan.pages).toEqual(knowledgeEditionImagePlan(book.full)!.images.map(i => i.body));
   });
 
@@ -70,7 +83,9 @@ describe("主题出图：图数按主题定、图内≤1200字、其余进内文
   });
 
   it("小节过多时图内只展开最多8节要点，其余列名、全文进内文", () => {
-    const plan = knowledgeEditionImagePlan(book.full)!;
+    // 48 张封顶后整本书每图约 4 节；用 300 个短小节（按量约 25 图、每图约 12 节）复现多节合并。
+    const shortBook = compileKnowledgeEditions("短节书", Array.from({ length: 300 }, (_, i) => ({ headline: `短节${i}`, body: sentence(i, 0).repeat(4), priority: "primary" as const })));
+    const plan = knowledgeEditionImagePlan(shortBook.full)!;
     const crowded = plan.images.filter(i => i.headlines.length > 8);
     expect(crowded.length).toBeGreaterThan(0);
     for (const image of plan.images) {
@@ -85,7 +100,7 @@ describe("主题出图：图数按主题定、图内≤1200字、其余进内文
       owner: "1", sourceId: "s", fullMarkdown: book.full, illustrationMarkdown: book.full, detailLevel: "full",
       imageJobIds: plan.images.map((_, i) => `job-${i}`),
     });
-    expect(source.pages).toHaveLength(16);
+    expect(source.pages).toHaveLength(48);
     expect(source.pages!.every(p => p.knowledgeRole === "illustration" && (p.supplement || "").length > 0)).toBe(true);
     source.pages!.forEach((page, i) => { if (plan.images[i]!.overflow) expect(page.supplement!.startsWith(plan.images[i]!.overflow)).toBe(true); });
   });

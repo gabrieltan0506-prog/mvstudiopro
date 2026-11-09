@@ -200,7 +200,7 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
     try{
       const plan=planKnowledgeCardPages(markdown,params.model);
       editionPageCounts[level].imagePages=plan.pageCount;
-      // 生图前预检（完整版≤16张主题图、图文同页、页数=图数、内文超图下容量时报压缩目标；精华版≤8张、图:文1:2–1:3）；只提示不阻断。
+      // 生图前预检（完整版≤48张主题图、图文同页、页数=图数、内文超图下容量时报压缩目标；精华版≤30张、图:文1:2–1:3）；只提示不阻断。
       const topics=knowledgeEditionImagePlan(markdown);
       editionPageCounts[level].pageBudget=knowledgeEditionBudgetCheck(level,plan.pageCount,topics?.readingChars||0,knowledgeEditionImageChars(topics));
       for(const [index,body] of Array.from(plan.pages.entries()))await evidence.save(`${evidence.prefix}/pages/${level}/images/${index}.json`,{inputDigest,pageIndex:index,body,status:'saved'});

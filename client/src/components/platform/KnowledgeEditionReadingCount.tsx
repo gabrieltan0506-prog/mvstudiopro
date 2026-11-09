@@ -4,8 +4,8 @@ import {knowledgeEditionImageChars,knowledgeEditionImagePlan} from '@shared/know
 import {knowledgeEditionBudgetCheck} from '@shared/knowledgeEditionBudget';
 import {auditKnowledgeTopicTitles,knowledgeTopicTitleWarning,readKnowledgeTopicTitles} from '@shared/knowledgeTopicImagePlan';
 /**
- * 生图前预检：每张图是一个主题的核心图解（图内≤1200字），完整版≤16张、图文同页、页数=图数（内文超图下容量时提示压缩），
- * 精华版≤8张、图:内文1:2–1:3，图外细节进内文续页。这里给出计划页数与提示，不阻断生成。
+ * 生图前预检：每张图是一个主题的核心图解（图内≤1200字），完整版≤48张、图文同页、页数=图数（内文超图下容量时提示压缩），
+ * 精华版≤30张（图≤30张即精华版、>30为完整版）、图:内文1:2–1:3，图外细节进内文续页。这里给出计划页数与提示，不阻断生成。
  */
 export function KnowledgeEditionReadingCount({markdown}:{markdown:string|null}){
  const plan=useMemo(()=>{

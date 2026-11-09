@@ -1,7 +1,9 @@
 /**
- * 主题图命题（用户 2026-11-08 令）：每册每档一次廉价批量调用，为每个主题图拟定
- * 图片标题、图下内文标题与各小节内文小标题。走两档准备阶段已用的知识整理路由（FlashX / DeepSeek flash）。
- * 原始回包与解析结果分别永久保存；失败时回退机械标题与原小节标题，不阻断出图准备。
+ * 主题图命题（用户 2026-11-08 令；2026-11-09 改小批并发）：为每个主题图拟定图片标题、图下内文标题与各小节内文小标题。
+ * 走两档准备阶段已用的知识整理路由（FlashX / DeepSeek flash）。
+ * 调用组织：主题按 ≤8 页一批拆分，按 knowledgeConcurrency 动态并发（首波错峰、429 减半）发出；
+ * 每批回包逐页部分采纳，缺项主题再逐主题补缺一次，仍缺的页退回机械/原标题。
+ * 每批与每个补缺主题的请求、原始回包与解析结果分别永久保存；整档汇总 parsed.json 供零调用回放。失败不阻断出图准备。
  */
 import { createHash } from "node:crypto";
 import { knowledgeEditionImagePlan } from "../../shared/knowledgeCardPagination";
@@ -22,6 +24,8 @@ import {
 } from "./knowledgePublicationRoutes";
 
 export const KNOWLEDGE_TOPIC_TITLES_VERSION = "topic-titles-v3";
+/** 每批最多几个主题（48 页 → 6 批）。 */
+export const KNOWLEDGE_TOPIC_TITLE_BATCH = 8;
 const MAX_TITLE = 24;
 const usable = (v: unknown) => {
   const t = typeof v === "string" ? v.replace(/^#+\s*/, "").trim() : "";
@@ -89,9 +93,10 @@ function buildTitleRequest(model: string | undefined, title: string, sourceDiges
 }
 
 /**
- * 命题：首发一次批量调用；回包缺页/不合格的主题只对缺项逐主题补一次（1108g2 实测 GLM 首发只回 6/16 页，
- * 路由合同整批拒收导致全部回退机械标题）。首发结果按页部分采纳，补缺结果只填缺项；仍缺的回退机械/原标题。
- * 原始回包与解析结果分别永久保存（批量与每个补缺主题各自一份）；同一输入再调用零请求回放，不重复购买。
+ * 命题：首发按 ≤KNOWLEDGE_TOPIC_TITLE_BATCH（8）个主题一批拆分、各批并发发出（1109：48 页 → 6 批，避免单次长回包截断）；
+ * 每批回包按页部分采纳，缺页/不合格的主题只对缺项逐主题补一次（1108g2 实测 GLM 整档首发只回 6/16 页，
+ * 路由合同整批拒收导致全部回退机械标题）；补缺结果只填缺项，仍缺的回退机械/原标题。
+ * 原始回包与解析结果分别永久保存（每批与每个补缺主题各自一份）；整档汇总 parsed.json，同一输入再调用零请求回放，不重复购买。
  */
 export async function nameKnowledgeEditionTopics(params: {
   markdown: string;
@@ -145,13 +150,19 @@ export async function nameKnowledgeEditionTopics(params: {
       return { titles: {} as KnowledgeTopicTitles, rejected: [] as string[], error: message };
     }
   };
-  // 首发：一次批量调用，按页部分采纳。
-  const first = await call(scope.prefix, topics, digest);
-  const titles: KnowledgeTopicTitles = { ...first.titles };
-  const rejected = [...first.rejected];
+  // 首发：按 ≤8 个主题一批拆分，各批并发（同通道上限），每批独立请求/回包/解析，按页部分采纳。
+  const batches: TitleTopic[][] = [];
+  for (let i = 0; i < topics.length; i += KNOWLEDGE_TOPIC_TITLE_BATCH) batches.push(topics.slice(i, i + KNOWLEDGE_TOPIC_TITLE_BATCH));
+  const firsts: Awaited<ReturnType<typeof call>>[] = new Array(batches.length);
+  await knowledgePooled(batches.length, async b => {
+    const batchDigest = createHash("sha256").update(`${digest}/batch/${b}`).digest("hex");
+    firsts[b] = await call(`${scope.prefix}/batch-${b}`, batches[b]!, batchDigest);
+  }, KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter);
+  const titles: KnowledgeTopicTitles = Object.assign({}, ...firsts.map(f => f.titles));
+  const rejected = firsts.flatMap(f => f.rejected);
   const incomplete = topics.filter(t => !isKnowledgeTopicTitleComplete(titles[knowledgeTopicKey(t.headlines)], t.headlines));
   const retried: number[] = [];
-  const errors: string[] = first.error ? [`首发：${first.error}`] : [];
+  const errors: string[] = firsts.flatMap((f, b) => (f.error ? [`首发第${b + 1}批：${f.error}`] : []));
   if (incomplete.length) {
     // 只对缺页/缺项逐主题补一次：每个主题独立请求（单页合同不会因别页缺失整批拒收），并发走同一通道上限。
     const outcomes: Awaited<ReturnType<typeof call>>[] = new Array(incomplete.length);
@@ -171,7 +182,7 @@ export async function nameKnowledgeEditionTopics(params: {
   }
   const missing = topics.filter(t => !isKnowledgeTopicTitleComplete(titles[knowledgeTopicKey(t.headlines)], t.headlines)).map(t => knowledgeTopicKey(t.headlines));
   const named = topics.filter(t => { const e = titles[knowledgeTopicKey(t.headlines)]; return e?.image || e?.reading || Object.keys(e?.sections || {}).length; }).length;
-  await scope.save(`${scope.prefix}/parsed.json`, { digest, titles, rejected, retried, missing, errors, topics: topics.map(t => ({ id: t.id, headlines: t.headlines })) });
+  await scope.save(`${scope.prefix}/parsed.json`, { digest, titles, rejected, retried, missing, errors, batches: batches.map((b, i) => ({ batch: i, topics: b.length, error: firsts[i]!.error })), topics: topics.map(t => ({ id: t.id, headlines: t.headlines })) });
   const message = errors.length ? errors.join("；") : undefined;
   if (!named) {
     const reason = message || `${topics.length}个主题命题均不合格：${rejected.slice(0, 3).join("；")}`;
