@@ -53,7 +53,7 @@ import {
   MANHUA_RETAKE_VARIABLE_LABEL_ZH,
 } from "@shared/manhuaDirectingWorkflow";
 import ManhuaDeliveryEditSection from "@/components/ManhuaDeliveryEditSection";
-import { requestPostProdGrade } from "@/lib/postProdQuickGrade";
+import { requestPostProdEdit, requestPostProdGrade } from "@/lib/postProdQuickGrade";
 
 type Props = {
   compactLayout?: boolean;
@@ -1024,6 +1024,16 @@ export default function ManhuaEditMultitrackPanel({
                 className="mt-1.5 text-sm text-sky-200/90 underline-offset-2 hover:underline"
               >
                 调色（去后期工坊）
+              </button>
+            ) : null}
+            {finalVideoVersions?.activeUrl ? (
+              <button
+                type="button"
+                data-manhua-final-edit
+                onClick={() => requestPostProdEdit({ url: finalVideoVersions.activeUrl!, label: "整集成片" })}
+                className="ml-3 mt-1.5 text-sm text-sky-200/90 underline-offset-2 hover:underline"
+              >
+                局部修改（去后期工坊）
               </button>
             ) : null}
           </div>

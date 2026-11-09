@@ -16,7 +16,7 @@ import { digitalHumanAdoptedFilmPrompt } from "@shared/digitalHumanStudio";
 import { DIGITAL_HUMAN_DIRECTION_MAX_CHARS, DIGITAL_HUMAN_FILM_MODELS, digitalHumanFilmModelSchema } from "@shared/digitalHumanFilmDirector";
 import { DigitalHumanOmniPanel } from "./DigitalHumanOmniPanel";
 import { DigitalHumanPostProduction } from "./DigitalHumanPostProduction";
-import { requestPostProdGrade } from "@/lib/postProdQuickGrade";
+import { requestPostProdEdit, requestPostProdGrade } from "@/lib/postProdQuickGrade";
 import { adoptDigitalHumanSource, type DigitalHumanSource } from "@shared/digitalHumanStudio";
 import { recoverDigitalHumanDraft } from "@/lib/digitalHumanRecovery";
 import { DigitalHumanRecorder } from "./DigitalHumanRecorder";
@@ -1327,6 +1327,13 @@ function DigitalHumanWorkspace({
                     onClick={event => { event.preventDefault(); requestPostProdGrade({ url: v.upscale?.status === "succeeded" && v.upscale.source ? v.upscale.source : v.source!, label: "数字人成片" }); }}
                   >
                     去后期调色
+                  </a>
+                  <a
+                    href="#manhua-post-enhance"
+                    data-digital-human-edit
+                    onClick={event => { event.preventDefault(); requestPostProdEdit({ url: v.upscale?.status === "succeeded" && v.upscale.source ? v.upscale.source : v.source!, label: "数字人成片" }); }}
+                  >
+                    局部修改（去后期工坊）
                   </a>
                 </>
               )}

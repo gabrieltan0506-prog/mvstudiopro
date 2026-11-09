@@ -2,6 +2,7 @@ import { MontagePlanner } from "./MontagePlanner";
 import type { ConcatGrade } from "@shared/colorGrade";
 import { POSTPROD_GRADE_EVENT, type PostProdGradeRequest } from "@/lib/postProdQuickGrade";
 import { VideoGradePanel } from "./VideoGradePanel";
+import { VideoEditPanel } from "./VideoEditPanel";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
 import type { MontageGrade } from "@/lib/montageFinish";
 import type { ManhuaVfxEnvironmentOption } from "@shared/manhuaVfxEnvironment";
@@ -560,13 +561,15 @@ export default function PostProdWorkshopCard({
   const [quickGradeOpen, setQuickGradeOpen] = useState(false);
   const [quickGrade, setQuickGrade] = useState<MontageGrade | undefined>(undefined);
   const [quickGradeBusy, setQuickGradeBusy] = useState(false);
+  /** 「局部修改这条」：同一所选单条，选区间 + 描述 + 参考图，报价确认后提交，原片保留。 */
+  const [quickEditOpen, setQuickEditOpen] = useState(false);
   useEffect(() => {
     const onGrade = (event: Event) => {
       const detail = (event as CustomEvent<PostProdGradeRequest>).detail;
       if (!detail?.url) return;
       setActiveTool("enhance");
       setUpscaleVideoUrl(detail.url);
-      setQuickGradeOpen(true);
+      if (detail.mode === "edit") { setQuickEditOpen(true); setQuickGradeOpen(false); } else { setQuickGradeOpen(true); setQuickEditOpen(false); }
     };
     window.addEventListener(POSTPROD_GRADE_EVENT, onGrade);
     return () => window.removeEventListener(POSTPROD_GRADE_EVENT, onGrade);
@@ -1960,6 +1963,20 @@ export default function PostProdWorkshopCard({
               {upscaleSubmitBusy ? "正在提交…" : `提交${enhanceChoice.target.toUpperCase()}／${enhanceChoice.fps}帧${upscaleProbedSec ? ` · 扣${canvasVideoEnhanceQuote(enhanceChoice.target, enhanceChoice.fps, upscaleProbedSec).totalCredits}积分` : ""}`}
             </button>
             <button type="button" data-postprod-quick-grade aria-expanded={quickGradeOpen} disabled={!upscaleVideoUrl} onClick={() => setQuickGradeOpen(open => !open)} className={goCls}>调色这条</button>
+            <button type="button" data-postprod-quick-edit aria-expanded={quickEditOpen} disabled={!upscaleVideoUrl} onClick={() => setQuickEditOpen(open => !open)} className={goCls}>局部修改这条</button>
+            {quickEditOpen ? (
+              <div data-postprod-quick-edit-panel className="space-y-1.5 rounded-lg border border-white/10 p-2">
+                <p className="text-[11px] text-white/55">对所选这一条选区间描述修改，确认报价后提交；生成新版本，原片保留，云端成片自动先导入本人工作流。</p>
+                {upscaleSource ? (
+                  <VideoEditPanel
+                    source={upscaleVideoUrl}
+                    durationSec={upscaleSource.durationExactSec ?? upscaleSource.durationSec}
+                    disabled={busy}
+                    onDone={result => toast.success("局部修改完成，已生成新版本", { description: result.jobId ? `单号 ${result.jobId}` : undefined })}
+                  />
+                ) : <p className="text-[11px] text-white/50">先读取真实尺寸与时长，再选择修改区间。</p>}
+              </div>
+            ) : null}
             {quickGradeOpen ? (
               <div data-postprod-quick-grade-panel className="space-y-1.5 rounded-lg border border-white/10 p-2">
                 <p className="text-[11px] text-white/55">对所选这一条直接全片或分段调色，生成新成片，原片保留；云端成片自动先导入本人工作流。</p>

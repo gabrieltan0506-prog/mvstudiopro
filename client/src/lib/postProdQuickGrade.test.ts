@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { submitVideoGrade } from "./videoGradeSubmit";
-import { POSTPROD_GRADE_EVENT, requestPostProdGrade } from "./postProdQuickGrade";
+import { submitVideoEdit } from "./videoEditSubmit";
+import { POSTPROD_GRADE_EVENT, requestPostProdEdit, requestPostProdGrade } from "./postProdQuickGrade";
 
 const SRC = "https://d2h7xmz5gqybh9.cloudfront.net/u1/final.mp4";
 const GS = "gs://bucket/u1/imported-final.mp4";
@@ -35,6 +36,20 @@ describe("调色这条：提交参数（后期工坊 submit 包装作 queue）",
   });
 });
 
+describe("局部修改这条：提交参数", () => {
+  it("预选的超分成片先导入，区间/描述/报价原样进提交", async () => {
+    const submit = vi.fn(async (_input: unknown) => ({ jobId: "edit-1" }));
+    const importSource = vi.fn(async () => GS);
+    const res = await submitVideoEdit(
+      { videoUrl: SRC, startSec: 2, endSec: 8, promptZh: "把杯子换成红色", expectedCredits: 90, durationSec: 12, requestId: "req-1" },
+      { submit, importSource },
+    );
+    expect(res).toEqual({ jobId: "edit-1", requestId: "req-1" });
+    expect(importSource).toHaveBeenCalledWith(SRC);
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ sourceUrl: GS, startSec: 2, endSec: 8, promptZh: "把杯子换成红色", expectedCredits: 90, requestId: "req-1" }));
+  });
+});
+
 describe("调色跳转", () => {
   it("派发预选事件并滚到超分页签锚点", () => {
     const dispatchEvent = vi.fn((_event: Event) => true);
@@ -47,10 +62,29 @@ describe("调色跳转", () => {
     expect(scrollIntoView).toHaveBeenCalled();
   });
 
+  it("局部修改跳转走同一事件，带 mode:edit", () => {
+    const dispatchEvent = vi.fn((_event: Event) => true);
+    requestPostProdEdit({ url: SRC, label: "数字人成片" }, { dispatchEvent, document: { getElementById: () => null } as unknown as Document });
+    const event = dispatchEvent.mock.calls[0][0] as unknown as CustomEvent;
+    expect(event.type).toBe(POSTPROD_GRADE_EVENT);
+    expect(event.detail).toEqual({ url: SRC, label: "数字人成片", mode: "edit" });
+  });
+
+  it("局部修改：工坊按 mode 展开对应面板；剪辑台与数字人页挂上入口", () => {
+    const card = read("../components/canvas/PostProdWorkshopCard.tsx");
+    expect(card).toMatch(/if \(detail\.mode === "edit"\) \{ setQuickEditOpen\(true\); setQuickGradeOpen\(false\); \}/);
+    expect(card).toContain(">局部修改这条</button>");
+    expect(card).toMatch(/<VideoEditPanel\s+source=\{upscaleVideoUrl\}\s+durationSec=\{upscaleSource\.durationExactSec \?\? upscaleSource\.durationSec\}/);
+    expect(read("../components/ManhuaEditMultitrackPanel.tsx")).toContain("requestPostProdEdit({ url: finalVideoVersions.activeUrl!");
+    const dh = read("../components/DigitalHumanStudio.tsx");
+    expect(dh).toContain("requestPostProdEdit({");
+    expect(dh).toContain("局部修改（去后期工坊）");
+  });
+
   it("后期工坊监听事件预选成片；剪辑台与数字人页挂上入口", () => {
     const card = read("../components/canvas/PostProdWorkshopCard.tsx");
     expect(card).toContain("window.addEventListener(POSTPROD_GRADE_EVENT");
-    expect(card).toMatch(/setActiveTool\("enhance"\);\s*setUpscaleVideoUrl\(detail\.url\);\s*setQuickGradeOpen\(true\)/);
+    expect(card).toMatch(/setActiveTool\("enhance"\);\s*setUpscaleVideoUrl\(detail\.url\);/);
     expect(card).toContain("submitVideoGrade({ videoUrl: upscaleVideoUrl, grade: quickGrade }, { queue: input => submit(input, `调色 · ${label}`, true) })");
     expect(card).toContain("<VideoGradePanel");
     expect(card).toContain(">调色这条</button>");
