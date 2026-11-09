@@ -13,6 +13,11 @@ import {
 } from "@/lib/videoUpscaleApi";
 import { canvasVideoUpscaleCredits } from "@shared/canvasGenerationPricing";
 import { canWavespeedUpscale } from "@shared/wavespeedVideoUpscaleModels";
+import { trpc } from "@/lib/trpc";
+import { flyDownloadUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
+import type { MontageGrade } from "@/lib/montageFinish";
+import { VideoGradePanel } from "@/components/canvas/VideoGradePanel";
+import { submitVideoGrade } from "@/lib/videoGradeSubmit";
 
 type Target = "2k" | "4k";
 export type VideoMetadata = {
@@ -138,6 +143,34 @@ export function restoreUpscaleRecords(raw: string | null): UpscaleRecord[] {
   }
 }
 
+/**
+ * 调色只接能登记为本人后期素材的地址（gs://、系统桶 storage.googleapis.com 直链；
+ * Fly 下载包装 /api/gcs-transfer?url= 先还原为原签名链）。首页 12 小时临时空间
+ * （/api/photo-media/）、任意粘贴网址等无法登记的来源返回空串，不显示「调色」。
+ */
+export function gradeSourceFromPlayableUrl(url: string | undefined): string {
+  const value = String(url || "").trim();
+  if (/^gs:\/\/[^/]+\/.+/.test(value)) return value;
+  let parsed: URL;
+  try {
+    parsed = new URL(value, "https://local.invalid");
+  } catch {
+    return "";
+  }
+  const pathStyleGcs = (candidate: string) => {
+    try {
+      return isGcsTransferUrl(candidate) && new URL(candidate).hostname === "storage.googleapis.com";
+    } catch {
+      return false;
+    }
+  };
+  if (parsed.pathname === "/api/gcs-transfer") {
+    const inner = parsed.searchParams.get("url") || "";
+    return pathStyleGcs(inner) ? inner : "";
+  }
+  return pathStyleGcs(value) ? value : "";
+}
+
 export function blocksUpscaleSubmit(
   records: UpscaleRecord[],
   url: string,
@@ -207,6 +240,7 @@ export default function HomePhotoVideoUpscale({
       authenticated={isAuthenticated}
       generatedVideoUrl={generatedVideoUrl}
       fixedSource={!!projectKey}
+      gradeScopeKey={projectKey ? `code-motion-grade:${projectKey}`.slice(0, 128) : "home-video-grade"}
     />
   );
 }
@@ -216,12 +250,15 @@ function UpscalePanel({
   authenticated,
   generatedVideoUrl,
   fixedSource = false,
+  gradeScopeKey,
 }: {
   storageKey?: string;
   authenticated: boolean;
   generatedVideoUrl?: string;
   fixedSource?: boolean;
+  gradeScopeKey?: string;
 }) {
+  const [gradeOpen, setGradeOpen] = useState(false);
   const [uploaded, setUploaded] = useState("");
   const [choice, setChoice] = useState<"uploaded" | "generated" | "cloud">(
     "uploaded"
@@ -533,7 +570,26 @@ function UpscalePanel({
               : ""}
           </button>
         ))}
+        {gradeSourceFromPlayableUrl(source) && (
+          <button
+            type="button"
+            className="rounded-lg border px-4 py-2"
+            aria-expanded={gradeOpen}
+            disabled={busy || !metadata || !authenticated}
+            onClick={() => setGradeOpen(open => !open)}
+          >
+            调色
+          </button>
+        )}
       </div>
+      {gradeOpen && metadata && gradeSourceFromPlayableUrl(source) && (
+        <VideoGradeEntry
+          key={source}
+          source={gradeSourceFromPlayableUrl(source)}
+          outputSec={metadata.durationSec}
+          scopeKey={gradeScopeKey}
+        />
+      )}
       {metadata && !canWavespeedUpscale(metadata.sourceResolution, "4k") && (
         <p>当前服务不支持此源档位继续放大，请保留原片。</p>
       )}
@@ -575,5 +631,71 @@ function UpscalePanel({
         </article>
       ))}
     </section>
+  );
+}
+
+const GRADE_ACTIVE = ["queued", "running", "processing", "pending"];
+
+/** 调色提交参数（首页/代码动画/营销成片共用）：只传已核对的来源与本入口的任务归属。 */
+export function videoGradeEntryRequest(source: string, grade: MontageGrade | undefined, scopeKey?: string) {
+  return { videoUrl: source, grade, ...(scopeKey ? { scopeKey: scopeKey.slice(0, 128) } : {}) };
+}
+
+/** 单片调色：复用后期 concat+grade，结果是新文件，原片保留。 */
+export function VideoGradeEntry({
+  source,
+  outputSec,
+  scopeKey,
+}: {
+  source: string;
+  outputSec: number;
+  scopeKey?: string;
+}) {
+  const queue = trpc.mvAnalysis.queuePostProd.useMutation();
+  const [grade, setGrade] = useState<MontageGrade | undefined>();
+  const [jobId, setJobId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const job = trpc.mvAnalysis.getPostProdJob.useQuery(
+    { jobId },
+    {
+      enabled: !!jobId,
+      refetchInterval: query =>
+        GRADE_ACTIVE.includes(String((query.state.data as { status?: unknown } | undefined)?.status ?? "queued")) ? 4000 : false,
+    }
+  );
+  const data = job.data as { status?: string; error?: string; output?: unknown } | undefined;
+  const resultUrl =
+    data?.status === "succeeded" && data.output && typeof data.output === "object"
+      ? (data.output as { url?: unknown }).url
+      : undefined;
+  async function submit() {
+    if (busy || !grade) return;
+    setBusy(true);
+    setError("");
+    try {
+      setJobId(await submitVideoGrade(videoGradeEntryRequest(source, grade, scopeKey), { queue: input => queue.mutateAsync(input) }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="space-y-3 rounded-xl border p-3" aria-label="调色">
+      <VideoGradePanel value={grade} onChange={setGrade} outputSec={outputSec} disabled={busy || (!!jobId && !resultUrl && data?.status !== "failed")} onError={setError} />
+      <button type="button" className="rounded-lg border px-4 py-2" disabled={busy || !grade} onClick={() => void submit()}>
+        {busy ? "正在提交调色…" : "生成调色版（新文件，原片保留）"}
+      </button>
+      {jobId && <p className="break-all text-xs">调色任务编号：{jobId}{data?.status ? ` · ${data.status === "succeeded" ? "已完成" : data.status === "failed" ? "未成功" : "处理中"}` : ""}</p>}
+      {data?.status === "failed" && data.error && <p role="alert">{data.error}</p>}
+      {error && <p role="alert">{error}</p>}
+      {typeof resultUrl === "string" && (
+        <div>
+          <video src={flyDownloadUrl(resultUrl)} controls preload="metadata" className="max-h-64 w-full" />
+          <a href={flyDownloadUrl(resultUrl)} target="_blank" rel="noreferrer" download="调色版.mp4">下载调色版</a>
+        </div>
+      )}
+    </div>
   );
 }

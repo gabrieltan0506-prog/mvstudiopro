@@ -143,6 +143,7 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
     "@/lib/canvasUpload":
       "export const inferCanvasAssetKind=()=> 'video'; export const uploadOneCanvasAsset=async()=>({url:'https://test.invalid/upload.mp4'});",
     "@/lib/videoUpscaleApi": `export class VideoUpscaleSubmitError extends Error {constructor(message){super(message);this.definitelyNotStarted=true;}};export const startVideoUpscale=async input=>{fixture.posts.push(input);if(fixture.denied)throw new VideoUpscaleSubmitError("积分不足");if(fixture.fail)throw new Error('离线断线');return {taskId:'task-'+input.target,status:'running',creditsUsed:1}};
+    export const importWorkflowVideoSource=async()=>{throw new Error('offline')};export const probeWorkflowVideoSource=async()=>{throw new Error('offline')};
     export const fetchVideoUpscaleStatus=async id=>{fixture.queries.push(id);return {taskId:id,status:fixture.status,...(fixture.status==='succeeded'?{videoUrl:'https://test.invalid/'+id+'.mp4'}:{})}};`,
   };
   const result = await build({

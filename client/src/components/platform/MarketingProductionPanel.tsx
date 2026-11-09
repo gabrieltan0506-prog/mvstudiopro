@@ -15,6 +15,7 @@ import { StockFootageDrawer, type StockFootagePick } from "@/components/stockFoo
 import { STOCK_DRAWER_PER_PAGE, defaultMinDurationSec, keywordSourceText } from "@/components/stockFootage/stockFootageModel";
 import { canvasTtsCreditsForDuration } from "@shared/canvasGenerationPricing";
 import { MarketingVoicePicker } from "./MarketingVoicePicker";
+import { VideoGradeEntry, gradeSourceFromPlayableUrl } from "@/components/HomePhotoVideoUpscale";
 import { MarketingSegmentTimeline, MarketingThumb } from "./MarketingSegmentTimeline";
 import {
   applyPostProdJobResult,
@@ -51,6 +52,10 @@ import {
 } from "@shared/marketingProduction";
 
 const buttonStyle = "rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-40";
+/** 成片调色单独归属，不与导出成片的 concat 恢复（scopeKey marketing:<稿号>）混淆。 */
+export function marketingGradeScopeKey(draftId: string): string {
+  return `marketing-grade:${draftId}`.slice(0, 128);
+}
 const ACTIVE_JOB = ["queued", "running"];
 /** 整稿找素材的并发上限。 */
 const PREFETCH_CONCURRENCY = 3;
@@ -102,6 +107,8 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
   /** 本次会话上传素材的本机预览（刷新后不保留，只显示文件名占位）。 */
   const [localPreview, setLocalPreview] = useState<Record<string, string>>({});
   const [finalUrl, setFinalUrl] = useState<string>();
+  const [finalSec, setFinalSec] = useState(0);
+  const [gradeOpen, setGradeOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const utils = trpc.useUtils();
   const dialogue = trpc.canvasAudio.generateDialogue.useMutation();
@@ -452,8 +459,14 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
         <span className="text-xs text-slate-400">{step.kind === "wait" ? step.reason : step.kind === "done" ? "成片已导出" : step.kind === "mount" ? `待贴装 ${step.segmentIds.length} 段` : step.kind === "concat" ? "贴装完成，待拼接" : ""}</span>
       </div>
       {draft.final?.status === "failed" && <p role="alert" className="mt-2 text-xs text-amber-200">拼接未成功：{draft.final.error}</p>}
-      {finalUrl && <video className="mt-3 max-h-[28rem] w-full rounded-lg" src={finalUrl} controls />}
+      {finalUrl && <video className="mt-3 max-h-[28rem] w-full rounded-lg" src={finalUrl} controls
+        onLoadedMetadata={event => { const sec = event.currentTarget.duration; if (Number.isFinite(sec) && sec > 0) setFinalSec(sec); }} />}
       {finalUrl && <a className={`${buttonStyle} mt-2 inline-block`} href={finalUrl} download>下载成片</a>}
+      {finalUrl && gradeSourceFromPlayableUrl(finalUrl) && <button type="button" className={`${buttonStyle} ml-2 mt-2`} aria-expanded={gradeOpen}
+        disabled={busy || !finalSec} onClick={() => setGradeOpen(open => !open)}>调色</button>}
+      {gradeOpen && finalUrl && finalSec > 0 && gradeSourceFromPlayableUrl(finalUrl) && <div className="mt-3">
+        <VideoGradeEntry key={finalUrl.split("?")[0]} source={gradeSourceFromPlayableUrl(finalUrl)} outputSec={finalSec} scopeKey={marketingGradeScopeKey(draft.draftId)} />
+      </div>}
       {credits.uploads.length > 0 && <div className="mt-3 text-xs text-slate-400">
         {credits.uploads.length > 0 && <p>自有素材：{credits.uploads.join("、")}</p>}
       </div>}
