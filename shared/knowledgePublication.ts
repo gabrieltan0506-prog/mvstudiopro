@@ -261,6 +261,13 @@ export const knowledgeBatchResultSchema = z
     reviewedPages: z.array(z.string().uuid()),
     pages: z.array(knowledgeReviewPageSchema).optional(),
     images: z.array(z.object({ id: z.string().uuid(), url: z.string() }).strict()).optional(),
+    /** 完整版图文同页：审校后按页预算压缩的结果（before=审校稿超出页、after=压缩后仍超出页、adopted=采纳压缩稿的页）。 */
+    budgetOverflow: z.object({
+      before: z.array(z.object({ id: z.string(), headline: z.string(), chars: z.number(), maxChars: z.number(), excess: z.number() }).strict()),
+      after: z.array(z.object({ id: z.string(), headline: z.string(), chars: z.number(), maxChars: z.number(), excess: z.number() }).strict()),
+      adopted: z.array(z.string()),
+      error: z.string().optional(),
+    }).strict().optional(),
   })
   .strict();
 

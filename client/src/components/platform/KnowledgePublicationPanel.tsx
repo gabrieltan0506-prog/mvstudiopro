@@ -339,6 +339,8 @@ export default function KnowledgePublicationPanel({
           )
             throw new Error("整理结果与原章节不一致，已暂停");
           if(result.pages && result.pages.map(page=>page.id).join(",")!==result.reviewedPages.join(","))throw Error("章节正文与原稿编号不一致，未采用");
+          // 完整版图文同页：压缩后仍超出图下容量的页只提示不阻断（会排成续页），由用户决定是否改图数或手动精简。
+          if(result.budgetOverflow?.after.length)console.warn(`[knowledgePublication] 第${i+1}组有${result.budgetOverflow.after.length}页内文压缩后仍超出图下容量：${result.budgetOverflow.after.map(o=>`${o.headline} ${o.chars}/${o.maxChars}字`).join("；")}${result.budgetOverflow.error?`（压缩调用未完成：${result.budgetOverflow.error.slice(0,120)}）`:""}`);
           pub = {...pub,chapterReviewDigest:result.sourceDigest,chapterReviews:{...pub.chapterReviews,...Object.fromEntries((result.pages||[]).map(page=>[page.id,page]))}};
           const completed = completedKnowledgeBatches(pub, batches.length);
           completed.add(i);
