@@ -2,7 +2,7 @@
 # 本工作流在 PR 分支推送时把该提交源码打包上传到 GCS 专用前缀，工作机在 Fly 内用
 # 服务端已有的 GCS 凭证读取（scripts/rig-fetch-source-tarball.mts），凭证不离开 Fly。
 #
-# 默认关闭：仓库变量 SOURCE_TARBALL_GCS_ENABLED=true 后才执行（未开启时 job 直接跳过）。
+# 默认开启（2026-11-09 已端到端验证：Actions 上传 → 工作机 downloadGcsObject 下载+sha256 校验+解包）；仓库变量 SOURCE_TARBALL_GCS_ENABLED=false 可关闭。
 # 凭证复用 pdf-worker-deploy.yml 已在用的 GCP_SA_KEY / GCP_SERVICE_ACCOUNT_KEY，不新增密钥。
 # 桶默认复用 Cloud Build 暂存桶，可用仓库变量 SOURCE_TARBALL_GCS_BUCKET 改写。
 # 对象：gs://<bucket>/mvstudiopro-source/<sha>.tar.gz 与 <sha>.tar.gz.sha256；
@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   upload:
-    if: (vars.SOURCE_TARBALL_GCS_ENABLED == 'true' || github.head_ref == 'chore/repo-private-readiness-1110') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: vars.SOURCE_TARBALL_GCS_ENABLED != 'false' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
