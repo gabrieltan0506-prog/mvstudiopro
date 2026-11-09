@@ -87,6 +87,17 @@ describe("normalizeMediaSections · 时间边界确定性修复", () => {
 });
 
 describe("repairJsonShape · zod issues 驱动的形状修复", () => {
+  it("线上 DeepSeek 案例：可选对象字段写成 {} → 整个删除；必填对象写成 {} 不删，留给逐字段修复/重写", () => {
+    const schema = z.object({ shots: z.array(z.object({ id: z.string(), sourceClip: z.object({ assetId: z.string(), durationSec: z.number() }).strict().optional() }).strict()), plan: z.object({ version: z.literal(1) }).strict() }).strict();
+    const fixed = repairJsonShape({ shots: [{ id: "a", sourceClip: {} }, { id: "b" }], plan: { version: 1 } }, schema);
+    expect(fixed.value).toEqual({ shots: [{ id: "a" }, { id: "b" }], plan: { version: 1 } });
+    expect(fixed.issues).toBeNull();
+    expect(fixed.fixes.map(f => [f.path, f.code, f.reasonZh])).toEqual([["shots.[0].sourceClip", "empty_object", "删除空对象占位字段（合同为可选）"]]);
+    const required = repairJsonShape({ shots: [{ id: "a" }], plan: {} }, schema);
+    expect((required.value as any).plan).toEqual({});
+    expect(required.fixes).toEqual([]);
+    expect(required.issues?.map(i => i.path.join("."))).toEqual(["plan.version"]);
+  });
   it("线上案例②：uncertainties 别名键改名为 uncertaintiesZh；字符串包成数组", () => {
     const schema = z.object({ uncertaintiesZh: z.array(z.string()), n: z.number() }).strict();
     const renamed = repairJsonShape({ uncertainties: ["a"], n: 1 }, schema);

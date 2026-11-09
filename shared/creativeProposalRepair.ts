@@ -180,6 +180,32 @@ export function repairJsonShape(value: unknown, schema: ZodType): { value: unkno
     let applied = 0;
     // 先改名未知键（uncertainties → uncertaintiesZh），再补缺失；否则缺失数组会被先补成 []，别名键随后被当重复键删掉。
     const ordered = [...result.error.issues].sort((a, b) => Number(b.code === "unrecognized_keys") - Number(a.code === "unrecognized_keys"));
+    // 1109 DeepSeek 一例：每个非素材镜头都塞了 sourceClip:{}，strict 合同对空对象报一串「缺失」。
+    // 父对象是空对象 {} 且删掉后该路径不再有任何 issue（说明合同里是可选字段）→ 整个删除；否则还原，交给下面逐字段处理。
+    const emptyParents = new Set<string>();
+    for (const issue of ordered) {
+      if (issue.code !== "invalid_type" || issue.path.length < 2) continue;
+      const parentPath = issue.path.slice(0, -1).filter((p): p is PathPart => typeof p === "string" || typeof p === "number");
+      const key = pathKey(parentPath);
+      if (emptyParents.has(key)) continue;
+      const parent = getAt(current, parentPath);
+      if (!isRecord(parent) || Object.keys(parent).length) continue;
+      const owner = getAt(current, parentPath.slice(0, -1));
+      const last = parentPath[parentPath.length - 1];
+      if (!isRecord(owner) || typeof last !== "string") continue;
+      emptyParents.add(key);
+      delete owner[last];
+      const retry = schema.safeParse(current);
+      // 必填字段删掉后 zod 会在同一路径报「缺失」；可选字段删掉后该路径不再有 issue。
+      const stillThere = !retry.success && retry.error.issues.some(row => pathKey(row.path.filter((p): p is PathPart => typeof p === "string" || typeof p === "number")) === key);
+      if (stillThere) {
+        owner[last] = parent;
+        continue;
+      }
+      fixes.push({ path: key, code: "empty_object", before: {}, after: undefined, reasonZh: "删除空对象占位字段（合同为可选）" });
+      applied += 1;
+    }
+    if (applied) continue;
     for (const issue of ordered) {
       const path = issue.path.filter((p): p is PathPart => typeof p === "string" || typeof p === "number");
       const code = issue.code;

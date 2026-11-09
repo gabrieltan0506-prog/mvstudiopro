@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { askMusicMvAdvisor } from "./musicMvAdvisor";
 import { parseAskJson } from "./platformSkillQa";
 import { CreativeProposalError, creativeProposalFailureMessage } from "./creativeProposalFailure";
+import { CREATIVE_LLM_HOPS, CreativeHopTransportError, type CreativeLlmHop } from "./creativeLlmHops";
 import {
   parseMusicMvAdvisorProposal,
   type MusicMvAdvisorTarget,
@@ -78,6 +79,19 @@ function proposal() {
     })),
   };
 }
+const review = { verdict: "approved" as const, summaryZh: "离线联合审阅", findings: [], mediaReview: [], inspirationZh: ["用动作推进关系"], limitationsZh: ["离线替身"] };
+const envelope = (candidate: unknown) => ({ proposal: candidate, review, changesZh: ["保留初稿"] });
+/** 用模型回包文本替换一次 compose（走真实 JSON 解析 → 修复 → 校验链）。 */
+const composeText = (mocks: ReturnType<typeof fixture>["mocks"], value: unknown, times = 1) => {
+  const impl = async (_i: string, _in: unknown, save: (n: string, v: unknown) => Promise<unknown>, hop: CreativeLlmHop) => {
+    await save("raw", { model: hop.modelName });
+    return { text: typeof value === "string" ? value : JSON.stringify(value), model: hop.modelName };
+  };
+  for (let i = 0; i < times; i += 1) mocks.compose.mockImplementationOnce(impl as any);
+};
+const HOP1 = "compose-hop-1-glm-5.3-flashx";
+const HOP2 = "compose-hop-2-z-ai_glm-5.3-flashx";
+const HOP3 = "compose-hop-3-deepseek_deepseek-v4.1-flash-1017";
 function fixture() {
   const records = new Map<string, unknown>();
   const d = {
@@ -108,10 +122,17 @@ function fixture() {
         return { created: true };
       }
     ),
-    compose: vi.fn(async () => ({decoded: JSON.parse(JSON.stringify(proposal())), model: "glm-5.3-flashx"})),
+    compose: vi.fn(async (_instructions: string, _input: unknown, save: (n: string, v: unknown) => Promise<unknown>, hop: CreativeLlmHop) => {
+      await save("raw", { model: hop.modelName });
+      return { text: JSON.stringify(proposal()), model: hop.modelName };
+    }),
     readKnowledge: vi.fn(async () => ({entries: [], selectedIds: []})),
     bucket: () => "test-bucket",
-    refine: vi.fn(async (input: any) => ({proposal: input.candidate, review: {verdict: "approved" as const, summaryZh: "离线联合审阅", findings: [], mediaReview: [], inspirationZh: ["用动作推进关系"], limitationsZh: ["离线替身"],model:"gpt-6-astra"}})),
+    refine: vi.fn(async (input: any, _draftModel: string, save: (n: string, v: unknown) => Promise<unknown>, hop: CreativeLlmHop) => {
+      await save("raw", { model: hop.modelName });
+      return { text: JSON.stringify(envelope(input.candidate)), model: hop.modelName, inputSha256: "sha" as string | undefined };
+    }),
+    hops: CREATIVE_LLM_HOPS,
     uuid: () => "11111111-1111-4111-8111-111111111111",
   };
   return {
@@ -140,9 +161,20 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
       "request.json",
       "raw.json",
       "decoded.json",
+      `${HOP1}-raw.json`,
+      `${HOP1}-decoded.json`,
+      "compose-hop-used.json",
       "glm-draft-validated.json",
+      "refine-hop-1-glm-5.3-flashx-raw.json",
+      "refine-hop-1-glm-5.3-flashx-decoded.json",
+      "refine-hop-used.json",
       "accepted.json",
     ]);
+    const used = records.get(`canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/compose-hop-used.json`) as any;
+    expect([used.hop, used.model, used.gateway, used.attempt, used.failuresZh]).toEqual([1, "glm-5.3-flashx", "evolink_flash_only", 1, []]);
+    expect((records.get(`canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/accepted.json`) as any).hopsUsed.refine.hop).toBe(1);
+    expect(mocks.refine).toHaveBeenCalledTimes(1);
+    expect((mocks.refine.mock.calls[0] as unknown as [any])[0].requirements).toContain("【硬约束");
   });
   it("无音频用量回执不能冒充听音，也不自动重试", async () => {
     const { d, mocks, records } = fixture();
@@ -151,7 +183,7 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
       candidates: [{finishReason: "STOP"}],
       modelVersion: "gemini-3.8-flash",
       usageMetadata: { promptTokensDetails: [] },
-    });
+    } as any);
     await expect(askMusicMvAdvisor(7, target, "设计MV", d)).rejects.toThrow(
       "音频处理回执"
     );
@@ -181,18 +213,18 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
     const { d, mocks, records } = fixture();
     const bad = JSON.parse(JSON.stringify(proposal()));
     bad.sections.push({ startSec: 0, endSec: 0, labelZh: "占位避免空段", heardZh: "无（此条为校验占位）", emotion: { fromZh: "无", toZh: "无", triggerZh: "无", musicZh: "无", visualZh: "无" } });
-    mocks.compose.mockResolvedValueOnce({ decoded: bad, model: "glm-5.3-flashx" });
+    composeText(mocks, bad);
     const answer = parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", d), true);
     const accepted = parseMusicMvAdvisorProposal(answer.answer, target);
     expect(accepted.sections.map(s => [s.startSec, s.endSec])).toEqual([[0, 12]]);
     expect(mocks.compose).toHaveBeenCalledTimes(1);
     expect(mocks.generate).toHaveBeenCalledTimes(1);
-    const normalized = records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/glm-draft-normalized.json") as any;
+    const normalized = records.get(`canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/${HOP1}-repaired.json`) as any;
     expect(normalized.before.sections).toHaveLength(2);
     expect(normalized.after.sections).toHaveLength(1);
     expect(normalized.fixes.sections).toEqual([{ index: 1, field: "section", before: { startSec: 0, endSec: 0, labelZh: "占位避免空段" }, after: undefined, reasonZh: "零长或倒序段落，已并入相邻段落" }]);
-    expect(Array.from(records.keys()).map(k => k.split("/").at(-1))).toEqual([
-      "request.json", "raw.json", "decoded.json", "glm-draft-normalized.json", "glm-draft-validated.json", "accepted.json",
+    expect(Array.from(records.keys()).map(k => k.split("/").at(-1)).filter(n => n?.startsWith("compose"))).toEqual([
+      `${HOP1}-raw.json`, `${HOP1}-decoded.json`, `${HOP1}-repaired.json`, "compose-hop-used.json",
     ]);
   });
   it("线上案例②：uncertainties 别名/字符串 + 末尾零长闭合段 → 形状修复后通过", async () => {
@@ -201,12 +233,12 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
     delete bad.uncertaintiesZh;
     bad.uncertainties = "实听速度约115–125BPM，与brief标注有出入";
     bad.sections.push({ startSec: 12, endSec: 12, labelZh: "（占位闭合段）", heardZh: "无", emotion: { fromZh: "无", toZh: "无", triggerZh: "无", musicZh: "无", visualZh: "无" } });
-    mocks.compose.mockResolvedValueOnce({ decoded: bad, model: "glm-5.3-flashx" });
+    composeText(mocks, bad);
     const accepted = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", d), true).answer, target);
     expect(accepted.uncertaintiesZh).toEqual(["实听速度约115–125BPM，与brief标注有出入"]);
     expect(accepted.sections.map(s => [s.startSec, s.endSec])).toEqual([[0, 12]]);
     expect(mocks.compose).toHaveBeenCalledTimes(1);
-    const normalized = records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/glm-draft-normalized.json") as any;
+    const normalized = records.get(`canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/${HOP1}-repaired.json`) as any;
     expect(normalized.fixes.shape.map((f: any) => [f.path, f.reasonZh])).toEqual([
       ["uncertainties", "未知字段改名为 uncertaintiesZh"],
       ["uncertaintiesZh", "字符串包成单元素数组"],
@@ -228,56 +260,144 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
     expect(normalized.fixes.sections.map((f: any) => [f.index, f.field, f.after])).toEqual([[0, "startSec", 0], [1, "section", undefined], [0, "endSec", 12]]);
     expect(JSON.stringify((mocks.compose.mock.calls as unknown as [string, unknown][])[0][1])).toContain('"uncertaintiesZh":["尾音边界需复听"]');
   });
-  it("形状修复后仍不过（concepts 只有 3 个）→ 带校验原因重 compose 一次，不重新听歌", async () => {
+  it("形状修复后仍不过（concepts 只有 3 个）→ 同一跳带校验原因重写一次，不重新听歌", async () => {
     const { d, mocks, records } = fixture();
     const bad = JSON.parse(JSON.stringify(proposal()));
     bad.concepts.pop();
-    mocks.compose.mockResolvedValueOnce({ decoded: bad, model: "glm-5.3-flashx" });
+    composeText(mocks, bad);
     const accepted = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", d), true).answer, target);
     expect(accepted.concepts).toHaveLength(4);
     expect(mocks.generate).toHaveBeenCalledTimes(1);
     expect(mocks.compose).toHaveBeenCalledTimes(2);
-    const [instructions, input] = mocks.compose.mock.calls[1] as unknown as [string, any];
+    const [instructions, input, , hop] = mocks.compose.mock.calls[1] as unknown as [string, any, unknown, CreativeLlmHop];
+    expect(hop.modelName).toBe("glm-5.3-flashx");
     expect(instructions).toContain("上一版方案未通过服务端校验：方案数量不足：至少 4 项");
-    expect(input.repair).toEqual({ attempt: 1, reasonZh: "方案数量不足：至少 4 项" });
+    expect(instructions).toContain("非 footage 镜头不得出现 sourceClip");
+    expect(input.repair).toEqual({ attempt: 2, reasonZh: "方案数量不足：至少 4 项" });
     expect(input.sourceEvidence).toEqual((mocks.compose.mock.calls[0] as unknown as [string, any])[1].sourceEvidence);
     const names = Array.from(records.keys()).map(k => k.split("/").at(-1));
-    expect(names).toContain("glm-draft-rejected.json");
-    expect((records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/glm-draft-rejected.json") as any).reasonZh).toBe("方案数量不足：至少 4 项");
+    expect(names).toContain(`${HOP1}-rejected.json`);
+    expect((records.get(`canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/${HOP1}-rejected.json`) as any).reasonZh).toBe("方案数量不足：至少 4 项");
+    expect(names).toContain(`${HOP1}-rewrite-decoded.json`);
+    const used = records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/compose-hop-used.json") as any;
+    expect([used.hop, used.attempt, used.rewritten]).toEqual([1, 2, true]);
     expect(names).toContain("accepted.json");
   });
-  it("重 compose 仍不过 → 抛出带具体原因的 CreativeProposalError，不再第三次", async () => {
+  it("三跳链①：第一跳写坏两次 → 切第二跳（GLM@OpenRouter）成功，记录 hop-used 与每跳原因", async () => {
     const { d, mocks, records } = fixture();
     const bad = JSON.parse(JSON.stringify(proposal()));
     bad.concepts[3].id = bad.concepts[0].id;
-    mocks.compose.mockResolvedValue({ decoded: bad, model: "glm-5.3-flashx" });
+    composeText(mocks, bad, 2);
+    const accepted = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", d), true).answer, target);
+    expect(accepted.concepts).toHaveLength(4);
+    expect(mocks.compose).toHaveBeenCalledTimes(3);
+    expect((mocks.compose.mock.calls as unknown as [string, unknown, unknown, CreativeLlmHop][]).map(c => c[3].modelName)).toEqual(["glm-5.3-flashx", "glm-5.3-flashx", "z-ai/glm-5.3-flashx"]);
+    expect(mocks.generate).toHaveBeenCalledTimes(1);
+    const used = records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/compose-hop-used.json") as any;
+    expect([used.hop, used.model, used.gateway, used.attempt]).toEqual([2, "z-ai/glm-5.3-flashx", "auto", 1]);
+    expect(used.failuresZh).toEqual([
+      "第1跳 GLM 5.3 FlashX · EvoLink：MV方案来源或编号不一致",
+      "第1跳 GLM 5.3 FlashX · EvoLink（重写）：MV方案来源或编号不一致",
+    ]);
+    const names = Array.from(records.keys()).map(k => k.split("/").at(-1));
+    expect(names).toContain(`${HOP1}-rejected.json`);
+    expect(names).toContain(`${HOP1}-rewrite-rejected.json`);
+    expect(names).toContain(`${HOP2}-decoded.json`);
+  });
+  it("三跳链②：前两跳通道异常（超时/429）→ 不重写直接切第三跳 DeepSeek 成功", async () => {
+    const { d, mocks, records } = fixture();
+    mocks.compose.mockImplementationOnce(async () => { throw new CreativeHopTransportError("GLM 5.3 FlashX · EvoLink 通道失败（超时）：timeout", undefined); });
+    mocks.compose.mockImplementationOnce(async () => { throw new CreativeHopTransportError("GLM 5.3 FlashX · OpenRouter 通道失败（HTTP 429）：rate limited", 429); });
+    const accepted = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", d), true).answer, target);
+    expect(accepted.concepts).toHaveLength(4);
+    expect(mocks.compose).toHaveBeenCalledTimes(3);
+    expect((mocks.compose.mock.calls[2] as unknown as [string, unknown, unknown, CreativeLlmHop])[3]).toEqual(CREATIVE_LLM_HOPS[2]);
+    const used = records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/compose-hop-used.json") as any;
+    expect([used.hop, used.model, used.gateway]).toEqual([3, "deepseek/deepseek-v4.1-flash-1017", "auto"]);
+    expect(used.failuresZh).toEqual([
+      "第1跳 GLM 5.3 FlashX · EvoLink：GLM 5.3 FlashX · EvoLink 通道失败（超时）：timeout",
+      "第2跳 GLM 5.3 FlashX · OpenRouter：GLM 5.3 FlashX · OpenRouter 通道失败（HTTP 429）：rate limited",
+    ]);
+    expect(Array.from(records.keys()).map(k => k.split("/").at(-1))).toContain(`${HOP3}-decoded.json`);
+  });
+  it("三跳链③：三跳全败（各写坏两次）→ CreativeProposalError 含三段原因，不进 refine", async () => {
+    const { d, mocks, records } = fixture();
+    const bad = JSON.parse(JSON.stringify(proposal()));
+    bad.concepts[3].id = bad.concepts[0].id;
+    composeText(mocks, bad, 6);
     const error = await askMusicMvAdvisor(7, target, "设计MV", d).catch(e => e);
     expect(error).toBeInstanceOf(CreativeProposalError);
-    expect(error.message).toBe("修复重试后方案仍未通过校验：MV方案来源或编号不一致");
+    expect(error.stage).toBe("compose");
+    expect(error.hopFailuresZh).toHaveLength(6);
+    expect(error.message).toContain("创作方案三条通道均未通过校验：第1跳 GLM 5.3 FlashX · EvoLink：MV方案来源或编号不一致");
+    expect(error.message).toContain("第2跳 GLM 5.3 FlashX · OpenRouter（重写）：MV方案来源或编号不一致");
+    expect(error.message).toContain("第3跳 DeepSeek V4.1 Flash 1017 · OpenRouter（重写）：MV方案来源或编号不一致");
     expect(creativeProposalFailureMessage(error)).toBe(error.message);
-    expect(mocks.compose).toHaveBeenCalledTimes(2);
+    expect(mocks.compose).toHaveBeenCalledTimes(6);
     expect(mocks.generate).toHaveBeenCalledTimes(1);
     expect(mocks.refine).not.toHaveBeenCalled();
     const names = Array.from(records.keys()).map(k => k.split("/").at(-1));
-    expect(names).toContain("glm-draft-rejected.json");
-    expect(names).toContain("repair-1-glm-draft-rejected.json");
+    expect(names).toContain(`${HOP3}-rewrite-rejected.json`);
+    expect(names).toContain("compose-hop-exhausted.json");
     expect(names).not.toContain("accepted.json");
   });
-  it("Astra 修订结果追加占位段时同样修复；改写区间则带原因重 refine 一次", async () => {
+  it("线上 DeepSeek 案例①：concepts 数组里混写 \"c2\":{…} 的非法 JSON → 带原因重写一次后通过", async () => {
+    const { d, mocks, records } = fixture();
+    const good = JSON.stringify(proposal());
+    const broken = good.replace('"concepts":[', '"concepts":["c2":');
+    expect(() => JSON.parse(broken)).toThrow();
+    composeText(mocks, broken);
+    const accepted = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", d), true).answer, target);
+    expect(accepted.concepts).toHaveLength(4);
+    expect(mocks.compose).toHaveBeenCalledTimes(2);
+    const [instructions, input] = mocks.compose.mock.calls[1] as unknown as [string, any];
+    expect(instructions).toContain("上一版方案未通过服务端校验：模型输出不是合法 JSON");
+    expect(input.repair.reasonZh).toContain("模型输出不是合法 JSON");
+    const rejected = records.get(`canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/${HOP1}-rejected.json`) as any;
+    expect(rejected.phase).toBe("json_parse");
+    expect(Array.from(records.keys()).map(k => k.split("/").at(-1))).not.toContain(`${HOP1}-decoded.json`);
+  });
+  it("线上 DeepSeek 案例②：每个非素材镜头塞 sourceClip:{} → 确定性删除，不重写；footage 镜头的空 sourceClip 不可删", async () => {
+    const { d, mocks, records } = fixture();
+    const bad = JSON.parse(JSON.stringify(proposal()));
+    for (const c of bad.concepts) c.plan.shots[0].sourceClip = {};
+    composeText(mocks, bad);
+    const accepted = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", d), true).answer, target);
+    expect(mocks.compose).toHaveBeenCalledTimes(1);
+    expect(accepted.concepts.every(c => c.plan.shots[0].sourceClip === undefined && c.plan.shots[1].sourceClip)).toBe(true);
+    const repaired = records.get(`canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/${HOP1}-repaired.json`) as any;
+    expect(repaired.fixes.shape.map((f: any) => [f.path, f.code])).toEqual([0, 1, 2, 3].map(i => [`concepts.[${i}].plan.shots.[0].sourceClip`, "empty_object"]));
+    const second = fixture();
+    const worse = JSON.parse(JSON.stringify(proposal()));
+    worse.concepts[0].plan.shots[1].sourceClip = {};
+    composeText(second.mocks, worse);
+    await askMusicMvAdvisor(7, target, "设计MV", second.d);
+    expect(second.mocks.compose).toHaveBeenCalledTimes(2);
+    expect((second.records.get(`canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/${HOP1}-rejected.json`) as any).reasonZh).toContain("素材切片");
+  });
+  it("refine 修订结果追加占位段时同样修复；改写区间则同一跳带原因重写一次；通道异常切下一跳", async () => {
     const { d, mocks } = fixture();
-    mocks.refine.mockImplementationOnce(async (input: any) => ({ proposal: { ...input.candidate, sections: [...input.candidate.sections, { startSec: 0, endSec: 0, labelZh: "占位", heardZh: "无", emotion }], uncertaintiesZh: "一条" }, review: { verdict: "approved" as const, summaryZh: "离线", findings: [], mediaReview: [], inspirationZh: ["x"], limitationsZh: ["y"], model: "gpt-6-astra" } }));
+    mocks.refine.mockImplementationOnce(async (input: any, _m: string, _s: unknown, hop: CreativeLlmHop) => ({ text: JSON.stringify(envelope({ ...input.candidate, sections: [...input.candidate.sections, { startSec: 0, endSec: 0, labelZh: "占位", heardZh: "无", emotion }], uncertaintiesZh: "一条" })), model: hop.modelName, inputSha256: "sha" }));
     const accepted = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", d), true).answer, target);
     expect(accepted.sections).toHaveLength(1);
     expect(accepted.uncertaintiesZh).toEqual(["一条"]);
+    expect(accepted.review?.model).toBe("glm-5.3-flashx");
     expect(mocks.refine).toHaveBeenCalledTimes(1);
     const second = fixture();
-    second.mocks.refine.mockImplementationOnce(async (input: any) => ({ proposal: { ...input.candidate, sections: [{ ...input.candidate.sections[0], startSec: 0, endSec: 6 }, { ...input.candidate.sections[0], startSec: 6, endSec: 12 }] }, review: { verdict: "approved" as const, summaryZh: "离线", findings: [], mediaReview: [], inspirationZh: ["x"], limitationsZh: ["y"], model: "gpt-6-astra" } }));
+    second.mocks.refine.mockImplementationOnce(async (input: any, _m: string, _s: unknown, hop: CreativeLlmHop) => ({ text: JSON.stringify(envelope({ ...input.candidate, sections: [{ ...input.candidate.sections[0], startSec: 0, endSec: 6 }, { ...input.candidate.sections[0], startSec: 6, endSec: 12 }] })), model: hop.modelName, inputSha256: "sha" }));
     const result = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", second.d), true).answer, target);
     expect(result.sections.map(s => [s.startSec, s.endSec])).toEqual([[0, 12]]);
     expect(second.mocks.refine).toHaveBeenCalledTimes(2);
     expect(second.mocks.compose).toHaveBeenCalledTimes(1);
     expect((second.mocks.refine.mock.calls as unknown as [any][])[1][0].requirements).toContain("联合创作不得改写媒体观察区间和证据");
-    expect(Array.from(second.records.keys()).map(k => k.split("/").at(-1))).toContain("astra-rejected.json");
+    const names = Array.from(second.records.keys()).map(k => k.split("/").at(-1));
+    expect(names).toContain("refine-hop-1-glm-5.3-flashx-rejected.json");
+    expect(names).toContain("refine-hop-1-glm-5.3-flashx-rewrite-decoded.json");
+    const third = fixture();
+    third.mocks.refine.mockImplementationOnce(async () => { throw new CreativeHopTransportError("GLM 5.3 FlashX · EvoLink 通道失败（HTTP 503）：down", 503); });
+    const out = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", third.d), true).answer, target);
+    expect(out.review?.model).toBe("z-ai/glm-5.3-flashx");
+    expect((third.records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/refine-hop-used.json") as any).hop).toBe(2);
   });
   it("线上第四次重跑：镜头 15.5s 超限 → 确定性等分，不重 compose，落 glm-draft-shots-split", async () => {
     const { d, mocks, records } = fixture();
@@ -293,14 +413,14 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
     const wide = { ...target, audio: { ...target.audio, durationSec: 20 } };
     mocks.read.mockResolvedValue({ buffer: Buffer.from("test-audio"), mimeType: "audio/wav", durationSec: 20 });
     mocks.generate.mockResolvedValue({ text: JSON.stringify({ kind: "native_music_evidence_v1", sourceKey: target.sourceKey, summaryZh: "持续人声", sections: bad.sections, uncertaintiesZh: [] }), candidates: [{ finishReason: "STOP" }], modelVersion: "gemini-3.8-flash", usageMetadata: { promptTokensDetails: [{ modality: "AUDIO", tokenCount: 30 }] } });
-    mocks.compose.mockResolvedValueOnce({ decoded: bad, model: "glm-5.3-flashx" });
+    composeText(mocks, bad);
     const accepted = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, wide, "设计MV", d), true).answer, wide);
     expect(mocks.compose).toHaveBeenCalledTimes(1);
     expect(accepted.concepts[0].plan.shots.map(s => [s.id, s.startSec, s.endSec])).toEqual([["long", 0, 7.75], ["long-2", 7.75, 15.5], ["sing", 15.5, 20]]);
     expect(accepted.concepts[0].plan.shots[1].visualPrompt).toBe("长镜（续）");
-    const split = records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/glm-draft-shots-split.json") as any;
-    expect(split.fixes).toHaveLength(4);
-    expect(split.fixes.map((f: any) => [f.concept, f.id, f.action])).toEqual([[0, "long", "split"], [1, "long", "split"], [2, "long", "split"], [3, "long", "split"]]);
+    const split = records.get(`canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/${HOP1}-repaired.json`) as any;
+    expect(split.fixes.shots).toHaveLength(4);
+    expect(split.fixes.shots.map((f: any) => [f.concept, f.id, f.action])).toEqual([[0, "long", "split"], [1, "long", "split"], [2, "long", "split"], [3, "long", "split"]]);
   });
   it("四份完整方案超过旧12000字限制仍原样消费", () => {
     const p = proposal();

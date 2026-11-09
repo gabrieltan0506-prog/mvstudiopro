@@ -2,13 +2,16 @@ import {refineSunoSongStyles} from './sunoStyleRefinement';
 import { MUSIC_EMOTION_INSTRUCTIONS, assertNewMusicEmotionCoverage } from "../../shared/musicEmotion";
 import { askManhuaFilmReview } from "./manhuaAdvisorFilmReview";
 import { advisorFilmReviewSchema } from "../../shared/manhuaAdvisorFilmReview";
-import { refineCreativeProposal } from "./creativeAstraRefinement";
-import { composeCreativeJson } from "./creativeGlmComposer";
+import { CREATIVE_REFINE_INSTRUCTIONS, parseRefinementEnvelope } from "./creativeAstraRefinement";
+import { CREATIVE_LLM_HOPS, CreativeHopTransportError, creativeHopSlug, invokeCreativeHop, type CreativeLlmHop } from "./creativeLlmHops";
+import { buildLyricReviewContext } from "../../shared/lyricCraftReview";
+import type { CreativeEvidenceReviewInput } from "../../shared/creativeEvidenceReview";
+import { extractJsonString } from "../_core/llm";
 import { readCreativeLibraryContext, assertCreativeSelections, CREATIVE_LIBRARY_SELECTION_INSTRUCTIONS } from "./creativeLibraryRetrieval";
 import { creativeLearningTargetSchema, creativeLearningReportSchema, assertCreativeMethodEvidence, CREATIVE_LEARNING_INSTRUCTIONS, type CreativeLearningTarget } from "../../shared/creativeGenerationLibrary";
 import { parseCreativeAudioEvidence, creativeAudioEvidenceSchema, CREATIVE_AUDIO_READ_INSTRUCTIONS } from "../../shared/creativeMediaEvidence";
-import { repairJsonShape, normalizeMediaSections, normalizeShotDurations } from "../../shared/creativeProposalRepair";
-import { toCreativeProposalError } from "./creativeProposalFailure";
+import { repairJsonShape, normalizeMediaSections, normalizeShotDurations, describeValidationErrorZh } from "../../shared/creativeProposalRepair";
+import { CreativeProposalError } from "./creativeProposalFailure";
 import { SUNO_SONG_CRAFT } from "../../shared/sunoSongCraft";
 import {
   sunoSongTargetSchema,
@@ -41,7 +44,15 @@ import {
   parseMusicMvAdvisorProposal,
   type MusicMvAdvisorTarget,
 } from "../../shared/canvasMusicMv";
-import { MUSIC_MV_ADVISOR_INSTRUCTIONS } from "../../shared/musicMvCraft";
+import { MUSIC_MV_ADVISOR_INSTRUCTIONS, MUSIC_MV_HARD_CONSTRAINTS_ZH } from "../../shared/musicMvCraft";
+
+type Save = (name: string, value: unknown) => Promise<unknown>;
+/** 一跳 compose：系统提示 + 完整创作上下文 → 模型正文（未解析）；request/raw 由 hopSave 落盘。 */
+export const composeCreativeAtHop = (instructions: string, input: unknown, save: Save, hop: CreativeLlmHop) =>
+  invokeCreativeHop(hop, instructions, input, save, { timeoutMs: 180_000 });
+/** 一跳 refine（联合创作审阅）：同 Astra 合同与指令，但走三跳 fallback 模型；回包 {proposal,review,changesZh} 由调用方解析校验。 */
+export const refineCreativeAtHop = (input: CreativeEvidenceReviewInput, draftModel: string, save: Save, hop: CreativeLlmHop) =>
+  invokeCreativeHop(hop, CREATIVE_REFINE_INSTRUCTIONS, { ...input, lyricCraft: buildLyricReviewContext(input.candidate), draftModel }, save, { timeoutMs: 240_000 });
 
 async function readAudio(gcsUri: string) {
   const chunks: Buffer[] = [];
@@ -81,8 +92,9 @@ const real = {
   upload: uploadBufferToGcsIfAbsent,
   bucket: getGcsBucketName,
   uuid: randomUUID,
-  refine: refineCreativeProposal,
-  compose: composeCreativeJson,
+  refine: refineCreativeAtHop,
+  compose: composeCreativeAtHop,
+  hops: CREATIVE_LLM_HOPS,
   readKnowledge: readCreativeLibraryContext,
   readVideo: async (userId: number, source: { url: string; gcsUri?: string; durationSec: number; title?: string }, sourceKey: string) => {
     const raw = await askManhuaFilmReview(userId, {
@@ -176,14 +188,12 @@ export async function askMusicMvAdvisor(
   const instructions=purpose==="learn"?CREATIVE_LEARNING_INSTRUCTIONS:(purpose==="song"?SUNO_SONG_CRAFT:MUSIC_MV_ADVISOR_INSTRUCTIONS)+"\n"+MUSIC_EMOTION_INSTRUCTIONS+(purpose==="song"?"\n"+CREATIVE_LIBRARY_SELECTION_INSTRUCTIONS:"");
   const proposalSchema:ZodType=purpose==="learn"?creativeLearningReportSchema:purpose==="song"?sunoSongProposalSchema:musicMvAdvisorProposalSchema;
   const sectionTolerance=purpose==="mv"?0.03:0.1;
-  /** 方案校验前的确定性修复：形状（字符串→数组、别名键、数字字符串）与 sections 时间边界；有修复才落证据。 */
+  /** 方案校验前的确定性修复：形状（字符串→数组、别名键、数字字符串、空对象占位）、sections 时间边界、MV 镜头 >15s 等分 / <0.5s 并入；有修复才落 `<stage>-repaired`。 */
   const prepareCandidate=async(raw:unknown,stage:string)=>{
     const shape=repairJsonShape(raw,proposalSchema);
     const sections=target.audio?normalizeMediaSections(shape.value,target.audio.durationSec,sectionTolerance):{value:shape.value,fixes:[]};
-    if(shape.fixes.length||sections.fixes.length)await save(`${stage}-normalized`,{before:raw,after:sections.value,fixes:{shape:shape.fixes,sections:sections.fixes},remainingIssues:shape.issues});
-    // MV 分镜：>15s 的镜头确定性等分、<0.5s 的并入相邻镜，四个方案都处理；GLM 两次 compose 都不肯自己切短（1109 第四次重跑）。
     const shots=purpose==="mv"?normalizeShotDurations(sections.value):{value:sections.value,fixes:[]};
-    if(shots.fixes.length)await save(`${stage}-shots-split`,{before:sections.value,after:shots.value,fixes:shots.fixes});
+    if(shape.fixes.length||sections.fixes.length||shots.fixes.length)await save(`${stage}-repaired`,{before:raw,after:shots.value,fixes:{shape:shape.fixes,sections:sections.fixes,shots:shots.fixes},remainingIssues:shape.issues});
     return shots.value;
   };
   const validateDraft=(candidate:unknown)=>{
@@ -202,33 +212,71 @@ export async function askMusicMvAdvisor(
     return parsed;
   };
   const composeInput={sourceKey:target.sourceKey,target,question,sourceEvidence,creativeLibrary};
-  let composed=await deps.compose(instructions,composeInput,save);
-  let proposal:ReturnType<typeof validateDraft>;
-  try{
-    proposal=validateDraft(await prepareCandidate(composed.decoded,"glm-draft"));
-  }catch(error){
-    // MV 方案校验失败：不重新听歌、不重发音频，用已存听音证据带上具体校验原因再 compose 一次（最多 1 次）。
-    if(purpose!=="mv")throw error;
-    const rejected=toCreativeProposalError(error,"glm-draft",1);
-    await save("glm-draft-rejected",{stage:"glm-draft",reasonZh:rejected.reasonZh,error:error instanceof Error?error.message:String(error),model:composed.model});
-    const repairInstructions=instructions+`\n上一版方案未通过服务端校验：${rejected.reasonZh}。请基于同一份 sourceEvidence 逐条修正上述问题后重新输出完整 JSON（不得只输出解释或声称已修好）：sections 逐条照抄 sourceEvidence.sections 的 startSec/endSec，不追加占位段、全曲段、零长段或任何 endSec≤startSec 的段；uncertaintiesZh 必须是字符串数组且字段名严格按合同；concepts 恰好 4 个且 id 唯一；每个 plan 的 shots 从 0 连续无缝覆盖到歌曲时长，每镜 0.5 至 15 秒（超过 15 秒的镜头拆成两镜），singing 至少 4 秒并带人物参考下标。`;
-    composed=await deps.compose(repairInstructions,{...composeInput,repair:{attempt:1,reasonZh:rejected.reasonZh}},(name,value)=>save(`repair-1-${name}`,value));
-    try{
-      proposal=validateDraft(await prepareCandidate(composed.decoded,"repair-1-glm-draft"));
-    }catch(again){
-      const failed=toCreativeProposalError(again,"repair-1-glm-draft",2);
-      await save("repair-1-glm-draft-rejected",{stage:"repair-1-glm-draft",reasonZh:failed.reasonZh,error:again instanceof Error?again.message:String(again),model:composed.model});
-      throw failed;
+  const hopsUsed:Record<string,unknown>={};
+  /**
+   * 三跳 fallback（GLM@EvoLink → GLM@OpenRouter → DeepSeek 1017@OpenRouter）：每跳 调用 → JSON 解析 → 形状/分段/镜长修复 → 校验；
+   * 解析或校验失败先带具体原因重写一次，仍失败切下一跳；通道异常直接切下一跳；三跳全败抛 CreativeProposalError（含每跳原因）。
+   * 证据：`<stage>-hop-<n>-<model>[-rewrite]-{request,raw,error,decoded,repaired,rejected}` 与 `<stage>-hop-used`。
+   */
+  const runHopChain=async<T>(stage:"compose"|"refine",chainSave:Save,call:(hop:CreativeLlmHop,hopSave:Save,repair?:{attempt:number;reasonZh:string})=>Promise<{text:string;model:string;inputSha256?:string;elapsedMs?:number}>,accept:(decoded:unknown,hopSave:Save,stageName:string,model:string,inputSha256?:string)=>Promise<T>)=>{
+    const failures:string[]=[];
+    const attemptsLog:Array<Record<string,unknown>>=[];
+    const startedAt=Date.now();
+    for(let index=0;index<deps.hops.length;index+=1){
+      const hop=deps.hops[index];
+      let reasonZh:string|undefined;
+      for(let attempt=1;attempt<=2;attempt+=1){
+        const stageName=`${stage}-hop-${index+1}-${creativeHopSlug(hop)}${attempt>1?"-rewrite":""}`;
+        const hopSave=(name:string,value:unknown)=>chainSave(`${stageName}-${name}`,value);
+        const t0=Date.now();
+        let text:string,model:string,inputSha256:string|undefined;
+        try{
+          const result=await call(hop,hopSave,reasonZh?{attempt,reasonZh}:undefined);
+          text=result.text;model=result.model;inputSha256=result.inputSha256;
+        }catch(error){
+          const message=error instanceof Error?error.message:String(error);
+          const reason=`第${index+1}跳 ${hop.label}${attempt>1?"（重写）":""}：${error instanceof CreativeHopTransportError?message:`通道异常：${message}`}`;
+          failures.push(reason);
+          attemptsLog.push({hop:index+1,model:hop.modelName,gateway:hop.gateway,attempt,outcome:"transport_error",reasonZh:reason,elapsedMs:Date.now()-t0});
+          break; // 通道挂/超时/429/截断：不重写，直接切下一跳
+        }
+        let decoded:unknown;
+        try{
+          decoded=JSON.parse(extractJsonString(text));
+        }catch(error){
+          reasonZh=`模型输出不是合法 JSON（${(error instanceof Error?error.message:String(error)).slice(0,160)}）`;
+          await hopSave("rejected",{stage:stageName,phase:"json_parse",reasonZh,model,textLength:text.length,textHead:text.slice(0,400),textTail:text.slice(-400)});
+          failures.push(`第${index+1}跳 ${hop.label}${attempt>1?"（重写）":""}：${reasonZh}`);
+          attemptsLog.push({hop:index+1,model,gateway:hop.gateway,attempt,outcome:"invalid_json",reasonZh,elapsedMs:Date.now()-t0});
+          continue;
+        }
+        await hopSave("decoded",decoded);
+        try{
+          const value=await accept(decoded,hopSave,stageName,model,inputSha256);
+          const used={stage,hop:index+1,label:hop.label,model,gateway:hop.gateway,attempt,rewritten:attempt>1,elapsedMs:Date.now()-t0,totalElapsedMs:Date.now()-startedAt,failuresZh:failures,attempts:[...attemptsLog,{hop:index+1,model,gateway:hop.gateway,attempt,outcome:"accepted",elapsedMs:Date.now()-t0}]};
+          await chainSave(`${stage}-hop-used`,used);
+          hopsUsed[stage]=used;
+          return {value,model,hop,inputSha256};
+        }catch(error){
+          reasonZh=describeValidationErrorZh(error);
+          await hopSave("rejected",{stage:stageName,phase:"validate",reasonZh,error:error instanceof Error?error.message:String(error),model});
+          failures.push(`第${index+1}跳 ${hop.label}${attempt>1?"（重写）":""}：${reasonZh}`);
+          attemptsLog.push({hop:index+1,model,gateway:hop.gateway,attempt,outcome:"rejected",reasonZh,elapsedMs:Date.now()-t0});
+        }
+      }
     }
-  }
-  await save("glm-draft-validated",{proposal,model:composed.model,creativeLibrary});
+    await chainSave(`${stage}-hop-exhausted`,{stage,failuresZh:failures,attempts:attemptsLog,totalElapsedMs:Date.now()-startedAt});
+    throw new CreativeProposalError(stage,failures.join("；"),attemptsLog.length,failures);
+  };
+  const mvRepairHintZh=purpose==="mv"?"sections 逐条照抄 sourceEvidence.sections 的 startSec/endSec/labelZh/heardZh/emotion，不追加占位段、全曲段、零长段或任何 endSec≤startSec 的段；uncertaintiesZh 必须是字符串数组且字段名严格按合同；concepts 是恰好 4 个元素的 JSON 数组且 id 唯一；每个 plan 的 shots 从 0 连续无缝覆盖到歌曲时长，每镜 0.5 至 15 秒（超过 15 秒的镜头拆成两镜），singing 至少 4 秒并带人物参考下标；非 footage 镜头不得出现 sourceClip。":"字段名、类型与数量严格按合同。";
+  const composed=await runHopChain("compose",save,
+    (hop,hopSave,repair)=>deps.compose(repair?instructions+`\n上一版方案未通过服务端校验：${repair.reasonZh}。请基于同一份 sourceEvidence 逐条修正上述问题后重新输出完整 JSON（不得只输出解释或声称已修好）：${mvRepairHintZh}`:instructions,repair?{...composeInput,repair}:composeInput,hopSave,hop),
+    async(decoded,_hopSave,stageName)=>validateDraft(await prepareCandidate(decoded,stageName)),
+  );
+  let proposal=composed.value;
+  await save("glm-draft-validated",{proposal,model:composed.model,hop:composed.hop,creativeLibrary});
   const draft=proposal;
-  const refineInput={sourceTaskId:evidenceId,durationSec:target.audio?.durationSec,mediaKind:(videoReport?"video":media?"audio":"none") as "video"|"audio"|"none",sourceEvidence:{media:sourceEvidence,creativeLibrary,...("originalBrief" in target?{originalBrief:target.originalBrief}:{})},candidate:draft,requirements:question+("originalBrief" in target&&target.originalBrief?"\n本次只优化音乐提示词，逐字符保留sourceEvidence.originalBrief的歌词、标题、演唱类型和完整版时长；不得改写歌词。":"")};
-  let refinement=await deps.refine(refineInput,composed.model,save);
-  if(purpose==="song"){
-    const candidate=parseSunoSongProposal(refinement.proposal,target as SunoSongTarget);
-    if(candidate.concepts.some(c=>c.brief.style.length>1000))refinement=await refineSunoSongStyles(candidate,target as SunoSongTarget,{sourceTaskId:evidenceId,durationSec:target.audio?.durationSec,mediaKind:videoReport?"video":media?"audio":"none",sourceEvidence:{media:sourceEvidence,creativeLibrary,...("originalBrief" in target?{originalBrief:target.originalBrief}:{})},candidate,requirements:question},refinement.review.model,save,deps.refine);
-  }
+  const refineInput={sourceTaskId:evidenceId,durationSec:target.audio?.durationSec,mediaKind:(videoReport?"video":media?"audio":"none") as "video"|"audio"|"none",sourceEvidence:{media:sourceEvidence,creativeLibrary,...("originalBrief" in target?{originalBrief:target.originalBrief}:{})},candidate:draft,requirements:question+("originalBrief" in target&&target.originalBrief?"\n本次只优化音乐提示词，逐字符保留sourceEvidence.originalBrief的歌词、标题、演唱类型和完整版时长；不得改写歌词。":"")+(purpose==="mv"?"\n"+MUSIC_MV_HARD_CONSTRAINTS_ZH:"")};
   const validateRefined=(candidate:unknown)=>{
     const parsed=purpose==="learn"?creativeLearningReportSchema.parse(candidate):purpose==="song"?parseSunoSongProposal(candidate,target as SunoSongTarget):parseMusicMvAdvisorProposal(candidate,target as MusicMvAdvisorTarget);
     if(parsed.kind==="creative_learning_v1"){
@@ -244,25 +292,28 @@ export async function askMusicMvAdvisor(
     }
     return parsed;
   };
-  try{
-    proposal=validateRefined(await prepareCandidate(refinement.proposal,"astra"));
-  }catch(error){
-    // Astra 修订结果校验失败：带原因、用已校验初稿与同一份听音证据再 refine 一次（最多 1 次），不重新听歌。
-    if(purpose!=="mv")throw error;
-    const rejected=toCreativeProposalError(error,"astra",1);
-    await save("astra-rejected",{stage:"astra",reasonZh:rejected.reasonZh,error:error instanceof Error?error.message:String(error),model:refinement.review.model});
-    refinement=await deps.refine({...refineInput,requirements:refineInput.requirements+`\n上一版联合创作结果未通过服务端校验：${rejected.reasonZh}。请在 candidate 结构内修正：sections 与 candidate.sections 完全一致，不追加占位段或零长段；uncertaintiesZh 为字符串数组；其余字段严格按合同。`},composed.model,(name,value)=>save(`repair-1-${name}`,value));
-    try{
-      proposal=validateRefined(await prepareCandidate(refinement.proposal,"repair-1-astra"));
-    }catch(again){
-      const failed=toCreativeProposalError(again,"repair-1-astra",2);
-      await save("repair-1-astra-rejected",{stage:"repair-1-astra",reasonZh:failed.reasonZh,error:again instanceof Error?again.message:String(again),model:refinement.review.model});
-      throw failed;
-    }
+  /** refine 三跳链：回包 {proposal,review,changesZh} 先过合同，再对 proposal 做修复 + 校验；歌曲 style 精炼复用同一条链。 */
+  const refineChain=async(input:CreativeEvidenceReviewInput,chainSave:Save,validate:(candidate:unknown)=>unknown=validateRefined)=>{
+    const result=await runHopChain("refine",chainSave,
+      (hop,hopSave,repair)=>deps.refine(repair?{...input,requirements:input.requirements+`\n上一版联合创作结果未通过服务端校验：${repair.reasonZh}。请在 candidate 结构内修正后重新输出完整 JSON {proposal,review,changesZh}：sections 与 candidate.sections 完全一致，不追加占位段或零长段；${mvRepairHintZh}`}:input,composed.model,hopSave,hop),
+      async(decoded,_hopSave,stageName,model,inputSha256)=>{
+        const envelope=parseRefinementEnvelope(decoded,input,{model,inputSha256:inputSha256||"",draftModel:composed.model});
+        const candidate=await prepareCandidate(envelope.proposal,stageName);
+        validate(candidate);
+        return {...envelope,proposal:candidate};
+      },
+    );
+    return result.value;
+  };
+  let refinement=await refineChain(refineInput,save);
+  if(purpose==="song"){
+    const candidate=parseSunoSongProposal(refinement.proposal,target as SunoSongTarget);
+    if(candidate.concepts.some(c=>c.brief.style.length>1000))refinement=await refineSunoSongStyles(candidate,target as SunoSongTarget,{...refineInput,candidate},composed.model,save,(input,_draftModel,styleSave)=>refineChain(input,styleSave,value=>parseSunoSongProposal(value,target as SunoSongTarget)));
   }
+  proposal=validateRefined(refinement.proposal);
   const review=refinement.review;
   const answer={...proposal,evidenceId,review};
-  await save("accepted",{target,proposal:answer,sourceEvidence,creativeLibrary,receipt,model:review.model,draftModel:composed.model,mediaModel:target.audio?MANHUA_BGM_ADVISOR_MODEL:undefined,audioTokens});
+  await save("accepted",{target,proposal:answer,sourceEvidence,creativeLibrary,receipt,model:review.model,draftModel:composed.model,hopsUsed,mediaModel:target.audio?MANHUA_BGM_ADVISOR_MODEL:undefined,audioTokens});
   return JSON.stringify({
     answer,
     model: review.model,
