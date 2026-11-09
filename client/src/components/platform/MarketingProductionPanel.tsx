@@ -12,7 +12,7 @@ import { trpc } from "@/lib/trpc";
 import { publicMarketingPlan } from "@shared/marketingPlanDisplay";
 import { uploadOneCanvasAsset } from "@/lib/canvasUpload";
 import { StockFootageDrawer, type StockFootagePick } from "@/components/stockFootage/StockFootageDrawer";
-import { defaultMinDurationSec, keywordSourceText } from "@/components/stockFootage/stockFootageModel";
+import { STOCK_DRAWER_PER_PAGE, defaultMinDurationSec, keywordSourceText } from "@/components/stockFootage/stockFootageModel";
 import { canvasTtsCreditsForDuration } from "@shared/canvasGenerationPricing";
 import { MarketingVoicePicker } from "./MarketingVoicePicker";
 import { MarketingSegmentTimeline, MarketingThumb } from "./MarketingSegmentTimeline";
@@ -54,8 +54,8 @@ const buttonStyle = "rounded-lg border border-white/20 px-3 py-2 text-sm disable
 const ACTIVE_JOB = ["queued", "running"];
 /** 整稿找素材的并发上限。 */
 const PREFETCH_CONCURRENCY = 3;
-/** 与抽屉首屏同参（第 1 页、每页 18、默认最短时长），抽屉打开时直接命中同一份候选缓存。 */
-const PREFETCH_PER_PAGE = 18;
+/** 与抽屉首屏同参（第 1 页、每页 STOCK_DRAWER_PER_PAGE、默认最短时长），抽屉打开时直接命中同一份候选缓存；参数不同则缓存不命中、候选数也对不上。 */
+const PREFETCH_PER_PAGE = STOCK_DRAWER_PER_PAGE;
 
 /** 整稿找素材的预取结果（只在本次会话内，供抽屉直接带入关键词；不入稿、不自动采用）。 */
 type Prefetch = { sourceText: string; status: "loading" | "done" | "failed"; query?: string; queryZh?: string; count?: number };
@@ -364,7 +364,7 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
       </select>
     </div>
 
-    <MarketingVoicePicker draftId={draft.draftId} voiceId={draft.voiceId} disabled={busy}
+    <MarketingVoicePicker key={userKey} userKey={userKey} draftId={draft.draftId} voiceId={draft.voiceId} disabled={busy}
       onSelect={voiceId => save(d => ({ ...d, voiceId }))} onMessage={setMessage}
       trialSegment={trialSegment ? { index: draft.segments.indexOf(trialSegment), narration: trialSegment.narration } : undefined} />
 

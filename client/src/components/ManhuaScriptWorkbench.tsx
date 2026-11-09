@@ -728,7 +728,7 @@ type Props = {
   stockEmptyShotCreditBySegment?: Record<number, string>;
   stockProjectId?: string;
   /** 1108 图库照片采用为「我的场景」场景参考图（只当空间/画风参考，不入片、不进角色） */
-  onAdoptStockSceneReference?: (asset: StockFootageAssetView) => void;
+  onAdoptStockSceneReference?: (asset: StockFootageAssetView) => void | Promise<void>;
   segmentReferenceBusy?: boolean;
   segmentReferenceProgress?: number | null;
   /** 本集缺成片/质检失败的段号依次生成 */
@@ -6564,8 +6564,9 @@ clipPromptReviewOpen ? (
                         kind="photo"
                         context={{ projectId: stockProjectId, note: "漫剧场景参考图" }}
                         confirmLabel="采用为场景参考"
-                        onPick={({ asset }) => {
-                          onAdoptStockSceneReference(asset);
+                        onPick={async ({ asset }) => {
+                          // 挂参考图失败时抛错由抽屉提示并保持打开；只有成功才关抽屉
+                          await onAdoptStockSceneReference(asset);
                           setStockSceneOpen(false);
                         }}
                       />

@@ -4,14 +4,15 @@
  * - 本机待办同步落盘：先读盘→改→写盘→setState，组件随后被卸载也不会留下「待继续」残影；
  * - 先落待办再发请求：回包丢失也能用原编号续做，服务端幂等不重复入库；
  * - 成功/明确失败（failed、CONFLICT、BAD_REQUEST）清除待办，网络中断保留；
- * - 刚发起（2 分钟内）的待办不查询状态，避免与占位抢跑误报。
+ * - 刚发起（2 分钟内）的待办不查询状态，避免与占位抢跑误报；
+ * - 待办记录发起用户（ownerKey），同一浏览器换账号登录不显示、不续做别人的待办。
  */
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import type { StockFootageAssetView, StockFootageCandidate, StockFootageOrientation, StockFootagePurpose, StockFootageUsage } from "@shared/stockFootage";
 import type { StockTrim } from "@shared/stockFootageTrim";
-import { isFreshPending, newRequestId, readPending, writePending, type PendingAdoption, type StockFootageContext } from "./stockFootageModel";
+import { isFreshPending, newRequestId, pendingBelongsTo, readPending, writePending, type PendingAdoption, type StockFootageContext } from "./stockFootageModel";
 
 export type { PendingAdoption } from "./stockFootageModel";
 
@@ -28,8 +29,12 @@ export function useStockFootageAdoption(options: UseStockFootageAdoptionOptions)
   const [pendingStatus, setPendingStatus] = useState<Record<string, string>>({});
   const utils = trpc.useUtils();
   const adopt = trpc.stockFootage.adopt.useMutation();
+  const abandon = trpc.stockFootage.abandonAdoption.useMutation();
+  // 当前登录用户（与 useAuth 同一查询，命中缓存不多发请求）：本机待办按它隔离。
+  const me = trpc.auth.me.useQuery(undefined, { retry: false, refetchOnWindowFocus: false, staleTime: Infinity });
+  const ownerKey = me.data?.id != null ? String(me.data.id) : undefined;
 
-  const myPending = pending.filter(p => (filterPending ? filterPending(p) : p.purpose === purpose));
+  const myPending = pending.filter(p => pendingBelongsTo(p, ownerKey) && (filterPending ? filterPending(p) : p.purpose === purpose));
 
   // 本机待办必须同步落盘：采用成功后业务方常会立即关闭面板（卸载），
   // 若把写入放在 setState 更新函数里，卸载后更新被丢弃，已完成的采用会一直显示「待继续」。
@@ -40,6 +45,22 @@ export function useStockFootageAdoption(options: UseStockFootageAdoptionOptions)
   }, []);
 
   const removePending = useCallback((requestId: string) => updatePending(list => list.filter(p => p.requestId !== requestId)), [updatePending]);
+
+  /**
+   * 用户点「移除」：先清本机待办，再通知服务端放弃（reconcile_manual → failed），
+   * 否则服务端会永远留下 running 的占位行。放弃请求失败不影响本机移除（服务端只是多留一行）。
+   */
+  const abandonPending = useCallback(
+    (requestId: string) => {
+      removePending(requestId);
+      setPendingStatus(s => {
+        const { [requestId]: _dropped, ...rest } = s;
+        return rest;
+      });
+      void abandon.mutateAsync({ requestId }).catch(() => undefined);
+    },
+    [abandon, removePending]
+  );
 
   /** 用待办里的编号发起/续做采用；成功返回资产，其余情况返回 null（已提示用户）。 */
   const runAdopt = useCallback(
@@ -100,11 +121,12 @@ export function useStockFootageAdoption(options: UseStockFootageAdoptionOptions)
         previewImageUrl: candidate.previewImageUrl,
         ...(opts.trim ? { trim: opts.trim } : {}),
         startedAt: Date.now(),
+        ...(ownerKey ? { ownerKey } : {}),
       };
       updatePending(list => [...list, item]);
       return runAdopt(item);
     },
-    [purpose, runAdopt, updatePending]
+    [ownerKey, purpose, runAdopt, updatePending]
   );
 
   // 刷新后查询未完成待办在服务端的真实状态（只查询，不自动绑定到当前编辑位置）。
@@ -136,6 +158,7 @@ export function useStockFootageAdoption(options: UseStockFootageAdoptionOptions)
     startAdoption,
     resumeAdoption: runAdopt,
     removePending,
+    abandonPending,
   };
 }
 
