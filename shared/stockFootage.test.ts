@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  STOCK_FOOTAGE_ALLOWED_USAGES,
+  STOCK_FOOTAGE_PURPOSES,
+  STOCK_FOOTAGE_PURPOSE_LABEL,
   assertStockUsageAllowed,
   isAllowedStockDownloadUrl,
   isStockAssetInsertable,
@@ -17,6 +20,22 @@ describe("stockFootage 合同", () => {
     expect(() => assertStockUsageAllowed("manhua", "reference")).not.toThrow();
     expect(() => assertStockUsageAllowed("manhua", "empty_shot")).not.toThrow();
     expect(() => assertStockUsageAllowed("mv", "empty_shot")).toThrow(/仅限漫剧/);
+  });
+
+  it("复刻（remix）只允许 insert：参考图与空镜都被拒，schema 同步", () => {
+    expect(STOCK_FOOTAGE_PURPOSES).toContain("remix");
+    expect(STOCK_FOOTAGE_ALLOWED_USAGES.remix).toEqual(["insert"]);
+    expect(() => assertStockUsageAllowed("remix", "insert")).not.toThrow();
+    expect(() => assertStockUsageAllowed("remix", "reference")).toThrow(/短视频复刻的实拍补充画面只允许 insert/);
+    expect(() => assertStockUsageAllowed("remix", "empty_shot")).toThrow(/仅限漫剧/);
+    expect(STOCK_FOOTAGE_PURPOSE_LABEL.remix).toBe("短视频复刻的实拍补充画面");
+    const ok = stockFootageAdoptInputSchema.parse({ requestId: uuid, providerAssetId: "77", kind: "video", purpose: "remix", usage: "insert", orientation: "portrait", context: { segmentId: "2", note: "痛点放大" } });
+    expect(ok).toMatchObject({ purpose: "remix", usage: "insert", orientation: "portrait", context: { segmentId: "2", note: "痛点放大" } });
+    expect(stockFootageAdoptInputSchema.safeParse({ requestId: uuid, providerAssetId: "77", kind: "video", purpose: "remix", usage: "reference" }).success).toBe(false);
+    expect(stockFootageSearchInputSchema.parse({ query: "city", purpose: "remix", orientation: "portrait" }).orientation).toBe("portrait");
+    // 既有用途的允许表不受影响
+    expect(STOCK_FOOTAGE_ALLOWED_USAGES.marketing).toEqual(["insert", "reference"]);
+    expect(STOCK_FOOTAGE_ALLOWED_USAGES.manhua).toEqual(["reference", "empty_shot"]);
   });
 
   it("采用输入在 schema 层就拒绝漫剧直接入片", () => {

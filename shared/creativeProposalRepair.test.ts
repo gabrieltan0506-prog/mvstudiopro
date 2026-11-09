@@ -4,6 +4,7 @@ import {
   describeValidationErrorZh,
   describeZodIssueTextZh,
   normalizeMediaSections,
+  normalizeShotDurations,
   repairJsonShape,
 } from "./creativeProposalRepair";
 import { creativeAudioEvidenceSchema, parseCreativeAudioEvidence } from "./creativeMediaEvidence";
@@ -86,6 +87,17 @@ describe("normalizeMediaSections · 时间边界确定性修复", () => {
 });
 
 describe("repairJsonShape · zod issues 驱动的形状修复", () => {
+  it("线上 DeepSeek 案例：可选对象字段写成 {} → 整个删除；必填对象写成 {} 不删，留给逐字段修复/重写", () => {
+    const schema = z.object({ shots: z.array(z.object({ id: z.string(), sourceClip: z.object({ assetId: z.string(), durationSec: z.number() }).strict().optional() }).strict()), plan: z.object({ version: z.literal(1) }).strict() }).strict();
+    const fixed = repairJsonShape({ shots: [{ id: "a", sourceClip: {} }, { id: "b" }], plan: { version: 1 } }, schema);
+    expect(fixed.value).toEqual({ shots: [{ id: "a" }, { id: "b" }], plan: { version: 1 } });
+    expect(fixed.issues).toBeNull();
+    expect(fixed.fixes.map(f => [f.path, f.code, f.reasonZh])).toEqual([["shots.[0].sourceClip", "empty_object", "删除空对象占位字段（合同为可选）"]]);
+    const required = repairJsonShape({ shots: [{ id: "a" }], plan: {} }, schema);
+    expect((required.value as any).plan).toEqual({});
+    expect(required.fixes).toEqual([]);
+    expect(required.issues?.map(i => i.path.join("."))).toEqual(["plan.version"]);
+  });
   it("线上案例②：uncertainties 别名键改名为 uncertaintiesZh；字符串包成数组", () => {
     const schema = z.object({ uncertaintiesZh: z.array(z.string()), n: z.number() }).strict();
     const renamed = repairJsonShape({ uncertainties: ["a"], n: 1 }, schema);
@@ -98,6 +110,13 @@ describe("repairJsonShape · zod issues 驱动的形状修复", () => {
     const missing = repairJsonShape({ n: 2, extraZh: "x" }, schema);
     expect(missing.value).toEqual({ uncertaintiesZh: [], n: 2 });
     expect(missing.fixes.map(f => f.reasonZh)).toEqual(["删除未支持字段", "缺失数组补为空数组"]);
+  });
+  it("线上第四次重跑：整份省略 lyricQuote → 补空字符串；visualPrompt 缺失不补", () => {
+    const schema = z.object({ shots: z.array(z.object({ lyricQuote: z.string(), visualPrompt: z.string() }).strict()) });
+    const result = repairJsonShape({ shots: [{ visualPrompt: "画面" }, { lyricQuote: "词", visualPrompt: "画面2" }, { lyricQuote: "词" }] }, schema);
+    expect((result.value as any).shots[0]).toEqual({ visualPrompt: "画面", lyricQuote: "" });
+    expect(result.fixes).toEqual([{ path: "shots.[0].lyricQuote", code: "invalid_type", before: undefined, after: "", reasonZh: "缺失的可空文本补为空字符串" }]);
+    expect(result.issues?.map(i => i.path.join("."))).toEqual(["shots.2.visualPrompt"]);
   });
   it("不编造内容：缺失必填字符串或 endSec≤0 不被形状修复吞掉，剩余 issues 原样返回", () => {
     const schema = z.object({ title: z.string(), endSec: z.number().positive() }).strict();
@@ -126,5 +145,46 @@ describe("describeZodIssuesZh · 用户可读中文", () => {
     expect(describeValidationErrorZh(new Error("听音段落未连续覆盖歌曲"))).toBe("听音段落未连续覆盖歌曲");
     const zodError = z.object({ concepts: z.array(z.string()).length(4) }).safeParse({ concepts: [] }).error!;
     expect(describeValidationErrorZh(zodError)).toBe("方案数量不足：至少 4 项");
+  });
+});
+
+describe("normalizeShotDurations · 分镜时长确定性拆并", () => {
+  const shot = (id: string, startSec: number, endSec: number, extra: Record<string, unknown> = {}) => ({ id, startSec, endSec, visualPrompt: `画面${id}`, cameraPrompt: `运镜${id}`, lyricQuote: "", referenceIndices: [], kind: "generated", ...extra });
+  const plan = (shots: unknown[]) => ({ concepts: [{ id: "c", plan: { version: 1, shots } }] });
+  const shotsOf = (value: unknown) => ((value as any).concepts[0].plan.shots as any[]).map(s => [s.id, s.startSec, s.endSec]);
+  it("线上案例①：第 14 镜 178.5→196（17.5s）等分为 2 镜 8.75s，边界连续，文案加（续）", () => {
+    const { value, fixes } = normalizeShotDurations(plan([shot("a", 170, 178.5), shot("b", 178.5, 196), shot("c", 196, 208.68)]));
+    expect(shotsOf(value)).toEqual([["a", 170, 178.5], ["b", 178.5, 187.25], ["b-2", 187.25, 196], ["c", 196, 208.68]]);
+    const second = (value as any).concepts[0].plan.shots[2];
+    expect(second.visualPrompt).toBe("画面b（续）");
+    expect(second.cameraPrompt).toBe("运镜b（续）");
+    expect(second.kind).toBe("generated");
+    expect(fixes).toEqual([{ concept: 0, shot: 1, id: "b", action: "split", before: { startSec: 178.5, endSec: 196 }, after: [{ id: "b", startSec: 178.5, endSec: 187.25 }, { id: "b-2", startSec: 187.25, endSec: 196 }], reasonZh: "镜头 17.5 秒超过 15 秒，等分为 2 镜" }]);
+    expect(shotsOf(normalizeShotDurations(plan([shot("x", 0, 178.5)])).value)).toHaveLength(12);
+  });
+  it("线上案例②：15.5s 与 16s 镜头各拆 2 镜；三倍长度拆 3 镜；singing/footage 字段沿用且 sourceStartSec 顺延", () => {
+    const { value } = normalizeShotDurations(plan([
+      shot("s", 0, 15.5, { kind: "singing", referenceIndices: [0], lyricQuote: "归来" }),
+      shot("f", 15.5, 31.5, { kind: "footage", sourceClip: { assetId: "street", url: "gs://b/s.mp4", durationSec: 60, sourceStartSec: 7 } }),
+      shot("g", 31.5, 76.5),
+    ]));
+    const shots = (value as any).concepts[0].plan.shots;
+    expect(shotsOf(value)).toEqual([["s", 0, 7.75], ["s-2", 7.75, 15.5], ["f", 15.5, 23.5], ["f-2", 23.5, 31.5], ["g", 31.5, 46.5], ["g-2", 46.5, 61.5], ["g-3", 61.5, 76.5]]);
+    expect(shots[1]).toMatchObject({ kind: "singing", referenceIndices: [0], lyricQuote: "归来" });
+    expect(shots[3].sourceClip).toEqual({ assetId: "street", url: "gs://b/s.mp4", durationSec: 60, sourceStartSec: 15 });
+    expect(shots[2].sourceClip.sourceStartSec).toBe(7);
+  });
+  it("不足 0.5s 的镜头并入前一镜（首镜并入后一镜）；合法分镜原样返回", () => {
+    const { value, fixes } = normalizeShotDurations(plan([shot("a", 0, 0.2), shot("b", 0.2, 10), shot("c", 10, 10.3), shot("d", 10.3, 20)]));
+    expect(shotsOf(value)).toEqual([["b", 0, 10.3], ["d", 10.3, 20]]);
+    expect(fixes.map(f => [f.id, f.action, f.reasonZh])).toEqual([["a", "merge", "首镜不足 0.5 秒，并入后一镜"], ["c", "merge", "镜头不足 0.5 秒，并入前一镜"]]);
+    const clean = plan([shot("a", 0, 15), shot("b", 15, 20)]);
+    expect(normalizeShotDurations(clean)).toEqual({ value: clean, fixes: [] });
+  });
+  it("拆镜后的真实结构能通过 canvasMusicMvPlanSchema 的连续性与时长校验", async () => {
+    const { canvasMusicMvPlanSchema } = await import("./canvasMusicMv");
+    const { value } = normalizeShotDurations(plan([shot("a", 0, 17.5), shot("b", 17.5, 33), shot("c", 33, 40.68)]));
+    const p = { version: 1, audioId: "song", audioDurationSec: 40.68, analysisBasis: "native_audio", shots: (value as any).concepts[0].plan.shots };
+    expect(canvasMusicMvPlanSchema.safeParse(p).success).toBe(true);
   });
 });

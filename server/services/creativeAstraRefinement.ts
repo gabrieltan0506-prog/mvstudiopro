@@ -3,13 +3,21 @@ import { invokeLLM, extractFirstChoicePlainText } from "../_core/llm";
 import { buildLyricReviewContext } from "../../shared/lyricCraftReview";
 import { CREATIVE_EVIDENCE_REVIEW_INSTRUCTIONS, parseCreativeEvidenceReview, type CreativeEvidenceReviewInput } from "../../shared/creativeEvidenceReview";
 import { z } from "zod";
-const envelopeSchema=z.object({proposal:z.unknown(),review:z.unknown(),changesZh:z.array(z.string().trim().min(1)).min(1)}).strict();
-const INSTRUCTIONS=`${CREATIVE_EVIDENCE_REVIEW_INSTRUCTIONS}
+export const refinementEnvelopeSchema=z.object({proposal:z.unknown(),review:z.unknown(),changesZh:z.array(z.string().trim().min(1)).min(1)}).strict();
+export const CREATIVE_REFINE_INSTRUCTIONS=`${CREATIVE_EVIDENCE_REVIEW_INSTRUCTIONS}
 你同时担任第二位创作顾问。GLM已结合最新模板库完成初稿；请在完整媒体证据和用户要求边界内共同创作并审阅。
 先核查证据，再改善有证据支持的歌词细节、段落推进、唱法与配器、情绪转折或MV叙事。不要为改而改；未发现可改点时明确保留初稿。原媒体观察sections、来源sourceKey、素材身份、时间范围必须保留，不能通过改写证据消除矛盾。无法确定的听音事实仍要求具体复听，不能编造修正。不得加入生成、发布、计费指令。
 输出proposal须与输入candidate完全相同的JSON结构与kind，保留全部方案、模板引用和必填字段。歌曲保留3种不同曲风；不要仅改风格标签。学习报告的evidencePaths仍指向原媒体证据内部。歌词原文只有在用户要求创作/改写时才可修改；仅优化style时完整保留歌词。
 若为歌曲方案，style由你语义精炼，目标900字符以内，保留用户的BPM、核心乐器、人声、段落推进与结尾要求，不用机械截断或牺牲歌词。
 最终仅输出JSON：{proposal:完整修订后的方案或原样保留初稿,review:对最终proposal的审阅对象,changesZh:[实际修改及理由或说明原稿保留]}。review遵守上文合同，其/candidate路径指向最终proposal。不得输出伪造的模型或审阅身份。`;
+const INSTRUCTIONS=CREATIVE_REFINE_INSTRUCTIONS;
+const envelopeSchema=refinementEnvelopeSchema;
+/** 联合创作回包（{proposal,review,changesZh}）的合同解析；三跳 fallback 与 Astra 通道共用，review 的 model/inputSha256 由服务器填写。 */
+export function parseRefinementEnvelope(decoded:unknown,input:CreativeEvidenceReviewInput,meta:{model:string;inputSha256:string;draftModel:string}){
+ const result=envelopeSchema.parse(decoded);
+ const review=parseCreativeEvidenceReview(result.review,{...input,candidate:result.proposal});
+ return {proposal:result.proposal,review:{...review,model:meta.model,inputSha256:meta.inputSha256,draftModel:meta.draftModel,revisionsZh:result.changesZh,draftProposal:input.candidate}};
+}
 const real={invoke:invokeLLM};
 /** Astra只走官方精确模型；任何调用/存储/解析失败均保留初稿，不静默换模型。 */
 export async function refineCreativeProposal(input:CreativeEvidenceReviewInput,draftModel:string,save:(name:string,value:unknown)=>Promise<unknown>,deps=real){

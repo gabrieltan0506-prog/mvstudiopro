@@ -71,7 +71,7 @@ export function StockFootagePanel(props: StockFootagePanelProps) {
     { enabled: tab === "adopted" }
   );
   const adoption = useStockFootageAdoption({ purpose: props.purpose });
-  const { pending: myPending, pendingStatus, busyId, removePending } = adoption;
+  const { pending: myPending, pendingStatus, busyId, abandonPending } = adoption;
 
   const deliver = (asset: StockFootageAssetView | null) => {
     if (!asset) return;
@@ -116,7 +116,7 @@ export function StockFootagePanel(props: StockFootagePanelProps) {
                   {busyId === p.requestId ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
                   {pendingStatus[p.requestId] === "succeeded" ? "使用" : "继续"}
                 </button>
-                <button type="button" className="text-xs opacity-60" onClick={() => removePending(p.requestId)}>移除</button>
+                <button type="button" className="text-xs opacity-60" onClick={() => abandonPending(p.requestId)}>移除</button>
               </div>
             ))}
           </div>

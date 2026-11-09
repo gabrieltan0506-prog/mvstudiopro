@@ -10,7 +10,7 @@ import { trpc } from "@/lib/trpc";
 import { uploadOneCanvasAsset } from "@/lib/canvasUpload";
 import { inspectDigitalHumanRecording } from "@/lib/digitalHumanRecording";
 import { canvasTtsCreditsForDuration } from "@shared/canvasGenerationPricing";
-import { estimateNarrationSec } from "@shared/marketingProduction";
+import { estimateNarrationSec, marketingCloneVoiceStorageKey } from "@shared/marketingProduction";
 import {
   MARKETING_SYSTEM_VOICES,
   MARKETING_VOICE_PURPOSES,
@@ -21,7 +21,6 @@ import {
   type MarketingVoicePurpose,
 } from "@shared/marketingVoiceFilter";
 
-const MARKETING_CLONE_KEY = "mvs.marketing.cloneVoice.v1";
 const chip = "rounded-full border px-3 py-1 text-xs";
 const btn = "rounded-lg border border-white/20 px-2 py-1 text-xs disabled:opacity-40";
 const PAGE = 12;
@@ -34,6 +33,8 @@ function errorText(error: unknown): string {
 }
 
 export function MarketingVoicePicker(props: {
+  /** 登录用户键：克隆续做编号按用户分键，不让同一浏览器的下一位用户续做上一位的录音。 */
+  userKey: string;
   draftId: string;
   voiceId?: string;
   onSelect: (voiceId: string) => void;
@@ -43,6 +44,7 @@ export function MarketingVoicePicker(props: {
   disabled?: boolean;
 }) {
   const { voiceId, onSelect, onMessage } = props;
+  const cloneKey = marketingCloneVoiceStorageKey(props.userKey);
   const upload = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const referenceVoices = trpc.canvasAudio.listReferenceVoices.useQuery(undefined, { retry: false });
   const designedVoices = trpc.canvasAudio.listDesignedVoices.useQuery(undefined, { retry: false });
@@ -59,10 +61,10 @@ export function MarketingVoicePicker(props: {
   const [cloneBusy, setCloneBusy] = useState(false);
   const [trial, setTrial] = useState<Trial | null>(null);
   const [pendingClone, setPendingClone] = useState<PendingClone | null>(() => {
-    try { const raw = window.localStorage.getItem(MARKETING_CLONE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
+    try { const raw = window.localStorage.getItem(cloneKey); return raw ? JSON.parse(raw) : null; } catch { return null; }
   });
   const rememberClone = (value: PendingClone | null) => {
-    try { if (value) window.localStorage.setItem(MARKETING_CLONE_KEY, JSON.stringify(value)); else window.localStorage.removeItem(MARKETING_CLONE_KEY); } catch { /* 仅失去本机续做提示 */ }
+    try { if (value) window.localStorage.setItem(cloneKey, JSON.stringify(value)); else window.localStorage.removeItem(cloneKey); } catch { /* 仅失去本机续做提示 */ }
     setPendingClone(value);
   };
 

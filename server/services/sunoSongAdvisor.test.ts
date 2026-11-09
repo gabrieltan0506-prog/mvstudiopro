@@ -4,6 +4,8 @@ import {
   parseSunoSongProposal,
   type SunoSongTarget,
 } from "../../shared/canvasMusicMv";
+import { CREATIVE_LLM_HOPS, type CreativeLlmHop } from "./creativeLlmHops";
+const envelope=(candidate:unknown)=>({proposal:candidate,review:{verdict:"approved" as const,summaryZh:"离线联合审阅",findings:[],mediaReview:[],inspirationZh:["用动作推进关系"],limitationsZh:["离线替身"]},changesZh:["保留初稿"]});
 const emotion = {fromZh:"克制",toZh:"释然",triggerZh:"归还旧物",musicZh:"减少鼓点后人声展开",visualZh:"建议：把车票递回"};
 const target: SunoSongTarget = {
   sourceKey: "original-topic",
@@ -73,15 +75,15 @@ function fixture() {
         return { created: true };
       }
     ),
-    compose: vi.fn(async (_instructions: string, input: any, save: (name: string, value: unknown) => Promise<unknown>) => {
+    compose: vi.fn(async (_instructions: string, input: any, save: (name: string, value: unknown) => Promise<unknown>, hop: CreativeLlmHop) => {
       const decoded = proposal(Boolean(input.target.audio));
-      await save("glm-raw", {model: "glm-5.3-flashx", decoded});
-      await save("glm-decoded", decoded);
-      return {decoded, model: "glm-5.3-flashx"};
+      await save("raw", {model: hop.modelName, decoded});
+      return {text: JSON.stringify(decoded), model: hop.modelName};
     }),
     readKnowledge: vi.fn(async (_userId: number, _question: string, selectedIds: readonly string[]) => ({catalog: ["lin-inner-turn", "fang-image-story"].map(id => ({id})), selectedIds})),
     bucket: () => "test",
-    refine: vi.fn(async (input: any) => ({proposal: input.candidate, review: {verdict: "approved" as const, summaryZh: "离线联合审阅", findings: [], mediaReview: [], inspirationZh: ["用动作推进关系"], limitationsZh: ["离线替身"],model:"gpt-6-astra"}})),
+    refine: vi.fn(async (input: any, _draftModel: string, _save: unknown, hop: CreativeLlmHop) => ({text: JSON.stringify(envelope(input.candidate)), model: hop.modelName})),
+    hops: CREATIVE_LLM_HOPS,
     uuid: () => "11111111-1111-4111-8111-111111111111",
   };
   return {
@@ -107,9 +109,12 @@ describe("原创歌曲与参考听音分开", () => {
     );
     expect(Array.from(records.keys()).map(k => k.split("/").at(-1))).toEqual([
       "request.json",
-      "glm-raw.json",
-      "glm-decoded.json",
+      "compose-hop-1-glm-5.3-flashx-raw.json",
+      "compose-hop-1-glm-5.3-flashx-decoded.json",
+      "compose-hop-used.json",
       "glm-draft-validated.json",
+      "refine-hop-1-glm-5.3-flashx-decoded.json",
+      "refine-hop-used.json",
       "accepted.json",
     ]);
   });
@@ -133,17 +138,19 @@ describe("原创歌曲与参考听音分开", () => {
     const { deps, mocks, records } = fixture();
     const incomplete = proposal();
     delete (incomplete.concepts[0] as any).mvDirectionZh;
-    mocks.compose.mockImplementationOnce(async (_instructions, _input, save) => {
-      await save("glm-raw", incomplete);
-      await save("glm-decoded", incomplete);
-      return {decoded: incomplete, model: "glm-5.3-flashx"};
+    // 三跳链：每跳（含重写）都返回同一份缺字段方案 → 三跳全败，错误带每跳原因
+    mocks.compose.mockImplementation(async (_instructions, _input, save, hop) => {
+      await save("raw", incomplete);
+      return {text: JSON.stringify(incomplete), model: hop.modelName};
     });
     await expect(askSunoSongAdvisor(7, target, "写歌", deps)).rejects.toThrow(
       "缺少写词方法或MV方向"
     );
     const names = Array.from(records.keys()).map(k => k.split("/").at(-1));
-    expect(names).toContain("glm-raw.json");
-    expect(names).toContain("glm-decoded.json");
+    expect(names).toContain("compose-hop-1-glm-5.3-flashx-raw.json");
+    expect(names).toContain("compose-hop-3-deepseek_deepseek-v4.1-flash-1017-rewrite-rejected.json");
+    expect(mocks.compose).toHaveBeenCalledTimes(6);
+    expect(names).toContain("compose-hop-1-glm-5.3-flashx-decoded.json");
     expect(names).not.toContain("accepted.json");
   });
   it("主题创作拒绝虚构听音时间线", () =>
@@ -196,7 +203,7 @@ describe("参考MV先原生读片再创作与审阅", () => {
     expect(mocks.read).not.toHaveBeenCalled();
     expect(JSON.stringify(mocks.compose.mock.calls)).toContain("完整原生证据");
     expect(mocks.generate).not.toHaveBeenCalled();
-    expect(mocks.refine).toHaveBeenCalledWith(expect.objectContaining({mediaKind:"video",sourceEvidence:expect.objectContaining({media:expect.objectContaining({nativeEvidence:expect.any(Object)})})}),expect.any(String),expect.any(Function));
+    expect(mocks.refine).toHaveBeenCalledWith(expect.objectContaining({mediaKind:"video",sourceEvidence:expect.objectContaining({media:expect.objectContaining({nativeEvidence:expect.any(Object)})})}),expect.any(String),expect.any(Function),CREATIVE_LLM_HOPS[0]);
     expect(result.answer.review.verdict).toBe("approved");
     expect(Array.from(records.values()).some((x:any)=>x.audioTokens===33)).toBe(true);
   });
@@ -211,19 +218,19 @@ it("优化现有提示词保留完整歌词和时长，初稿及Astra任一阶�
  const original={...proposal().concepts[0].brief,model:'suno-v6' as const,custom_mode:true as const,prompt:'【Verse 1】\n完整主歌原文\n【Chorus】\n意想愛 unexpected love\n【Outro】\nLove is brave',title:'意想爱',duration:300};
  const rawTarget={...target,originalBrief:original};
  const answer=proposal();answer.concepts=answer.concepts.map((c,i)=>({...c,brief:{...original,style:`73 BPM, original arrangement ${i}`}}));
- const f=fixture();f.mocks.compose.mockImplementation(async(_instructions,input,save)=>{expect(input.target.originalBrief).toEqual(original);await save('glm-raw',answer);return {decoded:answer,model:'glm-5.3-flashx'};});
+ const f=fixture();f.mocks.compose.mockImplementation(async(_instructions,input,save,hop)=>{expect(input.target.originalBrief).toEqual(original);await save('raw',answer);return {text:JSON.stringify(answer),model:hop.modelName};});
  const result=JSON.parse(await askSunoSongAdvisor(7,rawTarget,'仅优化音乐提示词',f.deps));
  expect(result.answer.concepts.every((c:any)=>c.brief.prompt===original.prompt&&c.brief.duration===300)).toBe(true);
  expect(f.mocks.refine.mock.calls[0][0].sourceEvidence.originalBrief).toEqual(original);
  const changed=structuredClone(answer);changed.concepts[1].brief.prompt+='改词';
  expect(()=>parseSunoSongProposal(changed,rawTarget)).toThrow('不得改写');
- f.mocks.refine.mockImplementation(async()=>({proposal:changed,review:result.answer.review}));
+ f.mocks.refine.mockImplementation(async(_i:any,_m:string,_s:unknown,hop:CreativeLlmHop)=>({text:JSON.stringify(envelope(changed)),model:hop.modelName}));
  await expect(askSunoSongAdvisor(7,rawTarget,'仅优化音乐提示词',f.deps)).rejects.toThrow('不得改写');
 });
 
 it('工作流超长style自动交同一LLM服务精炼，模板引用与原词继续保留',async()=>{
  const f=fixture();let n=0;
- f.mocks.refine.mockImplementation(async(input:any)=>{n++;const p=structuredClone(input.candidate);p.concepts=p.concepts.map((c:any,i:number)=>({...c,brief:{...c.brief,style:n===1?'详细编曲要求'.repeat(240):'LLM精炼编曲'+i}}));return {proposal:p,review:{verdict:'approved' as const,summaryZh:'隔离审阅',findings:[],mediaReview:[],inspirationZh:['保留变化'],limitationsZh:['离线替身'],model:'gpt-6-astra'}};});
+ f.mocks.refine.mockImplementation(async(input:any,_m:string,_s:unknown,hop:CreativeLlmHop)=>{n++;const p=structuredClone(input.candidate);p.concepts=p.concepts.map((c:any,i:number)=>({...c,brief:{...c.brief,style:n===1?'详细编曲要求'.repeat(240):'LLM精炼编曲'+i}}));return {text:JSON.stringify(envelope(p)),model:hop.modelName};});
  const result=JSON.parse(await askSunoSongAdvisor(7,target,'创作歌曲',f.deps));
  expect(f.mocks.refine).toHaveBeenCalledTimes(2);expect(f.mocks.compose).toHaveBeenCalledTimes(1);
  expect(f.mocks.refine.mock.calls[1][0].requirements).toContain('语义精炼');

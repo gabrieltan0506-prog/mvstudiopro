@@ -1,5 +1,6 @@
 import Navbar from "@/components/Navbar";
 import RemixDraftEditor from "@/components/RemixDraftEditor";
+import { RemixStoryboardStock } from "@/components/remix/RemixStoryboardStock";
 import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -3930,6 +3931,7 @@ export default function MVAnalysisPage({ remixWorkspace = false }: { remixWorksp
             </section>
 
         {remixWorkspace && user?.id ? <div id="remix-draft" className="scroll-mt-24"><RemixDraftEditor key={`${user.id}:${remixFormat}`} evidence={analysis} format={remixFormat} userId={user.id} brief={context} onBusyChange={setRemixDraftBusy} rewriteCost={user.role === "admin" || user.role === "supervisor" ? 0 : CREDIT_COSTS.platformOptimizeCustomCopy} onRewrite={async input => { const result = await remixRewriteMutation.mutateAsync(input); return result.result.optimizedMarkdown; }} /></div> : null}
+        {remixWorkspace && remixFormat === "video" && user?.id ? <RemixStoryboardStock key={user.id} userId={user.id} segments={firstScreenStoryboard} analyzed={Boolean(analysis)} /> : null}
         <div>
         {!analysis && !remixWorkspace ? (
           <section className="mt-8 grid gap-4 md:grid-cols-3">
