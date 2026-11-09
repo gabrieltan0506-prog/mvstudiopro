@@ -15,6 +15,8 @@ import { MV_SHOT_SINGING_SOUND_RULE_ZH, MV_SHOT_SOUND_RULE_ZH } from "./canvasMu
 import type { MusicMvBeatGrid, MusicMvLyricLine, MusicMvShotBeat } from "./canvasMusicMv";
 import { singingWindowsFromLyricLines } from "./canvasMusicMvBeats";
 import { compileSegmentPromptDetailed } from "./manhuaPromptCompiler";
+// 叶子模块：不经 ./canvasMusicMvPrevis（其经 guards 绕回本文件会形成 ESM 循环）
+import { MV_PREVIS_PROMPT_RULE_ZH, mvPrevisWindowRuleZh } from "./canvasMusicMvPrevisRule";
 import { COMPILER_ENGINE_LIMITS, type CompilerEngineId, type ShotIR } from "./manhuaShotIR";
 import type { FormatIssue } from "./promptFormatLayer";
 import { CANVAS_VIDEO_MODEL_HAILUO_H3, HAILUO_OPENROUTER_DURATION_CHOICES } from "./hailuoOpenRouterModels";
@@ -86,6 +88,22 @@ export const MV_KEY_EVENT_RE = /耳光|巴掌|扇[她他人脸]|推倒|推开|�
 export const MV_KEY_EVENT_WINDOW_RULE_ZH = "关键事件窗：本窗只发生这一件事，不并列其他动作；前至少1.5秒起势（靠近、抬手、蓄力），事件真实发生在画面中，不省略、不提前、不只做准备；末尾停在结束状态并保持到窗尾";
 export const MV_LIP_SYNC_WINDOW_RULE_ZH = "对口型窗：本窗一镜到底，不切镜、不跳轴、不换景别；演唱者正脸或微侧（不超过30度）面向镜头，嘴部始终清晰可见；禁止背身、大侧脸、低头遮脸或物体遮挡嘴部";
 export const MV_LIGHT_CONTINUITY_RULE_ZH = "光色与天气贯穿：每窗光色/天气承接前窗、只向下一状态渐变（如晴→阴→雨→转亮按顺序推进），不跳变、不回退、不凭空换天气或色温";
+/** 1110 白模不削弱既有规则：只定站位与动作时序，对口型正脸、一窗一事件、光色贯穿、人物锁照旧。 */
+export const MV_PREVIS_KEEP_RULES_ZH = "白模只定站位、走位与动作时序，不覆盖以下规则：对口型窗仍正脸或微侧对镜、一镜到底不切镜（白模朝向与之冲突时以正脸对镜为准）；关键事件仍一窗一事件；光色与天气仍逐窗贯穿；人物仍只取自人物一致性锁";
+/** 关键接触事件：接触瞬间以白模接触帧为准。 */
+export const mvPrevisContactRuleZh = (video: string) => `接触瞬间以${video}白模接触帧为准，不提前、不延后`;
+
+/**
+ * 白模参考片（@视频N 自身时间轴）与镜内秒的换算：白模按本镜逐窗节拍生成、时长等于本镜，源片第 t 秒＝镜内第 t 秒；
+ * 被裁切（trimmedFrom）后，派生片第 q 秒＝源片第 q+入点 秒 → 镜内 t 对应派生片 t−入点；再夹到取用区间 inSec–outSec。
+ * 返回 undefined＝本窗不在白模覆盖内。
+ */
+export function mvPrevisClipRange(v: Pick<MvShotReferences["motionVideos"][number], "inSec" | "outSec" | "trimmedFrom">, fromSec: number, toSec: number) {
+  const offset = v.trimmedFrom?.inSec ?? 0;
+  const a = r3(Math.max(v.inSec, fromSec - offset));
+  const b = r3(Math.min(v.outSec, toSec - offset));
+  return b - a > 0.001 ? { fromSec: a, toSec: b } : undefined;
+}
 
 /** 各方言的参考标记（seedance 中文标记由出站层转 @imageN；H3/Wan 用各自写法）。 */
 function markers(engine: CompilerEngineId) {
@@ -118,6 +136,16 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
   const chainTag = shot.chainFromPrevious ? mk.image(2) : undefined;
   const sceneBase = shot.chainFromPrevious ? 3 : 2;
   const sceneTags = r.sceneImages.map((_, i) => mk.image(i + sceneBase));
+  // 1110 白模动作参考：@视频N 的 N = 第一个白模在提交数组中的序号；没有白模时以下全部不写（输出逐字节不变）
+  const previsIdx = r.motionVideos.findIndex(v => v.source === "previs");
+  const previs = previsIdx >= 0 ? r.motionVideos[previsIdx]! : undefined;
+  const previsTag = previs ? mk.video(previsIdx + 1) : undefined;
+  const previsOffset = previs?.trimmedFrom?.inSec ?? 0;
+  const previsWindowZh = (from: number, to: number) => {
+    if (!previs || !previsTag) return "";
+    const c = mvPrevisClipRange(previs, from, to);
+    return c ? mvPrevisWindowRuleZh(previsTag, c.fromSec, c.toSec) : `本窗超出${previsTag}覆盖范围：站位承接前窗末态，不新增走位`;
+  };
 
   // ── 窗表（镜内相对秒）──
   type Win = MvShotPromptWindow & { ir: Omit<ShotIR, "index" | "durationSec"> };
@@ -137,12 +165,13 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
       ir: {
         sceneZh: sceneLine(true),
         actionZh: "按本镜分镜一次完成动作，常速、不重演（旧方案未出逐窗节拍，整镜一窗）",
+        ...(previsTag ? { microExpressionZh: previsWindowZh(0, L) } : {}),
         cameraZh: shot.cameraPrompt,
         lightingZh: `沿用${anchorTag}${sceneTags[0] ? `与${sceneTags[0]}` : ""}的主光方向与色调，亮度随动作缓变不闪`,
         sfxZh: singing ? `环境声随画面触发；唱段按${mk.audio(1)}原唱复现，不另配伴奏` : "环境声随画面实际发生处触发；无音乐、无人声",
         subtitleZh: "字幕关闭",
         labelZh: `${shot.shotId}整镜（歌曲 ${f2(shot.startSec)}–${f2(shot.endSec)} 秒）`,
-        ...(singing ? { microExpressionZh: `对口型：按${mk.audio(1)}本镜唱段逐字对口型，口型、呼吸与原唱同步` } : {}),
+        ...(singing ? { microExpressionZh: `对口型：按${mk.audio(1)}本镜唱段逐字对口型，口型、呼吸与原唱同步${previsTag ? `；${previsWindowZh(0, L)}` : ""}` } : {}),
         ...(singing && shot.lyricQuote?.trim() ? { dialogue: { speakerZh: "主角", emotionZh: `对口型演唱，按${mk.audio(1)}原唱逐字`, textZh: shot.lyricQuote.trim() } } : {}),
       },
     });
@@ -155,6 +184,8 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
       const micro = [
         lip ? `对口型：按${mk.audio(1)}本窗唱句逐字对口型，口型、呼吸与原唱同步；${MV_LIP_SYNC_WINDOW_RULE_ZH}` : "",
         keyEvent ? MV_KEY_EVENT_WINDOW_RULE_ZH : "",
+        previsTag ? previsWindowZh(from, to) : "",
+        previsTag && keyEvent ? mvPrevisContactRuleZh(previsTag) : "",
         dialect === "seedance" ? "" : `灯光与氛围：${w.lightingZh}`,
         dialect === "seedance" ? "" : `情绪与转折：${w.moodZh}`,
       ].filter(Boolean).join("；");
@@ -233,6 +264,15 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
       `${mk.video(i + 1)}＝${v.source === "previs" ? "白模站位片" : "运镜参考片"}${lab(v.label)}，取 ${f2(v.inSec)}–${f2(v.outSec)} 秒；只继承站位、景别、机位运动与动作节拍，不继承外观、材质、服装与人物。`,
     ),
   );
+  if (previsTag) {
+    const lookTags = [r.anchorImage ? anchorTag : "", ...sceneTags].filter(Boolean).join("、") || "人物一致性锁与本镜分镜";
+    const rule = MV_PREVIS_PROMPT_RULE_ZH(previsTag, lookTags);
+    const same = `${previsTag}第 t 秒＝本镜镜内第 t 秒`;
+    // 白模被裁切：派生片第 t 秒＝镜内第 t+入点 秒（逐窗秒点已换算到派生片自身时间轴）
+    const cropped = `${previsTag}第 t 秒＝本镜镜内第 t+${f2(previsOffset)} 秒（白模已裁切，入点 ${f2(previsOffset)} 秒，逐窗秒点已换算）`;
+    header.push(`${previsOffset > 0.001 ? (rule.includes(same) ? rule.replace(same, cropped) : `${rule}；${cropped}`) : rule}。`);
+    header.push(`${MV_PREVIS_KEEP_RULES_ZH}。`);
+  }
   if (r.songSlice)
     header.push(
       singing

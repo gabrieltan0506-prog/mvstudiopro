@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { compileMvShotTimedPrompt, mvCastFromCreative, mvShotGenerateDurationSec } from "./canvasMusicMvShotPrompt";
+import { createHash } from "node:crypto";
+import { compileMvShotTimedPrompt, mvCastFromCreative, mvPrevisClipRange, mvShotGenerateDurationSec } from "./canvasMusicMvShotPrompt";
 import { MUSIC_MV_BEATS_INSTRUCTIONS } from "./musicMvCraft";
 import type { MvShotReferences } from "./canvasMusicMvReferences";
 import type { MusicMvShotBeat } from "./canvasMusicMv";
@@ -162,3 +163,99 @@ describe("MV 请求时长：复用漫剧引擎表，不锁 5/15 秒", () => {
     expect(mvShotGenerateDurationSec("seedance-2.5", 16)).toBe(17);
   });
 });
+
+/** 无白模的代表性输入（逐字节锁定用）：逐窗/降级/演唱/接龙/H3/Wan/多人关键事件/身份照/运镜参考片。 */
+export function mvNoPrevisGoldenCases(): string[] {
+  const twoCast = "雨夜街头的分手戏。\n主角：短发女生，白色风衣\n配角：高个男生，黑色夹克\n副歌转亮。";
+  const slap = { shotId: "s5", startSec: 20, endSec: 26, visualPrompt: "街边雨棚下两人争执，女生打男生一巴掌，伞落地", cameraPrompt: "中景",
+    beats: [w(20, 22.5, { actionZh: "女生逼近男生，抬手" }), w(22.5, 24.5, { actionZh: "女生打男生一巴掌，男生脸偏向一侧" }), w(24.5, 26, { actionZh: "伞从女生手里掉落，落地翻倒在积水里" })] };
+  const sing = { shotId: "sing", startSec: 60, endSec: 66, visualPrompt: "她对镜头唱", cameraPrompt: "近景", kind: "singing" as const, beats: [w(60, 63), w(63, 66)], lyricTiming: "confirmed" as const,
+    lyricLines: [{ text: "别爱我", startSec: 60.4, endSec: 62.1 }, { text: "又不想说", startSec: 63.0, endSec: 65.6 }] };
+  const noVideo = { ...refs, motionVideos: [] };
+  return [
+    compileMvShotTimedPrompt({ shotId: "c1s12", startSec: 150, endSec: 156.2, visualPrompt: "她在便利店玻璃前", cameraPrompt: "中景推近", beats: [w(150, 152.33), w(152.33, 154.19), w(154.19, 156.2)] }, ctx()).text,
+    compileMvShotTimedPrompt({ shotId: "s1", startSec: 0, endSec: 5, visualPrompt: "她走过天桥", cameraPrompt: "跟拍" }, ctx({ generateDurationSec: 6 })).text,
+    compileMvShotTimedPrompt(sing, ctx({ generateDurationSec: 7 })).text,
+    compileMvShotTimedPrompt({ ...sing, lyricTiming: "unconfirmed" }, ctx({ generateDurationSec: 7, references: noVideo, performerZh: "男歌手" })).text,
+    compileMvShotTimedPrompt({ shotId: "s2", startSec: 0, endSec: 5, visualPrompt: "续", cameraPrompt: "同轴", beats: [w(0, 2.5), w(2.5, 5)], chainFromPrevious: true }, ctx({ generateDurationSec: 6 })).text,
+    compileMvShotTimedPrompt({ shotId: "s", startSec: 0, endSec: 4, visualPrompt: "v", cameraPrompt: "c", beats: [w(0, 2), w(2, 4)] }, ctx({ engine: "minimax-hailuo-3", generateDurationSec: 5 })).text,
+    compileMvShotTimedPrompt({ shotId: "s", startSec: 0, endSec: 4, visualPrompt: "v", cameraPrompt: "c", beats: [w(0, 2), w(2, 4)] }, ctx({ engine: "wan-3.0", generateDurationSec: 5 })).text,
+    compileMvShotTimedPrompt(slap, ctx({ creativePrompt: twoCast })).text,
+    compileMvShotTimedPrompt(slap, ctx({ creativePrompt: twoCast, references: { ...noVideo, anchorImage: { gcsUri: "gs://b/me.jpg", label: "我的照片", hasRealPerson: true } } })).text,
+    compileMvShotTimedPrompt(slap, ctx({ generateDurationSec: 6, beatGrid: undefined, references: { sceneImages: [], motionVideos: [] } })).text,
+  ];
+}
+
+describe("1110 白模动作参考（motionVideos.source=previs）", () => {
+  const twoCast = "雨夜街头的分手戏。\n主角：短发女生，白色风衣\n配角：高个男生，黑色夹克";
+  const slap = { shotId: "s5", startSec: 20, endSec: 26, visualPrompt: "街边雨棚下两人争执，女生打男生一巴掌", cameraPrompt: "中景",
+    beats: [w(20, 22.5, { actionZh: "女生逼近男生，抬手" }), w(22.5, 24.5, { actionZh: "女生打男生一巴掌，男生脸偏向一侧" }), w(24.5, 26, { actionZh: "两人对峙" })] };
+  const previs = { source: "previs" as const, gcsUri: "gs://b/previs.mp4", inSec: 0, outSec: 6, durationSec: 6, label: "白模" };
+  const stock = refs.motionVideos[0]!;
+
+  it("无白模：输出逐字节不变（锁定改前 SHA-256）", () => {
+    const hashes = mvNoPrevisGoldenCases().map(t => createHash("sha256").update(t).digest("hex").slice(0, 16));
+    expect(hashes).toEqual(NO_PREVIS_GOLDEN);
+    for (const t of mvNoPrevisGoldenCases()) expect(t).not.toContain("白模动作参考");
+  });
+
+  it("有白模：头部指令 + @视频N 用白模在提交数组中的真实序号", () => {
+    const first = compileMvShotTimedPrompt(slap, ctx({ creativePrompt: twoCast, references: { ...refs, motionVideos: [previs, stock] } })).text;
+    expect(first).toContain("白模动作参考：站位、走位、朝向与肢体接触时序严格按@视频1（白模动作参考）执行");
+    expect(first).toContain("人物外形、服装与场景以@图片1、@图片2、@图片3为准，忽略白模的材质与灰模外观");
+    const second = compileMvShotTimedPrompt(slap, ctx({ creativePrompt: twoCast, references: { ...refs, motionVideos: [stock, previs] } })).text;
+    expect(second).toContain("严格按@视频2（白模动作参考）执行");
+    expect(second).toContain("@视频2＝白模站位片（白模）");
+    expect(second).not.toContain("严格按@视频1（白模动作参考）");
+    // 头部指令在逐窗正文之前
+    expect(second.indexOf("白模动作参考：")).toBeLessThan(second.indexOf("逐窗执行正文："));
+    const h3 = compileMvShotTimedPrompt(slap, ctx({ engine: "minimax-hailuo-3", generateDurationSec: 10, references: { ...refs, motionVideos: [stock, previs] } })).text;
+    expect(h3).toContain("严格按Video 2白模动作参考执行");
+  });
+
+  // 秒位经格式层规范（2.50→2.5，0.00→0）
+  it("逐窗秒点对齐（未裁切：白模第 t 秒＝镜内第 t 秒），关键接触以白模接触帧为准", () => {
+    const out = compileMvShotTimedPrompt(slap, ctx({ creativePrompt: twoCast, references: { ...refs, motionVideos: [previs] } })).text;
+    expect(out).toContain("站位与动作按@视频1镜内 0–2.5 秒段执行");
+    expect(out).toContain("站位与动作按@视频1镜内 2.5–4.5 秒段执行");
+    expect(out).toContain("站位与动作按@视频1镜内 4.5–6 秒段执行");
+    expect(out).toContain("@视频1第 t 秒＝本镜镜内第 t 秒");
+    expect(out.split("接触瞬间以@视频1白模接触帧为准").length - 1).toBe(1); // 只有耳光窗
+    expect(out).not.toContain("白模已裁切");
+  });
+
+  it("裁切入点换算：派生片第 q 秒＝源片第 q+入点 秒；超出覆盖的窗承接前窗", () => {
+    const trimmed = { ...previs, inSec: 0, outSec: 4, durationSec: 4, trimmedFrom: { gcsUri: "gs://b/previs-src.mp4", inSec: 2, outSec: 6, sourceSec: 6, auto: false } };
+    expect(mvPrevisClipRange(trimmed, 0, 2.5)).toEqual({ fromSec: 0, toSec: 0.5 });
+    expect(mvPrevisClipRange(trimmed, 2.5, 4.5)).toEqual({ fromSec: 0.5, toSec: 2.5 });
+    expect(mvPrevisClipRange(trimmed, 4.5, 6)).toEqual({ fromSec: 2.5, toSec: 4 });
+    expect(mvPrevisClipRange(trimmed, 0, 2)).toBeUndefined();
+    const out = compileMvShotTimedPrompt(slap, ctx({ creativePrompt: twoCast, references: { ...refs, motionVideos: [trimmed] } })).text;
+    expect(out).toContain("@视频1第 t 秒＝本镜镜内第 t+2 秒（白模已裁切，入点 2 秒，逐窗秒点已换算）");
+    expect(out).toContain("站位与动作按@视频1镜内 0–0.5 秒段执行");
+    expect(out).toContain("站位与动作按@视频1镜内 0.5–2.5 秒段执行");
+    expect(out).toContain("站位与动作按@视频1镜内 2.5–4 秒段执行");
+    const early = compileMvShotTimedPrompt({ ...slap, beats: [w(20, 21.5), w(21.5, 26)] }, ctx({ references: { ...refs, motionVideos: [trimmed] } })).text;
+    expect(early).toContain("本窗超出@视频1覆盖范围：站位承接前窗末态，不新增走位");
+  });
+
+  it("与对口型/一窗一事件/光色贯穿/角色表人物锁共存：白模不削弱既有规则", () => {
+    const sing = compileMvShotTimedPrompt(
+      { shotId: "sing", startSec: 60, endSec: 66, visualPrompt: "她对镜头唱", cameraPrompt: "近景", kind: "singing", beats: [w(60, 63), w(63, 66)], lyricTiming: "confirmed", lyricLines: [{ text: "别爱我", startSec: 60.4, endSec: 62.1 }] },
+      ctx({ generateDurationSec: 7, references: { ...refs, motionVideos: [previs] } }),
+    ).text;
+    expect(sing).toContain("对口型窗：本窗一镜到底，不切镜、不跳轴、不换景别");
+    expect(sing).toContain("本窗不切镜，正脸或微侧对镜，禁止背身与大侧脸");
+    expect(sing).toContain("对口型窗仍正脸或微侧对镜、一镜到底不切镜（白模朝向与之冲突时以正脸对镜为准）");
+    expect(sing).toContain("站位与动作按@视频1镜内 0–2.1 秒段执行");
+    expect(sing).toContain("{别爱我}");
+    const multi = compileMvShotTimedPrompt(slap, ctx({ creativePrompt: twoCast, references: { ...refs, motionVideos: [previs] } })).text;
+    expect(multi).toContain("人物一致性锁（按角色表）：主角：短发女生，白色风衣；配角：高个男生，黑色夹克");
+    expect(multi).toContain("关键事件窗：本窗只发生这一件事");
+    expect(multi).toContain("光色与天气贯穿：每窗光色/天气承接前窗");
+    expect(multi).toContain("关键事件仍一窗一事件；光色与天气仍逐窗贯穿；人物仍只取自人物一致性锁");
+  });
+});
+
+/** 改前（80b9ac8d）同输入输出的 SHA-256 前 16 位：无白模时必须逐字节一致。 */
+const NO_PREVIS_GOLDEN = ["46d8b046d53f9fc7", "05ad906fdaa8dbcb", "036527ee283503f9", "73cf7bc1722a094b", "fe974edb9182076a", "784d21516e2e0895", "0a3ffa65caf9a856", "c71474a56210e8a9", "6323f680c3bbf5c7", "2396ff3ea85b6d1c"];
