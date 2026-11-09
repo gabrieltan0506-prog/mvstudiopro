@@ -113,7 +113,7 @@ export function buildMvShotPrevisStudio(blockId: string, shot: MvPrevisShot, exi
   if (cast.length < 2) throw new Error("角色表不足两人，不能为多人互动镜头建立白模");
   if (existing?.pending) throw new Error("本镜白模仍在处理，请等任务结束");
   const advisorShotSource = buildMvShotPrevisShotSource(blockId, shot);
-  const base = createManhuaPrevisStudio(previsDuration(shot), existing?.scopeId);
+  const base = createManhuaPrevisStudio(previsDuration(shot), existing?.scopeId as ReturnType<typeof crypto.randomUUID> | undefined);
   const template = base.spec.actors[0]!;
   const n = Math.min(cast.length, 8);
   const actors = cast.slice(0, n).map((row, i) => {

@@ -14731,6 +14731,7 @@ async function runAdvisorWriterTrial() {
           <FreeformCanvas
             projectId={projectScope?.projectId}
             musicWorkflow={isMvProject}
+            mvPrevis={mvPrevisBridge}
             resolveManhuaOutboundGate={(blockId) => ({
               currentScope: manhuaOutboundScope(blockId),
               confirmation: outboundConfirmationsRef.current[blockId],

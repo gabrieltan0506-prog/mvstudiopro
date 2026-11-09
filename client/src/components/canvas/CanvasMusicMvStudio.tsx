@@ -115,6 +115,8 @@ type Props = {
   onPatchBlock?: (id: string, patch: Partial<CanvasBlock>) => void;
   /** 1109 模型可选：漫剧同一模型表经 filterCanvasVideoModelOptions（会员闸门）再筛 MV 可用引擎。 */
   videoModelOptions?: Array<{ id: CanvasVideoModel; label: string }>;
+  /** 1110 多人互动镜头自动白模（页面注入的创作顾问白模入口）。 */
+  mvPrevis?: import("./CanvasMvShotReferencePicker").MvPrevisBridge;
 };
 const field = "w-full rounded border border-white/20 bg-black/30 p-1.5 text-xs";
 const button =
@@ -156,6 +158,7 @@ export function CanvasMusicMvStudio({
   runShot,
   getBlocks,
   onPatchBlock,
+  mvPrevis,
   videoModelOptions,
 }: Props) {
   const state = block.musicMv || { status: "idle", candidates: [] };
@@ -1988,8 +1991,10 @@ export function CanvasMusicMvStudio({
                 : last?.gcsUri
                   ? { gcsUri: last.gcsUri, durationSec: last.durationSec, requestId: last.requestId }
                   : undefined;
-              return [{ shotId, blockId: id, previs }];
+              return [{ shotId, blockId: id, previs, castZh: row.musicMvShot?.castZh, previsStudio: row.previsStudio }];
             })}
+            mvPrevis={mvPrevis}
+            onPatchShotPrevis={onPatchBlock ? (blockId, previsStudio) => onPatchBlock(blockId, { previsStudio }) : undefined}
             orientation={block.aspectRatio === "9:16" || highlightMode ? "portrait" : "landscape"}
             cinemaHintZh={state.creativePrompt}
             disabled={busy}

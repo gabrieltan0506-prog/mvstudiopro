@@ -315,6 +315,8 @@ type BlocksUpdater = CanvasBlock[] | ((prev: CanvasBlock[]) => CanvasBlock[]);
 
 type FreeformCanvasProps = {
   projectId?: string;
+  /** 1110 MV 多人互动镜头自动白模：页面注入的创作顾问白模入口。 */
+  mvPrevis?: import("./CanvasMvShotReferencePicker").MvPrevisBridge;
   /** MV 项目把已有音乐控制区放到不缩放的工作流面板，保留镜头画布。 */
   musicWorkflow?: boolean;
   /** 本项目已保存图片，仅供普通视频节点显式引用，不代替工厂资产认领。 */
@@ -822,6 +824,7 @@ function CanvasAssetVisualBody({
 
 export default function FreeformCanvas({
   projectId,
+  mvPrevis,
   musicWorkflow = false,
   projectAssetRefs = [],
   blocks,
@@ -2298,6 +2301,7 @@ export default function FreeformCanvas({
                         onPatchBlock={(id, patch) => patchOne(id, patch)}
                         runShot={runBlock}
                         videoModelOptions={mvShotVideoModelOptions}
+                        mvPrevis={mvPrevis}
                         onAdd={(added, links) => {
                           onBlocksChange(prev => [...prev, ...added.filter(item => !prev.some(row => item.id === row.id))]);
                           onEdgesChange([...edges.filter(edge => !links.some(link => link.fromId === edge.fromId && link.toId === edge.toId)), ...links]);
