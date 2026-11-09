@@ -694,6 +694,8 @@ export const canvasMusicMvShotBindingSchema = z
     complexity: musicMvShotComplexitySchema.optional(),
     fillRequested: z.boolean().optional(),
     fill: z.array(musicMvFillWindowSchema).max(12).optional(),
+    /** 1110 角色表（「名称：外形」逐项，取自创作说明）：秒锁编译按角色表生成人物锁，多人可同框。 */
+    castZh: z.array(text.max(300)).max(8).optional(),
   })
   .strict();
 export type CanvasMusicMvShotBinding = z.infer<

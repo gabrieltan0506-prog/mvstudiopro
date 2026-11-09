@@ -2593,6 +2593,7 @@ async function runCanvasBlockInner(
           aspectRatio: block.aspectRatio === "16:9" ? "16:9" : "9:16",
           generateDurationSec: mvShotGenerateDurationSec(engine, binding.endSec - binding.startSec),
           beatGrid: binding.beatGrid,
+          ...(binding.castZh?.length ? { castZh: binding.castZh } : {}),
           references: mvShotReferencesSchema.parse(mvRefs),
         },
       );

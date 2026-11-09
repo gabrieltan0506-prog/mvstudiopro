@@ -49,6 +49,10 @@ export type MvShotPromptContext = {
   references: MvShotReferences;
   /** 演唱者（演唱镜对口型的人，与叙事主角分开锁），如「男歌手」。 */
   performerZh?: string;
+  /** 1110 角色表（「名称：外形」逐项）；缺省从 creativePrompt 解析。≥2 人时人物锁放行角色表内多人同框。 */
+  castZh?: string[];
+  /** 1110 主锚图性质：identity＝身份照（只锁脸，不锁服装与场景）；缺省按 anchorImage.hasRealPerson / 图注判断。 */
+  anchorKind?: "identity" | "keyframe";
 };
 
 export type MvShotPromptWindow = { fromSec: number; toSec: number; role: "beat" | "whole" | "tail"; label: string; lipSync?: boolean };
@@ -62,6 +66,26 @@ function protagonistOf(creative?: string) {
   const m = /主角[：:]\s*([^。\n]+)/.exec(creative || "");
   return m ? m[1]!.trim() : "同一位主角";
 }
+
+/**
+ * 1110 角色表：创作说明里的「角色表：A；B」一行，或逐行「主角/女主/男主/配角/对手/角色N：外形」。
+ * 返回「名称：外形」逐项（去重、保序）；没有角色表返回空数组（人物锁按单主角）。
+ */
+export function mvCastFromCreative(creative?: string): string[] {
+  const text = String(creative || "");
+  const table = /角色表[：:]\s*([^\n]+)/.exec(text);
+  const rows = table
+    ? table[1]!.split(/[；;]/).map(x => x.trim())
+    : Array.from(text.matchAll(/(?:^|[\n。；;])\s*((?:主角|女主|男主|配角|对手|角色[一二三四五六七八九\d]+)[^：:\n。；;]{0,8}[：:][^。\n；;]+)/g), m => m[1]!.trim());
+  const seen = new Set<string>();
+  return rows.filter(r => r && !seen.has(r) && (seen.add(r), true)).slice(0, 8);
+}
+
+/** 1110 关键事件（身体接触/道具落地/倒地等）：一窗一事件、≥1.5 秒起势、写结束状态。 */
+export const MV_KEY_EVENT_RE = /耳光|巴掌|扇[她他人脸]|推倒|推开|推搡|摔[倒碎落]|落地|掉落|掉在|倒地|跌倒|拥抱|抱住|亲吻|吻[她他]|撞[到上倒]|抢过|夺过|泼[水酒]/;
+export const MV_KEY_EVENT_WINDOW_RULE_ZH = "关键事件窗：本窗只发生这一件事，不并列其他动作；前至少1.5秒起势（靠近、抬手、蓄力），事件真实发生在画面中，不省略、不提前、不只做准备；末尾停在结束状态并保持到窗尾";
+export const MV_LIP_SYNC_WINDOW_RULE_ZH = "对口型窗：本窗一镜到底，不切镜、不跳轴、不换景别；演唱者正脸或微侧（不超过30度）面向镜头，嘴部始终清晰可见；禁止背身、大侧脸、低头遮脸或物体遮挡嘴部";
+export const MV_LIGHT_CONTINUITY_RULE_ZH = "光色与天气贯穿：每窗光色/天气承接前窗、只向下一状态渐变（如晴→阴→雨→转亮按顺序推进），不跳变、不回退、不凭空换天气或色温";
 
 /** 各方言的参考标记（seedance 中文标记由出站层转 @imageN；H3/Wan 用各自写法）。 */
 function markers(engine: CompilerEngineId) {
@@ -81,6 +105,9 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
   const mk = markers(ctx.engine);
   const r = ctx.references;
   const singing = shot.kind === "singing";
+  const cast = ctx.castZh?.map(c => c.trim()).filter(Boolean).length ? ctx.castZh!.map(c => c.trim()).filter(Boolean) : mvCastFromCreative(ctx.creativePrompt);
+  const multiCast = cast.length >= 2;
+  const identityAnchor = ctx.anchorKind ? ctx.anchorKind === "identity" : Boolean(r.anchorImage?.hasRealPerson || /身份照|证件照|本人照|真人照|人像照/.test(r.anchorImage?.label || ""));
   // 演唱段不做降级：没有逐窗节拍或没有歌词时间表就不出片
   if (singing && !shot.beats?.length) throw new Error(`演唱镜 ${shot.shotId} 缺少逐窗节拍，请重新出分镜`);
   if (singing && !shot.lyricLines?.length) throw new Error(`演唱镜 ${shot.shotId}：先确认本段歌词，再生成演唱段`);
@@ -99,6 +126,11 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
     first
       ? `${shot.visualPrompt}（主角按${anchorTag}${chainTag ? `，起幅承接${chainTag}上一镜尾帧` : ""}${sceneTags.length ? `，场景按${sceneTags.join("、")}` : ""}）`
       : "承接前窗，同一空间、同一轴线，不重演已完成的动作";
+  // 1110 逐窗版首窗场景行只写空间：人物与动作由人物锁与逐窗动作承担，不把分镜原句（含人物/服装/动作）塞进场景行
+  const beatSceneLine = (first: boolean) =>
+    first
+      ? `空间：${sceneTags.length ? `按${sceneTags.join("、")}的场景空间、地标、光源方向与材质` : `按本镜分镜所在空间（${shot.visualPrompt}）`}${chainTag ? `；起幅承接${chainTag}上一镜尾帧` : ""}；人物外观只按人物一致性锁`
+      : sceneLine(false);
   if (degraded) {
     wins.push({
       fromSec: 0, toSec: L, role: "whole", label: `${shot.shotId}整镜`,
@@ -119,17 +151,19 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
       const from = r3(w.startSec - shot.startSec);
       const to = r3(w.endSec - shot.startSec);
       const lip = singing && w.lipSync === true;
+      const keyEvent = MV_KEY_EVENT_RE.test(w.actionZh);
       const micro = [
-        lip ? `对口型：按${mk.audio(1)}本窗唱句逐字对口型，口型、呼吸与原唱同步` : "",
+        lip ? `对口型：按${mk.audio(1)}本窗唱句逐字对口型，口型、呼吸与原唱同步；${MV_LIP_SYNC_WINDOW_RULE_ZH}` : "",
+        keyEvent ? MV_KEY_EVENT_WINDOW_RULE_ZH : "",
         dialect === "seedance" ? "" : `灯光与氛围：${w.lightingZh}`,
         dialect === "seedance" ? "" : `情绪与转折：${w.moodZh}`,
       ].filter(Boolean).join("；");
       wins.push({
         fromSec: from, toSec: to, role: "beat", label: `${shot.shotId}-W${i + 1}`, lipSync: lip || undefined,
         ir: {
-          sceneZh: sceneLine(i === 0),
+          sceneZh: beatSceneLine(i === 0),
           actionZh: w.actionZh,
-          cameraZh: w.cameraZh,
+          cameraZh: lip ? `${w.cameraZh}；本窗不切镜，正脸或微侧对镜，禁止背身与大侧脸` : w.cameraZh,
           lightingZh: w.lightingZh,
           moodZh: w.moodZh,
           sfxZh: lip ? `${w.sfxZh}；唱句按${mk.audio(1)}原唱复现，不另配伴奏` : `${w.sfxZh}；无音乐、无人声`,
@@ -173,14 +207,23 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
   header.push(
     singing
       ? `人物一致性锁：本镜是演唱者镜，画面主体是演唱者（${ctx.performerZh || "演唱者"}），只有他/她对口型。按${anchorTag}锁演唱者脸部骨相、年龄、体型与发型；叙事主角不在本镜出现，不让叙事主角对口型；不新增第二位清晰人物。`
-      : `人物一致性锁：本镜只有同一位主角（${protagonistOf(ctx.creativePrompt)}）。按${anchorTag}锁脸部骨相、年龄、体型与发型，不改骨相、不改年龄、不改体型，服装与全片一致；不新增第二位清晰人物，远处人影只作模糊剪影。`,
+      : multiCast
+        ? `人物一致性锁（按角色表）：${cast.join("；")}。本镜人物只取自角色表，角色表内人物可按逐窗正文同框、对手戏与肢体接触，不得删去任何一方；${identityAnchor ? `按${anchorTag}只锁${cast[0]!.split(/[：:]/)[0]}的脸部骨相、年龄与发型（身份照：不锁服装、背景与场景）` : `按${anchorTag}锁${cast[0]!.split(/[：:]/)[0]}的脸部骨相、年龄、体型与发型`}，其余角色按角色表外形描述全片一致，彼此不串脸；角色表之外不新增清晰人物，远处人影只作模糊剪影。`
+        : identityAnchor
+          ? `人物一致性锁：本镜只有同一位主角（${cast[0] ?? protagonistOf(ctx.creativePrompt)}）。按${anchorTag}只锁脸部骨相、年龄与发型（身份照：不锁服装、背景与场景，服装按本镜分镜与场景图）；不新增第二位清晰人物，远处人影只作模糊剪影。`
+          : `人物一致性锁：本镜只有同一位主角（${cast[0] ?? protagonistOf(ctx.creativePrompt)}）。按${anchorTag}锁脸部骨相、年龄、体型与发型，不改骨相、不改年龄、不改体型，服装与全片一致；不新增第二位清晰人物，远处人影只作模糊剪影。`,
   );
   header.push(`标记使用半角：{}只包实际台词${singing ? "（本镜演唱歌词按台词处理，逐句对口型）" : "（本镜无台词）"}；<>写环境与事件音效；[]仅写字幕开关。段落标题用普通文字，不把标题当字幕。`);
   header.push("[字幕关闭；不烧录歌词字幕、标题、Logo或水印。]");
   header.push(`<环境声：${(singing ? MV_SHOT_SINGING_SOUND_RULE_ZH.replace(/@音频1/g, mk.audio(1)) : MV_SHOT_SOUND_RULE_ZH)}事件声只在画面实际发生处触发，无动作不提前响。>`);
   header.push("参考绑定表（与提交数组同序）：");
   const lab = (s?: string) => (s ? `（${s}）` : "");
-  if (r.anchorImage) header.push(`${anchorTag}＝全片主锚图${lab(r.anchorImage.label)}，仅锁主角脸、年龄、体型、服装与全片色调；不继承其构图、背景、机位与手持物。`);
+  if (r.anchorImage)
+    header.push(
+      identityAnchor
+        ? `${anchorTag}＝主角身份照${lab(r.anchorImage.label)}，只锁脸部骨相、年龄与发型；不继承其服装、背景、场景、光线、构图与手持物。`
+        : `${anchorTag}＝全片主锚图${lab(r.anchorImage.label)}，仅锁主角脸、年龄、体型、服装与全片色调；不继承其构图、背景、机位与手持物。`,
+    );
   if (chainTag) header.push(`${chainTag}＝上一镜成片尾帧，作本镜首帧/起幅：开场构图、人物姿态、光线与之无缝衔接，然后按逐窗正文推进；不回放上一镜动作。`);
   r.sceneImages.forEach((img, i) =>
     header.push(`${mk.image(i + sceneBase)}＝本镜场景图${lab(img.label)}，仅锁场景空间、光源方向、材质与色调；不继承其中人物，不从空景生成额外人物。`),
@@ -200,11 +243,14 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
     header.push(
       `节拍：${ctx.beatGrid.bpm} BPM，1拍约 ${Math.round(ctx.beatGrid.beatSec * 1000)} 毫秒；${singing ? "演唱窗按唱句落位，不吸附拍点" : `窗界已落在${mk.audio(1)}拍点上`}（窗标题括注歌曲绝对秒）。`,
     );
+  if (!degraded && beats!.some(w => singing && w.lipSync === true)) header.push(`${MV_LIP_SYNC_WINDOW_RULE_ZH}。`);
+  if (!degraded && beats!.some(w => MV_KEY_EVENT_RE.test(w.actionZh))) header.push(`${MV_KEY_EVENT_WINDOW_RULE_ZH}。`);
   if (singing) header.push(`演唱秒锁：唱句窗起止取自${shot.lyricTiming === "confirmed" ? "用户确认版" : "自动识别待确认版（未经用户确认）"}本段歌词时间表；{}内为原唱词，逐字对口型。`);
   header.push(degraded ? "整镜执行正文（旧方案未出逐窗节拍）：" : "逐窗执行正文：");
 
   const footer = [
     `跨窗收束：全镜常速动作；窗与窗之间承接不重演、轴线不越；镜内 ${f2(L)} 秒处动作完成，交给下一镜${gen - L > 0.001 ? "，其后尾停不入片" : ""}。`,
+    `${MV_LIGHT_CONTINUITY_RULE_ZH}。`,
   ];
   const { prompt, issues } = compileSegmentPromptDetailed(
     { index: 1, durationSec: gen, shots: irs },

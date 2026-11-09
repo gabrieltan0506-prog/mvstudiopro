@@ -15,6 +15,7 @@ import {
 } from "../../shared/canvasMusicMv";
 import { beatsInRange, repairShotBeatWindows, singingWindowsFromLyricLines, type BeatFix } from "../../shared/canvasMusicMvBeats";
 import { MUSIC_MV_BEATS_INSTRUCTIONS } from "../../shared/musicMvCraft";
+import { mvCastFromCreative } from "../../shared/canvasMusicMvShotPrompt";
 import type { CreativeLlmHop } from "./creativeLlmHops";
 import { runCreativeHopChain, type HopSave } from "./creativeHopChain";
 
@@ -66,6 +67,8 @@ export async function composeMusicMvShotBeats(
   const failedShotIds: string[] = [];
   const failuresZh: string[] = [];
   const fixes: BeatFix[] = [];
+  // 1110 角色表：多人同框按角色表放行（不再写死单人）
+  const cast = mvCastFromCreative(input.creativePrompt);
   for (let c = 0; c < chunks.length; c += 1) {
     const chunk = chunks[c]!;
     const from = chunk[0]!.startSec;
@@ -84,6 +87,7 @@ export async function composeMusicMvShotBeats(
       lyrics: strip(input.lyrics, 8000),
       concept: input.concept,
       ...(input.performer ? { performer: input.performer } : {}),
+      ...(cast.length ? { cast } : {}),
       sections: (input.sections ?? []).filter(s => s.endSec > from && s.startSec < to),
       previousShot: prev ? { id: prev.id, kind: prev.kind, visualPrompt: prev.visualPrompt, cameraPrompt: prev.cameraPrompt } : undefined,
       shots: chunk.map(s => ({ id: s.id, kind: s.kind ?? "generated", startSec: s.startSec, endSec: s.endSec, visualPrompt: s.visualPrompt, cameraPrompt: s.cameraPrompt, lyricQuote: s.lyricQuote })),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { compileMvShotTimedPrompt, mvShotGenerateDurationSec } from "./canvasMusicMvShotPrompt";
+import { compileMvShotTimedPrompt, mvCastFromCreative, mvShotGenerateDurationSec } from "./canvasMusicMvShotPrompt";
+import { MUSIC_MV_BEATS_INSTRUCTIONS } from "./musicMvCraft";
 import type { MvShotReferences } from "./canvasMusicMvReferences";
 import type { MusicMvShotBeat } from "./canvasMusicMv";
 
@@ -76,6 +77,76 @@ describe("MV 秒锁编译：只排版顾问逐窗节拍（A 段版式）", () =>
     expect(h3.text).toContain("灯光与氛围：灯光0");
     const wan = compileMvShotTimedPrompt({ shotId: "s", startSec: 0, endSec: 4, visualPrompt: "v", cameraPrompt: "c", beats: [w(0, 2), w(2, 4)] }, ctx({ engine: "wan-3.0", generateDurationSec: 5 }));
     expect(wan.text).toContain("Reference image 1＝全片主锚图");
+  });
+});
+
+describe("1110 #1769 合并前必修：人物锁按角色表、对口型正脸不切镜、关键事件一窗一事、光色贯穿", () => {
+  const twoCast = "雨夜街头的分手戏。\n主角：短发女生，白色风衣\n配角：高个男生，黑色夹克\n副歌转亮。";
+  const slap = { shotId: "s5", startSec: 20, endSec: 26, visualPrompt: "街边雨棚下两人争执，女生打男生一巴掌，伞落地", cameraPrompt: "中景",
+    beats: [w(20, 22.5, { actionZh: "女生逼近男生，抬手" }), w(22.5, 24.5, { actionZh: "女生打男生一巴掌，男生脸偏向一侧" }), w(24.5, 26, { actionZh: "伞从女生手里掉落，落地翻倒在积水里" })] };
+
+  it("角色表解析：逐行主角/配角或「角色表：」一行", () => {
+    expect(mvCastFromCreative(twoCast)).toEqual(["主角：短发女生，白色风衣", "配角：高个男生，黑色夹克"]);
+    expect(mvCastFromCreative("角色表：女主：短发女生；男主：高个男生")).toEqual(["女主：短发女生", "男主：高个男生"]);
+    expect(mvCastFromCreative("主角：她")).toEqual(["主角：她"]);
+    expect(mvCastFromCreative("雨夜")).toEqual([]);
+  });
+
+  it("多人角色表：人物锁不再写死单人，角色表内可同框接触；单人仍按旧锁", () => {
+    const multi = compileMvShotTimedPrompt(slap, ctx({ creativePrompt: twoCast }));
+    expect(multi.text).toContain("人物一致性锁（按角色表）：主角：短发女生，白色风衣；配角：高个男生，黑色夹克");
+    expect(multi.text).toContain("角色表内人物可按逐窗正文同框、对手戏与肢体接触，不得删去任何一方");
+    expect(multi.text).not.toContain("本镜只有同一位主角");
+    expect(multi.text).not.toContain("不新增第二位清晰人物");
+    const viaBinding = compileMvShotTimedPrompt(slap, ctx({ castZh: ["女主：短发女生", "男主：高个男生"] }));
+    expect(viaBinding.text).toContain("人物一致性锁（按角色表）：女主：短发女生；男主：高个男生");
+    const single = compileMvShotTimedPrompt(slap, ctx({ creativePrompt: "主角：短发女生" }));
+    expect(single.text).toContain("本镜只有同一位主角（主角：短发女生）");
+  });
+
+  it("锚图为身份照：只锁脸不锁服装与场景；逐窗首窗场景行只写空间", () => {
+    const identity = compileMvShotTimedPrompt(slap, ctx({ creativePrompt: twoCast, references: { ...refs, anchorImage: { gcsUri: "gs://b/me.jpg", label: "我的照片", hasRealPerson: true } } }));
+    expect(identity.text).toContain("@图片1＝主角身份照（我的照片），只锁脸部骨相、年龄与发型；不继承其服装、背景、场景");
+    expect(identity.text).toContain("只锁主角的脸部骨相、年龄与发型（身份照：不锁服装、背景与场景）");
+    expect(identity.text).not.toContain("仅锁主角脸、年龄、体型、服装");
+    expect(identity.text).toContain("空间：按@图片2、@图片3的场景空间、地标、光源方向与材质");
+    expect(identity.text).not.toContain("街边雨棚下两人争执，女生打男生一巴掌");
+    const keyframe = compileMvShotTimedPrompt(slap, ctx({ creativePrompt: twoCast }));
+    expect(keyframe.text).toContain("@图片1＝全片主锚图（生成的主角定妆帧），仅锁主角脸、年龄、体型、服装");
+  });
+
+  it("关键事件窗：一窗一事件、≥1.5 秒起势、写结束状态（编译文本与编排指令都有）", () => {
+    const out = compileMvShotTimedPrompt(slap, ctx({ creativePrompt: twoCast }));
+    expect(out.text).toContain("关键事件窗：本窗只发生这一件事，不并列其他动作；前至少1.5秒起势");
+    expect(out.text).toContain("末尾停在结束状态");
+    expect(out.text.split("关键事件窗：").length - 1).toBe(3); // 头部 1 + 耳光窗 + 伞落窗
+    expect(MUSIC_MV_BEATS_INSTRUCTIONS).toContain("关键事件一窗一事件");
+    expect(MUSIC_MV_BEATS_INSTRUCTIONS).toContain("至少1.5秒起势");
+    expect(MUSIC_MV_BEATS_INSTRUCTIONS).toContain("最后写结束状态");
+  });
+
+  it("对口型窗：不切镜、正脸、禁背身/大侧脸（编译文本与编排指令都有）", () => {
+    const out = compileMvShotTimedPrompt(
+      { shotId: "sing", startSec: 60, endSec: 66, visualPrompt: "她对镜头唱", cameraPrompt: "近景", kind: "singing", beats: [w(60, 63), w(63, 66)], lyricTiming: "confirmed", lyricLines: [{ text: "别爱我", startSec: 60.4, endSec: 62.1 }] },
+      ctx({ generateDurationSec: 7 }),
+    );
+    expect(out.text).toContain("对口型窗：本窗一镜到底，不切镜、不跳轴、不换景别");
+    expect(out.text).toContain("禁止背身、大侧脸");
+    expect(out.text).toContain("本窗不切镜，正脸或微侧对镜，禁止背身与大侧脸");
+    expect(MUSIC_MV_BEATS_INSTRUCTIONS).toContain("对口型窗内一镜到底：不切镜");
+    expect(MUSIC_MV_BEATS_INSTRUCTIONS).toContain("禁止背身、大侧脸");
+    const plain = compileMvShotTimedPrompt(slap, ctx());
+    expect(plain.text).not.toContain("对口型窗：");
+  });
+
+  it("光色贯穿：编排指令逐窗写光色/天气且前后连续，编译收束带连续约束", () => {
+    expect(MUSIC_MV_BEATS_INSTRUCTIONS).toContain("lightingZh＝光色与天气（每窗必写");
+    expect(MUSIC_MV_BEATS_INSTRUCTIONS).toContain("晴→阴→雨→转亮");
+    expect(MUSIC_MV_BEATS_INSTRUCTIONS).toContain("不得跳变、回退");
+    expect(MUSIC_MV_BEATS_INSTRUCTIONS).not.toContain("不新增第二位清晰人物");
+    const out = compileMvShotTimedPrompt(slap, ctx());
+    expect(out.text).toContain("光色与天气贯穿：每窗光色/天气承接前窗");
+    expect(out.text).toContain("不跳变、不回退");
   });
 });
 

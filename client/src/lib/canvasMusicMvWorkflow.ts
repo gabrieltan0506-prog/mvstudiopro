@@ -8,7 +8,7 @@ import {
   mvShotNeedsStagingReference,
 } from "@shared/canvasMusicMv";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
-import { mvShotGenerateDurationSec } from "@shared/canvasMusicMvShotPrompt";
+import { mvCastFromCreative, mvShotGenerateDurationSec } from "@shared/canvasMusicMvShotPrompt";
 import { COMPILER_ENGINE_LIMITS } from "@shared/manhuaShotIR";
 import {
   isMvShotEngineSupported,
@@ -53,6 +53,7 @@ export function createMusicMvShotBlocks(
   lyricTable?: MusicMvLyricTable
 ): CanvasBlock[] {
   canvasMusicMvPlanSchema.parse(plan);
+  const cast = mvCastFromCreative(parent.musicMv?.creativePrompt);
   return plan.shots.map((shot, index) => {
     const block = defaultCanvasBlock(
       "video",
@@ -93,6 +94,7 @@ export function createMusicMvShotBlocks(
       ...(shot.complexity ? { complexity: shot.complexity } : {}),
       ...(shot.fillRequested ? { fillRequested: true, ...(shot.fill ? { fill: shot.fill } : {}) } : {}),
       ...(shot.kind === "singing" ? musicMvSingingLyricPatch(shot, lyricTable) : {}),
+      ...(cast.length ? { castZh: cast } : {}),
     };
     if (shot.kind === "singing") {
       if (
