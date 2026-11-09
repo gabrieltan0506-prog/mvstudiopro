@@ -3,12 +3,14 @@
  * - 本机待办：采用前先落盘 requestId，断线/刷新后用同一编号续做（服务端幂等）。
  * - 抽屉展示：时长、画幅、「短于镜头 N 秒」、关键词兜底、最终交给业务方的裁点。
  */
-import type {
-  StockFootageAssetView,
-  StockFootageKind,
-  StockFootageOrientation,
-  StockFootagePurpose,
-  StockFootageUsage,
+import {
+  matchesOrientation,
+  type StockFootageAssetView,
+  type StockFootageCandidate,
+  type StockFootageKind,
+  type StockFootageOrientation,
+  type StockFootagePurpose,
+  type StockFootageUsage,
 } from "@shared/stockFootage";
 import { clampStockTrim, type StockTrim } from "@shared/stockFootageTrim";
 
@@ -26,6 +28,8 @@ export type PendingAdoption = {
   /** 抽屉发起的采用会记下用户选定的裁点，续做成功后按原裁点绑定。 */
   trim?: StockTrim;
   startedAt: number;
+  /** 发起采用的登录用户（String(user.id)）；本机待办是浏览器级存储，不带它会把别人的待办显示给同一台机器上的下一位用户。 */
+  ownerKey?: string;
 };
 
 export const PENDING_KEY = "mvs.stockFootage.pending.v1";
@@ -64,6 +68,15 @@ export function writePending(list: PendingAdoption[], storage: StorageLike | und
 
 export function isFreshPending(p: Pick<PendingAdoption, "startedAt">, now = Date.now()): boolean {
   return now - p.startedAt < PENDING_FRESH_MS;
+}
+
+/**
+ * 待办是否属于当前登录用户：带 ownerKey 的只给同一用户看；旧版（无 ownerKey）待办为兼容仍显示，7 天后自然过期。
+ * 当前用户未知（尚未登录/身份未加载）时不显示任何带主人的待办。
+ */
+export function pendingBelongsTo(p: Pick<PendingAdoption, "ownerKey">, ownerKey: string | undefined): boolean {
+  if (!p.ownerKey) return true;
+  return Boolean(ownerKey) && p.ownerKey === ownerKey;
 }
 
 /** 抽屉只续做「同一用途 + 同一项目/镜头/段落」的待办，避免把别的镜头的素材绑到当前镜头。 */
@@ -199,4 +212,40 @@ export function rankStockCandidates<T extends { kind: StockFootageKind; duration
   const withFit = list.map((c, i) => ({ c, i, fit: fitOf(c) }));
   withFit.sort((a, b) => (a.fit === b.fit ? a.i - b.i : a.fit ? -1 : 1));
   return withFit.map(x => ({ ...x.c, fit: x.fit }));
+}
+
+// ── 「我已采用过的」复用（四端共用）──
+
+/**
+ * 已采用资产 → 抽屉候选形状：预览直接用本人资产的签名读链（照片当图、视频当预览），
+ * 与搜索候选共用选中/裁点/确认链；确认时命中 adoptedByKey 直接绑定，不再发起保存。
+ */
+export function adoptedAssetToCandidate(asset: StockFootageAssetView): StockFootageCandidate {
+  return {
+    provider: asset.source.provider,
+    providerAssetId: asset.source.providerAssetId,
+    kind: asset.kind,
+    pageUrl: asset.source.pageUrl,
+    previewImageUrl: asset.kind === "photo" ? asset.url : "",
+    ...(asset.kind === "video" ? { previewVideoUrl: asset.url } : {}),
+    width: asset.width,
+    height: asset.height,
+    ...(asset.durationSec ? { durationSec: asset.durationSec } : {}),
+    author: asset.source.author,
+  };
+}
+
+/**
+ * 只复用与当前位置同类型、同用法、画幅相符的已采用资产（视频还须带时长，否则没法裁）。
+ * 画幅：采用时服务端按当时的画幅偏好挑文件，同一 providerAssetId 的横/竖版是不同文件，不能跨画幅复用。
+ */
+export function reusableAdoptedAssets(
+  list: readonly StockFootageAssetView[] | undefined,
+  kind: "video" | "photo",
+  usage: StockFootageUsage,
+  orientation?: StockFootageOrientation,
+): StockFootageAssetView[] {
+  return (list ?? []).filter(
+    a => a.kind === kind && a.usage === usage && (kind !== "video" || (a.durationSec ?? 0) > 0) && matchesOrientation(a.width, a.height, orientation)
+  );
 }

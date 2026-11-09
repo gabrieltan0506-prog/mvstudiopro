@@ -26,7 +26,9 @@ import {
   marketingDialogueRequest,
   marketingMountInput,
   marketingMountKey,
+  marketingCloneVoiceStorageKey,
   marketingProductionScopeKey,
+  marketingProductionStorageKey,
   marketingSegmentClipSec,
   marketingVisualRef,
   marketingVoiceFromDialogue,
@@ -293,6 +295,16 @@ describe("刷新恢复与任务找回", () => {
     ];
     expect(findRecoveredPostProdJob(rows, { scopeKey: `marketing:${DRAFT_ID}`, action: "bgm_mount", sourceVideoUris: [`stock:${ASSET_ID}`] })).toBe("new");
     expect(findRecoveredPostProdJob(rows, { scopeKey: `marketing:${DRAFT_ID}`, action: "concat", sourceVideoUris: [`stock:${ASSET_ID}`] })).toBeNull();
+  });
+});
+
+describe("本机键按登录用户隔离", () => {
+  it("草稿键与声线克隆续做键都带用户；克隆键无用户直接拒绝、不再落到共享键", () => {
+    expect(marketingProductionStorageKey("7")).toBe("mvs.marketingProduction.v1:7");
+    expect(marketingCloneVoiceStorageKey("7")).toBe("mvs.marketing.cloneVoice.v2:7");
+    expect(marketingCloneVoiceStorageKey("7")).not.toBe(marketingCloneVoiceStorageKey("8"));
+    expect(() => marketingCloneVoiceStorageKey("")).toThrow("需要登录用户");
+    expect(() => marketingCloneVoiceStorageKey("  ")).toThrow("需要登录用户");
   });
 });
 

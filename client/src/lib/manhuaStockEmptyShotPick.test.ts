@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { validateManhuaStockEmptyShot } from "@shared/manhuaStockFootage";
 import { manhuaEmptyShotTrimFromPick } from "./manhuaStockEmptyShotPick";
@@ -24,5 +25,27 @@ describe("漫剧空镜 · 抽屉裁点", () => {
     expect(() => manhuaEmptyShotTrimFromPick({ asset: asset({ purpose: "mv", usage: "insert" }), inSec: 0, outSec: 3 }, 3)).toThrow("漫剧空镜");
     expect(() => manhuaEmptyShotTrimFromPick({ asset: asset({ kind: "photo" }), inSec: 0, outSec: 3 }, 3)).toThrow("视频");
     expect(() => manhuaEmptyShotTrimFromPick({ asset: asset({ durationSec: undefined }), inSec: 0, outSec: 3 }, 3)).toThrow("时长");
+  });
+});
+
+describe("漫剧空镜 / 场景参考 · 登记链不吞错（源码约束）", () => {
+  const canvas = readFileSync("client/src/pages/OmniCanvas.tsx", "utf8");
+  const register = readFileSync("client/src/components/manhua/ManhuaStockEmptyShotRegister.tsx", "utf8");
+  const workbench = readFileSync("client/src/components/ManhuaScriptWorkbench.tsx", "utf8");
+  it("空镜登记：忙碌/未确认剧本/落档失败都向上抛，登记面板据此保留所选并就地显示原因", () => {
+    const body = canvas.slice(canvas.indexOf("const handleRegisterStockEmptyShot"), canvas.indexOf("const handleAdoptStockSceneReference"));
+    expect(body).toContain('throw new Error("请等待当前生成结束后再登记空镜")');
+    expect(body).toContain('throw new Error("请先确认当前剧本，再登记空镜")');
+    expect(body).toContain("throw new Error(`空镜未登记：");
+    expect(body).not.toContain("toast.error(`空镜未登记");
+    expect(body).not.toMatch(/toast\.message\("请等待当前生成结束"\);\s*return;/);
+    // 面板：onRegister 抛错 → setError 并保留 picked；只有 resolve 才 setPicked(null)
+    expect(register).toMatch(/await props\.onRegister\([\s\S]*?\);\s*setPicked\(null\);\s*\} catch \(e\) \{\s*setError\(/);
+  });
+  it("场景参考：挂图失败抛给抽屉（抽屉保持打开并提示），只有成功才关抽屉", () => {
+    const body = canvas.slice(canvas.indexOf("const handleAdoptStockSceneReference"), canvas.indexOf("const handleSegmentReferenceClear"));
+    expect(body).not.toContain("toast.error(");
+    expect(body).toContain("buildManhuaSceneReferenceFromStock(asset");
+    expect(workbench).toMatch(/await onAdoptStockSceneReference\(asset\);\s*setStockSceneOpen\(false\);/);
   });
 });

@@ -5,6 +5,7 @@ import {
   PENDING_KEY,
   PENDING_MAX_AGE_MS,
   PENDING_MAX_ITEMS,
+  adoptedAssetToCandidate,
   buildStockPick,
   candidateShortBySec,
   defaultMinDurationSec,
@@ -15,8 +16,10 @@ import {
   keywordSourceText,
   newRequestId,
   orientationLabel,
+  pendingBelongsTo,
   pendingMatchesContext,
   readPending,
+  reusableAdoptedAssets,
   writePending,
   type PendingAdoption,
 } from "@/components/stockFootage/stockFootageModel";
@@ -100,6 +103,37 @@ describe("本机待办（同步落盘 / 同编号续做 / 成功清除的存储�
   it("编号为 UUID", () => {
     expect(newRequestId()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
+  it("待办按登录用户隔离：别人的不显示；旧版无主人的兼容显示；用户未知时带主人的都不显示", () => {
+    expect(pendingBelongsTo(pendingItem({ ownerKey: "7" }), "7")).toBe(true);
+    expect(pendingBelongsTo(pendingItem({ ownerKey: "7" }), "8")).toBe(false);
+    expect(pendingBelongsTo(pendingItem({ ownerKey: "7" }), undefined)).toBe(false);
+    expect(pendingBelongsTo(pendingItem(), "8")).toBe(true);
+    expect(pendingBelongsTo(pendingItem(), undefined)).toBe(true);
+  });
+});
+
+describe("「我已采用过的」复用（四端共用抽屉入口）", () => {
+  const portrait = asset({ assetId: `sf_${"b".repeat(48)}`, width: 1080, height: 1920, source: { ...asset().source, providerAssetId: "456" } });
+  const photo = asset({ assetId: `sf_${"c".repeat(48)}`, kind: "photo", mimeType: "image/jpeg", durationSec: undefined, url: "https://signed.test/c.jpg" });
+  const reference = asset({ assetId: `sf_${"d".repeat(48)}`, usage: "reference" });
+  const noDuration = asset({ assetId: `sf_${"e".repeat(48)}`, durationSec: undefined });
+  it("只留同类型、同用法、画幅相符且（视频）带时长的资产", () => {
+    const list = [asset(), portrait, photo, reference, noDuration];
+    expect(reusableAdoptedAssets(list, "video", "insert").map(a => a.assetId)).toEqual([asset().assetId, portrait.assetId]);
+    expect(reusableAdoptedAssets(list, "video", "insert", "landscape").map(a => a.assetId)).toEqual([asset().assetId]);
+    expect(reusableAdoptedAssets(list, "video", "insert", "portrait").map(a => a.assetId)).toEqual([portrait.assetId]);
+    expect(reusableAdoptedAssets(list, "photo", "insert").map(a => a.assetId)).toEqual([photo.assetId]);
+    expect(reusableAdoptedAssets(list, "video", "reference").map(a => a.assetId)).toEqual([reference.assetId]);
+    expect(reusableAdoptedAssets(undefined, "video", "insert")).toEqual([]);
+  });
+  it("资产 → 候选：视频用本人签名读链当预览、无上游缩略；照片用读链当图；键与搜索候选同构（kind-providerAssetId）", () => {
+    const v = adoptedAssetToCandidate(asset());
+    expect(v).toEqual({ provider: "pexels", providerAssetId: "123", kind: "video", pageUrl: "https://example.test/p", previewImageUrl: "", previewVideoUrl: "https://signed.test/a.mp4", width: 1920, height: 1080, durationSec: 10, author: { name: "Someone Author" } });
+    const ph = adoptedAssetToCandidate(photo);
+    expect(ph.previewImageUrl).toBe("https://signed.test/c.jpg");
+    expect(ph).not.toHaveProperty("previewVideoUrl");
+    expect(ph).not.toHaveProperty("durationSec");
+  });
 });
 
 describe("抽屉展示与裁点交付", () => {
@@ -157,13 +191,17 @@ const candidates: StockFootageCandidate[] = [
 ];
 const suggestUseQuery = vi.fn((..._args: unknown[]) => ({ data: undefined, isLoading: true, isError: false }));
 const searchUseQuery = vi.fn((..._args: unknown[]) => ({ data: { candidates, hasMore: true, page: 1 }, isFetching: false, error: null }));
+const listAdoptionsUseQuery = vi.fn((..._args: unknown[]) => ({ data: undefined as StockFootageAssetView[] | undefined }));
 vi.mock("@/lib/trpc", () => ({
   trpc: {
     useUtils: () => ({ stockFootage: { listAdoptions: { invalidate: vi.fn() }, getAdoption: { fetch: vi.fn() } } }),
+    auth: { me: { useQuery: () => ({ data: { id: 7 } }) } },
     stockFootage: {
       suggestKeywords: { useQuery: (...a: unknown[]) => suggestUseQuery(...a) },
       search: { useQuery: (...a: unknown[]) => searchUseQuery(...a) },
+      listAdoptions: { useQuery: (...a: unknown[]) => listAdoptionsUseQuery(...a) },
       adopt: { useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }) },
+      abandonAdoption: { useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }) },
     },
   },
 }));
@@ -235,6 +273,24 @@ describe("StockFootageDrawer 渲染", () => {
     expect(searchUseQuery.mock.calls[0][1]).toMatchObject({ enabled: false });
     expect(html).not.toContain('role="radiogroup"');
   });
+  it("已采用复用：按用途 + 当前项目取本人已采用；同类型/用法/画幅的进「我已采用过的」，不符的不进；没有则不渲染该区", () => {
+    listAdoptionsUseQuery.mockClear();
+    const reusableOne = asset({ assetId: `sf_${"f".repeat(48)}`, source: { ...asset().source, providerAssetId: "777" } });
+    const wrongShape = asset({ assetId: `sf_${"b".repeat(48)}`, width: 1080, height: 1920 });
+    const photo = asset({ assetId: `sf_${"c".repeat(48)}`, kind: "photo", durationSec: undefined });
+    listAdoptionsUseQuery.mockReturnValueOnce({ data: [reusableOne, wrongShape, photo] });
+    const html = render({ open: true, initialQuery: "rain", orientation: "landscape", context: { projectId: "proj-9", shotId: "s1" } });
+    expect(listAdoptionsUseQuery.mock.calls[0][0]).toEqual({ purpose: "mv", projectId: "proj-9", limit: 30 });
+    expect(html).toContain("data-stock-adopted-section");
+    expect(html).toContain("我已采用过的视频（1）");
+    expect(html).toContain("不重复保存");
+    // 作者/来源字样仍不得出现
+    for (const word of ["Someone Author", "example.test", "pexels", "Pexels"]) expect(html).not.toContain(word);
+
+    listAdoptionsUseQuery.mockReturnValueOnce({ data: [wrongShape, photo] });
+    const none = render({ open: true, initialQuery: "rain", orientation: "landscape" });
+    expect(none).not.toContain("data-stock-adopted-section");
+  });
   it("反向：界面不出现作者、来源、许可、供应商等字样；按钮都是真实 button 且触控 ≥44px", () => {
     const html = render({ open: true, targetDurationSec: 5, initialQuery: "rain" });
     for (const word of ["Pexels", "pexels", "License", "许可", "作者", "来源", "Jane Photographer", "John Filmmaker", "example.test", "rainy street", "编号", "入库"]) expect(html).not.toContain(word);
@@ -263,6 +319,15 @@ describe("源码约束", () => {
   it("裁点经 clampStockTrim，交付经 buildStockPick", () => {
     expect(drawer).toContain("clampStockTrim(");
     expect(drawer).toContain("buildStockPick(asset");
+  });
+  it("确认时命中已采用资产直接绑定（不再 startAdoption）；「移除」走 abandonPending 通知服务端放弃", () => {
+    expect(drawer).toContain("adoptedByKey.get(key)");
+    expect(drawer).toContain("adoption.abandonPending(p.requestId)");
+    expect(panel).toContain("abandonPending(p.requestId)");
+    expect(hook).toContain("stockFootage.abandonAdoption.useMutation");
+    // 发起时记录主人；展示时按主人过滤
+    expect(hook).toContain("...(ownerKey ? { ownerKey } : {})");
+    expect(hook).toContain("pendingBelongsTo(p, ownerKey)");
   });
 });
 

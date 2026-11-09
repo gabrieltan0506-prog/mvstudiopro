@@ -770,3 +770,14 @@ export function marketingVoiceFromDialogue(
 export function marketingProductionStorageKey(userKey: string): string {
   return `mvs.marketingProduction.v1:${userKey}`;
 }
+
+/**
+ * 营销声线克隆的本机续做编号键（按登录用户隔离）。
+ * 旧键 `mvs.marketing.cloneVoice.v1` 不带用户：同一浏览器换账号会把上一位用户的克隆请求（含其录音 gcsUri）
+ * 当成自己的待续做并重新提交，必须按用户分键；旧键不迁移（无法判定归属）。
+ */
+export function marketingCloneVoiceStorageKey(userKey: string): string {
+  const key = String(userKey || "").trim();
+  if (!key) throw new Error("营销声线克隆续做需要登录用户");
+  return `mvs.marketing.cloneVoice.v2:${key}`;
+}

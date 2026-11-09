@@ -178,6 +178,31 @@ describe("adoptStockFootage", () => {
     vi.resetModules();
   });
 
+  it("真实 takeover 以 ISO 字符串比对毫秒截断的 updatedAt（不把裸 Date 交给驱动按本地时区序列化）", async () => {
+    vi.resetModules();
+    const captured: unknown[] = [];
+    const chain = {
+      update: () => ({ set: () => ({ where: (w: unknown) => { captured.push(w); return { returning: async () => [{ id: "sf_x" }] }; } }) }),
+    };
+    vi.doMock("../../db", () => ({ getDb: async () => chain }));
+    const mod = await import("./adoption");
+    const prev = new Date("2026-11-09T01:02:03.456Z");
+    expect(await mod.realStockAdoptionDeps.takeover("sf_x", 7, prev)).toBe(true);
+    const flatten = (node: unknown, out: unknown[] = []): unknown[] => {
+      if (Array.isArray(node)) for (const c of node) flatten(c, out);
+      else if (node && typeof node === "object" && Array.isArray((node as { queryChunks?: unknown[] }).queryChunks)) for (const c of (node as { queryChunks: unknown[] }).queryChunks) flatten(c, out);
+      else if (node && typeof node === "object" && "value" in (node as object)) flatten((node as { value: unknown }).value, out);
+      else out.push(node);
+      return out;
+    };
+    const leaves = flatten(captured[0]);
+    expect(leaves).toContain("2026-11-09T01:02:03.456Z");
+    expect(leaves.some(v => v instanceof Date)).toBe(false);
+    expect(leaves.some(v => typeof v === "string" && v.includes("date_trunc('milliseconds'"))).toBe(true);
+    vi.doUnmock("../../db");
+    vi.resetModules();
+  });
+
   it("查询与归属核对：他人账号、未完成、用途不符都拒绝", async () => {
     const { deps } = makeDeps();
     const res = await adoptStockFootage(7, input, deps);

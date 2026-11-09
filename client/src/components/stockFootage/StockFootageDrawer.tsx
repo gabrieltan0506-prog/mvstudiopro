@@ -6,6 +6,8 @@
  * - 采用沿用 useStockFootageAdoption 的本机待办与同编号续做；onPick 失败时保留已采用资产，重试只重新绑定、不重复保存。
  * - onPick 成功后抽屉不自动关闭，由业务方决定（通常在 onPick 里把 open 置 false）。
  * - 界面不显示素材来源、作者、许可等信息，只显示时长、尺寸、画幅。
+ * - 「我已采用过的」：同用途 + 同项目 + 同类型/用法/画幅的本人资产可直接绑定（命中 adoptedByKey 不再发起保存），
+ *   四端（MV / 数字人 / 营销 / 漫剧）共用这一个入口。
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -22,6 +24,7 @@ import {
 } from "@shared/stockFootage";
 import { STOCK_TRIM_MIN_SEC, clampStockTrim, type StockTrim } from "@shared/stockFootageTrim";
 import {
+  adoptedAssetToCandidate,
   buildStockPick,
   candidateShortBySec,
   defaultMinDurationSec,
@@ -37,6 +40,7 @@ import {
   STOCK_DRAWER_PER_PAGE,
   STOCK_DRAWER_STEPS,
   rankStockCandidates,
+  reusableAdoptedAssets,
   stockDrawerConfirmLabel,
   stockDrawerStep,
 } from "./stockFootageModel";
@@ -70,30 +74,6 @@ const TRIM_STEP_SEC = 0.1;
 const ADOPTED_LIMIT = 30;
 
 const candidateKey = (c: Pick<StockFootageCandidate, "kind" | "providerAssetId">) => `${c.kind}-${c.providerAssetId}`;
-
-/**
- * 已采用资产 → 抽屉候选形状：预览直接用本人资产的签名读链（照片当图、视频当预览），
- * 与搜索候选共用选中/裁点/确认链；确认时命中 adoptedByKey 直接绑定，不再发起保存。
- */
-export function adoptedAssetToCandidate(asset: StockFootageAssetView): StockFootageCandidate {
-  return {
-    provider: asset.source.provider,
-    providerAssetId: asset.source.providerAssetId,
-    kind: asset.kind,
-    pageUrl: asset.source.pageUrl,
-    previewImageUrl: asset.kind === "photo" ? asset.url : "",
-    ...(asset.kind === "video" ? { previewVideoUrl: asset.url } : {}),
-    width: asset.width,
-    height: asset.height,
-    ...(asset.durationSec ? { durationSec: asset.durationSec } : {}),
-    author: asset.source.author,
-  };
-}
-
-/** 只复用与当前位置同类型、同用法的已采用资产（视频还须带时长，否则没法裁）。 */
-export function reusableAdoptedAssets(list: readonly StockFootageAssetView[] | undefined, kind: "video" | "photo", usage: StockFootageUsage): StockFootageAssetView[] {
-  return (list ?? []).filter(a => a.kind === kind && a.usage === usage && (kind !== "video" || (a.durationSec ?? 0) > 0));
-}
 
 export function StockFootageDrawer(props: StockFootageDrawerProps) {
   // 每次打开重新挂载：关键词、筛选、选中与裁点都从当前镜头/段落重新开始。
@@ -177,7 +157,8 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
     { purpose, ...(context?.projectId ? { projectId: context.projectId } : {}), limit: ADOPTED_LIMIT },
     { enabled: !usageError, retry: false, staleTime: 60_000, refetchOnWindowFocus: false }
   );
-  const reusable = useMemo(() => reusableAdoptedAssets(adoptedList.data, kind, usage), [adoptedList.data, kind, usage]);
+  const reusable = useMemo(() => reusableAdoptedAssets(adoptedList.data, kind, usage, orientation ?? props.orientation), [adoptedList.data, kind, usage, orientation, props.orientation]);
+  const adoptedCandidates = useMemo(() => rankStockCandidates(reusable.map(adoptedAssetToCandidate), targetSec, orientation), [reusable, targetSec, orientation]);
   const adoptedByKey = useMemo(() => new Map(reusable.map(a => [candidateKey(adoptedAssetToCandidate(a)), a] as const)), [reusable]);
   const [showAdopted, setShowAdopted] = useState(false);
 
@@ -321,6 +302,49 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
   const step = stockDrawerStep({ hasQuery: query.length > 0, hasCandidates: candidates.length > 0, hasSelected: Boolean(selected) });
   const shortBy = selected ? candidateShortBySec(selected, targetSec) : 0;
   const pct = (sec: number) => (sourceSec > 0 ? `${Math.min(100, Math.max(0, (sec / sourceSec) * 100))}%` : "0%");
+
+  /** 候选卡（搜索结果与「已采用」共用同一张卡、同一条选中/裁点/确认链）。已采用的视频没有上游预览图，用本人资产首帧当缩略。 */
+  const renderCard = (c: StockFootageCandidate & { fit: boolean }, adoptedBefore: boolean) => {
+    const key = candidateKey(c);
+    const checked = selected ? candidateKey(selected) === key : false;
+    const short = candidateShortBySec(c, targetSec);
+    const shape = orientationLabel(c.width, c.height);
+    return (
+      <button
+        key={`${adoptedBefore ? "adopted" : "search"}-${key}`}
+        type="button"
+        role="radio"
+        aria-checked={checked}
+        disabled={busy}
+        onClick={() => choose(c)}
+        data-stock-adopted-before={adoptedBefore ? "1" : undefined}
+        className={`flex min-h-11 flex-col gap-1.5 rounded-md border p-1.5 text-left disabled:opacity-60 ${checked ? "border-emerald-400 bg-emerald-400/15 ring-2 ring-emerald-400/60" : "border-white/10 hover:border-white/30 hover:bg-white/5"}`}
+      >
+        <span className="relative block aspect-video w-full overflow-hidden rounded bg-black/40">
+          {c.previewImageUrl ? (
+            <img src={c.previewImageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+          ) : c.previewVideoUrl ? (
+            <video src={`${c.previewVideoUrl}#t=0.1`} muted playsInline preload="metadata" aria-hidden className="pointer-events-none h-full w-full object-cover" />
+          ) : null}
+          {c.kind === "video" && c.durationSec ? (
+            <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[10px] tabular-nums">{fmtDuration(c.durationSec)}</span>
+          ) : null}
+          {adoptedBefore && !checked && <span className="absolute right-1 top-1 rounded bg-sky-500/90 px-1.5 text-[10px] font-medium text-black">已采用</span>}
+          {c.fit && !checked && <span className="absolute left-1 top-1 rounded bg-emerald-500/90 px-1.5 text-[10px] font-medium text-black">合适</span>}
+          {checked && <span className="absolute left-1 top-1 flex items-center gap-0.5 rounded bg-emerald-400 px-1.5 text-[10px] font-medium text-black"><Check className="h-3 w-3" />已选</span>}
+        </span>
+        <span className="flex min-w-0 flex-col gap-0.5 text-xs">
+          <span className="flex items-center gap-1 opacity-80">
+            {c.kind === "video" ? <Film className="h-3 w-3" /> : <ImageIcon className="h-3 w-3" />}
+            {c.kind === "video" ? "视频" : "照片"}
+            {shape ? ` · ${shape}` : ""}
+            <span className="tabular-nums opacity-60"> · {c.width}×{c.height}</span>
+          </span>
+          {short > 0 && <span className="text-amber-200">短于镜头 {short} 秒</span>}
+        </span>
+      </button>
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-[90] flex justify-end" data-stock-footage-drawer>
@@ -480,41 +504,26 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
               )}
               {candidates.length > 0 && (
                 <div role="radiogroup" aria-label="候选素材" className="grid grid-cols-2 gap-2">
-                  {candidates.map(c => {
-                    const key = candidateKey(c);
-                    const checked = selected ? candidateKey(selected) === key : false;
-                    const short = candidateShortBySec(c, targetSec);
-                    const shape = orientationLabel(c.width, c.height);
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        role="radio"
-                        aria-checked={checked}
-                        disabled={busy}
-                        onClick={() => choose(c)}
-                        className={`flex min-h-11 flex-col gap-1.5 rounded-md border p-1.5 text-left disabled:opacity-60 ${checked ? "border-emerald-400 bg-emerald-400/15 ring-2 ring-emerald-400/60" : "border-white/10 hover:border-white/30 hover:bg-white/5"}`}
-                      >
-                        <span className="relative block aspect-video w-full overflow-hidden rounded bg-black/40">
-                          <img src={c.previewImageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
-                          {c.kind === "video" && c.durationSec ? (
-                            <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[10px] tabular-nums">{fmtDuration(c.durationSec)}</span>
-                          ) : null}
-                          {c.fit && !checked && <span className="absolute left-1 top-1 rounded bg-emerald-500/90 px-1.5 text-[10px] font-medium text-black">合适</span>}
-                          {checked && <span className="absolute left-1 top-1 flex items-center gap-0.5 rounded bg-emerald-400 px-1.5 text-[10px] font-medium text-black"><Check className="h-3 w-3" />已选</span>}
-                        </span>
-                        <span className="flex min-w-0 flex-col gap-0.5 text-xs">
-                          <span className="flex items-center gap-1 opacity-80">
-                            {c.kind === "video" ? <Film className="h-3 w-3" /> : <ImageIcon className="h-3 w-3" />}
-                            {c.kind === "video" ? "视频" : "照片"}
-                            {shape ? ` · ${shape}` : ""}
-                            <span className="tabular-nums opacity-60"> · {c.width}×{c.height}</span>
-                          </span>
-                          {short > 0 && <span className="text-amber-200">短于镜头 {short} 秒</span>}
-                        </span>
-                      </button>
-                    );
-                  })}
+                  {candidates.map(c => renderCard(c, false))}
+                </div>
+              )}
+
+              {adoptedCandidates.length > 0 && (
+                <div className="rounded-md border border-white/10 p-2" data-stock-adopted-section>
+                  <button
+                    type="button"
+                    aria-expanded={showAdopted}
+                    onClick={() => setShowAdopted(v => !v)}
+                    className="flex min-h-9 w-full items-center justify-between text-xs"
+                  >
+                    <span className="font-medium opacity-90">我已采用过的{kind === "video" ? "视频" : "照片"}（{adoptedCandidates.length}）· 直接绑定，不重复保存</span>
+                    <span className="opacity-60">{showAdopted ? "收起" : "展开"}</span>
+                  </button>
+                  {showAdopted && (
+                    <div role="radiogroup" aria-label="已采用素材" className="mt-2 grid grid-cols-2 gap-2">
+                      {adoptedCandidates.map(c => renderCard(c, true))}
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -139,7 +139,9 @@ const realDeps: StockAdoptionDeps = {
       .update(jobs)
       .set({ updatedAt: new Date(), attempts: sql`${jobs.attempts} + 1` })
       // 旧占位行（本修复前由数据库 now() 写入）带微秒尾数，按毫秒截断比较才能接手。
-      .where(and(eq(jobs.id, id), eq(jobs.userId, String(userId)), eq(jobs.status, "running"), sql`date_trunc('milliseconds', ${jobs.updatedAt}) = ${prevUpdatedAt}`))
+      // 参数显式用 ISO 字符串（与 drizzle timestamp 列的 mapToDriverValue 同一口径）：裸 Date 由 pg 驱动按进程本地时区序列化，
+      // 进程时区非 UTC 时会与列里存的 UTC 墙钟差整数小时，永远对不上。
+      .where(and(eq(jobs.id, id), eq(jobs.userId, String(userId)), eq(jobs.status, "running"), sql`date_trunc('milliseconds', ${jobs.updatedAt}) = ${prevUpdatedAt.toISOString()}::timestamp`))
       .returning({ id: jobs.id });
     return rows.length === 1;
   },

@@ -10181,14 +10181,10 @@ function OmniCanvasWorkspace() {
    */
   const handleRegisterStockEmptyShot = useCallback(
     async (segmentIndex: number, pick: ManhuaStockEmptyShotPick) => {
-      if (factoryBusy) {
-        toast.message("请等待当前生成结束");
-        return;
-      }
-      if (!writerConfirmed) {
-        toast.error("请先确认当前剧本，再登记空镜");
-        return;
-      }
+      // 未登记一律抛错：登记面板靠异常保留「已选素材 + 裁点 + 勾选」并就地显示原因；
+      // 静默 return 会让面板把它当成功收起，用户以为登记了、其实本段没有空镜。
+      if (factoryBusy) throw new Error("请等待当前生成结束后再登记空镜");
+      if (!writerConfirmed) throw new Error("请先确认当前剧本，再登记空镜");
       try {
         const currentBlocks = blocksRef.current;
         const segment = groupShotsIntoSegments(resolveShotsForEpisodeKeyarts(currentBlocks, writerFocusEpisode), {
@@ -10236,7 +10232,7 @@ function OmniCanvasWorkspace() {
           description: `图库空镜 · 裁点 ${registration.window.inSec}–${registration.window.outSec} 秒；${MANHUA_REGISTERED_CLIP_SUMMARY_ZH}`,
         });
       } catch (error) {
-        toast.error(`空镜未登记：${error instanceof Error ? maskMediaProviderDetails(error.message) : String(error)}`);
+        throw new Error(`空镜未登记：${error instanceof Error ? maskMediaProviderDetails(error.message) : String(error)}`);
       }
     },
     [factoryBusy, writerConfirmed, writerFocusEpisode, activePilotVideoModel, writerPack, patchClipBlockPersist],
@@ -10252,14 +10248,11 @@ function OmniCanvasWorkspace() {
     return out;
   }, [blocks, writerFocusEpisode]);
   /** 1108 图库照片 → 「我的场景」场景参考图（恒为 scene·空间参考；标记让它不能被改成人物、不进角色卡）。 */
+  // 失败直接抛给抽屉（抽屉 toast 并保持打开，可换一张）；这里不吞错，否则抽屉会当成功关闭、参考图却没挂上。
   const handleAdoptStockSceneReference = useCallback((asset: StockFootageAssetView) => {
-    try {
-      const ref = buildManhuaSceneReferenceFromStock(asset, makeManhuaCustomAssetId());
-      setCustomAssetRefs((prev) => normalizeManhuaCustomAssetRefs([...prev.filter((r) => r.stockFootage?.assetId !== asset.assetId), ref]));
-      toast.message("已挂为场景参考图", { description: "只作空间/画风参考，不入片" });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
-    }
+    const ref = buildManhuaSceneReferenceFromStock(asset, makeManhuaCustomAssetId());
+    setCustomAssetRefs((prev) => normalizeManhuaCustomAssetRefs([...prev.filter((r) => r.stockFootage?.assetId !== asset.assetId), ref]));
+    toast.message("已挂为场景参考图", { description: "只作空间/画风参考，不入片" });
   }, []);
   const handleSegmentReferenceClear = useCallback(
     (clipBlockId: string, slot: ManhuaSegmentReferenceSlot) => {
