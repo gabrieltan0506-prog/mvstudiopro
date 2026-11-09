@@ -272,7 +272,7 @@ export function buildKnowledgePostImageConsistencyRequest(title:string,digest:st
  * 审校链顺序（用户规则 2026-11-09）：GLM-5.3 FlashX@EvoLink → GLM FlashX@OpenRouter → DeepSeek V4.1 Flash 1017@EvoLink → @OpenRouter。
  * 依据：敦煌整册审校 OpenRouter DeepSeek 24 次 200 后流中途断；GLM FlashX@EvoLink 支持图像输入、1M 上下文、输出 128K、思考常开
  * （reasoning_content 计入 completion_tokens，SSE 解析只取 content），官方推荐截图分析/文档工作流。
- * 通过 executionFamily/executionChannel 表达，不改全局路由表；篇幅压缩等显式指定 deepseek 的请求不受影响。
+ * 通过 executionFamily/executionChannel 表达，不改全局路由表；篇幅压缩同样走 GLM@EvoLink 首发链。
  */
 export const KNOWLEDGE_REVIEW_EXECUTION = { executionFamily: "glm", executionChannel: "evolink" } as const;
 /**
@@ -304,10 +304,11 @@ export function knowledgeReviewPageChars(page: { body: string; reading?: Paramet
  * 篇幅压缩请求（预算的生产者）：只对审校后超出各页 maxChars 的页，一次廉价文字调用按目标提炼 reading；
  * 不带图片、不改图片审校结论（imageDescription/imageStatus 由调用方从原审校复制回去）。
  */
-export function buildKnowledgeCompressionRequest(pageSource: KnowledgeSource, digest: string, overflow: readonly KnowledgeReadingOverflow[], channel: "openrouter" | "evolink" = "openrouter"): KnowledgeModelRequest {
+export function buildKnowledgeCompressionRequest(pageSource: KnowledgeSource, digest: string, overflow: readonly KnowledgeReadingOverflow[], channel: "openrouter" | "evolink" = "evolink"): KnowledgeModelRequest {
   const request = buildKnowledgeReviewRequest(pageSource, digest, new Map());
+  // 2026-11-09 用户令：每次 LLM 调用按 GLM FlashX@EvoLink→GLM@OR→DeepSeek 链执行（压缩从未发出过，改序不影响旧回执）。
   request.executionChannel = channel;
-  request.executionFamily = "deepseek";
+  request.executionFamily = "glm";
   request.systemInstruction.parts.push({ text: knowledgeCompressionInstructions(pageSource.detailLevel || "full", overflow) });
   request.systemInstruction.parts.push({ text: "严格保持层级：根对象只有kind、sourceDigest、title、pages；每页都要给完整reading（version:1,subtitle,accent,blocks），imageDescription写\"\"、imageStatus写\"absent\"（图片审校结论由程序保留原值）。" });
   return request;
@@ -356,14 +357,31 @@ export async function compressKnowledgeReviewToBudget(params: {
   return { pages, before, after, adopted, error };
 }
 
-async function readKnowledgeBatchReports(source:KnowledgeSource,digest:string,root:string,read:typeof real.read) {
+/**
+ * 已落盘批次报告若带「压缩调用未完成」（budgetOverflow.error 且仍有超出页），在被再次读取时补跑篇幅压缩（2026-11-09 用户令：
+ * 超出页不得带进排版；旧恢复入口曾零调用挡住首发压缩）。原报告另存 report-precompress.json 永久保留；新报告与压缩回执照常落 GCS。
+ */
+export async function retryKnowledgeBatchCompression(deps: typeof real, prefix: string, attempt: number, digest: string, source: KnowledgeSource, saved: any) {
+  const overflow = saved?.budgetOverflow;
+  if (!overflow?.error || !overflow.after?.length || !(source.detailLevel && source.reviewBatchMode === "ready-images")) return saved;
+  const compressed = await compressKnowledgeReviewToBudget({ deps, prefix: `${prefix}/compress`, attempt, digest, source, pages: saved.report.pages });
+  if (compressed.error) throw new Error(`第${prefix.split("/batch-").pop()}组篇幅压缩仍未完成，超出页不进排版：${compressed.error.slice(0, 200)}`);
+  if (!await deps.read(`${prefix}/report-precompress.json`)) await deps.save(`${prefix}/report-precompress.json`, saved);
+  const next = { ...saved, report: { ...saved.report, pages: compressed.pages },
+    budgetOverflow: { before: overflow.before, after: compressed.after, adopted: compressed.adopted, retriedAt: new Date().toISOString(), priorError: overflow.error } };
+  await deps.save(`${prefix}/report.json`, next);
+  return next;
+}
+
+async function readKnowledgeBatchReports(source:KnowledgeSource,digest:string,root:string,read:typeof real.read,deps?:typeof real,attempts?:Record<string,number>) {
   const batches=knowledgeReviewBatches(source);
   const results: {report:ReturnType<typeof validateKnowledgeReview>;sourceImages:{uri:string;sha256:string}[]}[]=new Array(batches.length);
   let cursor=0;
   await Promise.all(Array.from({length:Math.min(32,batches.length)},async()=>{
     while(cursor<batches.length){
-      const i=cursor++,indexes=batches[i],saved=await read(`${root}/batch-${i}/report.json`);
+      const i=cursor++,indexes=batches[i];let saved=await read(`${root}/batch-${i}/report.json`);
       if(!saved)throw new Error(`第${i+1}组内容尚未完成，不能把部分内容当整套通过`);
+      if(deps)saved=await retryKnowledgeBatchCompression(deps,`${root}/batch-${i}`,attempts?.[String(i)]||0,digest,source,saved);
       const partial={title:source.title,pages:indexes.map(n=>source.pages[n])};
       const report=validateKnowledgeReview(saved.report,partial,digest);
       validateKnowledgeImageReceipts(partial,saved.sourceImages);
@@ -407,7 +425,7 @@ export async function reviewKnowledgePublication(
       validateKnowledgeImageReceipts(source, previous.sourceImages);
       return validateKnowledgeReview(previous.report, source, digest);
     }
-    const savedReports = await readKnowledgeBatchReports(source, digest, root, deps.read);
+    const savedReports = await readKnowledgeBatchReports(source, digest, root, deps.read, deps, document.publication.attempts);
     const reports = savedReports.map(p => p.report);
     const sourceImages = savedReports.flatMap(p => p.sourceImages);
     validateKnowledgeImageReceipts(source, sourceImages);
@@ -493,8 +511,9 @@ export async function reviewKnowledgePublication(
     pages: indices.map(i => source.pages[i]),
   };
   const prefix = `${root}/batch-${context.batchIndex}`;
-  const previous = await deps.read(`${prefix}/report.json`);
+  let previous = await deps.read(`${prefix}/report.json`);
   if (previous) {
+    previous = await retryKnowledgeBatchCompression(deps, prefix, context.attempt, digest, source, previous);
     const report = validateKnowledgeReview(previous.report, batchSource, digest);
     validateKnowledgeImageReceipts(batchSource, previous.sourceImages);
     return {

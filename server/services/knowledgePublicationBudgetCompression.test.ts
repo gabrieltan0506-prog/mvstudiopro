@@ -16,7 +16,8 @@ const book = compileKnowledgeEditions("敦煌测试", Array.from({ length: 12 },
 })));
 const prose = (chars: number) => "敦煌壁画的内容与年代。".repeat(Math.ceil(chars / 11)).slice(0, chars);
 
-function harness(compressChars: number | "fail") {
+function harness(initial: number | "fail") {
+  let compressChars = initial;
   state.jobs.clear();
   const plan = knowledgeEditionImagePlan(book.full)!;
   const imageJobIds = plan.images.map((_, i) => `img-job-${i}`);
@@ -38,7 +39,7 @@ function harness(compressChars: number | "fail") {
     return { status: 200, text: JSON.stringify({ modelVersion: KNOWLEDGE_VISUAL_ADVISOR_MODEL, usageMetadata: { promptTokensDetails: payload.source.pages.some((p: any) => p.imageUrl) ? [{ modality: "IMAGE", tokenCount: 10 }] : [] }, candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(value) }] } }] }) };
   });
   const deps = { load: async () => doc as any, read: async (name: string) => storage.get(name) || null, save: async (name: string, value: any) => { storage.set(name, structuredClone(value)); }, count: async () => ({ totalTokens: 500, method: "test" }), post, image: async () => ({ buffer: Buffer.from("image"), mimeType: "image/png", width: 10, height: 10, sha256: sha }) };
-  return { doc, source, digest, storage, post, calls, deps, root: knowledgeEvidencePrefix(7, doc.id, doc.publication!.requestId) };
+  return { setCompress: (v: number | "fail") => { compressChars = v; }, doc, source, digest, storage, post, calls, deps, root: knowledgeEvidencePrefix(7, doc.id, doc.publication!.requestId) };
 }
 
 describe("完整版图文同页：审校后按页预算压缩（预算的生产者）", () => {
@@ -62,7 +63,7 @@ describe("完整版图文同页：审校后按页预算压缩（预算的生产�
     expect(h.storage.get(`${h.root}/batch-0/report.json`).budgetOverflow.after).toEqual([]);
     // 压缩请求是廉价文字路由，不带图片
     const compressRequest = (h.post.mock.calls[1]![0] as any);
-    expect(compressRequest.executionFamily).toBe("deepseek");
+    expect(compressRequest.executionFamily).toBe("glm");
     expect(compressRequest.contents[0].parts.some((p: any) => "fileData" in p)).toBe(false);
     const again = await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps) as any;
     expect(h.post).toHaveBeenCalledTimes(2);
@@ -84,5 +85,22 @@ describe("完整版图文同页：审校后按页预算压缩（预算的生产�
     expect(batch.budgetOverflow.adopted).toEqual([]);
     expect(batch.budgetOverflow.error).toContain("未完整结束");
     expect(batch.budgetOverflow.after[0]!.excess).toBe(1107);
+  });
+
+  it("旧报告带压缩未完成（从未发出）：再读时补跑压缩，原报告另存 report-precompress.json，超出页不再带进排版", async () => {
+    const h = harness("fail");
+    await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps);
+    // 模拟恢复入口当时零调用挡住首发压缩：压缩目录无任何回执
+    for (const key of Array.from(h.storage.keys())) if (key.startsWith(`${h.root}/batch-0/compress/`)) h.storage.delete(key);
+    const saved = structuredClone(h.storage.get(`${h.root}/batch-0/report.json`));
+    h.setCompress(650);
+    const again = await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps) as any;
+    expect(h.calls.map(c => c.kind)).toEqual(["review", "compress", "compress"]);
+    expect(knowledgeReviewPageChars(again.pages[0])).toBe(657);
+    expect(again.budgetOverflow.after).toEqual([]);
+    expect(again.budgetOverflow.priorError).toContain("未完整结束");
+    expect(h.storage.get(`${h.root}/batch-0/report-precompress.json`)).toEqual(saved);
+    await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps);
+    expect(h.post).toHaveBeenCalledTimes(3);
   });
 });
