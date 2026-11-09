@@ -228,8 +228,8 @@ describe("镜长与节拍/唱句对齐（1109 补完）", () => {
   ];
   it("切在唱句中间的演唱镜剪点移到最近句间，两镜分窗都不切句", () => {
     const shots = [
-      { id: "s1", startSec: 0, endSec: 6, kind: "singing", beats: [w(0, 3), w(3, 6)] },
-      { id: "s2", startSec: 6, endSec: 12, kind: "singing", beats: [w(6, 9), w(9, 12)] },
+      { id: "s1", startSec: 0, endSec: 6, kind: "singing" as const, beats: [w(0, 3), w(3, 6)] },
+      { id: "s2", startSec: 6, endSec: 12, kind: "singing" as const, beats: [w(6, 9), w(9, 12)] },
     ];
     const out = snapSingingCutsToLyricLines(shots, lines, { maxShotSec: 14 });
     expect(out.shots[0]!.endSec).toBe(7.8);

@@ -69,12 +69,12 @@ export function createAdvisorVideoEditHub() {
   const control: AdvisorVideoEditControl = async (action, signal) => {
     if (!controls.size) throw new Error("当前页面没有可局部修改的成片，请先生成成片或打开对应的「局部修改」，未打开");
     if (action.operation === "inspect") {
-      const parts = await Promise.all([...controls.values()].map(c => inspectOf(c, signal)));
+      const parts = await Promise.all(Array.from(controls.values()).map(c => inspectOf(c, signal)));
       const seen = new Set<string>();
       const videos = parts.flatMap(p => p.videos).filter(v => !seen.has(v.targetId) && Boolean(seen.add(v.targetId)));
       return JSON.stringify({ ...parts[0], videos, refs: parts.flatMap(p => p.refs) });
     }
-    for (const c of controls.values())
+    for (const c of Array.from(controls.values()))
       if ((await inspectOf(c, signal)).videos.some(v => v.targetId === action.targetId)) return c(action, signal);
     throw new Error("视频不在当前可编辑清单，请先读取可编辑视频，未打开");
   };
