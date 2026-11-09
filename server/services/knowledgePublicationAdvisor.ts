@@ -8,8 +8,9 @@ import { z } from "zod";
 import { planKnowledgeConsistency } from "../../shared/knowledgePublicationConsistency";
 import sharp from "sharp";
 import { KNOWLEDGE_READING_INSTRUCTIONS, knowledgeReadingMarkdown } from "../../shared/knowledgePublicationLayout";
+import { dedupeKnowledgeBody, dedupeKnowledgeReading, knowledgeReadingParagraphKeys, type KnowledgeDedupeRemoval } from "../../shared/knowledgeReadingDedupe";
 import { invokeKnowledgePublicationRoutes, KNOWLEDGE_PUBLICATION_MODEL, type KnowledgeModelRequest, type KnowledgeRouteEvidence } from "./knowledgePublicationRoutes";
-import { KNOWLEDGE_PUBLICATION_ROUTE_ORDER, KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST } from "./knowledgeModelCapabilities";
+import { KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES, KNOWLEDGE_PUBLICATION_ROUTE_ORDER, KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST } from "./knowledgeModelCapabilities";
 import {
   knowledgePublicationContextSchema,
   knowledgeConsistencySchema,
@@ -314,62 +315,134 @@ export function buildKnowledgeCompressionRequest(pageSource: KnowledgeSource, di
   return request;
 }
 
+/** 篇幅压缩最多轮数：每轮一次正式三跳链调用（GLM FlashX@EvoLink → GLM@OpenRouter → DeepSeek v4.1 Flash 1017，超时/断线/空回/写坏由路由切下一跳）。 */
+export const KNOWLEDGE_COMPRESSION_MAX_ROUNDS = 4;
+/** 第 2 轮起目标按 maxChars 留 8% 余量，避免模型反复贴线超出。 */
+const KNOWLEDGE_COMPRESSION_RETRY_MARGIN = 0.92;
+const compressionRoundPrefix = (prefix: string, round: number) => round === 0 ? prefix : `${prefix}/round-${round}`;
+
 /**
  * 审校后按页预算压缩（完整版图文同页：每页 reading 须装进图下一栏）。
  * - 没有超出页：原样返回，零调用。
- * - 有超出页：一次压缩调用（请求/原始回包/解析结果按 getRaw 永久保存），逐页部分采纳——压缩稿比原稿短才采用，
- *   仍超出的页记入 remaining 由上层报出；压缩调用失败不拖垮已完成的审校，只记录 error。
+ * - 有超出页：逐轮压缩仍超出的页，直到全部达标、某轮毫无进展或达到轮数上限（2026-11-09 用户令：压缩一遍未达标不得带超页进排版）。
+ *   每轮请求/原始回包/解析结果按 getRaw 永久保存；已有回包的轮次零调用回放（再读确定性一致），无任何已发回执的轮次视为首发。
+ *   逐页部分采纳——压缩稿比当前稿短才采用；压缩调用失败不拖垮已完成的审校，只记录 error。
  */
 export async function compressKnowledgeReviewToBudget(params: {
   deps: typeof real; prefix: string; attempt: number; digest: string;
   source: KnowledgeSource; pages: ReturnType<typeof validateKnowledgeReview>["pages"];
 }) {
   const { deps, prefix, attempt, digest, source } = params;
-  const chars = params.pages.map(p => ({ id: p.id, chars: knowledgeReviewPageChars(p) }));
-  const before = knowledgeReadingOverflow(source.detailLevel, source.pages, chars);
-  if (!before.length) return { pages: params.pages, before, after: [] as KnowledgeReadingOverflow[], adopted: [] as string[], error: undefined as string | undefined };
-  const ids = new Set(before.map(o => o.id));
+  const measure = (pages: typeof params.pages) => knowledgeReadingOverflow(source.detailLevel, source.pages, pages.map(p => ({ id: p.id, chars: knowledgeReviewPageChars(p) })));
+  const before = measure(params.pages);
+  if (!before.length) return { pages: params.pages, before, after: [] as KnowledgeReadingOverflow[], adopted: [] as string[], error: undefined as string | undefined, rounds: 0, functionResolved: [] as string[], llmPages: {} as Record<string, number> };
   const originals = new Map(source.pages.map(p => [p.id, p]));
-  const pageSource: KnowledgeSource = { title: source.title, detailLevel: source.detailLevel,
-    pages: params.pages.filter(p => ids.has(p.id)).map(p => ({ ...originals.get(p.id)!, body: p.body, imageUrl: "" })) };
-  const request = buildKnowledgeCompressionRequest(pageSource, digest, before);
-  let pages = params.pages;
-  const adopted: string[] = [];
+  // 第一段：确定性去重（零调用）——只删与本页图中文字重复/页内重复/跨页重复的整句、整行、整项与重复图注小标题，不截断、不删图外事实。
+  const overIds = new Set(before.map(o => o.id));
+  const priorParagraphs = new Set<string>();
+  const deterministic: { id: string; headline: string; chars: number; after: number; removed: KnowledgeDedupeRemoval[] }[] = [];
+  let pages = params.pages.map(page => {
+    let next = page;
+    if (overIds.has(page.id)) {
+      const imageText = originals.get(page.id)?.body || "";
+      const reading = page.reading ? dedupeKnowledgeReading({ headline: page.headline, reading: page.reading, imageText, priorParagraphs }) : undefined;
+      const body = dedupeKnowledgeBody(page.body, imageText, priorParagraphs);
+      const removed = [...(reading?.removed || []), ...(page.reading ? [] : body.removed)];
+      if (removed.length) next = { ...page, body: body.body, ...(reading ? { reading: reading.reading } : {}) };
+      deterministic.push({ id: page.id, headline: page.headline, chars: knowledgeReviewPageChars(page), after: knowledgeReviewPageChars(next), removed });
+    }
+    for (const key of knowledgeReadingParagraphKeys(next.reading, next.body)) priorParagraphs.add(key);
+    return next;
+  });
+  const adopted = new Set<string>(deterministic.filter(d => d.after < d.chars).map(d => d.id));
   let error: string | undefined;
-  try {
-    const raw = await getRaw(deps, prefix, attempt, digest, [], request);
-    const compressed = validateKnowledgeReview(parseRaw(raw, false), pageSource, digest);
-    const byId = new Map(compressed.pages.map(p => [p.id, p]));
-    pages = params.pages.map(page => {
-      const next = byId.get(page.id);
-      if (!next || knowledgeReviewPageChars(next) >= knowledgeReviewPageChars(page)) return page;
-      adopted.push(page.id);
-      // 图片审校结论与图文疑点来自原审校；压缩只改文字。
-      return { ...next, imageDescription: page.imageDescription, imageStatus: page.imageStatus,
-        cautions: Array.from(new Map([...page.cautions.filter(c => c.kind === "image_text" || c.kind === "uncertain"), ...next.cautions].map(c => [JSON.stringify(c), c])).values()) };
-    });
-  } catch (e) {
-    error = e instanceof Error ? e.message : String(e);
-    console.warn(`[knowledgePublication] 篇幅压缩未完成，保留审校稿并报出超出页：${error.slice(0, 200)}`);
+  let after = measure(pages);
+  const functionResolved = before.map(o => o.id).filter(id => !after.some(o => o.id === id));
+  if (deterministic.some(d => d.removed.length)) await deps.save(`${prefix}/deterministic.json`, { sourceDigest: digest, pages: deterministic, resolved: functionResolved });
+  const rounds: { round: number; targets: KnowledgeReadingOverflow[]; adopted: string[]; after: KnowledgeReadingOverflow[]; error?: string }[] = [];
+  for (let round = 0; round < KNOWLEDGE_COMPRESSION_MAX_ROUNDS && after.length; round++) {
+    const ids = new Set(after.map(o => o.id));
+    const pageSource: KnowledgeSource = { title: source.title, detailLevel: source.detailLevel,
+      pages: pages.filter(p => ids.has(p.id)).map(p => ({ ...originals.get(p.id)!, body: p.body, imageUrl: "" })) };
+    const targets = round === 0 ? after : after.map(o => ({ ...o, maxChars: Math.floor(o.maxChars * KNOWLEDGE_COMPRESSION_RETRY_MARGIN) }));
+    const request = buildKnowledgeCompressionRequest(pageSource, digest, targets);
+    if (round > 0) request.systemInstruction.parts.push({ text: `上一轮压缩后这些页仍超出图下容量（第${round + 1}轮）。本轮每页必须低于给定maxChars：先删与图中已画出内容重复的表格/清单，再把并列例子合并成一句，仍超出则只保留最关键的事实与数字。` });
+    const roundAdopted: string[] = [];
+    let roundError: string | undefined;
+    const roundPrefix = compressionRoundPrefix(prefix, round);
+    // 每轮首次得到回包时记下本轮是否有进展；再读时按记录决定是否继续，保证回放确定、不在无进展处反复付费。
+    const outcomeKey = `${roundPrefix}/outcome-${attempt}.json`;
+    const recorded = await deps.read(outcomeKey);
+    const replayed = !!await deps.read(`${roundPrefix}/raw-${attempt}.json`);
+    try {
+      const raw = await getRaw(deps, roundPrefix, attempt, digest, [], request, { firstSendWithoutReceipt: true });
+      const compressed = validateKnowledgeReview(parseRaw(raw, false), pageSource, digest);
+      const byId = new Map(compressed.pages.map(p => [p.id, p]));
+      pages = pages.map(page => {
+        const next = byId.get(page.id);
+        if (!next || knowledgeReviewPageChars(next) >= knowledgeReviewPageChars(page)) return page;
+        roundAdopted.push(page.id); adopted.add(page.id);
+        // 图片审校结论与图文疑点来自原审校；压缩只改文字。
+        return { ...next, imageDescription: page.imageDescription, imageStatus: page.imageStatus,
+          cautions: Array.from(new Map([...page.cautions.filter(c => c.kind === "image_text" || c.kind === "uncertain"), ...next.cautions].map(c => [JSON.stringify(c), c])).values()) };
+      });
+    } catch (e) {
+      roundError = e instanceof Error ? e.message : String(e);
+      console.warn(`[knowledgePublication] 篇幅压缩第${round + 1}轮未完成（正式链已用尽），保留当前稿并报出超出页：${roundError.slice(0, 200)}`);
+    }
+    after = measure(pages);
+    rounds.push({ round, targets, adopted: roundAdopted, after, ...(roundError ? { error: roundError } : {}) });
+    error = after.length ? roundError : undefined;
+    if (roundError) break; // 正式链用尽：停止，回执已保留，下次再读由路由按回执续接。
+    if (!recorded && !replayed) await deps.save(outcomeKey, { sourceDigest: digest, adopted: roundAdopted, after });
+    // 本轮首发时毫无进展：停止，不在同一稿上空转付费。旧轮次（无记录的回放）按已采纳处理，继续下一轮。
+    const progressed = recorded ? recorded.adopted?.length > 0 : replayed || roundAdopted.length > 0;
+    if (!progressed) break;
   }
-  const after = knowledgeReadingOverflow(source.detailLevel, source.pages, pages.map(p => ({ id: p.id, chars: knowledgeReviewPageChars(p) })));
-  await deps.save(`${prefix}/budget.json`, { sourceDigest: digest, before, after, adopted, error });
-  return { pages, before, after, adopted, error };
+  const llmPages: Record<string, number> = {};
+  for (const r of rounds) for (const t of r.targets) llmPages[t.id] = (llmPages[t.id] || 0) + 1;
+  await deps.save(`${prefix}/budget.json`, { sourceDigest: digest, before, after, adopted: Array.from(adopted), error, rounds, functionResolved, llmPages });
+  return { pages, before, after, adopted: Array.from(adopted), error, rounds: rounds.length, functionResolved, llmPages };
 }
 
 /**
- * 已落盘批次报告若带「压缩调用未完成」（budgetOverflow.error 且仍有超出页），在被再次读取时补跑篇幅压缩（2026-11-09 用户令：
+ * 已落盘批次报告若仍有超出页（压缩未完成、或压缩一遍未达标），在被再次读取时继续按轮压缩（2026-11-09 用户令：
  * 超出页不得带进排版；旧恢复入口曾零调用挡住首发压缩）。原报告另存 report-precompress.json 永久保留；新报告与压缩回执照常落 GCS。
+ * 已有回包的轮次零调用回放，只有尚无回包的轮次才真发。
  */
 export async function retryKnowledgeBatchCompression(deps: typeof real, prefix: string, attempt: number, digest: string, source: KnowledgeSource, saved: any) {
-  const overflow = saved?.budgetOverflow;
-  if (!overflow?.error || !overflow.after?.length || !(source.detailLevel && source.reviewBatchMode === "ready-images")) return saved;
+  if (!saved?.report?.pages || !(source.detailLevel && source.reviewBatchMode === "ready-images")) return saved;
+  const overflow = saved.budgetOverflow;
+  const pending = knowledgeReadingOverflow(source.detailLevel, source.pages, saved.report.pages.map((p: any) => ({ id: p.id, chars: knowledgeReviewPageChars(p) })));
+  if (!pending.length) return saved;
   const compressed = await compressKnowledgeReviewToBudget({ deps, prefix: `${prefix}/compress`, attempt, digest, source, pages: saved.report.pages });
-  if (compressed.error) throw new Error(`第${prefix.split("/batch-").pop()}组篇幅压缩仍未完成，超出页不进排版：${compressed.error.slice(0, 200)}`);
+  if (compressed.error && compressed.after.length && !compressed.adopted.length) throw new Error(`第${prefix.split("/batch-").pop()}组篇幅压缩仍未完成，超出页不进排版：${compressed.error.slice(0, 200)}`);
+  const changed = JSON.stringify(compressed.pages) !== JSON.stringify(saved.report.pages);
+  if (!changed) return saved;
   if (!await deps.read(`${prefix}/report-precompress.json`)) await deps.save(`${prefix}/report-precompress.json`, saved);
   const next = { ...saved, report: { ...saved.report, pages: compressed.pages },
-    budgetOverflow: { before: overflow.before, after: compressed.after, adopted: compressed.adopted, retriedAt: new Date().toISOString(), priorError: overflow.error } };
+    budgetOverflow: { before: overflow?.before || compressed.before, after: compressed.after, adopted: compressed.adopted, retriedAt: new Date().toISOString(), ...(overflow?.error ? { priorError: overflow.error } : {}), ...(compressed.error ? { error: compressed.error } : {}) } };
   await deps.save(`${prefix}/report.json`, next);
+  return next;
+}
+
+/**
+ * 整册报告（含最终修订）按页预算补压：最终修订按批次原稿改写，可能把已压缩页重新写长；整册报告再读时也补压。
+ * 回执在 `${root}/final-compress`（逐轮永久保存），补压前的整册报告另存 report-precompress.json。
+ */
+export async function compressKnowledgeFinalReport(deps: typeof real, root: string, attempt: number, digest: string, source: KnowledgeSource, saved: any) {
+  if (!saved?.report?.pages || !(source.detailLevel && source.reviewBatchMode === "ready-images")) return saved;
+  const pending = knowledgeReadingOverflow(source.detailLevel, source.pages, saved.report.pages.map((p: any) => ({ id: p.id, chars: knowledgeReviewPageChars(p) })));
+  if (!pending.length) return saved;
+  const compressed = await compressKnowledgeReviewToBudget({ deps, prefix: `${root}/final-compress`, attempt, digest, source, pages: saved.report.pages });
+  if (JSON.stringify(compressed.pages) === JSON.stringify(saved.report.pages)) {
+    if (compressed.error) throw new Error(`整册篇幅压缩未完成，超出页不进排版：${compressed.error.slice(0, 200)}`);
+    return saved;
+  }
+  if (!await deps.read(`${root}/report-precompress.json`)) await deps.save(`${root}/report-precompress.json`, saved);
+  const next = { ...saved, report: { ...saved.report, pages: compressed.pages },
+    budgetOverflow: { before: compressed.before, after: compressed.after, adopted: compressed.adopted, compressedAt: new Date().toISOString(), ...(compressed.error ? { error: compressed.error } : {}) } };
+  await deps.save(`${root}/report.json`, next);
   return next;
 }
 
@@ -420,9 +493,11 @@ export async function reviewKnowledgePublication(
   const root = knowledgeEvidencePrefix(owner, document.id, requestId);
   const batches = knowledgeReviewBatches(source);
   if (context.batchIndex >= batches.length) {
-    const previous = await deps.read(`${root}/report.json`);
+    let previous = await deps.read(`${root}/report.json`);
     if (previous) {
       validateKnowledgeImageReceipts(source, previous.sourceImages);
+      validateKnowledgeReview(previous.report, source, digest);
+      previous = await compressKnowledgeFinalReport(deps, root, context.attempt, digest, source, previous);
       return validateKnowledgeReview(previous.report, source, digest);
     }
     const savedReports = await readKnowledgeBatchReports(source, digest, root, deps.read, deps, document.publication.attempts);
@@ -501,8 +576,10 @@ export async function reviewKnowledgePublication(
       pages=revised;
     }
     const report = validateKnowledgeReview({kind:"knowledge_publication_v1",sourceDigest:digest,title:source.title,pages},source,digest);
-    await deps.save(`${root}/report.json`, {report,sourceImages,model:KNOWLEDGE_VISUAL_ADVISOR_MODEL,reportedModels:models,consistency:{taskCount:plan.tasks.length,factCount:plan.factCount}});
-    return report;
+    const consolidated = {report,sourceImages,model:KNOWLEDGE_VISUAL_ADVISOR_MODEL,reportedModels:models,consistency:{taskCount:plan.tasks.length,factCount:plan.factCount}};
+    await deps.save(`${root}/report.json`, consolidated);
+    // 最终修订可能把已压缩页重新写长：整册落盘后按页预算补压（未超出零调用）。
+    return validateKnowledgeReview((await compressKnowledgeFinalReport(deps, root, context.attempt, digest, source, consolidated)).report, source, digest);
   }
   const indices = batches[context.batchIndex];
   const batchSource = {
@@ -632,14 +709,19 @@ async function getRaw(
   attempt: number,
   digest: string,
   sourceImages: unknown[],
-  request: unknown
+  request: unknown,
+  options: { firstSendWithoutReceipt?: boolean } = {}
 ) {
   let raw = await deps.read(`${prefix}/raw-${attempt}.json`);
   if (!raw) {
     const prior = await deps.read(`${prefix}/request-${attempt}.json`);
     if (prior) {
       if (prior.sourceDigest !== digest) throw new Error("已保存请求的原稿版本不符");
-      request = prior.request;
+      // 篇幅压缩：已存请求但无任何已发回执（旧恢复入口零调用挡下、从未发出）→ 视为首发，按当前正式链请求发出；
+      // 原请求另存 request-N-unsent.json 永久保留。只有已有回执（含未闭合）时才沿用原请求身份，由路由零调用回放或按断流出口处理。
+      const sent = options.firstSendWithoutReceipt ? await knowledgeRouteReceiptExists(deps.read, `${prefix}/attempt-${attempt}`) : true;
+      if (sent) request = prior.request;
+      else if (!await deps.read(`${prefix}/request-${attempt}-unsent.json`)) await deps.save(`${prefix}/request-${attempt}-unsent.json`, prior);
     }
     await deps.save(`${prefix}/request-${attempt}.json`, {
       model: KNOWLEDGE_VISUAL_ADVISOR_MODEL,
@@ -667,6 +749,12 @@ async function getRaw(
     throw new Error("审校模型回执不符");
   if (raw.sourceDigest !== digest) throw new Error("审校原稿版本不符");
   return raw;
+}
+/** 该请求目录下是否已有任何路由回执（含 pending/unknown/failed/received，或断流补买记录）。 */
+async function knowledgeRouteReceiptExists(read: (name: string) => Promise<any>, prefix: string) {
+  if (await read(`${prefix}/interrupted-repurchase.json`)) return true;
+  for (const id of KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES) if (await read(`${prefix}/route-${id}.json`)) return true;
+  return false;
 }
 function parseRaw(raw: any, hasImages: boolean): unknown {
   if (raw.response.status < 200 || raw.response.status >= 300)

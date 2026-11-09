@@ -36,7 +36,9 @@ import {knowledgeCardCreditsForPageIndex,knowledgeEditionImageChars,knowledgeEdi
 import {auditKnowledgeTopicTitles,readKnowledgeTopicTitles} from '../shared/knowledgeTopicImagePlan';
 import {KNOWLEDGE_IMAGE_CHANNEL_MAX,knowledgeStageConcurrency} from '../shared/knowledgeConcurrency';
 import {knowledgeEditionParts} from '../shared/knowledgeCardEdition';
-import {knowledgeEditionBudgetCheck,KNOWLEDGE_LEAD_PAGE_CHARS} from '../shared/knowledgeEditionBudget';
+import {knowledgeEditionBudgetCheck,knowledgeReadingOverflow,KNOWLEDGE_LEAD_PAGE_CHARS} from '../shared/knowledgeEditionBudget';
+import {knowledgeManuscript,knowledgeReviewBatches} from '../shared/knowledgePublication';
+import {knowledgeReviewPageChars,reviewKnowledgePublication} from '../server/services/knowledgePublicationAdvisor';
 import {getGraphicNoteFusionTemplate} from '../shared/graphicNoteFusionTemplates';
 import {KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS} from '../shared/knowledgeCardDistillModels';
 import {COOKIE_NAME} from '../shared/const';
@@ -182,6 +184,30 @@ async function run(){
     const library=latest.library||{version:1,owner,documents:[]};
     await caller.editableLayout.save({library:layoutLibrarySchema.parse({...library,documents:[...library.documents,doc]}),expectedGeneration:latest.generation});
     state.documentId=doc.id;await fs.writeFile(statePath,JSON.stringify(state));
+  }
+  // resume 且整册审校已闭合：先由正式审校入口对整册报告按页预算补压（已有回执零调用回放，超页页按轮真发三跳链压缩）；
+  // 补压改变正文时，云稿换用新审校稿并另起整册排版请求（原排版回执与 62 页导出永久保留），由正式面板重新排版→导出。
+  if(mode==='resume'){
+    const latest=await caller.editableLayout.get();
+    const doc=latest.library?.documents.find((d:any)=>d.id===state.documentId);
+    const pub=doc?.publication;
+    if(pub?.review){
+      const batchIndex=knowledgeReviewBatches(pub.source).length;
+      const review=await reviewKnowledgePublication(user.id,{documentId:doc.id,batchIndex,attempt:Number(pub.attempts?.[String(batchIndex)])||0}) as any;
+      const before=knowledgeReadingOverflow(level,pub.source.pages,pub.review.pages.map((p:any)=>({id:p.id,chars:knowledgeReviewPageChars(p)})));
+      const after=knowledgeReadingOverflow(level,pub.source.pages,review.pages.map((p:any)=>({id:p.id,chars:knowledgeReviewPageChars(p)})));
+      const budgetName=`knowledge-publications/user-${user.id}/${doc.id}/${pub.requestId}/final-compress/budget.json`;
+      const budget=await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${budgetName}`}).then(r=>JSON.parse(r.buffer.toString('utf8'))).catch(()=>null);
+      // 终报口径：几页函数即达标、几页用了 LLM、各几轮。
+      await write('recompress.json',{documentId:doc.id,before,after,changed:JSON.stringify(review)!==JSON.stringify(pub.review),functionResolved:budget?.functionResolved||[],llmPages:budget?.llmPages||{},rounds:budget?.rounds?.length||0,error:budget?.error,budgetObject:budgetName});
+      if(JSON.stringify(review)!==JSON.stringify(pub.review)){
+        await write('recompress-prior-publication.json',{documentId:doc.id,review:pub.review,manuscript:pub.manuscript,layoutConversationId:pub.layoutConversationId,automaticLayout:pub.automaticLayout,confirmedManuscript:pub.confirmedManuscript});
+        const manuscript=knowledgeManuscript(review);
+        const next={...doc,title:review.title,pages:doc.pages.map((page:any,n:number)=>({...page,headline:review.pages[n].headline,body:review.pages[n].body})),
+          publication:{...pub,review,manuscript,confirmedManuscript:undefined,layoutConversationId:undefined,automaticLayout:{requestId:randomUUID(),maxCredits:0}},updatedAt:new Date().toISOString()};
+        await caller.editableLayout.save({library:layoutLibrarySchema.parse({...latest.library,documents:latest.library.documents.map((d:any)=>d.id===doc.id?next:d)}),expectedGeneration:latest.generation});
+      }
+    }
   }
   // run：首次启动；resume：工作机重启/部署打断后接续同一 state.json——已成功的图直接复用（不重付）、在途的只轮询、
   // 已失败的只报不重购、从未提交的（无任务记录）才提交；请求号与任务号不变，服务端预留按同号幂等。
