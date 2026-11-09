@@ -2,11 +2,16 @@ import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import { execFileSync } from "node:child_process";
 import sharp from "sharp";
 const paths = new Map<string, string>(),
   evidence = new Map<string, Buffer>();
-const dir = path.resolve("docs/evidence/ink-1011-video-consumer/compile-30s");
+// 默认写到临时目录，避免每次跑测试改写仓库内已提交的 #1697 证据；需重新生成证据时设 INK_1011_EVIDENCE_DIR。
+const dir = path.resolve(
+  process.env.INK_1011_EVIDENCE_DIR ||
+    path.join(os.tmpdir(), "ink-1011-video-consumer", "compile-30s")
+);
 vi.mock("./postProdMediaSource", () => ({
   resolveRegisteredPostProdMediaSource: async ({
     source,
