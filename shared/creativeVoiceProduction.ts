@@ -33,6 +33,7 @@ export const creativeVoiceProductionSchema = z.discriminatedUnion("action", [
     scoring:{inspect:{},configure:{required:["clipId","musicId"]},analyze:{allowed:["question"]},applyAdvice:{},submit:{required:["sourceKey"]}},
     edit:{inspect:{required:["episode"]},reorder:{required:["episode","order"]},trim:{required:["episode","shotIndex","inSec","outSec"]},transition:{required:["episode"],allowed:["transition","transitionSettings"]},grade:{required:["episode","grade"],allowed:["source","userQuoteZh"]},gradeAdvice:{required:["episode","userRequestZh"]}},
     deliver:{inspect:{required:["episode"]},assemble:{required:["episode"],allowed:["clipIds"]},subtitle:{required:["episode"]},selectVersion:{required:["episode","versionIndex"]},export:{required:["episode"]}},
+    videoEdit:{inspect:{allowed:["targetId"]},prefill:{required:["targetId","startSec","endSec","promptZh"],allowed:["refAssetId"]}},
     storyboardRecovery:{inspect:{required:["episode"]},recover:{required:["episode"]},archive:{required:["episode"]}},
   };
   if(!("operation" in value)||!rules[value.action])return;
@@ -43,6 +44,7 @@ export const creativeVoiceProductionSchema = z.discriminatedUnion("action", [
   if(value.action==="edit"&&value.operation==="trim"&&value.outSec!<=value.inSec!)ctx.addIssue({code:"custom",message:"出点必须大于进点"});
   if(value.action==="edit"&&value.operation==="transition"&&(value.transition===undefined)===(value.transitionSettings===undefined))ctx.addIssue({code:"custom",path:["transitionSettings"],message:"转场须且只能给 transition 或 transitionSettings 之一"});
   if(value.action==="edit"&&value.order&&new Set(value.order).size!==value.order.length)ctx.addIssue({code:"custom",path:["order"],message:"镜头顺序不得重复"});
+  if(value.action==="videoEdit"&&value.startSec!==undefined&&value.endSec!==undefined&&value.endSec<=value.startSec)ctx.addIssue({code:"custom",path:["endSec"],message:"结束秒须大于开始秒"});
   if(value.action==="writer"&&value.operation==="configure"&&Object.keys(value).length===2)ctx.addIssue({code:"custom",message:"配置操作没有任何修改"});
   if(value.action==="asset"&&value.metadata&&Object.keys(value.metadata).length===0)ctx.addIssue({code:"custom",path:["metadata"],message:"资产修改为空"});
   if(value.action==="audio"&&value.patch&&Object.keys(value.patch).length===0)ctx.addIssue({code:"custom",path:["patch"],message:"音轨修改为空"});

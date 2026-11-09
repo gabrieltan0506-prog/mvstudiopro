@@ -12,7 +12,7 @@ import { ManhuaVfxEditor, type ManhuaVfxSubmitInput } from "./ManhuaVfxEditor";
 import { adoptedManhuaVfxClipOptions, pendingManhuaVfxTrackedJobs, manhuaVfxImageOptions, manhuaVfxSceneOptions } from "@/lib/manhuaVfxWorkflow";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import { createAdvisorScoringSourceGuard } from "@/lib/manhuaAdvisorScoringSource";
-import type { AdvisorScoringControl, AdvisorScoringRegistration, AdvisorBgmControl, AdvisorEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
+import type { AdvisorScoringControl, AdvisorScoringRegistration, AdvisorBgmControl, AdvisorEditRegistration, AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { manhuaProjectStorage } from "@shared/manhuaProjectScope";
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
 import type { SubtitleHighlight } from "@shared/subtitleHighlights";
@@ -192,6 +192,8 @@ type PostProdWorkshopCardProps = {
   onAdvisorControl?: AdvisorScoringRegistration;
   /** 剪辑方案切点交给顾问 edit 控件（MV 第 5 步）；不传时保持原行为。 */
   onAdvisorEditControl?: AdvisorEditRegistration;
+  /** 顾问 videoEdit 注册口：视频局部修改面板挂载时用 createAdvisorVideoEditControl 注册（只预填、不提交）。 */
+  onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
   advisorContext?: ManhuaCreativeAdvisorContext;
   userId: string;
   userRole?: string | null;

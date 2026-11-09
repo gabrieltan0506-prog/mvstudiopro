@@ -11349,6 +11349,8 @@ async function runAdvisorWriterTrial() {
             }
             throw new Error("原场景工作台尚未就绪，未导出或采用。");
           }
+          // 视频局部修改面板挂在后期工坊；此处不预填、不提交
+          if (action.action === "videoEdit") throw new Error("视频局部修改请在后期工坊打开后再让顾问预填，未改动");
           if (action.action === "edit") {
             if (action.episode !== writerFocusEpisode) throw new Error("请先切换到目标集，再读取剪辑清单");
             const scope = voiceStoryboardScope;

@@ -8,6 +8,8 @@ import type {
   AdvisorEditRegistration,
   AdvisorScoringControl,
   AdvisorScoringRegistration,
+  AdvisorVideoEditControl,
+  AdvisorVideoEditRegistration,
 } from "@/lib/manhuaAdvisorWorkflowControl";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import {
@@ -48,7 +50,9 @@ export function CanvasMvPostProdWorkbench(props: {
   });
   const effects = useRef(new Map<string, AdvisorEffectsControl>()),
     scoring = useRef<AdvisorScoringControl | null>(null),
-    edit = useRef<AdvisorEditControl | null>(null);
+    edit = useRef<AdvisorEditControl | null>(null),
+    /** 视频局部修改面板挂载后经此注册（只预填，不提交）。 */
+    videoEdit = useRef<AdvisorVideoEditControl | null>(null);
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
@@ -72,6 +76,9 @@ export function CanvasMvPostProdWorkbench(props: {
   );
   const registerEdit = useCallback<AdvisorEditRegistration>(control => {
     edit.current = control;
+  }, []);
+  const registerVideoEdit = useCallback<AdvisorVideoEditRegistration>(control => {
+    videoEdit.current = control;
   }, []);
   const latest = useRef(props);
   latest.current = props;
@@ -136,6 +143,7 @@ export function CanvasMvPostProdWorkbench(props: {
         onAdvisorEffectsControl={registerEffects}
         onAdvisorControl={registerScoring}
         onAdvisorEditControl={registerEdit}
+        onAdvisorVideoEditControl={registerVideoEdit}
         onStudioFocus={setFocus}
         onOpenAdvisor={() => setAdvisorOpen(true)}
         advisorOpen={advisorOpen}
@@ -181,6 +189,12 @@ export function CanvasMvPostProdWorkbench(props: {
                 label,
               })),
             });
+          // 视频局部修改：只打开面板预填，不经 beforeSubmit、不提交
+          if (action.action === "videoEdit") {
+            if (!videoEdit.current)
+              throw new Error("视频局部修改尚未就绪，请先打开后期工坊的视频局部修改");
+            return await videoEdit.current(action, signal);
+          }
           if (
             action.action !== "effects" &&
             action.action !== "scoring" &&
