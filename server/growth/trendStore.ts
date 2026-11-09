@@ -322,12 +322,17 @@ const coldStoreFetch = createGrowthPrivateAssetFetch({
 // 旧冷备（本仓库 releases）在仓库转私有后不能再匿名下载。显式开启
 // GROWTH_LEGACY_COLD_STORE_AUTH=1 后改走同一套「令牌仅限该仓库 release API」的读取器
 // （不发往 github.com 下载页/存储重定向/其他仓库）；未开启或无令牌时保持原匿名行为。
+// 令牌优先用独立只读的 GROWTH_LEGACY_GITHUB_TOKEN（fine-grained，仅本仓库 Contents 只读），
+// 避免为读旧仓而给私有库写令牌加上本仓库的写权限；未设置时才回退 GROWTH_BACKUP_GITHUB_TOKEN。
+// 该只读令牌只交给本读取器，不进入私有库读取器 coldStoreFetch。
 const LEGACY_COLD_STORE_REPOSITORY =
   /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/releases\/download\//.exec(LEGACY_COLD_STORE_BASE_URL)?.[1]
   || "gabrieltan0506-prog/mvstudiopro";
+const LEGACY_COLD_STORE_TOKEN = String(process.env.GROWTH_LEGACY_GITHUB_TOKEN || "").trim()
+  || String(process.env.GROWTH_BACKUP_GITHUB_TOKEN || "").trim();
 const legacyColdStoreFetch: typeof fetch = /^(1|true)$/i.test(String(process.env.GROWTH_LEGACY_COLD_STORE_AUTH || "").trim())
-  && String(process.env.GROWTH_BACKUP_GITHUB_TOKEN || "").trim()
-  ? createGrowthPrivateAssetFetch({ repository: LEGACY_COLD_STORE_REPOSITORY, token: process.env.GROWTH_BACKUP_GITHUB_TOKEN })
+  && LEGACY_COLD_STORE_TOKEN
+  ? createGrowthPrivateAssetFetch({ repository: LEGACY_COLD_STORE_REPOSITORY, token: LEGACY_COLD_STORE_TOKEN })
   : coldStoreFetch;
 /** 读取旧仓 release 资产；GROWTH_LEGACY_COLD_STORE_AUTH=1 时带服务端令牌（仅限该仓 release API）。 */
 export function fetchLegacyGrowthReleaseAsset(tag: string, assetName: string, init?: RequestInit) {
