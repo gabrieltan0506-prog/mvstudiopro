@@ -29,6 +29,15 @@ describe("1110 MV 镜头白模入口对普通登录用户开放；其他 3D 门�
     const open = src.slice(src.indexOf("function openMvShotAdvisorPrevis"), src.indexOf("const mvPrevisBridge"));
     expect(open).not.toContain("canUseManhua3d");
     for (const gated of ["onGenerateAsset3d={canUseManhua3d ?", "onGenerateSceneWorld={canUseManhua3d ?", "onApplyRiggedModel={canUseManhua3d ?", "onOpenAdvisorPrevis={canUseManhua3d ?", "onUpdateClipPrevisStudio={canUseManhua3d ?"]) expect(src).toContain(gated);
-    expect(src.match(/canUseAdvisorPrevisFor\(/g)?.length).toBe(3);
+    expect(src.match(/canUseAdvisorPrevisFor\(/g)?.length).toBe(4);
+  });
+  it("顾问白模页音轨控件：MV 镜头块对普通登录用户可用，漫剧片段仍按 canUseManhua3d", () => {
+    const src = readFileSync("client/src/pages/OmniCanvas.tsx", "utf8");
+    const audio = src.slice(src.indexOf("<ManhuaPrevisAudioControls compact"), src.indexOf("onChange=", src.indexOf("<ManhuaPrevisAudioControls compact")));
+    expect(audio).toContain("disabled={!canUseAdvisorPrevisFor({ canUseManhua3d, userId: user?.id, clip: advisorPrevisClip })");
+    expect(audio).not.toMatch(/disabled=\{!canUseManhua3d\b/);
+    // 同一判定：普通用户 MV 镜头可用、漫剧片段不可用
+    expect(canUseAdvisorPrevisFor({ canUseManhua3d: false, userId: 7, clip: mvClip })).toBe(true);
+    expect(canUseAdvisorPrevisFor({ canUseManhua3d: false, userId: 7, clip: manhuaClip })).toBe(false);
   });
 });
