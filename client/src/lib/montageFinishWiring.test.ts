@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { COLOR_GRADE_LUT_ID_RE, concatGradeSchema } from "@shared/colorGrade";
+import { montageGradeAdviceStory } from "@/components/canvas/MontageGradeAdvice";
 import {
+  MONTAGE_ADVISOR_GRADE_NOT_EXPLICIT_ZH,
   MONTAGE_LUT_GROUPS,
   MONTAGE_LUT_IDS,
   MONTAGE_TRANSITION_RANGE,
@@ -29,6 +31,9 @@ import {
 
 type ManifestEntry = { id: string; intensity: "subtle" | "standard"; labelZh: string };
 const manifest = JSON.parse(readFileSync("server/assets/luts/manifest.json", "utf8")) as ManifestEntry[];
+
+
+const EXPLICIT = { source: "user_explicit", userQuoteZh: "饱和度0.8" } as const;
 
 describe("调色/转场草稿 ↔ concat 参数", () => {
   it("草稿经存储往返不变，组装结果通过共享 concatGradeSchema", () => {
@@ -161,10 +166,31 @@ describe("按方案各存一份 + 顾问写入即核对切点数", () => {
   });
 
   it("逐段调色项数 ≠ 本方案切点数 → 直接拒绝并给中文原因；相等才写入", () => {
-    const action = { operation: "grade", grade: { clips: [{ saturation: 0.8 }, null, null] } };
+    const action = { operation: "grade", ...EXPLICIT, grade: { clips: [{ saturation: 0.8 }, null, null] } };
     expect(() => applyAdvisorMontageFinish({}, action, 2)).toThrow("逐段调色有3项，本方案有2个切点，须一一对应，未改动");
     expect(applyAdvisorMontageFinish({}, action, 3)).toEqual({ grade: { clips: [{ saturation: 0.8 }, null, null] } });
-    expect(() => applyAdvisorMontageFinish({}, { operation: "grade", grade: { all: { saturation: 0.8 }, referenceClipIndex: 2 } }, 2)).toThrow("代表镜头第3段超出本方案2个切点，未改动");
+    expect(() => applyAdvisorMontageFinish({}, { operation: "grade", ...EXPLICIT, grade: { all: { saturation: 0.8 }, referenceClipIndex: 2 } }, 2)).toThrow("代表镜头第3段超出本方案2个切点，未改动");
+  });
+
+  it("顾问 grade 须带 user_explicit 与用户原话才写草稿，否则拒绝并指向『AI 调色建议』", () => {
+    const grade = { all: { saturation: 0.8 } };
+    expect(() => applyAdvisorMontageFinish({}, { operation: "grade", grade }, 2)).toThrow(MONTAGE_ADVISOR_GRADE_NOT_EXPLICIT_ZH);
+    expect(MONTAGE_ADVISOR_GRADE_NOT_EXPLICIT_ZH).toBe("调色方案请用『AI 调色建议』生成");
+    expect(() => applyAdvisorMontageFinish({}, { operation: "grade", source: "advisor", userQuoteZh: "饱和度0.8", grade }, 2)).toThrow(MONTAGE_ADVISOR_GRADE_NOT_EXPLICIT_ZH);
+    expect(() => applyAdvisorMontageFinish({}, { operation: "grade", source: "user_explicit", userQuoteZh: "  ", grade }, 2)).toThrow(MONTAGE_ADVISOR_GRADE_NOT_EXPLICIT_ZH);
+    expect(() => applyAdvisorMontageFinish({}, { operation: "grade", source: "user_explicit", grade }, 2)).toThrow(MONTAGE_ADVISOR_GRADE_NOT_EXPLICIT_ZH);
+    expect(applyAdvisorMontageFinish({}, { operation: "grade", ...EXPLICIT, grade }, 2)).toEqual({ grade: { all: { saturation: 0.8 } } });
+    // 还原原片色彩不是新调色方案，不要求原话
+    expect(applyAdvisorMontageFinish({ grade: { all: { saturation: 0.8 } } }, { operation: "grade", grade: null }, 2)).toEqual({ grade: undefined });
+    for (const k of ["source=user_explicit", "userQuoteZh", "gradeAdvice", "userRequestZh"]) expect(MONTAGE_FINISH_ADVISOR_HELP).toContain(k);
+  });
+
+  it("gradeAdvice 不直接写草稿；用户要求放在 storyZh 最前送「AI 调色建议」", () => {
+    expect(() => applyAdvisorMontageFinish({}, { operation: "gradeAdvice" } as { operation: string }, 2)).toThrow("该操作不是调色或转场设置");
+    expect(montageGradeAdviceStory("剧情时间线", "雨景偏冷一点、结尾更亮")).toBe("用户调色要求：雨景偏冷一点、结尾更亮\n剧情时间线");
+    expect(montageGradeAdviceStory("剧情", undefined)).toBe("剧情");
+    expect(montageGradeAdviceStory("长".repeat(9000), "结尾更亮").startsWith("用户调色要求：结尾更亮\n")).toBe(true);
+    expect(montageGradeAdviceStory("长".repeat(9000), "结尾更亮")).toHaveLength(8000);
   });
 
   it("transition 枚举放开 dissolve/wipeleft；提示含 20 个预设与色温方向", () => {
@@ -238,9 +264,9 @@ describe("分段调色 segments / crossfadeSec / autoMatchJunctions（共享 con
     expect(g).toBeUndefined();
   });
   it("顾问/调色建议写入分段：同一套校验，只写草稿", () => {
-    const next = applyAdvisorMontageFinish({}, { operation: "grade", grade: { segments: segs, crossfadeSec: 0.5, autoMatchJunctions: true } });
+    const next = applyAdvisorMontageFinish({}, { operation: "grade", ...EXPLICIT, grade: { segments: segs, crossfadeSec: 0.5, autoMatchJunctions: true } });
     expect(next.grade?.segments).toEqual(segs);
-    expect(() => applyAdvisorMontageFinish({}, { operation: "grade", grade: { segments: [{ startSec: 0, endSec: 10, lutId: "nope" }] } })).toThrow("调色预设不存在");
+    expect(() => applyAdvisorMontageFinish({}, { operation: "grade", ...EXPLICIT, grade: { segments: [{ startSec: 0, endSec: 10, lutId: "nope" }] } })).toThrow("调色预设不存在");
     expect(applyMontageSegmentsDraft({ all: { lutId: "basic_warm" } }, [{ startSec: 0, endSec: 4.04 }, { startSec: 4.04, endSec: 10, contrast: 1.2 }], 10)).toEqual({
       all: { lutId: "basic_warm" },
       segments: [{ startSec: 0, endSec: 4 }, { startSec: 4, endSec: 10, contrast: 1.2 }],

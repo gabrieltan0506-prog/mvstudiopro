@@ -44,6 +44,7 @@ export const MONTAGE_TRANSITION_LABELS: Record<MontageTransitionKind, string> = 
 /** 交给顾问 inspect 的约定说明（方向与范围），不含引擎/供应商字样。 */
 export const MONTAGE_FINISH_ADVISOR_HELP =
   COLOR_GRADE_ADVISOR_HELP + "分段调色写入grade.segments=[{startSec,endSec,…校正}]（成片秒，一位小数，首段从0起、首尾相接、末段到成片结尾即inspect的outputSec，最多24段，不能与clips/referenceClipIndex/autoMatch同用），grade.crossfadeSec 0–2为段间渐变秒数（须短于每段），grade.autoMatchJunctions=true自动修正接点。" +
+  "调色参数只能转述用户明确说出的数值或预设，须带source=user_explicit与userQuoteZh(用户原话片段)；用户只描述感觉或要方案时用operation=gradeAdvice+userRequestZh交给「AI 调色建议」，结果只列建议、须用户套用并采用。" +
   "转场写入transitionSettings{kind:none|fade|dissolve|wipeleft,durationSec .1–2}，或transition=cut|fade|dissolve|wipeleft。调色与转场按剪辑方案各存一份（episode=方案序号）。有同步字幕或单段方案时只能直接切换。只写草稿，须用户点采用才生成。";
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -255,13 +256,16 @@ export function montageFinishParams(
   return out;
 }
 
+/** 顾问自拟调色参数的拒绝口径：调色方案只能由「AI 调色建议」生成。 */
+export const MONTAGE_ADVISOR_GRADE_NOT_EXPLICIT_ZH = "调色方案请用『AI 调色建议』生成";
+
 /**
  * 顾问自然语言 → 草稿：接受现有 edit.transition=cut|fade，
  * 以及约定扩展 transitionSettings / operation=grade+grade（共享动作契约放开后生效）。返回新 finish，不提交。
  */
 export function applyAdvisorMontageFinish(
   current: MontageFinish,
-  action: { operation: string; transition?: unknown; transitionSettings?: unknown; grade?: unknown },
+  action: { operation: string; transition?: unknown; transitionSettings?: unknown; grade?: unknown; source?: unknown; userQuoteZh?: unknown },
   cutCount?: number
 ): MontageFinish {
   if (action.operation === "transition") {
@@ -275,6 +279,9 @@ export function applyAdvisorMontageFinish(
   if (action.operation === "grade") {
     if (action.grade === undefined) throw new Error("调色设置缺少参数");
     if (action.grade === null) return { ...current, grade: undefined };
+    // 顾问只能转述用户明确给出的参数（带用户原话）；自拟调色一律拒绝，改走「AI 调色建议」。
+    if (action.source !== "user_explicit" || typeof action.userQuoteZh !== "string" || !action.userQuoteZh.trim())
+      throw new Error(MONTAGE_ADVISOR_GRADE_NOT_EXPLICIT_ZH);
     const grade = normalizeMontageGrade(action.grade);
     // 写入即核对本方案切点数，不符直接拒绝（不等到采用时才报错）。
     if (cutCount != null && grade.clips && grade.clips.length !== cutCount)

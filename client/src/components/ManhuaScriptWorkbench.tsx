@@ -2150,7 +2150,7 @@ export default function ManhuaScriptWorkbench({
     if (action.episode !== focusEpisode) throw new Error("请先切换到目标集再读取剪辑清单");
     if (action.operation === "inspect") return JSON.stringify({ episode: focusEpisode, shots: roughClips.map(row => ({ shotIndex: row.shotIndex, durationSec: row.durationSec, trim: fineCutByShot[row.shotIndex] })), order: roughShotOrder, transition: manhuaEditTransitionOf(editTransitionByEpisode, focusEpisode), busy: factoryBusy || suggestAutoCutsBusy });
     if (factoryBusy || suggestAutoCutsBusy) throw new Error("剪辑正在处理任务，未改动");
-    if (action.operation === "grade" || action.transitionSettings || (action.operation === "transition" && action.transition !== "cut" && action.transition !== "fade")) throw new Error("本集剪辑台只支持直接切换或淡入淡出；调色与溶解、左划请在剪辑方案里设置，未改动");
+    if (action.operation === "grade" || action.operation === "gradeAdvice" || action.transitionSettings || (action.operation === "transition" && action.transition !== "cut" && action.transition !== "fade")) throw new Error("本集剪辑台只支持直接切换或淡入淡出；调色与溶解、左划请在剪辑方案里设置，未改动");
     if (!window.confirm("确认将本次剪辑建议保存到当前集？原片保留。")) throw new Error("用户未确认剪辑改动");
     signal.throwIfAborted();
     if (action.operation === "reorder") {

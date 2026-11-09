@@ -26,6 +26,17 @@ describe("顾问 edit 契约：grade / transitionSettings / 扩展转场", () =>
     expect(ok({ action: "edit", operation: "transition", episode: 1, transition: "fade", transitionSettings: { kind: "fade", durationSec: 1 } })).toBe(false);
     expect(ok({ action: "edit", operation: "trim", episode: 1, shotIndex: 1, inSec: 0, outSec: 1, grade: null })).toBe(false);
   });
+  it("grade 可带 user_explicit 与用户原话；gradeAdvice 须带用户调色要求，字段不得错位", () => {
+    expect(ok({ action: "edit", operation: "grade", episode: 1, source: "user_explicit", userQuoteZh: "饱和度 0.8", grade: { all: { saturation: 0.8 } } })).toBe(true);
+    expect(ok({ action: "edit", operation: "grade", episode: 1, source: "advisor", userQuoteZh: "x", grade: { all: { saturation: 0.8 } } })).toBe(false);
+    expect(ok({ action: "edit", operation: "gradeAdvice", episode: 1, userRequestZh: "雨景偏冷一点、结尾更亮" })).toBe(true);
+    expect(ok({ action: "edit", operation: "gradeAdvice", episode: 1 })).toBe(false);
+    expect(ok({ action: "edit", operation: "gradeAdvice", episode: 1, userRequestZh: "偏冷", grade: { all: { saturation: 0.8 } } })).toBe(false);
+    expect(ok({ action: "edit", operation: "grade", episode: 1, userRequestZh: "偏冷", grade: null })).toBe(false);
+    expect(MANHUA_ADVISOR_WORKFLOW_HELP).toContain("source=user_explicit");
+    expect(MANHUA_ADVISOR_WORKFLOW_HELP).toContain("gradeAdvice+userRequestZh");
+    expect(MANHUA_ADVISOR_WORKFLOW_HELP).not.toMatch(/Gemini|Vertex|EvoLink/);
+  });
   it("顾问提示列出 20 个预设 id 与中文标签、色温方向", () => {
     const presets = COLOR_GRADE_LUT_GROUPS.flatMap(g => g.presets);
     expect(presets).toHaveLength(20);

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { trpc } from "@/lib/trpc";
 
 /** 与服务端 GradeSegment 同形：可直接喂 concat grade.segments。 */
@@ -18,6 +18,18 @@ export type MontageGradeSegment = {
   curves?: Record<string, string | undefined>;
 };
 
+/** 顾问代用户发起调色建议：带上用户原话；仍走本组件同一调用与费用确认，结果只列建议、须用户点「套用到草稿」。 */
+export type MontageGradeAdviceTrigger = (userRequestZh: string, signal?: AbortSignal) => Promise<{ arcZh: string; segmentCount: number }>;
+
+/** 每次调色建议的扣费口径（管理员不扣），与服务端计费保持一致。 */
+export const MONTAGE_GRADE_ADVICE_COST_ZH = "每次 20 积分（管理员不扣）";
+
+/** 用户调色要求放在最前（服务端 storyZh 上限 8000 字，截断只丢剧情尾部）。 */
+export function montageGradeAdviceStory(storyZh: string | undefined, userRequestZh?: string): string {
+  const request = userRequestZh?.trim();
+  return [request ? `用户调色要求：${request}` : "", storyZh?.trim() ?? ""].filter(Boolean).join("\n").slice(0, 8000);
+}
+
 export type MontageGradeAdviceProps = {
   /** 成片 gs://（本人目录下的 mp4/mov/webm）。 */
   videoGsUri: string;
@@ -32,6 +44,8 @@ export type MontageGradeAdviceProps = {
   /** supervisor/debug 下才显示引擎名（前台零技术泄漏）。 */
   debugMode?: boolean;
   disabled?: boolean;
+  /** 挂载期间填入命令式触发（顾问 gradeAdvice 用），卸载清空。 */
+  triggerRef?: MutableRefObject<MontageGradeAdviceTrigger | null>;
 };
 
 const fmt = (n: number) => n.toFixed(1);
@@ -51,28 +65,52 @@ export function MontageGradeAdvice(props: MontageGradeAdviceProps) {
   const advise = trpc.canvasMusicMv.adviseMontageGrade.useMutation();
   const [error, setError] = useState<string | null>(null);
   const data = advise.data;
-  const run = async () => {
+  const run = async (userRequestZh?: string) => {
     setError(null);
+    const storyZh = montageGradeAdviceStory(props.storyZh, userRequestZh);
     try {
-      await advise.mutateAsync({
+      return await advise.mutateAsync({
         requestId: crypto.randomUUID(),
         videoGsUri: props.videoGsUri,
         durationSec: props.durationSec,
         ...(props.aspect ? { aspect: props.aspect } : {}),
-        ...(props.storyZh?.trim() ? { storyZh: props.storyZh.trim() } : {}),
+        ...(storyZh ? { storyZh } : {}),
         ...(props.seamSecs?.length ? { seamSecs: props.seamSecs } : {}),
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "调色建议暂不可用，请稍后重试");
+      const message = e instanceof Error ? e.message : "调色建议暂不可用，请稍后重试";
+      setError(message);
+      throw new Error(message);
     }
   };
+  const trigger: MontageGradeAdviceTrigger = async (userRequestZh, signal) => {
+    signal?.throwIfAborted();
+    if (props.disabled || advise.isPending || !props.videoGsUri || !(props.durationSec > 0)) throw new Error("调色建议暂不可用：请先合成本方案成片，且不在处理中");
+    if (!userRequestZh.trim()) throw new Error("缺少用户的调色要求");
+    if (!window.confirm(`按你的要求「${userRequestZh.trim()}」生成调色建议，${MONTAGE_GRADE_ADVICE_COST_ZH}。结果只列出建议，需点「套用到草稿」并采用后才生效。确认？`))
+      throw new Error("用户未确认调色建议费用");
+    signal?.throwIfAborted();
+    const result = await run(userRequestZh);
+    return { arcZh: result.advice.arcZh, segmentCount: result.segments.length };
+  };
+  const latest = useRef(trigger);
+  latest.current = trigger;
+  useEffect(() => {
+    const ref = props.triggerRef;
+    if (!ref) return;
+    ref.current = (userRequestZh, signal) => latest.current(userRequestZh, signal);
+    return () => {
+      ref.current = null;
+    };
+  }, [props.triggerRef]);
+
   return (
     <div className="space-y-2" data-testid="montage-grade-advice">
       <button
         type="button"
         className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
         disabled={props.disabled || advise.isPending || !props.videoGsUri || !(props.durationSec > 0)}
-        onClick={run}
+        onClick={() => void run().catch(() => {})}
       >
         {advise.isPending ? "正在分析成片…" : props.debugMode ? "AI 调色建议（Gemini 3.8 Flash）" : "AI 调色建议"}
       </button>

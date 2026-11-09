@@ -57,7 +57,9 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
             loader: "js",
             contents: `
       const query={data:undefined,isLoading:false,isFetching:false,error:null};
-      const mutation={isPending:false,mutate:()=>{},mutateAsync:async input=>{globalThis.calls.push(input);throw new Error('离线夹具不应调用顾问');}};
+      const mutation={isPending:false,mutate:()=>{},mutateAsync:async input=>{
+        if(input&&input.videoGsUri){(globalThis.adviceCalls??=[]).push(input);return {advice:{arcZh:'先冷后亮',grades:[],seams:[]},segments:[{startSec:0,endSec:2.3,lutId:'basic_cool'}],usedBy:{channel:'x',model:'x',failuresZh:[]}};}
+        globalThis.calls.push(input);throw new Error('离线夹具不应调用顾问');}};
       const utils=new Proxy({}, {get:()=>new Proxy({}, {get:()=>({invalidate:async()=>{},fetch:async()=>null})})});
       const leaf=new Proxy({}, {get:(_,key)=>key==='useQuery'?()=>query:key==='useMutation'?()=>mutation:()=>{}});
       export const trpc=new Proxy({}, {get:(_,key)=>key==='useUtils'?()=>utils:new Proxy({}, {get:()=>leaf})});
@@ -151,9 +153,17 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
 
     // 顾问 edit 控件：调色/转场只写草稿，不提交合成
     await page.waitForFunction(() => typeof (globalThis as any).control === "function");
+    // 顾问自拟调色（无 user_explicit 与用户原话）→ 拒绝，草稿不变
+    const invented = await page.evaluate(() =>
+      (globalThis as any)
+        .control({ action: "edit", episode: 1, operation: "grade", grade: { all: { lutId: "basic_cool" } } }, new AbortController().signal)
+        .then(() => "ok", (e: Error) => e.message)
+    );
+    expect(invented).toBe("调色方案请用『AI 调色建议』生成");
+    expect((await draft()).grade.all.lutId).toBe("neo_noir_subtle");
     const gradeResult = await page.evaluate(() =>
       (globalThis as any).control(
-        { action: "edit", episode: 1, operation: "grade", grade: { all: { lutId: "golden_hour_standard", saturation: 0.7 } } },
+        { action: "edit", episode: 1, operation: "grade", source: "user_explicit", userQuoteZh: "按用户原话", grade: { all: { lutId: "golden_hour_standard", saturation: 0.7 } } },
         new AbortController().signal
       )
     );
@@ -175,7 +185,7 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
     // 逐段调色项数与本方案切点数（2）不符 → 写入即拒绝，草稿不变
     const mismatch = await page.evaluate(() =>
       (globalThis as any)
-        .control({ action: "edit", episode: 1, operation: "grade", grade: { clips: [{ saturation: 0.8 }, null, null] } }, new AbortController().signal)
+        .control({ action: "edit", episode: 1, operation: "grade", source: "user_explicit", userQuoteZh: "按用户原话", grade: { clips: [{ saturation: 0.8 }, null, null] } }, new AbortController().signal)
         .then(() => "ok", (e: Error) => e.message)
     );
     expect(mismatch).toContain("逐段调色有3项，本方案有2个切点");
@@ -190,7 +200,7 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
     // 白名单外预设被拒，草稿不变
     const bad = await page.evaluate(() =>
       (globalThis as any)
-        .control({ action: "edit", episode: 1, operation: "grade", grade: { all: { lutId: "made_up" } } }, new AbortController().signal)
+        .control({ action: "edit", episode: 1, operation: "grade", source: "user_explicit", userQuoteZh: "按用户原话", grade: { all: { lutId: "made_up" } } }, new AbortController().signal)
         .then(() => "ok", (e: Error) => e.message)
     );
     expect(bad).toContain("调色预设不存在");
@@ -235,13 +245,13 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
     // 顾问写入分段：同一套校验（不覆盖片长被拒、草稿不变）
     const segBad = await page.evaluate(() =>
       (globalThis as any)
-        .control({ action: "edit", episode: 1, operation: "grade", grade: { segments: [{ startSec: 0, endSec: 1 }] } }, new AbortController().signal)
+        .control({ action: "edit", episode: 1, operation: "grade", source: "user_explicit", userQuoteZh: "按用户原话", grade: { segments: [{ startSec: 0, endSec: 1 }] } }, new AbortController().signal)
         .then(() => "ok", (e: Error) => e.message)
     );
     expect(segBad).toContain("末段须到成片结尾2.3秒");
     const segOk = await page.evaluate(() =>
       (globalThis as any).control(
-        { action: "edit", episode: 1, operation: "grade", grade: { segments: [{ startSec: 0, endSec: 1 }, { startSec: 1, endSec: 2.3, lutId: "basic_warm" }], crossfadeSec: 0.5 } },
+        { action: "edit", episode: 1, operation: "grade", source: "user_explicit", userQuoteZh: "按用户原话", grade: { segments: [{ startSec: 0, endSec: 1 }, { startSec: 1, endSec: 2.3, lutId: "basic_warm" }], crossfadeSec: 0.5 } },
         new AbortController().signal
       )
     );
@@ -257,6 +267,20 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
     const adviceText = await page.$eval('[data-testid="montage-grade-advice"]', n => n.textContent);
     expect(adviceText).toContain("AI 调色建议");
     expect(adviceText).not.toMatch(/Gemini|Flash/);
+
+    // 顾问 gradeAdvice：走「AI 调色建议」同一调用（用户要求拼进 storyZh），只回建议，不写草稿、不合成
+    const before = await draft();
+    const advised = JSON.parse(
+      await page.evaluate(() =>
+        (globalThis as any).control({ action: "edit", episode: 1, operation: "gradeAdvice", userRequestZh: "雨景偏冷一点、结尾更亮" }, new AbortController().signal)
+      )
+    );
+    expect(advised).toMatchObject({ status: "advised", operation: "gradeAdvice", arcZh: "先冷后亮", segmentCount: 1 });
+    const adviceCalls = await page.evaluate(() => (globalThis as any).adviceCalls);
+    expect(adviceCalls).toHaveLength(1);
+    expect(adviceCalls[0]).toMatchObject({ videoGsUri: "gs://test-only/out.mp4" });
+    expect(adviceCalls[0].storyZh).toMatch(/^用户调色要求：雨景偏冷一点、结尾更亮\n完整口播正文/);
+    expect(await draft()).toEqual(before);
 
     expect(await page.evaluate(() => (globalThis as any).submits.length)).toBe(5);
     expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(0);

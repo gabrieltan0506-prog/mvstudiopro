@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { manhuaVfxMediaIdentity } from "@/lib/manhuaVfxWorkflow";
-import { MontageGradeAdvice } from "./MontageGradeAdvice";
+import { MontageGradeAdvice, type MontageGradeAdviceTrigger } from "./MontageGradeAdvice";
 import {
   parseMontagePlan,
   remapMontageSubtitles,
@@ -216,6 +216,7 @@ export function MontagePlanner(props: Props) {
   ];
   const blockReasons = plan?.plans.map(p => montageTransitionBlockReason(p.cuts.length, Boolean(remapMontageSubtitles(plan!.sourceSrt, p.cuts)))) ?? [];
   const transitionLocked = Boolean(blockReasons[finishPlan]);
+  const gradeAdviceTrigger = useRef<MontageGradeAdviceTrigger | null>(null);
   const advisorEditControl = useRef<AdvisorEditControl | null>(null);
   advisorEditControl.current = async (action, signal) => {
     signal.throwIfAborted();
@@ -225,8 +226,15 @@ export function MontagePlanner(props: Props) {
     if (action.operation === "inspect") return JSON.stringify({ plan: action.episode, title: selected.title, cuts: selected.cuts.map((c, i) => ({ shotIndex: i + 1, startSec: c.startSec, endSec: c.endSec })), sourceDurationSec: plan.sourceDurationSec, busy: locked || Boolean(saved.pending) || stale,
       finish: finishOf(action.episode - 1), outputSec: montageOutputSec(selected.cuts, finishOf(action.episode - 1), subtitled), lutOptions: MONTAGE_LUT_GROUPS, transitionBlocked: montageTransitionBlockReason(selected.cuts.length, subtitled) || undefined, finishHelp: MONTAGE_FINISH_ADVISOR_HELP });
     if (locked || saved.pending || stale) throw new Error("剪辑方案正在处理或原片已变化，未改动");
+    // 用户要调色方案：走「AI 调色建议」同一调用与费用确认；结果只列建议，不写草稿、不合成。
+    if (action.operation === "gradeAdvice") {
+      if (action.episode - 1 !== finishPlan) throw new Error(`请先在剪辑方案调色区切到第${action.episode}版再请求调色建议，未改动`);
+      if (!adviceVideo || !gradeAdviceTrigger.current) throw new Error("本方案还没有合成成片，请先采用并生成此版再请求调色建议，未改动");
+      const advice = await gradeAdviceTrigger.current(action.userRequestZh ?? "", signal);
+      return JSON.stringify({ status: "advised", plan: action.episode, operation: "gradeAdvice", arcZh: advice.arcZh, segmentCount: advice.segmentCount, note: "调色建议已列在剪辑方案调色区，未写入草稿；需用户点「套用到草稿」并采用后才生效" });
+    }
     // 调色/转场：按方案各存一份；逐段调色项数写入时即核对本方案切点数。
-    const finishAction = action as unknown as { operation: string; transition?: unknown; transitionSettings?: unknown; grade?: unknown };
+    const finishAction = action as unknown as { operation: string; transition?: unknown; transitionSettings?: unknown; grade?: unknown; source?: unknown; userQuoteZh?: unknown };
     if (finishAction.operation === "transition" || finishAction.operation === "grade") {
       const next = applyAdvisorMontageFinish(finishOf(action.episode - 1), finishAction, selected.cuts.length);
       const blocked = next.transition && next.transition.kind !== "none" ? montageTransitionBlockReason(selected.cuts.length, subtitled) : "";
@@ -673,6 +681,7 @@ export function MontagePlanner(props: Props) {
                   storyZh={props.story}
                   seamSecs={seamSecs}
                   disabled={locked}
+                  triggerRef={gradeAdviceTrigger}
                   onApply={segs => {
                     try {
                       setSegGrade(applyMontageSegmentsDraft(finish.grade, segs, outputSec));

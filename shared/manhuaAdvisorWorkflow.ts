@@ -200,7 +200,7 @@ export const manhuaAdvisorWorkflowVariants = [
   z
     .object({
       action: z.literal("edit"),
-      operation: z.enum(["inspect", "reorder", "trim", "transition", "grade"]),
+      operation: z.enum(["inspect", "reorder", "trim", "transition", "grade", "gradeAdvice"]),
       episode,
       order: z.array(z.number().int().positive()).min(1).max(200).optional(),
       shotIndex: z.number().int().positive().optional(),
@@ -213,6 +213,11 @@ export const manhuaAdvisorWorkflowVariants = [
         .optional(),
       /** null = 还原原片色彩；只写剪辑方案草稿，采用时才随合成提交。 */
       grade: concatGradeSchema.nullable().optional(),
+      /** grade 只能转述用户明确给出的参数：须标 user_explicit 并附用户原话片段，前端核对后才写草稿。 */
+      source: z.literal("user_explicit").optional(),
+      userQuoteZh: z.string().trim().min(1).max(200).optional(),
+      /** gradeAdvice：用户的调色要求原话，交给「AI 调色建议」生成，结果只进建议列表、须用户套用并采用。 */
+      userRequestZh: z.string().trim().min(2).max(500).optional(),
     })
     .strict(),
   z
@@ -241,4 +246,4 @@ export const manhuaAdvisorWorkflowVariants = [
 
 export const MANHUA_ADVISOR_OPERATION_REQUEST = "【工作流操作】";
 export const MANHUA_ADVISOR_WORKFLOW_HELP = MANHUA_ADVISOR_EFFECTS_HELP + "\n" + CREATIVE_STUDIO_HELP + "\n" + `知识目录：knowledge(inspect/refresh)，inspect读最近快照，refresh明确更新已批准模板、导演包与工作流能力；不调用生成模型、不修改项目冻结导演包。刷新后以真实revision和scannedAt说明读取时点，不能声称永久最新。
-工作流动作：writer(inspect/configure/trial/expand/confirm，topic/brief/templateId/episodeCount)；asset(inspect/regenerate/select/adopt/configure/claim/primary/acceptReview，anchorId/assetId/libraryId/question/anchorIds/duty/metadata)；modelControl(inspect/multiview/multiviewSubmit/rigInspect/rigSubmit/rigAdopt/rigRestore，assetId/requestId)；worldControl(inspect/exportFrame/adoptFrame/clearFrame，assetId/clipId/shotId/frameId/camera)；generate(keyart/clip/retake/selectVersion，episode/blockId/versionIndex/question)；audio(inspect/addCue/configureCue/generateDialogue/adoptTake/selectMusic/selectSource/trim/premix/previewMix/resume，clipId/cueId/takeId/jobId/variantIndex/patch)；scoring(inspect/configure/analyze/applyAdvice/submit，clipId/musicId/question/sourceKey，submit必须原样携带本次scoring inspect的sourceKey；改素材或参数后重新inspect和准备方案，使用已采用配乐与原正式视频混音入口)；edit(inspect/reorder/trim/transition/grade，episode/order/shotIndex/inSec/outSec/transition(cut|fade|dissolve|wipeleft)/transitionSettings{kind:none|fade|dissolve|wipeleft,durationSec .1–2}/grade，沿原剪辑台保存；transition与grade只写草稿，须用户点采用才合成；${COLOR_GRADE_ADVISOR_HELP}）；deliver(inspect/assemble/subtitle/selectVersion/export，episode/clipIds/versionIndex)；storyboardRecovery(inspect/recover/archive，episode)。ID及候选编号只能从当前工作区实际清单取得，不接受外部素材URL。执行生成仍须原页面确认；inspect不改作品。缺少目标或参数时说明缺少什么，不猜测、不开任务。`;
+工作流动作：writer(inspect/configure/trial/expand/confirm，topic/brief/templateId/episodeCount)；asset(inspect/regenerate/select/adopt/configure/claim/primary/acceptReview，anchorId/assetId/libraryId/question/anchorIds/duty/metadata)；modelControl(inspect/multiview/multiviewSubmit/rigInspect/rigSubmit/rigAdopt/rigRestore，assetId/requestId)；worldControl(inspect/exportFrame/adoptFrame/clearFrame，assetId/clipId/shotId/frameId/camera)；generate(keyart/clip/retake/selectVersion，episode/blockId/versionIndex/question)；audio(inspect/addCue/configureCue/generateDialogue/adoptTake/selectMusic/selectSource/trim/premix/previewMix/resume，clipId/cueId/takeId/jobId/variantIndex/patch)；scoring(inspect/configure/analyze/applyAdvice/submit，clipId/musicId/question/sourceKey，submit必须原样携带本次scoring inspect的sourceKey；改素材或参数后重新inspect和准备方案，使用已采用配乐与原正式视频混音入口)；edit(inspect/reorder/trim/transition/grade/gradeAdvice，episode/order/shotIndex/inSec/outSec/transition(cut|fade|dissolve|wipeleft)/transitionSettings{kind:none|fade|dissolve|wipeleft,durationSec .1–2}/grade/source/userQuoteZh/userRequestZh，沿原剪辑台保存；transition与grade只写草稿，须用户点采用才合成；grade只能原样转述用户明确说出的参数（如「饱和度0.8」「用暖阳轻档」「第2段色温7000」），必须带source=user_explicit与userQuoteZh(用户原话片段)，不得自拟或补全调色参数；用户只描述感觉或要方案（如「雨景偏冷一点、结尾更亮」）时用gradeAdvice+userRequestZh(用户原话)，由「AI 调色建议」生成（须用户确认费用，结果只列建议，用户点套用到草稿并采用才生效）；${COLOR_GRADE_ADVISOR_HELP}）；deliver(inspect/assemble/subtitle/selectVersion/export，episode/clipIds/versionIndex)；storyboardRecovery(inspect/recover/archive，episode)。ID及候选编号只能从当前工作区实际清单取得，不接受外部素材URL。执行生成仍须原页面确认；inspect不改作品。缺少目标或参数时说明缺少什么，不猜测、不开任务。`;
