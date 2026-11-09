@@ -1,3 +1,4 @@
+import { canUseAdvisorPrevisFor, mvShotPrevisBridgeUnavailableZh } from "@/lib/mvShotPrevisAccess";
 import { ManhuaOverseasLibraryButton, ManhuaOverseasMethodReference } from "@/components/canvas/ManhuaOverseasLibrary";
 import RemixProductionImport from "@/components/RemixProductionImport";
 import { remixToNovelDraft } from "@/lib/remixProductionHandoff";
@@ -1783,14 +1784,15 @@ function OmniCanvasWorkspace() {
   }
   const advisorPrevisClip = blocks.find(b => b.id === advisorPrevisClipId && !b.archivedFromPreviousScript);
   const checkAdvisorPrevisReady = (candidate?: AdvisorPrevisCandidate) => {
-    if (!canUseManhua3d || factoryBusy) return "当前不能生成白模，请等待正在进行的制作结束。";
     const clip = blocksRef.current.find(b => b.id === (candidate?.target.clipId || advisorPrevisClipId));
+    // 1110：MV 镜头块白模对普通登录用户开放；其他白模/3D 仍按 canUseManhua3d
+    if (!canUseAdvisorPrevisFor({ canUseManhua3d, userId: user?.id, clip }) || factoryBusy) return "当前不能生成白模，请等待正在进行的制作结束。";
     try { return checkManhuaAdvisorPrevisLaunch(clip?.previsStudio ? { ...clip, previsStudio: advisorPrevisCurrentStudio(clip) } : clip, candidate); }
     catch (e) { return e instanceof Error ? e.message : "当前分镜无法读取，未使用旧来源"; }
   };
   const prepareAdvisorPrevis = (candidate: AdvisorPrevisCandidate): AdvisorPrevisTrial => {
-    if (!canUseManhua3d || factoryBusy) throw new Error("当前不能提交白模试看。");
     const clip = blocksRef.current.find(b => b.id === candidate.target.clipId && !b.archivedFromPreviousScript);
+    if (!canUseAdvisorPrevisFor({ canUseManhua3d, userId: user?.id, clip }) || factoryBusy) throw new Error("当前不能提交白模试看。");
     if (!clip?.previsStudio) throw new Error("本段白模不存在，未提交。");
     if (clip.status === "running" || clip.videoTaskStatus === "queued") throw new Error("本段仍在制作，请等待结束。");
     const trial = prepareAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip), candidate);
@@ -1801,9 +1803,9 @@ function OmniCanvasWorkspace() {
   const applyAdvisorPrevis = (trial: AdvisorPrevisTrial, receipt: AdvisorPrevisReceipt): boolean => {
     const candidate = trial.candidate;
     try {
-      if (!canUseManhua3d || factoryBusy) throw new Error("当前无法修改白模，请等待正在进行的制作结束。");
       const current = blocksRef.current;
       const clip = current.find(b => b.id === candidate.target.clipId && !b.archivedFromPreviousScript);
+      if (!canUseAdvisorPrevisFor({ canUseManhua3d, userId: user?.id, clip }) || factoryBusy) throw new Error("当前无法修改白模，请等待正在进行的制作结束。");
       if (!clip?.previsStudio) throw new Error("本段白模已不存在，未应用。");
       if (clip.status === "running" || clip.videoTaskStatus === "queued") throw new Error("本段视频正在处理，暂不能修改。");
       const currentAudio = clip.previsStudio.audioEnabled === true
@@ -10893,7 +10895,8 @@ function OmniCanvasWorkspace() {
 
   /** 1110 MV 多人互动镜头：打开顾问白模页（目标=镜头块），submit 时自动提问一次；额度、超额确认沿用面板，不另扣费。 */
   function openMvShotAdvisorPrevis(clipId: string, question: string, submit: boolean) {
-    if (!canUseManhua3d) throw new Error("当前账号暂未开放白模动作参考");
+    const unavailable = mvShotPrevisBridgeUnavailableZh({ userId: user?.id, factoryBusy: Boolean(factoryBusy) });
+    if (unavailable) throw new Error(unavailable);
     if (factoryBusy) throw new Error("正在制作中，结束后再生成白模");
     const clip = blocksRef.current.find(b => b.id === clipId && !b.archivedFromPreviousScript);
     if (!clip?.musicMvShot || !clip.previsStudio?.advisorShotSource) throw new Error("本镜白模基线尚未保存，未打开顾问");
@@ -10908,7 +10911,7 @@ function OmniCanvasWorkspace() {
     open: openMvShotAdvisorPrevis,
     onPreviewHostChange: (host: HTMLDivElement | null) => setAdvisorPreviewHost(prev => host ?? (prev?.dataset.mvPrevisHost != null ? null : prev)),
     activeClipId: advisorPrevisClipId ?? undefined,
-    ...(!canUseManhua3d ? { unavailableZh: "当前账号暂未开放白模动作参考" } : factoryBusy ? { unavailableZh: "正在制作中，结束后再生成白模" } : {}),
+    ...(mvShotPrevisBridgeUnavailableZh({ userId: user?.id, factoryBusy: Boolean(factoryBusy) }) ? { unavailableZh: mvShotPrevisBridgeUnavailableZh({ userId: user?.id, factoryBusy: Boolean(factoryBusy) }) } : {}),
   } : undefined;
 
   function prepareOverseasQuestion(question: string) {

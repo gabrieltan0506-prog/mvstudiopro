@@ -11,6 +11,7 @@ import { transform } from "esbuild";
 import { createMusicMvShotBlocks } from "./canvasMusicMvWorkflow";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
 import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
+import { mvShotPrevisBridgeUnavailableZh } from "./mvShotPrevisAccess";
 import type { CanvasMusicMvPlan, MusicMvShotBeat } from "@shared/canvasMusicMv";
 import { MV_SHOT_CAST_CONFLICT_ERROR_ZH } from "@shared/canvasMusicMvShotGuards";
 import {
@@ -159,7 +160,7 @@ describe("自动发起去重：镜头 id + 节拍哈希", () => {
     const panel = readFileSync("client/src/components/canvas/ManhuaCreativeAdvisorPanel.tsx", "utf8");
     const a = omni.indexOf("  function openMvShotAdvisorPrevis("); const b = omni.indexOf("  /** 交 FreeformCanvas", a);
     expect(a).toBeGreaterThan(0); expect(b).toBeGreaterThan(a);
-    const names = ["canUseManhua3d", "factoryBusy", "blocksRef", "advisor3dOpenVersion", "setAdvisor3dContext", "setAdvisorPreviewSelection", "setAdvisorPrevisClipId", "setAdvisorFocusSection", "chooseAdvisorVisibility", "setAdvisorNudge", "setAdvisorQuestionSeed", "advisorComponentKey"];
+    const names = ["canUseManhua3d", "factoryBusy", "blocksRef", "advisor3dOpenVersion", "setAdvisor3dContext", "setAdvisorPreviewSelection", "setAdvisorPrevisClipId", "setAdvisorFocusSection", "chooseAdvisorVisibility", "setAdvisorNudge", "setAdvisorQuestionSeed", "advisorComponentKey", "user", "mvShotPrevisBridgeUnavailableZh"];
     const { code } = await transform(`const {${names.join(",")}}=ctx;${omni.slice(a, b)}`, { loader: "ts", target: "es2022" });
     const makeOpen = new Function("ctx", `${code};return openMvShotAdvisorPrevis;`) as (ctx: Record<string, unknown>) => (id: string, q: string, submit: boolean) => void;
 
@@ -173,6 +174,8 @@ describe("自动发起去重：镜头 id + 节拍哈希", () => {
       canUseManhua3d: true, factoryBusy: false, blocksRef: { current: [withStudio] }, advisor3dOpenVersion: { current: 0 },
       setAdvisor3dContext: vi.fn(), setAdvisorPreviewSelection: vi.fn(), setAdvisorPrevisClipId: vi.fn(), setAdvisorFocusSection: vi.fn(),
       chooseAdvisorVisibility: vi.fn(), setAdvisorNudge: vi.fn(), setAdvisorQuestionSeed: vi.fn(), advisorComponentKey: "mv-project",
+      // 1110 白模入口对普通登录用户开放：桥只看登录与制作中
+      user: { id: 7, role: "user" }, mvShotPrevisBridgeUnavailableZh,
     };
     const question = mvPrevisAdvisorQuestion(pick.shot, { cues: mvShotNeedsPrevis(pick.shot).cues });
     makeOpen(ctx)(block.id, question, true);
