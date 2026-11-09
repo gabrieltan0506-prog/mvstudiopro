@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { layoutFromSource } from "../../shared/editableLayout";
 import { knowledgeManuscript } from "../../shared/knowledgePublication";
 import { knowledgeSourceDigest } from "./knowledgePublicationAdvisor";
-import { exportKnowledgePublication, loadKnowledgePublicationExport } from "./knowledgePublicationExport";
+import { exportKnowledgePublication, loadKnowledgePublicationExport, isTransientKnowledgePdfWorkerError, retryKnowledgeExportStep } from "./knowledgePublicationExport";
 function fixture() {
   const doc = layoutFromSource({
     kind: "knowledge-publication",
@@ -274,4 +274,36 @@ it('新稿未确认费率不能渲染收费；旧稿恢复下载不追溯扣款'
  await expect(exportKnowledgePublication(7,f.doc.id,'10',f.deps)).rejects.toThrow('确认内文');expect(f.deps.pdf).not.toHaveBeenCalled();expect(f.deduct).not.toHaveBeenCalled();
  delete f.doc.publication!.billing;
  expect((await exportKnowledgePublication(7,f.doc.id,'10',f.deps)).pdfUrl).toBeTruthy();expect(f.deduct).not.toHaveBeenCalled();
+});
+
+describe("pdf-worker 瞬时故障原地重试一次", () => {
+  it("识别 detached Frame / 5xx / 连接中断；合同类错误不算瞬时", () => {
+    expect(isTransientKnowledgePdfWorkerError(new Error("Attempted to use detached Frame 'ABC'"))).toBe(true);
+    expect(isTransientKnowledgePdfWorkerError(new Error("pdf-worker returned 503: upstream"))).toBe(true);
+    expect(isTransientKnowledgePdfWorkerError(Object.assign(new Error("fetch failed"), { code: "ECONNRESET" }))).toBe(true);
+    expect(isTransientKnowledgePdfWorkerError(new Error("pdf-worker returned 400: bad html"))).toBe(false);
+    expect(isTransientKnowledgePdfWorkerError(new Error("导出没有返回有效PDF"))).toBe(false);
+  });
+  it("瞬时错误重试 1 次后成功；第二次仍瞬时则抛出；非瞬时错误不重试", async () => {
+    const sleeps: number[] = [];
+    const sleep = async (ms: number) => { sleeps.push(ms); };
+    let calls = 0;
+    const result = await retryKnowledgeExportStep(async () => { calls++; if (calls === 1) throw new Error("detached Frame"); return "ok"; }, { sleep });
+    expect(result).toBe("ok"); expect(calls).toBe(2); expect(sleeps).toEqual([1500]);
+    calls = 0;
+    await expect(retryKnowledgeExportStep(async () => { calls++; throw new Error("Target closed"); }, { sleep })).rejects.toThrow("Target closed");
+    expect(calls).toBe(2);
+    calls = 0;
+    await expect(retryKnowledgeExportStep(async () => { calls++; throw new Error("导出没有返回有效PDF"); }, { sleep })).rejects.toThrow("有效PDF");
+    expect(calls).toBe(1);
+  });
+  it("整册导出：单段 PDF 首发 detached Frame，原地重试成功，不进入失败段、首次即结算", async () => {
+    const f = fixture();
+    f.deps.pdf.mockRejectedValueOnce(new Error("Attempted to use detached Frame"));
+    const result = await exportKnowledgePublication(7, f.doc.id, "10", f.deps as any);
+    expect(result.pdfUrl).toBeTruthy();
+    expect(result.pdfError).toBeUndefined();
+    expect(f.deps.pdf).toHaveBeenCalledTimes(2);
+    expect(f.deduct).toHaveBeenCalledTimes(1);
+  });
 });

@@ -36,6 +36,26 @@ import {
 import { fetchPdfBufferFromWorker, measureKnowledgeBookletFromWorker } from "./pdfWorkerClient";
 import { knowledgeStageConcurrency, runKnowledgeStaggeredPool } from "../../shared/knowledgeConcurrency";
 
+/** pdf-worker 的瞬时故障（部署/重启打断 Puppeteer 页面、网关 5xx、连接中断）：同一输入原地重试一次即可，不算段失败。 */
+export const isTransientKnowledgePdfWorkerError = (error: unknown) =>
+  /detached Frame|Execution context was destroyed|Target closed|Session closed|Navigating frame was detached|Protocol error|pdf-worker returned 5\d\d|ECONNRESET|ECONNREFUSED|EPIPE|socket hang up|fetch failed|aborted|timeout/i
+    .test(error instanceof Error ? `${error.message} ${String((error as any).code ?? "")}` : String(error ?? ""));
+
+/** 渲染/计页步骤：瞬时故障最多重试 retries 次（默认 1），其他错误原样抛出交段级处理。 */
+export async function retryKnowledgeExportStep<T>(step: () => Promise<T>, options: { retries?: number; sleep?: (ms: number) => Promise<void>; isTransient?: (error: unknown) => boolean; onRetry?: (error: unknown, attempt: number) => void } = {}): Promise<T> {
+  const retries = Math.max(0, options.retries ?? 1);
+  const isTransient = options.isTransient ?? isTransientKnowledgePdfWorkerError;
+  const sleep = options.sleep ?? (ms => new Promise<void>(r => setTimeout(r, ms)));
+  for (let attempt = 0; ; attempt++) {
+    try { return await step(); }
+    catch (error) {
+      if (attempt >= retries || !isTransient(error)) throw error;
+      options.onRetry?.(error, attempt + 1);
+      await sleep(1500 * (attempt + 1));
+    }
+  }
+}
+
 /** 导出分段池：按段数动态并发（≤16），每段自行捕获错误。 */
 async function knowledgeExportPool(count: number, worker: (index: number) => Promise<void>) {
   const lanes = Array.from({ length: knowledgeStageConcurrency(count, { max: 16 }) }, () => "pdf" as const);
@@ -306,7 +326,8 @@ export async function exportKnowledgePublication(
         // 各段预分页互不依赖：同时计数（按段数动态并发），结果按原段序写回。
         await knowledgeExportPool(chunks.length, async index => {
           try {
-            const count = await deps.measure(head + await readFile(chunks[index]!, "utf8") + tail);
+            const chunkHtml = head + await readFile(chunks[index]!, "utf8") + tail;
+            const count = await retryKnowledgeExportStep(() => deps.measure(chunkHtml));
             if (!Number.isSafeInteger(count) || count < 1) throw new Error("预分页结果无效");
             counts[index] = count;
           } catch {
@@ -331,7 +352,7 @@ export async function exportKnowledgePublication(
           if(failures.includes(index+1))return;
           try {
             const cached = await deps.read(name);
-            const bytes = cached || await deps.pdf(knowledgePublicationHead(doc.title, pagination) + await readFile(sourcePath, "utf8") + tail);
+            const bytes = cached || await retryKnowledgeExportStep(async () => deps.pdf(knowledgePublicationHead(doc.title, pagination) + await readFile(sourcePath, "utf8") + tail));
             if (bytes.length < 100 || bytes.subarray(0, 4).toString() !== "%PDF") throw new Error("导出没有返回有效PDF");
             if (!cached) await deps.save(name, bytes, "application/pdf");
             await deps.savePages(bytes,async(pageIndex,page)=>{
