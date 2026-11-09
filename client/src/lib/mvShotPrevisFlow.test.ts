@@ -6,6 +6,8 @@
  * - 角色表不足：仍被 R3 硬拦（未提交、未扣费）
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { transform } from "esbuild";
 import { createMusicMvShotBlocks } from "./canvasMusicMvWorkflow";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
 import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
@@ -13,6 +15,9 @@ import type { CanvasMusicMvPlan, MusicMvShotBeat } from "@shared/canvasMusicMv";
 import { MV_SHOT_CAST_CONFLICT_ERROR_ZH } from "@shared/canvasMusicMvShotGuards";
 import {
   MV_PREVIS_SOFT_HINT_ZH,
+  buildMvShotPrevisStudio,
+  MV_PREVIS_PROMPT_RULE_ZH,
+  mvPrevisAdvisorQuestion,
   mvShotNeedsPrevis,
   mvShotPrevisContentKey,
   nextMvShotAutoPrevis,
@@ -149,7 +154,41 @@ describe("自动发起去重：镜头 id + 节拍哈希", () => {
     expect(a.advisorCalls).toEqual([]);
   });
   it.todo("参考选择器挂载后自动发起顾问白模：同一镜头同节拍刷新/重挂载不重复发起（等 CanvasMvShotReferencePicker 推送）");
-  it.todo("顾问额度超额时走现有费用确认，未确认不发起、不静默扣费（等 OmniCanvas 顾问白模页推送）");
+  it("自动发起 → 顾问白模页：只预填并以面板 send 提问，超额时走现有 pendingPaid 费用确认，不带已确认付费、不直接调用付费接口", async () => {
+    const omni = readFileSync("client/src/pages/OmniCanvas.tsx", "utf8");
+    const panel = readFileSync("client/src/components/canvas/ManhuaCreativeAdvisorPanel.tsx", "utf8");
+    const a = omni.indexOf("  function openMvShotAdvisorPrevis("); const b = omni.indexOf("  /** 交 FreeformCanvas", a);
+    expect(a).toBeGreaterThan(0); expect(b).toBeGreaterThan(a);
+    const names = ["canUseManhua3d", "factoryBusy", "blocksRef", "advisor3dOpenVersion", "setAdvisor3dContext", "setAdvisorPreviewSelection", "setAdvisorPrevisClipId", "setAdvisorFocusSection", "chooseAdvisorVisibility", "setAdvisorNudge", "setAdvisorQuestionSeed", "advisorComponentKey"];
+    const { code } = await transform(`const {${names.join(",")}}=ctx;${omni.slice(a, b)}`, { loader: "ts", target: "es2022" });
+    const makeOpen = new Function("ctx", `${code};return openMvShotAdvisorPrevis;`) as (ctx: Record<string, unknown>) => (id: string, q: string, submit: boolean) => void;
+
+    const fetchSpy = vi.fn(async () => { throw new Error("自动发起不得直接发请求"); });
+    vi.stubGlobal("fetch", fetchSpy);
+    const block = shotBlock({ motion: stockMotion, id: "mvshot-auto" });
+    const pick = nextMvShotAutoPrevis([asPrevisShot(block)], () => false)!;
+    expect(pick).toBeTruthy();
+    const withStudio = { ...block, previsStudio: buildMvShotPrevisStudio(block.id, pick.shot) };
+    const ctx = {
+      canUseManhua3d: true, factoryBusy: false, blocksRef: { current: [withStudio] }, advisor3dOpenVersion: { current: 0 },
+      setAdvisor3dContext: vi.fn(), setAdvisorPreviewSelection: vi.fn(), setAdvisorPrevisClipId: vi.fn(), setAdvisorFocusSection: vi.fn(),
+      chooseAdvisorVisibility: vi.fn(), setAdvisorNudge: vi.fn(), setAdvisorQuestionSeed: vi.fn(), advisorComponentKey: "mv-project",
+    };
+    const question = mvPrevisAdvisorQuestion(pick.shot, { cues: mvShotNeedsPrevis(pick.shot).cues });
+    makeOpen(ctx)(block.id, question, true);
+    expect(ctx.setAdvisorPrevisClipId).toHaveBeenCalledWith(block.id);
+    const seed = ctx.setAdvisorQuestionSeed.mock.calls[0]![0] as Record<string, unknown>;
+    expect(seed).toMatchObject({ question, submit: true, projectKey: "mv-project" });
+    expect(Object.keys(seed).sort()).toEqual(["id", "projectKey", "question", "submit"]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    // 面板种子分支只 send(question)，不传已确认付费；在途/待确认付费时不重复发；超额由服务端拒绝后展示「确认支付」
+    const effect = panel.slice(panel.indexOf("const appliedQuestionSeed"), panel.indexOf("const operationKey"));
+    expect(effect).toMatch(/if \(seed\.submit && !draft\.trim\(\)\) \{\s*send\(seed\.question\);/);
+    expect(effect).toMatch(/asking \|\| pendingPaid \|\| unresolvedFailed/);
+    expect(panel).toMatch(/setPendingPaid\(\{ request, credits:/);
+    expect(panel).toMatch(/确认支付 \{pendingPaid\.credits/);
+  });
 });
 
 describe("出片路径：白模参考 / 软提示 / R3 硬拦（离线出站）", () => {
@@ -162,10 +201,21 @@ describe("出片路径：白模参考 / 软提示 / R3 硬拦（离线出站）"
     expect(body.workMode).toBe("reference_to_video");
     expect(body.videoUrls).toEqual(["https://test.invalid/shot-1.mp4?signature=fresh"]);
     expect(String(body.prompt)).toMatch(/@视频1＝白模站位片/);
+    // 头部白模指令 + 逐窗白模秒点（镜内相对秒）
+    const prompt = String(body.prompt);
+    expect(prompt).toContain(MV_PREVIS_PROMPT_RULE_ZH("@视频1", "@图片1、@图片2"));
+    // 秒数写法以编译器为准（0 / 0.00 均可），只锁定白模序号与窗界
+    expect(prompt).toMatch(/站位与动作按@视频1镜内 0(?:\.0+)?–2\.60? 秒段执行；接触瞬间以@视频1白模接触帧为准/);
+    expect(prompt).toMatch(/站位与动作按@视频1镜内 2\.60?–5\.20? 秒段执行/);
     expect(onMvShotAdvisory).not.toHaveBeenCalled();
     expect(toastWarning).not.toHaveBeenCalled();
   });
-  it.todo("采用白模后提示词含 MV_PREVIS_PROMPT_RULE_ZH 白模指令（等 canvasMusicMvShotPrompt 编译接入推送）");
+  it("无白模参考：提示词不含白模指令（逐字节不变由 canvasMusicMvShotPrompt 自测保证）", async () => {
+    const { requests } = offline();
+    await run(shotBlock({ motion: stockMotion, id: "mvshot-no-rule" }), "no-rule", { onMvShotAdvisory: vi.fn() });
+    expect(String(requests[0]!.prompt)).not.toContain(MV_PREVIS_PROMPT_RULE_ZH("@视频1", "§").split("§")[0]!);
+    expect(String(requests[0]!.prompt)).not.toMatch(/站位与动作按@视频\d镜内/);
+  });
 
   it("无白模：软提示出现，但照常提交且费用参数不变", async () => {
     const { requests } = offline();
