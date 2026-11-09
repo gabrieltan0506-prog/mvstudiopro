@@ -31,11 +31,11 @@ import {buildSinglePageKnowledgeCardImagePrompt,resolveKnowledgeCardPageSource} 
 import {resolveKnowledgeCardReferencePageUrls} from '../server/services/knowledgeCardDocumentPages';
 import {synchronizedKnowledgeCardSource} from '../shared/knowledgeCardEditableLayout';
 import {layoutFromSource,layoutLibrarySchema} from '../shared/editableLayout';
-import {knowledgeCardCreditsForPageIndex,knowledgeEditionImagePlan,planKnowledgeCardPages} from '../shared/knowledgeCardPagination';
+import {knowledgeCardCreditsForPageIndex,knowledgeEditionImageChars,knowledgeEditionImagePlan,planKnowledgeCardPages} from '../shared/knowledgeCardPagination';
 import {auditKnowledgeTopicTitles,readKnowledgeTopicTitles} from '../shared/knowledgeTopicImagePlan';
 import {KNOWLEDGE_IMAGE_CHANNEL_MAX,knowledgeStageConcurrency} from '../shared/knowledgeConcurrency';
 import {knowledgeEditionParts} from '../shared/knowledgeCardEdition';
-import {knowledgeEditionBudgetCheck} from '../shared/knowledgeEditionBudget';
+import {knowledgeEditionBudgetCheck,KNOWLEDGE_LEAD_PAGE_CHARS} from '../shared/knowledgeEditionBudget';
 import {getGraphicNoteFusionTemplate} from '../shared/graphicNoteFusionTemplates';
 import {KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS} from '../shared/knowledgeCardDistillModels';
 import {COOKIE_NAME} from '../shared/const';
@@ -117,7 +117,7 @@ async function prepare(){
   const plan=planKnowledgeCardPages(markdown,distillModel),quote=await quoteKnowledgeCard(Number(owner),markdown,distillModel);
   if(quote.pageCount!==plan.pageCount)throw Error('分页与报价不一致');
   const topics=knowledgeEditionImagePlan(markdown)!;
-  const budget=knowledgeEditionBudgetCheck(level,plan.pageCount,topics.readingChars);
+  const budget=knowledgeEditionBudgetCheck(level,plan.pageCount,topics.readingChars,knowledgeEditionImageChars(topics));
   // 正式生成器逐页编译实际输入（并发），供用户确认；不提交图片。
   const pages:any[]=new Array(plan.pageCount);let next=0;
   await Promise.all(Array.from({length:6},async()=>{while(next<plan.pageCount){const index=next++;
@@ -135,10 +135,10 @@ async function prepare(){
     pages[index]={pageIndex:index+1,chars:slice.length,visibleChars:slice.replace(/\s+/g,'').length,sections:topic.headlines.length,imageTitle:topic.title,readingTitle:topic.readingTitle,overflowChars:topic.overflow.replace(/\s+/g,'').length,body:slice,referencePages:refs.length,prompt};
   }}));
   const manuscriptSha256=createHash('sha256').update(markdown).digest('hex');
-  await fs.writeFile(path.join(root,'image-preview.md'),`# ${parts.title} · ${level==='full'?'完整版':'精华版'}逐页生图输入\n\n模板：${template.labelZh}；主体居中；${plan.pageCount}张，产品报价${quote.credits}积分。\n\n出图规则：每张图为一个主题的核心图解，图内≤1200字；图数按主题定（完整版≤16、精华版≤8）；图外细节全部进内文（图在上、内文在下及续页），不受1200字限制。\n\n页数预算：图文同页${budget.budget.imagePages}页 · 内文约${budget.plannedTextPages}页（建议${budget.budget.textPages.min}–${budget.budget.textPages.max}）· 合计约${budget.plannedTotalPages}页；内文资料约${topics.readingChars}字\n${budget.warnings.map(w=>`- ${w}`).join('\n')}\n\n`+pages.map(p=>`## 第${p.pageIndex}页 · ${p.chars}字（不含空白${p.visibleChars}字）· 含${p.sections}节 · 图外细节${p.overflowChars}字进内文 · 参考原页${p.referencePages}张\n\n图片标题：${p.imageTitle}；图下内文标题：${p.readingTitle}\n\n### 图内文字\n\n${p.body}\n\n### 实际生图指令\n\n\`\`\`\n${p.prompt}\n\`\`\``).join('\n\n'));
+  await fs.writeFile(path.join(root,'image-preview.md'),`# ${parts.title} · ${level==='full'?'完整版':'精华版'}逐页生图输入\n\n模板：${template.labelZh}；主体居中；${plan.pageCount}张，产品报价${quote.credits}积分。\n\n出图规则：每张图为一个主题的核心图解，图内≤1200字；图数按主题定（完整版≤16、精华版≤8）。${level==='full'?`完整版图文同页：每图一页、图下带该图内文（每图≤${KNOWLEDGE_LEAD_PAGE_CHARS}字），不排独立内文页，总页数=图数；内文装不下时在准备阶段压缩，不排续页。`:'精华版图外细节全部进内文（图在上、内文在下及续页）。'}\n\n页数预算：图文同页${budget.budget.imagePages}页 · 独立内文${budget.plannedTextPages}页 · 合计${budget.plannedTotalPages}页；内文资料约${topics.readingChars}字${budget.compression?`；图下合计可容${budget.compression.readingCapacityChars}字，需压缩到${budget.compression.targetReadingChars}字（${Math.round(budget.compression.ratio*100)}%）；不压缩需${budget.compression.imagesForNoLoss}张图（上限${budget.compression.imageCap}）`:''}\n${budget.warnings.map(w=>`- ${w}`).join('\n')}\n\n`+pages.map(p=>`## 第${p.pageIndex}页 · ${p.chars}字（不含空白${p.visibleChars}字）· 含${p.sections}节 · 图外细节${p.overflowChars}字进内文 · 参考原页${p.referencePages}张\n\n图片标题：${p.imageTitle}；图下内文标题：${p.readingTitle}\n\n### 图内文字\n\n${p.body}\n\n### 实际生图指令\n\n\`\`\`\n${p.prompt}\n\`\`\``).join('\n\n'));
   await fs.writeFile(path.join(root,'editions.json'),JSON.stringify({full:derived.fullEditionMarkdown,concise:derived.distilledMarkdown,counts:derived.editionPageCounts,issues:derived.editionIssues,pending:derived.editionPendingVerification}));
   const titleAudit=auditKnowledgeTopicTitles(topics.images,readKnowledgeTopicTitles(markdown));
-  const prepared={ids,title:parts.title,level,template:template.id,pageCount:plan.pageCount,credits:quote.credits,manuscriptSha256,readingChars:topics.readingChars,imageChars:pages.map(p=>p.chars),budget:{plannedTextPages:budget.plannedTextPages,estimatedTextPages:budget.estimatedTextPages,textPages:budget.budget.textPages,totalPages:budget.budget.totalPages,plannedTotalPages:budget.plannedTotalPages,warnings:budget.warnings},sections:pages.map(p=>p.sections),overflowChars:pages.map(p=>p.overflowChars),titleAudit,titles:{status:titled.status,message:titled.message?scrub(titled.message):undefined}};
+  const prepared={ids,title:parts.title,level,template:template.id,pageCount:plan.pageCount,credits:quote.credits,manuscriptSha256,readingChars:topics.readingChars,imageChars:pages.map(p=>p.chars),budget:{plannedTextPages:budget.plannedTextPages,estimatedTextPages:budget.estimatedTextPages,textPages:budget.budget.textPages,totalPages:budget.budget.totalPages,plannedTotalPages:budget.plannedTotalPages,compression:budget.compression,warnings:budget.warnings},sections:pages.map(p=>p.sections),overflowChars:pages.map(p=>p.overflowChars),titleAudit,titles:{status:titled.status,message:titled.message?scrub(titled.message):undefined}};
   // 开发者自用 autoConfirm：只在本探针内把准备与出图接成一步（应用内计费与用户确认不变）；命题核查不通过则停在出图前，不提交图片。
   if(config.autoConfirm===true){
     if(!titleAudit.ok){await write('live.json',{...prepared,stage:'failed',mode:'prepare',error:'主题命题核查未通过，未出图'});process.exitCode=1;return;}

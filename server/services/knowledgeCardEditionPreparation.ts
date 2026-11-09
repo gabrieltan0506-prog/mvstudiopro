@@ -5,7 +5,7 @@ import {measureKnowledgeBookletFromWorker} from './pdfWorkerClient';
 import {guardKnowledgeEditionEvidence,rethrowKnowledgeEditionInvariant,knowledgeEditionErrorMessage} from './knowledgeEditionRecovery';
 import {hasKnowledgeBody} from '../../shared/knowledgeEditionIssues';
 import {knowledgeEditionParts} from '../../shared/knowledgeCardEdition';
-import {knowledgeEditionImagePlan,planKnowledgeCardPages} from '../../shared/knowledgeCardPagination';
+import {knowledgeEditionImageChars,knowledgeEditionImagePlan,planKnowledgeCardPages} from '../../shared/knowledgeCardPagination';
 import {KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST} from './knowledgeModelCapabilities';
 import {verifyKnowledgeEditionManuscripts} from './knowledgeEditionFinalVerification';
 import {nameKnowledgeEditionTopics} from './knowledgeTopicTitles';
@@ -65,9 +65,9 @@ export async function prepareKnowledgeCardEditions(params:{
     return {...result,editionPageCounts:Object.fromEntries((['full','concise'] as const).map(level=>{
       const markdown=level==='full'?result.fullEditionMarkdown:result.markdown;
       const imagePages=planKnowledgeCardPages(markdown,params.model).pageCount;
-      // 内文 = 独立文字模块 + 各主题图的图外细节（图内≤1200字，其余全部进内文）。
-      const textChars=knowledgeEditionImagePlan(markdown)?.readingChars||0;
-      return [level,{...result.editionPageCounts[level],imagePages,pageBudget:knowledgeEditionBudgetCheck(level,imagePages,textChars)}];
+      // 内文 = 独立文字模块 + 各主题图的图外细节（图内≤1200字，其余全部进内文）；完整版图文同页，内文须装进各图下栏。
+      const topics=knowledgeEditionImagePlan(markdown);
+      return [level,{...result.editionPageCounts[level],imagePages,pageBudget:knowledgeEditionBudgetCheck(level,imagePages,topics?.readingChars||0,knowledgeEditionImageChars(topics))}];
     }))};
   }
   const invoke=params.invoke||invokeKnowledgePublicationRoutes;
@@ -200,9 +200,9 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
     try{
       const plan=planKnowledgeCardPages(markdown,params.model);
       editionPageCounts[level].imagePages=plan.pageCount;
-      // 生图前预检（完整版≤16张主题图、总页数≤72；精华版≤8张、图:文1:2–1:3）；只提示不阻断，略超无妨。
-      const textChars=knowledgeEditionImagePlan(markdown)?.readingChars||0;
-      editionPageCounts[level].pageBudget=knowledgeEditionBudgetCheck(level,plan.pageCount,textChars);
+      // 生图前预检（完整版≤16张主题图、图文同页、页数=图数、内文超图下容量时报压缩目标；精华版≤8张、图:文1:2–1:3）；只提示不阻断。
+      const topics=knowledgeEditionImagePlan(markdown);
+      editionPageCounts[level].pageBudget=knowledgeEditionBudgetCheck(level,plan.pageCount,topics?.readingChars||0,knowledgeEditionImageChars(topics));
       for(const [index,body] of Array.from(plan.pages.entries()))await evidence.save(`${evidence.prefix}/pages/${level}/images/${index}.json`,{inputDigest,pageIndex:index,body,status:'saved'});
     }catch(error){rethrowKnowledgeEditionInvariant(error);issues.push({kind:'pagination',message:knowledgeEditionErrorMessage(error),level});}
     try{

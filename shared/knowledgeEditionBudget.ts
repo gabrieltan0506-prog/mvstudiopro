@@ -1,29 +1,30 @@
 /**
- * 图文手册两档的页数预算（用户 2026-11-08 确认；2026-11-09 按敦煌 1108g2 膨胀复盘修正）：
- * - 出图：每张图是一个章节/主题的核心图解，图内≤1200字；图数按主题定，完整版≤16、精华版≤8（见 knowledgeTopicImagePlan）。
- * - 完整版：图片为主、文字为辅，纯内文页 ≈ 图片页的 1/3–1/2（3:1–2:1），下限 ⌊图数/3⌋；总页数另设 ≤72 硬顶（可精简不可多）。
- *   1108g2 复盘：此前把「≤72」当成目标（target = 72 − 图数 = 56 页内文），16 张图配了 50–56 页内文、每章 3–4 页续页，
- *   与血脂基准（48 页全部图文同页、无独立内文页）相去甚远；现在 72 只作上限，不再用它撑大内文。
+ * 图文手册两档的页数预算（用户 2026-11-08 确认；2026-11-09 按敦煌 1108g2 膨胀复盘，用户拍板完整版照血脂做法）：
+ * - 出图：每张图是一个章节/主题的核心图解，图内≤1200字；图数按主题定（完整版≤16、精华版≤8，见 knowledgeTopicImagePlan）。
+ * - 完整版（血脂基准 48 页全部图文同页、无独立内文页）：图片与该图对应内文合并在同一直式页（图在上、内文在下），
+ *   **不排独立内文页**；预算页数 = 图片数。图外细节放不进图下栏时，在准备阶段给出压缩目标字数（审校合并提炼），
+ *   而不是把溢出文字排成续页；排版时极少数图注过长才允许 +1 续页，且必须在回执里报出（readingPages>0 即为续页）。
+ *   1108g2 复盘：旧预算把「≤72」当目标（56 页内文），16 张图排成 66–72 页；现在 72 只作硬顶，正常不会触及。
  * - 精华版：图片页:纯内文页 ≈ 1:2 至 1:3 维持不变；内文可详尽，但不重复图中已表达的内容。
- * 预算在生图前计算（两档准备阶段展示、审校请求携带），不在导出后才阻断；略超可以接受。
- *
- * 版式：每张图与其要点说明同在一张直式页（图在上、要点在下），图外细节按主题接排续页，单图不独占一页。
+ * 预算在生图前计算（两档准备阶段展示、审校请求携带），不在导出后才阻断。
  */
+import { KNOWLEDGE_TOPIC_IMAGE_CAP, KNOWLEDGE_TOPIC_IMAGE_MAX_CHARS } from "./knowledgeTopicImagePlan";
+
 export type KnowledgeEditionLevel = "full" | "concise";
 
-/** 直式页图片下方要点区的保守容量（中文字符，含小标题/表格开销）。 */
+/** 直式页图片下方要点区的保守容量（中文字符，含小标题/表格开销）；完整版每图内文上限即此值。 */
 export const KNOWLEDGE_LEAD_PAGE_CHARS = 700;
-/** 一整页纯内文（两栏）的保守容量。 */
+/** 一整页纯内文（两栏）的保守容量（精华版内文页与估算续页用）。 */
 export const KNOWLEDGE_READING_PAGE_CHARS = 1300;
 /** 单张图片内的文字上限沿用出图分页上限。 */
-export const KNOWLEDGE_IMAGE_TEXT_MAX_CHARS = 1200;
-/** 完整版总页数包络（用户原口径 68–72 页，可精简不可多）。 */
+export const KNOWLEDGE_IMAGE_TEXT_MAX_CHARS = KNOWLEDGE_TOPIC_IMAGE_MAX_CHARS;
+/** 完整版总页数硬顶（用户原口径 ≤72，可精简不可多）；图文同页后正常不会触及。 */
 export const KNOWLEDGE_FULL_MAX_TOTAL_PAGES = 72;
 
 export type KnowledgePageBudget = {
   level: KnowledgeEditionLevel;
   imagePages: number;
-  /** 纯内文页（不含图文同页的图片页）。 */
+  /** 纯内文页（不含图文同页的图片页）。完整版恒为 0：不排独立内文页。 */
   textPages: { min: number; target: number; max: number };
   totalPages: { min: number; target: number; max: number };
 };
@@ -31,14 +32,10 @@ export type KnowledgePageBudget = {
 export function knowledgeEditionPageBudget(level: KnowledgeEditionLevel, imagePages: number): KnowledgePageBudget {
   if (!Number.isSafeInteger(imagePages) || imagePages < 0) throw new Error("图片页数无效");
   const n = imagePages;
-  // 完整版 3:1–2:1：目标约 0.45 倍（16 图 → 7 页内文，总 23 页；48 图 → 22 页，总 70 页），再受总页数 ≤72 硬顶。
-  // 精华版 1:2–1:3，目标 2.5 倍。
+  // 完整版：图文同页，预算 = 图片数，独立内文页 0（续页只在排版实测时报出，不进预算）。精华版 1:2–1:3，目标 2.5 倍。
   const textPages = level === "full"
-    ? { min: Math.floor(n / 3), target: Math.round(n * 0.45), max: Math.min(Math.ceil(n / 2), Math.max(0, KNOWLEDGE_FULL_MAX_TOTAL_PAGES - n)) }
+    ? { min: 0, target: 0, max: 0 }
     : { min: 2 * n, target: Math.round(n * 2.5), max: 3 * n };
-  if (textPages.min > textPages.max) textPages.min = textPages.max;
-  if (textPages.target > textPages.max) textPages.target = textPages.max;
-  if (textPages.target < textPages.min) textPages.target = textPages.min;
   return {
     level, imagePages: n, textPages,
     totalPages: { min: n + textPages.min, target: n + textPages.target, max: n + textPages.max },
@@ -50,18 +47,17 @@ export type KnowledgeBudgetPage = { id: string; headline: string; body: string; 
 const hasImage = (p: KnowledgeBudgetPage) => Boolean(p.imageJobId || p.imageUrl || p.role === "illustration");
 
 /**
- * 按预算把纯内文页分给各章：图外补充资料越多的章节得到越多整页，
- * 使每章要么只占图文同页，要么同页 + 若干填满的续页，减少半页留白。
- * 返回每页 reading 字数上限（含表格），供审校与排版模型遵守。
+ * 每章 reading 字数上限（含表格），供审校与排版模型遵守。
+ * 完整版：每个图文章只有图下一栏（KNOWLEDGE_LEAD_PAGE_CHARS），readingPages 恒为 0——不给任何章节续页预算。
+ * 精华版：按图外资料多少把纯内文页分给各章，使每章要么只占图文同页，要么同页 + 若干填满的续页，减少半页留白。
  */
 export function knowledgeReadingCharBudgets(level: KnowledgeEditionLevel, pages: KnowledgeBudgetPage[]) {
   const illustrated = pages.filter(hasImage);
   const budget = knowledgeEditionPageBudget(level, illustrated.length);
   const material = (p: KnowledgeBudgetPage) => {
     const extra = (p.supplement || "").replace(/\s+/g, "").length;
-    // 完整版图内文字已由图片承载，只按很小权重计入；精华版图少，图外资料是主体。
     const inImage = p.body.replace(/\s+/g, "").length;
-    return extra + (level === "full" ? 0.25 : 0.5) * inImage;
+    return extra + 0.5 * inImage;
   };
   const extraPages = new Map<string, number>(illustrated.map(p => [p.id, 0]));
   const remaining = new Map<string, number>(illustrated.map(p => [p.id, Math.max(0, material(p) - KNOWLEDGE_LEAD_PAGE_CHARS)]));
@@ -71,8 +67,6 @@ export function knowledgeReadingCharBudgets(level: KnowledgeEditionLevel, pages:
       const value = remaining.get(p.id)!;
       if (value > bestValue) { best = p.id; bestValue = value; }
     }
-    // 资料不足一整页时不硬凑篇幅；精华版仍按比例给页，模型据实写满或略少。
-    if (bestValue <= 0 && level === "full") break;
     extraPages.set(best, extraPages.get(best)! + 1);
     remaining.set(best, bestValue - KNOWLEDGE_READING_PAGE_CHARS);
   }
@@ -82,36 +76,75 @@ export function knowledgeReadingCharBudgets(level: KnowledgeEditionLevel, pages:
       const pagesForChapter = extraPages.get(p.id)!;
       return { id: p.id, headline: p.headline, maxChars: KNOWLEDGE_LEAD_PAGE_CHARS + pagesForChapter * KNOWLEDGE_READING_PAGE_CHARS, readingPages: pagesForChapter };
     }
-    // 旧稿或无图稿的独立文字页：平分剩余预算，至少一页。
+    // 旧稿或无图稿的独立文字页：平分剩余预算，至少一页（两档手册的独立文字模块已并入图文章，正常不会走到这里）。
     const share = Math.max(1, Math.floor((budget.textPages.target - Array.from(extraPages.values()).reduce((a, b) => a + b, 0)) / Math.max(1, textOnly.length)));
     return { id: p.id, headline: p.headline, maxChars: share * KNOWLEDGE_READING_PAGE_CHARS, readingPages: share };
   });
   return { budget, pages: result };
 }
 
-/** 生图前预检：按两档已有资料估算页数，只提示不阻断（略超无妨）。 */
-export function knowledgeEditionBudgetCheck(level: KnowledgeEditionLevel, imagePages: number, textChars: number) {
+/** 完整版图下容量不够时的压缩方案（准备阶段报出，不自行加图）。 */
+export type KnowledgeCompressionPlan = {
+  /** 当前图数下图下栏合计可容纳的内文字数（图数 × 每图图下容量）。 */
+  readingCapacityChars: number;
+  /** 需压缩到的内文字数（= readingCapacityChars）。 */
+  targetReadingChars: number;
+  /** 需压缩到的比例（0–1，相对当前内文字数）。 */
+  ratio: number;
+  /** 需删减/提炼掉的内文字数。 */
+  excessChars: number;
+  /** 不压缩内文时需要的图数（每图 = 图内 1200 字 + 图下容量），供用户对比。 */
+  imagesForNoLoss: number;
+  /** 本档图数硬顶；imagesForNoLoss 超过它时只能压缩。 */
+  imageCap: number;
+};
+
+/** 完整版：全部内文（图外细节 + 独立文字模块）必须装进各图下栏；图内文字另算（≤1200/图）。 */
+export function knowledgeFullCompressionPlan(imagePages: number, readingChars: number, imageChars = 0): KnowledgeCompressionPlan | null {
+  const readingCapacityChars = imagePages * KNOWLEDGE_LEAD_PAGE_CHARS;
+  if (readingChars <= readingCapacityChars) return null;
+  const totalChars = readingChars + imageChars;
+  return {
+    readingCapacityChars,
+    targetReadingChars: readingCapacityChars,
+    ratio: readingChars ? readingCapacityChars / readingChars : 1,
+    excessChars: readingChars - readingCapacityChars,
+    imagesForNoLoss: Math.ceil(totalChars / (KNOWLEDGE_IMAGE_TEXT_MAX_CHARS + KNOWLEDGE_LEAD_PAGE_CHARS)),
+    imageCap: KNOWLEDGE_TOPIC_IMAGE_CAP.full,
+  };
+}
+
+/**
+ * 生图前预检：按两档已有资料估算页数，只提示不阻断。
+ * 完整版：计划总页数恒 = 图数；内文超出图下容量时给出压缩目标（字数、比例）与「不压缩需几张图」的对比数字，
+ * 不自行加图、不把溢出排成内文页。imageChars 为各图图内文字合计（可选，用于估算不丢内容所需图数）。
+ */
+export function knowledgeEditionBudgetCheck(level: KnowledgeEditionLevel, imagePages: number, textChars: number, imageChars = 0) {
   const budget = knowledgeEditionPageBudget(level, imagePages);
   const estimated = Math.ceil(Math.max(0, textChars - imagePages * KNOWLEDGE_LEAD_PAGE_CHARS) / KNOWLEDGE_READING_PAGE_CHARS);
-  const plannedTextPages = Math.min(budget.textPages.max, Math.max(level === "full" ? 0 : budget.textPages.min, Math.min(estimated, budget.textPages.target)));
+  const plannedTextPages = level === "full" ? 0 : Math.min(budget.textPages.max, Math.max(budget.textPages.min, Math.min(estimated, budget.textPages.target)));
   const warnings: string[] = [];
+  const compression = level === "full" ? knowledgeFullCompressionPlan(imagePages, textChars, imageChars) : null;
   if (!imagePages) warnings.push("尚无图片页，无法按图文比例排版");
   if (level === "concise" && estimated < budget.textPages.min)
     warnings.push(`精华版图外文字资料约${textChars}字，估计只够${estimated}页内文，低于建议的${budget.textPages.min}页；将据实排版，不硬凑篇幅`);
-  if (level === "full" && estimated > budget.textPages.max) {
-    const capacity = imagePages * KNOWLEDGE_LEAD_PAGE_CHARS + plannedTextPages * KNOWLEDGE_READING_PAGE_CHARS;
-    warnings.push(`完整版图外文字资料约${textChars}字，估计需${estimated}页内文，超出${budget.textPages.max}页上限（图:内文 3:1–2:1，总页数≤${KNOWLEDGE_FULL_MAX_TOTAL_PAGES}）；按${plannedTextPages}页内文排版时图下与续页合计约可容${capacity}字，审校须压缩至约${Math.round(capacity / Math.max(1, textChars) * 100)}%，合并去重为主、不删关键事实`);
+  if (compression) {
+    const alternative = compression.imagesForNoLoss > compression.imageCap
+      ? `不压缩需约${compression.imagesForNoLoss}张图，超过完整版上限${compression.imageCap}张，只能压缩`
+      : `或改为${compression.imagesForNoLoss}张图（≤上限${compression.imageCap}张）可不丢内容，需用户拍板，不自行加图`;
+    warnings.push(`完整版图文同页、不排独立内文页：${imagePages}张图图下合计可容约${compression.readingCapacityChars}字，内文资料约${textChars}字，超出${compression.excessChars}字；审校须把内文压缩至约${compression.targetReadingChars}字（约${Math.round(compression.ratio * 100)}%，每图≤${KNOWLEDGE_LEAD_PAGE_CHARS}字），合并去重、提炼为主，不删关键事实；${alternative}`);
   }
   if (level === "concise" && estimated > budget.textPages.max)
     warnings.push(`精华版图外文字资料约${textChars}字，超出${budget.textPages.max}页内文建议上限；审校将按预算合并去重，不重复图中内容`);
-  return { budget, estimatedTextPages: estimated, plannedTextPages, plannedTotalPages: imagePages + plannedTextPages, warnings };
+  return { budget, estimatedTextPages: estimated, plannedTextPages, plannedTotalPages: imagePages + plannedTextPages, warnings, compression };
 }
 
 /** 发给审校/排版模型的预算说明。 */
 export function knowledgeBudgetInstructions(level: KnowledgeEditionLevel | undefined, pages: { id: string; maxChars: number }[]) {
   if (!level || !pages.length) return "";
   const rule = level === "full"
-    ? "本册为完整版：图片为主、文字为辅。每页reading只写图外补充（图中没画出的条件、因果、边界、读图提示）与supplement中的图外资料；图中已出现的表格、数字清单、步骤不得在reading里重打一遍，可用一句话指向图中位置。"
+    ? `本册为完整版：图片为主、文字为辅，图片与该图内文合并在同一页，不排独立内文页。每页reading必须装进图下一栏（≤maxChars，约${KNOWLEDGE_LEAD_PAGE_CHARS}字），只写图外补充（图中没画出的条件、因果、边界、读图提示）与supplement中的图外资料，资料多时合并去重、提炼成要点；图中已出现的表格、数字清单、步骤不得在reading里重打一遍，可用一句话指向图中位置。`
     : "本册为精华版：图少文多。reading详尽讲解次要重点与supplement资料，补足条件、因果与适用边界；图中已出现的表格、数字和要点不得重复抄写。";
-  return `${rule}\n篇幅预算（中文字符，含表格单元格；稍超可以，明显超出须合并去重而不是删掉关键事实）：${JSON.stringify(pages.map(p => ({ id: p.id, maxChars: p.maxChars })))}`;
+  const tolerance = level === "full" ? "超出即会溢出为续页，须压缩进上限" : "稍超可以，明显超出须合并去重而不是删掉关键事实";
+  return `${rule}\n篇幅预算（中文字符，含表格单元格；${tolerance}）：${JSON.stringify(pages.map(p => ({ id: p.id, maxChars: p.maxChars })))}`;
 }

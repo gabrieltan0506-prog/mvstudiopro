@@ -510,6 +510,11 @@ export function knowledgeEditionImagePlan(markdown: string): KnowledgeEditionIma
   return { level: edition.level, title: edition.title, images, textModules, readingChars };
 }
 
+/** 各主题图图内文字合计（不含空白），供完整版预检估算「不压缩需几张图」。 */
+export function knowledgeEditionImageChars(plan: KnowledgeEditionImagePlan | null | undefined) {
+  return (plan?.images || []).reduce((n, image) => n + image.body.replace(/\s+/g, '').length, 0);
+}
+
 /**
  * 两档手册的图文同页：每页 = 一张主题图（body）+ 图下内文标题（headline）+ 图外细节与并入的文字模块（supplement）。
  * 排版源与核实回执共用此函数，保证逐页一致。
