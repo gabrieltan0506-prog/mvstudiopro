@@ -156,6 +156,11 @@ export function knowledgeBudgetInstructions(level: KnowledgeEditionLevel | undef
 export const KNOWLEDGE_BUDGET_TOLERANCE = 0.15;
 /** 该页超出是否仍在容差内（边界含等号：700 字上限时 805 字收下、806 字切跳）。 */
 export const knowledgeBudgetWithinTolerance = (chars: number, maxChars: number, tolerance = KNOWLEDGE_BUDGET_TOLERANCE) => chars <= Math.floor(Math.round(maxChars * (1 + tolerance) * 1e6) / 1e6); // 去浮点误差：700×1.15 = 805
+/**
+ * 篇幅压缩提示词目标 = 上限 × 该比例（2026-11-09 用户选定：700 字上限写 595 字目标，减少「仍超出→连切多跳」）；
+ * 验收仍按真实上限（≤maxChars 收下，超出才切下一跳）。可调。
+ */
+export const KNOWLEDGE_COMPRESSION_TARGET_RATIO = 0.85;
 /** 提示词目标留 10% 余量，校验按 maxChars。 */
 export const KNOWLEDGE_BUDGET_PROMPT_MARGIN = 0.9;
 /**

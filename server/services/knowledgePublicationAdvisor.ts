@@ -1,5 +1,5 @@
 import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
-import { knowledgeBudgetInstructions, knowledgeBudgetOutputContract, knowledgeCompressionInstructions, knowledgeReadingCharBudgets, knowledgeReadingOverflow, type KnowledgeReadingOverflow } from "../../shared/knowledgeEditionBudget";
+import { KNOWLEDGE_COMPRESSION_TARGET_RATIO, knowledgeBudgetInstructions, knowledgeBudgetOutputContract, knowledgeCompressionInstructions, knowledgeReadingCharBudgets, knowledgeReadingOverflow, type KnowledgeReadingOverflow } from "../../shared/knowledgeEditionBudget";
 import { KNOWLEDGE_VERIFICATION_POLICY, KNOWLEDGE_VERIFICATION_EDIT_POLICY, knowledgeVerificationTriggers, knowledgeVerificationQueries, knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
 import { KNOWLEDGE_RESEARCH_INSTRUCTIONS, KNOWLEDGE_RESEARCH_MARKER } from "../../shared/knowledgeResearch";
@@ -317,8 +317,6 @@ export function buildKnowledgeCompressionRequest(pageSource: KnowledgeSource, di
 
 /** 篇幅压缩最多轮数：每轮一次正式三跳链调用（GLM FlashX@EvoLink → GLM@OpenRouter → DeepSeek v4.1 Flash 1017，超时/断线/空回/写坏由路由切下一跳）。 */
 export const KNOWLEDGE_COMPRESSION_MAX_ROUNDS = 4;
-/** 第 2 轮起目标按 maxChars 留 8% 余量，避免模型反复贴线超出。 */
-const KNOWLEDGE_COMPRESSION_RETRY_MARGIN = 0.92;
 const compressionRoundPrefix = (prefix: string, round: number) => round === 0 ? prefix : `${prefix}/round-${round}`;
 
 /**
@@ -364,12 +362,13 @@ export async function compressKnowledgeReviewToBudget(params: {
     const ids = new Set(after.map(o => o.id));
     const pageSource: KnowledgeSource = { title: source.title, detailLevel: source.detailLevel,
       pages: pages.filter(p => ids.has(p.id)).map(p => ({ ...originals.get(p.id)!, body: p.body, imageUrl: "" })) };
-    const targets = round === 0 ? after : after.map(o => ({ ...o, maxChars: Math.floor(o.maxChars * KNOWLEDGE_COMPRESSION_RETRY_MARGIN) }));
+    // 提示词目标 = 上限 × KNOWLEDGE_COMPRESSION_TARGET_RATIO（700→595）；验收（pageBudgets）仍按真实上限。
+    const targets = after.map(o => ({ ...o, maxChars: Math.floor(o.maxChars * KNOWLEDGE_COMPRESSION_TARGET_RATIO) }));
     const request = buildKnowledgeCompressionRequest(pageSource, digest, targets);
     // 压缩输出按真实上限逐页校验、容差 0：仍超出即算写坏，由路由切下一跳（GLM@EvoLink → GLM@OR → DeepSeek），三跳都超取最短的一份。
     request.pageBudgets = after.map(o => ({ id: o.id, headline: o.headline, maxChars: o.maxChars }));
     request.budgetTolerance = 0;
-    if (round > 0) request.systemInstruction.parts.push({ text: `上一轮压缩后这些页仍超出图下容量（第${round + 1}轮）。本轮每页必须低于给定maxChars：先删与图中已画出内容重复的表格/清单，再把并列例子合并成一句，仍超出则只保留最关键的事实与数字。` });
+    if (round > 0) request.systemInstruction.parts.push({ text: `上一轮压缩后这些页仍超出图下容量（第${round + 1}轮）。本轮每页必须低于给定目标maxChars：先删与图中已画出内容重复的表格/清单，再把并列例子合并成一句，仍超出则只保留最关键的事实与数字。` });
     const roundAdopted: string[] = [];
     let roundError: string | undefined;
     const roundPrefix = compressionRoundPrefix(prefix, round);

@@ -156,9 +156,13 @@ describe("篇幅压缩首发与多轮（2026-11-09 敦煌 62 页超出 56 页承
     expect(knowledgeReviewPageChars(batch.pages[0])).toBe(657);
     expect(batch.budgetOverflow.after).toEqual([]);
     expect(h.storage.has(`${h.root}/batch-0/compress/round-1/raw-0.json`)).toBe(true);
-    // 第二轮目标留 8% 余量
-    const second = h.post.mock.calls[2]![0] as any;
-    expect(second.systemInstruction.parts.some((p: any) => /"maxChars":644/.test(p.text))).toBe(true);
+    // 压缩提示词目标 = 上限 × 0.85（700→595），每轮相同；验收仍按真实上限 700
+    for (const call of [h.post.mock.calls[1]!, h.post.mock.calls[2]!]) {
+      const req = call[0] as any;
+      expect(req.systemInstruction.parts.some((p: any) => /"maxChars":595/.test(p.text))).toBe(true);
+      expect(req.pageBudgets[0].maxChars).toBe(700);
+      expect(req.budgetTolerance).toBe(0);
+    }
     await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps);
     expect(h.post).toHaveBeenCalledTimes(3);
   });
@@ -258,6 +262,19 @@ describe("篇幅容差 B：审校稿容差内收下后由压缩达标", () => {
     const saved = h.storage.get(`${h.root}/batch-0/report.json`);
     expect(saved.budgetTolerated.pages[0].path).toBe("tolerated_to_compression");
     expect(saved.budgetOverflow.after).toEqual([]);
+  });
+});
+
+describe("压缩目标比例常量", () => {
+  it("KNOWLEDGE_COMPRESSION_TARGET_RATIO=0.85：首轮压缩提示词即写 595 字目标，验收按 700（650 字压缩稿收下）", async () => {
+    const { KNOWLEDGE_COMPRESSION_TARGET_RATIO } = await import("../../shared/knowledgeEditionBudget");
+    expect(KNOWLEDGE_COMPRESSION_TARGET_RATIO).toBe(0.85);
+    const h = harness(650);
+    const batch = await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps) as any;
+    const first = h.post.mock.calls[1]![0] as any;
+    expect(first.systemInstruction.parts.some((p: any) => /"maxChars":595/.test(p.text))).toBe(true);
+    expect(h.calls.map(c => c.kind)).toEqual(["review", "compress"]);
+    expect(knowledgeReviewPageChars(batch.pages[0])).toBe(657);
   });
 });
 
