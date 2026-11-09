@@ -107,6 +107,9 @@ const real = {
   },
 };
 
+/** 真实依赖集合（隔离机端到端探针用：可在其上包一层计时，不改业务路径）。 */
+export const musicMvAdvisorRealDeps = real;
+
 /** 仅消费本人已登记歌曲；复用顾问事务，失败不回落文字推测，不重试听音。 */
 export async function askMusicMvAdvisor(
   userId: number,
