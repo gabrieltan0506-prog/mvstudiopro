@@ -1,3 +1,4 @@
+import { completedKnowledgeBatches } from "../../shared/knowledgePublicationParallel";
 import type { EditableLayout } from "../../shared/editableLayout";
 import { knowledgeBatchRequestId, knowledgeReviewBatches } from "../../shared/knowledgePublication";
 import { getJobByIdStrict } from "../jobs/repository";
@@ -74,8 +75,11 @@ export async function validateKnowledgePublicationRetryTransition(
   const changed = Array.from(keys).filter(key => (old.attempts[key] || 0) !== (next.attempts[key] || 0));
   if (!changed.length) return;
   const key = changed[0], batchIndex = Number(key), previousAttempt = old.attempts[key] || 0;
+  // 并发审校（parallel）下完成的是乱序集合：任一未完成批次都可按正式重试另开下一编号；顺序稿仍只允许当前前缀批次。
+  const retryable = batchIndex === old.completedBatches ||
+    Boolean(old.parallel && batchIndex < knowledgeReviewBatches(old.source).length && !completedKnowledgeBatches(old, knowledgeReviewBatches(old.source).length).has(batchIndex));
   if (changed.length !== 1 || !/^(0|[1-9]\d*)$/.test(key) || !Number.isSafeInteger(batchIndex) ||
-      next.attempts[key] !== previousAttempt + 1 || batchIndex !== old.completedBatches ||
+      next.attempts[key] !== previousAttempt + 1 || !retryable ||
       next.completedBatches !== old.completedBatches || old.requestId !== next.requestId)
     throw new Error("整理重试必须沿用当前未完成批次，不能跳号或覆盖原请求");
   await check(owner, before, batchIndex, previousAttempt);
