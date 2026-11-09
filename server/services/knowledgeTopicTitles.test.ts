@@ -18,7 +18,7 @@ function memoryEvidence() {
 
 /** 模拟廉价路由：按输入逐主题回出图片标题、内文标题与每节小标题。 */
 function titleInvoke(mutate?: (page: any, index: number) => void) {
-  return vi.fn(async (request: any) => {
+  return vi.fn(async (request: any, _scope?: any) => {
     const input = JSON.parse(request.contents[0].parts[0].text);
     const pages = input.source.pages.map((p: any, index: number) => {
       const headlines = String(p.body.split("\n")[0]).replace(/^原小节：/, "").split("｜");

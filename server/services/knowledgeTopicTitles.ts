@@ -29,7 +29,7 @@ const usable = (v: unknown) => {
 };
 
 /** 解析模型回包：blocks[0]=图片标题，blocks[1]=图下内文标题，其后按原顺序为各小节内文小标题。 */
-export function parseKnowledgeTopicTitles(report: any, topics: { id: string; headlines: string[] }[]) {
+export function parseKnowledgeTopicTitles(report: any, topics: readonly { id: string; headlines: string[] }[]) {
   const titles: KnowledgeTopicTitles = {};
   const rejected: string[] = [];
   const pages: any[] = Array.isArray(report?.pages) ? report.pages : [];

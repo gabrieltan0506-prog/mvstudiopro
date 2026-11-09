@@ -179,8 +179,17 @@ async function run(){
     await caller.editableLayout.save({library:layoutLibrarySchema.parse({...library,documents:[...library.documents,doc]}),expectedGeneration:latest.generation});
     state.documentId=doc.id;await fs.writeFile(statePath,JSON.stringify(state));
   }
-  if(existsSync(path.join(root,'started.json')))throw Error('本次已启动，只查询，禁止重复提交');
-  await write('started.json',{documentId:state.documentId});
+  // run：首次启动；resume：工作机重启/部署打断后接续同一 state.json——已成功的图直接复用（不重付）、在途的只轮询、
+  // 已失败的只报不重购、从未提交的（无任务记录）才提交；请求号与任务号不变，服务端预留按同号幂等。
+  const started=existsSync(path.join(root,'started.json'));
+  if(started&&mode!=='resume')throw Error('本次已启动，只查询，禁止重复提交；接续请用 resume 模式');
+  if(!started)await write('started.json',{documentId:state.documentId});
+  else{
+    const resumes=existsSync(path.join(root,'resumed.json'))?JSON.parse(await fs.readFile(path.join(root,'resumed.json'),'utf8')).count||0:0;
+    const jobs=await Promise.all(state.imageJobIds.map(async(id:string)=>({id,status:(await getJobByIdStrict(id))?.status||'missing'})));
+    await write('resumed.json',{count:resumes+1,documentId:state.documentId,jobs});
+    if(jobs.some(j=>j.status==='failed'))throw Error(`接续前发现${jobs.filter(j=>j.status==='failed').length}张图已失败，不自动重购；请按补图流程处理：${jobs.filter(j=>j.status==='failed').map(j=>j.id).join(',')}`);
+  }
   const total=quote.pageCount;
   const app=express();app.use(express.json({limit:'30mb'}));
   app.use('/api/trpc',createExpressMiddleware({router:appRouter,createContext,onError:({path,error})=>{void fs.appendFile(path_join(root,'server-errors.log'),`${new Date().toISOString()} ${path} ${error.code} ${String(error.message).slice(0,500)}${error.cause?` ← ${String((error.cause as Error).message||error.cause).slice(0,500)}`:''}\n`);}}));
@@ -237,5 +246,5 @@ page.on('console',m=>{const t=m.text();if(t.includes('[knowledgePublication]'))v
   if(final.stage!=='pdf_returned')process.exitCode=1;
 }
 
-try{ if(mode==='prepare')await prepare(); else if(mode==='run')await run(); else throw Error('模式无效'); }
+try{ if(mode==='prepare')await prepare(); else if(mode==='run'||mode==='resume')await run(); else throw Error('模式无效'); }
 catch(error){ await write('live.json',{stage:'failed',mode,error:scrub((error as Error).message)}); process.exitCode=1; }
