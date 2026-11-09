@@ -4,6 +4,7 @@ import { canvasMusicCandidateSchema } from "./canvasMusicMedia";
 import { creativeLearningSessionSchema } from "./creativeGenerationLibrary";
 import { musicEmotionTurnSchema, musicEmotionArcSchema } from "./musicEmotion";
 import { z } from "zod";
+import { concatGradeSchema } from "./colorGrade";
 import { creativeEvidenceReviewSchema } from "./creativeEvidenceReview";
 import { musicMvEditSessionSchema } from "./canvasMusicMvEdit";
 import { songOperationSessionSchema, songAlignedWordSchema } from "./songOperations";
@@ -736,6 +737,22 @@ export type CanvasMusicMvFinalUpscale = z.infer<
   typeof canvasMusicMvFinalUpscaleSchema
 >;
 
+/** 成片调色记录：单片后期 concat（grade 透传）任务号 + 结果版本块；原成片不动。建议先调色再超分。 */
+export const canvasMusicMvFinalGradeSchema = z
+  .object({
+    id: z.string().uuid(),
+    finalBlockId: text.max(200),
+    sourceUrl: z.string().url().max(4000),
+    grade: concatGradeSchema,
+    status: z.enum(["submitting", "submission_unknown", "queued", "running", "succeeded", "failed"]),
+    jobId: text.max(200).optional(),
+    videoUrl: z.string().url().max(4000).optional(),
+    versionBlockId: text.max(200).optional(),
+    error: z.string().max(2000).optional(),
+  })
+  .strict();
+export type CanvasMusicMvFinalGrade = z.infer<typeof canvasMusicMvFinalGradeSchema>;
+
 export const canvasMusicMvStateSchema = z
   .object({
     deliveryMode: z.enum(["song", "highlight"]).optional(),
@@ -869,6 +886,8 @@ export const canvasMusicMvStateSchema = z
     finalBlockId: text.max(200).optional(),
     /** 1109 成片超分：复用画布/首页同一超分任务与计价；结果作为新版本块挂在成片旁，原片不动。 */
     finalUpscales: z.array(canvasMusicMvFinalUpscaleSchema).max(40).optional(),
+    /** 1109 成片调色：结果作为新版本块挂在成片旁，原片不动。 */
+    finalGrades: z.array(canvasMusicMvFinalGradeSchema).max(40).optional(),
     error: z.string().max(2000).optional(),
   })
   .strict()

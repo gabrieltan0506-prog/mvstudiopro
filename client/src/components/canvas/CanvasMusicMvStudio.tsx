@@ -69,7 +69,10 @@ import { CanvasMvLyricTableEditor } from "./CanvasMvLyricTableEditor";
 import { planMvHighlightFades } from "@shared/canvasMusicMvLyricKinds";
 import { recommendMusicMvHighlight } from "@shared/musicMvHighlight";
 import { CanvasMvShotReferencePicker } from "./CanvasMvShotReferencePicker";
-import type { CanvasMusicMvFinalUpscale } from "@shared/canvasMusicMv";
+import type { CanvasMusicMvFinalGrade, CanvasMusicMvFinalUpscale } from "@shared/canvasMusicMv";
+import { VideoGradePanel } from "./VideoGradePanel";
+import { submitVideoGrade } from "@/lib/videoGradeSubmit";
+import type { MontageGrade } from "@/lib/montageFinish";
 import {
   fetchVideoUpscaleStatus,
   probeWorkflowVideoSource,
@@ -194,6 +197,10 @@ export function CanvasMusicMvStudio({
   const recognizeLyrics = trpc.canvasMusicMv.recognizeLyrics.useMutation({ retry: false });
   const reviseForLyrics = trpc.canvasMusicMv.reviseForLyrics.useMutation({ retry: false });
   const assemble = trpc.canvasMusicMvAssemble.queue.useMutation();
+  const queuePostProd = trpc.mvAnalysis.queuePostProd.useMutation();
+  const [gradeOpen, setGradeOpen] = useState(false);
+  const [gradeDraft, setGradeDraft] = useState<MontageGrade | undefined>(undefined);
+  const [gradeOutputSec, setGradeOutputSec] = useState<{ url: string; sec: number } | null>(null);
   const patch = (
     delta: Partial<CanvasMusicMvState>,
     extra: Partial<CanvasBlock> = {}
@@ -1037,6 +1044,125 @@ export function CanvasMusicMvStudio({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [versionKey]);
+  /** 1109 成片调色：只改本记录，其他字段以 latest 为准（同超分写法）。 */
+  const patchGrade = (id: string, delta: Partial<CanvasMusicMvFinalGrade>) =>
+    patch({
+      finalGrades: (latest.current.finalGrades || []).map(r =>
+        r.id === id ? { ...r, ...delta } : r
+      ),
+    });
+  const openFinalGrade = () =>
+    perform(async () => {
+      const src = finalSource;
+      if (!state.finalBlockId || !/^https:\/\//i.test(src))
+        throw new Error("请先完成合成成片再调色");
+      setGradeOpen(true);
+      if (gradeOutputSec?.url === src) return;
+      setProgress("读取成片实测时长…");
+      const meta = await probeWorkflowVideoSource(src);
+      setGradeOutputSec({ url: src, sec: meta.durationExactSec ?? meta.durationSec });
+      setProgress("");
+    });
+  /** 单片调色：后期 concat（单片 + grade 透传）；结果作为新版本块挂在成片旁，原成片保留。 */
+  const gradeFinal = (grade: MontageGrade | undefined) =>
+    perform(async () => {
+      const finalId = latest.current.finalBlockId;
+      const fb = finalId ? getBlocks().find(b => b.id === finalId) : undefined;
+      const src = String(fb?.outputUrl || "").trim();
+      if (!finalId || !/^https:\/\//i.test(src))
+        throw new Error("请先完成合成成片再调色");
+      if (!grade) throw new Error("请先设置调色参数");
+      if ((latest.current.finalGrades || []).some(r => r.finalBlockId === finalId && ["submitting", "queued", "running"].includes(r.status)))
+        throw new Error("该成片已有调色任务进行中，请等待完成");
+      const record: CanvasMusicMvFinalGrade = {
+        id: crypto.randomUUID(),
+        finalBlockId: finalId,
+        sourceUrl: src,
+        grade,
+        status: "submitting",
+      };
+      patch({ finalGrades: [...(latest.current.finalGrades || []), record] });
+      try {
+        const jobId = await submitVideoGrade(
+          { videoUrl: src, grade, scopeKey: `mv-grade:${block.id}:${record.id}`.slice(0, 128) },
+          { queue: input => queuePostProd.mutateAsync(input) }
+        );
+        patchGrade(record.id, { jobId, status: "queued", error: undefined });
+        setGradeOpen(false);
+        setProgress("调色已提交");
+      } catch (e) {
+        patchGrade(record.id, {
+          status: "failed",
+          error: e instanceof Error ? e.message : "调色提交失败",
+        });
+        throw e;
+      }
+    });
+  // 调色任务轮询（刷新恢复：记录随 MV 块持久化，挂载即接管）；成功后挂成成片旁的新版本块。
+  const gradeNeedsPoll = (r: CanvasMusicMvFinalGrade) =>
+    Boolean(r.jobId) && (r.status === "queued" || r.status === "running");
+  const gradePollKey = (state.finalGrades || [])
+    .filter(gradeNeedsPoll)
+    .map(r => `${r.id}:${r.jobId}`)
+    .join(",");
+  useEffect(() => {
+    if (!gradePollKey) return;
+    let cancelled = false;
+    const tick = async () => {
+      for (const r of (latest.current.finalGrades || []).filter(gradeNeedsPoll)) {
+        try {
+          const job = await utils.mvAnalysis.getPostProdJob.fetch({ jobId: r.jobId! });
+          if (cancelled || !alive.current) return;
+          const status = String(job?.status || "");
+          const out = job?.output as { url?: unknown } | null | undefined;
+          if (status === "succeeded" && typeof out?.url === "string")
+            patchGrade(r.id, { status: "succeeded", videoUrl: out.url, error: undefined });
+          else if (status === "failed")
+            patchGrade(r.id, { status: "failed", error: job?.error || "调色失败" });
+          else if (status === "running" && r.status !== "running")
+            patchGrade(r.id, { status: "running" });
+        } catch {
+          // 查询失败按瞬态处理，下一轮再查
+        }
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 8_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gradePollKey]);
+  const gradeVersionKey = (state.finalGrades || [])
+    .filter(r => r.status === "succeeded" && r.videoUrl && !r.versionBlockId)
+    .map(r => r.id)
+    .join(",");
+  useEffect(() => {
+    if (!gradeVersionKey) return;
+    for (const r of (latest.current.finalGrades || []).filter(r => r.status === "succeeded" && r.videoUrl && !r.versionBlockId)) {
+      const source = getBlocks().find(b => b.id === r.finalBlockId);
+      const id = `mvgrade-${r.finalBlockId}-${r.id}`.slice(0, 200);
+      if (!getBlocks().some(b => b.id === id)) {
+        const anchorBlock = source || block;
+        const version = defaultCanvasBlock(
+          "video",
+          anchorBlock.x - anchorBlock.width - 60,
+          anchorBlock.y + anchorBlock.height + 60,
+          anchorBlock.id
+        );
+        version.id = id;
+        version.prompt = `${source?.prompt || "MV 成片"} · 调色版`;
+        version.status = "done";
+        version.outputUrl = r.videoUrl;
+        version.outputUrls = [r.videoUrl!];
+        version.aspectRatio = source?.aspectRatio || version.aspectRatio;
+        onAdd([version], source ? [{ fromId: source.id, toId: id }] : []);
+      }
+      patchGrade(r.id, { versionBlockId: id });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gradeVersionKey]);
   /** 歌词表变化 → 未出片的演唱镜同步唱句（只有确认版会写入；改动后回到待确认即清空，出片前拦）。 */
   const syncSingingLyrics = (table: CanvasMusicMvState["lyricTable"]) => {
     for (const id of latest.current.shotBlockIds || []) {
@@ -2009,6 +2135,54 @@ export function CanvasMusicMvStudio({
                     </button>
                   );
                 })}
+              </div>
+              <div className="space-y-1.5 border-t border-white/10 pt-1.5" data-mv-final-grade>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className={button}
+                    disabled={busy}
+                    title="单片调色；结果作为新版本放在成片旁，原成片保留"
+                    onClick={() => (gradeOpen ? setGradeOpen(false) : openFinalGrade())}
+                  >
+                    {gradeOpen ? "收起调色" : "调色"}
+                  </button>
+                  <span className="text-xs text-white/60">建议先调色再超分</span>
+                </div>
+                {gradeOpen && gradeOutputSec?.url === finalSource && (
+                  <div className="space-y-1.5">
+                    <VideoGradePanel
+                      value={gradeDraft}
+                      onChange={setGradeDraft}
+                      outputSec={gradeOutputSec.sec}
+                      disabled={busy}
+                    />
+                    <button
+                      type="button"
+                      className={button}
+                      disabled={busy || !gradeDraft}
+                      onClick={() => gradeFinal(gradeDraft)}
+                    >
+                      提交调色
+                    </button>
+                  </div>
+                )}
+                {(state.finalGrades || []).map(r => (
+                  <div key={r.id} className="flex flex-wrap items-center gap-2 text-xs">
+                    <span>
+                      调色版{r.finalBlockId !== state.finalBlockId ? "（旧成片）" : ""} ·{" "}
+                      {r.status === "succeeded" ? "已完成" : r.status === "failed" ? "失败" : r.status === "submission_unknown" ? "提交结果未确认" : "处理中"}
+                    </span>
+                    {r.videoUrl && (
+                      <a className="underline" href={r.videoUrl} target="_blank" rel="noreferrer">
+                        打开调色版
+                      </a>
+                    )}
+                    {r.error && r.status !== "succeeded" && (
+                      <span className="text-amber-200">{creativeUserText(r.error)}</span>
+                    )}
+                  </div>
+                ))}
               </div>
               {(state.finalUpscales || []).map(r => (
                 <div key={r.id} className="flex flex-wrap items-center gap-2 text-xs">

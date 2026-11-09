@@ -126,6 +126,9 @@ import { canWavespeedUpscale } from "@shared/wavespeedVideoUpscaleModels";
 import { canvasVideoUpscaleCredits } from "@shared/canvasGenerationPricing";
 import { canUpscaleNow } from "@/lib/manhuaDeliveryOrder";
 import { trpc } from "@/lib/trpc";
+import { VideoGradePanel } from "./VideoGradePanel";
+import { submitVideoGrade } from "@/lib/videoGradeSubmit";
+import type { MontageGrade } from "@/lib/montageFinish";
 import {
   Clapperboard,
   LoaderCircle,
@@ -882,6 +885,12 @@ export default function FreeformCanvas({
     Record<string, VideoUpscaleSourceMetadata>
   >({});
   const [upscaleBusyId, setUpscaleBusyId] = useState<string | null>(null);
+  // 调色：面板展开的 block、草稿、来源（原片 / 高清版）、实测时长、提交中锁；结果作新版本，原片留在 outputUrls
+  const [gradePanelBlockId, setGradePanelBlockId] = useState<string | null>(null);
+  const [gradeDraft, setGradeDraft] = useState<MontageGrade | undefined>(undefined);
+  const [gradeUseUpscaled, setGradeUseUpscaled] = useState(false);
+  const [gradeProbedSec, setGradeProbedSec] = useState<Record<string, number>>({});
+  const [gradeBusyId, setGradeBusyId] = useState<string | null>(null);
   const [maskBusyId, setMaskBusyId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{
     blockId: string;
@@ -903,6 +912,9 @@ export default function FreeformCanvas({
   const enhancePromptMutation =
     trpc.mvAnalysis.enhanceCanvasPrompt.useMutation();
   const trimMvMotionClipMutation = trpc.canvasMusicMv.trimShotMotionClip.useMutation({ retry: false });
+  const queuePostProd = trpc.mvAnalysis.queuePostProd.useMutation();
+  const postProdUtils = trpc.useUtils();
+  const fetchPostProdJob = (jobId: string) => postProdUtils.mvAnalysis.getPostProdJob.fetch({ jobId });
   // 每个 block 暂存尚未取得明确终态的增强请求编号:结果未知时复用同一编号,
   // 服务端按 jobs 记录恢复结果,不重复调用模型不重复扣分。
   // ref 是热缓存;sessionStorage 是刷新后的恢复源,两处同写同清。
@@ -1467,6 +1479,84 @@ export default function FreeformCanvas({
       }
     },
     [blocks, eraseCornerBusyId, patchOne]
+  );
+
+  /** 调色面板：读实测时长（分段调色按成片秒）；高清版（CloudFront）提交时由 videoGradeSubmit 先导入。 */
+  const openGradePanel = useCallback(
+    async (blockId: string) => {
+      const block = blocks.find(b => b.id === blockId);
+      const src = String(block?.outputUrl || "").trim();
+      if (!block || !/^https:\/\//i.test(src)) {
+        toast.error("请先生成成片再调色");
+        return;
+      }
+      setGradePanelBlockId(blockId);
+      setGradeDraft(undefined);
+      setGradeUseUpscaled(false);
+      for (const url of [src, String(block.upscaledVideoUrl || "").trim()]) {
+        if (!/^https:\/\//i.test(url) || gradeProbedSec[url]) continue;
+        const measured = upscaleProbedSources[url] || (await probeVideoUpscaleSource(url));
+        const sec = measured?.durationExactSec ?? measured?.durationSec;
+        if (sec) setGradeProbedSec(prev => ({ ...prev, [url]: sec }));
+      }
+    },
+    [blocks, gradeProbedSec, upscaleProbedSources]
+  );
+
+  /** 单片调色：提交后期 concat（单片 + grade）→ 等结果 → 新版本写入 outputUrls，原片留在历史不覆盖。 */
+  const startGradeForBlock = useCallback(
+    async (blockId: string, grade: MontageGrade | undefined, useUpscaled: boolean) => {
+      const block = blocks.find(b => b.id === blockId);
+      const original = String(block?.outputUrl || "").trim();
+      const src = useUpscaled ? String(block?.upscaledVideoUrl || "").trim() : original;
+      if (!block || !/^https:\/\//i.test(src)) {
+        toast.error(useUpscaled ? "高清版尚未生成，无法调色" : "请先生成成片再调色");
+        return;
+      }
+      if (!grade) {
+        toast.error("请先设置调色参数");
+        return;
+      }
+      if (gradeBusyId) return;
+      setGradeBusyId(blockId);
+      try {
+        const jobId = await submitVideoGrade(
+          { videoUrl: src, grade, scopeKey: `canvas-grade:${blockId}`.slice(0, 128) },
+          { queue: input => queuePostProd.mutateAsync(input) }
+        );
+        setGradePanelBlockId(null);
+        toast.success("调色已提交，完成后作为新版本加入，原片保留");
+        let url = "";
+        for (let i = 0; i < 360 && !url; i++) {
+          const job = await fetchPostProdJob(jobId);
+          const status = String(job?.status || "");
+          if (status === "failed") throw new Error(job?.error || "调色失败");
+          const out = job?.output as { url?: unknown } | null | undefined;
+          if (status === "succeeded" && typeof out?.url === "string") url = out.url;
+          else await new Promise(r => setTimeout(r, 5_000));
+        }
+        if (!url) throw new Error("调色仍在处理中，可在后期任务列表查看结果");
+        // 轮询期间块可能已变：以最新块为准拼历史，提交时的原片与当前成片都留在 outputUrls
+        const live = blocksRef.current.find(b => b.id === blockId) ?? block;
+        const prevUrls = Array.isArray(live.outputUrls) ? live.outputUrls : [];
+        const current = String(live.outputUrl || "").trim();
+        patchOne(blockId, {
+          outputUrl: url,
+          outputUrls: capManhuaMediaHistory(
+            [url, ...prevUrls, ...[current, original].filter(Boolean)],
+            url,
+          ),
+          status: "done",
+          error: undefined,
+        });
+        toast.success("调色完成，已作为新版本加入，原片保留");
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "调色提交失败");
+      } finally {
+        setGradeBusyId(null);
+      }
+    },
+    [blocks, gradeBusyId, patchOne, queuePostProd, fetchPostProdJob]
   );
 
   const openUpscalePanel = useCallback(
@@ -3497,6 +3587,71 @@ export default function FreeformCanvas({
                                         : "高清放大（2K / 4K）"}
                                     </button>
                                   ) : null}
+                                  {/* 调色：单片后期调色，结果作为新版本写入 outputUrls，原片保留；高清版也可调色 */}
+                                  {gradePanelBlockId === block.id ? (
+                                    (() => {
+                                      const useUpscaled = gradeUseUpscaled && Boolean(block.upscaledVideoUrl);
+                                      const gradeSrc = String((useUpscaled ? block.upscaledVideoUrl : block.outputUrl) || "").trim();
+                                      const outputSec = gradeProbedSec[gradeSrc];
+                                      return (
+                                        <div className="space-y-1 rounded-lg border border-violet-300/30 bg-violet-500/[0.06] p-2" data-canvas-grade-panel>
+                                          {block.upscaledVideoUrl ? (
+                                            <div className="grid grid-cols-2 gap-1 text-[10px]">
+                                              {([false, true] as const).map(v => (
+                                                <button
+                                                  key={String(v)}
+                                                  type="button"
+                                                  onClick={() => setGradeUseUpscaled(v)}
+                                                  className={`rounded border px-2 py-1 ${useUpscaled === v ? "border-violet-300/60 bg-violet-500/20 text-white" : "border-white/15 text-white/60"}`}
+                                                >
+                                                  {v ? "调高清版" : "调原片"}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ) : null}
+                                          {outputSec ? (
+                                            <VideoGradePanel
+                                              value={gradeDraft}
+                                              onChange={setGradeDraft}
+                                              outputSec={outputSec}
+                                              disabled={gradeBusyId === block.id}
+                                              onError={message => toast.error(message)}
+                                            />
+                                          ) : (
+                                            <div className="text-[10px] text-white/60">读取视频时长中…</div>
+                                          )}
+                                          <div className="grid grid-cols-2 gap-1">
+                                            <button
+                                              type="button"
+                                              disabled={gradeBusyId === block.id || !gradeDraft || !outputSec}
+                                              onClick={() => void startGradeForBlock(block.id, gradeDraft, useUpscaled)}
+                                              className="rounded-lg border border-violet-300/35 bg-violet-500/10 px-2 py-1.5 text-[11px] text-violet-50/90 hover:bg-violet-500/15 disabled:opacity-50"
+                                            >
+                                              {gradeBusyId === block.id ? "调色处理中…" : "提交调色"}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setGradePanelBlockId(null)}
+                                              className="rounded-lg border border-white/15 px-2 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.06]"
+                                            >
+                                              收起
+                                            </button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })()
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled={gradeBusyId === block.id}
+                                      onClick={() => void openGradePanel(block.id)}
+                                      className="w-full rounded-lg border border-violet-300/35 bg-violet-500/10 px-2 py-1.5 text-[11px] text-violet-50/90 hover:bg-violet-500/15 disabled:opacity-50"
+                                      title="单片调色；结果作为新版本加入，原片保留。建议先调色再高清放大"
+                                      data-canvas-grade-entry
+                                    >
+                                      {gradeBusyId === block.id ? "调色处理中…" : "调色"}
+                                    </button>
+                                  )}
                                 </div>
                               ) : null}
                               {block.seedance25WebThreadLink ? (
