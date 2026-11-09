@@ -192,10 +192,17 @@ describe("StockFootageDrawer 渲染", () => {
     expect(html).toContain("横屏");
     expect(html).toContain("竖屏");
     expect(html).toContain("短于镜头 1.5 秒");
-    expect(html).toContain("采用并绑定");
+    expect(html).toContain("采用到镜头 02");
     expect(html).toContain("正在根据描述生成关键词");
     // 未选中候选时确认按钮不可用
-    expect(html).toMatch(/<button type="button" disabled=""[^>]*>采用并绑定<\/button>/);
+    expect(html).toMatch(/<button type="button" disabled=""[^>]*>采用到镜头 02<\/button>/);
+    // 步骤条与候选区标题（有结果未选 → 第 ② 步高亮）
+    expect(html).toContain('aria-label="步骤"');
+    expect(html).toContain('aria-current="step"');
+    expect(html).toContain("第 ② 步 · 点一张候选预览（2 个");
+    expect(html).toContain("先在上方点选一张候选");
+    // 一屏 6 个
+    expect(searchUseQuery.mock.calls.at(-1)?.[0]).toMatchObject({ perPage: 6 });
   });
   it("关键词：无 initialQuery 时按描述调用生成；有 initialQuery 时不调用；筛选默认至少=镜头时长", () => {
     suggestUseQuery.mockClear();
@@ -256,5 +263,37 @@ describe("源码约束", () => {
   it("裁点经 clampStockTrim，交付经 buildStockPick", () => {
     expect(drawer).toContain("clampStockTrim(");
     expect(drawer).toContain("buildStockPick(asset");
+  });
+});
+
+describe("找素材抽屉流程辅助", async () => {
+  const m = await import("@/components/stockFootage/stockFootageModel");
+  it("主按钮文案按标题推导目标，推不出退回默认", () => {
+    expect(m.stockDrawerConfirmLabel("为镜头02找素材")).toBe("采用到镜头 02");
+    expect(m.stockDrawerConfirmLabel("为第 3 段找素材")).toBe("采用到第 3 段");
+    expect(m.stockDrawerConfirmLabel("为第 2 段找无人物空镜")).toBe("采用到第 2 段");
+    expect(m.stockDrawerConfirmLabel("为口播 第 4 段 找补充画面")).toBe("采用到口播第 4 段");
+    expect(m.stockDrawerConfirmLabel("为本集场景找参考图")).toBe("采用为场景参考");
+    expect(m.stockDrawerConfirmLabel("随便什么")).toBe("采用并绑定");
+    expect(m.stockDrawerConfirmLabel("随便什么", "替换")).toBe("替换");
+  });
+  it("步骤判定：无结果①、有结果未选②、已选③；一屏 6 个", () => {
+    expect(m.stockDrawerStep({ hasQuery: false, hasCandidates: false, hasSelected: false })).toBe(1);
+    expect(m.stockDrawerStep({ hasQuery: true, hasCandidates: false, hasSelected: false })).toBe(1);
+    expect(m.stockDrawerStep({ hasQuery: true, hasCandidates: true, hasSelected: false })).toBe(2);
+    expect(m.stockDrawerStep({ hasQuery: true, hasCandidates: true, hasSelected: true })).toBe(3);
+    expect(m.STOCK_DRAWER_PER_PAGE).toBe(6);
+    expect(m.STOCK_DRAWER_GUIDE.length).toBe(4);
+  });
+  it("候选排序：时长够且画幅符合的在前，稳定且不丢候选", () => {
+    const list = [
+      { kind: "video" as const, durationSec: 2, width: 1080, height: 1920 },   // 短
+      { kind: "video" as const, durationSec: 9, width: 1920, height: 1080 },   // 横，画幅不符
+      { kind: "video" as const, durationSec: 9, width: 1080, height: 1920 },   // 合适
+      { kind: "video" as const, durationSec: 12, width: 1080, height: 1920 },  // 合适
+    ];
+    const ranked = m.rankStockCandidates(list, 5, "portrait");
+    expect(ranked.map(c => [c.durationSec, c.fit])).toEqual([[9, true], [12, true], [2, false], [9, false]]);
+    expect(m.rankStockCandidates(list, undefined, undefined).map(c => c.fit)).toEqual([true, true, true, true]);
   });
 });

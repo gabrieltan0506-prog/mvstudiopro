@@ -140,3 +140,63 @@ export function buildStockPick(asset: StockFootageAssetView, trim: StockTrim | u
   const clamped = clampStockTrim({ sourceSec, targetSec: windowSec && windowSec > 0 ? windowSec : undefined, inSec: trim?.inSec ?? 0 });
   return { asset, inSec: clamped.inSec, outSec: clamped.outSec };
 }
+
+// ── 抽屉流程（11-09 用户反馈「看了都不会用」「要 18 个候选吗」后的改版）──
+
+/** 一屏候选数：够挑又不用翻滚；要更多按「换一批」。 */
+export const STOCK_DRAWER_PER_PAGE = 6;
+
+export type StockDrawerStep = 1 | 2 | 3;
+export const STOCK_DRAWER_STEPS: ReadonlyArray<{ step: StockDrawerStep; label: string; hint: string }> = [
+  { step: 1, label: "定关键词", hint: "已按镜头描述自动生成并开始搜索，不合适可改词再搜" },
+  { step: 2, label: "挑一个候选", hint: "点卡片即预览；带「合适」标记的时长与画幅都够" },
+  { step: 3, label: "调选段并采用", hint: "拖入点选取素材哪一秒开始，确认后才替换当前画面" },
+];
+
+/** 当前所处步骤：没结果=①，有结果没选=②，已选=③。 */
+export function stockDrawerStep(input: { hasQuery: boolean; hasCandidates: boolean; hasSelected: boolean }): StockDrawerStep {
+  if (input.hasSelected) return 3;
+  if (input.hasQuery && input.hasCandidates) return 2;
+  return 1;
+}
+
+/** 使用指南：面向第一次打开的人，三句话说清这扇抽屉做什么、怎么用、采用后去了哪。 */
+export const STOCK_DRAWER_GUIDE: ReadonlyArray<string> = [
+  "这里从公开图库为当前镜头/段落找实拍画面，不会生成、不扣积分；采用后素材会保存到你的空间并绑定到这一段。",
+  "关键词已按描述自动生成并搜索；想换角度就改词再搜，中文词也可以。",
+  "点一张候选即预览；视频可拖「入点」决定从素材哪一秒开始，选段长度默认等于镜头时长。",
+  "按下方「采用到…」才会替换当前画面；不满意随时再开抽屉换一张，已采用的素材可在「我的素材」里复用。",
+];
+
+export const STOCK_DRAWER_GUIDE_SEEN_KEY = "mvs.stockFootage.guideSeen.v1";
+
+/** 主按钮文案：从标题推导目标，推不出退回传入的默认文案。 */
+export function stockDrawerConfirmLabel(title: string, fallback = "采用并绑定"): string {
+  const t = (title ?? "").replace(/\s+/g, "");
+  let m = t.match(/^为镜头(\d+)/);
+  if (m) return `采用到镜头 ${m[1]}`;
+  m = t.match(/^为口播第(\d+)段/);
+  if (m) return `采用到口播第 ${m[1]} 段`;
+  m = t.match(/^为第(\d+)段/);
+  if (m) return `采用到第 ${m[1]} 段`;
+  if (/场景找参考图/.test(t)) return "采用为场景参考";
+  return fallback;
+}
+
+/** 候选排序：时长够且画幅符合的排前面（稳定排序，不丢任何候选），其余保持接口顺序。 */
+export function rankStockCandidates<T extends { kind: StockFootageKind; durationSec?: number; width: number; height: number }>(
+  list: readonly T[],
+  targetSec?: number,
+  wantOrientation?: StockFootageOrientation,
+): Array<T & { fit: boolean }> {
+  const fitOf = (c: T) => {
+    const longEnough = candidateShortBySec(c, targetSec) === 0;
+    const shape = orientationLabel(c.width, c.height);
+    const want = wantOrientation === "landscape" ? "横屏" : wantOrientation === "portrait" ? "竖屏" : wantOrientation === "square" ? "方形" : "";
+    const shapeOk = !want || shape === want;
+    return longEnough && shapeOk;
+  };
+  const withFit = list.map((c, i) => ({ c, i, fit: fitOf(c) }));
+  withFit.sort((a, b) => (a.fit === b.fit ? a.i - b.i : a.fit ? -1 : 1));
+  return withFit.map(x => ({ ...x.c, fit: x.fit }));
+}
