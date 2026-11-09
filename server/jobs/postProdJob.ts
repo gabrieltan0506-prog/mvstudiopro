@@ -37,6 +37,11 @@ export async function processPostProdJob(
       const output = await renderManhuaVfx(input, userId, options?.signal ?? AbortSignal.timeout(POST_PROD_DEFAULT_TIMEOUT_MS));
       return { output, provider: "blender-vfx" };
     }
+    case "video_partial_edit": {
+      const { renderVideoPartialEdit, videoPartialEditTaskId } = await import("../services/videoPartialEdit");
+      const output = await renderVideoPartialEdit(input, userId, videoPartialEditTaskId(userId, input.requestId), options?.signal ?? AbortSignal.timeout(POST_PROD_DEFAULT_TIMEOUT_MS));
+      return { output, provider: "video-partial-edit" };
+    }
     case "manhua_auto_rig": {
       const {renderManhuaAutoRig}=await import("../services/manhuaAutoRigRender");
       const output=await renderManhuaAutoRig(input.params,userId,{signal:options?.signal??AbortSignal.timeout(resolvePostProdJobTimeoutMs(input))});

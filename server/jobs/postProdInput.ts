@@ -12,6 +12,7 @@ import { concatGradeSchema, validateGradeSegments } from "../../shared/colorGrad
 import { SUBTITLE_EFFECT_IDS } from "../../shared/subtitleEffects";
 import { manhuaVfxJobSchema } from "../../shared/manhuaVfx";
 import { artMotionJobSchema } from "../../shared/artMotion";
+import { videoPartialEditJobSchema } from "../../shared/videoEditPricing";
 import { digitalHumanSplitJobSchema, digitalHumanFrameJobSchema, digitalHumanFinalJobSchema } from "../../shared/digitalHumanProduction";
 
 const mediaSourceSchema = z.string().trim().min(1).max(2048);
@@ -210,6 +211,7 @@ export const postProdJobInputSchema = z.discriminatedUnion("action", [
   digitalHumanSplitJobSchema, digitalHumanFrameJobSchema, digitalHumanFinalJobSchema,
   artMotionJobSchema,
   manhuaVfxJobSchema,
+  videoPartialEditJobSchema,
   z.object({ ...postProdMetadataShape, action: z.literal("manhua_auto_rig"), params: autoRigRequestSchema }).strict(),
   z.object({ ...postProdMetadataShape, action: z.literal("manhua_previs"), params: manhuaPrevisRequestSchema }).strict(),
   z.object({ ...postProdMetadataShape, action: z.literal("audio_extract"), params: audioExtractParamsSchema }).strict(),

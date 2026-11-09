@@ -11,6 +11,7 @@ import { coverWorkshopRouter } from "./routers/coverWorkshop";
 import { coverCandidateProcedures } from "./routers/platformCoverCandidates.js";
 import { topicDigestProcedures } from "./routers/topicDigest.js";
 import { marketingPlanProcedures } from "./routers/platformMarketingPlan.js";
+import { videoPartialEditProcedures } from "./routers/videoPartialEdit.js";
 import { songOperationsRouter } from "./routers/songOperations";
 import { XHS_CONTENT_SKILL_ID, xhsTopicCount } from "../shared/xhsContentStrategy.js";
 import { codeMotionPlanFailureMessage } from "./services/codeMotionPlanFailure";
@@ -3203,6 +3204,7 @@ export const appRouter = router({
   // Video PK Rating - upload video frame and get AI analysis
   mvAnalysis: router({
     ...marketingPlanProcedures,
+    ...videoPartialEditProcedures,
     ...coverCandidateProcedures,
     ...topicDigestProcedures,
     listKnowledgeCardRecovery: protectedProcedure
@@ -4414,6 +4416,7 @@ export const appRouter = router({
       .input(postProdJobInputSchema)
       .mutation(async ({ ctx, input }) => {
         if (input.action.startsWith("digital_human_")) throw new TRPCError({ code: "FORBIDDEN", message: "请从数字人工作室核对输入并提交" });
+        if (input.action === "video_partial_edit") throw new TRPCError({ code: "FORBIDDEN", message: "请从片段修改入口确认费用后提交" });
         if(input.action === "manhua_previs" || input.action === "manhua_auto_rig") throw new TRPCError({code:"FORBIDDEN",message:input.action === "manhua_auto_rig" ? "请从人物模型绑骨入口提交" : "请从本段动作白模入口提交"});
         if (input.action === "manhua_vfx") {
           const { findManhuaVfxReceipt } = await import("./services/manhuaVfxTask");
