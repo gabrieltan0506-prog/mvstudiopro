@@ -32,6 +32,7 @@ import { resolveCanvasMusicMvAudio } from "../services/canvasMusicMvMedia";
 import {
   manhuaAdvisorOperationId,
   MANHUA_ADVISOR_DONE_ACTION,
+  MANHUA_ADVISOR_JOB_ACTION,
   MANHUA_ADVISOR_TASK_TYPE,
 } from "../services/manhuaAdvisorOperation";
 
@@ -375,17 +376,36 @@ export async function adoptMusicMvConcept(
   const output = operation?.output as
     | { action?: string; result?: { success?: boolean; answer?: string } }
     | undefined;
+  const operationInput = operation?.input as
+    | { action?: string; requestId?: string }
+    | undefined;
+  // 顾问 job 的 type 列实际写入 "platform"（reserveManhuaAdvisorOperation），
+  // 真正的判别字段是 input.action / input.requestId；MANHUA_ADVISOR_TASK_TYPE 只做兼容。
+  const isAdvisorOperation =
+    Boolean(operation) &&
+    (operation!.type === MANHUA_ADVISOR_TASK_TYPE ||
+      (operationInput?.action === MANHUA_ADVISOR_JOB_ACTION &&
+        operationInput.requestId === input.advisorRequestId));
   if (
     !operation ||
     String(operation.userId) !== String(userId) ||
-    operation.type !== MANHUA_ADVISOR_TASK_TYPE ||
+    !isAdvisorOperation
+  )
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "找不到对应的顾问咨询记录，请重新发起咨询",
+    });
+  if (
     operation.status !== "succeeded" ||
     output?.action !== MANHUA_ADVISOR_DONE_ACTION ||
     !output.result?.success
   )
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: "原顾问咨询尚未成功，请先查询原咨询",
+      message:
+        operation.status === "failed"
+          ? "原顾问咨询已失败，请重新发起咨询后再采用"
+          : "原顾问咨询尚未成功，请先查询原咨询；若已显示方案请重新发起咨询",
     });
   const returned = musicMvAdvisorProposalSchema.parse(
     JSON.parse(output.result.answer || "")

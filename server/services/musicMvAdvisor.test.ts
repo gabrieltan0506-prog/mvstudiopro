@@ -375,7 +375,7 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
     expect(second.mocks.compose).toHaveBeenCalledTimes(2);
     expect((second.records.get(`canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/${HOP1}-rejected.json`) as any).reasonZh).toContain("素材切片");
   });
-  it("refine 修订结果追加占位段时同样修复；改写区间则同一跳带原因重写一次；通道异常切下一跳", async () => {
+  it("refine 修订结果追加占位段时同样修复；改写区间则回填初稿 sections 落 sections-restored（不重写、不烧第二次）；通道异常切下一跳", async () => {
     const { d, mocks } = fixture();
     mocks.refine.mockImplementationOnce(async (input: any, _m: string, _s: unknown, hop: CreativeLlmHop) => ({ text: JSON.stringify(envelope({ ...input.candidate, sections: [...input.candidate.sections, { startSec: 0, endSec: 0, labelZh: "占位", heardZh: "无", emotion }], uncertaintiesZh: "一条" })), model: hop.modelName, inputSha256: "sha" }));
     const accepted = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", d), true).answer, target);
@@ -387,17 +387,58 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
     second.mocks.refine.mockImplementationOnce(async (input: any, _m: string, _s: unknown, hop: CreativeLlmHop) => ({ text: JSON.stringify(envelope({ ...input.candidate, sections: [{ ...input.candidate.sections[0], startSec: 0, endSec: 6 }, { ...input.candidate.sections[0], startSec: 6, endSec: 12 }] })), model: hop.modelName, inputSha256: "sha" }));
     const result = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", second.d), true).answer, target);
     expect(result.sections.map(s => [s.startSec, s.endSec])).toEqual([[0, 12]]);
-    expect(second.mocks.refine).toHaveBeenCalledTimes(2);
+    expect(second.mocks.refine).toHaveBeenCalledTimes(1);
     expect(second.mocks.compose).toHaveBeenCalledTimes(1);
-    expect((second.mocks.refine.mock.calls as unknown as [any][])[1][0].requirements).toContain("联合创作不得改写媒体观察区间和证据");
     const names = Array.from(second.records.keys()).map(k => k.split("/").at(-1));
-    expect(names).toContain("refine-hop-1-glm-5.3-flashx-rejected.json");
-    expect(names).toContain("refine-hop-1-glm-5.3-flashx-rewrite-decoded.json");
+    expect(names).toContain("refine-hop-1-glm-5.3-flashx-sections-restored.json");
+    expect(names).not.toContain("refine-hop-1-glm-5.3-flashx-rejected.json");
+    const restored = second.records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/refine-hop-1-glm-5.3-flashx-sections-restored.json") as any;
+    expect(restored.after).toEqual(proposal().sections);
+    expect(restored.fixes.length).toBeGreaterThan(0);
+    // refine 的硬约束照抄 candidate.sections 而非 sourceEvidence.sections，并带回包骨架
+    const refineReq = (second.mocks.refine.mock.calls as unknown as [any][])[0][0].requirements as string;
+    expect(refineReq).toContain("照抄输入 candidate.sections");
+    expect(refineReq).not.toContain("照抄所给 sourceEvidence.sections");
+    expect(refineReq).toContain("【回包骨架");
     const third = fixture();
     third.mocks.refine.mockImplementationOnce(async () => { throw new CreativeHopTransportError("GLM 5.3 FlashX · EvoLink 通道失败（HTTP 503）：down", 503); });
     const out = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", third.d), true).answer, target);
     expect(out.review?.model).toBe("z-ai/glm-5.3-flashx");
     expect((third.records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/refine-hop-used.json") as any).hop).toBe(2);
+  });
+  it("1109 探针四类 refine 写坏：review-only 根对象 / 漏 limitationsZh / 坏证据路径 / visualZh 改回证据原文 → 同一跳一次通过，落 envelope-repaired", async () => {
+    const { d, mocks, records } = fixture();
+    const draftSections = proposal().sections;
+    mocks.refine.mockImplementationOnce(async (input: any, _m: string, _s: unknown, hop: CreativeLlmHop) => ({
+      text: JSON.stringify({
+        proposal: { ...input.candidate, sections: [{ ...draftSections[0], emotion: { ...emotion, visualZh: "仅音频，未观察画面" } }] },
+        review: { verdict: "revise", summaryZh: "一处文案", findings: [{ id: "f1", severity: "note", evidencePaths: ["/candidate/sections/0/visualZh", "/candidate/unsections"], observationZh: "o", suggestionZh: "s" }], mediaReview: [], inspirationZh: ["灵感"] },
+        changesZh: "补了画面建议",
+      }),
+      model: hop.modelName, inputSha256: "sha",
+    }));
+    const accepted = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", d), true).answer, target);
+    expect(mocks.refine).toHaveBeenCalledTimes(1);
+    expect(accepted.sections).toEqual(draftSections);
+    expect(accepted.review?.limitationsZh).toEqual(["本次为创作结果审阅，依据已保存的音画分析；尚未人工验收"]);
+    expect(accepted.review?.findings[0].evidencePaths).toEqual(["/candidate/sections/0/emotion/visualZh", "/candidate"]);
+    expect(accepted.review?.revisionsZh).toEqual(["补了画面建议"]);
+    const repaired = records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/refine-hop-1-glm-5.3-flashx-envelope-repaired.json") as any;
+    expect(repaired.fixes.envelope.map((f: any) => f.code)).toEqual(["changes_string"]);
+    expect(repaired.fixes.review.map((f: any) => f.code)).toEqual(["limitations_missing", "evidence_path_normalized", "evidence_path_normalized"]);
+    expect(records.has("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/refine-hop-1-glm-5.3-flashx-sections-restored.json")).toBe(true);
+    // review-only 根对象（第 1 跳重写的原样写坏）：以初稿为 proposal 包起来，审阅照常入账
+    const second = fixture();
+    second.mocks.refine.mockImplementationOnce(async (_input: any, _m: string, _s: unknown, hop: CreativeLlmHop) => ({
+      text: JSON.stringify({ verdict: "approved", summaryZh: "无问题", findings: [], mediaReview: [], inspirationZh: ["灵感"], limitationsZh: ["离线"] }),
+      model: hop.modelName, inputSha256: "sha",
+    }));
+    const kept = parseMusicMvAdvisorProposal(parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", second.d), true).answer, target);
+    expect(second.mocks.refine).toHaveBeenCalledTimes(1);
+    expect(kept.review?.verdict).toBe("approved");
+    expect(kept.review?.revisionsZh?.[0]).toContain("原稿保留");
+    const shell = second.records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/refine-hop-1-glm-5.3-flashx-envelope-repaired.json") as any;
+    expect(shell.fixes.envelope.map((f: any) => f.code)).toEqual(["review_only_root", "changes_missing"]);
   });
   it("线上第四次重跑：镜头 15.5s 超限 → 确定性等分，不重 compose，落 glm-draft-shots-split", async () => {
     const { d, mocks, records } = fixture();
