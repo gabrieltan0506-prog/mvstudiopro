@@ -3,6 +3,7 @@ import RemixProductionImport from "@/components/RemixProductionImport";
 import { remixToNovelDraft } from "@/lib/remixProductionHandoff";
 import { manhuaVfxEnvironmentOptions } from "@shared/manhuaVfxEnvironment";
 import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
+import { formatPrevisMotionGuide } from "@shared/manhuaPrevis";
 import { adoptStageAnimationAsClip, assertCurrentStageAnimationAudio } from "@/lib/manhuaStageAnimationAdoption";
 import { resolveShotsForEpisodeKeyartsResult } from "@/lib/canvasDramaStudio";
 import {requireCurrentStageAnimation} from "@/lib/manhuaStageAnimationBinding";
@@ -675,6 +676,26 @@ function saveCanvasState(blocks: CanvasBlock[], edges: CanvasEdge[]) {
     toast.dismiss("manhua-canvas-save-failed");
   }
   return saved;
+}
+
+/**
+ * 1110 MV 镜头块：顾问试看经用户「应用」后，把该版白模写成本镜已采用白模参考（manhuaSegmentRefs.previs），
+ * 供 MV 参考选择 usePrevis 取用；旧参考进 referenceHistory，不丢。只读已落盘的 previsStudio，不提交任务。
+ */
+export function adoptMvShotAdvisorPrevisReference(block: CanvasBlock): CanvasBlock {
+  const studio = block.previsStudio;
+  if (!block.musicMvShot || !studio) return block;
+  const take = studio.history.find(h => h.jobId === studio.selectedJobId) ?? studio.history[studio.history.length - 1];
+  if (!take?.url) throw new Error("试看回执缺少视频地址，未采用；原参考保留。");
+  const old = block.manhuaSegmentRefs?.previs;
+  const referenceHistory = [...studio.referenceHistory];
+  if (old && !referenceHistory.some(r => (r.gcsUri || r.url) === (old.gcsUri || old.url))) referenceHistory.push(old);
+  const reference: ManhuaSegmentReferenceEntry = {
+    url: take.url, ...(take.gcsUri ? { gcsUri: take.gcsUri } : {}),
+    fileName: `动作白模-${take.jobId}.mp4`, durationSec: take.durationSec,
+    motionGuideZh: formatPrevisMotionGuide(take.spec), updatedAt: new Date().toISOString(),
+  };
+  return setManhuaSegmentReference({ ...block, previsStudio: { ...studio, selectedJobId: take.jobId, referenceHistory } }, "previs", reference);
 }
 
 function loadFactoryCharacterPrefs(): FactoryCharacterPrefs {
@@ -1730,7 +1751,8 @@ function OmniCanvasWorkspace() {
     try {
       if (!clip?.previsStudio) throw new Error("本段人物基线尚未保存，请从二级工具的动作白模标签打开顾问。");
       if (clip.previsStudio.pending) throw new Error("本段正在渲染，结束后再调整。");
-      const direction = resolveManhuaDirectionCard(activeDirectionCanon, "storyboard", classifyManhuaDirectionSceneType(clip.prompt || ""), { episodeIndex: writerFocusEpisode, segmentIndex: resolveClipLocalSegmentIndex(clip.id, clip.prompt, writerFocusEpisode) });
+      // 1110 MV 镜头块不属于漫剧分集，不套分集导演卡
+      const direction = clip.musicMvShot ? undefined : resolveManhuaDirectionCard(activeDirectionCanon, "storyboard", classifyManhuaDirectionSceneType(clip.prompt || ""), { episodeIndex: writerFocusEpisode, segmentIndex: resolveClipLocalSegmentIndex(clip.id, clip.prompt, writerFocusEpisode) });
       return { target: { ...makeAdvisorPrevisTarget(clip.id, advisorPrevisCurrentStudio(clip, blocks), advisorPreviewSelection?.clipId === clip.id ? advisorPreviewSelection.requestId : undefined), ...(direction ? { directionCardId: direction.card.id, directionCardVersion: direction.card.version } : {}) } };
     } catch (e) { return { issue: e instanceof Error ? maskMediaProviderDetails(e.message) : "本段白模暂不能调整" }; }
   }, [blocks, advisorPrevisClipId, advisorPreviewSelection, activeDirectionCanon, writerFocusEpisode, activePilotVideoModel, explicitWriterVideoModel, customAssetRefs]);
@@ -1738,7 +1760,9 @@ function OmniCanvasWorkspace() {
     const studio = clip.previsStudio;
     if (!studio) throw new Error("本段白模不存在，请重新打开顾问");
     let advisorShotSource = studio.advisorShotSource;
-    if (advisorShotSource) {
+    // 1110 MV 镜头块：分镜来源即 MV 端写在块上的逐窗节拍（buildMvShotPrevisShotSource），不按漫剧分集重解析
+    if (clip.musicMvShot && !advisorShotSource) throw new Error("本镜尚无逐窗节拍来源，请回 MV 镜头重新生成白模参考");
+    if (advisorShotSource && !clip.musicMvShot) {
       const episode = getBlockEpisodeIndex(clip) ?? writerFocusEpisode;
       const videoModel = resolveManhuaEpisodeClipVideoModel(currentBlocks, episode, explicitWriterVideoModel || undefined);
       const segmentIndex = resolveClipLocalSegmentIndex(clip.id, clip.prompt, episode);
@@ -1786,11 +1810,11 @@ function OmniCanvasWorkspace() {
         ? buildManhuaPrevisAudio(clip.audioStudio, trial.request.spec, clip.previsStudio.audioStartSec ?? 0, clip.previsStudio.loopBgm ?? false) : undefined;
       if (JSON.stringify(currentAudio) !== JSON.stringify(trial.request.audio)) throw new Error("音轨或秒窗已变化，请按当前声音重新试看后再应用；旧视频保留。");
       const previsStudio = adoptAdvisorPrevisTrial(clip.id, advisorPrevisCurrentStudio(clip), trial, receipt);
-      const next = current.map(b => b === clip ? { ...b, previsStudio } : b);
+      const next = current.map(b => b === clip ? (clip.musicMvShot ? adoptMvShotAdvisorPrevisReference({ ...b, previsStudio }) : { ...b, previsStudio }) : b);
       if (!saveCanvasState(next, edges)) throw new Error("配置保存失败，原白模未改动。");
       blocksRef.current = next;
       setBlocks(next);
-      toast.success("已按你的确认应用这版试看，原配置已保留；可回白模工作台继续审片。");
+      toast.success(clip.musicMvShot ? "已按你的确认采用这版白模为本镜动作参考，原参考已保留在历史中。" : "已按你的确认应用这版试看，原配置已保留；可回白模工作台继续审片。");
       return true;
     } catch (e) { toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "未能应用建议"); return false; }
   };
@@ -10867,6 +10891,26 @@ function OmniCanvasWorkspace() {
     </div>
   );
 
+  /** 1110 MV 多人互动镜头：打开顾问白模页（目标=镜头块），submit 时自动提问一次；额度、超额确认沿用面板，不另扣费。 */
+  function openMvShotAdvisorPrevis(clipId: string, question: string, submit: boolean) {
+    if (!canUseManhua3d) throw new Error("当前账号暂未开放白模动作参考");
+    if (factoryBusy) throw new Error("正在制作中，结束后再生成白模");
+    const clip = blocksRef.current.find(b => b.id === clipId && !b.archivedFromPreviousScript);
+    if (!clip?.musicMvShot || !clip.previsStudio?.advisorShotSource) throw new Error("本镜白模基线尚未保存，未打开顾问");
+    advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined);
+    setAdvisorPreviewSelection({ clipId });
+    setAdvisorPrevisClipId(clipId); setAdvisorFocusSection(null); chooseAdvisorVisibility(true); setAdvisorNudge(null);
+    setAdvisorQuestionSeed({ id: crypto.randomUUID(), question, projectKey: advisorComponentKey, ...(submit ? { submit: true } : {}) });
+  }
+
+  /** 交 FreeformCanvas → MV 参考选择的桥（MvPrevisBridge 形状）；预览宿主卸载时只回收 MV 自己挂的宿主。 */
+  const mvPrevisBridge = isMvProject ? {
+    open: openMvShotAdvisorPrevis,
+    onPreviewHostChange: (host: HTMLDivElement | null) => setAdvisorPreviewHost(prev => host ?? (prev?.dataset.mvPrevisHost != null ? null : prev)),
+    activeClipId: advisorPrevisClipId ?? undefined,
+    ...(!canUseManhua3d ? { unavailableZh: "当前账号暂未开放白模动作参考" } : factoryBusy ? { unavailableZh: "正在制作中，结束后再生成白模" } : {}),
+  } : undefined;
+
   function prepareOverseasQuestion(question: string) {
     setAdvisorPrevisClipId(null); advisor3dOpenVersion.current += 1; setAdvisor3dContext(undefined);
     setAdvisorFocusSection(null); chooseAdvisorVisibility(true); setAdvisorNudge(null);
@@ -11528,7 +11572,7 @@ async function runAdvisorWriterTrial() {
   return (
     <div
       data-manhua-theme={canvasMode === "manhua" ? "cream" : undefined}
-      data-advisor-sidebar={canvasMode === "manhua" && advisorOpen && !effectiveAdvisorDockHost ? "open" : undefined}
+      data-advisor-sidebar={(canvasMode === "manhua" || Boolean(advisorPrevisClip?.musicMvShot)) && advisorOpen && !effectiveAdvisorDockHost ? "open" : undefined}
       className={
         immersiveWorkbench
           ? "flex h-dvh flex-col overflow-hidden bg-transparent text-white"
@@ -15046,7 +15090,7 @@ async function runAdvisorWriterTrial() {
         }}
         previsTarget={advisorPrevisEditing.target}
         previsIssue={advisorPrevisEditing.issue}
-        previsLabel={advisorPrevisClip?.previsStudio ? `第${writerFocusEpisode}集 · 第${resolveClipLocalSegmentIndex(advisorPrevisClip.id, advisorPrevisClip.prompt, writerFocusEpisode)}段 · ${advisorPrevisClip.previsStudio.spec.durationSec}秒` : undefined}
+        previsLabel={advisorPrevisClip?.previsStudio ? advisorPrevisClip.musicMvShot ? `MV 镜头 ${advisorPrevisClip.musicMvShot.shotId} · ${advisorPrevisClip.previsStudio.spec.durationSec}秒` : `第${writerFocusEpisode}集 · 第${resolveClipLocalSegmentIndex(advisorPrevisClip.id, advisorPrevisClip.prompt, writerFocusEpisode)}段 · ${advisorPrevisClip.previsStudio.spec.durationSec}秒` : undefined}
         previsLaunchIssue={advisorPrevisClipId ? checkAdvisorPrevisReady() : undefined}
         onCheckPrevisReady={candidate => checkAdvisorPrevisReady(candidate)}
         previsAudioControls={advisorPrevisClip?.previsStudio ? <ManhuaPrevisAudioControls compact block={advisorPrevisClip} disabled={!canUseManhua3d || Boolean(factoryBusy) || advisorPrevisClip.status === "running" || advisorPrevisClip.videoTaskStatus === "queued"} onChange={studio => { if (!persistClipPrevisStudio(advisorPrevisClip.id, studio)) toast.error("本段白模音轨选择未保存，原设置保留。"); }} onOpenAudio={() => setAdvisorAudioRequest({ id: crypto.randomUUID(), clipId: advisorPrevisClip.id, scopeId: advisorPrevisClip.previsStudio!.scopeId })}/> : null}
@@ -15063,7 +15107,7 @@ async function runAdvisorWriterTrial() {
           setAdvisorOpen(false);
           locateAdvisorIssue(issue);
         }}
-        open={canvasMode === "manhua" && advisorOpen}
+        open={(canvasMode === "manhua" || Boolean(advisorPrevisClip?.musicMvShot)) && advisorOpen}
         onClose={() => { advisor3dOpenVersion.current += 1; chooseAdvisorVisibility(false); setAdvisorFocusSection(null); }}
         stageZh={MANHUA_ADVISOR_STAGE_LABELS[workflowPhase]}
         selectedTemplate={selectedViralTemplate}
