@@ -10,9 +10,11 @@ import {
   embedKnowledgeTopicTitles,
   knowledgeTopicKey,
   stripKnowledgeTopicTitles,
+  type KnowledgeTopicTitle,
   type KnowledgeTopicTitles,
 } from "../../shared/knowledgeTopicImagePlan";
 import { KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST } from "./knowledgeModelCapabilities";
+import { KNOWLEDGE_MODEL_CHANNEL_MAX, knowledgePooled } from "../../shared/knowledgeConcurrency";
 import {
   invokeKnowledgePublicationRoutes,
   type KnowledgeModelRequest,
@@ -49,13 +51,55 @@ export function parseKnowledgeTopicTitles(report: any, topics: { id: string; hea
   return { titles, rejected };
 }
 
+/** 一个主题的命题是否齐全：图片标题、内文标题都有，且每个小节都已改写。 */
+export function isKnowledgeTopicTitleComplete(entry: KnowledgeTopicTitle | undefined, headlines: readonly string[]) {
+  return Boolean(entry?.image && entry?.reading && headlines.every(h => entry.sections?.[h.trim()]));
+}
+
+/** 合并两次命题：以首发为准，缺项才用补缺结果填上。 */
+export function mergeKnowledgeTopicTitle(base: KnowledgeTopicTitle | undefined, patch: KnowledgeTopicTitle | undefined): KnowledgeTopicTitle {
+  return {
+    image: base?.image || patch?.image,
+    reading: base?.reading || patch?.reading,
+    sections: { ...(patch?.sections || {}), ...(base?.sections || {}) },
+  };
+}
+
+const TITLE_SYSTEM_PROMPT = `你为图文知识手册的每个主题图拟定标题。每个主题含若干原小节（见body首行“原小节：”后以｜分隔）与图内要点。
+为每个主题写出三类具体标题（都要是概括内容的实际短语，不能写字段名，不能写“图片标题”“内文标题”“小标题”这类字样）：
+1. 图片标题：≤16字，概括本主题核心，不用“等N节”。
+2. 图下内文标题：≤20字，概括图下详细内文讲什么，与图片标题互补、不重复。
+3. 每个原小节的内文小标题：≤16字，忠实原意，不新增事实、不加编号；必须改写，不得与原小节标题相同。
+图片标题与图下内文标题也不得与任何原小节标题相同。
+只依据给定文字，不编造。标题不含#、|、换行。
+输出格式：knowledge_publication_v1 JSON，pages与输入同id同顺序、一个不少。每页reading.blocks依次为：第1项=图片标题，第2项=图下内文标题，第3项起按原小节顺序每节一项=该节内文小标题；每项是{type:"prose",title:<标题>,note:"",text:<说明>}，第1项text写"image"，第2项text写"reading"，其后各项text逐字写对应的原小节标题。blocks数量=2+原小节数。
+示例（虚构主题，仅示意格式，不要照抄其中字词）：输入原小节“蒸发｜凝结｜降水”，则blocks为[{type:"prose",title:"太阳驱动的水循环",note:"",text:"image"},{type:"prose",title:"三种相变的条件与去向",note:"",text:"reading"},{type:"prose",title:"受热升空的水汽",note:"",text:"蒸发"},{type:"prose",title:"冷却成云",note:"",text:"凝结"},{type:"prose",title:"雨雪回到地面",note:"",text:"降水"}]。
+每页其余字段：headline照抄输入headline，body写一句话说明本主题，imageDescription:"",imageStatus:"absent",facts:[{term:"主题",statement:一句话说明}],cautions:[]，reading.version=1，reading.subtitle=""，reading.accent="jade"。顶层：kind:"knowledge_publication_v1"，sourceDigest照抄输入值，title:"主题命题"。`;
+
+type TitleTopic = { id: string; headlines: string[]; body: string; index: number };
+
+function buildTitleRequest(model: string | undefined, title: string, sourceDigest: string, topics: readonly TitleTopic[]): KnowledgeModelRequest {
+  return {
+    executionChannel: "openrouter",
+    executionFamily: String(model || "").includes("glm") ? "glm" : "deepseek",
+    systemInstruction: { parts: [{ text: TITLE_SYSTEM_PROMPT }] },
+    contents: [{ role: "user", parts: [{ text: JSON.stringify({ sourceDigest, source: { title, pages: topics.map(t => ({ id: t.id, headline: `主题${t.index + 1}`, body: `原小节：${t.headlines.join("｜")}\n\n${t.body}`, imageUrl: "" })) } }) }] }],
+    generationConfig: { temperature: 0.3, maxOutputTokens: KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST, responseMimeType: "application/json" },
+  };
+}
+
+/**
+ * 命题：首发一次批量调用；回包缺页/不合格的主题只对缺项逐主题补一次（1108g2 实测 GLM 首发只回 6/16 页，
+ * 路由合同整批拒收导致全部回退机械标题）。首发结果按页部分采纳，补缺结果只填缺项；仍缺的回退机械/原标题。
+ * 原始回包与解析结果分别永久保存（批量与每个补缺主题各自一份）；同一输入再调用零请求回放，不重复购买。
+ */
 export async function nameKnowledgeEditionTopics(params: {
   markdown: string;
   model?: string;
   evidence: KnowledgeRouteEvidence;
   invoke?: typeof invokeKnowledgePublicationRoutes;
   abortSignal?: AbortSignal;
-}): Promise<{ markdown: string; status: "named" | "cached" | "fallback" | "skipped"; message?: string }> {
+}): Promise<{ markdown: string; status: "named" | "partial" | "cached" | "fallback" | "skipped"; message?: string; missing?: string[] }> {
   const base = stripKnowledgeTopicTitles(params.markdown);
   const plan = knowledgeEditionImagePlan(base);
   if (!plan || !plan.images.length) return { markdown: base, status: "skipped" };
@@ -66,50 +110,75 @@ export async function nameKnowledgeEditionTopics(params: {
     const h = createHash("sha256").update(`${digest}/topic/${i}`).digest("hex");
     return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
   };
-  const topics = plan.images.map((image, i) => ({ id: uuid(i), headlines: image.headlines, body: image.body }));
+  const topics: TitleTopic[] = plan.images.map((image, i) => ({ id: uuid(i), headlines: image.headlines, body: image.body, index: i }));
   const scope = { ...params.evidence, prefix: `${params.evidence.prefix}/topic-titles/${plan.level}-${digest.slice(0, 16)}` };
   const parsedSaved = await scope.read(`${scope.prefix}/parsed.json`);
-  if (parsedSaved?.digest === digest) return { markdown: embedKnowledgeTopicTitles(base, parsedSaved.titles || {}), status: "cached" };
+  if (parsedSaved?.digest === digest) return { markdown: embedKnowledgeTopicTitles(base, parsedSaved.titles || {}), status: "cached", missing: parsedSaved.missing };
   const failed = await scope.read(`${scope.prefix}/failure.json`);
   if (failed?.digest === digest) return { markdown: base, status: "fallback", message: String(failed.message || "") };
-  const sourceDigest = digest;
-  const request: KnowledgeModelRequest = {
-    executionChannel: "openrouter",
-    executionFamily: String(params.model || "").includes("glm") ? "glm" : "deepseek",
-    systemInstruction: { parts: [{ text: `你为图文知识手册的每个主题图拟定标题。每个主题含若干原小节（见body首行“原小节：”后以｜分隔）与图内要点。
-为每个主题写出三类具体标题（都要是概括内容的实际短语，不能写字段名，不能写“图片标题”“内文标题”“小标题”这类字样）：
-1. 图片标题：≤16字，概括本主题核心，不用“等N节”。
-2. 图下内文标题：≤20字，概括图下详细内文讲什么，与图片标题互补、不重复。
-3. 每个原小节的内文小标题：≤16字，忠实原意，不新增事实、不加编号；必须改写，不得与原小节标题相同。
-图片标题与图下内文标题也不得与任何原小节标题相同。
-只依据给定文字，不编造。标题不含#、|、换行。
-输出格式：knowledge_publication_v1 JSON，pages与输入同id同顺序、一个不少。每页reading.blocks依次为：第1项=图片标题，第2项=图下内文标题，第3项起按原小节顺序每节一项=该节内文小标题；每项是{type:"prose",title:<标题>,note:"",text:<说明>}，第1项text写"image"，第2项text写"reading"，其后各项text逐字写对应的原小节标题。blocks数量=2+原小节数。
-示例（虚构主题，仅示意格式，不要照抄其中字词）：输入原小节“蒸发｜凝结｜降水”，则blocks为[{type:"prose",title:"太阳驱动的水循环",note:"",text:"image"},{type:"prose",title:"三种相变的条件与去向",note:"",text:"reading"},{type:"prose",title:"受热升空的水汽",note:"",text:"蒸发"},{type:"prose",title:"冷却成云",note:"",text:"凝结"},{type:"prose",title:"雨雪回到地面",note:"",text:"降水"}]。
-每页其余字段：headline照抄输入headline，body写一句话说明本主题，imageDescription:"",imageStatus:"absent",facts:[{term:"主题",statement:一句话说明}],cautions:[]，reading.version=1，reading.subtitle=""，reading.accent="jade"。顶层：kind:"knowledge_publication_v1"，sourceDigest照抄输入值，title:"主题命题"。` }] },
-    contents: [{ role: "user", parts: [{ text: JSON.stringify({ sourceDigest, source: { title: plan.title, pages: topics.map((t, i) => ({ id: t.id, headline: `主题${i + 1}`, body: `原小节：${t.headlines.join("｜")}\n\n${t.body}`, imageUrl: "" })) } }) }] }],
-    generationConfig: { temperature: 0.3, maxOutputTokens: KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST, responseMimeType: "application/json" },
+  const invoke = params.invoke || invokeKnowledgePublicationRoutes;
+  const fetchOverride = params.abortSignal
+    ? { fetch: (url: Parameters<typeof fetch>[0], init?: RequestInit) => fetch(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, params.abortSignal!]) : params.abortSignal }) }
+    : {};
+  /** 一次命题调用：请求先存、原始回包永久保存、解析结果另存；路由拒收或解析失败记 failure.json 并返回空结果。 */
+  const call = async (prefix: string, subset: readonly TitleTopic[], sourceDigest: string) => {
+    const sub = { ...scope, prefix };
+    const done = await sub.read(`${prefix}/parsed.json`);
+    if (done?.digest === digest) return { titles: done.titles as KnowledgeTopicTitles, rejected: (done.rejected || []) as string[], error: undefined as string | undefined };
+    const request = buildTitleRequest(params.model, plan.title, sourceDigest, subset);
+    const saved = await sub.read(`${prefix}/request.json`);
+    if (saved && saved.digest !== digest) throw Error("主题命题输入版本变化，保留原回执");
+    if (!saved) await sub.save(`${prefix}/request.json`, { digest, request });
+    try {
+      params.abortSignal?.throwIfAborted();
+      const response = await invoke(saved?.request || request, sub, fetchOverride);
+      params.abortSignal?.throwIfAborted();
+      await sub.save(`${prefix}/raw.json`, { digest, responseText: response.text });
+      const report = JSON.parse(JSON.parse(response.text).candidates[0].content.parts[0].text);
+      const parsed = parseKnowledgeTopicTitles(report, subset);
+      await sub.save(`${prefix}/parsed.json`, { digest, titles: parsed.titles, rejected: parsed.rejected, topics: subset.map(t => ({ id: t.id, headlines: t.headlines })) });
+      return { ...parsed, error: undefined as string | undefined };
+    } catch (error) {
+      if (params.abortSignal?.aborted) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      await sub.save(`${prefix}/failure.json`, { digest, message });
+      return { titles: {} as KnowledgeTopicTitles, rejected: [] as string[], error: message };
+    }
   };
-  const saved = await scope.read(`${scope.prefix}/request.json`);
-  if (saved && saved.digest !== digest) throw Error("主题命题输入版本变化，保留原回执");
-  if (!saved) await scope.save(`${scope.prefix}/request.json`, { digest, request });
-  try {
-    params.abortSignal?.throwIfAborted();
-    const invoke = params.invoke || invokeKnowledgePublicationRoutes;
-    const response = await invoke(saved?.request || request, scope, params.abortSignal
-      ? { fetch: (url, init) => fetch(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, params.abortSignal!]) : params.abortSignal }) }
-      : {});
-    params.abortSignal?.throwIfAborted();
-    // 原始回包先永久保存，再解析；解析结果另存，不覆盖原始对象。
-    await scope.save(`${scope.prefix}/raw.json`, { digest, responseText: response.text });
-    const report = JSON.parse(JSON.parse(response.text).candidates[0].content.parts[0].text);
-    const { titles, rejected } = parseKnowledgeTopicTitles(report, topics);
-    await scope.save(`${scope.prefix}/parsed.json`, { digest, titles, rejected, topics: topics.map(t => ({ id: t.id, headlines: t.headlines })) });
-    return { markdown: embedKnowledgeTopicTitles(base, titles), status: "named" };
-  } catch (error) {
-    if (params.abortSignal?.aborted) throw error;
-    const message = error instanceof Error ? error.message : String(error);
-    await scope.save(`${scope.prefix}/failure.json`, { digest, message });
-    console.warn(`[knowledgeTopicTitles] 主题命题失败，回退机械标题：${message.slice(0, 200)}`);
-    return { markdown: base, status: "fallback", message };
+  // 首发：一次批量调用，按页部分采纳。
+  const first = await call(scope.prefix, topics, digest);
+  const titles: KnowledgeTopicTitles = { ...first.titles };
+  const rejected = [...first.rejected];
+  const incomplete = topics.filter(t => !isKnowledgeTopicTitleComplete(titles[knowledgeTopicKey(t.headlines)], t.headlines));
+  const retried: number[] = [];
+  const errors: string[] = first.error ? [`首发：${first.error}`] : [];
+  if (incomplete.length) {
+    // 只对缺页/缺项逐主题补一次：每个主题独立请求（单页合同不会因别页缺失整批拒收），并发走同一通道上限。
+    const outcomes: Awaited<ReturnType<typeof call>>[] = new Array(incomplete.length);
+    await knowledgePooled(incomplete.length, async k => {
+      const topic = incomplete[k]!;
+      const topicDigest = createHash("sha256").update(`${digest}/retry/${topic.index}`).digest("hex");
+      outcomes[k] = await call(`${scope.prefix}/retry/topic-${topic.index}`, [topic], topicDigest);
+    }, KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter);
+    incomplete.forEach((topic, k) => {
+      const key = knowledgeTopicKey(topic.headlines);
+      const outcome = outcomes[k]!;
+      retried.push(topic.index);
+      titles[key] = mergeKnowledgeTopicTitle(titles[key], outcome.titles[key]);
+      rejected.push(...outcome.rejected.map(r => `补缺 ${r}`));
+      if (outcome.error) errors.push(`主题${topic.index + 1}补缺：${outcome.error}`);
+    });
   }
+  const missing = topics.filter(t => !isKnowledgeTopicTitleComplete(titles[knowledgeTopicKey(t.headlines)], t.headlines)).map(t => knowledgeTopicKey(t.headlines));
+  const named = topics.filter(t => { const e = titles[knowledgeTopicKey(t.headlines)]; return e?.image || e?.reading || Object.keys(e?.sections || {}).length; }).length;
+  await scope.save(`${scope.prefix}/parsed.json`, { digest, titles, rejected, retried, missing, errors, topics: topics.map(t => ({ id: t.id, headlines: t.headlines })) });
+  const message = errors.length ? errors.join("；") : undefined;
+  if (!named) {
+    const reason = message || `${topics.length}个主题命题均不合格：${rejected.slice(0, 3).join("；")}`;
+    await scope.save(`${scope.prefix}/failure.json`, { digest, message: reason });
+    console.warn(`[knowledgeTopicTitles] 主题命题失败，回退机械标题：${reason.slice(0, 200)}`);
+    return { markdown: base, status: "fallback", message: reason, missing };
+  }
+  if (missing.length) console.warn(`[knowledgeTopicTitles] 主题命题部分采纳：${topics.length - missing.length}/${topics.length} 齐全，${missing.length} 个主题缺项回退机械/原标题`);
+  return { markdown: embedKnowledgeTopicTitles(base, titles), status: missing.length ? "partial" : "named", message, missing };
 }

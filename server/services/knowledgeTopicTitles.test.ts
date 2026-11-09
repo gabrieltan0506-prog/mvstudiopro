@@ -86,17 +86,83 @@ describe("主题图与内文命题：每档一次廉价批量调用", () => {
     expect(parts.modules).toEqual(knowledgeEditionParts(book.full)!.modules);
   });
 
-  it("调用失败回退机械标题与原小节标题，记录失败且不重复购买", async () => {
+  it("调用失败回退机械标题与原小节标题，记录失败且不重复购买（首发 1 次 + 每主题补缺 1 次，之后零调用）", async () => {
     const { store, evidence } = memoryEvidence();
     const invoke = vi.fn(async () => { throw new Error("上游不可用"); });
+    const topicCount = knowledgeEditionImagePlan(book.full)!.images.length;
     const result = await nameKnowledgeEditionTopics({ markdown: book.full, evidence, invoke: invoke as any });
     expect(result.status).toBe("fallback");
     expect(result.markdown).toBe(book.full);
+    expect(result.missing).toHaveLength(topicCount);
     expect(planKnowledgeCardPages(result.markdown).pages[0]).toMatch(/## 原小节0（等\d+节）/);
     expect(knowledgeEditionIllustratedPages(result.markdown)![0]!.supplement).toContain("### 原小节0");
     expect(Array.from(store.keys()).some(k => k.endsWith("/failure.json"))).toBe(true);
+    expect(invoke).toHaveBeenCalledTimes(1 + topicCount);
     await nameKnowledgeEditionTopics({ markdown: book.full, evidence, invoke: invoke as any });
-    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledTimes(1 + topicCount);
+  });
+
+  it("1108g2 回归：首发只回 6/16 页（路由整批拒收）→ 按页部分采纳 + 只对缺页逐主题补一次，补齐后状态 named", async () => {
+    const { store, evidence } = memoryEvidence();
+    const topicCount = knowledgeEditionImagePlan(book.full)!.images.length;
+    expect(topicCount).toBeGreaterThanOrEqual(8);
+    const good = titleInvoke();
+    let batchCalls = 0;
+    const invoke = vi.fn(async (request: any, scope: any) => {
+      const input = JSON.parse(request.contents[0].parts[0].text);
+      if (input.source.pages.length > 1) {
+        batchCalls++;
+        // 模拟真实路由：回包少页会被合同整批拒收。
+        throw new Error("图文页编号与本批原稿不符");
+      }
+      return good(request, scope);
+    });
+    const result = await nameKnowledgeEditionTopics({ markdown: book.full, evidence, invoke: invoke as any });
+    expect(batchCalls).toBe(1);
+    expect(invoke).toHaveBeenCalledTimes(1 + topicCount);
+    expect(result.status).toBe("named");
+    expect(result.missing).toEqual([]);
+    const plan = knowledgeEditionImagePlan(result.markdown)!;
+    expect(plan.images.every(i => /^图题\d+$/.test(i.title) && /^内文题\d+$/.test(i.readingTitle))).toBe(true);
+    expect(knowledgeEditionIllustratedPages(result.markdown)!.every(p => !/### 原小节\d+/.test(p.supplement))).toBe(true);
+    const keys = Array.from(store.keys());
+    expect(keys.filter(k => /\/retry\/topic-\d+\/raw\.json$/.test(k))).toHaveLength(topicCount);
+    expect(keys.filter(k => /\/retry\/topic-\d+\/parsed\.json$/.test(k))).toHaveLength(topicCount);
+    const parsed = store.get(keys.find(k => /full-[0-9a-f]{16}\/parsed\.json$/.test(k))!);
+    expect(parsed.retried).toHaveLength(topicCount);
+    expect(parsed.errors[0]).toContain("首发：图文页编号与本批原稿不符");
+    // 再次调用零请求回放
+    await nameKnowledgeEditionTopics({ markdown: book.full, evidence, invoke: invoke as any });
+    expect(invoke).toHaveBeenCalledTimes(1 + topicCount);
+  });
+
+  it("首发部分主题缺项时只补那些主题：合格页保留首发标题，补缺只填缺项，补缺再失败的主题回退机械标题（partial）", async () => {
+    const { evidence } = memoryEvidence();
+    const topicCount = knowledgeEditionImagePlan(book.full)!.images.length;
+    // 首发：偶数主题图片标题写占位词（不合格），其余合格。
+    const first = titleInvoke((page, index) => { if (index % 2 === 0) page.reading.blocks[0].title = "图片标题"; });
+    const retryGood = titleInvoke((page) => { page.reading.blocks[0].title = "补缺图题"; page.reading.blocks[1].title = "补缺内文题"; });
+    let retryCalls = 0;
+    const invoke = vi.fn(async (request: any, scope: any) => {
+      const input = JSON.parse(request.contents[0].parts[0].text);
+      if (input.source.pages.length > 1) return first(request, scope);
+      retryCalls++;
+      if (retryCalls === 1) throw new Error("单主题补缺超时");
+      return retryGood(request, scope);
+    });
+    const result = await nameKnowledgeEditionTopics({ markdown: book.full, evidence, invoke: invoke as any });
+    const expectedRetries = Math.ceil(topicCount / 2);
+    expect(retryCalls).toBe(expectedRetries);
+    expect(result.status).toBe("partial");
+    expect(result.missing).toHaveLength(1);
+    const plan = knowledgeEditionImagePlan(result.markdown)!;
+    // 奇数主题保留首发标题；补缺成功的偶数主题图片标题来自补缺、内文标题保留首发（缺项才填）。
+    plan.images.forEach((image, i) => {
+      if (i % 2 === 1) { expect(image.title).toBe(`图题${i + 1}`); expect(image.readingTitle).toBe(`内文题${i + 1}`); return; }
+      if (image.title === "补缺图题") expect(image.readingTitle).toBe(`内文题${i + 1}`);
+      else expect(image.title).toMatch(/（等\d+节）$|^原小节\d+$/);
+    });
+    expect(plan.images.filter(i => i.title === "补缺图题")).toHaveLength(expectedRetries - 1);
   });
 
   it("小节标题数量对不上时只回退该主题小节标题；不合格标题回退", () => {
