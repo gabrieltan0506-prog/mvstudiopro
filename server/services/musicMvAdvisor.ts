@@ -46,7 +46,7 @@ import {
   parseMusicMvAdvisorProposal,
   type MusicMvAdvisorTarget,
 } from "../../shared/canvasMusicMv";
-import { MUSIC_MV_ADVISOR_INSTRUCTIONS, MUSIC_MV_REFINE_ENVELOPE_ZH, musicMvHardConstraintsZh } from "../../shared/musicMvCraft";
+import { musicMvAdvisorInstructionsZh, MUSIC_MV_REFINE_ENVELOPE_ZH, musicMvHardConstraintsZh } from "../../shared/musicMvCraft";
 import { repairRefinementEnvelope, repairReviewObject, restoreDraftSections } from "../../shared/creativeRefinementRepair";
 
 type Save = (name: string, value: unknown) => Promise<unknown>;
@@ -122,14 +122,14 @@ function audioMapOf(grid:MusicMvBeatGrid&{strongBeatsSec?:number[]}):MusicMvBeat
   const {strongBeatsSec:_drop,...map}=grid;
   return map;
 }
-/** 每个方案的非演唱剪点吸附拍点，并写入 plan.beatGrid（确定性修复，fixes 进 `<stage>-repaired`）。 */
-function snapPlanCuts(value:unknown,grid:MusicMvBeatGrid):{value:unknown;fixes:unknown[]}{
+/** 每个方案的非演唱剪点吸附拍点（吸附不得把镜头撑过所选模型单镜上限），并写入 plan.beatGrid（确定性修复，fixes 进 `<stage>-repaired`）。 */
+function snapPlanCuts(value:unknown,grid:MusicMvBeatGrid,maxShotSec:number):{value:unknown;fixes:unknown[]}{
   if(!value||typeof value!=="object"||!Array.isArray((value as {concepts?:unknown}).concepts))return {value,fixes:[]};
   const fixes:unknown[]=[];
   const concepts=((value as {concepts:unknown[]}).concepts).map((concept,ci)=>{
     const plan=(concept as {plan?:{shots?:unknown}})?.plan;
     if(!plan||!Array.isArray(plan.shots)||plan.shots.some(s=>!s||typeof s!=="object"||!Number.isFinite((s as {startSec?:unknown}).startSec)||!Number.isFinite((s as {endSec?:unknown}).endSec)))return concept;
-    const snapped=snapShotCutsToBeats(plan.shots as Array<{id:string;startSec:number;endSec:number;kind?:string}>,grid);
+    const snapped=snapShotCutsToBeats(plan.shots as Array<{id:string;startSec:number;endSec:number;kind?:string}>,grid,0.5,maxShotSec);
     fixes.push(...snapped.fixes.map(f=>({concept:ci,...f})));
     return {...(concept as object),plan:{...plan,shots:snapped.shots,beatGrid:audioMapOf(grid)}};
   });
@@ -204,16 +204,16 @@ export async function askMusicMvAdvisor(
   const beatGrid=purpose==="mv"&&media&&buffer&&deps.beatGrid?await deps.beatGrid(buffer,(target as MusicMvAdvisorTarget).creativePrompt,((sourceEvidence as {sections?:Array<{startSec:number;endSec:number}>}).sections)||undefined):undefined;
   if(beatGrid)await save("beat-grid",beatGrid);
   const creativeLibrary=purpose==="learn"?undefined:await deps.readKnowledge(userId,question+"\n"+("requirements" in target?target.requirements:target.creativePrompt),"craftIds" in target?target.craftIds:[]);
-  const instructions=purpose==="learn"?CREATIVE_LEARNING_INSTRUCTIONS:(purpose==="song"?SUNO_SONG_CRAFT:MUSIC_MV_ADVISOR_INSTRUCTIONS)+"\n"+MUSIC_EMOTION_INSTRUCTIONS+(purpose==="song"?"\n"+CREATIVE_LIBRARY_SELECTION_INSTRUCTIONS:"");
+  const shotMaxSec=mvShotPlanMaxSec(opts.videoModel);
+  const instructions=purpose==="learn"?CREATIVE_LEARNING_INSTRUCTIONS:(purpose==="song"?SUNO_SONG_CRAFT:musicMvAdvisorInstructionsZh(shotMaxSec))+"\n"+MUSIC_EMOTION_INSTRUCTIONS+(purpose==="song"?"\n"+CREATIVE_LIBRARY_SELECTION_INSTRUCTIONS:"");
   const proposalSchema:ZodType=purpose==="learn"?creativeLearningReportSchema:purpose==="song"?sunoSongProposalSchema:musicMvAdvisorProposalSchema;
   const sectionTolerance=purpose==="mv"?0.03:0.1;
-  /** 方案校验前的确定性修复：形状（字符串→数组、别名键、数字字符串、空对象占位）、sections 时间边界、MV 镜头 >15s 等分 / <0.5s 并入；有修复才落 `<stage>-repaired`。 */
-  const shotMaxSec=mvShotPlanMaxSec(opts.videoModel);
+  /** 方案校验前的确定性修复：形状（字符串→数组、别名键、数字字符串、空对象占位）、sections 时间边界、MV 镜头超所选模型单镜上限等分 / <0.5s 并入；有修复才落 `<stage>-repaired`。 */
   const prepareCandidate=async(raw:unknown,stage:string)=>{
     const shape=repairJsonShape(raw,proposalSchema);
     const sections=target.audio?normalizeMediaSections(shape.value,target.audio.durationSec,sectionTolerance):{value:shape.value,fixes:[]};
     const shots=purpose==="mv"?normalizeShotDurations(sections.value,shotMaxSec):{value:sections.value,fixes:[]};
-    const beats=purpose==="mv"&&beatGrid?snapPlanCuts(shots.value,beatGrid):{value:shots.value,fixes:[]};
+    const beats=purpose==="mv"&&beatGrid?snapPlanCuts(shots.value,beatGrid,shotMaxSec):{value:shots.value,fixes:[]};
     if(shape.fixes.length||sections.fixes.length||shots.fixes.length||beats.fixes.length)await save(`${stage}-repaired`,{before:raw,after:beats.value,fixes:{shape:shape.fixes,sections:sections.fixes,shots:shots.fixes,beats:beats.fixes},remainingIssues:shape.issues});
     return beats.value;
   };
@@ -245,7 +245,7 @@ export async function askMusicMvAdvisor(
     return result;
   };
   /** 重写提示：compose 照抄 sourceEvidence.sections，refine 照抄 candidate.sections（1109 探针根因：refine 被要求照抄证据原文，与「不得改初稿 sections」冲突）。 */
-  const mvRepairHintZh=(stage:"compose"|"refine")=>purpose==="mv"?`sections 逐条照抄 ${stage==="refine"?"输入 candidate.sections":"sourceEvidence.sections"} 的 startSec/endSec/labelZh/heardZh/emotion 全部字段，不追加占位段、全曲段、零长段或任何 endSec≤startSec 的段；uncertaintiesZh 必须是字符串数组且字段名严格按合同；concepts 是恰好 4 个元素的 JSON 数组且 id 唯一；每个 plan 的 shots 从 0 连续无缝覆盖到歌曲时长，每镜 0.5 至 15 秒（超过 15 秒的镜头拆成两镜），singing 至少 4 秒并带人物参考下标；非 footage 镜头不得出现 sourceClip。`:"字段名、类型与数量严格按合同。";
+  const mvRepairHintZh=(stage:"compose"|"refine")=>purpose==="mv"?`sections 逐条照抄 ${stage==="refine"?"输入 candidate.sections":"sourceEvidence.sections"} 的 startSec/endSec/labelZh/heardZh/emotion 全部字段，不追加占位段、全曲段、零长段或任何 endSec≤startSec 的段；uncertaintiesZh 必须是字符串数组且字段名严格按合同；concepts 是恰好 4 个元素的 JSON 数组且 id 唯一；每个 plan 的 shots 从 0 连续无缝覆盖到歌曲时长，每镜 0.5 至 ${shotMaxSec} 秒（超过 ${shotMaxSec} 秒的镜头拆成两镜），singing 至少 4 秒并带人物参考下标；非 footage 镜头不得出现 sourceClip。`:"字段名、类型与数量严格按合同。";
   const composed=await runHopChain("compose",save,
     (hop,hopSave,repair)=>deps.compose(repair?instructions+`\n上一版方案未通过服务端校验：${repair.reasonZh}。请基于同一份 sourceEvidence 逐条修正上述问题后重新输出完整 JSON（不得只输出解释或声称已修好）：${mvRepairHintZh("compose")}`:instructions,repair?{...composeInput,repair}:composeInput,hopSave,hop),
     async(decoded,_hopSave,stageName)=>validateDraft(await prepareCandidate(decoded,stageName)),
@@ -253,7 +253,7 @@ export async function askMusicMvAdvisor(
   let proposal=composed.value;
   await save("glm-draft-validated",{proposal,model:composed.model,hop:composed.hop,creativeLibrary});
   const draft=proposal;
-  const refineInput={sourceTaskId:evidenceId,durationSec:target.audio?.durationSec,mediaKind:(videoReport?"video":media?"audio":"none") as "video"|"audio"|"none",sourceEvidence:{media:sourceEvidence,creativeLibrary,...("originalBrief" in target?{originalBrief:target.originalBrief}:{})},candidate:draft,requirements:question+("originalBrief" in target&&target.originalBrief?"\n本次只优化音乐提示词，逐字符保留sourceEvidence.originalBrief的歌词、标题、演唱类型和完整版时长；不得改写歌词。":"")+(purpose==="mv"?"\n"+musicMvHardConstraintsZh("refine")+"\n"+MUSIC_MV_REFINE_ENVELOPE_ZH:"\n"+MUSIC_MV_REFINE_ENVELOPE_ZH)};
+  const refineInput={sourceTaskId:evidenceId,durationSec:target.audio?.durationSec,mediaKind:(videoReport?"video":media?"audio":"none") as "video"|"audio"|"none",sourceEvidence:{media:sourceEvidence,creativeLibrary,...("originalBrief" in target?{originalBrief:target.originalBrief}:{})},candidate:draft,requirements:question+("originalBrief" in target&&target.originalBrief?"\n本次只优化音乐提示词，逐字符保留sourceEvidence.originalBrief的歌词、标题、演唱类型和完整版时长；不得改写歌词。":"")+(purpose==="mv"?"\n"+musicMvHardConstraintsZh("refine",shotMaxSec)+"\n"+MUSIC_MV_REFINE_ENVELOPE_ZH:"\n"+MUSIC_MV_REFINE_ENVELOPE_ZH)};
   const validateRefined=(candidate:unknown)=>{
     const parsed=purpose==="learn"?creativeLearningReportSchema.parse(candidate):purpose==="song"?parseSunoSongProposal(candidate,target as SunoSongTarget):parseMusicMvAdvisorProposal(candidate,target as MusicMvAdvisorTarget);
     if(parsed.kind==="creative_learning_v1"){

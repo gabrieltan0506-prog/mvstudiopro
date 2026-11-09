@@ -20,11 +20,12 @@ export const MUSIC_MV_CRAFT_ZH = `
  * 其 emotion.visualZh 允许带「画面建议」）。1109 探针 6 次 refine 全败的根因就是 refine 也被要求照抄 sourceEvidence，
  * 模型把初稿的 visualZh 复原成证据原文，服务端却要求与初稿逐字一致。
  */
-export function musicMvHardConstraintsZh(stage: "compose" | "refine" = "compose"): string {
+export function musicMvHardConstraintsZh(stage: "compose" | "refine" = "compose", maxShotSec = 15): string {
+  const max = musicMvShotMaxSecText(maxShotSec);
   const sectionsSource = stage === "refine" ? "输入 candidate.sections（初稿，已通过服务端校验）" : "所给 sourceEvidence.sections";
   const sectionsNote = stage === "refine" ? "；即使它与 sourceEvidence.sections 的 emotion.visualZh 措辞不同，也以 candidate.sections 为准，不得改回证据原文" : "";
   return `【硬约束，服务端逐条校验，任一不满足整份作废】
-1. 每个镜头 endSec-startSec 必须在 0.5 到 15 秒之间；任何超过 15 秒的镜头必须拆成两镜或多镜，不得保留。
+1. 每个镜头 endSec-startSec 必须在 0.5 到 ${max} 秒之间（${max} 秒是所选成片模型的单镜上限）；任何超过 ${max} 秒的镜头必须拆成两镜或多镜，不得保留；拆分点落在唱句之间或拍点上，不切在唱句中间。
 2. sections 必须逐字照抄${sectionsSource}的每一段（startSec、endSec、labelZh、heardZh、emotion 全部字段），段数相同、顺序相同，不增不减，不追加占位段、全曲段、零长段或 endSec≤startSec 的段${sectionsNote}。
 3. 顶层字段名精确且只能是：kind、sourceKey、summaryZh、sections、uncertaintiesZh、concepts；uncertaintiesZh 必须是字符串数组（可为空数组），不得改名为 uncertainties 或写成字符串。
 4. concepts 必须是 JSON 数组（[ ... ]），恰好 4 个元素，id 互不相同；不得写成对象或在数组里混写 "c2":{...} 这类键值对。
@@ -32,8 +33,14 @@ export function musicMvHardConstraintsZh(stage: "compose" | "refine" = "compose"
 6. 每个方案 plan.shots 从 0 秒起连续无缝覆盖到歌曲时长，相邻镜头 endSec 等于下一镜 startSec；singing 镜头至少 4 秒且 referenceIndices 非空。
 8. 输出必须是一个可被 JSON.parse 直接解析的对象，不带 Markdown 代码围栏、注释或解释文字。`;
 }
-/** compose 版硬约束（历史常量名保留）。 */
+/** compose 版硬约束（历史常量名保留，15 秒口径）；顾问实际按所选模型调用 musicMvHardConstraintsZh(stage, mvShotPlanMaxSec(model))。 */
 export const MUSIC_MV_HARD_CONSTRAINTS_ZH = musicMvHardConstraintsZh("compose");
+
+/** 单镜上限写进提示词的秒数：最多一位小数。 */
+function musicMvShotMaxSecText(maxShotSec: number): number {
+  if (!(maxShotSec >= 0.5)) throw new Error(`MV 单镜上限 ${maxShotSec} 秒无效`);
+  return Math.round(maxShotSec * 10) / 10;
+}
 
 /**
  * refine（联合创作）回包骨架：1109 探针里 GLM 重写时只回了 review 根对象（verdict/findings…）没有 proposal 包裹，
@@ -46,13 +53,19 @@ review 必须同时包含六个键：verdict、summaryZh、findings、mediaRevie
 changesZh 是非空字符串数组：有修改写每一处修改及理由；未修改写 ["原稿保留，未发现需改动之处"]，不得写成字符串或省略。
 findings[].evidencePaths 只能是本次输入里真实存在的 JSON Pointer：以 /candidate/ 或 /sourceEvidence/ 开头，逐层写到真实字段，例如 /candidate/sections/0/emotion/visualZh、/candidate/concepts/1/plan/shots/3/visualPrompt、/sourceEvidence/media/sections/2/heardZh；不得省略中间层（如写成 /candidate/sections/0/visualZh），不得引用不存在的键。`;
 
-export const MUSIC_MV_ADVISOR_INSTRUCTIONS = `你是MV创作顾问。实际分析所附完整歌曲，以简体中文提出可执行创意。${MUSIC_MV_CRAFT_ZH}
+/** 1109 MV 顾问系统提示：单镜上限按所选成片模型（mvShotPlanMaxSec），不锁 15 秒。 */
+export function musicMvAdvisorInstructionsZh(maxShotSec = 15): string {
+  const max = musicMvShotMaxSecText(maxShotSec);
+  return `你是MV创作顾问。实际分析所附完整歌曲，以简体中文提出可执行创意。${MUSIC_MV_CRAFT_ZH}
 只返回JSON：{kind:"music_mv_v1",sourceKey,summaryZh,sections:[{startSec,endSec,labelZh,heardZh}],uncertaintiesZh:[],concepts:[{id,titleZh,rationaleZh,openingZh,peakZh,endingZh,plan:{version:1,audioId,audioDurationSec,analysisBasis:"native_audio",shots:[{id,startSec,endSec,kind:"generated或singing或footage",visualPrompt,cameraPrompt,lyricQuote,referenceIndices:[],sourceClip:{assetId,url,taskId可省略,durationSec,sourceStartSec}}]}}]}。
 concepts恰好四项，第一项主推荐，后三项不同方向；每项都包含完整可执行分镜，不用省略号或引用上一方案。
-sections从0到实际歌曲时长连续覆盖，记录听到的音乐/人声及情绪。所有方案从0秒连续无缝覆盖同一歌曲，编号唯一；每镜0.5至15秒，对口型singing至少4秒且referenceIndices包含人物参考下标。
+sections从0到实际歌曲时长连续覆盖，记录听到的音乐/人声及情绪。所有方案从0秒连续无缝覆盖同一歌曲，编号唯一；每镜0.5至${max}秒，对口型singing至少4秒且referenceIndices包含人物参考下标。
 referenceIndices只能使用给定参考文字的零起始下标。footage镜头的sourceClip必须逐字匹配给定素材身份，仅sourceStartSec可选；选段长度等于镜头长度，不能越过源素材时长。其他类型禁止sourceClip。
 visualPrompt与cameraPrompt须具体非空；镜头kind必须明确。不输出媒体地址之外的新网址，不输出evidenceId。
-${MUSIC_MV_HARD_CONSTRAINTS_ZH}`;
+${musicMvHardConstraintsZh("compose", maxShotSec)}`;
+}
+/** 15 秒口径（历史常量名保留）。 */
+export const MUSIC_MV_ADVISOR_INSTRUCTIONS = musicMvAdvisorInstructionsZh();
 
 /**
  * 1109 逐窗节拍（MV 创作顾问第三阶段，同一三跳链）：每镜按歌曲拍点切 2–4 秒窗，每窗写五项内容；

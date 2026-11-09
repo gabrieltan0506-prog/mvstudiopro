@@ -15,14 +15,14 @@ import {
 } from "../../shared/canvasMusicMv";
 import { musicMvHighlightSchema } from "../../shared/musicMvHighlight";
 import { partitionShotsByLyricKind } from "../../shared/canvasMusicMvLyricKinds";
-import { snapShotCutsToBeats } from "../../shared/canvasMusicMvBeats";
+import { snapShotCutsToBeats, snapSingingCutsToLyricLines } from "../../shared/canvasMusicMvBeats";
 import { computeSongBeatGrid } from "./musicMvBeatGrid";
 import { composeMusicMvShotBeats } from "./musicMvShotBeats";
 import { composeMusicMvFillPlan } from "./musicMvFillPlan";
 import { composeCreativeAtHop } from "./musicMvAdvisor";
 import { CREATIVE_LLM_HOPS } from "./creativeLlmHops";
 import { resolveCanvasMusicMvAudio } from "./canvasMusicMvMedia";
-import { detectPerformerGender } from "../../shared/canvasMusicMvReferences";
+import { detectPerformerGender, mvShotPlanMaxSec } from "../../shared/canvasMusicMvReferences";
 
 const prefix = (userId: number, id: string) => `canvas-music-mv/evidence/${userId}/${id}`;
 
@@ -57,7 +57,10 @@ export async function reviseMusicMvPlanForLyrics(
     grid = await computeSongBeatGrid(song, baseInput.creativePrompt);
   }
   const inRange = parted.shots.filter(s => s.endSec > highlight.startSec && s.startSec < highlight.endSec);
-  const snapped = snapShotCutsToBeats(inRange, grid!, 0.5);
+  // 2b) 演唱镜剪点不切唱句：落在确认版唱句中间的剪点移到句间（修订不知所选模型：任一镜不得被拉长到超过 max(原长, 默认单镜上限)）
+  const lyricCut = snapSingingCutsToLyricLines(inRange, table.lines, { maxShotSec: mvShotPlanMaxSec() });
+  const changes = [...parted.changes, ...lyricCut.fixes.map(f => ({ id: f.shotId, action: f.action, detailZh: f.reasonZh }))];
+  const snapped = snapShotCutsToBeats(lyricCut.shots, grid!, 0.5, mvShotPlanMaxSec());
   const byId = new Map(snapped.shots.map(s => [s.id, s]));
   const { strongBeatsSec: _drop, ...audioMap } = grid!;
   let plan = canvasMusicMvPlanSchema.parse({ ...basePlan, beatGrid: audioMap, shots: parted.shots.map(s => byId.get(s.id) ?? s) });
@@ -80,11 +83,11 @@ export async function reviseMusicMvPlanForLyrics(
     referenceSummaries: baseInput.referenceSummaries.length ? baseInput.referenceSummaries : ["全片主锚图（生成的主角定妆帧）"],
   });
   plan = validateCanvasMusicMvPlan(plan, revisedInput);
-  const revision = { revisedFrom: input.basePlanRequestId, highlight, lyricTable: table, changes: parted.changes, snapFixes: snapped.fixes, beats: beats && { filled: beats.filledShotIds, failed: beats.failedShotIds, failuresZh: beats.failuresZh }, fill: fill && { filled: fill.filled, failuresZh: fill.failuresZh } };
+  const revision = { revisedFrom: input.basePlanRequestId, highlight, lyricTable: table, changes, lyricCutFixes: lyricCut.fixes, snapFixes: snapped.fixes, beats: beats && { filled: beats.filledShotIds, failed: beats.failedShotIds, failuresZh: beats.failuresZh }, fill: fill && { filled: fill.filled, failuresZh: fill.failuresZh } };
   await save("revision", revision);
   const receipt = (name: string, value: unknown) => ({ objectName: `${out}/${name}.json`, bytes: Buffer.byteLength(JSON.stringify(value)), sha256: createHash("sha256").update(JSON.stringify(value)).digest("hex") });
   await save("result", { plan, input: revisedInput, evidence: { ...saved.evidence, revision: receipt("revision", revision) } });
   // 修订不另计费：沿用原分镜结算
   await save("settled", { settled: true, revisedFrom: input.basePlanRequestId, at: new Date().toISOString() });
-  return { requestId: newId, plan, changes: parted.changes, beatsFailed: beats?.failedShotIds ?? [], fillFailuresZh: fill?.failuresZh ?? [] };
+  return { requestId: newId, plan, changes, beatsFailed: beats?.failedShotIds ?? [], fillFailuresZh: fill?.failuresZh ?? [] };
 }

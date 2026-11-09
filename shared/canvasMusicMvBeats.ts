@@ -47,12 +47,13 @@ type TimedShot = { id: string; startSec: number; endSec: number; kind?: string }
 
 /**
  * 剪点吸附到拍点。首尾（0 与歌曲终点）不动；任一侧是演唱镜或素材切片时不动。
- * 吸附后每镜仍须 ≥ minShotSec，否则保留原剪点。
+ * 吸附后每镜仍须 ≥ minShotSec，且不得被拉长到超过 maxShotSec（所选模型单镜规划上限），否则保留原剪点。
  */
 export function snapShotCutsToBeats<T extends TimedShot>(
   shots: readonly T[],
   grid: Grid,
   minShotSec = 0.5,
+  maxShotSec = Infinity,
 ): { shots: T[]; fixes: BeatFix[] } {
   const out = shots.map(s => ({ ...s }));
   const fixes: BeatFix[] = [];
@@ -68,6 +69,8 @@ export function snapShotCutsToBeats<T extends TimedShot>(
     const reach = pacing === "beat" ? grid.beatSec / 2 : PHRASE_MICRO_SNAP_SEC;
     if (Math.abs(snapped - cut) < 0.0015 || Math.abs(snapped - cut) > reach + 1e-6) continue;
     if (snapped - prev.startSec < minShotSec || next.endSec - snapped < minShotSec) continue;
+    if (snapped > cut && snapped - prev.startSec > maxShotSec + 1e-9) continue;
+    if (snapped < cut && next.endSec - snapped > maxShotSec + 1e-9) continue;
     fixes.push({ shotId: next.id, action: "snap_cut", before: cut, after: snapped, reasonZh: `剪点 ${cut} 秒吸附到拍点 ${snapped} 秒` });
     prev.endSec = snapped;
     next.startSec = snapped;
@@ -80,6 +83,89 @@ export function snapShotCutsToBeats<T extends TimedShot>(
       else copy[0]!.startSec = snapped;
       (s as { beats?: MusicMvShotBeat[] }).beats = copy;
     }
+  }
+  return { shots: out, fixes };
+}
+
+/** 演唱镜最短秒数（与方案 schema「对口型镜头至少4秒」一致）。 */
+export const MUSIC_MV_SINGING_SHOT_MIN_SEC = 4;
+
+/** 镜头起止被移动后同步其逐窗节拍：裁到新区间、首尾对齐；裁后不合规（窗过短/过长/不连续）则清空待重补。 */
+function retimeShotBeats(shot: TimedShot & { beats?: MusicMvShotBeat[] }): "kept" | "cleared" | "none" {
+  if (!shot.beats?.length) return "none";
+  const rows = shot.beats
+    .map(w => ({ ...w, startSec: Math.max(shot.startSec, w.startSec), endSec: Math.min(shot.endSec, w.endSec) }))
+    .filter(w => w.endSec - w.startSec > 0.01);
+  if (rows.length) {
+    rows[0]!.startSec = shot.startSec;
+    rows[rows.length - 1]!.endSec = shot.endSec;
+    const ok = rows.every(w => w.endSec - w.startSec + 1e-9 >= MUSIC_MV_BEAT_WINDOW_MIN_SEC && w.endSec - w.startSec <= MUSIC_MV_BEAT_WINDOW_MAX_SEC + 1e-9);
+    if (ok) {
+      shot.beats = rows.map(w => ({ ...w, startSec: r3(w.startSec), endSec: r3(w.endSec) }));
+      return "kept";
+    }
+  }
+  delete shot.beats;
+  return "cleared";
+}
+
+/**
+ * 演唱镜剪点不切唱句（1109，确认版歌词表）：与演唱镜相邻的剪点若落在某句真歌词中间（距句首/句尾 >0.05 秒），
+ * 移到该句前或后的句间空隙中点（近者优先）。移动后两侧仍须 ≥ minShotSec、演唱镜 ≥4 秒，
+ * 且任一侧不得被拉长到超过 max(原长, maxShotSec)。素材切片相邻的剪点不动（会改源片入点）。
+ * 两个方向都不可行时剪点保留，记 `lyric_cut_unresolved` 交人工处理（不静默）。
+ * 被移动镜头的逐窗节拍裁到新区间；裁后不合规则清空，由调用方重补。
+ */
+export function snapSingingCutsToLyricLines<T extends TimedShot>(
+  shots: readonly T[],
+  lines: ReadonlyArray<{ text: string; startSec: number; endSec: number; kind?: string }>,
+  opts: { minShotSec?: number; maxShotSec?: number } = {},
+): { shots: T[]; fixes: BeatFix[] } {
+  const minShotSec = opts.minShotSec ?? 0.5;
+  const maxShotSec = opts.maxShotSec ?? Infinity;
+  const out = shots.map(s => ({ ...s }));
+  const fixes: BeatFix[] = [];
+  const all = [...lines].sort((a, b) => a.startSec - b.startSec);
+  const sung = all.filter(l => l.kind !== "chant" && l.text.trim());
+  for (let i = 1; i < out.length; i += 1) {
+    const prev = out[i - 1]!;
+    const next = out[i]!;
+    if (prev.kind !== "singing" && next.kind !== "singing") continue;
+    const cut = next.startSec;
+    const line = sung.find(l => l.startSec + 0.05 < cut && cut < l.endSec - 0.05);
+    if (!line) continue;
+    const idx = all.indexOf(line);
+    const before = all[idx - 1];
+    const after = all[idx + 1];
+    const gapBefore = before && before.endSec < line.startSec ? r3((before.endSec + line.startSec) / 2) : r3(line.startSec);
+    const gapAfter = after && line.endSec < after.startSec ? r3((line.endSec + after.startSec) / 2) : r3(line.endSec);
+    const quote = line.text.trim().slice(0, 40);
+    if (prev.kind === "footage" || next.kind === "footage") {
+      fixes.push({ shotId: next.id, action: "lyric_cut_unresolved", before: cut, after: cut, reasonZh: `剪点 ${cut} 秒切在唱句「${quote}」中间，但相邻素材切片不能移剪点，请人工调整` });
+      continue;
+    }
+    const prevLen = prev.endSec - prev.startSec;
+    const nextLen = next.endSec - next.startSec;
+    const fits = (c: number) => {
+      const a = c - prev.startSec;
+      const b = next.endSec - c;
+      if (a + 1e-9 < (prev.kind === "singing" ? MUSIC_MV_SINGING_SHOT_MIN_SEC : minShotSec)) return false;
+      if (b + 1e-9 < (next.kind === "singing" ? MUSIC_MV_SINGING_SHOT_MIN_SEC : minShotSec)) return false;
+      if (a > Math.max(prevLen, maxShotSec) + 1e-9 || b > Math.max(nextLen, maxShotSec) + 1e-9) return false;
+      return true;
+    };
+    const target = [gapBefore, gapAfter].sort((x, y) => Math.abs(x - cut) - Math.abs(y - cut)).find(fits);
+    if (target === undefined) {
+      fixes.push({ shotId: next.id, action: "lyric_cut_unresolved", before: cut, after: cut, reasonZh: `剪点 ${cut} 秒切在唱句「${quote}」中间，移到句间会使镜长越界（短于下限或超过所选模型单镜上限），请人工调整` });
+      continue;
+    }
+    prev.endSec = target;
+    next.startSec = target;
+    const retimed = [retimeShotBeats(prev), retimeShotBeats(next)];
+    fixes.push({
+      shotId: next.id, action: "lyric_cut", before: cut, after: target,
+      reasonZh: `剪点 ${cut} 秒切在唱句「${quote}」中间，移到句间 ${target} 秒${retimed.includes("cleared") ? "（相邻镜逐窗节拍失效，待重补）" : ""}`,
+    });
   }
   return { shots: out, fixes };
 }

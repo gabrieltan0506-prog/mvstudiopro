@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { beatsInRange, musicMvSingingPlacement, repairShotBeatWindows, singingWindowsFromLyricLines, snapShotCutsToBeats } from "./canvasMusicMvBeats";
+import { beatsInRange, musicMvSingingPlacement, repairShotBeatWindows, singingWindowsFromLyricLines, snapShotCutsToBeats, snapSingingCutsToLyricLines } from "./canvasMusicMvBeats";
+import { musicMvAdvisorInstructionsZh, musicMvHardConstraintsZh } from "./musicMvCraft";
 import { musicMvShotSlices } from "./musicMvHighlight";
 import { canvasMusicMvPlanSchema, mvShotNeedsStagingReference, musicMvPacingAt, musicMvLyricLineIssues, musicMvShotBeatIssues, type CanvasMusicMvPlan, type MusicMvShotBeat } from "./canvasMusicMv";
 import { markChantFrom } from "./canvasMusicMvLyricKinds";
@@ -204,5 +205,88 @@ describe("MV 单镜时长按所选模型（不锁 15 秒，留随机短缺余量
     expect(canvasMusicMvPlanSchema.safeParse(mk(25)).success).toBe(true);
     expect(canvasMusicMvPlanSchema.safeParse(mk(15)).success).toBe(true);
     expect(canvasMusicMvPlanSchema.safeParse(mk(31)).success).toBe(false);
+  });
+});
+
+describe("镜长与节拍/唱句对齐（1109 补完）", () => {
+  const g1 = { bpm: 60, beatSec: 1, phaseSec: 0, source: "creative_prompt" as const };
+  it("拍点吸附不得把镜头撑过所选模型单镜上限", () => {
+    const shots = [{ id: "a", startSec: 0, endSec: 13.6, kind: "generated" }, { id: "b", startSec: 13.6, endSec: 20, kind: "generated" }];
+    expect(snapShotCutsToBeats(shots, g1).shots[0]!.endSec).toBe(14);
+    const capped = snapShotCutsToBeats(shots, g1, 0.5, 13.8);
+    expect(capped.shots[0]!.endSec).toBe(13.6);
+    expect(capped.fixes).toEqual([]);
+    // 缩短方向不受限
+    const shrink = snapShotCutsToBeats([{ id: "a", startSec: 0, endSec: 6.3, kind: "generated" }, { id: "b", startSec: 6.3, endSec: 20, kind: "generated" }], g1, 0.5, 14);
+    expect(shrink.shots[1]!.startSec).toBe(6);
+  });
+
+  const lines = [
+    { text: "第一句", startSec: 0.5, endSec: 3.2 },
+    { text: "第二句", startSec: 3.8, endSec: 7.5 },
+    { text: "第三句", startSec: 8.1, endSec: 11 },
+  ];
+  it("切在唱句中间的演唱镜剪点移到最近句间，两镜分窗都不切句", () => {
+    const shots = [
+      { id: "s1", startSec: 0, endSec: 6, kind: "singing", beats: [w(0, 3), w(3, 6)] },
+      { id: "s2", startSec: 6, endSec: 12, kind: "singing", beats: [w(6, 9), w(9, 12)] },
+    ];
+    const out = snapSingingCutsToLyricLines(shots, lines, { maxShotSec: 14 });
+    expect(out.shots[0]!.endSec).toBe(7.8);
+    expect(out.shots[1]!.startSec).toBe(7.8);
+    expect(out.fixes).toEqual([expect.objectContaining({ shotId: "s2", action: "lyric_cut", before: 6, after: 7.8 })]);
+    expect(musicMvShotBeatIssues(out.shots[0]!)).toEqual([]);
+    expect(musicMvShotBeatIssues(out.shots[1]!)).toEqual([]);
+    const sung = out.shots.flatMap(s => singingWindowsFromLyricLines(s, s.beats!, lines).filter(x => x.lipSync));
+    expect(sung.map(x => [x.lyricZh, x.startSec <= lines.find(l => l.text === x.lyricZh)!.startSec, x.endSec >= lines.find(l => l.text === x.lyricZh)!.endSec])).toEqual([
+      ["第一句", true, true], ["第二句", true, true], ["第三句", true, true],
+    ]);
+    // 原数组不变
+    expect(shots[0]!.endSec).toBe(6);
+  });
+  it("剪点已在句间、或两侧都不是演唱镜时不动；吟唱句不算唱句", () => {
+    const between = [{ id: "a", startSec: 0, endSec: 3.5, kind: "singing" }, { id: "b", startSec: 3.5, endSec: 12, kind: "singing" }];
+    expect(snapSingingCutsToLyricLines(between, lines).fixes).toEqual([]);
+    const gen = [{ id: "a", startSec: 0, endSec: 6, kind: "generated" }, { id: "b", startSec: 6, endSec: 12, kind: "generated" }];
+    expect(snapSingingCutsToLyricLines(gen, lines).fixes).toEqual([]);
+    const chant = lines.map(l => (l.text === "第二句" ? { ...l, kind: "chant" } : l));
+    expect(snapSingingCutsToLyricLines([{ id: "a", startSec: 0, endSec: 6, kind: "singing" }, { id: "b", startSec: 6, endSec: 12, kind: "generated" }], chant).fixes).toEqual([]);
+  });
+  it("移动会越界（演唱镜 <4 秒 / 超单镜上限）或邻接素材切片时保留剪点并记 unresolved", () => {
+    const tight = [
+      { text: "甲", startSec: 0.5, endSec: 3.6 },
+      { text: "乙", startSec: 3.9, endSec: 5 },
+      { text: "丙", startSec: 5.3, endSec: 8 },
+    ];
+    const short = snapSingingCutsToLyricLines([{ id: "a", startSec: 0, endSec: 4.4, kind: "singing" }, { id: "b", startSec: 4.4, endSec: 8.4, kind: "singing" }], tight);
+    expect(short.shots[1]!.startSec).toBe(4.4);
+    expect(short.fixes).toEqual([expect.objectContaining({ action: "lyric_cut_unresolved", before: 4.4 })]);
+    // 往后移会让前镜 7.8 秒 > max(6, 7)；往前移会让后镜 8.5 秒 > max(6, 7)
+    const capped = snapSingingCutsToLyricLines([{ id: "a", startSec: 0, endSec: 6, kind: "singing" }, { id: "b", startSec: 6, endSec: 12, kind: "singing" }], lines, { maxShotSec: 7 });
+    expect(capped.shots[0]!.endSec).toBe(6);
+    expect(capped.fixes[0]!.action).toBe("lyric_cut_unresolved");
+    const footage = snapSingingCutsToLyricLines([{ id: "a", startSec: 0, endSec: 6, kind: "singing" }, { id: "b", startSec: 6, endSec: 12, kind: "footage" }], lines);
+    expect(footage.shots[1]!.startSec).toBe(6);
+    expect(footage.fixes[0]!.action).toBe("lyric_cut_unresolved");
+  });
+  it("剪点移动后相邻非演唱镜逐窗节拍：仍合规则裁齐，超窗上限则清空待重补", () => {
+    const kept = snapSingingCutsToLyricLines([{ id: "g", startSec: 0, endSec: 6, kind: "generated", beats: [w(0, 3), w(3, 6)] }, { id: "s", startSec: 6, endSec: 12, kind: "singing" }], lines);
+    expect(kept.shots[0]!.beats!.map(x => [x.startSec, x.endSec])).toEqual([[0, 3], [3, 7.8]]);
+    const cleared = snapSingingCutsToLyricLines([{ id: "g", startSec: 0, endSec: 6, kind: "generated", beats: [w(0, 1), w(1, 6)] }, { id: "s", startSec: 6, endSec: 12, kind: "singing" }], lines);
+    expect(cleared.shots[0]!.endSec).toBe(7.8);
+    expect(cleared.shots[0]!.beats).toBeUndefined();
+    expect(cleared.fixes[0]!.reasonZh).toContain("待重补");
+  });
+  it("顾问提示词的单镜上限按所选模型，不写死 15 秒", () => {
+    const mini = musicMvAdvisorInstructionsZh(mvShotPlanMaxSec("seedance-2.0-mini"));
+    const s25 = musicMvAdvisorInstructionsZh(mvShotPlanMaxSec("seedance-2.5"));
+    expect(mini).toContain("每镜0.5至14秒");
+    expect(mini).toContain("0.5 到 14 秒之间");
+    expect(s25).toContain("每镜0.5至29秒");
+    expect(s25).toContain("任何超过 29 秒的镜头必须拆成");
+    expect(s25).not.toMatch(/至15秒|到 15 秒|超过 15 秒/);
+    expect(musicMvHardConstraintsZh("refine", 29)).toContain("0.5 到 29 秒之间");
+    expect(musicMvHardConstraintsZh("refine", 29)).toContain("照抄输入 candidate.sections");
+    expect(() => musicMvAdvisorInstructionsZh(0)).toThrow(/无效/);
   });
 });
