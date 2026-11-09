@@ -176,6 +176,8 @@ function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
 const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 13 * 60_000;
 
 export type CanvasRunDeps = {
+  /** 1110 MV 镜头出片前的软提示（可继续，不拦）：如多人互动镜头未采用白模动作参考。缺省走页面 toast。 */
+  onMvShotAdvisory?: (blockId: string, messageZh: string) => void;
   /** 1109 MV 参考片送出前自动裁切（服务端 trimShotMotionClip）；缺省时超长参考片按上限拦下。 */
   trimMvMotionClip?: (input: { sourceGcsUri: string; shotSec: number; maxSec: number; inSec?: number }) => Promise<{ gcsUri: string; inSec: number; outSec: number; durationSec: number; sourceSec: number; auto: boolean }>;
   /** Narrow caller guard rechecked immediately before paid text/image submission. */
@@ -2548,6 +2550,13 @@ async function runCanvasBlockInner(
         ],
       });
       if (!castCheck.ok) throw new Error(castCheck.error);
+      // 1110：R3 硬拦之后的软提示——多人互动但本镜没有已采用的白模动作参考，提示可继续，不拦、不改提交
+      const { mvShotNeedsPrevis, MV_PREVIS_SOFT_HINT_ZH } = await import("@shared/canvasMusicMvPrevis");
+      if (mvShotNeedsPrevis({ shotId: binding.shotId, startSec: binding.startSec, endSec: binding.endSec, kind: binding.kind, visualPrompt: binding.visualPrompt || block.prompt, cameraPrompt: binding.cameraPrompt, beats: binding.beats, castZh: binding.castZh }).needed
+        && !binding.references?.motionVideos?.some(v => v.source === "previs")) {
+        if (deps.onMvShotAdvisory) deps.onMvShotAdvisory(block.id, MV_PREVIS_SOFT_HINT_ZH);
+        else void import("sonner").then(m => m.toast.warning(MV_PREVIS_SOFT_HINT_ZH)).catch(() => undefined);
+      }
     }
     // 1109 参考生视频：主锚图 + 场景图 + 动作参考片 + 歌曲切片（gcsUri 真源，出片前现签）。
     // 无任何参考 → 拒发（用户硬规则：MV 一向 reference_to_video，不得静默退回文生）。
