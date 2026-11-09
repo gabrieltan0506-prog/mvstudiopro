@@ -19,7 +19,7 @@ import { buildSubtitleEffectAss } from "./subtitleEffects.js";
  */
 
 import { mediaRuntime, boundMediaThreads } from "./postProdResources";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,7 +28,12 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { runChildUntilClosed } from "./runChildUntilClosed";
 import { z } from "zod";
-import { signGsUriV4ReadUrl, uploadStreamToGcs } from "./gcs.js";
+import { signGsUriV4ReadUrl, uploadBufferToGcs, uploadStreamToGcs } from "./gcs.js";
+import { fileURLToPath } from "node:url";
+import {
+  buildFilterChain, checkGradeConsistency, collectGradeLutIds, parseSignalStats, resolveClipCorrection,
+  COLOR_GRADE_LUT_ID_RE, SIGNALSTATS_PRINT_FILTER, type ConcatGrade, type GradeConsistencyReport,
+} from "../../shared/colorGrade";
 import {
   concatParamsSchema,
   audioTrimParamsSchema,
@@ -337,13 +342,90 @@ export async function renderAudioTimeline(input: RawAudioTimelineParams, userId:
   }
 }
 
+// ---------------------------------------------------------------- 调色
+
+/** LUT 只认 server/assets/luts/manifest.json 白名单里的 .cube（由预设烘焙产出），不收任意路径。 */
+export const COLOR_GRADE_LUT_DIR = fileURLToPath(new URL("../assets/luts/", import.meta.url));
+
+type LutManifestEntry = { id?: unknown; file?: unknown; path?: unknown; filename?: unknown };
+
+export async function resolveGradeLutPaths(ids: string[], lutDir = COLOR_GRADE_LUT_DIR): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!ids.length) return out;
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(await readFile(path.join(lutDir, "manifest.json"), "utf8"));
+  } catch {
+    throw new Error("调色预设暂不可用");
+  }
+  const raw = manifest as { luts?: unknown; presets?: unknown };
+  const entries = (Array.isArray(manifest) ? manifest : Array.isArray(raw?.luts) ? raw.luts : Array.isArray(raw?.presets) ? raw.presets : []) as LutManifestEntry[];
+  for (const id of ids) {
+    if (!COLOR_GRADE_LUT_ID_RE.test(id)) throw new Error("调色预设编号不正确");
+    const hit = entries.find(e => e && e.id === id);
+    const file = hit && [hit.file, hit.filename, hit.path].find((v): v is string => typeof v === "string");
+    const name = file ? path.basename(file) : "";
+    if (!name || !/^[A-Za-z0-9_.-]+\.cube$/.test(name)) throw new Error("调色预设不存在");
+    const full = path.join(lutDir, name);
+    if (!/^[A-Za-z0-9_./-]+$/.test(full)) throw new Error("调色预设路径不受支持");
+    try { await stat(full); } catch { throw new Error("调色预设不存在"); }
+    out.set(id, full);
+  }
+  return out;
+}
+
+/** 每段调色滤镜（空串 = 该段不调色）。grade 缺省时全空，拼接滤镜与旧版逐字一致。 */
+export async function buildConcatGradeFilters(grade: ConcatGrade | undefined, clipCount: number, lutDir?: string): Promise<string[]> {
+  if (!grade) return Array.from({ length: clipCount }, () => "");
+  const luts = await resolveGradeLutPaths(collectGradeLutIds(grade), lutDir);
+  return Array.from({ length: clipCount }, (_v, i) => {
+    const c = resolveClipCorrection(grade, i);
+    return c ? buildFilterChain(c, id => { const p = luts.get(id); if (!p) throw new Error("调色预设不存在"); return p; }) : "";
+  });
+}
+
+export type GradeCheckResult = GradeConsistencyReport & {
+  /** 每段 signalstats 原始输出与解析结果的永久留档（GCS），按段一一对应。 */
+  evidence: Array<{ index: number; atSec: number; raw: { gcsUri: string; bytes: number; sha256: string }; parsed: { gcsUri: string; bytes: number; sha256: string } }>;
+};
+
+/** 合成后在每段取 1 帧（段内 1 秒或中点，同上游 analyze 取 1 秒）测 signalstats，按代表镜头做一致性检查。 */
+async function measureGradeConsistency(
+  outPath: string,
+  segmentSec: number[],
+  referenceClipIndex: number,
+  userId: string,
+  signal: AbortSignal,
+): Promise<GradeCheckResult> {
+  const prefix = `post-prod/${userId.replace(/[^a-zA-Z0-9_-]/g, "")}/grade-evidence/${randomUUID()}`;
+  const save = async (name: string, buffer: Buffer, contentType: string) => {
+    const receipt = await uploadBufferToGcs({ objectName: `${prefix}/${name}`, buffer, contentType, signal });
+    return { gcsUri: receipt.gcsUri, bytes: buffer.length, sha256: createHash("sha256").update(buffer).digest("hex") };
+  };
+  const stats = [];
+  const evidence: GradeCheckResult["evidence"] = [];
+  let offset = 0;
+  for (let i = 0; i < segmentSec.length; i++) {
+    const atSec = parseFloat((offset + Math.min(1, segmentSec[i] / 2)).toFixed(3));
+    offset += segmentSec[i];
+    const { stderr } = await runMediaTool("ffmpeg", ["-nostdin", "-ss", String(atSec), "-i", outPath, "-vf", SIGNALSTATS_PRINT_FILTER, "-frames:v", "1", "-f", "null", "-"], signal);
+    const raw = await save(`clip-${i}.signalstats.raw.txt`, Buffer.from(stderr, "utf8"), "text/plain; charset=utf-8");
+    const parsedStats = parseSignalStats(stderr);
+    const parsed = await save(`clip-${i}.signalstats.parsed.json`, Buffer.from(JSON.stringify(parsedStats)), "application/json");
+    stats.push(parsedStats);
+    evidence.push({ index: i, atSec, raw, parsed });
+  }
+  if (evidence.length !== segmentSec.length) throw new Error("调色检查条数不一致");
+  return { ...checkGradeConsistency(stats, referenceClipIndex), evidence };
+}
+
 // ---------------------------------------------------------------- 拼接
 
 export async function concatClips(
   input: ConcatParams,
   userId: string,
   options?: PostProdRunOptions,
-): Promise<{ gcsUri: string; url: string; bytes: number; durationSec: number; clipCount: number }> {
+): Promise<{ gcsUri: string; url: string; bytes: number; durationSec: number; clipCount: number; gradeCheck?: GradeCheckResult }> {
   const signal = options?.signal ?? NEVER_ABORT;
   input = concatParamsSchema.parse(input);
   if (input.transition) return (await import("./manhuaTransitions")).renderManhuaTransitions(input, userId, options);
@@ -388,9 +470,10 @@ export async function concatClips(
         nextInputIndex += 1;
       }
     }
+    const gradeFilters = await buildConcatGradeFilters(input.grade, locals.length);
     const vChain = (i: number) =>
       `[${i}:v]trim=start=${locals[i].startSec}:end=${locals[i].endSec},setpts=PTS-STARTPTS,scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease,` +
-      `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=${fps},format=yuv420p,setsar=1,` +
+      `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=${fps},${gradeFilters[i] ? `${gradeFilters[i]},` : ""}format=yuv420p,setsar=1,` +
       `setpts=PTS-STARTPTS[v${i}]`;
     const aChain = (i: number) => {
       const sourceIndex = silentInputIndexByClip.get(i) ?? i;
@@ -429,7 +512,10 @@ export async function concatClips(
       contentType: "video/mp4",
       signal,
     });
-    return { ...up, durationSec: meta.durationSec, clipCount: clips.length };
+    const gradeCheck = input.grade?.referenceClipIndex != null
+      ? await measureGradeConsistency(outPath, locals.map(l => l.endSec - l.startSec), input.grade.referenceClipIndex, userId, signal)
+      : undefined;
+    return { ...up, durationSec: meta.durationSec, clipCount: clips.length, ...(gradeCheck ? { gradeCheck } : {}) };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }

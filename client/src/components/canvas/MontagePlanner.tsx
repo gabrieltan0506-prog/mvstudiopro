@@ -10,6 +10,23 @@ import {
 } from "@shared/montagePlan";
 import type { ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
 import type { AdvisorEditControl, AdvisorEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
+import {
+  MONTAGE_FINISH_ADVISOR_HELP,
+  MONTAGE_GRADE_SLIDERS,
+  MONTAGE_LUT_GROUPS,
+  MONTAGE_TRANSITION_LABELS,
+  MONTAGE_TRANSITION_RANGE,
+  applyAdvisorMontageFinish,
+  montageFinishParams,
+  montageTransitionBlockReason,
+  patchMontageGradeAll,
+  readMontageFinish,
+  type ColorCorrection,
+  type ConcatGrade,
+  type MontageFinish,
+  type MontageSliderKey,
+  type MontageTransitionKind,
+} from "@/lib/montageFinish";
 
 type Props = {
   clips: Array<{ id: string; url: string; label: string }>;
@@ -30,6 +47,8 @@ type Props = {
       height: number;
       fps: number;
       subtitleSrt?: string;
+      transition?: { kind: "fade" | "dissolve" | "wipeleft"; durationSec: number };
+      grade?: ConcatGrade;
     },
     title: string
   ) => Promise<unknown>;
@@ -41,6 +60,8 @@ type Saved = {
   target: number;
   aspect: "9:16" | "16:9";
   answer: string;
+  /** 采用时可选的调色与转场；只存草稿，点采用才随合成提交 */
+  finish?: MontageFinish;
   pending?: Parameters<
     ReturnType<
       typeof trpc.mvAnalysis.askPlatformSkillQa.useMutation
@@ -64,6 +85,7 @@ export function MontagePlanner(props: Props) {
           typeof value.answer !== "string" ||
           !Number.isFinite(value.target) ||
           !["9:16", "16:9"].includes(value.aspect) ||
+          readMontageFinish(value.finish) === null ||
           (value.pending &&
             (typeof value.pending.requestId !== "string" ||
               !value.pending.manhuaContext?.subtitleReview)))
@@ -136,13 +158,40 @@ export function MontagePlanner(props: Props) {
       parseError =
         "方案格式或时间码未通过校验，请核对报告后修正，不能提交剪辑。";
     }
+  const finish = saved.finish ?? {};
+  const gradeAll: ColorCorrection = finish.grade?.all ?? {};
+  const transition = finish.transition ?? { kind: "none" as MontageTransitionKind, durationSec: MONTAGE_TRANSITION_RANGE.default };
+  const setGrade = (patch: Partial<ColorCorrection>) =>
+    update({ finish: { ...finish, grade: patchMontageGradeAll(finish.grade, patch) } });
+  const sliderKeys = Object.keys(MONTAGE_GRADE_SLIDERS) as MontageSliderKey[];
+  const advisorExtras = [
+    ...Object.keys(gradeAll).filter(k => k !== "lutId" && !sliderKeys.includes(k as MontageSliderKey)),
+    ...(finish.grade?.clips ? [`逐段${finish.grade.clips.length}项`] : []),
+    ...(finish.grade?.referenceClipIndex != null ? [`代表镜头第${finish.grade.referenceClipIndex + 1}段`] : []),
+  ];
+  const blockReasons = plan?.plans.map(p => montageTransitionBlockReason(p.cuts.length, Boolean(remapMontageSubtitles(plan!.sourceSrt, p.cuts)))) ?? [];
+  const transitionLocked = blockReasons.length > 0 && blockReasons.every(Boolean);
   const advisorEditControl = useRef<AdvisorEditControl | null>(null);
   advisorEditControl.current = async (action, signal) => {
     signal.throwIfAborted();
     const selected = plan?.plans[action.episode - 1];
     if (!plan || !selected) throw new Error("请先选定有效剪辑方案再读取切点");
-    if (action.operation === "inspect") return JSON.stringify({ plan: action.episode, title: selected.title, cuts: selected.cuts.map((c, i) => ({ shotIndex: i + 1, startSec: c.startSec, endSec: c.endSec })), sourceDurationSec: plan.sourceDurationSec, busy: locked || Boolean(saved.pending) || stale });
+    const subtitled = Boolean(remapMontageSubtitles(plan.sourceSrt, selected.cuts));
+    if (action.operation === "inspect") return JSON.stringify({ plan: action.episode, title: selected.title, cuts: selected.cuts.map((c, i) => ({ shotIndex: i + 1, startSec: c.startSec, endSec: c.endSec })), sourceDurationSec: plan.sourceDurationSec, busy: locked || Boolean(saved.pending) || stale,
+      finish: saved.finish ?? {}, lutOptions: MONTAGE_LUT_GROUPS, transitionBlocked: montageTransitionBlockReason(selected.cuts.length, subtitled) || undefined, finishHelp: MONTAGE_FINISH_ADVISOR_HELP });
     if (locked || saved.pending || stale) throw new Error("剪辑方案正在处理或原片已变化，未改动");
+    // 调色/转场：共享契约目前只有 transition=cut|fade；transitionSettings / grade 为约定扩展，契约放开后直接生效。
+    const finishAction = action as typeof action & { operation: string; transitionSettings?: unknown; grade?: unknown };
+    if (finishAction.operation === "transition" || finishAction.operation === "grade") {
+      const next = applyAdvisorMontageFinish(live.current.finish ?? {}, finishAction);
+      const blocked = next.transition && next.transition.kind !== "none" ? montageTransitionBlockReason(selected.cuts.length, subtitled) : "";
+      if (blocked) throw new Error(`${blocked}，未改动`);
+      if (!window.confirm("确认将顾问的调色/转场建议填入剪辑方案草稿？此步不合成，仍需手动采用。")) throw new Error("用户未确认调色或转场改动");
+      signal.throwIfAborted();
+      save({ ...live.current, finish: next });
+      setError("");
+      return JSON.stringify({ status: "saved", plan: action.episode, operation: finishAction.operation, finish: next, note: "已写入草稿，尚未合成" });
+    }
     const cuts = [...selected.cuts];
     if (action.operation === "reorder") {
       if (!action.order || action.order.length !== cuts.length || new Set(action.order).size !== cuts.length || action.order.some(n => n < 1 || n > cuts.length)) throw new Error("顺序必须包含本方案全部切点且不得重复");
@@ -151,7 +200,7 @@ export function MontagePlanner(props: Props) {
       const i = (action.shotIndex ?? 0) - 1, tenth = (v: number) => Math.abs(v * 10 - Math.round(v * 10)) < 1e-9;
       if (!cuts[i] || action.inSec == null || action.outSec == null || !tenth(action.inSec) || !tenth(action.outSec)) throw new Error("切点进出点须为一位小数秒，且切点须存在");
       cuts[i] = { ...cuts[i], startSec: action.inSec, endSec: action.outSec };
-    } else throw new Error("剪辑方案合成暂不支持转场设置，未改动");
+    } else throw new Error("不支持的剪辑操作，未改动");
     const next = JSON.stringify({ ...plan, plans: plan.plans.map((p, i) => (i === action.episode - 1 ? { ...p, cuts } : p)) });
     try { parseMontagePlan(next); } catch { throw new Error("改动后切点未通过方案校验（须在原片内、按原片时间递增且不重叠），未改动"); }
     if (!window.confirm("确认将本次剪辑建议保存到当前方案草稿？原片保留，仍需手动采用。")) throw new Error("用户未确认剪辑改动");
@@ -257,6 +306,7 @@ export function MontagePlanner(props: Props) {
     try {
       const selected = plan.plans[index];
       const subtitleSrt = remapMontageSubtitles(plan.sourceSrt, selected.cuts);
+      const finishParams = montageFinishParams(live.current.finish, selected.cuts.length, Boolean(subtitleSrt));
       const [width, height] =
         saved.aspect === "9:16" ? [720, 1280] : [1280, 720];
       await props.onSubmit(
@@ -270,6 +320,7 @@ export function MontagePlanner(props: Props) {
           height,
           fps: 30,
           ...(subtitleSrt ? { subtitleSrt } : {}),
+          ...finishParams,
         },
         selected.title
       );
@@ -404,6 +455,101 @@ export function MontagePlanner(props: Props) {
               需人工核对：{plan.uncertainties.join("；")}
             </p>
           )}
+          <fieldset className="space-y-2 rounded border border-white/15 p-2 text-xs" aria-label="调色与转场">
+            <legend className="px-1">调色与转场（可选，采用时随本版合成）</legend>
+            <label className="block">
+              调色预设
+              <select
+                aria-label="调色预设"
+                disabled={locked}
+                value={gradeAll.lutId ?? ""}
+                onChange={e => setGrade({ lutId: e.target.value || undefined })}
+                className="ml-2 rounded bg-slate-900 p-1"
+              >
+                <option value="">不套用预设</option>
+                {MONTAGE_LUT_GROUPS.map(g => (
+                  <optgroup key={g.label} label={g.label}>
+                    {g.presets.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <span className="ml-2 text-white/60">强度选「轻 / 标准」两档</span>
+            </label>
+            {sliderKeys.map(key => {
+              const r = MONTAGE_GRADE_SLIDERS[key];
+              const value = gradeAll[key] ?? r.neutral;
+              return (
+                <label key={key} className="block">
+                  {r.label} {key === "color_temperature" ? `${value}K（低暖高冷）` : value.toFixed(2)}
+                  <input
+                    aria-label={r.label}
+                    type="range"
+                    min={r.min}
+                    max={r.max}
+                    step={r.step}
+                    disabled={locked}
+                    value={value}
+                    onChange={e => setGrade({ [key]: Number(e.target.value) })}
+                    className="ml-2 align-middle"
+                  />
+                </label>
+              );
+            })}
+            {advisorExtras.length > 0 && (
+              <p className="text-white/60">顾问另设：{advisorExtras.join("、")}</p>
+            )}
+            <button
+              type="button"
+              disabled={locked || !finish.grade}
+              onClick={() => update({ finish: { ...finish, grade: undefined } })}
+              className="text-xs underline disabled:opacity-40"
+            >
+              还原原片色彩
+            </button>
+            <label className="block">
+              镜头转场
+              <select
+                aria-label="镜头转场"
+                disabled={locked || transitionLocked}
+                value={transitionLocked ? "none" : transition.kind}
+                onChange={e => update({ finish: { ...finish, transition: { ...transition, kind: e.target.value as MontageTransitionKind } } })}
+                className="ml-2 rounded bg-slate-900 p-1"
+              >
+                {(Object.keys(MONTAGE_TRANSITION_LABELS) as MontageTransitionKind[]).map(k => (
+                  <option key={k} value={k}>
+                    {MONTAGE_TRANSITION_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              转场时长
+              <input
+                aria-label="转场时长"
+                type="number"
+                min={MONTAGE_TRANSITION_RANGE.min}
+                max={MONTAGE_TRANSITION_RANGE.max}
+                step={MONTAGE_TRANSITION_RANGE.step}
+                disabled={locked || transitionLocked || transition.kind === "none"}
+                value={transition.durationSec}
+                onChange={e => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v) && v >= MONTAGE_TRANSITION_RANGE.min && v <= MONTAGE_TRANSITION_RANGE.max)
+                    update({ finish: { ...finish, transition: { ...transition, durationSec: Math.round(v * 10) / 10 } } });
+                }}
+                className="ml-2 w-16 rounded bg-slate-900 p-1"
+              />
+              秒
+            </label>
+            {transitionLocked && <p className="text-amber-200">{blockReasons[0]}</p>}
+            {!transitionLocked && transition.kind !== "none" && (
+              <p className="text-white/60">重叠转场会让成片略短于方案时长。</p>
+            )}
+          </fieldset>
           {plan.plans.map((p, i) => (
             <article
               key={i}
@@ -433,6 +579,9 @@ export function MontagePlanner(props: Props) {
                   : "没有可用对白字幕，不添加字幕"}
                 。原片保留，结果回到本项目后期任务。
               </p>
+              {!transitionLocked && transition.kind !== "none" && blockReasons[i] && (
+                <p className="text-xs text-amber-200">{blockReasons[i]}，本版不加转场。</p>
+              )}
               <button
                 type="button"
                 disabled={locked || stale || !source || Boolean(saved.pending)}

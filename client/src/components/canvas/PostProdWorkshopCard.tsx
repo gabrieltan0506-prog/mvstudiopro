@@ -1,4 +1,5 @@
 import { MontagePlanner } from "./MontagePlanner";
+import type { ConcatGrade } from "@shared/colorGrade";
 import type { ManhuaVfxEnvironmentOption } from "@shared/manhuaVfxEnvironment";
 import type { ManhuaVfxState } from "@shared/manhuaVfx";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
@@ -839,6 +840,7 @@ export default function PostProdWorkshopCard({
               height: number;
               fps: number;
               transition?: { kind: "fade" | "dissolve" | "wipeleft"; durationSec: number };
+              grade?: ConcatGrade;
             };
           }
         | {

@@ -8,6 +8,7 @@ import { autoRigRequestSchema } from "../../shared/manhuaAutoRig";
 import { z } from "zod";
 import { bgmNarrativeMixSchema } from "../../shared/manhuaBgmNarrativeMix";
 import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
+import { concatGradeSchema } from "../../shared/colorGrade";
 import { SUBTITLE_EFFECT_IDS } from "../../shared/subtitleEffects";
 import { manhuaVfxJobSchema } from "../../shared/manhuaVfx";
 import { artMotionJobSchema } from "../../shared/artMotion";
@@ -48,8 +49,12 @@ export const concatParamsSchema = z
     width: evenDimension(320, 3840).default(1280),
     height: evenDimension(240, 2160).default(720),
     fps: z.number().int().min(12).max(60).default(30),
+    /** 可选调色：全片 all / 逐段 clips / 代表镜头一致性检查；缺省时滤镜与旧版逐字一致。 */
+    grade: concatGradeSchema.optional(),
   })
   .strict().superRefine((v, ctx) => {
+    if (v.grade?.clips && v.grade.clips.length !== v.clips.length) ctx.addIssue({ code: "custom", path: ["grade", "clips"], message: "调色参数须与片段一一对应" });
+    if (v.grade?.referenceClipIndex != null && v.grade.referenceClipIndex >= v.clips.length) ctx.addIssue({ code: "custom", path: ["grade", "referenceClipIndex"], message: "代表镜头不在片段范围内" });
     if (v.transition && (v.clips.length < 2 || v.subtitleSrt)) ctx.addIssue({ code: "custom", path: ["transition"], message: "单段或同步字幕剪辑须使用直接切换" });
     if (v.trims && v.trims.length !== v.clips.length) ctx.addIssue({ code: "custom", path: ["trims"], message: "剪辑取段须与片段一一对应" });
     v.trims?.forEach((t, i) => { if (t.endSec != null && t.endSec - t.startSec < 0.1) ctx.addIssue({ code: "custom", path: ["trims", i], message: "取段至少保留0.1秒" }); });
