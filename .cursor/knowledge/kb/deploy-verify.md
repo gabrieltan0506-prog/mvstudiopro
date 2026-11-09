@@ -12,6 +12,11 @@
 2. 同时核对真实任务列表的 queued/running 与相关日志；不能仅凭日志没有输出判空闲。单机换版存在中断风险，恢复与退款按具体任务链分别验证，不笼统声称全站无退款。
 3. 存在在途学习、运行中生成或冲突部署时不执行合并/部署；状态无法确认也不执行，不取消用户任务腾窗口。
 
+## 部署间隔（2026-11-08）
+- 相邻两次触发部署（合并 main / 直推 main / rerun Fly Deploy / Vercel Redeploy / 手动 fly deploy）至少隔 30 分钟，从上一次触发时刻起算。规则正文见 `.cursor/rules/ship-always.mdc` 第四节。
+- 核对命令：`gh api repos/<r>/commits/main --jq .commit.committer.date`；`gh api "repos/<r>/actions/runs?branch=main&per_page=1" --jq '.workflow_runs[0].created_at'`；`gh api "repos/<r>/deployments?environment=Production&per_page=1" --jq '.[0].created_at'`。
+- 事实：Fly Deploy 工作流按并发组运行，1 分钟内两次合并会取消前一次；Vercel 自动部署对每次分支推送都建 Preview（含 probe-transfer 孤儿分支），当日可达 100+。
+
 ## 验证口径
 - `pnpm check > file 2>&1; echo $?` —— 管道会吞退出码（`| tail` 假绿实锤 #1173）；grep 无命中会毒 pipefail。
 - 没跑验证只能说「已实现，未验证」；本地绿不冒充线上验收；疑点未闭环禁止肯定陈述（work-rules 3/23）。
