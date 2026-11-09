@@ -10,6 +10,7 @@ import {
   canvasMusicMvStateSchema,
   validateCanvasMusicMvPlan,
 } from "../../shared/canvasMusicMv";
+import { manhuaAdvisorOperationId } from "../services/manhuaAdvisorOperation";
 
 const input = {
   requestId: "11111111-1111-4111-8111-111111111111",
@@ -322,8 +323,27 @@ describe("顾问方案采用回执与恢复",()=>{
   });
   it("拒绝其他用户的顾问结果及假听音入口",async()=>{
     const f=advisorFixture();const job=f.job as unknown as NonNullable<Parameters<typeof adoptMusicMvConcept>[3]>;
-    await expect(adoptMusicMvConcept(8,f.selection,f.d,job)).rejects.toMatchObject({code:"PRECONDITION_FAILED"});
+    await expect(adoptMusicMvConcept(8,f.selection,f.d,job)).rejects.toMatchObject({code:"NOT_FOUND"});
     await expect(draftCanvasMusicMvPlan(7,"user",{...input,advisorEvidenceId:f.selection.evidenceId},f.d)).rejects.toThrow();
+    expect(f.mocks.llm).not.toHaveBeenCalled();expect(f.mocks.charge).not.toHaveBeenCalled();
+  });
+  it("线上 job 的 type 列为 platform：按 input.action/requestId 识别并允许采用",async()=>{
+    // 1109 线上 bug：reserveManhuaAdvisorOperation 写入 type:"platform"，此前 adopt 只认 "manhuaAdvisor" 导致永远 PRECONDITION_FAILED。
+    const f=advisorFixture();
+    const succeeded=await f.job() as unknown as {output:unknown};
+    const job=vi.fn(async()=>({userId:"7",type:"platform",provider:"openai",status:"succeeded",input:{action:"manhua_advisor_qa",requestId:f.selection.advisorRequestId},output:succeeded.output})) as unknown as NonNullable<Parameters<typeof adoptMusicMvConcept>[3]>;
+    const result=await adoptMusicMvConcept(7,f.selection,f.d,job);
+    expect(result.requestId).toBe(f.selection.requestId);
+    expect(job).toHaveBeenCalledWith(manhuaAdvisorOperationId(7,f.selection.advisorRequestId));
+    expect(f.mocks.llm).not.toHaveBeenCalled();expect(f.mocks.charge).not.toHaveBeenCalled();
+  });
+  it("type 为 platform 但 requestId 不符视为找不到咨询；已失败咨询提示重新发起",async()=>{
+    const f=advisorFixture();
+    const succeeded=await f.job() as unknown as {output:unknown};
+    const other=vi.fn(async()=>({userId:"7",type:"platform",status:"succeeded",input:{action:"manhua_advisor_qa",requestId:"99999999-9999-4999-8999-999999999999"},output:succeeded.output})) as unknown as NonNullable<Parameters<typeof adoptMusicMvConcept>[3]>;
+    await expect(adoptMusicMvConcept(7,f.selection,f.d,other)).rejects.toMatchObject({code:"NOT_FOUND"});
+    const failed=vi.fn(async()=>({userId:"7",type:"platform",status:"failed",input:{action:"manhua_advisor_qa",requestId:f.selection.advisorRequestId},output:{action:"manhua_advisor_qa_refund_reconciled"}})) as unknown as NonNullable<Parameters<typeof adoptMusicMvConcept>[3]>;
+    await expect(adoptMusicMvConcept(7,f.selection,f.d,failed)).rejects.toMatchObject({code:"PRECONDITION_FAILED",message:expect.stringContaining("重新发起咨询")});
     expect(f.mocks.llm).not.toHaveBeenCalled();expect(f.mocks.charge).not.toHaveBeenCalled();
   });
 });

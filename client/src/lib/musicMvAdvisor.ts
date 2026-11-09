@@ -28,6 +28,71 @@ export function musicMvAdvisorRequest(session: MusicMvAdvisorSession) {
   };
 }
 
+/** 服务端明确拒绝（非网络中断）的 tRPC 错误码：此时采用锁定没有保留价值，应解除并允许重试。 */
+const ADOPTION_REJECTED_CODES = new Set([
+  "PRECONDITION_FAILED",
+  "NOT_FOUND",
+  "BAD_REQUEST",
+  "CONFLICT",
+  "FORBIDDEN",
+  "UNAUTHORIZED",
+]);
+
+/**
+ * 采用请求体只从「已成功」的咨询会话取编号：advisorRequestId 必须是产出当前方案的那次咨询，
+ * evidenceId 以方案（结果）自带的为准；会话未成功或缺证据编号时直接拒绝，不拿旧请求编号去采用。
+ */
+export function musicMvAdoptionRequest(
+  session: MusicMvAdvisorSession | undefined,
+  conceptId: string
+): {
+  requestId: string;
+  conceptId: string;
+  advisorRequestId: string;
+  evidenceId: string;
+} {
+  if (!session || session.status !== "succeeded" || !session.proposal)
+    throw new Error("当前咨询尚未成功，请重新发起咨询后再采用");
+  const evidenceId = session.proposal.evidenceId;
+  if (!evidenceId)
+    throw new Error("当前方案缺少证据编号，请重新发起咨询后再采用");
+  if (!session.proposal.concepts.some(c => c.id === conceptId))
+    throw new Error("所选方案不属于当前咨询结果，请刷新后重新选择");
+  if (session.adoption && session.adoption.conceptId !== conceptId)
+    throw new Error("上一方案采用尚未确认，请先恢复该方案采用");
+  return {
+    requestId: session.adoption?.requestId || crypto.randomUUID(),
+    conceptId,
+    advisorRequestId: session.requestId,
+    evidenceId,
+  };
+}
+
+/**
+ * 采用失败后的本地处理：服务端明确拒绝时解除采用锁定（清掉 adoption）并给出可操作提示，
+ * 让用户可以再点或重新发起咨询；网络中断等不确定结果保留锁定，走「恢复本方案采用」幂等重放。
+ */
+export function musicMvAdoptionFailure(
+  error: unknown,
+  session: MusicMvAdvisorSession
+): { message: string; session: MusicMvAdvisorSession; rejected: boolean } {
+  const code = (error as { data?: { code?: string } } | null)?.data?.code;
+  const base =
+    error instanceof Error && error.message
+      ? error.message
+      : "采用未确认，请恢复原方案采用";
+  if (code && ADOPTION_REJECTED_CODES.has(code)) {
+    const { adoption: _dropped, ...rest } = session;
+    void _dropped;
+    const hint =
+      code === "PRECONDITION_FAILED" || code === "NOT_FOUND"
+        ? "；已解除本次采用锁定，可点「听歌并构思MV」重新发起咨询后再采用"
+        : "；已解除本次采用锁定，可重新点击采用";
+    return { message: base + hint, session: rest, rejected: true };
+  }
+  return { message: base, session, rejected: false };
+}
+
 export async function musicMvSourceKey(value: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(JSON.stringify(value));
   return Array.from(

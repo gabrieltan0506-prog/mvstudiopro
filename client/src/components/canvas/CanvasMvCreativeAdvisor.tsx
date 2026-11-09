@@ -5,6 +5,8 @@ import { useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { resolveMusicMvMediaUrl } from "@/lib/musicMvAdvisor";
 import {
+  musicMvAdoptionFailure,
+  musicMvAdoptionRequest,
   musicMvAdvisorRequest,
   musicMvSourceKey,
   readMvVideoDuration,
@@ -218,18 +220,23 @@ export function CanvasMvCreativeAdvisor(props: Props) {
     try {
       if (!matches(s))
         throw new Error("歌曲或创意已变化，请重新咨询；原方案仍保留");
-      if (s.adoption && s.adoption.conceptId !== conceptId)
-        throw new Error("上一方案采用尚未确认，请先恢复该方案采用");
-      const adoption = s.adoption || {
-        requestId: crypto.randomUUID(),
-        conceptId,
-      };
+      // 编号只从当前已成功的咨询结果取（advisorRequestId = 产出方案那次咨询，evidenceId = 方案自带）。
+      const request = musicMvAdoptionRequest(s, conceptId);
+      const adoption = { requestId: request.requestId, conceptId };
       patch({ ...s, adoption });
-      const result = await adopt.mutateAsync({
-        ...adoption,
-        advisorRequestId: s.requestId,
-        evidenceId: s.proposal.evidenceId,
-      });
+      let result: Awaited<ReturnType<typeof adopt.mutateAsync>>;
+      try {
+        result = await adopt.mutateAsync(request);
+      } catch (e) {
+        // 服务端明确拒绝：解除采用锁定，允许再点或重新咨询；网络不确定则保留锁定走幂等恢复。
+        const failure = musicMvAdoptionFailure(e, { ...s, adoption });
+        if (
+          failure.rejected &&
+          current.current.session?.requestId === s.requestId
+        )
+          patch(failure.session);
+        throw new Error(failure.message);
+      }
       if (current.current.session?.requestId !== s.requestId) return;
       if (!matches(s))
         throw new Error("输入已变化，原方案采用回执保留，未铺设镜头");
