@@ -14,6 +14,7 @@ import { runCreativeHopChain } from "./creativeHopChain";
 import { computeSongBeatGrid } from "./musicMvBeatGrid";
 import { composeMusicMvShotBeats } from "./musicMvShotBeats";
 import { snapShotCutsToBeats } from "../../shared/canvasMusicMvBeats";
+import { detectPerformerGender } from "../../shared/canvasMusicMvReferences";
 import type { MusicMvBeatGrid } from "../../shared/canvasMusicMv";
 import { SUNO_SONG_CRAFT } from "../../shared/sunoSongCraft";
 import {
@@ -317,7 +318,8 @@ export async function askMusicMvAdvisor(
     // 1109 第三阶段：主推荐方案逐窗节拍（同一三跳链）；三跳全败的镜头不出窗，编译器整镜一窗降级并标注。
     const mvTarget=target as MusicMvAdvisorTarget;
     const main=proposal.concepts[0]!;
-    const beats=await composeMusicMvShotBeats({plan:main.plan,beatGrid,lyrics:mvTarget.lyrics,creativePrompt:mvTarget.creativePrompt,concept:{titleZh:main.titleZh,rationaleZh:main.rationaleZh},sections:proposal.sections},{hops:deps.hops,compose:deps.compose,save});
+    const gender=detectPerformerGender(mvTarget.creativePrompt);
+    const beats=await composeMusicMvShotBeats({plan:main.plan,beatGrid,lyrics:mvTarget.lyrics,creativePrompt:mvTarget.creativePrompt,concept:{titleZh:main.titleZh,rationaleZh:main.rationaleZh},sections:proposal.sections,...(gender?{performer:{genderZh:gender,descZh:`${gender}歌手（演唱者，与叙事主角分开）`}}:{})},{hops:deps.hops,compose:deps.compose,save});
     beatsReport={filledShotIds:beats.filledShotIds,failedShotIds:beats.failedShotIds,failuresZh:beats.failuresZh};
     proposal=validateRefined({...proposal,concepts:proposal.concepts.map((c,i)=>i===0?{...c,plan:beats.plan}:c)});
   }

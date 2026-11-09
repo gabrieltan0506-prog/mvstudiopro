@@ -33,6 +33,8 @@ export type MusicMvShotBeatsInput = {
   sections?: Array<{ startSec: number; endSec: number; labelZh: string; heardZh: string; emotion?: unknown }>;
   /** 歌词逐句秒位（歌曲绝对秒）：歌词对齐回执优先；没有时由顾问听歌给出（source=heard）。 */
   lyricLines?: { source: "confirmed" | "unconfirmed"; lines: Array<{ text: string; startSec: number; endSec: number }> };
+  /** 演唱者（演唱镜对口型的人），与叙事主角区分，如 { genderZh: "男", descZh: "男歌手，清新克制" }。 */
+  performer?: { genderZh?: string; descZh?: string };
 };
 
 export type MusicMvShotBeatsResult = {
@@ -81,6 +83,7 @@ export async function composeMusicMvShotBeats(
       creativePrompt: strip(input.creativePrompt, 3000),
       lyrics: strip(input.lyrics, 8000),
       concept: input.concept,
+      ...(input.performer ? { performer: input.performer } : {}),
       sections: (input.sections ?? []).filter(s => s.endSec > from && s.startSec < to),
       previousShot: prev ? { id: prev.id, kind: prev.kind, visualPrompt: prev.visualPrompt, cameraPrompt: prev.cameraPrompt } : undefined,
       shots: chunk.map(s => ({ id: s.id, kind: s.kind ?? "generated", startSec: s.startSec, endSec: s.endSec, visualPrompt: s.visualPrompt, cameraPrompt: s.cameraPrompt, lyricQuote: s.lyricQuote })),

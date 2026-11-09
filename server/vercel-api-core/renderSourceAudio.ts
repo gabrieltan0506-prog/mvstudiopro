@@ -197,7 +197,7 @@ export async function renderSourceAudioFinal(
       "-vf",
       scale,
       "-af",
-      `aresample=${SAMPLE_RATE}:first_pts=0,apad`,
+      `${scene.muteSourceAudio ? "volume=0," : ""}aresample=${SAMPLE_RATE}:first_pts=0,apad`,
       ...encode,
       file
     );

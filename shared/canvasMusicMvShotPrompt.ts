@@ -47,6 +47,8 @@ export type MvShotPromptContext = {
   creativePrompt?: string;
   beatGrid?: Pick<MusicMvBeatGrid, "bpm" | "beatSec">;
   references: MvShotReferences;
+  /** 演唱者（演唱镜对口型的人，与叙事主角分开锁），如「男歌手」。 */
+  performerZh?: string;
 };
 
 export type MvShotPromptWindow = { fromSec: number; toSec: number; role: "beat" | "whole" | "tail"; label: string; lipSync?: boolean };
@@ -169,7 +171,9 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
     `MV镜头 ${shot.shotId}｜${ctx.modelLabel}｜${ctx.resolution}｜${ctx.aspectRatio}｜目标时长 ${f2(gen)} 秒（取用歌曲 ${f2(shot.startSec)}–${f2(shot.endSec)} 秒，镜内 0.00–${f2(L)} 秒入片）；单镜单段，不拆视频，不变速`,
   );
   header.push(
-    `人物一致性锁：本镜只有同一位主角（${protagonistOf(ctx.creativePrompt)}）。按${anchorTag}锁脸部骨相、年龄、体型与发型，不改骨相、不改年龄、不改体型，服装与全片一致；不新增第二位清晰人物，远处人影只作模糊剪影。`,
+    singing
+      ? `人物一致性锁：本镜是演唱者镜，画面主体是演唱者（${ctx.performerZh || "演唱者"}），只有他/她对口型。按${anchorTag}锁演唱者脸部骨相、年龄、体型与发型；叙事主角不在本镜出现，不让叙事主角对口型；不新增第二位清晰人物。`
+      : `人物一致性锁：本镜只有同一位主角（${protagonistOf(ctx.creativePrompt)}）。按${anchorTag}锁脸部骨相、年龄、体型与发型，不改骨相、不改年龄、不改体型，服装与全片一致；不新增第二位清晰人物，远处人影只作模糊剪影。`,
   );
   header.push(`标记使用半角：{}只包实际台词${singing ? "（本镜演唱歌词按台词处理，逐句对口型）" : "（本镜无台词）"}；<>写环境与事件音效；[]仅写字幕开关。段落标题用普通文字，不把标题当字幕。`);
   header.push("[字幕关闭；不烧录歌词字幕、标题、Logo或水印。]");

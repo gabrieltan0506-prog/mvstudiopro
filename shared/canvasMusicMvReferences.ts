@@ -319,3 +319,22 @@ export function planMvMotionTrim(input: {
   }
   return { inSec: r(bestIn), outSec: r(bestIn + len), lengthSec: r(len), auto: true };
 }
+
+/** 1109 演唱者与叙事主角分开锁：从歌曲生成提示词/创作说明里读演唱声线性别。 */
+export function detectPerformerGender(text: string | undefined): "男" | "女" | undefined {
+  const t = String(text || "");
+  const male = /男声|男歌手|男主唱|male vocal|male singer|baritone|tenor/i.test(t);
+  const female = /女声|女歌手|女主唱|female vocal|female singer|soprano|alto/i.test(t);
+  return male && !female ? "男" : female && !male ? "女" : undefined;
+}
+
+/** 演唱者定妆帧（演唱镜 @图片1）：与叙事主角分开，性别按声线；同一生图链（Sunburst / 资产线 / 禁字）。 */
+export function mvSingerKeyframePrompt(gender: "男" | "女", styleText: string | undefined, aspectRatio: "9:16" | "16:9" = "9:16"): string {
+  const who = gender === "男" ? "a male singer in his twenties, clean restrained look" : "a female singer in her twenties, clean restrained look";
+  return [
+    `MV performer keyframe (${aspectRatio}), ${who}, waist-up, facing camera at three-quarter angle, mouth relaxed and slightly open as if about to sing, clear readable face and lips.`,
+    "This is the vocalist who lip-syncs the song; keep this exact face, hairstyle and outfit in every singing shot.",
+    `Overall style (Chinese brief): ${String(styleText || "真实感电影画面").slice(0, 300)}.`,
+    "Photorealistic, natural skin texture, no microphone covering the mouth, no text, no logo, no watermark, no second person.",
+  ].join("\n");
+}

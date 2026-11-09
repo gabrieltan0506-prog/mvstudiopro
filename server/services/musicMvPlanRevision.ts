@@ -22,6 +22,7 @@ import { composeMusicMvFillPlan } from "./musicMvFillPlan";
 import { composeCreativeAtHop } from "./musicMvAdvisor";
 import { CREATIVE_LLM_HOPS } from "./creativeLlmHops";
 import { resolveCanvasMusicMvAudio } from "./canvasMusicMvMedia";
+import { detectPerformerGender } from "../../shared/canvasMusicMvReferences";
 
 const prefix = (userId: number, id: string) => `canvas-music-mv/evidence/${userId}/${id}`;
 
@@ -64,7 +65,7 @@ export async function reviseMusicMvPlanForLyrics(
   const highlightIds = plan.shots.filter(s => s.endSec > highlight.startSec && s.startSec < highlight.endSec && s.kind !== "footage").map(s => s.id);
   const needBeats = plan.shots.filter(s => highlightIds.includes(s.id) && !s.fillRequested && (!s.beats?.length || s.kind === "singing")).map(s => s.id);
   const beats = needBeats.length
-    ? await composeMusicMvShotBeats({ plan, shotIds: needBeats, beatGrid: grid!, lyrics: baseInput.lyrics, creativePrompt: baseInput.creativePrompt, lyricLines: { source: "confirmed", lines: table.lines } }, { hops: CREATIVE_LLM_HOPS, compose: composeCreativeAtHop, save: (n, v) => save(n, v) })
+    ? await composeMusicMvShotBeats({ plan, shotIds: needBeats, beatGrid: grid!, lyrics: baseInput.lyrics, creativePrompt: baseInput.creativePrompt, lyricLines: { source: "confirmed", lines: table.lines }, ...(detectPerformerGender(baseInput.creativePrompt) ? { performer: { genderZh: detectPerformerGender(baseInput.creativePrompt), descZh: `${detectPerformerGender(baseInput.creativePrompt)}歌手（演唱者，与叙事主角分开）` } } : {}) }, { hops: CREATIVE_LLM_HOPS, compose: composeCreativeAtHop, save: (n, v) => save(n, v) })
     : undefined;
   if (beats) plan = beats.plan;
   const fillIds = plan.shots.filter(s => highlightIds.includes(s.id) && s.fillRequested).map(s => s.id);

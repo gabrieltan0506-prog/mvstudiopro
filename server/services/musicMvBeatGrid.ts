@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execHeavyMedia } from "./heavyMediaProcess";
-import { buildMusicBeatGrid, onsetEnvelope, parseBpmFromText } from "../../shared/manhuaBeatTable";
+import { buildMusicBeatGrid, onsetEnvelope, resolveSongBpm } from "../../shared/manhuaBeatTable";
 import type { MusicMvBeatGrid, MusicMvPacing } from "../../shared/canvasMusicMv";
 
 const RATE = 11_025;
@@ -62,12 +62,12 @@ export function beatGridFromPcm(
   rate: number,
   creativePrompt?: string,
   sections?: readonly AudioMapSection[],
-): MusicMvBeatGrid & { strongBeatsSec: number[] } {
-  const stated = parseBpmFromText(creativePrompt);
-  let bpm = stated ?? buildMusicBeatGrid(pcm, rate, 120).estimatedBpm;
-  // 自相关估值常落在半速/倍速：折回 70–180
-  while (!stated && bpm < 70) bpm *= 2;
-  while (!stated && bpm > 180) bpm /= 2;
+  generationPrompt?: string,
+): MusicMvBeatGrid & { strongBeatsSec: number[]; bpmResolution: ReturnType<typeof resolveSongBpm> } {
+  const estimated = buildMusicBeatGrid(pcm, rate, 120).estimatedBpm;
+  const resolution = resolveSongBpm({ estimatedBpm: estimated, generationPrompt, creativePrompt });
+  const bpm = resolution.bpm;
+  const stated = resolution.source !== "estimated";
   const grid = buildMusicBeatGrid(pcm, rate, bpm);
   const env = onsetEnvelope(pcm, rate);
   const duration = pcm.length / rate;
@@ -86,7 +86,8 @@ export function beatGridFromPcm(
   const segments = ranges.map((r, i) => {
     const energy = Number((rms[i]! / peak).toFixed(3));
     const conf = Number(beatConfidence(env, grid.phaseSec, beatSec, r.startSec, r.endSec).toFixed(3));
-    const pacing: MusicMvPacing = energy < 0.12 || conf < 0.2 ? "free" : conf >= 0.5 ? "beat" : "phrase";
+    // 抒情/慢歌：按乐句与能量切（拍点只作微调）；否则按拍点置信度
+    const pacing: MusicMvPacing = energy < 0.12 || conf < 0.2 ? "free" : resolution.lyrical ? "phrase" : conf >= 0.5 ? "beat" : "phrase";
     return { startSec: Number(r.startSec.toFixed(3)), endSec: Number(r.endSec.toFixed(3)), energy, beatConfidence: conf, pacing };
   });
   return {
@@ -94,12 +95,13 @@ export function beatGridFromPcm(
     beatSec: Number(beatSec.toFixed(5)),
     phaseSec: grid.phaseSec,
     source: stated ? "creative_prompt" : "estimated",
+    bpmResolution: resolution,
     beatConfidence: Number(beatConfidence(env, grid.phaseSec, beatSec, 0, duration).toFixed(3)),
     segments,
     strongBeatsSec: grid.beats.filter(b => b.strength >= 0.6).map(b => b.sec),
   };
 }
 
-export async function computeSongBeatGrid(buffer: Buffer, creativePrompt?: string, sections?: readonly AudioMapSection[]) {
-  return beatGridFromPcm(await decodeMonoPcm(buffer), RATE, creativePrompt, sections);
+export async function computeSongBeatGrid(buffer: Buffer, creativePrompt?: string, sections?: readonly AudioMapSection[], generationPrompt?: string) {
+  return beatGridFromPcm(await decodeMonoPcm(buffer), RATE, creativePrompt, sections, generationPrompt);
 }

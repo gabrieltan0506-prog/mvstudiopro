@@ -15,6 +15,8 @@ import {
   type MusicMvShotBeat,
 } from "./canvasMusicMv";
 
+/** phrase 段拍点微调上限（秒）。 */
+export const PHRASE_MICRO_SNAP_SEC = 0.12;
 type Grid = Pick<MusicMvBeatGrid, "beatSec" | "phaseSec"> & Partial<Pick<MusicMvBeatGrid, "segments">>;
 
 export type BeatFix = { shotId: string; action: string; before: unknown; after: unknown; reasonZh: string };
@@ -57,10 +59,12 @@ export function snapShotCutsToBeats<T extends TimedShot>(
     const next = out[i]!;
     if (prev.kind === "singing" || next.kind === "singing" || prev.kind === "footage" || next.kind === "footage") continue;
     const cut = next.startSec;
-    // 节奏自适应：只有 beat 段吸附；phrase/free 段按乐句与能量切，不硬切网格
-    if (musicMvPacingAt(grid, cut) !== "beat") continue;
+    // 节奏自适应：beat 段吸附到 ≤半拍内的拍点；phrase 段按乐句与能量切，拍点只作 ≤0.12 秒的微调；free 段不动
+    const pacing = musicMvPacingAt(grid, cut);
+    if (pacing === "free") continue;
     const snapped = nearestBeat(cut, grid);
-    if (Math.abs(snapped - cut) < 0.0015 || Math.abs(snapped - cut) > grid.beatSec / 2 + 1e-6) continue;
+    const reach = pacing === "beat" ? grid.beatSec / 2 : PHRASE_MICRO_SNAP_SEC;
+    if (Math.abs(snapped - cut) < 0.0015 || Math.abs(snapped - cut) > reach + 1e-6) continue;
     if (snapped - prev.startSec < minShotSec || next.endSec - snapped < minShotSec) continue;
     fixes.push({ shotId: next.id, action: "snap_cut", before: cut, after: snapped, reasonZh: `剪点 ${cut} 秒吸附到拍点 ${snapped} 秒` });
     prev.endSec = snapped;
@@ -104,9 +108,10 @@ export function repairShotBeatWindows(
   if (grid && shot.kind !== "singing") {
     for (let i = 1; i < rows.length; i += 1) {
       const t = rows[i]!.startSec;
-      if (musicMvPacingAt(grid, t) !== "beat") continue;
+      const pacing = musicMvPacingAt(grid, t);
+      if (pacing === "free") continue;
       const snapped = nearestBeat(t, grid);
-      if (Math.abs(snapped - t) <= grid.beatSec / 2 + 1e-6 && snapped > rows[i - 1]!.startSec + 0.25 && snapped < rows[i]!.endSec - 0.25) {
+      if (Math.abs(snapped - t) <= (pacing === "beat" ? grid.beatSec / 2 : PHRASE_MICRO_SNAP_SEC) + 1e-6 && snapped > rows[i - 1]!.startSec + 0.25 && snapped < rows[i]!.endSec - 0.25) {
         rows[i - 1]!.endSec = snapped;
         rows[i]!.startSec = snapped;
       }

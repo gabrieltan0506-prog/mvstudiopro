@@ -4,16 +4,14 @@
  *
  * - 素材段：不生成，按素材选段裁切（原有逻辑），只核实测时长够用。
  * - 生成画面段：实测时长 ≥ 入片区间（offset+duration）即裁到目标；短缺 → 该段重做（不整批）。
- * - 演唱段：生成片自带音轨与原歌该窗做包络互相关求偏移，首尾两处偏移之差即漂移；
- *   按偏移落位（trimIn = offset + lag），漂移 > 2 帧或落位后不够唱句尾 → 该段重做。
+ * - 演唱段：按原歌绝对时间帧精确落位（trimIn = 入片偏移），只核实测时长够到唱句尾；
+ *   口型由视觉核验另判（嘴部张合度 × 原歌 200–3k Hz 人声包络互相关，相关 ≥0.5 且 |偏移| ≤2 帧）。
  * 所有实测时长、偏移、裁切点进回执，由调用方永久保存。
  */
 import { onsetEnvelope } from "./manhuaBeatTable";
 
 export const MV_FRAME_SEC = 1 / 30;
-export const MV_SINGING_DRIFT_MAX_SEC = 2 * MV_FRAME_SEC;
-/** 包络互相关峰值低于此值视为无法核对口型（生成片没有复现唱段）。 */
-export const MV_SINGING_MIN_CONFIDENCE = 0.3;
+
 
 export type MvClipFitInput = {
   shotId: string;
@@ -50,25 +48,8 @@ export type MvClipFitResult = MvClipFitInput & MvClipFitMeasure & {
 export function planMvClipFit(input: MvClipFitInput, m: MvClipFitMeasure): MvClipFitResult {
   const base = (input.kind === "footage" ? input.sourceStartSec ?? 0 : 0) + input.offsetSec;
   const r = (n: number) => Math.round(n * 1000) / 1000;
-  if (input.kind === "singing") {
-    if (m.lagHeadSec === undefined || m.lagTailSec === undefined || !m.hasAudio)
-      return { ...input, ...m, ok: false, trimInSec: base, trimOutSec: base + input.durationSec, reasonZh: "演唱段生成片无可核对的音轨，无法确认口型落位，需重做该段" };
-    if (m.confidence !== undefined && m.confidence < MV_SINGING_MIN_CONFIDENCE)
-      return { ...input, ...m, ok: false, trimInSec: base, trimOutSec: base + input.durationSec, reasonZh: `演唱段音轨与原歌相关度 ${m.confidence.toFixed(2)} 过低，无法确认口型落位，需重做该段` };
-    const drift = Math.abs(m.lagTailSec - m.lagHeadSec);
-    let lag = m.lagHeadSec;
-    // 生成片比原歌早开始且早于 1 帧以内：按 0 落位（误差 ≤ 1 帧）
-    if (lag < 0 && lag > -MV_FRAME_SEC) lag = 0;
-    const trimIn = r(base + lag);
-    const trimOut = r(trimIn + input.durationSec);
-    if (drift > MV_SINGING_DRIFT_MAX_SEC + 1e-6)
-      return { ...input, ...m, ok: false, trimInSec: trimIn, trimOutSec: trimOut, driftSec: r(drift), reasonZh: `演唱段口型漂移 ${(drift * 1000).toFixed(0)} 毫秒，超过 2 帧，需重做该段` };
-    if (trimIn < 0)
-      return { ...input, ...m, ok: false, trimInSec: trimIn, trimOutSec: trimOut, driftSec: r(drift), reasonZh: `演唱段比原歌晚起 ${(-lag * 1000).toFixed(0)} 毫秒以上，开头唱句缺失，需重做该段` };
-    if (trimOut > m.measuredSec + 1e-6)
-      return { ...input, ...m, ok: false, trimInSec: trimIn, trimOutSec: trimOut, driftSec: r(drift), shortfallSec: r(trimOut - m.measuredSec), reasonZh: `演唱段实测 ${m.measuredSec.toFixed(2)} 秒，落位后不够到唱句尾（缺 ${(trimOut - m.measuredSec).toFixed(2)} 秒），需重做该段` };
-    return { ...input, ...m, ok: true, trimInSec: trimIn, trimOutSec: trimOut, driftSec: r(drift) };
-  }
+  // 演唱镜：@音频1 从片首对齐原歌该窗，按请求时间线落位（trimIn = 入片偏移），不平移、不变速。
+  // 1109：模型自带音轨不会复现原唱，不能用音轨相关判口型；口型由视觉核验（嘴部张合 × 人声包络）另判。
   const trimIn = r(base);
   const trimOut = r(base + input.durationSec);
   if (trimOut > m.measuredSec + 1e-6)
@@ -76,7 +57,7 @@ export function planMvClipFit(input: MvClipFitInput, m: MvClipFitMeasure): MvCli
       ...input, ...m, ok: false, trimInSec: trimIn, trimOutSec: trimOut, shortfallSec: r(trimOut - m.measuredSec),
       reasonZh: input.kind === "footage"
         ? `素材实测 ${m.measuredSec.toFixed(2)} 秒，不够选段终点 ${trimOut.toFixed(2)} 秒，请改选素材`
-        : `生成段实测 ${m.measuredSec.toFixed(2)} 秒，不够入片 ${trimOut.toFixed(2)} 秒（缺 ${(trimOut - m.measuredSec).toFixed(2)} 秒），需重做该段`,
+        : `${input.kind === "singing" ? "演唱段" : "生成段"}实测 ${m.measuredSec.toFixed(2)} 秒，不够入片 ${trimOut.toFixed(2)} 秒（缺 ${(trimOut - m.measuredSec).toFixed(2)} 秒），需重做该段`,
     };
   return { ...input, ...m, ok: true, trimInSec: trimIn, trimOutSec: trimOut };
 }
@@ -126,4 +107,35 @@ export function estimateEnvelopeLagSec(
     if (Math.abs(den) > 1e-12) frac = Math.max(-0.5, Math.min(0.5, (0.5 * (y0 - y2)) / den));
   }
   return { lagSec: Math.round((bestLag + frac) * hop * 1000) / 1000, confidence: Math.round(best * 1000) / 1000 };
+}
+
+
+/** 视觉口型核验阈值（1109 用户口径）：相关 ≥0.5 且 |偏移| ≤2 帧。 */
+export const MV_LIPSYNC_MIN_CORR = 0.5;
+export const MV_LIPSYNC_MAX_LAG_FRAMES = 2;
+/**
+ * 嘴部张合度序列（每帧一个值，缺脸帧为 NaN）与原歌人声能量包络（同帧率）做归一化互相关。
+ * 返回相关系数、最优偏移（帧，正值＝口型比歌声晚）与是否通过。
+ */
+export function lipSyncCorrelation(mouth: readonly number[], vocal: readonly number[], maxLagFrames = 10) {
+  const n = Math.min(mouth.length, vocal.length);
+  let best = { corr: -1, lag: 0 };
+  for (let lag = -maxLagFrames; lag <= maxLagFrames; lag++) {
+    const xs: number[] = [], ys: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const j = i + lag;
+      if (j < 0 || j >= mouth.length) continue;
+      const m = mouth[j]!;
+      if (!Number.isFinite(m)) continue;
+      xs.push(m); ys.push(vocal[i]!);
+    }
+    if (xs.length < 15) continue;
+    const mx = xs.reduce((s, v) => s + v, 0) / xs.length, my = ys.reduce((s, v) => s + v, 0) / ys.length;
+    let sxy = 0, sxx = 0, syy = 0;
+    for (let k = 0; k < xs.length; k++) { sxy += (xs[k]! - mx) * (ys[k]! - my); sxx += (xs[k]! - mx) ** 2; syy += (ys[k]! - my) ** 2; }
+    const corr = sxy / Math.sqrt(sxx * syy || 1);
+    if (corr > best.corr) best = { corr, lag };
+  }
+  const faceCoverage = mouth.slice(0, n).filter(Number.isFinite).length / Math.max(1, n);
+  return { corr: Math.round(best.corr * 1000) / 1000, lagFrames: best.lag, faceCoverage: Math.round(faceCoverage * 1000) / 1000, pass: best.corr >= MV_LIPSYNC_MIN_CORR && Math.abs(best.lag) <= MV_LIPSYNC_MAX_LAG_FRAMES };
 }

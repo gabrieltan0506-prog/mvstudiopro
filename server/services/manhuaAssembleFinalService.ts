@@ -234,7 +234,7 @@ export async function runManhuaAssembleFinal(
       throw error;
     }
     // 只裁不变速：按实测落位后的裁切点覆盖
-    sceneVideos = sceneVideos.map((sv, i) => ({ ...sv, trimInSec: mvClipFit!.results[i]!.trimInSec, trimOutSec: mvClipFit!.results[i]!.trimOutSec }));
+    sceneVideos = sceneVideos.map((sv, i) => ({ ...sv, trimInSec: mvClipFit!.results[i]!.trimInSec, trimOutSec: mvClipFit!.results[i]!.trimOutSec, ...(mvClipFit!.results[i]!.kind === "singing" ? { muteSourceAudio: true } : {}) }));
   }
   const musicPrompt = "";
   const musicProviderUsed = "";
@@ -272,6 +272,7 @@ export async function runManhuaAssembleFinal(
       stillDuration: sv.stillDuration,
       trimInSec: sv.trimInSec,
       trimOutSec: sv.trimOutSec,
+      ...((sv as { muteSourceAudio?: boolean }).muteSourceAudio ? { muteSourceAudio: true } : {}),
     })),
     musicUrl: musicUrl || undefined,
     musicVolume,

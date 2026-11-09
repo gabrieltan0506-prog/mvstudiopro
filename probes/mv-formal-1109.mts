@@ -33,10 +33,14 @@ import { runManhuaAssembleFinal } from "../server/services/manhuaAssembleFinalSe
 import { buildEvolinkSeedanceRequest, pollEvolinkVideoTaskOnce, submitEvolinkSeedanceVideo } from "../server/services/evolinkSeedanceVideo";
 import { computeSongBeatGrid } from "../server/services/musicMvBeatGrid";
 import { snapShotCutsToBeats, beatsInRange, musicMvSingingPlacement } from "../shared/canvasMusicMvBeats";
+import { estimateEnvelopeLagSec } from "../shared/canvasMusicMvClipFit";
 import { composeMusicMvShotBeats } from "../server/services/musicMvShotBeats";
 import { composeCreativeAtHop } from "../server/services/musicMvAdvisor";
 import { CREATIVE_LLM_HOPS } from "../server/services/creativeLlmHops";
 import { generateGptImage2FromRawEnglishPrompt } from "../server/services/proxyImageService";
+import { markChantFrom, partitionShotsByLyricKind, planMvHighlightFades, withSuggestedLyricKinds } from "../shared/canvasMusicMvLyricKinds";
+import { composeMusicMvFillPlan } from "../server/services/musicMvFillPlan";
+import { buildMvFillShot } from "../server/services/mvFillShot";
 import { canvasMusicMvPlanSchema, musicMvPacingAt, mvShotNeedsStagingReference, type CanvasMusicMvPlan, type MusicMvBeatGrid, type MusicMvLyricTable } from "../shared/canvasMusicMv";
 
 const run = promisify(execFile);
@@ -44,7 +48,9 @@ const BUCKET = "mv-studio-pro-vertex-video-temp";
 const PROBE_USER = 999999001;
 const ENGINE = "seedance-2.0-mini" as const;
 const FRAME = 1 / 30;
-const [runId, projectPrefix = "d31a3a49", reuseRunId, lyricsRunId] = process.argv.slice(2);
+const [runId, projectPrefix = "d31a3a49", reuseRunId, lyricsRunId, chantFromArg] = process.argv.slice(2);
+/** 用户口径（1109）：本曲从 36.0 秒起几乎全是吟唱；跨该秒的句子切开。 */
+const CHANT_FROM_SEC = chantFromArg ? Number(chantFromArg) : undefined;
 if (!runId || !/^[a-z0-9-]{6,80}$/.test(runId)) throw Error("缺少 runId");
 const base = `probes/mv-formal/${runId}`;
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
@@ -114,6 +120,8 @@ if (!s0 && lyricsRunId) {
 }
 if (!s0?.recommendation) throw Error("缺少整首歌词与推荐高光（00 检查点）");
 s1.highlight = { startSec: s0.recommendation.startSec, endSec: s0.recommendation.endSec };
+// 句类型：先给建议，再按用户口径从 CHANT_FROM_SEC 起全部为吟唱（待确认版，未经用户确认）
+s0.table = { ...s0.table, lines: CHANT_FROM_SEC !== undefined ? markChantFrom(withSuggestedLyricKinds(s0.table.lines), CHANT_FROM_SEC) : withSuggestedLyricKinds(s0.table.lines) };
 const songBuf = s1.audio.gcsUri ? (await downloadGcsObject({ gcsUri: s1.audio.gcsUri })).buffer : Buffer.from(await (await fetch(s1.audio.url)).arrayBuffer());
 const songFile = path.join(work, "song");
 await writeFile(songFile, songBuf);
@@ -123,20 +131,10 @@ log("highlight", s1.highlight, "song", s1.audio.durationSec, "sha", sha(songBuf)
 type Step2 = { grid: MusicMvBeatGrid & { strongBeatsSec: number[] }; plan: CanvasMusicMvPlan; snapFixes: unknown[]; before: Array<[string, number, number]>; designatedSinging: string[] };
 const s2 = await cached<Step2>("02-audiomap", async () => {
   const grid = await computeSongBeatGrid(songBuf, s1.creativePrompt);
-  // 探针设定：高光内被唱句覆盖 ≥50% 且 ≥4 秒的镜头按演唱段做（分镜原为生成段；未经顾问重出分镜，报告注明）
-  const lines = s0.table.lines;
-  const covered = (a: number, b: number) => lines.reduce((sum, l) => sum + Math.max(0, Math.min(b, l.endSec) - Math.max(a, l.startSec)), 0);
-  const designated: string[] = [];
-  s1.plan = canvasMusicMvPlanSchema.parse({
-    ...s1.plan,
-    shots: s1.plan.shots.map(sh => {
-      const a = Math.max(sh.startSec, s1.highlight.startSec), b = Math.min(sh.endSec, s1.highlight.endSec);
-      if (b <= a || sh.kind === "footage" || sh.endSec - sh.startSec < 4 || covered(sh.startSec, sh.endSec) / (sh.endSec - sh.startSec) < 0.5) return sh;
-      designated.push(sh.id);
-      return { ...sh, kind: "singing" as const, referenceIndices: sh.referenceIndices.length ? sh.referenceIndices : [0] };
-    }),
-  });
-  (globalThis as any).__designatedSinging = designated;
+  // 按句类型分工（与生产 reviseForLyrics 同函数）：真歌词 → 演唱段；吟唱 → 素材填充段；跨吟唱起点的镜切开
+  const parted = partitionShotsByLyricKind(s1.plan.shots, s0.table.lines, s1.highlight);
+  s1.plan = canvasMusicMvPlanSchema.parse({ ...s1.plan, shots: parted.shots });
+  const designated = parted.changes.map(c => `${c.id}：${c.detailZh}`);
   const inRange = s1.plan.shots.filter(s => s.endSec > s1.highlight.startSec && s.startSec < s1.highlight.endSec);
   const snapped = snapShotCutsToBeats(inRange, grid, 0.5);
   const map = new Map(snapped.shots.map(s => [s.id, s]));
@@ -144,7 +142,8 @@ const s2 = await cached<Step2>("02-audiomap", async () => {
   return { grid, plan, snapFixes: snapped.fixes, before: inRange.map(s => [s.id, s.startSec, s.endSec] as [string, number, number]), designatedSinging: designated };
 });
 const rows = musicMvShotSlices(s2.plan, s1.highlight);
-const genRows = rows.filter(r => r.shot.kind !== "footage");
+const genRows = rows.filter(r => r.shot.kind !== "footage" && !r.shot.fillRequested);
+const fillRows = rows.filter(r => r.shot.kind !== "footage" && r.shot.fillRequested);
 log("bpm", s2.grid.bpm, "conf", s2.grid.beatConfidence, "shots", rows.map(r => `${r.shot.id}[${r.shot.kind}] ${r.shot.startSec}-${r.shot.endSec}`));
 
 // ── 3. 歌词表（整首，待确认版，来自 00 检查点） ───────────────────
@@ -161,7 +160,17 @@ const s4 = await cached<Step4>("04-beats", async () => {
   return { plan: canvasMusicMvPlanSchema.parse(out.plan), failedShotIds: out.failedShotIds, failuresZh: out.failuresZh };
 });
 if (s4.failedShotIds.length) throw Error(`逐窗节拍未出：${s4.failedShotIds.join(",")}；${s4.failuresZh.join("；")}`);
-const shotOf = (id: string) => s4.plan.shots.find(s => s.id === id)!;
+// ── 4b. 吟唱镜素材填充建议（顾问同一三跳链） ─────────────────────
+type Step4b = { plan: CanvasMusicMvPlan; failuresZh: string[] };
+const s4b = await cached<Step4b>("04b-fill", async () => {
+  const out = await composeMusicMvFillPlan(
+    { plan: s4.plan, shotIds: fillRows.map(r => r.shot.id), beatGrid: s2.grid, creativePrompt: s1.creativePrompt, lyricLines: s0.table.lines },
+    { hops: CREATIVE_LLM_HOPS, compose: composeCreativeAtHop, save: async (name, value) => putJson(`advisor/fill-${name}.json`, value) },
+  );
+  return { plan: canvasMusicMvPlanSchema.parse(out.plan), failuresZh: out.failuresZh };
+});
+if (fillRows.some(r => !s4b.plan.shots.find(s => s.id === r.shot.id)?.fill?.length)) throw Error(`素材填充建议未出：${s4b.failuresZh.join("；")}`);
+const shotOf = (id: string) => s4b.plan.shots.find(s => s.id === id)!;
 
 // ── 5. 主锚图 = 生成的主角定妆帧 ─────────────────────────────────
 type Anchor = { gcsUri: string; prompt: string; sourceUrl: string };
@@ -230,15 +239,17 @@ const tailFrame = async (shotId: string) => {
   const file = path.join(work, `${shotId}-tail.mp4`);
   await writeFile(file, (await downloadGcsObject({ gcsUri: f.gcsUri! })).buffer);
   const png = path.join(work, `${shotId}-tail.png`);
-  await run("ffmpeg", ["-y", "-v", "error", "-sseof", "-0.1", "-i", file, "-frames:v", "1", png]);
+  // 取最后 1 秒逐帧覆盖写，留下的就是末帧（-sseof 太靠尾可能一帧都解不出）
+  await run("ffmpeg", ["-y", "-v", "error", "-sseof", "-1", "-i", file, "-update", "1", "-q:v", "2", png]);
   const obj = `${base}/chain/${shotId}-tail.png`;
   await uploadBufferToGcs({ bucket: BUCKET, objectName: obj, buffer: await readFile(png), contentType: "image/png" });
   return `gs://${BUCKET}/${obj}`;
 };
 const submitShot = async (id: string, attempt: number) => {
   const shot = shotOf(id);
-  const idx = genRows.findIndex(r => r.shot.id === id);
-  const prev = idx > 0 ? genRows[idx - 1]!.shot.id : undefined;
+  const idx = rows.findIndex(r => r.shot.id === id);
+  const prevRow = idx > 0 ? rows[idx - 1] : undefined;
+  const prev = prevRow && genRows.some(g => g.shot.id === prevRow.shot.id) ? prevRow.shot.id : undefined;
   const chain = Boolean(shot.continuesFromPrevious && prev && finals[prev]?.state === "completed");
   const refs = s6.references[id]!;
   const assembled = assembleMvShotReferences(refs, { startSec: shot.startSec, endSec: shot.endSec, kind: shot.kind }, ENGINE, { requiresStaging: mvShotNeedsStagingReference(shot.complexity) });
@@ -274,7 +285,8 @@ const pollUntilDone = async (ids: string[]) => {
       const id = genRows[i]!.shot.id;
       if (!ids.includes(id) || submitted[id]) continue;
       const shot = shotOf(id);
-      const prev = i > 0 ? genRows[i - 1]!.shot.id : undefined;
+      const ri = rows.findIndex(r => r.shot.id === id);
+      const prev = ri > 0 && genRows.some(g => g.shot.id === rows[ri - 1]!.shot.id) ? rows[ri - 1]!.shot.id : undefined;
       if (shot.continuesFromPrevious && prev && !finals[prev]) continue;
       await submitShot(id, 1);
     }
@@ -313,6 +325,38 @@ if (failedGen.length) {
   throw Error(`镜头未全部出片：${failedGen.map(r => r.shot.id).join(",")}`);
 }
 
+// ── 7b. 素材填充镜头：每窗取首个图库候选（视频直接剪入 / 照片推拉），按帧精确拼成与镜头等长的片段 ──
+type FillPick = { shotId: string; windows: Array<{ startSec: number; endSec: number; mode: string; queryEn: string; cameraZh: string; reasonZh: string; assetId: string; gcsUri: string; label: string }>; built: { gcsUri: string; durationSec: number; frames: number } };
+const fillPicks = await cached<Record<string, FillPick>>("07b-fill", async () => {
+  const out: Record<string, FillPick> = {};
+  const used = new Set<string>();
+  for (const row of fillRows) {
+    const shot = shotOf(row.shot.id);
+    const windows: FillPick["windows"] = [];
+    for (const w of shot.fill!) {
+      const cand = w.candidates.find(c => c.mode !== "generated");
+      if (!cand) throw Error(`${shot.id} ${w.startSec}–${w.endSec} 没有图库候选`);
+      const kind = cand.mode === "stock_video" ? "video" as const : "photo" as const;
+      const len = w.endSec - w.startSec;
+      const search = await searchPexels({ query: cand.queryEn, kind, orientation: "portrait", page: 1, perPage: 15, purpose: "mvShot", ...(kind === "video" ? { minDurationSec: Math.ceil(len + 0.5), maxDurationSec: 60 } : {}) } as any);
+      await putJson(`raw/fill-pexels-${shot.id}-${w.startSec}.json`, { query: cand.queryEn, kind, result: search });
+      let asset: any;
+      for (const c of search.candidates) {
+        if (used.has(c.providerAssetId)) continue;
+        const res = await adoptStockFootage(PROBE_USER, { requestId: randomUUID(), providerAssetId: c.providerAssetId, kind, purpose: "mvShot", usage: "reference", orientation: "portrait", context: { projectId: `probe-${runId}`, shotId: shot.id, note: "mv fill probe" } });
+        await putJson(`raw/fill-adopt-${c.providerAssetId}.json`, res);
+        if (res.status === "succeeded" && res.asset) { used.add(c.providerAssetId); asset = res.asset; break; }
+      }
+      if (!asset) throw Error(`图库没有可采用的素材：${cand.queryEn}`);
+      windows.push({ startSec: w.startSec, endSec: w.endSec, mode: cand.mode, queryEn: cand.queryEn, cameraZh: cand.cameraZh, reasonZh: cand.reasonZh, assetId: asset.assetId, gcsUri: asset.gcsUri, label: `${asset.source.author.name} / Pexels` });
+    }
+    const built = await buildMvFillShot(PROBE_USER, { shotId: shot.id, aspect: s1.aspect, windows: windows.map(w => ({ startSec: w.startSec, endSec: w.endSec, kind: w.mode === "stock_video" ? "video" : "photo", gcsUri: w.gcsUri, cameraZh: w.cameraZh })) });
+    out[shot.id] = { shotId: shot.id, windows, built: { gcsUri: built.gcsUri, durationSec: built.durationSec, frames: built.frames } };
+  }
+  return out;
+});
+for (const [id, f] of Object.entries(fillPicks)) finals[id] = { state: "completed", gcsUri: f.built.gcsUri, durationSec: f.built.durationSec, hasAudio: false };
+
 // ── 8. 正式合成（含实测适配；不合格段只重做该段一次） ─────────────
 const clips = () => rows.map((row, index) => ({
   episodeIndex: 1, segmentIndex: index + 1,
@@ -325,15 +369,19 @@ const mvClipFit = rows.map(({ shot, offsetSec, durationSec }) => ({
   shotId: shot.id, kind: shot.kind ?? "generated", songStartSec: Math.round((shot.startSec + offsetSec) * 1000) / 1000, offsetSec, durationSec,
   ...(shot.kind === "footage" && shot.sourceClip ? { sourceStartSec: shot.sourceClip.sourceStartSec } : {}),
 }));
-type Step9 = { payload: unknown; result: any; gcsUri: string; bytes: number; sha256: string; redone: string[] };
+const fades = planMvHighlightFades({ range: s1.highlight, lines: s0.table.lines, beatGrid: s2.grid });
+log("fades", fades);
+type Step9 = { payload: unknown; result: any; gcsUri: string; bytes: number; sha256: string; redone: string[]; diagnostic?: { reasonZh: string; unfit: unknown[] } };
 let s9 = await getJson<Step9>("checkpoints/09-assemble.json");
 if (!s9) {
   const redone: string[] = [];
   let result: any;
+  let diagnostic: { reasonZh: string; unfit: unknown[] } | undefined;
   for (let round = 1; round <= 2; round++) {
     const payload = buildManhuaAssembleJobInput({
       clips: clips(), expectedSegments: clips().map(({ episodeIndex, segmentIndex }) => ({ episodeIndex, segmentIndex })),
       musicUrl: s1.audio.gcsUri || s1.audio.url, musicOnly: true, sourceAudioGainDb: -20, mvClipFit,
+      ...(fades.fadeInSec > 0 ? { videoFadeInSec: fades.fadeInSec } : {}), ...(fades.fadeOutSec > 0 ? { videoFadeOutSec: fades.fadeOutSec } : {}),
       musicStartSec: Math.round(s1.highlight.startSec * 30) / 30, musicEndSec: Math.round(s1.highlight.endSec * 30) / 30,
       musicVolume: 1, musicFadeInSec: 0, musicFadeOutSec: 0, transition: "cut", resolution: s1.aspect,
     });
@@ -344,10 +392,25 @@ if (!s9) {
       break;
     } catch (error: any) {
       await putJson(`raw/assemble-r${round}-error.json`, { message: error?.message, code: error?.code, mvClipFit: error?.mvClipFit });
-      if (error?.code !== "music_mv_clip_unfit" || round === 2) throw error;
+      // 续跑时这些镜已重做过一次：不再重提，直接走诊断成片
+      const alreadyRedone = error?.code === "music_mv_clip_unfit" && error.mvClipFit.redoShotIds.every((id: string) => (submitted[id]?.attempt ?? 1) >= 2);
+      if (error?.code === "music_mv_clip_unfit" && (round === 2 || alreadyRedone)) {
+        // 重做一次后演唱段仍过不了口型核验：照样出一版「诊断成片」供审（演唱段按请求时间线落位：@音频1 从片首对齐），
+        // 但演唱段核验失败记为阻断项，不当作通过。
+        const bad = error.mvClipFit.results.filter((r: any) => !r.ok);
+        for (const id of error.mvClipFit.redoShotIds) if (!redone.includes(id) && (submitted[id]?.attempt ?? 1) >= 2) redone.push(id);
+        if (bad.some((r: any) => r.kind !== "singing")) throw error;
+        diagnostic = { reasonZh: "演唱段口型落位核验未通过（生成片自带音轨与原歌相关度过低或漂移），本成片演唱段按请求时间线落位，仅供审看", unfit: bad };
+        const payload2 = buildManhuaAssembleJobInput({ ...(payload.params as any), mvClipFit: mvClipFit.map(f => (f.kind === "singing" ? { ...f, kind: "generated" as const } : f)) });
+        await putJson("raw/assemble-diagnostic-payload.json", payload2);
+        result = await runManhuaAssembleFinal(payload2.params as any, { userId: PROBE_USER });
+        await putJson("raw/assemble-diagnostic-result.json", result);
+        break;
+      }
+      if (error?.code !== "music_mv_clip_unfit") throw error;
       const redo: string[] = error.mvClipFit.redoShotIds;
       log("unfit, redo only", redo);
-      for (const id of redo) { redone.push(id); await submitShot(id, 2); }
+      for (const id of redo) { if (fillPicks[id]) throw Error(`素材填充镜头 ${id} 实测不合格：${JSON.stringify(error.mvClipFit.results.find((r: any) => r.shotId === id))}`); redone.push(id); await submitShot(id, 2); }
       await pollUntilDone(redo);
     }
   }
@@ -355,7 +418,7 @@ if (!s9) {
   const buf = (await downloadGcsObject({ gcsUri: `gs://${getGcsBucketName()}/${objectName}` })).buffer;
   const copy = `${base}/final/mv-highlight-${s1.highlight.startSec}-${s1.highlight.endSec}.mp4`;
   await uploadBufferToGcs({ bucket: BUCKET, objectName: copy, buffer: buf, contentType: "video/mp4" });
-  s9 = { payload: null, result, gcsUri: `gs://${BUCKET}/${copy}`, bytes: buf.length, sha256: sha(buf), redone };
+  s9 = { payload: null, result, gcsUri: `gs://${BUCKET}/${copy}`, bytes: buf.length, sha256: sha(buf), redone, diagnostic };
   await putJson("checkpoints/09-assemble.json", s9);
   await mark("09-assemble");
 }
@@ -391,14 +454,47 @@ const cutChecks = cuts.map(c => {
   return { cutSec: c.at, between: [c.left.id, c.right.id], pacing, nearestBeatSec: nearest, offBeatSec: Number(offBeatSec.toFixed(4)), onBeat: offBeatSec <= FRAME, exempt };
 });
 const placement = musicMvSingingPlacement(rows, s1.highlight.startSec);
+// 淡出断言：成片相对原歌切片的增益（每 0.25 秒分箱 RMS 之差）单调下降（容差 2 dB，环境层会带入少量起伏），末 0.1 秒降到静音
+const T = expected;
+const rate = 8000;
+const rmsDb = (x: number[], t0: number, t1: number) => {
+  let sum = 0, cnt = 0;
+  for (let i = Math.floor(t0 * rate); i < Math.min(x.length, Math.floor(t1 * rate)); i++) { sum += x[i]! * x[i]!; cnt++; }
+  return cnt ? 10 * Math.log10(sum / cnt + 1e-12) : -120;
+};
+const binsDb: number[] = [];
+const gainDb: number[] = [];
+for (let t = T - fades.fadeOutSec; t + 0.25 <= T + 1e-6; t += 0.25) {
+  binsDb.push(rmsDb(a, t, t + 0.25));
+  gainDb.push(rmsDb(a, t, t + 0.25) - rmsDb(b, t, t + 0.25));
+}
+const monotonic = gainDb.every((v, i) => i === 0 || v <= gainDb[i - 1]! + 2);
+const tailDb = rmsDb(a, T - 0.1, T);
+// 主轨核对：起音包络互相关（波形逐点相关对 AAC 编码延迟过敏），偏移 ≤1 帧且相关 ≥0.8
+const envAlign = estimateEnvelopeLagSec(Float32Array.from(b), Float32Array.from(a), rate, 0.5);
+// 线性 RMS 包络（50 ms）皮尔逊相关，不含淡出段：原歌 0 dB 为主轨时应 ≥0.9（环境层 −20 dB 只带入少量差异）
+const rmsEnv = (x: number[]) => { const out: number[] = []; const w = rate * 0.05; for (let i = 0; i + w <= Math.min(x.length, (T - fades.fadeOutSec) * rate); i += w) { let s2 = 0; for (let j = i; j < i + w; j++) s2 += x[j]! * x[j]!; out.push(Math.sqrt(s2 / w)); } return out; };
+const ea = rmsEnv(a), eb = rmsEnv(b); const m = Math.min(ea.length, eb.length);
+const mean = (x: number[]) => x.slice(0, m).reduce((p, v) => p + v, 0) / m;
+const ma = mean(ea), mb = mean(eb);
+let sab = 0, saa = 0, sbb = 0;
+for (let i = 0; i < m; i++) { sab += (ea[i]! - ma) * (eb[i]! - mb); saa += (ea[i]! - ma) ** 2; sbb += (eb[i]! - mb) ** 2; }
+const rmsEnvCorr = sab / Math.sqrt(saa * sbb || 1);
+const lastFrame = path.join(work, "last.png");
+await run("ffmpeg", ["-y", "-v", "error", "-sseof", "-0.5", "-i", finalFile, "-update", "1", lastFrame]);
+const lastLumaText = (await run("ffmpeg", ["-v", "error", "-i", lastFrame, "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", "-f", "null", "-"])).stdout;
+const lastYavg = Number(/YAVG=([\d.]+)/.exec(lastLumaText)?.[1] ?? NaN);
 const fit = s9.result?.mvClipFit?.results || [];
 const checks = {
   shotsSumIs45sWithin1Frame: Math.abs(sumDur - expected) <= FRAME + 1e-9,
   finalVideoIs45sWithin1Frame: Math.abs(Number(finalVideo?.duration ?? fp.format?.duration) - expected) <= FRAME + 0.01,
   cutsOnBeat: cutChecks.every(c => c.onBeat || c.exempt),
-  finalMainTrackIsSongSlice: audioStreams.length === 1 && Math.abs(Number(audioStreams[0]?.duration) - expected) <= 0.1 && correlation >= 0.9,
+  finalMainTrackIsSongSlice: audioStreams.length === 1 && Math.abs(Number(audioStreams[0]?.duration) - expected) <= 0.1 && Math.abs(envAlign.lagSec) <= FRAME + 1e-6 && rmsEnvCorr >= 0.9,
   singingPlacementWithin1Frame: placement.every(p => p.errorSec <= FRAME + 1e-9) && fit.filter((r: any) => r.kind === "singing").every((r: any) => r.ok && (r.driftSec ?? 0) <= 2 * FRAME + 1e-6),
-  allClipsMeasuredAndFit: fit.length === rows.length && fit.every((r: any) => r.ok),
+  allClipsMeasuredAndFit: !s9.diagnostic && fit.length === rows.length && fit.every((r: any) => r.ok),
+  singingLipSyncVerified: !s9.diagnostic,
+  endFadeOutAudioMonotonicToSilence: gainDb.length >= 4 && monotonic && tailDb < -40,
+  endFadeOutLastFrameBlack: Number.isFinite(lastYavg) && lastYavg < 24,
   allReferenceToVideo: genRows.every(r => /reference-to-video$/.test(submitted[r.shot.id]!.model) && submitted[r.shot.id]!.mode === "reference_to_video"),
   stagingRefsWhereRequired: genRows.every(r => !mvShotNeedsStagingReference(shotOf(r.shot.id).complexity) || (submitted[r.shot.id]!.body as any).video_urls?.length >= 1),
   generatedAudioOnForAmbience: genRows.every(r => (submitted[r.shot.id]!.body as any).generate_audio === true),
@@ -406,14 +502,16 @@ const checks = {
 const blockers = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
 const summary = {
   runId, at: new Date().toISOString(), pass: blockers.length === 0, blockers, checks,
-  measures: { expectedSec: expected, shotsSumSec: sumDur, finalVideoSec: Number(finalVideo?.duration ?? fp.format?.duration), finalAudioSec: Number(audioStreams[0]?.duration), correlation, width: finalVideo?.width, height: finalVideo?.height, bytes: s9.bytes, sha256: s9.sha256 },
+  measures: { mainTrackEnvelopeLagSec: envAlign.lagSec, mainTrackOnsetCorrelation: envAlign.confidence, mainTrackRmsEnvelopeCorrelation: rmsEnvCorr, expectedSec: expected, shotsSumSec: sumDur, finalVideoSec: Number(finalVideo?.duration ?? fp.format?.duration), finalAudioSec: Number(audioStreams[0]?.duration), correlation, width: finalVideo?.width, height: finalVideo?.height, bytes: s9.bytes, sha256: s9.sha256 },
   audiomap: { bpm: s2.grid.bpm, source: s2.grid.source, phaseSec: s2.grid.phaseSec, beatConfidence: s2.grid.beatConfidence, segmentsInHighlight: s2.grid.segments?.filter(g => g.endSec > s1.highlight.startSec && g.startSec < s1.highlight.endSec) },
   cutSnap: { before: s2.before, fixes: s2.snapFixes, cuts: cutChecks },
   highlight: { ...s1.highlight, rule: s0.recommendation.reasonZh, lineCount: s0.recommendation.lineCount },
-  designatedSinging: s2.designatedSinging,
-  lyricTable: { status: "pending（未经用户确认）", recognizedBy: lyricTable.recognizedBy, evidence: lyricTable.evidencePrefix, linesInHighlight: lyricTable.lines.filter(l => l.endSec > s1.highlight.startSec && l.startSec < s1.highlight.endSec), totalLines: lyricTable.lines.length },
+  shotRoles: s2.designatedSinging,
+  fades: { ...fades, endBinsDb: binsDb.map(v => Number(v.toFixed(1))), gainVsSongDb: gainDb.map(v => Number(v.toFixed(1))), tailLast100msDb: Number(tailDb.toFixed(1)), lastFrameYavg: lastYavg },
+  fill: Object.fromEntries(Object.entries(fillPicks).map(([id, f]) => [id, { advisorWindows: shotOf(id).fill, chosen: f.windows, built: { ...f.built, url24h: signGsUriV4ReadUrl(f.built.gcsUri, 24 * 3600) } }])),
+  lyricTable: { status: "pending（未经用户确认）", recognizedBy: lyricTable.recognizedBy, evidence: lyricTable.evidencePrefix, chantFromSec: CHANT_FROM_SEC, lines: s0.table.lines, totalLines: s0.table.lines.length },
   singingPlacement: placement,
-  clipFit: fit, redone: s9.redone,
+  clipFit: fit, redone: s9.redone, diagnostic: s9.diagnostic,
   anchor: { gcsUri: anchor.gcsUri, url24h: signGsUriV4ReadUrl(anchor.gcsUri, 24 * 3600), prompt: anchor.prompt },
   final: { gcsUri: s9.gcsUri, url24h: signGsUriV4ReadUrl(s9.gcsUri, 24 * 3600) },
   shots: rows.map(r => {
@@ -427,6 +525,8 @@ const summary = {
     };
   }),
 };
+const prevVerdict = await getJson("checkpoints/99-verdict.json");
+if (prevVerdict) await putJson(`checkpoints/99-verdict-prev-${Date.now()}.json`, prevVerdict);
 await putJson("checkpoints/99-verdict.json", summary);
 await mark("99-verdict");
 log("VERDICT", JSON.stringify({ pass: summary.pass, blockers, checks, measures: summary.measures }));

@@ -23,6 +23,8 @@ import {
   mvShotReferencesSchema,
   mvAnchorKeyframePrompt,
   mvShotReferenceLimits,
+  mvSingerKeyframePrompt,
+  detectPerformerGender,
   type MvShotReferenceImage,
   type MvShotReferences,
 } from "@shared/canvasMusicMvReferences";
@@ -148,6 +150,29 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
     await props.onFillComposed?.(shot.id, { gcsUri: built.gcsUri, durationSec: built.durationSec });
   };
 
+  /** 演唱者与叙事主角分开锁：演唱镜的 @图片1 换成按声线生成的演唱者定妆帧。 */
+  const [singerGender, setSingerGender] = useState<"男" | "女">(() => detectPerformerGender(props.cinemaHintZh) ?? "男");
+  const generateSinger = async () => {
+    setError("");
+    setGenerating(true);
+    try {
+      const aspect = props.orientation === "landscape" ? "16:9" : "9:16";
+      const receipt = await createJobSameOrigin({ type: "image", userId: String(user?.id || ""), input: buildCanvasGptImage2JobInput({ prompt: mvSingerKeyframePrompt(singerGender, props.cinemaHintZh, aspect), aspectRatio: aspect, openaiImageVariant: "sunburst", requireImageVariant: true, imageLane: "asset" }) });
+      const job = await pollJobUntilTerminal(receipt.jobId, { intervalMs: 2500, maxWaitMs: 20 * 60 * 1000 });
+      const url = String(job.output?.imageUrl || job.output?.imageUrls?.[0] || "");
+      const gcsUri = job.status === "succeeded" ? assetImageGcsUri(url) : undefined;
+      if (!gcsUri) throw new Error(job.error || "演唱者定妆帧尚未取得，任务编号已保留，请稍后重试查询");
+      const singer = { gcsUri, label: `演唱者定妆帧（${singerGender}声）`, hasRealPerson: false };
+      const next = { ...(props.shotReferences || {}) };
+      for (const shot of shots.filter(s => s.kind === "singing")) next[shot.id] = mvShotReferencesSchema.parse({ ...refsOf(shot.id), anchorImage: singer });
+      props.onChange({ anchorImage: props.anchorImage, shotReferences: next });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "演唱者定妆帧生成失败");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const onPick = async (pick: StockFootagePick) => {
     if (!target) return;
     setError("");
@@ -263,6 +288,15 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
         <button className={button} disabled={disabled || generating} onClick={() => void generateAnchor()}>
           {generating ? "正在生成定妆帧…" : props.anchorImage ? "重新生成主角定妆帧" : "按主角描述生成主锚图"}
         </button>
+        {shots.some(s => s.kind === "singing") && (
+          <span className="flex items-center gap-1">
+            <select aria-label="演唱者声线" className="rounded border border-white/20 bg-black/30 p-1" value={singerGender} disabled={disabled || generating} onChange={e => setSingerGender(e.target.value as "男" | "女")}>
+              <option value="男">男声</option>
+              <option value="女">女声</option>
+            </select>
+            <button className={button} disabled={disabled || generating} onClick={() => void generateSinger()}>生成演唱者定妆帧（只套演唱镜）</button>
+          </span>
+        )}
         <button className={button} disabled={disabled} onClick={() => setTarget({ kind: "anchor" })}>
           {props.anchorImage ? "从图库更换主锚图" : "从图库选主锚图"}
         </button>

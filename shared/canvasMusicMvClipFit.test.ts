@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { estimateEnvelopeLagSec, planMvClipFit } from "./canvasMusicMvClipFit";
+import { estimateEnvelopeLagSec, lipSyncCorrelation, planMvClipFit } from "./canvasMusicMvClipFit";
 
 describe("出片实测适配：只裁不变速，不合格段单独重做", () => {
   it("生成段实测够长 → 裁到目标；不够 → 该段重做并写缺口", () => {
@@ -10,14 +10,21 @@ describe("出片实测适配：只裁不变速，不合格段单独重做", () =
     expect(short.shortfallSec).toBe(1);
     expect(short.reasonZh).toContain("需重做该段");
   });
-  it("演唱段按偏移落位；漂移 > 2 帧、相关度低或晚起 → 不合格", () => {
-    const fit = { shotId: "s", kind: "singing" as const, songStartSec: 60, offsetSec: 0, durationSec: 5 };
-    expect(planMvClipFit(fit, { measuredSec: 6.04, hasAudio: true, lagHeadSec: 0.12, lagTailSec: 0.13, confidence: 0.8 })).toMatchObject({ ok: true, trimInSec: 0.12, trimOutSec: 5.12 });
-    expect(planMvClipFit(fit, { measuredSec: 6.04, hasAudio: true, lagHeadSec: 0.1, lagTailSec: 0.2, confidence: 0.8 }).ok).toBe(false);
-    expect(planMvClipFit(fit, { measuredSec: 6.04, hasAudio: true, lagHeadSec: 0.1, lagTailSec: 0.1, confidence: 0.1 }).ok).toBe(false);
-    expect(planMvClipFit(fit, { measuredSec: 6.04, hasAudio: true, lagHeadSec: -0.2, lagTailSec: -0.2, confidence: 0.9 }).ok).toBe(false);
-    expect(planMvClipFit(fit, { measuredSec: 6.04, hasAudio: true, lagHeadSec: -0.02, lagTailSec: -0.02, confidence: 0.9 })).toMatchObject({ ok: true, trimInSec: 0 });
-    expect(planMvClipFit(fit, { measuredSec: 6.04, hasAudio: false }).ok).toBe(false);
+  it("演唱段按原歌时间线落位（trimIn = 入片偏移，不按模型音轨平移）；实测不够唱句尾 → 重做", () => {
+    const fit = { shotId: "s", kind: "singing" as const, songStartSec: 18.2, offsetSec: 3.2, durationSec: 11.8 };
+    expect(planMvClipFit(fit, { measuredSec: 15.1, hasAudio: true })).toMatchObject({ ok: true, trimInSec: 3.2, trimOutSec: 15 });
+    expect(planMvClipFit(fit, { measuredSec: 14.6, hasAudio: true }).reasonZh).toContain("演唱段实测");
+  });
+  it("视觉口型核验：嘴部张合与人声包络同步 → 通过；错位 5 帧或不相关 → 不通过", () => {
+    const vocal = Array.from({ length: 180 }, (_, i) => (Math.sin(i / 4) > 0.3 ? 1 : 0.1) + 0.05 * Math.cos(i));
+    const mouth = vocal.map(v => v * 0.8 + 0.02);
+    expect(lipSyncCorrelation(mouth, vocal)).toMatchObject({ pass: true, lagFrames: 0 });
+    const late = [...Array(5).fill(0.1), ...mouth.slice(0, -5)];
+    const r = lipSyncCorrelation(late, vocal);
+    expect(r.lagFrames).toBe(5);
+    expect(r.pass).toBe(false);
+    const noise = vocal.map((_, i) => ((i * 7919) % 13) / 13);
+    expect(lipSyncCorrelation(noise, vocal).pass).toBe(false);
   });
   it("包络互相关能找回已知延迟（±10ms）", () => {
     const rate = 8000;

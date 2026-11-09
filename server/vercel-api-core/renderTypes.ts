@@ -15,6 +15,8 @@ export interface SceneVideoInput {
   /** 源片裁切入点（秒）；与 trimOutSec 同时有效时 ffmpeg 真裁切 */
   trimInSec?: number;
   trimOutSec?: number;
+  /** 1109 MV 演唱镜：模型自带音轨（自己哼唱）会与原唱打架，环境层静音。 */
+  muteSourceAudio?: boolean;
 }
 
 export interface RenderWorkflowInput {

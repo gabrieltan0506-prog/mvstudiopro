@@ -124,3 +124,23 @@ describe("卡点表 → 可执行 volumeExpr", () => {
     expect(markdown).toContain("| 片内时间 | BGM 事件 | 画面事件 | 声音处理 |");
   });
 });
+
+import { resolveSongBpm } from "./manhuaBeatTable";
+describe("1109 BPM 半速/倍速消歧", () => {
+  const suno = "中式流行抒情情歌, unhurried mid-tempo 65 BPM, 男声清新克制, 钢琴与古筝由疏至密";
+  it("生成提示词写明 65 BPM：以它为准，覆盖创作说明里的 129 BPM 并记原值", () => {
+    const r = resolveSongBpm({ estimatedBpm: 129.3, generationPrompt: suno, creativePrompt: "129 BPM，副歌每两拍一换镜" });
+    expect(r).toMatchObject({ bpm: 65, source: "generation_prompt", lyrical: true, correctedFrom: 129 });
+    expect(r.reasonZh).toContain("倍速");
+  });
+  it("没有生成提示词：创作说明 129 BPM 与「抒情/unhurried」语义冲突时按半速修正", () => {
+    const r = resolveSongBpm({ estimatedBpm: 129.3, creativePrompt: "抒情慢歌，unhurried，129 BPM" });
+    expect(r.bpm).toBe(65);
+    expect(r.correctedFrom).toBe(129);
+  });
+  it("只有检测值：抒情取半速、劲爆取倍速、无语义按 70–180 折叠", () => {
+    expect(resolveSongBpm({ estimatedBpm: 129.3, creativePrompt: "抒情情歌" }).bpm).toBeCloseTo(64.7, 0);
+    expect(resolveSongBpm({ estimatedBpm: 64, creativePrompt: "EDM dance 劲爆" }).bpm).toBe(128);
+    expect(resolveSongBpm({ estimatedBpm: 129.3 }).bpm).toBeCloseTo(129.3, 1);
+  });
+});

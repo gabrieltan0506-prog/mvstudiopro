@@ -435,3 +435,42 @@ export function snapCutsToBeats(
   out.push(cuts[cuts.length - 1]!);
   return out;
 }
+
+
+const LYRICAL_RE = /抒情|慢歌|情歌|舒缓|安静|unhurried|ballad|slow|lyrical|mellow|gentle|chill|lo-?fi|R&B/i;
+const UPBEAT_RE = /舞曲|快歌|劲爆|动感|燃|dance|upbeat|uptempo|EDM|house|techno|drum ?& ?bass|punk|fast/i;
+
+/**
+ * 1109 BPM 消歧（半速/倍速）：起音自相关常把 65 BPM 判成 129/130。
+ * 优先级：歌曲生成提示词里写明的 BPM（如 Suno 风格提示词）＞ 检测候选（×0.5/×1/×2）按语义选（抒情偏 ≤90，劲爆偏 ≥110）
+ * ＞ 创作说明里的 BPM（与检测/语义冲突时按半/倍速修正并记原值）。
+ */
+export function resolveSongBpm(input: { estimatedBpm: number; generationPrompt?: string; creativePrompt?: string }): {
+  bpm: number; source: "generation_prompt" | "creative_prompt" | "estimated"; lyrical: boolean; correctedFrom?: number; reasonZh: string;
+} {
+  const text = `${input.generationPrompt || ""}\n${input.creativePrompt || ""}`;
+  const lyrical = LYRICAL_RE.test(text) && !UPBEAT_RE.test(text);
+  const upbeat = UPBEAT_RE.test(text) && !LYRICAL_RE.test(text);
+  const fromGen = parseBpmFromText(input.generationPrompt);
+  const fromCreative = parseBpmFromText(input.creativePrompt);
+  const cands = [input.estimatedBpm / 2, input.estimatedBpm, input.estimatedBpm * 2].filter(b => b >= 50 && b <= 200);
+  const near = (a: number, b: number) => Math.abs(a - b) / b < 0.06;
+  if (fromGen) {
+    const corrected = fromCreative && !near(fromCreative, fromGen) ? fromCreative : undefined;
+    return { bpm: fromGen, source: "generation_prompt", lyrical, ...(corrected ? { correctedFrom: corrected } : {}), reasonZh: `以歌曲生成提示词 ${fromGen} BPM 为准${corrected ? `（创作说明写 ${corrected} BPM，为${near(corrected, fromGen * 2) ? "倍速" : near(corrected * 2, fromGen) ? "半速" : "不一致"}误判，已覆盖）` : ""}` };
+  }
+  const pickSemantic = () => (lyrical ? cands.filter(b => b <= 90).sort((a, b) => b - a)[0] : upbeat ? cands.filter(b => b >= 110).sort((a, b) => a - b)[0] : undefined);
+  if (fromCreative) {
+    // 创作说明的 BPM 与检测同族（×0.5/×1/×2）但与语义矛盾时，按语义取半/倍速
+    const sem = pickSemantic();
+    if (sem && !near(fromCreative, sem) && (near(fromCreative, sem * 2) || near(fromCreative * 2, sem)))
+      return { bpm: Math.round(sem), source: "estimated", lyrical, correctedFrom: fromCreative, reasonZh: `创作说明写 ${fromCreative} BPM，与检测和曲风语义（${lyrical ? "抒情" : "劲爆"}）不符，按${fromCreative > sem ? "半速" : "倍速"}修正为 ${Math.round(sem)} BPM` };
+    return { bpm: fromCreative, source: "creative_prompt", lyrical, reasonZh: `以创作说明 ${fromCreative} BPM 为准` };
+  }
+  const sem = pickSemantic();
+  if (sem) return { bpm: Number(sem.toFixed(1)), source: "estimated", lyrical, reasonZh: `检测候选 ${cands.map(c => c.toFixed(0)).join("/")} BPM，按曲风语义取 ${sem.toFixed(0)}` };
+  let bpm = input.estimatedBpm;
+  while (bpm < 70) bpm *= 2;
+  while (bpm > 180) bpm /= 2;
+  return { bpm: Number(bpm.toFixed(1)), source: "estimated", lyrical, reasonZh: `检测 ${bpm.toFixed(0)} BPM` };
+}

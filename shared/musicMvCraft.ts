@@ -69,7 +69,7 @@ export const MUSIC_MV_BEATS_INSTRUCTIONS = `你是MV创作顾问，现在为已�
    lightingZh＝灯光与氛围（光源方向、明暗、色温变化与其触发原因）；
    moodZh＝情绪与转折（本窗情绪、与前窗相比的变化及依据）；
    sfxZh＝环境/事件音效（只写画面里真实发生的声音，如雨声、脚步、车流；不得写音乐、配乐、人声、歌声或旋律）。
-4. 镜头三类：kind=generated 为生成画面段，歌曲只作卡点参考，lipSync 一律 false，lyricZh 留空；kind=singing 为演唱段，人物在唱、要对口型——歌词按「对白」处理：把该镜内的唱句逐句分到窗里，有唱句的窗 lipSync=true 且 lyricZh 逐字照抄用户提供歌词里的那一句（不改字、不合并多句），窗的起止就是这句唱的起止（演唱窗不吸附拍点，按唱句落位）；无唱句的过门窗 lipSync=false。
+4. 镜头三类：kind=generated 为生成画面段，歌曲只作卡点参考，lipSync 一律 false，lyricZh 留空；kind=singing 为演唱段，人物在唱、要对口型——歌词按「对白」处理：把该镜内的唱句逐句分到窗里，有唱句的窗 lipSync=true 且 lyricZh 逐字照抄用户提供歌词里的那一句（不改字、不合并多句），窗的起止就是这句唱的起止（演唱窗不吸附拍点，按唱句落位）；无唱句的过门窗 lipSync=false。演唱段画面主体是演唱者（输入 performer 给出性别与形象，声线是谁就是谁），不是叙事主角；叙事主角只出现在非演唱镜，绝不让叙事主角对演唱者的声音做口型。
 5. continuesFromPrevious：本镜与上一镜是同一动作/同一空间的直接延续（需要画面接龙）时为 true，出片时会用上一镜尾帧作本镜起幅；换场、换时空或跳切时为 false。第一个镜头若 previousShot 为空则为 false。
 6. complexity：如实统计本镜画面——people＝清晰出镜人数；action＝none（静态/微动）、light（走动、转身、抬手等轻动作）、strong（奔跑、舞蹈、打斗、拥抱等明确大动作）；contact＝人物之间或人与道具是否有身体接触；cameraSetups＝本镜用到的机位数；scenes＝本镜出现的场景数。多人、强动作、接触、多机位或多场景的镜头会强制要求站位参考，不得为省事少报。
 7. 内容必须贴合本镜 visualPrompt 与 cameraPrompt 的意图，并服从所给 sections 的情绪与创作说明；不新增第二位清晰人物，不出现文字、字幕、Logo。
