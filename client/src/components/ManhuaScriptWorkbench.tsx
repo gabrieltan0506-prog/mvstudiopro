@@ -2150,6 +2150,7 @@ export default function ManhuaScriptWorkbench({
     if (action.episode !== focusEpisode) throw new Error("请先切换到目标集再读取剪辑清单");
     if (action.operation === "inspect") return JSON.stringify({ episode: focusEpisode, shots: roughClips.map(row => ({ shotIndex: row.shotIndex, durationSec: row.durationSec, trim: fineCutByShot[row.shotIndex] })), order: roughShotOrder, transition: manhuaEditTransitionOf(editTransitionByEpisode, focusEpisode), busy: factoryBusy || suggestAutoCutsBusy });
     if (factoryBusy || suggestAutoCutsBusy) throw new Error("剪辑正在处理任务，未改动");
+    if (action.operation === "grade" || action.transitionSettings || (action.operation === "transition" && action.transition !== "cut" && action.transition !== "fade")) throw new Error("本集剪辑台只支持直接切换或淡入淡出；调色与溶解、左划请在剪辑方案里设置，未改动");
     if (!window.confirm("确认将本次剪辑建议保存到当前集？原片保留。")) throw new Error("用户未确认剪辑改动");
     signal.throwIfAborted();
     if (action.operation === "reorder") {
@@ -2161,7 +2162,7 @@ export default function ManhuaScriptWorkbench({
       if (!row || action.inSec == null || action.outSec == null || action.inSec % 0.5 || action.outSec % 0.5 || action.outSec - action.inSec < 0.5 || action.outSec > row.durationSec) throw new Error("进出点须在本镜头时长内，步进0.5秒，至少保留0.5秒");
       if (!handleFineCutChange(row.shotIndex, { inSec: action.inSec, outSec: action.outSec })) throw new Error("镜头进出点未保存");
     } else {
-      if (!onEditTransitionChange || !action.transition) throw new Error("转场保存入口不可用");
+      if (!onEditTransitionChange || (action.transition !== "cut" && action.transition !== "fade")) throw new Error("转场保存入口不可用");
       if (onEditTransitionChange(focusEpisode, action.transition) === false) throw new Error("转场未保存");
     }
     return JSON.stringify({ status: "saved", episode: focusEpisode, operation: action.operation });

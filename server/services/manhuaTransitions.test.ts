@@ -29,7 +29,6 @@ it("renders real crossfade pixels and correct overlapping duration while preserv
  const png=path.join(dir,"middle.png");await runMediaTool("ffmpeg",["-v","error","-ss","1.75","-i",out,"-frames:v","1",png],signal);
  const pixel=await sharp(png).extract({left:160,top:120,width:1,height:1}).raw().toBuffer();
  expect(pixel[0]).toBeGreaterThan(50);expect(pixel[2]).toBeGreaterThan(50);expect(pixel[1]).toBeLessThan(20);
- await writeFile("docs/evidence/manhua-vfx-1007/transition-receipt.json",JSON.stringify({boundary:"synthetic real ffmpeg; injected cloud; not workflow acceptance",dir,result,pixel:Array.from(pixel),archived},null,2));
 },90_000);
 
 it("手动剪辑取段进入转场的视频与音频链，并以取段长度计算重叠", () => {

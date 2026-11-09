@@ -55,6 +55,7 @@ export const concatParamsSchema = z
   .strict().superRefine((v, ctx) => {
     if (v.grade?.clips && v.grade.clips.length !== v.clips.length) ctx.addIssue({ code: "custom", path: ["grade", "clips"], message: "调色参数须与片段一一对应" });
     if (v.grade?.referenceClipIndex != null && v.grade.referenceClipIndex >= v.clips.length) ctx.addIssue({ code: "custom", path: ["grade", "referenceClipIndex"], message: "代表镜头不在片段范围内" });
+    if (v.grade?.autoMatch && v.transition) ctx.addIssue({ code: "custom", path: ["grade", "autoMatch"], message: "自动匹配调色暂只支持直接切换" });
     if (v.transition && (v.clips.length < 2 || v.subtitleSrt)) ctx.addIssue({ code: "custom", path: ["transition"], message: "单段或同步字幕剪辑须使用直接切换" });
     if (v.trims && v.trims.length !== v.clips.length) ctx.addIssue({ code: "custom", path: ["trims"], message: "剪辑取段须与片段一一对应" });
     v.trims?.forEach((t, i) => { if (t.endSec != null && t.endSec - t.startSec < 0.1) ctx.addIssue({ code: "custom", path: ["trims", i], message: "取段至少保留0.1秒" }); });

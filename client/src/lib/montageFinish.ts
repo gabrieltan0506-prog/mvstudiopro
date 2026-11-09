@@ -4,45 +4,15 @@
  * 每项为 ColorCorrection（lutId/exposure/contrast/gamma 系列/saturation/color_temperature/color_balance/curves）。
  * 中性值不下发，旧 concat 行为不变。
  */
-import { concatGradeSchema, type ColorCorrection, type ConcatGrade } from "@shared/colorGrade";
+import { COLOR_GRADE_ADVISOR_HELP, COLOR_GRADE_LUT_GROUPS, concatGradeSchema, type ColorCorrection, type ConcatGrade } from "@shared/colorGrade";
 
 export type { ColorCorrection, ConcatGrade };
 export type MontageTransitionKind = "none" | "fade" | "dissolve" | "wipeleft";
 export type MontageTransition = { kind: MontageTransitionKind; durationSec: number };
 export type MontageFinish = { grade?: ConcatGrade; transition?: MontageTransition };
 
-/**
- * 预设 LUT：id 与 server/assets/luts/manifest.json 一致（测试对账）；按类别分组、组内固定顺序。
- * 强度以「轻/标准」两档预设区分（服务端不收单独强度值）。
- */
-export const MONTAGE_LUT_GROUPS: ReadonlyArray<{ label: string; presets: ReadonlyArray<{ id: string; label: string }> }> = [
-  { label: "电影氛围", presets: [
-    { id: "nordic_desaturation_subtle", label: "冷灰低饱和 · 轻" },
-    { id: "nordic_desaturation_standard", label: "冷灰低饱和 · 标准" },
-    { id: "golden_hour_subtle", label: "暖阳黄昏 · 轻" },
-    { id: "golden_hour_standard", label: "暖阳黄昏 · 标准" },
-    { id: "neo_noir_subtle", label: "暗调黑色电影 · 轻" },
-    { id: "neo_noir_standard", label: "暗调黑色电影 · 标准" },
-    { id: "cyberpunk_neon_subtle", label: "霓虹雨夜 · 轻" },
-    { id: "cyberpunk_neon_standard", label: "霓虹雨夜 · 标准" },
-    { id: "dream_sequence_subtle", label: "梦境柔光 · 轻" },
-    { id: "dream_sequence_standard", label: "梦境柔光 · 标准" },
-    { id: "vintage_film_fade_subtle", label: "复古褪色 · 轻" },
-    { id: "vintage_film_fade_standard", label: "复古褪色 · 标准" },
-  ] },
-  { label: "胶片质感", presets: [
-    { id: "film_warm_print", label: "暖调印片" },
-    { id: "film_punchy_consumer", label: "鲜艳民用胶片" },
-    { id: "film_35mm_prestige", label: "35mm 院线质感" },
-    { id: "film_super8", label: "怀旧家庭录像" },
-  ] },
-  { label: "基础校色", presets: [
-    { id: "basic_split_tone_teal_orange", label: "冷暗暖亮分离" },
-    { id: "basic_warm", label: "整体偏暖" },
-    { id: "basic_cool", label: "整体偏冷" },
-    { id: "basic_desaturate", label: "压饱和" },
-  ] },
-];
+/** 预设 LUT：真源在 @shared/colorGrade（顾问提示与服务端白名单同一份），id 与 server/assets/luts/manifest.json 一致（测试对账）。 */
+export const MONTAGE_LUT_GROUPS = COLOR_GRADE_LUT_GROUPS;
 export const MONTAGE_LUT_IDS: ReadonlyArray<string> = MONTAGE_LUT_GROUPS.flatMap(g => g.presets.map(p => p.id));
 
 /** 滑杆范围（schema 允许更宽，界面取常用段）。 */
@@ -64,7 +34,7 @@ export const MONTAGE_TRANSITION_LABELS: Record<MontageTransitionKind, string> = 
 
 /** 交给顾问 inspect 的约定说明（方向与范围），不含引擎/供应商字样。 */
 export const MONTAGE_FINISH_ADVISOR_HELP =
-  "调色写入grade={all?:校正,clips?:[每切点一项或null，数量须等于本方案切点数],referenceClipIndex?:代表镜头(从0起)}；校正字段：lutId取lutOptions(轻/标准两档即强度)；exposure -0.95–3档(0中性)；contrast .2–3(1中性)；gamma/gamma_r/g/b .1–10(1中性)；saturation 0–3(1中性，<1压低饱和)；color_temperature 1000–40000K(6500中性，越低越暖、越高越冷)；color_balance{shadows,midtones,highlights:{r,g,b -1–1}}；curves{master,r,g,b:\"0/0 .5/.45 1/1\"}。转场写入transitionSettings{kind:none|fade|dissolve|wipeleft,durationSec .1–2}，或沿用transition=cut|fade。有同步字幕或单段方案时只能直接切换。只写草稿，须用户点采用才生成。";
+  COLOR_GRADE_ADVISOR_HELP + "转场写入transitionSettings{kind:none|fade|dissolve|wipeleft,durationSec .1–2}，或transition=cut|fade|dissolve|wipeleft。调色与转场按剪辑方案各存一份（episode=方案序号）。有同步字幕或单段方案时只能直接切换。只写草稿，须用户点采用才生成。";
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   Boolean(v) && typeof v === "object" && !Array.isArray(v);
@@ -111,6 +81,22 @@ export function readMontageFinish(value: unknown): MontageFinish | null {
   } catch {
     return null;
   }
+}
+
+/** 每个剪辑方案各存一份草稿：键 = 「方案序号:标题」（序号从1起）。 */
+export const montageFinishKey = (planIndex: number, title: string) => `${planIndex + 1}:${title}`;
+
+/** 读回全部方案草稿；任一份格式错误返回 null（不猜）。 */
+export function readMontageFinishes(value: unknown): Record<string, MontageFinish> | null {
+  if (value === undefined) return {};
+  if (!isRecord(value)) return null;
+  const out: Record<string, MontageFinish> = {};
+  for (const [k, v] of Object.entries(value)) {
+    const f = readMontageFinish(v);
+    if (f === null) return null;
+    out[k] = f;
+  }
+  return out;
 }
 
 /** 界面滑杆/下拉改全片校正：回到中性即删除该键。 */
@@ -160,19 +146,27 @@ export function montageFinishParams(
  */
 export function applyAdvisorMontageFinish(
   current: MontageFinish,
-  action: { operation: string; transition?: unknown; transitionSettings?: unknown; grade?: unknown }
+  action: { operation: string; transition?: unknown; transitionSettings?: unknown; grade?: unknown },
+  cutCount?: number
 ): MontageFinish {
   if (action.operation === "transition") {
     const keep = current.transition?.durationSec ?? MONTAGE_TRANSITION_RANGE.default;
     if (action.transitionSettings !== undefined) return { ...current, transition: normalizeMontageTransition(action.transitionSettings) };
     if (action.transition === "cut") return { ...current, transition: { kind: "none", durationSec: keep } };
-    if (action.transition === "fade") return { ...current, transition: { kind: "fade", durationSec: keep } };
+    if (action.transition === "fade" || action.transition === "dissolve" || action.transition === "wipeleft")
+      return { ...current, transition: { kind: action.transition, durationSec: keep } };
     throw new Error("转场设置缺少类型");
   }
   if (action.operation === "grade") {
     if (action.grade === undefined) throw new Error("调色设置缺少参数");
     if (action.grade === null) return { ...current, grade: undefined };
-    return { ...current, grade: normalizeMontageGrade(action.grade) };
+    const grade = normalizeMontageGrade(action.grade);
+    // 写入即核对本方案切点数，不符直接拒绝（不等到采用时才报错）。
+    if (cutCount != null && grade.clips && grade.clips.length !== cutCount)
+      throw new Error(`逐段调色有${grade.clips.length}项，本方案有${cutCount}个切点，须一一对应，未改动`);
+    if (cutCount != null && grade.referenceClipIndex != null && grade.referenceClipIndex >= cutCount)
+      throw new Error(`代表镜头第${grade.referenceClipIndex + 1}段超出本方案${cutCount}个切点，未改动`);
+    return { ...current, grade };
   }
   throw new Error("该操作不是调色或转场设置");
 }

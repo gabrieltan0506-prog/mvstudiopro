@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildFilterChain, checkGradeConsistency, colorCorrectionSchema, computeZoneDistribution, concatGradeSchema,
-  deriveMatchingCorrections, matchShotsToReference, parseSignalStats, resolveClipCorrection, collectGradeLutIds,
+  deriveMatchingCorrections, matchShotsToReference, matchShotsIteratively, parseSignalStats, resolveClipCorrection, collectGradeLutIds,
   type SignalStats,
 } from "./colorGrade";
 
@@ -94,5 +94,30 @@ describe("镜头匹配与一致性", () => {
     expect(r.pass).toBe(false);
     expect(r.clips[2].delta.UAVG).toBe(3.5);
     expect(() => checkGradeConsistency([ref], 3)).toThrow();
+  });
+});
+
+describe("matchShotsIteratively：应用→复测→再匹配", () => {
+  const st = (o: Partial<Record<string, number>>) => parseSignalStats(Object.entries({ YAVG: 120, UAVG: 128, VAVG: 128, SATAVG: 20, ...o }).map(([k, v]) => `lavfi.signalstats.${k}=${v}`).join("\n"));
+  it("达标即停；每轮在上一轮参数上叠加；midtones 累加", async () => {
+    const seq = [[st({}), st({ YAVG: 80, VAVG: 140 })], [st({}), st({ YAVG: 112, VAVG: 134 })], [st({}), st({ YAVG: 118, VAVG: 129 })]];
+    const seen: unknown[] = [];
+    const r = await matchShotsIteratively({ clipCount: 2, referenceClipIndex: 0, measure: async (clips, round) => { seen.push(clips); return seq[round]; } });
+    expect(r.pass).toBe(true);
+    expect(r.rounds.map(x => x.round)).toEqual([0, 1, 2]);
+    expect(r.rounds[1].clips[1]?.exposure).toBe(1);
+    expect(r.rounds[2].clips[1]?.exposure).toBe(1.2);
+    expect(r.rounds[2].clips[1]?.color_balance?.midtones?.r).toBeCloseTo(-0.024 - 0.012, 3);
+    expect(seen).toHaveLength(3);
+  });
+  it("最多 3 轮匹配；复测条数不符即抛错", async () => {
+    const r = await matchShotsIteratively({ clipCount: 2, referenceClipIndex: 0, measure: async () => [st({}), st({ YAVG: 60 })] });
+    expect(r.rounds).toHaveLength(4);
+    expect(r.pass).toBe(false);
+    await expect(matchShotsIteratively({ clipCount: 2, referenceClipIndex: 0, measure: async () => [st({})] })).rejects.toThrow("调色复测条数不一致");
+  });
+  it("autoMatch 须指定代表镜头", () => {
+    expect(concatGradeSchema.safeParse({ autoMatch: true }).success).toBe(false);
+    expect(concatGradeSchema.safeParse({ autoMatch: true, referenceClipIndex: 0 }).success).toBe(true);
   });
 });

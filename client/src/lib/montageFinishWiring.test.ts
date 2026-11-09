@@ -5,7 +5,11 @@ import {
   MONTAGE_LUT_GROUPS,
   MONTAGE_LUT_IDS,
   MONTAGE_TRANSITION_RANGE,
+  MONTAGE_FINISH_ADVISOR_HELP,
+  applyAdvisorMontageFinish,
+  montageFinishKey,
   montageFinishParams,
+  readMontageFinishes,
   montageTransitionBlockReason,
   normalizeMontageGrade,
   normalizeMontageTransition,
@@ -134,5 +138,29 @@ describe("默认不传 grade 时 concat 参数与改前一致", () => {
     expect(g).toEqual({ clips: [{ exposure: 0.1 }], all: { saturation: 0.6 } });
     expect(patchMontageGradeAll(g, { saturation: 1 })).toEqual({ clips: [{ exposure: 0.1 }] });
     expect(patchMontageGradeAll({ all: { saturation: 0.6 } }, { saturation: 1 })).toBeUndefined();
+  });
+});
+
+describe("按方案各存一份 + 顾问写入即核对切点数", () => {
+  it("键 = 方案序号:标题；读回逐份校验，任一份坏则整体 null", () => {
+    expect(montageFinishKey(0, "预告")).toBe("1:预告");
+    const ok = { "1:预告": { grade: { all: { lutId: "basic_warm" } } }, "2:短版": { transition: { kind: "fade", durationSec: 0.5 } } };
+    expect(readMontageFinishes(ok)).toEqual(ok);
+    expect(readMontageFinishes(undefined)).toEqual({});
+    expect(readMontageFinishes({ ...ok, "3:坏": { grade: { all: { lutId: "made_up" } } } })).toBeNull();
+    expect(readMontageFinishes([])).toBeNull();
+  });
+
+  it("逐段调色项数 ≠ 本方案切点数 → 直接拒绝并给中文原因；相等才写入", () => {
+    const action = { operation: "grade", grade: { clips: [{ saturation: 0.8 }, null, null] } };
+    expect(() => applyAdvisorMontageFinish({}, action, 2)).toThrow("逐段调色有3项，本方案有2个切点，须一一对应，未改动");
+    expect(applyAdvisorMontageFinish({}, action, 3)).toEqual({ grade: { clips: [{ saturation: 0.8 }, null, null] } });
+    expect(() => applyAdvisorMontageFinish({}, { operation: "grade", grade: { all: { saturation: 0.8 }, referenceClipIndex: 2 } }, 2)).toThrow("代表镜头第3段超出本方案2个切点，未改动");
+  });
+
+  it("transition 枚举放开 dissolve/wipeleft；提示含 20 个预设与色温方向", () => {
+    expect(applyAdvisorMontageFinish({}, { operation: "transition", transition: "wipeleft" }, 2)).toEqual({ transition: { kind: "wipeleft", durationSec: MONTAGE_TRANSITION_RANGE.default } });
+    for (const id of MONTAGE_LUT_IDS) expect(MONTAGE_FINISH_ADVISOR_HELP).toContain(id);
+    expect(MONTAGE_FINISH_ADVISOR_HELP).toContain("数值越低越暖");
   });
 });

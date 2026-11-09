@@ -34,6 +34,45 @@ export interface ZoneDistribution { blacks: number; shadows: number; midtones: n
 // ─── 参数契约（字段名与上游 CorrectionParams 一致，lut → lutId） ─────────────
 
 export const COLOR_GRADE_LUT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/**
+ * 预设 LUT：id 与 server/assets/luts/manifest.json 一致（测试对账）；按类别分组、组内固定顺序。
+ * 强度以「轻/标准」两档预设区分（服务端不收单独强度值）。
+ */
+export const COLOR_GRADE_LUT_GROUPS: ReadonlyArray<{ label: string; presets: ReadonlyArray<{ id: string; label: string }> }> = [
+  { label: "电影氛围", presets: [
+    { id: "nordic_desaturation_subtle", label: "冷灰低饱和 · 轻" },
+    { id: "nordic_desaturation_standard", label: "冷灰低饱和 · 标准" },
+    { id: "golden_hour_subtle", label: "暖阳黄昏 · 轻" },
+    { id: "golden_hour_standard", label: "暖阳黄昏 · 标准" },
+    { id: "neo_noir_subtle", label: "暗调黑色电影 · 轻" },
+    { id: "neo_noir_standard", label: "暗调黑色电影 · 标准" },
+    { id: "cyberpunk_neon_subtle", label: "霓虹雨夜 · 轻" },
+    { id: "cyberpunk_neon_standard", label: "霓虹雨夜 · 标准" },
+    { id: "dream_sequence_subtle", label: "梦境柔光 · 轻" },
+    { id: "dream_sequence_standard", label: "梦境柔光 · 标准" },
+    { id: "vintage_film_fade_subtle", label: "复古褪色 · 轻" },
+    { id: "vintage_film_fade_standard", label: "复古褪色 · 标准" },
+  ] },
+  { label: "胶片质感", presets: [
+    { id: "film_warm_print", label: "暖调印片" },
+    { id: "film_punchy_consumer", label: "鲜艳民用胶片" },
+    { id: "film_35mm_prestige", label: "35mm 院线质感" },
+    { id: "film_super8", label: "怀旧家庭录像" },
+  ] },
+  { label: "基础校色", presets: [
+    { id: "basic_split_tone_teal_orange", label: "冷暗暖亮分离" },
+    { id: "basic_warm", label: "整体偏暖" },
+    { id: "basic_cool", label: "整体偏冷" },
+    { id: "basic_desaturate", label: "压饱和" },
+  ] },
+];
+
+/** 顾问提示用：20 个预设 id 与中文标签、色温方向（数值越低越暖），让自然语言落到合法参数。 */
+export const COLOR_GRADE_ADVISOR_HELP =
+  "调色grade={all?:校正,clips?:[每切点一项或null，数量须等于本方案切点数],referenceClipIndex?:代表镜头(从0起),autoMatch?:true时以代表镜头为准逐段匹配并复测(最多3轮，仅直接切换)}；预设lutId(轻/标准即强度)：" +
+  COLOR_GRADE_LUT_GROUPS.map(g => `${g.label}[${g.presets.map(p => `${p.id}=${p.label}`).join("，")}]`).join("；") +
+  "；exposure -0.95–3档(0中性)；contrast .2–3(1中性)；saturation 0–3(1中性)；color_temperature 1000–40000K(6500中性，数值越低越暖、越高越冷)；color_balance{shadows,midtones,highlights:{r,g,b -1–1}}；curves{master,r,g,b:\"0/0 .5/.45 1/1\"}；grade=null还原原片色彩。";
+
 /** curves 点串：仅 "x/y x/y …"，0–1 小数，杜绝滤镜分隔符注入。 */
 const CURVE_POINTS_RE = /^(?:0|1|0?\.\d{1,4}|1\.0{1,4})\/(?:0|1|0?\.\d{1,4}|1\.0{1,4})(?: (?:0|1|0?\.\d{1,4}|1\.0{1,4})\/(?:0|1|0?\.\d{1,4}|1\.0{1,4})){1,15}$/;
 const balanceSchema = z.object({
@@ -79,7 +118,9 @@ export const concatGradeSchema = z.object({
   all: colorCorrectionSchema.optional(),
   clips: z.array(colorCorrectionSchema.nullable()).min(1).max(12).optional(),
   referenceClipIndex: z.number().int().min(0).max(11).optional(),
-}).strict();
+  /** 以代表镜头为准自动匹配：应用→复测→再匹配，最多 GRADE_MATCH_MAX_ROUNDS 轮直到一致性达标。 */
+  autoMatch: z.boolean().optional(),
+}).strict().refine(g => !g.autoMatch || g.referenceClipIndex != null, { message: "自动匹配须指定代表镜头", path: ["autoMatch"] });
 export type ConcatGrade = z.infer<typeof concatGradeSchema>;
 
 /** 某段实际生效的校正参数；无任何参数时返回 null（滤镜不变）。 */
@@ -277,6 +318,12 @@ export function matchShotsToReference(params: {
   return stats.map((s, i) => {
     const base = params.existing?.[i] ?? {};
     const next = i === referenceClipIndex ? { ...base } : deriveMatchingCorrections(ref, s, aspects, base);
+    // 上游 V 通道是「按本次差值重设 midtones」；复测迭代时须在上一轮基础上累加，否则每轮回到首轮量级不收敛。
+    const prevMid = base.color_balance?.midtones, nextMid = next.color_balance?.midtones;
+    if (i !== referenceClipIndex && prevMid && nextMid && nextMid !== prevMid) {
+      const add = (a: number, b: number) => parseFloat(Math.min(1, Math.max(-1, a + b)).toFixed(3));
+      next.color_balance = { ...next.color_balance, midtones: { r: add(prevMid.r, nextMid.r), g: add(prevMid.g, nextMid.g), b: add(prevMid.b, nextMid.b) } };
+    }
     if (next.exposure !== undefined) next.exposure = Math.min(3, Math.max(-0.95, next.exposure));
     if (next.color_temperature !== undefined) next.color_temperature = Math.min(40000, Math.max(1000, next.color_temperature));
     if (next.saturation !== undefined) next.saturation = Math.min(3, Math.max(0, next.saturation));
@@ -308,4 +355,44 @@ export function checkGradeConsistency(stats: SignalStats[], referenceClipIndex: 
     return { index, pass: keys.every(k => Math.abs(delta[k]) <= GRADE_CONSISTENCY_TOLERANCE[k]), delta };
   });
   return { pass: clips.every(c => c.pass), referenceClipIndex, clips };
+}
+
+// ─── 多轮匹配（上游做法：match_shots 后复测，不达标再匹配） ──────────────────
+
+export const GRADE_MATCH_MAX_ROUNDS = 3;
+
+export type GradeMatchRound = {
+  /** 0 = 初测（未匹配）；1..N = 第 N 轮匹配后的复测 */
+  round: number;
+  clips: Array<ColorCorrection | null>;
+  report: GradeConsistencyReport;
+};
+
+/**
+ * 应用→复测→再匹配：先按 existing 测一次，不达标则 matchShotsToReference（以本轮复测值、在本轮参数上叠加），
+ * 再交 measure 应用并复测，最多 maxRounds 轮或 checkGradeConsistency 达标即停。
+ * measure 负责真实应用滤镜并测 signalstats（含原始输出与解析 JSON 留档），按段一一对应返回。
+ */
+export async function matchShotsIteratively(params: {
+  clipCount: number;
+  referenceClipIndex: number;
+  existing?: Array<ColorCorrection | null | undefined>;
+  aspects?: MatchAspect[];
+  maxRounds?: number;
+  measure: (clips: Array<ColorCorrection | null>, round: number) => Promise<SignalStats[]>;
+}): Promise<{ pass: boolean; clips: Array<ColorCorrection | null>; rounds: GradeMatchRound[] }> {
+  const maxRounds = Math.min(GRADE_MATCH_MAX_ROUNDS, Math.max(0, params.maxRounds ?? GRADE_MATCH_MAX_ROUNDS));
+  let clips: Array<ColorCorrection | null> = Array.from({ length: params.clipCount }, (_v, i) => {
+    const c = params.existing?.[i];
+    return c && Object.keys(c).length ? colorCorrectionSchema.parse(c) : null;
+  });
+  const rounds: GradeMatchRound[] = [];
+  for (let round = 0; ; round++) {
+    const stats = await params.measure(clips, round);
+    if (stats.length !== params.clipCount) throw new Error("调色复测条数不一致");
+    const report = checkGradeConsistency(stats, params.referenceClipIndex);
+    rounds.push({ round, clips, report });
+    if (report.pass || round >= maxRounds) return { pass: report.pass, clips, rounds };
+    clips = matchShotsToReference({ stats, referenceClipIndex: params.referenceClipIndex, aspects: params.aspects, existing: clips });
+  }
 }

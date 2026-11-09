@@ -31,8 +31,8 @@ import { z } from "zod";
 import { signGsUriV4ReadUrl, uploadBufferToGcs, uploadStreamToGcs } from "./gcs.js";
 import { fileURLToPath } from "node:url";
 import {
-  buildFilterChain, checkGradeConsistency, collectGradeLutIds, parseSignalStats, resolveClipCorrection,
-  COLOR_GRADE_LUT_ID_RE, SIGNALSTATS_PRINT_FILTER, type ConcatGrade, type GradeConsistencyReport,
+  buildFilterChain, checkGradeConsistency, collectGradeLutIds, matchShotsIteratively, parseSignalStats, resolveClipCorrection,
+  COLOR_GRADE_LUT_ID_RE, SIGNALSTATS_PRINT_FILTER, type ColorCorrection, type ConcatGrade, type GradeConsistencyReport, type SignalStats,
 } from "../../shared/colorGrade";
 import {
   concatParamsSchema,
@@ -384,26 +384,31 @@ export async function buildConcatGradeFilters(grade: ConcatGrade | undefined, cl
   });
 }
 
+type GradeEvidence = Array<{ index: number; atSec: number; raw: { gcsUri: string; bytes: number; sha256: string }; parsed: { gcsUri: string; bytes: number; sha256: string } }>;
 export type GradeCheckResult = GradeConsistencyReport & {
   /** 每段 signalstats 原始输出与解析结果的永久留档（GCS），按段一一对应。 */
-  evidence: Array<{ index: number; atSec: number; raw: { gcsUri: string; bytes: number; sha256: string }; parsed: { gcsUri: string; bytes: number; sha256: string } }>;
+  evidence: GradeEvidence;
+  /** autoMatch：每轮（0=初测）实际应用的逐段参数、一致性报告与该轮留档；成片按最后一轮参数输出。 */
+  rounds?: Array<GradeConsistencyReport & { round: number; corrections: Array<ColorCorrection | null>; evidence: GradeEvidence }>;
+  appliedClips?: Array<ColorCorrection | null>;
 };
 
 /** 合成后在每段取 1 帧（段内 1 秒或中点，同上游 analyze 取 1 秒）测 signalstats，按代表镜头做一致性检查。 */
-async function measureGradeConsistency(
+export async function measureGradeConsistency(
   outPath: string,
   segmentSec: number[],
   referenceClipIndex: number,
   userId: string,
   signal: AbortSignal,
-): Promise<GradeCheckResult> {
-  const prefix = `post-prod/${userId.replace(/[^a-zA-Z0-9_-]/g, "")}/grade-evidence/${randomUUID()}`;
+  evidenceDir?: string,
+): Promise<GradeCheckResult & { stats: SignalStats[] }> {
+  const prefix = evidenceDir ?? `post-prod/${userId.replace(/[^a-zA-Z0-9_-]/g, "")}/grade-evidence/${randomUUID()}`;
   const save = async (name: string, buffer: Buffer, contentType: string) => {
     const receipt = await uploadBufferToGcs({ objectName: `${prefix}/${name}`, buffer, contentType, signal });
     return { gcsUri: receipt.gcsUri, bytes: buffer.length, sha256: createHash("sha256").update(buffer).digest("hex") };
   };
-  const stats = [];
-  const evidence: GradeCheckResult["evidence"] = [];
+  const stats: SignalStats[] = [];
+  const evidence: GradeEvidence = [];
   let offset = 0;
   for (let i = 0; i < segmentSec.length; i++) {
     const atSec = parseFloat((offset + Math.min(1, segmentSec[i] / 2)).toFixed(3));
@@ -416,7 +421,7 @@ async function measureGradeConsistency(
     evidence.push({ index: i, atSec, raw, parsed });
   }
   if (evidence.length !== segmentSec.length) throw new Error("调色检查条数不一致");
-  return { ...checkGradeConsistency(stats, referenceClipIndex), evidence };
+  return { ...checkGradeConsistency(stats, referenceClipIndex), evidence, stats };
 }
 
 // ---------------------------------------------------------------- 拼接
@@ -470,7 +475,16 @@ export async function concatClips(
         nextInputIndex += 1;
       }
     }
-    const gradeFilters = await buildConcatGradeFilters(input.grade, locals.length);
+    let subtitleFilter = "";
+    if (input.subtitleSrt) {
+      const srtPath = path.join(tmpDir, "montage.srt");
+      const srt = normalizeDialogueSubtitleSrt(input.subtitleSrt, locals.reduce((sum, clip) => sum + clip.durationSec, 0));
+      await writeFile(srtPath, srt, { encoding: "utf8", flag: "wx" });
+      subtitleFilter = `;[vraw]${buildBurnSubtitleFilter(srtPath)}[vo]`;
+    }
+    const outPath = path.join(tmpDir, "out.mp4");
+    const renderWith = async (grade: ConcatGrade | undefined) => {
+    const gradeFilters = await buildConcatGradeFilters(grade, locals.length);
     const vChain = (i: number) =>
       `[${i}:v]trim=start=${locals[i].startSec}:end=${locals[i].endSec},setpts=PTS-STARTPTS,scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease,` +
       `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=${fps},${gradeFilters[i] ? `${gradeFilters[i]},` : ""}format=yuv420p,setsar=1,` +
@@ -486,23 +500,43 @@ export async function concatClips(
     };
     const per = locals.map((_l, i) => `${vChain(i)};${aChain(i)}`).join(";");
     const heads = locals.map((_l, i) => `[v${i}][a${i}]`).join("");
-    const outPath = path.join(tmpDir, "out.mp4");
-    let subtitleFilter = "";
-    if (input.subtitleSrt) {
-      const srtPath = path.join(tmpDir, "montage.srt");
-      const srt = normalizeDialogueSubtitleSrt(input.subtitleSrt, locals.reduce((sum, clip) => sum + clip.durationSec, 0));
-      await writeFile(srtPath, srt, { encoding: "utf8", flag: "wx" });
-      subtitleFilter = `;[vraw]${buildBurnSubtitleFilter(srtPath)}[vo]`;
-    }
-    args.push(
+    await runMediaTool("ffmpeg", [
+      ...args,
       "-filter_complex",
       `${per};${heads}concat=n=${locals.length}:v=1:a=1[${subtitleFilter ? "vraw" : "vo"}][ao]${subtitleFilter}`,
       "-map", "[vo]", "-map", "[ao]",
       "-c:v", "libx264", "-preset", "medium", "-crf", "18",
       "-c:a", "aac", "-b:a", "256k",
       outPath,
-    );
-    await runMediaTool("ffmpeg", args, signal);
+    ], signal);
+    };
+    const segmentSec = locals.map(l => l.endSec - l.startSec);
+    let gradeCheck: GradeCheckResult | undefined;
+    const g = input.grade;
+    if (g?.autoMatch && g.referenceClipIndex != null) {
+      // 应用→复测→再匹配：每轮整片按当前逐段参数重出、逐段测量并留档；成片取最后一轮。
+      const evidenceRoot = `post-prod/${userId.replace(/[^a-zA-Z0-9_-]/g, "")}/grade-evidence/${randomUUID()}`;
+      const perRound: NonNullable<GradeCheckResult["rounds"]> = [];
+      const result = await matchShotsIteratively({
+        clipCount: locals.length,
+        referenceClipIndex: g.referenceClipIndex,
+        // 以每段实际生效参数（all 浅合并 clips）为起点，匹配增量叠在其上，逐段整组下发。
+        existing: locals.map((_l, i) => resolveClipCorrection(g, i)),
+        measure: async (clips, round) => {
+          await renderWith({ clips });
+          const m = await measureGradeConsistency(outPath, segmentSec, g.referenceClipIndex!, userId, signal, `${evidenceRoot}/round-${round}`);
+          const { stats, ...report } = m;
+          perRound.push({ ...report, round, corrections: clips });
+          return stats;
+        },
+      });
+      const last = perRound[perRound.length - 1];
+      if (!last || perRound.length !== result.rounds.length) throw new Error("调色复测条数不一致");
+      const { round: _r, corrections: _c, ...lastReport } = last;
+      gradeCheck = { ...lastReport, rounds: perRound, appliedClips: result.clips };
+    } else {
+      await renderWith(g);
+    }
     const meta = await probe(outPath, signal);
     const up = await uploadResult({
       filePath: outPath,
@@ -512,9 +546,10 @@ export async function concatClips(
       contentType: "video/mp4",
       signal,
     });
-    const gradeCheck = input.grade?.referenceClipIndex != null
-      ? await measureGradeConsistency(outPath, locals.map(l => l.endSec - l.startSec), input.grade.referenceClipIndex, userId, signal)
-      : undefined;
+    if (!gradeCheck && g?.referenceClipIndex != null) {
+      const { stats: _s, ...report } = await measureGradeConsistency(outPath, segmentSec, g.referenceClipIndex, userId, signal);
+      gradeCheck = report;
+    }
     return { ...up, durationSec: meta.durationSec, clipCount: clips.length, ...(gradeCheck ? { gradeCheck } : {}) };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { creativeStudioActionSchema, CREATIVE_STUDIO_HELP } from "./creativeStudio";
 import { advisorEffectsActionSchema, MANHUA_ADVISOR_EFFECTS_HELP } from "./manhuaAdvisorEffects";
+import { COLOR_GRADE_ADVISOR_HELP, concatGradeSchema } from "./colorGrade";
 
 const id = z.string().trim().min(1).max(200);
 const episode = z.number().int().positive();
@@ -199,13 +200,19 @@ export const manhuaAdvisorWorkflowVariants = [
   z
     .object({
       action: z.literal("edit"),
-      operation: z.enum(["inspect", "reorder", "trim", "transition"]),
+      operation: z.enum(["inspect", "reorder", "trim", "transition", "grade"]),
       episode,
       order: z.array(z.number().int().positive()).min(1).max(200).optional(),
       shotIndex: z.number().int().positive().optional(),
       inSec: z.number().finite().min(0).optional(),
       outSec: z.number().finite().positive().optional(),
-      transition: z.enum(["cut", "fade"]).optional(),
+      transition: z.enum(["cut", "fade", "dissolve", "wipeleft"]).optional(),
+      transitionSettings: z
+        .object({ kind: z.enum(["none", "fade", "dissolve", "wipeleft"]), durationSec: z.number().finite().min(0.1).max(2) })
+        .strict()
+        .optional(),
+      /** null = 还原原片色彩；只写剪辑方案草稿，采用时才随合成提交。 */
+      grade: concatGradeSchema.nullable().optional(),
     })
     .strict(),
   z
@@ -234,4 +241,4 @@ export const manhuaAdvisorWorkflowVariants = [
 
 export const MANHUA_ADVISOR_OPERATION_REQUEST = "【工作流操作】";
 export const MANHUA_ADVISOR_WORKFLOW_HELP = MANHUA_ADVISOR_EFFECTS_HELP + "\n" + CREATIVE_STUDIO_HELP + "\n" + `知识目录：knowledge(inspect/refresh)，inspect读最近快照，refresh明确更新已批准模板、导演包与工作流能力；不调用生成模型、不修改项目冻结导演包。刷新后以真实revision和scannedAt说明读取时点，不能声称永久最新。
-工作流动作：writer(inspect/configure/trial/expand/confirm，topic/brief/templateId/episodeCount)；asset(inspect/regenerate/select/adopt/configure/claim/primary/acceptReview，anchorId/assetId/libraryId/question/anchorIds/duty/metadata)；modelControl(inspect/multiview/multiviewSubmit/rigInspect/rigSubmit/rigAdopt/rigRestore，assetId/requestId)；worldControl(inspect/exportFrame/adoptFrame/clearFrame，assetId/clipId/shotId/frameId/camera)；generate(keyart/clip/retake/selectVersion，episode/blockId/versionIndex/question)；audio(inspect/addCue/configureCue/generateDialogue/adoptTake/selectMusic/selectSource/trim/premix/previewMix/resume，clipId/cueId/takeId/jobId/variantIndex/patch)；scoring(inspect/configure/analyze/applyAdvice/submit，clipId/musicId/question/sourceKey，submit必须原样携带本次scoring inspect的sourceKey；改素材或参数后重新inspect和准备方案，使用已采用配乐与原正式视频混音入口)；edit(inspect/reorder/trim/transition，episode/order/shotIndex/inSec/outSec/transition，沿原剪辑台保存)；deliver(inspect/assemble/subtitle/selectVersion/export，episode/clipIds/versionIndex)；storyboardRecovery(inspect/recover/archive，episode)。ID及候选编号只能从当前工作区实际清单取得，不接受外部素材URL。执行生成仍须原页面确认；inspect不改作品。缺少目标或参数时说明缺少什么，不猜测、不开任务。`;
+工作流动作：writer(inspect/configure/trial/expand/confirm，topic/brief/templateId/episodeCount)；asset(inspect/regenerate/select/adopt/configure/claim/primary/acceptReview，anchorId/assetId/libraryId/question/anchorIds/duty/metadata)；modelControl(inspect/multiview/multiviewSubmit/rigInspect/rigSubmit/rigAdopt/rigRestore，assetId/requestId)；worldControl(inspect/exportFrame/adoptFrame/clearFrame，assetId/clipId/shotId/frameId/camera)；generate(keyart/clip/retake/selectVersion，episode/blockId/versionIndex/question)；audio(inspect/addCue/configureCue/generateDialogue/adoptTake/selectMusic/selectSource/trim/premix/previewMix/resume，clipId/cueId/takeId/jobId/variantIndex/patch)；scoring(inspect/configure/analyze/applyAdvice/submit，clipId/musicId/question/sourceKey，submit必须原样携带本次scoring inspect的sourceKey；改素材或参数后重新inspect和准备方案，使用已采用配乐与原正式视频混音入口)；edit(inspect/reorder/trim/transition/grade，episode/order/shotIndex/inSec/outSec/transition(cut|fade|dissolve|wipeleft)/transitionSettings{kind:none|fade|dissolve|wipeleft,durationSec .1–2}/grade，沿原剪辑台保存；transition与grade只写草稿，须用户点采用才合成；${COLOR_GRADE_ADVISOR_HELP}）；deliver(inspect/assemble/subtitle/selectVersion/export，episode/clipIds/versionIndex)；storyboardRecovery(inspect/recover/archive，episode)。ID及候选编号只能从当前工作区实际清单取得，不接受外部素材URL。执行生成仍须原页面确认；inspect不改作品。缺少目标或参数时说明缺少什么，不猜测、不开任务。`;

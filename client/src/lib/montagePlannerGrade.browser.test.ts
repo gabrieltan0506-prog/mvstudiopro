@@ -78,7 +78,8 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
     await page.setContent('<div id="root"></div>');
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
     await page.waitForSelector('[aria-label="调色预设"]');
-    const draft = () => page.evaluate(() => JSON.parse((globalThis as any).saved.get("montage-test")).finish);
+    const drafts = () => page.evaluate(() => JSON.parse((globalThis as any).saved.get("montage-test")).finishes ?? {});
+    const draft = async (key = "1:预告") => (await drafts())[key];
     const clickNth = (text: string, nth: number) =>
       page.$$eval(
         '[aria-label="剪辑方案工坊"] button',
@@ -119,14 +120,26 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
     });
     expect(first.params.subtitleSrt).toBeUndefined();
 
-    // 第二版带对白字幕 → 只带调色，不带转场，并提示原因
-    expect(await page.$eval('[aria-label="剪辑方案工坊"]', n => n.textContent)).toContain("本版不加转场");
+    // 第二版：草稿按方案各存一份，第一版的调色/转场不串到第二版
     await clickNth("采用并生成此版", 1);
     await page.waitForFunction(() => (globalThis as any).submits.length === 3);
     const second = await page.evaluate(() => (globalThis as any).submits[2].params);
     expect(second.subtitleSrt).toBeTruthy();
-    expect(second.grade).toEqual({ all: { lutId: "neo_noir_subtle" } });
+    expect(second.grade).toBeUndefined();
     expect(second.transition).toBeUndefined();
+    // 切到第二版设置：带对白只能直接切换，单独设调色只进第二版草稿
+    await page.select('[aria-label="调色转场所属方案"]', "1");
+    await page.waitForFunction(() => (document.querySelector('[aria-label="镜头转场"]') as HTMLSelectElement)?.disabled);
+    expect(await page.$eval('[aria-label="调色与转场"]', n => n.textContent)).toContain("只能直接切换");
+    await page.select('[aria-label="调色预设"]', "basic_cool");
+    await page.waitForFunction(() => (globalThis as any).saved.get("montage-test").includes("basic_cool"));
+    expect(await drafts()).toEqual({
+      "1:预告": { grade: { all: { lutId: "neo_noir_subtle" } }, transition: { kind: "dissolve", durationSec: 0.5 } },
+      "2:短版": { grade: { all: { lutId: "basic_cool" } } },
+    });
+    await clickNth("采用并生成此版", 1);
+    await page.waitForFunction(() => (globalThis as any).submits.length === 4);
+    expect(await page.evaluate(() => (globalThis as any).submits[3].params.grade)).toEqual({ all: { lutId: "basic_cool" } });
 
     // 顾问 edit 控件：调色/转场只写草稿，不提交合成
     await page.waitForFunction(() => typeof (globalThis as any).control === "function");
@@ -148,7 +161,17 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
       grade: { all: { lutId: "golden_hour_standard", saturation: 0.7 } },
       transition: { kind: "wipeleft", durationSec: 1.2 },
     });
+    expect((await draft("2:短版")).grade.all.lutId).toBe("basic_cool");
+    await page.select('[aria-label="调色转场所属方案"]', "0");
     await page.waitForFunction(() => (document.querySelector('[aria-label="调色预设"]') as HTMLSelectElement)?.value === "golden_hour_standard");
+    // 逐段调色项数与本方案切点数（2）不符 → 写入即拒绝，草稿不变
+    const mismatch = await page.evaluate(() =>
+      (globalThis as any)
+        .control({ action: "edit", episode: 1, operation: "grade", grade: { clips: [{ saturation: 0.8 }, null, null] } }, new AbortController().signal)
+        .then(() => "ok", (e: Error) => e.message)
+    );
+    expect(mismatch).toContain("逐段调色有3项，本方案有2个切点");
+    expect((await draft()).grade).toEqual({ all: { lutId: "golden_hour_standard", saturation: 0.7 } });
     // 带对白的第二版不接受顾问转场
     const blocked = await page.evaluate(() =>
       (globalThis as any)
@@ -164,7 +187,7 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
     );
     expect(bad).toContain("调色预设不存在");
     expect((await draft()).grade.all.lutId).toBe("golden_hour_standard");
-    expect(await page.evaluate(() => (globalThis as any).submits.length)).toBe(3);
+    expect(await page.evaluate(() => (globalThis as any).submits.length)).toBe(4);
     expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(0);
     expect(errors).toEqual([]);
   } finally {
