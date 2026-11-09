@@ -312,5 +312,8 @@ describe("成片调色建议 · 计费 20 积分（router，替身）", () => {
     expect(src).toMatch(/import \{ CREDIT_COSTS \} from "@shared\/plans"/);
     expect(src).toMatch(/CREDIT_COSTS\.montageGradeAdvice/);
     expect(src).not.toMatch(/mvAnalysis/);
+    // 按钮与费用确认框文案都只引用常量，不写死数字
+    expect(src).toMatch(/MONTAGE_GRADE_ADVICE_COST_ZH = `每次 \$\{MONTAGE_GRADE_ADVICE_PRICE\} 积分/);
+    expect(src).not.toMatch(/\d+\s*积分/);
   });
 });

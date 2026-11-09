@@ -22,8 +22,10 @@ export type MontageGradeSegment = {
 /** 顾问代用户发起调色建议：带上用户原话；仍走本组件同一调用与费用确认，结果只列建议、须用户点「套用到草稿」。 */
 export type MontageGradeAdviceTrigger = (userRequestZh: string, signal?: AbortSignal) => Promise<{ arcZh: string; segmentCount: number }>;
 
-/** 每次调色建议的扣费口径（管理员不扣），与服务端计费保持一致。 */
-export const MONTAGE_GRADE_ADVICE_COST_ZH = "每次 20 积分（管理员不扣）";
+/** 单价与服务端扣费同一常量（shared/plans CREDIT_COSTS.montageGradeAdvice）。 */
+export const MONTAGE_GRADE_ADVICE_PRICE = CREDIT_COSTS.montageGradeAdvice;
+/** 每次调色建议的扣费口径（管理员不扣），读同一常量，与服务端计费一致。 */
+export const MONTAGE_GRADE_ADVICE_COST_ZH = `每次 ${MONTAGE_GRADE_ADVICE_PRICE} 积分（管理员不扣）`;
 
 /** 用户调色要求放在最前（服务端 storyZh 上限 8000 字，截断只丢剧情尾部）。 */
 export function montageGradeAdviceStory(storyZh: string | undefined, userRequestZh?: string): string {
@@ -49,8 +51,6 @@ export type MontageGradeAdviceProps = {
   triggerRef?: MutableRefObject<MontageGradeAdviceTrigger | null>;
 };
 
-/** 单价与服务端扣费同一常量（shared/plans CREDIT_COSTS.montageGradeAdvice）。 */
-export const MONTAGE_GRADE_ADVICE_PRICE = CREDIT_COSTS.montageGradeAdvice;
 const fmt = (n: number) => n.toFixed(1);
 function paramsZh(s: MontageGradeSegment): string {
   const out: string[] = [];
