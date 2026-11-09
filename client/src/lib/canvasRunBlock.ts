@@ -175,6 +175,16 @@ function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
 /** 客户端轮询上限：两轮合计须盖过 worker CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS（0910 起 25min） */
 const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 13 * 60_000;
 
+/** 1110 MV 白模软提示已提示过的「块 id|镜头内容键」（页面生命周期内，最多保留 500 条）。 */
+const mvShotAdvisoryShown = new Set<string>();
+/** 首次见到该键返回 true（应提示），之后返回 false。 */
+function markMvShotAdvisoryShown(key: string): boolean {
+  if (mvShotAdvisoryShown.has(key)) return false;
+  if (mvShotAdvisoryShown.size >= 500) mvShotAdvisoryShown.delete(mvShotAdvisoryShown.values().next().value!);
+  mvShotAdvisoryShown.add(key);
+  return true;
+}
+
 export type CanvasRunDeps = {
   /** 1110 MV 镜头出片前的软提示（可继续，不拦）：如多人互动镜头未采用白模动作参考。缺省走页面 toast。 */
   onMvShotAdvisory?: (blockId: string, messageZh: string) => void;
@@ -2551,9 +2561,12 @@ async function runCanvasBlockInner(
       });
       if (!castCheck.ok) throw new Error(castCheck.error);
       // 1110：R3 硬拦之后的软提示——多人互动但本镜没有已采用的白模动作参考，提示可继续，不拦、不改提交
-      const { mvShotNeedsPrevis, MV_PREVIS_SOFT_HINT_ZH } = await import("@shared/canvasMusicMvPrevis");
-      if (mvShotNeedsPrevis({ shotId: binding.shotId, startSec: binding.startSec, endSec: binding.endSec, kind: binding.kind, visualPrompt: binding.visualPrompt || block.prompt, cameraPrompt: binding.cameraPrompt, beats: binding.beats, castZh: binding.castZh }).needed
-        && !binding.references?.motionVideos?.some(v => v.source === "previs")) {
+      // 同一镜头同一内容（块 id + 镜头 id + 节拍/角色表哈希）只提示一次：预览、正式提交、自动重试不重复弹
+      const { mvShotNeedsPrevis, mvShotPrevisContentKey, MV_PREVIS_SOFT_HINT_ZH } = await import("@shared/canvasMusicMvPrevis");
+      const previsShot = { shotId: binding.shotId, startSec: binding.startSec, endSec: binding.endSec, kind: binding.kind, visualPrompt: binding.visualPrompt || block.prompt, cameraPrompt: binding.cameraPrompt, beats: binding.beats, castZh: binding.castZh };
+      if (mvShotNeedsPrevis(previsShot).needed
+        && !binding.references?.motionVideos?.some(v => v.source === "previs")
+        && markMvShotAdvisoryShown(`${block.id}|${mvShotPrevisContentKey(previsShot)}`)) {
         if (deps.onMvShotAdvisory) deps.onMvShotAdvisory(block.id, MV_PREVIS_SOFT_HINT_ZH);
         else void import("sonner").then(m => m.toast.warning(MV_PREVIS_SOFT_HINT_ZH)).catch(() => undefined);
       }

@@ -65,7 +65,7 @@ function refsWith(motion: typeof stockMotion | typeof previsMotion) {
   };
 }
 
-function shotBlock(opts: { motion: typeof stockMotion | typeof previsMotion; castZh?: string[]; beats?: MusicMvShotBeat[] }): CanvasBlock {
+function shotBlock(opts: { motion: typeof stockMotion | typeof previsMotion; castZh?: string[]; beats?: MusicMvShotBeat[]; id?: string }): CanvasBlock {
   const imgs = [{ id: "hero", fileName: "hero.png", url: "https://test.invalid/hero.png", gcsUri: "gs://test-bucket/hero.png" }];
   const parent: CanvasBlock = {
     ...defaultCanvasBlock("music", 0, 0),
@@ -75,7 +75,8 @@ function shotBlock(opts: { motion: typeof stockMotion | typeof previsMotion; cas
     musicMv: { status: "planned", candidates: [{ id: "song", url: musicUrl, durationSec: 5.2 }], selectedCandidateId: "song", plan, referenceImages: imgs },
   };
   const [shot] = createMusicMvShotBlocks(parent, plan, PLAN_ID, imgs, parent.musicMv!.candidates[0], refsWith(opts.motion));
-  return { ...shot!, musicMvShot: { ...shot!.musicMvShot!, castZh: opts.castZh ?? CAST, beats: opts.beats ?? BEATS } };
+  // 软提示按「块 id + 内容键」页面内去重：各用例用独立块 id，互不影响
+  return { ...shot!, ...(opts.id ? { id: opts.id } : {}), musicMvShot: { ...shot!.musicMvShot!, castZh: opts.castZh ?? CAST, beats: opts.beats ?? BEATS } };
 }
 
 /** 替身网络：只放行素材签名与 seedanceI2V 出站；其他任何地址直接抛错（绝不真实请求）。 */
@@ -169,7 +170,7 @@ describe("出片路径：白模参考 / 软提示 / R3 硬拦（离线出站）"
   it("无白模：软提示出现，但照常提交且费用参数不变", async () => {
     const { requests } = offline();
     const onMvShotAdvisory = vi.fn();
-    const block = shotBlock({ motion: stockMotion });
+    const block = shotBlock({ motion: stockMotion, id: "mvshot-no-previs" });
     await run(block, "no-previs", { onMvShotAdvisory });
     expect(onMvShotAdvisory).toHaveBeenCalledTimes(1);
     expect(onMvShotAdvisory).toHaveBeenCalledWith(block.id, MV_PREVIS_SOFT_HINT_ZH);
@@ -183,9 +184,34 @@ describe("出片路径：白模参考 / 软提示 / R3 硬拦（离线出站）"
   });
   it("无白模且未注入回调：缺省走页面 toast 警告，照常提交", async () => {
     const { requests } = offline();
-    await run(shotBlock({ motion: stockMotion }), "no-previs-toast");
+    await run(shotBlock({ motion: stockMotion, id: "mvshot-toast" }), "no-previs-toast");
     await vi.waitFor(() => expect(toastWarning).toHaveBeenCalledWith(MV_PREVIS_SOFT_HINT_ZH));
     expect(requests).toHaveLength(1);
+  });
+  it("同一镜头同一内容只提示一次（重跑/重试不重复）；节拍改了或换镜头才再提示，均照常提交", async () => {
+    const { requests } = offline();
+    const onMvShotAdvisory = vi.fn();
+    const block = shotBlock({ motion: stockMotion, id: "mvshot-dedupe" });
+    await run(block, "dedupe-1", { onMvShotAdvisory });
+    await run(block, "dedupe-1", { onMvShotAdvisory });
+    await run(block, "dedupe-2", { onMvShotAdvisory });
+    expect(onMvShotAdvisory).toHaveBeenCalledTimes(1);
+    const edited = shotBlock({ motion: stockMotion, id: "mvshot-dedupe", beats: [{ ...BEATS[0]!, actionZh: "阿宁冲上前一把拥抱阿哲" }, BEATS[1]!] });
+    await run(edited, "dedupe-3", { onMvShotAdvisory });
+    await run(edited, "dedupe-4", { onMvShotAdvisory });
+    expect(onMvShotAdvisory).toHaveBeenCalledTimes(2);
+    await run(shotBlock({ motion: stockMotion, id: "mvshot-dedupe-other" }), "dedupe-5", { onMvShotAdvisory });
+    expect(onMvShotAdvisory).toHaveBeenCalledTimes(3);
+    expect(onMvShotAdvisory.mock.calls.map(c => c[0])).toEqual(["mvshot-dedupe", "mvshot-dedupe", "mvshot-dedupe-other"]);
+    expect(requests.length).toBeGreaterThanOrEqual(5);
+  });
+  it("MV 镜头不进生成前确认预览（previewOnly 在任何外部调用前拒绝），因此不会在预览阶段多弹一次", async () => {
+    offline();
+    const onMvShotAdvisory = vi.fn();
+    await expect(
+      runCanvasBlock({ userRole: "admin", optimizeCopy: async () => "", onMvShotAdvisory }, shotBlock({ motion: stockMotion, id: "mvshot-preview" }), { visionImages: [], texts: [] }, { previewOnly: true }),
+    ).rejects.toThrow();
+    expect(onMvShotAdvisory).not.toHaveBeenCalled();
   });
   it("角色表不足：仍被 R3 硬拦，未提交、无软提示", async () => {
     const { requests } = offline();
