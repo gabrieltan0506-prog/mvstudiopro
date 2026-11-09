@@ -189,3 +189,119 @@ it("VideoEditPanel：区间与扩展提示、报价、确认后才提交、提�
     await browser.close();
   }
 }, 60000);
+
+/** 顾问 videoEdit：登记口 inspect/prefill 与 prefill(nonce) 只预填本面板、显示报价；提交仍须用户点确认。 */
+it("VideoEditPanel：顾问预填（登记口与 prefill nonce）只预填不提交，确认后才入队", async () => {
+  const bundle = await build({
+    stdin: {
+      resolveDir: process.cwd(),
+      loader: "tsx",
+      contents: `
+    import React from 'react'; import {createRoot} from 'react-dom/client';
+    import {VideoEditPanel} from './client/src/components/canvas/VideoEditPanel';
+    globalThis.React=React;globalThis.queued=[];globalThis.quotes=[];globalThis.vctl=null;
+    window.confirm=()=>{throw new Error('不应弹原生确认');};
+    function App(){const[pf,setPf]=React.useState(undefined);globalThis.setPrefill=setPf;
+      return <VideoEditPanel source='gs://test-only/post-prod/7/a.mp4' previewUrl='https://cdn.test/a.mp4' durationSec={40}
+        referenceImages={[{url:'gs://test-only/shop.png',label:'商店门口'}]} prefill={pf}
+        advisorTarget={{id:'clip-1',label:'第1段成片'}} onAdvisorVideoEditControl={c=>{globalThis.vctl=c;}}/>;}
+    createRoot(document.getElementById('root')).render(<App/>);
+  `,
+    },
+    bundle: true,
+    write: false,
+    platform: "browser",
+    format: "iife",
+    jsx: "automatic",
+    alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+    plugins: [
+      {
+        name: "offline",
+        setup(b) {
+          b.onResolve({ filter: /(?:^@\/lib\/trpc$|\/trpc$)/ }, () => ({ path: "trpc", namespace: "offline" }));
+          b.onLoad({ filter: /.*/, namespace: "offline" }, () => ({
+            loader: "js",
+            contents: `
+      const quote={useQuery:(input,opts)=>{
+        if(!opts.enabled) return {data:undefined};
+        globalThis.quotes.push(input);
+        const seg=Math.max(4,Math.round((input.endSec-input.startSec)*10)/10);
+        const s=input.startSec, e=Math.max(input.endSec, Math.round((s+4)*10)/10);
+        return {data:{sourceDurationSec:20,startSec:s,endSec:e,segmentSec:seg,expanded:seg>input.endSec-input.startSec,credits:Math.ceil(seg/2)*30,waived:false,creditsPerTwoSec:30,minSec:4,maxSec:30,confirmNotice:'提交后不可取消；失败或未通过审核将全额退回积分。'}};
+      }};
+      const queue={useMutation:()=>({mutateAsync:async input=>{globalThis.queued.push(input);return {jobId:'job-ve-1'};}})};
+      const job={useQuery:(input,opts)=>{
+        const React=globalThis.React;const [,force]=React.useState(0);
+        React.useEffect(()=>{globalThis.bump=()=>force(x=>x+1);},[]);
+        return {data:opts.enabled?globalThis.jobData:undefined};
+      }};
+      export const trpc={mvAnalysis:{quoteVideoPartialEdit:quote,queueVideoPartialEdit:queue,getPostProdJob:job}};
+    `,
+          }));
+        },
+      },
+    ],
+    define: { "process.env.NODE_ENV": '"production"', "import.meta.env": "{}" },
+    logLevel: "silent",
+  });
+  const browser = await puppeteer.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(10000);
+    const errors: string[] = [];
+    page.on("pageerror", e => errors.push(String(e)));
+    await page.setRequestInterception(true);
+    page.on("request", r => r.respond({ status: 200, contentType: "application/json", body: "[]" }));
+    await page.goto("http://localhost/");
+    await page.setContent('<div id="root"></div>');
+    await page.addScriptTag({ content: bundle.outputFiles[0].text });
+    await page.waitForFunction(() => typeof (globalThis as any).vctl === "function");
+    const text = (label: string) => page.$eval(`[aria-label="${label}"]`, n => n.textContent || "");
+    const val = (label: string) => page.$eval(`[aria-label="${label}"]`, n => (n as HTMLInputElement).value);
+    const click = (label: string) =>
+      page.$$eval("button", (nodes, label) => (nodes.find(n => n.textContent?.trim() === label) as HTMLButtonElement).click(), label);
+    const ctl = (a: unknown) =>
+      page.evaluate(a => (globalThis as any).vctl(a, new AbortController().signal).then((r: string) => JSON.parse(r), (e: Error) => ({ error: e.message })), a as any);
+
+    // inspect：本片 targetId 与时长、参考图
+    expect(await ctl({ action: "videoEdit", operation: "inspect" })).toMatchObject({ videos: [{ targetId: "clip-1", durationSec: 40 }], refs: [{ refAssetId: "ref1", label: "商店门口" }], minSec: 4, maxSec: 30 });
+    // 越界 / 超 30 秒：拒绝且面板不变
+    expect((await ctl({ action: "videoEdit", operation: "prefill", targetId: "clip-1", startSec: 36, endSec: 41, promptZh: "换背景" })).error).toContain("超出视频时长");
+    expect((await ctl({ action: "videoEdit", operation: "prefill", targetId: "clip-1", startSec: 0, endSec: 31, promptZh: "换背景" })).error).toContain("最多 30 秒");
+    expect(await val("修改描述")).toBe("");
+    // prefill：填区间/描述/参考图，显示报价，未入队
+    const r = await ctl({ action: "videoEdit", operation: "prefill", targetId: "clip-1", startSec: 24, endSec: 30, promptZh: "背景换成商店门口，人物动作与衣着不变", refAssetId: "ref1" });
+    expect(r).toMatchObject({ status: "prefilled", startSec: 24, endSec: 30 });
+    expect(JSON.stringify(r)).not.toMatch(/Seedance|BytePlus|EvoLink|Gemini|GPT|Veo/i);
+    await page.waitForFunction(() => (document.querySelector('[aria-label="修改描述"]') as HTMLTextAreaElement)?.value.includes("商店门口"));
+    expect(await text("所选区间")).toContain("24.0–30.0 秒");
+    await page.waitForFunction(() => document.querySelector('[aria-label="报价"]')?.textContent?.includes("需 90 积分"));
+    expect(await page.$eval('[aria-label="参考图1：商店门口"]', n => n.getAttribute("aria-pressed"))).toBe("true");
+    expect(await page.evaluate(() => (globalThis as any).queued.length)).toBe(0);
+    // 不足 4 秒：按中心扩展并说明
+    const short = await ctl({ action: "videoEdit", operation: "prefill", targetId: "clip-1", startSec: 26, endSec: 27, promptZh: "背景换成商店门口" });
+    expect(short).toMatchObject({ startSec: 24.5, endSec: 28.5 });
+    expect(short.notice).toContain("最短 4 秒");
+    // 宿主 prefill nonce：覆盖当前内容（多轮）
+    await page.evaluate(() => (globalThis as any).setPrefill({ startSec: 10, endSec: 16, promptZh: "天空换成黄昏", nonce: 1 }));
+    await page.waitForFunction(() => (document.querySelector('[aria-label="修改描述"]') as HTMLTextAreaElement)?.value === "天空换成黄昏");
+    expect(await text("所选区间")).toContain("10.0–16.0 秒");
+    expect(await page.$eval('[aria-label="参考图1：商店门口"]', n => n.getAttribute("aria-pressed"))).toBe("false");
+    await page.waitForFunction(() => document.querySelector('[aria-label="报价"]')?.textContent?.includes("需 90 积分"));
+    expect(await page.evaluate(() => (globalThis as any).queued.length)).toBe(0);
+    // 用户点提交 → 确认框（不可取消）→ 确认后才入队，参数为预填
+    await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some(b => b.textContent?.trim() === "提交局部修改" && !b.disabled));
+    await click("提交局部修改");
+    await page.waitForSelector('[role="dialog"]');
+    expect(await page.$eval('[role="dialog"]', n => n.textContent || "")).toContain("提交后不可取消");
+    // 确认框打开时顾问不能改预填
+    expect((await ctl({ action: "videoEdit", operation: "prefill", targetId: "clip-1", startSec: 0, endSec: 5, promptZh: "改别处" })).error).toContain("正在提交或处理中");
+    expect(await page.evaluate(() => (globalThis as any).queued.length)).toBe(0);
+    await click("确认提交");
+    await page.waitForFunction(() => (globalThis as any).queued.length === 1);
+    expect(await page.evaluate(() => (globalThis as any).queued[0])).toMatchObject({ startSec: 10, endSec: 16, promptZh: "天空换成黄昏", expectedCredits: 90 });
+    expect(errors).toEqual([]);
+  } finally {
+    await browser.close();
+  }
+}, 60000);

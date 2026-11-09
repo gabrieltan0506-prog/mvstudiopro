@@ -3,6 +3,7 @@ import type { ConcatGrade } from "@shared/colorGrade";
 import { POSTPROD_GRADE_EVENT, type PostProdGradeRequest } from "@/lib/postProdQuickGrade";
 import { VideoGradePanel } from "./VideoGradePanel";
 import { VideoEditPanel } from "./VideoEditPanel";
+import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
 import type { MontageGrade } from "@/lib/montageFinish";
 import type { ManhuaVfxEnvironmentOption } from "@shared/manhuaVfxEnvironment";
@@ -193,7 +194,7 @@ type PostProdWorkshopCardProps = {
   onAdvisorControl?: AdvisorScoringRegistration;
   /** 剪辑方案切点交给顾问 edit 控件（MV 第 5 步）；不传时保持原行为。 */
   onAdvisorEditControl?: AdvisorEditRegistration;
-  /** 顾问 videoEdit 注册口：视频局部修改面板挂载时用 createAdvisorVideoEditControl 注册（只预填、不提交）。 */
+  /** 顾问 videoEdit 注册口：挂「局部修改这条」时原样传给 VideoEditPanel.onAdvisorVideoEditControl（只预填、不提交）。 */
   onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
   advisorContext?: ManhuaCreativeAdvisorContext;
   userId: string;
@@ -259,6 +260,7 @@ export default function PostProdWorkshopCard({
   advisorContext,
   onAdvisorControl,
   onAdvisorEditControl,
+  onAdvisorVideoEditControl,
   userId,
   userRole,
   bgmSeedNoteZh,
@@ -563,6 +565,8 @@ export default function PostProdWorkshopCard({
   const [quickGradeBusy, setQuickGradeBusy] = useState(false);
   /** 「局部修改这条」：同一所选单条，选区间 + 描述 + 参考图，报价确认后提交，原片保留。 */
   const [quickEditOpen, setQuickEditOpen] = useState(false);
+  /** 顾问 videoEdit 预填（nonce 变化即覆盖面板内容）；只预填，提交仍须用户在面板确认。 */
+  const [advisorEditPrefill, setAdvisorEditPrefill] = useState<{ startSec: number; endSec: number; promptZh: string; referenceImageUrls?: string[]; nonce: number }>();
   useEffect(() => {
     const onGrade = (event: Event) => {
       const detail = (event as CustomEvent<PostProdGradeRequest>).detail;
@@ -1363,6 +1367,28 @@ export default function PostProdWorkshopCard({
   useEffect(()=>{onAdvisorControl?.(projectScopeKey,(...args)=>scoringRef.current(...args));return()=>onAdvisorControl?.(projectScopeKey,null);},[onAdvisorControl,projectScopeKey]);
 
   const busy = queueMutation.isPending || disabled;
+  const advisorVideoEditLive = useRef({ url: upscaleVideoUrl, source: upscaleSource, busy });
+  advisorVideoEditLive.current = { url: upscaleVideoUrl, source: upscaleSource, busy };
+  // 顾问 videoEdit：清单 = 超分页签所选这一条（已读真实时长）；prefill 打开「局部修改这条」并预填，不提交
+  useEffect(() => {
+    if (!onAdvisorVideoEditControl) return;
+    const cur = () => advisorVideoEditLive.current;
+    onAdvisorVideoEditControl(
+      createAdvisorVideoEditControl({
+        targets: () => {
+          const { url, source } = cur();
+          const sec = source ? source.durationExactSec ?? source.durationSec : 0;
+          return url && sec > 0 ? [{ id: "current", label: "所选这一条成片", url, durationSec: sec }] : [];
+        },
+        busy: () => cur().busy,
+        open: p => {
+          setQuickEditOpen(true);
+          setAdvisorEditPrefill({ startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, ...(p.referenceImageUrl ? { referenceImageUrls: [p.referenceImageUrl] } : {}), nonce: Date.now() });
+        },
+      })
+    );
+    return () => onAdvisorVideoEditControl(null);
+  }, [onAdvisorVideoEditControl]);
   const transitionKey = advisorWorkflowRevision([vfxScopeKey, clipOptions, concatSel, clipEdits, concatTransition, concatTransitionSec, concatRes, concatAspect]);
   const transitionKeyRef = useRef(transitionKey); transitionKeyRef.current = transitionKey;
   const transitionControl = useRef<AdvisorEffectsControl>(async () => "");
@@ -1972,6 +1998,7 @@ export default function PostProdWorkshopCard({
                     source={upscaleVideoUrl}
                     durationSec={upscaleSource.durationExactSec ?? upscaleSource.durationSec}
                     disabled={busy}
+                    prefill={advisorEditPrefill}
                     onDone={result => toast.success("局部修改完成，已生成新版本", { description: result.jobId ? `单号 ${result.jobId}` : undefined })}
                   />
                 ) : <p className="text-[11px] text-white/50">先读取真实尺寸与时长，再选择修改区间。</p>}

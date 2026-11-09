@@ -15,6 +15,8 @@ import {
   type VideoEditQuoteInput,
   type VideoEditSubmitInput,
 } from "@/lib/videoEditSubmit";
+import type { AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
+import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
 
 /** 本作品可选参考图（素材库/镜头图等）。 */
 export type VideoEditReferenceImage = { url: string; label?: string; thumbUrl?: string };
@@ -34,6 +36,12 @@ export type VideoEditPanelProps = {
   debugMode?: boolean;
   /** 修改完成：新版本（原片保留）；挂载方可据此加一条新版本。 */
   onDone?: (result: VideoEditResult) => void;
+  /** 外部（创作顾问）预填：nonce 变化即覆盖区间/描述/参考图；只预填，报价与提交仍须用户在本面板确认。 */
+  prefill?: { startSec: number; endSec: number; promptZh: string; referenceImageUrls?: string[]; nonce: string | number };
+  /** 顾问 videoEdit 登记口：本面板挂载期间登记（inspect 列本片与参考图，prefill 覆盖本面板内容），卸载即注销。 */
+  onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
+  /** 顾问清单里本片的 targetId 与名称（缺省 current / 当前成片）。 */
+  advisorTarget?: { id: string; label: string };
 };
 
 const POLL_MS = 4000;
@@ -84,6 +92,36 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const doneRef = useRef("");
 
+  const applyPrefill = (p: { startSec: number; endSec: number; promptZh: string; referenceImageUrls?: string[] }) => {
+    const allowed = new Set((props.referenceImages ?? []).map(r => r.url));
+    setStartSec(roundSec(Math.min(Math.max(0, p.startSec), duration)));
+    setEndSec(roundSec(Math.min(Math.max(0, p.endSec), duration)));
+    setPromptZh(p.promptZh.slice(0, VIDEO_EDIT_PROMPT_MAX));
+    setRefs((p.referenceImageUrls ?? []).filter(u => allowed.has(u)).slice(0, VIDEO_EDIT_REF_MAX));
+    setConfirming(false);
+    setError("");
+  };
+  const prefillNonce = props.prefill?.nonce;
+  useEffect(() => {
+    if (props.prefill && !jobId) applyPrefill(props.prefill);
+  }, [prefillNonce]); // eslint-disable-line react-hooks/exhaustive-deps
+  const advisorLive = useRef({ props, duration, locked: false, apply: applyPrefill });
+  useEffect(() => {
+    const register = props.onAdvisorVideoEditControl;
+    if (!register) return;
+    const cur = () => advisorLive.current;
+    register(
+      createAdvisorVideoEditControl({
+        targets: () => [{ id: cur().props.advisorTarget?.id ?? "current", label: cur().props.advisorTarget?.label ?? "当前成片", url: cur().props.source, durationSec: cur().duration }],
+        refs: () => (cur().props.referenceImages ?? []).map((r, i) => ({ id: `ref${i + 1}`, label: r.label ?? `参考图${i + 1}`, url: r.url })),
+        range: () => ({ minSec: VIDEO_EDIT_MIN_SEC, maxSec: VIDEO_EDIT_MAX_SEC }),
+        busy: () => cur().locked,
+        open: p => cur().apply({ ...p, referenceImageUrls: p.referenceImageUrl ? [p.referenceImageUrl] : [] }),
+      })
+    );
+    return () => register(null);
+  }, [props.onAdvisorVideoEditControl]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const range = checkVideoEditRange(startSec, endSec, duration);
   const debounced = useDebounced({ startSec: range.startSec, endSec: range.endSec }, 400);
   const quoteEnabled = Boolean(props.source) && !range.problem && !checkVideoEditRange(debounced.startSec, debounced.endSec, duration).problem;
@@ -109,6 +147,7 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
 
   const running = Boolean(jobId) && job?.status === "active";
   const locked = Boolean(props.disabled) || busy || running;
+  advisorLive.current = { props, duration, locked: locked || confirming, apply: applyPrefill };
   const promptOk = promptZh.trim().length > 0 && promptZh.trim().length <= VIDEO_EDIT_PROMPT_MAX;
   const canAsk = !locked && !range.problem && promptOk && quoteFresh;
 

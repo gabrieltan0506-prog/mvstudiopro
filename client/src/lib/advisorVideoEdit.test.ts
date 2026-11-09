@@ -1,14 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createElement } from "react";
-// 测试环境 JSX 走经典转换
-(globalThis as { React?: typeof React }).React = React;
-import { renderToStaticMarkup } from "react-dom/server";
 import { creativeVoiceProductionSchema } from "@shared/creativeVoiceProduction";
 import { MANHUA_ADVISOR_WORKFLOW_HELP } from "@shared/manhuaAdvisorWorkflow";
-import { confirmAndQueueVideoPartialEdit, prepareAdvisorVideoEditPrefill, videoPartialEditConfirmText, type AdvisorVideoEditPrefill } from "@shared/advisorVideoEdit";
+import { prepareAdvisorVideoEditPrefill } from "@shared/advisorVideoEdit";
 import { createAdvisorVideoEditControl } from "./advisorVideoEditControl";
-import { AdvisorVideoEditDock } from "@/components/canvas/AdvisorVideoEditDock";
 
 const targets = [{ id: "clip-1", label: "第1段成片", url: "https://cdn.test/a.mp4", durationSec: 40 }];
 const refs = [{ id: "ref-1", label: "商店门口", url: "https://cdn.test/shop.png" }];
@@ -66,33 +60,16 @@ describe("顾问 videoEdit 只预填不提交", () => {
   });
 });
 
-describe("确认后才提交 + 报价显示", () => {
-  const p: AdvisorVideoEditPrefill = { targetId: "clip-1", label: "第1段成片", sourceUrl: "https://cdn.test/a.mp4", startSec: 24, endSec: 30, promptZh: "背景换成商店门口，人别动", referenceImageUrl: "https://cdn.test/shop.png" };
-  const quote = { credits: 90, confirmNotice: "按原秒点拼回原片" };
-  it("无报价不提交；用户取消不提交；确认后按报价积分提交一次", async () => {
-    const queue = vi.fn(async () => ({ jobId: "j1" }));
-    await expect(confirmAndQueueVideoPartialEdit(p, undefined, { confirm: () => true, queue, requestId: () => "r" })).rejects.toThrow("报价未就绪");
-    expect(await confirmAndQueueVideoPartialEdit(p, quote, { confirm: () => false, queue, requestId: () => "r" })).toEqual({ submitted: false });
-    expect(queue).not.toHaveBeenCalled();
-    const texts: string[] = [];
-    const r = await confirmAndQueueVideoPartialEdit(p, quote, { confirm: t => (texts.push(t), true), queue, requestId: () => "req-1" });
-    expect(r).toEqual({ submitted: true, result: { jobId: "j1" } });
-    expect(queue).toHaveBeenCalledWith({ sourceUrl: "https://cdn.test/a.mp4", startSec: 24, endSec: 30, promptZh: "背景换成商店门口，人别动", referenceImageUrls: ["https://cdn.test/shop.png"], requestId: "req-1", expectedCredits: 90 });
-    expect(texts[0]).toContain("本次 90 积分");
-    expect(texts[0]).toContain("提交后无法取消");
-    expect(texts[0]).toContain("按原秒点拼回原片");
-    expect(texts[0]).not.toMatch(TECH);
-    expect(videoPartialEditConfirmText(p, { credits: 0 })).toContain("本次 0 积分");
-  });
-  it("面板显示区间、描述与报价；报价未就绪时确认按钮不可用；无引擎名", () => {
-    const html = renderToStaticMarkup(createElement(AdvisorVideoEditDock, { prefill: p, quote, queue: async () => ({}), onClose: () => {} }));
-    expect(html).toContain("24–30 秒");
-    expect(html).toContain("背景换成商店门口，人别动");
-    expect(html).toContain("本次 90 积分");
-    expect(html).toContain("提交后不可取消");
-    expect(html).not.toMatch(TECH);
-    const pending = renderToStaticMarkup(createElement(AdvisorVideoEditDock, { prefill: p, quoteLoading: true, queue: async () => ({}), onClose: () => {} }));
-    expect(pending).toContain("正在计算积分");
-    expect(pending).toMatch(/<button[^>]*disabled[^>]*>确认提交/);
+describe("顾问 videoEdit 接线", () => {
+  it("MV 后期工作台转给后期工坊登记口；工坊打开「局部修改这条」并按 nonce 预填，不经提交路径", async () => {
+    const { readFileSync } = await import("node:fs");
+    const card = readFileSync("client/src/components/canvas/PostProdWorkshopCard.tsx", "utf8");
+    const mv = readFileSync("client/src/components/canvas/CanvasMvPostProdWorkbench.tsx", "utf8");
+    expect(mv).toContain("onAdvisorVideoEditControl={registerVideoEdit}");
+    expect(mv).toMatch(/action\.action === "videoEdit"[\s\S]{0,200}videoEdit\.current\(action, signal\)/);
+    expect(card).toContain("createAdvisorVideoEditControl(");
+    expect(card).toMatch(/open: p => \{\s*setQuickEditOpen\(true\);\s*setAdvisorEditPrefill\(/);
+    expect(card).toContain("prefill={advisorEditPrefill}");
+    expect(card.indexOf("const busy = queueMutation.isPending || disabled;")).toBeLessThan(card.indexOf("const advisorVideoEditLive"));
   });
 });
