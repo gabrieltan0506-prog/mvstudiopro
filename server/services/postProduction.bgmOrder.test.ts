@@ -123,3 +123,42 @@ it("已采用配乐按进出秒窗结束，不循环填满片尾", () => {
   expect(plan.filterGraph).toContain("afade=t=out:st=7.600:d=0.400");
   expect(plan.filterGraph).toContain("apad,atrim=0:29.000");
 });
+
+describe("镜头自带声增益与静音区间", () => {
+  it("缺省参数时 filter 与改前逐字一致", () => {
+    const graph = buildBgmFilterPlan(base, { durationSec: 30, hasAudio: true }).filterGraph;
+    expect(graph).toBe(
+      "[1:a]atrim=start=5.000:end=31.000,asetpts=PTS-STARTPTS,adelay=4000|4000,volume=0.48,"
+      + "afade=t=in:st=4.000:d=0.500,afade=t=out:st=28.800:d=1.200,apad,atrim=0:30.000[bg];"
+      + "[0:a]apad,atrim=0:30.000,asetpts=PTS-STARTPTS,asplit=2[voxmix][voxkey];"
+      + "[bg][voxkey]sidechaincompress=threshold=0.035:ratio=7:attack=6:release=280[bgd];"
+      + "[voxmix][bgd]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[mix]",
+    );
+  });
+
+  it("静音区间叠加整体增益，用逐帧 volume 表达式作用在原声链", () => {
+    const parsed = bgmMountParamsSchema.parse({
+      ...base,
+      duckUnderDialogue: false,
+      sourceAudioGainDb: -6,
+      sourceAudioMuteRanges: [{ startSec: 9, endSec: 12 }, { startSec: 16.04, endSec: 23 }],
+    });
+    const graph = buildBgmFilterPlan(parsed, { durationSec: 30, hasAudio: true }).filterGraph;
+    expect(graph).toContain(
+      "[0:a]apad,atrim=0:30.000,asetpts=PTS-STARTPTS,"
+      + "volume='if(between(t,9.0,12.0)+between(t,16.0,23.0),0,0.5012)':eval=frame,anull[voxmix]",
+    );
+    // 主轨 BGM 与淡入淡出不受影响
+    expect(graph).toContain("volume=0.48,afade=t=in:st=4.000:d=0.500,afade=t=out:st=28.800:d=1.200");
+  });
+
+  it("只给增益时用 dB 常量滤镜", () => {
+    const graph = buildBgmFilterPlan({ ...base, sourceAudioGainDb: 3 }, { durationSec: 30, hasAudio: true }).filterGraph;
+    expect(graph).toContain("asetpts=PTS-STARTPTS,volume=3dB,asplit=2[voxmix][voxkey]");
+  });
+
+  it("校验拒绝倒置区间与越界增益", () => {
+    expect(bgmMountParamsSchema.safeParse({ ...base, sourceAudioMuteRanges: [{ startSec: 5, endSec: 5 }] }).success).toBe(false);
+    expect(bgmMountParamsSchema.safeParse({ ...base, sourceAudioGainDb: 20 }).success).toBe(false);
+  });
+});

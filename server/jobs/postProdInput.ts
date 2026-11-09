@@ -71,6 +71,21 @@ export const bgmMountParamsSchema = z
     fadeOutSec: z.number().min(0).max(30).default(1),
     /** 可选自动避让；旧任务缺省沿用原处理，新工作台显式选择。 */
     duckUnderDialogue: z.boolean().optional(),
+    /** 镜头自带声整体增益(dB)；缺省保持原声不变。 */
+    sourceAudioGainDb: z.number().finite().min(-60).max(12).optional(),
+    /** 镜头自带声静音区间（片内秒，一位小数）；缺省不静音。 */
+    sourceAudioMuteRanges: z
+      .array(
+        z
+          .object({
+            startSec: z.number().finite().min(0).max(3600).transform((v) => Math.round(v * 10) / 10),
+            endSec: z.number().finite().min(0).max(3600).transform((v) => Math.round(v * 10) / 10),
+          })
+          .strict()
+          .refine((r) => r.endSec > r.startSec, { message: "静音区间结束须晚于开始", path: ["endSec"] }),
+      )
+      .max(64)
+      .optional(),
     narrativeMix: bgmNarrativeMixSchema.optional(),
     /** 卡点表产出的片内分窗增益；缺省时保持旧版固定 bgmVolume。 */
     volumeExpr: z

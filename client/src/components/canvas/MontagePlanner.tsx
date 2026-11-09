@@ -9,6 +9,7 @@ import {
   type MontagePlan,
 } from "@shared/montagePlan";
 import type { ManhuaCreativeAdvisorContext } from "@shared/manhuaCreativeAdvisor";
+import type { AdvisorEditControl, AdvisorEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 
 type Props = {
   clips: Array<{ id: string; url: string; label: string }>;
@@ -19,6 +20,8 @@ type Props = {
   busy: boolean;
   beforeSubmit?: () => Promise<void>;
   onSourceChange?: (id: string) => void;
+  /** 顾问剪辑控件：episode=方案序号，shotIndex=切点序号（均从1起）；只改草稿，不提交合成。 */
+  onAdvisorEditControl?: AdvisorEditRegistration;
   onSubmit: (
     params: {
       clips: string[];
@@ -133,6 +136,38 @@ export function MontagePlanner(props: Props) {
       parseError =
         "方案格式或时间码未通过校验，请核对报告后修正，不能提交剪辑。";
     }
+  const advisorEditControl = useRef<AdvisorEditControl | null>(null);
+  advisorEditControl.current = async (action, signal) => {
+    signal.throwIfAborted();
+    const selected = plan?.plans[action.episode - 1];
+    if (!plan || !selected) throw new Error("请先选定有效剪辑方案再读取切点");
+    if (action.operation === "inspect") return JSON.stringify({ plan: action.episode, title: selected.title, cuts: selected.cuts.map((c, i) => ({ shotIndex: i + 1, startSec: c.startSec, endSec: c.endSec })), sourceDurationSec: plan.sourceDurationSec, busy: locked || Boolean(saved.pending) || stale });
+    if (locked || saved.pending || stale) throw new Error("剪辑方案正在处理或原片已变化，未改动");
+    const cuts = [...selected.cuts];
+    if (action.operation === "reorder") {
+      if (!action.order || action.order.length !== cuts.length || new Set(action.order).size !== cuts.length || action.order.some(n => n < 1 || n > cuts.length)) throw new Error("顺序必须包含本方案全部切点且不得重复");
+      cuts.splice(0, cuts.length, ...action.order.map(n => selected.cuts[n - 1]));
+    } else if (action.operation === "trim") {
+      const i = (action.shotIndex ?? 0) - 1, tenth = (v: number) => Math.abs(v * 10 - Math.round(v * 10)) < 1e-9;
+      if (!cuts[i] || action.inSec == null || action.outSec == null || !tenth(action.inSec) || !tenth(action.outSec)) throw new Error("切点进出点须为一位小数秒，且切点须存在");
+      cuts[i] = { ...cuts[i], startSec: action.inSec, endSec: action.outSec };
+    } else throw new Error("剪辑方案合成暂不支持转场设置，未改动");
+    const next = JSON.stringify({ ...plan, plans: plan.plans.map((p, i) => (i === action.episode - 1 ? { ...p, cuts } : p)) });
+    try { parseMontagePlan(next); } catch { throw new Error("改动后切点未通过方案校验（须在原片内、按原片时间递增且不重叠），未改动"); }
+    if (!window.confirm("确认将本次剪辑建议保存到当前方案草稿？原片保留，仍需手动采用。")) throw new Error("用户未确认剪辑改动");
+    signal.throwIfAborted();
+    save({ ...live.current, answer: next });
+    setError("");
+    return JSON.stringify({ status: "saved", plan: action.episode, operation: action.operation });
+  };
+  useEffect(() => {
+    const register = props.onAdvisorEditControl;
+    register?.((action, signal) => {
+      if (!advisorEditControl.current) throw new Error("剪辑方案尚未就绪");
+      return advisorEditControl.current(action, signal);
+    });
+    return () => register?.(null);
+  }, [props.onAdvisorEditControl]);
   async function ask(confirmPaid = false) {
     if (
       !props.context ||

@@ -15,6 +15,7 @@ import { CanvasSunoSongAdvisor } from "./CanvasSunoSongAdvisor";
 import { uploadOneCanvasAsset } from "@/lib/canvasUpload";
 import { sunoSongBriefSchema } from "@shared/canvasMusicMv";
 import { CanvasMvTimelineEditor } from "./CanvasMvTimelineEditor";
+import { CanvasMvPostProdWorkbench } from "./CanvasMvPostProdWorkbench";
 import { musicMvEditIssues, musicMvEditKey, musicMvEditMaterialGap } from "@shared/canvasMusicMvEdit";
 import { CanvasMvCreativeAdvisor } from "./CanvasMvCreativeAdvisor";
 import {
@@ -98,6 +99,8 @@ import {
 
 type Props = {
   projectId?: string;
+  /** 第 5 步后期工坊与创作顾问的账户作用域；未登录时不挂后期工坊。 */
+  userId?: string;
   block: CanvasBlock;
   blocks: CanvasBlock[];
   onPatch: (patch: Partial<CanvasBlock>) => void;
@@ -143,6 +146,7 @@ export function CanvasMusicMvStudio({
   block,
   blocks,
   projectId,
+  userId,
   onPatch,
   onAdd,
   runShot,
@@ -1910,6 +1914,36 @@ export function CanvasMusicMvStudio({
                 })
               }
             />
+            {userId && (() => {
+              // 复用后期工坊：原片=已出片镜头与已合成版本，主音=原歌曲；剪辑方案采用后才提交 concat。
+              const shotClips = (state.shotBlockIds || []).flatMap((id, i) => {
+                const b = blocks.find(row => row.id === id);
+                return b?.status === "done" && b.outputUrl
+                  ? [{ id: b.id, url: b.outputUrl, label: `镜头${i + 1}` }]
+                  : [];
+              });
+              const finalBlock = state.finalBlockId ? blocks.find(row => row.id === state.finalBlockId) : undefined;
+              const clips = finalBlock?.outputUrl ? [...shotClips, { id: finalBlock.id, url: finalBlock.outputUrl, label: "已合成MV" }] : shotClips;
+              return (
+                <CanvasMvPostProdWorkbench
+                  key={`${userId}:${state.planRequestId}`}
+                  userId={userId}
+                  projectId={projectId}
+                  scope={`music-mv:${block.id}:${state.planRequestId}`}
+                  title={state.songTitle?.trim() || "音乐MV"}
+                  aspect={block.aspectRatio === "9:16" ? "9:16" : "16:9"}
+                  videoModel={block.videoModel || ""}
+                  media={{
+                    clips,
+                    audio: [{ id: selected.id, url: selected.gcsUri || selected.url, label: "原歌曲" }],
+                    story: state.lyrics || "",
+                  }}
+                  storage={window.localStorage}
+                  disabled={busy}
+                  beforeSubmit={async () => {}}
+                />
+              );
+            })()}
             </div>
           )}
           {highlightMode && <p className="text-xs">5. 剪辑：按上方已应用的高光区间裁取画面、原歌曲与对齐歌词，不变速；调整区间后先补齐缺失镜头。</p>}

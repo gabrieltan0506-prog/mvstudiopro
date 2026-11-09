@@ -7,7 +7,7 @@ import { ManhuaVfxEditor, type ManhuaVfxSubmitInput } from "./ManhuaVfxEditor";
 import { adoptedManhuaVfxClipOptions, pendingManhuaVfxTrackedJobs, manhuaVfxImageOptions, manhuaVfxSceneOptions } from "@/lib/manhuaVfxWorkflow";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import { createAdvisorScoringSourceGuard } from "@/lib/manhuaAdvisorScoringSource";
-import type { AdvisorScoringControl, AdvisorScoringRegistration, AdvisorBgmControl } from "@/lib/manhuaAdvisorWorkflowControl";
+import type { AdvisorScoringControl, AdvisorScoringRegistration, AdvisorBgmControl, AdvisorEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { manhuaProjectStorage } from "@shared/manhuaProjectScope";
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
 import type { SubtitleHighlight } from "@shared/subtitleHighlights";
@@ -185,6 +185,8 @@ type PostProdWorkshopCardProps = {
   onVfxAdvisorDockChange?: (host: HTMLDivElement | null) => void;
   blocks: CanvasBlock[];
   onAdvisorControl?: AdvisorScoringRegistration;
+  /** 剪辑方案切点交给顾问 edit 控件（MV 第 5 步）；不传时保持原行为。 */
+  onAdvisorEditControl?: AdvisorEditRegistration;
   advisorContext?: ManhuaCreativeAdvisorContext;
   userId: string;
   userRole?: string | null;
@@ -248,6 +250,7 @@ export default function PostProdWorkshopCard({
   blocks,
   advisorContext,
   onAdvisorControl,
+  onAdvisorEditControl,
   userId,
   userRole,
   bgmSeedNoteZh,
@@ -1787,7 +1790,7 @@ export default function PostProdWorkshopCard({
         <div className="min-w-0 space-y-3" aria-label="当前后期参数">
         {/* 拼接 */}
         <div hidden={activeTool !== "concat"} id="manhua-post-concat" className="scroll-mt-24 rounded-xl border border-white/10 bg-black/25 p-3">
-          <MontagePlanner onSourceChange={id => { setPreviewClip(id); setPreviewResult(null); setSequencePlaying(false); }} key={`${userId}:${projectScopeKey}`} clips={clipOptions} context={advisorContext} story={currentStoryContext} storage={storage} storageKey={`${storageKey}:${projectScopeKey}:montage`} busy={busy || scopedJobs.some(job => job.action === "concat" && (job.status === "queued" || job.status === "running"))} beforeSubmit={beforeSubmit} onSubmit={(params, title) => submit({ action: "concat", params }, title, true)} />
+          <MontagePlanner onAdvisorEditControl={onAdvisorEditControl} onSourceChange={id => { setPreviewClip(id); setPreviewResult(null); setSequencePlaying(false); }} key={`${userId}:${projectScopeKey}`} clips={clipOptions} context={advisorContext} story={currentStoryContext} storage={storage} storageKey={`${storageKey}:${projectScopeKey}:montage`} busy={busy || scopedJobs.some(job => job.action === "concat" && (job.status === "queued" || job.status === "running"))} beforeSubmit={beforeSubmit} onSubmit={(params, title) => submit({ action: "concat", params }, title, true)} />
           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
             <Layers className="h-3.5 w-3.5 text-cyan-300" /> 拼接成片
           </div>

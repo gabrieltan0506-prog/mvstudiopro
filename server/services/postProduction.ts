@@ -500,8 +500,20 @@ export function buildBgmFilterPlan(input: RawBgmMountParams, video: {
 
   const voiceSource = video.hasAudio ? "[0:a]" : "[2:a]";
   const shouldDuck = normalized.duckUnderDialogue !== false;
+  // 镜头自带声：整体增益 + 静音区间；两者都缺省时不插滤镜，输出与旧版逐字一致。
+  const sourceGainDb = normalized.sourceAudioGainDb ?? 0;
+  const muteRanges = normalized.sourceAudioMuteRanges ?? [];
+  let sourceVolumeFilter = "";
+  if (muteRanges.length) {
+    const gain = Number(Math.pow(10, sourceGainDb / 20).toFixed(4));
+    const between = muteRanges.map((r) => `between(t,${r.startSec.toFixed(1)},${r.endSec.toFixed(1)})`).join("+");
+    sourceVolumeFilter = `volume='if(${between},0,${gain})':eval=frame,`;
+  } else if (sourceGainDb !== 0) {
+    sourceVolumeFilter = `volume=${sourceGainDb}dB,`;
+  }
   const voiceChain =
     `${voiceSource}apad,atrim=0:${durationSec.toFixed(3)},asetpts=PTS-STARTPTS,`
+    + sourceVolumeFilter
     + (shouldDuck ? "asplit=2[voxmix][voxkey]" : "anull[voxmix]");
   // 旧入口没有独立对白轨，继续保留原音侧链；真实对白窗同时由 volumeExpr 手动压低。
   const duck = { threshold: 0.035, ratio: 7, attack: 6, release: 280 };

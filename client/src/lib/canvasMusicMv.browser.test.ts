@@ -58,6 +58,11 @@ beforeAll(async () => {
             })
           );
           // 找素材抽屉由共用组件负责检索与采用；此处以虚构抽屉只验证 MV 接线（入口→onPick→绑定写入）。
+          // 登录态由站点外壳提供；离线夹具给虚构用户，不连 /api/me。
+          builder.onResolve({ filter: /^@\/_core\/hooks\/useAuth$/ }, () => ({
+            path: "auth",
+            namespace: "offline",
+          }));
           builder.onResolve(
             { filter: /^@\/components\/stockFootage\/StockFootageDrawer$/ },
             () => ({ path: "drawer", namespace: "offline" })
@@ -66,7 +71,9 @@ beforeAll(async () => {
             loader: "js",
             resolveDir: process.cwd(),
             contents:
-              args.path === "drawer"
+              args.path === "auth"
+                ? `export function useAuth(){return {user:{id:7,role:'user'},loading:false,isAuthenticated:true};}`
+                : args.path === "drawer"
                 ? `import React from 'react';
         export function StockFootageDrawer(p){const f=globalThis.fixture;f.drawer={open:p.open,title:p.title,purpose:p.purpose,usage:p.usage,kind:p.kind,orientation:p.orientation,targetDurationSec:p.targetDurationSec,sourceText:p.sourceText,context:p.context};if(!p.open)return null;
           return React.createElement('div',{role:'dialog','aria-label':p.title},
@@ -93,16 +100,20 @@ beforeAll(async () => {
           saveEdit:{useMutation:()=>({mutateAsync:async input=>{f().record('saveEdit',input);const receipt={...input,sha256:'test-hash',createdAt:'2026-10-15T21:00:00+08:00'};localStorage.setItem('saved-edit-'+input.revisionId,JSON.stringify(receipt));return receipt;}})},
           adoptConcept:{useMutation:()=>({mutateAsync:async input=>{f().record('adopt',input);const a=f().state.advisor;const c=a.proposal.concepts.find(c=>c.id===input.conceptId);return {requestId:input.requestId,plan:c.plan,input:{requestId:input.requestId,audio:a.target.audio,lyrics:a.target.lyrics,creativePrompt:a.target.creativePrompt,referenceSummaries:a.target.referenceSummaries,advisorEvidenceId:input.evidenceId}};}})},
           prepareShotSongSlice:{useMutation:()=>({isPending:false,mutateAsync:async input=>{f().record('songSlice',input);return {jobId:'slice-'+input.shotId,startSec:0,endSec:5,kind:'generated'};}})},
+          ...Object.fromEntries(['composeFillShot','prepareSinging','recognizeLyrics','reviseForLyrics','trimShotMotionClip'].map(k=>[k,{useMutation:()=>({isPending:false,mutateAsync:async input=>{f().record(k,input);throw new Error('离线夹具禁止真实提交');}})}])),
           draftPlan:{useMutation:()=>({mutateAsync:async input=>{f().record('plan',input);if(f().planError)throw new Error(f().planError);return {plan:f().makePlan(input)};}})}},
+          stockFootage:{getPersonEdit:{useQuery:()=>({data:undefined,refetch:async()=>{}})},personEdit:{useMutation:()=>({isPending:false,mutateAsync:async input=>{f().record('personEdit',input);throw new Error('离线夹具禁止真实提交');}})}},
           canvasMusicMvAssemble:{queue:{useMutation:()=>({mutateAsync:async input=>{f().record('assemble',input);return {jobId:'assemble-fictional'};}})}}};
       `
                 : args.path === "omniCanvasApi"
                   ? `export async function resolveCanvasMaterialUrl(uri){return uri.startsWith('gs://')?'https://test.invalid/'+encodeURIComponent(uri):uri;}`
-                  : `export async function getJob(){return {status:"running"};} export async function pollJobUntilTerminal(jobId,opts){globalThis.fixture.record('poll',jobId);if(globalThis.fixture.assembleError)throw new Error('unknown network');const status=globalThis.fixture.assembleStatus||'succeeded';opts?.onPoll?.({status});return {status,output:{finalVideoUrl:'https://test.invalid/final.mp4'}};}`,
+                  : `export async function getJob(){return {status:"running"};} export async function createJobSameOrigin(input){globalThis.fixture.record('createJob',input);throw new Error('离线夹具禁止真实提交');} export async function pollJobUntilTerminal(jobId,opts){globalThis.fixture.record('poll',jobId);if(globalThis.fixture.assembleError)throw new Error('unknown network');const status=globalThis.fixture.assembleStatus||'succeeded';opts?.onPoll?.({status});return {status,output:{finalVideoUrl:'https://test.invalid/final.mp4'}};}`,
           }));
         },
       },
     ],
+    // 第 5 步后期工坊连带的样式与字体不参与离线行为验证。
+    loader: { ".css": "empty", ".woff": "empty", ".woff2": "empty", ".ttf": "empty" },
     define: { "process.env.NODE_ENV": '"test"', "import.meta.env": "{}" },
   });
   bundle = result.outputFiles[0]!.text;
@@ -173,7 +184,7 @@ describe("独立音乐MV真实视图（虚构任务边界）", () => {
       expect(result.calls.filter((c:any)=>c.kind==='songPrepare')).toHaveLength(1);
       expect(result.calls.filter((c:any)=>c.kind==='songSubmit')).toHaveLength(0);
     } finally {await context.close();}
-  });
+  }, 15_000);
   it("两版音乐→选版→两镜分镜→缺镜拒合成→真实铺节点与逐镜执行→最终节点回写", async () => {
     const { context, page, click, reload } = await open();
     try {

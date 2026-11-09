@@ -2203,7 +2203,7 @@ export default function FreeformCanvas({
   const mvWorkflowBlock = musicWorkflow
     ? blocks.find(block => block.id === selectedId && block.kind === "music") || blocks.find(block => block.kind === "music")
     : undefined;
-  const renderMusicStudio = (block: CanvasBlock) => (<CanvasMusicMvStudio projectId={projectId} key={block.id} block={block} blocks={blocks}
+  const renderMusicStudio = (block: CanvasBlock) => (<CanvasMusicMvStudio projectId={projectId} userId={authUser?.id ? String(authUser.id) : undefined} key={block.id} block={block} blocks={blocks}
                         onPatch={patch => patchOne(block.id, patch)} getBlocks={() => blocksRef.current}
                         onPatchBlock={(id, patch) => patchOne(id, patch)}
                         runShot={runBlock}
