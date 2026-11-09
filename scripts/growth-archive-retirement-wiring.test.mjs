@@ -42,7 +42,8 @@ for(const name of files){
   const idx=f.source.indexOf('- name: Retire verified Bilibili archive sources');
   assert(idx>f.source.indexOf('- name: Always release archive hardlink snapshot'));
   if(name==='growth-backup.yml')assert(idx>f.source.indexOf('- name: Always release owned current snapshot'));
-  assert.match(f.source.slice(idx),/if: success\(\)/);
+  // 允许带 BACKUP_DEFERRED 让路守卫的写法：if: ${{ success() && env.BACKUP_DEFERRED != 'true' }}
+  assert.match(f.source.slice(idx),/if: (?:\$\{\{ )?success\(\)/);
   const r=f.run();assert.equal(r.status,0,r.stderr);
   const captured=JSON.parse(fs.readFileSync(f.capture));
   assert(captured.args.includes('selected-app'));
