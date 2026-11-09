@@ -1,7 +1,8 @@
 /**
  * 图文知识手册的出图规划（用户 2026-11-08 改令）：
  * - 每张图 = 一个章节/主题的核心图解；图内文字 ≤ 1200 中文字（KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE）。
- * - 图数由主题/章节数决定，不按字数切：相邻小节按篇幅合并成主题，完整版最多 16 张、精华版最多 8 张。
+ * - 图数由主题/章节数决定，不按字数切：相邻小节按篇幅合并成主题；档位只以图片张数区分：
+ *   精华版 = 图片 ≤30 张，超过 30 张即为完整版（完整版硬顶 48，用户 2026-11-09 改令，取代原 16/8）。
  * - 图外的全部细节（溢出文字）进入该主题的内文（图在上、要点在下，续页接排），内文不受 1200 限制。
  * - 图与内文互不重复：每段文字要么进图、要么进内文，按原顺序切分，不复制。
  *
@@ -11,8 +12,10 @@ import type { KnowledgeEditionLevel } from "./knowledgeEditionBudget";
 
 /** 单张图内文字上限（与出图分页上限同值；这里独立声明避免与分页模块循环依赖）。 */
 export const KNOWLEDGE_TOPIC_IMAGE_MAX_CHARS = 1200;
-/** 每档图片张数硬顶：用户此前完整版最多约 16 张；精华版图少文多，取一半。 */
-export const KNOWLEDGE_TOPIC_IMAGE_CAP: Record<KnowledgeEditionLevel, number> = { full: 16, concise: 8 };
+/** 每档图片张数硬顶（用户 2026-11-09 改令）：精华版 ≤30 张；超过 30 张即为完整版，完整版硬顶 48（血脂 v2 基准即 48 张）。 */
+export const KNOWLEDGE_TOPIC_IMAGE_CAP: Record<KnowledgeEditionLevel, number> = { full: 48, concise: 30 };
+/** 精华/完整只以图片张数区分：≤30 张为精华版，否则为完整版。 */
+export const knowledgeEditionLevelForImageCount = (images: number): KnowledgeEditionLevel => (images <= KNOWLEDGE_TOPIC_IMAGE_CAP.concise ? "concise" : "full");
 /** 合并后每个主题至少承载的原文字数；不足一张图的相邻小节合并为同一主题。 */
 export const KNOWLEDGE_TOPIC_MIN_CHARS = 1200;
 /** 每个小节在图内至少保留的要点字数（标题之外），避免多节合并时只剩标题。 */

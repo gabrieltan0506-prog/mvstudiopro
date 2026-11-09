@@ -3,7 +3,7 @@ import {knowledgeEditionParts} from '@shared/knowledgeCardEdition';
 import {knowledgeEditionImagePlan} from '@shared/knowledgeCardPagination';
 import {knowledgeEditionBudgetCheck} from '@shared/knowledgeEditionBudget';
 /**
- * 生图前预检：每张图是一个主题的核心图解（图内≤1200字），完整版≤16张、总页数≤72，精华版≤8张、图:内文1:2–1:3。
+ * 生图前预检：每张图是一个主题的核心图解（图内≤1200字），完整版≤48张、总页数≤72，精华版≤30张、图:内文1:2–1:3。
  * 每张图与要点同页，图外细节进内文续页；这里给出计划页数与提示，不阻断生成（略超无妨）。
  */
 export function KnowledgeEditionReadingCount({markdown}:{markdown:string|null}){

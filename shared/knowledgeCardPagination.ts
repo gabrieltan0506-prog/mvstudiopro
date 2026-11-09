@@ -437,7 +437,7 @@ export function planKnowledgeCardPages(
   distillModel?: string | null,
 ): KnowledgeCardPagePlan {
   const model = resolveKnowledgeCardDistillModel(distillModel);
-  // 两档手册：图数按主题定（完整版≤16、精华版≤8），图内≤1200字，图外细节进内文。
+  // 两档手册：图数按主题定（精华版≤30、完整版≤48），图内≤1200字，图外细节进内文。
   const topics = knowledgeEditionImagePlan(String(text || ''));
   if (topics) {
     const pages = topics.images.map(image => image.body);

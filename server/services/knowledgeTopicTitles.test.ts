@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { nameKnowledgeEditionTopics, parseKnowledgeTopicTitles } from "./knowledgeTopicTitles";
+import { KNOWLEDGE_TOPIC_TITLE_BATCH, KNOWLEDGE_TOPIC_TITLE_RESENDS, nameKnowledgeEditionTopics, parseKnowledgeTopicTitles } from "./knowledgeTopicTitles";
 import { compileKnowledgeEditions, knowledgeEditionParts } from "../../shared/knowledgeCardEdition";
 import { knowledgeEditionIllustratedPages, knowledgeEditionImagePlan, planKnowledgeCardPages } from "../../shared/knowledgeCardPagination";
 import { synchronizedKnowledgeCardSource } from "../../shared/knowledgeCardEditableLayout";
@@ -10,6 +10,7 @@ const book = compileKnowledgeEditions("测试书", Array.from({ length: 40 }, (_
   body: Array.from({ length: 30 }, (_, j) => longSentence(i, j)).join(""),
   priority: "primary" as const,
 })));
+const bookBatches = Math.ceil(knowledgeEditionImagePlan(book.full)!.images.length / KNOWLEDGE_TOPIC_TITLE_BATCH);
 
 function memoryEvidence() {
   const store = new Map<string, any>();
@@ -20,7 +21,9 @@ function memoryEvidence() {
 function titleInvoke(mutate?: (page: any, index: number) => void) {
   return vi.fn(async (request: any) => {
     const input = JSON.parse(request.contents[0].parts[0].text);
-    const pages = input.source.pages.map((p: any, index: number) => {
+    const pages = input.source.pages.map((p: any, position: number) => {
+      // 分批后 headline「主题N」带整档序号；按它编号，使标题与整档页序一致。
+      const index = Number(String(p.headline).replace(/^主题/, "")) - 1 || position;
       const headlines = String(p.body.split("\n")[0]).replace(/^原小节：/, "").split("｜");
       const page = { id: p.id, headline: p.headline, body: "说明", imageDescription: "", imageStatus: "absent", facts: [], cautions: [],
         reading: { version: 1, subtitle: "", accent: "jade", blocks: [
@@ -42,7 +45,8 @@ describe("主题图与内文命题：每档一次廉价批量调用", () => {
     const invoke = titleInvoke();
     const named = await nameKnowledgeEditionTopics({ markdown: book.full, model: "glm-5.3-flashx", evidence, invoke });
     expect(named.status).toBe("named");
-    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(bookBatches).toBeGreaterThan(1);
+    expect(invoke).toHaveBeenCalledTimes(bookBatches);
     const request = invoke.mock.calls[0]![0] as any;
     expect(request.executionChannel).toBe("openrouter");
     expect(request.executionFamily).toBe("glm");
@@ -66,16 +70,18 @@ describe("主题图与内文命题：每档一次廉价批量调用", () => {
     expect(source.pages![0]!.supplement).toContain("### 新原小节");
 
     const keys = Array.from(store.keys());
-    const raw = keys.find(k => k.endsWith("/raw.json"))!, parsed = keys.find(k => k.endsWith("/parsed.json"))!;
+    const raw = keys.find(k => k.endsWith("/batch-0/raw-1.json"))!, parsed = keys.find(k => /full-[0-9a-f]{16}\/parsed\.json$/.test(k))!;
     expect(raw).toContain("/topic-titles/full-");
     expect(store.get(raw).responseText).toContain("candidates");
     expect(Object.keys(store.get(parsed).titles)).toHaveLength(plan.images.length);
-    expect(keys.some(k => k.endsWith("/request.json"))).toBe(true);
+    expect(keys.some(k => k.endsWith("/batch-0/request.json"))).toBe(true);
 
     const again = await nameKnowledgeEditionTopics({ markdown: book.full, model: "glm-5.3-flashx", evidence, invoke });
     expect(again.status).toBe("cached");
     expect(again.markdown).toBe(named.markdown);
-    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledTimes(bookBatches);
+    expect(keys.filter(k => /\/batch-\d+\/raw-1\.json$/.test(k))).toHaveLength(bookBatches);
+    expect(keys.filter(k => /\/batch-\d+\/parsed\.json$/.test(k))).toHaveLength(bookBatches);
   });
 
   it("标题注释不进入正文：两档解析后的阅读稿与知识稿不含注释", async () => {
@@ -96,7 +102,7 @@ describe("主题图与内文命题：每档一次廉价批量调用", () => {
     expect(knowledgeEditionIllustratedPages(result.markdown)![0]!.supplement).toContain("### 原小节0");
     expect(Array.from(store.keys()).some(k => k.endsWith("/failure.json"))).toBe(true);
     await nameKnowledgeEditionTopics({ markdown: book.full, evidence, invoke: invoke as any });
-    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledTimes(bookBatches * (KNOWLEDGE_TOPIC_TITLE_RESENDS + 1));
   });
 
   it("小节标题数量对不上时只回退该主题小节标题；不合格标题回退", () => {
@@ -108,6 +114,86 @@ describe("主题图与内文命题：每档一次廉价批量调用", () => {
     expect(titles["甲｜乙"]).toEqual({ image: "图一", reading: "文一", sections: {} });
     expect(titles["丙"]).toEqual({ image: undefined, reading: "文二", sections: { 丙: "新丙" } });
     expect(rejected.length).toBe(2);
+  });
+});
+
+describe("1109 小批并发命题：≤8 页一批、按批校验、失败只重发该批", () => {
+  // 约 48 张主题图的完整版（200 节 × 12 句）
+  const big = compileKnowledgeEditions("大书", Array.from({ length: 200 }, (_, i) => ({
+    headline: `章节${i}`, body: Array.from({ length: 12 }, (_, j) => longSentence(i, j)).join(""), priority: "primary" as const,
+  })));
+  const bigImages = knowledgeEditionImagePlan(big.full)!.images.length;
+  const batchOf = (request: any) => JSON.parse(request.contents[0].parts[0].text).source.pages as any[];
+
+  it("48 页拆成 6 批，每批 ≤8 页，页 id 不重不漏；回执按批保存", async () => {
+    expect(bigImages).toBe(48);
+    const { store, evidence } = memoryEvidence();
+    const invoke = titleInvoke();
+    const named = await nameKnowledgeEditionTopics({ markdown: big.full, model: "glm-5.3-flashx", evidence, invoke });
+    expect(named.status).toBe("named");
+    expect(named.message).toBeUndefined();
+    expect(invoke).toHaveBeenCalledTimes(6);
+    const ids = invoke.mock.calls.flatMap(c => batchOf(c[0]).map(p => p.id));
+    expect(invoke.mock.calls.every(c => batchOf(c[0]).length <= KNOWLEDGE_TOPIC_TITLE_BATCH)).toBe(true);
+    expect(new Set(ids).size).toBe(48);
+    const keys = Array.from(store.keys());
+    expect(keys.filter(k => /\/batch-\d+\/request\.json$/.test(k))).toHaveLength(6);
+    expect(keys.filter(k => /\/batch-\d+\/raw-1\.json$/.test(k))).toHaveLength(6);
+    expect(store.get(keys.find(k => /full-[0-9a-f]{16}\/parsed\.json$/.test(k))!).batches.every((b: any) => b.ok && b.attempts === 1)).toBe(true);
+    expect(planKnowledgeCardPages(named.markdown).pages.every((p, i) => p.includes(`## 图题`))).toBe(true);
+  });
+
+  it("某批前两次回占位标题：只重发该批（第 3 次通过），其余批各发一次", async () => {
+    const { store, evidence } = memoryEvidence();
+    const seen = new Map<string, number>();
+    const invoke = titleInvoke();
+    // 以首页 id 识别批次：第 2 批前两次回占位值。
+    let secondBatchFirstId: string | undefined;
+    const wrapped = vi.fn(async (request: any, scope: any, deps: any) => {
+      const pages = batchOf(request);
+      if (!secondBatchFirstId && pages[0].headline === `主题${KNOWLEDGE_TOPIC_TITLE_BATCH + 1}`) secondBatchFirstId = pages[0].id;
+      const n = (seen.get(pages[0].id) ?? 0) + 1; seen.set(pages[0].id, n);
+      const response = await (invoke as any)(request, scope, deps);
+      if (pages[0].id === secondBatchFirstId && n <= 2) {
+        const outer = JSON.parse(response.text); const report = JSON.parse(outer.candidates[0].content.parts[0].text);
+        for (const p of report.pages) p.reading.blocks = p.reading.blocks.map((b: any) => ({ ...b, title: "图片标题" }));
+        outer.candidates[0].content.parts[0].text = JSON.stringify(report);
+        return { text: JSON.stringify(outer) };
+      }
+      return response;
+    });
+    const named = await nameKnowledgeEditionTopics({ markdown: big.full, evidence, invoke: wrapped as any });
+    expect(named.status).toBe("named");
+    expect(named.message).toBeUndefined();
+    expect(wrapped).toHaveBeenCalledTimes(6 + 2);
+    expect(seen.get(secondBatchFirstId!)).toBe(3);
+    const keys = Array.from(store.keys());
+    expect(keys.filter(k => /\/batch-1\/raw-\d\.json$/.test(k))).toHaveLength(3);
+    const summary = store.get(keys.find(k => /full-[0-9a-f]{16}\/parsed\.json$/.test(k))!).batches;
+    expect(summary.map((b: any) => b.attempts)).toEqual([1, 3, 1, 1, 1, 1]);
+    expect(planKnowledgeCardPages(named.markdown).pages.every(p => p.includes("## 图题"))).toBe(true);
+  });
+
+  it("重发 2 次仍不过的批：该批页退回原标题，其余批命题照用，整档不回退", async () => {
+    const { store, evidence } = memoryEvidence();
+    const wrapped = vi.fn(async (request: any, scope: any, deps: any) => {
+      const pages = batchOf(request);
+      const response = await (titleInvoke() as any)(request, scope, deps);
+      if (pages[0].headline === "主题1") { const outer = JSON.parse(response.text); const report = JSON.parse(outer.candidates[0].content.parts[0].text);
+        for (const p of report.pages) p.reading.blocks = p.reading.blocks.map((b: any) => ({ ...b, title: "小标题" }));
+        outer.candidates[0].content.parts[0].text = JSON.stringify(report); return { text: JSON.stringify(outer) }; }
+      return response;
+    });
+    const named = await nameKnowledgeEditionTopics({ markdown: big.full, evidence, invoke: wrapped as any });
+    expect(named.status).toBe("named");
+    expect(named.message).toContain("第1批");
+    expect(wrapped).toHaveBeenCalledTimes(6 + KNOWLEDGE_TOPIC_TITLE_RESENDS);
+    const pages = planKnowledgeCardPages(named.markdown).pages;
+    expect(pages.slice(0, KNOWLEDGE_TOPIC_TITLE_BATCH).every(p => /## 章节\d+（等\d+节）/.test(p))).toBe(true);
+    expect(pages.slice(KNOWLEDGE_TOPIC_TITLE_BATCH).every(p => p.includes("## 图题"))).toBe(true);
+    const summary = store.get(Array.from(store.keys()).find(k => /full-[0-9a-f]{16}\/parsed\.json$/.test(k))!).batches;
+    expect(summary[0]).toMatchObject({ ok: false, attempts: 3, named: 0 });
+    expect(Array.from(store.keys()).some(k => k.endsWith("/failure.json"))).toBe(false);
   });
 });
 
@@ -138,7 +224,8 @@ describe("经真实知识整理路由合同校验", () => {
       const user = body.messages.find((m: any) => m.role === "user");
       const text = typeof user.content === "string" ? user.content : user.content.map((c: any) => c.text || "").join("");
       const input = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
-      const report = { kind: "knowledge_publication_v1", sourceDigest: input.sourceDigest, title: "主题命题", pages: input.source.pages.map((p: any, index: number) => {
+      const report = { kind: "knowledge_publication_v1", sourceDigest: input.sourceDigest, title: "主题命题", pages: input.source.pages.map((p: any, position: number) => {
+        const index = Number(String(p.headline).replace(/^主题/, "")) - 1 || position;
         const headlines = String(p.body.split("\n")[0]).replace(/^原小节：/, "").split("｜");
         return { id: p.id, headline: p.headline, body: "本主题说明", imageDescription: "", imageStatus: "absent", facts: [{ term: "主题", statement: "本主题说明" }], cautions: [],
           reading: { version: 1, subtitle: "", accent: "jade", blocks: [
@@ -154,7 +241,7 @@ describe("经真实知识整理路由合同校验", () => {
       invoke: (request, scope) => invokeKnowledgePublicationRoutes(request, scope, deps) });
     expect(result.message).toBeUndefined();
     expect(result.status).toBe("named");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(bookBatches);
     expect(String(captured.model)).toMatch(/glm|flash/i);
     const pages = knowledgeEditionIllustratedPages(result.markdown)!;
     expect(pages[0]!.headline).toBe("内文题1");
