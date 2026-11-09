@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   upload:
-    if: vars.SOURCE_TARBALL_GCS_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: (vars.SOURCE_TARBALL_GCS_ENABLED == 'true' || github.head_ref == 'chore/repo-private-readiness-1110') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
