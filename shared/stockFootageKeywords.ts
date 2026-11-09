@@ -267,6 +267,8 @@ const PURPOSE_DEFAULTS: Record<StockFootagePurpose, { query: string; queryZh: st
   marketing: { query: "lifestyle people", queryZh: "生活场景", filler: "lifestyle" },
   digital_human: { query: "modern office background", queryZh: "现代办公背景", filler: "background" },
   manhua: { query: "ancient chinese landscape", queryZh: "古风山水", filler: "cinematic" },
+  // 复刻：竖屏短视频里替换原片的实拍补充画面，默认偏生活实拍
+  remix: { query: "lifestyle people closeup", queryZh: "生活实拍特写", filler: "lifestyle" },
 };
 
 /** 「某某：“……”」里，这些前缀后的引号内容是画面/旁白本身，保留；其余视为角色台词丢弃。 */

@@ -13,13 +13,16 @@ export type StockFootageKind = (typeof STOCK_FOOTAGE_KINDS)[number];
 export const STOCK_FOOTAGE_ORIENTATIONS = ["landscape", "portrait", "square"] as const;
 export type StockFootageOrientation = (typeof STOCK_FOOTAGE_ORIENTATIONS)[number];
 
-/** 业务用途：决定采用后谁能消费、怎么消费。 */
-export const STOCK_FOOTAGE_PURPOSES = ["mv", "digital_human", "marketing", "manhua"] as const;
+/**
+ * 业务用途：决定采用后谁能消费、怎么消费。
+ * - remix：爆款复刻（短视频分镜）的实拍替换画面——只「找素材 → 存到我的空间」，用户自己剪，不接成片链路。
+ */
+export const STOCK_FOOTAGE_PURPOSES = ["mv", "digital_human", "marketing", "manhua", "remix"] as const;
 export type StockFootagePurpose = (typeof STOCK_FOOTAGE_PURPOSES)[number];
 
 /**
  * 采用方式：
- * - insert：可直接入片（MV 镜头 footage、数字人覆盖/回切、营销补充画面、漫剧空镜）
+ * - insert：可直接入片（MV 镜头 footage、数字人覆盖/回切、营销补充画面、复刻替换画面、漫剧空镜）
  * - reference：只作参考图（漫剧场景参考），不得直接入片
  * 漫剧只允许 reference 或 empty_shot（无人物空镜），见 assertStockUsageAllowed。
  */
@@ -178,12 +181,23 @@ export type StockFootageAdoptionResponse = {
 
 export class StockUsageNotAllowedError extends Error {}
 
-/** 用途 × 采用方式白名单。漫剧不能把图库素材当角色直接入片。 */
+/** 用途 × 采用方式白名单（真源）。漫剧不能把图库素材当角色直接入片；复刻只做可入片的替换画面。 */
+export const STOCK_FOOTAGE_ALLOWED_USAGES: Record<StockFootagePurpose, readonly StockFootageUsage[]> = {
+  mv: ["insert", "reference"],
+  digital_human: ["insert", "reference"],
+  marketing: ["insert", "reference"],
+  manhua: ["reference", "empty_shot"],
+  remix: ["insert"],
+};
+
 export function assertStockUsageAllowed(purpose: StockFootagePurpose, usage: StockFootageUsage): void {
   if (purpose === "manhua" && usage === "insert")
     throw new StockUsageNotAllowedError("漫剧只能把图库素材用作参考图或无人物空镜，不能替换既定角色直接入片");
   if (purpose !== "manhua" && usage === "empty_shot")
     throw new StockUsageNotAllowedError("空镜用法仅限漫剧");
+  const allowed = STOCK_FOOTAGE_ALLOWED_USAGES[purpose];
+  if (!allowed || !allowed.includes(usage))
+    throw new StockUsageNotAllowedError(`${STOCK_FOOTAGE_PURPOSE_LABEL[purpose] ?? purpose}只允许 ${(allowed ?? []).join(" / ")} 采用方式`);
 }
 
 /** 资产是否可直接进入时间线（参考图不能入片）。 */
@@ -219,6 +233,7 @@ export const STOCK_FOOTAGE_PURPOSE_LABEL: Record<StockFootagePurpose, string> = 
   digital_human: "数字人补充画面",
   marketing: "营销/知识口播",
   manhua: "漫剧参考/空镜",
+  remix: "短视频复刻的实拍补充画面",
 };
 
 /** 署名文案（导出、图注、成片说明统一使用）。 */

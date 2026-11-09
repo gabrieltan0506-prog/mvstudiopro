@@ -93,3 +93,9 @@
 - 完整版：图片为主、文字为辅，图片页:纯内文页约3:1–2:1（48图总页数68–72，可精简不可多）；精华版：图:文1:2–1:3，内文可详尽但不重复图中已有内容。预算在生图前预检（`shared/knowledgeEditionBudget.ts`），不在导出后才阻断，略超无妨。
 - 版式：直式图文同页（图在上、要点两栏在下），不让单图独占一页；无图文字模块按内容并入相关图章（source页`supplement`），不按原书顺序。
 - 纹样按章节内容选配色/版式/表格/边框/纹样，续页降装饰，不以山水填空。
+
+## 2026-11-09 · 爆款复刻接入共用找素材抽屉（第五个接入端，PR 待合并）
+
+- 页面 `/creator-growth-camp/premium-remix?format=video`：`client/src/pages/MVAnalysis.tsx` 的 `buildVideoStoryboard` 四段（开场钩子/痛点放大/动作与方法/结果与行动）此前只算不渲染；现由 `client/src/components/remix/RemixStoryboardStock.tsx` 渲染在复刻分镜稿下方，每段一个「找素材」按钮开 `StockFootageDrawer`（purpose=`remix`、usage=insert、kind=video、portrait、目标时长=时间段长度）。
+- 新增 purpose `remix`（`shared/stockFootage.ts`，允许表 `STOCK_FOOTAGE_ALLOWED_USAGES.remix=["insert"]`，标签「短视频复刻的实拍补充画面」用于服务端关键词提示；规则兜底词在 `shared/stockFootageKeywords.ts`）。
+- 采用记录只在本机：键 `mvs.remix.stockPicks.v1`，内部按用户 id 分桶（`client/src/lib/remixStockPicks.ts`），不存签名地址；缩略图/预览地址每次由 `stockFootage.listAdoptions({purpose:"remix"})` 重签。范围只到「找素材 → 存进我的空间 → 用户自己剪」，不接成片/导出。

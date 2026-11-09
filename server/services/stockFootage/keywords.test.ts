@@ -95,6 +95,20 @@ describe("suggestStockKeywords", () => {
     expect(r).toEqual({ query: "city night", queryZh: "城市夜景", source: "rules" });
   });
 
+  it("remix 用途：提示词里带「短视频复刻的实拍补充画面」，缓存键与 marketing 分开", async () => {
+    const invoke = vi.fn(async (_p: InvokeParams) => reply(okJson));
+    const r = await suggestStockKeywords({ text: "城市夜景", purpose: "remix" }, { invoke });
+    expect(r.source).toBe("llm");
+    const userMsg = invoke.mock.calls[0][0].messages.find(m => m.role === "user");
+    expect(String(userMsg?.content)).toContain("用途：短视频复刻的实拍补充画面");
+    expect(String(userMsg?.content)).toContain("描述：城市夜景");
+    expect(stockKeywordCacheKey("城市夜景", "remix")).not.toBe(stockKeywordCacheKey("城市夜景", "marketing"));
+    // 上游失败时走 remix 自己的规则默认词
+    clearStockKeywordCache();
+    const failing = vi.fn(async () => { throw new Error("x"); });
+    expect(await suggestStockKeywords({ text: "……", purpose: "remix" }, { invoke: failing })).toEqual({ query: "lifestyle people closeup", queryZh: "生活实拍特写", source: "rules" });
+  });
+
   it("queryZh 不合格时用规则版中文展示兜底，query 仍用 LLM", async () => {
     const invoke = vi.fn(async () => reply(JSON.stringify({ query: "City Night", queryZh: "City" })));
     const r = await suggestStockKeywords({ text: "城市夜景", purpose: "mv" }, { invoke });

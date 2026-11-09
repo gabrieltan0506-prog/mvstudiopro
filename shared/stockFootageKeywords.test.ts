@@ -10,7 +10,7 @@ import {
 } from "./stockFootageKeywords";
 
 const words = (q: string) => q.split(" ");
-const rules = (text: string, purpose: "mv" | "marketing" | "digital_human" | "manhua" = "mv") =>
+const rules = (text: string, purpose: "mv" | "marketing" | "digital_human" | "manhua" | "remix" = "mv") =>
   suggestStockKeywordsByRules(text, purpose);
 
 describe("suggestStockKeywordsByRules（正向：常见营销/MV/漫剧描述）", () => {
@@ -77,6 +77,8 @@ describe("suggestStockKeywordsByRules（反向：人名、对白、不可视概�
     expect(rules("我们的理念是创新与坚持", "marketing")).toEqual({ query: "lifestyle people", queryZh: "生活场景" });
     expect(rules("……", "digital_human").query).toBe("modern office background");
     expect(rules("???", "manhua").query).toBe("ancient chinese landscape");
+    expect(rules("……", "remix")).toEqual({ query: "lifestyle people closeup", queryZh: "生活实拍特写" });
+    expect(stockFootageSuggestKeywordsInputSchema.parse({ text: "海边", purpose: "remix" }).purpose).toBe("remix");
   });
 
   it("stripNonVisualText 去掉说话人前缀与引号对白", () => {
