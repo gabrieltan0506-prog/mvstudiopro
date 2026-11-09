@@ -19,7 +19,7 @@ import {
 const LUTS = new Set(["golden_hour_subtle", "neo_noir_standard"]);
 const ok = () => ({
   segmentsNow: [{ fromSec: 0, toSec: 10, storyZh: "晴", exposureZh: "正常", colorTempZh: "偏暖", saturationZh: "适中", contrastZh: "略平", moodMatch: "match", moodMatchZh: "吻合" }],
-  seams: [{ atSec: 6, jump: true, beforeZh: "暖", afterZh: "冷", fixZh: "后段升色温" }],
+  seams: [{ atSec: 6, jump: true, intent: "intended" as "intended" | "unwanted", beforeZh: "暖", afterZh: "冷", fixZh: "后段升色温" }],
   grades: [
     { fromSec: 0, toSec: 6, correction: { lutId: "golden_hour_subtle", exposure: 0.1 }, reasonZh: "暖金期待" },
     { fromSec: 6, toSec: 10, correction: { saturation: 0.8, color_temperature: 7200, curves: { master: "0/0 0.5/0.45 1/1" } }, reasonZh: "转冷" },
@@ -32,8 +32,21 @@ describe("成片调色建议 · schema 校验", () => {
     const v = validateMontageGradeAdvice(ok(), { durationSec: 10, lutIds: LUTS });
     expect(adviceToGradeSegments(v, 10)).toEqual([
       { startSec: 0, endSec: 6, lutId: "golden_hour_subtle", exposure: 0.1 },
-      { startSec: 6, endSec: 10, saturation: 0.8, color_temperature: 7200, curves: { master: "0/0 0.5/0.45 1/1" } },
+      { startSec: 6, endSec: 10, junctionIntent: "intended", saturation: 0.8, color_temperature: 7200, curves: { master: "0/0 0.5/0.45 1/1" } },
     ]);
+  });
+  it("seams 须标 intent；就近（±0.6s）透传为段的 junctionIntent，对不上不填", () => {
+    const missing = ok() as { seams: Array<Record<string, unknown>> };
+    delete missing.seams[0]!.intent;
+    expect(() => validateMontageGradeAdvice(missing, { durationSec: 10, lutIds: LUTS })).toThrow();
+    const unwanted = ok(); unwanted.seams[0]!.intent = "unwanted"; unwanted.seams[0]!.atSec = 6.4;
+    expect(adviceToGradeSegments(validateMontageGradeAdvice(unwanted, { durationSec: 10, lutIds: LUTS }), 10)[1]).toMatchObject({ startSec: 6, junctionIntent: "unwanted" });
+    const far = ok(); far.seams[0]!.atSec = 7;
+    expect(adviceToGradeSegments(validateMontageGradeAdvice(far, { durationSec: 10, lutIds: LUTS }), 10)[1]).not.toHaveProperty("junctionIntent");
+    const p = buildMontageGradePrompt({ durationSec: 10, luts: [] });
+    expect(p).toContain('"intent": "intended"|"unwanted"');
+    expect(p).toContain("剧情意图的转变");
+    expect(p).toContain("不该有的跳色");
   });
   it("参数越界被 colorCorrectionSchema 拒收", () => {
     const bad = ok(); (bad.grades[0]!.correction as Record<string, unknown>).exposure = 5;

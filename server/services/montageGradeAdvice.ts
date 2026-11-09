@@ -30,7 +30,8 @@ const segmentNowSchema = z.object({
   storyZh: z.string(), exposureZh: z.string(), colorTempZh: z.string(), saturationZh: z.string(), contrastZh: z.string(),
   moodMatch: z.enum(["match", "partial", "mismatch"]), moodMatchZh: z.string(),
 }).strict();
-const seamSchema = z.object({ atSec: sec, jump: z.boolean(), beforeZh: z.string(), afterZh: z.string(), fixZh: z.string() }).strict();
+/** intent：intended = 剧情意图的转变（不修）；unwanted = 不该有的跳色（自动修正只修这类）。 */
+const seamSchema = z.object({ atSec: sec, jump: z.boolean(), intent: z.enum(["intended", "unwanted"]), beforeZh: z.string(), afterZh: z.string(), fixZh: z.string() }).strict();
 const gradeRowSchema = z.object({ fromSec: sec, toSec: sec, correction: colorCorrectionSchema, reasonZh: z.string().min(1) }).strict();
 
 export const montageGradeAdviceSchema = z.object({
@@ -41,8 +42,10 @@ export const montageGradeAdviceSchema = z.object({
 }).strict();
 export type MontageGradeAdvice = z.infer<typeof montageGradeAdviceSchema>;
 
-/** 可直接喂 concat grade.segments 的结构（X 的 grade.segments 字段：[{startSec,endSec,...ColorCorrection}]）。 */
-export type GradeSegment = { startSec: number; endSec: number } & ColorCorrection;
+/** 可直接喂 concat grade.segments 的结构（[{startSec,endSec,junctionIntent?,...ColorCorrection}]）；junctionIntent 为进本段接点的意图。 */
+export type GradeSegment = { startSec: number; endSec: number; junctionIntent?: "intended" | "unwanted" } & ColorCorrection;
+/** 段起点与 seams[].atSec 相差在此秒数内视为同一接点。 */
+export const SEAM_MATCH_TOLERANCE_SEC = 0.6;
 
 /** 校验：参数过 colorCorrectionSchema；LUT 必须在 manifest；区间按时间顺序连续覆盖 0..duration、不重叠不留空（容差 0.15s）。 */
 export function validateMontageGradeAdvice(value: unknown, ctx: { durationSec: number; lutIds: Set<string> }): MontageGradeAdvice {
@@ -61,12 +64,19 @@ export function validateMontageGradeAdvice(value: unknown, ctx: { durationSec: n
   return advice;
 }
 
+/** 建议段 → concat grade.segments；每段起点就近（±SEAM_MATCH_TOLERANCE_SEC）对上 seams 的接点意图，透传为 junctionIntent；对不上不填（自动修正视为未提供意图，不修）。 */
 export function adviceToGradeSegments(advice: MontageGradeAdvice, durationSec: number): GradeSegment[] {
-  return advice.grades.map((g, i, all) => ({
-    startSec: i === 0 ? 0 : g.fromSec,
-    endSec: i === all.length - 1 ? durationSec : g.toSec,
-    ...g.correction,
-  }));
+  return advice.grades.map((g, i, all) => {
+    const seam = i === 0 ? undefined : advice.seams
+      .filter(s => Math.abs(s.atSec - g.fromSec) <= SEAM_MATCH_TOLERANCE_SEC)
+      .sort((a, b) => Math.abs(a.atSec - g.fromSec) - Math.abs(b.atSec - g.fromSec))[0];
+    return {
+      startSec: i === 0 ? 0 : g.fromSec,
+      endSec: i === all.length - 1 ? durationSec : g.toSec,
+      ...(seam ? { junctionIntent: seam.intent } : {}),
+      ...g.correction,
+    };
+  });
 }
 
 export function buildMontageGradePrompt(input: { durationSec: number; aspect?: string; storyZh?: string; seamSecs?: number[]; luts: LutOption[] }): string {
@@ -95,14 +105,17 @@ ${input.luts.map(l => `- ${l.id}：${l.labelZh}`).join("\n")}
 
 【要求】
 1. 先逐段描述成片现状：曝光、色温、饱和、对比各自有什么问题，与该段剧情情绪是否匹配。
-2. ${seams}
+2. ${seams}每个接点都要标 intent：
+   - "intended"＝剧情意图的转变：这里的色调/亮度变化是叙事需要，应当保留（如挨耳光后转冷、回忆转入、雨落转暗、结尾转亮），通常发生在真实镜头切换且前后情绪明显不同处；
+   - "unwanted"＝不该有的跳色：前后情绪与场景连续，只是素材之间曝光/色温/饱和不一致，或同一镜头内部突然变色变亮暗，观众会觉得是穿帮。
+   拿不准时按画面所表达的情绪是否变化判断：情绪变了才是 intended。
 3. 再给逐段调色方案：时间区间保留一位小数，按时间顺序连续覆盖 0.0–${d} 不重叠不留空；每段给 correction（只用上面的字段与合法取值）和理由。
 4. 最后用一句话写全片光色弧线。
 
 【输出 JSON schema】
 {
   "segmentsNow": [{"fromSec": number, "toSec": number, "storyZh": string, "exposureZh": string, "colorTempZh": string, "saturationZh": string, "contrastZh": string, "moodMatch": "match"|"partial"|"mismatch", "moodMatchZh": string}],
-  "seams": [{"atSec": number, "jump": boolean, "beforeZh": string, "afterZh": string, "fixZh": string}],
+  "seams": [{"atSec": number, "jump": boolean, "intent": "intended"|"unwanted", "beforeZh": string, "afterZh": string, "fixZh": string}],
   "grades": [{"fromSec": number, "toSec": number, "correction": {"lutId"?: string, "exposure"?: number, "contrast"?: number, "gamma"?: number, "gamma_r"?: number, "gamma_g"?: number, "gamma_b"?: number, "saturation"?: number, "color_temperature"?: number, "color_balance"?: {"shadows"?: {"r":number,"g":number,"b":number}, "midtones"?: {...}, "highlights"?: {...}}, "curves"?: {"master"?: string, "r"?: string, "g"?: string, "b"?: string}}, "reasonZh": string}],
   "arcZh": string
 }

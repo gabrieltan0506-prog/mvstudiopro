@@ -33,8 +33,8 @@ import { fileURLToPath } from "node:url";
 import {
   buildFilterChain, checkGradeConsistency, collectGradeLutIds, matchShotsIteratively, parseSignalStats, resolveClipCorrection,
   COLOR_GRADE_LUT_ID_RE, SIGNALSTATS_PRINT_FILTER, type ColorCorrection, type ConcatGrade, type GradeConsistencyReport, type SignalStats,
-  applyJunctionAutoMatch, buildSegmentGradeGraph, SIGNALSTATS_FIRST_FRAME_FILTER, checkJunctionConsistency, junctionSampleTimes, planGradeSegments,
-  type GradeSpan, type JunctionConsistencyReport,
+  applyJunctionAutoMatch, buildSegmentGradeGraph, SIGNALSTATS_FIRST_FRAME_FILTER, checkJunctionConsistency, junctionSampleWindows, meanSignalStats, planGradeSegments,
+  type GradeSpan, type JunctionConsistencyReport, type JunctionFixNote,
 } from "../../shared/colorGrade";
 import {
   concatParamsSchema,
@@ -435,36 +435,48 @@ export type GradeMeasureDeps = {
 };
 const realMeasureDeps = (outPath: string): GradeMeasureDeps => ({ outPath, run: (c, a, s) => runMediaTool(c, a, s), upload: uploadBufferToGcs });
 
+type JunctionWindowEvidence = { fromSec: number; toSec: number; times: number[]; raw: GradeEvidenceReceipt; parsed: GradeEvidenceReceipt };
 export type JunctionCheckResult = JunctionConsistencyReport & {
-  /** 每个接点前/后各一帧的 signalstats 原始与解析留档（GCS），按接点一一对应。 */
-  evidence: Array<{ index: number; beforeSec: number; afterSec: number; before: { raw: GradeEvidenceReceipt; parsed: GradeEvidenceReceipt }; after: { raw: GradeEvidenceReceipt; parsed: GradeEvidenceReceipt } }>;
+  /** 每个接点前/后各一个取样窗（各若干帧）的 signalstats 原始与解析留档（GCS），按接点一一对应。 */
+  evidence: Array<{ index: number; before: JunctionWindowEvidence; after: JunctionWindowEvidence }>;
+  /** before/after 为窗内逐帧均值。 */
   pairs: Array<{ index: number; junctionSec: number; before: SignalStats; after: SignalStats }>;
 };
 
-/** 分段调色：在每个段接点前后各 0.1 秒取 1 帧测 signalstats（原始 stderr 与解析 JSON 分别先后留档），比较后帧与前帧。 */
-export async function measureJunctionConsistency(spans: Array<{ startSec: number; endSec: number }>, userId: string, signal: AbortSignal, deps: GradeMeasureDeps, prefix: string): Promise<JunctionCheckResult> {
+/**
+ * 分段调色接点检查：每个接点前、后各一个取样窗（junctionSampleWindows：各 0.5 秒内均匀 5 帧，不跨渐变窗外的镜头切换），
+ * 逐帧单帧截取测 signalstats，窗内取均值后比较。每个窗的原始 stderr（逐帧分隔）与解析 JSON（逐帧 + 均值）分别先后留档。
+ */
+export async function measureJunctionConsistency(spans: Array<{ startSec: number; endSec: number; crossfadeSec?: number }>, userId: string, signal: AbortSignal, deps: GradeMeasureDeps, prefix: string, opts: { cutsSec?: number[] } = {}): Promise<JunctionCheckResult> {
   const save = async (name: string, buffer: Buffer, contentType: string): Promise<GradeEvidenceReceipt> => {
     const receipt = await deps.upload({ objectName: `${prefix}/${name}`, buffer, contentType, signal });
     return { gcsUri: receipt.gcsUri, bytes: buffer.length, sha256: createHash("sha256").update(buffer).digest("hex") };
   };
-  const measure = async (name: string, atSec: number) => {
-    const { stderr } = await deps.run("ffmpeg", ["-nostdin", "-ss", String(atSec), "-i", deps.outPath, "-vf", SIGNALSTATS_FIRST_FRAME_FILTER, "-frames:v", "1", "-f", "null", "-"], signal);
-    const raw = await save(`${name}.signalstats.raw.txt`, Buffer.from(stderr, "utf8"), "text/plain; charset=utf-8");
-    const stats = parseSignalStats(stderr);
-    const parsed = await save(`${name}.signalstats.parsed.json`, Buffer.from(JSON.stringify(stats)), "application/json");
-    return { stats, raw, parsed };
+  const measureWindow = async (name: string, w: { fromSec: number; toSec: number; times: number[] }) => {
+    const raws: string[] = [];
+    const frames: Array<{ atSec: number; stats: SignalStats }> = [];
+    for (const atSec of w.times) {
+      const { stderr } = await deps.run("ffmpeg", ["-nostdin", "-ss", String(atSec), "-i", deps.outPath, "-vf", SIGNALSTATS_FIRST_FRAME_FILTER, "-frames:v", "1", "-f", "null", "-"], signal);
+      raws.push(`=== frame atSec=${atSec} ===\n${stderr}`);
+      frames.push({ atSec, stats: parseSignalStats(stderr) });
+    }
+    const raw = await save(`${name}.signalstats.raw.txt`, Buffer.from(raws.join("\n"), "utf8"), "text/plain; charset=utf-8");
+    if (frames.length !== w.times.length || raws.length !== w.times.length) throw new Error("调色检查条数不一致");
+    const mean = meanSignalStats(frames.map(f => f.stats));
+    const parsed = await save(`${name}.signalstats.parsed.json`, Buffer.from(JSON.stringify({ fromSec: w.fromSec, toSec: w.toSec, frames, mean })), "application/json");
+    return { mean, evidence: { ...w, raw, parsed } };
   };
   void userId;
-  const samples = junctionSampleTimes(spans);
+  const windows = junctionSampleWindows(spans, { cutsSec: opts.cutsSec });
   const pairs: JunctionCheckResult["pairs"] = [];
   const evidence: JunctionCheckResult["evidence"] = [];
-  for (const s of samples) {
-    const b = await measure(`junction-${s.index}.before`, s.beforeSec);
-    const a = await measure(`junction-${s.index}.after`, s.afterSec);
-    pairs.push({ index: s.index, junctionSec: s.junctionSec, before: b.stats, after: a.stats });
-    evidence.push({ index: s.index, beforeSec: s.beforeSec, afterSec: s.afterSec, before: { raw: b.raw, parsed: b.parsed }, after: { raw: a.raw, parsed: a.parsed } });
+  for (const w of windows) {
+    const b = await measureWindow(`junction-${w.index}.before`, w.before);
+    const a = await measureWindow(`junction-${w.index}.after`, w.after);
+    pairs.push({ index: w.index, junctionSec: w.junctionSec, before: b.mean, after: a.mean });
+    evidence.push({ index: w.index, before: b.evidence, after: a.evidence });
   }
-  if (pairs.length !== samples.length || evidence.length !== samples.length) throw new Error("调色检查条数不一致");
+  if (pairs.length !== windows.length || evidence.length !== windows.length) throw new Error("调色检查条数不一致");
   return { ...checkJunctionConsistency(pairs), evidence, pairs };
 }
 
@@ -485,8 +497,11 @@ export type SegmentGradeCheck = {
   mode: "junctions";
   spans: GradeSpan[];
   check: JunctionCheckResult;
-  /** autoMatchJunctions 且首检未过时：重渲一次后的复检与被修正的段。 */
-  autoMatch?: { adjusted: number[]; spans: GradeSpan[]; check: JunctionCheckResult };
+  /**
+   * autoMatchJunctions 且首检未过时：逐接点处理说明（只修 unwanted；intended / 未提供意图不修）、
+   * 实际渲染的 spans（含局部过渡子段）、被修正接点的后段下标；有修正时重渲一次并给复检 check（接点位置同首检）。
+   */
+  autoMatch?: { adjusted: number[]; spans: GradeSpan[]; junctions: JunctionFixNote[]; check?: JunctionCheckResult };
 };
 
 // ---------------------------------------------------------------- 拼接
@@ -588,13 +603,17 @@ export async function concatClips(
       const spans = planGradeSegments(g, locals.reduce((sum, l) => sum + l.durationSec, 0));
       const root = gradeEvidencePrefix(userId), deps = realMeasureDeps(outPath);
       await renderWith(undefined, segmentGradeGraph(spans, build, "vcat", vCat));
-      const check = await measureJunctionConsistency(spans, userId, signal, deps, `${root}/pass-1`);
+      // 素材拼接点即镜头切换：接点取样窗不跨越它们。
+      const cutsSec = locals.slice(0, -1).map((_l, i) => locals.slice(0, i + 1).reduce((sum, l) => sum + l.durationSec, 0));
+      const check = await measureJunctionConsistency(spans, userId, signal, deps, `${root}/pass-1`, { cutsSec });
       gradeSegmentCheck = { mode: "junctions", spans, check };
       if (g.autoMatchJunctions && !check.pass) {
         const matched = applyJunctionAutoMatch(spans, check.pairs, check);
+        gradeSegmentCheck.autoMatch = matched;
         if (matched.adjusted.length) {
           await renderWith(undefined, segmentGradeGraph(matched.spans, build, "vcat", vCat));
-          gradeSegmentCheck.autoMatch = { ...matched, check: await measureJunctionConsistency(matched.spans, userId, signal, deps, `${root}/pass-2`) };
+          // 复检按原接点位置取样（过渡子段内部的渐变不算接点）。
+          gradeSegmentCheck.autoMatch.check = await measureJunctionConsistency(spans, userId, signal, deps, `${root}/pass-2`, { cutsSec });
         }
       }
     } else if (g?.autoMatch && g.referenceClipIndex != null) {

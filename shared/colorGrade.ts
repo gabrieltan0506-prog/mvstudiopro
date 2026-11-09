@@ -119,8 +119,14 @@ export const gradeSegmentSchema = colorCorrectionSchema.extend({
   endSec: tenthSecSchema,
   /** 从上一段渐变进本段的时长（0–2 秒）；缺省取 grade.crossfadeSec，再缺省 0 硬切。首段忽略。 */
   crossfadeSec: z.number().finite().min(0).max(2).optional(),
+  /**
+   * 进本段那个接点的意图：intended = 剧情意图的转变（如耳光变冷、结尾转亮），不修；
+   * unwanted = 不该有的跳色（同镜头内或同场景素材拼接），autoMatchJunctions 只修这类。缺省 = 未提供意图，不修。
+   */
+  junctionIntent: z.enum(["intended", "unwanted"]).optional(),
 }).strict();
 export type GradeSegment = z.infer<typeof gradeSegmentSchema>;
+export type JunctionIntent = NonNullable<GradeSegment["junctionIntent"]>;
 
 export const gradeSegmentsFieldsSchema = {
   /** 按成片时间分段调色；连续不重叠。未覆盖的片头/片尾只吃 all（若有）。 */
@@ -476,7 +482,12 @@ export function validateGradeSegments(grade: ConcatGrade | undefined): string | 
   return null;
 }
 
-export type GradeSpan = { startSec: number; endSec: number; correction: ColorCorrection | null; /** 从上一段渐变进本段的秒数 */ crossfadeSec?: number };
+export type GradeSpan = {
+  startSec: number; endSec: number; correction: ColorCorrection | null;
+  /** 从上一段渐变进本段的秒数 */ crossfadeSec?: number;
+  /** 进本段那个接点的意图（来自 segments[].junctionIntent）；缺省 = 未提供 */ junctionIntent?: JunctionIntent;
+  /** 自动修正插入的局部过渡子段：属于第几个接点（原 spans 下标 k 的接点 = span k → span k+1） */ rampOf?: number;
+};
 
 /** 把分段补全为覆盖 [0,totalSec] 的时间段（头尾空档只吃 all），并校验渐变时长与成片时长。 */
 export function planGradeSegments(grade: ConcatGrade, totalSec: number): GradeSpan[] {
@@ -486,7 +497,7 @@ export function planGradeSegments(grade: ConcatGrade, totalSec: number): GradeSp
   if (!segs.length) throw new Error("没有调色分段");
   const base = grade.all && Object.keys(grade.all).length ? grade.all : null;
   const pick = (s: GradeSegment): ColorCorrection | null => {
-    const { startSec: _s, endSec: _e, crossfadeSec: _c, ...c } = s;
+    const { startSec: _s, endSec: _e, crossfadeSec: _c, junctionIntent: _j, ...c } = s;
     const merged = { ...(grade.all ?? {}), ...c };
     return Object.keys(merged).length ? merged : null;
   };
@@ -495,9 +506,10 @@ export function planGradeSegments(grade: ConcatGrade, totalSec: number): GradeSp
   const dflt = grade.crossfadeSec ?? 0;
   const spans: GradeSpan[] = [];
   if (segs[0].startSec > 0) spans.push({ startSec: 0, endSec: segs[0].startSec, correction: base });
-  for (const s of segs) spans.push({ startSec: s.startSec, endSec: Math.min(s.endSec, totalSec), correction: pick(s), crossfadeSec: s.crossfadeSec ?? dflt });
+  for (const s of segs) spans.push({ startSec: s.startSec, endSec: Math.min(s.endSec, totalSec), correction: pick(s), crossfadeSec: s.crossfadeSec ?? dflt, ...(s.junctionIntent ? { junctionIntent: s.junctionIntent } : {}) });
   if (totalSec - end >= 0.05) spans.push({ startSec: end, endSec: totalSec, correction: base, crossfadeSec: dflt });
   spans[0].crossfadeSec = 0;
+  delete spans[0].junctionIntent;
   spans.forEach((s, k) => { if (!s.crossfadeSec) delete s.crossfadeSec; });
   // 相邻两个渐变窗不得重叠：本段长 ≥ (进本段渐变 + 出本段渐变) / 2
   const cf = (k: number) => spans[k]?.crossfadeSec ?? 0;
@@ -531,12 +543,21 @@ export function buildSegmentGradeGraph(
   if (n === 1) return `${parts.join(";")};[gg0]null[${outLabel}]`;
   if (spans.every((_s, k) => cf(k) <= 0)) return `${parts.join(";")};${spans.map((_s, i) => `[gg${i}]`).join("")}concat=n=${n}:v=1:a=0[${outLabel}]`;
   let prev = "gg0";
+  // concat 输出时基为 AVTB，后续 xfade 要求两路时基一致（否则 ffmpeg 报 timebase do not match 直接失败）：
+  // 链上一旦出现过硬切，其后的 xfade 两路先 settb=AVTB。没有「硬切后接渐变」的图逐字不变。
+  let afterConcat = false;
   for (let k = 1; k < n; k++) {
     const label = k === n - 1 ? outLabel : `gx${k}`;
     const c = cf(k);
-    parts.push(c > 0
-      ? `[${prev}][gg${k}]xfade=transition=fade:duration=${sec(c)}:offset=${sec(spans[k - 1].endSec - c / 2)}[${label}]`
-      : `[${prev}][gg${k}]concat=n=2:v=1:a=0[${label}]`);
+    if (c > 0 && afterConcat) {
+      parts.push(`[${prev}]settb=AVTB[gt${k}a]`, `[gg${k}]settb=AVTB[gt${k}b]`,
+        `[gt${k}a][gt${k}b]xfade=transition=fade:duration=${sec(c)}:offset=${sec(spans[k - 1].endSec - c / 2)}[${label}]`);
+    } else {
+      parts.push(c > 0
+        ? `[${prev}][gg${k}]xfade=transition=fade:duration=${sec(c)}:offset=${sec(spans[k - 1].endSec - c / 2)}[${label}]`
+        : `[${prev}][gg${k}]concat=n=2:v=1:a=0[${label}]`);
+    }
+    if (c <= 0) afterConcat = true;
     prev = label;
   }
   return parts.join(";");
@@ -569,24 +590,129 @@ export function checkJunctionConsistency(pairs: Array<{ index: number; junctionS
 }
 
 /**
- * 接点匹配自动套用：对未达标接点，以接点前帧为参照、用 matchShotsToReference 算后段修正并叠加到后段参数。
- * 只算一轮（调用方据此最多重渲 1 次）。返回新 spans 与被修改的段下标。
+ * 接点段均值取样：接点前、后各取一小段（默认各 0.5 秒内均匀 5 帧，取帧中心点），每帧仍用 SIGNALSTATS_FIRST_FRAME_FILTER 单帧截取。
+ * 前窗止于本接点渐变窗左沿（接点 − 渐变/2），后窗起于右沿（接点 + 渐变/2）——比较两侧调色完全生效后的样子；
+ * 不跨越渐变窗外的镜头切换（cutsSec，如素材拼接点）、相邻接点的渐变窗、片头与片尾。
+ */
+export const JUNCTION_WINDOW_SEC = 0.5;
+export const JUNCTION_WINDOW_FRAMES = 5;
+export type JunctionSampleWindow = {
+  index: number; junctionSec: number; crossfadeSec: number;
+  before: { fromSec: number; toSec: number; times: number[] };
+  after: { fromSec: number; toSec: number; times: number[] };
+};
+export function junctionSampleWindows(
+  spans: Array<{ startSec: number; endSec: number; crossfadeSec?: number }>,
+  opts: { cutsSec?: number[]; windowSec?: number; frames?: number } = {},
+): JunctionSampleWindow[] {
+  const n = spans.length;
+  const total = spans[n - 1]?.endSec ?? 0;
+  const w = opts.windowSec ?? JUNCTION_WINDOW_SEC, f = Math.max(1, Math.round(opts.frames ?? JUNCTION_WINDOW_FRAMES));
+  const cuts = opts.cutsSec ?? [];
+  const cf = (k: number) => (k <= 0 || k >= n ? 0 : spans[k].crossfadeSec ?? 0);
+  const r3 = (v: number) => parseFloat(v.toFixed(3));
+  const spread = (a: number, b: number) => (b - a < 1e-3 ? [r3(Math.max(0, b - 0.02))] : Array.from({ length: f }, (_v, i) => r3(a + ((i + 0.5) * (b - a)) / f)));
+  return spans.slice(0, -1).map((s, index) => {
+    const J = s.endSec, c = cf(index + 1);
+    const fadeL = J - c / 2, fadeR = J + c / 2;
+    let lo = Math.max(0, fadeL - w, s.startSec + cf(index) / 2);
+    for (const cut of cuts) if (cut < fadeL - 1e-6 && cut > lo) lo = cut;
+    let hi = Math.min(Math.max(fadeR, total - 0.04), fadeR + w, spans[index + 1].endSec - cf(index + 2) / 2);
+    for (const cut of cuts) if (cut > fadeR + 1e-6 && cut < hi) hi = cut;
+    return {
+      index, junctionSec: J, crossfadeSec: c,
+      before: { fromSec: r3(lo), toSec: r3(fadeL), times: spread(lo, fadeL) },
+      after: { fromSec: r3(fadeR), toSec: r3(hi), times: spread(fadeR, hi) },
+    };
+  });
+}
+
+/** 多帧 signalstats 逐项取均值（3 位小数）。 */
+export function meanSignalStats(list: SignalStats[]): SignalStats {
+  if (!list.length) throw new Error("没有可平均的取样帧");
+  const out = {} as Record<keyof SignalStats, number>;
+  for (const k of Object.keys(list[0]) as Array<keyof SignalStats>) out[k] = parseFloat((list.reduce((a, s) => a + s[k], 0) / list.length).toFixed(3));
+  return out;
+}
+
+/** 单次自动修正的步长上限：曝光 ±0.25 档、饱和度 ±0.15、color_balance 每通道 ±0.05；局部过渡 1.0 秒。 */
+export const JUNCTION_FIX_LIMITS = { exposure: 0.25, saturation: 0.15, balance: 0.05, rampSec: 1.0, minRampSec: 0.2 } as const;
+
+export type JunctionFixNote = {
+  index: number; junctionSec: number; intent: JunctionIntent | null;
+  action: "pass" | "fixed" | "intended" | "no_intent" | "too_short" | "no_step";
+  noteZh: string;
+  /** 实际叠加到后段起点的增量（已限步长） */ step?: { exposure?: number; saturation?: number; color_balance?: ColorCorrection["color_balance"] };
+  /** 修正值从 rampFromSec（后段渐变结束）起线性回到原值，至 rampToSec 完全回原值 */ rampFromSec?: number; rampToSec?: number;
+};
+
+/**
+ * 接点自动修正（只修 unwanted、限步长、只动接点附近）：
+ * - 接点意图取后段 junctionIntent：intended 不修；缺省视为未提供意图，不修（保守）；达标的不修。
+ * - unwanted 且未达标：以接点前窗均值为参照，用 matchShotsToReference 算后段全量修正，与原参数的差逐项限步长
+ *   （JUNCTION_FIX_LIMITS），得到 B' = 原参数 + 限幅增量。
+ * - 不改整段基调：把后段 [J, end] 拆成过渡子段 [J, M]（参数 B'）与余段 [M, end]（原参数 B，逐字不变），
+ *   两者之间用现有段间 xfade=fade 渐变 d 秒，d = min(1.0, 到下一接点渐变窗) ，M = J + c/2 + d/2：
+ *   画面在 [J−c/2, J+c/2] 从前段渐变到 B'，在 [J+c/2, J+c/2+d] 从 B' 线性（像素域线性混合）回到 B。
+ * 只算一轮（调用方据此最多重渲 1 次）。adjusted 为被修正接点的后段在原 spans 中的下标。
  */
 export function applyJunctionAutoMatch(
   spans: GradeSpan[],
   pairs: Array<{ index: number; before: SignalStats; after: SignalStats }>,
   report: JunctionConsistencyReport,
-): { spans: GradeSpan[]; adjusted: number[] } {
-  const next = spans.map(s => ({ ...s }));
-  const adjusted: number[] = [];
+): { spans: GradeSpan[]; adjusted: number[]; junctions: JunctionFixNote[] } {
+  const L = JUNCTION_FIX_LIMITS;
+  const clampD = (v: number, lim: number) => Math.max(-lim, Math.min(lim, v));
+  const r3 = (v: number) => parseFloat(v.toFixed(3));
+  const cfOf = (k: number) => (k <= 0 || k >= spans.length ? 0 : spans[k].crossfadeSec ?? 0);
+  const fixes = new Map<number, { corr: ColorCorrection; M: number; d: number }>();
+  const junctions: JunctionFixNote[] = [];
   for (const j of report.junctions) {
-    if (j.pass) continue;
-    const p = pairs.find(x => x.index === j.index);
     const target = j.index + 1;
-    if (!p || !next[target]) continue;
-    const [, corr] = matchShotsToReference({ stats: [p.before, p.after], referenceClipIndex: 0, existing: [null, next[target].correction] });
-    next[target].correction = corr;
-    adjusted.push(target);
+    const after = spans[target];
+    const intent = after?.junctionIntent ?? null;
+    const note = (action: JunctionFixNote["action"], noteZh: string, extra: Partial<JunctionFixNote> = {}) =>
+      junctions.push({ index: j.index, junctionSec: j.junctionSec, intent, action, noteZh, ...extra });
+    if (j.pass) { note("pass", "接点达标，未修正"); continue; }
+    if (intent === "intended") { note("intended", "剧情意图的转变，未修正"); continue; }
+    if (intent !== "unwanted") { note("no_intent", "未提供意图，未修正"); continue; }
+    const p = pairs.find(x => x.index === j.index);
+    if (!p || !after) { note("no_step", "缺少接点取样，未修正"); continue; }
+    const c = cfOf(target);
+    const rampFrom = after.startSec + c / 2;
+    const rampTo = Math.min(rampFrom + L.rampSec, after.endSec - cfOf(target + 1) / 2);
+    const d = rampTo - rampFrom;
+    if (d < L.minRampSec - 1e-6) { note("too_short", "后段过短，放不下局部过渡，未修正"); continue; }
+    const B: ColorCorrection = after.correction ?? {};
+    const [, full] = matchShotsToReference({ stats: [p.before, p.after], referenceClipIndex: 0, existing: [null, B] });
+    const F: ColorCorrection = full ?? {};
+    const next: ColorCorrection = structuredClone(B);
+    const step: NonNullable<JunctionFixNote["step"]> = {};
+    const dE = r3(clampD((F.exposure ?? 0) - (B.exposure ?? 0), L.exposure));
+    if (Math.abs(dE) >= 0.005) { next.exposure = r3(Math.min(3, Math.max(-0.95, (B.exposure ?? 0) + dE))); step.exposure = dE; }
+    const dS = r3(clampD((F.saturation ?? 1) - (B.saturation ?? 1), L.saturation));
+    if (Math.abs(dS) >= 0.005) { next.saturation = r3(Math.min(3, Math.max(0, (B.saturation ?? 1) + dS))); step.saturation = dS; }
+    for (const zone of ["shadows", "midtones", "highlights"] as const) {
+      const fb = F.color_balance?.[zone], bb = B.color_balance?.[zone];
+      if (!fb) continue;
+      const base = bb ?? { r: 0, g: 0, b: 0 };
+      const dz = { r: r3(clampD(fb.r - base.r, L.balance)), g: r3(clampD(fb.g - base.g, L.balance)), b: r3(clampD(fb.b - base.b, L.balance)) };
+      if (Math.abs(dz.r) < 0.001 && Math.abs(dz.g) < 0.001 && Math.abs(dz.b) < 0.001) continue;
+      next.color_balance = { ...next.color_balance, [zone]: { r: clampBal(base.r + dz.r), g: clampBal(base.g + dz.g), b: clampBal(base.b + dz.b) } };
+      step.color_balance = { ...step.color_balance, [zone]: dz };
+    }
+    if (!Object.keys(step).length) { note("no_step", "匹配增量为零，未修正"); continue; }
+    fixes.set(target, { corr: colorCorrectionSchema.parse(next), M: r3(rampFrom + d / 2), d: r3(d) });
+    const parts = [step.exposure != null ? `曝光 ${step.exposure > 0 ? "+" : ""}${step.exposure} 档` : "", step.saturation != null ? `饱和 ${step.saturation > 0 ? "+" : ""}${step.saturation}` : "", step.color_balance ? "色彩平衡微调" : ""].filter(Boolean);
+    note("fixed", `局部修正：${parts.join("、")}，${r3(rampFrom)}–${r3(rampTo)} 秒线性回到原值`, { step, rampFromSec: r3(rampFrom), rampToSec: r3(rampTo) });
   }
-  return { spans: next, adjusted };
+  const out: GradeSpan[] = [];
+  spans.forEach((s, i) => {
+    const fx = fixes.get(i);
+    if (!fx) { out.push({ ...s }); return; }
+    out.push({ ...s, endSec: fx.M, correction: fx.corr, rampOf: i - 1 });
+    const { junctionIntent: _j, ...rest } = s;
+    out.push({ ...rest, startSec: fx.M, crossfadeSec: fx.d, rampOf: i - 1 });
+  });
+  return { spans: out, adjusted: Array.from(fixes.keys()), junctions };
 }

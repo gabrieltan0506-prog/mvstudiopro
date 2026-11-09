@@ -20,6 +20,7 @@ vi.mock("./runChildUntilClosed", () => ({
   },
 }));
 import { concatClips, resolveGradeLutPaths } from "./postProduction";
+import { buildFilterChain, SIGNALSTATS_FIRST_FRAME_FILTER } from "../../shared/colorGrade";
 import { concatParamsSchema } from "../jobs/postProdInput";
 
 const graphOf = (args: string[]) => args[args.indexOf("-filter_complex") + 1];
@@ -58,7 +59,7 @@ describe("concat 调色（服务端）", () => {
     ]);
   });
 
-  it("segments：成片尾部接分段子图，接点前后 0.1s 取帧并留档", async () => {
+  it("segments：成片尾部接分段子图，接点前后各 0.5s 均匀 5 帧取均值并按窗留档", async () => {
     const out = await concatClips({ ...base, grade: { segments: [{ startSec: 0, endSec: 2, exposure: 0.5 }, { startSec: 2, endSec: 4, saturation: 0.8 }] } }, "7");
     const g = graphOf(h.calls[0]);
     expect(g).toContain("concat=n=2:v=1:a=1[vcat][ao];[vcat]split=2[gs0][gs1];");
@@ -66,7 +67,8 @@ describe("concat 调色（服务端）", () => {
     // 逐段 vChain 不再插调色（分段在成片上做）
     expect(g).not.toMatch(/fps=30,curves/);
     const seek = h.calls.slice(1).map(a => a[a.indexOf("-ss") + 1]);
-    expect(seek).toEqual(["1.9", "2.1"]);
+    expect(seek).toEqual(["1.55", "1.65", "1.75", "1.85", "1.95", "2.05", "2.15", "2.25", "2.35", "2.45"]);
+    expect(h.calls.slice(1).every(a => a.includes(SIGNALSTATS_FIRST_FRAME_FILTER))).toBe(true);
     expect(out.gradeSegmentCheck?.check.junctions).toHaveLength(1);
     expect(h.uploads.filter(u => u.includes("/grade-evidence/")).map(u => u.split("/").slice(-2).join("/"))).toEqual([
       "pass-1/junction-0.before.signalstats.raw.txt", "pass-1/junction-0.before.signalstats.parsed.json",
@@ -75,18 +77,36 @@ describe("concat 调色（服务端）", () => {
     expect(out.gradeSegmentCheck?.autoMatch).toBeUndefined();
   });
 
-  it("autoMatchJunctions：未达标接点叠加修正后重渲 1 次并返回前后两次检查", async () => {
-    h.yavg.push(120, 80, 120, 118);
-    const out = await concatClips({ ...base, grade: { segments: [{ startSec: 0, endSec: 2 }, { startSec: 2, endSec: 4, saturation: 0.9 }], crossfadeSec: 0.4, autoMatchJunctions: true } }, "7");
+  it("autoMatchJunctions：unwanted 接点限步长局部修正后重渲 1 次，复检按原接点位置；余段参数不变", async () => {
+    h.yavg.push(...Array(5).fill(120), ...Array(5).fill(80), ...Array(5).fill(120), ...Array(5).fill(118));
+    const out = await concatClips({ ...base, grade: { segments: [{ startSec: 0, endSec: 2 }, { startSec: 2, endSec: 4, saturation: 0.9, junctionIntent: "unwanted" }], crossfadeSec: 0.4, autoMatchJunctions: true } }, "7");
     const renders = h.calls.filter(a => a.includes("-filter_complex"));
     expect(renders).toHaveLength(2);
     expect(graphOf(renders[0])).toContain("xfade=transition=fade:duration=0.4:offset=1.8[vo]");
     const r = out.gradeSegmentCheck!;
     expect(r.check.pass).toBe(false);
     expect(r.autoMatch?.adjusted).toEqual([1]);
-    expect(r.autoMatch?.spans[1].correction).toMatchObject({ saturation: 0.9, exposure: 1 });
-    expect(graphOf(renders[1])).toContain("curves=master='0/0 0.25/0.5 1/1'");
-    expect(r.autoMatch?.check.pass).toBe(true);
+    expect(r.autoMatch?.junctions[0]).toMatchObject({ action: "fixed", intent: "unwanted", step: { exposure: 0.25 }, rampFromSec: 2.2, rampToSec: 3.2 });
+    expect(r.autoMatch?.spans.map(s => [s.startSec, s.endSec, s.correction])).toEqual([[0, 2, null], [2, 2.7, { saturation: 0.9, exposure: 0.25 }], [2.7, 4, { saturation: 0.9 }]]);
+    const g2 = graphOf(renders[1]);
+    expect(g2).toContain(`[gs1]trim=start=1.8:end=3.2,setpts=PTS-STARTPTS,${buildFilterChain({ saturation: 0.9, exposure: 0.25 })},`);
+    expect(g2).toContain("[gs2]trim=start=2.2,setpts=PTS-STARTPTS,eq=saturation=0.9,format=yuv420p[gg2]");
+    expect(g2).toContain("[gx1][gg2]xfade=transition=fade:duration=1:offset=2.2[vo]");
+    // 复检：仍是原来 1 个接点、同一组取样位置
+    const seeks = h.calls.filter(a => !a.includes("-filter_complex")).map(a => a[a.indexOf("-ss") + 1]);
+    expect(seeks.slice(10)).toEqual(seeks.slice(0, 10));
+    expect(r.autoMatch?.check?.junctions).toHaveLength(1);
+    expect(r.autoMatch?.check?.pass).toBe(true);
+  });
+
+  it("autoMatchJunctions：未提供意图（或 intended）不修、不重渲，并标注原因", async () => {
+    h.yavg.push(...Array(5).fill(120), ...Array(5).fill(80));
+    const out = await concatClips({ ...base, grade: { segments: [{ startSec: 0, endSec: 2 }, { startSec: 2, endSec: 4, saturation: 0.9 }], autoMatchJunctions: true } }, "7");
+    expect(h.calls.filter(a => a.includes("-filter_complex"))).toHaveLength(1);
+    const a = out.gradeSegmentCheck!.autoMatch!;
+    expect(a.adjusted).toEqual([]);
+    expect(a.junctions[0]).toMatchObject({ action: "no_intent", noteZh: "未提供意图，未修正" });
+    expect(a.check).toBeUndefined();
   });
 
   it("schema：分段须首尾相接、一位小数，且不与逐段调色混用", () => {
