@@ -8,7 +8,7 @@ import { concatGradeSchema } from "./colorGrade";
 import { creativeEvidenceReviewSchema } from "./creativeEvidenceReview";
 import { musicMvEditSessionSchema } from "./canvasMusicMvEdit";
 import { songOperationSessionSchema, songAlignedWordSchema } from "./songOperations";
-import { mvShotReferenceImageSchema, mvShotReferencesSchema } from "./canvasMusicMvReferences";
+import { MV_SHOT_SCHEMA_MAX_SEC, mvShotReferenceImageSchema, mvShotReferencesSchema } from "./canvasMusicMvReferences";
 
 const text = z.string().trim().min(1);
 export { canvasMusicCandidateSchema, type CanvasMusicCandidate } from "./canvasMusicMedia";
@@ -404,10 +404,11 @@ export const canvasMusicMvPlanSchema = z
         });
       for (const message of musicMvShotBeatIssues(shot))
         ctx.addIssue({ code: "custom", message, path: ["shots", index, "beats"] });
-      if (duration + 1e-9 < 0.5 || duration > 15 + 1e-9)
+      // 1109 不锁 15 秒：落库按引擎表最大单段秒数；具体模型在规划（mvShotPlanMaxSec）与出片（单段上限）时另卡
+      if (duration + 1e-9 < 0.5 || duration > MV_SHOT_SCHEMA_MAX_SEC + 1e-9)
         ctx.addIssue({
           code: "custom",
-          message: "每镜时长必须为 0.5 至 15 秒",
+          message: `每镜时长必须为 0.5 至 ${MV_SHOT_SCHEMA_MAX_SEC} 秒`,
           path: ["shots", index, "endSec"],
         });
       cursor = shot.endSec;

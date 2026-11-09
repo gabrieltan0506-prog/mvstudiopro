@@ -10,6 +10,7 @@ import { readCreativeLibraryContext, assertCreativeSelections, CREATIVE_LIBRARY_
 import { creativeLearningTargetSchema, creativeLearningReportSchema, assertCreativeMethodEvidence, CREATIVE_LEARNING_INSTRUCTIONS, type CreativeLearningTarget } from "../../shared/creativeGenerationLibrary";
 import { parseCreativeAudioEvidence } from "../../shared/creativeMediaEvidence";
 import { repairJsonShape, normalizeMediaSections, normalizeShotDurations } from "../../shared/creativeProposalRepair";
+import { mvShotPlanMaxSec } from "../../shared/canvasMusicMvReferences";
 import { runCreativeHopChain } from "./creativeHopChain";
 import { computeSongBeatGrid } from "./musicMvBeatGrid";
 import { composeMusicMvShotBeats } from "./musicMvShotBeats";
@@ -140,7 +141,9 @@ export async function askMusicMvAdvisor(
   rawTarget: MusicMvAdvisorTarget | SunoSongTarget | CreativeLearningTarget,
   question: string,
   deps = real,
-  purpose: "mv" | "song" | "learn" = "mv"
+  purpose: "mv" | "song" | "learn" = "mv",
+  /** 1109 所选成片模型：MV 单镜上限按它定（mvShotPlanMaxSec），不锁 15 秒。 */
+  opts: { videoModel?: string } = {}
 ) {
   const target =
     purpose === "learn" ? creativeLearningTargetSchema.parse(rawTarget) : purpose === "song"
@@ -205,10 +208,11 @@ export async function askMusicMvAdvisor(
   const proposalSchema:ZodType=purpose==="learn"?creativeLearningReportSchema:purpose==="song"?sunoSongProposalSchema:musicMvAdvisorProposalSchema;
   const sectionTolerance=purpose==="mv"?0.03:0.1;
   /** 方案校验前的确定性修复：形状（字符串→数组、别名键、数字字符串、空对象占位）、sections 时间边界、MV 镜头 >15s 等分 / <0.5s 并入；有修复才落 `<stage>-repaired`。 */
+  const shotMaxSec=mvShotPlanMaxSec(opts.videoModel);
   const prepareCandidate=async(raw:unknown,stage:string)=>{
     const shape=repairJsonShape(raw,proposalSchema);
     const sections=target.audio?normalizeMediaSections(shape.value,target.audio.durationSec,sectionTolerance):{value:shape.value,fixes:[]};
-    const shots=purpose==="mv"?normalizeShotDurations(sections.value):{value:sections.value,fixes:[]};
+    const shots=purpose==="mv"?normalizeShotDurations(sections.value,shotMaxSec):{value:sections.value,fixes:[]};
     const beats=purpose==="mv"&&beatGrid?snapPlanCuts(shots.value,beatGrid):{value:shots.value,fixes:[]};
     if(shape.fixes.length||sections.fixes.length||shots.fixes.length||beats.fixes.length)await save(`${stage}-repaired`,{before:raw,after:beats.value,fixes:{shape:shape.fixes,sections:sections.fixes,shots:shots.fixes,beats:beats.fixes},remainingIssues:shape.issues});
     return beats.value;

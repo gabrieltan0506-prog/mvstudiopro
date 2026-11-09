@@ -32,6 +32,19 @@ export function mvShotReferenceLimits(engine: MvShotEngineKey | undefined) {
   // 单条参考视频上限：引擎表有就用，没有按供应商实测口径 15 秒（1109 探针：EvoLink「maximum is 15.2 seconds」）
   return { image: refs.image, video: refs.video, audio: refs.audio, maxVideoItemSec: refs.maxVideoItemSec ?? MV_REFERENCE_VIDEO_MAX_SEC, ...(refs.maxVideoTotalSec !== undefined ? { maxVideoTotalSec: refs.maxVideoTotalSec } : {}) } as { image: number; video: number; audio: number; maxVideoItemSec: number; maxVideoTotalSec?: number };
 }
+/** 模型实出时长有随机短缺（请求 15 秒可能出 14.5/13.5 秒）：请求时长 = 分镜 + 余量，出片后实测再裁回目标，不变速。 */
+export const MV_SHOT_DURATION_MARGIN_SEC = 1;
+/**
+ * MV 单镜规划上限（1109）：不锁 5/15 秒，按所选模型引擎表单段上限减随机短缺余量
+ * （Seedance 2.5 / Wan 3.0 → 29 秒；Mini / 2.0 / H3 → 14 秒），保证请求时长恒能多要 ≥1 秒、出片后实测裁回。
+ * 未选或不支持 MV 的模型按 Mini 口径（出片前会被拦下换模型）。
+ */
+export function mvShotPlanMaxSec(engine?: MvShotEngineKey): number {
+  const id = isMvShotEngineSupported(engine) ? mvShotEngineId(engine) : "seedance-2.0-mini";
+  return COMPILER_ENGINE_LIMITS[id].maxSegmentSec - MV_SHOT_DURATION_MARGIN_SEC;
+}
+/** 方案落库的模型无关上限 = 引擎表最大单段秒数（具体模型在规划与出片时另按 mvShotPlanMaxSec / 单段上限卡）。 */
+export const MV_SHOT_SCHEMA_MAX_SEC = Math.max(...Object.values(COMPILER_ENGINE_LIMITS).map(p => p.maxSegmentSec));
 /** 参考视频整条送出（取用区间只写进提示词），所以素材本身时长必须在上限内。 */
 export const MV_REFERENCE_VIDEO_MAX_SEC = 15;
 /** MV 镜头可用引擎：须能同时收主锚图+场景图（≥2 图）与歌曲切片（≥1 音频）。HappyHorse 仅首帧一图，不入选。 */

@@ -8,7 +8,9 @@
  *    不足 0.5 秒的窗并入相邻窗；超长窗不拆（拆分会伪造内容），交校验层带原因重写。
  * 所有修复返回 fixes 清单，由调用方落永久证据。
  */
+import { COMPILER_ENGINE_LIMITS, type CompilerEngineId } from "./manhuaShotIR";
 import {
+  MUSIC_MV_BEAT_WINDOW_MAX_SEC,
   MUSIC_MV_BEAT_WINDOW_MIN_SEC,
   musicMvPacingAt,
   type MusicMvBeatGrid,
@@ -161,54 +163,106 @@ export function musicMvSingingPlacement(
   return out;
 }
 
+/** 唱句窗前后呼吸上限（秒）：唱句窗只覆盖唱句本身 + 前后 ≤0.3 秒换气。 */
+export const MUSIC_MV_SINGING_BREATH_SEC = 0.3;
+
 /**
  * 演唱段窗表 = 用户确认版歌词时间表（歌词按「对白」处理的秒锁真源）：
- * 每句唱词一窗（起止即该句起止，裁到镜头区间，lipSync=true，lyricZh=该句原文）；
- * 句间空隙 ≥0.5 秒成过门窗（lipSync=false），<0.5 秒并入前一窗作换气；
- * 各窗的动作/运镜/灯光/情绪/音效取顾问逐窗节拍里与之重叠最多的那一窗。
+ * - 每句唱词一窗（lipSync=true，lyricZh=该句原文），窗界按 0.1 秒向外取整（起点向下、终点向上，不切掉唱句），裁到镜头区间；
+ * - 唱句之外的纯音乐（首句前引子、句间间奏、末句后尾奏）≥0.5 秒时单独成窗（lipSync=false），不并进唱句窗；
+ *   超过单窗上限（min(逐窗上限 6 秒, 所选模型单段上限)）的引子/间奏按等长切成多窗；
+ * - <0.5 秒的空隙作换气并进相邻唱句窗：句间空隙两句平分（每侧 ≤0.25 秒），引子/尾奏并进首/末句（≤0.3 秒；
+ *   0.3–0.5 秒的边缘空隙因不足一窗只能并入，属唯一例外）；
+ * - 窗界一位小数；首窗起点/末窗终点即镜头起止（与镜头无缝）；
+ * - 各窗的动作/运镜/灯光/情绪/音效取顾问逐窗节拍里与之重叠最多的那一窗。
  */
 export function singingWindowsFromLyricLines(
   shot: TimedShot,
   advisorBeats: readonly MusicMvShotBeat[],
   lines: ReadonlyArray<{ text: string; startSec: number; endSec: number }>,
+  opts: { engine?: CompilerEngineId; maxWindowSec?: number } = {},
 ): MusicMvShotBeat[] {
   if (!advisorBeats.length) throw new Error(`演唱镜 ${shot.id} 缺少逐窗节拍，请重新出分镜`);
-  // 只取真歌词句对口型；吟唱句不对口型
-  const inShot = lines
-    .filter(l => (l as { kind?: string }).kind !== "chant")
-    .map(l => ({ text: l.text.trim(), startSec: r3(Math.max(shot.startSec, l.startSec)), endSec: r3(Math.min(shot.endSec, l.endSec)) }))
-    .filter(l => l.text && l.endSec - l.startSec > 0.05)
-    .sort((a, b) => a.startSec - b.startSec);
-  if (!inShot.length) throw new Error(`演唱镜 ${shot.id} 的区间里没有已确认的唱句，请先确认本段歌词或改为非演唱镜`);
+  const cap = Math.min(
+    MUSIC_MV_BEAT_WINDOW_MAX_SEC,
+    opts.engine ? COMPILER_ENGINE_LIMITS[opts.engine].maxSegmentSec : Infinity,
+    opts.maxWindowSec ?? Infinity,
+  );
+  const r1 = (n: number) => Math.round(n * 10 + 1e-6) / 10;
+  const floor1 = (n: number) => Math.floor(n * 10 + 1e-6) / 10;
+  const ceil1 = (n: number) => Math.ceil(n * 10 - 1e-6) / 10;
+  const s0 = r3(shot.startSec);
+  const s1 = r3(shot.endSec);
+  // 只取真歌词句对口型；吟唱句不对口型（落成纯音乐窗）
+  const spans: Array<{ text: string; startSec: number; endSec: number }> = [];
+  for (const l of lines
+    .filter(l => (l as { kind?: string }).kind !== "chant" && l.text.trim())
+    .map(l => ({ text: l.text.trim(), startSec: Math.max(s0, floor1(l.startSec)), endSec: Math.min(s1, ceil1(l.endSec)) }))
+    .sort((a, b) => a.startSec - b.startSec)) {
+    const prev = spans[spans.length - 1];
+    const startSec = prev ? Math.max(prev.endSec, l.startSec) : l.startSec;
+    if (l.endSec - startSec > 0.05) spans.push({ ...l, startSec });
+  }
+  if (!spans.length) throw new Error(`演唱镜 ${shot.id} 的区间里没有已确认的唱句，请先确认本段歌词或改为非演唱镜`);
   const contentFor = (a: number, b: number) => {
     let best = advisorBeats[0]!;
-    let bestOverlap = -1;
+    let bestOverlap = -Infinity;
     for (const w of advisorBeats) {
       const overlap = Math.min(b, w.endSec) - Math.max(a, w.startSec);
       if (overlap > bestOverlap) { bestOverlap = overlap; best = w; }
     }
     return best;
   };
-  const out: MusicMvShotBeat[] = [];
-  const push = (a: number, b: number, line?: { text: string }) => {
+  // 先定唱句窗界（含换气），再把剩下的纯音乐空隙切成独立窗
+  const sung = spans.map(s => ({ ...s, a: s.startSec, b: s.endSec }));
+  // 不足一窗的唱句（多见于镜头切在句尾/句首）向相邻纯音乐借换气补足 0.5 秒：每侧 ≤0.3 秒，且借后空隙仍 ≥0.5 秒或借空
+  sung.forEach((s, i) => {
+    const borrow = (room: number, need: number) => Math.max(0, Math.min(MUSIC_MV_SINGING_BREATH_SEC, need, room));
+    let need = MUSIC_MV_BEAT_WINDOW_MIN_SEC - (s.b - s.a);
+    if (need <= 1e-9) return;
+    const before = s.a - (i === 0 ? s0 : sung[i - 1]!.b);
+    const takeA = borrow(before < MUSIC_MV_BEAT_WINDOW_MIN_SEC ? before : before - MUSIC_MV_BEAT_WINDOW_MIN_SEC, need);
+    s.a = Math.max(i === 0 ? s0 : sung[i - 1]!.b, floor1(s.a - takeA));
+    need = MUSIC_MV_BEAT_WINDOW_MIN_SEC - (s.b - s.a);
+    if (need <= 1e-9) return;
+    const after = (i === sung.length - 1 ? s1 : sung[i + 1]!.a) - s.b;
+    const takeB = borrow(after < MUSIC_MV_BEAT_WINDOW_MIN_SEC ? after : after - MUSIC_MV_BEAT_WINDOW_MIN_SEC, need);
+    s.b = Math.min(i === sung.length - 1 ? s1 : sung[i + 1]!.a, ceil1(s.b + takeB));
+  });
+  const gaps: Array<[number, number]> = [];
+  for (let i = 0; i <= sung.length; i += 1) {
+    const a = i === 0 ? s0 : sung[i - 1]!.b;
+    const b = i === sung.length ? s1 : sung[i]!.a;
+    const g = b - a;
+    if (g < 1e-6) continue;
+    if (g + 1e-9 >= MUSIC_MV_BEAT_WINDOW_MIN_SEC) { gaps.push([a, b]); continue; }
+    // 换气：句间平分，边缘并入唯一相邻唱句
+    if (i === 0) sung[0]!.a = s0;
+    else if (i === sung.length) sung[i - 1]!.b = s1;
+    else {
+      const mid = Math.min(b, Math.max(a, r1((a + b) / 2)));
+      sung[i - 1]!.b = mid;
+      sung[i]!.a = mid;
+    }
+  }
+  type Row = { a: number; b: number; line?: { text: string } };
+  const rows: Row[] = sung.map(s => ({ a: s.a, b: s.b, line: s }));
+  for (const [a, b] of gaps) {
+    const parts = Math.max(1, Math.ceil((b - a) / cap - 1e-9));
+    for (let k = 0; k < parts; k += 1) {
+      const pa = k === 0 ? a : r1(a + ((b - a) * k) / parts);
+      const pb = k === parts - 1 ? b : r1(a + ((b - a) * (k + 1)) / parts);
+      rows.push({ a: pa, b: pb });
+    }
+  }
+  rows.sort((x, y) => x.a - y.a);
+  return rows.map(({ a, b, line }) => {
     const c = contentFor(a, b);
-    out.push({
+    return {
       startSec: r3(a), endSec: r3(b),
       actionZh: c.actionZh, cameraZh: c.cameraZh, lightingZh: c.lightingZh, moodZh: c.moodZh, sfxZh: c.sfxZh,
       lipSync: Boolean(line),
       ...(line ? { lyricZh: line.text } : {}),
-    });
-  };
-  let cursor = shot.startSec;
-  for (const line of inShot) {
-    const start = Math.max(cursor, line.startSec);
-    if (start - cursor >= MUSIC_MV_BEAT_WINDOW_MIN_SEC) push(cursor, start);
-    else if (out.length) out[out.length - 1]!.endSec = r3(start);
-    else if (start > cursor) { push(cursor, line.endSec, line); cursor = line.endSec; continue; }
-    if (line.endSec > start) push(start, line.endSec, line);
-    cursor = Math.max(cursor, line.endSec);
-  }
-  if (shot.endSec - cursor >= MUSIC_MV_BEAT_WINDOW_MIN_SEC) push(cursor, shot.endSec);
-  else out[out.length - 1]!.endSec = r3(shot.endSec);
-  return out;
+    };
+  });
 }

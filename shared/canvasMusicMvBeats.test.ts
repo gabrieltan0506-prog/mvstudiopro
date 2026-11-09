@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { beatsInRange, musicMvSingingPlacement, repairShotBeatWindows, singingWindowsFromLyricLines, snapShotCutsToBeats } from "./canvasMusicMvBeats";
 import { musicMvShotSlices } from "./musicMvHighlight";
-import { mvShotNeedsStagingReference, musicMvPacingAt, musicMvLyricLineIssues, type CanvasMusicMvPlan, type MusicMvShotBeat } from "./canvasMusicMv";
+import { canvasMusicMvPlanSchema, mvShotNeedsStagingReference, musicMvPacingAt, musicMvLyricLineIssues, musicMvShotBeatIssues, type CanvasMusicMvPlan, type MusicMvShotBeat } from "./canvasMusicMv";
+import { markChantFrom } from "./canvasMusicMvLyricKinds";
+import { MV_SHOT_SCHEMA_MAX_SEC, mvShotPlanMaxSec } from "./canvasMusicMvReferences";
+import { mvShotGenerateDurationSec } from "./canvasMusicMvShotPrompt";
+import { normalizeShotDurations } from "./creativeProposalRepair";
 
 const grid = { bpm: 129, beatSec: 60 / 129, phaseSec: 0.1, source: "creative_prompt" as const };
 const w = (a: number, b: number, extra: Partial<MusicMvShotBeat> = {}): MusicMvShotBeat => ({ startSec: a, endSec: b, actionZh: "a", cameraZh: "c", lightingZh: "l", moodZh: "m", sfxZh: "s", ...extra });
@@ -49,7 +53,7 @@ describe("演唱段：确认版歌词时间表即秒锁真源", () => {
       { text: "第一句", startSec: 60.2, endSec: 62 }, { text: "第二句", startSec: 62.3, endSec: 64.5 }, { text: "第三句", startSec: 65.5, endSec: 67.9 },
     ]);
     expect(out.map(x => [x.startSec, x.endSec, x.lipSync, x.lyricZh ?? ""])).toEqual([
-      [60, 62.3, true, "第一句"], [62.3, 64.5, true, "第二句"], [64.5, 65.5, false, ""], [65.5, 68, true, "第三句"],
+      [60, 62.2, true, "第一句"], [62.2, 64.5, true, "第二句"], [64.5, 65.5, false, ""], [65.5, 68, true, "第三句"],
     ]);
     expect(out[3]!.actionZh).toBe("后");
     expect(() => singingWindowsFromLyricLines(shot, [w(60, 68)], [])).toThrow(/先确认本段歌词/);
@@ -119,5 +123,86 @@ describe("推荐高光：只取有歌词的部分", () => {
   });
   it("没有歌词句：不推荐", () => {
     expect(recommendMusicMvHighlight([], 200, segments)).toBeUndefined();
+  });
+});
+
+describe("演唱分窗（1109 合并前必修）：引子/间奏单独成窗、窗不超上限、0.1 秒精度", () => {
+  // 用户实例：65 BPM，高光 18.2–77.5 秒，36.0 秒后为吟唱
+  const lines = markChantFrom([
+    { text: "一", startSec: 18.4, endSec: 20.9 }, { text: "二", startSec: 21, endSec: 23.7 }, { text: "三", startSec: 24.15, endSec: 26.3 },
+    { text: "四", startSec: 26.5, endSec: 28.8 }, { text: "五", startSec: 29, endSec: 31.9 }, { text: "六", startSec: 32.9, endSec: 38.2 }, { text: "姿势 姿势", startSec: 40, endSec: 43 },
+  ], 36);
+  const fmt = (out: MusicMvShotBeat[]) => out.map(x => [x.startSec, x.endSec, x.lyricZh ?? ""]);
+  const tenths = (n: number) => Math.abs(n * 10 - Math.round(n * 10)) < 1e-6;
+  it("引子（首句前纯音乐）单独成窗并按上限切分，不与首句并窗；镜头切在句首时唱句向引子借 ≤0.3 秒换气补足一窗", () => {
+    const shot = { id: "s1", startSec: 4.6, endSec: 18.6, kind: "singing" as const };
+    const out = singingWindowsFromLyricLines(shot, [w(4.6, 18.6)], lines);
+    expect(fmt(out)).toEqual([[4.6, 9.1, ""], [9.1, 13.6, ""], [13.6, 18.1, ""], [18.1, 18.6, "一"]]);
+    expect(out.every(x => x.endSec - x.startSec <= 6 + 1e-9)).toBe(true);
+    expect(musicMvShotBeatIssues({ ...shot, beats: out })).toEqual([]);
+    // 高光起点 18.2：0.2 秒引子作换气并入首句（≤0.3）
+    const head = singingWindowsFromLyricLines({ id: "h", startSec: 18.2, endSec: 21 }, [w(18.2, 21)], lines);
+    expect(fmt(head)).toEqual([[18.2, 21, "一"]]);
+  });
+  it("间奏不并进唱句窗：唱句窗只含唱句 + 前后 ≤0.3 秒换气，≥0.5 秒间奏单独成窗", () => {
+    const shot = { id: "s2", startSec: 18.6, endSec: 36, kind: "singing" as const };
+    const out = singingWindowsFromLyricLines(shot, [w(18.6, 27), w(27, 36)], lines);
+    expect(fmt(out)).toEqual([
+      [18.6, 21, "一"], [21, 23.9, "二"], [23.9, 26.4, "三"], [26.4, 28.9, "四"], [28.9, 31.9, "五"], [31.9, 32.9, ""], [32.9, 36, "六"],
+    ]);
+    for (const x of out.filter(x => x.lipSync)) {
+      const l = lines.find(l => l.text === x.lyricZh && l.kind !== "chant")!;
+      expect(Math.max(shot.startSec, l.startSec) - x.startSec).toBeLessThanOrEqual(0.3 + 1e-9);
+      expect(x.endSec - Math.min(shot.endSec, l.endSec)).toBeLessThanOrEqual(0.3 + 1e-9);
+    }
+    expect(out.find(x => x.startSec === 31.9)!.lipSync).toBe(false);
+  });
+  it("单窗上限取 min(逐窗上限, 所选模型单段上限, 显式上限)", () => {
+    const shot = { id: "s1", startSec: 4.6, endSec: 18.6, kind: "singing" as const };
+    const a = singingWindowsFromLyricLines(shot, [w(4.6, 18.6)], lines, { engine: "seedance-2.5" });
+    expect(a.every(x => x.endSec - x.startSec <= 6 + 1e-9)).toBe(true);
+    const b = singingWindowsFromLyricLines(shot, [w(4.6, 18.6)], lines, { engine: "seedance-2.0-mini", maxWindowSec: 3 });
+    expect(b.filter(x => !x.lipSync)).toHaveLength(5);
+    expect(b.every(x => x.endSec - x.startSec <= 3 + 1e-9)).toBe(true);
+  });
+  it("边界 0.1 秒精度：唱句窗向外取整到 0.1 秒（不切唱句），镜头内窗界全为一位小数", () => {
+    const shot = { id: "p", startSec: 50, endSec: 60, kind: "singing" as const };
+    const out = singingWindowsFromLyricLines(shot, [w(50, 60)], [
+      { text: "甲", startSec: 50.73, endSec: 53.26 }, { text: "乙", startSec: 53.61, endSec: 55.02 }, { text: "丙", startSec: 56.18, endSec: 59.91 },
+    ]);
+    expect(fmt(out)).toEqual([[50, 50.7, ""], [50.7, 53.5, "甲"], [53.5, 55.1, "乙"], [55.1, 56.1, ""], [56.1, 60, "丙"]]);
+    expect(out.every(x => tenths(x.startSec) && tenths(x.endSec))).toBe(true);
+    expect(musicMvShotBeatIssues({ ...shot, beats: out })).toEqual([]);
+  });
+});
+
+describe("MV 单镜时长按所选模型（不锁 15 秒，留随机短缺余量）", () => {
+  it("规划上限 = 模型单段上限 − 1 秒余量；未知模型按 Mini", () => {
+    expect(mvShotPlanMaxSec("seedance-2.5")).toBe(29);
+    expect(mvShotPlanMaxSec("2.5")).toBe(29);
+    expect(mvShotPlanMaxSec("wan-3.0")).toBe(29);
+    expect(mvShotPlanMaxSec("seedance-2.0-mini")).toBe(14);
+    expect(mvShotPlanMaxSec("minimax-h3")).toBe(14);
+    expect(mvShotPlanMaxSec(undefined)).toBe(14);
+    expect(mvShotPlanMaxSec("not-a-model")).toBe(14);
+  });
+  it("请求时长恒带余量且不超模型上限；超上限拦下", () => {
+    expect(mvShotGenerateDurationSec("seedance-2.5", 29)).toBe(30);
+    expect(mvShotGenerateDurationSec("seedance-2.5", 22.4)).toBe(24);
+    expect(mvShotGenerateDurationSec("seedance-2.0-mini", 14)).toBe(15);
+    expect(() => mvShotGenerateDurationSec("seedance-2.0-mini", 20)).toThrow(/单段上限 15 秒/);
+  });
+  it("顾问确定性拆镜按模型上限：2.5 下 25 秒镜不拆，Mini 下拆", () => {
+    const plan = (len: number) => ({ concepts: [{ plan: { shots: [{ id: "a", startSec: 0, endSec: len }] } }] });
+    const shots = (v: unknown) => (v as { concepts: Array<{ plan: { shots: unknown[] } }> }).concepts[0]!.plan.shots;
+    expect(shots(normalizeShotDurations(plan(25), mvShotPlanMaxSec("seedance-2.5")).value)).toHaveLength(1);
+    expect(shots(normalizeShotDurations(plan(25), mvShotPlanMaxSec("seedance-2.0-mini")).value)).toHaveLength(2);
+  });
+  it("方案落库上限为引擎表最大单段秒数（25 秒镜可存，旧 15 秒方案仍可读）", () => {
+    expect(MV_SHOT_SCHEMA_MAX_SEC).toBe(30);
+    const mk = (len: number) => ({ version: 1, audioId: "a", audioDurationSec: len, analysisBasis: "native_audio", shots: [{ id: "g", startSec: 0, endSec: len, visualPrompt: "v", cameraPrompt: "c", lyricQuote: "", referenceIndices: [], kind: "generated" }] });
+    expect(canvasMusicMvPlanSchema.safeParse(mk(25)).success).toBe(true);
+    expect(canvasMusicMvPlanSchema.safeParse(mk(15)).success).toBe(true);
+    expect(canvasMusicMvPlanSchema.safeParse(mk(31)).success).toBe(false);
   });
 });

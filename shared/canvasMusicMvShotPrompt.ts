@@ -11,7 +11,7 @@
  * 纯函数、确定性：同输入同输出；不调用模型。
  */
 import type { MvShotReferences } from "./canvasMusicMvReferences";
-import { MV_SHOT_SINGING_SOUND_RULE_ZH, MV_SHOT_SOUND_RULE_ZH } from "./canvasMusicMvReferences";
+import { MV_SHOT_DURATION_MARGIN_SEC, MV_SHOT_SINGING_SOUND_RULE_ZH, MV_SHOT_SOUND_RULE_ZH } from "./canvasMusicMvReferences";
 import type { MusicMvBeatGrid, MusicMvLyricLine, MusicMvShotBeat } from "./canvasMusicMv";
 import { singingWindowsFromLyricLines } from "./canvasMusicMvBeats";
 import { compileSegmentPromptDetailed } from "./manhuaPromptCompiler";
@@ -132,7 +132,7 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
   // 演唱段不做降级：没有逐窗节拍或没有歌词时间表就不出片
   if (singing && !shot.beats?.length) throw new Error(`演唱镜 ${shot.shotId} 缺少逐窗节拍，请重新出分镜`);
   if (singing && !shot.lyricLines?.length) throw new Error(`演唱镜 ${shot.shotId}：先确认本段歌词，再生成演唱段`);
-  const beats = singing ? singingWindowsFromLyricLines({ id: shot.shotId, startSec: shot.startSec, endSec: shot.endSec, kind: "singing" }, shot.beats!, shot.lyricLines!) : shot.beats;
+  const beats = singing ? singingWindowsFromLyricLines({ id: shot.shotId, startSec: shot.startSec, endSec: shot.endSec, kind: "singing" }, shot.beats!, shot.lyricLines!, { engine: ctx.engine }) : shot.beats;
   const degraded = !beats?.length;
   const anchorTag = mk.image(1);
   // 尾帧接龙占图片 2，场景图顺延
@@ -312,8 +312,7 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
   };
 }
 
-/** 模型实出时长有随机短缺（请求 15 秒可能出 14.5/13.5 秒）：请求时长 = 分镜 + 余量，出片后实测再裁回目标，不变速。 */
-export const MV_SHOT_DURATION_MARGIN_SEC = 1;
+export { MV_SHOT_DURATION_MARGIN_SEC };
 
 /** MV 镜头请求时长：分镜时长 + 余量向上取整，按所选模型最短/最长秒数钳制（复用漫剧引擎表 COMPILER_ENGINE_LIMITS）。 */
 export function mvShotGenerateDurationSec(engine: CompilerEngineId, shotDurationSec: number): number {
