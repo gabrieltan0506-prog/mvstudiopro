@@ -123,6 +123,10 @@ const real = {
   interruptionPolicy: "wait-and-repurchase" as "wait-and-repurchase" | "hold",
 };
 /** EvoLink/OpenRouter 对 image_url 的 400：拉图失败而非模型不支持；不计入四次上限，同通道最多再补一次，再 400 才切通道。 */
+/** 1109 之前的回执把配图标为 "[服务端即时签名]"（无后缀）＝直送 4K 原图；其 image_url 400 已由缩图修法消除，不再作为通道拉图失败证据。 */
+function usedLegacyFullImage(receipt: any) {
+  return JSON.stringify(receipt?.request?.messages ?? []).includes('"[服务端即时签名]"');
+}
 function isImageInputRejection(response: {status:number;text:string} | undefined) {
   if (response?.status !== 400) return false;
   let envelope:any; try { envelope=JSON.parse(response.text||'{}'); } catch { return false; }
@@ -371,6 +375,9 @@ export async function invokeKnowledgePublicationRoutes(
   const imageRejectedRoutes = new Set<string>();
   // 传输中断归档：同章最多补买一次；记录永久保存在 interrupted-repurchase.json。
   const interrupted = new Set<string>();
+  /** 发生过传输中断的通道：补买优先换到其他通道（同通道断流再买大概率再断）；没有可买的其他通道时才回到原通道。 */
+  const interruptedChannels = new Set<KnowledgeModelChannel>();
+  const purchased = new Set<string>();
   const repurchaseKey = `${evidence.prefix}/interrupted-repurchase.json`;
   let repurchase: { requestDigest: string; after: string[]; route: string; at: string } | null = await evidence.read(repurchaseKey);
   if (repurchase && repurchase.requestDigest !== requestDigest) throw new Error("补买记录原稿版本变化，保留原请求");
@@ -388,7 +395,8 @@ export async function invokeKnowledgePublicationRoutes(
     if(inspectKnowledgeRouteResponse(receipt.response).keyLimit)keyLimitedChannels.add(target.channel);
     if(receipt.sent!==false && (receipt.request || receipt.response || ['pending','unknown','interrupted'].includes(receipt.state)))
       attempts[routeModelFamily(target.model)][target.channel]+=1;
-    if(images.length && isImageInputRejection(receipt.response)){ imageRejections[target.channel]+=1; attempts[routeModelFamily(target.model)][target.channel]-=1; imageRejectedRoutes.add(target.id); }
+    if(images.length && isImageInputRejection(receipt.response)){ attempts[routeModelFamily(target.model)][target.channel]-=1; imageRejectedRoutes.add(target.id); if(!usedLegacyFullImage(receipt)) imageRejections[target.channel]+=1; }
+    if (receipt.state === "interrupted" || (["pending","unknown"].includes(receipt.state) && !await evidence.read(`${evidence.prefix}/${target.id}-response.json`))) interruptedChannels.add(target.channel);
     if (["pending", "unknown"].includes(receipt.state) && !await evidence.read(`${evidence.prefix}/${target.id}-response.json`))
       unresolved.add(target.id);
     if (receipt.state === "interrupted") interrupted.add(target.id);
@@ -419,9 +427,12 @@ export async function invokeKnowledgePublicationRoutes(
   const archiveInterruption = async (route: string, key: string, receipt: any) => {
     const archived = { ...receipt, state: "interrupted", priorState: receipt.state, interruptedAt: new Date().toISOString(), reason: `传输中断，等待迟到回执${Math.round(deps.lateReceiptWaitMs/60000)}分钟未到，已归档；本次费用未知，不重复计费` };
     await evidence.save(key, archived);
-    interrupted.add(route); unresolved.delete(route);
+    interrupted.add(route); unresolved.delete(route); interruptedChannels.add(KNOWLEDGE_PUBLICATION_ALL_ROUTES.find(t => t.id === route)!.channel);
     return archived;
   };
+  /** 补买时是否还有其他通道的可买路由（无回执、未超次、未限额、未因拉图失败跳过）。 */
+  const purchasableElsewhere = (fromIndex: number, channel: KnowledgeModelChannel) => routeOrder.slice(fromIndex + 1).some(t =>
+    t.channel !== channel && !existing.has(t.id) && !purchased.has(t.id) && !keyLimitedChannels.has(t.channel) && attempts[routeModelFamily(t.model)][t.channel] < 4 && !(images.length && imageRejections[t.channel] >= 2) && (!images.length || degradedTextOnly || visionRoutes.has(t.id)));
   const routeOrder = [
     // 可重验的完整回包优先。未知费用记录仍保留，只允许零调用恢复已有正文。
     ...KNOWLEDGE_PUBLICATION_ALL_ROUTES.filter(target => existing.has(target.id) && !unresolved.has(target.id)),
@@ -487,7 +498,8 @@ export async function invokeKnowledgePublicationRoutes(
     }
     await evidence.save(`${evidence.prefix}/web-sources.json`, { requestDigest, sources: webSources, research: researchEvidence });
   }
-  for (const target of routeOrder) {
+  for (let routeIndex = 0; routeIndex < routeOrder.length; routeIndex++) {
+    const target = routeOrder[routeIndex];
     const { id: route, channel } = target;
     const capability = knowledgeModelCapabilities(target.model, channel);
     const model = capability.model;
@@ -534,9 +546,11 @@ export async function invokeKnowledgePublicationRoutes(
       if (images.length && imageRejections[channel] >= 2) { traces.push({ route, model, state: "skipped_image_rejected" }); continue; }
       if (interrupted.size) {
         if (repurchase) throw new Error(`传输中断后已补买一次（${repurchase.route}）仍未成功，本章判失败，不再购买`);
+        if (interruptedChannels.has(channel) && purchasableElsewhere(routeIndex, channel)) { traces.push({ route, model, state: "skipped_interrupted_channel" }); continue; }
         repurchase = { requestDigest, after: Array.from(interrupted), route, at: new Date().toISOString() };
         await evidence.save(repurchaseKey, repurchase);
       }
+      purchased.add(route);
       assertKnowledgePaidModel(channel, model, request.researchOnly === true);
       const apiKey = deps.key(channel);
       if (!apiKey) {
