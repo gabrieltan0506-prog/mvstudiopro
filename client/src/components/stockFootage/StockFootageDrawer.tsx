@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
-import { AlertTriangle, Film, Image as ImageIcon, Loader2, Pause, Play, RotateCw, Search, X } from "lucide-react";
+import { AlertTriangle, Check, CircleHelp, Film, Image as ImageIcon, Loader2, Pause, Play, RotateCw, Search, X } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import {
   assertStockUsageAllowed,
@@ -32,6 +32,13 @@ import {
   orientationLabel,
   pendingMatchesContext,
   type PendingAdoption,
+  STOCK_DRAWER_GUIDE,
+  STOCK_DRAWER_GUIDE_SEEN_KEY,
+  STOCK_DRAWER_PER_PAGE,
+  STOCK_DRAWER_STEPS,
+  rankStockCandidates,
+  stockDrawerConfirmLabel,
+  stockDrawerStep,
 } from "./stockFootageModel";
 import { useStockFootageAdoption } from "./useStockFootageAdoption";
 
@@ -119,13 +126,25 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
       kind,
       orientation,
       page,
-      perPage: 18,
+      perPage: STOCK_DRAWER_PER_PAGE,
       purpose,
       ...(kind === "video" && minDurationSec && minDurationSec >= 1 ? { minDurationSec: Math.min(600, Math.floor(minDurationSec)) } : {}),
     },
     { enabled: query.length > 0 && !usageError, staleTime: 5 * 60_000, retry: false }
   );
-  const candidates = search.data?.candidates ?? [];
+  const candidates = useMemo(() => rankStockCandidates(search.data?.candidates ?? [], targetSec, orientation), [search.data, targetSec, orientation]);
+
+  // ── 使用指南：第一次打开默认展开，看过一次就收起（按浏览器记，不按用户，只是界面偏好）──
+  const [guideOpen, setGuideOpen] = useState<boolean>(() => {
+    try { return typeof window !== "undefined" ? window.localStorage.getItem(STOCK_DRAWER_GUIDE_SEEN_KEY) !== "1" : false; } catch { return false; }
+  });
+  const toggleGuide = () => {
+    setGuideOpen(v => {
+      const next = !v;
+      try { if (!next) window.localStorage.setItem(STOCK_DRAWER_GUIDE_SEEN_KEY, "1"); } catch { /* 存不了就每次展开，无害 */ }
+      return next;
+    });
+  };
 
   // ── 选中与裁点 ──
   const [selected, setSelected] = useState<StockFootageCandidate | null>(null);
@@ -135,12 +154,15 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
   const isVideo = selected?.kind === "video";
   const canTrim = isVideo && sourceSec > 0;
 
+  const previewRef = useRef<HTMLDivElement | null>(null);
   const choose = (c: StockFootageCandidate) => {
     setSelected(c);
     setPlaying(false);
     setMetaDurationSec(undefined);
     const r = clampStockTrim({ sourceSec: c.durationSec ?? 0, targetSec, inSec: 0 });
     setTrim({ inSec: r.inSec, outSec: r.outSec });
+    // 预览区在候选下方：选中后滚到它，用户不用自己找
+    window.setTimeout(() => previewRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 0);
   };
 
   // ── 预览播放器：只在入点—出点之间循环 ──
@@ -260,7 +282,8 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
   };
 
   const errorMessage = (search.error as { message?: string } | null)?.message;
-  const confirmLabel = props.confirmLabel ?? "采用并绑定";
+  const confirmLabel = props.confirmLabel ?? stockDrawerConfirmLabel(props.title);
+  const step = stockDrawerStep({ hasQuery: query.length > 0, hasCandidates: candidates.length > 0, hasSelected: Boolean(selected) });
   const shortBy = selected ? candidateShortBySec(selected, targetSec) : 0;
   const pct = (sec: number) => (sourceSec > 0 ? `${Math.min(100, Math.max(0, (sec / sourceSec) * 100))}%` : "0%");
 
@@ -285,10 +308,37 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
               {usage === "empty_shot" && <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-violet-200">空镜·无人物</span>}
             </div>
           </div>
-          <button type="button" aria-label="关闭" disabled={busy} onClick={guardedClose} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-white/10">
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <button type="button" aria-expanded={guideOpen} aria-controls={`${titleId}-guide`} onClick={toggleGuide} className="flex min-h-11 items-center gap-1 rounded-md px-2 text-xs opacity-80 hover:bg-white/10 hover:opacity-100">
+              <CircleHelp className="h-4 w-4" />怎么用
+            </button>
+            <button type="button" aria-label="关闭" disabled={busy} onClick={guardedClose} className="flex h-11 w-11 items-center justify-center rounded-md hover:bg-white/10">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </header>
+        <ol aria-label="步骤" className="flex items-stretch border-b border-white/10 text-xs">
+          {STOCK_DRAWER_STEPS.map(st => {
+            const done = st.step < step;
+            const active = st.step === step;
+            return (
+              <li key={st.step} aria-current={active ? "step" : undefined} title={st.hint} className={`flex flex-1 items-center gap-1.5 px-3 py-2 ${active ? "bg-emerald-500/15 text-emerald-200" : done ? "text-emerald-300/70" : "opacity-50"}`}>
+                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] ${active ? "border-emerald-300" : done ? "border-emerald-300/60" : "border-white/40"}`}>
+                  {done ? <Check className="h-3 w-3" /> : st.step}
+                </span>
+                <span className="truncate">{st.label}</span>
+              </li>
+            );
+          })}
+        </ol>
+        {guideOpen && (
+          <div id={`${titleId}-guide`} className="border-b border-white/10 bg-white/[0.04] px-4 py-3 text-xs leading-relaxed">
+            <ol className="list-decimal space-y-1 pl-4 opacity-90">
+              {STOCK_DRAWER_GUIDE.map(line => <li key={line}>{line}</li>)}
+            </ol>
+            <button type="button" onClick={toggleGuide} className="mt-2 min-h-9 rounded-md bg-white/10 px-3 hover:bg-white/15">知道了</button>
+          </div>
+        )}
 
         {usageError ? (
           <div className="m-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-amber-200">{usageError}</div>
@@ -382,8 +432,67 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
                 </div>
               )}
 
+              {search.isFetching && <div className="flex items-center gap-2 opacity-70"><Loader2 className="h-4 w-4 animate-spin" />搜索中…</div>}
+              {errorMessage && <div className="rounded border border-red-500/40 bg-red-500/10 p-2 text-red-200">{errorMessage}</div>}
+              {!query && !keywordsLoading && <div className="opacity-70">第 ① 步 · 输入关键词（中英文都可）后回车搜索。</div>}
+              {search.data && candidates.length === 0 && <div className="opacity-70">没有找到符合条件的素材，换个关键词或放宽画幅/时长试试。</div>}
+
+              {candidates.length > 0 && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium opacity-90">第 ② 步 · 点一张候选预览（{candidates.length} 个{candidates.some(c => c.fit) ? `，${candidates.filter(c => c.fit).length} 个合适` : ""}）</span>
+                  <span className="opacity-60">不满意按下方「换一批」</span>
+                </div>
+              )}
+              {candidates.length > 0 && (
+                <div role="radiogroup" aria-label="候选素材" className="grid grid-cols-2 gap-2">
+                  {candidates.map(c => {
+                    const key = candidateKey(c);
+                    const checked = selected ? candidateKey(selected) === key : false;
+                    const short = candidateShortBySec(c, targetSec);
+                    const shape = orientationLabel(c.width, c.height);
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        role="radio"
+                        aria-checked={checked}
+                        disabled={busy}
+                        onClick={() => choose(c)}
+                        className={`flex min-h-11 flex-col gap-1.5 rounded-md border p-1.5 text-left disabled:opacity-60 ${checked ? "border-emerald-400 bg-emerald-400/15 ring-2 ring-emerald-400/60" : "border-white/10 hover:border-white/30 hover:bg-white/5"}`}
+                      >
+                        <span className="relative block aspect-video w-full overflow-hidden rounded bg-black/40">
+                          <img src={c.previewImageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                          {c.kind === "video" && c.durationSec ? (
+                            <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[10px] tabular-nums">{fmtDuration(c.durationSec)}</span>
+                          ) : null}
+                          {c.fit && !checked && <span className="absolute left-1 top-1 rounded bg-emerald-500/90 px-1.5 text-[10px] font-medium text-black">合适</span>}
+                          {checked && <span className="absolute left-1 top-1 flex items-center gap-0.5 rounded bg-emerald-400 px-1.5 text-[10px] font-medium text-black"><Check className="h-3 w-3" />已选</span>}
+                        </span>
+                        <span className="flex min-w-0 flex-col gap-0.5 text-xs">
+                          <span className="flex items-center gap-1 opacity-80">
+                            {c.kind === "video" ? <Film className="h-3 w-3" /> : <ImageIcon className="h-3 w-3" />}
+                            {c.kind === "video" ? "视频" : "照片"}
+                            {shape ? ` · ${shape}` : ""}
+                            <span className="tabular-nums opacity-60"> · {c.width}×{c.height}</span>
+                          </span>
+                          {short > 0 && <span className="text-amber-200">短于镜头 {short} 秒</span>}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {search.data && (search.data.hasMore || page > 1) && (
+                <div className="flex items-center justify-center gap-3">
+                  <button type="button" disabled={page <= 1} className="min-h-11 rounded-md bg-white/10 px-3 disabled:opacity-40" onClick={() => setPage(p => p - 1)}>上一页</button>
+                  <span className="opacity-70">第 {page} 页</span>
+                  <button type="button" disabled={!search.data.hasMore} className="min-h-11 rounded-md bg-white/10 px-3 disabled:opacity-40" onClick={() => setPage(p => p + 1)}>换一批</button>
+                </div>
+              )}
               {selected && (
-                <div className="space-y-2 rounded-md border border-white/10 bg-black/30 p-2" aria-live="polite">
+                <div ref={previewRef} className="space-y-2 rounded-md border border-emerald-400/40 bg-black/30 p-2" aria-live="polite">
+                  <div className="flex items-center justify-between text-xs"><span className="font-medium text-emerald-200">第 ③ 步 · 预览与选段</span><span className="opacity-60">{isVideo ? "拖入点选取从素材哪一秒开始" : "照片按镜头时长静帧使用"}</span></div>
                   <div className="relative aspect-video overflow-hidden rounded bg-black">
                     {isVideo && selected.previewVideoUrl ? (
                       <video
@@ -479,60 +588,10 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
                 </div>
               )}
 
-              {search.isFetching && <div className="flex items-center gap-2 opacity-70"><Loader2 className="h-4 w-4 animate-spin" />搜索中…</div>}
-              {errorMessage && <div className="rounded border border-red-500/40 bg-red-500/10 p-2 text-red-200">{errorMessage}</div>}
-              {!query && !keywordsLoading && <div className="opacity-70">输入关键词后搜索素材。</div>}
-              {search.data && candidates.length === 0 && <div className="opacity-70">没有找到符合条件的素材，换个关键词或放宽画幅/时长试试。</div>}
-
-              {candidates.length > 0 && (
-                <div role="radiogroup" aria-label="候选素材" className="flex flex-col gap-2">
-                  {candidates.map(c => {
-                    const key = candidateKey(c);
-                    const checked = selected ? candidateKey(selected) === key : false;
-                    const short = candidateShortBySec(c, targetSec);
-                    const shape = orientationLabel(c.width, c.height);
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        role="radio"
-                        aria-checked={checked}
-                        disabled={busy}
-                        onClick={() => choose(c)}
-                        className={`flex min-h-11 items-center gap-3 rounded-md border p-1.5 text-left disabled:opacity-60 ${checked ? "border-emerald-400 bg-emerald-400/10" : "border-white/10 hover:bg-white/5"}`}
-                      >
-                        <span className="relative block aspect-video w-28 shrink-0 overflow-hidden rounded bg-black/40">
-                          <img src={c.previewImageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
-                          {c.kind === "video" && c.durationSec ? (
-                            <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[10px] tabular-nums">{fmtDuration(c.durationSec)}</span>
-                          ) : null}
-                        </span>
-                        <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-xs">
-                          <span className="flex items-center gap-1 opacity-80">
-                            {c.kind === "video" ? <Film className="h-3 w-3" /> : <ImageIcon className="h-3 w-3" />}
-                            {c.kind === "video" ? "视频" : "照片"}
-                            {shape ? ` · ${shape}` : ""}
-                          </span>
-                          <span className="tabular-nums opacity-60">{c.width}×{c.height}</span>
-                          {short > 0 && <span className="text-amber-200">短于镜头 {short} 秒</span>}
-                        </span>
-                        <span aria-hidden="true" className={`mr-1 h-4 w-4 shrink-0 rounded-full border ${checked ? "border-emerald-400 bg-emerald-400" : "border-white/40"}`} />
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {search.data && (search.data.hasMore || page > 1) && (
-                <div className="flex items-center justify-center gap-3">
-                  <button type="button" disabled={page <= 1} className="min-h-11 rounded-md bg-white/10 px-3 disabled:opacity-40" onClick={() => setPage(p => p - 1)}>上一页</button>
-                  <span className="opacity-70">第 {page} 页</span>
-                  <button type="button" disabled={!search.data.hasMore} className="min-h-11 rounded-md bg-white/10 px-3 disabled:opacity-40" onClick={() => setPage(p => p + 1)}>换一批</button>
-                </div>
-              )}
             </div>
 
             <footer className="space-y-2 border-t border-white/10 px-4 py-3">
+              {!selected && !busy && candidates.length > 0 && <div className="text-xs opacity-70">先在上方点选一张候选，再「{confirmLabel}」。</div>}
               {selected && !busy && <div className="text-xs text-amber-200">正在预览候选，尚未替换；点「{confirmLabel}」后才会替换当前画面。</div>}
               {busy && <div className="flex items-center gap-1 text-xs opacity-80"><Loader2 className="h-3 w-3 animate-spin" />{binding ? "正在绑定…" : "正在保存素材，完成后自动绑定…"}</div>}
               <div className="flex gap-2">
