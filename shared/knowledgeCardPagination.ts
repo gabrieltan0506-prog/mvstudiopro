@@ -10,6 +10,8 @@ import {
 } from "./knowledgeCardDistillModels.js";
 import { stripKnowledgeCardPageRefs } from "./knowledgeCardPageRefs.js";
 import { knowledgeEditionParts } from './knowledgeCardEdition';
+import { planKnowledgeTopicImages, readKnowledgeTopicTitles, type KnowledgeTopicImage } from './knowledgeTopicImagePlan';
+import { attachKnowledgeTextModules } from './knowledgeTextAttachment';
 
 export const KNOWLEDGE_CARD_TARGET_MIN_PAGES = 4;
 export const KNOWLEDGE_CARD_TARGET_MAX_PAGES = 8;
@@ -435,9 +437,15 @@ export function planKnowledgeCardPages(
   distillModel?: string | null,
 ): KnowledgeCardPagePlan {
   const model = resolveKnowledgeCardDistillModel(distillModel);
+  // 两档手册：图数按主题定（精华版≤30、完整版≤48），图内≤1200字，图外细节进内文。
+  const topics = knowledgeEditionImagePlan(String(text || ''));
+  if (topics) {
+    const pages = topics.images.map(image => image.body);
+    return { pages, pageCount: pages.length, credits: knowledgeCardCreditsForPages(pages.length, distillModel),
+      roundText: pages.join('\n\n'), distillModel: model };
+  }
   // 〔参考原页〕标记只供服务端定位页图，不计入页数与页费
-  const edition=knowledgeEditionParts(String(text||''));
-  const full = stripKnowledgeCardInternalDirectives(stripKnowledgeCardPageRefs(edition?edition.images:String(text || ""))).trim();
+  const full = stripKnowledgeCardInternalDirectives(stripKnowledgeCardPageRefs(String(text || ""))).trim();
   if (!full) {
     return { pages: [], pageCount: 0, credits: 0, roundText: "", distillModel: model };
   }
@@ -472,4 +480,55 @@ export function planKnowledgeCardPages(
     roundText: full,
     distillModel: model,
   };
+}
+
+export type KnowledgeEditionImagePlan = {
+  level: 'full' | 'concise';
+  title: string;
+  images: KnowledgeTopicImage[];
+  /** 原有独立文字模块（不含图外溢出）。 */
+  textModules: { headline: string; body: string }[];
+  /** 全部内文字数（独立文字模块 + 各图溢出），用于生图前页数预算。 */
+  readingChars: number;
+};
+
+/**
+ * 两档手册的主题出图规划；非两档稿返回 null（沿用旧的按字数分页）。
+ * 〔参考原页〕标记与内部约束先剥离，不计入图内字数与页费。
+ */
+export function knowledgeEditionImagePlan(markdown: string): KnowledgeEditionImagePlan | null {
+  const edition = knowledgeEditionParts(String(markdown || ''));
+  if (!edition) return null;
+  const clean = (body: string) => stripKnowledgeCardInternalDirectives(stripKnowledgeCardPageRefs(body)).trim();
+  const imageModules = edition.modules.filter(m => m.medium === 'image')
+    .map(m => ({ headline: m.headline, body: clean(m.body) }))
+    .filter(m => m.body || m.headline.trim());
+  const images = planKnowledgeTopicImages(edition.level, edition.title, imageModules, undefined, readKnowledgeTopicTitles(markdown));
+  const textModules = edition.modules.filter(m => m.medium === 'text').map(m => ({ headline: m.headline, body: m.body }));
+  const count = (s: string) => s.replace(/\s+/g, '').length;
+  const readingChars = textModules.reduce((n, m) => n + count(m.body), 0) + images.reduce((n, i) => n + count(i.overflow), 0);
+  return { level: edition.level, title: edition.title, images, textModules, readingChars };
+}
+
+/** 各主题图图内文字合计（不含空白），供完整版预检估算「不压缩需几张图」。 */
+export function knowledgeEditionImageChars(plan: KnowledgeEditionImagePlan | null | undefined) {
+  return (plan?.images || []).reduce((n, image) => n + image.body.replace(/\s+/g, '').length, 0);
+}
+
+/**
+ * 两档手册的图文同页：每页 = 一张主题图（body）+ 图下内文标题（headline）+ 图外细节与并入的文字模块（supplement）。
+ * 排版源与核实回执共用此函数，保证逐页一致。
+ */
+export function knowledgeEditionIllustratedPages(markdown: string) {
+  const plan = knowledgeEditionImagePlan(markdown);
+  if (!plan) return null;
+  const textModules = plan.textModules.filter(m => m.body.trim());
+  const attached = attachKnowledgeTextModules(plan.images.map(image => `${image.body}\n\n${image.overflow}`), textModules);
+  return plan.images.map((image, i) => ({
+    body: image.body,
+    headline: image.readingTitle,
+    imageTitle: image.title,
+    // 图外细节按原顺序在前，并入的独立文字模块在后。
+    supplement: [image.overflow, attached[i]].filter(part => part?.trim()).join('\n\n'),
+  }));
 }

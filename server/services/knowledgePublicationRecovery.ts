@@ -43,6 +43,8 @@ const real = {
   billing: readChargeRefundState,
   access: validateKnowledgePublicationAccess,
   review: reviewKnowledgePublication,
+  /** 传给路由的依赖覆盖（测试注入 sleep/now/fetch）；生产为空。 */
+  routes: {} as Partial<Parameters<typeof invokeKnowledgePublicationRoutes>[2]>,
   conversation: undefined as undefined | ((owner: number, context: KnowledgePublicationContext, overrides: { post: (request: unknown, evidence: any) => Promise<unknown> }) => Promise<unknown>),
   read: async (name: string): Promise<any> => {
     try {
@@ -162,23 +164,12 @@ export async function recoverKnowledgePublicationOperation(
   if (context.purpose === "conversation") {
     const turn = doc.publication.conversation?.[context.batchIndex];
     if (turn?.request.action !== "layout") return null;
-    const noNewRequest = {
-      key: () => { throw Error("原回包不足以恢复，未提交新模型请求"); },
-      fetch: async () => { throw Error("原回包不足以恢复，未提交新模型请求"); },
-    };
     const { reviewKnowledgeConversation } = await import("./knowledgeConversationAdvisor");
-    // 已收到的回执先用当前解析器零调用重验；从未发出的批次按正式路由首次发送。
+    // 已收到的回执先用当前解析器零调用重验；明确失败按正式已配置重试链继续；
+    // 未闭合（pending/unknown）回执按 2026-11-09 规则由路由自行处理：等迟到回执≤3分钟→归档 interrupted→切下一路补买一次（同章仅一次）。
     const answer = await (deps.conversation || reviewKnowledgeConversation)(input.userId, context, {
-      post: async (request: unknown, evidence: any) => {
-        // 有未闭合（pending/unknown）回执时只查原请求，不新购；已发出的都是明确失败时，按正式已配置重试链继续
-        // （用户既定规则：未知回执不新购，明确失败走正式重试链；重试次数仍由路由的上限与语法补买规则约束）。
-        let unresolved = false;
-        for (const route of KNOWLEDGE_PUBLICATION_ALL_ROUTES) {
-          const receipt = await evidence.read(`${evidence.prefix}/route-${route.id}.json`);
-          if (receipt && ["pending", "unknown"].includes(receipt.state)) { unresolved = true; break; }
-        }
-        return invokeKnowledgePublicationRoutes(request as KnowledgeModelRequest, evidence, unresolved ? noNewRequest : undefined);
-      },
+      post: async (request: unknown, evidence: any) =>
+        invokeKnowledgePublicationRoutes(request as KnowledgeModelRequest, evidence, { interruptionPolicy: "wait-and-repurchase", ...deps.routes }),
     });
     const recovered: ManhuaAdvisorQaResponse = {
       success: true, replayed: true, answer: JSON.stringify(answer), ...metadata,
@@ -204,22 +195,13 @@ export async function recoverKnowledgePublicationOperation(
     await deps.save(name,value);
     fresh.set(name,value);
   };
+  // 2026-11-09（用户令）：恢复入口只挡「已有未闭合回执的重复提交」——这由路由自身保证（已有回执零调用回放；unknown 等迟到回执→归档→换通道补买一次）；
+  // 从未发出的请求（无回执的审校批次、篇幅压缩等）按正式链首发，明确失败按正式重试链继续（四次上限/跨通道）。
   const review = await deps.review(input.userId, context, {
     read,
     save,
-    post: (request, evidence) =>
-      invokeKnowledgePublicationRoutes(
-        request as KnowledgeModelRequest,
-        evidence,
-        {
-          key: () => {
-            throw Error("原回包不足以恢复，未提交新模型请求");
-          },
-          fetch: async () => {
-            throw Error("原回包不足以恢复，未提交新模型请求");
-          },
-        }
-      ),
+    post: async (request, evidence) =>
+      invokeKnowledgePublicationRoutes(request as KnowledgeModelRequest, evidence, { interruptionPolicy: "wait-and-repurchase" as const, ...deps.routes }),
   });
   const result: ManhuaAdvisorQaResponse = {
     success: true,

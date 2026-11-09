@@ -1,3 +1,4 @@
+import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
 import { normalizeKnowledgeCardPageRefs } from '../../shared/knowledgeCardPageRefs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
@@ -52,7 +53,7 @@ export async function invokeKnowledgeStructuredDistill(params: {
   if(oldPlan&&JSON.stringify(oldPlan)!==JSON.stringify(plan))throw Error('提炼原稿身份变化，禁止覆盖旧结果');
   if(!oldPlan)await context.evidence.save(`${root}/input.json`,plan);
   let cursor=0,stopped=false;
-  const outcomes=await Promise.allSettled(Array.from({length:Math.min(4,batches.length)},async()=>{
+  const outcomes=await Promise.allSettled(Array.from({length:knowledgeStageConcurrency(batches.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter})},async()=>{
     while(!stopped){
       const index=cursor++;if(index>=batches.length)return;
       try{

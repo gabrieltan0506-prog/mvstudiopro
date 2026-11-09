@@ -11,6 +11,7 @@
 | [blog-geo.md](./blog-geo.md) | 写博文、发文章、做 GEO 收录时 |
 | [line-canvas.md](./line-canvas.md) | 接手/继续漫剧工厂（/canvas）任何工作 |
 | [line-platform.md](./line-platform.md) | 接手/继续 /platform 内容创作线任何工作 |
+| [handbook-handoff-1108.md](./handbook-handoff-1108.md) | 接手图文知识手册（血脂/敦煌、按主题出图、并发、探针）——先读此交接 |
 | [incidents.md](./incidents.md) | 想犯错之前（P0 一行一案，详情有链接） |
 | [env-tooling.md](./env-tooling.md) | 用 worktree/截图/子代理/ffmpeg/浏览器工具之前 |
 

@@ -70,6 +70,13 @@
 - **固定参数**：`reasoning={effort:"max"}`、`response_format={type:"json_object"}`、`max_tokens=131072`、`provider={require_parameters:true}`；不发送 `temperature/top_p`。OpenRouter 公共模型目录确认上下文 1,048,576、最大输出 131,072。
 - **真实单枪回执**：Fly 只读取 OpenRouter secret 并发出 1 次请求；HTTP 200，provider=`Z.AI`，`finish_reason=stop`，JSON 解析成功；input 105、reasoning 203、output 218 tokens，耗时 7.299 秒，OpenRouter 回执成本 `$0.0011062`。没有调用北京 Qwen；本次只证明路由与参数可用，不等于完整系列聚合链已线上验收。
 
+### 图文手册审校链（2026-11-09 敦煌 48 张整册实测）
+- **实际顺序由请求的 executionChannel/executionFamily 决定**：审校批次通道由 `publication.parallel.channels` 指定（工位 EvoLink 份额大、首发），新稿 `parallel.family=glm` → GLM-5.3 FlashX@EvoLink → @OpenRouter → DeepSeek V4.1 Flash 1017@EvoLink → @OpenRouter；旧稿（含 1109 敦煌/血脂）缺 family，沿用 DeepSeek 优先，因 executionFamily 参与 requestDigest，不能事后改。全局 `KNOWLEDGE_PUBLICATION_ROUTE_ORDER` 只是无通道指定时的兜底。
+- **EvoLink 带图请求 BaseURL 已是 `https://api.evolink.ai/v1/chat/completions`**（多模态主力地址），不是 `direct.evolink.ai`。
+- **OpenRouter DeepSeek 断流**：24 章 HTTP 200、流已开始后中途断，无 402/429/5xx；`max_tokens=393216` = OR DeepSeek 自营端点 `max_completion_tokens`（EvoLink 384000），非误配。出口：unknown 回执等迟到回执 ≤3 分钟 → 归档 `interrupted` → 切下一路补买一次（同章仅一次），`interrupted-repurchase.json` 永久记录；零调用恢复入口 `interruptionPolicy=hold` 不等不买。
+- **EvoLink image_url 400「invalid or missing」**：54 次，全部是 4K PNG 13–18MB 的 GCS V4 签名 URL（即签即发，非过期），同一 URL 先 400 后 200 共 14 个 → EvoLink 上游 60 秒内拉不完境外鉴权大图。修法：审校前生成 `<原图目录>/review-thumbs/<原文件名>.jpg`（长边≤2048、JPEG q85，永久保留）签 URL 送模型，原图 URL 只作回退；不用 base64（用户明确不接受）。image_url 400 不计四次上限，同通道只补 1 次，再 400 才切通道。
+- 两模型在 OpenRouter 模型表均 text+image；EvoLink DeepSeek 同样接受 image_url（22 章成功）。capabilities 表加 `vision` 标注，带图请求只在 vision 路由间切换，无 vision 路由时降级去图并标 `degraded=text-only`（当前四路均 vision，该分支未触发）。
+
 ### Wan 3.0 / HappyHorse 1.1 三通道（PR #1308，2026-08-25）
 - **Wan 3.0**：顺序固定为 OpenRouter → EvoLink → WaveSpeed。带参考音频/视频时，OpenRouter 在真单证明字段确实被消费前默认无资格，实际从 EvoLink 开始；明确 4xx 才允许换下一家，网络断、5xx 或 2xx 缺任务号一律转人工对账，不退款、不自动重提。
 - **HappyHorse 1.1**：照片动画顺序为 EvoLink → OpenRouter → WaveSpeed；单图保持 image-to-video 首帧契约。自由画布有效参考图不少于 2 张时切 reference-to-video，OpenRouter 因无多图参考契约而跳过，只走 EvoLink → WaveSpeed。百炼在途旧单只轮询收尾，不再新建。

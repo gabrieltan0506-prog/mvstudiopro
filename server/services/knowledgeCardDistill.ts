@@ -1,3 +1,4 @@
+import { KNOWLEDGE_MODEL_CHANNEL_MAX, knowledgePooled, knowledgeStageConcurrency } from "../../shared/knowledgeConcurrency";
 import { knowledgeStructuredDistillContext, invokeKnowledgeStructuredDistill } from './knowledgeCardStructuredDistill';
 import type { KnowledgeRouteEvidence } from './knowledgePublicationRoutes';
 import { KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION, preserveKnowledgePendingResearch } from './knowledgeVerificationPolicy';
@@ -1427,21 +1428,17 @@ async function refineMergedDistill(params: {
     );
 
     const reduced: string[] = new Array(groups.length);
-    for (let i = 0; i < groups.length; i += profile.concurrency) {
-      const idxs = groups.slice(i, i + profile.concurrency).map((_, j) => i + j);
-      await Promise.all(
-        idxs.map(async (idx) => {
-          reduced[idx] = await refineOnce({
-            abortSignal: params.abortSignal,
-            body: groups[idx]!,
-            modelName: params.modelName,
-            minSections: perGroupTarget,
-            stage: "group",
-            detailLevel: params.detailLevel,
-          });
-        }),
-      );
-    }
+    // 2026-11-08：整层一轮发完（按组数动态并发，≤通道上限），不再按固定 4 组一轮串行等最慢的一组。
+    await knowledgePooled(groups.length, async (idx) => {
+      reduced[idx] = await refineOnce({
+        abortSignal: params.abortSignal,
+        body: groups[idx]!,
+        modelName: params.modelName,
+        minSections: perGroupTarget,
+        stage: "group",
+        detailLevel: params.detailLevel,
+      });
+    });
     const next = mergeDistilledMarkdownChunks(reduced);
     const sectionsAfter = countMarkdownSections(next);
     current = next;
@@ -1466,21 +1463,16 @@ async function refineMergedDistill(params: {
       `[knowledgeCardDistill] forced tighten round=${round} ${sectionsBefore} sections / ${current.length} chars → ${groups.length} groups × ${perGroupTarget} sections`,
     );
     const tightened: string[] = new Array(groups.length);
-    for (let i = 0; i < groups.length; i += profile.concurrency) {
-      const idxs = groups.slice(i, i + profile.concurrency).map((_, j) => i + j);
-      await Promise.all(
-        idxs.map(async (idx) => {
-          tightened[idx] = await refineOnce({
-            abortSignal: params.abortSignal,
-            body: groups[idx]!,
-            modelName: params.modelName,
-            minSections: perGroupTarget,
-            stage: "tighten",
-            detailLevel: params.detailLevel,
-          });
-        }),
-      );
-    }
+    await knowledgePooled(groups.length, async (idx) => {
+      tightened[idx] = await refineOnce({
+        abortSignal: params.abortSignal,
+        body: groups[idx]!,
+        modelName: params.modelName,
+        minSections: perGroupTarget,
+        stage: "tighten",
+        detailLevel: params.detailLevel,
+      });
+    });
     const next = mergeDistilledMarkdownChunks(tightened);
     if (next.length >= current.length * 0.95) {
       console.info(`[knowledgeCardDistill] forced tighten stalled (${current.length} → ${next.length} chars), stop`);
@@ -1873,7 +1865,8 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
     const work=(['openrouter','evolink'] as const).flatMap((primary,routeIndex)=>{
       const indices=groups.map((_,i)=>i).filter(i=>i%2===routeIndex);
       let next=0;
-      return Array.from({length:Math.min(KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE,indices.length)},async()=>{
+      // 每通道按本通道组数动态并发（≥原 5 路，≤通道上限），一轮发完。
+      return Array.from({length:Math.max(Math.min(KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE,indices.length),knowledgeStageConcurrency(indices.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX[primary]}))},async()=>{
         while(next<indices.length){ signal.throwIfAborted(); await runGroup(indices[next++]!,primary); }
       });
     });

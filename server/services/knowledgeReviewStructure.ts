@@ -42,6 +42,17 @@ export function restoreKnowledgeReviewStructure(value: any, source: KnowledgeSou
     } else throw Error('正文结构层级无效');
     delete result[field];
   }
+  // 实际回包（敦煌 1109 DeepSeek@EvoLink）把本页 cautions 写进了 reading 内；cautions 是页级字段，原样上移不改内容。
+  for (const page of result.pages) {
+    if (!object(page) || !object(page.reading) || !Object.prototype.hasOwnProperty.call(page.reading, 'cautions')) continue;
+    const misplaced = page.reading.cautions;
+    delete page.reading.cautions;
+    if (!Array.isArray(misplaced)) throw Error('reading 内 cautions 不是数组，保留回包');
+    const existing = Array.isArray(page.cautions) ? page.cautions : [];
+    const seen = new Set(existing.map((c: unknown) => JSON.stringify(c)));
+    page.cautions = [...existing, ...misplaced.filter((c: unknown) => !seen.has(JSON.stringify(c)))];
+    adjustments.push({ pageId: page.id, field: 'reading.cautions', after: 'pages[].cautions', reason: '疑点数组由 reading 上移到页级字段，逐条保留未改' });
+  }
   // 仅无图末稿：复用旧稿/手改稿已有的Markdown识别器，不给图片审校补造reading。
   if (finalTextRevision && source.pages.every(p => !p.imageUrl)) for (const page of result.pages) {
     if (!page.reading && typeof page.body === 'string' && page.body.trim() && source.pages.some(p => p.id === page.id)) {

@@ -5,7 +5,8 @@ it("四路真实重叠且每通道两工位，快路补位，乱序完成不跳�
   const gates=Array.from({length:6},deferred),fifth=deferred();
   const started: [number, KnowledgePublicationChannel][] = [], completed = new Set<number>(), channels: Record<string, KnowledgePublicationChannel> = {};
   let active=0,maximum=0;const perChannel={openrouter:0,evolink:0},peaks={openrouter:0,evolink:0};
-  const pending = runKnowledgeParallelBatches({ count: 6, completed, channels, active: () => true,
+  // 固定四工位验证补位语义；默认工位数改为按批次数动态计算（见下一条）。
+  const pending = runKnowledgeParallelBatches({ count: 6, completed, channels, active: () => true, lanes: ["openrouter","evolink","openrouter","evolink"], staggerMs: 0,
     assign: async (i, route) => { channels[i] = route; },
     execute: async (i, route) => {
       started.push([i, route]);maximum=Math.max(maximum,++active);peaks[route]=Math.max(peaks[route],++perChannel[route]);
@@ -34,7 +35,7 @@ it("单路失败保留另一条在途请求，恢复跳过乱序完成且保留�
   await runKnowledgeParallelBatches({ count: 4, completed: success, channels, active: () => true,
     assign: async () => {}, execute: async (i, route) => { replay.push([i, route]); return i; }, complete: async () => {},
   });
-  expect(replay).toEqual([[0, "openrouter"]]); expect(calls.sort()).toEqual([0, 1, 2, 3]);
+  expect(replay).toEqual([[0, "evolink"]]); expect(calls.sort()).toEqual([0, 1, 2, 3]);
 });
 it("旧连续进度与新乱序集合合并，离开页面不领取新批次", async () => {
   expect(Array.from(completedKnowledgeBatches({ completedBatches: 2, parallel: { channels: {}, completed: [3] } }, 5))).toEqual([0, 1, 3]);
@@ -73,4 +74,23 @@ it("就绪后恢复原通道，准备期间离开不会发出顾问请求",async
     prepare:()=>gate.promise,assign:async()=>{},execute:async i=>{calls.push(i);},complete:async()=>{},
   });
   active=false;gate.resolve();expect(await run).toEqual([]);expect(calls).toEqual([]);
+});
+
+it("默认动态工位：16批一轮全部在途，EvoLink份额更大（2026-11-09 用户规则 EvoLink 优先），同通道错峰首发；限流只降该通道并发", async () => {
+  const gates=Array.from({length:16},deferred);
+  const started: [number, KnowledgePublicationChannel][] = [], channels: Record<string, KnowledgePublicationChannel> = {};
+  const sleeps:number[]=[];
+  const pending = runKnowledgeParallelBatches({ count: 16, completed: new Set(), channels, active: () => true,
+    sleep: async ms => { sleeps.push(ms); },
+    assign: async (i, route) => { channels[i] = route; },
+    execute: async (i, route) => { started.push([i, route]); await gates[i].promise; return i; },
+    complete: async () => {},
+  });
+  for(let k=0;k<20;k++)await Promise.resolve();
+  expect(started).toHaveLength(16);
+  const evo=started.filter(([,c])=>c==="evolink").length;
+  expect(evo).toBeGreaterThan(16-evo);
+  expect(started[0][1]).toBe("evolink");
+  expect(sleeps.length).toBe(14);
+  gates.forEach(g=>g.resolve());expect(await pending).toEqual([]);
 });

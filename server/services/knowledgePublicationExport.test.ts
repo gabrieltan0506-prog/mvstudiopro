@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { layoutFromSource } from "../../shared/editableLayout";
 import { knowledgeManuscript } from "../../shared/knowledgePublication";
 import { knowledgeSourceDigest } from "./knowledgePublicationAdvisor";
-import { exportKnowledgePublication, loadKnowledgePublicationExport } from "./knowledgePublicationExport";
+import { exportKnowledgePublication, loadKnowledgePublicationExport, isTransientKnowledgePdfWorkerError, retryKnowledgeExportStep } from "./knowledgePublicationExport";
 function fixture() {
   const doc = layoutFromSource({
     kind: "knowledge-publication",
@@ -149,7 +149,9 @@ it('任一分段计页失败时先保留HTML，全部计页成功后才打印正
  pub.review={...pub.review!,sourceDigest:knowledgeSourceDigest(pub.source),pages:f.doc.pages.map(p=>({...pub.review!.pages[0],id:p.id,headline:p.headline,body:p.body}))};
  pub.manuscript=pub.confirmedManuscript=knowledgeManuscript(pub.review);
  f.deps.review.mockResolvedValue({report:pub.review,sourceImages:[]});
- const measure=vi.fn().mockResolvedValueOnce(2).mockRejectedValueOnce(Error('第二章计页暂时失败')).mockResolvedValueOnce(2).mockResolvedValueOnce(3);
+ // 各段并发计页：按内容返回（真实计页即按内容），第二章首次失败一次。
+ let secondFails=true;
+ const measure=vi.fn(async(html:string)=>{if(html.includes('第二章')){if(secondFails){secondFails=false;throw Error('第二章计页暂时失败');}return 3;}return 2;});
  f.deps.merge.mockImplementation(async(_paths?:string[],target?:string)=>{await writeFile(target!,Buffer.from('%PDF'+'merged-test-only'.repeat(20)));});
  f.deps.countPages.mockResolvedValue(5);
  const partial=await exportKnowledgePublication(7,f.doc.id,'10',{...f.deps,measure} as any);
@@ -161,8 +163,9 @@ it('任一分段计页失败时先保留HTML，全部计页成功后才打印正
  expect(complete.totalPages).toBe(5);expect(complete.pdfUrl).toBeTruthy();
  const renders=f.deps.pdf.mock.calls as unknown as [string][];
  expect(renders).toHaveLength(2);
- expect(renders[0][0]).toContain('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="2"');
- expect(renders[1][0]).toContain('data-booklet-page-offset="2" data-booklet-total-pages="5" data-booklet-expected-pages="3"');
+ // 各段并发渲染，调用顺序不定；按段内容核对页码偏移。
+ expect(renders.find(([h])=>h.includes('第一章'))![0]).toContain('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="2"');
+ expect(renders.find(([h])=>h.includes('第二章'))![0]).toContain('data-booklet-page-offset="2" data-booklet-total-pages="5" data-booklet-expected-pages="3"');
  expect(complete.billing?.readingPages).toBe(5);
 });
 
@@ -187,12 +190,17 @@ async function assertSplitRecovery(shiftCounts: boolean) {
  const complete=await exportKnowledgePublication(7,f.doc.id,'10',deps as any);
  expect(complete.imagePages).toBe(2);expect(complete.totalPages).toBe(7);
  expect(complete.pdfUrl).toBeTruthy();expect(f.deps.pdf).toHaveBeenCalledTimes(shiftCounts?4:3);expect(measure).toHaveBeenCalledTimes(4);
- expect(renders[0]).toContain('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="2"');
- expect(renders[1]).toContain('data-booklet-page-offset="2" data-booklet-total-pages="5" data-booklet-expected-pages="3"');
+ // 第一轮两段并发渲染（顺序不定），第二段失败；续跑只补失败段，成功段复用缓存。
+ const firstRound=renders.slice(0,2);
+ expect(firstRound.find(h=>h.includes('章一'))!.includes('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="2"')).toBe(true);
+ expect(firstRound.find(h=>h.includes('章二'))!.includes('data-booklet-page-offset="2" data-booklet-total-pages="5" data-booklet-expected-pages="3"')).toBe(true);
  if(shiftCounts){
-  expect(renders[2]).toContain('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="3"');
-  expect(renders[3]).toContain('data-booklet-page-offset="3" data-booklet-total-pages="5" data-booklet-expected-pages="2"');
- }else expect(renders[2]).toBe(renders[1]);
+  const second=renders.slice(2);
+  // 分段页数变化：章一改为3页、章二2页，两段都按新偏移重渲（不复用旧分段）。断言只比布尔，避免巨型HTML差异输出。
+  expect(second).toHaveLength(2);
+  expect(second.find(h=>h.includes('章一'))!.includes('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="3"')).toBe(true);
+  expect(second.find(h=>h.includes('章二'))!.includes('data-booklet-page-offset="3" data-booklet-total-pages="5" data-booklet-expected-pages="2"')).toBe(true);
+ }else expect(renders[2]).toBe(firstRound.find(h=>h.includes('章二')));
  expect(Array.from(f.storage.keys()).filter(k=>k.endsWith('/0-0-2-5.pdf'))).toHaveLength(1);
 }
 it('大手册分段使用全书页码，失败恢复只补缺失段',()=>assertSplitRecovery(false));
@@ -266,4 +274,36 @@ it('新稿未确认费率不能渲染收费；旧稿恢复下载不追溯扣款'
  await expect(exportKnowledgePublication(7,f.doc.id,'10',f.deps)).rejects.toThrow('确认内文');expect(f.deps.pdf).not.toHaveBeenCalled();expect(f.deduct).not.toHaveBeenCalled();
  delete f.doc.publication!.billing;
  expect((await exportKnowledgePublication(7,f.doc.id,'10',f.deps)).pdfUrl).toBeTruthy();expect(f.deduct).not.toHaveBeenCalled();
+});
+
+describe("pdf-worker 瞬时故障原地重试一次", () => {
+  it("识别 detached Frame / 5xx / 连接中断；合同类错误不算瞬时", () => {
+    expect(isTransientKnowledgePdfWorkerError(new Error("Attempted to use detached Frame 'ABC'"))).toBe(true);
+    expect(isTransientKnowledgePdfWorkerError(new Error("pdf-worker returned 503: upstream"))).toBe(true);
+    expect(isTransientKnowledgePdfWorkerError(Object.assign(new Error("fetch failed"), { code: "ECONNRESET" }))).toBe(true);
+    expect(isTransientKnowledgePdfWorkerError(new Error("pdf-worker returned 400: bad html"))).toBe(false);
+    expect(isTransientKnowledgePdfWorkerError(new Error("导出没有返回有效PDF"))).toBe(false);
+  });
+  it("瞬时错误重试 1 次后成功；第二次仍瞬时则抛出；非瞬时错误不重试", async () => {
+    const sleeps: number[] = [];
+    const sleep = async (ms: number) => { sleeps.push(ms); };
+    let calls = 0;
+    const result = await retryKnowledgeExportStep(async () => { calls++; if (calls === 1) throw new Error("detached Frame"); return "ok"; }, { sleep });
+    expect(result).toBe("ok"); expect(calls).toBe(2); expect(sleeps).toEqual([1500]);
+    calls = 0;
+    await expect(retryKnowledgeExportStep(async () => { calls++; throw new Error("Target closed"); }, { sleep })).rejects.toThrow("Target closed");
+    expect(calls).toBe(2);
+    calls = 0;
+    await expect(retryKnowledgeExportStep(async () => { calls++; throw new Error("导出没有返回有效PDF"); }, { sleep })).rejects.toThrow("有效PDF");
+    expect(calls).toBe(1);
+  });
+  it("整册导出：单段 PDF 首发 detached Frame，原地重试成功，不进入失败段、首次即结算", async () => {
+    const f = fixture();
+    f.deps.pdf.mockRejectedValueOnce(new Error("Attempted to use detached Frame"));
+    const result = await exportKnowledgePublication(7, f.doc.id, "10", f.deps as any);
+    expect(result.pdfUrl).toBeTruthy();
+    expect(result.pdfError).toBeUndefined();
+    expect(f.deps.pdf).toHaveBeenCalledTimes(2);
+    expect(f.deduct).toHaveBeenCalledTimes(1);
+  });
 });

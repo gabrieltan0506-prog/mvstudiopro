@@ -2,6 +2,8 @@ import {it,expect,vi} from 'vitest';
 import {prepareKnowledgeCardEditions} from './knowledgeCardEditionPreparation';
 import {knowledgeEditionParts} from '../../shared/knowledgeCardEdition';
 import {planKnowledgeCardPages} from '../../shared/knowledgeCardPagination';
+// 主题命题另有专测（knowledgeTopicTitles.test.ts）；这里只验整理与分页链路的调用次数，命题按回退原样返回。
+vi.mock('./knowledgeTopicTitles',()=>({nameKnowledgeEditionTopics:vi.fn(async({markdown}:{markdown:string})=>({markdown,status:'fallback'}))}));
 
 it('正式两档只选择原章，完整知识不二次浓缩；逐页保存且恢复零调用',async()=>{
  const storage=new Map<string,any>();
@@ -158,8 +160,9 @@ it('恢复缓存用当前分页器刷新图片计数但保留文字实测与原�
  const invoke=vi.fn(),save=vi.fn();
  const result=await prepareKnowledgeCardEditions({sourceMarkdown,invoke,evidence:{prefix:'counts',read:async()=>prior,save}});
  expect(result.editionPageCounts).toMatchObject({full:{imagePages:1,readingPages:10},concise:{imagePages:1,readingPages:47}});
- // 生图前按图文比例预检：1张图的完整版内文上限 0 页，精华版 2–3 页。
- expect(result.editionPageCounts!.full.pageBudget!.budget.textPages).toEqual({min:0,target:0,max:1});
+ // 生图前预检：完整版图文同页、不排独立内文页（预算页数=图数），精华版仍为图:文1:2–1:3。
+ expect(result.editionPageCounts!.full.pageBudget!.budget.textPages).toEqual({min:0,target:0,max:0});
+ expect(result.editionPageCounts!.full.pageBudget!.budget.totalPages).toEqual({min:1,target:1,max:1});
  expect(result.editionPageCounts!.concise.pageBudget!.budget.textPages).toEqual({min:2,target:3,max:3});
  expect(prior.result.editionPageCounts.full.imagePages).toBe(99);expect(invoke).not.toHaveBeenCalled();expect(save).not.toHaveBeenCalled();
 });

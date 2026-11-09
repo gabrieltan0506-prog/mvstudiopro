@@ -1,13 +1,6 @@
 {
-  "id": "watch-xuezhi-1108m",
-  "action": "watch",
-  "script": "scripts/probe-knowledge-handbook-monitor.mts",
+  "id": "stop-dunhuang-1108h",
+  "action": "stop",
   "machine": "7812595b294778",
-  "config": {
-    "targetId": "xuezhi-relayout-1108m",
-    "documentId": "0dcb5641-ad69-40fc-bde2-59ef2e20444d",
-    "ownerJobId": "kc_f7e6e69c3c946ee107f170f6b93d4f0bb77e3c6427db7889adec4d4d",
-    "rounds": 330,
-    "intervalSeconds": 60
-  }
+  "config": { "targetId": "dunhuang-full-1108h" }
 }

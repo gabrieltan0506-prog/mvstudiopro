@@ -1,5 +1,4 @@
-import { planKnowledgeCardPages } from "./knowledgeCardPagination";
-import {attachKnowledgeTextModules} from "./knowledgeTextAttachment";
+import { knowledgeEditionIllustratedPages, planKnowledgeCardPages } from "./knowledgeCardPagination";
 import type { LayoutSource } from "./editableLayout";
 import {knowledgeEditionParts} from './knowledgeCardEdition';
 
@@ -48,16 +47,15 @@ export function synchronizedKnowledgeCardSource(input: {
   const edition=knowledgeEditionParts(input.illustrationMarkdown);
   if(edition){
     if(edition.level!==input.detailLevel)throw Error('当前两版方案与所选档位不一致，未开始出图');
-    const images=planKnowledgeCardPages(input.illustrationMarkdown,input.distillModel).pages;
+    // 主题图只画核心图解；图外细节（overflow）与并入的文字模块排在该图下方及续页；headline为图下内文标题。
+    const pages=knowledgeEditionIllustratedPages(input.illustrationMarkdown)!;
+    const images=pages.map(page=>page.body);
     if(!images.length||images.length!==input.imageJobIds.length||new Set(input.imageJobIds).size!==images.length)
       throw Error('配图任务与实际知识模块不一致，尚未开始生成');
-    // 图文知识手册取其精华，不按原书顺序：无图文字模块并入内容最相关的图章，作为该章图外补充。
-    const textModules=edition.modules.filter(m=>m.medium==='text'&&m.body.trim());
-    const supplements=attachKnowledgeTextModules(images,textModules);
     return {kind:'knowledge-publication',owner:input.owner,sourceId:input.sourceId,title:edition.title,
       body:edition.knowledge,detailLevel:input.detailLevel,infographicTemplateId:input.infographicTemplateId||undefined,
       inputFingerprint:input.inputFingerprint,reviewBatchMode:'ready-images',images:{},pages:
-        images.map((body,i)=>({pageIndex:i+1,headline:body.match(/^##\s+(.+)$/m)?.[1]||edition.title,body,imageJobId:input.imageJobIds[i],knowledgeRole:'illustration' as const,...(supplements[i]?{supplement:supplements[i]}:{})})),
+        pages.map((page,i)=>({pageIndex:i+1,headline:page.headline||edition.title,body:page.body,imageJobId:input.imageJobIds[i],knowledgeRole:'illustration' as const,...(page.supplement?{supplement:page.supplement}:{})})),
     };
   }
   const reading = knowledgeCardLayoutSource({ ...input, markdown: input.fullMarkdown, images: [] });

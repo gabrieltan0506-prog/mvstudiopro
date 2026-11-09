@@ -5,7 +5,7 @@ name: Knowledge Handbook Probe
 # 入站私钥只在工作机内，出站用请求方公钥加密。
 on:
   push:
-    branches: [fix/knowledge-review-contract-1107]
+    branches: [fix/knowledge-review-contract-1107, "fix/knowledge-handbook-*"]
     paths: ["probes/knowledge-handbook/request.json"]
 
 # 不同请求ID各用独立目录与租约，允许并行；同一ID的重复启动由 started.json 拒绝。

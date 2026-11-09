@@ -1,3 +1,4 @@
+import { knowledgeReviewBatches } from '../../shared/knowledgePublication';
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { layoutFromSource, type LayoutLibrary } from "../../shared/editableLayout";
 import { knowledgeBatchRequestId } from "../../shared/knowledgePublication";
@@ -62,6 +63,11 @@ describe("KH-ROUTE-02 保存前验证真实失败和恢复边界", () => {
     const doc = fixture(); state.records.set("route-openrouter-retry-2.json", { state: status });
     await expect(checkKnowledgePublicationRetry(7, doc, 0, 0)).rejects.toThrow("结果尚待核实");
   });
+  it("断流回执到期归档为 interrupted 视为已闭合，允许正式重试另开新编号（2026-11-09）", async () => {
+    const doc = fixture(); state.records.set("route-openrouter.json", { state: "interrupted", priorState: "unknown" });
+    state.records.set("route-glm-evolink.json", { state: "interrupted", priorState: "unknown" });
+    await expect(checkKnowledgePublicationRetry(7, doc, 0, 0)).resolves.toBeUndefined();
+  });
   it("实际退款未闭合、金额缺失、错误账号和原请求均拒绝", async () => {
     const doc = fixture(); state.settled = false;
     await expect(checkKnowledgePublicationRetry(7, doc, 0, 0)).rejects.toThrow("退款未闭合");
@@ -71,6 +77,17 @@ describe("KH-ROUTE-02 保存前验证真实失败和恢复边界", () => {
     await expect(checkKnowledgePublicationRetry(7, doc, 0, 0)).rejects.toThrow("未确认失败");
     state.job.userId = "7"; state.job.input.requestId = "other";
     await expect(checkKnowledgePublicationRetry(7, doc, 0, 0)).rejects.toThrow("未确认失败");
+  });
+  it("并发审校稿：任一未完成批次可另开下一编号；已完成批次仍拒绝（2026-11-09）", async () => {
+    const doc = fixture(); (doc.publication as any).parallel = { channels: {}, completed: [] };
+    const count = knowledgeReviewBatches(doc.publication!.source).length;
+    // 并发稿：前缀为 0，但最后一批（非前缀）未完成也可另开编号。
+    const last = structuredClone(doc); last.publication!.attempts = { [count - 1]: 1 };
+    await expect(validateKnowledgePublicationRetryTransition(7, doc, last, async () => {})).resolves.toBeUndefined();
+    // 已完成的批次拒绝。
+    const doneDoc = structuredClone(doc); (doneDoc.publication as any).parallel = { channels: {}, completed: [count - 1] }; (doneDoc.publication as any).completedBatches = 0;
+    const again = structuredClone(doneDoc); again.publication!.attempts = { [count - 1]: 1 };
+    if (count > 1) await expect(validateKnowledgePublicationRetryTransition(7, doneDoc, again, async () => {})).rejects.toThrow("不能跳号");
   });
   it("不允许跳号、回退、批次错位或一次改多个编号", async () => {
     const doc = fixture();

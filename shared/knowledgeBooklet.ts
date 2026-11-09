@@ -8,7 +8,7 @@ import { renderLayoutBody } from "./editableLayout";
 
 export type KnowledgeBookletPage = { id: string; headline: string; body: string; imageUrl: string };
 export type KnowledgeBookletTheme = "fusion_chinese_garden" | "fusion_ink_mountains" | "fusion_coastal_lighthouse" | "fusion_glasshouse_garden" | "fusion_maple_bridge" | "fusion_snow_monastery";
-export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1108-v11-sparse-notes";
+export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1108-v13-tail-pullback-pointer-notes";
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 export const KNOWLEDGE_BOOKLET_THEMES: Record<KnowledgeBookletTheme, { name: string; paper: string; ink: string; accent: string; line: string; mark: string }> = {
   fusion_chinese_garden: { name:"中式园林融合",paper:"#fff2df",ink:"#713e2b",accent:"#b64632",line:"#d8ac83",mark:"园" },
@@ -43,6 +43,16 @@ const splitLongText = (text: string, limit: number): string[] => {
   if(rest)pieces.push(rest);return pieces;
 };
 
+const IMAGE_POINTER = /^(?:如|见|参见)?(?:上|本)?图(?:中|上|下|左|右|里|内|片)/;
+const SELF_REFERENCE = /此处(?:补|说明|解释|只|再|另|展开|讲)/;
+/** 只说明“图中已列什么、此处补什么”的编辑提示（版式块 note），不是读者正文。 */
+export function isImagePointerNote(text: string): boolean {
+  const t = text.replace(/^[>\s]+/gm, "").replace(/\s+/g, "").trim();
+  // 以“如下/：”引出后文的是导语，不算编辑提示。
+  if (/(?:如下|[:：])$/.test(t)) return false;
+  return t.length > 0 && t.length <= 120 && (IMAGE_POINTER.test(t) || SELF_REFERENCE.test(t));
+}
+
 /** 按原 Markdown 块排版，表格按原行顺序拆段；不总结、不校改、不增加知识。 */
 function readingUnits(pages: KnowledgeBookletPage[], decoration: KnowledgeDecoration, chapterOffset = 0): Unit[] {
   const lexer = new Marked();
@@ -50,7 +60,12 @@ function readingUnits(pages: KnowledgeBookletPage[], decoration: KnowledgeDecora
   for (const [index, page] of Array.from(pages.entries())) {
     const start = result.length;
     let heading = page.headline, ordinal = 0, lastHeading = "";
-    for (const token of lexer.lexer(page.body)) {
+    // 排版块的 note 会以引用块落进正文；只“指向图中位置/说明本处补什么”的编辑提示不是读者正文，不印出。
+    // 若一页只剩这类提示，则原样保留，不让章节变空。
+    const tokens = lexer.lexer(page.body);
+    const readerTokens = tokens.filter(token => !(token.type === "blockquote" && isImagePointerNote((token as {text:string}).text)));
+    const kept = readerTokens.some(token => token.type !== "space" && token.type !== "hr" && token.type !== "heading") ? readerTokens : tokens;
+    for (const token of kept) {
       if (token.type === "space" || token.type === "hr") continue;
       if (token.type === "heading") { heading = token.text; continue; }
       const title = heading === lastHeading ? "" : `<div class="unit-heading"><span>${String(chapterOffset + index + 1).padStart(2,"0")}</span><h3>${escape(heading)}</h3></div>`;
@@ -137,14 +152,77 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
       probe.remove();
       const pages=[],readingPages=[];let page=null,col=0,used=0,limit=0;
       const columnsOf=folio=>[...folio.querySelectorAll('.reading-column')];
-      const startReading=()=>{const next=template.content.firstElementChild.cloneNode(true);host.append(next);if(readingPages.length||pages.length)next.classList.add('reading-continuation');readingPages.push(next);pages.push(next);page=next;col=0;used=0;limit=capacity;};
-      const startLead=card=>{host.append(card);pages.push(card);page=card;col=0;used=0;limit=columnsOf(card)[0].clientHeight;};
+      const startReading=()=>{const next=template.content.firstElementChild.cloneNode(true);host.append(next);if(readingPages.length||pages.length)next.classList.add('reading-continuation');readingPages.push(next);pages.push(next);page=next;col=0;used=0;limit=capacity;next.dataset.columnLimit=String(limit);};
+      const startLead=card=>{host.append(card);pages.push(card);page=card;col=0;used=0;limit=columnsOf(card)[0].clientHeight;card.dataset.columnLimit=String(limit);};
+      const unitHeight=u=>u.offsetHeight+parseFloat(getComputedStyle(u).marginBottom||'0');
+      const columnUsed=c=>[...c.children].reduce((n,u)=>n+unitHeight(u),0);
+      // 图页首块高于图下栏时不能整块让到续页（图会独占一页）：在图下栏可用高度内切开，
+      // 段落按句、清单按项、表格按行（续块重复表头），行内标记整体保留；前段留在图下，余段按原顺序继续排。
+      const splitToFit=(unit,column,max)=>{
+        const kids=[...unit.children],heading=kids.find(e=>e.classList.contains('unit-heading'));
+        const decor=kids.filter(e=>e.tagName.toLowerCase()==='svg'),content=kids.filter(e=>e!==heading&&!decor.includes(e));
+        const atoms=[];
+        content.forEach((el,k)=>{
+          const tag=el.tagName.toLowerCase();
+          if(tag==='table'){const body=el.querySelector('tbody');[...(body?body.children:[])].forEach(n=>atoms.push({k,n}));}
+          else if(tag==='ul'||tag==='ol')[...el.children].forEach(n=>atoms.push({k,n}));
+          else [...el.childNodes].forEach(n=>{
+            if(n.nodeType!==3){atoms.push({k,n});return;}
+            for(const piece of n.textContent.match(/[^。！？；!?;]*[。！？；!?;]+[」”’）)]*|[^。！？；!?;]+$/g)||[])atoms.push({k,n:document.createTextNode(piece)});
+          });
+        });
+        if(atoms.length<2)return null;
+        const shell=(withHeading)=>{
+          const part=unit.cloneNode(false),boxes=content.map(el=>{
+            const tag=el.tagName.toLowerCase(),box=el.cloneNode(false);
+            if(tag==='table'){for(const c of el.children)if(c.tagName.toLowerCase()!=='tbody')box.append(c.cloneNode(true));const tb=document.createElement('tbody');box.append(tb);return {box,slot:tb};}
+            return {box,slot:box};
+          });
+          if(withHeading&&heading)part.append(heading.cloneNode(true));
+          return {part,boxes};
+        };
+        const first=shell(true),rest=shell(false);
+        column.append(first.part);
+        let n=0;
+        for(;n<atoms.length;n++){
+          const {k,n:node}=atoms[n],b=first.boxes[k];
+          if(!b.box.parentNode)first.part.append(b.box);
+          b.slot.append(node);
+          if(unitHeight(first.part)>max+1){node.remove();if(!b.slot.childNodes.length)b.box.remove();break;}
+        }
+        first.part.remove();
+        if(n===0||n===atoms.length)return null;
+        for(const {k,n:node} of atoms.slice(n)){const b=rest.boxes[k];if(!b.box.parentNode)rest.part.append(b.box);b.slot.append(node);}
+        decor.forEach(d=>rest.part.append(d.cloneNode(true)));
+        rest.part.dataset.unit=(unit.dataset.unit||'')+'-continued';
+        // 余段可能落到常规字号续页：按常规字号量高，留在收紧图页时只会偏保守。
+        const folio=column.closest('.folio'),density=folio.dataset.density;delete folio.dataset.density;
+        column.append(rest.part);const restHeight=unitHeight(rest.part);rest.part.remove();
+        if(density)folio.dataset.density=density;
+        column.append(first.part);const firstHeight=unitHeight(first.part);first.part.remove();
+        heights.set(first.part,firstHeight);heights.set(rest.part,restHeight);
+        return [first.part,rest.part];
+      };
       const placed=new Set();
-      for(const unit of units){
+      for(let index=0;index<units.length;index++){
+        let unit=units[index];
         const id=unit.dataset.sourceId,card=cards.find(c=>c.dataset.cardId===id&&!placed.has(c));
         if(card){placed.add(card);startLead(card);}
         if(!page)startReading();
-        const height=heights.get(unit);
+        let height=heights.get(unit);
+        // 图下栏放不下首块：先按原字号切开；切不开（单句/单行过高）再收紧图页一档，必要时收紧后再切。图页必须带要点。
+        if(page.classList.contains('lead-folio')&&col===0&&used===0&&height>limit+1){
+          const column=columnsOf(page)[0];
+          let parts=splitToFit(unit,column,limit);
+          if(!parts){
+            page.dataset.density='snug';
+            column.append(unit);const snugHeight=unitHeight(unit);unit.remove();
+            if(snugHeight<=limit+1){heights.set(unit,snugHeight);height=snugHeight;}
+            else parts=splitToFit(unit,column,limit);
+            if(!parts&&snugHeight>limit+1)delete page.dataset.density;
+          }
+          if(parts){units.splice(index,1,...parts);unit=parts[0];height=heights.get(unit);}
+        }
         if(height>capacity+1)throw new Error('单个内容块超过一页，请拆分长表或长段落后再导出');
         // 顺序填栏：先填满左栏再右栏，再开续页；不把少量内容均摊成两半空栏。
         const fits=()=>used===0?height<=limit+1:used+height<=limit;
@@ -165,10 +243,55 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
       };
       const ordered=[...host.querySelectorAll('.folio')];
       ordered.forEach((folio,i)=>{const next=ordered[i+1];if(!next||next.classList.contains('lead-folio'))balance(folio);});
+      // 顺序填栏已是保序下最省栏的排法；章末续页只剩少量块时（≤35%栏高），保序无法再收回，
+      // 只能二选一：A 原字号把这几块接到本章前页仍有余白的栏末（同章内，轻微换序）；
+      // B 本章各页收紧一档字号后按原顺序重排，剩余块再按 A 补位。两者都放不下才保留续页。
+      // 图下要点栏高度随内容伸缩（会挤压配图），不能用 scrollHeight 判断；一律按建页时量得的栏高核对块高之和。
+      const columnsFit=folio=>{const max=Number(folio.dataset.columnLimit);return max>0&&columnsOf(folio).every(c=>columnUsed(c)<=max+1);};
+      const fillGap=(chain,list)=>{
+        // 从离原位置最近的栏往前找余白，放得下就接在栏末。
+        const slots=chain.slice().reverse().flatMap(f=>columnsOf(f).reverse().map(c=>[f,c]));
+        for(const unit of list){
+          const slot=slots.find(([f,c])=>{c.append(unit);const ok=columnUsed(c)<=Number(f.dataset.columnLimit)+1;if(!ok)unit.remove();return ok;});
+          if(!slot)return false;
+        }
+        return true;
+      };
+      const refill=(chain,list)=>{
+        let i=0;
+        for(const folio of chain)for(const column of columnsOf(folio)){
+          const max=Number(folio.dataset.columnLimit);
+          while(i<list.length){column.append(list[i]);if(columnUsed(column)<=max+1){i++;continue;}list[i].remove();break;}
+        }
+        return list.slice(i);
+      };
+      for(const tail of [...host.querySelectorAll('.reading-continuation')]){
+        const next=tail.nextElementSibling;
+        if(next&&!next.classList.contains('lead-folio'))continue;
+        const chain=[];for(let f=tail.previousElementSibling;f;f=f.previousElementSibling){chain.unshift(f);if(!f.classList.contains('reading-continuation'))break;}
+        if(!chain.length)continue;
+        const tailUnits=columnsOf(tail).flatMap(c=>[...c.children]);
+        if(!tailUnits.length)continue;
+        const tailUsed=Math.max(...columnsOf(tail).map(c=>[...c.children].reduce((n,u)=>n+(heights.get(u)||unitHeight(u)),0)));
+        if(tailUsed>capacity*0.35)continue;
+        const home=new Map([...chain,tail].flatMap(f=>columnsOf(f).flatMap(c=>[...c.children])).map(u=>[u,u.parentElement]));
+        const density=new Map(chain.map(f=>[f,f.dataset.density]));
+        const restore=()=>{for(const f of chain){const d=density.get(f);if(d)f.dataset.density=d;else delete f.dataset.density;}for(const [u,parent] of home)parent.append(u);};
+        let done=fillGap(chain,tailUnits);
+        if(!done){
+          restore();
+          for(const f of chain)f.dataset.density='snug';
+          const all=[...home.keys()];all.forEach(u=>u.remove());
+          done=fillGap(chain,refill(chain,all));
+        }
+        if(done&&chain.every(columnsFit)){readingPages.splice(readingPages.indexOf(tail),1);pages.splice(pages.indexOf(tail),1);tail.remove();}
+        else restore();
+      }
       // 图文同页要点偏少时放大字号与行距（不改内容），仍放不下则还原；避免图下大片空白。
       for(const card of cards){
         const columns=columnsOf(card),next=card.nextElementSibling;
         if(next&&next.classList.contains('reading-folio')&&!next.classList.contains('lead-folio'))continue;
+        if(card.dataset.density)continue;
         const used=Math.max(...columns.map(c=>[...c.children].reduce((n,u)=>n+u.offsetHeight+16,0)));
         const room=columns[0].clientHeight;
         if(!used||used>room*0.62)continue;
@@ -219,7 +342,7 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
 
 /* 直式图文同页：图在上，本章要点两栏在下，余下高度全部给要点。 */
 .lead-folio .image-title{margin:18px 0 18px;min-height:0}.lead-folio .image-title h1{font-size:46px}.lead-folio .eyebrow .chapter-no{display:inline-grid;place-items:center;width:34px;height:34px;margin-right:12px;border:3px double var(--accent);border-radius:50%;font:15px/1 Georgia,serif;letter-spacing:0;color:var(--accent)}.image-title .content-motif,.image-title .botanical{width:260px!important;height:120px!important;flex:none;opacity:.6;color:var(--accent)}.reading-title .botanical{width:300px;height:110px;flex:none}.lead-columns{flex:1 1 auto!important;height:auto!important;min-height:0;margin:26px 0 19px!important}.lead-columns .reading-column{height:100%!important}
-.lead-columns{position:relative;padding:22px 22px 6px;border:1px solid color-mix(in srgb,var(--line) 70%,transparent);border-radius:16px;background:color-mix(in srgb,var(--paper) 55%,#fff)}.lead-folio[data-density=roomy] .reading-unit p,.lead-folio[data-density=roomy] .reading-unit li{font-size:26px!important;line-height:1.95!important}.lead-folio[data-density=roomy] .unit-heading h3{font-size:31px!important}.lead-folio[data-density=airy] .reading-unit p,.lead-folio[data-density=airy] .reading-unit li{font-size:28px!important;line-height:2.05!important}.lead-folio[data-density=airy] .unit-heading h3{font-size:33px!important}.lead-folio[data-density] .reading-unit{padding:22px 28px 24px!important;margin-bottom:22px}
+.lead-columns{position:relative;padding:22px 22px 6px;border:1px solid color-mix(in srgb,var(--line) 70%,transparent);border-radius:16px;background:color-mix(in srgb,var(--paper) 55%,#fff)}.folio[data-density=snug] .reading-unit p,.folio[data-density=snug] .reading-unit li{font-size:22px!important;line-height:1.66!important}.folio[data-density=snug] .unit-heading h3{font-size:26px!important}.folio[data-density=snug] .reading-unit{padding:12px 16px 13px!important;margin-bottom:12px!important}.folio[data-density=snug] .reading-unit td,.folio[data-density=snug] .reading-unit td p,.folio[data-density=snug] .reading-unit th p{font-size:21px!important}.lead-folio[data-density=roomy] .reading-unit p,.lead-folio[data-density=roomy] .reading-unit li{font-size:26px!important;line-height:1.95!important}.lead-folio[data-density=roomy] .unit-heading h3{font-size:31px!important}.lead-folio[data-density=airy] .reading-unit p,.lead-folio[data-density=airy] .reading-unit li{font-size:28px!important;line-height:2.05!important}.lead-folio[data-density=airy] .unit-heading h3{font-size:33px!important}.lead-folio:is([data-density=roomy],[data-density=airy]) .reading-unit{padding:22px 28px 24px!important;margin-bottom:22px}
 ${knowledgeDecorationCss(decoration)}
 ${design?knowledgeContentDesignCss(design):""}
 @media screen and (max-width:1656px){[data-ready="true"] .folio{zoom:calc((100vw - 32px) / 1600px)}}

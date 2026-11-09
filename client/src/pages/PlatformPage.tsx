@@ -1,4 +1,5 @@
 import { knowledgeCardTrackedJobId, submitKnowledgeCardOnce, knowledgeCardRecoveryMessage } from "@/lib/knowledgeCardTrackedSubmission";
+import { KNOWLEDGE_IMAGE_CHANNEL_MAX, knowledgeStageConcurrency } from "@shared/knowledgeConcurrency";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { KnowledgeReadingLive } from "@/components/platform/KnowledgeReadingLive";
 import type { ReadingDraft } from "@/lib/knowledgeReadingPreparation";
@@ -2257,8 +2258,12 @@ function PlatformIpDimensionGuide() {
   );
 }
 
-/** 知识卡出图并发路数（0908 用户令）：EvoLink 与 OpenAI 官方各 2 路同时打 */
-const KNOWLEDGE_CARD_RENDER_CONCURRENCY = 4;
+/**
+ * 知识卡出图并发路数（2026-11-08 用户令改为一次发完）：官方与 EvoLink 按路序交替分摊，
+ * 全部页同时在途（受两通道上限之和约束），单张约 3 分钟即整轮完成。
+ */
+const knowledgeCardRenderConcurrency = (total: number) =>
+  knowledgeStageConcurrency(total, { max: KNOWLEDGE_IMAGE_CHANNEL_MAX.openai + KNOWLEDGE_IMAGE_CHANNEL_MAX.evolink });
 
 /** 待提炼的上传文件：不论大小一律 GCS 直传，只带回 gs:// 地址（媒体传输铁律：不走 base64） */
 type KnowledgeCardPendingFile = {
@@ -8564,8 +8569,8 @@ export default function PlatformPage() {
     // 出图阶段：停发新页即可，在途那张跑完；已出的页已计费、保留
     if (customNoteRendering) {
       customNoteStopRenderRef.current = true;
-      // 并发是 KNOWLEDGE_CARD_RENDER_CONCURRENCY 路，在途可能不止一页，别说成「这页」
-      toast.message(`正在停止出图：在途的页（最多 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY} 页）会出完并计费，之后不再发新页`);
+      // 全部页同时在途，可能不止一页，别说成「这页」
+      toast.message(`正在停止出图：已发出的在途页会出完并计费，之后不再发新页`);
       return;
     }
     const jobId = customNoteDistillJobId;
@@ -9001,15 +9006,15 @@ export default function PlatformPage() {
           setCustomNoteImageUpper(urls[0] ?? null);
           setCustomNoteImageLower(urls[1] ?? null);
           // 已判失败的终态不被在途页的回填覆盖回「运行中」
-          setCustomNoteProgress((prev) => prev.status === "failed" ? prev : { status: "running", percent: knowledgeCardProgressFromRender(ready.length, total), stageDone: ready.length, stageTotal: total, label: `出图 ${ready.length}/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
+          setCustomNoteProgress((prev) => prev.status === "failed" ? prev : { status: "running", percent: knowledgeCardProgressFromRender(ready.length, total), stageDone: ready.length, stageTotal: total, label: `出图 ${ready.length}/${total} 页（并发 ${knowledgeCardRenderConcurrency(total)}）` });
         };
-        setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), stageDone: 0, stageTotal: total, label: `出图 0/${total} 页（并发 ${KNOWLEDGE_CARD_RENDER_CONCURRENCY}）` });
+        setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), stageDone: 0, stageTotal: total, label: `出图 0/${total} 页（并发 ${knowledgeCardRenderConcurrency(total)}）` });
         customNoteStopRenderRef.current = false;
         setCustomNoteRendering(true);
         try {
           await runKnowledgeIllustrationBatch({
             count: total,
-            concurrency: KNOWLEDGE_CARD_RENDER_CONCURRENCY,
+            concurrency: knowledgeCardRenderConcurrency(total),
             active: () => !customNoteStopRenderRef.current,
             execute: async (i, lane) => {
               const provider = lane % 2 === 0 ? "openai" : "evolink";

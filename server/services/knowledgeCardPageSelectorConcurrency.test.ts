@@ -19,7 +19,8 @@ it('31张分4批同时在途，双供应商各2批，乱序回包按原批序归
  expect(progress).toEqual([...progress].sort((a,b)=>a-b));expect(progress.at(-1)).toBe(31);
  expect(calls).toHaveLength(4);
 });
-it('两通道各最多5批，同时完成即补位，不重复发送成功批',async()=>{
+// 2026-11-08 动态并发：每通道按本通道批数一轮发完（≥原5路，≤通道上限），12批两通道各6路同时在途。
+it('两通道按批数动态并发一轮发完，不重复发送成功批',async()=>{
  const calls:{p:any;resolve:(v:string)=>void;finished:boolean}[]=[];
  const active={openrouter:0,evolink:0},peak={openrouter:0,evolink:0};
  __setKnowledgeCardDistillGatewayInvokerForTest(p=>new Promise(resolve=>{
@@ -27,11 +28,10 @@ it('两通道各最多5批，同时完成即补位，不重复发送成功批',a
   calls.push({p,finished:false,resolve:v=>{active[route]--;resolve(v);}});
  }));
  const result=makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_GLM)(sheets(96),96);
- await vi.waitFor(()=>expect(calls).toHaveLength(10));
- for(const c of [...calls]){c.finished=true;c.resolve(answer(Number(c.p.imageUrls[0].match(/\/(\d+)\.png/)[1])));}
  await vi.waitFor(()=>expect(calls).toHaveLength(12));
- for(const c of calls.filter(c=>!c.finished)){c.finished=true;c.resolve(answer(Number(c.p.imageUrls[0].match(/\/(\d+)\.png/)[1])));}
- expect(await result).toHaveLength(12);expect(peak).toEqual({openrouter:5,evolink:5});
+ expect(peak).toEqual({openrouter:6,evolink:6});
+ for(const c of [...calls]){c.finished=true;c.resolve(answer(Number(c.p.imageUrls[0].match(/\/(\d+)\.png/)[1])));}
+ expect(await result).toHaveLength(12);expect(calls).toHaveLength(12);
  expect(new Set(calls.map(c=>c.p.imageUrls[0])).size).toBe(12);
 });
 it('一批普通失败不丢其他批，也不重读已成功批',async()=>{
@@ -48,7 +48,7 @@ it('取消终止在途并停止领新批，等待已启动批次收尾',async()=
  __setKnowledgeCardDistillGatewayInvokerForTest(p=>new Promise((_resolve,reject)=>{calls++;p.abortSignal!.addEventListener('abort',()=>reject(p.abortSignal!.reason),{once:true});}));
  const running=makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_GLM,abort.signal)(sheets(96),96);
  const rejected=expect(running).rejects.toThrow('test cancel');
- await vi.waitFor(()=>expect(calls).toBe(10));abort.abort(new Error('test cancel'));await rejected;expect(calls).toBe(10);
+ await vi.waitFor(()=>expect(calls).toBe(12));abort.abort(new Error('test cancel'));await rejected;expect(calls).toBe(12);
 });
 it('DeepSeek首选EvoLink的批失败后仍回退同模型OpenRouter',async()=>{
  vi.stubEnv('OPENROUTER_API_KEY','test-key');vi.stubEnv('EVOLINK_API_KEY','test-key');const seen:string[]=[];
