@@ -35,7 +35,7 @@ it("单路失败保留另一条在途请求，恢复跳过乱序完成且保留�
   await runKnowledgeParallelBatches({ count: 4, completed: success, channels, active: () => true,
     assign: async () => {}, execute: async (i, route) => { replay.push([i, route]); return i; }, complete: async () => {},
   });
-  expect(replay).toEqual([[0, "openrouter"]]); expect(calls.sort()).toEqual([0, 1, 2, 3]);
+  expect(replay).toEqual([[0, "evolink"]]); expect(calls.sort()).toEqual([0, 1, 2, 3]);
 });
 it("旧连续进度与新乱序集合合并，离开页面不领取新批次", async () => {
   expect(Array.from(completedKnowledgeBatches({ completedBatches: 2, parallel: { channels: {}, completed: [3] } }, 5))).toEqual([0, 1, 3]);
@@ -76,7 +76,7 @@ it("就绪后恢复原通道，准备期间离开不会发出顾问请求",async
   active=false;gate.resolve();expect(await run).toEqual([]);expect(calls).toEqual([]);
 });
 
-it("默认动态工位：16批一轮全部在途，OpenRouter份额更大，同通道错峰首发；限流只降该通道并发", async () => {
+it("默认动态工位：16批一轮全部在途，EvoLink份额更大（2026-11-09 用户规则 EvoLink 优先），同通道错峰首发；限流只降该通道并发", async () => {
   const gates=Array.from({length:16},deferred);
   const started: [number, KnowledgePublicationChannel][] = [], channels: Record<string, KnowledgePublicationChannel> = {};
   const sleeps:number[]=[];
@@ -88,8 +88,9 @@ it("默认动态工位：16批一轮全部在途，OpenRouter份额更大，同�
   });
   for(let k=0;k<20;k++)await Promise.resolve();
   expect(started).toHaveLength(16);
-  const or=started.filter(([,c])=>c==="openrouter").length;
-  expect(or).toBeGreaterThan(16-or);
+  const evo=started.filter(([,c])=>c==="evolink").length;
+  expect(evo).toBeGreaterThan(16-evo);
+  expect(started[0][1]).toBe("evolink");
   expect(sleeps.length).toBe(14);
   gates.forEach(g=>g.resolve());expect(await pending).toEqual([]);
 });

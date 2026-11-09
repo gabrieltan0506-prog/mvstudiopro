@@ -19,6 +19,7 @@ import { getOpenRouterApiKey } from "./openrouterGptImage2";
 import { getEvolinkApiKey } from "./gpt56CopywritingGateway";
 import { signGsUriV4ReadUrl } from "./gcs";
 import { GLM_STREAM_IDLE_TIMEOUT_MS, readGlmSseStream, assertSseContentSafety, isSseContentSafetyError, SseContentSafetyError } from "./sseChatStream";
+import { ensureKnowledgeReviewThumbnail } from "./knowledgeReviewThumbnail";
 import { knowledgeModelCapabilities, knowledgeOutputBudget, KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST, KNOWLEDGE_PUBLICATION_ROUTE_ORDER, KNOWLEDGE_PUBLICATION_ALL_ROUTES, knowledgePublicationRoutesForChannel, type KnowledgeModelChannel } from "./knowledgeModelCapabilities";
 import { knowledgeReviewSchema, validateKnowledgeReview, knowledgeConsistencySchema } from "../../shared/knowledgePublication";
 import { knowledgeReadingMarkdown } from "../../shared/knowledgePublicationLayout";
@@ -106,11 +107,28 @@ async function readKnowledgeResponseBody(response: Response, controller: AbortCo
   }
 }
 
+/** 传输中断后等待迟到回执的时长（用户 2026-11-09 决定：默认 3 分钟），到期仍无回执才归档并允许切下一路补买一次。 */
+export const KNOWLEDGE_LATE_RECEIPT_WAIT_MS = 3 * 60_000;
+const KNOWLEDGE_LATE_RECEIPT_POLL_MS = 10_000;
 const real = {
   key: (channel: KnowledgeModelChannel) => channel === "openrouter" ? getOpenRouterApiKey() : getEvolinkApiKey(),
   sign: (uri: string) => signGsUriV4ReadUrl(uri, 3600),
+  /** 配图改送 GCS 缩图派生件（长边≤2048 JPEG，签名 URL 境外拉 4K 原图 60s 超时会 400）；返回 null 时回退原图签名 URL。 */
+  thumbnail: (uri: string) => ensureKnowledgeReviewThumbnail(uri),
   fetch: (...args: Parameters<typeof fetch>) => fetch(...args),
+  sleep: (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)),
+  now: () => Date.now(),
+  lateReceiptWaitMs: KNOWLEDGE_LATE_RECEIPT_WAIT_MS,
+  /** hold：零调用恢复入口——未闭合回执只读不等待、不归档、不补买（保持旧语义）。 */
+  interruptionPolicy: "wait-and-repurchase" as "wait-and-repurchase" | "hold",
 };
+/** EvoLink/OpenRouter 对 image_url 的 400：拉图失败而非模型不支持；不计入四次上限，同通道最多再补一次，再 400 才切通道。 */
+function isImageInputRejection(response: {status:number;text:string} | undefined) {
+  if (response?.status !== 400) return false;
+  let envelope:any; try { envelope=JSON.parse(response.text||'{}'); } catch { return false; }
+  const error=envelope.error||{};
+  return error.param==='image_url' || /image_url/i.test(String(error.message||''));
+}
 
 /** 完整原稿合同验证后才采用该跳；修订后的版式内容成为唯一确认正文。 */
 function validateAnswer(content: string, request: KnowledgeModelRequest, sources: KnowledgeWebSource[] = [], sourceWarnings: string[] = [], adjustments: unknown[] = []) {
@@ -349,6 +367,13 @@ export async function invokeKnowledgePublicationRoutes(
   const unresolved = new Set<string>();
   const keyLimitedChannels = new Set<KnowledgeModelChannel>();
   const attempts = {deepseek:{openrouter:0,evolink:0},glm:{openrouter:0,evolink:0}};
+  const imageRejections: Record<KnowledgeModelChannel, number> = {openrouter:0,evolink:0};
+  const imageRejectedRoutes = new Set<string>();
+  // 传输中断归档：同章最多补买一次；记录永久保存在 interrupted-repurchase.json。
+  const interrupted = new Set<string>();
+  const repurchaseKey = `${evidence.prefix}/interrupted-repurchase.json`;
+  let repurchase: { requestDigest: string; after: string[]; route: string; at: string } | null = await evidence.read(repurchaseKey);
+  if (repurchase && repurchase.requestDigest !== requestDigest) throw new Error("补买记录原稿版本变化，保留原请求");
   const availableRoutes = request.executionChannel ? knowledgePublicationRoutesForChannel(request.executionChannel) : KNOWLEDGE_PUBLICATION_ROUTE_ORDER;
   // 搜索阶段只允许 FlashX；正文继续按已有整理路由恢复。
   const plannedRoutes = request.researchOnly ? availableRoutes.filter(route => route.id.startsWith("glm-"))
@@ -361,11 +386,42 @@ export async function invokeKnowledgePublicationRoutes(
     if(receipt.safetyBlocked)throw new SseContentSafetyError();
     assertKnowledgeRouteContentAllowed(receipt.response);
     if(inspectKnowledgeRouteResponse(receipt.response).keyLimit)keyLimitedChannels.add(target.channel);
-    if(receipt.sent!==false && (receipt.request || receipt.response || ['pending','unknown'].includes(receipt.state)))
+    if(receipt.sent!==false && (receipt.request || receipt.response || ['pending','unknown','interrupted'].includes(receipt.state)))
       attempts[routeModelFamily(target.model)][target.channel]+=1;
+    if(images.length && isImageInputRejection(receipt.response)){ imageRejections[target.channel]+=1; attempts[routeModelFamily(target.model)][target.channel]-=1; imageRejectedRoutes.add(target.id); }
     if (["pending", "unknown"].includes(receipt.state) && !await evidence.read(`${evidence.prefix}/${target.id}-response.json`))
       unresolved.add(target.id);
+    if (receipt.state === "interrupted") interrupted.add(target.id);
   }
+  // 带图请求只在支持视觉的路由间切换；一条都不支持时降级为去图纯文本（页图改以文字说明代替）并在回执标 degraded。
+  const visionRoutes = new Set(KNOWLEDGE_PUBLICATION_ALL_ROUTES.filter(t => knowledgeModelCapabilities(t.model, t.channel).vision).map(t => t.id));
+  const degradedTextOnly = images.length > 0 && !plannedRoutes.some(t => visionRoutes.has(t.id));
+  /** 等迟到回执：从中断时刻起最多 lateReceiptWaitMs；期间每 10 秒查一次永久回执。 */
+  const awaitLateReceipt = async (route: string, since: number) => {
+    const responseKey = `${evidence.prefix}/${route}-response.json`;
+    const deadline = since + deps.lateReceiptWaitMs;
+    for (;;) {
+      const received = await evidence.read(responseKey);
+      if (received) return received;
+      const left = deadline - deps.now();
+      if (left <= 0) return null;
+      await deps.sleep(Math.min(KNOWLEDGE_LATE_RECEIPT_POLL_MS, left));
+    }
+  };
+  const interruptionSince = async (route: string, receipt: any) => {
+    const at = Date.parse(receipt?.at || receipt?.startedAt || "");
+    if (Number.isFinite(at)) return at;
+    const heartbeat = await evidence.read(`${evidence.prefix}/${route}-heartbeat.json`);
+    const beat = Date.parse(heartbeat?.at || "");
+    return Number.isFinite(beat) ? beat : deps.now();
+  };
+  /** 归档中断回执：原始 unknown 记录保留（priorState），状态改 interrupted；该次是否计费未知，按既定规则不重复扣费也不冒充失败。 */
+  const archiveInterruption = async (route: string, key: string, receipt: any) => {
+    const archived = { ...receipt, state: "interrupted", priorState: receipt.state, interruptedAt: new Date().toISOString(), reason: `传输中断，等待迟到回执${Math.round(deps.lateReceiptWaitMs/60000)}分钟未到，已归档；本次费用未知，不重复计费` };
+    await evidence.save(key, archived);
+    interrupted.add(route); unresolved.delete(route);
+    return archived;
+  };
   const routeOrder = [
     // 可重验的完整回包优先。未知费用记录仍保留，只允许零调用恢复已有正文。
     ...KNOWLEDGE_PUBLICATION_ALL_ROUTES.filter(target => existing.has(target.id) && !unresolved.has(target.id)),
@@ -454,28 +510,60 @@ export async function invokeKnowledgePublicationRoutes(
     if (receipt && receipt.requestDigest !== requestDigest)
       throw new Error("模型输入版本变化，不能复用旧路由回执");
     if (receipt?.state === "pending" || receipt?.state === "unknown") {
-      const received = await evidence.read(`${evidence.prefix}/${route}-response.json`);
-      if (!received) throw new Error(`${route}请求回执尚未闭合，保留原任务，不重复提交或切换通道`);
-      receipt = { ...receipt, state: "received", response: received };
-      await evidence.save(key, receipt);
+      let received = await evidence.read(`${evidence.prefix}/${route}-response.json`);
+      if (!received && deps.interruptionPolicy === "hold") throw new Error(`${route}请求回执尚未闭合，保留原任务，不重复提交或切换通道`);
+      if (!received) received = await awaitLateReceipt(route, await interruptionSince(route, receipt));
+      if (!received) {
+        receipt = await archiveInterruption(route, key, receipt);
+      } else {
+        receipt = { ...receipt, state: "received", response: received };
+        await evidence.save(key, receipt);
+      }
+    }
+    if (receipt?.state === "interrupted") {
+      interrupted.add(route);
+      traces.push({ route, model, state: "interrupted", status: receipt.status });
+      continue;
     }
     if (!receipt) {
       if (unresolved.size) throw new Error("原请求回执尚未闭合，保留原任务，不重复提交或切换通道");
       // 旧已发送回执计入对应模型/通道的四次上限；改变首选通道不重置已用次数。
       if(keyLimitedChannels.has(channel) || attempts[routeModelFamily(model)][channel]>=4)continue;
+      if (images.length && !degradedTextOnly && !visionRoutes.has(route)) { traces.push({ route, model, state: "skipped_no_vision" }); continue; }
+      // image_url 400：同通道已失败两次（首发+补一次）即跳过该通道其余重试，切下一通道。
+      if (images.length && imageRejections[channel] >= 2) { traces.push({ route, model, state: "skipped_image_rejected" }); continue; }
+      if (interrupted.size) {
+        if (repurchase) throw new Error(`传输中断后已补买一次（${repurchase.route}）仍未成功，本章判失败，不再购买`);
+        repurchase = { requestDigest, after: Array.from(interrupted), route, at: new Date().toISOString() };
+        await evidence.save(repurchaseKey, repurchase);
+      }
       assertKnowledgePaidModel(channel, model, request.researchOnly === true);
       const apiKey = deps.key(channel);
       if (!apiKey) {
         receipt = { requestDigest, route, model, state: "failed", reason: "通道未配置", sent: false };
         await evidence.save(key, receipt);
       } else {
+        // 配图：签名 URL 指向缩图派生件（review-thumbs/），缩图不可得时回退原图签名 URL；不用 base64 内联。
+        const thumbs = new Map<string, string | null>();
+        for (const uri of images) if (!thumbs.has(uri)) thumbs.set(uri, degradedTextOnly ? null : await deps.thumbnail(uri));
+        const thumbSigned = new Set<string>();
+        const imagePart = (uri: string) => {
+          const thumb = thumbs.get(uri);
+          const url = deps.sign(thumb || uri);
+          if (thumb) thumbSigned.add(url);
+          return { type: "image_url", image_url: { url, detail: "high" } };
+        };
         const messages = [
           { role: "system", content: request.systemInstruction.parts.map(p => p.text).join("\n") + (postResearch && postWorkflow ? "\n本次先完成已有原文和实际配图的整理，检索在正文保存后独立执行并补入。当前没有检索结果时sources=[]，不虚构外部事实；设计矛盾按正文与可用素材调整，不为装饰问题丢掉整批内容。" : "") },
           ...routeRequest.contents.map(c => ({ role: c.role, content: c.parts.map(p => "text" in p ?
-            { type: "text", text: p.text } : { type: "image_url", image_url: { url: deps.sign(p.fileData.fileUri), detail: "high" } }) })),
+            { type: "text", text: p.text } : degradedTextOnly ? { type: "text", text: "（本路由不支持图片输入，页图未随请求发送；请按原稿中该页图内文字与标题审校，imageStatus 写 absent。）" }
+            : imagePart(p.fileData.fileUri)) })),
         ];
         if (lastFailure) messages.push({ role: "user", content: `上一次完整回答未通过校验：${lastFailure.slice(0, 2000)}。请按原始完整合同修正，保留所有页号和必需字段；装饰配置须逐项核对；来源只列真实取得且实际使用的引用，缺少来源不影响原文整理。` });
-        const inputBudget = Buffer.byteLength(JSON.stringify(messages), "utf8") + images.length * 16384 + 4096;
+        // 容量估算用脱敏消息（图片 token 由上游按图计，另加每图 16K 余量）。
+        const redactedMessages = messages.map(m => ({ ...m, content: typeof m.content === "string" ? m.content :
+          m.content.map(p => "image_url" in p ? { type: "image_url", image_url: { url: thumbSigned.has(p.image_url.url) ? "[服务端即时签名:review-thumb]" : "[服务端即时签名:原图]", detail: p.image_url.detail } } : p) }));
+        const inputBudget = Buffer.byteLength(JSON.stringify(redactedMessages), "utf8") + images.length * 16384 + 4096;
         const body = {
           ...(needsSearch ? { tools: channel === "openrouter"
             ? [{ type: "openrouter:web_search", parameters: { max_results: 3, max_total_results: 12 } }]
@@ -487,11 +575,12 @@ export async function invokeKnowledgePublicationRoutes(
             { ...(model.startsWith("deepseek") ? { thinking: { type: "enabled" } } : {}), reasoning_effort: "high" }),
         };
         // 只存无凭证的模型输入；私有配图签名只在服务端即时请求中使用。
-        const storedBody = { ...body, messages: messages.map(m => ({ ...m, content: typeof m.content === "string" ? m.content :
-          m.content.map(p => p.type === "image_url" ? { type: "image_url", image_url: { url: "[服务端即时签名]", detail: "high" } } : p) })) };
-        await evidence.save(key, { requestDigest, route, model, state: "pending", startedAt: new Date().toISOString(), request: storedBody, imageSources: images });
+        const storedBody = { ...body, messages: redactedMessages };
+        const degraded = degradedTextOnly ? { degraded: "text-only" as const } : {};
+        await evidence.save(key, { requestDigest, route, model, state: "pending", startedAt: new Date().toISOString(), request: storedBody, imageSources: images, ...degraded });
         attempts[routeModelFamily(model)][channel]+=1;
         let status: number | undefined;
+        let archivedInterruption = false;
         try {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 120000);
@@ -520,20 +609,30 @@ export async function invokeKnowledgePublicationRoutes(
                 onBytes,
               });
             } else text = await readKnowledgeResponseBody(response, controller, onBytes);
-            receipt = { requestDigest, route, model, state: "received", request: storedBody, response: { status, text: text.split(apiKey).join("[REDACTED]") }, imageSources: images };
+            receipt = { requestDigest, route, model, state: "received", request: storedBody, response: { status, text: text.split(apiKey).join("[REDACTED]") }, imageSources: images, ...degraded };
           await evidence.save(key, receipt);
         } catch {
           const completedStream = await evidence.read(`${evidence.prefix}/${route}-response.json`);
           if (completedStream) {
             // 结束帧明确说明输出截断时已有永久回执，可按失败处理；不能把断流猜成同一种情况。
-            receipt = { requestDigest, route, model, state: "received", request: storedBody, response: completedStream, imageSources: images };
+            receipt = { requestDigest, route, model, state: "received", request: storedBody, response: completedStream, imageSources: images, ...degraded };
             await evidence.save(key, receipt);
           } else {
-            // 中断后是否计费未知，不能冒充“明确失败”继续偷偷重购。
-            await evidence.save(key, { requestDigest, route, model, state: "unknown", request: storedBody, status, reason: "传输或回执保存未闭合", imageSources: images });
-            throw new Error(`${route}传输或回执尚未闭合，未重复提交，原稿已保留`);
+            // 中断后是否计费未知，不能冒充“明确失败”立刻重购：先存 unknown，等迟到回执；到期仍无则归档 interrupted，允许切下一路补买一次。
+            const unknown = { requestDigest, route, model, state: "unknown", at: new Date().toISOString(), request: storedBody, status, reason: "传输或回执保存未闭合", imageSources: images, ...degraded };
+            await evidence.save(key, unknown);
+            if (deps.interruptionPolicy === "hold") throw new Error(`${route}传输或回执尚未闭合，未重复提交，原稿已保留`);
+            const late = await awaitLateReceipt(route, deps.now());
+            if (late) {
+              receipt = { ...unknown, state: "received", response: late };
+              await evidence.save(key, receipt);
+            } else {
+              receipt = await archiveInterruption(route, key, unknown);
+              archivedInterruption = true;
+            }
           }
         }
+        if (archivedInterruption) { traces.push({ route, model, state: "interrupted", status }); continue; }
       }
     }
     if(research && receipt.response && (request.researchOnly || !researchEvidence?.validation)){
@@ -549,6 +648,10 @@ export async function invokeKnowledgePublicationRoutes(
       continue;
     }
     if(inspectKnowledgeRouteResponse(receipt.response).keyLimit)keyLimitedChannels.add(channel);
+    if(images.length && receipt.request && isImageInputRejection(receipt.response) && !imageRejectedRoutes.has(route)){
+      // 本次新收到的 image_url 400：不占四次上限，计入同通道拉图失败次数（已有回执在预扫描时计过）。
+      imageRejections[channel]+=1; attempts[routeModelFamily(model)][channel]-=1; imageRejectedRoutes.add(route);
+    }
     let normalized: { status: number; text: string };
     const adjustments: unknown[] = [];
     let completeAnswerReceived=false;

@@ -4,6 +4,8 @@ export type KnowledgePublicationChannel = "openrouter" | "evolink";
 export type KnowledgePublicationParallel = {
   channels: Record<string, KnowledgePublicationChannel>;
   completed: number[];
+  /** 审校链模型序；新稿写 glm（GLM FlashX→DeepSeek），旧稿缺省沿用原 DeepSeek 优先，保证旧回执身份不变。 */
+  family?: "glm" | "deepseek";
 };
 
 /** 旧稿的连续完成前缀与新稿的乱序完成集合共同决定哪些批次仍需处理。 */
@@ -55,7 +57,8 @@ export async function runKnowledgeParallelBatches<T>(options: {
     });
     preparing.set(index, promise);
   }
-  const lanes: KnowledgePublicationChannel[] = [...(options.lanes ?? knowledgeChannelLanes(pending.size, KNOWLEDGE_MODEL_CHANNEL_MAX, ["openrouter", "evolink"] as const))];
+  // 用户规则 2026-11-09：审校链 EvoLink 优先（份额略大、首发），OpenRouter 其后；两通道仍并发。
+  const lanes: KnowledgePublicationChannel[] = [...(options.lanes ?? knowledgeChannelLanes(pending.size, KNOWLEDGE_MODEL_CHANNEL_MAX, ["evolink", "openrouter"] as const))];
   // 续跑时已固定通道的批次必须有对应工位。
   for (const channel of ["openrouter", "evolink"] as const)
     if (!lanes.includes(channel) && Array.from(pending).some(i => options.channels[String(i)] === channel)) lanes.push(channel);

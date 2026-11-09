@@ -165,6 +165,7 @@ export async function recoverKnowledgePublicationOperation(
     const noNewRequest = {
       key: () => { throw Error("原回包不足以恢复，未提交新模型请求"); },
       fetch: async () => { throw Error("原回包不足以恢复，未提交新模型请求"); },
+      interruptionPolicy: "hold" as const,
     };
     const { reviewKnowledgeConversation } = await import("./knowledgeConversationAdvisor");
     // 已收到的回执先用当前解析器零调用重验；从未发出的批次按正式路由首次发送。
@@ -218,6 +219,8 @@ export async function recoverKnowledgePublicationOperation(
           fetch: async () => {
             throw Error("原回包不足以恢复，未提交新模型请求");
           },
+          // 零调用恢复：未闭合回执只读，不等迟到回执、不归档、不补买。
+          interruptionPolicy: "hold" as const,
         }
       ),
   });

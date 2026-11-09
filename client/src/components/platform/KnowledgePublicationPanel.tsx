@@ -225,7 +225,8 @@ export default function KnowledgePublicationPanel({
         next = { ...next, publication: pub };
       }
       if (!pub.parallel) {
-        pub = { ...pub, parallel: { channels: {}, completed: Array.from(completedKnowledgeBatches(pub, batches.length)) } };
+        // 新开并发审校的稿：模型序 GLM FlashX 优先（用户规则 2026-11-09）；旧稿不补写，保持旧请求身份。
+        pub = { ...pub, parallel: { channels: {}, completed: Array.from(completedKnowledgeBatches(pub, batches.length)), family: "glm" } };
         next = { ...next, publication: pub };
       }
       try { await save(next); }

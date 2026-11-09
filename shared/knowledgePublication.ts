@@ -114,6 +114,7 @@ export const knowledgePublicationSchema = z
     parallel: z.object({
       channels: z.record(z.string().regex(/^(0|[1-9]\d*)$/), z.enum(["openrouter", "evolink"])),
       completed: z.array(z.number().int().min(0)),
+      family: z.enum(["glm", "deepseek"]).optional(),
     }).strict().optional(),
     attempts: z
       .record(z.string(), z.number().int().min(0).max(65535))

@@ -33,7 +33,12 @@ export const KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES = [
   "vertex", // 只读历史未知回执，不再调用。
 ] as const;
 
-/** 2026-11-06 核对官方文档及自营端点；EvoLink 的 DeepSeek 按十进制 384000 限制。 */
+/**
+ * 2026-11-06 核对官方文档及自营端点；EvoLink 的 DeepSeek 按十进制 384000 限制。
+ * 2026-11-09 复核：OpenRouter DeepSeek 自营端点 max_completion_tokens=393216（与此处一致，非误配）。
+ * vision：OpenRouter 模型表 DeepSeek V4.1 Flash 与 GLM 5.3 FlashX 均 text+image；EvoLink 文档两者均支持 image_url（公网 URL 须 60s 内拉完）。
+ * 审校链模型/通道顺序由请求的 executionFamily/executionChannel 决定（见 knowledgePublicationAdvisor：GLM@EvoLink→GLM@OR→DeepSeek@EvoLink→DeepSeek@OR）。
+ */
 export function knowledgeModelCapabilities(model: string, channel: KnowledgeModelChannel) {
   if (["deepseek-v4.1-flash", KNOWLEDGE_DEEPSEEK_EVOLINK_MODEL, KNOWLEDGE_DEEPSEEK_OPENROUTER_MODEL].includes(model)) {
     return {
@@ -41,6 +46,7 @@ export function knowledgeModelCapabilities(model: string, channel: KnowledgeMode
       contextTokens: channel === "openrouter" ? 1_048_576 : 1_000_000,
       outputTokens: channel === "openrouter" ? 393_216 : 384_000,
       provider: OPENROUTER_DEEPSEEK_PROVIDER_LOCK,
+      vision: true,
     };
   }
   if (["glm-5.3-flash", GLM_53_FLASHX_EVOLINK_MODEL, GLM_53_FLASHX_OPENROUTER_MODEL].includes(model)) {
@@ -49,6 +55,7 @@ export function knowledgeModelCapabilities(model: string, channel: KnowledgeMode
       contextTokens: channel === "openrouter" ? 1_048_576 : 1_000_000,
       outputTokens: 131_072,
       provider: OPENROUTER_GLM_PROVIDER_LOCK,
+      vision: true,
     };
   }
   throw new Error("图文整理仅支持 DeepSeek V4.1 Flash 1017 和 GLM 5.3 FlashX");

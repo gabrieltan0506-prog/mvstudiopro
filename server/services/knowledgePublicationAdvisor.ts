@@ -268,6 +268,23 @@ export function buildKnowledgePostImageConsistencyRequest(title:string,digest:st
  return {systemInstruction:{parts:[{text:'本册已完成生图前集中联网校验，当前只对照原文和已有读图记录，不再次联网、不添加外部事实、不把来源不足判无效。输出JSON：{sourceDigest:传入值,findings:[{pageIds:[已有章节UUID],evidence:具体原文或图中文字,message:矛盾与需用户处理之处}]}；无矛盾时findings=[]。'}]},contents:[{role:'user',parts:[{text:JSON.stringify({title,sourceDigest:digest,facts})}]}],generationConfig:{temperature:0.2,maxOutputTokens:32768,responseMimeType:'application/json'}};
 }
 
+/**
+ * 审校链顺序（用户规则 2026-11-09）：GLM-5.3 FlashX@EvoLink → GLM FlashX@OpenRouter → DeepSeek V4.1 Flash 1017@EvoLink → @OpenRouter。
+ * 依据：敦煌整册审校 OpenRouter DeepSeek 24 次 200 后流中途断；GLM FlashX@EvoLink 支持图像输入、1M 上下文、输出 128K、思考常开
+ * （reasoning_content 计入 completion_tokens，SSE 解析只取 content），官方推荐截图分析/文档工作流。
+ * 通过 executionFamily/executionChannel 表达，不改全局路由表；篇幅压缩等显式指定 deepseek 的请求不受影响。
+ */
+export const KNOWLEDGE_REVIEW_EXECUTION = { executionFamily: "glm", executionChannel: "evolink" } as const;
+/**
+ * executionFamily/executionChannel 参与请求身份（requestDigest）：只有稿件 parallel.family 已写 glm 的新稿才加模型序，
+ * 旧稿（含正在恢复的敦煌/血脂）不改请求身份，原回执零调用复用。
+ */
+export function applyKnowledgeReviewExecution<T extends KnowledgeModelRequest>(request: T, channel: "openrouter" | "evolink" | undefined, family: "glm" | "deepseek" | undefined): T {
+  if (family && !request.executionFamily) request.executionFamily = family;
+  if (channel && !request.executionChannel) request.executionChannel = channel;
+  return request;
+}
+
 export function buildKnowledgeFinalRevisionRequest(pageSource: KnowledgeSource, digest:string, verifications:unknown[], channel: "openrouter"|"evolink") {
   const request=buildKnowledgeReviewRequest(pageSource,digest,new Map());
   request.executionChannel=channel;
@@ -500,7 +517,8 @@ export async function reviewKnowledgePublication(
       images.set(page.imageUrl, await deps.image(page.imageUrl));
   // 分配保存在原稿中；旧请求恢复时 getRaw 仍以原始永久请求为准。
   const channel = document.publication.parallel?.channels[String(context.batchIndex)];
-  const request = { ...buildKnowledgeReviewRequest(batchSource, digest, images), ...(channel ? { executionChannel: channel } : {}) };
+  // 审校批次：通道由 parallel.channels 指定（EvoLink 优先分配）；模型序按稿件 parallel.family（新稿 glm→deepseek，旧稿沿用 deepseek 优先）。
+  const request = applyKnowledgeReviewExecution({ ...buildKnowledgeReviewRequest(batchSource, digest, images) }, channel, document.publication.parallel?.family);
   // 页数预算按整册计算后只下发本批各页上限；图文比例在生图前已确定，这里控制内文篇幅而非导出后阻断。
   if (source.detailLevel && source.reviewBatchMode === "ready-images") {
     const budget = knowledgeBudgetInstructions(source.detailLevel, knowledgeReadingCharBudgets(source.detailLevel, source.pages).pages.filter(p => indices.some(i => source.pages[i].id === p.id)));
