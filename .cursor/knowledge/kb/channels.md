@@ -10,6 +10,11 @@
 - `GPT_IMAGE2_PRIMARY_TIMEOUT_MS=90s` 对异步 EvoLink 过短 → 主路径全滑 OpenAI 同槽。服务端修超时优先于一切新出图功能。
 - EvoLink edits 场景曾连发「Image processing failed」——失败率高就对 edits 回钉官方通道。
 
+## 听音（Gemini 音频理解）
+- **Gemini 听音只有两条可用通道（用户 2026-11-09 更正）**：Gemini@Vertex → Gemini@EvoLink；**OpenRouter 不能用**，不得接入听音 fallback。
+- MV 本段歌词识别（`server/gemini-audio.ts` `geminiAudioJsonWithFallback`）按这两跳走：超时 / 断线 / HTTP 错 / 空回 / 写坏（JSON 解析或逐句时间校验不过）都切下一跳；每跳 request/raw/decoded/parsed/rejected 永久落 GCS。
+- GLM / DeepSeek 不能听音频，不能作为听音任务的 fallback。
+
 ## 视频
 - **Seedance 2.5 三通道路由拍板（用户 2026-08-13 口径）**：
   - BytePlus = 官方 API 最便宜，但**挡真人脸**；OpenRouter 同样挡脸——这两家只能出 CG。

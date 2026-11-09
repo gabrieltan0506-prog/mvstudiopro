@@ -697,3 +697,85 @@ export const analyzeManhuaDramaAudioWithGemini = analyzeManhuaDramaAudioWithFall
 export function isGeminiAudioAvailable(): boolean {
   return !!GEMINI_API_KEY;
 }
+
+export type GeminiAudioJsonChannel = "Vertex" | "EvoLink";
+
+/**
+ * 通用「听音 → JSON」两跳（1109 MV 歌词识别；用户口径：Gemini 只有 Vertex 与 EvoLink 两条可用通道，OpenRouter 不接）：
+ * Gemini@Vertex → Gemini@EvoLink，复用上面同一套通道配置；
+ * 每跳：调用 → JSON 解析 → validate；超时、断线、HTTP 错误、空回、写坏（解析/校验不过）都切下一跳。
+ * 每路的请求摘要、原始回包、解析结果或拒收原因经 save 永久落证据；未配置的通道跳过并记录。
+ */
+export async function geminiAudioJsonWithFallback<T>(input: {
+  audioBase64: string;
+  mimeType: string;
+  prompt: string;
+  /** Gemini 原生 responseSchema（大写类型）。 */
+  nativeSchema: Record<string, unknown>;
+  schemaName: string;
+  validate: (value: unknown) => T;
+  save: (name: string, value: unknown) => Promise<unknown>;
+  maxOutputTokens?: number;
+  timeoutMs?: number;
+}): Promise<{ value: T; channel: GeminiAudioJsonChannel; model: string; failuresZh: string[] }> {
+  const timeoutMs = input.timeoutMs ?? 180_000;
+  const maxOutputTokens = input.maxOutputTokens ?? 8192;
+  const nativeBody = {
+    contents: [{ role: "user", parts: [{ text: input.prompt }, { inlineData: { data: input.audioBase64, mimeType: input.mimeType } }] }],
+    generationConfig: { maxOutputTokens, responseMimeType: "application/json", audioTimestamp: true, responseSchema: input.nativeSchema, temperature: 0.2 },
+  };
+  const native = async (url: string, headers: Record<string, string>) => {
+    const response = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify(nativeBody) });
+    const payload = await response.json().catch(() => null);
+    return { status: response.status, ok: response.ok, payload, text: readNativeGeminiMessageText(payload) };
+  };
+  const channels: Array<{ name: GeminiAudioJsonChannel; available: () => boolean; model: () => string; run: () => Promise<{ status: number; ok: boolean; payload: unknown; text: string }> }> = [
+    {
+      name: "Vertex", available: isManhuaDramaVertexAudioAvailable, model: resolveManhuaAudioVertexModelName,
+      run: async () => {
+        const model = resolveManhuaAudioVertexModelName();
+        const location = resolveManhuaAudioVertexLocation();
+        const url = `${baseUrlForVertex(location)}/v1/projects/${encodeURIComponent(getVertexProjectId())}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+        return native(url, (await getVertexAuthHeaders()) as Record<string, string>);
+      },
+    },
+    {
+      name: "EvoLink", available: isManhuaDramaEvolinkAudioAvailable, model: resolveManhuaAudioEvolinkModelName,
+      run: () => native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(resolveManhuaAudioEvolinkModelName())}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }),
+    },
+  ];
+  const failures: string[] = [];
+  for (let i = 0; i < channels.length; i += 1) {
+    const ch = channels[i]!;
+    const slug = `hop-${i + 1}-${ch.name.toLowerCase().replace(/\s+/g, "_")}`;
+    if (!ch.available()) { failures.push(`${ch.name}（未配置，跳过）`); await input.save(`${slug}-skipped`, { channel: ch.name, reasonZh: "未配置" }); continue; }
+    const model = ch.model();
+    await input.save(`${slug}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt: input.prompt, mimeType: input.mimeType, audioBytes: Math.floor((input.audioBase64.length * 3) / 4), maxOutputTokens, timeoutMs });
+    let result: Awaited<ReturnType<typeof ch.run>>;
+    try {
+      result = await ch.run();
+    } catch (error) {
+      const reason = error instanceof Error && error.name === "TimeoutError" ? "请求超时" : `网络异常：${error instanceof Error ? error.message.slice(0, 160) : String(error)}`;
+      failures.push(`${ch.name}（${reason}）`);
+      await input.save(`${slug}-error`, { channel: ch.name, model, reasonZh: reason });
+      continue;
+    }
+    await input.save(`${slug}-raw`, { channel: ch.name, model, status: result.status, payload: result.payload });
+    if (!result.ok) { failures.push(`${ch.name}（HTTP ${result.status}）`); continue; }
+    if (!String(result.text || "").trim()) { failures.push(`${ch.name}（空回）`); await input.save(`${slug}-rejected`, { channel: ch.name, model, reasonZh: "空回" }); continue; }
+    try {
+      const decoded = JSON.parse(String(result.text || "").replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim());
+      await input.save(`${slug}-decoded`, decoded);
+      const value = input.validate(decoded);
+      await input.save(`${slug}-parsed`, value);
+      await input.save("hop-used", { channel: ch.name, model, hop: i + 1, failuresZh: failures });
+      return { value, channel: ch.name, model, failuresZh: failures };
+    } catch (error) {
+      const reason = `写坏：${error instanceof Error ? error.message.slice(0, 300) : String(error)}`;
+      failures.push(`${ch.name}（${reason}）`);
+      await input.save(`${slug}-rejected`, { channel: ch.name, model, reasonZh: reason, textHead: String(result.text || "").slice(0, 600) });
+    }
+  }
+  await input.save("hop-exhausted", { failuresZh: failures });
+  throw new Error(`听音识别全部通道失败：${failures.join("；")}`);
+}

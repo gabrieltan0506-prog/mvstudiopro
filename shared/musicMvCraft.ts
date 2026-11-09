@@ -30,7 +30,7 @@ export function musicMvHardConstraintsZh(stage: "compose" | "refine" = "compose"
 4. concepts 必须是 JSON 数组（[ ... ]），恰好 4 个元素，id 互不相同；不得写成对象或在数组里混写 "c2":{...} 这类键值对。
 5. 只有 kind 为 footage 的镜头才允许 sourceClip；generated 与 singing 镜头不得出现 sourceClip 字段，也不得写 sourceClip:{} 或 null。
 6. 每个方案 plan.shots 从 0 秒起连续无缝覆盖到歌曲时长，相邻镜头 endSec 等于下一镜 startSec；singing 镜头至少 4 秒且 referenceIndices 非空。
-7. 输出必须是一个可被 JSON.parse 直接解析的对象，不带 Markdown 代码围栏、注释或解释文字。`;
+8. 输出必须是一个可被 JSON.parse 直接解析的对象，不带 Markdown 代码围栏、注释或解释文字。`;
 }
 /** compose 版硬约束（历史常量名保留）。 */
 export const MUSIC_MV_HARD_CONSTRAINTS_ZH = musicMvHardConstraintsZh("compose");
@@ -53,3 +53,24 @@ sections从0到实际歌曲时长连续覆盖，记录听到的音乐/人声及�
 referenceIndices只能使用给定参考文字的零起始下标。footage镜头的sourceClip必须逐字匹配给定素材身份，仅sourceStartSec可选；选段长度等于镜头长度，不能越过源素材时长。其他类型禁止sourceClip。
 visualPrompt与cameraPrompt须具体非空；镜头kind必须明确。不输出媒体地址之外的新网址，不输出evidenceId。
 ${MUSIC_MV_HARD_CONSTRAINTS_ZH}`;
+
+/**
+ * 1109 逐窗节拍（MV 创作顾问第三阶段，同一三跳链）：每镜按歌曲拍点切 2–4 秒窗，每窗写五项内容；
+ * 镜头分三类（footage 素材段不出窗；generated 生成画面段歌曲只作卡点；singing 演唱段歌词按对白处理、逐句对口型）。
+ * 服务端只做时间修复（裁到镜头、无缝衔接、非演唱窗界吸附拍点、过短窗并入），不改写内容。
+ */
+export const MUSIC_MV_BEATS_INSTRUCTIONS = `你是MV创作顾问，现在为已确认分镜里的每个镜头写「逐窗节拍」。只返回JSON：{"shots":[{"id":"镜头id","continuesFromPrevious":false,"complexity":{"people":1,"action":"none","contact":false,"cameraSetups":1,"scenes":1},"beats":[{"startSec":0,"endSec":0,"actionZh":"","cameraZh":"","lightingZh":"","moodZh":"","sfxZh":"","lipSync":false,"lyricZh":""}]}]}。
+规则：
+1. 只为输入 shots 里的每个镜头各写一组 beats，id 逐字照抄，不增不减。秒位一律用歌曲绝对秒。
+2. 每镜 beats 从该镜 startSec 起、到 endSec 止，连续无缝，相邻窗 endSec 等于下一窗 startSec；每窗 2 到 4 秒（镜头本身短于 2 秒时整镜一窗）。按 beatGrid.segments 的节奏模式定窗界：pacing=beat 的段落窗界落在拍点上，重音（strongBeatsSec）适合放转折与动作落点；pacing=phrase 的段按乐句与能量峰分窗，不硬切网格；pacing=free 的段按能量起落与静音分窗。
+3. 每窗五项都要具体、可拍、承接上一窗，不重复上一窗原话：
+   actionZh＝人物表情、视线与动作（谁、看向哪里、做什么、做到什么程度）；
+   cameraZh＝景别与运镜（景别、机位、运动方向与速度，与前窗同轴不越轴）；
+   lightingZh＝灯光与氛围（光源方向、明暗、色温变化与其触发原因）；
+   moodZh＝情绪与转折（本窗情绪、与前窗相比的变化及依据）；
+   sfxZh＝环境/事件音效（只写画面里真实发生的声音，如雨声、脚步、车流；不得写音乐、配乐、人声、歌声或旋律）。
+4. 镜头三类：kind=generated 为生成画面段，歌曲只作卡点参考，lipSync 一律 false，lyricZh 留空；kind=singing 为演唱段，人物在唱、要对口型——歌词按「对白」处理：把该镜内的唱句逐句分到窗里，有唱句的窗 lipSync=true 且 lyricZh 逐字照抄用户提供歌词里的那一句（不改字、不合并多句），窗的起止就是这句唱的起止（演唱窗不吸附拍点，按唱句落位）；无唱句的过门窗 lipSync=false。
+5. continuesFromPrevious：本镜与上一镜是同一动作/同一空间的直接延续（需要画面接龙）时为 true，出片时会用上一镜尾帧作本镜起幅；换场、换时空或跳切时为 false。第一个镜头若 previousShot 为空则为 false。
+6. complexity：如实统计本镜画面——people＝清晰出镜人数；action＝none（静态/微动）、light（走动、转身、抬手等轻动作）、strong（奔跑、舞蹈、打斗、拥抱等明确大动作）；contact＝人物之间或人与道具是否有身体接触；cameraSetups＝本镜用到的机位数；scenes＝本镜出现的场景数。多人、强动作、接触、多机位或多场景的镜头会强制要求站位参考，不得为省事少报。
+7. 内容必须贴合本镜 visualPrompt 与 cameraPrompt 的意图，并服从所给 sections 的情绪与创作说明；不新增第二位清晰人物，不出现文字、字幕、Logo。
+8. 输出必须是一个可被 JSON.parse 直接解析的对象，不带 Markdown 代码围栏、注释或解释文字。`;

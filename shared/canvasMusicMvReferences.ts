@@ -3,21 +3,43 @@
  *
  * 每镜参考 = 全片主锚图 ×1（五镜共用保连续）+ 本镜场景/光线/道具/色调图 2–4
  *          + 动作/运镜参考片 1–2（白模工作台产物优先，否则图库片段）+ 本镜歌曲切片 ×1。
- * 总数 ≤9，各类上限按官方文档：Mini 图 9 / 视频 3 / 音频 3；2.5 为 30 / 10 / 10（同一张组装表照用）。
+ * 总数 ≤9，各类上限按所选成片引擎读 COMPILER_ENGINE_LIMITS（漫剧现成引擎表）。
  * 槽位编号 = 数组顺序（@图片1 恒为主锚图，@视频1 从视频数组 1 起，@音频1 为歌曲切片）；
  * 中文标记走既有 seedance 方言编译层，服务端 formatEvolinkReferencePrompt 出口转 @imageN/@videoN/@audioN。
  * 超限、缺锚、缺场景图与参考片 → 抛中文错误，不裁剪后放行，不静默退回 text_to_video。
  */
 import { z } from "zod";
+import { COMPILER_ENGINE_LIMITS, normalizeCompilerEngineId, type CompilerEngineId } from "./manhuaShotIR";
 
 const text = z.string().trim().min(1);
 const gcsUri = z.string().regex(/^gs:\/\/[^/]+\/.+/, "参考素材须为本人空间内的对象");
 
 export const MV_SHOT_REFERENCE_TOTAL_MAX = 9;
-export const MV_SHOT_REFERENCE_LIMITS = {
-  "2.0-mini": { image: 9, video: 3, audio: 3 },
-  "2.5": { image: 30, video: 10, audio: 10 },
-} as const;
+/**
+ * 1109 模型可选：单类上限不再写死 Mini/2.5 两档，按所选成片引擎读漫剧现成引擎表
+ * COMPILER_ENGINE_LIMITS（Seedance 2.0 系 9/3/3、2.5 为 30/10/10、H3 9/3/3、Wan 3.0 10/5/5）；
+ * 总数仍按用户拍板 ≤9。旧调用的 "2.0-mini" / "2.5" 写法兼容。
+ */
+export type MvShotEngineKey = CompilerEngineId | "2.0-mini" | "2.0" | "2.0-fast" | "2.5" | string;
+export function mvShotEngineId(engine: MvShotEngineKey | undefined): CompilerEngineId {
+  const key = String(engine || "seedance-2.0-mini").trim();
+  const id = normalizeCompilerEngineId(/^2\.(0|5)/.test(key) ? `seedance-${key}` : key);
+  if (!id) throw new Error("所选成片模型暂不支持 MV 镜头");
+  return id;
+}
+export function mvShotReferenceLimits(engine: MvShotEngineKey | undefined) {
+  const refs = COMPILER_ENGINE_LIMITS[mvShotEngineId(engine)].references;
+  return { image: refs.image, video: refs.video, audio: refs.audio };
+}
+/** MV 镜头可用引擎：须能同时收主锚图+场景图（≥2 图）与歌曲切片（≥1 音频）。HappyHorse 仅首帧一图，不入选。 */
+export function isMvShotEngineSupported(engine: MvShotEngineKey | undefined): boolean {
+  try {
+    const l = mvShotReferenceLimits(engine);
+    return l.image >= 2 && l.audio >= 1;
+  } catch {
+    return false;
+  }
+}
 /** 本镜补充图建议区间（主锚图之外）。 */
 export const MV_SHOT_SCENE_IMAGE_MIN = 2;
 export const MV_SHOT_SCENE_IMAGE_MAX = 4;
@@ -106,17 +128,23 @@ export type MvShotReferenceGap = { code: "anchor" | "scene" | "motion" | "song" 
  */
 export function mvShotReferenceGaps(
   refs: MvShotReferencesInput | undefined,
-  version: keyof typeof MV_SHOT_REFERENCE_LIMITS = "2.0-mini",
+  version: MvShotEngineKey = "2.0-mini",
+  /** 1109：镜头复杂度达阈值（多人/强动作/接触/多机位/多场景）时站位参考（@视频）必填。 */
+  opts: { requiresStaging?: boolean } = {},
 ): { blocking: MvShotReferenceGap[]; advisory: MvShotReferenceGap[] } {
   const r = mvShotReferencesSchema.parse(refs ?? EMPTY_MV_SHOT_REFERENCES);
   const counts = countMvShotReferences(r);
-  const limits = MV_SHOT_REFERENCE_LIMITS[version];
+  if (!isMvShotEngineSupported(version))
+    return { blocking: [{ code: "over_limit", messageZh: "所选成片模型不支持 MV 多参考生视频，请换模型" }], advisory: [] };
+  const limits = mvShotReferenceLimits(version);
   const blocking: MvShotReferenceGap[] = [];
   const advisory: MvShotReferenceGap[] = [];
   if (!r.anchorImage) blocking.push({ code: "anchor", messageZh: "缺全片主锚图" });
   if (!r.sceneImages.length && !r.motionVideos.length)
     blocking.push({ code: "scene", messageZh: "缺本镜场景图或动作参考片（至少一项）" });
   if (!r.songSlice) blocking.push({ code: "song", messageZh: "缺本镜歌曲切片" });
+  if (opts.requiresStaging && !r.motionVideos.length)
+    blocking.push({ code: "motion", messageZh: "该镜需白模站位或实拍运镜参考" });
   if (counts.total > MV_SHOT_REFERENCE_TOTAL_MAX)
     blocking.push({ code: "over_limit", messageZh: `参考共 ${counts.total} 项，超过 ${MV_SHOT_REFERENCE_TOTAL_MAX} 项上限` });
   if (counts.image > limits.image || counts.video > limits.video || counts.audio > limits.audio)
@@ -126,7 +154,7 @@ export function mvShotReferenceGaps(
     });
   if (r.anchorImage && r.sceneImages.length < MV_SHOT_SCENE_IMAGE_MIN)
     advisory.push({ code: "scene", messageZh: `建议补到 ${MV_SHOT_SCENE_IMAGE_MIN}–${MV_SHOT_SCENE_IMAGE_MAX} 张场景图` });
-  if (!r.motionVideos.length) advisory.push({ code: "motion", messageZh: "建议加 1 段动作/运镜参考片" });
+  if (!r.motionVideos.length && !opts.requiresStaging) advisory.push({ code: "motion", messageZh: "建议加 1 段动作/运镜参考片" });
   return { blocking, advisory };
 }
 
@@ -150,10 +178,11 @@ export type MvShotReferenceAssembly = {
 export function assembleMvShotReferences(
   refs: MvShotReferencesInput | undefined,
   shot: { startSec: number; endSec: number; kind?: "generated" | "singing" | "footage" },
-  version: keyof typeof MV_SHOT_REFERENCE_LIMITS = "2.0-mini",
+  version: MvShotEngineKey = "2.0-mini",
+  opts: { requiresStaging?: boolean } = {},
 ): MvShotReferenceAssembly {
   const r = mvShotReferencesSchema.parse(refs ?? EMPTY_MV_SHOT_REFERENCES);
-  const { blocking } = mvShotReferenceGaps(r, version);
+  const { blocking } = mvShotReferenceGaps(r, version, opts);
   if (blocking.length) throw new Error(`本镜参考素材不完整：${blocking.map(g => g.messageZh).join("；")}`);
   const anchor = r.anchorImage!;
   const imageGcsUris = [anchor.gcsUri, ...r.sceneImages.map(i => i.gcsUri)];
@@ -182,6 +211,8 @@ export function assembleMvShotReferences(
         : `@音频1是本镜 ${fmt(s.startSec)}–${fmt(s.endSec)} 秒的歌曲切片，画面节奏与剪切点与其卡点严格同步；不另生成音乐。`,
     );
   }
+  // 声音职责（1109 用户口径）：镜头只出环境音/特效音，成片时作背景层混在原歌曲之下。
+  lines.push(shot.kind === "singing" ? MV_SHOT_SINGING_SOUND_RULE_ZH : MV_SHOT_SOUND_RULE_ZH);
   const hasRealPerson = Boolean(
     anchor.hasRealPerson || r.sceneImages.some(i => i.hasRealPerson) || r.motionVideos.some(v => v.hasRealPerson),
   );
@@ -195,6 +226,16 @@ export function assembleMvShotReferences(
     hasRealPerson,
   };
 }
+
+/**
+ * MV 镜头声音规则：保留模型自带音轨，但只允许环境音与特效音；音乐、人声、旋律一律禁止。
+ * 成片以原歌曲为主音轨（0 dB），镜头声音作为背景层（默认 −20 dB）混入。
+ */
+/** 演唱段：自带音轨须按@音频1原唱同步复现，合成前用它与原歌互相关核对口型落位；成片仍只贴原歌整段。 */
+export const MV_SHOT_SINGING_SOUND_RULE_ZH =
+  "声音按@音频1原唱同步复现本窗唱句与环境声，不改词、不改调、不另配伴奏；成片以原歌曲为准，本镜声音只用于口型落位核验与环境层。";
+export const MV_SHOT_SOUND_RULE_ZH =
+  "声音只生成本镜画面里的环境音与特效音（如雨声、脚步声、远处城市车流、玻璃轻触声）；禁止生成任何音乐、配乐、人声、歌声、哼唱或旋律。";
 
 function fmt(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
@@ -212,4 +253,21 @@ export function applyAnchorImageToAll<T extends Record<string, MvShotReferencesI
     out[id] = { ...current, anchorImage: anchor };
   }
   return out;
+}
+
+/**
+ * 1109 主锚图 = 生成的角色定妆帧（不再从图库硬找有人物的图）：复用漫剧角色卡/定妆同一条生图链
+ * （canvas_gpt_image2，默认 Sunburst，资产线），按创作说明里的主角描述出一张全身定妆帧，作 @图片1 全片共用。
+ */
+export function mvAnchorKeyframePrompt(creativePrompt: string | undefined, aspectRatio: "9:16" | "16:9" = "9:16"): string {
+  const text = String(creativePrompt || "");
+  const protagonist = /主角[：:]\s*([^。\n]+)/.exec(text)?.[1]?.trim() || "MV 主角";
+  const style = /风格[：:]\s*([^\n]+)/.exec(text)?.[1]?.trim() || "真实感电影画面";
+  return [
+    `MV character keyframe (${aspectRatio}), a single person, full body standing, facing camera at three-quarter angle, neutral relaxed expression, clear readable face.`,
+    `Character (keep exactly, Chinese brief): ${protagonist}.`,
+    `Wardrobe and look must be the one used across every shot of the MV; plain uncluttered background in the MV's color mood; soft even key light that shows face, hair and outfit clearly.`,
+    `Overall style (Chinese brief): ${style}.`,
+    "Photorealistic, natural skin texture, no text, no subtitles, no logo, no watermark, no second person.",
+  ].join("\n");
 }

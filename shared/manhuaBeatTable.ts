@@ -334,3 +334,104 @@ export function beatTableToVolumeExpr(rows: readonly BeatTableRow[]): string {
   }
   return expression;
 }
+
+
+// ── 拍点网格（1109 MV 秒锁复用）──────────────────────────────────────
+// 上面的电平卡点表是 0.5 秒电平窗，分辨率不到 1 拍（129 BPM 一拍≈0.465 秒），不能直接定剪点。
+// 这里补「给定 BPM 的拍点网格」：起音包络求相位与逐拍重音强度；BPM 以分镜/用户给定为准，自相关估值只作核对。
+
+
+export type MusicBeatGrid = {
+  bpm: number;
+  /** 第一拍（相对输入 PCM 起点的秒数，0 ≤ phase < 1 拍）。 */
+  phaseSec: number;
+  /** 逐拍：歌曲时间（相对输入起点 + offsetSec）与 0–1 重音强度。 */
+  beats: Array<{ sec: number; strength: number }>;
+  /** 由起音包络自相关估得的 BPM（核对用，不参与网格）。 */
+  estimatedBpm: number;
+};
+
+const HOP_SEC = 0.01;
+
+/** 半波整流的能量差分包络（10ms 帧）。 */
+export function onsetEnvelope(samples: ArrayLike<number>, sampleRate: number): number[] {
+  const hop = Math.max(1, Math.round(sampleRate * HOP_SEC));
+  const frames = Math.floor(samples.length / hop);
+  const energy: number[] = new Array(frames);
+  for (let f = 0; f < frames; f++) {
+    let sum = 0;
+    for (let i = f * hop, end = i + hop; i < end; i++) sum += samples[i] * samples[i];
+    energy[f] = Math.log1p(1000 * Math.sqrt(sum / hop));
+  }
+  const env: number[] = new Array(frames).fill(0);
+  for (let f = 1; f < frames; f++) env[f] = Math.max(0, energy[f] - energy[f - 1]);
+  return env;
+}
+
+function envAt(env: number[], sec: number) {
+  const f = Math.round(sec / HOP_SEC);
+  let best = 0;
+  for (let d = -3; d <= 3; d++) best = Math.max(best, env[f + d] ?? 0); // ±30ms 容差
+  return best;
+}
+
+export function buildMusicBeatGrid(
+  samples: ArrayLike<number>,
+  sampleRate: number,
+  bpm: number,
+  offsetSec = 0,
+): MusicBeatGrid {
+  if (!(bpm >= 40 && bpm <= 240)) throw new Error("BPM 超出 40–240");
+  const env = onsetEnvelope(samples, sampleRate);
+  const durationSec = env.length * HOP_SEC;
+  const beatSec = 60 / bpm;
+  let bestPhase = 0;
+  let bestScore = -1;
+  for (let p = 0; p < beatSec; p += HOP_SEC) {
+    let score = 0;
+    for (let t = p; t < durationSec; t += beatSec) score += envAt(env, t);
+    if (score > bestScore) { bestScore = score; bestPhase = p; }
+  }
+  const raw: Array<{ sec: number; v: number }> = [];
+  for (let t = bestPhase; t < durationSec; t += beatSec) raw.push({ sec: t, v: envAt(env, t) });
+  const max = Math.max(1e-9, ...raw.map(r => r.v));
+  // 自相关核对 BPM（60–200）
+  let estimatedBpm = bpm;
+  let bestAc = -1;
+  for (let lag = Math.round(0.3 / HOP_SEC); lag <= Math.round(1 / HOP_SEC); lag++) {
+    let ac = 0;
+    for (let i = lag; i < env.length; i++) ac += env[i] * env[i - lag];
+    if (ac > bestAc) { bestAc = ac; estimatedBpm = 60 / (lag * HOP_SEC); }
+  }
+  return {
+    bpm,
+    phaseSec: Number(bestPhase.toFixed(3)),
+    beats: raw.map(r => ({ sec: Number((r.sec + offsetSec).toFixed(3)), strength: Number((r.v / max).toFixed(3)) })),
+    estimatedBpm: Number(estimatedBpm.toFixed(1)),
+  };
+}
+
+/** 从创作说明里读 BPM（如「129 BPM」）。 */
+export function parseBpmFromText(text: string | undefined): number | undefined {
+  const m = /(\d{2,3}(?:\.\d+)?)\s*BPM/i.exec(String(text || ""));
+  const n = m ? Number(m[1]) : NaN;
+  return n >= 40 && n <= 240 ? n : undefined;
+}
+
+/** 把计划剪点吸附到最近拍点（首尾固定为高光区间端点，不吸附）；保持严格递增且每段 ≥ minGapSec。 */
+export function snapCutsToBeats(
+  cuts: readonly number[],
+  beats: ReadonlyArray<{ sec: number }>,
+  minGapSec = 1,
+): number[] {
+  if (cuts.length < 2) return [...cuts];
+  const out = [cuts[0]!];
+  for (let i = 1; i < cuts.length - 1; i += 1) {
+    const ideal = cuts[i]!;
+    const sorted = [...beats].sort((a, b) => Math.abs(a.sec - ideal) - Math.abs(b.sec - ideal));
+    const pick = sorted.find((b) => b.sec - out[out.length - 1]! >= minGapSec && cuts[cuts.length - 1]! - b.sec >= minGapSec);
+    out.push(pick ? Math.round(pick.sec * 1000) / 1000 : ideal);
+  }
+  out.push(cuts[cuts.length - 1]!);
+  return out;
+}

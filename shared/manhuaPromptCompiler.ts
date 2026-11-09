@@ -94,21 +94,51 @@ function formatWanMediaReference(ref: ShotMediaRef): string {
 
 type PositionedShot = SegmentPlan["shots"][number] & { startSec: number };
 
+/** 秒位输出：整数保持原样（既有调用方输出不变），小数最多两位，杜绝 2.7900000000000003 之类浮点尾巴。 */
+function fmtSec(value: number): string {
+  return String(Math.round(value * 100) / 100);
+}
+
 function shotLineSeedance(shot: PositionedShot): string {
   const end = shot.startSec + shot.durationSec;
   const parts = [
-    `[${shot.startSec}-${end}s 第${shot.index}镜]`,
+    `[${fmtSec(shot.startSec)}-${fmtSec(end)}s ${shot.labelZh || `第${shot.index}镜`}]`,
     `场景:${shot.sceneZh}`,
     `动作:${shot.actionZh}`,
     shot.cameraZh ? `运镜:${shot.cameraZh}` : "",
+    shot.lightingZh ? `灯光:${shot.lightingZh}` : "",
     shot.microExpressionZh ? `表演:${shot.microExpressionZh}` : "",
+    shot.moodZh ? `情绪:${shot.moodZh}` : "",
     shot.dialogue
       ? `${shot.dialogue.speakerZh}${shot.dialogue.emotionZh ? `(${shot.dialogue.emotionZh})` : ""}说 {${shot.dialogue.textZh}}`
       : "",
     shot.sfxZh ? `<${shot.sfxZh}>` : "",
     (shot.mediaRefs ?? []).map(formatSeedanceMediaReference).join("；"),
+    shot.subtitleZh ? `[${shot.subtitleZh}]` : "",
   ].filter(Boolean);
   return parts.join(" · ");
+}
+
+/**
+ * 块状秒锁版式（知识库《ABC带参数成片提示词》A 段结构）：每窗「X.XX–Y.YY秒｜标签」后逐行写字段。
+ * 仅 seedance 方言、仅调用方显式选择时使用；默认单行版式不变。
+ */
+function shotBlockSeedance(shot: PositionedShot): string {
+  const end = shot.startSec + shot.durationSec;
+  return [
+    `${shot.startSec.toFixed(2)}–${end.toFixed(2)}秒｜${shot.labelZh || `第${shot.index}镜`}`,
+    `场景与承接：${shot.sceneZh}`,
+    `人物、视线与动作：${shot.actionZh}${shot.microExpressionZh ? `；表演：${shot.microExpressionZh}` : ""}`,
+    shot.cameraZh ? `景别与运镜：${shot.cameraZh}` : "",
+    shot.lightingZh ? `灯光与氛围：${shot.lightingZh}` : "",
+    shot.moodZh ? `情绪与转折：${shot.moodZh}` : "",
+    shot.dialogue
+      ? `${shot.dialogue.speakerZh}${shot.dialogue.emotionZh ? `(${shot.dialogue.emotionZh})` : ""}说 {${shot.dialogue.textZh}}`
+      : "",
+    shot.sfxZh ? `<${shot.sfxZh}>` : "",
+    (shot.mediaRefs ?? []).map(formatSeedanceMediaReference).join("；"),
+    shot.subtitleZh ? `[${shot.subtitleZh}]` : "",
+  ].filter(Boolean).join("\n");
 }
 
 function shotLineH3(shot: PositionedShot): string {
@@ -215,11 +245,22 @@ function assertSegmentPlanValid(segment: SegmentPlan, profile: CompilerEnginePro
   }
 }
 
+/** 段编译可选项（缺省 = 漫剧原口径，输出逐字不变）。 */
+export type SegmentCompileOptions = {
+  /** 头部之后、画质铁令之前插入的固定行（如人物一致性锁、标记约定、参考绑定表、节拍说明）。 */
+  headerLines?: string[];
+  /** 正向锁定之后追加的行（如情绪曲线、跨窗收束）。 */
+  footerLines?: string[];
+  /** seedance 方言窗版式：line=单行（默认）；block=A 段块状秒锁。 */
+  windowLayout?: "line" | "block";
+};
+
 /** 单段提示词(方言分流;头=风格句+画质铁令,尾=正向锁定);内部版连问题一起返回 */
 function compileSegmentPromptResult(
   segment: SegmentPlan,
   engine: CompilerEngineId,
   styleZh?: string,
+  options: SegmentCompileOptions = {},
 ): { prompt: string; issues: FormatIssue[] } {
   assertCompilerEngineReady(engine);
   const profile = COMPILER_ENGINE_LIMITS[engine];
@@ -232,7 +273,9 @@ function compileSegmentPromptResult(
     const withStart: PositionedShot = { ...shot, startSec };
     lines.push(
       dialect === "seedance"
-        ? shotLineSeedance(withStart)
+        ? options.windowLayout === "block"
+          ? `\n${shotBlockSeedance(withStart)}`
+          : shotLineSeedance(withStart)
         : dialect === "h3"
           ? shotLineH3(withStart)
           : shotLineWan(withStart),
@@ -241,9 +284,17 @@ function compileSegmentPromptResult(
   }
   const head =
     dialect === "seedance"
-      ? `【第${String(segment.index).padStart(2, "0")}段·${segment.durationSec}s】${styleZh ? ` ${styleZh}` : ""}`
-      : `${styleZh ? `${styleZh}。` : ""}本段时长约${segment.durationSec}秒。`;
-  const raw = [head, QUALITY_LOCK_ZH, ...lines, POSITIVE_LOCK_ZH].join("\n");
+      ? `【第${String(segment.index).padStart(2, "0")}段·${fmtSec(segment.durationSec)}s】${styleZh ? ` ${styleZh}` : ""}`
+      : `${styleZh ? `${styleZh}。` : ""}本段时长约${fmtSec(segment.durationSec)}秒。`;
+  const raw = [
+    head,
+    ...(options.headerLines ?? []),
+    QUALITY_LOCK_ZH,
+    ...lines,
+    ...(options.windowLayout === "block" ? [""] : []),
+    POSITIVE_LOCK_ZH,
+    ...(options.footerLines ?? []),
+  ].join("\n");
   const formatted = formatPromptForEngine(raw, engine, { durationSec: segment.durationSec });
   return { prompt: formatted.text, issues: formatted.issues };
 }
@@ -253,8 +304,19 @@ export function compileSegmentPrompt(
   segment: SegmentPlan,
   engine: CompilerEngineId,
   styleZh?: string,
+  options?: SegmentCompileOptions,
 ): string {
-  return compileSegmentPromptResult(segment, engine, styleZh).prompt;
+  return compileSegmentPromptResult(segment, engine, styleZh, options).prompt;
+}
+
+/** 同 compileSegmentPrompt，另返回格式层问题（MV 秒锁适配层用来阻断出站）。 */
+export function compileSegmentPromptDetailed(
+  segment: SegmentPlan,
+  engine: CompilerEngineId,
+  styleZh?: string,
+  options?: SegmentCompileOptions,
+): { prompt: string; issues: FormatIssue[] } {
+  return compileSegmentPromptResult(segment, engine, styleZh, options);
 }
 
 /** TTS 台词表:段内起止秒位(秒锁母轨用) */

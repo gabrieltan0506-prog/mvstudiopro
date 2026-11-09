@@ -23,8 +23,10 @@ export interface RenderWorkflowInput {
   sceneVideos: SceneVideoInput[];
   /** 漫剧合成保留片内对白、音效和环境声；旧独立配音工作流不改变。 */
   preserveSourceAudio?: boolean;
-  /** 仅在明确选择歌曲的 MV 中静音原片。 */
+  /** MV：选定歌曲为主音轨（0 dB），镜头自带声音只作环境层按 sourceAudioGainDb 混入。 */
   musicOnly?: boolean;
+  /** musicOnly 时镜头环境层电平（dB，−40～−12，默认 −20）；不变速。 */
+  sourceAudioGainDb?: number;
   alignedLyrics?: SongAlignedSubtitle;
   musicUrl?: string;
   voiceUrl?: string;

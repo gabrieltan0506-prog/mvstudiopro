@@ -143,6 +143,156 @@ export const MUSIC_MV_SHOT_LABELS = {
   footage: "已有素材切片",
 } as const;
 
+/**
+ * 1109 逐窗节拍：MV 创作顾问按歌曲拍点把每镜切成 2–4 秒窗，每窗写表情/视线与动作、景别与运镜、
+ * 灯光与氛围、情绪与转折、环境/事件音效；演唱镜另标对口型与对应歌词句。秒位为歌曲绝对秒。
+ * 编译器只排版（知识库《ABC带参数成片提示词》A 段），不再从一句分镜机械拆分。
+ */
+export const musicMvShotBeatSchema = z
+  .object({
+    startSec: z.number().finite().min(0),
+    endSec: z.number().finite().positive(),
+    actionZh: text.max(600),
+    cameraZh: text.max(400),
+    lightingZh: text.max(400),
+    moodZh: text.max(300),
+    sfxZh: text.max(300),
+    /** 本窗人物是否对口型演唱（仅 singing 镜可为 true）。 */
+    lipSync: z.boolean().optional(),
+    /** 本窗对应的歌词原句（逐字照抄用户歌词）。 */
+    lyricZh: z.string().max(500).optional(),
+  })
+  .strict();
+/**
+ * 1109 镜头复杂度（顾问逐窗阶段给出）：人数、动作强度、是否有身体接触、机位数、场景数。
+ * 达阈值（≥2 人、有明确动作或接触、≥2 机位或 ≥2 场景）→ 该镜站位参考（@视频：白模站位片或实拍运镜片）必填。
+ */
+export const musicMvShotComplexitySchema = z
+  .object({
+    people: z.number().int().min(0).max(20),
+    action: z.enum(["none", "light", "strong"]),
+    contact: z.boolean(),
+    cameraSetups: z.number().int().min(1).max(20),
+    scenes: z.number().int().min(1).max(20),
+  })
+  .strict();
+export type MusicMvShotComplexity = z.infer<typeof musicMvShotComplexitySchema>;
+export function mvShotNeedsStagingReference(c: MusicMvShotComplexity | undefined): boolean {
+  if (!c) return false;
+  return c.people >= 2 || c.action === "strong" || c.contact || c.cameraSetups >= 2 || c.scenes >= 2;
+}
+export const MV_SHOT_STAGING_REQUIRED_ZH = "该镜需白模站位或实拍运镜参考";
+
+/** 演唱窗起止的来源：confirmed＝用户确认版歌词时间表；unconfirmed＝自动识别待确认版（仅探针可用，正式出片拦截）。 */
+export const MUSIC_MV_LYRIC_TIMING_SOURCES = ["confirmed", "unconfirmed"] as const;
+export const musicMvLyricLineSchema = z
+  .object({
+    text: text.max(300),
+    startSec: z.number().finite().min(0),
+    endSec: z.number().finite().positive(),
+  })
+  .strict();
+export type MusicMvLyricLine = z.infer<typeof musicMvLyricLineSchema>;
+/** 逐句检查：起止有效、在区间内、按时间先后且不重叠。返回中文问题清单。 */
+export function musicMvLyricLineIssues(lines: readonly MusicMvLyricLine[], range: { startSec: number; endSec: number }): string[] {
+  const issues: string[] = [];
+  let prevEnd = range.startSec;
+  lines.forEach((l, i) => {
+    if (!(l.endSec > l.startSec)) issues.push(`第${i + 1}句结束时间须晚于开始时间`);
+    if (l.startSec < range.startSec - 0.05 || l.endSec > range.endSec + 0.05) issues.push(`第${i + 1}句超出 ${range.startSec}–${range.endSec} 秒区间`);
+    if (l.startSec < prevEnd - 0.05) issues.push(`第${i + 1}句与上一句时间重叠或顺序颠倒`);
+    prevEnd = Math.max(prevEnd, l.endSec);
+  });
+  return issues;
+}
+/**
+ * 1109 本段歌词时间表：自动识别（多通道听音，原始/解析 JSON 永久保存）→ 用户逐句改字、改起止、增删 → 确认。
+ * 演唱段的 {} 对白秒锁只读 status=confirmed 的版本；未确认不得生成演唱段。
+ */
+export const musicMvLyricTableSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    audioId: text.max(200),
+    range: z.object({ startSec: z.number().finite().min(0), endSec: z.number().finite().positive() }).strict(),
+    status: z.enum(["pending", "confirmed"]),
+    lines: z.array(musicMvLyricLineSchema).max(300),
+    recognizedBy: z.object({ channel: text.max(40), model: text.max(120) }).strict().optional(),
+    evidencePrefix: z.string().max(400).optional(),
+    editedByUser: z.boolean().optional(),
+    confirmedAt: z.string().max(40).optional(),
+  })
+  .strict()
+  .superRefine((t, ctx) => {
+    for (const message of musicMvLyricLineIssues(t.lines, t.range)) ctx.addIssue({ code: "custom", message, path: ["lines"] });
+  });
+export type MusicMvLyricTable = z.infer<typeof musicMvLyricTableSchema>;
+export type MusicMvShotBeat = z.infer<typeof musicMvShotBeatSchema>;
+export const MUSIC_MV_BEAT_WINDOW_MIN_SEC = 0.5;
+export const MUSIC_MV_BEAT_WINDOW_MAX_SEC = 6;
+/**
+ * 节奏模式：beat＝强节奏，剪点/窗界吸附拍点；phrase＝抒情或节拍不可靠，按乐句与能量峰切，不硬切网格；
+ * free＝无稳定节拍，按能量与静音切。自动判定写入 pacing，用户/顾问可写 pacingOverride 覆盖。
+ */
+export const MUSIC_MV_PACING_MODES = ["beat", "phrase", "free"] as const;
+export type MusicMvPacing = (typeof MUSIC_MV_PACING_MODES)[number];
+export const musicMvAudioSegmentSchema = z
+  .object({
+    startSec: z.number().finite().min(0),
+    endSec: z.number().finite().positive(),
+    /** 0–1：相对全曲最响段的能量。 */
+    energy: z.number().finite().min(0).max(1),
+    /** 0–1：本段拍点拟合度（拍位起音强度相对均值的周期性）。 */
+    beatConfidence: z.number().finite().min(0).max(1),
+    pacing: z.enum(MUSIC_MV_PACING_MODES),
+    pacingOverride: z.enum(MUSIC_MV_PACING_MODES).optional(),
+  })
+  .strict();
+export type MusicMvAudioSegment = z.infer<typeof musicMvAudioSegmentSchema>;
+/**
+ * 歌曲 audiomap（唯一节拍分析产物，服务端起音分析一次产出，下游只读不重测）：
+ * BPM 以创作说明为准，否则自相关估计；含全曲拍点置信度与分段能量/节奏模式。
+ */
+export const musicMvBeatGridSchema = z
+  .object({
+    bpm: z.number().finite().min(40).max(240),
+    beatSec: z.number().finite().positive(),
+    phaseSec: z.number().finite().min(0),
+    source: z.enum(["creative_prompt", "estimated"]),
+    beatConfidence: z.number().finite().min(0).max(1).optional(),
+    segments: z.array(musicMvAudioSegmentSchema).max(200).optional(),
+  })
+  .strict();
+/** 某时刻的生效节奏模式（覆盖优先；无分段的旧 audiomap 按 beat）。 */
+export function musicMvPacingAt(grid: Pick<MusicMvBeatGrid, "segments"> | undefined, sec: number): MusicMvPacing {
+  const seg = grid?.segments?.find(s => sec >= s.startSec - 1e-6 && sec < s.endSec + 1e-6);
+  return seg ? seg.pacingOverride ?? seg.pacing : "beat";
+}
+export type MusicMvBeatGrid = z.infer<typeof musicMvBeatGridSchema>;
+
+/** 逐窗节拍终检：从镜头起点连续无缝覆盖到终点；非演唱镜不得标对口型。返回中文问题清单。 */
+export function musicMvShotBeatIssues(shot: {
+  id: string;
+  startSec: number;
+  endSec: number;
+  kind?: "generated" | "singing" | "footage";
+  beats?: MusicMvShotBeat[];
+}): string[] {
+  const beats = shot.beats;
+  if (!beats?.length) return [];
+  const issues: string[] = [];
+  let cursor = shot.startSec;
+  beats.forEach((w, i) => {
+    if (Math.abs(w.startSec - cursor) > 0.02) issues.push(`镜头 ${shot.id} 第${i + 1}窗起点 ${w.startSec} 与前窗终点 ${cursor} 不连续`);
+    const len = w.endSec - w.startSec;
+    if (len + 1e-9 < MUSIC_MV_BEAT_WINDOW_MIN_SEC || len > MUSIC_MV_BEAT_WINDOW_MAX_SEC + 1e-9)
+      issues.push(`镜头 ${shot.id} 第${i + 1}窗 ${len.toFixed(2)} 秒，须在 ${MUSIC_MV_BEAT_WINDOW_MIN_SEC}–${MUSIC_MV_BEAT_WINDOW_MAX_SEC} 秒`);
+    if (w.lipSync && shot.kind !== "singing") issues.push(`镜头 ${shot.id} 不是对口型镜，第${i + 1}窗不得标对口型`);
+    cursor = w.endSec;
+  });
+  if (Math.abs(cursor - shot.endSec) > 0.02) issues.push(`镜头 ${shot.id} 逐窗终点 ${cursor} 未覆盖到镜头终点 ${shot.endSec}`);
+  return issues;
+}
+
 export const canvasMusicMvShotSchema = z
   .object({
     id: text.max(100),
@@ -155,6 +305,14 @@ export const canvasMusicMvShotSchema = z
     // 缺省保持历史分镜的普通生成行为。
     kind: z.enum(["generated", "singing", "footage"]).optional(),
     sourceClip: musicMvSourceClipSchema.optional(),
+    /** 1109 逐窗节拍（顾问输出）；旧方案无此字段，编译器按整镜一窗降级。 */
+    beats: z.array(musicMvShotBeatSchema).max(12).optional(),
+    /** 1109 尾帧接龙：与上一镜连续（同一动作/空间延续），出片时用上一镜尾帧作本镜起幅参考。 */
+    continuesFromPrevious: z.boolean().optional(),
+    /** 演唱窗起止来源（见 MUSIC_MV_LYRIC_TIMING_SOURCES）。 */
+    lyricTiming: z.enum(MUSIC_MV_LYRIC_TIMING_SOURCES).optional(),
+    /** 镜头复杂度（达阈值则站位参考必填）。 */
+    complexity: musicMvShotComplexitySchema.optional(),
   })
   .strict();
 export const canvasMusicMvPlanSchema = z
@@ -164,6 +322,8 @@ export const canvasMusicMvPlanSchema = z
     audioDurationSec: z.number().finite().positive().max(3600),
     // 分镜以歌词与创意说明为依据，不伪装已听取音乐或已测定节拍。
     analysisBasis: z.enum(["lyrics_and_user_description", "native_audio"]),
+    /** 1109 拍点网格（剪点与窗界吸附依据）；旧方案无此字段。 */
+    beatGrid: musicMvBeatGridSchema.optional(),
     shots: z.array(canvasMusicMvShotSchema).min(1),
   })
   .strict()
@@ -212,6 +372,8 @@ export const canvasMusicMvPlanSchema = z
           path: ["shots", index],
           message: "对口型镜头至少4秒且须绑定人物参考图",
         });
+      for (const message of musicMvShotBeatIssues(shot))
+        ctx.addIssue({ code: "custom", message, path: ["shots", index, "beats"] });
       if (duration + 1e-9 < 0.5 || duration > 15 + 1e-9)
         ctx.addIssue({
           code: "custom",
@@ -330,6 +492,11 @@ export function parseMusicMvAdvisorProposal(
         !target.lyrics.includes(shot.lyricQuote)
       )
         throw new Error("方案改写了提供的歌词");
+      if (
+        target.lyrics &&
+        shot.beats?.some(w => w.lyricZh?.trim() && !target.lyrics.includes(w.lyricZh.trim()))
+      )
+        throw new Error("逐窗节拍改写了提供的歌词");
       if (shot.sourceClip) {
         const source = target.footage.find(
           f => f.assetId === shot.sourceClip!.assetId
@@ -480,6 +647,19 @@ export const canvasMusicMvShotBindingSchema = z
       .optional(),
     /** 1109 参考生视频：主锚图 + 场景图 + 动作参考片 + 歌曲切片；无则不得提交生成。 */
     references: mvShotReferencesSchema.optional(),
+    /** 1109 秒锁编译真源：分镜原句、逐窗节拍与拍点网格（出片前按所选模型编译）。 */
+    visualPrompt: z.string().max(4000).optional(),
+    cameraPrompt: z.string().max(1000).optional(),
+    lyricQuote: z.string().max(2000).optional(),
+    beats: z.array(musicMvShotBeatSchema).max(12).optional(),
+    beatGrid: musicMvBeatGridSchema.optional(),
+    /** 尾帧接龙：本镜接上一镜；chainFromUrl 为上一镜成片（出片前抽尾帧作 @图片2 起幅）。 */
+    continuesFromPrevious: z.boolean().optional(),
+    chainFromUrl: z.string().url().optional(),
+    lyricTiming: z.enum(MUSIC_MV_LYRIC_TIMING_SOURCES).optional(),
+    /** 演唱段：用户确认版歌词时间表里落在本镜的唱句（歌曲绝对秒）。 */
+    lyricLines: z.array(musicMvLyricLineSchema).max(60).optional(),
+    complexity: musicMvShotComplexitySchema.optional(),
   })
   .strict();
 export type CanvasMusicMvShotBinding = z.infer<
@@ -490,6 +670,8 @@ export const canvasMusicMvStateSchema = z
   .object({
     deliveryMode: z.enum(["song", "highlight"]).optional(),
     highlight: musicMvHighlightSchema.optional(),
+    /** 1109 本段歌词时间表（高光区间）；演唱段只读 confirmed 版。 */
+    lyricTable: musicMvLyricTableSchema.optional(),
     status: z.enum([
       "idle",
       "music_running",

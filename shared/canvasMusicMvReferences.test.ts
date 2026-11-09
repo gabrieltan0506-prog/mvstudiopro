@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  isMvShotEngineSupported,
+  mvShotReferenceLimits,
   applyAnchorImageToAll,
   assembleMvShotReferences,
   countMvShotReferences,
@@ -42,6 +44,8 @@ describe("MV 镜头参考组装", () => {
     expect(out.promptAppendix).toContain("@图片2、@图片3定义本镜的场景");
     expect(out.promptAppendix).toContain("@视频1是运镜参考片");
     expect(out.promptAppendix).toContain("@音频1是本镜 140–149 秒的歌曲切片");
+    expect(out.promptAppendix).toContain("声音只生成本镜画面里的环境音与特效音");
+    expect(out.promptAppendix).toContain("禁止生成任何音乐、配乐、人声、歌声、哼唱或旋律");
     expect(out.hasRealPerson).toBe(false);
   });
 
@@ -105,5 +109,22 @@ describe("MV 镜头参考组装", () => {
     expect(out.a.anchorImage?.assetId).toBe(sf(9));
     expect(out.a.sceneImages).toHaveLength(2);
     expect(out.b).toEqual({ anchorImage: img(9), sceneImages: [], motionVideos: [] });
+  });
+
+  it("1109 模型可选：单类上限读漫剧引擎表；HappyHorse 不收参考视频/音频，不入 MV", () => {
+    expect(mvShotReferenceLimits("wan-3.0")).toEqual({ image: 10, video: 5, audio: 5 });
+    expect(mvShotReferenceLimits("minimax-hailuo-3")).toEqual({ image: 9, video: 3, audio: 3 });
+    expect(mvShotReferenceLimits("2.5")).toEqual({ image: 30, video: 10, audio: 10 });
+    expect(isMvShotEngineSupported("seedance-2.0-fast")).toBe(true);
+    expect(isMvShotEngineSupported("happyhorse-1.1")).toBe(false);
+    expect(mvShotReferenceGaps(full, "happyhorse-1.1").blocking[0]!.messageZh).toContain("不支持");
+  });
+
+  it("1109 站位参考必填：复杂镜头缺 @视频 即阻断", () => {
+    const noMotion = { ...full, motionVideos: [] };
+    expect(mvShotReferenceGaps(noMotion).blocking).toEqual([]);
+    expect(mvShotReferenceGaps(noMotion, "2.0-mini", { requiresStaging: true }).blocking.map(g => g.messageZh)).toContain("该镜需白模站位或实拍运镜参考");
+    expect(() => assembleMvShotReferences(noMotion, shot, "2.0-mini", { requiresStaging: true })).toThrow(/该镜需白模站位或实拍运镜参考/);
+    expect(() => assembleMvShotReferences(full, shot, "2.0-mini", { requiresStaging: true })).not.toThrow();
   });
 });

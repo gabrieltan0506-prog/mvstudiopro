@@ -1,3 +1,5 @@
+import { fitMusicMvClips, type MusicMvClipFitReport } from "./musicMvClipFit";
+import type { MvClipFitInput } from "../../shared/canvasMusicMvClipFit";
 import { cropSongAlignedSubtitle, validateSongAlignedSubtitle, type SongAlignedSubtitle } from "../../shared/songAlignedSubtitle";
 import { signGsUriV4ReadUrl } from "./gcs";
 import { resolveManhuaAssembleStockClips, type ManhuaStockGuardDeps } from "./manhuaStockFootageGuard";
@@ -49,6 +51,10 @@ export type ManhuaAssembleFinalInput = {
   musicProvider?: string;
   musicVolume?: number;
   musicOnly?: boolean;
+  /** MV 镜头环境层电平（dB），仅 musicOnly 生效，默认 −20。 */
+  sourceAudioGainDb?: number;
+  /** 1109 MV 逐段实测适配（与合成镜头同序）：实测时长、演唱段互相关落位；不合格段列出重做。 */
+  mvClipFit?: MvClipFitInput[];
   musicStartSec?: number;
   musicEndSec?: number;
   alignedLyrics?: SongAlignedSubtitle;
@@ -68,11 +74,13 @@ export type ManhuaAssembleFinalResult = {
   sceneCount: number;
   episodeIndexes: number[];
   skippedEpisodes: Array<{ episodeIndex: number; reason: string; title?: string }>;
+  /** MV 逐段实测与裁切回执（调用方永久保存）。 */
+  mvClipFit?: MusicMvClipFitReport;
 };
 
 export async function runManhuaAssembleFinal(
   raw: ManhuaAssembleFinalInput,
-  opts: { userId?: number; stockDeps?: ManhuaStockGuardDeps } = {},
+  opts: { userId?: number; stockDeps?: ManhuaStockGuardDeps; fitClips?: typeof fitMusicMvClips } = {},
 ): Promise<ManhuaAssembleFinalResult> {
   let sceneVideos: ManhuaAssembleSceneVideo[] = [];
   let skippedEpisodes: ManhuaAssembleFinalResult["skippedEpisodes"] = [];
@@ -211,6 +219,20 @@ export async function runManhuaAssembleFinal(
     sceneVideos = sceneVideos.map(scene => ({ ...scene, url: scene.url.startsWith("gs://") ? signGsUriV4ReadUrl(scene.url, 3600) : scene.url }));
   }
   if (raw.musicOnly === true && !musicUrl) throw new Error("MV 合成缺少选定歌曲，未开始渲染");
+  let mvClipFit: MusicMvClipFitReport | undefined;
+  if (raw.musicOnly === true && Array.isArray(raw.mvClipFit) && raw.mvClipFit.length) {
+    if (raw.mvClipFit.length !== sceneVideos.length) throw new Error("镜头实测清单与合成镜头数不一致，未合成");
+    mvClipFit = await (opts.fitClips ?? fitMusicMvClips)(sceneVideos.map(sv => sv.url), raw.mvClipFit, musicUrl);
+    if (!mvClipFit.ok) {
+      const bad = mvClipFit.results.filter(r => !r.ok);
+      const error = new Error(`以下镜头实测不合格，需单独重做：${bad.map(r => `${r.shotId}（${r.reasonZh}）`).join("；")}`) as Error & { code: string; mvClipFit: MusicMvClipFitReport };
+      error.code = "music_mv_clip_unfit";
+      error.mvClipFit = mvClipFit;
+      throw error;
+    }
+    // 只裁不变速：按实测落位后的裁切点覆盖
+    sceneVideos = sceneVideos.map((sv, i) => ({ ...sv, trimInSec: mvClipFit!.results[i]!.trimInSec, trimOutSec: mvClipFit!.results[i]!.trimOutSec }));
+  }
   const musicPrompt = "";
   const musicProviderUsed = "";
 
@@ -231,6 +253,7 @@ export async function runManhuaAssembleFinal(
     onSubtitleTimeline: timeline => { subtitleTimeline = timeline; },
     preserveSourceAudio: true,
     musicOnly: raw.musicOnly === true,
+    ...(raw.musicOnly === true && Number.isFinite(Number(raw.sourceAudioGainDb)) ? { sourceAudioGainDb: Number(raw.sourceAudioGainDb) } : {}),
     musicStartSec: raw.musicStartSec,
     musicEndSec: raw.musicEndSec,
     alignedLyrics,
@@ -263,5 +286,6 @@ export async function runManhuaAssembleFinal(
     sceneCount: sceneVideos.length,
     episodeIndexes: sceneVideos.map((sv) => sv.sceneIndex),
     skippedEpisodes,
+    ...(mvClipFit ? { mvClipFit } : {}),
   };
 }

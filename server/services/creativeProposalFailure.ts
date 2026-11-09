@@ -5,7 +5,7 @@ import { describeValidationErrorZh } from "../../shared/creativeProposalRepair";
  * 不再被泛化成「本次问答未完成」。只含阶段与校验原因，不含提示词、素材或模型正文。
  * `compose` / `refine`：三跳 fallback（GLM@EvoLink → GLM@OpenRouter → DeepSeek）全部用尽，reasonZh 含每跳原因。
  */
-export type CreativeProposalStage = "glm-draft" | "repair-1-glm-draft" | "astra" | "repair-1-astra" | "compose" | "refine";
+export type CreativeProposalStage = "glm-draft" | "repair-1-glm-draft" | "astra" | "repair-1-astra" | "compose" | "refine" | "beats";
 
 export class CreativeProposalError extends Error {
   constructor(
@@ -20,6 +20,8 @@ export class CreativeProposalError extends Error {
         ? `创作方案三条通道均未通过校验：${reasonZh}`
         : stage === "refine"
           ? `联合创作三条通道均未通过校验：${reasonZh}`
+          : stage === "beats"
+            ? `逐窗节拍三条通道均未通过校验：${reasonZh}`
           : `${stage.startsWith("repair") ? "修复重试后方案仍未通过校验" : stage === "astra" ? "联合创作结果未通过校验" : "创作方案未通过校验"}：${reasonZh}`,
     );
     this.name = "CreativeProposalError";

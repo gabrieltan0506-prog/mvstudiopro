@@ -1,3 +1,5 @@
+import { canvasMusicCandidateSchema } from "../../shared/canvasMusicMedia";
+import { musicMvHighlightSchema } from "../../shared/musicMvHighlight";
 import {readSongCraftCloudLibrary} from "../services/songCraftCloudLibrary";
 import {queueSongCover} from "../services/songCover";
 import { listCreativeLibraryEntries, saveCreativeLibraryEntry } from "../services/creativeGenerationLibrary";
@@ -514,6 +516,40 @@ export const canvasMusicMvRouter = router({
         .strict()
     )
     .mutation(({ ctx, input }) => prepareMvShotSongSlice(ctx.user.id, input, { singingOnly: false })),
+  /** 1109 本段歌词自动识别（Gemini 两跳听音，待确认版）；用户逐句改后在前端确认，演唱段只读确认版。 */
+  recognizeLyrics: protectedProcedure
+    .input(
+      z
+        .object({
+          requestId: z.string().uuid(),
+          audio: canvasMusicCandidateSchema,
+          musicJobId: z.string().trim().min(1).max(200).optional(),
+          highlight: musicMvHighlightSchema,
+          lyricsHint: z.string().max(30000).optional(),
+        })
+        .strict()
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (input.highlight.endSec > input.audio.durationSec + 0.05)
+        throw new TRPCError({ code: "BAD_REQUEST", message: "高光区间超出所选歌曲" });
+      let source: string;
+      try {
+        source = await resolveCanvasMusicMvAudio(ctx.user.id, input.audio, input.musicJobId);
+      } catch {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "歌曲来源不属于本人或尚未登记，请重新选择歌曲" });
+      }
+      const { recognizeMusicMvLyricTable } = await import("../services/musicMvLyricTable");
+      try {
+        return await recognizeMusicMvLyricTable(ctx.user.id, {
+          requestId: input.requestId,
+          audio: { id: input.audio.id, url: input.audio.url, ...(source.startsWith("gs://") ? { gcsUri: source } : {}) },
+          range: input.highlight,
+          lyricsHint: input.lyricsHint,
+        });
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_GATEWAY", message: `本段歌词识别失败：${error instanceof Error ? error.message.slice(0, 400) : "未知原因"}` });
+      }
+    }),
   draftPlan: protectedProcedure
     .input(canvasMusicMvDraftInputSchema)
     .mutation(({ ctx, input }) =>

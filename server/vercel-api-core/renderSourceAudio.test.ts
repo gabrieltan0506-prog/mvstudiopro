@@ -407,6 +407,48 @@ describe.skipIf(!available)(
       );
     }, 30_000);
 
+    it("MV（musicOnly）：原歌区间为 0 dB 主轨、时长与切片一致，镜头环境声按 −20 dB 作背景层；原歌不足区间拒交付", async () => {
+      const song = path.join(fixtureDir, "song-4s.wav");
+      await exec("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=1200:sample_rate=48000:duration=4", song]);
+      media.sources.set("https://test.invalid/song", song);
+      const result = await renderSourceAudioFinal(
+        {
+          sceneVideos: [{ url: "https://test.invalid/first", duration: 2 }],
+          musicUrl: "https://test.invalid/song",
+          musicOnly: true,
+          musicStartSec: 1,
+          musicEndSec: 3,
+          musicVolume: 1,
+        },
+        { width: 160, height: 90 },
+        await workDir()
+      );
+      const durations = await inspect(result);
+      expect(Math.abs(durations.audio - 2)).toBeLessThan(0.1);
+      for (const at of [0.3, 1.4]) {
+        const window = await audioWindow(result, at);
+        expect(window.magnitude(1200)).toBeGreaterThan(0.03);
+        // 镜头自带声音只作背景层：仍可测到，但比原歌主轨低一个量级以上（−20 dB）
+        const ambient = Math.max(window.magnitude(440), window.magnitude(660));
+        expect(ambient).toBeGreaterThan(0.001);
+        expect(ambient).toBeLessThan(window.magnitude(1200) / 5);
+      }
+      await expect(
+        renderSourceAudioFinal(
+          {
+            sceneVideos: [{ url: "https://test.invalid/first", duration: 2 }],
+            musicUrl: "https://test.invalid/song",
+            musicOnly: true,
+            musicStartSec: 3,
+            musicEndSec: 5,
+            musicVolume: 1,
+          },
+          { width: 160, height: 90 },
+          await workDir()
+        )
+      ).rejects.toThrow("原歌曲短于高光区间");
+    }, 30_000);
+
     it("同源两镜仅下载一次，全部媒体下载携带取消时限", async () => {
       media.downloads.length = 0;
       const result = await renderSourceAudioFinal(

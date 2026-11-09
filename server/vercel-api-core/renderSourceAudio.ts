@@ -66,6 +66,33 @@ async function mediaTool(command: "ffmpeg" | "ffprobe", args: string[]) {
   });
 }
 
+/** MV 镜头环境层默认电平与可调范围（dB）。 */
+export const MV_SOURCE_AUDIO_GAIN_DB_DEFAULT = -20;
+export function mvSourceAudioGainDb(value: unknown): number {
+  const n = Number(value);
+  if (value === undefined || value === null || !Number.isFinite(n)) return MV_SOURCE_AUDIO_GAIN_DB_DEFAULT;
+  return Math.min(-12, Math.max(-40, n));
+}
+
+/** 音轨实际时长：stream=首条音频流时长；format=容器时长（纯音频文件）。 */
+async function inspectAudioDuration(filePath: string, by: "stream" | "format") {
+  const { stdout } = await mediaTool("ffprobe", [
+    "-v",
+    "error",
+    "-select_streams",
+    "a:0",
+    "-show_entries",
+    "stream=duration:format=duration",
+    "-of",
+    "json",
+    filePath,
+  ]);
+  const parsed = JSON.parse(stdout) as SourceProbeResult;
+  const value = Number(by === "stream" ? parsed.streams?.[0]?.duration : parsed.format?.duration);
+  if (!Number.isFinite(value) || value <= 0) throw new Error("音轨时长不可验证，未交付");
+  return value;
+}
+
 async function downloadSourceMedia(url: string, target: string) {
   return downloadFileToPath(url, target, AbortSignal.timeout(120_000));
 }
@@ -307,8 +334,16 @@ export async function renderSourceAudioFinal(
     musicFilters.push(
       `afade=t=out:st=${Math.max(0, timeline - fadeOut)}:d=${fadeOut}`
     );
+  if (input.musicOnly === true && hasMusicRange) {
+    // 原歌区间必须真实存在，不能靠补静音冒充等长音轨。
+    const songDuration = await inspectAudioDuration(music, "format");
+    if (!(songDuration + 1 / 30 + 0.001 >= end))
+      throw new Error("原歌曲短于高光区间，未交付");
+  }
   // duration=first 以原片为准；短配乐补静音，不得通过 -shortest 截掉视频。
-  const filter = `[0:a]volume=${input.musicOnly === true ? 0 : 1}[source];[1:a]${musicFilters.join(",")},apad[m];[source][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=0[aout]`;
+  // MV（musicOnly）：原歌曲区间为主音轨（0 dB），镜头自带环境音/特效音按 sourceAudioGainDb 作背景层，不变速。
+  const sourceGain = input.musicOnly === true ? `${mvSourceAudioGainDb(input.sourceAudioGainDb)}dB` : "1";
+  const filter = `[0:a]volume=${sourceGain}[source];[1:a]${musicFilters.join(",")},apad[m];[source][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=0[aout]`;
   const final = path.join(tmpDir, "source-audio-final.mp4");
   await mediaTool("ffmpeg", [
     "-y",
@@ -332,5 +367,12 @@ export async function renderSourceAudioFinal(
     "+faststart",
     final,
   ]);
+  if (input.musicOnly === true) {
+    // 断言：成片音轨时长 = 画面时长（高光时 = 原歌切片 end-start），否则不交付。
+    const audioDuration = await inspectAudioDuration(final, "stream");
+    const expected = hasMusicRange ? end - start : timeline;
+    if (Math.abs(audioDuration - expected) > 0.1)
+      throw new Error(`成片音轨时长 ${audioDuration.toFixed(3)}s 与原歌切片 ${expected.toFixed(3)}s 不一致，未交付`);
+  }
   return finish(final);
 }

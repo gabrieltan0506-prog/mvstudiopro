@@ -23,7 +23,7 @@
 | `漫剧工厂/0913-子任务-角色模型表演.md` | 官方 Mini r2v 页：`image_urls` 0–9、`video_urls` 0–3，视频角色含 motion reference 与 camera movement，`@image1/@video1` 从各自数组 1 起编号；A/B 探针从未给外观图 → 不能说明「加图必成功」；文档无「仅迁移动作不继承形态」字段 | §3 上限 9/3/3；§3 必须配外观锚图；§9 风险 |
 | `漫剧工厂/0911-动作白模骨骼关节升级与验收.md` | 单次 Mini r2v 已跑通：5.04 s / 864×496 / USD 0.113；整体动作跟随但姿态时序不逐帧一致；原始+解析 JSON 各 16 份永久保存 | §7 探针预算与判据；§5 证据 |
 | `漫剧工厂/0917-绑骨的好处与用法.md` | 白模视频当 @视频参考（锁站位+景别+运镜+动作），静帧锁脸服场，母轨锁音——三件套一起进 Seedance；「采用为本段参考」路径 | §3 @video 槽来源优先级；§4 白模自动带入 |
-| `漫剧工厂/1007-特效与创作顾问交接.md`（1741 行附近） | 用户拍板：后台依内容自动选镜头，免费 Seedance 2.0 mini / 付费 2.5，每次最多 5 秒，支持图生/参考生，前台不要求选模型 | §6 通道档位；§3 每镜 5 s 切片 |
+| `漫剧工厂/1007-特效与创作顾问交接.md`（1741 行附近） | 旧口径「每次最多 5 秒」**已作废**（用户 1109：镜长跟分镜走，不锁 5/15 秒） | §3 时长按所选模型引擎表 |
 | `素材档案/八月素材档案.md`「EvoLink Seedance 调用规范」→ `通道路由/0921-Seedance2.5-EvoLink参考生成核对.md`、`通道路由/EvoLink.md` | 2.5 r2v 图 ≤30/视频 ≤10（合计 ≤30 s）/音频 ≤10（合计 ≤30 s）；`quality` 字段非 `resolution`；产物链接 24 h 需镜像 GCS；纯参考生成用描述式动作指令避免触发 edit/extend | §3 正式档上限；§4 不改既有镜像链 |
 | `工作规矩/LLM调用三层fallback-1109.md` | 任何 LLM 调用三跳 GLM@EvoLink→GLM@OpenRouter→DeepSeek v4.1 Flash；写坏也算失败；每跳回包永久保存 | §4 关键词推荐 LLM 走既有 `stockFootage.suggestKeywords`（已三跳）；视频通道按 §6 fallback |
 | `工作规矩/工作机探针必须落GCS检查点-1109.md` | 工作机无持久卷；每步落 `gs://mv-studio-pro-vertex-video-temp/probes/<类别>/<runId>/checkpoints/`；长跑命令必须 `FLY_PROCESS_GROUP=rig tsx scripts/with-worker-probe-lease.mts` 包裹；禁 sleep 保活；不 stop 机器 | §7 |
@@ -44,7 +44,7 @@
 
 ## 3. 每镜参考组装（「喂满」，总数 ≤9）
 
-Mini r2v 上限 图 9 / 视频 3 / 音频 3（官方页，0913 核对；`evolinkSeedanceVideo.ts` 与 `byteplusSeedanceVideo.ts` 已按 [9,3,3] 校验）。正式档 2.5 上限 30/10/10 但**同一张组装表照用**，不为 2.5 另造。
+单类上限按所选成片模型读漫剧引擎表 `COMPILER_ENGINE_LIMITS`（Seedance 2.0 系 9/3/3、2.5 为 30/10/10、H3 9/3/3、Wan 3.0 10/5/5；HappyHorse 仅首帧一图不入 MV）；总数按用户拍板 ≤9。不锁 Mini。
 
 | 槽 | 数量 | 来源 | 职责（写进 prompt） |
 |---|---|---|---|
@@ -54,7 +54,7 @@ Mini r2v 上限 图 9 / 视频 3 / 音频 3（官方页，0913 核对；`evolink
 | @audio1 本镜歌曲切片 | 1 | 复用 `prepareSinging` 的 `audio_trim`（从所选歌曲/高光区间按 `shot.startSec–endSec` 裁出，≤ 本镜时长）；对口型镜头已有，其余镜头新增同样裁法 | 节奏/情绪卡点；对口型镜头额外写口型同步 |
 
 - 计数规则：`1 + 补充图(2–4) + 视频(1–2) + 音频(1) ≤ 9`，各类 ≤ 9/3/3；超出在 UI 立即拒绝，不裁剪后放行（沿用 0908「编号必须对应完整数组」）。
-- 每镜时长：沿用 `目标时长：max(5, ceil(end-start))`，Mini 4–15 s，用户拍板「每次最多 5 秒」→ 高光模式镜头切到 ≤5 s 由分镜保证，本次不改分镜。
+- 每镜时长：请求时长 = 分镜时长 + 1 秒余量向上取整，按所选模型最短/最长秒数钳制（`mvShotGenerateDurationSec`，复用 `COMPILER_ENGINE_LIMITS`；H3 取 5/10/15 档）；**不锁 5 秒或 15 秒**。出片后合成前 ffprobe 实测、只裁不变速（`fitMusicMvClips`），短缺的段单独重做。
 - prompt 职责声明追加在既有镜头 prompt 之后，**不改既有提示词编译规则**，只加一段固定格式（与 0908 v5 同语法）：
 
 ```
@@ -90,7 +90,7 @@ Mini r2v 上限 图 9 / 视频 3 / 音频 3（官方页，0913 核对；`evolink
    - 顶部「全片主锚图」：打开 `StockFootageDrawer purpose="mvShot" usage="reference" kind=photo`；按钮「一键套到全部镜头」。
    - 每镜一行：已选 `图 n / 片 n / 歌 1`、缺失提示（无锚/补充图<2/无动作参考）、「找场景图」「找动作参考片」「用白模」「裁歌曲切片」。
    - 关键词预填：`stockFootage.suggestKeywords({text: visualPrompt+cameraPrompt+cinema 摘要, purpose:"mvShot"})`，可编辑。
-   - 白模：若 `manhuaPrevis.list({scopeId: block.id, clipId: shot.id})` 有 succeeded 产物，自动勾入 @video1（adminProcedure 限制保留，非管理员不显示该按钮）。
+   - 白模：`manhuaPrevis` 工作台已开放普通用户（每账号在跑上限），镜头块已采用/最近一次白模产物可一键作 @视频1；复杂镜头（≥2 人/强动作/接触/≥2 机位或场景）站位参考必填，缺了整批拒发。
    - 文案无供应商名；Pexels 署名按 `stockAttributionText` 显示（许可要求）。
 6. `render()`（生成缺失镜头）：提交前逐镜跑 `assembleMvShotReferences`，任一镜不达标即整批不发、列出缺哪镜缺什么。
 7. `canvasRunBlock.ts`：`musicMvShot` 分支现签 `references` 全部 gcsUri；**mini 也传 `workMode`**（`seedanceOpts.workMode = block.musicMvShot ? "reference_to_video" : (useSeedance25 ? workMode : undefined)`）；`segmentPrevisUrl` 对 `musicMvShot` 放开（原仅 isClip）。
@@ -110,7 +110,7 @@ Mini r2v 上限 图 9 / 视频 3 / 音频 3（官方页，0913 核对；`evolink
 - 判定：参考里有 Pexels 实拍人物（抽屉资产 `kind=video/photo` 且 Pexels 来源）→ 视为「有真人素材」→ 直接 EvoLink（`hasPhotorealReferenceUrl` 扩展：GCS 路径前缀 `stock-footage/` 或 mvShot 标记 `hasRealPerson=true` 由用户勾选「含真人」）。
 - 纯 CG/景物 → BytePlus（mini）→ 被「真人脸/PrivacyInformation」拒 → EvoLink 接手（`submitSeedance25Byteplus` 既有）。
 - 超时/断线：沿 `canvasVideoTask` 既有 `timed_out_pending_reconcile` 对账，不自动重发；提交体一字不改才可重试（工作规矩 -1 条）。
-- 探针档：Seedance 2.0 mini 480p 5 s（`SEEDANCE_PROBE_DEFAULT_*`）；正式档沿用 MV 块 `videoModel` 选择（mini / 2.5）。
+- 探针档：Seedance 2.0 mini 480p（只是探针便宜档）；正式档由 MV 工作区「镜头成片模型」下拉选择（漫剧同一模型表 + 会员闸门 `filterCanvasVideoModelOptions`，再筛能收参考图+歌曲切片的引擎）。
 
 ## 7. 探针（施工后、合并前）
 - 机器：工作机 7812595b294778，隔离目录 `/app/isolated/mv-r2v-<runId>`；命令全部 `FLY_PROCESS_GROUP=rig tsx scripts/with-worker-probe-lease.mts node …`；禁 sleep；不 stop 机器；每步落 `gs://mv-studio-pro-vertex-video-temp/probes/mv-shot-r2v/<runId>/checkpoints/`。
@@ -127,4 +127,13 @@ Mini r2v 上限 图 9 / 视频 3 / 音频 3（官方页，0913 核对；`evolink
 - Mini 对「白模/实拍参考片只取动作不取外观」没有官方保证（0913 结论），靠 prompt 职责声明 + 主锚图压制；若成片带入 Pexels 人物外观，下一步是换白模或 2.5，不是改提示词编译器。
 - Pexels 实拍人物进参考 → BytePlus 必拒 → 全走 EvoLink，成本比便宜通道高（channels.md +10%~30%），设计已直接路由避免扣费后退回。
 - 白模路由是 adminProcedure：普通用户只有 Pexels 片作运镜参考，文案不提白模。
-- 高光模式 5 镜各 9 s 超「每次最多 5 秒」拍板：本次不改分镜时长，是否切 5 s 请用户在摘要里拍板。
+- 旧「每镜 ≤5 秒」拍板已撤销：镜长跟分镜走，请求时长按所选模型上限（见 §3）。
+
+
+## 11. 1109 下午追加（以本节为准）
+
+- **逐窗节拍**由 MV 创作顾问第三阶段输出（同一三跳链 `runCreativeHopChain`，分块 ≤6 镜）：每镜按 audiomap 切 2–4 秒窗，每窗 表情/视线与动作、景别与运镜、灯光与氛围、情绪与转折、<环境/事件音效>；另给 `continuesFromPrevious`（尾帧接龙）与 `complexity`（站位参考阈值）。编译器 `compileMvShotTimedPrompt` 只按知识库 A 段版式排版（复用漫剧 `compileSegmentPromptDetailed` 块状版式），不再按标点拆句；旧方案无逐窗字段 → 整镜一窗降级并标注（演唱段不降级，直接拒发）。
+- **audiomap**：`computeSongBeatGrid` 一次产出（BPM 以创作说明为准否则自相关估计、相位、全曲与分段拍点置信度、分段能量、节奏模式 beat/phrase/free + `pacingOverride`），写进 `plan.beatGrid`；下游只读不重测。只有 beat 段的非演唱剪点/窗界吸附拍点。
+- **演唱段**：歌词按「对白」处理。高光区间旁「本段歌词」栏：Gemini 听音（Vertex → EvoLink 两跳，OpenRouter 不可用）出待确认版 → 用户逐句改字/改起止/增删 → 确认；演唱镜的唱句窗只读确认版（`singingWindowsFromLyricLines`），未确认不得生成演唱段。合成时演唱镜按原歌绝对时间帧精确落位，出片后用生成片自带音轨与原歌互相关求偏移，漂移 >2 帧或不够唱句尾 → 该段重做。
+- **主锚图**：按主角描述生成角色定妆帧（漫剧同一生图链 `canvas_gpt_image2`，Sunburst，资产线），Pexels 只提供场景/光线/运镜参考。
+- **声音**：成片 = 原歌整段 0 dB 一次贴上 + 镜头环境/事件音效 −20 dB 背景层（−40～−12 可调）；演唱段的模型音轨按原唱复现，只用于落位核验与环境层。

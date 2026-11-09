@@ -5,6 +5,7 @@
 import type { SongAlignedSubtitle } from "./songAlignedSubtitle";
 import type { ManhuaAssembleClipInput } from "./manhuaFinalAssemble";
 import type { ManhuaAssembleSegmentRef } from "./manhuaAssembleCompleteness";
+import type { MvClipFitInput } from "./canvasMusicMvClipFit";
 
 /** 新前台不得向尚未更新的后端提交，防旧入口继续隐式生成配乐。 */
 export function hasManhuaAssembleCapabilities(raw: unknown): boolean {
@@ -25,8 +26,12 @@ export type ManhuaAssembleJobParams = {
   transition?: string;
   resolution?: string;
   musicVolume?: number;
-  /** MV 保留选定歌曲，移除生成片段原声。 */
+  /** MV：选定歌曲为主音轨，生成片段声音只作环境层（见 sourceAudioGainDb）。 */
   musicOnly?: boolean;
+  /** MV 镜头环境层电平（dB，−40～−12），缺省 −20。 */
+  sourceAudioGainDb?: number;
+  /** 1109 MV 逐段实测适配（与 clips 同序）：worker 合成前 ffprobe 实测、演唱段互相关落位。 */
+  mvClipFit?: MvClipFitInput[];
   musicStartSec?: number;
   musicEndSec?: number;
   alignedLyrics?: SongAlignedSubtitle;

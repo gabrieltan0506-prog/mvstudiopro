@@ -485,3 +485,41 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
     expect(() => parseMusicMvAdvisorProposal(p, target)).toThrow();
   });
 });
+
+describe("1109 逐窗节拍阶段（audiomap + 三跳链）", () => {
+  it("有拍点网格时：主推荐方案的生成/演唱镜带逐窗节拍、复杂度与 audiomap；素材段不出窗；证据落盘", async () => {
+    const { d, records, mocks } = fixture();
+    const grid = { bpm: 120, beatSec: 0.5, phaseSec: 0, source: "creative_prompt" as const, beatConfidence: 0.7, segments: [{ startSec: 0, endSec: 12, energy: 1, beatConfidence: 0.7, pacing: "beat" as const }], strongBeatsSec: [0, 2, 4] };
+    (d as any).beatGrid = vi.fn(async () => grid);
+    mocks.compose.mockImplementationOnce(async (_i: string, _input: unknown, save: (n: string, v: unknown) => Promise<unknown>, hop: CreativeLlmHop) => {
+      await save("raw", { model: hop.modelName });
+      return { text: JSON.stringify(proposal()), model: hop.modelName };
+    });
+    mocks.compose.mockImplementationOnce(async (instructions: string, input: any, save: (n: string, v: unknown) => Promise<unknown>, hop: CreativeLlmHop) => {
+      expect(instructions).toContain("逐窗节拍");
+      expect(input.shots.map((s: any) => s.id)).toEqual(["sing"]);
+      expect(input.beatGrid.segments[0].pacing).toBe("beat");
+      await save("raw", { model: hop.modelName });
+      return { text: JSON.stringify({ shots: [{ id: "sing", continuesFromPrevious: false, complexity: { people: 1, action: "light", contact: false, cameraSetups: 1, scenes: 1 },
+        beats: [
+          { startSec: 0, endSec: 3, actionZh: "主唱抬眼开口", cameraZh: "近景缓推", lightingZh: "暖侧光", moodZh: "克制", sfxZh: "室内底噪", lipSync: true, lyricZh: "归来" },
+          { startSec: 3, endSec: 6, actionZh: "主唱闭眼换气", cameraZh: "停稳", lightingZh: "暖光收", moodZh: "释然", sfxZh: "衣料轻响", lipSync: false },
+        ] }] }), model: hop.modelName };
+    });
+    const answer = parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", d), true);
+    const accepted = parseMusicMvAdvisorProposal(answer.answer, target);
+    const main = accepted.concepts[0]!.plan;
+    expect(main.beatGrid).toMatchObject({ bpm: 120, beatConfidence: 0.7 });
+    expect((main.beatGrid as any).strongBeatsSec).toBeUndefined();
+    expect(main.shots[0]!.beats?.map(b => [b.startSec, b.endSec, b.lipSync])).toEqual([[0, 3, true], [3, 6, false]]);
+    expect(main.shots[0]!.complexity?.people).toBe(1);
+    expect(main.shots[1]!.beats).toBeUndefined();
+    expect(accepted.concepts[1]!.plan.shots[0]!.beats).toBeUndefined();
+    const names = Array.from(records.keys()).map(k => k.split("/").at(-1));
+    expect(names).toContain("beat-grid.json");
+    expect(names).toContain("beats-1-hop-used.json");
+    expect(names).toContain("beats-summary.json");
+    expect((records.get(`canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/accepted.json`) as any).beatsReport.failedShotIds).toEqual([]);
+  });
+});
+
