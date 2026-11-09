@@ -34,19 +34,21 @@ export function CanvasMvLyricTableEditor({ table, range, disabled, onRecognize, 
     setError("");
     onChange({ ...table, lines, status: "pending", editedByUser: true, confirmedAt: undefined });
   };
+  /** 对外显示与输入按 0.1 秒（内部剪点/对齐仍按帧）。 */
+  const tenth = (n: number) => Math.round(n * 10) / 10;
   const setLine = (i: number, patch: Partial<MusicMvLyricLine>) =>
-    edit(table!.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+    edit(table!.lines.map((l, j) => (j === i ? { ...l, ...patch, ...(patch.startSec !== undefined ? { startSec: tenth(patch.startSec) } : {}), ...(patch.endSec !== undefined ? { endSec: tenth(patch.endSec) } : {}) } : l)));
   const issues = table ? musicMvLyricLineIssues(table.lines, table.range) : [];
   return (
     <section aria-label="本段歌词" data-mv-lyric-table className="space-y-2 rounded border border-white/15 p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <h4 className="text-sm font-semibold">本段歌词（演唱段对口型以确认版为准）</h4>
+        <h4 className="text-sm font-semibold">歌词时间表（整首；演唱段对口型以确认版为准）</h4>
         <span className="text-xs text-white/60">
-          {!table ? "未识别" : table.status === "confirmed" ? "已确认" : "待确认"}
-          {stale ? " · 高光区间已改，请重新识别" : ""}
+          {!table ? "未识别" : table.status === "confirmed" ? "已确认" : "待确认：自动听写常有错字，请逐句核对改字、核对起止秒"}
+          {stale ? " · 歌曲已更换，请重新识别" : ""}
         </span>
         <button className={button} disabled={disabled || !range} onClick={() => { setError(""); void onRecognize().catch(e => setError(e instanceof Error ? e.message : "识别失败")); }}>
-          {table ? "重新识别本段歌词" : "自动识别本段歌词"}
+          {table ? "重新识别歌词" : "自动识别歌词（整首）"}
         </button>
       </div>
       {table && (
@@ -54,9 +56,9 @@ export function CanvasMvLyricTableEditor({ table, range, disabled, onRecognize, 
           {table.lines.length === 0 && <p className="text-xs text-white/60">本段没有识别到唱词；如确有演唱，请手动添加句子。</p>}
           {table.lines.map((line, i) => (
             <div key={i} className="grid grid-cols-[1fr_5.5rem_5.5rem_auto] items-center gap-1">
-              <input aria-label={`第${i + 1}句歌词`} className={field} value={line.text} disabled={disabled} onChange={e => setLine(i, { text: e.target.value })} />
-              <input aria-label={`第${i + 1}句开始秒`} className={field} type="number" step="0.01" value={line.startSec} disabled={disabled} onChange={e => setLine(i, { startSec: Number(e.target.value) })} />
-              <input aria-label={`第${i + 1}句结束秒`} className={field} type="number" step="0.01" value={line.endSec} disabled={disabled} onChange={e => setLine(i, { endSec: Number(e.target.value) })} />
+              <input aria-label={`第${i + 1}句歌词（可改字）`} className={field} value={line.text} disabled={disabled} onChange={e => setLine(i, { text: e.target.value })} />
+              <input aria-label={`第${i + 1}句开始秒`} className={field} type="number" step="0.1" value={tenth(line.startSec).toFixed(1)} disabled={disabled} onChange={e => setLine(i, { startSec: Number(e.target.value) })} />
+              <input aria-label={`第${i + 1}句结束秒`} className={field} type="number" step="0.1" value={tenth(line.endSec).toFixed(1)} disabled={disabled} onChange={e => setLine(i, { endSec: Number(e.target.value) })} />
               <span className="flex gap-1">
                 {onPlayLine && <button className={button} disabled={disabled} onClick={() => onPlayLine(line)}>试听</button>}
                 <button className={button} disabled={disabled} onClick={() => edit(table.lines.filter((_, j) => j !== i))}>删</button>
@@ -69,7 +71,7 @@ export function CanvasMvLyricTableEditor({ table, range, disabled, onRecognize, 
             onClick={() => {
               const last = table.lines[table.lines.length - 1];
               const start = Math.min(table.range.endSec - 0.5, last ? last.endSec : table.range.startSec);
-              edit([...table.lines, { text: "新句", startSec: Math.round(start * 100) / 100, endSec: Math.round(Math.min(table.range.endSec, start + 2) * 100) / 100 }]);
+              edit([...table.lines, { text: "新句", startSec: tenth(start), endSec: tenth(Math.min(table.range.endSec, start + 2)) }]);
             }}
           >
             加一句
@@ -80,7 +82,7 @@ export function CanvasMvLyricTableEditor({ table, range, disabled, onRecognize, 
             disabled={disabled || stale || issues.length > 0 || table.status === "confirmed" || table.lines.some(l => !l.text.trim() || l.text.includes("□"))}
             onClick={() => onConfirm({ ...table, status: "confirmed", confirmedAt: new Date().toISOString() })}
           >
-            确认本段歌词
+            确认歌词
           </button>
           {table.lines.some(l => l.text.includes("□")) && <p className="text-xs text-amber-200">有听不清的字（□），请改好后再确认。</p>}
         </div>

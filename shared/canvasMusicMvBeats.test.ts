@@ -93,3 +93,31 @@ describe("站位参考阈值", () => {
     expect(mvShotNeedsStagingReference({ ...base, scenes: 2 })).toBe(true);
   });
 });
+
+import { recommendMusicMvHighlight } from "./musicMvHighlight";
+describe("推荐高光：只取有歌词的部分", () => {
+  const lines = [
+    { text: "主歌一", startSec: 17.4, endSec: 20.5 }, { text: "主歌二", startSec: 20.75, endSec: 24.75 },
+    { text: "主歌三", startSec: 25.85, endSec: 29.45 }, { text: "主歌四", startSec: 29.6, endSec: 33.15 },
+    { text: "副歌一", startSec: 60, endSec: 63 }, { text: "副歌二", startSec: 63.2, endSec: 66 }, { text: "副歌三", startSec: 66.3, endSec: 69 },
+    { text: "副歌四", startSec: 69.2, endSec: 72 }, { text: "副歌五", startSec: 72.4, endSec: 75 },
+  ];
+  const segments = [{ startSec: 0, endSec: 50, energy: 0.5 }, { startSec: 50, endSec: 100, energy: 1 }];
+  it("30–60 秒窗内句数最多且含副歌；起止对齐乐句边界", () => {
+    const r = recommendMusicMvHighlight(lines, 200, segments)!;
+    expect(r.endSec - r.startSec).toBeGreaterThanOrEqual(30);
+    expect(r.endSec - r.startSec).toBeLessThanOrEqual(60);
+    expect(r.peakEnergy).toBe(1);
+    // 对外 0.1 秒精度
+    expect(Number.isInteger(Math.round(r.startSec * 1000) / 100)).toBe(true);
+    expect(Number.isInteger(Math.round(r.endSec * 1000) / 100)).toBe(true);
+    expect(r.startSec).toBeLessThanOrEqual(60);
+    expect(r.endSec).toBeGreaterThanOrEqual(75);
+    // 起点不切进前一句、终点不切进后一句
+    for (const l of lines) expect(l.startSec < r.startSec && l.endSec > r.startSec).toBe(false);
+    for (const l of lines) expect(l.startSec < r.endSec && l.endSec > r.endSec).toBe(false);
+  });
+  it("没有歌词句：不推荐", () => {
+    expect(recommendMusicMvHighlight([], 200, segments)).toBeUndefined();
+  });
+});

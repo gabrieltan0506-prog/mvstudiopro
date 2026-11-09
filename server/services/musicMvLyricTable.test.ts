@@ -32,3 +32,20 @@ describe("本段歌词识别（待确认版）", () => {
     expect(listen.mock.calls[0]![0].prompt).toContain("片段内 0 秒＝歌曲 140 秒");
   });
 });
+
+import { planLyricChunks, mergeLyricLines } from "./musicMvLyricTable";
+describe("整首分块听写", () => {
+  it("≤45 秒分块、3 秒重叠，核心区首尾相接覆盖整首", () => {
+    const chunks = planLyricChunks({ startSec: 0, endSec: 208.68 });
+    expect(chunks.length).toBe(5);
+    expect(chunks[0]!.startSec).toBe(0);
+    expect(chunks.at(-1)!.endSec).toBe(208.68);
+    for (const c of chunks) expect(c.endSec - c.startSec).toBeLessThanOrEqual(45.01);
+    for (let i = 1; i < chunks.length; i++) expect(chunks[i]!.coreStartSec).toBeCloseTo(chunks[i - 1]!.coreEndSec, 2);
+  });
+  it("合并去重叠", () => {
+    expect(mergeLyricLines([{ text: "b", startSec: 5, endSec: 8 }, { text: "a", startSec: 1, endSec: 5.5 }, { text: "c", startSec: 7.9, endSec: 8.05 }])).toEqual([
+      { text: "a", startSec: 1, endSec: 5.5 }, { text: "b", startSec: 5.5, endSec: 8 },
+    ]);
+  });
+});

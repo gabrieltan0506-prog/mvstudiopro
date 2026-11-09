@@ -1,5 +1,4 @@
 import { canvasMusicCandidateSchema } from "../../shared/canvasMusicMedia";
-import { musicMvHighlightSchema } from "../../shared/musicMvHighlight";
 import {readSongCraftCloudLibrary} from "../services/songCraftCloudLibrary";
 import {queueSongCover} from "../services/songCover";
 import { listCreativeLibraryEntries, saveCreativeLibraryEntry } from "../services/creativeGenerationLibrary";
@@ -516,7 +515,7 @@ export const canvasMusicMvRouter = router({
         .strict()
     )
     .mutation(({ ctx, input }) => prepareMvShotSongSlice(ctx.user.id, input, { singingOnly: false })),
-  /** 1109 本段歌词自动识别（Gemini 两跳听音，待确认版）；用户逐句改后在前端确认，演唱段只读确认版。 */
+  /** 1109 歌词自动识别（Gemini 两跳听音，待确认版，缺省整首）；用户逐句改后在前端确认，演唱段只读确认版。 */
   recognizeLyrics: protectedProcedure
     .input(
       z
@@ -524,14 +523,16 @@ export const canvasMusicMvRouter = router({
           requestId: z.string().uuid(),
           audio: canvasMusicCandidateSchema,
           musicJobId: z.string().trim().min(1).max(200).optional(),
-          highlight: musicMvHighlightSchema,
+          /** 识别区间（缺省整首）：高光只取有歌词的部分，所以先听整首再推荐高光。 */
+          range: z.object({ startSec: z.number().finite().min(0), endSec: z.number().finite().positive() }).strict().optional(),
           lyricsHint: z.string().max(30000).optional(),
         })
         .strict()
     )
     .mutation(async ({ ctx, input }) => {
-      if (input.highlight.endSec > input.audio.durationSec + 0.05)
-        throw new TRPCError({ code: "BAD_REQUEST", message: "高光区间超出所选歌曲" });
+      const range = input.range ?? { startSec: 0, endSec: input.audio.durationSec };
+      if (range.endSec > input.audio.durationSec + 0.05 || range.endSec - range.startSec < 1 || range.endSec - range.startSec > 600)
+        throw new TRPCError({ code: "BAD_REQUEST", message: "识别区间无效（须在所选歌曲内、不超过 10 分钟）" });
       let source: string;
       try {
         source = await resolveCanvasMusicMvAudio(ctx.user.id, input.audio, input.musicJobId);
@@ -543,11 +544,31 @@ export const canvasMusicMvRouter = router({
         return await recognizeMusicMvLyricTable(ctx.user.id, {
           requestId: input.requestId,
           audio: { id: input.audio.id, url: input.audio.url, ...(source.startsWith("gs://") ? { gcsUri: source } : {}) },
-          range: input.highlight,
+          range,
           lyricsHint: input.lyricsHint,
         });
       } catch (error) {
         throw new TRPCError({ code: "BAD_GATEWAY", message: `本段歌词识别失败：${error instanceof Error ? error.message.slice(0, 400) : "未知原因"}` });
+      }
+    }),
+  /** 1109 参考片送出前自动裁切：min(本镜时长, 所选模型单条上限)，入点用户指定优先否则取运动最强段。 */
+  trimShotMotionClip: protectedProcedure
+    .input(
+      z
+        .object({
+          sourceGcsUri: z.string().regex(/^gs:\/\/[^/]+\/.+/),
+          shotSec: z.number().finite().positive().max(60),
+          maxSec: z.number().finite().positive().max(60),
+          inSec: z.number().finite().min(0).optional(),
+        })
+        .strict()
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { trimMvMotionClip } = await import("../services/mvMotionClipTrim");
+      try {
+        return await trimMvMotionClip(ctx.user.id, input);
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "参考片裁切失败" });
       }
     }),
   draftPlan: protectedProcedure

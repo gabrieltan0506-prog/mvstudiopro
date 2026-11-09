@@ -65,6 +65,7 @@ import {
 } from "@shared/canvasGenerationPricing";
 import { CREDIT_COSTS } from "@shared/plans";
 import { CanvasMvLyricTableEditor } from "./CanvasMvLyricTableEditor";
+import { recommendMusicMvHighlight } from "@shared/musicMvHighlight";
 import { CanvasMvShotReferencePicker } from "./CanvasMvShotReferencePicker";
 import {
   EMPTY_MV_SHOT_REFERENCES,
@@ -680,7 +681,8 @@ export function CanvasMusicMvStudio({
           if (!binding.referenceImages.length) gapLines.push(`镜头 ${i + 1}：未选参考素材`);
           return;
         }
-        const gaps = mvShotReferenceGaps(binding.references, shotBlock.videoModel, { requiresStaging: mvShotNeedsStagingReference(binding.complexity) }).blocking;
+        // 超长参考片出片时自动裁切（canvasRunBlock），这里不因「超长」拦
+        const gaps = mvShotReferenceGaps(binding.references, shotBlock.videoModel, { requiresStaging: mvShotNeedsStagingReference(binding.complexity) }).blocking.filter(g => !/尚未自动裁切/.test(g.messageZh));
         if (gaps.length) gapLines.push(`镜头 ${i + 1}：${gaps.map(g => g.messageZh).join("、")}`);
         // 演唱段只读用户确认版歌词时间表；未确认不得生成（非演唱段不受影响）
         if (binding.kind === "singing" && (latest.current.lyricTable?.status !== "confirmed" || !binding.lyricLines?.length))
@@ -1382,20 +1384,27 @@ export function CanvasMusicMvStudio({
           <label className="text-xs">高光时长<input aria-label="高光时长" name="duration" type="number" min="30" max="60" step="0.1" defaultValue={state.highlight ? state.highlight.endSec-state.highlight.startSec : 45} className={field}/></label>
           <button className={button} disabled={busy || !selected || Boolean(state.assembleRequestId && !state.assembleTerminalStatus)}>应用高光区间</button>
         </form>
-        {selected && <p className="text-xs">当前区间：{state.highlight?.startSec || 0}–{state.highlight?.endSec ?? Math.min(45,selected.durationSec)} 秒 · 9:16竖屏</p>}
+        {selected && <p className="text-xs">当前区间：{(state.highlight?.startSec || 0).toFixed(1)}–{(state.highlight?.endSec ?? Math.min(45,selected.durationSec)).toFixed(1)} 秒 · 9:16竖屏</p>}
         {selected && <div className="space-y-2">
           <audio ref={highlightAudio} controls src={selected.url} className="w-full" onTimeUpdate={e=>{try {const range=highlightRange(latest.current);if(range && e.currentTarget.currentTime>=range.endSec)e.currentTarget.pause();}catch{e.currentTarget.pause();}}}/>
           <button className={button} disabled={busy || Boolean(highlightError)} onClick={()=>void perform(async()=>{const range=highlightRange(latest.current);if(!range || !highlightAudio.current)return;highlightAudio.current.currentTime=range.startSec;await highlightAudio.current.play();})}>试听高光区间</button>
         </div>}
         {highlightError && <p role="alert" className="text-xs text-amber-200">{highlightError}</p>}
+        {selected && !songOnly && <button className={button} disabled={busy || !state.lyricTable?.lines.length} onClick={()=>void perform(async()=>{
+          // 高光只取有歌词的部分：按歌词时间表推荐（规则见 recommendMusicMvHighlight），用户仍可手动改
+          const rec=recommendMusicMvHighlight(latest.current.lyricTable?.lines||[],selected.durationSec,latest.current.plan?.beatGrid?.segments||[]);
+          if(!rec)throw new Error("歌词表里没有唱句，无法推荐高光；请先识别并核对歌词");
+          const range=musicMvHighlightSchema.parse({startSec:rec.startSec,endSec:rec.endSec});
+          if(latest.current.plan)musicMvShotSlices(latest.current.plan,range);
+          patch({highlight:range,error:undefined});
+        })}>推荐高光（只取有歌词的段落）</button>}
         {selected && !songOnly && <CanvasMvLyricTableEditor
           table={state.lyricTable}
-          range={state.highlight}
+          range={selected ? { startSec: 0, endSec: selected.durationSec } : undefined}
           disabled={busy}
           onRecognize={async () => {
-            const range = highlightRange(latest.current);
-            if (!range || !selected) throw new Error("请先应用高光区间");
-            const table = await recognizeLyrics.mutateAsync({ requestId: crypto.randomUUID(), audio: selected, highlight: range, ...(latest.current.musicJobId ? { musicJobId: latest.current.musicJobId } : {}), ...(latest.current.lyrics?.trim() ? { lyricsHint: latest.current.lyrics } : {}) });
+            if (!selected) throw new Error("请先选定歌曲");
+            const table = await recognizeLyrics.mutateAsync({ requestId: crypto.randomUUID(), audio: selected, range: { startSec: 0, endSec: selected.durationSec }, ...(latest.current.musicJobId ? { musicJobId: latest.current.musicJobId } : {}), ...(latest.current.lyrics?.trim() ? { lyricsHint: latest.current.lyrics } : {}) });
             patch({ lyricTable: table });
             syncSingingLyrics(table);
           }}
@@ -1625,6 +1634,7 @@ export function CanvasMusicMvStudio({
           </details>
           <CanvasMvShotReferencePicker
             projectId={projectId}
+            videoModel={block.videoModel}
             planRequestId={state.planRequestId}
             shots={planShots}
             anchorImage={state.anchorImage}

@@ -9,7 +9,7 @@
  * 超限、缺锚、缺场景图与参考片 → 抛中文错误，不裁剪后放行，不静默退回 text_to_video。
  */
 import { z } from "zod";
-import { COMPILER_ENGINE_LIMITS, normalizeCompilerEngineId, type CompilerEngineId } from "./manhuaShotIR";
+import { COMPILER_ENGINE_LIMITS, normalizeCompilerEngineId, type CompilerEngineId, type CompilerReferenceLimits } from "./manhuaShotIR";
 
 const text = z.string().trim().min(1);
 const gcsUri = z.string().regex(/^gs:\/\/[^/]+\/.+/, "参考素材须为本人空间内的对象");
@@ -28,9 +28,12 @@ export function mvShotEngineId(engine: MvShotEngineKey | undefined): CompilerEng
   return id;
 }
 export function mvShotReferenceLimits(engine: MvShotEngineKey | undefined) {
-  const refs = COMPILER_ENGINE_LIMITS[mvShotEngineId(engine)].references;
-  return { image: refs.image, video: refs.video, audio: refs.audio };
+  const refs = COMPILER_ENGINE_LIMITS[mvShotEngineId(engine)].references as CompilerReferenceLimits;
+  // 单条参考视频上限：引擎表有就用，没有按供应商实测口径 15 秒（1109 探针：EvoLink「maximum is 15.2 seconds」）
+  return { image: refs.image, video: refs.video, audio: refs.audio, maxVideoItemSec: refs.maxVideoItemSec ?? MV_REFERENCE_VIDEO_MAX_SEC, ...(refs.maxVideoTotalSec !== undefined ? { maxVideoTotalSec: refs.maxVideoTotalSec } : {}) } as { image: number; video: number; audio: number; maxVideoItemSec: number; maxVideoTotalSec?: number };
 }
+/** 参考视频整条送出（取用区间只写进提示词），所以素材本身时长必须在上限内。 */
+export const MV_REFERENCE_VIDEO_MAX_SEC = 15;
 /** MV 镜头可用引擎：须能同时收主锚图+场景图（≥2 图）与歌曲切片（≥1 音频）。HappyHorse 仅首帧一图，不入选。 */
 export function isMvShotEngineSupported(engine: MvShotEngineKey | undefined): boolean {
   try {
@@ -74,6 +77,8 @@ export const mvShotReferenceVideoSchema = z
     durationSec: z.number().positive(),
     label: z.string().max(300).optional(),
     hasRealPerson: z.boolean().optional(),
+    /** 1109 自动裁切：gcsUri 已是裁好的派生片，记录原素材与源内入出点（可在 UI 改入点重裁）。 */
+    trimmedFrom: z.object({ gcsUri, inSec: z.number().min(0), outSec: z.number().positive(), sourceSec: z.number().positive(), auto: z.boolean() }).strict().optional(),
   })
   .strict()
   .superRefine((v, ctx) => {
@@ -143,6 +148,14 @@ export function mvShotReferenceGaps(
   if (!r.sceneImages.length && !r.motionVideos.length)
     blocking.push({ code: "scene", messageZh: "缺本镜场景图或动作参考片（至少一项）" });
   if (!r.songSlice) blocking.push({ code: "song", messageZh: "缺本镜歌曲切片" });
+  const tooLong = r.motionVideos.filter(v => v.durationSec > limits.maxVideoItemSec + 1e-6);
+  if (tooLong.length)
+    blocking.push({ code: "over_limit", messageZh: `${tooLong.map(v => `${v.label || "参考片"} ${v.durationSec.toFixed(1)} 秒`).join("、")} 超过所选模型单条 ${limits.maxVideoItemSec} 秒上限且尚未自动裁切，请重试裁切` });
+  const tooShort = r.motionVideos.filter(v => v.durationSec + 1e-6 < MV_REFERENCE_VIDEO_MIN_SEC);
+  if (tooShort.length) blocking.push({ code: "motion", messageZh: `参考片短于 ${MV_REFERENCE_VIDEO_MIN_SEC} 秒，无法作站位/运镜参考，请换片` });
+  const totalVideoSec = r.motionVideos.reduce((s, v) => s + v.durationSec, 0);
+  if (limits.maxVideoTotalSec !== undefined && totalVideoSec > limits.maxVideoTotalSec + 1e-6)
+    blocking.push({ code: "over_limit", messageZh: `参考片合计 ${totalVideoSec.toFixed(1)} 秒，超过所选模型合计 ${limits.maxVideoTotalSec} 秒上限` });
   if (opts.requiresStaging && !r.motionVideos.length)
     blocking.push({ code: "motion", messageZh: "该镜需白模站位或实拍运镜参考" });
   if (counts.total > MV_SHOT_REFERENCE_TOTAL_MAX)
@@ -270,4 +283,39 @@ export function mvAnchorKeyframePrompt(creativePrompt: string | undefined, aspec
     `Overall style (Chinese brief): ${style}.`,
     "Photorealistic, natural skin texture, no text, no subtitles, no logo, no watermark, no second person.",
   ].join("\n");
+}
+
+/** 参考片自动裁切的最短可用长度（短于此不足以给出站位/运镜节拍）。 */
+export const MV_REFERENCE_VIDEO_MIN_SEC = 2;
+/**
+ * 1109 参考片送出前自动裁切：长度 = min(本镜时长, 所选模型单条上限)；素材本身更短则整条用；短于 2 秒拒用。
+ * 入点：用户在 UI 指定的优先，否则取运动最强的一段（motionScores 为每 stepSec 一个帧差均值）。
+ */
+export function planMvMotionTrim(input: {
+  sourceSec: number;
+  shotSec: number;
+  maxSec: number;
+  inSec?: number;
+  motionScores?: readonly number[];
+  stepSec?: number;
+}): { inSec: number; outSec: number; lengthSec: number; auto: boolean } {
+  if (!(input.sourceSec >= MV_REFERENCE_VIDEO_MIN_SEC)) throw new Error(`参考片只有 ${input.sourceSec.toFixed(1)} 秒，短于 ${MV_REFERENCE_VIDEO_MIN_SEC} 秒，无法作站位/运镜参考，请换片`);
+  const len = Math.max(MV_REFERENCE_VIDEO_MIN_SEC, Math.min(input.shotSec, input.maxSec, input.sourceSec));
+  const r = (n: number) => Math.round(n * 1000) / 1000;
+  const latest = input.sourceSec - len;
+  if (input.inSec !== undefined) {
+    const inSec = Math.max(0, Math.min(latest, input.inSec));
+    return { inSec: r(inSec), outSec: r(inSec + len), lengthSec: r(len), auto: false };
+  }
+  const step = input.stepSec ?? 0.2;
+  const scores = input.motionScores ?? [];
+  let bestIn = 0;
+  let best = -1;
+  const win = Math.max(1, Math.round(len / step));
+  for (let k = 0; k * step <= latest + 1e-9; k++) {
+    let sum = 0;
+    for (let i = k; i < Math.min(scores.length, k + win); i++) sum += scores[i]!;
+    if (sum > best) { best = sum; bestIn = k * step; }
+  }
+  return { inSec: r(bestIn), outSec: r(bestIn + len), lengthSec: r(len), auto: true };
 }

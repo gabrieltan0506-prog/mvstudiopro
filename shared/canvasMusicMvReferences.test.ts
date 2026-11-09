@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isMvShotEngineSupported,
   mvShotReferenceLimits,
+  planMvMotionTrim,
   applyAnchorImageToAll,
   assembleMvShotReferences,
   countMvShotReferences,
@@ -112,9 +113,9 @@ describe("MV 镜头参考组装", () => {
   });
 
   it("1109 模型可选：单类上限读漫剧引擎表；HappyHorse 不收参考视频/音频，不入 MV", () => {
-    expect(mvShotReferenceLimits("wan-3.0")).toEqual({ image: 10, video: 5, audio: 5 });
-    expect(mvShotReferenceLimits("minimax-hailuo-3")).toEqual({ image: 9, video: 3, audio: 3 });
-    expect(mvShotReferenceLimits("2.5")).toEqual({ image: 30, video: 10, audio: 10 });
+    expect(mvShotReferenceLimits("wan-3.0")).toEqual({ image: 10, video: 5, audio: 5, maxVideoItemSec: 15 });
+    expect(mvShotReferenceLimits("minimax-hailuo-3")).toEqual({ image: 9, video: 3, audio: 3, maxVideoItemSec: 15, maxVideoTotalSec: 15 });
+    expect(mvShotReferenceLimits("2.5")).toEqual({ image: 30, video: 10, audio: 10, maxVideoItemSec: 15 });
     expect(isMvShotEngineSupported("seedance-2.0-fast")).toBe(true);
     expect(isMvShotEngineSupported("happyhorse-1.1")).toBe(false);
     expect(mvShotReferenceGaps(full, "happyhorse-1.1").blocking[0]!.messageZh).toContain("不支持");
@@ -126,5 +127,22 @@ describe("MV 镜头参考组装", () => {
     expect(mvShotReferenceGaps(noMotion, "2.0-mini", { requiresStaging: true }).blocking.map(g => g.messageZh)).toContain("该镜需白模站位或实拍运镜参考");
     expect(() => assembleMvShotReferences(noMotion, shot, "2.0-mini", { requiresStaging: true })).toThrow(/该镜需白模站位或实拍运镜参考/);
     expect(() => assembleMvShotReferences(full, shot, "2.0-mini", { requiresStaging: true })).not.toThrow();
+  });
+
+  it("1109 参考片自动裁切：长度 = min(本镜时长, 模型单条上限)，入点用户指定优先否则取运动最强段；短于 2 秒才拒", () => {
+    expect(planMvMotionTrim({ sourceSec: 28.4, shotSec: 13.95, maxSec: 15, inSec: 3 })).toEqual({ inSec: 3, outSec: 16.95, lengthSec: 13.95, auto: false });
+    expect(planMvMotionTrim({ sourceSec: 28.4, shotSec: 20, maxSec: 15, inSec: 20 })).toEqual({ inSec: 13.4, outSec: 28.4, lengthSec: 15, auto: false });
+    const scores = Array.from({ length: 100 }, (_, i) => (i >= 60 && i < 75 ? 9 : 1));
+    expect(planMvMotionTrim({ sourceSec: 20, shotSec: 3, maxSec: 15, motionScores: scores, stepSec: 0.2 })).toEqual({ inSec: 12, outSec: 15, lengthSec: 3, auto: true });
+    expect(planMvMotionTrim({ sourceSec: 6, shotSec: 13.95, maxSec: 15 }).lengthSec).toBe(6);
+    expect(() => planMvMotionTrim({ sourceSec: 1.5, shotSec: 5, maxSec: 15 })).toThrow(/短于 2 秒/);
+    // 裁后仍超长（未裁）才阻断；短于 2 秒阻断；合计按模型上限
+    const long = { ...full, motionVideos: [{ source: "stock" as const, gcsUri: "gs://b/long.mp4", inSec: 0, outSec: 10, durationSec: 28.4, label: "长片" }] };
+    expect(mvShotReferenceGaps(long).blocking.map(g => g.messageZh).join("")).toContain("尚未自动裁切");
+    const short = { ...full, motionVideos: [{ source: "stock" as const, gcsUri: "gs://b/s.mp4", inSec: 0, outSec: 1.2, durationSec: 1.2 }] };
+    expect(mvShotReferenceGaps(short).blocking.map(g => g.messageZh).join("")).toContain("短于 2 秒");
+    const two = { ...full, motionVideos: [{ source: "stock" as const, gcsUri: "gs://b/a.mp4", inSec: 0, outSec: 9, durationSec: 9 }, { source: "stock" as const, gcsUri: "gs://b/c.mp4", inSec: 0, outSec: 9, durationSec: 9 }] };
+    expect(mvShotReferenceGaps(two, "minimax-hailuo-3").blocking.map(g => g.messageZh).join("")).toContain("合计 18.0 秒");
+    expect(mvShotReferenceGaps(two, "2.0-mini").blocking).toEqual([]);
   });
 });

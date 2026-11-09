@@ -176,6 +176,8 @@ function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
 const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 13 * 60_000;
 
 export type CanvasRunDeps = {
+  /** 1109 MV 参考片送出前自动裁切（服务端 trimShotMotionClip）；缺省时超长参考片按上限拦下。 */
+  trimMvMotionClip?: (input: { sourceGcsUri: string; shotSec: number; maxSec: number; inSec?: number }) => Promise<{ gcsUri: string; inSec: number; outSec: number; durationSec: number; sourceSec: number; auto: boolean }>;
   /** Narrow caller guard rechecked immediately before paid text/image submission. */
   assertCurrentSource?: () => void;
   imageVariants?: OpenAiImageVariant[];
@@ -2536,18 +2538,31 @@ async function runCanvasBlockInner(
     if(binding.kind==="footage") throw new Error("此镜头使用已有素材切片，请在MV中合成，不提交视频生成");
     // 1109 参考生视频：主锚图 + 场景图 + 动作参考片 + 歌曲切片（gcsUri 真源，出片前现签）。
     // 无任何参考 → 拒发（用户硬规则：MV 一向 reference_to_video，不得静默退回文生）。
-    const mvRefs = binding.references;
+    let mvRefs = binding.references;
     if (!mvRefs && !binding.referenceImages.length) {
       throw new Error("MV 镜头缺少参考素材：请先在「为镜头选参考素材」里选主锚图、场景图/参考片与歌曲切片。本次未提交、未扣费。");
     }
     if (mvRefs) {
-      const { assembleMvShotReferences, isMvShotEngineSupported, mvShotEngineId, mvShotReferencesSchema } = await import("@shared/canvasMusicMvReferences");
+      const { assembleMvShotReferences, isMvShotEngineSupported, mvShotEngineId, mvShotReferencesSchema, mvShotReferenceLimits } = await import("@shared/canvasMusicMvReferences");
       const { compileMvShotTimedPrompt, mvShotGenerateDurationSec } = await import("@shared/canvasMusicMvShotPrompt");
       // 1109 模型可选：参考上限与时长上下限按所选引擎读漫剧引擎表，不锁 Mini
       const selectedModel = normalizeCanvasVideoModel(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL);
       if (!isMvShotEngineSupported(selectedModel)) throw new Error("所选成片模型不支持 MV 多参考生视频（需同时收参考图与歌曲切片），请换模型。本次未提交、未扣费。");
       const engine = mvShotEngineId(selectedModel);
       const { mvShotNeedsStagingReference } = await import("@shared/canvasMusicMv");
+      // 参考片整条送给模型：超过所选模型单条上限的，先自动裁成 min(本镜时长, 上限)（入点沿用已选，否则运动最强段）
+      const maxVideoSec = mvShotReferenceLimits(engine).maxVideoItemSec;
+      if (mvRefs.motionVideos?.some(v => v.durationSec > maxVideoSec + 1e-6) && deps.trimMvMotionClip) {
+        const trimClip = deps.trimMvMotionClip;
+        mvRefs = {
+          ...mvRefs,
+          motionVideos: await Promise.all((mvRefs.motionVideos || []).map(async v => {
+            if (v.durationSec <= maxVideoSec + 1e-6) return v;
+            const t = await trimClip({ sourceGcsUri: v.gcsUri, shotSec: binding.endSec - binding.startSec, maxSec: maxVideoSec, ...(v.inSec > 0 ? { inSec: v.inSec } : {}) });
+            return { ...v, gcsUri: t.gcsUri, inSec: 0, outSec: t.durationSec, durationSec: t.durationSec, trimmedFrom: { gcsUri: v.gcsUri, inSec: t.inSec, outSec: t.outSec, sourceSec: t.sourceSec, auto: t.auto } };
+          })),
+        };
+      }
       const assembled = assembleMvShotReferences(mvRefs, { startSec: binding.startSec, endSec: binding.endSec, kind: binding.kind }, engine, { requiresStaging: mvShotNeedsStagingReference(binding.complexity) });
       if (binding.kind === "singing" && (binding.lyricTiming !== "confirmed" || !binding.lyricLines?.length))
         throw new Error("演唱段：先确认本段歌词，再生成。本次未提交、未扣费。");

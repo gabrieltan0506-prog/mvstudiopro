@@ -22,6 +22,7 @@ import {
   mvShotReferenceGaps,
   mvShotReferencesSchema,
   mvAnchorKeyframePrompt,
+  mvShotReferenceLimits,
   type MvShotReferenceImage,
   type MvShotReferences,
 } from "@shared/canvasMusicMvReferences";
@@ -48,6 +49,8 @@ export type CanvasMvShotReferencePickerProps = {
   orientation: "landscape" | "portrait";
   /** 镜头创意摘要（Cinema 参数中文），拼进关键词来源。 */
   cinemaHintZh?: string;
+  /** 镜头成片模型（参考片裁切长度按其单条上限）。 */
+  videoModel?: string;
   disabled?: boolean;
   onChange: (next: { anchorImage?: MvShotReferenceImage; shotReferences: Record<string, MvShotReferences> }) => void;
 };
@@ -71,6 +74,16 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
   const [realPerson, setRealPerson] = useState(false);
   const [error, setError] = useState("");
   const prepareSlice = trpc.canvasMusicMv.prepareShotSongSlice.useMutation({ retry: false });
+  const trimMotion = trpc.canvasMusicMv.trimShotMotionClip.useMutation({ retry: false });
+  /** 改入点重裁：用户在 UI 调整参考片入点（出点 = 入点 + 自动长度）。 */
+  const retrim = async (shot: Shot, index: number, inSec: number) => {
+    const now = refsOf(shot.id);
+    const v = now.motionVideos[index];
+    if (!v?.trimmedFrom) return;
+    setError("");
+    const trimmed = await trimMotion.mutateAsync({ sourceGcsUri: v.trimmedFrom.gcsUri, shotSec: shot.endSec - shot.startSec, maxSec: mvShotReferenceLimits(props.videoModel).maxVideoItemSec, inSec });
+    commit(shot.id, { ...now, motionVideos: now.motionVideos.map((m, i) => i === index ? { ...m, gcsUri: trimmed.gcsUri, inSec: 0, outSec: trimmed.durationSec, durationSec: trimmed.durationSec, trimmedFrom: { ...m.trimmedFrom!, inSec: trimmed.inSec, outSec: trimmed.outSec, auto: false } } : m) });
+  };
   const utils = trpc.useUtils();
   const refsOf = (shotId: string): MvShotReferences =>
     mvShotReferencesSchema.parse({
@@ -134,6 +147,14 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
       const now = refsOf(target.shot.id);
       if (now.motionVideos.length >= MV_SHOT_MOTION_VIDEO_MAX)
         throw new Error(`本镜参考片最多 ${MV_SHOT_MOTION_VIDEO_MAX} 段`);
+      // 参考片整条送给模型：先自动裁成 min(本镜时长, 所选模型单条上限)；入点用抽屉里选的，没选（0）就取运动最强段
+      const shotSec = target.shot.endSec - target.shot.startSec;
+      const trimmed = await trimMotion.mutateAsync({
+        sourceGcsUri: pick.asset.gcsUri,
+        shotSec,
+        maxSec: mvShotReferenceLimits(props.videoModel).maxVideoItemSec,
+        ...(pick.inSec > 0 ? { inSec: pick.inSec } : {}),
+      });
       commit(target.shot.id, {
         ...now,
         motionVideos: [
@@ -141,11 +162,12 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
           {
             source: "stock",
             assetId: pick.asset.assetId,
-            gcsUri: pick.asset.gcsUri,
-            inSec: pick.inSec,
-            outSec: pick.outSec,
-            durationSec: pick.asset.durationSec || pick.outSec,
+            gcsUri: trimmed.gcsUri,
+            inSec: 0,
+            outSec: trimmed.durationSec,
+            durationSec: trimmed.durationSec,
             label: stockAttributionText(pick.asset.source),
+            trimmedFrom: { gcsUri: pick.asset.gcsUri, inSec: trimmed.inSec, outSec: trimmed.outSec, sourceSec: trimmed.sourceSec, auto: trimmed.auto },
             ...(realPerson ? { hasRealPerson: true } : {}),
           },
         ],
@@ -259,7 +281,8 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
             ))}
             {refs.motionVideos.map((v, i) => (
               <span key={v.gcsUri} className="mr-2 inline-flex items-center gap-1">
-                参考片{i + 1}：{v.label || (v.source === "previs" ? "白模站位片" : "运镜参考")}（{v.inSec.toFixed(1)}–{v.outSec.toFixed(1)}秒）
+                参考片{i + 1}：{v.label || (v.source === "previs" ? "白模站位片" : "运镜参考")}（{v.trimmedFrom ? `原片 ${v.trimmedFrom.inSec.toFixed(1)}–${v.trimmedFrom.outSec.toFixed(1)} 秒${v.trimmedFrom.auto ? "，自动取运动最强段" : ""}` : `${v.inSec.toFixed(1)}–${v.outSec.toFixed(1)}秒`}）
+                {v.trimmedFrom && <input aria-label={`参考片${i + 1}入点`} className="ml-1 w-16 rounded border border-white/20 bg-black/30 px-1" type="number" step="0.1" min="0" max={Math.max(0, v.trimmedFrom.sourceSec - v.durationSec)} defaultValue={v.trimmedFrom.inSec} disabled={disabled || trimMotion.isPending} onBlur={e => { const n = Number(e.currentTarget.value); if (Number.isFinite(n) && Math.abs(n - v.trimmedFrom!.inSec) > 0.05) void retrim(shot, i, n).catch(err => setError(err instanceof Error ? err.message : "重裁失败")); }} />}
                 <button className="text-white/50" disabled={disabled} onClick={() => removeAt(shot.id, "motion", i)} aria-label="移除参考片">×</button>
               </span>
             ))}

@@ -86,22 +86,39 @@ export async function recognizeMusicMvLyricTable(
   const dir = await mkdtemp(path.join(tmpdir(), "mv-lyric-"));
   try {
     const src = path.join(dir, "song");
-    const out = path.join(dir, "slice.mp3");
     await writeFile(src, await readSong(input.audio));
-    await execHeavyMedia("ffmpeg", ["-y", "-v", "error", "-ss", String(input.range.startSec), "-to", String(input.range.endSec), "-i", src, "-ac", "1", "-ar", "32000", "-b:a", "64k", out], { timeout: 60_000 });
-    const slice = await readFile(out);
-    await uploadBufferToGcsIfAbsent({ bucket, objectName: `${prefix}/slice.mp3`, buffer: slice, contentType: "audio/mpeg" });
-    await save("request", { userId, ...input, sliceSha256: createHash("sha256").update(slice).digest("hex"), sliceBytes: slice.length });
+    await save("request", { userId, ...input });
     const listen = deps.listen ?? geminiAudioJsonWithFallback;
-    const result = await listen({
-      audioBase64: slice.toString("base64"),
-      mimeType: "audio/mpeg",
-      prompt: MV_LYRIC_TABLE_PROMPT(input.range, input.lyricsHint),
-      nativeSchema: NATIVE_SCHEMA,
-      schemaName: "music_mv_lyric_table",
-      validate: decoded => parseRecognizedLyricLines(decoded, input.range),
-      save,
-    });
+    // 1109 实测：整首一次听写只出 10 句且中段大片缺失 → 按 ≤45 秒分块（3 秒重叠）逐块听写再合并
+    const chunks = planLyricChunks(input.range);
+    const merged: MusicMvLyricLine[] = [];
+    const used: Array<{ channel: string; model: string; failuresZh: string[] }> = [];
+    for (let k = 0; k < chunks.length; k++) {
+      const c = chunks[k]!;
+      const out = path.join(dir, `slice-${k}.mp3`);
+      await execHeavyMedia("ffmpeg", ["-y", "-v", "error", "-ss", String(c.startSec), "-to", String(c.endSec), "-i", src, "-ac", "1", "-ar", "32000", "-b:a", "64k", out], { timeout: 60_000 });
+      const slice = await readFile(out);
+      const tag = chunks.length > 1 ? `chunk-${k + 1}-` : "";
+      await uploadBufferToGcsIfAbsent({ bucket, objectName: `${prefix}/${tag}slice.mp3`, buffer: slice, contentType: "audio/mpeg" });
+      await save(`${tag}slice-meta`, { range: c, sliceSha256: createHash("sha256").update(slice).digest("hex"), sliceBytes: slice.length });
+      const result = await listen({
+        audioBase64: slice.toString("base64"),
+        mimeType: "audio/mpeg",
+        prompt: MV_LYRIC_TABLE_PROMPT(c, input.lyricsHint),
+        nativeSchema: NATIVE_SCHEMA,
+        schemaName: "music_mv_lyric_table",
+        validate: decoded => parseRecognizedLyricLines(decoded, c),
+        save: (name, value) => save(`${tag}${name}`, value),
+      });
+      used.push({ channel: result.channel, model: result.model, failuresZh: result.failuresZh });
+      // 只收中点落在本块「核心区」的句子（重叠区各取一半），避免重复
+      for (const line of result.value) {
+        const mid = (line.startSec + line.endSec) / 2;
+        if (mid >= c.coreStartSec && mid < c.coreEndSec) merged.push(line);
+      }
+    }
+    const lines = mergeLyricLines(merged);
+    const result = { channel: used.map(u => u.channel).filter((v, i, a) => a.indexOf(v) === i).join("+"), model: used[0]?.model || "", value: lines };
     const table: MusicMvLyricTable = {
       requestId: input.requestId,
       audioId: input.audio.id,
@@ -116,4 +133,32 @@ export async function recognizeMusicMvLyricTable(
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+/** ≤45 秒分块、3 秒重叠；核心区（各块不重叠部分）用于去重。 */
+export function planLyricChunks(range: { startSec: number; endSec: number }, chunkSec = 45, overlapSec = 3) {
+  const out: Array<{ startSec: number; endSec: number; coreStartSec: number; coreEndSec: number }> = [];
+  const total = range.endSec - range.startSec;
+  if (total <= chunkSec + 1e-6) return [{ ...range, coreStartSec: range.startSec, coreEndSec: range.endSec + 1e-6 }];
+  const n = Math.ceil((total - overlapSec) / (chunkSec - overlapSec));
+  const step = (total - overlapSec) / n;
+  for (let k = 0; k < n; k++) {
+    const startSec = Math.round((range.startSec + k * step) * 100) / 100;
+    const endSec = k === n - 1 ? range.endSec : Math.round((range.startSec + k * step + step + overlapSec) * 100) / 100;
+    out.push({ startSec, endSec, coreStartSec: k === 0 ? range.startSec : startSec + overlapSec / 2, coreEndSec: k === n - 1 ? range.endSec + 1e-6 : endSec - overlapSec / 2 });
+  }
+  return out;
+}
+
+/** 合并后按时间排序，重叠的后句起点推到前句终点，推后不足 0.2 秒的丢弃。 */
+export function mergeLyricLines(lines: readonly MusicMvLyricLine[]): MusicMvLyricLine[] {
+  const sorted = [...lines].sort((a, b) => a.startSec - b.startSec);
+  const out: MusicMvLyricLine[] = [];
+  for (const l of sorted) {
+    const prev = out[out.length - 1];
+    const start = prev ? Math.max(l.startSec, prev.endSec) : l.startSec;
+    if (l.endSec - start < 0.2) continue;
+    out.push({ ...l, startSec: Math.round(start * 100) / 100 });
+  }
+  return out;
 }

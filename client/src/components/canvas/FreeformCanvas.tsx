@@ -902,6 +902,7 @@ export default function FreeformCanvas({
     trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const enhancePromptMutation =
     trpc.mvAnalysis.enhanceCanvasPrompt.useMutation();
+  const trimMvMotionClipMutation = trpc.canvasMusicMv.trimShotMotionClip.useMutation({ retry: false });
   // 每个 block 暂存尚未取得明确终态的增强请求编号:结果未知时复用同一编号,
   // 服务端按 jobs 记录恢复结果,不重复调用模型不重复扣分。
   // ref 是热缓存;sessionStorage 是刷新后的恢复源,两处同写同清。
@@ -971,6 +972,7 @@ export default function FreeformCanvas({
   const runDepsWithPlan = useMemo(
     () => ({
       ...runDeps,
+      trimMvMotionClip: (input: { sourceGcsUri: string; shotSec: number; maxSec: number; inSec?: number }) => trimMvMotionClipMutation.mutateAsync(input),
       userPlan,
       userRole,
       // 长排队任务(Wan 公测等):taskId 创建即落节点,字段随画布持久化,刷新后由下方 effect 接管(审查 P1)
