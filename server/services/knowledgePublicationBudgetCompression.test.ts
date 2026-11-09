@@ -224,3 +224,15 @@ describe("篇幅压缩第一段：确定性去重（零调用）", () => {
     expect(h.storage.get(`${h.root}/batch-0/compress/budget.json`).functionResolved).toEqual([batch.pages[0].id]);
   });
 });
+
+describe("篇幅预算写进审校输出合同", () => {
+  it("完整版审校请求带逐页 pageBudgets（路由逐页校验）与输出合同文字（目标留 10% 余量）", async () => {
+    const h = harness(650);
+    await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps);
+    const review = h.post.mock.calls[0]![0] as any;
+    expect(review.pageBudgets).toEqual([{ id: h.source.pages[0]!.id, headline: h.source.pages[0]!.headline, maxChars: 700 }]);
+    expect(review.systemInstruction.parts.some((p: any) => p.text.includes("输出合同·篇幅") && p.text.includes('"targetChars":630'))).toBe(true);
+    // 压缩请求是兜底，不带 pageBudgets（由多轮自行收敛）
+    expect((h.post.mock.calls[1]![0] as any).pageBudgets).toBeUndefined();
+  });
+});

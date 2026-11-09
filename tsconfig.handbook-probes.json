@@ -8,6 +8,7 @@
     "scripts/probe-knowledge-handbook-fresh.mts",
     "scripts/probe-knowledge-handbook-finalize.mts",
     "scripts/probe-knowledge-handbook-image-input.mts",
+    "scripts/probe-knowledge-review-budget.mts",
     "server/**/*.d.ts",
     "shared/**/*.d.ts",
     "client/**/*.d.ts"

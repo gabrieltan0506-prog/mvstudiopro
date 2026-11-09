@@ -1,7 +1,7 @@
 import { describe,it,expect,vi } from 'vitest';
 import { randomUUID, createHash } from 'node:crypto';
 import { KNOWLEDGE_DESIGN_MARKER } from '../../shared/knowledgeDecorations';
-import { invokeKnowledgePublicationRoutes, KNOWLEDGE_PUBLICATION_MODEL as OR_MODEL, KNOWLEDGE_PUBLICATION_EVOLINK_MODEL as EVO_MODEL, KNOWLEDGE_LATE_RECEIPT_WAIT_MS, KNOWLEDGE_PUBLICATION_ROUTE_VERSION, type KnowledgeModelRequest } from './knowledgePublicationRoutes';
+import { invokeKnowledgePublicationRoutes, knowledgeAnswerBudgetOverflow, KNOWLEDGE_PUBLICATION_MODEL as OR_MODEL, KNOWLEDGE_PUBLICATION_EVOLINK_MODEL as EVO_MODEL, KNOWLEDGE_LATE_RECEIPT_WAIT_MS, KNOWLEDGE_PUBLICATION_ROUTE_VERSION, type KnowledgeModelRequest } from './knowledgePublicationRoutes';
 const make=()=>{
  const id=randomUUID(),sourceDigest='a'.repeat(64),storage=new Map<string,any>();
  const source={title:'水循环',pages:[{id,headline:'水循环',body:'蒸发、凝结、降水',imageUrl:'gs://test/own.png'}]};
@@ -966,5 +966,39 @@ describe('整册核对响应格式回显',()=>{
   f.deps.fetch.mockImplementation(async(...args:any[])=>f.response(JSON.parse(args[1].body).model,{type:'unknown',sourceDigest,findings:[]}));
   await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow();
   expect(f.storage.get('test/0/route-openrouter.json').reason).toContain('type');
+ });
+});
+
+describe('篇幅预算写进输出合同：超页算写坏切下一跳，三跳都超才交压缩兜底（2026-11-09 用户令）',()=>{
+ const long=(f:ReturnType<typeof make>,extra:number)=>{const r=structuredClone(f.report) as any;r.pages[0].reading.blocks[0].rows.push(['补充','液'.repeat(extra)]);return r;};
+ const setup=(answers:number[])=>{
+  const f=make(),limit=knowledgeAnswerBudgetOverflow(f.report,[{id:f.report.pages[0].id,headline:'水循环',maxChars:0}])[0].chars;
+  f.request.executionFamily='glm';f.request.executionChannel='evolink';
+  f.request.pageBudgets=[{id:f.report.pages[0].id,headline:'水循环',maxChars:limit+5}];
+  let n=0;f.deps.fetch.mockImplementation(async(_u?:unknown,init?:RequestInit)=>f.response(JSON.parse(String(init?.body)).model,long(f,answers[Math.min(n++,answers.length-1)])));
+  return {f,limit};
+ };
+ it('GLM@EvoLink 超 20 字 → 不在同通道重买，切 GLM@OpenRouter 合篇幅即采用；失败原因写明超几字',async()=>{
+  const {f}=setup([25,0]);
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+  expect(out.gateway).toBe('glm-openrouter');
+  expect(f.storage.get('test/0/route-glm-evolink.json').reason).toContain('《水循环》超');
+  expect(f.storage.get('test/0/route-glm-evolink.json').budgetOverflow[0].excess).toBeGreaterThan(0);
+  f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).not.toHaveBeenCalled();
+ });
+ it('三跳（GLM@EvoLink→GLM@OR→DeepSeek）都超出：不再购买第四次，取超出最少的一份并标 budgetFallback 交压缩',async()=>{
+  const {f,limit}=setup([40,12,30]);
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(f.deps.fetch).toHaveBeenCalledTimes(3);
+  expect(out.budgetFallback.route).toBe('glm-openrouter');
+  expect(out.budgetFallback.hops).toEqual(['glm:evolink','glm:openrouter','deepseek:evolink']);
+  const page=JSON.parse(out.candidates[0].content.parts[0].text).pages[0];
+  expect(knowledgeAnswerBudgetOverflow({pages:[page]},[{id:page.id,headline:'水循环',maxChars:limit+5}])[0].excess).toBe(12);
+  f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).not.toHaveBeenCalled();
+ });
+ it('未带 pageBudgets 的旧请求不做篇幅校验（旧回执身份不变）',async()=>{
+  const f=make();f.deps.fetch.mockImplementation(async(_u?:unknown,init?:RequestInit)=>f.response(JSON.parse(String(init?.body)).model,long(f,500)));
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(1);
  });
 });

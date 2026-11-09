@@ -191,7 +191,8 @@ async function run(){
     const latest=await caller.editableLayout.get();
     const doc=latest.library?.documents.find((d:any)=>d.id===state.documentId);
     const pub=doc?.publication;
-    if(pub?.review){
+    if(doc&&pub?.review&&latest.library){
+      const library=latest.library;
       const batchIndex=knowledgeReviewBatches(pub.source).length;
       const review=await reviewKnowledgePublication(user.id,{documentId:doc.id,batchIndex,attempt:Number(pub.attempts?.[String(batchIndex)])||0}) as any;
       const before=knowledgeReadingOverflow(level,pub.source.pages,pub.review.pages.map((p:any)=>({id:p.id,chars:knowledgeReviewPageChars(p)})));
@@ -205,7 +206,7 @@ async function run(){
         const manuscript=knowledgeManuscript(review);
         const next={...doc,title:review.title,pages:doc.pages.map((page:any,n:number)=>({...page,headline:review.pages[n].headline,body:review.pages[n].body})),
           publication:{...pub,review,manuscript,confirmedManuscript:undefined,layoutConversationId:undefined,automaticLayout:{requestId:randomUUID(),maxCredits:0}},updatedAt:new Date().toISOString()};
-        await caller.editableLayout.save({library:layoutLibrarySchema.parse({...latest.library,documents:latest.library.documents.map((d:any)=>d.id===doc.id?next:d)}),expectedGeneration:latest.generation});
+        await caller.editableLayout.save({library:layoutLibrarySchema.parse({...library,documents:library.documents.map((d:any)=>d.id===doc.id?next:d)}),expectedGeneration:latest.generation});
       }
     }
   }

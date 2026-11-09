@@ -31,6 +31,8 @@ export type KnowledgeModelRequest = {
   /** 首选供应商；同模型同通道首次加三次明确失败重试后才跨供应商，不改变批次并发。 */
   executionChannel?: KnowledgeModelChannel;
   executionFamily?: "deepseek" | "glm";
+  /** 完整版图文同页逐页内文上限：回答任一页 reading 超出即判「写坏」切下一跳（2026-11-09 用户令）；三跳都超出时取超出最少的一份交篇幅压缩兜底。 */
+  pageBudgets?: { id: string; headline: string; maxChars: number }[];
   researchOnly?: true;
   researchRequired?: boolean;
   researchAfterReview?: true;
@@ -47,6 +49,24 @@ export type KnowledgeRouteEvidence = {
 export type KnowledgeRoute = string;
 class KnowledgeRoutesExhaustedError extends Error {
   constructor(message: string, readonly traces: unknown[]) { super(message); }
+}
+/** 篇幅预算跳数：GLM FlashX@首选通道 → GLM@另一通道 → DeepSeek，三跳都超出即停止购买，取超出最少的回答交压缩兜底。 */
+export const KNOWLEDGE_BUDGET_MAX_HOPS = 3;
+export type KnowledgeBudgetOverflowPage = { id: string; headline: string; chars: number; maxChars: number; excess: number };
+class KnowledgeBudgetOverflowError extends Error {
+  constructor(message: string, readonly normalized: { status: number; text: string }, readonly excess: number, readonly overflow: KnowledgeBudgetOverflowPage[]) { super(message); }
+}
+/** 回答逐页内文字数（不含空白；有 reading 按生成稿计，否则按 body）对照请求逐页上限。 */
+export function knowledgeAnswerBudgetOverflow(answer: unknown, budgets: KnowledgeModelRequest["pageBudgets"]): KnowledgeBudgetOverflowPage[] {
+  const pages = (answer as { pages?: { id: string; body?: string; reading?: Parameters<typeof knowledgeReadingMarkdown>[0] }[] })?.pages;
+  if (!budgets?.length || !Array.isArray(pages)) return [];
+  const limits = new Map(budgets.map(b => [b.id, b]));
+  return pages.flatMap(page => {
+    const limit = limits.get(page.id);
+    if (!limit) return [];
+    const chars = (page.reading ? knowledgeReadingMarkdown(page.reading) : page.body || "").replace(/\s+/g, "").length;
+    return chars > limit.maxChars ? [{ id: page.id, headline: limit.headline, chars, maxChars: limit.maxChars, excess: chars - limit.maxChars }] : [];
+  });
 }
 const digest = (data: unknown) => createHash("sha256").update(JSON.stringify(data)).digest("hex");
 
@@ -358,6 +378,9 @@ export async function invokeKnowledgePublicationRoutes(
   const traces: { route: KnowledgeRoute; state: string; model: string; status?: number }[] = [];
   let lastFailure = "";
   let syntaxFailure: KnowledgeJsonSyntaxError | undefined;
+  /** 篇幅超出的跳（family:channel）与其中超出最少的完整回答。 */
+  const budgetHops = new Set<string>();
+  let budgetBest: { excess: number; normalized: { status: number; text: string }; route: string; overflow: KnowledgeBudgetOverflowPage[] } | undefined;
   let syntaxRetryUsed = false, routesWithReceipt = 0;
   let markdownFailure: Error | undefined;
   let researchEvidence: { status: "succeeded" | "failed"; model?: string; gateway?: string; usage?: unknown; traces: unknown; validation?: unknown; pages?: unknown } | undefined;
@@ -538,6 +561,8 @@ export async function invokeKnowledgePublicationRoutes(
       if (unresolved.size) throw new Error("原请求回执尚未闭合，保留原任务，不重复提交或切换通道");
       // 旧已发送回执计入对应模型/通道的四次上限；改变首选通道不重置已用次数。
       if(keyLimitedChannels.has(channel) || attempts[routeModelFamily(model)][channel]>=4)continue;
+      // 篇幅超出算写坏：同模型同通道不再重买，直接切下一跳。
+      if (budgetHops.has(`${routeModelFamily(model)}:${channel}`)) { traces.push({ route, model, state: "skipped_budget_hop" }); continue; }
       if (images.length && !degradedTextOnly && !visionRoutes.has(route)) { traces.push({ route, model, state: "skipped_no_vision" }); continue; }
       // image_url 400：同通道已失败两次（首发+补一次）即跳过该通道其余重试，切下一通道。
       if (images.length && imageRejections[channel] >= 2) { traces.push({ route, model, state: "skipped_image_rejected" }); continue; }
@@ -685,7 +710,20 @@ export async function invokeKnowledgePublicationRoutes(
       traces.push({ route, model: String(output.modelVersion), state: "succeeded", status: response.status });
       normalized = { status: 200, text: JSON.stringify({ ...output, gateway: route, gatewayTrace: traces, ...(researchEvidence ? { research: researchEvidence } : {}),
         inputEvidence: { imageSources: images, imageInputCount: images.length, requestDigest, imageTokenReporting: "provider_specific" } }) };
+      const overflow = knowledgeAnswerBudgetOverflow(answer, request.pageBudgets);
+      if (overflow.length) throw new KnowledgeBudgetOverflowError(`篇幅超出：${overflow.map(o => `《${o.headline}》超${o.excess}字（${o.chars}/${o.maxChars}）`).join("；")}`, normalized, overflow.reduce((n, o) => n + o.excess, 0), overflow);
     } catch (error) {
+      if (error instanceof KnowledgeBudgetOverflowError) {
+        // 完整回答但篇幅超出：按写坏记失败（原始回包保留），切下一跳；保留超出最少的一份作压缩兜底。
+        traces.pop(); traces.push({ route, model, state: "budget_overflow", status: 200 });
+        receipt = { ...receipt, state: "failed", adjustments, reason: error.message, budgetOverflow: error.overflow };
+        await evidence.save(key, receipt);
+        lastFailure = receipt.reason;
+        budgetHops.add(`${routeModelFamily(model)}:${channel}`);
+        if (!budgetBest || error.excess < budgetBest.excess) budgetBest = { excess: error.excess, normalized: error.normalized, route, overflow: error.overflow };
+        if (budgetHops.size >= KNOWLEDGE_BUDGET_MAX_HOPS) break;
+        continue;
+      }
       // HTTP错误、版本不符或完整响应校验失败均有原始回执，不以成功掩盖缺页。
       receipt = { ...receipt, state: "failed", ...(isSseContentSafetyError(error)?{safetyBlocked:true}:{}), adjustments, reason: error instanceof Error ? `${error.name === "ZodError" ? "输出合同不符：" : ""}${error.message}` : "输出合同不符" };
       await evidence.save(key, receipt);
@@ -743,6 +781,15 @@ export async function invokeKnowledgePublicationRoutes(
       if (checked || researchMeta.status === "failed") await evidence.save(`${evidence.prefix}/supplemented.json`,{requestDigest,normalized});
       await evidence.save(`${evidence.prefix}/accepted.json`,{requestDigest,normalized,traces});
     }
+    return normalized;
+  }
+  if (budgetBest) {
+    // 三跳都超出（或其余跳均明确失败）：取超出最少的完整回答，由上层篇幅压缩兜底；标记 budgetFallback，原始回包与各跳失败原因均已保留。
+    const envelope = JSON.parse(budgetBest.normalized.text);
+    envelope.budgetFallback = { route: budgetBest.route, excess: budgetBest.excess, overflow: budgetBest.overflow, hops: Array.from(budgetHops) };
+    envelope.gatewayTrace = traces;
+    const normalized = { status: 200, text: JSON.stringify(envelope) };
+    await evidence.save(`${evidence.prefix}/accepted.json`, { requestDigest, normalized, traces, budgetFallback: envelope.budgetFallback });
     return normalized;
   }
   if (syntaxFailure) throw syntaxFailure;

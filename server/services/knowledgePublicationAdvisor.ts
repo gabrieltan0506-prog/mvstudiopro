@@ -1,5 +1,5 @@
 import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
-import { knowledgeBudgetInstructions, knowledgeCompressionInstructions, knowledgeReadingCharBudgets, knowledgeReadingOverflow, type KnowledgeReadingOverflow } from "../../shared/knowledgeEditionBudget";
+import { knowledgeBudgetInstructions, knowledgeBudgetOutputContract, knowledgeCompressionInstructions, knowledgeReadingCharBudgets, knowledgeReadingOverflow, type KnowledgeReadingOverflow } from "../../shared/knowledgeEditionBudget";
 import { KNOWLEDGE_VERIFICATION_POLICY, KNOWLEDGE_VERIFICATION_EDIT_POLICY, knowledgeVerificationTriggers, knowledgeVerificationQueries, knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
 import { KNOWLEDGE_RESEARCH_INSTRUCTIONS, KNOWLEDGE_RESEARCH_MARKER } from "../../shared/knowledgeResearch";
@@ -617,8 +617,15 @@ export async function reviewKnowledgePublication(
   const request = applyKnowledgeReviewExecution({ ...buildKnowledgeReviewRequest(batchSource, digest, images) }, channel, document.publication.parallel?.family);
   // 页数预算按整册计算后只下发本批各页上限；图文比例在生图前已确定，这里控制内文篇幅而非导出后阻断。
   if (source.detailLevel && source.reviewBatchMode === "ready-images") {
-    const budget = knowledgeBudgetInstructions(source.detailLevel, knowledgeReadingCharBudgets(source.detailLevel, source.pages).pages.filter(p => indices.some(i => source.pages[i].id === p.id)));
+    const pageBudgets = knowledgeReadingCharBudgets(source.detailLevel, source.pages).pages.filter(p => indices.some(i => source.pages[i].id === p.id));
+    const budget = knowledgeBudgetInstructions(source.detailLevel, pageBudgets);
     if (budget) request.systemInstruction.parts.push({ text: budget });
+    // 2026-11-09 用户令：篇幅预算写进输出合同并由路由逐页校验——审校一次产出合篇幅的逐页稿；超出算写坏切下一跳，压缩保留为兜底。
+    const contract = knowledgeBudgetOutputContract(source.detailLevel, pageBudgets);
+    if (contract) {
+      request.systemInstruction.parts.push({ text: contract });
+      request.pageBudgets = pageBudgets.map(p => ({ id: p.id, headline: p.headline, maxChars: p.maxChars }));
+    }
   }
   if (source.readingPreparation) {
     const notes = await (await import("./knowledgeReadingPreparation")).loadVerifiedKnowledgeReadingNotes(owner,source.readingPreparation,source,undefined,false);

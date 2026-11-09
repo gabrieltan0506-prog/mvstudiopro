@@ -149,6 +149,17 @@ export function knowledgeBudgetInstructions(level: KnowledgeEditionLevel | undef
   return `${rule}\n篇幅预算（中文字符，含表格单元格；${tolerance}）：${JSON.stringify(pages.map(p => ({ id: p.id, maxChars: p.maxChars })))}`;
 }
 
+/** 提示词目标留 10% 余量，校验按 maxChars。 */
+export const KNOWLEDGE_BUDGET_PROMPT_MARGIN = 0.9;
+/**
+ * 审校输出合同中的篇幅硬约束（完整版图文同页）：每页 reading 生成稿必须 ≤maxChars；路由按此逐页校验，超出即判写坏切下一跳。
+ * 精华版允许续页，不加硬约束。
+ */
+export function knowledgeBudgetOutputContract(level: KnowledgeEditionLevel | undefined, pages: { id: string; headline: string; maxChars: number }[]) {
+  if (level !== "full" || !pages.length) return "";
+  return `输出合同·篇幅（硬约束，程序逐页校验）：每页 pages[i].reading 的生成稿字数（中文字符，不含空白；副标题、各节小标题、表格表头与单元格、清单标题与正文、图注全部计入）必须 ≤ 该页 maxChars，按 targetChars 写；body 与 reading 同内容。任一页超出即整份回答判为不合格、换通道重做。输出前逐页自数一遍，超了就删与图中重复的表格/清单、合并并列例子，不截断半句、不删图外关键事实。逐页上限：${JSON.stringify(pages.map(p => ({ id: p.id, headline: p.headline, maxChars: p.maxChars, targetChars: Math.floor(p.maxChars * KNOWLEDGE_BUDGET_PROMPT_MARGIN) })))}`;
+}
+
 /** 审校后逐页核对：reading 实际字数（不含空白）对照各页预算，返回超出的页。 */
 export type KnowledgeReadingOverflow = { id: string; headline: string; chars: number; maxChars: number; excess: number };
 export function knowledgeReadingOverflow(
