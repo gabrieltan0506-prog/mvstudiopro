@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compileKnowledgeEditions } from "./knowledgeCardEdition";
 import { knowledgeEditionImagePlan, planKnowledgeCardPages, knowledgeCardCreditsForPages } from "./knowledgeCardPagination";
-import { auditKnowledgeTopicTitles, readKnowledgeTopicTitles, embedKnowledgeTopicTitles, knowledgeTopicKey } from "./knowledgeTopicImagePlan";
+import { auditKnowledgeTopicTitles, knowledgeTopicTitleWarning, readKnowledgeTopicTitles, embedKnowledgeTopicTitles, knowledgeTopicKey } from "./knowledgeTopicImagePlan";
 import { synchronizedKnowledgeCardSource } from "./knowledgeCardEditableLayout";
 import {
   KNOWLEDGE_TOPIC_IMAGE_CAP,
@@ -114,5 +114,14 @@ describe("主题出图：图数按主题定、图内≤1200字、其余进内文
     const firstKey = knowledgeTopicKey(plan.images[0]!.headlines);
     const partial = embedKnowledgeTopicTitles(book.full, { ...titles, [firstKey]: { ...titles[firstKey]!, sections: {} } });
     expect(auditKnowledgeTopicTitles(knowledgeEditionImagePlan(partial)!.images, readKnowledgeTopicTitles(partial)).ok).toBe(false);
+  });
+});
+
+describe("命题核查提示（确认出图前展示）", () => {
+  it("齐全为 null；缺项列出已命题张数、已改写节数、占位词数与出图后果", () => {
+    expect(knowledgeTopicTitleWarning({ topics: 16, named: 16, placeholder: 0, sameAsHeadline: 0, sectionTotal: 40, sectionRenamed: 40, ok: true })).toBeNull();
+    expect(knowledgeTopicTitleWarning({ topics: 16, named: 6, placeholder: 2, sameAsHeadline: 0, sectionTotal: 40, sectionRenamed: 15, ok: false }))
+      .toBe("主题命题未齐全：6/16 张图已命题、15/40 节小标题已改写、2 处占位词；缺项将以机械标题（“等N节”）或原小节标题出图");
+    expect(knowledgeTopicTitleWarning({ topics: 0, named: 0, placeholder: 0, sameAsHeadline: 0, sectionTotal: 0, sectionRenamed: 0, ok: false })).toBe("尚无主题图，无法核查命题");
   });
 });

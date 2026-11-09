@@ -266,3 +266,10 @@ export function auditKnowledgeTopicTitles(images: readonly Pick<KnowledgeTopicIm
   const ok = images.length > 0 && named === images.length && placeholder === 0 && sameAsHeadline === 0 && sectionRenamed === sectionTotal;
   return { topics: images.length, named, placeholder, sameAsHeadline, sectionTotal, sectionRenamed, ok };
 }
+
+/** 命题核查的用户提示：齐全时为 null；否则说明几张图已命题、几节小标题已改写、几处占位词，以及缺项的出图后果。 */
+export function knowledgeTopicTitleWarning(audit: ReturnType<typeof auditKnowledgeTopicTitles>): string | null {
+  if (audit.ok) return null;
+  if (!audit.topics) return "尚无主题图，无法核查命题";
+  return `主题命题未齐全：${audit.named}/${audit.topics} 张图已命题、${audit.sectionRenamed}/${audit.sectionTotal} 节小标题已改写${audit.placeholder ? `、${audit.placeholder} 处占位词` : ""}${audit.sameAsHeadline ? `、${audit.sameAsHeadline} 张与原小节同名` : ""}；缺项将以机械标题（“等N节”）或原小节标题出图`;
+}
