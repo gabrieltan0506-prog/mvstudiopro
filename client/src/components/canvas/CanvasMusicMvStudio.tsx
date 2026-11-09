@@ -65,6 +65,7 @@ import {
 } from "@shared/canvasGenerationPricing";
 import { CREDIT_COSTS } from "@shared/plans";
 import { CanvasMvLyricTableEditor } from "./CanvasMvLyricTableEditor";
+import { planMvHighlightFades } from "@shared/canvasMusicMvLyricKinds";
 import { recommendMusicMvHighlight } from "@shared/musicMvHighlight";
 import { CanvasMvShotReferencePicker } from "./CanvasMvShotReferencePicker";
 import {
@@ -159,6 +160,7 @@ export function CanvasMusicMvStudio({
   const upload = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const plan = trpc.canvasMusicMv.draftPlan.useMutation();
   const recognizeLyrics = trpc.canvasMusicMv.recognizeLyrics.useMutation({ retry: false });
+  const reviseForLyrics = trpc.canvasMusicMv.reviseForLyrics.useMutation({ retry: false });
   const assemble = trpc.canvasMusicMvAssemble.queue.useMutation();
   const patch = (
     delta: Partial<CanvasMusicMvState>,
@@ -677,6 +679,8 @@ export function CanvasMusicMvStudio({
         const shotBlock = getBlocks().find(row => row.id === id);
         const binding = shotBlock?.musicMvShot;
         if (!shotBlock || !binding || binding.kind === "footage" || (shotBlock.status === "done" && shotBlock.outputUrl)) return;
+        // 吟唱段不生成：按顾问建议选素材合成（素材填充），未合成前整批拦
+        if (binding.fillRequested) { gapLines.push(`镜头 ${i + 1}：吟唱段走素材填充，请在「为镜头选参考素材」里按建议选素材并合成`); return; }
         if (!binding.references) {
           if (!binding.referenceImages.length) gapLines.push(`镜头 ${i + 1}：未选参考素材`);
           return;
@@ -763,6 +767,11 @@ export function CanvasMusicMvStudio({
           plan: source.plan,
           clips,
           resolution: range ? "9:16" : block.aspectRatio === "9:16" ? "9:16" : "16:9",
+          // 1109 高光结尾必须淡出（对齐拍点/句尾），起点落在句中做短淡入；用户可调
+          ...(range ? (() => {
+            const f = planMvHighlightFades({ range, lines: source.lyricTable?.lines, beatGrid: source.plan.beatGrid, fadeInSec: source.highlightFadeInSec, fadeOutSec: source.highlightFadeOutSec });
+            return { ...(f.fadeInSec > 0 ? { videoFadeInSec: f.fadeInSec } : {}), ...(f.fadeOutSec > 0 ? { videoFadeOutSec: f.fadeOutSec } : {}) };
+          })() : {}),
         };
         patch({
           assembleRequestId: submission.requestId,
@@ -1390,6 +1399,14 @@ export function CanvasMusicMvStudio({
           <button className={button} disabled={busy || Boolean(highlightError)} onClick={()=>void perform(async()=>{const range=highlightRange(latest.current);if(!range || !highlightAudio.current)return;highlightAudio.current.currentTime=range.startSec;await highlightAudio.current.play();})}>试听高光区间</button>
         </div>}
         {highlightError && <p role="alert" className="text-xs text-amber-200">{highlightError}</p>}
+        {selected && state.highlight && (() => {
+          const f = planMvHighlightFades({ range: state.highlight, lines: state.lyricTable?.lines, beatGrid: state.plan?.beatGrid, fadeInSec: state.highlightFadeInSec, fadeOutSec: state.highlightFadeOutSec });
+          return <div className="flex flex-wrap items-end gap-3 text-xs">
+            <label>淡入（秒）<input aria-label="高光淡入秒数" type="number" min="0" max="3" step="0.1" className={field} value={f.fadeInSec.toFixed(1)} disabled={busy} onChange={e=>patch({highlightFadeInSec:Math.max(0,Math.min(3,Math.round(Number(e.target.value)*10)/10))})}/></label>
+            <label>淡出（秒）<input aria-label="高光淡出秒数" type="number" min="0" max="6" step="0.1" className={field} value={f.fadeOutSec.toFixed(1)} disabled={busy} onChange={e=>patch({highlightFadeOutSec:Math.max(0,Math.min(6,Math.round(Number(e.target.value)*10)/10))})}/></label>
+            <span className="text-white/60">{f.reasonZh}；音画同步淡出，不硬切</span>
+          </div>;
+        })()}
         {selected && !songOnly && <button className={button} disabled={busy || !state.lyricTable?.lines.length} onClick={()=>void perform(async()=>{
           // 高光只取有歌词的部分：按歌词时间表推荐（规则见 recommendMusicMvHighlight），用户仍可手动改
           const rec=recommendMusicMvHighlight(latest.current.lyricTable?.lines||[],selected.durationSec,latest.current.plan?.beatGrid?.segments||[]);
@@ -1635,6 +1652,12 @@ export function CanvasMusicMvStudio({
           <CanvasMvShotReferencePicker
             projectId={projectId}
             videoModel={block.videoModel}
+            onFillComposed={async (shotId, clip) => {
+              const id = (latest.current.shotBlockIds || []).find(b => getBlocks().find(row => row.id === b)?.musicMvShot?.shotId === shotId);
+              if (!id) throw new Error("请先确认分镜并铺到画布，再合成素材填充镜头");
+              const url = await resolveCanvasMaterialUrl(clip.gcsUri);
+              onPatchBlock?.(id, { status: "done", outputUrl: url, outputUrls: [url], error: undefined });
+            }}
             planRequestId={state.planRequestId}
             shots={planShots}
             anchorImage={state.anchorImage}
@@ -1657,6 +1680,11 @@ export function CanvasMusicMvStudio({
             disabled={busy}
             onChange={updateReferences}
           />
+          {highlightMode && state.plan && state.planRequestId && <button className={button} disabled={busy || state.lyricTable?.status !== "confirmed" || !state.highlight} onClick={()=>void perform(async()=>{
+            // 1109：真歌词→演唱段，吟唱→素材填充段（跨吟唱起点的镜切开），补逐窗节拍与填充建议；存为新分镜记录后重新铺镜头
+            const revised = await reviseForLyrics.mutateAsync({ basePlanRequestId: latest.current.planRequestId!, lyricTable: latest.current.lyricTable, highlight: latest.current.highlight, ...(latest.current.musicJobId ? { musicJobId: latest.current.musicJobId } : {}) });
+            patch({ plan: revised.plan, planRequestId: revised.requestId, shotBlockIds: undefined, error: revised.beatsFailed.length || revised.fillFailuresZh.length ? `已重排镜头；${revised.beatsFailed.length ? `逐窗节拍未出：${revised.beatsFailed.join("、")}；` : ""}${revised.fillFailuresZh.join("；")}` : undefined });
+          })}>按确认版歌词重排镜头（演唱/素材填充）</button>}
           <h3 data-mv-step="shots" className="border-t border-white/15 pt-5 text-base font-semibold">4. 制作镜头</h3>
           {!!videoModelOptions?.length && (
             <label className="block text-xs">

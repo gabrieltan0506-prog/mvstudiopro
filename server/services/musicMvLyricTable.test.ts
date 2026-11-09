@@ -27,7 +27,7 @@ describe("本段歌词识别（待确认版）", () => {
     const listen = vi.fn(async (input: any) => ({ value: input.validate({ lines: [{ text: "又不想说", startSec: 2, endSec: 4.5 }] }), channel: "EvoLink" as const, model: "gemini-3.6-flash", failuresZh: ["Vertex（请求超时）"] }));
     const table = await recognizeMusicMvLyricTable(7, { requestId: "11111111-1111-4111-8111-111111111111", audio: { id: "a", url: "https://x/a.mp3" }, range: { startSec: 140, endSec: 185 } }, { readSong: async () => Buffer.from("song"), listen: listen as any });
     expect(table.status).toBe("pending");
-    expect(table.lines).toEqual([{ text: "又不想说", startSec: 142, endSec: 144.5 }]);
+    expect(table.lines).toEqual([{ text: "又不想说", startSec: 142, endSec: 144.5, kind: "lyric" }]);
     expect(table.recognizedBy).toEqual({ channel: "EvoLink", model: "gemini-3.6-flash" });
     expect(listen.mock.calls[0]![0].prompt).toContain("片段内 0 秒＝歌曲 140 秒");
   });

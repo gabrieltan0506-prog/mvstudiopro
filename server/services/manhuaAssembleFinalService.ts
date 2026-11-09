@@ -55,6 +55,9 @@ export type ManhuaAssembleFinalInput = {
   sourceAudioGainDb?: number;
   /** 1109 MV 逐段实测适配（与合成镜头同序）：实测时长、演唱段互相关落位；不合格段列出重做。 */
   mvClipFit?: MvClipFitInput[];
+  /** 1109 MV 高光首尾音画同步淡入/淡出（秒）。 */
+  videoFadeInSec?: number;
+  videoFadeOutSec?: number;
   musicStartSec?: number;
   musicEndSec?: number;
   alignedLyrics?: SongAlignedSubtitle;
@@ -254,6 +257,8 @@ export async function runManhuaAssembleFinal(
     preserveSourceAudio: true,
     musicOnly: raw.musicOnly === true,
     ...(raw.musicOnly === true && Number.isFinite(Number(raw.sourceAudioGainDb)) ? { sourceAudioGainDb: Number(raw.sourceAudioGainDb) } : {}),
+    ...(raw.musicOnly === true && Number(raw.videoFadeInSec) > 0 ? { videoFadeInSec: Math.min(3, Number(raw.videoFadeInSec)) } : {}),
+    ...(raw.musicOnly === true && Number(raw.videoFadeOutSec) > 0 ? { videoFadeOutSec: Math.min(6, Number(raw.videoFadeOutSec)) } : {}),
     musicStartSec: raw.musicStartSec,
     musicEndSec: raw.musicEndSec,
     alignedLyrics,

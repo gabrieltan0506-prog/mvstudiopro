@@ -168,7 +168,9 @@ export function singingWindowsFromLyricLines(
   lines: ReadonlyArray<{ text: string; startSec: number; endSec: number }>,
 ): MusicMvShotBeat[] {
   if (!advisorBeats.length) throw new Error(`演唱镜 ${shot.id} 缺少逐窗节拍，请重新出分镜`);
+  // 只取真歌词句对口型；吟唱句不对口型
   const inShot = lines
+    .filter(l => (l as { kind?: string }).kind !== "chant")
     .map(l => ({ text: l.text.trim(), startSec: r3(Math.max(shot.startSec, l.startSec)), endSec: r3(Math.min(shot.endSec, l.endSec)) }))
     .filter(l => l.text && l.endSec - l.startSec > 0.05)
     .sort((a, b) => a.startSec - b.startSec);

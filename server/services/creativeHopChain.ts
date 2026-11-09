@@ -11,7 +11,7 @@ import { CreativeProposalError } from "./creativeProposalFailure";
 export type HopSave = (name: string, value: unknown) => Promise<unknown>;
 type Save = HopSave;
 
-export const runCreativeHopChain=async<T>(hops:readonly CreativeLlmHop[],stage:"compose"|"refine"|"beats",chainSave:Save,call:(hop:CreativeLlmHop,hopSave:Save,repair?:{attempt:number;reasonZh:string})=>Promise<{text:string;model:string;inputSha256?:string;elapsedMs?:number}>,accept:(decoded:unknown,hopSave:Save,stageName:string,model:string,inputSha256?:string)=>Promise<T>)=>{
+export const runCreativeHopChain=async<T>(hops:readonly CreativeLlmHop[],stage:"compose"|"refine"|"beats"|"fill",chainSave:Save,call:(hop:CreativeLlmHop,hopSave:Save,repair?:{attempt:number;reasonZh:string})=>Promise<{text:string;model:string;inputSha256?:string;elapsedMs?:number}>,accept:(decoded:unknown,hopSave:Save,stageName:string,model:string,inputSha256?:string)=>Promise<T>)=>{
   const failures:string[]=[];
   const attemptsLog:Array<Record<string,unknown>>=[];
   const startedAt=Date.now();

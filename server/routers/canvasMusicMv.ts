@@ -571,6 +571,32 @@ export const canvasMusicMvRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "参考片裁切失败" });
       }
     }),
+  /** 1109 按确认版歌词表修订分镜（演唱/素材填充分工、补逐窗节拍与填充建议），存为新分镜记录。 */
+  reviseForLyrics: protectedProcedure
+    .input(z.object({ basePlanRequestId: z.string().uuid(), lyricTable: z.unknown(), highlight: z.unknown(), musicJobId: z.string().trim().min(1).max(200).optional() }).strict())
+    .mutation(async ({ ctx, input }) => {
+      const { reviseMusicMvPlanForLyrics } = await import("../services/musicMvPlanRevision");
+      try {
+        return await reviseMusicMvPlanForLyrics(ctx.user.id, input as any);
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message.slice(0, 400) : "分镜修订失败" });
+      }
+    }),
+  /** 1109 素材填充镜头合成：按逐窗选定的图库视频/照片渲染成与镜头等长的片段。 */
+  composeFillShot: protectedProcedure
+    .input(z.object({
+      shotId: z.string().min(1).max(100),
+      aspect: z.enum(["9:16", "16:9"]),
+      windows: z.array(z.object({ startSec: z.number().finite().min(0), endSec: z.number().finite().positive(), kind: z.enum(["video", "photo"]), gcsUri: z.string().regex(/^gs:\/\/[^/]+\/.+/), cameraZh: z.string().max(200).optional(), inSec: z.number().min(0).optional() }).strict()).min(1).max(12),
+    }).strict())
+    .mutation(async ({ ctx, input }) => {
+      const { buildMvFillShot } = await import("../services/mvFillShot");
+      try {
+        return await buildMvFillShot(ctx.user.id, input);
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message.slice(0, 400) : "素材填充合成失败" });
+      }
+    }),
   draftPlan: protectedProcedure
     .input(canvasMusicMvDraftInputSchema)
     .mutation(({ ctx, input }) =>

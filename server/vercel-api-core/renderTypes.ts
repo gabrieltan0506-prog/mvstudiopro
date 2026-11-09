@@ -27,6 +27,9 @@ export interface RenderWorkflowInput {
   musicOnly?: boolean;
   /** musicOnly 时镜头环境层电平（dB，−40～−12，默认 −20）；不变速。 */
   sourceAudioGainDb?: number;
+  /** 1109 MV 高光首尾音画同步淡入/淡出（秒）。 */
+  videoFadeInSec?: number;
+  videoFadeOutSec?: number;
   alignedLyrics?: SongAlignedSubtitle;
   musicUrl?: string;
   voiceUrl?: string;

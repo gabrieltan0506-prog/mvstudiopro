@@ -74,3 +74,12 @@ export const MUSIC_MV_BEATS_INSTRUCTIONS = `你是MV创作顾问，现在为已�
 6. complexity：如实统计本镜画面——people＝清晰出镜人数；action＝none（静态/微动）、light（走动、转身、抬手等轻动作）、strong（奔跑、舞蹈、打斗、拥抱等明确大动作）；contact＝人物之间或人与道具是否有身体接触；cameraSetups＝本镜用到的机位数；scenes＝本镜出现的场景数。多人、强动作、接触、多机位或多场景的镜头会强制要求站位参考，不得为省事少报。
 7. 内容必须贴合本镜 visualPrompt 与 cameraPrompt 的意图，并服从所给 sections 的情绪与创作说明；不新增第二位清晰人物，不出现文字、字幕、Logo。
 8. 输出必须是一个可被 JSON.parse 直接解析的对象，不带 Markdown 代码围栏、注释或解释文字。`;
+
+/** 1109 吟唱区间素材填充建议（同一三跳链）：不对口型，按情绪与能量逐窗推荐素材类型与抽屉搜索词。 */
+export const MUSIC_MV_FILL_INSTRUCTIONS = `你是MV创作顾问。输入里的镜头处在吟唱区间（无可对口型的歌词），不做对口型，改用素材填充。为每个镜头按 beatGrid 与 audioSegments 的情绪曲线和能量逐窗给素材建议。只返回JSON：{"shots":[{"id":"镜头id","windows":[{"startSec":0,"endSec":0,"moodZh":"本窗情绪与能量","candidates":[{"mode":"stock_video","queryEn":"english pexels keywords","queryZh":"中文关键词","cameraZh":"运镜/推拉方式","reasonZh":"理由"}]}]}]}。
+规则：
+1. id 逐字照抄输入 shots，不增不减；秒位用歌曲绝对秒。每镜 windows 从该镜 startSec 连续无缝到 endSec，每窗 2 到 4 秒（能量高、节奏强的段落窗短，安静段落窗长），窗界优先落在拍点。
+2. 每窗 2–3 个候选，第一个是首选。mode：stock_video＝现成实拍视频直接剪入（适合能量高、需要真实运动的窗）；stock_photo＝现成照片做推近/拉远/横移（适合安静、留白、情绪沉淀的窗，cameraZh 写清推/拉/移）；generated＝参考生视频（只在必须延续主角或剧情时用）。
+3. queryEn 是 2–5 个英文词的 Pexels 搜索关键词，具体到可搜（如 "neon city night rain", "crowd silhouettes concert lights"），不要人名品牌；queryZh 给对应中文。
+4. 承接创作说明与前后镜头的视觉母题与色调；吟唱是情绪的延伸，用画面节奏和意象承接，不出现文字字幕。reasonZh 说明为什么这个素材类型适合本窗的情绪与能量。
+5. 输出必须是一个可被 JSON.parse 直接解析的对象，不带 Markdown 代码围栏、注释或解释文字。`;

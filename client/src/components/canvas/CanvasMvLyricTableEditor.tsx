@@ -9,6 +9,7 @@ import {
   type MusicMvLyricLine,
   type MusicMvLyricTable,
 } from "@shared/canvasMusicMv";
+import { markChantFrom } from "@shared/canvasMusicMvLyricKinds";
 
 const field = "w-full rounded border border-white/20 bg-black/30 p-1.5 text-xs";
 const button = "rounded border border-white/20 px-2 py-1.5 text-xs disabled:opacity-40";
@@ -28,6 +29,7 @@ type Props = {
 
 export function CanvasMvLyricTableEditor({ table, range, disabled, onRecognize, onChange, onConfirm, onPlayLine }: Props) {
   const [error, setError] = useState("");
+  const [chantFrom, setChantFrom] = useState("");
   const stale = Boolean(table && range && (Math.abs(table.range.startSec - range.startSec) > 0.01 || Math.abs(table.range.endSec - range.endSec) > 0.01));
   const edit = (lines: MusicMvLyricLine[]) => {
     if (!table) return;
@@ -55,7 +57,11 @@ export function CanvasMvLyricTableEditor({ table, range, disabled, onRecognize, 
         <div className="space-y-1">
           {table.lines.length === 0 && <p className="text-xs text-white/60">本段没有识别到唱词；如确有演唱，请手动添加句子。</p>}
           {table.lines.map((line, i) => (
-            <div key={i} className="grid grid-cols-[1fr_5.5rem_5.5rem_auto] items-center gap-1">
+            <div key={i} className="grid grid-cols-[4.5rem_1fr_5.5rem_5.5rem_auto] items-center gap-1">
+              <select aria-label={`第${i + 1}句类型`} className={field} value={line.kind ?? "lyric"} disabled={disabled} onChange={e => setLine(i, { kind: e.target.value as "lyric" | "chant" })}>
+                <option value="lyric">歌词</option>
+                <option value="chant">吟唱</option>
+              </select>
               <input aria-label={`第${i + 1}句歌词（可改字）`} className={field} value={line.text} disabled={disabled} onChange={e => setLine(i, { text: e.target.value })} />
               <input aria-label={`第${i + 1}句开始秒`} className={field} type="number" step="0.1" value={tenth(line.startSec).toFixed(1)} disabled={disabled} onChange={e => setLine(i, { startSec: Number(e.target.value) })} />
               <input aria-label={`第${i + 1}句结束秒`} className={field} type="number" step="0.1" value={tenth(line.endSec).toFixed(1)} disabled={disabled} onChange={e => setLine(i, { endSec: Number(e.target.value) })} />
@@ -76,6 +82,13 @@ export function CanvasMvLyricTableEditor({ table, range, disabled, onRecognize, 
           >
             加一句
           </button>
+          <div className="flex flex-wrap items-center gap-1 text-xs">
+            <span>从</span>
+            <input aria-label="吟唱起点秒" className="w-20 rounded border border-white/20 bg-black/30 p-1" type="number" step="0.1" min={table.range.startSec} max={table.range.endSec} value={chantFrom} disabled={disabled} onChange={e => setChantFrom(e.target.value)} />
+            <span>秒起全部设为吟唱（跨该秒的句子自动切开）</span>
+            <button className={button} disabled={disabled || !Number.isFinite(Number(chantFrom)) || chantFrom === ""} onClick={() => edit(markChantFrom(table.lines, tenth(Number(chantFrom))))}>应用</button>
+          </div>
+          <p className="text-[11px] text-white/60">歌词句做演唱段（逐字对口型）；吟唱句不对口型，改做素材填充段（顾问按情绪给视频/照片/生成画面建议）。</p>
           {issues.length > 0 && <p role="alert" className="text-xs text-amber-200">{issues.join("；")}</p>}
           <button
             className={button}

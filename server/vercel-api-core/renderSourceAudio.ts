@@ -373,6 +373,18 @@ export async function renderSourceAudioFinal(
     const expected = hasMusicRange ? end - start : timeline;
     if (Math.abs(audioDuration - expected) > 0.1)
       throw new Error(`成片音轨时长 ${audioDuration.toFixed(3)}s 与原歌切片 ${expected.toFixed(3)}s 不一致，未交付`);
+    // 1109 高光首尾音画同步淡入/淡出（整段混音一起淡，画面淡黑），不改时长
+    const fi = nonNegative(input.videoFadeInSec, 0);
+    const fo = nonNegative(input.videoFadeOutSec, 0);
+    if (fi > 0 || fo > 0) {
+      const T = expected;
+      if (fi + fo > T) throw new Error("淡入淡出总时长超过成片时长，未交付");
+      const vf = [fi > 0 ? `fade=t=in:st=0:d=${fi}` : "", fo > 0 ? `fade=t=out:st=${Math.max(0, T - fo)}:d=${fo}` : ""].filter(Boolean).join(",");
+      const af = [fi > 0 ? `afade=t=in:st=0:d=${fi}` : "", fo > 0 ? `afade=t=out:st=${Math.max(0, T - fo)}:d=${fo}` : ""].filter(Boolean).join(",");
+      const faded = path.join(tmpDir, "source-audio-final-faded.mp4");
+      await mediaTool("ffmpeg", ["-y", "-v", "error", "-i", final, "-vf", vf, "-af", af, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-ar", String(SAMPLE_RATE), "-ac", "2", "-movflags", "+faststart", faded]);
+      return finish(faded);
+    }
   }
   return finish(final);
 }

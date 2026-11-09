@@ -33,7 +33,8 @@ type Shot = CanvasMusicMvPlan["shots"][number];
 type Target =
   | { kind: "anchor" }
   | { kind: "scene"; shot: Shot }
-  | { kind: "motion"; shot: Shot };
+  | { kind: "motion"; shot: Shot }
+  | { kind: "fill"; shot: Shot; windowIndex: number; media: "video" | "photo"; query: string; cameraZh: string };
 
 export type CanvasMvShotReferencePickerProps = {
   projectId?: string;
@@ -51,6 +52,8 @@ export type CanvasMvShotReferencePickerProps = {
   cinemaHintZh?: string;
   /** 镜头成片模型（参考片裁切长度按其单条上限）。 */
   videoModel?: string;
+  /** 1109 吟唱镜素材填充合成完成：镜头片段（与镜头等长）。 */
+  onFillComposed?: (shotId: string, clip: { gcsUri: string; durationSec: number }) => void | Promise<void>;
   disabled?: boolean;
   onChange: (next: { anchorImage?: MvShotReferenceImage; shotReferences: Record<string, MvShotReferences> }) => void;
 };
@@ -131,9 +134,29 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
     }
   };
 
+  const composeFill = trpc.canvasMusicMv.composeFillShot.useMutation({ retry: false });
+  /** 吟唱镜每窗选定的图库素材（视频直接剪入 / 照片推拉）。 */
+  const [fillPicks, setFillPicks] = useState<Record<string, Record<number, { kind: "video" | "photo"; gcsUri: string; cameraZh: string; label: string }>>>({});
+  const composeFillShot = async (shot: Shot) => {
+    const picks = fillPicks[shot.id] || {};
+    const windows = (shot.fill || []).map((w, i) => {
+      const p = picks[i];
+      if (!p) throw new Error(`第 ${i + 1} 窗还没选素材`);
+      return { startSec: w.startSec, endSec: w.endSec, kind: p.kind, gcsUri: p.gcsUri, cameraZh: p.cameraZh };
+    });
+    const built = await composeFill.mutateAsync({ shotId: shot.id, aspect: props.orientation === "portrait" ? "9:16" : "16:9", windows });
+    await props.onFillComposed?.(shot.id, { gcsUri: built.gcsUri, durationSec: built.durationSec });
+  };
+
   const onPick = async (pick: StockFootagePick) => {
     if (!target) return;
     setError("");
+    if (target.kind === "fill") {
+      const t = target;
+      setFillPicks(prev => ({ ...prev, [t.shot.id]: { ...(prev[t.shot.id] || {}), [t.windowIndex]: { kind: t.media, gcsUri: pick.asset.gcsUri, cameraZh: t.cameraZh, label: stockAttributionText(pick.asset.source) } } }));
+      setTarget(null);
+      return;
+    }
     if (target.kind === "anchor") {
       const anchor = imageFromPick(pick, realPerson);
       props.onChange({ anchorImage: anchor, shotReferences: { ...(props.shotReferences || {}) } });
@@ -227,7 +250,7 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
       : { ...now, motionVideos: now.motionVideos.filter((_, i) => i !== index) });
   };
 
-  const totalBlocking = shots.reduce((n, shot) => n + (shot.kind === "footage" ? 0 : mvShotReferenceGaps(refsOf(shot.id), undefined, { requiresStaging: mvShotNeedsStagingReference(shot.complexity) }).blocking.length ? 1 : 0), 0);
+  const totalBlocking = shots.reduce((n, shot) => n + (shot.kind === "footage" || shot.fillRequested ? 0 : mvShotReferenceGaps(refsOf(shot.id), undefined, { requiresStaging: mvShotNeedsStagingReference(shot.complexity) }).blocking.length ? 1 : 0), 0);
 
   return (
     <section data-mv-step="references" aria-label="为镜头选参考素材" className="space-y-2">
@@ -263,6 +286,33 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
       {shots.map((shot, index) => {
         if (shot.kind === "footage")
           return <p key={shot.id} className="text-xs text-white/50">{index + 1}. 已有素材切片，无需参考</p>;
+        if (shot.fillRequested) {
+          const picks = fillPicks[shot.id] || {};
+          return (
+            <div key={shot.id} className="space-y-1 rounded border border-white/10 p-2 text-xs" data-mv-shot-fill={shot.id}>
+              <p><strong>{index + 1}.</strong> {shot.startSec.toFixed(1)}–{shot.endSec.toFixed(1)} 秒 · 吟唱段：不对口型，按顾问建议用素材填充</p>
+              {!shot.fill?.length && <p className="text-amber-200">还没有素材填充建议：请先「按确认版歌词重排镜头」。</p>}
+              {shot.fill?.map((w, wi) => (
+                <div key={wi} className="rounded border border-white/10 p-1">
+                  <p>{w.startSec.toFixed(1)}–{w.endSec.toFixed(1)} 秒 · {w.moodZh}{picks[wi] ? ` · 已选：${picks[wi]!.label}` : ""}</p>
+                  {w.candidates.map((c, ci) => (
+                    <p key={ci} className="flex flex-wrap items-center gap-1 text-white/70">
+                      <span>{c.mode === "stock_video" ? "实拍视频剪入" : c.mode === "stock_photo" ? "照片推拉" : "参考生视频"}：{c.queryZh || c.queryEn}（{c.cameraZh}）— {c.reasonZh}</span>
+                      {c.mode !== "generated" && (
+                        <button className={button} disabled={disabled} onClick={() => setTarget({ kind: "fill", shot, windowIndex: wi, media: c.mode === "stock_video" ? "video" : "photo", query: c.queryEn, cameraZh: c.cameraZh })}>一键搜</button>
+                      )}
+                    </p>
+                  ))}
+                </div>
+              ))}
+              {!!shot.fill?.length && (
+                <button className={button} disabled={disabled || composeFill.isPending || shot.fill.some((_, wi) => !picks[wi])} onClick={() => void composeFillShot(shot).catch(e => setError(e instanceof Error ? e.message : "素材填充合成失败"))}>
+                  {composeFill.isPending ? "正在合成…" : "合成本镜素材填充"}
+                </button>
+              )}
+            </div>
+          );
+        }
         const refs = refsOf(shot.id);
         const counts = countMvShotReferences(refs);
         const staging = mvShotNeedsStagingReference(shot.complexity);
@@ -305,12 +355,13 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
         <StockFootageDrawer
           open
           onClose={() => setTarget(null)}
-          title={target.kind === "anchor" ? "选全片主锚图" : target.kind === "scene" ? `为镜头 ${shots.indexOf(target.shot) + 1} 找场景图` : `为镜头 ${shots.indexOf(target.shot) + 1} 找运镜参考片`}
+          title={target.kind === "anchor" ? "选全片主锚图" : target.kind === "scene" ? `为镜头 ${shots.indexOf(target.shot) + 1} 找场景图` : target.kind === "fill" ? `为吟唱镜 ${shots.indexOf(target.shot) + 1} 第 ${target.windowIndex + 1} 窗找素材` : `为镜头 ${shots.indexOf(target.shot) + 1} 找运镜参考片`}
           purpose="mvShot"
           usage="reference"
-          kind={target.kind === "motion" ? "video" : "photo"}
+          kind={target.kind === "motion" ? "video" : target.kind === "fill" ? target.media : "photo"}
+          {...(target.kind === "fill" ? { initialQuery: target.query } : {})}
           orientation={props.orientation}
-          targetDurationSec={target.kind === "motion" ? Math.max(1, target.shot.endSec - target.shot.startSec) : undefined}
+          targetDurationSec={target.kind === "motion" ? Math.max(1, target.shot.endSec - target.shot.startSec) : target.kind === "fill" && target.shot.fill ? Math.max(1, target.shot.fill[target.windowIndex]!.endSec - target.shot.fill[target.windowIndex]!.startSec) : undefined}
           sourceText={
             target.kind === "anchor"
               ? [shots.map(s => s.visualPrompt).join("；"), props.cinemaHintZh].filter(Boolean).join("；")

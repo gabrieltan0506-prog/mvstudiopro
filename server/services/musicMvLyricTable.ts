@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { execHeavyMedia } from "./heavyMediaProcess";
 import { geminiAudioJsonWithFallback } from "../gemini-audio";
 import { downloadGcsObject, getGcsBucketName, uploadBufferToGcsIfAbsent } from "./gcs";
+import { withSuggestedLyricKinds } from "../../shared/canvasMusicMvLyricKinds";
 import {
   musicMvLyricLineIssues,
   musicMvLyricLineSchema,
@@ -117,7 +118,8 @@ export async function recognizeMusicMvLyricTable(
         if (mid >= c.coreStartSec && mid < c.coreEndSec) merged.push(line);
       }
     }
-    const lines = mergeLyricLines(merged);
+    // 句类型先给建议（重复短词/无语义/拖长音判吟唱），用户在歌词表里可改
+    const lines = withSuggestedLyricKinds(mergeLyricLines(merged));
     const result = { channel: used.map(u => u.channel).filter((v, i, a) => a.indexOf(v) === i).join("+"), model: used[0]?.model || "", value: lines };
     const table: MusicMvLyricTable = {
       requestId: input.requestId,

@@ -183,6 +183,30 @@ export function mvShotNeedsStagingReference(c: MusicMvShotComplexity | undefined
 }
 export const MV_SHOT_STAGING_REQUIRED_ZH = "该镜需白模站位或实拍运镜参考";
 
+/**
+ * 1109 素材填充段（吟唱区间不对口型）：顾问按情绪与能量给逐窗建议——Pexels 视频直接剪入、
+ * Pexels 照片/生成关键帧做推拉、或参考生视频；每个候选带抽屉搜索关键词与理由。
+ */
+export const MUSIC_MV_FILL_MODES = ["stock_video", "stock_photo", "generated"] as const;
+export const musicMvFillCandidateSchema = z
+  .object({
+    mode: z.enum(MUSIC_MV_FILL_MODES),
+    queryEn: text.max(120),
+    queryZh: z.string().max(120).optional(),
+    cameraZh: text.max(200),
+    reasonZh: text.max(300),
+  })
+  .strict();
+export const musicMvFillWindowSchema = z
+  .object({
+    startSec: z.number().finite().min(0),
+    endSec: z.number().finite().positive(),
+    moodZh: text.max(200),
+    candidates: z.array(musicMvFillCandidateSchema).min(1).max(4),
+  })
+  .strict();
+export type MusicMvFillWindow = z.infer<typeof musicMvFillWindowSchema>;
+
 /** 演唱窗起止的来源：confirmed＝用户确认版歌词时间表；unconfirmed＝自动识别待确认版（仅探针可用，正式出片拦截）。 */
 export const MUSIC_MV_LYRIC_TIMING_SOURCES = ["confirmed", "unconfirmed"] as const;
 export const musicMvLyricLineSchema = z
@@ -190,6 +214,8 @@ export const musicMvLyricLineSchema = z
     text: text.max(300),
     startSec: z.number().finite().min(0),
     endSec: z.number().finite().positive(),
+    /** lyric＝真歌词（可对口型）；chant＝吟唱（不对口型，走素材填充）。缺省 lyric。 */
+    kind: z.enum(["lyric", "chant"]).optional(),
   })
   .strict();
 export type MusicMvLyricLine = z.infer<typeof musicMvLyricLineSchema>;
@@ -313,6 +339,9 @@ export const canvasMusicMvShotSchema = z
     lyricTiming: z.enum(MUSIC_MV_LYRIC_TIMING_SOURCES).optional(),
     /** 镜头复杂度（达阈值则站位参考必填）。 */
     complexity: musicMvShotComplexitySchema.optional(),
+    /** 1109 吟唱区间：本镜走素材填充（不对口型），fill 为顾问逐窗建议。 */
+    fillRequested: z.boolean().optional(),
+    fill: z.array(musicMvFillWindowSchema).max(12).optional(),
   })
   .strict();
 export const canvasMusicMvPlanSchema = z
@@ -597,6 +626,9 @@ export const canvasMusicMvAssembleSnapshotSchema = z
       )
       .min(1),
     resolution: z.enum(["16:9", "9:16"]),
+    /** 1109 高光首尾音画同步淡入/淡出（秒）。 */
+    videoFadeInSec: z.number().finite().min(0).max(3).optional(),
+    videoFadeOutSec: z.number().finite().min(0).max(6).optional(),
   })
   .strict();
 
@@ -660,6 +692,8 @@ export const canvasMusicMvShotBindingSchema = z
     /** 演唱段：用户确认版歌词时间表里落在本镜的唱句（歌曲绝对秒）。 */
     lyricLines: z.array(musicMvLyricLineSchema).max(60).optional(),
     complexity: musicMvShotComplexitySchema.optional(),
+    fillRequested: z.boolean().optional(),
+    fill: z.array(musicMvFillWindowSchema).max(12).optional(),
   })
   .strict();
 export type CanvasMusicMvShotBinding = z.infer<
@@ -672,6 +706,9 @@ export const canvasMusicMvStateSchema = z
     highlight: musicMvHighlightSchema.optional(),
     /** 1109 本段歌词时间表（高光区间）；演唱段只读 confirmed 版。 */
     lyricTable: musicMvLyricTableSchema.optional(),
+    /** 1109 高光淡入/淡出（秒，音画同步）；缺省按乐句与拍点自动定。 */
+    highlightFadeInSec: z.number().finite().min(0).max(3).optional(),
+    highlightFadeOutSec: z.number().finite().min(0).max(6).optional(),
     status: z.enum([
       "idle",
       "music_running",

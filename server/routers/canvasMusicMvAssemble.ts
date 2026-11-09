@@ -47,6 +47,9 @@ export const canvasMusicMvAssembleRouter = router({
           resolution: z.enum(["16:9", "9:16"]).default("16:9"),
           /** 镜头环境音背景层电平（dB）；主音轨原歌曲恒 0 dB。 */
           sourceAudioGainDb: z.number().min(-40).max(-12).optional(),
+          /** 1109 高光首尾音画同步淡入/淡出（秒）。 */
+          videoFadeInSec: z.number().finite().min(0).max(3).optional(),
+          videoFadeOutSec: z.number().finite().min(0).max(6).optional(),
         })
         .strict()
     )
@@ -234,6 +237,8 @@ export const canvasMusicMvAssembleRouter = router({
         musicUrl,
         musicOnly: true,
         sourceAudioGainDb: input.sourceAudioGainDb ?? -20,
+        ...(input.videoFadeInSec ? { videoFadeInSec: input.videoFadeInSec } : {}),
+        ...(input.videoFadeOutSec ? { videoFadeOutSec: input.videoFadeOutSec } : {}),
         // 1109 逐段实测适配：生成段实测够长才裁、演唱段按互相关落位（剪辑版本按剪辑点合成，不适配）
         ...(edit ? {} : {
           mvClipFit: slices.map(({ shot, offsetSec, durationSec }) => ({

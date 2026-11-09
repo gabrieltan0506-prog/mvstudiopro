@@ -32,6 +32,9 @@ export type ManhuaAssembleJobParams = {
   sourceAudioGainDb?: number;
   /** 1109 MV 逐段实测适配（与 clips 同序）：worker 合成前 ffprobe 实测、演唱段互相关落位。 */
   mvClipFit?: MvClipFitInput[];
+  /** 1109 MV 高光首尾音画同步淡入/淡出（秒）。 */
+  videoFadeInSec?: number;
+  videoFadeOutSec?: number;
   musicStartSec?: number;
   musicEndSec?: number;
   alignedLyrics?: SongAlignedSubtitle;

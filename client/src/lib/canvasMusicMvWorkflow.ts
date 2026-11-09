@@ -91,6 +91,7 @@ export function createMusicMvShotBlocks(
       ...(plan.beatGrid ? { beatGrid: plan.beatGrid } : {}),
       ...(index > 0 && shot.continuesFromPrevious ? { continuesFromPrevious: true } : {}),
       ...(shot.complexity ? { complexity: shot.complexity } : {}),
+      ...(shot.fillRequested ? { fillRequested: true, ...(shot.fill ? { fill: shot.fill } : {}) } : {}),
       ...(shot.kind === "singing" ? musicMvSingingLyricPatch(shot, lyricTable) : {}),
     };
     if (shot.kind === "singing") {
