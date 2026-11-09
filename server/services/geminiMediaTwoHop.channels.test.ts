@@ -129,3 +129,31 @@ describe("演唱者标签按现有字段判断", () => {
     expect(isPerformerTheUser({ creativePrompt: "歌手是我自己" })).toBe(true);
   });
 });
+
+describe("1110 EvoLink 跳只收签名 https（同模板学习做法）", () => {
+  const base = (evolinkFileUri: () => string) => ({
+    media: { vertexFileUri: "gs://test-bucket/a.mp3", evolinkFileUri },
+    mimeType: "audio/mpeg", prompt: "听", schemaName: "t", validate: (v: unknown) => v,
+    save: async () => undefined,
+  });
+  it("Vertex 失败后 EvoLink 收到签名 https，请求体无 gs:// 与 inlineData", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) }).mockResolvedValueOnce(geminiReply("{\"ok\":1}"));
+    const r = await geminiAudioJsonWithFallback(base(() => "https://signed.example/test-bucket/a.mp3?X-Goog-Signature=t"));
+    expect(r.channel).toBe("EvoLink");
+    const evo = sentBodies()[1]!;
+    expect(evo).toContain("\"fileUri\":\"https://signed.example/");
+    expect(evo).not.toContain("gs://");
+    expect(evo).not.toContain("inlineData");
+    expect(sentBodies()[0]).toContain("\"fileUri\":\"gs://test-bucket/a.mp3\"");
+  });
+  it("EvoLink 跳拿到 gs:// 时不发请求、记失败", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) });
+    await expect(geminiAudioJsonWithFallback(base(() => "gs://test-bucket/a.mp3"))).rejects.toThrow(/EvoLink 只收签名 https/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("没给媒体（只给内联音频）时 EvoLink 跳不发请求", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) });
+    await expect(geminiAudioJsonWithFallback({ audioBase64: "bXAz", mimeType: "audio/mpeg", prompt: "听", schemaName: "t", validate: (v: unknown) => v, save: async () => undefined })).rejects.toThrow(/EvoLink 只收签名 https/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

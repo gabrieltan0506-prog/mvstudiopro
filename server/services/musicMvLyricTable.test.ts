@@ -5,6 +5,7 @@ vi.mock("./gcs", () => ({
   getGcsBucketName: () => "test-bucket",
   uploadBufferToGcsIfAbsent: vi.fn(async () => ({ created: true })),
   downloadGcsObject: vi.fn(),
+  signGsUriV4ReadUrl: (u: string) => `https://signed.example/${u.slice(5)}`,
 }));
 vi.mock("./heavyMediaProcess", () => ({
   execHeavyMedia: vi.fn(async (_cmd: string, args: string[]) => {
@@ -30,6 +31,16 @@ describe("本段歌词识别（待确认版）", () => {
     expect(table.lines).toEqual([{ text: "又不想说", startSec: 142, endSec: 144.5, kind: "lyric" }]);
     expect(table.recognizedBy).toEqual({ channel: "EvoLink", model: "gemini-3.6-flash" });
     expect(listen.mock.calls[0]![0].prompt).toContain("片段内 0 秒＝歌曲 140 秒");
+  });
+
+  it("1110 不内联 base64：Vertex 给 gs://，EvoLink 给签名 https，开音频时间戳", async () => {
+    const listen = vi.fn(async (input: any) => ({ value: input.validate({ lines: [] }), channel: "Vertex" as const, model: "gemini-3.8-flash", failuresZh: [] }));
+    await recognizeMusicMvLyricTable(7, { requestId: "22222222-2222-4222-8222-222222222222", audio: { id: "a", url: "https://x/a.mp3" }, range: { startSec: 0, endSec: 20 } }, { readSong: async () => Buffer.from("song"), listen: listen as any, sign: (u: string) => `https://signed.example/${u.slice(5)}` });
+    const call = listen.mock.calls[0]![0];
+    expect(call.audioBase64).toBeUndefined();
+    expect(call.media.vertexFileUri).toMatch(/^gs:\/\/.+\/slice\.mp3$/);
+    expect(call.media.evolinkFileUri()).toMatch(/^https:\/\/signed\.example\/.+slice\.mp3$/);
+    expect(call.audioTimestamp).toBe(true);
   });
 });
 

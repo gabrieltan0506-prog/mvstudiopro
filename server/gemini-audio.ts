@@ -758,7 +758,12 @@ export async function geminiAudioJsonWithFallback<T>(input: {
     },
     {
       name: "EvoLink", available: isManhuaDramaEvolinkAudioAvailable, model: () => input.model || resolveManhuaAudioEvolinkModelName(),
-      run: () => native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(input.model || resolveManhuaAudioEvolinkModelName())}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, input.media?.evolinkFileUri()),
+      run: async () => {
+        // 1110：EvoLink 上的 Gemini 读不了 gs://，也不收内联 base64 —— 只认签名 https（同模板学习 manhuaNativeDeepReadRunner）
+        const fileUri = input.media?.evolinkFileUri();
+        if (!fileUri || !/^https:\/\//.test(fileUri)) throw new Error("EvoLink 只收签名 https 媒体链接（不收 gs:// 或内联音频）");
+        return native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(input.model || resolveManhuaAudioEvolinkModelName())}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, fileUri);
+      },
     },
   ];
   const failures: string[] = [];

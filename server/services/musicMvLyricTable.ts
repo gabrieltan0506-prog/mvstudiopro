@@ -9,7 +9,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { execHeavyMedia } from "./heavyMediaProcess";
 import { geminiAudioJsonWithFallback } from "../gemini-audio";
-import { downloadGcsObject, getGcsBucketName, uploadBufferToGcsIfAbsent } from "./gcs";
+import { downloadGcsObject, getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcsIfAbsent } from "./gcs";
 import { withSuggestedLyricKinds } from "../../shared/canvasMusicMvLyricKinds";
 import {
   musicMvLyricLineIssues,
@@ -74,6 +74,8 @@ export async function recognizeMusicMvLyricTable(
   deps: {
     readSong?: (audio: RecognizeLyricTableInput["audio"]) => Promise<Buffer>;
     listen?: typeof geminiAudioJsonWithFallback;
+    /** EvoLink 跳的签名读链接（同模板学习 manhuaNativeDeepReadRunner：gs:// → V4 签名 https，1 小时）。 */
+    sign?: (gsUri: string) => string;
   } = {},
 ): Promise<MusicMvLyricTable> {
   const prefix = `canvas-music-mv/lyrics/${userId}/${input.requestId}`;
@@ -90,6 +92,7 @@ export async function recognizeMusicMvLyricTable(
     await writeFile(src, await readSong(input.audio));
     await save("request", { userId, ...input });
     const listen = deps.listen ?? geminiAudioJsonWithFallback;
+    const sign = deps.sign ?? ((gsUri: string) => signGsUriV4ReadUrl(gsUri, 3600));
     // 1109 实测：整首一次听写只出 10 句且中段大片缺失 → 按 ≤45 秒分块（3 秒重叠）逐块听写再合并
     const chunks = planLyricChunks(input.range);
     const merged: MusicMvLyricLine[] = [];
@@ -100,10 +103,14 @@ export async function recognizeMusicMvLyricTable(
       await execHeavyMedia("ffmpeg", ["-y", "-v", "error", "-ss", String(c.startSec), "-to", String(c.endSec), "-i", src, "-ac", "1", "-ar", "32000", "-b:a", "64k", out], { timeout: 60_000 });
       const slice = await readFile(out);
       const tag = chunks.length > 1 ? `chunk-${k + 1}-` : "";
-      await uploadBufferToGcsIfAbsent({ bucket, objectName: `${prefix}/${tag}slice.mp3`, buffer: slice, contentType: "audio/mpeg" });
+      const sliceObject = `${prefix}/${tag}slice.mp3`;
+      await uploadBufferToGcsIfAbsent({ bucket, objectName: sliceObject, buffer: slice, contentType: "audio/mpeg" });
+      const sliceGsUri = `gs://${bucket}/${sliceObject}`;
       await save(`${tag}slice-meta`, { range: c, sliceSha256: createHash("sha256").update(slice).digest("hex"), sliceBytes: slice.length });
       const result = await listen({
-        audioBase64: slice.toString("base64"),
+        // 1110 通道合规：不内联 base64；Vertex 读 gs://，EvoLink 读不了 gs:// → 签名 https（复用模板学习做法）
+        media: { vertexFileUri: sliceGsUri, evolinkFileUri: () => sign(sliceGsUri) },
+        audioTimestamp: true,
         mimeType: "audio/mpeg",
         prompt: MV_LYRIC_TABLE_PROMPT(c, input.lyricsHint),
         nativeSchema: NATIVE_SCHEMA,
