@@ -96,6 +96,7 @@ import {
   mvShotReferencesSchema,
   type MvShotReferences,
 } from "@shared/canvasMusicMvReferences";
+import { mvSceneConsistencyPairs, parseMvSceneLocations } from "@shared/canvasMusicMvSceneLock";
 
 type Props = {
   projectId?: string;
@@ -184,6 +185,12 @@ export function CanvasMusicMvStudio({
   const music = trpc.mvAnalysis.queueManhuaBgm.useMutation();
   const upload = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const plan = trpc.canvasMusicMv.draftPlan.useMutation();
+  /** 1109 场景连续性锁：出视频前同地点场景图一致性预检（只读、零积分）。 */
+  const sceneLockCheck = trpc.stockFootage.sceneLockCheck.useMutation({ retry: false });
+  const sceneLockOf = (source: CanvasMusicMvState) => {
+    const lock = parseMvSceneLocations(source.plan?.shots || [], source.creativePrompt || block.prompt);
+    return { lock, nameOf: (shotId: string) => lock.locations.find(l => l.id === lock.byShot[shotId])?.nameZh };
+  };
   const recognizeLyrics = trpc.canvasMusicMv.recognizeLyrics.useMutation({ retry: false });
   const reviseForLyrics = trpc.canvasMusicMv.reviseForLyrics.useMutation({ retry: false });
   const assemble = trpc.canvasMusicMvAssemble.queue.useMutation();
@@ -679,6 +686,7 @@ export function CanvasMusicMvStudio({
   const updateReferences = (next: { anchorImage?: CanvasMusicMvState["anchorImage"]; shotReferences: Record<string, MvShotReferences> }) => {
     patch({ anchorImage: next.anchorImage, shotReferences: next.shotReferences });
     const effective = effectiveShotReferences(latest.current);
+    const { nameOf } = sceneLockOf(latest.current);
     for (const id of latest.current.shotBlockIds || []) {
       const shotBlock = getBlocks().find(row => row.id === id);
       const binding = shotBlock?.musicMvShot;
@@ -688,7 +696,7 @@ export function CanvasMusicMvStudio({
       if (!refs) continue;
       const gaps = mvShotReferenceGaps(refs, shotBlock.videoModel, { requiresStaging: mvShotNeedsStagingReference(binding.complexity) }).blocking;
       onPatchBlock?.(id, {
-        musicMvShot: { ...binding, references: refs },
+        musicMvShot: { ...binding, references: refs, ...(nameOf(binding.shotId) ? { sceneLocationZh: nameOf(binding.shotId) } : {}) },
         seedance25WorkMode: "reference_to_video",
         error: gaps.length ? `参考素材不完整：${gaps.map(g => g.messageZh).join("；")}` : undefined,
       });
@@ -718,6 +726,17 @@ export function CanvasMusicMvStudio({
           gapLines.push(`镜头 ${i + 1}：演唱段，先确认本段歌词`);
       });
       if (gapLines.length) throw new Error(`请先为镜头选参考素材，本次未提交、未扣费。${gapLines.join("；")}`);
+      // 1109 场景连续性锁：同地点场景图 vs 母版一致性预检（软提示，可继续；检查失败不拦）
+      const { lock: sceneLock } = sceneLockOf(latest.current);
+      const sceneGroups = mvSceneConsistencyPairs(sceneLock, effectiveShotReferences(latest.current)).map(g => ({
+        ...g,
+        items: g.items.map(it => ({ ...it, shotLabel: `镜头 ${(latest.current.plan?.shots || []).findIndex(s => s.id === it.shotId) + 1}` })),
+      }));
+      if (sceneGroups.length) {
+        const report = await sceneLockCheck.mutateAsync({ groups: sceneGroups }).catch(() => null);
+        if (report?.warningsZh.length && !window.confirm(`同一地点的场景图可能不一致：\n${report.warningsZh.join("\n")}\n\n建议回到「为镜头选参考素材」用「按母版重绘」。仍要继续出片吗？`))
+          throw new Error("已取消：请先统一同一地点的场景图。本次未提交、未扣费。");
+      }
       patch({ status: "rendering", error: undefined });
       for (let i = 0; i < ids.length; i++) {
         if (
@@ -1820,6 +1839,7 @@ export function CanvasMusicMvStudio({
           </details>
           <CanvasMvShotReferencePicker
             projectId={projectId}
+            creativePrompt={state.creativePrompt || block.prompt}
             videoModel={block.videoModel}
             onFillComposed={async (shotId, clip) => {
               const id = (latest.current.shotBlockIds || []).find(b => getBlocks().find(row => row.id === b)?.musicMvShot?.shotId === shotId);

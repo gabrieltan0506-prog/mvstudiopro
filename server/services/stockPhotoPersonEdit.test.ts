@@ -42,3 +42,32 @@ describe("实拍照放入人物重绘：归属、幂等与参数门禁", () => {
     expect(() => assertStockPhotoPersonEditJob(8, t.id, t.input)).toThrow("不一致");
   });
 });
+
+describe("场景连续性锁：母版底图与一致性预检（替身，不读真图、不调模型）", () => {
+  it("生成图母版走 baseSource：按本人素材核对，不查图库采用回执", async () => {
+    const { baseAssetId: _omit, ...rest } = input;
+    const deps = { loadBase: vi.fn(), resolvePerson: vi.fn(async (_u: number, s: string) => (s === "gs://bucket/gen/k1.png" ? "gs://bucket/gen/k1.png" : resolved.peopleSources[0]!)) };
+    await expect(resolveStockPhotoPersonEdit(7, { ...rest, baseSource: "gs://bucket/gen/k1.png", sceneLockLocationZh: "商店门口" }, deps)).resolves.toEqual({ baseGcsUri: "gs://bucket/gen/k1.png", peopleSources: resolved.peopleSources });
+    expect(deps.loadBase).not.toHaveBeenCalled();
+  });
+  it("预检：同图满分、不同图软提示；读图失败记为未检查不拦", async () => {
+    const { checkMvSceneLockConsistency } = await import("./stockPhotoPersonEdit");
+    const { mvSceneSignatureFromGray } = await import("../../shared/canvasMusicMvSceneLock");
+    const flat = (f: (i: number) => number) => mvSceneSignatureFromGray(Array.from({ length: 1024 }, (_, i) => f(i)), 32, 32);
+    const sigs: Record<string, ReturnType<typeof flat>> = { "gs://m": flat(i => (i % 32 < 16 ? 40 : 200)), "gs://same": flat(i => (i % 32 < 16 ? 30 : 150)), "gs://diff": flat(i => (Math.floor(i / 32) < 16 ? 220 : 20)) };
+    const deps = {
+      resolveImage: vi.fn(async (_u: number, s: string) => s),
+      download: vi.fn(async (g: string) => { if (g === "gs://broken") throw new Error("404"); return Buffer.from(g); }),
+      signature: vi.fn(async (b: Buffer) => sigs[b.toString()]!),
+    };
+    const out = await checkMvSceneLockConsistency(7, [{ locationZh: "商店门口", masterGcsUri: "gs://m", items: [
+      { shotId: "K4", shotLabel: "镜头 4", gcsUri: "gs://same" },
+      { shotId: "K5", shotLabel: "镜头 5", gcsUri: "gs://diff" },
+      { shotId: "K6", shotLabel: "镜头 6", gcsUri: "gs://broken" },
+    ] }], deps);
+    expect(out.reports[0]!.items.map(i => [i.shotId, i.ok])).toEqual([["K4", true], ["K5", false]]);
+    expect(out.warningsZh).toEqual(["镜头 5 的场景图与「商店门口」母版差异明显，可能不是同一地点"]);
+    expect(out.uncheckedZh).toEqual(["镜头 6 的场景图读取失败，未检查"]);
+    expect(deps.resolveImage).toHaveBeenCalledWith(7, "gs://m");
+  });
+});

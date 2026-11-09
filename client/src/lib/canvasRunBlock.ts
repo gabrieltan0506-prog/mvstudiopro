@@ -2629,6 +2629,7 @@ async function runCanvasBlockInner(
           generateDurationSec: mvShotGenerateDurationSec(engine, binding.endSec - binding.startSec),
           beatGrid: binding.beatGrid,
           ...(binding.castZh?.length ? { castZh: binding.castZh } : {}),
+          ...(binding.sceneLocationZh ? { locationZh: binding.sceneLocationZh } : {}),
           references: mvShotReferencesSchema.parse(mvRefs),
         },
       );

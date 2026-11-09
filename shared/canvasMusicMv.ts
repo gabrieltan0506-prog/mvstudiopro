@@ -696,6 +696,8 @@ export const canvasMusicMvShotBindingSchema = z
     fill: z.array(musicMvFillWindowSchema).max(12).optional(),
     /** 1110 角色表（「名称：外形」逐项，取自创作说明）：秒锁编译按角色表生成人物锁，多人可同框。 */
     castZh: z.array(text.max(300)).max(8).optional(),
+    /** 1109 场景连续性锁：本镜所在地点名（地点表解析），秒锁编译写进场景行。 */
+    sceneLocationZh: text.max(60).optional(),
   })
   .strict();
 export type CanvasMusicMvShotBinding = z.infer<

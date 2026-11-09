@@ -9,6 +9,7 @@
  * 纯函数：只做校验与排版，不调用模型、不碰计费。
  */
 import { z } from "zod";
+import { mvSceneLockEditLineEn } from "./canvasMusicMvSceneLock";
 
 export const STOCK_PHOTO_PERSON_EDIT_CAST = ["lead", "partner", "both"] as const;
 export type StockPhotoPersonEditCast = (typeof STOCK_PHOTO_PERSON_EDIT_CAST)[number];
@@ -34,7 +35,11 @@ export type StockPhotoPersonEditPerson = z.infer<typeof stockPhotoPersonEditPers
 export const stockPhotoPersonEditInputSchema = z.object({
   requestId: z.string().uuid(),
   /** 底图：本人已采用的图库照片 assetId（sf_…），服务端按采用回执取 gcsUri，不信任客户端 URL。 */
-  baseAssetId: z.string().regex(/^sf_[0-9a-f]{48}$/, "底图编号无效"),
+  baseAssetId: z.string().regex(/^sf_[0-9a-f]{48}$/, "底图编号无效").optional(),
+  /** 1109 场景连续性锁：母版是本人生成图（非图库）时用它作底图；服务端按本人上传/任务产物核对归属。与 baseAssetId 二选一。 */
+  baseSource: z.string().trim().min(1).max(2048).optional(),
+  /** 1109 场景连续性锁：底图是该地点母版时传地点名，指令加「保持同一地点」硬锁。 */
+  sceneLockLocationZh: z.string().trim().min(1).max(60).optional(),
   cast: z.enum(STOCK_PHOTO_PERSON_EDIT_CAST),
   people: z.array(stockPhotoPersonEditPersonSchema).min(1).max(2),
   /** 一句动作描述（中英文皆可），如「他撑透明伞站在橱窗前开口演唱」。 */
@@ -43,6 +48,8 @@ export const stockPhotoPersonEditInputSchema = z.object({
   relightText: z.string().trim().max(400).optional(),
   aspectRatio: z.enum(["9:16", "16:9", "1:1"]).default("9:16"),
 }).strict().superRefine((v, ctx) => {
+  if (Boolean(v.baseAssetId) === Boolean(v.baseSource))
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["baseAssetId"], message: "需要且只能提供一张底图" });
   const need: StockPhotoPersonEditSlot[] = v.cast === "both" ? ["lead", "partner"] : [v.cast];
   const got = v.people.map(p => p.slot);
   if (got.length !== need.length || need.some((s, i) => got[i] !== s))
@@ -53,9 +60,10 @@ export type StockPhotoPersonEditInput = z.infer<typeof stockPhotoPersonEditInput
 const defaultRole = (slot: StockPhotoPersonEditSlot) => (slot === "lead" ? "THE LEAD" : "THE PARTNER");
 
 /** 英文改图指令（images/edits 的 prompt）。确定性：同输入同输出。 */
-export function buildStockPhotoPersonEditPrompt(input: Pick<StockPhotoPersonEditInput, "people" | "actionText" | "relightText">): string {
+export function buildStockPhotoPersonEditPrompt(input: Pick<StockPhotoPersonEditInput, "people" | "actionText" | "relightText" | "sceneLockLocationZh">): string {
   const lines: string[] = [
     "PHOTO EDIT (CRITICAL): Image 1 is a REAL street photograph and is the BASE PLATE. Keep its camera position, lens perspective, horizon, architecture, surfaces and materials, signage shapes, light sources and their direction, reflections and depth of field. The result must look like an unretouched real-life photograph taken at this exact location, not an illustration or a composite.",
+    ...(input.sceneLockLocationZh?.trim() ? [mvSceneLockEditLineEn(input.sceneLockLocationZh.trim())] : []),
     "Remove or replace every existing person in image 1; the only people in the final image are the characters below.",
   ];
   input.people.forEach((p, i) => {

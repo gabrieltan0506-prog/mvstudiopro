@@ -20,6 +20,7 @@ import { MV_PREVIS_PROMPT_RULE_ZH, mvPrevisWindowRuleZh } from "./canvasMusicMvP
 import { COMPILER_ENGINE_LIMITS, type CompilerEngineId, type ShotIR } from "./manhuaShotIR";
 import type { FormatIssue } from "./promptFormatLayer";
 import { CANVAS_VIDEO_MODEL_HAILUO_H3, HAILUO_OPENROUTER_DURATION_CHOICES } from "./hailuoOpenRouterModels";
+import { MV_SCENE_LOCK_RULE_ZH } from "./canvasMusicMvSceneLock";
 
 export type MvShotScript = {
   shotId: string;
@@ -55,6 +56,8 @@ export type MvShotPromptContext = {
   castZh?: string[];
   /** 1110 主锚图性质：identity＝身份照（只锁脸，不锁服装与场景）；缺省按 anchorImage.hasRealPerson / 图注判断。 */
   anchorKind?: "identity" | "keyframe";
+  /** 1109 场景连续性锁：本镜所在地点名（地点表解析），写进场景行，全片同一地点保持一致。 */
+  locationZh?: string;
 };
 
 export type MvShotPromptWindow = { fromSec: number; toSec: number; role: "beat" | "whole" | "tail"; label: string; lipSync?: boolean };
@@ -150,14 +153,16 @@ export function compileMvShotTimedPrompt(shot: MvShotScript, ctx: MvShotPromptCo
   // ── 窗表（镜内相对秒）──
   type Win = MvShotPromptWindow & { ir: Omit<ShotIR, "index" | "durationSec"> };
   const wins: Win[] = [];
+  // 1109 场景连续性锁：首窗场景行写地点名（全片同一地点不漂移），与光色贯穿共存
+  const loc = ctx.locationZh?.trim() ? `；地点：${ctx.locationZh.trim()}（${MV_SCENE_LOCK_RULE_ZH}）` : "";
   const sceneLine = (first: boolean) =>
     first
-      ? `${shot.visualPrompt}（主角按${anchorTag}${chainTag ? `，起幅承接${chainTag}上一镜尾帧` : ""}${sceneTags.length ? `，场景按${sceneTags.join("、")}` : ""}）`
+      ? `${shot.visualPrompt}（主角按${anchorTag}${chainTag ? `，起幅承接${chainTag}上一镜尾帧` : ""}${sceneTags.length ? `，场景按${sceneTags.join("、")}` : ""}）${loc}`
       : "承接前窗，同一空间、同一轴线，不重演已完成的动作";
   // 1110 逐窗版首窗场景行只写空间：人物与动作由人物锁与逐窗动作承担，不把分镜原句（含人物/服装/动作）塞进场景行
   const beatSceneLine = (first: boolean) =>
     first
-      ? `空间：${sceneTags.length ? `按${sceneTags.join("、")}的场景空间、地标、光源方向与材质` : `按本镜分镜所在空间（${shot.visualPrompt}）`}${chainTag ? `；起幅承接${chainTag}上一镜尾帧` : ""}；人物外观只按人物一致性锁`
+      ? `空间：${sceneTags.length ? `按${sceneTags.join("、")}的场景空间、地标、光源方向与材质` : `按本镜分镜所在空间（${shot.visualPrompt}）`}${chainTag ? `；起幅承接${chainTag}上一镜尾帧` : ""}${loc}；人物外观只按人物一致性锁`
       : sceneLine(false);
   if (degraded) {
     wins.push({

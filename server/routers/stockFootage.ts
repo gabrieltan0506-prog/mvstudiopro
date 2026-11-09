@@ -7,7 +7,7 @@ import { abandonStockAdoption, adoptStockFootage, getStockAdoption, listStockAdo
 import { assertStockKeywordQuota, suggestStockKeywords } from "../services/stockFootage/keywords";
 import { StockFootageError, searchPexels } from "../services/stockFootage/pexelsClient";
 import { stockPhotoPersonEditInputSchema } from "../../shared/stockPhotoPersonEdit";
-import { getStockPhotoPersonEdit, queueStockPhotoPersonEdit } from "../services/stockPhotoPersonEdit";
+import { checkMvSceneLockConsistency, getStockPhotoPersonEdit, queueStockPhotoPersonEdit } from "../services/stockPhotoPersonEdit";
 
 async function safely<T>(operation: () => Promise<T>): Promise<T> {
   try {
@@ -72,4 +72,15 @@ export const stockFootageRouter = router({
   getPersonEdit: protectedProcedure
     .input(z.object({ requestId: z.string().uuid() }).strict())
     .query(({ ctx, input }) => safely(() => getStockPhotoPersonEdit(ctx.user.id, input.requestId))),
+  /** 1109 场景连续性锁：出视频前同地点场景图 vs 母版一致性预检（只读、零积分，软提示）。 */
+  sceneLockCheck: protectedProcedure
+    .input(z.object({
+      groups: z.array(z.object({
+        locationZh: z.string().trim().min(1).max(60),
+        masterGcsUri: z.string().trim().min(1).max(2048),
+        masterAssetId: z.string().regex(/^sf_[0-9a-f]{48}$/).optional(),
+        items: z.array(z.object({ shotId: z.string().trim().min(1).max(200), shotLabel: z.string().trim().max(60).optional(), gcsUri: z.string().trim().min(1).max(2048), assetId: z.string().regex(/^sf_[0-9a-f]{48}$/).optional() }).strict()).max(64),
+      }).strict()).max(16),
+    }).strict())
+    .mutation(({ ctx, input }) => safely(() => checkMvSceneLockConsistency(ctx.user.id, input.groups))),
 });

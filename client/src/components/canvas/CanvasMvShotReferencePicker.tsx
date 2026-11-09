@@ -29,6 +29,7 @@ import {
   type MvShotReferences,
 } from "@shared/canvasMusicMvReferences";
 import { stockAttributionText } from "@shared/stockFootage";
+import { mvSceneManualBaseWarning, parseMvSceneLocations, planMvSceneImage } from "@shared/canvasMusicMvSceneLock";
 import { StockFootageDrawer, type StockFootagePick } from "@/components/stockFootage/StockFootageDrawer";
 
 type Shot = CanvasMusicMvPlan["shots"][number];
@@ -50,6 +51,8 @@ export type CanvasMvShotReferencePickerProps = {
    */
   shotBlocks: Array<{ shotId: string; blockId: string; previs?: { gcsUri: string; durationSec: number; requestId?: string } }>;
   orientation: "landscape" | "portrait";
+  /** 1109 场景连续性锁：创作说明（解析地点表，无明确换景默认全片同一地点）。 */
+  creativePrompt?: string;
   /** 镜头创意摘要（Cinema 参数中文），拼进关键词来源。 */
   cinemaHintZh?: string;
   /** 镜头成片模型（参考片裁切长度按其单条上限）。 */
@@ -190,6 +193,8 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
       if (now.sceneImages.length >= MV_SHOT_SCENE_IMAGE_MAX)
         throw new Error(`本镜场景图最多 ${MV_SHOT_SCENE_IMAGE_MAX} 张`);
       if (now.sceneImages.some(i => i.gcsUri === pick.asset.gcsUri)) throw new Error("这张图已选过");
+      const mismatch = mvSceneManualBaseWarning(target.shot.id, { gcsUri: pick.asset.gcsUri, assetId: pick.asset.assetId }, sceneLock, allRefs());
+      if (mismatch && !window.confirm(mismatch)) return;
       commit(target.shot.id, { ...now, sceneImages: [...now.sceneImages, imageFromPick(pick, realPerson)] });
     } else {
       const now = refsOf(target.shot.id);
@@ -230,15 +235,67 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
     return {
       aspectRatio: (props.orientation === "landscape" ? "16:9" : "9:16") as "9:16" | "16:9",
       options: lead ? [{ slot: "lead" as const, source: lead.gcsUri, label: lead.label || "主角", identityPhoto: Boolean(lead.hasRealPerson) }] : [],
-      onEdited: (result: { imageUrl: string }) => {
+      onEdited: (result: { imageUrl: string; baseAssetId?: string }) => {
         const gcsUri = assetImageGcsUri(result.imageUrl);
         if (!gcsUri) throw new Error("重绘图地址无效，请稍后重试");
+        const p = planMvSceneImage(shot.id, sceneLock, allRefs());
+        if (p.mode === "master_edit" && result.baseAssetId && "baseAssetId" in p.base && p.base.baseAssetId !== result.baseAssetId) {
+          const mismatch = mvSceneManualBaseWarning(shot.id, { gcsUri: "", assetId: result.baseAssetId }, sceneLock, allRefs());
+          if (mismatch && !window.confirm(mismatch)) return;
+        }
         const now = refsOf(shot.id);
         if (now.sceneImages.length >= MV_SHOT_SCENE_IMAGE_MAX) throw new Error(`本镜场景图最多 ${MV_SHOT_SCENE_IMAGE_MAX} 张`);
         commit(shot.id, { ...now, sceneImages: [...now.sceneImages, { gcsUri, label: "实拍底图重绘（已放入人物）", ...(lead?.hasRealPerson ? { hasRealPerson: true } : {}) }] });
         setTarget(null);
       },
     };
+  };
+
+  /** 1109 场景连续性锁：地点表 + 全部镜头参考（母版 = 该地点首张场景图）。 */
+  const sceneLock = parseMvSceneLocations(shots, props.creativePrompt);
+  const allRefs = () => Object.fromEntries(shots.map(s => [s.id, refsOf(s.id)]));
+  const createPersonEdit = trpc.stockFootage.personEdit.useMutation({ retry: false });
+  const [masterEditing, setMasterEditing] = useState<string | null>(null);
+  /** 按母版重绘：同地点后续镜一律以母版为底图走改图（只改天气、光线、机位/景别、人物）。 */
+  const masterEdit = async (shot: Shot) => {
+    const p = planMvSceneImage(shot.id, sceneLock, allRefs());
+    if (p.mode !== "master_edit") return;
+    const lead = refsOf(shot.id).anchorImage ?? props.anchorImage;
+    if (!lead) { setError("先选或生成主锚图，再按母版重绘"); return; }
+    setError("");
+    setMasterEditing(shot.id);
+    try {
+      const requestId = crypto.randomUUID();
+      const beat = shot.beats?.[0];
+      await createPersonEdit.mutateAsync({
+        requestId,
+        ...p.base,
+        sceneLockLocationZh: p.locationZh,
+        cast: "lead",
+        people: [{ slot: "lead", source: lead.gcsUri, identityPhoto: Boolean(lead.hasRealPerson) }],
+        actionText: (beat?.actionZh || shot.visualPrompt).slice(0, 600),
+        ...(beat?.lightingZh ? { relightText: beat.lightingZh.slice(0, 400) } : {}),
+        aspectRatio: props.orientation === "landscape" ? "16:9" : "9:16",
+      });
+      for (let i = 0; i < 80; i++) {
+        const job = await utils.stockFootage.getPersonEdit.fetch({ requestId });
+        if (job?.status === "failed") throw new Error(job.error || "按母版重绘失败，原任务保留");
+        if (job?.status === "succeeded" && job.imageUrl) {
+          const gcsUri = assetImageGcsUri(job.imageUrl);
+          if (!gcsUri) throw new Error("重绘图地址无效，请稍后重试");
+          const now = refsOf(shot.id);
+          if (now.sceneImages.length >= MV_SHOT_SCENE_IMAGE_MAX) throw new Error(`本镜场景图最多 ${MV_SHOT_SCENE_IMAGE_MAX} 张`);
+          commit(shot.id, { ...now, sceneImages: [...now.sceneImages, { gcsUri, label: `按母版重绘（${p.locationZh}）`, ...(lead.hasRealPerson ? { hasRealPerson: true } : {}) }] });
+          return;
+        }
+        await new Promise(r => setTimeout(r, 3000));
+      }
+      throw new Error("按母版重绘仍在处理，请稍后再点一次（原任务保留）");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "按母版重绘未完成");
+    } finally {
+      setMasterEditing(null);
+    }
   };
 
   /** 白模产物：本镜头块已采用/最近一次的白模，整段作 @视频1（排在图库片之前）。 */
@@ -373,6 +430,7 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
             <p>
               <strong>{index + 1}.</strong> {shot.startSec.toFixed(1)}–{shot.endSec.toFixed(1)} 秒 · 图 {counts.image} / 片 {counts.video} / 歌 {counts.audio} · 共 {counts.total}/9
               {staging && <span className="ml-1 text-amber-200">· 多人/动作/多机位镜头：站位参考必填（白模站位片或图库运镜片）</span>}
+              {(() => { const p = planMvSceneImage(shot.id, sceneLock, allRefs()); return <span className="ml-1 text-white/60">· 地点：{p.locationZh}{p.mode === "master_edit" ? `（母版取自镜头 ${shots.findIndex(s => s.id === p.master.shotId) + 1}）` : "（本镜首张场景图即母版）"}</span>; })()}
             </p>
             {refs.sceneImages.map((img, i) => (
               <span key={img.gcsUri} className="mr-2 inline-flex items-center gap-1">
@@ -388,6 +446,11 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
               </span>
             ))}
             <div className="flex flex-wrap gap-2">
+              {planMvSceneImage(shot.id, sceneLock, allRefs()).mode === "master_edit" && (
+                <button className={button} disabled={disabled || Boolean(masterEditing) || refs.sceneImages.length >= MV_SHOT_SCENE_IMAGE_MAX} onClick={() => void masterEdit(shot)}>
+                  {masterEditing === shot.id ? "正在按母版重绘…" : "按母版重绘（同一地点）"}
+                </button>
+              )}
               <button className={button} disabled={disabled || refs.sceneImages.length >= MV_SHOT_SCENE_IMAGE_MAX} onClick={() => setTarget({ kind: "scene", shot })}>找场景图</button>
               <button className={button} disabled={disabled || refs.motionVideos.length >= MV_SHOT_MOTION_VIDEO_MAX} onClick={() => setTarget({ kind: "motion", shot })}>从图库找运镜视频</button>
               <button className={button} disabled={disabled} onClick={() => usePrevis(shot)}>用白模站位片（去白模工作台排站位）</button>
