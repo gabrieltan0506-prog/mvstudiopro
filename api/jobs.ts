@@ -1838,6 +1838,18 @@ async function runSeedance25EvolinkJob(
     videoUrls,
     audioUrls,
   });
+  // 1109 MV 镜头：必须显式 reference_to_video 且参考非空（用户硬规则），身份进任务记录供回执证据
+  const { parseMvShotTaskIdentity: parseMvShot25 } = await import("../server/services/canvasMusicMvShotEvidence.js");
+  const mvShot25 = parseMvShot25((body as Record<string, unknown>).mvShot);
+  if ((body as Record<string, unknown>).mvShot != null && !mvShot25) {
+    return { ok: false, status: 400, error: "MV 镜头身份无效，未提交" };
+  }
+  if (mvShot25) {
+    const refTotal = (imageUrl ? 1 : 0) + imageUrls.length + videoUrls.length + audioUrls.length;
+    if (mode !== "reference_to_video" || !refTotal) {
+      return { ok: false, status: 400, error: "MV 镜头必须以参考素材生成（reference_to_video）且参考非空，本次未提交、未扣费" };
+    }
+  }
   const rawDuration = body.duration ?? query.duration ?? body.durationSec ?? 15;
   // extend 官方支持 -1 自动（跟内容走）；显式时长 4–30s。原实现把 -1 clamp 成 4，自动档不可达
   const wantsAutoDuration =
@@ -2029,6 +2041,8 @@ async function runSeedance25EvolinkJob(
       resolution,
       generateAudio,
       workMode: mode,
+      // 1109 MV 镜头身份（回执 raw/parsed 永久证据）；非 MV 请求为 undefined
+      mvShot: mvShot25,
     };
     const intentGate = await gateCanvasIntentBeforeCharge({
       userId: access.userId,

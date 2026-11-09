@@ -882,6 +882,8 @@ export type SeedanceCanvasRequestOptions = {
     idempotencyKey?: string;
     /** 生成意图 ID（与 idempotencyKey 同值）；服务端按它做扣费前裁决 */
     intentId?: string;
+    /** 1109 MV 镜头身份：服务端据此硬锁 reference_to_video、拒空参考、回执永久落证据 */
+    mvShot?: { planRequestId: string; shotId: string; hasRealPerson?: boolean; referenceCounts?: { image: number; video: number; audio: number } };
 };
 
 /**
@@ -946,7 +948,9 @@ export function buildSeedanceCanvasRequestBody(
   const workMode =
     version === "2.5"
       ? normalizeSeedance25EvolinkMode(opts?.workMode, { imageUrls, videoUrls, audioUrls })
-      : undefined;
+      : opts?.mvShot
+        ? ("reference_to_video" as const)
+        : undefined;
   const episodeIndex = Number(opts?.episodeIndex);
   const clipIndex = Number(opts?.clipIndex);
   const compilerEngine: CompilerEngineId = `seedance-${version}`;
@@ -996,7 +1000,8 @@ export function buildSeedanceCanvasRequestBody(
     ...(opts?.manhuaPilot ? { manhuaPilot: opts.manhuaPilot } : {}),
     ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
     ...(opts?.intentId ? { intentId: opts.intentId } : {}),
-    ...(version === "2.5" ? { workMode } : {}),
+    ...(version === "2.5" || opts?.mvShot ? { workMode } : {}),
+    ...(opts?.mvShot ? { mvShot: opts.mvShot } : {}),
     ...(Number.isFinite(episodeIndex) && episodeIndex > 0 ? { episodeIndex } : {}),
     ...(Number.isFinite(clipIndex) && clipIndex > 0 ? { clipIndex } : {}),
   };
@@ -2524,10 +2529,41 @@ async function runCanvasBlockInner(
   }
   // 出片前统一重签上传件签名链（0908 EvoLink「input media could not be downloaded」：
   // 60 分钟签名在上传与提交之间过期）。同一 gcsUri 只签一次；失败退回原链不挡提交。
+  let mvShotOutbound: { hasRealPerson: boolean } | undefined;
   if (block.kind === "video" && block.musicMvShot) {
     const binding=block.musicMvShot;
     if(binding.kind==="footage") throw new Error("此镜头使用已有素材切片，请在MV中合成，不提交视频生成");
-    if(binding.kind==="singing") {
+    // 1109 参考生视频：主锚图 + 场景图 + 动作参考片 + 歌曲切片（gcsUri 真源，出片前现签）。
+    // 无任何参考 → 拒发（用户硬规则：MV 一向 reference_to_video，不得静默退回文生）。
+    const mvRefs = binding.references;
+    if (!mvRefs && !binding.referenceImages.length) {
+      throw new Error("MV 镜头缺少参考素材：请先在「为镜头选参考素材」里选主锚图、场景图/参考片与歌曲切片。本次未提交、未扣费。");
+    }
+    if (mvRefs) {
+      const { assembleMvShotReferences } = await import("@shared/canvasMusicMvReferences");
+      const version = normalizeCanvasVideoModel(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL) === "seedance-2.5" ? "2.5" : "2.0-mini";
+      const assembled = assembleMvShotReferences(mvRefs, { startSec: binding.startSec, endSec: binding.endSec, kind: binding.kind }, version);
+      const sign = async (uri: string, label: string) => {
+        const url = await resolveCanvasMaterialUrl(uri);
+        if (!/^https:\/\//.test(url)) throw new Error(`${label}暂不可用，未提交生成`);
+        return url;
+      };
+      const images = await Promise.all(assembled.imageGcsUris.map((u, i) => sign(u, i === 0 ? "MV 主锚图" : `MV 场景图 ${i}`)));
+      const videos = await Promise.all(assembled.videoGcsUris.map((u, i) => sign(u, `MV 动作参考片 ${i + 1}`)));
+      const audios = await Promise.all(assembled.audioGcsUris.map(u => sign(u, "MV 歌曲切片")));
+      if (block.audioStudio?.cues.some(cue=>cue.enabled!==false) || block.manhuaSegmentRefs?.master) throw new Error("MV 镜头已绑定歌曲切片，请先移除其他启用音轨，避免声音冲突");
+      block = {
+        ...block,
+        refImageUrl: images[0],
+        editFusionUrls: images.slice(1),
+        seedance25RefVideoUrls: videos,
+        seedance25RefAudioUrls: audios,
+        seedance25WorkMode: "reference_to_video",
+        prompt: `${block.prompt.trim()}\n\n${assembled.promptAppendix}`,
+      };
+      mvShotOutbound = { hasRealPerson: assembled.hasRealPerson };
+      upstream = { ...upstream, visionImages: [] };
+    } else if(binding.kind==="singing") {
       const audio=binding.singingAudio;
       if(!audio || audio.startSec!==binding.startSec || audio.endSec!==binding.endSec) throw new Error("请先准备并试听本镜唱段，再生成对口型视频");
       if(block.videoModel!=="seedance-2.5" && !isCanvasHailuoH3VideoModel(block.videoModel)) throw new Error("当前制作方式不能使用演唱音频参考，请选择支持音频参考的成片引擎");
@@ -2537,16 +2573,19 @@ async function runCanvasBlockInner(
       block={...block,seedance25WorkMode:"reference_to_video",seedance25RefAudioUrls:[url],
         uploadedAssets:[...(block.uploadedAssets||[]).filter(row=>row.id!=="mv-singing-audio"),{id:"mv-singing-audio",kind:"audio",url,previewUrl:url,gcsUri:audio.gcsUri,fileName:"本镜演唱.wav",mimeType:"audio/wav"}]};
     }
-    const fresh = new Map<string, string>();
-    for (const image of binding.referenceImages) {
-      const url = image.gcsUri ? await resolveCanvasMaterialUrl(image.gcsUri) : image.url;
-      if (!/^https:\/\//.test(url)) throw new Error("MV 参考图暂不可用，未提交生成");
-      fresh.set(image.url.split("?")[0]!, url);
+    if (!mvRefs) {
+      const fresh = new Map<string, string>();
+      for (const image of binding.referenceImages) {
+        const url = image.gcsUri ? await resolveCanvasMaterialUrl(image.gcsUri) : image.url;
+        if (!/^https:\/\//.test(url)) throw new Error("MV 参考图暂不可用，未提交生成");
+        fresh.set(image.url.split("?")[0]!, url);
+      }
+      const resign = (url: string | undefined) => url ? fresh.get(url.split("?")[0]!) || url : undefined;
+      // 旧参考图路径同样硬锁多模态参考模式
+      block = { ...block, refImageUrl: resign(block.refImageUrl), editFusionUrls: block.editFusionUrls?.map(url => resign(url)!), seedance25WorkMode: "reference_to_video" };
+      // 分镜已明确选择参考；空引用不从父音乐节点补入其他人物/场景。
+      upstream = { ...upstream, visionImages: [] };
     }
-    const resign = (url: string | undefined) => url ? fresh.get(url.split("?")[0]!) || url : undefined;
-    block = { ...block, refImageUrl: resign(block.refImageUrl), editFusionUrls: block.editFusionUrls?.map(url => resign(url)!) };
-    // 分镜已明确选择参考；空引用不从父音乐节点补入其他人物/场景。
-    upstream = { ...upstream, visionImages: [] };
   }
   const assetResigner = createCanvasAssetResigner(block.uploadedAssets);
   if (block.kind === "video" || block.kind === "image") {
@@ -3668,7 +3707,14 @@ async function runCanvasBlockInner(
                   ? "2.0-mini"
                   : "2.0",
           duration: clipDuration,
-          workMode: useSeedance25 ? workMode : undefined,
+          // MV 镜头：Mini 也显式传 reference_to_video（服务端校验，不再靠素材推断）
+          workMode: useSeedance25 ? workMode : block.musicMvShot ? "reference_to_video" : undefined,
+          mvShot: block.musicMvShot ? {
+            planRequestId: block.musicMvShot.planRequestId,
+            shotId: block.musicMvShot.shotId,
+            hasRealPerson: Boolean(mvShotOutbound?.hasRealPerson),
+            referenceCounts: { image: outImages.length, video: outVideos.length, audio: outAudios.length },
+          } : undefined,
           seedance25Provider: block.seedance25Provider,
           manhuaPilot,
           idempotencyKey: submissionKey,

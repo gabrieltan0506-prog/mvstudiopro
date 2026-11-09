@@ -6,6 +6,11 @@ import {
   type CanvasMusicCandidate,
 } from "@shared/canvasMusicMv";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
+import {
+  mvShotReferenceGaps,
+  mvShotReferencesSchema,
+  type MvShotReferencesInput,
+} from "@shared/canvasMusicMvReferences";
 
 /** 计划版本进入节点 ID，重做分镜不覆盖上一版已出片的节点。 */
 export function createMusicMvShotBlocks(
@@ -15,7 +20,9 @@ export function createMusicMvShotBlocks(
   references: Array<
     string | { id: string; url: string; gcsUri?: string; fileName: string }
   >,
-  audio?: CanvasMusicCandidate
+  audio?: CanvasMusicCandidate,
+  /** 1109 每镜参考槽位（主锚图/场景图/动作参考片/歌曲切片），键 shot.id。 */
+  shotReferences?: Record<string, MvShotReferencesInput | undefined>
 ): CanvasBlock[] {
   canvasMusicMvPlanSchema.parse(plan);
   return plan.shots.map((shot, index) => {
@@ -66,9 +73,19 @@ export function createMusicMvShotBlocks(
     }
     block.refImageUrl = referenceImages[0]?.url;
     block.editFusionUrls = referenceImages.map(row => row.url);
-    block.seedance25WorkMode = referenceImages.length
-      ? "reference_to_video"
-      : "text_to_video";
+    // 1109 用户硬规则：MV 镜头一律 reference_to_video，无参考不得静默退回文生。
+    // 参考真源是 musicMvShot.references（gcsUri），出片前在 canvasRunBlock 现签并组装；
+    // 缺项在这里只标记，不抛错——铺镜头仍可完成，「生成缺失镜头」前再整批拦。
+    block.seedance25WorkMode = "reference_to_video";
+    const refs = shotReferences?.[shot.id];
+    if (refs) {
+      block.musicMvShot.references = mvShotReferencesSchema.parse(refs);
+      const gaps = mvShotReferenceGaps(block.musicMvShot.references);
+      if (gaps.blocking.length && shot.kind !== "footage")
+        block.error = `参考素材不完整：${gaps.blocking.map(g => g.messageZh).join("；")}`;
+    } else if (!referenceImages.length && shot.kind !== "footage") {
+      block.error = "请先为本镜选参考素材（主锚图、场景图/参考片、歌曲切片）";
+    }
     return block;
   });
 }

@@ -4,7 +4,8 @@
  * 每镜参考 = 全片主锚图 ×1（五镜共用保连续）+ 本镜场景/光线/道具/色调图 2–4
  *          + 动作/运镜参考片 1–2（白模工作台产物优先，否则图库片段）+ 本镜歌曲切片 ×1。
  * 总数 ≤9，各类上限按官方文档：Mini 图 9 / 视频 3 / 音频 3；2.5 为 30 / 10 / 10（同一张组装表照用）。
- * 槽位编号 = 数组顺序（@image1 恒为主锚图，@video1 从视频数组 1 起，@audio1 为歌曲切片）。
+ * 槽位编号 = 数组顺序（@图片1 恒为主锚图，@视频1 从视频数组 1 起，@音频1 为歌曲切片）；
+ * 中文标记走既有 seedance 方言编译层，服务端 formatEvolinkReferencePrompt 出口转 @imageN/@videoN/@audioN。
  * 超限、缺锚、缺场景图与参考片 → 抛中文错误，不裁剪后放行，不静默退回 text_to_video。
  */
 import { z } from "zod";
@@ -72,13 +73,13 @@ export type MvShotSongSlice = z.infer<typeof mvShotSongSliceSchema>;
 
 export const mvShotReferencesSchema = z
   .object({
-    /** @image1：全片主锚图（五镜共用）。 */
+    /** @图片1：全片主锚图（五镜共用）。 */
     anchorImage: mvShotReferenceImageSchema.optional(),
-    /** @image2…：本镜场景/光线/道具/色调。 */
+    /** @图片2…：本镜场景/光线/道具/色调。 */
     sceneImages: z.array(mvShotReferenceImageSchema).max(8).default([]),
-    /** @video1(–2)：站位/景别/运镜/动作参考。 */
+    /** @视频1(–2)：站位/景别/运镜/动作参考。 */
     motionVideos: z.array(mvShotReferenceVideoSchema).max(3).default([]),
-    /** @audio1：本镜歌曲切片。 */
+    /** @音频1：本镜歌曲切片。 */
     songSlice: mvShotSongSliceSchema.optional(),
   })
   .strict();
@@ -137,7 +138,7 @@ export type MvShotReferenceAssembly = {
   /** 与数组同序的视频取用区间（秒）。 */
   videoWindows: Array<{ inSec: number; outSec: number }>;
   counts: MvShotReferenceCounts;
-  /** 追加在既有镜头提示词之后的职责声明（@image/@video/@audio 按数组顺序编号）。 */
+  /** 追加在既有镜头提示词之后的职责声明（@图片/@视频/@音频 按数组顺序编号）。 */
   promptAppendix: string;
   hasRealPerson: boolean;
 };
@@ -162,23 +163,23 @@ export function assembleMvShotReferences(
   if (!uniq(imageGcsUris) || !uniq(videoGcsUris))
     throw new Error("本镜参考素材有重复项，请移除重复后再生成");
   const lines: string[] = [];
-  lines.push("@image1定义全片人物造型、服装与场景基调，所有镜头共用，不继承其构图。");
+  lines.push("@图片1定义全片人物造型、服装与场景基调，所有镜头共用，不继承其构图。");
   if (r.sceneImages.length) {
-    const tags = r.sceneImages.map((_, i) => `@image${i + 2}`).join("、");
+    const tags = r.sceneImages.map((_, i) => `@图片${i + 2}`).join("、");
     lines.push(`${tags}定义本镜的场景、光线、道具与色调，只取氛围不取人物。`);
   }
   r.motionVideos.forEach((v, i) => {
     const role = v.source === "previs" ? "白模站位片" : "运镜参考片";
     lines.push(
-      `@video${i + 1}是${role}，提供本镜的站位、景别、机位运动与动作节拍，逐段照做；成片不继承其外观、材质与人物。`,
+      `@视频${i + 1}是${role}，提供本镜的站位、景别、机位运动与动作节拍，逐段照做；成片不继承其外观、材质与人物。`,
     );
   });
   if (r.songSlice) {
     const s = r.songSlice;
     lines.push(
       shot.kind === "singing"
-        ? `@audio1是本镜 ${fmt(s.startSec)}–${fmt(s.endSec)} 秒的歌曲唱段，人物口型、呼吸与表情与其严格同步，保持原曲速度与声音；不改唱词、不另配音、不另生成音乐。`
-        : `@audio1是本镜 ${fmt(s.startSec)}–${fmt(s.endSec)} 秒的歌曲切片，画面节奏与剪切点与其卡点严格同步；不另生成音乐。`,
+        ? `@音频1是本镜 ${fmt(s.startSec)}–${fmt(s.endSec)} 秒的歌曲唱段，人物口型、呼吸与表情与其严格同步，保持原曲速度与声音；不改唱词、不另配音、不另生成音乐。`
+        : `@音频1是本镜 ${fmt(s.startSec)}–${fmt(s.endSec)} 秒的歌曲切片，画面节奏与剪切点与其卡点严格同步；不另生成音乐。`,
     );
   }
   const hasRealPerson = Boolean(

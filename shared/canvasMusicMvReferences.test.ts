@@ -38,10 +38,10 @@ describe("MV 镜头参考组装", () => {
     expect(out.videoGcsUris).toEqual([vid(1).gcsUri]);
     expect(out.audioGcsUris).toEqual([song.gcsUri]);
     expect(out.counts).toEqual({ image: 3, video: 1, audio: 1, total: 5 });
-    expect(out.promptAppendix).toContain("@image1定义全片人物造型");
-    expect(out.promptAppendix).toContain("@image2、@image3定义本镜的场景");
-    expect(out.promptAppendix).toContain("@video1是运镜参考片");
-    expect(out.promptAppendix).toContain("@audio1是本镜 140–149 秒的歌曲切片");
+    expect(out.promptAppendix).toContain("@图片1定义全片人物造型");
+    expect(out.promptAppendix).toContain("@图片2、@图片3定义本镜的场景");
+    expect(out.promptAppendix).toContain("@视频1是运镜参考片");
+    expect(out.promptAppendix).toContain("@音频1是本镜 140–149 秒的歌曲切片");
     expect(out.hasRealPerson).toBe(false);
   });
 
@@ -84,8 +84,8 @@ describe("MV 镜头参考组装", () => {
 
   it("白模优先：source=previs 的职责文案是白模站位片；对口型镜头切片写口型同步", () => {
     const out = assembleMvShotReferences({ ...full, motionVideos: [vid(1, "previs"), vid(2)] }, { ...shot, kind: "singing" });
-    expect(out.promptAppendix).toContain("@video1是白模站位片");
-    expect(out.promptAppendix).toContain("@video2是运镜参考片");
+    expect(out.promptAppendix).toContain("@视频1是白模站位片");
+    expect(out.promptAppendix).toContain("@视频2是运镜参考片");
     expect(out.promptAppendix).toContain("歌曲唱段，人物口型");
     expect(out.videoWindows).toEqual([{ inSec: 0, outSec: 5 }, { inSec: 0, outSec: 5 }]);
   });
