@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { manhuaVfxMediaIdentity } from "@/lib/manhuaVfxWorkflow";
+import { MontageGradeAdvice } from "./MontageGradeAdvice";
 import {
   parseMontagePlan,
   remapMontageSubtitles,
@@ -16,15 +17,25 @@ import {
   MONTAGE_LUT_GROUPS,
   MONTAGE_TRANSITION_LABELS,
   MONTAGE_TRANSITION_RANGE,
+  MONTAGE_CROSSFADE_RANGE,
+  addMontageSegment,
   applyAdvisorMontageFinish,
+  applyMontageSegmentsDraft,
+  checkMontageSegments,
   montageFinishParams,
+  montageOutputSec,
   montageTransitionBlockReason,
   patchMontageGradeAll,
+  patchMontageSegment,
   readMontageFinish,
   readMontageFinishes,
   montageFinishKey,
+  readMontageJunctionCheck,
+  removeMontageSegment,
+  setMontageAutoMatch,
+  setMontageCrossfade,
   type ColorCorrection,
-  type ConcatGrade,
+  type MontageGrade,
   type MontageFinish,
   type MontageSliderKey,
   type MontageTransitionKind,
@@ -50,10 +61,12 @@ type Props = {
       fps: number;
       subtitleSrt?: string;
       transition?: { kind: "fade" | "dissolve" | "wipeleft"; durationSec: number };
-      grade?: ConcatGrade;
+      grade?: MontageGrade;
     },
     title: string
   ) => Promise<unknown>;
+  /** 已完成的拼接任务结果（含 gradeSegmentCheck 接点检查），只读展示；同名方案的成片供调色建议分析。 */
+  concatResults?: Array<{ jobId: string; title?: string; output: unknown }>;
 };
 type Saved = {
   sourceId: string;
@@ -72,6 +85,8 @@ type Saved = {
     >["mutateAsync"]
   >[0];
 };
+
+const transitionOverlap = (f: MontageFinish) => (f.transition && f.transition.kind !== "none" ? f.transition.durationSec : 0);
 
 /** 原片→完整音画顾问→可审方案→既有后期队列；保存到所属项目的原存储适配器。 */
 export function MontagePlanner(props: Props) {
@@ -173,6 +188,26 @@ export function MontagePlanner(props: Props) {
   const transition = finish.transition ?? { kind: "none" as MontageTransitionKind, durationSec: MONTAGE_TRANSITION_RANGE.default };
   const setGrade = (patch: Partial<ColorCorrection>) =>
     update(setFinish(finishPlan, { ...finish, grade: patchMontageGradeAll(finish.grade, patch) }));
+  const setSegGrade = (grade: MontageGrade | undefined) => update(setFinish(finishPlan, { ...finish, grade }));
+  const activeCuts = plan?.plans[finishPlan]?.cuts ?? [];
+  const activeSubtitled = Boolean(plan && activeCuts.length && remapMontageSubtitles(plan.sourceSrt, activeCuts));
+  const outputSec = montageOutputSec(activeCuts, finish, activeSubtitled);
+  const segments = finish.grade?.segments ?? [];
+  const segmentProblem = checkMontageSegments(segments, outputSec, finish.grade?.crossfadeSec ?? 0);
+  const activeTitle = plan?.plans[finishPlan]?.title;
+  const adviceVideo = (props.concatResults ?? [])
+    .filter(r => r.title === activeTitle)
+    .map(r => (r.output && typeof r.output === "object" ? (r.output as { gcsUri?: unknown }).gcsUri : undefined))
+    .find((u): u is string => typeof u === "string" && u.startsWith("gs://"));
+  const seamSecs = activeCuts.slice(0, -1).reduce<number[]>((acc, c, k) => {
+    const overlap = outputSec < activeCuts.reduce((n, x) => n + x.endSec - x.startSec, 0) - 1e-6 ? transitionOverlap(finish) : 0;
+    acc.push(Math.round(((acc[k - 1] ?? 0) + c.endSec - c.startSec - overlap) * 10) / 10);
+    return acc;
+  }, []);
+  const junctionChecks = (props.concatResults ?? []).flatMap(j => {
+    const check = readMontageJunctionCheck(j.output);
+    return check ? [{ ...j, check }] : [];
+  });
   const sliderKeys = Object.keys(MONTAGE_GRADE_SLIDERS) as MontageSliderKey[];
   const advisorExtras = [
     ...Object.keys(gradeAll).filter(k => k !== "lutId" && !sliderKeys.includes(k as MontageSliderKey)),
@@ -188,7 +223,7 @@ export function MontagePlanner(props: Props) {
     if (!plan || !selected) throw new Error("请先选定有效剪辑方案再读取切点");
     const subtitled = Boolean(remapMontageSubtitles(plan.sourceSrt, selected.cuts));
     if (action.operation === "inspect") return JSON.stringify({ plan: action.episode, title: selected.title, cuts: selected.cuts.map((c, i) => ({ shotIndex: i + 1, startSec: c.startSec, endSec: c.endSec })), sourceDurationSec: plan.sourceDurationSec, busy: locked || Boolean(saved.pending) || stale,
-      finish: finishOf(action.episode - 1), lutOptions: MONTAGE_LUT_GROUPS, transitionBlocked: montageTransitionBlockReason(selected.cuts.length, subtitled) || undefined, finishHelp: MONTAGE_FINISH_ADVISOR_HELP });
+      finish: finishOf(action.episode - 1), outputSec: montageOutputSec(selected.cuts, finishOf(action.episode - 1), subtitled), lutOptions: MONTAGE_LUT_GROUPS, transitionBlocked: montageTransitionBlockReason(selected.cuts.length, subtitled) || undefined, finishHelp: MONTAGE_FINISH_ADVISOR_HELP });
     if (locked || saved.pending || stale) throw new Error("剪辑方案正在处理或原片已变化，未改动");
     // 调色/转场：按方案各存一份；逐段调色项数写入时即核对本方案切点数。
     const finishAction = action as unknown as { operation: string; transition?: unknown; transitionSettings?: unknown; grade?: unknown };
@@ -196,6 +231,8 @@ export function MontagePlanner(props: Props) {
       const next = applyAdvisorMontageFinish(finishOf(action.episode - 1), finishAction, selected.cuts.length);
       const blocked = next.transition && next.transition.kind !== "none" ? montageTransitionBlockReason(selected.cuts.length, subtitled) : "";
       if (blocked) throw new Error(`${blocked}，未改动`);
+      // 分段/逐段与采用时同一套校验，不通过不写草稿
+      montageFinishParams(next, selected.cuts.length, subtitled, montageOutputSec(selected.cuts, next, subtitled));
       if (!window.confirm("确认将顾问的调色/转场建议填入剪辑方案草稿？此步不合成，仍需手动采用。")) throw new Error("用户未确认调色或转场改动");
       signal.throwIfAborted();
       save({ ...live.current, ...setFinish(action.episode - 1, next) });
@@ -316,7 +353,8 @@ export function MontagePlanner(props: Props) {
     try {
       const selected = plan.plans[index];
       const subtitleSrt = remapMontageSubtitles(plan.sourceSrt, selected.cuts);
-      const finishParams = montageFinishParams(finishOf(index), selected.cuts.length, Boolean(subtitleSrt));
+      const chosen = finishOf(index);
+      const finishParams = montageFinishParams(chosen, selected.cuts.length, Boolean(subtitleSrt), montageOutputSec(selected.cuts, chosen, Boolean(subtitleSrt)));
       const [width, height] =
         saved.aspect === "9:16" ? [720, 1280] : [1280, 720];
       await props.onSubmit(
@@ -538,6 +576,142 @@ export function MontagePlanner(props: Props) {
             >
               还原原片色彩
             </button>
+            <div className="space-y-1 rounded border border-white/10 p-2" aria-label="分段调色">
+              <div>
+                分段调色（成片约{outputSec.toFixed(1)}秒，不分段即全片统一）
+                <button
+                  type="button"
+                  aria-label="添加调色分段"
+                  disabled={locked || outputSec < 0.2 || segments.length >= 24 || Boolean(finish.grade?.clips || finish.grade?.referenceClipIndex != null)}
+                  onClick={() => setSegGrade(addMontageSegment(finish.grade, outputSec))}
+                  className="ml-2 underline disabled:opacity-40"
+                >
+                  添加分段
+                </button>
+              </div>
+              {segments.map((seg, i) => {
+                const n = i + 1;
+                const num = (key: "startSec" | "endSec", label: string, min: number, max: number, v: number) => (
+                  <label className="mr-2">
+                    {label}
+                    <input
+                      aria-label={`第${n}段${label}`}
+                      type="number"
+                      min={min}
+                      max={max}
+                      step={0.1}
+                      disabled={locked}
+                      value={v}
+                      onChange={e => {
+                        const x = Number(e.target.value);
+                        if (Number.isFinite(x) && x >= min && x <= max) setSegGrade(patchMontageSegment(finish.grade, i, { [key]: Math.round(x * 10) / 10 }));
+                      }}
+                      className="ml-1 w-16 rounded bg-slate-900 p-1"
+                    />
+                  </label>
+                );
+                return (
+                  <div key={i} className="space-y-1 border-t border-white/10 pt-1">
+                    <div>
+                      第{n}段 {num("startSec", "开始秒", 0, outputSec, seg.startSec)}
+                      {num("endSec", "结束秒", 0, outputSec, seg.endSec)}
+                      <button type="button" aria-label={`删除第${n}段`} disabled={locked} onClick={() => setSegGrade(removeMontageSegment(finish.grade, i))} className="underline disabled:opacity-40">
+                        删除
+                      </button>
+                    </div>
+                    <select
+                      aria-label={`第${n}段调色预设`}
+                      disabled={locked}
+                      value={seg.lutId ?? ""}
+                      onChange={e => setSegGrade(patchMontageSegment(finish.grade, i, { lutId: e.target.value || undefined }))}
+                      className="rounded bg-slate-900 p-1"
+                    >
+                      <option value="">不套用预设</option>
+                      {MONTAGE_LUT_GROUPS.map(g => (
+                        <optgroup key={g.label} label={g.label}>
+                          {g.presets.map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                    {sliderKeys.map(key => {
+                      const r = MONTAGE_GRADE_SLIDERS[key];
+                      const value = seg[key] ?? r.neutral;
+                      return (
+                        <label key={key} className="block">
+                          {r.label} {key === "color_temperature" ? `${value}K` : value.toFixed(2)}
+                          <input
+                            aria-label={`第${n}段${r.label}`}
+                            type="range"
+                            min={r.min}
+                            max={r.max}
+                            step={r.step}
+                            disabled={locked}
+                            value={value}
+                            onChange={e => setSegGrade(patchMontageSegment(finish.grade, i, { [key]: Number(e.target.value) }))}
+                            className="ml-2 align-middle"
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+              {segments.length > 0 && segmentProblem && (
+                <p aria-label="分段校验" className="text-amber-200">
+                  {segmentProblem}，采用前请修正
+                </p>
+              )}
+              {adviceVideo && (
+                <MontageGradeAdvice
+                  videoGsUri={adviceVideo}
+                  durationSec={outputSec}
+                  aspect={saved.aspect}
+                  storyZh={props.story}
+                  seamSecs={seamSecs}
+                  disabled={locked}
+                  onApply={segs => {
+                    try {
+                      setSegGrade(applyMontageSegmentsDraft(finish.grade, segs, outputSec));
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : String(e));
+                    }
+                  }}
+                />
+              )}
+              <label className="block">
+                段间过渡秒数
+                <input
+                  aria-label="段间过渡秒数"
+                  type="number"
+                  min={MONTAGE_CROSSFADE_RANGE.min}
+                  max={MONTAGE_CROSSFADE_RANGE.max}
+                  step={MONTAGE_CROSSFADE_RANGE.step}
+                  disabled={locked || segments.length < 2}
+                  value={finish.grade?.crossfadeSec ?? 0}
+                  onChange={e => {
+                    const v = Number(e.target.value);
+                    if (Number.isFinite(v) && v >= MONTAGE_CROSSFADE_RANGE.min && v <= MONTAGE_CROSSFADE_RANGE.max) setSegGrade(setMontageCrossfade(finish.grade, v));
+                  }}
+                  className="ml-2 w-16 rounded bg-slate-900 p-1"
+                />
+                秒（0 为硬切）
+              </label>
+              <label className="block">
+                <input
+                  aria-label="自动修正接点"
+                  type="checkbox"
+                  disabled={locked || segments.length < 2}
+                  checked={Boolean(finish.grade?.autoMatchJunctions)}
+                  onChange={e => setSegGrade(setMontageAutoMatch(finish.grade, e.target.checked))}
+                  className="mr-1 align-middle"
+                />
+                自动修正接点（接点前后色差超标时自动拉齐）
+              </label>
+            </div>
             <label className="block">
               镜头转场
               <select
@@ -620,6 +794,27 @@ export function MontagePlanner(props: Props) {
               </button>
             </article>
           ))}
+          {junctionChecks.length > 0 && (
+            <section aria-label="接点检查结果" className="space-y-1 rounded border border-white/15 p-2 text-xs">
+              <strong>成片接点色彩检查</strong>
+              {junctionChecks.map(j => (
+                <div key={j.jobId}>
+                  <p>
+                    {j.title || "成片"}：{j.check.pass ? "全部接点达标" : "有接点未达标"}
+                  </p>
+                  <ul>
+                    {j.check.junctions.map((x, k) => (
+                      <li key={k} aria-label={`接点${k + 1}`}>
+                        {x.atSec.toFixed(1)}秒 · 亮度差{x.delta.YAVG} · 蓝色差{x.delta.UAVG} · 红色差{x.delta.VAVG} · 饱和差{x.delta.SATAVG} ·{" "}
+                        {x.pass ? "达标" : "未达标"}
+                        {x.autoCorrected ? " · 已自动修正" : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </section>
+          )}
           <details>
             <summary className="text-xs">参考结构与差异化创作方向</summary>
             {plan.creativeDirections.map((d, i) => (

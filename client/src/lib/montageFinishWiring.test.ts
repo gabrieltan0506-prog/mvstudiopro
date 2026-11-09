@@ -6,10 +6,19 @@ import {
   MONTAGE_LUT_IDS,
   MONTAGE_TRANSITION_RANGE,
   MONTAGE_FINISH_ADVISOR_HELP,
+  addMontageSegment,
   applyAdvisorMontageFinish,
+  applyMontageSegmentsDraft,
+  checkMontageSegments,
   montageFinishKey,
   montageFinishParams,
+  montageOutputSec,
+  patchMontageSegment,
   readMontageFinishes,
+  readMontageJunctionCheck,
+  removeMontageSegment,
+  setMontageAutoMatch,
+  setMontageCrossfade,
   montageTransitionBlockReason,
   normalizeMontageGrade,
   normalizeMontageTransition,
@@ -162,5 +171,96 @@ describe("按方案各存一份 + 顾问写入即核对切点数", () => {
     expect(applyAdvisorMontageFinish({}, { operation: "transition", transition: "wipeleft" }, 2)).toEqual({ transition: { kind: "wipeleft", durationSec: MONTAGE_TRANSITION_RANGE.default } });
     for (const id of MONTAGE_LUT_IDS) expect(MONTAGE_FINISH_ADVISOR_HELP).toContain(id);
     expect(MONTAGE_FINISH_ADVISOR_HELP).toContain("数值越低越暖");
+  });
+});
+
+describe("分段调色 segments / crossfadeSec / autoMatchJunctions（共享 concatGradeSchema）", () => {
+  const segs = [
+    { startSec: 0, endSec: 4, lutId: "golden_hour_subtle" },
+    { startSec: 4, endSec: 7.5, saturation: 0.8 },
+    { startSec: 7.5, endSec: 10 },
+  ];
+  it("连续、不重叠、覆盖片长才通过；首段须从0起；每段长于段间过渡", () => {
+    expect(checkMontageSegments(segs, 10)).toBe("");
+    expect(checkMontageSegments([], 10)).toBe("");
+    expect(checkMontageSegments([{ startSec: 0.5, endSec: 10 }], 10)).toContain("从0秒");
+    expect(checkMontageSegments([{ startSec: 0, endSec: 4 }, { startSec: 3.5, endSec: 10 }], 10)).toContain("重叠");
+    expect(checkMontageSegments([{ startSec: 0, endSec: 4 }, { startSec: 4.5, endSec: 10 }], 10)).toContain("空档");
+    expect(checkMontageSegments(segs, 12)).toContain("成片结尾12.0秒");
+    expect(checkMontageSegments([{ startSec: 0, endSec: 1 }, { startSec: 1, endSec: 10 }], 10, 1.5)).toContain("短于段间过渡");
+  });
+  it("格式：非一位小数、过渡超2秒、白名单外预设、未知字段、与逐段同用、无分段带渐变均拒绝", () => {
+    expect(readMontageFinish({ grade: { segments: [{ startSec: 0, endSec: 10.05 }] } })).toBeNull();
+    expect(readMontageFinish({ grade: { segments: [{ startSec: 0, endSec: 10 }], crossfadeSec: 2.5 } })).toBeNull();
+    expect(readMontageFinish({ grade: { segments: [{ startSec: 0, endSec: 10, lutId: "made_up" }] } })).toBeNull();
+    expect(readMontageFinish({ grade: { segments: [{ startSec: 0, endSec: 10, foo: 1 }] } })).toBeNull();
+    expect(readMontageFinish({ grade: { segments: [{ startSec: 0, endSec: 10 }], clips: [null] } })).toBeNull();
+    expect(readMontageFinish({ grade: { crossfadeSec: 0.5 } })).toBeNull();
+    expect(readMontageFinish({ grade: { segments: [{ startSec: 0, endSec: 10 }], autoMatchJunctions: "yes" } })).toBeNull();
+    expect(() => montageFinishParams({ grade: { segments: [{ startSec: 0, endSec: 4 }, { startSec: 5, endSec: 10, saturation: 0.5 }] } }, 3, false, 10)).toThrow("空档");
+  });
+  it("采用时下发：中性段剥离校正、全中性不下发 segments（连同渐变/接点修正）；结果过共享 schema", () => {
+    const draft = readMontageFinish(JSON.parse(JSON.stringify({ grade: { segments: segs, crossfadeSec: 0.5, autoMatchJunctions: true } })))!;
+    const params = montageFinishParams(draft, 3, false, 10);
+    expect(params).toEqual({ grade: { segments: segs, crossfadeSec: 0.5, autoMatchJunctions: true } });
+    expect(concatGradeSchema.safeParse(params.grade).success).toBe(true);
+    expect(montageFinishParams({ grade: { segments: [{ startSec: 0, endSec: 5, saturation: 1 }, { startSec: 5, endSec: 10 }], crossfadeSec: 0.5, autoMatchJunctions: true } }, 3, false, 10)).toEqual({});
+    expect(() => montageFinishParams(draft, 3, false, 9)).toThrow("成片结尾");
+    expect(() => montageFinishParams(draft, 3, false)).toThrow("缺少成片时长");
+  });
+  it("默认无分段：参数与改前一致（不传 outputSec 也不报错）", () => {
+    expect(montageFinishParams({}, 3, false)).toEqual({});
+    expect(montageFinishParams({ grade: { all: { lutId: "basic_warm" } } }, 3, false)).toEqual({ grade: { all: { lutId: "basic_warm" } } });
+  });
+  it("成片时长：切点总长扣除实际下发的重叠转场", () => {
+    const cuts = [{ startSec: 0, endSec: 4 }, { startSec: 6, endSec: 9 }, { startSec: 10, endSec: 13 }];
+    expect(montageOutputSec(cuts, {}, false)).toBe(10);
+    expect(montageOutputSec(cuts, { transition: { kind: "fade", durationSec: 0.5 } }, false)).toBe(9);
+    expect(montageOutputSec(cuts, { transition: { kind: "fade", durationSec: 0.5 } }, true)).toBe(10);
+  });
+  it("界面增删改：始终连续；剩一段回到全片调色并清掉渐变/接点修正", () => {
+    let g = addMontageSegment(undefined, 10);
+    expect(g?.segments).toEqual([{ startSec: 0, endSec: 5 }, { startSec: 5, endSec: 10 }]);
+    g = addMontageSegment(g, 10);
+    expect(g?.segments?.map(s => [s.startSec, s.endSec])).toEqual([[0, 5], [5, 7.5], [7.5, 10]]);
+    g = patchMontageSegment(g, 1, { endSec: 8.2, saturation: 0.6 });
+    expect(g?.segments?.[1]).toEqual({ startSec: 5, endSec: 8.2, saturation: 0.6 });
+    expect(g?.segments?.[2].startSec).toBe(8.2);
+    g = patchMontageSegment(g, 1, { saturation: 1 });
+    expect(g?.segments?.[1]).toEqual({ startSec: 5, endSec: 8.2 });
+    expect(checkMontageSegments(g!.segments!, 10)).toBe("");
+    g = setMontageAutoMatch(setMontageCrossfade(g, 0.4), true);
+    expect(g).toMatchObject({ crossfadeSec: 0.4, autoMatchJunctions: true });
+    expect(setMontageCrossfade(g, 0)?.crossfadeSec).toBeUndefined();
+    g = removeMontageSegment(g, 0);
+    expect(g?.segments?.map(s => [s.startSec, s.endSec])).toEqual([[0, 8.2], [8.2, 10]]);
+    g = removeMontageSegment(g, 1);
+    expect(g).toBeUndefined();
+  });
+  it("顾问/调色建议写入分段：同一套校验，只写草稿", () => {
+    const next = applyAdvisorMontageFinish({}, { operation: "grade", grade: { segments: segs, crossfadeSec: 0.5, autoMatchJunctions: true } });
+    expect(next.grade?.segments).toEqual(segs);
+    expect(() => applyAdvisorMontageFinish({}, { operation: "grade", grade: { segments: [{ startSec: 0, endSec: 10, lutId: "nope" }] } })).toThrow("调色预设不存在");
+    expect(applyMontageSegmentsDraft({ all: { lutId: "basic_warm" } }, [{ startSec: 0, endSec: 4.04 }, { startSec: 4.04, endSec: 10, contrast: 1.2 }], 10)).toEqual({
+      all: { lutId: "basic_warm" },
+      segments: [{ startSec: 0, endSec: 4 }, { startSec: 4, endSec: 10, contrast: 1.2 }],
+    });
+    expect(() => applyMontageSegmentsDraft(undefined, [{ startSec: 0, endSec: 8 }], 10)).toThrow("成片结尾");
+    expect(() => applyMontageSegmentsDraft({ clips: [null, null] }, segs, 10)).toThrow("不能与逐段调色同时使用");
+  });
+  it("接点检查结果读取 gradeSegmentCheck：有复检以复检为准并标出自动修正；缺字段返回 null", () => {
+    const d = (YAVG: number) => ({ YAVG, UAVG: 0, VAVG: 0, SATAVG: 0 });
+    const first = { pass: false, junctions: [{ index: 0, junctionSec: 4, pass: true, delta: d(1) }, { index: 1, junctionSec: 7.5, pass: false, delta: d(9) }] };
+    const second = { pass: true, junctions: [{ index: 0, junctionSec: 4, pass: true, delta: d(1) }, { index: 1, junctionSec: 7.5, pass: true, delta: d(2) }] };
+    expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first } })).toEqual({
+      pass: false,
+      junctions: [{ atSec: 4, delta: d(1), pass: true, autoCorrected: false }, { atSec: 7.5, delta: d(9), pass: false, autoCorrected: false }],
+    });
+    expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first, autoMatch: { adjusted: [2], spans: [], check: second } } })).toEqual({
+      pass: true,
+      junctions: [{ atSec: 4, delta: d(1), pass: true, autoCorrected: false }, { atSec: 7.5, delta: d(2), pass: true, autoCorrected: true }],
+    });
+    expect(readMontageJunctionCheck({ gcsUri: "x" })).toBeNull();
+    expect(readMontageJunctionCheck({ gradeSegmentCheck: { check: { junctions: [{ delta: {} }] } } })).toBeNull();
   });
 });

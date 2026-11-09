@@ -35,6 +35,9 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
     function App(){const[v,setV]=React.useState(0);globalThis.remount=()=>setV(v=>v+1);return <MontagePlanner key={v} clips={[{id:'source',url,label:'口播原片'}]} story='完整口播正文' storage={store} storageKey='montage-test' busy={false}
       context={{projectId:'one',episodeBody:'完整口播正文',shotSummary:''}}
       onAdvisorEditControl={c=>{globalThis.control=c;}}
+      concatResults={[{jobId:'job-9',title:'预告',output:{gcsUri:'gs://test-only/out.mp4',gradeSegmentCheck:{mode:'junctions',spans:[],
+        check:{pass:false,junctions:[{index:0,junctionSec:1.2,pass:true,delta:{YAVG:1.5,UAVG:-0.4,VAVG:0.2,SATAVG:2.1}},{index:1,junctionSec:2.3,pass:false,delta:{YAVG:9,UAVG:0,VAVG:0,SATAVG:0}}]},
+        autoMatch:{adjusted:[2],spans:[],check:{pass:false,junctions:[{index:0,junctionSec:1.2,pass:true,delta:{YAVG:1.5,UAVG:-0.4,VAVG:0.2,SATAVG:2.1}},{index:1,junctionSec:2.3,pass:false,delta:{YAVG:6.2,UAVG:0,VAVG:0.1,SATAVG:-1}}]}}}}}]}
       onSubmit={async(params,title)=>{globalThis.submits.push({params,title});return {jobId:'job-1'};}}/>;}
     createRoot(document.getElementById('root')).render(<App/>);
   `,
@@ -80,6 +83,11 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
     await page.waitForSelector('[aria-label="调色预设"]');
     const drafts = () => page.evaluate(() => JSON.parse((globalThis as any).saved.get("montage-test")).finishes ?? {});
     const draft = async (key = "1:预告") => (await drafts())[key];
+    const setNum = (label: string, v: number) =>
+      page.$eval(`[aria-label="${label}"]`, (el, v) => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, String(v));
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }, v);
     const clickNth = (text: string, nth: number) =>
       page.$$eval(
         '[aria-label="剪辑方案工坊"] button',
@@ -187,7 +195,70 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
     );
     expect(bad).toContain("调色预设不存在");
     expect((await draft()).grade.all.lutId).toBe("golden_hour_standard");
+
+    // 分段调色：第一版成片 3.5−1.2(左划重叠)=2.3 秒；添加分段 → 0–1.2 / 1.2–2.3
+    await page.click('[aria-label="添加调色分段"]');
+    await page.waitForSelector('[aria-label="第2段调色预设"]');
+    expect((await draft()).grade.segments).toEqual([{ startSec: 0, endSec: 1.2 }, { startSec: 1.2, endSec: 2.3 }]);
+    await page.select('[aria-label="第2段调色预设"]', "basic_cool");
+    await setNum("段间过渡秒数", 0.3);
+    await setNum("第1段饱和度", 0.8);
+    await page.click('[aria-label="自动修正接点"]');
+    await page.waitForFunction(() => (globalThis as any).saved.get("montage-test").includes("autoMatchJunctions"));
+    // 末段不到片尾 → 提示且采用被拦，不提交
+    await setNum("第2段结束秒", 2);
+    await page.waitForSelector('[aria-label="分段校验"]');
+    expect(await page.$eval('[aria-label="分段校验"]', n => n.textContent)).toContain("末段须到成片结尾2.3秒");
+    await clickNth("采用并生成此版", 0);
+    await page.waitForSelector('[role="alert"]');
     expect(await page.evaluate(() => (globalThis as any).submits.length)).toBe(4);
+    await setNum("第2段结束秒", 2.3);
+    await page.waitForFunction(() => !document.querySelector('[aria-label="分段校验"]'));
+    await clickNth("采用并生成此版", 0);
+    await page.waitForFunction(() => (globalThis as any).submits.length === 5);
+    const seg = await page.evaluate(() => (globalThis as any).submits[4].params);
+    expect(seg.grade).toEqual({
+      all: { lutId: "golden_hour_standard", saturation: 0.7 },
+      segments: [
+        { startSec: 0, endSec: 1.2, saturation: 0.8 },
+        { startSec: 1.2, endSec: 2.3, lutId: "basic_cool" },
+      ],
+      crossfadeSec: 0.3,
+      autoMatchJunctions: true,
+    });
+    expect(seg.transition).toEqual({ kind: "wipeleft", durationSec: 1.2 });
+    // 删除一段 → 剩一段即回到全片调色
+    await page.click('[aria-label="删除第2段"]');
+    await page.waitForFunction(() => !document.querySelector('[aria-label="第1段调色预设"]'));
+    expect((await draft()).grade.segments).toBeUndefined();
+
+    // 顾问写入分段：同一套校验（不覆盖片长被拒、草稿不变）
+    const segBad = await page.evaluate(() =>
+      (globalThis as any)
+        .control({ action: "edit", episode: 1, operation: "grade", grade: { segments: [{ startSec: 0, endSec: 1 }] } }, new AbortController().signal)
+        .then(() => "ok", (e: Error) => e.message)
+    );
+    expect(segBad).toContain("末段须到成片结尾2.3秒");
+    const segOk = await page.evaluate(() =>
+      (globalThis as any).control(
+        { action: "edit", episode: 1, operation: "grade", grade: { segments: [{ startSec: 0, endSec: 1 }, { startSec: 1, endSec: 2.3, lutId: "basic_warm" }], crossfadeSec: 0.5 } },
+        new AbortController().signal
+      )
+    );
+    expect(JSON.parse(segOk)).toMatchObject({ status: "saved", operation: "grade" });
+    await page.waitForSelector('[aria-label="第2段调色预设"]');
+    expect(await page.$eval('[aria-label="第2段调色预设"]', n => (n as HTMLSelectElement).value)).toBe("basic_warm");
+
+    // 接点检查结果渲染；调色建议入口文案中性
+    const check = await page.$eval('[aria-label="接点检查结果"]', n => n.textContent);
+    expect(check).toContain("有接点未达标");
+    expect(await page.$eval('[aria-label="接点1"]', n => n.textContent)).toMatch(/1\.2秒.*亮度差1\.5.*饱和差2\.1.*达标/);
+    expect(await page.$eval('[aria-label="接点2"]', n => n.textContent)).toMatch(/2\.3秒.*亮度差6\.2.*未达标 · 已自动修正/);
+    const adviceText = await page.$eval('[data-testid="montage-grade-advice"]', n => n.textContent);
+    expect(adviceText).toContain("AI 调色建议");
+    expect(adviceText).not.toMatch(/Gemini|Flash/);
+
+    expect(await page.evaluate(() => (globalThis as any).submits.length)).toBe(5);
     expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(0);
     expect(errors).toEqual([]);
   } finally {
