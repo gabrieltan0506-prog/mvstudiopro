@@ -5,6 +5,8 @@ import { DIGITAL_HUMAN_FILM_INSTRUCTIONS, parseDigitalHumanFilmPlan } from "../.
 import { creativeLearningReportSchema } from "../../shared/creativeGenerationLibrary";
 import { DIGITAL_HUMAN_SPATIAL_INSTRUCTIONS, parseDigitalHumanSpatialPlan } from "../../shared/digitalHumanSpatialAdvisor";
 import { CodeMotionPlanError } from "./codeMotionPlanFailure";
+import { CreativeProposalError } from "./creativeProposalFailure";
+import { describeZodIssueTextZh } from "../../shared/creativeProposalRepair";
 import { codeMotionBriefSchema, type CodeMotionBrief } from "../../shared/codeMotion";
 import { generateCodeMotionPlan } from "./codeMotionPlan";
 import { MANHUA_ADVISOR_PLAIN_LANGUAGE, TEMPLATE_RECOMMENDATION_DELIVERY, advisorTemplateChoiceSchema, validateAdvisorTemplateChoice } from "../../shared/manhuaAdvisorTemplateChoice";
@@ -1069,6 +1071,8 @@ export async function askPlatformSkillQa(params: {
     } catch (e) {
       if (isSseContentSafetyError(e)) throw e;
       if (codeMotionContext && e instanceof CodeMotionPlanError) throw e;
+      // 创作方案校验失败已带具体中文原因（含修复重试结果），原样透传给用户，不再泛化成「问答失败」。
+      if ((manhuaContext?.musicMv || manhuaContext?.sunoSong || manhuaContext?.creativeLearning) && e instanceof CreativeProposalError) throw e;
       // 候选检查失败时清掉本轮解析值，避免三次失败后仍返回无效候选。
       parsed = null;
       lastErr = e instanceof Error ? e.message : String(e);
@@ -1086,10 +1090,13 @@ export async function askPlatformSkillQa(params: {
     }
   }
   if (!parsed) {
-    const friendly =
-      /Unexpected token|is not valid JSON|An error|非 JSON|空内容|timeout|超时|fetch failed|算力|偏离用户问题/i.test(
-        lastErr,
-      )
+    // zod 校验错误的 message 是 issues JSON 数组，直接截 160 字对用户不可读；先转成「听音分段第 9 段结束时间无效」这类中文。
+    const zodFriendly = describeZodIssueTextZh(lastErr);
+    const friendly = zodFriendly
+      ? `回答未通过校验：${zodFriendly}`.slice(0, 200)
+      : /Unexpected token|is not valid JSON|An error|非 JSON|空内容|timeout|超时|fetch failed|算力|偏离用户问题/i.test(
+          lastErr,
+        )
         ? "算力紧张或回答跑偏，请稍后重试同一问题"
         : lastErr.slice(0, 160) || "问答失败，请稍后重试";
     throw new Error(friendly);
