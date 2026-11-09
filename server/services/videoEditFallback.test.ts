@@ -104,7 +104,7 @@ describe("runVideoEditWithFallback", () => {
     ]);
     expect(out.attempts[0]!.rawReceipt).toEqual({ status: 400, body: PRIVACY_BODY });
     const evSent = vi.mocked(deps.submitEvolink).mock.calls[0]![0];
-    expect(evSent).toMatchObject({ mode: "video_edit", version: "2.5", videoUrls: [input.segmentUrl], imageUrls: input.referenceImageUrls, contentFilter: false });
+    expect(evSent).toMatchObject({ mode: "video_edit", version: "2.5", videoUrls: [input.segmentUrl], imageUrls: input.referenceImageUrls, contentFilter: true });
     expect(buildEvolinkSeedanceRequest(evSent).body.duration).toBe(-1);
     expect(tail(uploads)).toEqual([
       "01-byteplus-request-raw.json", "01-byteplus-request-parsed.json",

@@ -312,8 +312,8 @@ export async function runVideoEditWithFallback(
     duration: -1,
     aspectRatio: input.aspectRatio,
     generateAudio: true,
-    // 因真人/隐私转来：放宽真人限制（+10%，kb/channels.md）
-    contentFilter: fallbackReason === "byteplus_not_configured",
+    // 1110 用户定：转 EvoLink 时保持内容过滤（不放宽真人限制、不加 10%）；被拦按失败全额退积分
+    contentFilter: true,
   };
   const ev: VideoEditAttempt = { channel: "evolink", rawReceipt: null, parsed: null, upstreamCharged: false };
   attempts.push(ev);
