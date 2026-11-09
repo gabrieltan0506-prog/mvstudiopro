@@ -314,8 +314,9 @@ const HISTORY_LEDGER_DIR = path.join(STORE_DIR, "history-ledger");
 const GITHUB_OFFLOAD_CACHE_DIR = path.resolve(process.env.GROWTH_GITHUB_OFFLOAD_CACHE_DIR || path.join(DEFAULT_STORE_ROOT, "growth-github-cache"));
 const LEGACY_COLD_STORE_BASE_URL = String(process.env.GROWTH_GITHUB_COLD_STORE_BASE_URL || "").trim().replace(/\/$/, "");
 const GITHUB_COLD_STORE_BASE_URL = String(process.env.GROWTH_GITHUB_PRIVATE_COLD_STORE_BASE_URL || LEGACY_COLD_STORE_BASE_URL).trim().replace(/\/$/, "");
+const GROWTH_PRIVATE_REPOSITORY = process.env.GROWTH_BACKUP_REPOSITORY || "gabrieltan0506-prog/mvstudiopro-growth-data";
 const coldStoreFetch = createGrowthPrivateAssetFetch({
-  repository: process.env.GROWTH_BACKUP_REPOSITORY || "gabrieltan0506-prog/mvstudiopro-growth-data",
+  repository: GROWTH_PRIVATE_REPOSITORY,
   token: process.env.GROWTH_BACKUP_GITHUB_TOKEN,
 });
 // 旧冷备（本仓库 releases）在仓库转私有后不能再匿名下载。显式开启
@@ -328,12 +329,32 @@ const legacyColdStoreFetch: typeof fetch = /^(1|true)$/i.test(String(process.env
   && String(process.env.GROWTH_BACKUP_GITHUB_TOKEN || "").trim()
   ? createGrowthPrivateAssetFetch({ repository: LEGACY_COLD_STORE_REPOSITORY, token: process.env.GROWTH_BACKUP_GITHUB_TOKEN })
   : coldStoreFetch;
-/** 读取旧仓 release 资产（如 growth-recovery-20260321 摘要）；私有后带服务端令牌。 */
+/** 读取旧仓 release 资产；GROWTH_LEGACY_COLD_STORE_AUTH=1 时带服务端令牌（仅限该仓 release API）。 */
 export function fetchLegacyGrowthReleaseAsset(tag: string, assetName: string, init?: RequestInit) {
   return legacyColdStoreFetch(
     `https://github.com/${LEGACY_COLD_STORE_REPOSITORY}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(assetName)}`,
     init,
   );
+}
+/** 按 tag 读取 release 资产（如 growth-recovery-20260321 摘要）：先私有库同 tag，读不到再走旧仓读取器
+ * （GROWTH_LEGACY_COLD_STORE_AUTH=1 时鉴权，否则匿名，与冷备回退一致）。 */
+export async function fetchGrowthReleaseAsset(tag: string, assetName: string, init?: RequestInit): Promise<Response> {
+  let primary: Response | null = null;
+  try {
+    primary = await coldStoreFetch(
+      `https://github.com/${GROWTH_PRIVATE_REPOSITORY}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(assetName)}`,
+      init,
+    );
+    if (primary.ok) return primary;
+  } catch (error) {
+    console.warn(`[growth.cold-store] private release asset unavailable: ${tag}/${assetName}`, error);
+  }
+  try {
+    return await fetchLegacyGrowthReleaseAsset(tag, assetName, init);
+  } catch (error) {
+    if (primary) return primary;
+    throw error;
+  }
 }
 async function fetchRoutedColdStoreAsset(assetName: string, options?: RequestInit, legacyOnly = false): Promise<Response | null> {
   const primary = legacyOnly

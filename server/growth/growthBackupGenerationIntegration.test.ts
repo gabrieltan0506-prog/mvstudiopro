@@ -315,6 +315,9 @@ async function setupPrivateConsumer(pointerStatus?: number, legacyAuth = false) 
           });
         if (url === `${api}tags/growth-backup-123-1`)
           return Response.json({ id: 2, assets: generationAssets });
+        if (url === `${api}tags/growth-recovery-20260321`)
+          return Response.json({ id: 3, assets: [{ id: 77, name: "archive-merge-summary.json", state: "uploaded" }] });
+        if (url === `${api}assets/77`) return Response.json({ source: "private" });
         const match = url.match(/\/assets\/(\d+)$/);
         const raw = match ? assets.get(Number(match[1])) : undefined;
         if (raw) return new Response(new Uint8Array(raw));
@@ -325,6 +328,9 @@ async function setupPrivateConsumer(pointerStatus?: number, legacyAuth = false) 
         // 仓库转私有后的旧仓读取：令牌只到旧仓 release API，资产经 id 下载。
         expect(legacyAuth).toBe(true);
         expect(headers.get("authorization")).toBe(`Bearer ${token}`);
+        if (url === `${legacyApi}tags/growth-recovery-20260321`)
+          return Response.json({ id: 8, assets: [{ id: 88, name: "archive-merge-summary.json", state: "uploaded" }] });
+        if (url === `${legacyApi}assets/88`) return Response.json({ source: "legacy" });
         if (url === `${legacyApi}tags/growth-cold-store-latest`)
           return Response.json({
             id: 9,
@@ -394,6 +400,23 @@ it("opt-in legacy auth reads the legacy repository through its own release API o
   const legacyApiCalls = calls.filter(call => call.url.startsWith("https://api.github.com/repos/test-owner/public-code/releases/"));
   expect(legacyApiCalls.length).toBeGreaterThan(0);
   expect(calls.every(call => call.url.startsWith("https://api.github.com/repos/test-owner/"))).toBe(true);
+});
+
+it("release summary reads the private repository first and never touches the legacy repository when it exists there", async () => {
+  const { fetchGrowthReleaseAsset, calls } = await setupPrivateConsumer(undefined, true);
+  const response = await fetchGrowthReleaseAsset("growth-recovery-20260321", "archive-merge-summary.json");
+  expect(await response.json()).toEqual({ source: "private" });
+  expect(calls.every(call => call.url.startsWith("https://api.github.com/repos/test-owner/private-growth-data/releases/"))).toBe(true);
+});
+
+it("release summary falls back to the authenticated legacy reader when the private repository lacks it", async () => {
+  const { fetchGrowthReleaseAsset, calls } = await setupPrivateConsumer(404, true);
+  const response = await fetchGrowthReleaseAsset("growth-recovery-20260321", "archive-merge-summary.json");
+  expect(await response.json()).toEqual({ source: "legacy" });
+  expect(calls.some(call => call.url.startsWith("https://github.com/"))).toBe(false);
+  const legacyApiCalls = calls.filter(call => call.url.startsWith("https://api.github.com/repos/test-owner/public-code/releases/"));
+  expect(legacyApiCalls.length).toBeGreaterThan(0);
+  expect(legacyApiCalls.every(call => call.authorization === "Bearer synthetic-private-backup-token")).toBe(true);
 });
 
 it("private API consumer refuses 403 without fetching any public fallback asset", async () => {

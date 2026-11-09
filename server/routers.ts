@@ -153,7 +153,7 @@ import { buildAiManhuaRisingByPlatform } from "./growth/aiManhuaRising";
 import { AI_MANHUA_RISING_BOARD_LIMIT } from "../shared/manhuaDramaClassify";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
 import { withAbortableTimeout } from "./growth/collectorAbort";
-import { exportTrendCollectionsCsv, fetchLegacyGrowthReleaseAsset, getGrowthTrendStats, isTrendCollectionStale, loadDouyinDramaBaselineItems, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, fetchGrowthReleaseAsset, getGrowthTrendStats, isTrendCollectionStale, loadDouyinDramaBaselineItems, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { readDouyinCredentialHealthReport } from "./growth/douyinCredentialHealth";
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
 import { summarizeTrendWindowCounts } from "./growth/trendWindow";
@@ -455,13 +455,13 @@ async function readGrowthArchiveMergeSummary(): Promise<{
     return parseSummary(JSON.parse(await fs.readFile(summaryPath, "utf8")));
   } catch {
     try {
-      // 仓库私有后匿名下载会 404：走 trendStore 的旧仓读取器（服务端令牌，仅限该仓 release API）。
-      const response = await fetchLegacyGrowthReleaseAsset(
+      // 先读私有库同 tag；读不到再走旧仓读取器（GROWTH_LEGACY_COLD_STORE_AUTH=1 时带服务端令牌，仅限该仓 release API）。
+      const response = await fetchGrowthReleaseAsset(
         "growth-recovery-20260321",
         "archive-merge-summary.json",
         { signal: AbortSignal.timeout(5000) },
       );
-      if (!response.ok) return null;
+      if (!response?.ok) return null;
       return parseSummary(await response.json());
     } catch {
       return null;
