@@ -512,11 +512,8 @@ export async function invokeKnowledgePublicationRoutes(
     let receipt = await evidence.read(key);
     // 已有其他完整回包仍可零调用复验。完整回包无法无损解析属于“明确失败”，按用户既定规则走正式已配置重试链：
     // 只允许再购买一条下一路由；该路由仍失败则停止（2026-11-08，原“语法阻断后一律不再购买”导致整册卡死）。
-    if (syntaxFailure && !receipt) {
-      // 跨多次处理也只补买一条：已有两份及以上路由回执即停止。
-      if (syntaxRetryUsed || routesWithReceipt >= 2) throw syntaxFailure;
-      syntaxRetryUsed = true;
-    }
+    // 2026-11-09 用户令「写坏算失败要切下一跳」：无法无损修复的 JSON 与其他明确失败同等，沿正式链继续（四次上限/跨通道），不再只补买一条即停。
+    if (syntaxFailure && !receipt) syntaxRetryUsed = true;
     routesWithReceipt++;
     if (markdownFailure && !receipt) throw markdownFailure;
     if (receipt && receipt.requestDigest !== requestDigest)

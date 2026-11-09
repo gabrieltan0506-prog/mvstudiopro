@@ -309,6 +309,21 @@ describe("正式出版失败事务恢复", () => {
       expect(f.deps.persist).not.toHaveBeenCalled();
     }
   );
+  it("从未发出的请求（无任何回执）在恢复入口按正式链首发，不再被零调用挡住（2026-11-09）", async () => {
+    const f = setup();
+    const original = f.store.get(f.route);
+    for (const k of Array.from(f.store.keys())) if (k.includes("/route-") || k.endsWith("-response.json") || k.endsWith("/accepted.json")) f.store.delete(k);
+    const answer = JSON.parse(JSON.stringify(f.store.get(f.route) ?? null));
+    const fetch = vi.fn(async (_u: unknown, init?: RequestInit) => {
+      const model = JSON.parse(String(init?.body)).model;
+      return new Response(JSON.stringify({ model, choices: [{ finish_reason: "stop", message: { content: JSON.parse(original.response.text).choices[0].message.content } }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    f.deps.routes = { key: () => "k", fetch, sign: () => "https://signed.invalid/x", thumbnail: async () => null } as any;
+    // 断言放行：恢复入口确实按正式链发出了首个请求（不再抛「原回包不足以恢复，未提交新模型请求」）；回答合同由路由测试覆盖。
+    await recoverKnowledgePublicationOperation(f.input, meta, f.deps).catch(error => { expect(String(error.message)).not.toContain("未提交新模型请求"); });
+    expect(fetch).toHaveBeenCalled(); expect(answer).toBeNull();
+    expect(JSON.stringify(Array.from(f.store.keys()))).toContain("/route-");
+  });
   it("原回包unknown（断流）：等待窗内不发新请求；到期归档后只补买一次，再断即失败不保存成功", async () => {
     const f = setup();
     f.store.set(f.route, { requestDigest: f.store.get(f.route).requestDigest, state: "unknown", at: new Date().toISOString() });

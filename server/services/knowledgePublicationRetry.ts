@@ -55,6 +55,8 @@ export async function checkKnowledgePublicationRetry(
     const receipt = await deps.read(`${routePrefix}/route-${route}.json`);
     if (!receipt) continue;
     if (receipt.state === "unavailable" && receipt.sent !== true) continue;
+    // 2026-11-09：断流回执等迟到回执到期后已归档 interrupted（费用未知、永不复用），视为已闭合，允许正式重试另开新编号。
+    if (receipt.state === "interrupted") continue;
     if (receipt.state === "failed" && (receipt.sent === false ||
         (Number.isInteger(receipt.response?.status) && typeof receipt.response?.text === "string"))) continue;
     throw new Error("上一次整理结果尚待核实，不能新开付费重试；原稿已保留");

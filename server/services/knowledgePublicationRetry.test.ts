@@ -62,6 +62,11 @@ describe("KH-ROUTE-02 保存前验证真实失败和恢复边界", () => {
     const doc = fixture(); state.records.set("route-openrouter-retry-2.json", { state: status });
     await expect(checkKnowledgePublicationRetry(7, doc, 0, 0)).rejects.toThrow("结果尚待核实");
   });
+  it("断流回执到期归档为 interrupted 视为已闭合，允许正式重试另开新编号（2026-11-09）", async () => {
+    const doc = fixture(); state.records.set("route-openrouter.json", { state: "interrupted", priorState: "unknown" });
+    state.records.set("route-glm-evolink.json", { state: "interrupted", priorState: "unknown" });
+    await expect(checkKnowledgePublicationRetry(7, doc, 0, 0)).resolves.toBeUndefined();
+  });
   it("实际退款未闭合、金额缺失、错误账号和原请求均拒绝", async () => {
     const doc = fixture(); state.settled = false;
     await expect(checkKnowledgePublicationRetry(7, doc, 0, 0)).rejects.toThrow("退款未闭合");

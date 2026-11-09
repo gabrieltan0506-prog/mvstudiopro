@@ -49,11 +49,14 @@ describe('JSON语法阻断不自动购买下一次',()=>{
   f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
   expect(f.deps.fetch).not.toHaveBeenCalled();
  });
- it('无法无损修复的JSON按已配置重试链只再买一条下一路由；再次处理不再付费重试',async()=>{
-  const f=make(),raw='{"pages":[{"body":"缺失结尾';
-  f.deps.fetch.mockImplementation(async()=>new Response(JSON.stringify({model:OR_MODEL,choices:[{finish_reason:'stop',message:{content:raw}}]})));
+ it('无法无损修复的JSON算明确失败，沿正式重试链切下一跳（2026-11-09 用户令），下一跳成功即采用；全链写坏才报语法阻断且恢复不再付费',async()=>{
+  const ok=make(),bad='{"pages":[{"body":"缺失结尾';
+  ok.deps.fetch.mockResolvedValueOnce(new Response(JSON.stringify({model:OR_MODEL,choices:[{finish_reason:'stop',message:{content:bad}}]}))).mockResolvedValueOnce(ok.response(OR_MODEL));
+  expect(JSON.parse((await invokeKnowledgePublicationRoutes(ok.request,ok.evidence,ok.deps)).text).gateway).toBe('openrouter-retry-1');
+  const f=make(),raw=bad;
+  f.deps.fetch.mockImplementation(async(_u?:unknown,init?:RequestInit)=>new Response(JSON.stringify({model:JSON.parse(String(init?.body)).model,choices:[{finish_reason:'stop',message:{content:raw}}]})));
   await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toMatchObject({code:'knowledge_json_syntax'});
-  expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+  expect(f.deps.fetch).toHaveBeenCalledTimes(16);
   expect(f.storage.get('test/0/route-openrouter.json').response.text).toContain('缺失结尾');
   f.deps.fetch.mockClear();await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toMatchObject({code:'knowledge_json_syntax'});
   expect(f.deps.fetch).not.toHaveBeenCalled();

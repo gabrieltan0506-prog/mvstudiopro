@@ -195,36 +195,13 @@ export async function recoverKnowledgePublicationOperation(
     await deps.save(name,value);
     fresh.set(name,value);
   };
-  /** 批次下是否有未闭合（pending/unknown，且无迟到回执）回执。 */
-  const hasUnresolvedReceipt = async (evidence: { prefix: string; read: (k: string) => Promise<any> }) => {
-    for (const route of KNOWLEDGE_PUBLICATION_ALL_ROUTES) {
-      const receipt = await evidence.read(`${evidence.prefix}/route-${route.id}.json`);
-      if (receipt && ["pending", "unknown"].includes(receipt.state) && !await evidence.read(`${evidence.prefix}/${route.id}-response.json`)) return true;
-    }
-    return false;
-  };
+  // 2026-11-09（用户令）：恢复入口只挡「已有未闭合回执的重复提交」——这由路由自身保证（已有回执零调用回放；unknown 等迟到回执→归档→换通道补买一次）；
+  // 从未发出的请求（无回执的审校批次、篇幅压缩等）按正式链首发，明确失败按正式重试链继续（四次上限/跨通道）。
   const review = await deps.review(input.userId, context, {
     read,
     save,
     post: async (request, evidence) =>
-      invokeKnowledgePublicationRoutes(
-        request as KnowledgeModelRequest,
-        evidence,
-        await hasUnresolvedReceipt(evidence)
-          // 2026-11-09：断流 unknown 的出口在路由内——等迟到回执≤3分钟→归档 interrupted→切下一路补买一次；其余回执照旧零调用重验。
-          ? { interruptionPolicy: "wait-and-repurchase" as const, ...deps.routes }
-          : {
-              key: () => {
-                throw Error("原回包不足以恢复，未提交新模型请求");
-              },
-              fetch: async () => {
-                throw Error("原回包不足以恢复，未提交新模型请求");
-              },
-              // 零调用恢复：明确失败的章由正式重试路径另开新编号付费，不在此处购买。
-              interruptionPolicy: "hold" as const,
-              ...deps.routes,
-            }
-      ),
+      invokeKnowledgePublicationRoutes(request as KnowledgeModelRequest, evidence, { interruptionPolicy: "wait-and-repurchase" as const, ...deps.routes }),
   });
   const result: ManhuaAdvisorQaResponse = {
     success: true,
