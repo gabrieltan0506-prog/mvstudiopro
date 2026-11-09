@@ -28,6 +28,7 @@ export function useStockFootageAdoption(options: UseStockFootageAdoptionOptions)
   const [pendingStatus, setPendingStatus] = useState<Record<string, string>>({});
   const utils = trpc.useUtils();
   const adopt = trpc.stockFootage.adopt.useMutation();
+  const abandon = trpc.stockFootage.abandonAdoption.useMutation();
 
   const myPending = pending.filter(p => (filterPending ? filterPending(p) : p.purpose === purpose));
 
@@ -40,6 +41,22 @@ export function useStockFootageAdoption(options: UseStockFootageAdoptionOptions)
   }, []);
 
   const removePending = useCallback((requestId: string) => updatePending(list => list.filter(p => p.requestId !== requestId)), [updatePending]);
+
+  /**
+   * 用户点「移除」：先清本机待办，再通知服务端放弃（reconcile_manual → failed），
+   * 否则服务端会永远留下 running 的占位行。放弃请求失败不影响本机移除（服务端只是多留一行）。
+   */
+  const abandonPending = useCallback(
+    (requestId: string) => {
+      removePending(requestId);
+      setPendingStatus(s => {
+        const { [requestId]: _dropped, ...rest } = s;
+        return rest;
+      });
+      void abandon.mutateAsync({ requestId }).catch(() => undefined);
+    },
+    [abandon, removePending]
+  );
 
   /** 用待办里的编号发起/续做采用；成功返回资产，其余情况返回 null（已提示用户）。 */
   const runAdopt = useCallback(
@@ -136,6 +153,7 @@ export function useStockFootageAdoption(options: UseStockFootageAdoptionOptions)
     startAdoption,
     resumeAdoption: runAdopt,
     removePending,
+    abandonPending,
   };
 }
 

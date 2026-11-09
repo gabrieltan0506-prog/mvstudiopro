@@ -35,6 +35,7 @@ export const STOCK_FOOTAGE_JOB_TYPE = "stock_footage";
 export const STOCK_FOOTAGE_ACTION = "stock_footage_adopt";
 /** 运行中回执多久没有更新就允许同一 requestId 接手续做。 */
 export const STOCK_ADOPT_STALE_MS = 3 * 60_000;
+export const STOCK_ADOPT_ABANDONED_MESSAGE = "已放弃这次采用，可换一个素材或重新采用";
 
 export type StockAdoptionStage = "claimed" | "resolved" | "stored" | "done" | "failed";
 export type StockAdoptionOutput = {
@@ -69,6 +70,8 @@ export type StockAdoptionDeps = {
   claim: (record: StockAdoptionRecord) => Promise<boolean>;
   /** 乐观接手：仅当回执仍是 prevUpdatedAt 时成功。 */
   takeover: (id: string, userId: number, prevUpdatedAt: Date) => Promise<boolean>;
+  /** 用户放弃：running → failed；已成功/已失败的行不动。 */
+  abandon: (id: string, userId: number) => Promise<boolean>;
   save: (id: string, userId: number, output: StockAdoptionOutput, status?: "succeeded" | "failed") => Promise<void>;
   getAsset: typeof getPexelsAsset;
   download: (url: string, maxBytes: number) => Promise<{ buffer: Buffer; contentType: string | null }>;
@@ -121,9 +124,11 @@ const realDeps: StockAdoptionDeps = {
   },
   async claim(record) {
     const db = await database();
+    // updatedAt 必须由 JS 写入（毫秒精度）：若交给数据库 now()（微秒精度），占位后进程被杀时
+    // takeover 的 eq(jobs.updatedAt, prevUpdatedAt) 永远对不上（Date 只有毫秒），该编号会永久卡在 reconcile_manual。
     const rows = await db
       .insert(jobs)
-      .values({ id: record.id, userId: record.userId, type: STOCK_FOOTAGE_JOB_TYPE, provider: "pexels", status: "running", input: record.input, output: record.output, attempts: 1 })
+      .values({ id: record.id, userId: record.userId, type: STOCK_FOOTAGE_JOB_TYPE, provider: "pexels", status: "running", input: record.input, output: record.output, attempts: 1, createdAt: record.updatedAt, updatedAt: record.updatedAt })
       .onConflictDoNothing({ target: jobs.id })
       .returning({ id: jobs.id });
     return rows.length === 1;
@@ -133,7 +138,22 @@ const realDeps: StockAdoptionDeps = {
     const rows = await db
       .update(jobs)
       .set({ updatedAt: new Date(), attempts: sql`${jobs.attempts} + 1` })
-      .where(and(eq(jobs.id, id), eq(jobs.userId, String(userId)), eq(jobs.status, "running"), eq(jobs.updatedAt, prevUpdatedAt)))
+      // 旧占位行（本修复前由数据库 now() 写入）带微秒尾数，按毫秒截断比较才能接手。
+      .where(and(eq(jobs.id, id), eq(jobs.userId, String(userId)), eq(jobs.status, "running"), sql`date_trunc('milliseconds', ${jobs.updatedAt}) = ${prevUpdatedAt}`))
+      .returning({ id: jobs.id });
+    return rows.length === 1;
+  },
+  async abandon(id, userId) {
+    const db = await database();
+    const rows = await db
+      .update(jobs)
+      .set({
+        status: "failed",
+        error: STOCK_ADOPT_ABANDONED_MESSAGE,
+        output: sql`(coalesce(${jobs.output}::jsonb, '{}'::jsonb) || ${JSON.stringify({ stage: "failed", message: STOCK_ADOPT_ABANDONED_MESSAGE })}::jsonb)::json`,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(jobs.id, id), eq(jobs.userId, String(userId)), eq(jobs.type, STOCK_FOOTAGE_JOB_TYPE), eq(jobs.status, "running")))
       .returning({ id: jobs.id });
     return rows.length === 1;
   },
@@ -317,6 +337,25 @@ export async function getStockAdoption(userId: number, requestId: string, deps: 
   const row = await deps.load(stockFootageAssetId(userId, requestId), userId);
   if (!row) throw new StockFootageError("not_found", "没有找到该采用记录");
   return stockAdoptionResponseFor(row, deps);
+}
+
+/**
+ * 放弃一次未完成的采用（reconcile_manual 的唯一退出口）：
+ * - 已成功：原样返回资产，绝不改写；已失败：原样返回；
+ * - 还在新鲜运行（3 分钟内有更新且无错误）：不打断发起方，原样返回 running；
+ * - 其余（有 lastError 或已过期）：running → failed，服务端不再留下永久 running 的占位行。
+ */
+export async function abandonStockAdoption(userId: number, requestId: string, deps: StockAdoptionDeps = realDeps): Promise<StockFootageAdoptionResponse> {
+  const id = stockFootageAssetId(userId, requestId);
+  const row = await deps.load(id, userId);
+  if (!row) throw new StockFootageError("not_found", "没有找到该采用记录");
+  const current = stockAdoptionResponseFor(row, deps);
+  if (current.status !== "reconcile_manual") return current;
+  if (!(await deps.abandon(id, userId))) {
+    const latest = await deps.load(id, userId);
+    return latest ? stockAdoptionResponseFor(latest, deps) : current;
+  }
+  return { assetId: id, requestId, status: "failed", message: STOCK_ADOPT_ABANDONED_MESSAGE };
 }
 
 export async function listStockAdoptions(

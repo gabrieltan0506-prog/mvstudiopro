@@ -66,8 +66,34 @@ export type StockFootageDrawerProps = {
 };
 
 const TRIM_STEP_SEC = 0.1;
+/** 「已采用」列表最多取回的条数（按用途 + 当前项目）。 */
+const ADOPTED_LIMIT = 30;
 
 const candidateKey = (c: Pick<StockFootageCandidate, "kind" | "providerAssetId">) => `${c.kind}-${c.providerAssetId}`;
+
+/**
+ * 已采用资产 → 抽屉候选形状：预览直接用本人资产的签名读链（照片当图、视频当预览），
+ * 与搜索候选共用选中/裁点/确认链；确认时命中 adoptedByKey 直接绑定，不再发起保存。
+ */
+export function adoptedAssetToCandidate(asset: StockFootageAssetView): StockFootageCandidate {
+  return {
+    provider: asset.source.provider,
+    providerAssetId: asset.source.providerAssetId,
+    kind: asset.kind,
+    pageUrl: asset.source.pageUrl,
+    previewImageUrl: asset.kind === "photo" ? asset.url : "",
+    ...(asset.kind === "video" ? { previewVideoUrl: asset.url } : {}),
+    width: asset.width,
+    height: asset.height,
+    ...(asset.durationSec ? { durationSec: asset.durationSec } : {}),
+    author: asset.source.author,
+  };
+}
+
+/** 只复用与当前位置同类型、同用法的已采用资产（视频还须带时长，否则没法裁）。 */
+export function reusableAdoptedAssets(list: readonly StockFootageAssetView[] | undefined, kind: "video" | "photo", usage: StockFootageUsage): StockFootageAssetView[] {
+  return (list ?? []).filter(a => a.kind === kind && a.usage === usage && (kind !== "video" || (a.durationSec ?? 0) > 0));
+}
 
 export function StockFootageDrawer(props: StockFootageDrawerProps) {
   // 每次打开重新挂载：关键词、筛选、选中与裁点都从当前镜头/段落重新开始。
@@ -145,6 +171,15 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
       return next;
     });
   };
+
+  // ── 已采用（同用途 + 当前项目）：可直接绑定，不重复保存 ──
+  const adoptedList = trpc.stockFootage.listAdoptions.useQuery(
+    { purpose, ...(context?.projectId ? { projectId: context.projectId } : {}), limit: ADOPTED_LIMIT },
+    { enabled: !usageError, retry: false, staleTime: 60_000, refetchOnWindowFocus: false }
+  );
+  const reusable = useMemo(() => reusableAdoptedAssets(adoptedList.data, kind, usage), [adoptedList.data, kind, usage]);
+  const adoptedByKey = useMemo(() => new Map(reusable.map(a => [candidateKey(adoptedAssetToCandidate(a)), a] as const)), [reusable]);
+  const [showAdopted, setShowAdopted] = useState(false);
 
   // ── 选中与裁点 ──
   const [selected, setSelected] = useState<StockFootageCandidate | null>(null);
@@ -233,8 +268,8 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
     if (!selected || busy) return;
     const key = candidateKey(selected);
     const pickTrim = selected.kind === "video" && trim.outSec > trim.inSec ? trim : undefined;
-    // onPick 曾失败：素材已在本人空间，直接重新绑定，不再发起新的保存。
-    let asset = adopted?.key === key ? adopted.asset : null;
+    // onPick 曾失败 / 本人此前已为同一用途采用过同一素材：素材已在本人空间，直接重新绑定，不再发起新的保存。
+    let asset = adopted?.key === key ? adopted.asset : adoptedByKey.get(key) ?? null;
     if (!asset) {
       asset = await adoption.startAdoption(selected, { usage, orientation: orientation ?? props.orientation, context: context ?? {}, ...(pickTrim ? { trim: pickTrim } : {}) });
       if (!asset) return;
@@ -425,7 +460,7 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
                           {adoption.busyId === p.requestId ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
                           {adoption.pendingStatus[p.requestId] === "succeeded" ? "绑定" : "继续"}
                         </button>
-                        <button type="button" disabled={adoption.busyId === p.requestId} className="min-h-11 px-2 text-xs opacity-60 disabled:opacity-30" onClick={() => adoption.removePending(p.requestId)}>移除</button>
+                        <button type="button" disabled={adoption.busyId === p.requestId} className="min-h-11 px-2 text-xs opacity-60 disabled:opacity-30" onClick={() => adoption.abandonPending(p.requestId)}>移除</button>
                       </li>
                     ))}
                   </ul>

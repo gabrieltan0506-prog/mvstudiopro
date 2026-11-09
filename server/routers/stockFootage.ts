@@ -3,7 +3,7 @@ import { z } from "zod";
 import { STOCK_FOOTAGE_PURPOSES, stockFootageAdoptInputSchema, stockFootageSearchInputSchema } from "../../shared/stockFootage";
 import { stockFootageSuggestKeywordsInputSchema } from "../../shared/stockFootageKeywords";
 import { protectedProcedure, router } from "../_core/trpc";
-import { adoptStockFootage, getStockAdoption, listStockAdoptions } from "../services/stockFootage/adoption";
+import { abandonStockAdoption, adoptStockFootage, getStockAdoption, listStockAdoptions } from "../services/stockFootage/adoption";
 import { assertStockKeywordQuota, suggestStockKeywords } from "../services/stockFootage/keywords";
 import { StockFootageError, searchPexels } from "../services/stockFootage/pexelsClient";
 
@@ -43,6 +43,10 @@ export const stockFootageRouter = router({
   getAdoption: protectedProcedure
     .input(z.object({ requestId: z.string().uuid() }).strict())
     .query(({ ctx, input }) => safely(() => getStockAdoption(ctx.user.id, input.requestId))),
+  /** 放弃未完成的采用（只动 reconcile_manual：running → failed）；已成功/新鲜运行的原样返回。 */
+  abandonAdoption: protectedProcedure
+    .input(z.object({ requestId: z.string().uuid() }).strict())
+    .mutation(({ ctx, input }) => safely(() => abandonStockAdoption(ctx.user.id, input.requestId))),
   listAdoptions: protectedProcedure
     .input(
       z.object({
