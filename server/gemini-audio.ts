@@ -707,11 +707,19 @@ export type GeminiAudioJsonChannel = "Vertex" | "EvoLink";
  * 每路的请求摘要、原始回包、解析结果或拒收原因经 save 永久落证据；未配置的通道跳过并记录。
  */
 export async function geminiAudioJsonWithFallback<T>(input: {
-  audioBase64: string;
+  /** 内联音频；给了 media 时可留空。 */
+  audioBase64?: string;
   mimeType: string;
+  /**
+   * 1110 成片调色建议：改读 GCS 媒体（视频含音轨）。Vertex 用 gs:// 直读，EvoLink 用签名 URL；
+   * 不内联 base64。签名 URL 不落证据（只记 gs://）。
+   */
+  media?: { vertexFileUri: string; evolinkFileUri: () => string };
+  /** 两跳统一模型覆盖（如 gemini-3.8-flash）；缺省沿用听音通道配置。 */
+  model?: string;
   prompt: string;
-  /** Gemini 原生 responseSchema（大写类型）。 */
-  nativeSchema: Record<string, unknown>;
+  /** Gemini 原生 responseSchema（大写类型）；不给则只要求 application/json。 */
+  nativeSchema?: Record<string, unknown>;
   schemaName: string;
   validate: (value: unknown) => T;
   save: (name: string, value: unknown) => Promise<unknown>;
@@ -720,28 +728,30 @@ export async function geminiAudioJsonWithFallback<T>(input: {
 }): Promise<{ value: T; channel: GeminiAudioJsonChannel; model: string; failuresZh: string[] }> {
   const timeoutMs = input.timeoutMs ?? 180_000;
   const maxOutputTokens = input.maxOutputTokens ?? 8192;
-  const nativeBody = {
-    contents: [{ role: "user", parts: [{ text: input.prompt }, { inlineData: { data: input.audioBase64, mimeType: input.mimeType } }] }],
-    generationConfig: { maxOutputTokens, responseMimeType: "application/json", audioTimestamp: true, responseSchema: input.nativeSchema, temperature: 0.2 },
-  };
-  const native = async (url: string, headers: Record<string, string>) => {
-    const response = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify(nativeBody) });
+  const nativeBody = (fileUri?: string) => ({
+    contents: [{ role: "user", parts: fileUri
+      ? [{ fileData: { mimeType: input.mimeType, fileUri } }, { text: input.prompt }]
+      : [{ text: input.prompt }, { inlineData: { data: input.audioBase64 ?? "", mimeType: input.mimeType } }] }],
+    generationConfig: { maxOutputTokens, responseMimeType: "application/json", ...(fileUri ? {} : { audioTimestamp: true }), ...(input.nativeSchema ? { responseSchema: input.nativeSchema } : {}), temperature: 0.2 },
+  });
+  const native = async (url: string, headers: Record<string, string>, fileUri?: string) => {
+    const response = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify(nativeBody(fileUri)) });
     const payload = await response.json().catch(() => null);
     return { status: response.status, ok: response.ok, payload, text: readNativeGeminiMessageText(payload) };
   };
   const channels: Array<{ name: GeminiAudioJsonChannel; available: () => boolean; model: () => string; run: () => Promise<{ status: number; ok: boolean; payload: unknown; text: string }> }> = [
     {
-      name: "Vertex", available: isManhuaDramaVertexAudioAvailable, model: resolveManhuaAudioVertexModelName,
+      name: "Vertex", available: isManhuaDramaVertexAudioAvailable, model: () => input.model || resolveManhuaAudioVertexModelName(),
       run: async () => {
-        const model = resolveManhuaAudioVertexModelName();
+        const model = input.model || resolveManhuaAudioVertexModelName();
         const location = resolveManhuaAudioVertexLocation();
         const url = `${baseUrlForVertex(location)}/v1/projects/${encodeURIComponent(getVertexProjectId())}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
-        return native(url, (await getVertexAuthHeaders()) as Record<string, string>);
+        return native(url, (await getVertexAuthHeaders()) as Record<string, string>, input.media?.vertexFileUri);
       },
     },
     {
-      name: "EvoLink", available: isManhuaDramaEvolinkAudioAvailable, model: resolveManhuaAudioEvolinkModelName,
-      run: () => native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(resolveManhuaAudioEvolinkModelName())}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }),
+      name: "EvoLink", available: isManhuaDramaEvolinkAudioAvailable, model: () => input.model || resolveManhuaAudioEvolinkModelName(),
+      run: () => native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(input.model || resolveManhuaAudioEvolinkModelName())}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, input.media?.evolinkFileUri()),
     },
   ];
   const failures: string[] = [];
@@ -750,7 +760,7 @@ export async function geminiAudioJsonWithFallback<T>(input: {
     const slug = `hop-${i + 1}-${ch.name.toLowerCase().replace(/\s+/g, "_")}`;
     if (!ch.available()) { failures.push(`${ch.name}（未配置，跳过）`); await input.save(`${slug}-skipped`, { channel: ch.name, reasonZh: "未配置" }); continue; }
     const model = ch.model();
-    await input.save(`${slug}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt: input.prompt, mimeType: input.mimeType, audioBytes: Math.floor((input.audioBase64.length * 3) / 4), maxOutputTokens, timeoutMs });
+    await input.save(`${slug}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt: input.prompt, mimeType: input.mimeType, ...(input.media ? { mediaGsUri: input.media.vertexFileUri } : { audioBytes: Math.floor(((input.audioBase64 ?? "").length * 3) / 4) }), maxOutputTokens, timeoutMs });
     let result: Awaited<ReturnType<typeof ch.run>>;
     try {
       result = await ch.run();
