@@ -1792,6 +1792,10 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     const digitalHumanScenePolicy = params.digitalHumanScene
       ? (await import("../services/digitalHumanScene.js")).assertDigitalHumanSceneJob(Number(jobUserId), jobId || "", input)
       : null;
+    // 1109 实拍照放入人物重绘：底图+人物参考按已确认载荷复核，固定 2.6 Sunburst 改图档
+    const stockPhotoPersonEditPolicy = params.stockPhotoPersonEdit
+      ? (await import("../services/stockPhotoPersonEdit.js")).assertStockPhotoPersonEditJob(Number(jobUserId), jobId || "", input)
+      : null;
     const codeMotionPolicy = params.codeMotionImage
       ? await (await import("../services/codeMotionImages.js")).resolveCodeMotionImageWorkerPolicy(jobUserId, jobId || "", params.codeMotionImage, input)
       : null;
@@ -1804,7 +1808,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
           .filter(Boolean)
           .slice(0, 16)
       : [];
-    if (digitalHumanKeyframePolicy) {
+    if (digitalHumanKeyframePolicy || stockPhotoPersonEditPolicy) {
       const { signGsUriV4ReadUrl } = await import("../services/gcs.js");
       for (let i = 0; i < referenceImageUrls.length; i++) referenceImageUrls[i] = await signGsUriV4ReadUrl(referenceImageUrls[i], 3600);
     }
@@ -1961,6 +1965,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
         qualityOverride: assetStandardizeQuality || undefined,
         ...(digitalHumanScenePolicy || {}),
         ...(digitalHumanKeyframePolicy || {}),
+        ...(stockPhotoPersonEditPolicy || {}),
         captureError,
       });
     } catch (err) {

@@ -6,6 +6,8 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { abandonStockAdoption, adoptStockFootage, getStockAdoption, listStockAdoptions } from "../services/stockFootage/adoption";
 import { assertStockKeywordQuota, suggestStockKeywords } from "../services/stockFootage/keywords";
 import { StockFootageError, searchPexels } from "../services/stockFootage/pexelsClient";
+import { stockPhotoPersonEditInputSchema } from "../../shared/stockPhotoPersonEdit";
+import { getStockPhotoPersonEdit, queueStockPhotoPersonEdit } from "../services/stockPhotoPersonEdit";
 
 async function safely<T>(operation: () => Promise<T>): Promise<T> {
   try {
@@ -56,4 +58,18 @@ export const stockFootageRouter = router({
       }).strict()
     )
     .query(({ ctx, input }) => safely(() => listStockAdoptions(ctx.user.id, input))),
+  /** 实拍照「放入人物重绘」：本人已采用照片为底图，放入男主/女主；幂等入队，按画布出图单价由 worker 结算。 */
+  personEdit: protectedProcedure.input(stockPhotoPersonEditInputSchema).mutation(({ ctx, input }) =>
+    safely(async () => {
+      try {
+        return await queueStockPhotoPersonEdit(ctx.user.id, input);
+      } catch (error) {
+        if (error instanceof StockFootageError || error instanceof TRPCError) throw error;
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "重绘请求无效" });
+      }
+    })
+  ),
+  getPersonEdit: protectedProcedure
+    .input(z.object({ requestId: z.string().uuid() }).strict())
+    .query(({ ctx, input }) => safely(() => getStockPhotoPersonEdit(ctx.user.id, input.requestId))),
 });

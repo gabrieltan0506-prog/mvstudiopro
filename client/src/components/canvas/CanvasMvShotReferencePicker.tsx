@@ -224,6 +224,23 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
     setTarget(null);
   };
 
+  /** 1109 实拍照放入人物重绘：本镜演唱者/主锚图作男主；重绘结果作本镜场景图。 */
+  const scenePersonEdit = (shot: Shot) => {
+    const lead = refsOf(shot.id).anchorImage ?? props.anchorImage;
+    return {
+      aspectRatio: (props.orientation === "landscape" ? "16:9" : "9:16") as "9:16" | "16:9",
+      options: lead ? [{ slot: "lead" as const, source: lead.gcsUri, label: lead.label || "主角", identityPhoto: Boolean(lead.hasRealPerson) }] : [],
+      onEdited: (result: { imageUrl: string }) => {
+        const gcsUri = assetImageGcsUri(result.imageUrl);
+        if (!gcsUri) throw new Error("重绘图地址无效，请稍后重试");
+        const now = refsOf(shot.id);
+        if (now.sceneImages.length >= MV_SHOT_SCENE_IMAGE_MAX) throw new Error(`本镜场景图最多 ${MV_SHOT_SCENE_IMAGE_MAX} 张`);
+        commit(shot.id, { ...now, sceneImages: [...now.sceneImages, { gcsUri, label: "实拍底图重绘（已放入人物）", ...(lead?.hasRealPerson ? { hasRealPerson: true } : {}) }] });
+        setTarget(null);
+      },
+    };
+  };
+
   /** 白模产物：本镜头块已采用/最近一次的白模，整段作 @视频1（排在图库片之前）。 */
   const usePrevis = (shot: Shot) => {
     setError("");
@@ -404,6 +421,7 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
           context={{ projectId: props.projectId, ...(target.kind !== "anchor" ? { shotId: target.shot.id } : {}) }}
           confirmLabel="采用为参考"
           onPick={onPick}
+          {...(target.kind === "scene" ? { personEdit: scenePersonEdit(target.shot) } : {})}
         />
       )}
     </section>

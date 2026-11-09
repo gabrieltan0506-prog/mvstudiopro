@@ -33,14 +33,21 @@
 - WaveSpeed 超分：`runWavespeedVideoUpscale({videoUrl, target})` 2K $0.0144/s、4K $0.0288/s，音轨保留，结果镜像回 GCS。
 - 视频探针一律 Seedance 2.0-mini 480p（work-rules 7）；HappyHorse 1.1 = 首页照片动画引擎（720p/1080p）。
 
+- **Seedance 2.5 r2v 720p 实单（1109）**：9:16、30s、`content_filter:false`、图 5–6 张 + 参考视频 4–6s，每单 `usage.credits_reserved`=终态 `cost.credits`=**807.534 credits/30s**（≈26.9 credits/s，按 1 credit≈$0.0147 折约 $11.9/单），约 6.5 分钟出片，实出 30.08s、720×1280、24fps、带声。
+
 ### EvoLink Seedance 2.5 五模型（2026-08-13 读官方文档实录）
 - 统一端点 `POST /v1/videos/generations`，模型名：`seedance-2.5-text-to-video / -image-to-video / -reference-to-video / -video-edit / -video-extend`。输出只有 480p/720p，按输出秒计费；`content_filter:false`（放宽真人限制）一律 **+10%**；「AIGC 写实人物素材」官方支持。
 - **video-edit**：删物/删人、按参考图换主体、局部重绘、换背景音；`duration` 只认 `-1`（等长原片）；成片有穿帮用它做局部手术，别整段重烧。
 - **video-extend**：prompt 指定正续/倒续，单次出 4–30s，链式续片每请求独立；**参考视频的输入时长也计费**。
 - **reference-to-video**：图 ≤30 / 视频 ≤10 / 音频 ≤10（比小云雀白名单 9/3/3 宽得多）。
 - 源片约束：mp4/mov、单条 2–30s 且合计 ≤30s、≤200MB、300–6000px、24–60FPS、**禁 base64**；prompt 用 `@video1/@image1` 点名素材。
-- **产物链接只活 24h——出片后立即镜像回 GCS**。回执含 `can_cancel:true`，与旧口径「EvoLink 任务不可取消」冲突，未实测前按不可取消处理。
+- **产物链接只活 24h——出片后立即镜像回 GCS**。用户 1110 确认：EvoLink 2.5 任务提交即不可取消（回执 `can_cancel:true` 不可信；1109 两单 r2v 720p 实单回执为 `task_info.can_cancel:false`）；因此一切付费视频提交前必须取得用户明确批准。
 - 小云雀（Pippit）路由是另一套封装（video_part/nest，见 `.cursor/knowledge/xyq-seedance25-handbook-gaps.md`），与本节 EvoLink 参数不可混用。
+
+## 生图 edit：实拍照放入人物重绘（1109）
+- 现成通道即 `canvas_gpt_image2` 任务的 edit 模式（`referenceImageUrls` 非空 → 官方 `images/edits`），无需新接口；本功能固定 `gpt-image-2.6-sunburst`、官方资产线、high，经 `params.stockPhotoPersonEdit` 由 runner 复核载荷（`server/services/stockPhotoPersonEdit.ts`），按画布出图单价扣费。
+- 参考顺序硬约定：image 1 = 实拍底图（透视/材质/光源以它为准），image 2.. = 人物（真人身份照只锁脸、定妆帧锁脸与服装）；先评估底图适配度，适配才 edit，不适配纯生成。
+- 实测 1024×1536 edit：3 张参考 input image tokens 4608、2 张 3072，output 1372，单张 ≈$0.06–0.08（按 image 2 牌价估）；约 60–80s/张。
 
 ## LLM 双引擎（扩写/提炼类）
 - 稳定档 Kimi K3：OpenRouter `moonshotai/kimi-k3`（$3/$15 per M）reasoningEffort high、max_tokens 32k；EvoLink 备胎 reasoning 只认 "max"。
