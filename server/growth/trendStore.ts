@@ -318,14 +318,32 @@ const coldStoreFetch = createGrowthPrivateAssetFetch({
   repository: process.env.GROWTH_BACKUP_REPOSITORY || "gabrieltan0506-prog/mvstudiopro-growth-data",
   token: process.env.GROWTH_BACKUP_GITHUB_TOKEN,
 });
+// 旧冷备（本仓库 releases）在仓库转私有后不能再匿名下载。显式开启
+// GROWTH_LEGACY_COLD_STORE_AUTH=1 后改走同一套「令牌仅限该仓库 release API」的读取器
+// （不发往 github.com 下载页/存储重定向/其他仓库）；未开启或无令牌时保持原匿名行为。
+const LEGACY_COLD_STORE_REPOSITORY =
+  /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/releases\/download\//.exec(LEGACY_COLD_STORE_BASE_URL)?.[1]
+  || "gabrieltan0506-prog/mvstudiopro";
+const legacyColdStoreFetch: typeof fetch = /^(1|true)$/i.test(String(process.env.GROWTH_LEGACY_COLD_STORE_AUTH || "").trim())
+  && String(process.env.GROWTH_BACKUP_GITHUB_TOKEN || "").trim()
+  ? createGrowthPrivateAssetFetch({ repository: LEGACY_COLD_STORE_REPOSITORY, token: process.env.GROWTH_BACKUP_GITHUB_TOKEN })
+  : coldStoreFetch;
+/** 读取旧仓 release 资产（如 growth-recovery-20260321 摘要）；私有后带服务端令牌。 */
+export function fetchLegacyGrowthReleaseAsset(tag: string, assetName: string, init?: RequestInit) {
+  return legacyColdStoreFetch(
+    `https://github.com/${LEGACY_COLD_STORE_REPOSITORY}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(assetName)}`,
+    init,
+  );
+}
 async function fetchRoutedColdStoreAsset(assetName: string, options?: RequestInit, legacyOnly = false): Promise<Response | null> {
   const primary = legacyOnly
     ? await coldStoreFetch(`${GITHUB_COLD_STORE_BASE_URL}/${assetName}`, options)
     : await fetchGrowthColdStoreAsset(GITHUB_COLD_STORE_BASE_URL, assetName, options, coldStoreFetch);
   // A committed generation never calls this fallback. Historical archives retain
-  // their original public route only after an explicit missing response.
+  // their original route only after an explicit missing response (authenticated
+  // once the legacy repository is private).
   if ((!primary || primary.status === 404) && LEGACY_COLD_STORE_BASE_URL && LEGACY_COLD_STORE_BASE_URL !== GITHUB_COLD_STORE_BASE_URL)
-    return fetchGrowthColdStoreAsset(LEGACY_COLD_STORE_BASE_URL, assetName, options, coldStoreFetch);
+    return fetchGrowthColdStoreAsset(LEGACY_COLD_STORE_BASE_URL, assetName, options, legacyColdStoreFetch);
   return primary;
 }
 const BACKFILL_PLATFORMS = new Set<GrowthPlatform>(

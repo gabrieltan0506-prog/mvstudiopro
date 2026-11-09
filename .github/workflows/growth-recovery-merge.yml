@@ -21,8 +21,21 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Download recovery asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOVERY_ASSET_URL: ${{ inputs.recovery_asset_url }}
         run: |
-          curl -L "${{ inputs.recovery_asset_url }}" -o recovered.json.gz
+          # 本仓库 release 资产走 gh（带工作流自带令牌），仓库转私有后仍可下载；外部地址照旧 curl。
+          download() {
+            local url="$1" out="$2" prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/"
+            if [[ "$url" == "$prefix"*/* ]]; then
+              local rest="${url#"$prefix"}"
+              gh release download "${rest%%/*}" -R "$GITHUB_REPOSITORY" -p "${rest#*/}" -O "$out" --clobber
+            else
+              curl -fL --retry 3 "$url" -o "$out"
+            fi
+          }
+          download "$RECOVERY_ASSET_URL" recovered.json.gz
           gzip -df recovered.json.gz
 
       - name: Merge snapshots

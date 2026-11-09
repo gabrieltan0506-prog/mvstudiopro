@@ -258,7 +258,7 @@ it("an initial missing generation pointer does not permanently pin future reads 
   ).toHaveLength(2);
 });
 
-async function setupPrivateConsumer(pointerStatus?: number) {
+async function setupPrivateConsumer(pointerStatus?: number, legacyAuth = false) {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), "growth-private-consumer-")
   );
@@ -275,6 +275,7 @@ async function setupPrivateConsumer(pointerStatus?: number) {
   vi.stubEnv("GROWTH_GITHUB_COLD_STORE_BASE_URL", legacyBase);
   vi.stubEnv("GROWTH_BACKUP_REPOSITORY", repository);
   vi.stubEnv("GROWTH_BACKUP_GITHUB_TOKEN", token);
+  vi.stubEnv("GROWTH_LEGACY_COLD_STORE_AUTH", legacyAuth ? "1" : "");
   vi.resetModules();
   const current = generation("123-1"),
     historical = generation("99-1");
@@ -316,6 +317,21 @@ async function setupPrivateConsumer(pointerStatus?: number) {
           return Response.json({ id: 2, assets: generationAssets });
         const match = url.match(/\/assets\/(\d+)$/);
         const raw = match ? assets.get(Number(match[1])) : undefined;
+        if (raw) return new Response(new Uint8Array(raw));
+        return new Response("missing", { status: 404 });
+      }
+      const legacyApi = "https://api.github.com/repos/test-owner/public-code/releases/";
+      if (url.startsWith(legacyApi)) {
+        // 仓库转私有后的旧仓读取：令牌只到旧仓 release API，资产经 id 下载。
+        expect(legacyAuth).toBe(true);
+        expect(headers.get("authorization")).toBe(`Bearer ${token}`);
+        if (url === `${legacyApi}tags/growth-cold-store-latest`)
+          return Response.json({
+            id: 9,
+            assets: Array.from(historical.logical.keys()).map((name, index) => ({ id: 1000 + index, name, state: "uploaded" })),
+          });
+        const match = url.match(/\/assets\/(\d+)$/);
+        const raw = match ? Array.from(historical.logical.values())[Number(match[1]) - 1000] : undefined;
         if (raw) return new Response(new Uint8Array(raw));
         return new Response("missing", { status: 404 });
       }
@@ -368,6 +384,16 @@ it("private API consumer permits public legacy fallback only after an explicit m
   expect(calls[0].url).toContain(
     "api.github.com/repos/test-owner/private-growth-data/releases/tags/growth-cold-store-latest"
   );
+});
+
+it("opt-in legacy auth reads the legacy repository through its own release API only", async () => {
+  const { readTrendStore, calls, legacyBase } = await setupPrivateConsumer(404, true);
+  const full = await readTrendStore();
+  expect(full.collections.bilibili?.items[0].id).toBe("99-1-bilibili");
+  expect(calls.some(call => call.url.startsWith(legacyBase))).toBe(false);
+  const legacyApiCalls = calls.filter(call => call.url.startsWith("https://api.github.com/repos/test-owner/public-code/releases/"));
+  expect(legacyApiCalls.length).toBeGreaterThan(0);
+  expect(calls.every(call => call.url.startsWith("https://api.github.com/repos/test-owner/"))).toBe(true);
 });
 
 it("private API consumer refuses 403 without fetching any public fallback asset", async () => {

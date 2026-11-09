@@ -1,0 +1,68 @@
+# 仓库转私有后，工作机（rig）不能再用 codeload.github.com 匿名拉提交 tarball。
+# 本工作流在 PR 分支推送时把该提交源码打包上传到 GCS 专用前缀，工作机在 Fly 内用
+# 服务端已有的 GCS 凭证读取（scripts/rig-fetch-source-tarball.mts），凭证不离开 Fly。
+#
+# 默认关闭：仓库变量 SOURCE_TARBALL_GCS_ENABLED=true 后才执行（未开启时 job 直接跳过）。
+# 凭证复用 pdf-worker-deploy.yml 已在用的 GCP_SA_KEY / GCP_SERVICE_ACCOUNT_KEY，不新增密钥。
+# 桶默认复用 Cloud Build 暂存桶，可用仓库变量 SOURCE_TARBALL_GCS_BUCKET 改写。
+# 对象：gs://<bucket>/mvstudiopro-source/<sha>.tar.gz 与 <sha>.tar.gz.sha256；
+#       gs://<bucket>/mvstudiopro-source/refs/<分支名净化>.txt 指向该分支最新 sha。
+name: Source tarball to GCS
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+concurrency:
+  group: source-tarball-gcs-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upload:
+    if: vars.SOURCE_TARBALL_GCS_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      BUCKET: ${{ vars.SOURCE_TARBALL_GCS_BUCKET || 'mv-studio-pro-build-stash-255451353515' }}
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      SOURCE_REF: ${{ github.head_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Require GCP credentials
+        env:
+          KEY_A: ${{ secrets.GCP_SA_KEY }}
+          KEY_B: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+        run: |
+          if [ -z "$KEY_A" ] && [ -z "$KEY_B" ]; then
+            echo "::error::缺少 GCP_SA_KEY / GCP_SERVICE_ACCOUNT_KEY，无法上传源码包"
+            exit 1
+          fi
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY || secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Pack and upload source tarball
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          out="/tmp/${SOURCE_SHA}.tar.gz"
+          # 与 codeload 同形：顶层目录 mvstudiopro-<sha>/，只含已跟踪文件。
+          git archive --format=tar.gz --prefix="mvstudiopro-${SOURCE_SHA}/" -o "$out" "$SOURCE_SHA"
+          sha256sum "$out" | awk '{print $1}' > "${out}.sha256"
+          echo "bytes=$(stat -c%s "$out") sha256=$(cat "${out}.sha256")"
+          prefix="gs://${BUCKET}/mvstudiopro-source"
+          gcloud storage cp "$out" "${out}.sha256" "${prefix}/"
+          ref_key="$(printf '%s' "$SOURCE_REF" | tr -c 'A-Za-z0-9._-' '-')"
+          printf '%s\n' "$SOURCE_SHA" > /tmp/ref.txt
+          gcloud storage cp /tmp/ref.txt "${prefix}/refs/${ref_key}.txt"
+          echo "uploaded ${prefix}/${SOURCE_SHA}.tar.gz (ref ${SOURCE_REF} -> ${ref_key}.txt)"

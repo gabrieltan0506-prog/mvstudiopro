@@ -39,6 +39,11 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   # 原为 '60'：注释虽写「secret 接管」，但 secret 删掉后这个明文值会顶上来，
   # 结果分档逻辑被压住、线上仍每小时一封——2026-08-06 凌晨排查上传失败时发现。
   GROWTH_MAIL_DIGEST_INTERVAL_MINUTES = ''
+  # LEGACY 旧冷备入口（本仓库 releases，存有 2026-08-30~11-03 归档与早期批次）。私有冷备
+  # GROWTH_GITHUB_PRIVATE_COLD_STORE_BASE_URL（secret）优先；仅私有库明确 404 时才回读这里。
+  # 本仓库转私有后匿名不可读：须同时设 GROWTH_LEGACY_COLD_STORE_AUTH=1，trendStore 才用
+  # GROWTH_BACKUP_GITHUB_TOKEN 经本仓库 release API 读取（该令牌须对本仓库有 Contents 只读）。
+  # 不要删除此地址：历史归档仍只在这里。
   GROWTH_GITHUB_COLD_STORE_BASE_URL = 'https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest'
   GROWTH_OFFLOAD_SINGLE_FILE_THRESHOLD_MB = '400'
   GROWTH_OFFLOAD_DIRECTORY_THRESHOLD_MB = '800'

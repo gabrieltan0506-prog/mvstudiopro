@@ -153,7 +153,7 @@ import { buildAiManhuaRisingByPlatform } from "./growth/aiManhuaRising";
 import { AI_MANHUA_RISING_BOARD_LIMIT } from "../shared/manhuaDramaClassify";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
 import { withAbortableTimeout } from "./growth/collectorAbort";
-import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, loadDouyinDramaBaselineItems, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, fetchLegacyGrowthReleaseAsset, getGrowthTrendStats, isTrendCollectionStale, loadDouyinDramaBaselineItems, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { readDouyinCredentialHealthReport } from "./growth/douyinCredentialHealth";
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
 import { summarizeTrendWindowCounts } from "./growth/trendWindow";
@@ -455,8 +455,10 @@ async function readGrowthArchiveMergeSummary(): Promise<{
     return parseSummary(JSON.parse(await fs.readFile(summaryPath, "utf8")));
   } catch {
     try {
-      const response = await fetch(
-        "https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-recovery-20260321/archive-merge-summary.json",
+      // 仓库私有后匿名下载会 404：走 trendStore 的旧仓读取器（服务端令牌，仅限该仓 release API）。
+      const response = await fetchLegacyGrowthReleaseAsset(
+        "growth-recovery-20260321",
+        "archive-merge-summary.json",
         { signal: AbortSignal.timeout(5000) },
       );
       if (!response.ok) return null;
