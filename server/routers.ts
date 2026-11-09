@@ -14,6 +14,7 @@ import { marketingPlanProcedures } from "./routers/platformMarketingPlan.js";
 import { songOperationsRouter } from "./routers/songOperations";
 import { XHS_CONTENT_SKILL_ID, xhsTopicCount } from "../shared/xhsContentStrategy.js";
 import { codeMotionPlanFailureMessage } from "./services/codeMotionPlanFailure";
+import { creativeProposalFailureMessage } from "./services/creativeProposalFailure";
 import { buildManhuaBgmJobResponse, queueManhuaBgm } from "./services/manhuaBgmOperation";
 import { codeMotionBriefSchema } from "../shared/codeMotion";
 import { codeMotionRouter } from "./routers/codeMotion";
@@ -7164,7 +7165,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             try {
               const terminal = await claimManhuaAdvisorRefundPending(
                 jobId,
-                publicationFailure || codeMotionPlanFailureMessage(operationError) || "顾问回答未完成，积分对账处理中",
+                publicationFailure || codeMotionPlanFailureMessage(operationError) || creativeProposalFailureMessage(operationError) || "顾问回答未完成，积分对账处理中",
               );
               if (terminal === "succeeded") {
                 const replay = await reserveManhuaAdvisorOperation({
@@ -7196,7 +7197,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               } else if (refund.status !== "refunded") {
                 throw new Error(`advisor_refund_not_terminal:${refund.status}`);
               }
-              const planFailure = publicationFailure || codeMotionPlanFailureMessage(operationError);
+              const planFailure = publicationFailure || codeMotionPlanFailureMessage(operationError) || creativeProposalFailureMessage(operationError);
               const reconciled = planFailure
                 ? await markManhuaAdvisorRefundReconciled(jobId, creditsRefunded, planFailure)
                 : await markManhuaAdvisorRefundReconciled(jobId, creditsRefunded);
@@ -7211,7 +7212,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: publicationFailure || `ADVISOR_OPERATION_FAILED：${codeMotionPlanFailureMessage(operationError) || (operationError instanceof Error && operationError.message === "素材尚未登记,请从画布/成片里重新选择站内素材" ? "素材尚未登记，本次未发送影片" : "本次问答未完成")}${deducted.cost > 0 ? "；积分已原路退回" : ""}，请重新提问`,
+              message: publicationFailure || `ADVISOR_OPERATION_FAILED：${codeMotionPlanFailureMessage(operationError) || creativeProposalFailureMessage(operationError) || (operationError instanceof Error && operationError.message === "素材尚未登记,请从画布/成片里重新选择站内素材" ? "素材尚未登记，本次未发送影片" : "本次问答未完成")}${deducted.cost > 0 ? "；积分已原路退回" : ""}，请重新提问`,
             });
           }
 
