@@ -23,6 +23,7 @@ import { ensureKnowledgeReviewThumbnail } from "./knowledgeReviewThumbnail";
 import { knowledgeModelCapabilities, knowledgeOutputBudget, KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST, KNOWLEDGE_PUBLICATION_ROUTE_ORDER, KNOWLEDGE_PUBLICATION_ALL_ROUTES, knowledgePublicationRoutesForChannel, type KnowledgeModelChannel } from "./knowledgeModelCapabilities";
 import { knowledgeReviewSchema, validateKnowledgeReview, knowledgeConsistencySchema } from "../../shared/knowledgePublication";
 import { knowledgeReadingMarkdown } from "../../shared/knowledgePublicationLayout";
+import { KNOWLEDGE_BUDGET_TOLERANCE, knowledgeBudgetWithinTolerance } from "../../shared/knowledgeEditionBudget";
 
 export const KNOWLEDGE_PUBLICATION_MODEL = "deepseek/deepseek-v4.1-flash-1017";
 export const KNOWLEDGE_PUBLICATION_EVOLINK_MODEL = "deepseek-v4.1-flash-1017";
@@ -52,7 +53,7 @@ class KnowledgeRoutesExhaustedError extends Error {
 }
 /** 篇幅预算跳数：GLM FlashX@首选通道 → GLM@另一通道 → DeepSeek，三跳都超出即停止购买，取超出最少的回答交压缩兜底。 */
 export const KNOWLEDGE_BUDGET_MAX_HOPS = 3;
-export type KnowledgeBudgetOverflowPage = { id: string; headline: string; chars: number; maxChars: number; excess: number };
+export type KnowledgeBudgetOverflowPage = { id: string; headline: string; chars: number; maxChars: number; excess: number; ratio: number; path: "tolerated_to_compression" | "rejected_next_hop" };
 class KnowledgeBudgetOverflowError extends Error {
   constructor(message: string, readonly normalized: { status: number; text: string }, readonly excess: number, readonly overflow: KnowledgeBudgetOverflowPage[]) { super(message); }
 }
@@ -65,7 +66,10 @@ export function knowledgeAnswerBudgetOverflow(answer: unknown, budgets: Knowledg
     const limit = limits.get(page.id);
     if (!limit) return [];
     const chars = (page.reading ? knowledgeReadingMarkdown(page.reading) : page.body || "").replace(/\s+/g, "").length;
-    return chars > limit.maxChars ? [{ id: page.id, headline: limit.headline, chars, maxChars: limit.maxChars, excess: chars - limit.maxChars }] : [];
+    if (chars <= limit.maxChars) return [];
+    const ratio = Math.round(((chars - limit.maxChars) / limit.maxChars) * 1000) / 1000;
+    return [{ id: page.id, headline: limit.headline, chars, maxChars: limit.maxChars, excess: chars - limit.maxChars, ratio,
+      path: knowledgeBudgetWithinTolerance(chars, limit.maxChars) ? "tolerated_to_compression" as const : "rejected_next_hop" as const }];
   });
 }
 const digest = (data: unknown) => createHash("sha256").update(JSON.stringify(data)).digest("hex");
@@ -711,7 +715,15 @@ export async function invokeKnowledgePublicationRoutes(
       normalized = { status: 200, text: JSON.stringify({ ...output, gateway: route, gatewayTrace: traces, ...(researchEvidence ? { research: researchEvidence } : {}),
         inputEvidence: { imageSources: images, imageInputCount: images.length, requestDigest, imageTokenReporting: "provider_specific" } }) };
       const overflow = knowledgeAnswerBudgetOverflow(answer, request.pageBudgets);
-      if (overflow.length) throw new KnowledgeBudgetOverflowError(`篇幅超出：${overflow.map(o => `《${o.headline}》超${o.excess}字（${o.chars}/${o.maxChars}）`).join("；")}`, normalized, overflow.reduce((n, o) => n + o.excess, 0), overflow);
+      // 用户拍板 B：任一页超出 >容差才算写坏切下一跳；全部在容差内则收下，超出部分由上层篇幅压缩处理（回执记录每页比例与路径）。
+      if (overflow.some(o => o.path === "rejected_next_hop")) throw new KnowledgeBudgetOverflowError(`篇幅超出容差${Math.round(KNOWLEDGE_BUDGET_TOLERANCE * 100)}%：${overflow.map(o => `《${o.headline}》超${o.excess}字（${o.chars}/${o.maxChars}，${Math.round(o.ratio * 1000) / 10}%）`).join("；")}`, normalized, overflow.reduce((n, o) => n + o.excess, 0), overflow);
+      if (overflow.length) {
+        const envelope = JSON.parse(normalized.text);
+        envelope.budgetTolerated = { tolerance: KNOWLEDGE_BUDGET_TOLERANCE, route, pages: overflow };
+        normalized = { status: 200, text: JSON.stringify(envelope) };
+        receipt = { ...receipt, budgetTolerated: envelope.budgetTolerated };
+        await evidence.save(key, receipt);
+      }
     } catch (error) {
       if (error instanceof KnowledgeBudgetOverflowError) {
         // 完整回答但篇幅超出：按写坏记失败（原始回包保留），切下一跳；保留超出最少的一份作压缩兜底。

@@ -1,6 +1,7 @@
 import { describe,it,expect,vi } from 'vitest';
 import { randomUUID, createHash } from 'node:crypto';
 import { KNOWLEDGE_DESIGN_MARKER } from '../../shared/knowledgeDecorations';
+import { KNOWLEDGE_BUDGET_TOLERANCE, knowledgeBudgetWithinTolerance } from '../../shared/knowledgeEditionBudget';
 import { invokeKnowledgePublicationRoutes, knowledgeAnswerBudgetOverflow, KNOWLEDGE_PUBLICATION_MODEL as OR_MODEL, KNOWLEDGE_PUBLICATION_EVOLINK_MODEL as EVO_MODEL, KNOWLEDGE_LATE_RECEIPT_WAIT_MS, KNOWLEDGE_PUBLICATION_ROUTE_VERSION, type KnowledgeModelRequest } from './knowledgePublicationRoutes';
 const make=()=>{
  const id=randomUUID(),sourceDigest='a'.repeat(64),storage=new Map<string,any>();
@@ -1002,3 +1003,41 @@ describe('篇幅预算写进输出合同：超页算写坏切下一跳，三跳�
   await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(1);
  });
 });
+
+describe('篇幅容差 B：超出 ≤15% 收下转压缩，>15% 才切下一跳（2026-11-09 用户拍板）',()=>{
+ it('边界：700 字上限 805 字收下、806 字切跳；阈值常量可调',()=>{
+  expect(knowledgeBudgetWithinTolerance(805,700)).toBe(true);
+  expect(knowledgeBudgetWithinTolerance(806,700)).toBe(false);
+  expect(knowledgeBudgetWithinTolerance(770,700,0.1)).toBe(true);
+  expect(knowledgeBudgetWithinTolerance(771,700,0.1)).toBe(false);
+  expect(KNOWLEDGE_BUDGET_TOLERANCE).toBe(0.15);
+ });
+ const budgetCase=(over:number)=>{
+  const f=make(),r=structuredClone(f.report) as any;r.pages[0].reading.blocks[0].rows.push(['补充','液'.repeat(200)]);
+  const chars=knowledgeAnswerBudgetOverflow(r,[{id:r.pages[0].id,headline:'水循环',maxChars:0}])[0].chars;
+  // 找一个上限使 chars 恰为上限的 (1+over)
+  const maxChars=Math.round(chars/(1+over));
+  f.request.executionFamily='glm';f.request.executionChannel='evolink';
+  f.request.pageBudgets=[{id:r.pages[0].id,headline:'水循环',maxChars}];
+  f.deps.fetch.mockImplementation(async(_u?:unknown,init?:RequestInit)=>f.response(JSON.parse(String(init?.body)).model,r));
+  return {f,chars,maxChars};
+ };
+ it('超出约 10%：首跳即收下，不再购买；回执与回答记录每页超出比例与处理路径（转压缩）',async()=>{
+  const {f,chars,maxChars}=budgetCase(0.1);
+  const out=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+  expect(out.gateway).toBe('glm-evolink');
+  expect(out.budgetTolerated.pages[0]).toMatchObject({chars,maxChars,path:'tolerated_to_compression'});
+  expect(out.budgetTolerated.pages[0].ratio).toBeGreaterThan(0.09);
+  expect(f.storage.get('test/0/route-glm-evolink.json').budgetTolerated.tolerance).toBe(0.15);
+  f.deps.fetch.mockClear();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).not.toHaveBeenCalled();
+ });
+ it('超出约 20%：判写坏切下一跳，失败原因写明超出比例',async()=>{
+  const {f}=budgetCase(0.2);
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
+  expect(f.storage.get('test/0/route-glm-evolink.json').reason).toMatch(/超出容差15%.*%）/);
+  expect(f.storage.get('test/0/route-glm-evolink.json').budgetOverflow[0].path).toBe('rejected_next_hop');
+  expect(f.deps.fetch).toHaveBeenCalledTimes(3);
+ });
+});
+

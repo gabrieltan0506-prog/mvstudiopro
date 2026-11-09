@@ -696,6 +696,9 @@ export async function reviewKnowledgePublication(
     adjustments: JSON.parse(raw.response.text).adjustments,
     model: KNOWLEDGE_VISUAL_ADVISOR_MODEL,
     reportedModelVersion: JSON.parse(raw.response.text).modelVersion,
+    // 审校稿篇幅：容差内收下的页（每页超出比例与处理路径）、以及各跳写坏后取最少的兜底。
+    ...(JSON.parse(raw.response.text).budgetTolerated ? { budgetTolerated: JSON.parse(raw.response.text).budgetTolerated } : {}),
+    ...(JSON.parse(raw.response.text).budgetFallback ? { budgetFallback: JSON.parse(raw.response.text).budgetFallback } : {}),
     ...(budgetOverflow ? { budgetOverflow } : {}),
   });
   return {

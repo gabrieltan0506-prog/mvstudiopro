@@ -149,6 +149,13 @@ export function knowledgeBudgetInstructions(level: KnowledgeEditionLevel | undef
   return `${rule}\n篇幅预算（中文字符，含表格单元格；${tolerance}）：${JSON.stringify(pages.map(p => ({ id: p.id, maxChars: p.maxChars })))}`;
 }
 
+/**
+ * 审校稿篇幅容差（2026-11-09 用户拍板 B）：某页超出 maxChars 不超过该比例视为合格收下，超出部分交篇幅压缩
+ * （函数去重 → 仍超才三跳 LLM）；超出该比例才算写坏切下一跳。可调。
+ */
+export const KNOWLEDGE_BUDGET_TOLERANCE = 0.15;
+/** 该页超出是否仍在容差内（边界含等号：700 字上限时 805 字收下、806 字切跳）。 */
+export const knowledgeBudgetWithinTolerance = (chars: number, maxChars: number, tolerance = KNOWLEDGE_BUDGET_TOLERANCE) => chars <= Math.floor(Math.round(maxChars * (1 + tolerance) * 1e6) / 1e6); // 去浮点误差：700×1.15 = 805
 /** 提示词目标留 10% 余量，校验按 maxChars。 */
 export const KNOWLEDGE_BUDGET_PROMPT_MARGIN = 0.9;
 /**

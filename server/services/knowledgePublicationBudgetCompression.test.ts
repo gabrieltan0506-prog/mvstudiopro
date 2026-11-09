@@ -236,3 +236,26 @@ describe("篇幅预算写进审校输出合同", () => {
     expect((h.post.mock.calls[1]![0] as any).pageBudgets).toBeUndefined();
   });
 });
+
+describe("篇幅容差 B：审校稿容差内收下后由压缩达标", () => {
+  it("审校稿超出 ≤15%（路由已收下并标 budgetTolerated）→ 报告记录比例与路径，压缩后每页 ≤ 预算", async () => {
+    const h = harness(650);
+    const post = h.post.getMockImplementation()!;
+    h.post.mockImplementation(async (request: any) => {
+      const res: any = await post(request);
+      if (request.systemInstruction.parts.some((p: any) => /篇幅压缩/.test(p.text))) return res;
+      const env = JSON.parse(res.text); const value = JSON.parse(env.candidates[0].content.parts[0].text);
+      value.pages[0].reading.blocks = [{ type: "prose", title: "壁画分期", note: "", text: prose(780) }];
+      env.candidates[0].content.parts[0].text = JSON.stringify(value);
+      env.budgetTolerated = { tolerance: 0.15, route: "glm-evolink", pages: [{ id: value.pages[0].id, headline: "x", chars: 787, maxChars: 700, excess: 87, ratio: 0.124, path: "tolerated_to_compression" }] };
+      res.text = JSON.stringify(env); return res;
+    });
+    const batch = await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps) as any;
+    expect(h.calls.map(c => c.kind)).toEqual(["review", "compress"]);
+    expect(knowledgeReviewPageChars(batch.pages[0])).toBeLessThanOrEqual(700);
+    const saved = h.storage.get(`${h.root}/batch-0/report.json`);
+    expect(saved.budgetTolerated.pages[0].path).toBe("tolerated_to_compression");
+    expect(saved.budgetOverflow.after).toEqual([]);
+  });
+});
+
