@@ -148,3 +148,25 @@ export function knowledgeBudgetInstructions(level: KnowledgeEditionLevel | undef
   const tolerance = level === "full" ? "超出即会溢出为续页，须压缩进上限" : "稍超可以，明显超出须合并去重而不是删掉关键事实";
   return `${rule}\n篇幅预算（中文字符，含表格单元格；${tolerance}）：${JSON.stringify(pages.map(p => ({ id: p.id, maxChars: p.maxChars })))}`;
 }
+
+/** 审校后逐页核对：reading 实际字数（不含空白）对照各页预算，返回超出的页。 */
+export type KnowledgeReadingOverflow = { id: string; headline: string; chars: number; maxChars: number; excess: number };
+export function knowledgeReadingOverflow(
+  level: KnowledgeEditionLevel | undefined,
+  pages: KnowledgeBudgetPage[],
+  reviewed: readonly { id: string; chars: number }[],
+): KnowledgeReadingOverflow[] {
+  if (!level) return [];
+  const budgets = new Map(knowledgeReadingCharBudgets(level, pages).pages.map(p => [p.id, p]));
+  return reviewed.flatMap(r => {
+    const budget = budgets.get(r.id);
+    if (!budget || r.chars <= budget.maxChars) return [];
+    return [{ id: r.id, headline: budget.headline, chars: r.chars, maxChars: budget.maxChars, excess: r.chars - budget.maxChars }];
+  });
+}
+
+/** 压缩请求的说明：只对超出页，按各页 maxChars 提炼，不删关键事实、不重复图中内容。 */
+export function knowledgeCompressionInstructions(level: KnowledgeEditionLevel, overflow: readonly KnowledgeReadingOverflow[]) {
+  const target = level === "full" ? `图下一栏（每页约${KNOWLEDGE_LEAD_PAGE_CHARS}字）` : "本页预算";
+  return `这是篇幅压缩：以下各页审校后的reading超出${target}，须把每页reading压缩到不超过该页maxChars（中文字符，不含空白；含表格单元格与小标题）。合并去重、提炼成要点、删除与图中已画出内容重复的表格/清单/步骤，保留全部关键事实、数字、条件与边界；不新增事实、不改变结论、不写“详见图中”以外的空话。body与reading表达相同内容。沿用knowledge_publication_v1 JSON合同，pages与输入同id同顺序、一个不少。各页目标：${JSON.stringify(overflow.map(o => ({ id: o.id, chars: o.chars, maxChars: o.maxChars })))}`;
+}

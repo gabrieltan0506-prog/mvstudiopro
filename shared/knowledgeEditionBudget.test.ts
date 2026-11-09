@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { knowledgeBudgetInstructions, knowledgeEditionBudgetCheck, knowledgeEditionPageBudget, knowledgeReadingCharBudgets, KNOWLEDGE_LEAD_PAGE_CHARS, KNOWLEDGE_READING_PAGE_CHARS } from "./knowledgeEditionBudget";
+import { knowledgeBudgetInstructions, knowledgeCompressionInstructions, knowledgeEditionBudgetCheck, knowledgeEditionPageBudget, knowledgeReadingCharBudgets, knowledgeReadingOverflow, KNOWLEDGE_LEAD_PAGE_CHARS, KNOWLEDGE_READING_PAGE_CHARS } from "./knowledgeEditionBudget";
 import { attachKnowledgeTextModules } from "./knowledgeTextAttachment";
 import { compileKnowledgeEditions } from "./knowledgeCardEdition";
 import { knowledgeEditionIllustratedPages, knowledgeEditionImageChars, knowledgeEditionImagePlan, planKnowledgeCardPages } from "./knowledgeCardPagination";
@@ -105,5 +105,25 @@ describe("无图文字模块并入相关章节", () => {
   });
   it("没有文字模块时返回空补充", () => {
     expect(attachKnowledgeTextModules(["## a\n\n甲"], [])).toEqual([""]);
+  });
+});
+
+describe("审校后预算核对：knowledgeReadingOverflow", () => {
+  const pages = Array.from({ length: 3 }, (_, i) => ({ id: `p${i}`, headline: `章${i}`, body: "图内", supplement: "补", imageJobId: `job${i}` }));
+  it("完整版每页上限 700：只报超出页，excess 为超出字数", () => {
+    const overflow = knowledgeReadingOverflow("full", pages, [{ id: "p0", chars: 700 }, { id: "p1", chars: 1850 }, { id: "p2", chars: 701 }]);
+    expect(overflow).toEqual([
+      { id: "p1", headline: "章1", chars: 1850, maxChars: 700, excess: 1150 },
+      { id: "p2", headline: "章2", chars: 701, maxChars: 700, excess: 1 },
+    ]);
+  });
+  it("无档位或页不在预算内时不报", () => {
+    expect(knowledgeReadingOverflow(undefined, pages, [{ id: "p1", chars: 9999 }])).toEqual([]);
+    expect(knowledgeReadingOverflow("full", pages, [{ id: "unknown", chars: 9999 }])).toEqual([]);
+  });
+  it("压缩说明带每页 maxChars 目标", () => {
+    const text = knowledgeCompressionInstructions("full", [{ id: "p1", headline: "章1", chars: 1850, maxChars: 700, excess: 1150 }]);
+    expect(text).toContain("每页约700字");
+    expect(text).toContain('{"id":"p1","chars":1850,"maxChars":700}');
   });
 });

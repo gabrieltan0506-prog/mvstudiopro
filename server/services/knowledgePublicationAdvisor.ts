@@ -1,5 +1,5 @@
 import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
-import { knowledgeBudgetInstructions, knowledgeReadingCharBudgets } from "../../shared/knowledgeEditionBudget";
+import { knowledgeBudgetInstructions, knowledgeCompressionInstructions, knowledgeReadingCharBudgets, knowledgeReadingOverflow, type KnowledgeReadingOverflow } from "../../shared/knowledgeEditionBudget";
 import { KNOWLEDGE_VERIFICATION_POLICY, KNOWLEDGE_VERIFICATION_EDIT_POLICY, knowledgeVerificationTriggers, knowledgeVerificationQueries, knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
 import { KNOWLEDGE_RESEARCH_INSTRUCTIONS, KNOWLEDGE_RESEARCH_MARKER } from "../../shared/knowledgeResearch";
@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { planKnowledgeConsistency } from "../../shared/knowledgePublicationConsistency";
 import sharp from "sharp";
-import { KNOWLEDGE_READING_INSTRUCTIONS } from "../../shared/knowledgePublicationLayout";
+import { KNOWLEDGE_READING_INSTRUCTIONS, knowledgeReadingMarkdown } from "../../shared/knowledgePublicationLayout";
 import { invokeKnowledgePublicationRoutes, KNOWLEDGE_PUBLICATION_MODEL, type KnowledgeModelRequest, type KnowledgeRouteEvidence } from "./knowledgePublicationRoutes";
 import { KNOWLEDGE_PUBLICATION_ROUTE_ORDER, KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST } from "./knowledgeModelCapabilities";
 import {
@@ -278,6 +278,67 @@ export function buildKnowledgeFinalRevisionRequest(pageSource: KnowledgeSource, 
   return request;
 }
 
+/** 审校页实际内文字数（不含空白）：有 reading 按 reading 生成稿计，否则按 body。 */
+export function knowledgeReviewPageChars(page: { body: string; reading?: Parameters<typeof knowledgeReadingMarkdown>[0] }) {
+  return (page.reading ? knowledgeReadingMarkdown(page.reading) : page.body).replace(/\s+/g, "").length;
+}
+
+/**
+ * 篇幅压缩请求（预算的生产者）：只对审校后超出各页 maxChars 的页，一次廉价文字调用按目标提炼 reading；
+ * 不带图片、不改图片审校结论（imageDescription/imageStatus 由调用方从原审校复制回去）。
+ */
+export function buildKnowledgeCompressionRequest(pageSource: KnowledgeSource, digest: string, overflow: readonly KnowledgeReadingOverflow[], channel: "openrouter" | "evolink" = "openrouter"): KnowledgeModelRequest {
+  const request = buildKnowledgeReviewRequest(pageSource, digest, new Map());
+  request.executionChannel = channel;
+  request.executionFamily = "deepseek";
+  request.systemInstruction.parts.push({ text: knowledgeCompressionInstructions(pageSource.detailLevel || "full", overflow) });
+  request.systemInstruction.parts.push({ text: "严格保持层级：根对象只有kind、sourceDigest、title、pages；每页都要给完整reading（version:1,subtitle,accent,blocks），imageDescription写\"\"、imageStatus写\"absent\"（图片审校结论由程序保留原值）。" });
+  return request;
+}
+
+/**
+ * 审校后按页预算压缩（完整版图文同页：每页 reading 须装进图下一栏）。
+ * - 没有超出页：原样返回，零调用。
+ * - 有超出页：一次压缩调用（请求/原始回包/解析结果按 getRaw 永久保存），逐页部分采纳——压缩稿比原稿短才采用，
+ *   仍超出的页记入 remaining 由上层报出；压缩调用失败不拖垮已完成的审校，只记录 error。
+ */
+export async function compressKnowledgeReviewToBudget(params: {
+  deps: typeof real; prefix: string; attempt: number; digest: string;
+  source: KnowledgeSource; pages: ReturnType<typeof validateKnowledgeReview>["pages"];
+}) {
+  const { deps, prefix, attempt, digest, source } = params;
+  const chars = params.pages.map(p => ({ id: p.id, chars: knowledgeReviewPageChars(p) }));
+  const before = knowledgeReadingOverflow(source.detailLevel, source.pages, chars);
+  if (!before.length) return { pages: params.pages, before, after: [] as KnowledgeReadingOverflow[], adopted: [] as string[], error: undefined as string | undefined };
+  const ids = new Set(before.map(o => o.id));
+  const originals = new Map(source.pages.map(p => [p.id, p]));
+  const pageSource: KnowledgeSource = { title: source.title, detailLevel: source.detailLevel,
+    pages: params.pages.filter(p => ids.has(p.id)).map(p => ({ ...originals.get(p.id)!, body: p.body, imageUrl: "" })) };
+  const request = buildKnowledgeCompressionRequest(pageSource, digest, before);
+  let pages = params.pages;
+  const adopted: string[] = [];
+  let error: string | undefined;
+  try {
+    const raw = await getRaw(deps, prefix, attempt, digest, [], request);
+    const compressed = validateKnowledgeReview(parseRaw(raw, false), pageSource, digest);
+    const byId = new Map(compressed.pages.map(p => [p.id, p]));
+    pages = params.pages.map(page => {
+      const next = byId.get(page.id);
+      if (!next || knowledgeReviewPageChars(next) >= knowledgeReviewPageChars(page)) return page;
+      adopted.push(page.id);
+      // 图片审校结论与图文疑点来自原审校；压缩只改文字。
+      return { ...next, imageDescription: page.imageDescription, imageStatus: page.imageStatus,
+        cautions: Array.from(new Map([...page.cautions.filter(c => c.kind === "image_text" || c.kind === "uncertain"), ...next.cautions].map(c => [JSON.stringify(c), c])).values()) };
+    });
+  } catch (e) {
+    error = e instanceof Error ? e.message : String(e);
+    console.warn(`[knowledgePublication] 篇幅压缩未完成，保留审校稿并报出超出页：${error.slice(0, 200)}`);
+  }
+  const after = knowledgeReadingOverflow(source.detailLevel, source.pages, pages.map(p => ({ id: p.id, chars: knowledgeReviewPageChars(p) })));
+  await deps.save(`${prefix}/budget.json`, { sourceDigest: digest, before, after, adopted, error });
+  return { pages, before, after, adopted, error };
+}
+
 async function readKnowledgeBatchReports(source:KnowledgeSource,digest:string,root:string,read:typeof real.read) {
   const batches=knowledgeReviewBatches(source);
   const results: {report:ReturnType<typeof validateKnowledgeReview>;sourceImages:{uri:string;sha256:string}[]}[]=new Array(batches.length);
@@ -427,6 +488,7 @@ export async function reviewKnowledgePublication(
       reviewedPages: batchSource.pages.map(p => p.id),
       pages: report.pages,
     images: batchSource.pages.filter(p => p.imageJobId && p.imageUrl).map(p => ({ id: p.id, url: signGsUriV4ReadUrl(p.imageUrl, 7 * 24 * 3600) })),
+    ...(previous.budgetOverflow ? { budgetOverflow: previous.budgetOverflow } : {}),
     };
   }
   const images = new Map<
@@ -489,11 +551,20 @@ export async function reviewKnowledgePublication(
     )
   )
     throw new Error("配图版本已变化，未复用旧审校");
-  const report = validateKnowledgeReview(
+  let report = validateKnowledgeReview(
     parseRaw(raw, images.size > 0),
     batchSource,
     digest
   );
+  // 预算的生产者：审校稿超出各页上限时一次压缩调用按页提炼，仍超出的页随报告报出（不阻断、不截断）。
+  let budgetOverflow: { before: KnowledgeReadingOverflow[]; after: KnowledgeReadingOverflow[]; adopted: string[]; error?: string } | undefined;
+  if (source.detailLevel && source.reviewBatchMode === "ready-images") {
+    const compressed = await compressKnowledgeReviewToBudget({ deps, prefix: `${prefix}/compress`, attempt: context.attempt, digest, source, pages: report.pages });
+    if (compressed.before.length) {
+      report = { ...report, pages: compressed.pages };
+      budgetOverflow = { before: compressed.before, after: compressed.after, adopted: compressed.adopted, error: compressed.error };
+    }
+  }
   await deps.save(`${prefix}/verification-candidates.json`, {sourceDigest:digest,triggers:knowledgeVerificationTriggers(report.pages.flatMap(p=>p.facts.map(f=>({pageId:p.id,headline:p.headline,...f})))),cautions:report.pages.flatMap(p=>p.cautions.map(c=>({pageId:p.id,...c}))),stage:"等待全册整理后统一联网"});
   await deps.save(`${prefix}/report.json`, {
     report,
@@ -504,6 +575,7 @@ export async function reviewKnowledgePublication(
     adjustments: JSON.parse(raw.response.text).adjustments,
     model: KNOWLEDGE_VISUAL_ADVISOR_MODEL,
     reportedModelVersion: JSON.parse(raw.response.text).modelVersion,
+    ...(budgetOverflow ? { budgetOverflow } : {}),
   });
   return {
     kind: "knowledge_publication_batch_v1" as const,
@@ -513,6 +585,7 @@ export async function reviewKnowledgePublication(
     reviewedPages: batchSource.pages.map(p => p.id),
     pages: report.pages,
     images: batchSource.pages.filter(p => p.imageJobId && p.imageUrl).map(p => ({ id: p.id, url: signGsUriV4ReadUrl(p.imageUrl, 7 * 24 * 3600) })),
+    ...(budgetOverflow ? { budgetOverflow } : {}),
   };
 }
 
