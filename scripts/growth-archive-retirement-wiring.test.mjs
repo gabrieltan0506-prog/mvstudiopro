@@ -18,6 +18,7 @@ function fixture(t,name){
  fs.writeFileSync(path.join(bin,'flyctl'),`#!/usr/bin/env node
 const fs=require('node:fs');const args=process.argv.slice(2),input=fs.readFileSync(0,'utf8');
 fs.writeFileSync(process.env.CAPTURE,JSON.stringify({args,input}));
+if(process.env.BUSY==='1'){console.error(JSON.stringify({error:'growth_cleanup_busy'}));process.stdout.write(JSON.stringify({error:'growth_cleanup_busy'})+'\\n');process.exit(1);}
 process.stdout.write(JSON.stringify({completed:process.env.FAIL!=='1',removed:2,actualFreeBytesDelta:4096})+'\\n');
 process.exit(process.env.FAIL==='1'?23:0);
 `,{mode:0o755});
@@ -73,6 +74,14 @@ for(const name of files){
   const r=f.run();assert.equal(r.status,0,r.stderr);
   const captured=JSON.parse(fs.readFileSync(f.capture));assert.deepEqual(JSON.parse(captured.input),payload);
   assert(fs.existsSync(path.join(f.store,'retirement-result-reused.json')));
+ });
+ test(`${name}: 服务端采集锁 growth_cleanup_busy 只重试后延后，不红掉也不删来源`,t=>{
+  const f=fixture(t,name);f.seed();
+  const r=f.run(undefined,{BUSY:'1',GROWTH_RETIRE_BUSY_ATTEMPTS:'2',GROWTH_RETIRE_BUSY_WAIT_SECONDS:'0'});
+  assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/第 1 次遇到 growth_cleanup_busy/);
+  assert(fs.existsSync(path.join(f.store,'RETIREMENT_DEFERRED_new')));
+  assert(fs.readFileSync(f.summary,'utf8').includes('延后'));
+  assert(!fs.readFileSync(f.summary,'utf8').includes('逐文件清理已执行'));
  });
  test(`${name}: 仅快照清理成功才建立释放标记`,t=>{
   const f=fixture(t,name);f.seed();fs.unlinkSync(path.join(f.store,'SNAPSHOT_RELEASED'));

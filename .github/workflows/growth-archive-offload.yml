@@ -5,7 +5,7 @@ name: Growth Archive Offload
 on:
   schedule:
     # 每 3 小时（UTC :30）。必须与 growth-backup 的 0 */3 同频，错开 30 分钟，减少串行排队。
-    - cron: "30 */3 * * *"
+    - cron: "47 */3 * * *"  # 与 Growth Backup 错开 30 分钟，同样避开整点/半点
   workflow_dispatch:
     inputs:
       archive_dir:
@@ -311,14 +311,36 @@ jobs:
           }
           if(fs.existsSync(path.join(root,"reused-cleanup-input.json")))write("reused",read("reused-cleanup-input.json"));
           NODE
+          # 服务端采集/变更锁被占时清理脚本立刻报 growth_cleanup_busy；这是真实竞争不是陈旧锁，
+          # 等一等再试即可，不该让整个 run 红掉（1109 事故：07:01Z run 仅此一步失败）。
           for kind in new reused; do
             request="$ROOT/retirement-request-$kind.json"
             [ -s "$request" ] || continue
-            timeout --kill-after=10s 540s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-              -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth node scripts/growth-archive-retire.mjs --scope=bilibili-archives --allow-remote-download'" \
-              < "$request" | tee "$ROOT/retirement-result-$kind.json"
+            attempt=0
+            while :; do
+              attempt=$((attempt+1))
+              status=0
+              timeout --kill-after=10s 540s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+                -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth node scripts/growth-archive-retire.mjs --scope=bilibili-archives --allow-remote-download'" \
+                < "$request" > "$ROOT/retirement-result-$kind.json" || status=$?
+              cat "$ROOT/retirement-result-$kind.json"
+              if [ "$status" -eq 0 ] || ! grep -q '"growth_cleanup_busy"' "$ROOT/retirement-result-$kind.json"; then
+                [ "$status" -eq 0 ] || exit "$status"
+                break
+              fi
+              if [ "$attempt" -ge "${GROWTH_RETIRE_BUSY_ATTEMPTS:-8}" ]; then
+                echo "::warning::来源清理($kind)连续 $attempt 次遇到服务端采集锁 growth_cleanup_busy，本批延后到下一班再清，未删除任何来源"
+                printf '来源清理(%s)因 growth_cleanup_busy 延后，未删除来源。\n' "$kind" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+                touch "$ROOT/RETIREMENT_DEFERRED_$kind"
+                continue 2
+              fi
+              echo "来源清理($kind)第 $attempt 次遇到 growth_cleanup_busy，${GROWTH_RETIRE_BUSY_WAIT_SECONDS:-60}s 后重试"
+              sleep "${GROWTH_RETIRE_BUSY_WAIT_SECONDS:-60}"
+            done
           done
-          printf '本批B站归档还原核验与逐文件清理已执行；实际删除与空间变化见retirement-result-*.json。\n' >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          if ! ls "$ROOT"/RETIREMENT_DEFERRED_* >/dev/null 2>&1; then
+            printf '本批B站归档还原核验与逐文件清理已执行；实际删除与空间变化见retirement-result-*.json。\n' >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          fi
       - name: Preserve archive retirement receipts
         if: always()
         uses: actions/upload-artifact@v4
