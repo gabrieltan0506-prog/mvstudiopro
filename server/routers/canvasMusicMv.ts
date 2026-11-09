@@ -551,6 +551,46 @@ export const canvasMusicMvRouter = router({
         throw new TRPCError({ code: "BAD_GATEWAY", message: `本段歌词识别失败：${error instanceof Error ? error.message.slice(0, 400) : "未知原因"}` });
       }
     }),
+  /**
+   * 1110 成片调色建议（Gemini 3.8 Flash：Vertex gs:// → EvoLink 签名 URL，两跳）。只出建议与 grade.segments，不改草稿。
+   * 计费沿用本 router 分镜写法：非管理/监督先查余额，成功后按 chargeKey 幂等扣（管理员 deductCreditsAmount 内 0 扣）；失败不扣、无需退。
+   * 单价暂借 CREDIT_COSTS.mvAnalysis（视频分析同类），待用户拍板。
+   */
+  adviseMontageGrade: protectedProcedure
+    .input(
+      z
+        .object({
+          requestId: z.string().uuid(),
+          videoGsUri: z.string().regex(/^gs:\/\/[^/]+\/.+\.(?:mp4|mov|webm)$/i),
+          durationSec: z.number().finite().positive().max(600),
+          aspect: z.enum(["9:16", "16:9", "1:1"]).optional(),
+          storyZh: z.string().max(8000).optional(),
+          seamSecs: z.array(z.number().finite().min(0)).max(40).optional(),
+        })
+        .strict()
+    )
+    .mutation(async ({ ctx, input }) => {
+      const privileged = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+      const bucket = getGcsBucketName();
+      const m = /^gs:\/\/([^/]+)\/(.+)$/.exec(input.videoGsUri)!;
+      if (m[1] !== bucket || (!privileged && m[2]!.split("/")[1] !== String(ctx.user.id)))
+        throw new TRPCError({ code: "BAD_REQUEST", message: "成片来源不属于本人，请重新选择成片" });
+      const cost = CREDIT_COSTS.mvAnalysis;
+      if (!privileged && (await deps.balance(ctx.user.id)).totalAvailable < cost)
+        throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `调色建议需要 ${cost} 积分` });
+      const { adviseMontageGrade } = await import("../services/montageGradeAdvice");
+      let result: Awaited<ReturnType<typeof adviseMontageGrade>>;
+      try {
+        result = await adviseMontageGrade(ctx.user.id, input);
+      } catch (error) {
+        console.error("[adviseMontageGrade]", error);
+        throw new TRPCError({ code: "BAD_GATEWAY", message: "调色建议暂不可用，请稍后重试（未扣积分）" });
+      }
+      const deduction = await deps.charge(ctx.user.id, cost, "mvAnalysis", "成片调色建议", { chargeKey: `canvas-montage-grade:${ctx.user.id}:${input.requestId}` });
+      if (!deduction.success)
+        throw new TRPCError({ code: "PAYMENT_REQUIRED", message: "积分不足，调色建议未交付，请充值后重新生成" });
+      return { ...result, creditsCost: deduction.cost };
+    }),
   /** 1109 参考片送出前自动裁切：min(本镜时长, 所选模型单条上限)，入点用户指定优先否则取运动最强段。 */
   trimShotMotionClip: protectedProcedure
     .input(

@@ -33,6 +33,8 @@ import { fileURLToPath } from "node:url";
 import {
   buildFilterChain, checkGradeConsistency, collectGradeLutIds, parseSignalStats, resolveClipCorrection,
   COLOR_GRADE_LUT_ID_RE, SIGNALSTATS_PRINT_FILTER, type ConcatGrade, type GradeConsistencyReport,
+  applyJunctionAutoMatch, buildSegmentGradeGraph, SIGNALSTATS_FIRST_FRAME_FILTER, checkJunctionConsistency, junctionSampleTimes, planGradeSegments,
+  type ColorCorrection, type GradeSpan, type JunctionConsistencyReport, type SignalStats,
 } from "../../shared/colorGrade";
 import {
   concatParamsSchema,
@@ -389,7 +391,32 @@ export type GradeCheckResult = GradeConsistencyReport & {
   evidence: Array<{ index: number; atSec: number; raw: { gcsUri: string; bytes: number; sha256: string }; parsed: { gcsUri: string; bytes: number; sha256: string } }>;
 };
 
-/** 合成后在每段取 1 帧（段内 1 秒或中点，同上游 analyze 取 1 秒）测 signalstats，按代表镜头做一致性检查。 */
+type GradeEvidenceReceipt = { gcsUri: string; bytes: number; sha256: string };
+
+/** signalstats 原始 stderr 与解析 JSON 分别永久留档（GCS），先存原始再解析。 */
+function gradeEvidenceRecorder(userId: string, signal: AbortSignal, deps: GradeMeasureDeps) {
+  const prefix = `post-prod/${userId.replace(/[^a-zA-Z0-9_-]/g, "")}/grade-evidence/${randomUUID()}`;
+  const save = async (name: string, buffer: Buffer, contentType: string): Promise<GradeEvidenceReceipt> => {
+    const receipt = await deps.upload({ objectName: `${prefix}/${name}`, buffer, contentType, signal });
+    return { gcsUri: receipt.gcsUri, bytes: buffer.length, sha256: createHash("sha256").update(buffer).digest("hex") };
+  };
+  return async (name: string, atSec: number, filter = SIGNALSTATS_PRINT_FILTER) => {
+    const { stderr } = await deps.run("ffmpeg", ["-nostdin", "-ss", String(atSec), "-i", deps.outPath, "-vf", filter, "-frames:v", "1", "-f", "null", "-"], signal);
+    const raw = await save(`${name}.signalstats.raw.txt`, Buffer.from(stderr, "utf8"), "text/plain; charset=utf-8");
+    const stats = parseSignalStats(stderr);
+    const parsed = await save(`${name}.signalstats.parsed.json`, Buffer.from(JSON.stringify(stats)), "application/json");
+    return { stats, raw, parsed };
+  };
+}
+
+export type GradeMeasureDeps = {
+  outPath: string;
+  run: (cmd: "ffmpeg", args: string[], signal: AbortSignal) => Promise<{ stderr: string }>;
+  upload: (p: { objectName: string; buffer: Buffer; contentType: string; signal: AbortSignal }) => Promise<{ gcsUri: string }>;
+};
+const realMeasureDeps = (outPath: string): GradeMeasureDeps => ({ outPath, run: (c, a, s) => runMediaTool(c, a, s), upload: uploadBufferToGcs });
+
+/** 合成后在每段取 1 帧（段内 1 秒或中点，同上游 analyze 取 1 秒）测 signalstats，按代表镜头做一致性检查。仅 clips+referenceClipIndex 模式。 */
 async function measureGradeConsistency(
   outPath: string,
   segmentSec: number[],
@@ -397,21 +424,14 @@ async function measureGradeConsistency(
   userId: string,
   signal: AbortSignal,
 ): Promise<GradeCheckResult> {
-  const prefix = `post-prod/${userId.replace(/[^a-zA-Z0-9_-]/g, "")}/grade-evidence/${randomUUID()}`;
-  const save = async (name: string, buffer: Buffer, contentType: string) => {
-    const receipt = await uploadBufferToGcs({ objectName: `${prefix}/${name}`, buffer, contentType, signal });
-    return { gcsUri: receipt.gcsUri, bytes: buffer.length, sha256: createHash("sha256").update(buffer).digest("hex") };
-  };
+  const measure = gradeEvidenceRecorder(userId, signal, realMeasureDeps(outPath));
   const stats = [];
   const evidence: GradeCheckResult["evidence"] = [];
   let offset = 0;
   for (let i = 0; i < segmentSec.length; i++) {
     const atSec = parseFloat((offset + Math.min(1, segmentSec[i] / 2)).toFixed(3));
     offset += segmentSec[i];
-    const { stderr } = await runMediaTool("ffmpeg", ["-nostdin", "-ss", String(atSec), "-i", outPath, "-vf", SIGNALSTATS_PRINT_FILTER, "-frames:v", "1", "-f", "null", "-"], signal);
-    const raw = await save(`clip-${i}.signalstats.raw.txt`, Buffer.from(stderr, "utf8"), "text/plain; charset=utf-8");
-    const parsedStats = parseSignalStats(stderr);
-    const parsed = await save(`clip-${i}.signalstats.parsed.json`, Buffer.from(JSON.stringify(parsedStats)), "application/json");
+    const { stats: parsedStats, raw, parsed } = await measure(`clip-${i}`, atSec);
     stats.push(parsedStats);
     evidence.push({ index: i, atSec, raw, parsed });
   }
@@ -419,13 +439,54 @@ async function measureGradeConsistency(
   return { ...checkGradeConsistency(stats, referenceClipIndex), evidence };
 }
 
+export type JunctionCheckResult = JunctionConsistencyReport & {
+  /** 每个接点前/后各一帧的 signalstats 原始与解析留档，按接点一一对应。 */
+  evidence: Array<{ index: number; beforeSec: number; afterSec: number; before: { raw: GradeEvidenceReceipt; parsed: GradeEvidenceReceipt }; after: { raw: GradeEvidenceReceipt; parsed: GradeEvidenceReceipt } }>;
+  pairs: Array<{ index: number; junctionSec: number; before: SignalStats; after: SignalStats }>;
+};
+
+/** 分段调色：在每个段接点前后各 0.1 秒取帧测 signalstats，比较后帧与前帧。 */
+export async function measureJunctionConsistency(spans: Array<{ startSec: number; endSec: number }>, userId: string, signal: AbortSignal, deps: GradeMeasureDeps, tag = "pass-1"): Promise<JunctionCheckResult> {
+  const measure = gradeEvidenceRecorder(userId, signal, deps);
+  const samples = junctionSampleTimes(spans);
+  const pairs: JunctionCheckResult["pairs"] = [];
+  const evidence: JunctionCheckResult["evidence"] = [];
+  for (const s of samples) {
+    const b = await measure(`${tag}/junction-${s.index}.before`, s.beforeSec, SIGNALSTATS_FIRST_FRAME_FILTER);
+    const a = await measure(`${tag}/junction-${s.index}.after`, s.afterSec, SIGNALSTATS_FIRST_FRAME_FILTER);
+    pairs.push({ index: s.index, junctionSec: s.junctionSec, before: b.stats, after: a.stats });
+    evidence.push({ index: s.index, beforeSec: s.beforeSec, afterSec: s.afterSec, before: { raw: b.raw, parsed: b.parsed }, after: { raw: a.raw, parsed: a.parsed } });
+  }
+  if (pairs.length !== samples.length || evidence.length !== samples.length) throw new Error("调色检查条数不一致");
+  return { ...checkJunctionConsistency(pairs), evidence, pairs };
+}
+
+/** 分段调色滤镜构造器：把 all + segments 引到的 lutId 一次按白名单解析。 */
+export async function makeGradeFilterBuilder(grade: ConcatGrade, lutDir?: string): Promise<(c: ColorCorrection | null) => string> {
+  const luts = await resolveGradeLutPaths(collectGradeLutIds(grade), lutDir);
+  return c => c ? buildFilterChain(c, id => { const p = luts.get(id); if (!p) throw new Error("调色预设不存在"); return p; }) : "";
+}
+
+/** 分段调色的滤镜子图（[inLabel] → [outLabel]）。spans 来自 planGradeSegments，渐变秒数已逐段解析。 */
+export function segmentGradeGraph(spans: GradeSpan[], build: (c: ColorCorrection | null) => string, inLabel: string, outLabel: string): string {
+  return buildSegmentGradeGraph(inLabel, outLabel, spans.map(s => ({ startSec: s.startSec, endSec: s.endSec, crossfadeSec: s.crossfadeSec ?? 0, filter: build(s.correction) })));
+}
+
+export type SegmentGradeCheck = {
+  mode: "junctions";
+  spans: GradeSpan[];
+  check: JunctionCheckResult;
+  /** autoMatchJunctions 且首检未过时：重渲一次后的复检与被修正的段。 */
+  autoMatch?: { adjusted: number[]; spans: GradeSpan[]; check: JunctionCheckResult };
+};
+
 // ---------------------------------------------------------------- 拼接
 
 export async function concatClips(
   input: ConcatParams,
   userId: string,
   options?: PostProdRunOptions,
-): Promise<{ gcsUri: string; url: string; bytes: number; durationSec: number; clipCount: number; gradeCheck?: GradeCheckResult }> {
+): Promise<{ gcsUri: string; url: string; bytes: number; durationSec: number; clipCount: number; gradeCheck?: GradeCheckResult; gradeSegmentCheck?: SegmentGradeCheck }> {
   const signal = options?.signal ?? NEVER_ABORT;
   input = concatParamsSchema.parse(input);
   if (input.transition) return (await import("./manhuaTransitions")).renderManhuaTransitions(input, userId, options);
@@ -470,7 +531,8 @@ export async function concatClips(
         nextInputIndex += 1;
       }
     }
-    const gradeFilters = await buildConcatGradeFilters(input.grade, locals.length);
+    const segmented = !!input.grade?.segments;
+    const gradeFilters = await buildConcatGradeFilters(segmented ? undefined : input.grade, locals.length);
     const vChain = (i: number) =>
       `[${i}:v]trim=start=${locals[i].startSec}:end=${locals[i].endSec},setpts=PTS-STARTPTS,scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease,` +
       `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=${fps},${gradeFilters[i] ? `${gradeFilters[i]},` : ""}format=yuv420p,setsar=1,` +
@@ -494,15 +556,37 @@ export async function concatClips(
       await writeFile(srtPath, srt, { encoding: "utf8", flag: "wx" });
       subtitleFilter = `;[vraw]${buildBurnSubtitleFilter(srtPath)}[vo]`;
     }
-    args.push(
+    const vCat = subtitleFilter ? "vraw" : "vo";
+    const renderArgs = (segGraph = "") => [
+      ...args,
       "-filter_complex",
-      `${per};${heads}concat=n=${locals.length}:v=1:a=1[${subtitleFilter ? "vraw" : "vo"}][ao]${subtitleFilter}`,
+      segGraph
+        ? `${per};${heads}concat=n=${locals.length}:v=1:a=1[vcat][ao];${segGraph}${subtitleFilter}`
+        : `${per};${heads}concat=n=${locals.length}:v=1:a=1[${vCat}][ao]${subtitleFilter}`,
       "-map", "[vo]", "-map", "[ao]",
       "-c:v", "libx264", "-preset", "medium", "-crf", "18",
       "-c:a", "aac", "-b:a", "256k",
       outPath,
-    );
-    await runMediaTool("ffmpeg", args, signal);
+    ];
+    let segmentCheck: SegmentGradeCheck | undefined;
+    if (segmented && input.grade) {
+      const grade = input.grade;
+      const build = await makeGradeFilterBuilder(grade);
+      const spans = planGradeSegments(grade, locals.reduce((sum, l) => sum + l.durationSec, 0));
+      await runMediaTool("ffmpeg", renderArgs(segmentGradeGraph(spans, build, "vcat", vCat)), signal);
+      const deps = realMeasureDeps(outPath);
+      const check = await measureJunctionConsistency(spans, userId, signal, deps, "pass-1");
+      segmentCheck = { mode: "junctions", spans, check };
+      if (grade.autoMatchJunctions && !check.pass) {
+        const matched = applyJunctionAutoMatch(spans, check.pairs, check);
+        if (matched.adjusted.length) {
+          await runMediaTool("ffmpeg", renderArgs(segmentGradeGraph(matched.spans, build, "vcat", vCat)), signal);
+          segmentCheck.autoMatch = { ...matched, check: await measureJunctionConsistency(matched.spans, userId, signal, deps, "pass-2") };
+        }
+      }
+    } else {
+      await runMediaTool("ffmpeg", renderArgs(), signal);
+    }
     const meta = await probe(outPath, signal);
     const up = await uploadResult({
       filePath: outPath,
@@ -515,7 +599,7 @@ export async function concatClips(
     const gradeCheck = input.grade?.referenceClipIndex != null
       ? await measureGradeConsistency(outPath, locals.map(l => l.endSec - l.startSec), input.grade.referenceClipIndex, userId, signal)
       : undefined;
-    return { ...up, durationSec: meta.durationSec, clipCount: clips.length, ...(gradeCheck ? { gradeCheck } : {}) };
+    return { ...up, durationSec: meta.durationSec, clipCount: clips.length, ...(gradeCheck ? { gradeCheck } : {}), ...(segmentCheck ? { gradeSegmentCheck: segmentCheck } : {}) };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }

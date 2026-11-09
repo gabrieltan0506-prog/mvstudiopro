@@ -71,6 +71,27 @@ export const colorCorrectionSchema = z.object({
 
 export type ColorCorrection = z.infer<typeof colorCorrectionSchema>;
 
+const tenthSecSchema = z.number().finite().min(0).max(3600)
+  .refine(v => Math.abs(v * 10 - Math.round(v * 10)) < 1e-6, "分段时间须为一位小数");
+
+/** 一个调色时间段：以成片输出时间计（秒，一位小数），其余字段同 ColorCorrection。 */
+export const gradeSegmentSchema = colorCorrectionSchema.extend({
+  startSec: tenthSecSchema,
+  endSec: tenthSecSchema,
+  /** 从上一段渐变进本段的时长（0–2 秒）；缺省取 grade.crossfadeSec，再缺省 0 硬切。首段忽略。 */
+  crossfadeSec: z.number().finite().min(0).max(2).optional(),
+}).strict();
+export type GradeSegment = z.infer<typeof gradeSegmentSchema>;
+
+export const gradeSegmentsFieldsSchema = {
+  /** 按成片时间分段调色；连续不重叠。未覆盖的片头/片尾只吃 all（若有）。 */
+  segments: z.array(gradeSegmentSchema).min(1).max(24).optional(),
+  /** 段间调色渐变时长（0–2 秒，默认 0 硬切）。 */
+  crossfadeSec: z.number().finite().min(0).max(2).optional(),
+  /** 接点未达标时按匹配建议修正后段参数并重渲一次（最多 1 轮）。 */
+  autoMatchJunctions: z.boolean().optional(),
+};
+
 /**
  * 拼接调色参数：`all` 全片统一；`clips[i]` 逐镜头（浅合并覆盖 all，同上游 match_shots 的
  * `{ ...existingCorrections }` 叠加方式）；`referenceClipIndex` 指代表镜头，给出时合成后跑一致性检查。
@@ -79,6 +100,7 @@ export const concatGradeSchema = z.object({
   all: colorCorrectionSchema.optional(),
   clips: z.array(colorCorrectionSchema.nullable()).min(1).max(12).optional(),
   referenceClipIndex: z.number().int().min(0).max(11).optional(),
+  ...gradeSegmentsFieldsSchema,
 }).strict();
 export type ConcatGrade = z.infer<typeof concatGradeSchema>;
 
@@ -92,7 +114,7 @@ export function resolveClipCorrection(grade: ConcatGrade | undefined, index: num
 /** 本次调色引用到的全部 lutId（去重），供服务端白名单校验。 */
 export function collectGradeLutIds(grade: ConcatGrade | undefined): string[] {
   if (!grade) return [];
-  const ids = [grade.all?.lutId, ...(grade.clips ?? []).map(c => c?.lutId)].filter((v): v is string => !!v);
+  const ids = [grade.all?.lutId, ...(grade.clips ?? []).map(c => c?.lutId), ...(grade.segments ?? []).map(c => c.lutId)].filter((v): v is string => !!v);
   return Array.from(new Set(ids));
 }
 
@@ -169,6 +191,8 @@ export function buildFilterChain(corrections: ColorCorrection, resolveLut?: (lut
 // ─── Signal stats parser（上游 lib/ffmpeg.ts parseSignalStats） ─────────────
 
 export const SIGNALSTATS_PRINT_FILTER = "signalstats,metadata=mode=print";
+/** 只测 seek 落点那一帧：滤镜图会预读数帧，parseSignalStats 取最后一次输出，接点检查须先截到 1 帧。 */
+export const SIGNALSTATS_FIRST_FRAME_FILTER = `trim=end_frame=1,${SIGNALSTATS_PRINT_FILTER}`;
 
 export function parseSignalStats(raw: string): SignalStats {
   const stats: Record<string, number> = {};
@@ -308,4 +332,139 @@ export function checkGradeConsistency(stats: SignalStats[], referenceClipIndex: 
     return { index, pass: keys.every(k => Math.abs(delta[k]) <= GRADE_CONSISTENCY_TOLERANCE[k]), delta };
   });
   return { pass: clips.every(c => c.pass), referenceClipIndex, clips };
+}
+
+// ─── 按成片时间分段调色（segments）、段间 LUT 渐变、接点一致性 ─────────────────
+//
+// 实现方式：拼接（或转场）得到整条成片画面后，split 成 N 份，各份 trim 到自己的时间段并套本段滤镜，
+// crossfadeSec=0 时 concat 硬切；>0 时每段向接点两侧各多取 crossfadeSec/2，用 xfade=fade 在
+// 两组调色结果之间渐变，offset = 接点 - crossfadeSec/2，总时长不变、画面时间线与音轨不受影响。
+// 没选 enable='between(t,a,b)'：lut3d 等滤镜的 timeline 支持不一，且 enable 做不了两组结果的渐变。
+
+/** 分段字段的结构校验；返回错误句或 null。成片时长相关的校验在 planGradeSegments。 */
+export function validateGradeSegments(grade: ConcatGrade | undefined): string | null {
+  if (!grade) return null;
+  const segs = grade.segments;
+  if (!segs) return grade.crossfadeSec != null || grade.autoMatchJunctions != null ? "调色渐变与接点匹配须配合分段使用" : null;
+  if (grade.clips || grade.referenceClipIndex != null) return "分段调色不能与逐段调色同时使用";
+  for (let i = 0; i < segs.length; i++) {
+    if (!(segs[i].endSec - segs[i].startSec >= 0.1 - 1e-6)) return "每个调色分段至少 0.1 秒";
+    if (i > 0 && Math.abs(segs[i].startSec - segs[i - 1].endSec) > 1e-6) return "调色分段须首尾相接、不重叠";
+  }
+  return null;
+}
+
+export type GradeSpan = { startSec: number; endSec: number; correction: ColorCorrection | null; /** 从上一段渐变进本段的秒数 */ crossfadeSec?: number };
+
+/** 把分段补全为覆盖 [0,totalSec] 的时间段（头尾空档只吃 all），并校验渐变时长与成片时长。 */
+export function planGradeSegments(grade: ConcatGrade, totalSec: number): GradeSpan[] {
+  const segs = grade.segments ?? [];
+  const err = validateGradeSegments(grade);
+  if (err) throw new Error(err);
+  if (!segs.length) throw new Error("没有调色分段");
+  const base = grade.all && Object.keys(grade.all).length ? grade.all : null;
+  const pick = (s: GradeSegment): ColorCorrection | null => {
+    const { startSec: _s, endSec: _e, crossfadeSec: _c, ...c } = s;
+    const merged = { ...(grade.all ?? {}), ...c };
+    return Object.keys(merged).length ? merged : null;
+  };
+  const end = segs[segs.length - 1].endSec;
+  if (end > totalSec + 0.05) throw new Error("调色分段超出成片时长");
+  const dflt = grade.crossfadeSec ?? 0;
+  const spans: GradeSpan[] = [];
+  if (segs[0].startSec > 0) spans.push({ startSec: 0, endSec: segs[0].startSec, correction: base });
+  for (const s of segs) spans.push({ startSec: s.startSec, endSec: Math.min(s.endSec, totalSec), correction: pick(s), crossfadeSec: s.crossfadeSec ?? dflt });
+  if (totalSec - end >= 0.05) spans.push({ startSec: end, endSec: totalSec, correction: base, crossfadeSec: dflt });
+  spans[0].crossfadeSec = 0;
+  spans.forEach((s, k) => { if (!s.crossfadeSec) delete s.crossfadeSec; });
+  // 相邻两个渐变窗不得重叠：本段长 ≥ (进本段渐变 + 出本段渐变) / 2
+  const cf = (k: number) => spans[k]?.crossfadeSec ?? 0;
+  if (spans.some((s, k) => s.endSec - s.startSec < (cf(k) + cf(k + 1)) / 2 - 1e-6 || (k > 0 && s.endSec - s.startSec < cf(k) - 1e-6)))
+    throw new Error("调色分段须长于渐变时长");
+  return spans;
+}
+
+const sec = (v: number) => parseFloat(v.toFixed(3)).toString();
+
+/**
+ * 在 `[inLabel]` 整条画面上按时间段调色，输出 `[outLabel]`。spans 须覆盖整条成片（planGradeSegments 产出）。
+ * crossfadeSec > 0 时段间用 xfade=fade 在两组调色结果之间渐变，总时长不变。
+ */
+export function buildSegmentGradeGraph(
+  inLabel: string,
+  outLabel: string,
+  spans: Array<{ startSec: number; endSec: number; filter: string; crossfadeSec?: number }>,
+  crossfadeSec = 0,
+): string {
+  const n = spans.length;
+  if (n < 1) throw new Error("没有调色分段");
+  /** 第 k 个接点（span k-1 → span k）的渐变秒数；段上未写则用默认 crossfadeSec。 */
+  const cf = (k: number) => (k <= 0 || k >= n ? 0 : spans[k].crossfadeSec ?? crossfadeSec);
+  const parts: string[] = [`[${inLabel}]split=${n}${spans.map((_s, i) => `[gs${i}]`).join("")}`];
+  spans.forEach((s, i) => {
+    const from = i === 0 ? 0 : Math.max(0, s.startSec - cf(i) / 2);
+    const trim = [from > 0 ? `start=${sec(from)}` : "", i === n - 1 ? "" : `end=${sec(s.endSec + cf(i + 1) / 2)}`].filter(Boolean).join(":");
+    parts.push(`[gs${i}]${trim ? `trim=${trim},` : ""}setpts=PTS-STARTPTS,${s.filter ? `${s.filter},` : ""}format=yuv420p[gg${i}]`);
+  });
+  if (n === 1) return `${parts.join(";")};[gg0]null[${outLabel}]`;
+  if (spans.every((_s, k) => cf(k) <= 0)) return `${parts.join(";")};${spans.map((_s, i) => `[gg${i}]`).join("")}concat=n=${n}:v=1:a=0[${outLabel}]`;
+  let prev = "gg0";
+  for (let k = 1; k < n; k++) {
+    const label = k === n - 1 ? outLabel : `gx${k}`;
+    const c = cf(k);
+    parts.push(c > 0
+      ? `[${prev}][gg${k}]xfade=transition=fade:duration=${sec(c)}:offset=${sec(spans[k - 1].endSec - c / 2)}[${label}]`
+      : `[${prev}][gg${k}]concat=n=2:v=1:a=0[${label}]`);
+    prev = label;
+  }
+  return parts.join(";");
+}
+
+/** 接点检查取帧位置：每个接点前后各 0.1 秒（夹在成片范围内）。 */
+export const JUNCTION_SAMPLE_OFFSET_SEC = 0.1;
+export function junctionSampleTimes(spans: Array<{ startSec: number; endSec: number }>): Array<{ index: number; junctionSec: number; beforeSec: number; afterSec: number }> {
+  const total = spans[spans.length - 1]?.endSec ?? 0;
+  return spans.slice(0, -1).map((s, index) => ({
+    index,
+    junctionSec: s.endSec,
+    beforeSec: parseFloat(Math.max(0, s.endSec - JUNCTION_SAMPLE_OFFSET_SEC).toFixed(3)),
+    afterSec: parseFloat(Math.min(Math.max(0, total - 0.04), s.endSec + JUNCTION_SAMPLE_OFFSET_SEC).toFixed(3)),
+  }));
+}
+
+export type JunctionConsistencyReport = {
+  pass: boolean;
+  junctions: Array<{ index: number; junctionSec: number; pass: boolean; delta: { YAVG: number; UAVG: number; VAVG: number; SATAVG: number } }>;
+};
+
+/** 接点一致性：后帧 − 前帧，阈值同 checkGradeConsistency。 */
+export function checkJunctionConsistency(pairs: Array<{ index: number; junctionSec: number; before: SignalStats; after: SignalStats }>): JunctionConsistencyReport {
+  const junctions = pairs.map(p => {
+    const r = checkGradeConsistency([p.before, p.after], 0).clips[1];
+    return { index: p.index, junctionSec: p.junctionSec, pass: r.pass, delta: r.delta };
+  });
+  return { pass: junctions.every(j => j.pass), junctions };
+}
+
+/**
+ * 接点匹配自动套用：对未达标接点，以接点前帧为参照、用 matchShotsToReference 算后段修正并叠加到后段参数。
+ * 只算一轮（调用方据此最多重渲 1 次）。返回新 spans 与被修改的段下标。
+ */
+export function applyJunctionAutoMatch(
+  spans: GradeSpan[],
+  pairs: Array<{ index: number; before: SignalStats; after: SignalStats }>,
+  report: JunctionConsistencyReport,
+): { spans: GradeSpan[]; adjusted: number[] } {
+  const next = spans.map(s => ({ ...s }));
+  const adjusted: number[] = [];
+  for (const j of report.junctions) {
+    if (j.pass) continue;
+    const p = pairs.find(x => x.index === j.index);
+    const target = j.index + 1;
+    if (!p || !next[target]) continue;
+    const [, corr] = matchShotsToReference({ stats: [p.before, p.after], referenceClipIndex: 0, existing: [null, next[target].correction] });
+    next[target].correction = corr;
+    adjusted.push(target);
+  }
+  return { spans: next, adjusted };
 }
