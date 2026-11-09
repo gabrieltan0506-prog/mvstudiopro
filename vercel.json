@@ -12,6 +12,7 @@
   },
   "buildCommand": "pnpm exec vite build",
   "outputDirectory": "client/dist",
+  "ignoreCommand": "if [ \"$VERCEL_ENV\" = \"production\" ]; then exit 1; else echo skip-non-production-build; exit 0; fi",
   "headers": [
     {
       "source": "/",

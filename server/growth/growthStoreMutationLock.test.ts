@@ -94,5 +94,40 @@ describe("growth mutation lease failure protection", () => {
     expect(notified).toBe(1);
     expect(JSON.parse(await fs.readFile(lock, "utf8")).token).toBe("new-owner");
   });
+  it("reclaims a stale lock whose pid was reused after a reboot (different boot id)", async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "growth-reboot-stale-"));
+    process.env.GROWTH_STORE_DIR = root;
+    const lock = path.join(root, ".growth-store-mutation.lock");
+    // Owner pid is alive right now (ours), but the lock says it came from another boot.
+    await fs.writeFile(lock, JSON.stringify({ token: "pre-reboot-owner", pid: process.pid, bootId: "00000000-dead-beef-0000-000000000000", pidStartTicks: "1" }));
+    await fs.utimes(lock, new Date(0), new Date(0));
+    const ran = await withGrowthStoreMutationLock("contender", async () => "ran", { waitTimeoutMs: 1000, staleAfterMs: 1000 });
+    expect(ran).toBe("ran");
+    await expect(fs.readFile(lock, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("reclaims a stale lock whose pid number now belongs to a different process (start time differs)", async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "growth-pid-reuse-"));
+    process.env.GROWTH_STORE_DIR = root;
+    const lock = path.join(root, ".growth-store-mutation.lock");
+    let bootId: string | null = null;
+    try { bootId = (await fs.readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim(); } catch {}
+    if (!bootId) return; // /proc not available: covered by the boot-id test above.
+    await fs.writeFile(lock, JSON.stringify({ token: "reused-pid-owner", pid: process.pid, bootId, pidStartTicks: "0" }));
+    await fs.utimes(lock, new Date(0), new Date(0));
+    const ran = await withGrowthStoreMutationLock("contender", async () => "ran", { waitTimeoutMs: 1000, staleAfterMs: 1000 });
+    expect(ran).toBe("ran");
+  });
+  it("a stale-looking lock from this boot held by a live pid is still never stolen", async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "growth-live-same-boot-"));
+    process.env.GROWTH_STORE_DIR = root;
+    const lock = path.join(root, ".growth-store-mutation.lock");
+    // Acquire once for real so the file carries our own bootId/pidStartTicks, then age it.
+    let captured = "";
+    await withGrowthStoreMutationLock("seed", async () => { captured = await fs.readFile(lock, "utf8"); });
+    await fs.writeFile(lock, captured.replace(/"token":"[^"]+"/, '"token":"paused-owner"'));
+    await fs.utimes(lock, new Date(0), new Date(0));
+    await expect(withGrowthStoreMutationLock("contender", async () => true, { waitTimeoutMs: 1000, staleAfterMs: 1000 })).rejects.toThrow("growth_store_mutation_lock_timeout");
+    expect(JSON.parse(await fs.readFile(lock, "utf8")).token).toBe("paused-owner");
+  });
 
 });

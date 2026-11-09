@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -20,9 +21,50 @@ export type GrowthStoreMutationLease = {
   signal: AbortSignal;
 };
 
-function processIsAlive(pid: unknown) {
+type LockOwner = { token?: unknown; pid?: unknown; bootId?: unknown; pidStartTicks?: unknown };
+
+/**
+ * Identity of "this process on this boot". A pid number alone is not enough:
+ * after a machine restart (Fly redeploy) the old owner's pid can be reused by an
+ * unrelated process (seen 2026-11-08: pid 632 became a kernel worker), so a plain
+ * `kill(pid, 0)` keeps reporting the dead owner as alive and the lock is never
+ * reclaimed. Boot id changes on every (VM) boot; the pid start time (clock ticks
+ * since boot, /proc/<pid>/stat field 22) tells a reused pid from the original.
+ */
+function readBootId(): string | null {
+  try { return fsSync.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || null; }
+  catch { return null; }
+}
+
+function readPidStartTicks(pid: number): string | null {
+  try {
+    const stat = fsSync.readFileSync(`/proc/${pid}/stat`, "utf8");
+    // comm may contain spaces/parens; fields after the last ")" are fixed-position.
+    const rest = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return rest[19] || null; // field 22 overall == index 19 after state(3)
+  } catch { return null; }
+}
+
+const SELF_BOOT_ID = readBootId();
+const SELF_PID_START_TICKS = readPidStartTicks(process.pid);
+
+/** Conservative: only returns false when we can prove the owner is gone. */
+function ownerIsAlive(owner: LockOwner) {
+  const pid = owner.pid;
   if (!Number.isSafeInteger(pid) || Number(pid) <= 0) return true;
-  try { process.kill(Number(pid), 0); return true; }
+  if (typeof owner.bootId === "string" && owner.bootId && SELF_BOOT_ID && owner.bootId !== SELF_BOOT_ID) {
+    return false; // written on a previous boot: no process from that boot survives.
+  }
+  if (typeof owner.pidStartTicks === "string" && owner.pidStartTicks) {
+    const current = readPidStartTicks(Number(pid));
+    if (current === null) return !processExists(Number(pid));
+    if (current !== owner.pidStartTicks) return false; // same pid number, different process.
+  }
+  return processExists(Number(pid));
+}
+
+function processExists(pid: number) {
+  try { process.kill(pid, 0); return true; }
   catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
 }
 
@@ -68,7 +110,7 @@ export async function withGrowthStoreMutationLock<T>(
     try {
       const handle = await fs.open(lockPath, "wx");
       heldHandle = handle;
-      await handle.writeFile(JSON.stringify({ token, pid: process.pid, operation, acquiredAt: new Date().toISOString() }));
+      await handle.writeFile(JSON.stringify({ token, pid: process.pid, bootId: SELF_BOOT_ID, pidStartTicks: SELF_PID_START_TICKS, operation, acquiredAt: new Date().toISOString() }));
       heartbeat = setInterval(() => {
         if (heartbeatPending || leaseLost) return;
         heartbeatPending = (async () => {
@@ -88,9 +130,9 @@ export async function withGrowthStoreMutationLock<T>(
       if (stat?.isFile() && Date.now() - stat.mtimeMs > staleAfterMs) {
         // Age alone cannot prove that a paused process stopped writing.
         const raw = await fs.readFile(lockPath, "utf8").catch(() => "");
-        let owner: { pid?: unknown; token?: unknown } = {};
+        let owner: LockOwner = {};
         try { owner = JSON.parse(raw); } catch {}
-        if (typeof owner.token === "string" && !processIsAlive(owner.pid)) {
+        if (typeof owner.token === "string" && !ownerIsAlive(owner)) {
           const current = await fs.lstat(lockPath).catch(() => null);
           if (current?.ino === stat.ino && current.dev === stat.dev
               && await fs.readFile(lockPath, "utf8").catch(() => "") === raw) {
