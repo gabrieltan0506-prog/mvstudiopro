@@ -9,6 +9,7 @@ import { setManhuaSegmentReference } from "@shared/manhuaSegmentReference";
 import { createManhuaPrevisStudio, formatPrevisMotionGuide } from "@shared/manhuaPrevis";
 import { buildMvShotPrevisStudio, mvPrevisAdvisorQuestion, type MvPrevisShot } from "@shared/canvasMusicMvPrevis";
 import { requestsAdvisorPrevisRender } from "@/lib/manhuaAdvisorPrevisIntent";
+import { canUseAdvisorPrevisFor, mvShotPrevisBridgeUnavailableZh } from "@/lib/mvShotPrevisAccess";
 
 const source = readFileSync("client/src/pages/OmniCanvas.tsx", "utf8");
 const panelSource = readFileSync("client/src/components/canvas/ManhuaCreativeAdvisorPanel.tsx", "utf8");
@@ -34,9 +35,9 @@ beforeAll(async () => {
     "adoptMvShotAdvisorPrevisReference"))({ setManhuaSegmentReference, formatPrevisMotionGuide });
   makeCurrentStudio = await compile<Fn>(["blocksRef", "getBlockEpisodeIndex", "writerFocusEpisode", "resolveManhuaEpisodeClipVideoModel", "explicitWriterVideoModel", "resolveClipLocalSegmentIndex", "resolveShotsForEpisodeKeyartsResult", "groupShotsIntoSegments", "buildAdvisorPrevisShotSource", "withRiggedModelSourceAssetRefs", "customAssetRefs", "resolveManhuaRigSource"],
     slice("  function advisorPrevisCurrentStudio(", "  const advisorPrevisClip = blocks.find"), "advisorPrevisCurrentStudio");
-  makeApply = await compile<Fn>(["canUseManhua3d", "factoryBusy", "blocksRef", "buildManhuaPrevisAudio", "adoptAdvisorPrevisTrial", "advisorPrevisCurrentStudio", "adoptMvShotAdvisorPrevisReference", "saveCanvasState", "edges", "setBlocks", "toast", "maskMediaProviderDetails"],
+  makeApply = await compile<Fn>(["canUseManhua3d", "canUseAdvisorPrevisFor", "user", "factoryBusy", "blocksRef", "buildManhuaPrevisAudio", "adoptAdvisorPrevisTrial", "advisorPrevisCurrentStudio", "adoptMvShotAdvisorPrevisReference", "saveCanvasState", "edges", "setBlocks", "toast", "maskMediaProviderDetails"],
     slice("  const applyAdvisorPrevis = ", "  const advisorTopIssue = "), "applyAdvisorPrevis");
-  makeOpen = await compile<Fn>(["canUseManhua3d", "factoryBusy", "blocksRef", "advisor3dOpenVersion", "setAdvisor3dContext", "setAdvisorPreviewSelection", "setAdvisorPrevisClipId", "setAdvisorFocusSection", "chooseAdvisorVisibility", "setAdvisorNudge", "setAdvisorQuestionSeed", "advisorComponentKey"],
+  makeOpen = await compile<Fn>(["canUseManhua3d", "factoryBusy", "blocksRef", "advisor3dOpenVersion", "setAdvisor3dContext", "setAdvisorPreviewSelection", "setAdvisorPrevisClipId", "setAdvisorFocusSection", "chooseAdvisorVisibility", "setAdvisorNudge", "setAdvisorQuestionSeed", "advisorComponentKey", "user", "mvShotPrevisBridgeUnavailableZh"],
     slice("  function openMvShotAdvisorPrevis(", "  /** 交 FreeformCanvas"), "openMvShotAdvisorPrevis");
 });
 
@@ -79,7 +80,8 @@ describe("onOpenAdvisorPrevis 入口（autoStart）", () => {
   function openCtx(over: Record<string, unknown> = {}) {
     return { canUseManhua3d: true, factoryBusy: false, blocksRef: { current: [mvBlock()] }, advisor3dOpenVersion: { current: 0 },
       setAdvisor3dContext: vi.fn(), setAdvisorPreviewSelection: vi.fn(), setAdvisorPrevisClipId: vi.fn(), setAdvisorFocusSection: vi.fn(),
-      chooseAdvisorVisibility: vi.fn(), setAdvisorNudge: vi.fn(), setAdvisorQuestionSeed: vi.fn(), advisorComponentKey: "u1:p1", ...over };
+      chooseAdvisorVisibility: vi.fn(), setAdvisorNudge: vi.fn(), setAdvisorQuestionSeed: vi.fn(), advisorComponentKey: "u1:p1",
+      user: { id: 1, role: "admin" }, mvShotPrevisBridgeUnavailableZh, ...over };
   }
   it("打开顾问白模页，并只发一次带 submit 的提问种子；提问命中试看渲染意图", () => {
     const ctx = openCtx(); const q = mvPrevisAdvisorQuestion(shot);
@@ -97,8 +99,14 @@ describe("onOpenAdvisorPrevis 入口（autoStart）", () => {
     const ctx = openCtx(); makeOpen(ctx)("mv-shot-s3", "调整站位", false);
     expect((ctx.setAdvisorQuestionSeed as any).mock.calls[0][0].submit).toBeUndefined();
   });
-  it("无白模权限、制作中、块无基线：不打开、不提问", () => {
-    for (const over of [{ canUseManhua3d: false }, { factoryBusy: true }, { blocksRef: { current: [mvBlock({ previsStudio: undefined })] } }]) {
+  it("普通登录用户（无 3D 权限）：MV 镜头白模照常打开并提问", () => {
+    const ctx = openCtx({ canUseManhua3d: false, user: { id: 7, role: "user" } });
+    makeOpen(ctx)("mv-shot-s3", mvPrevisAdvisorQuestion(shot), true);
+    expect(ctx.setAdvisorPrevisClipId).toHaveBeenCalledWith("mv-shot-s3");
+    expect((ctx.setAdvisorQuestionSeed as any).mock.calls[0][0]).toMatchObject({ submit: true });
+  });
+  it("未登录、制作中、块无基线：不打开、不提问", () => {
+    for (const over of [{ user: null }, { canUseManhua3d: false, user: undefined }, { factoryBusy: true }, { blocksRef: { current: [mvBlock({ previsStudio: undefined })] } }]) {
       const ctx = openCtx(over);
       expect(() => makeOpen(ctx)("mv-shot-s3", "生成白模视频试看。", true)).toThrow();
       expect(ctx.setAdvisorQuestionSeed).not.toHaveBeenCalled();
@@ -121,7 +129,7 @@ describe("采用后写回 MV 镜头块白模参考", () => {
     return { ...block.previsStudio, selectedJobId: "job-1", history: [take] };
   }
   function applyCtx(block: any, saved = true) {
-    return { canUseManhua3d: true, factoryBusy: false, blocksRef: { current: [block] }, buildManhuaPrevisAudio: vi.fn(),
+    return { canUseManhua3d: true, canUseAdvisorPrevisFor, user: { id: 1, role: "admin" }, factoryBusy: false, blocksRef: { current: [block] }, buildManhuaPrevisAudio: vi.fn(),
       adoptAdvisorPrevisTrial: vi.fn((_id: string, _s: unknown) => receiptStudio(block)), advisorPrevisCurrentStudio: (c: any) => c.previsStudio,
       adoptMvShotAdvisorPrevisReference: adoptRef, saveCanvasState: vi.fn(() => saved), edges: [], setBlocks: vi.fn(),
       toast: { success: vi.fn(), error: vi.fn() }, maskMediaProviderDetails: (s: string) => s };
@@ -138,6 +146,20 @@ describe("采用后写回 MV 镜头块白模参考", () => {
     expect(saved.previsStudio.referenceHistory).toContainEqual(old);
     expect(saved.previsStudio.selectedJobId).toBe("job-1");
     expect(ctx.setBlocks).toHaveBeenCalledTimes(1);
+  });
+  it("普通登录用户：MV 镜头可采用白模；漫剧片段仍按 canUseManhua3d 拒绝且不写块", () => {
+    const block = mvBlock();
+    const ctx = { ...applyCtx(block), canUseManhua3d: false, user: { id: 7, role: "user" } };
+    expect(makeApply(ctx)(trial, { jobId: "job-1" })).toBe(true);
+    expect((ctx.blocksRef.current as any[])[0].manhuaSegmentRefs.previs).toMatchObject({ gcsUri: "gs://test/previs.mp4" });
+
+    const clip = { id: "clip-e01-g01", status: "idle", previsStudio: mvBlock().previsStudio } as any;
+    const manhua = { ...applyCtx(clip), canUseManhua3d: false, user: { id: 7, role: "user" } };
+    expect(makeApply(manhua)({ candidate: { target: { clipId: "clip-e01-g01" } }, request: {} }, {})).toBe(false);
+    expect((manhua.blocksRef.current as any[])[0]).toBe(clip);
+    expect(manhua.setBlocks).not.toHaveBeenCalled();
+    expect(manhua.adoptAdvisorPrevisTrial).not.toHaveBeenCalled();
+    expect(manhua.toast.error).toHaveBeenCalled();
   });
   it("保存失败：块与原参考都不变", () => {
     const block = mvBlock();

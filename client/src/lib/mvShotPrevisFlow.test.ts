@@ -7,7 +7,9 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { transform } from "esbuild";
+import path from "node:path";
+import { build, transform } from "esbuild";
+import puppeteer from "puppeteer";
 import { createMusicMvShotBlocks } from "./canvasMusicMvWorkflow";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
 import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
@@ -154,7 +156,172 @@ describe("自动发起去重：镜头 id + 节拍哈希", () => {
     a.tick([block]);
     expect(a.advisorCalls).toEqual([]);
   });
-  it.todo("参考选择器挂载后自动发起顾问白模：同一镜头同节拍刷新/重挂载不重复发起（等 CanvasMvShotReferencePicker 推送）");
+  it("参考选择器挂载后自动发起顾问白模：同一镜头同节拍刷新/重挂载不重复发起；不可用/顾问占用时不发；顾问说明可读、采用后成为白模参考并进提示词", async () => {
+    const block = shotBlock({ motion: stockMotion, id: "mvshot-picker" });
+    const s = block.musicMvShot!;
+    const scene = { assetId: sf(2), gcsUri: "gs://test-bucket/stock-footage/1/scene-a.jpg", label: "雨夜街景" };
+    const quietBeats: MusicMvShotBeat[] = [{ startSec: 5.2, endSec: 8, actionZh: "霓虹招牌在雨里闪烁", cameraZh: "固定机位", lightingZh: "霓虹", moodZh: "冷清", sfxZh: "雨声" }];
+    const shots = [
+      { id: s.shotId, startSec: s.startSec, endSec: s.endSec, visualPrompt: s.visualPrompt, cameraPrompt: s.cameraPrompt, lyricQuote: "", referenceIndices: [0], kind: "generated",
+        beats: BEATS, complexity: { people: 2, action: "strong", contact: true, cameraSetups: 1, scenes: 1 } },
+      { id: "shot-2", startSec: 5.2, endSec: 8, visualPrompt: "城市夜景空镜", cameraPrompt: "固定机位", lyricQuote: "", referenceIndices: [0], kind: "generated", beats: quietBeats },
+    ];
+    // 对照：第二镜无互动，不该被自动发起
+    expect(mvShotNeedsPrevis({ shotId: "shot-2", startSec: 5.2, endSec: 8, visualPrompt: "城市夜景空镜", cameraPrompt: "固定机位", beats: quietBeats, castZh: CAST }).needed).toBe(false);
+    const refs = { "shot-1": { ...refsWith(stockMotion)["shot-1"], sceneImages: [scene] } };
+    const rows = [{ shotId: "shot-1", blockId: block.id, castZh: CAST }, { shotId: "shot-2", blockId: "mvshot-quiet", castZh: CAST }];
+    const mocks: Record<string, string> = {
+      "@/lib/trpc": `const hook={useMutation:()=>({mutateAsync:async()=>{throw new Error('离线：不得调用服务端')},isPending:false}),useQuery:()=>({data:undefined})};
+        const ns=new Proxy({},{get:()=>hook});export const trpc=new Proxy({},{get:(_,k)=>k==='useUtils'?()=>new Proxy({},{get:()=>ns}):ns});`,
+      "@/_core/hooks/useAuth": "export const useAuth=()=>({user:{id:7,role:'user'}});",
+      "@/lib/jobs": "export const createJobSameOrigin=async()=>{throw new Error('禁止付费任务')};export const pollJobUntilTerminal=async()=>{throw new Error('离线')};",
+      "@/lib/manhuaAssetImageSource": "export const assetImageGcsUri=()=>undefined;",
+      "@/components/stockFootage/StockFootageDrawer": "export const StockFootageDrawer=()=>null;",
+    };
+    const bundle = await build({
+      stdin: {
+        resolveDir: process.cwd(),
+        loader: "tsx",
+        contents: `
+        import React,{useState} from 'react';import {flushSync} from 'react-dom';import {createRoot} from 'react-dom/client';
+        import {CanvasMvShotReferencePicker} from './client/src/components/canvas/CanvasMvShotReferencePicker';
+        const init=${JSON.stringify({ shots, refs, rows })};
+        const f=window.fixture={opens:[],patches:[],changes:[],fetches:[],shots:init.shots,refs:init.refs,rows:init.rows,unavailable:undefined,active:null};
+        window.fetch=async(url)=>{f.fetches.push(String(url));throw new Error('离线');};
+        function App(){
+          const [,set]=useState(0);f.force=()=>flushSync(()=>set(n=>n+1));
+          return <CanvasMvShotReferencePicker projectId="proj-1" planRequestId="${PLAN_ID}" shots={f.shots} shotReferences={f.refs} shotBlocks={f.rows} orientation="landscape"
+            onPatchShotPrevis={(blockId,studio)=>{f.patches.push({blockId,studio});f.rows=f.rows.map(r=>r.blockId===blockId?{...r,previsStudio:studio}:r);set(n=>n+1);}}
+            mvPrevis={{open:(id,q,submit)=>f.opens.push({id,q,submit}),onPreviewHostChange:()=>{},activeClipId:f.active,...(f.unavailable?{unavailableZh:f.unavailable}:{})}}
+            onChange={next=>{f.changes.push(next);f.refs=next.shotReferences;set(n=>n+1);}}/>;
+        }
+        const root=createRoot(document.getElementById('root'));let v=0;f.render=()=>flushSync(()=>root.render(<App key={++v}/>));f.render();`,
+      },
+      bundle: true,
+      write: false,
+      platform: "browser",
+      format: "iife",
+      jsx: "automatic",
+      alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+      define: { "process.env.NODE_ENV": '"test"' },
+      plugins: [{
+        name: "离线替身",
+        setup(b) {
+          b.onResolve({ filter: /^@\// }, a => (mocks[a.path] ? { path: a.path, namespace: "mock" } : undefined));
+          b.onLoad({ filter: /.*/, namespace: "mock" }, a => ({ contents: mocks[a.path], loader: "js" }));
+        },
+      }],
+    });
+    const browser = await puppeteer.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      const outbound: string[] = [];
+      await page.setRequestInterception(true);
+      page.on("request", req => {
+        if (req.isNavigationRequest()) void req.respond({ status: 200, contentType: "text/html", body: '<div id="root"></div>' });
+        else { outbound.push(req.url()); void req.abort(); }
+      });
+      const load = async (first: boolean) => {
+        await (first ? page.goto("http://localhost:41933") : page.reload());
+        await page.addScriptTag({ content: bundle.outputFiles[0]!.text });
+        await page.waitForSelector('[data-mv-shot-refs="shot-1"]');
+      };
+      const fx = <T,>(fn: string) => page.evaluate(`(()=>{const f=window.fixture;return ${fn}})()`) as Promise<T>;
+      const settle = () => new Promise(r => setTimeout(r, 300));
+      const cue = mvShotNeedsPrevis(asPrevisShot(block)).cues;
+
+      // ① 挂载即自动发起一次：先写白模基线（演员只有角色名、无动作），再按块 id 以 submit=true 打开顾问
+      await load(true);
+      await page.waitForFunction(() => (window as any).fixture.opens.length > 0);
+      await settle();
+      const opens = await fx<Array<{ id: string; q: string; submit: boolean }>>("f.opens");
+      expect(opens).toEqual([{ id: block.id, q: mvPrevisAdvisorQuestion(asPrevisShot(block), { sceneLabels: ["雨夜街景"], cues: cue }), submit: true }]);
+      expect(opens[0]!.q).toContain("用户不手填数值");
+      const patches = await fx<Array<{ blockId: string; studio: ReturnType<typeof buildMvShotPrevisStudio> }>>("f.patches");
+      expect(patches).toHaveLength(1);
+      expect(patches[0]!.blockId).toBe(block.id);
+      expect(patches[0]!.studio.advisorShotSource).toEqual(buildMvShotPrevisStudio(block.id, asPrevisShot(block)).advisorShotSource);
+      expect(patches[0]!.studio.spec.actors.map(a => [a.nameZh, a.actions.length])).toEqual([["阿宁", 0], ["阿哲", 0]]);
+      // 页面上没有任何让用户填坐标的数字框（图库片无入点框）
+      expect(await page.$$eval('[data-mv-shot-refs="shot-1"] input[type="number"]', els => els.length)).toBe(0);
+      const storeKey = `mv-previs-auto:v1:proj-1`;
+      const launchedKey = mvShotPrevisContentKey(asPrevisShot(block));
+      expect(Object.keys(JSON.parse((await page.evaluate(k => localStorage.getItem(k), storeKey)) || "{}"))).toEqual([launchedKey]);
+
+      // ② 同内容反复重渲染 / 重挂载 / 整页刷新：不再发起，也不再重写基线
+      await fx("(f.force(),f.force(),f.render(),f.render(),0)");
+      await settle();
+      expect(await fx<number>("f.opens.length")).toBe(1);
+      expect(await fx<number>("f.patches.length")).toBe(1);
+      await load(false);
+      await settle();
+      expect(await fx<number>("f.opens.length")).toBe(0);
+      expect(await fx<number>("f.patches.length")).toBe(0);
+
+      // ③ 不可用（未登录/制作中）或顾问正占用：不发起；软提示带原因
+      const editedBeats = [{ ...BEATS[0]!, actionZh: "阿宁冲上前一把拥抱阿哲" }, BEATS[1]!];
+      await page.evaluate(b => { const f = (window as any).fixture; f.unavailable = "正在制作中，结束后再生成白模"; f.shots = f.shots.map((s: any) => s.id === "shot-1" ? { ...s, beats: b } : s); f.render(); }, editedBeats);
+      await settle();
+      expect(await fx<number>("f.opens.length")).toBe(0);
+      expect(await page.$eval("[data-mv-previs-hint]", el => el.textContent)).toContain("正在制作中，结束后再生成白模");
+      await fx("(f.unavailable=undefined,f.active='mvshot-other',f.render(),0)");
+      await settle();
+      expect(await fx<number>("f.opens.length")).toBe(0);
+
+      // ④ 顾问空闲且节拍已改：按新内容键再发起一次（只一次）
+      await fx("(f.active=null,f.render(),0)");
+      await page.waitForFunction(() => (window as any).fixture.opens.length > 0);
+      await fx("(f.force(),f.render(),0)");
+      await settle();
+      expect(await fx<Array<{ id: string; submit: boolean }>>("f.opens.map(o=>({id:o.id,submit:o.submit}))")).toEqual([{ id: block.id, submit: true }]);
+      const editedKey = mvShotPrevisContentKey({ ...asPrevisShot(block), beats: editedBeats });
+      expect(Object.keys(JSON.parse((await page.evaluate(k => localStorage.getItem(k), storeKey)) || "{}")).sort()).toEqual([launchedKey, editedKey].sort());
+
+      // ⑤ 顾问试看后用户在面板确认应用 → 镜头卡读出顾问站位说明 → 采用为动作参考；之后不再自动发起
+      await page.evaluate(({ previsId }) => {
+        const f = (window as any).fixture;
+        f.rows = f.rows.map((r: any) => r.shotId !== "shot-1" ? r : {
+          ...r,
+          previs: { gcsUri: "gs://test-bucket/previs/shot-1.mp4", durationSec: 5.2, requestId: previsId },
+          previsStudio: { ...r.previsStudio, selectedJobId: "job-1",
+            history: [{ jobId: "job-1", requestId: previsId, gcsUri: "gs://test-bucket/previs/shot-1.mp4", url: "https://test.invalid/previs.mp4", durationSec: 5.2, createdAt: "t", spec: r.previsStudio.spec }],
+            specHistory: [...(r.previsStudio.specHistory || []), { spec: r.previsStudio.spec, createdAt: "t", reasonZh: `用户确认应用顾问试看 ${previsId}；阿宁站在阿哲左侧，右手扇耳光后阿哲后退半步` }] },
+        });
+        f.render();
+      }, { previsId: PREVIS_ID });
+      await page.waitForSelector('[data-mv-previs-adopted="shot-1"]');
+      expect(await page.$eval('[data-mv-previs-adopted="shot-1"]', el => el.textContent)).toContain("顾问站位与动作说明：阿宁站在阿哲左侧，右手扇耳光后阿哲后退半步");
+      await page.evaluate(() => (Array.from(document.querySelectorAll('[data-mv-previs-adopted="shot-1"] button')).find(b => b.textContent === "采用为动作参考") as HTMLButtonElement).click());
+      await page.waitForFunction(() => (window as any).fixture.changes.length > 0);
+      // 已有白模参考：节拍再改也不自动发起
+      await fx("(f.shots=f.shots.map(s=>s.id==='shot-1'?{...s,beats:s.beats.map(w=>({...w,moodZh:w.moodZh+'。'}))}:s),f.render(),0)");
+      await settle();
+      expect(await fx<number>("f.opens.length")).toBe(1);
+      expect(await page.$eval('[data-mv-previs-adopted="shot-1"]', el => el.textContent)).toContain("已采用为动作参考");
+      const adopted = await fx<Record<string, any>>("f.changes.at(-1).shotReferences");
+      expect(adopted["shot-1"].motionVideos[0]).toMatchObject({ source: "previs", previsRequestId: PREVIS_ID, gcsUri: "gs://test-bucket/previs/shot-1.mp4", inSec: 0, outSec: 5.2 });
+      expect(adopted["shot-1"].motionVideos[1]).toMatchObject({ source: "stock", gcsUri: stockMotion.gcsUri });
+      // 除白模试看片本身的播放与浏览器自带图标外，页面没有任何出站请求（无接口、无付费任务）
+      expect(outbound.filter(u => !u.startsWith("data:") && !u.endsWith("/favicon.ico") && u !== "https://test.invalid/previs.mp4")).toEqual([]);
+      expect(await fx<string[]>("f.fetches")).toEqual([]);
+
+      // ⑥ 用选择器写出的参考出片（离线出站）：提示词带白模参考片与白模指令，不出软提示
+      const { requests } = offline();
+      const onMvShotAdvisory = vi.fn();
+      const [built] = createMusicMvShotBlocks(
+        { ...defaultCanvasBlock("music", 0, 0), id: "music-root", outputUrl: musicUrl, outputUrls: [musicUrl],
+          musicMv: { status: "planned", candidates: [{ id: "song", url: musicUrl, durationSec: 5.2 }], selectedCandidateId: "song", plan, referenceImages: [{ id: "hero", fileName: "hero.png", url: "https://test.invalid/hero.png", gcsUri: "gs://test-bucket/hero.png" }] } },
+        plan, PLAN_ID, [{ id: "hero", fileName: "hero.png", url: "https://test.invalid/hero.png", gcsUri: "gs://test-bucket/hero.png" }], { id: "song", url: musicUrl, durationSec: 5.2 }, adopted as never);
+      await run({ ...built!, id: "mvshot-picker-adopted", musicMvShot: { ...built!.musicMvShot!, castZh: CAST, beats: BEATS } }, "picker-adopted", { onMvShotAdvisory });
+      expect(requests).toHaveLength(1);
+      expect((requests[0]!.videoUrls as string[])[0]).toBe("https://test.invalid/shot-1.mp4?signature=fresh");
+      expect(String(requests[0]!.prompt)).toMatch(/@视频1＝白模/);
+      expect(String(requests[0]!.prompt)).toContain(MV_PREVIS_PROMPT_RULE_ZH("@视频1", "@图片1、@图片2"));
+      expect(onMvShotAdvisory).not.toHaveBeenCalled();
+    } finally {
+      await browser.close();
+    }
+  }, 120_000);
   it("自动发起 → 顾问白模页：只预填并以面板 send 提问，超额时走现有 pendingPaid 费用确认，不带已确认付费、不直接调用付费接口", async () => {
     const omni = readFileSync("client/src/pages/OmniCanvas.tsx", "utf8");
     const panel = readFileSync("client/src/components/canvas/ManhuaCreativeAdvisorPanel.tsx", "utf8");
