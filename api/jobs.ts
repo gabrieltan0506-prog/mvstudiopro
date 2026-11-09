@@ -1845,10 +1845,17 @@ async function runSeedance25EvolinkJob(
     return { ok: false, status: 400, error: "MV 镜头身份无效，未提交" };
   }
   if (mvShot25) {
-    const refTotal = (imageUrl ? 1 : 0) + imageUrls.length + videoUrls.length + audioUrls.length;
-    if (mode !== "reference_to_video" || !refTotal) {
-      return { ok: false, status: 400, error: "MV 镜头必须以参考素材生成（reference_to_video）且参考非空，本次未提交、未扣费" };
-    }
+    // 与 Mini 路线同一闸（#1769 审查 #5）：reference_to_video + ≥1 张图 + 总参考 ≥2；再查多人互动 × 角色表（#3）
+    const { checkMvShotReferenceRequirement, checkMvShotPromptCastInteraction } = await import("../shared/canvasMusicMvShotGuards.js");
+    const refCheck = checkMvShotReferenceRequirement({
+      mode,
+      imageCount: (imageUrl ? 1 : 0) + imageUrls.length,
+      videoCount: videoUrls.length,
+      audioCount: audioUrls.length,
+    });
+    if (!refCheck.ok) return { ok: false, status: 400, error: refCheck.error };
+    const castCheck = checkMvShotPromptCastInteraction(prompt);
+    if (!castCheck.ok) return { ok: false, status: 400, error: castCheck.error };
   }
   const rawDuration = body.duration ?? query.duration ?? body.durationSec ?? 15;
   // extend 官方支持 -1 自动（跟内容走）；显式时长 4–30s。原实现把 -1 clamp 成 4，自动档不可达
@@ -5996,17 +6003,22 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         }
         const miniReferenceCount = (imageUrl ? 1 : 0) + (imageUrls?.length || 0) + (videoUrls?.length || 0) + (audioUrls?.length || 0);
         if (mvShot) {
-          if (miniWorkMode !== "reference_to_video") {
-            return res.status(400).json({ ok: false, error: "MV 镜头必须以参考素材生成（reference_to_video），本次未提交、未扣费" });
-          }
-          if (!((imageUrl ? 1 : 0) + (imageUrls?.length || 0)) || miniReferenceCount < 2) {
-            return res.status(400).json({ ok: false, error: "MV 镜头缺少参考素材：请先为本镜选主锚图、场景图/参考片与歌曲切片，本次未提交、未扣费" });
-          }
+          // 与 2.5 路线同一闸（#1769 审查 #5）；再查多人互动 × 角色表（#3）
+          const { checkMvShotReferenceRequirement, checkMvShotPromptCastInteraction } = await import("../shared/canvasMusicMvShotGuards.js");
+          const refCheck = checkMvShotReferenceRequirement({
+            mode: miniWorkMode,
+            imageCount: (imageUrl ? 1 : 0) + (imageUrls?.length || 0),
+            videoCount: videoUrls?.length || 0,
+            audioCount: audioUrls?.length || 0,
+          });
+          if (!refCheck.ok) return res.status(400).json({ ok: false, error: refCheck.error });
+          const castCheck = checkMvShotPromptCastInteraction(prompt);
+          if (!castCheck.ok) return res.status(400).json({ ok: false, error: castCheck.error });
         }
         if (miniWorkMode === "reference_to_video" && miniReferenceCount === 0) {
           return res.status(400).json({ ok: false, error: "多模态参考需要至少一张图片、一条视频或一条音频，本次未提交、未扣费" });
         }
-        const mvShotHasRealPerson = b.mvShot != null && (b.mvShot as { hasRealPerson?: unknown }).hasRealPerson === true;
+        const mvShotHasRealPerson = mvShot?.hasRealPerson === true;
         const preferByteplusMini = !isProbe && !mvShotHasRealPerson && isByteplusSeedanceConfigured();
         if (!preferByteplusMini && !isEvolinkSeedanceConfigured()) {
           return res.status(503).json({ ok: false, error: "视频服务暂不可用，请稍后重试" });

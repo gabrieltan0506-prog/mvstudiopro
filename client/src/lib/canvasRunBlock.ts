@@ -2536,6 +2536,19 @@ async function runCanvasBlockInner(
   if (block.kind === "video" && block.musicMvShot) {
     const binding=block.musicMvShot;
     if(binding.kind==="footage") throw new Error("此镜头使用已有素材切片，请在MV中合成，不提交视频生成");
+    // #1769 审查 #3：角色表 ≤1 人时人物锁是单人锁，逐窗写了两人戏（耳光/拥抱等）会被模型删掉 → 付费前拦截
+    {
+      const { checkMvShotCastInteraction } = await import("@shared/canvasMusicMvShotGuards");
+      const castCheck = checkMvShotCastInteraction({
+        kind: binding.kind,
+        castZh: binding.castZh,
+        texts: [
+          binding.visualPrompt, binding.cameraPrompt, block.prompt,
+          ...(binding.beats || []).flatMap(w => [w.actionZh, w.cameraZh, w.lightingZh, w.moodZh, w.sfxZh]),
+        ],
+      });
+      if (!castCheck.ok) throw new Error(castCheck.error);
+    }
     // 1109 参考生视频：主锚图 + 场景图 + 动作参考片 + 歌曲切片（gcsUri 真源，出片前现签）。
     // 无任何参考 → 拒发（用户硬规则：MV 一向 reference_to_video，不得静默退回文生）。
     let mvRefs = binding.references;
