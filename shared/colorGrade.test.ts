@@ -1,7 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   buildFilterChain, checkGradeConsistency, colorCorrectionSchema, computeZoneDistribution, concatGradeSchema,
-  deriveMatchingCorrections, matchShotsToReference, matchShotsIteratively, parseSignalStats, resolveClipCorrection, collectGradeLutIds,
+  deriveChromaCorrection, deriveMatchingCorrections, matchShotsToReference, matchShotsIteratively, parseSignalStats, resolveClipCorrection, collectGradeLutIds,
   type SignalStats,
 } from "./colorGrade";
 
@@ -99,7 +100,7 @@ describe("镜头匹配与一致性", () => {
 
 describe("matchShotsIteratively：应用→复测→再匹配", () => {
   const st = (o: Partial<Record<string, number>>) => parseSignalStats(Object.entries({ YAVG: 120, UAVG: 128, VAVG: 128, SATAVG: 20, ...o }).map(([k, v]) => `lavfi.signalstats.${k}=${v}`).join("\n"));
-  it("达标即停；每轮在上一轮参数上叠加；midtones 累加", async () => {
+  it("达标即停；每轮在上一轮参数上叠加；色度按残差/增益累加到中间调+高光", async () => {
     const seq = [[st({}), st({ YAVG: 80, VAVG: 140 })], [st({}), st({ YAVG: 112, VAVG: 134 })], [st({}), st({ YAVG: 118, VAVG: 129 })]];
     const seen: unknown[] = [];
     const r = await matchShotsIteratively({ clipCount: 2, referenceClipIndex: 0, measure: async (clips, round) => { seen.push(clips); return seq[round]; } });
@@ -107,7 +108,8 @@ describe("matchShotsIteratively：应用→复测→再匹配", () => {
     expect(r.rounds.map(x => x.round)).toEqual([0, 1, 2]);
     expect(r.rounds[1].clips[1]?.exposure).toBe(1);
     expect(r.rounds[2].clips[1]?.exposure).toBe(1.2);
-    expect(r.rounds[2].clips[1]?.color_balance?.midtones?.r).toBeCloseTo(-0.024 - 0.012, 3);
+    expect(r.rounds[2].clips[1]?.color_balance?.midtones?.r).toBeCloseTo(-12 / 60 - 6 / 60, 3);
+    expect(r.rounds[2].clips[1]?.color_balance?.highlights?.r).toBeCloseTo(-0.3, 3);
     expect(seen).toHaveLength(3);
   });
   it("最多 3 轮匹配；复测条数不符即抛错", async () => {
@@ -120,4 +122,49 @@ describe("matchShotsIteratively：应用→复测→再匹配", () => {
     expect(concatGradeSchema.safeParse({ autoMatch: true }).success).toBe(false);
     expect(concatGradeSchema.safeParse({ autoMatch: true, referenceClipIndex: 0 }).success).toBe(true);
   });
+});
+
+describe("色度比例控制与亮度/饱和度解耦", () => {
+  it("U→b、V→r，按残差/(增益×饱和度) 累加到中间调与高光；±2 内不动", () => {
+    const c = deriveChromaCorrection(stats({ UAVG: 128, VAVG: 128 }), stats({ UAVG: 116, VAVG: 140 }), { saturation: 2, color_balance: { midtones: { r: 0.1, g: 0.05, b: 0 } } });
+    expect(c.color_balance?.midtones).toEqual({ r: 0, g: 0.05, b: 0.1 });
+    expect(c.color_balance?.highlights).toEqual({ r: -0.1, g: 0, b: 0.1 });
+    expect(deriveChromaCorrection(stats({}), stats({ UAVG: 129.5, VAVG: 126.5 }), {})).toEqual({});
+  });
+  it("亮度超差的一轮不调饱和度", () => {
+    const [, dark] = matchShotsToReference({ stats: [stats({ YAVG: 120, SATAVG: 50 }), stats({ YAVG: 80, SATAVG: 30 })], referenceClipIndex: 0 });
+    expect(dark?.exposure).toBe(1);
+    expect(dark?.saturation).toBeUndefined();
+    const [, ok] = matchShotsToReference({ stats: [stats({ YAVG: 120, SATAVG: 50 }), stats({ YAVG: 117, SATAVG: 30 })], referenceClipIndex: 0 });
+    expect(ok?.saturation).toBe(parseFloat((1 + (50 / 30 - 1) * 0.7).toFixed(3)));
+  });
+  it("默认路径（不匹配）滤镜输出不变", () => {
+    expect(buildFilterChain({})).toBe("");
+    expect(resolveClipCorrection(undefined, 0)).toBeNull();
+    expect(buildFilterChain({ color_temperature: 5600, saturation: 1.2 })).toBe("colortemperature=temperature=5600,eq=saturation=1.2");
+  });
+});
+
+// 真实 ffmpeg + 合成色条：偏暖/偏冷/偏暗三类 ≤3 轮全部达标（本机无 ffmpeg 时跳过）。
+const hasFfmpeg = spawnSync("ffmpeg", ["-version"]).status === 0;
+describe.skipIf(!hasFfmpeg)("真实 ffmpeg 多轮匹配收敛", () => {
+  const VARIANTS: Record<string, string> = {
+    ref: "null",
+    warm: "colortemperature=temperature=3500,eq=saturation=1.15",
+    cool: "colortemperature=temperature=11000",
+    dark: "curves=master='0/0 0.5/0.28 1/0.75',eq=saturation=0.8",
+  };
+  const names = Object.keys(VARIANTS);
+  const measureOne = (pre: string, c: Parameters<typeof buildFilterChain>[0] | null) => {
+    const chain = [pre, c ? buildFilterChain(c) : ""].filter(Boolean).join(",");
+    const r = spawnSync("ffmpeg", ["-hide_banner", "-f", "lavfi", "-i", "smptehdbars=s=320x180:d=1", "-frames:v", "1", "-vf", `${chain},signalstats,metadata=mode=print`, "-f", "null", "-"], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(r.stderr);
+    return parseSignalStats(r.stderr);
+  };
+  it("偏暖、偏冷、暗片 ≤3 轮内 YAVG±5 / UAVG,VAVG±3 / SATAVG±5", async () => {
+    const r = await matchShotsIteratively({ clipCount: names.length, referenceClipIndex: 0, measure: async clips => names.map((n, i) => measureOne(VARIANTS[n], clips[i])) });
+    expect(r.rounds[0].report.pass).toBe(false);
+    expect(r.pass).toBe(true);
+    expect(r.rounds.length).toBeLessThanOrEqual(4);
+  }, 60_000);
 });

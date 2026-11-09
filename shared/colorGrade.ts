@@ -302,8 +302,40 @@ export function deriveMatchingCorrections(
 }
 
 /**
+ * 色度比例控制（本仓偏离上游 white_balance 映射，仅用于 matchShotsToReference / 多轮匹配）。
+ * 实测（ffmpeg 6.1 smptehdbars + signalstats）：上游 V→midtones 系数 vDelta/255*0.5 只有 midtones，
+ * colorbalance 中间调权重窄，rm=0.1 仅让 VAVG +1，等于没修；U→color_temperature（uDelta*60 K）在 6500K 以上
+ * 每千 K 只动约 5 个 U，且同时压亮度、带 V，三轮内偏暖片 U 残差仍约 7.5。
+ * 改为：U 残差→中间调+高光 b、V 残差→中间调+高光 r，按「残差 / (增益 × 当前饱和度)」累加到已有 color_balance；
+ * 实测 mid+high 同值 0.1 → 对应通道约 +6（增益 ≈ 60/单位），饱和度在 colorbalance 之后，会按倍数放大色度偏移。
+ */
+export const GRADE_CHROMA_GAIN = 60;
+const clampBal = (v: number) => parseFloat(Math.min(1, Math.max(-1, v)).toFixed(3));
+
+export function deriveChromaCorrection(refStats: SignalStats, targetStats: SignalStats, existing: ColorCorrection): ColorCorrection {
+  const uDelta = refStats.UAVG - targetStats.UAVG;
+  const vDelta = refStats.VAVG - targetStats.VAVG;
+  if (Math.abs(uDelta) <= 2 && Math.abs(vDelta) <= 2) return { ...existing };
+  const gain = GRADE_CHROMA_GAIN * Math.max(0.2, existing.saturation ?? 1);
+  const db = Math.abs(uDelta) > 2 ? uDelta / gain : 0;
+  const dr = Math.abs(vDelta) > 2 ? vDelta / gain : 0;
+  const zero = { r: 0, g: 0, b: 0 };
+  const shift = (t: { r: number; g: number; b: number } | undefined) => {
+    const base = t ?? zero;
+    return { r: clampBal(base.r + dr), g: base.g, b: clampBal(base.b + db) };
+  };
+  const cb = existing.color_balance;
+  return { ...existing, color_balance: { ...cb, midtones: shift(cb?.midtones), highlights: shift(cb?.highlights) } };
+}
+
+/**
  * 按代表镜头批量算匹配参数（上游 multi-clip-grade 流程：先定 hero，再逐镜头 match_shots）。
  * 返回值可直接作为 `grade.clips`；代表镜头保持其原参数。结果再过一次 schema 收边界。
+ * 偏离上游（均为多轮复测收敛所需）：
+ *   1) 色度不用上游 色温/midtones 映射，改走 deriveChromaCorrection 比例控制、在上一轮参数上累加；
+ *   2) 亮度与饱和度解耦：亮度超差的一轮只调曝光与色度，饱和度待亮度达标后再调——提亮本身会抬 SATAVG，
+ *      同轮按旧亮度下的饱和度比例再乘会反超（暗片实测首轮 SATAVG 反超 +11~14）。
+ * 曝光、饱和度公式仍照上游 deriveMatchingCorrections。
  */
 export function matchShotsToReference(params: {
   stats: SignalStats[];
@@ -315,14 +347,17 @@ export function matchShotsToReference(params: {
   const ref = stats[referenceClipIndex];
   if (!ref) throw new Error("代表镜头不存在");
   const aspects = params.aspects ?? ["all"];
+  const want = (a: MatchAspect) => aspects.includes("all") || aspects.includes(a);
   return stats.map((s, i) => {
     const base = params.existing?.[i] ?? {};
-    const next = i === referenceClipIndex ? { ...base } : deriveMatchingCorrections(ref, s, aspects, base);
-    // 上游 V 通道是「按本次差值重设 midtones」；复测迭代时须在上一轮基础上累加，否则每轮回到首轮量级不收敛。
-    const prevMid = base.color_balance?.midtones, nextMid = next.color_balance?.midtones;
-    if (i !== referenceClipIndex && prevMid && nextMid && nextMid !== prevMid) {
-      const add = (a: number, b: number) => parseFloat(Math.min(1, Math.max(-1, a + b)).toFixed(3));
-      next.color_balance = { ...next.color_balance, midtones: { r: add(prevMid.r, nextMid.r), g: add(prevMid.g, nextMid.g), b: add(prevMid.b, nextMid.b) } };
+    let next: ColorCorrection = { ...base };
+    if (i !== referenceClipIndex) {
+      const lumaOff = want("exposure") && Math.abs(ref.YAVG - s.YAVG) > GRADE_CONSISTENCY_TOLERANCE.YAVG;
+      const tonal: MatchAspect[] = [];
+      if (want("exposure")) tonal.push("exposure");
+      if (want("saturation") && !lumaOff) tonal.push("saturation");
+      if (tonal.length) next = deriveMatchingCorrections(ref, s, tonal, next);
+      if (want("white_balance")) next = deriveChromaCorrection(ref, s, next);
     }
     if (next.exposure !== undefined) next.exposure = Math.min(3, Math.max(-0.95, next.exposure));
     if (next.color_temperature !== undefined) next.color_temperature = Math.min(40000, Math.max(1000, next.color_temperature));
