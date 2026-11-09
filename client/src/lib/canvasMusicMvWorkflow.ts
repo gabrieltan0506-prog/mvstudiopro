@@ -4,13 +4,39 @@ import {
   canvasMusicMvPlanSchema,
   type CanvasMusicMvPlan,
   type CanvasMusicCandidate,
+  type MusicMvLyricTable,
+  mvShotNeedsStagingReference,
 } from "@shared/canvasMusicMv";
 import { defaultCanvasBlock, type CanvasBlock } from "./canvasTypes";
+import { mvShotGenerateDurationSec } from "@shared/canvasMusicMvShotPrompt";
+import { COMPILER_ENGINE_LIMITS } from "@shared/manhuaShotIR";
 import {
+  isMvShotEngineSupported,
+  mvShotEngineId,
   mvShotReferenceGaps,
   mvShotReferencesSchema,
   type MvShotReferencesInput,
 } from "@shared/canvasMusicMvReferences";
+
+/** 请求时长：所选模型支持 MV 时按引擎表（分镜+余量，钳到上下限）；不支持时按 Mini 口径，出片前会被拦下换模型。 */
+export function musicMvShotRequestSec(videoModel: string | undefined, shotSec: number): number {
+  const engine = isMvShotEngineSupported(videoModel) ? mvShotEngineId(videoModel) : "seedance-2.0-mini";
+  try {
+    return mvShotGenerateDurationSec(engine, shotSec);
+  } catch {
+    return COMPILER_ENGINE_LIMITS[engine].maxSegmentSec;
+  }
+}
+
+/** 演唱镜的歌词绑定：只取确认版时间表里落在本镜的唱句；未确认返回空（出片前拦「先确认本段歌词」）。 */
+export function musicMvSingingLyricPatch(
+  shot: { startSec: number; endSec: number },
+  table: MusicMvLyricTable | undefined
+): { lyricLines?: MusicMvLyricTable["lines"]; lyricTiming?: "confirmed" } {
+  if (!table || table.status !== "confirmed") return {};
+  const lines = table.lines.filter(l => l.endSec > shot.startSec && l.startSec < shot.endSec);
+  return lines.length ? { lyricLines: lines, lyricTiming: "confirmed" } : {};
+}
 
 /** 计划版本进入节点 ID，重做分镜不覆盖上一版已出片的节点。 */
 export function createMusicMvShotBlocks(
@@ -22,7 +48,9 @@ export function createMusicMvShotBlocks(
   >,
   audio?: CanvasMusicCandidate,
   /** 1109 每镜参考槽位（主锚图/场景图/动作参考片/歌曲切片），键 shot.id。 */
-  shotReferences?: Record<string, MvShotReferencesInput | undefined>
+  shotReferences?: Record<string, MvShotReferencesInput | undefined>,
+  /** 1109 本段歌词时间表：确认版的唱句同步到演唱镜头（未确认不写，出片前拦）。 */
+  lyricTable?: MusicMvLyricTable
 ): CanvasBlock[] {
   canvasMusicMvPlanSchema.parse(plan);
   return plan.shots.map((shot, index) => {
@@ -36,8 +64,8 @@ export function createMusicMvShotBlocks(
     block.aspectRatio = parent.aspectRatio;
     block.videoModel = parent.videoModel;
     block.videoResolution = parent.videoResolution;
-    // 片段按整秒生成，再由合成精确裁切；不会把整首歌曲伪装为每镜同步参考。
-    block.prompt = `目标时长：${Math.max(5, Math.ceil(shot.endSec - shot.startSec))} 秒。\n${shot.visualPrompt}\n运镜：${shot.cameraPrompt}\n歌曲段落：${shot.lyricQuote || "器乐段"}\nMV时间位置：${shot.startSec}–${shot.endSec}秒。后期统一贴入原歌曲。`;
+    // 片段按所选模型可用时长生成（分镜+余量，复用漫剧引擎表钳制），合成前实测再裁回分镜时长，不变速。
+    block.prompt = `目标时长：${musicMvShotRequestSec(block.videoModel, shot.endSec - shot.startSec)} 秒。\n${shot.visualPrompt}\n运镜：${shot.cameraPrompt}\n歌曲段落：${shot.lyricQuote || "器乐段"}\nMV时间位置：${shot.startSec}–${shot.endSec}秒。后期统一贴入原歌曲。`;
     const referenceImages = shot.referenceIndices.map(i => {
       const reference = references[i];
       if (!reference) throw new Error("分镜引用的图片不存在，请重新确认参考");
@@ -55,6 +83,15 @@ export function createMusicMvShotBlocks(
       kind: shot.kind,
       sourceClip: shot.sourceClip,
       ...(shot.kind === "singing" ? { audio } : {}),
+      // 1109 秒锁编译真源：出片前按所选模型把逐窗节拍编成 A 段秒锁提示词
+      visualPrompt: shot.visualPrompt,
+      cameraPrompt: shot.cameraPrompt,
+      lyricQuote: shot.lyricQuote,
+      ...(shot.beats?.length ? { beats: shot.beats } : {}),
+      ...(plan.beatGrid ? { beatGrid: plan.beatGrid } : {}),
+      ...(index > 0 && shot.continuesFromPrevious ? { continuesFromPrevious: true } : {}),
+      ...(shot.complexity ? { complexity: shot.complexity } : {}),
+      ...(shot.kind === "singing" ? musicMvSingingLyricPatch(shot, lyricTable) : {}),
     };
     if (shot.kind === "singing") {
       if (
@@ -63,7 +100,7 @@ export function createMusicMvShotBlocks(
         audio.durationSec !== plan.audioDurationSec
       )
         throw new Error("对口型镜头缺少对应原歌曲");
-      block.prompt = `目标时长：${Math.ceil(shot.endSec - shot.startSec)} 秒。\n${shot.visualPrompt}\n运镜：${shot.cameraPrompt}\n人物按@音频1中的真实演唱同步口型、呼吸和表情，保持原曲速度、唱法与声音；不改唱词、不另配音。仅表演本唱段，歌曲绝对时间${shot.startSec}–${shot.endSec}秒。\n歌词：${shot.lyricQuote || "以实际唱段为准"}`;
+      block.prompt = `目标时长：${musicMvShotRequestSec(block.videoModel, shot.endSec - shot.startSec)} 秒。\n${shot.visualPrompt}\n运镜：${shot.cameraPrompt}\n人物按@音频1中的真实演唱同步口型、呼吸和表情，保持原曲速度、唱法与声音；不改唱词、不另配音。仅表演本唱段，歌曲绝对时间${shot.startSec}–${shot.endSec}秒。\n歌词：${shot.lyricQuote || "以实际唱段为准"}`;
     }
     if (shot.kind === "footage" && shot.sourceClip) {
       block.status = "done";
@@ -80,7 +117,7 @@ export function createMusicMvShotBlocks(
     const refs = shotReferences?.[shot.id];
     if (refs) {
       block.musicMvShot.references = mvShotReferencesSchema.parse(refs);
-      const gaps = mvShotReferenceGaps(block.musicMvShot.references);
+      const gaps = mvShotReferenceGaps(block.musicMvShot.references, block.videoModel, { requiresStaging: mvShotNeedsStagingReference(shot.complexity) });
       if (gaps.blocking.length && shot.kind !== "footage")
         block.error = `参考素材不完整：${gaps.blocking.map(g => g.messageZh).join("；")}`;
     } else if (!referenceImages.length && shot.kind !== "footage") {

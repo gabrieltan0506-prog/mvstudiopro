@@ -6,7 +6,8 @@ import { formatManhuaShotCoreCatalog } from "@shared/manhuaShotCoreBank";
 import { formatManhuaEntranceAtmosphereCatalog } from "@shared/manhuaEntranceAtmosphereBank";
 import { manhuaGeneratedPrevisCoverageIssue } from "@shared/manhuaPrevisScope";
 import { compileManhua3dImageTreatment } from "@shared/manhua3dMaterialPrompt";
-import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVideoModel, type CanvasBlock } from "./canvasTypes";
+import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVideoModel, VIDEO_MODEL_OPTIONS, type CanvasBlock } from "./canvasTypes";
+import { hasBlockingFormatIssues } from "@shared/promptFormatLayer";
 import { compileCanvasAudioBindings, assertCanvasAudioMasterCurrent, usesSeparateCanvasAudio } from "@shared/canvasAudioStudio";
 import { isLocalMediaPointer, resolveUrlForCloudSync } from "./manhuaLocalMediaStore";
 import { withFlyHealthGate } from "./flyHealthGate";
@@ -2540,9 +2541,47 @@ async function runCanvasBlockInner(
       throw new Error("MV 镜头缺少参考素材：请先在「为镜头选参考素材」里选主锚图、场景图/参考片与歌曲切片。本次未提交、未扣费。");
     }
     if (mvRefs) {
-      const { assembleMvShotReferences } = await import("@shared/canvasMusicMvReferences");
-      const version = normalizeCanvasVideoModel(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL) === "seedance-2.5" ? "2.5" : "2.0-mini";
-      const assembled = assembleMvShotReferences(mvRefs, { startSec: binding.startSec, endSec: binding.endSec, kind: binding.kind }, version);
+      const { assembleMvShotReferences, isMvShotEngineSupported, mvShotEngineId, mvShotReferencesSchema } = await import("@shared/canvasMusicMvReferences");
+      const { compileMvShotTimedPrompt, mvShotGenerateDurationSec } = await import("@shared/canvasMusicMvShotPrompt");
+      // 1109 模型可选：参考上限与时长上下限按所选引擎读漫剧引擎表，不锁 Mini
+      const selectedModel = normalizeCanvasVideoModel(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL);
+      if (!isMvShotEngineSupported(selectedModel)) throw new Error("所选成片模型不支持 MV 多参考生视频（需同时收参考图与歌曲切片），请换模型。本次未提交、未扣费。");
+      const engine = mvShotEngineId(selectedModel);
+      const { mvShotNeedsStagingReference } = await import("@shared/canvasMusicMv");
+      const assembled = assembleMvShotReferences(mvRefs, { startSec: binding.startSec, endSec: binding.endSec, kind: binding.kind }, engine, { requiresStaging: mvShotNeedsStagingReference(binding.complexity) });
+      if (binding.kind === "singing" && (binding.lyricTiming !== "confirmed" || !binding.lyricLines?.length))
+        throw new Error("演唱段：先确认本段歌词，再生成。本次未提交、未扣费。");
+      // 尾帧接龙：上一镜成片尾帧作本镜起幅（图片 2）；抽帧失败即不提交，不静默去掉接龙
+      let chainFrameUrl: string | undefined;
+      // 上一镜不在本次制作范围（如高光首镜）或尚未出片时 chainFromUrl 为空：不接龙，按本镜参考出片
+      if (binding.continuesFromPrevious && binding.chainFromUrl) {
+        const { frames } = await extractVideoTailFramesFromUrl(binding.chainFromUrl, { frameCount: 1, tailWindowSec: MANHUA_CLIP_TAIL_WINDOW_SEC });
+        chainFrameUrl = (await toHttpsImageUrls(deps, frames.map(f => f.dataUrl).filter(Boolean))).at(-1);
+        if (!chainFrameUrl) throw new Error("上一镜尾帧抽取失败，本镜需接龙，未提交、未扣费。请重试。");
+        const limits = (await import("@shared/canvasMusicMvReferences")).mvShotReferenceLimits(engine);
+        if (assembled.counts.total + 1 > 9 || assembled.counts.image + 1 > limits.image)
+          throw new Error("加上一镜尾帧后参考超过上限，请先减少一张场景图。本次未提交、未扣费。");
+      }
+      // 秒锁提示词：顾问逐窗节拍按 A 段版式编译（无逐窗字段的旧方案整镜一窗降级）
+      const timed = compileMvShotTimedPrompt(
+        {
+          shotId: binding.shotId, startSec: binding.startSec, endSec: binding.endSec, kind: binding.kind,
+          visualPrompt: binding.visualPrompt || block.prompt, cameraPrompt: binding.cameraPrompt || "按分镜运镜",
+          lyricQuote: binding.lyricQuote, beats: binding.beats,
+          lyricLines: binding.lyricLines, lyricTiming: binding.lyricTiming,
+          chainFromPrevious: Boolean(chainFrameUrl),
+        },
+        {
+          engine,
+          modelLabel: VIDEO_MODEL_OPTIONS.find(o => o.id === selectedModel)?.label || selectedModel,
+          resolution: String(block.videoResolution || "720p"),
+          aspectRatio: block.aspectRatio === "16:9" ? "16:9" : "9:16",
+          generateDurationSec: mvShotGenerateDurationSec(engine, binding.endSec - binding.startSec),
+          beatGrid: binding.beatGrid,
+          references: mvShotReferencesSchema.parse(mvRefs),
+        },
+      );
+      if (hasBlockingFormatIssues(timed.issues)) throw new Error(`MV 秒锁提示词未通过出站校验：${timed.issues.map(i => i.detailZh).join("；")}。本次未提交、未扣费。`);
       const sign = async (uri: string, label: string) => {
         const url = await resolveCanvasMaterialUrl(uri);
         if (!/^https:\/\//.test(url)) throw new Error(`${label}暂不可用，未提交生成`);
@@ -2555,11 +2594,11 @@ async function runCanvasBlockInner(
       block = {
         ...block,
         refImageUrl: images[0],
-        editFusionUrls: images.slice(1),
+        editFusionUrls: chainFrameUrl ? [chainFrameUrl, ...images.slice(1)] : images.slice(1),
         seedance25RefVideoUrls: videos,
         seedance25RefAudioUrls: audios,
         seedance25WorkMode: "reference_to_video",
-        prompt: `${block.prompt.trim()}\n\n${assembled.promptAppendix}`,
+        prompt: timed.text,
       };
       mvShotOutbound = { hasRealPerson: assembled.hasRealPerson };
       upstream = { ...upstream, visionImages: [] };

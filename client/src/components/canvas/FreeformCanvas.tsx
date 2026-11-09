@@ -6,6 +6,7 @@ import { finishEditedMusicMvShot } from "@/lib/canvasMusicMvGuards";
 import { rememberMusicMvOutput } from "@/lib/canvasMusicMvWorkflow";
 import { CanvasMvShotControls } from "./CanvasMvShotControls";
 import { CanvasMusicMvStudio } from "./CanvasMusicMvStudio";
+import { isMvShotEngineSupported } from "@shared/canvasMusicMvReferences";
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readOpenAiImageVariantMode } from "@/lib/openaiImageVariantPref";
@@ -945,6 +946,11 @@ export default function FreeformCanvas({
     () => filterCanvasVideoModelOptions(canUseSeedance25),
     [canUseSeedance25],
   );
+  /** MV 镜头可选模型：同一张表 + 同一会员闸门，再筛能收「参考图 + 歌曲切片」的引擎。 */
+  const mvShotVideoModelOptions = useMemo(
+    () => videoModelOptions.filter(m => isMvShotEngineSupported(m.id)),
+    [videoModelOptions],
+  );
   /** patchOne 声明在后,经 ref 间接引用避免 TDZ;渲染期同步赋值,不会漏拍 */
   const patchOneRef = useRef<((id: string, patch: Partial<CanvasBlock>) => void) | null>(null);
   /**
@@ -1819,6 +1825,16 @@ export default function FreeformCanvas({
           };
         }
       }
+      // 1109 MV 尾帧接龙：顾问标「接上一镜」的镜头，取上一镜成片（读最新画布，不用闭包旧值）供抽尾帧作起幅
+      if (runBlockPayload.musicMvShot?.continuesFromPrevious) {
+        const latestBlocks = blocksRef.current;
+        const owner = latestBlocks.find(b => b.kind === "music" && b.musicMv?.shotBlockIds?.includes(runBlockPayload.id));
+        const ids = owner?.musicMv?.shotBlockIds || [];
+        const prevId = ids[ids.indexOf(runBlockPayload.id) - 1];
+        const prev = prevId ? latestBlocks.find(b => b.id === prevId) : undefined;
+        if (prev?.status === "done" && prev.outputUrl && /^https:\/\//.test(prev.outputUrl))
+          runBlockPayload = { ...runBlockPayload, musicMvShot: { ...runBlockPayload.musicMvShot, chainFromUrl: prev.outputUrl } };
+      }
       const referenceContext = projectReferenceContextRef.current;
       const guardProjectReferences = projectAssetRefs.length > 0 && canSelectProjectVideoReferences(runBlockPayload);
       const inputFingerprint = (item: CanvasBlock) => JSON.stringify([
@@ -2189,6 +2205,7 @@ export default function FreeformCanvas({
                         onPatch={patch => patchOne(block.id, patch)} getBlocks={() => blocksRef.current}
                         onPatchBlock={(id, patch) => patchOne(id, patch)}
                         runShot={runBlock}
+                        videoModelOptions={mvShotVideoModelOptions}
                         onAdd={(added, links) => {
                           onBlocksChange(prev => [...prev, ...added.filter(item => !prev.some(row => item.id === row.id))]);
                           onEdgesChange([...edges.filter(edge => !links.some(link => link.fromId === edge.fromId && link.toId === edge.toId)), ...links]);

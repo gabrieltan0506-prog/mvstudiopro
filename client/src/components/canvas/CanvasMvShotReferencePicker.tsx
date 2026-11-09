@@ -8,7 +8,11 @@
  */
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
-import type { CanvasMusicMvPlan } from "@shared/canvasMusicMv";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { createJobSameOrigin, pollJobUntilTerminal } from "@/lib/jobs";
+import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
+import { assetImageGcsUri } from "@/lib/manhuaAssetImageSource";
+import { mvShotNeedsStagingReference, type CanvasMusicMvPlan } from "@shared/canvasMusicMv";
 import {
   EMPTY_MV_SHOT_REFERENCES,
   MV_SHOT_MOTION_VIDEO_MAX,
@@ -17,6 +21,7 @@ import {
   countMvShotReferences,
   mvShotReferenceGaps,
   mvShotReferencesSchema,
+  mvAnchorKeyframePrompt,
   type MvShotReferenceImage,
   type MvShotReferences,
 } from "@shared/canvasMusicMvReferences";
@@ -78,6 +83,40 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
       anchorImage: props.anchorImage,
       shotReferences: { ...(props.shotReferences || {}), [shotId]: mvShotReferencesSchema.parse(next) },
     });
+
+  const { user } = useAuth();
+  const [generating, setGenerating] = useState(false);
+  /** 主锚图 = 生成的角色定妆帧（与漫剧定妆同链，Sunburst），不再从图库硬找有人物的图。 */
+  const generateAnchor = async () => {
+    setError("");
+    setGenerating(true);
+    try {
+      const aspect = props.orientation === "landscape" ? "16:9" : "9:16";
+      const receipt = await createJobSameOrigin({
+        type: "image",
+        userId: String(user?.id || ""),
+        input: buildCanvasGptImage2JobInput({
+          prompt: mvAnchorKeyframePrompt(props.cinemaHintZh, aspect),
+          aspectRatio: aspect,
+          openaiImageVariant: "sunburst",
+          requireImageVariant: true,
+          imageLane: "asset",
+        }),
+      });
+      const job = await pollJobUntilTerminal(receipt.jobId, { intervalMs: 2500, maxWaitMs: 20 * 60 * 1000 });
+      const url = String(job.output?.imageUrl || job.output?.imageUrls?.[0] || "");
+      const gcsUri = job.status === "succeeded" ? assetImageGcsUri(url) : undefined;
+      if (!gcsUri) throw new Error(job.error || "定妆帧尚未取得，任务编号已保留，请稍后重试查询");
+      props.onChange({
+        anchorImage: { gcsUri, label: "生成的主角定妆帧", hasRealPerson: false },
+        shotReferences: { ...(props.shotReferences || {}) },
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "定妆帧生成失败");
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const onPick = async (pick: StockFootagePick) => {
     if (!target) return;
@@ -166,7 +205,7 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
       : { ...now, motionVideos: now.motionVideos.filter((_, i) => i !== index) });
   };
 
-  const totalBlocking = shots.reduce((n, shot) => n + (shot.kind === "footage" ? 0 : mvShotReferenceGaps(refsOf(shot.id)).blocking.length ? 1 : 0), 0);
+  const totalBlocking = shots.reduce((n, shot) => n + (shot.kind === "footage" ? 0 : mvShotReferenceGaps(refsOf(shot.id), undefined, { requiresStaging: mvShotNeedsStagingReference(shot.complexity) }).blocking.length ? 1 : 0), 0);
 
   return (
     <section data-mv-step="references" aria-label="为镜头选参考素材" className="space-y-2">
@@ -176,8 +215,11 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
       </p>
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span>全片主锚图：{props.anchorImage ? props.anchorImage.label || "已选" : "未选"}</span>
+        <button className={button} disabled={disabled || generating} onClick={() => void generateAnchor()}>
+          {generating ? "正在生成定妆帧…" : props.anchorImage ? "重新生成主角定妆帧" : "按主角描述生成主锚图"}
+        </button>
         <button className={button} disabled={disabled} onClick={() => setTarget({ kind: "anchor" })}>
-          {props.anchorImage ? "更换主锚图" : "选主锚图"}
+          {props.anchorImage ? "从图库更换主锚图" : "从图库选主锚图"}
         </button>
         <button
           className={button}
@@ -201,11 +243,13 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
           return <p key={shot.id} className="text-xs text-white/50">{index + 1}. 已有素材切片，无需参考</p>;
         const refs = refsOf(shot.id);
         const counts = countMvShotReferences(refs);
-        const gaps = mvShotReferenceGaps(refs);
+        const staging = mvShotNeedsStagingReference(shot.complexity);
+        const gaps = mvShotReferenceGaps(refs, undefined, { requiresStaging: staging });
         return (
           <div key={shot.id} className="space-y-1 rounded border border-white/10 p-2 text-xs" data-mv-shot-refs={shot.id}>
             <p>
               <strong>{index + 1}.</strong> {shot.startSec.toFixed(1)}–{shot.endSec.toFixed(1)} 秒 · 图 {counts.image} / 片 {counts.video} / 歌 {counts.audio} · 共 {counts.total}/9
+              {staging && <span className="ml-1 text-amber-200">· 多人/动作/多机位镜头：站位参考必填（白模站位片或图库运镜片）</span>}
             </p>
             {refs.sceneImages.map((img, i) => (
               <span key={img.gcsUri} className="mr-2 inline-flex items-center gap-1">
@@ -221,8 +265,8 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
             ))}
             <div className="flex flex-wrap gap-2">
               <button className={button} disabled={disabled || refs.sceneImages.length >= MV_SHOT_SCENE_IMAGE_MAX} onClick={() => setTarget({ kind: "scene", shot })}>找场景图</button>
-              <button className={button} disabled={disabled || refs.motionVideos.length >= MV_SHOT_MOTION_VIDEO_MAX} onClick={() => setTarget({ kind: "motion", shot })}>找运镜参考片</button>
-              <button className={button} disabled={disabled} onClick={() => usePrevis(shot)}>用白模站位片</button>
+              <button className={button} disabled={disabled || refs.motionVideos.length >= MV_SHOT_MOTION_VIDEO_MAX} onClick={() => setTarget({ kind: "motion", shot })}>从图库找运镜视频</button>
+              <button className={button} disabled={disabled} onClick={() => usePrevis(shot)}>用白模站位片（去白模工作台排站位）</button>
               <button className={button} disabled={disabled || prepareSlice.isPending || !props.planRequestId} onClick={() => void sliceSong(shot)}>
                 {refs.songSlice ? "重新裁歌曲切片" : "裁本镜歌曲切片"}
               </button>

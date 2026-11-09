@@ -39,16 +39,20 @@ import {
   refreshMusicCandidate,
 } from "@/lib/canvasMusicMvRecovery";
 import {
+  mvShotNeedsStagingReference,
   canvasMusicMvDraftInputSchema,
   validateCanvasMusicMvPlan,
 } from "@shared/canvasMusicMv";
 import {
   createMusicMvShotBlocks,
   musicMvReadyClips,
+  musicMvShotRequestSec,
+  musicMvSingingLyricPatch,
 } from "@/lib/canvasMusicMvWorkflow";
 import {
   defaultCanvasBlock,
   type CanvasBlock,
+  type CanvasVideoModel,
   type CanvasEdge,
 } from "@/lib/canvasTypes";
 import type {
@@ -60,6 +64,7 @@ import {
   CANVAS_BGM_CREDITS_PER_RUN,
 } from "@shared/canvasGenerationPricing";
 import { CREDIT_COSTS } from "@shared/plans";
+import { CanvasMvLyricTableEditor } from "./CanvasMvLyricTableEditor";
 import { CanvasMvShotReferencePicker } from "./CanvasMvShotReferencePicker";
 import {
   EMPTY_MV_SHOT_REFERENCES,
@@ -78,6 +83,8 @@ type Props = {
   getBlocks: () => CanvasBlock[];
   /** 1109：把参考槽位同步到已铺的镜头块（出片真源是镜头块 musicMvShot.references）。 */
   onPatchBlock?: (id: string, patch: Partial<CanvasBlock>) => void;
+  /** 1109 模型可选：漫剧同一模型表经 filterCanvasVideoModelOptions（会员闸门）再筛 MV 可用引擎。 */
+  videoModelOptions?: Array<{ id: CanvasVideoModel; label: string }>;
 };
 const field = "w-full rounded border border-white/20 bg-black/30 p-1.5 text-xs";
 const button =
@@ -118,6 +125,7 @@ export function CanvasMusicMvStudio({
   runShot,
   getBlocks,
   onPatchBlock,
+  videoModelOptions,
 }: Props) {
   const state = block.musicMv || { status: "idle", candidates: [] };
   const latest = useRef(state);
@@ -149,6 +157,7 @@ export function CanvasMusicMvStudio({
   const music = trpc.mvAnalysis.queueManhuaBgm.useMutation();
   const upload = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const plan = trpc.canvasMusicMv.draftPlan.useMutation();
+  const recognizeLyrics = trpc.canvasMusicMv.recognizeLyrics.useMutation({ retry: false });
   const assemble = trpc.canvasMusicMvAssemble.queue.useMutation();
   const patch = (
     delta: Partial<CanvasMusicMvState>,
@@ -590,7 +599,8 @@ export function CanvasMusicMvStudio({
         state.planRequestId,
         refs,
         selected,
-        effectiveShotReferences(latest.current)
+        effectiveShotReferences(latest.current),
+        latest.current.lyricTable
       );
       for (const shot of shots)
         if (shot.musicMvShot?.kind === "footage" && shot.outputUrl) {
@@ -648,7 +658,7 @@ export function CanvasMusicMvStudio({
       if (shotBlock.status === "running" || (shotBlock.videoTaskId && shotBlock.videoTaskStatus !== "failed")) continue;
       const refs = effective[binding.shotId];
       if (!refs) continue;
-      const gaps = mvShotReferenceGaps(refs).blocking;
+      const gaps = mvShotReferenceGaps(refs, shotBlock.videoModel, { requiresStaging: mvShotNeedsStagingReference(binding.complexity) }).blocking;
       onPatchBlock?.(id, {
         musicMvShot: { ...binding, references: refs },
         seedance25WorkMode: "reference_to_video",
@@ -670,8 +680,11 @@ export function CanvasMusicMvStudio({
           if (!binding.referenceImages.length) gapLines.push(`镜头 ${i + 1}：未选参考素材`);
           return;
         }
-        const gaps = mvShotReferenceGaps(binding.references).blocking;
+        const gaps = mvShotReferenceGaps(binding.references, shotBlock.videoModel, { requiresStaging: mvShotNeedsStagingReference(binding.complexity) }).blocking;
         if (gaps.length) gapLines.push(`镜头 ${i + 1}：${gaps.map(g => g.messageZh).join("、")}`);
+        // 演唱段只读用户确认版歌词时间表；未确认不得生成（非演唱段不受影响）
+        if (binding.kind === "singing" && (latest.current.lyricTable?.status !== "confirmed" || !binding.lyricLines?.length))
+          gapLines.push(`镜头 ${i + 1}：演唱段，先确认本段歌词`);
       });
       if (gapLines.length) throw new Error(`请先为镜头选参考素材，本次未提交、未扣费。${gapLines.join("；")}`);
       patch({ status: "rendering", error: undefined });
@@ -825,6 +838,26 @@ export function CanvasMusicMvStudio({
       if (identityCurrent())
         patch({ finalBlockId: final.id, status: "done", error: undefined });
     });
+  /** 歌词表变化 → 未出片的演唱镜同步唱句（只有确认版会写入；改动后回到待确认即清空，出片前拦）。 */
+  const syncSingingLyrics = (table: CanvasMusicMvState["lyricTable"]) => {
+    for (const id of latest.current.shotBlockIds || []) {
+      const shot = getBlocks().find(row => row.id === id);
+      const binding = shot?.musicMvShot;
+      if (!shot || !binding || binding.kind !== "singing" || (shot.status === "done" && shot.outputUrl)) continue;
+      const { lyricLines: _l, lyricTiming: _t, ...rest } = binding;
+      onPatchBlock?.(id, { musicMvShot: { ...rest, ...musicMvSingingLyricPatch(binding, table) } });
+    }
+  };
+  /** 换镜头成片模型：音乐块记住选择，未出片的镜头块同步模型与请求时长（已出片的不动）。 */
+  const chooseShotModel = (videoModel: CanvasVideoModel) => {
+    onPatch({ videoModel });
+    for (const id of latest.current.shotBlockIds || []) {
+      const shot = getBlocks().find(row => row.id === id);
+      if (!shot?.musicMvShot || (shot.status === "done" && shot.outputUrl) || shot.musicMvShot.kind === "footage") continue;
+      const sec = musicMvShotRequestSec(videoModel, shot.musicMvShot.endSec - shot.musicMvShot.startSec);
+      onPatchBlock?.(id, { videoModel, prompt: shot.prompt.replace(/目标时长：\s*\d+(?:\.\d+)?\s*秒/, `目标时长：${sec} 秒`) });
+    }
+  };
   let visibleShotIds: string[] = [];
   let highlightError = "";
   let planShots = state.plan?.shots || [];
@@ -1355,6 +1388,21 @@ export function CanvasMusicMvStudio({
           <button className={button} disabled={busy || Boolean(highlightError)} onClick={()=>void perform(async()=>{const range=highlightRange(latest.current);if(!range || !highlightAudio.current)return;highlightAudio.current.currentTime=range.startSec;await highlightAudio.current.play();})}>试听高光区间</button>
         </div>}
         {highlightError && <p role="alert" className="text-xs text-amber-200">{highlightError}</p>}
+        {selected && !songOnly && <CanvasMvLyricTableEditor
+          table={state.lyricTable}
+          range={state.highlight}
+          disabled={busy}
+          onRecognize={async () => {
+            const range = highlightRange(latest.current);
+            if (!range || !selected) throw new Error("请先应用高光区间");
+            const table = await recognizeLyrics.mutateAsync({ requestId: crypto.randomUUID(), audio: selected, highlight: range, ...(latest.current.musicJobId ? { musicJobId: latest.current.musicJobId } : {}), ...(latest.current.lyrics?.trim() ? { lyricsHint: latest.current.lyrics } : {}) });
+            patch({ lyricTable: table });
+            syncSingingLyrics(table);
+          }}
+          onChange={next => { patch({ lyricTable: next }); syncSingingLyrics(next); }}
+          onConfirm={next => { patch({ lyricTable: next }); syncSingingLyrics(next); }}
+          onPlayLine={line => { const a = highlightAudio.current; if (!a) return; a.currentTime = line.startSec; void a.play(); window.setTimeout(() => a.pause(), Math.max(200, (line.endSec - line.startSec) * 1000)); }}
+        />}
       </section>}
       <h3 data-mv-step="concept" className="border-t border-white/15 pt-5 text-base font-semibold">2. 视觉方案</h3>
       <textarea
@@ -1451,7 +1499,9 @@ export function CanvasMusicMvStudio({
             result.plan,
             result.requestId,
             refs,
-            song
+            song,
+            effectiveShotReferences(previous),
+            previous.lyricTable
           );
           for (const shot of shots)
             if (shot.musicMvShot?.kind === "footage" && shot.outputUrl) {
@@ -1598,6 +1648,22 @@ export function CanvasMusicMvStudio({
             onChange={updateReferences}
           />
           <h3 data-mv-step="shots" className="border-t border-white/15 pt-5 text-base font-semibold">4. 制作镜头</h3>
+          {!!videoModelOptions?.length && (
+            <label className="block text-xs">
+              镜头成片模型（与漫剧工厂同一模型表；参考上限与时长按所选模型）
+              <select
+                aria-label="MV镜头成片模型"
+                className={field}
+                value={videoModelOptions.some(m => m.id === block.videoModel) ? block.videoModel : videoModelOptions[0]!.id}
+                disabled={busy}
+                onChange={e => chooseShotModel(e.target.value as CanvasVideoModel)}
+              >
+                {videoModelOptions.map(m => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <button
             className={button}
             disabled={busy || !!state.shotBlockIds?.length}

@@ -149,12 +149,12 @@ async function execute(
 }
 
 describe("MV 分镜编译到真实视频出站请求（全离线）", () => {
-  it("5.2秒与5.1秒镜头均提交6秒，只带各自指定图且不带整首音频", async () => {
+  it("5.2秒与5.1秒镜头均提交7秒（分镜+1秒余量，出片实测后裁回），只带各自指定图且不带整首音频", async () => {
     const { requests } = offline();
     const { shots, blocks, edges } = fixture();
     for (const [index, shot] of Array.from(shots.entries()))
       await execute(shot, blocks, edges, `mv-operation-${index}`);
-    expect(requests.map(row => row.duration)).toEqual([6, 6]);
+    expect(requests.map(row => row.duration)).toEqual([7, 7]);
     expect(String(requests[0].prompt)).toContain(plan.shots[0].visualPrompt);
     expect(String(requests[0].prompt)).not.toContain(
       plan.shots[1].visualPrompt
@@ -295,9 +295,10 @@ describe("1109 参考生视频：主锚图+场景图+动作参考片+歌曲切�
     expect(body.videoUrls).toEqual(["https://test.invalid/motion.mp4?signature=fresh"]);
     expect(body.audioUrls).toEqual(["https://test.invalid/shot-1.wav?signature=fresh"]);
     expect(String(body.prompt)).toContain(plan.shots[0].visualPrompt);
-    expect(String(body.prompt)).toMatch(/@图片1定义全片/);
-    expect(String(body.prompt)).toMatch(/@视频1是运镜参考片/);
-    expect(String(body.prompt)).toMatch(/@音频1是本镜 0–5.2 秒的歌曲切片/);
+    // 1109 秒锁编译：参考绑定表进 A 段头部（与提交数组同序）
+    expect(String(body.prompt)).toMatch(/@图片1＝全片主锚图/);
+    expect(String(body.prompt)).toMatch(/@视频1＝运镜参考片/);
+    expect(String(body.prompt)).toMatch(/@音频1＝本镜歌曲切片（原歌 0–5.2 秒）/);
     expect(body.mvShot).toEqual({
       planRequestId: "00000000-0000-4000-8000-000000000001",
       shotId: "shot-1",
