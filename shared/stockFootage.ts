@@ -16,8 +16,9 @@ export type StockFootageOrientation = (typeof STOCK_FOOTAGE_ORIENTATIONS)[number
 /**
  * 业务用途：决定采用后谁能消费、怎么消费。
  * - remix：爆款复刻（短视频分镜）的实拍替换画面——只「找素材 → 存到我的空间」，用户自己剪，不接成片链路。
+ * - mvShot：MV 镜头的参考素材（主锚图 / 场景图 / 动作运镜参考片），只进 reference_to_video 的参考数组，不直接入片。
  */
-export const STOCK_FOOTAGE_PURPOSES = ["mv", "digital_human", "marketing", "manhua", "remix"] as const;
+export const STOCK_FOOTAGE_PURPOSES = ["mv", "digital_human", "marketing", "manhua", "remix", "mvShot"] as const;
 export type StockFootagePurpose = (typeof STOCK_FOOTAGE_PURPOSES)[number];
 
 /**
@@ -188,6 +189,7 @@ export const STOCK_FOOTAGE_ALLOWED_USAGES: Record<StockFootagePurpose, readonly 
   marketing: ["insert", "reference"],
   manhua: ["reference", "empty_shot"],
   remix: ["insert"],
+  mvShot: ["reference"],
 };
 
 export function assertStockUsageAllowed(purpose: StockFootagePurpose, usage: StockFootageUsage): void {
@@ -234,6 +236,7 @@ export const STOCK_FOOTAGE_PURPOSE_LABEL: Record<StockFootagePurpose, string> = 
   marketing: "营销/知识口播",
   manhua: "漫剧参考/空镜",
   remix: "短视频复刻的实拍补充画面",
+  mvShot: "MV 镜头参考",
 };
 
 /** 署名文案（导出、图注、成片说明统一使用）。 */

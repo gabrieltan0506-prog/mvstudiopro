@@ -7,6 +7,7 @@ import { z } from "zod";
 import { creativeEvidenceReviewSchema } from "./creativeEvidenceReview";
 import { musicMvEditSessionSchema } from "./canvasMusicMvEdit";
 import { songOperationSessionSchema, songAlignedWordSchema } from "./songOperations";
+import { mvShotReferenceImageSchema, mvShotReferencesSchema } from "./canvasMusicMvReferences";
 
 const text = z.string().trim().min(1);
 export { canvasMusicCandidateSchema, type CanvasMusicCandidate } from "./canvasMusicMedia";
@@ -477,6 +478,8 @@ export const canvasMusicMvShotBindingSchema = z
     outputs: z
       .array(z.object({ taskId: text, url: z.string().url() }).strict())
       .optional(),
+    /** 1109 参考生视频：主锚图 + 场景图 + 动作参考片 + 歌曲切片；无则不得提交生成。 */
+    references: mvShotReferencesSchema.optional(),
   })
   .strict();
 export type CanvasMusicMvShotBinding = z.infer<
@@ -577,6 +580,9 @@ export const canvasMusicMvStateSchema = z
       )
       .optional(),
     shotBlockIds: z.array(text.max(200)).optional(),
+    /** 1109 全片主锚图（五镜共用）与每镜参考槽位，键为分镜 shot.id。 */
+    anchorImage: mvShotReferenceImageSchema.optional(),
+    shotReferences: z.record(text.max(100), mvShotReferencesSchema).optional(),
     assembleRequestId: z.string().uuid().optional(),
     assembleJobId: text.max(200).optional(),
     assembleInput: canvasMusicMvAssembleSnapshotSchema.optional(),
