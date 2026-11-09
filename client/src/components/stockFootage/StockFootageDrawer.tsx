@@ -8,6 +8,7 @@
  * - 界面不显示素材来源、作者、许可等信息，只显示时长、尺寸、画幅。
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { AlertTriangle, Film, Image as ImageIcon, Loader2, Pause, Play, RotateCw, Search, X } from "lucide-react";
 import { trpc } from "@/lib/trpc";
@@ -64,7 +65,10 @@ const candidateKey = (c: Pick<StockFootageCandidate, "kind" | "providerAssetId">
 export function StockFootageDrawer(props: StockFootageDrawerProps) {
   // 每次打开重新挂载：关键词、筛选、选中与裁点都从当前镜头/段落重新开始。
   if (!props.open) return null;
-  return <StockFootageDrawerBody {...props} />;
+  // 挂到 body：营销/数字人等面板的祖先带 backdrop-filter / transform，会把 fixed 定位困在面板内，
+  // 抽屉被画到视口外（线上 11-09 实测：营销「找素材」DOM 有 18 个候选但画面空白）。
+  if (typeof document === "undefined") return <StockFootageDrawerBody {...props} />;
+  return createPortal(<StockFootageDrawerBody {...props} />, document.body);
 }
 
 function StockFootageDrawerBody(props: StockFootageDrawerProps) {
