@@ -366,6 +366,9 @@ export async function compressKnowledgeReviewToBudget(params: {
       pages: pages.filter(p => ids.has(p.id)).map(p => ({ ...originals.get(p.id)!, body: p.body, imageUrl: "" })) };
     const targets = round === 0 ? after : after.map(o => ({ ...o, maxChars: Math.floor(o.maxChars * KNOWLEDGE_COMPRESSION_RETRY_MARGIN) }));
     const request = buildKnowledgeCompressionRequest(pageSource, digest, targets);
+    // 压缩输出按真实上限逐页校验、容差 0：仍超出即算写坏，由路由切下一跳（GLM@EvoLink → GLM@OR → DeepSeek），三跳都超取最短的一份。
+    request.pageBudgets = after.map(o => ({ id: o.id, headline: o.headline, maxChars: o.maxChars }));
+    request.budgetTolerance = 0;
     if (round > 0) request.systemInstruction.parts.push({ text: `上一轮压缩后这些页仍超出图下容量（第${round + 1}轮）。本轮每页必须低于给定maxChars：先删与图中已画出内容重复的表格/清单，再把并列例子合并成一句，仍超出则只保留最关键的事实与数字。` });
     const roundAdopted: string[] = [];
     let roundError: string | undefined;

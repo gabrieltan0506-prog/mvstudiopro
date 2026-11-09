@@ -232,8 +232,10 @@ describe("篇幅预算写进审校输出合同", () => {
     const review = h.post.mock.calls[0]![0] as any;
     expect(review.pageBudgets).toEqual([{ id: h.source.pages[0]!.id, headline: h.source.pages[0]!.headline, maxChars: 700 }]);
     expect(review.systemInstruction.parts.some((p: any) => p.text.includes("输出合同·篇幅") && p.text.includes('"targetChars":630'))).toBe(true);
-    // 压缩请求是兜底，不带 pageBudgets（由多轮自行收敛）
-    expect((h.post.mock.calls[1]![0] as any).pageBudgets).toBeUndefined();
+    // 压缩请求按真实上限严格校验（容差 0）：仍超出即由路由切下一跳
+    const compress = h.post.mock.calls[1]![0] as any;
+    expect(compress.pageBudgets).toEqual([{ id: h.source.pages[0]!.id, headline: h.source.pages[0]!.headline, maxChars: 700 }]);
+    expect(compress.budgetTolerance).toBe(0);
   });
 });
 

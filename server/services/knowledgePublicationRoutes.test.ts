@@ -1039,5 +1039,10 @@ describe('篇幅容差 B：超出 ≤15% 收下转压缩，>15% 才切下一跳�
   expect(f.storage.get('test/0/route-glm-evolink.json').budgetOverflow[0].path).toBe('rejected_next_hop');
   expect(f.deps.fetch).toHaveBeenCalledTimes(3);
  });
+ it('篇幅压缩请求容差 0：超出约 3% 也判写坏切下一跳（审校稿才享 15% 容差）',async()=>{
+  const {f}=budgetCase(0.03);f.request.budgetTolerance=0;
+  await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);
+  expect(f.storage.get('test/0/route-glm-evolink.json').reason).toContain('超出容差0%');
+  expect(f.deps.fetch).toHaveBeenCalledTimes(3);
+ });
 });
-

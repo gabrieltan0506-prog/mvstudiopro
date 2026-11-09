@@ -34,6 +34,8 @@ export type KnowledgeModelRequest = {
   executionFamily?: "deepseek" | "glm";
   /** 完整版图文同页逐页内文上限：回答任一页 reading 超出即判「写坏」切下一跳（2026-11-09 用户令）；三跳都超出时取超出最少的一份交篇幅压缩兜底。 */
   pageBudgets?: { id: string; headline: string; maxChars: number }[];
+  /** 篇幅容差覆盖：审校稿按 KNOWLEDGE_BUDGET_TOLERANCE；篇幅压缩请求传 0（必须 ≤maxChars，否则切下一跳）。 */
+  budgetTolerance?: number;
   researchOnly?: true;
   researchRequired?: boolean;
   researchAfterReview?: true;
@@ -58,7 +60,7 @@ class KnowledgeBudgetOverflowError extends Error {
   constructor(message: string, readonly normalized: { status: number; text: string }, readonly excess: number, readonly overflow: KnowledgeBudgetOverflowPage[]) { super(message); }
 }
 /** 回答逐页内文字数（不含空白；有 reading 按生成稿计，否则按 body）对照请求逐页上限。 */
-export function knowledgeAnswerBudgetOverflow(answer: unknown, budgets: KnowledgeModelRequest["pageBudgets"]): KnowledgeBudgetOverflowPage[] {
+export function knowledgeAnswerBudgetOverflow(answer: unknown, budgets: KnowledgeModelRequest["pageBudgets"], tolerance = KNOWLEDGE_BUDGET_TOLERANCE): KnowledgeBudgetOverflowPage[] {
   const pages = (answer as { pages?: { id: string; body?: string; reading?: Parameters<typeof knowledgeReadingMarkdown>[0] }[] })?.pages;
   if (!budgets?.length || !Array.isArray(pages)) return [];
   const limits = new Map(budgets.map(b => [b.id, b]));
@@ -69,7 +71,7 @@ export function knowledgeAnswerBudgetOverflow(answer: unknown, budgets: Knowledg
     if (chars <= limit.maxChars) return [];
     const ratio = Math.round(((chars - limit.maxChars) / limit.maxChars) * 1000) / 1000;
     return [{ id: page.id, headline: limit.headline, chars, maxChars: limit.maxChars, excess: chars - limit.maxChars, ratio,
-      path: knowledgeBudgetWithinTolerance(chars, limit.maxChars) ? "tolerated_to_compression" as const : "rejected_next_hop" as const }];
+      path: knowledgeBudgetWithinTolerance(chars, limit.maxChars, tolerance) ? "tolerated_to_compression" as const : "rejected_next_hop" as const }];
   });
 }
 const digest = (data: unknown) => createHash("sha256").update(JSON.stringify(data)).digest("hex");
@@ -714,12 +716,13 @@ export async function invokeKnowledgePublicationRoutes(
       traces.push({ route, model: String(output.modelVersion), state: "succeeded", status: response.status });
       normalized = { status: 200, text: JSON.stringify({ ...output, gateway: route, gatewayTrace: traces, ...(researchEvidence ? { research: researchEvidence } : {}),
         inputEvidence: { imageSources: images, imageInputCount: images.length, requestDigest, imageTokenReporting: "provider_specific" } }) };
-      const overflow = knowledgeAnswerBudgetOverflow(answer, request.pageBudgets);
+      const tolerance = request.budgetTolerance ?? KNOWLEDGE_BUDGET_TOLERANCE;
+      const overflow = knowledgeAnswerBudgetOverflow(answer, request.pageBudgets, tolerance);
       // 用户拍板 B：任一页超出 >容差才算写坏切下一跳；全部在容差内则收下，超出部分由上层篇幅压缩处理（回执记录每页比例与路径）。
-      if (overflow.some(o => o.path === "rejected_next_hop")) throw new KnowledgeBudgetOverflowError(`篇幅超出容差${Math.round(KNOWLEDGE_BUDGET_TOLERANCE * 100)}%：${overflow.map(o => `《${o.headline}》超${o.excess}字（${o.chars}/${o.maxChars}，${Math.round(o.ratio * 1000) / 10}%）`).join("；")}`, normalized, overflow.reduce((n, o) => n + o.excess, 0), overflow);
+      if (overflow.some(o => o.path === "rejected_next_hop")) throw new KnowledgeBudgetOverflowError(`篇幅超出容差${Math.round(tolerance * 100)}%：${overflow.map(o => `《${o.headline}》超${o.excess}字（${o.chars}/${o.maxChars}，${Math.round(o.ratio * 1000) / 10}%）`).join("；")}`, normalized, overflow.reduce((n, o) => n + o.excess, 0), overflow);
       if (overflow.length) {
         const envelope = JSON.parse(normalized.text);
-        envelope.budgetTolerated = { tolerance: KNOWLEDGE_BUDGET_TOLERANCE, route, pages: overflow };
+        envelope.budgetTolerated = { tolerance, route, pages: overflow };
         normalized = { status: 200, text: JSON.stringify(envelope) };
         receipt = { ...receipt, budgetTolerated: envelope.budgetTolerated };
         await evidence.save(key, receipt);
