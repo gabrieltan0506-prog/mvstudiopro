@@ -45,7 +45,16 @@ export type RunVideoEditInput = {
   aspectRatio?: string;
   /** 证据前缀（GCS 对象名，不含 gs://bucket/）；本次所有请求/回执/拒绝写在其下，只增不删。 */
   evidencePrefix: string;
+  /**
+   * 通道建单成功后立刻回调（轮询之前）：调用方把上游任务号落到任务行，供重启后只续查不重投。
+   * 回调失败不影响本次出片（任务号同时写在证据前缀的 upstream 记录里）。
+   */
+  onUpstreamSubmitted?: (handle: VideoEditUpstreamHandle) => Promise<void> | void;
+  /** 停机/超时信号：已中止时不再向下一通道提交（不可取消的付费单不在停机途中新建）。 */
+  signal?: AbortSignal;
 };
+
+export type VideoEditUpstreamHandle = { channel: VideoEditChannel; providerTaskId: string; submittedAt: string };
 
 export type VideoEditReceipt = { status: number; body: string };
 
@@ -198,6 +207,21 @@ export async function runVideoEditWithFallback(
   const recordReceipt = (channel: VideoEditChannel, phase: string, r: VideoEditReceipt) =>
     recordPair(channel, phase, r, { status: r.status, response: parseJson(r.body) });
 
+  // 建单成功即留任务号：先写证据（原始/解析分存），再回调调用方落任务行
+  const announceSubmitted = async (channel: VideoEditChannel, providerTaskId: string) => {
+    const handle: VideoEditUpstreamHandle = { channel, providerTaskId, submittedAt: new Date(deps.now()).toISOString() };
+    try {
+      await recordPair(channel, "upstream", handle, { ...handle, bucket });
+    } catch (e) {
+      console.error("[videoEdit] upstream handle evidence failed", channel, providerTaskId, e);
+    }
+    try {
+      await input.onUpstreamSubmitted?.(handle);
+    } catch (e) {
+      console.error("[videoEdit] onUpstreamSubmitted failed", channel, providerTaskId, e);
+    }
+  };
+
   const pollUntilDone = async (
     channel: VideoEditChannel,
     taskId: string,
@@ -281,6 +305,7 @@ export async function runVideoEditWithFallback(
       if (submitted) {
         attempt.providerTaskId = submitted.byteplusTaskId;
         attempt.upstreamCharged = true;
+        await announceSubmitted("byteplus", submitted.byteplusTaskId);
         const done = submitted.immediateSourceUrl
           ? { ok: true as const, sourceUrl: submitted.immediateSourceUrl }
           : await pollUntilDone("byteplus", submitted.byteplusTaskId, attempt);
@@ -302,6 +327,8 @@ export async function runVideoEditWithFallback(
   }
 
   // ── 2. EvoLink video-edit：duration=-1 与原段等长，可带参考图；提交后不可取消 ──
+  // 停机/超时途中不新建不可取消的付费单：此时本通道尚未提交，交由调用方按原口径留证
+  if (input.signal?.aborted) fail(`aborted before evolink submit (after ${fallbackReason})`);
   if (!deps.evolinkConfigured()) fail(`evolink not configured (after ${fallbackReason})`, VIDEO_EDIT_UNAVAILABLE_ZH);
   const evInput = {
     prompt: promptZh,
@@ -351,6 +378,7 @@ export async function runVideoEditWithFallback(
   }
   ev.providerTaskId = evSubmitted.evolinkTaskId;
   ev.upstreamCharged = true;
+  await announceSubmitted("evolink", evSubmitted.evolinkTaskId);
   const evDone = evSubmitted.immediateSourceUrl
     ? { ok: true as const, sourceUrl: evSubmitted.immediateSourceUrl }
     : await pollUntilDone("evolink", evSubmitted.evolinkTaskId, ev);

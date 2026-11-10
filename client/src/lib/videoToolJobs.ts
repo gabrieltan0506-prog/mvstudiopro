@@ -1,33 +1,49 @@
 /**
- * 画布视频块 / MV 成片「局部修改」「调色」在途任务：提交成功即把任务号记到块数据 / MV 草稿（随原有保存机制落盘），
+ * 画布视频块 / MV 成片「局部修改」「调色」在途任务：提交成功即把任务号记到块数据 / MV 草稿（随原有保存机制落盘，画布块另随云草稿往返），
+ * 画布局部修改在入队请求发出前先记「提交中」（只有 requestId），刷新后按 requestId 向服务端核对后补全或清除；
  * 挂载即按记录恢复轮询（同一个 getPostProdJob），完成按新版本写回（原片留在历史）、失败提示后清除；
  * 同一任务按 jobId 只落一次。另放两个面板的实测时长取法。本文件只放纯函数，组件里只做接线。
  */
 import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
-import { videoToolJobSchema, type VideoToolJob, type VideoToolJobKind } from "@shared/videoToolJob";
+import {
+  isVideoToolJobSubmitting,
+  sanitizeVideoToolJobRecords,
+  videoToolJobSchema,
+  videoToolJobSubmittingSchema,
+  type VideoToolJob,
+  type VideoToolJobKind,
+  type VideoToolJobRecord,
+  type VideoToolJobSubmitting,
+} from "@shared/videoToolJob";
 import { readVideoEditJob } from "@/lib/videoEditSubmit";
 import { probeVideoUpscaleSource, probeWorkflowVideoSource, type VideoUpscaleSourceMetadata } from "@/lib/videoUpscaleApi";
 
-export type { VideoToolJob, VideoToolJobKind };
+export type { VideoToolJob, VideoToolJobKind, VideoToolJobRecord, VideoToolJobSubmitting };
+export { isVideoToolJobSubmitting };
 
-/** 读块上的追踪记录：逐条校验，坏条目丢弃（旧档或手改不让轮询、渲染出错）；同 jobId 只留一条。 */
-export function readVideoToolJobs(raw: unknown): VideoToolJob[] {
-  if (!Array.isArray(raw)) return [];
-  const seen = new Set<string>();
-  const out: VideoToolJob[] = [];
-  for (const item of raw) {
-    const parsed = videoToolJobSchema.safeParse(item);
-    if (parsed.success && !seen.has(parsed.data.jobId)) {
-      seen.add(parsed.data.jobId);
-      out.push(parsed.data);
-    }
-  }
-  return out;
+/** 块上全部在途记录（已入队 + 局部修改提交中）：与云草稿同一校验，坏条目丢弃。 */
+export function readVideoToolJobRecords(raw: unknown): VideoToolJobRecord[] {
+  return sanitizeVideoToolJobRecords(raw);
 }
 
-/** 该类任务是否仍在处理（同块同类只允许一条在途，防重复提交）。 */
-export function pendingVideoToolJob(raw: unknown, kind: VideoToolJobKind): VideoToolJob | undefined {
-  return readVideoToolJobs(raw).find(j => j.kind === kind);
+/** 读块上已入队的追踪记录：逐条校验，坏条目丢弃（旧档或手改不让轮询、渲染出错）；同 jobId 只留一条。 */
+export function readVideoToolJobs(raw: unknown): VideoToolJob[] {
+  return readVideoToolJobRecords(raw).filter((r): r is VideoToolJob => !isVideoToolJobSubmitting(r));
+}
+
+/** 块上「提交中」的局部修改（只有 requestId，待按 requestId 核对）。 */
+export function readSubmittingVideoToolJobs(raw: unknown): VideoToolJobSubmitting[] {
+  return readVideoToolJobRecords(raw).filter(isVideoToolJobSubmitting);
+}
+
+/** 该类任务是否仍在处理（含提交中；同块同类只允许一条在途，防重复提交）。 */
+export function pendingVideoToolJob(raw: unknown, kind: VideoToolJobKind): VideoToolJobRecord | undefined {
+  return readVideoToolJobRecords(raw).find(j => j.kind === kind);
+}
+
+/** 轮询键：已入队按 jobId，提交中按 requestId。 */
+export function videoToolJobKey(r: VideoToolJobRecord): string {
+  return isVideoToolJobSubmitting(r) ? `submitting:${r.requestId}` : r.jobId;
 }
 
 /** 组一条追踪记录（提交成功那一刻）；字段不合法返回 null，调用方不写坏档。 */
@@ -50,16 +66,96 @@ export function buildVideoToolJob(input: {
   return parsed.success ? parsed.data : null;
 }
 
-/** 追加一条（同 jobId 不重复记）。 */
-export function addVideoToolJob(raw: unknown, job: VideoToolJob): VideoToolJob[] {
-  const list = readVideoToolJobs(raw);
-  return list.some(j => j.jobId === job.jobId) ? list : [...list, job];
+/** 组一条局部修改「提交中」（入队请求发出前）；不合法返回 null。 */
+export function buildSubmittingVideoToolJob(input: {
+  requestId: string;
+  sourceUrl: string;
+  range?: { startSec: number; endSec: number };
+  now?: Date;
+}): VideoToolJobSubmitting | null {
+  const parsed = videoToolJobSubmittingSchema.safeParse({
+    kind: "edit",
+    status: "submitting",
+    requestId: input.requestId,
+    startedAt: (input.now ?? new Date()).toISOString(),
+    sourceUrl: input.sourceUrl,
+    ...(input.range ? { range: { startSec: input.range.startSec, endSec: input.range.endSec } } : {}),
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+/** 追加一条已入队记录（同 jobId 不重复记）；同 requestId 的「提交中」就地补全为这条，不另加。 */
+export function addVideoToolJob(raw: unknown, job: VideoToolJob): VideoToolJobRecord[] {
+  const list = readVideoToolJobRecords(raw);
+  if (list.some(j => !isVideoToolJobSubmitting(j) && j.jobId === job.jobId)) return list;
+  const at = list.findIndex(j => isVideoToolJobSubmitting(j) && j.kind === job.kind && j.requestId === job.requestId);
+  return at < 0 ? sanitizeVideoToolJobRecords([...list, job]) : list.map((j, i) => (i === at ? job : j));
+}
+
+/** 记 / 刷新「提交中」：同 requestId 已入队则不动；同 requestId 重试只刷新发起时间，不另加。 */
+export function upsertSubmittingVideoToolJob(raw: unknown, pending: VideoToolJobSubmitting): VideoToolJobRecord[] {
+  const list = readVideoToolJobRecords(raw);
+  if (list.some(j => j.kind === "edit" && j.requestId === pending.requestId && !isVideoToolJobSubmitting(j))) return list;
+  const at = list.findIndex(j => isVideoToolJobSubmitting(j) && j.requestId === pending.requestId);
+  return at < 0 ? sanitizeVideoToolJobRecords([...list, pending]) : list.map((j, i) => (i === at ? pending : j));
+}
+
+/** 清掉某条「提交中」；notAfter 给定时只清发起时间不晚于它的（被拒后用户已用同一 requestId 重试的不清）。清空返回 undefined。 */
+export function removeSubmittingVideoToolJob(raw: unknown, requestId: string, notAfter?: number): VideoToolJobRecord[] | undefined {
+  const rest = readVideoToolJobRecords(raw).filter(
+    j => !(isVideoToolJobSubmitting(j) && j.requestId === requestId && (notAfter == null || !(Date.parse(j.startedAt) > notAfter)))
+  );
+  return rest.length ? rest : undefined;
 }
 
 /** 清掉某任务的追踪；清空后返回 undefined（块上不留空数组）。 */
-export function removeVideoToolJob(raw: unknown, jobId: string): VideoToolJob[] | undefined {
-  const rest = readVideoToolJobs(raw).filter(j => j.jobId !== jobId);
+export function removeVideoToolJob(raw: unknown, jobId: string): VideoToolJobRecord[] | undefined {
+  const rest = readVideoToolJobRecords(raw).filter(j => isVideoToolJobSubmitting(j) || j.jobId !== jobId);
   return rest.length ? rest : undefined;
+}
+
+/**
+ * 「提交中」多久查不到才算没提交成功：服务端受理（核验原片、实测、扣费、建任务）通常几十秒内完成，
+ * 留足余量（含换设备时钟差）；之前查不到一律按可能仍在受理继续查，不提前放掉已扣费的任务。
+ */
+export const VIDEO_TOOL_SUBMIT_GRACE_MS = 3 * 60_000;
+
+/** 按 requestId 查到的任务回执里取任务号（getPostProdJob 同形）。 */
+export function readFoundVideoToolJobId(data: unknown): string {
+  const jobId = (data as { jobId?: unknown } | null)?.jobId;
+  return typeof jobId === "string" ? jobId.trim() : "";
+}
+
+/**
+ * 「提交中」核对一轮：按 requestId 查服务端任务（局部修改任务号由 requestId 决定性派生）。
+ * 查到 → onFound(任务号)，调用方补全成已入队记录，之后按任务号正常轮询；
+ * 服务端明确「不存在」且已过宽限 → onMissing（没提交成功，清掉）；未过宽限或其余查询失败按瞬态，下一轮再查。
+ */
+export async function resolveSubmittingVideoToolJobsOnce<J extends VideoToolJobSubmitting>(input: {
+  jobs: readonly J[];
+  findByRequest: (requestId: string) => Promise<unknown>;
+  onFound: (job: J, jobId: string) => void;
+  onMissing: (job: J) => void;
+  now?: () => number;
+  graceMs?: number;
+  isCancelled?: () => boolean;
+}): Promise<void> {
+  const grace = input.graceMs ?? VIDEO_TOOL_SUBMIT_GRACE_MS;
+  for (const job of input.jobs) {
+    if (input.isCancelled?.()) return;
+    let data: unknown;
+    try {
+      data = await input.findByRequest(job.requestId);
+    } catch (error) {
+      if (input.isCancelled?.()) return;
+      const age = (input.now ?? Date.now)() - Date.parse(job.startedAt);
+      if (isPostProdJobNotFound(error) && !(age <= grace)) input.onMissing(job);
+      continue;
+    }
+    if (input.isCancelled?.()) return;
+    const jobId = readFoundVideoToolJobId(data);
+    if (jobId) input.onFound(job, jobId);
+  }
 }
 
 export type VideoToolJobResult = {

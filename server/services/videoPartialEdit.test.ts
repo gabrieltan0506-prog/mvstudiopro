@@ -162,3 +162,20 @@ describe("worker：通道回落、拼回、退款", () => {
     expect(deps.refund).toHaveBeenCalled();
   });
 });
+
+describe("按 requestId 查任务（只读续查）", () => {
+  it("同用户同 requestId 派生同一任务号：查到返回该任务；别人的 / 不存在的返回空；不扣费不入队", async () => {
+    const { findVideoPartialEditJobByRequest } = await import("./videoPartialEdit");
+    const deps = queueDeps();
+    await queueVideoPartialEdit(USER, false, request(), deps);
+    vi.mocked(deps.deduct).mockClear();
+    const row = await findVideoPartialEditJobByRequest(USER, REQ, deps.load);
+    expect(row?.id).toBe(videoPartialEditTaskId(USER, REQ));
+    expect(await findVideoPartialEditJobByRequest("43", REQ, deps.load)).toBeNull();
+    expect(await findVideoPartialEditJobByRequest(USER, "99999999-2222-4333-8444-555555555555", deps.load)).toBeNull();
+    deps.rows.set(videoPartialEditTaskId(USER, REQ), { ...deps.rows.get(videoPartialEditTaskId(USER, REQ)), type: "media_work" });
+    expect(await findVideoPartialEditJobByRequest(USER, REQ, deps.load)).toBeNull();
+    expect(deps.deduct).not.toHaveBeenCalled();
+    expect(deps.insert).toHaveBeenCalledTimes(1);
+  });
+});

@@ -488,6 +488,11 @@ export const adviseMontageGradeInputSchema = z
     aspect: z.enum(["9:16", "16:9", "1:1"]).optional(),
     storyZh: z.string().max(8000).optional(),
     seamSecs: z.array(z.number().finite().min(0)).max(40).optional(),
+    /** 已知转场：atSec = 转场中点（成片绝对秒），durationSec = 转场时长。 */
+    transitions: z
+      .array(z.object({ atSec: z.number().finite().min(0).max(600), durationSec: z.number().finite().min(0).max(10) }).strict())
+      .max(40)
+      .optional(),
   })
   .strict();
 

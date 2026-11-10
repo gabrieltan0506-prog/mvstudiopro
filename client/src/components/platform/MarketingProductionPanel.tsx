@@ -101,12 +101,15 @@ export function MarketingProductionPanel({
   userKey,
   onAdvisorVideoEditControl,
   advisorTarget = { id: "marketing-final", label: "营销成片" },
+  onDraftIdChange,
 }: {
   userKey: string;
   /** 顾问 videoEdit 登记口：清单为已导出且读到时长的营销成片，prefill 打开「局部修改」并预填；报价与提交仍须用户在面板确认。 */
   onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
   /** 顾问清单里营销成片的 targetId 与名称（同页多处挂载时须各自唯一）。 */
   advisorTarget?: AdvisorVideoTarget;
+  /** 当前制作稿编号回报给页面（页面顾问按此作品核对与计数额度）；新建制作稿即回报新编号。 */
+  onDraftIdChange?: (draftId: string) => void;
 }) {
   // 直接读与营销方案面板同一份查询（共用缓存，不多发请求），不再经父页状态回写：
   // 线上验收发现子组件挂载时回写父页状态会导致方案卡片 DOM 残留重复。
@@ -114,6 +117,9 @@ export function MarketingProductionPanel({
   const seedMarkdown = latestPlan.data ? publicMarketingPlan(latestPlan.data.result).steps.integrated.text || "" : "";
   const [draft, setDraft] = useState<MarketingProductionDraft>(() => loadDraft(userKey));
   const ref = useRef(draft);
+  const draftIdReport = useRef(onDraftIdChange);
+  draftIdReport.current = onDraftIdChange;
+  useEffect(() => { draftIdReport.current?.(draft.draftId); }, [draft.draftId]);
   const [message, setMessage] = useState("");
   const [drawerSegmentId, setDrawerSegmentId] = useState<string | null>(null);
   const [prefetch, setPrefetch] = useState<Record<string, Prefetch>>({});

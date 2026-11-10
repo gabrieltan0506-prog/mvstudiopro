@@ -77,6 +77,8 @@ import { PlatformStructuredPersonaForm } from "@/components/platform/PlatformStr
 import { MarketingPlanPanel } from "@/components/platform/MarketingPlanPanel";
 import { MarketingOfferPanel } from "@/components/platform/MarketingOfferPanel";
 import { MarketingProductionPanel } from "@/components/platform/MarketingProductionPanel";
+import VideoEditOnlyAdvisor from "@/components/canvas/VideoEditOnlyAdvisor";
+import { createAdvisorVideoEditHub } from "@/lib/advisorVideoEditControl";
 import { formatOptimizationAdvice } from "@shared/marketingOffer";
 import { PlatformPersonaPolishPanel } from "@/components/platform/PlatformPersonaPolishPanel";
 import {
@@ -3325,6 +3327,10 @@ export default function PlatformPage() {
   const workbenchUserKey = !loading && user?.id != null ? String(user.id) : null;
   const workbenchStorageReady = Boolean(workbenchUserKey);
   const [topicDigestTarget, setTopicDigestTarget] = useState(() => readTopicDigestLocation(window.location.search));
+  /** 营销成片顾问：「局部修改」入口经此汇总登记（只预填打开面板）；制作稿编号由制作稿面板回报，额度按该稿计。 */
+  const marketingAdvisorHub = useMemo(() => createAdvisorVideoEditHub(), []);
+  const [marketingDraft, setMarketingDraft] = useState<{ userKey: string; draftId: string } | null>(null);
+  const marketingDraftId = marketingDraft && marketingDraft.userKey === workbenchUserKey ? marketingDraft.draftId : undefined;
 
   useEffect(() => {
     if (!workbenchStorageReady || !workbenchUserKey) {
@@ -5322,7 +5328,16 @@ export default function PlatformPage() {
       }} />
       {/* 兄弟节点 key 不能与上方 MarketingPlanPanel（key=用户 id）相同：重复 key 会让 React 按 key 错配，
           每次重渲染都新建方案面板却不删旧 DOM（线上出现 6–11 份「从需求到营销推广方案」卡片）。 */}
-      {workbenchUserKey && <MarketingProductionPanel key={`marketing-production:${workbenchUserKey}`} userKey={workbenchUserKey} />}
+      {workbenchUserKey && <MarketingProductionPanel key={`marketing-production:${workbenchUserKey}`} userKey={workbenchUserKey}
+        onAdvisorVideoEditControl={marketingAdvisorHub.register("marketing-final")}
+        onDraftIdChange={draftId => setMarketingDraft(prev => prev?.userKey === workbenchUserKey && prev.draftId === draftId ? prev : { userKey: workbenchUserKey, draftId })} />}
+      {workbenchUserKey && marketingDraftId && <div className="mt-2 flex flex-wrap items-center gap-2">
+        <VideoEditOnlyAdvisor key={`marketing-advisor:${workbenchUserKey}:${marketingDraftId}`} hub={marketingAdvisorHub} userId={workbenchUserKey}
+          work={{ kind: "marketing", projectId: marketingDraftId, title: "营销成片", stageZh: "营销成片" }}
+          buttonLabel="创作顾问 · 用一句话改营销成片" buttonClassName="rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-40"
+          hint="导出成片后可用：顾问只帮你打开「局部修改」并填好区间与要求，报价、确认与提交仍由你在面板操作。"
+          hintClassName="text-xs text-slate-400" />
+      </div>}
       <details className="text-sm text-slate-300"><summary className="cursor-pointer py-2">需要帮助整理需求？</summary>
       <PlatformPersonaPolishPanel
         id="platform-persona-polish"

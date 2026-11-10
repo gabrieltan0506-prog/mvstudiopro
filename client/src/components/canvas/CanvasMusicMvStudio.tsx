@@ -70,10 +70,23 @@ import { planMvHighlightFades } from "@shared/canvasMusicMvLyricKinds";
 import { recommendMusicMvHighlight } from "@shared/musicMvHighlight";
 import { CanvasMvShotReferencePicker } from "./CanvasMvShotReferencePicker";
 import type { CanvasMusicMvFinalEdit, CanvasMusicMvFinalEditJob, CanvasMusicMvFinalGrade, CanvasMusicMvFinalUpscale } from "@shared/canvasMusicMv";
-import { canvasMusicMvFinalEditJobSchema, capMvFinalRecords, MV_FINAL_EDIT_JOBS_MAX, MV_FINAL_RECORDS_MAX } from "@shared/canvasMusicMv";
 import {
+  addMvFinalEditJob,
+  canvasMusicMvFinalEditJobSchema,
+  canvasMusicMvFinalEditSubmittingSchema,
+  capMvFinalRecords,
+  isMvFinalEditSubmitting,
+  MV_FINAL_EDIT_JOBS_MAX,
+  MV_FINAL_RECORDS_MAX,
+  removeMvFinalEditSubmitting,
+  upsertMvFinalEditSubmitting,
+} from "@shared/canvasMusicMv";
+import {
+  isPostProdJobNotFound,
   measuredExactSec,
   pollVideoToolJobsOnce,
+  readFoundVideoToolJobId,
+  resolveSubmittingVideoToolJobsOnce,
   videoGradePanelSec,
   type VideoToolJobSettled,
 } from "@/lib/videoToolJobs";
@@ -1169,22 +1182,78 @@ export function CanvasMusicMvStudio({
     }));
     return () => register(null);
   }, [advisorVideoEditHub]); // eslint-disable-line react-hooks/exhaustive-deps
-  /** 局部修改提交成功（面板 onSubmitted）：任务号、请求号、发起时间、实际区间记到 MV 草稿（随块保存），刷新后由轮询接管。 */
-  const trackFinalEdit = (finalId: string, sourceUrl: string, job: { jobId: string; requestId: string; startSec: number; endSec: number }) => {
+  /**
+   * 局部修改提交成功（面板 onSubmitted，或「提交中」按 requestId 查到任务号）：任务号、请求号、发起时间、实际区间记到 MV 草稿
+   *（随块保存），刷新后由轮询接管；同 requestId 的「提交中」就地补全为这条。
+   */
+  const trackFinalEdit = (finalId: string, sourceUrl: string, job: { jobId: string; requestId: string; startSec: number; endSec: number; startedAt?: string }) => {
     const list = latest.current.finalEditJobs || [];
-    if (list.some(t => t.jobId === job.jobId) || (latest.current.finalEdits || []).some(r => r.jobId === job.jobId)) return;
+    const settled = (latest.current.finalEdits || []).some(r => r.jobId === job.jobId);
+    if (settled || list.some(t => !isMvFinalEditSubmitting(t) && t.jobId === job.jobId)) {
+      // 结果已落过：只把同请求残留的「提交中」清掉
+      if (settled && list.some(t => isMvFinalEditSubmitting(t) && t.requestId === job.requestId)) {
+        const rest = removeMvFinalEditSubmitting(list, job.requestId);
+        patch({ finalEditJobs: rest.length ? rest : undefined });
+      }
+      return;
+    }
     const parsed = canvasMusicMvFinalEditJobSchema.safeParse({
       kind: "edit",
       jobId: job.jobId,
       requestId: job.requestId,
-      startedAt: new Date().toISOString(),
+      startedAt: job.startedAt || new Date().toISOString(),
       sourceUrl,
       range: { startSec: job.startSec, endSec: job.endSec },
       finalBlockId: finalId,
     });
-    // 不合法或超上限不写（坏档会让整块草稿读不回来）；本次挂载内面板自己仍在等结果
-    if (!parsed.success || list.length >= MV_FINAL_EDIT_JOBS_MAX) return;
-    patch({ finalEditJobs: [...list, parsed.data] });
+    // 不合法或超上限不写（坏档会让整块草稿读不回来）；本次挂载内面板自己仍在等结果。补全「提交中」不增条数，不受上限拦
+    if (!parsed.success) return;
+    const replaces = list.some(t => isMvFinalEditSubmitting(t) && t.requestId === job.requestId);
+    if (!replaces && list.length >= MV_FINAL_EDIT_JOBS_MAX) return;
+    patch({ finalEditJobs: addMvFinalEditJob(list, parsed.data) });
+  };
+  /** 「提交中」补全为已入队（按 requestId 查到任务号）：沿用提交中记下的成片、区间与发起时间，之后按任务号正常轮询。 */
+  const confirmFinalEditSubmitting = (requestId: string, jobId: string) => {
+    const pending = (latest.current.finalEditJobs || []).find(t => isMvFinalEditSubmitting(t) && t.requestId === requestId);
+    if (!pending) return;
+    trackFinalEdit(pending.finalBlockId, pending.sourceUrl, { jobId, requestId, startSec: pending.range.startSec, endSec: pending.range.endSec, startedAt: pending.startedAt });
+  };
+  /**
+   * 局部修改面板 onSubmitting：入队请求发出前以 requestId 先记「提交中」（随 MV 草稿保存，刷新后按 requestId 续查）；
+   * 服务端已回拒绝时按 requestId 核对一次：查到任务就补全，确无任务才清（之后用同一 requestId 重试过的不清）。
+   */
+  const trackFinalEditSubmitting = (finalId: string, sourceUrl: string, p: { requestId: string; startSec: number; endSec: number; phase: "sending" | "rejected" }) => {
+    if (p.phase === "rejected") {
+      const rejectedAt = Date.now();
+      void utils.mvAnalysis.findVideoPartialEditJob.fetch({ requestId: p.requestId }).then(
+        data => {
+          if (!alive.current) return;
+          const jobId = readFoundVideoToolJobId(data);
+          if (jobId) confirmFinalEditSubmitting(p.requestId, jobId);
+        },
+        error => {
+          if (!alive.current || !isPostProdJobNotFound(error)) return;
+          const list = latest.current.finalEditJobs || [];
+          const rest = removeMvFinalEditSubmitting(list, p.requestId, rejectedAt);
+          if (rest.length !== list.length) patch({ finalEditJobs: rest.length ? rest : undefined });
+        }
+      );
+      return;
+    }
+    const list = latest.current.finalEditJobs || [];
+    const parsed = canvasMusicMvFinalEditSubmittingSchema.safeParse({
+      kind: "edit",
+      status: "submitting",
+      requestId: p.requestId,
+      startedAt: new Date().toISOString(),
+      sourceUrl,
+      range: { startSec: p.startSec, endSec: p.endSec },
+      finalBlockId: finalId,
+    });
+    if (!parsed.success) return;
+    const known = list.some(t => t.requestId === p.requestId);
+    if (!known && list.length >= MV_FINAL_EDIT_JOBS_MAX) return;
+    patch({ finalEditJobs: upsertMvFinalEditSubmitting(list, parsed.data) });
   };
   /**
    * 局部修改完成：记录随 MV 块保存（同任务号只记一次），并在成片旁挂「局部修改版」版本块（块号按任务号定，
@@ -1194,7 +1263,7 @@ export function CanvasMusicMvStudio({
     const url = String(result?.url || "").trim();
     if (!result?.jobId) return;
     const pending = latest.current.finalEditJobs || [];
-    const rest = pending.filter(t => t.jobId !== result.jobId);
+    const rest = pending.filter(t => isMvFinalEditSubmitting(t) || t.jobId !== result.jobId);
     const clearPending = rest.length !== pending.length ? { finalEditJobs: rest.length ? rest : undefined } : {};
     if (!/^https:\/\//i.test(url) || (latest.current.finalEdits || []).some(r => r.jobId === result.jobId)) {
       if (rest.length !== pending.length) patch(clearPending);
@@ -1247,24 +1316,43 @@ export function CanvasMusicMvStudio({
       return;
     }
     const pending = latest.current.finalEditJobs || [];
-    if (!pending.some(t => t.jobId === job.jobId)) return;
-    const rest = pending.filter(t => t.jobId !== job.jobId);
+    if (!pending.some(t => !isMvFinalEditSubmitting(t) && t.jobId === job.jobId)) return;
+    const rest = pending.filter(t => isMvFinalEditSubmitting(t) || t.jobId !== job.jobId);
     // 原因写进 MV 的提示条（随草稿保存，schema 上限 2000 字），刷新后仍能看到这次未成功的原因
     patch({ finalEditJobs: rest.length ? rest : undefined, error: outcome.message.slice(0, 2000) });
   };
   /** 轮询一轮（挂载即跑，刷新恢复就是这一轮）：按 MV 草稿里的在途记录查后期任务，终态落定。 */
   const pollFinalEditJobs = (isCancelled: () => boolean) =>
     pollVideoToolJobsOnce({
-      jobs: latest.current.finalEditJobs || [],
+      jobs: (latest.current.finalEditJobs || []).filter((t): t is CanvasMusicMvFinalEditJob => !isMvFinalEditSubmitting(t)),
       fetchJob: jobId => utils.mvAnalysis.getPostProdJob.fetch({ jobId }),
       isCancelled: () => isCancelled() || !alive.current,
       onSettled: settleFinalEditJob,
     });
+  /**
+   * 「提交中」核对一轮（挂载即跑）：按 requestId 查到任务号就补全、转入上面的按任务号轮询；
+   * 过了宽限仍查不到（请求没发出去或服务端未受理）才清掉并提示，可重新发起。
+   */
+  const resolveFinalEditSubmitting = (isCancelled: () => boolean) =>
+    resolveSubmittingVideoToolJobsOnce({
+      jobs: (latest.current.finalEditJobs || []).filter(isMvFinalEditSubmitting),
+      findByRequest: requestId => utils.mvAnalysis.findVideoPartialEditJob.fetch({ requestId }),
+      isCancelled: () => isCancelled() || !alive.current,
+      onFound: (job, jobId) => confirmFinalEditSubmitting(job.requestId, jobId),
+      onMissing: job => {
+        const list = latest.current.finalEditJobs || [];
+        const rest = removeMvFinalEditSubmitting(list, job.requestId, Date.parse(job.startedAt));
+        if (rest.length === list.length) return;
+        patch({ finalEditJobs: rest.length ? rest : undefined, error: "这次局部修改没有提交成功，未生成新版本，可重新发起" });
+      },
+    });
   // 轮询长期挂着：落定时要用最新一次渲染的 onAdd / 画布连线，不能用定时器建立那次的旧闭包
   const pollFinalEditJobsRef = useRef(pollFinalEditJobs);
   pollFinalEditJobsRef.current = pollFinalEditJobs;
+  const resolveFinalEditSubmittingRef = useRef(resolveFinalEditSubmitting);
+  resolveFinalEditSubmittingRef.current = resolveFinalEditSubmitting;
   // 局部修改在途任务轮询（刷新恢复：记录随 MV 块保存，挂载即接管）；同调色轮询的写法与间隔。
-  const finalEditJobKey = (state.finalEditJobs || []).map(t => t.jobId).join(",");
+  const finalEditJobKey = (state.finalEditJobs || []).map(t => (isMvFinalEditSubmitting(t) ? `submitting:${t.requestId}` : t.jobId)).join(",");
   useEffect(() => {
     if (!finalEditJobKey) return;
     let cancelled = false;
@@ -1274,6 +1362,7 @@ export function CanvasMusicMvStudio({
       inFlight = true;
       try {
         await pollFinalEditJobsRef.current(() => cancelled);
+        await resolveFinalEditSubmittingRef.current(() => cancelled);
       } finally {
         inFlight = false;
       }
@@ -2392,15 +2481,16 @@ export function CanvasMusicMvStudio({
                       previewUrl={finalSource}
                       prefill={finalEditPrefill}
                       onAdvisorPrefillGuard={finalEditGuard.register}
+                      onSubmitting={p => trackFinalEditSubmitting(state.finalBlockId!, finalSource, p)}
                       onSubmitted={job => trackFinalEdit(state.finalBlockId!, finalSource, job)}
                       onDone={result => applyFinalEdit(state.finalBlockId!, finalSource, result)}
                     />
                   </div>
                 )}
                 {(state.finalEditJobs || []).map(t => (
-                  <div key={t.jobId} className="flex flex-wrap items-center gap-2 text-xs" data-mv-final-edit-pending>
+                  <div key={isMvFinalEditSubmitting(t) ? `submitting:${t.requestId}` : t.jobId} className="flex flex-wrap items-center gap-2 text-xs" data-mv-final-edit-pending>
                     <span>
-                      局部修改{t.finalBlockId !== state.finalBlockId ? "（旧成片）" : ""} · 处理中 · {t.range.startSec.toFixed(1)}–{t.range.endSec.toFixed(1)}秒
+                      局部修改{t.finalBlockId !== state.finalBlockId ? "（旧成片）" : ""} · {isMvFinalEditSubmitting(t) ? "提交中" : "处理中"} · {t.range.startSec.toFixed(1)}–{t.range.endSec.toFixed(1)}秒
                     </span>
                     <span className="text-white/60">完成后作为新版本放在成片旁，原成片保留</span>
                   </div>

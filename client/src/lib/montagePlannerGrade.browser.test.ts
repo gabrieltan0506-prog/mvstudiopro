@@ -263,7 +263,9 @@ it("调色与转场：选预设+转场→采用→onSubmit 带 grade/transition�
     const check = await page.$eval('[aria-label="接点检查结果"]', n => n.textContent);
     expect(check).toContain("有接点未达标");
     expect(await page.$eval('[aria-label="接点1"]', n => n.textContent)).toMatch(/1\.2秒.*亮度差1\.5.*饱和差2\.1.*达标/);
-    expect(await page.$eval('[aria-label="接点2"]', n => n.textContent)).toMatch(/2\.3秒.*亮度差6\.2.*未达标 · 已自动修正/);
+    // 未达标接点醒目标出：哪一秒、差多少、怎么办；排在达标接点之前
+    expect(await page.$eval('[aria-label="接点2"]', n => n.textContent)).toMatch(/2\.3秒.*不该跳 · 自动修正后仍未修平.*亮度变亮 6\.2（允许 5）.*调大「段间过渡秒数」/);
+    expect(await page.$$eval('[aria-label="接点检查结果"] [aria-label^="接点"]', n => n.map(x => x.getAttribute("aria-label")))).toEqual(["接点2", "接点1"]);
     const adviceText = await page.$eval('[data-testid="montage-grade-advice"]', n => n.textContent);
     expect(adviceText).toContain("AI 调色建议");
     expect(adviceText).not.toMatch(/Gemini|Flash/);

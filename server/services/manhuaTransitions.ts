@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildConcatGradeFilters, fetchPostProdSourceToFile, gradeEvidencePrefix, makeGradeFilterBuilder, measureJunctionConsistency, runMediaTool, segmentGradeGraph, uploadResult, type PostProdRunOptions } from "./postProduction";
-import { planGradeSegments } from "../../shared/colorGrade";
+import { buildJunctionWarnings, planGradeSegments } from "../../shared/colorGrade";
 import { uploadBufferToGcs } from "./gcs";
 import { parseVfxVideoProbe } from "./manhuaVfxRender";
 import { concatParamsSchema, type ConcatParams } from "../jobs/postProdInput";
@@ -77,7 +77,10 @@ export async function renderManhuaTransitions(input: ConcatParams, userId: strin
     const meta=await probe(out,"output");
     if(meta.width!==input.width||meta.height!==input.height||!meta.hasAudio||Math.abs(meta.durationSec-plan.durationSec)>1/input.fps+.001)
       throw new Error("转场成片画幅、音轨或时长不一致，未采用结果");
-    const gradeSegmentCheck=spans?{mode:"junctions" as const,spans,check:await measureJunctionConsistency(spans,userId,signal,{outPath:out,run:(c,a,s)=>deps.run(c,a,s),upload:deps.upload},`${gradeEvidencePrefix(userId)}/pass-1`)}:undefined;
+    const segSpans=spans as ReturnType<typeof planGradeSegments>|null;
+    const segCheck=segSpans?await measureJunctionConsistency(segSpans,userId,signal,{outPath:out,run:(c,a,s)=>deps.run(c,a,s),upload:deps.upload},`${gradeEvidencePrefix(userId)}/pass-1`):null;
+    // 转场路径不做接点自动修正：未达标的 unwanted 接点照样给结构化警告（reason=not_attempted），不静默交付。
+    const gradeSegmentCheck=segSpans&&segCheck?{mode:"junctions" as const,spans:segSpans,check:segCheck,warnings:buildJunctionWarnings(segSpans,segCheck)}:undefined;
     const uploaded=await deps.result({filePath:out,userId,kind:"concat",ext:"mp4",contentType:"video/mp4",signal});
     const result={...uploaded,durationSec:meta.durationSec,clipCount:input.clips.length,transition:input.transition,evidence,...(gradeSegmentCheck?{gradeSegmentCheck}:{})};
     await save("result.json",Buffer.from(JSON.stringify(result)));return result;

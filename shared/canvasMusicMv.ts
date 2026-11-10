@@ -5,7 +5,7 @@ import { creativeLearningSessionSchema } from "./creativeGenerationLibrary";
 import { musicEmotionTurnSchema, musicEmotionArcSchema } from "./musicEmotion";
 import { z } from "zod";
 import { concatGradeSchema } from "./colorGrade";
-import { videoToolJobRangeSchema, videoToolJobSchema } from "./videoToolJob";
+import { videoToolJobRangeSchema, videoToolJobSchema, videoToolJobSubmittingSchema } from "./videoToolJob";
 import { creativeEvidenceReviewSchema } from "./creativeEvidenceReview";
 import { musicMvEditSessionSchema } from "./canvasMusicMvEdit";
 import { songOperationSessionSchema, songAlignedWordSchema } from "./songOperations";
@@ -778,6 +778,74 @@ export const canvasMusicMvFinalEditJobSchema = videoToolJobSchema
 export type CanvasMusicMvFinalEditJob = z.infer<typeof canvasMusicMvFinalEditJobSchema>;
 export const MV_FINAL_EDIT_JOBS_MAX = 20;
 
+/**
+ * 成片局部修改「提交中」：入队请求发出前先以 requestId 记一条（可能已扣费、还没拿到任务号），
+ * 刷新后按 requestId 向服务端核对（任务号由 requestId 决定性派生）：查到补全成在途任务，确认没有这次任务才清除。
+ */
+export const canvasMusicMvFinalEditSubmittingSchema = videoToolJobSubmittingSchema
+  .extend({ finalBlockId: text.max(200), range: videoToolJobRangeSchema })
+  .strict();
+export type CanvasMusicMvFinalEditSubmitting = z.infer<typeof canvasMusicMvFinalEditSubmittingSchema>;
+/** finalEditJobs 的一条：已入队（有任务号，旧草稿只有这一种）或提交中（只有 requestId）。 */
+export type CanvasMusicMvFinalEditJobRecord = CanvasMusicMvFinalEditJob | CanvasMusicMvFinalEditSubmitting;
+
+export const isMvFinalEditSubmitting = (r: CanvasMusicMvFinalEditJobRecord): r is CanvasMusicMvFinalEditSubmitting =>
+  (r as { status?: unknown }).status === "submitting";
+
+/**
+ * 读 / 写 finalEditJobs（宽进严出）：逐条校验，坏条目丢弃、不让整块 MV 草稿判为坏档；旧草稿（只有已入队记录）原样可读。
+ * 同任务号只留一条；同 requestId 的提交中只留一条，已有任务号的同请求压过提交中；超限只截留最新的 MV_FINAL_EDIT_JOBS_MAX 条。
+ */
+export function sanitizeMvFinalEditJobRecords(raw: unknown): CanvasMusicMvFinalEditJobRecord[] {
+  if (!Array.isArray(raw)) return [];
+  const jobIds = new Set<string>();
+  const queuedRequests = new Set<string>();
+  const submittingRequests = new Set<string>();
+  const out: CanvasMusicMvFinalEditJobRecord[] = [];
+  for (const item of raw) {
+    const job = canvasMusicMvFinalEditJobSchema.safeParse(item);
+    if (job.success) {
+      if (jobIds.has(job.data.jobId)) continue;
+      jobIds.add(job.data.jobId);
+      queuedRequests.add(job.data.requestId);
+      out.push(job.data);
+      continue;
+    }
+    const pending = canvasMusicMvFinalEditSubmittingSchema.safeParse(item);
+    if (pending.success && !submittingRequests.has(pending.data.requestId)) {
+      submittingRequests.add(pending.data.requestId);
+      out.push(pending.data);
+    }
+  }
+  const kept = out.filter(r => !isMvFinalEditSubmitting(r) || !queuedRequests.has(r.requestId));
+  if (kept.length <= MV_FINAL_EDIT_JOBS_MAX) return kept;
+  console.warn(`[canvasMusicMv] finalEditJobs 共 ${kept.length} 条，超过上限 ${MV_FINAL_EDIT_JOBS_MAX}，只保留最新 ${MV_FINAL_EDIT_JOBS_MAX} 条`);
+  return kept.slice(-MV_FINAL_EDIT_JOBS_MAX);
+}
+
+/** 记 / 刷新「提交中」：同 requestId 已入队则不动；同 requestId 重试只刷新这一条，不另加。 */
+export function upsertMvFinalEditSubmitting(raw: unknown, pending: CanvasMusicMvFinalEditSubmitting): CanvasMusicMvFinalEditJobRecord[] {
+  const list = sanitizeMvFinalEditJobRecords(raw);
+  if (list.some(r => !isMvFinalEditSubmitting(r) && r.requestId === pending.requestId)) return list;
+  const at = list.findIndex(r => isMvFinalEditSubmitting(r) && r.requestId === pending.requestId);
+  return at < 0 ? sanitizeMvFinalEditJobRecords([...list, pending]) : list.map((r, i) => (i === at ? pending : r));
+}
+
+/** 记一条已入队任务（同任务号不重复记）；同 requestId 的「提交中」就地补全为这条，不另加。 */
+export function addMvFinalEditJob(raw: unknown, job: CanvasMusicMvFinalEditJob): CanvasMusicMvFinalEditJobRecord[] {
+  const list = sanitizeMvFinalEditJobRecords(raw);
+  if (list.some(r => !isMvFinalEditSubmitting(r) && r.jobId === job.jobId)) return list;
+  const at = list.findIndex(r => isMvFinalEditSubmitting(r) && r.requestId === job.requestId);
+  return at < 0 ? sanitizeMvFinalEditJobRecords([...list, job]) : list.map((r, i) => (i === at ? job : r));
+}
+
+/** 清掉某条「提交中」；notAfter 给定时只清发起时间不晚于它的（被拒后已用同一 requestId 重试的不清）。 */
+export function removeMvFinalEditSubmitting(raw: unknown, requestId: string, notAfter?: number): CanvasMusicMvFinalEditJobRecord[] {
+  return sanitizeMvFinalEditJobRecords(raw).filter(
+    r => !(isMvFinalEditSubmitting(r) && r.requestId === requestId && (notAfter == null || !(Date.parse(r.startedAt) > notAfter)))
+  );
+}
+
 /** 成片超分 / 调色 / 局部修改记录各自上限（写入先截留，读入超限也只截留，不整块拒收）。 */
 export const MV_FINAL_RECORDS_MAX = 40;
 
@@ -960,7 +1028,13 @@ export const canvasMusicMvStateSchema = z
     /** 1109 成片局部修改：结果作为新版本块挂在成片旁，原片不动。 */
     finalEdits: cappedMvRecords(canvasMusicMvFinalEditSchema, MV_FINAL_RECORDS_MAX, "finalEdits"),
     /** 1110 成片局部修改在途任务（刷新恢复用；完成或失败即清除）。写入已限 20 条，读入超限同样只截留。 */
-    finalEditJobs: cappedMvRecords(canvasMusicMvFinalEditJobSchema, MV_FINAL_EDIT_JOBS_MAX, "finalEditJobs", () => true),
+    /** 1110b 另含「提交中」记录（只有 requestId）；读入逐条校验，坏条目丢弃、超限截留，不整块拒收。 */
+    finalEditJobs: z
+      .preprocess(
+        raw => (raw === undefined ? undefined : sanitizeMvFinalEditJobRecords(raw)),
+        z.array(z.union([canvasMusicMvFinalEditJobSchema, canvasMusicMvFinalEditSubmittingSchema])).max(MV_FINAL_EDIT_JOBS_MAX)
+      )
+      .optional(),
     error: z.string().max(2000).optional(),
   })
   .strict()
