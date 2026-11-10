@@ -1,15 +1,16 @@
 /**
  * 视频局部修改（Video Edit）前端提交：选区间 + 中文描述 + 可选参考图 → 服务端任务。
  * 来源规范化沿用 videoGradeSubmit：CloudFront 成品先导入为本人 gs://，其余 https/gs 原样交服务端核验归属。
- * 计价、区间自动扩展（不足 4 秒扩到 4 秒）、失败退款全部以服务端为准；本 helper 不算价、不扣费。
+ * 计价、区间自动扩展（不足 4 秒扩到 4 秒）、失败退款全部以服务端为准；本 helper 不扣费。
+ * 即时显示用的预估价（estimateVideoEditQuote）直接调 shared/videoEditPricing 的同一组函数，提交仍用服务端报价的 credits。
  * 每次点击提交生成新 requestId（服务端按它做幂等）。
  */
 import { importWorkflowVideoSource } from "@/lib/videoUpscaleApi";
-import { planVideoEditSegment } from "@shared/videoEditPricing";
+import { VIDEO_EDIT_MAX_SEC, VIDEO_EDIT_MIN_SEC, planVideoEditSegment, quoteVideoEdit, type VideoEditQuote as SharedVideoEditQuote } from "@shared/videoEditPricing";
 
-/** 区间规则（与服务端约定一致）：一位小数；不足 4 秒服务端自动扩到 4 秒；单次上限 30 秒。 */
-export const VIDEO_EDIT_MIN_SEC = 4;
-export const VIDEO_EDIT_MAX_SEC = 30;
+/** 区间规则（服务端同一份常量）：一位小数；不足 4 秒服务端自动扩到 4 秒；单次上限 30 秒。 */
+export { VIDEO_EDIT_MAX_SEC, VIDEO_EDIT_MIN_SEC };
+export { videoEditPrefillBlockReason } from "./videoEditPrefillGate";
 export const VIDEO_EDIT_PROMPT_MAX = 2000;
 export const VIDEO_EDIT_REF_MAX = 4;
 
@@ -123,16 +124,15 @@ export function checkVideoEditRange(startSec: number, endSec: number, durationSe
 }
 
 /**
- * 顾问预填闸门（纯函数）：面板此刻不接受顾问预填的中文原因（回给顾问原话），空串 = 可预填。
- * 任务进行中 > 正在提交 > 用户确认中 > 面板停用 > 正在报价；被拒时面板内容与确认框一律不动。
+ * 前端即时预估（拖动时不发请求）：片长须是服务端报价带回的 sourceDurationSec，与服务端同一组函数算区间与积分。
+ * 只用于显示；区间不合法返回 null。提交时的 expectedCredits 仍取服务端报价。
  */
-export function videoEditPrefillBlockReason(s: { running: boolean; submitting: boolean; confirming: boolean; disabled?: boolean; quoting: boolean }): string {
-  if (s.running) return "局部修改任务进行中，未改动面板内容，请等任务完成后再预填";
-  if (s.submitting) return "用户正在提交局部修改，未改动面板内容";
-  if (s.confirming) return "用户正在确认局部修改，未改动面板内容";
-  if (s.disabled) return "局部修改面板暂不可操作，未改动面板内容";
-  if (s.quoting) return "面板正在计算所需积分，未改动面板内容，请稍后再预填";
-  return "";
+export function estimateVideoEditQuote(sourceDurationSec: number, startSec: number, endSec: number, waived: boolean): SharedVideoEditQuote | null {
+  try {
+    return quoteVideoEdit(planVideoEditSegment(sourceDurationSec, startSec, endSec), waived);
+  } catch {
+    return null;
+  }
 }
 
 /** 来源规范化（同 videoGradeSubmit）：只接 https/gs；CloudFront 成品先导入为本人 gs://。 */

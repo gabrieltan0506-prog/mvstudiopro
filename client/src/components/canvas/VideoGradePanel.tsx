@@ -1,13 +1,16 @@
-import { useState, type MutableRefObject } from "react";
+import { useRef, useState, type MutableRefObject } from "react";
 import { MontageGradeAdvice, type MontageGradeAdviceTrigger } from "./MontageGradeAdvice";
+import { RangeTrack, type RangeTrackMarker } from "./RangeTrack";
 import {
   MONTAGE_CROSSFADE_RANGE,
   MONTAGE_GRADE_SLIDERS,
+  MONTAGE_JUNCTION_KIND_ORDER,
   MONTAGE_LUT_GROUPS,
   MONTAGE_SEGMENT_MAX,
   addMontageSegment,
   applyMontageSegmentsDraft,
   checkMontageSegments,
+  describeMontageJunction,
   patchMontageGradeAll,
   patchMontageSegment,
   readMontageJunctionCheck,
@@ -16,6 +19,8 @@ import {
   setMontageCrossfade,
   type ColorCorrection,
   type MontageGrade,
+  type MontageGradeSegment,
+  type MontageJunctionKind,
   type MontageSliderKey,
 } from "@/lib/montageFinish";
 
@@ -35,6 +40,8 @@ export type VideoGradePanelProps = {
   storyZh?: string;
   /** 素材拼接接点秒位（单片无接点可不传）。 */
   seamSecs?: number[];
+  /** 已知转场（atSec = 转场中点，成片绝对秒）；未知不传。 */
+  transitions?: Array<{ atSec: number; durationSec: number }>;
   /** 套用建议失败等错误；不传则在面板内显示。 */
   onError?: (message: string) => void;
   /** 后期任务结果（含 gradeSegmentCheck）；传入即在面板末尾展示接点检查。 */
@@ -61,7 +68,58 @@ function LutOptions() {
   );
 }
 
-/** 成片接点色彩检查（只读）：读后期 concat 结果的 gradeSegmentCheck；读不到不渲染。 */
+const SLIDER_KEYS = Object.keys(MONTAGE_GRADE_SLIDERS) as MontageSliderKey[];
+const INTENT_ZH = { intended: "剧情需要", unwanted: "不该跳" } as const;
+
+/** 分段草稿 → 时间轴标记：每个接点（第2段起的起点）标出已知意图。 */
+export function montageIntentMarkers(segments: ReadonlyArray<Pick<MontageGradeSegment, "startSec" | "junctionIntent">>): RangeTrackMarker[] {
+  return segments.flatMap((s, i) => (i > 0 && s.junctionIntent ? [{ sec: s.startSec, label: INTENT_ZH[s.junctionIntent], tone: s.junctionIntent === "unwanted" ? ("warn" as const) : ("ok" as const) }] : []));
+}
+
+/** 一行一个滑杆：名称与数值同一行、滑杆独占一行，窄屏不挤。 */
+function GradeSlider(props: { sliderKey: MontageSliderKey; ariaLabel: string; value: number | undefined; disabled: boolean; hint?: string; onChange: (v: number) => void }) {
+  const r = MONTAGE_GRADE_SLIDERS[props.sliderKey];
+  const value = props.value ?? r.neutral;
+  return (
+    <label className="block">
+      <span className="flex items-baseline justify-between gap-2">
+        <span>{r.label}</span>
+        <span className="tabular-nums text-white/70">
+          {props.sliderKey === "color_temperature" ? `${value}K${props.hint ?? ""}` : value.toFixed(2)}
+        </span>
+      </span>
+      <input
+        aria-label={props.ariaLabel}
+        type="range"
+        min={r.min}
+        max={r.max}
+        step={r.step}
+        disabled={props.disabled}
+        value={value}
+        onChange={e => props.onChange(Number(e.target.value))}
+        className="block w-full"
+      />
+    </label>
+  );
+}
+
+const JUNCTION_TONE: Record<MontageJunctionKind, string> = {
+  fix: "border-red-400/70 bg-red-500/10",
+  unmarked: "border-amber-300/60 bg-amber-400/5",
+  story: "border-sky-300/40",
+  pass: "border-white/10",
+};
+const JUNCTION_TAG: Record<MontageJunctionKind, string> = {
+  fix: "text-red-300",
+  unmarked: "text-amber-200",
+  story: "text-sky-200",
+  pass: "text-white/60",
+};
+
+/**
+ * 成片接点色彩检查（只读）：读后期 concat 结果的 gradeSegmentCheck；读不到不渲染。
+ * 全部达标只占一行（可展开看数值）；未达标的按「不该跳且未修平 → 未标注 → 剧情需要」排在前面，各带一句怎么办。
+ */
 export function VideoGradeJunctionChecks({ results }: { results: VideoGradeJunctionResult[] | undefined }) {
   const checks = (results ?? []).flatMap(j => {
     const check = readMontageJunctionCheck(j.output);
@@ -69,43 +127,91 @@ export function VideoGradeJunctionChecks({ results }: { results: VideoGradeJunct
   });
   if (!checks.length) return null;
   return (
-    <section aria-label="接点检查结果" className="space-y-1 rounded border border-white/15 p-2 text-xs">
-      <strong>成片接点色彩检查</strong>
-      {checks.map(j => (
-        <div key={j.jobId}>
-          <p>
-            {j.title || "成片"}：{j.check.pass ? "全部接点达标" : "有接点未达标"}
-          </p>
-          <ul>
-            {j.check.junctions.map((x, k) => (
-              <li key={k} aria-label={`接点${k + 1}`}>
-                {x.atSec.toFixed(1)}秒 · 亮度差{x.delta.YAVG} · 蓝色差{x.delta.UAVG} · 红色差{x.delta.VAVG} · 饱和差{x.delta.SATAVG} ·{" "}
-                {x.pass ? "达标" : "未达标"}
-                {x.autoCorrected ? " · 已自动修正" : ""}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
+    <section aria-label="接点检查结果" className="space-y-2 rounded border border-white/15 p-2 text-xs">
+      {checks.map(j => {
+        const rows = j.check.junctions.map((x, k) => ({ x, k, view: describeMontageJunction(x, k + 2) }));
+        const passed = rows.filter(r => r.view.kind === "pass");
+        const open = rows.filter(r => r.view.kind !== "pass").sort((a, b) => MONTAGE_JUNCTION_KIND_ORDER.indexOf(a.view.kind) - MONTAGE_JUNCTION_KIND_ORDER.indexOf(b.view.kind) || a.k - b.k);
+        const mustFix = open.filter(r => r.view.kind === "fix").length;
+        const name = j.title || "成片";
+        const passLine = (r: (typeof rows)[number]) => (
+          <li key={r.k} aria-label={`接点${r.k + 1}`} data-junction-kind="pass">
+            {r.x.atSec.toFixed(1)}秒 · 亮度差{r.x.delta.YAVG} · 蓝色差{r.x.delta.UAVG} · 红色差{r.x.delta.VAVG} · 饱和差{r.x.delta.SATAVG} · {r.view.labelZh}
+          </li>
+        );
+        if (!open.length)
+          return (
+            <details key={j.jobId}>
+              <summary className="cursor-pointer">
+                接点色彩检查 · {name}：全部接点达标（{rows.length} 个）
+              </summary>
+              <ul className="mt-1 space-y-0.5 text-white/60">{passed.map(passLine)}</ul>
+            </details>
+          );
+        return (
+          <div key={j.jobId} className="space-y-1.5">
+            <p>
+              <strong>接点色彩检查 · {name}：有接点未达标</strong>
+              <span className="ml-1 text-white/70">
+                {mustFix ? `${mustFix} 处不该跳、还没修平` : `${open.length} 处色彩有跳变`}
+              </span>
+            </p>
+            <ul className="space-y-1.5">
+              {open.map(r => (
+                <li key={r.k} aria-label={`接点${r.k + 1}`} data-junction-kind={r.view.kind} className={`rounded border p-2 ${JUNCTION_TONE[r.view.kind]}`}>
+                  <p className="flex flex-wrap items-baseline gap-x-2">
+                    <strong className="text-sm tabular-nums">{r.x.atSec.toFixed(1)}秒</strong>
+                    <span className={`font-medium ${JUNCTION_TAG[r.view.kind]}`}>{r.view.labelZh}</span>
+                  </p>
+                  {r.x.warning?.messageZh ? (
+                    <p data-junction-warning className="tabular-nums">{r.x.warning.messageZh}</p>
+                  ) : (
+                    r.view.overZh.length > 0 && <p className="tabular-nums">{r.view.overZh.join("；")}</p>
+                  )}
+                  {r.x.warning?.failing?.length ? (
+                    <details>
+                      <summary className="cursor-pointer text-white/60">各项差值</summary>
+                      <ul aria-label={`接点${r.k + 1}超差明细`} className="mt-0.5 space-y-0.5 tabular-nums text-white/70">
+                        {r.x.warning.failing.map(f => (
+                          <li key={f.key}>
+                            {f.labelZh}差 {f.delta > 0 ? "+" : ""}{f.delta} · 允许 ±{f.tolerance} · 超出 {f.overBy}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
+                  <p className="text-white/70">{r.view.adviceZh}</p>
+                </li>
+              ))}
+            </ul>
+            {passed.length > 0 && (
+              <details>
+                <summary className="cursor-pointer text-white/60">其余 {passed.length} 个接点达标</summary>
+                <ul className="mt-1 space-y-0.5 text-white/60">{passed.map(passLine)}</ul>
+              </details>
+            )}
+          </div>
+        );
+      })}
     </section>
   );
 }
 
 /**
- * 视频调色面板（受控，可复用）：20 个预设分组下拉、饱和/色温/对比滑杆、还原、分段调色、段间渐变、
+ * 视频调色面板（受控，可复用）：20 个预设分组下拉、饱和/色温/对比滑杆、还原、分段调色（时间轴区间条 + 数字输入）、段间渐变、
  * 自动修正接点、AI 调色建议（仅有 gs:// 成片时）与接点检查结果。草稿类型与校验全部沿用 montageFinish。
  */
 export function VideoGradePanel(props: VideoGradePanelProps) {
   const [localError, setLocalError] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
   const grade = props.value;
   const locked = Boolean(props.disabled);
   const { outputSec } = props;
   const gradeAll: ColorCorrection = grade?.all ?? {};
   const segments = grade?.segments ?? [];
   const segmentProblem = checkMontageSegments(segments, outputSec, grade?.crossfadeSec ?? 0);
-  const sliderKeys = Object.keys(MONTAGE_GRADE_SLIDERS) as MontageSliderKey[];
   const advisorExtras = [
-    ...Object.keys(gradeAll).filter(k => k !== "lutId" && !sliderKeys.includes(k as MontageSliderKey)),
+    ...Object.keys(gradeAll).filter(k => k !== "lutId" && !SLIDER_KEYS.includes(k as MontageSliderKey)),
     ...(grade?.clips ? [`逐段${grade.clips.length}项`] : []),
     ...(grade?.referenceClipIndex != null ? [`代表镜头第${grade.referenceClipIndex + 1}段`] : []),
   ];
@@ -115,41 +221,27 @@ export function VideoGradePanel(props: VideoGradePanelProps) {
     if (props.onError) props.onError(message);
     else setLocalError(message);
   };
+  const tenth = (v: number) => Math.round(v * 10) / 10;
   return (
-    <div className="space-y-2" data-testid="video-grade-panel">
+    <div ref={rootRef} className="space-y-2" data-testid="video-grade-panel">
       <label className="block">
-        调色预设
+        <span className="flex flex-wrap items-baseline justify-between gap-x-2">
+          <span>调色预设</span>
+          <span className="text-xs text-white/60">每种风格有「轻 / 标准」两档</span>
+        </span>
         <select
           aria-label="调色预设"
           disabled={locked}
           value={gradeAll.lutId ?? ""}
           onChange={e => setGrade({ lutId: e.target.value || undefined })}
-          className="ml-2 rounded bg-slate-900 p-1"
+          className="mt-0.5 block w-full max-w-xs rounded bg-slate-900 p-1"
         >
           <LutOptions />
         </select>
-        <span className="ml-2 text-white/60">强度选「轻 / 标准」两档</span>
       </label>
-      {sliderKeys.map(key => {
-        const r = MONTAGE_GRADE_SLIDERS[key];
-        const value = gradeAll[key] ?? r.neutral;
-        return (
-          <label key={key} className="block">
-            {r.label} {key === "color_temperature" ? `${value}K（低暖高冷）` : value.toFixed(2)}
-            <input
-              aria-label={r.label}
-              type="range"
-              min={r.min}
-              max={r.max}
-              step={r.step}
-              disabled={locked}
-              value={value}
-              onChange={e => setGrade({ [key]: Number(e.target.value) })}
-              className="ml-2 align-middle"
-            />
-          </label>
-        );
-      })}
+      {SLIDER_KEYS.map(key => (
+        <GradeSlider key={key} sliderKey={key} ariaLabel={MONTAGE_GRADE_SLIDERS[key].label} value={gradeAll[key]} hint="（低暖高冷）" disabled={locked} onChange={v => setGrade({ [key]: v })} />
+      ))}
       {advisorExtras.length > 0 && <p className="text-white/60">顾问另设：{advisorExtras.join("、")}</p>}
       <button
         type="button"
@@ -159,81 +251,34 @@ export function VideoGradePanel(props: VideoGradePanelProps) {
       >
         还原原片色彩
       </button>
-      <div className="space-y-1 rounded border border-white/10 p-2" aria-label="分段调色">
-        <div>
-          分段调色（成片约{outputSec.toFixed(1)}秒，不分段即全片统一）
+      <div className="space-y-2 rounded border border-white/10 p-2" aria-label="分段调色">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+          <span>分段调色（成片约{outputSec.toFixed(1)}秒，不分段即全片统一）</span>
           <button
             type="button"
             aria-label="添加调色分段"
             disabled={locked || outputSec < 0.2 || segments.length >= MONTAGE_SEGMENT_MAX || Boolean(grade?.clips || grade?.referenceClipIndex != null)}
             onClick={() => setSegGrade(addMontageSegment(grade, outputSec))}
-            className="ml-2 underline disabled:opacity-40"
+            className="underline disabled:opacity-40"
           >
             添加分段
           </button>
         </div>
-        {segments.map((seg, i) => {
-          const n = i + 1;
-          const num = (key: "startSec" | "endSec", label: string, min: number, max: number, v: number) => (
-            <label className="mr-2">
-              {label}
-              <input
-                aria-label={`第${n}段${label}`}
-                type="number"
-                min={min}
-                max={max}
-                step={0.1}
-                disabled={locked}
-                value={v}
-                onChange={e => {
-                  const x = Number(e.target.value);
-                  if (Number.isFinite(x) && x >= min && x <= max) setSegGrade(patchMontageSegment(grade, i, { [key]: Math.round(x * 10) / 10 }));
-                }}
-                className="ml-1 w-16 rounded bg-slate-900 p-1"
-              />
-            </label>
-          );
-          return (
-            <div key={i} className="space-y-1 border-t border-white/10 pt-1">
-              <div>
-                第{n}段 {num("startSec", "开始秒", 0, outputSec, seg.startSec)}
-                {num("endSec", "结束秒", 0, outputSec, seg.endSec)}
-                <button type="button" aria-label={`删除第${n}段`} disabled={locked} onClick={() => setSegGrade(removeMontageSegment(grade, i))} className="underline disabled:opacity-40">
-                  删除
-                </button>
-              </div>
-              <select
-                aria-label={`第${n}段调色预设`}
-                disabled={locked}
-                value={seg.lutId ?? ""}
-                onChange={e => setSegGrade(patchMontageSegment(grade, i, { lutId: e.target.value || undefined }))}
-                className="rounded bg-slate-900 p-1"
-              >
-                <LutOptions />
-              </select>
-              {sliderKeys.map(key => {
-                const r = MONTAGE_GRADE_SLIDERS[key];
-                const value = seg[key] ?? r.neutral;
-                return (
-                  <label key={key} className="block">
-                    {r.label} {key === "color_temperature" ? `${value}K` : value.toFixed(2)}
-                    <input
-                      aria-label={`第${n}段${r.label}`}
-                      type="range"
-                      min={r.min}
-                      max={r.max}
-                      step={r.step}
-                      disabled={locked}
-                      value={value}
-                      onChange={e => setSegGrade(patchMontageSegment(grade, i, { [key]: Number(e.target.value) }))}
-                      className="ml-2 align-middle"
-                    />
-                  </label>
-                );
-              })}
-            </div>
-          );
-        })}
+        {segments.length > 0 && (
+          <div role="group" aria-label="分段时间轴">
+            <RangeTrack
+              disabled={locked}
+              step={0.1}
+              minSegmentSec={0.1}
+              formatValue={sec => `${sec.toFixed(1)}秒`}
+              segments={segments.map((seg, i) => ({ startSec: seg.startSec, endSec: seg.endSec, label: String(i + 1) }))}
+              boundaryAriaLabel={i => `第${i + 1}段与第${i + 2}段的分界`}
+              markers={montageIntentMarkers(segments)}
+              onBoundaryChange={(i, sec) => setSegGrade(patchMontageSegment(grade, i, { endSec: sec }))}
+              onSegmentSelect={i => rootRef.current?.querySelector<HTMLElement>(`[aria-label="第${i + 1}段调色预设"]`)?.focus()}
+            />
+          </div>
+        )}
         {segments.length > 0 && segmentProblem && (
           <p aria-label="分段校验" className="text-amber-200">
             {segmentProblem}，采用前请修正
@@ -246,6 +291,7 @@ export function VideoGradePanel(props: VideoGradePanelProps) {
             aspect={props.adviceAspect}
             storyZh={props.storyZh}
             seamSecs={props.seamSecs}
+            transitions={props.transitions}
             disabled={locked}
             debugMode={props.debugMode}
             triggerRef={props.adviceTriggerRef}
@@ -253,17 +299,79 @@ export function VideoGradePanel(props: VideoGradePanelProps) {
               try {
                 setSegGrade(applyMontageSegmentsDraft(grade, segs, outputSec));
                 setLocalError("");
+                return true;
               } catch (e) {
                 reportError(e instanceof Error ? e.message : String(e));
+                return false;
               }
             }}
           />
         )}
-        <label className="block">
+        {segments.map((seg, i) => {
+          const n = i + 1;
+          const num = (key: "startSec" | "endSec", label: string, min: number, max: number, v: number) => (
+            <label className="flex items-center gap-1">
+              {label}
+              <input
+                aria-label={`第${n}段${label}`}
+                type="number"
+                inputMode="decimal"
+                min={min}
+                max={max}
+                step={0.1}
+                disabled={locked}
+                value={v}
+                onChange={e => {
+                  const x = Number(e.target.value);
+                  if (Number.isFinite(x) && x >= min && x <= max) setSegGrade(patchMontageSegment(grade, i, { [key]: Math.round(x * 10) / 10 }));
+                }}
+                className="w-16 rounded bg-slate-900 p-1 tabular-nums"
+              />
+            </label>
+          );
+          return (
+            <div key={i} className="space-y-1 border-t border-white/10 pt-2">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <strong>第{n}段</strong>
+                {i > 0 && seg.junctionIntent && (
+                  <span className={seg.junctionIntent === "unwanted" ? "text-xs text-amber-200" : "text-xs text-sky-200"}>进入本段：{INTENT_ZH[seg.junctionIntent]}</span>
+                )}
+                <button type="button" aria-label={`删除第${n}段`} disabled={locked} onClick={() => setSegGrade(removeMontageSegment(grade, i))} className="ml-auto underline disabled:opacity-40">
+                  删除
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-x-3 gap-y-1">
+                {num("startSec", "开始秒", 0, outputSec, seg.startSec)}
+                {num("endSec", "结束秒", 0, outputSec, seg.endSec)}
+              </div>
+              <select
+                aria-label={`第${n}段调色预设`}
+                disabled={locked}
+                value={seg.lutId ?? ""}
+                onChange={e => setSegGrade(patchMontageSegment(grade, i, { lutId: e.target.value || undefined }))}
+                className="block w-full max-w-xs rounded bg-slate-900 p-1"
+              >
+                <LutOptions />
+              </select>
+              {SLIDER_KEYS.map(key => (
+                <GradeSlider
+                  key={key}
+                  sliderKey={key}
+                  ariaLabel={`第${n}段${MONTAGE_GRADE_SLIDERS[key].label}`}
+                  value={seg[key]}
+                  disabled={locked}
+                  onChange={v => setSegGrade(patchMontageSegment(grade, i, { [key]: v }))}
+                />
+              ))}
+            </div>
+          );
+        })}
+        <label className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-white/10 pt-2">
           段间过渡秒数
           <input
             aria-label="段间过渡秒数"
             type="number"
+            inputMode="decimal"
             min={MONTAGE_CROSSFADE_RANGE.min}
             max={MONTAGE_CROSSFADE_RANGE.max}
             step={MONTAGE_CROSSFADE_RANGE.step}
@@ -273,20 +381,20 @@ export function VideoGradePanel(props: VideoGradePanelProps) {
               const v = Number(e.target.value);
               if (Number.isFinite(v) && v >= MONTAGE_CROSSFADE_RANGE.min && v <= MONTAGE_CROSSFADE_RANGE.max) setSegGrade(setMontageCrossfade(grade, v));
             }}
-            className="ml-2 w-16 rounded bg-slate-900 p-1"
+            className="w-16 rounded bg-slate-900 p-1 tabular-nums"
           />
-          秒（0 为硬切）
+          <span className="text-white/60">秒（0 为硬切）</span>
         </label>
-        <label className="block">
+        <label className="flex items-start gap-1.5">
           <input
             aria-label="自动修正接点"
             type="checkbox"
             disabled={locked || segments.length < 2}
             checked={Boolean(grade?.autoMatchJunctions)}
             onChange={e => setSegGrade(setMontageAutoMatch(grade, e.target.checked))}
-            className="mr-1 align-middle"
+            className="mt-0.5 shrink-0"
           />
-          自动修正接点（接点前后色差超标时自动拉齐）
+          <span>自动修正接点（接点前后色差超标时自动拉齐）</span>
         </label>
       </div>
       {!props.onError && localError && (

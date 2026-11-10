@@ -33,8 +33,8 @@ import { fileURLToPath } from "node:url";
 import {
   buildFilterChain, checkGradeConsistency, collectGradeLutIds, matchShotsIteratively, parseSignalStats, resolveClipCorrection,
   COLOR_GRADE_LUT_ID_RE, SIGNALSTATS_PRINT_FILTER, type ColorCorrection, type ConcatGrade, type GradeConsistencyReport, type SignalStats,
-  applyJunctionAutoMatch, buildSegmentGradeGraph, SIGNALSTATS_FIRST_FRAME_FILTER, checkJunctionConsistency, junctionSampleWindows, meanSignalStats, planGradeSegments,
-  type GradeSpan, type JunctionConsistencyReport, type JunctionFixNote,
+  buildJunctionWarnings, matchJunctionsIteratively, buildSegmentGradeGraph, SIGNALSTATS_FIRST_FRAME_FILTER, checkJunctionConsistency, junctionSampleWindows, meanSignalStats, planGradeSegments,
+  type GradeSpan, type JunctionConsistencyReport, type JunctionFixNote, type JunctionWarning,
 } from "../../shared/colorGrade";
 import {
   concatParamsSchema,
@@ -499,9 +499,18 @@ export type SegmentGradeCheck = {
   check: JunctionCheckResult;
   /**
    * autoMatchJunctions 且首检未过时：逐接点处理说明（只修 unwanted；intended / 未提供意图不修）、
-   * 实际渲染的 spans（含局部过渡子段）、被修正接点的后段下标；有修正时重渲一次并给复检 check（接点位置同首检）。
+   * 最后一次实际渲染的 spans（含局部过渡子段）、累计被修正接点的后段下标；有修正时逐轮重渲并复检（接点位置同首检），
+   * 最多 maxRounds 轮，check 为最后一轮复检，rounds 为逐轮记录（各轮取样证据在 pass-(round+1) 下）。
    */
-  autoMatch?: { adjusted: number[]; spans: GradeSpan[]; junctions: JunctionFixNote[]; check?: JunctionCheckResult };
+  autoMatch?: {
+    adjusted: number[]; spans: GradeSpan[]; junctions: JunctionFixNote[]; check?: JunctionCheckResult;
+    rounds: Array<{ round: number; spans: GradeSpan[]; junctions: JunctionFixNote[]; check: JunctionCheckResult }>;
+    maxRounds: number;
+    /** 最后一轮比之前某版更差时回退到该版（0 = 原分段）并重渲复检，证据在 pass-(rounds+2) 下。 */
+    revertedToRound?: number;
+  };
+  /** 交付成片里仍未达标的 unwanted 接点（哪一秒、哪项差多少、已试几轮）；空数组 = 没有需要提示的接点。 */
+  warnings: JunctionWarning[];
 };
 
 // ---------------------------------------------------------------- 拼接
@@ -606,15 +615,18 @@ export async function concatClips(
       // 素材拼接点即镜头切换：接点取样窗不跨越它们。
       const cutsSec = locals.slice(0, -1).map((_l, i) => locals.slice(0, i + 1).reduce((sum, l) => sum + l.durationSec, 0));
       const check = await measureJunctionConsistency(spans, userId, signal, deps, `${root}/pass-1`, { cutsSec });
-      gradeSegmentCheck = { mode: "junctions", spans, check };
+      gradeSegmentCheck = { mode: "junctions", spans, check, warnings: buildJunctionWarnings(spans, check) };
       if (g.autoMatchJunctions && !check.pass) {
-        const matched = applyJunctionAutoMatch(spans, check.pairs, check);
+        // 只修 unwanted：修正 → 重渲 → 按原接点位置复检（过渡子段内部的渐变不算接点）→ 用本轮实测差继续，至达标或上限。
+        const { warnings, ...matched } = await matchJunctionsIteratively({
+          spans, first: check,
+          render: async (next, round) => {
+            await renderWith(undefined, segmentGradeGraph(next, build, "vcat", vCat));
+            return measureJunctionConsistency(spans, userId, signal, deps, `${root}/pass-${round + 1}`, { cutsSec });
+          },
+        });
         gradeSegmentCheck.autoMatch = matched;
-        if (matched.adjusted.length) {
-          await renderWith(undefined, segmentGradeGraph(matched.spans, build, "vcat", vCat));
-          // 复检按原接点位置取样（过渡子段内部的渐变不算接点）。
-          gradeSegmentCheck.autoMatch.check = await measureJunctionConsistency(spans, userId, signal, deps, `${root}/pass-2`, { cutsSec });
-        }
+        gradeSegmentCheck.warnings = warnings;
       }
     } else if (g?.autoMatch && g.referenceClipIndex != null) {
       // 应用→复测→再匹配：每轮整片按当前逐段参数重出、逐段测量并留档；成片取最后一轮。

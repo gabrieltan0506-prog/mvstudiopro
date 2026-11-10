@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { COLOR_GRADE_LUT_ID_RE, concatGradeSchema } from "@shared/colorGrade";
-import { montageGradeAdviceStory } from "@/components/canvas/MontageGradeAdvice";
+import { montageGradeAdviceStory, montageGradeSegmentGradeIndexes, montageGradeTransitions } from "@/components/canvas/MontageGradeAdvice";
 import {
   MONTAGE_ADVISOR_GRADE_NOT_EXPLICIT_ZH,
   MONTAGE_LUT_GROUPS,
@@ -280,13 +280,47 @@ describe("分段调色 segments / crossfadeSec / autoMatchJunctions（共享 con
     const second = { pass: true, junctions: [{ index: 0, junctionSec: 4, pass: true, delta: d(1) }, { index: 1, junctionSec: 7.5, pass: true, delta: d(2) }] };
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first } })).toEqual({
       pass: false,
-      junctions: [{ atSec: 4, delta: d(1), pass: true, autoCorrected: false }, { atSec: 7.5, delta: d(9), pass: false, autoCorrected: false }],
+      junctions: [{ atSec: 4, delta: d(1), pass: true, autoCorrected: false, intent: null }, { atSec: 7.5, delta: d(9), pass: false, autoCorrected: false, intent: null }],
     });
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first, autoMatch: { adjusted: [2], spans: [], check: second } } })).toEqual({
       pass: true,
-      junctions: [{ atSec: 4, delta: d(1), pass: true, autoCorrected: false }, { atSec: 7.5, delta: d(2), pass: true, autoCorrected: true }],
+      junctions: [{ atSec: 4, delta: d(1), pass: true, autoCorrected: false, intent: null }, { atSec: 7.5, delta: d(2), pass: true, autoCorrected: true, intent: null }],
+    });
+    // 接点意图：取后段 spans[index+1].junctionIntent；自动修正的逐接点说明里有就优先用它
+    const spans = [{ startSec: 0, endSec: 4 }, { startSec: 4, endSec: 7.5, junctionIntent: "intended" }, { startSec: 7.5, endSec: 10, junctionIntent: "unwanted" }];
+    expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans, check: first } })!.junctions.map(j => j.intent)).toEqual(["intended", "unwanted"]);
+    const notes = [{ index: 0, junctionSec: 4, intent: "unwanted", action: "pass", noteZh: "" }];
+    expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first, autoMatch: { adjusted: [], spans: [], junctions: notes } } })!.junctions.map(j => j.intent)).toEqual(["unwanted", null]);
+    // 多轮修正的结构化警告按接点下标挂到对应接点；形状不认识的忽略
+    const warnings = [{ index: 1, atSec: 7.5, intent: "unwanted", rounds: 3, maxRounds: 3, reason: "max_rounds", failing: [], delta: d(9), messageZh: "" }, { index: 0, reason: "whatever" }];
+    expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first, warnings } })!.junctions.map(j => j.warning)).toEqual([undefined, { rounds: 3, maxRounds: 3, reason: "max_rounds" }]);
+    // 警告里的一句话与超差明细（字段同服务端 JunctionWarning）原样带出；形状不对的明细条目丢弃
+    const full = [{ index: 1, atSec: 7.5, intent: "unwanted", rounds: 3, maxRounds: 3, reason: "max_rounds", delta: d(9), messageZh: "7.5 秒接点仍有跳变：亮度差 +9（允许 ±5），已自动修正 3 轮仍未压住",
+      failing: [{ key: "YAVG", labelZh: "亮度", delta: 9, tolerance: 5, overBy: 4 }, { key: "XAVG", labelZh: "x", delta: 1, tolerance: 1, overBy: 0 }, { key: "SATAVG", labelZh: "饱和" }] }];
+    expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first, warnings: full } })!.junctions[1].warning).toEqual({
+      rounds: 3, maxRounds: 3, reason: "max_rounds", messageZh: "7.5 秒接点仍有跳变：亮度差 +9（允许 ±5），已自动修正 3 轮仍未压住",
+      failing: [{ key: "YAVG", labelZh: "亮度", delta: 9, tolerance: 5, overBy: 4 }],
     });
     expect(readMontageJunctionCheck({ gcsUri: "x" })).toBeNull();
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { check: { junctions: [{ delta: {} }] } } })).toBeNull();
+  });
+});
+
+describe("AI 调色建议：已知转场传入与吸附合并后的列表对应", () => {
+  it("转场生效：每个接点一段转场，中点 = 接点 + 时长/2；无转场或无接点不传", () => {
+    expect(montageGradeTransitions([29.4, 40], 0.4)).toEqual([{ atSec: 29.6, durationSec: 0.4 }, { atSec: 40.2, durationSec: 0.4 }]);
+    expect(montageGradeTransitions([29.4], 0)).toBeUndefined();
+    expect(montageGradeTransitions([], 0.4)).toBeUndefined();
+  });
+  it("接线：方案页 → 调色面板 → 调色建议请求带 transitions", () => {
+    const src = (f: string) => readFileSync(new URL(`../components/canvas/${f}`, import.meta.url), "utf8");
+    expect(src("MontagePlanner.tsx")).toContain("transitions={gradeTransitions}");
+    expect(src("VideoGradePanel.tsx")).toContain("transitions={props.transitions}");
+    expect(src("MontageGradeAdvice.tsx")).toContain("props.transitions?.length ? { transitions: props.transitions } : {}");
+  });
+  it("吸附并段后 segments 少于 grades：按未并掉的原始段取理由，不越界", () => {
+    expect(montageGradeSegmentGradeIndexes(3, 3, [1])).toEqual([0, 1, 2]);
+    expect(montageGradeSegmentGradeIndexes(2, 3, [1])).toEqual([0, 2]);
+    expect(montageGradeSegmentGradeIndexes(2, 3)).toEqual([0, 1]);
   });
 });

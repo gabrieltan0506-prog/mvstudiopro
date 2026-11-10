@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { maskMediaProviderDetails } from "@/lib/maskMediaUrls";
 import { manhuaVfxMediaIdentity } from "@/lib/manhuaVfxWorkflow";
-import type { MontageGradeAdviceTrigger } from "./MontageGradeAdvice";
+import { montageGradeTransitions, type MontageGradeAdviceTrigger } from "./MontageGradeAdvice";
 import { VideoGradeJunctionChecks, VideoGradePanel } from "./VideoGradePanel";
 import {
   parseMontagePlan,
@@ -181,11 +181,13 @@ export function MontagePlanner(props: Props) {
     .filter(r => r.title === activeTitle)
     .map(r => (r.output && typeof r.output === "object" ? (r.output as { gcsUri?: unknown }).gcsUri : undefined))
     .find((u): u is string => typeof u === "string" && u.startsWith("gs://"));
+  const seamOverlap = outputSec < activeCuts.reduce((n, x) => n + x.endSec - x.startSec, 0) - 1e-6 ? transitionOverlap(finish) : 0;
   const seamSecs = activeCuts.slice(0, -1).reduce<number[]>((acc, c, k) => {
-    const overlap = outputSec < activeCuts.reduce((n, x) => n + x.endSec - x.startSec, 0) - 1e-6 ? transitionOverlap(finish) : 0;
+    const overlap = seamOverlap;
     acc.push(Math.round(((acc[k - 1] ?? 0) + c.endSec - c.startSec - overlap) * 10) / 10);
     return acc;
   }, []);
+  const gradeTransitions = montageGradeTransitions(seamSecs, seamOverlap);
   const blockReasons = plan?.plans.map(p => montageTransitionBlockReason(p.cuts.length, Boolean(remapMontageSubtitles(plan!.sourceSrt, p.cuts)))) ?? [];
   const transitionLocked = Boolean(blockReasons[finishPlan]);
   const gradeAdviceTrigger = useRef<MontageGradeAdviceTrigger | null>(null);
@@ -512,6 +514,7 @@ export function MontagePlanner(props: Props) {
               adviceAspect={saved.aspect}
               storyZh={props.story}
               seamSecs={seamSecs}
+              transitions={gradeTransitions}
               adviceTriggerRef={gradeAdviceTrigger}
               onError={setError}
             />
