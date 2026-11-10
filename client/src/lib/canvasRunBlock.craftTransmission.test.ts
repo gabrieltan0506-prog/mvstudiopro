@@ -77,15 +77,20 @@ it("独立列与超过48字镜头经过真实reader→工作台→段提示词�
   expect(noNetwork).not.toHaveBeenCalled();
 });
 
-it("长节拍拆分后每次实际优化请求都有完整两库，只缺一库的旧稿也补齐", async () => {
+it("长节拍整稿走工厂文字阶段单次实际请求，完整两库与全部正文不拆不截，只缺一库的旧稿也补齐", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("禁止真实网络"); }));
   const optimizeCopy = vi.fn(async (_input: unknown) => "可拍正文");
-  const source = "母女沿街扶行，伤马跟随。\n".repeat(1600) + formatManhuaShotCoreCatalog("storyboard");
+  const line = "母女沿街扶行，伤马跟随。";
+  const source = `${line}\n`.repeat(1600) + formatManhuaShotCoreCatalog("storyboard");
   await runCanvasBlock({ userRole: "admin", optimizeCopy }, { ...defaultCanvasBlock("text", 0, 0), id: "beats-e01", prompt: source });
-  expect(optimizeCopy.mock.calls.length).toBeGreaterThan(1);
+  // 工厂文字阶段沿编剧所选模型整稿提交（服务端对 factoryTextStage 保留完整上下文、不设 32000 上限），前端不再拆片。
+  expect(optimizeCopy).toHaveBeenCalledTimes(1);
   for (const call of optimizeCopy.mock.calls) {
-    const text = (call[0] as { sourceText: string }).sourceText;
-    expect(text.length).toBeLessThanOrEqual(32000);
+    const input = call[0] as { sourceText: string; factoryTextStage?: string };
+    expect(input.factoryTextStage).toBe("beats");
+    const text = input.sourceText;
+    expect(text.split(line)).toHaveLength(1601);
+    expect(text.split(cores)).toHaveLength(2);
     expect(text).toContain(entrances);
     expect(text).toContain("【/出场氛围与灯光候选库】");
     expect(text).toContain(cores);
@@ -95,19 +100,18 @@ it("长节拍拆分后每次实际优化请求都有完整两库，只缺一库�
   }
 });
 
-it("主优化失败时真实fallback请求仍带两库与原正文，零真实网络", async () => {
-  const bodies: Array<{ prompt: string }> = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-    expect(String(url)).toBe("/api/google?op=geminiScript");
-    bodies.push(JSON.parse(String(init?.body)));
-    return new Response(JSON.stringify({ ok: true, text: "可拍正文" }));
-  }));
-  await runCanvasBlock({ userRole: "admin", optimizeCopy: async () => { throw new Error("主通道测试失败"); } }, {
+it("主优化失败时原错误上抛、不旁路通用补跑，唯一实际请求仍带两库与原正文，零真实网络", async () => {
+  const network = vi.fn(async () => { throw new Error("禁止旁路"); });
+  vi.stubGlobal("fetch", network);
+  const optimizeCopy = vi.fn(async (_input: unknown): Promise<string> => { throw new Error("主通道测试失败"); });
+  await expect(runCanvasBlock({ userRole: "admin", optimizeCopy }, {
     ...defaultCanvasBlock("text", 0, 0), id: "beats-e01", prompt: "母女扶行，原声与第二段锁定。",
-  });
-  expect(bodies).toHaveLength(1);
-  expect(bodies[0]!.prompt).toContain("母女扶行，原声与第二段锁定。");
-  expect(bodies[0]!.prompt).toContain("亮暗权力翻转");
-  expect(bodies[0]!.prompt).toContain("匹配剪辑");
-  expect(bodies[0]!.prompt).toContain("不改已锁对白、原音轨或段长");
+  })).rejects.toThrow("主通道测试失败");
+  expect(network).not.toHaveBeenCalled();
+  expect(optimizeCopy).toHaveBeenCalledTimes(1);
+  const text = (optimizeCopy.mock.calls[0]![0] as { sourceText: string }).sourceText;
+  expect(text).toContain("母女扶行，原声与第二段锁定。");
+  expect(text).toContain("亮暗权力翻转");
+  expect(text).toContain("匹配剪辑");
+  expect(text).toContain("不改已锁对白、原音轨或段长");
 });

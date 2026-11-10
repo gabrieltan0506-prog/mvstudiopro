@@ -7,14 +7,12 @@ import {
   resolveManhuaSegmentBatchCharge,
   manhuaSegmentSelectionIdentity,
   isManhuaWorkbenchKeyartCurrent,
-  keyartOutputUrl,
   resolveManhuaSourcePlanBeat,
 } from "../components/ManhuaScriptWorkbench.js";
 import { resolveShotsForEpisodeKeyarts, ensureManhuaFragmentClips, expandManhuaShotKeyartsAfterReverse, spawnManhuaDramaStudio, queuedManhuaClipBlocks } from "./canvasDramaStudio";
 import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
 import { confirmManhuaBoardOverlayReview } from "@shared/manhuaDirectorBoardOverlay";
 import { canvasVideoClipCredits } from "@shared/canvasGenerationPricing";
-import { buildWorkbenchShotsFromSegmentPlan } from "@shared/manhuaStoryDistill";
 import { compileManhuaSegmentDirectorBoardOverlay } from "@shared/manhuaDirectorBoardOverlayCompile";
 import {
   groupShotsIntoSegments,
@@ -46,36 +44,21 @@ function productionHandler(source: string, attribute: string, scope: Record<stri
   return runInNewContext(ts.transpileModule(`(${text})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, scope);
 }
 
-function productionMemo(name: string, scope: Record<string, unknown>) {
-  const tree = ts.createSourceFile("view.tsx", uiSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  let text = "";
-  const visit = (node: ts.Node) => {
-    if (ts.isVariableDeclaration(node) && node.name.getText(tree) === name && node.initializer && ts.isCallExpression(node.initializer)) text = node.initializer.arguments[0]?.getText(tree) || "";
-    ts.forEachChild(node, visit);
-  };
-  visit(tree);
-  if (!text) throw new Error(`缺少生产派生：${name}`);
-  return runInNewContext(ts.transpileModule(`(${text})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, scope)();
-}
-
 describe("漫剧自动分段 UI 消费", () => {
   it("长镜续段轨迹不挪用旧段表同号动作，和生产编译器使用同一镜窗", () => {
     const shots = [{ ...shot(1, 20), cameraZh: "镜头向右横移跟拍", actionZh: "黑奇从画面左侧向右移动" }];
     const segments = groupShotsIntoSegments(shots, { videoModel: "seedance-2.0" });
     const shootablePlan = { segments: [{ index: 2, castZh: "旧角色", performanceZh: "旧角色从右向左后退", lightingCameraZh: "向左横移" }] };
     const common = { episodeIndex: 1, segmentIndex: 2, baseAspectRatio: "16:9" as const, segmentBoardUrls: { 2: "https://example.test/board.png" }, shots: segments[1]!.shots };
-    const result = productionMemo("activeDirectorBoardMotionOverlay", {
-      activeBoardBaseUrl: common.segmentBoardUrls[2], activeBoardImageGeometry: { baseAspectRatio: "16:9" },
-      activeSegNo: 2, segments, shots, shootablePlan, buildWorkbenchShotsFromSegmentPlan, resolveManhuaSourcePlanBeat,
-      focusEpisode: 1, directorBoardSegUrls: common.segmentBoardUrls, segmentFirstShotKeyart: undefined,
-      mediaUrl: () => undefined, keyartOutputUrl, directorBoardMotionOverlays: {}, compileManhuaSegmentDirectorBoardOverlay,
-      assetCanon: undefined,
-    });
+    // 10-03 精简分镜界面（b624cba0）后工作台不再自算轨迹叠层：段补充信息仍走工作台真实解析器，叠层只由生产编译器产出。
+    const beat = resolveManhuaSourcePlanBeat(shootablePlan as never, shots, segments[1]);
+    expect(beat).toBeUndefined();
+    const result = compileManhuaSegmentDirectorBoardOverlay({ ...common, beat })!;
     expect(result).toEqual(compileManhuaSegmentDirectorBoardOverlay(common));
     expect(JSON.stringify(result)).not.toContain("旧角色");
     expect(result.cameraPath).not.toBeNull();
   });
-  it("原稿人物路线经真实工作台确认后进入同源工厂成片提示词", () => {
+  it("原稿人物路线经确认后进入同源工厂成片提示词，未确认不注入", () => {
     const assetCanon: ManhuaWriterAssetCanon = {
       characters: [{ id: "wa_char_heiqi", role: "character", nameZh: "黑奇", lookZh: "灰黑马", promptZh: "灰黑马" }],
       props: [], locations: [], episodeMainSceneId: {},
@@ -89,12 +72,11 @@ describe("漫剧自动分段 UI 消费", () => {
     const shots = resolveShotsForEpisodeKeyarts(blocks, 1);
     const segments = groupShotsIntoSegments(shots, { videoModel: "seedance-2.0" });
     const board = "https://example.test/board.png";
-    const overlay = productionMemo("activeDirectorBoardMotionOverlay", {
-      activeBoardBaseUrl: board, activeBoardImageGeometry: { baseAspectRatio: "16:9" },
-      activeSegNo: 1, segments, shots, shootablePlan: { segments: [] }, resolveManhuaSourcePlanBeat,
-      focusEpisode: 1, directorBoardSegUrls: { 1: board }, segmentFirstShotKeyart: undefined,
-      mediaUrl: () => undefined, keyartOutputUrl, directorBoardMotionOverlays: {}, compileManhuaSegmentDirectorBoardOverlay, assetCanon,
-    });
+    const segment = segments.find((entry) => entry.index === 1);
+    const overlay = compileManhuaSegmentDirectorBoardOverlay({
+      episodeIndex: 1, segmentIndex: 1, baseAspectRatio: "16:9", segmentBoardUrls: { 1: board },
+      beat: resolveManhuaSourcePlanBeat({ segments: [] } as never, shots, segment), shots: segment?.shots, assetCanon,
+    })!;
     expect(overlay.actorRoutes).toMatchObject([{ entityId: "黑奇", entityKind: "character" }]);
     const expanded = expandManhuaShotKeyartsAfterReverse(blocks, spawned.edges, reverse.id, { videoModel: "seedance-2.0" });
     const ready = expanded.blocks.map((block) => block.id.startsWith("keyart-") ? { ...block, outputUrl: `https://example.test/${block.id}.png`, status: "done" as const } : block);

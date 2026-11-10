@@ -100,7 +100,9 @@ describe("原生精读页面接线", () => {
 
   it("owner 面板使用原生精读说明与直接开始按钮", () => {
     expect(PAGE).toContain("nativeDeepRead: ownerNativeDeepReadPanel");
-    expect(PAGE).toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读");
+    // 11-05 起前台不显示模型名与路由，面板只给中性说明。
+    expect(PAGE).toContain("逐集分析视频并整理为待审卡，完成后可查看和采用。");
+    expect(PAGE).not.toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS");
     expect(PAGE).toContain('? "开始精读"');
     expect(PAGE).not.toContain("预演并精读 ${manhuaLearnBatchSize} 集");
     expect(PAGE).not.toContain("旧抽帧任务");
@@ -117,8 +119,8 @@ describe("原生精读页面接线", () => {
     expect(PAGE).toContain('|| ownerTemplateCapabilityPending');
   });
 
-  it("原生精读徽标跟随面板所选模型，不读取任务回执或旧模型状态", () => {
-    expect(PAGE).toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读");
+  it("原生精读面板不显示模型徽标，不读取任务回执或旧模型状态", () => {
+    expect(PAGE).not.toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS");
     // 0903 双模型：徽标按面板所选模型显示，仍不读任务回执或旧模型状态
     expect(PAGE).not.toContain("nativeModelReceipts[0]?.model");
     expect(PAGE).not.toContain("MANHUA_TEMPLATE_FRAME_VISION_LABEL");
@@ -150,10 +152,9 @@ describe("原生精读页面接线", () => {
     expect(JOB_API).toContain("throw new CreateJobError(detail.message, response.status, detail.code)");
   });
 
-  it("模型、token、成本和原始进度只通过 owner/监管技术详情门展示", () => {
-    expect(PAGE).toContain(
-      "const canSeeManhuaLearnTechnicalDetails =\n    hasSupervisorOpsAccess || ownerTemplateOptimizeAllowed;",
-    );
+  it("模型、token、成本和原始进度只通过技术详情门展示，前台该门关闭", () => {
+    // 11-05 起模型名、用量与路由一律不进产品界面，技术详情门对所有前台角色关闭。
+    expect(PAGE).toContain("const canSeeManhuaLearnTechnicalDetails = false;");
     expect(PAGE).toContain(
       "canSeeManhuaLearnTechnicalDetails && manhuaLearnResult.nativeUsage",
     );
@@ -161,16 +162,16 @@ describe("原生精读页面接线", () => {
       "canSeeManhuaLearnTechnicalDetails\n                            && (manhuaLearnResult.progressLines?.length || 0) > 0",
     );
     expect(PAGE).toContain("getManhuaLearnSafeProgressLabelZh(manhuaLearnResult)");
-    expect(PAGE).toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[manhuaLearnReadModel]} · 原生视频精读");
+    expect(PAGE).not.toContain("学习模型：{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS");
   });
 
-  it("逐次模型回执只从当前服务端 Job 读取并仅向 owner 展示", () => {
+  it("逐次模型回执只从当前服务端 Job 读取并只经技术详情门展示", () => {
     expect(PAGE).toContain(
       "focusedManhuaLearnServerJob?.output?.nativeModelReceipts",
     );
     expect(PAGE).toContain("parseManhuaNativeModelReceipts(");
     expect(PAGE).toContain(
-      "ownerTemplateOptimizeAllowed\n                            && focusedManhuaNativeModelReceipts.length > 0",
+      "canSeeManhuaLearnTechnicalDetails\n                            && focusedManhuaNativeModelReceipts.length > 0",
     );
     expect(PAGE).toContain("逐次模型回执（{focusedManhuaNativeModelReceipts.length}）");
     expect(PAGE).toContain('stage === "visual_model" && status === "completed"');
@@ -272,8 +273,10 @@ describe("原生精读页面接线", () => {
 });
 
 // 只要求解释路由时，不得增加改变调度策略的选择器。
-it("整形面板仅说明真实并发与fallback，新学习和仅重新整形都不提交锁路由参数", () => {
-  expect(PAGE).toContain("OpenRouter（Z.AI）与 EvoLink 并发分流，失败后互为备用");
+it("整形面板不显示通道与路由名，新学习和仅重新整形都不提交锁路由参数", () => {
+  // 前台不得出现供应商/通道名（11-05 起整形路由说明已移出产品界面）。
+  expect(PAGE).not.toContain("并发分流，失败后互为备用");
+  expect(PAGE).not.toMatch(/整形路由：|OpenRouter（Z\.AI）/);
   expect(PAGE).not.toContain('select id="manhua-structuring-gateway"');
   expect(PAGE).not.toContain("setManhuaLearnStructuringGateway");
   expect(PAGE).not.toContain("nativeStructuringGateway:");

@@ -123,7 +123,7 @@ beforeEach(() => {
       if (url.startsWith("/api/google?op=materialReadUrl&gcsUri="))
         return new Response(JSON.stringify({ ok: true, url: fresh }));
       if (
-        !["/api/jobs?op=seedanceI2V", "/api/jobs?op=wan30Video"].includes(
+        !["/api/jobs?op=seedanceI2V", "/api/jobs?op=wan30Video", "/api/jobs?op=hailuo3Video"].includes(
           url
         ) ||
         init?.method !== "POST"
@@ -165,7 +165,8 @@ describe("动作白模草稿与最终消费闭环（离线）", () => {
       "2—6秒抬臂保护"
     );
   });
-  it.each(["seedance-2.5", "seedance-2.0-mini", "wan-3.0"] as const)(
+  // 海螺 H3 已按官方合同接收参考视频（服务端预检后走 EvoLink），白模与其它支持档同样出站。
+  it.each(["seedance-2.5", "seedance-2.0-mini", "wan-3.0", "minimax-hailuo-3"] as const)(
     "%s 最终出站请求同时包含非空视频与同一角色动作，不被提示词清洗吞掉",
     async videoModel => {
       const block = {
@@ -214,7 +215,7 @@ describe("动作白模草稿与最终消费闭环（离线）", () => {
     ).rejects.toThrow(/白模/);
     expect(requests).toHaveLength(0);
   });
-  it.each(["happyhorse-1.1", "minimax-hailuo-3"] as const)(
+  it.each(["happyhorse-1.1"] as const)(
     "%s 不支持动作视频参考时明确拒绝，不静默丢掉已采用白模",
     async videoModel => {
       const block = {

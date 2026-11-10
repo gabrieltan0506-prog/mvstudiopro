@@ -4,6 +4,7 @@ import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { collectManhuaBackupImageSources } from "./manhuaBackupImageSources";
 import { prepareManhuaBackupRestore } from "./manhuaBackupRestorePreflight";
+import { maskMediaProviderDetails } from "./maskMediaUrls";
 
 // 提取真实页面回调，只注入 ZIP、存储和 UI 边界，不复制导入业务逻辑。
 function importCallback(deps: Record<string, unknown>) {
@@ -133,6 +134,7 @@ function setup(
     buildLocalCloudDraftSnapshot: (value: unknown) => value,
     applyCloudDraftToUi: apply,
     toast,
+    maskMediaProviderDetails,
   });
   return { run, events, confirm, store, oldStore, apply, toast };
 }

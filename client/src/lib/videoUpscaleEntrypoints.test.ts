@@ -7,6 +7,7 @@ import { expect, it, vi } from "vitest";
 import { canWavespeedUpscale } from "@shared/wavespeedVideoUpscaleModels";
 import { canvasVideoUpscaleCredits, canvasVideoEnhanceQuote } from "@shared/canvasGenerationPricing";
 import { canUpscaleNow } from "./manhuaDeliveryOrder";
+import { maskMediaProviderDetails } from "./maskMediaUrls";
 
 function production(file:string){
  const source=readFileSync(new URL(`../components/canvas/${file}.tsx`,import.meta.url),"utf8");
@@ -17,7 +18,7 @@ function production(file:string){
   if(ts.isCallExpression(n)&&ts.isPropertyAccessExpression(n.expression)&&n.expression.name.text==="map"&&n.expression.expression.getText(tree).includes("canWavespeedUpscale"))targets=n.getText(tree);
   ts.forEachChild(n,walk);
  }walk(tree);
- const evaluate=(source:string,context:Record<string,unknown>)=>runInNewContext(ts.transpileModule(`(${source})`,{compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.React}}).outputText,{React,canWavespeedUpscale,canvasVideoUpscaleCredits,canvasVideoEnhanceQuote,canUpscaleNow,...context});
+ const evaluate=(source:string,context:Record<string,unknown>)=>runInNewContext(ts.transpileModule(`(${source})`,{compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.React}}).outputText,{React,canWavespeedUpscale,canvasVideoUpscaleCredits,canvasVideoEnhanceQuote,canUpscaleNow,maskMediaProviderDetails,...context});
  return {run:(name:string,context:Record<string,unknown>)=>evaluate(expressions.get(name)!,context),buttons:(context:Record<string,unknown>)=>renderToStaticMarkup(React.createElement(React.Fragment,null,evaluate(targets,context)))};
 }
 const free=production("FreeformCanvas"),post=production("PostProdWorkshopCard");
@@ -26,7 +27,7 @@ function fixture(resolution="480p"){
  const measured={sourceUrl:url,width:resolution==="480p"?854:1280,height:resolution==="480p"?480:720,durationSec:12,fps:24,sourceResolution:resolution};
  const block={id:"clip-e01-g01",outputUrl:url,episodeIndex:1,videoResolution:"720p"};
  const start=vi.fn(async()=>({taskId:"test-task",status:"queued",creditsUsed:10}));
- return {measured,block,start,context:{blocks:[block],block,upscaleBusyId:null,upscaleSubmitBusy:false,upscaleProbedSources:{[url]:measured},upscaleSource:measured,upscaleProbedSource:measured,upscaleVideoUrl:url,upscaleProbedSec:12,jobs:[],scopedJobs:[],currentClipBlocks:[],focusEpisode:1,projectScopeKey:"test-project",clipOptions:[],startVideoUpscale:start,toast:{error:vi.fn(),success:vi.fn()},patchOne:vi.fn(),setUpscaleBusyId:vi.fn(),setUpscalePanelBlockId:vi.fn(),setUpscaleSubmitBusy:vi.fn(),setUpscaleJobs:vi.fn(),window:{confirm:vi.fn(()=>true)},measured,sec:12,freeform:false,startUpscaleForBlock:vi.fn(),submitUpscale:vi.fn()}};
+ return {measured,block,start,context:{blocks:[block],block,upscaleBusyId:null,upscaleSubmitBusy:false,upscaleProbedSources:{[url]:measured},upscaleSource:measured,upscaleProbedSource:measured,upscaleVideoUrl:url,upscaleProbedSec:12,jobs:[],scopedJobs:[],currentClipBlocks:[],focusEpisode:1,projectScopeKey:"test-project",clipOptions:[],startVideoUpscale:start,acquireWork:vi.fn(()=>vi.fn()),beforeSubmit:vi.fn(async()=>{}),toast:{error:vi.fn(),success:vi.fn()},patchOne:vi.fn(),setUpscaleBusyId:vi.fn(),setUpscalePanelBlockId:vi.fn(),setUpscaleSubmitBusy:vi.fn(),setUpscaleJobs:vi.fn(),window:{confirm:vi.fn(()=>true)},measured,sec:12,freeform:false,startUpscaleForBlock:vi.fn(),submitUpscale:vi.fn()}};
 }
 it.each(["480p","720p"])("两真实UI按钮表达式按实测%s开放目标，不读默认720p",resolution=>{
  const f=fixture(resolution);

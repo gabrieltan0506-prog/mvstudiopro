@@ -180,7 +180,8 @@ describe("manhuaSeriesSwitchGate", () => {
       }),
       body: { appendChild: vi.fn() },
     });
-    vi.stubGlobal("window", { setTimeout: vi.fn() });
+    // 成片下载改走 Fly 中转（#1652），中转地址按当前站点主机名决定，桩里需带 location。
+    vi.stubGlobal("window", { setTimeout: vi.fn(), location: { hostname: "localhost", origin: "http://localhost" } });
     const final = defaultCanvasBlock("video", 0, 0);
     final.id = "final-e01";
     final.episodeIndex = 1;

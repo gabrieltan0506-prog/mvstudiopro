@@ -58,6 +58,15 @@ async function mount(): Promise<Page> {
   await p.goto("http://localhost/", { waitUntil: "domcontentloaded" }).catch(() => {});
   await p.setContent("<div id=root></div>");
   await p.evaluate(bundle);
+  // 10-14 起创作台分「爆款创作 / 图文知识手册 / 数字人」标签，知识手册不再是默认页：走真实标签进入。
+  await p.waitForFunction(
+    () => {
+      const tab = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((b) => (b.textContent || "").startsWith("图文知识手册"));
+      tab?.click();
+      return Boolean(tab);
+    },
+    { timeout: 30_000 },
+  );
   await p.waitForSelector(TA, { timeout: 30_000 });
   return p;
 }

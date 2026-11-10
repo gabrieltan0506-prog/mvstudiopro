@@ -111,9 +111,8 @@ describe("漫剧导演策略前台接线", () => {
     expect(workbenchSource).toContain('directorStrategyContract.version === 2 ? directorStrategyContract.revision : "原版 v1 · 保持不变"');
     expect(workbenchSource).toContain("已锁定");
     expect(workbenchSource).toContain("创作策略 · 旧项目待升级");
-    expect(workbenchSource).toContain("data-manhua-director-overlay-panel");
-    expect(workbenchSource).toContain('data-state={');
-    expect(workbenchSource).toContain("先生成本段静帧，或上传本段导演板");
+    // 轨迹叠层面板已于 10-03 精简分镜界面时移出工作台，不得回流成新的工作流步骤。
+    expect(workbenchSource).not.toContain("data-manhua-director-overlay-panel");
     expect(workbenchSource).not.toMatch(
       /activeBoardBaseUrl\s*&&\s*activeDirectorBoardMotionOverlay\s*\?\s*\(/,
     );

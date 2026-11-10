@@ -21,6 +21,10 @@ const freeformSource = readFileSync(
   new URL("../components/canvas/FreeformCanvas.tsx", import.meta.url),
   "utf8",
 );
+const effectsEditorSource = readFileSync(
+  new URL("../components/canvas/ManhuaGenerativeEffectsEditor.tsx", import.meta.url),
+  "utf8",
+);
 const reviewPanelSource = readFileSync(new URL("../components/ManhuaPilotReviewPanel.tsx", import.meta.url), "utf8");
 const reviewHookSource = readFileSync(new URL("./useManhuaPilotReview.ts", import.meta.url), "utf8");
 
@@ -46,7 +50,9 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
     expect(workbenchSource).toContain("latestEditSourceIdentity.current !== sourceIdentity");
     expect(workbenchSource).toContain("[clip.shotIndex, clip.durationSec, clip.order]");
     expect(workbenchSource).toContain("onlyShotIndex == null || legacyOrderNeedsPersist");
-    expect(omniSource).toContain("onApplyClipEditTrims={(updates)");
+    // 10-06 起写回逻辑提成具名函数，顾问执行层与工作台共用同一入口。
+    expect(omniSource).toContain("onApplyClipEditTrims={applyClipEditTrims}");
+    expect(omniSource).toContain("function applyClipEditTrims(updates");
     const assemble = omniSource.slice(omniSource.indexOf("const assembleManhuaFinal"));
     expect(assemble.indexOf("buildManhuaAssemblePlan(ready)")).toBeGreaterThan(-1);
     expect(assemble.indexOf("buildManhuaAssemblePlan(ready)")).toBeLessThan(assemble.indexOf("await createJobSameOrigin"));
@@ -71,16 +77,20 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
   });
 
   it("places video edit after clip QC and preserves prepared payload/history", () => {
-    expect(editPanelSource).toContain('data-manhua-action="video-edit-clip"');
-    expect(editPanelSource).toContain("位于单镜质检之后、最终拼接之前");
+    // 10-07 起编辑入口收进特效编辑器组件，仍只在单镜质检有片后挂出。
+    expect(editPanelSource).toContain('activeQc?.clipBlockId && activeQc.gate !== "missing" && onVideoEditClip ? (');
+    expect(editPanelSource).toContain("<ManhuaGenerativeEffectsEditor");
+    expect(effectsEditorSource).toContain('data-manhua-action="video-edit-clip"');
     expect(editPanelSource).toContain("成片版本");
     expect(omniSource).toContain('seedance25WorkMode: "video_edit"');
     expect(omniSource).toContain("handleSelectClipVersion");
     expect(omniSource).toContain("preparedTargetBlocks: [preparedBlock]");
     expect(pipelineSource).toContain("preservePreparedTargetBlocks");
     expect(pipelineSource).toContain("mergeManhuaMediaVersions");
-    expect(omniSource).toContain("const preparedVideoEdit = isPreparedManhuaVideoEditRun({");
-    expect(omniSource).toMatch(/fragmentShotIndex > 1 &&\s*!preparedVideoEdit/);
+    // 预备编辑判定改名 preparedEditOnly（只认单集单段且目标唯一）；预备了编辑载荷却不匹配时整次拒绝。
+    expect(omniSource).toContain('const preparedEditOnly = untilStage === "clip" &&');
+    expect(omniSource).toContain("isPreparedManhuaVideoEditRun({");
+    expect(omniSource).toMatch(/preparedTargetBlocks\?\.some\(\(block\) => block\.seedance25WorkMode === "video_edit"\) &&\s*!preparedEditOnly/);
     expect(omniSource).toContain("const retakeBase = clearManhuaVideoEditOperation(hit)");
     expect(omniSource).toContain("if (!isCanvasProductVideoModel(retakeVideoModel))");
     expect(omniSource).toContain("seedance25WorkMode: fresh.seedance25WorkMode");
@@ -136,7 +146,8 @@ describe("漫剧首10秒质检与视频编辑接线", () => {
     expect(omniSource).toContain("manhuaDirectorBoardMotionOverlayByEpisodeSegment");
     expect(workbenchSource).toContain("directorBoardMotionOverlays?:");
     expect(workbenchSource).toContain("onDirectorBoardMotionOverlayChange");
-    expect(workbenchSource).toContain("确认轨迹");
+    // 工作台内「确认轨迹」面板已于 10-03 精简分镜界面时移除；已存轨迹层仍按段进入成片编译。
+    expect(pipelineSource).toContain("opts?.directorBoardMotionOverlayByEpisodeSegment?.[ep]?.[seg.index]");
   });
 
   it("keeps five user-facing phases without changing legacy internal keys", () => {

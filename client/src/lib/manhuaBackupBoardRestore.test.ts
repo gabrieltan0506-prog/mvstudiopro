@@ -49,7 +49,8 @@ function setup() {
     getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => values.set(key, value),
   };
-  vi.stubGlobal("window", { localStorage });
+  // 漫剧存储按作品地址分命名空间（manhuaProjectScope 读 location），非作品页沿用原键。
+  vi.stubGlobal("window", { localStorage, location: { pathname: "/", search: "" } });
   vi.stubGlobal("localStorage", localStorage);
   let main = normalizeDirectorBoardMainByEpisode({ 1: board("old-main") });
   let segment = normalizeDirectorBoardBySegment({
