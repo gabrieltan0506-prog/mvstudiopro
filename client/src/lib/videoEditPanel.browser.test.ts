@@ -321,11 +321,176 @@ it("VideoEditPanel：顾问预填（登记口与 prefill nonce）只预填不提
     await page.waitForSelector('[role="dialog"]');
     expect(await page.$eval('[role="dialog"]', n => n.textContent || "")).toContain("提交后不可取消");
     // 确认框打开时顾问不能改预填
-    expect((await ctl({ action: "videoEdit", operation: "prefill", targetId: "clip-1", startSec: 0, endSec: 5, promptZh: "改别处" })).error).toContain("正在提交或处理中");
+    expect((await ctl({ action: "videoEdit", operation: "prefill", targetId: "clip-1", startSec: 0, endSec: 5, promptZh: "改别处" })).error).toContain("用户正在确认");
     expect(await page.evaluate(() => (globalThis as any).queued.length)).toBe(0);
     await click("确认提交");
     await page.waitForFunction(() => (globalThis as any).queued.length === 1);
     expect(await page.evaluate(() => (globalThis as any).queued[0])).toMatchObject({ startSec: 10, endSec: 16, promptZh: "天空换成黄昏", expectedCredits: 90 });
+    expect(errors).toEqual([]);
+  } finally {
+    await browser.close();
+  }
+}, 60000);
+
+/**
+ * 顾问预填防覆盖：确认框打开、正在报价、任务进行中时，面板登记口与宿主闸门（后期工坊/首页/营销页写法）都拒绝并回中文原因；
+ * 宿主未接闸门直接改 nonce 时，面板内容与确认框也原样保留。任务结束后可再预填。
+ */
+it("VideoEditPanel：确认框打开/正在报价/任务进行中拒绝顾问预填，面板与确认框不变", async () => {
+  const bundle = await build({
+    stdin: {
+      resolveDir: process.cwd(),
+      loader: "tsx",
+      contents: `
+    import React from 'react'; import {createRoot} from 'react-dom/client';
+    import {VideoEditPanel, useVideoEditPrefillGuard} from './client/src/components/canvas/VideoEditPanel';
+    import {createAdvisorVideoEditControl} from './client/src/lib/advisorVideoEditControl';
+    globalThis.React=React;globalThis.queued=[];globalThis.vctl=null;globalThis.hostCtl=null;globalThis.holdQuote=false;
+    let n=0;
+    function App(){const[pf,setPf]=React.useState(undefined);globalThis.setPrefill=setPf;
+      const guard=useVideoEditPrefillGuard();
+      React.useEffect(()=>{
+        // 宿主自建控件（同后期工坊/首页/营销页）：清单为本片，prefill 设 nonce 打开并预填；闸门先问面板
+        globalThis.hostCtl=guard.withGuard(createAdvisorVideoEditControl({
+          targets:()=>[{id:'host-clip',label:'宿主成片',url:'gs://test-only/post-prod/7/a.mp4',durationSec:40}],
+          open:p=>setPf({startSec:p.startSec,endSec:p.endSec,promptZh:p.promptZh,nonce:'host-'+(++n)}),
+        }));
+      },[guard]);
+      return <VideoEditPanel source='gs://test-only/post-prod/7/a.mp4' previewUrl='https://cdn.test/a.mp4' durationSec={40}
+        prefill={pf} onAdvisorPrefillGuard={guard.register}
+        advisorTarget={{id:'clip-1',label:'第1段成片'}} onAdvisorVideoEditControl={c=>{globalThis.vctl=c;}}/>;}
+    createRoot(document.getElementById('root')).render(<App/>);
+  `,
+    },
+    bundle: true,
+    write: false,
+    platform: "browser",
+    format: "iife",
+    jsx: "automatic",
+    alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+    plugins: [
+      {
+        name: "offline",
+        setup(b) {
+          b.onResolve({ filter: /(?:^@\/lib\/trpc$|\/trpc$)/ }, () => ({ path: "trpc", namespace: "offline" }));
+          b.onLoad({ filter: /.*/, namespace: "offline" }, () => ({
+            loader: "js",
+            contents: `
+      const quote={useQuery:(input,opts)=>{
+        if(!opts.enabled||globalThis.holdQuote) return {data:undefined,isFetching:Boolean(opts.enabled)};
+        const seg=Math.max(4,Math.round((input.endSec-input.startSec)*10)/10);
+        return {data:{sourceDurationSec:40,startSec:input.startSec,endSec:Math.max(input.endSec,input.startSec+4),segmentSec:seg,expanded:false,credits:Math.ceil(seg/2)*30,waived:false,creditsPerTwoSec:30,minSec:4,maxSec:30,confirmNotice:'提交后不可取消；失败或未通过审核将全额退回积分。'}};
+      }};
+      const queue={useMutation:()=>({mutateAsync:async input=>{globalThis.queued.push(input);return {jobId:'job-ve-9',startSec:input.startSec,endSec:input.endSec};}})};
+      const job={useQuery:(input,opts)=>{
+        const React=globalThis.React;const [,force]=React.useState(0);
+        React.useEffect(()=>{globalThis.bump=()=>force(x=>x+1);},[]);
+        return {data:opts.enabled?globalThis.jobData:undefined};
+      }};
+      export const trpc={mvAnalysis:{quoteVideoPartialEdit:quote,queueVideoPartialEdit:queue,getPostProdJob:job}};
+    `,
+          }));
+        },
+      },
+    ],
+    define: { "process.env.NODE_ENV": '"production"', "import.meta.env": "{}" },
+    logLevel: "silent",
+  });
+  const browser = await puppeteer.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(10000);
+    const errors: string[] = [];
+    page.on("pageerror", e => errors.push(String(e)));
+    await page.setRequestInterception(true);
+    page.on("request", r => r.respond({ status: 200, contentType: "application/json", body: "[]" }));
+    await page.goto("http://localhost/");
+    await page.setContent('<div id="root"></div>');
+    await page.addScriptTag({ content: bundle.outputFiles[0].text });
+    await page.waitForFunction(() => typeof (globalThis as any).vctl === "function" && typeof (globalThis as any).hostCtl === "function");
+    const text = (label: string) => page.$eval(`[aria-label="${label}"]`, n => n.textContent || "");
+    const val = (label: string) => page.$eval(`[aria-label="${label}"]`, n => (n as HTMLInputElement).value);
+    const setVal = (label: string, v: string | number) =>
+      page.$eval(
+        `[aria-label="${label}"]`,
+        (el, v) => {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, String(v));
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+        },
+        v
+      );
+    const click = (label: string) =>
+      page.$$eval("button", (nodes, label) => (nodes.find(n => n.textContent?.trim() === label) as HTMLButtonElement).click(), label);
+    const call = (who: "vctl" | "hostCtl", a: unknown) =>
+      page.evaluate(
+        (who, a) => (globalThis as any)[who](a, new AbortController().signal).then((r: string) => JSON.parse(r), (e: Error) => ({ error: e.message })),
+        who,
+        a as any
+      );
+    const ask = (targetId: string, startSec: number, endSec: number, promptZh: string) => ({ action: "videoEdit", operation: "prefill", targetId, startSec, endSec, promptZh });
+    const snapshot = async () => ({ range: await text("所选区间"), prompt: await val("修改描述"), dialog: Boolean(await page.$('[role="dialog"]')) });
+    /** 两条顾问路 + 宿主未接闸门的 nonce 都试一遍：顾问收到含 reason 的中文原因，面板快照不变。 */
+    const expectRejected = async (reason: string) => {
+      const before = await snapshot();
+      expect((await call("vctl", ask("clip-1", 0, 5, "改别处"))).error).toContain(reason);
+      expect((await call("hostCtl", ask("host-clip", 0, 5, "改别处"))).error).toContain(reason);
+      return before;
+    };
+
+    // 空闲：宿主控件预填照常（面板已挂载，闸门放行）
+    expect(await call("hostCtl", ask("host-clip", 10, 16, "天空换成黄昏"))).toMatchObject({ status: "prefilled", startSec: 10, endSec: 16 });
+    await page.waitForFunction(() => (document.querySelector('[aria-label="修改描述"]') as HTMLTextAreaElement)?.value === "天空换成黄昏");
+    await page.waitForFunction(() => document.querySelector('[aria-label="报价"]')?.textContent?.includes("需 90 积分"));
+
+    // 确认框打开：拒绝；宿主直接改 nonce 也不关确认框、不改内容
+    await click("提交局部修改");
+    await page.waitForSelector('[role="dialog"]');
+    const atConfirm = await expectRejected("用户正在确认");
+    expect(atConfirm).toEqual({ range: expect.stringContaining("10.0–16.0 秒"), prompt: "天空换成黄昏", dialog: true });
+    await page.evaluate(() => (globalThis as any).setPrefill({ startSec: 0, endSec: 5, promptZh: "宿主未接闸门", nonce: "raw-1" }));
+    await page.evaluate(() => new Promise(r => setTimeout(r, 50)));
+    expect(await snapshot()).toEqual(atConfirm);
+    expect(await page.evaluate(() => (globalThis as any).queued.length)).toBe(0);
+    await click("再想想");
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]'));
+
+    // 正在报价（报价未回）：拒绝，用户刚改的区间不被冲掉
+    await page.evaluate(() => ((globalThis as any).holdQuote = true));
+    await setVal("终点秒", 17);
+    await page.waitForFunction(() => document.querySelector('[aria-label="报价"]')?.textContent?.includes("正在计算所需积分"));
+    const atQuote = await expectRejected("正在计算所需积分");
+    expect(atQuote).toEqual({ range: expect.stringContaining("10.0–17.0 秒"), prompt: "天空换成黄昏", dialog: false });
+    await page.evaluate(() => new Promise(r => setTimeout(r, 50)));
+    expect(await snapshot()).toEqual(atQuote);
+    await page.evaluate(() => ((globalThis as any).holdQuote = false));
+    await setVal("终点秒", 17.5);
+    await page.waitForFunction(() => document.querySelector('[aria-label="报价"]')?.textContent?.includes("需 120 积分"));
+
+    // 任务进行中：拒绝；宿主直接改 nonce 也不动
+    await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some(b => b.textContent?.trim() === "提交局部修改" && !b.disabled));
+    await click("提交局部修改");
+    await page.waitForSelector('[role="dialog"]');
+    await click("确认提交");
+    await page.waitForFunction(() => (globalThis as any).queued.length === 1);
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]'));
+    expect(await text("修改任务")).toContain("处理中");
+    const atRun = await expectRejected("任务进行中");
+    expect(atRun).toEqual({ range: expect.stringContaining("10.0–17.5 秒"), prompt: "天空换成黄昏", dialog: false });
+    await page.evaluate(() => (globalThis as any).setPrefill({ startSec: 0, endSec: 5, promptZh: "宿主未接闸门", nonce: "raw-2" }));
+    await page.evaluate(() => new Promise(r => setTimeout(r, 50)));
+    expect(await snapshot()).toEqual(atRun);
+    expect(await page.evaluate(() => (globalThis as any).queued)).toMatchObject([{ startSec: 10, endSec: 17.5, promptZh: "天空换成黄昏" }]);
+
+    // 任务结束：可再预填（下一轮修改），仍只预填不提交
+    await page.evaluate(() => {
+      (globalThis as any).jobData = { status: "succeeded", output: { url: "https://cdn.test/e.mp4", editedRange: { startSec: 10, endSec: 17.5 } } };
+      (globalThis as any).bump();
+    });
+    await page.waitForSelector('[aria-label="修改结果"]');
+    expect(await call("hostCtl", ask("host-clip", 20, 26, "路灯更亮"))).toMatchObject({ status: "prefilled" });
+    await page.waitForFunction(() => (document.querySelector('[aria-label="修改描述"]') as HTMLTextAreaElement)?.value === "路灯更亮");
+    expect(await text("所选区间")).toContain("20.0–26.0 秒");
+    expect(await page.evaluate(() => (globalThis as any).queued.length)).toBe(1);
     expect(errors).toEqual([]);
   } finally {
     await browser.close();

@@ -112,6 +112,19 @@ export function checkVideoEditRange(startSec: number, endSec: number, durationSe
   return { ...base, expandedTo: { startSec: s, endSec: e }, problem: "" };
 }
 
+/**
+ * 顾问预填闸门（纯函数）：面板此刻不接受顾问预填的中文原因（回给顾问原话），空串 = 可预填。
+ * 任务进行中 > 正在提交 > 用户确认中 > 面板停用 > 正在报价；被拒时面板内容与确认框一律不动。
+ */
+export function videoEditPrefillBlockReason(s: { running: boolean; submitting: boolean; confirming: boolean; disabled?: boolean; quoting: boolean }): string {
+  if (s.running) return "局部修改任务进行中，未改动面板内容，请等任务完成后再预填";
+  if (s.submitting) return "用户正在提交局部修改，未改动面板内容";
+  if (s.confirming) return "用户正在确认局部修改，未改动面板内容";
+  if (s.disabled) return "局部修改面板暂不可操作，未改动面板内容";
+  if (s.quoting) return "面板正在计算所需积分，未改动面板内容，请稍后再预填";
+  return "";
+}
+
 /** 来源规范化（同 videoGradeSubmit）：只接 https/gs；CloudFront 成品先导入为本人 gs://。 */
 export async function normalizeVideoEditSource(url: string, importSource?: (url: string) => Promise<string>): Promise<string> {
   const value = String(url || "").trim();

@@ -2,7 +2,7 @@ import { MontagePlanner } from "./MontagePlanner";
 import type { ConcatGrade } from "@shared/colorGrade";
 import { POSTPROD_GRADE_EVENT, type PostProdGradeRequest } from "@/lib/postProdQuickGrade";
 import { VideoGradePanel } from "./VideoGradePanel";
-import { VideoEditPanel } from "./VideoEditPanel";
+import { VideoEditPanel, useVideoEditPrefillGuard } from "./VideoEditPanel";
 import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
 import type { MontageGrade } from "@/lib/montageFinish";
@@ -194,7 +194,7 @@ type PostProdWorkshopCardProps = {
   onAdvisorControl?: AdvisorScoringRegistration;
   /** 剪辑方案切点交给顾问 edit 控件（MV 第 5 步）；不传时保持原行为。 */
   onAdvisorEditControl?: AdvisorEditRegistration;
-  /** 顾问 videoEdit 注册口：挂「局部修改这条」时原样传给 VideoEditPanel.onAdvisorVideoEditControl（只预填、不提交）。 */
+  /** 顾问 videoEdit 注册口：清单为超分页签所选这一条，prefill 打开「局部修改这条」并预填（只预填、不提交；面板确认/报价/提交/任务进行中拒绝）。 */
   onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
   advisorContext?: ManhuaCreativeAdvisorContext;
   userId: string;
@@ -567,6 +567,8 @@ export default function PostProdWorkshopCard({
   const [quickEditOpen, setQuickEditOpen] = useState(false);
   /** 顾问 videoEdit 预填（nonce 变化即覆盖面板内容）；只预填，提交仍须用户在面板确认。 */
   const [advisorEditPrefill, setAdvisorEditPrefill] = useState<{ startSec: number; endSec: number; promptZh: string; referenceImageUrls?: string[]; nonce: number }>();
+  /** 面板确认/报价/提交/任务进行中时，顾问预填被拒并回中文原因，面板与确认框不动。 */
+  const editGuard = useVideoEditPrefillGuard();
   useEffect(() => {
     const onGrade = (event: Event) => {
       const detail = (event as CustomEvent<PostProdGradeRequest>).detail;
@@ -1374,21 +1376,23 @@ export default function PostProdWorkshopCard({
     if (!onAdvisorVideoEditControl) return;
     const cur = () => advisorVideoEditLive.current;
     onAdvisorVideoEditControl(
-      createAdvisorVideoEditControl({
-        targets: () => {
-          const { url, source } = cur();
-          const sec = source ? source.durationExactSec ?? source.durationSec : 0;
-          return url && sec > 0 ? [{ id: "postprod-selected", label: "后期工坊所选这一条成片", url, durationSec: sec }] : [];
-        },
-        busy: () => cur().busy,
-        open: p => {
-          setQuickEditOpen(true);
-          setAdvisorEditPrefill({ startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, ...(p.referenceImageUrl ? { referenceImageUrls: [p.referenceImageUrl] } : {}), nonce: Date.now() });
-        },
-      })
+      editGuard.withGuard(
+        createAdvisorVideoEditControl({
+          targets: () => {
+            const { url, source } = cur();
+            const sec = source ? source.durationExactSec ?? source.durationSec : 0;
+            return url && sec > 0 ? [{ id: "postprod-selected", label: "后期工坊所选这一条成片", url, durationSec: sec }] : [];
+          },
+          busy: () => cur().busy,
+          open: p => {
+            setQuickEditOpen(true);
+            setAdvisorEditPrefill({ startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, ...(p.referenceImageUrl ? { referenceImageUrls: [p.referenceImageUrl] } : {}), nonce: Date.now() });
+          },
+        })
+      )
     );
     return () => onAdvisorVideoEditControl(null);
-  }, [onAdvisorVideoEditControl]);
+  }, [onAdvisorVideoEditControl, editGuard]);
   const transitionKey = advisorWorkflowRevision([vfxScopeKey, clipOptions, concatSel, clipEdits, concatTransition, concatTransitionSec, concatRes, concatAspect]);
   const transitionKeyRef = useRef(transitionKey); transitionKeyRef.current = transitionKey;
   const transitionControl = useRef<AdvisorEffectsControl>(async () => "");
@@ -1999,6 +2003,7 @@ export default function PostProdWorkshopCard({
                     durationSec={upscaleSource.durationExactSec ?? upscaleSource.durationSec}
                     disabled={busy}
                     prefill={advisorEditPrefill}
+                    onAdvisorPrefillGuard={editGuard.register}
                     onDone={result => toast.success("局部修改完成，已生成新版本", { description: result.jobId ? `单号 ${result.jobId}` : undefined })}
                   />
                 ) : <p className="text-[11px] text-white/50">先读取真实尺寸与时长，再选择修改区间。</p>}

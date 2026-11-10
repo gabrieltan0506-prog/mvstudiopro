@@ -72,6 +72,15 @@ describe("顾问 videoEdit 接线", () => {
     expect(card).toContain("prefill={advisorEditPrefill}");
     expect(card.indexOf("const busy = queueMutation.isPending || disabled;")).toBeLessThan(card.indexOf("const advisorVideoEditLive"));
   });
+  it("后期工坊/代码动画与首页/营销成片：自建控件经面板预填闸门（确认/报价/提交/任务进行中拒绝并回原因）", async () => {
+    const { readFileSync } = await import("node:fs");
+    for (const file of ["client/src/components/canvas/PostProdWorkshopCard.tsx", "client/src/components/HomePhotoVideoUpscale.tsx", "client/src/components/platform/MarketingProductionPanel.tsx"]) {
+      const src = readFileSync(file, "utf8");
+      expect(src).toContain("const editGuard = useVideoEditPrefillGuard();");
+      expect(src).toMatch(/onAdvisorVideoEditControl\(\s*editGuard\.withGuard\(\s*createAdvisorVideoEditControl\(/);
+      expect(src).toContain("onAdvisorPrefillGuard={editGuard.register}");
+    }
+  });
 });
 
 describe("多个「局部修改」入口汇总", () => {

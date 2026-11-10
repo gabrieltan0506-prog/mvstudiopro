@@ -18,7 +18,7 @@ import { flyDownloadUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
 import type { MontageGrade } from "@/lib/montageFinish";
 import { VideoGradePanel } from "@/components/canvas/VideoGradePanel";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
-import { VideoEditPanel } from "@/components/canvas/VideoEditPanel";
+import { VideoEditPanel, useVideoEditPrefillGuard } from "@/components/canvas/VideoEditPanel";
 import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
 import type { AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 
@@ -284,6 +284,8 @@ function UpscalePanel({
 }) {
   const [tool, setTool] = useState<VideoTool | null>(null);
   const [editPrefill, setEditPrefill] = useState<VideoEditPrefill>();
+  /** 面板确认/报价/提交/任务进行中时，顾问预填被拒并回中文原因，面板不动。 */
+  const editGuard = useVideoEditPrefillGuard();
   const [uploaded, setUploaded] = useState("");
   const [choice, setChoice] = useState<"uploaded" | "generated" | "cloud">(
     "uploaded"
@@ -328,21 +330,23 @@ function UpscalePanel({
     if (!onAdvisorVideoEditControl) return;
     const cur = () => advisorVideoEditLive.current;
     onAdvisorVideoEditControl(
-      createAdvisorVideoEditControl({
-        targets: () => {
-          const { source: playable, metadata: meta, authenticated: authed, advisorTarget: target } = cur();
-          const url = gradeSourceFromPlayableUrl(playable);
-          return authed && meta && meta.durationSec > 0 && url ? [{ ...target, url, durationSec: meta.durationSec }] : [];
-        },
-        busy: () => cur().busy,
-        open: p => {
-          setTool("edit");
-          setEditPrefill({ startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, ...(p.referenceImageUrl ? { referenceImageUrls: [p.referenceImageUrl] } : {}), nonce: Date.now() });
-        },
-      })
+      editGuard.withGuard(
+        createAdvisorVideoEditControl({
+          targets: () => {
+            const { source: playable, metadata: meta, authenticated: authed, advisorTarget: target } = cur();
+            const url = gradeSourceFromPlayableUrl(playable);
+            return authed && meta && meta.durationSec > 0 && url ? [{ ...target, url, durationSec: meta.durationSec }] : [];
+          },
+          busy: () => cur().busy,
+          open: p => {
+            setTool("edit");
+            setEditPrefill({ startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, ...(p.referenceImageUrl ? { referenceImageUrls: [p.referenceImageUrl] } : {}), nonce: Date.now() });
+          },
+        })
+      )
     );
     return () => onAdvisorVideoEditControl(null);
-  }, [onAdvisorVideoEditControl]);
+  }, [onAdvisorVideoEditControl, editGuard]);
   function save(next: UpscaleRecord[]) {
     recordsRef.current = next;
     if (storageKey) {
@@ -639,6 +643,7 @@ function UpscalePanel({
           durationSec={metadata.durationSec}
           previewUrl={source}
           prefill={editPrefill}
+          onAdvisorPrefillGuard={editGuard.register}
         />
       )}
       {metadata && !canWavespeedUpscale(metadata.sourceResolution, "4k") && (

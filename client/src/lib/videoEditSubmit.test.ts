@@ -24,6 +24,7 @@ import {
   readVideoEditJob,
   readVideoEditQuote,
   submitVideoEdit,
+  videoEditPrefillBlockReason,
 } from "./videoEditSubmit";
 
 const SIGNED = "https://storage.googleapis.com/mv-bucket/post-prod/7/a.mp4?X-Goog-Signature=abc";
@@ -107,6 +108,23 @@ describe("提交参数", () => {
     expect(submit).not.toHaveBeenCalled();
     expect(importSource).not.toHaveBeenCalled();
     expect(() => buildVideoEditSubmitInput({ ...base, promptZh: "x".repeat(2001) }, "r")).toThrow("2000");
+  });
+});
+
+describe("顾问预填闸门", () => {
+  const idle = { running: false, submitting: false, confirming: false, disabled: false, quoting: false };
+  it("空闲放行；确认中/报价中/提交中/任务进行中/停用各给中文原因，任务进行中优先", () => {
+    expect(videoEditPrefillBlockReason(idle)).toBe("");
+    expect(videoEditPrefillBlockReason({ ...idle, confirming: true })).toContain("用户正在确认");
+    expect(videoEditPrefillBlockReason({ ...idle, quoting: true })).toContain("正在计算所需积分");
+    expect(videoEditPrefillBlockReason({ ...idle, submitting: true, confirming: true })).toContain("正在提交");
+    expect(videoEditPrefillBlockReason({ ...idle, disabled: true })).toContain("暂不可操作");
+    expect(videoEditPrefillBlockReason({ running: true, submitting: true, confirming: true, disabled: true, quoting: true })).toContain("任务进行中");
+    for (const k of ["running", "submitting", "confirming", "disabled", "quoting"] as const) {
+      const why = videoEditPrefillBlockReason({ ...idle, [k]: true });
+      expect(why).toContain("未改动");
+      expect(why).not.toMatch(/Seedance|BytePlus|EvoLink|Gemini|GPT|Veo|Kling|WaveSpeed/i);
+    }
   });
 });
 

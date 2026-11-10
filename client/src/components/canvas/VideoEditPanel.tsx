@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { flyDownloadUrl } from "@/lib/gcsTransfer";
 import {
@@ -12,10 +12,11 @@ import {
   readVideoEditQuote,
   roundSec,
   submitVideoEdit,
+  videoEditPrefillBlockReason,
   type VideoEditQuoteInput,
   type VideoEditSubmitDeps,
 } from "@/lib/videoEditSubmit";
-import type { AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
+import type { AdvisorVideoEditControl, AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
 
 /** 本作品可选参考图（素材库/镜头图等）。 */
@@ -38,10 +39,15 @@ export type VideoEditPanelProps = {
   onDone?: (result: VideoEditResult) => void;
   /** 入队成功（每次确认提交一次）：startSec/endSec 为实际提交的区间（不足 4 秒已扩展后的值）；挂载方可据此记账、刷新后续看进度。 */
   onSubmitted?: (job: { jobId: string; requestId: string; startSec: number; endSec: number }) => void;
-  /** 外部（创作顾问）预填：nonce 变化即覆盖区间/描述/参考图；只预填，报价与提交仍须用户在本面板确认。 */
+  /**
+   * 外部（创作顾问）预填：nonce 变化即覆盖区间/描述/参考图；只预填，报价与提交仍须用户在本面板确认。
+   * 确认框打开、正在提交或任务进行中时不覆盖（内容与确认框原样保留）；宿主须配 onAdvisorPrefillGuard 才能把拒绝原因回给顾问。
+   */
   prefill?: { startSec: number; endSec: number; promptZh: string; referenceImageUrls?: string[]; nonce: string | number };
-  /** 顾问 videoEdit 登记口：本面板挂载期间登记（inspect 列本片与参考图，prefill 覆盖本面板内容），卸载即注销。 */
+  /** 顾问 videoEdit 登记口：本面板挂载期间登记（inspect 列本片与参考图，prefill 覆盖本面板内容；确认/报价/提交/任务进行中拒绝），卸载即注销。 */
   onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
+  /** 宿主自建顾问控件时的预填闸门登记口（用 useVideoEditPrefillGuard().register）：挂载期间登记，卸载即注销。 */
+  onAdvisorPrefillGuard?: (guard: (() => string) | null) => void;
   /** 顾问清单里本片的 targetId 与名称（缺省 current / 当前成片）。 */
   advisorTarget?: { id: string; label: string };
 };
@@ -74,6 +80,33 @@ function useDebounced<T>(value: T, ms: number): T {
 
 const fmt = (n: number) => roundSec(n).toFixed(1);
 
+/** 顾问 prefill 前置闸门：reason() 非空即原样拒绝（不调用原控件、不改任何状态）；inspect 照常。 */
+function guardAdvisorPrefill(control: AdvisorVideoEditControl, reason: () => string): AdvisorVideoEditControl {
+  return async (action, signal) => {
+    const held = action.operation === "prefill" ? reason() : "";
+    if (held) throw new Error(held);
+    return control(action, signal);
+  };
+}
+
+/**
+ * 宿主自建顾问 videoEdit 控件（清单 + 打开面板 + prefill nonce）时用：register 交给面板 onAdvisorPrefillGuard，
+ * withGuard 包住宿主控件——prefill 前先问已挂载的面板，确认框打开、正在报价、提交或任务进行中就拒绝并把中文原因回给顾问，
+ * 宿主不改预填、不动面板；面板未挂载时照常打开并预填。
+ */
+export function useVideoEditPrefillGuard() {
+  const guard = useRef<(() => string) | null>(null);
+  return useMemo(
+    () => ({
+      register: (g: (() => string) | null) => {
+        guard.current = g;
+      },
+      withGuard: (control: AdvisorVideoEditControl) => guardAdvisorPrefill(control, () => guard.current?.() ?? ""),
+    }),
+    []
+  );
+}
+
 /**
  * 视频局部修改面板：选区间（一位小数，拖动或输入）→ 描述要改什么 → 可选参考图 → 报价 → 确认（不可取消、失败退款）
  * → 提交后轮询；完成显示新版本（原片保留），可前后对比。计价与区间扩展以服务端报价为准。
@@ -94,35 +127,42 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const doneRef = useRef("");
 
+  // 只改区间/描述/参考图；确认框与任务状态不在这里动（被闸门拦下时根本不会调用）
   const applyPrefill = (p: { startSec: number; endSec: number; promptZh: string; referenceImageUrls?: string[] }) => {
     const allowed = new Set((props.referenceImages ?? []).map(r => r.url));
     setStartSec(roundSec(Math.min(Math.max(0, p.startSec), duration)));
     setEndSec(roundSec(Math.min(Math.max(0, p.endSec), duration)));
     setPromptZh(p.promptZh.slice(0, VIDEO_EDIT_PROMPT_MAX));
     setRefs((p.referenceImageUrls ?? []).filter(u => allowed.has(u)).slice(0, VIDEO_EDIT_REF_MAX));
-    setConfirming(false);
     setError("");
   };
+  /** lockReason：此刻拒绝顾问预填的原因（含正在报价）；holdPrefill：确认框打开/正在提交/任务进行中，宿主 nonce 也不覆盖。 */
+  const advisorLive = useRef({ props, duration, lockReason: "", holdPrefill: false, apply: applyPrefill });
   const prefillNonce = props.prefill?.nonce;
   useEffect(() => {
-    if (props.prefill && !jobId) applyPrefill(props.prefill);
+    // 挂载时（宿主刚打开面板）直接预填；之后的新 nonce 若撞上确认/提交/任务进行中，面板内容与确认框原样保留。
+    // 宿主经 useVideoEditPrefillGuard 先问过本面板，拒绝原因已回给顾问（未接闸门的宿主至少不会冲掉用户的确认框）。
+    if (props.prefill && !advisorLive.current.holdPrefill) applyPrefill(props.prefill);
   }, [prefillNonce]); // eslint-disable-line react-hooks/exhaustive-deps
-  const advisorLive = useRef({ props, duration, locked: false, apply: applyPrefill });
   useEffect(() => {
     const register = props.onAdvisorVideoEditControl;
     if (!register) return;
     const cur = () => advisorLive.current;
-    register(
-      createAdvisorVideoEditControl({
-        targets: () => [{ id: cur().props.advisorTarget?.id ?? "current", label: cur().props.advisorTarget?.label ?? "当前成片", url: cur().props.source, durationSec: cur().duration }],
-        refs: () => (cur().props.referenceImages ?? []).map((r, i) => ({ id: `ref${i + 1}`, label: r.label ?? `参考图${i + 1}`, url: r.url })),
-        range: () => ({ minSec: VIDEO_EDIT_MIN_SEC, maxSec: VIDEO_EDIT_MAX_SEC }),
-        busy: () => cur().locked,
-        open: p => cur().apply({ ...p, referenceImageUrls: p.referenceImageUrl ? [p.referenceImageUrl] : [] }),
-      })
-    );
+    const control = createAdvisorVideoEditControl({
+      targets: () => [{ id: cur().props.advisorTarget?.id ?? "current", label: cur().props.advisorTarget?.label ?? "当前成片", url: cur().props.source, durationSec: cur().duration }],
+      refs: () => (cur().props.referenceImages ?? []).map((r, i) => ({ id: `ref${i + 1}`, label: r.label ?? `参考图${i + 1}`, url: r.url })),
+      range: () => ({ minSec: VIDEO_EDIT_MIN_SEC, maxSec: VIDEO_EDIT_MAX_SEC }),
+      open: p => cur().apply({ ...p, referenceImageUrls: p.referenceImageUrl ? [p.referenceImageUrl] : [] }),
+    });
+    register(guardAdvisorPrefill(control, () => cur().lockReason));
     return () => register(null);
   }, [props.onAdvisorVideoEditControl]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const register = props.onAdvisorPrefillGuard;
+    if (!register) return;
+    register(() => advisorLive.current.lockReason);
+    return () => register(null);
+  }, [props.onAdvisorPrefillGuard]);
 
   const range = checkVideoEditRange(startSec, endSec, duration);
   const debounced = useDebounced({ startSec: range.startSec, endSec: range.endSec }, 400);
@@ -149,7 +189,15 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
 
   const running = Boolean(jobId) && job?.status === "active";
   const locked = Boolean(props.disabled) || busy || running;
-  advisorLive.current = { props, duration, locked: locked || confirming, apply: applyPrefill };
+  /** 正在报价 = 界面正显示「正在计算所需积分…」（区间有效、报价未到且未报错）。 */
+  const quoting = Boolean(props.source) && !range.problem && !quoteFresh && !quoteQuery.error;
+  advisorLive.current = {
+    props,
+    duration,
+    lockReason: videoEditPrefillBlockReason({ running, submitting: busy, confirming, disabled: Boolean(props.disabled), quoting }),
+    holdPrefill: running || busy || confirming,
+    apply: applyPrefill,
+  };
   const promptOk = promptZh.trim().length > 0 && promptZh.trim().length <= VIDEO_EDIT_PROMPT_MAX;
   const canAsk = !locked && !range.problem && promptOk && quoteFresh;
 
