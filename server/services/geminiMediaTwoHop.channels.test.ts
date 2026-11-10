@@ -167,3 +167,18 @@ describe("1110 EvoLink 跳只收签名 https（同模板学习做法）", () => 
     expect(JSON.parse(sentBodies()[0]!).generationConfig).not.toHaveProperty("audioTimestamp");
   });
 });
+
+describe("1110 两跳缺省模型固定 gemini-3.8-flash（隔离探针发现缺省落到通道配置 3.6）", () => {
+  it("不传 model 时两跳 URL 都是 gemini-3.8-flash，通道环境变量不生效", async () => {
+    vi.stubEnv("MANHUA_AUDIO_VERTEX_MODEL", "gemini-3.6-flash");
+    vi.stubEnv("MANHUA_AUDIO_EVOLINK_MODEL", "gemini-3.6-flash");
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) }).mockResolvedValueOnce(geminiReply("{\"ok\":1}"));
+    const r = await geminiAudioJsonWithFallback({
+      media: { vertexFileUri: "gs://test-bucket/a.mp3", evolinkFileUri: () => "https://signed.example/test-bucket/a.mp3?X-Goog-Signature=t" },
+      mimeType: "audio/mpeg", prompt: "听", schemaName: "t", validate: (v: unknown) => v, save: async () => undefined,
+    });
+    expect(r.model).toBe("gemini-3.8-flash");
+    expect(sentUrls()).toHaveLength(2);
+    expect(sentUrls().every(u => u.includes("/models/gemini-3.8-flash:"))).toBe(true);
+  });
+});

@@ -339,7 +339,7 @@ export async function geminiAudioJsonWithFallback<T>(input: {
    * 已删除内联音频入参，「不内联 base64」由类型保证；签名 URL 不落证据（只记 gs://）。
    */
   media: { vertexFileUri: string; evolinkFileUri: () => string };
-  /** 两跳统一模型覆盖（如 gemini-3.8-flash）；缺省沿用听音通道配置。 */
+  /** 两跳统一模型覆盖；缺省固定 gemini-3.8-flash（1110 隔离探针发现缺省沿用听音通道配置会落到 3.6-flash，违反「Gemini 一律 3.8 Flash」）。 */
   model?: string;
   /** 1109：系统指令（MV 独立听歌 / 剪辑方案分析）。 */
   systemInstruction?: string;
@@ -375,21 +375,21 @@ export async function geminiAudioJsonWithFallback<T>(input: {
   };
   const channels: Array<{ name: GeminiAudioJsonChannel; available: () => boolean; model: () => string; run: () => Promise<{ status: number; ok: boolean; payload: unknown; text: string }> }> = [
     {
-      name: "Vertex", available: isManhuaDramaVertexAudioAvailable, model: () => input.model || resolveManhuaAudioVertexModelName(),
+      name: "Vertex", available: isManhuaDramaVertexAudioAvailable, model: () => input.model || GEMINI_AUDIO_TWO_HOP_MODEL,
       run: async () => {
-        const model = input.model || resolveManhuaAudioVertexModelName();
+        const model = input.model || GEMINI_AUDIO_TWO_HOP_MODEL;
         const location = resolveManhuaAudioVertexLocation();
         const url = `${baseUrlForVertex(location)}/v1/projects/${encodeURIComponent(getVertexProjectId())}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
         return native(url, (await getVertexAuthHeaders()) as Record<string, string>, media.vertexFileUri);
       },
     },
     {
-      name: "EvoLink", available: isManhuaDramaEvolinkAudioAvailable, model: () => input.model || resolveManhuaAudioEvolinkModelName(),
+      name: "EvoLink", available: isManhuaDramaEvolinkAudioAvailable, model: () => input.model || GEMINI_AUDIO_TWO_HOP_MODEL,
       run: async () => {
         // 1110：EvoLink 上的 Gemini 读不了 gs://，也不收内联 base64 —— 只认签名 https（同模板学习 manhuaNativeDeepReadRunner）
         const fileUri = media.evolinkFileUri();
         if (!fileUri || !/^https:\/\//.test(fileUri)) throw new Error("EvoLink 只收签名 https 媒体链接（不收 gs:// 或内联音频）");
-        return native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(input.model || resolveManhuaAudioEvolinkModelName())}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, fileUri);
+        return native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(input.model || GEMINI_AUDIO_TWO_HOP_MODEL)}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, fileUri);
       },
     },
   ];
