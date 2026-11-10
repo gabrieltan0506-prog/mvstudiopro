@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { COLOR_GRADE_LUT_ID_RE, concatGradeSchema } from "@shared/colorGrade";
-import { montageGradeAdviceStory } from "@/components/canvas/MontageGradeAdvice";
+import { montageGradeAdviceStory, montageGradeSegmentGradeIndexes, montageGradeTransitions } from "@/components/canvas/MontageGradeAdvice";
 import {
   MONTAGE_ADVISOR_GRADE_NOT_EXPLICIT_ZH,
   MONTAGE_LUT_GROUPS,
@@ -296,5 +296,24 @@ describe("分段调色 segments / crossfadeSec / autoMatchJunctions（共享 con
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first, warnings } })!.junctions.map(j => j.warning)).toEqual([undefined, { rounds: 3, maxRounds: 3, reason: "max_rounds" }]);
     expect(readMontageJunctionCheck({ gcsUri: "x" })).toBeNull();
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { check: { junctions: [{ delta: {} }] } } })).toBeNull();
+  });
+});
+
+describe("AI 调色建议：已知转场传入与吸附合并后的列表对应", () => {
+  it("转场生效：每个接点一段转场，中点 = 接点 + 时长/2；无转场或无接点不传", () => {
+    expect(montageGradeTransitions([29.4, 40], 0.4)).toEqual([{ atSec: 29.6, durationSec: 0.4 }, { atSec: 40.2, durationSec: 0.4 }]);
+    expect(montageGradeTransitions([29.4], 0)).toBeUndefined();
+    expect(montageGradeTransitions([], 0.4)).toBeUndefined();
+  });
+  it("接线：方案页 → 调色面板 → 调色建议请求带 transitions", () => {
+    const src = (f: string) => readFileSync(new URL(`../components/canvas/${f}`, import.meta.url), "utf8");
+    expect(src("MontagePlanner.tsx")).toContain("transitions={gradeTransitions}");
+    expect(src("VideoGradePanel.tsx")).toContain("transitions={props.transitions}");
+    expect(src("MontageGradeAdvice.tsx")).toContain("props.transitions?.length ? { transitions: props.transitions } : {}");
+  });
+  it("吸附并段后 segments 少于 grades：按未并掉的原始段取理由，不越界", () => {
+    expect(montageGradeSegmentGradeIndexes(3, 3, [1])).toEqual([0, 1, 2]);
+    expect(montageGradeSegmentGradeIndexes(2, 3, [1])).toEqual([0, 2]);
+    expect(montageGradeSegmentGradeIndexes(2, 3)).toEqual([0, 1]);
   });
 });

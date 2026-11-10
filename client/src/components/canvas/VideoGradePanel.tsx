@@ -40,6 +40,8 @@ export type VideoGradePanelProps = {
   storyZh?: string;
   /** 素材拼接接点秒位（单片无接点可不传）。 */
   seamSecs?: number[];
+  /** 已知转场（atSec = 转场中点，成片绝对秒）；未知不传。 */
+  transitions?: Array<{ atSec: number; durationSec: number }>;
   /** 套用建议失败等错误；不传则在面板内显示。 */
   onError?: (message: string) => void;
   /** 后期任务结果（含 gradeSegmentCheck）；传入即在面板末尾展示接点检查。 */
@@ -273,6 +275,7 @@ export function VideoGradePanel(props: VideoGradePanelProps) {
             aspect={props.adviceAspect}
             storyZh={props.storyZh}
             seamSecs={props.seamSecs}
+            transitions={props.transitions}
             disabled={locked}
             debugMode={props.debugMode}
             triggerRef={props.adviceTriggerRef}

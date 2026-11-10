@@ -46,6 +46,8 @@ export type MontageGradeAdviceProps = {
   storyZh?: string;
   /** 可选素材拼接接点秒位。 */
   seamSecs?: number[];
+  /** 可选已知转场（atSec = 转场中点，成片绝对秒）；未知不传。 */
+  transitions?: Array<{ atSec: number; durationSec: number }>;
   /** 「套用到草稿」回调；只回传 segments，不自动提交。返回 false = 没套用成功（按钮不显示「已套用」）。 */
   onApply: (segments: MontageGradeSegment[]) => boolean | void;
   /** supervisor/debug 下才显示引擎名（前台零技术泄漏）。 */
@@ -71,6 +73,21 @@ export function montageAdviceParamsZh(s: MontageGradeSegment): string {
   if (s.curves) out.push("曲线");
   return out.join("、") || "保持原样";
 }
+
+/** 转场生效时每个接点都是一段转场：接点秒位（seamSecs）= 转场起点，中点 = 起点 + 时长/2；无转场返回 undefined（不传）。 */
+export function montageGradeTransitions(seamSecs: number[], transitionSec: number): Array<{ atSec: number; durationSec: number }> | undefined {
+  if (!(transitionSec > 0) || !seamSecs.length) return undefined;
+  return seamSecs.map(s => ({ atSec: Math.round((s + transitionSec / 2) * 100) / 100, durationSec: transitionSec }));
+}
+
+/** 结果第 j 段对应模型原始 grades 的下标：边界吸附可能把过短的段并掉，segments 会比 grades 少。 */
+export function montageGradeSegmentGradeIndexes(segmentCount: number, gradeCount: number, mergedGradeIndexes: number[] = []): number[] {
+  const all = Array.from({ length: gradeCount }, (_, i) => i);
+  if (segmentCount === gradeCount) return all;
+  const kept = all.filter(i => !mergedGradeIndexes.includes(i));
+  return kept.length === segmentCount ? kept : all.slice(0, segmentCount);
+}
+
 export function MontageGradeAdvice(props: MontageGradeAdviceProps) {
   const advise = trpc.canvasMusicMv.adviseMontageGrade.useMutation();
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +105,7 @@ export function MontageGradeAdvice(props: MontageGradeAdviceProps) {
         ...(props.aspect ? { aspect: props.aspect } : {}),
         ...(storyZh ? { storyZh } : {}),
         ...(props.seamSecs?.length ? { seamSecs: props.seamSecs } : {}),
+        ...(props.transitions?.length ? { transitions: props.transitions } : {}),
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : "调色建议暂不可用，请稍后重试";
@@ -121,6 +139,8 @@ export function MontageGradeAdvice(props: MontageGradeAdviceProps) {
   const intentMarkers = segs.flatMap((s, i) =>
     i > 0 && s.junctionIntent ? [{ sec: s.startSec, label: INTENT_ZH[s.junctionIntent], tone: s.junctionIntent === "unwanted" ? ("warn" as const) : ("ok" as const) }] : []
   );
+  /** 每段理由取自未被吸附并掉的模型原始段。 */
+  const reasons = montageGradeSegmentGradeIndexes(segs.length, data?.advice.grades.length ?? 0, data?.snap?.mergedGradeIndexes).map(gi => data?.advice.grades[gi]?.reasonZh);
   const jumps = (data?.advice.seams ?? []).filter(s => s.jump);
   const markers = [
     ...intentMarkers,
@@ -167,9 +187,9 @@ export function MontageGradeAdvice(props: MontageGradeAdviceProps) {
                   {i + 1}. {fmt(s.startSec)}–{fmt(s.endSec)}秒
                 </span>
                 <span>{montageAdviceParamsZh(s)}</span>
-                {data.advice.grades[i]?.reasonZh && (
-                  <span className="min-w-0 basis-full truncate text-white/60" title={data.advice.grades[i]!.reasonZh}>
-                    {data.advice.grades[i]!.reasonZh}
+                {reasons[i] && (
+                  <span className="min-w-0 basis-full truncate text-white/60" title={reasons[i]}>
+                    {reasons[i]}
                   </span>
                 )}
               </li>
