@@ -86,7 +86,7 @@ const fetchFrom = (jobs: Jobs) =>
   });
 
 /** 画布一次挂载：块在 store（onBlocksChange 走 updater），组件函数取自 FreeformCanvas 真实源码；只跑轮询的一轮，不起定时器。 */
-function mountCanvas(blocks: CanvasBlock[], jobs: Jobs) {
+function mountCanvas(blocks: CanvasBlock[], jobs: Jobs, byRequest: Jobs = {}) {
   const store = { blocks };
   const toast = { error: vi.fn(), success: vi.fn() };
   const fetchPostProdJob = fetchFrom(jobs);
@@ -104,14 +104,23 @@ function mountCanvas(blocks: CanvasBlock[], jobs: Jobs) {
     measureVideoToolExactSec: vi.fn(async () => 10.08),
     toast, maskMediaProviderDetails, setEditPanelBlockId, setGradeProbedSec: vi.fn(), setGradeBusyId: vi.fn(), setGradePanelBlockId: vi.fn(),
     crypto: { randomUUID: () => "55555555-5555-4555-8555-555555555555" },
-    Promise, Array, String, Boolean, Error, JSON, Set,
+    Promise, Array, String, Boolean, Error, JSON, Set, Date,
   };
-  for (const name of ["trackVideoToolJob", "applyVideoToolJobOnBlock", "failVideoToolJobOnBlock", "applyVideoEditForBlock", "pollCanvasVideoToolJobs", "openEditPanel", "startGradeForBlock"])
+  const findByRequest = fetchFrom(byRequest);
+  context.fetchVideoEditJobByRequestRef = { current: findByRequest };
+  for (const name of ["trackVideoToolJob", "confirmSubmittingVideoEdit", "trackVideoEditSubmitting", "applyVideoToolJobOnBlock", "failVideoToolJobOnBlock", "applyVideoEditForBlock", "pollCanvasVideoToolJobs", "resolveCanvasSubmittingVideoEdits", "openEditPanel", "startGradeForBlock"])
     context[name] = free.run(name, context);
+  const pairs = () => JSON.parse(free.run("activeVideoToolJobKey", context));
   return {
-    store, toast, fetchPostProdJob, queue, setEditPanelBlockId,
-    /** 挂载即跑的第一轮（effect 用的就是这对 [块, 任务] 键）。 */
-    poll: () => (context.pollCanvasVideoToolJobs as (p: unknown, c: () => boolean) => Promise<void>)(JSON.parse(free.run("activeVideoToolJobKey", context)), () => false),
+    store, toast, fetchPostProdJob, queue, setEditPanelBlockId, findByRequest,
+    /** 挂载即跑的一轮（effect 用的就是这对 [块, 任务] 键）：先按任务号轮询，再核对「提交中」。 */
+    poll: async () => {
+      const p = pairs();
+      await (context.pollCanvasVideoToolJobs as (p: unknown, c: () => boolean) => Promise<void>)(p, () => false);
+      await (context.resolveCanvasSubmittingVideoEdits as (p: unknown, c: () => boolean) => Promise<void>)(p, () => false);
+    },
+    onSubmitting: (blockId: string, p: { requestId: string; startSec: number; endSec: number; phase: "sending" | "rejected" }, sourceUrl: string) =>
+      (context.trackVideoEditSubmitting as (id: string, src: string, p: unknown) => void)(blockId, sourceUrl, p),
     onSubmitted: (blockId: string, job: { jobId: string; requestId: string; startSec: number; endSec: number }, sourceUrl: string) =>
       (context.trackVideoToolJob as (id: string, j: unknown) => void)(
         blockId,
@@ -575,4 +584,156 @@ describe("MV 成片记录上限（40 条）：写入截留、读入宽进，不�
     expect(mvFinalRecordPending({ status: "failed" })).toBe(false);
     expect(mvFinalRecordPending({ jobId: "x" })).toBe(false);
   });
+});
+
+/** 换设备 / 从云端回填：本机保存后过一遍云草稿序列化、服务端同一校验与恢复（只用云端结果，不读本机）。 */
+function cloudReload(blocks: CanvasBlock[]): CanvasBlock[] {
+  const serialized = serializeCloudDraftForUpload(buildLocalCloudDraftSnapshot({ writerSession: {}, blocks: slimBlocksForLocalPersist(reload(blocks)), edges: [] }));
+  expect(serialized).not.toBeNull();
+  const parsed = parseManhuaCloudDraftPayload(serialized);
+  expect(parsed).not.toBeNull();
+  return cloudDraftBlocksToCanvas(parsed!.canvas.blocks);
+}
+
+describe("画布视频块在途任务随云草稿往返（换设备 / 云端回填不丢）", () => {
+  it("已入队：云端往返后仍续查，完成作新版本加入；同任务再回执 / 再回填不重复加入", async () => {
+    const first = mountCanvas([videoBlock()], {});
+    first.onSubmitted("clip-v1", { jobId: EDIT_JOB, requestId: REQUEST, startSec: 2, endSec: 6 }, original);
+    const restored = cloudReload(first.store.blocks);
+    expect(readVideoToolJobs(blockOf(restored).videoToolJobs)).toEqual(readVideoToolJobs(blockOf(first.store.blocks).videoToolJobs));
+    const jobs: Jobs = { [EDIT_JOB]: { status: "running", output: null, error: null } };
+    const second = mountCanvas(restored, jobs);
+    await second.poll();
+    expect(blockOf(second.store.blocks).videoToolJobs).toHaveLength(1);
+    jobs[EDIT_JOB] = { status: "succeeded", output: { url: edited("c1") }, error: null };
+    await second.poll();
+    const done = blockOf(second.store.blocks);
+    expect(done.outputUrl).toBe(edited("c1"));
+    expect(done.outputUrls).toContain(original);
+    expect(done.videoToolJobs).toBeUndefined();
+    second.onDone("clip-v1", original, { url: edited("c2"), jobId: EDIT_JOB });
+    const third = mountCanvas(cloudReload(second.store.blocks), jobs);
+    await third.poll();
+    third.onDone("clip-v1", original, { url: edited("c3"), jobId: EDIT_JOB });
+    expect(objectCount(blockOf(third.store.blocks).outputUrls, edited("c1"))).toBe(1);
+    expect(blockOf(third.store.blocks).outputUrls).toHaveLength(done.outputUrls.length);
+  });
+
+  it("旧云稿无此字段照常读；坏条目丢弃、超限只截留最新 20 条，不整块拒收", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const legacy = parseManhuaCloudDraftPayload(serializeCloudDraftForUpload(buildLocalCloudDraftSnapshot({ writerSession: {}, blocks: [videoBlock()], edges: [] })));
+      expect(cloudDraftBlocksToCanvas(legacy!.canvas.blocks)[0].videoToolJobs).toBeUndefined();
+      const many = Array.from({ length: 25 }, (_, i) => ({ kind: "grade", jobId: `g-${i}`, requestId: `r-${i}`, startedAt: "2026-11-10T00:00:00.000Z", sourceUrl: original }));
+      const raw = { ...videoBlock(), videoToolJobs: [{ jobId: "" }, null, { kind: "edit", status: "submitting", requestId: "not-a-uuid", startedAt: "x", sourceUrl: original }, ...many] };
+      const restored = cloudReload([raw as CanvasBlock]);
+      const b = blockOf(restored);
+      expect(b.outputUrl).toBe(original);
+      expect(readVideoToolJobs(b.videoToolJobs).map(j => j.jobId)).toEqual(many.slice(5).map(j => j.jobId));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("超过上限 20"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("局部修改「提交中」：入队回执前刷新也不漏记", () => {
+  const sending = { requestId: REQUEST, startSec: 2, endSec: 6, phase: "sending" as const };
+  const notFound = () => { throw Object.assign(new Error("片段修改任务不存在"), { data: { code: "NOT_FOUND" } }); };
+
+  it("发请求前先记提交中（入口锁住）→ 云端往返刷新 → 按 requestId 查到任务号补全 → 续查完成加入新版本；晚到回执不重复加入", async () => {
+    const first = mountCanvas([videoBlock()], {});
+    first.onSubmitting("clip-v1", sending, original);
+    first.onSubmitting("clip-v1", sending, original);
+    const recs = videoToolJobs.readVideoToolJobRecords(blockOf(first.store.blocks).videoToolJobs);
+    expect(recs).toEqual([{ kind: "edit", status: "submitting", requestId: REQUEST, startedAt: expect.any(String), sourceUrl: original, range: { startSec: 2, endSec: 6 } }]);
+    await first.openEditPanel("clip-v1");
+    expect(first.setEditPanelBlockId).not.toHaveBeenCalled();
+
+    // 刷新（只走云端）：只剩 requestId
+    const jobs: Jobs = { [EDIT_JOB]: { status: "running", output: null, error: null } };
+    const second = mountCanvas(cloudReload(first.store.blocks), jobs, { [REQUEST]: { jobId: EDIT_JOB, status: "queued", output: null, error: null } });
+    await second.poll();
+    expect(second.findByRequest).toHaveBeenCalledWith(REQUEST);
+    expect(readVideoToolJobs(blockOf(second.store.blocks).videoToolJobs)).toEqual([
+      { kind: "edit", jobId: EDIT_JOB, requestId: REQUEST, startedAt: recs[0].startedAt, sourceUrl: original, range: { startSec: 2, endSec: 6 } },
+    ]);
+    expect(videoToolJobs.readSubmittingVideoToolJobs(blockOf(second.store.blocks).videoToolJobs)).toEqual([]);
+    // 补全后按任务号轮询；同任务回执晚到也只一条
+    second.onSubmitted("clip-v1", { jobId: EDIT_JOB, requestId: REQUEST, startSec: 2, endSec: 6 }, original);
+    expect(blockOf(second.store.blocks).videoToolJobs).toHaveLength(1);
+    jobs[EDIT_JOB] = { status: "succeeded", output: { url: edited("p1") }, error: null };
+    second.findByRequest.mockClear();
+    await second.poll();
+    expect(second.findByRequest).not.toHaveBeenCalled();
+    const done = blockOf(second.store.blocks);
+    expect(done.outputUrl).toBe(edited("p1"));
+    expect(done.videoToolJobs).toBeUndefined();
+    second.onDone("clip-v1", original, { url: edited("p2"), jobId: EDIT_JOB });
+    expect(objectCount(blockOf(second.store.blocks).outputUrls, edited("p1"))).toBe(1);
+    expect(second.toast.success).toHaveBeenCalledTimes(1);
+  });
+
+  it("面板回执先到：提交中就地补全为已入队，不另加一条", () => {
+    const m = mountCanvas([videoBlock()], {});
+    m.onSubmitting("clip-v1", sending, original);
+    m.onSubmitted("clip-v1", { jobId: EDIT_JOB, requestId: REQUEST, startSec: 2, endSec: 6 }, original);
+    expect(videoToolJobs.readVideoToolJobRecords(blockOf(m.store.blocks).videoToolJobs)).toEqual([
+      expect.objectContaining({ jobId: EDIT_JOB, requestId: REQUEST }),
+    ]);
+  });
+
+  it("查不到：宽限内按可能仍在受理继续保留；过了宽限才清掉并提示可重新发起", async () => {
+    const first = mountCanvas([videoBlock()], {});
+    first.onSubmitting("clip-v1", sending, original);
+    const second = mountCanvas(cloudReload(first.store.blocks), {}, { [REQUEST]: notFound });
+    await second.poll();
+    expect(videoToolJobs.readSubmittingVideoToolJobs(blockOf(second.store.blocks).videoToolJobs)).toHaveLength(1);
+    expect(second.toast.error).not.toHaveBeenCalled();
+    // 查询失败（非 NOT_FOUND）一律按瞬态，即使过了宽限
+    const old = blockOf(second.store.blocks);
+    const aged = { ...old, videoToolJobs: videoToolJobs.readVideoToolJobRecords(old.videoToolJobs).map(j => ({ ...j, startedAt: new Date(Date.now() - videoToolJobs.VIDEO_TOOL_SUBMIT_GRACE_MS - 1000).toISOString() })) };
+    const flaky = mountCanvas([aged], {}, { [REQUEST]: () => { throw new Error("network down"); } });
+    await flaky.poll();
+    expect(blockOf(flaky.store.blocks).videoToolJobs).toHaveLength(1);
+    const third = mountCanvas([aged], {}, { [REQUEST]: notFound });
+    await third.poll();
+    expect(blockOf(third.store.blocks).videoToolJobs).toBeUndefined();
+    expect(third.toast.error).toHaveBeenCalledWith("这次局部修改没有提交成功，未生成新版本，可重新发起");
+    await third.openEditPanel("clip-v1");
+    expect(third.setEditPanelBlockId).toHaveBeenCalledWith("clip-v1");
+  });
+
+  it("服务端已回拒绝：按 requestId 核对一次，确无任务才清；查到任务（回包出错但已建任务）就补全", async () => {
+    const m = mountCanvas([videoBlock()], {}, { [REQUEST]: notFound });
+    m.onSubmitting("clip-v1", sending, original);
+    m.onSubmitting("clip-v1", { ...sending, phase: "rejected" }, original);
+    await vi.waitFor(() => expect(blockOf(m.store.blocks).videoToolJobs).toBeUndefined());
+    expect(m.toast.error).not.toHaveBeenCalled();
+
+    const n = mountCanvas([videoBlock()], {}, { [REQUEST]: { jobId: EDIT_JOB, status: "queued" } });
+    n.onSubmitting("clip-v1", sending, original);
+    n.onSubmitting("clip-v1", { ...sending, phase: "rejected" }, original);
+    await vi.waitFor(() => expect(readVideoToolJobs(blockOf(n.store.blocks).videoToolJobs).map(j => j.jobId)).toEqual([EDIT_JOB]));
+  });
+
+  it("纯函数：被拒后用同一 requestId 重试过（发起时间更新）的不清；已入队的同请求压过提交中", () => {
+    const at = Date.parse("2026-11-10T00:00:00.000Z");
+    const pending = videoToolJobs.buildSubmittingVideoToolJob({ requestId: REQUEST, sourceUrl: original, now: new Date(at + 5000) })!;
+    expect(videoToolJobs.removeSubmittingVideoToolJob([pending], REQUEST, at)).toEqual([pending]);
+    expect(videoToolJobs.removeSubmittingVideoToolJob([pending], REQUEST, at + 5000)).toBeUndefined();
+    const tracked = videoToolJobs.buildVideoToolJob({ kind: "edit", jobId: EDIT_JOB, requestId: REQUEST, sourceUrl: original })!;
+    expect(videoToolJobs.readVideoToolJobRecords([pending, tracked])).toEqual([tracked]);
+    expect(videoToolJobs.upsertSubmittingVideoToolJob([tracked], pending)).toEqual([tracked]);
+  });
+});
+
+it("接线：面板发请求前回报提交中、画布按 requestId 续查；前台文案不出现模型 / 通道名", () => {
+  expect(free.source).toContain("onSubmitting={p => trackVideoEditSubmitting(block.id, editSrc, p)}");
+  expect(free.source).toContain("await resolveCanvasSubmittingVideoEditsRef.current(pairs, () => cancelled);");
+  expect(free.source).toContain("postProdUtils.mvAnalysis.findVideoPartialEditJob.fetch({ requestId })");
+  const panel = readFileSync(new URL("../components/canvas/VideoEditPanel.tsx", import.meta.url), "utf8");
+  expect(panel).toMatch(/submit: input => \{\s*sentRequestId = input\.requestId;\s*report\(\{ requestId: input\.requestId, startSec: quote\.startSec, endSec: quote\.endSec, phase: "sending" \}\);\s*return queue\.mutateAsync\(input\);/);
+  for (const src of [readFileSync(new URL("../../../shared/videoToolJob.ts", import.meta.url), "utf8")])
+    expect(src).not.toMatch(/Seedance|EvoLink|BytePlus|Gemini|Vertex|GPT|Claude/);
 });

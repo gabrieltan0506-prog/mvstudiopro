@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { z } from "zod";
 import { protectedProcedure } from "../_core/trpc.js";
 import { videoPartialEditQuoteInputSchema, videoPartialEditRequestSchema } from "../../shared/videoEditPricing.js";
 import { hasUnlimitedAccess } from "../services/access-policy.js";
@@ -23,4 +24,17 @@ export const videoPartialEditProcedures = {
     const { queueVideoPartialEdit } = await import("../services/videoPartialEdit.js");
     return queueVideoPartialEdit(String(ctx.user.id), waived(ctx.user), input);
   })),
+  /**
+   * 按 requestId 查本人的局部修改任务（只读、不扣费、不入队）：前端在入队回执前刷新、只剩 requestId 时续查。
+   * 回包与 getPostProdJob 同形（含 jobId）；确实无记录才 NOT_FOUND，查询失败抛错交客户端下一轮重试。
+   */
+  findVideoPartialEditJob: protectedProcedure
+    .input(z.object({ requestId: z.string().uuid() }).strict())
+    .query(async ({ ctx, input }) => {
+      const { findVideoPartialEditJobByRequest } = await import("../services/videoPartialEdit.js");
+      const row = await findVideoPartialEditJobByRequest(String(ctx.user.id), input.requestId);
+      if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "片段修改任务不存在" });
+      const { buildPostProdJobResponse } = await import("../services/postProdJobResponse.js");
+      return buildPostProdJobResponse(row as Parameters<typeof buildPostProdJobResponse>[0]);
+    }),
 };

@@ -202,6 +202,20 @@ export async function queueVideoPartialEdit(
   }
 }
 
+/**
+ * 按 requestId 查本人的局部修改任务（任务号由 requestId 决定性派生）：前端「提交中」刷新后只记得 requestId 时续查用。
+ * 只读：不扣费、不入队、不重试；无记录（或不是本人的局部修改任务）返回 null。
+ */
+export async function findVideoPartialEditJobByRequest(
+  userId: string,
+  requestId: string,
+  load: VideoPartialEditQueueDeps["load"] = realQueueDeps.load,
+) {
+  const row = await load(videoPartialEditTaskId(userId, requestId));
+  if (!row || String(row.userId) !== String(userId) || row.type !== "post_prod") return null;
+  return videoPartialEditJobSchema.safeParse(row.input).success ? row : null;
+}
+
 function receiptFrom(row: JobRow, userId: string) {
   const stored = videoPartialEditJobSchema.safeParse(row.input);
   if (row.userId !== userId || row.type !== "post_prod" || !stored.success) throw new Error("同一请求编号不能用于不同作品或修改内容");

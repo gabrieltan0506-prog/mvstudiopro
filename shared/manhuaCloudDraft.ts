@@ -9,6 +9,7 @@ import { normalizeManhuaClipPromptEdit } from "./manhuaClipPromptEdit";
 import { parseManhuaActionPlan, type ManhuaActionPlan } from "./manhuaActionPlan.js";
 import { canvasMusicMvShotBindingSchema, type CanvasMusicMvShotBinding, normalizeCanvasMusicMvState, type CanvasMusicMvState } from "./canvasMusicMv";
 import { capManhuaMediaHistory } from "./manhuaMediaHistoryCap";
+import { sanitizeVideoToolJobRecords, type VideoToolJobRecord } from "./videoToolJob";
 import { normalizeManhuaTimelineOrder } from "./manhuaEditOrder.js";
 import { canvasAudioStudioSchema } from "./canvasAudioStudio.js";
 import { manhuaPrevisStudioSchema, type ManhuaPrevisStudio } from "./manhuaPrevis";
@@ -95,6 +96,11 @@ export type ManhuaCloudDraftCanvasBlock = {
   videoTaskId?: string;
   videoTaskEngine?: string;
   videoTaskStatus?: string;
+  /**
+   * 局部修改 / 调色在途任务（含局部修改「提交中」）：换设备或从云端回填后仍能续查、完成后加入新版本。
+   * 旧云稿没有此字段照常读；逐条校验、超限只截留（shared/videoToolJob sanitizeVideoToolJobRecords）。
+   */
+  videoToolJobs?: VideoToolJobRecord[];
   /** D（0915）：生成意图与提前进合同的三个身份；只做往返，不赋语义 */
   videoIntentId?: string;
   videoIntentStatus?: string;
@@ -528,6 +534,10 @@ export function sanitizeManhuaCloudDraftBlock(
           ? [outputUrl, ...outputUrls]
           : outputUrls,
       error: typeof b.error === "string" ? b.error : undefined,
+      videoToolJobs: (() => {
+        const jobs = sanitizeVideoToolJobRecords(b.videoToolJobs);
+        return jobs.length ? jobs : undefined;
+      })(),
       manhuaClipQuality: sanitizeVideoQuality(b.manhuaClipQuality),
       refVideoUrl: isHttpUrl(b.refVideoUrl)
         ? String(b.refVideoUrl).trim()

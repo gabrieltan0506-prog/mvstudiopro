@@ -482,6 +482,8 @@ export function cloudDraftBlocksToCanvas(
       videoTaskStatus: (
         raw as { videoTaskStatus?: CanvasBlock["videoTaskStatus"] }
       ).videoTaskStatus,
+      // 局部修改 / 调色在途任务（含提交中）：云端回填后照常续查，完成作新版本加入
+      videoToolJobs: raw.videoToolJobs?.length ? raw.videoToolJobs : undefined,
       manhuaEditTrim: (
         raw as { manhuaEditTrim?: CanvasBlock["manhuaEditTrim"] }
       ).manhuaEditTrim,

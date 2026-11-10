@@ -136,7 +136,16 @@ import type { MontageGrade } from "@/lib/montageFinish";
 import {
   addVideoToolJob,
   applyVideoToolJobResult,
+  buildSubmittingVideoToolJob,
   buildVideoToolJob,
+  isPostProdJobNotFound,
+  isVideoToolJobSubmitting,
+  readSubmittingVideoToolJobs,
+  readVideoToolJobRecords,
+  removeSubmittingVideoToolJob,
+  resolveSubmittingVideoToolJobsOnce,
+  upsertSubmittingVideoToolJob,
+  videoToolJobKey,
   measureVideoToolExactSec,
   pendingVideoToolJob,
   pollVideoToolJobsOnce,
@@ -948,6 +957,8 @@ export default function FreeformCanvas({
   const queuePostProd = trpc.mvAnalysis.queuePostProd.useMutation();
   const postProdUtils = trpc.useUtils();
   const fetchPostProdJob = (jobId: string) => postProdUtils.mvAnalysis.getPostProdJob.fetch({ jobId });
+  /** 局部修改按 requestId 查任务（只读；任务号由 requestId 决定性派生）：「提交中」刷新后续查用。 */
+  const fetchVideoEditJobByRequest = (requestId: string) => postProdUtils.mvAnalysis.findVideoPartialEditJob.fetch({ requestId });
   // 每个 block 暂存尚未取得明确终态的增强请求编号:结果未知时复用同一编号,
   // 服务端按 jobs 记录恢复结果,不重复调用模型不重复扣分。
   // ref 是热缓存;sessionStorage 是刷新后的恢复源,两处同写同清。
@@ -1609,6 +1620,49 @@ export default function FreeformCanvas({
     );
   }, []);
 
+  /** 「提交中」补全为已入队（按 requestId 查到任务号或面板回执先到都走这里）；之后按任务号正常轮询。 */
+  const confirmSubmittingVideoEdit = useCallback((blockId: string, requestId: string, jobId: string) => {
+    onBlocksChangeRef.current(prev =>
+      prev.map(b => {
+        if (b.id !== blockId) return b;
+        const pending = readSubmittingVideoToolJobs(b.videoToolJobs).find(j => j.requestId === requestId);
+        const job = pending && buildVideoToolJob({ kind: "edit", jobId, requestId, sourceUrl: pending.sourceUrl, range: pending.range, now: new Date(pending.startedAt) });
+        return job ? { ...b, videoToolJobs: addVideoToolJob(b.videoToolJobs, job) } : b;
+      })
+    );
+  }, []);
+
+  /**
+   * 局部修改面板 onSubmitting：入队请求发出前以 requestId 先记「提交中」（随画布与云草稿保存，刷新后按 requestId 续查）；
+   * 服务端已回拒绝时按 requestId 核对一次：查到任务就补全，确无任务才清（之后用同一 requestId 重试过的不清）。
+   */
+  const trackVideoEditSubmitting = useCallback(
+    (blockId: string, sourceUrl: string, p: { requestId: string; startSec: number; endSec: number; phase: "sending" | "rejected" }) => {
+      if (p.phase === "rejected") {
+        const rejectedAt = Date.now();
+        void fetchVideoEditJobByRequestRef.current(p.requestId).then(
+          data => {
+            const jobId = String((data as { jobId?: unknown } | null)?.jobId || "");
+            if (jobId) confirmSubmittingVideoEdit(blockId, p.requestId, jobId);
+          },
+          error => {
+            if (!isPostProdJobNotFound(error)) return;
+            onBlocksChangeRef.current(prev =>
+              prev.map(b => (b.id === blockId ? { ...b, videoToolJobs: removeSubmittingVideoToolJob(b.videoToolJobs, p.requestId, rejectedAt) } : b))
+            );
+          }
+        );
+        return;
+      }
+      const pending = buildSubmittingVideoToolJob({ requestId: p.requestId, sourceUrl, range: { startSec: p.startSec, endSec: p.endSec } });
+      if (!pending) return;
+      onBlocksChangeRef.current(prev =>
+        prev.map(b => (b.id === blockId ? { ...b, videoToolJobs: upsertSubmittingVideoToolJob(b.videoToolJobs, pending) } : b))
+      );
+    },
+    [confirmSubmittingVideoEdit]
+  );
+
   /**
    * 局部修改 / 调色完成：同 eraseCornerMarkForBlock 写法加新版本，原片留在 outputUrls 不覆盖；追踪字段同批清掉。
    * 面板 onDone 与刷新后轮询都走这里：本挂载按 jobId 只落一次，updater 内再按产物去重（多处挂载也不重复加）。
@@ -1660,9 +1714,33 @@ export default function FreeformCanvas({
     });
   const pollCanvasVideoToolJobsRef = useRef(pollCanvasVideoToolJobs);
   pollCanvasVideoToolJobsRef.current = pollCanvasVideoToolJobs;
+  const fetchVideoEditJobByRequestRef = useRef(fetchVideoEditJobByRequest);
+  fetchVideoEditJobByRequestRef.current = fetchVideoEditJobByRequest;
+  /**
+   * 「提交中」核对一轮（挂载即跑）：按 requestId 查到任务号就补全、转入上面的按任务号轮询；
+   * 过了宽限仍查不到（请求没发出去或服务端未受理）才清掉并提示，可重新发起。
+   */
+  const resolveCanvasSubmittingVideoEdits = (pairs: Array<[string, string]>, isCancelled: () => boolean) =>
+    resolveSubmittingVideoToolJobsOnce({
+      jobs: pairs.flatMap(([blockId, key]) => {
+        const job = readSubmittingVideoToolJobs(blocksRef.current.find(b => b.id === blockId)?.videoToolJobs).find(j => videoToolJobKey(j) === key);
+        return job ? [{ ...job, blockId }] : [];
+      }),
+      findByRequest: fetchVideoEditJobByRequestRef.current,
+      isCancelled,
+      onFound: (job, jobId) => confirmSubmittingVideoEdit(job.blockId, job.requestId, jobId),
+      onMissing: job => {
+        onBlocksChangeRef.current(prev =>
+          prev.map(b => (b.id === job.blockId ? { ...b, videoToolJobs: removeSubmittingVideoToolJob(b.videoToolJobs, job.requestId, Date.parse(job.startedAt)) } : b))
+        );
+        toast.error("这次局部修改没有提交成功，未生成新版本，可重新发起");
+      },
+    });
+  const resolveCanvasSubmittingVideoEditsRef = useRef(resolveCanvasSubmittingVideoEdits);
+  resolveCanvasSubmittingVideoEditsRef.current = resolveCanvasSubmittingVideoEdits;
   // 局部修改 / 调色在途任务统一轮询（含刷新恢复：追踪字段随画布持久化，挂载即接管）；deps 用任务键串，不随画布重渲重建。
   const activeVideoToolJobKey = JSON.stringify(
-    blocks.flatMap(b => readVideoToolJobs(b.videoToolJobs).map(j => [b.id, j.jobId]))
+    blocks.flatMap(b => readVideoToolJobRecords(b.videoToolJobs).map(j => [b.id, videoToolJobKey(j)]))
   );
   useEffect(() => {
     const pairs = JSON.parse(activeVideoToolJobKey) as Array<[string, string]>;
@@ -1674,6 +1752,7 @@ export default function FreeformCanvas({
       inFlight = true;
       try {
         await pollCanvasVideoToolJobsRef.current(pairs, () => cancelled);
+        await resolveCanvasSubmittingVideoEditsRef.current(pairs, () => cancelled);
       } finally {
         inFlight = false;
       }
@@ -3774,6 +3853,7 @@ export default function FreeformCanvas({
                                               previewUrl={editSrc}
                                               prefill={editPrefill?.blockId === block.id ? editPrefill : undefined}
                                               onAdvisorPrefillGuard={editGuard.register}
+                                              onSubmitting={p => trackVideoEditSubmitting(block.id, editSrc, p)}
                                               onSubmitted={job =>
                                                 trackVideoToolJob(
                                                   block.id,
@@ -3876,16 +3956,16 @@ export default function FreeformCanvas({
                                     </button>
                                   ) : null}
                                   {/* 在途任务随画布保存：刷新后照常显示并接着等结果 */}
-                                  {readVideoToolJobs(block.videoToolJobs)
+                                  {readVideoToolJobRecords(block.videoToolJobs)
                                     .filter(j => j.kind === "grade" || editPanelBlockId !== block.id)
                                     .map(j => (
                                       <div
-                                        key={j.jobId}
+                                        key={videoToolJobKey(j)}
                                         className="rounded-lg border border-white/15 bg-white/[0.04] px-2 py-1.5 text-[10px] leading-4 text-white/75"
                                         data-canvas-video-tool-pending={j.kind}
                                       >
                                         {j.kind === "edit"
-                                          ? `局部修改处理中${j.range ? `（${j.range.startSec.toFixed(1)}–${j.range.endSec.toFixed(1)} 秒）` : ""}`
+                                          ? `局部修改${isVideoToolJobSubmitting(j) ? "提交中" : "处理中"}${j.range ? `（${j.range.startSec.toFixed(1)}–${j.range.endSec.toFixed(1)} 秒）` : ""}`
                                           : "调色处理中"}
                                         ·完成后自动作为新版本加入，原片保留
                                       </div>

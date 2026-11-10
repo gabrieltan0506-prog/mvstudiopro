@@ -41,6 +41,12 @@ export type VideoEditPanelProps = {
   /** 入队成功（每次确认提交一次）：startSec/endSec 为实际提交的区间（不足 4 秒已扩展后的值）；挂载方可据此记账、刷新后续看进度。 */
   onSubmitted?: (job: { jobId: string; requestId: string; startSec: number; endSec: number }) => void;
   /**
+   * 入队请求发出前（可能随即扣费、回执未到）：phase "sending" 以 requestId 先回报（区间为确认框报价区间），挂载方记「提交中」，
+   * 刷新后可按 requestId 续查；同一次的重试同 requestId 再报一次。服务端已回了拒绝（非断网）时报 phase "rejected"，
+   * 挂载方按 requestId 核对一次、确无任务再清。拿到 jobId 后照常 onSubmitted 补全。
+   */
+  onSubmitting?: (pending: { requestId: string; startSec: number; endSec: number; phase: "sending" | "rejected" }) => void;
+  /**
    * 外部（创作顾问）预填：nonce 变化即覆盖区间/描述/参考图；只预填，报价与提交仍须用户在本面板确认。
    * 确认框打开、正在提交或任务进行中时不覆盖（内容与确认框原样保留）；宿主须配 onAdvisorPrefillGuard 才能把拒绝原因回给顾问。
    */
@@ -80,6 +86,12 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 const fmt = (n: number) => roundSec(n).toFixed(1);
+
+/** 服务端处理完并回了错误（tRPC 错误带 code）；断网、超时等拿不到回包的不算。 */
+function serverAnswered(error: unknown): boolean {
+  const e = error as { data?: { code?: unknown }; shape?: { data?: { code?: unknown } } } | null;
+  return typeof (e?.data?.code ?? e?.shape?.data?.code) === "string";
+}
 
 /** 顾问 prefill 前置闸门：reason() 非空即原样拒绝（不调用原控件、不改任何状态）；inspect 照常。 */
 function guardAdvisorPrefill(control: AdvisorVideoEditControl, reason: () => string): AdvisorVideoEditControl {
@@ -232,6 +244,15 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
     if (busy || !quote) return;
     setBusy(true);
     setError("");
+    let sentRequestId = "";
+    const report = (p: Parameters<NonNullable<VideoEditPanelProps["onSubmitting"]>>[0]) => {
+      try {
+        props.onSubmitting?.(p);
+      } catch (e) {
+        // 挂载方记账出错不拦提交（提交本身照常，回执到了仍走 onSubmitted）
+        console.error("[VideoEditPanel] onSubmitting", e);
+      }
+    };
     try {
       const res = await submitVideoEdit(
         {
@@ -244,7 +265,13 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
           durationSec: duration,
           requestId: requestIdRef.current,
         },
-        { submit: input => queue.mutateAsync(input) }
+        {
+          submit: input => {
+            sentRequestId = input.requestId;
+            report({ requestId: input.requestId, startSec: quote.startSec, endSec: quote.endSec, phase: "sending" });
+            return queue.mutateAsync(input);
+          },
+        }
       );
       setJobId(res.jobId);
       setCompare("after");
@@ -259,6 +286,8 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      // 服务端已回了拒绝（带错误码）才报 rejected；断网 / 超时可能仍在受理，留给挂载方按宽限续查
+      if (sentRequestId && serverAnswered(e)) report({ requestId: sentRequestId, startSec: quote.startSec, endSec: quote.endSec, phase: "rejected" });
     } finally {
       setBusy(false);
     }

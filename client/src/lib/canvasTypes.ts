@@ -205,10 +205,10 @@ export type CanvasBlock = {
   upscaleError?: string;
   upscaleCreditsUsed?: number;
   /**
-   * 局部修改 / 调色在途任务（提交成功即记，随画布持久化；刷新后恢复轮询，完成作新版本写入 outputUrls、
+   * 局部修改 / 调色在途任务（局部修改发出入队请求前先记「提交中」，提交成功补全任务号；随画布与云草稿持久化；刷新后恢复轮询，完成作新版本写入 outputUrls、
    * 失败提示后清除）。同块同类只一条在途。
    */
-  videoToolJobs?: import("@shared/videoToolJob").VideoToolJob[];
+  videoToolJobs?: import("@shared/videoToolJob").VideoToolJobRecord[];
   /** 连载集号（多集铺板时挂在链上各节点，可序列化） */
   episodeIndex?: number;
   /** 本集标题（坞列表 / story 注释用） */
