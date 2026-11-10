@@ -90,6 +90,22 @@ const failedPoll = (status = "failed") => vi.fn(async (_h: unknown, persist: (r:
 });
 
 describe("局部修改重启续查", () => {
+  it("续查拼回同样优先流复制：成功则不走整片重编码；不满足条件回退原路径", async () => {
+    const s = setup({ output: { vpeUpstream: HANDLE } });
+    const spliceStreamCopy = vi.fn(async () => ({ ok: true as const, gcsUri: "gs://bucket/fast.mp4", url: "https://signed/fast.mp4", bytes: 99, durationSec: 20, editedUri: "gs://bucket/raw.mp4", stats: { minSsim: 0.999 } }));
+    Object.assign(s.render, { spliceStreamCopy });
+    expect(await recoverVideoPartialEditJob(s.row, s.deps)).toBe("succeeded");
+    expect(spliceStreamCopy).toHaveBeenCalledWith(expect.objectContaining({ editedUrl: "https://storage.googleapis.com/bucket/mirrored.mp4?sig=1" }));
+    expect(s.render.restoreSegmentAudio).not.toHaveBeenCalled();
+    expect(s.render.concat).not.toHaveBeenCalled();
+    expect(s.row.output).toMatchObject({ gcsUri: "gs://bucket/fast.mp4", debug: { splice: { path: "stream_copy" } } });
+
+    const f = setup({ output: { vpeUpstream: HANDLE } });
+    Object.assign(f.render, { spliceStreamCopy: vi.fn(async () => ({ ok: false as const, reason: "codec_mpeg4" })) });
+    expect(await recoverVideoPartialEditJob(f.row, f.deps)).toBe("succeeded");
+    expect(f.render.concat).toHaveBeenCalledTimes(1);
+    expect(f.row.output).toMatchObject({ gcsUri: "gs://bucket/final.mp4", debug: { splice: { path: "reencode", fallbackReason: "codec_mpeg4" } } });
+  });
   it("有任务号且上游已出片 → 替回音轨、拼回、留证、标成功，不退款", async () => {
     const s = setup({ output: { vpeUpstream: HANDLE } });
     expect(await recoverVideoPartialEditJob(s.row, s.deps)).toBe("succeeded");
