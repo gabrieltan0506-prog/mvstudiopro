@@ -3508,6 +3508,9 @@ export const appRouter = router({
           fileName: input.fileName,
           contentType: input.mimeType,
           objectName: `uploads/u${ctx.user.id}/${randomUUID()}-${safeName}`,
+          // 大小上限签进链接（同服务端直收上限，缺省 600MB）：上传方须带返回的 requiredHeaders，超限由存储侧拒收。
+          // 前端各上传点都经站内转发并原样带上 requiredHeaders（转发会透传 x-goog-* 请求头）。
+          maxBytes: (await import("./services/uploadLimits")).resolveUploadMaxBytes(),
         });
       }),
 

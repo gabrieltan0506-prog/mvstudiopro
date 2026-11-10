@@ -101,3 +101,24 @@ describe("原先匿名可触发付费上游的接口须登录", () => {
     await expect((caller({ id: 7, role: "user" }) as any).openaiImage.edit({})).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
+
+describe("mvAnalysis.getVideoUploadSignedUrl", () => {
+  it("未登录拒绝；登录后对象落本人前缀、客户端 objectName 无效，并签入大小上限（缺省 600MB）", async () => {
+    const { generateKeyPairSync } = await import("node:crypto");
+    // 虚构签名身份（本地临时生成，不对应任何真实服务账号）
+    vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS_JSON", JSON.stringify({
+      client_email: "test-signer@example.invalid",
+      private_key: generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    }));
+    vi.stubEnv("GCS_BUCKET_NAME", "test-bucket");
+    vi.stubEnv("UPLOAD_MAX_BYTES", "");
+    const input = { fileName: "../u8/clip.mp4", mimeType: "video/mp4", objectName: "uploads/u8/hijack.mp4" };
+    await expect(caller(null).mvAnalysis.getVideoUploadSignedUrl(input)).rejects.toThrow();
+    const signed = await caller({ id: 7, role: "user" }).mvAnalysis.getVideoUploadSignedUrl(input);
+    expect(signed.objectName).toMatch(/^uploads\/u7\/[0-9a-f-]{36}-[\w.-]+$/);
+    const max = 600 * 1024 * 1024;
+    expect(signed.maxBytes).toBe(max);
+    expect(signed.requiredHeaders).toMatchObject({ "x-goog-content-length-range": `0,${max}` });
+    expect(new URL(signed.uploadUrl).searchParams.get("X-Goog-SignedHeaders")).toContain("x-goog-content-length-range");
+  });
+});

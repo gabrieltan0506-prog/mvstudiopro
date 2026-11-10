@@ -2,6 +2,7 @@ import { Router } from "express";
 import { nanoid } from "nanoid";
 import { storagePut } from "./storage";
 import { uploadBufferToGcs } from "./services/gcs";
+import { resolveUploadMaxBytes } from "./services/uploadLimits";
 import { platformQaUserPrefix, resolvePlatformQaBucket } from "./services/platformQaUpload";
 
 /**
@@ -33,8 +34,7 @@ uploadRouter.post(
   requireUploadLogin,
 );
 const MB = 1024 * 1024;
-const DEFAULT_UPLOAD_MAX_BYTES = 600 * MB;
-const MAX_UPLOAD_BYTES = Math.max(10 * MB, Number(process.env.UPLOAD_MAX_BYTES || DEFAULT_UPLOAD_MAX_BYTES) || DEFAULT_UPLOAD_MAX_BYTES);
+const MAX_UPLOAD_BYTES = resolveUploadMaxBytes();
 
 async function parseMultipartFile(req: any) {
   const request = new Request("http://local/upload", {
