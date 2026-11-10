@@ -76,6 +76,12 @@ export const GEMINI_MODEL_DOMAIN_ENVS = {
   deepResearchAssist: ["DEEP_RESEARCH_ASSIST_GEMINI_MODEL"],
   /** 成长营 Phase 1 音频 / 关键帧粗筛。 */
   growthCampExtractor: ["GROWTH_CAMP_EXTRACTOR_MODEL"],
+  /** 代码动画·原图语义预检（看原图 + 听已采用原声窗 + 看参考影片，一次两跳）。 */
+  codeMotionSemantic: ["CODE_MOTION_SEMANTIC_MODEL"],
+  /** 代码动画·词拍听音（已采用原声 30 秒窗的词与拍点估计）。 */
+  codeMotionTiming: ["CODE_MOTION_TIMING_MODEL"],
+  /** 创作顾问问答·联网检索摘要（googleSearch，不阻断主问答）。 */
+  platformSkillQa: ["PLATFORM_SKILL_QA_GEMINI_MODEL"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type GeminiModelDomain = keyof typeof GEMINI_MODEL_DOMAIN_ENVS;

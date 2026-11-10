@@ -3,7 +3,9 @@ import { createHash } from "node:crypto";
 import sharp from "sharp";
 import {
   analyzeCodeMotionImageSemantic,
+  codeMotionSemanticEvolinkBody,
   loadCodeMotionImageSemantic,
+  resolveCodeMotionSemanticModel,
   validateCodeMotionSemanticReport,
   type CodeMotionSemanticDeps,
 } from "./codeMotionImageSemantic";
@@ -172,6 +174,10 @@ async function setup(tier: "free" | "paid" = "free") {
       uri.endsWith(".png") ? image : uri.endsWith(".wav") ? audio : video
     ),
     window: vi.fn(async () => Buffer.from("fixture bounded PCM window")),
+    sign: vi.fn(
+      (gsUri: string) =>
+        `https://signed.test/${gsUri.slice(5)}?X-Goog-Signature=abc`
+    ),
     post: vi.fn(async body => {
       posts.push(body);
       expect(
@@ -411,4 +417,142 @@ it("真实长度的音频窗归档后请求仍可保存，恢复不会重复调�
   for (const key of Array.from(t.files.keys())) if (key.endsWith("/result.json")) t.files.delete(key);
   await analyzeCodeMotionImageSemantic("1", t.input, t.deps);
   expect(t.deps.post).toHaveBeenCalledTimes(1);
+});
+
+describe("1110 通道合规与模型配置（替身，不真调模型）", () => {
+  const ok = (report: unknown, modelVersion = "gemini-3.8-flash-001") => ({
+    status: 200,
+    text: JSON.stringify({
+      modelVersion,
+      candidates: [
+        {
+          finishReason: "STOP",
+          content: { parts: [{ text: JSON.stringify(report) }] },
+        },
+      ],
+    }),
+  });
+  const names = (files: Map<string, unknown>) =>
+    Array.from(files.keys()).map(k => k.split("/").pop());
+  const read = (files: Map<string, { body: Buffer }>, suffix: string) =>
+    JSON.parse(
+      files.get(Array.from(files.keys()).find(k => k.endsWith(suffix))!)!.body.toString()
+    );
+  it("模型不写死：缺省 3.8 Flash；CODE_MOTION_SEMANTIC_MODEL 生效于新提交并绑定 intent；恢复按 intent 模型", async () => {
+    vi.stubEnv("GEMINI_DEFAULT_MODEL", "");
+    vi.stubEnv("CODE_MOTION_SEMANTIC_MODEL", "");
+    try {
+      expect(resolveCodeMotionSemanticModel()).toBe("gemini-3.8-flash");
+      vi.stubEnv("CODE_MOTION_SEMANTIC_MODEL", "gemini-3.9-flash");
+      const t = await setup();
+      t.deps.post = vi.fn(async () => ok(t.report, "gemini-3.9-flash-002"));
+      const first = await analyzeCodeMotionImageSemantic("1", t.input, t.deps);
+      expect(first.model).toBe("gemini-3.9-flash");
+      expect(t.deps.post).toHaveBeenCalledWith(expect.anything(), "gemini-3.9-flash", "vertex");
+      expect(read(t.files, "/intent.json").model).toBe("gemini-3.9-flash");
+      vi.stubEnv("CODE_MOTION_SEMANTIC_MODEL", "gemini-5.0-flash");
+      for (const k of Array.from(t.files.keys()))
+        if (k.endsWith("/result.json")) t.files.delete(k);
+      const again = await analyzeCodeMotionImageSemantic("1", t.input, t.deps);
+      expect(again.model).toBe("gemini-3.9-flash");
+      expect(t.deps.post).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+  it("首跳失败 → 备跳只收签名 https（不含 gs:// / 内联），每跳 request/raw 分别落档且不记签名 URL", async () => {
+    const t = await setup();
+    const sent: Array<{ body: any; route: string }> = [];
+    t.deps.post = vi.fn(async (body: any, _model: string, route: string) => {
+      sent.push({ body, route });
+      return route === "vertex" ? { status: 503, text: "{}" } : ok(t.report);
+    });
+    const result = await analyzeCodeMotionImageSemantic("1", t.input, t.deps);
+    expect(result.report.findings[0].status).toBe("conflict");
+    expect(sent.map(s => s.route)).toEqual(["vertex", "evolink"]);
+    const media = (b: any) =>
+      b.contents[0].parts.filter((p: any) => p.fileData).map((p: any) => p.fileData.fileUri);
+    expect(media(sent[0].body).every((u: string) => u.startsWith("gs://"))).toBe(true);
+    expect(media(sent[1].body)).toHaveLength(3);
+    expect(media(sent[1].body).every((u: string) => /^https:\/\/signed\.test\/.+X-Goog-Signature=abc$/.test(u))).toBe(true);
+    expect(JSON.stringify(sent[1].body)).not.toContain("inlineData");
+    expect(sent[1].body.contents[0].parts.find((p: any) => p.videoMetadata)?.videoMetadata).toEqual({ fps: 12 });
+    expect(names(t.files)).toEqual(
+      expect.arrayContaining([
+        "request.json",
+        "raw.json",
+        "hop-1-vertex-rejected.json",
+        "hop-2-evolink-request.json",
+        "hop-2-evolink-raw.json",
+        "result.json",
+      ])
+    );
+    expect(read(t.files, "/result.json")).toMatchObject({ route: "evolink", rawObject: "hop-2-evolink-raw.json" });
+    const evidence = Array.from(t.files.entries())
+      .filter(([k]) => !k.includes("/sources/"))
+      .map(([, v]) => v.body.toString())
+      .join("\n");
+    expect(evidence).not.toContain("X-Goog-Signature");
+    expect(read(t.files, "/hop-2-evolink-request.json").mediaGsUris.every((u: string) => u.startsWith("gs://"))).toBe(true);
+    expect(t.deps.assert).toHaveBeenCalledTimes(2);
+  });
+  it("首跳确定失败后宕机：恢复时只补发一次备跳；备跳结果不明绝不重发；两跳都失败给中性报错不再调用", async () => {
+    const t = await setup();
+    let evolinkCalls = 0;
+    t.deps.post = vi.fn(async (_b: unknown, _m: string, route: string) => {
+      if (route === "vertex") return { status: 500, text: "{}" };
+      evolinkCalls += 1;
+      throw new Error("simulated crash before receipt");
+    });
+    await expect(analyzeCodeMotionImageSemantic("1", t.input, t.deps)).rejects.toThrow(
+      /两跳均未通过/
+    );
+    // 模拟「首跳回包已落档、备跳从未发出」的宕机现场。
+    for (const k of Array.from(t.files.keys()))
+      if (k.includes("/hop-2-evolink-") || k.endsWith("/hop-1-vertex-rejected.json")) t.files.delete(k);
+    t.deps.post = vi.fn(async (_b: unknown, _m: string, route: string) => {
+      if (route === "vertex") throw new Error("首跳不得重发");
+      return ok(t.report);
+    });
+    const recovered = await analyzeCodeMotionImageSemantic("1", t.input, t.deps);
+    expect(recovered.report.findings).toHaveLength(1);
+    expect(t.deps.post).toHaveBeenCalledTimes(1);
+    expect(t.deps.post).toHaveBeenCalledWith(expect.anything(), "gemini-3.8-flash", "evolink");
+
+    const u = await setup();
+    u.deps.post = vi.fn(async (_b: unknown, _m: string, route: string) =>
+      route === "vertex" ? { status: 500, text: "{}" } : ok(u.report)
+    );
+    await analyzeCodeMotionImageSemantic("1", u.input, u.deps);
+    for (const k of Array.from(u.files.keys()))
+      if (k.endsWith("/result.json") || k.endsWith("/hop-2-evolink-raw.json")) u.files.delete(k);
+    await expect(analyzeCodeMotionImageSemantic("1", u.input, u.deps)).rejects.toThrow("待核对");
+    expect(u.deps.post).toHaveBeenCalledTimes(2);
+
+    const w = await setup();
+    w.report.coverage.pop();
+    const error = await analyzeCodeMotionImageSemantic("1", w.input, w.deps).catch(e => e as Error);
+    expect(error.message).toMatch(/首跳.*未覆盖.*备跳.*未覆盖/);
+    expect(error.message).not.toMatch(/vertex|evolink/i);
+    expect(w.deps.post).toHaveBeenCalledTimes(2);
+    await expect(analyzeCodeMotionImageSemantic("1", w.input, w.deps)).rejects.toThrow(/两跳均未通过/);
+    expect(w.deps.post).toHaveBeenCalledTimes(2);
+    expect(evolinkCalls).toBe(1);
+  });
+  it("1110 前旧任务（intent 无 routes、结果未记 route）照常复用，不重新调用", async () => {
+    const t = await setup();
+    await analyzeCodeMotionImageSemantic("1", t.input, t.deps);
+    const resultKey = Array.from(t.files.keys()).find(k => k.endsWith("/result.json"))!;
+    const { route: _r, rawObject: _o, failuresZh: _f, model: _m, ...legacy } = read(t.files, "/result.json");
+    t.files.set(resultKey, { body: Buffer.from(JSON.stringify(legacy)), generation: "9" });
+    const again = await analyzeCodeMotionImageSemantic("1", t.input, t.deps);
+    expect(again.model).toBe("gemini-3.8-flash");
+    expect(t.deps.post).toHaveBeenCalledTimes(1);
+  });
+  it("备跳请求体拒收无法签成 https 的媒体", () => {
+    const body = { contents: [{ role: "user", parts: [{ fileData: { mimeType: "image/png", fileUri: "gs://b/x" } }] }] };
+    expect(() => codeMotionSemanticEvolinkBody(body, u => u)).toThrow("签名 https");
+    expect(codeMotionSemanticEvolinkBody(body, () => "https://s/x?sig").contents[0].parts[0].fileData.fileUri).toBe("https://s/x?sig");
+    expect(body.contents[0].parts[0].fileData.fileUri).toBe("gs://b/x");
+  });
 });
