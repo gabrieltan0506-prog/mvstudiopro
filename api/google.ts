@@ -297,12 +297,16 @@ async function fetchManhuaScanAudio(audioUrl: string): Promise<Buffer> {
  * uploads/u<uid>/<子目录>/<UUID>-<文件名>（同 getVideoUploadSignedUrl 口径，客户端不可指定），
  * 听音扫描的归属核验（resolveRegisteredPostProdMediaSource）按同一前缀放行。
  * 文件名只作可读后缀：非常规字符折成 "-"、连续点折成一个（核验侧拒收含 ".." 的对象名）。
- * Content-Type 签入 URL、有效期 20 分钟，均同原入口。
+ * Content-Type 签入 URL、有效期 20 分钟，均同原入口；另签入大小上限（x-goog-content-length-range），上传时须带 requiredHeaders。
  */
+/** 学习直传大小上限：听音音频 100MB、读帧关键帧 10MB（单张图）。 */
+const MANHUA_LEARN_AUDIO_UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
+const MANHUA_LEARN_FRAME_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+
 async function issueManhuaLearnUploadUrl(
   req: VercelRequest,
   res: VercelResponse,
-  input: { fileName: string; mimeType: string; subdir: string },
+  input: { fileName: string; mimeType: string; subdir: string; maxBytes: number },
 ) {
   const viewer = await resolveGoogleGatewayUser(req);
   if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required", message: "请先登录后再上传文件" });
@@ -315,6 +319,8 @@ async function issueManhuaLearnUploadUrl(
       contentType: input.mimeType,
       objectName: `${userUploadsPrefix(String(viewer.userId))}${input.subdir}/${randomUUID()}-${safeName}`,
       expiresInMinutes: 20,
+      // 大小上限签进链接：上传方须带返回的 requiredHeaders（x-goog-content-length-range），超限由存储侧拒收
+      maxBytes: input.maxBytes,
     });
     return res.status(200).json({ ok: true, ...signed, mimeType: input.mimeType });
   } catch (e: unknown) {
@@ -564,6 +570,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         fileName: s(b.fileName || q.fileName || "learn-audio.mp3") || "learn-audio.mp3",
         mimeType: s(b.mimeType || q.mimeType || "audio/mpeg") || "audio/mpeg",
         subdir: "manhua-template-learn",
+        maxBytes: MANHUA_LEARN_AUDIO_UPLOAD_MAX_BYTES,
       });
     }
 
@@ -642,6 +649,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         fileName: s(b.fileName || q.fileName || "learn-frame.jpg") || "learn-frame.jpg",
         mimeType: s(b.mimeType || q.mimeType || "image/jpeg") || "image/jpeg",
         subdir: "manhua-template-learn/frames",
+        maxBytes: MANHUA_LEARN_FRAME_UPLOAD_MAX_BYTES,
       });
     }
 

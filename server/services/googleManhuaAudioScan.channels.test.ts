@@ -237,7 +237,12 @@ it("学习直传签名：对象名由服务端生成并落本人前缀 uploads/u
     const url = new URL(result.body.uploadUrl);
     expect(url.pathname).toBe(`/test-bucket/${objectName}`);
     expect(url.searchParams.get("X-Goog-Expires")).toBe("1200");
-    expect(url.searchParams.get("X-Goog-SignedHeaders")).toBe("content-type;host");
+    // 大小上限签进链接（音频 100MB / 关键帧 10MB），并通过 requiredHeaders 告知上传方必须带的请求头
+    const maxBytes = op === "manhuaAudioGetUploadUrl" ? 100 * 1024 * 1024 : 10 * 1024 * 1024;
+    expect(url.searchParams.get("X-Goog-SignedHeaders")).toBe("content-type;host;x-goog-content-length-range");
+    expect(result.body.requiredHeaders).toEqual({ "x-goog-content-length-range": `0,${maxBytes}` });
+    expect(result.body.maxBytes).toBe(maxBytes);
+    expect(h.sign.mock.calls[0]![0]).toMatchObject({ maxBytes });
   }
   // 换人登录，前缀随之换成本人
   h.auth.mockResolvedValue({ id: 8, role: "user" });
