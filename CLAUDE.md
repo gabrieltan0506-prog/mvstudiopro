@@ -1,5 +1,6 @@
 # mvstudiopro · agent 开工四行令
 
+0. **首条必须执行（2026-11-10）**：代理工作目录用完自动清理，不靠人工清磁盘。开工先跑一次 `bash scripts/install-agent-hooks.sh`（装 pre-push 钩子，每次推送自动清已完工目录）；自己建的 `git worktree` 收工前必须已提交并推送，随后执行 `bash scripts/agent-worktree-gc.sh`。有未提交/未推送改动的目录不会被删。
 1. 动手前读 `.cursor/knowledge/kb/INDEX.md`，按当前任务挑 1–2 个主题文件读，不全读。
 2. 碰积分/扣费先读 `kb/billing.md`；碰生图/视频/LLM 通道或任何烧钱批次先读 `kb/channels.md`；推送/合并/验收先读 `kb/deploy-verify.md`。
 3. 规则真源 = 持久记忆 work-rules 与 `.cursor/rules/*.mdc`（alwaysApply）；本文件与 kb 只放事实，不放规则。收班五分钟更新 `kb/line-*.md`。

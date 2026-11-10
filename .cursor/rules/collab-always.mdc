@@ -2,6 +2,13 @@
 
 合并自旧的 `user-instruction-priority` / `ask-where-to-start` / `ask-before-design-choices` / `knowledge-base` 四条。规则每轮都进上下文，所以只留硬约束，不写教条。
 
+## 代理工作目录用完自动清理（2026-11-10 用户明确要求，首条必须执行）
+
+- 多代理并行时每个代理的 `git worktree` 约 0.6–1GB，不清会把工作区磁盘占满（11-10 实测只剩 1.7GB）。清理写成代码，不靠主会话或用户人工清。
+- 开工先跑 `bash scripts/install-agent-hooks.sh`：装 pre-push 钩子，之后任何一次 `git push` 都会自动调用 `scripts/agent-worktree-gc.sh`，删除「无未提交/未跟踪改动、HEAD 已在远端分支、近 30 分钟无改动」的工作目录。
+- 代理收工前必须：改动已提交并推送 → 执行 `bash scripts/agent-worktree-gc.sh`。有未提交或未推送改动的目录脚本不会删；这类残留须在回报里写明路径与原因。
+- 不得为省空间删除他人未推送的改动、证据 JSON 或任何 GCS 对象；本规则只管本机工作目录。
+
 ## 一、开场（硬）
 
 接手或新开会话，**先读再问，不要直接动手**：
