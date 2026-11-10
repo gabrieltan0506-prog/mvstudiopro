@@ -93,8 +93,12 @@ export function adviceToGradeSegments(advice: MontageGradeAdvice, durationSec: n
 
 /** 已知转场：atSec = 转场中点（成片绝对秒），durationSec = 转场时长；转场区间 = atSec ± durationSec/2。 */
 export type GradeTransition = { atSec: number; durationSec: number };
-/** 分段边界吸附容差（秒）：离最近切点、或离转场区间边缘在此范围内才吸附。 */
+/** 分段边界吸附到切点的容差（秒）：离最近切点在此范围内才吸附。 */
 export const GRADE_SNAP_TOLERANCE_SEC = 1.5;
+/** 转场让位范围（秒）：转场区间前后此秒数内的分段边界一律让位给转场中点，即使该边界本身落在切点上。 */
+export const GRADE_TRANSITION_YIELD_SEC = 3;
+/** 建议过渡时长上限（秒）＝ shared/colorGrade.ts gradeSegmentSchema.crossfadeSec 的上限；超出截断。 */
+export const GRADE_CROSSFADE_MAX_SEC = 2;
 /** 吸附后的段长下限（秒）＝ validateMontageGradeAdvice 的连续性容差；短于它的段并入相邻段。 */
 export const GRADE_SEGMENT_MIN_SEC = 0.15;
 
@@ -106,7 +110,7 @@ export type GradeBoundarySnap = {
   snappedTo: "cut" | "transition" | "none";
   /** true＝超出容差，保留模型原值。 */
   unsnapped?: true;
-  /** 吸到转场中点时建议的该处段间过渡时长（= 转场时长，秒）。 */
+  /** 吸到转场中点时建议的该处段间过渡时长（= 转场时长，秒；超过 GRADE_CROSSFADE_MAX_SEC 截断）。 */
   suggestedCrossfadeSec?: number;
   /** 吸附合并后以该边界为起点的段在 segments 里的下标；该边界因合并消失则为 null。 */
   segmentIndex: number | null;
@@ -114,6 +118,8 @@ export type GradeBoundarySnap = {
 type GradeRow = MontageGradeAdvice["grades"][number];
 export type GradeSnapReport = {
   toleranceSec: number;
+  /** 转场让位范围（秒）；旧证据无此字段。 */
+  transitionYieldSec?: number;
   minSegmentSec: number;
   seamSecs: number[];
   transitions: GradeTransition[];
@@ -131,7 +137,8 @@ const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /**
  * 确定性吸附（不调模型）：
- * 1) 边界落在某转场区间内或其 ±GRADE_SNAP_TOLERANCE_SEC 内 → 吸到该转场中点（多个命中取中点最近的），并给出建议过渡时长；
+ * 1) 边界落在某转场区间内或其前后 GRADE_TRANSITION_YIELD_SEC 内 → 让位给该转场中点（即使边界本身就是切点；多个命中取中点最近的），
+ *    并给出建议过渡时长（转场时长，上限 GRADE_CROSSFADE_MAX_SEC）；
  * 2) 否则吸到最近切点（±GRADE_SNAP_TOLERANCE_SEC）；
  * 3) 都够不着 → 保留原值并标 unsnapped。
  * 吸附后重排为首尾相接、覆盖 0..durationSec；段长 < GRADE_SEGMENT_MIN_SEC 的段并入相邻段（丢弃该段调色参数，前后段直接相接）。
@@ -148,10 +155,10 @@ export function snapGradeBoundaries(
   for (let i = 1; i < grades.length; i++) {
     const b = grades[i]!.fromSec;
     const tr = transitions
-      .filter(t => Math.abs(b - t.atSec) <= t.durationSec / 2 + GRADE_SNAP_TOLERANCE_SEC + eps)
+      .filter(t => Math.abs(b - t.atSec) <= t.durationSec / 2 + GRADE_TRANSITION_YIELD_SEC + eps)
       .sort((x, y) => Math.abs(b - x.atSec) - Math.abs(b - y.atSec))[0];
     if (tr) {
-      boundaries.push({ gradeIndex: i, originalSec: b, snappedSec: r3(tr.atSec), snappedTo: "transition", suggestedCrossfadeSec: tr.durationSec, segmentIndex: null });
+      boundaries.push({ gradeIndex: i, originalSec: b, snappedSec: r3(tr.atSec), snappedTo: "transition", suggestedCrossfadeSec: Math.min(tr.durationSec, GRADE_CROSSFADE_MAX_SEC), segmentIndex: null });
       continue;
     }
     const cut = cuts.filter(c => Math.abs(b - c) <= GRADE_SNAP_TOLERANCE_SEC + eps).sort((x, y) => Math.abs(b - x) - Math.abs(b - y))[0];
@@ -346,6 +353,7 @@ export async function adviseMontageGrade(
     const snapped = snapGradeBoundaries(out.value.grades, input);
     snap = {
       toleranceSec: GRADE_SNAP_TOLERANCE_SEC,
+      transitionYieldSec: GRADE_TRANSITION_YIELD_SEC,
       minSegmentSec: GRADE_SEGMENT_MIN_SEC,
       seamSecs: input.seamSecs ?? [],
       transitions: input.transitions ?? [],

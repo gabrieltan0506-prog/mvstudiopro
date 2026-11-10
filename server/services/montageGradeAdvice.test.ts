@@ -10,8 +10,11 @@ import { geminiAudioJsonWithFallback } from "../gemini-audio";
 import { readFileSync } from "node:fs";
 import { CREDIT_COSTS as SHARED_CREDIT_COSTS } from "../../shared/plans";
 import { CREDIT_COSTS as SERVER_CREDIT_COSTS } from "../plans";
-import { adviseCanvasMontageGrade } from "../routers/canvasMusicMv";
+import { adviseCanvasMontageGrade, adviseMontageGradeInputSchema } from "../routers/canvasMusicMv";
+import { gradeSegmentSchema } from "../../shared/colorGrade";
 import {
+  GRADE_CROSSFADE_MAX_SEC,
+  GRADE_TRANSITION_YIELD_SEC,
   MontageGradeAdviceRequestUsedError,
   adviceToGradeSegments,
   adviseMontageGrade,
@@ -264,18 +267,18 @@ describe("成片调色建议 · 防重放（替身，不真调模型）", () => 
 describe("成片调色建议 · 分段边界吸附（1110 实测切点，替身，不真调模型）", () => {
   const CUTS = [8.5, 12.5, 16.5, 20.6, 23.7, 26.9, 27.2, 29.7, 33.1];
   const DUR = 40;
-  /** 溶解中点 29.6、时长 3.0 → 区间 28.1–31.1，连同 ±1.5 容差覆盖 26.6–32.6。 */
+  /** 溶解中点 29.6、时长 3.0 → 区间 28.1–31.1，连同前后 3 秒让位范围覆盖 25.1–34.1。 */
   const DISSOLVE = { atSec: 29.6, durationSec: 3 };
   const row = (fromSec: number, toSec: number, extra: Record<string, unknown> = {}) => ({ fromSec, toSec, correction: { saturation: 1, ...extra }, reasonZh: "理由" });
   const advice1110 = (grades: ReturnType<typeof row>[], seams = [{ atSec: 26.9, jump: true, intent: "intended" as const, beforeZh: "暖", afterZh: "冷", fixZh: "保留" }]) => ({ ...ok(), seams, grades });
   const lutCtx = { durationSec: DUR, lutIds: LUTS };
 
-  it("26.9 的冷色段起点被吸到 29.6 转场中点，并给出建议过渡时长 = 转场时长；吸附后校验通过", () => {
+  it("26.9 的冷色段起点被吸到 29.6 转场中点，建议过渡时长 = 转场时长（3 秒超上限，截到 2 秒）；吸附后校验通过", () => {
     const grades = [row(0, 12.4), row(12.4, 26.9, { color_temperature: 5600 }), row(26.9, DUR, { color_temperature: 7600 })];
     const s = snapGradeBoundaries(grades, { durationSec: DUR, seamSecs: CUTS, transitions: [DISSOLVE] });
     expect(s.boundaries).toEqual([
       { gradeIndex: 1, originalSec: 12.4, snappedSec: 12.5, snappedTo: "cut", segmentIndex: 1 },
-      { gradeIndex: 2, originalSec: 26.9, snappedSec: 29.6, snappedTo: "transition", suggestedCrossfadeSec: 3, segmentIndex: 2 },
+      { gradeIndex: 2, originalSec: 26.9, snappedSec: 29.6, snappedTo: "transition", suggestedCrossfadeSec: 2, segmentIndex: 2 },
     ]);
     expect(s.grades.map(g => [g.fromSec, g.toSec])).toEqual([[0, 12.5], [12.5, 29.6], [29.6, DUR]]);
     expect(s.mergedGradeIndexes).toEqual([]);
@@ -296,12 +299,39 @@ describe("成片调色建议 · 分段边界吸附（1110 实测切点，替身�
     validateMontageGradeAdvice(advice1110(s.grades), lutCtx);
   });
 
-  it("转场范围按 区间±1.5 秒 计：1.0 秒溶解（区间 29.1–30.1）够不着 26.9，够得着 27.7", () => {
-    const short = { atSec: 29.6, durationSec: 1 };
-    const far = snapGradeBoundaries([row(0, 26.9), row(26.9, DUR)], { durationSec: DUR, seamSecs: CUTS, transitions: [short] });
-    expect(far.boundaries[0]).toMatchObject({ snappedSec: 26.9, snappedTo: "cut" });
-    const near = snapGradeBoundaries([row(0, 27.7), row(27.7, DUR)], { durationSec: DUR, seamSecs: CUTS, transitions: [short] });
-    expect(near.boundaries[0]).toMatchObject({ snappedSec: 29.6, snappedTo: "transition", suggestedCrossfadeSec: 1 });
+  it("1110 实例：0.4 秒转场（中点 29.6），模型边界 26.9 本身是切点、离中点 2.7 秒，仍让位吸到 29.6", () => {
+    const real = { atSec: 29.6, durationSec: 0.4 };
+    const s = snapGradeBoundaries([row(0, 26.9), row(26.9, DUR, { color_temperature: 7600 })], { durationSec: DUR, seamSecs: CUTS, transitions: [real] });
+    expect(s.boundaries).toEqual([{ gradeIndex: 1, originalSec: 26.9, snappedSec: 29.6, snappedTo: "transition", suggestedCrossfadeSec: 0.4, segmentIndex: 1 }]);
+    expect(s.grades.map(g => [g.fromSec, g.toSec])).toEqual([[0, 29.6], [29.6, DUR]]);
+    validateMontageGradeAdvice(advice1110(s.grades), lutCtx);
+  });
+
+  it("让位范围按 转场区间前后 3 秒 计（0.4 秒转场 → 26.4–32.8）：范围外仍按切点规则，范围内的切点边界也让位", () => {
+    const real = { atSec: 29.6, durationSec: 0.4 };
+    const snap1 = (b: number) => snapGradeBoundaries([row(0, b), row(b, DUR)], { durationSec: DUR, seamSecs: CUTS, transitions: [real] }).boundaries[0];
+    expect(GRADE_TRANSITION_YIELD_SEC).toBe(3);
+    expect(snap1(23.7)).toMatchObject({ snappedSec: 23.7, snappedTo: "cut" });
+    expect(snap1(26.3)).toMatchObject({ snappedSec: 26.9, snappedTo: "cut" });
+    expect(snap1(26.4)).toMatchObject({ snappedSec: 29.6, snappedTo: "transition" });
+    expect(snap1(33.1)).toMatchObject({ snappedSec: 33.1, snappedTo: "cut" });
+    expect(snap1(32.8)).toMatchObject({ snappedSec: 29.6, snappedTo: "transition" });
+    expect(snap1(36.5)).toMatchObject({ snappedSec: 36.5, snappedTo: "none", unsnapped: true });
+  });
+
+  it("建议过渡时长上限与 shared/colorGrade 的 crossfadeSec 上限一致，超出截断", () => {
+    expect(gradeSegmentSchema.safeParse({ startSec: 0, endSec: 1, crossfadeSec: GRADE_CROSSFADE_MAX_SEC }).success).toBe(true);
+    expect(gradeSegmentSchema.safeParse({ startSec: 0, endSec: 1, crossfadeSec: GRADE_CROSSFADE_MAX_SEC + 0.1 }).success).toBe(false);
+    const s = snapGradeBoundaries([row(0, 29), row(29, DUR)], { durationSec: DUR, transitions: [{ atSec: 29.6, durationSec: 5 }] });
+    expect(s.boundaries[0]).toMatchObject({ snappedTo: "transition", suggestedCrossfadeSec: GRADE_CROSSFADE_MAX_SEC });
+  });
+
+  it("路由 schema：放行可选 transitions，越界/多余字段/超量拒收", () => {
+    const base = { requestId: RID, videoGsUri: "gs://b/post-prod/a.mp4", durationSec: DUR };
+    expect(adviseMontageGradeInputSchema.parse({ ...base, transitions: [{ atSec: 29.6, durationSec: 0.4 }] }).transitions).toEqual([{ atSec: 29.6, durationSec: 0.4 }]);
+    expect(adviseMontageGradeInputSchema.safeParse(base).success).toBe(true);
+    for (const bad of [[{ atSec: -1, durationSec: 0.4 }], [{ atSec: 601, durationSec: 0.4 }], [{ atSec: 5, durationSec: 11 }], [{ atSec: 5, durationSec: -0.1 }], [{ atSec: 5 }], [{ atSec: 5, durationSec: 1, kind: "fade" }], Array.from({ length: 41 }, () => ({ atSec: 5, durationSec: 1 }))])
+      expect(adviseMontageGradeInputSchema.safeParse({ ...base, transitions: bad }).success).toBe(false);
   });
 
   it("两个边界吸到同一点：中间段并入相邻段，结果仍首尾相接覆盖全片且过校验", () => {
@@ -342,7 +372,7 @@ describe("成片调色建议 · 分段边界吸附（1110 实测切点，替身�
     expect(res.advice.grades.map(g => g.fromSec)).toEqual([0, 26.9]);
     expect(res.segments.map(s => [s.startSec, s.endSec])).toEqual([[0, 29.6], [29.6, DUR]]);
     expect(res.segments[1]).toMatchObject({ junctionIntent: "intended", color_temperature: 7600 });
-    expect(res.snap!.boundaries).toEqual([{ gradeIndex: 1, originalSec: 26.9, snappedSec: 29.6, snappedTo: "transition", suggestedCrossfadeSec: 3, segmentIndex: 1 }]);
+    expect(res.snap!.boundaries).toEqual([{ gradeIndex: 1, originalSec: 26.9, snappedSec: 29.6, snappedTo: "transition", suggestedCrossfadeSec: 2, segmentIndex: 1 }]);
     expect(res.snap!.fallbackZh).toBeUndefined();
     expect(Array.from(gcs.objects.keys()).map(k => k.split("/").pop())).toEqual(["request.json", "hop-1-vertex-raw.json", "hop-1-vertex-parsed.json", "snap-before.json", "snap-after.json", "segments.json"]);
     const read = (n: string) => JSON.parse(gcs.objects.get(`canvas-montage/grade-advice/7/${RID}/${n}.json`)!.toString("utf8"));
