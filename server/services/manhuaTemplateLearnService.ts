@@ -1112,6 +1112,24 @@ async function writeJsonGcs(objectName: string, value: unknown): Promise<string>
   return uploaded.gcsUri;
 }
 
+/**
+ * 续学放行前的服务端核实：客户端声明的续学系列必须真已入库 / 在途（系列进度已落盘）才作数。
+ * 读取异常 fail-closed（抛错、不建任务）；未落盘 = 新系列，返回 undefined，由调用方按配置模型处理。
+ */
+export async function resolveStoredManhuaNativeResumeSeriesKey(
+  params: Record<string, unknown>,
+  deps: { readProgress?: (objectName: string) => ReturnType<typeof readJsonGcsDetailed<ManhuaLearnSeriesProgress>> } = {},
+): Promise<string | undefined> {
+  const { readNativeDeepReadResumeSeriesKey } = await import("../../shared/manhuaNativeDeepReadJob.js");
+  const key = readNativeDeepReadResumeSeriesKey(params);
+  if (!key) return undefined;
+  const read = await (deps.readProgress || readJsonGcsDetailed<ManhuaLearnSeriesProgress>)(
+    `manhua-template-learn/series/${key}/progress.json`,
+  );
+  if (read.status === "error") throw new Error("无法核对续学系列进度，未建立学习任务，请稍后重试");
+  return read.status === "found" ? key : undefined;
+}
+
 async function loadSeriesProgress(seriesKey: string): Promise<ManhuaLearnSeriesProgress | null> {
   return readJsonGcs<ManhuaLearnSeriesProgress>(
     `manhua-template-learn/series/${seriesKey}/progress.json`,

@@ -3221,8 +3221,8 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
     expect(only.usage.inputTokens).toBe(200_000);
     expect(only.usage.outputTokens).toBe(2 * 2_500);
     expect(only.audioInputTokens).toBe(16_000);
-    // ¥9.0/M 输入 + ¥72/M 输出（待账单核实）
-    expect(only.usage.costCny).toBeCloseTo(200_000 * 9 / 1e6 + 5_000 * 72 / 1e6, 6);
+    // ¥8.75/M 输入 + ¥70/M 输出（$1.25/$10 × 7，待账单核实）
+    expect(only.usage.costCny).toBeCloseTo(200_000 * 8.75 / 1e6 + 5_000 * 70 / 1e6, 6);
     expect(only.resolvedAudioChunks.map((row) => row.chunkIndex)).toEqual([0, 1]);
     expect(only.attemptedSegments).toBe(2);
     // 用后删：两个 GCS 临时对象都清理
@@ -4246,7 +4246,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(harness.calls.map(row=>row.first)).toEqual([0,60]); // 恢复没有新增网关调用。
     expect(harness.saved).toHaveLength(savedBefore); // request/raw/parsed全部复用。
     expect(result.usage).toMatchObject({inputTokens:200_000,outputTokens:5_000});
-    expect(result.usage.costCny).toBeCloseTo(2.16,8);
+    expect(result.usage.costCny).toBeCloseTo(2.1,8);
     expect(receipts.filter(row=>row.route===NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE)).toEqual([]);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledWith(expect.objectContaining({inputTokens:10,outputTokens:10,costUsd:0.01,evidence:expect.objectContaining({parsed:expect.any(Object)})}));

@@ -90,7 +90,9 @@ export const manhuaViralTemplateRouter = router({
       const { parseNewNativeDeepReadJobConfirmation } = await import("../../shared/manhuaNativeDeepReadJob.js");
       const { readManhuaLearnExtraSourceHosts } = await import("../services/manhuaLearn0996Source.js");
       const { buildNativeDeepReadPlanPreviewFromServices } = await import("../services/manhuaNativeDeepReadPlanRuntime.js");
-      const confirmed = parseNewNativeDeepReadJobConfirmation(input.params, { extraSourceHosts: readManhuaLearnExtraSourceHosts() });
+      const { resolveStoredManhuaNativeResumeSeriesKey } = await import("../services/manhuaTemplateLearnService.js");
+      const confirmed = parseNewNativeDeepReadJobConfirmation(input.params, { extraSourceHosts: readManhuaLearnExtraSourceHosts(),
+        storedSeriesKey: await resolveStoredManhuaNativeResumeSeriesKey(input.params) });
       const plan = await buildNativeDeepReadPlanPreviewFromServices({
         url: confirmed.url, localVideoUploadId: confirmed.localVideoUploadId,
         userId: String(ctx.user.id), limit: confirmed.planLimit,

@@ -220,6 +220,7 @@ export const NATIVE_DEEP_READ_JOB_FIELDS = [
   "nativeVideoFps",
   "nativeStandaloneSource",
   "nativeReadModel",
+  "nativeResumeSeriesKey",
   "nativeStructuringModel",
   "nativeStructuringGateway",
   "nativeStructuringOnly",
@@ -380,21 +381,67 @@ export function parseNativeDeepReadJobConfirmation(
   };
 }
 
+/** 读片配置拒因：不含模型名（前端不显示模型名）。 */
+export const NATIVE_DEEP_READ_READ_MODEL_REJECTED_ZH = "所选读片模型未在服务端配置中启用，未建立学习任务" as const;
+/** 续学绑定拒因：不含模型名。 */
+export const NATIVE_DEEP_READ_RESUME_SERIES_MISMATCH_ZH = "续学系列身份与本次计划不一致，未发出模型请求" as const;
+const NATIVE_DEEP_READ_SERIES_KEY_PATTERN = /^[0-9A-Za-z_-]{1,40}$/;
+
+/** 客户端续学时随确认参数带上的系列键；只是「声明」，是否真已入库由服务端核实后才作数。 */
+export function readNativeDeepReadResumeSeriesKey(params: Record<string, unknown>): string | undefined {
+  const raw = params.nativeResumeSeriesKey;
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  if (typeof raw !== "string" || !NATIVE_DEEP_READ_SERIES_KEY_PATTERN.test(raw)) throw new Error("续学系列标识无效");
+  return raw;
+}
+
+/**
+ * 续学车道模型：系列键写明的模型（-g38f / -g4a / -gm-…）。无后缀的历史 3.1 Pro 车道自 0903 起不再接新读片，
+ * 返回 undefined（沿用既有行为：按配置模型另起车道，不拿新模型写进旧系列，也不重启 Pro 车道）。
+ */
+export function nativeDeepReadResumeLaneModel(seriesKey: string): ManhuaNativeDeepReadModelId | undefined {
+  const model = nativeDeepReadModelForSeriesKey(seriesKey);
+  return model === MANHUA_NATIVE_DEEP_READ_MODEL ? undefined : model;
+}
+
 /**
  * 只在新任务入口使用；worker 仍按已保存模型身份恢复，不重标历史 Pro 任务。
  * 1110：未指定模型 = env 配置的读片模型（缺省 gemini-3.8-flash）；显式指定只认 nativeDeepReadAllowedNewReadModels。
- * 拒因不含模型名（前端不显示模型名）。
+ * 续学例外（#1771 回归修复）：options.storedSeriesKey = 服务端已核实「已入库 / 在途」的系列键时，
+ * 该系列按其保存的模型续学，不因当前配置改变而拒收；显式模型与系列模型不一致一律拒收（不拿别的模型续这个系列）。
+ * 未核实的系列键不得传入：新系列只用配置模型。拒因不含模型名（前端不显示模型名）。
  */
 export function parseNewNativeDeepReadJobConfirmation(
   params: Record<string, unknown>,
-  options: { extraSourceHosts?: readonly string[]; env?: GeminiModelEnv } = {},
+  options: { extraSourceHosts?: readonly string[]; env?: GeminiModelEnv; storedSeriesKey?: string } = {},
 ): NativeDeepReadJobConfirmation {
   if (params.nativeStructuringOnly === true) return parseNativeDeepReadJobConfirmation(params, options);
-  const model = params.nativeReadModel;
-  if (model !== undefined && model !== null && model !== "" && !(nativeDeepReadAllowedNewReadModels(options.env) as readonly unknown[]).includes(model)) {
-    throw new Error("所选读片模型未在服务端配置中启用，未建立学习任务");
+  const raw = params.nativeReadModel;
+  const requested = raw === undefined || raw === null || raw === "" ? undefined : raw;
+  const laneModel = options.storedSeriesKey ? nativeDeepReadResumeLaneModel(options.storedSeriesKey) : undefined;
+  if (laneModel) {
+    if (requested !== undefined && requested !== laneModel) throw new Error(NATIVE_DEEP_READ_READ_MODEL_REJECTED_ZH);
+    return parseNativeDeepReadJobConfirmation({ ...params, nativeReadModel: laneModel }, options);
   }
-  return parseNativeDeepReadJobConfirmation({ ...params, nativeReadModel: model || resolveManhuaNativeDeepReadModel(options.env) }, options);
+  if (requested !== undefined && !(nativeDeepReadAllowedNewReadModels(options.env) as readonly unknown[]).includes(requested)) {
+    throw new Error(NATIVE_DEEP_READ_READ_MODEL_REJECTED_ZH);
+  }
+  return parseNativeDeepReadJobConfirmation({ ...params, nativeReadModel: requested || resolveManhuaNativeDeepReadModel(options.env) }, options);
+}
+
+/**
+ * worker 发车前的续学绑定：凭「已入库系列」放行的非配置模型，只能落在那一个系列上。
+ * 计划解析出的系列与续学系列不同（剧名变化等）且该模型当前不可新发 → 拒收，绝不用非配置模型另起新系列。
+ */
+export function assertNativeDeepReadResumeSeriesPlan(input: {
+  resumeSeriesKey?: string;
+  readModel: ManhuaNativeDeepReadModelId;
+  planSeriesKey: string;
+  env?: GeminiModelEnv;
+}): void {
+  if (!input.resumeSeriesKey || input.resumeSeriesKey === input.planSeriesKey) return;
+  if (nativeDeepReadAllowedNewReadModels(input.env).includes(input.readModel)) return;
+  throw new Error(NATIVE_DEEP_READ_RESUME_SERIES_MISMATCH_ZH);
 }
 
 export function resolveNativeDeepReadJobTimeoutMs(modelCalls: number): number {

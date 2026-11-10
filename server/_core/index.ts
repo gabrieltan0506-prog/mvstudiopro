@@ -349,9 +349,16 @@ async function startServer() {
             const { readManhuaLearnExtraSourceHosts } = await import(
               "../services/manhuaLearn0996Source.js"
             );
+            // 续学：已入库 / 在途的系列按其保存的模型续学；系列是否真已入库由服务端核实，不信客户端声明。
+            const { resolveStoredManhuaNativeResumeSeriesKey } = await import("../services/manhuaTemplateLearnService.js");
+            const storedSeriesKey = await resolveStoredManhuaNativeResumeSeriesKey(learnParams);
             const confirmation = parseNewNativeDeepReadJobConfirmation(learnParams, {
               extraSourceHosts: readManhuaLearnExtraSourceHosts(),
+              storedSeriesKey,
             });
+            // 只把核实过的系列键留给 worker 做续学绑定；未核实的声明不落任务参数。
+            if (storedSeriesKey) learnParams.nativeResumeSeriesKey = storedSeriesKey;
+            else delete learnParams.nativeResumeSeriesKey;
             learnParams.nativeReadModel = confirmation.readModel;
             if (learnParams.localVideoUploadId !== undefined) {
               const { parseManhuaLocalVideoSourceRef } = await import("../../shared/manhuaLocalVideoUpload.js");

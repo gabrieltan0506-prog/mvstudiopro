@@ -122,7 +122,9 @@ import {
   isNativeDeepReadCurrentContractModel,
   MANHUA_NATIVE_DEEP_READ_MODEL,
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
+  assertNativeDeepReadResumeSeriesPlan,
   parseNativeDeepReadJobConfirmation,
+  readNativeDeepReadResumeSeriesKey,
   resolveNativeDeepReadJobTimeoutMs,
 } from "../../shared/manhuaNativeDeepReadJob.js";
 import { readManhuaLearnExtraSourceHosts } from "../services/manhuaLearn0996Source.js";
@@ -1004,6 +1006,12 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           confirmation,
           nativePlanPreview,
         );
+        // 续学绑定：凭已入库系列放行的非配置模型只能落在该系列，不得另起新系列。
+        assertNativeDeepReadResumeSeriesPlan({
+          resumeSeriesKey: readNativeDeepReadResumeSeriesKey(params),
+          readModel: confirmation.readModel,
+          planSeriesKey: nativePlanPreview.seriesKey,
+        });
         // 「已隔离占位」是内部术语；对用户说清楚：这几集有没结清的历史账单，本次不动它们
         const quarantinedClaims = nativePlanPreview.pendingClaimEpisodeIndexes.length
           ? ` · 第 ${nativePlanPreview.pendingClaimEpisodeIndexes.join("、")} 集疑似仍在处理，本次等待（可在学习任务中查看）`

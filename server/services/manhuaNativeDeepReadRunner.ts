@@ -187,15 +187,27 @@ function resolveNativeDeepReadEvolinkBaseUrl(): string {
 }
 
 /**
- * 计价常量（¥/M token）：3.1 Pro 按 Vertex 目录价 $1.25/$10 × 7.2 折算；
- * 3.8 Flash 按 flash 档目录价 $0.30/$2.50 × 7.2 折算。⚠️ 均待账单核实。
+ * 成本统计口径汇率：1 USD = 7 CNY（用户 2026-08-13 拍板，见 kb/billing.md）。
+ * 只用于精读成本估算展示，不参与任何用户积分扣费。
+ */
+export const NATIVE_DEEP_READ_PRICE_USD_TO_CNY = 7;
+
+function nativeDeepReadPricePerM(inUsdPerM: number, outUsdPerM: number): { inPerM: number; outPerM: number } {
+  // 以「分/百万 token」取整，避免浮点尾差进入成本合计。
+  const toCny = (usd: number) => Math.round(usd * NATIVE_DEEP_READ_PRICE_USD_TO_CNY * 100) / 100;
+  return { inPerM: toCny(inUsdPerM), outPerM: toCny(outUsdPerM) };
+}
+
+/**
+ * 计价常量（¥/M token）：目录美元价 × NATIVE_DEEP_READ_PRICE_USD_TO_CNY。
+ * 3.1 Pro 按 Vertex 目录价 $1.25/$10；3.8 Flash 按 flash 档目录价 $0.30/$2.50。⚠️ 均待账单核实。
  * EvoLink 兜底档：仓库暂无对应计价样例，先按 Vertex 同价折算记账。
  */
 export const NATIVE_DEEP_READ_MODEL_PRICES_PER_M: Readonly<Record<string, { inPerM: number; outPerM: number }>> = {
-  "gemini-3.1-pro-preview": { inPerM: 9.0, outPerM: 72.0 },
-  "gemini-3.8-flash": { inPerM: 2.16, outPerM: 18.0 },
+  "gemini-3.1-pro-preview": nativeDeepReadPricePerM(1.25, 10),
+  "gemini-3.8-flash": nativeDeepReadPricePerM(0.3, 2.5),
   // Argon按返还前标准价估算，避免把尚未到账的50%优惠当成实扣；仅用于成本展示。
-  "gemini-4-argon": { inPerM: 4.0 * 7.2, outPerM: 20.0 * 7.2 },
+  "gemini-4-argon": nativeDeepReadPricePerM(4, 20),
 };
 
 /**
@@ -4398,7 +4410,8 @@ export const NATIVE_DEEP_READ_GLM_STRUCTURING_REASONING_EFFORT = MANHUA_NATIVE_G
 // 0829 曾放宽到 6 小时（15 分钟硬顶曾在 900,005ms 掐断成 network_error）。
 // 普通 GLM 链单档 30 分钟；当前只在 OpenRouter 与 EvoLink 之间切换，不重读片。
 const GLM_STRUCTURING_TIMEOUT_MS = 30 * 60_000;
-const OPENROUTER_USD_TO_CNY_EQUIVALENT = 7.2;
+// 与读片成本表同一汇率（kb/billing.md：1 USD = 7 CNY），不留第二个汇率。
+const OPENROUTER_USD_TO_CNY_EQUIVALENT = NATIVE_DEEP_READ_PRICE_USD_TO_CNY;
 
 /** GLM结构化的完整冻结参数；调用方只能由调度器指定首选通道，不能覆盖这些值。 */
 export const NATIVE_DEEP_READ_GLM_STRUCTURING_CONFIG = deepFreezeNativeContract({
