@@ -137,5 +137,15 @@ describe("调色面板时间轴与接点口径", () => {
     expect(still.adviceZh).toMatch(/^调大「段间过渡秒数」，或手动微调第2段的色温/);
     expect(describeMontageJunction(j({ YAVG: 9 }, { intent: "intended" }), 2)).toMatchObject({ kind: "story", labelZh: "剧情需要", adviceZh: "这里是剧情需要的转变，已保留，不用处理。" });
     expect(describeMontageJunction(j({ YAVG: 9 }, {}), 2)).toMatchObject({ kind: "unmarked", labelZh: "未标注是否该跳" });
+    // 多轮自动修正的结构化警告：试了几轮、为什么停
+    const warned = (reason: "max_rounds" | "too_short" | "no_step" | "not_attempted", rounds: number) => describeMontageJunction({ ...j({ YAVG: 7 }, {}), warning: { rounds, maxRounds: 3, reason } }, 4);
+    expect(warned("max_rounds", 3)).toMatchObject({ kind: "fix", labelZh: "不该跳 · 自动修正 3 轮仍未修平", overZh: ["亮度变亮 7（允许 5）"] });
+    expect(warned("max_rounds", 3).adviceZh).toMatch(/^调大「段间过渡秒数」，或手动微调第4段的对比度（明暗）/);
+    expect(warned("no_step", 2).labelZh).toBe("不该跳 · 自动修正 2 轮后已修不动");
+    expect(warned("no_step", 0).labelZh).toBe("不该跳 · 自动修正修不动");
+    expect(warned("too_short", 0)).toMatchObject({ kind: "fix", labelZh: "不该跳 · 这一段太短，没法自动修平" });
+    expect(warned("too_short", 0).adviceZh).toMatch(/^把第4段拉长一些/);
+    expect(warned("not_attempted", 0)).toMatchObject({ kind: "fix", labelZh: "不该跳 · 未修平" });
+    expect(warned("not_attempted", 0).adviceZh).toMatch(/^勾选「自动修正接点」重新生成/);
   });
 });

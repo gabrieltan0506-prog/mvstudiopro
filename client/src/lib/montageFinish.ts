@@ -306,6 +306,11 @@ export type MontageJunctionCheck = {
     autoCorrected: boolean;
     /** 接点意图：intended = 剧情需要的转变；unwanted = 不该跳；null = 没有标注。 */
     intent: "intended" | "unwanted" | null;
+    /**
+     * 多轮自动修正后仍未达标的结构化警告（结果里带才有）：已试几轮、上限几轮、为什么停。
+     * max_rounds = 修满上限仍超差；too_short = 后段太短放不下过渡；no_step = 已无可用修正量；not_attempted = 没开自动修正。
+     */
+    warning?: { rounds: number; maxRounds: number; reason: "max_rounds" | "too_short" | "no_step" | "not_attempted" };
   }>;
 };
 export function readMontageJunctionCheck(output: unknown): MontageJunctionCheck | null {
@@ -326,9 +331,19 @@ export function readMontageJunctionCheck(output: unknown): MontageJunctionCheck 
     const v = notes.find(n => n.index === index)?.intent ?? (isRecord(after) ? after.junctionIntent : null);
     return v === "intended" || v === "unwanted" ? v : null;
   };
+  const warnings = seg && Array.isArray(seg.warnings) ? seg.warnings.filter(isRecord) : [];
+  const warningOf = (index: unknown): MontageJunctionCheck["junctions"][number]["warning"] => {
+    const w = typeof index === "number" ? warnings.find(x => x.index === index) : undefined;
+    const reason = w?.reason;
+    if (!w || (reason !== "max_rounds" && reason !== "too_short" && reason !== "no_step" && reason !== "not_attempted")) return undefined;
+    const int = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : 0);
+    return { rounds: int(w.rounds), maxRounds: int(w.maxRounds), reason };
+  };
   const junctions = rows.filter(isRecord).map(r => {
     const d = isRecord(r.delta) ? r.delta : {};
+    const warning = warningOf(r.index);
     return {
+      ...(warning ? { warning } : {}),
       atSec: num(r.junctionSec),
       delta: { YAVG: num(d.YAVG), UAVG: num(d.UAVG), VAVG: num(d.VAVG), SATAVG: num(d.SATAVG) },
       pass: r.pass === true,
@@ -369,8 +384,16 @@ export function describeMontageJunction(j: MontageJunctionCheck["junctions"][num
   }
   if (j.pass) return { kind: "pass", labelZh: j.autoCorrected ? "达标（已自动修正）" : "达标", overZh, adviceZh: "" };
   const tune = `手动微调第${segmentNo}段的${knobs.length ? knobs.join("、") : "调色"}，让它靠近前一段`;
+  // 多轮自动修正后的结构化警告：只发给「不该跳且仍未修平」的接点，直接说试了几轮、为什么停、下一步怎么办。
+  const w = j.warning;
+  if (w && w.reason !== "not_attempted") {
+    const again = `调大「段间过渡秒数」，或${tune}，再重新生成。`;
+    if (w.reason === "too_short") return { kind: "fix", labelZh: "不该跳 · 这一段太短，没法自动修平", overZh, adviceZh: `把第${segmentNo}段拉长一些（或并进相邻段），或${tune}，再重新生成。` };
+    if (w.reason === "max_rounds") return { kind: "fix", labelZh: `不该跳 · 自动修正 ${w.rounds} 轮仍未修平`, overZh, adviceZh: again };
+    return { kind: "fix", labelZh: w.rounds ? `不该跳 · 自动修正 ${w.rounds} 轮后已修不动` : "不该跳 · 自动修正修不动", overZh, adviceZh: again };
+  }
   // 自动修正只动「不该跳」的接点：被修过即按不该跳处理（旧结果可能没带意图）。
-  const intent = j.autoCorrected ? "unwanted" : j.intent;
+  const intent = j.autoCorrected || w ? "unwanted" : j.intent;
   if (intent === "intended") return { kind: "story", labelZh: "剧情需要", overZh, adviceZh: "这里是剧情需要的转变，已保留，不用处理。" };
   if (intent === "unwanted")
     return {

@@ -291,6 +291,9 @@ describe("分段调色 segments / crossfadeSec / autoMatchJunctions（共享 con
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans, check: first } })!.junctions.map(j => j.intent)).toEqual(["intended", "unwanted"]);
     const notes = [{ index: 0, junctionSec: 4, intent: "unwanted", action: "pass", noteZh: "" }];
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first, autoMatch: { adjusted: [], spans: [], junctions: notes } } })!.junctions.map(j => j.intent)).toEqual(["unwanted", null]);
+    // 多轮修正的结构化警告按接点下标挂到对应接点；形状不认识的忽略
+    const warnings = [{ index: 1, atSec: 7.5, intent: "unwanted", rounds: 3, maxRounds: 3, reason: "max_rounds", failing: [], delta: d(9), messageZh: "" }, { index: 0, reason: "whatever" }];
+    expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first, warnings } })!.junctions.map(j => j.warning)).toEqual([undefined, { rounds: 3, maxRounds: 3, reason: "max_rounds" }]);
     expect(readMontageJunctionCheck({ gcsUri: "x" })).toBeNull();
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { check: { junctions: [{ delta: {} }] } } })).toBeNull();
   });
