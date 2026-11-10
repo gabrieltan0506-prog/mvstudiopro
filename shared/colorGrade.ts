@@ -133,7 +133,7 @@ export const gradeSegmentsFieldsSchema = {
   segments: z.array(gradeSegmentSchema).min(1).max(24).optional(),
   /** 段间调色渐变时长（0–2 秒，默认 0 硬切）。 */
   crossfadeSec: z.number().finite().min(0).max(2).optional(),
-  /** 接点未达标时按匹配建议修正后段参数并重渲一次（最多 1 轮）。 */
+  /** 接点未达标时只对标 unwanted 的接点做限步长局部修正并重渲，按上一轮实测差值迭代到达标或 JUNCTION_FIX_MAX_ROUNDS 轮；仍未达标的进 warnings。 */
   autoMatchJunctions: z.boolean().optional(),
 };
 
@@ -642,6 +642,7 @@ export type JunctionFixNote = {
   index: number; junctionSec: number; intent: JunctionIntent | null;
   action: "pass" | "fixed" | "intended" | "no_intent" | "too_short" | "no_step";
   noteZh: string;
+  /** 该接点累计已下发的修正轮数（含本轮）；未修过不带 */ rounds?: number;
   /** 实际叠加到后段起点的增量（已限步长） */ step?: { exposure?: number; saturation?: number; color_balance?: ColorCorrection["color_balance"] };
   /** 修正值从 rampFromSec（后段渐变结束）起线性回到原值，至 rampToSec 完全回原值 */ rampFromSec?: number; rampToSec?: number;
 };
@@ -654,18 +655,33 @@ export type JunctionFixNote = {
  * - 不改整段基调：把后段 [J, end] 拆成过渡子段 [J, M]（参数 B'）与余段 [M, end]（原参数 B，逐字不变），
  *   两者之间用现有段间 xfade=fade 渐变 d 秒，d = min(1.0, 到下一接点渐变窗) ，M = J + c/2 + d/2：
  *   画面在 [J−c/2, J+c/2] 从前段渐变到 B'，在 [J+c/2, J+c/2+d] 从 B' 线性（像素域线性混合）回到 B。
- * 只算一轮（调用方据此最多重渲 1 次）。adjusted 为被修正接点的后段在原 spans 中的下标。
+ * 每次只算一轮。多轮（matchJunctionsIteratively）时传入上一轮返回的 state，spans / 取样位置始终用原始分段：
+ * - 本轮增量叠在上一轮已下发的 B' 上（过渡子段位置不变，余段仍回到原参数 B）；已达标的接点保留已有修正、不再加步。
+ * - 防过冲：按上一轮「下发了公式全量的几成（φ）→ 实测消掉了差值的几成（ρ）」把公式增量乘 k = φ/ρ（夹在 0.25–2），
+ *   修过头（差值变号，ρ>1）自动缩步，修不动（ρ≤0.05）保持；每轮增量仍逐项限 JUNCTION_FIX_LIMITS。
+ * adjusted 为累计被修正接点的后段在原 spans 中的下标；stepped 为本轮新下发了增量的后段下标（空 = 无需/无法再修）。
  */
+export type JunctionFixAxis = "exposure" | "saturation" | "balance";
+type JunctionAxisTrack = { /** 公式全量增量（未缩放未限幅） */ raw: number; /** 实际下发增量 */ applied: number; /** 下发前该项实测差 */ delta: number; key: keyof typeof GRADE_CONSISTENCY_TOLERANCE };
+export type JunctionFixState = Map<number, {
+  corr: ColorCorrection; M: number; d: number; rounds: number;
+  k: Record<JunctionFixAxis, number>;
+  last: Partial<Record<JunctionFixAxis, JunctionAxisTrack>>;
+}>;
+export const JUNCTION_FIX_GAIN_RANGE = { min: 0.25, max: 2 } as const;
+
 export function applyJunctionAutoMatch(
   spans: GradeSpan[],
   pairs: Array<{ index: number; before: SignalStats; after: SignalStats }>,
   report: JunctionConsistencyReport,
-): { spans: GradeSpan[]; adjusted: number[]; junctions: JunctionFixNote[] } {
+  prev?: JunctionFixState,
+): { spans: GradeSpan[]; adjusted: number[]; stepped: number[]; junctions: JunctionFixNote[]; state: JunctionFixState } {
   const L = JUNCTION_FIX_LIMITS;
   const clampD = (v: number, lim: number) => Math.max(-lim, Math.min(lim, v));
   const r3 = (v: number) => parseFloat(v.toFixed(3));
   const cfOf = (k: number) => (k <= 0 || k >= spans.length ? 0 : spans[k].crossfadeSec ?? 0);
-  const fixes = new Map<number, { corr: ColorCorrection; M: number; d: number }>();
+  const fixes: JunctionFixState = new Map(prev ?? []);
+  const stepped: number[] = [];
   const junctions: JunctionFixNote[] = [];
   for (const j of report.junctions) {
     const target = j.index + 1;
@@ -673,7 +689,12 @@ export function applyJunctionAutoMatch(
     const intent = after?.junctionIntent ?? null;
     const note = (action: JunctionFixNote["action"], noteZh: string, extra: Partial<JunctionFixNote> = {}) =>
       junctions.push({ index: j.index, junctionSec: j.junctionSec, intent, action, noteZh, ...extra });
-    if (j.pass) { note("pass", "接点达标，未修正"); continue; }
+    const had = fixes.get(target);
+    if (j.pass) {
+      if (had) note("fixed", `已修正 ${had.rounds} 轮，接点达标`, { rounds: had.rounds, rampFromSec: r3(had.M - had.d / 2), rampToSec: r3(had.M + had.d / 2) });
+      else note("pass", "接点达标，未修正");
+      continue;
+    }
     if (intent === "intended") { note("intended", "剧情意图的转变，未修正"); continue; }
     if (intent !== "unwanted") { note("no_intent", "未提供意图，未修正"); continue; }
     const p = pairs.find(x => x.index === j.index);
@@ -683,28 +704,49 @@ export function applyJunctionAutoMatch(
     const rampTo = Math.min(rampFrom + L.rampSec, after.endSec - cfOf(target + 1) / 2);
     const d = rampTo - rampFrom;
     if (d < L.minRampSec - 1e-6) { note("too_short", "后段过短，放不下局部过渡，未修正"); continue; }
-    const B: ColorCorrection = after.correction ?? {};
+    // B = 上一轮已下发的修正（首轮 = 后段原参数）；本轮增量叠在它上面。
+    const B: ColorCorrection = had?.corr ?? after.correction ?? {};
+    // 增益校准：上一轮下发了公式全量的 φ、实测消掉差值的 ρ → 本轮公式增量乘 φ/ρ。
+    const k = { exposure: 1, saturation: 1, balance: 1, ...had?.k };
+    for (const axis of ["exposure", "saturation", "balance"] as const) {
+      const t = had?.last[axis];
+      if (!t || Math.abs(t.raw) < 1e-6 || Math.abs(t.delta) < 1e-6) continue;
+      const rho = (t.delta - j.delta[t.key]) / t.delta;
+      if (rho > 0.05) k[axis] = Math.min(JUNCTION_FIX_GAIN_RANGE.max, Math.max(JUNCTION_FIX_GAIN_RANGE.min, (t.applied / t.raw) / rho));
+    }
     const [, full] = matchShotsToReference({ stats: [p.before, p.after], referenceClipIndex: 0, existing: [null, B] });
     const F: ColorCorrection = full ?? {};
     const next: ColorCorrection = structuredClone(B);
     const step: NonNullable<JunctionFixNote["step"]> = {};
-    const dE = r3(clampD((F.exposure ?? 0) - (B.exposure ?? 0), L.exposure));
-    if (Math.abs(dE) >= 0.005) { next.exposure = r3(Math.min(3, Math.max(-0.95, (B.exposure ?? 0) + dE))); step.exposure = dE; }
-    const dS = r3(clampD((F.saturation ?? 1) - (B.saturation ?? 1), L.saturation));
-    if (Math.abs(dS) >= 0.005) { next.saturation = r3(Math.min(3, Math.max(0, (B.saturation ?? 1) + dS))); step.saturation = dS; }
+    const last: Partial<Record<JunctionFixAxis, JunctionAxisTrack>> = {};
+    const rawE = (F.exposure ?? 0) - (B.exposure ?? 0);
+    const dE = r3(clampD(rawE * k.exposure, L.exposure));
+    if (Math.abs(dE) >= 0.005) { next.exposure = r3(Math.min(3, Math.max(-0.95, (B.exposure ?? 0) + dE))); step.exposure = dE; last.exposure = { raw: rawE, applied: dE, delta: j.delta.YAVG, key: "YAVG" }; }
+    const rawS = (F.saturation ?? 1) - (B.saturation ?? 1);
+    const dS = r3(clampD(rawS * k.saturation, L.saturation));
+    if (Math.abs(dS) >= 0.005) { next.saturation = r3(Math.min(3, Math.max(0, (B.saturation ?? 1) + dS))); step.saturation = dS; last.saturation = { raw: rawS, applied: dS, delta: j.delta.SATAVG, key: "SATAVG" }; }
+    let rawBal = 0, appliedBal = 0;
     for (const zone of ["shadows", "midtones", "highlights"] as const) {
       const fb = F.color_balance?.[zone], bb = B.color_balance?.[zone];
       if (!fb) continue;
       const base = bb ?? { r: 0, g: 0, b: 0 };
-      const dz = { r: r3(clampD(fb.r - base.r, L.balance)), g: r3(clampD(fb.g - base.g, L.balance)), b: r3(clampD(fb.b - base.b, L.balance)) };
+      const raw = { r: fb.r - base.r, g: fb.g - base.g, b: fb.b - base.b };
+      const dz = { r: r3(clampD(raw.r * k.balance, L.balance)), g: r3(clampD(raw.g * k.balance, L.balance)), b: r3(clampD(raw.b * k.balance, L.balance)) };
       if (Math.abs(dz.r) < 0.001 && Math.abs(dz.g) < 0.001 && Math.abs(dz.b) < 0.001) continue;
+      for (const ch of ["r", "g", "b"] as const) if (Math.abs(raw[ch]) > Math.abs(rawBal)) { rawBal = raw[ch]; appliedBal = dz[ch]; }
       next.color_balance = { ...next.color_balance, [zone]: { r: clampBal(base.r + dz.r), g: clampBal(base.g + dz.g), b: clampBal(base.b + dz.b) } };
       step.color_balance = { ...step.color_balance, [zone]: dz };
     }
-    if (!Object.keys(step).length) { note("no_step", "匹配增量为零，未修正"); continue; }
-    fixes.set(target, { corr: colorCorrectionSchema.parse(next), M: r3(rampFrom + d / 2), d: r3(d) });
+    if (step.color_balance) {
+      const key = Math.abs(j.delta.UAVG) >= Math.abs(j.delta.VAVG) ? "UAVG" : "VAVG";
+      last.balance = { raw: rawBal, applied: appliedBal, delta: j.delta[key], key };
+    }
+    if (!Object.keys(step).length) { note("no_step", had ? `已修正 ${had.rounds} 轮，匹配增量为零，无法继续修正` : "匹配增量为零，未修正", had ? { rounds: had.rounds } : {}); continue; }
+    const rounds = (had?.rounds ?? 0) + 1;
+    fixes.set(target, { corr: colorCorrectionSchema.parse(next), M: r3(rampFrom + d / 2), d: r3(d), rounds, k, last });
+    stepped.push(target);
     const parts = [step.exposure != null ? `曝光 ${step.exposure > 0 ? "+" : ""}${step.exposure} 档` : "", step.saturation != null ? `饱和 ${step.saturation > 0 ? "+" : ""}${step.saturation}` : "", step.color_balance ? "色彩平衡微调" : ""].filter(Boolean);
-    note("fixed", `局部修正：${parts.join("、")}，${r3(rampFrom)}–${r3(rampTo)} 秒线性回到原值`, { step, rampFromSec: r3(rampFrom), rampToSec: r3(rampTo) });
+    note("fixed", `${rounds > 1 ? `第 ${rounds} 轮` : ""}局部修正：${parts.join("、")}，${r3(rampFrom)}–${r3(rampTo)} 秒线性回到原值`, { step, rounds, rampFromSec: r3(rampFrom), rampToSec: r3(rampTo) });
   }
   const out: GradeSpan[] = [];
   spans.forEach((s, i) => {
@@ -714,5 +756,126 @@ export function applyJunctionAutoMatch(
     const { junctionIntent: _j, ...rest } = s;
     out.push({ ...rest, startSec: fx.M, crossfadeSec: fx.d, rampOf: i - 1 });
   });
-  return { spans: out, adjusted: Array.from(fixes.keys()), junctions };
+  return { spans: out, adjusted: Array.from(fixes.keys()).sort((x, y) => x - y), stepped, junctions, state: fixes };
+}
+
+// ─── 接点多轮修正与未达标警告 ─────────────────────────────────────────────
+
+/** 接点自动修正的重渲轮数上限（每轮 = 整片重渲 + 原接点位置复检）。 */
+export const JUNCTION_FIX_MAX_ROUNDS = 3;
+
+const JUNCTION_METRIC_ZH = { YAVG: "亮度", UAVG: "蓝色", VAVG: "红色", SATAVG: "饱和" } as const;
+
+/**
+ * 交付时仍未达标的 unwanted 接点（结构化，供前端显示；文案不含技术名词）。
+ * reason：max_rounds = 修满上限仍超差；too_short = 后段过短放不下局部过渡；no_step = 已无可用修正量；
+ * not_attempted = 未开启自动修正（或该渲染路径不支持）。intended / 未提供意图的接点不进警告。
+ */
+export type JunctionWarning = {
+  index: number;
+  /** 接点秒位（成片时间） */ atSec: number;
+  intent: "unwanted";
+  /** 已下发的修正轮数 */ rounds: number;
+  maxRounds: number;
+  reason: "max_rounds" | "too_short" | "no_step" | "not_attempted";
+  /** 超差项：后 − 前的实测差、容差、超出量 */
+  failing: Array<{ key: keyof typeof GRADE_CONSISTENCY_TOLERANCE; labelZh: string; delta: number; tolerance: number; overBy: number }>;
+  delta: { YAVG: number; UAVG: number; VAVG: number; SATAVG: number };
+  messageZh: string;
+};
+
+export function buildJunctionWarnings(
+  spans: GradeSpan[],
+  report: JunctionConsistencyReport,
+  opts: { state?: JunctionFixState; notes?: JunctionFixNote[]; attempted?: boolean; maxRounds?: number } = {},
+): JunctionWarning[] {
+  const maxRounds = opts.maxRounds ?? JUNCTION_FIX_MAX_ROUNDS;
+  const keys = Object.keys(GRADE_CONSISTENCY_TOLERANCE) as Array<keyof typeof GRADE_CONSISTENCY_TOLERANCE>;
+  const signed = (v: number) => `${v > 0 ? "+" : ""}${v}`;
+  return report.junctions.flatMap(j => {
+    if (j.pass || spans[j.index + 1]?.junctionIntent !== "unwanted") return [];
+    const rounds = opts.state?.get(j.index + 1)?.rounds ?? 0;
+    const noteAction = opts.notes?.find(n => n.index === j.index)?.action;
+    const reason: JunctionWarning["reason"] = !opts.attempted ? "not_attempted"
+      : noteAction === "too_short" ? "too_short"
+      : rounds >= maxRounds ? "max_rounds"
+      : "no_step";
+    const failing = keys.filter(k => Math.abs(j.delta[k]) > GRADE_CONSISTENCY_TOLERANCE[k]).map(k => ({
+      key: k, labelZh: JUNCTION_METRIC_ZH[k], delta: j.delta[k], tolerance: GRADE_CONSISTENCY_TOLERANCE[k],
+      overBy: parseFloat((Math.abs(j.delta[k]) - GRADE_CONSISTENCY_TOLERANCE[k]).toFixed(2)),
+    }));
+    const tail = reason === "not_attempted" ? "未做自动修正"
+      : reason === "too_short" ? "后段过短放不下局部过渡，未能修正"
+      : reason === "max_rounds" ? `已自动修正 ${rounds} 轮仍未压住`
+      : rounds ? `已自动修正 ${rounds} 轮，无法继续修正` : "无可用修正量，未能修正";
+    const messageZh = `${j.junctionSec.toFixed(1)} 秒接点仍有跳变：${failing.map(f => `${f.labelZh}差 ${signed(f.delta)}（允许 ±${f.tolerance}）`).join("、")}，${tail}`;
+    return [{ index: j.index, atSec: j.junctionSec, intent: "unwanted" as const, rounds, maxRounds, reason, failing, delta: j.delta, messageZh }];
+  });
+}
+
+type JunctionMeasured = JunctionConsistencyReport & { pairs: Array<{ index: number; junctionSec: number; before: SignalStats; after: SignalStats }> };
+
+/**
+ * 接点多轮修正：对标 unwanted 且未达标的接点，修正 → 重渲复检（render，按原接点位置取样）→ 用本轮实测差继续修，
+ * 直到 unwanted 接点全部达标、没有可再下发的增量，或满 maxRounds 轮。intended / 未提供意图的接点始终不动。
+ * 防越修越差：最后一轮若不是各轮（含首检）里最好的一版，按最好那版额外回退重渲一次（revertedToRound）。
+ * 返回最后一次实际渲染的 spans 与复检（一轮都没渲染时 check 缺省、spans 为原分段），以及仍未达标的结构化警告。
+ */
+export async function matchJunctionsIteratively<C extends JunctionMeasured>(params: {
+  spans: GradeSpan[];
+  first: C;
+  maxRounds?: number;
+  render: (spans: GradeSpan[], round: number) => Promise<C>;
+}): Promise<{
+  adjusted: number[]; spans: GradeSpan[]; junctions: JunctionFixNote[]; check?: C;
+  rounds: Array<{ round: number; spans: GradeSpan[]; junctions: JunctionFixNote[]; check: C }>;
+  maxRounds: number; warnings: JunctionWarning[];
+  /** 最后一轮比之前某一版更差时，按那一版（0 = 未修正的原分段）回退重渲并复检；check / spans 即回退后的交付版本。 */
+  revertedToRound?: number;
+}> {
+  const maxRounds = Math.min(JUNCTION_FIX_MAX_ROUNDS, Math.max(0, params.maxRounds ?? JUNCTION_FIX_MAX_ROUNDS));
+  const unwantedDone = (r: JunctionConsistencyReport) => r.junctions.every(j => j.pass || params.spans[j.index + 1]?.junctionIntent !== "unwanted");
+  let plan = applyJunctionAutoMatch(params.spans, params.first.pairs, params.first);
+  let rendered: typeof plan | null = null;
+  let check: C = params.first;
+  const rounds: Array<{ round: number; spans: GradeSpan[]; junctions: JunctionFixNote[]; check: C }> = [];
+  while (plan.stepped.length && rounds.length < maxRounds) {
+    const round = rounds.length + 1;
+    check = await params.render(plan.spans, round);
+    if (check.junctions.length !== params.first.junctions.length) throw new Error("调色复测条数不一致");
+    rendered = plan;
+    rounds.push({ round, spans: plan.spans, junctions: plan.junctions, check });
+    if (unwantedDone(check)) break;
+    plan = applyJunctionAutoMatch(params.spans, check.pairs, check, rendered.state);
+  }
+  // 防越修越差：交付的必须是各轮（含首检原片）里 unwanted 接点超差最小的一版；最后一轮不是最好时按最好那版回退重渲一次。
+  const tol = GRADE_CONSISTENCY_TOLERANCE;
+  const score = (r: JunctionConsistencyReport) => r.junctions.reduce((sum, j) => j.pass || params.spans[j.index + 1]?.junctionIntent !== "unwanted" ? sum
+    : sum + Math.max(0, ...(Object.keys(tol) as Array<keyof typeof tol>).map(k => Math.abs(j.delta[k]) / tol[k] - 1)), 0);
+  const tried = rendered?.state;
+  let delivered: { spans: GradeSpan[]; adjusted: number[]; junctions: JunctionFixNote[] } | null = rendered;
+  let revertedToRound: number | undefined;
+  if (rounds.length) {
+    const cands = [{ round: 0, s: score(params.first) }, ...rounds.map(r => ({ round: r.round, s: score(r.check) }))];
+    const best = cands.reduce((m, c) => (c.s < m.s - 1e-9 ? c : m));
+    const lastScore = cands[cands.length - 1].s;
+    if (best.s < lastScore - 1e-9) {
+      const src = best.round === 0 ? null : rounds[best.round - 1];
+      const spans = src?.spans ?? params.spans;
+      check = await params.render(spans, rounds.length + 1);
+      if (check.junctions.length !== params.first.junctions.length) throw new Error("调色复测条数不一致");
+      revertedToRound = best.round;
+      delivered = { spans, adjusted: src ? spans.flatMap(x => (x.rampOf != null ? [x.rampOf + 1] : [])) : [], junctions: src?.junctions ?? rendered!.junctions };
+    }
+  }
+  // plan 为「下一步打算」（可能未渲染）：其 too_short / no_step 说明用于警告原因；state 只认已渲染的（轮数 = 实际试过的轮数）。
+  const warnings = buildJunctionWarnings(params.spans, check, { state: tried, notes: plan.junctions, attempted: true, maxRounds });
+  return {
+    adjusted: delivered?.adjusted ?? [],
+    spans: delivered?.spans ?? plan.spans,
+    junctions: delivered?.junctions ?? plan.junctions,
+    ...(rendered ? { check } : {}),
+    rounds, maxRounds, warnings,
+    ...(revertedToRound != null ? { revertedToRound } : {}),
+  };
 }

@@ -99,6 +99,36 @@ describe("concat 调色（服务端）", () => {
     expect(r.autoMatch?.check?.pass).toBe(true);
   });
 
+  it("autoMatchJunctions 多轮：未达标按实测差继续重渲，最多 3 轮；逐轮留档；仍未达标给结构化警告", async () => {
+    const seg = { segments: [{ startSec: 0, endSec: 2 }, { startSec: 2, endSec: 4, junctionIntent: "unwanted" as const }], autoMatchJunctions: true };
+    const five = (before: number, after: number) => [...Array(5).fill(before), ...Array(5).fill(after)];
+    // 第 3 轮才达标：首检 + 3 轮复检，共 4 次渲染
+    h.yavg.push(...five(120, 80), ...five(120, 95), ...five(120, 108), ...five(120, 118));
+    const ok = (await concatClips({ ...base, grade: seg }, "7")).gradeSegmentCheck!;
+    expect(h.calls.filter(a => a.includes("-filter_complex"))).toHaveLength(4);
+    expect(ok.autoMatch?.rounds.map(r => [r.round, r.check.pass])).toEqual([[1, false], [2, false], [3, true]]);
+    expect(ok.autoMatch?.check?.pass).toBe(true);
+    expect(ok.autoMatch?.maxRounds).toBe(3);
+    expect(ok.warnings).toEqual([]);
+    expect(Array.from(new Set(h.uploads.filter(u => u.includes("/grade-evidence/")).map(u => u.split("/").at(-2))))).toEqual(["pass-1", "pass-2", "pass-3", "pass-4"]);
+    // 始终压不住：满 3 轮即停（不再渲第 5 次），警告写明秒位、差值、轮数
+    h.calls.length = 0; h.uploads.length = 0; h.yavg.length = 0;
+    h.yavg.push(...five(120, 60), ...five(120, 70), ...five(120, 80), ...five(120, 90));
+    const bad = (await concatClips({ ...base, grade: seg }, "7")).gradeSegmentCheck!;
+    expect(h.calls.filter(a => a.includes("-filter_complex"))).toHaveLength(4);
+    expect(bad.autoMatch?.rounds).toHaveLength(3);
+    expect(bad.warnings).toMatchObject([{
+      index: 0, atSec: 2, intent: "unwanted", rounds: 3, maxRounds: 3, reason: "max_rounds",
+      failing: [{ key: "YAVG", labelZh: "亮度", delta: -30, tolerance: 5, overBy: 25 }],
+      messageZh: "2.0 秒接点仍有跳变：亮度差 -30（允许 ±5），已自动修正 3 轮仍未压住",
+    }]);
+    // 未开自动修正：不重渲，同样给警告（not_attempted）
+    h.calls.length = 0; h.yavg.length = 0; h.yavg.push(...five(120, 60));
+    const off = (await concatClips({ ...base, grade: { ...seg, autoMatchJunctions: false } }, "7")).gradeSegmentCheck!;
+    expect(h.calls.filter(a => a.includes("-filter_complex"))).toHaveLength(1);
+    expect(off.warnings).toMatchObject([{ atSec: 2, rounds: 0, reason: "not_attempted" }]);
+  });
+
   it("autoMatchJunctions：未提供意图（或 intended）不修、不重渲，并标注原因", async () => {
     h.yavg.push(...Array(5).fill(120), ...Array(5).fill(80));
     const out = await concatClips({ ...base, grade: { segments: [{ startSec: 0, endSec: 2 }, { startSec: 2, endSec: 4, saturation: 0.9 }], autoMatchJunctions: true } }, "7");
