@@ -280,12 +280,17 @@ describe("分段调色 segments / crossfadeSec / autoMatchJunctions（共享 con
     const second = { pass: true, junctions: [{ index: 0, junctionSec: 4, pass: true, delta: d(1) }, { index: 1, junctionSec: 7.5, pass: true, delta: d(2) }] };
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first } })).toEqual({
       pass: false,
-      junctions: [{ atSec: 4, delta: d(1), pass: true, autoCorrected: false }, { atSec: 7.5, delta: d(9), pass: false, autoCorrected: false }],
+      junctions: [{ atSec: 4, delta: d(1), pass: true, autoCorrected: false, intent: null }, { atSec: 7.5, delta: d(9), pass: false, autoCorrected: false, intent: null }],
     });
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first, autoMatch: { adjusted: [2], spans: [], check: second } } })).toEqual({
       pass: true,
-      junctions: [{ atSec: 4, delta: d(1), pass: true, autoCorrected: false }, { atSec: 7.5, delta: d(2), pass: true, autoCorrected: true }],
+      junctions: [{ atSec: 4, delta: d(1), pass: true, autoCorrected: false, intent: null }, { atSec: 7.5, delta: d(2), pass: true, autoCorrected: true, intent: null }],
     });
+    // 接点意图：取后段 spans[index+1].junctionIntent；自动修正的逐接点说明里有就优先用它
+    const spans = [{ startSec: 0, endSec: 4 }, { startSec: 4, endSec: 7.5, junctionIntent: "intended" }, { startSec: 7.5, endSec: 10, junctionIntent: "unwanted" }];
+    expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans, check: first } })!.junctions.map(j => j.intent)).toEqual(["intended", "unwanted"]);
+    const notes = [{ index: 0, junctionSec: 4, intent: "unwanted", action: "pass", noteZh: "" }];
+    expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first, autoMatch: { adjusted: [], spans: [], junctions: notes } } })!.junctions.map(j => j.intent)).toEqual(["unwanted", null]);
     expect(readMontageJunctionCheck({ gcsUri: "x" })).toBeNull();
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { check: { junctions: [{ delta: {} }] } } })).toBeNull();
   });

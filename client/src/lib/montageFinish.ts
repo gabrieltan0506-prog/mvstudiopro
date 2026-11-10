@@ -4,7 +4,7 @@
  * 每项为 ColorCorrection（lutId/exposure/contrast/gamma 系列/saturation/color_temperature/color_balance/curves）。
  * 中性值不下发，旧 concat 行为不变。
  */
-import { COLOR_GRADE_ADVISOR_HELP, COLOR_GRADE_LUT_GROUPS, concatGradeSchema, validateGradeSegments, type ColorCorrection, type ConcatGrade, type GradeSegment } from "@shared/colorGrade";
+import { COLOR_GRADE_ADVISOR_HELP, COLOR_GRADE_LUT_GROUPS, GRADE_CONSISTENCY_TOLERANCE, concatGradeSchema, validateGradeSegments, type ColorCorrection, type ConcatGrade, type GradeSegment } from "@shared/colorGrade";
 
 export type { ColorCorrection, ConcatGrade };
 export type MontageTransitionKind = "none" | "fade" | "dissolve" | "wipeleft";
@@ -299,7 +299,14 @@ export function applyAdvisorMontageFinish(
  */
 export type MontageJunctionCheck = {
   pass: boolean;
-  junctions: Array<{ atSec: number; delta: { YAVG: number; UAVG: number; VAVG: number; SATAVG: number }; pass: boolean; autoCorrected: boolean }>;
+  junctions: Array<{
+    atSec: number;
+    delta: { YAVG: number; UAVG: number; VAVG: number; SATAVG: number };
+    pass: boolean;
+    autoCorrected: boolean;
+    /** 接点意图：intended = 剧情需要的转变；unwanted = 不该跳；null = 没有标注。 */
+    intent: "intended" | "unwanted" | null;
+  }>;
 };
 export function readMontageJunctionCheck(output: unknown): MontageJunctionCheck | null {
   const seg = isRecord(output) && isRecord(output.gradeSegmentCheck) ? output.gradeSegmentCheck : null;
@@ -309,6 +316,16 @@ export function readMontageJunctionCheck(output: unknown): MontageJunctionCheck 
   if (!check || !rows) return null;
   const adjusted = auto && Array.isArray(auto.adjusted) ? auto.adjusted : [];
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+  // 意图取该接点后段（span index+1）的 junctionIntent；自动修正的逐接点说明里也带一份，优先用它。
+  const spans = seg && Array.isArray(seg.spans) ? seg.spans : [];
+  const matched = seg && isRecord(seg.autoMatch) ? seg.autoMatch : null;
+  const notes = matched && Array.isArray(matched.junctions) ? matched.junctions.filter(isRecord) : [];
+  const intentOf = (index: unknown): "intended" | "unwanted" | null => {
+    if (typeof index !== "number") return null;
+    const after = spans[index + 1];
+    const v = notes.find(n => n.index === index)?.intent ?? (isRecord(after) ? after.junctionIntent : null);
+    return v === "intended" || v === "unwanted" ? v : null;
+  };
   const junctions = rows.filter(isRecord).map(r => {
     const d = isRecord(r.delta) ? r.delta : {};
     return {
@@ -316,10 +333,53 @@ export function readMontageJunctionCheck(output: unknown): MontageJunctionCheck 
       delta: { YAVG: num(d.YAVG), UAVG: num(d.UAVG), VAVG: num(d.VAVG), SATAVG: num(d.SATAVG) },
       pass: r.pass === true,
       autoCorrected: typeof r.index === "number" && adjusted.includes(r.index + 1),
+      intent: intentOf(r.index),
     };
   });
   if (junctions.length !== rows.length || junctions.some(j => !Number.isFinite(j.atSec))) return null;
   return { pass: typeof check.pass === "boolean" ? check.pass : junctions.every(j => j.pass), junctions };
+}
+
+/**
+ * 接点检查的界面口径（纯函数）：
+ * - kind：pass 达标；fix = 不该跳且没修平（要处理，置顶）；unmarked = 没标注是否该跳；story = 剧情需要的转变（保留）。
+ * - overZh：超出允许范围的项（亮度 / 色偏 / 饱和，带方向与允许值）；全部在范围内为空。
+ * - adviceZh：一句怎么办；达标为空串。segmentNo = 接点后那一段的序号（从1起）。
+ */
+export type MontageJunctionKind = "pass" | "fix" | "unmarked" | "story";
+export type MontageJunctionView = { kind: MontageJunctionKind; labelZh: string; overZh: string[]; adviceZh: string };
+export const MONTAGE_JUNCTION_KIND_ORDER: ReadonlyArray<MontageJunctionKind> = ["fix", "unmarked", "story", "pass"];
+export function describeMontageJunction(j: MontageJunctionCheck["junctions"][number], segmentNo: number): MontageJunctionView {
+  const T = GRADE_CONSISTENCY_TOLERANCE, d = j.delta;
+  const n = (v: number) => String(Math.abs(parseFloat(v.toFixed(1))));
+  const overZh: string[] = [], knobs: string[] = [];
+  if (Math.abs(d.YAVG) > T.YAVG) {
+    overZh.push(`亮度${d.YAVG > 0 ? "变亮" : "变暗"} ${n(d.YAVG)}（允许 ${T.YAVG}）`);
+    knobs.push("对比度（明暗）");
+  }
+  // 色偏取蓝/红两个色差里超得多的一项：蓝色差正 = 偏蓝、负 = 偏黄；红色差正 = 偏红、负 = 偏青。
+  const hue = Math.abs(d.VAVG) >= Math.abs(d.UAVG) ? { v: d.VAVG, pos: "偏红", neg: "偏青", limit: T.VAVG } : { v: d.UAVG, pos: "偏蓝", neg: "偏黄", limit: T.UAVG };
+  if (Math.abs(hue.v) > hue.limit) {
+    overZh.push(`色偏${hue.v > 0 ? hue.pos : hue.neg} ${n(hue.v)}（允许 ${hue.limit}）`);
+    knobs.push("色温");
+  }
+  if (Math.abs(d.SATAVG) > T.SATAVG) {
+    overZh.push(`饱和度${d.SATAVG > 0 ? "变浓" : "变淡"} ${n(d.SATAVG)}（允许 ${T.SATAVG}）`);
+    knobs.push("饱和度");
+  }
+  if (j.pass) return { kind: "pass", labelZh: j.autoCorrected ? "达标（已自动修正）" : "达标", overZh, adviceZh: "" };
+  const tune = `手动微调第${segmentNo}段的${knobs.length ? knobs.join("、") : "调色"}，让它靠近前一段`;
+  // 自动修正只动「不该跳」的接点：被修过即按不该跳处理（旧结果可能没带意图）。
+  const intent = j.autoCorrected ? "unwanted" : j.intent;
+  if (intent === "intended") return { kind: "story", labelZh: "剧情需要", overZh, adviceZh: "这里是剧情需要的转变，已保留，不用处理。" };
+  if (intent === "unwanted")
+    return {
+      kind: "fix",
+      labelZh: j.autoCorrected ? "不该跳 · 自动修正后仍未修平" : "不该跳 · 未修平",
+      overZh,
+      adviceZh: j.autoCorrected ? `调大「段间过渡秒数」，或${tune}，再重新生成。` : `勾选「自动修正接点」重新生成；仍不平就调大「段间过渡秒数」，或${tune}。`,
+    };
+  return { kind: "unmarked", labelZh: "未标注是否该跳", overZh, adviceZh: `如果这里不该跳：调大「段间过渡秒数」，或${tune}；是剧情需要的转变就不用管。` };
 }
 
 /** 外部（调色建议/顾问）给出的分段写入草稿：先取一位小数，再走同一套格式与片长校验；不通过抛错、不改草稿。 */
