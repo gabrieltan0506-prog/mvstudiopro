@@ -1,7 +1,7 @@
 import { TEMPLATE_METHOD_BRIEF_INSTRUCTION } from "../../shared/manhuaTemplateMethodBrief";
 import { attachLearnedMethodBrief } from "./manhuaTemplateMethodBrief";
 import crypto from "node:crypto";
-import { MANHUA_NATIVE_GLM_REASONING_EFFORT } from "../../shared/manhuaNativeDeepReadJob.js";
+import { MANHUA_NATIVE_GLM_REASONING_EFFORT, NATIVE_DEEP_READ_PRICE_USD_TO_CNY } from "../../shared/manhuaNativeDeepReadJob.js";
 import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, open, readFile, rename, rm } from "node:fs/promises";
@@ -68,7 +68,8 @@ const AGGREGATION_TIMEOUT_MS = 12 * 60_000;
 const SERIES_LOCK_TTL_MS = 20 * 60_000;
 /** 提交前至少还要剩这段租期；否则宁可停手，也不让临界过期的旧持有者覆盖新结果。 */
 const SERIES_COMMIT_MIN_LEASE_MS = 2 * 60_000;
-const OPENROUTER_USD_TO_CNY_EQUIVALENT = 7.2;
+// 与读片成本表同一汇率（kb/billing.md：1 USD = 7 CNY），只用于成本回执展示。
+const OPENROUTER_USD_TO_CNY_EQUIVALENT = NATIVE_DEEP_READ_PRICE_USD_TO_CNY;
 
 type SnapshotEpisode = {
   episodeIndex: number;

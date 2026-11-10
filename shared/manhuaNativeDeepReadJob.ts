@@ -381,6 +381,12 @@ export function parseNativeDeepReadJobConfirmation(
   };
 }
 
+/**
+ * 模板学习成本统计口径汇率：1 USD = 7 CNY（用户 2026-08-13 拍板，见 kb/billing.md）。
+ * 读片成本表、GLM 整形、系列聚合共用这一处；只用于成本估算展示，不参与任何用户积分扣费。
+ */
+export const NATIVE_DEEP_READ_PRICE_USD_TO_CNY = 7;
+
 /** 读片配置拒因：不含模型名（前端不显示模型名）。 */
 export const NATIVE_DEEP_READ_READ_MODEL_REJECTED_ZH = "所选读片模型未在服务端配置中启用，未建立学习任务" as const;
 /** 续学绑定拒因：不含模型名。 */

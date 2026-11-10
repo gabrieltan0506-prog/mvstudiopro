@@ -186,11 +186,9 @@ function resolveNativeDeepReadEvolinkBaseUrl(): string {
     .trim().replace(/\/+$/, "") || "https://direct.evolink.ai";
 }
 
-/**
- * 成本统计口径汇率：1 USD = 7 CNY（用户 2026-08-13 拍板，见 kb/billing.md）。
- * 只用于精读成本估算展示，不参与任何用户积分扣费。
- */
-export const NATIVE_DEEP_READ_PRICE_USD_TO_CNY = 7;
+/** 成本统计口径汇率的唯一真源在 shared/manhuaNativeDeepReadJob.ts（1 USD = 7 CNY）。 */
+import { NATIVE_DEEP_READ_PRICE_USD_TO_CNY } from "../../shared/manhuaNativeDeepReadJob.js";
+export { NATIVE_DEEP_READ_PRICE_USD_TO_CNY };
 
 function nativeDeepReadPricePerM(inUsdPerM: number, outUsdPerM: number): { inPerM: number; outPerM: number } {
   // 以「分/百万 token」取整，避免浮点尾差进入成本合计。

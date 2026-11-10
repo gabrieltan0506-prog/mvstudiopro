@@ -512,7 +512,7 @@ describe("系列聚合快照与提交 fencing", () => {
       reasoningTokens: 25,
       costUsd: 0.01,
     });
-    expect(Number(receipts.at(-1)?.priceEquivalentCny)).toBeCloseTo(0.072, 10);
+    expect(Number(receipts.at(-1)?.priceEquivalentCny)).toBeCloseTo(0.07, 10);
   });
 
   it("1/4 部分分集卡只供单集审批，不进入付费系列聚合", async () => {
@@ -570,7 +570,7 @@ describe("系列聚合快照与提交 fencing", () => {
       outputTokens: usage.outputTokens,
       reasoningTokens: usage.reasoningTokens,
       costUsd: usage.costUsd,
-      priceEquivalentCny: 3.024,
+      priceEquivalentCny: expect.closeTo(usage.costUsd * 7, 10),
     });
   });
 
