@@ -4,13 +4,14 @@
  * - 生图英文化：无工具 + HIGH thinking（0.7 / 0.9）
  */
 import { GoogleGenAI } from "@google/genai";
+import { GEMINI_MODEL_DOMAIN_DEFAULTS, resolveGeminiModel } from "../../shared/geminiModelConfig.js";
 import {
   GEMINI_COPY_SIMPLIFIED_ZH_LOCK,
   toSimplifiedChinese,
 } from "./simplifiedChinese.js";
 
-/** 平台默认：临时用 `gemini-3-flash-preview`（可用 GEMINI_35_FLASH_MODEL 覆写）。 */
-export const DEFAULT_GEMINI_35_FLASH_MODEL = "gemini-3-flash-preview";
+/** 平台缺省（领域 flashCopywriting 的领域缺省，不在此写死；可用 GEMINI_35_FLASH_MODEL 等 env 覆写）。 */
+export const DEFAULT_GEMINI_35_FLASH_MODEL = GEMINI_MODEL_DOMAIN_DEFAULTS.flashCopywriting;
 
 /** 文案生成默认输出上限（64K）。可用 `GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS` 覆写（4096～65536）。 */
 export const GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS = 65536;
@@ -45,22 +46,14 @@ export function resolveGemini35FlashImageTranslationMaxOutputTokens(override?: n
   return GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS;
 }
 
+/** 领域 flashCopywriting：GEMINI_35_FLASH_MODEL → GROWTH_CAMP_EXTRACTOR_MODEL → GEMINI_FLASH_TRANSLATION_MODEL → VERTEX_GEMINI_FLASH_TRANSLATION_MODEL → VERTEX_GEMINI_COVER_TRANSLATION_MODEL → 领域缺省。 */
 export function resolveGemini35FlashModelName(): string {
-  const fromEnv =
-    String(process.env.GEMINI_35_FLASH_MODEL || "").trim() ||
-    String(process.env.GROWTH_CAMP_EXTRACTOR_MODEL || "").trim() ||
-    String(process.env.GEMINI_FLASH_TRANSLATION_MODEL || "").trim() ||
-    String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || "").trim() ||
-    String(process.env.VERTEX_GEMINI_COVER_TRANSLATION_MODEL || "").trim();
-  return fromEnv || DEFAULT_GEMINI_35_FLASH_MODEL;
+  return resolveGeminiModel("flashCopywriting");
 }
 
-/** Stage2 专属文案 fallback；默認 `gemini-3.1-pro-preview`（可 `PLATFORM_STAGE2_GEMINI_MODEL` 覆写）。简体硬锁仍走 callGemini35FlashCopywriting。 */
+/** Stage2 专属文案 fallback（领域 platformStage2：PLATFORM_STAGE2_GEMINI_MODEL → 领域缺省）。简体硬锁仍走 callGemini35FlashCopywriting。 */
 export function resolvePlatformStage2GeminiModel(): string {
-  return (
-    String(process.env.PLATFORM_STAGE2_GEMINI_MODEL || "").trim() ||
-    "gemini-3.1-pro-preview"
-  );
+  return resolveGeminiModel("platformStage2");
 }
 
 export function requireGeminiApiKey(): string {

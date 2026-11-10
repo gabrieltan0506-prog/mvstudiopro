@@ -1,10 +1,7 @@
 import { z } from "zod";
 import { extractJsonString, invokeLLM } from "../_core/llm.js";
-import {
-  GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS,
-  DEFAULT_GEMINI_35_FLASH_MODEL,
-  resolveGemini35FlashModelName,
-} from "./gemini35FlashRuntime.js";
+import { GEMINI_35_FLASH_IMAGE_TRANSLATION_MAX_OUTPUT_TOKENS } from "./gemini35FlashRuntime.js";
+import { GEMINI_MODEL_DOMAIN_DEFAULTS, resolveGeminiModel } from "../../shared/geminiModelConfig.js";
 import { isPlatformImageOpenAiAllowed } from "../config/platformSwitches.js";
 import { platformFlowLogTimestamp } from "../utils/platformFlowLogTimestamp.js";
 import { PLATFORM_SCENE_WARDROBE_LOCK_ZH, PLATFORM_FASHION_EDITORIAL_CHARACTER_ZH } from "../../shared/platformFashionEditorialCharacter.js";
@@ -122,24 +119,20 @@ export function resolveVertexFlashTranslationLocation(): string {
   return loc || "global";
 }
 
-/** 預設 Vertex Flash 翻譯模型 ID（**2×4／分鏡／八格 composite** 与竖封封面）。可 `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 覆寫。 */
-export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = DEFAULT_GEMINI_35_FLASH_MODEL;
+/** **2×4／分鏡／八格 composite** 英文化缺省（领域 compositeFlashTranslation 的领域缺省，不在此写死）。 */
+export const DEFAULT_VERTEX_FLASH_TRANSLATION_MODEL = GEMINI_MODEL_DOMAIN_DEFAULTS.compositeFlashTranslation;
 
+/** 领域 compositeFlashTranslation：`VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` 优先，其余同 Flash 文案 env 链。 */
 export function resolveVertexFlashTranslationModelName(): string {
-  return (
-    String(process.env.VERTEX_GEMINI_FLASH_TRANSLATION_MODEL || "").trim() ||
-    resolveGemini35FlashModelName()
-  );
+  return resolveGeminiModel("compositeFlashTranslation");
 }
 
-/** **選題豎封封面**英文化：与 composite 统一 **Gemini 3.5 Flash**。可 `VERTEX_GEMINI_COVER_TRANSLATION_MODEL` 覆寫。 */
-export const DEFAULT_VERTEX_COVER_TRANSLATION_MODEL = DEFAULT_GEMINI_35_FLASH_MODEL;
+/** **選題豎封封面**英文化缺省（领域 coverTranslation 的领域缺省，不在此写死）。 */
+export const DEFAULT_VERTEX_COVER_TRANSLATION_MODEL = GEMINI_MODEL_DOMAIN_DEFAULTS.coverTranslation;
 
+/** 领域 coverTranslation：`VERTEX_GEMINI_COVER_TRANSLATION_MODEL` 优先，其余同 Flash 文案 env 链。 */
 export function resolveVertexCoverTranslationModelName(): string {
-  return (
-    String(process.env.VERTEX_GEMINI_COVER_TRANSLATION_MODEL || "").trim() ||
-    resolveGemini35FlashModelName()
-  );
+  return resolveGeminiModel("coverTranslation");
 }
 
 /**
@@ -695,7 +688,7 @@ ${buildPlatformEditorialCoverGuidance(ctx)}
 ${PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER}`.trim();
 }
 
-/** 战略智库杂志封面：双语编导（Vertex Global · gemini-3.1-pro-preview）把中文题与出版语境压成英文视觉 prompt → GPT-IMAGE-2 */
+/** 战略智库杂志封面：双语编导（Vertex Global · 领域 strategicCoverDirector）把中文题与出版语境压成英文视觉 prompt → GPT-IMAGE-2 */
 export function buildStrategicCoverGeminiTask(input: {
   chineseTitle: string;
   englishMonthYear: string;
@@ -744,11 +737,12 @@ MANDATORY RULES:
 }
 
 /**
- * 战略封面 / 章节扉页：**Vertex Global · gemini-3.1-pro-preview** 双语编导 → 一条英文视觉 prompt。
+ * 战略封面 / 章节扉页 / 自定义抠图：**Vertex Global** 双语编导 → 一条英文视觉 prompt。
+ * 模型不写死：领域 strategicCoverDirector（STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL → 旧 VERTEX_GEMINI_31_PRO_MODEL → VERTEX_GEMINI_MODEL → 领域缺省）。
  */
 export async function runGemini31ProPreviewText(userTask: string): Promise<string> {
   const { callGemini3_1_Pro } = await import("./vertexGemini31ProGlobal.js");
-  const raw = await callGemini3_1_Pro(userTask);
+  const raw = await callGemini3_1_Pro(userTask, { modelName: resolveGeminiModel("strategicCoverDirector") });
   const out = stripGeminiModelOutput(raw);
   if (!out) {
     throw new Error("封面指令返回空内容");

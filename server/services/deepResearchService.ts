@@ -25,6 +25,7 @@ import {
 } from "./geminiPlatformCompositeTranslation.js";
 import { generateDeepResearchSceneIllustration, generateGptImage2FromRawEnglishPrompt } from "./proxyImageService";
 import { TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../../shared/const.js";
+import { resolveGeminiModel } from "../../shared/geminiModelConfig.js";
 import {
   createDeepResearchInteraction,
   getGoogleGenAI,
@@ -316,15 +317,17 @@ ${vals.map((v, i) => `<circle cx="${toX(i)}" cy="${toY(v)}" r="3.5" fill="${colo
   return `\n\n> 📈 **四平台 7 天趋势监控**（热度指数 0-100，100 为最热）\n\n<img src="data:image/svg+xml;base64,${b64}" width="680" alt="四平台7天趋势图" style="border-radius:12px;margin:8px 0"/>\n\n`;
 }
 
-/** 直接 HTTP 调用 Gemini API（普通模式） */
+/**
+ * 直接 HTTP 调用 Gemini API（普通模式）。
+ * 模型不写死：领域 deepResearchAssist（DEEP_RESEARCH_ASSIST_GEMINI_MODEL → 领域缺省，见 shared/geminiModelConfig）。
+ * 原第一个参数（调用处传的模型名）从未生效，已删除，免得调用处继续写死模型名。
+ */
 async function generate(
-  model: string,
   prompt: string,
   retries = 2,
   opts?: { temperature?: number; maxTokens?: number; topP?: number; topK?: number },
 ): Promise<string> {
-  /** AI Studio 深研輔助生成：鎖 formal gemini-3.1-pro（與 Vertex 前半段分流） */
-  const modelName = "gemini-3.1-pro";
+  const modelName = resolveGeminiModel("deepResearchAssist");
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 
@@ -361,7 +364,7 @@ async function generate(
 
 /**
  * Deep Research Pro Preview · 顶级商业智库引擎调用器
- * - 模型：gemini-deep-research-pro-preview（2026 战略智库大脑，严禁降级）
+ * - 代理：DEEP_RESEARCH_MAX_AGENT_ID（googleDeepResearchInteractions.ts；Interactions API 代理，非 generateContent 模型）
  * - 工具：googleSearch（实时全网检索）+ deepResearch（comprehensive 深度推理）
  * - 推理：thinkingConfig.includeThoughts=true（开启思维链）
  * - 限速：Deep Research 建立 interaction 走 acquireRateGate() — 63s 滑窗内最多 30 次
@@ -376,8 +379,6 @@ interface GroundedResult {
   thoughts?: string;
   sources: Array<{ title: string; url: string; snippet?: string }>;
 }
-
-const DEEP_RESEARCH_MODEL = "gemini-deep-research-pro-preview";
 
 // ─── Interactions API（Deep Research Agent，@google/genai SDK） ───────────────
 // generateContent 不可用；见 {@link ./googleDeepResearchInteractions.ts}
@@ -1781,7 +1782,6 @@ export async function runDeepResearchAsync(jobId: string) {
     if (productType !== "personalized") {
       try {
         const trendJson = await generate(
-          "gemini-2.0-flash-exp",
           `你是一个社交媒体数据分析师。请根据课题「${job.topic}」，模拟该细分赛道在小红书、抖音、B站、快手四平台过去 7 天的相对热度趋势指数（0-100，100为最热）。
 今天日期：${new Date().toLocaleDateString("zh-CN")}
 请直接输出 JSON，格式如下（不要任何其他文字）：
@@ -1809,7 +1809,7 @@ export async function runDeepResearchAsync(jobId: string) {
 
     // ═════════════════════════════════════════════════════════════════════════
     // 阶段 A：Deep Research Pro Preview · 全网检索 + 深度推理 + 思维链
-    // 模型：gemini-deep-research-pro-preview（2026 战略智库大脑，63s 滑窗 30 次建链限速）
+    // 代理：DEEP_RESEARCH_MAX_AGENT_ID（Interactions API，63s 滑窗 30 次建链限速）
     // 工具：googleSearch（实时检索）+ deepResearch{complexity: "comprehensive"}（最深推理）
     // 配置：thinkingConfig.includeThoughts=true（开启思维链）
     // ═════════════════════════════════════════════════════════════════════════
@@ -2113,7 +2113,6 @@ ${job.topic}
     //   - topP 0.95 + topK 40：保留长尾候选词，避免输出过于刻板
     //   - maxTokens 8192：保证万字长报告输出完整不被截断
     const rawReportMarkdown = await generate(
-      "gemini-3.1-pro-preview",
       promptForSynthesis,
       2,
       { temperature: 0.7, topP: 0.95, topK: 40, maxTokens: 8192 },
@@ -2160,7 +2159,6 @@ ${job.topic}
     let lighthouseTitle = job.topic;
     try {
       const titleText = await generate(
-        "gemini-3.1-pro-preview",
         `针对课题《${job.topic}》，生成一个哈佛商业评论风格的灯塔标题（不超过 20 字，不含引号和标点符号以外的特殊字符）。仅输出标题本身。`,
       );
       if (titleText.trim().length > 0) lighthouseTitle = titleText.trim().slice(0, 40);
@@ -2575,7 +2573,6 @@ async function generateSceneIllustrations(params: {
   // ── 1. 用 LLM 抽场景（仅取报告前 12000 字喂给 LLM，避免 prompt 过长） ──
   const reportSnippet = params.reportMarkdown.slice(0, 12000);
   const sceneJsonText = await generate(
-    "gemini-3.1-pro-preview",
     `你是商业杂志的视觉总监。下面是一份课题为《${params.topic}》的战略研报正文（Markdown）。
 
 【任务】
@@ -2640,7 +2637,6 @@ ${reportSnippet}`,
   if (!parsed || firstSceneCount === 0) {
     console.warn(`[deepResearch][scenes] 第 1 次解析无场景，发起精简 retry…`);
     const retryText = await generate(
-      "gemini-3.1-pro-preview",
       `上一次返回的 JSON 不完整（被 token 上限截断或字符串未闭合）。请严格只输出 ${minCount} 个最关键场景的 JSON，每个 imagePrompt **必须 ≤ 50 个英文单词**。
 
 【4 类覆盖 · 必须遵守】
