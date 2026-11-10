@@ -5,6 +5,7 @@
  * 每次点击提交生成新 requestId（服务端按它做幂等）。
  */
 import { importWorkflowVideoSource } from "@/lib/videoUpscaleApi";
+import { planVideoEditSegment } from "@shared/videoEditPricing";
 
 /** 区间规则（与服务端约定一致）：一位小数；不足 4 秒服务端自动扩到 4 秒；单次上限 30 秒。 */
 export const VIDEO_EDIT_MIN_SEC = 4;
@@ -89,7 +90,7 @@ export type VideoEditRangeCheck = {
   endSec: number;
   /** 所选长度（秒，一位小数）。 */
   lengthSec: number;
-  /** 不足 4 秒时服务端将自动扩展后的区间（仅提示用）；够 4 秒为 null。 */
+  /** 不足 4 秒时服务端将自动扩展后的区间（仅提示用，与服务端同一函数算）；够 4 秒为 null。 */
   expandedTo: { startSec: number; endSec: number } | null;
   /** 不可提交的原因；可提交为空串。 */
   problem: string;
@@ -97,7 +98,8 @@ export type VideoEditRangeCheck = {
 
 /**
  * 区间校验（纯函数）：取一位小数；起点<终点；不越过片长；不超过 30 秒。
- * 不足 4 秒不算错，只给出“将自动扩到 4 秒”的预估区间（先向后扩，碰到片尾再向前补）。
+ * 不足 4 秒不算错，只给出“将自动扩到 4 秒”的预估区间：直接用服务端 planVideoEditSegment
+ * （以选段中心向两侧扩到 4 秒，贴片头/片尾往另一侧补）；片长未知时按不贴片尾估。
  */
 export function checkVideoEditRange(startSec: number, endSec: number, durationSec?: number): VideoEditRangeCheck {
   const start = roundSec(Number(startSec));
@@ -112,13 +114,12 @@ export function checkVideoEditRange(startSec: number, endSec: number, durationSe
   if (lengthSec > VIDEO_EDIT_MAX_SEC) return { ...base, problem: `单次最多修改 ${VIDEO_EDIT_MAX_SEC} 秒，请缩短区间` };
   if (lengthSec >= VIDEO_EDIT_MIN_SEC) return { ...base, problem: "" };
   if (dur != null && dur < VIDEO_EDIT_MIN_SEC) return { ...base, problem: `视频不足 ${VIDEO_EDIT_MIN_SEC} 秒，暂不支持局部修改` };
-  let s = start;
-  let e = roundSec(start + VIDEO_EDIT_MIN_SEC);
-  if (dur != null && e > dur) {
-    e = dur;
-    s = roundSec(Math.max(0, dur - VIDEO_EDIT_MIN_SEC));
+  try {
+    const plan = planVideoEditSegment(dur ?? roundSec(end + VIDEO_EDIT_MIN_SEC), start, end);
+    return { ...base, expandedTo: { startSec: plan.startSec, endSec: plan.endSec }, problem: "" };
+  } catch (e) {
+    return { ...base, problem: e instanceof Error ? e.message : "请调整修改区间" };
   }
-  return { ...base, expandedTo: { startSec: s, endSec: e }, problem: "" };
 }
 
 /**

@@ -114,8 +114,10 @@ export function useVideoEditPrefillGuard() {
  */
 export function VideoEditPanel(props: VideoEditPanelProps) {
   const api = useVideoEditApi();
+  /** 报价带回的服务端实测片长（按原片记）：有就覆盖浏览器读到的时长作选区上限，避免选到最后 0.1 秒报价失败。 */
+  const [serverSec, setServerSec] = useState<{ source: string; sec: number } | null>(null);
   // 片长上限按实测秒数一位小数向下取（同服务端），10.08 秒不会放到 10.1 秒去报价
-  const duration = videoEditDurationSec(props.durationSec);
+  const duration = serverSec?.source === props.source ? serverSec.sec : videoEditDurationSec(props.durationSec);
   const [startSec, setStartSec] = useState(0);
   const [endSec, setEndSec] = useState(() => roundSec(Math.min(duration, VIDEO_EDIT_MIN_SEC)));
   const [promptZh, setPromptZh] = useState("");
@@ -175,6 +177,10 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
   );
   const quote = readVideoEditQuote(quoteQuery.data);
   const quoteFresh = Boolean(quote) && debounced.startSec === range.startSec && debounced.endSec === range.endSec;
+  const quotedSourceSec = videoEditDurationSec(quote?.sourceDurationSec);
+  useEffect(() => {
+    if (quotedSourceSec > 0) setServerSec(cur => (cur?.source === props.source && cur.sec === quotedSourceSec ? cur : { source: props.source, sec: quotedSourceSec }));
+  }, [quotedSourceSec, props.source]);
   const queue = api.queueVideoPartialEdit.useMutation();
   const jobQuery = api.getPostProdJob.useQuery(
     { jobId },

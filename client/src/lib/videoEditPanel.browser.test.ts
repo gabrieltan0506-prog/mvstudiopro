@@ -104,7 +104,8 @@ it("VideoEditPanel：区间与扩展提示、报价、确认后才提交、提�
     await setVal("起点秒", 2.04);
     await setVal("终点秒", 3.5);
     await page.waitForSelector('[aria-label="区间扩展提示"]');
-    expect(await text("区间扩展提示")).toContain("自动扩到 4 秒（约 2.0–6.0 秒）");
+    // 与服务端同一规则：2.0–3.5 以中心向两侧扩到 4 秒
+    expect(await text("区间扩展提示")).toContain("自动扩到 4 秒（约 0.8–4.8 秒）");
 
     // 超 30 秒：报错且不报价
     await setVal("起点秒", 0);
@@ -253,7 +254,7 @@ it("VideoEditPanel：顾问预填（登记口与 prefill nonce）只预填不提
         globalThis.quotes.push(input);
         const seg=Math.max(4,Math.round((input.endSec-input.startSec)*10)/10);
         const s=input.startSec, e=Math.max(input.endSec, Math.round((s+4)*10)/10);
-        return {data:{sourceDurationSec:20,startSec:s,endSec:e,segmentSec:seg,expanded:seg>input.endSec-input.startSec,credits:Math.ceil(seg/2)*30,waived:false,creditsPerTwoSec:30,minSec:4,maxSec:30,confirmNotice:'提交后不可取消；失败或未通过审核将全额退回积分。'}};
+        return {data:{sourceDurationSec:40,startSec:s,endSec:e,segmentSec:seg,expanded:seg>input.endSec-input.startSec,credits:Math.ceil(seg/2)*30,waived:false,creditsPerTwoSec:30,minSec:4,maxSec:30,confirmNotice:'提交后不可取消；失败或未通过审核将全额退回积分。'}};
       }};
       const queue={useMutation:()=>({mutateAsync:async input=>{globalThis.queued.push(input);return {jobId:'job-ve-1'};}})};
       const job={useQuery:(input,opts)=>{
@@ -491,6 +492,89 @@ it("VideoEditPanel：确认框打开/正在报价/任务进行中拒绝顾问预
     await page.waitForFunction(() => (document.querySelector('[aria-label="修改描述"]') as HTMLTextAreaElement)?.value === "路灯更亮");
     expect(await text("所选区间")).toContain("20.0–26.0 秒");
     expect(await page.evaluate(() => (globalThis as any).queued.length)).toBe(1);
+    expect(errors).toEqual([]);
+  } finally {
+    await browser.close();
+  }
+}, 60000);
+
+/** 报价带回服务端实测片长后，选区上限改用它（覆盖浏览器读到的时长），终点不会再选到报价必败的最后 0.1 秒。 */
+it("VideoEditPanel：报价返回后用服务端片长作选区上限", async () => {
+  const bundle = await build({
+    stdin: {
+      resolveDir: process.cwd(),
+      loader: "tsx",
+      contents: `
+    import React from 'react'; import {createRoot} from 'react-dom/client';
+    import {VideoEditPanel} from './client/src/components/canvas/VideoEditPanel';
+    globalThis.React=React;globalThis.quotes=[];
+    createRoot(document.getElementById('root')).render(
+      <VideoEditPanel source='gs://test-only/post-prod/7/a.mp4' previewUrl='https://cdn.test/a.mp4' durationSec={10.18}/>);
+  `,
+    },
+    bundle: true,
+    write: false,
+    platform: "browser",
+    format: "iife",
+    jsx: "automatic",
+    alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+    plugins: [
+      {
+        name: "offline",
+        setup(b) {
+          b.onResolve({ filter: /(?:^@\/lib\/trpc$|\/trpc$)/ }, () => ({ path: "trpc", namespace: "offline" }));
+          b.onLoad({ filter: /.*/, namespace: "offline" }, () => ({
+            loader: "js",
+            contents: `
+      // 服务端实测（ffprobe）10.0 秒，比浏览器读到的 10.18 秒短
+      const quote={useQuery:(input,opts)=>{
+        if(!opts.enabled) return {data:undefined};
+        globalThis.quotes.push(input);
+        const seg=Math.max(4,Math.round((input.endSec-input.startSec)*10)/10);
+        return {data:{sourceDurationSec:10,startSec:input.startSec,endSec:input.endSec,segmentSec:seg,expanded:false,credits:Math.ceil(seg/2)*30,waived:false,creditsPerTwoSec:30,minSec:4,maxSec:30,confirmNotice:'提交后不可取消；失败或未通过审核将全额退回积分。'}};
+      }};
+      const queue={useMutation:()=>({mutateAsync:async()=>({jobId:'never'})})};
+      const job={useQuery:()=>({data:undefined})};
+      export const trpc={mvAnalysis:{quoteVideoPartialEdit:quote,queueVideoPartialEdit:queue,getPostProdJob:job}};
+    `,
+          }));
+        },
+      },
+    ],
+    define: { "process.env.NODE_ENV": '"production"', "import.meta.env": "{}" },
+    logLevel: "silent",
+  });
+  const browser = await puppeteer.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(10000);
+    const errors: string[] = [];
+    page.on("pageerror", e => errors.push(String(e)));
+    await page.setRequestInterception(true);
+    page.on("request", r => r.respond({ status: 200, contentType: "application/json", body: "[]" }));
+    await page.goto("http://localhost/");
+    await page.setContent('<div id="root"></div>');
+    await page.addScriptTag({ content: bundle.outputFiles[0].text });
+    await page.waitForSelector('[data-testid="video-edit-panel"]');
+    // 首个报价（默认 0–4 秒）带回 10.0 秒：上限从浏览器的 10.1 改为 10.0
+    await page.waitForFunction(() => document.querySelector("legend")?.textContent?.includes("原片 10.0 秒"));
+    for (const label of ["终点滑杆", "终点秒", "起点滑杆", "起点秒"])
+      expect(await page.$eval(`[aria-label="${label}"]`, n => n.getAttribute("max"))).toBe("10");
+    await page.$eval('[aria-label="起点秒"]', el => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, "6");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await page.$eval('[aria-label="终点秒"]', el => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, "10.1");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await page.waitForFunction(() => document.querySelector('[aria-label="报价"]')?.textContent?.includes("需 60 积分"));
+    expect(await page.$eval('[aria-label="终点秒"]', n => (n as HTMLInputElement).value)).toBe("10");
+    expect(await page.$eval('[aria-label="所选区间"]', n => n.textContent || "")).toContain("6.0–10.0 秒");
+    expect(await page.$('[aria-label="区间问题"]')).toBeNull();
+    const quotes = await page.evaluate(() => (globalThis as any).quotes as Array<{ endSec: number }>);
+    expect(quotes.length).toBeGreaterThan(0);
+    expect(quotes.every(q => q.endSec <= 10)).toBe(true);
     expect(errors).toEqual([]);
   } finally {
     await browser.close();

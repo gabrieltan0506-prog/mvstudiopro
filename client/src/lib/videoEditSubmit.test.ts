@@ -18,6 +18,7 @@ vi.mock("@/lib/trpc", () => ({
 }));
 
 import { VideoEditPanel } from "@/components/canvas/VideoEditPanel";
+import { planVideoEditSegment } from "@shared/videoEditPricing";
 import {
   buildVideoEditSubmitInput,
   checkVideoEditRange,
@@ -32,10 +33,20 @@ const SIGNED = "https://storage.googleapis.com/mv-bucket/post-prod/7/a.mp4?X-Goo
 const CDN = "https://d2h7xmz5gqybh9.cloudfront.net/out/x.mp4";
 
 describe("区间校验", () => {
-  it("一位小数；4–30 秒正常；不足 4 秒给出自动扩展预估（先向后、碰片尾向前）", () => {
+  it("一位小数；4–30 秒正常；不足 4 秒给出自动扩展预估（以中心向两侧扩、贴片尾往前补）", () => {
     expect(checkVideoEditRange(1.04, 6.06, 20)).toMatchObject({ startSec: 1, endSec: 6.1, lengthSec: 5.1, expandedTo: null, problem: "" });
-    expect(checkVideoEditRange(2, 3.5, 20)).toMatchObject({ expandedTo: { startSec: 2, endSec: 6 }, problem: "" });
+    expect(checkVideoEditRange(2, 3.5, 20)).toMatchObject({ expandedTo: { startSec: 0.8, endSec: 4.8 }, problem: "" });
     expect(checkVideoEditRange(9, 10, 10)).toMatchObject({ expandedTo: { startSec: 6, endSec: 10 }, problem: "" });
+  });
+  it("不足 4 秒的扩展提示与服务端 planVideoEditSegment 同一结果（贴片头/片尾往另一侧补）", () => {
+    for (const [s, e, dur] of [[2, 3.5, 20], [0.5, 1, 20], [9, 10, 10], [26, 27, 40], [9.5, 10, 10.08]] as const) {
+      const plan = planVideoEditSegment(dur, s, e);
+      expect(checkVideoEditRange(s, e, dur).expandedTo).toEqual({ startSec: plan.startSec, endSec: plan.endSec });
+    }
+    expect(checkVideoEditRange(0.5, 1, 20).expandedTo).toEqual({ startSec: 0, endSec: 4 });
+    expect(checkVideoEditRange(26, 27, 40).expandedTo).toEqual({ startSec: 24.5, endSec: 28.5 });
+    // 片长未知：按不贴片尾估
+    expect(checkVideoEditRange(2, 3.5).expandedTo).toEqual({ startSec: 0.8, endSec: 4.8 });
   });
   it("片长按实测秒数一位小数向下取（同服务端，不超过原片），不向上取整", () => {
     expect(videoEditDurationSec(10.08)).toBe(10);
