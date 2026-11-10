@@ -1,11 +1,30 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { putPublicStoredMedia as put } from "../server/services/publicStoredMedia";
+import { hasSupervisorRole } from "../shared/internalMediaEndpointPolicy.js";
+
+/** 取登录用户与角色；未登录/校验失败返回 null（不抛）。 */
+async function resolveViewer(req: VercelRequest): Promise<{ userId: number; role: string } | null> {
+  try {
+    const { sdk } = await import("../server/_core/sdk.js");
+    const user = await sdk.authenticateRequest(req as any, { silentMissing: true });
+    const userId = Number((user as any)?.id);
+    if (!Number.isFinite(userId) || userId <= 0) return null;
+    return { userId, role: String((user as any)?.role || "") };
+  } catch {
+    return null;
+  }
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
 
+  // 付费上游：仓库内无调用方，原先匿名可调；收口为只许监管/管理员（同 /api/kling-image）。
+  const viewer = await resolveViewer(req);
+  if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required", message: "请先登录后再使用" });
+  if (!hasSupervisorRole(viewer.role)) return res.status(403).json({ ok: false, error: "supervisor_only", message: "该入口仅供监管验收" });
+
   const apiKey = String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
-  if (!apiKey) return res.status(500).json({ ok: false, error: "Missing OPENAI_IMAGE_API_KEY" });
+  if (!apiKey) return res.status(500).json({ ok: false, error: "image_service_unavailable" });
 
   const body: any = (req as any).body || {};
   const prompt = String(body.prompt || "").trim();

@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({ auth: vi.fn() }));
 vi.mock("../_core/sdk.js", () => ({ sdk: { authenticateRequest: h.auth } }));
 import jobsHandler from "../../api/jobs";
 import klingImageHandler from "../../api/kling-image";
+import openaiImageHandler from "../../api/openai-image";
 import { decideLegacyJobsOpAccess, legacyJobsOpAccess } from "../../shared/internalMediaEndpointPolicy";
 import { buildInternalGatewayHeaders, isInternalGatewayRequest, markInProcessGatewayRequest } from "./internalGatewayAuth";
 
@@ -108,5 +109,18 @@ describe("/api/kling-image", () => {
     const result = await call(klingImageHandler, { method: "POST", body: { prompt: "测试" } });
     expect(result.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("/api/openai-image", () => {
+  it("未登录 401、普通用户 403，不访问上游", async () => {
+    const req = { method: "POST", body: { prompt: "测试" } };
+    h.auth.mockRejectedValueOnce(new Error("no session"));
+    expect((await call(openaiImageHandler, req)).status).toBe(401);
+    h.auth.mockResolvedValueOnce({ id: 7, role: "user" });
+    const r = await call(openaiImageHandler, req);
+    expect(r.status).toBe(403);
+    expect(r.body.error).toBe("supervisor_only");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
