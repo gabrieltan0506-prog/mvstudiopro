@@ -42,7 +42,7 @@ function fixture() {
     })),
     review: vi.fn(async () => ({ report: pub.review, sourceImages: [] })),
     image: vi.fn(),
-    imageUrl: (uri: string) => `https://test.invalid/signed/${encodeURIComponent(uri)}`,
+    imageUrl: async (uri: string) => `https://test.invalid/signed/${encodeURIComponent(uri)}`,
     read: vi.fn(async (name: string) => storage.get(name) || null),
     save: vi.fn(async (name: string, buffer: Buffer) => {
       storage.set(name, buffer);
@@ -150,9 +150,9 @@ it('任一分段计页失败时先保留HTML，全部计页成功后才打印正
  pub.review={...pub.review!,sourceDigest:knowledgeSourceDigest(pub.source),pages:f.doc.pages.map(p=>({...pub.review!.pages[0],id:p.id,headline:p.headline,body:p.body}))};
  pub.manuscript=pub.confirmedManuscript=knowledgeManuscript(pub.review);
  f.deps.review.mockResolvedValue({report:pub.review,sourceImages:[]});
- // 各段并发计页：按内容返回（真实计页即按内容），第二章首次失败一次。
- let secondFails=true;
- const measure=vi.fn(async(html:string)=>{if(html.includes('第二章')){if(secondFails){secondFails=false;throw Error('第二章计页暂时失败');}return 3;}return 2;});
+ // 各段并发计页：按内容返回（真实计页即按内容）。第二章并发首发与本轮补跑都失败（共两次），本轮才算未完成；续跑时成功。
+ let secondFails=2;
+ const measure=vi.fn(async(html:string)=>{if(html.includes('第二章')){if(secondFails>0){secondFails--;throw Error('第二章计页暂时失败');}return 3;}return 2;});
  f.deps.merge.mockImplementation(async(_paths?:string[],target?:string)=>{await writeFile(target!,Buffer.from('%PDF'+'merged-test-only'.repeat(20)));});
  f.deps.countPages.mockResolvedValue(5);
  const partial=await exportKnowledgePublication(7,f.doc.id,'10',{...f.deps,measure} as any);

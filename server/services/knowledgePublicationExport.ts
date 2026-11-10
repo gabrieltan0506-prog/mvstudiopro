@@ -34,6 +34,7 @@ import {
   uploadStreamToGcs,
 } from "./gcs";
 import { fetchPdfBufferFromWorker, measureKnowledgeBookletFromWorker } from "./pdfWorkerClient";
+import { ensureKnowledgeReviewThumbnail } from "./knowledgeReviewThumbnail";
 import { knowledgeStageConcurrency, runKnowledgeStaggeredPool } from "../../shared/knowledgeConcurrency";
 
 /** pdf-worker 的瞬时故障（部署/重启打断 Puppeteer 页面、网关 5xx、连接中断）：同一输入原地重试一次即可，不算段失败。 */
@@ -56,9 +57,10 @@ export async function retryKnowledgeExportStep<T>(step: () => Promise<T>, option
   }
 }
 
-/** 导出分段池：按段数动态并发（≤16），每段自行捕获错误。 */
+/** 导出分段池：按段数动态并发（≤8，排版服务每路要取图、排版、打印，16 路实测互相拖到超时），每段自行捕获错误。 */
+export const KNOWLEDGE_EXPORT_PART_CONCURRENCY = 8;
 async function knowledgeExportPool(count: number, worker: (index: number) => Promise<void>) {
-  const lanes = Array.from({ length: knowledgeStageConcurrency(count, { max: 16 }) }, () => "pdf" as const);
+  const lanes = Array.from({ length: knowledgeStageConcurrency(count, { max: KNOWLEDGE_EXPORT_PART_CONCURRENCY }) }, () => "pdf" as const);
   await runKnowledgeStaggeredPool(Array.from({ length: count }, (_, i) => i), { lanes, staggerMs: 0, worker: async i => { await worker(i); } });
 }
 
@@ -66,7 +68,7 @@ async function knowledgeExportPool(count: number, worker: (index: number) => Pro
 /** 阅读稿 HTML 内配图签名地址的有效期：GCS V4 上限 7 天；过期后重新导出即换新地址，PDF 成品不受影响。 */
 export const KNOWLEDGE_EXPORT_IMAGE_URL_TTL_SECONDS = 7 * 24 * 3600;
 /** 配图传输方式标记进成品目录：改为地址引用后的成品与旧内嵌版分开存放，互不复用。 */
-export const KNOWLEDGE_EXPORT_IMAGE_TRANSPORT = "url1";
+export const KNOWLEDGE_EXPORT_IMAGE_TRANSPORT = "url2";
 const exportLog = (event: string, fields: Record<string, string | number | undefined>) =>
   console.log(`[knowledgeExport] ${event} ${Object.entries(fields).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}=${v}`).join(" ")}`);
 /** 日志只留业务原因：去掉地址与签名，截断。 */
@@ -91,7 +93,9 @@ const real = {
   review: readKnowledgePublicationReview,
   image: readKnowledgeImage,
   // 导出配图只以签名地址交给排版服务与阅读稿 HTML，不把图片数据内嵌进 HTML（禁 base64）。
-  imageUrl: (uri: string) => signGsUriV4ReadUrl(uri, KNOWLEDGE_EXPORT_IMAGE_URL_TTL_SECONDS),
+  // 地址指向缩图派生件（长边 ≤2048 的 JPEG，审校时已生成）：排版服务入版前本就把每张图缩到长边 1200，
+  // 送 13–18MB 的 4K 原图只会让并发取图超时（1110 实测 34 段有 11 段预分页失败）；缩图不可得时回退原图地址。
+  imageUrl: async (uri: string) => signGsUriV4ReadUrl((await ensureKnowledgeReviewThumbnail(uri)) || uri, KNOWLEDGE_EXPORT_IMAGE_URL_TTL_SECONDS),
   pdf: fetchPdfBufferFromWorker,
   measure: measureKnowledgeBookletFromWorker,
   // 使用镜像已有poppler，按真实PDF物理页保存，不用估算页数。
@@ -310,7 +314,7 @@ export async function exportKnowledgePublication(
           const image = await (prefetched.get(index) ?? verifyImage(page.imageUrl));
           if (expected.get(page.imageUrl) !== image.sha256)
             throw new Error(`第${index + 1}页配图已变化，未导出旧审校版本`);
-          imageAddress = deps.imageUrl(page.imageUrl);
+          imageAddress = await deps.imageUrl(page.imageUrl);
           imageBytes = image.bytes;
           totalImageBytes += image.bytes;
         }
@@ -350,11 +354,24 @@ export async function exportKnowledgePublication(
             const count = await retryKnowledgeExportStep(() => deps.measure(chunkHtml));
             if (!Number.isSafeInteger(count) || count < 1) throw new Error("预分页结果无效");
             counts[index] = count;
-          } catch {
+          } catch (error) {
             counts[index]=0;
             failures.push(index + 1);
+            exportLog("measure-failed", { owner, document: documentId, part: index + 1, reason: knowledgeExportLogReason(error) });
           }
         });
+        // 并发下个别段偶发失败：对失败段逐段再补一轮，仍不过才留给下次续跑。
+        for (const part of failures.splice(0)) {
+          try {
+            const chunkHtml = head + await readFile(chunks[part - 1]!, "utf8") + tail;
+            const count = await retryKnowledgeExportStep(() => deps.measure(chunkHtml));
+            if (!Number.isSafeInteger(count) || count < 1) throw new Error("预分页结果无效");
+            counts[part - 1] = count;
+          } catch (error) {
+            failures.push(part);
+            exportLog("measure-failed-again", { owner, document: documentId, part, reason: knowledgeExportLogReason(error) });
+          }
+        }
       }
       // 全册计页成功后才打印；缺段时的临时总页数会污染页脚和分片缓存身份。
       if (!failures.length) {
@@ -381,8 +398,9 @@ export async function exportKnowledgePublication(
             });
             await writeFile(path, bytes);
             rendered[index] = path;
-          } catch {
+          } catch (error) {
             failures.push(index + 1);
+            exportLog("render-failed", { owner, document: documentId, part: index + 1, reason: knowledgeExportLogReason(error) });
           }
         });
         for (const path of rendered) if (path) pdfFiles.push(path);
