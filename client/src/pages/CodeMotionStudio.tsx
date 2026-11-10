@@ -3,7 +3,7 @@ import { prepareCodeMotionSpatialScene } from "@shared/codeMotionSpatial";
 import CodeMotionSpatialProduction from "@/components/code-motion/CodeMotionSpatialProduction";
 import { retimeCodeMotionPlanScene } from "@shared/codeMotionComposition";
 import { INK_FREE_POLICY, inkFreeMessage } from "@shared/inkFree";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import {
   ArrowLeft,
@@ -18,6 +18,8 @@ import { trpc } from "@/lib/trpc";
 import { flyDownloadUrl, gcsTransferUrl } from "@/lib/gcsTransfer";
 import CodeMotionVideoPptx from "@/components/CodeMotionVideoPptx";
 import HomePhotoVideoUpscale from "@/components/HomePhotoVideoUpscale";
+import VideoEditOnlyAdvisor from "@/components/canvas/VideoEditOnlyAdvisor";
+import { createAdvisorVideoEditHub } from "@/lib/advisorVideoEditControl";
 import CodeMotionSpreadsheetPicker from "@/components/code-motion/CodeMotionSpreadsheetPicker";
 import type { CodeMotionWorkbook } from "@shared/codeMotionSpreadsheet";
 import CodeMotionAudioPanel from "@/components/code-motion/CodeMotionAudioPanel";
@@ -147,6 +149,8 @@ export default function CodeMotionStudio() {
   const lock = useRef(false),
     active = useRef<string>("");
   const identity = `${user?.id || "guest"}:${project.id}`;
+  /** 顾问 videoEdit 汇总：成片「局部修改」入口经此登记（只预填打开面板，报价与提交由用户在面板确认）。 */
+  const advisorVideoEditHub = useMemo(() => createAdvisorVideoEditHub(), []);
   active.current = identity;
   const utils = trpc.useUtils();
   const quote = trpc.codeMotion.quote.useQuery(undefined, {
@@ -1873,7 +1877,13 @@ export default function CodeMotionStudio() {
                     title={project.brief.title}
                     orientation={project.brief.orientation}
                   />
-                  <HomePhotoVideoUpscale generatedVideoUrl={videoUrl} projectKey={project.id} />
+                  <VideoEditOnlyAdvisor key={`advisor:${identity}`} hub={advisorVideoEditHub}
+                    userId={user?.id != null ? String(user.id) : undefined}
+                    work={{ kind: "code_motion", projectId: project.id, title: project.brief.title, stageZh: "代码动画成片", body: project.brief.text || project.brief.request }}
+                    buttonLabel="创作顾问 · 用一句话改成片" buttonClassName={button}
+                    hint="顾问只帮你打开「局部修改」并填好区间与要求；报价、确认与提交仍由你在面板操作。"
+                    hintClassName="text-xs text-stone-500" />
+                  <HomePhotoVideoUpscale generatedVideoUrl={videoUrl} projectKey={project.id} onAdvisorVideoEditControl={advisorVideoEditHub.register("code-motion")} />
                   <CodeMotionRevision key={`revision:${identity}`} project={project} generation={generation}
                     disabled={busy || !user || dirty || !!pending} execute={run}
                     onCreated={async saved => {
