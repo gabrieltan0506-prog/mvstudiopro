@@ -2623,9 +2623,9 @@ async function processAudioJob(
 /**
  * 平台异步任务处理器。
  *
- * platform_analysis：
- *   第 1 阶段：vertex / gemini-3.1-pro-preview，生成深度内容蓝图
- *   第 2 阶段：vertex / gemini-3.1-pro-preview，校准趋势信号与平台看板
+ * platform_analysis（不走 Gemini）：
+ *   第 1 阶段：invokePlatformAnalysisChat（北京 Qwen 3.8 → 新加坡 Qwen 3.8 → GLM-5.3），生成深度内容蓝图
+ *   第 2 阶段：同一路由，校准趋势信号与平台看板
  *
  * platform_qa：
  *   **OpenAI GPT‑5.5**（与深度追问同步路径）；纯文本 JSON。有 fileUri 时暂保留 Gemini 多模态读附件。

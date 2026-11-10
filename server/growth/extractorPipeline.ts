@@ -1,8 +1,9 @@
 import type { GrowthCampModel } from "@shared/growth";
+import { resolveGeminiModel } from "../../shared/geminiModelConfig";
 
+/** Phase 1 音频 / 关键帧粗筛模型：不写死，领域 growthCampExtractor（GROWTH_CAMP_EXTRACTOR_MODEL → 领域缺省）。 */
 export function resolveGrowthCampExtractorModel() {
-  return String(process.env.GROWTH_CAMP_EXTRACTOR_MODEL || "gemini-3.5-flash").trim()
-    || "gemini-3.5-flash";
+  return resolveGeminiModel("growthCampExtractor");
 }
 
 export type GrowthCampStrategistEngine = {
