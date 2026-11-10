@@ -294,6 +294,13 @@ describe("分段调色 segments / crossfadeSec / autoMatchJunctions（共享 con
     // 多轮修正的结构化警告按接点下标挂到对应接点；形状不认识的忽略
     const warnings = [{ index: 1, atSec: 7.5, intent: "unwanted", rounds: 3, maxRounds: 3, reason: "max_rounds", failing: [], delta: d(9), messageZh: "" }, { index: 0, reason: "whatever" }];
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first, warnings } })!.junctions.map(j => j.warning)).toEqual([undefined, { rounds: 3, maxRounds: 3, reason: "max_rounds" }]);
+    // 警告里的一句话与超差明细（字段同服务端 JunctionWarning）原样带出；形状不对的明细条目丢弃
+    const full = [{ index: 1, atSec: 7.5, intent: "unwanted", rounds: 3, maxRounds: 3, reason: "max_rounds", delta: d(9), messageZh: "7.5 秒接点仍有跳变：亮度差 +9（允许 ±5），已自动修正 3 轮仍未压住",
+      failing: [{ key: "YAVG", labelZh: "亮度", delta: 9, tolerance: 5, overBy: 4 }, { key: "XAVG", labelZh: "x", delta: 1, tolerance: 1, overBy: 0 }, { key: "SATAVG", labelZh: "饱和" }] }];
+    expect(readMontageJunctionCheck({ gradeSegmentCheck: { mode: "junctions", spans: [], check: first, warnings: full } })!.junctions[1].warning).toEqual({
+      rounds: 3, maxRounds: 3, reason: "max_rounds", messageZh: "7.5 秒接点仍有跳变：亮度差 +9（允许 ±5），已自动修正 3 轮仍未压住",
+      failing: [{ key: "YAVG", labelZh: "亮度", delta: 9, tolerance: 5, overBy: 4 }],
+    });
     expect(readMontageJunctionCheck({ gcsUri: "x" })).toBeNull();
     expect(readMontageJunctionCheck({ gradeSegmentCheck: { check: { junctions: [{ delta: {} }] } } })).toBeNull();
   });

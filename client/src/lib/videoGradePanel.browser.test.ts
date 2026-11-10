@@ -18,12 +18,19 @@ it("VideoGradePanel：受控渲染与变更；AI 调色建议仅有 gs:// 成片
     const mixed={jobId:'job-10',title:'分段成片',output:{gradeSegmentCheck:{mode:'junctions',
       spans:[{startSec:0,endSec:2},{startSec:2,endSec:4,junctionIntent:'intended'},{startSec:4,endSec:6},{startSec:6,endSec:8,junctionIntent:'unwanted'},{startSec:8,endSec:8.5}],
       check:{pass:false,junctions:[{index:0,junctionSec:2,pass:false,delta:dz(-9,0)},{index:1,junctionSec:4,pass:true,delta:dz(1,0)},{index:2,junctionSec:6,pass:false,delta:dz(0,4.5)},{index:3,junctionSec:8,pass:false,delta:dz(7,0)}]}}}};
+    const warned={jobId:'job-11',title:'多轮成片',output:{gradeSegmentCheck:{mode:'junctions',
+      spans:[{startSec:0,endSec:3},{startSec:3,endSec:8.5,junctionIntent:'unwanted'}],
+      check:{pass:false,junctions:[{index:0,junctionSec:3,pass:false,delta:{YAVG:60.37,UAVG:0.36,VAVG:0.17,SATAVG:22.29}}]},
+      warnings:[{index:0,atSec:3,intent:'unwanted',rounds:3,maxRounds:3,reason:'max_rounds',delta:{YAVG:60.37,UAVG:0.36,VAVG:0.17,SATAVG:22.29},
+        failing:[{key:'YAVG',labelZh:'亮度',delta:60.37,tolerance:5,overBy:55.37},{key:'SATAVG',labelZh:'饱和',delta:22.29,tolerance:5,overBy:17.29}],
+        messageZh:'3.0 秒接点仍有跳变：亮度差 +60.37（允许 ±5）、饱和差 +22.29（允许 ±5），已自动修正 3 轮仍未压住'}]}}};
+    globalThis.showWarned=()=>globalThis.setResults([warned]);
     function App(){
       const[grade,setGrade]=React.useState({all:{lutId:'basic_warm'}});
       const[gs,setGs]=React.useState(undefined);
       const[frozen,setFrozen]=React.useState(false);
       const[results,setResults]=React.useState([junction]);
-      globalThis.setGs=setGs;globalThis.freeze=()=>setFrozen(true);globalThis.setGrade=setGrade;globalThis.showMixed=()=>setResults([mixed]);
+      globalThis.setGs=setGs;globalThis.freeze=()=>setFrozen(true);globalThis.setGrade=setGrade;globalThis.showMixed=()=>setResults([mixed]);globalThis.setResults=setResults;
       return <VideoGradePanel value={grade} outputSec={8.5} adviceVideoGsUri={gs} adviceAspect='16:9' junctionResults={results}
         onChange={next=>{globalThis.changes.push(next===undefined?null:next);if(!frozen)setGrade(next);}}/>;
     }
@@ -191,6 +198,16 @@ it("VideoGradePanel：受控渲染与变更；AI 调色建议仅有 gs:// 成片
     expect(await page.$eval('[aria-label="接点1"]', n => n.textContent)).toMatch(/2\.0秒.*剧情需要.*亮度变暗 9（允许 5）.*不用处理/);
     expect(await page.$eval('[aria-label="接点检查结果"]', n => n.textContent)).toContain("1 处不该跳、还没修平");
     expect(await page.$eval('[aria-label="接点检查结果"]', n => n.textContent)).toContain("其余 1 个接点达标");
+
+    // 多轮修正后仍未修平：直接显示服务端写好的一句话，展开可看各项差值/允许值/超出量
+    await page.evaluate(() => (globalThis as any).showWarned());
+    await page.waitForSelector("[data-junction-warning]");
+    expect(await page.$eval("[data-junction-warning]", n => n.textContent)).toBe("3.0 秒接点仍有跳变：亮度差 +60.37（允许 ±5）、饱和差 +22.29（允许 ±5），已自动修正 3 轮仍未压住");
+    expect(await page.$eval('[aria-label="接点1"]', n => n.textContent)).toMatch(/不该跳 · 自动修正 3 轮仍未修平/);
+    expect(await page.$eval('[aria-label="接点1"] details', n => (n as HTMLDetailsElement).open)).toBe(false);
+    await page.click('[aria-label="接点1"] summary');
+    expect(await page.$$eval('[aria-label="接点1超差明细"] li', n => n.map(x => x.textContent))).toEqual(["亮度差 +60.37 · 允许 ±5 · 超出 55.37", "饱和差 +22.29 · 允许 ±5 · 超出 17.29"]);
+    expect(await page.$eval('[aria-label="接点检查结果"]', n => n.textContent)).not.toMatch(/YAVG|SATAVG|max_rounds/);
 
     expect(await page.evaluate(() => (globalThis as any).calls.length)).toBe(0);
     expect(errors).toEqual([]);

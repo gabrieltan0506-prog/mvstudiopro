@@ -163,7 +163,23 @@ export function VideoGradeJunctionChecks({ results }: { results: VideoGradeJunct
                     <strong className="text-sm tabular-nums">{r.x.atSec.toFixed(1)}秒</strong>
                     <span className={`font-medium ${JUNCTION_TAG[r.view.kind]}`}>{r.view.labelZh}</span>
                   </p>
-                  {r.view.overZh.length > 0 && <p className="tabular-nums">{r.view.overZh.join("；")}</p>}
+                  {r.x.warning?.messageZh ? (
+                    <p data-junction-warning className="tabular-nums">{r.x.warning.messageZh}</p>
+                  ) : (
+                    r.view.overZh.length > 0 && <p className="tabular-nums">{r.view.overZh.join("；")}</p>
+                  )}
+                  {r.x.warning?.failing?.length ? (
+                    <details>
+                      <summary className="cursor-pointer text-white/60">各项差值</summary>
+                      <ul aria-label={`接点${r.k + 1}超差明细`} className="mt-0.5 space-y-0.5 tabular-nums text-white/70">
+                        {r.x.warning.failing.map(f => (
+                          <li key={f.key}>
+                            {f.labelZh}差 {f.delta > 0 ? "+" : ""}{f.delta} · 允许 ±{f.tolerance} · 超出 {f.overBy}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
                   <p className="text-white/70">{r.view.adviceZh}</p>
                 </li>
               ))}

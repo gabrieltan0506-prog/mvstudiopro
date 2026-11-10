@@ -297,6 +297,7 @@ export function applyAdvisorMontageFinish(
  * 后期任务结果里的接点检查：服务端 output.gradeSegmentCheck = { check, autoMatch?: { adjusted, check } }；
  * 有 autoMatch 时以复检为准，接点 j 的后段（span j+1）在 adjusted 里即「已自动修正」。读不到返回 null。
  */
+export type MontageJunctionFailing = { key: "YAVG" | "UAVG" | "VAVG" | "SATAVG"; labelZh: string; delta: number; tolerance: number; overBy: number };
 export type MontageJunctionCheck = {
   pass: boolean;
   junctions: Array<{
@@ -310,7 +311,13 @@ export type MontageJunctionCheck = {
      * 多轮自动修正后仍未达标的结构化警告（结果里带才有）：已试几轮、上限几轮、为什么停。
      * max_rounds = 修满上限仍超差；too_short = 后段太短放不下过渡；no_step = 已无可用修正量；not_attempted = 没开自动修正。
      */
-    warning?: { rounds: number; maxRounds: number; reason: "max_rounds" | "too_short" | "no_step" | "not_attempted" };
+    warning?: {
+      rounds: number; maxRounds: number; reason: "max_rounds" | "too_short" | "no_step" | "not_attempted";
+      /** 服务端写好的一句话（哪一秒、哪项差多少、试了几轮）；结果里没有或为空则不带。 */
+      messageZh?: string;
+      /** 超差项（字段同服务端 JunctionWarning.failing）：实测差（后 − 前）、允许值、超出量；没有则不带。 */
+      failing?: MontageJunctionFailing[];
+    };
   }>;
 };
 export function readMontageJunctionCheck(output: unknown): MontageJunctionCheck | null {
@@ -337,7 +344,13 @@ export function readMontageJunctionCheck(output: unknown): MontageJunctionCheck 
     const reason = w?.reason;
     if (!w || (reason !== "max_rounds" && reason !== "too_short" && reason !== "no_step" && reason !== "not_attempted")) return undefined;
     const int = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : 0);
-    return { rounds: int(w.rounds), maxRounds: int(w.maxRounds), reason };
+    const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+    const failing = (Array.isArray(w.failing) ? w.failing : []).filter(isRecord).flatMap((f): MontageJunctionFailing[] =>
+      (f.key === "YAVG" || f.key === "UAVG" || f.key === "VAVG" || f.key === "SATAVG") && typeof f.labelZh === "string" && f.labelZh && fin(f.delta) && fin(f.tolerance) && fin(f.overBy)
+        ? [{ key: f.key, labelZh: f.labelZh, delta: f.delta, tolerance: f.tolerance, overBy: f.overBy }]
+        : []);
+    const messageZh = typeof w.messageZh === "string" ? w.messageZh.trim() : "";
+    return { rounds: int(w.rounds), maxRounds: int(w.maxRounds), reason, ...(messageZh ? { messageZh } : {}), ...(failing.length ? { failing } : {}) };
   };
   const junctions = rows.filter(isRecord).map(r => {
     const d = isRecord(r.delta) ? r.delta : {};
