@@ -18,7 +18,7 @@ vi.mock("./postProdMediaSource", () => ({ resolvePostProdInputSources: async ({ 
 
 import { geminiAudioJsonWithFallback } from "../gemini-audio";
 import { askManhuaSubtitleReview } from "./manhuaAdvisorSubtitle";
-import { hearSongIndependently, SONG_HEARING_MODEL } from "./musicMvSongHearing";
+import { hearSongIndependently, resolveSongHearingModel } from "./musicMvSongHearing";
 import { isPerformerTheUser, performerLabelZh } from "../../shared/canvasMusicMvReferences";
 
 const fetchMock = vi.fn();
@@ -37,6 +37,10 @@ beforeEach(() => {
   vi.stubEnv("VERTEX_PROJECT_ID", "test-project");
   vi.stubEnv("EVOLINK_API_KEY", "test-evolink-key");
   vi.stubEnv("GEMINI_API_KEY", "test-direct-gemini-key");
+  // 1110 模型配置：默认不设，走缺省 gemini-3.8-flash
+  vi.stubEnv("GEMINI_DEFAULT_MODEL", "");
+  vi.stubEnv("GEMINI_AUDIO_TWO_HOP_MODEL", "");
+  vi.stubEnv("MV_SONG_HEARING_MODEL", "");
   h.store.clear();
   h.upload.mockReset().mockImplementation(async ({ objectName, buffer }: any) => {
     if (h.store.has(objectName)) return { created: false };
@@ -94,7 +98,10 @@ describe("MV 顾问独立听歌两跳 + 复用", () => {
       .mockRejectedValueOnce(Object.assign(new Error("timeout"), { name: "TimeoutError" }))
       .mockResolvedValueOnce(geminiReply(evidence(`song:${song.audioSha256}`)));
     const first = await hearSongIndependently(song);
-    expect([first.channel, first.model, first.reused, first.audioTokens]).toEqual(["EvoLink", SONG_HEARING_MODEL, false, 40]);
+    expect([first.channel, first.model, first.reused, first.audioTokens]).toEqual(["EvoLink", "gemini-3.8-flash", false, 40]);
+    expect(resolveSongHearingModel()).toBe("gemini-3.8-flash");
+    // 复用身份含模型：缺省 3.8 Flash 时对象名与 1110 前一致
+    expect(first.cacheObject).toMatch(new RegExp(`^canvas-music-mv/song-hearing/${song.audioSha256}/gemini-3\\.8-flash-[0-9a-f]{12}\\.json$`));
     expect(JSON.parse(sentBodies()[0]).contents[0].parts[0].fileData.fileUri).toBe("gs://test-bucket/song.wav");
     expect(JSON.parse(sentBodies()[1]).contents[0].parts[0].fileData.fileUri).toMatch(/^https:\/\/signed\.example\/test-bucket\/song\.wav\?/);
     const prompt = JSON.parse(JSON.parse(sentBodies()[0]).contents[0].parts[1].text);
@@ -113,6 +120,24 @@ describe("MV 顾问独立听歌两跳 + 复用", () => {
     });
     expect(again.reused).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+  it("1110 设 MV_SONG_HEARING_MODEL 后两跳都用配置模型，复用对象按模型分开（不吃别的模型的结果）", async () => {
+    fetchMock.mockResolvedValue(geminiReply(evidence(`song:${song.audioSha256}`)));
+    const flash = await hearSongIndependently(song);
+    vi.stubEnv("MV_SONG_HEARING_MODEL", "gemini-3.9-flash");
+    const next = await hearSongIndependently(song, {
+      listen: geminiAudioJsonWithFallback, sign: u => `https://signed.example/${u.slice(5)}?X-Goog-Signature=test`, upload: h.upload as any,
+      readJson: async name => h.store.get(name), bucket: () => "test-bucket", uuid: () => "cfg",
+    });
+    expect(next.reused).toBe(false);
+    expect(next.model).toBe("gemini-3.9-flash");
+    expect(next.cacheObject).not.toBe(flash.cacheObject);
+    expect(next.cacheObject).toContain("/gemini-3.9-flash-");
+    expect(sentUrls()[1]).toContain("/models/gemini-3.9-flash:generateContent");
+    // 空白回落全局缺省
+    vi.stubEnv("MV_SONG_HEARING_MODEL", "  ");
+    vi.stubEnv("GEMINI_DEFAULT_MODEL", "gemini-4.0-flash");
+    expect(resolveSongHearingModel()).toBe("gemini-4.0-flash");
   });
   it("无 AUDIO token 回执算写坏换下一跳", async () => {
     fetchMock.mockResolvedValueOnce(geminiReply(evidence(`song:${song.audioSha256}`), 0)).mockResolvedValueOnce(geminiReply(evidence(`song:${song.audioSha256}`)));

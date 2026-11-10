@@ -360,7 +360,7 @@ async function fetchVideoAsBase64(videoUrl: string) {
  * 不直连 GEMINI_API_KEY、不走 OpenRouter、不内联 base64。每跳 request/raw/decoded/parsed/rejected 由两跳函数
  * 永久落证据；证据里只记 gs://，签名链接不落档。
  */
-const GOOGLE_AUDIO_TWO_HOP_MODEL = "gemini-3.8-flash";
+// 1110：两跳模型不在此写死，统一用 server/gemini-audio.ts resolveGeminiAudioTwoHopModel()（env 可配，缺省 gemini-3.8-flash）。
 
 function googleAudioEvidenceSaver(bucket: string, prefix: string) {
   return async (name: string, value: unknown) => {
@@ -477,7 +477,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       let unusable = false;
       const requestId = randomUUID();
       try {
-        const { geminiAudioJsonWithFallback, isManhuaDramaVertexAudioAvailable, isManhuaDramaEvolinkAudioAvailable } = await import("../server/gemini-audio");
+        const { geminiAudioJsonWithFallback, isManhuaDramaVertexAudioAvailable, isManhuaDramaEvolinkAudioAvailable, resolveGeminiAudioTwoHopModel } = await import("../server/gemini-audio");
         if (!isManhuaDramaVertexAudioAvailable() && !isManhuaDramaEvolinkAudioAvailable())
           return res.status(500).json({ ok: false, error: "missing_env", message: "语音识别服务暂未配置，原音保留，可手动填写" });
         const bucket = getGcsBucketName();
@@ -489,7 +489,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         await save("request", { userId: viewer.userId, op, mimeType, audioGsUri, audioBytes: bytes.length, audioSha256: createHash("sha256").update(bytes).digest("hex") });
         const result = await geminiAudioJsonWithFallback<{ text: string }>({
           media: googleAudioTwoHopMedia(audioGsUri),
-          model: GOOGLE_AUDIO_TWO_HOP_MODEL,
+          model: resolveGeminiAudioTwoHopModel(),
           mimeType,
           prompt: TRANSCRIBE_AUDIO_PROMPT,
           nativeSchema: TRANSCRIBE_AUDIO_SCHEMA,
@@ -567,7 +567,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       }
       try {
         // 提示词 / schema / 结果整形与 gemini-audio.ts 一处真源（不再在本文件抄一份）
-        const { geminiAudioJsonWithFallback, MANHUA_AUDIO_SCAN_PROMPT, MANHUA_AUDIO_SCAN_SCHEMA, normalizeManhuaAudioScan } = await import("../server/gemini-audio");
+        const { geminiAudioJsonWithFallback, resolveGeminiAudioTwoHopModel, MANHUA_AUDIO_SCAN_PROMPT, MANHUA_AUDIO_SCAN_SCHEMA, normalizeManhuaAudioScan } = await import("../server/gemini-audio");
         const bucket = getGcsBucketName();
         const prefix = `manhua-template-learn/audio-scan/${viewer.userId}/${randomUUID()}`;
         const save = googleAudioEvidenceSaver(bucket, prefix);
@@ -585,7 +585,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         const result = await geminiAudioJsonWithFallback({
           media: googleAudioTwoHopMedia(mediaGsUri),
           audioTimestamp: true,
-          model: GOOGLE_AUDIO_TWO_HOP_MODEL,
+          model: resolveGeminiAudioTwoHopModel(),
           mimeType,
           prompt: MANHUA_AUDIO_SCAN_PROMPT,
           nativeSchema: MANHUA_AUDIO_SCAN_SCHEMA,

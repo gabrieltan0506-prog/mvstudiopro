@@ -3,9 +3,15 @@ import { geminiAudioJsonWithFallback } from "../gemini-audio";
 import { downloadGcsObject, getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcsIfAbsent } from "./gcs";
 import { CREATIVE_AUDIO_READ_INSTRUCTIONS, creativeAudioEvidenceSchema, parseCreativeAudioEvidence } from "../../shared/creativeMediaEvidence";
 import { normalizeMediaSections, repairJsonShape } from "../../shared/creativeProposalRepair";
+import { resolveGeminiModel, type GeminiModelEnv } from "../../shared/geminiModelConfig.js";
 
-/** 1109 通道合规：MV 顾问听歌只走 Gemini 3.8 Flash（Vertex gs:// → EvoLink 签名 URL），禁 Pro、禁直连 key、禁 base64。 */
-export const SONG_HEARING_MODEL = "gemini-3.8-flash";
+/**
+ * 1109 通道合规：MV 顾问听歌只走 Gemini（Vertex gs:// → EvoLink 签名 URL），禁直连 key、禁 base64。
+ * 1110 模型不写死：env MV_SONG_HEARING_MODEL → GEMINI_DEFAULT_MODEL → gemini-3.8-flash（Pro 级需用户批准，解析时告警）。
+ */
+export function resolveSongHearingModel(env?: GeminiModelEnv): string {
+  return resolveGeminiModel("mvSongHearing", env);
+}
 const INSTRUCTIONS_SHA = createHash("sha256").update(CREATIVE_AUDIO_READ_INSTRUCTIONS).digest("hex").slice(0, 12);
 
 const evidenceNativeSchema = {
@@ -64,7 +70,7 @@ const audioTokensOf = (payload: unknown) =>
 
 /**
  * 「不看剧情」独立听歌：只送歌曲本身与时长，不送创作要求/歌词/剧情；剧情在后续 GLM 编排阶段才合入。
- * 结果按「歌曲 SHA-256 + 模型 + 听歌指令版本」永久存档并复用，同一首歌不重复听。
+ * 结果按「歌曲 SHA-256 + 模型 + 听歌指令版本」永久存档并复用，同一首歌不重复听；换模型 = 新存档对象，不吃别的模型的结果。
  * 每跳 request/raw/decoded/parsed/rejected 由两跳函数永久落档；解析后的歌曲证据另存为 cacheObject。
  */
 export async function hearSongIndependently(input: SongHearingInput, deps: Deps = realDeps): Promise<SongHearing> {
@@ -72,7 +78,9 @@ export async function hearSongIndependently(input: SongHearingInput, deps: Deps 
   if (!/^[0-9a-f]{64}$/.test(input.audioSha256)) throw new Error("听歌缺少歌曲指纹");
   const songKey = `song:${input.audioSha256}`;
   const base = `canvas-music-mv/song-hearing/${input.audioSha256}`;
-  const cacheObject = `${base}/${SONG_HEARING_MODEL}-${INSTRUCTIONS_SHA}.json`;
+  const model = resolveSongHearingModel();
+  // 复用身份含模型（缺省 3.8 Flash 时对象名与 1110 前一致，已听过的歌照常复用）。
+  const cacheObject = `${base}/${model}-${INSTRUCTIONS_SHA}.json`;
   const cached = await deps.readJson(cacheObject) as SongHearing | undefined;
   if (cached?.evidence) return { ...cached, reused: true, cacheObject };
   const evidencePrefix = `${base}/attempts/${deps.uuid()}`;
@@ -85,7 +93,7 @@ export async function hearSongIndependently(input: SongHearingInput, deps: Deps 
   const result = await deps.listen({
     media: { vertexFileUri: input.gcsUri, evolinkFileUri: () => deps.sign(input.gcsUri) },
     audioTimestamp: true,
-    model: SONG_HEARING_MODEL,
+    model,
     mimeType: input.mimeType,
     systemInstruction: CREATIVE_AUDIO_READ_INSTRUCTIONS,
     prompt: JSON.stringify({ sourceKey: songKey, audioDurationSec: input.durationSec, task: "独立听完整首歌，只给音乐结构与逐段情绪；不看剧情、不生成创作方案" }),

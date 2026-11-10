@@ -21,9 +21,6 @@ vi.mock("./services/gcs", () => ({
 
 import * as geminiAudio from "./gemini-audio";
 import {
-  DEFAULT_MANHUA_AUDIO_EVOLINK_MODEL,
-  DEFAULT_MANHUA_AUDIO_VERTEX_MODEL,
-  GEMINI_AUDIO_TWO_HOP_MODEL,
   MANHUA_AUDIO_SCAN_PROMPT,
   MANHUA_AUDIO_SCAN_SCHEMA,
   analyzeAudioWithGemini,
@@ -31,6 +28,7 @@ import {
   isManhuaDramaAudioAvailable,
   listenStagedAudioJson,
   normalizeManhuaAudioScan,
+  resolveGeminiAudioTwoHopModel,
   resolveManhuaAudioEvolinkModelName,
   resolveManhuaAudioVertexModelName,
 } from "./gemini-audio";
@@ -60,7 +58,7 @@ const assertTwoHopCompliance = () => {
   }
   for (const call of modelCalls()) {
     const url = String(call[0]);
-    expect(url).toContain(GEMINI_AUDIO_TWO_HOP_MODEL);
+    expect(url).toContain(resolveGeminiAudioTwoHopModel());
     const fileUri = JSON.parse(String((call[1] as RequestInit).body)).contents[0].parts[0].fileData.fileUri as string;
     if (url.includes("direct.evolink.ai")) expect(fileUri).toMatch(/^https:\/\//);
     else expect(fileUri).toMatch(/^gs:\/\/test-bucket\//);
@@ -80,6 +78,9 @@ beforeEach(() => {
   vi.stubEnv("OPENROUTER_API_KEY", "sk-or-test-key");
   vi.stubEnv("MANHUA_AUDIO_VERTEX_MODEL", "");
   vi.stubEnv("MANHUA_AUDIO_EVOLINK_MODEL", "");
+  // 1110 模型配置：默认不设，走缺省 gemini-3.8-flash
+  vi.stubEnv("GEMINI_DEFAULT_MODEL", "");
+  vi.stubEnv("GEMINI_AUDIO_TWO_HOP_MODEL", "");
   h.store.clear();
   h.upload.mockReset().mockImplementation(async ({ objectName, buffer, contentType }: any) => {
     if (h.store.has(objectName)) return { created: false };
@@ -90,14 +91,20 @@ beforeEach(() => {
 afterEach(() => { fetchMock.mockReset(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("通道配置", () => {
-  it("听音通道默认模型名仍可显式覆盖（两跳统一用 gemini-3.8-flash 覆盖）", () => {
-    expect(DEFAULT_MANHUA_AUDIO_VERTEX_MODEL).toBe("gemini-3.8-flash");
-    expect(DEFAULT_MANHUA_AUDIO_EVOLINK_MODEL).toBe("gemini-3.8-flash");
-    expect(resolveManhuaAudioVertexModelName()).toBe(DEFAULT_MANHUA_AUDIO_VERTEX_MODEL);
-    expect(resolveManhuaAudioEvolinkModelName()).toBe(DEFAULT_MANHUA_AUDIO_EVOLINK_MODEL);
+  it("听音通道默认模型名仍可显式覆盖（1110：两跳缺省走配置，未设 = gemini-3.8-flash）", () => {
+    expect(resolveGeminiAudioTwoHopModel()).toBe("gemini-3.8-flash");
+    expect(resolveManhuaAudioVertexModelName()).toBe("gemini-3.8-flash");
+    expect(resolveManhuaAudioEvolinkModelName()).toBe("gemini-3.8-flash");
     vi.stubEnv("MANHUA_AUDIO_VERTEX_MODEL", "gemini-3.6-flash-custom");
     expect(resolveManhuaAudioVertexModelName()).toBe("gemini-3.6-flash-custom");
-    expect(GEMINI_AUDIO_TWO_HOP_MODEL).toBe("gemini-3.8-flash");
+    // 全局缺省 → 领域覆盖 → 空白回落
+    vi.stubEnv("GEMINI_DEFAULT_MODEL", "gemini-3.9-flash");
+    expect(resolveGeminiAudioTwoHopModel()).toBe("gemini-3.9-flash");
+    expect(resolveManhuaAudioEvolinkModelName()).toBe("gemini-3.9-flash");
+    vi.stubEnv("GEMINI_AUDIO_TWO_HOP_MODEL", "  gemini-4.0-flash  ");
+    expect(resolveGeminiAudioTwoHopModel()).toBe("gemini-4.0-flash");
+    vi.stubEnv("GEMINI_AUDIO_TWO_HOP_MODEL", "   ");
+    expect(resolveGeminiAudioTwoHopModel()).toBe("gemini-3.9-flash");
   });
 
   it("可用性只看 Vertex / EvoLink；只剩 GEMINI_API_KEY / OPENROUTER_API_KEY 时判不可用", () => {
@@ -169,6 +176,19 @@ describe("漫剧学习听音扫描：提示词 / schema / 整形一处真源 + �
       "hop-2-evolink-request.json", "hop-2-evolink-raw.json", "hop-2-evolink-decoded.json", "hop-2-evolink-parsed.json", "hop-used.json",
     ]);
     expect(JSON.parse(h.store.get(`${prefix}request.json`)!.buffer.toString())).toMatchObject({ audioGsUri: `gs://test-bucket/${audioObject}`, model: "gemini-3.8-flash" });
+  });
+
+  it("1110 设 GEMINI_AUDIO_TWO_HOP_MODEL 后两跳 URL 与 request 证据都用配置模型（不写死）", async () => {
+    vi.stubEnv("GEMINI_AUDIO_TWO_HOP_MODEL", "gemini-3.9-flash");
+    fetchMock.mockResolvedValueOnce(new Response("{}", { status: 503 })).mockResolvedValueOnce(geminiReply(scan));
+    const out = await listenStagedAudioJson({ area: "test-area/scan", audio: Buffer.from("cfg-audio"), mimeType: "audio/mpeg", prompt: MANHUA_AUDIO_SCAN_PROMPT, nativeSchema: MANHUA_AUDIO_SCAN_SCHEMA, schemaName: "manhua_drama_audio_scan", validate: normalizeManhuaAudioScan });
+    expect([out.channel, out.model]).toEqual(["EvoLink", "gemini-3.9-flash"]);
+    expect(String(modelCalls()[0]![0])).toContain("/models/gemini-3.9-flash:generateContent");
+    expect(String(modelCalls()[1]![0])).toBe("https://direct.evolink.ai/v1beta/models/gemini-3.9-flash:generateContent");
+    assertTwoHopCompliance();
+    const prefix = out.evidencePrefix.replace("gs://test-bucket/", "") + "/";
+    expect(JSON.parse(h.store.get(`${prefix}request.json`)!.buffer.toString())).toMatchObject({ model: "gemini-3.9-flash" });
+    expect(JSON.parse(h.store.get(`${prefix}hop-used.json`)!.buffer.toString())).toMatchObject({ model: "gemini-3.9-flash" });
   });
 
   it("写坏（缺 sections）也换下一跳；两跳都坏则失败", async () => {

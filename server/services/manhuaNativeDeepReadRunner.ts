@@ -6,7 +6,6 @@ import { buildManhuaLocalVideoSourceRef } from "../../shared/manhuaLocalVideoUpl
 // 0920：梯度/上限/容差下沉到叶子模块，断开与 attemptSelection 的循环 import（见该文件注释）。
 import {
   NATIVE_DEEP_READ_RETRY_TEMPERATURES,
-  NATIVE_DEEP_READ_ESCALATION_MODEL,
   NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
   NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
   NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO,
@@ -14,7 +13,6 @@ import {
 } from "./manhuaNativeDeepReadGradient.js";
 export {
   NATIVE_DEEP_READ_RETRY_TEMPERATURES,
-  NATIVE_DEEP_READ_ESCALATION_MODEL,
   NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
   NATIVE_DEEP_READ_SHOT_LONG_TAKE_HARD_MAX_SEC,
   NATIVE_DEEP_READ_GATE_TOLERANCE_RATIO,
@@ -57,6 +55,10 @@ import {
   MANHUA_NATIVE_LEGACY_READ_MODEL_OPTIONS,
   parseNativeDeepReadModel,
   type ManhuaNativeDeepReadModelId,
+  isNativeDeepReadCurrentContractModel,
+  nativeDeepReadSegmentCacheIdentityModel,
+  resolveManhuaNativeDeepReadModel,
+  resolveManhuaNativeDeepReadEscalationModel,
   MANHUA_NATIVE_GLM_REASONING_EFFORT,
   NATIVE_DEEP_READ_MAX_VIDEO_FPS,
   parseNativeDeepReadVideoFps,
@@ -153,7 +155,10 @@ export function isManhuaNativeDeepReadEnabled(): boolean {
   return String(process.env.MANHUA_NATIVE_DEEP_READ || "").trim() === "1";
 }
 
-/** 请求与前端共用共享真值；provenance 记的必须是真跑的这个。 */
+/**
+ * 历史身份常量（3.1 Pro）：只用于段缓存指纹缺省模型身份、计划确认码与旧任务恢复，**不决定新请求模型**。
+ * 新请求模型 = 任务保存的 readModel（新任务入队时由 env 配置解析，见 resolveManhuaNativeDeepReadModel）。
+ */
 export const NATIVE_DEEP_READ_MODEL = MANHUA_NATIVE_DEEP_READ_MODEL;
 
 /** 主线：Vertex 服务账号直读 gs://（音频链路已实弹证明无需签名 URL）。 */
@@ -186,18 +191,34 @@ function resolveNativeDeepReadEvolinkBaseUrl(): string {
  * 3.8 Flash 按 flash 档目录价 $0.30/$2.50 × 7.2 折算。⚠️ 均待账单核实。
  * EvoLink 兜底档：仓库暂无对应计价样例，先按 Vertex 同价折算记账。
  */
-const MODEL_PRICES_PER_M: Record<ManhuaNativeDeepReadModelId, { inPerM: number; outPerM: number }> = {
+export const NATIVE_DEEP_READ_MODEL_PRICES_PER_M: Readonly<Record<string, { inPerM: number; outPerM: number }>> = {
   "gemini-3.1-pro-preview": { inPerM: 9.0, outPerM: 72.0 },
   "gemini-3.8-flash": { inPerM: 2.16, outPerM: 18.0 },
   // Argon按返还前标准价估算，避免把尚未到账的50%优惠当成实扣；仅用于成本展示。
   "gemini-4-argon": { inPerM: 4.0 * 7.2, outPerM: 20.0 * 7.2 },
 };
 
+/**
+ * 1110：读片模型改为 env 可配后，表里没有单价的模型**不得按 0 元计**——取表内最高单价作保守上限估算并告警，
+ * 待用户拍板该模型单价后补表。
+ */
+export function nativeDeepReadModelPrices(model: ManhuaNativeDeepReadModelId): { inPerM: number; outPerM: number; priceKnown: boolean } {
+  const known = NATIVE_DEEP_READ_MODEL_PRICES_PER_M[model];
+  if (known) return { ...known, priceKnown: true };
+  const rows = Object.values(NATIVE_DEEP_READ_MODEL_PRICES_PER_M);
+  console.warn(`[nativeDeepRead] 读片模型 ${model} 不在单价表内：按表内最高单价保守估算成本（不按 0 元计），请补单价`);
+  return {
+    inPerM: Math.max(...rows.map((row) => row.inPerM)),
+    outPerM: Math.max(...rows.map((row) => row.outPerM)),
+    priceKnown: false,
+  };
+}
+
 function routePrices(
   _route: NativeDeepReadVisualRoute,
   model: ManhuaNativeDeepReadModelId,
 ): { inPerM: number; outPerM: number } {
-  return MODEL_PRICES_PER_M[model];
+  return nativeDeepReadModelPrices(model);
 }
 
 /** 观察说明由prompt与schema共用，保持环境、道具、动作的要求一致。 */
@@ -1732,11 +1753,11 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
   segmentContext: NativeDeepReadSegmentContext;
   /**
    * 只允许选择冻结梯度中的尝试序号；调用方不能覆盖 generationConfig。
-   * 0920 起首读梯度 5 档；**升级档（3.1 Pro）另有 3 档，序号接着往后数**（5→7），
+   * 0920 起首读梯度 5 档；**升级档（1110 起模型按配置）另有 3 档，序号接着往后数**（5→7），
    * 由 `escalated` 标记，温度取升级梯度表，不与首读梯度混用。
    */
   attemptIndex?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
-  /** true＝这一发属于 0920 升级档（Gemini 3.1 Pro，0.7/0.65/0.6）。 */
+  /** true＝这一发属于 0920 升级档（1110 起升级模型按 env 配置，温度 0.7/0.65/0.6）。 */
   escalated?: boolean;
 }): Record<string, unknown> {
   assertNativeDeepReadFrozenContract();
@@ -1869,11 +1890,13 @@ export async function postNativeDeepReadGenerateContent(input: {
   }
 }
 
+/** 1110：未传模型时用 env 配置的读片模型（缺省 gemini-3.8-flash），不再缺省 3.1 Pro。 */
 export async function postVertexNativeDeepRead(
   body: unknown,
   abortSignal?: AbortSignal,
   _context?: NativeDeepReadSegmentContext,
-  model: ManhuaNativeDeepReadModelId = MANHUA_NATIVE_DEEP_READ_MODEL,
+  model: ManhuaNativeDeepReadModelId = resolveManhuaNativeDeepReadModel(),
+  httpDeps: NativeDeepReadHttpDeps = defaultNativeDeepReadHttpDeps,
 ): Promise<NativeDeepReadModelResponse> {
   const url = `${baseUrlForVertex(NATIVE_DEEP_READ_VERTEX_LOCATION)}/v1/projects/`
     + `${encodeURIComponent(getVertexProjectId())}/locations/${NATIVE_DEEP_READ_VERTEX_LOCATION}`
@@ -1883,14 +1906,16 @@ export async function postVertexNativeDeepRead(
     headers: await getVertexAuthHeaders(),
     body,
     abortSignal,
-  });
+  }, httpDeps);
 }
 
-async function postEvolinkNativeDeepRead(
+/** 1110：未传模型时用 env 配置的读片模型（缺省 gemini-3.8-flash），不再缺省 3.1 Pro。 */
+export async function postEvolinkNativeDeepRead(
   body: unknown,
   abortSignal?: AbortSignal,
   _context?: NativeDeepReadSegmentContext,
-  model: ManhuaNativeDeepReadModelId = MANHUA_NATIVE_DEEP_READ_MODEL,
+  model: ManhuaNativeDeepReadModelId = resolveManhuaNativeDeepReadModel(),
+  httpDeps: NativeDeepReadHttpDeps = defaultNativeDeepReadHttpDeps,
 ): Promise<NativeDeepReadModelResponse> {
   const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
   if (!apiKey) throw new Error("EVOLINK_API_KEY 未配置，EvoLink 兜底不可用");
@@ -1901,7 +1926,7 @@ async function postEvolinkNativeDeepRead(
     headers: { Authorization: `Bearer ${apiKey}` },
     body,
     abortSignal,
-  });
+  }, httpDeps);
 }
 
 /* ────────────────── 媒体节点解析（yt-dlp，与批处理脚本共用） ────────────────── */
@@ -5389,8 +5414,8 @@ async function executeNativeDeepReadBatch(
     throw new Error("重学执行身份无效，未发出模型请求");
   }
   const readModel = parseNativeDeepReadModel(params.readModel);
-  // 当前用户指定的3.8 Flash双通道；Argon与历史模型保持各自已有合同。
-  const dualReadRoutes = readModel === "gemini-3.8-flash";
+  // 当前合同（3.8 Flash 起的双通道）：配置的缺省读片模型与 3.8 Flash 旧车道；Argon与历史模型保持各自已有合同。
+  const dualReadRoutes = isNativeDeepReadCurrentContractModel(readModel);
   const evolinkOnly = params.evolinkOnly === true;
   if (evolinkOnly && (!dualReadRoutes || params.relearnRequestId)) throw new Error("失败续跑Evolink通道仅限3.8Flash原任务恢复");
   if (params.structuringOnly && (!params.segmentCacheSeriesKey || params.episodes.length !== 1 || diagnosticSelection)) throw new Error("仅重新整形必须绑定单集完整证据");
@@ -5456,7 +5481,7 @@ async function executeNativeDeepReadBatch(
           if (!cached && params.structuringOnly && deps.readPermanentSegment) {
             cached = await deps.readPermanentSegment({ seriesKey: params.segmentCacheSeriesKey, episodeIndex: episode.episodeIndex,
               segmentIndex, sourceDigest: episode.cacheSourceDigest!, fingerprints: [false, true].flatMap(hasAudio => nativeDeepReadFingerprintVariants(readModel).map(version => nativeDeepReadSegmentCacheFingerprint({
-                model: readModel === "gemini-4-argon" ? readModel : undefined, sourceDigest: episode.cacheSourceDigest!, episodeIndex: episode.episodeIndex, episodeDurationSec: episode.sourceDurationSec,
+                model: nativeDeepReadSegmentCacheIdentityModel(readModel), sourceDigest: episode.cacheSourceDigest!, episodeIndex: episode.episodeIndex, episodeDurationSec: episode.sourceDurationSec,
                 segment, segmentIndex, segmentCount: episode.segments.length, hasAudio, videoFps: episode.videoFps, hintZh: episode.hintZh, ...version,
               }))) });
           }
@@ -5464,7 +5489,7 @@ async function executeNativeDeepReadBatch(
           const entry = cached.entry;
           if (!params.structuringOnly && entry.relearnRequestId !== params.relearnRequestId) continue;
           const fingerprintInput = {
-            model: readModel === "gemini-4-argon" ? readModel : undefined,
+            model: nativeDeepReadSegmentCacheIdentityModel(readModel),
             sourceDigest: episode.cacheSourceDigest!,
             episodeIndex: episode.episodeIndex,
             episodeDurationSec: episode.sourceDurationSec,
@@ -5869,7 +5894,8 @@ async function executeNativeDeepReadBatch(
         const attemptModel = input.model ?? readModel;
         let callId: string = crypto.randomUUID();
         const startedAt = Date.now();
-        let degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK && attemptModel !== "gemini-3.8-flash";
+        // 1110：「EvoLink 非当前合同模型记降级」与配置的缺省读片模型比较（3.8 Flash 旧车道同属当前合同）。
+        let degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK && !isNativeDeepReadCurrentContractModel(attemptModel);
         let modelCallStarted = false;
         let recoveredPaidEvidence = false;
         let evidenceBatchRequestId: string = episodeRequestId;
@@ -5942,7 +5968,7 @@ async function executeNativeDeepReadBatch(
               evidenceBatchRequestId = recovered.batchRequestId;
               evidenceVisualRoute = recovered.visualRoute;
               input.route = recovered.visualRoute;
-              degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK && attemptModel !== "gemini-3.8-flash";
+              degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK && !isNativeDeepReadCurrentContractModel(attemptModel);
               response = {
                 status: recovered.httpStatus,
                 text: recovered.responseText,
@@ -6619,18 +6645,22 @@ async function executeNativeDeepReadBatch(
         if (firstPass) return firstPass;
         /**
          * 0920 用户令：「單一分片如果連讀五次都不通過，就升級成Gemini 3.1 pro來讀」
-         * 「保留分片，不報錯」「直接從0.7--0.65--0.6」。首读已是 3.1 Pro 时没有更高档，跳过。
+         * 「保留分片，不報錯」「直接從0.7--0.65--0.6」。
+         * 1110 用户令：升级模型按配置决定（MANHUA_DEEP_READ_ESCALATION_MODEL，缺省同首读模型），不再写死 3.1 Pro/Argon。
+         * 只有「当前合同」读片（配置的缺省读片模型 / 3.8 Flash 旧车道）才升级，且升级模型与首读模型相同即不升级；
+         * 在途的旧 Pro / Argon 任务保持原合同不升级。
          */
-        if (readModel !== "gemini-4-argon" && readModel !== NATIVE_DEEP_READ_ESCALATION_MODEL) {
+        const escalationModel = resolveManhuaNativeDeepReadEscalationModel();
+        if (isNativeDeepReadCurrentContractModel(readModel) && escalationModel !== readModel) {
           console.warn(
             `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
             + `${NATIVE_DEEP_READ_RETRY_TEMPERATURES.length} 发均未过门禁，保留分片并升级 `
-            + `${NATIVE_DEEP_READ_ESCALATION_MODEL} 重读（${NATIVE_DEEP_READ_ESCALATION_TEMPERATURES.join("→")}）：`
+            + `${escalationModel} 重读（${NATIVE_DEEP_READ_ESCALATION_TEMPERATURES.join("→")}）：`
             + `${rejectedReasonZh || "上一档门禁未通过"}`,
           );
           await emitVisualModelReceipt({
-            callId: `${episodeRequestId}:segment-${input.segmentIndex}:escalate-${NATIVE_DEEP_READ_ESCALATION_MODEL}`,
-            model: NATIVE_DEEP_READ_ESCALATION_MODEL,
+            callId: `${episodeRequestId}:segment-${input.segmentIndex}:escalate-${escalationModel}`,
+            model: escalationModel,
             route: "read_model_escalation_pending",
             stage: "visual_parse",
             status: "started",
@@ -6644,7 +6674,7 @@ async function executeNativeDeepReadBatch(
             errorZh: rejectedReasonZh,
           }, params.onModelReceipt);
           const escalated = await runGradient(
-            NATIVE_DEEP_READ_ESCALATION_MODEL,
+            escalationModel,
             NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
             NATIVE_DEEP_READ_RETRY_TEMPERATURES.length,
           );
@@ -6778,7 +6808,7 @@ async function executeNativeDeepReadBatch(
           const entry: NativeDeepReadSegmentCacheEntry = {
             schemaVersion: NATIVE_DEEP_READ_SEGMENT_CACHE_SCHEMA_VERSION,
             fingerprint: nativeDeepReadSegmentCacheFingerprint({
-              model: readModel === "gemini-4-argon" ? readModel : undefined,
+              model: nativeDeepReadSegmentCacheIdentityModel(readModel),
               sourceDigest,
               episodeIndex: episode.episodeIndex,
               episodeDurationSec: episode.sourceDurationSec,
@@ -6800,7 +6830,7 @@ async function executeNativeDeepReadBatch(
             model: readModel,
             requestedFps: fps,
             visualRoute: result.visualRoute,
-            degraded: result.visualRoute === NATIVE_DEEP_READ_ROUTE_EVOLINK && readModel !== "gemini-3.8-flash",
+            degraded: result.visualRoute === NATIVE_DEEP_READ_ROUTE_EVOLINK && !isNativeDeepReadCurrentContractModel(readModel),
             raw: result.raw,
             attemptSelection: result.attemptSelection,
             rawAttemptEvidenceObjectName: result.rawAttemptEvidenceObjectName,
