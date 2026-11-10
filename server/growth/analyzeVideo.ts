@@ -392,7 +392,8 @@ async function transcribeVideoAudio(audioBuffer: Buffer | null): Promise<string>
   if (!audioBuffer) return "";
   try {
     const transcription = await transcribeAudio({
-      audioBase64: audioBuffer.toString("base64"),
+      // 1110：音轨字节直接交转写（服务端存 GCS 后走 Vertex → EvoLink 两跳），不再转 base64
+      audioBuffer,
       mimeType: "audio/mpeg",
       language: "zh",
       prompt: "请转写视频里的口播、字幕或关键信息，并尽量保留时间线索。",
