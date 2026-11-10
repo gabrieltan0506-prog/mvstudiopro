@@ -42,6 +42,7 @@ function fixture() {
     })),
     review: vi.fn(async () => ({ report: pub.review, sourceImages: [] })),
     image: vi.fn(),
+    imageUrl: (uri: string) => `https://test.invalid/signed/${encodeURIComponent(uri)}`,
     read: vi.fn(async (name: string) => storage.get(name) || null),
     save: vi.fn(async (name: string, buffer: Buffer) => {
       storage.set(name, buffer);
@@ -186,6 +187,10 @@ async function assertSplitRecovery(shiftCounts: boolean) {
  const deps={...f.deps,measure};
  const partial=await exportKnowledgePublication(7,f.doc.id,'10',deps as any);
  expect(partial.pdfUrl).toBeUndefined();expect(partial.htmlUrl).toBeTruthy();
+ // 两张 19MB 原图仍按体积分成两卷，但 HTML 只含签名地址：阅读稿与每卷请求体都很小、不含内嵌图片数据。
+ const savedHtml=Array.from(f.storage.entries()).find(([k])=>k.endsWith('阅读稿.html'))![1];
+ expect(savedHtml.length).toBeLessThan(200*1024);expect(savedHtml.toString('utf8')).not.toContain('base64,');
+ expect(renders.every(h=>h.length<200*1024&&!h.includes('base64,')&&h.includes('https://test.invalid/signed/'))).toBe(true);
  shifted=shiftCounts;
  const complete=await exportKnowledgePublication(7,f.doc.id,'10',deps as any);
  expect(complete.imagePages).toBe(2);expect(complete.totalPages).toBe(7);
