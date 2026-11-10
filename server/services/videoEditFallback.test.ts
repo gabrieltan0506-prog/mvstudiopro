@@ -83,8 +83,9 @@ describe("runVideoEditWithFallback", () => {
     expect(tail(uploads)).toEqual([
       "01-byteplus-request-raw.json", "01-byteplus-request-parsed.json",
       "02-byteplus-submit-raw.json", "02-byteplus-submit-parsed.json",
-      "03-byteplus-terminal-raw.json", "03-byteplus-terminal-parsed.json",
-      "04-byteplus-result-raw.json", "04-byteplus-result-parsed.json",
+      "03-byteplus-upstream-raw.json", "03-byteplus-upstream-parsed.json",
+      "04-byteplus-terminal-raw.json", "04-byteplus-terminal-parsed.json",
+      "05-byteplus-result-raw.json", "05-byteplus-result-parsed.json",
     ]);
   });
 
@@ -112,8 +113,9 @@ describe("runVideoEditWithFallback", () => {
       "03-byteplus-rejection-raw.json", "03-byteplus-rejection-parsed.json",
       "04-evolink-request-raw.json", "04-evolink-request-parsed.json",
       "05-evolink-submit-raw.json", "05-evolink-submit-parsed.json",
-      "06-evolink-terminal-raw.json", "06-evolink-terminal-parsed.json",
-      "07-evolink-result-raw.json", "07-evolink-result-parsed.json",
+      "06-evolink-upstream-raw.json", "06-evolink-upstream-parsed.json",
+      "07-evolink-terminal-raw.json", "07-evolink-terminal-parsed.json",
+      "08-evolink-result-raw.json", "08-evolink-result-parsed.json",
     ]);
     const rejection = Array.from(store.entries()).find(([k]) => k.endsWith("03-byteplus-rejection-parsed.json"))![1] as { parsed: Record<string, unknown> };
     expect(rejection.parsed).toMatchObject({ zeroCharge: true, upstreamCharged: false, fallback: true });

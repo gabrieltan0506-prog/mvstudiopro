@@ -1045,6 +1045,8 @@ async function startServer() {
     const recoverManhuaThenStartWorkers = async (attempt = 1): Promise<void> => {
       const { startPostProdRecovery } = await import("../jobs/postProdRecovery");
       startPostProdRecovery();
+      // 局部修改：重启后只续查已有上游任务号并对账（不重新提交）；本地收尾需要 app 的媒体环境
+      if (resolveJobWorkerRole() !== "rig") (await import("../services/videoPartialEditRecovery")).startVideoPartialEditRecovery();
       // 0917：rig 进程组只跑 Blender 后期任务，启动期的学习/配乐恢复交给 app 做，避免两台机同时 requeue
       if (resolveJobWorkerRole() === "rig") {
         // 不起 stale reaper：reaper 判 manhua_assemble_final 活性要读 /data 上的 paidJobLedger，
@@ -1201,6 +1203,7 @@ async function startServer() {
         const { drainPostProdOnShutdown } = await import("../jobs/runner");
         const { stopPostProdRecovery } = await import("../jobs/postProdRecovery");
         stopPostProdRecovery();
+        (await import("../services/videoPartialEditRecovery")).stopVideoPartialEditRecovery();
         draining = drainPostProdOnShutdown().catch(error => { console.error("[post-prod] shutdown cleanup", error); });
         // Only app owns /data and paid holds. Rig shutdown must never inspect/refund another machine's ledger.
         if (resolveJobWorkerRole() === "rig") return;

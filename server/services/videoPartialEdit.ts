@@ -37,7 +37,10 @@ export type VideoEditChannelInput = {
   aspectRatio: string;
   evidencePrefix: string;
   signal?: AbortSignal;
+  /** 通道建单成功后立刻回调（轮询之前），供重启后只续查原单。 */
+  onUpstreamSubmitted?: (handle: VideoEditUpstreamHandle) => Promise<void> | void;
 };
+export type VideoEditUpstreamHandle = { channel: string; providerTaskId: string; submittedAt: string };
 export type VideoEditChannelResult = {
   videoUrl: string;
   channel: string;
@@ -237,6 +240,8 @@ export type VideoPartialEditRenderDeps = {
   concat(params: ReturnType<typeof buildVideoEditSpliceConcat>, userId: string, signal: AbortSignal): Promise<{ gcsUri: string; url: string; bytes: number; durationSec: number }>;
   /** 参考图 gs:// → 上游可读签名链（不传 base64）。 */
   signRead(gsUri: string): Promise<string> | string;
+  /** 可选：上游任务号一出现就落任务行与证据（重启续查用）；失败不打断本次出片。 */
+  onUpstreamSubmitted?(input: { jobId: string; userId: string; handle: VideoEditUpstreamHandle }): Promise<void>;
 } & Pick<VideoPartialEditQueueDeps, "refund" | "writeEvidence">;
 
 function aspectOf(width: number, height: number) {
@@ -259,6 +264,45 @@ async function persistAttempts(prefix: string, attempts: VideoEditChannelAttempt
   await write(`${prefix}/attempts-index.json`, { count: attempts.length, channels: attempts.map(a => a.channel) });
 }
 
+/**
+ * 出片之后的收尾（正常执行与重启续查共用）：原片段音轨替回 → 按原秒点拼回 → 时长核对 → 结果留证。
+ * 不调用任何上游通道。
+ */
+export async function spliceVideoPartialEditResult(
+  input: {
+    job: VideoPartialEditJob; userId: string; jobId: string; dir: string; signal: AbortSignal;
+    segment: { gcsUri: string; filePath: string };
+    edited: Pick<VideoEditChannelResult, "videoUrl" | "channel" | "providerTaskId" | "attempts">;
+  },
+  d: Pick<VideoPartialEditRenderDeps, "restoreSegmentAudio" | "concat" | "writeEvidence">,
+) {
+  const { job, userId, jobId, segment, edited, dir, signal } = input;
+  const p = job.params;
+  const prefix = videoPartialEditEvidencePrefix(userId, jobId);
+  const restored = await d.restoreSegmentAudio({ editedUrl: edited.videoUrl, segmentFile: segment.filePath, segmentSec: p.segmentSec, hasAudio: p.hasAudio, dir, signal, userId });
+  const concatParams = buildVideoEditSpliceConcat({
+    sourceUri: p.videoUri, editedUri: restored.gcsUri, startSec: p.startSec, endSec: p.endSec,
+    sourceDurationSec: p.sourceDurationSec, width: p.width, height: p.height, fps: p.fps,
+  });
+  const spliced = await d.concat(concatParams, userId, signal);
+  if (Math.abs(spliced.durationSec - p.sourceDurationSec) > 0.25) throw new Error("拼回后总时长与原片不一致");
+  const output = {
+    gcsUri: spliced.gcsUri,
+    url: spliced.url,
+    bytes: spliced.bytes,
+    durationSec: spliced.durationSec,
+    originalDurationSec: p.sourceDurationSec,
+    originalUri: p.videoUri,
+    editedRange: { startSec: p.startSec, endSec: p.endSec },
+    segmentSec: p.segmentSec,
+    expanded: p.expanded,
+    creditsCharged: p.charge.credits,
+    debug: { channel: edited.channel, providerTaskId: edited.providerTaskId ?? null, attempts: (edited.attempts ?? []).map(a => ({ channel: a.channel, rejectionCode: a.rejectionCode ?? null, upstreamCharged: a.upstreamCharged ?? null })) },
+  };
+  await d.writeEvidence(`${prefix}/result.json`, { jobId, userId, at: new Date().toISOString(), output, concatParams, editedSegmentUri: restored.gcsUri, segmentUri: segment.gcsUri });
+  return output;
+}
+
 export async function renderVideoPartialEdit(
   rawInput: unknown,
   userId: string,
@@ -267,7 +311,8 @@ export async function renderVideoPartialEdit(
   deps?: VideoPartialEditRenderDeps,
 ) {
   const job = videoPartialEditJobSchema.parse(rawInput);
-  const d = deps ?? (await realRenderDeps());
+  // 正式执行默认把上游任务号写进任务行（实现在恢复模块）；替身注入时按替身自己的回调
+  const d = deps ?? { ...(await realRenderDeps()), onUpstreamSubmitted: (await import("./videoPartialEditRecovery")).recordVideoPartialEditUpstream };
   const p = job.params;
   const prefix = videoPartialEditEvidencePrefix(userId, jobId);
   const dir = await mkdtemp(path.join(tmpdir(), "vpe-"));
@@ -281,6 +326,7 @@ export async function renderVideoPartialEdit(
       edited = await d.runVideoEditWithFallback({
         segmentUrl: segment.url, promptZh: p.promptZh, referenceImageUrls: refs, segmentSec: p.segmentSec,
         aspectRatio: aspectOf(p.width, p.height), evidencePrefix: `${prefix}/channel`, signal,
+        onUpstreamSubmitted: d.onUpstreamSubmitted ? handle => d.onUpstreamSubmitted!({ jobId, userId, handle }) : undefined,
       });
     } catch (error) {
       await persistAttempts(prefix, attemptsOf(error), d.writeEvidence);
@@ -288,28 +334,7 @@ export async function renderVideoPartialEdit(
     }
     await persistAttempts(prefix, edited.attempts ?? [], d.writeEvidence);
     stage = "splice";
-    const restored = await d.restoreSegmentAudio({ editedUrl: edited.videoUrl, segmentFile: segment.filePath, segmentSec: p.segmentSec, hasAudio: p.hasAudio, dir, signal, userId });
-    const concatParams = buildVideoEditSpliceConcat({
-      sourceUri: p.videoUri, editedUri: restored.gcsUri, startSec: p.startSec, endSec: p.endSec,
-      sourceDurationSec: p.sourceDurationSec, width: p.width, height: p.height, fps: p.fps,
-    });
-    const spliced = await d.concat(concatParams, userId, signal);
-    if (Math.abs(spliced.durationSec - p.sourceDurationSec) > 0.25) throw new Error("拼回后总时长与原片不一致");
-    const output = {
-      gcsUri: spliced.gcsUri,
-      url: spliced.url,
-      bytes: spliced.bytes,
-      durationSec: spliced.durationSec,
-      originalDurationSec: p.sourceDurationSec,
-      originalUri: p.videoUri,
-      editedRange: { startSec: p.startSec, endSec: p.endSec },
-      segmentSec: p.segmentSec,
-      expanded: p.expanded,
-      creditsCharged: p.charge.credits,
-      debug: { channel: edited.channel, providerTaskId: edited.providerTaskId ?? null, attempts: (edited.attempts ?? []).map(a => ({ channel: a.channel, rejectionCode: a.rejectionCode ?? null, upstreamCharged: a.upstreamCharged ?? null })) },
-    };
-    await d.writeEvidence(`${prefix}/result.json`, { jobId, userId, at: new Date().toISOString(), output, concatParams, editedSegmentUri: restored.gcsUri, segmentUri: segment.gcsUri });
-    return output;
+    return await spliceVideoPartialEditResult({ job, userId, jobId, segment, edited, dir, signal }, d);
   } catch (error) {
     // 上游结果未知（已建单但状态不明）不自动退：留证待核对，避免出片后又退成免费
     // 编辑阶段被中止（超时/停机）时上游可能仍在出片，同样按未知处理
@@ -384,3 +409,6 @@ async function realRenderDeps(): Promise<VideoPartialEditRenderDeps> {
     },
   };
 }
+
+/** 重启续查复用同一套裁段/替回音轨/拼回实现（不含任何提交动作）。 */
+export async function videoPartialEditRenderDeps(): Promise<VideoPartialEditRenderDeps> { return realRenderDeps(); }
