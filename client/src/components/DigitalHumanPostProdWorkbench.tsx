@@ -168,6 +168,8 @@ export function DigitalHumanPostProdWorkbench(props: {
         stage: "final" as const,
         activeStudio: focus,
         projectId: props.draft.project?.id || props.draft.id,
+        // 数字人作品按数字人云端制作稿核对与计数（不再按漫剧云稿路径核对而必然失败）
+        projectKind: "digital_human" as const,
         episodeBody: props.media.story,
         shotSummary:
           (result.context.shotSummary || "").length + 150 <=
