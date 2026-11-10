@@ -2,7 +2,7 @@ import WorkflowStoryboardToVideo from "./pages/WorkflowStoryboardToVideo";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch, useLocation } from "wouter";
+import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { lazy, Suspense, useEffect } from "react";
@@ -64,7 +64,6 @@ const TeamManagement = lazy(() => import("./pages/TeamManagement"));
 const LayoutDashboard = lazy(() => import("./pages/Dashboard"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 const PaymentHistory = lazy(() => import("./pages/PaymentHistory"));
-const RemixStudio = lazy(() => import("./pages/RemixStudio"));
 const RemixLanding = lazy(() => import("./pages/RemixLanding"));
 const WorkspaceStudio = lazy(() => import("./pages/WorkspaceStudio"));
 const TemplatesLibrary = lazy(() => import("./pages/TemplatesLibrary"));
@@ -112,16 +111,6 @@ function SupervisorTestLabRoute() {
   return <TestLab />;
 }
 
-function LegacyRemixRedirect() {
-  const [, navigate] = useLocation();
-
-  useEffect(() => {
-    navigate("/kling-studio", { replace: true });
-  }, [navigate]);
-
-  return <PageLoader />;
-}
-
 function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
@@ -143,8 +132,6 @@ function Router() {
         <Route path={"/dashboard"} component={LayoutDashboard} />
         <Route path={"/admin"} component={AdminPanel} />
         <Route path={"/payments"} component={PaymentHistory} />
-        <Route path={"/kling-studio"} component={RemixStudio} />
-        <Route path={"/remix"} component={LegacyRemixRedirect} />
         <Route path={"/workflow"} component={WorkflowStoryboardToVideo} />
         <Route path={"/workspace"} component={WorkspaceStudio} />
         <Route path={"/templates"} component={TemplatesLibrary} />
