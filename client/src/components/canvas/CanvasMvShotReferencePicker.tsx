@@ -31,7 +31,7 @@ import {
 import { stockAttributionText } from "@shared/stockFootage";
 import { mvSceneManualBaseWarning, parseMvSceneLocations, planMvSceneImage } from "@shared/canvasMusicMvSceneLock";
 import type { ManhuaPrevisStudio } from "@shared/manhuaPrevis";
-import { buildMvShotPrevisStudio, mvPrevisAdoptedSummaryZh, mvPrevisAdvisorQuestion, mvShotNeedsPrevis, nextMvShotAutoPrevis } from "@shared/canvasMusicMvPrevis";
+import { buildMvShotPrevisStudio, mvPrevisAdoptedSummaryZh, mvPrevisAdvisorQuestion, mvShotNeedsPrevis, mvShotPrevisContentKey, nextMvShotAutoPrevis } from "@shared/canvasMusicMvPrevis";
 import { StockFootageDrawer, type StockFootagePick } from "@/components/stockFootage/StockFootageDrawer";
 
 type Shot = CanvasMusicMvPlan["shots"][number];
@@ -50,7 +50,7 @@ export type MvPrevisBridge = {
   unavailableZh?: string;
 };
 
-/** 自动发起记录：同一镜头 + 同一节拍内容只自动发起一次（本机按作品保存）。 */
+/** 自动发起记录：成功打开顾问后才记「已发起」；同一镜头 + 同一节拍内容只自动发起一次（本机按作品保存）。 */
 const AUTO_PREVIS_STORE = "mv-previs-auto:v1";
 function autoLaunched(projectId: string | undefined, key: string): boolean {
   try { return Boolean(JSON.parse(localStorage.getItem(`${AUTO_PREVIS_STORE}:${projectId || "local"}`) || "{}")[key]); } catch { return false; }
@@ -61,6 +61,39 @@ function markAutoLaunched(projectId: string | undefined, key: string) {
     const map = JSON.parse(localStorage.getItem(k) || "{}") as Record<string, string>;
     localStorage.setItem(k, JSON.stringify({ ...map, [key]: new Date().toISOString() }));
   } catch { /* 记录失败只会多发起一次顾问咨询，仍走额度确认 */ }
+}
+/** 自动打开顾问失败记录（本机按作品保存）：同一内容连续失败满 3 次即停止自动发起，改由用户点「重新生成白模」。 */
+const AUTO_PREVIS_FAIL_STORE = "mv-previs-auto-fail:v1";
+const AUTO_PREVIS_MAX_ATTEMPTS = 3;
+type AutoPrevisFailure = { count: number; reasonZh: string; at: string };
+/** 本机存储不可读写时的页内兜底：刷新前仍按次数封顶。 */
+const autoFailureMemory = new Map<string, Record<string, AutoPrevisFailure>>();
+/** 正在打开（尚未知成败）的内容键：同页多处挂载或打开途中重挂载时不重复发起。 */
+const autoInFlight = new Set<string>();
+const autoFlightKey = (projectId: string | undefined, key: string) => `${projectId || "local"}|${key}`;
+function readAutoFailures(projectId: string | undefined): Record<string, AutoPrevisFailure> {
+  const k = `${AUTO_PREVIS_FAIL_STORE}:${projectId || "local"}`;
+  try {
+    const raw = JSON.parse(localStorage.getItem(k) || "{}") as Record<string, Partial<AutoPrevisFailure> | null>;
+    const out: Record<string, AutoPrevisFailure> = {};
+    for (const [key, f] of Object.entries(raw))
+      if (f && typeof f.count === "number" && Number.isInteger(f.count) && f.count > 0) out[key] = { count: f.count, reasonZh: String(f.reasonZh || ""), at: String(f.at || "") };
+    return out;
+  } catch { return { ...autoFailureMemory.get(k) }; }
+}
+function writeAutoFailure(projectId: string | undefined, key: string, failure: AutoPrevisFailure | null) {
+  const k = `${AUTO_PREVIS_FAIL_STORE}:${projectId || "local"}`;
+  const next = readAutoFailures(projectId);
+  if (failure) next[key] = failure;
+  else delete next[key];
+  autoFailureMemory.set(k, next);
+  try { localStorage.setItem(k, JSON.stringify(next)); } catch { /* 页内兜底仍封顶 */ }
+}
+function autoFailureHintZh(f: AutoPrevisFailure): string {
+  const reason = f.reasonZh.replace(/[。．.！!；;，,\s]+$/, "") || "未打开顾问";
+  return f.count >= AUTO_PREVIS_MAX_ATTEMPTS
+    ? `（已自动尝试 ${f.count} 次仍未打开创作顾问：${reason}。不再自动发起，处理好后请点「重新生成白模」）`
+    : `（自动打开创作顾问未成功：${reason}。重新进入本步或刷新页面会再自动尝试，同一内容最多 ${AUTO_PREVIS_MAX_ATTEMPTS} 次）`;
 }
 type Target =
   | { kind: "anchor" }
@@ -354,7 +387,8 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
     const row = props.shotBlocks.find(r => r.shotId === shot.id);
     return { row, input: { shotId: shot.id, startSec: shot.startSec, endSec: shot.endSec, kind: shot.kind, visualPrompt: shot.visualPrompt, cameraPrompt: shot.cameraPrompt, beats: shot.beats, castZh: row?.castZh } };
   };
-  const launchPrevis = (shot: Shot, submit: boolean) => {
+  /** onOpened：顾问已打开时无参回调；未打开（含基线约 1 秒内仍未保存）时带原因回调；只回调一次。 */
+  const launchPrevis = (shot: Shot, submit: boolean, onOpened?: (errorZh?: string) => void) => {
     const bridge = props.mvPrevis;
     const { row, input } = previsShotOf(shot);
     if (!bridge || !props.onPatchShotPrevis) throw new Error("当前页面不能打开白模顾问");
@@ -372,28 +406,56 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
       catch (e) {
         const msg = e instanceof Error ? e.message : "未打开顾问";
         if (left > 0 && /基线尚未保存/.test(msg)) setTimeout(() => attempt(left - 1), 100);
-        else setError(msg);
+        else { setError(msg); onOpened?.(msg); }
+        return;
       }
+      onOpened?.();
     };
     setTimeout(() => attempt(10), 0);
   };
-  /** 自动发起：节拍就绪 + 多人互动 + 角色表 ≥2 + 本镜无白模参考；同内容只发起一次，一次只处理一镜。 */
-  const autoBusy = useRef(false);
+  /** 本次挂载内已自动尝试过的内容键（在途/成功/失败）：同一挂载不连发；重新挂载、刷新或内容变化后再判。 */
   const launchedKeys = useRef(new Set<string>());
+  const [, setAutoRevision] = useState(0);
+  /**
+   * 发起白模顾问并落账：打开成功（自动或手动）才记「已发起」并清失败次数；自动发起打开失败只累计次数（不记已发起），
+   * 满 3 次停止自动发起、软提示说明原因；手动失败只提示。在途期间同作品不再发起（一次只处理一镜）。
+   */
+  const startLaunch = (shot: Shot, key: string, auto: boolean) => {
+    const projectId = props.projectId, flight = autoFlightKey(projectId, key);
+    if (autoInFlight.has(flight)) return;
+    autoInFlight.add(flight);
+    if (auto) launchedKeys.current.add(key);
+    const settle = (errorZh?: string) => {
+      autoInFlight.delete(flight);
+      if (errorZh === undefined) {
+        launchedKeys.current.add(key);
+        markAutoLaunched(projectId, key);
+        writeAutoFailure(projectId, key, null);
+      } else if (auto)
+        writeAutoFailure(projectId, key, { count: (readAutoFailures(projectId)[key]?.count ?? 0) + 1, reasonZh: errorZh.slice(0, 200), at: new Date().toISOString() });
+      setAutoRevision(n => n + 1);
+    };
+    try { launchPrevis(shot, true, settle); }
+    catch (e) {
+      const msg = e instanceof Error ? e.message : "白模动作参考未发起";
+      setError(msg);
+      settle(msg);
+    }
+  };
+  /** 自动发起：节拍就绪 + 多人互动 + 角色表 ≥2 + 本镜无白模参考 + 未成功打开过 + 自动失败未满 3 次。 */
   useEffect(() => {
     const bridge = props.mvPrevis;
-    if (disabled || !bridge || bridge.unavailableZh || bridge.activeClipId || autoBusy.current || !props.onPatchShotPrevis) return;
+    const projectId = props.projectId, flightPrefix = autoFlightKey(projectId, "");
+    if (disabled || !bridge || bridge.unavailableZh || bridge.activeClipId || !props.onPatchShotPrevis) return;
+    if (Array.from(autoInFlight).some(k => k.startsWith(flightPrefix))) return;
+    const failures = readAutoFailures(projectId);
     const candidates = shots.filter(shot => shot.kind !== "footage" && !shot.fillRequested && previsShotOf(shot).row).map(shot => ({ ...previsShotOf(shot).input, shot }));
     const next = nextMvShotAutoPrevis(candidates, (c, key) =>
-      refsOf(c.shotId).motionVideos.some(v => v.source === "previs") || launchedKeys.current.has(key) || autoLaunched(props.projectId, key));
-    if (!next) return;
-    launchedKeys.current.add(next.key);
-    markAutoLaunched(props.projectId, next.key);
-    autoBusy.current = true;
-    try { launchPrevis(next.shot.shot, true); }
-    catch (e) { setError(e instanceof Error ? e.message : "白模动作参考未发起"); }
-    finally { setTimeout(() => { autoBusy.current = false; }, 0); }
+      refsOf(c.shotId).motionVideos.some(v => v.source === "previs") || launchedKeys.current.has(key) ||
+      autoLaunched(projectId, key) || (failures[key]?.count ?? 0) >= AUTO_PREVIS_MAX_ATTEMPTS);
+    if (next) startLaunch(next.shot.shot, next.key, true);
   });
+  const autoFailures = readAutoFailures(props.projectId);
 
   /** 歌曲切片：服务端按分镜秒位裁出，任务成功后回填 gcsUri。 */
   const sliceSong = async (shot: Shot) => {
@@ -505,6 +567,7 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
         const gaps = mvShotReferenceGaps(refs, undefined, { requiresStaging: staging });
         const { row, input: previsInput } = previsShotOf(shot);
         const interaction = mvShotNeedsPrevis(previsInput);
+        const autoKey = mvShotPrevisContentKey(previsInput);
         const hasPrevisRef = refs.motionVideos.some(v => v.source === "previs");
         const studioHistory = row?.previsStudio?.history || [];
         const lastPrevis = studioHistory.find(h => h.jobId === row?.previsStudio?.selectedJobId) || studioHistory[studioHistory.length - 1];
@@ -539,13 +602,13 @@ export function CanvasMvShotReferencePicker(props: CanvasMvShotReferencePickerPr
               <button className={button} disabled={disabled || refs.motionVideos.length >= MV_SHOT_MOTION_VIDEO_MAX} onClick={() => setTarget({ kind: "motion", shot })}>从图库找运镜视频</button>
               <button className={button} disabled={disabled} onClick={() => usePrevis(shot)}>用白模站位片（去白模工作台排站位）</button>
               {props.mvPrevis && interaction.needed && (
-                <button className={button} disabled={disabled || Boolean(props.mvPrevis.unavailableZh)} onClick={() => { try { setError(""); launchPrevis(shot, true); } catch (e) { setError(e instanceof Error ? e.message : "白模动作参考未发起"); } }}>重新生成白模</button>
+                <button className={button} disabled={disabled || Boolean(props.mvPrevis.unavailableZh)} onClick={() => { setError(""); startLaunch(shot, autoKey, false); }}>重新生成白模</button>
               )}
               <button className={button} disabled={disabled || prepareSlice.isPending || !props.planRequestId} onClick={() => void sliceSong(shot)}>
                 {refs.songSlice ? "重新裁歌曲切片" : "裁本镜歌曲切片"}
               </button>
             </div>
-            {interaction.needed && !hasPrevisRef && <p className="text-amber-200" data-mv-previs-hint>检测到多人互动（{interaction.cues.join("；")}）：多人互动镜头建议先生成白模动作参考{props.mvPrevis?.unavailableZh ? `（${props.mvPrevis.unavailableZh}）` : "，已交创作顾问按逐窗节拍排站位与动作"}</p>}
+            {interaction.needed && !hasPrevisRef && <p className="text-amber-200" data-mv-previs-hint>检测到多人互动（{interaction.cues.join("；")}）：多人互动镜头建议先生成白模动作参考{props.mvPrevis?.unavailableZh ? `（${props.mvPrevis.unavailableZh}）` : autoFailures[autoKey] ? autoFailureHintZh(autoFailures[autoKey]!) : "，已交创作顾问按逐窗节拍排站位与动作"}</p>}
             {row?.blockId && props.mvPrevis?.activeClipId === row.blockId && (
               <div className="rounded border border-cyan-300/30 p-1">
                 <p className="text-cyan-100">白模试看（创作顾问按本镜节拍与角色表排的站位与动作）：在顾问面板里用一句话修改，如「她站到他左侧、耳光用右手」；满意后点「应用」，再点下方「采用为动作参考」。</p>

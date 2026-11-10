@@ -1,6 +1,7 @@
 /**
  * 1110 ⑤ MV 多人互动镜头 → 白模动作参考 整链（全离线替身，零付费调用）。
  * - 自动发起去重：镜头 id + 节拍哈希（同内容只发一次，节拍改了才重发）
+ * - 打开失败不记「已发起」：重新挂载/刷新/内容变化再自动发起；同一内容自动最多 3 次，满 3 次软提示说明原因
  * - 采用白模后：提交参数里有 previs 视频参考，提示词含白模指令
  * - 无白模：软提示出现但照常提交（不拦、不改费用）
  * - 角色表不足：仍被 R3 硬拦（未提交、未扣费）
@@ -110,6 +111,101 @@ const asPrevisShot = (b: CanvasBlock): MvPrevisShot => {
   return { shotId: s.shotId, startSec: s.startSec, endSec: s.endSec, kind: s.kind, visualPrompt: s.visualPrompt, cameraPrompt: s.cameraPrompt, beats: s.beats, castZh: s.castZh };
 };
 
+/** 参考选择器真机夹具：第一镜多人互动、第二镜空镜；全离线替身，零服务端/付费调用。 */
+const pickerBlock = () => shotBlock({ motion: stockMotion, id: "mvshot-picker" });
+const PICKER_SCENE = { assetId: sf(2), gcsUri: "gs://test-bucket/stock-footage/1/scene-a.jpg", label: "雨夜街景" };
+const QUIET_BEATS: MusicMvShotBeat[] = [{ startSec: 5.2, endSec: 8, actionZh: "霓虹招牌在雨里闪烁", cameraZh: "固定机位", lightingZh: "霓虹", moodZh: "冷清", sfxZh: "雨声" }];
+/**
+ * 页面打包一次、各用例复用。夹具预设（注入打包前写 window.__mvPrevisPreset，刷新后需重写）：
+ * openError → 桥 open 抛此错（f.openError 可随时改）；previsStudio → 第一镜块已有的白模工作台（如仍在处理）。
+ * f.attempts 记每次 open 调用（含失败），f.opens 只记打开成功。
+ */
+let pickerBundleText: Promise<string> | undefined;
+function pickerBundle() {
+  return (pickerBundleText ??= (async () => {
+    const block = pickerBlock();
+    const s = block.musicMvShot!;
+    const shots = [
+      { id: s.shotId, startSec: s.startSec, endSec: s.endSec, visualPrompt: s.visualPrompt, cameraPrompt: s.cameraPrompt, lyricQuote: "", referenceIndices: [0], kind: "generated",
+        beats: BEATS, complexity: { people: 2, action: "strong", contact: true, cameraSetups: 1, scenes: 1 } },
+      { id: "shot-2", startSec: 5.2, endSec: 8, visualPrompt: "城市夜景空镜", cameraPrompt: "固定机位", lyricQuote: "", referenceIndices: [0], kind: "generated", beats: QUIET_BEATS },
+    ];
+    const refs = { "shot-1": { ...refsWith(stockMotion)["shot-1"], sceneImages: [PICKER_SCENE] } };
+    const rows = [{ shotId: "shot-1", blockId: block.id, castZh: CAST }, { shotId: "shot-2", blockId: "mvshot-quiet", castZh: CAST }];
+    const mocks: Record<string, string> = {
+      "@/lib/trpc": `const hook={useMutation:()=>({mutateAsync:async()=>{throw new Error('离线：不得调用服务端')},isPending:false}),useQuery:()=>({data:undefined})};
+        const ns=new Proxy({},{get:()=>hook});export const trpc=new Proxy({},{get:(_,k)=>k==='useUtils'?()=>new Proxy({},{get:()=>ns}):ns});`,
+      "@/_core/hooks/useAuth": "export const useAuth=()=>({user:{id:7,role:'user'}});",
+      "@/lib/jobs": "export const createJobSameOrigin=async()=>{throw new Error('禁止付费任务')};export const pollJobUntilTerminal=async()=>{throw new Error('离线')};",
+      "@/lib/manhuaAssetImageSource": "export const assetImageGcsUri=()=>undefined;",
+      "@/components/stockFootage/StockFootageDrawer": "export const StockFootageDrawer=()=>null;",
+    };
+    const bundle = await build({
+      stdin: {
+        resolveDir: process.cwd(),
+        loader: "tsx",
+        contents: `
+        import React,{useState} from 'react';import {flushSync} from 'react-dom';import {createRoot} from 'react-dom/client';
+        import {CanvasMvShotReferencePicker} from './client/src/components/canvas/CanvasMvShotReferencePicker';
+        const init=${JSON.stringify({ shots, refs, rows })};
+        const preset=window.__mvPrevisPreset||{};
+        const f=window.fixture={opens:[],attempts:[],patches:[],changes:[],fetches:[],shots:init.shots,refs:init.refs,unavailable:undefined,active:null,openError:preset.openError,
+          rows:preset.previsStudio?init.rows.map(r=>r.shotId==='shot-1'?{...r,previsStudio:preset.previsStudio}:r):init.rows};
+        window.fetch=async(url)=>{f.fetches.push(String(url));throw new Error('离线');};
+        function App(){
+          const [,set]=useState(0);f.force=()=>flushSync(()=>set(n=>n+1));
+          return <CanvasMvShotReferencePicker projectId="proj-1" planRequestId="${PLAN_ID}" shots={f.shots} shotReferences={f.refs} shotBlocks={f.rows} orientation="landscape"
+            onPatchShotPrevis={(blockId,studio)=>{f.patches.push({blockId,studio});f.rows=f.rows.map(r=>r.blockId===blockId?{...r,previsStudio:studio}:r);set(n=>n+1);}}
+            mvPrevis={{open:(id,q,submit)=>{f.attempts.push({id,submit});if(f.openError)throw new Error(f.openError);f.opens.push({id,q,submit});},onPreviewHostChange:()=>{},activeClipId:f.active,...(f.unavailable?{unavailableZh:f.unavailable}:{})}}
+            onChange={next=>{f.changes.push(next);f.refs=next.shotReferences;set(n=>n+1);}}/>;
+        }
+        const root=createRoot(document.getElementById('root'));let v=0;f.render=()=>flushSync(()=>root.render(<App key={++v}/>));f.render();`,
+      },
+      bundle: true,
+      write: false,
+      platform: "browser",
+      format: "iife",
+      jsx: "automatic",
+      alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
+      define: { "process.env.NODE_ENV": '"test"' },
+      plugins: [{
+        name: "离线替身",
+        setup(b) {
+          b.onResolve({ filter: /^@\// }, a => (mocks[a.path] ? { path: a.path, namespace: "mock" } : undefined));
+          b.onLoad({ filter: /.*/, namespace: "mock" }, a => ({ contents: mocks[a.path], loader: "js" }));
+        },
+      }],
+    });
+    return bundle.outputFiles[0]!.text;
+  })());
+}
+type PickerPreset = { openError?: string; previsStudio?: unknown };
+/** 起无头浏览器挂选择器：拦截一切出站（记录后中止）；load(true) 首次打开、load(false) 整页刷新。 */
+async function openPickerPage() {
+  const bundle = await pickerBundle();
+  const browser = await puppeteer.launch({ headless: true });
+  const page = await browser.newPage().catch(async e => { await browser.close(); throw e; });
+  const outbound: string[] = [];
+  await page.setRequestInterception(true).catch(async e => { await browser.close(); throw e; });
+  page.on("request", req => {
+    if (req.isNavigationRequest()) void req.respond({ status: 200, contentType: "text/html", body: '<div id="root"></div>' });
+    else { outbound.push(req.url()); void req.abort(); }
+  });
+  const load = async (first: boolean, preset?: PickerPreset) => {
+    await (first ? page.goto("http://localhost:41933") : page.reload());
+    if (preset) await page.evaluate(p => { (window as unknown as { __mvPrevisPreset: unknown }).__mvPrevisPreset = p; }, preset as never);
+    await page.addScriptTag({ content: bundle });
+    await page.waitForSelector('[data-mv-shot-refs="shot-1"]');
+  };
+  const fx = <T,>(fn: string) => page.evaluate(`(()=>{const f=window.fixture;return ${fn}})()`) as Promise<T>;
+  const settle = () => new Promise(r => setTimeout(r, 300));
+  /** 本机按作品保存的记录：mv-previs-auto:v1 = 已成功打开；mv-previs-auto-fail:v1 = 自动打开失败次数与原因。 */
+  const store = (name: "mv-previs-auto:v1" | "mv-previs-auto-fail:v1") =>
+    page.evaluate(k => JSON.parse(localStorage.getItem(k) || "{}"), `${name}:proj-1`) as Promise<Record<string, any>>;
+  const hint = () => page.$eval("[data-mv-previs-hint]", el => el.textContent || "");
+  return { browser, page, outbound, load, fx, settle, store, hint };
+}
+
 describe("自动发起去重：镜头 id + 节拍哈希", () => {
   /** 自动发起替身：与参考选择器同口径——已发起键集合 + 已有白模参考即跳过。 */
   function autoLauncher() {
@@ -157,77 +253,11 @@ describe("自动发起去重：镜头 id + 节拍哈希", () => {
     expect(a.advisorCalls).toEqual([]);
   });
   it("参考选择器挂载后自动发起顾问白模：同一镜头同节拍刷新/重挂载不重复发起；不可用/顾问占用时不发；顾问说明可读、采用后成为白模参考并进提示词", async () => {
-    const block = shotBlock({ motion: stockMotion, id: "mvshot-picker" });
-    const s = block.musicMvShot!;
-    const scene = { assetId: sf(2), gcsUri: "gs://test-bucket/stock-footage/1/scene-a.jpg", label: "雨夜街景" };
-    const quietBeats: MusicMvShotBeat[] = [{ startSec: 5.2, endSec: 8, actionZh: "霓虹招牌在雨里闪烁", cameraZh: "固定机位", lightingZh: "霓虹", moodZh: "冷清", sfxZh: "雨声" }];
-    const shots = [
-      { id: s.shotId, startSec: s.startSec, endSec: s.endSec, visualPrompt: s.visualPrompt, cameraPrompt: s.cameraPrompt, lyricQuote: "", referenceIndices: [0], kind: "generated",
-        beats: BEATS, complexity: { people: 2, action: "strong", contact: true, cameraSetups: 1, scenes: 1 } },
-      { id: "shot-2", startSec: 5.2, endSec: 8, visualPrompt: "城市夜景空镜", cameraPrompt: "固定机位", lyricQuote: "", referenceIndices: [0], kind: "generated", beats: quietBeats },
-    ];
+    const block = pickerBlock();
     // 对照：第二镜无互动，不该被自动发起
-    expect(mvShotNeedsPrevis({ shotId: "shot-2", startSec: 5.2, endSec: 8, visualPrompt: "城市夜景空镜", cameraPrompt: "固定机位", beats: quietBeats, castZh: CAST }).needed).toBe(false);
-    const refs = { "shot-1": { ...refsWith(stockMotion)["shot-1"], sceneImages: [scene] } };
-    const rows = [{ shotId: "shot-1", blockId: block.id, castZh: CAST }, { shotId: "shot-2", blockId: "mvshot-quiet", castZh: CAST }];
-    const mocks: Record<string, string> = {
-      "@/lib/trpc": `const hook={useMutation:()=>({mutateAsync:async()=>{throw new Error('离线：不得调用服务端')},isPending:false}),useQuery:()=>({data:undefined})};
-        const ns=new Proxy({},{get:()=>hook});export const trpc=new Proxy({},{get:(_,k)=>k==='useUtils'?()=>new Proxy({},{get:()=>ns}):ns});`,
-      "@/_core/hooks/useAuth": "export const useAuth=()=>({user:{id:7,role:'user'}});",
-      "@/lib/jobs": "export const createJobSameOrigin=async()=>{throw new Error('禁止付费任务')};export const pollJobUntilTerminal=async()=>{throw new Error('离线')};",
-      "@/lib/manhuaAssetImageSource": "export const assetImageGcsUri=()=>undefined;",
-      "@/components/stockFootage/StockFootageDrawer": "export const StockFootageDrawer=()=>null;",
-    };
-    const bundle = await build({
-      stdin: {
-        resolveDir: process.cwd(),
-        loader: "tsx",
-        contents: `
-        import React,{useState} from 'react';import {flushSync} from 'react-dom';import {createRoot} from 'react-dom/client';
-        import {CanvasMvShotReferencePicker} from './client/src/components/canvas/CanvasMvShotReferencePicker';
-        const init=${JSON.stringify({ shots, refs, rows })};
-        const f=window.fixture={opens:[],patches:[],changes:[],fetches:[],shots:init.shots,refs:init.refs,rows:init.rows,unavailable:undefined,active:null};
-        window.fetch=async(url)=>{f.fetches.push(String(url));throw new Error('离线');};
-        function App(){
-          const [,set]=useState(0);f.force=()=>flushSync(()=>set(n=>n+1));
-          return <CanvasMvShotReferencePicker projectId="proj-1" planRequestId="${PLAN_ID}" shots={f.shots} shotReferences={f.refs} shotBlocks={f.rows} orientation="landscape"
-            onPatchShotPrevis={(blockId,studio)=>{f.patches.push({blockId,studio});f.rows=f.rows.map(r=>r.blockId===blockId?{...r,previsStudio:studio}:r);set(n=>n+1);}}
-            mvPrevis={{open:(id,q,submit)=>f.opens.push({id,q,submit}),onPreviewHostChange:()=>{},activeClipId:f.active,...(f.unavailable?{unavailableZh:f.unavailable}:{})}}
-            onChange={next=>{f.changes.push(next);f.refs=next.shotReferences;set(n=>n+1);}}/>;
-        }
-        const root=createRoot(document.getElementById('root'));let v=0;f.render=()=>flushSync(()=>root.render(<App key={++v}/>));f.render();`,
-      },
-      bundle: true,
-      write: false,
-      platform: "browser",
-      format: "iife",
-      jsx: "automatic",
-      alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
-      define: { "process.env.NODE_ENV": '"test"' },
-      plugins: [{
-        name: "离线替身",
-        setup(b) {
-          b.onResolve({ filter: /^@\// }, a => (mocks[a.path] ? { path: a.path, namespace: "mock" } : undefined));
-          b.onLoad({ filter: /.*/, namespace: "mock" }, a => ({ contents: mocks[a.path], loader: "js" }));
-        },
-      }],
-    });
-    const browser = await puppeteer.launch({ headless: true });
+    expect(mvShotNeedsPrevis({ shotId: "shot-2", startSec: 5.2, endSec: 8, visualPrompt: "城市夜景空镜", cameraPrompt: "固定机位", beats: QUIET_BEATS, castZh: CAST }).needed).toBe(false);
+    const { browser, page, outbound, load, fx, settle } = await openPickerPage();
     try {
-      const page = await browser.newPage();
-      const outbound: string[] = [];
-      await page.setRequestInterception(true);
-      page.on("request", req => {
-        if (req.isNavigationRequest()) void req.respond({ status: 200, contentType: "text/html", body: '<div id="root"></div>' });
-        else { outbound.push(req.url()); void req.abort(); }
-      });
-      const load = async (first: boolean) => {
-        await (first ? page.goto("http://localhost:41933") : page.reload());
-        await page.addScriptTag({ content: bundle.outputFiles[0]!.text });
-        await page.waitForSelector('[data-mv-shot-refs="shot-1"]');
-      };
-      const fx = <T,>(fn: string) => page.evaluate(`(()=>{const f=window.fixture;return ${fn}})()`) as Promise<T>;
-      const settle = () => new Promise(r => setTimeout(r, 300));
       const cue = mvShotNeedsPrevis(asPrevisShot(block)).cues;
 
       // ① 挂载即自动发起一次：先写白模基线（演员只有角色名、无动作），再按块 id 以 submit=true 打开顾问
@@ -318,6 +348,108 @@ describe("自动发起去重：镜头 id + 节拍哈希", () => {
       expect(String(requests[0]!.prompt)).toMatch(/@视频1＝白模/);
       expect(String(requests[0]!.prompt)).toContain(MV_PREVIS_PROMPT_RULE_ZH("@视频1", "@图片1、@图片2"));
       expect(onMvShotAdvisory).not.toHaveBeenCalled();
+    } finally {
+      await browser.close();
+    }
+  }, 120_000);
+  it("打开失败不记「已发起」：基线约 1 秒内没保存好只算一次失败、同一挂载不连发；重新挂载再自动发起，打开成功才记，之后重挂载/刷新不再发起", async () => {
+    const block = pickerBlock();
+    const key = mvShotPrevisContentKey(asPrevisShot(block));
+    const baselineZh = "本镜白模基线尚未保存，未打开顾问";
+    const { browser, page, load, fx, settle, store, hint } = await openPickerPage();
+    try {
+      // ① 基线一直未就绪：本次发起内每 100ms 重试、共 11 次 open 后放弃；0 次打开、只记 1 次失败、不记已发起；报错与软提示说明原因
+      await load(true, { openError: baselineZh });
+      await page.waitForFunction(() => (window as any).fixture.attempts.length >= 11);
+      await settle();
+      expect(await fx<number>("f.attempts.length")).toBe(11);
+      expect(await fx<number>("f.opens.length")).toBe(0);
+      expect(await fx<number>("f.patches.length")).toBe(1);
+      expect(await store("mv-previs-auto:v1")).toEqual({});
+      expect(await store("mv-previs-auto-fail:v1")).toEqual({ [key]: { count: 1, reasonZh: baselineZh, at: expect.any(String) } });
+      expect(await page.$eval('[role="alert"]', el => el.textContent)).toBe(baselineZh);
+      expect(await hint()).toContain(`自动打开创作顾问未成功：${baselineZh}。重新进入本步或刷新页面会再自动尝试，同一内容最多 3 次`);
+      // ② 同一挂载反复重渲染：不连发
+      await fx("(f.force(),f.force(),0)");
+      await settle();
+      expect(await fx<number>("f.attempts.length")).toBe(11);
+      // ③ 重新挂载（基线已就绪）：再自动发起并打开；打开成功才记已发起、清失败记录，基线不重写
+      await fx("(f.openError=undefined,f.render(),0)");
+      await page.waitForFunction(() => (window as any).fixture.opens.length > 0);
+      await settle();
+      expect(await fx<Array<{ id: string; submit: boolean }>>("f.opens.map(o=>({id:o.id,submit:o.submit}))")).toEqual([{ id: block.id, submit: true }]);
+      expect(await fx<number>("f.attempts.length")).toBe(12);
+      expect(await fx<number>("f.patches.length")).toBe(1);
+      expect(Object.keys(await store("mv-previs-auto:v1"))).toEqual([key]);
+      expect(await store("mv-previs-auto-fail:v1")).toEqual({});
+      expect(await hint()).toContain("已交创作顾问按逐窗节拍排站位与动作");
+      // ④ 已成功打开过：重挂载、整页刷新都不再自动发起
+      await fx("(f.render(),f.render(),0)");
+      await settle();
+      expect(await fx<number>("f.attempts.length")).toBe(12);
+      await load(false);
+      await settle();
+      expect(await fx<number>("f.attempts.length")).toBe(0);
+      expect(await fx<string[]>("f.fetches")).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  }, 120_000);
+  it("白模还在处理：自动发起失败不记「已发起」、重挂载/刷新再试；同一内容连续失败 3 次后不再自动发起、软提示说明原因；手动重新生成打开成功才记；内容变化再自动发起", async () => {
+    const block = pickerBlock();
+    const key = mvShotPrevisContentKey(asPrevisShot(block));
+    const studio = buildMvShotPrevisStudio(block.id, asPrevisShot(block));
+    const running = { ...studio, pending: { requestId: "00000000-0000-4000-8000-0000000000bb", scopeId: studio.scopeId, clipId: block.id, spec: studio.spec } };
+    const busyZh = "本镜白模仍在处理，请等任务结束";
+    const { browser, page, load, fx, settle, store, hint } = await openPickerPage();
+    const failures = async () => (await store("mv-previs-auto-fail:v1"))[key]?.count ?? 0;
+    try {
+      // ① 首次挂载：白模还在处理 → 未打开顾问（不调 open）、不记已发起；失败 1 次，报错与软提示说明原因
+      await load(true, { previsStudio: running });
+      await settle();
+      expect(await fx<number>("f.attempts.length")).toBe(0);
+      expect(await store("mv-previs-auto:v1")).toEqual({});
+      expect(await failures()).toBe(1);
+      expect(await page.$eval('[role="alert"]', el => el.textContent)).toBe(busyZh);
+      expect(await hint()).toContain(`自动打开创作顾问未成功：${busyZh}`);
+      // ② 同一挂载重渲染不连发；③ 重新挂载再试（第 2 次）；④ 整页刷新再试（第 3 次）→ 软提示说明已停止自动发起及原因
+      await fx("(f.force(),f.force(),0)");
+      await settle();
+      expect(await failures()).toBe(1);
+      await fx("(f.render(),0)");
+      await settle();
+      expect(await failures()).toBe(2);
+      await load(false, { previsStudio: running });
+      await settle();
+      expect(await failures()).toBe(3);
+      expect(await store("mv-previs-auto:v1")).toEqual({});
+      expect(await hint()).toContain(`已自动尝试 3 次仍未打开创作顾问：${busyZh}。不再自动发起，处理好后请点「重新生成白模」`);
+      // ⑤ 满 3 次：白模处理完（已可打开）后重挂载、刷新都不再自动发起，软提示保留原因
+      await page.evaluate(s => { const f = (window as any).fixture; f.rows = f.rows.map((r: any) => r.shotId === "shot-1" ? { ...r, previsStudio: s } : r); f.render(); f.render(); }, studio as never);
+      await settle();
+      expect(await fx<number>("f.attempts.length")).toBe(0);
+      await load(false, { previsStudio: studio });
+      await settle();
+      expect(await fx<number>("f.attempts.length")).toBe(0);
+      expect(await failures()).toBe(3);
+      expect(await hint()).toContain("已自动尝试 3 次仍未打开创作顾问");
+      // ⑥ 用户手动「重新生成白模」：打开成功才记已发起、清失败记录，软提示恢复
+      await page.evaluate(() => (Array.from(document.querySelectorAll('[data-mv-shot-refs="shot-1"] button')).find(b => b.textContent === "重新生成白模") as HTMLButtonElement).click());
+      await page.waitForFunction(() => (window as any).fixture.opens.length > 0);
+      await settle();
+      expect(await fx<Array<{ id: string; submit: boolean }>>("f.opens.map(o=>({id:o.id,submit:o.submit}))")).toEqual([{ id: block.id, submit: true }]);
+      expect(Object.keys(await store("mv-previs-auto:v1"))).toEqual([key]);
+      expect(await store("mv-previs-auto-fail:v1")).toEqual({});
+      expect(await hint()).toContain("已交创作顾问按逐窗节拍排站位与动作");
+      // ⑦ 内容变化（同一挂载改节拍）：新内容键自动发起一次
+      const edited = [{ ...BEATS[0]!, actionZh: "阿宁冲上前一把拥抱阿哲" }, BEATS[1]!];
+      await page.evaluate(b => { const f = (window as any).fixture; f.shots = f.shots.map((s: any) => s.id === "shot-1" ? { ...s, beats: b } : s); f.force(); }, edited);
+      await page.waitForFunction(() => (window as any).fixture.opens.length > 1);
+      await settle();
+      expect(await fx<number>("f.opens.length")).toBe(2);
+      const editedKey = mvShotPrevisContentKey({ ...asPrevisShot(block), beats: edited });
+      expect(Object.keys(await store("mv-previs-auto:v1")).sort()).toEqual([key, editedKey].sort());
+      expect(await fx<string[]>("f.fetches")).toEqual([]);
     } finally {
       await browser.close();
     }
