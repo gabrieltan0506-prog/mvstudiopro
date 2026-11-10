@@ -44,6 +44,8 @@ import { isTtapiSunoReady } from "./services/ttapiSunoMusic.js";
 import {
   MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS,
   manhuaCreativeAdvisorContextSchema,
+  advisorProjectKindSchema,
+  advisorProjectRef,
 } from "../shared/manhuaCreativeAdvisor.js";
 
 import { COOKIE_NAME, TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../shared/const.js";
@@ -6720,10 +6722,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 若检测到生图意图，返回 imageOffer（须用户再点确认才扣费生图）。
      */
     /** 进入顾问即展示额度；未知额度不得当作免费，也不触发模型或扣费。 */
-    getManhuaAdvisorQuota: protectedProcedure.input(z.object({ projectId: z.string().uuid().optional() }).optional()).query(async ({ ctx, input }) => {
-      await assertAdvisorProject(ctx.user.id, input?.projectId);
+    getManhuaAdvisorQuota: protectedProcedure.input(z.object({ projectId: z.string().uuid().optional(), projectKind: advisorProjectKindSchema.optional() }).optional()).query(async ({ ctx, input }) => {
+      // 作品类型缺省 = 漫剧：调用参数与账本编号同旧；其他类型按各自存档核对、账本并入类型
+      const work = advisorProjectRef(input);
+      await assertAdvisorProject(ctx.user.id, work);
       const exempt = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-      const quota = exempt ? { used: 0, remaining: MANHUA_ADVISOR_PROJECT_FREE } : await readAdvisorProjectQuota(ctx.user.id, input?.projectId);
+      const quota = exempt ? { used: 0, remaining: MANHUA_ADVISOR_PROJECT_FREE } : await readAdvisorProjectQuota(ctx.user.id, work);
       return { dailyLimit: MANHUA_ADVISOR_PROJECT_FREE, remaining: quota.remaining, price: MANHUA_ADVISOR_PAID_CREDITS, exempt, scope: "project" as const };
     }),
 
@@ -6893,10 +6897,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
         }
         // 已有回执先按账户/请求指纹回放；云存储临时不可用不应阻止取回已付费结果。
-        if (input.manhuaContext) await assertAdvisorProject(ctx.user.id, input.manhuaContext.projectId);
+        if (input.manhuaContext) await assertAdvisorProject(ctx.user.id, advisorProjectRef(input.manhuaContext));
         const usedToday = isAdminUser || Boolean(input.knowledgePublicationContext)
           ? 0
-          : input.manhuaContext ? (await readAdvisorProjectQuota(ctx.user.id, input.manhuaContext.projectId)).used : await countPlatformSkillQaToday(ctx.user.id, qaMode, false);
+          : input.manhuaContext ? (await readAdvisorProjectQuota(ctx.user.id, advisorProjectRef(input.manhuaContext))).used : await countPlatformSkillQaToday(ctx.user.id, qaMode, false);
         let needPay = !isAdminUser && !input.knowledgePublicationContext && usedToday >= dailyLimit;
 
         if (needPay && (!input.confirmPaid || (advisorOperationInput && input.confirmedCredits !== paidUnit))) {
@@ -6964,7 +6968,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           let projectQuotaUsed = usedToday;
           if (!isAdminUser && input.manhuaContext) {
             let quota: Awaited<ReturnType<typeof reserveAdvisorProjectQuota>>;
-            try { quota = await reserveAdvisorProjectQuota(ctx.user.id, input.manhuaContext?.projectId, input.requestId!); }
+            try { quota = await reserveAdvisorProjectQuota(ctx.user.id, advisorProjectRef(input.manhuaContext), input.requestId!); }
             catch (error) {
               // 尚未扣费/调用模型，保留同编号恢复；数据库回执不明也不能重领一个请求。
               const { awaitManhuaAdvisorPaymentConfirmation } = await import("./services/manhuaAdvisorOperation.js");
@@ -6996,7 +7000,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
           const restoreFreeQuota = async () => {
             if (!projectFreeReserved || !input.manhuaContext) return;
-            await releaseAdvisorProjectQuota(ctx.user.id, input.manhuaContext?.projectId, input.requestId!);
+            await releaseAdvisorProjectQuota(ctx.user.id, advisorProjectRef(input.manhuaContext), input.requestId!);
           };
           const taskType = MANHUA_ADVISOR_TASK_TYPE;
           const chargeKey = `${taskType}/${jobId}`.slice(0, 120);
