@@ -388,6 +388,37 @@ async function fetchManhuaScanAudio(audioUrl: string): Promise<Buffer> {
   return buf;
 }
 
+/**
+ * 漫剧学习直传签名（听音音频 / 读帧关键帧）：须登录；对象名由服务端生成，落本人上传前缀
+ * uploads/u<uid>/<子目录>/<UUID>-<文件名>（同 getVideoUploadSignedUrl 口径，客户端不可指定），
+ * 听音扫描的归属核验（resolveRegisteredPostProdMediaSource）按同一前缀放行。
+ * 文件名只作可读后缀：非常规字符折成 "-"、连续点折成一个（核验侧拒收含 ".." 的对象名）。
+ * Content-Type 签入 URL、有效期 20 分钟，均同原入口。
+ */
+async function issueManhuaLearnUploadUrl(
+  req: VercelRequest,
+  res: VercelResponse,
+  input: { fileName: string; mimeType: string; subdir: string },
+) {
+  const viewer = await resolveGoogleGatewayUser(req);
+  if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required", message: "请先登录后再上传文件" });
+  try {
+    const { createGcsSignedUploadUrl } = await import("../server/services/gcs");
+    const { userUploadsPrefix } = await import("../server/services/postProdMediaSource");
+    const safeName = input.fileName.replace(/[^\w.\-]+/g, "-").replace(/\.{2,}/g, ".").slice(0, 80);
+    const signed = await createGcsSignedUploadUrl({
+      fileName: input.fileName,
+      contentType: input.mimeType,
+      objectName: `${userUploadsPrefix(String(viewer.userId))}${input.subdir}/${randomUUID()}-${safeName}`,
+      expiresInMinutes: 20,
+    });
+    return res.status(200).json({ ok: true, ...signed, mimeType: input.mimeType });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return res.status(500).json({ ok: false, error: "gcs_signed_upload_failed", detail: msg.slice(0, 240) });
+  }
+}
+
 const TRANSCRIBE_AUDIO_PROMPT = "请将音频内容完整转录为文字，写入 JSON 的 text 字段。只输出转录文字本身，不要任何解释、标注或时间码。";
 const TRANSCRIBE_AUDIO_SCHEMA = { type: "OBJECT", properties: { text: { type: "STRING" } }, required: ["text"] };
 
@@ -523,23 +554,13 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       }
     }
 
-    // ---------------- 漫剧学习 A：GCS 签名上传 URL（本机 PUT，Fly 持 SA） ----------------
+    // ---------------- 漫剧学习 A：GCS 签名上传 URL（本机 PUT，Fly 持 SA；须登录，对象落本人前缀） ----------------
     if (op === "manhuaAudioGetUploadUrl") {
-      const fileName = s(b.fileName || q.fileName || "learn-audio.mp3") || "learn-audio.mp3";
-      const mimeType = s(b.mimeType || q.mimeType || "audio/mpeg") || "audio/mpeg";
-      try {
-        const { createGcsSignedUploadUrl } = await import("../server/services/gcs");
-        const signed = await createGcsSignedUploadUrl({
-          fileName,
-          contentType: mimeType,
-          objectName: `manhua-template-learn/${Date.now()}-${fileName.replace(/[^\w.\-]+/g, "-").slice(0, 80)}`,
-          expiresInMinutes: 20,
-        });
-        return res.status(200).json({ ok: true, ...signed, mimeType });
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return res.status(500).json({ ok: false, error: "gcs_signed_upload_failed", detail: msg.slice(0, 240) });
-      }
+      return issueManhuaLearnUploadUrl(req, res, {
+        fileName: s(b.fileName || q.fileName || "learn-audio.mp3") || "learn-audio.mp3",
+        mimeType: s(b.mimeType || q.mimeType || "audio/mpeg") || "audio/mpeg",
+        subdir: "manhua-template-learn",
+      });
     }
 
     // ---------------- 漫剧学习 A：听音扫描（1110：Gemini 3.8 Flash 两跳 Vertex gs:// → EvoLink 签名 https，不内联） ----------------
@@ -611,23 +632,13 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       }
     }
 
-    // ---------------- 漫剧学习：关键帧 GCS 签名上传（本机 PUT，Fly 持 SA） ----------------
+    // ---------------- 漫剧学习：关键帧 GCS 签名上传（本机 PUT，Fly 持 SA；须登录，对象落本人前缀） ----------------
     if (op === "manhuaTemplateFrameGetUploadUrl") {
-      const fileName = s(b.fileName || q.fileName || "learn-frame.jpg") || "learn-frame.jpg";
-      const mimeType = s(b.mimeType || q.mimeType || "image/jpeg") || "image/jpeg";
-      try {
-        const { createGcsSignedUploadUrl } = await import("../server/services/gcs");
-        const signed = await createGcsSignedUploadUrl({
-          fileName,
-          contentType: mimeType,
-          objectName: `manhua-template-learn/frames/${Date.now()}-${fileName.replace(/[^\w.\-]+/g, "-").slice(0, 80)}`,
-          expiresInMinutes: 20,
-        });
-        return res.status(200).json({ ok: true, ...signed, mimeType });
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return res.status(500).json({ ok: false, error: "gcs_signed_upload_failed", detail: msg.slice(0, 240) });
-      }
+      return issueManhuaLearnUploadUrl(req, res, {
+        fileName: s(b.fileName || q.fileName || "learn-frame.jpg") || "learn-frame.jpg",
+        mimeType: s(b.mimeType || q.mimeType || "image/jpeg") || "image/jpeg",
+        subdir: "manhua-template-learn/frames",
+      });
     }
 
     // ---------------- 漫剧学习：GCS/URL/dataUrl 关键帧 → GPT-5.6 Terra（high）补全提案字段 ----------------
