@@ -526,7 +526,7 @@ export default function ManhuaEpisodeOptimization(
         </p>
         <p className="text-xs opacity-70">
           模板试写今日剩余 {quota.data?.trialsLeftToday ?? "…"} / 3
-          次，GLM / DeepSeek共用；换模型重新试写也计一次。每次只试写一集。推荐沿用顾问额度，超额先确认。
+          次，两条写作线路共用；换线路重新试写也计一次。每次只试写一集。推荐沿用顾问额度，超额先确认。
         </p>
         {chosen.length > 1 && (
           <label className="block">
@@ -723,7 +723,7 @@ export default function ManhuaEpisodeOptimization(
                   onClick={() => openCandidate(r, c)}
                 >
                   {r.mode === "trial" ? "试写" : "组合优化"} · 第
-                  {c.episodeIndex}集 · {r.model === "glm" ? "GLM" : "DeepSeek"} ·{" "}
+                  {c.episodeIndex}集 · {r.model === "glm" ? "线路一" : "线路二"} ·{" "}
                   {r.templates.map(t => t.nameZh).join(" + ")}
                 </button>
               ))

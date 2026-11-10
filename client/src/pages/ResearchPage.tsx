@@ -367,7 +367,7 @@ export default function ResearchPage() {
             <button
               onClick={toggleVoice}
               disabled={isTranscribing}
-              title={isRecording ? "点击停止录音" : isTranscribing ? "转录中…" : "点击开始录音（Gemini 转录）"}
+              title={isRecording ? "点击停止录音" : isTranscribing ? "转录中…" : "点击开始录音（自动转录）"}
               style={{
                 display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, flexShrink: 0,
                 background: isRecording ? "rgba(239,68,68,0.15)" : isTranscribing ? "rgba(251,191,36,0.10)" : "rgba(255,255,255,0.05)",

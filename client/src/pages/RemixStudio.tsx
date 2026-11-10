@@ -867,7 +867,7 @@ export default function RemixStudio() {
           <div>
             <div style={{ fontSize: 34, fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.03em" }}>Kling Studio</div>
             <div style={{ marginTop: 6, color: "rgba(226,232,240,0.72)", fontSize: 14 }}>
-              大师级视频基地（脚本 → 分镜图 → Seedance 成片）在 <strong>/workflow-nodes</strong>；此处串联可灵参考图与图生视频，并补充配乐。
+              大师级视频基地（脚本 → 分镜图 → 成片）在 <strong>/workflow-nodes</strong>；此处串联可灵参考图与图生视频，并补充配乐。
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>

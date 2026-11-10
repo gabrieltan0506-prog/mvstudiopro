@@ -33,17 +33,17 @@ const FUNCTIONS: FunctionEntry[] = [
     tagline: "把文档与图片，整理成图解配说明的完整手册。",
     options: [
       {
-        label: "精细档 · GPT-5.6 Sol",
+        label: "精细档",
         desc: "输出最全，长文档提炼首选",
         href: "/platform?mode=create&createTool=knowledge",
       },
       {
-        label: "均衡档 · GLM 5.3 FlashX",
+        label: "均衡档",
         desc: "速度与密度的折中档",
         href: "/platform?mode=create&createTool=knowledge",
       },
       {
-        label: "轻量档 · Qwen 3.8 Max",
+        label: "轻量档",
         desc: "单价最低，出稿最快",
         href: "/platform?mode=create&createTool=knowledge",
       },
@@ -54,12 +54,12 @@ const FUNCTIONS: FunctionEntry[] = [
     tagline: "趋势看板、20 条爆款选题、逐镜拆片表，一口气交付。",
     options: [
       {
-        label: "稳定档 · GLM 5.3 FlashX",
+        label: "稳定档",
         desc: "趋势、选题、六维全案与顾问问答主力",
         href: "/platform?mode=create",
       },
       {
-        label: "轻快档 · Qwen 3.8 Max",
+        label: "轻快档",
         desc: "扩写更快更省，赶热点用它",
         href: "/platform?mode=create",
       },

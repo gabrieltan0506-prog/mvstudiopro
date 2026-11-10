@@ -160,7 +160,7 @@ export default function CodeMotionImageProduction({
                       ? "已检查文件尺寸与画幅；尚未进行语义内容冲突分析。"
                       : s.preflight.semanticAssessment === "uncertain"
                         ? "语义核对不确定，请人工核对，不据此自动重绘。"
-                        : `Gemini 3.8 Flash 已核对实际素材：${s.preflight.semanticAssessment === "conflict" ? "发现明确冲突" : "未发现明确冲突"}。`}
+                        : `已核对实际素材：${s.preflight.semanticAssessment === "conflict" ? "发现明确冲突" : "未发现明确冲突"}。`}
                     {s.preflight.semanticFinding &&
                       ` ${s.preflight.semanticFinding.observations.map(o => o.observation).join("；")}`}
                     {s.preflight.semanticLimitations &&

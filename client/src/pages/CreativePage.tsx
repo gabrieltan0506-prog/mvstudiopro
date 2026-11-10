@@ -283,7 +283,7 @@ export default function CreativePage() {
                 <strong>生图</strong>：Nano Banana 2 每张 <strong>35</strong>；GPT-image-2 每张 <strong>54</strong>。
               </li>
               <li>
-                <strong>转视频</strong>：Seedance 2.0，<strong>10 秒</strong> /{" "}
+                <strong>转视频</strong>：<strong>10 秒</strong> /{" "}
                 <strong>118</strong> 积分。失败退还。
               </li>
             </ul>

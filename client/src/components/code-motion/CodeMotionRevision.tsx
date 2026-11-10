@@ -143,8 +143,7 @@ export default function CodeMotionRevision({
     >
       <h3 className="font-medium">局部修改</h3>
       <p className="text-xs text-stone-600">
-        修改选定镜头，沿用已有场景图、旁白和配乐。原片编辑只修改已采用的本镜4–5秒，其余镜头保留。免费使用Seedance
-        2.0，付费使用2.5专用编辑。
+        修改选定镜头，沿用已有场景图、旁白和配乐。原片编辑只修改已采用的本镜4–5秒，其余镜头保留。免费使用标准编辑，付费使用专用编辑。
       </p>
       <p className="text-xs">
         {quote.data?.message || "完成当前版本成片后可修改。"}
@@ -257,7 +256,7 @@ export default function CodeMotionRevision({
             )}
             {price?.shot && (
               <p className="text-sm">
-                Seedance {price.shot.version} ·{" "}
+                编辑档 {price.shot.version} ·{" "}
                 {price.shot.mode === "video_edit" ? "原片编辑" : "参考原片修改"}
               </p>
             )}

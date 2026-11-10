@@ -1407,7 +1407,7 @@ export default function CodeMotionStudio() {
                       {project.brief.style !== "scenes" && <span className="mt-1 block text-xs text-stone-500">对白口型请选逐镜创作；当前模式可使用画外旁白。</span>}
                     </label>
                     <label className="mt-3 block text-sm">
-                      本镜{scene.speech?.role === "dialogue" ? "对白" : "旁白"}文字转语音（Qwen，60秒内作品）
+                      本镜{scene.speech?.role === "dialogue" ? "对白" : "旁白"}文字转语音（60秒内作品）
                       <textarea
                         className={field}
                         maxLength={180}

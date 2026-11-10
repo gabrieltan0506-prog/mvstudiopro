@@ -1063,7 +1063,8 @@ export async function askPlatformSkillQa(params: {
         break;
       }
       const hop = manhuaContext ? advisorHops[Math.min(attempt - 1, advisorHops.length - 1)] : undefined;
-      if (hop) params.onStream?.("reset", hop.label);
+      // 流式标签会发到浏览器：只给中性说法，模型/通道名只进服务端日志与 usedModel。
+      if (hop) params.onStream?.("reset", attempt === 1 ? "创作顾问" : "创作顾问 · 备用线路");
       if (manhuaContext?.filmReview) {
         params.onStream?.("reset", "影片审阅");
         parsed = parseAskJson(await askManhuaFilmReview(params.userId, manhuaContext.filmReview, params.rawQuestion || question, undefined, { episodeIndex: manhuaContext.episodeIndex, episodeBody: manhuaContext.episodeBody, episodes: manhuaContext.continuityEpisodes || [], workflowEvidenceZh: manhuaContext.workflowEvidenceZh || "" }, [buildManhuaCraftReference(manhuaRawQuestion || question), templateReference].filter(Boolean).join("\n")), true, true);

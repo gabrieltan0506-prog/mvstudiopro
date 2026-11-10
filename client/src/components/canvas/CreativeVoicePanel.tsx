@@ -1,4 +1,5 @@
 import { inspectCreativeVoiceWorkspace } from "@/lib/creativeVoiceWorkspaceInspect";
+import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import type { CreativeVoiceProductionAction } from "@shared/creativeVoiceProduction";
 import type { CreativeVoiceNovelAction } from "@shared/creativeVoiceNovel";
 import type { AdvisorMediaProposal, AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
@@ -74,7 +75,11 @@ export function CreativeVoicePanel(props: {
   useEffect(() => () => { if (file) URL.revokeObjectURL(file.url); }, [file]);
   async function start() {
     if (active || props.disabled) return;
-    if (!window.confirm("开始语音／看片管理者测试：会调用Google并产生实际成本；普通通道失败会自动改走Gemini API。你明确要求模板推荐或改写时，允许调用当前GLM／DeepSeek顾问，沿用现有扣点确认。开始？")) return;
+    // 模型/通道名只在 supervisor 调试入口显示；其余一律中性说法。
+    const debug = hasSupervisorAccess();
+    if (!window.confirm(debug
+      ? "开始语音／看片管理者测试：会调用Google并产生实际成本；普通通道失败会自动改走Gemini API。你明确要求模板推荐或改写时，允许调用当前GLM／DeepSeek顾问，沿用现有扣点确认。开始？"
+      : "开始语音／看片管理者测试：会调用实时语音服务并产生实际成本；主线路失败会自动改走备用线路。你明确要求模板推荐或改写时，允许调用当前创作顾问，沿用现有扣点确认。开始？")) return;
     stop(); const seq = generation.current;
     voiceAbort.current = new AbortController(); toolCalls.current.clear(); setActive(true); setStatus("正在连接…"); setUsage(0);
     audio.current = new AudioContext(); await audio.current.resume();
@@ -86,7 +91,7 @@ export function CreativeVoicePanel(props: {
       if (seq !== generation.current) return;
       try {
         const data = JSON.parse(event.data) as CreativeVoiceEvent;
-        if (data.type === "route") { setRoute(`${data.route === "vertex" ? "Vertex" : "Gemini API"} · ${data.model}${data.fallback ? "（备用）" : ""}`); }
+        if (data.type === "route") { setRoute(debug ? `${data.route === "vertex" ? "Vertex" : "Gemini API"} · ${data.model}${data.fallback ? "（备用）" : ""}` : data.fallback ? "备用线路" : "主线路"); }
         if (data.type === "status") { setStatus(data.text); if (data.ready) setReady(true); }
         if (data.type === "error") { stop(); setStatus(data.text); }
         if (data.type === "usage") setUsage(data.totalTokens);
