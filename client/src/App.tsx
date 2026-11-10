@@ -105,6 +105,13 @@ function SupervisorWorkflowNodesRoute() {
   return <WorkflowNodes />;
 }
 
+function SupervisorTestLabRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <PageLoader />;
+  if (user?.role !== "admin" && user?.role !== "supervisor") return <NotFound />;
+  return <TestLab />;
+}
+
 function LegacyRemixRedirect() {
   const [, navigate] = useLocation();
 
@@ -141,7 +148,7 @@ function Router() {
         <Route path={"/workflow"} component={WorkflowStoryboardToVideo} />
         <Route path={"/workspace"} component={WorkspaceStudio} />
         <Route path={"/templates"} component={TemplatesLibrary} />
-        <Route path={"/test-lab"} component={TestLab} />
+        <Route path={"/test-lab"} component={SupervisorTestLabRoute} />
         <Route path={"/workflow-nodes"} component={SupervisorWorkflowNodesRoute} />
         <Route path={"/creative"} component={CreativePage} />
         <Route path={"/create"} component={CreativePage} />

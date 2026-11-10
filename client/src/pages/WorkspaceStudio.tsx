@@ -452,7 +452,7 @@ export default function WorkspaceStudioPage() {
               </div>
 
               <div className="rounded-lg border border-cyan-300/20 bg-cyan-400/5 p-3 mb-4">
-                <h3 className="font-medium mb-2">工作室控制 V1（Kling）</h3>
+                <h3 className="font-medium mb-2">工作室控制 V1</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                   <label className="flex items-center justify-between rounded-md border border-white/10 px-3 py-2">
                     <span className="text-sm">动作控制</span>

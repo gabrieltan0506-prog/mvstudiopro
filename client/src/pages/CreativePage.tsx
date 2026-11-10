@@ -96,7 +96,7 @@ export default function CreativePage() {
          const usageKey = `gpt2_usage_${user?.id}`;
          const usedCount = parseInt(localStorage.getItem(usageKey) || "0", 10);
          if (usedCount >= 1) {
-           throw new Error("GPT-image-2 免费/内测额度已用尽（限1张），请升级为付费用户继续使用。");
+           throw new Error("精绘生图免费/内测额度已用尽（限1张），请升级为付费用户继续使用。");
          }
          localStorage.setItem(usageKey, (usedCount + 1).toString());
       }
@@ -280,7 +280,7 @@ export default function CreativePage() {
             <div className="font-bold text-amber-200 mb-1">积分</div>
             <ul className="list-disc pl-5 space-y-1 text-amber-100/90">
               <li>
-                <strong>生图</strong>：Nano Banana 2 每张 <strong>35</strong>；GPT-image-2 每张 <strong>54</strong>。
+                <strong>生图</strong>：标准生图每张 <strong>35</strong>；精绘生图每张 <strong>54</strong>。
               </li>
               <li>
                 <strong>转视频</strong>：<strong>10 秒</strong> /{" "}
@@ -326,8 +326,8 @@ export default function CreativePage() {
                     onChange={(e) => setImageModel(e.target.value)}
                     className="rounded-lg border border-white/15 bg-[#0b1020] p-2 text-sm text-white outline-none"
                   >
-                    <option value="gemini-3.1-flash-image-preview">Nano Banana 2</option>
-                    <option value="gpt-image-2">GPT-image-2</option>
+                    <option value="gemini-3.1-flash-image-preview">标准生图</option>
+                    <option value="gpt-image-2">精绘生图</option>
                   </select>
                 </div>
 

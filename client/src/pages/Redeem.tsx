@@ -150,7 +150,7 @@ export default function RedeemPage() {
                 </div>
                 <div className="flex flex-col items-center p-2">
                   <span className="text-2xl font-bold">{result.klingLimit}</span>
-                  <span className="text-xs text-gray-400">Kling 视频</span>
+                  <span className="text-xs text-gray-400">视频生成</span>
                 </div>
                 <div className="flex flex-col items-center p-2">
                   <span className="text-2xl font-bold">+10</span>
@@ -192,7 +192,7 @@ export default function RedeemPage() {
                   { icon: Star, title: "智能分镜生成", desc: "AI 脚本 + 分镜图一键生成" },
                   { icon: User, title: "虚拟偶像 2D/3D", desc: "AI 生成偶像形象 + 3D 转换" },
                   { icon: Music, title: "Suno 音乐生成", desc: "Custom / Simple 双模式创作" },
-                  { icon: Video, title: "Kling 视频生成", desc: "分镜转视频（限 1 次）" },
+                  { icon: Video, title: "视频生成", desc: "分镜转视频（限 1 次）" },
                   { icon: Box, title: "3D Studio", desc: "2D 转 3D 模型 + GLB 导出" },
                   { icon: BarChart, title: "视频 PK 评分", desc: "AI 分析视频质量和表现力" },
                 ].map((f, i) => (
