@@ -195,8 +195,8 @@ export type ManhuaDramaAudioScanResult = {
   }>;
 };
 
-export const DEFAULT_MANHUA_AUDIO_VERTEX_MODEL = "gemini-3.6-flash";
-export const DEFAULT_MANHUA_AUDIO_EVOLINK_MODEL = "gemini-3.6-flash";
+export const DEFAULT_MANHUA_AUDIO_VERTEX_MODEL = GEMINI_AUDIO_TWO_HOP_MODEL; // 1110：Gemini 一律 3.8 Flash
+export const DEFAULT_MANHUA_AUDIO_EVOLINK_MODEL = GEMINI_AUDIO_TWO_HOP_MODEL; // 1110：Gemini 一律 3.8 Flash
 
 export function resolveManhuaAudioVertexModelName(): string {
   return (

@@ -91,6 +91,8 @@ afterEach(() => { fetchMock.mockReset(); vi.unstubAllGlobals(); vi.unstubAllEnvs
 
 describe("通道配置", () => {
   it("听音通道默认模型名仍可显式覆盖（两跳统一用 gemini-3.8-flash 覆盖）", () => {
+    expect(DEFAULT_MANHUA_AUDIO_VERTEX_MODEL).toBe("gemini-3.8-flash");
+    expect(DEFAULT_MANHUA_AUDIO_EVOLINK_MODEL).toBe("gemini-3.8-flash");
     expect(resolveManhuaAudioVertexModelName()).toBe(DEFAULT_MANHUA_AUDIO_VERTEX_MODEL);
     expect(resolveManhuaAudioEvolinkModelName()).toBe(DEFAULT_MANHUA_AUDIO_EVOLINK_MODEL);
     vi.stubEnv("MANHUA_AUDIO_VERTEX_MODEL", "gemini-3.6-flash-custom");
