@@ -121,6 +121,8 @@ it("本人前缀 gcsUri 直接给 Vertex 读 gs://，不下载不转 base64；�
   expect(body.contents[0].parts[1].text).toContain("竖屏短剧/漫剧听写与节奏分析助手");
   expect(body.generationConfig.audioTimestamp).toBe(true);
   expect(body.generationConfig.responseSchema.required).toEqual(["language", "transcriptSummary", "sections"]);
+  // 1110：同文件的转写入口改 temperature 0，本听音扫描不传 → 仍是缺省 0.2 / 8192
+  expect(body.generationConfig).toMatchObject({ temperature: 0.2, maxOutputTokens: 8192 });
   assertTwoHopCompliant();
   // 只落 JSON 证据（本人前缀），不转存媒体；原始回包与解析结果分开存
   expect(uploaded().every(u => u.contentType === "application/json" && /^manhua-template-learn\/audio-scan\/7\/[0-9a-f-]{36}\//.test(u.objectName))).toBe(true);

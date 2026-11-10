@@ -323,9 +323,6 @@ async function issueManhuaLearnUploadUrl(
   }
 }
 
-const TRANSCRIBE_AUDIO_PROMPT = "请将音频内容完整转录为文字，写入 JSON 的 text 字段。只输出转录文字本身，不要任何解释、标注或时间码。";
-const TRANSCRIBE_AUDIO_SCHEMA = { type: "OBJECT", properties: { text: { type: "STRING" } }, required: ["text"] };
-
 /**
  * 1110 看图 / 视频反推帧 / 成片质检通道合规（同听音做法）：媒体先存 GCS（用户前缀，或核验为本人的 gs://），
  * 再走 geminiAudioJsonWithFallback 两跳 —— Vertex 读 gs://，EvoLink 读 V4 签名 https（1 小时）；
@@ -530,14 +527,13 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       if (!bytes.length || bytes.length > maxBytes || bytes.toString("base64") !== audioBase64)
         return res.status(400).json({ ok: false, error: "invalid_audio_base64", message: "音频传输内容损坏，请重新选择原音" });
 
-      // 拒因分类：两跳都失败时仍按原合同回错误码（不完整 422 / 不可用 422 / 上游失败 502）。
-      let incomplete = false;
-      let unusable = false;
       const requestId = randomUUID();
       try {
-        const { geminiAudioJsonWithFallback, isManhuaDramaVertexAudioAvailable, isManhuaDramaEvolinkAudioAvailable, resolveGeminiAudioTwoHopModel } = await import("../server/gemini-audio");
+        const { isManhuaDramaVertexAudioAvailable, isManhuaDramaEvolinkAudioAvailable } = await import("../server/gemini-audio");
         if (!isManhuaDramaVertexAudioAvailable() && !isManhuaDramaEvolinkAudioAvailable())
           return res.status(500).json({ ok: false, error: "missing_env", message: "语音识别服务暂未配置，原音保留，可手动填写" });
+        // 1110：两跳规格（temperature 0、按 12000 字合同估算 maxOutputTokens、STOP 与字数校验）与实测探针共用一处真源
+        const { transcribeVoiceInputTwoHop } = await import("../server/_core/voiceTranscription");
         const bucket = getGcsBucketName();
         const prefix = `voice-transcribe/${viewer.userId}/${requestId}`;
         const save = googleAudioEvidenceSaver(bucket, prefix);
@@ -545,35 +541,16 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         await uploadBufferToGcsIfAbsent({ bucket, objectName, buffer: bytes, contentType: mimeType });
         const audioGsUri = `gs://${bucket}/${objectName}`;
         await save("request", { userId: viewer.userId, op, mimeType, audioGsUri, audioBytes: bytes.length, audioSha256: createHash("sha256").update(bytes).digest("hex") });
-        const result = await geminiAudioJsonWithFallback<{ text: string }>({
-          media: googleAudioTwoHopMedia(audioGsUri),
-          model: resolveGeminiAudioTwoHopModel(),
-          mimeType,
-          prompt: TRANSCRIBE_AUDIO_PROMPT,
-          nativeSchema: TRANSCRIBE_AUDIO_SCHEMA,
-          schemaName: "voice_transcription",
-          checkPayload: payload => {
-            const finish = (payload as { candidates?: Array<{ finishReason?: unknown }> })?.candidates?.[0]?.finishReason;
-            if (finish === "STOP") return undefined;
-            incomplete = true;
-            return `识别不完整：finishReason=${String(finish)}`;
-          },
-          validate: decoded => {
-            const raw = (decoded as { text?: unknown } | null)?.text;
-            const text = typeof raw === "string" ? raw.trim() : "";
-            if (!text || text.length > 12_000) { unusable = true; throw new Error(text ? "转写超过 12000 字" : "转写为空"); }
-            return { text };
-          },
-          save,
-        }).catch(() => null);
-        if (!result) {
+        const out = await transcribeVoiceInputTwoHop({ audioGsUri, mimeType, save });
+        // 拒因分类：两跳都失败时仍按原合同回错误码（不完整 422 / 不可用 422 / 上游失败 502）；拒因原文只在证据里。
+        if (!out.ok) {
           console.warn("[transcribeAudio] 两跳均未取得完整转写", requestId);
-          if (incomplete) return res.status(422).json({ ok: false, error: "transcription_incomplete", message: "识别结果不完整，未将截断文字作为全文，请缩短音频后重新确认" });
-          if (unusable) return res.status(422).json({ ok: false, error: "transcription_unusable", message: "本次未取得可用完整文字，原音保留，可手动填写" });
+          if (out.reason === "incomplete") return res.status(422).json({ ok: false, error: "transcription_incomplete", message: "识别结果不完整，未将截断文字作为全文，请缩短音频后重新确认" });
+          if (out.reason === "unusable") return res.status(422).json({ ok: false, error: "transcription_unusable", message: "本次未取得可用完整文字，原音保留，可手动填写" });
           return res.status(502).json({ ok: false, error: "transcription_upstream_failed", message: "语音识别服务本次未成功，原音保留，请勿连续重试" });
         }
-        await save("transcript", { channel: result.channel, model: result.model, failuresZh: result.failuresZh, text: result.value.text });
-        return res.status(200).json({ ok: true, text: result.value.text });
+        await save("transcript", { channel: out.channel, model: out.model, failuresZh: out.failuresZh, text: out.text });
+        return res.status(200).json({ ok: true, text: out.text });
       } catch {
         // 不回传原错误（可能含内部地址）；证据在 voice-transcribe/<userId>/<requestId>/。
         console.warn("[transcribeAudio] 转存或落证据失败", requestId);

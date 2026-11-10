@@ -16,7 +16,7 @@ vi.mock("./gcs", () => ({
 }));
 vi.mock("./postProdMediaSource", () => ({ resolvePostProdInputSources: async ({ input }: any) => input }));
 
-import { geminiAudioJsonWithFallback } from "../gemini-audio";
+import { GEMINI_AUDIO_MAX_OUTPUT_TOKENS, geminiAudioJsonWithFallback, transcriptionMaxOutputTokens } from "../gemini-audio";
 import { askManhuaSubtitleReview } from "./manhuaAdvisorSubtitle";
 import { hearSongIndependently, resolveSongHearingModel } from "./musicMvSongHearing";
 import { isPerformerTheUser, performerLabelZh } from "../../shared/canvasMusicMvReferences";
@@ -190,6 +190,61 @@ describe("1110 EvoLink 跳只收签名 https（同模板学习做法）", () => 
     expect(JSON.parse(sentBodies()[0]!).contents[0].parts[0].fileData.fileUri).toBe("gs://test-bucket/a.mp3");
     expect(JSON.parse(sentBodies()[1]!).contents[0].parts[0].fileData.fileUri).toMatch(/^https:\/\//);
     expect(JSON.parse(sentBodies()[0]!).generationConfig).not.toHaveProperty("audioTimestamp");
+  });
+});
+
+describe("1110 temperature 入参：转写传 0 两跳都透传，缺省调用方不变", () => {
+  const base = {
+    media: { vertexFileUri: "gs://test-bucket/a.mp3", evolinkFileUri: () => "https://signed.example/test-bucket/a.mp3?X-Goog-Signature=t" },
+    mimeType: "audio/mpeg", prompt: "听", schemaName: "t", validate: (v: unknown) => v,
+  };
+  const recorder = () => {
+    const saved = new Map<string, any>();
+    return { saved, save: async (name: string, value: unknown) => { saved.set(name, value); } };
+  };
+  const generationConfigs = () => sentBodies().map(b => JSON.parse(b).generationConfig);
+
+  it("temperature: 0（转写）→ Vertex 与 EvoLink 请求体都是 0（不被当成未传回落 0.2），两跳 request 证据都记 0", async () => {
+    const { saved, save } = recorder();
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) }).mockResolvedValueOnce(geminiReply("{\"ok\":1}"));
+    const r = await geminiAudioJsonWithFallback({ ...base, temperature: 0, maxOutputTokens: 20_480, save });
+    expect(r.channel).toBe("EvoLink");
+    expect(sentUrls()[0]).toContain("aiplatform.googleapis.com");
+    expect(sentUrls()[1]).toBe("https://direct.evolink.ai/v1beta/models/gemini-3.8-flash:generateContent");
+    expect(generationConfigs().map(c => [c.temperature, c.maxOutputTokens])).toEqual([[0, 20_480], [0, 20_480]]);
+    expect([saved.get("hop-1-vertex-request").temperature, saved.get("hop-2-evolink-request").temperature]).toEqual([0, 0]);
+  });
+
+  it("缺省调用方不变：不传 temperature / maxOutputTokens → 两跳都是 0.2 / 8192", async () => {
+    const { saved, save } = recorder();
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) }).mockResolvedValueOnce(geminiReply("{\"ok\":1}"));
+    await geminiAudioJsonWithFallback({ ...base, save });
+    expect(generationConfigs().map(c => [c.temperature, c.maxOutputTokens])).toEqual([[0.2, 8192], [0.2, 8192]]);
+    expect([saved.get("hop-1-vertex-request").temperature, saved.get("hop-2-evolink-request").temperature]).toEqual([0.2, 0.2]);
+  });
+
+  it("显式传上限的旧调用方（MV 独立听歌 32768）温度仍是 0.2", async () => {
+    fetchMock.mockResolvedValueOnce(geminiReply(JSON.stringify({ kind: "native_music_evidence_v1", sourceKey: `song:${"c".repeat(64)}`, summaryZh: "人声", sections: [{ startSec: 0, endSec: 12, labelZh: "主歌", heardZh: "人声", emotion: { fromZh: "平", toZh: "扬", triggerZh: "鼓", musicZh: "渐强", visualZh: "仅音频，未观察画面" } }], uncertaintiesZh: [] })));
+    await hearSongIndependently({ gcsUri: "gs://test-bucket/song2.wav", mimeType: "audio/wav", durationSec: 12, audioSha256: "c".repeat(64) });
+    expect(generationConfigs().map(c => [c.temperature, c.maxOutputTokens])).toEqual([[0.2, 32_768]]);
+  });
+
+  it("temperature 越界 / 非数 → 不发任何请求、不落证据，直接拒", async () => {
+    for (const temperature of [-0.1, 2.5, Number.NaN, Number.POSITIVE_INFINITY, "0" as unknown as number]) {
+      const { saved, save } = recorder();
+      await expect(geminiAudioJsonWithFallback({ ...base, temperature, save })).rejects.toThrow(/temperature 须在 0–2 之间/);
+      expect(saved.size).toBe(0);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("转写 maxOutputTokens 估算：有字数合同按字数 + 64 + 思考预留 8192 取整到 1024；无合同取单次上限 65536", () => {
+    expect(GEMINI_AUDIO_MAX_OUTPUT_TOKENS).toBe(65_536);
+    expect(transcriptionMaxOutputTokens()).toBe(65_536);
+    expect(transcriptionMaxOutputTokens(12_000)).toBe(20_480); // 12000 + 64 + 8192 = 20256 → 20480
+    expect(transcriptionMaxOutputTokens(100)).toBe(9_216); // 8356 → 9216
+    expect(transcriptionMaxOutputTokens(1_000_000)).toBe(65_536); // 不超单次上限
+    for (const bad of [0, -1, Number.NaN]) expect(() => transcriptionMaxOutputTokens(bad)).toThrow("转写字数上限无效");
   });
 });
 

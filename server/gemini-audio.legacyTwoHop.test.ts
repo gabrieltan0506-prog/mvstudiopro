@@ -226,6 +226,8 @@ describe("音频实验室 analyzeAudioWithGemini（routers audioLab.analyze）",
     expect(modelBodies()[0].contents[0].parts[0].fileData).toEqual({ mimeType: "audio/mpeg", fileUri: expect.stringMatching(/^gs:\/\/test-bucket\/audio-lab\/analysis\/[0-9a-f]{64}\/audio\.mp3$/) });
     expect(modelBodies()[1].contents[0].parts[0].fileData.fileUri).toMatch(/^https:\/\/signed\.example\/test-bucket\/audio-lab\/analysis\//);
     expect(modelBodies()[0].contents[0].parts[1].text).toContain("BPM");
+    // 1110：音频实验室经 listenStagedAudioJson 不传 temperature → 两跳仍是缺省 0.2 / 8192（只有转写改 0）
+    expect(modelBodies().map(b => [b.generationConfig.temperature, b.generationConfig.maxOutputTokens])).toEqual([[0.2, 8192], [0.2, 8192]]);
     assertTwoHopCompliance();
     expect(Array.from(h.store.keys()).some(k => /\/hop-1-vertex-rejected\.json$/.test(k))).toBe(true);
     expect(Array.from(h.store.keys()).some(k => /\/hop-2-evolink-parsed\.json$/.test(k))).toBe(true);
