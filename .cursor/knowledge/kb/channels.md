@@ -17,7 +17,35 @@
 
 ## Gemini 模型配置（1110 起不写死）
 - 真源 `shared/geminiModelConfig.ts` `resolveGeminiModel(domain)`：领域 env → `GEMINI_DEFAULT_MODEL` → `gemini-3.8-flash`；trim，空白回落；非 `gemini-` 合法标识回落并告警；名称含 pro 记 console.warn（不阻断）。
-- 领域 env：`MANHUA_DEEP_READ_MODEL`（模板学习精读首读）、`MANHUA_DEEP_READ_ESCALATION_MODEL`（五发不过后的升级重读，缺省同首读 = 不升级）、`GEMINI_AUDIO_TWO_HOP_MODEL`（听音两跳缺省）、`MV_SONG_HEARING_MODEL`（MV 独立听歌）、`MONTAGE_GRADE_ADVICE_MODEL`（成片调色建议）、`CANVAS_VISION_MODEL`（画布看图 / 视频反推帧）、`MANHUA_CLIP_QUALITY_MODEL`（成片质检）。改 Fly env 重启即生效，已入队任务按保存的模型恢复。
+- 领域表（真源 `GEMINI_MODEL_DOMAIN_ENVS` / `GEMINI_MODEL_DOMAIN_DEFAULTS`，1110 快照；env 按列出顺序取第一个有效值）。缺省标「全局」= 领域 env 未设时走 `GEMINI_DEFAULT_MODEL` → `gemini-3.8-flash`；标「领域」= 领域缺省优先于 `GEMINI_DEFAULT_MODEL`，改全局缺省不会换掉它。改 Fly env 重启即生效，已入队任务按保存的模型恢复。
+
+| 领域 | 用途 | env（按优先顺序） | 缺省 | 缺省是否 Pro |
+| --- | --- | --- | --- | --- |
+| `manhuaDeepRead` | 模板学习精读首读 | `MANHUA_DEEP_READ_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `manhuaDeepReadEscalation` | 精读五发不过后的升级重读（缺省同首读 = 不升级） | `MANHUA_DEEP_READ_ESCALATION_MODEL` → `MANHUA_DEEP_READ_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `audioTwoHop` | 听音两跳缺省 | `GEMINI_AUDIO_TWO_HOP_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `mvSongHearing` | MV 独立听歌 | `MV_SONG_HEARING_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `montageGradeAdvice` | 成片调色建议 | `MONTAGE_GRADE_ADVICE_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `canvasVision` | 画布看图 / 视频反推帧 | `CANVAS_VISION_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `clipQualityReview` | 漫剧成片质检 | `MANHUA_CLIP_QUALITY_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `manhuaAdvisorWatch` | 漫剧顾问·看片 | `MANHUA_ADVISOR_WATCH_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `manhuaAdvisorBgm` | 漫剧顾问·配乐 | `MANHUA_ADVISOR_BGM_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `manhuaAdvisorSubtitle` | 漫剧顾问·字幕 | `MANHUA_ADVISOR_SUBTITLE_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `codeMotionSemantic` | 代码动画·原图语义预检 | `CODE_MOTION_SEMANTIC_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `codeMotionTiming` | 代码动画·词拍听音 | `CODE_MOTION_TIMING_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `platformSkillQa` | 创作顾问问答·联网检索摘要 | `PLATFORM_SKILL_QA_GEMINI_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `llmProTier` | invokeLLM pro 档缺省 | `LLM_GEMINI_PRO_TIER_MODEL` → `VERTEX_GEMINI_MODEL` | `gemini-3.1-pro-preview`（领域） | **是** |
+| `llmFlashTier` | invokeLLM flash / 未指定档缺省 | `LLM_GEMINI_FLASH_TIER_MODEL` → `VERTEX_GEMINI_MODEL` | `gemini-2.5-flash`（领域） | 否 |
+| `platformStage2` | Stage2 专属文案兜底 | `PLATFORM_STAGE2_GEMINI_MODEL` | `gemini-3.1-pro-preview`（领域） | **是** |
+| `flashCopywriting` | Flash 文案 / 生图英文化 | `GEMINI_35_FLASH_MODEL` → `GROWTH_CAMP_EXTRACTOR_MODEL` → `GEMINI_FLASH_TRANSLATION_MODEL` → `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` → `VERTEX_GEMINI_COVER_TRANSLATION_MODEL` | `gemini-3-flash-preview`（领域） | 否 |
+| `compositeFlashTranslation` | 平台 composite 英文化 | `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` → 其余同 Flash 文案链 | `gemini-3-flash-preview`（领域） | 否 |
+| `coverTranslation` | 选题竖封英文化 | `VERTEX_GEMINI_COVER_TRANSLATION_MODEL` → 其余同 Flash 文案链 | `gemini-3-flash-preview`（领域） | 否 |
+| `strategicCoverDirector` | 战略封面 / 扉页 / 抠图双语编导 | `STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL` → `VERTEX_GEMINI_31_PRO_MODEL` → `VERTEX_GEMINI_MODEL` | `gemini-3.1-pro-preview`（领域） | **是** |
+| `deepResearchAssist` | 战略智库辅助生成 | `DEEP_RESEARCH_ASSIST_GEMINI_MODEL` | `gemini-3.1-pro`（领域） | **是** |
+| `growthCampExtractor` | 成长营 Phase 1 音频 / 关键帧粗筛 | `GROWTH_CAMP_EXTRACTOR_MODEL` | `gemini-3.5-flash`（领域） | 否 |
+
+- 缺省为 Pro 的 4 个领域（`llmProTier` / `platformStage2` / `strategicCoverDirector` / `deepResearchAssist`）是搬表前就写死的旧值，行为未变；是否降到 3.8 Flash 待用户拍板（删领域缺省条目或设该领域 env）。
+- 1110 行为变化：创作顾问联网摘要原走 Flash 文案链（缺省 `gemini-3-flash-preview`），改为 `platformSkillQa` 领域后缺省 `gemini-3.8-flash`，不再读 Flash 文案旧 env 链。
 - 精读历史身份不变：`MANHUA_NATIVE_DEEP_READ_MODEL`（3.1 Pro）只作旧任务缺省 / 段缓存指纹缺省身份 / 计划码；3.1 Pro、3.8 Flash 段缓存指纹不写模型，Argon 与配置新模型写入模型；配置新模型车道系列后缀 `-gm-<去前缀、点换下划线>`。精读成本表外模型按表内最高单价估算（不按 0 元）。
 
 ## 视频
