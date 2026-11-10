@@ -28,6 +28,7 @@ import {
   musicMvAdvisorTargetSchema,
   parseMusicMvAdvisorProposal,
 } from "../../shared/canvasMusicMv";
+import { isMvShotEngineSupported } from "../../shared/canvasMusicMvReferences";
 import { getJobByIdStrict, createJob } from "../jobs/repository";
 import { resolveCanvasMusicMvAudio } from "../services/canvasMusicMvMedia";
 import {
@@ -642,9 +643,18 @@ export const canvasMusicMvRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "参考片裁切失败" });
       }
     }),
-  /** 1109 按确认版歌词表修订分镜（演唱/素材填充分工、补逐窗节拍与填充建议），存为新分镜记录。 */
+  /**
+   * 1109 按确认版歌词表修订分镜（演唱/素材填充分工、补逐窗节拍与填充建议），存为新分镜记录。
+   * videoModel：所选镜头成片模型（可选）；有则单镜上限按该模型，缺省（旧客户端/未选）按保守值 max(原镜长, Mini 口径)。
+   */
   reviseForLyrics: protectedProcedure
-    .input(z.object({ basePlanRequestId: z.string().uuid(), lyricTable: z.unknown(), highlight: z.unknown(), musicJobId: z.string().trim().min(1).max(200).optional() }).strict())
+    .input(z.object({
+      basePlanRequestId: z.string().uuid(),
+      lyricTable: z.unknown(),
+      highlight: z.unknown(),
+      musicJobId: z.string().trim().min(1).max(200).optional(),
+      videoModel: z.string().trim().min(1).max(64).refine(isMvShotEngineSupported, "所选成片模型暂不支持 MV 镜头").optional(),
+    }).strict())
     .mutation(async ({ ctx, input }) => {
       const { reviseMusicMvPlanForLyrics } = await import("../services/musicMvPlanRevision");
       try {

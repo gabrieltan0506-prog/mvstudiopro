@@ -2087,7 +2087,7 @@ export function CanvasMusicMvStudio({
           />
           {highlightMode && state.plan && state.planRequestId && <button className={button} disabled={busy || state.lyricTable?.status !== "confirmed" || !state.highlight} onClick={()=>void perform(async()=>{
             // 1109：真歌词→演唱段，吟唱→素材填充段（跨吟唱起点的镜切开），补逐窗节拍与填充建议；存为新分镜记录后重新铺镜头
-            const revised = await reviseForLyrics.mutateAsync({ basePlanRequestId: latest.current.planRequestId!, lyricTable: latest.current.lyricTable, highlight: latest.current.highlight, ...(latest.current.musicJobId ? { musicJobId: latest.current.musicJobId } : {}) });
+            const revised = await reviseForLyrics.mutateAsync({ basePlanRequestId: latest.current.planRequestId!, lyricTable: latest.current.lyricTable, highlight: latest.current.highlight, ...(latest.current.musicJobId ? { musicJobId: latest.current.musicJobId } : {}), ...(block.videoModel && videoModelOptions?.some(m => m.id === block.videoModel) ? { videoModel: block.videoModel } : {}) });
             patch({ plan: revised.plan, planRequestId: revised.requestId, shotBlockIds: undefined, error: revised.beatsFailed.length || revised.fillFailuresZh.length ? `已重排镜头；${revised.beatsFailed.length ? `逐窗节拍未出：${revised.beatsFailed.join("、")}；` : ""}${revised.fillFailuresZh.join("；")}` : undefined });
           })}>按确认版歌词重排镜头（演唱/素材填充）</button>}
           <h3 data-mv-step="shots" className="border-t border-white/15 pt-5 text-base font-semibold">4. 制作镜头</h3>

@@ -28,7 +28,7 @@ const prefix = (userId: number, id: string) => `canvas-music-mv/evidence/${userI
 
 export async function reviseMusicMvPlanForLyrics(
   userId: number,
-  input: { basePlanRequestId: string; lyricTable: MusicMvLyricTable; highlight: { startSec: number; endSec: number }; musicJobId?: string },
+  input: { basePlanRequestId: string; lyricTable: MusicMvLyricTable; highlight: { startSec: number; endSec: number }; musicJobId?: string; videoModel?: string },
 ) {
   const table = musicMvLyricTableSchema.parse(input.lyricTable);
   if (table.status !== "confirmed") throw new Error("请先确认歌词表，再按歌词重排镜头");
@@ -57,10 +57,12 @@ export async function reviseMusicMvPlanForLyrics(
     grid = await computeSongBeatGrid(song, baseInput.creativePrompt);
   }
   const inRange = parted.shots.filter(s => s.endSec > highlight.startSec && s.startSec < highlight.endSec);
-  // 2b) 演唱镜剪点不切唱句：落在确认版唱句中间的剪点移到句间（修订不知所选模型：任一镜不得被拉长到超过 max(原长, 默认单镜上限)）
-  const lyricCut = snapSingingCutsToLyricLines(inRange, table.lines, { maxShotSec: mvShotPlanMaxSec() });
+  // 2b) 演唱镜剪点不切唱句：落在确认版唱句中间的剪点移到句间。单镜上限按所选模型（mvShotPlanMaxSec）；
+  //     缺省（旧客户端/未选模型）按保守值：任一镜不得被拉长到超过 max(原长, Mini 口径单镜上限)
+  const maxShotSec = mvShotPlanMaxSec(input.videoModel);
+  const lyricCut = snapSingingCutsToLyricLines(inRange, table.lines, { maxShotSec });
   const changes = [...parted.changes, ...lyricCut.fixes.map(f => ({ id: f.shotId, action: f.action, detailZh: f.reasonZh }))];
-  const snapped = snapShotCutsToBeats(lyricCut.shots, grid!, 0.5, mvShotPlanMaxSec());
+  const snapped = snapShotCutsToBeats(lyricCut.shots, grid!, 0.5, maxShotSec);
   const byId = new Map(snapped.shots.map(s => [s.id, s]));
   const { strongBeatsSec: _drop, ...audioMap } = grid!;
   let plan = canvasMusicMvPlanSchema.parse({ ...basePlan, beatGrid: audioMap, shots: parted.shots.map(s => byId.get(s.id) ?? s) });
@@ -83,7 +85,7 @@ export async function reviseMusicMvPlanForLyrics(
     referenceSummaries: baseInput.referenceSummaries.length ? baseInput.referenceSummaries : ["全片主锚图（生成的主角定妆帧）"],
   });
   plan = validateCanvasMusicMvPlan(plan, revisedInput);
-  const revision = { revisedFrom: input.basePlanRequestId, highlight, lyricTable: table, changes, lyricCutFixes: lyricCut.fixes, snapFixes: snapped.fixes, beats: beats && { filled: beats.filledShotIds, failed: beats.failedShotIds, failuresZh: beats.failuresZh }, fill: fill && { filled: fill.filled, failuresZh: fill.failuresZh } };
+  const revision = { revisedFrom: input.basePlanRequestId, highlight, lyricTable: table, shotLimit: { videoModel: input.videoModel ?? null, maxShotSec }, changes, lyricCutFixes: lyricCut.fixes, snapFixes: snapped.fixes, beats: beats && { filled: beats.filledShotIds, failed: beats.failedShotIds, failuresZh: beats.failuresZh }, fill: fill && { filled: fill.filled, failuresZh: fill.failuresZh } };
   await save("revision", revision);
   const receipt = (name: string, value: unknown) => ({ objectName: `${out}/${name}.json`, bytes: Buffer.byteLength(JSON.stringify(value)), sha256: createHash("sha256").update(JSON.stringify(value)).digest("hex") });
   await save("result", { plan, input: revisedInput, evidence: { ...saved.evidence, revision: receipt("revision", revision) } });
