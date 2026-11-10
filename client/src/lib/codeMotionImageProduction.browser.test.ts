@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { testEvidenceDir } from "@shared/testEvidenceDir";
 import { build } from "esbuild";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -75,7 +76,7 @@ imageAdopt:mutation(async input=>{record('apiAdopt');return{sceneIndex:input.ind
     const restored = await page.evaluate(()=>JSON.parse(localStorage.getItem('yingke:draft:7')!).project);
     expect(restored.brief.images).toHaveLength(1);
     expect(restored.plan.scenes[0].composition.elements.map((e:any)=>e.id)).toEqual(['ink-generated-image-0','ball']);
-    const evidence = path.resolve('docs/evidence/code-motion-1011/images'); await mkdir(evidence,{recursive:true});
+    const evidence = testEvidenceDir('code-motion-1011/images'); await mkdir(evidence,{recursive:true});
     await writeFile(path.join(evidence,'studio-raw-trace.json'),JSON.stringify(await page.evaluate(()=>({events:(globalThis as any).fixture.events,stored:JSON.parse(localStorage.getItem('image-probe:store')!),local:JSON.parse(localStorage.getItem('yingke:draft:7')!),batches:(globalThis as any).fixture.batches})),null,2));
     await page.screenshot({path:path.join(evidence,'studio-restored.png'),fullPage:true});
     await (await page.$('[aria-label="制作场景图"]'))!.screenshot({path:path.join(evidence,'image-panel-restored.png')});

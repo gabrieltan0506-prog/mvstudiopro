@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import { exec } from "child_process";
 import util from "util";
+import { requireUploadLogin } from "../upload";
 
 const execPromise = util.promisify(exec);
 
@@ -25,7 +26,8 @@ const client = createSpeechClient();
 const upload = multer({ storage: multer.memoryStorage() });
 
 export function registerSpeechApiRoutes(app: Express) {
-  app.post("/api/speech-to-text", upload.single("audio"), async (req, res) => {
+  // 须登录（原先匿名可调：付费语音识别 + 服务端转码）。在接收文件之前认人，未登录不收文件、不转码、不识别。
+  app.post("/api/speech-to-text", requireUploadLogin, upload.single("audio"), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "No audio file found" });
     }

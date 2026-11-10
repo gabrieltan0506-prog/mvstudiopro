@@ -6152,6 +6152,8 @@ export default function PlatformPage() {
           nativeVideoFps,
           nativeStandaloneSource: localVideoSource || manhuaLearnStandaloneSource,
           nativeReadModel: requestedReadModel,
+          // 续学：带上系列键，服务端核实该系列已入库后按其原读片配置续学（与当前配置无关）。
+          ...(requestedReadModel && resumeSeriesKey ? { nativeResumeSeriesKey: resumeSeriesKey } : {}),
           nativeStructuringModel: manhuaLearnStructuringModel,
         };
       }

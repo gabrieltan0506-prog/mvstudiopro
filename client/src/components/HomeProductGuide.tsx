@@ -108,7 +108,7 @@ export default function HomeProductGuide() {
     >
       <div style={{ fontSize: 13, fontWeight: 800, color: "#c7d2fe", marginBottom: 8 }}>站内智能向导</div>
       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.6, marginBottom: 10 }}>
-        随便问：适合用哪个功能、大约多少积分、怎么开始。每次约 2 点，回答由 Gemini 3.1 Pro 生成。
+        随便问：适合用哪个功能、大约多少积分、怎么开始。每次约 2 点。
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
         <textarea

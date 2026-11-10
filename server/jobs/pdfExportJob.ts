@@ -1,6 +1,7 @@
 import { type JobType, recordPdfExportStep } from "./repository";
 import { downloadGcsObject, deleteGcsObject, uploadBufferToGcs, signGsUriV4ReadUrl, resolvePdfExportBucketName } from "../services/gcs";
 import { fetchPdfBufferFromWorker } from "../services/pdfWorkerClient";
+import { assertOwnPdfHtmlSnapshotUri } from "../services/pdfHtmlSnapshot";
 
 type Envelope = { action?: string; params?: Record<string, unknown> };
 
@@ -24,10 +25,13 @@ export async function processPdfExportJob(
     throw new Error(`Unsupported pdf_export action: ${String(input.action)}`);
   }
   const params = input.params ?? {};
-  const htmlGcsUri = String(params.htmlGcsUri ?? "").trim();
-  if (!htmlGcsUri.startsWith("gs://")) {
+  const rawHtmlGcsUri = String(params.htmlGcsUri ?? "").trim();
+  if (!rawHtmlGcsUri.startsWith("gs://")) {
     throw new Error("pdf_export missing htmlGcsUri");
   }
+  // 执行前再核一次归属（入队已核过）：只读、只删本桶 pdf-async/html/<本人uid>/ 下的快照；不符即拒，零下载零删除。
+  const snapshot = assertOwnPdfHtmlSnapshotUri(rawHtmlGcsUri, userId);
+  const htmlGcsUri = snapshot.gcsUri;
   const token = typeof params.token === "string" ? params.token : "";
 
   await recordPdfExportStep(jobId, "validate_input", `htmlGcsUri=${htmlGcsUri.slice(0, 160)}`);
@@ -61,13 +65,8 @@ export async function processPdfExportJob(
   await recordPdfExportStep(jobId, "sign_download_url");
   const downloadUrl = signGsUriV4ReadUrl(pdfGcsUri, 3600);
 
-  const { bucket: htmlBucket, objectName: htmlObj } = (() => {
-    const u = htmlGcsUri.replace(/^gs:\/\//, "");
-    const i = u.indexOf("/");
-    return { bucket: u.slice(0, i), objectName: u.slice(i + 1) };
-  })();
   await recordPdfExportStep(jobId, "delete_html_snapshot_start", htmlGcsUri.slice(0, 200));
-  await deleteGcsObject({ bucket: htmlBucket, objectName: htmlObj }).catch((e) => {
+  await deleteGcsObject({ bucket: snapshot.bucket, objectName: snapshot.objectName }).catch((e) => {
     console.warn("[pdf_export] delete html snapshot failed:", (e as Error).message);
   });
   await recordPdfExportStep(jobId, "delete_html_snapshot_done");

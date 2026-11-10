@@ -17,7 +17,16 @@ import {
 } from "@shared/growth";
 import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM, extractJsonString } from "../_core/llm";
-import { deleteGcsObject, downloadGcsObject, isGsUri, uploadBufferToGcs } from "../services/gcs";
+import {
+  deleteGcsObject,
+  downloadGcsObject,
+  getGcsBucketName,
+  isGsUri,
+  signGsUriV4ReadUrl,
+  uploadBufferToGcs,
+  uploadBufferToGcsIfAbsent,
+} from "../services/gcs";
+import { geminiAudioJsonWithFallback } from "../gemini-audio";
 import { storageRead } from "../storage";
 import {
   resolveGrowthCampExtractorModel,
@@ -82,8 +91,66 @@ type VideoFailureStage =
 
 type SparseFrame = {
   timestamp: number;
-  dataUrl: string;
+  /** 帧图已存 GCS：Vertex 跳直读 gs://；EvoLink / GPT 跳现签 https（约 2 小时）。不内联 base64。 */
+  gcsUri: string;
 };
+
+/** 帧图签名 https 有效期：约 2 小时（覆盖 Strategist 退避重试与长视频多轮请求）。 */
+const FRAME_SIGNED_URL_TTL_SECONDS = 2 * 3600;
+
+/**
+ * 1110「不传 base64 图片，用签名 URL」：抽出的帧图先存 GCS，与本次分析任务的视频 / 音轨副本同挂 growth-camp/ 下、同一任务编号 runId。
+ * - 帧图：growth-camp/frames/<runId>/<序号>-<毫秒>ms.jpg —— 临时媒体，进 uploadedObjects，与视频 / 音轨副本同一清理口径（GROWTH_CAMP_KEEP_GCS_TEMP）。
+ * - 模型证据：growth-camp/evidence/<runId>/… —— 原始与解析 JSON 分别永久保留，不进清理名单；只记 gs://，不落签名 URL。
+ */
+type GrowthAnalysisGcs = {
+  runId: string;
+  evidencePrefix: string;
+  storeFrames: (frames: Array<{ timestamp: number; buffer: Buffer }>) => Promise<SparseFrame[]>;
+};
+
+function createGrowthAnalysisGcs(runId: string, uploadedObjects: string[]): GrowthAnalysisGcs {
+  let seq = 0;
+  return {
+    runId,
+    evidencePrefix: `growth-camp/evidence/${runId}`,
+    async storeFrames(frames) {
+      const named = frames.map((frame) => ({
+        ...frame,
+        objectName: `growth-camp/frames/${runId}/${String(seq++).padStart(3, "0")}-${Math.round(frame.timestamp * 1000)}ms.jpg`,
+      }));
+      // 并行上传；全部落定后再判失败，避免清理名单漏掉仍在途的帧图。
+      const settled = await Promise.allSettled(named.map(async (frame) => {
+        const stored = await uploadBufferToGcs({ objectName: frame.objectName, buffer: frame.buffer, contentType: "image/jpeg" });
+        uploadedObjects.push(stored.objectName);
+        return { timestamp: frame.timestamp, gcsUri: stored.gcsUri } satisfies SparseFrame;
+      }));
+      const failed = settled.find((item): item is PromiseRejectedResult => item.status === "rejected");
+      if (failed) throw failed.reason;
+      return settled.map((item) => (item as PromiseFulfilledResult<SparseFrame>).value);
+    },
+  };
+}
+
+/** EvoLink / GPT 跳：帧图 gs:// → V4 签名 https（发请求前现签；签名 URL 只进请求体，不入证据）。 */
+function signFrameUrl(frame: SparseFrame): string {
+  return signGsUriV4ReadUrl(frame.gcsUri, FRAME_SIGNED_URL_TTL_SECONDS);
+}
+
+/** 模型证据（原始 / 解析 JSON 分别落档）：只增不覆盖、永不删除，复用 uploadBufferToGcsIfAbsent。 */
+function createGrowthEvidenceSaver(prefix: string) {
+  const bucket = getGcsBucketName();
+  return async (name: string, value: unknown) => {
+    const saved = await uploadBufferToGcsIfAbsent({
+      bucket,
+      objectName: `${prefix}/${name}.json`,
+      buffer: Buffer.from(JSON.stringify(value)),
+      contentType: "application/json",
+    });
+    if (!saved.created) throw new Error("视频分析证据已存在，未覆盖原记录");
+    return saved;
+  };
+}
 
 /** BGM（背景音乐）识别结果
  *
@@ -458,7 +525,11 @@ function buildSparseFrameTimestamps(duration: number, strategy: SparseFrameStrat
     .sort((a, b) => a - b);
 }
 
-async function extractSparseFramesAtTimestamps(videoPath: string, timestampsSeconds: number[]): Promise<SparseFrame[]> {
+async function extractSparseFramesAtTimestamps(
+  videoPath: string,
+  timestampsSeconds: number[],
+  gcs: GrowthAnalysisGcs,
+): Promise<SparseFrame[]> {
   const unique = Array.from(new Set(timestampsSeconds.map((t) => Number(t.toFixed(2)))))
     .filter((t) => t >= 0)
     .sort((a, b) => a - b);
@@ -470,7 +541,7 @@ async function extractSparseFramesAtTimestamps(videoPath: string, timestampsSeco
   );
   await fs.mkdir(frameDir, { recursive: true });
   try {
-    const frames: SparseFrame[] = [];
+    const frames: Array<{ timestamp: number; buffer: Buffer }> = [];
     for (let index = 0; index < unique.length; index += 1) {
       const absoluteTimestamp = unique[index];
       const outPath = path.join(frameDir, `frame-${String(index).padStart(2, "0")}.jpg`);
@@ -488,13 +559,9 @@ async function extractSparseFramesAtTimestamps(videoPath: string, timestampsSeco
         "5",
         outPath,
       ]);
-      const frameBuffer = await fs.readFile(outPath);
-      frames.push({
-        timestamp: absoluteTimestamp,
-        dataUrl: `data:image/jpeg;base64,${frameBuffer.toString("base64")}`,
-      });
+      frames.push({ timestamp: absoluteTimestamp, buffer: await fs.readFile(outPath) });
     }
-    return frames;
+    return await gcs.storeFrames(frames);
   } finally {
     await fs.rm(frameDir, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -693,6 +760,7 @@ async function runExtractOnlyPipeline(params: {
   fileName?: string;
   extractPrompt?: string;
   mode: GrowthAnalysisMode;
+  gcs: GrowthAnalysisGcs;
 }) {
   const extractEngine = resolveGrowthCampPhase2Engine();
   const transcriptChunks: string[] = [];
@@ -727,7 +795,7 @@ async function runExtractOnlyPipeline(params: {
   });
   const targetTimestamps = buildExtractTargetTimestamps(params.duration, scan.priorityMoments);
   const sparseFrames = targetTimestamps.length
-    ? await extractSparseFramesAtTimestamps(params.videoPath, targetTimestamps)
+    ? await extractSparseFramesAtTimestamps(params.videoPath, targetTimestamps, params.gcs)
     : [];
 
   let visualFirstPass = buildEmptyVisualFirstPass();
@@ -772,6 +840,7 @@ async function runExtractOnlyPipeline(params: {
 
 async function extractSparseFramesFromPath(
   videoPath: string,
+  gcs: GrowthAnalysisGcs,
   startSeconds = 0,
   durationSeconds?: number,
   strategy: SparseFrameStrategy = "dense",
@@ -784,7 +853,7 @@ async function extractSparseFramesFromPath(
   );
   await fs.mkdir(frameDir, { recursive: true });
   try {
-    const frames: SparseFrame[] = [];
+    const frames: Array<{ timestamp: number; buffer: Buffer }> = [];
     for (let index = 0; index < timestamps.length; index += 1) {
       const chunkTimestamp = timestamps[index];
       const absoluteTimestamp = startSeconds + chunkTimestamp;
@@ -803,13 +872,9 @@ async function extractSparseFramesFromPath(
         "5",
         outPath,
       ]);
-      const frameBuffer = await fs.readFile(outPath);
-      frames.push({
-        timestamp: absoluteTimestamp,
-        dataUrl: `data:image/jpeg;base64,${frameBuffer.toString("base64")}`,
-      });
+      frames.push({ timestamp: absoluteTimestamp, buffer: await fs.readFile(outPath) });
     }
-    return { duration: boundedDuration, frames };
+    return { duration: boundedDuration, frames: await gcs.storeFrames(frames) };
   } finally {
     await fs.rm(frameDir, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -1073,20 +1138,7 @@ async function runAudioFirstPass(params: {
   };
 }
 
-async function runVisualFirstPass(params: {
-  sparseFrames: SparseFrame[];
-  context?: string;
-  duration: number;
-  fileName?: string;
-}): Promise<VisualFirstPass> {
-  const response = await invokeLLM({
-    model: "pro",
-    provider: "vertex",
-    modelName: growthCampFirstPassModel(),
-    messages: [
-      {
-        role: "system",
-        content: `你是一位短视频视觉策略分析师。你现在只做“关键帧视觉初判”，不要分析音频，不要假装看了完整视频。
+const VISUAL_FIRST_PASS_SYSTEM_PROMPT = `你是一位短视频视觉策略分析师。你现在只做“关键帧视觉初判”，不要分析音频，不要假装看了完整视频。
 
 规则：
 1. 只能依据给你的关键帧做判断。
@@ -1116,35 +1168,16 @@ async function runVisualFirstPass(params: {
       "emotionalTension": "string（这一帧的情绪张力——景别+表情+剪辑节奏带来的情绪推力）"
     }
   ]
-}`,
-      },
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: [
-              `文件名：${params.fileName || "未命名视频"}`,
-              `业务背景：${params.context?.trim() || "未提供"}`,
-              `视频时长：${params.duration.toFixed(1)} 秒`,
-              `关键帧时间点：${params.sparseFrames.map((item) => toTimestamp(item.timestamp)).join("、")}`,
-            ].join("\n\n"),
-          },
-          ...params.sparseFrames.map((item, index) => ({
-            type: "image_url" as const,
-            image_url: {
-              url: item.dataUrl,
-              detail: index < 3 ? "high" as const : "auto" as const,
-            },
-          })),
-        ],
-      },
-    ],
-    response_format: { type: "json_object" },
-  });
+}`;
 
-  const parsed = JSON.parse(extractJsonString(String(response.choices[0]?.message?.content || "{}")));
-  return {
+/**
+ * 关键帧视觉初判回包校验（两跳 validate）：非对象、或画面总结与关键帧都为空 = 写坏，换下一跳；
+ * 其余字段按旧口径规整（结构不变）。
+ */
+function parseVisualFirstPass(decoded: unknown): VisualFirstPass {
+  const parsed = decoded as Record<string, any> | null;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("视觉初判结果不是 JSON 对象");
+  const result: VisualFirstPass = {
     visualSummary: String(parsed.visualSummary || ""),
     openingFrameAssessment: String(parsed.openingFrameAssessment || ""),
     sceneConsistency: String(parsed.sceneConsistency || ""),
@@ -1161,6 +1194,60 @@ async function runVisualFirstPass(params: {
         }))
       : [],
   };
+  if (!result.visualSummary.trim() && !result.keyFrames.length) throw new Error("视觉初判缺少 visualSummary 与 keyFrames");
+  return result;
+}
+
+/**
+ * 关键帧视觉初判（Gemini）：帧图已存 GCS，走 gemini-audio 两跳——Vertex 读 gs:// → EvoLink 读签名 https（约 2 小时）；
+ * 模型经 geminiModelConfig 领域 growthCampExtractor（GROWTH_CAMP_EXTRACTOR_MODEL → 领域缺省，与改动前同一模型）；超时 / 断线 / HTTP 错 / 空回 / 写坏都切下一跳。
+ * 每跳 request / raw / decoded / parsed / rejected 永久落 <evidencePrefix>/，证据只记 gs://。
+ */
+async function runVisualFirstPass(params: {
+  sparseFrames: SparseFrame[];
+  context?: string;
+  duration: number;
+  fileName?: string;
+  /** 永久证据目录（growth-camp/evidence/<runId>/visual-first-pass-<分段>） */
+  evidencePrefix: string;
+}): Promise<VisualFirstPass> {
+  const model = growthCampFirstPassModel();
+  const save = createGrowthEvidenceSaver(params.evidencePrefix);
+  const prompt = [
+    `文件名：${params.fileName || "未命名视频"}`,
+    `业务背景：${params.context?.trim() || "未提供"}`,
+    `视频时长：${params.duration.toFixed(1)} 秒`,
+    `关键帧时间点：${params.sparseFrames.map((item) => toTimestamp(item.timestamp)).join("、")}`,
+  ].join("\n\n");
+  await save("request", {
+    area: "growth-camp/visual-first-pass",
+    model,
+    fileName: params.fileName || "",
+    durationSeconds: params.duration,
+    frames: params.sparseFrames.map((frame) => ({ timestamp: frame.timestamp, gcsUri: frame.gcsUri })),
+  });
+  const [firstFrame, ...restFrames] = params.sparseFrames;
+  if (!firstFrame) throw new Error("视觉初判缺少关键帧");
+  const out = await geminiAudioJsonWithFallback({
+    media: { vertexFileUri: firstFrame.gcsUri, evolinkFileUri: () => signFrameUrl(firstFrame) },
+    extraMedia: restFrames.map((frame) => ({
+      mimeType: "image/jpeg",
+      vertexFileUri: frame.gcsUri,
+      evolinkFileUri: () => signFrameUrl(frame),
+    })),
+    mimeType: "image/jpeg",
+    model,
+    systemInstruction: VISUAL_FIRST_PASS_SYSTEM_PROMPT,
+    prompt,
+    schemaName: "growth_camp_visual_first_pass",
+    validate: parseVisualFirstPass,
+    save,
+    // 与原 Vertex Flash 口径一致：JSON 输出上限 32768、温度 0.8
+    maxOutputTokens: 32768,
+    temperature: 0.8,
+    timeoutMs: 240_000,
+  });
+  return out.value;
 }
 
 /** 提取模式：GPT-5.6 Sol 关键帧视觉描述（不做商业/钩子解读） */
@@ -1209,10 +1296,11 @@ async function runExtractVisualFirstPass(params: {
               `关键帧时间点：${params.sparseFrames.map((item) => toTimestamp(item.timestamp)).join("、")}`,
             ].join("\n\n"),
           },
+          // GPT 跳（官方 → EvoLink）读不了 gs://：帧图现签 https（约 2 小时），不内联 base64
           ...params.sparseFrames.map((item, index) => ({
             type: "image_url" as const,
             image_url: {
-              url: item.dataUrl,
+              url: signFrameUrl(item),
               detail: index < 4 ? "high" as const : "auto" as const,
             },
           })),
@@ -1541,10 +1629,11 @@ function buildStrategistMultimodalUserContent(params: {
           : "转写摘录：暂无或转写失败，请依第一阶段音频结论和关键帧判断。",
       ].join("\n\n"),
     },
+    // GPT 跳（官方 → EvoLink）读不了 gs://：帧图现签 https（约 2 小时），不内联 base64
     ...params.sparseFrames.map((item, index) => ({
       type: "image_url" as const,
       image_url: {
-        url: item.dataUrl,
+        url: signFrameUrl(item),
         detail: index < 2 ? ("high" as const) : ("auto" as const),
       },
     })),
@@ -1732,10 +1821,11 @@ function buildExtractMultimodalUserContent(params: {
         `【视觉初判 JSON】\n${JSON.stringify(params.visualFirstPass, null, 2)}`,
       ].filter(Boolean).join("\n\n"),
     },
+    // GPT 跳（官方 → EvoLink）读不了 gs://：帧图现签 https（约 2 小时），不内联 base64
     ...params.sparseFrames.map((item, index) => ({
       type: "image_url" as const,
       image_url: {
-        url: item.dataUrl,
+        url: signFrameUrl(item),
         detail: index < 4 ? ("high" as const) : ("auto" as const),
       },
     })),
@@ -1934,6 +2024,7 @@ async function runPlatformReferenceAssetPipeline(params: {
   mode: GrowthAnalysisMode;
   uploadedObjects?: string[];
   progress?: AssetAnalysisProgressReporter;
+  gcs: GrowthAnalysisGcs;
 }) {
   let transcript = "";
   let audioFirstPass = emptyAudioFirstPass();
@@ -1980,6 +2071,7 @@ async function runPlatformReferenceAssetPipeline(params: {
 
   const sparseFrames = await extractSparseFramesFromPath(
     params.videoPath,
+    params.gcs,
     0,
     params.duration,
     "slim",
@@ -2200,6 +2292,9 @@ export async function analyzeVideo(params: {
   progress?: AssetAnalysisProgressReporter;
 }): Promise<VideoAnalysisResult> {
   const uploadedObjects: string[] = [];
+  // 本次分析任务编号：视频副本、帧图（临时媒体）与模型证据（永久）同用，便于按任务对账。
+  const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const gcs = createGrowthAnalysisGcs(runId, uploadedObjects);
   try {
     const strategistEngine = resolveGrowthCampStrategistEngine(params.modelName);
     const finalModel = strategistEngine.modelName;
@@ -2239,7 +2334,7 @@ export async function analyzeVideo(params: {
     const safeName = (params.fileName || "video.mp4").replace(/[^a-z0-9._-]/gi, "-");
     if (!videoGcsUri) {
       const storedVideo = await uploadBufferToGcs({
-        objectName: `growth-camp/videos/${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${safeName}`,
+        objectName: `growth-camp/videos/${runId}-${safeName}`,
         buffer,
         contentType: params.mimeType || "video/mp4",
       });
@@ -2269,6 +2364,7 @@ export async function analyzeVideo(params: {
           mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
           uploadedObjects,
           progress: params.progress,
+          gcs,
         });
         return {
           analysis: liteResult.analysis,
@@ -2303,6 +2399,7 @@ export async function analyzeVideo(params: {
           fileName: params.fileName,
           extractPrompt: params.extractPrompt,
           mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
+          gcs,
         });
         return {
           analysis: extractResult.analysis,
@@ -2363,7 +2460,7 @@ export async function analyzeVideo(params: {
 
         // ✨ GROWTH / REMIX 模式用 slim 策略（≥5min=8帧 / <5min=10帧），降本提速
         const frameStrategy: SparseFrameStrategy = (params.mode === "GROWTH" || params.mode === "REMIX") ? "slim" : "dense";
-        const sparseFrames = await extractSparseFramesFromPath(videoPath, chunk.start, chunk.duration, frameStrategy).catch((error) => {
+        const sparseFrames = await extractSparseFramesFromPath(videoPath, gcs, chunk.start, chunk.duration, frameStrategy).catch((error) => {
           console.warn("[growth.analyzeVideo] sparse frame extraction failed:", error);
           throw new VideoAnalysisFailure("frame_extraction", normalizeFailureReason(error));
         });
@@ -2374,6 +2471,7 @@ export async function analyzeVideo(params: {
           context: params.context,
           duration: chunk.duration,
           fileName: `${params.fileName || "video"}#${chunk.index + 1}`,
+          evidencePrefix: `${gcs.evidencePrefix}/visual-first-pass-${chunk.index + 1}`,
         }).catch((error) => {
           console.warn("[growth.analyzeVideo] visual first pass failed:", error);
           throw new VideoAnalysisFailure("llm", normalizeFailureReason(error));

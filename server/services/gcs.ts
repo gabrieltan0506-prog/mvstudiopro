@@ -105,7 +105,7 @@ function getGoogleServiceAccount(): ServiceAccountCredentials {
   throw new Error("Missing GOOGLE_APPLICATION_CREDENTIALS_JSON or GOOGLE_APPLICATION_CREDENTIALS");
 }
 
-function buildCanonicalHeaders(host: string, contentType: string, userProject?: string) {
+function buildCanonicalHeaders(host: string, contentType: string, userProject?: string, contentLengthRange?: string) {
   const normalizedContentType = String(contentType || "application/octet-stream").trim() || "application/octet-stream";
   const normalizedUserProject = String(userProject || "").trim();
   const headerLines = [
@@ -113,6 +113,11 @@ function buildCanonicalHeaders(host: string, contentType: string, userProject?: 
     `host:${host}`,
   ];
   const signedHeaders = ["content-type", "host"];
+  // 签名头须按字母序：x-goog-content-length-range 排在 x-goog-user-project 之前
+  if (contentLengthRange) {
+    headerLines.push(`x-goog-content-length-range:${contentLengthRange}`);
+    signedHeaders.push("x-goog-content-length-range");
+  }
   if (normalizedUserProject) {
     headerLines.push(`x-goog-user-project:${normalizedUserProject}`);
     signedHeaders.push("x-goog-user-project");
@@ -155,7 +160,12 @@ export async function createGcsSignedUploadUrl(params: {
   expiresInMinutes?: number;
   /** 覆寫默認 GCS 桶（例如 PDF 異步 HTML 快照專用） */
   bucket?: string;
-}): Promise<{ bucket: string; objectName: string; gcsUri: string; uploadUrl: string; requiredHeaders?: Record<string, string> }> {
+  /**
+   * 上传大小上限（字节）。给定时把 x-goog-content-length-range: 0,<上限> 签进链接：
+   * 上传方必须原样带上该请求头（见返回的 requiredHeaders），超限由存储侧拒收；不带或改值则签名不符。
+   */
+  maxBytes?: number;
+}): Promise<{ bucket: string; objectName: string; gcsUri: string; uploadUrl: string; requiredHeaders?: Record<string, string>; maxBytes?: number }> {
   const bucket = String(params.bucket || "").trim() || getGcsBucketName();
   if (!bucket) {
     throw new Error("GCS bucket is not configured");
@@ -172,7 +182,9 @@ export async function createGcsSignedUploadUrl(params: {
   const host = "storage.googleapis.com";
   const encodedObjectName = objectName.split("/").map(encodeURIComponent).join("/");
   const canonicalUri = `/${bucket}/${encodedObjectName}`;
-  const { contentType, canonicalHeaders, signedHeaders } = buildCanonicalHeaders(host, params.contentType, userProject);
+  const maxBytes = Number.isFinite(Number(params.maxBytes)) && Number(params.maxBytes) > 0 ? Math.floor(Number(params.maxBytes)) : 0;
+  const contentLengthRange = maxBytes ? `0,${maxBytes}` : "";
+  const { contentType, canonicalHeaders, signedHeaders } = buildCanonicalHeaders(host, params.contentType, userProject, contentLengthRange);
 
   const queryParams = new URLSearchParams({
     "X-Goog-Algorithm": "GOOG4-RSA-SHA256",
@@ -215,7 +227,14 @@ export async function createGcsSignedUploadUrl(params: {
     objectName,
     gcsUri: `gs://${bucket}/${objectName}`,
     uploadUrl: `https://${host}${canonicalUri}?${queryParams.toString()}`,
-    requiredHeaders: userProject ? { "x-goog-user-project": userProject } : undefined,
+    requiredHeaders:
+      userProject || contentLengthRange
+        ? {
+            ...(contentLengthRange ? { "x-goog-content-length-range": contentLengthRange } : {}),
+            ...(userProject ? { "x-goog-user-project": userProject } : {}),
+          }
+        : undefined,
+    ...(maxBytes ? { maxBytes } : {}),
   };
 }
 

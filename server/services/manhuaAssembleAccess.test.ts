@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { assertManhuaAssembleJobOwner, hasCurrentManhuaAssembleBillingContract, resolveManhuaAssembleAccess } from "./manhuaAssembleAccess.js";
 import { MANHUA_ASSEMBLE_LEDGER_TYPE } from "./manhuaAssembleBilling.js";
 import { CREDIT_COSTS } from "../plans.js";
+import { hasSupervisorRole, isLegacyUnbilledKlingJobAction } from "../../shared/internalMediaEndpointPolicy.js";
 
 const params = { billingContractVersion: "manhua-assemble-v1", clips: [{ clipUrl: "https://example.test/clip.mp4" }] };
 const input = { action: "manhua_assemble_final", params };
@@ -38,6 +39,7 @@ function queueRuntime(user: unknown) {
   const deps = {
     createContext: vi.fn(async () => ({ user })), createJob,
     resolveManhuaAssembleAccess, hasCurrentManhuaAssembleBillingContract,
+    isLegacyUnbilledKlingJobAction, hasSupervisorRole,
     CREATIVE_NANO_IMAGE_ACTION: "creative_nano_image", nanoid: () => "job-7",
     processJobsOnce: vi.fn(async () => {}),
   };
@@ -176,5 +178,43 @@ describe("合成真实入口鉴权（执行源码，不发网络）", () => {
       expect(ledger.unregisterActiveJob).not.toHaveBeenCalled();
       if (mode === "timeout") expect(save).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("通用任务队列不收匿名入队（执行源码，不发网络）", () => {
+  const body = (type: string, action: string) => ({ type, input: { action, params: { prompt: "测试" } } });
+
+  it.each([
+    ["audio", "suno_music"], ["video", "omni_t2v"], ["video", "omni_i2v"], ["video", "omni_storyboard"],
+    ["video", "motion_control"], ["video", "lip_sync"], ["image", "virtual_idol"], ["video", "some_future_action"],
+  ])("匿名 %s/%s → 401，不入队", async (type, action) => {
+    const q = queueRuntime(null);
+    const res = response();
+    await q.handle({ method: "POST", query: {}, body: body(type, action) }, res);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(q.createJob).not.toHaveBeenCalled();
+    expect(q.processJobsOnce).not.toHaveBeenCalled();
+  });
+
+  it.each(["omni_t2v", "omni_i2v", "omni_storyboard", "motion_control", "lip_sync"])("无计费的旧可灵 %s：普通用户 403，监管放行", async action => {
+    const user = queueRuntime({ id: 7, role: "user" });
+    const denied = response();
+    await user.handle({ method: "POST", query: {}, body: body("video", action) }, denied);
+    expect(denied.status).toHaveBeenCalledWith(403);
+    expect(user.createJob).not.toHaveBeenCalled();
+
+    const supervisor = queueRuntime({ id: 1, role: "supervisor" });
+    const allowed = response();
+    await supervisor.handle({ method: "POST", query: {}, body: body("video", action) }, allowed);
+    expect(allowed.status).toHaveBeenCalledWith(200);
+    expect(supervisor.createJob).toHaveBeenCalledWith(expect.objectContaining({ userId: "1", type: "video" }));
+  });
+
+  it("登录用户的音乐任务照常入队，归属为会话用户", async () => {
+    const q = queueRuntime({ id: 7, role: "user" });
+    const res = response();
+    await q.handle({ method: "POST", query: {}, body: body("audio", "suno_music") }, res);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(q.createJob).toHaveBeenCalledWith(expect.objectContaining({ userId: "7", type: "audio", provider: "suno" }));
   });
 });

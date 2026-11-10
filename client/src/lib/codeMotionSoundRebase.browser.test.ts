@@ -1,4 +1,5 @@
 import {expect,it} from 'vitest';
+import { testEvidenceDir } from "@shared/testEvidenceDir";
 import {build} from 'esbuild';
 import path from 'node:path';
 import puppeteer from 'puppeteer';
@@ -14,7 +15,7 @@ async function probe(rejected=false){
  await open();await click();await page.waitForFunction(()=>document.querySelector('#duration')?.textContent==='21.1');
  const evidence=await page.evaluate(()=>({requests:JSON.parse(localStorage.getItem('requests')!),saves:localStorage.getItem('save-count'),pending:localStorage.getItem('ink:sound-adoption:11111111-1111-4111-8111-111111111111'),duration:document.querySelector('#duration')?.textContent}));
  expect(evidence.requests).toHaveLength(2);expect(evidence.requests[0]).toEqual(evidence.requests[1]);expect(evidence.saves).toBe(rejected?'2':'1');expect(evidence.pending).toBeNull();expect(errors).toEqual([]);
- const dir=path.resolve('docs/evidence/code-motion-1011/sounds/rebase');await mkdir(dir,{recursive:true});await page.screenshot({path:path.join(dir,rejected?'rejected-retry.png':'restored.png'),fullPage:true});await writeFile(path.join(dir,rejected?'browser-rejected.json':'browser.json'),JSON.stringify({...evidence,errors},null,2));
+ const dir=testEvidenceDir('code-motion-1011/sounds/rebase');await mkdir(dir,{recursive:true});await page.screenshot({path:path.join(dir,rejected?'rejected-retry.png':'restored.png'),fullPage:true});await writeFile(path.join(dir,rejected?'browser-rejected.json':'browser.json'),JSON.stringify({...evidence,errors},null,2));
  }finally{await browser.close()}
 }
 it('measured adoption resumes the same saved generation after a lost response and reload without saving stale audio or buying speech',()=>probe(),60000);

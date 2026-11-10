@@ -24,7 +24,16 @@
  * });
  * ```
  */
-import { isGeminiAudioAvailable, listenStagedAudioJson } from "../gemini-audio";
+import {
+  GEMINI_TRANSCRIPTION_TEMPERATURE,
+  gcsAudioTwoHopMedia,
+  geminiAudioJsonWithFallback,
+  isGeminiAudioAvailable,
+  listenStagedAudioJson,
+  resolveGeminiAudioTwoHopModel,
+  transcriptionMaxOutputTokens,
+  type GeminiAudioJsonChannel,
+} from "../gemini-audio";
 
 export type TranscribeOptions = {
   audioUrl?: string; // URL to the audio file (e.g., S3 URL)
@@ -85,7 +94,7 @@ const TRANSCRIPTION_NATIVE_SCHEMA = {
   required: ["language", "durationSec", "text", "segments"],
 };
 
-function buildTranscriptionPrompt(options: TranscribeOptions): string {
+function buildTranscriptionPrompt(options: Pick<TranscribeOptions, "language" | "prompt">): string {
   return [
     "你是逐字听写员。逐字转写所附音频里实际说出或唱出的内容：不总结、不翻译、不补写，听不清的字用「□」占位。",
     "按自然句切分 segments，每段给音频内起止秒（startSec / endSec，保留两位小数，按时间先后且不重叠）；text 为全文。",
@@ -124,6 +133,80 @@ function parseTranscription(decoded: unknown, fallbackLanguage?: string): Whispe
     text: v.text.trim(),
     segments,
   };
+}
+
+/**
+ * 服务端转写两跳规格（transcribeAudio 与 scripts/probe-transcribe-sample.mts 共用一处真源）：
+ * 逐字听写 temperature 0；带逐句时间轴、无全文字数上限 → maxOutputTokens 取单次上限（依据见 transcriptionMaxOutputTokens）。
+ */
+export function voiceTranscriptionListenSpec(options: Pick<TranscribeOptions, "language" | "prompt">) {
+  return {
+    prompt: buildTranscriptionPrompt(options),
+    nativeSchema: TRANSCRIPTION_NATIVE_SCHEMA,
+    schemaName: "voice_transcription_v1",
+    validate: (decoded: unknown) => parseTranscription(decoded, options.language),
+    temperature: GEMINI_TRANSCRIPTION_TEMPERATURE,
+    maxOutputTokens: transcriptionMaxOutputTokens(),
+    timeoutMs: 240_000,
+    context: { language: options.language || null, userPrompt: options.prompt || null },
+  };
+}
+
+/** 短语音识别（api/google.ts op=transcribeAudio）全文上限：超出判「不可用」（原合同），也是该入口 maxOutputTokens 的估算依据。 */
+export const VOICE_INPUT_TRANSCRIPT_MAX_CHARS = 12_000;
+const VOICE_INPUT_TRANSCRIBE_PROMPT = "请将音频内容完整转录为文字，写入 JSON 的 text 字段。只输出转录文字本身，不要任何解释、标注或时间码。";
+const VOICE_INPUT_TRANSCRIBE_SCHEMA = { type: "OBJECT", properties: { text: { type: "STRING" } }, required: ["text"] };
+
+export type VoiceInputTranscribeOutcome =
+  | { ok: true; text: string; channel: GeminiAudioJsonChannel; model: string; failuresZh: string[]; payload: unknown }
+  /** detailZh 含各跳拒因，只进日志 / 探针，不回给前台。 */
+  | { ok: false; reason: "incomplete" | "unusable" | "upstream"; detailZh: string };
+
+/**
+ * 短语音识别两跳（api/google.ts op=transcribeAudio 与 scripts/probe-transcribe-sample.mts 共用的生产函数）：
+ * 音频须已存 GCS（Vertex 读 gs://，EvoLink 读 V4 签名 https）；只要全文 {text}，temperature 0，
+ * maxOutputTokens 按 12000 字合同估算。finishReason 不是 STOP（截断 / 被拦）判不完整，空文或超 12000 字判不可用，均换下一跳；
+ * 两跳都失败回拒因类别（不完整优先，其次不可用，否则上游失败），入口照原合同回 422 / 422 / 502。
+ */
+export async function transcribeVoiceInputTwoHop(input: {
+  audioGsUri: string;
+  mimeType: string;
+  save: (name: string, value: unknown) => Promise<unknown>;
+}): Promise<VoiceInputTranscribeOutcome> {
+  let incomplete = false;
+  let unusable = false;
+  let detailZh = "";
+  const result = await geminiAudioJsonWithFallback<{ text: string }>({
+    media: gcsAudioTwoHopMedia(input.audioGsUri),
+    model: resolveGeminiAudioTwoHopModel(),
+    mimeType: input.mimeType,
+    prompt: VOICE_INPUT_TRANSCRIBE_PROMPT,
+    nativeSchema: VOICE_INPUT_TRANSCRIBE_SCHEMA,
+    schemaName: "voice_transcription",
+    temperature: GEMINI_TRANSCRIPTION_TEMPERATURE,
+    maxOutputTokens: transcriptionMaxOutputTokens(VOICE_INPUT_TRANSCRIPT_MAX_CHARS),
+    checkPayload: payload => {
+      const finish = (payload as { candidates?: Array<{ finishReason?: unknown }> })?.candidates?.[0]?.finishReason;
+      if (finish === "STOP") return undefined;
+      incomplete = true;
+      return `识别不完整：finishReason=${String(finish)}`;
+    },
+    validate: decoded => {
+      const raw = (decoded as { text?: unknown } | null)?.text;
+      const text = typeof raw === "string" ? raw.trim() : "";
+      if (!text || text.length > VOICE_INPUT_TRANSCRIPT_MAX_CHARS) {
+        unusable = true;
+        throw new Error(text ? `转写超过 ${VOICE_INPUT_TRANSCRIPT_MAX_CHARS} 字` : "转写为空");
+      }
+      return { text };
+    },
+    save: input.save,
+  }).catch((error: unknown) => {
+    detailZh = error instanceof Error ? error.message : String(error);
+    return null;
+  });
+  if (!result) return { ok: false, reason: incomplete ? "incomplete" : unusable ? "unusable" : "upstream", detailZh };
+  return { ok: true, text: result.value.text, channel: result.channel, model: result.model, failuresZh: result.failuresZh, payload: result.payload };
 }
 
 /**
@@ -197,20 +280,15 @@ export async function transcribeAudio(
       };
     }
 
-    // Step 3: 存 GCS → 两跳（每跳原始 / 解析 JSON 永久落 voice-transcription/<sha256>/attempts/<uuid>/）
+    // Step 3: 存 GCS → 两跳（每跳原始 / 解析 JSON 永久落 voice-transcription/<sha256>/attempts/<uuid>/）；
+    // 1110 规格（temperature 0、maxOutputTokens 65536 等）与实测探针共用 voiceTranscriptionListenSpec
     let transcription: WhisperResponse;
     try {
       const out = await listenStagedAudioJson({
         area: "voice-transcription",
         audio: audioBuffer,
         mimeType,
-        prompt: buildTranscriptionPrompt(options),
-        nativeSchema: TRANSCRIPTION_NATIVE_SCHEMA,
-        schemaName: "voice_transcription_v1",
-        validate: (decoded) => parseTranscription(decoded, options.language),
-        maxOutputTokens: 32768,
-        timeoutMs: 240_000,
-        context: { language: options.language || null, userPrompt: options.prompt || null },
+        ...voiceTranscriptionListenSpec(options),
       });
       transcription = out.value;
     } catch (error) {

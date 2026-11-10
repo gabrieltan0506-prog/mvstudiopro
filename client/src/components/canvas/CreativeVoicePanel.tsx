@@ -1,4 +1,5 @@
 import { inspectCreativeVoiceWorkspace } from "@/lib/creativeVoiceWorkspaceInspect";
+import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import type { CreativeVoiceProductionAction } from "@shared/creativeVoiceProduction";
 import type { CreativeVoiceNovelAction } from "@shared/creativeVoiceNovel";
 import type { AdvisorMediaProposal, AdvisorMediaSource } from "@shared/manhuaAdvisorMediaEdit";
@@ -74,7 +75,11 @@ export function CreativeVoicePanel(props: {
   useEffect(() => () => { if (file) URL.revokeObjectURL(file.url); }, [file]);
   async function start() {
     if (active || props.disabled) return;
-    if (!window.confirm("开始语音／看片管理者测试：会调用Google并产生实际成本；普通通道失败会自动改走Gemini API。你明确要求模板推荐或改写时，允许调用当前GLM／DeepSeek顾问，沿用现有扣点确认。开始？")) return;
+    // 模型/通道名只在 supervisor 调试入口显示；其余一律中性说法。
+    const debug = hasSupervisorAccess();
+    if (!window.confirm(debug
+      ? "开始语音／看片管理者测试：会调用Google并产生实际成本；普通通道失败会自动改走Gemini API。你明确要求模板推荐或改写时，允许调用当前GLM／DeepSeek顾问，沿用现有扣点确认。开始？"
+      : "开始语音／看片管理者测试：会调用实时语音服务并产生实际成本；主线路失败会自动改走备用线路。你明确要求模板推荐或改写时，允许调用当前创作顾问，沿用现有扣点确认。开始？")) return;
     stop(); const seq = generation.current;
     voiceAbort.current = new AbortController(); toolCalls.current.clear(); setActive(true); setStatus("正在连接…"); setUsage(0);
     audio.current = new AudioContext(); await audio.current.resume();
@@ -86,7 +91,7 @@ export function CreativeVoicePanel(props: {
       if (seq !== generation.current) return;
       try {
         const data = JSON.parse(event.data) as CreativeVoiceEvent;
-        if (data.type === "route") { setRoute(`${data.route === "vertex" ? "Vertex" : "Gemini API"} · ${data.model}${data.fallback ? "（备用）" : ""}`); }
+        if (data.type === "route") { setRoute(debug ? `${data.route === "vertex" ? "Vertex" : "Gemini API"} · ${data.model}${data.fallback ? "（备用）" : ""}` : data.fallback ? "备用线路" : "主线路"); }
         if (data.type === "status") { setStatus(data.text); if (data.ready) setReady(true); }
         if (data.type === "error") { stop(); setStatus(data.text); }
         if (data.type === "usage") setUsage(data.totalTokens);
@@ -255,7 +260,7 @@ export function CreativeVoicePanel(props: {
         <label>本机影片 <input type="file" accept="video/*" disabled={sharing || videoAudio} onChange={e => { const picked = e.target.files?.[0]; if (picked) setFile({ url: URL.createObjectURL(picked), name: picked.name, identity: `file:${picked.name}:${picked.size}:${picked.lastModified}` }); }} /></label>
         {file && <><video ref={localVideo} src={file.url} controls playsInline className="max-h-64 w-full bg-black" /><button type="button" className={button} disabled={sharing || videoAudio} onClick={() => setFile(null)}>改用页面播放器</button></>}
         {!file && <><button type="button" className={button} disabled={sharing || videoAudio} onClick={() => setVideos(Array.from(document.querySelectorAll("video")).filter(v => v !== localVideo.current))}>读取本页播放器</button><select aria-label="定位的播放器" value={selected} disabled={sharing || videoAudio} className="max-w-full bg-slate-900 p-2 text-white" onChange={e => setSelected(Number(e.target.value))}>{videos.map((v, i) => <option value={i} key={i}>播放器{i + 1} · {Number.isFinite(v.duration) ? Math.round(v.duration) : "?"}秒</option>)}</select></>}
-        <p>此处仅播放影片、定位和记录意见，不向 Live 传送影片画面或音轨。影片与音轨审阅请使用创作顾问的「审阅所选影片 · Gemini Flash」，也可用语音要求审阅当前影片。</p>
+        <p>此处仅播放影片、定位和记录意见，不向 Live 传送影片画面或音轨。影片与音轨审阅请使用创作顾问的「审阅所选影片」，也可用语音要求审阅当前影片。</p>
       </fieldset>
       <div className="flex gap-2"><input aria-label="向语音顾问打字提问" value={question} maxLength={4000} onChange={e => setQuestion(e.target.value)} className="min-w-0 flex-1 rounded border bg-transparent p-2" /><button type="button" className={button} disabled={!ready || !question.trim()} onClick={() => { send({ type: "text", text: question }); append(`你：${question}\n`); setQuestion(""); }}>发送</button></div>
       <details open><summary>讨论记录 · 保存在本机</summary><pre className="max-h-52 overflow-auto whitespace-pre-wrap">{notes || "尚无记录"}</pre><button type="button" className={button} disabled={!notes} onClick={download}>下载记录</button></details>

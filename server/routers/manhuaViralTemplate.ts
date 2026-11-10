@@ -87,10 +87,14 @@ export const manhuaViralTemplateRouter = router({
     .input(z.object({ params: z.record(z.string(), z.unknown()) }))
     .query(async ({ ctx, input }) => {
       assertSiteOwner(ctx.user);
-      const { parseNewNativeDeepReadJobConfirmation } = await import("../../shared/manhuaNativeDeepReadJob.js");
+      const { parseNewNativeDeepReadJobConfirmation, readNativeDeepReadResumeSeriesKey } = await import("../../shared/manhuaNativeDeepReadJob.js");
       const { readManhuaLearnExtraSourceHosts } = await import("../services/manhuaLearn0996Source.js");
       const { buildNativeDeepReadPlanPreviewFromServices } = await import("../services/manhuaNativeDeepReadPlanRuntime.js");
-      const confirmed = parseNewNativeDeepReadJobConfirmation(input.params, { extraSourceHosts: readManhuaLearnExtraSourceHosts() });
+      // 续学：只有带了系列键才去核实该系列是否已入库（新学不加载学习服务、不读存储）。
+      const storedSeriesKey = readNativeDeepReadResumeSeriesKey(input.params)
+        ? await (await import("../services/manhuaTemplateLearnService.js")).resolveStoredManhuaNativeResumeSeriesKey(input.params)
+        : undefined;
+      const confirmed = parseNewNativeDeepReadJobConfirmation(input.params, { extraSourceHosts: readManhuaLearnExtraSourceHosts(), storedSeriesKey });
       const plan = await buildNativeDeepReadPlanPreviewFromServices({
         url: confirmed.url, localVideoUploadId: confirmed.localVideoUploadId,
         userId: String(ctx.user.id), limit: confirmed.planLimit,

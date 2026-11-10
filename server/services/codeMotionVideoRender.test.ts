@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { testEvidenceDir } from "../../shared/testEvidenceDir";
 import {
   applyCodeMotionTiming,
   codeMotionTimingSchema,
@@ -10,7 +11,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 const archive = new Map<string, Buffer>();
-const dir = path.resolve("docs/evidence/ink-1011-video-consumer");
+const dir = testEvidenceDir("ink-1011-video-consumer");
 vi.mock("./artMotionEvidenceStore", () => ({
   persistArtMotionEvidence: async (
     _u: string,

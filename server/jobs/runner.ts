@@ -35,6 +35,13 @@ import { normalizePlatformTopicExpandEngine } from "../../shared/platformTopicSh
 import { appRouter, buildPlatformContent, slimBuildPlatformContentDiagnosticsForJob } from "../routers";
 import { invokeLLM, extractJsonString, type FileContent } from "../_core/llm";
 import { deleteGcsObject, getGcsBucketName } from "../services/gcs";
+import { assertPlatformQaWorkerFileUri } from "../services/platformQaUpload";
+
+/** platform_qa 附件：空值 → 无附件；有值必须通过归属核验，返回规范 gs://。 */
+export function resolvePlatformQaJobFileUri(raw: unknown): string | undefined {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  return value ? assertPlatformQaWorkerFileUri(value).gcsUri : undefined;
+}
 import { isOwnedManhuaLearnImportGcsUri } from "../../shared/manhuaLearnVideoSegments.js";
 import { resolveWatermark } from "../services/tier-provider-routing.js";
 import { buildStage1StrategicHandoffForStage2 } from "../services/stage1StrategicHandoff.js";
@@ -122,7 +129,9 @@ import {
   isNativeDeepReadCurrentContractModel,
   MANHUA_NATIVE_DEEP_READ_MODEL,
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
+  assertNativeDeepReadResumeSeriesPlan,
   parseNativeDeepReadJobConfirmation,
+  readNativeDeepReadResumeSeriesKey,
   resolveNativeDeepReadJobTimeoutMs,
 } from "../../shared/manhuaNativeDeepReadJob.js";
 import { readManhuaLearnExtraSourceHosts } from "../services/manhuaLearn0996Source.js";
@@ -1004,6 +1013,12 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
           confirmation,
           nativePlanPreview,
         );
+        // 续学绑定：凭已入库系列放行的非配置模型只能落在该系列，不得另起新系列。
+        assertNativeDeepReadResumeSeriesPlan({
+          resumeSeriesKey: readNativeDeepReadResumeSeriesKey(params),
+          readModel: confirmation.readModel,
+          planSeriesKey: nativePlanPreview.seriesKey,
+        });
         // 「已隔离占位」是内部术语；对用户说清楚：这几集有没结清的历史账单，本次不动它们
         const quarantinedClaims = nativePlanPreview.pendingClaimEpisodeIndexes.length
           ? ` · 第 ${nativePlanPreview.pendingClaimEpisodeIndexes.join("、")} 集疑似仍在处理，本次等待（可在学习任务中查看）`
@@ -2623,9 +2638,9 @@ async function processAudioJob(
 /**
  * 平台异步任务处理器。
  *
- * platform_analysis：
- *   第 1 阶段：vertex / gemini-3.1-pro-preview，生成深度内容蓝图
- *   第 2 阶段：vertex / gemini-3.1-pro-preview，校准趋势信号与平台看板
+ * platform_analysis（不走 Gemini）：
+ *   第 1 阶段：invokePlatformAnalysisChat（北京 Qwen 3.8 → 新加坡 Qwen 3.8 → GLM-5.3），生成深度内容蓝图
+ *   第 2 阶段：同一路由，校准趋势信号与平台看板
  *
  * platform_qa：
  *   **OpenAI GPT‑5.5**（与深度追问同步路径）；纯文本 JSON。有 fileUri 时暂保留 Gemini 多模态读附件。
@@ -3004,7 +3019,8 @@ async function processPlatformJob(
       const context = String(params.context || "");
       const windowDays = Number(params.windowDays || 15);
       const snapshot = (params.snapshot || {}) as Record<string, unknown>;
-      const fileUri = typeof params.fileUri === "string" ? params.fileUri : undefined;
+      // 执行前再核一次（入队已核过）：附件只收 QA 桶 platform-qa/ 下的对象；不符即拒，不交给模型、不删除。
+      const fileUri = resolvePlatformQaJobFileUri(params.fileUri);
       const fileMimeTypeRaw =
         typeof params.fileMimeType === "string" ? params.fileMimeType : "application/octet-stream";
       const allowedFileMimes = [
@@ -3125,12 +3141,11 @@ async function processPlatformJob(
         };
       } finally {
         if (fileUri) {
-          const match = fileUri.match(/^gs:\/\/([^/]+)\/(.+)$/);
-          if (match) {
-            await deleteGcsObject({ bucket: match[1], objectName: match[2] }).catch((err) => {
-              console.warn(`[processPlatformJob] 删除 GCS 临时文件失败 ${fileUri}:`, err);
-            });
-          }
+          // fileUri 已是核验后的规范地址：只会删 QA 桶 platform-qa/ 下的那个附件
+          const owned = assertPlatformQaWorkerFileUri(fileUri);
+          await deleteGcsObject({ bucket: owned.bucket, objectName: owned.objectName }).catch((err) => {
+            console.warn(`[processPlatformJob] 删除 GCS 临时文件失败 ${fileUri}:`, err);
+          });
         }
       }
     }

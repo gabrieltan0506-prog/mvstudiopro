@@ -44,6 +44,16 @@ it("知识卡上下文可进入同一鉴权SSE，保留原请求与回放标记"
   const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(input)});
   expect(res.status).toBe(200);const text=await res.text();expect(text).toContain('"replayed":true');expect(text).toContain('event: result');expect(mocks.ask).toHaveBeenCalledWith(input);
 }));
+it("漫剧顾问各跳标签发往浏览器前换成中性说法，不带模型与通道名", () => endpoint(async url => {
+  mocks.ask.mockImplementationOnce(async () => {
+    const ctx = mocks.caller.mock.calls[0][0];
+    ctx.advisorStream("reset", "DeepSeek V4.1 Flash 1017 · OpenRouter"); ctx.advisorStream("reset", "GLM 5.3 FlashX · EvoLink"); ctx.advisorStream("reset", "影片审阅"); ctx.advisorStream("delta", "先推近");
+    return { answer: "先推近", remainingFreeToday: 4 };
+  });
+  const text = await (await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"manhuaContext":{}}' })).text();
+  expect(text).not.toMatch(/DeepSeek|GLM|OpenRouter|EvoLink|Flash/i);
+  expect(text.match(/event: reset/g)).toHaveLength(3); expect(text).toContain('"text":"创作顾问"'); expect(text).toContain('"text":"影片审阅"'); expect(text).toContain("先推近");
+}));
 it("知识卡不向前台发送模型、技术流或原始错误", () => endpoint(async url => {
   mocks.ask.mockImplementationOnce(async()=>{
     const ctx=mocks.caller.mock.calls[0][0];ctx.advisorStream('reset','DeepSeek 1017 OpenRouter');ctx.advisorStream('delta','request_id=private');

@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
+import { hasSupervisorRole } from "../shared/internalMediaEndpointPolicy.js";
 
 function s(v:any){
   if(v==null) return "";
@@ -29,8 +30,26 @@ function tryParse(t:string){
   try { return JSON.parse(t); } catch { return null; }
 }
 
+/** 取登录用户与角色；未登录/校验失败返回 null（不抛）。 */
+async function resolveKlingImageUser(req: VercelRequest): Promise<{ userId: number; role: string } | null> {
+  try {
+    const { sdk } = await import("../server/_core/sdk.js");
+    const user = await sdk.authenticateRequest(req as any, { silentMissing: true });
+    const userId = Number((user as any)?.id);
+    if (!Number.isFinite(userId) || userId <= 0) return null;
+    return { userId, role: String((user as any)?.role || "") };
+  } catch {
+    return null;
+  }
+}
+
 export default async function handler(req:VercelRequest,res:VercelResponse){
   try{
+    // 本入口直调付费出图上游且不扣费，只有管理员测试台在用：一律须监管/管理员登录（原先匿名可调，含 op=probe 真实出图）。
+    const viewer = await resolveKlingImageUser(req);
+    if (!viewer) return res.status(401).json({ ok:false, error:"authentication_required", message:"请先登录后再使用" });
+    if (!hasSupervisorRole(viewer.role)) return res.status(403).json({ ok:false, error:"supervisor_only", message:"该入口仅供监管验收" });
+
     const AK = s(process.env.KLING_CN_IMAGE_ACCESS_KEY).trim();
     const SK = s(process.env.KLING_CN_IMAGE_SECRET_KEY).trim();
     const BASE = (s(process.env.KLING_CN_BASE_URL) || "https://api-beijing.klingai.com").replace(/\/+$/,"");

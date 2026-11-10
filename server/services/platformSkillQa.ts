@@ -15,15 +15,15 @@ import { buildManhuaCraftReference } from "../../shared/manhuaCraftKnowledge";
 import { buildManhuaAdvisorKnowledgeReference } from "./manhuaAdvisorKnowledgeReference";
 import { advisorWorkflowPlanSchema, parseAdvisorWorkflowPlan, buildAdvisorWorkflowQuestion } from "../../shared/manhuaAdvisorWorkflowPlan";
 import { parseAdvisorMediaProposal } from "../../shared/manhuaAdvisorMediaEdit";
-import { askManhuaFilmReview } from "./manhuaAdvisorFilmReview";
+import { askManhuaFilmReview, resolveManhuaAdvisorWatchModel } from "./manhuaAdvisorFilmReview";
 import { advisorRewriteResponseSchema, advisorTemplatePlansSchema, validateAdvisorRewriteBody, splitManhuaEpisodeStoryText, TEMPLATE_REWRITE_MARKER, TEMPLATE_REWRITE_DELIVERY } from "../../shared/manhuaAdvisorRewrite";
 import { TEMPLATE_CATALOG_REQUEST_MARKER } from "../../shared/manhuaTemplateCraft";
 import { MANHUA_DIALOGUE_CRAFT_ZH } from "../../shared/manhuaDialogueCraft";
 import { MANHUA_ADVISOR_PROJECT_FREE, MANHUA_ADVISOR_PAID_CREDITS } from "../../shared/manhuaAdvisorPolicy";
 import { askMusicMvAdvisor, askSunoSongAdvisor, askCreativeLearning } from "./musicMvAdvisor";
 import { musicMvAdvisorProposalSchema, sunoSongProposalSchema } from "../../shared/canvasMusicMv";
-import { askManhuaBgmMix, MANHUA_BGM_ADVISOR_MODEL } from "./manhuaAdvisorBgmMix";
-import { askManhuaSubtitleReview } from "./manhuaAdvisorSubtitle";
+import { askManhuaBgmMix, resolveManhuaAdvisorBgmModel } from "./manhuaAdvisorBgmMix";
+import { askManhuaSubtitleReview, resolveManhuaAdvisorSubtitleModel } from "./manhuaAdvisorSubtitle";
 import { parseAdvisorBgmMixPlan } from "../../shared/manhuaAdvisorBgmMix";
 import { buildAdvisorModelReviewFacts, composeAdvisorPromptReviewAnswer } from "../../shared/manhuaAdvisorModelReview.js";
 import { buildManhuaTemplateAdvisorReference } from "./manhuaTemplateAdvisorReference.js";
@@ -42,7 +42,9 @@ import { ADVISOR_PREVIS_EDIT_INSTRUCTIONS, parseAdvisorPrevisPatch, prepareAdvis
  * 核心口径：像可调用趋势库的 ChatGPT——**先直接回答用户问题**；
  * Skill 仅作软参考，禁止被 Skill 带跑成全案策略看板。
  */
+import { randomUUID } from "node:crypto";
 import { and, count, eq, gte, inArray } from "drizzle-orm";
+import { resolveGeminiModel, type GeminiModelEnv } from "../../shared/geminiModelConfig.js";
 import { extractFirstChoicePlainText, extractJsonString, invokeLLM, type Message } from "../_core/llm.js";
 import {
   resolvePlatformSkillQaOpenAiModel,
@@ -702,31 +704,111 @@ async function buildTrendEvidenceForQuestion(
   }
 }
 
-/** 联网摘要：Gemini googleSearch；失败则空串，不阻断主问答 */
-async function buildWebEvidenceForQuestion(question: string): Promise<string> {
-  if (!shouldFetchWebEvidence(question)) return "";
-  try {
-    const { callGemini35FlashCopywriting } = await import("./gemini35FlashRuntime.js");
-    const brief = await Promise.race([
-      callGemini35FlashCopywriting({
-        taskSystemInstruction: `你是调研助手。请针对用户问题做简短联网核实摘要（简体中文）。
+/**
+ * 1110 模型不写死：联网检索摘要（googleSearch）的 Gemini 模型
+ * env PLATFORM_SKILL_QA_GEMINI_MODEL → GEMINI_DEFAULT_MODEL → gemini-3.8-flash（Pro 级需用户批准，解析时告警）。
+ */
+export function resolvePlatformSkillQaGeminiModel(env?: GeminiModelEnv): string {
+  return resolveGeminiModel("platformSkillQa", env);
+}
+
+const WEB_EVIDENCE_TASK_INSTRUCTION = `你是调研助手。请针对用户问题做简短联网核实摘要（简体中文）。
 要求：
 1. 只输出事实要点与可核对方向，不要写成发帖计划或策略看板。
 2. 分点：品类/类型、需求是否持续、利润与定价常见口径、时间节点/合规注意。
 3. 不确定就写「未证实」；禁止伪造具体成交额、伪造链接。
-4. 全文控制在 800 字以内。`,
-        userText: `用户问题：\n${question}\n\n请检索公开信息后给出摘要。`,
-        responseMimeType: "text/plain",
-        maxOutputTokens: 2048,
-        temperature: 0.3,
-      }),
-      new Promise<string>((resolve) => setTimeout(() => resolve(""), 28_000)),
-    ]);
-    const text = String(brief || "").trim();
-    if (!text || text.length < 40) return "";
-    return `【联网检索摘要（公开信息归纳，非内部库；可与趋势库对照）】\n${text.slice(0, 2400)}`;
+4. 全文控制在 800 字以内。`;
+/** 与旧版同一总时限：两跳共用，超时即放弃联网摘要，不拖慢主问答。 */
+const WEB_EVIDENCE_TIMEOUT_MS = 28_000;
+
+export type PlatformSkillQaWebRoute = "vertex" | "evolink";
+export type PlatformSkillQaWebEvidenceDeps = {
+  available(route: PlatformSkillQaWebRoute): Promise<boolean>;
+  post(route: PlatformSkillQaWebRoute, body: unknown, model: string, signal: AbortSignal): Promise<{ status: number; text: string }>;
+  /** 证据只增不覆盖（GCS 对象已存在即报错）。 */
+  save(objectName: string, value: unknown): Promise<void>;
+  uuid(): string;
+};
+const webEvidenceDeps: PlatformSkillQaWebEvidenceDeps = {
+  async available(route) {
+    const audio = await import("../gemini-audio.js");
+    return route === "vertex" ? audio.isManhuaDramaVertexAudioAvailable() : audio.isManhuaDramaEvolinkAudioAvailable();
+  },
+  async post(route, body, model, signal) {
+    const runner = await import("./manhuaNativeDeepReadRunner.js");
+    return route === "vertex"
+      ? runner.postVertexNativeDeepRead(body, signal, undefined, model)
+      : runner.postEvolinkNativeDeepRead(body, signal, undefined, model);
+  },
+  async save(objectName, value) {
+    const { uploadBufferToGcsIfAbsent } = await import("./gcs.js");
+    const saved = await uploadBufferToGcsIfAbsent({ objectName, buffer: Buffer.from(JSON.stringify(value)), contentType: "application/json" });
+    if (!saved.created) throw new Error("联网摘要证据已存在，未覆盖原记录");
+  },
+  uuid: () => randomUUID(),
+};
+
+function readGeminiAnswerText(response: { status: number; text: string }): string {
+  if (response.status < 200 || response.status >= 300) throw new Error(`HTTP ${response.status}`);
+  const parts = (JSON.parse(response.text) as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown; thought?: unknown }> } }> })
+    ?.candidates?.[0]?.content?.parts;
+  return Array.isArray(parts) ? parts.filter((p) => !p?.thought && typeof p?.text === "string").map((p) => String(p.text)).join("").trim() : "";
+}
+
+/**
+ * 联网摘要：Gemini googleSearch 两跳（1110 通道合规：Vertex → EvoLink，纯文字无媒体；不直连 Gemini API 密钥）。
+ * 超时/断线/HTTP 错/空回/过短都换下一跳；每跳 request/raw、拒因与采用的摘要永久落 GCS。全部失败则空串，不阻断主问答。
+ */
+export async function buildWebEvidenceForQuestion(
+  question: string,
+  deps: PlatformSkillQaWebEvidenceDeps = webEvidenceDeps,
+): Promise<string> {
+  if (!shouldFetchWebEvidence(question)) return "";
+  const failures: string[] = [];
+  try {
+    const { GEMINI_35_FLASH_COPYWRITING_SYSTEM } = await import("./gemini35FlashRuntime.js");
+    const { GEMINI_COPY_SIMPLIFIED_ZH_LOCK, toSimplifiedChinese } = await import("./simplifiedChinese.js");
+    const model = resolvePlatformSkillQaGeminiModel();
+    const prefix = `platform-skill-qa/web-evidence/${new Date().toISOString().slice(0, 10)}/${deps.uuid()}`;
+    const body = {
+      systemInstruction: { parts: [{ text: `${GEMINI_35_FLASH_COPYWRITING_SYSTEM}\n\n${WEB_EVIDENCE_TASK_INSTRUCTION}\n\n${GEMINI_COPY_SIMPLIFIED_ZH_LOCK}`.trim() }] },
+      contents: [{ role: "user", parts: [{ text: `用户问题：\n${question}\n\n请检索公开信息后给出摘要。` }] }],
+      tools: [{ googleSearch: {} }],
+      generationConfig: { responseMimeType: "text/plain", maxOutputTokens: 4096, temperature: 0.3, topP: 0.9, thinkingConfig: { thinkingLevel: "HIGH" } },
+    };
+    const signal = AbortSignal.timeout(WEB_EVIDENCE_TIMEOUT_MS);
+    for (const [index, route] of Array.from((["vertex", "evolink"] as const).entries())) {
+      const slug = `${prefix}/hop-${index + 1}-${route}`;
+      if (!(await deps.available(route))) { failures.push(`${route}（未配置，跳过）`); continue; }
+      if (signal.aborted) { failures.push(`${route}（总时限已到，未发出）`); break; }
+      await deps.save(`${slug}-request.json`, { route, model, body });
+      let response: { status: number; text: string };
+      try {
+        response = await deps.post(route, body, model, signal);
+      } catch (error) {
+        const reason = signal.aborted ? "请求超时" : `网络异常：${error instanceof Error ? error.message.slice(0, 160) : String(error)}`;
+        failures.push(`${route}（${reason}）`);
+        await deps.save(`${slug}-error.json`, { route, model, reasonZh: reason });
+        continue;
+      }
+      await deps.save(`${slug}-raw.json`, { route, model, status: response.status, text: response.text });
+      let summary = "";
+      try {
+        summary = String(await toSimplifiedChinese(readGeminiAnswerText(response))).trim();
+        if (summary.length < 40) throw new Error(summary ? "摘要过短" : "空回");
+      } catch (error) {
+        const reason = `写坏：${error instanceof Error ? error.message.slice(0, 160) : String(error)}`;
+        failures.push(`${route}（${reason}）`);
+        await deps.save(`${slug}-rejected.json`, { route, model, reasonZh: reason });
+        continue;
+      }
+      await deps.save(`${prefix}/parsed.json`, { route, model, failuresZh: failures, summary });
+      return `【联网检索摘要（公开信息归纳，非内部库；可与趋势库对照）】\n${summary.slice(0, 2400)}`;
+    }
+    if (failures.length) console.warn("[askPlatformSkillQa] web evidence failed:", failures.join("；").slice(0, 400));
+    return "";
   } catch (e) {
-    console.warn("[askPlatformSkillQa] web evidence failed:", e instanceof Error ? e.message : e);
+    console.warn("[askPlatformSkillQa] web evidence failed:", e instanceof Error ? e.message : e, failures.join("；").slice(0, 400));
     return "";
   }
 }
@@ -981,17 +1063,18 @@ export async function askPlatformSkillQa(params: {
         break;
       }
       const hop = manhuaContext ? advisorHops[Math.min(attempt - 1, advisorHops.length - 1)] : undefined;
-      if (hop) params.onStream?.("reset", hop.label);
+      // 流式标签会发到浏览器：只给中性说法，模型/通道名只进服务端日志与 usedModel。
+      if (hop) params.onStream?.("reset", attempt === 1 ? "创作顾问" : "创作顾问 · 备用线路");
       if (manhuaContext?.filmReview) {
-        params.onStream?.("reset", "Gemini Flash · 影片审阅");
+        params.onStream?.("reset", "影片审阅");
         parsed = parseAskJson(await askManhuaFilmReview(params.userId, manhuaContext.filmReview, params.rawQuestion || question, undefined, { episodeIndex: manhuaContext.episodeIndex, episodeBody: manhuaContext.episodeBody, episodes: manhuaContext.continuityEpisodes || [], workflowEvidenceZh: manhuaContext.workflowEvidenceZh || "" }, [buildManhuaCraftReference(manhuaRawQuestion || question), templateReference].filter(Boolean).join("\n")), true, true);
-        usedModel = "gemini-3.8-flash"; lastErr = ""; break;
+        usedModel = resolveManhuaAdvisorWatchModel(); lastErr = ""; break;
       }
       if (manhuaContext?.subtitleReview) {
         const raw = await askManhuaSubtitleReview(params.userId, manhuaContext.subtitleReview);
         // 剪辑方案含原片全量字幕，已由专用schema校验，不走普通短答的1.2万字截断。
         parsed = parseAskJson(raw, true, Boolean(manhuaContext.subtitleReview.montageTargetSec));
-        usedModel = MANHUA_BGM_ADVISOR_MODEL;
+        usedModel = resolveManhuaAdvisorSubtitleModel();
         lastErr = "";
         break;
       }
@@ -1011,11 +1094,11 @@ export async function askPlatformSkillQa(params: {
         usedModel = JSON.parse(raw).model; lastErr = ""; break;
       }
       if (manhuaContext?.bgmMix) {
-        params.onStream?.("reset", "Gemini 3.8 Flash · 音画配乐分析");
+        params.onStream?.("reset", "音画配乐分析");
         const raw = await askManhuaBgmMix(params.userId, manhuaContext.bgmMix, llmMessages);
         parsed = parseAskJson(raw, true);
         parseAdvisorBgmMixPlan(parsed.answer, manhuaContext.bgmMix);
-        usedModel = MANHUA_BGM_ADVISOR_MODEL;
+        usedModel = resolveManhuaAdvisorBgmModel();
         lastErr = "";
         break;
       }

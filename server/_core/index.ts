@@ -76,7 +76,7 @@ import klingImageHandler from "../../api/kling-image";
 import {
   CREATIVE_NANO_IMAGE_ACTION,
 } from "../../shared/creativeNanoImageJobInput";
-import { hasSupervisorRole } from "../../shared/internalMediaEndpointPolicy";
+import { hasSupervisorRole, isLegacyUnbilledKlingJobAction } from "../../shared/internalMediaEndpointPolicy";
 
 function isGrowthTrendSchedulerDisabled() {
   const raw = String(process.env.DISABLE_GROWTH_TREND_SCHEDULER || "").trim().toLowerCase();
@@ -349,9 +349,16 @@ async function startServer() {
             const { readManhuaLearnExtraSourceHosts } = await import(
               "../services/manhuaLearn0996Source.js"
             );
+            // 续学：已入库 / 在途的系列按其保存的模型续学；系列是否真已入库由服务端核实，不信客户端声明。
+            const { resolveStoredManhuaNativeResumeSeriesKey } = await import("../services/manhuaTemplateLearnService.js");
+            const storedSeriesKey = await resolveStoredManhuaNativeResumeSeriesKey(learnParams);
             const confirmation = parseNewNativeDeepReadJobConfirmation(learnParams, {
               extraSourceHosts: readManhuaLearnExtraSourceHosts(),
+              storedSeriesKey,
             });
+            // 只把核实过的系列键留给 worker 做续学绑定；未核实的声明不落任务参数。
+            if (storedSeriesKey) learnParams.nativeResumeSeriesKey = storedSeriesKey;
+            else delete learnParams.nativeResumeSeriesKey;
             learnParams.nativeReadModel = confirmation.readModel;
             if (learnParams.localVideoUploadId !== undefined) {
               const { parseManhuaLocalVideoSourceRef } = await import("../../shared/manhuaLocalVideoUpload.js");
@@ -406,6 +413,29 @@ async function startServer() {
           return res.status(401).json({ error: "请先登录后再提交分析" });
         }
         resolvedUserId = String(ctx.user.id);
+      }
+      if (isLegacyUnbilledKlingJobAction(action)) {
+        /**
+         * 旧可灵视频 action（文生/图生/分镜/动作迁移/对口型）没有服务端计费，也没有正式前端调用方，
+         * 曾可匿名入队直打付费上游。同旧图片 action：只留给监管探针。
+         */
+        if (!ctx.user) {
+          return res.status(401).json({ error: "请先登录后再生成视频" });
+        }
+        if (!hasSupervisorRole(ctx.user.role)) {
+          return res.status(403).json({ error: "legacy_video_job_requires_supervisor" });
+        }
+        resolvedUserId = String(ctx.user.id);
+      }
+      /**
+       * 终闸：这条队列的 video/image/audio 任务都会打付费上游，一律不收匿名（"public"）入队 ——
+       * 上面按 action 的专门校验可能漏掉新增或历史 action（如音乐生成曾可匿名免费出歌）。
+       */
+      if (resolvedUserId === "public") {
+        if (ctx.authUnavailable) {
+          return res.status(503).json({ error: "Auth store unavailable, retry" });
+        }
+        return res.status(401).json({ error: "请先登录后再提交任务" });
       }
       const provider =
         type === "audio"

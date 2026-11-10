@@ -1,7 +1,7 @@
 import { spatialTargetFixture, spatialPlanFixture } from "../../shared/digitalHumanSpatialAdvisor.fixtures";
 import { buildAdvisorPrevisShotSource } from "../../shared/manhuaAdvisorPrevisShotSource";
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { invokeLLMMock, resolvePlatformSkillsPromptMock, getDbMock, resolveVideoMock, bgmAdvisorMock, filmAdvisorMock } = vi.hoisted(() => ({
   invokeLLMMock: vi.fn(),
@@ -20,9 +20,9 @@ vi.mock("../_core/llm.js", async (importOriginal) => ({
   }) => String(response.choices?.[0]?.message?.content || ""),
 }));
 
-vi.mock("./manhuaAdvisorFilmReview",()=>({askManhuaFilmReview:filmAdvisorMock}));
+vi.mock("./manhuaAdvisorFilmReview",()=>({askManhuaFilmReview:filmAdvisorMock,resolveManhuaAdvisorWatchModel:()=>"gemini-3.8-flash"}));
 
-vi.mock("./manhuaAdvisorBgmMix",()=>({askManhuaBgmMix:bgmAdvisorMock,generateGeminiBgmAnalysis:vi.fn(),MANHUA_BGM_ADVISOR_MODEL:"gemini-3.8-flash"}));
+vi.mock("./manhuaAdvisorBgmMix",()=>({askManhuaBgmMix:bgmAdvisorMock,generateGeminiBgmAnalysis:vi.fn(),resolveManhuaAdvisorBgmModel:()=>"gemini-3.8-flash"}));
 
 vi.mock("./manhuaAdvisorPrevisVideo", () => ({ resolveAdvisorPrevisVideo: resolveVideoMock }));
 
@@ -43,6 +43,9 @@ import {
   classifyPlatformSkillQaKind,
   shouldFetchTrendEvidence,
   shouldFetchWebEvidence,
+  buildWebEvidenceForQuestion,
+  resolvePlatformSkillQaGeminiModel,
+  type PlatformSkillQaWebEvidenceDeps,
 } from "./platformSkillQa";
 import type { ManhuaCreativeAdvisorContext } from "../../shared/manhuaCreativeAdvisor";
 import { MANHUA_DIRECTOR_STRATEGY_APPROVED_MANIFEST_VERSION } from "../../shared/manhuaDirectorStrategy";
@@ -229,6 +232,75 @@ describe("evidence soft heuristics", () => {
 
   it("pure creative rewrite does not force web research", () => {
     expect(shouldFetchWebEvidence("帮我改写这条小红书钩子文案")).toBe(false);
+  });
+});
+
+describe("1110 联网摘要通道合规：Vertex → EvoLink 两跳，模型不写死（替身，不真调模型）", () => {
+  const marketQ = "根据数据库以及网络的相关讯息，帮我找出小红书目前可以销售虚拟资料的类型有哪些，该如何定价";
+  const answer = (text: string) => ({ status: 200, text: JSON.stringify({ candidates: [{ content: { parts: [{ text: "思考", thought: true }, { text }] } }] }) });
+  const longText = "品类：电子模板与学习资料需求持续；定价多在九块九到四十九元区间；注意版权与平台虚拟商品规则，具体成交额未证实。";
+  function fakeDeps(post: PlatformSkillQaWebEvidenceDeps["post"], available = async () => true) {
+    const saved = new Map<string, any>();
+    const deps: PlatformSkillQaWebEvidenceDeps = {
+      available: vi.fn(available),
+      post: vi.fn(post),
+      save: vi.fn(async (name: string, value: unknown) => {
+        if (saved.has(name)) throw new Error("exists");
+        saved.set(name, value);
+      }),
+      uuid: () => "u-1",
+    };
+    return { deps, saved };
+  }
+  beforeEach(() => { vi.stubEnv("GEMINI_DEFAULT_MODEL", ""); vi.stubEnv("PLATFORM_SKILL_QA_GEMINI_MODEL", ""); });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("缺省 3.8 Flash；PLATFORM_SKILL_QA_GEMINI_MODEL / GEMINI_DEFAULT_MODEL 可改；首跳 Vertex 成功即用，带 googleSearch，无媒体", async () => {
+    expect(resolvePlatformSkillQaGeminiModel()).toBe("gemini-3.8-flash");
+    vi.stubEnv("GEMINI_DEFAULT_MODEL", "gemini-4.0-flash");
+    expect(resolvePlatformSkillQaGeminiModel()).toBe("gemini-4.0-flash");
+    vi.stubEnv("PLATFORM_SKILL_QA_GEMINI_MODEL", "gemini-3.9-flash");
+    const { deps, saved } = fakeDeps(async () => answer(longText));
+    const out = await buildWebEvidenceForQuestion(marketQ, deps);
+    expect(out).toContain("【联网检索摘要");
+    expect(out).toContain("九块九");
+    expect(out).not.toContain("思考");
+    expect(deps.post).toHaveBeenCalledTimes(1);
+    const [route, body, model] = vi.mocked(deps.post).mock.calls[0]!;
+    expect(route).toBe("vertex");
+    expect(model).toBe("gemini-3.9-flash");
+    expect((body as any).tools).toEqual([{ googleSearch: {} }]);
+    expect(JSON.stringify(body)).not.toMatch(/fileData|inlineData/);
+    expect(Array.from(saved.keys()).map(k => k.split("/").pop())).toEqual(["hop-1-vertex-request.json", "hop-1-vertex-raw.json", "parsed.json"]);
+    expect(Array.from(saved.values())[0].model).toBe("gemini-3.9-flash");
+  });
+
+  it("首跳 HTTP 错 / 空回都换 EvoLink；两跳都失败返回空串不阻断；未配置的通道跳过且不发请求", async () => {
+    const first = fakeDeps(async (route) => route === "vertex" ? { status: 503, text: "{}" } : answer(longText));
+    expect(await buildWebEvidenceForQuestion(marketQ, first.deps)).toContain("九块九");
+    expect(vi.mocked(first.deps.post).mock.calls.map(c => c[0])).toEqual(["vertex", "evolink"]);
+    expect(first.saved.get(Array.from(first.saved.keys()).find(k => k.endsWith("parsed.json"))!).route).toBe("evolink");
+
+    const empty = fakeDeps(async () => answer(""));
+    expect(await buildWebEvidenceForQuestion(marketQ, empty.deps)).toBe("");
+    expect(empty.deps.post).toHaveBeenCalledTimes(2);
+    expect(Array.from(empty.saved.keys()).filter(k => k.endsWith("-rejected.json"))).toHaveLength(2);
+
+    const none = fakeDeps(async () => answer(longText), async () => false);
+    expect(await buildWebEvidenceForQuestion(marketQ, none.deps)).toBe("");
+    expect(none.deps.post).not.toHaveBeenCalled();
+    expect(none.deps.save).not.toHaveBeenCalled();
+
+    const skip = fakeDeps(async () => answer(longText));
+    expect(await buildWebEvidenceForQuestion("帮我改写这条小红书钩子文案", skip.deps)).toBe("");
+    expect(skip.deps.available).not.toHaveBeenCalled();
+  });
+
+  it("平台问答文件内不再写死 Gemini 模型名、不直连 Gemini API 密钥（allowQaModelOverride 入参保留）", () => {
+    const source = readFileSync(new URL("./platformSkillQa.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/callGemini35FlashCopywriting|GEMINI_API_KEY|buildGeminiApiClient/);
+    expect(source).not.toMatch(/"reset",\s*"Gemini/);
+    expect(source).toMatch(/allowQaModelOverride\?: boolean;/);
   });
 });
 
@@ -640,7 +712,7 @@ it("顾问按 GLM OR→Evo→DeepSeek OR→Evo 自动切换，四跳失败即终
     ["z-ai/glm-5.3-flashx", "auto"], ["glm-5.3-flashx", "evolink_flash_only"],
     ["deepseek/deepseek-v4.1-flash-1017", "auto"], ["deepseek-v4.1-flash-1017", "evolink_flash_only"],
   ]);
-  expect(events).toHaveLength(4);
+  expect(events).toEqual(["创作顾问", "创作顾问 · 备用线路", "创作顾问 · 备用线路", "创作顾问 · 备用线路"]);
   for (const [p] of invokeLLMMock.mock.calls) expect(p.response_format).toEqual({ type: "json_object" });
 });
 it("GLM 两跳失败后 DeepSeek 成功即停止，沿用同一上下文", async () => {

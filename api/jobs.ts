@@ -34,9 +34,13 @@ import { resolveSafeFlyPlatformImageReadPath } from "../server/services/flyVolum
 import { bridgeMimeFor, resolveSafeBridgeReadPath } from "../server/services/flyEditBridge.js";
 import { createReadStream as createBridgeReadStream } from "node:fs";
 import {
+  decideLegacyJobsOpAccess,
   hasSupervisorRole,
   isSupervisorWorkflowOp,
+  legacyJobsOpAccess,
 } from "../shared/internalMediaEndpointPolicy.js";
+import { isInternalGatewayRequest } from "../server/services/internalGatewayAuth.js";
+import { redactModelInfoForRole } from "../shared/modelInfoExposure.js";
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 function getBody(req: VercelRequest): any {
@@ -2328,11 +2332,8 @@ async function generateScriptOnlyViaPromptBuilder(input: {
   }
   const script = stripJsonFence(extractGoogleText(scriptResult?.raw));
   if (!script) throw new Error("empty_script");
-  return {
-    script,
-    provider: "google-vertex",
-    model: s(process.env.VERTEX_GEMINI_MODEL || "gemini-3.1-pro-preview").trim() || "gemini-3.1-pro-preview",
-  };
+  // 只回脚本正文：模型/通道名不进响应（前台零技术泄漏）；调用本身不变。
+  return { script };
 }
 
 function createServerWorkflowTask(input: {
@@ -2417,6 +2418,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
     if (!op) return res.status(400).json({ ok: false, error: "missing_op" });
+
+    // 历史上不认人的付费/代取入口统一在任何上游调用之前鉴权（档位见 shared/internalMediaEndpointPolicy.ts）。
+    const legacyAccess = legacyJobsOpAccess(opNormalized);
+    if (legacyAccess) {
+      const internal = isInternalGatewayRequest(req);
+      const legacyViewer = internal ? null : await resolveJobUser(req);
+      const decision = decideLegacyJobsOpAccess(legacyAccess, {
+        internal,
+        userId: legacyViewer?.userId,
+        role: legacyViewer?.role,
+      });
+      if (!decision.ok) {
+        res.setHeader("Cache-Control", "no-store");
+        return res.status(decision.status).json(
+          decision.status === 401
+            ? { ok: false, error: "请先登录后再使用", code: "AUTHENTICATION_REQUIRED" }
+            : { ok: false, error: "该入口仅供监管验收", code: "SUPERVISOR_ONLY" },
+        );
+      }
+    }
 
     const KLING_BASE = (s(process.env.KLING_CN_BASE_URL) || "https://api-beijing.klingai.com").replace(/\/+$/, "");
     const COMET_KEY = getCometApiKey();
@@ -4097,8 +4118,6 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       return res.status(200).json({
         ok: true,
         script: generated.script,
-        provider: generated.provider,
-        model: generated.model,
       });
     }
 
@@ -4189,8 +4208,6 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       return res.status(200).json({
         ok: true,
         videoUrl: polled.videoUrl,
-        provider: "kling",
-        model,
       });
     }
 
@@ -4259,6 +4276,13 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (!/^https:\/\//i.test(videoUrl)) {
         return res.status(400).json({ ok: false, error: "请提供成片 HTTPS 地址" });
       }
+      // 服务端要按这个链接代取视频：主机不得指向本机/内网/保留地址
+      try {
+        const { assertSafePublicUrl } = await import("../server/services/remoteImageFetch.js");
+        await assertSafePublicUrl(new URL(videoUrl));
+      } catch {
+        return res.status(400).json({ ok: false, error: "成片地址不可用，请换一个公开可访问的地址" });
+      }
       const rawShots = Array.isArray(b.shots) ? b.shots : [];
       const shots = rawShots
         .map((row: any) => ({
@@ -4312,6 +4336,13 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (!/^https:\/\//i.test(videoUrl)) {
         return res.status(400).json({ ok: false, error: "请提供成片 HTTPS 地址" });
       }
+      // 服务端要按这个链接代取视频：主机不得指向本机/内网/保留地址
+      try {
+        const { assertSafePublicUrl } = await import("../server/services/remoteImageFetch.js");
+        await assertSafePublicUrl(new URL(videoUrl));
+      } catch {
+        return res.status(400).json({ ok: false, error: "成片地址不可用，请换一个公开可访问的地址" });
+      }
       try {
         const { extractManhuaClipAudioToGcs } = await import(
           "../server/services/manhuaExtractClipAudio.js"
@@ -4351,6 +4382,13 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const videoUrl = s(b.videoUrl || q.videoUrl || "").trim();
       if (!/^https:\/\//i.test(videoUrl)) {
         return res.status(400).json({ ok: false, error: "请提供成片 HTTPS 地址" });
+      }
+      // 服务端要按这个链接代取视频：主机不得指向本机/内网/保留地址
+      try {
+        const { assertSafePublicUrl } = await import("../server/services/remoteImageFetch.js");
+        await assertSafePublicUrl(new URL(videoUrl));
+      } catch {
+        return res.status(400).json({ ok: false, error: "成片地址不可用，请换一个公开可访问的地址" });
       }
       try {
         const { eraseAiCornerMarkToGcs } = await import(
@@ -6379,7 +6417,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             console.warn(`[manhuaPilot] registry reconcile failed taskId=${task.taskId}`);
           });
         }
-        return res.status(200).json({
+        // 模型/通道/引擎代号只给监管与管理员；前端轮询只读 status/videoUrl/workMode/error。
+        return res.status(200).json(redactModelInfoForRole({
           ok: true,
           taskId: task.taskId,
           status: task.status,
@@ -6402,7 +6441,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           // 超时对账诊断：UI 把 timed_out_pending_reconcile 显示为「超时对账中，不会白扣」
           timedOutAt: task.timedOutAt || undefined,
           lastTransientError: task.lastTransientError || undefined,
-        });
+        }, viewer.role));
       } catch (error: any) {
         return res.status(502).json({
           ok: false,

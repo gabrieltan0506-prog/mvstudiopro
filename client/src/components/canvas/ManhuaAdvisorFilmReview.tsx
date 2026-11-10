@@ -119,7 +119,7 @@ function FilmReview(props: Props) {
       aria-label="影片审阅结果"
       className="space-y-3 rounded-xl border border-cyan-300/30 p-3 text-sm"
     >
-      <h3 className="font-semibold">{props.target.label} · Gemini Flash审阅</h3>
+      <h3 className="font-semibold">{props.target.label} · 影片审阅</h3>
       {url && (
         <video
           ref={video}

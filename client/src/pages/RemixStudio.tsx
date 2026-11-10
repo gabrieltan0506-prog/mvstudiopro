@@ -50,7 +50,7 @@ async function toDataUrl(file: File): Promise<string> {
 function normalizeUiError(detail: unknown) {
   const raw = String(detail || "").trim();
   if (!raw) return "";
-  if (/Account balance not enough/i.test(raw)) return "可灵视频当前账户余额不足，请先充值后再试。";
+  if (/Account balance not enough/i.test(raw)) return "算力紧张，请稍后重试。";
   if (/missing imageUrl/i.test(raw)) return "缺少参考图，请先上传图片或使用生图结果。";
   if (/missing_prompt/i.test(raw)) return "缺少提示词，请先填写提示词。";
   if (/upload failed/i.test(raw)) return "参考图上传失败，请重新上传。";
@@ -161,8 +161,8 @@ const GHOST_BUTTON: React.CSSProperties = {
 };
 
 const nodeItems: NodeItem[] = [
-  { id: "image", title: "图文生图", en: "Kling Image", x: 46, y: 124, icon: ImageIcon },
-  { id: "video", title: "图生视频", en: "Kling Video", x: 340, y: 70, icon: Video },
+  { id: "image", title: "图文生图", en: "Image", x: 46, y: 124, icon: ImageIcon },
+  { id: "video", title: "图生视频", en: "Video", x: 340, y: 70, icon: Video },
   { id: "music", title: "音乐生成", en: "Music", x: 340, y: 238, icon: Music2 },
   { id: "output", title: "成品输出", en: "Output", x: 660, y: 152, icon: Sparkles },
 ];
@@ -279,7 +279,7 @@ function WorkflowCanvas(props: {
     <div style={PANEL_STYLE}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
         <div>
-          <div style={{ fontSize: 22, fontWeight: 900 }}>Kling Studio</div>
+          <div style={{ fontSize: 22, fontWeight: 900 }}>视频生成工作室</div>
           <div style={MUTED_TEXT}>
             把生图、图生视频和音乐合并到同一张画布上，先产出参考图，再推进视频和配乐。
           </div>
@@ -595,10 +595,10 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (url
       <div style={{ display: "flex", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
         <div style={{ maxWidth: 620 }}>
           <div style={{ fontSize: 20, fontWeight: 900 }}>节点二：图生视频</div>
-          <div style={{ ...MUTED_TEXT, marginTop: 6 }}>上传参考图或接收上方生图结果，直接推进可灵图生视频工作流。</div>
+          <div style={{ ...MUTED_TEXT, marginTop: 6 }}>上传参考图或接收上方生图结果，直接推进图生视频工作流。</div>
         </div>
         <div style={HEADER_BADGE}>
-          Kling Video
+          视频生成
         </div>
       </div>
 
@@ -865,9 +865,9 @@ export default function RemixStudio() {
         <BuildBadge />
         <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 34, fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.03em" }}>Kling Studio</div>
+            <div style={{ fontSize: 34, fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.03em" }}>视频生成工作室</div>
             <div style={{ marginTop: 6, color: "rgba(226,232,240,0.72)", fontSize: 14 }}>
-              大师级视频基地（脚本 → 分镜图 → Seedance 成片）在 <strong>/workflow-nodes</strong>；此处串联可灵参考图与图生视频，并补充配乐。
+              大师级视频基地（脚本 → 分镜图 → 成片）在 <strong>/workflow-nodes</strong>；此处串联参考图与图生视频，并补充配乐。
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>

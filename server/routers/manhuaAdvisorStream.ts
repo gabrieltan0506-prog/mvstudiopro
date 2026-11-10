@@ -3,6 +3,13 @@ import { appRouter } from "../routers";
 import { createContext } from "../_core/context";
 import { knowledgePublicationPublicError } from "../../shared/knowledgePublicationPublic";
 
+const PROVIDER_NAME_RE = /gemini|glm|deepseek|seedance|evolink|byteplus|vertex|openrouter|qwen|gpt|claude|z-ai|flash|\bpro\b/i;
+/** 发往浏览器的各跳标签：含模型/通道名即换成中性说法；空标签保持为空。 */
+export function neutralAdvisorStreamLabel(label?: string): string {
+  const text = String(label || "").trim();
+  return text && PROVIDER_NAME_RE.test(text) ? "创作顾问" : text;
+}
+
 /** 流式入口复用原问答事务；额度、确认、幂等、退款与恢复只有一份实现。 */
 export function registerManhuaAdvisorStream(app: Express) {
   app.post("/api/manhua-advisor/stream", async (req, res) => {
@@ -28,7 +35,11 @@ export function registerManhuaAdvisorStream(app: Express) {
       if (connected && !res.destroyed && !res.writableEnded) res.write(": heartbeat\n\n");
     }, 15_000);
     try {
-      ctx.advisorStream = (event, text) => { if (!req.body?.knowledgePublicationContext) send(event, { text: text || "" }); };
+      // 前台零技术泄漏：各跳标签若带模型/通道名，一律换成中性说法再发往浏览器（增量正文不动）。
+      ctx.advisorStream = (event, text) => {
+        if (req.body?.knowledgePublicationContext) return;
+        send(event, { text: event === "reset" ? neutralAdvisorStreamLabel(text) : text || "" });
+      };
       // 断开浏览器只停止发送；事务继续落库，刷新后用原请求编号恢复，不重新扣费。
       const result = await appRouter.createCaller(ctx).mvAnalysis.askPlatformSkillQa(req.body);
       if (req.body?.knowledgePublicationContext) {

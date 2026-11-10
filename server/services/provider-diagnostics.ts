@@ -81,16 +81,17 @@ async function pingUrl(url: string, timeoutMs: number, headers?: Record<string, 
   }
 }
 
-async function checkGeminiApi(timeoutMs: number): Promise<CheckResult> {
-  const geminiApiKey = process.env.GEMINI_API_KEY;
-  if (!hasValue(geminiApiKey)) {
-    return { ok: false, error: "GEMINI_API_KEY missing" };
-  }
-  const apiKey = geminiApiKey.trim();
-  return await pingUrl(
-    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
-    timeoutMs
-  );
+/**
+ * 1110：Gemini 只走 Vertex → EvoLink 两跳，不再用直连密钥探活 Google 消费端接口；
+ * 这里只核对两跳通道是否已配置（不发网络请求、不读密钥值、不烧钱）。
+ */
+async function checkGeminiApi(_timeoutMs: number): Promise<CheckResult> {
+  const vertex =
+    (hasValue(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) || hasValue(process.env.GOOGLE_APPLICATION_CREDENTIALS)) &&
+    hasValue(process.env.VERTEX_PROJECT_ID);
+  const evolink = hasValue(process.env.EVOLINK_API_KEY);
+  if (!vertex && !evolink) return { ok: false, error: "gemini_two_hop_not_configured" };
+  return { ok: true };
 }
 
 async function checkFalApi(timeoutMs: number): Promise<CheckResult> {

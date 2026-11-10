@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { testEvidenceDir } from "@shared/testEvidenceDir";
 import { build } from "esbuild";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -87,7 +88,7 @@ imageAdopt:mutation(async input=>{record('apiAdopt');return{sceneIndex:input.ind
     await click('生成尚未制作的配音与配乐');
     await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.trim()==='生成尚未制作的配音与配乐')?.disabled);
     expect(await page.evaluate(()=>(globalThis as any).fixture.events.filter((e:any)=>e.sound).length)).toBe(5);
-    const evidence=path.resolve('docs/evidence/code-motion-1011/sounds/role');await mkdir(evidence,{recursive:true});
+    const evidence=testEvidenceDir('code-motion-1011/sounds/role');await mkdir(evidence,{recursive:true});
     await writeFile(path.join(evidence,'studio-raw-trace.json'),JSON.stringify(await page.evaluate(()=>({events:(globalThis as any).fixture.events,stored:JSON.parse(localStorage.getItem('image-probe:store')!),local:JSON.parse(localStorage.getItem('yingke:draft:7')!),sounds:(globalThis as any).fixture.sounds})),null,2));
     await (await page.$('[aria-label="生成旁白、对白和配乐"]'))!.screenshot({path:path.join(evidence,'sound-panel-restored.png')});
     expect(errors).toEqual([]);

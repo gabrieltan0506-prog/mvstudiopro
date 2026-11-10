@@ -824,6 +824,28 @@ describe("学习来源只读检查", () => {
     expect(await caller.inspectLearnSource({ params })).toEqual({ seriesKey: "series_real", episodeIndex: 16, alreadyLearned: true });
     expect(learnSourcePlan).toHaveBeenLastCalledWith(expect.objectContaining({ inspectSourceOnly: true, readModel: "gemini-3.8-flash", userId: "7" }));
   });
+  it("续学已入库的 Argon 系列：服务端核实后按系列模型放行，不因当前配置拒收", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const resolveStored = vi.fn(async () => "abc123-g4a");
+    vi.doMock("../services/manhuaTemplateLearnService", () => ({ resolveStoredManhuaNativeResumeSeriesKey: resolveStored }));
+    try {
+      learnSourcePlan.mockResolvedValue({ seriesKey: "abc123-g4a", sourceEpisodeIndex: 3, alreadyIngestedEpisodeIndexes: [1, 2], episodes: [] });
+      const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+      const resume = { ...params, nativeReadModel: "gemini-4-argon", nativeResumeSeriesKey: "abc123-g4a" };
+      expect(await caller.inspectLearnSource({ params: resume })).toEqual({ seriesKey: "abc123-g4a", episodeIndex: 3, alreadyLearned: false });
+      expect(resolveStored).toHaveBeenCalledTimes(1);
+      expect(learnSourcePlan).toHaveBeenLastCalledWith(expect.objectContaining({ readModel: "gemini-4-argon" }));
+      // 系列未入库（新系列）：同样的声明不作数，按新任务规则拒收，提示不含模型名
+      resolveStored.mockResolvedValueOnce(undefined as never);
+      learnSourcePlan.mockClear();
+      const rejected = await caller.inspectLearnSource({ params: resume }).then(() => null, (error: Error) => error);
+      expect(rejected?.message).toBe("所选读片模型未在服务端配置中启用，未建立学习任务");
+      expect(rejected?.message).not.toMatch(/gemini|argon|flash/i);
+      expect(learnSourcePlan).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("../services/manhuaTemplateLearnService");
+    }
+  });
 });
 
 describe("待审卡本集实时查询", () => {

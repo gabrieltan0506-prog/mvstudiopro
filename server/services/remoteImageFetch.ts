@@ -28,7 +28,8 @@ export function isTrustedBlobBearerHost(hostname: string): boolean {
   return value === "blob.vercel-storage.com" || value.endsWith(".blob.vercel-storage.com");
 }
 
-async function assertSafePublicUrl(url: URL): Promise<void> {
+/** 出网前核对：只许 http(s)，且主机不得解析到本机/内网/保留地址（防服务端代取内网与云元数据）。 */
+export async function assertSafePublicUrl(url: URL): Promise<void> {
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error("unsupported_image_url");
   }

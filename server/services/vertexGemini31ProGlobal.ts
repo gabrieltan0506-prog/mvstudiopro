@@ -53,6 +53,8 @@ export type CallGemini31ProOptions = {
   maxOutputTokens?: number;
   temperature?: number;
   topP?: number;
+  /** 调用方按领域解析好的模型（shared/geminiModelConfig）；未给时沿用本文件旧解析。 */
+  modelName?: string;
 };
 
 /** 人類可讀：**模型 ID · 區域**（供日誌 / 異常前缀）。 */
@@ -60,9 +62,9 @@ export function describeVertexGemini31ProRouting(): string {
   return `${resolveVertexGemini31ProModelId()} · ${resolveVertexGemini31Location()}`;
 }
 
-async function vertexGemini31ProRestGenerateContent(body: Record<string, unknown>): Promise<string> {
+async function vertexGemini31ProRestGenerateContent(body: Record<string, unknown>, modelOverride?: string): Promise<string> {
   const projectId = resolveVertexTextProjectId();
-  const modelName = resolveVertexGemini31ProModelId();
+  const modelName = String(modelOverride || "").trim() || resolveVertexGemini31ProModelId();
   const location = resolveVertexGemini31Location();
   const base = baseUrlForVertex(location);
   const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelName}:generateContent`;
@@ -128,7 +130,7 @@ export async function callGemini31ProSystemUserForImagePrompt(
 
 /** Vertex **`gemini-3.1-pro-preview`**（或環境覆寫）純 user 文本；與 **`op=geminiScript`** 同 REST 路徑。 */
 export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOptions): Promise<string> {
-  const modelName = resolveVertexGemini31ProModelId();
+  const modelName = String(opts?.modelName || "").trim() || resolveVertexGemini31ProModelId();
   try {
     return await vertexGemini31ProRestGenerateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -138,7 +140,7 @@ export async function callGemini3_1_Pro(prompt: string, opts?: CallGemini31ProOp
         topP: opts?.topP ?? 0.95,
         thinkingConfig: { includeThoughts: false, thinkingLevel: "HIGH" },
       },
-    });
+    }, modelName);
   } catch (error: unknown) {
     const errorDetail = error instanceof Error ? error.message : String(error);
     console.error(`[Vertex AI ${modelName} 崩潰]:`, errorDetail);

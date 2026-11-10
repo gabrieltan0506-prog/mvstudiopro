@@ -120,6 +120,8 @@ it("音频先存本人前缀GCS，Vertex读gs://（gemini-3.8-flash），不直�
   const body = JSON.parse(sentBodies()[0]!);
   expect(body.contents[0].parts[0].fileData).toEqual({ mimeType: "audio/webm", fileUri: `gs://test-bucket/${audio.objectName}` });
   expect(body.generationConfig.responseMimeType).toBe("application/json");
+  // 1110 转写：temperature 0；上限按 12000 字合同估算（12000 + 64 + 思考预留 8192 → 20480），不是缺省 8192
+  expect(body.generationConfig).toMatchObject({ temperature: 0, maxOutputTokens: 20_480 });
   assertTwoHopCompliant();
   // 原始回包与解析结果分别永久留证；证据只记 gs://，不记签名链接
   const prefix = audio.objectName.replace(/audio\.webm$/, "");
@@ -137,6 +139,10 @@ it("Vertex失败后EvoLink收到签名https（不收gs://），仍返回{text}",
   expect(sentBodies()[0]).toMatch(/"fileUri":"gs:\/\/test-bucket\/voice-transcribe\/7\//);
   expect(sentBodies()[1]).toMatch(/"fileUri":"https:\/\/signed\.example\/test-bucket\/voice-transcribe\/7\//);
   expect(sentBodies()[1]).not.toContain("gs://");
+  // Vertex 与 EvoLink 两跳都是 temperature 0 / 20480，两跳 request 证据同记
+  expect(sentBodies().map(b => JSON.parse(b).generationConfig).map(c => [c.temperature, c.maxOutputTokens])).toEqual([[0, 20_480], [0, 20_480]]);
+  const hopRequests = Array.from(h.store.entries()).filter(([n]) => /\/hop-[12]-(vertex|evolink)-request\.json$/.test(n)).map(([, v]) => v as any);
+  expect(hopRequests.map(v => [v.channel, v.temperature, v.maxOutputTokens])).toEqual([["Vertex", 0, 20_480], ["EvoLink", 0, 20_480]]);
   assertTwoHopCompliant();
 });
 it("被截断、被阻止及空白结果明确失败，不冒充完整转写", async () => {

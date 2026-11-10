@@ -24,6 +24,36 @@ export function resolveGeminiAudioTwoHopModel(env?: GeminiModelEnv): string {
   return resolveGeminiModel("audioTwoHop", env);
 }
 
+/** 3.x Flash 单次输出上限：与模板学习精读 NATIVE_DEEP_READ_GENERATION_CONFIG 同值（Vertex / EvoLink 线上已在用）。 */
+export const GEMINI_AUDIO_MAX_OUTPUT_TOKENS = 65_536;
+/** 两跳缺省采样温度（听音分析类调用一直是 0.2；不传 temperature 的调用方不变）。 */
+export const GEMINI_AUDIO_DEFAULT_TEMPERATURE = 0.2;
+/** 1110 转写温度：逐字听写要确定、不要发挥（#1769 改两跳前的转写入口即 temperature 0）。 */
+export const GEMINI_TRANSCRIPTION_TEMPERATURE = 0;
+/** 思考预留：3.x Flash 缺省会思考且 thoughts 计入 maxOutputTokens（kb/channels.md 151 秒音轨分析 thoughts 0.9k–2.4k；精读见过思考挤占致坏 JSON）。 */
+const TRANSCRIPTION_THINKING_RESERVE_TOKENS = 8_192;
+
+/**
+ * 1110 转写 maxOutputTokens（长音频不截断）。依据：
+ * - 调用方有全文字数上限（短语音识别合同 ≤12000 字）：字数 × 1 token/字（汉字取上界，英文约 4 字符/token 更省）
+ *   + 外层 JSON 64 + 思考预留 8192，向上取整到 1024 → 12000 字 = 20480。合同外的长文本本就判不可用，再放大只会放大复读失控的浪费。
+ * - 无字数上限（服务端转写 transcribeAudio：≤16MB、全文 + 逐句文本 + 时间轴骨架约 3.5 token/字；成长营单块最长 35 分钟，
+ *   密集口播 4.5 字/秒 ≈ 3.3 万 token + 思考预留，原 32768 会截断）→ 取单次上限 65536（约 60 分钟密集口播）。
+ *   再长的音频单次装不下，只能分块（同 MV 歌词表 ≤45 秒分块），不靠调大上限。
+ * 实测校准：scripts/probe-transcribe-sample.mts 打印每次 token/字 与思考用量。
+ */
+export function transcriptionMaxOutputTokens(maxTextChars?: number): number {
+  if (maxTextChars === undefined) return GEMINI_AUDIO_MAX_OUTPUT_TOKENS;
+  if (!Number.isFinite(maxTextChars) || maxTextChars <= 0) throw new Error(`转写字数上限无效：${String(maxTextChars)}`);
+  const raw = Math.ceil(maxTextChars) + 64 + TRANSCRIPTION_THINKING_RESERVE_TOKENS;
+  return Math.min(GEMINI_AUDIO_MAX_OUTPUT_TOKENS, Math.ceil(raw / 1024) * 1024);
+}
+
+/** 两跳媒体：Vertex 读 gs://；EvoLink 读不了 gs:// → V4 签名 https（3600 秒，现签，不落证据）。 */
+export function gcsAudioTwoHopMedia(gsUri: string): { vertexFileUri: string; evolinkFileUri: () => string } {
+  return { vertexFileUri: gsUri, evolinkFileUri: () => signGsUriV4ReadUrl(gsUri, 3600) };
+}
+
 /** 音频分析默认：gemini-3.5-flash（与 Platform 趋势同款）；可用 GEMINI_AUDIO_MODEL 覆写 */
 export function resolveGeminiAudioModelName(): string {
   const fromEnv = String(process.env.GEMINI_AUDIO_MODEL || "").trim();
@@ -343,6 +373,15 @@ export async function geminiAudioJsonWithFallback<T>(input: {
    * 已删除内联音频入参，「不内联 base64」由类型保证；签名 URL 不落证据（只记 gs://）。
    */
   media: { vertexFileUri: string; evolinkFileUri: () => string };
+  /**
+   * 1110 视觉入口（画布多图 / 视频反推帧 / 成片质检）：同一请求再附的 GCS 媒体，按序排在 media 之后、prompt 之前；
+   * 每项同样 Vertex 读 gs://、EvoLink 读签名 https，不内联；证据只记 gs://。
+   */
+  extraMedia?: Array<{ mimeType: string; vertexFileUri: string; evolinkFileUri: () => string; label?: string }>;
+  /** 1110：主媒体前的文字标签（如「帧 1/8」「第1项：本镜关键静帧」）；缺省不加。 */
+  mediaLabel?: string;
+  /** 采样温度；缺省 0.2（听音口径）。 */
+  temperature?: number;
   /** 两跳统一模型覆盖；缺省 resolveGeminiAudioTwoHopModel()（env 可配，缺省 gemini-3.8-flash；1110 起不写死）。 */
   model?: string;
   /** 1109：系统指令（MV 独立听歌 / 剪辑方案分析）。 */
@@ -357,25 +396,39 @@ export async function geminiAudioJsonWithFallback<T>(input: {
   schemaName: string;
   validate: (value: unknown) => T;
   save: (name: string, value: unknown) => Promise<unknown>;
+  /** 缺省 8192；转写类按 transcriptionMaxOutputTokens() 估算后传入。 */
   maxOutputTokens?: number;
   timeoutMs?: number;
 }): Promise<{ value: T; channel: GeminiAudioJsonChannel; model: string; failuresZh: string[]; payload: unknown }> {
   // 运行时同样拒收（JS 调用方绕过类型时）：没给 GCS 媒体就不发任何请求。
-  if (!input.media?.vertexFileUri || typeof input.media.evolinkFileUri !== "function") {
+  const extraMedia = input.extraMedia ?? [];
+  if (!input.media?.vertexFileUri || typeof input.media.evolinkFileUri !== "function"
+    || extraMedia.some(m => !m?.vertexFileUri || typeof m.evolinkFileUri !== "function")) {
     throw new Error("听音只收 GCS 媒体（Vertex 读 gs://、EvoLink 读签名 https），不收内联音频");
+  }
+  // 用 ?? 而非 ||：temperature 0 是转写的有效值，不能被当成未传。
+  const temperature = input.temperature ?? GEMINI_AUDIO_DEFAULT_TEMPERATURE;
+  if (typeof temperature !== "number" || !Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
+    throw new Error(`听音 temperature 须在 0–2 之间：${String(input.temperature)}`);
   }
   const media = input.media;
   // 两跳同一模型：本次调用解析一次，Vertex / EvoLink 与证据记录一致。
   const twoHopModel = String(input.model || "").trim() || resolveGeminiAudioTwoHopModel();
   const timeoutMs = input.timeoutMs ?? 180_000;
   const maxOutputTokens = input.maxOutputTokens ?? 8192;
-  const nativeBody = (fileUri: string) => ({
+  // fileUris[0] = 主媒体，其余按 extraMedia 顺序；只有 fileData 引用，不内联媒体。
+  const mediaParts = (fileUris: string[]) => [
+    ...(input.mediaLabel ? [{ text: input.mediaLabel }] : []),
+    { fileData: { mimeType: input.mimeType, fileUri: fileUris[0]! } },
+    ...extraMedia.flatMap((m, i) => [...(m.label ? [{ text: m.label }] : []), { fileData: { mimeType: m.mimeType, fileUri: fileUris[i + 1]! } }]),
+  ];
+  const nativeBody = (fileUris: string[]) => ({
     ...(input.systemInstruction ? { systemInstruction: { parts: [{ text: input.systemInstruction }] } } : {}),
-    contents: [{ role: "user", parts: [{ fileData: { mimeType: input.mimeType, fileUri } }, { text: input.prompt }] }],
-    generationConfig: { maxOutputTokens, responseMimeType: "application/json", ...(input.audioTimestamp ? { audioTimestamp: true } : {}), ...(input.nativeSchema ? { responseSchema: input.nativeSchema } : {}), temperature: 0.2 },
+    contents: [{ role: "user", parts: [...mediaParts(fileUris), { text: input.prompt }] }],
+    generationConfig: { maxOutputTokens, responseMimeType: "application/json", ...(input.audioTimestamp ? { audioTimestamp: true } : {}), ...(input.nativeSchema ? { responseSchema: input.nativeSchema } : {}), temperature },
   });
-  const native = async (url: string, headers: Record<string, string>, fileUri: string) => {
-    const response = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify(nativeBody(fileUri)) });
+  const native = async (url: string, headers: Record<string, string>, fileUris: string[]) => {
+    const response = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify(nativeBody(fileUris)) });
     const payload = await response.json().catch(() => null);
     return { status: response.status, ok: response.ok, payload, text: readNativeGeminiMessageText(payload) };
   };
@@ -386,16 +439,16 @@ export async function geminiAudioJsonWithFallback<T>(input: {
         const model = twoHopModel;
         const location = resolveManhuaAudioVertexLocation();
         const url = `${baseUrlForVertex(location)}/v1/projects/${encodeURIComponent(getVertexProjectId())}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
-        return native(url, (await getVertexAuthHeaders()) as Record<string, string>, media.vertexFileUri);
+        return native(url, (await getVertexAuthHeaders()) as Record<string, string>, [media.vertexFileUri, ...extraMedia.map(m => m.vertexFileUri)]);
       },
     },
     {
       name: "EvoLink", available: isManhuaDramaEvolinkAudioAvailable, model: () => twoHopModel,
       run: async () => {
         // 1110：EvoLink 上的 Gemini 读不了 gs://，也不收内联 base64 —— 只认签名 https（同模板学习 manhuaNativeDeepReadRunner）
-        const fileUri = media.evolinkFileUri();
-        if (!fileUri || !/^https:\/\//.test(fileUri)) throw new Error("EvoLink 只收签名 https 媒体链接（不收 gs:// 或内联音频）");
-        return native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(twoHopModel)}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, fileUri);
+        const fileUris = [media.evolinkFileUri(), ...extraMedia.map(m => m.evolinkFileUri())];
+        if (fileUris.some(fileUri => !fileUri || !/^https:\/\//.test(fileUri))) throw new Error("EvoLink 只收签名 https 媒体链接（不收 gs:// 或内联音频）");
+        return native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(twoHopModel)}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, fileUris);
       },
     },
   ];
@@ -405,7 +458,7 @@ export async function geminiAudioJsonWithFallback<T>(input: {
     const slug = `hop-${i + 1}-${ch.name.toLowerCase().replace(/\s+/g, "_")}`;
     if (!ch.available()) { failures.push(`${ch.name}（未配置，跳过）`); await input.save(`${slug}-skipped`, { channel: ch.name, reasonZh: "未配置" }); continue; }
     const model = ch.model();
-    await input.save(`${slug}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt: input.prompt, mimeType: input.mimeType, mediaGsUri: media.vertexFileUri, ...(input.systemInstruction ? { systemInstruction: input.systemInstruction } : {}), maxOutputTokens, timeoutMs });
+    await input.save(`${slug}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt: input.prompt, mimeType: input.mimeType, mediaGsUri: media.vertexFileUri, ...(extraMedia.length ? { extraMedia: extraMedia.map(m => ({ mimeType: m.mimeType, gsUri: m.vertexFileUri, ...(m.label ? { label: m.label } : {}) })) } : {}), ...(input.systemInstruction ? { systemInstruction: input.systemInstruction } : {}), maxOutputTokens, temperature, timeoutMs });
     let result: Awaited<ReturnType<typeof ch.run>>;
     try {
       result = await ch.run();
@@ -454,6 +507,8 @@ export async function listenStagedAudioJson<T>(input: {
   validate: (value: unknown) => T;
   maxOutputTokens?: number;
   timeoutMs?: number;
+  /** 透传两跳 temperature；缺省 0.2（音频实验室等不变），转写传 0。 */
+  temperature?: number;
   /** 写进 request 证据的业务上下文（不得含签名 URL 或密钥）。 */
   context?: Record<string, unknown>;
 }): Promise<{ value: T; channel: GeminiAudioJsonChannel; model: string; failuresZh: string[]; payload: unknown; audioGsUri: string; evidencePrefix: string }> {
@@ -475,7 +530,7 @@ export async function listenStagedAudioJson<T>(input: {
   const model = resolveGeminiAudioTwoHopModel();
   await save("request", { ...input.context, area: input.area, audioGsUri, audioSha256, audioBytes: input.audio.length, mimeType, model, schemaName: input.schemaName });
   const result = await geminiAudioJsonWithFallback({
-    media: { vertexFileUri: audioGsUri, evolinkFileUri: () => signGsUriV4ReadUrl(audioGsUri, 3600) },
+    media: gcsAudioTwoHopMedia(audioGsUri),
     audioTimestamp: true,
     model,
     mimeType,
@@ -486,6 +541,7 @@ export async function listenStagedAudioJson<T>(input: {
     save,
     maxOutputTokens: input.maxOutputTokens,
     timeoutMs: input.timeoutMs,
+    temperature: input.temperature,
   });
   return { ...result, audioGsUri, evidencePrefix: `gs://${bucket}/${prefix}` };
 }

@@ -1,4 +1,5 @@
 import { isRetiredKimiModel, PLATFORM_TEXT_MODEL } from "../../shared/textModelPolicy";
+import { resolveGeminiModel } from "../../shared/geminiModelConfig";
 import crypto from "node:crypto";
 import { assertSseContentSafety, readGlmSseStream } from "../services/sseChatStream";
 import { GoogleGenAI } from "@google/genai";
@@ -614,8 +615,12 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
+/**
+ * 未给 modelName 时按档位取 Gemini 模型：不写死，经 shared/geminiModelConfig（领域 llmProTier / llmFlashTier）。
+ * 缺省保持原值（pro 档 3.1 Pro、其余 2.5 Flash，见 GEMINI_MODEL_DOMAIN_DEFAULTS）；旧 env VERTEX_GEMINI_MODEL 已并入两档 env 链。
+ */
 const getGeminiModelName = (modelTier: ModelTier | undefined) =>
-  modelTier === "pro" ? "gemini-3.1-pro-preview" : "gemini-2.5-flash";
+  resolveGeminiModel(modelTier === "pro" ? "llmProTier" : "llmFlashTier");
 
 function getOpenAiModelName(modelTier: ModelTier | undefined) {
   if (modelTier === "gpt54" || modelTier === "gpt5") {
@@ -836,7 +841,7 @@ const resolveTarget = (
       throw new Error("VERTEX environment is not configured");
     }
     const location = String(process.env.VERTEX_GEMINI_LOCATION || "global").trim() || "global";
-    const modelName = String(explicitModelName || process.env.VERTEX_GEMINI_MODEL || getGeminiModelName(modelTier)).trim() || getGeminiModelName(modelTier);
+    const modelName = String(explicitModelName || "").trim() || getGeminiModelName(modelTier);
     const projectId = String(process.env.VERTEX_PROJECT_ID || "").trim();
     return {
       provider: "vertex",
@@ -853,13 +858,13 @@ const resolveTarget = (
     return {
       provider: "gemini",
       apiKey: ENV.geminiApiKey,
-      modelName: String(explicitModelName || getGeminiModelName(modelTier)).trim() || getGeminiModelName(modelTier),
+      modelName: String(explicitModelName || "").trim() || getGeminiModelName(modelTier),
     };
   }
 
   if (hasVertexEnv()) {
     const location = String(process.env.VERTEX_GEMINI_LOCATION || "global").trim() || "global";
-    const modelName = String(explicitModelName || process.env.VERTEX_GEMINI_MODEL || getGeminiModelName(modelTier)).trim() || getGeminiModelName(modelTier);
+    const modelName = String(explicitModelName || "").trim() || getGeminiModelName(modelTier);
     const projectId = String(process.env.VERTEX_PROJECT_ID || "").trim();
     return {
       provider: "vertex",
@@ -876,7 +881,7 @@ const resolveTarget = (
   return {
     provider: "gemini",
     apiKey: ENV.geminiApiKey,
-    modelName: String(explicitModelName || getGeminiModelName(modelTier)).trim() || getGeminiModelName(modelTier),
+    modelName: String(explicitModelName || "").trim() || getGeminiModelName(modelTier),
   };
 };
 

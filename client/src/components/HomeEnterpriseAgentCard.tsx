@@ -21,7 +21,7 @@ export function HomeEnterpriseAgentCard() {
       </p>
       <ul className="space-y-2 mb-6 text-sm text-[#0F1B2D]">
         <li>✓ 私有化知识库 (PDF / TXT 上传，企业隔离存储)</li>
-        <li>✓ Gemini 3.1 Pro 顶配算力推演</li>
+        <li>✓ 顶配算力推演</li>
         <li>✓ 30 天 / 100 次调用 / 50 MB 知识库</li>
         <li>✓ 满意可抵扣 50% Pro 部署费</li>
       </ul>

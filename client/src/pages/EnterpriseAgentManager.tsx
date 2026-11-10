@@ -466,7 +466,7 @@ export default function EnterpriseAgentManager() {
               </span>
             </h1>
             <p className="text-xs sm:text-sm text-zinc-400">
-              基于 Gemini 3 Pro · 私有知识库 · 企业隔离存储
+              私有知识库 · 企业隔离存储
               {stats.total > 0 && (
                 <span className="ml-2 text-zinc-500">
                   · 共 {stats.total} 个（运行 {stats.active} / 已停用 {stats.expired}）
@@ -541,7 +541,7 @@ function EmptyState({ onDeploy }: { onDeploy: () => void }) {
         还没有部署 Agent
       </h2>
       <p className="text-xs sm:text-sm text-zinc-400 max-w-md mb-6">
-        部署一个企业专属智能体：基于 Gemini 3 Pro，喂入你的客户战败手册 / SOP /
+        部署一个企业专属智能体：喂入你的客户战败手册 / SOP /
         合同模板等私有知识，让团队随时调用。
       </p>
       <Button

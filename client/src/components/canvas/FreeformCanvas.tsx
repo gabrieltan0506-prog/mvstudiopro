@@ -3242,7 +3242,7 @@ export default function FreeformCanvas({
                                   });
                               }}
                               className="rounded-lg border border-violet-300/40 bg-violet-500/15 px-2 py-1 text-[10px] font-semibold text-violet-100 hover:bg-violet-500/25 disabled:opacity-45"
-                              title="GLM 编译器按十字段满配扩写,成功才扣费"
+                              title="按十字段满配扩写,成功才扣费"
                             >
                               {enhancePromptMutation.isPending ? "增强中…" : "增强提示词(3积分)"}
                             </button>

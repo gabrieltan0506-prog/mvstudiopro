@@ -4,7 +4,7 @@ import { askManhuaFilmReview, resolveAdvisorFilmSource } from "./manhuaAdvisorFi
 import {assertNativeDeepReadRequiredSegmentEvidence,evaluateNativeDeepReadSegmentAcceptance} from "./manhuaNativeDeepReadRunner";
 const target={videoUri:"https://storage.googleapis.com/test/film.mp4",blockId:"clip-1",revision:"v1",label:"第1段"};
 const analysis={originalEvidence:{retained:"完整原生结果"},filmReview:{summary:"构图有层次",findings:[{kind:"亮点",atSec:1,endSec:2,category:"构图",observation:"前景遮挡",suggestion:"保留层次",confidence:"明确"}],limitations:"声音仍需核对"}};
-function fixture(){return {resolve:vi.fn().mockResolvedValue("gs://test/film.mp4"),inspect:vi.fn().mockResolvedValue({generation:"1"}),probe:vi.fn().mockResolvedValue({durationSec:5,audioStreams:[{}]}),count:vi.fn().mockResolvedValue({totalTokens:100}),post:vi.fn().mockResolvedValue({status:200,text:JSON.stringify({modelVersion:"gemini-3.8-flash",usageMetadata:{promptTokensDetails:[{modality:"AUDIO",tokenCount:119}]},candidates:[{finishReason:"STOP",content:{parts:[{text:JSON.stringify(analysis)}]}}]})}),save:vi.fn().mockResolvedValue("saved")};}
+function fixture(){return {resolve:vi.fn().mockResolvedValue("gs://test/film.mp4"),inspect:vi.fn().mockResolvedValue({generation:"1"}),probe:vi.fn().mockResolvedValue({durationSec:5,audioStreams:[{}]}),count:vi.fn().mockResolvedValue({totalTokens:100}),post:vi.fn().mockResolvedValue({status:200,text:JSON.stringify({modelVersion:"gemini-3.8-flash",usageMetadata:{promptTokensDetails:[{modality:"AUDIO",tokenCount:119}]},candidates:[{finishReason:"STOP",content:{parts:[{text:JSON.stringify(analysis)}]}}]})}),postEvolink:vi.fn().mockResolvedValue({status:503,text:"{}"}),sign:vi.fn((u:string)=>`https://signed.example/${u.slice(5)}?X-Goog-Signature=t`),save:vi.fn().mockResolvedValue("saved")};}
 beforeEach(()=>{vi.mocked(assertNativeDeepReadRequiredSegmentEvidence).mockReset();vi.mocked(evaluateNativeDeepReadSegmentAcceptance).mockReset().mockReturnValue({retry:false,advisories:[]} as any)});
 it("原生审片保留完整证据并调用原学习门禁；原参数不变",async()=>{
  const d=fixture();const result=JSON.parse(JSON.parse(await askManhuaFilmReview(7,target,"灯光",d as any)).answer);
@@ -14,13 +14,14 @@ it("原生审片保留完整证据并调用原学习门禁；原参数不变",as
  expect(d.post.mock.calls[0][0].generationConfig).toMatchObject({temperature:0.7,maxOutputTokens:65536,audioTimestamp:true,thinkingConfig:{thinkingLevel:"MEDIUM"}});
  expect(d.post).toHaveBeenCalledTimes(1);
 });
-it("原生门禁失败仍保留原始和解析JSON，不重投",async()=>{
+it("原生门禁失败（写坏）保留该跳原始和解析JSON，只换 EvoLink 一跳，不再重投",async()=>{
  const d=fixture();vi.mocked(assertNativeDeepReadRequiredSegmentEvidence).mockImplementationOnce(()=>{throw Error("native gate failed")});
- await expect(askManhuaFilmReview(7,target,"x",d as any)).rejects.toThrow("native gate");
- const names=d.save.mock.calls.map(c=>c[0].objectName);expect(names.some(n=>n.endsWith('/raw.json'))).toBe(true);expect(names.some(n=>n.endsWith('/analysis.json'))).toBe(true);expect(d.post).toHaveBeenCalledTimes(1);
+ await expect(askManhuaFilmReview(7,target,"x",d as any)).rejects.toThrow(/全部通道失败.*native gate/);
+ const names=d.save.mock.calls.map(c=>c[0].objectName);expect(names.some(n=>n.endsWith('/hop-1-vertex-raw.json'))).toBe(true);expect(names.some(n=>n.endsWith('/hop-1-vertex-analysis.json'))).toBe(true);expect(names.some(n=>n.endsWith('/hop-2-evolink-raw.json'))).toBe(true);
+ expect(d.post).toHaveBeenCalledTimes(1);expect(d.postEvolink).toHaveBeenCalledTimes(1);
 });
 it("审片附加建议越界拒绝，不夹断时间也不重投",async()=>{
- const d=fixture();d.probe.mockResolvedValue({durationSec:1,audioStreams:[{}]});await expect(askManhuaFilmReview(7,target,"x",d as any)).rejects.toThrow("时间超出");expect(d.post).toHaveBeenCalledTimes(1);
+ const d=fixture();d.probe.mockResolvedValue({durationSec:1,audioStreams:[{}]});await expect(askManhuaFilmReview(7,target,"x",d as any)).rejects.toThrow("时间超出");expect(d.post).toHaveBeenCalledTimes(1);expect(d.postEvolink).toHaveBeenCalledTimes(1);
 });
 it("画布独立任务审片只放行本人成功产物，拒绝其他对象且不掩盖数据库故障", async()=>{
  const originalError = new Error("素材尚未登记,请从画布/成片里重新选择站内素材");
@@ -56,9 +57,9 @@ it("跨集范围附言不掩盖供应商缺失的限制说明", async () => {
  d.post.mockResolvedValue({status:200,text:JSON.stringify({candidates:[{finishReason:"STOP",content:{parts:[{text:JSON.stringify(bad)}]}}]})});
  await expect(askManhuaFilmReview(7,target,"跨集核对",d as any)).rejects.toThrow("限制说明无效");
  expect(d.post).toHaveBeenCalledTimes(1);
- expect(d.save.mock.calls.some(c=>c[0].objectName.endsWith("/analysis.json"))).toBe(true);
+ expect(d.save.mock.calls.some(c=>c[0].objectName.endsWith("/hop-1-vertex-analysis.json"))).toBe(true);
 });
 
 it("参考MV时长版本不符在原生请求前拒绝", async()=>{
- const d=fixture();await expect(askManhuaFilmReview(7,{...target,expectedDurationSec:6},"MV",d as any)).rejects.toThrow("时长");expect(d.post).not.toHaveBeenCalled();expect(d.count).not.toHaveBeenCalled();
+ const d=fixture();await expect(askManhuaFilmReview(7,{...target,expectedDurationSec:6},"MV",d as any)).rejects.toThrow("时长");expect(d.post).not.toHaveBeenCalled();expect(d.count).not.toHaveBeenCalled();expect(d.postEvolink).not.toHaveBeenCalled();
 });

@@ -48,7 +48,7 @@ type PendingQuestion = AdvisorPendingRequest;
 function readableAdvice(text: string) {
   try { return advisorTemplateChoiceSchema.parse(JSON.parse(text)).explanation + "\n\n搭配已整理，尚未生成或替换原稿。"; } catch { /* 其他回答按原类型展示。 */ }
   try { const p = parseAdvisorMediaProposal(text); return `素材修改方案 · ${p.blockId}\n\n${p.instruction}\n\n请在图片与视频修改区查看并确认，尚未生成。`; } catch { /* ordinary answer */ }
-  try { const r = advisorFilmReviewSchema.parse(JSON.parse(text)); return `${r.summary}\n\n${r.findings.map(f => `${f.atSec.toFixed(1)}–${f.endSec.toFixed(1)}秒 · ${f.category} · ${f.confidence}\n${f.observation}\n建议：${f.suggestion}`).join("\n\n")}\n\n核验范围：${r.limitations}\nGemini Flash · 影片审阅`; } catch { /* other answer */ }
+  try { const r = advisorFilmReviewSchema.parse(JSON.parse(text)); return `${r.summary}\n\n${r.findings.map(f => `${f.atSec.toFixed(1)}–${f.endSec.toFixed(1)}秒 · ${f.category} · ${f.confidence}\n${f.observation}\n建议：${f.suggestion}`).join("\n\n")}\n\n核验范围：${r.limitations}\n影片审阅`; } catch { /* other answer */ }
   try { const value = JSON.parse(text); if (value.kind === "world_plan_v1") return value.summaryZh; } catch { /* 普通文本按原路径显示。 */ }
   try { return parseAdvisorPrevisPatch(text).summaryZh; } catch { return formatAdvisorRewriteAnswer(text); }
 }
@@ -905,7 +905,7 @@ export default function ManhuaCreativeAdvisorPanel(props: {
         <CreativeVoicePanel onSessionActiveChange={setLiveSessionActive} key={`${userId}:${props.projectId}:${confirmedProjectVersion || "draft"}`} scopeKey={`${userId}:${props.projectId || `legacy:${confirmedProjectVersion || "draft"}`}`} context={JSON.stringify({ activeStudio: project?.context.activeStudio, stage: currentStage, project: project?.context, selectedTemplate })} onReviewFilm={(blockId, question, signal) => new Promise(resolve => {
           const source = props.mediaWorkspace?.sources.find(s => s.blockId === blockId && s.kind === "video");
           if (signal.aborted || !source || props.mediaWorkspace?.disabled) { resolve("当前影片不可审阅，请重新选择"); return; }
-          if (!window.confirm(`把${source.label}交给Gemini Flash审阅？计入本作品顾问次数；超出免费次数会另行确认扣点。`)) { resolve("用户取消影片审阅"); return; }
+          if (!window.confirm(`把${source.label}交给创作顾问审阅？计入本作品顾问次数；超出免费次数会另行确认扣点。`)) { resolve("用户取消影片审阅"); return; }
           let done = false;
           const reply = (answer?: string) => { if (done) return; done = true; signal.removeEventListener("abort", abort); for (const [id,cb] of Array.from(voiceReplies.current)) if (cb === reply) voiceReplies.current.delete(id); resolve(answer ? readableAdvice(answer) : undefined); };
           const abort = () => reply("语音已结束，已提交的审阅继续在原顾问保存，不重提");

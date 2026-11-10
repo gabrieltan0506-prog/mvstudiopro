@@ -82,8 +82,12 @@ describe("transcribeAudio 两跳", () => {
     expect(modelBodies()[0].contents[0].parts[0].fileData).toEqual({ mimeType: "audio/mpeg", fileUri: `gs://test-bucket/${audioObject}` });
     expect(modelBodies()[0].contents[0].parts[1].text).toContain("请转写口播");
     expect(modelBodies()[0].generationConfig).toMatchObject({ audioTimestamp: true, responseSchema: { type: "OBJECT" } });
+    // 1110 转写：temperature 0、无字数合同取单次上限 65536（原 32768 会截断长块），并记入 request 证据
+    expect(modelBodies()[0].generationConfig).toMatchObject({ temperature: 0, maxOutputTokens: 65_536 });
     const names = Array.from(h.store.keys()).filter(k => k.startsWith(`voice-transcription/${sha}/attempts/`)).map(k => k.replace(/^.*\/attempts\/[^/]+\//, ""));
     expect(names).toEqual(["request.json", "hop-1-vertex-request.json", "hop-1-vertex-raw.json", "hop-1-vertex-decoded.json", "hop-1-vertex-parsed.json", "hop-used.json"]);
+    const hopRequest = Array.from(h.store.entries()).find(([k]) => k.endsWith("/hop-1-vertex-request.json"))![1].buffer.toString("utf8");
+    expect(JSON.parse(hopRequest)).toMatchObject({ temperature: 0, maxOutputTokens: 65_536, timeoutMs: 240_000 });
     assertTwoHopCompliance();
   });
 
@@ -100,6 +104,8 @@ describe("transcribeAudio 两跳", () => {
     ]);
     expect(modelBodies()[1].contents[0].parts[0].fileData.fileUri).toMatch(/^https:\/\/signed\.example\/test-bucket\/voice-transcription\/[0-9a-f]{64}\/audio\.mp3\?X-Goog-Expires=3600&/);
     expect(JSON.stringify(modelBodies())).not.toContain(bytes.toString("base64"));
+    // Vertex 与 EvoLink 两跳都是 temperature 0 / 65536
+    expect(modelBodies().map(b => [b.generationConfig.temperature, b.generationConfig.maxOutputTokens])).toEqual([[0, 65_536], [0, 65_536]]);
     assertTwoHopCompliance();
   });
 

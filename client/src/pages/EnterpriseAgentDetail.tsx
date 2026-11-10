@@ -27,6 +27,7 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
 import {
   Loader2,
@@ -557,6 +558,9 @@ interface SessionItem {
 }
 
 function SessionsList({ sessions }: { sessions: SessionItem[] }) {
+  const { user } = useAuth();
+  /** 前台零技术泄漏：模型名仅 supervisor / admin 可见。 */
+  const canSeeModel = user?.role === "admin" || user?.role === "supervisor";
   if (sessions.length === 0) {
     return (
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-6 sm:p-8 text-center text-sm text-zinc-500">
@@ -578,7 +582,7 @@ function SessionsList({ sessions }: { sessions: SessionItem[] }) {
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] sm:text-xs text-zinc-500">
             <span>{formatDateTime(s.createdAt)}</span>
-            {s.modelUsed && <span>· {s.modelUsed}</span>}
+            {canSeeModel && s.modelUsed && <span>· {s.modelUsed}</span>}
             {s.durationMs !== null && <span>· {(s.durationMs / 1000).toFixed(1)}s</span>}
             {s.promptTokens !== null && <span>· in {s.promptTokens}t</span>}
             {s.outputTokens !== null && <span>· out {s.outputTokens}t</span>}

@@ -2543,6 +2543,17 @@ function readRawSegmentsFromGlmPrompt(user: string): Array<Record<string, unknow
   return JSON.parse(user.slice(at + marker.length)) as Array<Record<string, unknown>>;
 }
 
+/** 1015 起18片内均分双路：多批时把各批整形输入按片序拼回，校验整集不丢片。 */
+function readAllRawSegmentsFromGlmCalls(calls: ReadonlyArray<ReadonlyArray<unknown>>): Array<Record<string, unknown>> {
+  return calls.flatMap(([prompt]) => readRawSegmentsFromGlmPrompt((prompt as { user: string }).user))
+    .sort((a, b) => Number((a.shots as Array<{ startSec: number }>)[0]!.startSec) - Number((b.shots as Array<{ startSec: number }>)[0]!.startSec));
+}
+/** 每次GLM调用的首片起点；用于证明每批只首发一次、没有重发。 */
+function glmCallFirstStarts(calls: ReadonlyArray<ReadonlyArray<unknown>>): number[] {
+  return calls.map(([prompt]) => Number((readRawSegmentsFromGlmPrompt((prompt as { user: string }).user)[0]!.shots as Array<{ startSec: number }>)[0]!.startSec))
+    .sort((a, b) => a - b);
+}
+
 const validGeneratedAnalysisFixture = { templateTitleZh: "测试剧情推进·情绪递进型", classificationProseZh: { emotionZh: "压迫渐强", narrativeZh: "信息递进", performanceZh: "克制爆发", audiovisualZh: "冷暖对撞", audienceZh: "持续紧张" } };
 
 function makeGlmStructuringStub() {
@@ -3192,8 +3203,9 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
     expect(postVertex).toHaveBeenCalledTimes(2);
     expect(deps.postEvolink).not.toHaveBeenCalled();
     expect(deps.signReadUrl).not.toHaveBeenCalled();
-    // 0829 统一收口：Vertex 主线也必走 GLM 整形，且只走一次（门禁一次过就不重整）
-    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    // 0829 统一收口：Vertex 主线也必走 GLM 整形；1015 起两片均分双路，每批只首发一次（门禁一次过就不重整）
+    expect(deps.invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(glmCallFirstStarts(vi.mocked(deps.invokeGlmStructuring).mock.calls)).toEqual([0, 60]);
 
     const started = receipts.filter((r) => r.stage === "visual_model" && r.status === "started");
     expect(started).toHaveLength(2);
@@ -3209,8 +3221,8 @@ describe("Vertex 主线：每段一次调用（不再多段合包）", () => {
     expect(only.usage.inputTokens).toBe(200_000);
     expect(only.usage.outputTokens).toBe(2 * 2_500);
     expect(only.audioInputTokens).toBe(16_000);
-    // ¥9.0/M 输入 + ¥72/M 输出（待账单核实）
-    expect(only.usage.costCny).toBeCloseTo(200_000 * 9 / 1e6 + 5_000 * 72 / 1e6, 6);
+    // ¥8.75/M 输入 + ¥70/M 输出（$1.25/$10 × 7，待账单核实）
+    expect(only.usage.costCny).toBeCloseTo(200_000 * 8.75 / 1e6 + 5_000 * 70 / 1e6, 6);
     expect(only.resolvedAudioChunks.map((row) => row.chunkIndex)).toEqual([0, 1]);
     expect(only.attemptedSegments).toBe(2);
     // 用后删：两个 GCS 临时对象都清理
@@ -3551,7 +3563,8 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
   });
 
   it("四批错峰等待取消后不发第二批，已在途两批收尾", async () => {
-    const segments = Array.from({ length: 18 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
+    // 1015 用户令：18片以内只两批；超过18片才四批错峰，故用20片（5+5+5+5）。
+    const segments = Array.from({ length: 20 }, (_, index) => ({ startSec: index * 60, endSec: (index + 1) * 60 }));
     const finish = deferred(), controller = new AbortController();
     const harness=realStructuringHarness({invoke:async()=>{await finish.promise;}});
     const invoke=harness.invoke;
@@ -3562,7 +3575,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
         signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
       })) });
     const task = runManhuaNativeDeepReadBatch({ episodes: [{ episodeIndex: 1, resolveNodes: async () => [],
-      segments, sourceDurationSec: 1080, cacheSourceDigest: "a".repeat(64) }],
+      segments, sourceDurationSec: 1200, cacheSourceDigest: "a".repeat(64) }],
       abortSignal: controller.signal, segmentCacheSeriesKey: "four_batches_cancel" }, deps);
     const observed = task.catch(error => error);
     await vi.waitFor(() => expect(deps.waitForRetry).toHaveBeenCalledTimes(2));
@@ -3722,12 +3735,14 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     });
     await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
 
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
-    const prompt = invokeGlmStructuring.mock.calls[0]![0] as { system: string; user: string };
-    const sent = readRawSegmentsFromGlmPrompt(prompt.user);
+    // 1015 起两片均分双路：两批合起来含本集全部分段卡、一份不丢
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    const sent = readAllRawSegmentsFromGlmCalls(invokeGlmStructuring.mock.calls);
     expect(sent).toHaveLength(2);
     expect(sent.map((row) => (row.shots as Array<{ startSec: number }>)[0]!.startSec)).toEqual([0, 60]);
-    expect(prompt.system).toContain("记录去重、信息取并集");
+    for (const [prompt] of invokeGlmStructuring.mock.calls) {
+      expect((prompt as { system: string }).system).toContain("记录去重、信息取并集");
+    }
   });
 
   it("九片按5+4并发整形成两张批次卡，再由代码确定性拼成整集", async () => {
@@ -3759,7 +3774,8 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       .toContain('"segments":[{"segmentIndex":0');
     expect((invokeGlmStructuring.mock.calls[1]![0] as { user: string }).user)
       .toContain('"segments":[{"segmentIndex":5');
-    expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(2);
+    // 1015 起先探查当前布局（2 次未命中），付费首发前各批再核一次缓存防重复付费（2 次）
+    expect(deps.readStructuredBatchCache).toHaveBeenCalledTimes(4);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(result.episodes[0]!.result.segmentCount).toBe(9);
     expect(result.episodes[0]!.result.attemptedSegments).toBe(9);
@@ -4080,11 +4096,14 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       segmentCacheSeriesKey: "keymoments_backfill",
       onModelReceipt: (receipt) => { receipts.push(receipt as unknown as Record<string, unknown>); },
     }, deps);
-    // 漏键不算坏输出：一次整形就过，不烧第二发
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    // 漏键不算坏输出：三片均分两批（2+1），每批一次整形就过，不烧第二发
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(glmCallFirstStarts(invokeGlmStructuring.mock.calls)).toEqual([0, 120]);
     expect(receipts.some((row) => row.route === "structuring_retry_pending")).toBe(false);
-    const backfill = receipts.find((row) => row.route === "structuring_keymoments_backfilled");
-    expect(String(backfill?.model)).toContain("从读片稿补回 6 条");
+    const backfills = receipts.filter((row) => row.route === "structuring_keymoments_backfilled").map((row) => String(row.model));
+    expect(backfills).toHaveLength(2);
+    expect(backfills.some((model) => model.includes("第1—2片") && model.includes("从读片稿补回 4 条"))).toBe(true);
+    expect(backfills.some((model) => model.includes("第3—3片") && model.includes("从读片稿补回 2 条"))).toBe(true);
     const episode = result.episodes[0]!.result;
     expect(episode.segmentCount).toBe(3);
     expect((episode.keyMoments ?? []).map((row) => row.atSec)).toEqual([10.5, 40, 70.5, 100, 130.5, 160]);
@@ -4227,7 +4246,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     expect(harness.calls.map(row=>row.first)).toEqual([0,60]); // 恢复没有新增网关调用。
     expect(harness.saved).toHaveLength(savedBefore); // request/raw/parsed全部复用。
     expect(result.usage).toMatchObject({inputTokens:200_000,outputTokens:5_000});
-    expect(result.usage.costCny).toBeCloseTo(2.16,8);
+    expect(result.usage.costCny).toBeCloseTo(2.1,8);
     expect(receipts.filter(row=>row.route===NATIVE_DEEP_READ_GLM_STRUCTURING_ROUTE)).toEqual([]);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledTimes(2);
     expect(deps.writeStructuredBatchCache).toHaveBeenCalledWith(expect.objectContaining({inputTokens:10,outputTokens:10,costUsd:0.01,evidence:expect.objectContaining({parsed:expect.any(Object)})}));
@@ -4274,7 +4293,10 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     });
     await expect(runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps))
       .rejects.toBe(failure);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    // 两片双路两批各首发一次；交卷后落盘失败不补发、不本地fallback
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(glmCallFirstStarts(invokeGlmStructuring.mock.calls)).toEqual([0, 60]);
+    expect(deps.writeStructuredBatchCache).not.toHaveBeenCalled();
   });
 
   /**
@@ -4325,9 +4347,8 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
       // 镜头＋结构＝2 家族 < 3 项线 → 不重试（2 段各一次）
       expect(postVertex).toHaveBeenCalledTimes(3);
-      const sent = readRawSegmentsFromGlmPrompt(
-        (invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user,
-      );
+      // 1015 起两片均分双路：两批输入合起来核对
+      const sent = readAllRawSegmentsFromGlmCalls(invokeGlmStructuring.mock.calls);
       // 两段都直接入库，没有被标记版
       expect(sent).toHaveLength(2);
       expect(sent.filter((row) => row.gateMarked === true)).toHaveLength(0);
@@ -4358,9 +4379,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
       await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
       // 🔴 关键断言：截断段不重买，只打 2 发
       expect(postVertex).toHaveBeenCalledTimes(3);
-      const sent = readRawSegmentsFromGlmPrompt(
-        (invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user,
-      );
+      const sent = readAllRawSegmentsFromGlmCalls(invokeGlmStructuring.mock.calls);
       expect(sent).toHaveLength(2);
       expect(sent[1]!.truncated).not.toBe(true);
     } finally {
@@ -4423,8 +4442,9 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     try {
       await runManhuaNativeDeepReadBatch({ episodes: [{ ...twoSegmentEpisode, segments, sourceDurationSec: 180 }] }, deps);
-      expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
-      expect(readRawSegmentsFromGlmPrompt(invokeGlmStructuring.mock.calls[0]![0].user)[1]!.shots).toEqual(markedFirst.shots);
+      // 两片双路各一批；第2片批次用选中的原稿整形
+      expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+      expect(readAllRawSegmentsFromGlmCalls(invokeGlmStructuring.mock.calls)[1]!.shots).toEqual(markedFirst.shots);
       // 第1片一发过 + 第2片五档全撞 72 秒线 ⇒ 6 发、4 次降温等待
       expect(postVertex).toHaveBeenCalledTimes(6);
       expect(deps.waitForRetry).toHaveBeenCalledTimes(4);
@@ -4491,10 +4511,9 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     });
     await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
 
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
-    const sent = readRawSegmentsFromGlmPrompt(
-      (invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user,
-    );
+    // 两片双路各一批，合起来两份都进 GLM 输入
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    const sent = readAllRawSegmentsFromGlmCalls(invokeGlmStructuring.mock.calls);
     expect(sent).toHaveLength(2);
     expect(sent[1]!.truncated).toBe(true);
     expect(sent[1]!.advisories).toEqual([{ code: "audio_track_thin", detailZh: "音轨仅 1 段" }]);
@@ -4506,7 +4525,7 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
    * 整集判死：10 片视觉证据全好、钱全花完，一片都没入库。
    * 集级门禁与带拒因重整**双双拿掉**，GLM 出什么就入什么。本测试看守这条。
    */
-  it("GLM 合并后尾部空 6 秒且弄丢一段音轨，照常入库且只调用一次 GLM（0830 集级门禁已拿掉）", async () => {
+  it("GLM 合并后尾部空 6 秒且弄丢一段音轨，照常入库且每批只调用一次 GLM（0830 集级门禁已拿掉）", async () => {
     const base = makeGlmStructuringStub();
     const invokeGlmStructuring = vi.fn(async (prompt: { system: string; user: string }) => {
       const out = await base(prompt);
@@ -4527,9 +4546,12 @@ describe("GLM 5.3 统一收口：每集装配都走结构化整形（0829）", (
     // 旧代码在这里会：音轨分段不完整 → 带拒因重整第 2 发 → 再拒 →「整集拒绝入库」抛错
     // ——真人剧 2817 秒实弹就是这样死的：10 片视觉证据全好，钱全花完，一片没入库。
     await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
-    expect((invokeGlmStructuring.mock.calls[0]![0] as { user: string }).user)
-      .not.toContain("【上一轮门禁被拒原因】");
+    // 1015 起两片均分双路：每批只首发一次，无带拒因重整
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(glmCallFirstStarts(invokeGlmStructuring.mock.calls)).toEqual([0, 60]);
+    for (const [prompt] of invokeGlmStructuring.mock.calls) {
+      expect((prompt as { user: string }).user).not.toContain("【上一轮门禁被拒原因】");
+    }
   });
 });
 
@@ -5949,7 +5971,9 @@ describe("0907 · 八坑补齐：费用闸 / 集级留存率不可达 / 三稿�
       episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "c".repeat(64) }],
       segmentCacheSeriesKey: "cost_cap",
     }, deps)).resolves.toHaveProperty("episodes");
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    // 三片均分两批（2+1），每批只付首发，判坏后从原稿恢复、不补发
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(glmCallFirstStarts(invokeGlmStructuring.mock.calls)).toEqual([0, 120]);
   });
 
   it("集级留存率闸不可达：各批留存率都过线时，确定性拼接不会再降到线下（拼接只合并同秒位同角色的重复镜）", async () => {
@@ -6201,7 +6225,9 @@ describe("0906 学习两栏必填与整形漏栏恢复", () => {
     const result = await runManhuaNativeDeepReadBatch({ episodes: [twoSegmentEpisode] }, deps);
     expect(result.episodes[0]!.result.reusableZh).toContain("开场即冲突的通用做法");
     expect(result.episodes[0]!.result.genPromptHintZh).toContain("景别递进+顶光");
-    expect(invokeGlmStructuring).toHaveBeenCalledTimes(1);
+    // 1015 起两片均分双路：每批各一次整形，漏栏不追加调用
+    expect(invokeGlmStructuring).toHaveBeenCalledTimes(2);
+    expect(glmCallFirstStarts(invokeGlmStructuring.mock.calls)).toEqual([0, 60]);
     expect(deps.postVertex).toHaveBeenCalledTimes(2);
   });
 });
@@ -6344,7 +6370,8 @@ describe("三分支必填结构与实际时间类型", () => {
     expect(nativeDeepReadSegmentCacheFingerprint({ ...input, legacyBeforeStrict0906: true, legacyBefore0920: true })).toBe("7e41253732e877823905f0d834f8eacd9c83e8c663cd0623bb3716a9230ee47f");
     expect(nativeDeepReadSegmentCacheFingerprint(input)).not.toBe("ce7d5593718e491e66b24c4b9389f8719006557e376a0071c76b10a1a52d6434");
     const { nativeDeepReadStructuringJsonSchema } = await import("./manhuaNativeDeepReadRunner");
-    expect(createHash("sha256").update(JSON.stringify(nativeDeepReadStructuringJsonSchema())).digest("hex")).toBe("c343b78c17e87ecd0679cac4fa93a9a9dee5f6a339d6e65fa4a48819a7ab7ed0");
+    // 1004（2538a8e0）整形Schema按需求新增必填 methodBrief，c343b78c… → 93f34623…；整形缓存对象名不含Schema，不影响已付费批次复用。
+    expect(createHash("sha256").update(JSON.stringify(nativeDeepReadStructuringJsonSchema())).digest("hex")).toBe("93f346236b64c0b444d529a48e6bccef3e092a6e61fd6b3abb846c8be2a3878a");
   });
 });
 

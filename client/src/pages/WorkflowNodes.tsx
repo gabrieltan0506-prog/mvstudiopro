@@ -2164,7 +2164,7 @@ export default function WorkflowNodes() {
                   <span className="font-semibold text-white">分镜与素材</span> →{" "}
                   <span className="font-semibold text-white">场景视频</span>，并在同一条工作流里衔接{" "}
                   <span className="font-semibold text-white">旁白、配乐与成片</span>。
-                  引擎随步骤变化（Gemini / GPT-Image / Seedance 等），以左侧画布与上方流程图为准。
+                  引擎随步骤变化，以左侧画布与上方流程图为准。
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">

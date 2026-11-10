@@ -84,11 +84,11 @@ describe("精读成本表", () => {
   beforeEach(() => { warn = vi.spyOn(console, "warn").mockImplementation(() => undefined); });
   afterEach(() => { warn.mockRestore(); });
 
-  it("含 gemini-3.8-flash 单价（$0.30/$2.50 × 7.2 → ¥2.16/¥18 每百万 token），旧三代单价不变", () => {
-    expect(NATIVE_DEEP_READ_MODEL_PRICES_PER_M["gemini-3.8-flash"]).toEqual({ inPerM: 2.16, outPerM: 18.0 });
-    expect(nativeDeepReadModelPrices("gemini-3.8-flash")).toEqual({ inPerM: 2.16, outPerM: 18.0, priceKnown: true });
-    expect(nativeDeepReadModelPrices("gemini-3.1-pro-preview")).toEqual({ inPerM: 9.0, outPerM: 72.0, priceKnown: true });
-    expect(nativeDeepReadModelPrices("gemini-4-argon")).toEqual({ inPerM: 28.8, outPerM: 144, priceKnown: true });
+  it("含 gemini-3.8-flash 单价（$0.30/$2.50 × 7 → ¥2.1/¥17.5 每百万 token），三代均按 1 USD = 7 CNY 折算", () => {
+    expect(NATIVE_DEEP_READ_MODEL_PRICES_PER_M["gemini-3.8-flash"]).toEqual({ inPerM: 2.1, outPerM: 17.5 });
+    expect(nativeDeepReadModelPrices("gemini-3.8-flash")).toEqual({ inPerM: 2.1, outPerM: 17.5, priceKnown: true });
+    expect(nativeDeepReadModelPrices("gemini-3.1-pro-preview")).toEqual({ inPerM: 8.75, outPerM: 70, priceKnown: true });
+    expect(nativeDeepReadModelPrices("gemini-4-argon")).toEqual({ inPerM: 28, outPerM: 140, priceKnown: true });
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -97,7 +97,7 @@ describe("精读成本表", () => {
     expect(unknown.priceKnown).toBe(false);
     expect(unknown.inPerM).toBeGreaterThan(0);
     expect(unknown.outPerM).toBeGreaterThan(0);
-    expect(unknown).toMatchObject({ inPerM: 28.8, outPerM: 144 });
+    expect(unknown).toMatchObject({ inPerM: 28, outPerM: 140 });
     expect(warn).toHaveBeenCalledTimes(1);
   });
 });

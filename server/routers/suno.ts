@@ -10,6 +10,7 @@
 
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
+import { canViewModelInfo } from "@shared/modelInfoExposure";
 import { recordCreation } from "./creations";
 import { invokeLLM } from "../_core/llm";
 import { deductCredits, getCredits, getUserPlan } from "../credits";
@@ -258,10 +259,11 @@ export const sunoRouter = router({
         console.error("[AIMusic] recordCreation failed:", e);
       }
 
+      // 创作记录 metadata 里的 model 照存（审计）；响应里的模型名只给监管与管理员。
       return {
         taskId: created.taskId,
         mode: input.mode,
-        model: producerModel,
+        ...(canViewModelInfo(ctx.user.role) ? { model: producerModel } : {}),
         quality,
         creditCost,
         retentionDays: getRetentionDays(billingPolicy),

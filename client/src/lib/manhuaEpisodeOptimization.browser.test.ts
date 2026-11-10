@@ -50,7 +50,7 @@ it('UI换模型会发新试写而非冒用旧稿，刷新保留模型身份与�
  await page.evaluate(()=>(globalThis as any).fixture.setModel('deepseek'));await trial();await page.waitForFunction(()=>document.body.textContent?.includes('今日剩余 1 / 3'));
  expect(await page.evaluate(()=>(globalThis as any).fixture.calls.map((r:any)=>r.model))).toEqual(['glm','deepseek']);
  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('mvs:episode-optimization:7:20000000-0000-4000-8000-000000000001')!).results.map((r:any)=>r.model))).toEqual(['glm','deepseek']);
- await page.reload();await page.addScriptTag({content:bundle});await page.waitForFunction(()=>document.body.textContent?.includes('DeepSeek'));expect(await page.evaluate(()=>(globalThis as any).fixture.calls.length)).toBe(0);await page.close();
+ await page.reload();await page.addScriptTag({content:bundle});await page.waitForFunction(()=>document.body.textContent?.includes('线路二'));expect(await page.evaluate(()=>/DeepSeek|GLM/.test(document.body.textContent||''))).toBe(false);expect(await page.evaluate(()=>(globalThis as any).fixture.calls.length)).toBe(0);await page.close();
 },20000);
 
 it('顾问自然语言搭配回填已选亮点，未调用改稿，刷新仍保留', async()=>{

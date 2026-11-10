@@ -19,13 +19,18 @@ describe("Veo 与 Google Omni 淘汰面", () => {
     }
   });
 
-  it("旧 Google 视频 API 在任何上游调用前统一返回 410", () => {
+  it("旧 Google 视频 API 在任何上游调用前统一返回 410，且处理代码已删除（1110）", () => {
     const source = read("api/google.ts");
     const guard = source.indexOf("if (isRetiredGoogleVideoOp(op))");
-    const firstLegacyHandler = source.indexOf('if(op === "veoCreate")');
     expect(guard).toBeGreaterThan(0);
-    expect(firstLegacyHandler).toBeGreaterThan(guard);
-    expect(source.slice(guard, firstLegacyHandler)).toContain("status(410)");
+    expect(source.slice(guard, guard + 400)).toContain("status(410)");
+    // 410 之后不再保留不可达的 Veo / Omni / translateForVeo 处理分支，也不再引用 Omni 直连服务
+    for (const op of ["veoCreate", "veoTask", "omniVideoCreate", "omniVideoTask", "omniMaterialUrl", "omniInteractionCreate", "omniInteractionGet", "translateForVeo"]) {
+      expect(source, op).not.toMatch(new RegExp(`op\\s*===\\s*["']${op}["']`));
+    }
+    expect(source).not.toMatch(/geminiOmniVertexVideo|geminiOmniInteractions/);
+    expect(fs.existsSync(path.join(root, "server/services/geminiOmniVertexVideo.ts"))).toBe(false);
+    expect(fs.existsSync(path.join(root, "server/services/geminiOmniInteractions.ts"))).toBe(false);
   });
 
   it("中央 Veo 服务固定不可用且每个执行函数首段均硬拒绝", () => {

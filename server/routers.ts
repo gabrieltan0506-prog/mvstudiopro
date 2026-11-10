@@ -315,6 +315,7 @@ import {
   growthTitleExecutionSchema,
 } from "@shared/growth";
 import { buildAutoPickedTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
+import { debugForRole } from "@shared/modelInfoExposure";
 import { formatShanghaiDateZh, getShanghaiVisualReportWindows, nowShanghaiIso } from "./growth/time";
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
@@ -3270,13 +3271,13 @@ export const appRouter = router({
         return { ok: true as const, started, jobId: job.jobId, kind: job.kind };
       }),
 
-    analyzeFrame: publicProcedure
+    analyzeFrame: protectedProcedure
       .input(z.object({
         imageBase64: z.string().min(1),
         mimeType: z.string().default("image/jpeg"),
         context: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         // Upload the frame to S3 first
         const buffer = Buffer.from(input.imageBase64, "base64");
         const { url: frameUrl } = await storagePut(
@@ -3330,12 +3331,13 @@ export const appRouter = router({
             success: true,
             analysis,
             frameUrl,
-            debug: {
+            // 模型/通道名只进监管与管理员的 debug；普通用户不回 debug。
+            debug: debugForRole(ctx.user?.role, {
               route: "analyzeFrame",
               provider: response.provider || "unknown",
               model: response.model || "unknown",
               fallback: false,
-            },
+            }),
           };
         } catch (error) {
           console.warn("[mvAnalysis.analyzeFrame] Falling back to deterministic analysis:", error);
@@ -3344,17 +3346,17 @@ export const appRouter = router({
             analysis: buildFallbackFrameAnalysis(input.context),
             frameUrl,
             fallback: true,
-            debug: {
+            debug: debugForRole(ctx.user?.role, {
               route: "analyzeFrame",
               provider: "fallback",
               model: "deterministic",
               fallback: true,
-            },
+            }),
           };
         }
       }),
 
-    analyzeDocument: publicProcedure
+    analyzeDocument: protectedProcedure
       .input(z.object({
         fileBase64: z.string().min(1),
         mimeType: z.string().min(1),
@@ -3393,13 +3395,13 @@ export const appRouter = router({
           fileUrl: result.documentMeta.fileUrl,
           extractionMethod: result.documentMeta.extractionMethod,
           extractedTextPreview: result.documentMeta.extractedTextPreview,
-          debug: {
+          debug: debugForRole(ctx.user?.role, {
             route: "analyzeDocument",
             provider: result.documentMeta.provider,
             model: result.documentMeta.model,
             fallback: result.documentMeta.fallback,
             extractionMethod: result.documentMeta.extractionMethod,
-          },
+          }),
         };
       }),
 
@@ -3451,14 +3453,14 @@ export const appRouter = router({
           analysis: result.analysis,
           fileUrls: result.imageMeta.fileUrls,
           imageCount: result.imageMeta.imageCount,
-          debug: {
+          debug: debugForRole(ctx.user?.role, {
             route: "analyzeGrowthCampImages",
             provider: result.imageMeta.provider,
             model: result.imageMeta.model,
             fallback: result.imageMeta.fallback,
             primaryError: result.imageMeta.primaryError || null,
             imageCount: result.imageMeta.imageCount,
-          },
+          }),
         };
       }),
 
@@ -3508,6 +3510,9 @@ export const appRouter = router({
           fileName: input.fileName,
           contentType: input.mimeType,
           objectName: `uploads/u${ctx.user.id}/${randomUUID()}-${safeName}`,
+          // 大小上限签进链接（同服务端直收上限，缺省 600MB）：上传方须带返回的 requiredHeaders，超限由存储侧拒收。
+          // 前端各上传点都经站内转发并原样带上 requiredHeaders（转发会透传 x-goog-* 请求头）。
+          maxBytes: (await import("./services/uploadLimits")).resolveUploadMaxBytes(),
         });
       }),
 
@@ -3561,7 +3566,7 @@ export const appRouter = router({
           videoUrl: result.videoMeta.videoUrl,
           transcript: result.videoMeta.transcript,
           videoDuration: result.videoMeta.videoDuration,
-          debug: {
+          debug: debugForRole(ctx.user?.role, {
             route: "analyzeVideo",
             provider: result.videoMeta.provider,
             model: result.videoMeta.model,
@@ -3570,11 +3575,11 @@ export const appRouter = router({
             videoDuration: result.videoMeta.videoDuration,
             failureStage: result.videoMeta.failureStage || null,
             failureReason: result.videoMeta.failureReason || null,
-          },
+          }),
         };
       }),
 
-    buildPremiumRemix: publicProcedure
+    buildPremiumRemix: protectedProcedure
       .input(z.object({
         context: z.string().optional(),
         transcript: z.string().optional(),
@@ -3762,7 +3767,7 @@ export const appRouter = router({
         };
       }),
 
-    generatePremiumRemixAssets: publicProcedure
+    generatePremiumRemixAssets: protectedProcedure
       .input(z.object({
         remix: growthPremiumRemixSchema,
         mode: z.enum(["loop", "interpolation"]).default("loop"),
@@ -4036,7 +4041,7 @@ export const appRouter = router({
         };
       }),
 
-    askPlatformFollowUp: publicProcedure
+    askPlatformFollowUp: protectedProcedure
       .input(z.object({
         question: z.string().min(3).max(1200),
         context: z.string().optional(),
@@ -4109,21 +4114,21 @@ export const appRouter = router({
           return {
             success: true,
             result: parsed,
-            debug: {
+            debug: debugForRole(ctx.user?.role, {
               route: "mvAnalysis.askPlatformFollowUp",
               modelName: followUpModelUsed || followUpModel,
               provider: followUpProvider,
               copyLlmMode: followUpProvider === "gemini" ? "vertex" : "openai",
               windowDays: input.windowDays,
               fallbackUsed: geminiFallbackUsed,
-            },
+            }),
           };
         } catch (error) {
           console.warn("[growth.askPlatformFollowUp] static fallback:", error);
           return {
             success: true,
             result: buildPlatformFollowUpFallback(input),
-            debug: {
+            debug: debugForRole(ctx.user?.role, {
               route: "mvAnalysis.askPlatformFollowUp",
               modelName: followUpModel,
               provider: "openai",
@@ -4131,7 +4136,7 @@ export const appRouter = router({
               windowDays: input.windowDays,
               fallbackUsed: true,
               error: error instanceof Error ? error.message : String(error),
-            },
+            }),
           };
         }
       }),
@@ -4143,7 +4148,7 @@ export const appRouter = router({
     // the background and writes the result to the DB via markJobSucceeded.
     // Frontend polls GET /api/jobs/:id every 3 seconds.
     // ─────────────────────────────────────────────────────────────────────────
-    createPlatformAnalysisJob: publicProcedure
+    createPlatformAnalysisJob: protectedProcedure
       .input(z.object({
         context: z.string().optional(),
         windowDays: z.number().int().min(3).max(90).default(15),
@@ -4222,7 +4227,7 @@ export const appRouter = router({
       }),
 
     // Platform Follow-Up (QA) Job — same async pattern
-    createPlatformQAJob: publicProcedure
+    createPlatformQAJob: protectedProcedure
       .input(z.object({
         question: z.string().min(1),
         windowDays: z.number().int().min(3).max(90).default(15),
@@ -4232,7 +4237,19 @@ export const appRouter = router({
         fileUri: z.string().optional(),
         fileMimeType: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        // 附件只收本人经 /api/platform/upload 上传的对象（QA 桶 platform-qa/u<uid>/）：任务会把它交给模型并在读完后删除，
+        // 任意 gs:// / https 一律不入队（原先匿名即可借此读、删任意对象）。不带附件的追问口径不变。
+        let fileUri: string | undefined;
+        if (input.fileUri?.trim()) {
+          if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED", message: "请先登录后再上传附件" });
+          const { assertOwnPlatformQaFileUri } = await import("./services/platformQaUpload");
+          try {
+            fileUri = assertOwnPlatformQaFileUri(input.fileUri, ctx.user.id);
+          } catch {
+            throw new TRPCError({ code: "FORBIDDEN", message: "附件不属于本人，请重新上传" });
+          }
+        }
         const jobId = nanoid(16);
         await createJobRecord({
           id: jobId,
@@ -4246,7 +4263,7 @@ export const appRouter = router({
               windowDays: input.windowDays,
               snapshot: input.snapshot,
               context: input.context,
-              fileUri: input.fileUri,
+              fileUri,
               fileMimeType: input.fileMimeType,
             },
           },
@@ -4339,8 +4356,8 @@ export const appRouter = router({
 
     /** 瀏覽器直傳 HTML 快照到 GCS（與異步 pdf_export 同桶），供作品庫 queuePdfFromHtml。 */
     getPdfHtmlSnapshotUploadUrl: protectedProcedure.mutation(async ({ ctx }) => {
-      const safeUser = String(ctx.user.id).replace(/[^0-9a-zA-Z_-]/g, "");
-      const objectName = `pdf-async/html/${safeUser}/${Date.now()}-${nanoid(12)}.html`;
+      const { pdfHtmlSnapshotPrefix } = await import("./services/pdfHtmlSnapshot");
+      const objectName = `${pdfHtmlSnapshotPrefix(ctx.user.id)}${Date.now()}-${nanoid(12)}.html`;
       return createGcsSignedUploadUrl({
         contentType: "text/html; charset=utf-8",
         objectName,
@@ -4358,6 +4375,14 @@ export const appRouter = router({
         }),
       )
       .mutation(async ({ ctx, input }) => {
+        // 只收本人快照（本桶 pdf-async/html/<本人uid>/）：任务会读取并删除该对象，别人的、别的桶的一律不入队。
+        const { assertOwnPdfHtmlSnapshotUri } = await import("./services/pdfHtmlSnapshot");
+        let htmlGcsUri: string;
+        try {
+          htmlGcsUri = assertOwnPdfHtmlSnapshotUri(input.htmlGcsUri, ctx.user.id).gcsUri;
+        } catch {
+          throw new TRPCError({ code: "FORBIDDEN", message: "HTML 快照不屬於本人，無法導出" });
+        }
         const jobId = nanoid(16);
         await createJobRecord({
           id: jobId,
@@ -4367,7 +4392,7 @@ export const appRouter = router({
           input: {
             action: "render_html",
             params: {
-              htmlGcsUri: input.htmlGcsUri,
+              htmlGcsUri,
               token: input.token ?? "",
             },
           },
@@ -11694,7 +11719,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     // Analyze a single segment frame (used by full video analysis)
-    analyzeSegment: publicProcedure
+    analyzeSegment: protectedProcedure
       .input(z.object({
         imageBase64: z.string().min(1),
         mimeType: z.string().default("image/jpeg"),
@@ -11765,7 +11790,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     // Generate final summary report from all segment analyses
-    generateReport: publicProcedure
+    generateReport: protectedProcedure
       .input(z.object({
         segments: z.array(z.object({
           segmentIndex: z.number(),
@@ -14166,7 +14191,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
 
     /** 竞品图片视觉分析（调用 gpt-4.1-mini vision） */
-    analyze: publicProcedure
+    analyze: protectedProcedure
       .input(z.object({
         imageUrl: z.string().min(1),
         question: z.string().optional(),
@@ -14212,7 +14237,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
 
     /** 图片编辑（gpt-image-2 edits：原图 + 可选多图融合 + 可选遮罩局部改） */
-    edit: publicProcedure
+    edit: adminProcedure
       .input(z.object({
         imageUrl: z.string().min(1),
         prompt: z.string().min(1),

@@ -1,23 +1,12 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { putPublicStoredMedia as put } from "../server/services/publicStoredMedia";
 import { getVertexAccessToken } from "../server/utils/vertex";
 import { runVertexUpscaleImage, type VertexUpscaleResult } from "../server/services/vertexImage";
 import { randomUUID, createHash } from "node:crypto";
 import { uploadBufferToGcs, uploadBufferToGcsIfAbsent, getGcsBucketName, signGsUriV4ReadUrl } from "../server/services/gcs";
-import {
-  pollOmniVideoGeneration,
-  resolveOmniVideoModel,
-  startOmniVideoGeneration,
-  type OmniVideoResolution,
-} from "../server/services/geminiOmniVertexVideo";
-import {
-  createOmniFlashInteraction,
-  extractOmniInteractionOutputs,
-  getOmniFlashInteraction,
-  type OmniVideoTask,
-} from "../server/services/geminiOmniInteractions";
+import { resolveGeminiModel, type GeminiModelDomain } from "../shared/geminiModelConfig";
 import {
   buildManhuaClipQualityPrompt,
+  MANHUA_CLIP_QUALITY_KEYS,
   parseManhuaClipQualityMarkdown,
 } from "../shared/manhuaClipQuality";
 import {
@@ -26,6 +15,7 @@ import {
   isRetiredGoogleVideoOp,
 } from "../shared/internalMediaEndpointPolicy";
 import { assertSongOperationMaterialRead } from "../server/services/songOperationMediaAccess";
+import { redactModelInfoForRole } from "../shared/modelInfoExposure";
 import { isAllowedCanvasMaterialGcsUri } from "../shared/canvasMaterialReadPolicy";
 export { runVertexUpscaleImage, type VertexUpscaleResult };
 
@@ -43,22 +33,16 @@ export const config = {
  * - op=geminiScript    (Gemini text)
  * - op=vertexTranslate（Vertex IAM 纯文本翻译；**locations/global**；模型 gemini-3-flash-preview，供 TestLab）
  * - op=nanoImage       Vertex **`generateContent` 圖像**：Nano Banana 2（Flash）/ Nano Banana Pro。
- * - op=veoCreate       (Veo create)
- * - op=veoTask         (Veo polling)
- * - op=omniVideoCreate (Gemini Omni · Vertex generateVideos)
- * - op=omniVideoTask   (Gemini Omni polling)
- * - op=translateForVeo (Chinese → Veo-native English audio prompt)
+ * - op=canvasVisionMarkdown / videoReversePrompt / manhuaClipQualityReview（1110：媒体先存 GCS → Gemini 两跳 Vertex gs:// → EvoLink 签名 https）
  * - op=manhuaAudioGetUploadUrl / manhuaAudioClimaxScan（漫剧学习语音 · Gemini Flash）
  * - op=manhuaTemplateFrameGetUploadUrl / manhuaTemplateFrameScan（漫剧学习读帧 · GPT-5.6 Terra · high）
+ * - Veo / Google Omni / translateForVeo 已淘汰：isRetiredGoogleVideoOp 统一 410，处理代码已删除。
  *
  * Env:
- * - **Vertex IAM（`generateContent` 圖像、Gemini Script、Veo 等 `aiplatform` 呼叫）**：`GOOGLE_APPLICATION_CREDENTIALS_JSON` **或** `GOOGLE_APPLICATION_CREDENTIALS`（金鑰檔路徑）；換取短效 **Bearer token**，**非** URL `?key=`。
- * - GEMINI_API_KEY：僅 **Consumer** `generativelanguage`（translateForVeo）；**不**用於 Vertex 圖像。
- *   transcribeAudio / manhuaAudioClimaxScan 已改走 Gemini 3.8 Flash 两跳（Vertex gs:// → EvoLink 签名 https），不读此 key。
- * - VERTEX_PROJECT_ID（Vertex 圖像 / geminiScript / Veo 等必填；可另備 GOOGLE_CLOUD_PROJECT）
+ * - **Vertex IAM（`generateContent` 圖像、Gemini Script 等 `aiplatform` 呼叫）**：`GOOGLE_APPLICATION_CREDENTIALS_JSON` **或** `GOOGLE_APPLICATION_CREDENTIALS`（金鑰檔路徑）；換取短效 **Bearer token**，**非** URL `?key=`。
+ * - 本文件不读 Gemini API 直连密钥：Gemini 只走 Vertex → EvoLink 两跳（EVOLINK_API_KEY），模型经 shared/geminiModelConfig.ts 解析。
+ * - VERTEX_PROJECT_ID（Vertex 圖像 / geminiScript 等必填；可另備 GOOGLE_CLOUD_PROJECT）
  * - VERTEX_IMAGE_MODEL_FLASH / VERTEX_IMAGE_MODEL_PRO
- * - VERTEX_VEO_MODEL_RAPID / VERTEX_VEO_MODEL_PRO
- * - VERTEX_VIDEO_LOCATION_RAPID / VERTEX_VIDEO_LOCATION_PRO
  * - BLOB_READ_WRITE_TOKEN (optional for fetching private blob url)
  */
 
@@ -109,76 +93,6 @@ function baseUrlFor(location:string){
   return location==="global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
 }
 
-function getPublicAssetBaseUrl() {
-  return String(process.env.OAUTH_SERVER_URL || "").trim() || "https://mvstudiopro.com";
-}
-
-function buildBlobMediaUrlFromPath(pathname: string) {
-  const normalized = String(pathname || "").replace(/^\/+/, "").trim();
-  return `${getPublicAssetBaseUrl()}/api/jobs?op=blobMedia&blobPath=${encodeURIComponent(normalized)}`;
-}
-
-function extractVideoUrl(raw:any): string {
-  const candidates = [
-    raw?.response?.generatedVideos?.[0]?.video?.uri,
-    raw?.response?.generatedVideos?.[0]?.video?.url,
-    raw?.response?.videos?.[0]?.uri,
-    raw?.response?.videos?.[0]?.url,
-    raw?.generatedVideos?.[0]?.video?.uri,
-    raw?.generatedVideos?.[0]?.video?.url,
-    raw?.videoUrl,
-    raw?.url,
-  ];
-  for (const item of candidates) {
-    const v = s(item).trim();
-    if (v) return v;
-  }
-  return "";
-}
-
-function extractGeneratedVideo(raw:any): { data: string; mimeType: string } | null {
-  const candidates = [
-    raw?.response?.generatedVideos?.[0]?.video,
-    raw?.response?.videos?.[0],
-    raw?.generatedVideos?.[0]?.video,
-    raw?.videos?.[0],
-  ];
-
-  for (const item of candidates) {
-    const data = s(item?.bytesBase64Encoded || item?.bytesBase64EncodedVideo || item?.videoBytes).trim();
-    if (data) {
-      return {
-        data,
-        mimeType: s(item?.mimeType || "video/mp4").trim() || "video/mp4",
-      };
-    }
-  }
-
-  return null;
-}
-
-async function materializeGeneratedVideo(taskId: string, raw:any) {
-  const extracted = extractGeneratedVideo(raw);
-  if (!extracted) return { videoUrl: "", materialized: false };
-
-  const safeTaskId = s(taskId).split("/").pop() || `veo-${Date.now()}`;
-  const extension = extracted.mimeType.includes("quicktime")
-    ? "mov"
-    : extracted.mimeType.includes("webm")
-      ? "webm"
-      : "mp4";
-
-  const blob = await put(`videos/${Date.now()}-${safeTaskId}.${extension}`, Buffer.from(extracted.data, "base64"), {
-    access: "public",
-    contentType: extracted.mimeType,
-  });
-
-  return {
-    videoUrl: buildBlobMediaUrlFromPath(String(blob.pathname || "")),
-    materialized: true,
-  };
-}
-
 function extractGeneratedImages(raw:any): Array<{ data: string; mimeType: string }> {
   const images: Array<{ data: string; mimeType: string }> = [];
   const parts = Array.isArray(raw?.candidates?.[0]?.content?.parts) ? raw.candidates[0].content.parts : [];
@@ -203,15 +117,6 @@ function extractGeneratedImages(raw:any): Array<{ data: string; mimeType: string
     }
   }
   return images;
-}
-
-function normalizePredictOperationName(taskIdOrName: string, projectId: string, location: string, model: string): string {
-  const input = s(taskIdOrName).trim();
-  if (!input) return "";
-  if (input.startsWith(`projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/`)) return input;
-  const m = input.match(/operations\/([^/?\s]+)/);
-  if (m?.[1]) return `projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/${m[1]}`;
-  return `projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/${input}`;
 }
 
 async function fetchJson(url:string, init:RequestInit){
@@ -308,56 +213,56 @@ async function buildNanoImageResponseBody(opts: {
   };
 }
 
-async function fetchImageAsBase64(imageUrl:string){
+/** 图片：data: 解码或下载（403 时带 BLOB 令牌重试），≤10MB。只取字节，落 GCS 后以 gs:// / 签名 https 交模型（不内联）。 */
+async function fetchImageBuffer(imageUrl: string, fallbackMime = "image/jpeg"): Promise<{ buffer: Buffer; mimeType: string; via: "dataUrl" | "url" }> {
   const url = s(imageUrl).trim();
-  if(!url) throw new Error("missing_image_url");
-
-  const dataMatch = url.match(/^data:([^;,]+);base64,(.+)$/);
-  if (dataMatch?.[1] && dataMatch?.[2]) {
-    const mimeType = String(dataMatch[1] || "image/png");
-    const b64 = String(dataMatch[2] || "").trim();
-    const buf = Buffer.from(b64, "base64");
-    if(!buf.length) throw new Error("empty_image");
-    if(buf.length > 10*1024*1024) throw new Error("image_too_large");
-    return { mimeType, b64, bytes: buf.length };
+  if (!url) throw new Error("missing_image_url");
+  if (url.startsWith("data:")) {
+    const dataMatch = url.match(/^data:([^;,]+);base64,(.+)$/);
+    if (!dataMatch?.[2]) throw new GoogleVisionMediaError("bad_data_url", 400, "图片数据格式不正确");
+    const buffer = Buffer.from(String(dataMatch[2]).trim(), "base64");
+    if (!buffer.length) throw new Error("empty_image");
+    if (buffer.length > 10 * 1024 * 1024) throw new Error("image_too_large");
+    return { buffer, mimeType: String(dataMatch[1] || fallbackMime).trim().toLowerCase(), via: "dataUrl" };
   }
+  if (!/^https?:\/\//i.test(url)) throw new Error("bad_image_url");
 
   const token = s(process.env.BLOB_READ_WRITE_TOKEN).trim();
-  const headers:any = { "User-Agent":"mvstudiopro/1.0 (+google-fetch)" };
-
-  let r = await fetch(url, { redirect:"follow", headers });
-  if (r.status===403 && token){
+  const headers: Record<string, string> = { "User-Agent": "mvstudiopro/1.0 (+google-fetch)" };
+  let r = await fetch(url, { redirect: "follow", headers });
+  if (r.status === 403 && token) {
     headers["Authorization"] = `Bearer ${token}`;
-    r = await fetch(url, { redirect:"follow", headers });
+    r = await fetch(url, { redirect: "follow", headers });
   }
-  if(!r.ok) throw new Error("image_fetch_failed:"+r.status);
-
-  const mimeType = String(r.headers.get("content-type") || "image/png");
-  const buf = Buffer.from(await r.arrayBuffer());
-  if(!buf.length) throw new Error("empty_image");
-  if(buf.length > 10*1024*1024) throw new Error("image_too_large");
-  return { mimeType, b64: buf.toString("base64"), bytes: buf.length };
+  if (!r.ok) throw new Error("image_fetch_failed:" + r.status);
+  const ct = String(r.headers.get("content-type") || "").split(";")[0]!.trim().toLowerCase();
+  const buffer = Buffer.from(await r.arrayBuffer());
+  if (!buffer.length) throw new Error("empty_image");
+  if (buffer.length > 10 * 1024 * 1024) throw new Error("image_too_large");
+  return { buffer, mimeType: /^image\//.test(ct) ? ct : fallbackMime, via: "url" };
 }
 
-async function fetchVideoAsBase64(videoUrl: string) {
+/** 视频：下载 ≤30MB（原质检上限），落 GCS 后交模型（不内联）。 */
+async function fetchVideoBuffer(videoUrl: string): Promise<{ buffer: Buffer; mimeType: string; via: "url" }> {
   const url = s(videoUrl).trim();
   if (!url) throw new Error("missing_video_url");
+  if (!/^https?:\/\//i.test(url)) throw new Error("bad_video_url");
   const r = await fetch(url, {
     redirect: "follow",
     headers: { "User-Agent": "mvstudiopro/1.0 (+clip-quality)" },
   });
   if (!r.ok) throw new Error(`video_fetch_failed:${r.status}`);
-  const mimeType = String(r.headers.get("content-type") || "video/mp4").split(";")[0] || "video/mp4";
-  const buf = Buffer.from(await r.arrayBuffer());
-  if (!buf.length) throw new Error("empty_video");
-  if (buf.length > 30 * 1024 * 1024) throw new Error("video_too_large");
-  return { mimeType, b64: buf.toString("base64"), bytes: buf.length };
+  const ct = String(r.headers.get("content-type") || "").split(";")[0]!.trim().toLowerCase();
+  const buffer = Buffer.from(await r.arrayBuffer());
+  if (!buffer.length) throw new Error("empty_video");
+  if (buffer.length > 30 * 1024 * 1024) throw new Error("video_too_large");
+  return { buffer, mimeType: /^video\//.test(ct) ? ct : "video/mp4", via: "url" };
 }
 
 /**
  * 1110 听音通道合规（照抄 musicMvLyricTable 43f248f1 与模板学习做法）：音频先存 GCS（用户前缀），
  * 再走 geminiAudioJsonWithFallback 两跳 —— Vertex 读 gs://，EvoLink 读不了 gs:// → V4 签名 https（1 小时）；
- * 不直连 GEMINI_API_KEY、不走 OpenRouter、不内联 base64。每跳 request/raw/decoded/parsed/rejected 由两跳函数
+ * 不直连 Gemini API 密钥、不走 OpenRouter、不内联 base64。每跳 request/raw/decoded/parsed/rejected 由两跳函数
  * 永久落证据；证据里只记 gs://，签名链接不落档。
  */
 // 1110：两跳模型不在此写死，统一用 server/gemini-audio.ts resolveGeminiAudioTwoHopModel()（env 可配，缺省 gemini-3.8-flash）。
@@ -388,8 +293,165 @@ async function fetchManhuaScanAudio(audioUrl: string): Promise<Buffer> {
   return buf;
 }
 
-const TRANSCRIBE_AUDIO_PROMPT = "请将音频内容完整转录为文字，写入 JSON 的 text 字段。只输出转录文字本身，不要任何解释、标注或时间码。";
-const TRANSCRIBE_AUDIO_SCHEMA = { type: "OBJECT", properties: { text: { type: "STRING" } }, required: ["text"] };
+/**
+ * 漫剧学习直传签名（听音音频 / 读帧关键帧）：须登录；对象名由服务端生成，落本人上传前缀
+ * uploads/u<uid>/<子目录>/<UUID>-<文件名>（同 getVideoUploadSignedUrl 口径，客户端不可指定），
+ * 听音扫描的归属核验（resolveRegisteredPostProdMediaSource）按同一前缀放行。
+ * 文件名只作可读后缀：非常规字符折成 "-"、连续点折成一个（核验侧拒收含 ".." 的对象名）。
+ * Content-Type 签入 URL、有效期 20 分钟，均同原入口；另签入大小上限（x-goog-content-length-range），上传时须带 requiredHeaders。
+ */
+/** 学习直传大小上限：听音音频 100MB、读帧关键帧 10MB（单张图）。 */
+const MANHUA_LEARN_AUDIO_UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
+const MANHUA_LEARN_FRAME_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+
+async function issueManhuaLearnUploadUrl(
+  req: VercelRequest,
+  res: VercelResponse,
+  input: { fileName: string; mimeType: string; subdir: string; maxBytes: number },
+) {
+  const viewer = await resolveGoogleGatewayUser(req);
+  if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required", message: "请先登录后再上传文件" });
+  try {
+    const { createGcsSignedUploadUrl } = await import("../server/services/gcs");
+    const { userUploadsPrefix } = await import("../server/services/postProdMediaSource");
+    const safeName = input.fileName.replace(/[^\w.\-]+/g, "-").replace(/\.{2,}/g, ".").slice(0, 80);
+    const signed = await createGcsSignedUploadUrl({
+      fileName: input.fileName,
+      contentType: input.mimeType,
+      objectName: `${userUploadsPrefix(String(viewer.userId))}${input.subdir}/${randomUUID()}-${safeName}`,
+      expiresInMinutes: 20,
+      // 大小上限签进链接：上传方须带返回的 requiredHeaders（x-goog-content-length-range），超限由存储侧拒收
+      maxBytes: input.maxBytes,
+    });
+    return res.status(200).json({ ok: true, ...signed, mimeType: input.mimeType });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return res.status(500).json({ ok: false, error: "gcs_signed_upload_failed", detail: msg.slice(0, 240) });
+  }
+}
+
+/**
+ * 1110 看图 / 视频反推帧 / 成片质检通道合规（同听音做法）：媒体先存 GCS（用户前缀，或核验为本人的 gs://），
+ * 再走 geminiAudioJsonWithFallback 两跳 —— Vertex 读 gs://，EvoLink 读 V4 签名 https（1 小时）；
+ * 不直连 Gemini API 密钥、不内联 base64；模型经 shared/geminiModelConfig.ts 解析（缺省 gemini-3.8-flash，不收前端传的模型名）。
+ * 每跳 request/raw/decoded/parsed/rejected 由两跳函数永久落证据；证据只记 gs://，不记签名链接或调用方传入的原链接。
+ */
+class GoogleVisionMediaError extends Error {
+  constructor(readonly code: string, readonly status: 400 | 403 | 502, message: string) {
+    super(message);
+  }
+}
+
+type GoogleVisionMediaInput = { kind: "image" | "video"; url: string; gcsUri?: string; mimeType: string; label?: string };
+type GoogleVisionStagedMedia = { gsUri: string; mimeType: string; via: "gcs" | "url" | "dataUrl"; bytes?: number; sha256?: string };
+
+function googleVisionObjectExt(mimeType: string): string {
+  const sub = String(mimeType || "").toLowerCase().split(";")[0]!.split("/")[1] || "";
+  return ({ jpeg: "jpg", jpg: "jpg", png: "png", webp: "webp", gif: "gif", heic: "heic", mp4: "mp4", quicktime: "mov", webm: "webm" } as Record<string, string>)[sub] || "bin";
+}
+
+/** 单个媒体落 GCS：gs:// 先按后期素材登记核验本人归属（不下载）；核验不过且有链接时按链接下载转存，否则 403。 */
+async function stageGoogleVisionMedia(userId: number, bucket: string, prefix: string, index: number, item: GoogleVisionMediaInput): Promise<GoogleVisionStagedMedia> {
+  const gcsUri = s(item.gcsUri).trim();
+  if (gcsUri.startsWith("gs://")) {
+    try {
+      const { resolveRegisteredPostProdMediaSource } = await import("../server/services/postProdMediaSource");
+      return { gsUri: await resolveRegisteredPostProdMediaSource({ userId: String(userId), source: gcsUri }), mimeType: item.mimeType, via: "gcs" };
+    } catch {
+      // 不能证明是本人对象：调用方若同时持有 https 链接，按链接下载转存（不扩大读取面），否则拒绝。
+      if (!s(item.url).trim()) throw new GoogleVisionMediaError("gcs_uri_not_allowed", 403, "素材不属于本人或尚未登记");
+    }
+  }
+  const fetched = item.kind === "video" ? await fetchVideoBuffer(item.url) : await fetchImageBuffer(item.url, item.mimeType);
+  const objectName = `${prefix}/media-${String(index + 1).padStart(2, "0")}.${googleVisionObjectExt(fetched.mimeType)}`;
+  await uploadBufferToGcsIfAbsent({ bucket, objectName, buffer: fetched.buffer, contentType: fetched.mimeType });
+  return {
+    gsUri: `gs://${bucket}/${objectName}`,
+    mimeType: fetched.mimeType,
+    via: fetched.via,
+    bytes: fetched.buffer.length,
+    sha256: createHash("sha256").update(fetched.buffer).digest("hex"),
+  };
+}
+
+const GOOGLE_VISION_MARKDOWN_SCHEMA = { type: "OBJECT", properties: { markdown: { type: "STRING" } }, required: ["markdown"] };
+const GOOGLE_VISION_MARKDOWN_WRAP = "【输出封装】把上面要求输出的完整原文（Markdown 或逐行结果）原样写进 JSON 的 markdown 字段，保留换行；JSON 之外不要输出任何内容。";
+
+type GoogleVisionTwoHopOutcome =
+  | { ok: true; markdown: string; staged: GoogleVisionStagedMedia[] }
+  | { ok: false; status: number; body: Record<string, unknown> };
+
+/**
+ * 看图类入口共用：媒体逐个落 GCS → 两跳（主媒体 + extraMedia 按序，全部 fileData 引用）→ markdown。
+ * 写坏（空回 / JSON 解析失败 / validate 抛错）同样换下一跳；两跳都不过返回 failure（业务友好文案，不回传上游原文）。
+ */
+async function runGoogleVisionTwoHop(input: {
+  userId: number;
+  op: string;
+  area: string;
+  domain: GeminiModelDomain;
+  media: GoogleVisionMediaInput[];
+  prompt: string;
+  maxOutputTokens: number;
+  temperature: number;
+  timeoutMs?: number;
+  validate?: (markdown: string) => void;
+  mediaError: (index: number, error: unknown) => { status: number; body: Record<string, unknown> };
+  failure: { status: number; body: Record<string, unknown> };
+  context?: Record<string, unknown>;
+}): Promise<GoogleVisionTwoHopOutcome> {
+  const { geminiAudioJsonWithFallback, isManhuaDramaAudioAvailable } = await import("../server/gemini-audio");
+  if (!isManhuaDramaAudioAvailable()) {
+    return { ok: false, status: 500, body: { ok: false, error: "missing_env", message: "看图服务暂未配置，请稍后再试" } };
+  }
+  const bucket = getGcsBucketName();
+  const prefix = `${input.area}/${input.userId}/${randomUUID()}`;
+  const save = googleAudioEvidenceSaver(bucket, prefix);
+  const staged: GoogleVisionStagedMedia[] = [];
+  for (let i = 0; i < input.media.length; i += 1) {
+    try {
+      staged.push(await stageGoogleVisionMedia(input.userId, bucket, prefix, i, input.media[i]!));
+    } catch (error) {
+      return { ok: false, ...input.mediaError(i, error) };
+    }
+  }
+  const model = resolveGeminiModel(input.domain);
+  await save("request", {
+    userId: input.userId,
+    op: input.op,
+    model,
+    ...input.context,
+    media: staged.map((m, i) => ({ kind: input.media[i]!.kind, gsUri: m.gsUri, mimeType: m.mimeType, via: m.via, bytes: m.bytes, sha256: m.sha256, label: input.media[i]!.label })),
+  });
+  try {
+    const result = await geminiAudioJsonWithFallback<{ markdown: string }>({
+      media: googleAudioTwoHopMedia(staged[0]!.gsUri),
+      mediaLabel: input.media[0]!.label,
+      extraMedia: staged.slice(1).map((m, i) => ({ mimeType: m.mimeType, ...googleAudioTwoHopMedia(m.gsUri), label: input.media[i + 1]!.label })),
+      mimeType: staged[0]!.mimeType,
+      model,
+      prompt: `${input.prompt}\n\n${GOOGLE_VISION_MARKDOWN_WRAP}`,
+      nativeSchema: GOOGLE_VISION_MARKDOWN_SCHEMA,
+      schemaName: `${input.op}_markdown`,
+      maxOutputTokens: input.maxOutputTokens,
+      temperature: input.temperature,
+      timeoutMs: input.timeoutMs,
+      validate: decoded => {
+        const raw = (decoded as { markdown?: unknown } | null)?.markdown;
+        const markdown = typeof raw === "string" ? raw.trim() : "";
+        if (!markdown) throw new Error("markdown 为空");
+        input.validate?.(markdown);
+        return { markdown };
+      },
+      save,
+    });
+    return { ok: true, markdown: result.value.markdown, staged };
+  } catch {
+    // 两跳拒因已逐跳落证据（hop-*-raw / rejected / hop-exhausted），这里不回传上游原文。
+    console.warn(`[${input.op}] 两跳均未取得可用结果`, prefix);
+    return { ok: false, ...input.failure };
+  }
+}
 
 export default async function handler(req:VercelRequest,res:VercelResponse){
   try{
@@ -472,14 +534,13 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       if (!bytes.length || bytes.length > maxBytes || bytes.toString("base64") !== audioBase64)
         return res.status(400).json({ ok: false, error: "invalid_audio_base64", message: "音频传输内容损坏，请重新选择原音" });
 
-      // 拒因分类：两跳都失败时仍按原合同回错误码（不完整 422 / 不可用 422 / 上游失败 502）。
-      let incomplete = false;
-      let unusable = false;
       const requestId = randomUUID();
       try {
-        const { geminiAudioJsonWithFallback, isManhuaDramaVertexAudioAvailable, isManhuaDramaEvolinkAudioAvailable, resolveGeminiAudioTwoHopModel } = await import("../server/gemini-audio");
+        const { isManhuaDramaVertexAudioAvailable, isManhuaDramaEvolinkAudioAvailable } = await import("../server/gemini-audio");
         if (!isManhuaDramaVertexAudioAvailable() && !isManhuaDramaEvolinkAudioAvailable())
           return res.status(500).json({ ok: false, error: "missing_env", message: "语音识别服务暂未配置，原音保留，可手动填写" });
+        // 1110：两跳规格（temperature 0、按 12000 字合同估算 maxOutputTokens、STOP 与字数校验）与实测探针共用一处真源
+        const { transcribeVoiceInputTwoHop } = await import("../server/_core/voiceTranscription");
         const bucket = getGcsBucketName();
         const prefix = `voice-transcribe/${viewer.userId}/${requestId}`;
         const save = googleAudioEvidenceSaver(bucket, prefix);
@@ -487,35 +548,16 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         await uploadBufferToGcsIfAbsent({ bucket, objectName, buffer: bytes, contentType: mimeType });
         const audioGsUri = `gs://${bucket}/${objectName}`;
         await save("request", { userId: viewer.userId, op, mimeType, audioGsUri, audioBytes: bytes.length, audioSha256: createHash("sha256").update(bytes).digest("hex") });
-        const result = await geminiAudioJsonWithFallback<{ text: string }>({
-          media: googleAudioTwoHopMedia(audioGsUri),
-          model: resolveGeminiAudioTwoHopModel(),
-          mimeType,
-          prompt: TRANSCRIBE_AUDIO_PROMPT,
-          nativeSchema: TRANSCRIBE_AUDIO_SCHEMA,
-          schemaName: "voice_transcription",
-          checkPayload: payload => {
-            const finish = (payload as { candidates?: Array<{ finishReason?: unknown }> })?.candidates?.[0]?.finishReason;
-            if (finish === "STOP") return undefined;
-            incomplete = true;
-            return `识别不完整：finishReason=${String(finish)}`;
-          },
-          validate: decoded => {
-            const raw = (decoded as { text?: unknown } | null)?.text;
-            const text = typeof raw === "string" ? raw.trim() : "";
-            if (!text || text.length > 12_000) { unusable = true; throw new Error(text ? "转写超过 12000 字" : "转写为空"); }
-            return { text };
-          },
-          save,
-        }).catch(() => null);
-        if (!result) {
+        const out = await transcribeVoiceInputTwoHop({ audioGsUri, mimeType, save });
+        // 拒因分类：两跳都失败时仍按原合同回错误码（不完整 422 / 不可用 422 / 上游失败 502）；拒因原文只在证据里。
+        if (!out.ok) {
           console.warn("[transcribeAudio] 两跳均未取得完整转写", requestId);
-          if (incomplete) return res.status(422).json({ ok: false, error: "transcription_incomplete", message: "识别结果不完整，未将截断文字作为全文，请缩短音频后重新确认" });
-          if (unusable) return res.status(422).json({ ok: false, error: "transcription_unusable", message: "本次未取得可用完整文字，原音保留，可手动填写" });
+          if (out.reason === "incomplete") return res.status(422).json({ ok: false, error: "transcription_incomplete", message: "识别结果不完整，未将截断文字作为全文，请缩短音频后重新确认" });
+          if (out.reason === "unusable") return res.status(422).json({ ok: false, error: "transcription_unusable", message: "本次未取得可用完整文字，原音保留，可手动填写" });
           return res.status(502).json({ ok: false, error: "transcription_upstream_failed", message: "语音识别服务本次未成功，原音保留，请勿连续重试" });
         }
-        await save("transcript", { channel: result.channel, model: result.model, failuresZh: result.failuresZh, text: result.value.text });
-        return res.status(200).json({ ok: true, text: result.value.text });
+        await save("transcript", { channel: out.channel, model: out.model, failuresZh: out.failuresZh, text: out.text });
+        return res.status(200).json({ ok: true, text: out.text });
       } catch {
         // 不回传原错误（可能含内部地址）；证据在 voice-transcribe/<userId>/<requestId>/。
         console.warn("[transcribeAudio] 转存或落证据失败", requestId);
@@ -523,23 +565,14 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       }
     }
 
-    // ---------------- 漫剧学习 A：GCS 签名上传 URL（本机 PUT，Fly 持 SA） ----------------
+    // ---------------- 漫剧学习 A：GCS 签名上传 URL（本机 PUT，Fly 持 SA；须登录，对象落本人前缀） ----------------
     if (op === "manhuaAudioGetUploadUrl") {
-      const fileName = s(b.fileName || q.fileName || "learn-audio.mp3") || "learn-audio.mp3";
-      const mimeType = s(b.mimeType || q.mimeType || "audio/mpeg") || "audio/mpeg";
-      try {
-        const { createGcsSignedUploadUrl } = await import("../server/services/gcs");
-        const signed = await createGcsSignedUploadUrl({
-          fileName,
-          contentType: mimeType,
-          objectName: `manhua-template-learn/${Date.now()}-${fileName.replace(/[^\w.\-]+/g, "-").slice(0, 80)}`,
-          expiresInMinutes: 20,
-        });
-        return res.status(200).json({ ok: true, ...signed, mimeType });
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return res.status(500).json({ ok: false, error: "gcs_signed_upload_failed", detail: msg.slice(0, 240) });
-      }
+      return issueManhuaLearnUploadUrl(req, res, {
+        fileName: s(b.fileName || q.fileName || "learn-audio.mp3") || "learn-audio.mp3",
+        mimeType: s(b.mimeType || q.mimeType || "audio/mpeg") || "audio/mpeg",
+        subdir: "manhua-template-learn",
+        maxBytes: MANHUA_LEARN_AUDIO_UPLOAD_MAX_BYTES,
+      });
     }
 
     // ---------------- 漫剧学习 A：听音扫描（1110：Gemini 3.8 Flash 两跳 Vertex gs:// → EvoLink 签名 https，不内联） ----------------
@@ -596,14 +629,15 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         // model 写法同原函数：`vertex/<模型>` 或 `evolink/<模型>`
         const scan = { model: `${result.channel.toLowerCase()}/${result.model}`, ...result.value };
         await save("scan", { channel: result.channel, failuresZh: result.failuresZh, ...scan });
-        return res.status(200).json({
+        // 证据存档里保留 channel/model（审计）；响应里的模型/通道名只给监管与管理员。
+        return res.status(200).json(redactModelInfoForRole({
           ok: true,
           model: scan.model,
           language: scan.language,
           transcriptSummary: scan.transcriptSummary,
           sections: scan.sections,
           via: gcsUri ? "gcs" : "audioUrl",
-        });
+        }, viewer.role));
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[manhuaAudioClimaxScan]", msg.slice(0, 400));
@@ -611,23 +645,14 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       }
     }
 
-    // ---------------- 漫剧学习：关键帧 GCS 签名上传（本机 PUT，Fly 持 SA） ----------------
+    // ---------------- 漫剧学习：关键帧 GCS 签名上传（本机 PUT，Fly 持 SA；须登录，对象落本人前缀） ----------------
     if (op === "manhuaTemplateFrameGetUploadUrl") {
-      const fileName = s(b.fileName || q.fileName || "learn-frame.jpg") || "learn-frame.jpg";
-      const mimeType = s(b.mimeType || q.mimeType || "image/jpeg") || "image/jpeg";
-      try {
-        const { createGcsSignedUploadUrl } = await import("../server/services/gcs");
-        const signed = await createGcsSignedUploadUrl({
-          fileName,
-          contentType: mimeType,
-          objectName: `manhua-template-learn/frames/${Date.now()}-${fileName.replace(/[^\w.\-]+/g, "-").slice(0, 80)}`,
-          expiresInMinutes: 20,
-        });
-        return res.status(200).json({ ok: true, ...signed, mimeType });
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return res.status(500).json({ ok: false, error: "gcs_signed_upload_failed", detail: msg.slice(0, 240) });
-      }
+      return issueManhuaLearnUploadUrl(req, res, {
+        fileName: s(b.fileName || q.fileName || "learn-frame.jpg") || "learn-frame.jpg",
+        mimeType: s(b.mimeType || q.mimeType || "image/jpeg") || "image/jpeg",
+        subdir: "manhua-template-learn/frames",
+        maxBytes: MANHUA_LEARN_FRAME_UPLOAD_MAX_BYTES,
+      });
     }
 
     // ---------------- 漫剧学习：GCS/URL/dataUrl 关键帧 → GPT-5.6 Terra（high）补全提案字段 ----------------
@@ -644,6 +669,35 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         .filter((item: { dataUrl: string; url: string; gcsUri: string }) => item.dataUrl || item.url || item.gcsUri)
         .slice(0, 32);
       if (!frames.length) return res.status(400).json({ ok: false, error: "missing_frames" });
+      // 须登录（原入口未鉴权）。帧来源只收三种，未通过一律不下载、不调模型：
+      // 1) data:image 内联帧；2) gcsUri；3) url —— 后两种都走后期素材登记核验（本桶 uploads/u<uid>/、post-prod/<uid>/、
+      // 本人成功任务产物、画布登记簿；本桶签名链接/站内稳定链折成规范 gs://，本人任务产物直链全等才放行），
+      // 别人的对象、别的桶、任意外部链接一律 403（防跨用户读取与服务端代取任意地址）。
+      const frameViewer = await resolveGoogleGatewayUser(req);
+      if (!frameViewer) return res.status(401).json({ ok: false, error: "authentication_required", message: "请先登录后再使用" });
+      for (const frame of frames) {
+        if (frame.dataUrl) {
+          if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(frame.dataUrl)) return res.status(400).json({ ok: false, error: "invalid_frame_dataUrl" });
+          frame.url = "";
+          frame.gcsUri = "";
+          continue;
+        }
+        const source = frame.gcsUri || frame.url;
+        const isGs = /^gs:\/\/[^/]+\/.+/.test(source);
+        if (!isGs && !/^https:\/\//i.test(source)) return res.status(400).json({ ok: false, error: frame.gcsUri ? "invalid_gcsUri" : "invalid_frame_url" });
+        try {
+          const { resolveRegisteredPostProdMediaSource } = await import("../server/services/postProdMediaSource");
+          const owned = await resolveRegisteredPostProdMediaSource({ userId: String(frameViewer.userId), source });
+          frame.gcsUri = owned.startsWith("gs://") ? owned : "";
+          frame.url = owned.startsWith("gs://") ? "" : owned;
+        } catch {
+          return res.status(403).json({
+            ok: false,
+            error: isGs ? "gcs_uri_not_allowed" : "frame_url_not_allowed",
+            message: "素材不属于本人或尚未登记",
+          });
+        }
+      }
       try {
         const { analyzeManhuaTemplateFramesWithTerra } = await import("../server/manhuaTemplateFrameVision");
         const {
@@ -660,49 +714,18 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
             : [],
           fallbackLane: s(b.fallbackLane || "爽文逆袭") || "爽文逆袭",
         });
-        return res.status(200).json({
+        // 模型名与推理档只给监管与管理员（顶层与 vision 内同时收）；分析调用本身不变。
+        return res.status(200).json(redactModelInfoForRole({
           ok: true,
           model: vision.model || MANHUA_TEMPLATE_FRAME_VISION_MODEL,
           reasoningEffort: vision.reasoningEffort || MANHUA_TEMPLATE_FRAME_VISION_REASONING,
-          vision,
+          vision: redactModelInfoForRole(vision as Record<string, unknown>, frameViewer.role),
           frameCount: frames.length,
-        });
+        }, frameViewer.role));
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[manhuaTemplateFrameScan]", msg.slice(0, 400));
         return res.status(500).json({ ok: false, error: "manhua_frame_scan_failed", detail: msg.slice(0, 280) });
-      }
-    }
-
-    // ---------------- 轻量探针：本机经 Fly 验 Gemini 3.5 Flash 文本是否通 ----------------
-    if (op === "gemini35FlashPing") {
-      const geminiApiKey = s(process.env.GEMINI_API_KEY).trim();
-      if (!geminiApiKey) return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
-      try {
-        const { resolveGeminiAudioModelName } = await import("../server/gemini-audio");
-        const model = resolveGeminiAudioModelName();
-        const r = await fetchJson(
-          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${geminiApiKey}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ role: "user", parts: [{ text: "只回复两个字：通了" }] }],
-              generationConfig: { maxOutputTokens: 32, temperature: 0 },
-            }),
-          },
-        );
-        const text = (r.json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-        return res.status(200).json({
-          ok: Boolean(r.ok && text),
-          model,
-          http: r.status,
-          text: text.slice(0, 80),
-          detail: r.ok ? undefined : String(r.rawText || "").slice(0, 200),
-        });
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return res.status(500).json({ ok: false, error: "ping_failed", detail: msg.slice(0, 200) });
       }
     }
 
@@ -727,12 +750,175 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(result.ok ? 200 : 502).json(result);
     }
 
+    // ---------------- Canvas / 工作流：视频反推提示词（帧序列；1110 起存 GCS → Gemini 两跳，不内联） ----------------
+    if (op === "videoReversePrompt") {
+      const {
+        VIDEO_REVERSE_SYSTEM_PROMPT,
+        buildVideoReverseUserPrompt,
+        parseVideoReverseOutputMode,
+      } = await import("../shared/videoReversePrompt");
+      const userHint = s(b.userHint || b.prompt || q.prompt || "");
+      const outputMode = parseVideoReverseOutputMode(b.outputMode || q.outputMode || b.locale || q.locale);
+      const legacyUrls = Array.isArray(b.imageUrls)
+        ? b.imageUrls.map((u: unknown) => s(u).trim()).filter(Boolean)
+        : [];
+      const rawImages = Array.isArray(b.images) ? b.images : legacyUrls.map((url: string) => ({ url }));
+      const images = rawImages
+        .map((item: { url?: unknown; gcsUri?: unknown; mimeType?: unknown; dataUrl?: unknown }) => ({
+          url: s(item?.url || item?.dataUrl).trim(),
+          gcsUri: s(item?.gcsUri).trim(),
+          mimeType: s(item?.mimeType || "image/jpeg").trim() || "image/jpeg",
+        }))
+        .filter((item: { url: string; gcsUri: string }) => item.url || item.gcsUri)
+        .slice(0, 32);
+      if (!images.length) return res.status(400).json({ ok: false, error: "missing_frames" });
+      // 帧要落本人前缀并留证据 → 先认人（原入口未鉴权）。
+      const viewer = await resolveGoogleGatewayUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required" });
+
+      const outcome = await runGoogleVisionTwoHop({
+        userId: viewer.userId,
+        op,
+        area: "canvas-vision/video-reverse",
+        domain: "canvasVision",
+        media: images.map((item: { url: string; gcsUri: string; mimeType: string }, i: number) => ({
+          kind: "image" as const,
+          ...item,
+          label: `帧 ${i + 1}/${images.length}`,
+        })),
+        prompt: [
+          VIDEO_REVERSE_SYSTEM_PROMPT,
+          "",
+          buildVideoReverseUserPrompt({
+            userHint,
+            outputMode,
+            targetEngine: s(b.targetEngine || "seedance-2.0") === "generic" ? "generic" : "seedance-2.0",
+          }),
+          "",
+          `（共 ${images.length} 帧，按时间顺序）`,
+        ].join("\n"),
+        maxOutputTokens: 65536,
+        temperature: 0.35,
+        timeoutMs: 240_000,
+        context: { outputMode, frameCount: images.length },
+        mediaError: (i, error) =>
+          error instanceof GoogleVisionMediaError && error.status !== 502
+            ? { status: error.status, body: { ok: false, error: error.code, message: error.message } }
+            : {
+                status: 502,
+                body: { ok: false, error: "frame_fetch_failed", message: `无法读取第 ${i + 1} 帧（${error instanceof Error ? error.message : String(error)}）` },
+              },
+        failure: { status: 502, body: { ok: false, error: "video_reverse_failed", message: "视频反推暂不可用，请稍后重试" } },
+      });
+      if (!outcome.ok) return res.status(outcome.status).json(outcome.body);
+      return res.status(200).json({ ok: true, markdown: outcome.markdown, frameCount: images.length });
+    }
+
+    // ---------------- 漫剧成片：首镜 + 完整视频智能质检（1110 起存 GCS → Gemini 两跳，不内联） ----------------
+    if (op === "manhuaClipQualityReview") {
+      const referenceImageUrl = s(b.referenceImageUrl || "").trim();
+      const videoUrl = s(b.videoUrl || "").trim();
+      const expectedContext = s(b.expectedContext || "").trim();
+      const expectedDurationSec = Number(b.expectedDurationSec);
+      const shotIndex = Number(b.shotIndex);
+      if (!referenceImageUrl) return res.status(400).json({ ok: false, error: "missing_reference_image" });
+      if (!videoUrl) return res.status(400).json({ ok: false, error: "missing_video" });
+      const viewer = await resolveGoogleGatewayUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required" });
+
+      const qualityPrompt = buildManhuaClipQualityPrompt({
+        expectedContext,
+        expectedDurationSec: Number.isFinite(expectedDurationSec) ? expectedDurationSec : undefined,
+        shotIndex: Number.isFinite(shotIndex) && shotIndex >= 1 ? shotIndex : undefined,
+      });
+      const outcome = await runGoogleVisionTwoHop({
+        userId: viewer.userId,
+        op,
+        area: "manhua-clip-quality",
+        domain: "clipQualityReview",
+        media: [
+          { kind: "image", url: referenceImageUrl, mimeType: "image/jpeg", label: "第1项：本镜关键静帧" },
+          { kind: "video", url: videoUrl, mimeType: "video/mp4", label: "第2项：本镜生成成片" },
+        ],
+        prompt: qualityPrompt,
+        maxOutputTokens: 8192,
+        temperature: 0.1,
+        context: { shotIndex: Number.isFinite(shotIndex) ? shotIndex : undefined, expectedDurationSec: Number.isFinite(expectedDurationSec) ? expectedDurationSec : undefined },
+        // 写坏：七项判定任一缺 YES/NO 即换下一跳（不把缺项当 NO 判失败）。
+        validate: markdown => {
+          const missing = MANHUA_CLIP_QUALITY_KEYS.filter(key => {
+            const name = key === "DURATION_OK" ? "(?:DURATION_OK|DURATION_10S)" : key;
+            return !new RegExp(`(?:^|\\n)\\s*${name}\\s*=\\s*(?:YES|NO)\\b`, "i").test(markdown);
+          });
+          if (missing.length) throw new Error(`质检项缺失：${missing.join("、")}`);
+        },
+        mediaError: (_i, error) => ({
+          status: 502,
+          body: { ok: false, error: "quality_media_fetch_failed", message: error instanceof Error ? error.message : String(error) },
+        }),
+        failure: { status: 502, body: { ok: false, error: "quality_review_failed" } },
+      });
+      if (!outcome.ok) return res.status(outcome.status).json(outcome.body);
+      return res.status(200).json({
+        ok: true,
+        report: parseManhuaClipQualityMarkdown(outcome.markdown),
+        media: { imageBytes: outcome.staged[0]?.bytes, videoBytes: outcome.staged[1]?.bytes },
+      });
+    }
+
+    // ---------------- Canvas：多图视觉 → Markdown（1110 起存 GCS → Gemini 两跳，不内联） ----------------
+    if (op === "canvasVisionMarkdown") {
+      const prompt = s(b.prompt || q.prompt || "");
+      const legacyUrls = Array.isArray(b.imageUrls)
+        ? b.imageUrls.map((u: unknown) => s(u).trim()).filter(Boolean)
+        : [];
+      const rawImages = Array.isArray(b.images) ? b.images : legacyUrls.map((url: string) => ({ url }));
+      const images = rawImages
+        .map((item: { url?: unknown; gcsUri?: unknown; mimeType?: unknown }) => ({
+          url: s(item?.url).trim(),
+          gcsUri: s(item?.gcsUri).trim(),
+          mimeType: s(item?.mimeType || "image/jpeg").trim() || "image/jpeg",
+        }))
+        .filter((item: { url: string; gcsUri: string }) => item.url || item.gcsUri);
+      if (!prompt) return res.status(400).json({ ok: false, error: "missing_prompt" });
+      if (!images.length) return res.status(400).json({ ok: false, error: "missing_image_urls" });
+      const viewer = await resolveGoogleGatewayUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required" });
+
+      const outcome = await runGoogleVisionTwoHop({
+        userId: viewer.userId,
+        op,
+        area: "canvas-vision/markdown",
+        domain: "canvasVision",
+        media: images.map((item: { url: string; gcsUri: string; mimeType: string }) => ({ kind: "image" as const, ...item })),
+        prompt: [prompt, "", `（共 ${images.length} 张图）`, "请输出 Markdown，不要多余解释。"].join("\n"),
+        maxOutputTokens: 65536,
+        temperature: 0.4,
+        timeoutMs: 240_000,
+        context: { imageCount: images.length },
+        mediaError: (_i, error) =>
+          error instanceof GoogleVisionMediaError && error.status !== 502
+            ? { status: error.status, body: { ok: false, error: error.code, message: error.message } }
+            : {
+                status: 502,
+                body: {
+                  ok: false,
+                  error: "image_fetch_failed",
+                  message: `无法读取参考图（${error instanceof Error ? error.message : String(error)}）。请改用画布内已上传的素材 URL，或重新上传后再试。`,
+                },
+              },
+        failure: { status: 502, body: { ok: false, error: "vision_failed", message: "图片分析暂不可用，请稍后重试" } },
+      });
+      if (!outcome.ok) return res.status(outcome.status).json(outcome.body);
+      return res.status(200).json({ ok: true, markdown: outcome.markdown, imageCount: images.length });
+    }
+
     const projectId = s(process.env.VERTEX_PROJECT_ID).trim();
     if(!projectId) return res.status(500).json({ok:false,error:"missing_env",detail:"VERTEX_PROJECT_ID"});
 
     const token = await getVertexAccessToken();
 
-    // ---------------- Gemini (text) · Vertex IAM only（Bearer；禁止 GEMINI_API_KEY） ----------------
+    // ---------------- Gemini (text) · Vertex IAM only（Bearer；禁止 Gemini API 直连密钥） ----------------
     if(op === "geminiScript"){
       const prompt = s(b.prompt || q.prompt || "");
       if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
@@ -820,249 +1006,12 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       });
     }
 
-    // ---------------- Canvas / 工作流：视频反推提示词（帧序列 → Gemini） ----------------
-    if (op === "videoReversePrompt") {
-      const {
-        VIDEO_REVERSE_SYSTEM_PROMPT,
-        buildVideoReverseUserPrompt,
-        parseVideoReverseOutputMode,
-      } = await import("../shared/videoReversePrompt");
-      const userHint = s(b.userHint || b.prompt || q.prompt || "");
-      const outputMode = parseVideoReverseOutputMode(b.outputMode || q.outputMode || b.locale || q.locale);
-      const legacyUrls = Array.isArray(b.imageUrls)
-        ? b.imageUrls.map((u: unknown) => s(u).trim()).filter(Boolean)
-        : [];
-      const rawImages = Array.isArray(b.images) ? b.images : legacyUrls.map((url: string) => ({ url }));
-      const images = rawImages
-        .map((item: { url?: unknown; gcsUri?: unknown; mimeType?: unknown; dataUrl?: unknown }) => ({
-          url: s(item?.url || item?.dataUrl).trim(),
-          gcsUri: s(item?.gcsUri).trim(),
-          mimeType: s(item?.mimeType || "image/jpeg").trim() || "image/jpeg",
-        }))
-        .filter((item: { url: string; gcsUri: string }) => item.url || item.gcsUri)
-        .slice(0, 32);
-      if (!images.length) return res.status(400).json({ ok: false, error: "missing_frames" });
-
-      const model = (s(b.model || q.model || "") || "gemini-3.1-pro-preview").trim();
-      const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
-      const base = baseUrlFor(location);
-      const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
-
-      const parts: Array<{
-        text?: string;
-        inlineData?: { mimeType: string; data: string };
-        fileData?: { mimeType: string; fileUri: string };
-      }> = [
-        {
-          text: [
-            VIDEO_REVERSE_SYSTEM_PROMPT,
-            "",
-            buildVideoReverseUserPrompt({
-              userHint,
-              outputMode,
-              targetEngine: s(b.targetEngine || "seedance-2.0") === "generic" ? "generic" : "seedance-2.0",
-            }),
-            "",
-            `（共 ${images.length} 帧，按时间顺序）`,
-          ].join("\n"),
-        },
-      ];
-
-      for (let i = 0; i < images.length; i++) {
-        const item = images[i];
-        parts.push({ text: `帧 ${i + 1}/${images.length}` });
-        if (item.gcsUri.startsWith("gs://")) {
-          parts.push({ fileData: { mimeType: item.mimeType, fileUri: item.gcsUri } });
-          continue;
-        }
-        if (item.url.startsWith("data:")) {
-          const m = item.url.match(/^data:([^;]+);base64,(.+)$/);
-          if (!m) return res.status(400).json({ ok: false, error: "bad_data_url" });
-          parts.push({ inlineData: { mimeType: m[1] || item.mimeType, data: m[2] } });
-          continue;
-        }
-        try {
-          const img = await fetchImageAsBase64(item.url);
-          parts.push({ inlineData: { mimeType: img.mimeType, data: img.b64 } });
-        } catch (fetchErr: any) {
-          const msg = fetchErr?.message || String(fetchErr);
-          return res.status(502).json({
-            ok: false,
-            error: "frame_fetch_failed",
-            message: `无法读取第 ${i + 1} 帧（${msg}）`,
-          });
-        }
-      }
-
-      const r = await fetchJson(url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts }],
-          generationConfig: {
-            maxOutputTokens: 65536,
-            temperature: 0.35,
-            topP: 0.95,
-            thinkingConfig: { includeThoughts: false, thinkingLevel: "HIGH" },
-          },
-        }),
-      });
-
-      const raw = r.json ?? r.rawText;
-      const markdown = String(
-        (raw as any)?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("") ||
-          (raw as any)?.candidates?.[0]?.content?.parts?.[0]?.text ||
-          "",
-      ).trim();
-      if (!r.ok) return res.status(502).json({ ok: false, status: r.status, error: "video_reverse_failed", raw });
-      if (!markdown) return res.status(502).json({ ok: false, error: "empty_markdown", raw });
-      return res.status(200).json({ ok: true, markdown, frameCount: images.length, model });
-    }
-
-    // ---------------- 漫剧成片：首镜 + 完整视频智能质检 ----------------
-    if (op === "manhuaClipQualityReview") {
-      const referenceImageUrl = s(b.referenceImageUrl || "").trim();
-      const videoUrl = s(b.videoUrl || "").trim();
-      const expectedContext = s(b.expectedContext || "").trim();
-      const expectedDurationSec = Number(b.expectedDurationSec);
-      const shotIndex = Number(b.shotIndex);
-      if (!referenceImageUrl) return res.status(400).json({ ok: false, error: "missing_reference_image" });
-      if (!videoUrl) return res.status(400).json({ ok: false, error: "missing_video" });
-
-      let image: Awaited<ReturnType<typeof fetchImageAsBase64>>;
-      let video: Awaited<ReturnType<typeof fetchVideoAsBase64>>;
-      try {
-        [image, video] = await Promise.all([
-          fetchImageAsBase64(referenceImageUrl),
-          fetchVideoAsBase64(videoUrl),
-        ]);
-      } catch (fetchErr: any) {
-        return res.status(502).json({
-          ok: false,
-          error: "quality_media_fetch_failed",
-          message: String(fetchErr?.message || fetchErr),
-        });
-      }
-
-      const model = "gemini-3.1-pro-preview";
-      const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
-      const base = baseUrlFor(location);
-      const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
-      const qualityPrompt = buildManhuaClipQualityPrompt({
-        expectedContext,
-        expectedDurationSec: Number.isFinite(expectedDurationSec) ? expectedDurationSec : undefined,
-        shotIndex: Number.isFinite(shotIndex) && shotIndex >= 1 ? shotIndex : undefined,
-      });
-      const r = await fetchJson(url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [
-                { text: qualityPrompt },
-                { inlineData: { mimeType: image.mimeType, data: image.b64 } },
-                { inlineData: { mimeType: video.mimeType, data: video.b64 } },
-              ],
-            },
-          ],
-          generationConfig: {
-            maxOutputTokens: 4096,
-            temperature: 0.1,
-            thinkingConfig: { includeThoughts: false, thinkingLevel: "HIGH" },
-          },
-        }),
-      });
-      const raw = r.json ?? r.rawText;
-      const markdown = String((raw as any)?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-      if (!r.ok) return res.status(502).json({ ok: false, status: r.status, error: "quality_review_failed" });
-      if (!markdown) return res.status(502).json({ ok: false, error: "empty_quality_review" });
-      return res.status(200).json({
-        ok: true,
-        report: parseManhuaClipQualityMarkdown(markdown),
-        media: { imageBytes: image.bytes, videoBytes: video.bytes },
-      });
-    }
-
-    // ---------------- Canvas：多图视觉 → Markdown ----------------
-    if (op === "canvasVisionMarkdown") {
-      const prompt = s(b.prompt || q.prompt || "");
-      const legacyUrls = Array.isArray(b.imageUrls)
-        ? b.imageUrls.map((u: unknown) => s(u).trim()).filter(Boolean)
-        : [];
-      const rawImages = Array.isArray(b.images) ? b.images : legacyUrls.map((url: string) => ({ url }));
-      const images = rawImages
-        .map((item: { url?: unknown; gcsUri?: unknown; mimeType?: unknown }) => ({
-          url: s(item?.url).trim(),
-          gcsUri: s(item?.gcsUri).trim(),
-          mimeType: s(item?.mimeType || "image/jpeg").trim() || "image/jpeg",
-        }))
-        .filter((item: { url: string; gcsUri: string }) => item.url || item.gcsUri);
-      if (!prompt) return res.status(400).json({ ok: false, error: "missing_prompt" });
-      if (!images.length) return res.status(400).json({ ok: false, error: "missing_image_urls" });
-
-      const model = (s(b.model || q.model || "") || "gemini-3.1-pro-preview").trim();
-      const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
-      const base = baseUrlFor(location);
-      const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
-
-      const parts: Array<{
-        text?: string;
-        inlineData?: { mimeType: string; data: string };
-        fileData?: { mimeType: string; fileUri: string };
-      }> = [
-        {
-          text: [
-            prompt,
-            "",
-            `（共 ${images.length} 张图）`,
-            "请输出 Markdown，不要 JSON 或多余解释。",
-          ].join("\n"),
-        },
-      ];
-
-      for (const item of images) {
-        if (item.gcsUri.startsWith("gs://")) {
-          parts.push({ fileData: { mimeType: item.mimeType, fileUri: item.gcsUri } });
-          continue;
-        }
-        try {
-          const img = await fetchImageAsBase64(item.url);
-          parts.push({ inlineData: { mimeType: img.mimeType, data: img.b64 } });
-        } catch (fetchErr: any) {
-          const msg = fetchErr?.message || String(fetchErr);
-          return res.status(502).json({
-            ok: false,
-            error: "image_fetch_failed",
-            message: `无法读取参考图（${msg}）。请改用画布内已上传的素材 URL，或重新上传后再试。`,
-          });
-        }
-      }
-
-      const r = await fetchJson(url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts }],
-          generationConfig: {
-            maxOutputTokens: 65536,
-            temperature: 0.4,
-            topP: 0.95,
-            thinkingConfig: { includeThoughts: false, thinkingLevel: "HIGH" },
-          },
-        }),
-      });
-
-      const raw = r.json ?? r.rawText;
-      const markdown = String((raw as any)?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-      if (!r.ok) return res.status(502).json({ ok: false, status: r.status, error: "vision_failed", raw });
-      if (!markdown) return res.status(502).json({ ok: false, error: "empty_markdown", raw });
-      return res.status(200).json({ ok: true, markdown, imageCount: images.length });
-    }
-
     // ---------------- Vertex：TestLab 翻译（gemini-3-flash-preview · locations/global；与 geminiScript 同为 IAM REST） ----------------
     if (op === "vertexTranslate") {
+      // 只有管理员测试台在用、不扣费直调模型：须监管/管理员登录（原先匿名可调）。只加闸门，模型调用本身不动。
+      const translateViewer = await resolveGoogleGatewayUser(req);
+      if (!translateViewer) return res.status(401).json({ ok: false, error: "authentication_required" });
+      if (!hasSupervisorRole(translateViewer.role)) return res.status(403).json({ ok: false, error: "supervisor_only" });
       const sourceText = s(b.prompt || b.text || q.prompt || "").trim();
       if (!sourceText) return res.status(400).json({ ok: false, error: "missing_prompt" });
 
@@ -1195,380 +1144,6 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const result = await generateNanoOnce();
       return res.status(result.ok ? 200 : 502).json(result.bodyNb);
-    }
-
-    // ---------------- Veo (video) ----------------
-    if(op === "veoCreate"){
-      if(req.method !== "POST") return res.status(405).json({ok:false,error:"Method not allowed"});
-      const provider = s(b.provider || q.provider || "pro").toLowerCase(); // rapid|pro
-      const prompt = s(b.prompt || q.prompt || "");
-      const imageUrl = s(b.imageUrl || q.imageUrl || "");
-      if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
-      if(!imageUrl) return res.status(400).json({ok:false,error:"missing_image_url"});
-
-      const mode = (provider.includes("rapid") || provider.includes("fast")) ? "rapid" : "pro";
-      const model = mode === "rapid"
-        ? s(process.env.VERTEX_VEO_MODEL_RAPID || "veo-3.1-fast-generate-001")
-        : s(process.env.VERTEX_VEO_MODEL_PRO || "veo-3.1-generate-001");
-
-      const location = mode === "rapid"
-        ? s(process.env.VERTEX_VIDEO_LOCATION_RAPID || "us-central1")
-        : s(process.env.VERTEX_VIDEO_LOCATION_PRO || "us-central1");
-
-      const base = baseUrlFor(location);
-
-      const img = await fetchImageAsBase64(imageUrl);
-
-      const durationSeconds = Number(b.durationSeconds || b.duration || 8) || 8;
-      const aspectRatio = s(b.aspectRatio || "16:9");
-      const resolution = s(b.resolution || "720p");
-
-      const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:predictLongRunning`;
-
-      const r = await fetchJson(url,{
-        method:"POST",
-        headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
-        body: JSON.stringify({
-          instances:[{ prompt, image:{ bytesBase64Encoded: img.b64, mimeType: img.mimeType } }],
-          parameters:{ aspectRatio, resolution, durationSeconds, generateAudio:true, upscale:false }
-        })
-      });
-
-      const taskId = r.json?.name ? String(r.json.name) : "";
-      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, taskId: taskId || null, raw:r.json ?? r.rawText });
-    }
-
-    if(op === "veoTask"){
-      const provider = s(q.provider || b.provider || "pro").toLowerCase();
-      const taskId = s(q.taskId || b.taskId || "");
-      if(!taskId) return res.status(400).json({ok:false,error:"missing_taskId"});
-
-      const mode = (provider.includes("rapid") || provider.includes("fast")) ? "rapid" : "pro";
-      const model = mode === "rapid"
-        ? s(process.env.VERTEX_VEO_MODEL_RAPID || "veo-3.1-fast-generate-001")
-        : s(process.env.VERTEX_VEO_MODEL_PRO || "veo-3.1-generate-001");
-
-      const location = mode === "rapid"
-        ? s(process.env.VERTEX_VIDEO_LOCATION_RAPID || "us-central1")
-        : s(process.env.VERTEX_VIDEO_LOCATION_PRO || "us-central1");
-
-      const base = baseUrlFor(location);
-      const operationName = normalizePredictOperationName(taskId, projectId, location, model);
-
-      const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:fetchPredictOperation`;
-
-      const r = await fetchJson(url,{
-        method:"POST",
-        headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
-        body: JSON.stringify({ operationName })
-      });
-
-      if(!r.ok) return res.status(502).json({ ok:false, status:r.status, raw:r.json ?? r.rawText });
-
-      let videoUrl = extractVideoUrl(r.json);
-      const done = Boolean(r.json?.done);
-      const failed = done && !!r.json?.error;
-      const status = failed ? "failed" : done ? "succeeded" : "running";
-
-      let materialized = false;
-      if (done && !failed && !videoUrl) {
-        const uploaded = await materializeGeneratedVideo(taskId, r.json).catch(() => ({ videoUrl: "", materialized: false }));
-        videoUrl = uploaded.videoUrl || "";
-        materialized = Boolean(uploaded.materialized);
-      }
-
-      return res.status(200).json({ ok:true, status, videoUrl: videoUrl || null, materialized, raw:r.json });
-    }
-
-    // ---------------- Gemini Omni (GEMINI_API_KEY · generateVideos) ----------------
-    if (op === "omniVideoCreate") {
-      if (req.method !== "POST") return res.status(400).json({ ok: false, error: "method_not_allowed" });
-      const prompt = s(b.prompt || q.prompt || "").trim();
-      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim();
-      if (!prompt) return res.status(400).json({ ok: false, error: "missing_prompt" });
-
-      const durationRaw = Number(b.durationSeconds || b.duration || 30);
-      const resolution = s(b.resolution || "4K").toUpperCase() === "2K" ? "2K" : "4K";
-      const aspectRatio = s(b.aspectRatio || "16:9") === "9:16" ? "9:16" : "16:9";
-
-      try {
-        const started = await startOmniVideoGeneration({
-          prompt,
-          imageUrl: imageUrl || undefined,
-          durationSeconds: durationRaw,
-          aspectRatio,
-          resolution: resolution as OmniVideoResolution,
-        });
-        let videoUrl = "";
-        let materialized = false;
-        if (started.immediate) {
-          if (started.immediate.videoBytes) {
-            const uploaded = await materializeGeneratedVideo(started.taskId, {
-              response: {
-                generatedVideos: [
-                  { video: { videoBytes: started.immediate.videoBytes, mimeType: started.immediate.mimeType } },
-                ],
-              },
-            }).catch(() => ({ videoUrl: "", materialized: false }));
-            videoUrl = uploaded.videoUrl || "";
-            materialized = Boolean(uploaded.materialized);
-          } else if (started.immediate.videoUri) {
-            videoUrl = started.immediate.videoUri;
-          }
-        }
-
-        return res.status(200).json({
-          ok: true,
-          provider: "omni",
-          authMode: started.authMode,
-          model: started.model,
-          location: started.location,
-          taskId: started.taskId,
-          durationSeconds: started.durationSeconds,
-          resolution: started.resolution,
-          aspectRatio: started.aspectRatio,
-          videoUrl: videoUrl || null,
-          materialized,
-        });
-      } catch (error: any) {
-        return res.status(502).json({
-          ok: false,
-          error: "omni_video_create_failed",
-          message: error?.message || String(error),
-          model: resolveOmniVideoModel(),
-        });
-      }
-    }
-
-    if (op === "omniVideoTask") {
-      const taskId = s(q.taskId || b.taskId || "").trim();
-      if (!taskId) return res.status(400).json({ ok: false, error: "missing_taskId" });
-      const authModeRaw = s(q.authMode || b.authMode || "").trim();
-      const authMode =
-        authModeRaw === "gemini_api" ? ("gemini_api" as const) : authModeRaw === "vertex" ? ("vertex" as const) : undefined;
-
-      try {
-        const polled = await pollOmniVideoGeneration(taskId, { authMode });
-        let videoUrl = "";
-        let materialized = false;
-
-        if (polled.done && !polled.failed) {
-          if (polled.videoBytes) {
-            const uploaded = await materializeGeneratedVideo(taskId, {
-              response: { generatedVideos: [{ video: { videoBytes: polled.videoBytes, mimeType: polled.mimeType } }] },
-            }).catch(() => ({ videoUrl: "", materialized: false }));
-            videoUrl = uploaded.videoUrl || "";
-            materialized = Boolean(uploaded.materialized);
-          } else if (polled.videoUri) {
-            const download = await fetch(polled.videoUri);
-            if (download.ok) {
-              const buf = Buffer.from(await download.arrayBuffer());
-              if (buf.length) {
-                const safeTaskId = taskId.split("/").pop() || `omni-${Date.now()}`;
-                const blob = await put(`videos/${Date.now()}-${safeTaskId}.mp4`, buf, {
-                  access: "public",
-                  contentType: polled.mimeType,
-                });
-                videoUrl = buildBlobMediaUrlFromPath(String(blob.pathname || ""));
-                materialized = true;
-              } else {
-                videoUrl = polled.videoUri;
-              }
-            } else {
-              videoUrl = polled.videoUri;
-            }
-          }
-        }
-
-        return res.status(200).json({
-          ok: true,
-          status: polled.status,
-          videoUrl: videoUrl || null,
-          materialized,
-          error: polled.failed ? polled.error : undefined,
-        });
-      } catch (error: any) {
-        return res.status(502).json({
-          ok: false,
-          error: "omni_video_poll_failed",
-          message: error?.message || String(error),
-        });
-      }
-    }
-
-    // ---------------- Gemini Omni Interactions（AI Studio · gemini-omni-flash-preview） ----------------
-    if (op === "omniMaterialUrl") {
-      const gcsUri = s(b.gcsUri || q.gcsUri || "").trim();
-      if (!gcsUri.startsWith("gs://")) {
-        return res.status(400).json({ ok: false, error: "missing_gcsUri" });
-      }
-      try {
-        const url = signGsUriV4ReadUrl(gcsUri, 3600);
-        return res.status(200).json({ ok: true, gcsUri, url });
-      } catch (error: any) {
-        return res.status(502).json({ ok: false, error: "sign_failed", message: error?.message || String(error) });
-      }
-    }
-
-    if (op === "omniInteractionCreate") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method_not_allowed" });
-      const prompt = s(b.prompt || q.prompt || "").trim();
-      const task = s(b.task || q.task || "").trim() as OmniVideoTask;
-      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim();
-      const videoUrl = s(b.videoUrl || q.videoUrl || "").trim();
-      const gcsUri = s(b.gcsUri || q.gcsUri || "").trim();
-      const referenceImageUrls = Array.isArray(b.referenceImageUrls)
-        ? (b.referenceImageUrls as unknown[])
-            .map((u) => s(u).trim())
-            .filter(Boolean)
-            .slice(0, 8)
-        : [];
-      const previousInteractionId = s(
-        b.previousInteractionId || q.previousInteractionId || b.previous_interaction_id || "",
-      ).trim();
-      const aspectRatio = s(b.aspectRatio || q.aspectRatio || "9:16") === "16:9" ? "16:9" : "9:16";
-      const durationSeconds = Number(b.durationSeconds || q.durationSeconds || 10) || 10;
-      const systemInstruction = s(b.systemInstruction || q.systemInstruction || "").trim();
-
-      if (
-        !prompt &&
-        !imageUrl &&
-        !videoUrl &&
-        !gcsUri &&
-        !previousInteractionId &&
-        !referenceImageUrls.length
-      ) {
-        return res.status(400).json({ ok: false, error: "missing_prompt_or_media" });
-      }
-
-      try {
-        const created = await createOmniFlashInteraction({
-          prompt,
-          task: task || (previousInteractionId || videoUrl ? "edit" : undefined),
-          aspectRatio,
-          durationSeconds,
-          imageUrl: imageUrl || undefined,
-          videoUrl: videoUrl || undefined,
-          gcsUri: gcsUri || undefined,
-          referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
-          previousInteractionId: previousInteractionId || undefined,
-          systemInstruction: systemInstruction || undefined,
-          responseModalities: ["video"],
-        });
-        return res.status(200).json({ ok: true, ...created });
-      } catch (error: any) {
-        return res.status(502).json({
-          ok: false,
-          error: "omni_interaction_create_failed",
-          message: error?.message || String(error),
-        });
-      }
-    }
-
-    if (op === "omniInteractionGet") {
-      const interactionId = s(q.interactionId || b.interactionId || q.taskId || b.taskId || "").trim();
-      if (!interactionId) return res.status(400).json({ ok: false, error: "missing_interactionId" });
-
-      try {
-        const row = await getOmniFlashInteraction(interactionId);
-        const status = String((row as any)?.status || "unknown");
-        const outputs = extractOmniInteractionOutputs(row);
-
-        let videoUrl = "";
-        let materialized = false;
-
-        if (outputs.videoBytes) {
-          const uploaded = await materializeGeneratedVideo(interactionId, {
-            response: {
-              generatedVideos: [{ video: { videoBytes: outputs.videoBytes, mimeType: outputs.videoMimeType } }],
-            },
-          }).catch(() => ({ videoUrl: "", materialized: false }));
-          videoUrl = uploaded.videoUrl || "";
-          materialized = Boolean(uploaded.materialized);
-        } else if (outputs.videoUri) {
-          const download = await fetch(outputs.videoUri);
-          if (download.ok) {
-            const buf = Buffer.from(await download.arrayBuffer());
-            if (buf.length) {
-              const blob = await put(`videos/${Date.now()}-omni-${interactionId.slice(-8)}.mp4`, buf, {
-                access: "public",
-                contentType: outputs.videoMimeType,
-              });
-              videoUrl = buildBlobMediaUrlFromPath(String(blob.pathname || ""));
-              materialized = true;
-            } else {
-              videoUrl = outputs.videoUri;
-            }
-          } else {
-            videoUrl = outputs.videoUri;
-          }
-        }
-
-        return res.status(200).json({
-          ok: true,
-          status,
-          interactionId,
-          text: outputs.text || null,
-          videoUrl: videoUrl || null,
-          imageUrls: outputs.imageUrls,
-          materialized,
-          failed: status === "failed" || status === "cancelled",
-          error: (row as any)?.error ?? undefined,
-        });
-      } catch (error: any) {
-        return res.status(502).json({
-          ok: false,
-          error: "omni_interaction_get_failed",
-          message: error?.message || String(error),
-        });
-      }
-    }
-
-    // ---------------- translateForVeo (中文音效/台词 → Veo 原生英文指令) ----------------
-    if (op === "translateForVeo") {
-      const rawPrompt = s(b.prompt || q.prompt || "").trim();
-      if (!rawPrompt) return res.status(400).json({ ok: false, error: "missing_prompt" });
-
-      const geminiApiKey = s(process.env.GEMINI_API_KEY).trim();
-      if (!geminiApiKey) return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
-
-      const translateBody = {
-        contents: [{
-          parts: [{
-            text: `You are a professional AI video prompt translator. Convert the following Chinese video scene audio description into a Veo-native English audio prompt.
-
-Rules:
-1. Translate ALL sound effect descriptions and action descriptions into precise English.
-2. Extract character dialogue and keep it in the original Chinese, using the format: A [male/female/old/young] voice speaking Mandarin Chinese: "[original Chinese dialogue]"
-3. If multiple characters speak, list each one separately.
-4. Output ONLY the final English audio prompt. No explanations, no preamble.
-
-Chinese input:
-${rawPrompt}
-
-English Veo audio prompt:`
-          }]
-        }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: 512 }
-      };
-
-      const model = "gemini-3-flash-preview";
-      const tRes = await fetchJson(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(translateBody) }
-      );
-
-      if (!tRes.ok) {
-        console.error("[translateForVeo] Gemini Flash failed:", tRes.status, tRes.rawText?.slice(0, 200));
-        // 降级：原样返回，让 Veo 尽力处理
-        return res.status(200).json({ ok: true, translated: rawPrompt, fallback: true });
-      }
-
-      const translatedText = (tRes.json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-      if (!translatedText) return res.status(200).json({ ok: true, translated: rawPrompt, fallback: true });
-
-      console.log(`[translateForVeo] ✅ 翻译成功: ${translatedText.slice(0, 120)}...`);
-      return res.status(200).json({ ok: true, translated: translatedText, fallback: false });
     }
 
     return res.status(400).json({ok:false,error:"unknown_op",op});
