@@ -17,7 +17,8 @@ export function knowledgePublicationChapter(doc: EditableLayout, review: Knowled
   const page=doc.pages[index],checked=review.pages[index];
   if(!page || !checked || page.id!==checked.id) throw new Error("图文页身份不一致");
   if(page.imageUrl && !image) throw new Error(`第${index+1}页图片未载入，未输出缺图文件`);
-  if(!preview && image && !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(image)) throw new Error("导出配图必须完整内嵌");
+  // 导出配图一律以 https 地址引用（GCS 签名 URL），禁止 base64 内嵌：内嵌会让 HTML 与请求体随图片数量失控（用户 2026-11-10 再次明确）。
+  if(!preview && image && !/^https:\/\/[^\s"'<>]+$/.test(image)) throw new Error("导出配图必须以地址引用，不得内嵌图片数据");
   const layout=selectedKnowledgeBookLayout(doc);
   const chapter=layout?.chapters.find(p=>p.pageId===page.id);
   const selected=resolveKnowledgePublicationTemplate(doc.publication?.infographicTemplateId,chapter?.templateId||checked.reading?.templateId);
