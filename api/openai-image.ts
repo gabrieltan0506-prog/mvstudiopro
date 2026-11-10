@@ -46,7 +46,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (imageUrls.length === 0) return res.status(500).json({ ok: false, error: "no image returned" });
 
-    return res.json({ ok: true, imageUrl: imageUrls[0], imageUrls, model, size, quality });
+    // 模型名不回前端（前台零技术泄漏）；请求与模型选择不变。
+    return res.json({ ok: true, imageUrl: imageUrls[0], imageUrls, size, quality });
   } catch (e: any) {
     console.error("[openai-image] error:", e?.message);
     return res.status(500).json({ ok: false, error: e?.message || "unknown error" });

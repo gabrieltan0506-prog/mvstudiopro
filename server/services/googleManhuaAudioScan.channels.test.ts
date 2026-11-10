@@ -102,12 +102,14 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-it("本人前缀 gcsUri 直接给 Vertex 读 gs://，不下载不转 base64；输出结构同原函数", async () => {
+it("本人前缀 gcsUri 直接给 Vertex 读 gs://，不下载不转 base64；输出结构同原函数（普通用户响应不带模型/通道名）", async () => {
   const result = await invoke({ gcsUri: "gs://test-bucket/uploads/u7/ep1.mp3", mimeType: "audio/mpeg" });
+  expect(result.body).not.toHaveProperty("model");
+  expect(JSON.stringify(result.body)).not.toMatch(/gemini|vertex|evolink/i);
   expect(result).toEqual({
     status: 200,
     body: {
-      ok: true, model: "vertex/gemini-3.8-flash", language: "zh", transcriptSummary: "女主当众反击", via: "gcs",
+      ok: true, language: "zh", transcriptSummary: "女主当众反击", via: "gcs",
       sections: [
         { name: "开场钩子", timeRange: "0:00-0:12", mood: "压抑", energy: "中", lyrics: undefined },
         { name: "反转", timeRange: "0:12-0:30", mood: "爽", energy: "极高", lyrics: "你也配？" },
@@ -130,7 +132,8 @@ it("本人前缀 gcsUri 直接给 Vertex 读 gs://，不下载不转 base64；�
   expect(names).toEqual(expect.arrayContaining(["request.json", "hop-1-vertex-request.json", "hop-1-vertex-raw.json", "hop-1-vertex-decoded.json", "hop-1-vertex-parsed.json", "scan.json"]));
 });
 
-it("只有 audioUrl：Fly 代下后存到本人前缀 GCS；Vertex 失败时 EvoLink 收签名 https（不收 gs://）", async () => {
+it("只有 audioUrl：Fly 代下后存到本人前缀 GCS；Vertex 失败时 EvoLink 收签名 https（不收 gs://）；监管看得到通道/模型", async () => {
+  h.auth.mockResolvedValue({ id: 7, role: "supervisor" });
   fetchMock.mockImplementation(async (url: unknown) => {
     if (String(url) === AUDIO_URL) return new Response(Buffer.from("虚构音频字节"), { status: 200 });
     return String(url).includes("aiplatform") ? new Response("{}", { status: 503 }) : geminiReply();
@@ -192,7 +195,8 @@ it("gcsUri 只收本人对象：别人前缀、别的桶、未登记、越界路
 it("本人其他登记对象（成功任务产物）同样放行，正常两跳", async () => {
   const result = await invoke({ gcsUri: "gs://test-bucket/canvas-tts/job-1/voice.mp3" });
   expect(result.status).toBe(200);
-  expect(result.body).toMatchObject({ ok: true, model: "vertex/gemini-3.8-flash", via: "gcs" });
+  expect(result.body).toMatchObject({ ok: true, via: "gcs" });
+  expect(result.body).not.toHaveProperty("model");
   expect(fetchMock).toHaveBeenCalledOnce();
   expect(sentBodies()[0]).toContain('"fileUri":"gs://test-bucket/canvas-tts/job-1/voice.mp3"');
   assertTwoHopCompliant();
@@ -260,7 +264,8 @@ it("经学习直传拿到的 gcsUri 能过听音扫描归属核验（本人放�
   expect(gcsUri).toMatch(/^gs:\/\/test-bucket\/uploads\/u7\/manhua-template-learn\//);
   const scan = await invoke({ gcsUri, mimeType: "audio/mpeg" });
   expect(scan.status).toBe(200);
-  expect(scan.body).toMatchObject({ ok: true, model: "vertex/gemini-3.8-flash", via: "gcs" });
+  expect(scan.body).toMatchObject({ ok: true, via: "gcs" });
+  expect(scan.body).not.toHaveProperty("model");
   expect(fetchMock).toHaveBeenCalledOnce();
   expect(JSON.parse(sentBodies()[0]!).contents[0].parts[0].fileData).toEqual({ mimeType: "audio/mpeg", fileUri: gcsUri });
   assertTwoHopCompliant();

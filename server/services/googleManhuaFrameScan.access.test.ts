@@ -119,3 +119,20 @@ it("本人素材放行：内联帧原样；本人前缀 gs、本桶本人签名�
     ["", "gs://test-bucket/post-prod/7/f5.jpg", ""],
   ]);
 });
+
+it("前台零技术泄漏：普通用户响应里没有 model / reasoningEffort（顶层与 vision 内）；监管/管理员原样可见", async () => {
+  const user = await scan([{ atSec: 0, dataUrl: DATA_URL }]);
+  expect(user.status).toBe(200);
+  for (const key of ["model", "reasoningEffort", "provider", "modelName", "modelUsed", "engine"]) {
+    expect(user.body).not.toHaveProperty(key);
+    expect(user.body.vision).not.toHaveProperty(key);
+  }
+  expect(user.body.vision).toMatchObject({ lane: "爽文逆袭" });
+
+  for (const role of ["supervisor", "admin"]) {
+    h.auth.mockResolvedValueOnce({ id: 7, role });
+    const staff = await scan([{ atSec: 0, dataUrl: DATA_URL }]);
+    expect(staff.status).toBe(200);
+    expect(staff.body).toMatchObject({ model: "m", reasoningEffort: "high", vision: { model: "m", reasoningEffort: "high" } });
+  }
+});

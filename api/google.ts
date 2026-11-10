@@ -15,6 +15,7 @@ import {
   isRetiredGoogleVideoOp,
 } from "../shared/internalMediaEndpointPolicy";
 import { assertSongOperationMaterialRead } from "../server/services/songOperationMediaAccess";
+import { redactModelInfoForRole } from "../shared/modelInfoExposure";
 import { isAllowedCanvasMaterialGcsUri } from "../shared/canvasMaterialReadPolicy";
 export { runVertexUpscaleImage, type VertexUpscaleResult };
 
@@ -628,14 +629,15 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         // model 写法同原函数：`vertex/<模型>` 或 `evolink/<模型>`
         const scan = { model: `${result.channel.toLowerCase()}/${result.model}`, ...result.value };
         await save("scan", { channel: result.channel, failuresZh: result.failuresZh, ...scan });
-        return res.status(200).json({
+        // 证据存档里保留 channel/model（审计）；响应里的模型/通道名只给监管与管理员。
+        return res.status(200).json(redactModelInfoForRole({
           ok: true,
           model: scan.model,
           language: scan.language,
           transcriptSummary: scan.transcriptSummary,
           sections: scan.sections,
           via: gcsUri ? "gcs" : "audioUrl",
-        });
+        }, viewer.role));
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[manhuaAudioClimaxScan]", msg.slice(0, 400));
@@ -712,13 +714,14 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
             : [],
           fallbackLane: s(b.fallbackLane || "爽文逆袭") || "爽文逆袭",
         });
-        return res.status(200).json({
+        // 模型名与推理档只给监管与管理员（顶层与 vision 内同时收）；分析调用本身不变。
+        return res.status(200).json(redactModelInfoForRole({
           ok: true,
           model: vision.model || MANHUA_TEMPLATE_FRAME_VISION_MODEL,
           reasoningEffort: vision.reasoningEffort || MANHUA_TEMPLATE_FRAME_VISION_REASONING,
-          vision,
+          vision: redactModelInfoForRole(vision as Record<string, unknown>, frameViewer.role),
           frameCount: frames.length,
-        });
+        }, frameViewer.role));
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[manhuaTemplateFrameScan]", msg.slice(0, 400));

@@ -40,6 +40,7 @@ import {
   legacyJobsOpAccess,
 } from "../shared/internalMediaEndpointPolicy.js";
 import { isInternalGatewayRequest } from "../server/services/internalGatewayAuth.js";
+import { redactModelInfoForRole } from "../shared/modelInfoExposure.js";
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 function getBody(req: VercelRequest): any {
@@ -2331,11 +2332,8 @@ async function generateScriptOnlyViaPromptBuilder(input: {
   }
   const script = stripJsonFence(extractGoogleText(scriptResult?.raw));
   if (!script) throw new Error("empty_script");
-  return {
-    script,
-    provider: "google-vertex",
-    model: s(process.env.VERTEX_GEMINI_MODEL || "gemini-3.1-pro-preview").trim() || "gemini-3.1-pro-preview",
-  };
+  // 只回脚本正文：模型/通道名不进响应（前台零技术泄漏）；调用本身不变。
+  return { script };
 }
 
 function createServerWorkflowTask(input: {
@@ -4120,8 +4118,6 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       return res.status(200).json({
         ok: true,
         script: generated.script,
-        provider: generated.provider,
-        model: generated.model,
       });
     }
 
@@ -4212,8 +4208,6 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       return res.status(200).json({
         ok: true,
         videoUrl: polled.videoUrl,
-        provider: "kling",
-        model,
       });
     }
 
@@ -6423,7 +6417,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             console.warn(`[manhuaPilot] registry reconcile failed taskId=${task.taskId}`);
           });
         }
-        return res.status(200).json({
+        // 模型/通道/引擎代号只给监管与管理员；前端轮询只读 status/videoUrl/workMode/error。
+        return res.status(200).json(redactModelInfoForRole({
           ok: true,
           taskId: task.taskId,
           status: task.status,
@@ -6446,7 +6441,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           // 超时对账诊断：UI 把 timed_out_pending_reconcile 显示为「超时对账中，不会白扣」
           timedOutAt: task.timedOutAt || undefined,
           lastTransientError: task.lastTransientError || undefined,
-        });
+        }, viewer.role));
       } catch (error: any) {
         return res.status(502).json({
           ok: false,

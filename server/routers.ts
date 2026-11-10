@@ -315,6 +315,7 @@ import {
   growthTitleExecutionSchema,
 } from "@shared/growth";
 import { buildAutoPickedTitleVariantsForBlueprint } from "@shared/platformTitleVariants";
+import { debugForRole } from "@shared/modelInfoExposure";
 import { formatShanghaiDateZh, getShanghaiVisualReportWindows, nowShanghaiIso } from "./growth/time";
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
@@ -3276,7 +3277,7 @@ export const appRouter = router({
         mimeType: z.string().default("image/jpeg"),
         context: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         // Upload the frame to S3 first
         const buffer = Buffer.from(input.imageBase64, "base64");
         const { url: frameUrl } = await storagePut(
@@ -3330,12 +3331,13 @@ export const appRouter = router({
             success: true,
             analysis,
             frameUrl,
-            debug: {
+            // 模型/通道名只进监管与管理员的 debug；普通用户不回 debug。
+            debug: debugForRole(ctx.user?.role, {
               route: "analyzeFrame",
               provider: response.provider || "unknown",
               model: response.model || "unknown",
               fallback: false,
-            },
+            }),
           };
         } catch (error) {
           console.warn("[mvAnalysis.analyzeFrame] Falling back to deterministic analysis:", error);
@@ -3344,12 +3346,12 @@ export const appRouter = router({
             analysis: buildFallbackFrameAnalysis(input.context),
             frameUrl,
             fallback: true,
-            debug: {
+            debug: debugForRole(ctx.user?.role, {
               route: "analyzeFrame",
               provider: "fallback",
               model: "deterministic",
               fallback: true,
-            },
+            }),
           };
         }
       }),
@@ -3393,13 +3395,13 @@ export const appRouter = router({
           fileUrl: result.documentMeta.fileUrl,
           extractionMethod: result.documentMeta.extractionMethod,
           extractedTextPreview: result.documentMeta.extractedTextPreview,
-          debug: {
+          debug: debugForRole(ctx.user?.role, {
             route: "analyzeDocument",
             provider: result.documentMeta.provider,
             model: result.documentMeta.model,
             fallback: result.documentMeta.fallback,
             extractionMethod: result.documentMeta.extractionMethod,
-          },
+          }),
         };
       }),
 
@@ -3451,14 +3453,14 @@ export const appRouter = router({
           analysis: result.analysis,
           fileUrls: result.imageMeta.fileUrls,
           imageCount: result.imageMeta.imageCount,
-          debug: {
+          debug: debugForRole(ctx.user?.role, {
             route: "analyzeGrowthCampImages",
             provider: result.imageMeta.provider,
             model: result.imageMeta.model,
             fallback: result.imageMeta.fallback,
             primaryError: result.imageMeta.primaryError || null,
             imageCount: result.imageMeta.imageCount,
-          },
+          }),
         };
       }),
 
@@ -3564,7 +3566,7 @@ export const appRouter = router({
           videoUrl: result.videoMeta.videoUrl,
           transcript: result.videoMeta.transcript,
           videoDuration: result.videoMeta.videoDuration,
-          debug: {
+          debug: debugForRole(ctx.user?.role, {
             route: "analyzeVideo",
             provider: result.videoMeta.provider,
             model: result.videoMeta.model,
@@ -3573,7 +3575,7 @@ export const appRouter = router({
             videoDuration: result.videoMeta.videoDuration,
             failureStage: result.videoMeta.failureStage || null,
             failureReason: result.videoMeta.failureReason || null,
-          },
+          }),
         };
       }),
 
@@ -4112,21 +4114,21 @@ export const appRouter = router({
           return {
             success: true,
             result: parsed,
-            debug: {
+            debug: debugForRole(ctx.user?.role, {
               route: "mvAnalysis.askPlatformFollowUp",
               modelName: followUpModelUsed || followUpModel,
               provider: followUpProvider,
               copyLlmMode: followUpProvider === "gemini" ? "vertex" : "openai",
               windowDays: input.windowDays,
               fallbackUsed: geminiFallbackUsed,
-            },
+            }),
           };
         } catch (error) {
           console.warn("[growth.askPlatformFollowUp] static fallback:", error);
           return {
             success: true,
             result: buildPlatformFollowUpFallback(input),
-            debug: {
+            debug: debugForRole(ctx.user?.role, {
               route: "mvAnalysis.askPlatformFollowUp",
               modelName: followUpModel,
               provider: "openai",
@@ -4134,7 +4136,7 @@ export const appRouter = router({
               windowDays: input.windowDays,
               fallbackUsed: true,
               error: error instanceof Error ? error.message : String(error),
-            },
+            }),
           };
         }
       }),

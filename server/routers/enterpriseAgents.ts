@@ -22,6 +22,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq } from "drizzle-orm";
 import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
+import { canViewModelInfo } from "@shared/modelInfoExposure";
 import { getDb } from "../db";
 import {
   enterpriseAgents,
@@ -213,8 +214,10 @@ export const enterpriseAgentsRouter = router({
           ...r,
           uploadedAt: r.uploadedAt.toISOString(),
         })),
+        // 库里的 modelUsed 照存（审计）；回前端时模型名只给监管与管理员，普通用户恒为 null。
         recentSessions: sessionRows.map((r) => ({
           ...r,
+          modelUsed: canViewModelInfo(ctx.user.role) ? r.modelUsed : null,
           createdAt: r.createdAt.toISOString(),
         })),
       };
@@ -364,7 +367,7 @@ export const enterpriseAgentsRouter = router({
         promptTokens: result.promptTokens,
         outputTokens: result.outputTokens,
         durationMs: result.durationMs,
-        modelUsed: ENTERPRISE_AGENT_GEMINI_MODEL,
+        ...(canViewModelInfo(ctx.user.role) ? { modelUsed: ENTERPRISE_AGENT_GEMINI_MODEL } : {}),
       };
     }),
 
