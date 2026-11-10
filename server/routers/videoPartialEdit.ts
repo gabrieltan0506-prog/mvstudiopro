@@ -35,6 +35,10 @@ export const videoPartialEditProcedures = {
       const row = await findVideoPartialEditJobByRequest(String(ctx.user.id), input.requestId);
       if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "片段修改任务不存在" });
       const { buildPostProdJobResponse } = await import("../services/postProdJobResponse.js");
-      return buildPostProdJobResponse(row as Parameters<typeof buildPostProdJobResponse>[0]);
+      return buildPostProdJobResponse({
+        id: row.id, status: row.status, input: row.input,
+        output: row.output ?? null, error: row.error ?? null, provider: row.provider ?? null,
+        createdAt: row.createdAt ?? null, updatedAt: row.updatedAt ?? null,
+      });
     }),
 };

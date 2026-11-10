@@ -155,7 +155,7 @@ it("VideoEditPanel：区间与扩展提示、报价、确认后才提交、提�
     expect(await previewAt()).toBe(16);
     await page.mouse.up();
     await page.waitForFunction(() => document.querySelector('[aria-label="报价"]')?.textContent?.endsWith("需 210 积分"));
-    const added = [...(await quotedKeys())].filter(k => !before.has(k));
+    const added = Array.from(await quotedKeys()).filter(k => !before.has(k));
     expect(added).toEqual(["3.3-16"]);
     // 再点轨道左侧：离起点近，动的是起点
     await page.mouse.click(xAt(1), track.y);

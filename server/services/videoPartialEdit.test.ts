@@ -168,7 +168,7 @@ describe("按 requestId 查任务（只读续查）", () => {
     const { findVideoPartialEditJobByRequest } = await import("./videoPartialEdit");
     const deps = queueDeps();
     await queueVideoPartialEdit(USER, false, request(), deps);
-    deps.deduct.mockClear();
+    vi.mocked(deps.deduct).mockClear();
     const row = await findVideoPartialEditJobByRequest(USER, REQ, deps.load);
     expect(row?.id).toBe(videoPartialEditTaskId(USER, REQ));
     expect(await findVideoPartialEditJobByRequest("43", REQ, deps.load)).toBeNull();

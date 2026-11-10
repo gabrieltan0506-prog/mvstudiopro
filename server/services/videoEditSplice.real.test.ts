@@ -229,7 +229,7 @@ describe("renderVideoPartialEdit：两条拼回路径与回退（真实 ffmpeg�
     expect(t.deps.refund).not.toHaveBeenCalled();
     expect(videoFrames(t.spliced())).toBe(360);
     expect(audioMd5(t.spliced())).toBe(audioMd5(src));
-    const result = t.evidence.get([...t.evidence.keys()].find(k => k.endsWith("/result.json"))!);
+    const result = t.evidence.get(Array.from(t.evidence.keys()).find(k => k.endsWith("/result.json"))!);
     expect(result.output.debug.splice.path).toBe("stream_copy");
     expect(result.editedSegmentUri).toBe("gs://bucket/edited-raw.mp4");
   }, 120_000);
@@ -243,7 +243,7 @@ describe("renderVideoPartialEdit：两条拼回路径与回退（真实 ffmpeg�
     expect(t.deps.restoreSegmentAudio).toHaveBeenCalledTimes(1);
     expect(t.deps.concat).toHaveBeenCalledTimes(1);
     expect(t.deps.refund).not.toHaveBeenCalled();
-    const result = t.evidence.get([...t.evidence.keys()].find(k => k.endsWith("/result.json"))!);
+    const result = t.evidence.get(Array.from(t.evidence.keys()).find(k => k.endsWith("/result.json"))!);
     expect(result.concatParams.clips).toHaveLength(3);
     expect(result.editedSegmentUri).toBe("gs://bucket/restored.mp4");
   }, 120_000);

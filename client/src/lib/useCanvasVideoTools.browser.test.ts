@@ -95,7 +95,7 @@ it("useCanvasVideoTools：挂载接管在途任务、完成加新版本、失败
     const bad = await block("clip-bad");
     expect(bad.outputUrl).toContain("/canvas/7/clip-original.mp4");
     expect(bad.outputUrls).toHaveLength(1);
-    expect(await page.evaluate(() => [...new Set((globalThis as any).fetched)].sort())).toEqual(["grade-job-bad", "grade-job-ok"]);
+    expect(await page.evaluate(() => Array.from(new Set((globalThis as any).fetched)).sort())).toEqual(["grade-job-bad", "grade-job-ok"]);
 
     // 局部修改「提交中」先记到块上；面板回执到后补全为已入队（同一 requestId 不重复）
     const REQ = "66666666-6666-4666-8666-666666666666";

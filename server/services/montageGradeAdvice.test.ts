@@ -269,8 +269,10 @@ describe("成片调色建议 · 分段边界吸附（1110 实测切点，替身�
   const DUR = 40;
   /** 溶解中点 29.6、时长 3.0 → 区间 28.1–31.1，连同前后 3 秒让位范围覆盖 25.1–34.1。 */
   const DISSOLVE = { atSec: 29.6, durationSec: 3 };
-  const row = (fromSec: number, toSec: number, extra: Record<string, unknown> = {}) => ({ fromSec, toSec, correction: { saturation: 1, ...extra }, reasonZh: "理由" });
-  const advice1110 = (grades: ReturnType<typeof row>[], seams = [{ atSec: 26.9, jump: true, intent: "intended" as const, beforeZh: "暖", afterZh: "冷", fixZh: "保留" }]) => ({ ...ok(), seams, grades });
+  /** 模型原始分段（未校验）：correction 可带任意调色参数，不能按首个样例推断成只有 saturation。 */
+  type RawGradeRow = { fromSec: number; toSec: number; correction: Record<string, unknown>; reasonZh: string };
+  const row = (fromSec: number, toSec: number, extra: Record<string, unknown> = {}): RawGradeRow => ({ fromSec, toSec, correction: { saturation: 1, ...extra }, reasonZh: "理由" });
+  const advice1110 = (grades: RawGradeRow[], seams = [{ atSec: 26.9, jump: true, intent: "intended" as const, beforeZh: "暖", afterZh: "冷", fixZh: "保留" }]) => ({ ...ok(), seams, grades });
   const lutCtx = { durationSec: DUR, lutIds: LUTS };
 
   it("26.9 的冷色段起点被吸到 29.6 转场中点，建议过渡时长 = 转场时长（3 秒超上限，截到 2 秒）；吸附后校验通过", () => {

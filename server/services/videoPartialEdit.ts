@@ -63,7 +63,12 @@ export function videoPartialEditEvidencePrefix(userId: string, jobId: string) {
 }
 
 type SourceMeta = { durationSec: number; width: number; height: number; fps: number; hasAudio: boolean };
-type JobRow = { id: string; userId: string; type: string; status: string; input: unknown };
+/** jobs 表一行（真实 load 返回 NormalizedJob 全列；替身可只给必需列，回包列缺省按 null）。 */
+type JobRow = {
+  id: string; userId: string; type: string; status: string; input: unknown;
+  output?: unknown; error?: string | null; provider?: string | null;
+  createdAt?: Date | string | null; updatedAt?: Date | string | null;
+};
 type DeductResult = { success: boolean; cost: number; source: string };
 
 export type VideoPartialEditQueueDeps = {
