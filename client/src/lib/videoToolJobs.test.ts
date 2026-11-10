@@ -17,8 +17,15 @@ import { probeVideoUpscaleSource } from "./videoUpscaleApi";
 import { videoEditDurationSec } from "./videoEditSubmit";
 import { parseManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
 import {
+  addMvFinalEditJob,
   canvasMusicMvFinalEditJobSchema,
   canvasMusicMvFinalEditSchema,
+  canvasMusicMvFinalEditSubmittingSchema,
+  canvasMusicMvStateSchema,
+  isMvFinalEditSubmitting,
+  removeMvFinalEditSubmitting,
+  sanitizeMvFinalEditJobRecords,
+  upsertMvFinalEditSubmitting,
   capMvFinalRecords,
   MV_FINAL_EDIT_JOBS_MAX,
   MV_FINAL_RECORDS_MAX,
@@ -255,11 +262,12 @@ describe("画布视频块：调色提交即记任务，刷新后恢复轮询", (
 });
 
 /** MV 一次挂载：MV 状态在 latest，onPatch 写回音乐块、onAdd 按块号并入画布（同 FreeformCanvas 接线）；函数取自 CanvasMusicMvStudio 真实源码。 */
-function mountMv(blocks: CanvasBlock[], jobs: Jobs) {
+function mountMv(blocks: CanvasBlock[], jobs: Jobs, byRequest: Jobs = {}) {
   const board = { blocks };
   const music = () => board.blocks.find(b => b.id === "music-1")!;
   const adds: string[][] = [];
   const fetch = fetchFrom(jobs);
+  const findByRequest = fetchFrom(byRequest);
   const setEditOpen = vi.fn();
   const context: Record<string, unknown> = {
     alive: { current: true },
@@ -274,7 +282,14 @@ function mountMv(blocks: CanvasBlock[], jobs: Jobs) {
     defaultCanvasBlock,
     crypto: { randomUUID: () => crypto.randomUUID() },
     setEditOpen, setProgress: vi.fn(),
-    utils: { mvAnalysis: { getPostProdJob: { fetch: ({ jobId }: { jobId: string }) => fetch(jobId) } } },
+    utils: { mvAnalysis: {
+      getPostProdJob: { fetch: ({ jobId }: { jobId: string }) => fetch(jobId) },
+      findVideoPartialEditJob: { fetch: ({ requestId }: { requestId: string }) => findByRequest(requestId) },
+    } },
+    resolveSubmittingVideoToolJobsOnce: videoToolJobs.resolveSubmittingVideoToolJobsOnce,
+    readFoundVideoToolJobId: videoToolJobs.readFoundVideoToolJobId,
+    isPostProdJobNotFound: videoToolJobs.isPostProdJobNotFound,
+    addMvFinalEditJob, canvasMusicMvFinalEditSubmittingSchema, isMvFinalEditSubmitting, removeMvFinalEditSubmitting, upsertMvFinalEditSubmitting,
     pollVideoToolJobsOnce, canvasMusicMvFinalEditJobSchema, MV_FINAL_EDIT_JOBS_MAX, capMvFinalRecords, MV_FINAL_RECORDS_MAX,
     perform: (work: () => Promise<void>) => work(),
     queuePostProd: { mutateAsync: async () => ({ jobId: "grade-new" }) },
@@ -282,12 +297,18 @@ function mountMv(blocks: CanvasBlock[], jobs: Jobs) {
     setGradeOpen: vi.fn(),
     String, Date, JSON, Array, Boolean, Error,
   };
-  for (const name of ["patch", "patchGrade", "applyFinalEdit", "settleFinalEditJob", "pollFinalEditJobs", "trackFinalEdit", "releaseStuckGradeSubmits", "gradeFinal"])
+  for (const name of ["patch", "patchGrade", "applyFinalEdit", "settleFinalEditJob", "pollFinalEditJobs", "trackFinalEdit", "confirmFinalEditSubmitting", "trackFinalEditSubmitting", "resolveFinalEditSubmitting", "releaseStuckGradeSubmits", "gradeFinal"])
     context[name] = mv.run(name, context);
   const state = () => (context.latest as { current: CanvasMusicMvState }).current;
   return {
-    board, adds, fetch, setEditOpen, state,
-    poll: () => (context.pollFinalEditJobs as (c: () => boolean) => Promise<void>)(() => false),
+    board, adds, fetch, findByRequest, setEditOpen, state,
+    /** 同组件定时器的一轮：先按任务号轮询，再核对「提交中」。 */
+    poll: async () => {
+      await (context.pollFinalEditJobs as (c: () => boolean) => Promise<void>)(() => false);
+      await (context.resolveFinalEditSubmitting as (c: () => boolean) => Promise<void>)(() => false);
+    },
+    onSubmitting: (p: { requestId: string; startSec: number; endSec: number; phase: "sending" | "rejected" }) =>
+      (context.trackFinalEditSubmitting as (f: string, s: string, p: unknown) => void)("mv-final", original, p),
     onSubmitted: (job: { jobId: string; requestId: string; startSec: number; endSec: number }) =>
       (context.trackFinalEdit as (f: string, s: string, j: unknown) => void)("mv-final", original, job),
     onDone: (result: unknown) => (context.applyFinalEdit as (f: string, s: string, r: unknown) => void)("mv-final", original, result),
@@ -736,4 +757,117 @@ it("接线：面板发请求前回报提交中、画布按 requestId 续查；�
   expect(panel).toMatch(/submit: input => \{\s*sentRequestId = input\.requestId;\s*report\(\{ requestId: input\.requestId, startSec: quote\.startSec, endSec: quote\.endSec, phase: "sending" \}\);\s*return queue\.mutateAsync\(input\);/);
   for (const src of [readFileSync(new URL("../../../shared/videoToolJob.ts", import.meta.url), "utf8")])
     expect(src).not.toMatch(/Seedance|EvoLink|BytePlus|Gemini|Vertex|GPT|Claude/);
+});
+
+describe("MV 第 6 步成片：局部修改「提交中」先记，刷新按 requestId 续查", () => {
+  const sending = { requestId: REQUEST, startSec: 8.5, endSec: 12.5, phase: "sending" as const };
+  const notFound = () => { throw Object.assign(new Error("片段修改任务不存在"), { data: { code: "NOT_FOUND" } }); };
+  const submittingOf = (s: CanvasMusicMvState) => (s.finalEditJobs || []).filter(isMvFinalEditSubmitting);
+
+  it("发请求前先记提交中 → 刷新（本机 + 云草稿往返）→ 按 requestId 查到任务号补全 → 完成挂新版本块；晚到回执不重复", async () => {
+    const first = mountMv(mvBoard(), {});
+    first.onSubmitting(sending);
+    first.onSubmitting(sending);
+    const recs = first.state().finalEditJobs!;
+    expect(recs).toEqual([{ kind: "edit", status: "submitting", requestId: REQUEST, startedAt: expect.any(String), sourceUrl: original, range: { startSec: 8.5, endSec: 12.5 }, finalBlockId: "mv-final" }]);
+    expect(canvasMusicMvFinalEditSubmittingSchema.safeParse(recs[0]).success).toBe(true);
+
+    const jobs: Jobs = { [EDIT_JOB]: { status: "running", output: null, error: null } };
+    const restored = reloadMv(first.board.blocks);
+    expect(restored.find(b => b.id === "music-1")!.musicMv?.finalEditJobs).toEqual(recs);
+    const second = mountMv(restored, jobs, { [REQUEST]: { jobId: EDIT_JOB, status: "queued", output: null, error: null } });
+    await second.poll();
+    expect(second.findByRequest).toHaveBeenCalledWith(REQUEST);
+    expect(second.state().finalEditJobs).toEqual([
+      { kind: "edit", jobId: EDIT_JOB, requestId: REQUEST, startedAt: recs[0].startedAt, sourceUrl: original, range: { startSec: 8.5, endSec: 12.5 }, finalBlockId: "mv-final" },
+    ]);
+    // 补全后的记录落盘读得回；同任务回执晚到也只一条
+    expect(normalizeCanvasBlock(second.board.blocks.find(b => b.id === "music-1")!).musicMv?.finalEditJobs).toHaveLength(1);
+    second.onSubmitted({ jobId: EDIT_JOB, requestId: REQUEST, startSec: 8.5, endSec: 12.5 });
+    expect(second.state().finalEditJobs).toHaveLength(1);
+
+    jobs[EDIT_JOB] = { status: "succeeded", output: { url: edited("s1"), editedRange: { startSec: 8.5, endSec: 12.5 } }, error: null };
+    second.findByRequest.mockClear();
+    await second.poll();
+    expect(second.findByRequest).not.toHaveBeenCalled();
+    expect(second.adds).toEqual([[`mvedit-mv-final-${EDIT_JOB}`]]);
+    expect(second.state().finalEditJobs).toBeUndefined();
+    expect(second.state().finalEdits).toHaveLength(1);
+    expect(second.board.blocks.find(b => b.id === "mv-final")!.outputUrl).toBe(original);
+  });
+
+  it("面板回执先到：提交中就地补全为已入队（用服务端实际区间），不另加一条", () => {
+    const m = mountMv(mvBoard(), {});
+    m.onSubmitting(sending);
+    m.onSubmitted({ jobId: EDIT_JOB, requestId: REQUEST, startSec: 8, endSec: 12.5 });
+    expect(m.state().finalEditJobs).toEqual([expect.objectContaining({ jobId: EDIT_JOB, requestId: REQUEST, range: { startSec: 8, endSec: 12.5 } })]);
+    expect(submittingOf(m.state())).toEqual([]);
+  });
+
+  it("查不到：3 分钟宽限内保留；其余查询失败按瞬态；过了宽限才清掉并留提示", async () => {
+    const first = mountMv(mvBoard(), {});
+    first.onSubmitting(sending);
+    const second = mountMv(reloadMv(first.board.blocks), {}, { [REQUEST]: notFound });
+    await second.poll();
+    expect(submittingOf(second.state())).toHaveLength(1);
+    expect(second.state().error).toBeUndefined();
+    const aged = () => mvBoard({ finalEditJobs: [{ ...submittingOf(second.state())[0], startedAt: new Date(Date.now() - videoToolJobs.VIDEO_TOOL_SUBMIT_GRACE_MS - 1000).toISOString() }] });
+    const flaky = mountMv(aged(), {}, { [REQUEST]: () => { throw new Error("network down"); } });
+    await flaky.poll();
+    expect(submittingOf(flaky.state())).toHaveLength(1);
+    const third = mountMv(aged(), {}, { [REQUEST]: notFound });
+    await third.poll();
+    expect(third.state().finalEditJobs).toBeUndefined();
+    expect(third.state().error).toBe("这次局部修改没有提交成功，未生成新版本，可重新发起");
+    expect(third.adds).toEqual([]);
+  });
+
+  it("服务端已回拒绝：按 requestId 核对一次，确无任务才清；查到任务（回包出错但已建任务）就补全", async () => {
+    const m = mountMv(mvBoard(), {}, { [REQUEST]: notFound });
+    m.onSubmitting(sending);
+    m.onSubmitting({ ...sending, phase: "rejected" });
+    await vi.waitFor(() => expect(m.state().finalEditJobs).toBeUndefined());
+    expect(m.state().error).toBeUndefined();
+
+    const n = mountMv(mvBoard(), {}, { [REQUEST]: { jobId: EDIT_JOB, status: "queued" } });
+    n.onSubmitting(sending);
+    n.onSubmitting({ ...sending, phase: "rejected" });
+    await vi.waitFor(() => expect(n.state().finalEditJobs).toEqual([expect.objectContaining({ jobId: EDIT_JOB, requestId: REQUEST })]));
+  });
+
+  it("记录格式宽进严出：旧草稿（只有已入队记录）可读；坏条目丢弃不拒整块；同请求已入队压过提交中；超限截留最新", () => {
+    const queued = { kind: "edit" as const, jobId: EDIT_JOB, requestId: REQUEST, startedAt: "2026-11-10T00:00:00.000Z", sourceUrl: original, range: { startSec: 2, endSec: 6 }, finalBlockId: "mv-final" };
+    const pending = { kind: "edit" as const, status: "submitting" as const, requestId: REQUEST, startedAt: "2026-11-10T00:00:05.000Z", sourceUrl: original, range: { startSec: 2, endSec: 6 }, finalBlockId: "mv-final" };
+    const other = { ...pending, requestId: "55555555-5555-4555-8555-555555555555" };
+    const base = { status: "done", candidates: [], finalBlockId: "mv-final" };
+    // 旧草稿
+    expect(canvasMusicMvStateSchema.parse({ ...base, finalEditJobs: [queued] }).finalEditJobs).toEqual([queued]);
+    expect(canvasMusicMvStateSchema.parse(base).finalEditJobs).toBeUndefined();
+    // 坏条目（缺 finalBlockId、requestId 非 uuid、未知字段、非对象）只丢自己
+    const mixed = [queued, { ...pending, finalBlockId: undefined }, { ...other, requestId: "not-a-uuid" }, { ...other, extra: 1 }, null, other, pending];
+    const parsed = canvasMusicMvStateSchema.safeParse({ ...base, finalEditJobs: mixed });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.finalEditJobs).toEqual([queued, other]);
+    expect(canvasMusicMvStateSchema.parse({ ...base, finalEditJobs: "broken" }).finalEditJobs).toEqual([]);
+    // 纯函数
+    expect(upsertMvFinalEditSubmitting([queued], pending)).toEqual([queued]);
+    expect(upsertMvFinalEditSubmitting([pending], { ...pending, startedAt: "2026-11-10T00:01:00.000Z" })).toEqual([{ ...pending, startedAt: "2026-11-10T00:01:00.000Z" }]);
+    expect(addMvFinalEditJob([other, pending], queued)).toEqual([other, queued]);
+    const at = Date.parse(pending.startedAt);
+    expect(removeMvFinalEditSubmitting([pending], REQUEST, at - 1)).toEqual([pending]);
+    expect(removeMvFinalEditSubmitting([pending, other], REQUEST, at)).toEqual([other]);
+    const many = Array.from({ length: MV_FINAL_EDIT_JOBS_MAX + 3 }, (_, i) => ({ ...queued, jobId: `vpe_${i}`, requestId: `r-${i}` }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const kept = sanitizeMvFinalEditJobRecords(many);
+    expect(kept).toHaveLength(MV_FINAL_EDIT_JOBS_MAX);
+    expect((kept[0] as { jobId: string }).jobId).toBe("vpe_3");
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("MV 面板接了 onSubmitting，在途条区分提交中 / 处理中，前台不出现模型或通道名", () => {
+    expect(mv.source).toContain("onSubmitting={p => trackFinalEditSubmitting(state.finalBlockId!, finalSource, p)}");
+    expect(mv.source).toContain('isMvFinalEditSubmitting(t) ? "提交中" : "处理中"');
+    expect(mv.source).toContain("await resolveFinalEditSubmittingRef.current(() => cancelled);");
+  });
 });
