@@ -306,6 +306,15 @@ it("VideoEditPanel：区间与扩展提示、报价、确认后才提交、提�
     expect(await rates()).toEqual([1, 1]);
     // 并排入口不按屏宽隐藏（窄屏上下叠放）
     expect(await page.$$eval('[aria-label="对比方式"] button', ns => ns.map(n => n.textContent?.trim()))).toEqual(["修改前", "修改后", "并排对比"]);
+    // 窄屏上下叠放时入口叫「前后对比」，回到宽屏仍叫「并排对比」；模式不因改名而变
+    const vp = page.viewport()!;
+    const compareLabels = () => page.$$eval('[aria-label="对比方式"] button', ns => ns.map(n => [n.textContent?.trim(), n.getAttribute("aria-pressed")]));
+    await page.setViewport({ ...vp, width: 360 });
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('[aria-label="对比方式"] button')).some(b => b.textContent?.trim() === "前后对比"));
+    expect(await compareLabels()).toEqual([["修改前", "false"], ["修改后", "false"], ["前后对比", "true"]]);
+    await page.setViewport(vp);
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('[aria-label="对比方式"] button')).some(b => b.textContent?.trim() === "并排对比"));
+    expect(await compareLabels()).toEqual([["修改前", "false"], ["修改后", "false"], ["并排对比", "true"]]);
     await click("修改前");
     await page.waitForFunction(() => document.querySelector("[data-compare-mode]")?.getAttribute("data-compare-mode") === "before");
     expect(await cmp()).toEqual({ mode: "before", before: [true, 4, false], after: [false, 4, false] });

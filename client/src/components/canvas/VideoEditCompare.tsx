@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export type VideoEditCompareMode = "after" | "before" | "side";
@@ -6,6 +6,9 @@ export type VideoEditCompareMode = "after" | "before" | "side";
 const tabCls =
   "rounded-md px-2.5 py-1 pointer-coarse:min-h-9 pointer-coarse:px-3 text-[12px] text-white/70 hover:text-white aria-pressed:bg-white/15 aria-pressed:font-semibold aria-pressed:text-white";
 const videoCls = "max-h-64 w-full rounded-lg bg-black";
+
+/** 与下方 @xl 容器断点一致（36rem）：够宽左右并排，否则上下叠放。 */
+const SIDE_BY_SIDE_MIN_PX = 576;
 
 const seek = (v: HTMLVideoElement | null, sec: number) => {
   if (!v || !Number.isFinite(sec)) return;
@@ -33,6 +36,19 @@ export function VideoEditCompare(props: {
   const afterRef = useRef<HTMLVideoElement | null>(null);
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  // 同时看两条的入口文案跟实际排法走：左右并排叫「并排对比」，窄屏上下叠放叫「前后对比」
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [wide, setWide] = useState(true);
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const measure = () => setWide(el.getBoundingClientRect().width >= SIDE_BY_SIDE_MIN_PX);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const jumpSec = editedRange ? Math.max(0, Math.round((editedRange.startSec - 1) * 10) / 10) : 0;
 
   // 新结果进来：回到「修改后」，两条都停在改动处前 1 秒
@@ -105,7 +121,7 @@ export function VideoEditCompare(props: {
 
   const side = mode === "side";
   return (
-    <div className="@container space-y-1.5" data-compare-mode={mode}>
+    <div ref={rootRef} className="@container space-y-1.5" data-compare-mode={mode}>
       {beforeSrc && (
         <div role="group" aria-label="对比方式" className="inline-flex flex-wrap gap-0.5 rounded-lg border border-white/12 bg-black/40 p-0.5">
           <button type="button" aria-pressed={mode === "before"} className={tabCls} onClick={() => switchTo("before")}>
@@ -115,7 +131,7 @@ export function VideoEditCompare(props: {
             修改后
           </button>
           <button type="button" aria-pressed={side} className={tabCls} onClick={() => switchTo("side")}>
-            并排对比
+            {wide ? "并排对比" : "前后对比"}
           </button>
         </div>
       )}
