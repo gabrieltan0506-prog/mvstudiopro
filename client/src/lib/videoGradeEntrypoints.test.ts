@@ -7,8 +7,8 @@ import { canvasMusicMvFinalEditSchema, canvasMusicMvFinalGradeSchema, capMvFinal
 import * as videoToolJobs from "./videoToolJobs";
 
 /** 从真实组件源码取同名表达式（useCallback 取回调本体），在受控上下文里执行，不起浏览器。 */
-function production(file: string) {
-  const source = readFileSync(new URL(`../components/canvas/${file}.tsx`, import.meta.url), "utf8");
+function production(file: string, ext: "tsx" | "ts" = "tsx") {
+  const source = readFileSync(new URL(`../components/canvas/${file}.${ext}`, import.meta.url), "utf8");
   const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const expressions = new Map<string, string>();
   function walk(n: ts.Node) {
@@ -24,6 +24,8 @@ function production(file: string) {
   return { source, run };
 }
 const free = production("FreeformCanvas"), mv = production("CanvasMusicMvStudio");
+/** 画布视频块「局部修改 / 调色」的逻辑在 useCanvasVideoTools（FreeformCanvas 只调用与渲染）。 */
+const tools = production("useCanvasVideoTools", "ts");
 const original = "https://video.test/original.mp4";
 const upscaled = "https://d2h7xmz5gqybh9.cloudfront.net/up/4k.mp4";
 const graded = "https://video.test/graded.mp4";
@@ -68,15 +70,15 @@ function freeContext(block: Record<string, unknown>) {
     setTimeout, Promise, Array, String, Boolean, Error, JSON, Set,
   };
   for (const name of ["trackVideoToolJob", "applyVideoToolJobOnBlock", "failVideoToolJobOnBlock", "applyVideoEditForBlock", "pollCanvasVideoToolJobs"])
-    context[name] = free.run(name, context);
-  const poll = () => (context.pollCanvasVideoToolJobs as (p: unknown, c: () => boolean) => Promise<void>)(JSON.parse(free.run("activeVideoToolJobKey", context)), () => false);
+    context[name] = tools.run(name, context);
+  const poll = () => (context.pollCanvasVideoToolJobs as (p: unknown, c: () => boolean) => Promise<void>)(JSON.parse(tools.run("activeVideoToolJobKey", context)), () => false);
   return { queue, store, toast, context, poll };
 }
 
 it("自由画布调色：单片 concat、grade 原样透传；任务号记到块上，完成后新版本写 outputUrls 且原片保留", async () => {
   const block = { id: "v1", kind: "video", outputUrl: original, outputUrls: [original] };
   const f = freeContext(block);
-  await free.run("startGradeForBlock", f.context)("v1", grade, false);
+  await tools.run("startGradeForBlock", f.context)("v1", grade, false);
   expect(f.queue).toHaveBeenCalledTimes(1);
   const input = f.queue.mock.calls[0][0] as { action: string; params: { clips: string[]; grade: unknown; width: number; height: number; fps: number; transition?: unknown; trims?: unknown } };
   expect(input.action).toBe("concat");
@@ -102,7 +104,7 @@ it("自由画布高清版调色：CloudFront 先导入再提交，原片与高�
   importSource.mockClear();
   const block = { id: "v2", kind: "video", outputUrl: original, upscaledVideoUrl: upscaled };
   const f = freeContext(block);
-  await free.run("startGradeForBlock", f.context)("v2", grade, true);
+  await tools.run("startGradeForBlock", f.context)("v2", grade, true);
   expect(importSource).toHaveBeenCalledWith(upscaled);
   const input = f.queue.mock.calls[0][0] as { params: { clips: string[]; grade: unknown } };
   expect(input.params.clips).toEqual(["gs://user-bucket/imported/4k.mp4"]);
@@ -117,7 +119,7 @@ it("自由画布高清版调色：CloudFront 先导入再提交，原片与高�
 it("自由画布无调色参数不提交", async () => {
   const f = freeContext({ id: "v3", kind: "video", outputUrl: original });
   const before = f.store.blocks;
-  await free.run("startGradeForBlock", f.context)("v3", undefined, false);
+  await tools.run("startGradeForBlock", f.context)("v3", undefined, false);
   expect(f.queue).not.toHaveBeenCalled();
   expect(f.store.blocks).toBe(before);
 });

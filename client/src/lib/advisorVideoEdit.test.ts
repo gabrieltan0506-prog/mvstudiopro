@@ -117,9 +117,12 @@ describe("多个「局部修改」入口汇总", () => {
   it("各入口接线：画布视频块、MV 第 6 步成片、漫剧页汇总；预填只开面板", async () => {
     const { readFileSync } = await import("node:fs");
     const canvas = readFileSync("client/src/components/canvas/FreeformCanvas.tsx", "utf8");
+    // 画布视频块局部修改 / 调色的逻辑（含顾问登记）在 useCanvasVideoTools，FreeformCanvas 只调用与渲染
+    const canvasTools = readFileSync("client/src/components/canvas/useCanvasVideoTools.ts", "utf8");
+    expect(canvas).toMatch(/= useCanvasVideoTools\(\{ blocks, blocksRef, onBlocksChangeRef, onAdvisorVideoEditControl, blockLabel: freeformNodeListLabel \}\);/);
     const studio = readFileSync("client/src/components/canvas/CanvasMusicMvStudio.tsx", "utf8");
     const omni = readFileSync("client/src/pages/OmniCanvas.tsx", "utf8");
-    expect(canvas).toMatch(/open: p => \{\s*setEditPanelBlockId\(p\.targetId\);\s*setEditPrefill\(/);
+    expect(canvasTools).toMatch(/open: p => \{\s*setEditPanelBlockId\(p\.targetId\);\s*setEditPrefill\(/);
     expect(canvas).toContain("prefill={editPrefill?.blockId === block.id ? editPrefill : undefined}");
     expect(studio).toContain('advisorVideoEditHub.register("mv-final")');
     expect(studio).toMatch(/open: p => \{\s*setEditOpen\(true\);\s*setFinalEditPrefill\(/);
@@ -129,8 +132,8 @@ describe("多个「局部修改」入口汇总", () => {
     for (const k of ["canvas-1", "canvas-2", "canvas-3", "postprod"]) expect(omni).toContain(`advisorVideoEditHub.register("${k}")`);
     // 画布清单只列真有「局部修改」入口的块（与渲染条件同一谓词），防预填了却打不开面板
     expect(canvas).toContain("{canvasBlockHasVideoTools(block) ? (");
-    expect(canvas).toMatch(/const videos = \(\) => cur\(\)\.blocks\.filter\(b => canvasBlockHasVideoTools\(b\)/);
-    for (const src of [canvas, studio]) expect(src).not.toMatch(/queueVideoPartialEdit/);
+    expect(canvasTools).toMatch(/const videos = \(\) => cur\(\)\.blocks\.filter\(b => canvasBlockHasVideoTools\(b\)/);
+    for (const src of [canvas, canvasTools, studio]) expect(src).not.toMatch(/queueVideoPartialEdit/);
   });
   it("代码动画与营销成片：登记口 + advisorTarget 唯一，预填只开面板", async () => {
     const { readFileSync } = await import("node:fs");

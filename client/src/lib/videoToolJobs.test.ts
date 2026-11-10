@@ -44,8 +44,8 @@ const {
 } = videoToolJobs;
 
 /** 从真实组件源码取同名表达式（useCallback 取回调本体），在受控上下文里执行，不起浏览器（同 videoGradeEntrypoints 写法）。 */
-function production(file: string) {
-  const source = readFileSync(new URL(`../components/canvas/${file}.tsx`, import.meta.url), "utf8");
+function production(file: string, ext: "tsx" | "ts" = "tsx") {
+  const source = readFileSync(new URL(`../components/canvas/${file}.${ext}`, import.meta.url), "utf8");
   const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const expressions = new Map<string, string>();
   function walk(n: ts.Node) {
@@ -62,6 +62,8 @@ function production(file: string) {
   return { source, run };
 }
 const free = production("FreeformCanvas"), mv = production("CanvasMusicMvStudio");
+/** 画布视频块「局部修改 / 调色」的逻辑在 useCanvasVideoTools（FreeformCanvas 只调用与渲染）。 */
+const tools = production("useCanvasVideoTools", "ts");
 
 const original = "https://storage.googleapis.com/mv-bucket/canvas/7/clip-original.mp4?X-Goog-Signature=first";
 const edited = (sig: string) => `https://storage.googleapis.com/mv-bucket/post-prod/7/vpe-out.mp4?X-Goog-Signature=${sig}`;
@@ -116,8 +118,8 @@ function mountCanvas(blocks: CanvasBlock[], jobs: Jobs, byRequest: Jobs = {}) {
   const findByRequest = fetchFrom(byRequest);
   context.fetchVideoEditJobByRequestRef = { current: findByRequest };
   for (const name of ["trackVideoToolJob", "confirmSubmittingVideoEdit", "trackVideoEditSubmitting", "applyVideoToolJobOnBlock", "failVideoToolJobOnBlock", "applyVideoEditForBlock", "pollCanvasVideoToolJobs", "resolveCanvasSubmittingVideoEdits", "openEditPanel", "startGradeForBlock"])
-    context[name] = free.run(name, context);
-  const pairs = () => JSON.parse(free.run("activeVideoToolJobKey", context));
+    context[name] = tools.run(name, context);
+  const pairs = () => JSON.parse(tools.run("activeVideoToolJobKey", context));
   return {
     store, toast, fetchPostProdJob, queue, setEditPanelBlockId, findByRequest,
     /** 挂载即跑的一轮（effect 用的就是这对 [块, 任务] 键）：先按任务号轮询，再核对「提交中」。 */
@@ -451,7 +453,7 @@ describe("面板实测时长：一位小数、不向上取整（10.08 秒不再�
     expect(mv.source).not.toMatch(/durationExactSec \?\? meta\.durationSec/);
     // 顾问清单里的片长与面板同一规则
     expect(mv.source).toContain("const durationSec = sec?.url === url ? videoEditDurationSec(sec.sec) : 0;");
-    expect(free.source).toContain("const sec = videoEditDurationSec(cur().sec[srcOf(b)] ?? known[srcOf(b)]);");
+    expect(tools.source).toContain("const sec = videoEditDurationSec(cur().sec[srcOf(b)] ?? known[srcOf(b)]);");
     // 画布局部修改面板打开时记录的是实测原始秒（10.08），进面板才取一位
     const probed: Record<string, number> = {};
     const ctx: Record<string, unknown> = {
@@ -459,7 +461,7 @@ describe("面板实测时长：一位小数、不向上取整（10.08 秒不再�
       setGradeProbedSec: (u: (p: Record<string, number>) => Record<string, number>) => Object.assign(probed, u(probed)),
       measureVideoToolExactSec: vi.fn(async () => 10.08), pendingVideoToolJob: videoToolJobs.pendingVideoToolJob, String,
     };
-    await free.run("openEditPanel", ctx)("clip-v1");
+    await tools.run("openEditPanel", ctx)("clip-v1");
     expect(probed[original]).toBe(10.08);
     expect(videoEditDurationSec(probed[original])).toBe(10);
   });
@@ -513,16 +515,16 @@ describe("回执归一与结果写回（纯函数）", () => {
 it("接线：面板入队即记、onDone 与轮询同一落点；轮询挂载即跑；同块同类在途时入口锁住", () => {
   expect(free.source).toMatch(/onSubmitted=\{job =>\s*trackVideoToolJob\(\s*block\.id,\s*buildVideoToolJob\(\{ kind: "edit", jobId: job\.jobId, requestId: job\.requestId, sourceUrl: editSrc, range: \{ startSec: job\.startSec, endSec: job\.endSec \} \}\)/);
   expect(free.source).toContain("onDone={result => applyVideoEditForBlock(block.id, editSrc, result)}");
-  expect(free.source).toMatch(/void tick\(\);\s*const timer = window\.setInterval\(\(\) => void tick\(\), 5_000\);/);
-  expect(free.source).toContain("await pollCanvasVideoToolJobsRef.current(pairs, () => cancelled);");
+  expect(tools.source).toMatch(/void tick\(\);\s*const timer = window\.setInterval\(\(\) => void tick\(\), 5_000\);/);
+  expect(tools.source).toContain("await pollCanvasVideoToolJobsRef.current(pairs, () => cancelled);");
   expect(free.source).toContain('disabled={Boolean(pendingVideoToolJob(block.videoToolJobs, "edit"))}');
   expect(mv.source).toContain("onSubmitted={job => trackFinalEdit(state.finalBlockId!, finalSource, job)}");
   expect(mv.source).toContain("await pollFinalEditJobsRef.current(() => cancelled);");
   expect(mv.source).toContain("disabled={busy || (finalEditPending && !editOpen)}");
   expect(mv.source).toContain("busy: () => cur().busy || cur().editPending");
   // 顾问预填闸门：面板确认/报价/提交/任务进行中拒绝预填（面板代理的最小接线）
-  expect(free.source).toContain("const editGuard = useVideoEditPrefillGuard();");
-  expect(free.source).toContain("onAdvisorVideoEditControl(editGuard.withGuard(async (action, signal) => {");
+  expect(tools.source).toContain("const editGuard = useVideoEditPrefillGuard();");
+  expect(tools.source).toContain("onAdvisorVideoEditControl(editGuard.withGuard(async (action, signal) => {");
   expect(free.source).toContain("onAdvisorPrefillGuard={editGuard.register}");
   expect(mv.source).toContain("const finalEditGuard = useVideoEditPrefillGuard();");
   expect(mv.source).toContain("register(finalEditGuard.withGuard(async (action, signal) => {");
@@ -751,8 +753,8 @@ describe("局部修改「提交中」：入队回执前刷新也不漏记", () =
 
 it("接线：面板发请求前回报提交中、画布按 requestId 续查；前台文案不出现模型 / 通道名", () => {
   expect(free.source).toContain("onSubmitting={p => trackVideoEditSubmitting(block.id, editSrc, p)}");
-  expect(free.source).toContain("await resolveCanvasSubmittingVideoEditsRef.current(pairs, () => cancelled);");
-  expect(free.source).toContain("postProdUtils.mvAnalysis.findVideoPartialEditJob.fetch({ requestId })");
+  expect(tools.source).toContain("await resolveCanvasSubmittingVideoEditsRef.current(pairs, () => cancelled);");
+  expect(tools.source).toContain("postProdUtils.mvAnalysis.findVideoPartialEditJob.fetch({ requestId })");
   const panel = readFileSync(new URL("../components/canvas/VideoEditPanel.tsx", import.meta.url), "utf8");
   expect(panel).toMatch(/submit: input => \{\s*sentRequestId = input\.requestId;\s*report\(\{ requestId: input\.requestId, startSec: quote\.startSec, endSec: quote\.endSec, phase: "sending" \}\);\s*return queue\.mutateAsync\(input\);/);
   for (const src of [readFileSync(new URL("../../../shared/videoToolJob.ts", import.meta.url), "utf8")])
