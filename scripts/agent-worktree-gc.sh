@@ -18,7 +18,7 @@ git -C "$MAIN" worktree list --porcelain | awk '/^worktree /{print $2}' | while 
   if [ -n "$(git -C "$WT" status --porcelain 2>/dev/null | grep -v '^?? node_modules/\?$')" ]; then continue; fi
   # HEAD 未推到任何远端分支 → 保留
   HEAD_SHA="$(git -C "$WT" rev-parse HEAD 2>/dev/null)" || continue
-  [ -n "$(git -C "$MAIN" branch -r --contains "$HEAD_SHA" 2>/dev/null | head -1)" ] || continue
+  [ -z "$(git -C "$MAIN" rev-list -1 "$HEAD_SHA" --not --remotes 2>/dev/null)" ] || continue
   # 近期仍有文件改动（含 .git 元数据）→ 保留
   GITDIR="$(git -C "$WT" rev-parse --git-dir 2>/dev/null)"
   if [ -n "$(find "$WT" "$GITDIR" -maxdepth 2 -not -path '*/node_modules/*' -mmin "-$GRACE_MIN" -print -quit 2>/dev/null)" ]; then continue; fi
