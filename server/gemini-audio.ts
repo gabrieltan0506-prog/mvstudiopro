@@ -343,6 +343,15 @@ export async function geminiAudioJsonWithFallback<T>(input: {
    * 已删除内联音频入参，「不内联 base64」由类型保证；签名 URL 不落证据（只记 gs://）。
    */
   media: { vertexFileUri: string; evolinkFileUri: () => string };
+  /**
+   * 1110 视觉入口（画布多图 / 视频反推帧 / 成片质检）：同一请求再附的 GCS 媒体，按序排在 media 之后、prompt 之前；
+   * 每项同样 Vertex 读 gs://、EvoLink 读签名 https，不内联；证据只记 gs://。
+   */
+  extraMedia?: Array<{ mimeType: string; vertexFileUri: string; evolinkFileUri: () => string; label?: string }>;
+  /** 1110：主媒体前的文字标签（如「帧 1/8」「第1项：本镜关键静帧」）；缺省不加。 */
+  mediaLabel?: string;
+  /** 采样温度；缺省 0.2（听音口径）。 */
+  temperature?: number;
   /** 两跳统一模型覆盖；缺省 resolveGeminiAudioTwoHopModel()（env 可配，缺省 gemini-3.8-flash；1110 起不写死）。 */
   model?: string;
   /** 1109：系统指令（MV 独立听歌 / 剪辑方案分析）。 */
@@ -361,7 +370,9 @@ export async function geminiAudioJsonWithFallback<T>(input: {
   timeoutMs?: number;
 }): Promise<{ value: T; channel: GeminiAudioJsonChannel; model: string; failuresZh: string[]; payload: unknown }> {
   // 运行时同样拒收（JS 调用方绕过类型时）：没给 GCS 媒体就不发任何请求。
-  if (!input.media?.vertexFileUri || typeof input.media.evolinkFileUri !== "function") {
+  const extraMedia = input.extraMedia ?? [];
+  if (!input.media?.vertexFileUri || typeof input.media.evolinkFileUri !== "function"
+    || extraMedia.some(m => !m?.vertexFileUri || typeof m.evolinkFileUri !== "function")) {
     throw new Error("听音只收 GCS 媒体（Vertex 读 gs://、EvoLink 读签名 https），不收内联音频");
   }
   const media = input.media;
@@ -369,13 +380,20 @@ export async function geminiAudioJsonWithFallback<T>(input: {
   const twoHopModel = String(input.model || "").trim() || resolveGeminiAudioTwoHopModel();
   const timeoutMs = input.timeoutMs ?? 180_000;
   const maxOutputTokens = input.maxOutputTokens ?? 8192;
-  const nativeBody = (fileUri: string) => ({
+  const temperature = input.temperature ?? 0.2;
+  // fileUris[0] = 主媒体，其余按 extraMedia 顺序；只有 fileData 引用，不内联媒体。
+  const mediaParts = (fileUris: string[]) => [
+    ...(input.mediaLabel ? [{ text: input.mediaLabel }] : []),
+    { fileData: { mimeType: input.mimeType, fileUri: fileUris[0]! } },
+    ...extraMedia.flatMap((m, i) => [...(m.label ? [{ text: m.label }] : []), { fileData: { mimeType: m.mimeType, fileUri: fileUris[i + 1]! } }]),
+  ];
+  const nativeBody = (fileUris: string[]) => ({
     ...(input.systemInstruction ? { systemInstruction: { parts: [{ text: input.systemInstruction }] } } : {}),
-    contents: [{ role: "user", parts: [{ fileData: { mimeType: input.mimeType, fileUri } }, { text: input.prompt }] }],
-    generationConfig: { maxOutputTokens, responseMimeType: "application/json", ...(input.audioTimestamp ? { audioTimestamp: true } : {}), ...(input.nativeSchema ? { responseSchema: input.nativeSchema } : {}), temperature: 0.2 },
+    contents: [{ role: "user", parts: [...mediaParts(fileUris), { text: input.prompt }] }],
+    generationConfig: { maxOutputTokens, responseMimeType: "application/json", ...(input.audioTimestamp ? { audioTimestamp: true } : {}), ...(input.nativeSchema ? { responseSchema: input.nativeSchema } : {}), temperature },
   });
-  const native = async (url: string, headers: Record<string, string>, fileUri: string) => {
-    const response = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify(nativeBody(fileUri)) });
+  const native = async (url: string, headers: Record<string, string>, fileUris: string[]) => {
+    const response = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify(nativeBody(fileUris)) });
     const payload = await response.json().catch(() => null);
     return { status: response.status, ok: response.ok, payload, text: readNativeGeminiMessageText(payload) };
   };
@@ -386,16 +404,16 @@ export async function geminiAudioJsonWithFallback<T>(input: {
         const model = twoHopModel;
         const location = resolveManhuaAudioVertexLocation();
         const url = `${baseUrlForVertex(location)}/v1/projects/${encodeURIComponent(getVertexProjectId())}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
-        return native(url, (await getVertexAuthHeaders()) as Record<string, string>, media.vertexFileUri);
+        return native(url, (await getVertexAuthHeaders()) as Record<string, string>, [media.vertexFileUri, ...extraMedia.map(m => m.vertexFileUri)]);
       },
     },
     {
       name: "EvoLink", available: isManhuaDramaEvolinkAudioAvailable, model: () => twoHopModel,
       run: async () => {
         // 1110：EvoLink 上的 Gemini 读不了 gs://，也不收内联 base64 —— 只认签名 https（同模板学习 manhuaNativeDeepReadRunner）
-        const fileUri = media.evolinkFileUri();
-        if (!fileUri || !/^https:\/\//.test(fileUri)) throw new Error("EvoLink 只收签名 https 媒体链接（不收 gs:// 或内联音频）");
-        return native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(twoHopModel)}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, fileUri);
+        const fileUris = [media.evolinkFileUri(), ...extraMedia.map(m => m.evolinkFileUri())];
+        if (fileUris.some(fileUri => !fileUri || !/^https:\/\//.test(fileUri))) throw new Error("EvoLink 只收签名 https 媒体链接（不收 gs:// 或内联音频）");
+        return native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(twoHopModel)}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, fileUris);
       },
     },
   ];
@@ -405,7 +423,7 @@ export async function geminiAudioJsonWithFallback<T>(input: {
     const slug = `hop-${i + 1}-${ch.name.toLowerCase().replace(/\s+/g, "_")}`;
     if (!ch.available()) { failures.push(`${ch.name}（未配置，跳过）`); await input.save(`${slug}-skipped`, { channel: ch.name, reasonZh: "未配置" }); continue; }
     const model = ch.model();
-    await input.save(`${slug}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt: input.prompt, mimeType: input.mimeType, mediaGsUri: media.vertexFileUri, ...(input.systemInstruction ? { systemInstruction: input.systemInstruction } : {}), maxOutputTokens, timeoutMs });
+    await input.save(`${slug}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt: input.prompt, mimeType: input.mimeType, mediaGsUri: media.vertexFileUri, ...(extraMedia.length ? { extraMedia: extraMedia.map(m => ({ mimeType: m.mimeType, gsUri: m.vertexFileUri, ...(m.label ? { label: m.label } : {}) })) } : {}), ...(input.systemInstruction ? { systemInstruction: input.systemInstruction } : {}), maxOutputTokens, timeoutMs });
     let result: Awaited<ReturnType<typeof ch.run>>;
     try {
       result = await ch.run();

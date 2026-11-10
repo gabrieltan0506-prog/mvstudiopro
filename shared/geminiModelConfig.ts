@@ -30,6 +30,10 @@ export const GEMINI_MODEL_DOMAIN_ENVS = {
   mvSongHearing: ["MV_SONG_HEARING_MODEL"],
   /** 成片调色建议（看成片 + 听音轨）。 */
   montageGradeAdvice: ["MONTAGE_GRADE_ADVICE_MODEL"],
+  /** 画布多图看图（canvasVisionMarkdown）与视频反推帧（videoReversePrompt）：两跳 Vertex gs:// → EvoLink 签名 https。 */
+  canvasVision: ["CANVAS_VISION_MODEL"],
+  /** 漫剧成片智能质检（首镜静帧 + 成片，manhuaClipQualityReview）：同走两跳。 */
+  clipQualityReview: ["MANHUA_CLIP_QUALITY_MODEL"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type GeminiModelDomain = keyof typeof GEMINI_MODEL_DOMAIN_ENVS;
