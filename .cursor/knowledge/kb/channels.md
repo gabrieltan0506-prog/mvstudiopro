@@ -17,7 +17,7 @@
 
 ## Gemini 模型配置（1110 起不写死）
 - 真源 `shared/geminiModelConfig.ts` `resolveGeminiModel(domain)`：领域 env → `GEMINI_DEFAULT_MODEL` → `gemini-3.8-flash`；trim，空白回落；非 `gemini-` 合法标识回落并告警；名称含 pro 记 console.warn（不阻断）。
-- 领域表（真源 `GEMINI_MODEL_DOMAIN_ENVS` / `GEMINI_MODEL_DOMAIN_DEFAULTS`，1110 快照；env 按列出顺序取第一个有效值）。缺省标「全局」= 领域 env 未设时走 `GEMINI_DEFAULT_MODEL` → `gemini-3.8-flash`；标「领域」= 领域缺省优先于 `GEMINI_DEFAULT_MODEL`，改全局缺省不会换掉它。改 Fly env 重启即生效，已入队任务按保存的模型恢复。
+- 领域表（真源 `GEMINI_MODEL_DOMAIN_ENVS` / `GEMINI_MODEL_DOMAIN_DEFAULTS`，1110 快照；env 按列出顺序取第一个有效值）。缺省标「全局」= 领域 env 未设时走 `GEMINI_DEFAULT_MODEL` → `gemini-3.8-flash`；标「领域」= 领域缺省优先于 `GEMINI_DEFAULT_MODEL`，改全局缺省不会换掉它。改 Fly env 重启即生效，已入队任务按保存的模型恢复。模板学习精读续学：系列进度已落盘（已入库 / 在途）的系列按系列键写明的模型续学（如 `-g4a`），不看当前配置；是否已入库由服务端核实（`resolveStoredManhuaNativeResumeSeriesKey`），新系列只用配置模型，无后缀的旧 Pro 车道不重启。
 
 | 领域 | 用途 | env（按优先顺序） | 缺省 | 缺省是否 Pro |
 | --- | --- | --- | --- | --- |
