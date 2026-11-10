@@ -1,4 +1,5 @@
 import { beforeEach as beforeWorkerTest, afterEach as afterWorkerTest, vi as workerEnv } from "vitest";
+import { testEvidenceDir } from "../../shared/testEvidenceDir";
 beforeWorkerTest(() => { workerEnv.stubEnv("JOB_WORKER_ROLE", "rig"); workerEnv.stubEnv("FLY_MACHINE_ID", "test-vfx-worker"); workerEnv.stubEnv("MANHUA_HEAVY_MACHINE_ID", "test-vfx-worker"); });
 afterWorkerTest(() => workerEnv.unstubAllEnvs());
 /** Offline pipeline evidence: synthetic source and injected RGBA renderer; no upstream/GCS calls. */
@@ -67,7 +68,7 @@ describe("VFX render/composite boundary", () => {
     await runMediaTool("ffmpeg", ["-v", "error", "-i", output, "-frames:v", "1", png], signal);
     const pixel = await sharp(png).extract({ left: 32, top: 32, width: 1, height: 1 }).raw().toBuffer();
     expect(pixel[0]).toBeGreaterThan(80); expect(pixel[2]).toBeGreaterThan(80); expect(pixel[1]).toBeLessThan(20);
-    await mkdir("docs/evidence/manhua-vfx-1007", { recursive: true });
-    await writeFile("docs/evidence/manhua-vfx-1007/offline-pipeline-receipt.json", JSON.stringify({ boundary: "synthetic source; injected renderer; real ffmpeg; no cloud or workflow acceptance", dir, result, audioHash: await audioHash(output), pixel: Array.from(pixel), archived: Array.from(archived).map(([name, bytes]) => ({ name, bytes: bytes.length, sha256: hash(bytes) })) }, null, 2));
+    await mkdir(testEvidenceDir("manhua-vfx-1007"), { recursive: true });
+    await writeFile(path.join(testEvidenceDir("manhua-vfx-1007"), "offline-pipeline-receipt.json"), JSON.stringify({ boundary: "synthetic source; injected renderer; real ffmpeg; no cloud or workflow acceptance", dir, result, audioHash: await audioHash(output), pixel: Array.from(pixel), archived: Array.from(archived).map(([name, bytes]) => ({ name, bytes: bytes.length, sha256: hash(bytes) })) }, null, 2));
   }, 90_000);
 });

@@ -1,5 +1,6 @@
 /** Real workbench components; offline state only. No renderer, media, or model requests. */
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { testEvidenceDir } from "@shared/testEvidenceDir";
 import { build } from "esbuild";
 import puppeteer, { type Browser } from "puppeteer";
 import path from "node:path";
@@ -10,9 +11,7 @@ import { CODE_MOTION_EFFECTS } from "../../../shared/codeMotionEffects";
 let browser: Browser, bundle: string;
 let server: Server, origin: string;
 const evidence: unknown[] = [];
-const evidenceDir = path.resolve(
-  "docs/evidence/code-motion-1011/effects-workbench"
-);
+const evidenceDir = testEvidenceDir("code-motion-1011/effects-workbench");
 beforeAll(async () => {
   server = createServer((_request, response) => {
     response.setHeader("Content-Type", "text/html");

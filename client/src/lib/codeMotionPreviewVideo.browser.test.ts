@@ -1,9 +1,10 @@
 import { codeMotionCompositionSchema } from "../../../shared/codeMotionComposition";
+import { testEvidenceDir } from "@shared/testEvidenceDir";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { build } from "esbuild";
 import puppeteer, { type Browser } from "puppeteer";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 let browser: Browser, bundle: string, bytes: Buffer;
@@ -206,8 +207,9 @@ it("actual HTML video follows timeline seek/play, stays muted, and ends at the e
     expect(
       await page.$eval("iframe", frame => getComputedStyle(frame).zIndex)
     ).toBe("2");
+    await mkdir(testEvidenceDir("ink-1011-video-consumer"), { recursive: true });
     await page.screenshot({
-      path: "docs/evidence/ink-1011-video-consumer/preview-video-word.png",
+      path: path.join(testEvidenceDir("ink-1011-video-consumer"), "preview-video-word.png"),
     });
     await page.click("button");
     await page.waitForFunction(

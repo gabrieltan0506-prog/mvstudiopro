@@ -1,4 +1,5 @@
 import {expect,it} from "vitest";
+import { testEvidenceDir } from "@shared/testEvidenceDir";
 import {build} from "esbuild";
 import path from "node:path";
 import {mkdir,readFile,writeFile} from "node:fs/promises";
@@ -14,6 +15,6 @@ it("formal menu applies rendered particles and clears paid3D selection when swit
  await page.waitForFunction(()=>document.querySelector('[role="status"]')?.textContent?.includes("已采用"));
  const frame=await(await page.$("iframe"))!.contentFrame();await frame!.waitForFunction("window.__productReady || window.__bootFailed",{timeout:25000});
  const pixels=await frame!.evaluate(()=>{const w=window as any;if(w.__bootFailed)throw Error(w.__bootFailed);return [0,2].map(t=>{w.renderFrame(t);const a=w.__canvas.getContext('2d').getImageData(0,0,w.__canvas.width,w.__canvas.height).data;let hash=0;for(let i=0;i<a.length;i+=64)hash=(Math.imul(hash,31)+a[i]+a[i+1]+a[i+2])>>>0;return hash;});});expect(new Set(pixels).size).toBe(2);expect(errors).toEqual([]);
- const dir=path.resolve("docs/evidence/code-motion-1011/video-edit/browser");await mkdir(dir,{recursive:true});await page.screenshot({path:path.join(dir,"effects-free-rendered.png"),fullPage:true});await writeFile(path.join(dir,"effects-menu-browser.json"),JSON.stringify({free3DDisabled:true,paidSelectionCleared:true,renderFrameHashes:pixels,errors},null,2));
+ const dir=testEvidenceDir("code-motion-1011/video-edit/browser");await mkdir(dir,{recursive:true});await page.screenshot({path:path.join(dir,"effects-free-rendered.png"),fullPage:true});await writeFile(path.join(dir,"effects-menu-browser.json"),JSON.stringify({free3DDisabled:true,paidSelectionCleared:true,renderFrameHashes:pixels,errors},null,2));
  }finally{await browser.close();}
 },60000);

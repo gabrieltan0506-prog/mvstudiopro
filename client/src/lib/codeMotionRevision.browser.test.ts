@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { testEvidenceDir } from "@shared/testEvidenceDir";
 import { build } from "esbuild";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -133,7 +134,7 @@ it.each(["free", "paid"])(
         )
       ).toBeNull();
       expect(errors).toEqual([]);
-      const dir = path.resolve("docs/evidence/code-motion-1011/video-edit/browser");
+      const dir = testEvidenceDir("code-motion-1011/video-edit/browser");
       await mkdir(dir, { recursive: true });
       await writeFile(
         path.join(dir, `revision-${tier}-dialog-browser.json`),
