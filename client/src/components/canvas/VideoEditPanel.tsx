@@ -62,13 +62,13 @@ export type VideoEditPanelProps = {
 const QUOTE_SETTLE_MS = 500;
 
 // 与后期工坊等站内面板同一套输入/按钮样式
-const fieldCls = "w-full rounded-lg border border-white/12 bg-black/40 px-2 py-1.5 text-[12px] text-white placeholder:text-white/35 disabled:opacity-50";
-const numCls = "w-full min-w-0 rounded-lg border border-white/12 bg-black/40 px-2 py-1 text-[12px] tabular-nums text-white disabled:opacity-50";
+const fieldCls = "w-full rounded-lg border border-white/12 bg-black/40 px-2 py-1.5 text-[12px] pointer-coarse:text-[16px] text-white placeholder:text-white/35 disabled:opacity-50";
+const numCls = "w-full min-w-0 rounded-lg border border-white/12 bg-black/40 px-2 py-1 pointer-coarse:py-2 text-[12px] pointer-coarse:text-[16px] tabular-nums text-white disabled:opacity-50";
 const goCls =
-  "inline-flex items-center justify-center gap-1.5 rounded-lg border border-cyan-300/45 bg-cyan-500/15 px-3 py-1.5 text-[12px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45";
+  "inline-flex items-center justify-center gap-1.5 rounded-lg border border-cyan-300/45 bg-cyan-500/15 px-3 py-1.5 pointer-coarse:min-h-10 text-[12px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45";
 const ghostCls =
-  "inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/12 px-3 py-1.5 text-[12px] text-white/85 hover:bg-white/10 disabled:opacity-45 aria-pressed:border-cyan-300/45 aria-pressed:bg-cyan-500/15";
-const linkCls = "text-[11px] text-cyan-100/80 underline underline-offset-2 hover:text-cyan-50 disabled:opacity-45";
+  "inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/12 px-3 py-1.5 pointer-coarse:min-h-10 text-[12px] text-white/85 hover:bg-white/10 disabled:opacity-45 aria-pressed:border-cyan-300/45 aria-pressed:bg-cyan-500/15";
+const linkCls = "pointer-coarse:py-2 text-[11px] text-cyan-100/80 underline underline-offset-2 hover:text-cyan-50 disabled:opacity-45";
 const hintCls = "text-[11px] text-white/55";
 
 const fmt = (n: number) => roundSec(n).toFixed(1);
@@ -295,7 +295,7 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
   const resultSrc = job?.status === "succeeded" && job.url ? flyDownloadUrl(job.url) : "";
 
   return (
-    <div className="space-y-3 rounded-xl border border-white/12 bg-black/20 p-3 text-[12px] text-white/90" aria-label="局部修改" data-testid="video-edit-panel">
+    <div className="@container space-y-3 rounded-xl border border-white/12 bg-black/20 p-3 text-[12px] text-white/90" aria-label="局部修改" data-testid="video-edit-panel">
       {preview && (
         <video
           ref={videoRef}
@@ -370,7 +370,7 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
           </p>
         )}
         {preview && (
-          <button type="button" aria-pressed={looping} className={ghostCls} disabled={!looping && !loopable} onClick={toggleLoop}>
+          <button type="button" aria-pressed={looping} className={cn(ghostCls, "@max-md:w-full")} disabled={!looping && !loopable} onClick={toggleLoop}>
             {looping ? "停止试看" : "试看所选片段"}
           </button>
         )}
@@ -412,7 +412,7 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
         </div>
       )}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <button type="button" className={goCls} disabled={!canAsk} onClick={openConfirm}>
+        <button type="button" className={cn(goCls, "@max-md:w-full")} disabled={!canAsk} onClick={openConfirm}>
           提交局部修改
         </button>
         <p aria-label="报价" aria-live="polite" className="min-w-0 tabular-nums text-white/85">
@@ -441,10 +441,10 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
           <p>{quote.confirmNotice || "提交后不可取消；失败或未通过审核将全额退回积分。"}</p>
           <p className={hintCls}>修改结果另存为新版本，原片保留。</p>
           <div className="flex flex-wrap gap-2">
-            <button type="button" className={goCls} disabled={busy} onClick={() => void confirmSubmit()}>
+            <button type="button" className={cn(goCls, "@max-md:flex-1")} disabled={busy} onClick={() => void confirmSubmit()}>
               {busy ? "正在提交…" : error ? "重试提交" : "确认提交"}
             </button>
-            <button type="button" className={ghostCls} disabled={busy} onClick={() => setConfirming(false)}>
+            <button type="button" className={cn(ghostCls, "@max-md:flex-1")} disabled={busy} onClick={() => setConfirming(false)}>
               再想想
             </button>
           </div>

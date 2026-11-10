@@ -291,6 +291,21 @@ it("VideoEditPanel：区间与扩展提示、报价、确认后才提交、提�
       v.dispatchEvent(new Event("seeked", { bubbles: true }));
     });
     expect(await cmp()).toEqual({ mode: "side", before: [true, 4, true], after: [true, 4, false] });
+    // 并排时倍速、播完也同步：一侧改倍速另一侧跟上；切回单条时倍速沿用
+    const rates = () => page.$$eval('[aria-label="修改结果"] video', vs => vs.map(v => (v as HTMLVideoElement).playbackRate));
+    await page.$eval('video[aria-label="修改后"]', v => {
+      (v as HTMLVideoElement).playbackRate = 0.5;
+      v.dispatchEvent(new Event("ratechange", { bubbles: true }));
+    });
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('[aria-label="修改结果"] video')).every(v => (v as HTMLVideoElement).playbackRate === 0.5));
+    await page.$eval('video[aria-label="修改前"]', v => {
+      (v as HTMLVideoElement).playbackRate = 1;
+      v.dispatchEvent(new Event("ratechange", { bubbles: true }));
+    });
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('[aria-label="修改结果"] video')).every(v => (v as HTMLVideoElement).playbackRate === 1));
+    expect(await rates()).toEqual([1, 1]);
+    // 并排入口不按屏宽隐藏（窄屏上下叠放）
+    expect(await page.$$eval('[aria-label="对比方式"] button', ns => ns.map(n => n.textContent?.trim()))).toEqual(["修改前", "修改后", "并排对比"]);
     await click("修改前");
     await page.waitForFunction(() => document.querySelector("[data-compare-mode]")?.getAttribute("data-compare-mode") === "before");
     expect(await cmp()).toEqual({ mode: "before", before: [true, 4, false], after: [false, 4, false] });
