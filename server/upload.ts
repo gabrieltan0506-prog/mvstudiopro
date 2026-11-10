@@ -2,6 +2,7 @@ import { Router } from "express";
 import { nanoid } from "nanoid";
 import { storagePut } from "./storage";
 import { uploadBufferToGcs } from "./services/gcs";
+import { platformQaUserPrefix, resolvePlatformQaBucket } from "./services/platformQaUpload";
 
 /**
  * 服务端直收上传一律须登录（原先四个入口都不认人，任何人可往存储里写文件）。
@@ -102,11 +103,7 @@ uploadRouter.post("/api/upload-image", async (req, res) => {
 // 桶其实不存在（404 / The specified bucket does not exist），导致 GodView 上传失败。
 // 现在按优先级回退：GCS_USER_UPLOAD_BUCKET → GCS_PDF_EXPORT_BUCKET → VERTEX_GCS_BUCKET，
 // 最差情况下复用已经 deploy 在 fly 上的 vertex-video-temp 桶（也是公开读桶）。
-const PLATFORM_QA_BUCKET =
-  process.env.GCS_USER_UPLOAD_BUCKET ||
-  process.env.GCS_PDF_EXPORT_BUCKET ||
-  process.env.VERTEX_GCS_BUCKET ||
-  "mv-studio-pro-vertex-video-temp";
+const PLATFORM_QA_BUCKET = resolvePlatformQaBucket();
 const PLATFORM_QA_MAX_BYTES = 20 * 1024 * 1024; // 20MB for images/PDFs
 
 uploadRouter.post("/api/platform/upload", async (req: any, res: any) => {
@@ -137,7 +134,9 @@ uploadRouter.post("/api/platform/upload", async (req: any, res: any) => {
     const filename = file.name || "attachment";
     const ext = filename.includes(".") ? filename.split(".").pop() || "bin" : "bin";
     const mimeType = file.type || "application/octet-stream";
-    const objectName = `platform-qa/${Date.now()}-${nanoid(8)}.${ext}`;
+    // 落本人前缀 platform-qa/u<uid>/：追问任务只收本人前缀下的附件（读完即删），扩展名只留字母数字
+    const safeExt = ext.replace(/[^0-9A-Za-z]/g, "").slice(0, 10) || "bin";
+    const objectName = `${platformQaUserPrefix(req.uploadUserId)}${Date.now()}-${nanoid(8)}.${safeExt}`;
 
     await uploadBufferToGcs({
       objectName,

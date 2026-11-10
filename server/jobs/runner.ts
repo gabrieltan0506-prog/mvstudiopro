@@ -35,6 +35,13 @@ import { normalizePlatformTopicExpandEngine } from "../../shared/platformTopicSh
 import { appRouter, buildPlatformContent, slimBuildPlatformContentDiagnosticsForJob } from "../routers";
 import { invokeLLM, extractJsonString, type FileContent } from "../_core/llm";
 import { deleteGcsObject, getGcsBucketName } from "../services/gcs";
+import { assertPlatformQaWorkerFileUri } from "../services/platformQaUpload";
+
+/** platform_qa 附件：空值 → 无附件；有值必须通过归属核验，返回规范 gs://。 */
+export function resolvePlatformQaJobFileUri(raw: unknown): string | undefined {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  return value ? assertPlatformQaWorkerFileUri(value).gcsUri : undefined;
+}
 import { isOwnedManhuaLearnImportGcsUri } from "../../shared/manhuaLearnVideoSegments.js";
 import { resolveWatermark } from "../services/tier-provider-routing.js";
 import { buildStage1StrategicHandoffForStage2 } from "../services/stage1StrategicHandoff.js";
@@ -3012,7 +3019,8 @@ async function processPlatformJob(
       const context = String(params.context || "");
       const windowDays = Number(params.windowDays || 15);
       const snapshot = (params.snapshot || {}) as Record<string, unknown>;
-      const fileUri = typeof params.fileUri === "string" ? params.fileUri : undefined;
+      // 执行前再核一次（入队已核过）：附件只收 QA 桶 platform-qa/ 下的对象；不符即拒，不交给模型、不删除。
+      const fileUri = resolvePlatformQaJobFileUri(params.fileUri);
       const fileMimeTypeRaw =
         typeof params.fileMimeType === "string" ? params.fileMimeType : "application/octet-stream";
       const allowedFileMimes = [
@@ -3133,12 +3141,11 @@ async function processPlatformJob(
         };
       } finally {
         if (fileUri) {
-          const match = fileUri.match(/^gs:\/\/([^/]+)\/(.+)$/);
-          if (match) {
-            await deleteGcsObject({ bucket: match[1], objectName: match[2] }).catch((err) => {
-              console.warn(`[processPlatformJob] 删除 GCS 临时文件失败 ${fileUri}:`, err);
-            });
-          }
+          // fileUri 已是核验后的规范地址：只会删 QA 桶 platform-qa/ 下的那个附件
+          const owned = assertPlatformQaWorkerFileUri(fileUri);
+          await deleteGcsObject({ bucket: owned.bucket, objectName: owned.objectName }).catch((err) => {
+            console.warn(`[processPlatformJob] 删除 GCS 临时文件失败 ${fileUri}:`, err);
+          });
         }
       }
     }

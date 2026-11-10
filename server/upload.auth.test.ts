@@ -82,7 +82,7 @@ it("已登录：/api/upload 与 /api/upload-image 照常落存储", async () => 
 it("已登录：/api/platform/upload 照常落 GCS 并返回 gs://", async () => {
   const result = await call("/api/platform/upload");
   expect(result.status).toBe(200);
-  expect(result.body.fileUri).toMatch(/^gs:\/\/[^/]+\/platform-qa\/\d+-[\w-]{8}\.png$/);
+  expect(result.body.fileUri).toMatch(/^gs:\/\/[^/]+\/platform-qa\/u7\/\d+-[\w-]{8}\.png$/);
   expect(h.gcsUpload).toHaveBeenCalledTimes(1);
 });
 

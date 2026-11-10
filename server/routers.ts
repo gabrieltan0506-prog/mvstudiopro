@@ -4232,7 +4232,19 @@ export const appRouter = router({
         fileUri: z.string().optional(),
         fileMimeType: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        // 附件只收本人经 /api/platform/upload 上传的对象（QA 桶 platform-qa/u<uid>/）：任务会把它交给模型并在读完后删除，
+        // 任意 gs:// / https 一律不入队（原先匿名即可借此读、删任意对象）。不带附件的追问口径不变。
+        let fileUri: string | undefined;
+        if (input.fileUri?.trim()) {
+          if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED", message: "请先登录后再上传附件" });
+          const { assertOwnPlatformQaFileUri } = await import("./services/platformQaUpload");
+          try {
+            fileUri = assertOwnPlatformQaFileUri(input.fileUri, ctx.user.id);
+          } catch {
+            throw new TRPCError({ code: "FORBIDDEN", message: "附件不属于本人，请重新上传" });
+          }
+        }
         const jobId = nanoid(16);
         await createJobRecord({
           id: jobId,
@@ -4246,7 +4258,7 @@ export const appRouter = router({
               windowDays: input.windowDays,
               snapshot: input.snapshot,
               context: input.context,
-              fileUri: input.fileUri,
+              fileUri,
               fileMimeType: input.fileMimeType,
             },
           },
