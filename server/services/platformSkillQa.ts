@@ -15,15 +15,15 @@ import { buildManhuaCraftReference } from "../../shared/manhuaCraftKnowledge";
 import { buildManhuaAdvisorKnowledgeReference } from "./manhuaAdvisorKnowledgeReference";
 import { advisorWorkflowPlanSchema, parseAdvisorWorkflowPlan, buildAdvisorWorkflowQuestion } from "../../shared/manhuaAdvisorWorkflowPlan";
 import { parseAdvisorMediaProposal } from "../../shared/manhuaAdvisorMediaEdit";
-import { askManhuaFilmReview } from "./manhuaAdvisorFilmReview";
+import { askManhuaFilmReview, resolveManhuaAdvisorWatchModel } from "./manhuaAdvisorFilmReview";
 import { advisorRewriteResponseSchema, advisorTemplatePlansSchema, validateAdvisorRewriteBody, splitManhuaEpisodeStoryText, TEMPLATE_REWRITE_MARKER, TEMPLATE_REWRITE_DELIVERY } from "../../shared/manhuaAdvisorRewrite";
 import { TEMPLATE_CATALOG_REQUEST_MARKER } from "../../shared/manhuaTemplateCraft";
 import { MANHUA_DIALOGUE_CRAFT_ZH } from "../../shared/manhuaDialogueCraft";
 import { MANHUA_ADVISOR_PROJECT_FREE, MANHUA_ADVISOR_PAID_CREDITS } from "../../shared/manhuaAdvisorPolicy";
 import { askMusicMvAdvisor, askSunoSongAdvisor, askCreativeLearning } from "./musicMvAdvisor";
 import { musicMvAdvisorProposalSchema, sunoSongProposalSchema } from "../../shared/canvasMusicMv";
-import { askManhuaBgmMix, MANHUA_BGM_ADVISOR_MODEL } from "./manhuaAdvisorBgmMix";
-import { askManhuaSubtitleReview } from "./manhuaAdvisorSubtitle";
+import { askManhuaBgmMix, resolveManhuaAdvisorBgmModel } from "./manhuaAdvisorBgmMix";
+import { askManhuaSubtitleReview, resolveManhuaAdvisorSubtitleModel } from "./manhuaAdvisorSubtitle";
 import { parseAdvisorBgmMixPlan } from "../../shared/manhuaAdvisorBgmMix";
 import { buildAdvisorModelReviewFacts, composeAdvisorPromptReviewAnswer } from "../../shared/manhuaAdvisorModelReview.js";
 import { buildManhuaTemplateAdvisorReference } from "./manhuaTemplateAdvisorReference.js";
@@ -983,15 +983,15 @@ export async function askPlatformSkillQa(params: {
       const hop = manhuaContext ? advisorHops[Math.min(attempt - 1, advisorHops.length - 1)] : undefined;
       if (hop) params.onStream?.("reset", hop.label);
       if (manhuaContext?.filmReview) {
-        params.onStream?.("reset", "Gemini Flash · 影片审阅");
+        params.onStream?.("reset", "影片审阅");
         parsed = parseAskJson(await askManhuaFilmReview(params.userId, manhuaContext.filmReview, params.rawQuestion || question, undefined, { episodeIndex: manhuaContext.episodeIndex, episodeBody: manhuaContext.episodeBody, episodes: manhuaContext.continuityEpisodes || [], workflowEvidenceZh: manhuaContext.workflowEvidenceZh || "" }, [buildManhuaCraftReference(manhuaRawQuestion || question), templateReference].filter(Boolean).join("\n")), true, true);
-        usedModel = "gemini-3.8-flash"; lastErr = ""; break;
+        usedModel = resolveManhuaAdvisorWatchModel(); lastErr = ""; break;
       }
       if (manhuaContext?.subtitleReview) {
         const raw = await askManhuaSubtitleReview(params.userId, manhuaContext.subtitleReview);
         // 剪辑方案含原片全量字幕，已由专用schema校验，不走普通短答的1.2万字截断。
         parsed = parseAskJson(raw, true, Boolean(manhuaContext.subtitleReview.montageTargetSec));
-        usedModel = MANHUA_BGM_ADVISOR_MODEL;
+        usedModel = resolveManhuaAdvisorSubtitleModel();
         lastErr = "";
         break;
       }
@@ -1011,11 +1011,11 @@ export async function askPlatformSkillQa(params: {
         usedModel = JSON.parse(raw).model; lastErr = ""; break;
       }
       if (manhuaContext?.bgmMix) {
-        params.onStream?.("reset", "Gemini 3.8 Flash · 音画配乐分析");
+        params.onStream?.("reset", "音画配乐分析");
         const raw = await askManhuaBgmMix(params.userId, manhuaContext.bgmMix, llmMessages);
         parsed = parseAskJson(raw, true);
         parseAdvisorBgmMixPlan(parsed.answer, manhuaContext.bgmMix);
-        usedModel = MANHUA_BGM_ADVISOR_MODEL;
+        usedModel = resolveManhuaAdvisorBgmModel();
         lastErr = "";
         break;
       }

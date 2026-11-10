@@ -34,6 +34,12 @@ export const GEMINI_MODEL_DOMAIN_ENVS = {
   canvasVision: ["CANVAS_VISION_MODEL"],
   /** 漫剧成片智能质检（首镜静帧 + 成片，manhuaClipQualityReview）：同走两跳。 */
   clipQualityReview: ["MANHUA_CLIP_QUALITY_MODEL"],
+  /** 漫剧创作顾问·看片（影片审阅：看画面 + 听原片音轨）。 */
+  manhuaAdvisorWatch: ["MANHUA_ADVISOR_WATCH_MODEL"],
+  /** 漫剧创作顾问·配乐（成片 + 已采用 BGM 的音画配乐分析）。 */
+  manhuaAdvisorBgm: ["MANHUA_ADVISOR_BGM_MODEL"],
+  /** 漫剧创作顾问·字幕（字幕对齐核对 / 原片剪辑方案）。 */
+  manhuaAdvisorSubtitle: ["MANHUA_ADVISOR_SUBTITLE_MODEL"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type GeminiModelDomain = keyof typeof GEMINI_MODEL_DOMAIN_ENVS;

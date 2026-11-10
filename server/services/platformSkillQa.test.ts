@@ -20,9 +20,9 @@ vi.mock("../_core/llm.js", async (importOriginal) => ({
   }) => String(response.choices?.[0]?.message?.content || ""),
 }));
 
-vi.mock("./manhuaAdvisorFilmReview",()=>({askManhuaFilmReview:filmAdvisorMock}));
+vi.mock("./manhuaAdvisorFilmReview",()=>({askManhuaFilmReview:filmAdvisorMock,resolveManhuaAdvisorWatchModel:()=>"gemini-3.8-flash"}));
 
-vi.mock("./manhuaAdvisorBgmMix",()=>({askManhuaBgmMix:bgmAdvisorMock,generateGeminiBgmAnalysis:vi.fn(),MANHUA_BGM_ADVISOR_MODEL:"gemini-3.8-flash"}));
+vi.mock("./manhuaAdvisorBgmMix",()=>({askManhuaBgmMix:bgmAdvisorMock,generateGeminiBgmAnalysis:vi.fn(),resolveManhuaAdvisorBgmModel:()=>"gemini-3.8-flash"}));
 
 vi.mock("./manhuaAdvisorPrevisVideo", () => ({ resolveAdvisorPrevisVideo: resolveVideoMock }));
 
