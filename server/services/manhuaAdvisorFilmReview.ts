@@ -89,7 +89,7 @@ export async function askManhuaFilmReview(userId: number, target: AdvisorFilmRev
       }},
     ] as const;
     const failures:string[]=[];
-    for (const [index,hop] of hops.entries()) {
+    for (const [index,hop] of Array.from(hops.entries())) {
       try {
         if(index>0) receipt.retries=index;
         receipt.route=hop.route;receipt.channel=hop.name;

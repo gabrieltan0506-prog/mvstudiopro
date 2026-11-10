@@ -531,7 +531,8 @@ describe("1110 通道合规与模型配置（替身，不真调模型）", () =>
 
     const w = await setup();
     w.report.coverage.pop();
-    const error = await analyzeCodeMotionImageSemantic("1", w.input, w.deps).catch(e => e as Error);
+    const error: unknown = await analyzeCodeMotionImageSemantic("1", w.input, w.deps).catch((e: unknown) => e);
+    if (!(error instanceof Error)) throw new Error("应抛出 Error");
     expect(error.message).toMatch(/首跳.*未覆盖.*备跳.*未覆盖/);
     expect(error.message).not.toMatch(/vertex|evolink/i);
     expect(w.deps.post).toHaveBeenCalledTimes(2);

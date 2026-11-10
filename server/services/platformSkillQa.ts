@@ -777,7 +777,7 @@ export async function buildWebEvidenceForQuestion(
       generationConfig: { responseMimeType: "text/plain", maxOutputTokens: 4096, temperature: 0.3, topP: 0.9, thinkingConfig: { thinkingLevel: "HIGH" } },
     };
     const signal = AbortSignal.timeout(WEB_EVIDENCE_TIMEOUT_MS);
-    for (const [index, route] of (["vertex", "evolink"] as const).entries()) {
+    for (const [index, route] of Array.from((["vertex", "evolink"] as const).entries())) {
       const slug = `${prefix}/hop-${index + 1}-${route}`;
       if (!(await deps.available(route))) { failures.push(`${route}（未配置，跳过）`); continue; }
       if (signal.aborted) { failures.push(`${route}（总时限已到，未发出）`); break; }

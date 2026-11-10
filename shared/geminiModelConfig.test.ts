@@ -39,7 +39,7 @@ describe("resolveGeminiModel", () => {
       deepResearchAssist: "gemini-3.1-pro",
       growthCampExtractor: "gemini-3.5-flash",
     });
-    for (const domain of pinned) {
+    for (const domain of Array.from(pinned)) {
       expect(GEMINI_MODEL_DOMAIN_ENVS).toHaveProperty(domain);
       const d = domain as GeminiModelDomain;
       expect(resolveGeminiModel(d, {})).toBe(geminiModelDomainDefault(d));
