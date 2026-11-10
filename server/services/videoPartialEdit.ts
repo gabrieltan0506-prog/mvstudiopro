@@ -352,12 +352,16 @@ async function realRenderDeps(): Promise<VideoPartialEditRenderDeps> {
       return signGsUriV4ReadUrl(uri, 24 * 3600);
     },
     async cutSegment({ videoUri, startSec, endSec, fps, dir, signal, userId }) {
-      const src = path.join(dir, "source.mp4"), out = path.join(dir, "segment.mp4");
-      await pp.fetchPostProdSourceToFile(videoUri, src, { signal });
-      const rate = Math.min(60, Math.max(24, Math.round(fps) || 24)); // 上游输入要求 24–60fps；只改帧率不改速度
-      await pp.runMediaTool("ffmpeg", ["-y", "-i", src, "-ss", startSec.toFixed(3), "-to", endSec.toFixed(3),
-        "-r", String(rate), "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out], signal);
+      // 直接按区间读远程原片；远程不可用时回退整片下载再裁（见 videoPartialEditCut）
+      const { cutVideoSegmentToFile } = await import("./videoPartialEditCut");
+      const { signGsUriV4ReadUrl } = await import("./gcs");
+      const cut = await cutVideoSegmentToFile({ videoUri, startSec, endSec, fps, dir, signal }, {
+        runMediaTool: pp.runMediaTool, probe: pp.probe,
+        download: (uri, file, s) => pp.fetchPostProdSourceToFile(uri, file, { signal: s }),
+        signRead: uri => signGsUriV4ReadUrl(uri, 3600),
+      });
+      if (cut.fallbackReason) console.warn(`[videoPartialEdit] 裁段回退整片下载：${cut.fallbackReason}`);
+      const out = cut.filePath;
       const up = await pp.uploadResult({ filePath: out, userId, kind: "video-edit-segment", ext: "mp4", contentType: "video/mp4", signal });
       return { url: up.url, gcsUri: up.gcsUri, filePath: out };
     },
