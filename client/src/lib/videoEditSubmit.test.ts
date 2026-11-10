@@ -61,6 +61,15 @@ describe("提交参数", () => {
     });
   });
 
+  it("回执带实际区间（不足 4 秒已扩展）时原样给 editedRange；只回 jobId 时不带", async () => {
+    const submit = vi.fn(async () => ({ jobId: "job-x", status: "queued", startSec: 0.8, endSec: 4.8, segmentSec: 4, expanded: true }));
+    const res = await submitVideoEdit({ ...base, startSec: 2, endSec: 3.5 }, { submit, newRequestId: () => "rid-x" });
+    expect(res).toEqual({ jobId: "job-x", requestId: "rid-x", editedRange: { startSec: 0.8, endSec: 4.8 } });
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ startSec: 2, endSec: 3.5 }));
+    const bare = await submitVideoEdit(base, { submit: async () => ({ jobId: "job-y", startSec: Number.NaN }), newRequestId: () => "rid-y" });
+    expect(bare).toEqual({ jobId: "job-y", requestId: "rid-y" });
+  });
+
   it("CloudFront 来源与参考图先导入为本人 gs://（同调色写法）；gs:// 原样", async () => {
     const importSource = vi.fn(async (u: string) => `gs://mine/${u.split("/").pop()}`);
     const submit = vi.fn(async () => "job-2");

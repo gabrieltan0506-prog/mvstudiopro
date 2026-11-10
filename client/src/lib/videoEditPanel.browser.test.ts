@@ -15,11 +15,11 @@ it("VideoEditPanel：区间与扩展提示、报价、确认后才提交、提�
       contents: `
     import React from 'react'; import {createRoot} from 'react-dom/client';
     import {VideoEditPanel} from './client/src/components/canvas/VideoEditPanel';
-    globalThis.React=React;globalThis.queued=[];globalThis.quotes=[];globalThis.done=[];
+    globalThis.React=React;globalThis.queued=[];globalThis.quotes=[];globalThis.done=[];globalThis.submitted=[];
     createRoot(document.getElementById('root')).render(
       <VideoEditPanel source='gs://test-only/post-prod/7/a.mp4' previewUrl='https://cdn.test/a.mp4' durationSec={20}
         referenceImages={[{url:'gs://test-only/bg.png',label:'场景底图'},{url:'gs://test-only/p.png',label:'人物'}]}
-        debugMode={false} onDone={r=>globalThis.done.push(r)}/>);
+        debugMode={false} onDone={r=>globalThis.done.push(r)} onSubmitted={j=>globalThis.submitted.push(j)}/>);
   `,
     },
     bundle: true,
@@ -43,7 +43,12 @@ it("VideoEditPanel：区间与扩展提示、报价、确认后才提交、提�
         const s=input.startSec, e=Math.max(input.endSec, Math.round((s+4)*10)/10);
         return {data:{sourceDurationSec:20,startSec:s,endSec:e,segmentSec:seg,expanded:seg>input.endSec-input.startSec,credits:Math.ceil(seg/2)*30,waived:false,creditsPerTwoSec:30,minSec:4,maxSec:30,confirmNotice:'提交后不可取消；失败或未通过审核将全额退回积分。'}};
       }};
-      const queue={useMutation:()=>({mutateAsync:async input=>{globalThis.queued.push(input);return {jobId:'job-ve-1'};}})};
+      // 入队回执按服务端规则带实际区间：不足 4 秒以选段中心向两侧扩到 4 秒（报价桩是简化版，区间故意不同，以证明取的是回执）
+      const tenth=n=>Math.round(n*10)/10;
+      const queue={useMutation:()=>({mutateAsync:async input=>{globalThis.queued.push(input);
+        let s=input.startSec,e=input.endSec;const len=tenth(e-s);
+        if(len<4){s=tenth(s-(4-len)/2);e=tenth(s+4);if(s<0){s=0;e=4;}if(e>20){e=20;s=16;}}
+        return {jobId:'job-ve-1',status:'queued',credits:input.expectedCredits,startSec:s,endSec:e,segmentSec:tenth(e-s),expanded:len<4};}})};
       const job={useQuery:(input,opts)=>{
         const React=globalThis.React;const [,force]=React.useState(0);
         React.useEffect(()=>{globalThis.bump=()=>force(x=>x+1);},[]);
@@ -70,6 +75,7 @@ it("VideoEditPanel：区间与扩展提示、报价、确认后才提交、提�
     await page.setContent('<div id="root"></div>');
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
     await page.waitForSelector('[data-testid="video-edit-panel"]');
+    const submitted = () => page.evaluate(() => (globalThis as any).submitted);
     const text = (label: string) => page.$eval(`[aria-label="${label}"]`, n => n.textContent || "");
     const setVal = (label: string, v: string | number, proto: "input" | "textarea" = "input") =>
       page.$eval(
@@ -136,6 +142,7 @@ it("VideoEditPanel：区间与扩展提示、报价、确认后才提交、提�
     await click("再想想");
     await page.waitForFunction(() => !document.querySelector('[role="dialog"]'));
     expect(await page.evaluate(() => (globalThis as any).queued.length)).toBe(0);
+    expect(await submitted()).toEqual([]);
 
     // 确认提交：参数按约定
     await click("提交局部修改");
@@ -152,6 +159,9 @@ it("VideoEditPanel：区间与扩展提示、报价、确认后才提交、提�
       expectedCredits: 90,
     });
     expect(input.requestId).toMatch(/^[0-9a-f-]{36}$/);
+    // 入队成功：onSubmitted 恰好一次，jobId/requestId/实际区间
+    await page.waitForFunction(() => (globalThis as any).submitted.length === 1);
+    expect(await submitted()).toEqual([{ jobId: "job-ve-1", requestId: input.requestId, startSec: 3, endSec: 8.5 }]);
     await page.waitForSelector('[aria-label="修改任务"]');
     expect(await text("修改任务")).toContain("处理中");
     expect(await button("提交局部修改")).toEqual({ disabled: true });
@@ -181,6 +191,22 @@ it("VideoEditPanel：区间与扩展提示、报价、确认后才提交、提�
     await page.waitForFunction(() => (globalThis as any).queued.length === 2);
     const ids = await page.evaluate(() => (globalThis as any).queued.map((q: any) => q.requestId));
     expect(ids[0]).not.toBe(ids[1]);
+    await page.waitForFunction(() => (globalThis as any).submitted.length === 2);
+    expect((await submitted())[1]).toEqual({ jobId: "job-ve-1", requestId: ids[1], startSec: 3, endSec: 8.5 });
+
+    // 不足 4 秒：提交的是用户所选 10.0–11.0，onSubmitted 给服务端扩展后的实际区间 8.5–12.5
+    await setVal("起点秒", 10);
+    await setVal("终点秒", 11);
+    await page.waitForFunction(() => document.querySelector('[aria-label="报价"]')?.textContent?.includes("需 60 积分"));
+    await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some(b => b.textContent?.trim() === "提交局部修改" && !b.disabled));
+    await click("提交局部修改");
+    await page.waitForSelector('[role="dialog"]');
+    await click("确认提交");
+    await page.waitForFunction(() => (globalThis as any).submitted.length === 3);
+    const third = await page.evaluate(() => (globalThis as any).queued[2]);
+    expect(third).toMatchObject({ startSec: 10, endSec: 11, expectedCredits: 60 });
+    expect((await submitted())[2]).toEqual({ jobId: "job-ve-1", requestId: third.requestId, startSec: 8.5, endSec: 12.5 });
+    expect(await page.evaluate(() => (globalThis as any).queued.length)).toBe(3);
 
     const all = await page.$eval('[data-testid="video-edit-panel"]', n => n.textContent || "");
     expect(all).not.toMatch(/Seedance|BytePlus|EvoLink|ffmpeg|Gemini|GPT|Veo|Kling|WaveSpeed/i);

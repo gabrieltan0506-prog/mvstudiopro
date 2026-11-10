@@ -60,9 +60,12 @@ export type VideoEditRequest = {
   requestId?: string;
 };
 
+/** queueVideoPartialEdit 回执：服务端带实际修改区间（不足 4 秒已扩展后的值）。 */
+export type VideoEditQueueReceipt = { jobId: string; startSec?: number; endSec?: number };
+
 export type VideoEditSubmitDeps = {
   /** 入队：trpc.mvAnalysis.queueVideoPartialEdit 的 mutateAsync。 */
-  submit: (input: VideoEditSubmitInput) => Promise<{ jobId: string } | string | undefined>;
+  submit: (input: VideoEditSubmitInput) => Promise<VideoEditQueueReceipt | string | undefined>;
   /** 测试注入；默认 importWorkflowVideoSource（CloudFront 成品先落本人目录）。 */
   importSource?: (url: string) => Promise<string>;
   /** 测试注入；默认 crypto.randomUUID。 */
@@ -144,11 +147,17 @@ export function buildVideoEditSubmitInput(req: VideoEditRequest, requestId: stri
   };
 }
 
+const finiteSec = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+
 /**
- * 局部修改提交：校验 → 来源与参考图规范化（CloudFront 先导入）→ 入队，返回 jobId 与所用 requestId。
+ * 局部修改提交：校验 → 来源与参考图规范化（CloudFront 先导入）→ 入队，返回 jobId 与所用 requestId；
+ * 回执带区间时另给 editedRange（服务端实际修改区间，不足 4 秒已扩展）。
  * requestId：调用方每次点击「确认提交」传入新 uuid（或不传由此生成）；同一次点击的重试传回同一个。
  */
-export async function submitVideoEdit(req: VideoEditRequest, deps: VideoEditSubmitDeps): Promise<{ jobId: string; requestId: string }> {
+export async function submitVideoEdit(
+  req: VideoEditRequest,
+  deps: VideoEditSubmitDeps
+): Promise<{ jobId: string; requestId: string; editedRange?: { startSec: number; endSec: number } }> {
   buildVideoEditSubmitInput({ ...req, videoUrl: "https://placeholder.invalid/", referenceImageUrls: [] }, "check");
   const importSource = deps.importSource ?? importWorkflowVideoSource;
   const videoUrl = await normalizeVideoEditSource(req.videoUrl, importSource);
@@ -162,7 +171,10 @@ export async function submitVideoEdit(req: VideoEditRequest, deps: VideoEditSubm
   const res = await deps.submit(input);
   const jobId = typeof res === "string" ? res : res?.jobId;
   if (!jobId) throw new Error("尚未取得修改任务编号，请稍后在任务记录中查看");
-  return { jobId, requestId };
+  const receipt = typeof res === "object" ? res : undefined;
+  const editedRange =
+    receipt && finiteSec(receipt.startSec) && finiteSec(receipt.endSec) ? { startSec: receipt.startSec, endSec: receipt.endSec } : undefined;
+  return { jobId, requestId, ...(editedRange ? { editedRange } : {}) };
 }
 
 /** getPostProdJob 结果归一（VE1 约定：成功 output.url；失败 error 中性句 + output.refund）。 */

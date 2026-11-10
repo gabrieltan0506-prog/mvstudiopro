@@ -13,7 +13,7 @@ import {
   roundSec,
   submitVideoEdit,
   type VideoEditQuoteInput,
-  type VideoEditSubmitInput,
+  type VideoEditSubmitDeps,
 } from "@/lib/videoEditSubmit";
 import type { AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
@@ -36,6 +36,8 @@ export type VideoEditPanelProps = {
   debugMode?: boolean;
   /** 修改完成：新版本（原片保留）；挂载方可据此加一条新版本。 */
   onDone?: (result: VideoEditResult) => void;
+  /** 入队成功（每次确认提交一次）：startSec/endSec 为实际提交的区间（不足 4 秒已扩展后的值）；挂载方可据此记账、刷新后续看进度。 */
+  onSubmitted?: (job: { jobId: string; requestId: string; startSec: number; endSec: number }) => void;
   /** 外部（创作顾问）预填：nonce 变化即覆盖区间/描述/参考图；只预填，报价与提交仍须用户在本面板确认。 */
   prefill?: { startSec: number; endSec: number; promptZh: string; referenceImageUrls?: string[]; nonce: string | number };
   /** 顾问 videoEdit 登记口：本面板挂载期间登记（inspect 列本片与参考图，prefill 覆盖本面板内容），卸载即注销。 */
@@ -49,7 +51,7 @@ const POLL_MS = 4000;
 type QueryLike<T> = { data?: T; isLoading?: boolean; isFetching?: boolean; error?: unknown };
 type VideoEditTrpc = {
   quoteVideoPartialEdit: { useQuery: (input: VideoEditQuoteInput, opts: { enabled: boolean; retry?: boolean | number }) => QueryLike<unknown> };
-  queueVideoPartialEdit: { useMutation: () => { mutateAsync: (input: VideoEditSubmitInput) => Promise<{ jobId: string } | string | undefined> } };
+  queueVideoPartialEdit: { useMutation: () => { mutateAsync: VideoEditSubmitDeps["submit"] } };
   getPostProdJob: {
     useQuery: (input: { jobId: string }, opts: { enabled: boolean; refetchInterval: (q: { state: { data?: unknown } }) => number | false }) => QueryLike<unknown>;
   };
@@ -191,6 +193,14 @@ export function VideoEditPanel(props: VideoEditPanelProps) {
       setJobId(res.jobId);
       setCompare("after");
       setConfirming(false);
+      // 实际提交区间以服务端回执为准（不足 4 秒已扩展）；回执未带时取用户确认过的报价区间（同一规则算出）
+      const edited = res.editedRange ?? { startSec: quote.startSec, endSec: quote.endSec };
+      try {
+        props.onSubmitted?.({ jobId: res.jobId, requestId: res.requestId, startSec: edited.startSec, endSec: edited.endSec });
+      } catch (e) {
+        // 挂载方回调出错不能当成提交失败（任务已入队、已扣积分），只进控制台
+        console.error("[VideoEditPanel] onSubmitted", e);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
