@@ -3,7 +3,34 @@ import { nanoid } from "nanoid";
 import { storagePut } from "./storage";
 import { uploadBufferToGcs } from "./services/gcs";
 
+/**
+ * 服务端直收上传一律须登录（原先四个入口都不认人，任何人可往存储里写文件）。
+ * 在读取请求体之前认人：未登录直接 401，不接收、不落存储。
+ * 调用方核对（2026-11-10）：/api/upload、/api/upload-image 前端已无调用；/api/platform/upload 所在页强制登录；
+ * /api/magazine/upload 的下游（agent.launch*、deepResearch.launch）全是须登录接口。
+ */
+export async function requireUploadLogin(req: any, res: any, next: (error?: unknown) => void) {
+  try {
+    const { sdk } = await import("./_core/sdk");
+    const user = await sdk.authenticateRequest(req, { silentMissing: true });
+    const userId = Number((user as any)?.id);
+    if (!Number.isFinite(userId) || userId <= 0) throw new Error("no_user");
+    req.uploadUserId = userId;
+    return next();
+  } catch (error) {
+    // 登录库暂时连不上 ≠ 未登录：给 503，前台不必误报「登录失效」
+    const statusCode = Number((error as any)?.statusCode) >= 500 ? 503 : 401;
+    return res
+      .status(statusCode)
+      .json(statusCode === 503 ? { error: "服务暂时不可用，请稍后重试" } : { error: "请先登录后再上传文件" });
+  }
+}
+
 const uploadRouter = Router();
+uploadRouter.post(
+  ["/api/upload", "/api/upload-image", "/api/platform/upload", "/api/magazine/upload"],
+  requireUploadLogin,
+);
 const MB = 1024 * 1024;
 const DEFAULT_UPLOAD_MAX_BYTES = 600 * MB;
 const MAX_UPLOAD_BYTES = Math.max(10 * MB, Number(process.env.UPLOAD_MAX_BYTES || DEFAULT_UPLOAD_MAX_BYTES) || DEFAULT_UPLOAD_MAX_BYTES);
