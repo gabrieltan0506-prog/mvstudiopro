@@ -18,6 +18,7 @@ import {
   buildMontageGradePrompt,
   loadGradeLutOptions,
   resolveMontageGradeAdviceModel,
+  snapGradeBoundaries,
   validateMontageGradeAdvice,
 } from "./montageGradeAdvice";
 
@@ -257,6 +258,114 @@ describe("成片调色建议 · 防重放（替身，不真调模型）", () => 
     await expect(adviseMontageGrade(7, baseInput, svcDeps(gcs, call), { beforeModelCall: async () => { throw new Error("余额不足"); } })).rejects.toThrow(/余额不足/);
     expect(gcs.objects.size).toBe(0);
     expect(call).not.toHaveBeenCalled();
+  });
+});
+
+describe("成片调色建议 · 分段边界吸附（1110 实测切点，替身，不真调模型）", () => {
+  const CUTS = [8.5, 12.5, 16.5, 20.6, 23.7, 26.9, 27.2, 29.7, 33.1];
+  const DUR = 40;
+  /** 溶解中点 29.6、时长 3.0 → 区间 28.1–31.1，连同 ±1.5 容差覆盖 26.6–32.6。 */
+  const DISSOLVE = { atSec: 29.6, durationSec: 3 };
+  const row = (fromSec: number, toSec: number, extra: Record<string, unknown> = {}) => ({ fromSec, toSec, correction: { saturation: 1, ...extra }, reasonZh: "理由" });
+  const advice1110 = (grades: ReturnType<typeof row>[], seams = [{ atSec: 26.9, jump: true, intent: "intended" as const, beforeZh: "暖", afterZh: "冷", fixZh: "保留" }]) => ({ ...ok(), seams, grades });
+  const lutCtx = { durationSec: DUR, lutIds: LUTS };
+
+  it("26.9 的冷色段起点被吸到 29.6 转场中点，并给出建议过渡时长 = 转场时长；吸附后校验通过", () => {
+    const grades = [row(0, 12.4), row(12.4, 26.9, { color_temperature: 5600 }), row(26.9, DUR, { color_temperature: 7600 })];
+    const s = snapGradeBoundaries(grades, { durationSec: DUR, seamSecs: CUTS, transitions: [DISSOLVE] });
+    expect(s.boundaries).toEqual([
+      { gradeIndex: 1, originalSec: 12.4, snappedSec: 12.5, snappedTo: "cut", segmentIndex: 1 },
+      { gradeIndex: 2, originalSec: 26.9, snappedSec: 29.6, snappedTo: "transition", suggestedCrossfadeSec: 3, segmentIndex: 2 },
+    ]);
+    expect(s.grades.map(g => [g.fromSec, g.toSec])).toEqual([[0, 12.5], [12.5, 29.6], [29.6, DUR]]);
+    expect(s.mergedGradeIndexes).toEqual([]);
+    const after = validateMontageGradeAdvice(advice1110(s.grades), lutCtx);
+    // 模型在原处（26.9）标的接点意图跟着边界走
+    expect(adviceToGradeSegments(after, DUR, s.originalFromSecs.map(t => [t]))[2]).toMatchObject({ startSec: 29.6, endSec: DUR, junctionIntent: "intended", color_temperature: 7600 });
+  });
+
+  it("没给转场时 26.9 本身是切点，原地不动；超容差的边界保留原值并标 unsnapped", () => {
+    const grades = [row(0, 4), row(4, 26.9), row(26.9, 36.5), row(36.5, DUR)];
+    const s = snapGradeBoundaries(grades, { durationSec: DUR, seamSecs: CUTS });
+    expect(s.boundaries).toEqual([
+      { gradeIndex: 1, originalSec: 4, snappedSec: 4, snappedTo: "none", unsnapped: true, segmentIndex: 1 },
+      { gradeIndex: 2, originalSec: 26.9, snappedSec: 26.9, snappedTo: "cut", segmentIndex: 2 },
+      { gradeIndex: 3, originalSec: 36.5, snappedSec: 36.5, snappedTo: "none", unsnapped: true, segmentIndex: 3 },
+    ]);
+    expect(s.grades).toEqual(grades);
+    validateMontageGradeAdvice(advice1110(s.grades), lutCtx);
+  });
+
+  it("转场范围按 区间±1.5 秒 计：1.0 秒溶解（区间 29.1–30.1）够不着 26.9，够得着 27.7", () => {
+    const short = { atSec: 29.6, durationSec: 1 };
+    const far = snapGradeBoundaries([row(0, 26.9), row(26.9, DUR)], { durationSec: DUR, seamSecs: CUTS, transitions: [short] });
+    expect(far.boundaries[0]).toMatchObject({ snappedSec: 26.9, snappedTo: "cut" });
+    const near = snapGradeBoundaries([row(0, 27.7), row(27.7, DUR)], { durationSec: DUR, seamSecs: CUTS, transitions: [short] });
+    expect(near.boundaries[0]).toMatchObject({ snappedSec: 29.6, snappedTo: "transition", suggestedCrossfadeSec: 1 });
+  });
+
+  it("两个边界吸到同一点：中间段并入相邻段，结果仍首尾相接覆盖全片且过校验", () => {
+    const grades = [row(0, 26.9), row(26.9, 27.2, { saturation: 0.5 }), row(27.2, DUR, { color_temperature: 7600 })];
+    const s = snapGradeBoundaries(grades, { durationSec: DUR, seamSecs: CUTS, transitions: [DISSOLVE] });
+    expect(s.mergedGradeIndexes).toEqual([1]);
+    expect(s.grades.map(g => [g.fromSec, g.toSec])).toEqual([[0, 29.6], [29.6, DUR]]);
+    expect(s.boundaries.map(b => b.segmentIndex)).toEqual([null, 1]);
+    expect(s.grades[1]!.correction).toMatchObject({ color_temperature: 7600 });
+    validateMontageGradeAdvice(advice1110(s.grades), lutCtx);
+  });
+
+  it("提示词：给了切点/转场才出现硬约束；都不给时逐字不变", () => {
+    const base = buildMontageGradePrompt({ durationSec: DUR, luts: [] });
+    expect(base).not.toContain("分段边界硬约束");
+    expect(buildMontageGradePrompt({ durationSec: DUR, luts: [], seamSecs: [], transitions: [] })).toBe(base);
+    const p = buildMontageGradePrompt({ durationSec: DUR, luts: [], seamSecs: CUTS, transitions: [DISSOLVE] });
+    expect(p).toContain("分段边界只能落在给定切点或转场中点上");
+    expect(p).toContain("切点：8.5 秒、12.5 秒");
+    expect(p).toContain("转场（中点／时长）：29.6 秒／3.0 秒");
+    expect(p).toContain("专门检查 8.5 秒");
+    expect(buildMontageGradePrompt({ durationSec: DUR, luts: [], transitions: [DISSOLVE] })).not.toContain("切点：");
+  });
+
+  const snapCall = () => vi.fn(async (o: { prompt: string; validate: (v: unknown) => unknown; save: (n: string, v: unknown) => Promise<unknown> }) => {
+    const value = o.validate(advice1110([row(0, 26.9), row(26.9, DUR, { color_temperature: 7600 })]));
+    await o.save("hop-1-vertex-raw", { payload: "raw" });
+    await o.save("hop-1-vertex-parsed", value);
+    return { value, channel: "Vertex", model: MONTAGE_GRADE_ADVICE_MODEL, failuresZh: [] };
+  });
+
+  it("服务：传切点+转场 → segments 为吸附后、advice 保持模型原样；吸附前后分段各落一份证据；重放带回 snap", async () => {
+    const gcs = memGcs();
+    const call = snapCall();
+    const input = { ...baseInput, durationSec: DUR, seamSecs: CUTS, transitions: [DISSOLVE] };
+    const res = await adviseMontageGrade(7, input, svcDeps(gcs, call));
+    expect((call.mock.calls[0]![0] as { prompt: string }).prompt).toContain("分段边界硬约束");
+    expect(res.advice.grades.map(g => g.fromSec)).toEqual([0, 26.9]);
+    expect(res.segments.map(s => [s.startSec, s.endSec])).toEqual([[0, 29.6], [29.6, DUR]]);
+    expect(res.segments[1]).toMatchObject({ junctionIntent: "intended", color_temperature: 7600 });
+    expect(res.snap!.boundaries).toEqual([{ gradeIndex: 1, originalSec: 26.9, snappedSec: 29.6, snappedTo: "transition", suggestedCrossfadeSec: 3, segmentIndex: 1 }]);
+    expect(res.snap!.fallbackZh).toBeUndefined();
+    expect(Array.from(gcs.objects.keys()).map(k => k.split("/").pop())).toEqual(["request.json", "hop-1-vertex-raw.json", "hop-1-vertex-parsed.json", "snap-before.json", "snap-after.json", "segments.json"]);
+    const read = (n: string) => JSON.parse(gcs.objects.get(`canvas-montage/grade-advice/7/${RID}/${n}.json`)!.toString("utf8"));
+    expect(read("request").transitions).toEqual([DISSOLVE]);
+    expect(read("snap-before").segments.map((s: { startSec: number }) => s.startSec)).toEqual([0, 26.9]);
+    expect(read("snap-after").segments.map((s: { startSec: number }) => s.startSec)).toEqual([0, 29.6]);
+    expect(read("hop-1-vertex-parsed").grades.map((g: { fromSec: number }) => g.fromSec)).toEqual([0, 26.9]);
+    const again = await adviseMontageGrade(7, input, svcDeps(gcs, call));
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(again.replayed).toBe(true);
+    expect(again.snap).toEqual(res.snap);
+    expect(again.segments).toEqual(res.segments);
+  });
+
+  it("服务：不传 seamSecs/transitions（或传空数组）时不吸附、无 snap 字段、落档清单与原来一致", async () => {
+    for (const extra of [{}, { seamSecs: [], transitions: [] }]) {
+      const gcs = memGcs();
+      const res = await adviseMontageGrade(7, { ...baseInput, durationSec: DUR, ...extra }, svcDeps(gcs, snapCall()));
+      expect(res).not.toHaveProperty("snap");
+      expect(res.segments.map(s => [s.startSec, s.endSec])).toEqual([[0, 26.9], [26.9, DUR]]);
+      expect(Array.from(gcs.objects.keys()).map(k => k.split("/").pop())).toEqual(["request.json", "hop-1-vertex-raw.json", "hop-1-vertex-parsed.json", "segments.json"]);
+      expect(JSON.parse(gcs.objects.get(`canvas-montage/grade-advice/7/${RID}/segments.json`)!.toString("utf8"))).not.toHaveProperty("snap");
+    }
   });
 });
 
