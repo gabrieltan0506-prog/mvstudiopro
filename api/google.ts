@@ -1005,6 +1005,10 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
     // ---------------- Vertex：TestLab 翻译（gemini-3-flash-preview · locations/global；与 geminiScript 同为 IAM REST） ----------------
     if (op === "vertexTranslate") {
+      // 只有管理员测试台在用、不扣费直调模型：须监管/管理员登录（原先匿名可调）。只加闸门，模型调用本身不动。
+      const translateViewer = await resolveGoogleGatewayUser(req);
+      if (!translateViewer) return res.status(401).json({ ok: false, error: "authentication_required" });
+      if (!hasSupervisorRole(translateViewer.role)) return res.status(403).json({ ok: false, error: "supervisor_only" });
       const sourceText = s(b.prompt || b.text || q.prompt || "").trim();
       if (!sourceText) return res.status(400).json({ ok: false, error: "missing_prompt" });
 

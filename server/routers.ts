@@ -3270,7 +3270,7 @@ export const appRouter = router({
         return { ok: true as const, started, jobId: job.jobId, kind: job.kind };
       }),
 
-    analyzeFrame: publicProcedure
+    analyzeFrame: protectedProcedure
       .input(z.object({
         imageBase64: z.string().min(1),
         mimeType: z.string().default("image/jpeg"),
@@ -3354,7 +3354,7 @@ export const appRouter = router({
         }
       }),
 
-    analyzeDocument: publicProcedure
+    analyzeDocument: protectedProcedure
       .input(z.object({
         fileBase64: z.string().min(1),
         mimeType: z.string().min(1),
@@ -3574,7 +3574,7 @@ export const appRouter = router({
         };
       }),
 
-    buildPremiumRemix: publicProcedure
+    buildPremiumRemix: protectedProcedure
       .input(z.object({
         context: z.string().optional(),
         transcript: z.string().optional(),
@@ -3762,7 +3762,7 @@ export const appRouter = router({
         };
       }),
 
-    generatePremiumRemixAssets: publicProcedure
+    generatePremiumRemixAssets: protectedProcedure
       .input(z.object({
         remix: growthPremiumRemixSchema,
         mode: z.enum(["loop", "interpolation"]).default("loop"),
@@ -4036,7 +4036,7 @@ export const appRouter = router({
         };
       }),
 
-    askPlatformFollowUp: publicProcedure
+    askPlatformFollowUp: protectedProcedure
       .input(z.object({
         question: z.string().min(3).max(1200),
         context: z.string().optional(),
@@ -4143,7 +4143,7 @@ export const appRouter = router({
     // the background and writes the result to the DB via markJobSucceeded.
     // Frontend polls GET /api/jobs/:id every 3 seconds.
     // ─────────────────────────────────────────────────────────────────────────
-    createPlatformAnalysisJob: publicProcedure
+    createPlatformAnalysisJob: protectedProcedure
       .input(z.object({
         context: z.string().optional(),
         windowDays: z.number().int().min(3).max(90).default(15),
@@ -4222,7 +4222,7 @@ export const appRouter = router({
       }),
 
     // Platform Follow-Up (QA) Job — same async pattern
-    createPlatformQAJob: publicProcedure
+    createPlatformQAJob: protectedProcedure
       .input(z.object({
         question: z.string().min(1),
         windowDays: z.number().int().min(3).max(90).default(15),
@@ -11714,7 +11714,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     // Analyze a single segment frame (used by full video analysis)
-    analyzeSegment: publicProcedure
+    analyzeSegment: protectedProcedure
       .input(z.object({
         imageBase64: z.string().min(1),
         mimeType: z.string().default("image/jpeg"),
@@ -11785,7 +11785,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     // Generate final summary report from all segment analyses
-    generateReport: publicProcedure
+    generateReport: protectedProcedure
       .input(z.object({
         segments: z.array(z.object({
           segmentIndex: z.number(),
@@ -14186,7 +14186,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
 
     /** 竞品图片视觉分析（调用 gpt-4.1-mini vision） */
-    analyze: publicProcedure
+    analyze: protectedProcedure
       .input(z.object({
         imageUrl: z.string().min(1),
         question: z.string().optional(),
@@ -14232,7 +14232,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
 
     /** 图片编辑（gpt-image-2 edits：原图 + 可选多图融合 + 可选遮罩局部改） */
-    edit: publicProcedure
+    edit: adminProcedure
       .input(z.object({
         imageUrl: z.string().min(1),
         prompt: z.string().min(1),

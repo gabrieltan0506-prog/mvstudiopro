@@ -334,7 +334,9 @@ async function generateStoryboardImages(storyboard: Array<{ sceneIndex: number; 
 async function callWorkflowModelApi(payload: Record<string, any>) {
   const mod = await import("../../api/jobs.js");
   const handler = mod.default;
-  const req: any = { method: "POST", body: payload, query: {}, headers: { "content-type": "application/json" } };
+  // 进程内自调：这些模型入口对外须监管角色，工作流自身已在入口鉴权，这里打进程内标记放行（外部请求无法伪造）。
+  const { markInProcessGatewayRequest } = await import("../services/internalGatewayAuth.js");
+  const req: any = markInProcessGatewayRequest({ method: "POST", body: payload, query: {}, headers: { "content-type": "application/json" } });
   const res: any = {
     statusCode: 200,
     body: undefined,

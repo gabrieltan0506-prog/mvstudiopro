@@ -1,3 +1,5 @@
+import { buildInternalGatewayHeaders } from "./internalGatewayAuth";
+
 export type ProducerModel = "suno" | "udio";
 export type ProducerQuality = "normal" | "high";
 
@@ -141,7 +143,8 @@ export async function createProducerTask(input: {
 }): Promise<{ taskId: string; raw: Record<string, any> }> {
   const response = await fetch(`${getJobsApiBase()}/api/jobs?op=${getCreateOp(input.model)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    // 音乐入口对外须登录；服务端任务回调自己时带内部签名头（只传签名，不传密钥）
+    headers: { "Content-Type": "application/json", ...buildInternalGatewayHeaders() },
     body: JSON.stringify({
       prompt: input.prompt,
       duration: input.duration,
@@ -178,7 +181,7 @@ export async function getProducerTaskStatus(taskId: string): Promise<{
   for (const model of tryModels) {
     const response = await fetch(
       `${getJobsApiBase()}/api/jobs?op=${getTaskOp(model)}&taskId=${encodeURIComponent(taskId)}`,
-      { method: "GET" }
+      { method: "GET", headers: buildInternalGatewayHeaders() }
     );
 
     if (!response.ok) {
