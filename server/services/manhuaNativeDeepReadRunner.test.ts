@@ -31,7 +31,6 @@ import {
   NATIVE_DEEP_READ_FINAL_RETRY_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RETRY_GENERATION_CONFIG,
   NATIVE_DEEP_READ_RESOURCE_RETRY_INTERVAL_MS,
-  NATIVE_DEEP_READ_ESCALATION_MODEL,
   NATIVE_DEEP_READ_ESCALATION_TEMPERATURES,
   NATIVE_DEEP_READ_RETRY_INTERVAL_MS_BEFORE_0920,
   nativeDeepReadFrozenContractSha256,
@@ -6410,8 +6409,10 @@ it("本地恢复保留有效GLM分析；原稿也不完整时仍拒绝且不编�
 /**
  * 0920 用户令：「單一分片如果連讀五次都不通過，就升級成Gemini 3.1 pro來讀」
  * 「如果重是五次都不通過，保留分片，不報錯，換Gemini 3.1 pro來讀，直接從0.7--0.65--0.6」。
+ * 1110 用户令：升级模型按配置决定（MANHUA_DEEP_READ_ESCALATION_MODEL，缺省同首读模型 = 不升级），不再写死 3.1 Pro。
  */
-describe("0920 读片升级档：单片五发不过 → 不报错 → 升级 Gemini 3.1 Pro 三档重读", () => {
+describe("0920 读片升级档（1110 起升级模型按配置）：单片五发不过 → 不报错 → 升级配置的模型三档重读", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
   const fullSegments = [0, 319, 638, 957, 1276].map((startSec, index) => ({
     startSec, endSec: index === 4 ? 1594 : startSec + 319,
   }));
@@ -6431,7 +6432,22 @@ describe("0920 读片升级档：单片五发不过 → 不报错 → 升级 Gem
   const tempsOf = (spy: unknown) => (spy as ReturnType<typeof vi.fn>).mock.calls
     .map((call) => (call[0] as { generationConfig: { temperature: number } }).generationConfig.temperature);
 
-  it("Flash 五发全不过：再跑 3.1 Pro 三档（共 8 发），温度从 0.7 重新开始，且不抛错", async () => {
+  it("1110 缺省配置：升级模型同首读 3.8 Flash → 不升级、不转 Pro，停在五发", async () => {
+    vi.stubEnv("GEMINI_DEFAULT_MODEL", "");
+    vi.stubEnv("MANHUA_DEEP_READ_MODEL", "");
+    vi.stubEnv("MANHUA_DEEP_READ_ESCALATION_MODEL", "");
+    const short = makeSegmentPayload({ segmentIndex: 3, startSec: 957, endSec: 977 });
+    const deps = makeRunnerDeps({ postVertex: vi.fn().mockResolvedValue(geminiResponse(short)) });
+    const error = await runManhuaNativeDeepReadSelectedSegments(
+      { ...selectedParams([3]), readModel: "gemini-3.8-flash" }, deps).catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(deps.postVertex).toHaveBeenCalledTimes(5);
+    expect(new Set(modelsOf(deps.postVertex))).toEqual(new Set(["gemini-3.8-flash"]));
+    expect(deps.writeRawAttemptEvidence).toHaveBeenCalledTimes(5);
+  });
+
+  it("配置 MANHUA_DEEP_READ_ESCALATION_MODEL=3.1 Pro（用户批准时）：Flash 五发全不过再跑 3.1 Pro 三档（共 8 发），温度从 0.7 重新开始", async () => {
+    vi.stubEnv("MANHUA_DEEP_READ_ESCALATION_MODEL", "gemini-3.1-pro-preview");
     const short = makeSegmentPayload({ segmentIndex: 3, startSec: 957, endSec: 977 });
     const deps = makeRunnerDeps({ postVertex: vi.fn().mockResolvedValue(geminiResponse(short)) });
     // 「不报错」指的是**五发不过不停手、改升级**；升级三档也全废时仍按既有硬门拒收（覆盖率 6.3%）
@@ -6450,7 +6466,8 @@ describe("0920 读片升级档：单片五发不过 → 不报错 → 升级 Gem
     expect(deps.writeParsedAttemptEvidence).toHaveBeenCalledTimes(8);
   });
 
-  it("升级档第一发就过：总共 6 发，采用 3.1 Pro 那一稿", async () => {
+  it("升级档第一发就过：总共 6 发，采用配置升级模型那一稿", async () => {
+    vi.stubEnv("MANHUA_DEEP_READ_ESCALATION_MODEL", "gemini-3.1-pro-preview");
     const short = makeSegmentPayload({ segmentIndex: 3, startSec: 957, endSec: 977 });
     const healthy = makeSegmentPayload({ segmentIndex: 3, startSec: 957, endSec: 1276 });
     const postVertex = vi.fn()
@@ -6467,7 +6484,20 @@ describe("0920 读片升级档：单片五发不过 → 不报错 → 升级 Gem
     expect(result.segments[0]!.raw.shots).toEqual(healthy.shots);
   });
 
-  it("首读已经是 3.1 Pro：没有更高档可升，仍然只发五次", async () => {
+  it("配置的新读片模型同样按配置升级（不写死模型名）", async () => {
+    vi.stubEnv("MANHUA_DEEP_READ_MODEL", "gemini-3.9-flash");
+    vi.stubEnv("MANHUA_DEEP_READ_ESCALATION_MODEL", "gemini-4.0-flash");
+    const short = makeSegmentPayload({ segmentIndex: 3, startSec: 957, endSec: 977 });
+    const deps = makeRunnerDeps({ postVertex: vi.fn().mockResolvedValue(geminiResponse(short)) });
+    await runManhuaNativeDeepReadSelectedSegments(
+      { ...selectedParams([3]), readModel: "gemini-3.9-flash" }, deps).catch((e) => e);
+    expect(modelsOf(deps.postVertex)).toEqual([
+      "gemini-3.9-flash", "gemini-3.9-flash", "gemini-3.9-flash", "gemini-3.9-flash", "gemini-3.9-flash",
+      "gemini-4.0-flash", "gemini-4.0-flash", "gemini-4.0-flash",
+    ]);
+  });
+
+  it("在途旧 3.1 Pro 任务保持原合同：不升级，仍然只发五次", async () => {
     const short = makeSegmentPayload({ segmentIndex: 3, startSec: 957, endSec: 977 });
     const deps = makeRunnerDeps({ postVertex: vi.fn().mockResolvedValue(geminiResponse(short)) });
     const error = await runManhuaNativeDeepReadSelectedSegments(
@@ -6495,10 +6525,13 @@ describe("0920 读片升级档：单片五发不过 → 不报错 → 升级 Gem
     expect(deps.postEvolink).not.toHaveBeenCalled();
   });
 
-  it("升级档常量按用户原话写死：3.1 Pro + 0.7/0.65/0.6 三发", () => {
-    expect(NATIVE_DEEP_READ_ESCALATION_MODEL).toBe("gemini-3.1-pro-preview");
+  it("升级档温度仍按 0920 原话 0.7/0.65/0.6 三发；升级模型不再有写死常量", async () => {
     expect([...NATIVE_DEEP_READ_ESCALATION_TEMPERATURES]).toEqual([0.7, 0.65, 0.6]);
     expect(NATIVE_DEEP_READ_ESCALATION_TEMPERATURES).toHaveLength(3);
+    const runner = await import("./manhuaNativeDeepReadRunner");
+    expect("NATIVE_DEEP_READ_ESCALATION_MODEL" in runner).toBe(false);
+    const src = readFileSync(new URL("./manhuaNativeDeepReadRunner.ts", import.meta.url), "utf8");
+    expect(src).not.toMatch(/=== "gemini-3\.8-flash"|!== "gemini-3\.8-flash"/);
   });
 });
 

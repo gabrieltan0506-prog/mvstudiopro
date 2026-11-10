@@ -38,7 +38,7 @@ import {
   resolveCanvasMusicMvAudio,
   resolveCanvasMusicMvVideo,
 } from "./canvasMusicMvMedia";
-import { hearSongIndependently, SONG_HEARING_MODEL } from "./musicMvSongHearing";
+import { hearSongIndependently, resolveSongHearingModel } from "./musicMvSongHearing";
 import { probeAudio } from "./postProduction";
 import {
   musicMvAdvisorTargetSchema,
@@ -188,15 +188,17 @@ export async function askMusicMvAdvisor(
     };
   };
   const audioSha256=buffer?createHash("sha256").update(buffer).digest("hex"):undefined;
-  await save("request",{target,purpose,question,audioUri,durationSec,analysisBasis:videoReport?"native_video_audio":media?"native_audio":"user_brief",nativeVideoEvidence:videoReport,audioSha256,model:media?SONG_HEARING_MODEL:undefined,hearingScope:media?"song_only_no_story":undefined,audioMimeType:mimeType,audioBytes:buffer?.length});
+  await save("request",{target,purpose,question,audioUri,durationSec,analysisBasis:videoReport?"native_video_audio":media?"native_audio":"user_brief",nativeVideoEvidence:videoReport,audioSha256,model:media?resolveSongHearingModel():undefined,hearingScope:media?"song_only_no_story":undefined,audioMimeType:mimeType,audioBytes:buffer?.length});
   let sourceEvidence: unknown=videoReport || {basis:"user_brief",noteZh:"无参考媒体，不声称听过或看过"};
   let audioTokens=videoReport?.nativeEvidence?.audioTokens || 0;
   let receipt: unknown;
+  let hearingModel: string|undefined;
   if(media&&audioUri&&mimeType&&audioSha256){
     // 1109：先「不看剧情」独立听歌（只送歌曲），结果按歌曲永久存档复用；剧情只在后续 GLM 编排阶段合入。
     const hearing=await deps.hear({gcsUri:audioUri,mimeType,durationSec:target.audio!.durationSec,audioSha256});
     receipt=await save("hearing",{reused:hearing.reused,cacheObject:hearing.cacheObject,evidencePrefix:hearing.evidencePrefix,channel:hearing.channel,model:hearing.model,audioTokens:hearing.audioTokens});
     audioTokens=hearing.audioTokens;
+    hearingModel=hearing.model;
     if(!audioTokens)throw Error("未取得歌曲音频处理回执，未以文字分析冒充听音");
     sourceEvidence=parseCreativeAudioEvidence({...(hearing.evidence as object),sourceKey:target.sourceKey},target.sourceKey,target.audio!.durationSec);
   }
@@ -313,7 +315,7 @@ export async function askMusicMvAdvisor(
   }
   const review=refinement.review;
   const answer={...proposal,evidenceId,review};
-  await save("accepted",{target,proposal:answer,sourceEvidence,creativeLibrary,receipt,model:review.model,draftModel:composed.model,hopsUsed,beatGrid,beatsReport,mediaModel:target.audio?SONG_HEARING_MODEL:undefined,audioTokens});
+  await save("accepted",{target,proposal:answer,sourceEvidence,creativeLibrary,receipt,model:review.model,draftModel:composed.model,hopsUsed,beatGrid,beatsReport,mediaModel:target.audio?(hearingModel??resolveSongHearingModel()):undefined,audioTokens});
   return JSON.stringify({
     answer,
     model: review.model,

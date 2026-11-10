@@ -1201,6 +1201,20 @@ describe("0906 AI Studio 兜底段的音轨路由", () => {
     expect(build({}).resolverRoute).toBe("vertex_gcs_video");
     expect(build({ visualRoutes: ["gemini_api_files_video"], degradedFpsSegmentIndexes: [1] }).resolverRoute).toBe("evolink_gemini_video");
   });
+
+  it("1110：新卡音轨按实际调用的读片模型落盘（3.8 Flash / 配置新模型），旧卡读取门照认", async () => {
+    const { buildNativeDeepReadDirectAudioAnalysis } = await import("./manhuaNativeDeepReadExecution");
+    const { parseManhuaNativeAudioAnalysis } = await import("../../shared/manhuaNativeAudioAnalysis");
+    for (const model of ["gemini-3.8-flash", "gemini-3.9-flash", "gemini-4-argon", "gemini-3.1-pro-preview"]) {
+      const card = buildNativeDeepReadDirectAudioAnalysis({
+        durationSec: 60,
+        segments: [{ startSec: 0, endSec: 60 }] as never,
+        visualResult: { model, hasAudio: false, degradedFpsSegmentIndexes: [], visualRoutes: ["vertex_gcs_video"] } as never,
+      });
+      expect([card.model, card.resolverModel]).toEqual([model, model]);
+      expect(parseManhuaNativeAudioAnalysis(JSON.parse(JSON.stringify(card)))?.model).toBe(model);
+    }
+  });
 });
 
 

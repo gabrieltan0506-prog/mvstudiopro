@@ -1,5 +1,5 @@
 /**
- * 1110 成片调色建议：Gemini 3.8 Flash 看成片（视频+音轨）给逐段调色方案。
+ * 1110 成片调色建议：Gemini（缺省 3.8 Flash，env 可配，见 resolveMontageGradeAdviceModel）看成片（视频+音轨）给逐段调色方案。
  * 通道（用户定案）：Vertex gs:// 直读 → EvoLink 签名 URL；禁止 Pro / 直连 API key / GLM / DeepSeek。
  * 复用 gemini-audio.ts geminiAudioJsonWithFallback（超时/断线/HTTP 错/空回/写坏都换下一跳，每跳原始与解析 JSON 分别永久落 GCS）。
  * 指令与 schema 沿用 1109 已验证探针（/home/claude/grade-advice/prompt.json），只把剧情时间线、时长、接点改为入参。
@@ -10,8 +10,15 @@ import { z } from "zod";
 import { colorCorrectionSchema, type ColorCorrection } from "../../shared/colorGrade";
 import { geminiAudioJsonWithFallback } from "../gemini-audio";
 import { downloadGcsObjectVersioned, getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcsIfAbsent } from "./gcs";
+import { resolveGeminiModel, type GeminiModelEnv } from "../../shared/geminiModelConfig.js";
 
-export const MONTAGE_GRADE_ADVICE_MODEL = "gemini-3.8-flash";
+/**
+ * 1110 模型不写死（用户定案：调色建议只用 Gemini，缺省 3.8 Flash）：
+ * env MONTAGE_GRADE_ADVICE_MODEL → GEMINI_DEFAULT_MODEL → gemini-3.8-flash；Pro 级需用户批准（解析时告警）。
+ */
+export function resolveMontageGradeAdviceModel(env?: GeminiModelEnv): string {
+  return resolveGeminiModel("montageGradeAdvice", env);
+}
 const LUT_MANIFEST_PATH = fileURLToPath(new URL("../assets/luts/manifest.json", import.meta.url));
 
 export type LutOption = { id: string; labelZh: string };
@@ -204,7 +211,8 @@ export async function adviseMontageGrade(
   const save = async (name: string, value: unknown) => {
     return d.upload({ bucket, objectName: `${prefix}/${name}.json`, buffer: Buffer.from(JSON.stringify(value)), contentType: "application/json" });
   };
-  const claim = await save("request", { userId, ...input, model: MONTAGE_GRADE_ADVICE_MODEL });
+  const model = resolveMontageGradeAdviceModel();
+  const claim = await save("request", { userId, ...input, model });
   if (!claim.created) {
     const raced = await readStoredResult(d, bucket, prefix);
     if (raced) return { ...raced, replayed: true };
@@ -216,7 +224,7 @@ export async function adviseMontageGrade(
   const out = await d.call({
     media: { vertexFileUri: input.videoGsUri, evolinkFileUri: () => d.sign(input.videoGsUri, 2 * 3600) },
     mimeType: "video/mp4",
-    model: MONTAGE_GRADE_ADVICE_MODEL,
+    model,
     prompt,
     schemaName: "montage_grade_advice",
     validate: v => validateMontageGradeAdvice(v, { durationSec: input.durationSec, lutIds }),

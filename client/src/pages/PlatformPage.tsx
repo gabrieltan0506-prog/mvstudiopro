@@ -176,15 +176,12 @@ import {
 import {
   NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
   NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
-  MANHUA_NATIVE_CURRENT_READ_MODEL,
-  MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS,
+  MANHUA_NATIVE_DEEP_READ_MODEL,
   nativeDeepReadModelForSeriesKey,
   MANHUA_NATIVE_STRUCTURING_MODEL,
   MANHUA_NATIVE_STRUCTURING_MODEL_LABELS,
   MANHUA_NATIVE_STRUCTURING_MODEL_OPTIONS,
   type ManhuaNativeStructuringModelId,
-  MANHUA_NATIVE_DEEP_READ_MODEL_LABELS,
-  type ManhuaNativeDeepReadModelId,
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
   NATIVE_DEEP_READ_MAX_SEGMENT_SECONDS,
   NATIVE_DEEP_READ_MAX_VIDEO_FPS,
@@ -240,8 +237,6 @@ import {
   readManhuaLearnMissingDismissedKeys,
   readManhuaLearnResult,
   readManhuaLearnSegmentSeconds,
-  readManhuaLearnReadModel,
-  writeManhuaLearnReadModel,
   readManhuaLearnStructuringModel,
   writeManhuaLearnStructuringModel,
   hasStoredManhuaLearnSegmentSeconds,
@@ -2691,8 +2686,7 @@ export default function PlatformPage() {
     const timer = window.setTimeout(() => setManhuaPasteTitleDebounced(trimmed), 600);
     return () => window.clearTimeout(timer);
   }, [manhuaPasteTitle]);
-  /** 新读片默认Flash；显式选择Argon只影响新任务，历史任务保留原合同。 */
-  const [manhuaLearnReadModel, setManhuaLearnReadModel] = useState<ManhuaNativeDeepReadModelId>(MANHUA_NATIVE_CURRENT_READ_MODEL);
+  /** 1110：读片模型由服务端 env 配置决定（缺省 3.8 Flash），前端不再保存或发送读片模型偏好。 */
   /** 0916 用户拍板：整形固定 GLM-5.3。 */
   const [manhuaLearnStructuringModel, setManhuaLearnStructuringModel] = useState<ManhuaNativeStructuringModelId>(MANHUA_NATIVE_STRUCTURING_MODEL);
   const [manhuaRestructureBusy, setManhuaRestructureBusy] = useState(false);
@@ -2704,7 +2698,6 @@ export default function PlatformPage() {
   const manhuaLearnDupQuery = trpc.manhuaViralTemplate.checkLearnSourceLearned.useQuery(
     {
       url: manhuaPasteUrlDebounced,
-      readModel: manhuaLearnReadModel,
       ...(manhuaPasteTitleDebounced ? { titleZh: manhuaPasteTitleDebounced } : {}),
     },
     {
@@ -2819,7 +2812,6 @@ export default function PlatformPage() {
     setManhuaLearnSegmentSecondsError("");
     setManhuaLearnVideoFpsInput(String(readManhuaLearnVideoFps(manhuaLearnUserKey)));
     setManhuaLearnVideoFpsError("");
-    setManhuaLearnReadModel(readManhuaLearnReadModel(manhuaLearnUserKey));
     setManhuaLearnStructuringModel(readManhuaLearnStructuringModel(manhuaLearnUserKey));
     setManhuaLearnServerJobs([]);
     setManhuaLearnServerJobsHydrated(false);
@@ -6050,8 +6042,9 @@ export default function PlatformPage() {
         return;
       }
       const seriesModel = resumeSeriesKey ? nativeDeepReadModelForSeriesKey(resumeSeriesKey) : undefined;
-      const requestedReadModel = seriesModel && (MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS as readonly string[]).includes(seriesModel)
-        ? seriesModel : manhuaLearnReadModel;
+      // 1110：读片模型由服务端 env 配置决定，前端不再自带模型；续学非旧 Pro 车道的系列时按系列身份续跑，
+      // 其余（新学 / 旧 Pro 车道）不传，由服务端用配置模型（不允许的车道服务端拒收，提示不含模型名）。
+      const requestedReadModel = seriesModel && seriesModel !== MANHUA_NATIVE_DEEP_READ_MODEL ? seriesModel : undefined;
       let nativeConfirmedParams: Record<string, unknown> = {};
       const nativePlanCandidate =
         (localVideoSource || (row.platform === "douyin" || /(?:^|\.)douyin\.com/i.test((() => {
@@ -6369,8 +6362,6 @@ export default function PlatformPage() {
       manhuaLearnBatchSize,
       manhuaLearnSegmentSecondsInput,
       manhuaLearnVideoFpsInput,
-      // 0905 实证：这里漏了读片模型，重选 Flash 后建单闭包仍拿默认 Pro
-      manhuaLearnReadModel,
       manhuaLearnStructuringModel,
       manhuaLearnStandaloneSource,
       manhuaLearnBasket,
@@ -13875,7 +13866,6 @@ export default function PlatformPage() {
                                         return;
                                       try {
                                         await retireLearnEpisodeMutation.mutateAsync({
-                                          readModel: manhuaLearnReadModel,
                                           url: manhuaPasteUrlDebounced,
                                           episodeIndex: row.episodeIndex,
                                         });

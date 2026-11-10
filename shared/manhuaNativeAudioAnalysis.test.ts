@@ -299,3 +299,42 @@ it("稀疏音轨只覆盖已读片，完整卡解析不能借部分区间绕过�
   expect(parseManhuaNativeAudioAnalysis({ ...merged, audioTrack: [{ ...track(120), toSec: 140 }] }, { allowPartial: true })).toBeUndefined();
   expect(parseManhuaNativeAudioAnalysis({ ...merged, coveredChunks: [{ index: 2, startSec: 60, endSec: 120 }] }, { allowPartial: true })).toBeUndefined();
 });
+
+describe("1110 读取门：旧三代照认，配置出来的新模型卡也认", () => {
+  const durationSec = 10;
+  const chunk = {
+    audioTrack: [{ ...track(0), toSec: 10 }],
+    audioBeatStructureZh: "持续推进", mixNotesZh: "人声居中", reusableAudioZh: "连续增强", genAudioHintZh: "保留层次",
+  };
+  const usage = (calls: number) => ({
+    inputTokens: 10, audioInputTokens: 8, outputTokens: 2, costCny: 0.01, receiptComplete: true,
+    geminiInputTokens: 10, geminiAudioInputTokens: 8, geminiOutputTokens: 2, geminiCostCny: 0.01, geminiCalls: calls,
+  });
+  const roundTrip = (card: unknown) => parseManhuaNativeAudioAnalysis(JSON.parse(JSON.stringify(card)));
+
+  it("3.6 双路、3.1 Pro 直读、Argon 直读三代旧卡仍可读", () => {
+    expect(roundTrip(mergeManhuaNativeAudioChunks({ durationSec, chunks: [chunk], usage: usage(2) }))?.model).toBe("gemini-3.6-flash");
+    // 1110 前 3.8 Flash 读出的卡也标成 3.1 Pro（model 缺省）
+    expect(roundTrip(mergeManhuaNativeDirectAudioChunks({ durationSec, chunks: [chunk], usage: usage(1), route: "vertex_gcs_video" }))?.model).toBe("gemini-3.1-pro-preview");
+    expect(roundTrip(mergeManhuaNativeDirectAudioChunks({ durationSec, chunks: [chunk], usage: usage(1), route: "vertex_gcs_video", model: "gemini-4-argon" }))?.model).toBe("gemini-4-argon");
+  });
+
+  it("新卡按实际调用模型落盘：3.8 Flash 与配置出来的新模型都可读；无音轨卡同样", () => {
+    for (const model of ["gemini-3.8-flash", "gemini-3.9-flash"]) {
+      const card = mergeManhuaNativeDirectAudioChunks({ durationSec, chunks: [chunk], usage: usage(1), route: "vertex_gcs_video", model });
+      expect(card.model).toBe(model);
+      expect(card.resolverModel).toBe(model);
+      expect(roundTrip(card)?.model).toBe(model);
+      expect(roundTrip(noAudioManhuaNativeDirectAnalysis(30, "evolink_gemini_video", model))?.model).toBe(model);
+      // 新模型走 Vertex 主线同样要求真实 AUDIO token（不放松门禁）
+      expect(roundTrip({ ...card, usage: { ...card.usage, audioInputTokens: 0 } })).toBeUndefined();
+    }
+  });
+
+  it("来源代际仍是关闭式：非 Gemini 标识、模型与仲裁模型不一致都拒读", () => {
+    const card = mergeManhuaNativeDirectAudioChunks({ durationSec, chunks: [chunk], usage: usage(1), route: "vertex_gcs_video", model: "gemini-3.9-flash" });
+    expect(roundTrip({ ...card, model: "glm-5.3", resolverModel: "glm-5.3" })).toBeUndefined();
+    expect(roundTrip({ ...card, resolverModel: "gemini-3.8-flash" })).toBeUndefined();
+    expect(roundTrip({ ...card, alignmentMethod: "ffmpeg_sample_clock_dual_v2" })).toBeUndefined();
+  });
+});

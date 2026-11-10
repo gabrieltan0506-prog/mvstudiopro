@@ -9,6 +9,12 @@ import {
   parseNewNativeDeepReadJobConfirmation,
   nativeDeepReadSeriesKeyForModel,
   nativeDeepReadModelForSeriesKey,
+  nativeDeepReadAllowedNewReadModels,
+  nativeDeepReadSegmentCacheIdentityModel,
+  isNativeDeepReadCurrentContractModel,
+  parseNativeDeepReadModel,
+  resolveManhuaNativeDeepReadModel,
+  resolveManhuaNativeDeepReadEscalationModel,
   resolveNativeDeepReadJobTimeoutMs,
   sameNativeDeepReadJobConfirmation,
 } from "./manhuaNativeDeepReadJob.js";
@@ -267,7 +273,7 @@ describe("新读片唯一Flash入口", () => {
     expect(parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-3.8-flash" })).toEqual(current);
   });
   it("新请求拒绝旧Pro，而历史Pro只整形仍保留证据身份", () => {
-    expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-3.1-pro-preview" })).toThrow("仅支持");
+    expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-3.1-pro-preview" })).toThrow("未在服务端配置中启用");
     const old = { ...params, nativeStructuringModel: "glm-5.3", nativeReadModel: "gemini-3.1-pro-preview",
       nativeStructuringOnly: true, nativeStructuringEpisodeIndex: 1, nativeStructuringPreviousJobId: "old-job-12345" };
     expect(parseNewNativeDeepReadJobConfirmation(old)).toEqual(parseNativeDeepReadJobConfirmation(old));
@@ -288,10 +294,14 @@ it("指定整形路由冻结进契约，另一页不同路由不得复用同任�
 describe("Argon新读片合同与独立系列", () => {
   const params = { url: "https://www.douyin.com/video/12345", batchSize: 1,
     nativeDeepReadConfirmed: true, nativeMaxCalls: 200, nativePlanLimit: 1 };
-  it("明确选择Argon进入真实确认合同，缺省仍是Flash", () => {
-    const argon = parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-4-argon" });
+  it("1110：Argon 按配置决定——未配置时新读片拒收；配置成读片模型后进入真实确认合同，与 Flash 合同不同", () => {
+    expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-4-argon" }, { env: {} }))
+      .toThrow("未在服务端配置中启用");
+    const env = { MANHUA_DEEP_READ_MODEL: "gemini-4-argon" };
+    const argon = parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-4-argon" }, { env });
     expect(argon.readModel).toBe("gemini-4-argon");
-    expect(sameNativeDeepReadJobConfirmation(argon, parseNewNativeDeepReadJobConfirmation(params))).toBe(false);
+    expect(parseNewNativeDeepReadJobConfirmation(params, { env }).readModel).toBe("gemini-4-argon");
+    expect(sameNativeDeepReadJobConfirmation(argon, parseNewNativeDeepReadJobConfirmation(params, { env: {} }))).toBe(false);
   });
   it("系列身份不混用历史Pro与Flash缓存，重复解析不加第二个后缀", () => {
     const key = nativeDeepReadSeriesKeyForModel("a".repeat(40), "gemini-4-argon");
@@ -301,5 +311,70 @@ describe("Argon新读片合同与独立系列", () => {
     expect(nativeDeepReadModelForSeriesKey(key)).toBe("gemini-4-argon");
     expect(nativeDeepReadModelForSeriesKey("abc-g38f")).toBe("gemini-3.8-flash");
     expect(nativeDeepReadModelForSeriesKey("abc")).toBe("gemini-3.1-pro-preview");
+  });
+});
+
+
+describe("1110 模板学习读片模型 env 可配（不写死）", () => {
+  const params = { url: "https://www.douyin.com/video/12345", batchSize: 1,
+    nativeDeepReadConfirmed: true, nativeMaxCalls: 200, nativePlanLimit: 1 };
+  it("缺省解析为 gemini-3.8-flash；MANHUA_DEEP_READ_MODEL / GEMINI_DEFAULT_MODEL 覆盖生效，空白回落", () => {
+    expect(resolveManhuaNativeDeepReadModel({})).toBe("gemini-3.8-flash");
+    expect(parseNewNativeDeepReadJobConfirmation(params, { env: {} }).readModel).toBe("gemini-3.8-flash");
+    expect(resolveManhuaNativeDeepReadModel({ GEMINI_DEFAULT_MODEL: "gemini-3.9-flash" })).toBe("gemini-3.9-flash");
+    expect(resolveManhuaNativeDeepReadModel({ GEMINI_DEFAULT_MODEL: "gemini-3.9-flash", MANHUA_DEEP_READ_MODEL: " gemini-4.0-flash " })).toBe("gemini-4.0-flash");
+    expect(resolveManhuaNativeDeepReadModel({ GEMINI_DEFAULT_MODEL: "gemini-3.9-flash", MANHUA_DEEP_READ_MODEL: "   " })).toBe("gemini-3.9-flash");
+    const env = { MANHUA_DEEP_READ_MODEL: "gemini-3.9-flash" };
+    const confirmed = parseNewNativeDeepReadJobConfirmation(params, { env });
+    expect(confirmed.readModel).toBe("gemini-3.9-flash");
+    // 已入队任务按保存的模型恢复（worker 侧不看当前配置）
+    expect(parseNativeDeepReadJobConfirmation({ ...params, nativeReadModel: confirmed.readModel }).readModel).toBe("gemini-3.9-flash");
+    // 3.8 Flash 旧车道仍可续学；Pro / Argon 未配置即拒收
+    expect(parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-3.8-flash" }, { env }).readModel).toBe("gemini-3.8-flash");
+    expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-3.1-pro-preview" }, { env })).toThrow("未在服务端配置中启用");
+    expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-4-argon" }, { env })).toThrow("未在服务端配置中启用");
+    expect(nativeDeepReadAllowedNewReadModels(env)).toEqual(["gemini-3.9-flash", "gemini-3.8-flash"]);
+    expect(nativeDeepReadAllowedNewReadModels({})).toEqual(["gemini-3.8-flash"]);
+  });
+  it("升级模型按配置：缺省同首读模型（不升级）；可单独覆盖", () => {
+    expect(resolveManhuaNativeDeepReadEscalationModel({})).toBe("gemini-3.8-flash");
+    expect(resolveManhuaNativeDeepReadEscalationModel({ MANHUA_DEEP_READ_MODEL: "gemini-3.9-flash" })).toBe("gemini-3.9-flash");
+    expect(resolveManhuaNativeDeepReadEscalationModel({ MANHUA_DEEP_READ_MODEL: "gemini-3.9-flash", MANHUA_DEEP_READ_ESCALATION_MODEL: "gemini-3.1-pro-preview" })).toBe("gemini-3.1-pro-preview");
+  });
+  it("配置模型车道：系列键可逆、不与旧车道混用；旧三条车道身份不变", () => {
+    const key = nativeDeepReadSeriesKeyForModel("abc123def456", "gemini-3.9-flash");
+    expect(key).toBe("abc123def456-gm-3_9-flash");
+    expect(key).toMatch(/^[0-9A-Za-z_-]{1,40}$/);
+    expect(nativeDeepReadSeriesKeyForModel(key, "gemini-3.9-flash")).toBe(key);
+    expect(nativeDeepReadModelForSeriesKey(key)).toBe("gemini-3.9-flash");
+    const long = nativeDeepReadSeriesKeyForModel("a".repeat(40), "gemini-2.5-flash-preview-09-2025");
+    expect(long).toHaveLength(40);
+    expect(nativeDeepReadModelForSeriesKey(long)).toBe("gemini-2.5-flash-preview-09-2025");
+    expect(nativeDeepReadSeriesKeyForModel("abc", "gemini-3.8-flash")).toBe("abc-g38f");
+    expect(nativeDeepReadSeriesKeyForModel("abc", "gemini-4-argon")).toBe("abc-g4a");
+    expect(nativeDeepReadSeriesKeyForModel("abc", "gemini-3.1-pro-preview")).toBe("abc");
+    expect(nativeDeepReadModelForSeriesKey("abc-g38f")).toBe("gemini-3.8-flash");
+    expect(nativeDeepReadModelForSeriesKey("abc")).toBe("gemini-3.1-pro-preview");
+  });
+  it("段缓存身份：3.1 Pro / 3.8 Flash 保持历史缺省身份（不写模型），Argon 与配置新模型写入模型", () => {
+    expect(nativeDeepReadSegmentCacheIdentityModel("gemini-3.1-pro-preview")).toBeUndefined();
+    expect(nativeDeepReadSegmentCacheIdentityModel("gemini-3.8-flash")).toBeUndefined();
+    expect(nativeDeepReadSegmentCacheIdentityModel("gemini-4-argon")).toBe("gemini-4-argon");
+    expect(nativeDeepReadSegmentCacheIdentityModel("gemini-3.9-flash")).toBe("gemini-3.9-flash");
+  });
+  it("当前合同（双通道 / EvoLink 不记降级）与配置的缺省模型比较，3.8 Flash 旧车道照旧", () => {
+    expect(isNativeDeepReadCurrentContractModel("gemini-3.8-flash", {})).toBe(true);
+    expect(isNativeDeepReadCurrentContractModel("gemini-3.9-flash", {})).toBe(false);
+    expect(isNativeDeepReadCurrentContractModel("gemini-3.9-flash", { MANHUA_DEEP_READ_MODEL: "gemini-3.9-flash" })).toBe(true);
+    expect(isNativeDeepReadCurrentContractModel("gemini-3.8-flash", { MANHUA_DEEP_READ_MODEL: "gemini-3.9-flash" })).toBe(true);
+    expect(isNativeDeepReadCurrentContractModel("gemini-3.1-pro-preview", {})).toBe(false);
+    expect(isNativeDeepReadCurrentContractModel("gemini-4-argon", {})).toBe(false);
+  });
+  it("worker 恢复：旧三代与合法 Gemini 标识照认，非法标识拒收（拒因不含模型名）", () => {
+    expect(parseNativeDeepReadModel(undefined)).toBe("gemini-3.1-pro-preview");
+    expect(parseNativeDeepReadModel("gemini-4-argon")).toBe("gemini-4-argon");
+    expect(parseNativeDeepReadModel("gemini-3.9-flash")).toBe("gemini-3.9-flash");
+    expect(() => parseNativeDeepReadModel("glm-5.3")).toThrow("读片模型标识无效");
+    expect(() => parseNativeDeepReadModel("gemini-x/../y")).toThrow("读片模型标识无效");
   });
 });

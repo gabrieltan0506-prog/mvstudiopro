@@ -36,6 +36,7 @@ import {
   MANHUA_NATIVE_DEEP_READ_MODEL,
   nativeDeepReadSeriesKeyForModel,
   nativeDeepReadModelForSeriesKey,
+  resolveManhuaNativeDeepReadModel,
   parseNativeDeepReadSegmentSeconds,
   parseNativeDeepReadVideoFps,
 } from "../../shared/manhuaNativeDeepReadJob.js";
@@ -2153,7 +2154,8 @@ export async function checkManhuaLearnSourceLearned(
       sourceIdentity: cleanUrl,
       learnLlm: "gpt",
     }),
-    readModel,
+    // 1110：未指定 = 服务端配置的读片模型车道（与新任务入口同一缺省）
+    readModel ?? resolveManhuaNativeDeepReadModel(),
   );
   const [{ listIngestedNativeDeepReadEpisodeRecords, nativeDeepReadProposalId }, store] =
     await Promise.all([
@@ -2309,7 +2311,7 @@ export async function retireNativeLearnEpisodeForRelearn(input: {
       sourceIdentity: cleanUrl,
       learnLlm: "gpt",
     }),
-    input.readModel,
+    input.readModel ?? resolveManhuaNativeDeepReadModel(),
   );
   const [{ nativeDeepReadProposalId }, { retireNativeEpisodeTemplatesForRelearn }] = await Promise.all([
     import("./manhuaNativeDeepReadIngest.js"),
