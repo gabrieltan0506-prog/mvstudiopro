@@ -83,7 +83,10 @@ describe("创作顾问的真实项目生产者", () => {
     expect(result.issues.find((issue) => issue.id === "canon")?.phase).toBe("outline");
     expect(result.context.episodeBody).toBe(pack.episodes[0]!.body);
     expect(JSON.stringify(result.context)).not.toContain("https://");
-    expect(JSON.stringify(result.context)).not.toContain("第二集不得串入");
+    // 跨集正文只经带集号的 continuityEpisodes 交顾问核连续性；本集字段仍不得串入第二集。
+    const { continuityEpisodes, ...currentEpisodeContext } = result.context;
+    expect(JSON.stringify(currentEpisodeContext)).not.toContain("第二集不得串入");
+    expect(continuityEpisodes?.find((ep) => ep.body.includes("第二集不得串入"))?.episodeIndex).toBe(2);
     expect(manhuaCreativeAdvisorContextSchema.safeParse(result.context).success).toBe(true);
   });
 

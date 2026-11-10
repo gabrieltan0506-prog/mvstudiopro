@@ -4,8 +4,11 @@ import os from "node:os";
 import path from "node:path";
 
 const state = vi.hoisted(() => ({ outputs: [] as Array<{ output: unknown }> }));
+// 成功任务产物按主键分页读取（where → orderBy → limit）；测试行数远小于一页，一次读完。
 vi.mock("../db", () => ({ getDb: async () => ({
-  select: () => ({ from: () => ({ where: async () => state.outputs }) }),
+  select: () => ({ from: () => ({ where: () => Object.assign(Promise.resolve(state.outputs), {
+    orderBy: () => ({ limit: async () => state.outputs }),
+  }) }) }),
 }) }));
 vi.mock("./gcs.js", async original => ({
   ...await original<typeof import("./gcs.js")>(), getGcsBucketName: () => "test-bucket",

@@ -245,3 +245,14 @@ it("白模成功回执把预览、动画工程和分层地址固定为本人鉴�
   expect(output.sceneUrl).toBe(`/api/manhua-previs-media/${id}/scene`);
   expect(output.layerBundle.url).toBe(`/api/manhua-previs-media/${id}/layers`);
 });
+
+it("白模开放普通用户后：每账号在跑数达上限即明确拒绝，不建任务", async () => {
+  const { assertPrevisInFlightCapacity, PREVIS_IN_FLIGHT_PER_USER_MAX, PrevisRejectedError } = await import("./manhuaPrevisTask");
+  const requestId = "11111111-1111-4111-8111-111111111111";
+  await expect(
+    assertPrevisInFlightCapacity(7, requestId, { countInFlight: async () => PREVIS_IN_FLIGHT_PER_USER_MAX - 1 })
+  ).resolves.toBeUndefined();
+  await expect(
+    assertPrevisInFlightCapacity(7, requestId, { countInFlight: async () => PREVIS_IN_FLIGHT_PER_USER_MAX })
+  ).rejects.toBeInstanceOf(PrevisRejectedError);
+});

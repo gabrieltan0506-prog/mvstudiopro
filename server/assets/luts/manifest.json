@@ -1,0 +1,202 @@
+[
+  {
+    "id": "nordic_desaturation_subtle",
+    "labelZh": "北欧冷灰低饱和-轻",
+    "category": "cinematic",
+    "intensity": "subtle",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "nordic_desaturation_subtle",
+    "file": "nordic_desaturation_subtle.cube",
+    "sizeBytes": 970395
+  },
+  {
+    "id": "nordic_desaturation_standard",
+    "labelZh": "北欧冷灰低饱和-标准",
+    "category": "cinematic",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "nordic_desaturation_standard",
+    "file": "nordic_desaturation_standard.cube",
+    "sizeBytes": 970397
+  },
+  {
+    "id": "golden_hour_subtle",
+    "labelZh": "暖阳黄昏-轻",
+    "category": "cinematic",
+    "intensity": "subtle",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "golden_hour_subtle",
+    "file": "golden_hour_subtle.cube",
+    "sizeBytes": 970387
+  },
+  {
+    "id": "golden_hour_standard",
+    "labelZh": "暖阳黄昏-标准",
+    "category": "cinematic",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "golden_hour_standard",
+    "file": "golden_hour_standard.cube",
+    "sizeBytes": 970389
+  },
+  {
+    "id": "neo_noir_subtle",
+    "labelZh": "暗调黑色电影-轻",
+    "category": "cinematic",
+    "intensity": "subtle",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "neo_noir_subtle",
+    "file": "neo_noir_subtle.cube",
+    "sizeBytes": 970384
+  },
+  {
+    "id": "neo_noir_standard",
+    "labelZh": "暗调黑色电影-标准",
+    "category": "cinematic",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "neo_noir_standard",
+    "file": "neo_noir_standard.cube",
+    "sizeBytes": 970386
+  },
+  {
+    "id": "cyberpunk_neon_subtle",
+    "labelZh": "赛博霓虹雨夜-轻",
+    "category": "cinematic",
+    "intensity": "subtle",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "cyberpunk_neon_subtle",
+    "file": "cyberpunk_neon_subtle.cube",
+    "sizeBytes": 970390
+  },
+  {
+    "id": "cyberpunk_neon_standard",
+    "labelZh": "赛博霓虹雨夜-标准",
+    "category": "cinematic",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "cyberpunk_neon_standard",
+    "file": "cyberpunk_neon_standard.cube",
+    "sizeBytes": 970392
+  },
+  {
+    "id": "dream_sequence_subtle",
+    "labelZh": "梦境柔光低对比-轻",
+    "category": "cinematic",
+    "intensity": "subtle",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "dream_sequence_subtle",
+    "file": "dream_sequence_subtle.cube",
+    "sizeBytes": 970390
+  },
+  {
+    "id": "dream_sequence_standard",
+    "labelZh": "梦境柔光低对比-标准",
+    "category": "cinematic",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "dream_sequence_standard",
+    "file": "dream_sequence_standard.cube",
+    "sizeBytes": 970392
+  },
+  {
+    "id": "vintage_film_fade_subtle",
+    "labelZh": "复古褪色回忆-轻",
+    "category": "cinematic",
+    "intensity": "subtle",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "vintage_film_fade_subtle",
+    "file": "vintage_film_fade_subtle.cube",
+    "sizeBytes": 970393
+  },
+  {
+    "id": "vintage_film_fade_standard",
+    "labelZh": "复古褪色回忆-标准",
+    "category": "cinematic",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "vintage_film_fade_standard",
+    "file": "vintage_film_fade_standard.cube",
+    "sizeBytes": 970395
+  },
+  {
+    "id": "film_warm_print",
+    "labelZh": "暖调印片胶片（近似，非实测）",
+    "category": "film_stock",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "warm_print_film",
+    "file": "film_warm_print.cube",
+    "sizeBytes": 970384
+  },
+  {
+    "id": "film_punchy_consumer",
+    "labelZh": "鲜艳民用胶片（近似，非实测）",
+    "category": "film_stock",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "punchy_consumer_film",
+    "file": "film_punchy_consumer.cube",
+    "sizeBytes": 970389
+  },
+  {
+    "id": "film_35mm_prestige",
+    "labelZh": "35mm 院线胶片质感（近似，非实测）",
+    "category": "film_stock",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "35mm_prestige",
+    "file": "film_35mm_prestige.cube",
+    "sizeBytes": 970387
+  },
+  {
+    "id": "film_super8",
+    "labelZh": "Super 8 怀旧家庭录像（近似，非实测）",
+    "category": "film_stock",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "super_8_film",
+    "file": "film_super8.cube",
+    "sizeBytes": 970380
+  },
+  {
+    "id": "basic_split_tone_teal_orange",
+    "labelZh": "基础-冷暗暖亮分离色调",
+    "category": "basic",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": "split_toning",
+    "file": "basic_split_tone_teal_orange.cube",
+    "sizeBytes": 970397
+  },
+  {
+    "id": "basic_warm",
+    "labelZh": "基础-整体偏暖",
+    "category": "basic",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": null,
+    "file": "basic_warm.cube",
+    "sizeBytes": 970379
+  },
+  {
+    "id": "basic_cool",
+    "labelZh": "基础-整体偏冷",
+    "category": "basic",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": null,
+    "file": "basic_cool.cube",
+    "sizeBytes": 970379
+  },
+  {
+    "id": "basic_desaturate",
+    "labelZh": "基础-压饱和（75%）",
+    "category": "basic",
+    "intensity": "standard",
+    "source": "color-fx 0.1.2 MIT",
+    "colorFxSlug": null,
+    "file": "basic_desaturate.cube",
+    "sizeBytes": 970385
+  }
+]

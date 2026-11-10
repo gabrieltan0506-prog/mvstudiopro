@@ -149,12 +149,12 @@ async function execute(
 }
 
 describe("MV 分镜编译到真实视频出站请求（全离线）", () => {
-  it("5.2秒与5.1秒镜头均提交6秒，只带各自指定图且不带整首音频", async () => {
+  it("5.2秒与5.1秒镜头均提交7秒（分镜+1秒余量，出片实测后裁回），只带各自指定图且不带整首音频", async () => {
     const { requests } = offline();
     const { shots, blocks, edges } = fixture();
     for (const [index, shot] of Array.from(shots.entries()))
       await execute(shot, blocks, edges, `mv-operation-${index}`);
-    expect(requests.map(row => row.duration)).toEqual([6, 6]);
+    expect(requests.map(row => row.duration)).toEqual([7, 7]);
     expect(String(requests[0].prompt)).toContain(plan.shots[0].visualPrompt);
     expect(String(requests[0].prompt)).not.toContain(
       plan.shots[1].visualPrompt
@@ -177,16 +177,25 @@ describe("MV 分镜编译到真实视频出站请求（全离线）", () => {
       expect(JSON.stringify(row)).not.toContain(musicUrl);
     }
   });
-  it("未选参考的镜头不会静默采用音乐父节点的任意图片", async () => {
+  it("无任何参考的镜头拒发（不静默退回文生、不采用父节点任意图片）", async () => {
     const { requests } = offline();
     const noRefsPlan = {
       ...plan,
       shots: plan.shots.map(row => ({ ...row, referenceIndices: [] })),
     };
     const { shots, blocks, edges } = fixture(noRefsPlan);
-    await execute(shots[0], blocks, edges, "no-ref-operation");
-    expect(requests[0].imageUrls).toBeUndefined();
-    expect(requests[0].imageUrl).toBeUndefined();
+    expect(shots[0].seedance25WorkMode).toBe("reference_to_video");
+    expect(shots[0].error).toContain("请先为本镜选参考素材");
+    await expect(execute(shots[0], blocks, edges, "no-ref-operation")).rejects.toThrow("缺少参考素材");
+    expect(requests).toEqual([]);
+  });
+  it("旧参考图路径同样硬锁 reference_to_video 并带 MV 镜头身份", async () => {
+    const { requests } = offline();
+    const { shots, blocks, edges } = fixture();
+    await execute(shots[0], blocks, edges, "legacy-ref-mode");
+    expect(requests[0].workMode).toBe("reference_to_video");
+    expect(requests[0].mvShot).toMatchObject({ planRequestId: "00000000-0000-4000-8000-000000000001", shotId: "shot-1" });
+    expect(requests[0].version).toBe("2.0-mini");
   });
   it("选定参考续签失败会阻断提交，不降级使用旧签名", async () => {
     const { requests } = offline({ failSign: true });
@@ -240,5 +249,69 @@ describe("混合MV镜头消费（离线出站）",()=>{
     expect(shots[0].status).toBe("done");expect(shots[0].outputUrl).toBe(sourceClip.url);
     await expect(execute(shots[0],blocks,edges,"footage-no-gen")).rejects.toThrow("已有素材切片");
     expect(requests).toHaveLength(0);
+  });
+});
+
+
+describe("1109 参考生视频：主锚图+场景图+动作参考片+歌曲切片（离线出站）", () => {
+  const sf = (n: number) => `sf_${n.toString(16).padStart(48, "0")}`;
+  const references = {
+    "shot-1": {
+      anchorImage: { assetId: sf(1), gcsUri: "gs://test-bucket/stock-footage/1/anchor.jpg" },
+      sceneImages: [
+        { assetId: sf(2), gcsUri: "gs://test-bucket/stock-footage/1/scene-a.jpg" },
+        { assetId: sf(3), gcsUri: "gs://test-bucket/stock-footage/1/scene-b.jpg", hasRealPerson: true },
+      ],
+      motionVideos: [{ source: "stock" as const, assetId: sf(4), gcsUri: "gs://test-bucket/stock-footage/1/motion.mp4", inSec: 0, outSec: 5, durationSec: 12 }],
+      songSlice: { jobId: "mv_slice_1", gcsUri: "gs://test-bucket/slices/shot-1.wav", startSec: 0, endSec: 5.2 },
+    },
+    "shot-2": {
+      anchorImage: { assetId: sf(1), gcsUri: "gs://test-bucket/stock-footage/1/anchor.jpg" },
+      sceneImages: [],
+      motionVideos: [],
+      songSlice: { jobId: "mv_slice_2", gcsUri: "gs://test-bucket/slices/shot-2.wav", startSec: 5.2, endSec: 10.3 },
+    },
+  };
+  function fixtureWithRefs() {
+    const { blocks, edges } = fixture();
+    const parent = blocks[0];
+    const shots = createMusicMvShotBlocks(parent, plan, "00000000-0000-4000-8000-000000000001", refs, parent.musicMv!.candidates[0], references);
+    return { shots, blocks: [parent, ...shots], edges: shots.map(row => ({ fromId: parent.id, toId: row.id })) };
+  }
+  it("完整参考：@图片1 主锚图在首位，视频/音频进各自数组，workMode=reference_to_video，含真人标记上送", async () => {
+    const { requests } = offline();
+    const { shots, blocks, edges } = fixtureWithRefs();
+    expect(shots[0].error).toBeUndefined();
+    expect(shots[0].musicMvShot?.references?.anchorImage?.assetId).toBe(sf(1));
+    await execute(shots[0], blocks, edges, "ref-full");
+    expect(requests).toHaveLength(1);
+    const body = requests[0];
+    expect(body.workMode).toBe("reference_to_video");
+    expect(body.imageUrls).toEqual([
+      "https://test.invalid/anchor.jpg?signature=fresh",
+      "https://test.invalid/scene-a.jpg?signature=fresh",
+      "https://test.invalid/scene-b.jpg?signature=fresh",
+    ]);
+    expect(body.videoUrls).toEqual(["https://test.invalid/motion.mp4?signature=fresh"]);
+    expect(body.audioUrls).toEqual(["https://test.invalid/shot-1.wav?signature=fresh"]);
+    expect(String(body.prompt)).toContain(plan.shots[0].visualPrompt);
+    // 1109 秒锁编译：参考绑定表进 A 段头部（与提交数组同序）
+    expect(String(body.prompt)).toMatch(/@图片1＝全片主锚图/);
+    expect(String(body.prompt)).toMatch(/@视频1＝运镜参考片/);
+    expect(String(body.prompt)).toMatch(/@音频1＝本镜歌曲切片（原歌 0–5.2 秒）/);
+    expect(body.mvShot).toEqual({
+      planRequestId: "00000000-0000-4000-8000-000000000001",
+      shotId: "shot-1",
+      hasRealPerson: true,
+      referenceCounts: { image: 3, video: 1, audio: 1 },
+    });
+    expect(JSON.stringify(body)).not.toContain(musicUrl);
+  });
+  it("只有主锚图+切片、没有场景图也没有参考片 → 铺镜头标缺项，出片拒发", async () => {
+    const { requests } = offline();
+    const { shots, blocks, edges } = fixtureWithRefs();
+    expect(shots[1].error).toContain("缺本镜场景图或动作参考片");
+    await expect(execute(shots[1], blocks, edges, "ref-gap")).rejects.toThrow("参考素材不完整");
+    expect(requests).toEqual([]);
   });
 });

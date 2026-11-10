@@ -8,7 +8,13 @@ import {
   resolveManhuaAdvisorSelection,
   resolveManhuaAdvisorShotsFromBlocks,
 } from "../components/ManhuaScriptWorkbench";
-import { buildManhuaAdvisorProject } from "./manhuaAdvisorProject";
+import { buildManhuaAdvisorProject, resolveAdvisorVideoPromptContext } from "./manhuaAdvisorProject";
+import { buildAdvisorComparisonRequest, comparisonEpisodeIndex, requestsAdvisorComparison } from "./manhuaAdvisorComparisonRequest";
+import { TEMPLATE_PLAN_QUESTION } from "./manhuaAdvisorTemplates";
+import { TEMPLATE_REWRITE_MARKER } from "@shared/manhuaAdvisorRewrite";
+import { requestsTemplateRecommendations } from "@shared/manhuaAdvisorTemplateChoice";
+import { MANHUA_ADVISOR_OPERATION_REQUEST } from "@shared/manhuaAdvisorWorkflow";
+import { prepareAdvisorPrevisComparison, withAdvisorPrevisVideo } from "@shared/manhuaAdvisorPrevisEdit";
 import { buildAdvisorQuestion } from "./manhuaCreativeAdvisorContext";
 import {
   advisorRecentHistory,
@@ -113,8 +119,23 @@ function send(project: ReturnType<typeof buildManhuaAdvisorProject>) {
     formatManhuaAdvisorContextIssue,
     MANHUA_ADVISOR_STAGE_LABELS,
     buildAdvisorQuestion,
+    // 发送前的比较稿/模板/操作/白模分流与本段提示词读取（真实依赖，无面板附加工作区）。
+    props: {},
+    previewVideoSource: undefined,
+    previsCandidate: null,
+    requestsAdvisorComparison,
+    comparisonEpisodeIndex,
+    buildAdvisorComparisonRequest,
+    TEMPLATE_REWRITE_MARKER,
+    TEMPLATE_PLAN_QUESTION,
+    requestsTemplateRecommendations,
+    MANHUA_ADVISOR_OPERATION_REQUEST,
+    withAdvisorPrevisVideo,
+    prepareAdvisorPrevisComparison,
+    resolveAdvisorVideoPromptContext,
   });
-  fn("检查当前选中镜头的动作与运镜");
+  // 含「检查/核对/提示词」的问题按设计转去审本段已存视频提示词（见 resolveAdvisorVideoPromptContext），这里只问选中镜头本身。
+  fn("当前选中镜头的动作与运镜是否合理");
   expect(toast.error).not.toHaveBeenCalled();
   expect(submit).toHaveBeenCalledOnce();
   expect(submit.mock.calls[0]![1]).toBe(false);
@@ -150,7 +171,7 @@ describe("选中镜头到真实顾问请求", () => {
       message => message.role === "user"
     )!.content;
     expect(userMessage).toContain(JSON.stringify(h.shot));
-    expect(userMessage).toContain("检查当前选中镜头的动作与运镜");
+    expect(userMessage).toContain("当前选中镜头的动作与运镜是否合理");
     expect(userMessage).not.toContain("阿菁扶住黑奇");
   });
 

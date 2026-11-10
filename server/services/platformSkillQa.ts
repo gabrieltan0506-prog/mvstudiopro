@@ -1006,7 +1006,7 @@ export async function askPlatformSkillQa(params: {
         break;
       }
       if (manhuaContext?.musicMv) {
-        const raw = await askMusicMvAdvisor(params.userId, manhuaContext.musicMv, manhuaRawQuestion || question);
+        const raw = await askMusicMvAdvisor(params.userId, manhuaContext.musicMv, manhuaRawQuestion || question, undefined, "mv", { videoModel: manhuaContext.videoModel });
         parsed = parseAskJson(raw, true);
         usedModel = JSON.parse(raw).model; lastErr = ""; break;
       }

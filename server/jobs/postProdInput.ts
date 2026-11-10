@@ -8,9 +8,11 @@ import { autoRigRequestSchema } from "../../shared/manhuaAutoRig";
 import { z } from "zod";
 import { bgmNarrativeMixSchema } from "../../shared/manhuaBgmNarrativeMix";
 import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
+import { concatGradeSchema, validateGradeSegments } from "../../shared/colorGrade";
 import { SUBTITLE_EFFECT_IDS } from "../../shared/subtitleEffects";
 import { manhuaVfxJobSchema } from "../../shared/manhuaVfx";
 import { artMotionJobSchema } from "../../shared/artMotion";
+import { videoPartialEditJobSchema } from "../../shared/videoEditPricing";
 import { digitalHumanSplitJobSchema, digitalHumanFrameJobSchema, digitalHumanFinalJobSchema } from "../../shared/digitalHumanProduction";
 
 const mediaSourceSchema = z.string().trim().min(1).max(2048);
@@ -48,8 +50,15 @@ export const concatParamsSchema = z
     width: evenDimension(320, 3840).default(1280),
     height: evenDimension(240, 2160).default(720),
     fps: z.number().int().min(12).max(60).default(30),
+    /** 可选调色：全片 all / 逐段 clips / 代表镜头一致性检查；缺省时滤镜与旧版逐字一致。 */
+    grade: concatGradeSchema.optional(),
   })
   .strict().superRefine((v, ctx) => {
+    if (v.grade?.clips && v.grade.clips.length !== v.clips.length) ctx.addIssue({ code: "custom", path: ["grade", "clips"], message: "调色参数须与片段一一对应" });
+    if (v.grade?.referenceClipIndex != null && v.grade.referenceClipIndex >= v.clips.length) ctx.addIssue({ code: "custom", path: ["grade", "referenceClipIndex"], message: "代表镜头不在片段范围内" });
+    if (v.grade?.autoMatch && v.transition) ctx.addIssue({ code: "custom", path: ["grade", "autoMatch"], message: "自动匹配调色暂只支持直接切换" });
+    const segErr = validateGradeSegments(v.grade);
+    if (segErr) ctx.addIssue({ code: "custom", path: ["grade", "segments"], message: segErr });
     if (v.transition && (v.clips.length < 2 || v.subtitleSrt)) ctx.addIssue({ code: "custom", path: ["transition"], message: "单段或同步字幕剪辑须使用直接切换" });
     if (v.trims && v.trims.length !== v.clips.length) ctx.addIssue({ code: "custom", path: ["trims"], message: "剪辑取段须与片段一一对应" });
     v.trims?.forEach((t, i) => { if (t.endSec != null && t.endSec - t.startSec < 0.1) ctx.addIssue({ code: "custom", path: ["trims", i], message: "取段至少保留0.1秒" }); });
@@ -71,6 +80,21 @@ export const bgmMountParamsSchema = z
     fadeOutSec: z.number().min(0).max(30).default(1),
     /** 可选自动避让；旧任务缺省沿用原处理，新工作台显式选择。 */
     duckUnderDialogue: z.boolean().optional(),
+    /** 镜头自带声整体增益(dB)；缺省保持原声不变。 */
+    sourceAudioGainDb: z.number().finite().min(-60).max(12).optional(),
+    /** 镜头自带声静音区间（片内秒，一位小数）；缺省不静音。 */
+    sourceAudioMuteRanges: z
+      .array(
+        z
+          .object({
+            startSec: z.number().finite().min(0).max(3600).transform((v) => Math.round(v * 10) / 10),
+            endSec: z.number().finite().min(0).max(3600).transform((v) => Math.round(v * 10) / 10),
+          })
+          .strict()
+          .refine((r) => r.endSec > r.startSec, { message: "静音区间结束须晚于开始", path: ["endSec"] }),
+      )
+      .max(64)
+      .optional(),
     narrativeMix: bgmNarrativeMixSchema.optional(),
     /** 卡点表产出的片内分窗增益；缺省时保持旧版固定 bgmVolume。 */
     volumeExpr: z
@@ -187,6 +211,7 @@ export const postProdJobInputSchema = z.discriminatedUnion("action", [
   digitalHumanSplitJobSchema, digitalHumanFrameJobSchema, digitalHumanFinalJobSchema,
   artMotionJobSchema,
   manhuaVfxJobSchema,
+  videoPartialEditJobSchema,
   z.object({ ...postProdMetadataShape, action: z.literal("manhua_auto_rig"), params: autoRigRequestSchema }).strict(),
   z.object({ ...postProdMetadataShape, action: z.literal("manhua_previs"), params: manhuaPrevisRequestSchema }).strict(),
   z.object({ ...postProdMetadataShape, action: z.literal("audio_extract"), params: audioExtractParamsSchema }).strict(),

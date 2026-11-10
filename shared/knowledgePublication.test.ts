@@ -88,7 +88,7 @@ describe("知识卡自动出版合同", () => {
       validateKnowledgeReview(review, s, review.sourceDigest)
     ).toThrow("疑点");
   });
-  it("HTML正文不执行注入，保留知识说明与图内疑点", () => {
+  it("HTML正文不执行注入，审查疑点只留作者面板不进读者正文", () => {
     const doc = layoutFromSource({
       owner: "7",
       sourceId: "x",
@@ -119,7 +119,10 @@ describe("知识卡自动出版合同", () => {
     const html = buildKnowledgePublicationHtml(doc, review, {});
     expect(html).not.toContain("<script>alert");
     expect(html).toContain("末句保留");
-    expect(html).toContain("原始数字冲突");
-    expect(html).toContain("@page{size:1600px 1200px");
+    // 1108（#1751）起审查疑点只保留在作者面板，最终读者正文不再附加待核主张
+    expect(html).not.toContain("原始数字冲突");
+    expect(html).not.toContain("请核对两处数字");
+    // 1108 起书册改直式图文同页，默认页面为竖版 1600×2240
+    expect(html).toContain("@page{size:1600px 2240px");
   });
 });

@@ -108,8 +108,9 @@ export function probeVideoUpscaleSource(url: string): Promise<VideoUpscaleSource
       video.onloadedmetadata = () => {
         const { videoWidth: width, videoHeight: height, duration } = video!;
         const sourceResolution = wavespeedSourceResolutionFromDimensions(width, height);
+        // durationSec 向上取整是计费秒；面板片长另给原始实测 durationExactSec（与服务端探针同名）
         done(sourceResolution && Number.isFinite(duration) && duration > 0 && duration <= 600
-          ? { sourceUrl: url, width, height, durationSec: Math.max(1, Math.ceil(duration)), sourceResolution } : null);
+          ? { sourceUrl: url, width, height, durationSec: Math.max(1, Math.ceil(duration)), durationExactSec: duration, sourceResolution } : null);
       };
       video.onerror = () => done(null);
       timer = setTimeout(() => done(null), 15_000);

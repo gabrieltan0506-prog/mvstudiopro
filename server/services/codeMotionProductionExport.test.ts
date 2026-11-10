@@ -114,6 +114,9 @@ beforeEach(async () => {
   state.paid = false;
   await db.execute(sql`DELETE FROM jobs`);
   await db.execute(sql`DELETE FROM ink_free_claims`);
+  // 导出占位表由入队按需建表；同一用户+作品的 grant id 固定，残留占位会让后续用例的首导被判重复。
+  await db.execute(sql`DROP TABLE IF EXISTS ink_free_production_exports`);
+  await db.execute(sql`DROP TABLE IF EXISTS ink_paid_production_exports`);
 });
 afterAll(() => pg.close());
 describe("正式免费/会员导出账务门禁 PostgreSQL", () => {
@@ -192,7 +195,7 @@ describe("正式免费/会员导出账务门禁 PostgreSQL", () => {
     });
     await expect(
       enqueueInkFree({ ...request, id: "other-export" }, source("other"), db)
-    ).rejects.toThrow("已有免费任务");
+    ).rejects.toThrow("已领取免费名额");
     expect(
       (await db.execute(sql`SELECT count(*)::int n FROM ink_free_claims`)).rows
     ).toEqual([{ n: 1 }]);

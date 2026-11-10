@@ -403,6 +403,12 @@ export async function resolvePostProdInputSources(
     for(const uri of Array.from(new Set(job.params.audioTimeline?.clips.map(clip=>clip.audioUri)??[]))) if(await resolve(uri)!==uri)throw new Error("场景动画配乐时间轴来源身份不一致");
     return postProdJobInputSchema.parse(job);
   }
+  if (job.action === "video_partial_edit") {
+    // 入队时已规整为本人 gs://；执行前按同一把尺复核，身份不一致即拒（不改写已锁价快照）
+    if (await resolve(job.params.videoUri) !== job.params.videoUri) throw new Error("修改原片来源身份不一致");
+    for (const uri of job.params.referenceImageUris ?? []) if (await resolve(uri) !== uri) throw new Error("参考图来源身份不一致");
+    return postProdJobInputSchema.parse(job);
+  }
   if (job.action === "manhua_previs") {
     if (job.params.audio) {
       // 白模长期身份只允许gs，校验不改写快照，避免幂等参数漂移。

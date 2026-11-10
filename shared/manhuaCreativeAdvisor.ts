@@ -99,10 +99,26 @@ export const manhuaCreativeAdvisorHistoryMessageSchema = z
   })
   .strict();
 
+/**
+ * 顾问计费的作品类型：缺省 = 漫剧云稿（旧行为与旧账本编号完全不变）；
+ * 代码动画 / 营销 / 数字人按各自存档核对作品存在，账本编号并入类型，每部作品各自 5 次免费。
+ */
+export const advisorProjectKindSchema = z.enum(["manhua", "code_motion", "marketing", "digital_human"]);
+export type AdvisorProjectKind = z.infer<typeof advisorProjectKindSchema>;
+/** 计费作品：漫剧（含缺省）沿用旧形态——projectId 字符串，缺省 = 每账户一个旧工作区；其他类型带上类型。 */
+export type AdvisorProjectRef = string | undefined | { kind: Exclude<AdvisorProjectKind, "manhua">; projectId?: string };
+/** 从顾问上下文或额度查询入参取计费作品：漫剧原样返回 projectId（旧调用参数与旧账本不变）。 */
+export function advisorProjectRef(input?: { projectId?: string; projectKind?: AdvisorProjectKind } | null): AdvisorProjectRef {
+  const kind = input?.projectKind;
+  return !kind || kind === "manhua" ? input?.projectId : { kind, projectId: input?.projectId };
+}
+
 export const manhuaCreativeAdvisorContextSchema = z
   .object({
     /** Stable cloud project identity for account-scoped billing; absent = legacy workspace. */
     projectId: z.string().uuid().optional(),
+    /** 作品类型（见 advisorProjectKindSchema）；缺省按漫剧云稿核对与计数。 */
+    projectKind: advisorProjectKindSchema.optional(),
     seriesTitle: contextText(
       MANHUA_CREATIVE_ADVISOR_CONTEXT_LIMITS.seriesTitleChars,
       "剧名",

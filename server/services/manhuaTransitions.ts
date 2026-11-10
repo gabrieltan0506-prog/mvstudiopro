@@ -3,11 +3,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fetchPostProdSourceToFile, runMediaTool, uploadResult, type PostProdRunOptions } from "./postProduction";
+import { buildConcatGradeFilters, fetchPostProdSourceToFile, gradeEvidencePrefix, makeGradeFilterBuilder, measureJunctionConsistency, runMediaTool, segmentGradeGraph, uploadResult, type PostProdRunOptions } from "./postProduction";
+import { planGradeSegments } from "../../shared/colorGrade";
 import { uploadBufferToGcs } from "./gcs";
 import { parseVfxVideoProbe } from "./manhuaVfxRender";
 import { concatParamsSchema, type ConcatParams } from "../jobs/postProdInput";
-export function buildTransitionPlan(input: ConcatParams, sources: Array<{ filePath: string; durationSec: number; hasAudio: boolean }>, output: string) {
+export function buildTransitionPlan(input: ConcatParams, sources: Array<{ filePath: string; durationSec: number; hasAudio: boolean }>, output: string, gradeFilters: string[] = [], segmentGraph?: (inLabel: string, outLabel: string, totalSec: number) => string) {
   input = concatParamsSchema.parse(input);
   if (!input.transition || sources.length < 2 || sources.length > 6) throw new Error("转场拼接支持2至6段");
   const edits = sources.map((s, i) => resolvePostProdClipEdit(s.durationSec, input.trims?.[i]));
@@ -23,7 +24,7 @@ export function buildTransitionPlan(input: ConcatParams, sources: Array<{ filePa
   const args = ["-y"], chains: string[] = [];
   sources.forEach(s => args.push("-i", s.filePath));
   sources.forEach((s,i) => {
-    chains.push(`[${i}:v:0]trim=start=${edits[i].startSec}:end=${edits[i].endSec},setpts=PTS-STARTPTS,scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},format=yuv420p,trim=duration=${seconds[i]},settb=AVTB,setpts=PTS-STARTPTS[v${i}]`);
+    chains.push(`[${i}:v:0]trim=start=${edits[i].startSec}:end=${edits[i].endSec},setpts=PTS-STARTPTS,scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},${gradeFilters[i] ? `${gradeFilters[i]},` : ""}format=yuv420p,trim=duration=${seconds[i]},settb=AVTB,setpts=PTS-STARTPTS[v${i}]`);
     chains.push(s.hasAudio ? `[${i}:a:0]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=start=${edits[i].startSec}:end=${edits[i].endSec},asetpts=PTS-STARTPTS,atrim=duration=${seconds[i]},asetpts=PTS-STARTPTS[a${i}]` : `anullsrc=r=48000:cl=stereo,atrim=duration=${seconds[i]},asetpts=PTS-STARTPTS[a${i}]`);
   });
   let end = seconds[0], video = "v0", audio = "a0";
@@ -32,6 +33,7 @@ export function buildTransitionPlan(input: ConcatParams, sources: Array<{ filePa
     chains.push(`[${audio}][a${i}]acrossfade=d=${duration}:c1=tri:c2=tri[ax${i}]`);
     video=`vx${i}`; audio=`ax${i}`; end+=seconds[i]-duration;
   }
+  if (segmentGraph) { chains.push(segmentGraph(video, "vgrade", expectedSec)); video = "vgrade"; }
   args.push("-filter_complex", chains.join(";"), "-map", `[${video}]`, "-map", `[${audio}]`, "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", output);
   return { args, durationSec: expectedSec, transitionSec: duration };
 }
@@ -66,14 +68,18 @@ export async function renderManhuaTransitions(input: ConcatParams, userId: strin
       await deps.fetch(input.clips[i],filePath,{signal,budget});
       sources.push({filePath,...await probe(filePath,`source-${i}`)});
     }
-    const out=path.join(dir,"result.mp4"),plan=buildTransitionPlan(input,sources,out);
+    const grade=input.grade,segBuild=grade?.segments?await makeGradeFilterBuilder(grade):null;
+    let spans: ReturnType<typeof planGradeSegments>|null=null;
+    const out=path.join(dir,"result.mp4"),plan=buildTransitionPlan(input,sources,out,await buildConcatGradeFilters(segBuild?undefined:grade,sources.length),
+      grade&&segBuild?(inL,outL,total)=>segmentGradeGraph(spans=planGradeSegments(grade,total),segBuild,inL,outL):undefined);
     await save("plan.json",Buffer.from(JSON.stringify(plan)));
     await deps.run("ffmpeg",plan.args,signal);
     const meta=await probe(out,"output");
     if(meta.width!==input.width||meta.height!==input.height||!meta.hasAudio||Math.abs(meta.durationSec-plan.durationSec)>1/input.fps+.001)
       throw new Error("转场成片画幅、音轨或时长不一致，未采用结果");
+    const gradeSegmentCheck=spans?{mode:"junctions" as const,spans,check:await measureJunctionConsistency(spans,userId,signal,{outPath:out,run:(c,a,s)=>deps.run(c,a,s),upload:deps.upload},`${gradeEvidencePrefix(userId)}/pass-1`)}:undefined;
     const uploaded=await deps.result({filePath:out,userId,kind:"concat",ext:"mp4",contentType:"video/mp4",signal});
-    const result={...uploaded,durationSec:meta.durationSec,clipCount:input.clips.length,transition:input.transition,evidence};
+    const result={...uploaded,durationSec:meta.durationSec,clipCount:input.clips.length,transition:input.transition,evidence,...(gradeSegmentCheck?{gradeSegmentCheck}:{})};
     await save("result.json",Buffer.from(JSON.stringify(result)));return result;
   } catch(error) {
     await save("failure.json",Buffer.from(JSON.stringify({error:error instanceof Error?error.message:"unknown"}))).catch(()=>{archived=false;});

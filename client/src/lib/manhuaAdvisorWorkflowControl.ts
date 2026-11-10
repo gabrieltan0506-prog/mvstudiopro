@@ -53,3 +53,15 @@ export type AdvisorEditControl = (
 export type AdvisorEditRegistration = (
   control: AdvisorEditControl | null
 ) => void;
+
+export type AdvisorVideoEditAction = Extract<
+  CreativeVoiceProductionAction,
+  { action: "videoEdit" }
+>;
+export type AdvisorVideoEditControl = (
+  action: AdvisorVideoEditAction,
+  signal: AbortSignal
+) => Promise<string>;
+export type AdvisorVideoEditRegistration = (
+  control: AdvisorVideoEditControl | null
+) => void;

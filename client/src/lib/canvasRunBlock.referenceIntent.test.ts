@@ -436,24 +436,28 @@ describe("Seedance 2.5：重跑不继承本节点旧成片", () => {
     expect(requests[0].videoUrls).toBeUndefined();
   });
 
-  it("video_extend 仍以本节点旧成片为源片（延长依赖它）", async () => {
+  it("video_extend 仍以本节点旧成片为源片（延长依赖它）；显式勾选的延长源优先，不再混入旧成片", async () => {
     const requests = offlineRequests("seedanceI2V");
     const staleWhiteModel = "https://test.invalid/old-white-model.mp4";
+    const extendBlock: Parameters<typeof runCanvasBlock>[1] = {
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "video-seedance25-extend",
+      videoModel: "seedance-2.5",
+      seedance25WorkMode: "video_extend",
+      prompt: `【第1段·10s】${action}`,
+      status: "done",
+      outputUrl: stale,
+    };
+    // 未勾选任何视频：本节点当前成片兜底作 @视频1。
+    await runCanvasBlock({ userRole: "admin", optimizeCopy: async () => "" }, extendBlock);
+    // 显式勾选即用户指定的延长源，旧 outputUrl 不再追加（否则供应商仍收到过长旧片）。
     await runCanvasBlock(
       { userRole: "admin", optimizeCopy: async () => "" },
-      {
-        ...defaultCanvasBlock("video", 0, 0),
-        id: "video-seedance25-extend",
-        videoModel: "seedance-2.5",
-        seedance25WorkMode: "video_extend",
-        prompt: `【第1段·10s】${action}`,
-        status: "done",
-        outputUrl: stale,
-        seedance25RefVideoUrls: [staleWhiteModel],
-      }
+      { ...extendBlock, seedance25RefVideoUrls: [staleWhiteModel] }
     );
-    expect(requests).toHaveLength(1);
-    expect(requests[0].workMode).toBe("video_extend");
-    expect(requests[0].videoUrls).toEqual([stale, staleWhiteModel]);
+    expect(requests).toHaveLength(2);
+    expect(requests.map((request) => request.workMode)).toEqual(["video_extend", "video_extend"]);
+    expect(requests[0].videoUrls).toEqual([stale]);
+    expect(requests[1].videoUrls).toEqual([staleWhiteModel]);
   });
 });

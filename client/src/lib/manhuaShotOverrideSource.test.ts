@@ -24,6 +24,9 @@ import { parseShotDescriptionTable, patchShotDescriptionSection } from "@shared/
 import { canvasVideoClipCredits } from "@shared/canvasGenerationPricing";
 import { createManhuaAudioFromShots } from "@shared/manhuaAudioFromShots";
 import { canvasAudioCueInputKey } from "@shared/canvasAudioStudio";
+import { isManhuaClipBlockId } from "@shared/manhuaCanvasRerunCompile";
+import { syncEditedShotDialoguesToAudio } from "./manhuaAudioScriptSource";
+import { maskMediaProviderDetails } from "./maskMediaUrls";
 
 const text = [
   "| # | 秒位 | 景别·运镜 | 画面 | 台词/字幕 | 音效·配乐 |",
@@ -155,11 +158,19 @@ describe("对白覆盖不能抢占真实分镜", () => {
       takes: [{ id: "old-take", gcsUri: "gs://test-bucket/old.wav", previewUrl: "", durationSec: 1,
         createdAt: "2026-09-26", inputKey: canvasAudioCueInputKey(cue) }],
     })) };
-    const withOldAudio = dialogueOnly.blocks.map(item => item.id === clip.id ? { ...item, audioStudio: oldAudio } : item);
+    // 台词保存经真实同步：该镜旧采用立即失效、旧候选留作历史，成片不再读旧 TTS。
+    const synced = syncEditedShotDialoguesToAudio(oldAudio, originalShots, 15, { 1: newDialogue });
+    const syncedCue = synced.cues.find(cue => cue.kind === "dialogue" && /^script-shot-1-line-/.test(cue.id))!;
+    expect(syncedCue.textZh).toContain("先送娘去医馆");
+    expect(syncedCue).toMatchObject({ selectedTakeId: undefined, approved: false });
+    expect(syncedCue.takes.map(take => take.id)).toEqual(["old-take"]);
+    // 绕过同步把新句挂在旧采用上：成片前拒绝，零提交。
+    const staleAudio = { ...oldAudio, cues: oldAudio.cues.map(cue => cue.id === syncedCue.id ? { ...cue, textZh: syncedCue.textZh } : cue) };
+    const withOldAudio = dialogueOnly.blocks.map(item => item.id === clip.id ? { ...item, audioStudio: staleAudio } : item);
     await expect(studio.prepareManhuaFactoryClipInput({
       blocks: withOldAudio, edges: dialogueOnly.edges, blockId: clip.id,
-      fallbackBlock: { ...clip, audioStudio: oldAudio }, stage: "clip", episodeIndex: 1, preparedVideoEdit: false,
-    })).rejects.toThrow("已有TTS语音需按新台词重新生成");
+      fallbackBlock: { ...clip, audioStudio: staleAudio }, stage: "clip", episodeIndex: 1, preparedVideoEdit: false,
+    })).rejects.toThrow("当前台词、说话人或音色与已选TTS不一致");
 
     const changedVisual = { ...changedBeats, outputText: patchShotDescriptionSection(changedBeats.outputText || "", { 1: "阿菁独自走进医馆" }) };
     const visualChanged = studio.ensureManhuaFragmentClips(
@@ -237,6 +248,7 @@ describe("对白覆盖不能抢占真实分镜", () => {
       setWriterPack: (updater: (value: typeof pack) => typeof pack) => { pack = updater(pack); },
       handleBlocksChange: (updater: (value: typeof nodes) => typeof nodes) => { nodes = updater(nodes); },
       patchShotDialogueSection,
+      isManhuaClipBlockId,
       getBlockEpisodeIndex: (node: CanvasBlock) => Number(node.id.match(/e(\d\d)/)?.[1] || 1),
       stageKeyFromBlockId: (id: string) => id.split("-")[0],
     });
@@ -367,6 +379,7 @@ describe("对白覆盖不能抢占真实分镜", () => {
         setSegmentCastMismatch: vi.fn(),
         setSegmentNoFaceLock: vi.fn(),
         toast: { error },
+        maskMediaProviderDetails,
         window: { setTimeout: (callback: () => void) => callback() },
         openManhuaFactoryCanvas: vi.fn(),
         runFactory,

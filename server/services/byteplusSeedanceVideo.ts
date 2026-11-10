@@ -65,6 +65,8 @@ export type ByteplusSeedanceRunInput = {
   generateAudio?: boolean;
   watermark?: boolean;
   mode?: SeedanceEvolinkMode | ByteplusSeedance25Mode;
+  /** 原始创建回执先持久化，再解释状态/提取任务号（MV 镜头证据）。 */
+  persistSubmitReceipt?: (receipt: { status: number; body: string }) => Promise<void>;
 };
 
 type ByteplusTaskJson = {
@@ -223,6 +225,7 @@ export type ByteplusVideoPollSnapshot =
 export async function pollByteplusVideoTaskOnce(
   taskId: string,
   label = "Seedance 2.5",
+  persistTerminalReceipt?: (receipt: { status: number; body: string }) => Promise<void>,
 ): Promise<ByteplusVideoPollSnapshot> {
   const apiKey = getByteplusArkApiKey();
   if (!apiKey) return { state: "failed", error: "BYTEPLUS_ARK_API_KEY 未配置" };
@@ -245,12 +248,16 @@ export async function pollByteplusVideoTaskOnce(
       status: `transient_fetch_error:${e instanceof Error ? e.name : "unknown"}`,
     };
   }
-  const json = (await r.json().catch(() => ({}))) as ByteplusTaskJson;
+  const rawBody = await r.text();
+  const json = (() => { try { return JSON.parse(rawBody); } catch { return {}; } })() as ByteplusTaskJson;
   if (!r.ok) {
     return { state: "running", status: `transient_http_${r.status}` };
   }
 
   const status = String(json.status || "").toLowerCase();
+  if (persistTerminalReceipt && ["succeeded", "success", "completed", "failed", "cancelled", "canceled"].includes(status)) {
+    await persistTerminalReceipt({ status: r.status, body: rawBody });
+  }
   if (status === "succeeded" || status === "success" || status === "completed") {
     const url = extractByteplusVideoUrl(json);
     if (!url) return { state: "failed", error: `${label} 任务完成但未返回视频 URL` };
@@ -294,7 +301,9 @@ export async function submitByteplusSeedance25Video(
     body: JSON.stringify(built.body),
     signal: AbortSignal.timeout(60_000),
   });
-  const createJson = (await createRes.json().catch(() => ({}))) as ByteplusTaskJson;
+  const createRawBody = await createRes.text();
+  if (input.persistSubmitReceipt) await input.persistSubmitReceipt({ status: createRes.status, body: createRawBody });
+  const createJson = (() => { try { return JSON.parse(createRawBody); } catch { return {}; } })() as ByteplusTaskJson;
   if (!createRes.ok) {
     const error = new Error(
       [createJson.error?.code, createJson.error?.message || createJson.message].filter(Boolean).join(": ") ||
@@ -361,3 +370,22 @@ export {
   POLL_INTERVAL_MS as BYTEPLUS_SEEDANCE_POLL_INTERVAL_MS,
   MAX_POLL_MS as BYTEPLUS_SEEDANCE_MAX_POLL_MS,
 };
+
+export type {
+  RunVideoEditInput,
+  RunVideoEditResult,
+  VideoEditAttempt,
+  VideoEditChannel,
+  VideoEditEvidenceObject,
+} from "./videoEditFallback.js";
+
+/**
+ * 视频局部修改通道层入口（实现见 ./videoEditFallback.ts）：BytePlus 优先，真人/隐私拒绝转 EvoLink video-edit。
+ * 动态导入避免与 videoEditFallback 互相引用时的初始化顺序问题。失败抛 VideoEditFailedError（error.attempts 同形）。
+ */
+export async function runVideoEditWithFallback(
+  input: import("./videoEditFallback.js").RunVideoEditInput,
+): Promise<import("./videoEditFallback.js").RunVideoEditResult> {
+  const { runVideoEditWithFallback: run } = await import("./videoEditFallback.js");
+  return run(input);
+}

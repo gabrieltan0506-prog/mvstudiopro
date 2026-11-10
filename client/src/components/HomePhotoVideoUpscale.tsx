@@ -13,12 +13,28 @@ import {
 } from "@/lib/videoUpscaleApi";
 import { canvasVideoUpscaleCredits } from "@shared/canvasGenerationPricing";
 import { canWavespeedUpscale } from "@shared/wavespeedVideoUpscaleModels";
+import { trpc } from "@/lib/trpc";
+import { flyDownloadUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
+import type { MontageGrade } from "@/lib/montageFinish";
+import { VideoGradePanel } from "@/components/canvas/VideoGradePanel";
+import { submitVideoGrade } from "@/lib/videoGradeSubmit";
+import { VideoEditPanel, useVideoEditPrefillGuard } from "@/components/canvas/VideoEditPanel";
+import { videoEditDurationSec } from "@/lib/videoEditSubmit";
+import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
+import type { AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
+
+/** 顾问 videoEdit 清单里本工具当前视频的 targetId 与名称（同页多处挂载时须各自唯一）。 */
+export type AdvisorVideoTarget = { id: string; label: string };
+type VideoEditPrefill = { startSec: number; endSec: number; promptZh: string; referenceImageUrls?: string[]; nonce: number };
 
 type Target = "2k" | "4k";
 export type VideoMetadata = {
   width: number;
   height: number;
+  /** 超分计费秒数（向上取整，至少 1 秒）。 */
   durationSec: number;
+  /** 实测秒数（不取整）；局部修改的选区上限与报价按它。 */
+  durationExactSec: number;
   sourceResolution: string;
 };
 type RecordStatus =
@@ -63,6 +79,7 @@ export function metadataForUpscale(
     width,
     height,
     durationSec: Math.max(1, Math.ceil(duration)),
+    durationExactSec: duration,
     sourceResolution,
   };
 }
@@ -138,6 +155,34 @@ export function restoreUpscaleRecords(raw: string | null): UpscaleRecord[] {
   }
 }
 
+/**
+ * 调色只接能登记为本人后期素材的地址（gs://、系统桶 storage.googleapis.com 直链；
+ * Fly 下载包装 /api/gcs-transfer?url= 先还原为原签名链）。首页 12 小时临时空间
+ * （/api/photo-media/）、任意粘贴网址等无法登记的来源返回空串，不显示「调色」。
+ */
+export function gradeSourceFromPlayableUrl(url: string | undefined): string {
+  const value = String(url || "").trim();
+  if (/^gs:\/\/[^/]+\/.+/.test(value)) return value;
+  let parsed: URL;
+  try {
+    parsed = new URL(value, "https://local.invalid");
+  } catch {
+    return "";
+  }
+  const pathStyleGcs = (candidate: string) => {
+    try {
+      return isGcsTransferUrl(candidate) && new URL(candidate).hostname === "storage.googleapis.com";
+    } catch {
+      return false;
+    }
+  };
+  if (parsed.pathname === "/api/gcs-transfer") {
+    const inner = parsed.searchParams.get("url") || "";
+    return pathStyleGcs(inner) ? inner : "";
+  }
+  return pathStyleGcs(value) ? value : "";
+}
+
 export function blocksUpscaleSubmit(
   records: UpscaleRecord[],
   url: string,
@@ -161,10 +206,16 @@ const labels: Record<RecordStatus, string> = {
 export default function HomePhotoVideoUpscale({
   generatedVideoUrl,
   projectKey,
+  onAdvisorVideoEditControl,
+  advisorTarget,
 }: {
   generatedVideoUrl?: string;
   /** 映客复用首页正式提交/计费/恢复链路，仅固定为当前成片。 */
   projectKey?: string;
+  /** 顾问 videoEdit 登记口：清单为当前已读时长的视频，prefill 打开「局部修改」并预填；报价与提交仍须用户在面板确认。 */
+  onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
+  /** 缺省：代码动画按作品编号、首页为「首页视频工具」。 */
+  advisorTarget?: AdvisorVideoTarget;
 }) {
   const { user, isAuthenticated } = useAuth();
   const [identity, setIdentity] = useState<{
@@ -207,6 +258,14 @@ export default function HomePhotoVideoUpscale({
       authenticated={isAuthenticated}
       generatedVideoUrl={generatedVideoUrl}
       fixedSource={!!projectKey}
+      gradeScopeKey={projectKey ? `code-motion-grade:${projectKey}`.slice(0, 128) : "home-video-grade"}
+      onAdvisorVideoEditControl={onAdvisorVideoEditControl}
+      advisorTarget={
+        advisorTarget ??
+        (projectKey
+          ? { id: `code-motion:${projectKey}`.slice(0, 200), label: "代码动画成片" }
+          : { id: "home-video-tool", label: "首页视频工具当前视频" })
+      }
     />
   );
 }
@@ -216,12 +275,22 @@ function UpscalePanel({
   authenticated,
   generatedVideoUrl,
   fixedSource = false,
+  gradeScopeKey,
+  onAdvisorVideoEditControl,
+  advisorTarget,
 }: {
   storageKey?: string;
   authenticated: boolean;
   generatedVideoUrl?: string;
   fixedSource?: boolean;
+  gradeScopeKey?: string;
+  onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
+  advisorTarget: AdvisorVideoTarget;
 }) {
+  const [tool, setTool] = useState<VideoTool | null>(null);
+  const [editPrefill, setEditPrefill] = useState<VideoEditPrefill>();
+  /** 面板确认/报价/提交/任务进行中时，顾问预填被拒并回中文原因，面板不动。 */
+  const editGuard = useVideoEditPrefillGuard();
   const [uploaded, setUploaded] = useState("");
   const [choice, setChoice] = useState<"uploaded" | "generated" | "cloud">(
     "uploaded"
@@ -259,6 +328,32 @@ function UpscalePanel({
       mounted.current = false;
     };
   }, []);
+  // 顾问 videoEdit：清单 = 当前已读时长、可局部修改的这条（同「局部修改」按钮条件）；prefill 打开面板并预填，不提交
+  const advisorVideoEditLive = useRef({ source, metadata, authenticated, busy, advisorTarget });
+  advisorVideoEditLive.current = { source, metadata, authenticated, busy, advisorTarget };
+  useEffect(() => {
+    if (!onAdvisorVideoEditControl) return;
+    const cur = () => advisorVideoEditLive.current;
+    onAdvisorVideoEditControl(
+      editGuard.withGuard(
+        createAdvisorVideoEditControl({
+          targets: () => {
+            const { source: playable, metadata: meta, authenticated: authed, advisorTarget: target } = cur();
+            const url = gradeSourceFromPlayableUrl(playable);
+            // 清单时长 = 实测秒数一位小数向下取（同面板与服务端），不用超分计费的向上取整秒数
+            const sec = videoEditDurationSec(meta?.durationExactSec);
+            return authed && sec > 0 && url ? [{ ...target, url, durationSec: sec }] : [];
+          },
+          busy: () => cur().busy,
+          open: p => {
+            setTool("edit");
+            setEditPrefill({ startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, ...(p.referenceImageUrl ? { referenceImageUrls: [p.referenceImageUrl] } : {}), nonce: Date.now() });
+          },
+        })
+      )
+    );
+    return () => onAdvisorVideoEditControl(null);
+  }, [onAdvisorVideoEditControl, editGuard]);
   function save(next: UpscaleRecord[]) {
     recordsRef.current = next;
     if (storageKey) {
@@ -533,7 +628,31 @@ function UpscalePanel({
               : ""}
           </button>
         ))}
+        <VideoToolToggles
+          source={source}
+          open={tool}
+          disabled={busy || !metadata || !authenticated}
+          onToggle={setTool}
+        />
       </div>
+      {tool === "grade" && metadata && gradeSourceFromPlayableUrl(source) && (
+        <VideoGradeEntry
+          key={source}
+          source={gradeSourceFromPlayableUrl(source)}
+          outputSec={metadata.durationSec}
+          scopeKey={gradeScopeKey}
+        />
+      )}
+      {tool === "edit" && metadata && gradeSourceFromPlayableUrl(source) && (
+        <VideoEditPanel
+          key={`edit:${source}`}
+          source={gradeSourceFromPlayableUrl(source)}
+          durationSec={videoEditDurationSec(metadata.durationExactSec)}
+          previewUrl={source}
+          prefill={editPrefill}
+          onAdvisorPrefillGuard={editGuard.register}
+        />
+      )}
       {metadata && !canWavespeedUpscale(metadata.sourceResolution, "4k") && (
         <p>当前服务不支持此源档位继续放大，请保留原片。</p>
       )}
@@ -575,5 +694,101 @@ function UpscalePanel({
         </article>
       ))}
     </section>
+  );
+}
+
+const GRADE_ACTIVE = ["queued", "running", "processing", "pending"];
+
+export type VideoTool = "grade" | "edit";
+
+/** 成片旁「调色」「局部修改」：只对可登记为本人后期素材的来源显示（首页临时空间不显示）。 */
+export function VideoToolToggles({
+  source,
+  open,
+  disabled,
+  onToggle,
+  className = "rounded-lg border px-4 py-2",
+}: {
+  source: string | undefined;
+  open: VideoTool | null;
+  disabled?: boolean;
+  onToggle: (next: VideoTool | null) => void;
+  className?: string;
+}) {
+  if (!gradeSourceFromPlayableUrl(source)) return null;
+  const items: [VideoTool, string][] = [["grade", "调色"], ["edit", "局部修改"]];
+  return (
+    <>
+      {items.map(([id, label]) => (
+        <button key={id} type="button" className={className} aria-expanded={open === id} disabled={disabled}
+          onClick={() => onToggle(open === id ? null : id)}>
+          {label}
+        </button>
+      ))}
+    </>
+  );
+}
+
+/** 调色提交参数（首页/代码动画/营销成片共用）：只传已核对的来源与本入口的任务归属。 */
+export function videoGradeEntryRequest(source: string, grade: MontageGrade | undefined, scopeKey?: string) {
+  return { videoUrl: source, grade, ...(scopeKey ? { scopeKey: scopeKey.slice(0, 128) } : {}) };
+}
+
+/** 单片调色：复用后期 concat+grade，结果是新文件，原片保留。 */
+export function VideoGradeEntry({
+  source,
+  outputSec,
+  scopeKey,
+}: {
+  source: string;
+  outputSec: number;
+  scopeKey?: string;
+}) {
+  const queue = trpc.mvAnalysis.queuePostProd.useMutation();
+  const [grade, setGrade] = useState<MontageGrade | undefined>();
+  const [jobId, setJobId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const job = trpc.mvAnalysis.getPostProdJob.useQuery(
+    { jobId },
+    {
+      enabled: !!jobId,
+      refetchInterval: query =>
+        GRADE_ACTIVE.includes(String((query.state.data as { status?: unknown } | undefined)?.status ?? "queued")) ? 4000 : false,
+    }
+  );
+  const data = job.data as { status?: string; error?: string; output?: unknown } | undefined;
+  const resultUrl =
+    data?.status === "succeeded" && data.output && typeof data.output === "object"
+      ? (data.output as { url?: unknown }).url
+      : undefined;
+  async function submit() {
+    if (busy || !grade) return;
+    setBusy(true);
+    setError("");
+    try {
+      setJobId(await submitVideoGrade(videoGradeEntryRequest(source, grade, scopeKey), { queue: input => queue.mutateAsync(input) }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="space-y-3 rounded-xl border p-3" aria-label="调色">
+      <VideoGradePanel value={grade} onChange={setGrade} outputSec={outputSec} disabled={busy || (!!jobId && !resultUrl && data?.status !== "failed")} onError={setError} />
+      <button type="button" className="rounded-lg border px-4 py-2" disabled={busy || !grade} onClick={() => void submit()}>
+        {busy ? "正在提交调色…" : "生成调色版（新文件，原片保留）"}
+      </button>
+      {jobId && <p className="break-all text-xs">调色任务编号：{jobId}{data?.status ? ` · ${data.status === "succeeded" ? "已完成" : data.status === "failed" ? "未成功" : "处理中"}` : ""}</p>}
+      {data?.status === "failed" && data.error && <p role="alert">{data.error}</p>}
+      {error && <p role="alert">{error}</p>}
+      {typeof resultUrl === "string" && (
+        <div>
+          <video src={flyDownloadUrl(resultUrl)} controls preload="metadata" className="max-h-64 w-full" />
+          <a href={flyDownloadUrl(resultUrl)} target="_blank" rel="noreferrer" download="调色版.mp4">下载调色版</a>
+        </div>
+      )}
+    </div>
   );
 }

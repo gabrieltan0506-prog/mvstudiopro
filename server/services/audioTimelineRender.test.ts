@@ -13,6 +13,11 @@ vi.mock("./gcs.js", () => ({
     h.outputs.push(buffer);
     return { gcsUri: `gs://test-bucket/${objectName}` };
   },
+  // 后期产物按文件流上传（postProduction.uploadResult）；测试把流读回内存核对字节。
+  uploadStreamToGcs: async ({ objectName, stream }: { objectName: string; stream: ReadableStream<Uint8Array> }) => {
+    h.outputs.push(Buffer.from(await new Response(stream).arrayBuffer()));
+    return { bucket: "test-bucket", objectName, gcsUri: `gs://test-bucket/${objectName}` };
+  },
 }));
 import { trimAudio, renderAudioTimeline, normalizeDialogueAudio } from "./postProduction";
 

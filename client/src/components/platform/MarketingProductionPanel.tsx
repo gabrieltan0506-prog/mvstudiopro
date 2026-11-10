@@ -15,6 +15,11 @@ import { StockFootageDrawer, type StockFootagePick } from "@/components/stockFoo
 import { STOCK_DRAWER_PER_PAGE, defaultMinDurationSec, keywordSourceText } from "@/components/stockFootage/stockFootageModel";
 import { canvasTtsCreditsForDuration } from "@shared/canvasGenerationPricing";
 import { MarketingVoicePicker } from "./MarketingVoicePicker";
+import { VideoGradeEntry, VideoToolToggles, gradeSourceFromPlayableUrl, type AdvisorVideoTarget, type VideoTool } from "@/components/HomePhotoVideoUpscale";
+import { VideoEditPanel, useVideoEditPrefillGuard } from "@/components/canvas/VideoEditPanel";
+import { videoEditDurationSec } from "@/lib/videoEditSubmit";
+import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
+import type { AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { MarketingSegmentTimeline, MarketingThumb } from "./MarketingSegmentTimeline";
 import {
   applyPostProdJobResult,
@@ -51,6 +56,10 @@ import {
 } from "@shared/marketingProduction";
 
 const buttonStyle = "rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-40";
+/** 成片调色单独归属，不与导出成片的 concat 恢复（scopeKey marketing:<稿号>）混淆。 */
+export function marketingGradeScopeKey(draftId: string): string {
+  return `marketing-grade:${draftId}`.slice(0, 128);
+}
 const ACTIVE_JOB = ["queued", "running"];
 /** 整稿找素材的并发上限。 */
 const PREFETCH_CONCURRENCY = 3;
@@ -88,7 +97,17 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : "操作未完成，请稍后重试";
 }
 
-export function MarketingProductionPanel({ userKey }: { userKey: string }) {
+export function MarketingProductionPanel({
+  userKey,
+  onAdvisorVideoEditControl,
+  advisorTarget = { id: "marketing-final", label: "营销成片" },
+}: {
+  userKey: string;
+  /** 顾问 videoEdit 登记口：清单为已导出且读到时长的营销成片，prefill 打开「局部修改」并预填；报价与提交仍须用户在面板确认。 */
+  onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
+  /** 顾问清单里营销成片的 targetId 与名称（同页多处挂载时须各自唯一）。 */
+  advisorTarget?: AdvisorVideoTarget;
+}) {
   // 直接读与营销方案面板同一份查询（共用缓存，不多发请求），不再经父页状态回写：
   // 线上验收发现子组件挂载时回写父页状态会导致方案卡片 DOM 残留重复。
   const latestPlan = trpc.mvAnalysis.getPlatformMarketingPlan.useQuery({ jobId: undefined, scope: userKey }, { retry: false });
@@ -102,7 +121,38 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
   /** 本次会话上传素材的本机预览（刷新后不保留，只显示文件名占位）。 */
   const [localPreview, setLocalPreview] = useState<Record<string, string>>({});
   const [finalUrl, setFinalUrl] = useState<string>();
+  const [finalSec, setFinalSec] = useState(0);
+  const [tool, setTool] = useState<VideoTool | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editPrefill, setEditPrefill] = useState<{ startSec: number; endSec: number; promptZh: string; referenceImageUrls?: string[]; nonce: number }>();
+  /** 面板确认/报价/提交/任务进行中时，顾问预填被拒并回中文原因，面板不动。 */
+  const editGuard = useVideoEditPrefillGuard();
+  // 顾问 videoEdit：清单 = 已导出、读到时长的营销成片（同「局部修改」按钮条件）；prefill 打开面板并预填，不提交
+  const advisorVideoEditLive = useRef({ finalUrl, finalSec, busy, advisorTarget });
+  advisorVideoEditLive.current = { finalUrl, finalSec, busy, advisorTarget };
+  useEffect(() => {
+    if (!onAdvisorVideoEditControl) return;
+    const cur = () => advisorVideoEditLive.current;
+    onAdvisorVideoEditControl(
+      editGuard.withGuard(
+        createAdvisorVideoEditControl({
+          targets: () => {
+            const { finalUrl: playable, finalSec: sec, advisorTarget: target } = cur();
+            const url = gradeSourceFromPlayableUrl(playable);
+            // 清单时长 = 实测秒数一位小数向下取（同面板与服务端），不超过原片
+            const editSec = videoEditDurationSec(sec);
+            return url && editSec > 0 ? [{ ...target, url, durationSec: editSec }] : [];
+          },
+          busy: () => cur().busy,
+          open: p => {
+            setTool("edit");
+            setEditPrefill({ startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, ...(p.referenceImageUrl ? { referenceImageUrls: [p.referenceImageUrl] } : {}), nonce: Date.now() });
+          },
+        })
+      )
+    );
+    return () => onAdvisorVideoEditControl(null);
+  }, [onAdvisorVideoEditControl, editGuard]);
   const utils = trpc.useUtils();
   const dialogue = trpc.canvasAudio.generateDialogue.useMutation();
   const queue = trpc.mvAnalysis.queuePostProd.useMutation();
@@ -452,8 +502,16 @@ export function MarketingProductionPanel({ userKey }: { userKey: string }) {
         <span className="text-xs text-slate-400">{step.kind === "wait" ? step.reason : step.kind === "done" ? "成片已导出" : step.kind === "mount" ? `待贴装 ${step.segmentIds.length} 段` : step.kind === "concat" ? "贴装完成，待拼接" : ""}</span>
       </div>
       {draft.final?.status === "failed" && <p role="alert" className="mt-2 text-xs text-amber-200">拼接未成功：{draft.final.error}</p>}
-      {finalUrl && <video className="mt-3 max-h-[28rem] w-full rounded-lg" src={finalUrl} controls />}
+      {finalUrl && <video className="mt-3 max-h-[28rem] w-full rounded-lg" src={finalUrl} controls
+        onLoadedMetadata={event => { const sec = event.currentTarget.duration; if (Number.isFinite(sec) && sec > 0) setFinalSec(sec); }} />}
       {finalUrl && <a className={`${buttonStyle} mt-2 inline-block`} href={finalUrl} download>下载成片</a>}
+      {finalUrl && <VideoToolToggles source={finalUrl} open={tool} disabled={busy || !finalSec} onToggle={setTool} className={`${buttonStyle} ml-2 mt-2`} />}
+      {tool === "edit" && finalUrl && finalSec > 0 && gradeSourceFromPlayableUrl(finalUrl) && <div className="mt-3">
+        <VideoEditPanel key={`edit:${finalUrl.split("?")[0]}`} source={gradeSourceFromPlayableUrl(finalUrl)} durationSec={videoEditDurationSec(finalSec)} previewUrl={finalUrl} prefill={editPrefill} onAdvisorPrefillGuard={editGuard.register} />
+      </div>}
+      {tool === "grade" && finalUrl && finalSec > 0 && gradeSourceFromPlayableUrl(finalUrl) && <div className="mt-3">
+        <VideoGradeEntry key={finalUrl.split("?")[0]} source={gradeSourceFromPlayableUrl(finalUrl)} outputSec={finalSec} scopeKey={marketingGradeScopeKey(draft.draftId)} />
+      </div>}
       {credits.uploads.length > 0 && <div className="mt-3 text-xs text-slate-400">
         {credits.uploads.length > 0 && <p>自有素材：{credits.uploads.join("、")}</p>}
       </div>}

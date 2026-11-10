@@ -102,14 +102,16 @@ it("真实声音面板按种类分组、采用状态随原handler变化，不更
   expect(consumed.bindings.audioUrls).toContain("gs://test/music-a-2.mp3");
   expect(consumed.bindings.audioUrls).toContain("gs://test/door-a-1.mp3");
   expect(consumed.bindings.promptAppendix).toContain("门厅停步后配乐进入");
-  expect(consumed.bindings.promptAppendix).toContain("3.000秒触发");
+  // 秒位口径：整理后的秒窗按一位小数写（3 → 3.0），仅未整理的旧值保留三位。
+  expect(consumed.bindings.promptAppendix).toContain("3.0秒触发");
   expect(consumed.bindings.promptAppendix).toContain("阿菁");
   expect(consumed.masterError).toContain("预混母轨仍为旧版");
   expect(await page.$eval('[aria-label="逐句配音、配乐与事件音效"]', el => el.textContent)).toContain("当前母轨与声音配置不一致");
   for (const width of [1280, 390]) {
    await page.setViewport({ width, height: 900 });
    const geometry = await page.$eval('[data-manhua-sound-summary]', el => ({ columns: getComputedStyle(el).gridTemplateColumns.split(" ").length, viewport: document.documentElement.clientWidth, page: document.documentElement.scrollWidth }));
-   expect(geometry.columns).toBe(width >= 1024 ? 3 : 1);
+   // 10-06 工作区重排：摘要移到画面右侧栏，宽屏两列、窄屏单列。
+   expect(geometry.columns).toBe(width >= 640 ? 2 : 1);
    expect(geometry.page).toBeLessThanOrEqual(geometry.viewport + 1);
    await page.screenshot({ path: `/tmp/0920-audio-layout-${width}.png`, fullPage: true });
   }

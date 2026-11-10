@@ -50,12 +50,12 @@ it("规划沿指定GLM→DeepSeek路线；模型只收到素材名字和ID", asy
     invoke: invoke as CodeMotionPlanDeps["invoke"],
     speechEnabled: () => true,
   });
-  expect(value.modelName).toBe("deepseek/deepseek-v4.1-flash");
+  expect(value.modelName).toBe("deepseek/deepseek-v4.1-flash-1017");
   expect(JSON.parse(value.answer)).toEqual(plan);
   expect(invoke.mock.calls.map(c => c[0].modelName)).toEqual([
     "z-ai/glm-5.3-flashx",
     "glm-5.3-flashx",
-    "deepseek/deepseek-v4.1-flash",
+    "deepseek/deepseek-v4.1-flash-1017",
   ]);
   expect(JSON.stringify(invoke.mock.calls)).not.toContain("gs://private");
 });

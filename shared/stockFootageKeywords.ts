@@ -269,6 +269,8 @@ const PURPOSE_DEFAULTS: Record<StockFootagePurpose, { query: string; queryZh: st
   manhua: { query: "ancient chinese landscape", queryZh: "古风山水", filler: "cinematic" },
   // 复刻：竖屏短视频里替换原片的实拍补充画面，默认偏生活实拍
   remix: { query: "lifestyle people closeup", queryZh: "生活实拍特写", filler: "lifestyle" },
+  // MV 镜头参考：场景/光线/色调氛围图与运镜参考片，默认偏电影感
+  mvShot: { query: "cinematic mood lighting", queryZh: "电影感氛围光线", filler: "cinematic" },
 };
 
 /** 「某某：“……”」里，这些前缀后的引号内容是画面/旁白本身，保留；其余视为角色台词丢弃。 */

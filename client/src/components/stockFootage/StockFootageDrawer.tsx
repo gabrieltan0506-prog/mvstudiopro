@@ -45,6 +45,8 @@ import {
   stockDrawerStep,
 } from "./stockFootageModel";
 import { useStockFootageAdoption } from "./useStockFootageAdoption";
+import { StockPhotoPersonEditPanel, type StockPhotoPersonEditResult } from "./StockPhotoPersonEditPanel";
+import type { StockPhotoPersonEditCastOption } from "@shared/stockPhotoPersonEdit";
 
 export type StockFootagePick = { asset: StockFootageAssetView; inSec: number; outSec: number };
 export type StockFootageDrawerProps = {
@@ -67,6 +69,11 @@ export type StockFootageDrawerProps = {
   /** 默认「采用并绑定」 */
   confirmLabel?: string;
   onPick: (pick: StockFootagePick) => void | Promise<void>;
+  /**
+   * 可选（1109）：选中照片后提供「放入人物重绘」——以实拍照为底图把男主/女主合成进去。
+   * options 为业务方能提供的人物来源；onEdited 收到重绘结果（由业务方决定如何绑定）。
+   */
+  personEdit?: { options: StockPhotoPersonEditCastOption[]; aspectRatio: "9:16" | "16:9" | "1:1"; onEdited: (result: StockPhotoPersonEditResult) => void | Promise<void> };
 };
 
 const TRIM_STEP_SEC = 0.1;
@@ -245,17 +252,25 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
     }
   };
 
-  const confirm = async () => {
-    if (!selected || busy) return;
+  /** 取得选中素材在本人空间里的资产：已采用过的直接复用，否则发起采用（同编号续做）。 */
+  const ensureAsset = async (pickTrim?: StockTrim) => {
+    if (!selected) return null;
     const key = candidateKey(selected);
-    const pickTrim = selected.kind === "video" && trim.outSec > trim.inSec ? trim : undefined;
     // onPick 曾失败 / 本人此前已为同一用途采用过同一素材：素材已在本人空间，直接重新绑定，不再发起新的保存。
     let asset = adopted?.key === key ? adopted.asset : adoptedByKey.get(key) ?? null;
     if (!asset) {
       asset = await adoption.startAdoption(selected, { usage, orientation: orientation ?? props.orientation, context: context ?? {}, ...(pickTrim ? { trim: pickTrim } : {}) });
-      if (!asset) return;
+      if (!asset) return null;
       setAdopted({ key, asset });
     }
+    return asset;
+  };
+
+  const confirm = async () => {
+    if (!selected || busy) return;
+    const pickTrim = selected.kind === "video" && trim.outSec > trim.inSec ? trim : undefined;
+    const asset = await ensureAsset(pickTrim);
+    if (!asset) return;
     await bind(buildStockPick(asset, pickTrim, targetSec));
   };
 
@@ -634,6 +649,18 @@ function StockFootageDrawerBody(props: StockFootageDrawerProps) {
 
             </div>
 
+            {props.personEdit && selected?.kind === "photo" && (
+              <div className="border-t border-white/10 px-4 py-2">
+                <StockPhotoPersonEditPanel
+                  key={candidateKey(selected)}
+                  options={props.personEdit.options}
+                  aspectRatio={props.personEdit.aspectRatio}
+                  disabled={busy}
+                  ensureAsset={() => ensureAsset()}
+                  onEdited={props.personEdit.onEdited}
+                />
+              </div>
+            )}
             <footer className="space-y-2 border-t border-white/10 px-4 py-3">
               {!selected && !busy && candidates.length > 0 && <div className="text-xs opacity-70">先在上方点选一张候选，再「{confirmLabel}」。</div>}
               {selected && !busy && <div className="text-xs text-amber-200">正在预览候选，尚未替换；点「{confirmLabel}」后才会替换当前画面。</div>}

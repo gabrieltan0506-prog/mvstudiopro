@@ -328,11 +328,14 @@ export function asEnvelope(value: unknown): JobEnvelope {
   if (!isRecord(value) || typeof value.action !== "string") {
     throw new Error("Invalid job input payload");
   }
+  // 只有趋势报告才带外部证据键；其他任务不得多出值为 undefined 的键——
+  // 配乐等 strict 入参 Schema 会把它判成未知字段，整单拒跑。
   return {
     action: value.action,
     params: isRecord(value.params) ? value.params : {},
-    externalEvidenceSnapshot: value.action === "platform_visual_report" && isRecord(value.externalEvidenceSnapshot)
-      ? value.externalEvidenceSnapshot as import("../../shared/guaikei").GuaikeiTrendSnapshot : undefined,
+    ...(value.action === "platform_visual_report" && isRecord(value.externalEvidenceSnapshot)
+      ? { externalEvidenceSnapshot: value.externalEvidenceSnapshot as import("../../shared/guaikei").GuaikeiTrendSnapshot }
+      : {}),
   };
 }
 
@@ -1792,6 +1795,10 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     const digitalHumanScenePolicy = params.digitalHumanScene
       ? (await import("../services/digitalHumanScene.js")).assertDigitalHumanSceneJob(Number(jobUserId), jobId || "", input)
       : null;
+    // 1109 实拍照放入人物重绘：底图+人物参考按已确认载荷复核，固定 2.6 Sunburst 改图档
+    const stockPhotoPersonEditPolicy = params.stockPhotoPersonEdit
+      ? (await import("../services/stockPhotoPersonEdit.js")).assertStockPhotoPersonEditJob(Number(jobUserId), jobId || "", input)
+      : null;
     const codeMotionPolicy = params.codeMotionImage
       ? await (await import("../services/codeMotionImages.js")).resolveCodeMotionImageWorkerPolicy(jobUserId, jobId || "", params.codeMotionImage, input)
       : null;
@@ -1804,7 +1811,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
           .filter(Boolean)
           .slice(0, 16)
       : [];
-    if (digitalHumanKeyframePolicy) {
+    if (digitalHumanKeyframePolicy || stockPhotoPersonEditPolicy) {
       const { signGsUriV4ReadUrl } = await import("../services/gcs.js");
       for (let i = 0; i < referenceImageUrls.length; i++) referenceImageUrls[i] = await signGsUriV4ReadUrl(referenceImageUrls[i], 3600);
     }
@@ -1961,6 +1968,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
         qualityOverride: assetStandardizeQuality || undefined,
         ...(digitalHumanScenePolicy || {}),
         ...(digitalHumanKeyframePolicy || {}),
+        ...(stockPhotoPersonEditPolicy || {}),
         captureError,
       });
     } catch (err) {

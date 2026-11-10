@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { askMusicMvAdvisor } from "./musicMvAdvisor";
+import { hearSongIndependently } from "./musicMvSongHearing";
 import { parseAskJson } from "./platformSkillQa";
 import { CreativeProposalError, creativeProposalFailureMessage } from "./creativeProposalFailure";
 import { CREATIVE_LLM_HOPS, CreativeHopTransportError, type CreativeLlmHop } from "./creativeLlmHops";
@@ -135,6 +136,23 @@ function fixture() {
     hops: CREATIVE_LLM_HOPS,
     uuid: () => "11111111-1111-4111-8111-111111111111",
   };
+  /** 两跳函数替身（单跳 Vertex）：generate 只吐 Gemini 原始回包；checkPayload/validate/save 走真实听歌模块。 */
+  const listen = vi.fn(async (input: any) => {
+    await input.save("hop-1-vertex-request", { media: input.media.vertexFileUri, model: input.model, prompt: input.prompt });
+    const payload: any = await (d.generate as any)(input);
+    await input.save("hop-1-vertex-raw", payload);
+    const reject = input.checkPayload?.(payload);
+    if (reject) throw new Error(`听音识别全部通道失败：Vertex（${reject}）`);
+    const decoded = { ...JSON.parse(payload.text), sourceKey: JSON.parse(input.prompt).sourceKey };
+    const value = input.validate(decoded);
+    await input.save("hop-1-vertex-parsed", value);
+    return { value, channel: "Vertex", model: input.model, failuresZh: [], payload };
+  });
+  (d as any).listen = listen;
+  (d as any).hear = vi.fn((input: any) => hearSongIndependently(input, {
+    listen: listen as any, sign: (u: string) => `https://signed.example/${u.slice(5)}`, upload: d.upload as any,
+    readJson: async (name: string) => records.get(name), bucket: () => "test-bucket", uuid: () => "22222222-2222-4222-8222-222222222222",
+  }));
   return {
     d: d as unknown as NonNullable<Parameters<typeof askMusicMvAdvisor>[3]>,
     records,
@@ -154,13 +172,13 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
     expect(mocks.compose).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(mocks.compose.mock.calls)).toContain("native_music_evidence_v1");
     expect(JSON.stringify(mocks.generate.mock.calls)).not.toContain("music_mv_v1");
-    expect(JSON.stringify(mocks.generate.mock.calls)).toContain(
-      Buffer.from("test-audio").toString("base64")
-    );
-    expect(Array.from(records.keys()).map(k => k.split("/").at(-1))).toEqual([
+    // 1109：听歌以 gs:// 引用送达，不内嵌 base64；只送歌曲，不带剧情/创作要求。
+    expect(JSON.stringify(mocks.generate.mock.calls)).not.toContain(Buffer.from("test-audio").toString("base64"));
+    expect(JSON.stringify(mocks.generate.mock.calls)).toContain("gs://test-bucket/song.wav");
+    expect(JSON.stringify(mocks.generate.mock.calls)).not.toContain(target.creativePrompt);
+    expect(Array.from(records.keys()).filter(k => k.startsWith("canvas-music-mv/advisor/")).map(k => k.split("/").at(-1))).toEqual([
       "request.json",
-      "raw.json",
-      "decoded.json",
+      "hearing.json",
       `${HOP1}-raw.json`,
       `${HOP1}-decoded.json`,
       "compose-hop-used.json",
@@ -254,9 +272,9 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
       usageMetadata: { promptTokensDetails: [{ modality: "AUDIO", tokenCount: 30 }] },
     });
     await askMusicMvAdvisor(7, target, "设计MV", d);
-    const normalized = records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/evidence-normalized.json") as any;
-    expect(normalized.after.sections).toEqual([{ ...proposal().sections[0], startSec: 0, endSec: 12 }]);
-    expect(normalized.after.uncertaintiesZh).toEqual(["尾音边界需复听"]);
+    const normalized = Array.from(records.entries()).find(([k]) => /song-hearing\/[0-9a-f]{64}\/gemini-3\.8-flash-[0-9a-f]{12}\.json$/.test(k))![1] as any;
+    expect(normalized.evidence.sections).toEqual([{ ...proposal().sections[0], startSec: 0, endSec: 12 }]);
+    expect(normalized.evidence.uncertaintiesZh).toEqual(["尾音边界需复听"]);
     expect(normalized.fixes.sections.map((f: any) => [f.index, f.field, f.after])).toEqual([[0, "startSec", 0], [1, "section", undefined], [0, "endSec", 12]]);
     expect(JSON.stringify((mocks.compose.mock.calls as unknown as [string, unknown][])[0][1])).toContain('"uncertaintiesZh":["尾音边界需复听"]');
   });
@@ -485,3 +503,41 @@ describe("MV真实听音消费合同（离线替身，不证明上游可用）",
     expect(() => parseMusicMvAdvisorProposal(p, target)).toThrow();
   });
 });
+
+describe("1109 逐窗节拍阶段（audiomap + 三跳链）", () => {
+  it("有拍点网格时：主推荐方案的生成/演唱镜带逐窗节拍、复杂度与 audiomap；素材段不出窗；证据落盘", async () => {
+    const { d, records, mocks } = fixture();
+    const grid = { bpm: 120, beatSec: 0.5, phaseSec: 0, source: "creative_prompt" as const, beatConfidence: 0.7, segments: [{ startSec: 0, endSec: 12, energy: 1, beatConfidence: 0.7, pacing: "beat" as const }], strongBeatsSec: [0, 2, 4] };
+    (d as any).beatGrid = vi.fn(async () => grid);
+    mocks.compose.mockImplementationOnce(async (_i: string, _input: unknown, save: (n: string, v: unknown) => Promise<unknown>, hop: CreativeLlmHop) => {
+      await save("raw", { model: hop.modelName });
+      return { text: JSON.stringify(proposal()), model: hop.modelName };
+    });
+    mocks.compose.mockImplementationOnce(async (instructions: string, input: any, save: (n: string, v: unknown) => Promise<unknown>, hop: CreativeLlmHop) => {
+      expect(instructions).toContain("逐窗节拍");
+      expect(input.shots.map((s: any) => s.id)).toEqual(["sing"]);
+      expect(input.beatGrid.segments[0].pacing).toBe("beat");
+      await save("raw", { model: hop.modelName });
+      return { text: JSON.stringify({ shots: [{ id: "sing", continuesFromPrevious: false, complexity: { people: 1, action: "light", contact: false, cameraSetups: 1, scenes: 1 },
+        beats: [
+          { startSec: 0, endSec: 3, actionZh: "主唱抬眼开口", cameraZh: "近景缓推", lightingZh: "暖侧光", moodZh: "克制", sfxZh: "室内底噪", lipSync: true, lyricZh: "归来" },
+          { startSec: 3, endSec: 6, actionZh: "主唱闭眼换气", cameraZh: "停稳", lightingZh: "暖光收", moodZh: "释然", sfxZh: "衣料轻响", lipSync: false },
+        ] }] }), model: hop.modelName };
+    });
+    const answer = parseAskJson(await askMusicMvAdvisor(7, target, "设计MV", d), true);
+    const accepted = parseMusicMvAdvisorProposal(answer.answer, target);
+    const main = accepted.concepts[0]!.plan;
+    expect(main.beatGrid).toMatchObject({ bpm: 120, beatConfidence: 0.7 });
+    expect((main.beatGrid as any).strongBeatsSec).toBeUndefined();
+    expect(main.shots[0]!.beats?.map(b => [b.startSec, b.endSec, b.lipSync])).toEqual([[0, 3, true], [3, 6, false]]);
+    expect(main.shots[0]!.complexity?.people).toBe(1);
+    expect(main.shots[1]!.beats).toBeUndefined();
+    expect(accepted.concepts[1]!.plan.shots[0]!.beats).toBeUndefined();
+    const names = Array.from(records.keys()).map(k => k.split("/").at(-1));
+    expect(names).toContain("beat-grid.json");
+    expect(names).toContain("beats-1-hop-used.json");
+    expect(names).toContain("beats-summary.json");
+    expect((records.get(`canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/accepted.json`) as any).beatsReport.failedShotIds).toEqual([]);
+  });
+});
+

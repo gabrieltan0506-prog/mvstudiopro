@@ -5,6 +5,7 @@ import ts from "typescript";
 import {
   createManhuaPrevisStudio,
   formatPrevisMotionGuide,
+  manhuaPrevisSpecSchema,
 } from "@shared/manhuaPrevis";
 import {
   manhuaGeneratedPrevisCoverageIssue,
@@ -87,6 +88,9 @@ function realPublish(
     latest,
     sourceShots,
     setError: (error: string) => errors.push(error),
+    // publish 先过白模方案 schema；整段（非创作者）模式按本段目标时长核覆盖。
+    manhuaPrevisSpecSchema,
+    creatorMode: false,
     manhuaGeneratedPrevisCoverageIssue,
     parseManhuaClipTargetDurationSec,
     clampManhuaClipDurationSecForVideoModel,

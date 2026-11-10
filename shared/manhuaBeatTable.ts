@@ -334,3 +334,143 @@ export function beatTableToVolumeExpr(rows: readonly BeatTableRow[]): string {
   }
   return expression;
 }
+
+
+// ── 拍点网格（1109 MV 秒锁复用）──────────────────────────────────────
+// 上面的电平卡点表是 0.5 秒电平窗，分辨率不到 1 拍（129 BPM 一拍≈0.465 秒），不能直接定剪点。
+// 这里补「给定 BPM 的拍点网格」：起音包络求相位与逐拍重音强度；BPM 以分镜/用户给定为准，自相关估值只作核对。
+
+
+export type MusicBeatGrid = {
+  bpm: number;
+  /** 第一拍（相对输入 PCM 起点的秒数，0 ≤ phase < 1 拍）。 */
+  phaseSec: number;
+  /** 逐拍：歌曲时间（相对输入起点 + offsetSec）与 0–1 重音强度。 */
+  beats: Array<{ sec: number; strength: number }>;
+  /** 由起音包络自相关估得的 BPM（核对用，不参与网格）。 */
+  estimatedBpm: number;
+};
+
+const HOP_SEC = 0.01;
+
+/** 半波整流的能量差分包络（10ms 帧）。 */
+export function onsetEnvelope(samples: ArrayLike<number>, sampleRate: number): number[] {
+  const hop = Math.max(1, Math.round(sampleRate * HOP_SEC));
+  const frames = Math.floor(samples.length / hop);
+  const energy: number[] = new Array(frames);
+  for (let f = 0; f < frames; f++) {
+    let sum = 0;
+    for (let i = f * hop, end = i + hop; i < end; i++) sum += samples[i] * samples[i];
+    energy[f] = Math.log1p(1000 * Math.sqrt(sum / hop));
+  }
+  const env: number[] = new Array(frames).fill(0);
+  for (let f = 1; f < frames; f++) env[f] = Math.max(0, energy[f] - energy[f - 1]);
+  return env;
+}
+
+function envAt(env: number[], sec: number) {
+  const f = Math.round(sec / HOP_SEC);
+  let best = 0;
+  for (let d = -3; d <= 3; d++) best = Math.max(best, env[f + d] ?? 0); // ±30ms 容差
+  return best;
+}
+
+export function buildMusicBeatGrid(
+  samples: ArrayLike<number>,
+  sampleRate: number,
+  bpm: number,
+  offsetSec = 0,
+): MusicBeatGrid {
+  if (!(bpm >= 40 && bpm <= 240)) throw new Error("BPM 超出 40–240");
+  const env = onsetEnvelope(samples, sampleRate);
+  const durationSec = env.length * HOP_SEC;
+  const beatSec = 60 / bpm;
+  let bestPhase = 0;
+  let bestScore = -1;
+  for (let p = 0; p < beatSec; p += HOP_SEC) {
+    let score = 0;
+    for (let t = p; t < durationSec; t += beatSec) score += envAt(env, t);
+    if (score > bestScore) { bestScore = score; bestPhase = p; }
+  }
+  const raw: Array<{ sec: number; v: number }> = [];
+  for (let t = bestPhase; t < durationSec; t += beatSec) raw.push({ sec: t, v: envAt(env, t) });
+  const max = Math.max(1e-9, ...raw.map(r => r.v));
+  // 自相关核对 BPM（60–200）
+  let estimatedBpm = bpm;
+  let bestAc = -1;
+  for (let lag = Math.round(0.3 / HOP_SEC); lag <= Math.round(1 / HOP_SEC); lag++) {
+    let ac = 0;
+    for (let i = lag; i < env.length; i++) ac += env[i] * env[i - lag];
+    if (ac > bestAc) { bestAc = ac; estimatedBpm = 60 / (lag * HOP_SEC); }
+  }
+  return {
+    bpm,
+    phaseSec: Number(bestPhase.toFixed(3)),
+    beats: raw.map(r => ({ sec: Number((r.sec + offsetSec).toFixed(3)), strength: Number((r.v / max).toFixed(3)) })),
+    estimatedBpm: Number(estimatedBpm.toFixed(1)),
+  };
+}
+
+/** 从创作说明里读 BPM（如「129 BPM」）。 */
+export function parseBpmFromText(text: string | undefined): number | undefined {
+  const m = /(\d{2,3}(?:\.\d+)?)\s*BPM/i.exec(String(text || ""));
+  const n = m ? Number(m[1]) : NaN;
+  return n >= 40 && n <= 240 ? n : undefined;
+}
+
+/** 把计划剪点吸附到最近拍点（首尾固定为高光区间端点，不吸附）；保持严格递增且每段 ≥ minGapSec。 */
+export function snapCutsToBeats(
+  cuts: readonly number[],
+  beats: ReadonlyArray<{ sec: number }>,
+  minGapSec = 1,
+): number[] {
+  if (cuts.length < 2) return [...cuts];
+  const out = [cuts[0]!];
+  for (let i = 1; i < cuts.length - 1; i += 1) {
+    const ideal = cuts[i]!;
+    const sorted = [...beats].sort((a, b) => Math.abs(a.sec - ideal) - Math.abs(b.sec - ideal));
+    const pick = sorted.find((b) => b.sec - out[out.length - 1]! >= minGapSec && cuts[cuts.length - 1]! - b.sec >= minGapSec);
+    out.push(pick ? Math.round(pick.sec * 1000) / 1000 : ideal);
+  }
+  out.push(cuts[cuts.length - 1]!);
+  return out;
+}
+
+
+const LYRICAL_RE = /抒情|慢歌|情歌|舒缓|安静|unhurried|ballad|slow|lyrical|mellow|gentle|chill|lo-?fi|R&B/i;
+const UPBEAT_RE = /舞曲|快歌|劲爆|动感|燃|dance|upbeat|uptempo|EDM|house|techno|drum ?& ?bass|punk|fast/i;
+
+/**
+ * 1109 BPM 消歧（半速/倍速）：起音自相关常把 65 BPM 判成 129/130。
+ * 优先级：歌曲生成提示词里写明的 BPM（如 Suno 风格提示词）＞ 检测候选（×0.5/×1/×2）按语义选（抒情偏 ≤90，劲爆偏 ≥110）
+ * ＞ 创作说明里的 BPM（与检测/语义冲突时按半/倍速修正并记原值）。
+ */
+export function resolveSongBpm(input: { estimatedBpm: number; generationPrompt?: string; creativePrompt?: string }): {
+  bpm: number; source: "generation_prompt" | "creative_prompt" | "estimated"; lyrical: boolean; correctedFrom?: number; reasonZh: string;
+} {
+  const text = `${input.generationPrompt || ""}\n${input.creativePrompt || ""}`;
+  const lyrical = LYRICAL_RE.test(text) && !UPBEAT_RE.test(text);
+  const upbeat = UPBEAT_RE.test(text) && !LYRICAL_RE.test(text);
+  const fromGen = parseBpmFromText(input.generationPrompt);
+  const fromCreative = parseBpmFromText(input.creativePrompt);
+  const cands = [input.estimatedBpm / 2, input.estimatedBpm, input.estimatedBpm * 2].filter(b => b >= 50 && b <= 200);
+  const near = (a: number, b: number) => Math.abs(a - b) / b < 0.06;
+  if (fromGen) {
+    const corrected = fromCreative && !near(fromCreative, fromGen) ? fromCreative : undefined;
+    return { bpm: fromGen, source: "generation_prompt", lyrical, ...(corrected ? { correctedFrom: corrected } : {}), reasonZh: `以歌曲生成提示词 ${fromGen} BPM 为准${corrected ? `（创作说明写 ${corrected} BPM，为${near(corrected, fromGen * 2) ? "倍速" : near(corrected * 2, fromGen) ? "半速" : "不一致"}误判，已覆盖）` : ""}` };
+  }
+  const pickSemantic = () => (lyrical ? cands.filter(b => b <= 90).sort((a, b) => b - a)[0] : upbeat ? cands.filter(b => b >= 110).sort((a, b) => a - b)[0] : undefined);
+  if (fromCreative) {
+    // 创作说明的 BPM 与检测同族（×0.5/×1/×2）但与语义矛盾时，按语义取半/倍速
+    const sem = pickSemantic();
+    if (sem && !near(fromCreative, sem) && (near(fromCreative, sem * 2) || near(fromCreative * 2, sem)))
+      return { bpm: Math.round(sem), source: "estimated", lyrical, correctedFrom: fromCreative, reasonZh: `创作说明写 ${fromCreative} BPM，与检测和曲风语义（${lyrical ? "抒情" : "劲爆"}）不符，按${fromCreative > sem ? "半速" : "倍速"}修正为 ${Math.round(sem)} BPM` };
+    return { bpm: fromCreative, source: "creative_prompt", lyrical, reasonZh: `以创作说明 ${fromCreative} BPM 为准` };
+  }
+  const sem = pickSemantic();
+  if (sem) return { bpm: Number(sem.toFixed(1)), source: "estimated", lyrical, reasonZh: `检测候选 ${cands.map(c => c.toFixed(0)).join("/")} BPM，按曲风语义取 ${sem.toFixed(0)}` };
+  let bpm = input.estimatedBpm;
+  while (bpm < 70) bpm *= 2;
+  while (bpm > 180) bpm /= 2;
+  return { bpm: Number(bpm.toFixed(1)), source: "estimated", lyrical, reasonZh: `检测 ${bpm.toFixed(0)} BPM` };
+}

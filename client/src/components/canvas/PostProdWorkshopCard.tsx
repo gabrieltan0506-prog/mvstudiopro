@@ -1,4 +1,12 @@
 import { MontagePlanner } from "./MontagePlanner";
+import type { ConcatGrade } from "@shared/colorGrade";
+import { POSTPROD_GRADE_EVENT, type PostProdGradeRequest } from "@/lib/postProdQuickGrade";
+import { VideoGradePanel } from "./VideoGradePanel";
+import { VideoEditPanel, useVideoEditPrefillGuard } from "./VideoEditPanel";
+import { videoEditDurationSec } from "@/lib/videoEditSubmit";
+import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
+import { submitVideoGrade } from "@/lib/videoGradeSubmit";
+import type { MontageGrade } from "@/lib/montageFinish";
 import type { ManhuaVfxEnvironmentOption } from "@shared/manhuaVfxEnvironment";
 import type { ManhuaVfxState } from "@shared/manhuaVfx";
 import type { AdvisorEffectsControl, AdvisorEffectsRegistration } from "@shared/manhuaAdvisorEffects";
@@ -7,7 +15,7 @@ import { ManhuaVfxEditor, type ManhuaVfxSubmitInput } from "./ManhuaVfxEditor";
 import { adoptedManhuaVfxClipOptions, pendingManhuaVfxTrackedJobs, manhuaVfxImageOptions, manhuaVfxSceneOptions } from "@/lib/manhuaVfxWorkflow";
 import type { ManhuaAdvisorStudioContext } from "@shared/manhuaAdvisorStudioContext";
 import { createAdvisorScoringSourceGuard } from "@/lib/manhuaAdvisorScoringSource";
-import type { AdvisorScoringControl, AdvisorScoringRegistration, AdvisorBgmControl } from "@/lib/manhuaAdvisorWorkflowControl";
+import type { AdvisorScoringControl, AdvisorScoringRegistration, AdvisorBgmControl, AdvisorEditRegistration, AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { manhuaProjectStorage } from "@shared/manhuaProjectScope";
 import { UrlMaskedTextarea } from "@/components/UrlMaskedTextarea";
 import type { SubtitleHighlight } from "@shared/subtitleHighlights";
@@ -185,6 +193,10 @@ type PostProdWorkshopCardProps = {
   onVfxAdvisorDockChange?: (host: HTMLDivElement | null) => void;
   blocks: CanvasBlock[];
   onAdvisorControl?: AdvisorScoringRegistration;
+  /** 剪辑方案切点交给顾问 edit 控件（MV 第 5 步）；不传时保持原行为。 */
+  onAdvisorEditControl?: AdvisorEditRegistration;
+  /** 顾问 videoEdit 注册口：清单为超分页签所选这一条，prefill 打开「局部修改这条」并预填（只预填、不提交；面板确认/报价/提交/任务进行中拒绝）。 */
+  onAdvisorVideoEditControl?: AdvisorVideoEditRegistration;
   advisorContext?: ManhuaCreativeAdvisorContext;
   userId: string;
   userRole?: string | null;
@@ -248,6 +260,8 @@ export default function PostProdWorkshopCard({
   blocks,
   advisorContext,
   onAdvisorControl,
+  onAdvisorEditControl,
+  onAdvisorVideoEditControl,
   userId,
   userRole,
   bgmSeedNoteZh,
@@ -546,6 +560,27 @@ export default function PostProdWorkshopCard({
   const [upscaleProbeBusy, setUpscaleProbeBusy] = useState(false);
   const [upscaleSubmitBusy, setUpscaleSubmitBusy] = useState(false);
   const [enhanceChoice, setEnhanceChoice] = useState<{ target: "2k" | "4k"; fps: 30 }>({ target: "2k", fps: 30 });
+  /** 「调色这条」快捷入口：对超分页签所选单条直接调色，不必先出剪辑方案。 */
+  const [quickGradeOpen, setQuickGradeOpen] = useState(false);
+  const [quickGrade, setQuickGrade] = useState<MontageGrade | undefined>(undefined);
+  const [quickGradeBusy, setQuickGradeBusy] = useState(false);
+  /** 「局部修改这条」：同一所选单条，选区间 + 描述 + 参考图，报价确认后提交，原片保留。 */
+  const [quickEditOpen, setQuickEditOpen] = useState(false);
+  /** 顾问 videoEdit 预填（nonce 变化即覆盖面板内容）；只预填，提交仍须用户在面板确认。 */
+  const [advisorEditPrefill, setAdvisorEditPrefill] = useState<{ startSec: number; endSec: number; promptZh: string; referenceImageUrls?: string[]; nonce: number }>();
+  /** 面板确认/报价/提交/任务进行中时，顾问预填被拒并回中文原因，面板与确认框不动。 */
+  const editGuard = useVideoEditPrefillGuard();
+  useEffect(() => {
+    const onGrade = (event: Event) => {
+      const detail = (event as CustomEvent<PostProdGradeRequest>).detail;
+      if (!detail?.url) return;
+      setActiveTool("enhance");
+      setUpscaleVideoUrl(detail.url);
+      if (detail.mode === "edit") { setQuickEditOpen(true); setQuickGradeOpen(false); } else { setQuickGradeOpen(true); setQuickEditOpen(false); }
+    };
+    window.addEventListener(POSTPROD_GRADE_EVENT, onGrade);
+    return () => window.removeEventListener(POSTPROD_GRADE_EVENT, onGrade);
+  }, []);
   const [upscaleJobs, setUpscaleJobs] = useState<TrackedUpscale[]>(() =>
     loadTrackedUpscales(userId, localStorage, Boolean(mediaInput))
   );
@@ -836,6 +871,7 @@ export default function PostProdWorkshopCard({
               height: number;
               fps: number;
               transition?: { kind: "fade" | "dissolve" | "wipeleft"; durationSec: number };
+              grade?: ConcatGrade;
             };
           }
         | {
@@ -1334,6 +1370,31 @@ export default function PostProdWorkshopCard({
   useEffect(()=>{onAdvisorControl?.(projectScopeKey,(...args)=>scoringRef.current(...args));return()=>onAdvisorControl?.(projectScopeKey,null);},[onAdvisorControl,projectScopeKey]);
 
   const busy = queueMutation.isPending || disabled;
+  const advisorVideoEditLive = useRef({ url: upscaleVideoUrl, source: upscaleSource, busy });
+  advisorVideoEditLive.current = { url: upscaleVideoUrl, source: upscaleSource, busy };
+  // 顾问 videoEdit：清单 = 超分页签所选这一条（已读真实时长）；prefill 打开「局部修改这条」并预填，不提交
+  useEffect(() => {
+    if (!onAdvisorVideoEditControl) return;
+    const cur = () => advisorVideoEditLive.current;
+    onAdvisorVideoEditControl(
+      editGuard.withGuard(
+        createAdvisorVideoEditControl({
+          targets: () => {
+            const { url, source } = cur();
+            // 只认实测秒数（一位小数向下取，同面板与服务端）；不退回超分计费的向上取整秒数
+            const sec = videoEditDurationSec(source?.durationExactSec);
+            return url && sec > 0 ? [{ id: "postprod-selected", label: "后期工坊所选这一条成片", url, durationSec: sec }] : [];
+          },
+          busy: () => cur().busy,
+          open: p => {
+            setQuickEditOpen(true);
+            setAdvisorEditPrefill({ startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, ...(p.referenceImageUrl ? { referenceImageUrls: [p.referenceImageUrl] } : {}), nonce: Date.now() });
+          },
+        })
+      )
+    );
+    return () => onAdvisorVideoEditControl(null);
+  }, [onAdvisorVideoEditControl, editGuard]);
   const transitionKey = advisorWorkflowRevision([vfxScopeKey, clipOptions, concatSel, clipEdits, concatTransition, concatTransitionSec, concatRes, concatAspect]);
   const transitionKeyRef = useRef(transitionKey); transitionKeyRef.current = transitionKey;
   const transitionControl = useRef<AdvisorEffectsControl>(async () => "");
@@ -1787,7 +1848,7 @@ export default function PostProdWorkshopCard({
         <div className="min-w-0 space-y-3" aria-label="当前后期参数">
         {/* 拼接 */}
         <div hidden={activeTool !== "concat"} id="manhua-post-concat" className="scroll-mt-24 rounded-xl border border-white/10 bg-black/25 p-3">
-          <MontagePlanner onSourceChange={id => { setPreviewClip(id); setPreviewResult(null); setSequencePlaying(false); }} key={`${userId}:${projectScopeKey}`} clips={clipOptions} context={advisorContext} story={currentStoryContext} storage={storage} storageKey={`${storageKey}:${projectScopeKey}:montage`} busy={busy || scopedJobs.some(job => job.action === "concat" && (job.status === "queued" || job.status === "running"))} beforeSubmit={beforeSubmit} onSubmit={(params, title) => submit({ action: "concat", params }, title, true)} />
+          <MontagePlanner onAdvisorEditControl={onAdvisorEditControl} onSourceChange={id => { setPreviewClip(id); setPreviewResult(null); setSequencePlaying(false); }} key={`${userId}:${projectScopeKey}`} clips={clipOptions} context={advisorContext} story={currentStoryContext} storage={storage} storageKey={`${storageKey}:${projectScopeKey}:montage`} busy={busy || scopedJobs.some(job => job.action === "concat" && (job.status === "queued" || job.status === "running"))} beforeSubmit={beforeSubmit} onSubmit={(params, title) => submit({ action: "concat", params }, title, true)} concatResults={scopedJobs.filter(job => job.action === "concat" && job.status === "succeeded" && job.output).map(job => ({ jobId: job.jobId, title: job.label, output: job.output }))} />
           <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white">
             <Layers className="h-3.5 w-3.5 text-cyan-300" /> 拼接成片
           </div>
@@ -1933,6 +1994,47 @@ export default function PostProdWorkshopCard({
             <button type="button" disabled={!upscaleSource || upscaleSubmitBusy || busy || !upscaleSource.fps || !canWavespeedUpscale(upscaleSource.sourceResolution, enhanceChoice.target)} onClick={() => void submitUpscale(enhanceChoice.target, enhanceChoice.fps)} className={goCls}>
               {upscaleSubmitBusy ? "正在提交…" : `提交${enhanceChoice.target.toUpperCase()}／${enhanceChoice.fps}帧${upscaleProbedSec ? ` · 扣${canvasVideoEnhanceQuote(enhanceChoice.target, enhanceChoice.fps, upscaleProbedSec).totalCredits}积分` : ""}`}
             </button>
+            <button type="button" data-postprod-quick-grade aria-expanded={quickGradeOpen} disabled={!upscaleVideoUrl} onClick={() => setQuickGradeOpen(open => !open)} className={goCls}>调色这条</button>
+            <button type="button" data-postprod-quick-edit aria-expanded={quickEditOpen} disabled={!upscaleVideoUrl} onClick={() => setQuickEditOpen(open => !open)} className={goCls}>局部修改这条</button>
+            {quickEditOpen ? (
+              <div data-postprod-quick-edit-panel className="space-y-1.5 rounded-lg border border-white/10 p-2">
+                <p className="text-[11px] text-white/55">对所选这一条选区间描述修改，确认报价后提交；生成新版本，原片保留，云端成片自动先导入本人工作流。</p>
+                {upscaleSource && videoEditDurationSec(upscaleSource.durationExactSec) > 0 ? (
+                  <VideoEditPanel
+                    source={upscaleVideoUrl}
+                    durationSec={videoEditDurationSec(upscaleSource.durationExactSec)}
+                    disabled={busy}
+                    prefill={advisorEditPrefill}
+                    onAdvisorPrefillGuard={editGuard.register}
+                    onDone={result => toast.success("局部修改完成，已生成新版本", { description: result.jobId ? `单号 ${result.jobId}` : undefined })}
+                  />
+                ) : <p className="text-[11px] text-white/50">先读取真实尺寸与时长，再选择修改区间。</p>}
+              </div>
+            ) : null}
+            {quickGradeOpen ? (
+              <div data-postprod-quick-grade-panel className="space-y-1.5 rounded-lg border border-white/10 p-2">
+                <p className="text-[11px] text-white/55">对所选这一条直接全片或分段调色，生成新成片，原片保留；云端成片自动先导入本人工作流。</p>
+                {upscaleSource ? (
+                  <VideoGradePanel
+                    value={quickGrade}
+                    onChange={setQuickGrade}
+                    outputSec={upscaleSource.durationExactSec ?? upscaleSource.durationSec}
+                    disabled={quickGradeBusy || busy}
+                    adviceVideoGsUri={upscaleVideoUrl.startsWith("gs://") ? upscaleVideoUrl : undefined}
+                    adviceAspect={upscaleSource.width === upscaleSource.height ? "1:1" : upscaleSource.width > upscaleSource.height ? "16:9" : "9:16"}
+                    storyZh={currentStoryContext}
+                    onError={message => toast.error(message)}
+                  />
+                ) : <p className="text-[11px] text-white/50">先读取真实尺寸与时长，再设置调色。</p>}
+                <button type="button" data-postprod-quick-grade-submit disabled={!upscaleSource || !quickGrade || quickGradeBusy || busy} onClick={() => {
+                  const label = clipOptions.find(clip => clip.url === upscaleVideoUrl)?.label || "所选成片";
+                  setQuickGradeBusy(true);
+                  void submitVideoGrade({ videoUrl: upscaleVideoUrl, grade: quickGrade }, { queue: input => submit(input, `调色 · ${label}`, true) })
+                    .catch(error => toast.error(error instanceof Error ? maskMediaProviderDetails(error.message) : "调色提交失败"))
+                    .finally(() => setQuickGradeBusy(false));
+                }} className={goCls}>{quickGradeBusy ? "正在提交…" : "提交调色（新成片，原片保留）"}</button>
+              </div>
+            ) : null}
             {upscaleSource && (upscaleSource.sourceResolution === "2k" || upscaleSource.sourceResolution === "4k") ? <p className="text-xs text-amber-200">补帧请选择未超分原视频；先AI补帧并恢复原音轨，最后再超分。</p> : null}
             <p className="text-[10px] text-white/50">每30秒：2K超分100积分，4K超分180积分；30帧补帧19积分。不足30秒按30秒计，一次合计扣分。</p>
             {scopedUpscaleJobs.slice(0, 3).map(job => (

@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 import { createServer, type Server } from "node:http";
 import { mkdtemp, realpath, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { createManhuaLocalVideoUploadRouter } from "./manhuaLocalVideoUpload";
 import { createManhuaLocalVideoUploadService } from "./services/manhuaLocalVideoUploadService";
 import { MANHUA_LOCAL_VIDEO_CHUNK_BYTES } from "../shared/manhuaLocalVideoUpload";
@@ -17,8 +18,9 @@ afterEach(async () => {
   }
 });
 async function setup(options: { authorized?: boolean; owner?: boolean } = {}) {
+  // 系统临时目录（不写死 macOS 的 /private/tmp）；realpath 去掉 /tmp 软链，服务端拒绝软链路径。
   const root = await realpath(
-    await mkdtemp("/private/tmp/manhua-upload-http-test-")
+    await mkdtemp(path.join(tmpdir(), "manhua-upload-http-test-"))
   );
   const service = createManhuaLocalVideoUploadService({ root });
   const create = vi.spyOn(service, "create");

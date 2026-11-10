@@ -45,6 +45,11 @@ export const canvasMusicMvAssembleRouter = router({
             )
             .min(1),
           resolution: z.enum(["16:9", "9:16"]).default("16:9"),
+          /** 镜头环境音背景层电平（dB）；主音轨原歌曲恒 0 dB。 */
+          sourceAudioGainDb: z.number().min(-40).max(-12).optional(),
+          /** 1109 高光首尾音画同步淡入/淡出（秒）。 */
+          videoFadeInSec: z.number().finite().min(0).max(3).optional(),
+          videoFadeOutSec: z.number().finite().min(0).max(6).optional(),
         })
         .strict()
     )
@@ -231,6 +236,20 @@ export const canvasMusicMvAssembleRouter = router({
         })),
         musicUrl,
         musicOnly: true,
+        sourceAudioGainDb: input.sourceAudioGainDb ?? -20,
+        ...(input.videoFadeInSec ? { videoFadeInSec: input.videoFadeInSec } : {}),
+        ...(input.videoFadeOutSec ? { videoFadeOutSec: input.videoFadeOutSec } : {}),
+        // 1109 逐段实测适配：生成段实测够长才裁、演唱段按互相关落位（剪辑版本按剪辑点合成，不适配）
+        ...(edit ? {} : {
+          mvClipFit: slices.map(({ shot, offsetSec, durationSec }) => ({
+            shotId: shot.id,
+            kind: shot.kind ?? "generated",
+            songStartSec: Math.round((shot.startSec + offsetSec) * 1000) / 1000,
+            offsetSec,
+            durationSec,
+            ...(shot.kind === "footage" && shot.sourceClip ? { sourceStartSec: shot.sourceClip.sourceStartSec } : {}),
+          })),
+        }),
         ...(input.highlight ? { musicStartSec: Math.round(input.highlight.startSec*30)/30, musicEndSec: Math.round(input.highlight.endSec*30)/30 } : {}),
         musicVolume: 1,
         musicFadeInSec: 0,

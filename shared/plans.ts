@@ -196,6 +196,8 @@ export const CREDIT_COSTS = {
 
   // ─── 基础功能 ───────────────────────────────────
   mvAnalysis: 8,
+  /** 成片调色建议（AI 调色建议）：20 cr/次（用户 2026-11-09 定价）；管理员/supervisor 0 扣 */
+  montageGradeAdvice: 20,
   idolGeneration: 3,
   storyboard: 15,
   storyboardFlash: 8,

@@ -30,7 +30,12 @@ it('选节Markdown解析到cautions的疑点不能被原文回填吞掉',async()
  const source='# 手册\n\n'+Array.from({length:15},(_,i)=>`## 章${i}\n\n图：步骤。\n\n原文${i}。\n\n说明：条件${i}。`).join('\n\n');
  const data=new Map<string,any>();
  const invoke=vi.fn(async(req:any,scope:any)=>{
-  if(scope.prefix.includes('/selection-'))return envelope({pages:[{body:'# 手册\n\n## 章0\n\n图：步骤。\n\n原文0。\n\n说明：条件0。',cautions:[{kind:'uncertain',evidence:'原句「原文0」；问题：说明不清楚，缺少操作条件',message:'已标注疑点，等待全册整理后统一联网核实。'}]}]});
+  // 选节按 original-sections-json-selection-v4 合同只回 reading.blocks 标题（程序取回原章全文），疑点另记 cautions。
+  if(scope.prefix.includes('/selection-')){
+   const title=/^##\s+(.+)$/m.exec(JSON.parse(req.contents[0].parts[0].text).source.pages[0].body)![1].trim();
+   return envelope({pages:[{body:'选择理由',cautions:title==='章0'?[{kind:'uncertain',evidence:'原句「原文0」；问题：说明不清楚，缺少操作条件',message:'已标注疑点，等待全册整理后统一联网核实。'}]:[],
+    reading:{version:1,subtitle:'',accent:'jade',blocks:[{type:'prose',title,note:'',text:'该章值得配图'}]}}]});
+  }
   if(req.researchOnly)return envelope({verificationMarkdown:'已检查对应原句',sources:[{title:'测试资料',url:'https://example.invalid/source',content:'操作条件'}]});
   return envelope({pages:[{body:'# 手册\n\n## 主要重点｜章0\n\n图：步骤。\n\n原文0。\n\n说明：补充操作条件。'}]});
  });

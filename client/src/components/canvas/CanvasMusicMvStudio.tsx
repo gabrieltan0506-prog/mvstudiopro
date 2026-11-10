@@ -15,6 +15,7 @@ import { CanvasSunoSongAdvisor } from "./CanvasSunoSongAdvisor";
 import { uploadOneCanvasAsset } from "@/lib/canvasUpload";
 import { sunoSongBriefSchema } from "@shared/canvasMusicMv";
 import { CanvasMvTimelineEditor } from "./CanvasMvTimelineEditor";
+import { CanvasMvPostProdWorkbench } from "./CanvasMvPostProdWorkbench";
 import { musicMvEditIssues, musicMvEditKey, musicMvEditMaterialGap } from "@shared/canvasMusicMvEdit";
 import { CanvasMvCreativeAdvisor } from "./CanvasMvCreativeAdvisor";
 import {
@@ -25,7 +26,7 @@ import {
   shouldSyncMusicUploadedReferences,
 } from "@/lib/canvasMusicMvGuards";
 import { parseManhuaClipTargetDurationSec } from "@shared/manhuaScriptWorkbench";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
 import { pollJobUntilTerminal } from "@/lib/jobs";
@@ -39,16 +40,20 @@ import {
   refreshMusicCandidate,
 } from "@/lib/canvasMusicMvRecovery";
 import {
+  mvShotNeedsStagingReference,
   canvasMusicMvDraftInputSchema,
   validateCanvasMusicMvPlan,
 } from "@shared/canvasMusicMv";
 import {
   createMusicMvShotBlocks,
   musicMvReadyClips,
+  musicMvShotRequestSec,
+  musicMvSingingLyricPatch,
 } from "@/lib/canvasMusicMvWorkflow";
 import {
   defaultCanvasBlock,
   type CanvasBlock,
+  type CanvasVideoModel,
   type CanvasEdge,
 } from "@/lib/canvasTypes";
 import type {
@@ -60,15 +65,68 @@ import {
   CANVAS_BGM_CREDITS_PER_RUN,
 } from "@shared/canvasGenerationPricing";
 import { CREDIT_COSTS } from "@shared/plans";
+import { CanvasMvLyricTableEditor } from "./CanvasMvLyricTableEditor";
+import { planMvHighlightFades } from "@shared/canvasMusicMvLyricKinds";
+import { recommendMusicMvHighlight } from "@shared/musicMvHighlight";
+import { CanvasMvShotReferencePicker } from "./CanvasMvShotReferencePicker";
+import type { CanvasMusicMvFinalEdit, CanvasMusicMvFinalEditJob, CanvasMusicMvFinalGrade, CanvasMusicMvFinalUpscale } from "@shared/canvasMusicMv";
+import { canvasMusicMvFinalEditJobSchema, capMvFinalRecords, MV_FINAL_EDIT_JOBS_MAX, MV_FINAL_RECORDS_MAX } from "@shared/canvasMusicMv";
+import {
+  measuredExactSec,
+  pollVideoToolJobsOnce,
+  videoGradePanelSec,
+  type VideoToolJobSettled,
+} from "@/lib/videoToolJobs";
+import { videoEditDurationSec } from "@/lib/videoEditSubmit";
+import { VideoEditPanel, useVideoEditPrefillGuard, type VideoEditResult } from "./VideoEditPanel";
+import { createAdvisorVideoEditControl, createAdvisorVideoEditHub } from "@/lib/advisorVideoEditControl";
+import { VideoGradePanel } from "./VideoGradePanel";
+import { submitVideoGrade } from "@/lib/videoGradeSubmit";
+import type { MontageGrade } from "@/lib/montageFinish";
+import {
+  fetchVideoUpscaleStatus,
+  probeWorkflowVideoSource,
+  startVideoUpscale,
+  VideoUpscaleSubmitError,
+} from "@/lib/videoUpscaleApi";
+import {
+  MV_FINAL_UPSCALE_TARGETS,
+  mvFinalUpscaleBlocker,
+  mvFinalUpscaleConfirmText,
+  mvFinalUpscaleDownloadName,
+  mvFinalUpscaleNeedsPoll,
+  mvFinalUpscaleNeedsVersionBlock,
+  mvFinalUpscaleQuote,
+  mvFinalUpscaleScopeKey,
+  mvFinalUpscaleStatusText,
+  mvFinalUpscaleSupported,
+  mvFinalUpscaleVersionBlockId,
+  type MvUpscaleTarget,
+} from "@/lib/musicMvFinalUpscale";
+import {
+  EMPTY_MV_SHOT_REFERENCES,
+  mvShotReferenceGaps,
+  mvShotReferencesSchema,
+  type MvShotReferences,
+} from "@shared/canvasMusicMvReferences";
+import { mvSceneConsistencyPairs, parseMvSceneLocations } from "@shared/canvasMusicMvSceneLock";
 
 type Props = {
   projectId?: string;
+  /** 第 5 步后期工坊与创作顾问的账户作用域；未登录时不挂后期工坊。 */
+  userId?: string;
   block: CanvasBlock;
   blocks: CanvasBlock[];
   onPatch: (patch: Partial<CanvasBlock>) => void;
   onAdd: (blocks: CanvasBlock[], edges: CanvasEdge[]) => void;
   runShot: (id: string) => Promise<boolean | undefined>;
   getBlocks: () => CanvasBlock[];
+  /** 1109：把参考槽位同步到已铺的镜头块（出片真源是镜头块 musicMvShot.references）。 */
+  onPatchBlock?: (id: string, patch: Partial<CanvasBlock>) => void;
+  /** 1109 模型可选：漫剧同一模型表经 filterCanvasVideoModelOptions（会员闸门）再筛 MV 可用引擎。 */
+  videoModelOptions?: Array<{ id: CanvasVideoModel; label: string }>;
+  /** 1110 多人互动镜头自动白模（页面注入的创作顾问白模入口）。 */
+  mvPrevis?: import("./CanvasMvShotReferencePicker").MvPrevisBridge;
 };
 const field = "w-full rounded border border-white/20 bg-black/30 p-1.5 text-xs";
 const button =
@@ -104,10 +162,14 @@ export function CanvasMusicMvStudio({
   block,
   blocks,
   projectId,
+  userId,
   onPatch,
   onAdd,
   runShot,
   getBlocks,
+  onPatchBlock,
+  mvPrevis,
+  videoModelOptions,
 }: Props) {
   const state = block.musicMv || { status: "idle", candidates: [] };
   const latest = useRef(state);
@@ -139,7 +201,24 @@ export function CanvasMusicMvStudio({
   const music = trpc.mvAnalysis.queueManhuaBgm.useMutation();
   const upload = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const plan = trpc.canvasMusicMv.draftPlan.useMutation();
+  /** 1109 场景连续性锁：出视频前同地点场景图一致性预检（只读、零积分）。 */
+  const sceneLockCheck = trpc.stockFootage.sceneLockCheck.useMutation({ retry: false });
+  const sceneLockOf = (source: CanvasMusicMvState) => {
+    const lock = parseMvSceneLocations(source.plan?.shots || [], source.creativePrompt || block.prompt);
+    return { lock, nameOf: (shotId: string) => lock.locations.find(l => l.id === lock.byShot[shotId])?.nameZh };
+  };
+  const recognizeLyrics = trpc.canvasMusicMv.recognizeLyrics.useMutation({ retry: false });
+  const reviseForLyrics = trpc.canvasMusicMv.reviseForLyrics.useMutation({ retry: false });
   const assemble = trpc.canvasMusicMvAssemble.queue.useMutation();
+  const queuePostProd = trpc.mvAnalysis.queuePostProd.useMutation();
+  const [gradeOpen, setGradeOpen] = useState(false);
+  const [gradeDraft, setGradeDraft] = useState<MontageGrade | undefined>(undefined);
+  const [gradeOutputSec, setGradeOutputSec] = useState<{ url: string; sec: number } | null>(null);
+  /** 顾问 videoEdit：第 5 步后期工坊与第 6 步成片共用一个汇总；预填只打开面板，提交仍须用户在面板确认。 */
+  const advisorVideoEditHub = useMemo(() => createAdvisorVideoEditHub(), []);
+  const [finalEditPrefill, setFinalEditPrefill] = useState<{ startSec: number; endSec: number; promptZh: string; nonce: number }>();
+  const finalEditGuard = useVideoEditPrefillGuard();
+  const [editOpen, setEditOpen] = useState(false);
   const patch = (
     delta: Partial<CanvasMusicMvState>,
     extra: Partial<CanvasBlock> = {}
@@ -579,7 +658,9 @@ export function CanvasMusicMvStudio({
         state.plan,
         state.planRequestId,
         refs,
-        selected
+        selected,
+        effectiveShotReferences(latest.current),
+        latest.current.lyricTable
       );
       for (const shot of shots)
         if (shot.musicMvShot?.kind === "footage" && shot.outputUrl) {
@@ -612,10 +693,75 @@ export function CanvasMusicMvStudio({
     const wanted = new Set(musicMvShotSlices(source.plan, highlightRange(source)).map(row=>row.shot.id));
     return (source.shotBlockIds || []).filter(id => wanted.has(getBlocks().find(row=>row.id === id)?.musicMvShot?.shotId || ""));
   };
+  /** 每镜有效参考 = 本镜槽位 + 未单独设定时继承全片主锚图。 */
+  const effectiveShotReferences = (source: CanvasMusicMvState): Record<string, MvShotReferences> => {
+    const out: Record<string, MvShotReferences> = {};
+    for (const shot of source.plan?.shots || []) {
+      const own = source.shotReferences?.[shot.id];
+      if (!own && !source.anchorImage) continue;
+      out[shot.id] = mvShotReferencesSchema.parse({
+        ...EMPTY_MV_SHOT_REFERENCES,
+        ...(own || {}),
+        ...(!own?.anchorImage && source.anchorImage ? { anchorImage: source.anchorImage } : {}),
+      });
+    }
+    return out;
+  };
+  /** 参考变更：写入音乐块状态，并同步到已铺镜头块（出片读镜头块）。已出片镜头不改。 */
+  const updateReferences = (next: { anchorImage?: CanvasMusicMvState["anchorImage"]; shotReferences: Record<string, MvShotReferences> }) => {
+    patch({ anchorImage: next.anchorImage, shotReferences: next.shotReferences });
+    const effective = effectiveShotReferences(latest.current);
+    const { nameOf } = sceneLockOf(latest.current);
+    for (const id of latest.current.shotBlockIds || []) {
+      const shotBlock = getBlocks().find(row => row.id === id);
+      const binding = shotBlock?.musicMvShot;
+      if (!shotBlock || !binding || binding.kind === "footage") continue;
+      if (shotBlock.status === "running" || (shotBlock.videoTaskId && shotBlock.videoTaskStatus !== "failed")) continue;
+      const refs = effective[binding.shotId];
+      if (!refs) continue;
+      const gaps = mvShotReferenceGaps(refs, shotBlock.videoModel, { requiresStaging: mvShotNeedsStagingReference(binding.complexity) }).blocking;
+      onPatchBlock?.(id, {
+        musicMvShot: { ...binding, references: refs, ...(nameOf(binding.shotId) ? { sceneLocationZh: nameOf(binding.shotId) } : {}) },
+        seedance25WorkMode: "reference_to_video",
+        error: gaps.length ? `参考素材不完整：${gaps.map(g => g.messageZh).join("；")}` : undefined,
+      });
+    }
+  };
   const render = () =>
     perform(async () => {
       const ids = activeShotIds(latest.current);
       if (!ids.length) throw new Error("请先确认分镜并铺设镜头");
+      // 1109 硬规则：整批先核参考，任一镜缺项即全部不发（无参考不得退回文生）。
+      const gapLines: string[] = [];
+      ids.forEach((id, i) => {
+        const shotBlock = getBlocks().find(row => row.id === id);
+        const binding = shotBlock?.musicMvShot;
+        if (!shotBlock || !binding || binding.kind === "footage" || (shotBlock.status === "done" && shotBlock.outputUrl)) return;
+        // 吟唱段不生成：按顾问建议选素材合成（素材填充），未合成前整批拦
+        if (binding.fillRequested) { gapLines.push(`镜头 ${i + 1}：吟唱段走素材填充，请在「为镜头选参考素材」里按建议选素材并合成`); return; }
+        if (!binding.references) {
+          if (!binding.referenceImages.length) gapLines.push(`镜头 ${i + 1}：未选参考素材`);
+          return;
+        }
+        // 超长参考片出片时自动裁切（canvasRunBlock），这里不因「超长」拦
+        const gaps = mvShotReferenceGaps(binding.references, shotBlock.videoModel, { requiresStaging: mvShotNeedsStagingReference(binding.complexity) }).blocking.filter(g => !/尚未自动裁切/.test(g.messageZh));
+        if (gaps.length) gapLines.push(`镜头 ${i + 1}：${gaps.map(g => g.messageZh).join("、")}`);
+        // 演唱段只读用户确认版歌词时间表；未确认不得生成（非演唱段不受影响）
+        if (binding.kind === "singing" && (latest.current.lyricTable?.status !== "confirmed" || !binding.lyricLines?.length))
+          gapLines.push(`镜头 ${i + 1}：演唱段，先确认本段歌词`);
+      });
+      if (gapLines.length) throw new Error(`请先为镜头选参考素材，本次未提交、未扣费。${gapLines.join("；")}`);
+      // 1109 场景连续性锁：同地点场景图 vs 母版一致性预检（软提示，可继续；检查失败不拦）
+      const { lock: sceneLock } = sceneLockOf(latest.current);
+      const sceneGroups = mvSceneConsistencyPairs(sceneLock, effectiveShotReferences(latest.current)).map(g => ({
+        ...g,
+        items: g.items.map(it => ({ ...it, shotLabel: `镜头 ${(latest.current.plan?.shots || []).findIndex(s => s.id === it.shotId) + 1}` })),
+      }));
+      if (sceneGroups.length) {
+        const report = await sceneLockCheck.mutateAsync({ groups: sceneGroups }).catch(() => null);
+        if (report?.warningsZh.length && !window.confirm(`同一地点的场景图可能不一致：\n${report.warningsZh.join("\n")}\n\n建议回到「为镜头选参考素材」用「按母版重绘」。仍要继续出片吗？`))
+          throw new Error("已取消：请先统一同一地点的场景图。本次未提交、未扣费。");
+      }
       patch({ status: "rendering", error: undefined });
       for (let i = 0; i < ids.length; i++) {
         if (
@@ -690,6 +836,11 @@ export function CanvasMusicMvStudio({
           plan: source.plan,
           clips,
           resolution: range ? "9:16" : block.aspectRatio === "9:16" ? "9:16" : "16:9",
+          // 1109 高光结尾必须淡出（对齐拍点/句尾），起点落在句中做短淡入；用户可调
+          ...(range ? (() => {
+            const f = planMvHighlightFades({ range, lines: source.lyricTable?.lines, beatGrid: source.plan.beatGrid, fadeInSec: source.highlightFadeInSec, fadeOutSec: source.highlightFadeOutSec });
+            return { ...(f.fadeInSec > 0 ? { videoFadeInSec: f.fadeInSec } : {}), ...(f.fadeOutSec > 0 ? { videoFadeOutSec: f.fadeOutSec } : {}) };
+          })() : {}),
         };
         patch({
           assembleRequestId: submission.requestId,
@@ -767,6 +918,472 @@ export function CanvasMusicMvStudio({
       if (identityCurrent())
         patch({ finalBlockId: final.id, status: "done", error: undefined });
     });
+  /** 1109 成片超分：只改本记录，其他字段以 latest 为准，避免轮询与按钮并发互相覆盖。 */
+  const patchUpscale = (id: string, delta: Partial<CanvasMusicMvFinalUpscale>) =>
+    patch({
+      finalUpscales: (latest.current.finalUpscales || []).map(r =>
+        r.id === id ? { ...r, ...delta } : r
+      ),
+    });
+  const finalBlock = state.finalBlockId
+    ? blocks.find(b => b.id === state.finalBlockId)
+    : undefined;
+  const finalSource = String(finalBlock?.outputUrl || "").trim();
+  const upscaleFinal = (target: MvUpscaleTarget) =>
+    perform(async () => {
+      const finalId = latest.current.finalBlockId;
+      const fb = finalId ? getBlocks().find(b => b.id === finalId) : undefined;
+      const src = String(fb?.outputUrl || "").trim();
+      if (!finalId || !/^https:\/\//i.test(src))
+        throw new Error("请先完成合成成片再超分");
+      const blocker = mvFinalUpscaleBlocker(latest.current.finalUpscales, finalId, target);
+      if (blocker) throw new Error(blocker);
+      setProgress("读取成片实测规格…");
+      const meta = await probeWorkflowVideoSource(src);
+      if (!mvFinalUpscaleSupported(meta.sourceResolution, target))
+        throw new Error(
+          meta.sourceResolution === "480p"
+            ? "该成片最高可超分到 2K"
+            : "该成片已达到目标档位，无需超分"
+        );
+      const credits = mvFinalUpscaleQuote(target, meta.durationSec);
+      if (
+        !window.confirm(
+          mvFinalUpscaleConfirmText({ target, width: meta.width, height: meta.height, durationSec: meta.durationSec, credits })
+        )
+      )
+        return;
+      // 提交结果未确认的旧记录复用同一条（服务端同源同档幂等），不另起记录。
+      const unknown = (latest.current.finalUpscales || []).find(
+        r => r.finalBlockId === finalId && r.target === target && r.status === "submission_unknown"
+      );
+      const record: CanvasMusicMvFinalUpscale = {
+        id: unknown?.id || crypto.randomUUID(),
+        finalBlockId: finalId,
+        sourceUrl: src,
+        target,
+        status: "submitting",
+        durationSec: meta.durationSec,
+        width: meta.width,
+        height: meta.height,
+        creditsQuoted: credits,
+      };
+      patch({
+        // 写入先截留到上限（丢最旧的已完成项，进行中 / 待核对的不丢），不让第 41 条把整块草稿写成读不回的坏档
+        finalUpscales: capMvFinalRecords(
+          [...(latest.current.finalUpscales || []).filter(r => r.id !== record.id), record],
+          MV_FINAL_RECORDS_MAX
+        ),
+      });
+      try {
+        const started = await startVideoUpscale({
+          videoUrl: src,
+          target,
+          durationSec: meta.durationSec,
+          sourceResolution: meta.sourceResolution,
+          scopeKey: mvFinalUpscaleScopeKey(block.id, finalId, target),
+        });
+        patchUpscale(record.id, {
+          taskId: started.taskId,
+          status: started.status === "succeeded" ? "running" : started.status,
+          creditsUsed: started.creditsUsed,
+          error: undefined,
+        });
+        setProgress(`${target.toUpperCase()} 超分已提交`);
+      } catch (e) {
+        if (e instanceof VideoUpscaleSubmitError && e.definitelyNotStarted) {
+          patch({ finalUpscales: (latest.current.finalUpscales || []).filter(r => r.id !== record.id) });
+        } else {
+          patchUpscale(record.id, {
+            status: "submission_unknown",
+            error: e instanceof Error ? e.message : "提交结果未确认",
+          });
+        }
+        throw e;
+      }
+    });
+  // 超分任务轮询（刷新恢复：记录随 MV 块持久化，挂载即接管）；成功后把结果挂成成片旁的新版本块。
+  const upscalePollKey = (state.finalUpscales || [])
+    .filter(mvFinalUpscaleNeedsPoll)
+    .map(r => `${r.id}:${r.taskId}`)
+    .join(",");
+  useEffect(() => {
+    if (!upscalePollKey) return;
+    let cancelled = false;
+    const tick = async () => {
+      for (const r of (latest.current.finalUpscales || []).filter(mvFinalUpscaleNeedsPoll)) {
+        try {
+          const snap = await fetchVideoUpscaleStatus(r.taskId!);
+          if (cancelled || !alive.current) return;
+          patchUpscale(r.id, {
+            status: snap.status === "succeeded" && !snap.videoUrl ? "running" : snap.status,
+            ...(snap.videoUrl ? { videoUrl: snap.videoUrl } : {}),
+            ...(snap.creditsUsed ? { creditsUsed: snap.creditsUsed } : {}),
+            error: snap.status === "failed" ? snap.error : undefined,
+          });
+        } catch {
+          // 查询失败按瞬态处理，下一轮再查；终态只信服务端
+        }
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 8_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upscalePollKey]);
+  const versionKey = (state.finalUpscales || [])
+    .filter(mvFinalUpscaleNeedsVersionBlock)
+    .map(r => r.id)
+    .join(",");
+  useEffect(() => {
+    if (!versionKey) return;
+    for (const r of (latest.current.finalUpscales || []).filter(mvFinalUpscaleNeedsVersionBlock)) {
+      const source = getBlocks().find(b => b.id === r.finalBlockId);
+      const id = mvFinalUpscaleVersionBlockId(r.finalBlockId, r);
+      if (!getBlocks().some(b => b.id === id)) {
+        const anchorBlock = source || block;
+        const version = defaultCanvasBlock(
+          "video",
+          anchorBlock.x + (r.target === "4k" ? anchorBlock.width + 60 : 0),
+          anchorBlock.y + anchorBlock.height + 60,
+          anchorBlock.id
+        );
+        version.id = id;
+        version.prompt = `${source?.prompt || "MV 成片"} · ${r.target.toUpperCase()} 超分版`;
+        version.status = "done";
+        version.outputUrl = r.videoUrl;
+        version.outputUrls = [r.videoUrl!];
+        version.aspectRatio = source?.aspectRatio || version.aspectRatio;
+        onAdd([version], source ? [{ fromId: source.id, toId: id }] : []);
+      }
+      patchUpscale(r.id, { versionBlockId: id });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versionKey]);
+  /** 1109 成片调色：只改本记录，其他字段以 latest 为准（同超分写法）。 */
+  const patchGrade = (id: string, delta: Partial<CanvasMusicMvFinalGrade>) =>
+    patch({
+      finalGrades: (latest.current.finalGrades || []).map(r =>
+        r.id === id ? { ...r, ...delta } : r
+      ),
+    });
+  /** 读成片实测原始秒（服务端实读，与报价、提交同一把尺）；进两个面板时再按各自规则取一位小数。 */
+  const measureFinalSec = async (url: string) => {
+    const sec = measuredExactSec(await probeWorkflowVideoSource(url));
+    if (!sec) throw new Error("读取成片时长失败，请稍后重试");
+    return sec;
+  };
+  const openFinalGrade = () =>
+    perform(async () => {
+      const src = finalSource;
+      if (!state.finalBlockId || !/^https:\/\//i.test(src))
+        throw new Error("请先完成合成成片再调色");
+      setGradeOpen(true);
+      if (gradeOutputSec?.url === src) return;
+      setProgress("读取成片实测时长…");
+      setGradeOutputSec({ url: src, sec: await measureFinalSec(src) });
+      setProgress("");
+    });
+  /** 单片调色：后期 concat（单片 + grade 透传）；结果作为新版本块挂在成片旁，原成片保留。 */
+  const gradeFinal = (grade: MontageGrade | undefined) =>
+    perform(async () => {
+      const finalId = latest.current.finalBlockId;
+      const fb = finalId ? getBlocks().find(b => b.id === finalId) : undefined;
+      const src = String(fb?.outputUrl || "").trim();
+      if (!finalId || !/^https:\/\//i.test(src))
+        throw new Error("请先完成合成成片再调色");
+      if (!grade) throw new Error("请先设置调色参数");
+      if ((latest.current.finalGrades || []).some(r => r.finalBlockId === finalId && ["submitting", "queued", "running"].includes(r.status)))
+        throw new Error("该成片已有调色任务进行中，请等待完成");
+      const record: CanvasMusicMvFinalGrade = {
+        id: crypto.randomUUID(),
+        finalBlockId: finalId,
+        sourceUrl: src,
+        grade,
+        status: "submitting",
+      };
+      patch({ finalGrades: capMvFinalRecords([...(latest.current.finalGrades || []), record], MV_FINAL_RECORDS_MAX) });
+      try {
+        const jobId = await submitVideoGrade(
+          { videoUrl: src, grade, scopeKey: `mv-grade:${block.id}:${record.id}`.slice(0, 128) },
+          { queue: input => queuePostProd.mutateAsync(input) }
+        );
+        patchGrade(record.id, { jobId, status: "queued", error: undefined });
+        setGradeOpen(false);
+        setProgress("调色已提交");
+      } catch (e) {
+        patchGrade(record.id, {
+          status: "failed",
+          error: e instanceof Error ? e.message : "调色提交失败",
+        });
+        throw e;
+      }
+    });
+  /** 当前成片仍有局部修改在处理：入口与顾问预填都锁住（防重复提交）。 */
+  const finalEditPending = (state.finalEditJobs || []).some(t => t.finalBlockId === state.finalBlockId);
+  const openFinalEdit = () =>
+    perform(async () => {
+      const src = finalSource;
+      if (!state.finalBlockId || !/^https:\/\//i.test(src))
+        throw new Error("请先完成合成成片再局部修改");
+      if ((latest.current.finalEditJobs || []).some(t => t.finalBlockId === state.finalBlockId))
+        throw new Error("该成片有局部修改正在处理，完成后作为新版本放在成片旁");
+      setEditOpen(true);
+      if (gradeOutputSec?.url === src) return;
+      setProgress("读取成片实测时长…");
+      setGradeOutputSec({ url: src, sec: await measureFinalSec(src) });
+      setProgress("");
+    });
+  const finalEditLive = useRef({ finalSource, finalBlockId: state.finalBlockId, sec: gradeOutputSec, busy, editPending: finalEditPending });
+  finalEditLive.current = { finalSource, finalBlockId: state.finalBlockId, sec: gradeOutputSec, busy, editPending: finalEditPending };
+  useEffect(() => {
+    const cur = () => finalEditLive.current;
+    const base = createAdvisorVideoEditControl({
+      targets: () => {
+        const { finalSource: url, finalBlockId, sec } = cur();
+        // 实测秒数一位小数向下取（同面板与服务端选段），10.08 → 10.0
+        const durationSec = sec?.url === url ? videoEditDurationSec(sec.sec) : 0;
+        return finalBlockId && /^https:\/\//i.test(url) && durationSec ? [{ id: "mv-final", label: "MV 合成成片", url, durationSec }] : [];
+      },
+      busy: () => cur().busy || cur().editPending,
+      open: p => {
+        setEditOpen(true);
+        setFinalEditPrefill({ startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, nonce: Date.now() });
+      },
+    });
+    const register = advisorVideoEditHub.register("mv-final");
+    // 面板确认框打开、正在报价、提交或任务进行中时，顾问预填被拒并回中文原因（面板内容不动）
+    register(finalEditGuard.withGuard(async (action, signal) => {
+      // 成片时长未读过：先读实测时长（只读元数据，不扣费），清单才列出本成片
+      const { finalSource: url, finalBlockId, sec } = cur();
+      if (finalBlockId && /^https:\/\//i.test(url) && sec?.url !== url) {
+        const measured = await measureFinalSec(url);
+        signal.throwIfAborted();
+        setGradeOutputSec({ url, sec: measured });
+        finalEditLive.current = { ...cur(), sec: { url, sec: measured } };
+      }
+      return base(action, signal);
+    }));
+    return () => register(null);
+  }, [advisorVideoEditHub]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** 局部修改提交成功（面板 onSubmitted）：任务号、请求号、发起时间、实际区间记到 MV 草稿（随块保存），刷新后由轮询接管。 */
+  const trackFinalEdit = (finalId: string, sourceUrl: string, job: { jobId: string; requestId: string; startSec: number; endSec: number }) => {
+    const list = latest.current.finalEditJobs || [];
+    if (list.some(t => t.jobId === job.jobId) || (latest.current.finalEdits || []).some(r => r.jobId === job.jobId)) return;
+    const parsed = canvasMusicMvFinalEditJobSchema.safeParse({
+      kind: "edit",
+      jobId: job.jobId,
+      requestId: job.requestId,
+      startedAt: new Date().toISOString(),
+      sourceUrl,
+      range: { startSec: job.startSec, endSec: job.endSec },
+      finalBlockId: finalId,
+    });
+    // 不合法或超上限不写（坏档会让整块草稿读不回来）；本次挂载内面板自己仍在等结果
+    if (!parsed.success || list.length >= MV_FINAL_EDIT_JOBS_MAX) return;
+    patch({ finalEditJobs: [...list, parsed.data] });
+  };
+  /**
+   * 局部修改完成：记录随 MV 块保存（同任务号只记一次），并在成片旁挂「局部修改版」版本块（块号按任务号定，
+   * 重复落也只一块）；该任务的在途记录同批清掉。面板 onDone 与刷新后轮询都走这里。原成片不动。
+   */
+  const applyFinalEdit = (finalId: string, sourceUrl: string, result: VideoEditResult) => {
+    const url = String(result?.url || "").trim();
+    if (!result?.jobId) return;
+    const pending = latest.current.finalEditJobs || [];
+    const rest = pending.filter(t => t.jobId !== result.jobId);
+    const clearPending = rest.length !== pending.length ? { finalEditJobs: rest.length ? rest : undefined } : {};
+    if (!/^https:\/\//i.test(url) || (latest.current.finalEdits || []).some(r => r.jobId === result.jobId)) {
+      if (rest.length !== pending.length) patch(clearPending);
+      return;
+    }
+    const recordId = crypto.randomUUID();
+    const id = `mvedit-${finalId}-${result.jobId}`.slice(0, 200);
+    const source = getBlocks().find(b => b.id === finalId);
+    const anchorBlock = source || block;
+    const version = defaultCanvasBlock(
+      "video",
+      anchorBlock.x,
+      anchorBlock.y + anchorBlock.height * 2 + 120,
+      anchorBlock.id
+    );
+    version.id = id;
+    const range = result.editedRange;
+    version.prompt = `${source?.prompt || "MV 成片"} · 局部修改版${range ? `（${range.startSec}–${range.endSec}秒）` : ""}`;
+    version.status = "done";
+    version.outputUrl = url;
+    version.outputUrls = [url];
+    version.aspectRatio = source?.aspectRatio || version.aspectRatio;
+    onAdd([version], source ? [{ fromId: source.id, toId: id }] : []);
+    const record: CanvasMusicMvFinalEdit = {
+      id: recordId,
+      finalBlockId: finalId,
+      sourceUrl,
+      jobId: result.jobId,
+      videoUrl: url,
+      ...(result.gcsUri ? { gcsUri: result.gcsUri } : {}),
+      ...(result.durationSec ? { durationSec: result.durationSec } : {}),
+      ...(range ? { editedRange: range } : {}),
+      versionBlockId: id,
+    };
+    patch({ finalEdits: capMvFinalRecords([...(latest.current.finalEdits || []), record], MV_FINAL_RECORDS_MAX), ...clearPending });
+    // 旧成片的在途修改晚到时不收起当前成片正开着的面板
+    if (finalId === latest.current.finalBlockId) setEditOpen(false);
+    setProgress("局部修改完成，已作为新版本放在成片旁");
+  };
+  /** 在途局部修改落定：成功按上面同一落点作新版本；失败 / 被拒提示服务端原句（即「积分已全额退回」那句），然后清掉在途记录。 */
+  const settleFinalEditJob = (job: CanvasMusicMvFinalEditJob, outcome: VideoToolJobSettled) => {
+    if (outcome.status === "succeeded") {
+      applyFinalEdit(job.finalBlockId, job.sourceUrl, {
+        url: outcome.url,
+        jobId: job.jobId,
+        ...(outcome.gcsUri ? { gcsUri: outcome.gcsUri } : {}),
+        ...(outcome.durationSec ? { durationSec: outcome.durationSec } : {}),
+        editedRange: outcome.editedRange ?? job.range,
+      });
+      return;
+    }
+    const pending = latest.current.finalEditJobs || [];
+    if (!pending.some(t => t.jobId === job.jobId)) return;
+    const rest = pending.filter(t => t.jobId !== job.jobId);
+    // 原因写进 MV 的提示条（随草稿保存，schema 上限 2000 字），刷新后仍能看到这次未成功的原因
+    patch({ finalEditJobs: rest.length ? rest : undefined, error: outcome.message.slice(0, 2000) });
+  };
+  /** 轮询一轮（挂载即跑，刷新恢复就是这一轮）：按 MV 草稿里的在途记录查后期任务，终态落定。 */
+  const pollFinalEditJobs = (isCancelled: () => boolean) =>
+    pollVideoToolJobsOnce({
+      jobs: latest.current.finalEditJobs || [],
+      fetchJob: jobId => utils.mvAnalysis.getPostProdJob.fetch({ jobId }),
+      isCancelled: () => isCancelled() || !alive.current,
+      onSettled: settleFinalEditJob,
+    });
+  // 轮询长期挂着：落定时要用最新一次渲染的 onAdd / 画布连线，不能用定时器建立那次的旧闭包
+  const pollFinalEditJobsRef = useRef(pollFinalEditJobs);
+  pollFinalEditJobsRef.current = pollFinalEditJobs;
+  // 局部修改在途任务轮询（刷新恢复：记录随 MV 块保存，挂载即接管）；同调色轮询的写法与间隔。
+  const finalEditJobKey = (state.finalEditJobs || []).map(t => t.jobId).join(",");
+  useEffect(() => {
+    if (!finalEditJobKey) return;
+    let cancelled = false;
+    let inFlight = false;
+    const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        await pollFinalEditJobsRef.current(() => cancelled);
+      } finally {
+        inFlight = false;
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 8_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finalEditJobKey]);
+  /** 刷新前停在「提交中」、没拿到任务号的调色记录：本次挂载不可能还在提交，改为「提交结果未确认」，不再永久挡住新的调色。 */
+  const releaseStuckGradeSubmits = () => {
+    if (!(latest.current.finalGrades || []).some(r => r.status === "submitting" && !r.jobId)) return;
+    patch({
+      finalGrades: (latest.current.finalGrades || []).map(r =>
+        r.status === "submitting" && !r.jobId
+          ? { ...r, status: "submission_unknown" as const, error: "页面刷新时调色尚未提交完成，结果未确认，可重新提交" }
+          : r
+      ),
+    });
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(releaseStuckGradeSubmits, []);
+  // 调色任务轮询（刷新恢复：记录随 MV 块持久化，挂载即接管）；成功后挂成成片旁的新版本块。
+  const gradeNeedsPoll = (r: CanvasMusicMvFinalGrade) =>
+    Boolean(r.jobId) && (r.status === "queued" || r.status === "running");
+  const gradePollKey = (state.finalGrades || [])
+    .filter(gradeNeedsPoll)
+    .map(r => `${r.id}:${r.jobId}`)
+    .join(",");
+  useEffect(() => {
+    if (!gradePollKey) return;
+    let cancelled = false;
+    const tick = async () => {
+      for (const r of (latest.current.finalGrades || []).filter(gradeNeedsPoll)) {
+        try {
+          const job = await utils.mvAnalysis.getPostProdJob.fetch({ jobId: r.jobId! });
+          if (cancelled || !alive.current) return;
+          const status = String(job?.status || "");
+          const out = job?.output as { url?: unknown } | null | undefined;
+          if (status === "succeeded" && typeof out?.url === "string")
+            patchGrade(r.id, { status: "succeeded", videoUrl: out.url, error: undefined });
+          else if (status === "failed")
+            patchGrade(r.id, { status: "failed", error: job?.error || "调色失败" });
+          else if (status === "running" && r.status !== "running")
+            patchGrade(r.id, { status: "running" });
+        } catch {
+          // 查询失败按瞬态处理，下一轮再查
+        }
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 8_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gradePollKey]);
+  const gradeVersionKey = (state.finalGrades || [])
+    .filter(r => r.status === "succeeded" && r.videoUrl && !r.versionBlockId)
+    .map(r => r.id)
+    .join(",");
+  useEffect(() => {
+    if (!gradeVersionKey) return;
+    for (const r of (latest.current.finalGrades || []).filter(r => r.status === "succeeded" && r.videoUrl && !r.versionBlockId)) {
+      const source = getBlocks().find(b => b.id === r.finalBlockId);
+      const id = `mvgrade-${r.finalBlockId}-${r.id}`.slice(0, 200);
+      if (!getBlocks().some(b => b.id === id)) {
+        const anchorBlock = source || block;
+        const version = defaultCanvasBlock(
+          "video",
+          anchorBlock.x - anchorBlock.width - 60,
+          anchorBlock.y + anchorBlock.height + 60,
+          anchorBlock.id
+        );
+        version.id = id;
+        version.prompt = `${source?.prompt || "MV 成片"} · 调色版`;
+        version.status = "done";
+        version.outputUrl = r.videoUrl;
+        version.outputUrls = [r.videoUrl!];
+        version.aspectRatio = source?.aspectRatio || version.aspectRatio;
+        onAdd([version], source ? [{ fromId: source.id, toId: id }] : []);
+      }
+      patchGrade(r.id, { versionBlockId: id });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gradeVersionKey]);
+  /** 歌词表变化 → 未出片的演唱镜同步唱句（只有确认版会写入；改动后回到待确认即清空，出片前拦）。 */
+  const syncSingingLyrics = (table: CanvasMusicMvState["lyricTable"]) => {
+    for (const id of latest.current.shotBlockIds || []) {
+      const shot = getBlocks().find(row => row.id === id);
+      const binding = shot?.musicMvShot;
+      if (!shot || !binding || binding.kind !== "singing" || (shot.status === "done" && shot.outputUrl)) continue;
+      const { lyricLines: _l, lyricTiming: _t, ...rest } = binding;
+      onPatchBlock?.(id, { musicMvShot: { ...rest, ...musicMvSingingLyricPatch(binding, table) } });
+    }
+  };
+  /** 换镜头成片模型：音乐块记住选择，未出片的镜头块同步模型与请求时长（已出片的不动）。 */
+  const chooseShotModel = (videoModel: CanvasVideoModel) => {
+    onPatch({ videoModel });
+    for (const id of latest.current.shotBlockIds || []) {
+      const shot = getBlocks().find(row => row.id === id);
+      if (!shot?.musicMvShot || (shot.status === "done" && shot.outputUrl) || shot.musicMvShot.kind === "footage") continue;
+      const sec = musicMvShotRequestSec(videoModel, shot.musicMvShot.endSec - shot.musicMvShot.startSec);
+      onPatchBlock?.(id, { videoModel, prompt: shot.prompt.replace(/目标时长：\s*\d+(?:\.\d+)?\s*秒/, `目标时长：${sec} 秒`) });
+    }
+  };
   let visibleShotIds: string[] = [];
   let highlightError = "";
   let planShots = state.plan?.shots || [];
@@ -1291,12 +1908,42 @@ export function CanvasMusicMvStudio({
           <label className="text-xs">高光时长<input aria-label="高光时长" name="duration" type="number" min="30" max="60" step="0.1" defaultValue={state.highlight ? state.highlight.endSec-state.highlight.startSec : 45} className={field}/></label>
           <button className={button} disabled={busy || !selected || Boolean(state.assembleRequestId && !state.assembleTerminalStatus)}>应用高光区间</button>
         </form>
-        {selected && <p className="text-xs">当前区间：{state.highlight?.startSec || 0}–{state.highlight?.endSec ?? Math.min(45,selected.durationSec)} 秒 · 9:16竖屏</p>}
+        {selected && <p className="text-xs">当前区间：{(state.highlight?.startSec || 0).toFixed(1)}–{(state.highlight?.endSec ?? Math.min(45,selected.durationSec)).toFixed(1)} 秒 · 9:16竖屏</p>}
         {selected && <div className="space-y-2">
           <audio ref={highlightAudio} controls src={selected.url} className="w-full" onTimeUpdate={e=>{try {const range=highlightRange(latest.current);if(range && e.currentTarget.currentTime>=range.endSec)e.currentTarget.pause();}catch{e.currentTarget.pause();}}}/>
           <button className={button} disabled={busy || Boolean(highlightError)} onClick={()=>void perform(async()=>{const range=highlightRange(latest.current);if(!range || !highlightAudio.current)return;highlightAudio.current.currentTime=range.startSec;await highlightAudio.current.play();})}>试听高光区间</button>
         </div>}
         {highlightError && <p role="alert" className="text-xs text-amber-200">{highlightError}</p>}
+        {selected && state.highlight && (() => {
+          const f = planMvHighlightFades({ range: state.highlight, lines: state.lyricTable?.lines, beatGrid: state.plan?.beatGrid, fadeInSec: state.highlightFadeInSec, fadeOutSec: state.highlightFadeOutSec });
+          return <div className="flex flex-wrap items-end gap-3 text-xs">
+            <label>淡入（秒）<input aria-label="高光淡入秒数" type="number" min="0" max="3" step="0.1" className={field} value={f.fadeInSec.toFixed(1)} disabled={busy} onChange={e=>patch({highlightFadeInSec:Math.max(0,Math.min(3,Math.round(Number(e.target.value)*10)/10))})}/></label>
+            <label>淡出（秒）<input aria-label="高光淡出秒数" type="number" min="0" max="6" step="0.1" className={field} value={f.fadeOutSec.toFixed(1)} disabled={busy} onChange={e=>patch({highlightFadeOutSec:Math.max(0,Math.min(6,Math.round(Number(e.target.value)*10)/10))})}/></label>
+            <span className="text-white/60">{f.reasonZh}；音画同步淡出，不硬切</span>
+          </div>;
+        })()}
+        {selected && !songOnly && <button className={button} disabled={busy || !state.lyricTable?.lines.length} onClick={()=>void perform(async()=>{
+          // 高光只取有歌词的部分：按歌词时间表推荐（规则见 recommendMusicMvHighlight），用户仍可手动改
+          const rec=recommendMusicMvHighlight(latest.current.lyricTable?.lines||[],selected.durationSec,latest.current.plan?.beatGrid?.segments||[]);
+          if(!rec)throw new Error("歌词表里没有唱句，无法推荐高光；请先识别并核对歌词");
+          const range=musicMvHighlightSchema.parse({startSec:rec.startSec,endSec:rec.endSec});
+          if(latest.current.plan)musicMvShotSlices(latest.current.plan,range);
+          patch({highlight:range,error:undefined});
+        })}>推荐高光（只取有歌词的段落）</button>}
+        {selected && !songOnly && <CanvasMvLyricTableEditor
+          table={state.lyricTable}
+          range={selected ? { startSec: 0, endSec: selected.durationSec } : undefined}
+          disabled={busy}
+          onRecognize={async () => {
+            if (!selected) throw new Error("请先选定歌曲");
+            const table = await recognizeLyrics.mutateAsync({ requestId: crypto.randomUUID(), audio: selected, range: { startSec: 0, endSec: selected.durationSec }, ...(latest.current.musicJobId ? { musicJobId: latest.current.musicJobId } : {}), ...(latest.current.lyrics?.trim() ? { lyricsHint: latest.current.lyrics } : {}) });
+            patch({ lyricTable: table });
+            syncSingingLyrics(table);
+          }}
+          onChange={next => { patch({ lyricTable: next }); syncSingingLyrics(next); }}
+          onConfirm={next => { patch({ lyricTable: next }); syncSingingLyrics(next); }}
+          onPlayLine={line => { const a = highlightAudio.current; if (!a) return; a.currentTime = line.startSec; void a.play(); window.setTimeout(() => a.pause(), Math.max(200, (line.endSec - line.startSec) * 1000)); }}
+        />}
       </section>}
       <h3 data-mv-step="concept" className="border-t border-white/15 pt-5 text-base font-semibold">2. 视觉方案</h3>
       <textarea
@@ -1393,7 +2040,9 @@ export function CanvasMusicMvStudio({
             result.plan,
             result.requestId,
             refs,
-            song
+            song,
+            effectiveShotReferences(previous),
+            previous.lyricTable
           );
           for (const shot of shots)
             if (shot.musicMvShot?.kind === "footage" && shot.outputUrl) {
@@ -1515,7 +2164,62 @@ export function CanvasMusicMvStudio({
               </p>
             ))}
           </details>
+          <CanvasMvShotReferencePicker
+            projectId={projectId}
+            creativePrompt={state.creativePrompt || block.prompt}
+            videoModel={block.videoModel}
+            onFillComposed={async (shotId, clip) => {
+              const id = (latest.current.shotBlockIds || []).find(b => getBlocks().find(row => row.id === b)?.musicMvShot?.shotId === shotId);
+              if (!id) throw new Error("请先确认分镜并铺到画布，再合成素材填充镜头");
+              const url = await resolveCanvasMaterialUrl(clip.gcsUri);
+              onPatchBlock?.(id, { status: "done", outputUrl: url, outputUrls: [url], error: undefined });
+            }}
+            planRequestId={state.planRequestId}
+            shots={planShots}
+            anchorImage={state.anchorImage}
+            shotReferences={state.shotReferences}
+            shotBlocks={(state.shotBlockIds || []).flatMap(id => {
+              const row = blocks.find(b => b.id === id);
+              const shotId = row?.musicMvShot?.shotId;
+              if (!row || !shotId) return [];
+              const adopted = row.manhuaSegmentRefs?.previs;
+              const last = row.previsStudio?.history?.[row.previsStudio.history.length - 1];
+              const previs = adopted?.gcsUri && adopted.durationSec
+                ? { gcsUri: adopted.gcsUri, durationSec: adopted.durationSec }
+                : last?.gcsUri
+                  ? { gcsUri: last.gcsUri, durationSec: last.durationSec, requestId: last.requestId }
+                  : undefined;
+              return [{ shotId, blockId: id, previs, castZh: row.musicMvShot?.castZh, previsStudio: row.previsStudio }];
+            })}
+            mvPrevis={mvPrevis}
+            onPatchShotPrevis={onPatchBlock ? (blockId, previsStudio) => onPatchBlock(blockId, { previsStudio }) : undefined}
+            orientation={block.aspectRatio === "9:16" || highlightMode ? "portrait" : "landscape"}
+            cinemaHintZh={state.creativePrompt}
+            disabled={busy}
+            onChange={updateReferences}
+          />
+          {highlightMode && state.plan && state.planRequestId && <button className={button} disabled={busy || state.lyricTable?.status !== "confirmed" || !state.highlight} onClick={()=>void perform(async()=>{
+            // 1109：真歌词→演唱段，吟唱→素材填充段（跨吟唱起点的镜切开），补逐窗节拍与填充建议；存为新分镜记录后重新铺镜头
+            const revised = await reviseForLyrics.mutateAsync({ basePlanRequestId: latest.current.planRequestId!, lyricTable: latest.current.lyricTable, highlight: latest.current.highlight, ...(latest.current.musicJobId ? { musicJobId: latest.current.musicJobId } : {}), ...(block.videoModel && videoModelOptions?.some(m => m.id === block.videoModel) ? { videoModel: block.videoModel } : {}) });
+            patch({ plan: revised.plan, planRequestId: revised.requestId, shotBlockIds: undefined, error: revised.beatsFailed.length || revised.fillFailuresZh.length ? `已重排镜头；${revised.beatsFailed.length ? `逐窗节拍未出：${revised.beatsFailed.join("、")}；` : ""}${revised.fillFailuresZh.join("；")}` : undefined });
+          })}>按确认版歌词重排镜头（演唱/素材填充）</button>}
           <h3 data-mv-step="shots" className="border-t border-white/15 pt-5 text-base font-semibold">4. 制作镜头</h3>
+          {!!videoModelOptions?.length && (
+            <label className="block text-xs">
+              镜头成片模型（与漫剧工厂同一模型表；参考上限与时长按所选模型）
+              <select
+                aria-label="MV镜头成片模型"
+                className={field}
+                value={videoModelOptions.some(m => m.id === block.videoModel) ? block.videoModel : videoModelOptions[0]!.id}
+                disabled={busy}
+                onChange={e => chooseShotModel(e.target.value as CanvasVideoModel)}
+              >
+                {videoModelOptions.map(m => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <button
             className={button}
             disabled={busy || !!state.shotBlockIds?.length}
@@ -1559,6 +2263,37 @@ export function CanvasMusicMvStudio({
                 })
               }
             />
+            {userId && (() => {
+              // 复用后期工坊：原片=已出片镜头与已合成版本，主音=原歌曲；剪辑方案采用后才提交 concat。
+              const shotClips = (state.shotBlockIds || []).flatMap((id, i) => {
+                const b = blocks.find(row => row.id === id);
+                return b?.status === "done" && b.outputUrl
+                  ? [{ id: b.id, url: b.outputUrl, label: `镜头${i + 1}` }]
+                  : [];
+              });
+              const finalBlock = state.finalBlockId ? blocks.find(row => row.id === state.finalBlockId) : undefined;
+              const clips = finalBlock?.outputUrl ? [...shotClips, { id: finalBlock.id, url: finalBlock.outputUrl, label: "已合成MV" }] : shotClips;
+              return (
+                <CanvasMvPostProdWorkbench
+                  key={`${userId}:${state.planRequestId}`}
+                  userId={userId}
+                  projectId={projectId}
+                  scope={`music-mv:${block.id}:${state.planRequestId}`}
+                  title={state.songTitle?.trim() || "音乐MV"}
+                  aspect={block.aspectRatio === "9:16" ? "9:16" : "16:9"}
+                  videoModel={block.videoModel || ""}
+                  media={{
+                    clips,
+                    audio: [{ id: selected.id, url: selected.gcsUri || selected.url, label: "原歌曲" }],
+                    story: state.lyrics || "",
+                  }}
+                  storage={window.localStorage}
+                  disabled={busy}
+                  beforeSubmit={async () => {}}
+                  advisorVideoEditHub={advisorVideoEditHub}
+                />
+              );
+            })()}
             </div>
           )}
           {highlightMode && <p className="text-xs">5. 剪辑：按上方已应用的高光区间裁取画面、原歌曲与对齐歌词，不变速；调整区间后先补齐缺失镜头。</p>}
@@ -1584,6 +2319,143 @@ export function CanvasMusicMvStudio({
             >
               合成新版本 · {CREDIT_COSTS.workflowFinalRender} 积分
             </button>
+          )}
+          {state.assembleTerminalStatus === "succeeded" && /^https:\/\//i.test(finalSource) && state.finalBlockId && (
+            <div className="space-y-1.5 rounded border border-white/15 p-2" data-mv-final-upscale>
+              <p className="text-xs">成片超分（结果作为新版本放在成片旁，原成片保留；点击后先显示预估积分再确认）</p>
+              <div className="flex gap-2">
+                {MV_FINAL_UPSCALE_TARGETS.map(t => {
+                  const blocker = mvFinalUpscaleBlocker(state.finalUpscales, state.finalBlockId!, t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      className={button}
+                      disabled={busy || Boolean(blocker)}
+                      title={blocker || `按成片实测时长计费，确认前显示预估积分`}
+                      onClick={() => upscaleFinal(t)}
+                    >
+                      {t.toUpperCase()} 超分
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="space-y-1.5 border-t border-white/10 pt-1.5" data-mv-final-grade>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className={button}
+                    disabled={busy}
+                    title="单片调色；结果作为新版本放在成片旁，原成片保留"
+                    onClick={() => (gradeOpen ? setGradeOpen(false) : openFinalGrade())}
+                  >
+                    {gradeOpen ? "收起调色" : "调色"}
+                  </button>
+                  <button
+                    type="button"
+                    className={button}
+                    disabled={busy || (finalEditPending && !editOpen)}
+                    title="选一段描述要改的内容；先报价再确认，结果作为新版本放在成片旁，原成片保留"
+                    onClick={() => (editOpen ? setEditOpen(false) : openFinalEdit())}
+                    data-mv-final-edit-entry
+                  >
+                    {editOpen ? "收起局部修改" : finalEditPending ? "局部修改处理中…" : "局部修改"}
+                  </button>
+                  <span className="text-xs text-white/60">建议先调色再超分</span>
+                </div>
+                {gradeOpen && gradeOutputSec?.url === finalSource && (
+                  <div className="space-y-1.5">
+                    {/* 实测成片秒一位小数（10.08 → 10.1，同提交时分段校验），不取整到整秒 */}
+                    <VideoGradePanel
+                      value={gradeDraft}
+                      onChange={setGradeDraft}
+                      outputSec={videoGradePanelSec(gradeOutputSec.sec) ?? gradeOutputSec.sec}
+                      disabled={busy}
+                    />
+                    <button
+                      type="button"
+                      className={button}
+                      disabled={busy || !gradeDraft}
+                      onClick={() => gradeFinal(gradeDraft)}
+                    >
+                      提交调色
+                    </button>
+                  </div>
+                )}
+                {editOpen && gradeOutputSec?.url === finalSource && state.finalBlockId && (
+                  <div data-mv-final-edit>
+                    {/* 实测片长一位小数向下取（10.08 → 10.0），与服务端选段同一规则 */}
+                    <VideoEditPanel
+                      key={`edit:${finalSource.split("?")[0]}`}
+                      source={finalSource}
+                      durationSec={videoEditDurationSec(gradeOutputSec.sec)}
+                      previewUrl={finalSource}
+                      prefill={finalEditPrefill}
+                      onAdvisorPrefillGuard={finalEditGuard.register}
+                      onSubmitted={job => trackFinalEdit(state.finalBlockId!, finalSource, job)}
+                      onDone={result => applyFinalEdit(state.finalBlockId!, finalSource, result)}
+                    />
+                  </div>
+                )}
+                {(state.finalEditJobs || []).map(t => (
+                  <div key={t.jobId} className="flex flex-wrap items-center gap-2 text-xs" data-mv-final-edit-pending>
+                    <span>
+                      局部修改{t.finalBlockId !== state.finalBlockId ? "（旧成片）" : ""} · 处理中 · {t.range.startSec.toFixed(1)}–{t.range.endSec.toFixed(1)}秒
+                    </span>
+                    <span className="text-white/60">完成后作为新版本放在成片旁，原成片保留</span>
+                  </div>
+                ))}
+                {(state.finalEdits || []).map(r => (
+                  <div key={r.id} className="flex flex-wrap items-center gap-2 text-xs">
+                    <span>
+                      局部修改版{r.finalBlockId !== state.finalBlockId ? "（旧成片）" : ""}
+                      {r.editedRange ? ` · ${r.editedRange.startSec}–${r.editedRange.endSec}秒` : ""}
+                    </span>
+                    <a className="underline" href={r.videoUrl} target="_blank" rel="noreferrer">
+                      打开局部修改版
+                    </a>
+                  </div>
+                ))}
+                {(state.finalGrades || []).map(r => (
+                  <div key={r.id} className="flex flex-wrap items-center gap-2 text-xs">
+                    <span>
+                      调色版{r.finalBlockId !== state.finalBlockId ? "（旧成片）" : ""} ·{" "}
+                      {r.status === "succeeded" ? "已完成" : r.status === "failed" ? "失败" : r.status === "submission_unknown" ? "提交结果未确认" : "处理中"}
+                    </span>
+                    {r.videoUrl && (
+                      <a className="underline" href={r.videoUrl} target="_blank" rel="noreferrer">
+                        打开调色版
+                      </a>
+                    )}
+                    {r.error && r.status !== "succeeded" && (
+                      <span className="text-amber-200">{creativeUserText(r.error)}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {(state.finalUpscales || []).map(r => (
+                <div key={r.id} className="flex flex-wrap items-center gap-2 text-xs">
+                  <span>
+                    {r.target.toUpperCase()} 超分{r.finalBlockId !== state.finalBlockId ? "（旧成片）" : ""} · {mvFinalUpscaleStatusText(r)}
+                    {r.creditsUsed !== undefined ? ` · ${r.creditsUsed} 积分` : ` · 预估 ${r.creditsQuoted} 积分`}
+                  </span>
+                  {r.videoUrl && (
+                    <a
+                      className="underline"
+                      href={r.videoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      download={mvFinalUpscaleDownloadName(state.songTitle, r.target)}
+                    >
+                      下载 {r.target.toUpperCase()} 版
+                    </a>
+                  )}
+                  {r.error && r.status !== "succeeded" && (
+                    <span className="text-amber-200">{creativeUserText(r.error)}</span>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
           {!!state.shotBlockIds?.length && materialGap > 0 && (
             <p className="text-xs text-amber-200">

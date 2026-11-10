@@ -193,11 +193,11 @@ describe("P1 流式完整性：断流不得当成稿（主提炼真实链路）"
     expect(calls).toHaveLength(2);
   });
 
-  it("六跳全部断流：整体失败，不交半截稿", async () => {
-    // 六跳一轮 × （首轮 + 整链重试 3 次）
-    const { calls } = stubFetch(Array.from({ length: 24 }, () => () => errorFrameStream(SECTIONS.slice(0, 60))));
+  it("四跳全部断流：整体失败，不交半截稿", async () => {
+    // 四跳一轮（DeepSeek 两家 → GLM 两家，1013 起不再调用 Qwen）×（首轮 + 整链重试 4 次）
+    const { calls } = stubFetch(Array.from({ length: 20 }, () => () => errorFrameStream(SECTIONS.slice(0, 60))));
     await expect(distillOnce()).rejects.toThrow();
-    expect(calls).toHaveLength(24);
+    expect(calls).toHaveLength(20);
   });
 });
 
@@ -232,11 +232,11 @@ describe("P2 锁定自营供应商无端点：换下一跳；安全拒绝：终�
     expect(new URL(calls[1]!.url).hostname).toBe("direct.evolink.ai");
   });
 
-  it("同模型两家都 No endpoints → 落到另一档，最后才是 Qwen 两跳", async () => {
+  it("同模型两家都 No endpoints → 落到另一档 GLM 两家，不再调用 Qwen", async () => {
     const { calls } = stubFetch([
       noEndpoints, noEndpoints, // deepseek 两家
-      noEndpoints, noEndpoints, // glm 两家
-      () => okStream(SECTIONS), // 新加坡 Qwen
+      noEndpoints, // glm OpenRouter
+      () => okStream(SECTIONS), // glm EvoLink 接住
     ]);
     const out = await distillOnce();
     expect(out).toContain("## 第1节");
@@ -245,9 +245,10 @@ describe("P2 锁定自营供应商无端点：换下一跳；安全拒绝：终�
       "direct.evolink.ai",
       "openrouter.ai",
       "direct.evolink.ai",
-      "token-plan.ap-southeast-1.maas.aliyuncs.com",
     ]);
-    expect(calls[4]!.body.model).toBe("qwen3.8-max");
+    expect(calls[2]!.body.model).toBe("z-ai/glm-5.3-flashx");
+    expect(calls[3]!.body.model).toBe("glm-5.3-flashx");
+    expect(calls.some((c) => /qwen/i.test(String(c.body.model)))).toBe(false);
   });
 
   it("安全/内容策略拒答（guardrail / moderation）：确定性拒绝，整链终止、不再打第二家", async () => {
@@ -263,11 +264,11 @@ describe("P2 锁定自营供应商无端点：换下一跳；安全拒绝：终�
     expect(calls).toHaveLength(2);
   });
 
-  it("六跳全失败：抛错，不交空稿", async () => {
-    // 六跳一轮 × （首轮 + 整链重试 3 次）
-    const { calls } = stubFetch(Array.from({ length: 24 }, () => noEndpoints));
+  it("四跳全失败：抛错，不交空稿", async () => {
+    // 四跳一轮 ×（首轮 + 整链重试 4 次）
+    const { calls } = stubFetch(Array.from({ length: 20 }, () => noEndpoints));
     await expect(distillOnce()).rejects.toThrow();
-    expect(calls).toHaveLength(24);
+    expect(calls).toHaveLength(20);
   });
 });
 

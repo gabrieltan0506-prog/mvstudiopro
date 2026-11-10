@@ -27,6 +27,7 @@ import {
   MANHUA_PROMO_COVER_LAYOUTS,
 } from "./manhuaPromoCoverLayouts";
 import { GRAPHIC_NOTE_FUSION_TEMPLATES } from "./graphicNoteFusionTemplates";
+import { MANHUA_ENTRANCE_ATMOSPHERE_BANK } from "./manhuaEntranceAtmosphereBank";
 import { INFOGRAPHIC_NOTE_TEMPLATES, listInfographicTemplatesByMode } from "./infographicNoteTemplates";
 import {
   buildActionCameraInjectBlock,
@@ -88,7 +89,9 @@ describe("manhua path camera + P3 banks", () => {
   });
 
   it("narrative lighting bank", () => {
-    expect(MANHUA_NARRATIVE_LIGHTING_BANK.length).toBe(8);
+    // 8 条叙事光语 + 并入的「出场氛围与灯光」组（同一选择器分组展示）
+    expect(MANHUA_NARRATIVE_LIGHTING_BANK.filter((e) => e.id.startsWith("nlight_")).length).toBe(8);
+    expect(MANHUA_NARRATIVE_LIGHTING_BANK.length).toBe(8 + MANHUA_ENTRANCE_ATMOSPHERE_BANK.length);
     const block = buildNarrativeLightingInjectBlock(["nlight_07_light_the_evidence"]);
     expect(block).toContain("照亮证据");
     expect(recommendNarrativeLightingFromTopic("罪证揭穿").lightingId).toBe(

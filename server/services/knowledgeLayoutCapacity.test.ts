@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 import { layoutFromSource } from "../../shared/editableLayout";
-import { knowledgeManuscript } from "../../shared/knowledgePublication";
+import { knowledgeManuscript, knowledgeReviewBatches } from "../../shared/knowledgePublication";
 import type { KnowledgeBookLayoutInput } from "../../shared/knowledgeBookLayout";
 import { buildKnowledgeConversationRequest, knowledgeConversationInput, reviewKnowledgeConversation } from "./knowledgeConversationAdvisor";
 import { invokeKnowledgePublicationRoutes } from "./knowledgePublicationRoutes";
@@ -58,20 +58,28 @@ it("补充稿章节仍完整进入布局输入，原稿引用只绑定原册章�
   expect(wire.bookLayout.pages.at(-1)).toEqual(extra);
   expect(wire.sourceReference.pageIds).toEqual(f.doc.pages.map(p=>p.id));
 });
-it("压缩输入走真实Markdown路由、永久方案保存和恢复，恢复不新增模型请求",async()=>{
+// 1108（#1751）起整册排版按审校批次分批走原 JSON 合同（四路并发、逐批落盘），不再走 Markdown 表格路由。
+it("整册排版按审校批次走真实JSON路由、逐批永久保存，恢复不新增模型请求",async()=>{
   const f=fixture(),storage=new Map<string,any>();
   const read=async(k:string)=>storage.get(k),save=async(k:string,v:any)=>{storage.set(k,v)};
-  const md="|章节标识|模板|配色|版式|表格|边框|纹样|理由|\n|---|---|---|---|---|---|---|---|\n"+
-    f.book.pages.map(p=>`|${p.id}||jade-paper|editorial|rules|none|herb-leaf|结合完整文字安排留白|`).join("\n");
-  const fetch=vi.fn(async(_url:unknown,init?:RequestInit)=>new Response(JSON.stringify({model:JSON.parse(String(init?.body)).model,choices:[{finish_reason:"stop",message:{content:md}}]}),{status:200}));
+  const fetch=vi.fn(async(_url:unknown,init?:RequestInit)=>{
+    const body=JSON.parse(String(init?.body)),input=JSON.parse(body.messages[1].content[0].text);
+    const answer={kind:"knowledge_conversation_v1",requestId:input.conversation.requestId,answer:"结合完整文字安排留白",sources:[],supplementalImages:[],
+      layoutPlan:{kind:"knowledge_book_layout_v1",sourceDigest:input.bookLayout.sourceDigest,chapters:input.bookLayout.pages.map((p:{id:string})=>({pageId:p.id,
+        design:{palette:"jade-paper",layout:"editorial",table:"rules",frame:"none",motif:"herb-leaf",reason:"结合完整文字安排留白"}}))}};
+    return new Response(JSON.stringify({model:body.model,choices:[{finish_reason:"stop",message:{content:JSON.stringify(answer)}}]}),{status:200});
+  });
   const deps={load:async()=>f.doc as any,book:async()=>f.book,read,save,
     post:(request:any,evidence:any)=>invokeKnowledgePublicationRoutes(request,evidence,{key:()=>"test-key",fetch})};
   const canonical=knowledgeConversationInput(f.doc,f.ctx,f.book);
+  const batches=knowledgeReviewBatches({title:f.book.title,pages:f.book.pages.map(page=>({...page,imageUrl:""}))});
+  expect(batches.length).toBeGreaterThan(1);
   const result=await reviewKnowledgeConversation(7,f.ctx,deps);
   expect(result.layoutPlan?.chapters.map(p=>p.pageId)).toEqual(f.book.pages.map(p=>p.id));
-  const report=Array.from(storage.entries()).find(([k])=>k.endsWith("/report.json"))![1];
+  expect(fetch).toHaveBeenCalledTimes(batches.length);
+  const report=Array.from(storage.entries()).find(([k])=>k.endsWith("/report.json")&&!k.includes("/batch-"))![1];
   expect(report.fingerprint).toBe(createHash("sha256").update(JSON.stringify(canonical)).digest("hex"));
   expect(await reviewKnowledgeConversation(7,f.ctx,deps)).toEqual(result);
-  expect(fetch).toHaveBeenCalledTimes(1);
-  expect(Array.from(storage.keys()).some(k=>k.endsWith("/raw.json"))).toBe(true);
+  expect(fetch).toHaveBeenCalledTimes(batches.length);
+  expect(Array.from(storage.keys()).filter(k=>k.endsWith("/raw.json"))).toHaveLength(batches.length);
 });

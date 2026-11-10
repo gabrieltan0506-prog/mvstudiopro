@@ -49,6 +49,14 @@ export type ShotIR = {
   dialogue?: ShotDialogue;
   sfxZh?: string;
   mediaRefs?: ShotMediaRef[];
+  /** 可选（1109 MV 秒锁窗复用）：窗标签，如「c1s13-W2」；缺省按「第N镜」。 */
+  labelZh?: string;
+  /** 可选：灯光与氛围（光源、明暗、色温变化）。 */
+  lightingZh?: string;
+  /** 可选：情绪与转折依据（落到本窗）。 */
+  moodZh?: string;
+  /** 可选：字幕开关文本，按 [] 输出，如「字幕关闭」。 */
+  subtitleZh?: string;
 };
 
 export type EpisodeIR = {

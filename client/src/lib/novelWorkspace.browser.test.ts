@@ -25,7 +25,8 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     jsx: "automatic",
     tsconfig: "tsconfig.json",
     external: ["pdfjs-dist", "tesseract.js"],
-    define: { "process.env.NODE_ENV": '"test"' },
+    // iife 无 import.meta：页面挂载的模板目录订阅经 longJobsFlyOrigin 读 env，按其它离线视图同样置空。
+    define: { "process.env.NODE_ENV": '"test"', "import.meta.env": "{}" },
     plugins: [
       {
         name: "mock-transport",

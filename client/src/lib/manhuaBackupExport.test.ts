@@ -13,6 +13,7 @@ import {
   localMediaPointerId,
   resolveUrlForLocalPersist,
 } from "./manhuaLocalMediaStore";
+import { maskMediaProviderDetails } from "./maskMediaUrls";
 
 // Node 缺少浏览器 FileReader，只转换 Blob 输入；文件组织及 ZIP 编解码都用真实 JSZip。
 class NodeCompatibleZip {
@@ -132,6 +133,7 @@ function setup(payload: Payload) {
       revokeObjectURL: revoke,
     },
     toast,
+    maskMediaProviderDetails,
   };
   const run = exportCallback(deps);
   return {

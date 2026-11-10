@@ -6,7 +6,8 @@ import { formatManhuaShotCoreCatalog } from "@shared/manhuaShotCoreBank";
 import { formatManhuaEntranceAtmosphereCatalog } from "@shared/manhuaEntranceAtmosphereBank";
 import { manhuaGeneratedPrevisCoverageIssue } from "@shared/manhuaPrevisScope";
 import { compileManhua3dImageTreatment } from "@shared/manhua3dMaterialPrompt";
-import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVideoModel, type CanvasBlock } from "./canvasTypes";
+import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVideoModel, VIDEO_MODEL_OPTIONS, type CanvasBlock } from "./canvasTypes";
+import { hasBlockingFormatIssues } from "@shared/promptFormatLayer";
 import { compileCanvasAudioBindings, assertCanvasAudioMasterCurrent, usesSeparateCanvasAudio } from "@shared/canvasAudioStudio";
 import { isLocalMediaPointer, resolveUrlForCloudSync } from "./manhuaLocalMediaStore";
 import { withFlyHealthGate } from "./flyHealthGate";
@@ -174,7 +175,21 @@ function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
 /** 客户端轮询上限：两轮合计须盖过 worker CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS（0910 起 25min） */
 const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 13 * 60_000;
 
+/** 1110 MV 白模软提示已提示过的「块 id|镜头内容键」（页面生命周期内，最多保留 500 条）。 */
+const mvShotAdvisoryShown = new Set<string>();
+/** 首次见到该键返回 true（应提示），之后返回 false。 */
+function markMvShotAdvisoryShown(key: string): boolean {
+  if (mvShotAdvisoryShown.has(key)) return false;
+  if (mvShotAdvisoryShown.size >= 500) mvShotAdvisoryShown.delete(mvShotAdvisoryShown.values().next().value!);
+  mvShotAdvisoryShown.add(key);
+  return true;
+}
+
 export type CanvasRunDeps = {
+  /** 1110 MV 镜头出片前的软提示（可继续，不拦）：如多人互动镜头未采用白模动作参考。缺省走页面 toast。 */
+  onMvShotAdvisory?: (blockId: string, messageZh: string) => void;
+  /** 1109 MV 参考片送出前自动裁切（服务端 trimShotMotionClip）；缺省时超长参考片按上限拦下。 */
+  trimMvMotionClip?: (input: { sourceGcsUri: string; shotSec: number; maxSec: number; inSec?: number }) => Promise<{ gcsUri: string; inSec: number; outSec: number; durationSec: number; sourceSec: number; auto: boolean }>;
   /** Narrow caller guard rechecked immediately before paid text/image submission. */
   assertCurrentSource?: () => void;
   imageVariants?: OpenAiImageVariant[];
@@ -882,6 +897,8 @@ export type SeedanceCanvasRequestOptions = {
     idempotencyKey?: string;
     /** 生成意图 ID（与 idempotencyKey 同值）；服务端按它做扣费前裁决 */
     intentId?: string;
+    /** 1109 MV 镜头身份：服务端据此硬锁 reference_to_video、拒空参考、回执永久落证据 */
+    mvShot?: { planRequestId: string; shotId: string; hasRealPerson?: boolean; referenceCounts?: { image: number; video: number; audio: number } };
 };
 
 /**
@@ -946,7 +963,9 @@ export function buildSeedanceCanvasRequestBody(
   const workMode =
     version === "2.5"
       ? normalizeSeedance25EvolinkMode(opts?.workMode, { imageUrls, videoUrls, audioUrls })
-      : undefined;
+      : opts?.mvShot
+        ? ("reference_to_video" as const)
+        : undefined;
   const episodeIndex = Number(opts?.episodeIndex);
   const clipIndex = Number(opts?.clipIndex);
   const compilerEngine: CompilerEngineId = `seedance-${version}`;
@@ -996,7 +1015,8 @@ export function buildSeedanceCanvasRequestBody(
     ...(opts?.manhuaPilot ? { manhuaPilot: opts.manhuaPilot } : {}),
     ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
     ...(opts?.intentId ? { intentId: opts.intentId } : {}),
-    ...(version === "2.5" ? { workMode } : {}),
+    ...(version === "2.5" || opts?.mvShot ? { workMode } : {}),
+    ...(opts?.mvShot ? { mvShot: opts.mvShot } : {}),
     ...(Number.isFinite(episodeIndex) && episodeIndex > 0 ? { episodeIndex } : {}),
     ...(Number.isFinite(clipIndex) && clipIndex > 0 ? { clipIndex } : {}),
   };
@@ -2524,10 +2544,117 @@ async function runCanvasBlockInner(
   }
   // 出片前统一重签上传件签名链（0908 EvoLink「input media could not be downloaded」：
   // 60 分钟签名在上传与提交之间过期）。同一 gcsUri 只签一次；失败退回原链不挡提交。
+  let mvShotOutbound: { hasRealPerson: boolean } | undefined;
   if (block.kind === "video" && block.musicMvShot) {
     const binding=block.musicMvShot;
     if(binding.kind==="footage") throw new Error("此镜头使用已有素材切片，请在MV中合成，不提交视频生成");
-    if(binding.kind==="singing") {
+    // #1769 审查 #3：角色表 ≤1 人时人物锁是单人锁，逐窗写了两人戏（耳光/拥抱等）会被模型删掉 → 付费前拦截
+    {
+      const { checkMvShotCastInteraction } = await import("@shared/canvasMusicMvShotGuards");
+      const castCheck = checkMvShotCastInteraction({
+        kind: binding.kind,
+        castZh: binding.castZh,
+        texts: [
+          binding.visualPrompt, binding.cameraPrompt, block.prompt,
+          ...(binding.beats || []).flatMap(w => [w.actionZh, w.cameraZh, w.lightingZh, w.moodZh, w.sfxZh]),
+        ],
+      });
+      if (!castCheck.ok) throw new Error(castCheck.error);
+      // 1110：R3 硬拦之后的软提示——多人互动但本镜没有已采用的白模动作参考，提示可继续，不拦、不改提交
+      // 同一镜头同一内容（块 id + 镜头 id + 节拍/角色表哈希）只提示一次：预览、正式提交、自动重试不重复弹
+      const { mvShotNeedsPrevis, mvShotPrevisContentKey, MV_PREVIS_SOFT_HINT_ZH } = await import("@shared/canvasMusicMvPrevis");
+      const previsShot = { shotId: binding.shotId, startSec: binding.startSec, endSec: binding.endSec, kind: binding.kind, visualPrompt: binding.visualPrompt || block.prompt, cameraPrompt: binding.cameraPrompt, beats: binding.beats, castZh: binding.castZh };
+      if (mvShotNeedsPrevis(previsShot).needed
+        && !binding.references?.motionVideos?.some(v => v.source === "previs")
+        && markMvShotAdvisoryShown(`${block.id}|${mvShotPrevisContentKey(previsShot)}`)) {
+        if (deps.onMvShotAdvisory) deps.onMvShotAdvisory(block.id, MV_PREVIS_SOFT_HINT_ZH);
+        else void import("sonner").then(m => m.toast.warning(MV_PREVIS_SOFT_HINT_ZH)).catch(() => undefined);
+      }
+    }
+    // 1109 参考生视频：主锚图 + 场景图 + 动作参考片 + 歌曲切片（gcsUri 真源，出片前现签）。
+    // 无任何参考 → 拒发（用户硬规则：MV 一向 reference_to_video，不得静默退回文生）。
+    let mvRefs = binding.references;
+    if (!mvRefs && !binding.referenceImages.length) {
+      throw new Error("MV 镜头缺少参考素材：请先在「为镜头选参考素材」里选主锚图、场景图/参考片与歌曲切片。本次未提交、未扣费。");
+    }
+    if (mvRefs) {
+      const { assembleMvShotReferences, isMvShotEngineSupported, mvShotEngineId, mvShotReferencesSchema, mvShotReferenceLimits } = await import("@shared/canvasMusicMvReferences");
+      const { compileMvShotTimedPrompt, mvShotGenerateDurationSec } = await import("@shared/canvasMusicMvShotPrompt");
+      // 1109 模型可选：参考上限与时长上下限按所选引擎读漫剧引擎表，不锁 Mini
+      const selectedModel = normalizeCanvasVideoModel(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL);
+      if (!isMvShotEngineSupported(selectedModel)) throw new Error("所选成片模型不支持 MV 多参考生视频（需同时收参考图与歌曲切片），请换模型。本次未提交、未扣费。");
+      const engine = mvShotEngineId(selectedModel);
+      const { mvShotNeedsStagingReference } = await import("@shared/canvasMusicMv");
+      // 参考片整条送给模型：超过所选模型单条上限的，先自动裁成 min(本镜时长, 上限)（入点沿用已选，否则运动最强段）
+      const maxVideoSec = mvShotReferenceLimits(engine).maxVideoItemSec;
+      if (mvRefs.motionVideos?.some(v => v.durationSec > maxVideoSec + 1e-6) && deps.trimMvMotionClip) {
+        const trimClip = deps.trimMvMotionClip;
+        mvRefs = {
+          ...mvRefs,
+          motionVideos: await Promise.all((mvRefs.motionVideos || []).map(async v => {
+            if (v.durationSec <= maxVideoSec + 1e-6) return v;
+            const t = await trimClip({ sourceGcsUri: v.gcsUri, shotSec: binding.endSec - binding.startSec, maxSec: maxVideoSec, ...(v.inSec > 0 ? { inSec: v.inSec } : {}) });
+            return { ...v, gcsUri: t.gcsUri, inSec: 0, outSec: t.durationSec, durationSec: t.durationSec, trimmedFrom: { gcsUri: v.gcsUri, inSec: t.inSec, outSec: t.outSec, sourceSec: t.sourceSec, auto: t.auto } };
+          })),
+        };
+      }
+      const assembled = assembleMvShotReferences(mvRefs, { startSec: binding.startSec, endSec: binding.endSec, kind: binding.kind }, engine, { requiresStaging: mvShotNeedsStagingReference(binding.complexity) });
+      if (binding.kind === "singing" && (binding.lyricTiming !== "confirmed" || !binding.lyricLines?.length))
+        throw new Error("演唱段：先确认本段歌词，再生成。本次未提交、未扣费。");
+      // 尾帧接龙：上一镜成片尾帧作本镜起幅（图片 2）；抽帧失败即不提交，不静默去掉接龙
+      let chainFrameUrl: string | undefined;
+      // 上一镜不在本次制作范围（如高光首镜）或尚未出片时 chainFromUrl 为空：不接龙，按本镜参考出片
+      if (binding.continuesFromPrevious && binding.chainFromUrl) {
+        const { frames } = await extractVideoTailFramesFromUrl(binding.chainFromUrl, { frameCount: 1, tailWindowSec: MANHUA_CLIP_TAIL_WINDOW_SEC });
+        chainFrameUrl = (await toHttpsImageUrls(deps, frames.map(f => f.dataUrl).filter(Boolean))).at(-1);
+        if (!chainFrameUrl) throw new Error("上一镜尾帧抽取失败，本镜需接龙，未提交、未扣费。请重试。");
+        const limits = (await import("@shared/canvasMusicMvReferences")).mvShotReferenceLimits(engine);
+        if (assembled.counts.total + 1 > 9 || assembled.counts.image + 1 > limits.image)
+          throw new Error("加上一镜尾帧后参考超过上限，请先减少一张场景图。本次未提交、未扣费。");
+      }
+      // 秒锁提示词：顾问逐窗节拍按 A 段版式编译（无逐窗字段的旧方案整镜一窗降级）
+      const timed = compileMvShotTimedPrompt(
+        {
+          shotId: binding.shotId, startSec: binding.startSec, endSec: binding.endSec, kind: binding.kind,
+          visualPrompt: binding.visualPrompt || block.prompt, cameraPrompt: binding.cameraPrompt || "按分镜运镜",
+          lyricQuote: binding.lyricQuote, beats: binding.beats,
+          lyricLines: binding.lyricLines, lyricTiming: binding.lyricTiming,
+          chainFromPrevious: Boolean(chainFrameUrl),
+        },
+        {
+          engine,
+          modelLabel: VIDEO_MODEL_OPTIONS.find(o => o.id === selectedModel)?.label || selectedModel,
+          resolution: String(block.videoResolution || "720p"),
+          aspectRatio: block.aspectRatio === "16:9" ? "16:9" : "9:16",
+          generateDurationSec: mvShotGenerateDurationSec(engine, binding.endSec - binding.startSec),
+          beatGrid: binding.beatGrid,
+          ...(binding.castZh?.length ? { castZh: binding.castZh } : {}),
+          ...(binding.sceneLocationZh ? { locationZh: binding.sceneLocationZh } : {}),
+          references: mvShotReferencesSchema.parse(mvRefs),
+        },
+      );
+      if (hasBlockingFormatIssues(timed.issues)) throw new Error(`MV 秒锁提示词未通过出站校验：${timed.issues.map(i => i.detailZh).join("；")}。本次未提交、未扣费。`);
+      const sign = async (uri: string, label: string) => {
+        const url = await resolveCanvasMaterialUrl(uri);
+        if (!/^https:\/\//.test(url)) throw new Error(`${label}暂不可用，未提交生成`);
+        return url;
+      };
+      const images = await Promise.all(assembled.imageGcsUris.map((u, i) => sign(u, i === 0 ? "MV 主锚图" : `MV 场景图 ${i}`)));
+      const videos = await Promise.all(assembled.videoGcsUris.map((u, i) => sign(u, `MV 动作参考片 ${i + 1}`)));
+      const audios = await Promise.all(assembled.audioGcsUris.map(u => sign(u, "MV 歌曲切片")));
+      if (block.audioStudio?.cues.some(cue=>cue.enabled!==false) || block.manhuaSegmentRefs?.master) throw new Error("MV 镜头已绑定歌曲切片，请先移除其他启用音轨，避免声音冲突");
+      block = {
+        ...block,
+        refImageUrl: images[0],
+        editFusionUrls: chainFrameUrl ? [chainFrameUrl, ...images.slice(1)] : images.slice(1),
+        seedance25RefVideoUrls: videos,
+        seedance25RefAudioUrls: audios,
+        seedance25WorkMode: "reference_to_video",
+        prompt: timed.text,
+      };
+      mvShotOutbound = { hasRealPerson: assembled.hasRealPerson };
+      upstream = { ...upstream, visionImages: [] };
+    } else if(binding.kind==="singing") {
       const audio=binding.singingAudio;
       if(!audio || audio.startSec!==binding.startSec || audio.endSec!==binding.endSec) throw new Error("请先准备并试听本镜唱段，再生成对口型视频");
       if(block.videoModel!=="seedance-2.5" && !isCanvasHailuoH3VideoModel(block.videoModel)) throw new Error("当前制作方式不能使用演唱音频参考，请选择支持音频参考的成片引擎");
@@ -2537,16 +2664,19 @@ async function runCanvasBlockInner(
       block={...block,seedance25WorkMode:"reference_to_video",seedance25RefAudioUrls:[url],
         uploadedAssets:[...(block.uploadedAssets||[]).filter(row=>row.id!=="mv-singing-audio"),{id:"mv-singing-audio",kind:"audio",url,previewUrl:url,gcsUri:audio.gcsUri,fileName:"本镜演唱.wav",mimeType:"audio/wav"}]};
     }
-    const fresh = new Map<string, string>();
-    for (const image of binding.referenceImages) {
-      const url = image.gcsUri ? await resolveCanvasMaterialUrl(image.gcsUri) : image.url;
-      if (!/^https:\/\//.test(url)) throw new Error("MV 参考图暂不可用，未提交生成");
-      fresh.set(image.url.split("?")[0]!, url);
+    if (!mvRefs) {
+      const fresh = new Map<string, string>();
+      for (const image of binding.referenceImages) {
+        const url = image.gcsUri ? await resolveCanvasMaterialUrl(image.gcsUri) : image.url;
+        if (!/^https:\/\//.test(url)) throw new Error("MV 参考图暂不可用，未提交生成");
+        fresh.set(image.url.split("?")[0]!, url);
+      }
+      const resign = (url: string | undefined) => url ? fresh.get(url.split("?")[0]!) || url : undefined;
+      // 旧参考图路径同样硬锁多模态参考模式
+      block = { ...block, refImageUrl: resign(block.refImageUrl), editFusionUrls: block.editFusionUrls?.map(url => resign(url)!), seedance25WorkMode: "reference_to_video" };
+      // 分镜已明确选择参考；空引用不从父音乐节点补入其他人物/场景。
+      upstream = { ...upstream, visionImages: [] };
     }
-    const resign = (url: string | undefined) => url ? fresh.get(url.split("?")[0]!) || url : undefined;
-    block = { ...block, refImageUrl: resign(block.refImageUrl), editFusionUrls: block.editFusionUrls?.map(url => resign(url)!) };
-    // 分镜已明确选择参考；空引用不从父音乐节点补入其他人物/场景。
-    upstream = { ...upstream, visionImages: [] };
   }
   const assetResigner = createCanvasAssetResigner(block.uploadedAssets);
   if (block.kind === "video" || block.kind === "image") {
@@ -3668,7 +3798,14 @@ async function runCanvasBlockInner(
                   ? "2.0-mini"
                   : "2.0",
           duration: clipDuration,
-          workMode: useSeedance25 ? workMode : undefined,
+          // MV 镜头：Mini 也显式传 reference_to_video（服务端校验，不再靠素材推断）
+          workMode: useSeedance25 ? workMode : block.musicMvShot ? "reference_to_video" : undefined,
+          mvShot: block.musicMvShot ? {
+            planRequestId: block.musicMvShot.planRequestId,
+            shotId: block.musicMvShot.shotId,
+            hasRealPerson: Boolean(mvShotOutbound?.hasRealPerson),
+            referenceCounts: { image: outImages.length, video: outVideos.length, audio: outAudios.length },
+          } : undefined,
           seedance25Provider: block.seedance25Provider,
           manhuaPilot,
           idempotencyKey: submissionKey,

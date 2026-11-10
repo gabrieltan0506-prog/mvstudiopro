@@ -20,6 +20,8 @@ beforeAll(async () => {
       const initial={...defaultCanvasBlock('music',0,0),id:'music-root',prompt:'中国风叙事音乐，温暖弦乐',musicMv:{status:'idle',candidates:[],requestedDurationSec:10}};
       const f=globalThis.fixture={current:saved||[initial],calls:JSON.parse(localStorage.getItem('offline-calls')||'[]'),musicReady:true,queries:[],adds:[]};
       f.record=(kind,input)=>{f.calls.push({kind,input});localStorage.setItem('offline-calls',JSON.stringify(f.calls));};
+      // 1109：MV 镜头无参考拒发；夹具为每个镜头块写入完整参考槽位（主锚图+场景图+参考片+歌曲切片）。
+      f.fillRefs=()=>{const sf=n=>'sf_'+n.toString(16).padStart(48,'0');f.update(f.current.map(b=>b.musicMvShot&&b.musicMvShot.kind!=='footage'?{...b,error:undefined,musicMvShot:{...b.musicMvShot,references:{anchorImage:{assetId:sf(1),gcsUri:'gs://test-bucket/stock/anchor.jpg'},sceneImages:[{assetId:sf(2),gcsUri:'gs://test-bucket/stock/scene.jpg'}],motionVideos:[],songSlice:{jobId:'slice-'+b.musicMvShot.shotId,gcsUri:'gs://test-bucket/slices/'+b.musicMvShot.shotId+'.wav',startSec:b.musicMvShot.startSec,endSec:b.musicMvShot.endSec}}}}:b));};
       f.makePlan=input=>({version:1,audioId:input.audio.id,audioDurationSec:input.audio.durationSec,analysisBasis:'lyrics_and_user_description',shots:[
         {id:'shot-a',startSec:0,endSec:5,visualPrompt:'主角站在林间',cameraPrompt:'缓慢推进',lyricQuote:input.lyrics?'夜雨落在旧城墙':'',referenceIndices:[]},
         {id:'shot-b',startSec:5,endSec:10,visualPrompt:'主角转身看向远处',cameraPrompt:'轻微横移',lyricQuote:'',referenceIndices:[]}]});
@@ -30,7 +32,7 @@ beforeAll(async () => {
         const onPatch=patch=>update(f.current.map((b,i)=>i===0?{...b,...patch}:b));
         const onAdd=(added,edges)=>{f.adds.push({ids:added.map(b=>b.id),edges});update([...f.current.filter(b=>!added.some(a=>a.id===b.id)),...added]);};
         const runShot=async id=>{f.record('shot',id);update(f.current.map(b=>b.id===id?{...b,status:'done',outputUrl:'https://test.invalid/'+id+'.mp4'}:b));return true;};
-        return <CanvasMusicMvStudio block={blocks[0]} blocks={blocks} onPatch={onPatch} onAdd={onAdd} runShot={runShot} getBlocks={()=>f.current}/>;
+        return <CanvasMusicMvStudio block={blocks[0]} blocks={blocks} onPatch={onPatch} onAdd={onAdd} runShot={runShot} getBlocks={()=>f.current} onPatchBlock={(id,patch)=>update(f.current.map(b=>b.id===id?{...b,...patch}:b))}/>;
       }
       createRoot(document.getElementById('root')).render(<App/>);
     `,
@@ -56,6 +58,11 @@ beforeAll(async () => {
             })
           );
           // 找素材抽屉由共用组件负责检索与采用；此处以虚构抽屉只验证 MV 接线（入口→onPick→绑定写入）。
+          // 登录态由站点外壳提供；离线夹具给虚构用户，不连 /api/me。
+          builder.onResolve({ filter: /^@\/_core\/hooks\/useAuth$/ }, () => ({
+            path: "auth",
+            namespace: "offline",
+          }));
           builder.onResolve(
             { filter: /^@\/components\/stockFootage\/StockFootageDrawer$/ },
             () => ({ path: "drawer", namespace: "offline" })
@@ -64,7 +71,9 @@ beforeAll(async () => {
             loader: "js",
             resolveDir: process.cwd(),
             contents:
-              args.path === "drawer"
+              args.path === "auth"
+                ? `export function useAuth(){return {user:{id:7,role:'user'},loading:false,isAuthenticated:true};}`
+                : args.path === "drawer"
                 ? `import React from 'react';
         export function StockFootageDrawer(p){const f=globalThis.fixture;f.drawer={open:p.open,title:p.title,purpose:p.purpose,usage:p.usage,kind:p.kind,orientation:p.orientation,targetDurationSec:p.targetDurationSec,sourceText:p.sourceText,context:p.context};if(!p.open)return null;
           return React.createElement('div',{role:'dialog','aria-label':p.title},
@@ -77,12 +86,15 @@ beforeAll(async () => {
         const songMutations={prepare:{useMutation:()=>({mutateAsync:async input=>{f().record('songPrepare',input);const r={...input,operation:input.draft.operation,sourceId:input.draft.source.id,status:'prepared',inputDigest:'a'.repeat(64),createdAt:'2026-10-16T14:00:00+08:00',creditsCost:null,variants:[]};localStorage.setItem('song-op-'+input.requestId,JSON.stringify(r));return r;}})},submit:{useMutation:()=>({mutateAsync:async input=>{f().record('songSubmit',input);throw new Error('离线夹具禁止真实提交');}})},resume:{useMutation:()=>({mutateAsync:songGet})}};
         const utils={songOperations:{get:{fetch:songGet}},mvAnalysis:{
           getManhuaBgmJob:{fetch:async({jobId})=>{f().queries.push(jobId);if(f().musicError)throw new Error('missing job');return {jobId,status:f().musicReady?'succeeded':'running',titleZh:'虚构音乐',durationSec:10,missingVariants:f().missingVariants||0,variants:f().musicReady?(f().missingVariants?[0]:[0,1]).map(index=>({index,gcsUri:'gs://test-bucket/post-prod/7/candidate-'+index+'.mp3',durationSec:10,bytes:1000})):[]};}},
-          listManhuaBgmJobs:{fetch:async()=>[]}},canvasMusicMv:{getEdit:{fetch:async input=>JSON.parse(localStorage.getItem('saved-edit-'+input.revisionId))},getPlan:{fetch:async()=>({status:localStorage.getItem('plan-query-status')||'pending_or_unconfirmed'})}}};
+          listManhuaBgmJobs:{fetch:async()=>[]},
+          // 后期任务（局部修改/调色）状态由测试写进 localStorage，刷新后仍是同一份回执
+          getPostProdJob:{fetch:async({jobId})=>{f().postProdQueries=(f().postProdQueries||[]).concat(jobId);return JSON.parse(localStorage.getItem('postprod-'+jobId)||'{"status":"running"}');}}},canvasMusicMv:{getEdit:{fetch:async input=>JSON.parse(localStorage.getItem('saved-edit-'+input.revisionId))},getPlan:{fetch:async()=>({status:localStorage.getItem('plan-query-status')||'pending_or_unconfirmed'})}}};
         export const trpc={useUtils:()=>utils,songOperations:songMutations,mvAnalysis:{
           getVideoUploadSignedUrl:{useMutation:()=>({mutateAsync:async()=>{throw new Error("离线夹具不上传媒体");}})},
           getManhuaAdvisorQuota:{useQuery:()=>({data:{remaining:2,price:12,exempt:false},refetch:async()=>{}})},
           askPlatformSkillQa:{useMutation:()=>({mutateAsync:async input=>{f().record('advisor',input);if(input.manhuaContext.sunoSong){const t=input.manhuaContext.sunoSong;return {answer:JSON.stringify({kind:'suno_song_v1',sourceKey:t.sourceKey,evidenceId:'11111111-1111-4111-8111-111111111111',summaryZh:'按主题创作，未听音',review:{model:'gpt-6-astra',draftModel:'GLM 5.3',verdict:'approved',summaryZh:'离线通过',findings:[],mediaReview:[],inspirationZh:['强化副歌层次'],limitationsZh:['Gemini读取的分析尚未人工验收']},sections:[],uncertaintiesZh:['尚未试听'],transferableCraft:['第二段推进故事'],concepts:[0,1,2].map(i=>({id:'song-'+i,rationaleZh:'符合重逢主题',differenceZh:'原创叙述',hookZh:'明天再见',lyricMethodZh:'物件写关系',mvDirectionZh:'红围巾贯穿车站与重逢',brief:{model:'suno-v6',custom_mode:true,instrumental:false,title:t.originalBrief?.title||'重逢'+i,style:t.originalBrief?'73 BPM, optimized arrangement '+i:'acoustic pop, warm piano',prompt:t.originalBrief?.prompt||'[Verse] 你把车票放回口袋 [Chorus] 明天再见',negative_tags:'',duration:t.originalBrief?.duration||180,style_weight:0,weirdness_constraint:0.35}}))})};}const t=input.manhuaContext.musicMv;const p=f().makePlan(t);p.analysisBasis='native_audio';p.shots=p.shots.map(s=>({...s,kind:'generated'}));return {answer:JSON.stringify({kind:'music_mv_v1',sourceKey:t.sourceKey,evidenceId:'11111111-1111-4111-8111-111111111111',summaryZh:'听音后的测试方案',sections:[{startSec:0,endSec:10,labelZh:'主段',heardZh:'人声弦乐'}],uncertaintiesZh:['离线测试不证明听音'],concepts:[0,1,2,3].map(i=>({id:'idea-'+i,titleZh:'归途'+i,rationaleZh:'情绪推进',openingZh:'林间',peakZh:'转身',endingZh:'远望',plan:p}))})};}})},
-          queueManhuaBgm:{useMutation:()=>({mutateAsync:async input=>{f().record('music',input);if(f().musicError)throw f().musicError;return {jobId:'bgm_'+input.billingRequestId.replaceAll('-',''),status:'queued'};}})}},
+          queueManhuaBgm:{useMutation:()=>({mutateAsync:async input=>{f().record('music',input);if(f().musicError)throw f().musicError;return {jobId:'bgm_'+input.billingRequestId.replaceAll('-',''),status:'queued'};}})},
+          queuePostProd:{useMutation:()=>({mutateAsync:async input=>{f().record('postProd',input);throw new Error('离线夹具禁止真实提交');}})}},
           canvasMusicMv:{
           listSongCraftTemplates:{useQuery:()=>({data:{cards:[{id:'lin-inner-turn',title:'林夕 · 内心转折与克制留白',contributor:'林夕',basis:'interview',highlights:['内心转折'],sources:[]}],revision:'offline'},refetch:async()=>{}})},
           listCreativeLibrary:{useQuery:()=>({data:[],refetch:async()=>{}})},
@@ -90,16 +102,21 @@ beforeAll(async () => {
           queueSongCover:{useMutation:()=>({mutateAsync:async()=>({jobId:'cover-offline',status:'queued'})})},
           saveEdit:{useMutation:()=>({mutateAsync:async input=>{f().record('saveEdit',input);const receipt={...input,sha256:'test-hash',createdAt:'2026-10-15T21:00:00+08:00'};localStorage.setItem('saved-edit-'+input.revisionId,JSON.stringify(receipt));return receipt;}})},
           adoptConcept:{useMutation:()=>({mutateAsync:async input=>{f().record('adopt',input);const a=f().state.advisor;const c=a.proposal.concepts.find(c=>c.id===input.conceptId);return {requestId:input.requestId,plan:c.plan,input:{requestId:input.requestId,audio:a.target.audio,lyrics:a.target.lyrics,creativePrompt:a.target.creativePrompt,referenceSummaries:a.target.referenceSummaries,advisorEvidenceId:input.evidenceId}};}})},
+          prepareShotSongSlice:{useMutation:()=>({isPending:false,mutateAsync:async input=>{f().record('songSlice',input);return {jobId:'slice-'+input.shotId,startSec:0,endSec:5,kind:'generated'};}})},
+          ...Object.fromEntries(['composeFillShot','prepareSinging','recognizeLyrics','reviseForLyrics','trimShotMotionClip'].map(k=>[k,{useMutation:()=>({isPending:false,mutateAsync:async input=>{f().record(k,input);throw new Error('离线夹具禁止真实提交');}})}])),
           draftPlan:{useMutation:()=>({mutateAsync:async input=>{f().record('plan',input);if(f().planError)throw new Error(f().planError);return {plan:f().makePlan(input)};}})}},
+          stockFootage:{sceneLockCheck:{useMutation:()=>({isPending:false,mutateAsync:async input=>{f().record('sceneLockCheck',input);return {pairs:[]};}})},getPersonEdit:{useQuery:()=>({data:undefined,refetch:async()=>{}})},personEdit:{useMutation:()=>({isPending:false,mutateAsync:async input=>{f().record('personEdit',input);throw new Error('离线夹具禁止真实提交');}})}},
           canvasMusicMvAssemble:{queue:{useMutation:()=>({mutateAsync:async input=>{f().record('assemble',input);return {jobId:'assemble-fictional'};}})}}};
       `
                 : args.path === "omniCanvasApi"
                   ? `export async function resolveCanvasMaterialUrl(uri){return uri.startsWith('gs://')?'https://test.invalid/'+encodeURIComponent(uri):uri;}`
-                  : `export async function getJob(){return {status:"running"};} export async function pollJobUntilTerminal(jobId,opts){globalThis.fixture.record('poll',jobId);if(globalThis.fixture.assembleError)throw new Error('unknown network');const status=globalThis.fixture.assembleStatus||'succeeded';opts?.onPoll?.({status});return {status,output:{finalVideoUrl:'https://test.invalid/final.mp4'}};}`,
+                  : `export async function getJob(){return {status:"running"};} export async function createJobSameOrigin(input){globalThis.fixture.record('createJob',input);throw new Error('离线夹具禁止真实提交');} export async function pollJobUntilTerminal(jobId,opts){globalThis.fixture.record('poll',jobId);if(globalThis.fixture.assembleError)throw new Error('unknown network');const status=globalThis.fixture.assembleStatus||'succeeded';opts?.onPoll?.({status});return {status,output:{finalVideoUrl:'https://test.invalid/final.mp4'}};}`,
           }));
         },
       },
     ],
+    // 第 5 步后期工坊连带的样式与字体不参与离线行为验证。
+    loader: { ".css": "empty", ".woff": "empty", ".woff2": "empty", ".ttf": "empty" },
     define: { "process.env.NODE_ENV": '"test"', "import.meta.env": "{}" },
   });
   bundle = result.outputFiles[0]!.text;
@@ -170,7 +187,7 @@ describe("独立音乐MV真实视图（虚构任务边界）", () => {
       expect(result.calls.filter((c:any)=>c.kind==='songPrepare')).toHaveLength(1);
       expect(result.calls.filter((c:any)=>c.kind==='songSubmit')).toHaveLength(0);
     } finally {await context.close();}
-  });
+  }, 15_000);
   it("两版音乐→选版→两镜分镜→缺镜拒合成→真实铺节点与逐镜执行→最终节点回写", async () => {
     const { context, page, click, reload } = await open();
     try {
@@ -206,6 +223,18 @@ describe("独立音乐MV真实视图（虚构任务边界）", () => {
           )
         )
       ).toHaveLength(0);
+      // 1109 硬规则：无参考时整批拒发、零调用，错误逐镜列出
+      await click("生成缺失镜头");
+      await page.waitForFunction(() =>
+        String((window as any).fixture.state.error || "").includes("请先为镜头选参考素材")
+      );
+      expect(
+        await page.evaluate(() =>
+          (window as any).fixture.calls.filter((c: any) => c.kind === "shot")
+        )
+      ).toHaveLength(0);
+      expect(await page.$$('[data-mv-shot-refs]')).toHaveLength(2);
+      await page.evaluate(() => (window as any).fixture.fillRefs());
       await click("生成缺失镜头");
       await page.waitForFunction(() =>
         (window as any).fixture.current
@@ -394,6 +423,7 @@ describe("独立音乐MV真实视图（虚构任务边界）", () => {
         );
       });
       await reload();
+      await page.evaluate(() => (window as any).fixture.fillRefs());
       await click("生成缺失镜头");
       await page.waitForFunction(() =>
         (window as any).fixture.current
@@ -971,6 +1001,7 @@ it("双交付：歌曲模式止于音频封面，高光只制作原曲25至65秒
   await page.waitForFunction(()=>(window as any).fixture.state.highlight?.startSec===25);
   await click('确认分镜并铺到画布');
   await page.waitForFunction(()=>(window as any).fixture.state.shotBlockIds?.length===10);
+  await page.evaluate(()=>(window as any).fixture.fillRefs());
   await click('生成缺失镜头（5');
   await page.waitForFunction(()=>(window as any).fixture.calls.filter((c:any)=>c.kind==='shot').length===5);
   await click('合成抖音高光 MV');
@@ -984,3 +1015,49 @@ it("双交付：歌曲模式止于音频封面，高光只制作原曲25至65秒
   expect(await page.evaluate(()=>(window as any).fixture.state.finalBlockId)).toBe(result.final.id);
  }finally{await context.close();}
 },30_000);
+
+it("成片局部修改刷新恢复：在途任务挂载即续查，失败提示已全额退回并清掉；完成作新版本块、原成片不动，再刷新不重复加入", async () => {
+  const { context, page, reload } = await open();
+  try {
+    const ids = await page.evaluate(() => {
+      const f = (window as any).fixture;
+      const job = { kind: "edit", jobId: "vpe_" + "b".repeat(48), requestId: "88888888-8888-4888-8888-888888888888", startedAt: "2026-11-10T02:00:00.000Z", sourceUrl: "https://test.invalid/final.mp4", range: { startSec: 2, endSec: 6 }, finalBlockId: "mv-final" };
+      const failed = { ...job, jobId: "vpe_" + "c".repeat(48), requestId: "99999999-9999-4999-8999-999999999999" };
+      localStorage.setItem("postprod-" + job.jobId, JSON.stringify({ status: "running" }));
+      localStorage.setItem("postprod-" + failed.jobId, JSON.stringify({ status: "failed", output: null, error: "片段修改未完成，积分已全额退回，原片未受影响" }));
+      const final = { ...f.current[0], id: "mv-final", kind: "video", musicMv: undefined, prompt: "完整 MV", outputUrl: "https://test.invalid/final.mp4", outputUrls: ["https://test.invalid/final.mp4"], status: "done" };
+      f.update([{ ...f.current[0], musicMv: { ...f.state, finalBlockId: "mv-final", finalEditJobs: [job, failed] } }, final]);
+      return { job: job.jobId, failed: failed.jobId };
+    });
+    // 刷新：挂载即按草稿里的在途记录续查；处理中保持，失败的清掉并提示服务端原句
+    await reload();
+    await page.waitForFunction(id => (window as any).fixture.state.finalEditJobs?.length === 1 && (window as any).fixture.state.finalEditJobs[0].jobId === id, {}, ids.job);
+    expect(await page.$eval('[role="alert"]', el => el.textContent)).toContain("积分已全额退回");
+    expect(await page.evaluate(() => (window as any).fixture.current.some((b: any) => String(b.id).startsWith("mvedit-")))).toBe(false);
+    // 服务端完成后再刷新：作为新版本块挂在成片旁，记录入 finalEdits，在途清掉，原成片不动
+    await page.evaluate(id => localStorage.setItem("postprod-" + id, JSON.stringify({ status: "succeeded", output: { url: "https://test.invalid/edited.mp4", editedRange: { startSec: 2, endSec: 6 } } })), ids.job);
+    await reload();
+    const versionId = `mvedit-mv-final-${ids.job}`;
+    await page.waitForFunction(id => (window as any).fixture.current.some((b: any) => b.id === id) && !(window as any).fixture.state.finalEditJobs, {}, versionId);
+    const done = await page.evaluate(id => {
+      const f = (window as any).fixture;
+      return { version: f.current.find((b: any) => b.id === id), final: f.current.find((b: any) => b.id === "mv-final"), edits: f.state.finalEdits, adds: f.adds };
+    }, versionId);
+    expect(done.version.outputUrl).toBe("https://test.invalid/edited.mp4");
+    expect(done.version.prompt).toContain("局部修改版（2–6秒）");
+    expect(done.final.outputUrl).toBe("https://test.invalid/final.mp4");
+    expect(done.edits).toHaveLength(1);
+    expect(done.edits[0]).toMatchObject({ jobId: ids.job, videoUrl: "https://test.invalid/edited.mp4", versionBlockId: versionId });
+    expect(done.adds).toEqual([{ ids: [versionId], edges: [{ fromId: "mv-final", toId: versionId }] }]);
+    // 再刷新：没有在途记录就不再查、不再加
+    await reload();
+    await new Promise(r => setTimeout(r, 1500));
+    const again = await page.evaluate(id => {
+      const f = (window as any).fixture;
+      return { versions: f.current.filter((b: any) => b.id === id).length, edits: f.state.finalEdits.length, adds: f.adds.length, queries: f.postProdQueries || [] };
+    }, versionId);
+    expect(again).toEqual({ versions: 1, edits: 1, adds: 0, queries: [] });
+  } finally {
+    await context.close();
+  }
+}, 30_000);

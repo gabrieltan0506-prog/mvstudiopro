@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrpcContext } from "../_core/context";
 const mocks=vi.hoisted(()=>({get:vi.fn(),create:vi.fn(),download:vi.fn(),audio:vi.fn()}));
 vi.mock("../jobs/repository",()=>({getJobByIdStrict:mocks.get,createJob:mocks.create}));
-vi.mock("../services/gcs",()=>({getGcsBucketName:()=>"test-bucket",downloadGcsObjectVersioned:mocks.download,uploadBufferToGcsIfAbsent:vi.fn(),signGsUriV4ReadUrl:vi.fn()}));
+vi.mock("../services/gcs",()=>({getGcsBucketName:()=>"test-bucket",downloadGcsObjectVersioned:mocks.download,uploadBufferToGcsIfAbsent:vi.fn(),signGsUriV4ReadUrl:vi.fn(),listGcsObjectVersions:vi.fn(async()=>[])}));
 vi.mock("../services/canvasMusicMvMedia",()=>({resolveCanvasMusicMvAudio:mocks.audio,resolveCanvasMusicMvVideo:vi.fn()}));
 import { canvasMusicMvRouter } from "./canvasMusicMv";
 const planRequestId="11111111-1111-4111-8111-111111111111";

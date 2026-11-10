@@ -91,6 +91,9 @@ vi.mock("./services/codeMotionConsultQuota", () => ({ reserveCodeMotionConsultQu
 
 const validateKnowledgePublicationAccess = vi.fn();
 vi.mock("./services/knowledgePublicationAdvisor",()=>({validateKnowledgePublicationAccess:(...args:unknown[])=>validateKnowledgePublicationAccess(...args)}));
+// 已失败的知识卡请求先按原回执零调用重验（#1751）；恢复链自有单测，这里默认「无可恢复回执」。
+const recoverKnowledgePublicationOperation = vi.fn();
+vi.mock("./services/knowledgePublicationRecovery",()=>({recoverKnowledgePublicationOperation:(...args:unknown[])=>recoverKnowledgePublicationOperation(...args)}));
 import { appRouter } from "./routers";
 
 const REQUEST_ID = "6f9619ff-8b86-4d01-b42d-00cf4fc964ff";
@@ -564,6 +567,52 @@ describe("每作品5次/12积分新增路径", () => {
   });
 });
 
+describe("按作品类型记额度：代码动画 / 营销 / 数字人", () => {
+  const projectId = "7f9619ff-8b86-4d01-b42d-00cf4fc964ff";
+  const executable = () => reserveManhuaAdvisorOperation.mockResolvedValueOnce({ kind: "awaiting_confirmation", jobId: JOB_ID, requestFingerprint: FINGERPRINT }).mockResolvedValueOnce({ kind: "execute", jobId: JOB_ID, requestFingerprint: FINGERPRINT });
+  it("额度查询带类型：核对与读数按该类型作品；显式 manhua 与缺省同为漫剧原参数", async () => {
+    readAdvisorProjectQuota.mockResolvedValueOnce({ used: 1, remaining: 4, limit: 5 });
+    expect(await caller().mvAnalysis.getManhuaAdvisorQuota({ projectId, projectKind: "marketing" })).toMatchObject({ remaining: 4, price: 12, scope: "project" });
+    expect(assertAdvisorProject).toHaveBeenCalledWith(7, { kind: "marketing", projectId });
+    expect(readAdvisorProjectQuota).toHaveBeenCalledWith(7, { kind: "marketing", projectId });
+    await caller().mvAnalysis.getManhuaAdvisorQuota({ projectId, projectKind: "manhua" });
+    expect(assertAdvisorProject).toHaveBeenLastCalledWith(7, projectId);
+    expect(readAdvisorProjectQuota).toHaveBeenLastCalledWith(7, projectId);
+  });
+  it("咨询按上下文作品类型核对、读数、领取与失败释放（代码动画）；免费失败不扣费", async () => {
+    const work = { kind: "code_motion", projectId };
+    readAdvisorProjectQuota.mockResolvedValueOnce({ used: 4, remaining: 1, limit: 5 });
+    reserveAdvisorProjectQuota.mockResolvedValueOnce({ reserved: true, used: 5, remaining: 0 });
+    askPlatformSkillQa.mockRejectedValueOnce(new Error("测试模型失败"));
+    executable();
+    await expect(caller().mvAnalysis.askPlatformSkillQa({ ...INPUT, manhuaContext: { ...CONTEXT, projectId, projectKind: "code_motion" as const } })).rejects.toThrow();
+    expect(assertAdvisorProject).toHaveBeenCalledWith(7, work);
+    expect(readAdvisorProjectQuota).toHaveBeenCalledWith(7, work);
+    expect(reserveAdvisorProjectQuota).toHaveBeenCalledWith(7, work, REQUEST_ID);
+    expect(releaseAdvisorProjectQuota).toHaveBeenCalledWith(7, work, REQUEST_ID);
+    expect(deductCreditsAmount).not.toHaveBeenCalled();
+  });
+  it("超额仍要确认 12 积分：未确认拒绝、不领名额不扣费（营销）", async () => {
+    readAdvisorProjectQuota.mockResolvedValueOnce({ used: 5, remaining: 0, limit: 5 });
+    reserveManhuaAdvisorOperation.mockResolvedValueOnce({ kind: "awaiting_confirmation", jobId: JOB_ID, requestFingerprint: FINGERPRINT });
+    await expect(caller().mvAnalysis.askPlatformSkillQa({ ...INPUT, manhuaContext: { ...CONTEXT, projectId, projectKind: "marketing" as const } })).rejects.toMatchObject({ code: "PAYMENT_REQUIRED" });
+    expect(readAdvisorProjectQuota).toHaveBeenCalledWith(7, { kind: "marketing", projectId });
+    expect(reserveAdvisorProjectQuota).not.toHaveBeenCalled();
+    expect(deductCreditsAmount).not.toHaveBeenCalled();
+    expect(askPlatformSkillQa).not.toHaveBeenCalled();
+  });
+  it("作品不存在（数字人）：核对拒绝，不读额度、不调用模型、不扣费", async () => {
+    reserveManhuaAdvisorOperation.mockResolvedValueOnce({ kind: "awaiting_confirmation", jobId: JOB_ID, requestFingerprint: FINGERPRINT });
+    assertAdvisorProject.mockRejectedValueOnce(new Error("尚未确认这部数字人作品的云端保存，请先保存制作稿再咨询；本次未扣费。"));
+    await expect(caller().mvAnalysis.askPlatformSkillQa({ ...INPUT, manhuaContext: { ...CONTEXT, projectId, projectKind: "digital_human" as const } })).rejects.toThrow("本次未扣费");
+    expect(assertAdvisorProject).toHaveBeenCalledWith(7, { kind: "digital_human", projectId });
+    expect(readAdvisorProjectQuota).not.toHaveBeenCalled();
+    expect(reserveAdvisorProjectQuota).not.toHaveBeenCalled();
+    expect(deductCreditsAmount).not.toHaveBeenCalled();
+    expect(askPlatformSkillQa).not.toHaveBeenCalled();
+  });
+});
+
 
 describe("映刻复用咨询回执但保持独立工作区", () => {
   const brief = { title: "映刻样稿", request: "整理介绍内容", text: "真实资料", style: "words" as const, duration: 15, orientation: "landscape" as const, images: [], data: [], unit: "" };
@@ -625,6 +674,8 @@ describe("映刻复用咨询回执但保持独立工作区", () => {
   reserveManhuaAdvisorOperation.mockResolvedValueOnce({kind:'failed',jobId:JOB_ID,message:first.message+'；积分对账已完成'});
   const replay=await caller().mvAnalysis.askPlatformSkillQa(input).catch(e=>e);
   expect(replay.message).toBe(first.message);expect(askPlatformSkillQa).toHaveBeenCalledTimes(1);expect(deductCreditsAmount).not.toHaveBeenCalled();
+  expect(recoverKnowledgePublicationOperation).toHaveBeenCalledTimes(1);
+  expect(recoverKnowledgePublicationOperation).toHaveBeenCalledWith(expect.objectContaining({userId:7,requestId:REQUEST_ID,knowledgePublicationContext:input.knowledgePublicationContext}),expect.anything());
  });
  it('知识整理未知态经过错误脱敏仍保留禁止新购提示',async()=>{
   reserveManhuaAdvisorOperation.mockResolvedValueOnce({kind:'failed',jobId:JOB_ID,message:'openrouter传输或回执尚未闭合，private-key'});

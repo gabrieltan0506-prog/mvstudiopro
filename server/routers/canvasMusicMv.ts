@@ -1,3 +1,4 @@
+import { canvasMusicCandidateSchema } from "../../shared/canvasMusicMedia";
 import {readSongCraftCloudLibrary} from "../services/songCraftCloudLibrary";
 import {queueSongCover} from "../services/songCover";
 import { listCreativeLibraryEntries, saveCreativeLibraryEntry } from "../services/creativeGenerationLibrary";
@@ -27,6 +28,7 @@ import {
   musicMvAdvisorTargetSchema,
   parseMusicMvAdvisorProposal,
 } from "../../shared/canvasMusicMv";
+import { isMvShotEngineSupported } from "../../shared/canvasMusicMvReferences";
 import { getJobByIdStrict, createJob } from "../jobs/repository";
 import { resolveCanvasMusicMvAudio } from "../services/canvasMusicMvMedia";
 import {
@@ -478,6 +480,70 @@ export async function adoptMusicMvConcept(
   };
 }
 
+export const adviseMontageGradeInputSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    videoGsUri: z.string().regex(/^gs:\/\/[^/]+\/.+\.(?:mp4|mov|webm)$/i),
+    durationSec: z.number().finite().positive().max(600),
+    aspect: z.enum(["9:16", "16:9", "1:1"]).optional(),
+    storyZh: z.string().max(8000).optional(),
+    seamSecs: z.array(z.number().finite().min(0)).max(40).optional(),
+  })
+  .strict();
+
+/**
+ * 1110 成片调色建议计费与防重放（沿用本 router 分镜写法）：
+ * - 单价 CREDIT_COSTS.montageGradeAdvice（20），扣费 action=montageGradeAdvice、说明「成片调色建议」，chargeKey 按 requestId 幂等；
+ *   管理员/supervisor 跳过余额预检，deductCreditsAmount 内 0 扣。
+ * - 同 requestId 已有最终结果：不再调模型，直接返回已存结果，并按同 chargeKey 补扣（已扣过则幂等命中、不重复扣）。
+ * - 同 requestId 已登记但无结果（处理中/失败）：拒绝，提示重新发起（前端每次点击生成新 requestId）。
+ * - 模型失败不扣、无需退。
+ */
+export async function adviseCanvasMontageGrade(
+  user: { id: number; role?: string | null },
+  input: z.infer<typeof adviseMontageGradeInputSchema>,
+  d: Pick<MusicMvPlanDeps, "bucket" | "balance" | "charge"> = deps,
+  serviceDeps: Partial<import("../services/montageGradeAdvice").MontageGradeAdviceDeps> = {},
+  /** 来源登记核验替身（测试注入）；缺省走 postProdMediaSource 真实登记源。 */
+  mediaDeps?: import("../services/postProdMediaSource").PostProdMediaDeps,
+) {
+  const privileged = user.role === "admin" || user.role === "supervisor";
+  const bucket = d.bucket();
+  const m = /^gs:\/\/([^/]+)\/(.+)$/.exec(input.videoGsUri)!;
+  if (m[1] !== bucket)
+    throw new TRPCError({ code: "BAD_REQUEST", message: "成片来源不属于本人，请重新选择成片" });
+  // 来源归属与后期 concat 同一套登记核验（本桶 post-prod/、uploads/、本人成功任务产物、画布素材归属）；管理员/supervisor 豁免。
+  if (!privileged) {
+    const { resolveRegisteredPostProdMediaSource } = await import("../services/postProdMediaSource");
+    try {
+      input = { ...input, videoGsUri: await resolveRegisteredPostProdMediaSource({ userId: String(user.id), source: input.videoGsUri }, mediaDeps) };
+    } catch {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "成片来源不属于本人或尚未登记，请重新选择成片" });
+    }
+  }
+  const cost = CREDIT_COSTS.montageGradeAdvice;
+  const { adviseMontageGrade, MontageGradeAdviceRequestUsedError } = await import("../services/montageGradeAdvice");
+  let result: Awaited<ReturnType<typeof adviseMontageGrade>>;
+  try {
+    result = await adviseMontageGrade(user.id, input, serviceDeps, {
+      beforeModelCall: async () => {
+        if (!privileged && (await d.balance(user.id)).totalAvailable < cost)
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `调色建议需要 ${cost} 积分` });
+      },
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    if (error instanceof MontageGradeAdviceRequestUsedError)
+      throw new TRPCError({ code: "CONFLICT", message: "这次调色建议未完成或已失败，请重新发起" });
+    console.error("[adviseMontageGrade]", error);
+    throw new TRPCError({ code: "BAD_GATEWAY", message: "调色建议暂不可用，请稍后重试（未扣积分）" });
+  }
+  const deduction = await d.charge(user.id, cost, "montageGradeAdvice", "成片调色建议", { chargeKey: `canvas-montage-grade:${user.id}:${input.requestId}` });
+  if (!deduction.success)
+    throw new TRPCError({ code: "PAYMENT_REQUIRED", message: "积分不足，调色建议未交付，请充值后重新生成" });
+  return { ...result, creditsCost: deduction.cost };
+}
+
 export const canvasMusicMvRouter = router({
   listSongCraftTemplates: protectedProcedure.query(()=>readSongCraftCloudLibrary()),
   queueSongCover: protectedProcedure.input(z.object({musicJobId:z.string().min(1).max(200),prompt:z.string().min(1).max(12000),aspectRatio:z.enum(["9:16","1:1"]).optional()}).strict()).mutation(({ctx,input})=>queueSongCover(ctx.user.id,input.musicJobId,input.prompt,input.aspectRatio)),
@@ -488,6 +554,10 @@ export const canvasMusicMvRouter = router({
   adoptConcept: protectedProcedure
     .input(adoptMusicMvConceptInputSchema)
     .mutation(({ ctx, input }) => adoptMusicMvConcept(ctx.user.id, input)),
+  /**
+   * 1109：任意镜头都可按分镜秒位裁歌曲切片（@audio1 节奏参考）；对口型镜头沿用同一条链作唱段。
+   * 旧名 prepareSinging 保留（仅接受对口型镜头），新名 prepareShotSongSlice 对全部 kind 开放。
+   */
   prepareSinging: protectedProcedure
     .input(
       z
@@ -498,11 +568,135 @@ export const canvasMusicMvRouter = router({
         })
         .strict()
     )
+    .mutation(({ ctx, input }) => prepareMvShotSongSlice(ctx.user.id, input, { singingOnly: true })),
+  prepareShotSongSlice: protectedProcedure
+    .input(
+      z
+        .object({
+          requestId: z.string().uuid(),
+          planRequestId: z.string().uuid(),
+          shotId: z.string().min(1).max(100),
+        })
+        .strict()
+    )
+    .mutation(({ ctx, input }) => prepareMvShotSongSlice(ctx.user.id, input, { singingOnly: false })),
+  /** 1109 歌词自动识别（Gemini 两跳听音，待确认版，缺省整首）；用户逐句改后在前端确认，演唱段只读确认版。 */
+  recognizeLyrics: protectedProcedure
+    .input(
+      z
+        .object({
+          requestId: z.string().uuid(),
+          audio: canvasMusicCandidateSchema,
+          musicJobId: z.string().trim().min(1).max(200).optional(),
+          /** 识别区间（缺省整首）：高光只取有歌词的部分，所以先听整首再推荐高光。 */
+          range: z.object({ startSec: z.number().finite().min(0), endSec: z.number().finite().positive() }).strict().optional(),
+          lyricsHint: z.string().max(30000).optional(),
+        })
+        .strict()
+    )
     .mutation(async ({ ctx, input }) => {
-      const state = await getCanvasMusicMvPlan(
-        ctx.user.id,
-        input.planRequestId
-      );
+      const range = input.range ?? { startSec: 0, endSec: input.audio.durationSec };
+      if (range.endSec > input.audio.durationSec + 0.05 || range.endSec - range.startSec < 1 || range.endSec - range.startSec > 600)
+        throw new TRPCError({ code: "BAD_REQUEST", message: "识别区间无效（须在所选歌曲内、不超过 10 分钟）" });
+      let source: string;
+      try {
+        source = await resolveCanvasMusicMvAudio(ctx.user.id, input.audio, input.musicJobId);
+      } catch {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "歌曲来源不属于本人或尚未登记，请重新选择歌曲" });
+      }
+      const { recognizeMusicMvLyricTable } = await import("../services/musicMvLyricTable");
+      try {
+        return await recognizeMusicMvLyricTable(ctx.user.id, {
+          requestId: input.requestId,
+          audio: { id: input.audio.id, url: input.audio.url, ...(source.startsWith("gs://") ? { gcsUri: source } : {}) },
+          range,
+          lyricsHint: input.lyricsHint,
+        });
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_GATEWAY", message: `本段歌词识别失败：${error instanceof Error ? error.message.slice(0, 400) : "未知原因"}` });
+      }
+    }),
+  /**
+   * 1110 成片调色建议（Gemini 3.8 Flash：Vertex gs:// → EvoLink 签名 URL，两跳）。只出建议与 grade.segments，不改草稿。
+   * 计费：CREDIT_COSTS.montageGradeAdvice（20 积分/次），流程见 adviseCanvasMontageGrade。
+   */
+  adviseMontageGrade: protectedProcedure
+    .input(adviseMontageGradeInputSchema)
+    .mutation(({ ctx, input }) => adviseCanvasMontageGrade(ctx.user, input)),
+  /** 1109 参考片送出前自动裁切：min(本镜时长, 所选模型单条上限)，入点用户指定优先否则取运动最强段。 */
+  trimShotMotionClip: protectedProcedure
+    .input(
+      z
+        .object({
+          sourceGcsUri: z.string().regex(/^gs:\/\/[^/]+\/.+/),
+          shotSec: z.number().finite().positive().max(60),
+          maxSec: z.number().finite().positive().max(60),
+          inSec: z.number().finite().min(0).optional(),
+        })
+        .strict()
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { trimMvMotionClip } = await import("../services/mvMotionClipTrim");
+      try {
+        return await trimMvMotionClip(ctx.user.id, input);
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "参考片裁切失败" });
+      }
+    }),
+  /**
+   * 1109 按确认版歌词表修订分镜（演唱/素材填充分工、补逐窗节拍与填充建议），存为新分镜记录。
+   * videoModel：所选镜头成片模型（可选）；有则单镜上限按该模型，缺省（旧客户端/未选）按保守值 max(原镜长, Mini 口径)。
+   */
+  reviseForLyrics: protectedProcedure
+    .input(z.object({
+      basePlanRequestId: z.string().uuid(),
+      lyricTable: z.unknown(),
+      highlight: z.unknown(),
+      musicJobId: z.string().trim().min(1).max(200).optional(),
+      videoModel: z.string().trim().min(1).max(64).refine(isMvShotEngineSupported, "所选成片模型暂不支持 MV 镜头").optional(),
+    }).strict())
+    .mutation(async ({ ctx, input }) => {
+      const { reviseMusicMvPlanForLyrics } = await import("../services/musicMvPlanRevision");
+      try {
+        return await reviseMusicMvPlanForLyrics(ctx.user.id, input as any);
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message.slice(0, 400) : "分镜修订失败" });
+      }
+    }),
+  /** 1109 素材填充镜头合成：按逐窗选定的图库视频/照片渲染成与镜头等长的片段。 */
+  composeFillShot: protectedProcedure
+    .input(z.object({
+      shotId: z.string().min(1).max(100),
+      aspect: z.enum(["9:16", "16:9"]),
+      windows: z.array(z.object({ startSec: z.number().finite().min(0), endSec: z.number().finite().positive(), kind: z.enum(["video", "photo"]), gcsUri: z.string().regex(/^gs:\/\/[^/]+\/.+/), cameraZh: z.string().max(200).optional(), inSec: z.number().min(0).optional() }).strict()).min(1).max(12),
+    }).strict())
+    .mutation(async ({ ctx, input }) => {
+      const { buildMvFillShot } = await import("../services/mvFillShot");
+      try {
+        return await buildMvFillShot(ctx.user.id, input);
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message.slice(0, 400) : "素材填充合成失败" });
+      }
+    }),
+  draftPlan: protectedProcedure
+    .input(canvasMusicMvDraftInputSchema)
+    .mutation(({ ctx, input }) =>
+      draftCanvasMusicMvPlan(ctx.user.id, ctx.user.role, input)
+    ),
+  getPlan: protectedProcedure
+    .input(z.object({ requestId: z.string().uuid() }).strict())
+    .query(({ ctx, input }) =>
+      getCanvasMusicMvPlan(ctx.user.id, input.requestId)
+    ),
+});
+
+async function prepareMvShotSongSlice(
+  userId: number,
+  input: { requestId: string; planRequestId: string; shotId: string },
+  opts: { singingOnly: boolean }
+) {
+  {
+      const state = await getCanvasMusicMvPlan(userId, input.planRequestId);
       if (state.status !== "succeeded")
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
@@ -510,19 +704,20 @@ export const canvasMusicMvRouter = router({
         });
       const saved = await read<SavedPlan>(
         deps,
-        `${prefix(ctx.user.id, input.planRequestId)}/result`
+        `${prefix(userId, input.planRequestId)}/result`
       );
       if (!saved) throw new Error("分镜来源暂不可读取");
       const shot = saved.plan.shots.find(row => row.id === input.shotId);
-      if (shot?.kind !== "singing")
+      if (!shot)
+        throw new TRPCError({ code: "BAD_REQUEST", message: "分镜里没有这个镜头" });
+      if (opts.singingOnly && shot.kind !== "singing")
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "只有对口型镜头需要准备唱段",
         });
-      const audioUri = await resolveCanvasMusicMvAudio(
-        ctx.user.id,
-        saved.input.audio
-      );
+      if (shot.kind === "footage")
+        throw new TRPCError({ code: "BAD_REQUEST", message: "已有素材切片镜头不生成视频，无需歌曲切片" });
+      const audioUri = await resolveCanvasMusicMvAudio(userId, saved.input.audio);
       const payload = {
         action: "audio_trim",
         params: {
@@ -534,11 +729,12 @@ export const canvasMusicMvRouter = router({
           fadeOutSec: 0,
         },
       };
-      const jobId = `mv_singing_${digest([ctx.user.id, input.requestId]).slice(0, 40)}`;
+      // 同一 payload 两条入口共用同一 jobId 前缀规则：切片内容只由（用户，requestId）决定。
+      const jobId = `mv_singing_${digest([userId, input.requestId]).slice(0, 40)}`;
       const check = (job: Awaited<ReturnType<typeof getJobByIdStrict>>) => {
         if (
           !job ||
-          String(job.userId) !== String(ctx.user.id) ||
+          String(job.userId) !== String(userId) ||
           job.type !== "post_prod" ||
           job.provider !== "ffmpeg-post-prod" ||
           digest(job.input) !== digest(payload)
@@ -554,7 +750,7 @@ export const canvasMusicMvRouter = router({
         try {
           await createJob({
             id: jobId,
-            userId: String(ctx.user.id),
+            userId: String(userId),
             type: "post_prod",
             provider: "ffmpeg-post-prod",
             input: payload,
@@ -562,16 +758,6 @@ export const canvasMusicMvRouter = router({
         } catch {
           check(await getJobByIdStrict(jobId));
         }
-      return { jobId, startSec: shot.startSec, endSec: shot.endSec };
-    }),
-  draftPlan: protectedProcedure
-    .input(canvasMusicMvDraftInputSchema)
-    .mutation(({ ctx, input }) =>
-      draftCanvasMusicMvPlan(ctx.user.id, ctx.user.role, input)
-    ),
-  getPlan: protectedProcedure
-    .input(z.object({ requestId: z.string().uuid() }).strict())
-    .query(({ ctx, input }) =>
-      getCanvasMusicMvPlan(ctx.user.id, input.requestId)
-    ),
-});
+      return { jobId, startSec: shot.startSec, endSec: shot.endSec, kind: shot.kind ?? "generated" };
+  }
+}

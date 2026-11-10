@@ -31,8 +31,9 @@ export const creativeVoiceProductionSchema = z.discriminatedUnion("action", [
     generate:{keyart:{required:["episode"],allowed:["blockId"]},clip:{required:["episode","blockId"]},retake:{required:["episode","blockId","variable"]},selectVersion:{required:["episode","blockId","versionIndex"]}},
     audio:{inspect:{required:["clipId"]},addCue:{required:["clipId","kind"],allowed:["patch"]},configureCue:{required:["clipId","cueId","patch"]},generateDialogue:{required:["clipId","cueId"]},adoptTake:{required:["clipId","cueId","takeId"]},selectMusic:{required:["clipId","cueId","jobId","variantIndex"]},selectSource:{required:["clipId","cueId","sourceId"]},trim:{required:["clipId","cueId"]},premix:{required:["clipId"]},previewMix:{required:["clipId"]},resume:{required:["clipId","jobId"]}},
     scoring:{inspect:{},configure:{required:["clipId","musicId"]},analyze:{allowed:["question"]},applyAdvice:{},submit:{required:["sourceKey"]}},
-    edit:{inspect:{required:["episode"]},reorder:{required:["episode","order"]},trim:{required:["episode","shotIndex","inSec","outSec"]},transition:{required:["episode","transition"]}},
+    edit:{inspect:{required:["episode"]},reorder:{required:["episode","order"]},trim:{required:["episode","shotIndex","inSec","outSec"]},transition:{required:["episode"],allowed:["transition","transitionSettings"]},grade:{required:["episode","grade"],allowed:["source","userQuoteZh"]},gradeAdvice:{required:["episode","userRequestZh"]}},
     deliver:{inspect:{required:["episode"]},assemble:{required:["episode"],allowed:["clipIds"]},subtitle:{required:["episode"]},selectVersion:{required:["episode","versionIndex"]},export:{required:["episode"]}},
+    videoEdit:{inspect:{allowed:["targetId"]},prefill:{required:["targetId","startSec","endSec","promptZh"],allowed:["refAssetId"]}},
     storyboardRecovery:{inspect:{required:["episode"]},recover:{required:["episode"]},archive:{required:["episode"]}},
   };
   if(!("operation" in value)||!rules[value.action])return;
@@ -41,7 +42,9 @@ export const creativeVoiceProductionSchema = z.discriminatedUnion("action", [
   for(const field of rule.required||[])if((value as Record<string,unknown>)[field]===undefined)ctx.addIssue({code:"custom",path:[field],message:"本操作缺少必需参数"});
   for(const field of Object.keys(value))if(!fields.has(field))ctx.addIssue({code:"custom",path:[field],message:"该参数不属于本操作，请分步保存后再执行"});
   if(value.action==="edit"&&value.operation==="trim"&&value.outSec!<=value.inSec!)ctx.addIssue({code:"custom",message:"出点必须大于进点"});
+  if(value.action==="edit"&&value.operation==="transition"&&(value.transition===undefined)===(value.transitionSettings===undefined))ctx.addIssue({code:"custom",path:["transitionSettings"],message:"转场须且只能给 transition 或 transitionSettings 之一"});
   if(value.action==="edit"&&value.order&&new Set(value.order).size!==value.order.length)ctx.addIssue({code:"custom",path:["order"],message:"镜头顺序不得重复"});
+  if(value.action==="videoEdit"&&value.startSec!==undefined&&value.endSec!==undefined&&value.endSec<=value.startSec)ctx.addIssue({code:"custom",path:["endSec"],message:"结束秒须大于开始秒"});
   if(value.action==="writer"&&value.operation==="configure"&&Object.keys(value).length===2)ctx.addIssue({code:"custom",message:"配置操作没有任何修改"});
   if(value.action==="asset"&&value.metadata&&Object.keys(value.metadata).length===0)ctx.addIssue({code:"custom",path:["metadata"],message:"资产修改为空"});
   if(value.action==="audio"&&value.patch&&Object.keys(value.patch).length===0)ctx.addIssue({code:"custom",path:["patch"],message:"音轨修改为空"});
@@ -56,7 +59,10 @@ export function creativeVoiceProductionToolParameters() {
     if(!value || typeof value!=="object")return value;
     const result:Record<string,any>={};
     for(const [key,item] of Object.entries(value)) {
-      if(["$schema","additionalProperties"].includes(key))continue;
+      // z.record 会产出 propertyNames；Live 的 Schema 不认这个字段，键名约束仍由原 Zod 契约在执行时校验。
+      if(["$schema","additionalProperties","propertyNames"].includes(key))continue;
+      // properties 下的键是字段名（可能恰好叫 type/items/const），只转换各字段的 Schema，不当关键字处理。
+      if(key==="properties" && item && typeof item==="object"){result.properties=Object.fromEntries(Object.entries(item).map(([name,child])=>[name,convert(child)]));continue;}
       // Live 的 Schema 不接受 JSON Schema 的开区间字段；执行时仍由原 Zod 契约严格校验。
       if(key==="exclusiveMinimum" || key==="exclusiveMaximum")continue;
       if(key==="prefixItems"){const items=item as any[];result.items=convert(items[0]);result.minItems=items.length;result.maxItems=items.length;continue;}

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   submitPrevisTask: vi.fn(),
   getPrevisTask: vi.fn(),
   listPrevisTasks: vi.fn(),
+  assertPrevisInFlightCapacity: vi.fn(),
 }));
 vi.mock("../services/manhuaPrevisTask", async importOriginal => ({
   ...(await importOriginal<typeof import("../services/manhuaPrevisTask")>()),
@@ -32,8 +33,10 @@ beforeEach(() => {
   mocks.submitPrevisTask.mockResolvedValue({ jobId: "test-job" });
   mocks.getPrevisTask.mockResolvedValue(null);
   mocks.listPrevisTasks.mockResolvedValue({ items: [], nextCursor: null });
+  mocks.assertPrevisInFlightCapacity.mockResolvedValue(undefined);
 });
-for (const role of ["admin", "supervisor"] as const) {
+// 1109 用户拍板：白模工作台对普通用户开放（计费不变，另有每账号在跑上限）
+for (const role of ["admin", "supervisor", "user"] as const) {
   it(`${role}真实router caller可提交、查询及分页`, async () => {
     const c = caller(role);
     expect(await c.submit(input)).toEqual({ jobId: "test-job" });
@@ -55,17 +58,17 @@ for (const role of ["admin", "supervisor"] as const) {
     );
   });
 }
-it("普通用户全部入口均被真实权限中间件拒绝，服务零调用", async () => {
-  const c = caller("user");
-  await expect(c.submit(input)).rejects.toMatchObject({ code: "FORBIDDEN" });
-  await expect(c.get({ requestId: input.requestId })).rejects.toMatchObject({
-    code: "FORBIDDEN",
-  });
-  await expect(
-    c.list({ scopeId: input.scopeId, clipId: input.clipId })
-  ).rejects.toMatchObject({ code: "FORBIDDEN" });
-  for (const service of Object.values(mocks))
-    expect(service).not.toHaveBeenCalled();
+it("未登录全部入口均被真实权限中间件拒绝，服务零调用", async () => {
+  const c = manhuaPrevisRouter.createCaller({ user: null } as unknown as TrpcContext);
+  await expect(c.submit(input)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(c.get({ requestId: input.requestId })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  await expect(c.list({ scopeId: input.scopeId, clipId: input.clipId })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  for (const service of Object.values(mocks)) expect(service).not.toHaveBeenCalled();
+});
+it("普通用户在跑白模达上限：明确拒绝且不建任务", async () => {
+  mocks.assertPrevisInFlightCapacity.mockRejectedValueOnce(new PrevisRejectedError("已有 2 个白模在生成"));
+  await expect(caller("user").submit(input)).rejects.toMatchObject({ code: "PRECONDITION_FAILED", message: expect.stringContaining("已有 2 个白模在生成") });
+  expect(mocks.submitPrevisTask).not.toHaveBeenCalled();
 });
 it("管理员坏游标在路由schema拒绝，分页服务零调用", async () => {
   await expect(

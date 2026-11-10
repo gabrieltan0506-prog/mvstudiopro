@@ -1838,6 +1838,25 @@ async function runSeedance25EvolinkJob(
     videoUrls,
     audioUrls,
   });
+  // 1109 MV 镜头：必须显式 reference_to_video 且参考非空（用户硬规则），身份进任务记录供回执证据
+  const { parseMvShotTaskIdentity: parseMvShot25 } = await import("../server/services/canvasMusicMvShotEvidence.js");
+  const mvShot25 = parseMvShot25((body as Record<string, unknown>).mvShot);
+  if ((body as Record<string, unknown>).mvShot != null && !mvShot25) {
+    return { ok: false, status: 400, error: "MV 镜头身份无效，未提交" };
+  }
+  if (mvShot25) {
+    // 与 Mini 路线同一闸（#1769 审查 #5）：reference_to_video + ≥1 张图 + 总参考 ≥2；再查多人互动 × 角色表（#3）
+    const { checkMvShotReferenceRequirement, checkMvShotPromptCastInteraction } = await import("../shared/canvasMusicMvShotGuards.js");
+    const refCheck = checkMvShotReferenceRequirement({
+      mode,
+      imageCount: (imageUrl ? 1 : 0) + imageUrls.length,
+      videoCount: videoUrls.length,
+      audioCount: audioUrls.length,
+    });
+    if (!refCheck.ok) return { ok: false, status: 400, error: refCheck.error };
+    const castCheck = checkMvShotPromptCastInteraction(prompt);
+    if (!castCheck.ok) return { ok: false, status: 400, error: castCheck.error };
+  }
   const rawDuration = body.duration ?? query.duration ?? body.durationSec ?? 15;
   // extend 官方支持 -1 自动（跟内容走）；显式时长 4–30s。原实现把 -1 clamp 成 4，自动档不可达
   const wantsAutoDuration =
@@ -2029,6 +2048,8 @@ async function runSeedance25EvolinkJob(
       resolution,
       generateAudio,
       workMode: mode,
+      // 1109 MV 镜头身份（回执 raw/parsed 永久证据）；非 MV 请求为 undefined
+      mvShot: mvShot25,
     };
     const intentGate = await gateCanvasIntentBeforeCharge({
       userId: access.userId,
@@ -5964,12 +5985,46 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         const { isByteplusSeedanceConfigured, buildByteplusSeedance25SubmitBody } = await import(
           "../server/services/byteplusSeedanceVideo.js"
         );
-        const preferByteplusMini = !isProbe && isByteplusSeedanceConfigured();
+        /**
+         * 1109 MV 镜头参考生视频：客户端显式传 workMode（下划线枚举）与 mvShot 身份。
+         * MV 镜头必须 reference_to_video 且参考数组非空——无参考不得静默退回文生（用户硬规则）。
+         * 参考含真人实拍（Pexels）时直接走不挡脸通道，省一次 BytePlus 扣费后退回。
+         */
+        const { isSeedance25EvolinkMode: isMiniModeEnum } = await import("../shared/seedanceEvolinkModels.js");
+        const { parseMvShotTaskIdentity } = await import("../server/services/canvasMusicMvShotEvidence.js");
+        const requestedMiniMode = String(b.workMode || q.workMode || "").trim();
+        const miniWorkMode = isMiniModeEnum(requestedMiniMode) ? requestedMiniMode : undefined;
+        if (miniWorkMode === "video_edit" || miniWorkMode === "video_extend") {
+          return res.status(400).json({ ok: false, error: "草稿档不支持视频编辑或延长" });
+        }
+        const mvShot = parseMvShotTaskIdentity(b.mvShot);
+        if (b.mvShot != null && !mvShot) {
+          return res.status(400).json({ ok: false, error: "MV 镜头身份无效，未提交" });
+        }
+        const miniReferenceCount = (imageUrl ? 1 : 0) + (imageUrls?.length || 0) + (videoUrls?.length || 0) + (audioUrls?.length || 0);
+        if (mvShot) {
+          // 与 2.5 路线同一闸（#1769 审查 #5）；再查多人互动 × 角色表（#3）
+          const { checkMvShotReferenceRequirement, checkMvShotPromptCastInteraction } = await import("../shared/canvasMusicMvShotGuards.js");
+          const refCheck = checkMvShotReferenceRequirement({
+            mode: miniWorkMode,
+            imageCount: (imageUrl ? 1 : 0) + (imageUrls?.length || 0),
+            videoCount: videoUrls?.length || 0,
+            audioCount: audioUrls?.length || 0,
+          });
+          if (!refCheck.ok) return res.status(400).json({ ok: false, error: refCheck.error });
+          const castCheck = checkMvShotPromptCastInteraction(prompt);
+          if (!castCheck.ok) return res.status(400).json({ ok: false, error: castCheck.error });
+        }
+        if (miniWorkMode === "reference_to_video" && miniReferenceCount === 0) {
+          return res.status(400).json({ ok: false, error: "多模态参考需要至少一张图片、一条视频或一条音频，本次未提交、未扣费" });
+        }
+        const mvShotHasRealPerson = mvShot?.hasRealPerson === true;
+        const preferByteplusMini = !isProbe && !mvShotHasRealPerson && isByteplusSeedanceConfigured();
         if (!preferByteplusMini && !isEvolinkSeedanceConfigured()) {
           return res.status(503).json({ ok: false, error: "视频服务暂不可用，请稍后重试" });
         }
         if (!isProbe) {
-          const miniInput = { prompt, imageUrl, imageUrls, videoUrls, audioUrls, aspectRatio, duration: durationSec, resolution, generateAudio, version: "2.0-mini" as const };
+          const miniInput = { prompt, imageUrl, imageUrls, videoUrls, audioUrls, aspectRatio, duration: durationSec, resolution, generateAudio, version: "2.0-mini" as const, mode: miniWorkMode };
           if (preferByteplusMini) buildByteplusSeedance25SubmitBody(miniInput);
           // 只有EvoLink作为主通道时预检；备用通道不能阻挡合法BytePlus主通道请求。
           else buildEvolinkSeedanceRequest({ ...miniInput, quality: resolution });
@@ -5980,6 +6035,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         }
         // 探针仍走同步，方便脚本一次拿结果；正式用户走异步 task，避免 HTTP 超时
         if (isProbe) {
+          const probeReceipts: Array<{ status: number; body: string }> = [];
           const out = await runEvolinkSeedanceVideo({
             prompt,
             imageUrl,
@@ -5991,6 +6047,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             duration: durationSec,
             generateAudio,
             version: seedanceVersion,
+            mode: miniWorkMode,
+            persistSubmitReceipt: async receipt => { probeReceipts.push(receipt); },
           });
           return res.status(200).json({
             ok: true,
@@ -6000,6 +6058,13 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             mode: out.mode,
             version: out.version,
             resolution,
+            // 探针脚本负责把原始回执落 GCS（原始/解析分存）；这里原样返回不解析。
+            submitReceipts: probeReceipts,
+            referenceCounts: {
+              image: (imageUrl ? 1 : 0) + (imageUrls?.length || 0),
+              video: videoUrls?.length || 0,
+              audio: audioUrls?.length || 0,
+            },
           });
         }
         let preparedPilot: PreparedManhuaPilot = { kind: "none" };
@@ -6070,6 +6135,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           resolution,
           generateAudio,
           seedanceVersion: "2.0-mini" as const,
+          workMode: miniWorkMode,
+          mvShot,
         };
         const intentGate = await gateCanvasIntentBeforeCharge({
           userId: intentViewerId,
@@ -6325,6 +6392,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           resolution: task.resolution,
           duration: task.duration,
           creditsUsed: task.creditsCharged,
+          // MV 镜头：参考计数与回执证据对象名（原始/解析分存），供前端与探针核对
+          mvShot: task.mvShot || undefined,
+          mvShotEvidence: task.mvShotEvidence || undefined,
           // 超分任务：原片地址与目标档（结果在 videoUrl，原片不被覆盖）
           upscaleSourceUrl: task.upscaleSourceUrl || undefined,
           upscaleTarget: task.upscaleTarget || undefined,

@@ -34,6 +34,7 @@ describe("照片视频超分元数据与恢复边界", () => {
       width: 1112,
       height: 834,
       durationSec: 11,
+      durationExactSec: 10.08,
       sourceResolution: "1080p",
     });
     expect(
@@ -42,6 +43,17 @@ describe("照片视频超分元数据与恢复边界", () => {
       canvasVideoUpscaleCredits("2k", Math.ceil(10.08), { freeform: true })
     );
     expect(metadataForUpscale(834, 1112, 10.51).durationSec).toBe(11);
+  });
+  it("局部修改按实测时长：10.08 秒传 10.0 秒（一位小数向下取，同服务端），不用超分计费的 11 秒", async () => {
+    const { videoEditDurationSec } = await import("./videoEditSubmit");
+    const m = metadataForUpscale(1112, 834, 10.08);
+    expect(videoEditDurationSec(m.durationExactSec)).toBe(10);
+    expect(videoEditDurationSec(metadataForUpscale(834, 1112, 10.51).durationExactSec)).toBe(10.5);
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("client/src/components/HomePhotoVideoUpscale.tsx", "utf8");
+    expect(src).toContain("durationSec={videoEditDurationSec(metadata.durationExactSec)}");
+    expect(src).toContain("const sec = videoEditDurationSec(meta?.durationExactSec);");
+    expect(src).not.toMatch(/<VideoEditPanel[^>]*durationSec=\{metadata\.durationSec\}/);
   });
   it.each([0, -1, NaN, Infinity, 601])("拒绝无效或超上限时长 %s", duration => {
     expect(() => metadataForUpscale(1280, 720, duration)).toThrow();
@@ -143,6 +155,7 @@ it("浏览器挂载：确认后单次提交、刷新只查原ID、用户隔离�
     "@/lib/canvasUpload":
       "export const inferCanvasAssetKind=()=> 'video'; export const uploadOneCanvasAsset=async()=>({url:'https://test.invalid/upload.mp4'});",
     "@/lib/videoUpscaleApi": `export class VideoUpscaleSubmitError extends Error {constructor(message){super(message);this.definitelyNotStarted=true;}};export const startVideoUpscale=async input=>{fixture.posts.push(input);if(fixture.denied)throw new VideoUpscaleSubmitError("积分不足");if(fixture.fail)throw new Error('离线断线');return {taskId:'task-'+input.target,status:'running',creditsUsed:1}};
+    export const importWorkflowVideoSource=async()=>{throw new Error('offline')};export const probeWorkflowVideoSource=async()=>{throw new Error('offline')};
     export const fetchVideoUpscaleStatus=async id=>{fixture.queries.push(id);return {taskId:id,status:fixture.status,...(fixture.status==='succeeded'?{videoUrl:'https://test.invalid/'+id+'.mp4'}:{})}};`,
   };
   const result = await build({

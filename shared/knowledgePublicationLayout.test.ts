@@ -14,13 +14,14 @@ describe('自动结构化阅读与千页完整性',()=>{
   expect(plan.tasks.every(t=>Buffer.byteLength(JSON.stringify(t))<=180000)).toBe(true);
   for(const [a,b] of [[0,999],[10,650],[500,700]])expect(plan.tasks.some(t=>t.some(f=>f.pageId===pages[a].id&&f.term==='共同概念')&&t.some(f=>f.pageId===pages[b].id&&f.term==='共同概念'))).toBe(true);
  });
- it('自动长表分页不漏行，手改后不读旧结构，原稿/疑点保留',()=>{
+ it('自动长表分页不漏行，手改后不读旧结构，疑点只留作者面板',()=>{
   const reading=knowledgeReadingSchema.parse({version:1,subtitle:'分类对照',accent:'jade',blocks:[{type:'table',title:'分类',note:'完整120项',columns:['编号','内容'],rows:Array.from({length:120},(_,i)=>['编号'+i,'知识内容'+i])},{type:'cards',title:'概念',note:'',items:[{title:'概念甲',body:'详细解释甲'},{title:'概念乙',body:'详细解释乙'}]}]});
   const doc=layoutFromSource({kind:'knowledge-publication',owner:'7',sourceId:'test',title:'主题',body:knowledgeReadingMarkdown(reading)});
   const p=doc.pages[0];const review={kind:'knowledge_publication_v1' as const,sourceDigest:'a'.repeat(64),title:doc.title,pages:[{...p,imageUrl:undefined,imagePlacement:undefined,reading,imageDescription:'',imageStatus:'absent' as const,facts:[{term:'主题',statement:'事实'}],cautions:[{kind:'text' as const,message:'重要疑点',evidence:'源文条件'}]}]};
   const html=buildKnowledgePublicationHtml(doc,review,{});expect(html.match(/<thead>/g)!.length).toBeGreaterThan(1);
   for(let i=0;i<120;i++)expect(html.match(new RegExp('>编号'+i+'<','g'))).toHaveLength(1);
-  expect(html).toContain('重要疑点');expect(html).toContain('源文条件');expect(html).toContain('data-booklet-root');
+  // 1108（#1751）起审查疑点只保留在作者面板，读者正文不附加
+  expect(html).not.toContain('重要疑点');expect(html).not.toContain('源文条件');expect(html).toContain('data-booklet-root');
   doc.pages[0].body='### 新说明\n\n用户改后的唯一正文';const edited=buildKnowledgePublicationHtml(doc,review,{});expect(edited).toContain('用户改后的唯一正文');expect(edited).not.toContain('知识内容119');
  });
  it('表格列数不一致明确拒收；Markdown里的表格仍识别，脚本不执行',()=>{

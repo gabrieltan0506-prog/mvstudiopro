@@ -31,6 +31,7 @@ import {
   resolveSegmentIndexFromShotIndex,
 } from "@shared/manhuaScriptWorkbench";
 import { mergeManhuaMediaVersions } from "./manhuaMediaVersions";
+import { maskMediaProviderDetails } from "./maskMediaUrls";
 import { confirmManhuaSegmentLookBindingSource } from "@shared/manhuaCharacterLookSets";
 import { normalizeManhuaAutoSegmentBinding } from "@shared/manhuaAutoSegment";
 import { isManhuaWorkbenchKeyartCurrent } from "../components/ManhuaScriptWorkbench";
@@ -308,6 +309,7 @@ function actualWorkbenchReview(scope: Record<string, unknown>) {
       consumableManhuaCustomAssetRefsForCanon,
       collectManhuaCharacterSheetUrlById,
       collectManhuaPropImageUrlById,
+      maskMediaProviderDetails,
       focusEpisode: 1,
       assetCanon: undefined,
       episodeVideoModel: undefined,

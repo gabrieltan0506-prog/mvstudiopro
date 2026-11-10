@@ -3,6 +3,8 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { importManhuaWriterPackFromText } from "@shared/manhuaWriterRoom";
+import { MANHUA_WRITER_GENERATION_MIN } from "@shared/manhuaWriterModels";
+import { maskMediaProviderDetails } from "./maskMediaUrls";
 import {
   buildManhuaWriterSession,
   parseManhuaWriterSession,
@@ -95,6 +97,8 @@ function harness(
   );
   const context = {
     ...setters,
+    MANHUA_WRITER_GENERATION_MIN,
+    maskMediaProviderDetails,
     factoryTopic: "墨菁传",
     writerEpisodeCount: options.realImport ? 2 : 1,
     writerPack: pack,

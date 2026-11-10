@@ -1,6 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { adminProcedure, router } from "../_core/trpc";
+import { protectedProcedure, router } from "../_core/trpc";
 import { manhuaPrevisRequestSchema } from "../../shared/manhuaPrevis";
 import {
   getPrevisTask,
@@ -8,6 +8,7 @@ import {
   submitPrevisTask,
   previsCursorSchema,
   PrevisRejectedError,
+  assertPrevisInFlightCapacity,
 } from "../services/manhuaPrevisTask";
 
 async function safely<T>(fn: () => Promise<T>) {
@@ -30,18 +31,25 @@ async function safely<T>(fn: () => Promise<T>) {
     });
   }
 }
+/**
+ * 1109 用户拍板：白模工作台对普通用户开放（原 adminProcedure 只放 admin/supervisor）。
+ * 白模本身不扣积分（0911 实录），计费不变；新增每账号在跑上限，防止单用户占满 rig 机。
+ */
 export const manhuaPrevisRouter = router({
-  submit: adminProcedure
+  submit: protectedProcedure
     .input(manhuaPrevisRequestSchema)
     .mutation(({ ctx, input }) =>
-      safely(() => submitPrevisTask(ctx.user.id, input))
+      safely(async () => {
+        await assertPrevisInFlightCapacity(ctx.user.id, input.requestId);
+        return submitPrevisTask(ctx.user.id, input);
+      })
     ),
-  get: adminProcedure
+  get: protectedProcedure
     .input(z.object({ requestId: z.string().uuid() }))
     .query(({ ctx, input }) =>
       safely(() => getPrevisTask(ctx.user.id, input.requestId))
     ),
-  list: adminProcedure
+  list: protectedProcedure
     .input(
       z.object({
         scopeId: z.string().uuid(),

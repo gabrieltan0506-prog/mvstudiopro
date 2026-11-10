@@ -249,6 +249,39 @@ const realList: PrevisListDeps = {
       .limit(31);
   },
 };
+/** 每账号同时在跑的白模任务上限（普通用户开放后的配额护栏；不涉及积分）。 */
+export const PREVIS_IN_FLIGHT_PER_USER_MAX = Math.max(
+  1,
+  Number(process.env.MANHUA_PREVIS_IN_FLIGHT_PER_USER_MAX) || 2
+);
+export async function assertPrevisInFlightCapacity(
+  userId: number,
+  requestId: string,
+  d: { countInFlight: (userId: number, excludeId: string) => Promise<number> } = {
+    async countInFlight(uid, excludeId) {
+      const db = await database();
+      const rows = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(jobs)
+        .where(
+          and(
+            eq(jobs.userId, String(uid)),
+            eq(jobs.type, "post_prod"),
+            sql`${jobs.input}::jsonb->>'action' = 'manhua_previs'`,
+            sql`${jobs.status} in ('queued','running','processing')`,
+            sql`${jobs.id} <> ${excludeId}`
+          )
+        );
+      return Number(rows[0]?.n || 0);
+    },
+  }
+) {
+  const inFlight = await d.countInFlight(userId, previsTaskId(userId, requestId));
+  if (inFlight >= PREVIS_IN_FLIGHT_PER_USER_MAX)
+    throw new PrevisRejectedError(
+      `已有 ${inFlight} 个白模在生成，请等它完成后再提交（每账号最多 ${PREVIS_IN_FLIGHT_PER_USER_MAX} 个同时进行）`
+    );
+}
 export async function listPrevisTasks(
   userId: number,
   scopeId: string,

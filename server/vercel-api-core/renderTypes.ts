@@ -15,6 +15,8 @@ export interface SceneVideoInput {
   /** 源片裁切入点（秒）；与 trimOutSec 同时有效时 ffmpeg 真裁切 */
   trimInSec?: number;
   trimOutSec?: number;
+  /** 1109 MV 演唱镜：模型自带音轨（自己哼唱）会与原唱打架，环境层静音。 */
+  muteSourceAudio?: boolean;
 }
 
 export interface RenderWorkflowInput {
@@ -23,8 +25,13 @@ export interface RenderWorkflowInput {
   sceneVideos: SceneVideoInput[];
   /** 漫剧合成保留片内对白、音效和环境声；旧独立配音工作流不改变。 */
   preserveSourceAudio?: boolean;
-  /** 仅在明确选择歌曲的 MV 中静音原片。 */
+  /** MV：选定歌曲为主音轨（0 dB），镜头自带声音只作环境层按 sourceAudioGainDb 混入。 */
   musicOnly?: boolean;
+  /** musicOnly 时镜头环境层电平（dB，−40～−12，默认 −20）；不变速。 */
+  sourceAudioGainDb?: number;
+  /** 1109 MV 高光首尾音画同步淡入/淡出（秒）。 */
+  videoFadeInSec?: number;
+  videoFadeOutSec?: number;
   alignedLyrics?: SongAlignedSubtitle;
   musicUrl?: string;
   voiceUrl?: string;

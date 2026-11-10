@@ -254,7 +254,9 @@ export default function ManhuaCreativeAdvisorPanel(props: {
   const listRef = useRef<HTMLDivElement | null>(null);
   const templateSectionRef = useRef<HTMLElement | null>(null);
   const asking = streamPending;
-  const quotaQuery = trpc.mvAnalysis.getManhuaAdvisorQuota.useQuery(props.projectId ? { projectId: props.projectId } : undefined, { enabled: (open || Boolean(props.automaticMonitoring)) && Boolean(userId), staleTime: 0, retry: false, refetchOnWindowFocus: true });
+  // 作品类型随上下文：缺省 = 漫剧（查询参数同旧）；代码动画 / 营销 / 数字人按各自作品核对与计数
+  const projectKind = project?.context.projectKind;
+  const quotaQuery = trpc.mvAnalysis.getManhuaAdvisorQuota.useQuery(props.projectId ? { projectId: props.projectId, ...(projectKind && projectKind !== "manhua" ? { projectKind } : {}) } : undefined, { enabled: (open || Boolean(props.automaticMonitoring)) && Boolean(userId), staleTime: 0, retry: false, refetchOnWindowFocus: true });
   useEffect(() => { if (quotaQuery.data) setQuota({ remaining: quotaQuery.data.remaining, price: quotaQuery.data.price }); }, [quotaQuery.data?.remaining, quotaQuery.data?.price]);
   const sessionStorageBlocked = Boolean((sessionKey && !initial.writable) || initialRewrite.error);
   // 唯一 pending 槽仍属于这个非终态请求；先恢复，不能被新问题覆盖。
