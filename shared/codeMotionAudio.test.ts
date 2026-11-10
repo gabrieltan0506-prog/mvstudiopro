@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import {
+  CODE_MOTION_AUDIO_MAX_BYTES,
   codeMotionAudioSchema,
   codeMotionAudioClipSchema,
   validateCodeMotionAudio,
@@ -82,9 +83,10 @@ it("拒绝坏数值、过长淡入淡出和没有声音的音量", () => {
       audioTimeline: [{ ...clip, volume: 0 }],
     }).success
   ).toBe(false);
+  // 共享结构按全部音源上限（含生成音乐）64 MB 收口；上传音源 30 MB 由服务端入库另行拒绝。
   expect(
     codeMotionAudioSchema.safeParse({
-      sources: [{ ...source, bytes: 30 * 1024 * 1024 + 1 }],
+      sources: [{ ...source, bytes: CODE_MOTION_AUDIO_MAX_BYTES + 1 }],
       audioTimeline: [clip],
     }).success
   ).toBe(false);

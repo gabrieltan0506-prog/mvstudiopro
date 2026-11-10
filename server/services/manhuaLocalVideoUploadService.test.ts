@@ -11,6 +11,7 @@ import {
   rename,
 } from "node:fs/promises";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
@@ -28,8 +29,9 @@ const exec = promisify(execFile);
 let root: string;
 let video: Buffer;
 beforeAll(async () => {
+  // 系统临时目录（不写死 macOS 的 /private/tmp）；realpath 去掉 /tmp 软链，服务端拒绝软链路径。
   root = await realpath(
-    await mkdtemp("/private/tmp/manhua-local-upload-test-")
+    await mkdtemp(path.join(tmpdir(), "manhua-local-upload-test-"))
   );
   await exec("ffmpeg", [
     "-v",

@@ -108,7 +108,7 @@ describe("复用模型路由", () => {
     const bodies = fetch.mock.calls.map(c => JSON.parse(c[1].body));
     expect(bodies.map(b => b.model)).toEqual([
       "z-ai/glm-5.3-flashx",
-      "deepseek/deepseek-v4.1-flash",
+      "deepseek/deepseek-v4.1-flash-1017",
     ]);
     expect(bodies[0].provider.order).toEqual(["Z.AI"]);
     expect(bodies[1].reasoning).toEqual({ enabled: true, effort: "high" });
@@ -164,7 +164,7 @@ it("手动选择DeepSeek直接调用该模型，并使用对应参数与模型�
   vi.stubGlobal("fetch",fetch);
   try {
     const result=await callNovelStage("相同输入",true,"manual",{modelPreference:"deepseek"});
-    expect(result.model).toBe("deepseek/deepseek-v4.1-flash");
+    expect(result.model).toBe("deepseek/deepseek-v4.1-flash-1017");
     expect(result.settings).toEqual({reasoning:"high",maxTokens:32768});
     expect(fetch).toHaveBeenCalledTimes(1);
     const body=JSON.parse(fetch.mock.calls[0][1].body);
@@ -185,7 +185,7 @@ it("EvoLink DeepSeek仅发送文档支持的thinking开关，不伪造high档", 
   try {
     const result=await callNovelStage("相同方向",true,"evo",{modelPreference:"deepseek"});
     const body=JSON.parse(fetch.mock.calls[0][1].body);
-    expect(body.model).toBe("deepseek-v4.1-flash");
+    expect(body.model).toBe("deepseek-v4.1-flash-1017");
     expect(body.thinking).toEqual({type:"enabled"});
     expect(body).not.toHaveProperty("reasoning_effort");
     expect(body).not.toHaveProperty("reasoning");
@@ -213,7 +213,7 @@ describe("同模型双通道", () => {
   });
   it.each([
     ["glm", "z-ai/glm-5.3-flashx", "glm-5.3-flashx"],
-    ["deepseek", "deepseek/deepseek-v4.1-flash", "deepseek-v4.1-flash"],
+    ["deepseek", "deepseek/deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1017"],
   ] as const)("%s 首路503仅转同模型备用，并保留逐路证据", async (modelPreference, primary, backup) => {
     gatewayKeys.evolink = "test-evolink-key";
     const fetch = vi.fn().mockResolvedValueOnce(new Response("busy", { status: 503 }))
@@ -243,7 +243,7 @@ describe("同模型双通道", () => {
     vi.stubGlobal("fetch", fetch);
     await callNovelStage("正文", false, "auto");
     expect(fetch.mock.calls.map(([, options]) => JSON.parse(options.body).model)).toEqual([
-      "z-ai/glm-5.3-flashx", "glm-5.3-flashx", "deepseek/deepseek-v4.1-flash",
+      "z-ai/glm-5.3-flashx", "glm-5.3-flashx", "deepseek/deepseek-v4.1-flash-1017",
     ]);
   });
   it.each(["glm", "deepseek"] as const)("%s 两路存在首路成功不重发", async modelPreference => {

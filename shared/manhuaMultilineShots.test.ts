@@ -61,7 +61,11 @@ describe("多行镜块真实消费", () => {
     }
   }
   const clip = current.blocks.find(block => block.id.startsWith("clip-") && !block.archivedFromPreviousScript)!;
-  await expect(prepareManhuaFactoryClipInput({ blocks: current.blocks, edges: current.edges, blockId: clip.id, fallbackBlock: clip, stage: "clip", episodeIndex: 1, preparedVideoEdit: false })).rejects.toThrow("原稿分镜已变更或旧图尚未核对原镜身份");
+  // 版本回执差异只作建议（prepareManhuaFactoryClipInput）：已有静帧按当前镜号取用，不伪造新回执、不自动重出图；
+  // 「未就绪」只由上面的源指纹判定表达，成片准备不因此拒绝。
+  const prepared = await prepareManhuaFactoryClipInput({ blocks: current.blocks, edges: current.edges, blockId: clip.id, fallbackBlock: clip, stage: "clip", episodeIndex: 1, preparedVideoEdit: false });
+  expect(prepared.preparedBlock.refImageUrl).toBe("https://test.invalid/old-1.png");
+  expect(prepared.preparedBlock.editFusionUrls).toEqual([2, 3, 4].map(index => `https://test.invalid/old-${index}.png`));
  });
  it("空镜块/乱码不覆盖旧段表，Markdown标签和显式时间不丢", () => {
   const oldPlan = buildManhuaEpisodeSegmentPlanFixtureMarkdown();

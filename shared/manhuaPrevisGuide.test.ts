@@ -168,10 +168,14 @@ describe("角色表演指引到正式出站请求（全离线）", () => {
       endSec: (index + 1) / 2,
       intensity: (index + 1) / 24,
     }));
-    const guide = formatPrevisMotionGuide(manhuaPrevisSpecSchema.parse(spec));
+    const parsed = manhuaPrevisSpecSchema.parse(spec);
+    const guide = formatPrevisMotionGuide(parsed);
+    // 参考须与白模原任务同一时长：原任务记录同步为 12 秒候选（出片前会核对两者一致）。
+    const take = { ...f.take, durationSec: 12, spec: parsed };
     const block = setManhuaSegmentReference(
       {
         ...f.block,
+        previsStudio: { ...f.studio, history: [take] },
         videoModel: "wan-3.0" as const,
         prompt: "【第1段·12s】0–12s：阿菁按参考表演。",
       },

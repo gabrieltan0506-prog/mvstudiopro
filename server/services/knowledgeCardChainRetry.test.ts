@@ -11,13 +11,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("0923 用户令：模型服务异常隔 30 秒重试 3 次", () => {
-  it("口径写死：3 次、30 秒", () => {
+describe("1013 用户令：模型服务异常隔 20 秒重试 4 次（0923 旧口径 30 秒 × 3 次已替换）", () => {
+  it("口径写死：4 次、20 秒", () => {
     expect(KNOWLEDGE_CARD_CHAIN_RETRY_ROUNDS).toBe(4);
     expect(KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS).toBe(20_000);
   });
 
-  it("前三次失败、第四次成功：拿到结果，每次之间真的等满 30 秒", async () => {
+  it("前三次失败、第四次成功：拿到结果，每次之间真的等满 20 秒", async () => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => {});
     let n = 0;
@@ -29,16 +29,16 @@ describe("0923 用户令：模型服务异常隔 30 秒重试 3 次", () => {
     const p = retryKnowledgeCardChain(run, { label: "t", isRetryable: () => true });
     await vi.advanceTimersByTimeAsync(0);
     expect(run).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(29_999);
+    await vi.advanceTimersByTimeAsync(KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS - 1);
     expect(run).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(run).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(2 * KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS);
     await expect(p).resolves.toBe("ok");
     expect(run).toHaveBeenCalledTimes(4);
   });
 
-  it("重试 3 次仍失败：才把错误交给前端，总共跑 4 遍", async () => {
+  it("重试 4 次仍失败：才把错误交给前端，总共跑 5 遍", async () => {
     vi.stubEnv("KNOWLEDGE_CARD_CHAIN_RETRY_DELAY_MS", "0");
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const run = vi.fn(async () => {

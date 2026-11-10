@@ -91,6 +91,9 @@ vi.mock("./services/codeMotionConsultQuota", () => ({ reserveCodeMotionConsultQu
 
 const validateKnowledgePublicationAccess = vi.fn();
 vi.mock("./services/knowledgePublicationAdvisor",()=>({validateKnowledgePublicationAccess:(...args:unknown[])=>validateKnowledgePublicationAccess(...args)}));
+// 已失败的知识卡请求先按原回执零调用重验（#1751）；恢复链自有单测，这里默认「无可恢复回执」。
+const recoverKnowledgePublicationOperation = vi.fn();
+vi.mock("./services/knowledgePublicationRecovery",()=>({recoverKnowledgePublicationOperation:(...args:unknown[])=>recoverKnowledgePublicationOperation(...args)}));
 import { appRouter } from "./routers";
 
 const REQUEST_ID = "6f9619ff-8b86-4d01-b42d-00cf4fc964ff";
@@ -671,6 +674,8 @@ describe("映刻复用咨询回执但保持独立工作区", () => {
   reserveManhuaAdvisorOperation.mockResolvedValueOnce({kind:'failed',jobId:JOB_ID,message:first.message+'；积分对账已完成'});
   const replay=await caller().mvAnalysis.askPlatformSkillQa(input).catch(e=>e);
   expect(replay.message).toBe(first.message);expect(askPlatformSkillQa).toHaveBeenCalledTimes(1);expect(deductCreditsAmount).not.toHaveBeenCalled();
+  expect(recoverKnowledgePublicationOperation).toHaveBeenCalledTimes(1);
+  expect(recoverKnowledgePublicationOperation).toHaveBeenCalledWith(expect.objectContaining({userId:7,requestId:REQUEST_ID,knowledgePublicationContext:input.knowledgePublicationContext}),expect.anything());
  });
  it('知识整理未知态经过错误脱敏仍保留禁止新购提示',async()=>{
   reserveManhuaAdvisorOperation.mockResolvedValueOnce({kind:'failed',jobId:JOB_ID,message:'openrouter传输或回执尚未闭合，private-key'});

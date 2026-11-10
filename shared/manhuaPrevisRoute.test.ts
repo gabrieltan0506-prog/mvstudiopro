@@ -56,7 +56,6 @@ describe("分段路线时间、峰速、朝向与草稿", () => {
     "startPosition",
     "endPosition",
     "facing",
-    "fraction",
     "order",
     "gap",
     "fastMove",
@@ -70,11 +69,11 @@ describe("分段路线时间、峰速、朝向与草稿", () => {
     if (mode === "empty") a.motionRoute = [];
     if (mode === "one") a.motionRoute = r.slice(0, 1);
     if (mode === "startTime") r[0].timeSec = 0.25;
-    if (mode === "lastTime") r[2].timeSec = 6;
+    // 末节点只认最后一帧（143/24）或片尾（6 秒）；两者之外的秒位必须拒绝
+    if (mode === "lastTime") r[2].timeSec = 5.9;
     if (mode === "startPosition") r[0].position[0] = 0;
     if (mode === "endPosition") r[2].position[0] = 0;
     if (mode === "facing") r[0].facingDeg = 10;
-    if (mode === "fraction") r[1].timeSec = 3.01;
     if (mode === "order") r[1].timeSec = 6;
     if (mode === "gap") r[1].timeSec = 1 / 24;
     if (mode === "fastMove") r[1].position = [10, 0];
@@ -101,6 +100,14 @@ describe("分段路线时间、峰速、朝向与草稿", () => {
         transformEndSec: 1,
       };
     expect(manhuaPrevisSpecSchema.safeParse(spec).success).toBe(false);
+  });
+  it("末节点可落在最后一帧或片尾，中间节点不再强制对齐24帧（1019 白模时长可带一位小数）", () => {
+    const { spec } = fixture(),
+      r = spec.actors[0].motionRoute!;
+    r[2].timeSec = spec.durationSec;
+    expect(manhuaPrevisSpecSchema.safeParse(spec).success).toBe(true);
+    r[1].timeSec = 3.01;
+    expect(manhuaPrevisSpecSchema.safeParse(spec).success).toBe(true);
   });
   it("峰速边界和短弧正确，不沿旧移动时长误拒绝路线", () => {
     const { spec } = fixture(),

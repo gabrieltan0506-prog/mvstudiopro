@@ -12,7 +12,9 @@ vi.mock("../services/codeMotionProductionGrant", async original => ({
   ...(await original<typeof import("../services/codeMotionProductionGrant")>()),
   ensureCodeMotionProductionGrant: mock.ensure,
 }));
-vi.mock("../services/codeMotionTiming", () => ({
+// 只替换模型分析；其余导出（如图片语义链使用的 trimCodeMotionTimingWindow）沿用真实实现。
+vi.mock("../services/codeMotionTiming", async original => ({
+  ...(await original<typeof import("../services/codeMotionTiming")>()),
   analyzeCodeMotionTiming: mock.analyze,
 }));
 import { codeMotionRouter } from "./codeMotion";

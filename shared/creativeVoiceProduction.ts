@@ -59,7 +59,10 @@ export function creativeVoiceProductionToolParameters() {
     if(!value || typeof value!=="object")return value;
     const result:Record<string,any>={};
     for(const [key,item] of Object.entries(value)) {
-      if(["$schema","additionalProperties"].includes(key))continue;
+      // z.record 会产出 propertyNames；Live 的 Schema 不认这个字段，键名约束仍由原 Zod 契约在执行时校验。
+      if(["$schema","additionalProperties","propertyNames"].includes(key))continue;
+      // properties 下的键是字段名（可能恰好叫 type/items/const），只转换各字段的 Schema，不当关键字处理。
+      if(key==="properties" && item && typeof item==="object"){result.properties=Object.fromEntries(Object.entries(item).map(([name,child])=>[name,convert(child)]));continue;}
       // Live 的 Schema 不接受 JSON Schema 的开区间字段；执行时仍由原 Zod 契约严格校验。
       if(key==="exclusiveMinimum" || key==="exclusiveMaximum")continue;
       if(key==="prefixItems"){const items=item as any[];result.items=convert(items[0]);result.minItems=items.length;result.maxItems=items.length;continue;}

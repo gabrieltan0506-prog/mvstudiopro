@@ -95,7 +95,7 @@ describe("manhuaWriterExpandRun", () => {
     expect(await runManhuaWriterExpand({ prompt: "write it", tier: "superb", episodeCount: 1 })).toBe("完整剧本");
     expect(llmMock.mock.calls.map(([p]) => [p.modelName, p.openAiGateway, p.reasoningEffort])).toEqual([
       ["z-ai/glm-5.3-flashx", "auto", "low"], ["glm-5.3-flashx", "evolink_flash_only", "low"],
-      ["deepseek/deepseek-v4.1-flash", "auto", "none"], ["deepseek-v4.1-flash", "evolink_flash_only", "none"],
+      ["deepseek/deepseek-v4.1-flash-1017", "auto", "none"], ["deepseek-v4.1-flash-1017", "evolink_flash_only", "none"],
     ]);
     expect(fetchMock).not.toHaveBeenCalled();
   });

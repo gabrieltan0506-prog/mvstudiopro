@@ -32,7 +32,9 @@ describe("同步文字到配图、云稿与导出消费链", () => {
     const imageBatch = await reviewKnowledgePublication(7, { ...context, batchIndex: 1 }, deps) as any;
     expect(imageBatch.images).toEqual([{ id: source.pages[1].id, url: "https://storage.googleapis.com/test/river.png" }]);
     const review = knowledgeReviewSchema.parse(await reviewKnowledgePublication(7, { ...context, batchIndex: 2 }, deps));
-    expect(review.pages).toHaveLength(2); expect(post).toHaveBeenCalledTimes(3);
+    // 两批审校均无实际疑点：整套核对按 1108 规则跳过联网、不发模型请求，只留跳过回执
+    expect(review.pages).toHaveLength(2); expect(post).toHaveBeenCalledTimes(2);
+    expect(storage.get(`${knowledgeEvidencePrefix(7, doc.id, doc.publication!.requestId)}/consistency-0/report.json`)).toMatchObject({ skipped: true, findings: [] });
     expect(review.pages[0].body).toContain("水量受降水影响");
     doc.pages = doc.pages.map((page, i) => ({ ...page, body: review.pages[i].body, headline: review.pages[i].headline, imageUrl: imageBatch.images.find((image: any) => image.id === page.id)?.url || "" }));
     doc.publication = { ...doc.publication!, review, completedBatches: 3, manuscript: knowledgeManuscript(review), confirmedManuscript: knowledgeManuscript(review) };

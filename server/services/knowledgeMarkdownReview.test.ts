@@ -15,11 +15,12 @@ describe('Markdown正文与模板选择独立保留',()=>{
    const body='正文'.repeat(4000)+'最后一个事实';
    expect(knowledgeReviewFromMarkdown(body,source,digest).pages[0].facts.map(f=>f.statement).join('')).toBe(body);
  });
- it('请求不再要求JSON或每页装饰',()=>{
+ // 1108（#1751）终版：审校请求沿完整 JSON 合同（body 与 reading 同步，终稿修订复用同一合同）
+ it('审校请求沿完整JSON合同，不前置联网',()=>{
    const request=buildKnowledgeReviewRequest(source,digest,new Map());
-   expect(request.generationConfig.responseMimeType).toBe('text/markdown');
+   expect(request.generationConfig.responseMimeType).toBe('application/json');
    expect(request.researchAfterReview).toBeUndefined();
-   expect(request.systemInstruction.parts[0].text).not.toContain('reading={');
+   expect(request.systemInstruction.parts[0].text).toContain('reading={');
  });
  it('用户选择的模板仍优先于自动模板',()=>{
    const [manual,automatic]=knowledgePublicationTemplates;
@@ -34,7 +35,9 @@ describe('Markdown正文与模板选择独立保留',()=>{
 import { invokeKnowledgePublicationRoutes } from './knowledgePublicationRoutes';
 it('两段独立正文双通道同时发送，回放不新增调用且保留全部正文',async()=>{
  const book={...source,pages:[source.pages[0],{...source.pages[0],id:'22222222-2222-4222-8222-222222222222'}]};
- const request=buildKnowledgeReviewRequest(book,digest,new Map());
+ // 审校请求本身是 JSON 合同；这里显式构造 Markdown 正文请求，覆盖路由层「逐段独立绑定身份、双通道并发」。
+ const built=buildKnowledgeReviewRequest(book,digest,new Map());
+ const request={...built,generationConfig:{...built.generationConfig,responseMimeType:'text/markdown'}};
  const storage=new Map<string,any>();let calls=0;let active=0;let peak=0;const models:string[]=[];
  const evidence={prefix:'md',read:async(k:string)=>storage.get(k)||null,save:async(k:string,v:unknown)=>{storage.set(k,structuredClone(v));}};
  const deps={key:()=> 'test-key',fetch:async (_url:any,options:any)=>{

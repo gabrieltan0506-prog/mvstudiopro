@@ -30,31 +30,30 @@ const okJson = (content: string) =>
   });
 
 describe("挑页 JSON 模式（0923 热修）", () => {
-  it("选 GLM：OpenRouter GLM / DeepSeek 跳带 json_object；EvoLink、新加坡、OpenRouter 千问不带", async () => {
+  it("选 GLM：OpenRouter GLM / DeepSeek 跳带 json_object；EvoLink 不带，链上不再有千问（1013 起四跳）", async () => {
     stubKeys();
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const bodies: Array<{ url: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       bodies.push({ url: String(input), body: JSON.parse(String(init?.body || "{}")) });
-      // 前五跳都 503，第六跳（OpenRouter 千问）成功：六跳的请求体都能看到
-      if (bodies.length < 6) return new Response("down", { status: 503 });
+      // 前三跳都 503，第四跳（EvoLink·DeepSeek）成功：四跳的请求体都能看到
+      if (bodies.length < 4) return new Response("down", { status: 503 });
       return okJson('{"pages":[{"page":2,"reason":"表格"}]}');
     }));
     const picked = await makeKnowledgeCardPageSelector(KNOWLEDGE_CARD_DISTILL_MODEL_GLM)(SHEET as never, 3);
     expect(picked).toEqual([{ pageNumber: 2, reason: "表格" }]);
-    expect(bodies).toHaveLength(6);
+    expect(bodies).toHaveLength(4);
     const rf = bodies.map((b) => {
       const host = new URL(b.url).hostname;
       const model = String(b.body.model);
       return `${host}|${model}|${JSON.stringify(b.body.response_format ?? null)}`;
     });
-    // 顺序：OR·GLM → EvoLink·GLM → OR·DeepSeek → EvoLink·DeepSeek → 新加坡·千问 → OR·千问
+    // 顺序：OR·GLM → EvoLink·GLM → OR·DeepSeek → EvoLink·DeepSeek（两档都失败即报错，不再调用千问）
     expect(rf[0]).toMatch(/^openrouter\.ai\|z-ai\/glm.*\|\{"type":"json_object"\}$/);
-    expect(rf[1]).toMatch(/evolink.*\|null$/);
+    expect(rf[1]).toMatch(/evolink.*\|glm.*\|null$/);
     expect(rf[2]).toMatch(/^openrouter\.ai\|deepseek\/.*\|\{"type":"json_object"\}$/);
-    expect(rf[3]).toMatch(/evolink.*\|null$/);
-    expect(rf[4]).toMatch(/\|null$/);
-    expect(rf[5]).toMatch(/^openrouter\.ai\|qwen\/.*\|null$/);
+    expect(rf[3]).toMatch(/evolink.*\|deepseek.*\|null$/);
+    expect(rf.some((row) => /qwen/i.test(row))).toBe(false);
     // OpenRouter GLM 仍锁 Z.AI 自营
     expect(bodies[0]!.body.provider).toMatchObject({ order: ["Z.AI"], allow_fallbacks: false });
   });

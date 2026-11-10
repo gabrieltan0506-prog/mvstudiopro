@@ -29,6 +29,8 @@ const noCodeCard = {
 } as unknown as ManhuaViralTemplateCard;
 
 vi.mock("./gcs.js", () => ({
+  // 严格读卡按系统桶拼 gs:// 地址（manhuaViralTemplateStore.readCardFromObjectStrict）
+  getGcsBucketName: () => "test-bucket",
   downloadGcsObject: vi.fn(async ({ gcsUri }: { gcsUri: string }) => {
     const card = gcsUri.includes("nocode") ? noCodeCard : codedCard;
     return { buffer: Buffer.from(JSON.stringify(card), "utf8") };

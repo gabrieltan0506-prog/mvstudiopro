@@ -140,7 +140,7 @@ describe("合成真实入口鉴权（执行源码，不发网络）", () => {
   });
 
   it.each(["success", "save_failed", "timeout", "settlement_pending"])("真实 worker 外层 %s 的落库／退款／无重排", async mode => {
-    const code = extract("../jobs/runner.ts", node => ts.isFunctionDeclaration(node) && node.name?.text === "runClaimedJob");
+    const code = extract("../jobs/runner.ts", node => ts.isFunctionDeclaration(node) && node.name?.text === "runClaimedJob").replace(/^export\s+/, "");
     const timeoutCode = extract("../jobs/runner.ts", node => ts.isFunctionDeclaration(node) && node.name?.text === "withTimeout").replace(/^export\s+/, "");
     const record = (value: unknown) => !!value && typeof value === "object" && !Array.isArray(value);
     const actualTimeout = runtime(`${timeoutCode}\nreturn withTimeout;`, { isRecord: record }, false);
@@ -154,6 +154,8 @@ describe("合成真实入口鉴权（执行源码，不发网络）", () => {
     const worker = runtime(`${code}\nreturn runClaimedJob;`, {
       isKnowledgeCardCancelledJobError: runtime(`${extract("../jobs/runner.ts", node => ts.isFunctionDeclaration(node) && node.name?.text === "isKnowledgeCardCancelledJobError").replace(/^export\s+/, "")}\nreturn isKnowledgeCardCancelledJobError;`, {}, false),
       isRecord: record, resolveJobTimeoutMs: () => 10, resolveJobGrowthInteractiveLeaseLabel: () => undefined,
+      // 工作机心跳与重媒体上下文（1003/1006 接入 runClaimedJob）：合成单只需透传执行
+      startWorkerHeartbeat: () => () => {}, withHeavyMediaContext: (_context: unknown, run: () => unknown) => run(),
       MANHUA_BGM_ACTION: "manhua_bgm", MANHUA_ASSEMBLE_LEDGER_TYPE,
       executeJob: () => mode === "timeout" ? new Promise(() => {}) : Promise.resolve({ output, provider: "manhua-assemble" }),
       withTimeout: (promise: Promise<unknown>, ms: number, message: string) => actualTimeout(promise, ms, message, { cleanupGraceMs: 0 }),

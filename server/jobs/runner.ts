@@ -328,11 +328,14 @@ export function asEnvelope(value: unknown): JobEnvelope {
   if (!isRecord(value) || typeof value.action !== "string") {
     throw new Error("Invalid job input payload");
   }
+  // 只有趋势报告才带外部证据键；其他任务不得多出值为 undefined 的键——
+  // 配乐等 strict 入参 Schema 会把它判成未知字段，整单拒跑。
   return {
     action: value.action,
     params: isRecord(value.params) ? value.params : {},
-    externalEvidenceSnapshot: value.action === "platform_visual_report" && isRecord(value.externalEvidenceSnapshot)
-      ? value.externalEvidenceSnapshot as import("../../shared/guaikei").GuaikeiTrendSnapshot : undefined,
+    ...(value.action === "platform_visual_report" && isRecord(value.externalEvidenceSnapshot)
+      ? { externalEvidenceSnapshot: value.externalEvidenceSnapshot as import("../../shared/guaikei").GuaikeiTrendSnapshot }
+      : {}),
   };
 }
 

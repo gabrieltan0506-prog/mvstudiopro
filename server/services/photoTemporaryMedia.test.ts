@@ -35,7 +35,11 @@ describe("照片临时空间与真实计费边界", () => {
     ).toEqual({
       width: 1176,
       height: 788,
-      durationSec: 15,
+      // 整秒时长不足一秒按一秒（计费另按 30 秒单元向上取整，15/16 秒同为 1 单元）；精确时长、帧率与音轨一并回传
+      durationSec: 16,
+      durationExactSec: 15.072,
+      fps: null,
+      hasAudio: false,
       sourceResolution: "1080p",
     });
     expect(() =>
