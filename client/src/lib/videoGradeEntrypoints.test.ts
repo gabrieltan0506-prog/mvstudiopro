@@ -3,7 +3,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { expect, it, vi } from "vitest";
 import { submitVideoGrade } from "./videoGradeSubmit";
-import { canvasMusicMvFinalEditSchema, canvasMusicMvFinalGradeSchema } from "@shared/canvasMusicMv";
+import { canvasMusicMvFinalEditSchema, canvasMusicMvFinalGradeSchema, capMvFinalRecords, MV_FINAL_RECORDS_MAX } from "@shared/canvasMusicMv";
 import * as videoToolJobs from "./videoToolJobs";
 
 /** 从真实组件源码取同名表达式（useCallback 取回调本体），在受控上下文里执行，不起浏览器。 */
@@ -130,7 +130,7 @@ it("MV 成片调色：记录 finalGrades（schema 合法）、单片 grade 透�
   const context: Record<string, unknown> = {
     latest, patch, perform: (work: () => Promise<void>) => work(), getBlocks: () => [finalBlock], block: { id: "mv-studio" },
     queuePostProd: { mutateAsync: queue }, submitVideoGrade: realSubmit, setGradeOpen: vi.fn(), setProgress: vi.fn(),
-    crypto: { randomUUID: () => "11111111-1111-4111-8111-111111111111" }, Error,
+    crypto: { randomUUID: () => "11111111-1111-4111-8111-111111111111" }, Error, capMvFinalRecords, MV_FINAL_RECORDS_MAX,
   };
   context.patchGrade = mv.run("patchGrade", context);
   await mv.run("gradeFinal", context)(grade);
@@ -184,7 +184,7 @@ it("MV 成片局部修改 onDone：挂局部修改版版本块、记录随块保
   const ctx = {
     latest, patch, onAdd, getBlocks: () => [finalBlock], block: { id: "mv-studio", x: 0, y: 0, width: 1, height: 1 },
     defaultCanvasBlock: (kind: string, x: number, y: number) => ({ id: "tmp", kind, x, y, width: 300, height: 200, aspectRatio: "16:9" }),
-    crypto: { randomUUID: () => "22222222-2222-4222-8222-222222222222" }, setEditOpen: vi.fn(), setProgress: vi.fn(), String,
+    crypto: { randomUUID: () => "22222222-2222-4222-8222-222222222222" }, setEditOpen: vi.fn(), setProgress: vi.fn(), String, capMvFinalRecords, MV_FINAL_RECORDS_MAX,
   };
   const apply = mv.run("applyFinalEdit", ctx);
   const result = { url: edited, jobId: "edit-job", durationSec: 12, editedRange: { startSec: 2, endSec: 4 } };

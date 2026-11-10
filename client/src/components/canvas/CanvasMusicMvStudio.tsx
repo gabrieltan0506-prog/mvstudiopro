@@ -70,7 +70,7 @@ import { planMvHighlightFades } from "@shared/canvasMusicMvLyricKinds";
 import { recommendMusicMvHighlight } from "@shared/musicMvHighlight";
 import { CanvasMvShotReferencePicker } from "./CanvasMvShotReferencePicker";
 import type { CanvasMusicMvFinalEdit, CanvasMusicMvFinalEditJob, CanvasMusicMvFinalGrade, CanvasMusicMvFinalUpscale } from "@shared/canvasMusicMv";
-import { canvasMusicMvFinalEditJobSchema, MV_FINAL_EDIT_JOBS_MAX } from "@shared/canvasMusicMv";
+import { canvasMusicMvFinalEditJobSchema, capMvFinalRecords, MV_FINAL_EDIT_JOBS_MAX, MV_FINAL_RECORDS_MAX } from "@shared/canvasMusicMv";
 import {
   measuredExactSec,
   pollVideoToolJobsOnce,
@@ -969,10 +969,11 @@ export function CanvasMusicMvStudio({
         creditsQuoted: credits,
       };
       patch({
-        finalUpscales: [
-          ...(latest.current.finalUpscales || []).filter(r => r.id !== record.id),
-          record,
-        ],
+        // 写入先截留到上限（丢最旧的已完成项，进行中 / 待核对的不丢），不让第 41 条把整块草稿写成读不回的坏档
+        finalUpscales: capMvFinalRecords(
+          [...(latest.current.finalUpscales || []).filter(r => r.id !== record.id), record],
+          MV_FINAL_RECORDS_MAX
+        ),
       });
       try {
         const started = await startVideoUpscale({
@@ -1104,7 +1105,7 @@ export function CanvasMusicMvStudio({
         grade,
         status: "submitting",
       };
-      patch({ finalGrades: [...(latest.current.finalGrades || []), record] });
+      patch({ finalGrades: capMvFinalRecords([...(latest.current.finalGrades || []), record], MV_FINAL_RECORDS_MAX) });
       try {
         const jobId = await submitVideoGrade(
           { videoUrl: src, grade, scopeKey: `mv-grade:${block.id}:${record.id}`.slice(0, 128) },
@@ -1228,7 +1229,7 @@ export function CanvasMusicMvStudio({
       ...(range ? { editedRange: range } : {}),
       versionBlockId: id,
     };
-    patch({ finalEdits: [...(latest.current.finalEdits || []), record], ...clearPending });
+    patch({ finalEdits: capMvFinalRecords([...(latest.current.finalEdits || []), record], MV_FINAL_RECORDS_MAX), ...clearPending });
     // 旧成片的在途修改晚到时不收起当前成片正开着的面板
     if (finalId === latest.current.finalBlockId) setEditOpen(false);
     setProgress("局部修改完成，已作为新版本放在成片旁");

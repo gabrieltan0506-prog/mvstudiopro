@@ -778,6 +778,50 @@ export const canvasMusicMvFinalEditJobSchema = videoToolJobSchema
 export type CanvasMusicMvFinalEditJob = z.infer<typeof canvasMusicMvFinalEditJobSchema>;
 export const MV_FINAL_EDIT_JOBS_MAX = 20;
 
+/** 成片超分 / 调色 / 局部修改记录各自上限（写入先截留，读入超限也只截留，不整块拒收）。 */
+export const MV_FINAL_RECORDS_MAX = 40;
+
+/** 进行中 / 待核对的记录（不能截掉）：有状态且未到终态，或已成功但还没挂上版本块。无状态（局部修改结果）算已完成。 */
+export function mvFinalRecordPending(record: unknown): boolean {
+  const r = record as { status?: unknown; versionBlockId?: unknown } | null;
+  const status = r?.status;
+  if (typeof status !== "string") return false;
+  if (status === "failed") return false;
+  return status !== "succeeded" || !r?.versionBlockId;
+}
+
+/**
+ * 记录截留（宽进严出）：超过 max 时先丢最旧的已完成项，进行中 / 待核对的不丢（仍超限才丢最旧的进行中项）；其余保持原顺序。
+ */
+export function capMvFinalRecords<T>(records: readonly T[], max: number, pending: (record: T) => boolean = mvFinalRecordPending): T[] {
+  if (records.length <= max) return [...records];
+  let excess = records.length - max;
+  const drop = new Set<number>();
+  for (let i = 0; i < records.length && excess > 0; i++)
+    if (!pending(records[i])) {
+      drop.add(i);
+      excess--;
+    }
+  for (let i = 0; i < records.length && excess > 0; i++)
+    if (!drop.has(i)) {
+      drop.add(i);
+      excess--;
+    }
+  return records.filter((_, i) => !drop.has(i));
+}
+
+/** 读入时超限截留并 console.warn，不让一个超长数组把整块 MV 草稿判为坏档。 */
+function cappedMvRecords<T extends z.ZodTypeAny>(item: T, max: number, field: string, pending?: (record: unknown) => boolean) {
+  return z
+    .preprocess(raw => {
+      if (!Array.isArray(raw) || raw.length <= max) return raw;
+      const kept = capMvFinalRecords(raw as unknown[], max, pending);
+      console.warn(`[canvasMusicMv] ${field} 共 ${raw.length} 条，超过上限 ${max}，读入只保留 ${kept.length} 条（进行中 / 待核对的不丢）`);
+      return kept;
+    }, z.array(item).max(max))
+    .optional();
+}
+
 export const canvasMusicMvStateSchema = z
   .object({
     deliveryMode: z.enum(["song", "highlight"]).optional(),
@@ -910,13 +954,13 @@ export const canvasMusicMvStateSchema = z
       .optional(),
     finalBlockId: text.max(200).optional(),
     /** 1109 成片超分：复用画布/首页同一超分任务与计价；结果作为新版本块挂在成片旁，原片不动。 */
-    finalUpscales: z.array(canvasMusicMvFinalUpscaleSchema).max(40).optional(),
+    finalUpscales: cappedMvRecords(canvasMusicMvFinalUpscaleSchema, MV_FINAL_RECORDS_MAX, "finalUpscales"),
     /** 1109 成片调色：结果作为新版本块挂在成片旁，原片不动。 */
-    finalGrades: z.array(canvasMusicMvFinalGradeSchema).max(40).optional(),
+    finalGrades: cappedMvRecords(canvasMusicMvFinalGradeSchema, MV_FINAL_RECORDS_MAX, "finalGrades"),
     /** 1109 成片局部修改：结果作为新版本块挂在成片旁，原片不动。 */
-    finalEdits: z.array(canvasMusicMvFinalEditSchema).max(40).optional(),
-    /** 1110 成片局部修改在途任务（刷新恢复用；完成或失败即清除）。 */
-    finalEditJobs: z.array(canvasMusicMvFinalEditJobSchema).max(MV_FINAL_EDIT_JOBS_MAX).optional(),
+    finalEdits: cappedMvRecords(canvasMusicMvFinalEditSchema, MV_FINAL_RECORDS_MAX, "finalEdits"),
+    /** 1110 成片局部修改在途任务（刷新恢复用；完成或失败即清除）。写入已限 20 条，读入超限同样只截留。 */
+    finalEditJobs: cappedMvRecords(canvasMusicMvFinalEditJobSchema, MV_FINAL_EDIT_JOBS_MAX, "finalEditJobs", () => true),
     error: z.string().max(2000).optional(),
   })
   .strict()

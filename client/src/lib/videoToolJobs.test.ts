@@ -19,7 +19,10 @@ import { parseManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
 import {
   canvasMusicMvFinalEditJobSchema,
   canvasMusicMvFinalEditSchema,
+  capMvFinalRecords,
   MV_FINAL_EDIT_JOBS_MAX,
+  MV_FINAL_RECORDS_MAX,
+  mvFinalRecordPending,
   type CanvasMusicMvState,
 } from "@shared/canvasMusicMv";
 
@@ -263,10 +266,14 @@ function mountMv(blocks: CanvasBlock[], jobs: Jobs) {
     crypto: { randomUUID: () => crypto.randomUUID() },
     setEditOpen, setProgress: vi.fn(),
     utils: { mvAnalysis: { getPostProdJob: { fetch: ({ jobId }: { jobId: string }) => fetch(jobId) } } },
-    pollVideoToolJobsOnce, canvasMusicMvFinalEditJobSchema, MV_FINAL_EDIT_JOBS_MAX,
+    pollVideoToolJobsOnce, canvasMusicMvFinalEditJobSchema, MV_FINAL_EDIT_JOBS_MAX, capMvFinalRecords, MV_FINAL_RECORDS_MAX,
+    perform: (work: () => Promise<void>) => work(),
+    queuePostProd: { mutateAsync: async () => ({ jobId: "grade-new" }) },
+    submitVideoGrade: async (_i: unknown, deps: { queue: (x: unknown) => Promise<{ jobId: string }> }) => (await deps.queue({ action: "concat" })).jobId,
+    setGradeOpen: vi.fn(),
     String, Date, JSON, Array, Boolean, Error,
   };
-  for (const name of ["patch", "applyFinalEdit", "settleFinalEditJob", "pollFinalEditJobs", "trackFinalEdit", "releaseStuckGradeSubmits"])
+  for (const name of ["patch", "patchGrade", "applyFinalEdit", "settleFinalEditJob", "pollFinalEditJobs", "trackFinalEdit", "releaseStuckGradeSubmits", "gradeFinal"])
     context[name] = mv.run(name, context);
   const state = () => (context.latest as { current: CanvasMusicMvState }).current;
   return {
@@ -276,6 +283,7 @@ function mountMv(blocks: CanvasBlock[], jobs: Jobs) {
       (context.trackFinalEdit as (f: string, s: string, j: unknown) => void)("mv-final", original, job),
     onDone: (result: unknown) => (context.applyFinalEdit as (f: string, s: string, r: unknown) => void)("mv-final", original, result),
     releaseStuck: () => (context.releaseStuckGradeSubmits as () => void)(),
+    gradeFinal: () => (context.gradeFinal as (g: unknown) => Promise<void>)({ all: { saturation: 1.1 } }),
   };
 }
 
@@ -492,4 +500,79 @@ it("接线：面板入队即记、onDone 与轮询同一落点；轮询挂载即
   // 前台不出现模型 / 通道名
   for (const src of [readFileSync(new URL("./videoToolJobs.ts", import.meta.url), "utf8")])
     expect(src).not.toMatch(/Seedance|EvoLink|BytePlus|Gemini|Vertex|GPT|Claude/);
+});
+
+describe("MV 成片记录上限（40 条）：写入截留、读入宽进，不再整块读不回", () => {
+  const uuid = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+  const doneGrade = (i: number, finalBlockId = "mv-final") => ({ id: uuid(i), finalBlockId, sourceUrl: original, grade: { all: { saturation: 1.1 } }, status: "succeeded" as const, jobId: `g-${i}`, videoUrl: graded, versionBlockId: `mvgrade-${i}` });
+  const doneEdit = (i: number) => ({ id: uuid(i), finalBlockId: "mv-final", sourceUrl: original, jobId: `vpe-${i}`, videoUrl: edited(`e${i}`), versionBlockId: `mvedit-${i}` });
+  const upscale = (i: number, status: "succeeded" | "queued" = "succeeded") => ({ id: uuid(i), finalBlockId: "mv-final", sourceUrl: original, target: "2k" as const, status, taskId: `u-${i}`, durationSec: 12, creditsQuoted: 24, ...(status === "succeeded" ? { videoUrl: graded, versionBlockId: `up-${i}` } : {}) });
+
+  it("第 41 条局部修改写入：保留最新 40 条（丢最旧的），刷新后整块草稿仍读得回", () => {
+    const m = mountMv(mvBoard({ finalEdits: Array.from({ length: 40 }, (_, i) => doneEdit(i + 1)) }), {});
+    m.onDone({ url: edited("new"), jobId: EDIT_JOB });
+    const edits = m.state().finalEdits!;
+    expect(edits).toHaveLength(MV_FINAL_RECORDS_MAX);
+    expect(edits[0].jobId).toBe("vpe-2");
+    expect(edits.at(-1)!.jobId).toBe(EDIT_JOB);
+    const music = reload(m.board.blocks).find(b => b.id === "music-1")!;
+    expect(music.musicMv?.finalEdits).toHaveLength(40);
+  });
+
+  it("第 41 条调色写入：进行中 / 待核对的不丢，丢最旧的已完成项；刷新后仍读得回", async () => {
+    const pending = [
+      { ...doneGrade(1, "old-final"), status: "queued" as const, videoUrl: undefined, versionBlockId: undefined },
+      { ...doneGrade(2, "old-final"), status: "submission_unknown" as const, jobId: undefined, videoUrl: undefined, versionBlockId: undefined },
+      { ...doneGrade(3, "old-final"), versionBlockId: undefined },
+    ];
+    const grades = [...pending, ...Array.from({ length: 37 }, (_, i) => doneGrade(i + 4))];
+    const m = mountMv(mvBoard({ finalGrades: grades }), {});
+    await m.gradeFinal();
+    const kept = m.state().finalGrades!;
+    expect(kept).toHaveLength(MV_FINAL_RECORDS_MAX);
+    expect(kept.slice(0, 3).map(r => r.id)).toEqual(pending.map(r => r.id));
+    expect(kept.some(r => r.id === uuid(4))).toBe(false);
+    expect(kept.at(-1)).toMatchObject({ finalBlockId: "mv-final", status: "queued", jobId: "grade-new" });
+    const music = reload(m.board.blocks).find(b => b.id === "music-1")!;
+    expect(music.musicMv?.finalGrades).toHaveLength(40);
+    expect(music.musicMv?.finalGrades?.filter(r => mvFinalRecordPending(r))).toHaveLength(4);
+  });
+
+  it("旧草稿 45 条：本机读取与云草稿往返都读得回，截留 40 条（进行中留下）并 console.warn，不报错", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const board = mvBoard({
+        finalGrades: [{ ...doneGrade(1), status: "running" as const, videoUrl: undefined, versionBlockId: undefined }, ...Array.from({ length: 44 }, (_, i) => doneGrade(i + 2))],
+        finalEdits: Array.from({ length: 45 }, (_, i) => doneEdit(i + 1)),
+        finalUpscales: [upscale(1, "queued"), ...Array.from({ length: 44 }, (_, i) => upscale(i + 2))],
+      });
+      const storage = memoryStorage();
+      storage.setItem("mv-freeform-canvas-v1", JSON.stringify({ blocks: board, edges: [] }));
+      const loaded = tryLoadLocalCanvas(storage);
+      expect(loaded).not.toBeNull();
+      const mv = loaded!.blocks.find(b => b.id === "music-1")!.musicMv!;
+      expect(mv.finalEdits!.map(r => r.jobId)).toEqual(Array.from({ length: 40 }, (_, i) => `vpe-${i + 6}`));
+      expect(mv.finalGrades).toHaveLength(40);
+      expect(mv.finalGrades![0]).toMatchObject({ id: uuid(1), status: "running" });
+      expect(mv.finalUpscales).toHaveLength(40);
+      expect(mv.finalUpscales![0]).toMatchObject({ id: uuid(1), status: "queued" });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("超过上限 40"));
+      const parsed = parseManhuaCloudDraftPayload(serializeCloudDraftForUpload(buildLocalCloudDraftSnapshot({ writerSession: {}, blocks: slimBlocksForLocalPersist(board as CanvasBlock[]), edges: [] })));
+      expect(parsed).not.toBeNull();
+      const cloud = cloudDraftBlocksToCanvas(parsed!.canvas.blocks).find(b => b.id === "music-1")!.musicMv!;
+      expect([cloud.finalGrades?.length, cloud.finalEdits?.length, cloud.finalUpscales?.length]).toEqual([40, 40, 40]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("截留规则：不超限原样；先丢最旧的已完成，进行中全超时才丢最旧的进行中；无状态（局部修改结果）算已完成", () => {
+    const rows = ["done", "run", "done", "run", "done"].map((k, i) => ({ i, status: k === "run" ? "running" : "succeeded", versionBlockId: "v" }));
+    expect(capMvFinalRecords(rows, 5)).toEqual(rows);
+    expect(capMvFinalRecords(rows, 3).map(r => r.i)).toEqual([1, 3, 4]);
+    expect(capMvFinalRecords(rows, 1).map(r => r.i)).toEqual([3]);
+    expect(mvFinalRecordPending({ status: "succeeded" })).toBe(true);
+    expect(mvFinalRecordPending({ status: "failed" })).toBe(false);
+    expect(mvFinalRecordPending({ jobId: "x" })).toBe(false);
+  });
 });
