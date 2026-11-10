@@ -377,59 +377,6 @@ function googleAudioObjectExt(mimeType: string): string {
   return ({ mpeg: "mp3", mp3: "mp3", mp4: "m4a", "x-m4a": "m4a", wav: "wav", "x-wav": "wav", webm: "webm", ogg: "ogg", flac: "flac", aac: "aac" } as Record<string, string>)[sub] || "audio";
 }
 
-/**
- * 漫剧学习听音扫描的提示词 / 原生 schema / 结果整形：与 server/gemini-audio.ts 的
- * MANHUA_AUDIO_SYSTEM_PROMPT、buildManhuaAudioNativeRequestBody.responseSchema、normalizeManhuaAudioResult 同文同义。
- * 那三项未导出且该文件另线在改，这里逐字照抄；待其导出后改为 import。
- */
-const MANHUA_AUDIO_SCAN_PROMPT = `你是竖屏短剧/漫剧听写与节奏分析助手。只根据音频输出 JSON，不要解释。
-任务：
-1. 尽量转写对白/旁白（可压缩，保留冲突与情绪词）。
-2. 按时间拆成 4～12 段，timeRange 用 m:ss-m:ss 或 秒-秒（如 0:00-0:15 或 58-72）。
-3. energy 用：低 / 中 / 高 / 极高。高潮、打脸、反转、对决、爆发段标「高」或「极高」，name 可用「开场钩子/对峙/反转/高潮/片尾钩」等中性名。
-4. 不要输出外部平台剧名、商标。`;
-
-const MANHUA_AUDIO_SCAN_SCHEMA = {
-  type: "OBJECT",
-  properties: {
-    language: { type: "STRING" },
-    transcriptSummary: { type: "STRING" },
-    sections: {
-      type: "ARRAY",
-      items: {
-        type: "OBJECT",
-        properties: {
-          name: { type: "STRING" },
-          timeRange: { type: "STRING" },
-          mood: { type: "STRING" },
-          energy: { type: "STRING" },
-          lyrics: { type: "STRING" },
-        },
-        required: ["name", "timeRange", "mood", "energy", "lyrics"],
-      },
-    },
-  },
-  required: ["language", "transcriptSummary", "sections"],
-};
-
-function normalizeManhuaAudioScan(decoded: unknown) {
-  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) throw new Error("语音分析结果格式无效");
-  const parsed = decoded as { language?: unknown; transcriptSummary?: unknown; sections?: unknown };
-  return {
-    language: String(parsed.language || "").trim(),
-    transcriptSummary: String(parsed.transcriptSummary || "").trim(),
-    sections: Array.isArray(parsed.sections)
-      ? parsed.sections.map((s: any) => ({
-          name: String(s?.name || "").trim(),
-          timeRange: String(s?.timeRange || "").trim(),
-          mood: String(s?.mood || "").trim(),
-          energy: String(s?.energy || "").trim(),
-          lyrics: String(s?.lyrics || "").trim() || undefined,
-        }))
-      : [],
-  };
-}
-
 /** 原 analyzeManhuaDramaAudioFromUrl 的下载校验（http(s)、跟随跳转、非空、18MB 上限）；下载后转存 GCS，不再内联。 */
 async function fetchManhuaScanAudio(audioUrl: string): Promise<Buffer> {
   if (!/^https?:\/\//i.test(audioUrl)) throw new Error("missing_or_invalid_audio_url");
@@ -619,7 +566,8 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         }
       }
       try {
-        const { geminiAudioJsonWithFallback } = await import("../server/gemini-audio");
+        // 提示词 / schema / 结果整形与 gemini-audio.ts 一处真源（不再在本文件抄一份）
+        const { geminiAudioJsonWithFallback, MANHUA_AUDIO_SCAN_PROMPT, MANHUA_AUDIO_SCAN_SCHEMA, normalizeManhuaAudioScan } = await import("../server/gemini-audio");
         const bucket = getGcsBucketName();
         const prefix = `manhua-template-learn/audio-scan/${viewer.userId}/${randomUUID()}`;
         const save = googleAudioEvidenceSaver(bucket, prefix);

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * 1110 旧听音入口通道合规（离线替身，不发真实请求，参照 services/geminiMediaTwoHop.channels.test.ts）：
- * 音频实验室 / 漫剧学习语音都先存 GCS，再走 Vertex gs:// → EvoLink 签名 https 两跳；
+ * 音频实验室 / 漫剧学习听音扫描都先存 GCS，再走 Vertex gs:// → EvoLink 签名 https 两跳；
  * 不直连 Gemini API 密钥、不接第三方聚合通道、请求体不内联音频；原始与解析 JSON 分别永久落档。
  */
 const h = vi.hoisted(() => ({ upload: vi.fn(), store: new Map<string, { buffer: Buffer; contentType: string }>() }));
@@ -24,14 +24,13 @@ import {
   DEFAULT_MANHUA_AUDIO_EVOLINK_MODEL,
   DEFAULT_MANHUA_AUDIO_VERTEX_MODEL,
   GEMINI_AUDIO_TWO_HOP_MODEL,
+  MANHUA_AUDIO_SCAN_PROMPT,
+  MANHUA_AUDIO_SCAN_SCHEMA,
   analyzeAudioWithGemini,
-  analyzeManhuaDramaAudioFromUrl,
-  analyzeManhuaDramaAudioWithEvolink,
-  analyzeManhuaDramaAudioWithFallback,
-  analyzeManhuaDramaAudioWithGemini,
-  analyzeManhuaDramaAudioWithVertex,
   isGeminiAudioAvailable,
   isManhuaDramaAudioAvailable,
+  listenStagedAudioJson,
+  normalizeManhuaAudioScan,
   resolveManhuaAudioEvolinkModelName,
   resolveManhuaAudioVertexModelName,
 } from "./gemini-audio";
@@ -108,33 +107,52 @@ describe("通道配置", () => {
     expect(isGeminiAudioAvailable()).toBe(false);
   });
 
-  it("已移除第三方聚合与 Gemini API 直连跳的导出；单通道旧入口统一走两跳", () => {
-    for (const removed of ["analyzeManhuaDramaAudioWithOpenRouter", "analyzeManhuaDramaAudioWithGeminiApi", "resolveManhuaAudioOpenRouterModelName", "resolveManhuaAudioGeminiApiModelName", "isManhuaDramaGeminiApiAudioAvailable"]) {
+  it("旧四路听音函数（第三方聚合 / Gemini API 直连 / 单通道 / 旧 fallback）已删除，生产只剩两跳", () => {
+    for (const removed of [
+      "analyzeManhuaDramaAudioFromUrl", "analyzeManhuaDramaAudioWithFallback", "analyzeManhuaDramaAudioWithGemini",
+      "analyzeManhuaDramaAudioWithVertex", "analyzeManhuaDramaAudioWithEvolink", "analyzeManhuaDramaAudioWithOpenRouter",
+      "analyzeManhuaDramaAudioWithGeminiApi", "resolveManhuaAudioOpenRouterModelName", "resolveManhuaAudioGeminiApiModelName",
+      "isManhuaDramaGeminiApiAudioAvailable", "mapManhuaAudioProviderFailure", "isManhuaAudioFailureRetryable",
+    ]) {
       expect(removed in geminiAudio).toBe(false);
     }
-    expect(analyzeManhuaDramaAudioWithVertex).toBe(analyzeManhuaDramaAudioWithFallback);
-    expect(analyzeManhuaDramaAudioWithEvolink).toBe(analyzeManhuaDramaAudioWithFallback);
-    expect(analyzeManhuaDramaAudioWithGemini).toBe(analyzeManhuaDramaAudioWithFallback);
   });
 
   it("源码不再引用直连密钥、直连域名、聚合通道与内联音频", () => {
     for (const file of ["./gemini-audio.ts", "./_core/voiceTranscription.ts"]) {
       const src = readFileSync(new URL(file, import.meta.url), "utf8");
-      expect(src).not.toMatch(/GEMINI_API_KEY|generativelanguage\.googleapis|openrouter\.ai|OPENROUTER_|openrouterAuth|@google\/genai|api\.openai\.com/);
+      expect(src).not.toMatch(/GEMINI_API_KEY|generativelanguage\.googleapis|openrouter\.ai|OPENROUTER_|openrouterAuth|@google\/genai|api\.openai\.com|inlineData/);
     }
   });
 });
 
-describe("漫剧学习语音（旧签名 audioBase64 / audioUrl）", () => {
+describe("漫剧学习听音扫描：提示词 / schema / 整形一处真源 + 存 GCS 两跳", () => {
   const scan = { language: "zh", transcriptSummary: "主角受辱后反击。", sections: [{ name: "开场钩子", timeRange: "0:00-0:12", mood: "压迫", energy: "高", lyrics: "你不能进去。" }] };
 
-  it("base64 先在服务端解码存 GCS；Vertex 503 → EvoLink 签名 https；返回结构不变；raw/parsed 分别落档", async () => {
+  it("api/google.ts 改为 import 本模块导出，不再抄写提示词 / schema / 整形", () => {
+    const api = readFileSync(new URL("../api/google.ts", import.meta.url), "utf8");
+    expect(api).not.toMatch(/const MANHUA_AUDIO_SCAN_PROMPT|const MANHUA_AUDIO_SCAN_SCHEMA|function normalizeManhuaAudioScan/);
+    expect(api).toMatch(/MANHUA_AUDIO_SCAN_PROMPT, MANHUA_AUDIO_SCAN_SCHEMA, normalizeManhuaAudioScan } = await import\("\.\.\/server\/gemini-audio"\)/);
+    expect(MANHUA_AUDIO_SCAN_PROMPT).toContain("energy 用：低 / 中 / 高 / 极高");
+    expect(MANHUA_AUDIO_SCAN_SCHEMA.required).toEqual(["language", "transcriptSummary", "sections"]);
+  });
+
+  it("整形：字段规整、空唱词置 undefined；非对象或缺 sections 判写坏", () => {
+    expect(normalizeManhuaAudioScan({ ...scan, language: " zh ", sections: [{ ...scan.sections[0], lyrics: "" }] })).toEqual({
+      language: "zh", transcriptSummary: "主角受辱后反击。", sections: [{ name: "开场钩子", timeRange: "0:00-0:12", mood: "压迫", energy: "高", lyrics: undefined }],
+    });
+    expect(() => normalizeManhuaAudioScan({ language: "zh", transcriptSummary: "x" })).toThrow("缺少 sections");
+    expect(() => normalizeManhuaAudioScan([scan])).toThrow("不是 JSON 对象");
+  });
+
+  it("listenStagedAudioJson：音频按 SHA 存 GCS；Vertex 503 → EvoLink 签名 https（3600 秒）；raw/decoded/parsed 分别落档", async () => {
     const bytes = Buffer.from("manhua-audio-bytes");
     const sha = createHash("sha256").update(bytes).digest("hex");
     fetchMock.mockResolvedValueOnce(new Response("{}", { status: 503 })).mockResolvedValueOnce(geminiReply(scan));
-    const result = await analyzeManhuaDramaAudioWithGemini({ audioBase64: bytes.toString("base64"), mimeType: "audio/mpeg" });
-    expect(result).toEqual({ model: "evolink/gemini-3.8-flash", language: "zh", transcriptSummary: "主角受辱后反击。", sections: [{ name: "开场钩子", timeRange: "0:00-0:12", mood: "压迫", energy: "高", lyrics: "你不能进去。" }] });
-    const audioObject = `manhua-template-learn/audio-scan/${sha}/audio.mp3`;
+    const out = await listenStagedAudioJson({ area: "test-area/scan", audio: bytes, mimeType: "audio/mpeg; charset=binary", prompt: MANHUA_AUDIO_SCAN_PROMPT, nativeSchema: MANHUA_AUDIO_SCAN_SCHEMA, schemaName: "manhua_drama_audio_scan", validate: normalizeManhuaAudioScan });
+    expect([out.channel, out.model, out.value.sections[0]!.lyrics]).toEqual(["EvoLink", "gemini-3.8-flash", "你不能进去。"]);
+    const audioObject = `test-area/scan/${sha}/audio.mp3`;
+    expect(out.audioGsUri).toBe(`gs://test-bucket/${audioObject}`);
     expect(h.store.get(audioObject)).toEqual({ buffer: bytes, contentType: "audio/mpeg" });
     expect(modelBodies()[0].contents[0].parts[0].fileData).toEqual({ mimeType: "audio/mpeg", fileUri: `gs://test-bucket/${audioObject}` });
     expect(modelBodies()[1].contents[0].parts[0].fileData.fileUri).toBe(`https://signed.example/test-bucket/${audioObject}?X-Goog-Expires=3600&X-Goog-Signature=test`);
@@ -142,8 +160,8 @@ describe("漫剧学习语音（旧签名 audioBase64 / audioUrl）", () => {
     expect(String(modelCalls()[0]![0])).toBe("https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/publishers/google/models/gemini-3.8-flash:generateContent");
     expect(String(modelCalls()[1]![0])).toBe("https://direct.evolink.ai/v1beta/models/gemini-3.8-flash:generateContent");
     assertTwoHopCompliance();
-    const prefix = h.upload.mock.calls.find(c => /\/attempts\/.+\/request\.json$/.test(c[0].objectName))![0].objectName.replace(/request\.json$/, "");
-    expect(prefix.startsWith(`manhua-template-learn/audio-scan/${sha}/attempts/`)).toBe(true);
+    const prefix = out.evidencePrefix.replace("gs://test-bucket/", "") + "/";
+    expect(prefix.startsWith(`test-area/scan/${sha}/attempts/`)).toBe(true);
     expect(savedJsonNames(prefix)).toEqual([
       "request.json", "hop-1-vertex-request.json", "hop-1-vertex-raw.json",
       "hop-2-evolink-request.json", "hop-2-evolink-raw.json", "hop-2-evolink-decoded.json", "hop-2-evolink-parsed.json", "hop-used.json",
@@ -151,20 +169,9 @@ describe("漫剧学习语音（旧签名 audioBase64 / audioUrl）", () => {
     expect(JSON.parse(h.store.get(`${prefix}request.json`)!.buffer.toString())).toMatchObject({ audioGsUri: `gs://test-bucket/${audioObject}`, model: "gemini-3.8-flash" });
   });
 
-  it("audioUrl：Fly 下载后存 GCS 再交 Vertex（gs://），不把音频塞进请求体", async () => {
-    const bytes = Buffer.from("climax-audio");
-    fetchMock.mockResolvedValueOnce(audioDownload(bytes, "audio/wav")).mockResolvedValueOnce(geminiReply(scan));
-    const result = await analyzeManhuaDramaAudioFromUrl({ audioUrl: "https://storage.example/learn.wav?sig=1" });
-    expect(result.model).toBe("vertex/gemini-3.8-flash");
-    expect(modelCalls()).toHaveLength(1);
-    expect(modelBodies()[0].contents[0].parts[0].fileData.fileUri).toMatch(/^gs:\/\/test-bucket\/manhua-template-learn\/audio-scan\/[0-9a-f]{64}\/audio\.wav$/);
-    expect(JSON.stringify(modelBodies()[0])).not.toContain(bytes.toString("base64"));
-    assertTwoHopCompliance();
-  });
-
   it("写坏（缺 sections）也换下一跳；两跳都坏则失败", async () => {
     fetchMock.mockResolvedValue(geminiReply({ language: "zh", transcriptSummary: "x" }));
-    await expect(analyzeManhuaDramaAudioWithFallback({ audioBase64: Buffer.from("a").toString("base64") })).rejects.toThrow("全部通道失败");
+    await expect(listenStagedAudioJson({ area: "test-area/scan", audio: Buffer.from("a"), mimeType: "audio/mpeg", prompt: MANHUA_AUDIO_SCAN_PROMPT, nativeSchema: MANHUA_AUDIO_SCAN_SCHEMA, schemaName: "s", validate: normalizeManhuaAudioScan })).rejects.toThrow("全部通道失败");
     expect(modelCalls()).toHaveLength(2);
     assertTwoHopCompliance();
   });
@@ -172,7 +179,7 @@ describe("漫剧学习语音（旧签名 audioBase64 / audioUrl）", () => {
   it("两跳都未配置时不上传、不发请求（即使还有旧直连密钥）", async () => {
     vi.stubEnv("VERTEX_PROJECT_ID", "");
     vi.stubEnv("EVOLINK_API_KEY", "");
-    await expect(analyzeManhuaDramaAudioWithFallback({ audioBase64: Buffer.from("a").toString("base64") })).rejects.toThrow("未配置");
+    await expect(listenStagedAudioJson({ area: "test-area/scan", audio: Buffer.from("a"), mimeType: "audio/mpeg", prompt: "听", schemaName: "s", validate: v => v })).rejects.toThrow("未配置");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(h.upload).not.toHaveBeenCalled();
   });

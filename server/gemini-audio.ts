@@ -2,7 +2,7 @@
  * Gemini Audio Analysis Service
  * Extracts: BPM, mood, rhythm changes, song structure, instrumentation, lyrics
  *
- * 1110 通道合规：所有听音入口（音频实验室、漫剧学习语音、语音转写）一律「音频先存 GCS → geminiAudioJsonWithFallback 两跳」：
+ * 1110 通道合规：所有听音入口（音频实验室、漫剧学习听音扫描、语音转写）一律「音频先存 GCS → geminiAudioJsonWithFallback 两跳」：
  * Gemini@Vertex 读 gs:// → Gemini@EvoLink 读 V4 签名 https（3600 秒），模型 gemini-3.8-flash；
  * 不直连 Gemini API 密钥、不接第三方聚合通道、不内联 base64；每跳 request/raw/decoded/parsed/rejected 永久落 GCS，证据只记 gs://。
  */
@@ -256,40 +256,15 @@ export function isManhuaDramaAudioAvailable(): boolean {
   return isManhuaDramaVertexAudioAvailable() || isManhuaDramaEvolinkAudioAvailable();
 }
 
-/** Fly 按 HTTPS/签名 URL 拉取音频 → 存 GCS → 两跳（不把音频内联进模型请求）。 */
-export async function analyzeManhuaDramaAudioFromUrl(input: {
-  audioUrl: string;
-  mimeType?: string;
-  maxBytes?: number;
-}): Promise<ManhuaDramaAudioScanResult> {
-  const url = String(input.audioUrl || "").trim();
-  if (!url || !/^https?:\/\//i.test(url)) {
-    throw new Error("missing_or_invalid_audio_url");
-  }
-  const res = await fetch(url, {
-    redirect: "follow",
-    headers: { "User-Agent": "mvstudiopro/1.0 (+manhua-audio-climax)" },
-  });
-  if (!res.ok) throw new Error(`audio_fetch_failed:${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  const maxBytes = Math.max(1_000_000, Math.min(24 * 1024 * 1024, input.maxBytes ?? 18 * 1024 * 1024));
-  if (!buf.length) throw new Error("empty_audio");
-  if (buf.length > maxBytes) throw new Error(`audio_too_large:${buf.length}`);
-  const mimeType =
-    String(input.mimeType || "").trim() ||
-    String(res.headers.get("content-type") || "audio/mpeg").split(";")[0] ||
-    "audio/mpeg";
-  return scanManhuaDramaAudio(buf, mimeType);
-}
-
-const MANHUA_AUDIO_SYSTEM_PROMPT = `你是竖屏短剧/漫剧听写与节奏分析助手。只根据音频输出 JSON，不要解释。
+/** 漫剧学习听音扫描（api/google.ts manhuaAudioClimaxScan 经两跳调用）：提示词 / 原生 schema / 结果整形，一处真源。 */
+export const MANHUA_AUDIO_SCAN_PROMPT = `你是竖屏短剧/漫剧听写与节奏分析助手。只根据音频输出 JSON，不要解释。
 任务：
 1. 尽量转写对白/旁白（可压缩，保留冲突与情绪词）。
 2. 按时间拆成 4～12 段，timeRange 用 m:ss-m:ss 或 秒-秒（如 0:00-0:15 或 58-72）。
 3. energy 用：低 / 中 / 高 / 极高。高潮、打脸、反转、对决、爆发段标「高」或「极高」，name 可用「开场钩子/对峙/反转/高潮/片尾钩」等中性名。
 4. 不要输出外部平台剧名、商标。`;
 
-const MANHUA_AUDIO_NATIVE_SCHEMA = {
+export const MANHUA_AUDIO_SCAN_SCHEMA = {
   type: "OBJECT",
   properties: {
     language: { type: "STRING" },
@@ -312,8 +287,8 @@ const MANHUA_AUDIO_NATIVE_SCHEMA = {
   required: ["language", "transcriptSummary", "sections"],
 };
 
-/** 写坏（非对象或无 sections 数组）即抛，交下一跳；其余字段按旧口径规整。 */
-function normalizeManhuaAudioFields(decoded: unknown): Omit<ManhuaDramaAudioScanResult, "model"> {
+/** 两跳 validate：写坏（非对象或无 sections 数组）即抛，交下一跳；其余字段按旧口径规整（model 由调用方按「通道/模型」补）。 */
+export function normalizeManhuaAudioScan(decoded: unknown): Omit<ManhuaDramaAudioScanResult, "model"> {
   const parsed = decoded as Record<string, unknown> | null;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("语音分析结果不是 JSON 对象");
   if (!Array.isArray(parsed.sections)) throw new Error("语音分析结果缺少 sections");
@@ -342,42 +317,6 @@ function readNativeGeminiMessageText(payload: unknown): string {
     : "";
 }
 
-/** 漫剧学习语音：存 GCS → 两跳；model 记为「通道/模型」（vertex/… 或 evolink/…）。 */
-async function scanManhuaDramaAudio(audio: Buffer, mimeType?: string): Promise<ManhuaDramaAudioScanResult> {
-  const out = await listenStagedAudioJson({
-    area: "manhua-template-learn/audio-scan",
-    audio,
-    mimeType: String(mimeType || "").trim() || "audio/mpeg",
-    prompt: MANHUA_AUDIO_SYSTEM_PROMPT,
-    nativeSchema: MANHUA_AUDIO_NATIVE_SCHEMA,
-    schemaName: "manhua_drama_audio_scan",
-    validate: normalizeManhuaAudioFields,
-  });
-  return { model: `${out.channel.toLowerCase()}/${out.model}`, ...out.value };
-}
-
-/**
- * 漫剧学习语音：Vertex（gs://）→ EvoLink（签名 https）两跳；每个通道至多一次。
- * 入参保持旧签名（服务端已有的 base64 音频），在服务端解码后先存 GCS，不再内联进模型请求。
- */
-export async function analyzeManhuaDramaAudioWithFallback(input: {
-  audioBase64: string;
-  mimeType?: string;
-}): Promise<ManhuaDramaAudioScanResult> {
-  const audio = Buffer.from(String(input.audioBase64 || ""), "base64");
-  if (!audio.length) throw new Error("empty_audio");
-  return scanManhuaDramaAudio(audio, input.mimeType);
-}
-
-/** @deprecated 1110 起单通道入口不再单独发请求，统一经两跳（Vertex gs:// → EvoLink 签名 https）；保留导出名与签名兼容旧调用。 */
-export const analyzeManhuaDramaAudioWithVertex = analyzeManhuaDramaAudioWithFallback;
-
-/** @deprecated 同上：统一经两跳。 */
-export const analyzeManhuaDramaAudioWithEvolink = analyzeManhuaDramaAudioWithFallback;
-
-/** @deprecated 兼容旧调用名；生产实现为 Vertex → EvoLink 两跳。 */
-export const analyzeManhuaDramaAudioWithGemini = analyzeManhuaDramaAudioWithFallback;
-
 /**
  * Check if Gemini Audio Analysis is available（Vertex 或 EvoLink 任一可用）
  */
@@ -394,19 +333,17 @@ export type GeminiAudioJsonChannel = "Vertex" | "EvoLink";
  * 每路的请求摘要、原始回包、解析结果或拒收原因经 save 永久落证据；未配置的通道跳过并记录。
  */
 export async function geminiAudioJsonWithFallback<T>(input: {
-  /** 内联音频；给了 media 时可留空。 */
-  audioBase64?: string;
   mimeType: string;
   /**
-   * 1110 成片调色建议：改读 GCS 媒体（视频含音轨）。Vertex 用 gs:// 直读，EvoLink 用签名 URL；
-   * 不内联 base64。签名 URL 不落证据（只记 gs://）。
+   * 1110 只收 GCS 媒体（音频或含音轨的视频）：Vertex 用 gs:// 直读，EvoLink 用签名 https（读不了 gs://）。
+   * 已删除内联音频入参，「不内联 base64」由类型保证；签名 URL 不落证据（只记 gs://）。
    */
-  media?: { vertexFileUri: string; evolinkFileUri: () => string };
+  media: { vertexFileUri: string; evolinkFileUri: () => string };
   /** 两跳统一模型覆盖（如 gemini-3.8-flash）；缺省沿用听音通道配置。 */
   model?: string;
   /** 1109：系统指令（MV 独立听歌 / 剪辑方案分析）。 */
   systemInstruction?: string;
-  /** 1109：音频时间戳；缺省 = 内联时开、引用媒体时不发（保持旧行为）。 */
+  /** 1109：音频时间戳；缺省不发（引用媒体的旧行为）。 */
   audioTimestamp?: boolean;
   /** 1109：原始回包级校验（如必须有 AUDIO token、finishReason=STOP）；返回拒因即按写坏换下一跳。 */
   checkPayload?: (payload: unknown) => string | undefined;
@@ -419,16 +356,19 @@ export async function geminiAudioJsonWithFallback<T>(input: {
   maxOutputTokens?: number;
   timeoutMs?: number;
 }): Promise<{ value: T; channel: GeminiAudioJsonChannel; model: string; failuresZh: string[]; payload: unknown }> {
+  // 运行时同样拒收（JS 调用方绕过类型时）：没给 GCS 媒体就不发任何请求。
+  if (!input.media?.vertexFileUri || typeof input.media.evolinkFileUri !== "function") {
+    throw new Error("听音只收 GCS 媒体（Vertex 读 gs://、EvoLink 读签名 https），不收内联音频");
+  }
+  const media = input.media;
   const timeoutMs = input.timeoutMs ?? 180_000;
   const maxOutputTokens = input.maxOutputTokens ?? 8192;
-  const nativeBody = (fileUri?: string) => ({
+  const nativeBody = (fileUri: string) => ({
     ...(input.systemInstruction ? { systemInstruction: { parts: [{ text: input.systemInstruction }] } } : {}),
-    contents: [{ role: "user", parts: fileUri
-      ? [{ fileData: { mimeType: input.mimeType, fileUri } }, { text: input.prompt }]
-      : [{ text: input.prompt }, { inlineData: { data: input.audioBase64 ?? "", mimeType: input.mimeType } }] }],
-    generationConfig: { maxOutputTokens, responseMimeType: "application/json", ...((input.audioTimestamp ?? !fileUri) ? { audioTimestamp: true } : {}), ...(input.nativeSchema ? { responseSchema: input.nativeSchema } : {}), temperature: 0.2 },
+    contents: [{ role: "user", parts: [{ fileData: { mimeType: input.mimeType, fileUri } }, { text: input.prompt }] }],
+    generationConfig: { maxOutputTokens, responseMimeType: "application/json", ...(input.audioTimestamp ? { audioTimestamp: true } : {}), ...(input.nativeSchema ? { responseSchema: input.nativeSchema } : {}), temperature: 0.2 },
   });
-  const native = async (url: string, headers: Record<string, string>, fileUri?: string) => {
+  const native = async (url: string, headers: Record<string, string>, fileUri: string) => {
     const response = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify(nativeBody(fileUri)) });
     const payload = await response.json().catch(() => null);
     return { status: response.status, ok: response.ok, payload, text: readNativeGeminiMessageText(payload) };
@@ -440,14 +380,14 @@ export async function geminiAudioJsonWithFallback<T>(input: {
         const model = input.model || resolveManhuaAudioVertexModelName();
         const location = resolveManhuaAudioVertexLocation();
         const url = `${baseUrlForVertex(location)}/v1/projects/${encodeURIComponent(getVertexProjectId())}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
-        return native(url, (await getVertexAuthHeaders()) as Record<string, string>, input.media?.vertexFileUri);
+        return native(url, (await getVertexAuthHeaders()) as Record<string, string>, media.vertexFileUri);
       },
     },
     {
       name: "EvoLink", available: isManhuaDramaEvolinkAudioAvailable, model: () => input.model || resolveManhuaAudioEvolinkModelName(),
       run: async () => {
         // 1110：EvoLink 上的 Gemini 读不了 gs://，也不收内联 base64 —— 只认签名 https（同模板学习 manhuaNativeDeepReadRunner）
-        const fileUri = input.media?.evolinkFileUri();
+        const fileUri = media.evolinkFileUri();
         if (!fileUri || !/^https:\/\//.test(fileUri)) throw new Error("EvoLink 只收签名 https 媒体链接（不收 gs:// 或内联音频）");
         return native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(input.model || resolveManhuaAudioEvolinkModelName())}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, fileUri);
       },
@@ -459,7 +399,7 @@ export async function geminiAudioJsonWithFallback<T>(input: {
     const slug = `hop-${i + 1}-${ch.name.toLowerCase().replace(/\s+/g, "_")}`;
     if (!ch.available()) { failures.push(`${ch.name}（未配置，跳过）`); await input.save(`${slug}-skipped`, { channel: ch.name, reasonZh: "未配置" }); continue; }
     const model = ch.model();
-    await input.save(`${slug}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt: input.prompt, mimeType: input.mimeType, ...(input.media ? { mediaGsUri: input.media.vertexFileUri } : { audioBytes: Math.floor(((input.audioBase64 ?? "").length * 3) / 4) }), ...(input.systemInstruction ? { systemInstruction: input.systemInstruction } : {}), maxOutputTokens, timeoutMs });
+    await input.save(`${slug}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt: input.prompt, mimeType: input.mimeType, mediaGsUri: media.vertexFileUri, ...(input.systemInstruction ? { systemInstruction: input.systemInstruction } : {}), maxOutputTokens, timeoutMs });
     let result: Awaited<ReturnType<typeof ch.run>>;
     try {
       result = await ch.run();

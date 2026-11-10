@@ -151,9 +151,19 @@ describe("1110 EvoLink 跳只收签名 https（同模板学习做法）", () => 
     await expect(geminiAudioJsonWithFallback(base(() => "gs://test-bucket/a.mp3"))).rejects.toThrow(/EvoLink 只收签名 https/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
-  it("没给媒体（只给内联音频）时 EvoLink 跳不发请求", async () => {
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) });
-    await expect(geminiAudioJsonWithFallback({ audioBase64: "bXAz", mimeType: "audio/mpeg", prompt: "听", schemaName: "t", validate: (v: unknown) => v, save: async () => undefined })).rejects.toThrow(/EvoLink 只收签名 https/);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+  it("1110 内联音频入参已删除：没给媒体（只给内联音频）直接拒绝，两跳都不发请求", async () => {
+    // @ts-expect-error audioBase64 入参已删除且 media 必填 —— 「不内联」由类型保证
+    await expect(geminiAudioJsonWithFallback({ audioBase64: "bXAz", mimeType: "audio/mpeg", prompt: "听", schemaName: "t", validate: (v: unknown) => v, save: async () => undefined })).rejects.toThrow(/不收内联音频/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("1110 即使夹带多余的 audioBase64，两跳请求体也只有 fileData（Vertex gs:// / EvoLink https），无 inlineData", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) }).mockResolvedValueOnce(geminiReply("{\"ok\":1}"));
+    // @ts-expect-error audioBase64 不在入参类型里（若有人加回该入参，这里的类型检查会报「未使用的 ts-expect-error」）
+    const r = await geminiAudioJsonWithFallback({ ...base(() => "https://signed.example/test-bucket/a.mp3?X-Goog-Signature=t"), audioBase64: "bXAz" });
+    expect(r.channel).toBe("EvoLink");
+    expect(sentBodies().join("\n")).not.toMatch(/inlineData|bXAz/);
+    expect(JSON.parse(sentBodies()[0]!).contents[0].parts[0].fileData.fileUri).toBe("gs://test-bucket/a.mp3");
+    expect(JSON.parse(sentBodies()[1]!).contents[0].parts[0].fileData.fileUri).toMatch(/^https:\/\//);
+    expect(JSON.parse(sentBodies()[0]!).generationConfig).not.toHaveProperty("audioTimestamp");
   });
 });
