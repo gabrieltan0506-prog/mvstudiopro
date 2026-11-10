@@ -119,6 +119,7 @@ import {
 import { resolveGrowthCampJobServerTimeoutMs } from "../../shared/growthCampJobTiming.js";
 import {
   hasNativeDeepReadJobFields,
+  isNativeDeepReadCurrentContractModel,
   MANHUA_NATIVE_DEEP_READ_MODEL,
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
   parseNativeDeepReadJobConfirmation,
@@ -1031,7 +1032,8 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         throw new Error("原生精读计划未获明确确认，未发出模型请求");
       }
       // 通道身份仅由服务端真实终态与重算计划产生，不读取客户端的路由标记。
-      if (nativeReadModel === "gemini-3.8-flash" && jobId && !params.nativeRelearn) {
+      // 1110：失败续跑 EvoLink 只限「当前合同」读片（配置的缺省读片模型 / 3.8 Flash 旧车道），不再写死 3.8 Flash。
+      if (nativeReadModel && isNativeDeepReadCurrentContractModel(nativeReadModel) && jobId && !params.nativeRelearn) {
         const seriesKey = nativePlanPreview?.seriesKey || nativeStructuringSource?.seriesKey;
         const episodeIndexes = nativePlanPreview?.episodes.map(episode => episode.episodeIndex)
           || (nativeStructuringSource ? [nativeStructuringSource.episodeIndex] : []);

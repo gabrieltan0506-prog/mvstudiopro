@@ -25,8 +25,9 @@ export const NATIVE_DEEP_READ_RETRY_TEMPERATURES = deepFreezeGradient(
 /**
  * 🔴 0920 用户令：「單一分片如果連讀五次都不通過，就升級成Gemini 3.1 pro來讀」
  * 「保留分片，不報錯」「直接從0.7--0.65--0.6」。
+ * 1110 用户令：升级模型不再写死 3.1 Pro，改由 env 配置（resolveManhuaNativeDeepReadEscalationModel，
+ * 缺省同首读模型 = 不升级；Pro 级需用户批准）。这里只保留升级档温度梯度。
  */
-export const NATIVE_DEEP_READ_ESCALATION_MODEL = "gemini-3.1-pro-preview" as const;
 export const NATIVE_DEEP_READ_ESCALATION_TEMPERATURES = deepFreezeGradient(
   [0.7, 0.65, 0.6] as const);
 

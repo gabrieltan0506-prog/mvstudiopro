@@ -15,6 +15,11 @@
 - MV 本段歌词识别（`server/gemini-audio.ts` `geminiAudioJsonWithFallback`）按这两跳走：超时 / 断线 / HTTP 错 / 空回 / 写坏（JSON 解析或逐句时间校验不过）都切下一跳；每跳 request/raw/decoded/parsed/rejected 永久落 GCS。
 - GLM / DeepSeek 不能听音频，不能作为听音任务的 fallback。
 
+## Gemini 模型配置（1110 起不写死）
+- 真源 `shared/geminiModelConfig.ts` `resolveGeminiModel(domain)`：领域 env → `GEMINI_DEFAULT_MODEL` → `gemini-3.8-flash`；trim，空白回落；非 `gemini-` 合法标识回落并告警；名称含 pro 记 console.warn（不阻断）。
+- 领域 env：`MANHUA_DEEP_READ_MODEL`（模板学习精读首读）、`MANHUA_DEEP_READ_ESCALATION_MODEL`（五发不过后的升级重读，缺省同首读 = 不升级）、`GEMINI_AUDIO_TWO_HOP_MODEL`（听音两跳缺省）、`MV_SONG_HEARING_MODEL`（MV 独立听歌）、`MONTAGE_GRADE_ADVICE_MODEL`（成片调色建议）。改 Fly env 重启即生效，已入队任务按保存的模型恢复。
+- 精读历史身份不变：`MANHUA_NATIVE_DEEP_READ_MODEL`（3.1 Pro）只作旧任务缺省 / 段缓存指纹缺省身份 / 计划码；3.1 Pro、3.8 Flash 段缓存指纹不写模型，Argon 与配置新模型写入模型；配置新模型车道系列后缀 `-gm-<去前缀、点换下划线>`。精读成本表外模型按表内最高单价估算（不按 0 元）。
+
 ## 视频
 - **Seedance 2.5 三通道路由拍板（用户 2026-08-13 口径）**：
   - BytePlus = 官方 API 最便宜，但**挡真人脸**；OpenRouter 同样挡脸——这两家只能出 CG。

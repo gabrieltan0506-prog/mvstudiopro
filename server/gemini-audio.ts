@@ -3,7 +3,7 @@
  * Extracts: BPM, mood, rhythm changes, song structure, instrumentation, lyrics
  *
  * 1110 通道合规：所有听音入口（音频实验室、漫剧学习听音扫描、语音转写）一律「音频先存 GCS → geminiAudioJsonWithFallback 两跳」：
- * Gemini@Vertex 读 gs:// → Gemini@EvoLink 读 V4 签名 https（3600 秒），模型 gemini-3.8-flash；
+ * Gemini@Vertex 读 gs:// → Gemini@EvoLink 读 V4 签名 https（3600 秒），模型经 resolveGeminiAudioTwoHopModel()（env 可配，缺省 gemini-3.8-flash）；
  * 不直连 Gemini API 密钥、不接第三方聚合通道、不内联 base64；每跳 request/raw/decoded/parsed/rejected 永久落 GCS，证据只记 gs://。
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -14,9 +14,15 @@ import {
   getVertexProjectId,
 } from "./services/vertexMedia.js";
 import { getGcsBucketName, signGsUriV4ReadUrl, uploadBufferToGcsIfAbsent } from "./services/gcs";
+import { resolveGeminiModel, type GeminiModelEnv } from "../shared/geminiModelConfig.js";
 
-/** 1110 两跳统一模型（用户口径：Gemini 只走 Vertex → EvoLink，固定 gemini-3.8-flash）。 */
-export const GEMINI_AUDIO_TWO_HOP_MODEL = "gemini-3.8-flash";
+/**
+ * 1110 两跳缺省模型（用户口径：Gemini 只走 Vertex → EvoLink）：不再写死，
+ * env GEMINI_AUDIO_TWO_HOP_MODEL → GEMINI_DEFAULT_MODEL → gemini-3.8-flash。
+ */
+export function resolveGeminiAudioTwoHopModel(env?: GeminiModelEnv): string {
+  return resolveGeminiModel("audioTwoHop", env);
+}
 
 /** 音频分析默认：gemini-3.5-flash（与 Platform 趋势同款）；可用 GEMINI_AUDIO_MODEL 覆写 */
 export function resolveGeminiAudioModelName(): string {
@@ -195,20 +201,18 @@ export type ManhuaDramaAudioScanResult = {
   }>;
 };
 
-export const DEFAULT_MANHUA_AUDIO_VERTEX_MODEL = GEMINI_AUDIO_TWO_HOP_MODEL; // 1110：Gemini 一律 3.8 Flash
-export const DEFAULT_MANHUA_AUDIO_EVOLINK_MODEL = GEMINI_AUDIO_TWO_HOP_MODEL; // 1110：Gemini 一律 3.8 Flash
-
+/** 单跳旧覆盖（MANHUA_AUDIO_VERTEX_MODEL / MANHUA_AUDIO_EVOLINK_MODEL）保留；未设时同两跳缺省（1110 起不再写死）。 */
 export function resolveManhuaAudioVertexModelName(): string {
   return (
     String(process.env.MANHUA_AUDIO_VERTEX_MODEL || "").trim()
-    || DEFAULT_MANHUA_AUDIO_VERTEX_MODEL
+    || resolveGeminiAudioTwoHopModel()
   );
 }
 
 export function resolveManhuaAudioEvolinkModelName(): string {
   return (
     String(process.env.MANHUA_AUDIO_EVOLINK_MODEL || "").trim()
-    || DEFAULT_MANHUA_AUDIO_EVOLINK_MODEL
+    || resolveGeminiAudioTwoHopModel()
   );
 }
 
@@ -339,7 +343,7 @@ export async function geminiAudioJsonWithFallback<T>(input: {
    * 已删除内联音频入参，「不内联 base64」由类型保证；签名 URL 不落证据（只记 gs://）。
    */
   media: { vertexFileUri: string; evolinkFileUri: () => string };
-  /** 两跳统一模型覆盖；缺省固定 gemini-3.8-flash（1110 隔离探针发现缺省沿用听音通道配置会落到 3.6-flash，违反「Gemini 一律 3.8 Flash」）。 */
+  /** 两跳统一模型覆盖；缺省 resolveGeminiAudioTwoHopModel()（env 可配，缺省 gemini-3.8-flash；1110 起不写死）。 */
   model?: string;
   /** 1109：系统指令（MV 独立听歌 / 剪辑方案分析）。 */
   systemInstruction?: string;
@@ -361,6 +365,8 @@ export async function geminiAudioJsonWithFallback<T>(input: {
     throw new Error("听音只收 GCS 媒体（Vertex 读 gs://、EvoLink 读签名 https），不收内联音频");
   }
   const media = input.media;
+  // 两跳同一模型：本次调用解析一次，Vertex / EvoLink 与证据记录一致。
+  const twoHopModel = String(input.model || "").trim() || resolveGeminiAudioTwoHopModel();
   const timeoutMs = input.timeoutMs ?? 180_000;
   const maxOutputTokens = input.maxOutputTokens ?? 8192;
   const nativeBody = (fileUri: string) => ({
@@ -375,21 +381,21 @@ export async function geminiAudioJsonWithFallback<T>(input: {
   };
   const channels: Array<{ name: GeminiAudioJsonChannel; available: () => boolean; model: () => string; run: () => Promise<{ status: number; ok: boolean; payload: unknown; text: string }> }> = [
     {
-      name: "Vertex", available: isManhuaDramaVertexAudioAvailable, model: () => input.model || GEMINI_AUDIO_TWO_HOP_MODEL,
+      name: "Vertex", available: isManhuaDramaVertexAudioAvailable, model: () => twoHopModel,
       run: async () => {
-        const model = input.model || GEMINI_AUDIO_TWO_HOP_MODEL;
+        const model = twoHopModel;
         const location = resolveManhuaAudioVertexLocation();
         const url = `${baseUrlForVertex(location)}/v1/projects/${encodeURIComponent(getVertexProjectId())}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
         return native(url, (await getVertexAuthHeaders()) as Record<string, string>, media.vertexFileUri);
       },
     },
     {
-      name: "EvoLink", available: isManhuaDramaEvolinkAudioAvailable, model: () => input.model || GEMINI_AUDIO_TWO_HOP_MODEL,
+      name: "EvoLink", available: isManhuaDramaEvolinkAudioAvailable, model: () => twoHopModel,
       run: async () => {
         // 1110：EvoLink 上的 Gemini 读不了 gs://，也不收内联 base64 —— 只认签名 https（同模板学习 manhuaNativeDeepReadRunner）
         const fileUri = media.evolinkFileUri();
         if (!fileUri || !/^https:\/\//.test(fileUri)) throw new Error("EvoLink 只收签名 https 媒体链接（不收 gs:// 或内联音频）");
-        return native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(input.model || GEMINI_AUDIO_TWO_HOP_MODEL)}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, fileUri);
+        return native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(twoHopModel)}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, fileUri);
       },
     },
   ];
@@ -466,11 +472,12 @@ export async function listenStagedAudioJson<T>(input: {
     if (!saved.created) throw new Error("听音证据已存在，未覆盖原记录");
     return saved;
   };
-  await save("request", { ...input.context, area: input.area, audioGsUri, audioSha256, audioBytes: input.audio.length, mimeType, model: GEMINI_AUDIO_TWO_HOP_MODEL, schemaName: input.schemaName });
+  const model = resolveGeminiAudioTwoHopModel();
+  await save("request", { ...input.context, area: input.area, audioGsUri, audioSha256, audioBytes: input.audio.length, mimeType, model, schemaName: input.schemaName });
   const result = await geminiAudioJsonWithFallback({
     media: { vertexFileUri: audioGsUri, evolinkFileUri: () => signGsUriV4ReadUrl(audioGsUri, 3600) },
     audioTimestamp: true,
-    model: GEMINI_AUDIO_TWO_HOP_MODEL,
+    model,
     mimeType,
     prompt: input.prompt,
     nativeSchema: input.nativeSchema,

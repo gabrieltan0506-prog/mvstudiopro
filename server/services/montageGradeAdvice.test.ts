@@ -12,14 +12,17 @@ import { CREDIT_COSTS as SHARED_CREDIT_COSTS } from "../../shared/plans";
 import { CREDIT_COSTS as SERVER_CREDIT_COSTS } from "../plans";
 import { adviseCanvasMontageGrade } from "../routers/canvasMusicMv";
 import {
-  MONTAGE_GRADE_ADVICE_MODEL,
   MontageGradeAdviceRequestUsedError,
   adviceToGradeSegments,
   adviseMontageGrade,
   buildMontageGradePrompt,
   loadGradeLutOptions,
+  resolveMontageGradeAdviceModel,
   validateMontageGradeAdvice,
 } from "./montageGradeAdvice";
+
+/** 1110：模型走配置，未设 env 时缺省 gemini-3.8-flash（测试替身直接用该值）。 */
+const MONTAGE_GRADE_ADVICE_MODEL = "gemini-3.8-flash";
 
 const LUTS = new Set(["golden_hour_subtle", "neo_noir_standard"]);
 const ok = () => ({
@@ -87,9 +90,36 @@ describe("成片调色建议 · 两跳 fallback（替身，不真调模型）", 
     vi.stubEnv("EVOLINK_API_KEY", "test-key");
     vi.stubEnv("MANHUA_AUDIO_VERTEX_LOCATION", "global");
     vi.stubEnv("MANHUA_AUDIO_EVOLINK_BASE_URL", "https://evolink.test");
+    vi.stubEnv("GEMINI_DEFAULT_MODEL", "");
+    vi.stubEnv("MONTAGE_GRADE_ADVICE_MODEL", "");
     fetchMock.mockReset();
   });
   afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+  it("1110 模型不写死：缺省 3.8 Flash；设 MONTAGE_GRADE_ADVICE_MODEL 后两跳 URL 与 request 证据都用配置模型；空白回落", async () => {
+    expect(resolveMontageGradeAdviceModel()).toBe("gemini-3.8-flash");
+    vi.stubEnv("MONTAGE_GRADE_ADVICE_MODEL", "gemini-3.9-flash");
+    expect(resolveMontageGradeAdviceModel()).toBe("gemini-3.9-flash");
+    fetchMock.mockResolvedValueOnce(gem("{not json")).mockResolvedValueOnce(gem(JSON.stringify(ok())));
+    const uploads: Array<{ name: string; body: Record<string, unknown> }> = [];
+    const res = await adviseMontageGrade(7, { requestId: "r-cfg", videoGsUri: "gs://b/post-prod/7/final.mp4", durationSec: 10 }, {
+      bucket: () => "b",
+      sign: () => "https://signed.test/v.mp4?X-Goog-Signature=abc",
+      luts: async () => Array.from(LUTS).map(id => ({ id, labelZh: id })),
+      upload: (async (p: { objectName: string; buffer: Buffer }) => {
+        uploads.push({ name: p.objectName.replace("canvas-montage/grade-advice/7/r-cfg/", ""), body: JSON.parse(p.buffer.toString("utf8")) });
+        return { created: true };
+      }) as never,
+      download: (async () => { throw new Error("gcs_stat_failed:404"); }) as never,
+    });
+    expect(res.usedBy.model).toBe("gemini-3.9-flash");
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("/models/gemini-3.9-flash:generateContent");
+    expect(String(fetchMock.mock.calls[1]![0])).toBe("https://evolink.test/v1beta/models/gemini-3.9-flash:generateContent");
+    expect(uploads.find(u => u.name === "request.json")!.body.model).toBe("gemini-3.9-flash");
+    vi.stubEnv("MONTAGE_GRADE_ADVICE_MODEL", " ");
+    vi.stubEnv("GEMINI_DEFAULT_MODEL", "gemini-4.0-flash");
+    expect(resolveMontageGradeAdviceModel()).toBe("gemini-4.0-flash");
+  });
 
   const gem = (text: string) => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }), { status: 200 });
 

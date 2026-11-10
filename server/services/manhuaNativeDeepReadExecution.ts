@@ -571,7 +571,8 @@ export function buildNativeDeepReadDirectAudioAnalysis(input: {
         ? NATIVE_DEEP_READ_ROUTE_GEMINI_API
         : NATIVE_DEEP_READ_ROUTE_VERTEX;
   if (input.visualResult.hasAudio !== true) {
-    return noAudioManhuaNativeDirectAnalysis(input.durationSec, route, input.visualResult.model === "gemini-4-argon" ? "gemini-4-argon" : undefined);
+    // 1110：新卡用实际调用的读片模型名落盘（此前 3.8 Flash 卡沿用 3.1 Pro 标签；旧卡读取门照认）。
+    return noAudioManhuaNativeDirectAnalysis(input.durationSec, route, input.visualResult.model || undefined);
   }
   const audioInputTokens = Math.max(0, Number(input.visualResult.audioInputTokens) || 0);
   const usage: ManhuaNativeAudioUsage = {
@@ -593,7 +594,7 @@ export function buildNativeDeepReadDirectAudioAnalysis(input: {
       startSec: segment.startSec,
       endSec: segment.endSec,
     })),
-    model: input.visualResult.model === "gemini-4-argon" ? "gemini-4-argon" : undefined,
+    model: input.visualResult.model || undefined,
     resolvedChunks: input.visualResult.resolvedAudioChunks,
     usage,
     route,

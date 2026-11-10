@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isGeminiModelId } from "./geminiModelConfig.js";
 
 export const MANHUA_NATIVE_AUDIO_MODEL = "gemini-3.6-flash" as const;
 export const MANHUA_NATIVE_AUDIO_RESOLVER_MODEL = "qwen3.8-max" as const;
@@ -16,6 +17,16 @@ export type ManhuaNativeAudioSourceVariant =
  */
 export const MANHUA_NATIVE_AUDIO_DIRECT_MODEL = "gemini-3.1-pro-preview" as const;
 export const MANHUA_NATIVE_AUDIO_ARGON_MODEL = "gemini-4-argon" as const;
+/**
+ * 1110：直读卡的模型 = 实际调用的读片模型（env 可配）。上面两个常量保留**只作读取门 / 旧卡缺省标签**：
+ * 1110 前 3.8 Flash 读出的卡都标成 3.1 Pro，照认；新卡写实际模型（如 gemini-3.8-flash 或配置出的新模型）。
+ */
+export type ManhuaNativeAudioDirectModel = string;
+
+/** 直读卡读取门认的模型：旧两代（3.1 Pro / Argon）+ 任何合法 Gemini 模型标识（配置出来的新模型，换配置后旧卡仍可读）。 */
+export function isManhuaNativeAudioDirectModel(model: unknown): model is ManhuaNativeAudioDirectModel {
+  return model === MANHUA_NATIVE_AUDIO_DIRECT_MODEL || model === MANHUA_NATIVE_AUDIO_ARGON_MODEL || isGeminiModelId(model);
+}
 export const MANHUA_NATIVE_AUDIO_DIRECT_ROUTES = [
   "vertex_gcs_video",
   "evolink_gemini_video",
@@ -87,11 +98,10 @@ export type ManhuaNativeAudioUsage = {
 };
 
 export type ManhuaNativeAudioAnalysis = {
-  model: typeof MANHUA_NATIVE_AUDIO_MODEL | typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL | typeof MANHUA_NATIVE_AUDIO_ARGON_MODEL;
+  model: typeof MANHUA_NATIVE_AUDIO_MODEL | ManhuaNativeAudioDirectModel;
   resolverModel:
     | typeof MANHUA_NATIVE_AUDIO_RESOLVER_MODEL
-    | typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL
-    | typeof MANHUA_NATIVE_AUDIO_ARGON_MODEL;
+    | ManhuaNativeAudioDirectModel;
   resolverRoute: typeof MANHUA_NATIVE_AUDIO_RESOLVER_ROUTE | ManhuaNativeAudioDirectRoute;
   sourceVariants:
     | typeof MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS
@@ -423,7 +433,7 @@ export function mergeManhuaNativeDirectAudioChunks(input: {
   chunks: readonly ManhuaNativeAudioChunkAnalysis[];
   usage: ManhuaNativeAudioUsage;
   route: ManhuaNativeAudioDirectRoute;
-  model?: typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL | typeof MANHUA_NATIVE_AUDIO_ARGON_MODEL;
+  model?: ManhuaNativeAudioDirectModel;
   coveredChunks?: readonly ManhuaNativeAudioChunk[];
 }): ManhuaNativeAudioAnalysis {
   if (!MANHUA_NATIVE_AUDIO_DIRECT_ROUTES.includes(input.route)) {
@@ -470,7 +480,7 @@ export function finalizeManhuaNativeDirectAudioAnalysis(input: {
   resolvedChunks: ReadonlyArray<{ chunkIndex: number; analysis: unknown }>;
   usage: ManhuaNativeAudioUsage;
   route: ManhuaNativeAudioDirectRoute;
-  model?: typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL | typeof MANHUA_NATIVE_AUDIO_ARGON_MODEL;
+  model?: ManhuaNativeAudioDirectModel;
   /** 仅部分提案允许缺少其他原视频分片；整集仍要求完整覆盖。 */
   partial?: boolean;
 }): ManhuaNativeAudioAnalysis {
@@ -506,7 +516,7 @@ export function finalizeManhuaNativeDirectAudioAnalysis(input: {
 export function noAudioManhuaNativeDirectAnalysis(
   durationSec: number,
   route: ManhuaNativeAudioDirectRoute,
-  model: typeof MANHUA_NATIVE_AUDIO_DIRECT_MODEL | typeof MANHUA_NATIVE_AUDIO_ARGON_MODEL = MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
+  model: ManhuaNativeAudioDirectModel = MANHUA_NATIVE_AUDIO_DIRECT_MODEL,
 ): ManhuaNativeAudioAnalysis {
   return {
     ...noAudioManhuaNativeAnalysis(durationSec),
@@ -530,7 +540,7 @@ export function parseManhuaNativeAudioAnalysis(raw: unknown, options: { allowPar
     && o.alignmentMethod === MANHUA_NATIVE_AUDIO_ALIGNMENT
     && JSON.stringify(o.sourceVariants) === JSON.stringify(MANHUA_NATIVE_AUDIO_SOURCE_VARIANTS);
   const isDirect =
-    (o.model === MANHUA_NATIVE_AUDIO_DIRECT_MODEL || o.model === MANHUA_NATIVE_AUDIO_ARGON_MODEL)
+    isManhuaNativeAudioDirectModel(o.model)
     && o.resolverModel === o.model
     && MANHUA_NATIVE_AUDIO_DIRECT_ROUTES.includes(o.resolverRoute as ManhuaNativeAudioDirectRoute)
     && o.alignmentMethod === MANHUA_NATIVE_AUDIO_DIRECT_ALIGNMENT
