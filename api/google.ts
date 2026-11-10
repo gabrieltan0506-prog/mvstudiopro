@@ -607,13 +607,24 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       // 转存与证据要放用户前缀下 → 先认人（原入口未鉴权）。
       const viewer = await resolveGoogleGatewayUser(req);
       if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required" });
+      // 防跨用户读取：gcsUri 只收本人对象，复用后期素材登记核验（本桶 uploads/u<uid>/、post-prod/<uid>/、
+      // 本人成功任务产物、画布登记簿）；别人的、别的桶的、未登记的一律 403，不下载、不调模型。
+      let ownedGsUri = "";
+      if (gcsUri) {
+        try {
+          const { resolveRegisteredPostProdMediaSource } = await import("../server/services/postProdMediaSource");
+          ownedGsUri = await resolveRegisteredPostProdMediaSource({ userId: String(viewer.userId), source: gcsUri });
+        } catch {
+          return res.status(403).json({ ok: false, error: "gcs_uri_not_allowed", message: "素材不属于本人或尚未登记" });
+        }
+      }
       try {
         const { geminiAudioJsonWithFallback } = await import("../server/gemini-audio");
         const bucket = getGcsBucketName();
         const prefix = `manhua-template-learn/audio-scan/${viewer.userId}/${randomUUID()}`;
         const save = googleAudioEvidenceSaver(bucket, prefix);
-        // 有 gcsUri 直接用；只有 audioUrl 时 Fly 代下后转存到本人前缀下
-        let mediaGsUri = gcsUri;
+        // 有 gcsUri（已核验为本人对象）直接用；只有 audioUrl 时 Fly 代下后转存到本人前缀下
+        let mediaGsUri = ownedGsUri;
         let fetched: { audioBytes: number; audioSha256: string } | undefined;
         if (!mediaGsUri) {
           const buffer = await fetchManhuaScanAudio(audioUrl);

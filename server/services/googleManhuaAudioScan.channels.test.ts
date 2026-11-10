@@ -16,6 +16,20 @@ vi.mock("./gcs", async (importOriginal) => ({
   getGcsBucketName: () => "test-bucket",
   downloadGcsObject: async () => { throw new Error("不应再下载 gs:// 转 base64"); },
 }));
+// 归属核验走真实的后期素材登记逻辑，只替换登记来源（不连库）：用户 7 有一条成功任务产物 canvas-tts/job-1/voice.mp3
+vi.mock("./postProdMediaSource", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./postProdMediaSource")>();
+  return {
+    ...actual,
+    resolveRegisteredPostProdMediaSource: (input: { userId: string; source: string }) =>
+      actual.resolveRegisteredPostProdMediaSource(input, {
+        getBucket: () => "test-bucket",
+        verifyOwnership: async () => false,
+        loadSucceededJobOutputObjects: async () => new Set<string>(),
+        loadSucceededJobOutputSources: async (uid: string) => ({ objects: new Set(uid === "7" ? ["canvas-tts/job-1/voice.mp3"] : []), urls: new Set<string>() }),
+      }),
+  };
+});
 import handler from "../../api/google";
 
 const SCAN = {
@@ -70,8 +84,8 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-it("有 gcsUri 直接给 Vertex 读 gs://，不下载不转 base64；输出结构同原函数", async () => {
-  const result = await invoke({ gcsUri: "gs://test-bucket/manhua-template-learn/123-ep1.mp3", mimeType: "audio/mpeg" });
+it("本人前缀 gcsUri 直接给 Vertex 读 gs://，不下载不转 base64；输出结构同原函数", async () => {
+  const result = await invoke({ gcsUri: "gs://test-bucket/uploads/u7/ep1.mp3", mimeType: "audio/mpeg" });
   expect(result).toEqual({
     status: 200,
     body: {
@@ -85,7 +99,7 @@ it("有 gcsUri 直接给 Vertex 读 gs://，不下载不转 base64；输出结�
   expect(fetchMock).toHaveBeenCalledOnce();
   expect(sentUrls()[0]).toContain("https://aiplatform.googleapis.com/");
   const body = JSON.parse(sentBodies()[0]!);
-  expect(body.contents[0].parts[0].fileData).toEqual({ mimeType: "audio/mpeg", fileUri: "gs://test-bucket/manhua-template-learn/123-ep1.mp3" });
+  expect(body.contents[0].parts[0].fileData).toEqual({ mimeType: "audio/mpeg", fileUri: "gs://test-bucket/uploads/u7/ep1.mp3" });
   expect(body.contents[0].parts[1].text).toContain("竖屏短剧/漫剧听写与节奏分析助手");
   expect(body.generationConfig.audioTimestamp).toBe(true);
   expect(body.generationConfig.responseSchema.required).toEqual(["language", "transcriptSummary", "sections"]);
@@ -122,7 +136,7 @@ it("只有 audioUrl：Fly 代下后存到本人前缀 GCS；Vertex 失败时 Evo
 
 it("两跳都失败时报错且不回退 OpenRouter / 直连 key", async () => {
   fetchMock.mockImplementation(async () => new Response("{}", { status: 503 }));
-  const result = await invoke({ gcsUri: "gs://test-bucket/a.mp3" });
+  const result = await invoke({ gcsUri: "gs://test-bucket/uploads/u7/a.mp3" });
   expect(result.status).toBe(500);
   expect(result.body.error).toBe("manhua_audio_scan_failed");
   expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -136,4 +150,30 @@ it("未登录或 gcsUri 非 gs:// 时不访问模型", async () => {
   expect((await invoke({})).status).toBe(400);
   expect(fetchMock).not.toHaveBeenCalled();
   expect(h.upload).not.toHaveBeenCalled();
+});
+
+it("gcsUri 只收本人对象：别人前缀、别的桶、未登记、越界路径一律 403，模型零调用、不下载、不落档", async () => {
+  for (const gcsUri of [
+    "gs://test-bucket/uploads/u8/a.mp3",
+    "gs://other-bucket/uploads/u7/a.mp3",
+    "gs://test-bucket/manhua-template-learn/123-ep1.mp3",
+    "gs://test-bucket/uploads/u7/../u8/a.mp3",
+  ]) {
+    const result = await invoke({ gcsUri });
+    expect(result.status, gcsUri).toBe(403);
+    expect(result.body.error).toBe("gcs_uri_not_allowed");
+  }
+  h.auth.mockResolvedValue({ id: 8, role: "user" });
+  expect((await invoke({ gcsUri: "gs://test-bucket/canvas-tts/job-1/voice.mp3" })).status).toBe(403);
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(h.upload).not.toHaveBeenCalled();
+});
+
+it("本人其他登记对象（成功任务产物）同样放行，正常两跳", async () => {
+  const result = await invoke({ gcsUri: "gs://test-bucket/canvas-tts/job-1/voice.mp3" });
+  expect(result.status).toBe(200);
+  expect(result.body).toMatchObject({ ok: true, model: "vertex/gemini-3.8-flash", via: "gcs" });
+  expect(fetchMock).toHaveBeenCalledOnce();
+  expect(sentBodies()[0]).toContain('"fileUri":"gs://test-bucket/canvas-tts/job-1/voice.mp3"');
+  assertTwoHopCompliant();
 });
