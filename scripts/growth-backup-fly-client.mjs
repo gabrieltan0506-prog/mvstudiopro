@@ -19,7 +19,12 @@ export function decodeBackupCommand(args,repository) {
   return {...request,operation:'upload',file,name:path.basename(file),label:label||'',bytes:st.size,sha256:hash.digest('hex'),replace:scoped.includes('--clobber')};
  }throw Error('backup_fly_command_invalid');
 }
-export function runBackupViaFly(args,{env=process.env,execute=execFileSync}={}) {
+// 1110：Fly 接口偶发断线（如 `Error: get app: ... stream error ... INTERNAL_ERROR`）发生在 flyctl 连上机器之前，
+// 远端命令根本没执行，重试安全；连上之后的失败一律不重试（避免重复写入），照旧整次判失败。
+export const FLY_PRE_CONNECT_ERROR=/Error: (get app|get machine|failed to connect|could not (find|resolve|connect))|dial tcp|TLS handshake timeout|api\.machines\.dev/i;
+export function isFlyPreConnectFailure(error){return error?.status!==undefined&&!/Connecting to /.test(String(error.stdout||'')+String(error.stderr||''))&&FLY_PRE_CONNECT_ERROR.test(String(error.stderr||''));}
+const sleepSync=ms=>Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,ms);
+export function runBackupViaFly(args,{env=process.env,execute=execFileSync,attempts=3,backoffMs=20000,sleep=sleepSync}={}) {
  const repo=env.GROWTH_BACKUP_REPOSITORY||'gabrieltan0506-prog/mvstudiopro-growth-data';
  if(!/^[a-f0-9]+$/.test(env.FLY_MACHINE_ID||'')||!env.FLY_API_TOKEN)throw Error('backup_fly_target_required');
  const request=decodeBackupCommand(args,repo),{file,directory,...wire}=request;
@@ -28,8 +33,16 @@ export function runBackupViaFly(args,{env=process.env,execute=execFileSync}={}) 
  const encoded=Buffer.from(js).toString('base64');
  const command=`node --input-type=module -e 'eval(Buffer.from("${encoded}","base64").toString())'`;
  let fd;try {
-  if(file)fd=fs.openSync(file,'r');
-  const raw=execute('flyctl',['ssh','console','-a','mvstudiopro','--machine',env.FLY_MACHINE_ID,'-C',command],{env,encoding:'utf8',stdio:[fd??'ignore','pipe','pipe'],maxBuffer:32*1024*1024,timeout:600000});
+  let raw;
+  for(let attempt=1;;attempt++){
+   if(file)fd=fs.openSync(file,'r');
+   try{raw=execute('flyctl',['ssh','console','-a','mvstudiopro','--machine',env.FLY_MACHINE_ID,'-C',command],{env,encoding:'utf8',stdio:[fd??'ignore','pipe','pipe'],maxBuffer:32*1024*1024,timeout:600000});break;}
+   catch(error){
+    if(attempt>=attempts||!isFlyPreConnectFailure(error))throw error;
+    process.stderr.write(`backup_fly_preconnect_retry:${attempt}/${attempts}:${String(error.stderr||'').trim().split('\n').pop().slice(0,200)}\n`);
+    sleep(backoffMs*attempt);
+   }finally{if(fd!==undefined){fs.closeSync(fd);fd=undefined;}}
+  }
   const result=JSON.parse(raw);
   if(request.operation==='manifests') {
    for(const item of result){if(!/^archive-\d{4}-\d{2}-\d{2}(?:-\d{2})?\.manifest\.json$/.test(item.name))throw Error('backup_fly_manifest_name');fs.writeFileSync(path.join(directory,item.name),Buffer.from(item.base64,'base64'),{flag:'wx'});}return '';

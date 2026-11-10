@@ -54,3 +54,21 @@ test('manifest跨域下载不携带GitHub凭证且校验原始字节',async()=>{
  assert.equal(Buffer.from(result[0].base64,'base64').toString(),raw.toString());assert.equal(calls.length,5);
 });
 test('release标签metadata读取保持协议兼容',async()=>{const f=fixture();const result=await executeBackupRequest({repository,operation:'api',endpoint:`repos/${repository}/releases/tags/growth-archive-test`},{env,...f});assert.equal(result.id,1);});
+test('1110 Fly 接口连前断线可重试：重开文件fd、最多3次；连上后失败不重试',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fly-client-retry-'));
+ try{
+  const file=path.join(dir,'growth-backup-latest.json');fs.writeFileSync(file,'{}');
+  const args=['release','upload','growth-archive-test',file,'--clobber','--repo',repository];
+  const envX={GROWTH_BACKUP_REPOSITORY:repository,FLY_MACHINE_ID:'abc123',FLY_API_TOKEN:'test-fly'};
+  const pre=()=>Object.assign(new Error('flyctl'),{status:1,stdout:'',stderr:'Error: get app: Get "https://api.machines.dev/v1/apps/mvstudiopro": stream error: stream ID 1; INTERNAL_ERROR; received from peer\n'});
+  const post=()=>Object.assign(new Error('flyctl'),{status:1,stdout:'',stderr:'Connecting to fdaa:50::2...\nError: ssh shell: Process exited with status 1\n'});
+  // 连前断线两次后成功
+  let n=0,slept=[];const fds=[];
+  const ok=runBackupViaFly(args,{env:envX,backoffMs:5,sleep:ms=>slept.push(ms),execute:(bin,argv,options)=>{fds.push(options.stdio[0]);assert.equal(typeof options.stdio[0],'number');if(++n<3)throw pre();return '{}';}});
+  assert.equal(ok,'{}');assert.equal(n,3);assert.deepEqual(slept,[5,10]);
+  // 连上之后失败：不重试
+  let m=0;assert.throws(()=>runBackupViaFly(args,{env:envX,backoffMs:5,sleep:()=>{},execute:()=>{m++;throw post();}}),/backup_fly_command_failed/);assert.equal(m,1);
+  // 连前断线三次：用尽后失败
+  let k=0;assert.throws(()=>runBackupViaFly(args,{env:envX,backoffMs:5,sleep:()=>{},execute:()=>{k++;throw pre();}}),/backup_fly_command_failed:.*get app/s);assert.equal(k,3);
+ }finally{fs.rmSync(dir,{recursive:true});}
+});

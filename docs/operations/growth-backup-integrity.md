@@ -15,6 +15,11 @@
 2. Fly 服务端需有同名仓库与 token 配置，以及 `GROWTH_GITHUB_PRIVATE_COLD_STORE_BASE_URL`。原公开 URL 仅作明确 404 后的历史读取回退；403/不明状态不回退。
 3. 先让正式读取器具备新格式能力，再放行备份。workflow 的服务端门禁核代码与配置、私有仓库 metadata 读取，不宣称真实还原成功。
 4. 合并前核实在途任务与部署；上线后另行做最小真实备份、还原与用户验收。既有手工分片只有大小/哈希记录，尚无实际还原证明。
+5. 本仓库转私有（旧 releases 不迁移）前，旧冷备 `GROWTH_GITHUB_COLD_STORE_BASE_URL` 将无法匿名读取，须先完成：
+   - 用户自建只读令牌：GitHub fine-grained token，Repository access 仅选本仓库 `gabrieltan0506-prog/mvstudiopro`，权限只给 Contents: Read-only。不要改为给 `GROWTH_BACKUP_GITHUB_TOKEN` 加本仓库——fine-grained 权限对所选全部仓库统一生效，会让私有库写令牌对本仓库也可写，违反最小权限。
+   - 由用户本人执行 `fly secrets set GROWTH_LEGACY_GITHUB_TOKEN=...`（agent 不生成、不经手、不读取该值），并设 `GROWTH_LEGACY_COLD_STORE_AUTH=1`。
+   - 读取器行为：开关开启时旧仓读取优先用 `GROWTH_LEGACY_GITHUB_TOKEN`，未设置才回退 `GROWTH_BACKUP_GITHUB_TOKEN`；令牌只发往 `api.github.com/repos/<本仓库>/releases/` 路径，不发往私有库、github.com 下载页、存储重定向或其他主机。开关未开时保持匿名读取。
+   - 核对只用 `fly secrets list` 看变量名存在，不读不打印值；生效后另行做旧仓归档读取验收。
 
 ## B 站历史来源清理
 

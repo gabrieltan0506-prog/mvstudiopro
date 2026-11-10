@@ -314,18 +314,62 @@ const HISTORY_LEDGER_DIR = path.join(STORE_DIR, "history-ledger");
 const GITHUB_OFFLOAD_CACHE_DIR = path.resolve(process.env.GROWTH_GITHUB_OFFLOAD_CACHE_DIR || path.join(DEFAULT_STORE_ROOT, "growth-github-cache"));
 const LEGACY_COLD_STORE_BASE_URL = String(process.env.GROWTH_GITHUB_COLD_STORE_BASE_URL || "").trim().replace(/\/$/, "");
 const GITHUB_COLD_STORE_BASE_URL = String(process.env.GROWTH_GITHUB_PRIVATE_COLD_STORE_BASE_URL || LEGACY_COLD_STORE_BASE_URL).trim().replace(/\/$/, "");
+const GROWTH_PRIVATE_REPOSITORY = process.env.GROWTH_BACKUP_REPOSITORY || "gabrieltan0506-prog/mvstudiopro-growth-data";
 const coldStoreFetch = createGrowthPrivateAssetFetch({
-  repository: process.env.GROWTH_BACKUP_REPOSITORY || "gabrieltan0506-prog/mvstudiopro-growth-data",
+  repository: GROWTH_PRIVATE_REPOSITORY,
   token: process.env.GROWTH_BACKUP_GITHUB_TOKEN,
 });
+// 旧冷备（本仓库 releases）在仓库转私有后不能再匿名下载。显式开启
+// GROWTH_LEGACY_COLD_STORE_AUTH=1 后改走同一套「令牌仅限该仓库 release API」的读取器
+// （不发往 github.com 下载页/存储重定向/其他仓库）；未开启或无令牌时保持原匿名行为。
+// 令牌优先用独立只读的 GROWTH_LEGACY_GITHUB_TOKEN（fine-grained，仅本仓库 Contents 只读），
+// 避免为读旧仓而给私有库写令牌加上本仓库的写权限；未设置时才回退 GROWTH_BACKUP_GITHUB_TOKEN。
+// 该只读令牌只交给本读取器，不进入私有库读取器 coldStoreFetch。
+const LEGACY_COLD_STORE_REPOSITORY =
+  /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/releases\/download\//.exec(LEGACY_COLD_STORE_BASE_URL)?.[1]
+  || "gabrieltan0506-prog/mvstudiopro";
+const LEGACY_COLD_STORE_TOKEN = String(process.env.GROWTH_LEGACY_GITHUB_TOKEN || "").trim()
+  || String(process.env.GROWTH_BACKUP_GITHUB_TOKEN || "").trim();
+const legacyColdStoreFetch: typeof fetch = /^(1|true)$/i.test(String(process.env.GROWTH_LEGACY_COLD_STORE_AUTH || "").trim())
+  && LEGACY_COLD_STORE_TOKEN
+  ? createGrowthPrivateAssetFetch({ repository: LEGACY_COLD_STORE_REPOSITORY, token: LEGACY_COLD_STORE_TOKEN })
+  : coldStoreFetch;
+/** 读取旧仓 release 资产；GROWTH_LEGACY_COLD_STORE_AUTH=1 时带服务端令牌（仅限该仓 release API）。 */
+export function fetchLegacyGrowthReleaseAsset(tag: string, assetName: string, init?: RequestInit) {
+  return legacyColdStoreFetch(
+    `https://github.com/${LEGACY_COLD_STORE_REPOSITORY}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(assetName)}`,
+    init,
+  );
+}
+/** 按 tag 读取 release 资产（如 growth-recovery-20260321 摘要）：先私有库同 tag，读不到再走旧仓读取器
+ * （GROWTH_LEGACY_COLD_STORE_AUTH=1 时鉴权，否则匿名，与冷备回退一致）。 */
+export async function fetchGrowthReleaseAsset(tag: string, assetName: string, init?: RequestInit): Promise<Response> {
+  let primary: Response | null = null;
+  try {
+    primary = await coldStoreFetch(
+      `https://github.com/${GROWTH_PRIVATE_REPOSITORY}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(assetName)}`,
+      init,
+    );
+    if (primary.ok) return primary;
+  } catch (error) {
+    console.warn(`[growth.cold-store] private release asset unavailable: ${tag}/${assetName}`, error);
+  }
+  try {
+    return await fetchLegacyGrowthReleaseAsset(tag, assetName, init);
+  } catch (error) {
+    if (primary) return primary;
+    throw error;
+  }
+}
 async function fetchRoutedColdStoreAsset(assetName: string, options?: RequestInit, legacyOnly = false): Promise<Response | null> {
   const primary = legacyOnly
     ? await coldStoreFetch(`${GITHUB_COLD_STORE_BASE_URL}/${assetName}`, options)
     : await fetchGrowthColdStoreAsset(GITHUB_COLD_STORE_BASE_URL, assetName, options, coldStoreFetch);
   // A committed generation never calls this fallback. Historical archives retain
-  // their original public route only after an explicit missing response.
+  // their original route only after an explicit missing response (authenticated
+  // once the legacy repository is private).
   if ((!primary || primary.status === 404) && LEGACY_COLD_STORE_BASE_URL && LEGACY_COLD_STORE_BASE_URL !== GITHUB_COLD_STORE_BASE_URL)
-    return fetchGrowthColdStoreAsset(LEGACY_COLD_STORE_BASE_URL, assetName, options, coldStoreFetch);
+    return fetchGrowthColdStoreAsset(LEGACY_COLD_STORE_BASE_URL, assetName, options, legacyColdStoreFetch);
   return primary;
 }
 const BACKFILL_PLATFORMS = new Set<GrowthPlatform>(

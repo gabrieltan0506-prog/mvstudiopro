@@ -41,12 +41,28 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Download recovery assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_ASSET_URL: ${{ inputs.current_asset_url }}
+          MERGED_15_19_URL: ${{ inputs.merged_15_19_url }}
+          MERGED_17_19_URL: ${{ inputs.merged_17_19_url }}
+          MERGED_18_19_URL: ${{ inputs.merged_18_19_url }}
         run: |
           mkdir -p /tmp/growth-archive-merge/assets
-          curl -L "${{ inputs.current_asset_url }}" -o /tmp/growth-archive-merge/assets/current.json.gz
-          curl -L "${{ inputs.merged_15_19_url }}" -o /tmp/growth-archive-merge/assets/recovery-merged-15-19-upload.tar.gz
-          curl -L "${{ inputs.merged_17_19_url }}" -o /tmp/growth-archive-merge/assets/recovery-merged-17-19-upload.tar.gz
-          curl -L "${{ inputs.merged_18_19_url }}" -o /tmp/growth-archive-merge/assets/recovery-merged-18-19-upload.tar.gz
+          # 本仓库 release 资产走 gh（带工作流自带令牌），仓库转私有后仍可下载；外部地址照旧 curl。
+          download() {
+            local url="$1" out="$2" prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/"
+            if [[ "$url" == "$prefix"*/* ]]; then
+              local rest="${url#"$prefix"}"
+              gh release download "${rest%%/*}" -R "$GITHUB_REPOSITORY" -p "${rest#*/}" -O "$out" --clobber
+            else
+              curl -fL --retry 3 "$url" -o "$out"
+            fi
+          }
+          download "$CURRENT_ASSET_URL" /tmp/growth-archive-merge/assets/current.json.gz
+          download "$MERGED_15_19_URL" /tmp/growth-archive-merge/assets/recovery-merged-15-19-upload.tar.gz
+          download "$MERGED_17_19_URL" /tmp/growth-archive-merge/assets/recovery-merged-17-19-upload.tar.gz
+          download "$MERGED_18_19_URL" /tmp/growth-archive-merge/assets/recovery-merged-18-19-upload.tar.gz
 
       - name: Prepare working directories
         run: |
