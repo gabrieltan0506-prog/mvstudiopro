@@ -4339,8 +4339,8 @@ export const appRouter = router({
 
     /** 瀏覽器直傳 HTML 快照到 GCS（與異步 pdf_export 同桶），供作品庫 queuePdfFromHtml。 */
     getPdfHtmlSnapshotUploadUrl: protectedProcedure.mutation(async ({ ctx }) => {
-      const safeUser = String(ctx.user.id).replace(/[^0-9a-zA-Z_-]/g, "");
-      const objectName = `pdf-async/html/${safeUser}/${Date.now()}-${nanoid(12)}.html`;
+      const { pdfHtmlSnapshotPrefix } = await import("./services/pdfHtmlSnapshot");
+      const objectName = `${pdfHtmlSnapshotPrefix(ctx.user.id)}${Date.now()}-${nanoid(12)}.html`;
       return createGcsSignedUploadUrl({
         contentType: "text/html; charset=utf-8",
         objectName,
@@ -4358,6 +4358,14 @@ export const appRouter = router({
         }),
       )
       .mutation(async ({ ctx, input }) => {
+        // 只收本人快照（本桶 pdf-async/html/<本人uid>/）：任务会读取并删除该对象，别人的、别的桶的一律不入队。
+        const { assertOwnPdfHtmlSnapshotUri } = await import("./services/pdfHtmlSnapshot");
+        let htmlGcsUri: string;
+        try {
+          htmlGcsUri = assertOwnPdfHtmlSnapshotUri(input.htmlGcsUri, ctx.user.id).gcsUri;
+        } catch {
+          throw new TRPCError({ code: "FORBIDDEN", message: "HTML 快照不屬於本人，無法導出" });
+        }
         const jobId = nanoid(16);
         await createJobRecord({
           id: jobId,
@@ -4367,7 +4375,7 @@ export const appRouter = router({
           input: {
             action: "render_html",
             params: {
-              htmlGcsUri: input.htmlGcsUri,
+              htmlGcsUri,
               token: input.token ?? "",
             },
           },

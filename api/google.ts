@@ -659,6 +659,35 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         .filter((item: { dataUrl: string; url: string; gcsUri: string }) => item.dataUrl || item.url || item.gcsUri)
         .slice(0, 32);
       if (!frames.length) return res.status(400).json({ ok: false, error: "missing_frames" });
+      // 须登录（原入口未鉴权）。帧来源只收三种，未通过一律不下载、不调模型：
+      // 1) data:image 内联帧；2) gcsUri；3) url —— 后两种都走后期素材登记核验（本桶 uploads/u<uid>/、post-prod/<uid>/、
+      // 本人成功任务产物、画布登记簿；本桶签名链接/站内稳定链折成规范 gs://，本人任务产物直链全等才放行），
+      // 别人的对象、别的桶、任意外部链接一律 403（防跨用户读取与服务端代取任意地址）。
+      const frameViewer = await resolveGoogleGatewayUser(req);
+      if (!frameViewer) return res.status(401).json({ ok: false, error: "authentication_required", message: "请先登录后再使用" });
+      for (const frame of frames) {
+        if (frame.dataUrl) {
+          if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(frame.dataUrl)) return res.status(400).json({ ok: false, error: "invalid_frame_dataUrl" });
+          frame.url = "";
+          frame.gcsUri = "";
+          continue;
+        }
+        const source = frame.gcsUri || frame.url;
+        const isGs = /^gs:\/\/[^/]+\/.+/.test(source);
+        if (!isGs && !/^https:\/\//i.test(source)) return res.status(400).json({ ok: false, error: frame.gcsUri ? "invalid_gcsUri" : "invalid_frame_url" });
+        try {
+          const { resolveRegisteredPostProdMediaSource } = await import("../server/services/postProdMediaSource");
+          const owned = await resolveRegisteredPostProdMediaSource({ userId: String(frameViewer.userId), source });
+          frame.gcsUri = owned.startsWith("gs://") ? owned : "";
+          frame.url = owned.startsWith("gs://") ? "" : owned;
+        } catch {
+          return res.status(403).json({
+            ok: false,
+            error: isGs ? "gcs_uri_not_allowed" : "frame_url_not_allowed",
+            message: "素材不属于本人或尚未登记",
+          });
+        }
+      }
       try {
         const { analyzeManhuaTemplateFramesWithTerra } = await import("../server/manhuaTemplateFrameVision");
         const {
