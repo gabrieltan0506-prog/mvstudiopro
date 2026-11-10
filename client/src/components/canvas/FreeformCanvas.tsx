@@ -127,11 +127,25 @@ import { canvasVideoUpscaleCredits } from "@shared/canvasGenerationPricing";
 import { canUpscaleNow } from "@/lib/manhuaDeliveryOrder";
 import { trpc } from "@/lib/trpc";
 import { VideoGradePanel } from "./VideoGradePanel";
-import { VideoEditPanel, type VideoEditResult } from "./VideoEditPanel";
+import { VideoEditPanel, useVideoEditPrefillGuard, type VideoEditResult } from "./VideoEditPanel";
+import { videoEditDurationSec } from "@/lib/videoEditSubmit";
 import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
 import type { AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
 import type { MontageGrade } from "@/lib/montageFinish";
+import {
+  addVideoToolJob,
+  applyVideoToolJobResult,
+  buildVideoToolJob,
+  measureVideoToolExactSec,
+  pendingVideoToolJob,
+  pollVideoToolJobsOnce,
+  readVideoToolJobs,
+  removeVideoToolJob,
+  videoGradePanelSec,
+  type VideoToolJob,
+  type VideoToolJobKind,
+} from "@/lib/videoToolJobs";
 import {
   Clapperboard,
   LoaderCircle,
@@ -899,14 +913,17 @@ export default function FreeformCanvas({
     Record<string, VideoUpscaleSourceMetadata>
   >({});
   const [upscaleBusyId, setUpscaleBusyId] = useState<string | null>(null);
-  // 调色：面板展开的 block、草稿、来源（原片 / 高清版）、实测时长、提交中锁；结果作新版本，原片留在 outputUrls
+  // 调色：面板展开的 block、草稿、来源（原片 / 高清版）、提交中锁；结果作新版本，原片留在 outputUrls。
+  // gradeProbedSec：按地址存实测原始秒（局部修改与调色共用），进面板时再按各自规则取一位小数。
   const [gradePanelBlockId, setGradePanelBlockId] = useState<string | null>(null);
   const [gradeDraft, setGradeDraft] = useState<MontageGrade | undefined>(undefined);
   const [gradeUseUpscaled, setGradeUseUpscaled] = useState(false);
   const [gradeProbedSec, setGradeProbedSec] = useState<Record<string, number>>({});
   const [gradeBusyId, setGradeBusyId] = useState<string | null>(null);
-  // 局部修改：面板展开的 block（报价/提交/轮询在 VideoEditPanel 内）；完成后新版本写入 outputUrls，原片保留
+  // 局部修改：面板展开的 block（报价/提交在 VideoEditPanel 内）；提交成功任务号记到块上，完成后新版本写入 outputUrls，原片保留
   const [editPanelBlockId, setEditPanelBlockId] = useState<string | null>(null);
+  /** 本次挂载已落过的任务（面板 onDone 与刷新后轮询可能命中同一 jobId，提示只出一次；数据层另按产物去重）。 */
+  const settledVideoToolJobsRef = useRef(new Set<string>());
   const [maskBusyId, setMaskBusyId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{
     blockId: string;
@@ -1497,7 +1514,7 @@ export default function FreeformCanvas({
     [blocks, eraseCornerBusyId, patchOne]
   );
 
-  /** 调色面板：读实测时长（分段调色按成片秒）；高清版（CloudFront）提交时由 videoGradeSubmit 先导入。 */
+  /** 调色面板：读实测时长（分段调色按成片秒，同提交时服务端实读）；高清版（CloudFront）提交时由 videoGradeSubmit 先导入。 */
   const openGradePanel = useCallback(
     async (blockId: string) => {
       const block = blocks.find(b => b.id === blockId);
@@ -1506,34 +1523,41 @@ export default function FreeformCanvas({
         toast.error("请先生成成片再调色");
         return;
       }
+      if (pendingVideoToolJob(block.videoToolJobs, "grade")) {
+        toast.error("该视频已有调色在处理，完成后自动作为新版本加入");
+        return;
+      }
       setGradePanelBlockId(blockId);
       setGradeDraft(undefined);
       setGradeUseUpscaled(false);
       for (const url of [src, String(block.upscaledVideoUrl || "").trim()]) {
         if (!/^https:\/\//i.test(url) || gradeProbedSec[url]) continue;
-        const measured = upscaleProbedSources[url] || (await probeVideoUpscaleSource(url));
-        const sec = measured?.durationExactSec ?? measured?.durationSec;
+        const sec = await measureVideoToolExactSec(url);
         if (sec) setGradeProbedSec(prev => ({ ...prev, [url]: sec }));
+        else if (url === src) toast.error("读取视频时长失败，请稍后重试");
       }
     },
-    [blocks, gradeProbedSec, upscaleProbedSources]
+    [blocks, gradeProbedSec]
   );
 
   /** 顾问 videoEdit 预填（按块；nonce 变化即覆盖面板内容）。 */
   const [editPrefill, setEditPrefill] = useState<{ blockId: string; startSec: number; endSec: number; promptZh: string; nonce: number }>();
-  const advisorEditLive = useRef({ blocks, sec: gradeProbedSec, probed: upscaleProbedSources });
-  advisorEditLive.current = { blocks, sec: gradeProbedSec, probed: upscaleProbedSources };
+  const editGuard = useVideoEditPrefillGuard();
+  const advisorEditLive = useRef({ blocks, sec: gradeProbedSec });
+  advisorEditLive.current = { blocks, sec: gradeProbedSec };
   useEffect(() => {
     if (!onAdvisorVideoEditControl) return;
     const cur = () => advisorEditLive.current;
     const srcOf = (b: CanvasBlock) => String(b.outputUrl || "").trim();
-    // 只列画布上真有「局部修改」入口且为 https 成片的块（同 openEditPanel 条件），预填才能打开对应面板
-    const videos = () => cur().blocks.filter(b => canvasBlockHasVideoTools(b) && /^https:\/\//i.test(srcOf(b)));
+    // 只列画布上真有「局部修改」入口且为 https 成片的块（同 openEditPanel 条件），预填才能打开对应面板；
+    // 局部修改仍在处理的块不列（入口已锁，防重复提交）
+    const videos = () => cur().blocks.filter(b => canvasBlockHasVideoTools(b) && /^https:\/\//i.test(srcOf(b)) && !pendingVideoToolJob(b.videoToolJobs, "edit"));
     const known: Record<string, number> = {};
     const base = createAdvisorVideoEditControl({
       targets: () =>
         videos().flatMap((b, i) => {
-          const sec = cur().sec[srcOf(b)] ?? known[srcOf(b)];
+          // 实测秒数一位小数向下取（同面板与服务端选段），10.08 → 10.0
+          const sec = videoEditDurationSec(cur().sec[srcOf(b)] ?? known[srcOf(b)]);
           return sec ? [{ id: b.id, label: `画布视频块${i + 1}·${freeformNodeListLabel(b)}`, url: srcOf(b), durationSec: sec }] : [];
         }),
       open: p => {
@@ -1541,23 +1565,21 @@ export default function FreeformCanvas({
         setEditPrefill({ blockId: p.targetId, startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, nonce: Date.now() });
       },
     });
-    onAdvisorVideoEditControl(async (action, signal) => {
+    // 面板确认框打开、正在报价、提交或任务进行中时，顾问预填被拒并回中文原因（面板内容不动）
+    onAdvisorVideoEditControl(editGuard.withGuard(async (action, signal) => {
       // 未读过时长的已出片视频块先读实测时长（只读元数据，不扣费）
       const missing = videos().map(srcOf).filter(src => !cur().sec[src] && !known[src]);
-      const measured = await Promise.all(missing.map(async src => [src, cur().probed[src] || (await probeVideoUpscaleSource(src).catch(() => null))] as const));
+      const measured = await Promise.all(missing.map(async src => [src, await measureVideoToolExactSec(src)] as const));
       signal.throwIfAborted();
       const got: Record<string, number> = {};
-      for (const [src, m] of measured) {
-        const sec = m?.durationExactSec ?? m?.durationSec;
-        if (sec) got[src] = known[src] = sec;
-      }
+      for (const [src, sec] of measured) if (sec) got[src] = known[src] = sec;
       if (Object.keys(got).length) setGradeProbedSec(prev => ({ ...prev, ...got }));
       return base(action, signal);
-    });
+    }));
     return () => onAdvisorVideoEditControl(null);
   }, [onAdvisorVideoEditControl]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** 局部修改面板：读实测时长（选区间按成片秒）。 */
+  /** 局部修改面板：读实测时长（选区间按成片秒，同报价时服务端实读）。仍有局部修改在处理时不再打开（防重复提交）。 */
   const openEditPanel = useCallback(
     async (blockId: string) => {
       const block = blocks.find(b => b.id === blockId);
@@ -1566,41 +1588,108 @@ export default function FreeformCanvas({
         toast.error("请先生成成片再局部修改");
         return;
       }
+      if (pendingVideoToolJob(block.videoToolJobs, "edit")) {
+        toast.error("该视频已有局部修改在处理，完成后自动作为新版本加入");
+        return;
+      }
       setEditPanelBlockId(blockId);
       if (gradeProbedSec[src]) return;
-      const measured = upscaleProbedSources[src] || (await probeVideoUpscaleSource(src));
-      const sec = measured?.durationExactSec ?? measured?.durationSec;
+      const sec = await measureVideoToolExactSec(src);
       if (sec) setGradeProbedSec(prev => ({ ...prev, [src]: sec }));
       else toast.error("读取视频时长失败，请稍后重试");
     },
-    [blocks, gradeProbedSec, upscaleProbedSources]
+    [blocks, gradeProbedSec]
   );
 
-  /** 局部修改完成：同 eraseCornerMarkForBlock 写法加新版本，原片留在 outputUrls 不覆盖。 */
-  const applyVideoEditForBlock = useCallback(
-    (blockId: string, sourceUrl: string, result: VideoEditResult) => {
-      const url = String(result?.url || "").trim();
-      const live = blocksRef.current.find(b => b.id === blockId);
-      if (!live || !/^https:\/\//i.test(url)) return;
-      const prevUrls = Array.isArray(live.outputUrls) ? live.outputUrls : [];
-      const current = String(live.outputUrl || "").trim();
-      if (current === url) return;
-      patchOne(blockId, {
-        outputUrl: url,
-        outputUrls: capManhuaMediaHistory(
-          [url, ...prevUrls, ...[current, sourceUrl].filter(Boolean)],
-          url,
-        ),
-        status: "done",
-        error: undefined,
-      });
-      setEditPanelBlockId(null);
-      toast.success("局部修改完成，已作为新版本加入，原片保留");
+  /** 提交成功即把任务号记到块上（随画布保存）；刷新后由下方轮询接管。同 jobId 只记一条。 */
+  const trackVideoToolJob = useCallback((blockId: string, job: VideoToolJob | null) => {
+    if (!job) return;
+    onBlocksChangeRef.current(prev =>
+      prev.map(b => (b.id === blockId ? { ...b, videoToolJobs: addVideoToolJob(b.videoToolJobs, job) } : b))
+    );
+  }, []);
+
+  /**
+   * 局部修改 / 调色完成：同 eraseCornerMarkForBlock 写法加新版本，原片留在 outputUrls 不覆盖；追踪字段同批清掉。
+   * 面板 onDone 与刷新后轮询都走这里：本挂载按 jobId 只落一次，updater 内再按产物去重（多处挂载也不重复加）。
+   */
+  const applyVideoToolJobOnBlock = useCallback(
+    (blockId: string, kind: VideoToolJobKind, jobId: string, url: string, sourceUrl?: string) => {
+      if (!jobId || settledVideoToolJobsRef.current.has(jobId)) return;
+      settledVideoToolJobsRef.current.add(jobId);
+      onBlocksChangeRef.current(prev =>
+        prev.map(b => (b.id === blockId ? applyVideoToolJobResult(b, jobId, url, sourceUrl).block : b))
+      );
+      if (!/^https:\/\//i.test(String(url || "").trim())) return;
+      if (kind === "edit") setEditPanelBlockId(cur => (cur === blockId ? null : cur));
+      toast.success(kind === "edit" ? "局部修改完成，已作为新版本加入，原片保留" : "调色完成，已作为新版本加入，原片保留");
     },
-    [patchOne]
+    []
   );
 
-  /** 单片调色：提交后期 concat（单片 + grade）→ 等结果 → 新版本写入 outputUrls，原片留在历史不覆盖。 */
+  /** 失败 / 被拒：提示服务端原句（局部修改即「积分已全额退回」那句），然后清掉追踪字段。 */
+  const failVideoToolJobOnBlock = useCallback((blockId: string, jobId: string, message: string) => {
+    if (!jobId || settledVideoToolJobsRef.current.has(jobId)) return;
+    settledVideoToolJobsRef.current.add(jobId);
+    onBlocksChangeRef.current(prev =>
+      prev.map(b => (b.id === blockId ? { ...b, videoToolJobs: removeVideoToolJob(b.videoToolJobs, jobId) } : b))
+    );
+    toast.error(maskMediaProviderDetails(message));
+  }, []);
+
+  /** 局部修改面板 onDone（本次挂载内完成）：与刷新后轮询同一落点。 */
+  const applyVideoEditForBlock = useCallback(
+    (blockId: string, sourceUrl: string, result: VideoEditResult) =>
+      applyVideoToolJobOnBlock(blockId, "edit", String(result?.jobId || ""), String(result?.url || ""), sourceUrl),
+    [applyVideoToolJobOnBlock]
+  );
+
+  /** 轮询一轮（挂载即跑，刷新恢复就是这一轮）：按块上的追踪记录查后期任务，终态落回对应块。 */
+  const pollCanvasVideoToolJobs = (pairs: Array<[string, string]>, isCancelled: () => boolean) =>
+    pollVideoToolJobsOnce({
+      jobs: pairs.flatMap(([blockId, jobId]) => {
+        const job = readVideoToolJobs(blocksRef.current.find(b => b.id === blockId)?.videoToolJobs).find(j => j.jobId === jobId);
+        return job ? [{ ...job, blockId }] : [];
+      }),
+      fetchJob: fetchPostProdJob,
+      isCancelled,
+      onSettled: (job, outcome) =>
+        outcome.status === "succeeded"
+          ? applyVideoToolJobOnBlock(job.blockId, job.kind, job.jobId, outcome.url)
+          : failVideoToolJobOnBlock(job.blockId, job.jobId, outcome.message),
+    });
+  const pollCanvasVideoToolJobsRef = useRef(pollCanvasVideoToolJobs);
+  pollCanvasVideoToolJobsRef.current = pollCanvasVideoToolJobs;
+  // 局部修改 / 调色在途任务统一轮询（含刷新恢复：追踪字段随画布持久化，挂载即接管）；deps 用任务键串，不随画布重渲重建。
+  const activeVideoToolJobKey = JSON.stringify(
+    blocks.flatMap(b => readVideoToolJobs(b.videoToolJobs).map(j => [b.id, j.jobId]))
+  );
+  useEffect(() => {
+    const pairs = JSON.parse(activeVideoToolJobKey) as Array<[string, string]>;
+    if (!pairs.length) return;
+    let cancelled = false;
+    let inFlight = false;
+    const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        await pollCanvasVideoToolJobsRef.current(pairs, () => cancelled);
+      } finally {
+        inFlight = false;
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeVideoToolJobKey]);
+
+  /**
+   * 单片调色：提交后期 concat（单片 + grade）→ 任务号记到块上（随画布保存）→ 由在途任务轮询等结果
+   * （刷新后同样接管）→ 新版本写入 outputUrls，提交时的原片留在历史不覆盖。同块已有调色在处理时不再提交。
+   */
   const startGradeForBlock = useCallback(
     async (blockId: string, grade: MontageGrade | undefined, useUpscaled: boolean) => {
       const block = blocks.find(b => b.id === blockId);
@@ -1615,45 +1704,30 @@ export default function FreeformCanvas({
         return;
       }
       if (gradeBusyId) return;
+      if (pendingVideoToolJob(block.videoToolJobs, "grade")) {
+        toast.error("该视频已有调色在处理，完成后自动作为新版本加入");
+        return;
+      }
       setGradeBusyId(blockId);
       try {
+        const requestId = crypto.randomUUID();
         const jobId = await submitVideoGrade(
           { videoUrl: src, grade, scopeKey: `canvas-grade:${blockId}`.slice(0, 128) },
           { queue: input => queuePostProd.mutateAsync(input) }
         );
+        // 历史里留提交时的原片（调高清版时也是原片，不把高清临时链写进 outputUrls）
+        const job = buildVideoToolJob({ kind: "grade", jobId, requestId, sourceUrl: original || src });
+        if (!job) throw new Error("调色已提交，但未能记下任务，请勿重复提交，稍后到后期任务记录查看结果");
+        trackVideoToolJob(blockId, job);
         setGradePanelBlockId(null);
         toast.success("调色已提交，完成后作为新版本加入，原片保留");
-        let url = "";
-        for (let i = 0; i < 360 && !url; i++) {
-          const job = await fetchPostProdJob(jobId);
-          const status = String(job?.status || "");
-          if (status === "failed") throw new Error(job?.error || "调色失败");
-          const out = job?.output as { url?: unknown } | null | undefined;
-          if (status === "succeeded" && typeof out?.url === "string") url = out.url;
-          else await new Promise(r => setTimeout(r, 5_000));
-        }
-        if (!url) throw new Error("调色仍在处理中，可在后期任务列表查看结果");
-        // 轮询期间块可能已变：以最新块为准拼历史，提交时的原片与当前成片都留在 outputUrls
-        const live = blocksRef.current.find(b => b.id === blockId) ?? block;
-        const prevUrls = Array.isArray(live.outputUrls) ? live.outputUrls : [];
-        const current = String(live.outputUrl || "").trim();
-        patchOne(blockId, {
-          outputUrl: url,
-          outputUrls: capManhuaMediaHistory(
-            [url, ...prevUrls, ...[current, original].filter(Boolean)],
-            url,
-          ),
-          status: "done",
-          error: undefined,
-        });
-        toast.success("调色完成，已作为新版本加入，原片保留");
       } catch (e: unknown) {
         toast.error(e instanceof Error ? maskMediaProviderDetails(e.message) : "调色提交失败");
       } finally {
         setGradeBusyId(null);
       }
     },
-    [blocks, gradeBusyId, patchOne, queuePostProd, fetchPostProdJob]
+    [blocks, gradeBusyId, queuePostProd, trackVideoToolJob]
   );
 
   const openUpscalePanel = useCallback(
@@ -3688,7 +3762,8 @@ export default function FreeformCanvas({
                                   {editPanelBlockId === block.id ? (
                                     (() => {
                                       const editSrc = String(block.outputUrl || "").trim();
-                                      const editSec = gradeProbedSec[editSrc];
+                                      // 实测片长一位小数向下取（10.08 → 10.0），与服务端选段同一规则
+                                      const editSec = videoEditDurationSec(gradeProbedSec[editSrc]);
                                       return (
                                         <div className="space-y-1 rounded-lg border border-teal-300/30 bg-teal-500/[0.06] p-2" data-canvas-edit-panel>
                                           {editSec ? (
@@ -3698,6 +3773,13 @@ export default function FreeformCanvas({
                                               durationSec={editSec}
                                               previewUrl={editSrc}
                                               prefill={editPrefill?.blockId === block.id ? editPrefill : undefined}
+                                              onAdvisorPrefillGuard={editGuard.register}
+                                              onSubmitted={job =>
+                                                trackVideoToolJob(
+                                                  block.id,
+                                                  buildVideoToolJob({ kind: "edit", jobId: job.jobId, requestId: job.requestId, sourceUrl: editSrc, range: { startSec: job.startSec, endSec: job.endSec } })
+                                                )
+                                              }
                                               onDone={result => applyVideoEditForBlock(block.id, editSrc, result)}
                                             />
                                           ) : (
@@ -3719,7 +3801,9 @@ export default function FreeformCanvas({
                                     (() => {
                                       const useUpscaled = gradeUseUpscaled && Boolean(block.upscaledVideoUrl);
                                       const gradeSrc = String((useUpscaled ? block.upscaledVideoUrl : block.outputUrl) || "").trim();
-                                      const outputSec = gradeProbedSec[gradeSrc];
+                                      // 实测成片秒一位小数（10.08 → 10.1，与提交时分段校验同一规则），不取整到整秒
+                                      const outputSec = videoGradePanelSec(gradeProbedSec[gradeSrc]);
+                                      const gradeLocked = gradeBusyId === block.id || Boolean(pendingVideoToolJob(block.videoToolJobs, "grade"));
                                       return (
                                         <div className="space-y-1 rounded-lg border border-violet-300/30 bg-violet-500/[0.06] p-2" data-canvas-grade-panel>
                                           {block.upscaledVideoUrl ? (
@@ -3741,7 +3825,7 @@ export default function FreeformCanvas({
                                               value={gradeDraft}
                                               onChange={setGradeDraft}
                                               outputSec={outputSec}
-                                              disabled={gradeBusyId === block.id}
+                                              disabled={gradeLocked}
                                               onError={message => toast.error(message)}
                                             />
                                           ) : (
@@ -3750,11 +3834,11 @@ export default function FreeformCanvas({
                                           <div className="grid grid-cols-2 gap-1">
                                             <button
                                               type="button"
-                                              disabled={gradeBusyId === block.id || !gradeDraft || !outputSec}
+                                              disabled={gradeLocked || !gradeDraft || !outputSec}
                                               onClick={() => void startGradeForBlock(block.id, gradeDraft, useUpscaled)}
                                               className="rounded-lg border border-violet-300/35 bg-violet-500/10 px-2 py-1.5 text-[11px] text-violet-50/90 hover:bg-violet-500/15 disabled:opacity-50"
                                             >
-                                              {gradeBusyId === block.id ? "调色处理中…" : "提交调色"}
+                                              {gradeLocked ? "调色处理中…" : "提交调色"}
                                             </button>
                                             <button
                                               type="button"
@@ -3770,26 +3854,42 @@ export default function FreeformCanvas({
                                   ) : (
                                     <button
                                       type="button"
-                                      disabled={gradeBusyId === block.id}
+                                      disabled={gradeBusyId === block.id || Boolean(pendingVideoToolJob(block.videoToolJobs, "grade"))}
                                       onClick={() => void openGradePanel(block.id)}
                                       className="w-full rounded-lg border border-violet-300/35 bg-violet-500/10 px-2 py-1.5 text-[11px] text-violet-50/90 hover:bg-violet-500/15 disabled:opacity-50"
                                       title="单片调色；结果作为新版本加入，原片保留。建议先调色再高清放大"
                                       data-canvas-grade-entry
                                     >
-                                      {gradeBusyId === block.id ? "调色处理中…" : "调色"}
+                                      {gradeBusyId === block.id || pendingVideoToolJob(block.videoToolJobs, "grade") ? "调色处理中…" : "调色"}
                                     </button>
                                   )}
                                   {editPanelBlockId !== block.id ? (
                                     <button
                                       type="button"
+                                      disabled={Boolean(pendingVideoToolJob(block.videoToolJobs, "edit"))}
                                       onClick={() => void openEditPanel(block.id)}
-                                      className="w-full rounded-lg border border-teal-300/35 bg-teal-500/10 px-2 py-1.5 text-[11px] text-teal-50/90 hover:bg-teal-500/15"
+                                      className="w-full rounded-lg border border-teal-300/35 bg-teal-500/10 px-2 py-1.5 text-[11px] text-teal-50/90 hover:bg-teal-500/15 disabled:opacity-50"
                                       title="选一段描述要改的内容；先报价再确认，结果作为新版本加入，原片保留"
                                       data-canvas-edit-entry
                                     >
-                                      局部修改
+                                      {pendingVideoToolJob(block.videoToolJobs, "edit") ? "局部修改处理中…" : "局部修改"}
                                     </button>
                                   ) : null}
+                                  {/* 在途任务随画布保存：刷新后照常显示并接着等结果 */}
+                                  {readVideoToolJobs(block.videoToolJobs)
+                                    .filter(j => j.kind === "grade" || editPanelBlockId !== block.id)
+                                    .map(j => (
+                                      <div
+                                        key={j.jobId}
+                                        className="rounded-lg border border-white/15 bg-white/[0.04] px-2 py-1.5 text-[10px] leading-4 text-white/75"
+                                        data-canvas-video-tool-pending={j.kind}
+                                      >
+                                        {j.kind === "edit"
+                                          ? `局部修改处理中${j.range ? `（${j.range.startSec.toFixed(1)}–${j.range.endSec.toFixed(1)} 秒）` : ""}`
+                                          : "调色处理中"}
+                                        ·完成后自动作为新版本加入，原片保留
+                                      </div>
+                                    ))}
                                 </div>
                               ) : null}
                               {block.seedance25WebThreadLink ? (

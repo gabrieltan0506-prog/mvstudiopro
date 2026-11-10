@@ -69,8 +69,16 @@ import { CanvasMvLyricTableEditor } from "./CanvasMvLyricTableEditor";
 import { planMvHighlightFades } from "@shared/canvasMusicMvLyricKinds";
 import { recommendMusicMvHighlight } from "@shared/musicMvHighlight";
 import { CanvasMvShotReferencePicker } from "./CanvasMvShotReferencePicker";
-import type { CanvasMusicMvFinalEdit, CanvasMusicMvFinalGrade, CanvasMusicMvFinalUpscale } from "@shared/canvasMusicMv";
-import { VideoEditPanel, type VideoEditResult } from "./VideoEditPanel";
+import type { CanvasMusicMvFinalEdit, CanvasMusicMvFinalEditJob, CanvasMusicMvFinalGrade, CanvasMusicMvFinalUpscale } from "@shared/canvasMusicMv";
+import { canvasMusicMvFinalEditJobSchema, MV_FINAL_EDIT_JOBS_MAX } from "@shared/canvasMusicMv";
+import {
+  measuredExactSec,
+  pollVideoToolJobsOnce,
+  videoGradePanelSec,
+  type VideoToolJobSettled,
+} from "@/lib/videoToolJobs";
+import { videoEditDurationSec } from "@/lib/videoEditSubmit";
+import { VideoEditPanel, useVideoEditPrefillGuard, type VideoEditResult } from "./VideoEditPanel";
 import { createAdvisorVideoEditControl, createAdvisorVideoEditHub } from "@/lib/advisorVideoEditControl";
 import { VideoGradePanel } from "./VideoGradePanel";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
@@ -209,6 +217,7 @@ export function CanvasMusicMvStudio({
   /** 顾问 videoEdit：第 5 步后期工坊与第 6 步成片共用一个汇总；预填只打开面板，提交仍须用户在面板确认。 */
   const advisorVideoEditHub = useMemo(() => createAdvisorVideoEditHub(), []);
   const [finalEditPrefill, setFinalEditPrefill] = useState<{ startSec: number; endSec: number; promptZh: string; nonce: number }>();
+  const finalEditGuard = useVideoEditPrefillGuard();
   const [editOpen, setEditOpen] = useState(false);
   const patch = (
     delta: Partial<CanvasMusicMvState>,
@@ -1060,6 +1069,12 @@ export function CanvasMusicMvStudio({
         r.id === id ? { ...r, ...delta } : r
       ),
     });
+  /** 读成片实测原始秒（服务端实读，与报价、提交同一把尺）；进两个面板时再按各自规则取一位小数。 */
+  const measureFinalSec = async (url: string) => {
+    const sec = measuredExactSec(await probeWorkflowVideoSource(url));
+    if (!sec) throw new Error("读取成片时长失败，请稍后重试");
+    return sec;
+  };
   const openFinalGrade = () =>
     perform(async () => {
       const src = finalSource;
@@ -1068,8 +1083,7 @@ export function CanvasMusicMvStudio({
       setGradeOpen(true);
       if (gradeOutputSec?.url === src) return;
       setProgress("读取成片实测时长…");
-      const meta = await probeWorkflowVideoSource(src);
-      setGradeOutputSec({ url: src, sec: meta.durationExactSec ?? meta.durationSec });
+      setGradeOutputSec({ url: src, sec: await measureFinalSec(src) });
       setProgress("");
     });
   /** 单片调色：后期 concat（单片 + grade 透传）；结果作为新版本块挂在成片旁，原成片保留。 */
@@ -1107,54 +1121,86 @@ export function CanvasMusicMvStudio({
         throw e;
       }
     });
+  /** 当前成片仍有局部修改在处理：入口与顾问预填都锁住（防重复提交）。 */
+  const finalEditPending = (state.finalEditJobs || []).some(t => t.finalBlockId === state.finalBlockId);
   const openFinalEdit = () =>
     perform(async () => {
       const src = finalSource;
       if (!state.finalBlockId || !/^https:\/\//i.test(src))
         throw new Error("请先完成合成成片再局部修改");
+      if ((latest.current.finalEditJobs || []).some(t => t.finalBlockId === state.finalBlockId))
+        throw new Error("该成片有局部修改正在处理，完成后作为新版本放在成片旁");
       setEditOpen(true);
       if (gradeOutputSec?.url === src) return;
       setProgress("读取成片实测时长…");
-      const meta = await probeWorkflowVideoSource(src);
-      setGradeOutputSec({ url: src, sec: meta.durationExactSec ?? meta.durationSec });
+      setGradeOutputSec({ url: src, sec: await measureFinalSec(src) });
       setProgress("");
     });
-  const finalEditLive = useRef({ finalSource, finalBlockId: state.finalBlockId, sec: gradeOutputSec, busy });
-  finalEditLive.current = { finalSource, finalBlockId: state.finalBlockId, sec: gradeOutputSec, busy };
+  const finalEditLive = useRef({ finalSource, finalBlockId: state.finalBlockId, sec: gradeOutputSec, busy, editPending: finalEditPending });
+  finalEditLive.current = { finalSource, finalBlockId: state.finalBlockId, sec: gradeOutputSec, busy, editPending: finalEditPending };
   useEffect(() => {
     const cur = () => finalEditLive.current;
     const base = createAdvisorVideoEditControl({
       targets: () => {
         const { finalSource: url, finalBlockId, sec } = cur();
-        return finalBlockId && /^https:\/\//i.test(url) && sec?.url === url && sec.sec > 0 ? [{ id: "mv-final", label: "MV 合成成片", url, durationSec: sec.sec }] : [];
+        // 实测秒数一位小数向下取（同面板与服务端选段），10.08 → 10.0
+        const durationSec = sec?.url === url ? videoEditDurationSec(sec.sec) : 0;
+        return finalBlockId && /^https:\/\//i.test(url) && durationSec ? [{ id: "mv-final", label: "MV 合成成片", url, durationSec }] : [];
       },
-      busy: () => cur().busy,
+      busy: () => cur().busy || cur().editPending,
       open: p => {
         setEditOpen(true);
         setFinalEditPrefill({ startSec: p.startSec, endSec: p.endSec, promptZh: p.promptZh, nonce: Date.now() });
       },
     });
     const register = advisorVideoEditHub.register("mv-final");
-    register(async (action, signal) => {
+    // 面板确认框打开、正在报价、提交或任务进行中时，顾问预填被拒并回中文原因（面板内容不动）
+    register(finalEditGuard.withGuard(async (action, signal) => {
       // 成片时长未读过：先读实测时长（只读元数据，不扣费），清单才列出本成片
       const { finalSource: url, finalBlockId, sec } = cur();
       if (finalBlockId && /^https:\/\//i.test(url) && sec?.url !== url) {
-        const meta = await probeWorkflowVideoSource(url);
+        const measured = await measureFinalSec(url);
         signal.throwIfAborted();
-        setGradeOutputSec({ url, sec: meta.durationExactSec ?? meta.durationSec });
-        finalEditLive.current = { ...cur(), sec: { url, sec: meta.durationExactSec ?? meta.durationSec } };
+        setGradeOutputSec({ url, sec: measured });
+        finalEditLive.current = { ...cur(), sec: { url, sec: measured } };
       }
       return base(action, signal);
-    });
+    }));
     return () => register(null);
   }, [advisorVideoEditHub]); // eslint-disable-line react-hooks/exhaustive-deps
-  /** 局部修改完成：记录随 MV 块保存（同任务号只记一次），并在成片旁挂「局部修改版」版本块；原成片不动。 */
+  /** 局部修改提交成功（面板 onSubmitted）：任务号、请求号、发起时间、实际区间记到 MV 草稿（随块保存），刷新后由轮询接管。 */
+  const trackFinalEdit = (finalId: string, sourceUrl: string, job: { jobId: string; requestId: string; startSec: number; endSec: number }) => {
+    const list = latest.current.finalEditJobs || [];
+    if (list.some(t => t.jobId === job.jobId) || (latest.current.finalEdits || []).some(r => r.jobId === job.jobId)) return;
+    const parsed = canvasMusicMvFinalEditJobSchema.safeParse({
+      kind: "edit",
+      jobId: job.jobId,
+      requestId: job.requestId,
+      startedAt: new Date().toISOString(),
+      sourceUrl,
+      range: { startSec: job.startSec, endSec: job.endSec },
+      finalBlockId: finalId,
+    });
+    // 不合法或超上限不写（坏档会让整块草稿读不回来）；本次挂载内面板自己仍在等结果
+    if (!parsed.success || list.length >= MV_FINAL_EDIT_JOBS_MAX) return;
+    patch({ finalEditJobs: [...list, parsed.data] });
+  };
+  /**
+   * 局部修改完成：记录随 MV 块保存（同任务号只记一次），并在成片旁挂「局部修改版」版本块（块号按任务号定，
+   * 重复落也只一块）；该任务的在途记录同批清掉。面板 onDone 与刷新后轮询都走这里。原成片不动。
+   */
   const applyFinalEdit = (finalId: string, sourceUrl: string, result: VideoEditResult) => {
     const url = String(result?.url || "").trim();
-    if (!/^https:\/\//i.test(url) || !result.jobId) return;
-    if ((latest.current.finalEdits || []).some(r => r.jobId === result.jobId)) return;
+    if (!result?.jobId) return;
+    const pending = latest.current.finalEditJobs || [];
+    const rest = pending.filter(t => t.jobId !== result.jobId);
+    const clearPending = rest.length !== pending.length ? { finalEditJobs: rest.length ? rest : undefined } : {};
+    if (!/^https:\/\//i.test(url) || (latest.current.finalEdits || []).some(r => r.jobId === result.jobId)) {
+      if (rest.length !== pending.length) patch(clearPending);
+      return;
+    }
     const recordId = crypto.randomUUID();
-    const id = `mvedit-${finalId}-${recordId}`.slice(0, 200);
+    const id = `mvedit-${finalId}-${result.jobId}`.slice(0, 200);
     const source = getBlocks().find(b => b.id === finalId);
     const anchorBlock = source || block;
     const version = defaultCanvasBlock(
@@ -1182,10 +1228,76 @@ export function CanvasMusicMvStudio({
       ...(range ? { editedRange: range } : {}),
       versionBlockId: id,
     };
-    patch({ finalEdits: [...(latest.current.finalEdits || []), record] });
-    setEditOpen(false);
+    patch({ finalEdits: [...(latest.current.finalEdits || []), record], ...clearPending });
+    // 旧成片的在途修改晚到时不收起当前成片正开着的面板
+    if (finalId === latest.current.finalBlockId) setEditOpen(false);
     setProgress("局部修改完成，已作为新版本放在成片旁");
   };
+  /** 在途局部修改落定：成功按上面同一落点作新版本；失败 / 被拒提示服务端原句（即「积分已全额退回」那句），然后清掉在途记录。 */
+  const settleFinalEditJob = (job: CanvasMusicMvFinalEditJob, outcome: VideoToolJobSettled) => {
+    if (outcome.status === "succeeded") {
+      applyFinalEdit(job.finalBlockId, job.sourceUrl, {
+        url: outcome.url,
+        jobId: job.jobId,
+        ...(outcome.gcsUri ? { gcsUri: outcome.gcsUri } : {}),
+        ...(outcome.durationSec ? { durationSec: outcome.durationSec } : {}),
+        editedRange: outcome.editedRange ?? job.range,
+      });
+      return;
+    }
+    const pending = latest.current.finalEditJobs || [];
+    if (!pending.some(t => t.jobId === job.jobId)) return;
+    const rest = pending.filter(t => t.jobId !== job.jobId);
+    // 原因写进 MV 的提示条（随草稿保存，schema 上限 2000 字），刷新后仍能看到这次未成功的原因
+    patch({ finalEditJobs: rest.length ? rest : undefined, error: outcome.message.slice(0, 2000) });
+  };
+  /** 轮询一轮（挂载即跑，刷新恢复就是这一轮）：按 MV 草稿里的在途记录查后期任务，终态落定。 */
+  const pollFinalEditJobs = (isCancelled: () => boolean) =>
+    pollVideoToolJobsOnce({
+      jobs: latest.current.finalEditJobs || [],
+      fetchJob: jobId => utils.mvAnalysis.getPostProdJob.fetch({ jobId }),
+      isCancelled: () => isCancelled() || !alive.current,
+      onSettled: settleFinalEditJob,
+    });
+  // 轮询长期挂着：落定时要用最新一次渲染的 onAdd / 画布连线，不能用定时器建立那次的旧闭包
+  const pollFinalEditJobsRef = useRef(pollFinalEditJobs);
+  pollFinalEditJobsRef.current = pollFinalEditJobs;
+  // 局部修改在途任务轮询（刷新恢复：记录随 MV 块保存，挂载即接管）；同调色轮询的写法与间隔。
+  const finalEditJobKey = (state.finalEditJobs || []).map(t => t.jobId).join(",");
+  useEffect(() => {
+    if (!finalEditJobKey) return;
+    let cancelled = false;
+    let inFlight = false;
+    const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        await pollFinalEditJobsRef.current(() => cancelled);
+      } finally {
+        inFlight = false;
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 8_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finalEditJobKey]);
+  /** 刷新前停在「提交中」、没拿到任务号的调色记录：本次挂载不可能还在提交，改为「提交结果未确认」，不再永久挡住新的调色。 */
+  const releaseStuckGradeSubmits = () => {
+    if (!(latest.current.finalGrades || []).some(r => r.status === "submitting" && !r.jobId)) return;
+    patch({
+      finalGrades: (latest.current.finalGrades || []).map(r =>
+        r.status === "submitting" && !r.jobId
+          ? { ...r, status: "submission_unknown" as const, error: "页面刷新时调色尚未提交完成，结果未确认，可重新提交" }
+          : r
+      ),
+    });
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(releaseStuckGradeSubmits, []);
   // 调色任务轮询（刷新恢复：记录随 MV 块持久化，挂载即接管）；成功后挂成成片旁的新版本块。
   const gradeNeedsPoll = (r: CanvasMusicMvFinalGrade) =>
     Boolean(r.jobId) && (r.status === "queued" || r.status === "running");
@@ -2241,21 +2353,22 @@ export function CanvasMusicMvStudio({
                   <button
                     type="button"
                     className={button}
-                    disabled={busy}
+                    disabled={busy || (finalEditPending && !editOpen)}
                     title="选一段描述要改的内容；先报价再确认，结果作为新版本放在成片旁，原成片保留"
                     onClick={() => (editOpen ? setEditOpen(false) : openFinalEdit())}
                     data-mv-final-edit-entry
                   >
-                    {editOpen ? "收起局部修改" : "局部修改"}
+                    {editOpen ? "收起局部修改" : finalEditPending ? "局部修改处理中…" : "局部修改"}
                   </button>
                   <span className="text-xs text-white/60">建议先调色再超分</span>
                 </div>
                 {gradeOpen && gradeOutputSec?.url === finalSource && (
                   <div className="space-y-1.5">
+                    {/* 实测成片秒一位小数（10.08 → 10.1，同提交时分段校验），不取整到整秒 */}
                     <VideoGradePanel
                       value={gradeDraft}
                       onChange={setGradeDraft}
-                      outputSec={gradeOutputSec.sec}
+                      outputSec={videoGradePanelSec(gradeOutputSec.sec) ?? gradeOutputSec.sec}
                       disabled={busy}
                     />
                     <button
@@ -2270,16 +2383,27 @@ export function CanvasMusicMvStudio({
                 )}
                 {editOpen && gradeOutputSec?.url === finalSource && state.finalBlockId && (
                   <div data-mv-final-edit>
+                    {/* 实测片长一位小数向下取（10.08 → 10.0），与服务端选段同一规则 */}
                     <VideoEditPanel
                       key={`edit:${finalSource.split("?")[0]}`}
                       source={finalSource}
-                      durationSec={gradeOutputSec.sec}
+                      durationSec={videoEditDurationSec(gradeOutputSec.sec)}
                       previewUrl={finalSource}
                       prefill={finalEditPrefill}
+                      onAdvisorPrefillGuard={finalEditGuard.register}
+                      onSubmitted={job => trackFinalEdit(state.finalBlockId!, finalSource, job)}
                       onDone={result => applyFinalEdit(state.finalBlockId!, finalSource, result)}
                     />
                   </div>
                 )}
+                {(state.finalEditJobs || []).map(t => (
+                  <div key={t.jobId} className="flex flex-wrap items-center gap-2 text-xs" data-mv-final-edit-pending>
+                    <span>
+                      局部修改{t.finalBlockId !== state.finalBlockId ? "（旧成片）" : ""} · 处理中 · {t.range.startSec.toFixed(1)}–{t.range.endSec.toFixed(1)}秒
+                    </span>
+                    <span className="text-white/60">完成后作为新版本放在成片旁，原成片保留</span>
+                  </div>
+                ))}
                 {(state.finalEdits || []).map(r => (
                   <div key={r.id} className="flex flex-wrap items-center gap-2 text-xs">
                     <span>

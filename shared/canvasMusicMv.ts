@@ -5,6 +5,7 @@ import { creativeLearningSessionSchema } from "./creativeGenerationLibrary";
 import { musicEmotionTurnSchema, musicEmotionArcSchema } from "./musicEmotion";
 import { z } from "zod";
 import { concatGradeSchema } from "./colorGrade";
+import { videoToolJobRangeSchema, videoToolJobSchema } from "./videoToolJob";
 import { creativeEvidenceReviewSchema } from "./creativeEvidenceReview";
 import { musicMvEditSessionSchema } from "./canvasMusicMvEdit";
 import { songOperationSessionSchema, songAlignedWordSchema } from "./songOperations";
@@ -770,6 +771,13 @@ export const canvasMusicMvFinalEditSchema = z
   .strict();
 export type CanvasMusicMvFinalEdit = z.infer<typeof canvasMusicMvFinalEditSchema>;
 
+/** 成片局部修改在途任务：提交成功即记（任务号、请求号、发起时间、实际区间），刷新后据此恢复轮询；完成转入 finalEdits、失败提示后清除。 */
+export const canvasMusicMvFinalEditJobSchema = videoToolJobSchema
+  .extend({ kind: z.literal("edit"), finalBlockId: text.max(200), range: videoToolJobRangeSchema })
+  .strict();
+export type CanvasMusicMvFinalEditJob = z.infer<typeof canvasMusicMvFinalEditJobSchema>;
+export const MV_FINAL_EDIT_JOBS_MAX = 20;
+
 export const canvasMusicMvStateSchema = z
   .object({
     deliveryMode: z.enum(["song", "highlight"]).optional(),
@@ -907,6 +915,8 @@ export const canvasMusicMvStateSchema = z
     finalGrades: z.array(canvasMusicMvFinalGradeSchema).max(40).optional(),
     /** 1109 成片局部修改：结果作为新版本块挂在成片旁，原片不动。 */
     finalEdits: z.array(canvasMusicMvFinalEditSchema).max(40).optional(),
+    /** 1110 成片局部修改在途任务（刷新恢复用；完成或失败即清除）。 */
+    finalEditJobs: z.array(canvasMusicMvFinalEditJobSchema).max(MV_FINAL_EDIT_JOBS_MAX).optional(),
     error: z.string().max(2000).optional(),
   })
   .strict()

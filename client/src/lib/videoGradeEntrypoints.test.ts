@@ -3,8 +3,8 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { expect, it, vi } from "vitest";
 import { submitVideoGrade } from "./videoGradeSubmit";
-import { capManhuaMediaHistory } from "@shared/manhuaMediaHistoryCap";
 import { canvasMusicMvFinalEditSchema, canvasMusicMvFinalGradeSchema } from "@shared/canvasMusicMv";
+import * as videoToolJobs from "./videoToolJobs";
 
 /** 从真实组件源码取同名表达式（useCallback 取回调本体），在受控上下文里执行，不起浏览器。 */
 function production(file: string) {
@@ -48,23 +48,32 @@ it("两处入口按钮都在：自由画布紧挨高清放大、MV 第 6 步在�
   expect(mv.source).toContain("<VideoGradePanel");
 });
 
+/** 一次挂载：块存在 store 里（onBlocksChange 走 updater），组件函数取自真实源码；轮询只查一次、不起定时器。 */
 function freeContext(block: Record<string, unknown>) {
   const queue = vi.fn(async (_input: unknown) => ({ jobId: "grade-job" }));
-  const patchOne = vi.fn();
-  return {
-    queue, patchOne,
-    context: {
-      blocks: [block], blocksRef: { current: [block] }, gradeBusyId: null, patchOne,
-      queuePostProd: { mutateAsync: queue },
-      fetchPostProdJob: vi.fn(async () => ({ status: "succeeded", output: { url: graded } })),
-      submitVideoGrade: realSubmit, capManhuaMediaHistory, maskMediaProviderDetails: (m: string) => m,
-      toast: { error: vi.fn(), success: vi.fn() }, setGradeBusyId: vi.fn(), setGradePanelBlockId: vi.fn(),
-      setTimeout, Promise, Array, String, Boolean, Error,
-    },
+  const store = { blocks: [block] as Array<Record<string, unknown>> };
+  const toast = { error: vi.fn(), success: vi.fn() };
+  const context: Record<string, unknown> = {
+    get blocks() { return store.blocks; },
+    blocksRef: { get current() { return store.blocks; } },
+    onBlocksChangeRef: { current: (u: unknown) => { store.blocks = typeof u === "function" ? (u as (p: unknown[]) => Array<Record<string, unknown>>)(store.blocks) : (u as Array<Record<string, unknown>>); } },
+    settledVideoToolJobsRef: { current: new Set<string>() },
+    gradeBusyId: null,
+    queuePostProd: { mutateAsync: queue },
+    fetchPostProdJob: vi.fn(async () => ({ status: "succeeded", output: { url: graded } })),
+    submitVideoGrade: realSubmit, maskMediaProviderDetails: (m: string) => m,
+    toast, setGradeBusyId: vi.fn(), setGradePanelBlockId: vi.fn(), setEditPanelBlockId: vi.fn(),
+    crypto: { randomUUID: () => "33333333-3333-4333-8333-333333333333" },
+    ...videoToolJobs,
+    setTimeout, Promise, Array, String, Boolean, Error, JSON, Set,
   };
+  for (const name of ["trackVideoToolJob", "applyVideoToolJobOnBlock", "failVideoToolJobOnBlock", "applyVideoEditForBlock", "pollCanvasVideoToolJobs"])
+    context[name] = free.run(name, context);
+  const poll = () => (context.pollCanvasVideoToolJobs as (p: unknown, c: () => boolean) => Promise<void>)(JSON.parse(free.run("activeVideoToolJobKey", context)), () => false);
+  return { queue, store, toast, context, poll };
 }
 
-it("自由画布调色：单片 concat、grade 原样透传、新版本写 outputUrls 且原片保留", async () => {
+it("自由画布调色：单片 concat、grade 原样透传；任务号记到块上，完成后新版本写 outputUrls 且原片保留", async () => {
   const block = { id: "v1", kind: "video", outputUrl: original, outputUrls: [original] };
   const f = freeContext(block);
   await free.run("startGradeForBlock", f.context)("v1", grade, false);
@@ -76,11 +85,16 @@ it("自由画布调色：单片 concat、grade 原样透传、新版本写 outpu
   expect(input.params).not.toHaveProperty("transition");
   expect(input.params).not.toHaveProperty("trims");
   expect(input.params).toMatchObject({ width: 1280, height: 720, fps: 24 });
-  const [id, patch] = f.patchOne.mock.calls[0];
-  expect(id).toBe("v1");
-  expect(patch.outputUrl).toBe(graded);
-  expect(patch.outputUrls[0]).toBe(graded);
-  expect(patch.outputUrls).toContain(original);
+  expect(f.store.blocks[0].outputUrl).toBe(original);
+  expect(f.store.blocks[0].videoToolJobs).toEqual([
+    { kind: "grade", jobId: "grade-job", requestId: "33333333-3333-4333-8333-333333333333", startedAt: expect.any(String), sourceUrl: original },
+  ]);
+  await f.poll();
+  const live = f.store.blocks[0] as { outputUrl: string; outputUrls: string[]; videoToolJobs?: unknown };
+  expect(live.outputUrl).toBe(graded);
+  expect(live.outputUrls[0]).toBe(graded);
+  expect(live.outputUrls).toContain(original);
+  expect(live.videoToolJobs).toBeUndefined();
   expect(block.outputUrl).toBe(original);
 });
 
@@ -93,16 +107,19 @@ it("自由画布高清版调色：CloudFront 先导入再提交，原片与高�
   const input = f.queue.mock.calls[0][0] as { params: { clips: string[]; grade: unknown } };
   expect(input.params.clips).toEqual(["gs://user-bucket/imported/4k.mp4"]);
   expect(input.params.grade).toEqual(grade);
-  const patch = f.patchOne.mock.calls[0][1];
-  expect(patch.outputUrls).toContain(original);
-  expect(patch).not.toHaveProperty("upscaledVideoUrl");
+  await f.poll();
+  const live = f.store.blocks[0] as { outputUrls: string[]; upscaledVideoUrl: string };
+  expect(live.outputUrls).toContain(original);
+  expect(live.outputUrls).not.toContain(upscaled);
+  expect(live.upscaledVideoUrl).toBe(upscaled);
 });
 
 it("自由画布无调色参数不提交", async () => {
   const f = freeContext({ id: "v3", kind: "video", outputUrl: original });
+  const before = f.store.blocks;
   await free.run("startGradeForBlock", f.context)("v3", undefined, false);
   expect(f.queue).not.toHaveBeenCalled();
-  expect(f.patchOne).not.toHaveBeenCalled();
+  expect(f.store.blocks).toBe(before);
 });
 
 it("MV 成片调色：记录 finalGrades（schema 合法）、单片 grade 透传、成片块不改", async () => {
@@ -142,18 +159,20 @@ it("局部修改入口：自由画布紧挨调色、MV 第 6 步在调色旁，�
 
 it("自由画布局部修改 onDone：新版本写 outputUrls 最前，原片保留", () => {
   const block = { id: "v4", kind: "video", outputUrl: original, outputUrls: [original] };
-  const patchOne = vi.fn();
-  const ctx = { blocksRef: { current: [block] }, patchOne, capManhuaMediaHistory, setEditPanelBlockId: vi.fn(), toast: { success: vi.fn(), error: vi.fn() }, Array, String, Boolean };
+  const f = freeContext(block);
+  const apply = f.context.applyVideoEditForBlock as (id: string, src: string, r: unknown) => void;
   const edited = "https://video.test/edited.mp4";
-  free.run("applyVideoEditForBlock", ctx)("v4", original, { url: edited, jobId: "edit-job", editedRange: { startSec: 2, endSec: 4 } });
-  const [id, patch] = patchOne.mock.calls[0];
-  expect(id).toBe("v4");
-  expect(patch.outputUrl).toBe(edited);
-  expect(patch.outputUrls[0]).toBe(edited);
-  expect(patch.outputUrls).toContain(original);
+  apply("v4", original, { url: edited, jobId: "edit-job", editedRange: { startSec: 2, endSec: 4 } });
+  const live = f.store.blocks[0] as { outputUrl: string; outputUrls: string[] };
+  expect(live.outputUrl).toBe(edited);
+  expect(live.outputUrls[0]).toBe(edited);
+  expect(live.outputUrls).toContain(original);
   expect(block.outputUrl).toBe(original);
-  free.run("applyVideoEditForBlock", ctx)("v4", original, { url: "not-a-url", jobId: "x" });
-  expect(patchOne).toHaveBeenCalledTimes(1);
+  const after = f.store.blocks;
+  apply("v4", original, { url: "not-a-url", jobId: "x" });
+  expect((f.store.blocks[0] as { outputUrl: string }).outputUrl).toBe(edited);
+  expect(f.store.blocks[0]).toEqual(after[0]);
+  expect(f.toast.success).toHaveBeenCalledTimes(1);
 });
 
 it("MV 成片局部修改 onDone：挂局部修改版版本块、记录随块保存（schema 合法、同任务只记一次）、原成片不动", () => {
