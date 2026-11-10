@@ -7,7 +7,7 @@
  * 对外文案不出现模型/通道名；通道信息只进 output.debug。
  */
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -238,6 +238,13 @@ export type VideoPartialEditRenderDeps = {
   /** 编辑段画面 + 原片段音轨（等长、不变速），返回 gs://。 */
   restoreSegmentAudio(input: { editedUrl: string; segmentFile: string; segmentSec: number; hasAudio: boolean; dir: string; signal: AbortSignal; userId: string }): Promise<{ gcsUri: string; durationSec: number }>;
   concat(params: ReturnType<typeof buildVideoEditSpliceConcat>, userId: string, signal: AbortSignal): Promise<{ gcsUri: string; url: string; bytes: number; durationSec: number }>;
+  /**
+   * 流复制拼回（可选）：未改的前后段按关键帧原样复制，只把切点附近少量帧与编辑段编码一次，音轨整条取原片。
+   * 原片不满足条件或校验不过返回 { ok:false, reason }，由整片重编码路径（restoreSegmentAudio + concat）接手。
+   */
+  spliceStreamCopy?(input: { videoUri: string; editedUrl: string; startSec: number; endSec: number; dir: string; signal: AbortSignal; userId: string }): Promise<
+    | { ok: true; gcsUri: string; url: string; bytes: number; durationSec: number; editedUri: string; stats: Record<string, unknown> }
+    | { ok: false; reason: string }>;
   /** 参考图 gs:// → 上游可读签名链（不传 base64）。 */
   signRead(gsUri: string): Promise<string> | string;
   /** 可选：上游任务号一出现就落任务行与证据（重启续查用）；失败不打断本次出片。 */
@@ -274,18 +281,39 @@ export async function spliceVideoPartialEditResult(
     segment: { gcsUri: string; filePath: string };
     edited: Pick<VideoEditChannelResult, "videoUrl" | "channel" | "providerTaskId" | "attempts">;
   },
-  d: Pick<VideoPartialEditRenderDeps, "restoreSegmentAudio" | "concat" | "writeEvidence">,
+  d: Pick<VideoPartialEditRenderDeps, "restoreSegmentAudio" | "concat" | "writeEvidence" | "spliceStreamCopy">,
 ) {
   const { job, userId, jobId, segment, edited, dir, signal } = input;
   const p = job.params;
   const prefix = videoPartialEditEvidencePrefix(userId, jobId);
-  const restored = await d.restoreSegmentAudio({ editedUrl: edited.videoUrl, segmentFile: segment.filePath, segmentSec: p.segmentSec, hasAudio: p.hasAudio, dir, signal, userId });
-  const concatParams = buildVideoEditSpliceConcat({
-    sourceUri: p.videoUri, editedUri: restored.gcsUri, startSec: p.startSec, endSec: p.endSec,
-    sourceDurationSec: p.sourceDurationSec, width: p.width, height: p.height, fps: p.fps,
-  });
-  const spliced = await d.concat(concatParams, userId, signal);
-  if (Math.abs(spliced.durationSec - p.sourceDurationSec) > 0.25) throw new Error("拼回后总时长与原片不一致");
+  // 优先流复制拼回；不满足条件、出错或时长校验不过 → 回退整片重编码（两条路径都记进 debug）
+  const fast = d.spliceStreamCopy
+    ? await d.spliceStreamCopy({ videoUri: p.videoUri, editedUrl: edited.videoUrl, startSec: p.startSec, endSec: p.endSec, dir, signal, userId })
+      .catch((error: unknown) => {
+        if (signal.aborted) throw error;
+        return { ok: false as const, reason: `error: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300) };
+      })
+    : { ok: false as const, reason: "unavailable" };
+  const fastOk = fast.ok && Math.abs(fast.durationSec - p.sourceDurationSec) <= 0.25 ? fast : null;
+  let spliced: { gcsUri: string; url: string; bytes: number; durationSec: number };
+  let editedSegmentUri: string;
+  let concatParams: ReturnType<typeof buildVideoEditSpliceConcat> | null = null;
+  let splice: Record<string, unknown>;
+  if (fastOk) {
+    spliced = { gcsUri: fastOk.gcsUri, url: fastOk.url, bytes: fastOk.bytes, durationSec: fastOk.durationSec };
+    editedSegmentUri = fastOk.editedUri;
+    splice = { path: "stream_copy", ...fastOk.stats };
+  } else {
+    const restored = await d.restoreSegmentAudio({ editedUrl: edited.videoUrl, segmentFile: segment.filePath, segmentSec: p.segmentSec, hasAudio: p.hasAudio, dir, signal, userId });
+    concatParams = buildVideoEditSpliceConcat({
+      sourceUri: p.videoUri, editedUri: restored.gcsUri, startSec: p.startSec, endSec: p.endSec,
+      sourceDurationSec: p.sourceDurationSec, width: p.width, height: p.height, fps: p.fps,
+    });
+    spliced = await d.concat(concatParams, userId, signal);
+    if (Math.abs(spliced.durationSec - p.sourceDurationSec) > 0.25) throw new Error("拼回后总时长与原片不一致");
+    editedSegmentUri = restored.gcsUri;
+    splice = { path: "reencode", fallbackReason: fast.ok ? "stream_copy_duration_drift" : fast.reason };
+  }
   const output = {
     gcsUri: spliced.gcsUri,
     url: spliced.url,
@@ -297,9 +325,9 @@ export async function spliceVideoPartialEditResult(
     segmentSec: p.segmentSec,
     expanded: p.expanded,
     creditsCharged: p.charge.credits,
-    debug: { channel: edited.channel, providerTaskId: edited.providerTaskId ?? null, attempts: (edited.attempts ?? []).map(a => ({ channel: a.channel, rejectionCode: a.rejectionCode ?? null, upstreamCharged: a.upstreamCharged ?? null })) },
+    debug: { channel: edited.channel, providerTaskId: edited.providerTaskId ?? null, attempts: (edited.attempts ?? []).map(a => ({ channel: a.channel, rejectionCode: a.rejectionCode ?? null, upstreamCharged: a.upstreamCharged ?? null })), splice },
   };
-  await d.writeEvidence(`${prefix}/result.json`, { jobId, userId, at: new Date().toISOString(), output, concatParams, editedSegmentUri: restored.gcsUri, segmentUri: segment.gcsUri });
+  await d.writeEvidence(`${prefix}/result.json`, { jobId, userId, at: new Date().toISOString(), output, concatParams, editedSegmentUri, segmentUri: segment.gcsUri });
   return output;
 }
 
@@ -402,6 +430,21 @@ async function realRenderDeps(): Promise<VideoPartialEditRenderDeps> {
         "-t", segmentSec.toFixed(3), "-movflags", "+faststart", out], signal);
       const up = await pp.uploadResult({ filePath: out, userId, kind: "video-edit-restored", ext: "mp4", contentType: "video/mp4", signal });
       return { gcsUri: up.gcsUri, durationSec: segmentSec };
+    },
+    async spliceStreamCopy({ videoUri, editedUrl, startSec, endSec, dir, signal, userId }) {
+      const { spliceByStreamCopy } = await import("./videoEditSplice");
+      // 流复制需要完整原片：裁段若已落过整片则复用，否则此时再下载
+      const cached = path.join(dir, "source.mp4");
+      const src = (await stat(cached).then(st => st.isFile(), () => false)) ? cached : path.join(dir, "splice-source.mp4");
+      if (src !== cached) await pp.fetchPostProdSourceToFile(videoUri, src, { signal });
+      const edited = path.join(dir, "splice-edited.mp4");
+      await pp.fetchPostProdSourceToFile(editedUrl, edited, { signal });
+      const result = await spliceByStreamCopy({ sourceFile: src, editedFile: edited, startSec, endSec, dir }, pp.runMediaTool, signal);
+      if (!result.ok) return result;
+      const up = await pp.uploadResult({ filePath: result.outPath, userId, kind: "video-edit-spliced", ext: "mp4", contentType: "video/mp4", signal });
+      // 编辑通道原始出片另存一份（拼回只取其画面，不再经中间重压）
+      const raw = await pp.uploadResult({ filePath: edited, userId, kind: "video-edit-raw", ext: "mp4", contentType: "video/mp4", signal });
+      return { ok: true, ...up, durationSec: result.stats.durationSec, editedUri: raw.gcsUri, stats: result.stats };
     },
     async concat(params, userId, signal) {
       const { totalSec: _t, ...concatParams } = params;

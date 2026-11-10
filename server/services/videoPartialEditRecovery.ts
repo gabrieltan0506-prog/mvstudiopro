@@ -100,7 +100,7 @@ export type VpeRecoveryDeps = {
   readEvidence(objectName: string): Promise<unknown>;
   writeEvidence(objectName: string, value: unknown): Promise<void>;
   refund: VideoPartialEditRenderDeps["refund"];
-  render(): Promise<Pick<VideoPartialEditRenderDeps, "cutSegment" | "restoreSegmentAudio" | "concat">>;
+  render(): Promise<Pick<VideoPartialEditRenderDeps, "cutSegment" | "restoreSegmentAudio" | "concat" | "spliceStreamCopy">>;
   /** 本地媒体收尾与其他后期任务共用资源互斥。 */
   withResources<T>(jobId: string, signal: AbortSignal, work: (signal: AbortSignal) => Promise<T>): Promise<T>;
   now(): number;
@@ -296,7 +296,7 @@ export async function recoverVideoPartialEditJob(candidate: VpeRecoveryRow, deps
         return spliceVideoPartialEditResult({
           job, userId, jobId, segment, dir, signal,
           edited: { videoUrl, channel: handle.channel, providerTaskId: handle.providerTaskId, attempts: [] },
-        }, { restoreSegmentAudio: render.restoreSegmentAudio, concat: render.concat, writeEvidence: deps.writeEvidence });
+        }, { restoreSegmentAudio: render.restoreSegmentAudio, concat: render.concat, spliceStreamCopy: render.spliceStreamCopy, writeEvidence: deps.writeEvidence });
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
