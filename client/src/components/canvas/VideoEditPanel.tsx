@@ -12,6 +12,7 @@ import {
   readVideoEditQuote,
   roundSec,
   submitVideoEdit,
+  videoEditDurationSec,
   videoEditPrefillBlockReason,
   type VideoEditQuoteInput,
   type VideoEditSubmitDeps,
@@ -27,7 +28,7 @@ export type VideoEditResult = { url: string; gcsUri?: string; durationSec?: numb
 export type VideoEditPanelProps = {
   /** 原片地址：https（系统桶/CloudFront）或本人 gs://；挂载方先做来源核对（同调色入口）。 */
   source: string;
-  /** 原片秒数。 */
+  /** 原片实测秒数（不要传超分计费用的向上取整秒数）；面板按一位小数向下取作选区上限。 */
   durationSec: number;
   /** 可播放地址（缺省用 flyDownloadUrl(source)，gs:// 时不显示预览）。 */
   previewUrl?: string;
@@ -113,7 +114,8 @@ export function useVideoEditPrefillGuard() {
  */
 export function VideoEditPanel(props: VideoEditPanelProps) {
   const api = useVideoEditApi();
-  const duration = Math.max(0, roundSec(props.durationSec || 0));
+  // 片长上限按实测秒数一位小数向下取（同服务端），10.08 秒不会放到 10.1 秒去报价
+  const duration = videoEditDurationSec(props.durationSec);
   const [startSec, setStartSec] = useState(0);
   const [endSec, setEndSec] = useState(() => roundSec(Math.min(duration, VIDEO_EDIT_MIN_SEC)));
   const [promptZh, setPromptZh] = useState("");

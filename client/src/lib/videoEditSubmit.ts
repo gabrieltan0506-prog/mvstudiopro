@@ -75,6 +75,15 @@ export type VideoEditSubmitDeps = {
 const WAVESPEED_CDN = "https://d2h7xmz5gqybh9.cloudfront.net/";
 export const roundSec = (n: number) => Math.round(n * 10) / 10;
 
+/**
+ * 局部修改用的片长（选区上限、报价区间都按它）：实测秒数保留一位小数、向下取，与服务端选段同一规则（不超过原片），
+ * 如 10.08 → 10.0；不向上取整（超分计费的 ceil 秒数不能拿来当片长）。无效为 0。
+ */
+export function videoEditDurationSec(measuredSec: number | null | undefined): number {
+  const n = Number(measuredSec);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n * 10 + 1e-6) / 10 : 0;
+}
+
 export type VideoEditRangeCheck = {
   startSec: number;
   endSec: number;
@@ -93,7 +102,7 @@ export type VideoEditRangeCheck = {
 export function checkVideoEditRange(startSec: number, endSec: number, durationSec?: number): VideoEditRangeCheck {
   const start = roundSec(Number(startSec));
   const end = roundSec(Number(endSec));
-  const dur = durationSec != null && Number.isFinite(durationSec) && durationSec > 0 ? roundSec(durationSec) : undefined;
+  const dur = durationSec != null && Number.isFinite(durationSec) && durationSec > 0 ? videoEditDurationSec(durationSec) : undefined;
   const lengthSec = Number.isFinite(start) && Number.isFinite(end) ? roundSec(end - start) : 0;
   const base = { startSec: start, endSec: end, lengthSec, expandedTo: null };
   if (!Number.isFinite(start) || !Number.isFinite(end)) return { ...base, problem: "请填写起止秒数" };

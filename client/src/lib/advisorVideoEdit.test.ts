@@ -81,6 +81,13 @@ describe("顾问 videoEdit 接线", () => {
       expect(src).toContain("onAdvisorPrefillGuard={editGuard.register}");
     }
   });
+  it("营销成片：面板与顾问清单都按实测秒数一位小数向下取", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("client/src/components/platform/MarketingProductionPanel.tsx", "utf8");
+    expect(src).toContain("durationSec={videoEditDurationSec(finalSec)}");
+    expect(src).toContain("const editSec = videoEditDurationSec(sec);");
+    expect(src).toContain("[{ ...target, url, durationSec: editSec }]");
+  });
 });
 
 describe("多个「局部修改」入口汇总", () => {

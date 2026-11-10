@@ -17,6 +17,7 @@ import { canvasTtsCreditsForDuration } from "@shared/canvasGenerationPricing";
 import { MarketingVoicePicker } from "./MarketingVoicePicker";
 import { VideoGradeEntry, VideoToolToggles, gradeSourceFromPlayableUrl, type AdvisorVideoTarget, type VideoTool } from "@/components/HomePhotoVideoUpscale";
 import { VideoEditPanel, useVideoEditPrefillGuard } from "@/components/canvas/VideoEditPanel";
+import { videoEditDurationSec } from "@/lib/videoEditSubmit";
 import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
 import type { AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 import { MarketingSegmentTimeline, MarketingThumb } from "./MarketingSegmentTimeline";
@@ -138,7 +139,9 @@ export function MarketingProductionPanel({
           targets: () => {
             const { finalUrl: playable, finalSec: sec, advisorTarget: target } = cur();
             const url = gradeSourceFromPlayableUrl(playable);
-            return url && sec > 0 ? [{ ...target, url, durationSec: sec }] : [];
+            // 清单时长 = 实测秒数一位小数向下取（同面板与服务端），不超过原片
+            const editSec = videoEditDurationSec(sec);
+            return url && editSec > 0 ? [{ ...target, url, durationSec: editSec }] : [];
           },
           busy: () => cur().busy,
           open: p => {
@@ -504,7 +507,7 @@ export function MarketingProductionPanel({
       {finalUrl && <a className={`${buttonStyle} mt-2 inline-block`} href={finalUrl} download>下载成片</a>}
       {finalUrl && <VideoToolToggles source={finalUrl} open={tool} disabled={busy || !finalSec} onToggle={setTool} className={`${buttonStyle} ml-2 mt-2`} />}
       {tool === "edit" && finalUrl && finalSec > 0 && gradeSourceFromPlayableUrl(finalUrl) && <div className="mt-3">
-        <VideoEditPanel key={`edit:${finalUrl.split("?")[0]}`} source={gradeSourceFromPlayableUrl(finalUrl)} durationSec={finalSec} previewUrl={finalUrl} prefill={editPrefill} onAdvisorPrefillGuard={editGuard.register} />
+        <VideoEditPanel key={`edit:${finalUrl.split("?")[0]}`} source={gradeSourceFromPlayableUrl(finalUrl)} durationSec={videoEditDurationSec(finalSec)} previewUrl={finalUrl} prefill={editPrefill} onAdvisorPrefillGuard={editGuard.register} />
       </div>}
       {tool === "grade" && finalUrl && finalSec > 0 && gradeSourceFromPlayableUrl(finalUrl) && <div className="mt-3">
         <VideoGradeEntry key={finalUrl.split("?")[0]} source={gradeSourceFromPlayableUrl(finalUrl)} outputSec={finalSec} scopeKey={marketingGradeScopeKey(draft.draftId)} />

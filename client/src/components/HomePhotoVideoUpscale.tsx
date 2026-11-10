@@ -19,6 +19,7 @@ import type { MontageGrade } from "@/lib/montageFinish";
 import { VideoGradePanel } from "@/components/canvas/VideoGradePanel";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
 import { VideoEditPanel, useVideoEditPrefillGuard } from "@/components/canvas/VideoEditPanel";
+import { videoEditDurationSec } from "@/lib/videoEditSubmit";
 import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
 import type { AdvisorVideoEditRegistration } from "@/lib/manhuaAdvisorWorkflowControl";
 
@@ -30,7 +31,10 @@ type Target = "2k" | "4k";
 export type VideoMetadata = {
   width: number;
   height: number;
+  /** 超分计费秒数（向上取整，至少 1 秒）。 */
   durationSec: number;
+  /** 实测秒数（不取整）；局部修改的选区上限与报价按它。 */
+  durationExactSec: number;
   sourceResolution: string;
 };
 type RecordStatus =
@@ -75,6 +79,7 @@ export function metadataForUpscale(
     width,
     height,
     durationSec: Math.max(1, Math.ceil(duration)),
+    durationExactSec: duration,
     sourceResolution,
   };
 }
@@ -335,7 +340,9 @@ function UpscalePanel({
           targets: () => {
             const { source: playable, metadata: meta, authenticated: authed, advisorTarget: target } = cur();
             const url = gradeSourceFromPlayableUrl(playable);
-            return authed && meta && meta.durationSec > 0 && url ? [{ ...target, url, durationSec: meta.durationSec }] : [];
+            // 清单时长 = 实测秒数一位小数向下取（同面板与服务端），不用超分计费的向上取整秒数
+            const sec = videoEditDurationSec(meta?.durationExactSec);
+            return authed && sec > 0 && url ? [{ ...target, url, durationSec: sec }] : [];
           },
           busy: () => cur().busy,
           open: p => {
@@ -640,7 +647,7 @@ function UpscalePanel({
         <VideoEditPanel
           key={`edit:${source}`}
           source={gradeSourceFromPlayableUrl(source)}
-          durationSec={metadata.durationSec}
+          durationSec={videoEditDurationSec(metadata.durationExactSec)}
           previewUrl={source}
           prefill={editPrefill}
           onAdvisorPrefillGuard={editGuard.register}

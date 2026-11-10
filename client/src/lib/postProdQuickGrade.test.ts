@@ -74,7 +74,10 @@ describe("调色跳转", () => {
     const card = read("../components/canvas/PostProdWorkshopCard.tsx");
     expect(card).toMatch(/if \(detail\.mode === "edit"\) \{ setQuickEditOpen\(true\); setQuickGradeOpen\(false\); \}/);
     expect(card).toContain(">局部修改这条</button>");
-    expect(card).toMatch(/<VideoEditPanel\s+source=\{upscaleVideoUrl\}\s+durationSec=\{upscaleSource\.durationExactSec \?\? upscaleSource\.durationSec\}/);
+    // 局部修改只认实测秒数（一位小数向下取），不退回超分计费的向上取整秒数
+    expect(card).toMatch(/<VideoEditPanel\s+source=\{upscaleVideoUrl\}\s+durationSec=\{videoEditDurationSec\(upscaleSource\.durationExactSec\)\}/);
+    expect(card).toContain("const sec = videoEditDurationSec(source?.durationExactSec);");
+    expect(card).not.toContain("source.durationExactSec ?? source.durationSec");
     expect(read("../components/ManhuaEditMultitrackPanel.tsx")).toContain("requestPostProdEdit({ url: finalVideoVersions.activeUrl!");
     const dh = read("../components/DigitalHumanStudio.tsx");
     expect(dh).toContain("requestPostProdEdit({");

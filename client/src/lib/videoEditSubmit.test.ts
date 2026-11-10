@@ -24,6 +24,7 @@ import {
   readVideoEditJob,
   readVideoEditQuote,
   submitVideoEdit,
+  videoEditDurationSec,
   videoEditPrefillBlockReason,
 } from "./videoEditSubmit";
 
@@ -35,6 +36,17 @@ describe("区间校验", () => {
     expect(checkVideoEditRange(1.04, 6.06, 20)).toMatchObject({ startSec: 1, endSec: 6.1, lengthSec: 5.1, expandedTo: null, problem: "" });
     expect(checkVideoEditRange(2, 3.5, 20)).toMatchObject({ expandedTo: { startSec: 2, endSec: 6 }, problem: "" });
     expect(checkVideoEditRange(9, 10, 10)).toMatchObject({ expandedTo: { startSec: 6, endSec: 10 }, problem: "" });
+  });
+  it("片长按实测秒数一位小数向下取（同服务端，不超过原片），不向上取整", () => {
+    expect(videoEditDurationSec(10.08)).toBe(10);
+    expect(videoEditDurationSec(10.1)).toBe(10.1);
+    expect(videoEditDurationSec(10.99)).toBe(10.9);
+    expect(videoEditDurationSec(12)).toBe(12);
+    for (const bad of [0, -1, Number.NaN, undefined, null]) expect(videoEditDurationSec(bad)).toBe(0);
+    // 10.08 秒原片：终点 10.1 越界（服务端也拒），10.0 可选；不足 4 秒贴尾扩展到 6.0–10.0
+    expect(checkVideoEditRange(6, 10.1, 10.08).problem).toContain("片长 10.0 秒");
+    expect(checkVideoEditRange(6, 10, 10.08).problem).toBe("");
+    expect(checkVideoEditRange(9, 10, 10.08)).toMatchObject({ expandedTo: { startSec: 6, endSec: 10 }, problem: "" });
   });
   it("超 30 秒、倒置、越过片长、片长不足 4 秒均不可提交", () => {
     expect(checkVideoEditRange(0, 30.1, 60).problem).toContain("最多修改 30 秒");
@@ -155,5 +167,11 @@ describe("VideoEditPanel 静态渲染", () => {
     expect(html).not.toContain('role="dialog"');
     expect(html).not.toMatch(/Seedance|BytePlus|EvoLink|ffmpeg|Gemini|GPT|Veo|Kling|WaveSpeed/i);
     expect(calls).not.toContain("queue");
+  });
+  it("实测 10.08 秒：显示原片 10.0 秒，选区上限 10（不按 10.1 或 11 秒）", () => {
+    const html = renderToStaticMarkup(createElement(VideoEditPanel, { source: SIGNED, durationSec: 10.08 }));
+    expect(html).toContain("原片 10.0 秒");
+    expect(html).toMatch(/aria-label="终点滑杆"[^>]*max="10"/);
+    expect(html).toMatch(/aria-label="终点秒"[^>]*max="10"/);
   });
 });

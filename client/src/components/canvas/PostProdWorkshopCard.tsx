@@ -3,6 +3,7 @@ import type { ConcatGrade } from "@shared/colorGrade";
 import { POSTPROD_GRADE_EVENT, type PostProdGradeRequest } from "@/lib/postProdQuickGrade";
 import { VideoGradePanel } from "./VideoGradePanel";
 import { VideoEditPanel, useVideoEditPrefillGuard } from "./VideoEditPanel";
+import { videoEditDurationSec } from "@/lib/videoEditSubmit";
 import { createAdvisorVideoEditControl } from "@/lib/advisorVideoEditControl";
 import { submitVideoGrade } from "@/lib/videoGradeSubmit";
 import type { MontageGrade } from "@/lib/montageFinish";
@@ -1380,7 +1381,8 @@ export default function PostProdWorkshopCard({
         createAdvisorVideoEditControl({
           targets: () => {
             const { url, source } = cur();
-            const sec = source ? source.durationExactSec ?? source.durationSec : 0;
+            // 只认实测秒数（一位小数向下取，同面板与服务端）；不退回超分计费的向上取整秒数
+            const sec = videoEditDurationSec(source?.durationExactSec);
             return url && sec > 0 ? [{ id: "postprod-selected", label: "后期工坊所选这一条成片", url, durationSec: sec }] : [];
           },
           busy: () => cur().busy,
@@ -1997,10 +1999,10 @@ export default function PostProdWorkshopCard({
             {quickEditOpen ? (
               <div data-postprod-quick-edit-panel className="space-y-1.5 rounded-lg border border-white/10 p-2">
                 <p className="text-[11px] text-white/55">对所选这一条选区间描述修改，确认报价后提交；生成新版本，原片保留，云端成片自动先导入本人工作流。</p>
-                {upscaleSource ? (
+                {upscaleSource && videoEditDurationSec(upscaleSource.durationExactSec) > 0 ? (
                   <VideoEditPanel
                     source={upscaleVideoUrl}
-                    durationSec={upscaleSource.durationExactSec ?? upscaleSource.durationSec}
+                    durationSec={videoEditDurationSec(upscaleSource.durationExactSec)}
                     disabled={busy}
                     prefill={advisorEditPrefill}
                     onAdvisorPrefillGuard={editGuard.register}
