@@ -2,7 +2,8 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { putPublicStoredMedia as put } from "../server/services/publicStoredMedia";
 import { getVertexAccessToken } from "../server/utils/vertex";
 import { runVertexUpscaleImage, type VertexUpscaleResult } from "../server/services/vertexImage";
-import { uploadBufferToGcs, signGsUriV4ReadUrl } from "../server/services/gcs";
+import { randomUUID, createHash } from "node:crypto";
+import { uploadBufferToGcs, uploadBufferToGcsIfAbsent, getGcsBucketName, signGsUriV4ReadUrl } from "../server/services/gcs";
 import {
   pollOmniVideoGeneration,
   resolveOmniVideoModel,
@@ -52,7 +53,8 @@ export const config = {
  *
  * Env:
  * - **Vertex IAM（`generateContent` 圖像、Gemini Script、Veo 等 `aiplatform` 呼叫）**：`GOOGLE_APPLICATION_CREDENTIALS_JSON` **或** `GOOGLE_APPLICATION_CREDENTIALS`（金鑰檔路徑）；換取短效 **Bearer token**，**非** URL `?key=`。
- * - GEMINI_API_KEY：僅 **Consumer** `generativelanguage`（transcribeAudio、translateForVeo）；**不**用於 Vertex 圖像。
+ * - GEMINI_API_KEY：僅 **Consumer** `generativelanguage`（translateForVeo）；**不**用於 Vertex 圖像。
+ *   transcribeAudio / manhuaAudioClimaxScan 已改走 Gemini 3.8 Flash 两跳（Vertex gs:// → EvoLink 签名 https），不读此 key。
  * - VERTEX_PROJECT_ID（Vertex 圖像 / geminiScript / Veo 等必填；可另備 GOOGLE_CLOUD_PROJECT）
  * - VERTEX_IMAGE_MODEL_FLASH / VERTEX_IMAGE_MODEL_PRO
  * - VERTEX_VEO_MODEL_RAPID / VERTEX_VEO_MODEL_PRO
@@ -352,6 +354,96 @@ async function fetchVideoAsBase64(videoUrl: string) {
   return { mimeType, b64: buf.toString("base64"), bytes: buf.length };
 }
 
+/**
+ * 1110 听音通道合规（照抄 musicMvLyricTable 43f248f1 与模板学习做法）：音频先存 GCS（用户前缀），
+ * 再走 geminiAudioJsonWithFallback 两跳 —— Vertex 读 gs://，EvoLink 读不了 gs:// → V4 签名 https（1 小时）；
+ * 不直连 GEMINI_API_KEY、不走 OpenRouter、不内联 base64。每跳 request/raw/decoded/parsed/rejected 由两跳函数
+ * 永久落证据；证据里只记 gs://，签名链接不落档。
+ */
+const GOOGLE_AUDIO_TWO_HOP_MODEL = "gemini-3.8-flash";
+
+function googleAudioEvidenceSaver(bucket: string, prefix: string) {
+  return async (name: string, value: unknown) => {
+    await uploadBufferToGcsIfAbsent({ bucket, objectName: `${prefix}/${name}.json`, buffer: Buffer.from(JSON.stringify(value)), contentType: "application/json" });
+  };
+}
+
+function googleAudioTwoHopMedia(gsUri: string) {
+  return { vertexFileUri: gsUri, evolinkFileUri: () => signGsUriV4ReadUrl(gsUri, 3600) };
+}
+
+function googleAudioObjectExt(mimeType: string): string {
+  const sub = String(mimeType || "").toLowerCase().split(";")[0]!.split("/")[1] || "";
+  return ({ mpeg: "mp3", mp3: "mp3", mp4: "m4a", "x-m4a": "m4a", wav: "wav", "x-wav": "wav", webm: "webm", ogg: "ogg", flac: "flac", aac: "aac" } as Record<string, string>)[sub] || "audio";
+}
+
+/**
+ * 漫剧学习听音扫描的提示词 / 原生 schema / 结果整形：与 server/gemini-audio.ts 的
+ * MANHUA_AUDIO_SYSTEM_PROMPT、buildManhuaAudioNativeRequestBody.responseSchema、normalizeManhuaAudioResult 同文同义。
+ * 那三项未导出且该文件另线在改，这里逐字照抄；待其导出后改为 import。
+ */
+const MANHUA_AUDIO_SCAN_PROMPT = `你是竖屏短剧/漫剧听写与节奏分析助手。只根据音频输出 JSON，不要解释。
+任务：
+1. 尽量转写对白/旁白（可压缩，保留冲突与情绪词）。
+2. 按时间拆成 4～12 段，timeRange 用 m:ss-m:ss 或 秒-秒（如 0:00-0:15 或 58-72）。
+3. energy 用：低 / 中 / 高 / 极高。高潮、打脸、反转、对决、爆发段标「高」或「极高」，name 可用「开场钩子/对峙/反转/高潮/片尾钩」等中性名。
+4. 不要输出外部平台剧名、商标。`;
+
+const MANHUA_AUDIO_SCAN_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    language: { type: "STRING" },
+    transcriptSummary: { type: "STRING" },
+    sections: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          name: { type: "STRING" },
+          timeRange: { type: "STRING" },
+          mood: { type: "STRING" },
+          energy: { type: "STRING" },
+          lyrics: { type: "STRING" },
+        },
+        required: ["name", "timeRange", "mood", "energy", "lyrics"],
+      },
+    },
+  },
+  required: ["language", "transcriptSummary", "sections"],
+};
+
+function normalizeManhuaAudioScan(decoded: unknown) {
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) throw new Error("语音分析结果格式无效");
+  const parsed = decoded as { language?: unknown; transcriptSummary?: unknown; sections?: unknown };
+  return {
+    language: String(parsed.language || "").trim(),
+    transcriptSummary: String(parsed.transcriptSummary || "").trim(),
+    sections: Array.isArray(parsed.sections)
+      ? parsed.sections.map((s: any) => ({
+          name: String(s?.name || "").trim(),
+          timeRange: String(s?.timeRange || "").trim(),
+          mood: String(s?.mood || "").trim(),
+          energy: String(s?.energy || "").trim(),
+          lyrics: String(s?.lyrics || "").trim() || undefined,
+        }))
+      : [],
+  };
+}
+
+/** 原 analyzeManhuaDramaAudioFromUrl 的下载校验（http(s)、跟随跳转、非空、18MB 上限）；下载后转存 GCS，不再内联。 */
+async function fetchManhuaScanAudio(audioUrl: string): Promise<Buffer> {
+  if (!/^https?:\/\//i.test(audioUrl)) throw new Error("missing_or_invalid_audio_url");
+  const r = await fetch(audioUrl, { redirect: "follow", headers: { "User-Agent": "mvstudiopro/1.0 (+manhua-audio-climax)" } });
+  if (!r.ok) throw new Error(`audio_fetch_failed:${r.status}`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (!buf.length) throw new Error("empty_audio");
+  if (buf.length > 18 * 1024 * 1024) throw new Error(`audio_too_large:${buf.length}`);
+  return buf;
+}
+
+const TRANSCRIBE_AUDIO_PROMPT = "请将音频内容完整转录为文字，写入 JSON 的 text 字段。只输出转录文字本身，不要任何解释、标注或时间码。";
+const TRANSCRIBE_AUDIO_SCHEMA = { type: "OBJECT", properties: { text: { type: "STRING" } }, required: ["text"] };
+
 export default async function handler(req:VercelRequest,res:VercelResponse){
   try{
     const q:any = req.query || {};
@@ -412,7 +504,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
     const nanoForceInlineBase64 = /^(1|true|yes|on)$/i.test(s(q.inlineBase64 || b.inlineBase64));
 
-    // ---------------- transcribeAudio (Gemini direct, no Vertex needed) ----------------
+    // ---------------- transcribeAudio（1110：存 GCS 用户前缀 → Gemini 3.8 Flash 两跳 Vertex gs:// → EvoLink 签名 https） ----------------
     if (op === "transcribeAudio") {
       if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method_not_allowed", message: "语音识别只接受 POST 请求" });
       const viewer = await resolveGoogleGatewayUser(req);
@@ -433,36 +525,53 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       if (!bytes.length || bytes.length > maxBytes || bytes.toString("base64") !== audioBase64)
         return res.status(400).json({ ok: false, error: "invalid_audio_base64", message: "音频传输内容损坏，请重新选择原音" });
 
-      const geminiApiKey = s(process.env.GEMINI_API_KEY).trim();
-      if (!geminiApiKey) return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
-
-      const model = "gemini-3.1-flash-lite-preview";
-      const body = {
-        contents: [{
-          parts: [
-            { text: "请将以下音频内容转录为文字。只输出转录文字，不要任何解释。" },
-            { inlineData: { mimeType, data: audioBase64 } }
-          ]
-        }],
-        generationConfig: { temperature: 0, maxOutputTokens: 1024 }
-      };
-
+      // 拒因分类：两跳都失败时仍按原合同回错误码（不完整 422 / 不可用 422 / 上游失败 502）。
+      let incomplete = false;
+      let unusable = false;
+      const requestId = randomUUID();
       try {
-        const r = await fetchJson(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`,
-          { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(120_000) }
-        );
-        if (!r.ok) return res.status(502).json({ ok: false, error: "transcription_upstream_failed", message: "语音识别服务本次未成功，原音保留，请勿连续重试" });
-        const candidate = r.json?.candidates?.[0];
-        if (candidate?.finishReason !== "STOP")
-          return res.status(422).json({ ok: false, error: "transcription_incomplete", message: "识别结果不完整，未将截断文字作为全文，请缩短音频后重新确认" });
-        const parts = candidate.content?.parts;
-        const text = (Array.isArray(parts) ? parts.filter((part: any) => part?.thought !== true && typeof part?.text === "string").map((part: any) => part.text).join("") : "").trim();
-        if (!text || text.length > 12_000)
-          return res.status(422).json({ ok: false, error: "transcription_unusable", message: "本次未取得可用完整文字，原音保留，可手动填写" });
-        return res.status(200).json({ ok: true, text });
+        const { geminiAudioJsonWithFallback, isManhuaDramaVertexAudioAvailable, isManhuaDramaEvolinkAudioAvailable } = await import("../server/gemini-audio");
+        if (!isManhuaDramaVertexAudioAvailable() && !isManhuaDramaEvolinkAudioAvailable())
+          return res.status(500).json({ ok: false, error: "missing_env", message: "语音识别服务暂未配置，原音保留，可手动填写" });
+        const bucket = getGcsBucketName();
+        const prefix = `voice-transcribe/${viewer.userId}/${requestId}`;
+        const save = googleAudioEvidenceSaver(bucket, prefix);
+        const objectName = `${prefix}/audio.${googleAudioObjectExt(mimeType)}`;
+        await uploadBufferToGcsIfAbsent({ bucket, objectName, buffer: bytes, contentType: mimeType });
+        const audioGsUri = `gs://${bucket}/${objectName}`;
+        await save("request", { userId: viewer.userId, op, mimeType, audioGsUri, audioBytes: bytes.length, audioSha256: createHash("sha256").update(bytes).digest("hex") });
+        const result = await geminiAudioJsonWithFallback<{ text: string }>({
+          media: googleAudioTwoHopMedia(audioGsUri),
+          model: GOOGLE_AUDIO_TWO_HOP_MODEL,
+          mimeType,
+          prompt: TRANSCRIBE_AUDIO_PROMPT,
+          nativeSchema: TRANSCRIBE_AUDIO_SCHEMA,
+          schemaName: "voice_transcription",
+          checkPayload: payload => {
+            const finish = (payload as { candidates?: Array<{ finishReason?: unknown }> })?.candidates?.[0]?.finishReason;
+            if (finish === "STOP") return undefined;
+            incomplete = true;
+            return `识别不完整：finishReason=${String(finish)}`;
+          },
+          validate: decoded => {
+            const raw = (decoded as { text?: unknown } | null)?.text;
+            const text = typeof raw === "string" ? raw.trim() : "";
+            if (!text || text.length > 12_000) { unusable = true; throw new Error(text ? "转写超过 12000 字" : "转写为空"); }
+            return { text };
+          },
+          save,
+        }).catch(() => null);
+        if (!result) {
+          console.warn("[transcribeAudio] 两跳均未取得完整转写", requestId);
+          if (incomplete) return res.status(422).json({ ok: false, error: "transcription_incomplete", message: "识别结果不完整，未将截断文字作为全文，请缩短音频后重新确认" });
+          if (unusable) return res.status(422).json({ ok: false, error: "transcription_unusable", message: "本次未取得可用完整文字，原音保留，可手动填写" });
+          return res.status(502).json({ ok: false, error: "transcription_upstream_failed", message: "语音识别服务本次未成功，原音保留，请勿连续重试" });
+        }
+        await save("transcript", { channel: result.channel, model: result.model, failuresZh: result.failuresZh, text: result.value.text });
+        return res.status(200).json({ ok: true, text: result.value.text });
       } catch {
-        // 上游错误可能包含带凭证的请求地址，不能回传或记录原错误。
+        // 不回传原错误（可能含内部地址）；证据在 voice-transcribe/<userId>/<requestId>/。
+        console.warn("[transcribeAudio] 转存或落证据失败", requestId);
         return res.status(502).json({ ok: false, error: "transcription_unavailable", message: "语音识别连接未完成，原音保留，请先确认本次结果" });
       }
     }
@@ -486,40 +595,51 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       }
     }
 
-    // ---------------- 漫剧学习 A：Fly 代下音频 → Gemini 3.6 Flash 四路语音分析 ----------------
+    // ---------------- 漫剧学习 A：听音扫描（1110：Gemini 3.8 Flash 两跳 Vertex gs:// → EvoLink 签名 https，不内联） ----------------
     if (op === "manhuaAudioClimaxScan") {
-      const audioUrl = s(b.audioUrl || q.audioUrl);
-      const gcsUri = s(b.gcsUri || q.gcsUri);
+      const audioUrl = s(b.audioUrl || q.audioUrl).trim();
+      const gcsUri = s(b.gcsUri || q.gcsUri).trim();
       const mimeType = s(b.mimeType || q.mimeType || "audio/mpeg") || "audio/mpeg";
       if (!audioUrl && !gcsUri) {
         return res.status(400).json({ ok: false, error: "missing_audioUrl_or_gcsUri" });
       }
+      if (gcsUri && !/^gs:\/\/[^/]+\/.+/.test(gcsUri)) return res.status(400).json({ ok: false, error: "invalid_gcsUri" });
+      // 转存与证据要放用户前缀下 → 先认人（原入口未鉴权）。
+      const viewer = await resolveGoogleGatewayUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required" });
       try {
-        const {
-          analyzeManhuaDramaAudioFromUrl,
-          analyzeManhuaDramaAudioWithGemini,
-          resolveGeminiAudioModelName,
-        } = await import("../server/gemini-audio");
-        let scan;
-        if (gcsUri) {
-          const { downloadGcsObject, signGsUriV4ReadUrl } = await import("../server/services/gcs");
-          // 优先服务账号直下；失败再签名 HTTPS
-          try {
-            const obj = await downloadGcsObject({ gcsUri });
-            scan = await analyzeManhuaDramaAudioWithGemini({
-              audioBase64: obj.buffer.toString("base64"),
-              mimeType,
-            });
-          } catch {
-            const signedRead = signGsUriV4ReadUrl(gcsUri, 3600);
-            scan = await analyzeManhuaDramaAudioFromUrl({ audioUrl: signedRead, mimeType });
-          }
-        } else {
-          scan = await analyzeManhuaDramaAudioFromUrl({ audioUrl, mimeType });
+        const { geminiAudioJsonWithFallback } = await import("../server/gemini-audio");
+        const bucket = getGcsBucketName();
+        const prefix = `manhua-template-learn/audio-scan/${viewer.userId}/${randomUUID()}`;
+        const save = googleAudioEvidenceSaver(bucket, prefix);
+        // 有 gcsUri 直接用；只有 audioUrl 时 Fly 代下后转存到本人前缀下
+        let mediaGsUri = gcsUri;
+        let fetched: { audioBytes: number; audioSha256: string } | undefined;
+        if (!mediaGsUri) {
+          const buffer = await fetchManhuaScanAudio(audioUrl);
+          const objectName = `${prefix}/source.${googleAudioObjectExt(mimeType)}`;
+          await uploadBufferToGcsIfAbsent({ bucket, objectName, buffer, contentType: mimeType });
+          mediaGsUri = `gs://${bucket}/${objectName}`;
+          fetched = { audioBytes: buffer.length, audioSha256: createHash("sha256").update(buffer).digest("hex") };
         }
+        await save("request", { userId: viewer.userId, op, via: gcsUri ? "gcs" : "audioUrl", mediaGsUri, mimeType, ...fetched });
+        const result = await geminiAudioJsonWithFallback({
+          media: googleAudioTwoHopMedia(mediaGsUri),
+          audioTimestamp: true,
+          model: GOOGLE_AUDIO_TWO_HOP_MODEL,
+          mimeType,
+          prompt: MANHUA_AUDIO_SCAN_PROMPT,
+          nativeSchema: MANHUA_AUDIO_SCAN_SCHEMA,
+          schemaName: "manhua_drama_audio_scan",
+          validate: normalizeManhuaAudioScan,
+          save,
+        });
+        // model 写法同原函数：`vertex/<模型>` 或 `evolink/<模型>`
+        const scan = { model: `${result.channel.toLowerCase()}/${result.model}`, ...result.value };
+        await save("scan", { channel: result.channel, failuresZh: result.failuresZh, ...scan });
         return res.status(200).json({
           ok: true,
-          model: scan.model || resolveGeminiAudioModelName(),
+          model: scan.model,
           language: scan.language,
           transcriptSummary: scan.transcriptSummary,
           sections: scan.sections,
