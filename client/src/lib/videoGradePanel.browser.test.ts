@@ -123,7 +123,8 @@ it("VideoGradePanel：受控渲染与变更；AI 调色建议仅有 gs:// 成片
     await page.mouse.up();
     await page.waitForFunction(() => (globalThis as any).changes.at(-1)?.segments?.[0]?.endSec === 5);
     expect(await segsNow()).toEqual([[0, 5], [5, 8.5]]);
-    expect(await page.$eval('[aria-label="第1段结束秒"]', n => (n as HTMLInputElement).value)).toBe("5");
+    // onChange 先于界面重绘：等输入框跟上再断言（否则偶发读到拖动中途的值）
+    await page.waitForFunction(() => (document.querySelector('[aria-label="第1段结束秒"]') as HTMLInputElement | null)?.value === "5");
     // 数字输入仍可用，并与时间轴同步
     await setNum("第1段结束秒", 4.3);
     await page.waitForFunction(h => document.querySelector(h)?.getAttribute("aria-valuenow") === "4.3", {}, handle);
