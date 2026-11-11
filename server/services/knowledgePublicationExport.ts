@@ -34,6 +34,7 @@ import {
   uploadStreamToGcs,
 } from "./gcs";
 import { fetchPdfBufferFromWorker, measureKnowledgeBookletFromWorker } from "./pdfWorkerClient";
+import { ensureKnowledgeReviewThumbnail } from "./knowledgeReviewThumbnail";
 import { knowledgeStageConcurrency, runKnowledgeStaggeredPool } from "../../shared/knowledgeConcurrency";
 
 /** pdf-worker 的瞬时故障（部署/重启打断 Puppeteer 页面、网关 5xx、连接中断）：同一输入原地重试一次即可，不算段失败。 */
@@ -56,12 +57,23 @@ export async function retryKnowledgeExportStep<T>(step: () => Promise<T>, option
   }
 }
 
-/** 导出分段池：按段数动态并发（≤16），每段自行捕获错误。 */
+/** 导出分段池：按段数动态并发（≤8，排版服务每路要取图、排版、打印，16 路实测互相拖到超时），每段自行捕获错误。 */
+export const KNOWLEDGE_EXPORT_PART_CONCURRENCY = 8;
 async function knowledgeExportPool(count: number, worker: (index: number) => Promise<void>) {
-  const lanes = Array.from({ length: knowledgeStageConcurrency(count, { max: 16 }) }, () => "pdf" as const);
+  const lanes = Array.from({ length: knowledgeStageConcurrency(count, { max: KNOWLEDGE_EXPORT_PART_CONCURRENCY }) }, () => "pdf" as const);
   await runKnowledgeStaggeredPool(Array.from({ length: count }, (_, i) => i), { lanes, staggerMs: 0, worker: async i => { await worker(i); } });
 }
 
+
+/** 阅读稿 HTML 内配图签名地址的有效期：GCS V4 上限 7 天；过期后重新导出即换新地址，PDF 成品不受影响。 */
+export const KNOWLEDGE_EXPORT_IMAGE_URL_TTL_SECONDS = 7 * 24 * 3600;
+/** 配图传输方式标记进成品目录：改为地址引用后的成品与旧内嵌版分开存放，互不复用。 */
+export const KNOWLEDGE_EXPORT_IMAGE_TRANSPORT = "url2";
+const exportLog = (event: string, fields: Record<string, string | number | undefined>) =>
+  console.log(`[knowledgeExport] ${event} ${Object.entries(fields).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}=${v}`).join(" ")}`);
+/** 日志只留业务原因：去掉地址与签名，截断。 */
+export const knowledgeExportLogReason = (error: unknown) =>
+  String(error instanceof Error ? error.message : error ?? "").replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 300);
 
 const inflight = new Map<string, Promise<KnowledgePublicationExport>>();
 export type KnowledgePublicationExport = {
@@ -80,6 +92,10 @@ const real = {
   load: readCanonicalLayoutLibrary,
   review: readKnowledgePublicationReview,
   image: readKnowledgeImage,
+  // 导出配图只以签名地址交给排版服务与阅读稿 HTML，不把图片数据内嵌进 HTML（禁 base64）。
+  // 地址指向缩图派生件（长边 ≤2048 的 JPEG，审校时已生成）：排版服务入版前本就把每张图缩到长边 1200，
+  // 送 13–18MB 的 4K 原图只会让并发取图超时（1110 实测 34 段有 11 段预分页失败）；缩图不可得时回退原图地址。
+  imageUrl: async (uri: string) => signGsUriV4ReadUrl((await ensureKnowledgeReviewThumbnail(uri)) || uri, KNOWLEDGE_EXPORT_IMAGE_URL_TTL_SECONDS),
   pdf: fetchPdfBufferFromWorker,
   measure: measureKnowledgeBookletFromWorker,
   // 使用镜像已有poppler，按真实PDF物理页保存，不用估算页数。
@@ -225,7 +241,8 @@ export async function exportKnowledgePublication(
 ):Promise<KnowledgePublicationExport>{
   const deps={...real,...overrides};
   const { loadKnowledgeBookLayoutView } = await import("./knowledgeBookLayout");
-  const {doc,review,receipt,prefix}=await loadKnowledgeBookLayoutView(owner,documentId,generation,deps);
+  const {doc,review,receipt,prefix:sourcePrefix}=await loadKnowledgeBookLayoutView(owner,documentId,generation,deps);
+  const prefix=`${sourcePrefix}-${KNOWLEDGE_EXPORT_IMAGE_TRANSPORT}`;
   if(doc.publication?.supplementOf && doc.publication.billing)return exportKnowledgePublication(owner,doc.publication.supplementOf.documentId,generation,overrides);
   assertKnowledgeInteriorConsent(doc);
   const run = async () => {
@@ -272,6 +289,7 @@ export async function exportKnowledgePublication(
     const pdfFiles: string[] = [],
       failures: number[] = [];
     const expected = new Map(receipt.sourceImages.map(p => [p.uri, p.sha256]));
+    let totalImageBytes = 0;
     const flush = async () => {
       if (!chunk) return;
       const path = join(folder, `chunk-${chunks.length}.html`);
@@ -283,26 +301,31 @@ export async function exportKnowledgePublication(
     try {
       await html.writeFile(head);
       // 配图先并发取回（按页数动态并发），装配仍按页序；校验与原逻辑相同。
-      const prefetched = new Map<number, Promise<Awaited<ReturnType<typeof deps.image>>>>();
+      // 只为核对原图指纹与体积而读取，读完即释放；图片数据不进入 HTML。
+      const verifyImage = async (url: string) => { const image = await deps.image(url); return { sha256: image.sha256, bytes: image.buffer.length }; };
+      const prefetched = new Map<number, ReturnType<typeof verifyImage>>();
       await knowledgeExportPool(doc.pages.length, async index => {
         const url = doc.pages[index]!.imageUrl;
-        if (url) { const p = deps.image(url); prefetched.set(index, p); await p.catch(() => undefined); }
+        if (url) { const p = verifyImage(url); prefetched.set(index, p); await p.catch(() => undefined); }
       });
       for (const [index, page] of Array.from(doc.pages.entries())) {
-        let embedded = "";
+        let imageAddress = "", imageBytes = 0;
         if (page.imageUrl) {
-          const image = await (prefetched.get(index) ?? deps.image(page.imageUrl));
+          const image = await (prefetched.get(index) ?? verifyImage(page.imageUrl));
           if (expected.get(page.imageUrl) !== image.sha256)
             throw new Error(`第${index + 1}页配图已变化，未导出旧审校版本`);
-          embedded = `data:${image.mimeType};base64,${image.buffer.toString("base64")}`;
+          imageAddress = await deps.imageUrl(page.imageUrl);
+          imageBytes = image.bytes;
+          totalImageBytes += image.bytes;
         }
         const section = knowledgePublicationChapter(
             doc,
             review,
             index,
-            embedded
+            imageAddress
           ),
-          bytes = Buffer.byteLength(section);
+          // 分卷仍按「正文 + 原图体积」计重，保持每卷载入排版服务的图片总量与原先一致；HTML 本身只含地址。
+          bytes = Buffer.byteLength(section) + imageBytes;
         // 内部自动分卷渲染，再合成一个PDF；用户不必拆页。HTML流式落盘，不把千页图同时装进内存。
         if (chunkBytes + bytes > 48 * 1024 * 1024) await flush();
         await html.writeFile(section);
@@ -320,6 +343,7 @@ export async function exportKnowledgePublication(
         htmlPath,
         "text/html;charset=utf-8"
       );
+      exportLog("html", { owner, document: documentId, htmlBytes, parts: chunks.length, imageBytes: totalImageBytes, ms: Date.now() - startedAt });
       // 分段先在最终字体下计数，再带全书页码渲染。只保留一段HTML在内存中。
       const counts: number[] = [];
       if (chunks.length > 1) {
@@ -330,11 +354,24 @@ export async function exportKnowledgePublication(
             const count = await retryKnowledgeExportStep(() => deps.measure(chunkHtml));
             if (!Number.isSafeInteger(count) || count < 1) throw new Error("预分页结果无效");
             counts[index] = count;
-          } catch {
+          } catch (error) {
             counts[index]=0;
             failures.push(index + 1);
+            exportLog("measure-failed", { owner, document: documentId, part: index + 1, reason: knowledgeExportLogReason(error) });
           }
         });
+        // 并发下个别段偶发失败：对失败段逐段再补一轮，仍不过才留给下次续跑。
+        for (const part of failures.splice(0)) {
+          try {
+            const chunkHtml = head + await readFile(chunks[part - 1]!, "utf8") + tail;
+            const count = await retryKnowledgeExportStep(() => deps.measure(chunkHtml));
+            if (!Number.isSafeInteger(count) || count < 1) throw new Error("预分页结果无效");
+            counts[part - 1] = count;
+          } catch (error) {
+            failures.push(part);
+            exportLog("measure-failed-again", { owner, document: documentId, part, reason: knowledgeExportLogReason(error) });
+          }
+        }
       }
       // 全册计页成功后才打印；缺段时的临时总页数会污染页脚和分片缓存身份。
       if (!failures.length) {
@@ -361,8 +398,9 @@ export async function exportKnowledgePublication(
             });
             await writeFile(path, bytes);
             rendered[index] = path;
-          } catch {
+          } catch (error) {
             failures.push(index + 1);
+            exportLog("render-failed", { owner, document: documentId, part: index + 1, reason: knowledgeExportLogReason(error) });
           }
         });
         for (const path of rendered) if (path) pdfFiles.push(path);
@@ -442,7 +480,15 @@ export async function exportKnowledgePublication(
   };
   const key = prefix;
   if (inflight.has(key)) return inflight.get(key)!;
-  const task = run().finally(() => inflight.delete(key));
+  const startedAt = Date.now();
+  exportLog("start", { owner, document: documentId, chapters: doc.pages.length, images: doc.pages.filter(page => page.imageUrl).length });
+  const task = run().then(result => {
+    exportLog(result.pdfUrl ? "done" : "partial", { owner, document: documentId, ms: Date.now() - startedAt, totalPages: result.totalPages, imagePages: result.imagePages, htmlBytes: result.htmlBytes, pdfBytes: result.pdfBytes, reason: result.pdfError });
+    return result;
+  }, error => {
+    exportLog("failed", { owner, document: documentId, ms: Date.now() - startedAt, reason: knowledgeExportLogReason(error) });
+    throw error;
+  }).finally(() => inflight.delete(key));
   inflight.set(key, task);
   return task;
 }

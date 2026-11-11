@@ -9,7 +9,7 @@ it('正式预览和PDF打印样式下原图与说明穿插，最终字体重排�
  const doc=layoutFromSource({kind:'knowledge-publication',detailLevel:'full',owner:'7',sourceId:'print-css',title:'原图分页回归',body:'',pages:[{headline:'第一卡',body:table,pageIndex:1},{headline:'第二卡',body:'另一张图的独立说明。'+('长段落完整保留。'.repeat(700))+'尾句没有丢失。\n\n|项目|解释|\n|---|---|\n|长单元格|'+('全部原始内容；'.repeat(120))+'单元格结尾保留|' ,pageIndex:2}],images:{1:'gs://test/own.png',2:'gs://test/own2.png'}});
  const review:any={title:doc.title,pages:doc.pages.map(p=>({...p,imageDescription:'真实测试配图',reading:{templateId:p===doc.pages[0]?'fusion_chinese_garden':'fusion_coastal_lighthouse'},cautions:[]}))};
  const pixel='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j2s8AAAAASUVORK5CYII=';
- const html=buildKnowledgePublicationHtml(doc,review,{'gs://test/own.png':pixel,'gs://test/own2.png':pixel});
+ const html=buildKnowledgePublicationHtml(doc,review,{'gs://test/own.png':pixel,'gs://test/own2.png':pixel},true);
  const workerCss=fs.readFileSync('pdf-worker/index.ts','utf8').match(/const MYREPORTS_SNAPSHOT_PRINT_CSS = `([\s\S]*?)`\.trim/)![1];
  const browser=await puppeteer.launch({headless:true,args:['--no-sandbox']});
  try{

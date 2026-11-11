@@ -9,9 +9,14 @@ import {
   readLayoutLibrary,
   writeLayoutLibrary,
 } from "../services/editableLayoutStore";
-const publicationProcedure = protectedProcedure.use(async ({ next }) => {
+const publicationProcedure = protectedProcedure.use(async ({ next, path }) => {
   const result = await next();
-  if (!result.ok) return { ...result, error: new TRPCError({ code: result.error.code, message: knowledgePublicationPublicError(result.error).message }) };
+  if (!result.ok) {
+    // 前台只收到业务提示；真实原因留在服务端日志（去地址、截断），否则出错后后台无从查起。
+    const cause = result.error.cause instanceof Error ? result.error.cause.message : result.error.message;
+    console.warn(`[knowledgePublication] ${path} failed code=${result.error.code} reason=${String(cause).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 300)}`);
+    return { ...result, error: new TRPCError({ code: result.error.code, message: knowledgePublicationPublicError(result.error).message }) };
+  }
   return result;
 });
 export const editableLayoutRouter = router({

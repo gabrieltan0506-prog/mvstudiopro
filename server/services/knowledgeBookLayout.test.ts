@@ -54,6 +54,7 @@ function fixture() {
       return {report:structuredClone(doc.publication!.review!),sourceImages:doc.pages.filter(p=>p.imageUrl).map(p=>({id:p.id,uri:p.imageUrl,sha256:sha,mimeType:"image/png",width:1,height:1}))};
     },
     image:vi.fn(async()=>({buffer:image,sha256:sha,mimeType:"image/png",width:1,height:1})),
+    imageUrl:async (uri:string)=>`https://example.invalid/signed/${encodeURIComponent(uri)}?X-Goog-Expires=604800&X-Goog-Signature=test`,
     layoutReport:async(_owner:number,doc:string,id:string)=>structuredClone(models.get(`knowledge-publications/user-7/${doc}/conversation/${id}/report.json`)),
     read:async(name:string)=>objects.get(name)||null,
     save:async(name:string,data:Buffer)=>{objects.set(name,data);},
@@ -120,9 +121,13 @@ it("真实顾问路由产出方案，经永久回执与保存校验后控制合�
   expect(JSON.stringify(f.library)).toBe(original);
   const result=await exportKnowledgePublication(7,f.parent.id,"10",f.deps);
   expect(result.imagePages).toBe(2);expect(result.totalPages).toBe(4);
-  const images=Object.fromEntries(view.doc.pages.filter(p=>p.imageUrl).map(p=>[p.imageUrl,`data:image/png;base64,${Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=","base64").toString("base64")}`]));
+  const images=Object.fromEntries(view.doc.pages.filter(p=>p.imageUrl).map(p=>[p.imageUrl,`https://example.invalid/signed/${encodeURIComponent(p.imageUrl)}?X-Goog-Expires=604800&X-Goog-Signature=test`]));
   const savedHtml=Array.from(f.objects.entries()).find(([name])=>name.endsWith('/阅读稿.html'))![1].toString('utf8');
   expect(savedHtml.replace(/>\s+</g, "><")).toBe(buildKnowledgePublicationHtml(view.doc,view.review,images).replace(/>\s+</g, "><"));
+  // 配图只以地址引用：阅读稿与送排版服务的 HTML 都不得出现内嵌图片数据。
+  expect(savedHtml).not.toContain('base64,');expect(savedHtml).toContain('https://example.invalid/signed/');
+  expect(f.deps.pdf.mock.calls.map(([html])=>html).join('\n')).not.toContain('base64,');
+  expect(Array.from(f.objects.keys()).filter(name=>name.endsWith('/阅读稿.html')).every(name=>name.includes('-url2/'))).toBe(true);
   const sentHtml=f.deps.pdf.mock.calls.map(([html])=>html).join('\n');
   for(const end of ["末句一必须保留","末句二必须保留","末句三必须保留","末句四必须保留"])expect(sentHtml).toContain(end);
   expect(Array.from(f.objects.keys()).filter(name=>/\.pdf\.pages\/\d+\.pdf$/.test(name))).toHaveLength(4);
@@ -158,6 +163,10 @@ it("实际Chromium打印按顾问顺序保留全部章节、图卡、正文与�
     await page.setViewport({width:1800,height:1000});
     const errors:string[]=[];
     page.on("pageerror",e=>errors.push(String(e)));
+    // 配图以签名地址引用：测试里拦下该地址并回同一张原图，等同排版服务从存储取图。
+    const pixelPng=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=","base64");
+    await page.setRequestInterception(true);
+    page.on("request",request=>{void(request.url().startsWith("https://example.invalid/signed/")?request.respond({status:200,contentType:"image/png",body:pixelPng}):request.continue());});
     const render=async(html:string)=>{
       await page.setContent(html,{waitUntil:"load"});
       await page.waitForFunction(()=>Array.from(document.querySelectorAll('[data-booklet-root]')).every(root=>root.getAttribute('data-ready')==='true'),{timeout:30000});
