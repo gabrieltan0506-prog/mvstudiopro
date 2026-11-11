@@ -111,7 +111,8 @@ export function planGeminiCarbonCreate(input: {
   if (envTimeout) {
     createTimeoutMs = envTimeout;
     basis = "env";
-  } else if (p90Ms !== null && samples >= GEMINI_CARBON_TIMING_MIN_SAMPLES && 2 * p90Ms > baselineMs) {
+  } else if (p90Ms !== null && samples >= GEMINI_CARBON_TIMING_MIN_SAMPLES) {
+    // 站长 2026-11-11「看数据动态调整」：有足够样本就完全按历史定（可比基线更短，也可更长），下限 / 上限兜底；样本不足才用规模基线。
     createTimeoutMs = clamp(2 * p90Ms, GEMINI_CARBON_CREATE_TIMEOUT_FLOOR_MS, GEMINI_CARBON_CREATE_TIMEOUT_CEIL_MS);
     basis = "history_p90";
   } else {

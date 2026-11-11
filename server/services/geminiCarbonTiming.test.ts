@@ -21,15 +21,19 @@ describe("动态创建期：纯函数", () => {
     expect(geminiCarbonSizeBaselineMs(10_000)).toBeGreaterThan(geminiCarbonSizeBaselineMs(5_000));
   });
 
-  it("有历史 → 2 × P90（高于基线时）；样本太少仍用基线", () => {
+  it("有历史 → 2 × P90（可高于也可低于基线，上下限兜底）；样本太少仍用基线", () => {
     const samples = [20_000, 22_000, 25_000, 30_000, 40_000, 21_000, 23_000, 24_000, 26_000, 60_000];
     const plan = planGeminiCarbonCreate({ inputTokens: 500, successFirstDataMs: samples, recentCreateFailed: [] });
     expect(plan).toMatchObject({ basis: "history_p90", samples: 10, p90Ms: 40_000, createTimeoutMs: 80_000 });
     const few = planGeminiCarbonCreate({ inputTokens: 500, successFirstDataMs: [60_000, 60_000], recentCreateFailed: [] });
     expect(few.basis).toBe("size_baseline");
-    // 2×P90 低于基线 → 取基线（max）
+    // 一直很快的通道：按历史缩短（低于基线），但不低于 30 秒下限
     const fast = planGeminiCarbonCreate({ inputTokens: 500, successFirstDataMs: [2_000, 3_000, 4_000], recentCreateFailed: [] });
-    expect(fast).toMatchObject({ basis: "size_baseline", createTimeoutMs: fast.baselineMs });
+    expect(fast).toMatchObject({ basis: "history_p90", createTimeoutMs: 30_000 });
+    expect(fast.createTimeoutMs).toBeLessThan(fast.baselineMs);
+    const mid = planGeminiCarbonCreate({ inputTokens: 20_000, successFirstDataMs: [18_000, 20_000, 22_000, 25_000], recentCreateFailed: [] });
+    expect(mid).toMatchObject({ basis: "history_p90", createTimeoutMs: 50_000 });
+    expect(mid.createTimeoutMs).toBeLessThan(mid.baselineMs);
   });
 
   it("上下限夹取：30 秒 ~ 300 秒", () => {
