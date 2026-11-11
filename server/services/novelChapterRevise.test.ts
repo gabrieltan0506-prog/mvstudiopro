@@ -90,4 +90,26 @@ describe("审稿改稿流程", () => {
     expect(err.review.verdict).toBe(REVISE_REVIEW.verdict);
     expect(r.log).toEqual(["raw:review", "parsed:review", "raw:revise", "parsed:revise"]);
   });
+  it("结果记录审稿、改稿各自所用的模型标识；未定位的意见不进改稿提示的落实清单", async () => {
+    const r = recorder();
+    const review = {
+      ...REVISE_REVIEW,
+      issues: [...REVISE_REVIEW.issues, { ...REVISE_REVIEW.issues[0], quote: "原文没有这句", problem: "无法定位的问题" }],
+    };
+    const prompts: string[] = [];
+    const call = vi.fn(async (step: string, prompt: string) => {
+      prompts.push(prompt);
+      return {
+        text: JSON.stringify(step === "review" ? review : REVISE_REVISED),
+        model: step === "review" ? "model-a" : "model-b",
+      };
+    });
+    const out = await executeNovelRevise(input, call, r);
+    expect(out.result.models).toEqual({ review: "model-a", revise: "model-b" });
+    expect(out.result.review.issues.at(-1)?.located).toBe(false);
+    expect(prompts[1]).not.toContain("无法定位的问题");
+    expect(prompts[1]).toContain("outlineImpact");
+    expect(prompts[1]).toContain("episodeOutline");
+    expect(prompts[1]).toContain("第2集：库房夺账");
+  });
 });

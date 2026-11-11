@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import {
   adoptNovelRevision,
   emptyNovelWorkspace,
+  novelOutlineAlertSummary,
   parseNovelRevisionEntry,
   recordNovelReviewOnly,
   recordNovelRevision,
@@ -56,4 +57,24 @@ it("改稿失败只保留审稿意见，不可采用", () => {
 });
 it("坏记录不让整份草稿读取失败", () => {
   expect(parseNovelRevisionEntry({ index: 0, requestId: "x", savedAt: "", outcome: "{坏" })).toBeNull();
+});
+
+it("大纲偏离：申报 major 时提醒；旧结果未申报但大纲专名在修改版消失时由代码核对提示；更新本集大纲条目后提醒消失", () => {
+  const outline = "第2集：库房夺账\n剧情：沈昭去户部库房，钥匙在御史台";
+  const withImpact = (impact?: object) => ({
+    ...result,
+    text: JSON.stringify({
+      chapterIndex: 2, original: REVISE_ORIGINAL, review: REVISE_REVIEW,
+      revised: { ...REVISE_REVISED, ...(impact ? { outlineImpact: impact } : {}) },
+    }),
+  });
+  const base = { ...emptyNovelWorkspace(), outline, outlineApproved: outline };
+  const ri = { ...input, outline };
+  const major = { ...base, ...recordNovelRevision(base, ri, withImpact({ changed: true, level: "major", items: [] })) } as NovelWorkspace;
+  expect(novelOutlineAlertSummary(major)).toEqual({ level: "major", chapters: [2] });
+  // 代码兜底：大纲里的「御史台」在原稿出现、修改版（夹具）里消失 → partial 提示
+  const legacy = { ...base, ...recordNovelRevision(base, ri, withImpact()) } as NovelWorkspace;
+  expect(novelOutlineAlertSummary(legacy).level).toBe("partial");
+  const updated = { ...major, outline: "第2集：库房夺账\n剧情：沈昭翻墙入库", outlineApproved: "第2集：库房夺账\n剧情：沈昭翻墙入库" };
+  expect(novelOutlineAlertSummary(updated).level).toBe("none");
 });

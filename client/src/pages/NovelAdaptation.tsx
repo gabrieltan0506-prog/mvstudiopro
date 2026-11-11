@@ -61,6 +61,7 @@ import {
 import { NovelChapterRevisionPanel } from "@/components/canvas/NovelChapterRevision";
 import {
   adoptNovelRevision,
+  novelOutlineAlertSummary,
   recordNovelReviewOnly,
   recordNovelRevision,
   applyNovelChapterCompletion,
@@ -733,8 +734,15 @@ function NovelWorkspaceEditor({
         stage: "revise",
         topic: draft.topic,
         direction: draft.direction,
+        // 审稿、改稿线路分开选；未选时都沿用写作线路。modelPreference 带审稿线路，兼容旧服务端。
         ...((draft.reviseModelPreference || draft.modelPreference)
-          ? { modelPreference: draft.reviseModelPreference || draft.modelPreference }
+          ? {
+              modelPreference: draft.reviseModelPreference || draft.modelPreference,
+              reviewModelPreference: draft.reviseModelPreference || draft.modelPreference,
+            }
+          : {}),
+        ...((draft.rewriteModelPreference || draft.modelPreference)
+          ? { rewriteModelPreference: draft.rewriteModelPreference || draft.modelPreference }
           : {}),
         templates: [],
         episodeCount: 1,
@@ -1857,6 +1865,8 @@ function NovelWorkspaceEditor({
       ))}
     </>
   );
+  /** 审稿改稿改动情节时提醒核对大纲（模型申报 + 代码兜底核对）。 */
+  const outlineAlert = novelOutlineAlertSummary(draft);
   const storyContent = (
     <>
       <button
@@ -2051,12 +2061,20 @@ function NovelWorkspaceEditor({
       >
         生成本批续写提案
       </button>
+      {outlineAlert.level !== "none" && (
+        <p className="novel-outline-alert-note mt-4" role="status">
+          {outlineAlert.level === "major"
+            ? "修改版已偏离原大纲，采用前请先核对并更新大纲"
+            : "审稿改稿改动了情节，请核对大纲"}
+          （第{outlineAlert.chapters.join("、")}集）。更新本集大纲条目后提醒自动消失。
+        </p>
+      )}
       <label className="mt-4 block">
         提案与大纲 · 可修改
         <textarea
           aria-label="提案与大纲"
           disabled={disabled}
-          className={field}
+          className={`${field}${outlineAlert.level === "major" ? " novel-outline-alert novel-outline-alert-flash" : outlineAlert.level === "partial" ? " novel-outline-alert" : ""}`}
           rows={12}
           value={draft.outline}
           onChange={e =>
@@ -2199,26 +2217,33 @@ function NovelWorkspaceEditor({
             >
               审稿改稿
             </button>
-            <label className="inline-flex items-center gap-2 text-sm">
-              审稿改稿线路
-              <select
-                aria-label={`第${i + 1}集审稿改稿线路`}
-                className="rounded border px-2 py-1"
-                disabled={disabled}
-                value={draft.reviseModelPreference || draft.modelPreference || "auto"}
-                onChange={e =>
-                  change({
-                    reviseModelPreference: e.target.value as NovelTestInput["modelPreference"],
-                  })
-                }
-              >
-                {NOVEL_MODEL_OPTIONS.map(option => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {(
+              [
+                ["reviseModelPreference", "审稿线路"],
+                ["rewriteModelPreference", "改稿线路"],
+              ] as const
+            ).map(([key, title]) => (
+              <label key={key} className="inline-flex items-center gap-2 text-sm">
+                {title}
+                <select
+                  aria-label={`第${i + 1}集${title}`}
+                  className="rounded border px-2 py-1"
+                  disabled={disabled}
+                  value={draft[key] || draft.modelPreference || "auto"}
+                  onChange={e =>
+                    change({
+                      [key]: e.target.value as NovelTestInput["modelPreference"],
+                    })
+                  }
+                >
+                  {NOVEL_MODEL_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
           </div>
           <textarea
             aria-label={`第${i + 1}集小说稿`}
@@ -2241,10 +2266,15 @@ function NovelWorkspaceEditor({
           <NovelChapterRevisionPanel
             entries={(draft.chapterRevisions || []).filter(r => r.index === i)}
             disabled={disabled || Boolean(initial.error)}
-            onAdopt={requestId => {
+            outlineState={draft}
+            onAdopt={(requestId, outlineAlert) => {
               if (
                 !window.confirm(
-                  "采用最终修改版？当前正文会保留为本集历史版本。"
+                  outlineAlert === "major"
+                    ? "修改版已偏离原大纲，采用前请先核对并更新大纲。\n仍要采用最终修改版？当前正文会保留为本集历史版本。"
+                    : outlineAlert === "partial"
+                      ? "本次修改改动了情节，请留意与大纲是否一致。\n采用最终修改版？当前正文会保留为本集历史版本。"
+                      : "采用最终修改版？当前正文会保留为本集历史版本。"
                 )
               )
                 return;
@@ -2643,6 +2673,15 @@ function NovelWorkspaceEditor({
           >
             <Icon size={19} />
             <span>{label}</span>
+            {id === "prepare" && outlineAlert.level !== "none" && (
+              <span
+                className="novel-step-alert"
+                title="审稿改稿改动了情节，请核对大纲"
+                aria-label="大纲待核对"
+              >
+                大纲待核对
+              </span>
+            )}
             <span className="novel-step-number">0{i + 1}</span>
           </button>
         ))}

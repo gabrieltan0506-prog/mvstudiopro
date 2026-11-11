@@ -12,6 +12,12 @@ import {
   type NovelTestResult,
 } from "@shared/novelWorkspace";
 import { novelWorkspaceStateSchema as stateSchema } from "@shared/novelWorkspaceState";
+import {
+  detectOutlineDrift,
+  extractEpisodeOutline,
+  novelOutlineAlertLevel,
+  type NovelOutlineAlert,
+} from "@shared/novelOutlineDrift";
 export type NovelWorkspace = Omit<z.infer<typeof stateSchema>, "source"> & {
   source: ManhuaNovelDraft | null;
 };
@@ -177,12 +183,54 @@ export function parseNovelRevisionEntry(entry: NovelRevisionEntry): {
   original: string;
   review: NovelReview;
   revised?: NovelRevisedChapter;
+  models?: { review?: string; revise?: string };
 } | null {
   try {
     return revisionOutcomeSchema.parse(JSON.parse(entry.outcome));
   } catch {
     return null;
   }
+}
+/**
+ * 某条审稿改稿记录的大纲偏离：模型申报 + 代码兜底核对。
+ * 当前大纲里的本集条目已与提交时不同（用户已核对并更新大纲）时不再提醒。
+ */
+export function novelRevisionOutlineAlert(
+  now: Pick<NovelWorkspace, "outline" | "outlineApproved">,
+  entry: NovelRevisionEntry
+) {
+  const parsed = parseNovelRevisionEntry(entry);
+  const currentItem = extractEpisodeOutline(
+    now.outlineApproved || now.outline,
+    entry.index + 1
+  );
+  const item = entry.outlineItem ?? currentItem;
+  if (!parsed?.revised)
+    return { level: "none" as NovelOutlineAlert, hints: [], item, stale: false };
+  const hints = detectOutlineDrift(
+    item,
+    parsed.original,
+    `${parsed.revised.title}\n${parsed.revised.text}`
+  );
+  const level = novelOutlineAlertLevel(parsed.revised.outlineImpact, hints);
+  const stale = entry.outlineItem !== undefined && entry.outlineItem !== currentItem;
+  return { level, hints, item, stale };
+}
+/** 需要提醒核对大纲的最高级别（每集只看最近一条记录）；用于大纲所在步骤入口的角标。 */
+export function novelOutlineAlertSummary(
+  now: Pick<NovelWorkspace, "outline" | "outlineApproved" | "chapterRevisions">
+): { level: NovelOutlineAlert; chapters: number[] } {
+  const latestByChapter = new Map<number, NovelRevisionEntry>();
+  for (const entry of now.chapterRevisions || []) latestByChapter.set(entry.index, entry);
+  let level: NovelOutlineAlert = "none";
+  const chapters: number[] = [];
+  for (const entry of Array.from(latestByChapter.values())) {
+    const alert = novelRevisionOutlineAlert(now, entry);
+    if (alert.stale || alert.level === "none") continue;
+    chapters.push(entry.index + 1);
+    if (alert.level === "major" || level === "none") level = alert.level;
+  }
+  return { level, chapters: chapters.sort((a, b) => a - b) };
 }
 /** 审稿改稿成功：记录未修改版、审稿与修改版，不改动本集正文。 */
 export function recordNovelRevision(
@@ -200,6 +248,7 @@ export function recordNovelRevision(
         requestId: input.requestId,
         savedAt: new Date().toISOString(),
         outcome: result.text,
+        outlineItem: extractEpisodeOutline(input.outline, input.chapterIndex),
       },
     ],
   };
@@ -226,6 +275,7 @@ export function recordNovelReviewOnly(
           review,
         }),
         failure,
+        outlineItem: extractEpisodeOutline(input.outline, input.chapterIndex),
       },
     ],
   };

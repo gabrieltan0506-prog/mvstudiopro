@@ -268,7 +268,11 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     ).toBe("deepseek");
     expect(
       await page.$eval('[aria-label="顾问对话记录"]', el => el.textContent)
-    ).toContain("DeepSeek V4.1 Flash");
+    ).toContain("线路二");
+    // 前台只显示中性线路名（1111-c 起），不得回显模型名。
+    expect(
+      await page.$eval('[aria-label="顾问对话记录"]', el => el.textContent)
+    ).not.toMatch(/DeepSeek|GLM/i);
     await click("生成3个故事方案");
     await page.waitForSelector('[aria-label="故事线方案"]');
     expect(

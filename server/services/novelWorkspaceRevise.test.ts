@@ -121,3 +121,16 @@ it("改稿失败：阶段失败但审稿结果保留并经回执返回，两份�
   expect(receipt.revise?.review).toEqual(REVISE_REVIEW);
   expect(receipt.revise?.original).toBe(REVISE_ORIGINAL);
 });
+it("审稿线路与改稿线路分别生效（各自传给对应那次调用）", async () => {
+  const split = novelTestInputSchema.parse({
+    ...input,
+    requestId: "44444444-4444-4444-8444-444444444444",
+    reviewModelPreference: "deepseek",
+    rewriteModelPreference: "glm",
+  });
+  await runNovelWorkspaceTest(1, split);
+  expect(memory.calls).toEqual([
+    { step: "review", modelPreference: "deepseek" },
+    { step: "revise", modelPreference: "glm" },
+  ]);
+});

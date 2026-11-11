@@ -30,6 +30,7 @@ import {
   NovelReviseError,
   type NovelReviseStep,
 } from "./novelChapterRevise";
+import { novelRevisePreference } from "../../shared/novelWorkspace";
 import { retrieveNovelCraft, shouldRetrieveNovelCraft } from "./novelCraftRetrieval";
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 /**
@@ -456,8 +457,9 @@ async function runNovelReviseJob(
       input,
       (step, prompt) =>
         callNovelStage(prompt, true, `${input.requestId}:${step}`, {
-          modelPreference: input.modelPreference,
-          ...(input.modelPreference === "carbon"
+          // 审稿、改稿线路各自生效；缺省沿用 modelPreference。
+          modelPreference: novelRevisePreference(input, step),
+          ...(novelRevisePreference(input, step) === "carbon"
             ? {
                 saveEvidence: createGeminiCarbonGcsSaver(
                   `${novelWorkspaceCarbonEvidencePrefix(userId, input.requestId)}/${step}`

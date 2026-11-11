@@ -30,8 +30,13 @@ export const novelWorkspaceStateSchema = z.object({
   direction: z.string(),
   advisorDraft: z.string().max(2000).optional(),
   modelPreference: novelModelSchema.optional(),
-  /** 审稿改稿单独选用的线路（站长 2026-11-11：审稿改稿可自选，不随写作线路锁定）；未设时沿用写作线路。 */
+  /**
+   * 审稿线路（站长 2026-11-11：审稿、改稿拆成两个下拉）。字段名沿用旧的 reviseModelPreference，
+   * 旧草稿里的值即作为审稿线路读取；未设时沿用写作线路。
+   */
   reviseModelPreference: novelModelSchema.optional(),
+  /** 改稿线路（1111 新增）；未设时沿用写作线路。 */
+  rewriteModelPreference: novelModelSchema.optional(),
   advisorAnchor: z.string().optional(),
   storyVersions: z
     .array(
@@ -114,6 +119,8 @@ export const novelWorkspaceStateSchema = z.object({
         outcome: z.string(),
         failure: z.string().optional(),
         adoptedAt: z.string().optional(),
+        /** 提交时的本集大纲条目；当前大纲条目与之不同即视为已核对并更新大纲，不再提醒。 */
+        outlineItem: z.string().optional(),
       })
     )
     .optional(),

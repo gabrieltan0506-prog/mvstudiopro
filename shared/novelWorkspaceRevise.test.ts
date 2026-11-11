@@ -6,6 +6,9 @@ import {
   validateNovelRevision,
   validateNovelStageOutput,
   novelTextLength,
+  locateNovelQuote,
+  novelRevisePreference,
+  novelRevisedChapterSchema,
 } from "./novelWorkspace";
 import { novelWorkspaceStateSchema } from "./novelWorkspaceState";
 import {
@@ -91,5 +94,85 @@ describe("审稿改稿契约", () => {
     expect(NOVEL_CRAFT_REVIEW_RULES).toMatch(/只对第 1–3 集适用/);
     const all = NOVEL_CRAFT_REVIEW_RULES + NOVEL_REVISION_DISCIPLINE;
     expect(all).not.toMatch(/github|oh-story|human-novel|howells|author-toolkit|claude|gpt|gemini|glm|deepseek|carbon|MIT/i);
+  });
+  it("引用定位：空白、全半角标点、中英文引号归一化后能定位，quote 修正为原文原始片段", () => {
+    const original = "侍郎冷笑：「明日早朝前，\n交不出真账，沈家满门流放！」" + REVISE_ORIGINAL;
+    const hit = locateNovelQuote(original, "“明日早朝前,交不出真账");
+    expect(hit?.text).toBe("「明日早朝前，\n交不出真账");
+    const review = validateNovelReview(original, {
+      ...REVISE_REVIEW,
+      issues: [{ ...REVISE_REVIEW.issues[0], quote: "明日早朝前, 交不出真账" }, ...REVISE_REVIEW.issues],
+    });
+    expect(review.issues[0].quote).toBe("明日早朝前，\n交不出真账");
+    expect(review.issues[0].located).toBeUndefined();
+  });
+  it("仍定位不到的意见标 located:false 排在后面；能定位的少于 3 条才判失败", () => {
+    const review = validateNovelReview(REVISE_ORIGINAL, {
+      ...REVISE_REVIEW,
+      issues: [{ ...REVISE_REVIEW.issues[0], quote: "原文没有的句子" }, ...REVISE_REVIEW.issues],
+    });
+    expect(review.issues).toHaveLength(4);
+    expect(review.issues.slice(0, 3).every(i => i.located === undefined)).toBe(true);
+    expect(review.issues[3]).toMatchObject({ quote: "原文没有的句子", located: false });
+    expect(() =>
+      validateNovelReview(REVISE_ORIGINAL, {
+        ...REVISE_REVIEW,
+        issues: [...REVISE_REVIEW.issues.slice(0, 2), { ...REVISE_REVIEW.issues[2], quote: "不存在甲" }, { ...REVISE_REVIEW.issues[2], quote: "不存在乙" }],
+      })
+    ).toThrow(/仅2条/);
+    // 标准不降：超过 30 字的引用仍不合格
+    expect(() =>
+      validateNovelReview(REVISE_ORIGINAL, {
+        ...REVISE_REVIEW,
+        issues: [...REVISE_REVIEW.issues, { ...REVISE_REVIEW.issues[0], quote: "她".repeat(31) }],
+      })
+    ).toThrow();
+  });
+  it("outlineImpact：新字段可解析、超长截断、自相矛盾从严；旧结果没有该字段仍可解析", () => {
+    const v = validateNovelRevision({
+      ...REVISE_REVISED,
+      outlineImpact: {
+        changed: false,
+        level: "none",
+        items: [{ what: "钥匙来源改了", before: "从御史台取钥匙", after: "改为翻墙撬锁".repeat(10) }],
+      },
+    });
+    expect(v.outlineImpact).toMatchObject({ changed: true, level: "partial" });
+    expect(Array.from(v.outlineImpact!.items[0].after)).toHaveLength(40);
+    expect(validateNovelRevision(REVISE_REVISED).outlineImpact).toBeUndefined();
+    expect(novelRevisedChapterSchema.parse({ ...REVISE_REVISED, outlineImpact: { changed: true, level: "major", items: [] } }).outlineImpact?.level).toBe("major");
+    const old = { chapterIndex: 3, original: REVISE_ORIGINAL, review: REVISE_REVIEW, revised: REVISE_REVISED };
+    expect(novelReviseResultSchema.parse(old).models).toBeUndefined();
+    expect(novelReviseResultSchema.parse({ ...old, models: { review: "a", revise: "b" } }).models?.revise).toBe("b");
+  });
+  it("审稿/改稿线路各自生效；旧请求只带 modelPreference 时两步都沿用；其他阶段不得携带", () => {
+    const both = novelTestInputSchema.parse({
+      ...base, stage: "revise", reviseDraft: REVISE_ORIGINAL,
+      modelPreference: "glm", reviewModelPreference: "carbon", rewriteModelPreference: "deepseek",
+    });
+    expect(novelRevisePreference(both, "review")).toBe("carbon");
+    expect(novelRevisePreference(both, "revise")).toBe("deepseek");
+    const legacy = novelTestInputSchema.parse({ ...base, stage: "revise", reviseDraft: REVISE_ORIGINAL, modelPreference: "glm" });
+    expect(novelRevisePreference(legacy, "review")).toBe("glm");
+    expect(novelRevisePreference(legacy, "revise")).toBe("glm");
+    expect(() =>
+      novelTestInputSchema.parse({ ...base, stage: "outline", templates: [{ publicId: "a", role: "b" }], reviewModelPreference: "glm" })
+    ).toThrow(/仅审稿改稿/);
+  });
+  it("草稿：旧 reviseModelPreference 作审稿线路读取，新增改稿线路与大纲条目快照可保存", () => {
+    const old = {
+      roundId: base.roundId, topic: "t", direction: "d", mode: "original", source: null,
+      templates: [], episodeCount: 3, outline: "", outlineApproved: "", chapters: [],
+      novelApproved: "", runs: [], reviseModelPreference: "carbon",
+    };
+    const parsed = novelWorkspaceStateSchema.parse(old);
+    expect(parsed.reviseModelPreference).toBe("carbon");
+    expect(parsed.rewriteModelPreference).toBeUndefined();
+    const next = novelWorkspaceStateSchema.parse({
+      ...old, rewriteModelPreference: "deepseek",
+      chapterRevisions: [{ index: 0, requestId: "r", savedAt: "x", outcome: "{}", outlineItem: "第1集：开场" }],
+    });
+    expect(next.rewriteModelPreference).toBe("deepseek");
+    expect(next.chapterRevisions?.[0].outlineItem).toBe("第1集：开场");
   });
 });
