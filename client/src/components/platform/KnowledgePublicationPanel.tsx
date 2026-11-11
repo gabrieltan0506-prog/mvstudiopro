@@ -165,7 +165,7 @@ export default function KnowledgePublicationPanel({
     try{generation=sessionStorage.getItem(exportMarker(doc.id));}catch{generation=null;}
     if(!generation||active.current)return;
     let cancelled=false;
-    locked(true);setStage({step:4});setExporting(true);setMessage("正在继续生成 PDF（刷新前已发起）…");
+    locked(true);setStage({step:3});setExporting(true);setMessage("正在继续生成 PDF（刷新前已发起）…");
     void runExport(doc.id,generation).then(result=>{
       if(cancelled||!alive.current||latest.current.id!==doc.id)return;
       setFiles(result);
@@ -239,7 +239,7 @@ export default function KnowledgePublicationPanel({
       return value;
     };
     if(pub.layoutConversationId)return;
-    setStage({step:3});
+    setStage({step:2});
     const history=pub.conversation||[];
     let turn=history.find(t=>t.request.id===intent.requestId);
     // 统稿一落盘立即衔接：顾问报价与排版输入并行读取，不再串行等待（1110 实测两者串行 + 两次保存 = 44 秒空档）。
@@ -344,7 +344,7 @@ export default function KnowledgePublicationPanel({
       const execute = async (i: number) => {
         setMessage(
           i >= batches.length
-            ? "联网校验搜索：全册疑点集中核实，随后修订统稿…"
+            ? "正在汇总全册整理结果，生成统稿…"
             : `正在整理第 ${batches[i].map(n=>n+1).join("、")} 章 · 已完成内容已保存`
         );
         const attempt = pub.attempts[String(i)] || 0;
@@ -453,9 +453,9 @@ export default function KnowledgePublicationPanel({
           quote = updated;
           total = updated.batches;
         }
-        // 最后一组核对在服务端紧接着做逐页统稿；之前各组为联网校验。
+        // 最后一步在服务端汇总成统稿；旧稿已开始的全册核对批次计入统稿进度（新稿生图前已核实，不再重复联网）。
         const checks = Math.max(1, total - batches.length), check = i - batches.length;
-        setStage(i >= total - 1 ? { step: 2 } : { step: 1, done: check, total: checks });
+        setStage(i >= total - 1 ? { step: 1 } : { step: 1, done: check, total: checks });
         await consume(i, await execute(i));
       }
       if(latest.current.publication?.automaticLayout)await arrangeBook();
@@ -576,7 +576,7 @@ export default function KnowledgePublicationPanel({
         setPptxFile(result);setMessage(`PPTX已生成，共${result.slides}页，可下载后编辑。`);
       }else{
         setMessage("确认稿已保存，正在自动排版并生成 PDF…");
-        setStage({step:4});setExporting(true);
+        setStage({step:3});setExporting(true);
         let result:Awaited<ReturnType<typeof runExport>>;
         try{result=await runExport(next.id,saved.generation);}
         finally{setExporting(false);}
@@ -596,7 +596,7 @@ export default function KnowledgePublicationPanel({
     }
   };
   const exportLayout=async(next:EditableLayout,saved:Saved)=>{
-    setFiles(null);setError("");setStage({step:4});
+    setFiles(null);setError("");setStage({step:3});
     setMessage("顾问方案已保存，正在按指定章节顺序和设计生成 PDF…");
     let result:Awaited<ReturnType<typeof runExport>>;
     setExporting(true);
@@ -744,7 +744,7 @@ export default function KnowledgePublicationPanel({
           <p className="text-sm">
             正文整理 {Math.round(completedCount/Math.max(1,pub.source.pages.length)*100)}% · 已完成 {completedCount}/{pub.source.pages.length} 章。原稿与配图已保留。
             {pendingChapters.length>0 && <span>第 {pendingChapters.join("、")} 章{error ? "尚未成功，已完成章节不会重做。" : "正在等待或整理。"}</span>}
-            {completedCount===pub.source.pages.length && <span>联网校验搜索进行中，尚未完成最终统稿。</span>}
+            {completedCount===pub.source.pages.length && <span>正在汇总全册整理结果，尚未完成最终统稿。</span>}
           </p>
           <div aria-label="已整理章节" aria-live="polite" className="max-h-[720px] space-y-4 overflow-y-auto">
             {pub.source.pages.map((source,i)=>{const chapter=pub.chapterReviews?.[source.id];if(!chapter || !pub.chapterReviewDigest)return null;

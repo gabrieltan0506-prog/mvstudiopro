@@ -4,6 +4,7 @@ import {deflateSync} from 'node:zlib';
 import {layoutFromSource} from './editableLayout';
 import {knowledgePublicationChapter,knowledgePublicationHead} from './knowledgePublicationHtml';
 import {KNOWLEDGE_BOOKLET_MAX_WHITESPACE} from './knowledgeBooklet';
+import {auditKnowledgeBookletLayout} from './knowledgeLayoutAudit';
 import {finalizeKnowledgeBookletPagination} from '../pdf-worker/knowledgeBookletPagination';
 import {pdfImageCompressionScript} from '../pdf-worker/pdfImageCompression';
 
@@ -149,14 +150,17 @@ it('34 章完整版（长短混合，正文已按版面预算压过）：逐章�
   for(let i=0;i<n;i++)counts.push(await prepare(page,html(i)));
   const total=counts.reduce((a,b)=>a+b,0);
   expect(total).toBeGreaterThanOrEqual(48);expect(total).toBeLessThanOrEqual(54);
-  let offset=0;const whitespace:number[]=[];let spreads=0;
+  let offset=0;const whitespace:number[]=[];let spreads=0;const layout:any[]=[];
   for(let i=0;i<n;i++){
    await prepare(page,html(i,{offset,total,count:counts[i]!}));
    const r=await page.evaluate(()=>(document.querySelector('[data-booklet-root]') as any).__knowledgeBooklet);
-   expect(r.ready).toBe(true);whitespace.push(...r.whitespace);spreads+=r.spreadChapters;offset+=counts[i]!;
+   expect(r.ready).toBe(true);whitespace.push(...r.whitespace);layout.push(...r.layout);spreads+=r.spreadChapters;offset+=counts[i]!;
   }
   expect(whitespace).toHaveLength(total);
   expect(Math.max(...whitespace)).toBeLessThanOrEqual(KNOWLEDGE_BOOKLET_MAX_WHITESPACE);
   expect(spreads).toBe(17);
+  // 排版后快速版面审查（确定性、不调模型）：真实渲染的整册无溢出/遮挡/裁切/超限留白/页码断档/坏图/跨页图不成对。
+  expect(layout).toHaveLength(total);
+  expect(auditKnowledgeBookletLayout(layout).issues).toEqual([]);
  }finally{await page.close();}
 },300000);

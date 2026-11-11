@@ -222,3 +222,47 @@ it('旧核对回执的卖书来源不再作为佐证，新修订保留作者独�
  expect(saved.before.body).toBe(f.report.pages[0].body);expect(saved.after.body).toBe(f.report.pages[0].body);
  await reviewKnowledgePublication(7,{...f.context,batchIndex:1},f.deps as any);expect(f.deps.post).toHaveBeenCalledTimes(3);
 });
+describe('1111 审校后不重复联网核实', () => {
+ it('生图前已核实（verificationJobId）的新稿：汇总零调用，不发起联网或离线核对；批次数只加一步汇总', async () => {
+  const f = make();
+  (f.doc.publication!.source as any).verificationJobId = 'job-verified';
+  f.report.sourceDigest = (f as any).digest = knowledgeSourceDigest(f.doc.publication!.source);
+  (f.report.pages[0].cautions as any[]).push({kind:'uncertain',evidence:'原句「某疑点」',message:'已标注疑点，等待全册整理后统一联网核实。'});
+  await reviewKnowledgePublication(7, f.context, f.deps as any);
+  expect(f.deps.post).toHaveBeenCalledTimes(1);
+  const result: any = await reviewKnowledgePublication(7, {...f.context, batchIndex: 1}, f.deps as any);
+  expect(f.deps.post).toHaveBeenCalledTimes(1);
+  expect(result.pages[0].cautions).toHaveLength(1);
+  const keys = Array.from(f.storage.keys());
+  expect(keys.some(k => /consistency-\d|consistency-plan|final-markdown|research/.test(k))).toBe(false);
+  const saved = Array.from(f.storage.entries()).find(([k]) => k.endsWith('/report.json') && !k.includes('batch-'))![1];
+  expect(saved.consistency).toMatchObject({ taskCount: 0 });
+  const { knowledgePublicationWorkPlan } = await import('./knowledgePublicationAdvisor');
+  const plan = await knowledgePublicationWorkPlan(7, {...f.doc, publication: {...f.doc.publication!, completedBatches: 1}} as any, f.deps.read as any);
+  expect(plan).toMatchObject({ reviewBatches: 1, totalBatches: 2, consistencyKnown: true });
+  await reviewKnowledgePublication(7, {...f.context, batchIndex: 1}, f.deps as any);
+  expect(f.deps.post).toHaveBeenCalledTimes(1);
+ });
+ it('无生图前核实记录的稿：这一轮仍是唯一一次联网核实，保持发起', async () => {
+  const f = make();
+  (f.report.pages[0].cautions as any[]).push({kind:'uncertain',evidence:'原句「某疑点」；问题：前后说法不一',message:'已标注疑点，等待全册整理后统一联网核实。'});
+  await reviewKnowledgePublication(7, f.context, f.deps as any);
+  f.deps.post.mockImplementationOnce(async () => f.envelope({sourceDigest:f.digest,findings:[],verificationMarkdown:'无依据',sources:[]}, false));
+  await reviewKnowledgePublication(7, {...f.context, batchIndex: 1}, f.deps as any).catch(() => undefined);
+  const requests = f.deps.post.mock.calls as unknown as [any][];
+  expect(requests[1][0]).toMatchObject({ researchOnly: true });
+ });
+ it('旧稿已开始全册核对（已有 consistency-plan.json）：沿用原核对批次，不改请求身份', async () => {
+  const f = make();
+  (f.doc.publication!.source as any).verificationJobId = 'job-verified';
+  f.report.sourceDigest = (f as any).digest = knowledgeSourceDigest(f.doc.publication!.source);
+  await reviewKnowledgePublication(7, f.context, f.deps as any);
+  const root = Array.from(f.storage.keys()).find(k => k.includes('/batch-0/'))!.split('/batch-0/')[0];
+  f.storage.set(`${root}/consistency-plan.json`, { legacy: true });
+  f.deps.post.mockImplementationOnce(async () => f.envelope({sourceDigest:f.digest,findings:[]}, false));
+  await reviewKnowledgePublication(7, {...f.context, batchIndex: 1}, f.deps as any);
+  const requests = f.deps.post.mock.calls as unknown as [any][];
+  expect(requests).toHaveLength(2);
+  expect(requests[1][0].researchOnly).toBeUndefined();
+ });
+});
