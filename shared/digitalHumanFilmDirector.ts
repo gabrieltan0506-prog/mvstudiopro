@@ -5,7 +5,7 @@ export type DigitalHumanFilmModel = z.infer<typeof digitalHumanFilmModelSchema>;
 export const DIGITAL_HUMAN_FILM_MODELS = {
   "seedance-2.5": { label: "Seedance 2.5 · 720p", resolution: "720p", maxAudioSec: 30, maxImages: 30 },
   "seedance-2.0-mini": { label: "Seedance 2.0 Mini · 480p", resolution: "480p", maxAudioSec: 15, maxImages: 9 },
-  "wan-3.0": { label: "Wan 3.0 · 720p", resolution: "720p", maxAudioSec: 15, maxImages: 10 },
+  "wan-3.0": { label: "长镜直出引擎 · 720p", resolution: "720p", maxAudioSec: 15, maxImages: 10 },
 } as const;
 export const DIGITAL_HUMAN_DIRECTION_MAX_CHARS = 20000;
 export const digitalHumanDirectionSchema = z.string().max(DIGITAL_HUMAN_DIRECTION_MAX_CHARS, "完整导演要求超过20000字，请保留原稿并拆分制作段落");

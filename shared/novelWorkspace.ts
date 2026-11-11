@@ -10,20 +10,17 @@ export const NOVEL_FACETS = [
   "对白",
 ] as const;
 export const NOVEL_MODEL_OPTIONS = [
-  { value: "auto", label: "自动 · GLM优先，异常时DeepSeek接续" },
-  { value: "glm", label: "GLM 5.3 FlashX" },
-  { value: "deepseek", label: "DeepSeek V4.1 Flash" },
+  { value: "auto", label: "自动 · 线路一优先，异常时线路二接续" },
+  { value: "glm", label: "线路一" },
+  { value: "deepseek", label: "线路二" },
 ] as const;
 export const novelModelSchema = z.enum(["auto", "glm", "deepseek"]);
+/** 前台只显示中性线路名；模型名是商业机密，未知模型也不回显原始标识。 */
 export function novelModelLabel(model?: string) {
   if (!model) return "";
-  const names: Record<string, string> = {
-    "z-ai/glm-5.3-flashx": "GLM 5.3 FlashX",
-    "glm-5.3-flashx": "GLM 5.3 FlashX",
-    "deepseek/deepseek-v4.1-flash": "DeepSeek V4.1 Flash",
-    "deepseek-v4.1-flash": "DeepSeek V4.1 Flash",
-  };
-  return names[model] || model;
+  if (/glm/i.test(model)) return "线路一";
+  if (/deepseek/i.test(model)) return "线路二";
+  return "创作线路";
 }
 const text = z.string().trim().min(1);
 export const novelTemplateChoiceSchema = z

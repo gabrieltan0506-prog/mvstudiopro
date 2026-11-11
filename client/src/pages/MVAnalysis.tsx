@@ -4483,7 +4483,7 @@ export default function MVAnalysisPage({ remixWorkspace = false }: { remixWorksp
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex flex-col gap-0.5">
                       <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Music Prompt</div>
-                      <div className="text-[10px] text-white/40">可选 Suno 或 Udio 生成 BGM</div>
+                      <div className="text-[10px] text-white/40">可选两档配乐引擎生成 BGM</div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <select
@@ -4491,8 +4491,8 @@ export default function MVAnalysisPage({ remixWorkspace = false }: { remixWorksp
                         onChange={(e) => setMusicProvider((e.target.value as MusicProvider) || "suno")}
                         className="rounded-xl border border-white/15 bg-[#0b1020] px-3 py-2 text-xs text-white"
                       >
-                        <option value="suno">Suno</option>
-                        <option value="udio">Udio</option>
+                        <option value="suno">配乐·高质量</option>
+                        <option value="udio">配乐·经济</option>
                       </select>
                       <button
                         type="button"
@@ -4626,8 +4626,8 @@ export default function MVAnalysisPage({ remixWorkspace = false }: { remixWorksp
                               onChange={(e) => setMusicProvider((e.target.value as MusicProvider) || "suno")}
                               className="rounded-xl border border-white/15 bg-[#0b1020] px-3 py-2 text-xs text-white"
                             >
-                              <option value="suno">Suno</option>
-                              <option value="udio">Udio</option>
+                              <option value="suno">配乐·高质量</option>
+                              <option value="udio">配乐·经济</option>
                             </select>
                             <button
                               type="button"
@@ -4883,7 +4883,7 @@ export default function MVAnalysisPage({ remixWorkspace = false }: { remixWorksp
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div className="flex flex-col gap-0.5">
                                 <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Music Prompt</div>
-                                <div className="text-[10px] text-white/40">可选 Suno 或 Udio 生成 BGM</div>
+                                <div className="text-[10px] text-white/40">可选两档配乐引擎生成 BGM</div>
                               </div>
                               <div className="flex flex-wrap items-center gap-2">
                                 <select
@@ -4891,8 +4891,8 @@ export default function MVAnalysisPage({ remixWorkspace = false }: { remixWorksp
                                   onChange={(e) => setMusicProvider((e.target.value as MusicProvider) || "suno")}
                                   className="rounded-xl border border-white/15 bg-[#0b1020] px-3 py-2 text-xs text-white"
                                 >
-                                  <option value="suno">Suno</option>
-                                  <option value="udio">Udio</option>
+                                  <option value="suno">配乐·高质量</option>
+                                  <option value="udio">配乐·经济</option>
                                 </select>
                                 <button
                                   type="button"

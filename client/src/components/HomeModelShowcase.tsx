@@ -75,7 +75,7 @@ const FUNCTIONS: FunctionEntry[] = [
         href: "/canvas",
       },
       {
-        label: "MiniMax H3 · 2K 直出",
+        label: "2K 多图参考 · 直出",
         desc: "固定 15 秒，屏内文字与品牌牌面最稳",
         href: "/canvas",
       },
@@ -91,7 +91,7 @@ const FUNCTIONS: FunctionEntry[] = [
     tagline: "对标视频逐帧分析、总结与战略推演。",
     options: [
       {
-        label: "深度档 · GPT-5.6 Sol",
+        label: "深度档",
         desc: "逐帧视觉分析，出可执行策略",
         href: "/creator-growth-camp",
       },

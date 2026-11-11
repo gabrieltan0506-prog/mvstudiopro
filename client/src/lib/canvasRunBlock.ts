@@ -510,11 +510,11 @@ export async function runGptImage2(
   }
 
   if (job.status !== "succeeded") {
-    throw new Error(job.error || "GPT-Image-2 生图失败");
+    throw new Error(job.error || "生图失败，请稍后重试");
   }
   const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
   const url = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
-  if (!url) throw new Error("GPT-Image-2 未返回图片 URL");
+  if (!url) throw new Error("生图未返回图片，请稍后重试");
   return url;
 }
 
@@ -1547,7 +1547,7 @@ async function runWan30(
   const probeOrigin = flyHealthProbeOriginForUrl(wanUrl);
   const images = imageUrls.map((u) => String(u || "").trim()).filter(Boolean);
   if (!images.length) {
-    throw new Error("Wan 3.0 成片需要至少一张参考图（请先出静帧或上传参考）");
+    throw new Error("长镜直出引擎成片需要至少一张参考图（请先出静帧或上传参考）");
   }
   // 载荷统一走 buildWan30RequestBody：提交键/seed 必须真实入 POST（三审 P0-1）。
   // 先构造好再进健康门，核对与 fetch 之间不留任何计算。
@@ -3577,7 +3577,7 @@ async function runCanvasBlockInner(
       } else if (useHappyHorse) {
         const firstFrame = String(seedStill || "").trim();
         if (!/^https?:\/\//i.test(firstFrame)) {
-          throw new Error("Happy Horse 成片需要至少一张首帧参考图（请先出静帧或上传参考）");
+          throw new Error("首帧图生引擎成片需要至少一张首帧参考图（请先出静帧或上传参考）");
         }
         // 0825 r2v：取图口径与 Wan 相同（块上收集的参考图集）；≥2 张服务端自动切多图参考
         const hhImages = httpsImages.length ? httpsImages : ([firstFrame].filter(Boolean) as string[]);

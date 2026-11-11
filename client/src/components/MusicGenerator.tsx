@@ -121,8 +121,8 @@ export default function MusicGenerator() {
               fontWeight: 700,
             }}
           >
-            <option value="suno">Suno（高质量）</option>
-            <option value="udio">Udio（更便宜）</option>
+            <option value="suno">配乐·高质量</option>
+            <option value="udio">配乐·经济（更便宜）</option>
           </select>
         </div>
       </div>

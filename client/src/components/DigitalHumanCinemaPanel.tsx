@@ -115,7 +115,7 @@ export function DigitalHumanCinemaPanel({
           )}
           <small>
             {value.mode === "talking"
-              ? "OmniHuman 2 只接收人物照片、音频和表演提示；背景沿用照片。"
+              ? "照片口播只接收人物照片、音频和表演提示；背景沿用照片。"
               : "人物、场景、已审预演及分段参考以生成前的完整输入预览为准。"}
           </small>
         </aside>
@@ -138,7 +138,7 @@ export function DigitalHumanCinemaPanel({
           >
             照片口播{" "}
             <small>
-              OmniHuman 2 · 照片＋配音{!canUseOmni ? " · 管理者试用" : ""}
+              照片＋配音{!canUseOmni ? " · 管理者试用" : ""}
             </small>
           </button>
         </div>

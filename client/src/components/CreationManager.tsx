@@ -29,10 +29,10 @@ const TYPE_LABELS: Record<CreationType, string> = {
   music: "音乐",
   video: "视频",
   storyboard: "分镜图",
-  kling_video: "可灵视频",
+  kling_video: "视频生成",
   kling_lipsync: "口型同步",
   kling_motion: "动作迁移",
-  kling_image: "可灵图片",
+  kling_image: "图片生成",
 };
 
 const TYPE_ICONS: Record<CreationType, React.ElementType> = {

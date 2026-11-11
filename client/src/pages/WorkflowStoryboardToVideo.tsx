@@ -717,7 +717,7 @@ export default function WorkflowStoryboardToVideo() {
             {debugMode ? "Debug Mode: ON" : "Debug Mode: OFF"}
           </button>
         )}
-        {envStatus ? (
+        {debugMode && envStatus ? (
           <div style={{ fontSize: 12, opacity: 0.82 }}>
             env:
             {" hasFAL="}{String(Boolean(envStatus.hasFalKey))}
@@ -1236,8 +1236,8 @@ export default function WorkflowStoryboardToVideo() {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
           <select value={musicProvider} onChange={(e) => setMusicProvider(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}>
-            <option value="suno">Suno</option>
-            <option value="udio">Udio</option>
+            <option value="suno">配乐·高质量</option>
+            <option value="udio">配乐·经济</option>
           </select>
           <input value={musicMood} onChange={(e) => setMusicMood(e.target.value)} placeholder="Music Mood" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
           <input value={musicBpm} onChange={(e) => setMusicBpm(e.target.value)} placeholder="Music BPM" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
