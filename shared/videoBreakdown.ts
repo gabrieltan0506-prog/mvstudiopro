@@ -38,6 +38,16 @@ export const videoBreakdownRecreatePromptSchema = z.object({
   constraints: text(600), // 生成约束（必须保留 / 必须避免）
 }).strict();
 
+/**
+ * 口播 / 台词（可选，1111 拉片复刻爆款）：口播类短视频的复刻核心。三项各自可选、至少有一项；
+ * 解析时单独校验、坏了只丢本段这一块，不影响主结果；旧结果没有此字段照常解析。
+ */
+export const videoBreakdownSpeechSchema = z.object({
+  transcript: text(1500).optional(), // 本段口播 / 对白原话（按音轨逐字转写，听不清处写「不可辨」）
+  onScreenText: text(600).optional(), // 字幕与花字（画面上出现的文字及其样式、出现方式）
+  delivery: text(300).optional(), // 口播节奏（语速、停顿、重音、情绪起伏）
+}).strict().refine(v => Boolean(v.transcript || v.onScreenText || v.delivery), "口播块至少要有一项");
+
 export const videoBreakdownSegmentSchema = z.object({
   index: z.number().int().min(0).max(199),
   startSec: sec,
@@ -51,6 +61,7 @@ export const videoBreakdownSegmentSchema = z.object({
     sound: z.string().trim().max(600).optional(), // 声音（有音轨时）
   }).strict(),
   recreatePrompt: videoBreakdownRecreatePromptSchema,
+  speech: videoBreakdownSpeechSchema.optional(),
 }).strict();
 
 export const videoBreakdownSchema = z.object({
@@ -79,6 +90,17 @@ export const videoBreakdownSchema = z.object({
       generationElements: text(400), // 生成声音要素（乐器、音色、速度、关键音效）
     }).strict().optional(),
     /** 重点时刻：模型看片时自报的抓帧秒位（全片绝对秒），类型限定五类。 */
+    /**
+     * 爆款策略（可选，1111 由原「爆款复刻」的内容策略分析并入）：同一次看片顺带产出，不另调接口、不另计价；
+     * 模型没给或校验不过时整块丢弃。
+     */
+    viralStrategy: z.object({
+      whyItWorks: text(600), // 爆款原因
+      hook: text(400), // 开头钩子（前几秒靠什么留人）
+      scriptStructure: text(600), // 口播 / 文案结构（用 → 串起各阶段）
+      topicAngle: text(400).optional(), // 选题与受众
+      titleIdeas: z.array(text(60)).min(1).max(5).optional(), // 标题参考
+    }).strict().optional(),
     keyMoments: z.array(z.object({
       atSec: sec,
       type: z.enum(["cut", "emotion", "lighting", "story", "sound"]), // 切镜 / 情绪 / 灯光 / 剧情 / 声音
@@ -122,8 +144,19 @@ export function formatVideoBreakdownRecreatePrompt(segment: VideoBreakdownSegmen
     `【摄影机与构图】${p.camera}`,
     `【光色与材质】${p.lightColor}`,
     `【节奏与声音】${p.rhythm}`,
+    ...formatSpeechLines(segment.speech),
     `【生成约束】${p.constraints}`,
   ].join("\n");
+}
+
+/** 口播三行（有才出）：台词原样带进复刻提示词，字幕花字与口播节奏一并带上。 */
+export function formatSpeechLines(speech: VideoBreakdownSegment["speech"]): string[] {
+  if (!speech) return [];
+  return [
+    speech.transcript ? `【台词 / 口播】${speech.transcript}` : "",
+    speech.onScreenText ? `【字幕花字】${speech.onScreenText}` : "",
+    speech.delivery ? `【口播节奏】${speech.delivery}` : "",
+  ].filter(Boolean);
 }
 
 /** 接口契约（tRPC 路由名 videoBreakdown）。 */

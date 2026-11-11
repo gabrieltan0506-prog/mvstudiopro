@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatVideoBreakdownRecreatePrompt } from "./videoBreakdown";
 import { videoBreakdownFixture as fixture } from "./videoBreakdown.fixture";
-import { VIDEO_BREAKDOWN_REMAKE_CONSTRAINT, formatVideoBreakdownRemakePrompt, remakeVideoBreakdownSegment, videoBreakdownRemakeInputSchema } from "./videoBreakdownRemake";
+import { VIDEO_BREAKDOWN_REMAKE_CONSTRAINT, VIDEO_BREAKDOWN_REMAKE_SPEECH_CONSTRAINT, formatVideoBreakdownRemakePrompt, remakeVideoBreakdownSegment, videoBreakdownRemakeInputSchema } from "./videoBreakdownRemake";
 
 const section = (text: string, name: string) => {
   const lines = text.split("\n");
@@ -34,5 +34,19 @@ describe("用这套拍法创作新片", () => {
     expect(() => remakeVideoBreakdownSegment(seg, { subject: "  " })).toThrow("请用一句话写新主体");
     expect(videoBreakdownRemakeInputSchema.safeParse({ subject: "a".repeat(301) }).success).toBe(false);
     expect(videoBreakdownRemakeInputSchema.safeParse({ subject: "x", scene: "b".repeat(301) }).success).toBe(false);
+  });
+
+  it("口播片做新片：不照抄原话，保留字幕花字与口播节奏，约束里写明台词换成自己的话；不改原段", () => {
+    const talking = { ...seg, speech: { transcript: "别再这样洗脸了", onScreenText: "黄底大字弹出", delivery: "语速快，重音在开头" } };
+    const recreated = formatVideoBreakdownRecreatePrompt(talking);
+    expect(recreated).toContain("【台词 / 口播】别再这样洗脸了");
+    const remade = formatVideoBreakdownRemakePrompt(talking, { subject: "健身教练" });
+    expect(remade).not.toContain("别再这样洗脸了");
+    expect(remade).toContain("【字幕花字】黄底大字弹出");
+    expect(remade).toContain("【口播节奏】语速快，重音在开头");
+    expect(section(remade, "生成约束")).toContain(VIDEO_BREAKDOWN_REMAKE_SPEECH_CONSTRAINT);
+    expect(talking.speech.transcript).toBe("别再这样洗脸了");
+    // 只有原话的段：speech 整块去掉
+    expect(remakeVideoBreakdownSegment({ ...seg, speech: { transcript: "只有原话" } }, { subject: "x" }).speech).toBeUndefined();
   });
 });
