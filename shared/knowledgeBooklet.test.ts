@@ -25,3 +25,13 @@ it('只有标题的章节仍进入预览，保留其他全文并标记待补齐�
  const html=buildKnowledgeBookletHtml({title:'原稿',pages:[{id:'empty',headline:'只有标题',body:'',imageUrl:''},{id:'good',headline:'已有正文',body:'保留原有内容123。',imageUrl:''}]});
  expect(html).toContain('只有标题');expect(html).toContain('保留原有内容123。');expect(html).toContain('本节正文待补齐');expect(html).toContain('pendingContent');
 });
+
+import { KNOWLEDGE_BOOKLET_WATERMARK as WATERMARK_TEXT, buildKnowledgeBookletHtml as buildForWatermark } from "./knowledgeBooklet";
+it("手册水印：每页平铺半透明站名水印，不拦截点击、不参与排版", () => {
+    const html = buildForWatermark({ title: "水印", pages: [{ id: "a", headline: "标题", body: "正文", imageUrl: "" }] });
+    expect(WATERMARK_TEXT).toBe("mvstudiopro.com");
+    expect(html).toContain(".folio::after{");
+    expect(html).toContain(`>${WATERMARK_TEXT}</text>`);
+    expect(html).toMatch(/\.folio::after\{[^}]*position:absolute[^}]*pointer-events:none/);
+    expect(html).toMatch(/fill-opacity='0\.0\d+'/);
+  });
