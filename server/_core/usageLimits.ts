@@ -222,6 +222,8 @@ export const USAGE_LIMITS = {
   growthCampAnalyze: { name: "growth_camp_analyze", perMinute: 3, perDay: 30, globalPerDay: 1500 },
   /** 服务端直收上传（/api/upload 等）。 */
   serverUpload: { name: "server_upload", perMinute: 20, perDay: 300 },
+  /** 发版验收只读条数（匿名，按 IP；只回各平台条数）。 */
+  growthDeployCounts: { name: "growth_deploy_counts", perMinute: 20, perDay: 500, globalPerDay: 5000 },
   /** 访客留言 / MV 评论（匿名可写，按 IP）。 */
   guestbookSubmit: { name: "guestbook_submit", perMinute: 3, perDay: 20, globalPerDay: 1000 },
   /** 首页邀请码申请 / 教育咨询（访客入口，发邮件，按 IP）。 */

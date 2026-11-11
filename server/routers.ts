@@ -11035,6 +11035,26 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
+     * 发版验收专用（.github/workflows/fly-deploy.yml → scripts/fetch-growth-status.mjs）：匿名只读，
+     * 只回各平台在库 / 归档条数，供部署前后核对「数据不倒退」。不含邮箱、凭证、报错、磁盘等任何运维信息。
+     */
+    getGrowthDeployCounts: publicProcedure
+      .use(withUsageLimit(USAGE_LIMITS.growthDeployCounts))
+      .query(async () => {
+        const snapshot = await readGrowthStatusSnapshot();
+        const debugSummary = snapshot?.debugSummary !== undefined ? snapshot.debugSummary : await readGrowthDebugSummary();
+        return {
+          truthStore: {
+            ready: debugSummary != null,
+            platforms: activeGrowthPlatformValues.map((platform) => ({
+              platform,
+              currentItems: Number(debugSummary?.platforms?.[platform]?.currentTotal ?? 0),
+              archivedItems: Number(debugSummary?.platforms?.[platform]?.archivedTotal || 0),
+            })),
+          },
+        };
+      }),
+    /**
      * 正式进度 + 健康摘要（MVAnalysis 分析中依赖 anomalies / currentSupportActivities）。
      * 敏感写操作见 setGrowthRuntimeMode / setGrowthBurstControl（adminProcedure，含 supervisor）。
      * Debug 面板只读仍走本接口，但仅在 supervisor UI 挂载时请求；勿改为仅 admin 否则正式分析会挂。
