@@ -22,12 +22,12 @@ export const NOVEL_MODEL_OPTIONS = [
 ] as const;
 /**
  * 创作顾问档位（站长 2026-11-12）：前台只显示档位名，不显示模型名。
- * 站长定价（每次顾问答复）：卓越 20 / 优秀 10 / 完美 5 积分；管理者测试流程不扣积分，扣费尚未接入。
+ * 站长定价（每次顾问答复）：卓越 20（限时特价，原价 40）/ 优秀 10 / 完美 5 积分；管理者测试流程不扣积分，扣费尚未接入。
  */
 export const NOVEL_ADVISOR_TIER_OPTIONS = [
-  { value: "carbon", label: "卓越", referenceCredits: 20 },
-  { value: "glm", label: "优秀", referenceCredits: 10 },
-  { value: "deepseek", label: "完美", referenceCredits: 5 },
+  { value: "carbon", label: "卓越", referenceCredits: 20, originalCredits: 40 },
+  { value: "glm", label: "优秀", referenceCredits: 10, originalCredits: undefined },
+  { value: "deepseek", label: "完美", referenceCredits: 5, originalCredits: undefined },
 ] as const;
 export const novelModelSchema = z.enum(["auto", "glm", "deepseek", "carbon"]);
 /** 前台只显示中性线路名；模型名是商业机密，未知模型也不回显原始标识。 */

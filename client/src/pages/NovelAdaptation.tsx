@@ -1579,11 +1579,21 @@ function NovelWorkspaceEditor({
             <option value="">沿用创作线路</option>
             {NOVEL_ADVISOR_TIER_OPTIONS.map(option => (
               <option key={option.value} value={option.value}>
-                {option.label} · {option.referenceCredits} 积分/次
+                {option.label} · {option.originalCredits ? "限时特价 " : ""}{option.referenceCredits} 积分/次
               </option>
             ))}
           </select>
         </label>
+        <span className="inline-flex flex-wrap items-center gap-3 text-xs text-slate-300" aria-label="顾问档位价格">
+          {NOVEL_ADVISOR_TIER_OPTIONS.map(option => (
+            <span key={option.value}>
+              {option.label}{" "}
+              {option.originalCredits ? <><s className="text-slate-500">{option.originalCredits}</s>{" "}</> : null}
+              <strong className={option.originalCredits ? "text-amber-200" : undefined}>{option.referenceCredits} 积分</strong>
+              {option.originalCredits ? <span className="ml-1 rounded bg-amber-200/15 px-1 text-amber-200">限时特价</span> : null}
+            </span>
+          ))}
+        </span>
         <label className="inline-flex items-center gap-2">
           <input
             type="checkbox"
