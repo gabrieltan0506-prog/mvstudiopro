@@ -51,7 +51,8 @@ export const GEMINI_CARBON_CREATE_RETRIES = 2;
  * 缺省思考设置：调用方没给 thinkingConfig 时由调用层补上。Gemini 4 Carbon 只认 thinkingLevel（LOW / MEDIUM / HIGH，
  * 给 thinkingBudget 会 400）；includeThoughts 让思考摘要随流回来，既是心跳也是证据。env GEMINI_CARBON_THINKING_LEVEL 可改档。
  */
-export const GEMINI_CARBON_DEFAULT_THINKING_LEVEL = "HIGH";
+/** 站长 2026-11-11：先用 MEDIUM，跑通后再考虑升 HIGH。 */
+export const GEMINI_CARBON_DEFAULT_THINKING_LEVEL = "MEDIUM";
 /** 缺省输出上限：输出含思考 token，给小了会 MAX_TOKENS 空正文（1111 实测）。 */
 export const GEMINI_CARBON_DEFAULT_MAX_OUTPUT_TOKENS = 65_536;
 

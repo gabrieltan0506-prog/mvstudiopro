@@ -212,11 +212,11 @@ describe("Carbon 流式：有心跳就等，创建失败就重新创建（站长
     expect(mergeGeminiCarbonStream('{"a":1}')).toEqual({ a: 1 });
   });
 
-  it("缺省带思考设置（thinkingLevel HIGH + includeThoughts）；调用方给了就不覆盖；流式原文与还原回包各存一份", async () => {
+  it("缺省带思考设置（thinkingLevel MEDIUM + includeThoughts）；调用方给了就不覆盖；流式原文与还原回包各存一份", async () => {
     const h = harness({ evolink: [{ body: sse([part("想", true), { candidates: [{ content: { parts: [{ text: '{"ok":true}' }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, thoughtsTokenCount: 4 } }]) }] }, ONE);
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     const result = await run(h.deps, h.save);
-    expect(h.calls[0]!.body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "HIGH", includeThoughts: true });
+    expect(h.calls[0]!.body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "MEDIUM", includeThoughts: true });
     expect(result.usage.thoughtsTokens).toBe(4);
     const raw = h.saved["hop-1-evolink-raw"] as any;
     expect(raw.rawStream).toContain("data: ");

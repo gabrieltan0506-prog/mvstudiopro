@@ -32,7 +32,7 @@ describe("1111 创作顾问 Carbon 跳", () => {
     expect(result.text).toBe('{"ok":1}');
     expect(deps.calls[0].url).toContain("direct.evolink.ai/v1beta/models/gemini-4-carbon:streamGenerateContent?alt=sse");
     expect(deps.calls[0].body.systemInstruction.parts[0].text).toBe("系统提示");
-    expect(deps.calls[0].body.generationConfig).toEqual({ maxOutputTokens: 65536, responseMimeType: "application/json", thinkingConfig: { thinkingLevel: "HIGH", includeThoughts: true } });
+    expect(deps.calls[0].body.generationConfig).toEqual({ maxOutputTokens: 65536, responseMimeType: "application/json", thinkingConfig: { thinkingLevel: "MEDIUM", includeThoughts: true } });
     expect(saved.request.timeoutMs).toBe(1_800_000); // 总上限兜底 30 分钟；正常靠心跳等待
     expect(saved["carbon-raw"].usage.thoughtsTokens).toBe(7);
   });
