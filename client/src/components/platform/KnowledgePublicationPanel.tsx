@@ -28,6 +28,7 @@ import { KNOWLEDGE_PREVIEW_UNAVAILABLE, KNOWLEDGE_PUBLICATION_STAGES, knowledgeS
 import { withKnowledgeAdvisorRecovery } from "@/lib/knowledgeAdvisorRecovery";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
 import { flyDownloadUrl } from "@/lib/gcsTransfer";
+import KnowledgeLayoutAuditNotice from "./KnowledgeLayoutAuditNotice";
 import { knowledgePublicationPublicError } from "@shared/knowledgePublicationPublic";
 
 type Saved = { generation: string };
@@ -142,6 +143,7 @@ export default function KnowledgePublicationPanel({
     imagePages?: number;
     totalPages?: number;
     billing?: {readingPages:number;unitCredits:number;chargedCredits:number;alreadyCharged:boolean};
+    layoutAudit?: unknown;
   } | null>(null);
   useEffect(() => {
     alive.current = true;
@@ -873,6 +875,7 @@ export default function KnowledgePublicationPanel({
                     下载 PDF{files.totalPages ? ` · 手册共 ${files.totalPages} 页` : ""}
                   </a>
                 )}
+                {files.pdfUrl && <div className="basis-full"><KnowledgeLayoutAuditNotice audit={files.layoutAudit} /></div>}
               </>
             )}
           </div>

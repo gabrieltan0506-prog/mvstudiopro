@@ -48,3 +48,53 @@ export function auditKnowledgeBookletLayout(pages: KnowledgeLayoutPageMeasure[])
 export function knowledgeLayoutIssueLines(issues: KnowledgeLayoutIssue[]) {
   return issues.map(i => `第 ${i.page} 页 · ${KNOWLEDGE_LAYOUT_ISSUE_LABEL[i.kind]} · ${i.target}`);
 }
+
+/** 导出结果里的版面审查摘要：checked=false 表示本次未审查（排版服务未回报测量或数据不全），不影响导出。issues 截断到上限，issueCount 为总数。 */
+export type KnowledgeLayoutAuditSummary =
+  | { checked: false }
+  | { checked: true; passed: boolean; pages: number; issueCount: number; issues: KnowledgeLayoutIssue[] };
+export const KNOWLEDGE_LAYOUT_AUDIT_MAX_ISSUES = 60;
+
+/**
+ * 分段导出：每段一组排版根（booklets），每根的 layout 页码是段内、根内从 1 起的局部页码。
+ * 按段起始页（offsets）与段内前序根页数换算成全书页码后整册审查；任一段/根缺测量或页数对不上即视为未审查。
+ */
+export function auditKnowledgeExportSegments(
+  segments: ({ count: number; booklets?: { pages?: number; layout?: unknown }[] } | undefined)[],
+  offsets: number[],
+): KnowledgeLayoutAuditSummary {
+  try {
+    const pages: KnowledgeLayoutPageMeasure[] = [];
+    for (let index = 0; index < segments.length; index++) {
+      const segment = segments[index];
+      const booklets = segment?.booklets;
+      if (!segment || !booklets?.length || !Number.isSafeInteger(offsets[index])) return { checked: false };
+      let within = 0;
+      for (const booklet of booklets) {
+        if (!Array.isArray(booklet.layout)) return { checked: false };
+        for (const raw of booklet.layout as KnowledgeLayoutPageMeasure[]) {
+          if (!raw || typeof raw !== "object" || !Number.isFinite(raw.page)) return { checked: false };
+          pages.push({ ...raw, page: raw.page + offsets[index]! + within });
+        }
+        within += booklet.layout.length;
+      }
+      if (within !== segment.count) return { checked: false };
+    }
+    if (!pages.length) return { checked: false };
+    const result = auditKnowledgeBookletLayout(pages);
+    return { checked: true, passed: result.passed, pages: pages.length, issueCount: result.issues.length, issues: result.issues.slice(0, KNOWLEDGE_LAYOUT_AUDIT_MAX_ISSUES) };
+  } catch {
+    return { checked: false };
+  }
+}
+
+/** 读回成品清单里的审查摘要；旧清单或格式不对时返回 undefined（前台按未审查处理）。 */
+export function readKnowledgeLayoutAuditSummary(value: unknown): KnowledgeLayoutAuditSummary | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const v = value as Record<string, unknown>;
+  if (v.checked === false) return { checked: false };
+  if (v.checked !== true || typeof v.passed !== "boolean" || !Array.isArray(v.issues) || !Number.isSafeInteger(v.issueCount)) return undefined;
+  const kinds = Object.keys(KNOWLEDGE_LAYOUT_ISSUE_LABEL);
+  const issues = (v.issues as KnowledgeLayoutIssue[]).filter(i => i && Number.isFinite(i.page) && kinds.includes(i.kind) && typeof i.target === "string").slice(0, KNOWLEDGE_LAYOUT_AUDIT_MAX_ISSUES);
+  return { checked: true, passed: v.passed, pages: Number(v.pages) || 0, issueCount: v.issueCount as number, issues };
+}
