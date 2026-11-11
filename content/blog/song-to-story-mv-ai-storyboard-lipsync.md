@@ -8,11 +8,11 @@ cover: /blog-assets/mv-rainy-duet/mv-rainy-duet-cover-20261111.jpg
 
 # 一首歌怎么生成一支有剧情的 MV？AI 分镜、对口型与参考图驱动实录
 
-**能做到什么程度：给一首歌和一段剧情大纲，系统会先听歌拿到节拍、段落和逐句歌词时间，再按节拍拆出逐个时间窗的分镜，用参考图生成画面，唱词段对口型，最后在歌曲指定秒点拼成一支竖屏剧情 MV。** 下面这支 59 秒的片子，就是用一首约 3 分半的原创歌，走完这条链路做出来的高光段。
+**能做到什么程度：给一首歌和一段剧情大纲，系统会先听歌拿到节拍、段落和逐句歌词时间，再按节拍拆出逐个时间窗的分镜，用参考图生成画面，唱词段对口型，最后在歌曲指定秒点拼成一支竖屏剧情 MV。** 这次做的 59 秒高光段，就是用一首约 3 分半的原创歌，走完这条链路做出来的。
 
 <figure>
-  <video src="/blog-assets/mv-rainy-duet/mv-rainy-duet-highlight-20261111.mp4" poster="/blog-assets/mv-rainy-duet/mv-rainy-duet-sunny-wait-20261111.jpg" controls playsinline preload="metadata" controlslist="nodownload" oncontextmenu="return false" draggable="false" width="720" height="1280"></video>
-  <figcaption>成片高光段：720×1280 竖屏，59.4 秒。取自原曲第 18.2–77.5 秒，天气从晴转阴、下雨，再在雨后转亮。</figcaption>
+  <img src="/blog-assets/mv-rainy-duet/mv-rainy-duet-cover-20261111.jpg" alt="成片高光段的四个关键画面：晴天等待、转阴对话、雨中、雨后蝴蝶定格" width="1280" height="720" loading="lazy" draggable="false" oncontextmenu="return false">
+  <figcaption>成片高光段的四个关键画面：720×1280 竖屏，59.4 秒，取自原曲第 18.2–77.5 秒，天气从晴转阴、下雨，再在雨后转亮。完整成片视频稍后补上。</figcaption>
 </figure>
 
 想直接做一支：**[打开「我的 MV」，新建一部作品](/mv-projects)**
