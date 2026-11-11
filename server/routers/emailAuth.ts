@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
+import { publicProcedure, protectedProcedure, router, withUsageLimit } from "../_core/trpc";
+import { USAGE_LIMITS, assertUsageOrThrow, clientIpOf } from "../_core/usageLimits";
 import { getDb } from "../db";
 import { emailAuth, users } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -21,7 +22,9 @@ export const emailAuthRouter = router({
   /**
    * 注册新用户
    */
+  // 1111：按 IP 闸门（每分钟 3 次 / 每日 20 次）
   register: publicProcedure
+    .use(withUsageLimit(USAGE_LIMITS.accountRegister))
     .input(
       z.object({
         email: z.string().email(),
@@ -65,6 +68,7 @@ export const emailAuthRouter = router({
   /**
    * 登录
    */
+  // 1111：原先无失败次数限制可撞库 → 每次尝试按 IP 与「邮箱」各自计数（每分钟 10 次 / 每日 100 次）
   login: publicProcedure
     .input(
       z.object({
@@ -73,6 +77,7 @@ export const emailAuthRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
+      assertUsageOrThrow(USAGE_LIMITS.passwordLogin, [`ip:${clientIpOf(ctx.req as never)}`, `login:${String(input.email).trim().toLowerCase()}`]);
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
 

@@ -4,6 +4,7 @@ import { storagePut } from "./storage";
 import { uploadBufferToGcs } from "./services/gcs";
 import { resolveUploadMaxBytes } from "./services/uploadLimits";
 import { platformQaUserPrefix, resolvePlatformQaBucket } from "./services/platformQaUpload";
+import { USAGE_LIMITS, clientIpOf, consumeUsage } from "./_core/usageLimits";
 
 /**
  * 服务端直收上传一律须登录（原先四个入口都不认人，任何人可往存储里写文件）。
@@ -18,6 +19,12 @@ export async function requireUploadLogin(req: any, res: any, next: (error?: unkn
     const userId = Number((user as any)?.id);
     if (!Number.isFinite(userId) || userId <= 0) throw new Error("no_user");
     req.uploadUserId = userId;
+    // 1111：服务端直收上传加用量闸门（每用户 + IP），超限不读请求体
+    const usage = consumeUsage(USAGE_LIMITS.serverUpload, [`u:${userId}`, `ip:${clientIpOf(req)}`]);
+    if (!usage.ok) {
+      res.setHeader?.("Retry-After", String(usage.retryAfterSec));
+      return res.status(429).json({ error: usage.message });
+    }
     return next();
   } catch (error) {
     // 登录库暂时连不上 ≠ 未登录：给 503，前台不必误报「登录失效」
@@ -73,10 +80,19 @@ async function parseMultipartFile(req: any) {
   };
 }
 
+/**
+ * 1111：对象落本人前缀 <keyPrefix>/u<uid>/…（原先落全站共用的 <keyPrefix>/…，谁都能往同一前缀写）。
+ * 读取侧按 URL 读，旧对象照常可读；按前缀核验归属的读取方（如 analyzeVideo 的 fileKey 须以 uploads/u<uid>/ 开头）现在也能对上。
+ */
+export function serverUploadObjectKey(keyPrefix: string, userId: number, ext: string, fallbackBaseName: string): string {
+  const safeExt = String(ext || "").replace(/[^0-9A-Za-z]/g, "").slice(0, 10) || fallbackBaseName;
+  return `${keyPrefix}/u${userId}/${nanoid(12)}.${safeExt}`;
+}
+
 async function handleUpload(req: any, res: any, keyPrefix: string, fallbackBaseName: string) {
   try {
     const { buffer, filename, ext, mimeType } = await parseMultipartFile(req);
-    const key = `${keyPrefix}/${nanoid(12)}.${ext || fallbackBaseName}`;
+    const key = serverUploadObjectKey(keyPrefix, Number(req.uploadUserId), ext, fallbackBaseName);
     const { url } = await storagePut(key, buffer, mimeType);
     res.json({ url, key });
   } catch (error) {

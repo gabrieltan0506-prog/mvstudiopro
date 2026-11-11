@@ -1,12 +1,19 @@
 import { z } from "zod";
-import { router, publicProcedure } from "../_core/trpc";
+import { router, publicProcedure, withUsageLimit } from "../_core/trpc";
+import { USAGE_LIMITS } from "../_core/usageLimits";
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
 import { sendSimpleMail } from "../services/smtp-mailer";
 import { TRPCError } from "@trpc/server";
 
 const ADMIN_EMAIL = "benjamintan0506@163.com";
 
 export const inviteApplyRouter = router({
+  // 1111：首页访客入口保留匿名；加按 IP 的闸门，邮件 HTML 里的用户输入先转义
   submit: publicProcedure
+    .use(withUsageLimit(USAGE_LIMITS.visitorInquiry))
     .input(
       z.object({
         purpose: z.string().min(5, "请填写用途（至少5字）").max(500),
@@ -31,9 +38,9 @@ export const inviteApplyRouter = router({
           <h2 style="color:#a78bfa;margin:0 0 16px">📩 MVStudioPro 邀请码申请</h2>
           <table style="width:100%;border-collapse:collapse">
             <tr><td style="padding:8px 0;color:#8b7fd4;width:90px">时间</td><td style="padding:8px 0">${now}</td></tr>
-            <tr><td style="padding:8px 0;color:#8b7fd4">姓名</td><td style="padding:8px 0">${name || "（未填写）"}</td></tr>
-            <tr><td style="padding:8px 0;color:#8b7fd4">联系方式</td><td style="padding:8px 0;font-weight:700;color:#c4b5fd">${contact}</td></tr>
-            <tr><td style="padding:8px 0;color:#8b7fd4;vertical-align:top">用途</td><td style="padding:8px 0;line-height:1.7">${purpose.replace(/\n/g, "<br>")}</td></tr>
+            <tr><td style="padding:8px 0;color:#8b7fd4">姓名</td><td style="padding:8px 0">${escapeHtml(name || "（未填写）")}</td></tr>
+            <tr><td style="padding:8px 0;color:#8b7fd4">联系方式</td><td style="padding:8px 0;font-weight:700;color:#c4b5fd">${escapeHtml(contact)}</td></tr>
+            <tr><td style="padding:8px 0;color:#8b7fd4;vertical-align:top">用途</td><td style="padding:8px 0;line-height:1.7">${escapeHtml(purpose).replace(/\n/g, "<br>")}</td></tr>
           </table>
         </div>
       `;

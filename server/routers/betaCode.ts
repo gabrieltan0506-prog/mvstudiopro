@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { eq, and, desc, sql } from "drizzle-orm";
-import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
+import { protectedProcedure, router } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
 import { betaInviteCodes, betaCodeUsages } from "../../drizzle/schema-beta";
@@ -80,7 +80,8 @@ async function ensureBetaTables(db: NonNullable<Awaited<ReturnType<typeof getDb>
 }
 
 export const betaCodeRouter = router({
-  generate: publicProcedure
+  // 1111：须登录后才进入（原先匿名请求也会先执行建表 DDL）
+  generate: protectedProcedure
     .input(
       z.object({
         count: z.number().int().min(1).max(100).default(1),
@@ -213,7 +214,7 @@ export const betaCodeRouter = router({
       };
     }),
 
-  listMine: publicProcedure
+  listMine: protectedProcedure
     .query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });

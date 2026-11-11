@@ -511,10 +511,30 @@ function trafficSearchLabelFromCoords(lat: number, lon: number): string | null {
 /** 快取版本後綴：後端修復空新聞後舊條目不應佔 30 分鐘。 */
 const NEWS_CACHE_KEY_REV = "v4";
 
-function newsBundleCacheKey(lat?: number, lon?: number): string {
-  if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return `no-geo_${NEWS_CACHE_KEY_REV}`;
-  return `${lat.toFixed(2)}_${lon.toFixed(2)}_${NEWS_CACHE_KEY_REV}`;
+/**
+ * 新聞快取與聯網檢索共用的座標粒度（度）：0.5° ≈ 50 km，約城市級。
+ * 1111 收口：原先按小數兩位（≈1 km）做鍵，調用方換座標即可繞過快取反覆觸發帶聯網檢索的模型調用。
+ * 量化後的座標同時送模型，確保同一鍵對應同一份結果。
+ */
+export const AMBIENT_NEWS_COORD_STEP_DEG = 0.5;
+/** 新聞快取條目上限（量化後全球格點有限，此為記憶體保險）。 */
+const NEWS_CACHE_MAX_ENTRIES = 500;
+
+export function quantizeAmbientNewsCoords(lat?: number, lon?: number): { lat?: number; lon?: number } {
+  if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return {};
+  const step = AMBIENT_NEWS_COORD_STEP_DEG;
+  const q = (v: number, max: number) => Math.max(-max, Math.min(max, Math.round(v / step) * step));
+  return { lat: q(lat, 90), lon: q(lon, 180) };
 }
+
+export function newsBundleCacheKey(lat?: number, lon?: number): string {
+  const qc = quantizeAmbientNewsCoords(lat, lon);
+  if (qc.lat == null || qc.lon == null) return `no-geo_${NEWS_CACHE_KEY_REV}`;
+  return `${qc.lat.toFixed(1)}_${qc.lon.toFixed(1)}_${NEWS_CACHE_KEY_REV}`;
+}
+
+/** 同一快取鍵的並發未命中只觸發一次上游（其餘等同一個 Promise）。 */
+const newsInFlight = new Map<string, Promise<DashboardNewsResult>>();
 
 /** 從模型輸出中剝離 ```json 圍欄或前後雜訊，再取最外層 `{...}`。 */
 function extractJsonObjectForNews(raw: string): string {
@@ -660,6 +680,17 @@ export type HybridDashboardOpts = {
   trafficLocation?: string;
 };
 
+/** 只收可被 Intl 識別的 IANA 時區；其他一律視為未傳。 */
+export function normalizeIanaTimeZone(raw?: string): string | undefined {
+  const tz = String(raw || "").trim();
+  if (!tz || tz.length > 64) return undefined;
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: tz }).resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
 function liveOptsKey(opts: HybridDashboardOpts): string {
   return [
     opts.timeZone?.trim() ?? "",
@@ -671,7 +702,15 @@ function liveOptsKey(opts: HybridDashboardOpts): string {
 }
 
 /** 天氣 + 路況 + 當地時間；服務端約 10 分鐘快取（同參數重複請求不打 API／Gemini）。 */
-export async function executeDashboardLive(opts: HybridDashboardOpts = {}): Promise<HybridDashboardLiveData> {
+export async function executeDashboardLive(rawOpts: HybridDashboardOpts = {}): Promise<HybridDashboardLiveData> {
+  // 1111 收口：座標量化到與新聞同一粒度、時區只收合法 IANA，避免調用方換參數繞過快取反覆觸發路況模型調用
+  const qc = quantizeAmbientNewsCoords(rawOpts.lat, rawOpts.lon);
+  const opts: HybridDashboardOpts = {
+    ...rawOpts,
+    lat: qc.lat,
+    lon: qc.lon,
+    timeZone: normalizeIanaTimeZone(rawOpts.timeZone),
+  };
   const key = liveOptsKey(opts);
   const now = Date.now();
   const hit = liveResponseCache.get(key);
@@ -753,14 +792,31 @@ function flattenNewsBundle(bundle: AmbientNewsBundle): AmbientNewsItem[] {
 }
 
 /** 即時新聞：Gemini（+ 搜尋）為主；依定位 key 約 30 分鐘快取。失敗時降級 Google News RSS（無省級細分）。 */
-export async function executeDashboardNews(opts: DashboardNewsOpts = {}): Promise<DashboardNewsResult> {
+export async function executeDashboardNews(rawOpts: DashboardNewsOpts = {}): Promise<DashboardNewsResult> {
   const now = Date.now();
+  const opts: DashboardNewsOpts = { ...rawOpts, ...quantizeAmbientNewsCoords(rawOpts.lat, rawOpts.lon) };
+  if (opts.lat == null || opts.lon == null) {
+    delete opts.lat;
+    delete opts.lon;
+  }
   const cacheKey = newsBundleCacheKey(opts.lat, opts.lon);
   const cached = newsBundleCache.get(cacheKey);
   if (cached && cached.expires > now) {
     const b = cached.data;
     return { domestic: b.domestic, international: b.international, news: flattenNewsBundle(b) };
   }
+  const inFlight = newsInFlight.get(cacheKey);
+  if (inFlight) return inFlight;
+  const task = buildDashboardNewsUncached(opts, cacheKey, now).finally(() => newsInFlight.delete(cacheKey));
+  newsInFlight.set(cacheKey, task);
+  return task;
+}
+
+async function buildDashboardNewsUncached(
+  opts: DashboardNewsOpts,
+  cacheKey: string,
+  now: number,
+): Promise<DashboardNewsResult> {
 
   const hasGeo =
     opts.lat != null && opts.lon != null && Number.isFinite(opts.lat) && Number.isFinite(opts.lon);
@@ -806,6 +862,11 @@ export async function executeDashboardNews(opts: DashboardNewsOpts = {}): Promis
       if (v.expires <= now) staleKeys.push(k);
     });
     for (const k of staleKeys) newsBundleCache.delete(k);
+  }
+  while (newsBundleCache.size > NEWS_CACHE_MAX_ENTRIES) {
+    const oldest = newsBundleCache.keys().next().value;
+    if (oldest === undefined) break;
+    newsBundleCache.delete(oldest);
   }
 
   return {

@@ -31,8 +31,14 @@ export function createApp() {
 
   app.get("/api/diag/providers", async (req, res) => {
     let effectiveTier: UserTier | "unknown" = "unknown";
+    // 1111：同 index.ts，仅管理员 / 监管（本文件 createApp 目前无挂载方，保持口径一致）
+    const diagCtx = await createContext({ req: req as any, res: res as any } as any).catch(() => null);
+    if (!diagCtx?.user || (diagCtx.user.role !== "admin" && diagCtx.user.role !== "supervisor")) {
+      res.status(diagCtx?.user ? 403 : 401).json({ error: diagCtx?.user ? "Forbidden" : "Unauthorized" });
+      return;
+    }
     try {
-      const ctx = await createContext({ req: req as any, res: res as any } as any);
+      const ctx = diagCtx;
       if (ctx.user?.id) {
         effectiveTier = await resolveUserTier(ctx.user.id, ctx.user.role === "admin");
       }

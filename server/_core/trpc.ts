@@ -3,6 +3,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { withHeavyMediaRequest } from "../jobs/heavyMediaContext";
 import type { TrpcContext } from "./context";
+import { assertUsageOrThrow, trpcUsageSubjects, type UsageLimitSpec } from "./usageLimits";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -49,3 +50,14 @@ export const adminProcedure = t.procedure.use(
     }));
   }),
 );
+
+/**
+ * 用量闸门中间件（每分钟限流 + 每日上限 + 全站每日总量，见 ./usageLimits）。
+ * 用法：`protectedProcedure.use(withUsageLimit(USAGE_LIMITS.xxx))`；登录用户按用户 + IP 计，未登录按 IP 计。
+ */
+export function withUsageLimit(spec: UsageLimitSpec) {
+  return t.middleware(async opts => {
+    assertUsageOrThrow(spec, trpcUsageSubjects(opts.ctx));
+    return opts.next();
+  });
+}

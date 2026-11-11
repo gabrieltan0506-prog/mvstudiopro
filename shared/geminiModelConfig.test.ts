@@ -43,6 +43,7 @@ describe("resolveGeminiModel", () => {
       manhuaDeepReadUpgrade: "gemini-4-carbon",
       musicMvDeepCompose: "gemini-4-carbon",
       novelWriterCarbon: "gemini-4-carbon",
+      geminiScript: "gemini-3.1-pro-preview",
     });
     for (const domain of Array.from(pinned)) {
       expect(GEMINI_MODEL_DOMAIN_ENVS).toHaveProperty(domain);

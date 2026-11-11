@@ -975,11 +975,17 @@ async function startServer() {
     }
   });
 
+  // 1111 收口：原先匿名可调，每次都对各上游探活并回传供应商与路由表 → 仅管理员 / 监管（前台无调用点）
   app.get("/api/diag/providers", async (req, res) => {
     try {
+      const diagCtx = await createContext({ req: req as any, res: res as any } as any).catch(() => null);
+      const diagRole = diagCtx?.user?.role;
+      if (!diagCtx?.user || (diagRole !== "admin" && diagRole !== "supervisor")) {
+        return res.status(diagCtx?.user ? 403 : 401).json({ error: diagCtx?.user ? "Forbidden" : "Unauthorized" });
+      }
       let effectiveTier: "free" | "beta" | "paid" | "supervisor" | "unknown" = "unknown";
       try {
-        const ctx = await createContext({ req: req as any, res: res as any } as any);
+        const ctx = diagCtx;
         const rawUserId = ctx.user?.id;
         const userId = Number(rawUserId);
         if (rawUserId != null && Number.isFinite(userId)) {

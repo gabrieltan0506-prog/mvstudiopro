@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
+import { adminProcedure, protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import Stripe from "stripe";
 import {
   createPaymentTransaction,
@@ -90,7 +90,8 @@ export const paymentRouter = router({
     }),
 
   // Handle Stripe webhook (called by Stripe when payment succeeds)
-  handleStripeWebhook: publicProcedure
+  // 1111 收口：原先匿名、不验签即可改交易状态（正式 Stripe webhook 在 server/stripe-webhook.ts，验签且限流；前台无调用点）→ 仅管理员手工补单用
+  handleStripeWebhook: adminProcedure
     .input(
       z.object({
         paymentIntentId: z.string(),

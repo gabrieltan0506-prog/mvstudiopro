@@ -11,6 +11,7 @@
 import fs from "fs";
 import path from "path";
 import axios from "axios";
+import { isOwnedResourceUrl } from "./services/ownedResourceUrl";
 import sharp from "sharp";
 import { storagePut, storageGet } from "./storage";
 import { env } from "./vercel-api-core/env";
@@ -117,9 +118,17 @@ async function downloadImageWithDimensions(url: string): Promise<{
   // 0912 起 Vercel Blob 已退场：公共媒体写入走 GCS，站内地址 302 跳签名链，
   // 这里普通 fetch 跟着跳转即可，不需要任何 Blob 令牌分支。
   {
+    // 1111 收口：只代取本站与自有存储；站内地址会 302 到签名链，每一跳都复核，跳到站外 / 内网即中止
+    if (!isOwnedResourceUrl(target)) throw new Error("export_image_not_owned");
     const response = await axios.get(target, {
       responseType: "arraybuffer",
       timeout: 15000,
+      maxRedirects: 3,
+      maxContentLength: 25 * 1024 * 1024,
+      beforeRedirect: (options: { href?: string; protocol?: string; hostname?: string; path?: string }) => {
+        const next = options.href || `${options.protocol || "https:"}//${options.hostname || ""}${options.path || ""}`;
+        if (!isOwnedResourceUrl(next)) throw new Error("export_image_redirect_not_owned");
+      },
     });
     buffer = Buffer.from(response.data);
   }

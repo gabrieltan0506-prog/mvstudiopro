@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { publicProcedure, router } from "../_core/trpc";
+import { publicProcedure, router, withUsageLimit } from "../_core/trpc";
+import { USAGE_LIMITS } from "../_core/usageLimits";
 import { getDb } from "../db";
 import { users } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -61,7 +62,9 @@ async function sendEmailOTP(email: string, code: string): Promise<boolean> {
 
 export const emailOtpRouter = router({
   // ─── Send OTP to email ───
+  // 1111：原有按邮箱 10 分钟 5 次可换邮箱绕过 → 再加按 IP 的闸门（每分钟 3 次 / 每日 30 次、全站日 3000 次）
   sendCode: publicProcedure
+    .use(withUsageLimit(USAGE_LIMITS.otpSend))
     .input(
       z.object({
         email: z.string().email("请输入有效的电子邮件地址"),
