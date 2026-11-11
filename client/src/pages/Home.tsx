@@ -10,6 +10,7 @@ import HomeInviteApply from "../components/HomeInviteApply";
 import HomeEducation from "../components/HomeEducation";
 import HomeFeedback from "../components/HomeFeedback";
 import HomeRemixStrip from "../components/HomeRemixStrip";
+import HomeVideoBreakdown from "../components/HomeVideoBreakdown";
 import { LaunchCountdownBanner } from "../components/LaunchCountdownBanner";
 import HomePlatformHighlights from "../components/HomePlatformHighlights";
 import HomeFileConversion from "../components/HomeFileConversion";
@@ -32,6 +33,7 @@ export default function HomePage() {
         <LaunchCountdownBanner />
         <HomePresentationShowcase />
         <HomeRemixStrip />
+        <HomeVideoBreakdown />
         <HomeCodeMotion />
         <HomeImageWorkshop />
         <HomeFileConversion />

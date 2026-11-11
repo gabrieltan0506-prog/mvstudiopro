@@ -2,6 +2,7 @@ import { canUseAdvisorPrevisFor, mvShotPrevisBridgeUnavailableZh } from "@/lib/m
 import { ManhuaOverseasLibraryButton, ManhuaOverseasMethodReference } from "@/components/canvas/ManhuaOverseasLibrary";
 import RemixProductionImport from "@/components/RemixProductionImport";
 import { remixToNovelDraft } from "@/lib/remixProductionHandoff";
+import VideoBreakdownCanvasImport, { VIDEO_BREAKDOWN_CANVAS_NEXT_STEP } from "@/components/canvas/VideoBreakdownCanvasImport";
 import { manhuaVfxEnvironmentOptions } from "@shared/manhuaVfxEnvironment";
 import { buildAdvisorPrevisShotSource } from "@shared/manhuaAdvisorPrevisShotSource";
 import { formatPrevisMotionGuide } from "@shared/manhuaPrevis";
@@ -11588,6 +11589,8 @@ async function runAdvisorWriterTrial() {
       }
     >
       <Navbar compact={immersiveWorkbench} workspaceNavigation={immersiveWorkbench ? workspaceToolbar : undefined} />
+      {/* 1111 拉片 → 自由画布：与上一行爆款复刻同一交接方式（?from=lapian）；只追加方块、切到自由画布，不生成。 */}
+      <VideoBreakdownCanvasImport userId={user?.id} disabled={writerBusy || factoryBusy || Boolean(cloudConflict)} onApply={make => { setBlocks(prev => [...prev, ...make(prev)]); selectCanvasMode("freeform"); toast.success("已放入自由画布，未生成", { description: VIDEO_BREAKDOWN_CANVAS_NEXT_STEP, duration: 12000 }); }} />
       <RemixProductionImport userId={user?.id} format="video" disabled={writerBusy || factoryBusy || Boolean(cloudConflict)} onApply={draft => {
         const source = remixToNovelDraft(draft);
         if ((novelDraft?.text || writerBrief.trim()) && !window.confirm("采用会替换当前编剧室原文与补充条件，已有剧本不变。确认已备份当前输入？")) return false;
