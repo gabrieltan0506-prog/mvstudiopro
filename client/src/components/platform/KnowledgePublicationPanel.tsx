@@ -1,7 +1,7 @@
 import {KNOWLEDGE_INTERIOR_PRICE_COPY} from "@shared/knowledgePublicationPricing";
 import {knowledgeConversationAnswerSchema} from "@shared/knowledgeConversation";
 import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
-import { completedKnowledgeBatches, knowledgeCompletedPrefix, runKnowledgeParallelBatches } from "@shared/knowledgePublicationParallel";
+import { completedKnowledgeBatches, knowledgeCoalescedUpdater, knowledgeCompletedPrefix, runKnowledgeParallelBatches } from "@shared/knowledgePublicationParallel";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { pollJobUntilTerminal } from "@/lib/jobs";
 import {knowledgePresentationSourceManuscript,knowledgePresentationRequestMatches,knowledgePresentationRangeSchema,knowledgePresentationPlanSchema,knowledgePresentationCapacityIssues,assertKnowledgePresentationCapacity,validateKnowledgePresentationRevision,type KnowledgePresentationPlan} from "@shared/knowledgePresentation";
@@ -243,20 +243,17 @@ export default function KnowledgePublicationPanel({
       total = quote.batches;
       const documentId = next.id;
       const stillHere = () => alive.current && latest.current.id === documentId;
-      let saves = Promise.resolve();
-      const update = (change: () => void) => {
-        const saving = saves.then(async () => {
-          if (!stillHere()) throw new Error("已切换稿件，结果保留在原任务，请返回原稿恢复");
-          change();
+      // 通道固定与回执落盘合并保存：同时到达的改动一次整库保存（原先每批一次、串行约 10 秒，34 批发车即 6 分钟）。
+      const update = knowledgeCoalescedUpdater({
+        guard: () => { if (!stillHere()) throw new Error("已切换稿件，结果保留在原任务，请返回原稿恢复"); },
+        save: async () => {
           // 并发课件规划可先完成，审校保存不可用旧快照覆盖其回执。
           const presentation = latest.current.publication;
           pub = { ...pub, presentationRequest: presentation?.presentationRequest, presentationPlan: presentation?.presentationPlan, presentationRevision: presentation?.presentationRevision };
           next = { ...next, publication: pub };
           await save({ ...next, updatedAt: new Date().toISOString() });
-        });
-        saves = saving;
-        return saving;
-      };
+        },
+      });
       const prepare = async (i: number) => {
         if (i < batches.length) {
           const imageJobs = batches[i].map(n => pub.source.pages[n].imageJobId).filter((id): id is string => Boolean(id)).map(id => pub.imageReplacements?.[id] || id);

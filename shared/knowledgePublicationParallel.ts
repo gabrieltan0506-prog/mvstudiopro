@@ -8,6 +8,42 @@ export type KnowledgePublicationParallel = {
   family?: "glm" | "deepseek";
 };
 
+/**
+ * 合并保存（1110 实测根因：每次「固定通道」与「收妥回执」都单独整库保存云稿，约 10 秒一次且串行，
+ * 34 批光发车就排了 6 分钟、收尾又在保存队列里排队）。
+ *
+ * 同一时刻排队的改动在下一次保存里一起落盘：保存进行中到达的改动并入紧随其后的那一次。
+ * 语义保持：每个改动只有在包含它的保存成功后才 resolve（通道固定先落盘、后发请求）；
+ * 单个改动抛错只拒绝它自己，不污染其他工位；保存失败时同批改动全部拒绝。
+ */
+export function knowledgeCoalescedUpdater(options: { save: () => Promise<void>; guard?: () => void }) {
+  type Item = { change: () => void; resolve: () => void; reject: (error: unknown) => void };
+  let queue: Item[] = [];
+  let tail: Promise<void> = Promise.resolve();
+  let scheduled = false;
+  const flush = async () => {
+    scheduled = false;
+    const items = queue;
+    queue = [];
+    try { options.guard?.(); }
+    catch (error) { for (const item of items) item.reject(error); return; }
+    const applied: Item[] = [];
+    for (const item of items) {
+      try { item.change(); applied.push(item); }
+      catch (error) { item.reject(error); }
+    }
+    if (!applied.length) return;
+    try { await options.save(); for (const item of applied) item.resolve(); }
+    catch (error) { for (const item of applied) item.reject(error); }
+  };
+  return (change: () => void) => new Promise<void>((resolve, reject) => {
+    queue.push({ change, resolve, reject });
+    if (scheduled) return;
+    scheduled = true;
+    tail = tail.then(flush, flush);
+  });
+}
+
 /** 旧稿的连续完成前缀与新稿的乱序完成集合共同决定哪些批次仍需处理。 */
 export function completedKnowledgeBatches(
   value: { completedBatches: number; parallel?: KnowledgePublicationParallel },
