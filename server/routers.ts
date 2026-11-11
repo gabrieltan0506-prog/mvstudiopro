@@ -61,7 +61,9 @@ import {
   protectedProcedure,
   adminProcedure,
   router,
+  withUsageLimit,
 } from "./_core/trpc";
+import { USAGE_LIMITS } from "./_core/usageLimits";
 import { TRPCError } from "@trpc/server";
 import { postProdJobInputSchema } from "./jobs/postProdInput";
 import {
@@ -2989,6 +2991,26 @@ function assertHomePhotoResultBrowserReadable(imageUrl: string): string {
 }
 
 
+const ambientDashboardInputSchema = z.object({
+  timeZone: z.string().min(1).max(64).optional(),
+  weatherCity: z.string().min(1).max(120).optional(),
+  lat: z.number().gte(-90).lte(90).optional(),
+  lon: z.number().gte(-180).lte(180).optional(),
+  trafficLocation: z.string().min(1).max(200).optional(),
+});
+
+/** 工作台看板參數：自由文本城市 / 路段只給監管與管理員（會變成快取鍵與模型輸入），普通用戶忽略。 */
+function ambientDashboardOpts(input: z.infer<typeof ambientDashboardInputSchema>, role: unknown) {
+  const privileged = role === "admin" || role === "supervisor";
+  return {
+    timeZone: input.timeZone,
+    lat: input.lat,
+    lon: input.lon,
+    weatherCity: privileged ? input.weatherCity : undefined,
+    trafficLocation: privileged ? input.trafficLocation : undefined,
+  };
+}
+
 export const appRouter = router({
   guaikei: guaikeiRouter,
   codeMotion: codeMotionRouter,
@@ -3117,29 +3139,22 @@ export const appRouter = router({
 
   /** 時間 / 天氣 / 路況 / 即時新聞（免登入；新聞約 30 分鐘、天氣路況約 10 分鐘節流） */
   ambient: router({
+    /**
+     * 1111 收口：三個入口原先匿名可調（新聞 / 路況走帶聯網檢索的模型），坐標兩位小數做快取鍵可被繞過。
+     * 前台唯一調用點是成長營工作台（MVAnalysis → WorkAmbientPanel / GlobalMascotAssistant），頁面本身須登錄 → 改為登錄 + 用量閘門；
+     * 座標在引擎內量化到 0.5°（城市級）後才做快取鍵並送模型；weatherCity / trafficLocation 自由文本只給監管（前台從不傳）。
+     */
     /** 天氣 + 路況 + 時間（建議前端 10 分鐘 refetch） */
-    dashboardLive: publicProcedure
-      .input(
-        z.object({
-          timeZone: z.string().min(1).max(64).optional(),
-          weatherCity: z.string().min(1).max(120).optional(),
-          lat: z.number().gte(-90).lte(90).optional(),
-          lon: z.number().gte(-180).lte(180).optional(),
-          trafficLocation: z.string().min(1).max(200).optional(),
-        }),
-      )
-      .query(async ({ input }) => {
+    dashboardLive: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.ambientLive))
+      .input(ambientDashboardInputSchema)
+      .query(async ({ input, ctx }) => {
         const { executeDashboardLive } = await import("./services/hybridDashboardEngine.js");
-        return executeDashboardLive({
-          timeZone: input.timeZone,
-          weatherCity: input.weatherCity,
-          lat: input.lat,
-          lon: input.lon,
-          trafficLocation: input.trafficLocation,
-        });
+        return executeDashboardLive(ambientDashboardOpts(input, ctx.user.role));
       }),
     /** 即時新聞：Gemini 為主（建議前端 30 分鐘 refetch）；可傳瀏覽器定位以差異化周邊 2 條 */
-    dashboardNews: publicProcedure
+    dashboardNews: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.ambientNews))
       .input(
         z.object({
           lat: z.number().gte(-90).lte(90).optional(),
@@ -3148,27 +3163,14 @@ export const appRouter = router({
       )
       .query(async ({ input }) => {
         const { executeDashboardNews } = await import("./services/hybridDashboardEngine.js");
-        return executeDashboardNews(input);
+        return executeDashboardNews({ lat: input.lat, lon: input.lon });
       }),
-    hybridDashboard: publicProcedure
-      .input(
-        z.object({
-          timeZone: z.string().min(1).max(64).optional(),
-          weatherCity: z.string().min(1).max(120).optional(),
-          lat: z.number().gte(-90).lte(90).optional(),
-          lon: z.number().gte(-180).lte(180).optional(),
-          trafficLocation: z.string().min(1).max(200).optional(),
-        }),
-      )
-      .query(async ({ input }) => {
+    hybridDashboard: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.ambientNews))
+      .input(ambientDashboardInputSchema)
+      .query(async ({ input, ctx }) => {
         const { executeHybridDashboardPipeline } = await import("./services/hybridDashboardEngine.js");
-        return executeHybridDashboardPipeline({
-          timeZone: input.timeZone,
-          weatherCity: input.weatherCity,
-          lat: input.lat,
-          lon: input.lon,
-          trafficLocation: input.trafficLocation,
-        });
+        return executeHybridDashboardPipeline(ambientDashboardOpts(input, ctx.user.role));
       }),
     /** 吉祥物情緒關懷短語（Gemini）：僅 Admin / Supervisor 可調用，前台不提供入口 */
     mascotCareMessage: adminProcedure
@@ -3787,7 +3789,9 @@ export const appRouter = router({
         };
       }),
 
-    getGrowthSnapshot: publicProcedure
+    // 1111 收口：原先匿名可调且非交互模式会跑两次 LLM、不扣费。前台调用点（PlatformPage / MVAnalysis）都在登录页内。
+    getGrowthSnapshot: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.growthSnapshot))
       .input(z.object({
         context: z.string().optional(),
         requestedPlatforms: z.array(z.string()).optional(),
@@ -9372,7 +9376,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         return { ok: true as const, totalCost: 0 as const, results, isTrial };
       }),
 
-    getPlatformDashboard: publicProcedure
+    // 1111 收口：原先匿名可调 LLM、不扣费；前台调用点 PlatformPage 在登录页内。
+    getPlatformDashboard: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.platformDashboard))
       .input(z.object({
         context: z.string().optional(),
         windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]),
@@ -11001,7 +11007,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
       }),
 
-    getPlatformContent: publicProcedure
+    // 1111 收口：前台已无调用点（正式路径 enqueuePlatformContentJob 登录且扣费），原先匿名可调 LLM 且不扣费 → 只留监管调试
+    getPlatformContent: adminProcedure
+      .use(withUsageLimit(USAGE_LIMITS.platformContent))
       .input(z.object({
         context: z.string().optional(),
         windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]),
