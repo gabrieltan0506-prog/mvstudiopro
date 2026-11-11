@@ -34,9 +34,20 @@ export type NovelTemplateDigestStore = {
   writeIfAbsent: (objectName: string, body: string) => Promise<void>;
 };
 
+/** 每个所选模板的结构化提炼结果（与 templates 文本同序）；回退原文的模板 card 为 null。 */
+export type NovelTemplateDigestEntry = {
+  publicId: string;
+  role: string;
+  card: NovelTemplateDigestCard | null;
+  /** card 为 null 时的回退原文。 */
+  text: string;
+};
+
 export type NovelTemplateDigestResult = {
   templates: string;
   stats: { cached: string[]; fresh: string[]; fallback: string[] };
+  /** 结构化字段（供按需检索用），不改变 templates / stats 的含义。 */
+  entries: NovelTemplateDigestEntry[];
 };
 
 /** 只有正文写作阶段（小说稿 / 剧本）用手法卡；顾问与提案阶段保持原文。 */
@@ -156,8 +167,13 @@ export async function digestNovelTemplates(params: {
   const now = params.now ?? Date.now;
   const prefix = novelTemplateDigestPrefix(userId);
   const stats = { cached: [] as string[], fresh: [] as string[], fallback: [] as string[] };
+  const entries = new Array<NovelTemplateDigestEntry>(sources.length);
 
-  const sections = await mapWithLimit(sources, NOVEL_TEMPLATE_DIGEST_CONCURRENCY, async source => {
+  const indexed = sources.map((source, index) => ({ source, index }));
+  const sections = await mapWithLimit(indexed, NOVEL_TEMPLATE_DIGEST_CONCURRENCY, async ({ source, index }) => {
+    const keep = (card: NovelTemplateDigestCard | null) => {
+      entries[index] = { publicId: source.publicId, role: source.role, card, text: card ? "" : source.text };
+    };
     const weight = input.templates.find(t => t.publicId === source.publicId)?.weight;
     const key = novelTemplateDigestKey(input, source, weight);
     const cacheName = `${prefix}/${key}.json`;
@@ -168,6 +184,7 @@ export async function digestNovelTemplates(params: {
         const card = normalizeNovelTemplateDigestCard(JSON.parse(hit), source.publicId);
         if (card) {
           stats.cached.push(source.publicId);
+          keep(card);
           return `${header}\n${renderNovelTemplateDigestCard(card)}`;
         }
       }
@@ -196,6 +213,7 @@ export async function digestNovelTemplates(params: {
       if (!card) throw new Error("digest_invalid");
       await store.writeIfAbsent(cacheName, JSON.stringify(card));
       stats.fresh.push(source.publicId);
+      keep(card);
       return `${header}\n${renderNovelTemplateDigestCard(card)}`;
     } catch (error) {
       console.warn(
@@ -204,10 +222,11 @@ export async function digestNovelTemplates(params: {
         error instanceof Error ? error.message : "failed"
       );
       stats.fallback.push(source.publicId);
+      keep(null);
       return `${header}\n${source.text}`;
     }
   });
-  return { templates: sections.join("\n\n"), stats };
+  return { templates: sections.join("\n\n"), stats, entries };
 }
 
 /** 生产存储：GCS 先读后写，写用「不存在才写」。 */

@@ -30,6 +30,7 @@ import {
   NovelReviseError,
   type NovelReviseStep,
 } from "./novelChapterRevise";
+import { retrieveNovelCraft, shouldRetrieveNovelCraft } from "./novelCraftRetrieval";
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 /**
  * 只有顾问阶段（推荐模板 / 故事线可从库内换组合）需要整份目录；
@@ -284,6 +285,23 @@ export async function runNovelWorkspaceTest(
             }),
         });
         templatesForPrompt = digest.templates;
+        if (shouldRetrieveNovelCraft(input.stage)) {
+          // 按需抓取：模型只看索引挑条目，提示词只注入选中条目的正文；retrieveNovelCraft 不抛错，失败回退默认集合。
+          const craft = await retrieveNovelCraft({
+            userId,
+            input,
+            entries: digest.entries ?? [],
+            call: (prompt, json, requestId) =>
+              callNovelStage(prompt, json, requestId, {
+                modelPreference: input.modelPreference,
+                ...(input.modelPreference === "carbon"
+                  ? { saveEvidence: createGeminiCarbonGcsSaver(`${novelWorkspaceCarbonEvidencePrefix(userId, input.requestId)}/craft-retrieval`) }
+                  : {}),
+              }),
+          });
+          templatesForPrompt = craft.text;
+          evidence = { ...evidence, craftRetrieval: { craft: craft.craft, methods: craft.methods, fallback: craft.fallback } };
+        }
         evidence = {
           ...evidence,
           templateDigest: digest.stats,
