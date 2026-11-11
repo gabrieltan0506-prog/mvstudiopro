@@ -40,7 +40,8 @@ import {
   legacyJobsOpAccess,
 } from "../shared/internalMediaEndpointPolicy.js";
 import { isInternalGatewayRequest } from "../server/services/internalGatewayAuth.js";
-import { redactModelInfoForRole } from "../shared/modelInfoExposure.js";
+import { canViewModelInfo, redactModelInfoForRole } from "../shared/modelInfoExposure.js";
+import { logAndSanitizeUpstreamError, sanitizeUpstreamErrorForClient } from "../shared/upstreamErrorForClient.js";
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 function getBody(req: VercelRequest): any {
@@ -6417,13 +6418,17 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             console.warn(`[manhuaPilot] registry reconcile failed taskId=${task.taskId}`);
           });
         }
+        // 任务报错多为上游原文：普通用户只拿脱敏版（去地址、模型与供应商名、截断），监管/管理员原样
+        const privileged = canViewModelInfo(viewer.role);
+        const clientError = (value: unknown) =>
+          value ? (privileged ? value : sanitizeUpstreamErrorForClient(value, { fallback: "成片生成失败，请查看退款记录" })) : undefined;
         // 模型/通道/引擎代号只给监管与管理员；前端轮询只读 status/videoUrl/workMode/error。
         return res.status(200).json(redactModelInfoForRole({
           ok: true,
           taskId: task.taskId,
           status: task.status,
           videoUrl: task.videoUrl || undefined,
-          error: task.error || undefined,
+          error: clientError(task.error),
           engine: task.engine,
           provider: task.provider,
           model: task.model,
@@ -6440,12 +6445,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           frameTargetFps: task.frameTargetFps || undefined,
           // 超时对账诊断：UI 把 timed_out_pending_reconcile 显示为「超时对账中，不会白扣」
           timedOutAt: task.timedOutAt || undefined,
-          lastTransientError: task.lastTransientError || undefined,
+          lastTransientError: clientError(task.lastTransientError),
         }, viewer.role));
       } catch (error: any) {
         return res.status(502).json({
           ok: false,
-          error: error?.message || "查询成片进度失败",
+          error: logAndSanitizeUpstreamError("canvasVideoStatus", error, { fallback: "查询成片进度失败" }),
         });
       }
     }
