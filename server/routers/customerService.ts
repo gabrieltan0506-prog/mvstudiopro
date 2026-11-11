@@ -14,12 +14,17 @@
  */
 
 import { z } from "zod";
-import { router, publicProcedure } from "../_core/trpc";
+import { TRPCError } from "@trpc/server";
+import { router, protectedProcedure } from "../_core/trpc";
+import { USAGE_LIMITS, assertUsageOrThrow, trpcUsageSubjects } from "../_core/usageLimits";
+import { SUPPORT_CONTACT_EMAIL } from "../../shared/const";
 import { invokeLLM, type Message } from "../_core/llm";
 import { notifyOwner } from "../_core/notification";
 
 // ─── 内存会话存储（按 sessionId） ─────────────────────────
 interface ChatSession {
+  /** 发起会话的用户；只有本人能续写、读取、转人工。 */
+  ownerUserId: number;
   messages: Array<{ role: "user" | "assistant"; content: string; timestamp: number }>;
   escalated: boolean;
   createdAt: number;
@@ -41,10 +46,17 @@ setInterval(() => {
   }
 }, 30 * 60 * 1000);
 
-function getOrCreateSession(sessionId: string): ChatSession {
+function getOrCreateSession(sessionId: string, ownerUserId: number): ChatSession {
   let session = sessions.get(sessionId);
   if (!session) {
+    // 会话数上限：超过先淘汰最早建立的（Map 保持插入顺序）
+    while (sessions.size >= MAX_SESSIONS) {
+      const oldest = sessions.keys().next().value;
+      if (oldest === undefined) break;
+      sessions.delete(oldest);
+    }
     session = {
+      ownerUserId,
       messages: [],
       escalated: false,
       createdAt: Date.now(),
@@ -67,26 +79,26 @@ const CUSTOMER_SERVICE_SYSTEM_PROMPT = `你是 MV Studio Pro 的 AI 客服助手
 
 ## 平台核心功能
 1. **智能脚本与分镜生成** — 输入歌词/文案，AI 自动生成分镜脚本和分镜图
-   - 入门版：Forge AI 生图（0 Credits，含水印），每次最多 10 张
-   - 付费版：Nano Banana Pro 2K/4K 高清图（无水印），最多 30-70 张
+   - 入门版：基础生图（0 Credits，含水印），每次最多 10 张
+   - 付费版：2K/4K 高清图（无水印），最多 30-70 张
    - AI 灵感助手：没灵感时，给三句话描述，AI 帮你写完整脚本
 
 2. **虚拟偶像生成** — AI 生成 2D 虚拟偶像形象，可转 3D 模型
-   - 入门版：Forge AI 生成（0 Credits）
-   - 付费版：NBP 2K/4K 高清生成
-   - 3D 转换：使用 Trellis 引擎，支持 GLB/OBJ 导出
+   - 入门版：基础生成（0 Credits）
+   - 付费版：2K/4K 高清生成
+   - 3D 转换：支持 GLB/OBJ 导出
 
 3. **视频 PK 评分** — 上传视频，AI 从多维度打分并给出改进建议
 
-4. **Kling AI 工作室** — 专业视频生成
-   - Omni Video 3.0：文生视频 / 图生视频
-   - Motion Control 2.6：动作迁移
-   - Lip-Sync：口型同步
-   - Elements 3.0：角色元素管理
+4. **AI 视频工作室** — 专业视频生成
+   - 文生视频 / 图生视频
+   - 动作迁移
+   - 口型同步
+   - 角色元素管理
 
 5. **3D Studio** — 2D 图片转 3D 模型（Rapid 闪电模式 / Pro 精雕模式）
 
-6. **音乐生成**（开发中）— Suno V4/V4.5 AI 作曲
+6. **音乐生成**（开发中）— AI 作曲
 
 ## Credits 定价
 - 所有付费功能使用 Credits（积分）
@@ -98,11 +110,11 @@ const CUSTOMER_SERVICE_SYSTEM_PROMPT = `你是 MV Studio Pro 的 AI 客服助手
 - 各包**人民币标价**仅在定价页 / 支付订单中展示；请勿向用户推算或承诺统一的「积分单价」。
 - 主要功能消耗：
   - AI 灵感生成：5 Credits
-  - NBP 2K 图片：5 Credits/张
-  - NBP 4K 图片：9 Credits/张
-  - Suno V4 音乐：12 Credits
+  - 2K 高清图片：5 Credits/张
+  - 4K 高清图片：9 Credits/张
+  - AI 音乐：12 Credits
   - 视频生成：50 Credits
-  - Kling 视频：80 Credits
+  - 专业视频生成：80 Credits
   - 偶像 3D 转换：30 Credits
 
 ## 学生版
@@ -122,7 +134,8 @@ const CUSTOMER_SERVICE_SYSTEM_PROMPT = `你是 MV Studio Pro 的 AI 客服助手
 2. 不要编造不存在的功能
 3. 不要承诺具体的上线时间
 4. 如果用户情绪激动或投诉，先安抚情绪，再建议转人工
-5. 不要透露 API 成本或利润率等商业机密`;
+5. 不要透露 API 成本或利润率等商业机密
+6. 不要透露平台使用的模型、引擎代号、服务供应商或云厂商名称；用户问起时回答「平台使用自研调度的多家生成服务」即可`;
 
 // ─── 判断是否需要转人工 ──────────────────────────────────
 const ESCALATION_KEYWORDS = [
@@ -137,18 +150,37 @@ function shouldSuggestEscalation(message: string): boolean {
 }
 
 // ─── 路由定义 ─────────────────────────────────────────────
+/**
+ * 1111 收口：四个入口原先全部匿名可调（sendMessage 直接调模型、无限流；getHistory 拿到会话号就能读别人的聊天）。
+ * 全仓前台没有调用点（CustomerServiceChat 走 community 路由），没有匿名访客场景 → 一律须登录 + 用量闸门；
+ * 会话绑定发起用户，别人拿到会话号也读不到、写不进；模型固定为服务端便宜档（flash），调用方不能指定任何模型参数。
+ */
+export const CUSTOMER_SERVICE_MAX_MESSAGE_CHARS = 1000;
+const MAX_SESSIONS = 5000;
+
+function ownedSession(sessionId: string, userId: number): ChatSession {
+  const session = getOrCreateSession(sessionId, userId);
+  if (session.ownerUserId !== userId) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "会话已失效，请刷新后重新开始对话" });
+  }
+  return session;
+}
+
+const sessionIdSchema = z.string().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/);
+
 export const customerServiceRouter = router({
   /**
    * 发送消息给 AI 客服
    */
-  sendMessage: publicProcedure
+  sendMessage: protectedProcedure
     .input(z.object({
-      sessionId: z.string().min(1).max(64),
-      message: z.string().min(1).max(2000),
+      sessionId: sessionIdSchema,
+      message: z.string().trim().min(1).max(CUSTOMER_SERVICE_MAX_MESSAGE_CHARS),
       userName: z.string().max(100).optional(),
     }))
-    .mutation(async ({ input }) => {
-      const session = getOrCreateSession(input.sessionId);
+    .mutation(async ({ input, ctx }) => {
+      assertUsageOrThrow(USAGE_LIMITS.customerServiceChat, [...trpcUsageSubjects(ctx), `s:${input.sessionId}`]);
+      const session = ownedSession(input.sessionId, ctx.user.id);
 
       // 记录用户消息
       session.messages.push({
@@ -156,6 +188,7 @@ export const customerServiceRouter = router({
         content: input.message,
         timestamp: Date.now(),
       });
+      session.lastActivity = Date.now();
 
       // 构建 LLM 消息历史（最近 20 条）
       const recentMessages = session.messages.slice(-20);
@@ -168,7 +201,9 @@ export const customerServiceRouter = router({
       ];
 
       try {
+        // 固定便宜档：模型与上限只由服务端决定
         const result = await invokeLLM({
+          model: "flash",
           messages: llmMessages,
           maxTokens: 1024,
         });
@@ -196,6 +231,7 @@ export const customerServiceRouter = router({
           sessionId: input.sessionId,
         };
       } catch (error) {
+        // 原文只进日志，回给前台的是固定文案
         console.error("[CustomerService] LLM error:", error);
 
         const fallbackResponse = "抱歉，AI 助手暂时繁忙。请稍后再试，或点击「转人工客服」获取帮助。";
@@ -216,15 +252,16 @@ export const customerServiceRouter = router({
   /**
    * 转人工客服 — 发送 Email 通知管理员
    */
-  escalate: publicProcedure
+  escalate: protectedProcedure
     .input(z.object({
-      sessionId: z.string().min(1).max(64),
+      sessionId: sessionIdSchema,
       userName: z.string().max(100).optional(),
-      userEmail: z.string().email().optional(),
+      userEmail: z.string().email().max(200).optional(),
       reason: z.string().max(500).optional(),
     }))
-    .mutation(async ({ input }) => {
-      const session = getOrCreateSession(input.sessionId);
+    .mutation(async ({ input, ctx }) => {
+      assertUsageOrThrow(USAGE_LIMITS.contactNotify, trpcUsageSubjects(ctx));
+      const session = ownedSession(input.sessionId, ctx.user.id);
       session.escalated = true;
 
       // 整理对话历史
@@ -233,10 +270,11 @@ export const customerServiceRouter = router({
         .map(m => `[${m.role === "user" ? "用户" : "AI"}] ${m.content}`)
         .join("\n\n");
 
-      const title = `🆘 MV Studio Pro 客服转人工 — ${input.userName || "匿名用户"}`;
+      const title = `🆘 MV Studio Pro 客服转人工 — ${input.userName || "用户"}`;
       const content = [
         `## 客服转人工通知`,
         ``,
+        `**用户 ID：** ${ctx.user.id}`,
         `**用户名称：** ${input.userName || "未提供"}`,
         `**用户邮箱：** ${input.userEmail || "未提供"}`,
         `**转人工原因：** ${input.reason || "用户主动请求"}`,
@@ -255,7 +293,6 @@ export const customerServiceRouter = router({
       ].join("\n");
 
       try {
-        // 使用 Manus 通知服务发送通知给项目 Owner
         const sent = await notifyOwner({ title, content });
 
         if (sent) {
@@ -266,14 +303,14 @@ export const customerServiceRouter = router({
         } else {
           return {
             success: false,
-            message: "通知发送暂时失败，请直接发送邮件至 support@mvstudiopro.com 联系我们。",
+            message: `通知发送暂时失败，请直接发送邮件至 ${SUPPORT_CONTACT_EMAIL} 联系我们。`,
           };
         }
       } catch (error) {
         console.error("[CustomerService] Escalation error:", error);
         return {
           success: false,
-          message: "通知发送失败，请直接发送邮件至 support@mvstudiopro.com 联系我们。",
+          message: `通知发送失败，请直接发送邮件至 ${SUPPORT_CONTACT_EMAIL} 联系我们。`,
         };
       }
     }),
@@ -281,18 +318,20 @@ export const customerServiceRouter = router({
   /**
    * 提交联络表单 — 发送 Email 通知管理员
    */
-  submitContactForm: publicProcedure
+  submitContactForm: protectedProcedure
     .input(z.object({
       name: z.string().max(100).optional(),
-      email: z.string().min(1).max(200),
+      email: z.string().email().max(200),
       subject: z.string().max(100).default("其他"),
-      content: z.string().min(1).max(5000),
+      content: z.string().trim().min(1).max(5000),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      assertUsageOrThrow(USAGE_LIMITS.contactNotify, trpcUsageSubjects(ctx));
       const title = `📩 MV Studio Pro 联络表单 — ${input.subject}`;
       const body = [
         `## 新的联络表单提交`,
         ``,
+        `**用户 ID：** ${ctx.user.id}`,
         `**称呼：** ${input.name || "未提供"}`,
         `**邮箱：** ${input.email}`,
         `**主题：** ${input.subject}`,
@@ -319,28 +358,28 @@ export const customerServiceRouter = router({
         } else {
           return {
             success: false,
-            message: "提交暂时失败，请直接发送邮件至 benjamintan0318@gmail.com 联系我们。",
+            message: `提交暂时失败，请直接发送邮件至 ${SUPPORT_CONTACT_EMAIL} 联系我们。`,
           };
         }
       } catch (error) {
         console.error("[CustomerService] Contact form error:", error);
         return {
           success: false,
-          message: "提交失败，请直接发送邮件至 benjamintan0318@gmail.com 联系我们。",
+          message: `提交失败，请直接发送邮件至 ${SUPPORT_CONTACT_EMAIL} 联系我们。`,
         };
       }
     }),
 
   /**
-   * 获取会话历史
+   * 获取会话历史（只读本人发起的会话）
    */
-  getHistory: publicProcedure
+  getHistory: protectedProcedure
     .input(z.object({
-      sessionId: z.string().min(1).max(64),
+      sessionId: sessionIdSchema,
     }))
-    .query(({ input }) => {
+    .query(({ input, ctx }) => {
       const session = sessions.get(input.sessionId);
-      if (!session) {
+      if (!session || session.ownerUserId !== ctx.user.id) {
         return { messages: [], escalated: false };
       }
       return {

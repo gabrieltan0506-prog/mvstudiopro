@@ -10,3 +10,6 @@ export const TRIAL_READ_WATERMARK_LINE = "MVSTUDIOPRO.COM · 试读";
 /** 生图模型 prompt 用水印指令（Vertex Nano Banana / gpt-image-2 共用语义） */
 export const TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION =
   `IMPORTANT: Add a subtle editorial preview watermark: repeating diagonal lines (~-26°) of EXACTLY "${TRIAL_READ_WATERMARK_LINE}" across the frame, semi-transparent (~15–22% opacity), generous spacing, sans-serif; like a premium magazine 试读 sample — do NOT fill the image with tiny unreadable paragraph text. A discreet corner emphasis is acceptable.`;
+
+/** 站内通用客服联系邮箱（前台 CustomerServiceChat 与服务端失败提示共用；不要再写个人邮箱）。 */
+export const SUPPORT_CONTACT_EMAIL = "support@mvstudiopro.com";

@@ -14,6 +14,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { motion, AnimatePresence } from "framer-motion";
 import { trpc } from "@/lib/trpc";
 import { Headset, X, Send, Loader2, User, Mail } from "lucide-react";
+import { SUPPORT_CONTACT_EMAIL } from "@shared/const";
 
 // ─── 类型 ─────────────────────────────────────────────────
 interface ChatMessage {
@@ -156,7 +157,7 @@ export function CustomerServiceChat() {
       const errorMsg: ChatMessage = {
         id: `error_${Date.now()}`,
         role: "system",
-        content: "⚠️ 通知发送失败，请直接发送邮件至 support@mvstudiopro.com",
+        content: `⚠️ 通知发送失败，请直接发送邮件至 ${SUPPORT_CONTACT_EMAIL}`,
         timestamp: Date.now(),
       };
       setMessages(prev => [...prev, errorMsg]);
@@ -331,7 +332,7 @@ export function CustomerServiceChat() {
                             <User className="w-3.5 h-3.5 text-orange-400" />
                             <span className="text-xs font-semibold text-orange-400">转人工</span>
                         </button>
-                        <a href="mailto:support@mvstudiopro.com" className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-sky-500/10 border border-sky-500/25 hover:bg-sky-500/20 transition-colors">
+                        <a href={`mailto:${SUPPORT_CONTACT_EMAIL}`} className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-sky-500/10 border border-sky-500/25 hover:bg-sky-500/20 transition-colors">
                             <Mail className="w-3.5 h-3.5 text-sky-400" />
                             <span className="text-xs font-semibold text-sky-400">邮件联系</span>
                         </a>
