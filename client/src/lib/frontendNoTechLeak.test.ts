@@ -90,7 +90,7 @@ const EXTENDED_CLEAN_FILES = [
 /** 用户可见文案 = 字符串字面量与 JSX 文本；代码标识符、对象键、调试面板另行判定。 */
 const visibleText = (file: string) =>
   visible(file).flatMap(line =>
-    [...line.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`|>([^<>{}]+)</g)]
+    Array.from(line.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`|>([^<>{}]+)</g))
       .map(m => m[1] ?? m[2] ?? m[3] ?? m[4] ?? "")
       .filter(s => /[一-鿿]|\s/.test(s)),
   );
