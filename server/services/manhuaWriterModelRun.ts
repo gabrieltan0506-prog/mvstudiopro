@@ -20,6 +20,8 @@ export function createManhuaWriterModelCall(userId: number, requestId: string, m
         modelPreference: model,
         onBytes: trace?.onBytes,
         onRaw: async response => { raw = await write("raw", response); },
+        // 1111 线路三：Carbon 每通道证据写进同一请求目录（carbon-*.json，永久保存）。
+        saveEvidence: async (name, value) => write(`carbon-${name}`, JSON.stringify(value)),
         onRouteEvent: async event => {
           const evidence = await write(`route-${event.route.attempt}-${event.phase}`, JSON.stringify({ requestId, stageId, ...event }));
           routeEvents.push({ phase: event.phase, route: event.route, evidence });

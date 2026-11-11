@@ -11,6 +11,7 @@
  * - Credits 不足时自动降级到 Forge AI（有水印）
  */
 
+import { isKlingRetired } from "../shared/klingRetired";
 import {
   TRIAL_PACK_199_MAX_PURCHASES_PER_USER,
   imageUpscaleTotalCredits,
@@ -435,14 +436,16 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "Suno", subFeature: "歌词生成", credits: CREDIT_COSTS.sunoLyrics },
   { product: "Suno", subFeature: "单曲购买池", credits: CREDIT_COSTS.audioSinglePurchase },
   { product: "Suno", subFeature: "套餐内生成", credits: CREDIT_COSTS.audioPackageGeneration },
-  // ─── Kling 视频 / 图 ─────────────────────────────────────
-  { product: "可灵", subFeature: "图生视频", credits: CREDIT_COSTS.klingVideo },
-  { product: "可灵", subFeature: "动作迁移", credits: CREDIT_COSTS.klingMotionControl },
-  { product: "可灵", subFeature: "口型同步", credits: CREDIT_COSTS.klingLipSync },
-  { product: "可灵 图", subFeature: "O1 1K", credits: CREDIT_COSTS.klingImageO1_1K },
-  { product: "可灵 图", subFeature: "O1 2K", credits: CREDIT_COSTS.klingImageO1_2K },
-  { product: "可灵 图", subFeature: "V2.1 1K", credits: CREDIT_COSTS.klingImageV2_1K },
-  { product: "可灵 图", subFeature: "V2.1 2K", credits: CREDIT_COSTS.klingImageV2_2K },
+  // ─── Kling 视频 / 图：可灵停用（方案 A）时不再对外列价；计价键 CREDIT_COSTS.kling* 保留（历史账目/放大基准价）
+  ...(isKlingRetired() ? [] : [
+    { product: "可灵", subFeature: "图生视频", credits: CREDIT_COSTS.klingVideo },
+    { product: "可灵", subFeature: "动作迁移", credits: CREDIT_COSTS.klingMotionControl },
+    { product: "可灵", subFeature: "口型同步", credits: CREDIT_COSTS.klingLipSync },
+    { product: "可灵 图", subFeature: "O1 1K", credits: CREDIT_COSTS.klingImageO1_1K },
+    { product: "可灵 图", subFeature: "O1 2K", credits: CREDIT_COSTS.klingImageO1_2K },
+    { product: "可灵 图", subFeature: "V2.1 1K", credits: CREDIT_COSTS.klingImageV2_1K },
+    { product: "可灵 图", subFeature: "V2.1 2K", credits: CREDIT_COSTS.klingImageV2_2K },
+  ]),
   // ─── 其他 AI ────────────────────────────────────────────
   { product: "分镜", subFeature: "AI 改写脚本", credits: CREDIT_COSTS.storyboardRewrite },
   { product: "分镜", subFeature: "推荐 BGM 描述", credits: CREDIT_COSTS.recommendBGM },

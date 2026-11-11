@@ -611,7 +611,9 @@ import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import {
   MANHUA_WRITER_MODELS,
   MANHUA_WRITER_GENERATION_MIN,
-  MANHUA_WRITER_EPISODE_CREDITS,
+  MANHUA_WRITER_MODEL_HINTS,
+  manhuaWriterAuxModel,
+  manhuaWriterEpisodeCredits,
   manhuaWriterExpansionQuote,
   manhuaWriterModelLabel,
   type ManhuaWriterModel,
@@ -4633,7 +4635,7 @@ function OmniCanvasWorkspace() {
     const saved = trialWriterRecentQuery.data?.find((result) =>
       result.input.topic === factoryTopic.trim() &&
       result.input.brief === writerBrief.trim() &&
-      result.input.publicTemplateId === publicTemplateId && (!result.input.model || result.input.model === writerModel),
+      result.input.publicTemplateId === publicTemplateId && (!result.input.model || result.input.model === manhuaWriterAuxModel(writerModel)),
     );
     if (!saved) return;
     const sameDisplayed = trialWriterInput?.topic === saved.input.topic &&
@@ -5088,7 +5090,8 @@ function OmniCanvasWorkspace() {
               sourceText,
               optimizationBrief,
               modelName,
-              ...(storyboardCandidate || factoryTextStage ? { storyboardCandidate, factoryTextStage, writerModel, publicTemplateId, templateReferences } : {}),
+              // 1111：线路三只用于连载扩写 / 小说改编；其他文字步骤明示改用线路一（选择器下方有提示）
+              ...(storyboardCandidate || factoryTextStage ? { storyboardCandidate, factoryTextStage, writerModel: manhuaWriterAuxModel(writerModel), publicTemplateId, templateReferences } : {}),
             });
             const md = res.result.optimizedMarkdown;
             if (debugMode) {
@@ -6240,8 +6243,8 @@ function OmniCanvasWorkspace() {
     const fromEpisode = Math.max(0, Math.floor(opts?.fromEpisodeOverride ?? writerFromEpisode));
     const fromSegment = opts?.fromEpisodeOverride != null ? 1 : writerFromSegment;
     // 改名沿用当前作品身份；不强制下载备份，不因标题不同清空已付费资产。
-    const expansionQuote = manhuaWriterExpansionQuote(writerEpisodeCount, fromEpisode);
-    if (!window.confirm(`${manhuaWriterModelLabel(writerModel)} · 扩写 ${expansionQuote.episodes} 集，每集 6 积分，共 ${expansionQuote.credits} 积分。成功后替换本次改写范围，其余集数与已出片资产保留；生成失败不替换原稿、不扣积分。是否继续？`)) return;
+    const expansionQuote = manhuaWriterExpansionQuote(writerEpisodeCount, fromEpisode, writerModel);
+    if (!window.confirm(`${manhuaWriterModelLabel(writerModel)} · 扩写 ${expansionQuote.episodes} 集，每集 ${manhuaWriterEpisodeCredits(writerModel)} 积分，共 ${expansionQuote.credits} 积分。成功后替换本次改写范围，其余集数与已出片资产保留；生成失败不替换原稿、不扣积分。是否继续？`)) return;
     setWriterBusy(true);
     // 补密度路径：过了 confirm 等全部早退才挂自动重检标，防悬挂被无关剧本变更误触发
     if (opts?.fromEpisodeOverride != null) gateRecheckPendingRef.current = true;
@@ -6277,7 +6280,7 @@ function OmniCanvasWorkspace() {
           sourceExcerpt,
           episodeCount: count,
           model: writerModel,
-          confirmedCredits: manhuaWriterExpansionQuote(count, fromEpisode).credits,
+          confirmedCredits: manhuaWriterExpansionQuote(count, fromEpisode, writerModel).credits,
           requestId: expandRequestId,
           publicTemplateId: publicTemplateId || undefined,
           templateTrialFingerprint: opts?.templateTrialFingerprint,
@@ -10755,7 +10758,7 @@ function OmniCanvasWorkspace() {
           const result = await optimizeCopyMutation.mutateAsync({
             sourceText: buildManhuaStoryAssetRefreshPrompt({pack:plan.writerPack,changedEpisodeIndexes:plan.changedEpisodeIndexes}),
             optimizationBrief: "只更新受已接受剧情影响的资产设定，严格保留其余集、原人物身份及旧资产，不输出剧情或分镜。",
-            factoryTextStage: "assets", writerModel,
+            factoryTextStage: "assets", writerModel: manhuaWriterAuxModel(writerModel),
           });
           return result.result.optimizedMarkdown;
         },
@@ -11124,9 +11127,11 @@ async function runAdvisorWriterTrial() {
     const scope = JSON.stringify(manhuaOutboundContextRef.current);
     setTrialWriterError(""); setTrialWriterDismissed(false);
     try {
-      const res = await trialWriterMutation.mutateAsync({ requestId, model: writerModel, publicTemplateId, topic: topic || undefined, brief: brief || undefined });
+      // 免费试写只走线路一 / 二（线路三成本高，不进免费额度）；选了线路三时明示用线路一试写
+      const trialModel = manhuaWriterAuxModel(writerModel);
+      const res = await trialWriterMutation.mutateAsync({ requestId, model: trialModel, publicTemplateId, topic: topic || undefined, brief: brief || undefined });
       if (JSON.stringify(manhuaOutboundContextRef.current) !== scope) throw new Error("试写已返回原作品历史，作品已切换，未覆盖当前对比区");
-      setTrialWriterResult(res); setTrialWriterInput({ topic, brief, publicTemplateId, model: writerModel });
+      setTrialWriterResult(res); setTrialWriterInput({ topic, brief, publicTemplateId, model: trialModel });
       void trialWriterQuotaQuery.refetch(); void trialWriterRecentQuery.refetch();
       window.requestAnimationFrame(() => {
         const comparison = document.querySelector<HTMLElement>("[data-manhua-template-trial-compare]");
@@ -13358,20 +13363,20 @@ async function runAdvisorWriterTrial() {
                   trialWriterInput.topic !== factoryTopic.trim() ||
                   trialWriterInput.brief !== writerBrief.trim() ||
                   trialWriterInput.publicTemplateId !== publicTemplateId ||
-                  Boolean(trialWriterInput.model && trialWriterInput.model !== writerModel) ||
+                  Boolean(trialWriterInput.model && trialWriterInput.model !== manhuaWriterAuxModel(writerModel)) ||
                   trialWriterResult.appliedTemplate.publicId !== publicTemplateId
                 ) ? <p className="mt-2 text-xs text-amber-100" role="status">题材、补充条件、模型或模板已改变，请核对后再套用全集。</p> : null}
                 {trialWriterResult && trialWriterInput && trialWriterDismissed &&
                   trialWriterInput.topic === factoryTopic.trim() &&
                   trialWriterInput.brief === writerBrief.trim() &&
-                  trialWriterInput.publicTemplateId === publicTemplateId && (!trialWriterInput.model || trialWriterInput.model === writerModel) ? (
+                  trialWriterInput.publicTemplateId === publicTemplateId && (!trialWriterInput.model || trialWriterInput.model === manhuaWriterAuxModel(writerModel)) ? (
                   <button type="button" className="mt-2 rounded-lg border border-cyan-300/30 px-3 py-1.5 text-xs text-cyan-100" onClick={() => setTrialWriterDismissed(false)}>重新打开已保存的试写对比</button>
                 ) : null}
                 {trialWriterResult && trialWriterInput &&
                   !trialWriterDismissed &&
                   trialWriterInput.topic === factoryTopic.trim() &&
                   trialWriterInput.brief === writerBrief.trim() &&
-                  trialWriterInput.publicTemplateId === publicTemplateId && (!trialWriterInput.model || trialWriterInput.model === writerModel) &&
+                  trialWriterInput.publicTemplateId === publicTemplateId && (!trialWriterInput.model || trialWriterInput.model === manhuaWriterAuxModel(writerModel)) &&
                   trialWriterResult.appliedTemplate.publicId === publicTemplateId ? (
                   <ManhuaTemplateTrialCompare
                     result={trialWriterResult}
@@ -13479,7 +13484,7 @@ async function runAdvisorWriterTrial() {
                           key={t.id}
                           type="button"
                           disabled={writerBusy || factoryBusy}
-                          title={`${t.label} · 每集 ${MANHUA_WRITER_EPISODE_CREDITS} 积分`}
+                          title={`${t.label} · ${MANHUA_WRITER_MODEL_HINTS[t.id]} · 每集 ${manhuaWriterEpisodeCredits(t.id)} 积分`}
                           onClick={() => setWriterModel(t.id)}
                           className={`rounded-md border px-2 py-1 text-[10px] font-semibold disabled:opacity-50 ${
                             on
@@ -13494,9 +13499,14 @@ async function runAdvisorWriterTrial() {
                   </div>
                   <p className="text-[10px] leading-snug text-white/40">
                     本次扣{" "}
-                    {manhuaWriterExpansionQuote(writerEpisodeCount, writerFromEpisode).credits}{" "}
+                    {manhuaWriterExpansionQuote(writerEpisodeCount, writerFromEpisode, writerModel).credits}{" "}
                     积分
                   </p>
+                  {writerModel === "carbon" ? (
+                    <p className="text-[10px] leading-snug text-white/40">
+                      线路三：推理更强、更慢（每集 {manhuaWriterEpisodeCredits("carbon")} 积分）；只用于连载扩写与小说改编，免费试写、资产与分镜文字等其他步骤改用线路一。暂不可用时不扣积分、不换线路，可稍后重试。
+                    </p>
+                  ) : null}
                   <button
                     type="button"
                     disabled={
@@ -13646,7 +13656,7 @@ async function runAdvisorWriterTrial() {
                         writerPack.episodes.length - minFailing + 1,
                       );
                       const perEpisode =
-                        MANHUA_WRITER_EPISODE_CREDITS;
+                        manhuaWriterEpisodeCredits(writerModel);
                       const tierLabel =
                         manhuaWriterModelLabel(writerModel);
                       return (
@@ -15033,7 +15043,7 @@ async function runAdvisorWriterTrial() {
         workflowRevision={advisorActionRevision}
         project={advisorProject}
         onTemplateReferences={saveEpisodeTemplateReferences}
-        episodeWorkspace={writerPack?.episodes.length ? { episodes: writerPack.episodes, model: writerModel, comparisonHost: optimizationComparisonHost, onFocusEpisode: setWriterFocusEpisode, onApplyCandidates: applyTemplateRewriteCandidates } : undefined}
+        episodeWorkspace={writerPack?.episodes.length ? { episodes: writerPack.episodes, model: manhuaWriterAuxModel(writerModel), comparisonHost: optimizationComparisonHost, onFocusEpisode: setWriterFocusEpisode, onApplyCandidates: applyTemplateRewriteCandidates } : undefined}
         mediaWorkspace={{ sources: advisorMediaSourceList(), disabled: Boolean(factoryBusy || writerBusy || cloudConflict),
           validate: validateAdvisorMediaEdit,
           applyImage: (plan, url) => {

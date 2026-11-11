@@ -38,6 +38,12 @@ describe("resolveGeminiModel", () => {
       strategicCoverDirector: "gemini-3.1-pro-preview",
       deepResearchAssist: "gemini-3.1-pro",
       growthCampExtractor: "gemini-3.5-flash",
+      // 1111 Carbon 贵档四个领域（只在用户主动选择时调用）
+      geminiCarbon: "gemini-4-carbon",
+      manhuaDeepReadUpgrade: "gemini-4-carbon",
+      musicMvDeepCompose: "gemini-4-carbon",
+      novelWriterCarbon: "gemini-4-carbon",
+      geminiScript: "gemini-3.1-pro-preview",
     });
     for (const domain of Array.from(pinned)) {
       expect(GEMINI_MODEL_DOMAIN_ENVS).toHaveProperty(domain);
@@ -45,6 +51,22 @@ describe("resolveGeminiModel", () => {
       expect(resolveGeminiModel(d, {})).toBe(geminiModelDomainDefault(d));
     }
     expect(geminiModelDomainDefault("audioTwoHop")).toBe("gemini-3.8-flash");
+  });
+
+  it("1111 Carbon 领域：缺省 gemini-4-carbon，改全局缺省不影响；业务领域 env → GEMINI_CARBON_MODEL 依次覆盖", () => {
+    const carbonDomains = ["geminiCarbon", "manhuaDeepReadUpgrade", "musicMvDeepCompose", "novelWriterCarbon"] as const;
+    for (const d of carbonDomains) {
+      expect(resolveGeminiModel(d, {})).toBe("gemini-4-carbon");
+      expect(resolveGeminiModel(d, { GEMINI_DEFAULT_MODEL: "gemini-3.8-flash" })).toBe("gemini-4-carbon");
+      expect(resolveGeminiModel(d, { GEMINI_CARBON_MODEL: "gemini-4-carbon-0115" })).toBe("gemini-4-carbon-0115");
+    }
+    expect(resolveGeminiModel("manhuaDeepReadUpgrade", { MANHUA_DEEP_READ_UPGRADE_MODEL: "gemini-4-x", GEMINI_CARBON_MODEL: "gemini-4-y" })).toBe("gemini-4-x");
+    expect(resolveGeminiModel("musicMvDeepCompose", { MV_DEEP_COMPOSE_MODEL: "gemini-4-x", GEMINI_CARBON_MODEL: "gemini-4-y" })).toBe("gemini-4-x");
+    expect(resolveGeminiModel("novelWriterCarbon", { NOVEL_WRITER_CARBON_MODEL: "gemini-4-x", GEMINI_CARBON_MODEL: "gemini-4-y" })).toBe("gemini-4-x");
+    // 反向：Carbon env 不会把 Flash 领域与升级重读换成贵档
+    expect(resolveGeminiModel("manhuaDeepRead", { GEMINI_CARBON_MODEL: "gemini-4-carbon" })).toBe("gemini-3.8-flash");
+    expect(resolveGeminiModel("manhuaDeepReadEscalation", { GEMINI_CARBON_MODEL: "gemini-4-carbon" })).toBe("gemini-3.8-flash");
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("领域缺省优先于 GEMINI_DEFAULT_MODEL；领域 env 仍可覆盖", () => {

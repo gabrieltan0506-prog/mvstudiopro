@@ -10,6 +10,7 @@
     "scripts/probe-knowledge-handbook-image-input.mts",
     "scripts/probe-knowledge-review-budget-replay.mts",
     "scripts/probe-knowledge-review-budget.mts",
+    "scripts/probe-novel-carbon-compare.mts",
     "server/**/*.d.ts",
     "shared/**/*.d.ts",
     "client/**/*.d.ts"

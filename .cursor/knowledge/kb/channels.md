@@ -44,10 +44,21 @@
 | `strategicCoverDirector` | 战略封面 / 扉页 / 抠图双语编导 | `STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL` → `VERTEX_GEMINI_31_PRO_MODEL` → `VERTEX_GEMINI_MODEL` | `gemini-3.1-pro-preview`（领域） | **是** |
 | `deepResearchAssist` | 战略智库辅助生成 | `DEEP_RESEARCH_ASSIST_GEMINI_MODEL` | `gemini-3.1-pro`（领域） | **是** |
 | `growthCampExtractor` | 成长营 Phase 1 音频 / 关键帧粗筛 | `GROWTH_CAMP_EXTRACTOR_MODEL` | `gemini-3.5-flash`（领域） | 否 |
+| `geminiCarbon` | Carbon 共用调用层缺省（1111） | `GEMINI_CARBON_MODEL` | `gemini-4-carbon`（领域） | 否；**缺省非 Flash，属贵档，只在用户主动选择时调用** |
+| `manhuaDeepReadUpgrade` | 模板学习·整集精读升级档（替换 Argon，车道 `-g4c`） | `MANHUA_DEEP_READ_UPGRADE_MODEL` → `GEMINI_CARBON_MODEL` | `gemini-4-carbon`（领域） | 否；贵档，只在用户主动选择时调用 |
+| `musicMvDeepCompose` | MV 顾问·深度编排（整片 compose + 逐窗节拍） | `MV_DEEP_COMPOSE_MODEL` → `GEMINI_CARBON_MODEL` | `gemini-4-carbon`（领域） | 否；贵档，只在用户主动选择时调用 |
+| `novelWriterCarbon` | 小说改编 / 连载扩写「线路三」 | `NOVEL_WRITER_CARBON_MODEL` → `GEMINI_CARBON_MODEL` | `gemini-4-carbon`（领域） | 否；贵档，只在用户主动选择时调用 |
 
 - 缺省为 Pro 的 4 个领域（`llmProTier` / `platformStage2` / `strategicCoverDirector` / `deepResearchAssist`）是搬表前就写死的旧值，行为未变；是否降到 3.8 Flash 待用户拍板（删领域缺省条目或设该领域 env）。
 - 1110 行为变化：创作顾问联网摘要原走 Flash 文案链（缺省 `gemini-3-flash-preview`），改为 `platformSkillQa` 领域后缺省 `gemini-3.8-flash`，不再读 Flash 文案旧 env 链。
 - 精读历史身份不变：`MANHUA_NATIVE_DEEP_READ_MODEL`（3.1 Pro）只作旧任务缺省 / 段缓存指纹缺省身份 / 计划码；3.1 Pro、3.8 Flash 段缓存指纹不写模型，Argon 与配置新模型写入模型；配置新模型车道系列后缀 `-gm-<去前缀、点换下划线>`。精读成本表外模型按表内最高单价估算（不按 0 元）。
+
+## Gemini 4 Carbon（1111 接入，贵档）
+- 只走 EvoLink、Gemini API、Vertex，**不接 OpenRouter**。模型标识 `gemini-4-carbon`（`-preview` 三通道 404）。1111 09:00Z 实测：EvoLink 200/2.2s，Gemini API 200/8.3s（先花思考 token，输出上限小会 MAX_TOKENS 空正文），Vertex global 90 秒无回应。
+- 价格：首发到 11-30 输入 $2 / 输出 $10 每百万 token，12-01 起 $4 / $20；输出含思考 token；上下文约 105 万。常量真源 `shared/geminiCarbon.ts`。
+- 共用调用层 `server/services/geminiCarbonCall.ts`：通道顺序 `GEMINI_CARBON_CHANNEL_ORDER`（缺省 `evolink,gemini_api,vertex`），单通道文字类缺省超时 5 分钟、输出上限 65536；超时 / 断线 / HTTP / 错误包 / 空回 / MAX_TOKENS / 拦截 / 写坏（同通道带原因修复一次）都切下一通道；429 同通道退避 2s/5s/10s（同 `GEMINI_TWO_HOP_RATE_LIMIT_BACKOFF_MS`）；每发 request/raw/decoded/parsed/rejected 永久证据，用量（输入/输出/思考）入证据与日志。带媒体请求不走 Gemini API（需 Files API，不做）。
+- 模板学习 Carbon 车道读原生视频：`MANHUA_DEEP_READ_CARBON_ROUTES`（缺省 `evolink,vertex`，不含 Gemini API）；Vertex 复测通过可设 `vertex,evolink`。升级重读缺省不改（同首读模型）；要让五发不过的分片升级到 Carbon，设 `MANHUA_DEEP_READ_ESCALATION_MODEL=gemini-4-carbon`（所有失败段都会走贵档）。
+- 用户入口（全部默认不选）：模板学习面板「整集精读升级档」、MV 顾问「深度编排」（全部通道失败回落原三跳并标注）、小说改编 / 连载扩写「线路三」（失败不换线、不扣点）。
 
 ## 视频
 - **Seedance 2.5 三通道路由拍板（用户 2026-08-13 口径）**：
@@ -122,6 +133,13 @@
 - **OpenRouter DeepSeek 断流**：24 章 HTTP 200、流已开始后中途断，无 402/429/5xx；`max_tokens=393216` = OR DeepSeek 自营端点 `max_completion_tokens`（EvoLink 384000），非误配。出口：unknown 回执等迟到回执 ≤3 分钟 → 归档 `interrupted` → 切下一路补买一次（同章仅一次），`interrupted-repurchase.json` 永久记录；零调用恢复入口 `interruptionPolicy=hold` 不等不买。
 - **EvoLink image_url 400「invalid or missing」**：54 次，全部是 4K PNG 13–18MB 的 GCS V4 签名 URL（即签即发，非过期），同一 URL 先 400 后 200 共 14 个 → EvoLink 上游 60 秒内拉不完境外鉴权大图。修法：审校前生成 `<原图目录>/review-thumbs/<原文件名>.jpg`（长边≤2048、JPEG q85，永久保留）签 URL 送模型，原图 URL 只作回退；不用 base64（用户明确不接受）。image_url 400 不计四次上限，同通道只补 1 次，再 400 才切通道。
 - 两模型在 OpenRouter 模型表均 text+image；EvoLink DeepSeek 同样接受 image_url（22 章成功）。capabilities 表加 `vision` 标注，带图请求只在 vision 路由间切换，无 vision 路由时降级去图并标 `degraded=text-only`（当前四路均 vision，该分支未触发）。
+- **失败处理顺序（用户 2026-11-11）**：同通道重试 → 同模型换路由 → 换模型；跳 = 模型族×通道，每跳 4 个路由位（首发+3 次重试），不增加任何一跳的最多购买次数。实现与常量见 `knowledgePublicationRoutes.ts` 顶部注释。
+  - 限流（429/rate limit/资源耗尽）与临时错误（408/5xx）：同通道最多重试 3 次，退避 2s→5s→10s，有 Retry-After（头或错误体）按它，单次封顶 30s；用尽才换跳。前台批次调度「该通道并发减半」保留。
+  - 断流/超时/连接重置（结果未知）：先等迟到回执、归档 interrupted、不重复计费；同章因断流补买上限 1 次（`KNOWLEDGE_STREAM_BREAK_REPURCHASE_MAX`）。断流后同通道再试 `KNOWLEDGE_STREAM_BREAK_SAME_ROUTE_RETRIES=0`：唯一一次补买直接换路由（同通道断流再买大概率再断）；改成 3 须同时放宽补买上限。
+  - 写坏（2xx 但解析/合同不过）：不占上面 3 次；带原因修复重写一次，仍不过切下一跳（此前实际是同跳最多 4 次）。
+  - 非 429/408 的 4xx：不在同通道重试，直接切下一跳；内容审核拒绝终止；image_url 400 与 key limit 按各自既有规则。
+  - 每次重试/切换一行 `[knowledgeRoute]`（批次、原因、第几次、下一步；无正文/地址/密钥）；accepted.json 与回包 `routeSummary` 记最终跳与各跳次数。
+  - 整条链总时长上限约 10 分钟（`KNOWLEDGE_ROUTE_CHAIN_BUDGET_MS`）：到上限不再新购，判本批失败交「只重试未完成部分」；等迟到回执中到上限则保留 unknown 不提前归档。
 
 ### Wan 3.0 / HappyHorse 1.1 三通道（PR #1308，2026-08-25）
 - **Wan 3.0**：顺序固定为 OpenRouter → EvoLink → WaveSpeed。带参考音频/视频时，OpenRouter 在真单证明字段确实被消费前默认无资格，实际从 EvoLink 开始；明确 4xx 才允许换下一家，网络断、5xx 或 2xx 缺任务号一律转人工对账，不退款、不自动重提。

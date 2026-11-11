@@ -1,5 +1,6 @@
 import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import React, { useMemo, useRef, useState } from "react";
+import { KLING_RETIRED_CLIENT } from "@shared/klingRetired";
 import { withFlyHealthGate } from "@/lib/flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 
@@ -705,7 +706,7 @@ export default function TestLab() {
     <div style={{ maxWidth: 1080, margin: "0 auto", padding: 20, color: "white" }}>
       <h1 style={{ fontSize: 28, margin: 0, fontWeight: 900 }}>AI Studio TestLab</h1>
       <div style={{ marginTop: 8, opacity: 0.78 }}>
-        统一测试：Google / Kling / Music。这里只做功能验证，不是最终用户页面。
+        统一测试：Google / Music。这里只做功能验证，不是最终用户页面。
       </div>
 
       <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
@@ -841,7 +842,8 @@ export default function TestLab() {
               >
                 <option value="google">Google（Nano Banana）</option>
                 <option value="openai">OpenAI（GPT-image-2）</option>
-                <option value="kling">Kling</option>
+                {/* 可灵停用（方案 A）：停用常量下不再提供可灵生图 */}
+                {KLING_RETIRED_CLIENT ? null : <option value="kling">Kling</option>}
               </select>
             </div>
 
@@ -1160,7 +1162,8 @@ export default function TestLab() {
                 style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
               >
                 <option value="seedance">Seedance 2.9 (fal)</option>
-                <option value="kling">Kling Video</option>
+                {/* 可灵停用（方案 A）：停用常量下不再提供可灵视频 */}
+                {KLING_RETIRED_CLIENT ? null : <option value="kling">Kling Video</option>}
               </select>
             </div>
 

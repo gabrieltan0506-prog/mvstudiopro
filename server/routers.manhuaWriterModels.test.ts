@@ -68,3 +68,29 @@ it("批次最少三集，旧两集请求在模型与扣款前拒绝", async () =
   await expect(caller().mvAnalysis.expandManhuaWriterPack({ ...input, episodeCount: 2, confirmedCredits: 12 })).rejects.toThrow();
   expect(modelCall).not.toHaveBeenCalled(); expect(charge).not.toHaveBeenCalled();
 });
+
+it("1111 线路三：三集按单独计价 75 分（占位价），成功后才扣；旧 18 分同意在模型前拒绝", async () => {
+  const result = await caller().mvAnalysis.expandManhuaWriterPack({ ...input, model: "carbon", confirmedCredits: 75 });
+  expect(createCall).toHaveBeenCalledWith(7, input.requestId, "carbon");
+  expect(charge).toHaveBeenCalledWith(7, 75, "manhuaWriterExpand", expect.stringContaining("线路三"), expect.objectContaining({ chargeKey: expect.any(String) }));
+  expect(result).toMatchObject({ model: "carbon", creditsCost: 75 });
+  vi.clearAllMocks();
+  await expect(caller().mvAnalysis.expandManhuaWriterPack({ ...input, model: "carbon", confirmedCredits: 18 })).rejects.toThrow("线路三每集 25 积分，本次 75 积分");
+  expect(modelCall).not.toHaveBeenCalled(); expect(charge).not.toHaveBeenCalled();
+});
+
+it("1111 线路三全部通道失败：返回可重试提示，不扣点，不换别的线路，提示不含模型 / 通道名", async () => {
+  modelCall.mockRejectedValueOnce(Object.assign(new Error("线路三：暂时不可用（已尝试全部通道），旧稿保留，本次未扣点，请稍后重试或改选其他线路"), { code: "NOVEL_CARBON_UNAVAILABLE" }));
+  const error = await caller().mvAnalysis.expandManhuaWriterPack({ ...input, model: "carbon", confirmedCredits: 75 }).catch(e => e);
+  expect(String(error.message)).toContain("本次未扣点");
+  expect(String(error.message)).not.toMatch(/gemini|carbon|evolink|vertex|glm|deepseek/i);
+  expect(createCall).toHaveBeenCalledTimes(1);
+  expect(createCall).toHaveBeenCalledWith(7, input.requestId, "carbon");
+  expect(modelCall).toHaveBeenCalledTimes(1);
+  expect(charge).not.toHaveBeenCalled();
+});
+
+it("1111 免费试写不收线路三（成本高，不进免费额度）", async () => {
+  await expect(caller().mvAnalysis.trialManhuaWriterTemplate({ topic: "测试剧", requestId: input.requestId, publicTemplateId: "mt_1e50", model: "carbon" as never })).rejects.toThrow();
+  expect(modelCall).not.toHaveBeenCalled();
+});

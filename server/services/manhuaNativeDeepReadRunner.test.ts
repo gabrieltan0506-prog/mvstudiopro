@@ -6937,3 +6937,75 @@ it("成功响应的本地解析门禁失败沿原梯度重试，不切Evolink", 
   expect(deps.postEvolink).not.toHaveBeenCalled();
   expect(deps.waitForRetry).toHaveBeenCalledTimes(1);
 });
+
+describe("1111 Carbon 整集精读升级档车道：EvoLink → Vertex（可配），Gemini API 不读视频", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+  const signed = () => vi.fn((uri: string) => uri.replace("gs://test-bucket/", "https://storage.googleapis.com/test-bucket/"));
+  const modelsOf = (spy: unknown) => (spy as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[3]);
+
+  it("Carbon 车道首选 EvoLink：成功即不碰 Vertex，不记降级；请求不带 candidateCount、输出上限与思考档不变", async () => {
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = makeRunnerDeps({ postVertex: vi.fn(), postEvolink: makeSuccessfulEpisodePostVertex(twoSegmentEpisode.segments), signReadUrl: signed() });
+    await runManhuaNativeDeepReadBatch({ readModel: "gemini-4-carbon", episodes: [twoSegmentEpisode], onModelReceipt: row => { receipts.push(row); } }, deps);
+    expect(deps.postVertex).not.toHaveBeenCalled();
+    expect(deps.postEvolink).toHaveBeenCalledTimes(2);
+    expect(new Set(modelsOf(deps.postEvolink))).toEqual(new Set(["gemini-4-carbon"]));
+    for (const [body] of (deps.postEvolink as ReturnType<typeof vi.fn>).mock.calls) {
+      expect(body.generationConfig).not.toHaveProperty("candidateCount");
+      expect(body.generationConfig.maxOutputTokens).toBe(65_536);
+      expect(body.generationConfig.thinkingConfig.thinkingLevel).toBe("MEDIUM");
+      expect(body.contents[0].parts[0].fileData.fileUri).toMatch(/^https:\/\/storage\.googleapis\.com\//);
+    }
+    expect(receipts.filter(r => r.stage === "visual_model" && r.status === "started").every(r => !r.degraded)).toBe(true);
+  });
+
+  it("EvoLink 上游失败（断线 / 超时 / 错误包）→ 同片切 Vertex，Vertex 读 gs://", async () => {
+    const evolink = vi.fn(async () => { throw Object.assign(new Error("fetch failed"), { name: "TypeError" }); });
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(twoSegmentEpisode.segments), postEvolink: evolink, signReadUrl: signed() });
+    await runManhuaNativeDeepReadBatch({ readModel: "gemini-4-carbon", segmentModelConcurrency: 1, episodes: [twoSegmentEpisode] }, deps);
+    expect(evolink).toHaveBeenCalledTimes(2);
+    expect(deps.postVertex).toHaveBeenCalledTimes(2);
+    expect(new Set(modelsOf(deps.postVertex))).toEqual(new Set(["gemini-4-carbon"]));
+    for (const [body] of (deps.postVertex as ReturnType<typeof vi.fn>).mock.calls) expect(body.contents[0].parts[0].fileData.fileUri).toMatch(/^gs:\/\//);
+    expect(deps.waitForRetry).not.toHaveBeenCalled();
+  });
+
+  it("两通道都失败：不循环、不换别的模型，按原错失败", async () => {
+    // 非资源拥堵类失败（资源拥堵仍按冻结规则同通道 30 秒 ×4 重试，见上方既有用例）
+    const deps = makeRunnerDeps({ postVertex: vi.fn(async () => { throw new Error("vertex network failure"); }),
+      postEvolink: vi.fn(async () => { throw new Error("evolink network failure"); }), signReadUrl: signed() });
+    await expect(runManhuaNativeDeepReadBatch({ readModel: "gemini-4-carbon", segmentModelConcurrency: 1, episodes: [twoSegmentEpisode] }, deps)).rejects.toThrow();
+    expect(deps.postEvolink).toHaveBeenCalledTimes(1);
+    expect(deps.postVertex).toHaveBeenCalledTimes(1);
+  });
+
+  it("MANHUA_DEEP_READ_CARBON_ROUTES=vertex,evolink 时 Vertex 先发（Vertex 复测通过后可调回首位）", async () => {
+    vi.stubEnv("MANHUA_DEEP_READ_CARBON_ROUTES", "vertex,evolink");
+    const deps = makeRunnerDeps({ postVertex: makeSuccessfulEpisodePostVertex(twoSegmentEpisode.segments), postEvolink: vi.fn(), signReadUrl: signed() });
+    await runManhuaNativeDeepReadBatch({ readModel: "gemini-4-carbon", episodes: [twoSegmentEpisode] }, deps);
+    expect(deps.postVertex).toHaveBeenCalledTimes(2);
+    expect(deps.postEvolink).not.toHaveBeenCalled();
+  });
+
+  it("升级重读配成 Carbon 时（站长开 env）：3.8 Flash 五发后 Carbon 三档走 EvoLink；未配置时缺省不升级", async () => {
+    const shortPost = () => vi.fn(async (body: any) => {
+      const segmentIndex = Number(/seg-(\d+)/.exec(body.contents[0].parts[0].fileData.fileUri)?.[1]);
+      const segment = twoSegmentEpisode.segments[segmentIndex]!;
+      return geminiResponse(makeSegmentPayload({ segmentIndex, startSec: segment.startSec, endSec: segment.startSec + 5 }));
+    });
+    vi.stubEnv("MANHUA_DEEP_READ_ESCALATION_MODEL", "gemini-4-carbon");
+    const deps = makeRunnerDeps({ postVertex: shortPost(), postEvolink: shortPost(), signReadUrl: signed() });
+    await runManhuaNativeDeepReadBatch({ readModel: "gemini-3.8-flash", segmentModelConcurrency: 1, episodes: [twoSegmentEpisode] }, deps).catch((e) => e);
+    expect(new Set(modelsOf(deps.postVertex))).toEqual(new Set(["gemini-3.8-flash"]));
+    expect(modelsOf(deps.postEvolink).length).toBeGreaterThanOrEqual(3);
+    expect(new Set(modelsOf(deps.postEvolink))).toEqual(new Set(["gemini-4-carbon"]));
+    vi.unstubAllEnvs();
+    vi.stubEnv("MANHUA_DEEP_READ_ESCALATION_MODEL", "");
+    vi.stubEnv("MANHUA_DEEP_READ_MODEL", "");
+    vi.stubEnv("GEMINI_DEFAULT_MODEL", "");
+    const plain = makeRunnerDeps({ postVertex: shortPost(), postEvolink: shortPost(), signReadUrl: signed() });
+    await runManhuaNativeDeepReadBatch({ readModel: "gemini-3.8-flash", segmentModelConcurrency: 1, episodes: [twoSegmentEpisode] }, plain).catch((e) => e);
+    expect(modelsOf(plain.postEvolink)).not.toContain("gemini-4-carbon");
+    expect(modelsOf(plain.postVertex)).not.toContain("gemini-4-carbon");
+  });
+});

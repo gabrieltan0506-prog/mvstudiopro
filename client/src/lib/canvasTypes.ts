@@ -387,15 +387,15 @@ export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }>
   { id: "gpt-image-2", label: "官方出图" },
 ];
 
-/** 产品成片引擎：正式产品名（漫剧开场选型另见 manhuaSeedanceLayout，Happy Horse 只在自由画布） */
+/** 产品成片引擎：Seedance 显示正式名，其余引擎只用中性叫法（模型名是商业机密，前台不露）（漫剧开场选型另见 manhuaSeedanceLayout，Happy Horse 只在自由画布） */
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
   { id: "seedance-2.0-mini", label: "Seedance 2.0 mini（草稿档）" },
   { id: "seedance-2.0", label: "Seedance 2.0" },
   { id: "seedance-2.0-fast", label: "Seedance 2.0 fast" },
   { id: "seedance-2.5", label: "Seedance 2.5" },
-  { id: "minimax-hailuo-3", label: "Minimax H3" },
-  { id: "happyhorse-1.1", label: "Happy Horse 1.1" },
-  { id: "wan-3.0", label: "Wan 3.0（直出30s · 排队时间较长）" },
+  { id: "minimax-hailuo-3", label: "2K 多图参考引擎" },
+  { id: "happyhorse-1.1", label: "首帧图生引擎" },
+  { id: "wan-3.0", label: "长镜直出引擎（直出30s · 排队时间较长）" },
 ];
 
 /**

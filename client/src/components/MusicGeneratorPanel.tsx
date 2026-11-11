@@ -85,8 +85,8 @@ export default function MusicGeneratorPanel() {
             onChange={(e) => setProvider(e.target.value as Provider)}
             style={{ padding: "6px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.25)", color: "white", fontWeight: 800 }}
           >
-            <option value="suno">Suno（高质量）</option>
-            <option value="udio">Udio（更便宜）</option>
+            <option value="suno">配乐·高质量</option>
+            <option value="udio">配乐·经济（更便宜）</option>
           </select>
         </div>
       </div>

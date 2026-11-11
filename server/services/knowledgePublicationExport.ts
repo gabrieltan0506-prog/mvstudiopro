@@ -34,6 +34,7 @@ import {
   uploadStreamToGcs,
 } from "./gcs";
 import { fetchPdfBufferFromWorker, measureKnowledgeBookletFromWorker } from "./pdfWorkerClient";
+import type { KnowledgeBookletImageMode } from "../../shared/knowledgeBooklet";
 import { ensureKnowledgeReviewThumbnail } from "./knowledgeReviewThumbnail";
 import { knowledgeStageConcurrency, runKnowledgeStaggeredPool } from "../../shared/knowledgeConcurrency";
 
@@ -236,14 +237,26 @@ export async function loadKnowledgePublicationExport(
   }
   return {doc,review,receipt,prefix};
 }
+/**
+ * 压缩适配（knowledgeHandbookRefit）用的派生导出：view=已在副本上压缩正文的整册视图（原稿与已确认正文不动），
+ * imageModes=按实测收回跨页名额后的逐章版式，prefixTag=成品目录版本标记（与正式导出分开存放，互不复用）。
+ */
+export type KnowledgeDerivedExport = { view?: Awaited<ReturnType<typeof loadKnowledgePublicationExport>>; imageModes?: KnowledgeBookletImageMode[]; prefixTag?: string };
 export async function exportKnowledgePublication(
-  owner:number,documentId:string,generation:string,overrides:Partial<typeof real>={}
+  owner:number,documentId:string,generation:string,overrides:Partial<typeof real>={},derived:KnowledgeDerivedExport={}
 ):Promise<KnowledgePublicationExport>{
   const deps={...real,...overrides};
   const { loadKnowledgeBookLayoutView } = await import("./knowledgeBookLayout");
-  const {doc,review,receipt,prefix:sourcePrefix}=await loadKnowledgeBookLayoutView(owner,documentId,generation,deps);
-  const prefix=`${sourcePrefix}-${KNOWLEDGE_EXPORT_IMAGE_TRANSPORT}`;
-  if(doc.publication?.supplementOf && doc.publication.billing)return exportKnowledgePublication(owner,doc.publication.supplementOf.documentId,generation,overrides);
+  // 生产调用（无注入依赖）复用同一 generation 的整册视图缓存，与预览/排版输入共用一次解析与核验。
+  const {doc,review,receipt,prefix:sourcePrefix}=derived.view
+    ? derived.view
+    : Object.keys(overrides).length===0
+    ? await loadKnowledgeBookLayoutView(owner,documentId,generation,{},{cache:true})
+    : await loadKnowledgeBookLayoutView(owner,documentId,generation,deps);
+  if(derived.imageModes&&derived.imageModes.length!==doc.pages.length)throw new Error("逐章版式数量与章节不一致");
+  if(derived.prefixTag&&!/^[a-z0-9-]{1,64}$/.test(derived.prefixTag))throw new Error("导出目录标记无效");
+  const prefix=`${sourcePrefix}-${KNOWLEDGE_EXPORT_IMAGE_TRANSPORT}${derived.prefixTag?`-${derived.prefixTag}`:""}`;
+  if(doc.publication?.supplementOf && doc.publication.billing)return exportKnowledgePublication(owner,doc.publication.supplementOf.documentId,generation,overrides,derived.view?{}:derived);
   assertKnowledgeInteriorConsent(doc);
   const run = async () => {
     const manifest = await deps.read(`${prefix}/manifest.json`);
@@ -308,21 +321,28 @@ export async function exportKnowledgePublication(
         const url = doc.pages[index]!.imageUrl;
         if (url) { const p = verifyImage(url); prefetched.set(index, p); await p.catch(() => undefined); }
       });
+      // 每张图只签一次地址：本章配图与上一章「下篇预告」裁切条共用（预告条只引用地址，不另生成图）。
+      const addresses = new Map<string, Promise<string>>();
+      const addressOf = (uri: string) => { if (!addresses.has(uri)) addresses.set(uri, deps.imageUrl(uri)); return addresses.get(uri)!; };
       for (const [index, page] of Array.from(doc.pages.entries())) {
         let imageAddress = "", imageBytes = 0;
         if (page.imageUrl) {
           const image = await (prefetched.get(index) ?? verifyImage(page.imageUrl));
           if (expected.get(page.imageUrl) !== image.sha256)
             throw new Error(`第${index + 1}页配图已变化，未导出旧审校版本`);
-          imageAddress = await deps.imageUrl(page.imageUrl);
+          imageAddress = await addressOf(page.imageUrl);
           imageBytes = image.bytes;
           totalImageBytes += image.bytes;
         }
+        const nextUri = doc.pages[index + 1]?.imageUrl;
         const section = knowledgePublicationChapter(
             doc,
             review,
             index,
-            imageAddress
+            imageAddress,
+            false,
+            nextUri ? await addressOf(nextUri) : "",
+            derived.imageModes?.[index]
           ),
           // 分卷仍按「正文 + 原图体积」计重，保持每卷载入排版服务的图片总量与原先一致；HTML 本身只含地址。
           bytes = Buffer.byteLength(section) + imageBytes;

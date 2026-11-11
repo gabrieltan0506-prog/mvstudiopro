@@ -19,3 +19,9 @@ export async function finalizeKnowledgeBookletPagination(page: Page): Promise<nu
     throw new Error("知识书册分页计数无效");
   return count;
 }
+
+/** 预分页回报的逐章细节（2026-11-11 压缩适配用）：各片段页数、实际版式（跨页/图文同页）、最大单页留白。旧服务端只读 pages，忽略本字段。 */
+export async function readKnowledgeBookletDetails(page: Page): Promise<{ pages: number; imageModes: Record<string, string>; maxWhitespace: number }[]> {
+  const details = await page.evaluate(`[...document.querySelectorAll('[data-booklet-root]')].map(r=>{const k=r.__knowledgeBooklet||{};return {pages:Number(k.pages)||0,imageModes:k.imageModes||{},maxWhitespace:Number(k.maxWhitespace)||0};})`);
+  return Array.isArray(details) ? details as { pages: number; imageModes: Record<string, string>; maxWhitespace: number }[] : [];
+}

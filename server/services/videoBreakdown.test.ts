@@ -14,6 +14,7 @@ import { videoBreakdownFixture } from "./videoBreakdown.fixture";
 import {
   VIDEO_BREAKDOWN_STALE_MS,
   buildVideoBreakdownPrompt,
+  buildVideoBreakdownNativeSchema,
   buildVideoBreakdownUploadObjectName,
   createVideoBreakdownUpload,
   cutVideoBreakdownClips,
@@ -216,12 +217,86 @@ describe("可选三块：坏了就丢", () => {
   it("提示词：有音轨要声音块与配乐要素，无音轨不要；重点时刻上限随片长", () => {
     const a = buildVideoBreakdownPrompt({ durationSec: 30, hasAudio: true });
     expect(a).toContain("generationElements");
-    expect(a).toContain("不转录台词");
+    // 1111 起台词原文进各段 speech.transcript，声音块里不重复
+    expect(a).toContain("台词原文只写进各段 speech.transcript");
     expect(a).toContain("全片至多 9 条");
     expect(a).toContain("用什么拍法");
     const b = buildVideoBreakdownPrompt({ durationSec: 300, hasAudio: false });
     expect(b).toContain("不要输出 overview.sound");
     expect(b).toContain("全片至多 60 条");
+  });
+});
+
+describe("口播与爆款策略（1111 可选块）", () => {
+  const strategy = { whyItWorks: "反常识结论 + 真实场景，信息密度高", hook: "第一句直接抛出「别再这样洗脸了」并配大字弹出", scriptStructure: "抛痛点 → 反常识结论 → 三步做法 → 引导评论", titleIdeas: ["别再这样洗脸了"] };
+  const speech = { transcript: "别再这样洗脸了，越洗越干。", onScreenText: "黄底黑字大标题「别再这样洗脸」弹出", delivery: "语速快，第一句重音落在「别再」" };
+  const withSpeech = (index: number, value: unknown) => {
+    const v = videoBreakdownFixture() as any;
+    v.segments[index] = { ...v.segments[index], speech: value };
+    return v;
+  };
+
+  it("旧结果（无 speech / viralStrategy）照常解析，新块缺省为空", () => {
+    const old = videoBreakdownFixture();
+    expect(videoBreakdownSchema.parse(old)).toEqual(old);
+    const out = parseAndFixVideoBreakdown(old, 30, { hasAudio: true });
+    expect(out.overview.viralStrategy).toBeUndefined();
+    expect(out.segments.every(s => s.speech === undefined)).toBe(true);
+    expect(formatVideoBreakdownRecreatePrompt(out.segments[0]!)).not.toContain("【台词");
+  });
+  it("合格时保留：策略进 overview，口播随段，复刻提示词带上台词、字幕花字与口播节奏", () => {
+    const raw = withSpeech(0, speech);
+    raw.overview.viralStrategy = strategy;
+    const drops: VideoBreakdownOptionalDrop[] = [];
+    const out = parseAndFixVideoBreakdown(raw, 30, { hasAudio: true, drops });
+    expect(drops).toEqual([]);
+    expect(out.overview.viralStrategy).toEqual(strategy);
+    expect(out.segments[0]!.speech).toEqual(speech);
+    expect(videoBreakdownSchema.parse(out)).toEqual(out);
+    const prompt = formatVideoBreakdownRecreatePrompt(out.segments[0]!);
+    expect(prompt).toContain(`【台词 / 口播】${speech.transcript}`);
+    expect(prompt).toContain("【字幕花字】");
+    expect(prompt).toContain("【口播节奏】");
+    expect(prompt.indexOf("【台词")).toBeLessThan(prompt.indexOf("【生成约束】"));
+  });
+  it("口播块坏了只丢本段的 speech；空串当没给；不抛错、不触发修复", () => {
+    const raw = withSpeech(0, { transcript: "", extra: 1 });
+    raw.segments[1] = { ...raw.segments[1], speech: { transcript: "  ", onScreenText: "片尾字幕" } };
+    raw.segments[2] = { ...raw.segments[2], speech: {} };
+    const drops: VideoBreakdownOptionalDrop[] = [];
+    const out = parseAndFixVideoBreakdown(raw, 30, { hasAudio: true, drops });
+    expect(out.segments[0]!.speech).toBeUndefined();
+    expect(out.segments[1]!.speech).toEqual({ onScreenText: "片尾字幕" });
+    expect(out.segments[2]!.speech).toBeUndefined();
+    expect(drops).toEqual([expect.objectContaining({ block: "speech", count: 1 })]);
+  });
+  it("无音轨：台词与口播节奏丢掉，画面字幕花字保留", () => {
+    const drops: VideoBreakdownOptionalDrop[] = [];
+    const out = parseAndFixVideoBreakdown(withSpeech(0, speech), 30, { hasAudio: false, drops });
+    expect(out.segments[0]!.speech).toEqual({ onScreenText: speech.onScreenText });
+    expect(drops[0]!.reasonZh).toContain("无音轨");
+  });
+  it("爆款策略不合格整块丢，主体照留", () => {
+    const raw = videoBreakdownFixture() as any;
+    raw.overview.viralStrategy = { whyItWorks: "x", hook: "" };
+    const drops: VideoBreakdownOptionalDrop[] = [];
+    const out = parseAndFixVideoBreakdown(raw, 30, { hasAudio: true, drops });
+    expect(out.overview.viralStrategy).toBeUndefined();
+    expect(out.segments).toHaveLength(3);
+    expect(drops.map(d => d.block)).toEqual(["viralStrategy"]);
+  });
+  it("提示词与原生 schema：要求爆款策略与逐段口播，口播不进 required", () => {
+    const p = buildVideoBreakdownPrompt({ durationSec: 30, hasAudio: true });
+    expect(p).toContain("overview.viralStrategy");
+    expect(p).toContain("逐字转写");
+    expect(p).toContain("\"speech\"?:");
+    const schema = buildVideoBreakdownNativeSchema(true) as any;
+    expect(schema.properties.overview.required).toContain("viralStrategy");
+    expect(schema.properties.overview.properties.viralStrategy.required).toEqual(["whyItWorks", "hook", "scriptStructure"]);
+    const seg = schema.properties.segments.items;
+    expect(seg.properties.speech).toBeDefined();
+    expect(seg.required).not.toContain("speech");
+    expect(seg.properties.speech.required).toEqual([]);
   });
 });
 

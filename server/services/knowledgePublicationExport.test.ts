@@ -60,6 +60,8 @@ function fixture() {
   };
   return { doc, deps, storage, deduct };
 }
+// 2026-11-11 起每章片段带「下篇预告」，会出现下一章标题；按本章正文块的来源标题识别分段，而不是全文子串。
+const own=(headline:string)=>`data-source-headline="${headline}"`;
 describe("出版确认版本与恢复", () => {
   it("同一确认稿导出成功后复用永久成品，不再提交PDF", async () => {
     const f = fixture();
@@ -152,7 +154,7 @@ it('任一分段计页失败时先保留HTML，全部计页成功后才打印正
  f.deps.review.mockResolvedValue({report:pub.review,sourceImages:[]});
  // 各段并发计页：按内容返回（真实计页即按内容）。第二章并发首发与本轮补跑都失败（共两次），本轮才算未完成；续跑时成功。
  let secondFails=2;
- const measure=vi.fn(async(html:string)=>{if(html.includes('第二章')){if(secondFails>0){secondFails--;throw Error('第二章计页暂时失败');}return 3;}return 2;});
+ const measure=vi.fn(async(html:string)=>{if(html.includes(own('第二章'))){if(secondFails>0){secondFails--;throw Error('第二章计页暂时失败');}return 3;}return 2;});
  f.deps.merge.mockImplementation(async(_paths?:string[],target?:string)=>{await writeFile(target!,Buffer.from('%PDF'+'merged-test-only'.repeat(20)));});
  f.deps.countPages.mockResolvedValue(5);
  const partial=await exportKnowledgePublication(7,f.doc.id,'10',{...f.deps,measure} as any);
@@ -165,8 +167,8 @@ it('任一分段计页失败时先保留HTML，全部计页成功后才打印正
  const renders=f.deps.pdf.mock.calls as unknown as [string][];
  expect(renders).toHaveLength(2);
  // 各段并发渲染，调用顺序不定；按段内容核对页码偏移。
- expect(renders.find(([h])=>h.includes('第一章'))![0]).toContain('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="2"');
- expect(renders.find(([h])=>h.includes('第二章'))![0]).toContain('data-booklet-page-offset="2" data-booklet-total-pages="5" data-booklet-expected-pages="3"');
+ expect(renders.find(([h])=>h.includes(own('第一章')))![0]).toContain('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="2"');
+ expect(renders.find(([h])=>h.includes(own('第二章')))![0]).toContain('data-booklet-page-offset="2" data-booklet-total-pages="5" data-booklet-expected-pages="3"');
  expect(complete.billing?.readingPages).toBe(5);
 });
 
@@ -180,7 +182,7 @@ async function assertSplitRecovery(shiftCounts: boolean) {
  const sha='a'.repeat(64);f.deps.review.mockResolvedValue({report:pub.review,sourceImages:pub.source.pages.map(p=>({uri:p.imageUrl,sha256:sha}))} as any);
  f.deps.image.mockResolvedValue({buffer:Buffer.alloc(19*1024*1024),mimeType:'image/png',sha256:sha});
  let shifted=false;
- const measure=vi.fn(async(html:string)=>html.includes('章二')?(shifted?2:3):(shifted?3:2));
+ const measure=vi.fn(async(html:string)=>html.includes(own('章二'))?(shifted?2:3):(shifted?3:2));
  const renders:string[]=[];let failSecond=true;
  f.deps.pdf.mockImplementation(async(html?:string)=>{renders.push(html!);if(html!.includes('data-booklet-page-offset="2"')&&failSecond){failSecond=false;throw Error('第二段测试失败');}return Buffer.from('%PDF'+ 'test-only'.repeat(20));});
  f.deps.merge.mockImplementation(async(_paths?:string[],target?:string)=>{await writeFile(target!,Buffer.from('%PDF'+'merged-test-only'.repeat(20)));});
@@ -197,15 +199,15 @@ async function assertSplitRecovery(shiftCounts: boolean) {
  expect(complete.pdfUrl).toBeTruthy();expect(f.deps.pdf).toHaveBeenCalledTimes(shiftCounts?4:3);expect(measure).toHaveBeenCalledTimes(4);
  // 第一轮两段并发渲染（顺序不定），第二段失败；续跑只补失败段，成功段复用缓存。
  const firstRound=renders.slice(0,2);
- expect(firstRound.find(h=>h.includes('章一'))!.includes('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="2"')).toBe(true);
- expect(firstRound.find(h=>h.includes('章二'))!.includes('data-booklet-page-offset="2" data-booklet-total-pages="5" data-booklet-expected-pages="3"')).toBe(true);
+ expect(firstRound.find(h=>h.includes(own('章一')))!.includes('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="2"')).toBe(true);
+ expect(firstRound.find(h=>h.includes(own('章二')))!.includes('data-booklet-page-offset="2" data-booklet-total-pages="5" data-booklet-expected-pages="3"')).toBe(true);
  if(shiftCounts){
   const second=renders.slice(2);
   // 分段页数变化：章一改为3页、章二2页，两段都按新偏移重渲（不复用旧分段）。断言只比布尔，避免巨型HTML差异输出。
   expect(second).toHaveLength(2);
-  expect(second.find(h=>h.includes('章一'))!.includes('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="3"')).toBe(true);
-  expect(second.find(h=>h.includes('章二'))!.includes('data-booklet-page-offset="3" data-booklet-total-pages="5" data-booklet-expected-pages="2"')).toBe(true);
- }else expect(renders[2]).toBe(firstRound.find(h=>h.includes('章二')));
+  expect(second.find(h=>h.includes(own('章一')))!.includes('data-booklet-page-offset="0" data-booklet-total-pages="5" data-booklet-expected-pages="3"')).toBe(true);
+  expect(second.find(h=>h.includes(own('章二')))!.includes('data-booklet-page-offset="3" data-booklet-total-pages="5" data-booklet-expected-pages="2"')).toBe(true);
+ }else expect(renders[2]).toBe(firstRound.find(h=>h.includes(own('章二'))));
  expect(Array.from(f.storage.keys()).filter(k=>k.endsWith('/0-0-2-5.pdf'))).toHaveLength(1);
 }
 it('大手册分段使用全书页码，失败恢复只补缺失段',()=>assertSplitRecovery(false));

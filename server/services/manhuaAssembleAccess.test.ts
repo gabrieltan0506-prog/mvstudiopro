@@ -5,6 +5,7 @@ import { assertManhuaAssembleJobOwner, hasCurrentManhuaAssembleBillingContract, 
 import { MANHUA_ASSEMBLE_LEDGER_TYPE } from "./manhuaAssembleBilling.js";
 import { CREDIT_COSTS } from "../plans.js";
 import { hasSupervisorRole, isLegacyUnbilledKlingJobAction } from "../../shared/internalMediaEndpointPolicy.js";
+import { isKlingJobAction, klingRetiredBody, KLING_RETIRED_HTTP_STATUS } from "../kling/retired.js";
 
 const params = { billingContractVersion: "manhua-assemble-v1", clips: [{ clipUrl: "https://example.test/clip.mp4" }] };
 const input = { action: "manhua_assemble_final", params };
@@ -31,7 +32,8 @@ function response() {
   return { status: vi.fn(function (this: any, _status: number) { return this; }), json: vi.fn((body: unknown) => body) };
 }
 
-function queueRuntime(user: unknown) {
+/** klingRetired 缺省 false：既有鉴权用例按「KLING_RETIRED=0 紧急恢复」口径继续验证分层鉴权；停用口径见文末专门用例。 */
+function queueRuntime(user: unknown, klingRetired = false) {
   const call = extract("../_core/index.ts", node => ts.isCallExpression(node) && node.expression.getText() === "app.all" && node.arguments[0]?.getText() === '"/api/jobs"');
   const tree = ts.createSourceFile("call.ts", call, ts.ScriptTarget.Latest, true);
   const callback = (tree.statements[0] as ts.ExpressionStatement).expression as ts.CallExpression;
@@ -40,6 +42,7 @@ function queueRuntime(user: unknown) {
     createContext: vi.fn(async () => ({ user })), createJob,
     resolveManhuaAssembleAccess, hasCurrentManhuaAssembleBillingContract,
     isLegacyUnbilledKlingJobAction, hasSupervisorRole,
+    isKlingJobAction, isKlingRetired: () => klingRetired, klingRetiredBody, KLING_RETIRED_HTTP_STATUS,
     CREATIVE_NANO_IMAGE_ACTION: "creative_nano_image", nanoid: () => "job-7",
     processJobsOnce: vi.fn(async () => {}),
   };
@@ -216,5 +219,27 @@ describe("通用任务队列不收匿名入队（执行源码，不发网络）"
     await q.handle({ method: "POST", query: {}, body: body("audio", "suno_music") }, res);
     expect(res.status).toHaveBeenCalledWith(200);
     expect(q.createJob).toHaveBeenCalledWith(expect.objectContaining({ userId: "7", type: "audio", provider: "suno" }));
+  });
+
+  it.each([
+    ["video", "omni_t2v"], ["video", "omni_i2v"], ["video", "omni_storyboard"], ["video", "motion_control"], ["video", "lip_sync"], ["image", "kling_image"],
+  ])("可灵停用：%s/%s 对匿名、普通用户、监管一律 410 kling_retired，不入队", async (type, action) => {
+    for (const who of [null, { id: 7, role: "user" }, { id: 1, role: "supervisor" }]) {
+      const q = queueRuntime(who, true);
+      const res = response();
+      await q.handle({ method: "POST", query: {}, body: body(type, action) }, res);
+      expect(res.status).toHaveBeenCalledWith(410);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ ok: false, error: "kling_retired" }));
+      expect(q.createJob).not.toHaveBeenCalled();
+      expect(q.processJobsOnce).not.toHaveBeenCalled();
+    }
+  });
+
+  it("可灵停用不误伤其他 action：登录用户音乐任务照常入队", async () => {
+    const q = queueRuntime({ id: 7, role: "user" }, true);
+    const res = response();
+    await q.handle({ method: "POST", query: {}, body: body("audio", "suno_music") }, res);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(q.createJob).toHaveBeenCalledTimes(1);
   });
 });

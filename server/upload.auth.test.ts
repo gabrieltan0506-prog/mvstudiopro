@@ -9,6 +9,7 @@ vi.mock("./services/gcs", () => ({ uploadBufferToGcs: h.gcsUpload }));
 vi.mock("./services/publicStoredMedia", () => ({ putPublicStoredMedia: h.blobPut }));
 import uploadRouter from "./upload";
 import blobPutImage from "../api/blob-put-image";
+import { resetUsageLimitsForTest, USAGE_LIMITS } from "./_core/usageLimits";
 
 const PATHS = ["/api/upload", "/api/upload-image", "/api/platform/upload", "/api/magazine/upload"];
 
@@ -44,6 +45,7 @@ async function callBlob(body: unknown, method = "POST") {
 
 beforeEach(() => {
   h.auth.mockReset().mockResolvedValue({ id: 7, role: "user" });
+  resetUsageLimitsForTest();
   h.storagePut.mockReset().mockImplementation(async (key: string) => ({ url: `https://media.example/${key}` }));
   h.gcsUpload.mockReset().mockImplementation(async ({ bucket, objectName }: any) => ({ bucket, objectName, gcsUri: `gs://${bucket}/${objectName}` }));
   h.blobPut.mockReset().mockImplementation(async (pathname: string) => ({ pathname, url: `https://blob.example/${pathname}` }));
@@ -73,9 +75,9 @@ it("登录库暂时不可用 → 503（不当成未登录），同样不收文�
 it("已登录：/api/upload 与 /api/upload-image 照常落存储", async () => {
   const upload = await call("/api/upload");
   expect(upload.status).toBe(200);
-  expect(upload.body.key).toMatch(/^uploads\/[\w-]{12}\.png$/);
+  expect(upload.body.key).toMatch(/^uploads\/u7\/[\w-]{12}\.png$/);
   const image = await call("/api/upload-image");
-  expect(image.body.key).toMatch(/^idol-3d\/[\w-]{12}\.png$/);
+  expect(image.body.key).toMatch(/^idol-3d\/u7\/[\w-]{12}\.png$/);
   expect(h.storagePut).toHaveBeenCalledTimes(2);
 });
 
@@ -99,4 +101,20 @@ it("blob-put-image：未登录 401、登录库不可用 503，均不落存储；
   expect(ok.status).toBe(200);
   expect(ok.body.blobPath).toMatch(/^refs\/\d+-ref\.png$/);
   expect(h.blobPut).toHaveBeenCalledTimes(1);
+});
+
+it("1111：对象落本人前缀，换人落各自前缀（不再写全站共用前缀）", async () => {
+  h.auth.mockResolvedValue({ id: 8, role: "user" });
+  const other = await call("/api/upload");
+  expect(other.body.key).toMatch(/^uploads\/u8\/[\w-]{12}\.png$/);
+  expect(h.storagePut.mock.calls[0][0]).toBe(other.body.key);
+});
+
+it("1111：超过每分钟上限 → 429，不读请求体、不落存储", async () => {
+  for (let i = 0; i < USAGE_LIMITS.serverUpload.perMinute; i++) expect((await call("/api/upload")).status).toBe(200);
+  const before = h.storagePut.mock.calls.length;
+  const limited = await call("/api/upload");
+  expect(limited.status).toBe(429);
+  expect(limited.wasRead).toBe(false);
+  expect(h.storagePut.mock.calls.length).toBe(before);
 });

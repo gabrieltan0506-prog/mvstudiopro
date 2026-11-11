@@ -17,6 +17,11 @@ import {
 import { assertSongOperationMaterialRead } from "../server/services/songOperationMediaAccess";
 import { redactModelInfoForRole } from "../shared/modelInfoExposure";
 import { isAllowedCanvasMaterialGcsUri } from "../shared/canvasMaterialReadPolicy";
+import { logAndSanitizeUpstreamError } from "../shared/upstreamErrorForClient";
+import { USAGE_LIMITS, clientIpOf, consumeUsage } from "../server/_core/usageLimits";
+
+/** geminiScript 单次提示词上限（字符）。画布角色卡 / 分镜文案远低于此值。 */
+const GEMINI_SCRIPT_MAX_PROMPT_CHARS = 120_000;
 export { runVertexUpscaleImage, type VertexUpscaleResult };
 
 /**
@@ -199,6 +204,19 @@ async function buildNanoImageResponseBody(opts: {
   }
   const hadDataUri = opts.imageUrls.some((u) => u.startsWith("data:"));
   const noDataLeft = !imageUrls.some((u) => u.startsWith("data:"));
+  if (!opts.ok) {
+    // 失败：上游原文、请求地址与模型名只进服务端日志，前台只拿业务友好句
+    logAndSanitizeUpstreamError("nanoImage", { status: opts.status, model: opts.model, url: opts.url, raw: opts.raw });
+    return {
+      ok: false,
+      status: opts.status,
+      imageUrl: "",
+      imageUrls: [] as string[],
+      imageCount: 0,
+      error: "生图服务暂不可用，请稍后重试",
+      ...(opts.extra || {}),
+    };
+  }
   const omitRaw = !opts.forceInlineBase64 && opts.ok && hadDataUri && noDataLeft;
   return {
     ok: opts.ok,
@@ -325,8 +343,9 @@ async function issueManhuaLearnUploadUrl(
     });
     return res.status(200).json({ ok: true, ...signed, mimeType: input.mimeType });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return res.status(500).json({ ok: false, error: "gcs_signed_upload_failed", detail: msg.slice(0, 240) });
+    // 原文进服务端日志；前台只拿脱敏短句（去地址 / 模型与供应商名、截断）
+    const detail = logAndSanitizeUpstreamError(`gcsSignedUpload:${input.subdir}`, e, { fallback: "上传地址生成失败，请稍后重试" });
+    return res.status(500).json({ ok: false, error: "gcs_signed_upload_failed", detail });
   }
 }
 
@@ -484,7 +503,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       try {
         return res.status(200).json({ ok: true, gcsUri, url: signGsUriV4ReadUrl(gcsUri, 3600) });
       } catch (error: any) {
-        return res.status(502).json({ ok: false, error: "sign_failed", message: error?.message || String(error) });
+        return res.status(502).json({ ok: false, error: "sign_failed", message: logAndSanitizeUpstreamError("materialReadUrl", error, { fallback: "素材读取地址生成失败，请稍后重试" }) });
       }
     }
 
@@ -639,9 +658,8 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
           via: gcsUri ? "gcs" : "audioUrl",
         }, viewer.role));
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error("[manhuaAudioClimaxScan]", msg.slice(0, 400));
-        return res.status(500).json({ ok: false, error: "manhua_audio_scan_failed", detail: msg.slice(0, 280) });
+        const detail = logAndSanitizeUpstreamError("manhuaAudioClimaxScan", e, { fallback: "听音分析暂不可用，请稍后重试" });
+        return res.status(500).json({ ok: false, error: "manhua_audio_scan_failed", detail });
       }
     }
 
@@ -723,9 +741,8 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
           frameCount: frames.length,
         }, frameViewer.role));
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error("[manhuaTemplateFrameScan]", msg.slice(0, 400));
-        return res.status(500).json({ ok: false, error: "manhua_frame_scan_failed", detail: msg.slice(0, 280) });
+        const detail = logAndSanitizeUpstreamError("manhuaTemplateFrameScan", e, { fallback: "画面分析暂不可用，请稍后重试" });
+        return res.status(500).json({ ok: false, error: "manhua_frame_scan_failed", detail });
       }
     }
 
@@ -747,7 +764,11 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         imageUrl,
         upscaleFactor: access.upscaleFactor,
       });
-      return res.status(result.ok ? 200 : 502).json(result);
+      if (!result.ok) {
+        const { raw: _raw, ...rest } = result as typeof result & { raw?: unknown };
+        return res.status(502).json({ ...redactModelInfoForRole(rest as Record<string, unknown>, viewer.role), error: logAndSanitizeUpstreamError("legacyUpscale", { error: result.error, raw: _raw }, { fallback: "放大服务暂不可用，请稍后重试" }) });
+      }
+      return res.status(200).json(result);
     }
 
     // ---------------- Canvas / 工作流：视频反推提示词（帧序列；1110 起存 GCS → Gemini 两跳，不内联） ----------------
@@ -913,8 +934,26 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(200).json({ ok: true, markdown: outcome.markdown, imageCount: images.length });
     }
 
+    // geminiScript：须登录 + 用量闸门 + 提示词长度上限，均在取 Vertex 令牌与任何上游调用之前（原先匿名可调且可指定模型）
+    if (op === "geminiScript") {
+      const scriptViewer = await resolveGoogleGatewayUser(req);
+      if (!scriptViewer) return res.status(401).json({ ok: false, error: "authentication_required", message: "请先登录后再使用" });
+      const scriptPrompt = s(b.prompt || q.prompt || "");
+      if (scriptPrompt.length > GEMINI_SCRIPT_MAX_PROMPT_CHARS) {
+        return res.status(413).json({ ok: false, error: "prompt_too_long", message: "输入内容过长，请精简后重试" });
+      }
+      const usage = consumeUsage(USAGE_LIMITS.geminiScript, [`u:${scriptViewer.userId}`, `ip:${clientIpOf(req as any)}`]);
+      if (!usage.ok) {
+        res.setHeader("Retry-After", String(usage.retryAfterSec));
+        return res.status(429).json({ ok: false, error: "rate_limited", message: usage.message });
+      }
+    }
+
     const projectId = s(process.env.VERTEX_PROJECT_ID).trim();
-    if(!projectId) return res.status(500).json({ok:false,error:"missing_env",detail:"VERTEX_PROJECT_ID"});
+    if(!projectId){
+      console.error("[api/google] missing_env VERTEX_PROJECT_ID");
+      return res.status(500).json({ok:false,error:"missing_env",message:"服务暂未配置，请联系支持"});
+    }
 
     const token = await getVertexAccessToken();
 
@@ -924,7 +963,8 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
 
       const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
-      const model = (s(b.model || q.model || "") || s(process.env.VERTEX_GEMINI_MODEL) || "gemini-3.1-pro-preview").trim();
+      // 模型只由服务端配置决定（GEMINI_SCRIPT_MODEL → VERTEX_GEMINI_MODEL → 领域缺省），调用方传的 model 一律忽略
+      const model = resolveGeminiModel("geminiScript");
       const is31Pro = /gemini-3\.1.*pro/i.test(model);
       const is25Pro = /gemini-2\.5/i.test(model) && /pro/i.test(model) && !/flash/i.test(model);
       const is3Flash =
@@ -997,12 +1037,17 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const raw = r.json ?? r.rawText;
       const httpOut = r.ok ? 200 : r.status === 429 ? 429 : r.status === 503 ? 503 : 502;
+      if (!r.ok) {
+        // 失败：上游原文与请求地址（含项目与模型名）只进服务端日志，不回前台
+        logAndSanitizeUpstreamError("geminiScript", { status: r.status, url: r.url, raw });
+        return res.status(httpOut).json({ ok: false, status: r.status, error: "算力紧张，请稍后重试" });
+      }
       return res.status(httpOut).json({
         ok: r.ok,
         status: r.status,
         url: r.url,
         raw,
-        error: r.ok ? undefined : "算力紧张，请稍后重试",
+        error: undefined,
       });
     }
 
@@ -1148,6 +1193,6 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
     return res.status(400).json({ok:false,error:"unknown_op",op});
   }catch(e:any){
-    return res.status(500).json({ok:false,error:"server_error",message:e?.message||String(e)});
+    return res.status(500).json({ok:false,error:"server_error",message:logAndSanitizeUpstreamError("api/google", e)});
   }
 }

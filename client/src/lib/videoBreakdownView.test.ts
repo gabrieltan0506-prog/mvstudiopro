@@ -21,6 +21,8 @@ import {
   segmentPlayback,
   sortedKeyMoments,
   splitArrowStages,
+  speechRows,
+  viralStrategyRows,
   validateVideoBreakdownDuration,
   validateVideoBreakdownFile,
   videoBreakdownStageIndex,
@@ -279,5 +281,36 @@ describe("可选块：镜长分布 / 手法节奏情绪 / 风格判词 / 声音�
     const plain = buildVideoBreakdownMarkdown(fixture);
     expect(plain).toContain("### 镜长分布");
     for (const text of ["### 可复用手法", "### 声音拆解", "### 重点时刻"]) expect(plain).not.toContain(text);
+  });
+});
+
+describe("口播与爆款策略（1111 可选块）", () => {
+  const talking = () => {
+    const v = structuredClone(fixture);
+    v.overview.viralStrategy = { whyItWorks: "反常识结论 + 真实场景", hook: "第一句抛出「别再这样洗脸了」", scriptStructure: "抛痛点 → 反常识结论 → 三步做法", topicAngle: "护肤新手", titleIdeas: ["别再这样洗脸了"] };
+    v.segments[0]!.speech = { transcript: "别再这样洗脸了，越洗越干。", onScreenText: "黄底大字弹出", delivery: "语速快" };
+    return videoBreakdownSchema.parse(v);
+  };
+  it("旧结果不渲染新区块", () => {
+    const out = html(createElement(VideoBreakdownResultView, { result: fixture, onCopy: () => undefined }));
+    expect(out).not.toContain("data-lapian-viral-strategy");
+    expect(out).not.toContain("data-segment-speech");
+    expect(speechRows(fixture.segments[0]!)).toEqual([]);
+    expect(viralStrategyRows(fixture)).toEqual([]);
+    expect(buildVideoBreakdownMarkdown(fixture)).not.toContain("## 爆款策略");
+  });
+  it("有值时渲染爆款策略区块与逐段口播，复刻提示词与导出都带上台词", () => {
+    const result = talking();
+    const out = decode(html(createElement(VideoBreakdownResultView, { result, onCopy: () => undefined })));
+    expect(out).toContain("data-lapian-viral-strategy");
+    for (const label of ["爆款原因", "开头钩子", "口播 / 文案结构", "选题与受众", "标题参考"]) expect(out).toContain(label);
+    expect(out).toContain('data-segment-speech="0"');
+    expect(out).toContain("别再这样洗脸了，越洗越干。");
+    expect(out).toContain("【台词 / 口播】别再这样洗脸了，越洗越干。");
+    expect(out.indexOf("爆款策略")).toBeLessThan(out.indexOf("全片创作拆解"));
+    const md = buildVideoBreakdownMarkdown(result);
+    expect(md).toContain("## 爆款策略");
+    expect(md).toContain("### 口播与字幕");
+    expect(buildAllRecreatePromptsText(result)).toContain("【字幕花字】黄底大字弹出");
   });
 });

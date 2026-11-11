@@ -19,6 +19,7 @@ export function musicMvAdvisorRequest(session: MusicMvAdvisorSession) {
     shotSummary: "",
     blockers: [],
     musicMv: session.target,
+    ...(session.composeEngine === "deep" ? { musicMvComposeEngine: "deep" as const } : {}),
   });
   return {
     requestId: session.requestId,

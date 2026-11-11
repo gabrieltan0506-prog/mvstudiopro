@@ -15,6 +15,11 @@ cover: /blog-assets/mv-rainy-duet/mv-rainy-duet-cover-20261111.jpg
   <figcaption>成片高光段的四个关键画面：720×1280 竖屏，59.4 秒，取自原曲第 18.2–77.5 秒，天气从晴转阴、下雨，再在雨后转亮。完整成片视频稍后补上。</figcaption>
 </figure>
 
+<figure>
+  <audio src="/blog-assets/mv-rainy-duet/mv-rainy-duet-song-20261111.mp3" controls preload="none" controlslist="nodownload noplaybackrate" oncontextmenu="return false" draggable="false" style="width:100%"></audio>
+  <figcaption>这支 MV 用的原创歌曲，全长约 3 分 29 秒；成片取的是其中第 18.2–77.5 秒的高光段。仅供在线试听。</figcaption>
+</figure>
+
 想直接做一支：**[打开「我的 MV」，新建一部作品](/mv-projects)**
 
 ## 这支片子的输入只有两样：一首歌和一段剧情大纲

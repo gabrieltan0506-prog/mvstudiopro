@@ -1623,7 +1623,7 @@ export function CanvasAudioStudioView({
       </div>
       {state.referenceMode === "dialogue" && <p className="text-xs text-sky-100">本次只送对白及已选音效，BGM保留采用记录和原参数，待成片后叠加；旧母轨不参与本次生成。</p>}
       {state.referenceMode !== "dialogue" && block.videoModel === "seedance-2.5" && usesSeparateCanvasAudio(state) && <p className="text-xs text-sky-100">对白按角色和秒窗独立绑定，BGM用整曲独立参考；各自按保存参数处理，不合并为母轨。原音频、采用记录及旧合听保留。</p>}
-      {proxyAudio && <p className="text-xs text-amber-100">音频先从本机浏览器缓存读取，缺失时经 Fly 暂存回源；Fly 暂存仅保留 24 小时。请及时下载所选音轨。若原件也已丢失，需重新生成。</p>}
+      {proxyAudio && <p className="text-xs text-amber-100">音频先从本机浏览器缓存读取，缺失时经云端暂存回源；云端暂存仅保留 24 小时。请及时下载所选音轨。若原件也已丢失，需重新生成。</p>}
       {restoreSources.length > 0 && <details className="rounded border border-sky-200/20 p-2">
         <summary className="cursor-pointer text-xs">找回本段整套原声与配乐</summary>
         <p className="my-2 text-xs text-white/70">恢复所选旧节点的台词、角色、秒窗、音色、配乐和原采用记录。当前音轨保留为停用版本；剧本、图片及成片保持原样。恢复后请检查声音时长与保存全文，母轨须匹配恢复后的音轨版本。</p>
@@ -1766,7 +1766,7 @@ export function CanvasAudioStudioView({
               })}
             </div>
             <div className="flex gap-2"><button type="button" className={buttonClass} disabled={voicePage === 0} onClick={() => setVoicePage(page => page - 1)}>上一页</button><button type="button" className={buttonClass} disabled={(voicePage + 1) * 30 >= voiceCatalogMatches.length} onClick={() => setVoicePage(page => page + 1)}>下一页</button></div>
-            <p className="text-[11px] text-white/45">目录试音来自阿里云百炼官方基础音色样本包；正式对白仍须按句生成、试听并结算。</p>
+            <p className="text-[11px] text-white/45">目录试音来自官方基础音色样本包；正式对白仍须按句生成、试听并结算。</p>
           </div></>}
         </div>}
         {activeCue?.kind === "dialogue" && voiceTab === "自定义音色" && <div className="rounded border border-cyan-300/20 p-2">

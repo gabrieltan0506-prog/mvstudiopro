@@ -732,7 +732,7 @@ function DigitalHumanWorkspace({
                 };
                 if (
                   !window.confirm(
-                    `Sunburst 2K 场景图，${canvasImageCredits(0)}积分。确认生成？`
+                    `精细 2K 场景图，${canvasImageCredits(0)}积分。确认生成？`
                   )
                 )
                   return;
@@ -910,7 +910,7 @@ function DigitalHumanWorkspace({
               onChange={e => edit({ speechInstruction: e.target.value })}
               placeholder="例如：保留本人音色，开场有力度，关键词重读，句间自然停顿。" />
           </label>
-          <p>此处是给声音模型的指令，不作为台词朗读。当前支持百炼本人克隆声线；“嗯、你看”等要念出来的语气词请写进口播文案。表情和手势在导演方案中安排。</p>
+          <p>此处是给声音模型的指令，不作为台词朗读。当前支持本人克隆声线；“嗯、你看”等要念出来的语气词请写进口播文案。表情和手势在导演方案中安排。</p>
           <p>
             配音按实际时长计费，每开始0.2秒2积分，15秒约
             {canvasTtsCreditsForDuration(15)}积分。超长音频保留，不截断。

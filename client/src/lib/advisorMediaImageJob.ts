@@ -18,7 +18,7 @@ export async function runAdvisorImageEdit(input: {
   previewUrl?: string; jobId?: string; onJob: (id: string) => void;
 }): Promise<string> {
   if (input.plan.kind !== "image") throw new Error("不是图片方案");
-  if (input.variant === "sunburst" && !input.previewUrl) throw new Error("请先确认Flare预览");
+  if (input.variant === "sunburst" && !input.previewUrl) throw new Error("请先确认快速预览");
   let jobId = input.jobId;
 
   if (!jobId) {

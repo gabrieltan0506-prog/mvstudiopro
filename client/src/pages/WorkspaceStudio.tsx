@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, Plus, Trash2, PencilLine, Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { KLING_RETIRED_CLIENT } from "@shared/klingRetired";
 
 type StepType = "script" | "storyboard" | "images" | "video" | "audio" | "export";
 
@@ -189,6 +190,14 @@ export default function WorkspaceStudioPage() {
       if (completeTimerRef.current) clearTimeout(completeTimerRef.current);
     };
   }, []);
+
+  /** 旧工作流是否开过已下线引擎的工作室开关（只读判断，不写库）。 */
+  const hasRetiredStudioControls = Boolean(
+    workflowQuery.data &&
+      (workflowQuery.data.klingMotionControlEnabled ||
+        workflowQuery.data.klingLipsyncEnabled ||
+        workflowQuery.data.klingElementsEnabled),
+  );
 
   const runsByStep = useMemo(() => {
     const grouped: Record<StepType, Array<any>> = {
@@ -451,33 +460,44 @@ export default function WorkspaceStudioPage() {
                 {workflowQuery.data ? <Badge variant="secondary">{workflowQuery.data.name}</Badge> : null}
               </div>
 
-              <div className="rounded-lg border border-cyan-300/20 bg-cyan-400/5 p-3 mb-4">
-                <h3 className="font-medium mb-2">工作室控制 V1</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-                  <label className="flex items-center justify-between rounded-md border border-white/10 px-3 py-2">
-                    <span className="text-sm">动作控制</span>
-                    <Switch checked={motionControl} onCheckedChange={setMotionControl} />
-                  </label>
-                  <label className="flex items-center justify-between rounded-md border border-white/10 px-3 py-2">
-                    <span className="text-sm">口型同步</span>
-                    <Switch checked={lipsync} onCheckedChange={setLipsync} />
-                  </label>
-                  <label className="flex items-center justify-between rounded-md border border-white/10 px-3 py-2">
-                    <span className="text-sm">角色元素</span>
-                    <Switch checked={elements} onCheckedChange={setElements} />
-                  </label>
-                </div>
+              {/* 可灵停用（方案 A）：动作控制/口型同步/角色元素只由已下线的引擎提供，停用常量下不再渲染；
+                  旧工作流开过这些开关时只提示、不改用户数据（库里的旧值原样保留）。 */}
+              {KLING_RETIRED_CLIENT ? (
+                hasRetiredStudioControls ? (
+                  <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 mb-4" data-testid="kling-retired-notice">
+                    <p className="text-sm">该工作流开启过的「动作控制 / 口型同步 / 角色元素」所依赖的视频引擎已下线，相关设置已保留但不再生效。</p>
+                    <p className="text-sm text-white/70 mt-1">如需继续出片，请改用平台其他视频生成功能；此前生成的作品仍可在「我的作品」查看和下载。</p>
+                  </div>
+                ) : null
+              ) : (
+                <div className="rounded-lg border border-cyan-300/20 bg-cyan-400/5 p-3 mb-4">
+                  <h3 className="font-medium mb-2">工作室控制 V1</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                    <label className="flex items-center justify-between rounded-md border border-white/10 px-3 py-2">
+                      <span className="text-sm">动作控制</span>
+                      <Switch checked={motionControl} onCheckedChange={setMotionControl} />
+                    </label>
+                    <label className="flex items-center justify-between rounded-md border border-white/10 px-3 py-2">
+                      <span className="text-sm">口型同步</span>
+                      <Switch checked={lipsync} onCheckedChange={setLipsync} />
+                    </label>
+                    <label className="flex items-center justify-between rounded-md border border-white/10 px-3 py-2">
+                      <span className="text-sm">角色元素</span>
+                      <Switch checked={elements} onCheckedChange={setElements} />
+                    </label>
+                  </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
-                  <Input value={motionIntensity} onChange={(e) => setMotionIntensity(e.target.value)} placeholder="动作强度（0-1）" />
-                  <Input value={lipsyncStrength} onChange={(e) => setLipsyncStrength(e.target.value)} placeholder="口型强度（0-1）" />
-                  <Input value={elementsPrompt} onChange={(e) => setElementsPrompt(e.target.value)} placeholder="元素提示词" />
-                </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+                    <Input value={motionIntensity} onChange={(e) => setMotionIntensity(e.target.value)} placeholder="动作强度（0-1）" />
+                    <Input value={lipsyncStrength} onChange={(e) => setLipsyncStrength(e.target.value)} placeholder="口型强度（0-1）" />
+                    <Input value={elementsPrompt} onChange={(e) => setElementsPrompt(e.target.value)} placeholder="元素提示词" />
+                  </div>
 
-                <Button onClick={handleSaveStudioControls} disabled={updateStudioControls.isPending}>
-                  Save controls
-                </Button>
-              </div>
+                  <Button onClick={handleSaveStudioControls} disabled={updateStudioControls.isPending}>
+                    Save controls
+                  </Button>
+                </div>
+              )}
 
               {isRendering ? (
                 <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 mb-4">

@@ -48,10 +48,10 @@ describe("一键预混母轨 · 时间轴片段", () => {
   it("超过 12 条与 Wan 3.0 段 >15 秒都先拦下", () => {
     const many = Array.from({ length: 13 }, (_, i) => cueWithTake("dialogue", `d${i}`, i * 2, i * 2 + 1.5, 1));
     expect(() => buildPremixTimelineClips({ cues: many, durationSec: 30, getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/最多预混 12 条/);
-    expect(() => buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 0, 3, 2)], durationSec: 20, videoModel: "wan-3.0", getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/Wan 3.0 参考音频上限 15 秒/);
+    expect(() => buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 0, 3, 2)], durationSec: 20, videoModel: "wan-3.0", getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/长镜直出引擎参考音频上限 15 秒/);
     expect(buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 0, 3, 2)], durationSec: 15, videoModel: "wan-3.0", getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toHaveLength(1);
     // 引擎别名与出片侧同一套判定（normalizeCanvasVideoModel + isCanvasWan30VideoModel）
-    expect(() => buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 0, 3, 2)], durationSec: 20, videoModel: "alibaba/wan-3.0", getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/Wan 3.0 参考音频上限 15 秒/);
+    expect(() => buildPremixTimelineClips({ cues: [cueWithTake("dialogue", "d", 0, 3, 2)], durationSec: 20, videoModel: "alibaba/wan-3.0", getSelectedTake, inputKeyOf: canvasAudioCueInputKey })).toThrow(/长镜直出引擎参考音频上限 15 秒/);
   });
   it("秒窗顶到段尾而音频多出十毫秒：本地按服务端同一容差先拦，不放行到服务端再拒", () => {
     const edge = cueWithTake("dialogue", "edge", 27, 30, 3.01);

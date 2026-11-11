@@ -21,6 +21,7 @@ import {
   validateNovelStageOutput,
 } from "../../shared/novelWorkspace";
 import { listMergedApprovedManhuaViralTemplatesGrouped } from "./manhuaViralTemplateStore";
+import { createGeminiCarbonGcsSaver } from "./geminiCarbonCall";
 import { resolveStableManhuaTemplatePublicCode } from "./manhuaTemplatePublicId";
 import { formatManhuaViralTemplateWriterSkillFromCard } from "../../shared/manhuaViralTemplateBank";
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
@@ -127,6 +128,33 @@ export async function executeNovelTest(
     catalog.map(c => c.publicId)
   );
 }
+/**
+ * 按请求准备模板目录与已选模板全文（与正式生成同一份代码；1111 抽出供对比探针复用，行为不变）。
+ * 目录与模板卡取当下已审核库：同一请求在不同时间准备，目录变化会体现在 catalogSha256 / cardSha256 上。
+ */
+export async function prepareNovelTestTemplates(input: NovelTestInput) {
+  const groups = await listMergedApprovedManhuaViralTemplatesGrouped();
+  const catalogSnapshot = buildNovelStageCraftCatalog(groups.flatMap(g => g.items), input);
+  const full: string[] = [];
+  const selectedEvidence: Array<{ publicId: string; cardSha256: string }> = [];
+  const approved = groups.flatMap(g => g.items);
+  for (const selected of input.templates) {
+    const card = approved.find(c => {
+      const code = resolveStableManhuaTemplatePublicCode(c);
+      return code && `mt_${code.toLowerCase()}` === selected.publicId;
+    });
+    if (!card) throw new Error("所选模板已下架或不可用");
+    selectedEvidence.push({ publicId: selected.publicId, cardSha256: hash(JSON.stringify(card)) });
+    full.push(`${selected.publicId} / 分工：${selected.role}\n${formatManhuaViralTemplateWriterSkillFromCard(card)}`);
+  }
+  return { catalogSnapshot, templates: full.join("\n\n"), selectedEvidence };
+}
+
+/** 1111 线路三证据目录：与该账号该请求绑定，永久保存（不随测试失败删除）。 */
+export function novelWorkspaceCarbonEvidencePrefix(userId: number, requestId: string) {
+  return `novel-workspace-evidence/user-${userId}/${requestId}/carbon`;
+}
+
 export async function runNovelWorkspaceTest(
   userId: number,
   input: NovelTestInput
@@ -183,34 +211,15 @@ export async function runNovelWorkspaceTest(
   let completedSettings: NovelGenerationSettings | undefined;
   const rawResponses: string[] = [];
   try {
-    const groups = await listMergedApprovedManhuaViralTemplatesGrouped();
-    const catalogSnapshot = buildNovelStageCraftCatalog(
-      groups.flatMap(g => g.items),
-      input
-    );
+    const prepared = await prepareNovelTestTemplates(input);
+    const catalogSnapshot = prepared.catalogSnapshot;
     const catalog = catalogSnapshot.catalog;
     evidence = {
       ...evidence,
       templateCatalogSha256: catalogSnapshot.sha256,
       templateCatalogCount: catalogSnapshot.count,
     };
-    const full = [];
-    const selectedEvidence = [];
-    const approved = groups.flatMap(g => g.items);
-    for (const selected of input.templates) {
-      const card = approved.find(c => {
-        const code = resolveStableManhuaTemplatePublicCode(c);
-        return code && `mt_${code.toLowerCase()}` === selected.publicId;
-      });
-      if (!card) throw new Error("所选模板已下架或不可用");
-      selectedEvidence.push({
-        publicId: selected.publicId,
-        cardSha256: hash(JSON.stringify(card)),
-      });
-      full.push(
-        `${selected.publicId} / 分工：${selected.role}\n${formatManhuaViralTemplateWriterSkillFromCard(card)}`
-      );
-    }
+    const selectedEvidence = prepared.selectedEvidence;
     evidence = {
       ...evidence,
       selectedTemplates: selectedEvidence,
@@ -222,11 +231,14 @@ export async function runNovelWorkspaceTest(
       .where(eq(jobs.id, id));
     const value = await executeNovelTest(
       input,
-      full.join("\n\n"),
+      prepared.templates,
       catalog,
       (prompt, json, requestId) =>
         callNovelStage(prompt, json, requestId, {
           modelPreference: input.modelPreference,
+          ...(input.modelPreference === "carbon"
+            ? { saveEvidence: createGeminiCarbonGcsSaver(novelWorkspaceCarbonEvidencePrefix(userId, input.requestId)) }
+            : {}),
           onBytes: async () => {
             if (Date.now() - lastHeartbeat < 15000) return;
             evidence = { ...evidence, phase: "receiving" };

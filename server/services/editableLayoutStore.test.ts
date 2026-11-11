@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { layoutFromSource } from "../../shared/editableLayout";
-import { readLayoutLibrary, writeLayoutLibrary } from "./editableLayoutStore";
+import { layoutLibraryBufferCache, readLayoutLibrary, writeLayoutLibrary } from "./editableLayoutStore";
 vi.mock("./postProdMediaSource", () => ({
   loadSucceededJobOutputSources: vi.fn(async () => ({
     objects: new Set(["own.png"]),
@@ -205,4 +205,41 @@ describe("知识稿原始快照保护",()=>{
   await expect(writeLayoutLibrary(7,stripped,"1",deps)).rejects.toThrow("原稿快照");
   expect((await readLayoutLibrary(7,deps)).library?.documents[0].publication?.source.pages[0].body).toBe("原说明");
  });
+});
+describe("云稿整库按 generation 进程内缓存（1111 衔接提速）", () => {
+  it("同版本只取元数据不再下载；写入后新版本直接命中；版本变化重新下载；账号隔离", async () => {
+    const { deps, map } = storage();
+    const stat = vi.fn(async (i: any) => {
+      const name = i.gcsUri.match(/editable-layouts\/.*$/)[0];
+      const value = map.get(name);
+      if (!value) throw new Error("gcs_stat_failed:404");
+      return { generation: value.generation };
+    });
+    const cached = { ...deps, stat };
+    layoutLibraryBufferCache.clear();
+    await writeLayoutLibrary(7, library, "0", cached);
+    deps.read.mockClear();
+    // 刚写入的版本：读取不下载。
+    expect(await readLayoutLibrary(7, cached)).toMatchObject({ generation: "1" });
+    expect(await readLayoutLibrary(7, cached)).toMatchObject({ generation: "1" });
+    expect(deps.read).not.toHaveBeenCalled();
+    // 别处写入（缓存外）导致版本变化：必须重新下载。
+    const name = "editable-layouts/user-7/library.json";
+    const updated = { ...library, documents: [] };
+    map.set(name, { buffer: Buffer.from(JSON.stringify({ format: "editable-layout-v1", owner: 7, updatedAt: "x", library: updated })), generation: "5" });
+    expect(await readLayoutLibrary(7, cached)).toMatchObject({ generation: "5", library: updated });
+    expect(deps.read).toHaveBeenCalledTimes(1);
+    // 其他账号的键不同，不会读到本账号缓存。
+    await expect(readLayoutLibrary(8, cached)).resolves.toMatchObject({ library: null, generation: "0" });
+  });
+  it("读取方就地修改结果不污染缓存", async () => {
+    const { deps, map } = storage();
+    const stat = vi.fn(async () => ({ generation: map.get("editable-layouts/user-7/library.json")!.generation }));
+    layoutLibraryBufferCache.clear();
+    await writeLayoutLibrary(7, library, "0", { ...deps, stat });
+    const first = await readLayoutLibrary(7, { ...deps, stat });
+    first.library!.documents[0].title = "被改";
+    const second = await readLayoutLibrary(7, { ...deps, stat });
+    expect(second.library!.documents[0].title).toBe("原文");
+  });
 });

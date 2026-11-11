@@ -58,6 +58,8 @@ export type LayoutSource = {
   verificationJobId?: string;
   readingPreparation?: import("./knowledgeReadingPreparation").KnowledgeReadingPreparation;
   reviewBatchMode?: "ready-images";
+  /** 新稿正文合同（见 knowledgeSourceSchema.readingContract）；旧稿无此字段。 */
+  readingContract?: "image-primary-v1";
   kind?: "knowledge-publication";
   inputFingerprint?: string;
   infographicTemplateId?: string;
@@ -97,7 +99,7 @@ export function layoutFromSource(source: LayoutSource): EditableLayout {
       billing: {version:"interior-pages-v1",confirmed:false},
       inputFingerprint: source.inputFingerprint,
       infographicTemplateId: source.infographicTemplateId,
-      source: { title: source.title, detailLevel: source.detailLevel, pages: sourcePages, readingPreparation: source.readingPreparation, verificationJobId:source.verificationJobId, reviewBatchMode: source.reviewBatchMode },
+      source: { title: source.title, detailLevel: source.detailLevel, pages: sourcePages, readingPreparation: source.readingPreparation, verificationJobId:source.verificationJobId, reviewBatchMode: source.reviewBatchMode, ...(source.readingContract ? { readingContract: source.readingContract } : {}) },
       manuscript: knowledgeManuscript({title:source.title, pages:sourcePages}),
     } } : {}),
   });

@@ -11,6 +11,7 @@
  * - Elements 3.0
  */
 
+import { assertKlingNotRetired } from "./retired";
 import { fal } from "@fal-ai/client";
 
 // ─── Initialize fal.ai client ──────────────────────
@@ -59,6 +60,7 @@ export async function falKlingSubmit(
   input: Record<string, unknown>,
   onProgress?: (status: string) => void
 ): Promise<FalKlingResult> {
+  assertKlingNotRetired(); // 可灵停用兜底：新建一律不打上游（轮询/查询不拦）
   initFal();
   const falEndpoint = FAL_KLING_ENDPOINTS[endpoint];
   
@@ -91,6 +93,7 @@ export async function falKlingQueue(
   endpoint: FalKlingEndpoint,
   input: Record<string, unknown>
 ): Promise<{ request_id: string; status_url: string }> {
+  assertKlingNotRetired(); // 可灵停用兜底：新建一律不打上游（轮询/查询不拦）
   initFal();
   const falEndpoint = FAL_KLING_ENDPOINTS[endpoint];
 

@@ -58,6 +58,8 @@ import { getTierProviderChain, resolveUserTier } from "../services/tier-provider
 import { getSupervisorAllowlist, resolveSiteOwnerOnlyAllowed } from "../services/access-policy";
 import { shapeManhuaJobOutputForViewer } from "../services/manhuaNativeModelReceiptAccess";
 import { warnLegacyKlingEnvIgnored } from "../config/klingCn";
+import { isKlingRetired } from "../../shared/klingRetired";
+import { isKlingJobAction, klingRetiredBody, KLING_RETIRED_HTTP_STATUS } from "../kling/retired";
 import { registerAuthApiRoutes } from "../routers/authApi";
 import { registerSmsAuthRoutes } from "../routers/smsAuth";
 import { registerSpeechApiRoutes } from "../routers/speechApi";
@@ -301,6 +303,10 @@ async function startServer() {
           return res.status(400).json({ error: `${action} only supports image jobs` });
         }
         resolvedUserId = String(ctx.user.id);
+      }
+      if (isKlingJobAction(action) && isKlingRetired()) {
+        // 可灵停用（方案 A）：新建可灵任务一律 410，不入队、不扣费、不打上游。
+        return res.status(KLING_RETIRED_HTTP_STATUS).json(klingRetiredBody());
       }
       if (action === "nano_image" || action === "kling_image") {
         /**
@@ -969,11 +975,17 @@ async function startServer() {
     }
   });
 
+  // 1111 收口：原先匿名可调，每次都对各上游探活并回传供应商与路由表 → 仅管理员 / 监管（前台无调用点）
   app.get("/api/diag/providers", async (req, res) => {
     try {
+      const diagCtx = await createContext({ req: req as any, res: res as any } as any).catch(() => null);
+      const diagRole = diagCtx?.user?.role;
+      if (!diagCtx?.user || (diagRole !== "admin" && diagRole !== "supervisor")) {
+        return res.status(diagCtx?.user ? 403 : 401).json({ error: diagCtx?.user ? "Forbidden" : "Unauthorized" });
+      }
       let effectiveTier: "free" | "beta" | "paid" | "supervisor" | "unknown" = "unknown";
       try {
-        const ctx = await createContext({ req: req as any, res: res as any } as any);
+        const ctx = diagCtx;
         const rawUserId = ctx.user?.id;
         const userId = Number(rawUserId);
         if (rawUserId != null && Number.isFinite(userId)) {

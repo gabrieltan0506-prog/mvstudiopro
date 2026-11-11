@@ -65,6 +65,29 @@ describe("/api/jobs?op=canvasVideoStatus", () => {
     expect(result.status).toBe(200);
     expect(result.body).toMatchObject({ engine: "seedance-mini-evolink", provider: "evolink", model: "seedance-2.0-mini" });
   });
+
+  it("任务报错：普通用户拿脱敏版（无地址 / 供应商 / 模型名），监管原样", async () => {
+    const raw = "EvoLink 上游失败 HTTP 500：https://api.evolink.ai/v1/videos?key=abc123 model=wan-3.0 via OpenRouter";
+    h.getTask.mockResolvedValue({ taskId: "t-1", status: "failed", error: raw, lastTransientError: "GLM-5.3 timeout gs://bucket/x.json" });
+    const user = await canvasVideoStatus();
+    expect(user.status).toBe(200);
+    const text = JSON.stringify(user.body);
+    expect(text).not.toMatch(/evolink|openrouter|wan-3|glm|https?:|gs:\/\/|key=/i);
+    expect(user.body.error).toContain("上游失败 HTTP 500");
+    h.auth.mockResolvedValue({ id: 1, role: "supervisor" });
+    const sup = await canvasVideoStatus();
+    expect(sup.body.error).toBe(raw);
+  });
+
+  it("查询异常：502 报错同样脱敏", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    h.getTask.mockRejectedValue(new Error("Vertex projects/my-proj/locations/us failed at https://x.googleapis.com"));
+    const result = await canvasVideoStatus();
+    expect(result.status).toBe(502);
+    expect(String(result.body.error)).not.toMatch(/vertex|my-proj|googleapis|https?:/i);
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
 });
 
 describe("shared/modelInfoExposure", () => {

@@ -1,7 +1,7 @@
 import {KNOWLEDGE_INTERIOR_PRICE_COPY} from "@shared/knowledgePublicationPricing";
 import {knowledgeConversationAnswerSchema} from "@shared/knowledgeConversation";
 import type {KnowledgeSupplementSelection} from "@shared/knowledgeSupplement";
-import { completedKnowledgeBatches, knowledgeCompletedPrefix, runKnowledgeParallelBatches } from "@shared/knowledgePublicationParallel";
+import { completedKnowledgeBatches, knowledgeCoalescedUpdater, knowledgeCompletedPrefix, runKnowledgeParallelBatches } from "@shared/knowledgePublicationParallel";
 import type { KnowledgePublicationPagination } from "@shared/knowledgePublication";
 import { pollJobUntilTerminal } from "@/lib/jobs";
 import {knowledgePresentationSourceManuscript,knowledgePresentationRequestMatches,knowledgePresentationRangeSchema,knowledgePresentationPlanSchema,knowledgePresentationCapacityIssues,assertKnowledgePresentationCapacity,validateKnowledgePresentationRevision,type KnowledgePresentationPlan} from "@shared/knowledgePresentation";
@@ -24,6 +24,7 @@ import {
   knowledgePublicationChapter,
 } from "@shared/knowledgePublicationHtml";
 import { trpc } from "@/lib/trpc";
+import { KNOWLEDGE_PREVIEW_UNAVAILABLE, KNOWLEDGE_PUBLICATION_STAGES, knowledgeStageLabel, loadKnowledgePreviewWithRetry, type KnowledgePublicationStage } from "@/lib/knowledgePublicationStage";
 import { withKnowledgeAdvisorRecovery } from "@/lib/knowledgeAdvisorRecovery";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
 import { flyDownloadUrl } from "@/lib/gcsTransfer";
@@ -69,10 +70,44 @@ export default function KnowledgePublicationPanel({
     return withKnowledgeAdvisorRecovery(input.requestId, () => streamManhuaAdvisor(input, onText, onModel),
       () => utils.client.auth.me.query(), () => alive.current && latest.current.id === documentId);
   };
-  const exporter = trpc.editableLayout.exportPublication.useMutation();
+  const exportStarter = trpc.editableLayout.startExportPublication.useMutation();
+  const exportMarker = (documentId: string) => `mvstudiopro.knowledgeExport.${documentId}`;
+  /**
+   * 导出不阻塞（1111）：发起即拿任务标识，后台执行，前台轮询；刷新后按本页会话标记自动续看。
+   * 同一稿件版本重复发起复用同一任务；服务重启后任务丢失（missing）时用同一版本重新发起，已完成分片复用；结算仍幂等。
+   */
+  const runExport = async (documentId: string, expectedGeneration: string) => {
+    try { sessionStorage.setItem(exportMarker(documentId), expectedGeneration); } catch { /* 仅影响刷新续看 */ }
+    let state: { status: string; taskId: string; result?: unknown; error?: string; retryable?: boolean } = await exportStarter.mutateAsync({ documentId, expectedGeneration });
+    let reissued = 0, misses = 0;
+    const deadline = Date.now() + 90 * 60_000;
+    try {
+      while (state.status === "running" || state.status === "missing") {
+        if (!alive.current) throw Error("页面已离开，PDF 仍在后台生成；返回后重新打开即可续看");
+        if (Date.now() > deadline) throw Error("PDF 生成时间过长，已完成部分已保存；请稍后重新点击生成，会复用已完成部分");
+        if (state.status === "missing") {
+          if (++reissued > 3) throw Error("PDF 生成任务暂时无法续看，已完成部分已保存；请重新点击生成");
+          state = await exportStarter.mutateAsync({ documentId, expectedGeneration });
+          continue;
+        }
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        try { state = await utils.client.editableLayout.exportPublicationStatus.query({ taskId: state.taskId }); misses = 0; }
+        catch (error) { if (++misses > 5) throw error; }
+      }
+      if (state.status === "failed") throw Object.assign(Error(state.error || "PDF 暂未生成完成，请重新点击生成"), { retryable: state.retryable });
+      return (state as { result: Awaited<ReturnType<typeof utils.client.editableLayout.exportPublication.mutate>> }).result;
+    } finally {
+      if (state.status !== "running" && state.status !== "missing") try { sessionStorage.removeItem(exportMarker(documentId)); } catch { /* 忽略 */ }
+    }
+  };
   const pptxExporter = trpc.editableLayout.exportPublicationPptx.useMutation();
   const [layoutView,setLayoutView]=useState<{doc:EditableLayout;review:KnowledgeReview;images:Record<string,string>}|null>(null);
   const [layoutPreviewError,setLayoutPreviewError]=useState("");
+  const [layoutPreviewNote,setLayoutPreviewNote]=useState("");
+  const [previewReload,setPreviewReload]=useState(0);
+  const [exporting,setExporting]=useState(false);
+  const [stage,setStage]=useState<KnowledgePublicationStage|null>(null);
+  const previewCache=useRef<{key:string;view:NonNullable<typeof layoutView>}|null>(null);
   const [minSlides,setMinSlides]=useState(doc.publication?.presentationRequest?.minSlides ?? 15);
   const [maxSlides,setMaxSlides]=useState(doc.publication?.presentationRequest?.maxSlides ?? 20);
   const [presentationBusy,setPresentationBusy]=useState(false);
@@ -118,28 +153,63 @@ export default function KnowledgePublicationPanel({
     setFiles(null);
     setPptxFile(null);
     setPageIndex(0);
-    setPlanDraft(null);setRevisionError("");
+    setPlanDraft(null);setRevisionError("");setStage(null);
     setMinSlides(doc.publication?.presentationRequest?.minSlides ?? 15);
     setMaxSlides(doc.publication?.presentationRequest?.maxSlides ?? 20);
     setError("");
     setTerminal(false);
   }, [doc.id]);
+  // 刷新续看：本页会话里有未结束的导出标记时，按原稿件版本重新发起（服务端复用进行中/已完成任务，不重复扣费）。
+  useEffect(()=>{
+    let generation:string|null=null;
+    try{generation=sessionStorage.getItem(exportMarker(doc.id));}catch{generation=null;}
+    if(!generation||active.current)return;
+    let cancelled=false;
+    locked(true);setStage({step:4});setExporting(true);setMessage("正在继续生成 PDF（刷新前已发起）…");
+    void runExport(doc.id,generation).then(result=>{
+      if(cancelled||!alive.current||latest.current.id!==doc.id)return;
+      setFiles(result);
+      if(result.pdfUrl&&result.totalPages&&result.imagePages!==undefined){
+        setStage({step:KNOWLEDGE_PUBLICATION_STAGES.length});
+        onPagination?.(latest.current,{imagePages:result.imagePages,totalPages:result.totalPages});
+        setMessage(`排版完成：图片 ${result.imagePages} 页｜手册共 ${result.totalPages} 页。可直接下载。`);
+      }else setMessage(result.pdfError||"HTML 已生成并保存，可继续生成 PDF。");
+    },()=>{
+      try{sessionStorage.removeItem(exportMarker(doc.id));}catch{/* 忽略 */}
+      if(!cancelled&&alive.current)setMessage("刷新前的 PDF 生成未能续看，已完成部分已保存；请重新点击生成。");
+    }).finally(()=>{if(alive.current){setExporting(false);locked(false);}});
+    return ()=>{cancelled=true;};
+  },[doc.id]);
   const paginationVersion = (value: EditableLayout) => JSON.stringify([
     value.id, value.title, value.aspect, value.theme, value.fontSize, value.pages,
     value.publication?.manuscript, value.publication?.infographicTemplateId, value.publication?.designMode, value.publication?.review,
     value.publication?.layoutConversationId, value.publication?.supplementDocumentId,
   ]);
   const currentPaginationVersion = paginationVersion(doc);
+  // 整册预览：同一稿件版本只读一次并复用；导出进行中不并发读取（导出结束后自动补读）；
+  // 读取失败退避自动重试，最终失败只提示预览暂时读不出，不当作整理/导出失败（1110 导出期间曾误报任务失败）。
   useEffect(()=>{
     let current=true;
-    setLayoutView(null);setLayoutPreviewError("");
-    if(doc.publication?.layoutConversationId){
-      void utils.editableLayout.bookLayoutPreview.fetch({documentId:doc.id}).then(view=>{
-        if(current)setLayoutView(view);
-      }).catch(error=>{if(current)setLayoutPreviewError(knowledgePublicationPublicError(error).message);});
-    }
+    setLayoutPreviewError("");setLayoutPreviewNote("");
+    if(!doc.publication?.layoutConversationId){setLayoutView(null);return;}
+    const key=currentPaginationVersion;
+    if(previewCache.current?.key===key){setLayoutView(previewCache.current.view);return;}
+    setLayoutView(null);
+    if(exporting){setLayoutPreviewNote("正在生成 PDF，完成后读取整册预览…");return;}
+    void loadKnowledgePreviewWithRetry(()=>utils.editableLayout.bookLayoutPreview.fetch({documentId:doc.id}),{
+      alive:()=>current,
+      onRetry:(attempt,error)=>{
+        console.warn("[knowledgePublication] 整册预览读取失败，自动重试：",String((error as Error)?.message??error).replace(/(?:https?|gs):\/\/\S+/g,"[地址]").slice(0,300));
+        if(current)setLayoutPreviewNote(`整册预览读取较慢，正在自动重试（第 ${attempt} 次）…`);
+      },
+    }).then(result=>{
+      if(!current)return;
+      setLayoutPreviewNote("");
+      if(result.ok){previewCache.current={key,view:result.value};setLayoutView(result.value);}
+      else setLayoutPreviewError(KNOWLEDGE_PREVIEW_UNAVAILABLE);
+    });
     return ()=>{current=false;};
-  },[currentPaginationVersion]);
+  },[currentPaginationVersion,exporting,previewReload]);
   useEffect(() => {
     setFiles(null);
     onPagination?.(doc, null);
@@ -169,10 +239,15 @@ export default function KnowledgePublicationPanel({
       return value;
     };
     if(pub.layoutConversationId)return;
+    setStage({step:3});
     const history=pub.conversation||[];
     let turn=history.find(t=>t.request.id===intent.requestId);
+    // 统稿一落盘立即衔接：顾问报价与排版输入并行读取，不再串行等待（1110 实测两者串行 + 两次保存 = 44 秒空档）。
+    const quoteFetch=turn?.response?undefined:utils.editableLayout.publicationQuote.fetch({documentId,purpose:"conversation"});
+    quoteFetch?.catch(()=>undefined);
     if(!turn){
       if(history.some(t=>!t.response))throw Error("原交流尚未结束，请先恢复该请求；整册排版尚未重复提交");
+      setMessage("统稿已保存，正在准备整册排版…");
       const input=await utils.editableLayout.bookLayoutInput.fetch({documentId});
       turn={request:{id:intent.requestId,question:"请根据完整正文和现有全部图卡重新安排整册顺序与设计，将图片放到相关内容附近，保留每段文字和每张图片，做好精美排版。",imagePageIds:[],manuscript:pub.manuscript,action:"layout",layoutSourceDigest:input.sourceDigest}};
       const fresh=current();
@@ -183,7 +258,7 @@ export default function KnowledgePublicationPanel({
     if(history.some(t=>t.request.id===intent.requestId))await save(current());
     let answer=turn.response;
     if(!answer){
-      const quote=await utils.editableLayout.publicationQuote.fetch({documentId,purpose:"conversation"});
+      const quote=await quoteFetch!;
       if(quote.maxCredits!==0)throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");
       current();setMessage("正在将全部图片安排到对应正文，统一整册顺序、配色和版式…");
       const response=await streamKnowledgeAdvisor({question:turn.request.question,rawQuestion:turn.request.question,requestId:intent.requestId,knowledgePublicationContext:{documentId,batchIndex:current().publication!.conversation!.findIndex(t=>t.request.id===intent.requestId),attempt:0,purpose:"conversation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);
@@ -243,20 +318,17 @@ export default function KnowledgePublicationPanel({
       total = quote.batches;
       const documentId = next.id;
       const stillHere = () => alive.current && latest.current.id === documentId;
-      let saves = Promise.resolve();
-      const update = (change: () => void) => {
-        const saving = saves.then(async () => {
-          if (!stillHere()) throw new Error("已切换稿件，结果保留在原任务，请返回原稿恢复");
-          change();
+      // 通道固定与回执落盘合并保存：同时到达的改动一次整库保存（原先每批一次、串行约 10 秒，34 批发车即 6 分钟）。
+      const update = knowledgeCoalescedUpdater({
+        guard: () => { if (!stillHere()) throw new Error("已切换稿件，结果保留在原任务，请返回原稿恢复"); },
+        save: async () => {
           // 并发课件规划可先完成，审校保存不可用旧快照覆盖其回执。
           const presentation = latest.current.publication;
           pub = { ...pub, presentationRequest: presentation?.presentationRequest, presentationPlan: presentation?.presentationPlan, presentationRevision: presentation?.presentationRevision };
           next = { ...next, publication: pub };
           await save({ ...next, updatedAt: new Date().toISOString() });
-        });
-        saves = saving;
-        return saving;
-      };
+        },
+      });
       const prepare = async (i: number) => {
         if (i < batches.length) {
           const imageJobs = batches[i].map(n => pub.source.pages[n].imageJobId).filter((id): id is string => Boolean(id)).map(id => pub.imageReplacements?.[id] || id);
@@ -346,11 +418,13 @@ export default function KnowledgePublicationPanel({
           const completed = completedKnowledgeBatches(pub, batches.length);
           completed.add(i);
           pub = { ...pub, parallel: { channels: pub.parallel!.channels, completed: Array.from(completed).sort((a, b) => a - b) }, completedBatches: knowledgeCompletedPrefix(completed, batches.length) };
+          setStage({ step: 0, done: completed.size, total: batches.length });
           const imageUrls = new Map((result.images || []).map(image => [image.id, image.url]));
           next = { ...next, pages: next.pages.map(page => imageUrls.has(page.id) ? { ...page, imageUrl: imageUrls.get(page.id)! } : page), publication: pub };
         }
         });
       };
+      setStage({ step: 0, done: completedKnowledgeBatches(pub, batches.length).size, total: batches.length });
       const failures = await runKnowledgeParallelBatches({
         count: batches.length,
         completed: completedKnowledgeBatches(pub, batches.length),
@@ -379,6 +453,9 @@ export default function KnowledgePublicationPanel({
           quote = updated;
           total = updated.batches;
         }
+        // 最后一组核对在服务端紧接着做逐页统稿；之前各组为联网校验。
+        const checks = Math.max(1, total - batches.length), check = i - batches.length;
+        setStage(i >= total - 1 ? { step: 2 } : { step: 1, done: check, total: checks });
         await consume(i, await execute(i));
       }
       if(latest.current.publication?.automaticLayout)await arrangeBook();
@@ -499,9 +576,13 @@ export default function KnowledgePublicationPanel({
         setPptxFile(result);setMessage(`PPTX已生成，共${result.slides}页，可下载后编辑。`);
       }else{
         setMessage("确认稿已保存，正在自动排版并生成 HTML 和 PDF…");
-        const result=await exporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});
+        setStage({step:4});setExporting(true);
+        let result:Awaited<ReturnType<typeof runExport>>;
+        try{result=await runExport(next.id,saved.generation);}
+        finally{setExporting(false);}
         if (paginationVersion(latest.current) !== paginationVersion(next)) return;
         setFiles(result);
+        if(result.pdfUrl)setStage({step:KNOWLEDGE_PUBLICATION_STAGES.length});
         if (result.pdfUrl && result.totalPages && result.imagePages !== undefined) {
           onPagination?.(next, { imagePages: result.imagePages, totalPages: result.totalPages });
           setMessage(`排版完成：图片 ${result.imagePages} 页｜手册共 ${result.totalPages} 页。可直接下载。`);
@@ -515,11 +596,15 @@ export default function KnowledgePublicationPanel({
     }
   };
   const exportLayout=async(next:EditableLayout,saved:Saved)=>{
-    setFiles(null);setError("");
+    setFiles(null);setError("");setStage({step:4});
     setMessage("顾问方案已保存，正在按指定章节顺序和设计生成 PDF…");
-    const result=await exporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});
+    let result:Awaited<ReturnType<typeof runExport>>;
+    setExporting(true);
+    try{result=await runExport(next.id,saved.generation);}
+    finally{setExporting(false);}
     if(latest.current.id!==next.id)return;
     setFiles(result);
+    if(result.pdfUrl)setStage({step:KNOWLEDGE_PUBLICATION_STAGES.length});
     if(result.pdfUrl&&result.totalPages&&result.imagePages!==undefined){
       onPagination?.(next,{imagePages:result.imagePages,totalPages:result.totalPages});
       setMessage(`已按顾问方案排版：图片 ${result.imagePages} 页｜手册共 ${result.totalPages} 页。`);
@@ -606,6 +691,11 @@ export default function KnowledgePublicationPanel({
         {!pub.infographicTemplateId && review.pages[index]?.reading?.templateReason ? ` · ${review.pages[index].reading!.templateReason}` : ""}
       </p>}
       </details>
+      {stage && (
+        <p aria-label="手册处理阶段" className="text-xs text-[#c0cabb]">
+          {knowledgeStageLabel(stage)}
+        </p>
+      )}
       {message && (
         <p role="status" className="text-sm text-[#d6e4bd]">
           {message}
@@ -747,8 +837,9 @@ export default function KnowledgePublicationPanel({
               />
             </label>
           )}
-          {layoutPreviewError&&<p role="alert" className="text-rose-200">{layoutPreviewError}</p>}
-          {pub.layoutConversationId&&!layoutView&&!layoutPreviewError&&<p role="status">正在读取整册预览…</p>}
+          {/* 预览状态独立于整理/导出状态：读不出预览不代表任务失败。 */}
+          {layoutPreviewError&&<p role="status" aria-label="整册预览状态" className="text-sm text-amber-200">{layoutPreviewError} <button className="underline" onClick={()=>setPreviewReload(n=>n+1)}>重新读取预览</button></p>}
+          {pub.layoutConversationId&&!layoutView&&!layoutPreviewError&&<p role="status" aria-label="整册预览状态" className="text-sm text-[#c0cabb]">{layoutPreviewNote||"正在读取整册预览…"}</p>}
           <iframe
             title="图文知识手册预览"
             sandbox="allow-scripts"

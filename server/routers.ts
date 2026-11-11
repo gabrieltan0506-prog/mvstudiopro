@@ -23,7 +23,7 @@ import { codeMotionProductionRouter } from "./routers/codeMotionProduction";
 import { fileConversionRouter } from "./routers/fileConversion";
 import { optimizationInputSchema } from "../shared/manhuaEpisodeOptimization";
 import { imageWorldRouter } from "./routers/imageWorld";
-import { manhuaWriterExpansionQuote, manhuaWriterModelLabel } from "../shared/manhuaWriterModels";
+import { manhuaWriterEpisodeCredits, manhuaWriterExpansionQuote, manhuaWriterModelLabel } from "../shared/manhuaWriterModels";
 import { advisorTemplatePlansSchema } from "../shared/manhuaAdvisorRewrite";
 import { MANHUA_ADVISOR_PROJECT_FREE, MANHUA_ADVISOR_PAID_CREDITS } from "../shared/manhuaAdvisorPolicy";
 import { assertAdvisorProject, readAdvisorProjectQuota, reserveAdvisorProjectQuota, releaseAdvisorProjectQuota } from "./services/manhuaAdvisorProjectQuota";
@@ -62,7 +62,10 @@ import {
   protectedProcedure,
   adminProcedure,
   router,
+  withUsageLimit,
 } from "./_core/trpc";
+import { USAGE_LIMITS } from "./_core/usageLimits";
+import { PdfHtmlRejectedError, sanitizePdfHtml } from "./services/pdfHtmlSanitize";
 import { TRPCError } from "@trpc/server";
 import { postProdJobInputSchema } from "./jobs/postProdInput";
 import {
@@ -152,7 +155,7 @@ import { analyzeGrowthCampImages } from "./growth/analyzeGrowthCampImages";
 import { synthesizeGrowthAnalyses } from "./growth/synthesizeGrowthAnalyses";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
-import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/premiumRemix";
+import { rejectRetiredPremiumRemix } from "./growth/premiumRemixRetired";
 import { buildAiManhuaRisingByPlatform } from "./growth/aiManhuaRising";
 import { AI_MANHUA_RISING_BOARD_LIMIT } from "../shared/manhuaDramaClassify";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
@@ -308,8 +311,6 @@ import {
   growthMonetizationTrackSchema,
   growthMonetizationStrategySchema,
   growthPlanStepSchema,
-  growthPremiumRemixAssetsSchema,
-  growthPremiumRemixSchema,
   growthPlatformActivitySchema,
   growthPlatformMenuItemSchema,
   growthPlatformRecommendationSchema,
@@ -2991,6 +2992,38 @@ function assertHomePhotoResultBrowserReadable(imageUrl: string): string {
 }
 
 
+const ambientDashboardInputSchema = z.object({
+  timeZone: z.string().min(1).max(64).optional(),
+  weatherCity: z.string().min(1).max(120).optional(),
+  lat: z.number().gte(-90).lte(90).optional(),
+  lon: z.number().gte(-180).lte(180).optional(),
+  trafficLocation: z.string().min(1).max(200).optional(),
+});
+
+/** 工作台看板參數：自由文本城市 / 路段只給監管與管理員（會變成快取鍵與模型輸入），普通用戶忽略。 */
+function ambientDashboardOpts(input: z.infer<typeof ambientDashboardInputSchema>, role: unknown) {
+  const privileged = role === "admin" || role === "supervisor";
+  return {
+    timeZone: input.timeZone,
+    lat: input.lat,
+    lon: input.lon,
+    weatherCity: privileged ? input.weatherCity : undefined,
+    trafficLocation: privileged ? input.trafficLocation : undefined,
+  };
+}
+
+/** 同步 PDF：净化提交的 HTML（大小上限、去脚本与外链、注入 CSP），超限给 PAYLOAD_TOO_LARGE。 */
+function sanitizePdfHtmlOrThrow(html: string): string {
+  try {
+    const result = sanitizePdfHtml(html);
+    if (result.removedTags > 0) console.warn(`[pdfHtmlSanitize] 去掉 ${result.removedTags} 个危险标签 / 外链（${result.bytes} 字节）`);
+    return result.html;
+  } catch (error) {
+    if (error instanceof PdfHtmlRejectedError) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: error.message });
+    throw error;
+  }
+}
+
 export const appRouter = router({
   guaikei: guaikeiRouter,
   codeMotion: codeMotionRouter,
@@ -3086,7 +3119,9 @@ export const appRouter = router({
 
   mvReviews: router({
     // Submit a new review for an MV (public, no auth required)
+    // 1111：保留匿名，按 IP 限流 + 全站日总量
     submit: publicProcedure
+      .use(withUsageLimit(USAGE_LIMITS.guestbookSubmit))
       .input(
         z.object({
           mvId: z.string().min(1).max(64),
@@ -3122,29 +3157,22 @@ export const appRouter = router({
 
   /** 時間 / 天氣 / 路況 / 即時新聞（免登入；新聞約 30 分鐘、天氣路況約 10 分鐘節流） */
   ambient: router({
+    /**
+     * 1111 收口：三個入口原先匿名可調（新聞 / 路況走帶聯網檢索的模型），坐標兩位小數做快取鍵可被繞過。
+     * 前台唯一調用點是成長營工作台（MVAnalysis → WorkAmbientPanel / GlobalMascotAssistant），頁面本身須登錄 → 改為登錄 + 用量閘門；
+     * 座標在引擎內量化到 0.5°（城市級）後才做快取鍵並送模型；weatherCity / trafficLocation 自由文本只給監管（前台從不傳）。
+     */
     /** 天氣 + 路況 + 時間（建議前端 10 分鐘 refetch） */
-    dashboardLive: publicProcedure
-      .input(
-        z.object({
-          timeZone: z.string().min(1).max(64).optional(),
-          weatherCity: z.string().min(1).max(120).optional(),
-          lat: z.number().gte(-90).lte(90).optional(),
-          lon: z.number().gte(-180).lte(180).optional(),
-          trafficLocation: z.string().min(1).max(200).optional(),
-        }),
-      )
-      .query(async ({ input }) => {
+    dashboardLive: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.ambientLive))
+      .input(ambientDashboardInputSchema)
+      .query(async ({ input, ctx }) => {
         const { executeDashboardLive } = await import("./services/hybridDashboardEngine.js");
-        return executeDashboardLive({
-          timeZone: input.timeZone,
-          weatherCity: input.weatherCity,
-          lat: input.lat,
-          lon: input.lon,
-          trafficLocation: input.trafficLocation,
-        });
+        return executeDashboardLive(ambientDashboardOpts(input, ctx.user.role));
       }),
     /** 即時新聞：Gemini 為主（建議前端 30 分鐘 refetch）；可傳瀏覽器定位以差異化周邊 2 條 */
-    dashboardNews: publicProcedure
+    dashboardNews: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.ambientNews))
       .input(
         z.object({
           lat: z.number().gte(-90).lte(90).optional(),
@@ -3153,27 +3181,14 @@ export const appRouter = router({
       )
       .query(async ({ input }) => {
         const { executeDashboardNews } = await import("./services/hybridDashboardEngine.js");
-        return executeDashboardNews(input);
+        return executeDashboardNews({ lat: input.lat, lon: input.lon });
       }),
-    hybridDashboard: publicProcedure
-      .input(
-        z.object({
-          timeZone: z.string().min(1).max(64).optional(),
-          weatherCity: z.string().min(1).max(120).optional(),
-          lat: z.number().gte(-90).lte(90).optional(),
-          lon: z.number().gte(-180).lte(180).optional(),
-          trafficLocation: z.string().min(1).max(200).optional(),
-        }),
-      )
-      .query(async ({ input }) => {
+    hybridDashboard: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.ambientNews))
+      .input(ambientDashboardInputSchema)
+      .query(async ({ input, ctx }) => {
         const { executeHybridDashboardPipeline } = await import("./services/hybridDashboardEngine.js");
-        return executeHybridDashboardPipeline({
-          timeZone: input.timeZone,
-          weatherCity: input.weatherCity,
-          lat: input.lat,
-          lon: input.lon,
-          trafficLocation: input.trafficLocation,
-        });
+        return executeHybridDashboardPipeline(ambientDashboardOpts(input, ctx.user.role));
       }),
     /** 吉祥物情緒關懷短語（Gemini）：僅 Admin / Supervisor 可調用，前台不提供入口 */
     mascotCareMessage: adminProcedure
@@ -3415,7 +3430,9 @@ export const appRouter = router({
      * 审查必须修（P0·跨租户）：所有接收外部 gcsUri 的入口都要校验归属——
      * 只认本人上传前缀，否则服务账号会替调用者代读任意对象。
      */
-    analyzeGrowthCampImages: publicProcedure
+    // 1111：须登录（原先内部判登录）+ 用量闸门；该入口不扣费，是否计价待站长定
+    analyzeGrowthCampImages: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.growthCampAnalyze))
       .input(
         z.object({
           images: z
@@ -3469,7 +3486,9 @@ export const appRouter = router({
         };
       }),
 
-    synthesizeGrowthCampAnalyses: publicProcedure
+    // 1111：须登录（原先内部判登录）+ 用量闸门；该入口不扣费，是否计价待站长定
+    synthesizeGrowthCampAnalyses: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.growthCampAnalyze))
       .input(
         z.object({
           parts: z
@@ -3521,7 +3540,9 @@ export const appRouter = router({
         });
       }),
 
-    analyzeVideo: publicProcedure
+    // 1111：须登录（原先内部判登录）+ 用量闸门；该入口不扣费，是否计价待站长定
+    analyzeVideo: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.growthCampAnalyze))
       .input(z.object({
         gcsUri: z.string().optional(),
         fileBase64: z.string().optional(),
@@ -3584,215 +3605,21 @@ export const appRouter = router({
         };
       }),
 
+    /**
+     * 已退役（并入拉片，见 shared/premiumRemixRetired.ts）：保留过程名与登录校验，登录后在任何扣费 / 上游请求之前直接拒绝。
+     * 入参一律不解析（z.unknown），避免旧前端带旧形状时先报参数错、看不到业务提示。
+     */
     buildPremiumRemix: protectedProcedure
-      .input(z.object({
-        context: z.string().optional(),
-        transcript: z.string().optional(),
-        analysis: growthAnalysisScoresSchema.optional(),
-        modelName: growthCampModelSchema.optional(),
-        titleExecutions: z.array(growthTitleExecutionSchema).optional(),
-        assetAdaptation: growthAssetAdaptationSchema.optional(),
-        growthHandoff: growthHandoffSchema.optional(),
-        creationStoryboardPrompt: z.string().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const fallbackAnalysis = input.analysis || {
-          composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
-          explosiveIndex: 0, realityCheck: "",
-          reverseEngineering: { hookStrategy: "", emotionalArc: "", commercialLogic: "" },
-          premiumContent: { summary: "", strategy: "", actionableTopics: [], topics: [], explosiveTopicAnalysis: "", musicAndExpressionAnalysis: "", remixVisualAnalysis: "", remixExpressionAnalysis: "", musicPrompt: "" },
-          visualSummary: "", openingFrameAssessment: "", sceneConsistency: "",
-          languageExpression: "", emotionalExpression: "", cameraEmotionTension: "",
-          bgmAnalysis: "", musicRecommendation: "", sunoPrompt: "",
-          trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [], platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [], timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: ""
-        };
-        const requestedPlatforms = normalizePlatforms(fallbackAnalysis.platforms);
-        const store = await readTrendStore({ preferDerivedFiles: true }).catch(() => null);
-        const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms).catch(() => null) : null;
-        const remixEvidence = await (async () => {
-          if (!store) return null;
-          const historicalPlatformTotals = Object.fromEntries(
-            requestedPlatforms.map((platform) => [
-              platform,
-              {
-                currentTotal: Number(store.collections?.[platform]?.items?.length || 0),
-                archivedTotal: Number(store.history?.platforms?.[platform]?.archivedItems || 0),
-              },
-            ]),
-          ) as Partial<Record<typeof requestedPlatforms[number], { currentTotal?: number; archivedTotal?: number }>>;
-          const hasAnyLiveCollection = requestedPlatforms.some((platform) => (store.collections?.[platform]?.items?.length || 0) > 0);
-          const baseSnapshot = hasAnyLiveCollection
-            ? buildGrowthSnapshotFromCollections({
-                analysis: fallbackAnalysis,
-                context: input.context,
-                requestedPlatforms,
-                collections: store.collections,
-                historicalPlatformTotals,
-                errors: {},
-              })
-            : buildMockGrowthSnapshot({
-                analysis: fallbackAnalysis,
-                context: input.context,
-                requestedPlatforms,
-                historicalPlatformTotals,
-              });
-          const effectiveStore = {
-            ...store,
-            collections: store.collections,
-          };
-          const personalized = await personalizeGrowthSnapshot({
-            snapshot: baseSnapshot,
-            analysis: fallbackAnalysis,
-            context: input.context,
-            requestedPlatforms,
-            modelName: input.modelName,
-            store: effectiveStore,
-            userEvidence,
-          }).catch((error) => {
-            console.warn("[growth.buildPremiumRemix] personalization fallback:", error);
-            return null;
-          });
-
-          return {
-            source: baseSnapshot.status.source,
-            liveSummary: baseSnapshot.analysisTracks?.liveSummary || "",
-            historicalSummary: baseSnapshot.analysisTracks?.historicalSummary || "",
-            hotTopic: baseSnapshot.analysisTracks?.liveHotTopic || "",
-            recommendationReason: baseSnapshot.dataAnalystSummary?.recommendationReason || "",
-            personalizedOverview: personalized ? {
-              summary: personalized.overview?.summary || "",
-              trendNarrative: personalized.overview?.trendNarrative || "",
-              nextCollectionPlan: personalized.overview?.nextCollectionPlan || "",
-            } : undefined,
-            decisionFramework: personalized ? {
-              recommendedFormat: personalized.decisionFramework?.assetAdaptation?.format || "",
-              mainPathTitle: personalized.decisionFramework?.mainPath?.title || "",
-              mainPathWhyNow: personalized.decisionFramework?.mainPath?.whyNow || "",
-              mainPathExecution: personalized.decisionFramework?.mainPath?.nextAction || "",
-              avoidPathTitle: personalized.decisionFramework?.avoidPaths?.[0]?.title || "",
-              avoidPathReason: personalized.decisionFramework?.avoidPaths?.[0]?.reason || "",
-              assetAdaptation: personalized.decisionFramework?.assetAdaptation,
-            } : undefined,
-            platformRows: (baseSnapshot.dataAnalystSummary?.platformRows || []).slice(0, 4).map((item) => ({
-              platformLabel: item.platformLabel,
-              currentTotal: item.currentTotal,
-              archivedTotal: item.archivedTotal,
-              note: item.note || "",
-            })),
-            platformSnapshots: (baseSnapshot.platformSnapshots || []).slice(0, 4).map((item) => ({
-              platformLabel: item.displayName,
-              summary: item.summary,
-              fitLabel: item.fitLabel,
-              sampleTopics: item.sampleTopics.slice(0, 3),
-              recommendedFormats: item.recommendedFormats.slice(0, 2),
-            })),
-            topicLibrary: (baseSnapshot.topicLibrary || []).slice(0, 6).map((item) => ({
-              platformLabel: item.platformLabel,
-              title: item.title,
-              rationale: item.rationale,
-            })),
-            platformRecommendations: (personalized?.platformRecommendations || []).slice(0, 4).map((item) => ({
-              platformLabel: item.name,
-              strategy: item.playbook,
-              action: item.action,
-              reason: item.reason,
-            })),
-            businessInsights: (personalized?.businessInsights || []).slice(0, 4).map((item) => ({
-              title: item.title,
-              detail: item.detail,
-            })),
-            growthPlan: (personalized?.growthPlan || []).slice(0, 4).map((item) => ({
-              title: `Day ${item.day} ${item.title}`,
-              nextStep: item.action,
-            })),
-            referenceExamples: (personalized?.dashboardConsole?.referenceExamples || []).slice(0, 4).map((item) => ({
-              title: `${item.platformLabel} / ${item.account} / ${item.title}`,
-              reason: item.reason,
-            })),
-            authorSummary: personalized?.authorAnalysis
-              ? [
-                  personalized.authorAnalysis.identity?.tierReason,
-                  personalized.authorAnalysis.identity?.identityTags?.join("、"),
-                  personalized.authorAnalysis.identity?.verticalCategory,
-                  personalized.authorAnalysis.monetizationValue?.recommendedPaths?.[0]?.reason,
-                ].filter(Boolean).join("；")
-              : "",
-            userEvidence: userEvidence ? {
-              strongestPlatforms: userEvidence.strongestPlatforms,
-              recurringThemes: userEvidence.recurringThemes,
-              summaryNote: userEvidence.summaryNote,
-            } : null,
-            personalized,
-          };
-        })();
-
-        const result = await buildPremiumRemixPlan({
-          context: input.context,
-          transcript: input.transcript,
-          analysis: fallbackAnalysis,
-          modelName: input.modelName,
-          titleExecutions: input.titleExecutions?.length
-            ? input.titleExecutions
-            : remixEvidence?.personalized?.titleExecutions,
-          assetAdaptation: input.assetAdaptation
-            || remixEvidence?.personalized?.decisionFramework?.assetAdaptation,
-          growthHandoff: input.growthHandoff
-            || remixEvidence?.personalized?.growthHandoff,
-          creationStoryboardPrompt: input.creationStoryboardPrompt
-            || remixEvidence?.personalized?.creationAssist?.storyboardPrompt,
-          dataEvidence: remixEvidence
-            ? {
-                source: remixEvidence.source,
-                liveSummary: remixEvidence.liveSummary,
-                historicalSummary: remixEvidence.historicalSummary,
-                hotTopic: remixEvidence.hotTopic,
-                recommendationReason: remixEvidence.recommendationReason,
-                personalizedOverview: remixEvidence.personalizedOverview,
-                decisionFramework: remixEvidence.decisionFramework,
-                platformRows: remixEvidence.platformRows,
-                platformSnapshots: remixEvidence.platformSnapshots,
-                topicLibrary: remixEvidence.topicLibrary,
-                platformRecommendations: remixEvidence.platformRecommendations,
-                businessInsights: remixEvidence.businessInsights,
-                growthPlan: remixEvidence.growthPlan,
-                referenceExamples: remixEvidence.referenceExamples,
-                authorSummary: remixEvidence.authorSummary,
-                userEvidence: remixEvidence.userEvidence,
-              }
-            : undefined,
-        });
-        return {
-          success: true,
-          remix: growthPremiumRemixSchema.parse(result.remix),
-          debug: {
-            route: "mvAnalysis.buildPremiumRemix",
-            personalizedApplied: Boolean(remixEvidence?.personalized),
-            ...result.debug,
-          },
-        };
-      }),
+      .input(z.unknown().optional())
+      .mutation(({ ctx }) => rejectRetiredPremiumRemix("buildPremiumRemix", ctx.user.id)),
 
     generatePremiumRemixAssets: protectedProcedure
-      .input(z.object({
-        remix: growthPremiumRemixSchema,
-        mode: z.enum(["loop", "interpolation"]).default("loop"),
-      }))
-      .mutation(async ({ input }) => {
-        const result = await generatePremiumRemixAssets({
-          remix: input.remix,
-          mode: input.mode,
-        });
-        return {
-          success: true,
-          assets: growthPremiumRemixAssetsSchema.parse(result.assets),
-          debug: {
-            route: "mvAnalysis.generatePremiumRemixAssets",
-            ...result.debug,
-          },
-        };
-      }),
+      .input(z.unknown().optional())
+      .mutation(({ ctx }) => rejectRetiredPremiumRemix("generatePremiumRemixAssets", ctx.user.id)),
 
-    getGrowthSnapshot: publicProcedure
+    // 1111 收口：原先匿名可调且非交互模式会跑两次 LLM、不扣费。前台调用点（PlatformPage / MVAnalysis）都在登录页内。
+    getGrowthSnapshot: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.growthSnapshot))
       .input(z.object({
         context: z.string().optional(),
         requestedPlatforms: z.array(z.string()).optional(),
@@ -4281,15 +4108,19 @@ export const appRouter = router({
 
     // Platform-specific PDF download — same as downloadAnalysisPdf but named
     // separately so PlatformPage can use it without touching MVAnalysis routes.
-    downloadPlatformPdf: publicProcedure
+    // 1111 收口：原先匿名可提交任意 HTML 让渲染端加载外链（SSRF）。前台调用点均在登录页（PlatformPage / MyReportsPage / MVAnalysis / ResearchPage / ReportEditor）
+    downloadPlatformPdf: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.pdfRender))
       .input(z.object({
         html: z.string().min(100),
         token: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
+        const safeHtml = sanitizePdfHtmlOrThrow(input.html);
         const cloudRunUrl = String(process.env.CLOUD_RUN_PDF_URL || "").trim();
         if (!cloudRunUrl) {
-          throw new Error("CLOUD_RUN_PDF_URL env var is not set.");
+          console.error("[downloadPlatformPdf] CLOUD_RUN_PDF_URL 未配置");
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "PDF 服务暂未配置，请稍后重试" });
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
@@ -4298,7 +4129,7 @@ export const appRouter = router({
           const res = await fetch(proxyUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ html: input.html, token: input.token ?? "" }),
+            body: JSON.stringify({ html: safeHtml, token: input.token ?? "" }),
             signal: controller.signal,
           });
           if (!res.ok) {
@@ -4311,13 +4142,15 @@ export const appRouter = router({
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           console.error("[downloadPlatformPdf] proxy error:", msg);
-          throw new Error(`downloadPlatformPdf failed: ${msg}`);
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "PDF 生成失败，请稍后重试" });
         } finally {
           clearTimeout(timeoutId);
         }
       }),
 
-    downloadAnalysisPdf: publicProcedure
+    // 1111 收口：原先匿名可提交任意 HTML 让渲染端加载外链（SSRF）。前台调用点均在登录页（PlatformPage / MyReportsPage / MVAnalysis / ResearchPage / ReportEditor）
+    downloadAnalysisPdf: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.pdfRender))
       .input(z.object({
         html: z.string().min(100),
         // Optional token forwarded from the frontend for auditing / future auth use.
@@ -4328,9 +4161,11 @@ export const appRouter = router({
         token: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
+        const safeHtml = sanitizePdfHtmlOrThrow(input.html);
         const cloudRunUrl = String(process.env.CLOUD_RUN_PDF_URL || "").trim();
         if (!cloudRunUrl) {
-          throw new Error("CLOUD_RUN_PDF_URL env var is not set. Deploy the pdf-worker to Cloud Run and set this variable.");
+          console.error("[downloadAnalysisPdf] CLOUD_RUN_PDF_URL 未配置");
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "PDF 服务暂未配置，请稍后重试" });
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
@@ -4340,7 +4175,7 @@ export const appRouter = router({
             method: "POST",
             headers: { "Content-Type": "application/json" },
             // Forward html + token to pdf-worker so it can use token for future page.goto() auth
-            body: JSON.stringify({ html: input.html, token: input.token ?? "" }),
+            body: JSON.stringify({ html: safeHtml, token: input.token ?? "" }),
             signal: controller.signal,
           });
           if (!res.ok) {
@@ -4353,7 +4188,7 @@ export const appRouter = router({
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           console.error("[downloadAnalysisPdf] proxy error:", msg);
-          throw new Error(`downloadAnalysisPdf failed: ${msg}`);
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "PDF 生成失败，请稍后重试" });
         } finally {
           clearTimeout(timeoutId);
         }
@@ -9377,7 +9212,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         return { ok: true as const, totalCost: 0 as const, results, isTrial };
       }),
 
-    getPlatformDashboard: publicProcedure
+    // 1111 收口：原先匿名可调 LLM、不扣费；前台调用点 PlatformPage 在登录页内。
+    getPlatformDashboard: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.platformDashboard))
       .input(z.object({
         context: z.string().optional(),
         windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]),
@@ -10154,11 +9991,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         return listManhuaTemplateCandidateHistory({ ...input, userId: ctx.user.id });
       }),
 
-    /** /canvas 编剧室连载扩写：至少三集起写，GLM/DeepSeek均按实际改写集数计价。 */
+    /** /canvas 编剧室连载扩写：至少三集起写，按实际改写集数计价；线路一 / 二每集 6 积分，线路三（1111，Carbon）每集单独计价（待站长定价）。 */
     expandManhuaWriterPack: protectedProcedure
       .input(
         z.object({
-          model: z.enum(["glm", "deepseek"]).optional(),
+          model: z.enum(["glm", "deepseek", "carbon"]).optional(),
           confirmedCredits: z.number().int().nonnegative().optional(),
           topic: z.string().max(500).optional(),
           brief: z.string().max(2000).optional(),
@@ -10196,7 +10033,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }),
       )
       .mutation(async ({ ctx, input }) => {
-        if (!input.model) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "扩写选项已更新，请刷新后选择 GLM 或 DeepSeek；本次未提交、未扣点" });
+        if (!input.model) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "扩写选项已更新，请刷新后选择创作线路；本次未提交、未扣点" });
         const writerModel = input.model;
         if (input.sourceExcerpt && input.templateTrialFingerprint) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "小说改编请使用正常扩写入口；题材试写未读取小说原文，不能直接套用" });
@@ -10308,8 +10145,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const billableEpisodes =
           fromEpisodeReq > 0 ? Math.max(1, episodeCount - fromEpisodeReq + 1) : episodeCount;
 
-        const cost = manhuaWriterExpansionQuote(episodeCount, fromEpisodeReq).credits;
-        if (input.confirmedCredits !== cost) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `扩写报价已更新：每集 6 积分，本次 ${cost} 积分，请重新确认；本次未提交、未扣点` });
+        const quote = manhuaWriterExpansionQuote(episodeCount, fromEpisodeReq, writerModel);
+        const cost = quote.credits;
+        if (input.confirmedCredits !== cost) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `扩写报价已更新：${manhuaWriterModelLabel(writerModel)}每集 ${manhuaWriterEpisodeCredits(writerModel)} 积分，本次 ${cost} 积分，请重新确认；本次未提交、未扣点` });
         if (cost > 0) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < cost) {
@@ -11006,7 +10844,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
       }),
 
-    getPlatformContent: publicProcedure
+    // 1111 收口：前台已无调用点（正式路径 enqueuePlatformContentJob 登录且扣费），原先匿名可调 LLM 且不扣费 → 只留监管调试
+    getPlatformContent: adminProcedure
+      .use(withUsageLimit(USAGE_LIMITS.platformContent))
       .input(z.object({
         context: z.string().optional(),
         windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]),
@@ -11199,8 +11039,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 敏感写操作见 setGrowthRuntimeMode / setGrowthBurstControl（adminProcedure，含 supervisor）。
      * Debug 面板只读仍走本接口，但仅在 supervisor UI 挂载时请求；勿改为仅 admin 否则正式分析会挂。
      */
-    getGrowthSystemStatus: publicProcedure
-      .query(async () => {
+    // 1111 收口：原先匿名可读内部运维信息（报表邮箱、SMTP、凭证健康、lastError、磁盘）。
+    // 普通用户只在成长营分析中读「平台扶持活动」轮播（MVAnalysis uploadStage=analyzing）→ 须登录，非监管只回这一项
+    getGrowthSystemStatus: protectedProcedure
+      .query(async ({ ctx }) => {
         const smtp = getSmtpStatus();
         const snapshot = await readGrowthStatusSnapshot();
         const runtimeMeta = snapshot?.runtimeMeta || await readTrendRuntimeMeta();
@@ -11378,6 +11220,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           })
           .filter((item) => item.supportActivities.length || item.hotTopic);
 
+        if (!resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession)) {
+          // 只回轮播所需；其余字段前台均有可选链兜底（as never 让推断类型保持完整形状）
+          return { success: true, anomalies: [] as typeof anomalies, currentSupportActivities } as never;
+        }
         return {
           success: true,
           targetEmail,
@@ -11683,42 +11529,47 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
       }),
 
-    exportGrowthTrendsCsv: publicProcedure
+    /**
+     * 1111 收口：原先匿名可调，写盘导出整份趋势并发到调用方填的任意邮箱，响应还回显内部报表邮箱。
+     * → 仅管理员 / 监管；收件人只能是当前管理员账号自己的登记邮箱（入参 email 不再使用）；响应不带任何邮箱与服务器路径。
+     */
+    exportGrowthTrendsCsv: adminProcedure
+      .use(withUsageLimit(USAGE_LIMITS.contactNotify))
       .input(z.object({
+        /** @deprecated 1111 起忽略：收件人固定为当前管理员登记邮箱 */
         email: z.string().email().optional(),
-      }))
-      .mutation(async ({ input }) => {
+      }).optional())
+      .mutation(async ({ ctx }) => {
+        const targetEmail = String(ctx.user.email || "").trim();
+        if (!targetEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(targetEmail)) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "当前账号未登记邮箱，无法发送导出文件" });
+        }
         const exported = await exportTrendCollectionsCsv();
-        const targetEmail = input.email || String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim() || undefined;
         let emailed = false;
         let emailError: string | undefined;
-
-        if (targetEmail) {
-          try {
-            await sendMailWithAttachments({
-              to: targetEmail,
-              subject: "Creator Growth Camp 趋势抓取 CSV",
-              requireResend: true,
-              text: `最新趋势抓取 CSV 已按平台分别导出，共 ${exported.rows} 行。\n清单：${exported.manifestPath}`,
-              attachments: exported.files.map((file) => ({
-                filename: file.filePath.split("/").pop() || `${file.platform}-growth-trends.csv`,
-                path: file.filePath,
-                contentType: "text/csv",
-              })),
-            });
-            emailed = true;
-          } catch (error) {
-            emailError = error instanceof Error ? error.message : String(error);
-          }
+        try {
+          await sendMailWithAttachments({
+            to: targetEmail,
+            subject: "Creator Growth Camp 趋势抓取 CSV",
+            requireResend: true,
+            text: `最新趋势抓取 CSV 已按平台分别导出，共 ${exported.rows} 行。`,
+            attachments: exported.files.map((file) => ({
+              filename: file.filePath.split("/").pop() || `${file.platform}-growth-trends.csv`,
+              path: file.filePath,
+              contentType: "text/csv",
+            })),
+          });
+          emailed = true;
+        } catch (error) {
+          console.error("[exportGrowthTrendsCsv] 发送失败:", error);
+          emailError = "邮件发送失败，请稍后重试";
         }
 
         return {
           success: true,
-          manifestPath: exported.manifestPath,
-          files: exported.files,
           rows: exported.rows,
+          fileCount: exported.files.length,
           emailed,
-          targetEmail,
           emailError,
         };
       }),
@@ -11902,7 +11753,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }).catch(() => {});
 
         const system = `你是 MV Studio Pro 站内智能向导。用户可能不了解产品。
-请用温暖、耐心、专业的简体中文回答，避免生硬推销；若涉及付费，诚实说明「大约需要多少积分/适合谁」，并给出 1～2 个最相关的站内路径（如 /platform、/god-view、/research、/creator-growth-camp/premium-remix）。
+请用温暖、耐心、专业的简体中文回答，避免生硬推销；若涉及付费，诚实说明「大约需要多少积分/适合谁」，并给出 1～2 个最相关的站内路径（如 /platform、/god-view、/research、/lapian）。
 回答控制在 400 字以内，分条陈述，不要编造不存在的功能。若问题与产品无关，礼貌引导回创作与增长相关主题。`;
 
         try {
@@ -13154,7 +13005,9 @@ ${sceneSummary}
 
   guestbook: router({
     // Submit a new guestbook message (public, no auth required)
+    // 1111：保留匿名（留言是访客入口），按 IP 限流 + 全站日总量；字段长度见下方 schema
     submit: publicProcedure
+      .use(withUsageLimit(USAGE_LIMITS.guestbookSubmit))
       .input(
         z.object({
           name: z.string().min(1, "请输入姓名").max(100),
@@ -13178,8 +13031,8 @@ ${sceneSummary}
         return { success: true, id };
       }),
 
-    // List recent guestbook messages (public)
-    list: publicProcedure
+    // 1111 收口：原先匿名返回所有留言人的邮箱 / 电话 / 公司 → 仅管理员 / 监管
+    list: adminProcedure
       .input(z.object({ limit: z.number().min(1).max(100).default(20) }).optional())
       .query(async ({ input }) => {
         const limit = input?.limit ?? 20;

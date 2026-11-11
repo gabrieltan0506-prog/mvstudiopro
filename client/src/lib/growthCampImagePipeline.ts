@@ -396,7 +396,7 @@ function growthQueuedLabel(elapsedMs: number, kind: "视频" | "图片") {
     return `${kind}分析排队中（已等 ${sec}s，专用 worker 繁忙；若超过 5 分钟请联系支持）`;
   }
   if (sec >= 45) {
-    return `${kind}分析排队中（已等 ${sec}s，等待 Fly growth 专用 worker 认领）`;
+    return `${kind}分析排队中（已等 ${sec}s，等待分析服务认领）`;
   }
   return `${kind}分析排队中`;
 }

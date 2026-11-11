@@ -16,13 +16,14 @@ import {
   type AdvisorRewriteCandidate,
 } from "@shared/manhuaAdvisorRewrite";
 import type { ManhuaWriterEpisode } from "@shared/manhuaWriterRoom";
-import type { ManhuaWriterModel } from "@shared/manhuaWriterModels";
+import type { ManhuaWriterAuxModel } from "@shared/manhuaWriterModels";
 import type { PublicManhuaViralTemplateCard } from "@shared/manhuaViralTemplateBank";
 import type { AdvisorTemplatePlan } from "@/lib/manhuaAdvisorTemplates";
 import { ManhuaRewriteComparison } from "./ManhuaRewriteComparison";
 export type EpisodeOptimizationWorkspace = {
   episodes: ManhuaWriterEpisode[];
-  model: ManhuaWriterModel;
+  /** 单集优化只走线路一 / 二（选了线路三时由上层明示改用线路一）。 */
+  model: ManhuaWriterAuxModel;
   comparisonHost: HTMLElement | null;
   onFocusEpisode: (index: number) => void;
   onApplyCandidates: (candidates: AdvisorRewriteCandidate[]) => boolean | Promise<boolean>;
