@@ -24,6 +24,7 @@ import {
   knowledgePublicationChapter,
 } from "@shared/knowledgePublicationHtml";
 import { trpc } from "@/lib/trpc";
+import { KNOWLEDGE_PREVIEW_UNAVAILABLE, KNOWLEDGE_PUBLICATION_STAGES, knowledgeStageLabel, loadKnowledgePreviewWithRetry, type KnowledgePublicationStage } from "@/lib/knowledgePublicationStage";
 import { withKnowledgeAdvisorRecovery } from "@/lib/knowledgeAdvisorRecovery";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
 import { flyDownloadUrl } from "@/lib/gcsTransfer";
@@ -73,6 +74,11 @@ export default function KnowledgePublicationPanel({
   const pptxExporter = trpc.editableLayout.exportPublicationPptx.useMutation();
   const [layoutView,setLayoutView]=useState<{doc:EditableLayout;review:KnowledgeReview;images:Record<string,string>}|null>(null);
   const [layoutPreviewError,setLayoutPreviewError]=useState("");
+  const [layoutPreviewNote,setLayoutPreviewNote]=useState("");
+  const [previewReload,setPreviewReload]=useState(0);
+  const [exporting,setExporting]=useState(false);
+  const [stage,setStage]=useState<KnowledgePublicationStage|null>(null);
+  const previewCache=useRef<{key:string;view:NonNullable<typeof layoutView>}|null>(null);
   const [minSlides,setMinSlides]=useState(doc.publication?.presentationRequest?.minSlides ?? 15);
   const [maxSlides,setMaxSlides]=useState(doc.publication?.presentationRequest?.maxSlides ?? 20);
   const [presentationBusy,setPresentationBusy]=useState(false);
@@ -118,7 +124,7 @@ export default function KnowledgePublicationPanel({
     setFiles(null);
     setPptxFile(null);
     setPageIndex(0);
-    setPlanDraft(null);setRevisionError("");
+    setPlanDraft(null);setRevisionError("");setStage(null);
     setMinSlides(doc.publication?.presentationRequest?.minSlides ?? 15);
     setMaxSlides(doc.publication?.presentationRequest?.maxSlides ?? 20);
     setError("");
@@ -130,16 +136,30 @@ export default function KnowledgePublicationPanel({
     value.publication?.layoutConversationId, value.publication?.supplementDocumentId,
   ]);
   const currentPaginationVersion = paginationVersion(doc);
+  // 整册预览：同一稿件版本只读一次并复用；导出进行中不并发读取（导出结束后自动补读）；
+  // 读取失败退避自动重试，最终失败只提示预览暂时读不出，不当作整理/导出失败（1110 导出期间曾误报任务失败）。
   useEffect(()=>{
     let current=true;
-    setLayoutView(null);setLayoutPreviewError("");
-    if(doc.publication?.layoutConversationId){
-      void utils.editableLayout.bookLayoutPreview.fetch({documentId:doc.id}).then(view=>{
-        if(current)setLayoutView(view);
-      }).catch(error=>{if(current)setLayoutPreviewError(knowledgePublicationPublicError(error).message);});
-    }
+    setLayoutPreviewError("");setLayoutPreviewNote("");
+    if(!doc.publication?.layoutConversationId){setLayoutView(null);return;}
+    const key=currentPaginationVersion;
+    if(previewCache.current?.key===key){setLayoutView(previewCache.current.view);return;}
+    setLayoutView(null);
+    if(exporting){setLayoutPreviewNote("正在生成 PDF，完成后读取整册预览…");return;}
+    void loadKnowledgePreviewWithRetry(()=>utils.editableLayout.bookLayoutPreview.fetch({documentId:doc.id}),{
+      alive:()=>current,
+      onRetry:(attempt,error)=>{
+        console.warn("[knowledgePublication] 整册预览读取失败，自动重试：",String((error as Error)?.message??error).replace(/(?:https?|gs):\/\/\S+/g,"[地址]").slice(0,300));
+        if(current)setLayoutPreviewNote(`整册预览读取较慢，正在自动重试（第 ${attempt} 次）…`);
+      },
+    }).then(result=>{
+      if(!current)return;
+      setLayoutPreviewNote("");
+      if(result.ok){previewCache.current={key,view:result.value};setLayoutView(result.value);}
+      else setLayoutPreviewError(KNOWLEDGE_PREVIEW_UNAVAILABLE);
+    });
     return ()=>{current=false;};
-  },[currentPaginationVersion]);
+  },[currentPaginationVersion,exporting,previewReload]);
   useEffect(() => {
     setFiles(null);
     onPagination?.(doc, null);
@@ -169,6 +189,7 @@ export default function KnowledgePublicationPanel({
       return value;
     };
     if(pub.layoutConversationId)return;
+    setStage({step:3});
     const history=pub.conversation||[];
     let turn=history.find(t=>t.request.id===intent.requestId);
     // 统稿一落盘立即衔接：顾问报价与排版输入并行读取，不再串行等待（1110 实测两者串行 + 两次保存 = 44 秒空档）。
@@ -347,11 +368,13 @@ export default function KnowledgePublicationPanel({
           const completed = completedKnowledgeBatches(pub, batches.length);
           completed.add(i);
           pub = { ...pub, parallel: { channels: pub.parallel!.channels, completed: Array.from(completed).sort((a, b) => a - b) }, completedBatches: knowledgeCompletedPrefix(completed, batches.length) };
+          setStage({ step: 0, done: completed.size, total: batches.length });
           const imageUrls = new Map((result.images || []).map(image => [image.id, image.url]));
           next = { ...next, pages: next.pages.map(page => imageUrls.has(page.id) ? { ...page, imageUrl: imageUrls.get(page.id)! } : page), publication: pub };
         }
         });
       };
+      setStage({ step: 0, done: completedKnowledgeBatches(pub, batches.length).size, total: batches.length });
       const failures = await runKnowledgeParallelBatches({
         count: batches.length,
         completed: completedKnowledgeBatches(pub, batches.length),
@@ -380,6 +403,9 @@ export default function KnowledgePublicationPanel({
           quote = updated;
           total = updated.batches;
         }
+        // 最后一组核对在服务端紧接着做逐页统稿；之前各组为联网校验。
+        const checks = Math.max(1, total - batches.length), check = i - batches.length;
+        setStage(i >= total - 1 ? { step: 2 } : { step: 1, done: check, total: checks });
         await consume(i, await execute(i));
       }
       if(latest.current.publication?.automaticLayout)await arrangeBook();
@@ -500,9 +526,13 @@ export default function KnowledgePublicationPanel({
         setPptxFile(result);setMessage(`PPTX已生成，共${result.slides}页，可下载后编辑。`);
       }else{
         setMessage("确认稿已保存，正在自动排版并生成 HTML 和 PDF…");
-        const result=await exporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});
+        setStage({step:4});setExporting(true);
+        let result:Awaited<ReturnType<typeof exporter.mutateAsync>>;
+        try{result=await exporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});}
+        finally{setExporting(false);}
         if (paginationVersion(latest.current) !== paginationVersion(next)) return;
         setFiles(result);
+        if(result.pdfUrl)setStage({step:KNOWLEDGE_PUBLICATION_STAGES.length});
         if (result.pdfUrl && result.totalPages && result.imagePages !== undefined) {
           onPagination?.(next, { imagePages: result.imagePages, totalPages: result.totalPages });
           setMessage(`排版完成：图片 ${result.imagePages} 页｜手册共 ${result.totalPages} 页。可直接下载。`);
@@ -516,11 +546,15 @@ export default function KnowledgePublicationPanel({
     }
   };
   const exportLayout=async(next:EditableLayout,saved:Saved)=>{
-    setFiles(null);setError("");
+    setFiles(null);setError("");setStage({step:4});
     setMessage("顾问方案已保存，正在按指定章节顺序和设计生成 PDF…");
-    const result=await exporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});
+    let result:Awaited<ReturnType<typeof exporter.mutateAsync>>;
+    setExporting(true);
+    try{result=await exporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});}
+    finally{setExporting(false);}
     if(latest.current.id!==next.id)return;
     setFiles(result);
+    if(result.pdfUrl)setStage({step:KNOWLEDGE_PUBLICATION_STAGES.length});
     if(result.pdfUrl&&result.totalPages&&result.imagePages!==undefined){
       onPagination?.(next,{imagePages:result.imagePages,totalPages:result.totalPages});
       setMessage(`已按顾问方案排版：图片 ${result.imagePages} 页｜手册共 ${result.totalPages} 页。`);
@@ -607,6 +641,11 @@ export default function KnowledgePublicationPanel({
         {!pub.infographicTemplateId && review.pages[index]?.reading?.templateReason ? ` · ${review.pages[index].reading!.templateReason}` : ""}
       </p>}
       </details>
+      {stage && (
+        <p aria-label="手册处理阶段" className="text-xs text-[#c0cabb]">
+          {knowledgeStageLabel(stage)}
+        </p>
+      )}
       {message && (
         <p role="status" className="text-sm text-[#d6e4bd]">
           {message}
@@ -748,8 +787,9 @@ export default function KnowledgePublicationPanel({
               />
             </label>
           )}
-          {layoutPreviewError&&<p role="alert" className="text-rose-200">{layoutPreviewError}</p>}
-          {pub.layoutConversationId&&!layoutView&&!layoutPreviewError&&<p role="status">正在读取整册预览…</p>}
+          {/* 预览状态独立于整理/导出状态：读不出预览不代表任务失败。 */}
+          {layoutPreviewError&&<p role="status" aria-label="整册预览状态" className="text-sm text-amber-200">{layoutPreviewError} <button className="underline" onClick={()=>setPreviewReload(n=>n+1)}>重新读取预览</button></p>}
+          {pub.layoutConversationId&&!layoutView&&!layoutPreviewError&&<p role="status" aria-label="整册预览状态" className="text-sm text-[#c0cabb]">{layoutPreviewNote||"正在读取整册预览…"}</p>}
           <iframe
             title="图文知识手册预览"
             sandbox="allow-scripts"
