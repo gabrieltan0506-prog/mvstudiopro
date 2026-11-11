@@ -14,17 +14,26 @@ export type VideoBreakdownRemakeInput = z.infer<typeof videoBreakdownRemakeInput
 
 export const VIDEO_BREAKDOWN_REMAKE_CONSTRAINT = "本片换成新主体与新场景：主体外观以【主体一致性】为准，场景以【场景与美术】为准；【镜头序列】里出现的原片主体或场景字样只取其动作、走位、运镜与节奏，不沿用原片外观。";
 
-/** 返回换了主体/场景的段（不改原对象）；场景留空时沿用原片场景。 */
+export const VIDEO_BREAKDOWN_REMAKE_SPEECH_CONSTRAINT = "台词换成新主体自己的话，沿用原片口播结构、句子长短与停顿节奏，不照抄原片原话。";
+
+/**
+ * 返回换了主体/场景的段（不改原对象）；场景留空时沿用原片场景。
+ * 口播（1111）：做新片不照抄原片原话——去掉逐字台词，保留字幕花字样式与口播节奏，并在【生成约束】里写明台词换成自己的话。
+ */
 export function remakeVideoBreakdownSegment(segment: VideoBreakdownSegment, input: VideoBreakdownRemakeInput): VideoBreakdownSegment {
   const { subject, scene } = videoBreakdownRemakeInputSchema.parse(input);
   const p = segment.recreatePrompt;
+  const { speech, ...rest } = segment;
+  const hadTranscript = Boolean(speech?.transcript);
+  const keptSpeech = speech ? { ...(speech.onScreenText ? { onScreenText: speech.onScreenText } : {}), ...(speech.delivery ? { delivery: speech.delivery } : {}) } : undefined;
   return {
-    ...segment,
+    ...rest,
+    ...(keptSpeech && Object.keys(keptSpeech).length ? { speech: keptSpeech } : {}),
     recreatePrompt: {
       ...p,
       subject,
       scene: scene?.trim() ? scene.trim() : p.scene,
-      constraints: `${p.constraints}；${VIDEO_BREAKDOWN_REMAKE_CONSTRAINT}`,
+      constraints: [p.constraints, VIDEO_BREAKDOWN_REMAKE_CONSTRAINT, hadTranscript ? VIDEO_BREAKDOWN_REMAKE_SPEECH_CONSTRAINT : ""].filter(Boolean).join("；"),
     },
   };
 }

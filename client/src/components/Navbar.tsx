@@ -22,7 +22,7 @@ import {
 
 const NAV_ITEMS: Array<{ label: string; href: string }> = [
   { label: "平台创作与营销指南", href: "/platform?mode=create" },
-  { label: "爆款复刻", href: "/creator-growth-camp/premium-remix" },
+  { label: "拉片复刻爆款", href: "/lapian" },
   { label: "一战成片", href: "/canvas" },
   { label: "小说改编", href: "/novel-adaptation" },
   { label: "我的漫剧", href: "/manhua-projects" },

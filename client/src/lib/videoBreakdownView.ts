@@ -155,6 +155,29 @@ export function expressionRows(segment: VideoBreakdownSegment): Array<{ label: s
   return rows;
 }
 
+/** 逐段口播（1111，可选）：有才出行，顺序固定为 台词 → 字幕花字 → 口播节奏。 */
+export function speechRows(segment: VideoBreakdownSegment): Array<{ label: string; value: string }> {
+  const s = segment.speech;
+  if (!s) return [];
+  return [
+    { label: "台词 / 口播", value: s.transcript || "" },
+    { label: "字幕花字", value: s.onScreenText || "" },
+    { label: "口播节奏", value: s.delivery || "" },
+  ].filter(row => row.value.trim());
+}
+
+/** 爆款策略（1111，可选）：固定三行 + 可选选题受众；标题参考单独渲染。 */
+export function viralStrategyRows(result: VideoBreakdown): Array<{ label: string; value: string }> {
+  const v = result.overview.viralStrategy;
+  if (!v) return [];
+  return [
+    { label: "爆款原因", value: v.whyItWorks },
+    { label: "开头钩子", value: v.hook },
+    { label: "口播 / 文案结构", value: v.scriptStructure },
+    { label: "选题与受众", value: v.topicAngle || "" },
+  ].filter(row => row.value.trim());
+}
+
 export function segmentHeading(segment: VideoBreakdownSegment): string {
   return `片段 ${segment.index + 1} · ${segment.title}`;
 }
@@ -186,6 +209,12 @@ const cell = (value: string) => value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|
 export function buildVideoBreakdownMarkdown(result: VideoBreakdown): string {
   const lines: string[] = [];
   lines.push("# 拉片报告", "", `> ${result.summary}`, "", `全片时长：${formatDuration(result.durationSec)} · 共 ${result.segments.length} 段`, "");
+  const strategy = viralStrategyRows(result);
+  if (strategy.length) {
+    lines.push("## 爆款策略", "", "| 维度 | 分析 |", "| --- | --- |", ...strategy.map(row => `| ${row.label} | ${cell(row.value)} |`), "");
+    const titles = result.overview.viralStrategy?.titleIdeas || [];
+    if (titles.length) lines.push("### 标题参考", "", ...titles.map(t => `- ${t}`), "");
+  }
   lines.push("## 全片创作拆解", "", "### 视觉基因", "", "| 维度 | 全片特征 |", "| --- | --- |");
   for (const row of VISUAL_GENE_ROWS) lines.push(`| ${row.label} | ${cell(result.overview.visualGenes[row.key])} |`);
   lines.push("", "### 反复出现的画面元素", "", ...result.overview.recurringElements.map(item => `- ${item}`));
@@ -210,6 +239,8 @@ export function buildVideoBreakdownMarkdown(result: VideoBreakdown): string {
     for (const shot of segment.shots) lines.push(`| ${formatClock(shot.startSec)}–${formatClock(shot.endSec)} | ${cell(shot.framing)} | ${cell(shot.camera)} | ${cell(shot.blockingAndFocus)} |`);
     lines.push("", "### 段落表达", "", "| 维度 | 分析 |", "| --- | --- |");
     for (const row of expressionRows(segment)) lines.push(`| ${row.label} | ${cell(row.value)} |`);
+    const speech = speechRows(segment);
+    if (speech.length) lines.push("", "### 口播与字幕", "", "| 维度 | 内容 |", "| --- | --- |", ...speech.map(row => `| ${row.label} | ${cell(row.value)} |`));
     lines.push("", "### 复刻生成提示词", "", "```text", formatVideoBreakdownRecreatePrompt(segment), "```", "");
   }
   lines.push("## 配乐提示词", "", "```text", buildVideoBreakdownBgmPrompt(result), "```", "");

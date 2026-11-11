@@ -30,6 +30,12 @@ const CLEAN_FILES = [
   "pages/Redeem.tsx",
   "pages/WorkspaceStudio.tsx",
   "pages/CreativePage.tsx",
+  // 1111 拉片复刻爆款合并
+  "components/HomeVideoBreakdown.tsx",
+  "components/videoBreakdown/VideoBreakdownResult.tsx",
+  "components/videoBreakdown/VideoBreakdownOverviewExtras.tsx",
+  "pages/VideoBreakdown.tsx",
+  "pages/RemixLanding.tsx",
 ];
 const visible = (file: string) =>
   readFileSync(new URL(`../${file}`, import.meta.url), "utf8")

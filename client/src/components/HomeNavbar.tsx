@@ -16,7 +16,7 @@ const nav = [
   ["首页", "Home", "/"],
   ["影像工坊", "Studio", "/#image-workshop"],
   ["平台创作与营销指南", "Creation & Marketing", "/platform?mode=create"],
-  ["爆款复刻", "Recreate", "/creator-growth-camp/premium-remix"],
+  ["拉片复刻爆款", "Recreate", "/lapian"],
   // 竞品调研内测中：首页导航暂不给链接（标注见 HomeHero 卡片）
   // 原为「Omini，Seedance 2.X画布」：Omni 拼错，且导航挂模型版本号会随版本过期，
   // 对普通访客也没有意义。「一战成片」取一站式与一战成名的双关（用户 2026-08-05 定名）。

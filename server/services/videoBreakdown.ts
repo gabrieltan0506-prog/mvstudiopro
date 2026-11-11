@@ -195,6 +195,8 @@ const overviewShape = videoBreakdownSchema.shape.overview.shape;
 const craftSchema = overviewShape.craft.unwrap();
 const soundSchema = overviewShape.sound.unwrap();
 const keyMomentSchema = overviewShape.keyMoments.unwrap().element;
+const viralStrategySchema = overviewShape.viralStrategy.unwrap();
+const speechSchema = videoBreakdownSchema.shape.segments.element.shape.speech.unwrap();
 export const VIDEO_BREAKDOWN_KEY_MOMENTS_PER_10S = 3;
 export const VIDEO_BREAKDOWN_KEY_MOMENTS_MAX = 60;
 /** 重点时刻条数上限：每 10 秒（不足 10 秒按 10 秒）至多 3 条，总数 ≤60。 */
@@ -203,7 +205,39 @@ export function videoBreakdownKeyMomentLimit(durationSec: number): number {
 }
 
 /** 丢弃记录：解析时收集，由任务层写日志与 optional-drops 证据（不进前台）。 */
-export type VideoBreakdownOptionalDrop = { block: "craft" | "sound" | "keyMoments"; reasonZh: string; count?: number };
+export type VideoBreakdownOptionalDrop = { block: "craft" | "sound" | "keyMoments" | "viralStrategy" | "speech"; reasonZh: string; count?: number };
+
+/**
+ * 逐段口播块（1111）：在主体解析之前就地校验，坏了只删本段的 speech、记 drops，绝不抛错。
+ * 无音轨时只保留画面可见的 onScreenText（台词与口播节奏依赖音轨，一律丢）。返回新数组，不改入参。
+ */
+export function sanitizeVideoBreakdownSpeech(rawSegments: unknown, hasAudio: boolean | undefined, drops: VideoBreakdownOptionalDrop[] = []): unknown {
+  if (!Array.isArray(rawSegments)) return rawSegments;
+  let invalid = 0;
+  let mutedDropped = 0;
+  const out = rawSegments.map(seg => {
+    if (!seg || typeof seg !== "object" || Array.isArray(seg)) return seg;
+    const { speech, ...rest } = seg as Record<string, unknown>;
+    if (speech === undefined || speech === null) return rest;
+    let candidate: unknown = speech;
+    if (hasAudio === false && candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      const { transcript, delivery, ...visual } = candidate as Record<string, unknown>;
+      if (transcript !== undefined || delivery !== undefined) mutedDropped += 1;
+      candidate = visual;
+    }
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      // 空串当作「没给」，不让一个空字段拖垮整块
+      candidate = Object.fromEntries(Object.entries(candidate as Record<string, unknown>).filter(([, v]) => !(typeof v === "string" && !v.trim())));
+      if (!Object.keys(candidate as object).length) return rest;
+    }
+    const parsed = speechSchema.safeParse(candidate);
+    if (!parsed.success) { invalid += 1; return rest; }
+    return { ...rest, speech: parsed.data };
+  });
+  if (invalid) drops.push({ block: "speech", reasonZh: "口播块结构不合格，逐段丢弃", count: invalid });
+  if (mutedDropped) drops.push({ block: "speech", reasonZh: "无音轨，台词与口播节奏丢弃（字幕花字保留）", count: mutedDropped });
+  return out;
+}
 
 /** 声音块：文本里的钟表式秒位剥掉（数字秒位才是时间真源）；剥后为空或仍残留即整块丢。 */
 function sanitizeSound(value: unknown): { sound?: Overview["sound"]; reasonZh?: string } {
@@ -275,14 +309,19 @@ export function parseAndFixVideoBreakdown(
   opts: { hasAudio?: boolean; drops?: VideoBreakdownOptionalDrop[] } = {},
 ): VideoBreakdown {
   const drops = opts.drops ?? [];
-  let optional: Partial<Pick<Overview, "craft" | "sound" | "keyMoments">> = {};
+  let optional: Partial<Pick<Overview, "craft" | "sound" | "keyMoments" | "viralStrategy">> = {};
   let pre = raw;
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     const top: Record<string, unknown> = { ...(raw as Record<string, unknown>), kind: "video_breakdown_v1", durationSec: r1(durationSec) };
     const ov = top.overview;
     if (ov && typeof ov === "object" && !Array.isArray(ov)) {
-      const { craft, sound, keyMoments, ...rest } = ov as Record<string, unknown>;
+      const { craft, sound, keyMoments, viralStrategy, ...rest } = ov as Record<string, unknown>;
       top.overview = rest;
+      if (viralStrategy !== undefined && viralStrategy !== null) {
+        const parsed = viralStrategySchema.safeParse(viralStrategy);
+        if (parsed.success) optional.viralStrategy = parsed.data;
+        else drops.push({ block: "viralStrategy", reasonZh: formatZodIssues(parsed.error) });
+      }
       if (craft !== undefined && craft !== null) {
         const parsed = craftSchema.safeParse(craft);
         if (parsed.success) optional.craft = parsed.data;
@@ -299,6 +338,7 @@ export function parseAndFixVideoBreakdown(
       const km = filterVideoBreakdownKeyMoments(keyMoments, r1(durationSec), drops);
       if (km) optional.keyMoments = km;
     }
+    top.segments = sanitizeVideoBreakdownSpeech(top.segments, opts.hasAudio, drops);
     pre = top;
   }
   const parsed = videoBreakdownSchema.safeParse(pre);
@@ -328,6 +368,7 @@ export function buildVideoBreakdownPrompt(input: { durationSec: number; hasAudio
 5. 每段的 shots 逐镜列出（以真实剪辑点为准，逐镜时间码），镜头秒位必须落在所属段内；一段内镜头首尾相接。
 6. recreatePrompt 用「秒锁」写法：timeline 每个时间窗写清该时段主体在做什么动作、什么表情、光线怎样、氛围如何，时间窗在段长内、按时间顺序首尾相接、覆盖整段。
 7. 有对白、音乐或音效时写进 expression.sound 与 recreatePrompt.rhythm；无音轨或无声段，sound 可省略。
+8. 有人声口播 / 对白，或画面上有字幕、花字的段，写 segments[].speech（见下文）；没有就省略整个 speech，不要写空串。
 
 【字段说明】
 - summary：一句话概括全片（≤400 字）。
@@ -337,6 +378,7 @@ export function buildVideoBreakdownPrompt(input: { durationSec: number; hasAudio
 - segments[].title：本段小标题（≤80 字）。
 - segments[].shots[]：framing 画面景别；camera 摄影机（机位、运动、焦段感）；blockingAndFocus 调度、构图与焦点。
 - segments[].expression：narrativeIntent 叙事意图；technique 表现手法；rhythm 节奏与情绪；sound 声音（可选）。
+- segments[].speech（可选）：transcript 本段口播 / 对白原话，按音轨逐字转写，听不清处写「不可辨」，不改写、不总结、不补全；onScreenText 本段画面上出现的字幕与花字（原文 + 样式与出现方式，如「黄底黑字大标题弹出」）；delivery 口播节奏（语速快慢、停顿、重音、情绪起伏），不写时间。三项按实际有无填写，至少一项。
 - segments[].recreatePrompt：subject 主体一致性（外形、服装、特征）；scene 场景与美术；timeline 镜头序列（秒锁）；camera 摄影机与构图；lightColor 光色与材质；rhythm 节奏与声音；constraints 生成约束（必须保留 / 必须避免）。
 
 【可借鉴的创作手法 overview.craft】
@@ -345,7 +387,7 @@ export function buildVideoBreakdownPrompt(input: { durationSec: number; hasAudio
 - emotionArc：情绪推进，用 → 串起各阶段。
 - styleTags：风格判词 1–24 个短标签（每个 ≤20 字），覆盖情绪、叙事特色、视觉、节奏、声音。
 ${hasAudio ? `
-【声音拆解 overview.sound】（只依据音轨；不转录台词原文、不复述对白内容；文本里不写任何时间或秒位）
+【声音拆解 overview.sound】（只依据音轨；台词原文只写进各段 speech.transcript，这里不重复；文本里不写任何时间或秒位）
 - rhythm：声音节奏（疏密、起伏、停顿）。
 - mix：混音主次（对白 / 音乐 / 音效 / 环境谁在前、谁让位）。
 - reusableTechniques：可复用声音手法（用什么声音处理达到什么效果）。
@@ -353,6 +395,13 @@ ${hasAudio ? `
 ` : `
 【声音】本片无音轨，不要输出 overview.sound。
 `}
+【爆款策略 overview.viralStrategy】站在短视频运营角度，只依据本片实际内容判断，不编造播放量、点赞等数据：
+- whyItWorks：这支片为什么能火（选题、情绪、信息密度、人设、反差等，写具体，不写「内容优质」这类空话）。
+- hook：开头几秒靠什么留住人（画面、第一句话、字幕或悬念），写清做法与作用。
+- scriptStructure：口播 / 文案结构，用 → 串起各阶段（如「抛痛点 → 给反常识结论 → 三步做法 → 引导评论」），只写阶段，不写时间。
+- topicAngle（可选）：选题角度与目标受众。
+- titleIdeas（可选）：1–5 个可直接借用句式的标题参考，每个 ≤60 字，不出现任何品牌名或人名。
+
 【重点时刻 overview.keyMoments】看片时自报的抓帧秒位，下游按 atSec 抓一张原片画面：
 - atSec：全片绝对秒（0.0–${d}），可保留一位小数；取事件真正发生、画面清晰落定的那一帧，不取镜头区间中点，不按剧情顺序猜。
 - type：cut 切镜（景别或机位突变后落定的代表帧）／emotion 情绪（微表情峰值）／lighting 灯光（氛围切换前后）／story 剧情（推动因果的关键节点）／sound 声音（配乐转折、关键音效）${hasAudio ? "" : "（本片无音轨，不要用 sound）"}。
@@ -360,7 +409,7 @@ ${hasAudio ? `
 - 宁缺毋滥：普通切镜、普通打光不算；平淡区间可以留空；不要为覆盖全片或凑齐五类而硬选。每 10 秒至多 3 条，全片至多 ${kmLimit} 条。
 
 【输出 JSON 形状】
-{"kind":"video_breakdown_v1","durationSec":${d},"summary":string,"overview":{"visualGenes":{"mediumAndArtStyle":string,"color":string,"lighting":string,"materialTexture":string,"composition":string,"camera":string},"recurringElements":[string],"mustKeep":[string],"craft":{"reusableTechniques":[string],"rhythmStructure":string,"emotionArc":string,"styleTags":[string]},${hasAudio ? `"sound":{"rhythm":string,"mix":string,"reusableTechniques":string,"generationElements":string},` : ""}"keyMoments":[{"atSec":number,"type":"cut"|"emotion"|"lighting"|"story"|"sound","note":string}]},"segments":[{"index":number,"startSec":number,"endSec":number,"title":string,"shots":[{"startSec":number,"endSec":number,"framing":string,"camera":string,"blockingAndFocus":string}],"expression":{"narrativeIntent":string,"technique":string,"rhythm":string,"sound"?:string},"recreatePrompt":{"subject":string,"scene":string,"timeline":[{"fromSec":number,"toSec":number,"text":string}],"camera":string,"lightColor":string,"rhythm":string,"constraints":string}}]}`;
+{"kind":"video_breakdown_v1","durationSec":${d},"summary":string,"overview":{"visualGenes":{"mediumAndArtStyle":string,"color":string,"lighting":string,"materialTexture":string,"composition":string,"camera":string},"recurringElements":[string],"mustKeep":[string],"craft":{"reusableTechniques":[string],"rhythmStructure":string,"emotionArc":string,"styleTags":[string]},${hasAudio ? `"sound":{"rhythm":string,"mix":string,"reusableTechniques":string,"generationElements":string},` : ""}"viralStrategy":{"whyItWorks":string,"hook":string,"scriptStructure":string,"topicAngle"?:string,"titleIdeas"?:[string]},"keyMoments":[{"atSec":number,"type":"cut"|"emotion"|"lighting"|"story"|"sound","note":string}]},"segments":[{"index":number,"startSec":number,"endSec":number,"title":string,"shots":[{"startSec":number,"endSec":number,"framing":string,"camera":string,"blockingAndFocus":string}],"expression":{"narrativeIntent":string,"technique":string,"rhythm":string,"sound"?:string},"recreatePrompt":{"subject":string,"scene":string,"timeline":[{"fromSec":number,"toSec":number,"text":string}],"camera":string,"lightColor":string,"rhythm":string,"constraints":string},"speech"?:{"transcript"?:string,"onScreenText"?:string,"delivery"?:string}}]}`;
 }
 
 /** 修复重写：同一视频再附一次，带上上次输出与不过原因，要求只修问题、完整重出。 */
@@ -383,7 +432,8 @@ const obj = (properties: Record<string, unknown>, optional: string[] = []) => ({
 });
 /**
  * Gemini 原生 responseSchema（与契约同形；长度与条数上限由 zod 复验）。
- * craft / keyMoments 进 required（借鉴模板学习 0830：不进 required 时输出预算紧张会被整块漏掉）；sound 只在有音轨时出现。
+ * craft / keyMoments / viralStrategy 进 required（借鉴模板学习 0830：不进 required 时输出预算紧张会被整块漏掉）；sound 只在有音轨时出现；
+ * segments[].speech 不进 required（无口播无字幕的段本就该省略）。
  * 三块即便生成了，解析时仍单独校验、坏了就丢。
  */
 export function buildVideoBreakdownNativeSchema(hasAudio: boolean) {
@@ -397,6 +447,7 @@ export function buildVideoBreakdownNativeSchema(hasAudio: boolean) {
     mustKeep: { type: "ARRAY", items: S },
     craft: obj({ reusableTechniques: { type: "ARRAY", items: S }, rhythmStructure: S, emotionArc: S, styleTags: { type: "ARRAY", items: S } }),
     ...(hasAudio ? { sound: obj({ rhythm: S, mix: S, reusableTechniques: S, generationElements: S }) } : {}),
+    viralStrategy: obj({ whyItWorks: S, hook: S, scriptStructure: S, topicAngle: S, titleIdeas: { type: "ARRAY", items: S } }, ["topicAngle", "titleIdeas"]),
     keyMoments: { type: "ARRAY", items: obj({ atSec: N, type: { type: "STRING", enum: ["cut", "emotion", "lighting", "story", "sound"] }, note: S }) },
   }),
   segments: {
@@ -417,7 +468,8 @@ export function buildVideoBreakdownNativeSchema(hasAudio: boolean) {
         rhythm: S,
         constraints: S,
       }),
-    }),
+      speech: obj({ transcript: S, onScreenText: S, delivery: S }, ["transcript", "onScreenText", "delivery"]),
+    }, ["speech"]),
   },
   });
 }

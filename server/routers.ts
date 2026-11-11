@@ -155,7 +155,7 @@ import { analyzeGrowthCampImages } from "./growth/analyzeGrowthCampImages";
 import { synthesizeGrowthAnalyses } from "./growth/synthesizeGrowthAnalyses";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
-import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/premiumRemix";
+import { rejectRetiredPremiumRemix } from "./growth/premiumRemixRetired";
 import { buildAiManhuaRisingByPlatform } from "./growth/aiManhuaRising";
 import { AI_MANHUA_RISING_BOARD_LIMIT } from "../shared/manhuaDramaClassify";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
@@ -311,8 +311,6 @@ import {
   growthMonetizationTrackSchema,
   growthMonetizationStrategySchema,
   growthPlanStepSchema,
-  growthPremiumRemixAssetsSchema,
-  growthPremiumRemixSchema,
   growthPlatformActivitySchema,
   growthPlatformMenuItemSchema,
   growthPlatformRecommendationSchema,
@@ -3607,213 +3605,17 @@ export const appRouter = router({
         };
       }),
 
+    /**
+     * 已退役（并入拉片，见 shared/premiumRemixRetired.ts）：保留过程名与登录校验，登录后在任何扣费 / 上游请求之前直接拒绝。
+     * 入参一律不解析（z.unknown），避免旧前端带旧形状时先报参数错、看不到业务提示。
+     */
     buildPremiumRemix: protectedProcedure
-      .input(z.object({
-        context: z.string().optional(),
-        transcript: z.string().optional(),
-        analysis: growthAnalysisScoresSchema.optional(),
-        modelName: growthCampModelSchema.optional(),
-        titleExecutions: z.array(growthTitleExecutionSchema).optional(),
-        assetAdaptation: growthAssetAdaptationSchema.optional(),
-        growthHandoff: growthHandoffSchema.optional(),
-        creationStoryboardPrompt: z.string().optional(),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const fallbackAnalysis = input.analysis || {
-          composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
-          explosiveIndex: 0, realityCheck: "",
-          reverseEngineering: { hookStrategy: "", emotionalArc: "", commercialLogic: "" },
-          premiumContent: { summary: "", strategy: "", actionableTopics: [], topics: [], explosiveTopicAnalysis: "", musicAndExpressionAnalysis: "", remixVisualAnalysis: "", remixExpressionAnalysis: "", musicPrompt: "" },
-          visualSummary: "", openingFrameAssessment: "", sceneConsistency: "",
-          languageExpression: "", emotionalExpression: "", cameraEmotionTension: "",
-          bgmAnalysis: "", musicRecommendation: "", sunoPrompt: "",
-          trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [], platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [], timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: ""
-        };
-        const requestedPlatforms = normalizePlatforms(fallbackAnalysis.platforms);
-        const store = await readTrendStore({ preferDerivedFiles: true }).catch(() => null);
-        const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms).catch(() => null) : null;
-        const remixEvidence = await (async () => {
-          if (!store) return null;
-          const historicalPlatformTotals = Object.fromEntries(
-            requestedPlatforms.map((platform) => [
-              platform,
-              {
-                currentTotal: Number(store.collections?.[platform]?.items?.length || 0),
-                archivedTotal: Number(store.history?.platforms?.[platform]?.archivedItems || 0),
-              },
-            ]),
-          ) as Partial<Record<typeof requestedPlatforms[number], { currentTotal?: number; archivedTotal?: number }>>;
-          const hasAnyLiveCollection = requestedPlatforms.some((platform) => (store.collections?.[platform]?.items?.length || 0) > 0);
-          const baseSnapshot = hasAnyLiveCollection
-            ? buildGrowthSnapshotFromCollections({
-                analysis: fallbackAnalysis,
-                context: input.context,
-                requestedPlatforms,
-                collections: store.collections,
-                historicalPlatformTotals,
-                errors: {},
-              })
-            : buildMockGrowthSnapshot({
-                analysis: fallbackAnalysis,
-                context: input.context,
-                requestedPlatforms,
-                historicalPlatformTotals,
-              });
-          const effectiveStore = {
-            ...store,
-            collections: store.collections,
-          };
-          const personalized = await personalizeGrowthSnapshot({
-            snapshot: baseSnapshot,
-            analysis: fallbackAnalysis,
-            context: input.context,
-            requestedPlatforms,
-            modelName: input.modelName,
-            store: effectiveStore,
-            userEvidence,
-          }).catch((error) => {
-            console.warn("[growth.buildPremiumRemix] personalization fallback:", error);
-            return null;
-          });
-
-          return {
-            source: baseSnapshot.status.source,
-            liveSummary: baseSnapshot.analysisTracks?.liveSummary || "",
-            historicalSummary: baseSnapshot.analysisTracks?.historicalSummary || "",
-            hotTopic: baseSnapshot.analysisTracks?.liveHotTopic || "",
-            recommendationReason: baseSnapshot.dataAnalystSummary?.recommendationReason || "",
-            personalizedOverview: personalized ? {
-              summary: personalized.overview?.summary || "",
-              trendNarrative: personalized.overview?.trendNarrative || "",
-              nextCollectionPlan: personalized.overview?.nextCollectionPlan || "",
-            } : undefined,
-            decisionFramework: personalized ? {
-              recommendedFormat: personalized.decisionFramework?.assetAdaptation?.format || "",
-              mainPathTitle: personalized.decisionFramework?.mainPath?.title || "",
-              mainPathWhyNow: personalized.decisionFramework?.mainPath?.whyNow || "",
-              mainPathExecution: personalized.decisionFramework?.mainPath?.nextAction || "",
-              avoidPathTitle: personalized.decisionFramework?.avoidPaths?.[0]?.title || "",
-              avoidPathReason: personalized.decisionFramework?.avoidPaths?.[0]?.reason || "",
-              assetAdaptation: personalized.decisionFramework?.assetAdaptation,
-            } : undefined,
-            platformRows: (baseSnapshot.dataAnalystSummary?.platformRows || []).slice(0, 4).map((item) => ({
-              platformLabel: item.platformLabel,
-              currentTotal: item.currentTotal,
-              archivedTotal: item.archivedTotal,
-              note: item.note || "",
-            })),
-            platformSnapshots: (baseSnapshot.platformSnapshots || []).slice(0, 4).map((item) => ({
-              platformLabel: item.displayName,
-              summary: item.summary,
-              fitLabel: item.fitLabel,
-              sampleTopics: item.sampleTopics.slice(0, 3),
-              recommendedFormats: item.recommendedFormats.slice(0, 2),
-            })),
-            topicLibrary: (baseSnapshot.topicLibrary || []).slice(0, 6).map((item) => ({
-              platformLabel: item.platformLabel,
-              title: item.title,
-              rationale: item.rationale,
-            })),
-            platformRecommendations: (personalized?.platformRecommendations || []).slice(0, 4).map((item) => ({
-              platformLabel: item.name,
-              strategy: item.playbook,
-              action: item.action,
-              reason: item.reason,
-            })),
-            businessInsights: (personalized?.businessInsights || []).slice(0, 4).map((item) => ({
-              title: item.title,
-              detail: item.detail,
-            })),
-            growthPlan: (personalized?.growthPlan || []).slice(0, 4).map((item) => ({
-              title: `Day ${item.day} ${item.title}`,
-              nextStep: item.action,
-            })),
-            referenceExamples: (personalized?.dashboardConsole?.referenceExamples || []).slice(0, 4).map((item) => ({
-              title: `${item.platformLabel} / ${item.account} / ${item.title}`,
-              reason: item.reason,
-            })),
-            authorSummary: personalized?.authorAnalysis
-              ? [
-                  personalized.authorAnalysis.identity?.tierReason,
-                  personalized.authorAnalysis.identity?.identityTags?.join("、"),
-                  personalized.authorAnalysis.identity?.verticalCategory,
-                  personalized.authorAnalysis.monetizationValue?.recommendedPaths?.[0]?.reason,
-                ].filter(Boolean).join("；")
-              : "",
-            userEvidence: userEvidence ? {
-              strongestPlatforms: userEvidence.strongestPlatforms,
-              recurringThemes: userEvidence.recurringThemes,
-              summaryNote: userEvidence.summaryNote,
-            } : null,
-            personalized,
-          };
-        })();
-
-        const result = await buildPremiumRemixPlan({
-          context: input.context,
-          transcript: input.transcript,
-          analysis: fallbackAnalysis,
-          modelName: input.modelName,
-          titleExecutions: input.titleExecutions?.length
-            ? input.titleExecutions
-            : remixEvidence?.personalized?.titleExecutions,
-          assetAdaptation: input.assetAdaptation
-            || remixEvidence?.personalized?.decisionFramework?.assetAdaptation,
-          growthHandoff: input.growthHandoff
-            || remixEvidence?.personalized?.growthHandoff,
-          creationStoryboardPrompt: input.creationStoryboardPrompt
-            || remixEvidence?.personalized?.creationAssist?.storyboardPrompt,
-          dataEvidence: remixEvidence
-            ? {
-                source: remixEvidence.source,
-                liveSummary: remixEvidence.liveSummary,
-                historicalSummary: remixEvidence.historicalSummary,
-                hotTopic: remixEvidence.hotTopic,
-                recommendationReason: remixEvidence.recommendationReason,
-                personalizedOverview: remixEvidence.personalizedOverview,
-                decisionFramework: remixEvidence.decisionFramework,
-                platformRows: remixEvidence.platformRows,
-                platformSnapshots: remixEvidence.platformSnapshots,
-                topicLibrary: remixEvidence.topicLibrary,
-                platformRecommendations: remixEvidence.platformRecommendations,
-                businessInsights: remixEvidence.businessInsights,
-                growthPlan: remixEvidence.growthPlan,
-                referenceExamples: remixEvidence.referenceExamples,
-                authorSummary: remixEvidence.authorSummary,
-                userEvidence: remixEvidence.userEvidence,
-              }
-            : undefined,
-        });
-        return {
-          success: true,
-          remix: growthPremiumRemixSchema.parse(result.remix),
-          debug: {
-            route: "mvAnalysis.buildPremiumRemix",
-            personalizedApplied: Boolean(remixEvidence?.personalized),
-            ...result.debug,
-          },
-        };
-      }),
+      .input(z.unknown().optional())
+      .mutation(({ ctx }) => rejectRetiredPremiumRemix("buildPremiumRemix", ctx.user.id)),
 
     generatePremiumRemixAssets: protectedProcedure
-      .input(z.object({
-        remix: growthPremiumRemixSchema,
-        mode: z.enum(["loop", "interpolation"]).default("loop"),
-      }))
-      .mutation(async ({ input }) => {
-        const result = await generatePremiumRemixAssets({
-          remix: input.remix,
-          mode: input.mode,
-        });
-        return {
-          success: true,
-          assets: growthPremiumRemixAssetsSchema.parse(result.assets),
-          debug: {
-            route: "mvAnalysis.generatePremiumRemixAssets",
-            ...result.debug,
-          },
-        };
-      }),
+      .input(z.unknown().optional())
+      .mutation(({ ctx }) => rejectRetiredPremiumRemix("generatePremiumRemixAssets", ctx.user.id)),
 
     // 1111 收口：原先匿名可调且非交互模式会跑两次 LLM、不扣费。前台调用点（PlatformPage / MVAnalysis）都在登录页内。
     getGrowthSnapshot: protectedProcedure
@@ -11951,7 +11753,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }).catch(() => {});
 
         const system = `你是 MV Studio Pro 站内智能向导。用户可能不了解产品。
-请用温暖、耐心、专业的简体中文回答，避免生硬推销；若涉及付费，诚实说明「大约需要多少积分/适合谁」，并给出 1～2 个最相关的站内路径（如 /platform、/god-view、/research、/creator-growth-camp/premium-remix）。
+请用温暖、耐心、专业的简体中文回答，避免生硬推销；若涉及付费，诚实说明「大约需要多少积分/适合谁」，并给出 1～2 个最相关的站内路径（如 /platform、/god-view、/research、/lapian）。
 回答控制在 400 字以内，分条陈述，不要编造不存在的功能。若问题与产品无关，礼貌引导回创作与增长相关主题。`;
 
         try {

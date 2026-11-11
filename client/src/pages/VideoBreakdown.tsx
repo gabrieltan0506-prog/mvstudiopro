@@ -246,8 +246,8 @@ export default function VideoBreakdownPage() {
           <div className="flex min-w-0 items-center gap-3">
             <a href="/" aria-label="返回首页" className="text-white/50 transition hover:text-white"><ChevronLeft className="h-5 w-5" /></a>
             <div className="min-w-0">
-              <h1 className="text-lg font-black">拉片</h1>
-              <p className="truncate text-xs text-white/40">逐段拆解一支好片，拿到可直接复刻的提示词</p>
+              <h1 className="text-lg font-black">拉片复刻爆款</h1>
+              <p className="truncate text-xs text-white/40">拆开一支爆款的钩子、镜头与口播，拿到可直接复刻的提示词</p>
             </div>
           </div>
           {user && jobId && view && !isVideoBreakdownActive(view) && (
