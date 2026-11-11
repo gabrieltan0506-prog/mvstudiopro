@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  NOVEL_CRAFT_BASE_CARDS,
   NOVEL_CRAFT_CARDS,
   NOVEL_CRAFT_FIRST_THREE_ID,
   getNovelCraftCards,
@@ -66,8 +67,9 @@ const ok = (v: unknown) => async () => ({ text: JSON.stringify(v), model: "fake"
 
 describe("技法条目库", () => {
   it("条数、简介与正文长度、id 稳定唯一，正文不含仓库名与模型名", () => {
-    expect(NOVEL_CRAFT_CARDS.length).toBeGreaterThanOrEqual(15);
-    expect(NOVEL_CRAFT_CARDS.length).toBeLessThanOrEqual(19);
+    // 原有通用条目 15–19 条；站长资料条目另在 novelCraftOwnerCards.test.ts 校验。
+    expect(NOVEL_CRAFT_BASE_CARDS.length).toBeGreaterThanOrEqual(15);
+    expect(NOVEL_CRAFT_BASE_CARDS.length).toBeLessThanOrEqual(19);
     expect(new Set(NOVEL_CRAFT_CARDS.map(c => c.id)).size).toBe(NOVEL_CRAFT_CARDS.length);
     for (const c of NOVEL_CRAFT_CARDS) {
       expect(c.id).toMatch(/^craft_[a-z_]+$/);

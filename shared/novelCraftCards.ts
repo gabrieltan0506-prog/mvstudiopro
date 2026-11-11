@@ -17,7 +17,11 @@ export type NovelCraftCard = {
   firstEpisodesOnly?: boolean;
   /** 单条不超过 900 字。 */
   body: string;
+  /** 内部标记：来源资料尚未校正（不进索引、不给模型看）。 */
+  provisional?: boolean;
 };
+
+import { NOVEL_CRAFT_OWNER_CARDS } from "./novelCraftCardsOwner";
 
 export const NOVEL_CRAFT_FIRST_THREE_ID = "craft_first_three";
 
@@ -25,7 +29,8 @@ const ALL: NovelCraftStage[] = ["advice", "outline", "chapter", "script"];
 const WRITE: NovelCraftStage[] = ["chapter", "script"];
 const PLAN: NovelCraftStage[] = ["advice", "outline", "chapter", "script"];
 
-export const NOVEL_CRAFT_CARDS: readonly NovelCraftCard[] = [
+/** 原有通用条目（id 与顺序固定；检索失败时的默认回退只从这里取）。 */
+export const NOVEL_CRAFT_BASE_CARDS: readonly NovelCraftCard[] = [
   {
     id: NOVEL_CRAFT_FIRST_THREE_ID,
     title: "前三章分工",
@@ -295,6 +300,9 @@ export const NOVEL_CRAFT_CARDS: readonly NovelCraftCard[] = [
     ].join("\n"),
   },
 ];
+
+/** 全库：原有通用条目在前，站长资料条目（craft_owner_*）接在后面。 */
+export const NOVEL_CRAFT_CARDS: readonly NovelCraftCard[] = [...NOVEL_CRAFT_BASE_CARDS, ...NOVEL_CRAFT_OWNER_CARDS];
 
 export type NovelCraftIndexEntry = Pick<NovelCraftCard, "id" | "title" | "intro" | "tags">;
 

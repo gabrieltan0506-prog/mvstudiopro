@@ -9,6 +9,7 @@ import type { NovelStageCall } from "./manhuaNovelAdaptationRun";
 import type { NovelTestInput } from "../../shared/novelWorkspace";
 import { parseNovelModelJson } from "../../shared/novelJson";
 import {
+  NOVEL_CRAFT_BASE_CARDS,
   NOVEL_CRAFT_CARDS,
   NOVEL_CRAFT_FIRST_THREE_ID,
   getNovelCraftCards,
@@ -179,14 +180,19 @@ export function validateNovelCraftSelection(
   return { craft, methods, why: typeof v.why === "string" ? clip(v.why, 200) : "" };
 }
 
-/** 回退默认集合：该阶段适用条目前 4 条（第 1–3 集时加「前三章分工」）+ 全部手法条目。 */
+const NOVEL_CRAFT_DEFAULT_POOL = new Set(NOVEL_CRAFT_BASE_CARDS.map(c => c.id));
+
+/**
+ * 回退默认集合：该阶段适用的原有通用条目前 4 条（第 1–3 集时加「前三章分工」）+ 全部手法条目。
+ * 只从原有通用条目里取，后续追加的条目不会挤掉默认集合。
+ */
 export function defaultNovelCraftSelection(
   input: NovelCraftRetrievalInput,
   index: readonly NovelCraftUnifiedEntry[]
 ): NovelCraftSelection {
   const available = new Set(index.filter(e => e.kind === "craft").map(e => e.id));
   const general = novelCraftCardsForStage(input)
-    .filter(c => !c.firstEpisodesOnly && available.has(c.id))
+    .filter(c => !c.firstEpisodesOnly && NOVEL_CRAFT_DEFAULT_POOL.has(c.id) && available.has(c.id))
     .slice(0, NOVEL_CRAFT_DEFAULT_CRAFT)
     .map(c => c.id);
   const craft = available.has(NOVEL_CRAFT_FIRST_THREE_ID) ? [NOVEL_CRAFT_FIRST_THREE_ID, ...general] : general;
