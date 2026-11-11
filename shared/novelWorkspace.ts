@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { novelExcerptSchema } from "./manhuaNovelSource";
-import { novelImitationBeatSchema } from "./novelImitation";
+import { NOVEL_IMITATION_LIBRARY_PICK_MAX, novelImitationBeatSchema } from "./novelImitation";
 import {
   NOVEL_REVIEW_DIMENSIONS,
   type NovelReviewDimension,
@@ -124,6 +124,11 @@ export const novelTestInputSchema = z
      * 存在即表示仿写模式（结构沿用所选模板骨架，题材、人物与故事发展全部来自用户）。旧请求没有此字段，行为不变。
      */
     imitation: novelImitationBriefSchema.optional(),
+    /**
+     * 拆书参考模板（1112b）：用户勾选的公共拆书参考模板 id（最多 3 条）。服务端从公共库读取结构内容，
+     * 只在大纲与正文阶段作为结构参考注入；任何模式都可用。旧请求没有此字段，行为不变。
+     */
+    libraryTemplateIds: z.array(z.string().trim().min(1).max(80)).max(NOVEL_IMITATION_LIBRARY_PICK_MAX).optional(),
   })
   .strict()
   .superRefine((v, c) => {
@@ -186,6 +191,8 @@ export const novelTestInputSchema = z
       c.addIssue({ code: "custom", message: "剧本分批范围无效" });
     if (v.stage === "script" && v.novel.trim().length < 500)
       c.addIssue({ code: "custom", message: "请先确认小说正文" });
+    if (v.libraryTemplateIds && new Set(v.libraryTemplateIds).size !== v.libraryTemplateIds.length)
+      c.addIssue({ code: "custom", message: "拆书模板不可重复" });
     if (v.imitation && v.stage === "outline" && !v.imitation.skeleton?.length)
       c.addIssue({ code: "custom", message: "请先拆解底稿结构" });
   });

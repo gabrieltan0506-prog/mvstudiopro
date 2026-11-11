@@ -44,7 +44,19 @@ import {
   buildNovelImitationOutlineRules,
 } from "../../shared/novelImitationPrompt";
 import { resolveNovelImitationSkeleton, NovelImitationSkeletonError } from "./novelImitationSkeleton";
-import type { NovelImitationSkeleton } from "../../shared/novelImitation";
+import type { NovelImitationLibraryOutcome, NovelImitationSkeleton } from "../../shared/novelImitation";
+import {
+  NovelImitationLibraryMissingError,
+  collectNovelImitationLibrary,
+  formatNovelImitationLibraryReference,
+  loadNovelImitationLibraryEntries,
+} from "./novelImitationLibrary";
+
+/** 拆书参考模板只在大纲与正文阶段作为结构参考注入。 */
+export const NOVEL_LIBRARY_REFERENCE_STAGES = ["outline", "chapter"] as const;
+export function shouldUseNovelLibraryReference(input: Pick<NovelTestInput, "stage" | "libraryTemplateIds">) {
+  return !!input.libraryTemplateIds?.length && (NOVEL_LIBRARY_REFERENCE_STAGES as readonly string[]).includes(input.stage);
+}
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 /**
  * 只有顾问阶段（推荐模板 / 故事线可从库内换组合）需要整份目录；
@@ -71,8 +83,8 @@ export function buildNovelTestPrompt(
   input: NovelTestInput,
   templates: string,
   catalog: unknown,
-  /** shortlisted：顾问目录是分片初选后的入围名单（不是全库）。 */
-  options: { shortlisted?: boolean } = {}
+  /** shortlisted：顾问目录是分片初选后的入围名单（不是全库）。libraryReference：拆书参考模板结构参考块（仅大纲 / 正文阶段生效）。 */
+  options: { shortlisted?: boolean; libraryReference?: string } = {}
 ) {
   const format =
     input.advisorIntent === "story_variants"
@@ -156,6 +168,9 @@ export function buildNovelTestPrompt(
     "已核验的模板创作方法与学习摘要（非逐镜全文）：",
     templates,
     ...novelImitationCraftBlock(input),
+    ...(options.libraryReference && (NOVEL_LIBRARY_REFERENCE_STAGES as readonly string[]).includes(input.stage)
+      ? [options.libraryReference]
+      : []),
   ].join("\n\n");
 }
 
@@ -173,11 +188,16 @@ export function novelImitationCraftBlock(input: Pick<NovelTestInput, "stage" | "
  */
 export async function runNovelImitationSkeleton(
   userId: number,
-  input: { requestId: string; baseText: string; modelPreference?: NovelTestInput["modelPreference"] }
-): Promise<NovelImitationSkeleton> {
+  input: { requestId: string; baseText: string; baseTitle?: string; modelPreference?: NovelTestInput["modelPreference"] },
+  deps: {
+    resolve?: typeof resolveNovelImitationSkeleton;
+    collect?: typeof collectNovelImitationLibrary;
+  } = {}
+): Promise<{ skeleton: NovelImitationSkeleton; library: NovelImitationLibraryOutcome }> {
+  let skeleton: NovelImitationSkeleton;
   try {
     // call 缺省为 callNovelStage（带本次线路；线路三另带证据落点），不另造调用层。
-    return await resolveNovelImitationSkeleton({
+    skeleton = await (deps.resolve ?? resolveNovelImitationSkeleton)({
       userId,
       baseText: input.baseText,
       modelPreference: input.modelPreference,
@@ -187,6 +207,21 @@ export async function runNovelImitationSkeleton(
     console.error("[novel-imitation-skeleton]", input.requestId, error instanceof Error ? error.message : "failed");
     throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: novelImitationSkeletonFailureMessage(error) });
   }
+  // 自动收录到拆书参考模板库（公共库）；收录没写成不影响结构骨架本身（前台提示可重新拆解再收录）。
+  let library: NovelImitationLibraryOutcome;
+  try {
+    library = await (deps.collect ?? collectNovelImitationLibrary)({
+      userId,
+      skeleton,
+      baseText: input.baseText,
+      baseTitle: input.baseTitle,
+      requestId: input.requestId,
+    });
+  } catch (error) {
+    console.warn("[novel-imitation-library] 收录未完成", input.requestId, error instanceof Error ? error.message : "failed");
+    library = { scored: Boolean(skeleton.score), wholeCollected: false, highlightCount: 0, failed: true };
+  }
+  return { skeleton, library };
 }
 
 /** 拆解失败的前台提示（中性、可重试；不回退成无骨架的普通流程）。 */
@@ -218,10 +253,12 @@ export async function executeNovelTest(
     repaired: boolean
   ) => Promise<void>,
   /** 顾问阶段分片初选后的入围名单：只替换提示词里的目录；校验仍用全库 catalog。 */
-  promptCatalog?: { publicId: string }[]
+  promptCatalog?: { publicId: string }[],
+  /** 拆书参考模板结构参考块（大纲 / 正文阶段）。 */
+  libraryReference?: string
 ) {
   const response = await call(
-    buildNovelTestPrompt(input, templates, promptCatalog ?? catalog, { shortlisted: !!promptCatalog }),
+    buildNovelTestPrompt(input, templates, promptCatalog ?? catalog, { shortlisted: !!promptCatalog, libraryReference }),
     true,
     input.requestId
   );
@@ -328,6 +365,17 @@ export async function runNovelWorkspaceTest(
   let completedSettings: NovelGenerationSettings | undefined;
   const rawResponses: string[] = [];
   try {
+    // 拆书参考模板：从公共库读结构内容（GCS 读取，不发模型调用）；勾选的条目已不在库里即失败，不静默跳过。
+    let libraryReference: string | undefined;
+    if (shouldUseNovelLibraryReference(input)) {
+      const entries = await loadNovelImitationLibraryEntries(input.libraryTemplateIds!);
+      libraryReference = formatNovelImitationLibraryReference(entries);
+      evidence = {
+        ...evidence,
+        libraryTemplates: entries.map(e => ({ id: e.id, kind: e.kind, entrySha256: hash(JSON.stringify(e)) })),
+        libraryReferenceSha256: hash(libraryReference),
+      };
+    }
     const prepared = await prepareNovelTestTemplates(input);
     const catalogSnapshot = prepared.catalogSnapshot;
     const catalog = catalogSnapshot.catalog;
@@ -486,7 +534,8 @@ export async function runNovelWorkspaceTest(
           .set({ output: evidence, updatedAt: new Date() })
           .where(eq(jobs.id, id));
       },
-      promptCatalog
+      promptCatalog,
+      libraryReference
     );
     const text = JSON.stringify(value, null, 2);
     const result: NovelTestResult = {
@@ -525,7 +574,10 @@ export async function runNovelWorkspaceTest(
     );
     throw new TRPCError({
       code: "SERVICE_UNAVAILABLE",
-      message: "本次测试未完成，原稿与已收到的记录保留；未自动重试。",
+      message:
+        error instanceof NovelImitationLibraryMissingError
+          ? error.message
+          : "本次测试未完成，原稿与已收到的记录保留；未自动重试。",
     });
   }
 }

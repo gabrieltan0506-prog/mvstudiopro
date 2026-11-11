@@ -121,4 +121,29 @@ export const NOVEL_IMITATION_UI = {
     `以下名称与底稿重名，建议换成你自己的命名：${terms.join("、")}`,
   originalitySentences: "以下句子与底稿相同，建议改写：",
   originalityClear: "未发现与底稿重名的名称或相同的句子。",
+  // ---- 1112b：参考分与拆书参考模板 ----
+  scoreTitle: "示例底稿参考分",
+  scoreNote: "参考分按审稿七个维度给出（每项 1–5 分），仅供参考。",
+  scoreTotal: (total: number) => `综合 ${total} 分`,
+  scoreMissing: "本次拆解未给出参考分。",
+  collectDone: (whole: boolean, highlights: number) =>
+    whole
+      ? `本次拆解的结构已收入拆书参考模板库（整本 1 条、特色章节 ${highlights} 条）。`
+      : `整本结构未收入，已收入特色章节 ${highlights} 条。`,
+  collectKept: "这部示例底稿的结构此前已收入拆书参考模板库，本次参考分未更高，保留原有条目。",
+  collectFailed: "参考模板收录未完成，结构骨架不受影响；可重新拆解再收录。",
+  libraryTitle: "拆书参考模板",
+  libraryHint: (threshold: number, max: number) =>
+    `从拆解过的示例底稿里收录的结构参考：参考分达到 ${threshold} 分收录整本结构，有特色的章节逐条收录。最多勾选 ${max} 条，作为大纲与正文的结构参考，只借结构。`,
+  libraryEmpty: "暂时还没有拆书参考模板。",
+  libraryLoadFailed: "拆书参考模板列表暂时读取不到，可稍后刷新。",
+  libraryKindWhole: "整本结构",
+  libraryKindHighlight: "特色章节",
+  libraryScore: (total: number) => `参考分 ${total}`,
+  libraryReuse: (text: string) => `可复用：${text}`,
+  libraryPickLimit: (max: number) => `最多勾选 ${max} 条。`,
+  libraryPicked: (count: number, max: number) => `已勾选 ${count}/${max}`,
+  libraryDelete: "删除",
+  libraryDeleteConfirm: "从拆书参考模板库删除这一条？删除后，同一底稿重新拆解也不会再收回这一条。",
+  libraryDeleteFailed: "删除未完成，可稍后重试。",
 } as const;

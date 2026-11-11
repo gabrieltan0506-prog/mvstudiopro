@@ -9,13 +9,18 @@
  * 报错信息写明第几片失败；汇总失败抛 NOVEL_IMITATION_SKELETON_MERGE_FAILED。不静默截断节拍或专有名词。
  * 不扣积分（管理者测试流程）。
  *
- * 接线：resolveNovelImitationSkeleton 返回 NovelImitationSkeleton（{ beats, properNouns }）；
+ * 评分与特色段（1112b）：汇总这一步（只有一片时为该片）的同一次调用里，模型另给 score（参考分）与 highlights（最多 8 条特色段）；
+ * 多片时每片在本片调用里报告候选特色段，供汇总挑选。不增加调用次数。分数是模型给的参考分，不是平台评定。
+ *
+ * 接线：resolveNovelImitationSkeleton 返回 NovelImitationSkeleton（{ beats, properNouns, score?, highlights? }）；
  * 模型调用注入参数名沿用本目录习惯叫 `call`（类型即 NovelStageCall）；是否命中缓存、分片统计经可选 onStats 回调给出。
  */
 import { createHash, randomUUID } from "node:crypto";
 import { parseNovelModelJson } from "../../shared/novelJson";
+import { NOVEL_REVIEW_DIMENSIONS } from "../../shared/novelCraftReview";
 import {
   NOVEL_IMITATION_MAX_BEATS,
+  NOVEL_IMITATION_MAX_HIGHLIGHTS,
   NOVEL_IMITATION_MAX_PROPER_NOUNS,
   NOVEL_IMITATION_SHARD_CHARS,
   NOVEL_IMITATION_SHARD_CONCURRENCY,
@@ -26,7 +31,8 @@ import type { NovelTestInput } from "../../shared/novelWorkspace";
 import type { NovelStageCall } from "./manhuaNovelAdaptationRun";
 import type { NovelTemplateDigestStore } from "./novelTemplateDigest";
 
-export const NOVEL_IMITATION_SKELETON_VERSION = "novel-imitation-skeleton-v1";
+/** v2（1112b）：输出新增 score / highlights，旧缓存不再命中（旧对象保留不删）。 */
+export const NOVEL_IMITATION_SKELETON_VERSION = "novel-imitation-skeleton-v2";
 
 export type NovelImitationModelPreference = NonNullable<NovelTestInput["modelPreference"]>;
 
@@ -112,8 +118,22 @@ export function splitNovelImitationShards(text: string, size = NOVEL_IMITATION_S
 
 export type NovelImitationShardResult = NovelImitationSkeleton;
 
-const OUTPUT_SHAPE =
-  '{"beats":[{"index":1,"name":"节拍名（不超过20字）","function":"这一拍的作用","position":"大致位置","roles":["人物功能位"],"summary":"功能性描述（不超过120字）"}],"properNouns":["专有名词"]}';
+const BEATS_SHAPE =
+  '"beats":[{"index":1,"name":"节拍名（不超过20字）","function":"这一拍的作用","position":"大致位置","roles":["人物功能位"],"summary":"功能性描述（不超过120字）"}],"properNouns":["专有名词"]';
+const HIGHLIGHTS_SHAPE =
+  '"highlights":[{"title":"中性展示名（不超过16字）","position":"大致位置","feature":"特色是什么（不超过20字）","beats":["这一段的功能性小节拍（每条不超过40字）"],"reusableAs":"可以怎样用到别的题材（不超过80字）"}]';
+const SCORE_SHAPE = `"title":"整本结构的中性展示名（不超过20字）","score":{"total":0-100的整数,"dimensions":{${NOVEL_REVIEW_DIMENSIONS.map(d => `"${d}":1-5的整数`).join(",")}},"reason":"一两句依据"}`;
+/** withScore：汇总调用（或只有一片时的那一次调用）另给参考分。 */
+const outputShape = (withScore: boolean) => `{${BEATS_SHAPE},${HIGHLIGHTS_SHAPE}${withScore ? `,${SCORE_SHAPE}` : ""}}`;
+
+const HIGHLIGHT_RULES = [
+  `highlights列出有特色、值得借鉴的章节或段落，最多${NOVEL_IMITATION_MAX_HIGHLIGHTS}条，没有就给空数组：position写大致位置；feature写特色是什么（如开篇钩子、反转设计、情绪爆点、信息差运用、打脸节奏、卷末悬念）；beats按顺序写这一段的小节拍骨架，只写功能（这一步做了什么、起什么作用），不复述情节细节、不引用原句、不出现示例底稿的任何名称；reusableAs写这套写法可以怎样用到别的题材；title按「结构特征」起一个中性展示名（如「开篇三百字险境钩子」「三段打脸升级」），不出现示例底稿的书名、人名、地名等任何名称。`,
+];
+
+const SCORE_RULES = [
+  `score是对示例底稿结构写法的参考评分：dimensions按${NOVEL_REVIEW_DIMENSIONS.join("、")}七个维度各打1–5分（3分为合格）；total是0–100的综合分，与各维度分大体一致；reason用一两句写出依据，只谈结构与写法，不出现示例底稿的任何名称。`,
+  "title按「题材 + 结构特征」给整本结构起一个中性展示名（如「都市逆袭 · 三段打脸升级结构」），不出现示例底稿的书名、人名、地名等任何名称。",
+];
 
 const STRUCTURE_RULES = [
   "节拍名与summary只写结构与功能：这一拍做了什么、起什么作用、制造了什么期待或情绪，不复述具体情节细节，不引用示例底稿的原句与对白，不出现示例底稿的人名、地名、门派、道具、金手指名称。",
@@ -129,7 +149,9 @@ export function buildNovelImitationShardPrompt(shard: string, index: number, tot
     `下面是示例底稿的第${index + 1}片（共${total}片）。按出现顺序列出本片的节拍（每拍是一个有独立作用的情节单元），index 从 1 开始连续编号。`,
     ...STRUCTURE_RULES,
     `position写这一拍在示例底稿中的大致位置：本片有章节标题时写「第N章」或「第N-M章」，没有时写「第${index + 1}片约X%」。`,
-    `仅返回JSON：${OUTPUT_SHAPE}`,
+    ...HIGHLIGHT_RULES,
+    ...(total > 1 ? ["本片的highlights是候选，之后汇总全书时再挑选。"] : SCORE_RULES),
+    `仅返回JSON：${outputShape(total === 1)}`,
     `示例底稿第${index + 1}片原文：`,
     shard,
   ].join("\n\n");
@@ -141,7 +163,10 @@ export function buildNovelImitationMergePrompt(shardResults: readonly NovelImita
     `合并规则：保持全书先后顺序；相邻且作用相同的小节拍合并为一拍；index 从 1 开始重新连续编号；总拍数不超过${NOVEL_IMITATION_MAX_BEATS}；position 改写成全书范围内的大致位置（如「第3-5章」或「约20%」）。`,
     ...STRUCTURE_RULES,
     `properNouns：合并各分片的专有名词并去重，全部保留，总数不超过${NOVEL_IMITATION_MAX_PROPER_NOUNS}。`,
-    `仅返回JSON：${OUTPUT_SHAPE}`,
+    ...HIGHLIGHT_RULES,
+    `highlights从各分片的候选里挑出全书最有特色的至多${NOVEL_IMITATION_MAX_HIGHLIGHTS}条（相近的合并），position改写成全书范围内的大致位置。`,
+    ...SCORE_RULES,
+    `仅返回JSON：${outputShape(true)}`,
     "各分片结构：",
     JSON.stringify({ total: shardResults.length, shards: shardResults.map((r, i) => ({ shard: i + 1, ...r })) }),
   ].join("\n\n");
@@ -168,7 +193,14 @@ export function normalizeNovelImitationSkeleton(value: unknown): NovelImitationS
     ? v.beats.map((b, i) => ({ ...(b && typeof b === "object" ? (b as Record<string, unknown>) : {}), index: i + 1 }))
     : v.beats;
   const properNouns = Array.isArray(v.properNouns) ? dedupe(v.properNouns as string[]) : v.properNouns ?? [];
-  return novelImitationSkeletonSchema.parse({ beats, properNouns });
+  // score / highlights 可选（旧缓存没有）；给了就必须合 schema，超过条数上限按不合格处理（不截断）。
+  return novelImitationSkeletonSchema.parse({
+    ...(v.title !== undefined && v.title !== null ? { title: v.title } : {}),
+    beats,
+    properNouns,
+    ...(v.score !== undefined && v.score !== null ? { score: v.score } : {}),
+    ...(v.highlights !== undefined && v.highlights !== null ? { highlights: v.highlights } : {}),
+  });
 }
 
 // ---------- 缓存 / 证据路径 ----------
@@ -383,7 +415,14 @@ export async function resolveNovelImitationSkeleton(params: {
     // 专有名词以各片原始列表为准补齐（汇总只做去重），超过上限不截断，按失败处理。
     const properNouns = dedupe([...merged.value.properNouns, ...shardValues.flatMap(v => v.properNouns)]);
     if (properNouns.length > NOVEL_IMITATION_MAX_PROPER_NOUNS) return mergeFail(`proper_nouns_over_limit:${properNouns.length}`);
-    skeleton = { beats: merged.value.beats, properNouns };
+    skeleton = {
+      ...(merged.value.title ? { title: merged.value.title } : {}),
+      beats: merged.value.beats,
+      properNouns,
+      ...(merged.value.score ? { score: merged.value.score } : {}),
+      // 汇总给的特色段为准；各片候选只供汇总挑选，不直接进结果。
+      highlights: merged.value.highlights ?? [],
+    };
   }
   skeleton = normalizeNovelImitationSkeleton(skeleton);
   try {

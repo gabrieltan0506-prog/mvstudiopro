@@ -7,7 +7,11 @@ import {
   novelStageSchema,
   NOVEL_IMITATION_SYNOPSIS_MAX,
 } from "./novelWorkspace";
-import { novelImitationSkeletonSchema } from "./novelImitation";
+import {
+  NOVEL_IMITATION_LIBRARY_PICK_MAX,
+  novelImitationLibraryOutcomeSchema,
+  novelImitationSkeletonSchema,
+} from "./novelImitation";
 const runSchema = z.object({
   input: novelTestInputSchema,
   result: z.object({
@@ -70,8 +74,12 @@ export const novelWorkspaceStateSchema = z.object({
       baseSha256: z.string(),
       savedAt: z.string(),
       skeleton: novelImitationSkeletonSchema,
+      /** 本次拆解后的收录结果（1112b，可选；旧草稿没有）。 */
+      library: novelImitationLibraryOutcomeSchema.optional(),
     })
     .optional(),
+  /** 拆书参考模板：勾选的公共参考模板 id，最多 3 条（1112b，可选；旧草稿没有，所有模式可用）。 */
+  libraryTemplatePicks: z.array(z.string()).max(NOVEL_IMITATION_LIBRARY_PICK_MAX).optional(),
   source: z.unknown(),
   templates: z.array(
     z.object({

@@ -65,6 +65,7 @@ import {
 import {
   NOVEL_IMITATION_SKELETON_CREDITS,
   NOVEL_IMITATION_EPISODE_CREDITS,
+  NOVEL_IMITATION_LIBRARY_PICK_MAX,
 } from "@shared/novelImitation";
 import {
   NOVEL_IMITATION_UI,
@@ -75,6 +76,8 @@ import {
   findNovelSentenceOverlaps,
 } from "@shared/novelOriginalityCheck";
 import {
+  NovelImitationLibraryPicker,
+  NovelImitationScoreCard,
   NovelImitationStructureMap,
   NovelOriginalityNote,
 } from "@/components/canvas/NovelImitationPanels";
@@ -222,6 +225,11 @@ function NovelWorkspaceEditor({
   const cards = (templates.data?.groups || []).flatMap(g => g.items);
   const mutation = trpc.novelWorkspace.generate.useMutation();
   const skeletonMutation = trpc.novelWorkspace.imitationSkeleton.useMutation();
+  /** 拆书参考模板（公共库）；所有模式可勾选，作为大纲与正文的结构参考；仅管理员可删除。 */
+  const libraryQuery = trpc.novelWorkspace.imitationLibrary.useQuery(undefined, { retry: 1, staleTime: 0 });
+  const libraryDelete = trpc.novelWorkspace.deleteImitationLibrary.useMutation();
+  const libraryItems = libraryQuery.data ?? [];
+  const { user: authUser } = useAuth();
   const [skeletonBusy, setSkeletonBusy] = useState(false);
   /** 当前底稿全文的摘要：与拆解时记录的一致才算结构骨架可用。 */
   const [currentBaseSha, setCurrentBaseSha] = useState("");
@@ -682,6 +690,7 @@ function NovelWorkspaceEditor({
         );
       if (choices.some(t => !cards.some(c => c.publicId === t.publicId)))
         throw new Error("所选模板已不可用，请重新选择。");
+      const libraryPicks = (draft.libraryTemplatePicks ?? []).filter(id => libraryItems.some(i => i.id === id));
       const input = novelTestInputSchema.parse({
         requestId: crypto.randomUUID(),
         roundId: draft.roundId,
@@ -694,6 +703,10 @@ function NovelWorkspaceEditor({
           : {}),
         source,
         ...(imitation ? { imitation } : {}),
+        // 拆书参考模板：只在大纲与正文阶段带上；已不在库里的勾选不发送。
+        ...((stage === "outline" || stage === "chapter") && libraryPicks.length
+          ? { libraryTemplateIds: libraryPicks }
+          : {}),
         ...(advisorMessage ? { advisorMessage } : {}),
         ...(advisorIntent ? { advisorIntent } : {}),
         ...(((stage === "advice" &&
@@ -814,15 +827,18 @@ function NovelWorkspaceEditor({
     running.current = true;
     try {
       const baseSha256 = await novelTextHash(base);
-      const skeleton = await skeletonMutation.mutateAsync({
+      const baseTitle = latest.current.source?.name?.trim().slice(0, 200);
+      const { skeleton, library } = await skeletonMutation.mutateAsync({
         requestId: crypto.randomUUID(),
         baseText: base,
+        ...(baseTitle ? { baseTitle } : {}),
         ...(latest.current.modelPreference ? { modelPreference: latest.current.modelPreference } : {}),
       });
+      void libraryQuery.refetch();
       if (!alive.current) return;
       await persist({
         ...latest.current,
-        imitationSkeleton: { baseSha256, savedAt: new Date().toISOString(), skeleton },
+        imitationSkeleton: { baseSha256, savedAt: new Date().toISOString(), skeleton, library },
         outlineApproved: "",
         novelApproved: "",
       });
@@ -938,6 +954,7 @@ function NovelWorkspaceEditor({
       ...(d.mode === "imitation"
         ? [d.imitationGenre || "", d.imitationSynopsis || "", d.imitationSkeleton?.baseSha256 || ""]
         : []),
+      ...(d.libraryTemplatePicks?.length ? [d.libraryTemplatePicks] : []),
     ]);
   const startBatch = async (stage: "chapter" | "script", single?: string) => {
     if (disabled || queueSubmitting.current) return;
@@ -1527,6 +1544,7 @@ function NovelWorkspaceEditor({
               imitationGenre: draft.imitationGenre,
               imitationSynopsis: draft.imitationSynopsis,
               imitationSkeleton: draft.imitationSkeleton,
+              libraryTemplatePicks: draft.libraryTemplatePicks,
               templates: draft.templates,
               modelPreference: draft.modelPreference,
               targetEpisodeCount: draft.targetEpisodeCount,
@@ -1692,6 +1710,12 @@ function NovelWorkspaceEditor({
                     ? NOVEL_IMITATION_UI.skeletonReady(draft.imitationSkeleton.skeleton.beats.length)
                     : NOVEL_IMITATION_UI.skeletonStale}
                 </p>
+              )}
+              {skeletonReady && draft.imitationSkeleton && (
+                <NovelImitationScoreCard
+                  score={draft.imitationSkeleton.skeleton.score}
+                  library={draft.imitationSkeleton.library}
+                />
               )}
               {skeletonReady && draft.imitationSkeleton && (
                 <details className="mt-2 text-sm">
@@ -3118,6 +3142,33 @@ function NovelWorkspaceEditor({
                   </p>
                 )}
                 <div className="novel-mix-content">{templateMix}</div>
+                <NovelImitationLibraryPicker
+                  items={libraryItems}
+                  failed={libraryQuery.isError}
+                  picked={(draft.libraryTemplatePicks ?? []).filter(id => libraryItems.some(i => i.id === id))}
+                  disabled={disabled}
+                  canDelete={authUser?.role === "admin" || authUser?.role === "supervisor"}
+                  onToggle={(id, checked) => {
+                    const current = (latest.current.libraryTemplatePicks ?? []).filter(p => p !== id);
+                    const next = checked ? [...current, id] : current;
+                    if (next.length > NOVEL_IMITATION_LIBRARY_PICK_MAX) {
+                      setError(NOVEL_IMITATION_UI.libraryPickLimit(NOVEL_IMITATION_LIBRARY_PICK_MAX));
+                      return;
+                    }
+                    change({ libraryTemplatePicks: next });
+                  }}
+                  onDelete={id => {
+                    if (!window.confirm(NOVEL_IMITATION_UI.libraryDeleteConfirm)) return;
+                    void libraryDelete
+                      .mutateAsync({ id })
+                      .then(() => {
+                        const picks = latest.current.libraryTemplatePicks ?? [];
+                        if (picks.includes(id)) change({ libraryTemplatePicks: picks.filter(p => p !== id) });
+                        return libraryQuery.refetch();
+                      })
+                      .catch(() => setError(NOVEL_IMITATION_UI.libraryDeleteFailed));
+                  }}
+                />
                 <div className="novel-mix-actions">
                   <button
                     className={`${button} novel-primary`}
