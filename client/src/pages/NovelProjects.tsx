@@ -261,7 +261,7 @@ export function NovelProjectLibrary({ userId }: { userId: string }) {
                 <h3>{p.local?.title || p.cloud?.title}</h3>
                 <p>
                   {p.local
-                    ? `${p.local.mode === "source" ? "原著改编" : "原创小说"} · ${p.local.chapterCount} 集正文 · 第 ${p.local.season} 季`
+                    ? `${p.local.mode === "source" ? "原著改编" : p.local.mode === "imitation" ? "爆款仿写" : "原创小说"} · ${p.local.chapterCount} 集正文 · 第 ${p.local.season} 季`
                     : `云端作品 · 第 ${p.cloud?.season || 1} 季`}
                 </p>
                 <small>

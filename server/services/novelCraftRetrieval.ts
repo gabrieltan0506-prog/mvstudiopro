@@ -43,7 +43,7 @@ export type NovelCraftUnifiedEntry = {
 export type NovelCraftRetrievalInput = Pick<
   NovelTestInput,
   "stage" | "topic" | "direction" | "source" | "outline" | "chapterIndex" | "episodeStart" | "episodeCount" | "requestId"
->;
+> & Partial<Pick<NovelTestInput, "imitation">>;
 
 export type NovelCraftSelection = { craft: string[]; methods: string[]; why: string };
 
@@ -151,6 +151,9 @@ export function buildNovelCraftTaskBrief(input: NovelCraftRetrievalInput) {
     material = `本集大纲：${outlineEpisode(outline, start) || outline}`;
   } else if (outline.trim()) {
     material = `全剧大纲摘要：${outline}`;
+  } else if (input.imitation) {
+    // 爆款仿写没有底本：用用户的题材与纲要。
+    material = `题材：${input.imitation.genre}\n纲要：${input.imitation.synopsis}`;
   } else {
     material = `底本摘要：${input.source ? `${input.source.label}\n${input.source.text}` : ""}`;
   }

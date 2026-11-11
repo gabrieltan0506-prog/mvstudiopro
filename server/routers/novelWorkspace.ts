@@ -13,7 +13,9 @@ import {
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../_core/trpc";
 import { novelTestInputSchema } from "../../shared/novelWorkspace";
-import { runNovelWorkspaceTest } from "../services/novelWorkspaceTest";
+import { runNovelWorkspaceTest, runNovelImitationSkeleton } from "../services/novelWorkspaceTest";
+import { novelModelSchema } from "../../shared/novelWorkspace";
+import { NOVEL_IMITATION_BASE_MAX_CHARS } from "../../shared/novelImitationPrompt";
 export function assertNovelTestRole(role: string) {
   if (role !== "admin" && role !== "supervisor")
     throw new TRPCError({
@@ -61,6 +63,21 @@ export const novelWorkspaceRouter = router({
     .query(({ ctx, input }) => {
       assertNovelTestRole(ctx.user.role);
       return readNovelWorkspaceReceipt(ctx.user.id, input.requestId);
+    }),
+  /** 爆款仿写：底稿结构拆解（同一底稿按内容摘要与线路缓存，不重复拆）。 */
+  imitationSkeleton: protectedProcedure
+    .input(
+      z
+        .object({
+          requestId: z.string().uuid(),
+          baseText: z.string().trim().min(80).max(NOVEL_IMITATION_BASE_MAX_CHARS),
+          modelPreference: novelModelSchema.optional(),
+        })
+        .strict()
+    )
+    .mutation(({ ctx, input }) => {
+      assertNovelTestRole(ctx.user.role);
+      return runNovelImitationSkeleton(ctx.user.id, input);
     }),
   generate: protectedProcedure
     .input(novelTestInputSchema)

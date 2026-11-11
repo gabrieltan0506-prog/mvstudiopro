@@ -33,6 +33,18 @@ import {
 import { novelRevisePreference } from "../../shared/novelWorkspace";
 import { retrieveNovelCraft, shouldRetrieveNovelCraft } from "./novelCraftRetrieval";
 import { shortlistNovelCatalog, shouldShortlistNovelCatalog } from "./novelCatalogShortlist";
+import { getNovelCraftCards } from "../../shared/novelCraftCards";
+import {
+  NOVEL_IMITATION_ADVICE_RULES,
+  NOVEL_IMITATION_CHAPTER_RULES,
+  NOVEL_IMITATION_CRAFT_CARD_ID,
+  NOVEL_IMITATION_CRAFT_NOTE,
+  NOVEL_IMITATION_CRAFT_STAGES,
+  NOVEL_IMITATION_ORIGINAL_RULES,
+  buildNovelImitationOutlineRules,
+} from "../../shared/novelImitationPrompt";
+import { resolveNovelImitationSkeleton, NovelImitationSkeletonError } from "./novelImitationSkeleton";
+import type { NovelImitationSkeleton } from "../../shared/novelImitation";
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 /**
  * 只有顾问阶段（推荐模板 / 故事线可从库内换组合）需要整份目录；
@@ -67,6 +79,8 @@ export function buildNovelTestPrompt(
       ? '{"assessment":"三个方案的创作依据与差异","recommendations":[],"variants":[{"id":"A/B/C","title":"方案名","changeSummary":"相对原稿或另外方案的具体差异","tradeoff":"收益与代价","templates":[{"publicId":"真实模板ID","role":"具体分工","weight":100}],"outline":{"premise":"核心冲突","characters":"人物动机与关系","episodes":[{"index":1,"title":"标题","events":"具体因果事件","payoff":"当集兑现","hook":"追看理由"}]}}]}'
       : input.stage === "advice"
         ? '{"assessment":"人物动机、核心冲突、前三集留人风险与建议","recommendations":[{"publicId":"真实库内公开ID","reason":"适合原因及能强化之处","tradeoff":"取舍"}]}'
+        : input.stage === "outline" && input.imitation
+          ? '{"structure":[{"beat":"节拍名","function":"钩子/铺垫/爽点/反转/情绪高点/卷末悬念等","role":"这一拍在骨架里的结构作用"}],"premise":"核心矛盾与世界规则","characters":"角色欲望、关系与代价","episodes":[{"index":1,"title":"标题","events":"因果清楚的事件大纲","hook":"片尾悬念","payoff":"当集兑现的期待","beats":[{"beat":"对应structure里的节拍名","function":"该拍功能","content":"本作在这一拍发生什么"}]}]}'
         : input.stage === "outline"
           ? '{"premise":"核心矛盾与世界规则","characters":"角色欲望、关系与代价","episodes":[{"index":1,"title":"标题","events":"因果清楚的事件大纲","hook":"片尾悬念","payoff":"当集兑现的期待"}]}'
           : input.stage === "chapter"
@@ -98,11 +112,20 @@ export function buildNovelTestPrompt(
           ? "本轮是继续讨论。优先回答用户具体问题并说明已选模板的分工，不强行换掉已有推荐；不需要新增推荐时recommendations返回空数组，需要替换或补充时仅给出真实可用且尚未选的模板。"
           : input.stage === "advice"
             ? "从完整可用手法目录选择3–5个不同模板，排除用户已选；不足3个时如实推荐剩余全部，不能编造或用目录前几项敷衍。理由必须指出一种具体手法如何服务当前人物动机、在哪个转折使用以及取舍；不能只重复题材标签。给出改编提案建议，不自动采用。"
+            : input.stage === "outline" && input.imitation
+              ? buildNovelImitationOutlineRules(input.episodeCount).join("\n")
             : input.stage === "outline"
               ? `只生成 ${input.episodeCount} 集的可编辑提案，不生成小说或剧本。`
               : input.stage === "chapter"
                 ? `只写第 ${input.chapterIndex} 集小说稿，遵守已确认大纲。其余小说是已确认前文，不改写、不重复；人物身份与因果必须衔接。不得一次写完整部。`
                 : `严格以用户已确认小说为事实和事件基准，生成 ${input.episodeCount} 集完整可拍剧本。模板可改变表现手法，不改小说人物身份、关键事件与因果。同一事件用稳定场次key（E1-S1等）便于对照，不虚构已确认事实。applications必须覆盖本次每个模板，具体说明方法怎样落到已生成场次；sceneKeys只能引用本次真实场次。`,
+    ...(input.imitation
+      ? [
+          NOVEL_IMITATION_ORIGINAL_RULES,
+          ...(input.stage === "advice" ? [NOVEL_IMITATION_ADVICE_RULES] : []),
+          ...(input.stage === "chapter" ? [NOVEL_IMITATION_CHAPTER_RULES] : []),
+        ]
+      : []),
     "组合模板须按分工协作；冲突以已确认方向、提案、小说为准，不堆叠互斥设定。",
     input.stage === "advice"
       ? `availableCatalog 是${options.shortlisted ? "入围模板" : "全库每个模板"}的能力简介与特征标签（不是手法全文）：按简介与标签挑选合适的模板；用户已选模板的具体手法见文末的手法卡，讨论具体用法时以手法卡为准，不凭简介臆造手法细节。${options.shortlisted ? "目录是初选后的入围名单：已先从全库按本作品逐片初选，只列入围条目；从入围名单里终选即可。" : ""}`
@@ -117,6 +140,7 @@ export function buildNovelTestPrompt(
       topic: input.topic,
       direction: input.direction,
       source: input.source,
+      ...(input.imitation ? { imitationBrief: input.imitation } : {}),
       ...(input.advisorHistory?.length
         ? { advisorHistory: input.advisorHistory }
         : {}),
@@ -131,7 +155,52 @@ export function buildNovelTestPrompt(
     }),
     "已核验的模板创作方法与学习摘要（非逐镜全文）：",
     templates,
+    ...novelImitationCraftBlock(input),
   ].join("\n\n");
+}
+
+/** 仿写模式：大纲与正文阶段必带站长仿写规范卡（不经检索，检索失败回退时也在）。 */
+export function novelImitationCraftBlock(input: Pick<NovelTestInput, "stage" | "imitation">): string[] {
+  if (!input.imitation || !(NOVEL_IMITATION_CRAFT_STAGES as readonly string[]).includes(input.stage)) return [];
+  const [card] = getNovelCraftCards([NOVEL_IMITATION_CRAFT_CARD_ID]);
+  if (!card) return [];
+  return [NOVEL_IMITATION_CRAFT_NOTE, `《${card.title}》\n${card.body}`];
+}
+
+/**
+ * 爆款仿写：底稿结构拆解（分片并发 + 汇总 + 缓存在 novelImitationSkeleton 内完成）。
+ * 线路用草稿当前的创作线路；不新增线路、不改 fallback。线路三的原始返回按现有证据目录永久保存。
+ */
+export async function runNovelImitationSkeleton(
+  userId: number,
+  input: { requestId: string; baseText: string; modelPreference?: NovelTestInput["modelPreference"] }
+): Promise<NovelImitationSkeleton> {
+  try {
+    // call 缺省为 callNovelStage（带本次线路；线路三另带证据落点），不另造调用层。
+    return await resolveNovelImitationSkeleton({
+      userId,
+      baseText: input.baseText,
+      modelPreference: input.modelPreference,
+      requestId: input.requestId,
+    });
+  } catch (error) {
+    console.error("[novel-imitation-skeleton]", input.requestId, error instanceof Error ? error.message : "failed");
+    throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: novelImitationSkeletonFailureMessage(error) });
+  }
+}
+
+/** 拆解失败的前台提示（中性、可重试；不回退成无骨架的普通流程）。 */
+export function novelImitationSkeletonFailureMessage(error: unknown) {
+  if (error instanceof NovelImitationSkeletonError) {
+    if (error.code === "NOVEL_IMITATION_SKELETON_SHARD_FAILED") {
+      const shards = error.failures.map(f => f.shard).filter(n => n > 0);
+      return `底稿结构整理未完成：${shards.length ? `第${shards.join("、")}片` : "部分片段"}未成功，可重新提交，已完成部分不会重做。`;
+    }
+    if (error.code === "NOVEL_IMITATION_SKELETON_MERGE_FAILED")
+      return "底稿结构整理未完成：各片段已完成，汇总这一步未成功，可重新提交，已完成部分不会重做。";
+    if (error.code === "NOVEL_IMITATION_SKELETON_EMPTY") return "请先导入要仿写的原文。";
+  }
+  return "底稿结构整理暂不可用，底稿与已填内容保留；可稍后重新提交。";
 }
 export async function executeNovelTest(
   input: NovelTestInput,
@@ -188,7 +257,12 @@ export async function prepareNovelTestTemplates(input: NovelTestInput) {
     selectedTexts.push({ publicId: selected.publicId, role: selected.role, cardSha256, text });
     full.push(`${selected.publicId} / 分工：${selected.role}\n${text}`);
   }
-  return { catalogSnapshot, templates: full.join("\n\n"), selectedEvidence, selectedTexts };
+  return {
+    catalogSnapshot,
+    templates: full.join("\n\n"),
+    selectedEvidence,
+    selectedTexts,
+  };
 }
 
 /** 1111 线路三证据目录：与该账号该请求绑定，永久保存（不随测试失败删除）。 */

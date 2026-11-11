@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { novelExcerptSchema } from "./manhuaNovelSource";
+import { novelImitationBeatSchema } from "./novelImitation";
 import {
   NOVEL_REVIEW_DIMENSIONS,
   type NovelReviewDimension,
@@ -40,6 +41,21 @@ export function novelModelLabel(model?: string) {
   return "创作线路";
 }
 const text = z.string().trim().min(1);
+/**
+ * 爆款仿写的请求附带内容：用户的新题材与纲要（纲要可短可长），
+ * 以及底稿拆出的结构骨架（只有节拍、功能、位置与人物功能位）和需要避开的底稿名称。
+ * 底稿原文本身不随请求发送。
+ */
+export const NOVEL_IMITATION_SYNOPSIS_MAX = 6000;
+export const novelImitationBriefSchema = z
+  .object({
+    genre: text.max(200),
+    synopsis: text.max(NOVEL_IMITATION_SYNOPSIS_MAX),
+    skeleton: z.array(novelImitationBeatSchema).min(1).max(200).optional(),
+    avoidNames: z.array(z.string().trim().min(1).max(40)).max(500).optional(),
+  })
+  .strict();
+export type NovelImitationBrief = z.infer<typeof novelImitationBriefSchema>;
 export const novelTemplateChoiceSchema = z
   .object({
     publicId: text.max(40),
@@ -103,6 +119,11 @@ export const novelTestInputSchema = z
     /** revise 阶段：该集待审正文（未修改版，原样）。其他阶段不得携带。 */
     reviseDraft: z.string().max(8000).optional(),
     selectedTemplateIds: z.array(z.string().max(40)).default([]),
+    /**
+     * 爆款仿写（1112 第一版）：用户自己的题材与纲要；方向沿用 direction。
+     * 存在即表示仿写模式（结构沿用所选模板骨架，题材、人物与故事发展全部来自用户）。旧请求没有此字段，行为不变。
+     */
+    imitation: novelImitationBriefSchema.optional(),
   })
   .strict()
   .superRefine((v, c) => {
@@ -165,6 +186,8 @@ export const novelTestInputSchema = z
       c.addIssue({ code: "custom", message: "剧本分批范围无效" });
     if (v.stage === "script" && v.novel.trim().length < 500)
       c.addIssue({ code: "custom", message: "请先确认小说正文" });
+    if (v.imitation && v.stage === "outline" && !v.imitation.skeleton?.length)
+      c.addIssue({ code: "custom", message: "请先拆解底稿结构" });
   });
 export type NovelTestInput = z.infer<typeof novelTestInputSchema>;
 export const novelOutlineSchema = z
@@ -204,6 +227,73 @@ export function formatNovelOutline(plan: z.infer<typeof novelOutlineSchema>) {
     ...plan.episodes.map(
       ep =>
         `第${ep.index}集：${ep.title}\n剧情：${ep.events}\n本集兑现：${ep.payoff}\n片尾钩子：${ep.hook}`
+    ),
+  ].join("\n\n");
+}
+/** 仿写模式「结构锁定」大纲：先列模板结构骨架（有序节拍），每集再标出覆盖的节拍与本作内容。 */
+const imitationBeatName = text.max(40);
+const imitationBeatFunction = text.max(20);
+export const novelImitationOutlineSchema = z
+  .object({
+    structure: z
+      .array(
+        z
+          .object({
+            beat: imitationBeatName,
+            function: imitationBeatFunction,
+            role: text.max(300),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(60),
+    premise: text.max(3000),
+    characters: text.max(3000),
+    episodes: z
+      .array(
+        z
+          .object({
+            index: z.number().int().positive(),
+            title: text.max(120),
+            events: text.max(1500),
+            hook: text.max(500),
+            payoff: text.max(500),
+            beats: z
+              .array(
+                z
+                  .object({
+                    beat: imitationBeatName,
+                    function: imitationBeatFunction,
+                    content: text.max(600),
+                  })
+                  .strict()
+              )
+              .min(1)
+              .max(12),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(20),
+  })
+  .strict();
+export type NovelImitationOutline = z.infer<typeof novelImitationOutlineSchema>;
+/**
+ * 仿写大纲格式化：在原有格式上加「结构骨架」与每集「结构节拍」行。
+ * 每集仍以「第N集：」开头、块间空一行，正文阶段按集取大纲条目的方式不变。
+ */
+export function formatNovelImitationOutline(plan: NovelImitationOutline) {
+  return [
+    `结构骨架（模板节拍）\n${plan.structure
+      .map((b, i) => `${i + 1}. ${b.beat}【${b.function}】${b.role}`)
+      .join("\n")}`,
+    `核心冲突\n${plan.premise}`,
+    `人物关系\n${plan.characters}`,
+    ...plan.episodes.map(
+      ep =>
+        `第${ep.index}集：${ep.title}\n剧情：${ep.events}\n本集兑现：${ep.payoff}\n片尾钩子：${ep.hook}\n结构节拍：${ep.beats
+          .map(b => `${b.beat}【${b.function}】${b.content}`)
+          .join("；")}`
     ),
   ].join("\n\n");
 }
@@ -546,6 +636,17 @@ export function validateNovelStageOutput(
     // A missing optional continuity note must not discard a complete paid chapter.
     // The client asks for a reviewed continuity record before distant continuation.
     return chapter;
+  }
+  if (input.stage === "outline" && input.imitation) {
+    const plan = novelImitationOutlineSchema.parse(value);
+    if (
+      plan.episodes.length !== input.episodeCount ||
+      plan.episodes.some((e, i) => e.index !== i + (input.episodeStart || 1))
+    )
+      throw new Error("分集数量或次序不完整");
+    if (formatNovelImitationOutline(plan).length > 14000)
+      throw new Error("本批大纲超出可编辑长度，原始结果保留");
+    return plan;
   }
   const result =
     input.stage === "outline"

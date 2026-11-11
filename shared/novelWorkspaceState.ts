@@ -5,7 +5,9 @@ import {
   novelTemplateChoiceSchema,
   novelGenerationSettingsSchema,
   novelStageSchema,
+  NOVEL_IMITATION_SYNOPSIS_MAX,
 } from "./novelWorkspace";
+import { novelImitationSkeletonSchema } from "./novelImitation";
 const runSchema = z.object({
   input: novelTestInputSchema,
   result: z.object({
@@ -57,7 +59,19 @@ export const novelWorkspaceStateSchema = z.object({
   seasons: z
     .array(z.object({ season: z.number(), workspace: z.string() }))
     .optional(),
-  mode: z.enum(["source", "original"]),
+  /** imitation：爆款仿写（1112 追加枚举值，旧草稿 source / original 照常读取）。 */
+  mode: z.enum(["source", "original", "imitation"]),
+  /** 爆款仿写的题材与纲要（方向沿用 direction）；其他模式不使用。 */
+  imitationGenre: z.string().max(200).optional(),
+  imitationSynopsis: z.string().max(NOVEL_IMITATION_SYNOPSIS_MAX).optional(),
+  /** 底稿结构拆解结果：baseSha256 对应拆解时的底稿全文，底稿更换后需重新拆解。 */
+  imitationSkeleton: z
+    .object({
+      baseSha256: z.string(),
+      savedAt: z.string(),
+      skeleton: novelImitationSkeletonSchema,
+    })
+    .optional(),
   source: z.unknown(),
   templates: z.array(
     z.object({

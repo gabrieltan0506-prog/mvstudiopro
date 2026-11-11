@@ -100,6 +100,10 @@ export function novelSourceIdentity(draft: NovelWorkspace) {
     draft.mode === "source" ? draft.source : null,
     draft.episodeCount,
     draft.episodeStart,
+    // 爆款仿写：题材与纲要变了，已确认的大纲与小说需要重新确认（其他模式不追加，身份串不变）。
+    ...(draft.mode === "imitation"
+      ? [draft.imitationGenre || "", draft.imitationSynopsis || ""]
+      : []),
   ]);
 }
 export function scriptBaseline(input: NovelTestInput) {

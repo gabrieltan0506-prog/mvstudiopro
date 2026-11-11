@@ -14,9 +14,11 @@ const SUMMARY_FRAGMENT_CHARS = 30;
 /** 同一窗口在底稿中最多记录的起点数，避免高度重复文本拖慢扩展。 */
 const MAX_BASE_POSITIONS_PER_WINDOW = 4;
 
+const OVERLAP_STRIP = new RegExp("[\\s\\p{P}\\p{S}]+", "gu");
 /** 去掉空白、中英文标点与符号。 */
 function normalizeForOverlap(text: string): string {
-  return String(text || "").replace(/[\s\p{P}\p{S}]+/gu, "");
+  // 用构造函数写 u 标志：仓库 tsconfig 目标低于 es6 时字面量 /u 过不了类型检查。
+  return String(text || "").replace(OVERLAP_STRIP, "");
 }
 
 function charLength(s: string): number {
