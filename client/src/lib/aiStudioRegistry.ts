@@ -1,3 +1,5 @@
+import { KLING_RETIRED_CLIENT } from "@shared/klingRetired";
+
 export type EngineFamily = "script" | "image" | "video" | "music";
 
 export type ModelPlan =
@@ -131,12 +133,15 @@ export const AI_STUDIO_MODELS: ModelRegistryItem[] = [
   },
 ];
 
+/** 可灵停用（方案 A）：供选择的模型列表在停用常量下不含可灵项；getModelById 不过滤，旧草稿仍能查到原配置。 */
+const isSelectable = (m: ModelRegistryItem) => !(KLING_RETIRED_CLIENT && m.provider === "kling");
+
 export function getModelsByFamily(family: EngineFamily) {
-  return AI_STUDIO_MODELS.filter((m) => m.family === family);
+  return AI_STUDIO_MODELS.filter((m) => m.family === family && isSelectable(m));
 }
 
 export function getModelsByGroup(group: "google" | "kling" | "music") {
-  return AI_STUDIO_MODELS.filter((m) => m.uiGroup === group);
+  return AI_STUDIO_MODELS.filter((m) => m.uiGroup === group && isSelectable(m));
 }
 
 export function getModelById(id: string) {

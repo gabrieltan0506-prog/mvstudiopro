@@ -39,10 +39,10 @@
 | shared/plans.ts / shared/credits.ts | 售卖（计价键） | 计价键与历史账目不删；`IMAGE_UPSCALE_BASE_CREDIT_KEYS` 里的可灵键保留（历史可灵图放大仍要基准价） | 否 |
 | server/routers/customerService.ts | 售卖 | 客服提示词去掉可灵工作室与「Kling 视频 80」报价，改为「旧版专业视频工作室已下线」中性口径 | 是 |
 | client/src/components/HomePlans.tsx | 售卖（死代码） | 组件无引用；仍删掉「Kling 2.6 生成」卖点 | 是 |
-| client/src/pages/TestLab.tsx | 前端入口（监管） | 停用常量下隐藏可灵生图/视频选项 | 待改 |
-| client/src/pages/WorkspaceStudio.tsx | 前端入口 / 旧工作流 | 停用常量下隐藏「工作室控制」；旧工作流开过这些开关时给中文提示、不改数据 | 待改 |
-| client/src/pages/Showcase.tsx | 前端入口（营销位） | 去掉恒为空的「影视级视频」筛选页签；风格画廊图片保留（标签中性、无创建入口） | 待改 |
-| client/src/lib/aiStudioRegistry.ts | 前端入口（死代码） | 无引用；按族/分组列模型时停用常量下过滤可灵项，`getModelById` 保留 | 待改 |
+| client/src/pages/TestLab.tsx | 前端入口（监管） | 停用常量下隐藏可灵生图/视频选项，页头去掉可灵字样 | 是 |
+| client/src/pages/WorkspaceStudio.tsx | 前端入口 / 旧工作流 | 停用常量下隐藏「工作室控制」；旧工作流开过这些开关时给中文提示、不改数据 | 是 |
+| client/src/pages/Showcase.tsx | 前端入口（营销位） | 去掉恒为空的「影视级视频」筛选页签；风格画廊图片保留（标签中性、无创建入口） | 是 |
+| client/src/lib/aiStudioRegistry.ts | 前端入口（死代码） | 无引用；按族/分组列模型时停用常量下过滤可灵项，`getModelById` 保留 | 是 |
 | client/src/pages/RemixStudio.tsx | 死代码 | #1772 已拿掉路由，无入口，不改 | 否 |
 | client/src/pages/Redeem.tsx | 死代码 | 未挂路由；「视频生成」文案中性，不改 | 否 |
 | client/src/components/CreationManager.tsx | 仅历史展示 | 可灵作品类型的展示/播放/下载照常，不改 | 否 |
