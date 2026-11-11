@@ -2,10 +2,11 @@ import { expect, it } from "vitest";
 import { KNOWLEDGE_PREVIEW_RETRY_DELAYS_MS, knowledgeStageLabel, loadKnowledgePreviewWithRetry } from "./knowledgePublicationStage";
 
 it("阶段文案显示当前步与完成数，不含模型或通道名", () => {
-  expect(knowledgeStageLabel({ step: 0, done: 12, total: 34 })).toBe("【逐章整理 12/34】 → 联网校验 → 统稿 → 整册排版 → 生成 PDF");
-  expect(knowledgeStageLabel({ step: 1, done: 1, total: 2 })).toBe("逐章整理 ✓ → 【联网校验 1/2】 → 统稿 → 整册排版 → 生成 PDF");
-  expect(knowledgeStageLabel({ step: 4 })).toBe("逐章整理 ✓ → 联网校验 ✓ → 统稿 ✓ → 整册排版 ✓ → 【生成 PDF】");
-  expect(knowledgeStageLabel({ step: 5 })).toContain("全部完成");
+  expect(knowledgeStageLabel({ step: 0, done: 12, total: 34 })).toBe("【逐章整理 12/34】 → 统稿 → 整册排版 → 版面审查与 PDF");
+  expect(knowledgeStageLabel({ step: 1, done: 1, total: 2 })).toBe("逐章整理 ✓ → 【统稿 1/2】 → 整册排版 → 版面审查与 PDF");
+  expect(knowledgeStageLabel({ step: 3 })).toBe("逐章整理 ✓ → 统稿 ✓ → 整册排版 ✓ → 【版面审查与 PDF】");
+  expect(knowledgeStageLabel({ step: 1 })).not.toContain("联网");
+  expect(knowledgeStageLabel({ step: 4 })).toContain("全部完成");
   expect(knowledgeStageLabel(null)).toBe("");
 });
 it("整册预览读取失败按退避自动重试 3 次，成功即返回", async () => {

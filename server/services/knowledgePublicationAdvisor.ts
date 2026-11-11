@@ -505,6 +505,16 @@ async function readKnowledgeBatchReports(source:KnowledgeSource,digest:string,ro
   }));
   return results;
 }
+/**
+ * 站长 2026-11-11：生图前（提炼阶段）已对全册疑点集中联网核实的稿件，审校后不再重复全册核对
+ * （原先这里按事实分组再跑一轮核对：无核实记录走联网检索+逐页修订，有核实记录走离线对照）。
+ * 已开始旧流程（已落盘 consistency-plan.json）的稿件沿用原批次与原回执，零调用恢复，不改请求身份。
+ * 没有生图前核实记录的稿件（改稿后、旧稿）这一轮仍是唯一一次联网核实，保持不变。
+ */
+export async function knowledgeSkipsPostReviewConsistency(source:{verificationJobId?:string},root:string,read:(name:string)=>Promise<any>){
+  if(!source.verificationJobId)return false;
+  return !(await read(`${root}/consistency-plan.json`));
+}
 /** 收费前读取权威批次回执；后半本事实自动分组，每组复用原咨询计费合同。 */
 /**
  * 全部批次完成后的工作计划只取决于账号、稿件、请求、原稿摘要与补图绑定（批次回执落盘后不再改变），
@@ -518,6 +528,9 @@ export async function knowledgePublicationWorkPlan(owner:number,document:Awaited
   const compute=async()=>{
     source = await resolveKnowledgePublicationImages(owner, source, undefined, undefined, document.publication.imageReplacements);
     const saved=await readKnowledgeBatchReports(source,knowledgeSourceDigest(source),knowledgeEvidencePrefix(owner,document.id,requestId),read);
+    // 生图前已集中联网核实（verificationJobId）的新稿：不再跑审校后的全册核对，只剩一次零调用汇总。
+    if(await knowledgeSkipsPostReviewConsistency(source,knowledgeEvidencePrefix(owner,document.id,requestId),read))
+      return {reviewBatches:batches.length,totalBatches:batches.length+1,consistencyKnown:true as const};
     const plan=planKnowledgeConsistency(saved.map(p=>p.report));
     return {reviewBatches:batches.length,totalBatches:batches.length+plan.tasks.length,consistencyKnown:true as const};
   };
@@ -557,6 +570,15 @@ export async function reviewKnowledgePublication(
     const sourceImages = savedReports.flatMap(p => p.sourceImages);
     validateKnowledgeImageReceipts(source, sourceImages);
     const plan = planKnowledgeConsistency(reports);
+    if (await knowledgeSkipsPostReviewConsistency(source, root, deps.read)) {
+      if (context.batchIndex !== batches.length) throw new Error("整套核对进度超出当前资料");
+      // 零调用汇总：逐章审校结果（含读图疑点）直接成册，不发起联网检索、离线核对或逐页修订。
+      const report = validateKnowledgeReview({kind:"knowledge_publication_v1",sourceDigest:digest,title:source.title,pages:reports.flatMap(r=>r.pages)},source,digest);
+      const consolidated = {report,sourceImages,model:KNOWLEDGE_VISUAL_ADVISOR_MODEL,reportedModels:[] as string[],
+        consistency:{taskCount:0,factCount:plan.factCount,skipped:"生图前已集中联网核实，审校后不重复核对"}};
+      await deps.save(`${root}/report.json`, consolidated);
+      return validateKnowledgeReview((await compressKnowledgeFinalReport(deps, root, context.attempt, digest, source, consolidated)).report, source, digest);
+    }
     const taskIndex = context.batchIndex - batches.length;
     if (taskIndex >= plan.tasks.length) throw new Error("整套核对进度超出当前资料");
     await deps.save(`${root}/consistency-plan.json`, { sourceDigest: digest, plan });

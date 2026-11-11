@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { novelExcerptSchema } from "./manhuaNovelSource";
+import {
+  NOVEL_REVIEW_DIMENSIONS,
+  type NovelReviewDimension,
+} from "./novelCraftReview";
 
 export const NOVEL_FACETS = [
   "场景",
@@ -15,6 +19,15 @@ export const NOVEL_MODEL_OPTIONS = [
   { value: "deepseek", label: "线路二" },
   // 1111：线路三（推理更强、更慢）；失败不换别的线路，返回可重试提示。
   { value: "carbon", label: "线路三 · 推理更强、更慢" },
+] as const;
+/**
+ * 创作顾问档位（站长 2026-11-12）：前台只显示档位名，不显示模型名。
+ * 站长定价（每次顾问答复）：卓越 20（限时特价，原价 40）/ 优秀 10 / 完美 5 积分；管理者测试流程不扣积分，扣费尚未接入。
+ */
+export const NOVEL_ADVISOR_TIER_OPTIONS = [
+  { value: "carbon", label: "卓越", referenceCredits: 20, originalCredits: 40 },
+  { value: "glm", label: "优秀", referenceCredits: 10, originalCredits: undefined },
+  { value: "deepseek", label: "完美", referenceCredits: 5, originalCredits: undefined },
 ] as const;
 export const novelModelSchema = z.enum(["auto", "glm", "deepseek", "carbon"]);
 /** 前台只显示中性线路名；模型名是商业机密，未知模型也不回显原始标识。 */
@@ -34,14 +47,25 @@ export const novelTemplateChoiceSchema = z
     weight: z.number().int().min(0).max(100).optional(),
   })
   .strict();
+/** revise：审稿改稿（1111 新增；只追加枚举值，旧草稿仍可解析）。 */
+export const novelStageSchema = z.enum([
+  "advice",
+  "outline",
+  "chapter",
+  "script",
+  "revise",
+]);
 export const novelTestInputSchema = z
   .object({
     requestId: z.string().uuid(),
     roundId: z.string().uuid(),
-    stage: z.enum(["advice", "outline", "chapter", "script"]),
+    stage: novelStageSchema,
     topic: text.max(200),
     direction: text.max(2000),
     modelPreference: novelModelSchema.optional(),
+    /** revise 阶段：审稿、改稿各自的线路（1111 站长：拆成两个下拉）；缺省沿用 modelPreference。 */
+    reviewModelPreference: novelModelSchema.optional(),
+    rewriteModelPreference: novelModelSchema.optional(),
     source: novelExcerptSchema.optional(),
     advisorMessage: text.max(2000).optional(),
     advisorIntent: z
@@ -76,6 +100,8 @@ export const novelTestInputSchema = z
     outline: z.string().max(14000).default(""),
     novel: z.string().max(20000).default(""),
     chapterIndex: z.number().int().positive().default(1),
+    /** revise 阶段：该集待审正文（未修改版，原样）。其他阶段不得携带。 */
+    reviseDraft: z.string().max(8000).optional(),
     selectedTemplateIds: z.array(z.string().max(40)).default([]),
   })
   .strict()
@@ -104,7 +130,18 @@ export const novelTestInputSchema = z
         code: "custom",
         message: "模板创作配比须全部填写，合计100%",
       });
-    if (v.stage !== "advice" && !v.templates.length)
+    if (v.stage === "revise") {
+      if ((v.reviseDraft || "").trim().length < 500)
+        c.addIssue({ code: "custom", message: "本集正文过短，暂不能审稿改稿" });
+    } else if (v.reviseDraft !== undefined)
+      c.addIssue({ code: "custom", message: "仅审稿改稿携带待审正文" });
+    if (
+      v.stage !== "revise" &&
+      (v.reviewModelPreference !== undefined ||
+        v.rewriteModelPreference !== undefined)
+    )
+      c.addIssue({ code: "custom", message: "仅审稿改稿可分别选择审稿与改稿线路" });
+    if (v.stage !== "advice" && v.stage !== "revise" && !v.templates.length)
       c.addIssue({ code: "custom", message: "请选择模板" });
     if (
       v.stage === "chapter" &&
@@ -261,6 +298,173 @@ export type NovelTestResult = {
   inputSha256: string;
   resultSha256: string;
 };
+const reviewScore = z.number().int().min(1).max(5);
+export const novelReviewSchema = z
+  .object({
+    scores: z
+      .object(
+        Object.fromEntries(
+          NOVEL_REVIEW_DIMENSIONS.map(d => [d, reviewScore])
+        ) as Record<NovelReviewDimension, typeof reviewScore>
+      )
+      .strict(),
+    issues: z
+      .array(
+        z
+          .object({
+            dimension: z.enum(NOVEL_REVIEW_DIMENSIONS),
+            /** ≤30 字（不计空白）；能定位时已修正为原文对应的原始片段（可能含原文换行）。 */
+            quote: text
+              .max(60)
+              .refine(q => q.replace(/\s+/g, "").length <= 30, "定位片段不超过30字"),
+            problem: text.max(600),
+            fix: text.max(800),
+            /** 仅在归一化后仍无法在原文定位时为 false；能定位的不带此字段。 */
+            located: z.literal(false).optional(),
+          })
+          .strict()
+      )
+      .min(3)
+      .max(10),
+    keep: z.array(text.max(300)).max(10).default([]),
+    verdict: text.max(300),
+  })
+  .strict();
+export type NovelReview = z.infer<typeof novelReviewSchema>;
+const clip = (max: number) =>
+  z.preprocess(
+    v => (typeof v === "string" ? Array.from(v.trim()).slice(0, max).join("") : v),
+    z.string()
+  );
+/** 改稿对大纲的影响（模型自报）；旧结果没有此字段时按「未申报」处理。 */
+export const novelOutlineImpactSchema = z
+  .object({
+    changed: z.boolean(),
+    level: z.enum(["none", "partial", "major"]),
+    items: z
+      .array(
+        z
+          .object({ what: clip(80), before: clip(40), after: clip(40) })
+          .strip()
+      )
+      .max(12)
+      .default([]),
+  })
+  .strip()
+  .transform(v => {
+    // 自相矛盾时从严：列了偏离项就算改动了情节。
+    const level =
+      v.items.length && v.level === "none" ? ("partial" as const) : v.level;
+    return { ...v, level, changed: v.changed || level !== "none" };
+  });
+export type NovelOutlineImpact = z.infer<typeof novelOutlineImpactSchema>;
+export const novelRevisedChapterSchema = z
+  .object({
+    title: text.max(120),
+    text: text.max(6500),
+    changes: z
+      .array(z.object({ issue: text.max(400), what: text.max(800) }).strict())
+      .min(1)
+      .max(20),
+    outlineImpact: novelOutlineImpactSchema.optional(),
+  })
+  .strict();
+export type NovelRevisedChapter = z.infer<typeof novelRevisedChapterSchema>;
+/** 审稿改稿阶段结果：未修改版（原样）、审稿意见、最终修改版同时保留。 */
+export const novelReviseResultSchema = z
+  .object({
+    chapterIndex: z.number().int().positive(),
+    original: z.string(),
+    review: novelReviewSchema,
+    revised: novelRevisedChapterSchema,
+    /** 本次审稿、改稿实际所用的模型标识（前台只经 novelModelLabel 显示线路名）；旧结果缺省。 */
+    models: z
+      .object({ review: z.string().optional(), revise: z.string().optional() })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type NovelReviseResult = z.infer<typeof novelReviseResultSchema>;
+/** 正文字数：去掉空白后的字符数（中文按字计）。 */
+export const novelTextLength = (value: string) =>
+  value.replace(/\s+/g, "").length;
+/** 审稿/改稿各用哪条线路：分开选的优先，缺省沿用 modelPreference（旧请求不受影响）。 */
+export function novelRevisePreference(
+  input: Pick<
+    NovelTestInput,
+    "modelPreference" | "reviewModelPreference" | "rewriteModelPreference"
+  >,
+  step: "review" | "revise"
+) {
+  return step === "review"
+    ? input.reviewModelPreference ?? input.modelPreference
+    : input.rewriteModelPreference ?? input.modelPreference;
+}
+const QUOTE_MARKS = /[“”「」『』"＂‘’'＇〝〞]/;
+/** 引用比对的单字归一化：空白去掉（返回空串），全角转半角，中英文引号统一。 */
+function normalizeQuoteChar(ch: string) {
+  if (/\s/.test(ch) || ch === "\u3000") return "";
+  if (QUOTE_MARKS.test(ch)) return '"';
+  if (ch === "。") return ".";
+  if (ch === "、") return ",";
+  const code = ch.charCodeAt(0);
+  if (code >= 0xff01 && code <= 0xff5e) return String.fromCharCode(code - 0xfee0);
+  return ch;
+}
+/** 归一化后的字符串与每个字在原文中的下标。 */
+function normalizeWithMap(value: string) {
+  let text = "";
+  const map: number[] = [];
+  for (let i = 0; i < value.length; i++) {
+    const n = normalizeQuoteChar(value[i]);
+    if (!n) continue;
+    text += n;
+    map.push(i);
+  }
+  return { text, map };
+}
+export const normalizeNovelQuote = (value: string) => normalizeWithMap(value).text;
+/** 在原文中定位引用：归一化后比对，返回原文中的原始片段区间；找不到返回 null。 */
+export function locateNovelQuote(original: string, quote: string) {
+  const q = normalizeNovelQuote(quote);
+  if (!q) return null;
+  const body = normalizeWithMap(original);
+  const at = body.text.indexOf(q);
+  if (at < 0) return null;
+  const start = body.map[at];
+  const end = body.map[at + q.length - 1] + 1;
+  return { start, end, text: original.slice(start, end) };
+}
+export const NOVEL_REVIEW_MIN_LOCATED = 3;
+/**
+ * 审稿意见定位（1111 放宽失败方式，标准不降）：归一化后能在原文找到的，quote 修正为原文原始片段；
+ * 仍找不到的标 located:false 排在后面、不进改稿清单；能定位的少于 3 条才判审稿失败。
+ */
+export function validateNovelReview(original: string, value: unknown) {
+  const review = novelReviewSchema.parse(value);
+  const located: NovelReview["issues"] = [];
+  const missing: NovelReview["issues"] = [];
+  for (const { located: _, ...issue } of review.issues) {
+    const hit = locateNovelQuote(original, issue.quote);
+    if (hit)
+      located.push({ ...issue, quote: hit.text.length <= 60 ? hit.text : issue.quote });
+    else missing.push({ ...issue, located: false });
+  }
+  if (located.length < NOVEL_REVIEW_MIN_LOCATED)
+    throw new Error(
+      `审稿意见引用的片段在原文中找不到（能定位的仅${located.length}条，至少需要${NOVEL_REVIEW_MIN_LOCATED}条）`
+    );
+  return { ...review, issues: [...located, ...missing] };
+}
+export const NOVEL_REVISED_MIN_CHARS = 1200;
+export const NOVEL_REVISED_MAX_CHARS = 3000;
+export function validateNovelRevision(value: unknown) {
+  const revised = novelRevisedChapterSchema.parse(value);
+  const length = novelTextLength(revised.text);
+  if (length < NOVEL_REVISED_MIN_CHARS || length > NOVEL_REVISED_MAX_CHARS)
+    throw new Error(`修改稿字数${length}，不在${NOVEL_REVISED_MIN_CHARS}–${NOVEL_REVISED_MAX_CHARS}之间`);
+  return revised;
+}
 export function validateNovelStageOutput(
   input: NovelTestInput,
   value: unknown,
@@ -336,6 +540,7 @@ export function validateNovelStageOutput(
       throw new Error("推荐模板不在可用库中或数量不足");
     return result;
   }
+  if (input.stage === "revise") return novelReviseResultSchema.parse(value);
   if (input.stage === "chapter") {
     const chapter = novelChapterSchema.parse(value);
     // A missing optional continuity note must not discard a complete paid chapter.

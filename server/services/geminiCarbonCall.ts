@@ -29,6 +29,13 @@ import {
   type GeminiCarbonUsage,
 } from "../../shared/geminiCarbon";
 import { resolveGeminiModel, type GeminiModelDomain } from "../../shared/geminiModelConfig";
+import {
+  GeminiCarbonTimingStore,
+  estimateGeminiCarbonRequestTokens,
+  getDefaultGeminiCarbonTimingStore,
+  planGeminiCarbonCreate,
+  type GeminiCarbonCreatePlan,
+} from "./geminiCarbonTiming";
 
 /**
  * 限流退避（毫秒），条数即同通道重试次数。与分支 feat/lapian-1111 `server/gemini-audio.ts`
@@ -42,6 +49,8 @@ export const GEMINI_CARBON_RATE_LIMIT_BACKOFF_MS: readonly number[] = [2_000, 5_
  * - 心跳：创建成功后每收到一段数据（含思考摘要片段）就续等；连续 HEARTBEAT_TIMEOUT 没有任何数据才判失败。
  * - 总上限 TEXT_TIMEOUT 只是防挂死的兜底（30 分钟），不是正常路径上的限制。
  * 三项都可用同名 env 覆盖（GEMINI_CARBON_CREATE_TIMEOUT_MS / _HEARTBEAT_TIMEOUT_MS / _CREATE_RETRIES）。
+ * 1111 晚：创建期等待与重新创建次数改为按数据动态决定（见 geminiCarbonTiming.ts）；下面两个常量只作旧口径参考，
+ * env 设了仍强制覆盖。
  */
 export const GEMINI_CARBON_TEXT_TIMEOUT_MS = 30 * 60_000;
 export const GEMINI_CARBON_CREATE_TIMEOUT_MS = 150_000;
@@ -95,6 +104,8 @@ export type GeminiCarbonDeps = {
   vertexProjectId: () => string;
   signGsUri: (gsUri: string, expiresSeconds: number) => string;
   now: () => number;
+  /** 首段耗时统计（动态创建期）；不给 = 无历史、不记录（单测替身缺省如此）。 */
+  timing?: GeminiCarbonTimingStore;
 };
 
 const realDeps = (): GeminiCarbonDeps => ({
@@ -113,6 +124,7 @@ const realDeps = (): GeminiCarbonDeps => ({
   // 真签名函数在 defaultDeps 里延迟加载（gcs 模块在测试替身里不需要）。
   signGsUri: () => { throw new Error("signGsUri 未注入"); },
   now: () => Date.now(),
+  timing: getDefaultGeminiCarbonTimingStore(),
 });
 
 let signImpl: ((gsUri: string, expiresSeconds: number) => string) | undefined;
@@ -153,6 +165,32 @@ export type GeminiCarbonRequest = {
   generationConfig: Record<string, unknown>;
 };
 
+/**
+ * 本次调用的创建期规划：有统计就先懒加载（失败静默），再按通道 × 输入规模给出 createTimeoutMs 与重新创建次数。
+ * 任何异常都退回无历史的规模基线，绝不挡调用。
+ */
+export async function planGeminiCarbonCreateForRequest(deps: GeminiCarbonDeps, channel: GeminiCarbonChannel, request: GeminiCarbonRequest): Promise<GeminiCarbonCreatePlan & { inputChars: number }> {
+  const { inputChars, inputTokens } = estimateGeminiCarbonRequestTokens(request);
+  try {
+    if (deps.timing) {
+      await deps.timing.ensureLoaded();
+      return { ...deps.timing.plan(channel, inputTokens, deps.env), inputChars };
+    }
+  } catch (error) {
+    console.warn(`[geminiCarbon] 创建期统计不可用，按规模基线：${String((error as Error)?.message || error).slice(0, 160)}`);
+  }
+  return { ...planGeminiCarbonCreate({ inputTokens, successFirstDataMs: [], recentCreateFailed: [], env: deps.env }), inputChars };
+}
+
+/** 证据里的规划摘要。 */
+export function geminiCarbonCreatePlanEvidence(plan: GeminiCarbonCreatePlan & { inputChars?: number }) {
+  return {
+    createTimeoutMs: plan.createTimeoutMs, basis: plan.basis, samples: plan.samples, p90Ms: plan.p90Ms, baselineMs: plan.baselineMs,
+    inputChars: plan.inputChars, inputTokensEstimated: plan.inputTokens, bucket: plan.bucket,
+    createRetries: plan.createRetries, retriesBasis: plan.retriesBasis, recentCreateFailures: plan.recentCreateFailures, recentAttempts: plan.recentAttempts,
+  };
+}
+
 export type GeminiCarbonChannelResult = {
   channel: GeminiCarbonChannel;
   model: string;
@@ -166,6 +204,8 @@ export type GeminiCarbonChannelResult = {
   /** 流式：首段数据到达耗时与收到的网络分段数（心跳观测用）。 */
   firstDataMs?: number | null;
   segments?: number;
+  /** 本次实际采用的创建期规划。 */
+  createPlan?: ReturnType<typeof geminiCarbonCreatePlanEvidence>;
 };
 
 function requestHasMedia(request: GeminiCarbonRequest): boolean {
@@ -334,7 +374,7 @@ async function fetchGeminiCarbonStream(
 export async function callGeminiCarbonChannel(
   channel: GeminiCarbonChannel,
   request: GeminiCarbonRequest,
-  options: { timeoutMs?: number; signal?: AbortSignal; save: GeminiCarbonSave; slug: string; backoffMs?: readonly number[]; deps?: GeminiCarbonDeps },
+  options: { timeoutMs?: number; signal?: AbortSignal; save: GeminiCarbonSave; slug: string; backoffMs?: readonly number[]; deps?: GeminiCarbonDeps; createPlan?: GeminiCarbonCreatePlan & { inputChars?: number } },
 ): Promise<GeminiCarbonChannelResult> {
   const deps = options.deps ?? (await defaultDeps());
   const env = deps.env;
@@ -375,9 +415,15 @@ export async function callGeminiCarbonChannel(
       body: buildBody(request, (gsUri) => gsUri),
     };
   };
-  const createMs = positiveInt(env.GEMINI_CARBON_CREATE_TIMEOUT_MS, GEMINI_CARBON_CREATE_TIMEOUT_MS) || GEMINI_CARBON_CREATE_TIMEOUT_MS;
+  // 创建期等待与重新创建次数按数据动态决定（env 设了强制覆盖，见 geminiCarbonTiming.ts）。
+  const plan = options.createPlan ?? (await planGeminiCarbonCreateForRequest(deps, channel, request));
+  const planEvidence = geminiCarbonCreatePlanEvidence(plan);
+  const createMs = plan.createTimeoutMs;
   const heartbeatMs = positiveInt(env.GEMINI_CARBON_HEARTBEAT_TIMEOUT_MS, GEMINI_CARBON_HEARTBEAT_TIMEOUT_MS) || GEMINI_CARBON_HEARTBEAT_TIMEOUT_MS;
-  const createRetries = positiveInt(env.GEMINI_CARBON_CREATE_RETRIES, GEMINI_CARBON_CREATE_RETRIES);
+  const createRetries = plan.createRetries;
+  const recordTiming = (firstDataMs: number | null, ok: boolean) => {
+    try { deps.timing?.record({ channel, inputTokens: plan.inputTokens, firstDataMs, ok, at: deps.now() }); } catch { /* 统计失败不影响调用 */ }
+  };
   let createAttempt = 0;
   for (let retry = 0; ; ) {
     options.signal?.throwIfAborted();
@@ -402,7 +448,9 @@ export async function callGeminiCarbonChannel(
         : stall?.phase === "ceiling" ? `触及总上限（${Math.round(timeoutMs / 60_000)} 分钟）`
         : `${createFailed ? "创建失败" : "中途断流"}：${broken?.causeMessage ?? String((error as Error)?.message || error).slice(0, 160)}`;
       const willRecreate = createFailed && createAttempt < createRetries;
-      await options.save(`${evidenceTag}-error`, { channel, model, reasonZh: reason, elapsedMs: deps.now() - started, createFailed, willRecreate });
+      // 首段耗时统计：创建失败记 null；已有数据后的心跳中断 / 断流不是创建期问题，不计入。
+      if (createFailed) recordTiming(null, false);
+      await options.save(`${evidenceTag}-error`, { channel, model, reasonZh: reason, elapsedMs: deps.now() - started, createFailed, willRecreate, createPlan: planEvidence });
       if (willRecreate) {
         createAttempt += 1;
         console.warn(`[geminiCarbon] ${channel} ${reason}，同通道重新创建（${createAttempt}/${createRetries}）`);
@@ -412,10 +460,11 @@ export async function callGeminiCarbonChannel(
       throw new GeminiCarbonChannelError(channel, stall ? "timeout" : "network", reason);
     }
     const elapsedMs = deps.now() - started;
+    recordTiming(firstDataMs, firstDataMs !== null && status >= 200 && status < 300);
     const usage = readGeminiUsage(payload);
     const finishReason = String((payload as { candidates?: Array<{ finishReason?: unknown }> } | null)?.candidates?.[0]?.finishReason ?? "") || undefined;
     await options.save(`${evidenceTag}-raw`, {
-      channel, model, status, elapsedMs, firstDataMs, segments, finishReason, usage,
+      channel, model, status, elapsedMs, firstDataMs, segments, finishReason, usage, createPlan: planEvidence,
       estimatedCostUsd: estimateGeminiCarbonCostUsd(usage),
       // 原始与还原各存一份：rawStream 是上游原文（流式分段），payload 是还原后的同形回包。
       rawStream: rawText,
@@ -453,7 +502,7 @@ export async function callGeminiCarbonChannel(
     const blockReason = (payload as { promptFeedback?: { blockReason?: unknown } }).promptFeedback?.blockReason;
     if (blockReason) throw new GeminiCarbonChannelError(channel, "blocked", `输入被拦截（${String(blockReason)}）`, status, usage);
     if (!text) throw new GeminiCarbonChannelError(channel, "empty", "空回", status, usage);
-    return { channel, model, status, payload, text, finishReason, usage, elapsedMs, rateLimitRetries: retry, firstDataMs, segments };
+    return { channel, model, status, payload, text, finishReason, usage, elapsedMs, rateLimitRetries: retry, firstDataMs, segments, createPlan: planEvidence };
   }
 }
 
@@ -545,10 +594,11 @@ export async function runGeminiCarbon<T>(input: GeminiCarbonRunInput<T>): Promis
         ? (input.repairPrompt?.(reasonZh) ?? `${input.prompt}\n\n上一版输出未通过服务端校验：${reasonZh}。请逐条修正后重新输出完整结果（不得只输出解释或声称已修好）。`)
         : input.prompt;
       const request = requestFor(prompt);
-      await input.save(`${slug}-request`, { ...requestEvidence(request), channel, label: input.label, promptSha256, repairOf: reasonZh, timeoutMs: input.timeoutMs ?? GEMINI_CARBON_TEXT_TIMEOUT_MS });
+      const createPlan = await planGeminiCarbonCreateForRequest(deps, channel, request);
+      await input.save(`${slug}-request`, { ...requestEvidence(request), channel, label: input.label, promptSha256, repairOf: reasonZh, timeoutMs: input.timeoutMs ?? GEMINI_CARBON_TEXT_TIMEOUT_MS, createPlan: geminiCarbonCreatePlanEvidence(createPlan) });
       let result: GeminiCarbonChannelResult;
       try {
-        result = await callGeminiCarbonChannel(channel, request, { timeoutMs: input.timeoutMs, signal: input.signal, save: input.save, slug, backoffMs: input.backoffMs, deps });
+        result = await callGeminiCarbonChannel(channel, request, { timeoutMs: input.timeoutMs, signal: input.signal, save: input.save, slug, backoffMs: input.backoffMs, deps, createPlan });
       } catch (error) {
         if (!(error instanceof GeminiCarbonChannelError)) {
           if (input.signal?.aborted) throw error;
@@ -569,9 +619,9 @@ export async function runGeminiCarbon<T>(input: GeminiCarbonRunInput<T>): Promis
         const value = await input.validate(decoded, result.text);
         await input.save(`${slug}-parsed`, value);
         const elapsedMs = deps.now() - started;
-        const used = { channel, model, hop: index + 1, repaired: attempt > 1, usage: result.usage, totalUsage, estimatedCostUsd: estimateGeminiCarbonCostUsd(totalUsage), failuresZh: failures, elapsedMs };
+        const used = { channel, model, hop: index + 1, repaired: attempt > 1, usage: result.usage, totalUsage, estimatedCostUsd: estimateGeminiCarbonCostUsd(totalUsage), failuresZh: failures, elapsedMs, firstDataMs: result.firstDataMs ?? null, createPlan: result.createPlan };
         await input.save("hop-used", used);
-        console.info(`[geminiCarbon] ${input.label} 通过：${channel} 第${index + 1}通道${attempt > 1 ? "（修复发）" : ""} in=${result.usage.inputTokens} out=${result.usage.outputTokens} thoughts=${result.usage.thoughtsTokens} 合计≈$${used.estimatedCostUsd} ${result.elapsedMs}ms`);
+        console.info(`[geminiCarbon] ${input.label} 通过：${channel} 第${index + 1}通道${attempt > 1 ? "（修复发）" : ""} in=${result.usage.inputTokens} out=${result.usage.outputTokens} thoughts=${result.usage.thoughtsTokens} 合计≈$${used.estimatedCostUsd} firstDataMs=${result.firstDataMs ?? "-"} ${result.elapsedMs}ms 创建期=${result.createPlan?.createTimeoutMs ?? "-"}ms(${result.createPlan?.basis ?? "-"},n=${result.createPlan?.samples ?? 0})`);
         return { value, text: result.text, channel, model, hop: index + 1, repaired: attempt > 1, usage: result.usage, totalUsage, estimatedCostUsd: used.estimatedCostUsd, failuresZh: failures, elapsedMs, payload: result.payload };
       } catch (error) {
         reasonZh = (error instanceof Error ? error.message : String(error)).slice(0, 600);

@@ -152,7 +152,7 @@ export async function waitKnowledgeCardPdfPageDrained(
  */
 export async function buildKnowledgeCardPdfFile(
   loadPage: Array<() => Promise<Buffer>>,
-  options: { timeoutMs?: number; signal?: AbortSignal; makeOut?: (filePath: string) => Writable } = {},
+  options: { timeoutMs?: number; signal?: AbortSignal; makeOut?: (filePath: string) => Writable; onPage?: (done: number) => void } = {},
 ): Promise<{ filePath: string; dir: string; bytes: number }> {
   if (!loadPage.length) throw new Error("没有可导出的页面");
   const { width, height } = KNOWLEDGE_CARD_PDF_PAGE;
@@ -168,15 +168,22 @@ export async function buildKnowledgeCardPdfFile(
     const readable = doc as unknown as NodeJS.ReadableStream & { readableLength: number; destroyed: boolean };
     // 先排空 PDF 头，随后每页尾排空本页
     await waitKnowledgeCardPdfPageDrained(readable, out, pipe, options);
-    for (const load of loadPage) {
+    // 预取下一页：取图走网络、归一走 CPU，两者交叠能省掉大半等待；内存里最多两页原图。
+    let pending: Promise<Buffer> | undefined = loadPage[0]!();
+    pending.catch(() => {});
+    for (let index = 0; index < loadPage.length; index += 1) {
       options.signal?.throwIfAborted();
       pipe.check();
-      const jpeg = await normalizeKnowledgeCardPage(await load());
+      const current = pending!;
+      pending = index + 1 < loadPage.length ? loadPage[index + 1]!() : undefined;
+      pending?.catch(() => {});
+      const jpeg = await normalizeKnowledgeCardPage(await current);
       options.signal?.throwIfAborted();
       pipe.check();
       doc.addPage({ size: [width, height], margin: 0 });
       doc.image(jpeg, 0, 0, { width, height });
       await waitKnowledgeCardPdfPageDrained(readable, out, pipe, options);
+      options.onPage?.(index + 1);
     }
     doc.end();
     // 收尾同样有界：不能无限等一个停滞的文件系统
@@ -215,6 +222,8 @@ export async function exportKnowledgeCardPdfToGcs(params: {
   userId: number;
   imageUrls: string[];
   title?: string;
+  /** 每写完一页回报一次（后台任务据此给前台进度） */
+  onPage?: (done: number) => void;
 }): Promise<{ gcsUri: string; url: string; pageCount: number }> {
   const { getGcsBucketName, signGsUriV4ReadUrl, uploadStreamToGcs } = await import("./gcs.js");
   const bucket = getGcsBucketName();
@@ -227,7 +236,7 @@ export async function exportKnowledgeCardPdfToGcs(params: {
     if (!res.ok) throw new Error(`读取成品图失败（${res.status}）`);
     return Buffer.from(await res.arrayBuffer());
   });
-  const { filePath, dir, bytes } = await buildKnowledgeCardPdfFile(loaders);
+  const { filePath, dir, bytes } = await buildKnowledgeCardPdfFile(loaders, { onPage: params.onPage });
   // 终审 P2：调用方持有 Node 流的所有权——上传前置失败时 fd 不能靠 GC，
   // finally 里 destroy 并等它真正关闭，之后才删临时目录
   const source = createReadStream(filePath);

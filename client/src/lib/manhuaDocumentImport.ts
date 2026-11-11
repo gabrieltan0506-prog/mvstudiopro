@@ -48,6 +48,33 @@ function checkedText(text: string): string {
     );
   return text;
 }
+/**
+ * 文本解码（1112）：网文 txt 常见 GBK / GB18030、Big5、UTF-16，不能只认 UTF-8。
+ * 依次按 BOM、UTF-8、GB18030、Big5 严格解码，全部失败才报错；不做有损解码。
+ */
+export function decodeNovelText(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const strict = (encoding: string) => new TextDecoder(encoding, { fatal: true }).decode(bytes);
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return strict("utf-16le");
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return strict("utf-16be");
+  for (const encoding of ["utf-8", "gb18030", "big5"]) {
+    try { return strict(encoding).replace(/^\uFEFF/, ""); } catch { /* 换下一种编码 */ }
+  }
+  throw new Error("无法识别文本编码（已尝试 UTF-8、GBK、Big5、UTF-16），请转成 UTF-8 后导入；当前原文保留。");
+}
+
+/** fb2 / html 只取正文文字：按段落换行，丢弃脚本、样式与内嵌图片数据。 */
+function markupText(source: string, type: DOMParserSupportedType): string {
+  const doc = new DOMParser().parseFromString(source, type);
+  doc.querySelectorAll("script,style,binary,head,description").forEach(node => node.remove());
+  const root = doc.querySelector("body") ?? doc.documentElement;
+  const blocks = Array.from(root.querySelectorAll("p,h1,h2,h3,h4,h5,h6,li,title,subtitle,v,blockquote"))
+    .filter(node => !node.querySelector("p,h1,h2,h3,h4,h5,h6,li"))
+    .map(node => (node.textContent || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  return (blocks.length ? blocks.join("\n\n") : (root.textContent || "").replace(/[ \t]+/g, " ").trim());
+}
+
 function plainDraft(name: string, text: string): ManhuaNovelDraft {
   if (!text.trim()) throw new Error("文件没有可读取的正文，当前原文保留。");
   return {
@@ -339,17 +366,15 @@ export async function importManhuaDocument(
   else if (extension === "docx") result = await importDocx(file, options);
   else if (extension === "pdf") result = await importPdf(file, options);
   else if (["txt", "md", "markdown"].includes(extension || "")) {
-    let text: string;
-    try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(
-        await file.arrayBuffer()
-      );
-    } catch {
-      throw new Error("文本不是UTF-8编码，请转换编码后导入；当前原文保留。");
-    }
-    result = plainDraft(file.name, text);
+    result = plainDraft(file.name, decodeNovelText(await file.arrayBuffer()));
+  } else if (extension === "fb2") {
+    result = plainDraft(file.name, markupText(decodeNovelText(await file.arrayBuffer()), "application/xml"));
+  } else if (["html", "htm", "xhtml"].includes(extension || "")) {
+    result = plainDraft(file.name, markupText(decodeNovelText(await file.arrayBuffer()), "text/html"));
+  } else if (["mobi", "azw", "azw3", "kfx"].includes(extension || "")) {
+    throw new Error("Kindle 格式（mobi / azw3）暂不能直接读取，请先转成 epub 再导入；当前原文保留。");
   } else if (extension === "doc") result = await importDoc(file, options);
-  else throw new Error("请选择 doc、docx、pdf、md、txt 或 epub 文件。");
+  else throw new Error("请选择 epub、fb2、pdf、docx、doc、md、txt 或 html 文件。");
   options.signal?.throwIfAborted();
   return result;
 }

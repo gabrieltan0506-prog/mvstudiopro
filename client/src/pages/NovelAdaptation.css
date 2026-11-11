@@ -1213,3 +1213,67 @@
   }
 }
 .novel-project-save-message { margin:0; padding:12px 24px; color:#c5e8da; background:#193b35; font-size:14px; line-height:1.7; }
+
+/* 1111 审稿改稿：改动高亮、审稿意见定位闪烁、大纲偏离提醒 */
+.novel-diff-added {
+  background: rgba(52, 211, 153, 0.28);
+  border-radius: 2px;
+}
+.novel-diff-removed {
+  background: rgba(248, 113, 113, 0.22);
+  text-decoration: line-through;
+  text-decoration-color: rgba(248, 113, 113, 0.9);
+}
+.novel-quote-link {
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+.novel-quote-flash {
+  outline: 2px solid rgba(251, 191, 36, 0.95);
+  animation: novel-quote-flash 1.6s ease-out 1;
+}
+@keyframes novel-quote-flash {
+  0%, 40% { background: rgba(251, 191, 36, 0.75); }
+  100% { background: rgba(251, 191, 36, 0.2); }
+}
+.novel-plot-change-banner {
+  border: 1px solid rgba(251, 191, 36, 0.7);
+  background: rgba(251, 191, 36, 0.12);
+  border-radius: 0.75rem;
+  padding: 0.6rem 0.8rem;
+}
+.novel-plot-change-banner.is-major {
+  border-color: rgba(248, 113, 113, 0.85);
+  background: rgba(248, 113, 113, 0.14);
+}
+.novel-outline-alert {
+  background-color: rgba(251, 191, 36, 0.18) !important;
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.7);
+}
+/* 闪约 6 秒（4 次 × 1.5s）后停在高亮态 */
+.novel-outline-alert-flash {
+  animation: novel-outline-flash 1.5s ease-in-out 4;
+}
+@keyframes novel-outline-flash {
+  0%, 100% { background-color: rgba(251, 191, 36, 0.18); box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.7); }
+  50% { background-color: rgba(248, 113, 113, 0.45); box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.9); }
+}
+.novel-outline-alert-note {
+  color: rgb(253, 230, 138);
+  font-size: 0.875rem;
+}
+.novel-step-alert {
+  margin-left: 0.35rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  background: rgba(248, 113, 113, 0.9);
+  color: #fff;
+}
+@media (prefers-reduced-motion: reduce) {
+  .novel-outline-alert-flash,
+  .novel-quote-flash {
+    animation: none;
+  }
+}

@@ -147,6 +147,7 @@ import {
   type PlatformVisualReportPendingJobV1,
 } from "@/lib/platformVisualReportPersist";
 import {
+  purgeShortlistTitlesPersist,
   readShortlistExpandPersist,
   writeShortlistExpandPersist,
 } from "@/lib/platformShortlistExpandPersist";
@@ -4533,7 +4534,12 @@ export default function PlatformPage() {
     ? platformContent!.contentBlueprints.length
     : 0;
 
-  // 登录后恢复：选题 + 已扩写文案（刷新/误切 Tab 不丢烧积分结果）
+  // 站长 2026-11-11：生成过的选题标题刷新即删。开页先一次性抹掉旧版本存下的候选标题（不分账号、不碰正文与在途任务）。
+  useEffect(() => {
+    purgeShortlistTitlesPersist();
+  }, []);
+
+  // 登录后恢复：已扩写文案与在途扩写任务（选题候选标题只留在本次会话内存，刷新不回填）
   useEffect(() => {
     if (!workbenchUserKey) return;
     if (shortlistExpandRestoredForKeyRef.current === workbenchUserKey) return;
@@ -4546,9 +4552,7 @@ export default function PlatformPage() {
     if (saved.viralPreferences) { setViralPlatforms(saved.viralPreferences.platforms); setXhsFormats(saved.viralPreferences.formats); }
     setCoverReferencePhotoMap(saved.referencePhotos?.byScene || {});
     setGlobalCoverReferencePhotoUrl(saved.referencePhotos?.global || null);
-    setFailedExpandPicks(saved.failedPicks || []);
     setPendingExpand(saved.pendingExpand);
-    setTopicShortlist(saved.topics);
     if (saved.contentBlueprints.length > 0) {
       setPlatformContent((prev) => {
         if (Array.isArray(prev?.contentBlueprints) && prev!.contentBlueprints.length > 0) return prev;
@@ -4559,8 +4563,6 @@ export default function PlatformPage() {
       });
       setHasAnalyzed(true);
       pushShortlistDebug(`本机恢复：扩写文案 ${saved.contentBlueprints.length} 条（刷新不丢）`);
-    } else if (saved.topics.length > 0) {
-      pushShortlistDebug(`本机恢复：选题初选 ${saved.topics.length} 条`);
     }
   }, [workbenchUserKey, pushShortlistDebug]);
 
@@ -4575,12 +4577,11 @@ export default function PlatformPage() {
       referencePhotos: { byScene: coverReferencePhotoMap, global: globalCoverReferencePhotoUrl || undefined },
       viralPreferences: { platforms: viralPlatforms, formats: xhsFormats },
       userKey: workbenchUserKey,
-      topics: topicShortlist,
+      // 选题候选标题与未出稿候选不落盘（刷新即删），只存正文与在途任务
       contentBlueprints: bps,
-      failedPicks: failedExpandPicks,
       pendingExpand,
     });
-  }, [workbenchUserKey, topicShortlist, platformContent?.contentBlueprints, failedExpandPicks, pendingExpand, viralPlatforms, xhsFormats, shortlistRestoreKey, coverReferencePhotoMap, globalCoverReferencePhotoUrl]);
+  }, [workbenchUserKey, platformContent?.contentBlueprints, pendingExpand, viralPlatforms, xhsFormats, shortlistRestoreKey, coverReferencePhotoMap, globalCoverReferencePhotoUrl]);
 
   // 监管验收：?demoExpand=1 注入假文案，不烧积分，只验同页可见
   useEffect(() => {
@@ -8046,8 +8047,9 @@ export default function PlatformPage() {
 
   /** 自定義文案生成圖文筆記 — 獨立 mutation；回呼留空，全部流程在 handler 以 mutateAsync 串接控制。 */
   const generateCustomNoteMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation();
-  const exportKnowledgeCardPdfMutation = trpc.mvAnalysis.exportKnowledgeCardPdf.useMutation();
+  const startKnowledgeCardPdfExportMutation = trpc.mvAnalysis.startKnowledgeCardPdfExport.useMutation();
   const [knowledgeCardPdfBusy, setKnowledgeCardPdfBusy] = useState(false);
+  const [knowledgeCardPdfProgress, setKnowledgeCardPdfProgress] = useState<{ done: number; total: number } | null>(null);
   const [knowledgeCardPdfUrl, setKnowledgeCardPdfUrl] = useState<string | null>(null);
   /** 0923 用户令：上传 EPUB 后给「转好的 PDF」下载按钮（服务端 GCS 存档签名链接，下载经 Fly 临时转存） */
   const [knowledgeCardEpubPdfs, setKnowledgeCardEpubPdfs] = useState<Array<{ fileName: string; url: string }>>([]);
@@ -8211,30 +8213,53 @@ export default function PlatformPage() {
     }
   };
 
-  /** PDF保留GCS存档，下载时由服务端转存Fly临时空间。 */
+  /**
+   * 纯图片 PDF：发起即拿任务标识，后台合成，前台轮询进度（1111）。
+   * 多页 4K 合成要数分钟，原先的同步长请求会被网关截断，表现为「导出中断」。
+   * PDF 保留 GCS 存档，下载时由服务端转存 Fly 临时空间。
+   */
   const downloadKnowledgeCardPdf = async (urls: string[]) => {
     if (!urls.length || knowledgeCardPdfBusy) return;
     setKnowledgeCardPdfBusy(true);
+    setKnowledgeCardPdfProgress({ done: 0, total: urls.length });
     try {
-      const res = await exportKnowledgeCardPdfMutation.mutateAsync({ imageUrls: urls, title: extractInfographicSubjectFromUserCopy(customNoteText) });
+      const title = extractInfographicSubjectFromUserCopy(customNoteText);
+      type PdfTaskState = Awaited<ReturnType<typeof startKnowledgeCardPdfExportMutation.mutateAsync>> | { status: "missing"; taskId: string };
+      let state: PdfTaskState = await startKnowledgeCardPdfExportMutation.mutateAsync({ imageUrls: urls, title });
+      let reissued = 0, misses = 0;
+      const deadline = Date.now() + 40 * 60_000;
+      while (state.status === "running" || state.status === "missing") {
+        if (Date.now() > deadline) throw new Error("PDF 合成时间过长，请稍后重新点击导出");
+        if (state.status === "missing") {
+          if (++reissued > 3) throw new Error("PDF 合成任务暂时无法续看，请重新点击导出");
+          state = await startKnowledgeCardPdfExportMutation.mutateAsync({ imageUrls: urls, title });
+          continue;
+        }
+        setKnowledgeCardPdfProgress({ done: state.donePages, total: state.totalPages });
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        // 单次轮询失败（网络抖动）不算导出失败，连续多次才放弃
+        try { state = await trpcUtils.client.mvAnalysis.knowledgeCardPdfExportStatus.query({ taskId: state.taskId }); misses = 0; }
+        catch (error) { if (++misses > 8) throw error; }
+      }
+      if (state.status === "failed") throw new Error(state.error || "PDF 合成失败，请稍后重试");
+      const res = state.result;
       // 临时下载链接同时留在页面上，便于再次下载。
       const downloadUrl = await cachePhotoTemporaryMedia(res.url, "pdf");
       setKnowledgeCardPdfUrl(downloadUrl);
       triggerTemporaryDownload(downloadUrl, "knowledge-cards.pdf");
-      toast.success(`PDF 已生成（${res.pageCount} 页），可点「打开 / 下载 PDF」`);
+      toast.success(`纯图片 PDF 已生成（${res.pageCount} 页），可点「打开 / 下载 PDF」`);
     } catch (e) {
       const raw = String((e as { message?: string })?.message || "");
-      // 服务端被中断（重启 / 内存不足 / 网关截断）时回的是 HTML 或纯文本，
-      // tRPC 解析失败抛出的「Unexpected token …is not valid JSON」对用户毫无意义，换成人话
       const broken = /is not valid JSON|Unexpected token|Failed to fetch|NetworkError|ECONNRESET|terminated/i.test(raw);
       toast.error(
         broken
-          ? "PDF 导出中断了，服务端没能返回结果。已生成的卡片还在，可以先用每页右下角单张下载，或稍后重试整套导出。"
+          ? "网络中断，没能确认 PDF 是否合成完成。再点一次导出会接着看同一份，不会重做。"
           : `PDF 导出失败：${raw.slice(0, 120)}`,
         { duration: 10_000 },
       );
     } finally {
       setKnowledgeCardPdfBusy(false);
+      setKnowledgeCardPdfProgress(null);
     }
   };
   const prepareKnowledgeCardCopyMutation = trpc.mvAnalysis.prepareKnowledgeCardCopy.useMutation();
@@ -16050,12 +16075,14 @@ export default function PlatformPage() {
                         className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
                       >
                         <Download className="h-3.5 w-3.5" />
-                        {knowledgeCardPdfBusy ? "正在合成 PDF…" : `整套下载 PDF（${customNoteImages.filter(Boolean).length} 页 · 统一 3840×2160）`}
+                        {knowledgeCardPdfBusy
+                          ? `正在合成纯图片 PDF…${knowledgeCardPdfProgress ? ` ${knowledgeCardPdfProgress.done}/${knowledgeCardPdfProgress.total} 页` : ""}`
+                          : `导出纯图片 PDF（${customNoteImages.filter(Boolean).length} 页 · 统一 3840×2160）`}
                       </button>
                       {knowledgeCardPdfUrl ? (
                         <a href={gcsTransferUrl(knowledgeCardPdfUrl)} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-[#8cefff] underline">打开 / 下载 PDF</a>
                       ) : null}
-                      <span className="text-[11px] text-[#c9c0e6]/45">单张下载见各页右下角</span>
+                      <span className="text-[11px] text-[#c9c0e6]/45">只含配图，不含正文；含正文的图文手册 PDF / PPTX 在「图文知识手册」面板里生成。单张下载见各页右下角</span>
                     </div>
                   )}
                   {customNoteKind === "single_page_knowledge_card" && (customNoteImages.length > 0 ? customNoteImages : [customNoteImageUpper, customNoteImageLower].filter(Boolean) as string[]).map((url, idx, arr) => url ? (
