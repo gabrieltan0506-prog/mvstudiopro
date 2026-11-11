@@ -30,7 +30,7 @@
 |---|---|---|
 | 纯函数（前后端共用） | `shared/manhuaTemplateLapianView.ts` | 镜头构造表、分段计划、段证据包、视觉频次统计、模型输出 schema、提示词时间窗校验、证据摘要输入 |
 | 服务 | `server/services/manhuaTemplateLapianService.ts` | 读卡、三跳文字模型（`CREATIVE_LLM_HOPS`：GLM 5.3 FlashX@EvoLink → @OpenRouter → DeepSeek V4.1 Flash）、写坏带原因重写一次再切跳、request/raw/parsed/rejected/error 逐发永久落 GCS、结果缓存、片段裁切签名 |
-| 路由 | `server/routers/manhuaTemplateLapian.ts`（注册为 `manhuaTemplateLapian`） | 四个接口全部 `assertSiteOwner`（与 `renderEpisodeReport` 等模板学习接口同一判定：`OWNER_OPEN_ID`），不扣费 |
+| 路由 | `server/routers/manhuaTemplateLapian.ts`（注册为 `manhuaTemplateLapian`：`segmentPrompt` / `genes` / `segmentClip`，均走鉴权 Fly 长连接） | 三个接口全部 `assertSiteOwner`（与 `renderEpisodeReport` 等模板学习接口同一判定：`OWNER_OPEN_ID`），不扣费 |
 | 前台 | `client/src/components/ManhuaTemplateLapianPanel.tsx`，挂在 `ManhuaApprovedTemplateOwnerDrawer`（站长专属正式模板详情） | 「镜头构造」「复刻提示词」「视觉基因」三个区块，一键复制；没改 PlatformPage |
 
 ### 分段规则（确定性，`tpl_lapian_v1`）
@@ -53,7 +53,8 @@
 1. 线上 `tmp/native-deep-read/` 是否有桶生命周期规则（决定旧集能否出片段）。若有，建议把有恢复索引的分片迁出 `tmp/` 或给前缀加例外——这是删除/存储策略，需站长决定。
 2. 片段裁切固定输出 30fps（`videoSegmentCutRate` 只接受 24–60）；如果源是 25fps 会有帧率转换，需要的话改成先 ffprobe 读源帧率。
 3. 真实学习卡与真实模型输出质量未验证（本次不发任何真实模型请求）；首次上线建议站长挑一集点一段看提示词质量。
-4. 视觉基因一次调用的输入是全片逐镜视觉字段（41 分钟 527 镜约十几万字），在 GLM 上下文内，但成本约为单段的数十倍；如嫌贵可改为按学习分片各汇一次再合并（需要拍板）。
+4. 前端组件只做了 esbuild 语法检查，未跑全量 tsc / vite build（共用机器内存限制）；服务端与 shared 新文件已用定向 tsc 检查通过。合并前请在 CI 跑一次全量类型检查。
+5. 视觉基因一次调用的输入是全片逐镜视觉字段（41 分钟 527 镜约十几万字），在 GLM 上下文内，但成本约为单段的数十倍；如嫌贵可改为按学习分片各汇一次再合并（需要拍板）。
 
 ## 6. 拉片可以再向模板学习学什么（只列不做）
 
