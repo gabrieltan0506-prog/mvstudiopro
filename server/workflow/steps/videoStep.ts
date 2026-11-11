@@ -45,5 +45,5 @@ export async function videoStep(task:any): Promise<any> {
   void provider;
   void model;
   void prompt;
-  throw new Error("legacy_video_step_retired: 请通过当前 Seedance/Kling 异步成片入口生成");
+  throw new Error("legacy_video_step_retired: 请通过当前异步成片入口生成");
 }

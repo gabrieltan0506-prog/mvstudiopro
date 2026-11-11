@@ -30,6 +30,8 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   for (const key of ["KLING_CN_IMAGE_ACCESS_KEY", "KLING_CN_IMAGE_SECRET_KEY", "KLING_CN_VIDEO_ACCESS_KEY", "KLING_CN_VIDEO_SECRET_KEY", "AIMUSIC_API_KEY", "COMETAPI_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"]) vi.stubEnv(key, "test-key");
   vi.stubEnv("JWT_SECRET", "test-session-secret");
+  // 本文件既有用例验证的是分层鉴权，按「KLING_RETIRED=0 紧急恢复」口径跑；停用口径见文末「可灵停用」用例。
+  vi.stubEnv("KLING_RETIRED", "0");
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
@@ -122,5 +124,58 @@ describe("/api/openai-image", () => {
     expect(r.status).toBe(403);
     expect(r.body.error).toBe("supervisor_only");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("可灵停用（缺省）：新建入口 410，轮询保留", () => {
+  beforeEach(() => { vi.stubEnv("KLING_RETIRED", ""); });
+
+  it.each(["klingCreate", "klingT2V", "klingI2V", "KLINGCREATE"])("/api/jobs op=%s 匿名/普通/管理员/进程内一律 410，零上游", async (op) => {
+    for (const who of [null, { id: 7, role: "user" }, { id: 1, role: "admin" }]) {
+      if (who) h.auth.mockResolvedValue(who); else h.auth.mockRejectedValue(new Error("no session"));
+      const r = await jobs(op);
+      expect(r.status).toBe(410);
+      expect(r.body).toEqual(expect.objectContaining({ ok: false, error: "kling_retired" }));
+    }
+    const internal = await jobs(op, { headers: buildInternalGatewayHeaders() });
+    expect(internal.status).toBe(410);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("op=workflowGenerateVideo（唯一通道是可灵）对监管 410，零上游", async () => {
+    h.auth.mockResolvedValue({ id: 1, role: "supervisor" });
+    const r = await jobs("workflowGenerateVideo", { body: { workflowId: "wf-1" } });
+    expect(r.status).toBe(410);
+    expect(r.body.error).toBe("kling_retired");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("op=klingTask 轮询不受停用影响：管理员照常查在途任务", async () => {
+    h.auth.mockResolvedValue({ id: 1, role: "admin" });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ data: { task_status: "succeed", task_result: { videos: [{ url: "https://media.example/v.mp4" }] } } }), { status: 200 }));
+    const r = await jobs("klingTask");
+    expect(r.status).toBe(200);
+    expect(r.body.videoUrl).toBe("https://media.example/v.mp4");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("/api/kling-image：POST 与 probe 先于鉴权 410；GET 轮询照常（管理员）", async () => {
+    h.auth.mockResolvedValue({ id: 1, role: "admin" });
+    for (const req of [{ method: "POST", body: { prompt: "测试" } }, { method: "GET", query: { op: "probe" } }]) {
+      const r = await call(klingImageHandler, req);
+      expect(r.status).toBe(410);
+      expect(r.body.error).toBe("kling_retired");
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ data: { task_status: "succeed", task_result: { images: [{ url: "https://media.example/i.png" }] } } }), { status: 200 }));
+    const poll = await call(klingImageHandler, { method: "GET", query: { taskId: "t1" } });
+    expect(poll.status).toBe(200);
+    expect(poll.body.imageUrl).toBe("https://media.example/i.png");
+  });
+
+  it("KLING_RETIRED=0 紧急恢复：管理员 klingCreate 重新走到鉴权之后", async () => {
+    vi.stubEnv("KLING_RETIRED", "0");
+    h.auth.mockResolvedValue({ id: 7, role: "user" });
+    expect((await jobs("klingCreate")).status).toBe(403);
   });
 });

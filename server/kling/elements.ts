@@ -9,6 +9,7 @@
  * Elements are used in Omni Video via element_list + <<<element_N>>> prompt syntax.
  */
 
+import { assertKlingNotRetired } from "./retired";
 import { getKlingClient } from "./client";
 import type {
   CreateImageElementRequest,
@@ -28,6 +29,7 @@ export async function createImageElement(
   params: CreateImageElementRequest,
   region?: "global" | "cn"
 ) {
+  assertKlingNotRetired(); // 可灵停用兜底：新建一律不打上游（轮询/查询不拦）
   const client = getKlingClient();
 
   const response = await client.request<{ element_id: number }>({
@@ -50,6 +52,7 @@ export async function createVideoElement(
   params: CreateVideoElementRequest,
   region?: "global" | "cn"
 ) {
+  assertKlingNotRetired(); // 可灵停用兜底：新建一律不打上游（轮询/查询不拦）
   const client = getKlingClient();
 
   const response = await client.request<{ element_id: number }>({

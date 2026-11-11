@@ -7,6 +7,7 @@ import { getDb } from "../db";
 import { getUserPlan } from "../credits";
 import type { GenerationProvider } from "./provider-manager";
 import { hasUnlimitedAccess, isSupervisorAccount } from "./access-policy";
+import { withoutKlingProviders } from "../kling/retired";
 
 export type UserTier = "free" | "beta" | "paid" | "supervisor";
 export type ProviderSurface = "image" | "video" | "text";
@@ -34,8 +35,9 @@ const PROVIDER_CHAINS: Record<UserTier, Record<ProviderSurface, GenerationProvid
   },
 };
 
+/** 可灵停用（方案 A）：停用时从链里剔除 kling_beijing / fal_kling_video，其余通道原序保留；KLING_RETIRED=0 恢复原链。 */
 export function getTierProviderChain(tier: UserTier, surface: ProviderSurface): GenerationProvider[] {
-  return [...PROVIDER_CHAINS[tier][surface]];
+  return withoutKlingProviders(PROVIDER_CHAINS[tier][surface]);
 }
 
 export function shouldApplyWatermarkForTier(tier: UserTier): boolean {

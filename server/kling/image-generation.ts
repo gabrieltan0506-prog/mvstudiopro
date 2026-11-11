@@ -7,6 +7,7 @@
  * - 1K and 2K resolution
  */
 
+import { assertKlingNotRetired } from "./retired";
 import { getKlingClient } from "./client";
 
 // ─── Types ────────────────────────────────────────────
@@ -44,6 +45,7 @@ export async function createImageTask(
   request: CreateImageRequest,
   region?: "global" | "cn",
 ): Promise<ImageTaskResult> {
+  assertKlingNotRetired(); // 可灵停用兜底：新建一律不打上游（轮询/查询不拦）
   const client = getKlingClient();
   const response = await client.request<ImageTaskResult>({
     method: "POST",
