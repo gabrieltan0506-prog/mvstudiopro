@@ -6,7 +6,7 @@
 import React from "react";
 import { VIDEO_BREAKDOWN_KEY_MOMENT_LABELS, videoBreakdownShotLengthDistribution, type VideoBreakdown } from "@shared/videoBreakdown";
 import { gcsTransferUrl } from "@/lib/gcsTransfer";
-import { formatClock, sortedKeyMoments, splitArrowStages } from "@/lib/videoBreakdownView";
+import { formatClock, sortedKeyMoments, splitArrowStages, viralStrategyRows } from "@/lib/videoBreakdownView";
 
 const card = "rounded-2xl border border-white/10 bg-white/[0.04] p-4 sm:p-5";
 const h3 = "mb-3 text-sm font-medium text-white/70";
@@ -68,6 +68,34 @@ export function CraftBlock({ result }: { result: VideoBreakdown }) {
         <h3 className={h3}>风格判词</h3>
         <ul className="flex flex-wrap gap-1.5">{craft.styleTags.map((tag, i) => <li key={i} className="rounded-full border border-violet-300/30 bg-violet-500/10 px-2.5 py-0.5 text-xs text-violet-100">{tag}</li>)}</ul>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 爆款策略（1111，原「爆款复刻」的内容策略分析并入拉片）：同一次看片顺带产出，不另计价；字段缺失整块不渲染。
+ * 「口播 / 文案结构」带箭头时按阶段展示。
+ */
+export function ViralStrategyBlock({ result }: { result: VideoBreakdown }) {
+  const rows = viralStrategyRows(result);
+  if (!rows.length) return null;
+  const titles = result.overview.viralStrategy?.titleIdeas || [];
+  return (
+    <div data-lapian-viral-strategy className={`${card} space-y-4 border-amber-300/25 bg-amber-400/[0.05]`}>
+      {rows.map(row => row.label === "口播 / 文案结构"
+        ? <Steps key={row.label} label={row.label} text={row.value} />
+        : (
+          <div key={row.label}>
+            <h3 className={h3}>{row.label}</h3>
+            <p className="text-sm leading-6 text-white/85">{row.value}</p>
+          </div>
+        ))}
+      {titles.length > 0 && (
+        <div>
+          <h3 className={h3}>标题参考</h3>
+          <ul className="space-y-1 text-sm leading-6 text-white/85">{titles.map((title, i) => <li key={i} className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5">{title}</li>)}</ul>
+        </div>
+      )}
     </div>
   );
 }

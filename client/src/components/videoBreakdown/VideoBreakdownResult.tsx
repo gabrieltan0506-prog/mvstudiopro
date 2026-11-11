@@ -4,11 +4,11 @@
  */
 // 单测在 node 环境走经典 JSX 转换，需要 React 在作用域内。
 import React, { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Check, ClipboardCopy, Clapperboard, Download, Film, Copy as RecreateIcon, Music, Wand2, X, RotateCcw, Send, Sparkles } from "lucide-react";
+import { AlertTriangle, Check, ClipboardCopy, Clapperboard, Download, Film, Copy as RecreateIcon, Music, Wand2, X, RotateCcw, Send, Sparkles, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { formatVideoBreakdownRecreatePrompt, type VideoBreakdown, type VideoBreakdownSegment } from "@shared/videoBreakdown";
 import { buildVideoBreakdownBgmPrompt } from "@shared/videoBreakdownBgm";
-import { CraftBlock, KeyMomentsBlock, ShotLengthBars, SoundBlock } from "./VideoBreakdownOverviewExtras";
+import { CraftBlock, KeyMomentsBlock, ShotLengthBars, SoundBlock, ViralStrategyBlock } from "./VideoBreakdownOverviewExtras";
 import { videoBreakdownRemakeInputSchema, type VideoBreakdownRemakeInput } from "@shared/videoBreakdownRemake";
 import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import {
@@ -22,6 +22,7 @@ import {
   markdownFileName,
   segmentHeading,
   segmentPlayback,
+  speechRows,
 } from "@/lib/videoBreakdownView";
 
 export type CopyHandler = (text: string, label: string) => void | Promise<void>;
@@ -146,6 +147,18 @@ function SegmentCard({ segment, clipUrl, sourceUrl, focus, onCopy, onSendToCanva
               </tbody>
             </ScrollTable>
           </section>
+          {speechRows(segment).length > 0 && (
+            <section data-segment-speech={segment.index}>
+              <h4 className="mb-2 text-sm font-medium text-white/70">口播与字幕</h4>
+              <ScrollTable label={`${segmentHeading(segment)} 口播与字幕`} minWidth={420}>
+                <tbody>
+                  {speechRows(segment).map(row => (
+                    <tr key={row.label}><th scope="row" className={`${th} w-28 align-top`}>{row.label}</th><td className={`${td} whitespace-pre-wrap`}>{row.value}</td></tr>
+                  ))}
+                </tbody>
+              </ScrollTable>
+            </section>
+          )}
         </div>
       </div>
       <section className="mt-5 rounded-xl border border-violet-400/20 bg-violet-500/[0.06] p-4">
@@ -269,6 +282,13 @@ export function VideoBreakdownResultView({ result, sourceUrl, clipUrls, keyMomen
         </nav>
       </section>
 
+      {result.overview.viralStrategy && (
+        <section className="space-y-4">
+          <SectionTitle icon={<TrendingUp className="h-5 w-5 text-amber-300" />}>爆款策略</SectionTitle>
+          <ViralStrategyBlock result={result} />
+        </section>
+      )}
+
       <section className="space-y-4">
         <SectionTitle icon={<Film className="h-5 w-5 text-violet-300" />}>全片创作拆解</SectionTitle>
         <div className={`${card} p-4 sm:p-5`}>
@@ -338,7 +358,7 @@ export function VideoBreakdownIntro() {
       <p><strong className="text-white">拉一支片</strong>，逐段拆开它的美术、光色、景别、运镜与节奏。拆完有两种用法：<strong className="text-white">直接复刻</strong>这支片，或<strong className="text-white">套用它的拍法</strong>，换上你自己的主体和场景，做一支新的短视频。</p>
       <ul className="grid gap-2 sm:grid-cols-3">
         {[
-          ["拆解", "全片视觉基因、逐段镜头构造与段落表达，每段可回放"],
+          ["拆解", "爆款原因与开头钩子、全片视觉基因、逐段镜头与口播台词，每段可回放"],
           ["直接复刻", "每段按秒锁定的复刻提示词＋参考片段＋配乐，一键送入画布逐段生成"],
           ["套用拍法做新片", "保留分段、镜头节奏、运镜与光色，主体和场景换成你的"],
         ].map(([title, desc]) => (
