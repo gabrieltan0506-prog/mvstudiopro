@@ -13,6 +13,7 @@ import {
   NOVEL_CRAFT_FIRST_THREE_ID,
   NOVEL_CRAFT_GENRE_CARDS,
   NOVEL_CRAFT_GENRE_RULE,
+  NOVEL_CREATIVE_FIRST_RULE,
   NOVEL_CRAFT_SHORT_CARDS,
   NOVEL_CRAFT_PREFERRED_MARK,
   NOVEL_CRAFT_PREFERRED_RULE,
@@ -271,7 +272,7 @@ export function renderNovelCraftShortAppendix(ids: readonly string[]) {
   const cards = getNovelCraftCards(ids).filter(c => c.form === "short");
   if (!cards.length) return "";
   return [
-    "【短篇结构公式】按本作题材与篇幅自动带上，只作整篇结构参考；与本站写作规范冲突时以本站规范为准。",
+    "【短篇结构公式】按本作题材与篇幅自动带上，只作整篇结构参考，不是必须照搬的公式，本作独有的创意优先；与本站写作规范冲突时以本站规范为准。",
     ...cards.map(c => `《${c.title}》\n${c.body}`),
   ].join("\n\n");
 }
@@ -287,7 +288,7 @@ export function renderNovelCraftInjection(
   selection: Pick<NovelCraftSelection, "craft" | "methods">,
   entries: readonly NovelTemplateDigestEntry[]
 ) {
-  const parts: string[] = ["本次取用的技法与手法（按本次任务从索引中挑选；技法条目是通用写作规则，手法条目来自已选模板的手法卡）："];
+  const parts: string[] = [NOVEL_CREATIVE_FIRST_RULE, "本次取用的技法与手法（按本次任务从索引中挑选；技法条目是通用写作规则，手法条目来自已选模板的手法卡）："];
   // 本站规范条目在前，题材条目其次，通用条目最后（各自保持选择顺序）。
   const picked = getNovelCraftCards(selection.craft);
   const rank = (c: NovelCraftCard) => (c.source === "owner" ? 0 : c.source === "genre" ? 1 : 2);

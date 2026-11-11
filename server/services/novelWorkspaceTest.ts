@@ -38,7 +38,7 @@ import {
   shouldRetrieveNovelCraft,
 } from "./novelCraftRetrieval";
 import { shortlistNovelCatalog, shouldShortlistNovelCatalog } from "./novelCatalogShortlist";
-import { getNovelCraftCards } from "../../shared/novelCraftCards";
+import { getNovelCraftCards, NOVEL_CREATIVE_FIRST_RULE } from "../../shared/novelCraftCards";
 import {
   NOVEL_IMITATION_ADVICE_RULES,
   NOVEL_IMITATION_CHAPTER_RULES,
@@ -451,6 +451,8 @@ export async function runNovelWorkspaceTest(
       }
     }
     if (input.stage === "advice") {
+      // 创意优先（站长 1112）：顾问先帮用户立住本作独有的创意，题材与模板只是底线。
+      templatesForPrompt = templatesForPrompt ? `${templatesForPrompt}\n\n${NOVEL_CREATIVE_FIRST_RULE}` : NOVEL_CREATIVE_FIRST_RULE;
       // 短篇结构公式：判定为短篇且题材命中时附 1 条（纯字符串匹配，不调模型；大纲阶段由检索结果附带）。
       const shortIds = novelCraftShortIdsForInput(input);
       const appendix = renderNovelCraftShortAppendix(shortIds);
