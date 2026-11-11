@@ -330,7 +330,9 @@ describe("1111 线路三（Carbon 三通道）", () => {
     vi.stubEnv("GEMINI_API_KEY", "gem-key");
     vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS_JSON", "");
     vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS", "");
-    vi.stubEnv("GEMINI_CARBON_CHANNEL_ORDER", "");
+    // 本组用例固定通道顺序与「不重新创建」，只验线路三自身的行为；缺省顺序与重新创建在调用层用例里验。
+    vi.stubEnv("GEMINI_CARBON_CHANNEL_ORDER", "evolink,gemini_api,vertex");
+    vi.stubEnv("GEMINI_CARBON_CREATE_RETRIES", "0");
   };
   const reply = (text: string, finishReason = "STOP") => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] }, finishReason }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, thoughtsTokenCount: 3 } }), { status: 200 });
 
@@ -344,7 +346,7 @@ describe("1111 线路三（Carbon 三通道）", () => {
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     const result = await callNovelStage("提示词", true, "req-1", { modelPreference: "carbon", saveEvidence: async (name) => { saved.push(name); }, onRouteEvent: async (e) => { events.push(e); }, onRaw: async (r) => { raws.push(r); } });
     expect(result).toMatchObject({ text: '{"title":"t"}', model: "gemini-4-carbon", route: { gateway: "evolink", attempt: 1 } });
-    expect(urls).toEqual(["https://direct.evolink.ai/v1beta/models/gemini-4-carbon:generateContent"]);
+    expect(urls).toEqual(["https://direct.evolink.ai/v1beta/models/gemini-4-carbon:streamGenerateContent?alt=sse"]);
     expect(saved).toEqual(expect.arrayContaining(["stage", "hop-1-evolink-request", "hop-1-evolink-raw", "hop-1-evolink-decoded", "hop-1-evolink-parsed", "hop-used"]));
     expect(events.map(e => e.phase)).toEqual(["selected"]);
     expect(JSON.parse(raws[0]!).usageMetadata.thoughtsTokenCount).toBe(3);

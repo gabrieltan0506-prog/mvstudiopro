@@ -223,7 +223,7 @@ export const callNovelStage: NovelStageCall = async (
 export const NOVEL_CARBON_UNAVAILABLE_ZH = "暂时不可用（已尝试全部通道），旧稿保留，本次未扣点，请稍后重试或改选其他线路";
 
 /**
- * 线路三（1111）：Gemini 4 Carbon 经共用调用层（EvoLink → Gemini API → Vertex，可配），模型按 novelWriterCarbon 领域（缺省 gemini-4-carbon）。
+ * 线路三（1111）：Gemini 4 Carbon 经共用调用层（Vertex → Gemini API → EvoLink，可配），模型按 novelWriterCarbon 领域（缺省 gemini-4-carbon）。
  * 失败定义、429 退避、写坏修复一次再切同共用层；json 阶段要求严格 JSON（下游 JSON.parse 与 parseNovelModelJson 都能读）。
  * 证据：trace.saveEvidence 或缺省 GCS `gemini-carbon/novel/<日期>/<uuid>/`；通过的那一发原始回包再交 onRaw（与线路一 / 二同口径）。
  */
