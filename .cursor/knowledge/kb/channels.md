@@ -26,6 +26,7 @@
 | `audioTwoHop` | 听音两跳缺省 | `GEMINI_AUDIO_TWO_HOP_MODEL` | `gemini-3.8-flash`（全局） | 否 |
 | `mvSongHearing` | MV 独立听歌 | `MV_SONG_HEARING_MODEL` | `gemini-3.8-flash`（全局） | 否 |
 | `montageGradeAdvice` | 成片调色建议 | `MONTAGE_GRADE_ADVICE_MODEL` | `gemini-3.8-flash`（全局） | 否 |
+| `videoBreakdown` | 拉片（视频创作拆解：整片看片 + 逐段镜头 + 复刻提示词） | `VIDEO_BREAKDOWN_MODEL` | `gemini-3.8-flash`（全局） | 否 |
 | `canvasVision` | 画布看图 / 视频反推帧 | `CANVAS_VISION_MODEL` | `gemini-3.8-flash`（全局） | 否 |
 | `clipQualityReview` | 漫剧成片质检 | `MANHUA_CLIP_QUALITY_MODEL` | `gemini-3.8-flash`（全局） | 否 |
 | `manhuaAdvisorWatch` | 漫剧顾问·看片 | `MANHUA_ADVISOR_WATCH_MODEL` | `gemini-3.8-flash`（全局） | 否 |

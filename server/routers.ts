@@ -31,6 +31,7 @@ import { novelWorkspaceRouter } from "./routers/novelWorkspace";
 import { createKnowledgeCardPageJob, reserveKnowledgeCardImageJob, checkKnowledgeCardImageMaySubmit } from "./jobs/knowledgeCardPageTask";
 import { novelExcerptSchema } from "../shared/manhuaNovelSource.js";
 import { canvasMusicMvRouter } from "./routers/canvasMusicMv";
+import { videoBreakdownRouter } from "./routers/videoBreakdown";
 import { canvasMusicMvAssembleRouter } from "./routers/canvasMusicMvAssemble";
 import { buildManhuaDirectionCanonFromSelection } from "../shared/manhuaDirectionCanonLibrary.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -2996,6 +2997,8 @@ export const appRouter = router({
   fileConversion: fileConversionRouter,
   novelWorkspace: novelWorkspaceRouter,
   canvasMusicMv: canvasMusicMvRouter,
+  /** 1111 拉片（视频创作拆解），契约 shared/videoBreakdown.ts。 */
+  videoBreakdown: videoBreakdownRouter,
   coverWorkshop: coverWorkshopRouter,
   canvasMusicMvAssemble: canvasMusicMvAssembleRouter,
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
