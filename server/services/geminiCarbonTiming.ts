@@ -231,11 +231,11 @@ export class GeminiCarbonTimingStore {
 
   snapshot(): GeminiCarbonTimingSnapshot {
     const samples: GeminiCarbonTimingSnapshot["samples"] = {};
-    for (const [key, list] of this.samples) {
+    for (const [key, list] of Array.from(this.samples.entries())) {
       const [channel, bucket] = key.split("|") as [string, GeminiCarbonSizeBucket];
       (samples[channel] ??= {})[bucket] = [...list];
     }
-    return { version: 1, updatedAt: this.now(), samples, attempts: Object.fromEntries([...this.attempts].map(([k, v]) => [k, [...v]])) };
+    return { version: 1, updatedAt: this.now(), samples, attempts: Object.fromEntries(Array.from(this.attempts.entries()).map(([k, v]) => [k, [...v]])) };
   }
 
   private maybeFlush() {

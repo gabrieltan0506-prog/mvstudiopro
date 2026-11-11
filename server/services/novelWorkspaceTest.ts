@@ -31,6 +31,7 @@ import {
   type NovelReviseStep,
 } from "./novelChapterRevise";
 import { retrieveNovelCraft, shouldRetrieveNovelCraft } from "./novelCraftRetrieval";
+import { shortlistNovelCatalog, shouldShortlistNovelCatalog } from "./novelCatalogShortlist";
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 /**
  * 只有顾问阶段（推荐模板 / 故事线可从库内换组合）需要整份目录；
@@ -56,7 +57,9 @@ export function selectNovelPromptCatalog(input: NovelTestInput, catalog: unknown
 export function buildNovelTestPrompt(
   input: NovelTestInput,
   templates: string,
-  catalog: unknown
+  catalog: unknown,
+  /** shortlisted：顾问目录是分片初选后的入围名单（不是全库）。 */
+  options: { shortlisted?: boolean } = {}
 ) {
   const format =
     input.advisorIntent === "story_variants"
@@ -101,7 +104,7 @@ export function buildNovelTestPrompt(
                 : `严格以用户已确认小说为事实和事件基准，生成 ${input.episodeCount} 集完整可拍剧本。模板可改变表现手法，不改小说人物身份、关键事件与因果。同一事件用稳定场次key（E1-S1等）便于对照，不虚构已确认事实。applications必须覆盖本次每个模板，具体说明方法怎样落到已生成场次；sceneKeys只能引用本次真实场次。`,
     "组合模板须按分工协作；冲突以已确认方向、提案、小说为准，不堆叠互斥设定。",
     input.stage === "advice"
-      ? "availableCatalog 是全库每个模板的能力简介与特征标签（不是手法全文）：按简介与标签挑选合适的模板；用户已选模板的具体手法见文末的手法卡，讨论具体用法时以手法卡为准，不凭简介臆造手法细节。"
+      ? `availableCatalog 是${options.shortlisted ? "入围模板" : "全库每个模板"}的能力简介与特征标签（不是手法全文）：按简介与标签挑选合适的模板；用户已选模板的具体手法见文末的手法卡，讨论具体用法时以手法卡为准，不凭简介臆造手法细节。${options.shortlisted ? "目录是初选后的入围名单：已先从全库按本作品逐片初选，只列入围条目；从入围名单里终选即可。" : ""}`
       : "文末是已针对本作品提炼的手法卡（个别模板可能仍为方法摘要原文）：每次从多张手法卡里挑适合当前场面的几条手法做排列组合，再结合人物动机与因果改写成本作品自己的内容；不必每张都用、不必一张用尽，不照搬来源剧情。",
     ...(input.templates.some(t => t.weight !== undefined)
       ? [
@@ -143,10 +146,12 @@ export async function executeNovelTest(
     value: unknown,
     normalized: string,
     repaired: boolean
-  ) => Promise<void>
+  ) => Promise<void>,
+  /** 顾问阶段分片初选后的入围名单：只替换提示词里的目录；校验仍用全库 catalog。 */
+  promptCatalog?: { publicId: string }[]
 ) {
   const response = await call(
-    buildNovelTestPrompt(input, templates, catalog),
+    buildNovelTestPrompt(input, templates, promptCatalog ?? catalog, { shortlisted: !!promptCatalog }),
     true,
     input.requestId
   );
@@ -317,6 +322,34 @@ export async function runNovelWorkspaceTest(
         console.warn(`[novelTemplateDigest] 提炼环节异常，回退模板原文：${digestError instanceof Error ? digestError.name : "error"}`);
       }
     }
+    // 顾问阶段：全库目录分片并发初选，只把入围名单交给终选提示词（校验仍用全库）。shortlistNovelCatalog 不抛错。
+    let promptCatalog: { publicId: string }[] | undefined;
+    if (shouldShortlistNovelCatalog(input, catalog)) {
+      try {
+        const shortlist = await shortlistNovelCatalog({
+          userId,
+          input,
+          catalog,
+          call: (prompt, json, requestId) =>
+            callNovelStage(prompt, json, requestId, {
+              modelPreference: input.modelPreference,
+              ...(input.modelPreference === "carbon"
+                // 每片一发、并发执行：证据目录按片请求号分开（只增不覆盖）。
+                ? { saveEvidence: createGeminiCarbonGcsSaver(`${novelWorkspaceCarbonEvidencePrefix(userId, input.requestId)}/catalog-shortlist/${hash(requestId).slice(0, 16)}`) }
+                : {}),
+            }),
+        });
+        if (shortlist.shortlisted) promptCatalog = shortlist.catalog;
+        evidence = { ...evidence, catalogShortlist: { ...shortlist.stats, ...(shortlist.allFailed ? { allFailed: true } : {}) } };
+        await db
+          .update(jobs)
+          .set({ output: evidence, updatedAt: new Date() })
+          .where(eq(jobs.id, id));
+      } catch (shortlistError) {
+        evidence = { ...evidence, catalogShortlist: { shards: 0, picked: [], fallbackShards: [], allFailed: true } };
+        console.warn(`[novel-catalog-shortlist] 初选环节异常，回退全库目录：${shortlistError instanceof Error ? shortlistError.name : "error"}`);
+      }
+    }
     const value = await executeNovelTest(
       input,
       templatesForPrompt,
@@ -377,7 +410,8 @@ export async function runNovelWorkspaceTest(
           .update(jobs)
           .set({ output: evidence, updatedAt: new Date() })
           .where(eq(jobs.id, id));
-      }
+      },
+      promptCatalog
     );
     const text = JSON.stringify(value, null, 2);
     const result: NovelTestResult = {
