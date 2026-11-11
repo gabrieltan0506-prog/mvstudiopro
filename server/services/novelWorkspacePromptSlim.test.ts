@@ -43,19 +43,28 @@ const variants: Record<string, NovelTestInput> = {
 };
 
 describe("小说改编提示词按阶段瘦身目录", () => {
-  it("advice（含推荐/故事线）提示词与改动前逐字一致，送整份目录", () => {
-    // 哈希由改动前的 buildNovelTestPrompt 生成（同一输入与目录）。
-    const golden: Record<string, string> = {
-      advice: "d67d22ca8956cf059f5792a77a536d53608cd26908906d28442bde25e23ef63f",
-      discussion: "c2eecd9727b86ba66c3e5691e8f9d4f3070a786ee71be453f2f04abc37197057",
-      recommend: "d3d8842a7b2e04c90e5dfc33f74d7fce0e87c74e2a78b694f8507cdc4e9a17cf",
-      storyVariants: "7f15a912ff02bd94067eff320765874a9146dc9c764627531884e987f957a980",
-    };
+  it("advice（含推荐/故事线）：目录条目带简介时只送 编号＋简介＋标签，不送手法全文；条数不变", () => {
+    const withBriefs = (catalog as Array<Record<string, unknown>>).map((c, i) => ({ ...c, craft: "手法全文".repeat(200), methods: "可复用手法".repeat(200), intro: `简介${i}`, tags: ["古风", "权谋"] }));
     for (const [k, v] of Object.entries(variants)) {
-      const prompt = buildNovelTestPrompt(v, "模板摘要", catalog);
-      expect(sha(prompt), k).toBe(golden[k]);
-      expect(catalogIn(prompt)).toHaveLength(200);
+      const prompt = buildNovelTestPrompt(v, "模板摘要", withBriefs);
+      const line = prompt.split("\n\n").find(p => p.includes('"availableCatalog"'))!;
+      const sent = JSON.parse(line).availableCatalog as Array<Record<string, unknown>>;
+      expect(sent, k).toHaveLength(200);
+      expect(Object.keys(sent[0]!).sort()).toEqual(["intro", "publicId", "tags"]);
+      expect(prompt).not.toContain("手法全文手法全文");
+      expect(prompt).toContain("能力简介与特征标签");
+      expect(prompt.length).toBeLessThan(JSON.stringify(withBriefs).length * 0.1);
     }
+  });
+
+  it("advice：目录条目没有简介（旧调用方）时原样送，不丢信息", () => {
+    const prompt = buildNovelTestPrompt(variants.advice!, "模板摘要", catalog);
+    expect(catalogIn(prompt)).toHaveLength(200);
+  });
+
+  it("非 advice 阶段提示词要求从多张手法卡挑选组合", () => {
+    const prompt = buildNovelTestPrompt({ ...base, stage: "script" }, "模板摘要", catalog);
+    expect(prompt).toContain("从多张手法卡里挑适合当前场面的几条手法做排列组合");
   });
 
   it.each(["outline", "chapter", "script"] as const)(

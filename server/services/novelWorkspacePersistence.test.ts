@@ -51,6 +51,7 @@ vi.mock("./manhuaTemplatePublicId", () => ({
 }));
 vi.mock("../../shared/manhuaViralTemplateBank", () => ({
   formatManhuaViralTemplateWriterSkillFromCard: () => "完整模板",
+  flattenManhuaTemplateClassification: () => [],
   toPublicManhuaViralTemplateCard: (c: any) => ({
     publicId: "mt_" + c.publicCode,
     nameZh: "匿名模板",
@@ -58,6 +59,8 @@ vi.mock("../../shared/manhuaViralTemplateBank", () => ({
     introZh: "冲突",
   }),
 }));
+// 本文件只验持久化与重放；手法卡提炼另有专门用例，这里关掉以免多出模型调用计数。
+vi.mock("./novelTemplateDigest", async (original) => ({ ...(await original<typeof import("./novelTemplateDigest")>()), shouldDigestNovelTemplates: () => false }));
 vi.mock("./manhuaNovelAdaptationRun", () => ({
   callNovelStage: async (_p: any, _j: any, _r: any, trace: any) => {
     memory.calls++;

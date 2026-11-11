@@ -131,10 +131,10 @@ describe("digestNovelTemplates", () => {
 });
 
 describe("shouldDigestNovelTemplates", () => {
-  it("仅 chapter / script 阶段提炼", () => {
+  it("四个阶段都提炼（顾问也读手法卡）", () => {
     expect(shouldDigestNovelTemplates("chapter")).toBe(true);
     expect(shouldDigestNovelTemplates("script")).toBe(true);
-    expect(shouldDigestNovelTemplates("advice")).toBe(false);
-    expect(shouldDigestNovelTemplates("outline")).toBe(false);
+    expect(shouldDigestNovelTemplates("advice")).toBe(true);
+    expect(shouldDigestNovelTemplates("outline")).toBe(true);
   });
 });

@@ -41,7 +41,8 @@ export type NovelTemplateDigestResult = {
 
 /** 只有正文写作阶段（小说稿 / 剧本）用手法卡；顾问与提案阶段保持原文。 */
 export function shouldDigestNovelTemplates(stage: NovelTestInput["stage"]) {
-  return stage === "chapter" || stage === "script";
+  // 站长 2026-11-11：创作顾问也读手法卡（不读全库全文），所以四个阶段都提炼；没有已选模板时调用方自然不会发起提炼。
+  return stage === "advice" || stage === "outline" || stage === "chapter" || stage === "script";
 }
 
 const sha = (v: string) => createHash("sha256").update(v).digest("hex");

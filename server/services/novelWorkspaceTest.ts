@@ -31,7 +31,17 @@ const hash = (v: string) => createHash("sha256").update(v).digest("hex");
  * 大纲、小说、剧本只送用户已选模板的条目。仅影响提示词，校验 ID 列表由调用方原样传入。
  */
 export function selectNovelPromptCatalog(input: NovelTestInput, catalog: unknown) {
-  if (input.stage === "advice" || !Array.isArray(catalog)) return catalog;
+  if (!Array.isArray(catalog)) return catalog;
+  // 顾问阶段：全库只送「公开编号 + 能力简介 + 特征标签」，不送手法全文（站长 2026-11-11）；
+  // 条目没有简介字段（旧调用方 / 测试造的目录）时原样返回，不丢信息。
+  if (input.stage === "advice") {
+    const hasBriefs = catalog.some(c => !!c && typeof c === "object" && typeof (c as { intro?: unknown }).intro === "string" && (c as { intro: string }).intro.length > 0);
+    if (!hasBriefs) return catalog;
+    return catalog.map(c => {
+      const entry = c as { publicId?: string; intro?: string; tags?: string[] };
+      return { publicId: entry.publicId, intro: entry.intro ?? "", tags: entry.tags ?? [] };
+    });
+  }
   const assigned = new Set(input.templates.map(t => t.publicId));
   return catalog.filter(
     c => !!c && typeof c === "object" && assigned.has((c as { publicId?: string }).publicId ?? "")
@@ -84,6 +94,9 @@ export function buildNovelTestPrompt(
                 ? `只写第 ${input.chapterIndex} 集小说稿，遵守已确认大纲。其余小说是已确认前文，不改写、不重复；人物身份与因果必须衔接。不得一次写完整部。`
                 : `严格以用户已确认小说为事实和事件基准，生成 ${input.episodeCount} 集完整可拍剧本。模板可改变表现手法，不改小说人物身份、关键事件与因果。同一事件用稳定场次key（E1-S1等）便于对照，不虚构已确认事实。applications必须覆盖本次每个模板，具体说明方法怎样落到已生成场次；sceneKeys只能引用本次真实场次。`,
     "组合模板须按分工协作；冲突以已确认方向、提案、小说为准，不堆叠互斥设定。",
+    input.stage === "advice"
+      ? "availableCatalog 是全库每个模板的能力简介与特征标签（不是手法全文）：按简介与标签挑选合适的模板；用户已选模板的具体手法见文末的手法卡，讨论具体用法时以手法卡为准，不凭简介臆造手法细节。"
+      : "文末是已针对本作品提炼的手法卡（个别模板可能仍为方法摘要原文）：每次从多张手法卡里挑适合当前场面的几条手法做排列组合，再结合人物动机与因果改写成本作品自己的内容；不必每张都用、不必一张用尽，不照搬来源剧情。",
     ...(input.templates.some(t => t.weight !== undefined)
       ? [
           "templateRoles.weight是用户明确选择的创作手法影响百分比，合计100。高权重主导节奏、信息释放与场面组织；低权重只用于对应分工的点睛段落，不按字数或场次数机械切分。0%模板只可借鉴合适情节，不主导节奏和风格。顾问须解释这套配比如何服务当前故事及其取舍，仅在用户要求新方向的故事线候选中可提出待采用的新配比，其余不擅自改比例；提案、小说、组合剧本均遵守配比，已确认的人物与事件不因配比改动。",
@@ -246,30 +259,38 @@ export async function runNovelWorkspaceTest(
       .set({ output: evidence, updatedAt: new Date() })
       .where(eq(jobs.id, id));
     let templatesForPrompt = prepared.templates;
-    if (shouldDigestNovelTemplates(input.stage)) {
-      // 手法卡：同一线路提炼，每部作品每模板只提炼一次；失败模板回退原文。
-      const digest = await digestNovelTemplates({
-        userId,
-        input,
-        sources: prepared.selectedTexts,
-        call: (prompt, json, requestId) =>
-          callNovelStage(prompt, json, requestId, {
-            modelPreference: input.modelPreference,
-            ...(input.modelPreference === "carbon"
-              ? { saveEvidence: createGeminiCarbonGcsSaver(`${novelWorkspaceCarbonEvidencePrefix(userId, input.requestId)}/template-digest`) }
-              : {}),
-          }),
-      });
-      templatesForPrompt = digest.templates;
-      evidence = {
-        ...evidence,
-        templateDigest: digest.stats,
-        templatesSha256: hash(templatesForPrompt),
-      };
-      await db
-        .update(jobs)
-        .set({ output: evidence, updatedAt: new Date() })
-        .where(eq(jobs.id, id));
+    if (shouldDigestNovelTemplates(input.stage) && (prepared.selectedTexts?.length ?? 0) > 0) {
+      // 手法卡是增益不是前提：提炼环节任何异常（存储读写、线路失败等）都不得挡住写作，回退用模板原文。
+      try {
+        // 手法卡：同一线路提炼，每部作品每模板只提炼一次；失败模板回退原文。
+        const digest = await digestNovelTemplates({
+          userId,
+          input,
+          sources: prepared.selectedTexts,
+          call: (prompt, json, requestId) =>
+            callNovelStage(prompt, json, requestId, {
+              modelPreference: input.modelPreference,
+              ...(input.modelPreference === "carbon"
+                // 每个模板一发、并发执行：证据目录按提炼请求号分开，避免同名对象互相挡住（只增不覆盖）。
+                ? { saveEvidence: createGeminiCarbonGcsSaver(`${novelWorkspaceCarbonEvidencePrefix(userId, input.requestId)}/template-digest/${hash(requestId).slice(0, 16)}`) }
+                : {}),
+            }),
+        });
+        templatesForPrompt = digest.templates;
+        evidence = {
+          ...evidence,
+          templateDigest: digest.stats,
+          templatesSha256: hash(templatesForPrompt),
+        };
+        await db
+          .update(jobs)
+          .set({ output: evidence, updatedAt: new Date() })
+          .where(eq(jobs.id, id));
+      } catch (digestError) {
+        templatesForPrompt = prepared.templates;
+        evidence = { ...evidence, templateDigest: { cached: 0, fresh: 0, fallback: prepared.selectedTexts.length, failed: true } };
+        console.warn(`[novelTemplateDigest] 提炼环节异常，回退模板原文：${digestError instanceof Error ? digestError.name : "error"}`);
+      }
     }
     const value = await executeNovelTest(
       input,
