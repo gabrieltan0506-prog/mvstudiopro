@@ -10,7 +10,11 @@ export const PREMIUM_REMIX_LEGACY_PATH = "/creator-growth-camp/premium-remix";
 export const PREMIUM_REMIX_RETIRED_CODE = "premium_remix_merged_into_lapian" as const;
 export const PREMIUM_REMIX_RETIRED_MESSAGE_ZH = "爆款复刻的分镜与出片已并入「拉片复刻爆款」，请到拉片页面上传参考视频后复刻。本次未扣积分。";
 
-/** 旧地址 → 新地址：不论带什么参数都去拉片页（拉片只收视频，旧的 format 参数无对应项，不透传）。 */
-export function premiumRemixRedirectTarget(): string {
-  return LAPIAN_PATH;
+/** 图文笔记复刻入口（站长 2026-11-11：图文要留入口）：拉片只收视频，笔记复刻沿用原有的参考拆解 + 改写 + 交接。 */
+export const NOTE_REMIX_ENTRY_TITLE = "图文笔记复刻";
+export const NOTE_REMIX_PATH = `${PREMIUM_REMIX_LEGACY_PATH}?format=note`;
+
+/** 旧地址 → 新地址：带 format=note 留在笔记复刻（返回 null），其余一律去拉片页。 */
+export function premiumRemixRedirectTarget(search = ""): string | null {
+  return new URLSearchParams(search).get("format") === "note" ? null : LAPIAN_PATH;
 }

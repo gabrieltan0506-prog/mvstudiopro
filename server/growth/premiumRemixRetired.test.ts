@@ -74,8 +74,10 @@ describe("爆款复刻分镜 / 出片已并入拉片", () => {
     expect(PREMIUM_REMIX_RETIRED_MESSAGE_ZH).toContain("拉片复刻爆款");
   });
 
-  it("旧地址不论参数都跳到拉片页", () => {
+  it("旧地址跳到拉片页，图文笔记复刻（format=note）保留", () => {
     expect(premiumRemixRedirectTarget()).toBe(LAPIAN_PATH);
+    expect(premiumRemixRedirectTarget("?format=video")).toBe(LAPIAN_PATH);
+    expect(premiumRemixRedirectTarget("?format=note")).toBeNull();
     expect(LAPIAN_PATH).toBe("/lapian");
   });
 });
