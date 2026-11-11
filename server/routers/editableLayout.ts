@@ -14,7 +14,8 @@ const publicationProcedure = protectedProcedure.use(async ({ next, path }) => {
   const startedAt = Date.now();
   const result = await next();
   // 每个图文手册接口一行耗时（不含正文与地址），用于定位阶段间空档。
-  knowledgeTimingLog(path, startedAt, { ok: result.ok });
+  // 导出状态轮询（每 3 秒）成功时不逐条记，避免刷屏；任务本身另有 knowledgeExport.task 耗时日志。
+  if (!(result.ok && path.endsWith("exportPublicationStatus"))) knowledgeTimingLog(path, startedAt, { ok: result.ok });
   if (!result.ok) {
     // 前台只收到业务提示；真实原因留在服务端日志（去地址、截断），否则出错后后台无从查起。
     const cause = result.error.cause instanceof Error ? result.error.cause.message : result.error.message;
@@ -81,6 +82,17 @@ export const editableLayoutRouter = router({
       const {exportKnowledgePublication}=await import("../services/knowledgePublicationExport");
       return exportKnowledgePublication(ctx.user.id,input.documentId,input.expectedGeneration);
     }),
+  /** 导出不阻塞：发起即返回任务标识，后台执行；同一账号+稿件+版本重复发起复用同一任务（刷新后重新发起即可续看）。 */
+  startExportPublication: publicationProcedure.input(z.object({documentId:z.string().uuid(),expectedGeneration:z.string().regex(/^\d+$/)}).strict())
+    .mutation(async({ctx,input})=>{
+      const {knowledgeExportTasks}=await import("../services/knowledgePublicationExportTasks");
+      return knowledgeExportTasks().start(ctx.user.id,input.documentId,input.expectedGeneration);
+    }),
+  exportPublicationStatus: publicationProcedure.input(z.object({taskId:z.string().regex(/^[a-f0-9]{32}$/)}).strict()).query(async({ctx,input})=>{
+    const {knowledgeExportTasks}=await import("../services/knowledgePublicationExportTasks");
+    // 未知任务（含服务重启后）返回 missing，由前台用同一稿件版本重新发起，已完成分片复用。
+    return knowledgeExportTasks().status(ctx.user.id,input.taskId)??{status:"missing" as const,taskId:input.taskId};
+  }),
   exportPublicationPptx: publicationProcedure.input(z.object({documentId:z.string().uuid(),expectedGeneration:z.string().regex(/^\d+$/)}).strict())
     .mutation(async({ctx,input})=>{
       const {exportKnowledgePublicationPptx}=await import("../services/knowledgePublicationPptx");

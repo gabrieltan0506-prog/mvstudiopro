@@ -70,7 +70,36 @@ export default function KnowledgePublicationPanel({
     return withKnowledgeAdvisorRecovery(input.requestId, () => streamManhuaAdvisor(input, onText, onModel),
       () => utils.client.auth.me.query(), () => alive.current && latest.current.id === documentId);
   };
-  const exporter = trpc.editableLayout.exportPublication.useMutation();
+  const exportStarter = trpc.editableLayout.startExportPublication.useMutation();
+  const exportMarker = (documentId: string) => `mvstudiopro.knowledgeExport.${documentId}`;
+  /**
+   * 导出不阻塞（1111）：发起即拿任务标识，后台执行，前台轮询；刷新后按本页会话标记自动续看。
+   * 同一稿件版本重复发起复用同一任务；服务重启后任务丢失（missing）时用同一版本重新发起，已完成分片复用；结算仍幂等。
+   */
+  const runExport = async (documentId: string, expectedGeneration: string) => {
+    try { sessionStorage.setItem(exportMarker(documentId), expectedGeneration); } catch { /* 仅影响刷新续看 */ }
+    let state: { status: string; taskId: string; result?: unknown; error?: string; retryable?: boolean } = await exportStarter.mutateAsync({ documentId, expectedGeneration });
+    let reissued = 0, misses = 0;
+    const deadline = Date.now() + 90 * 60_000;
+    try {
+      while (state.status === "running" || state.status === "missing") {
+        if (!alive.current) throw Error("页面已离开，PDF 仍在后台生成；返回后重新打开即可续看");
+        if (Date.now() > deadline) throw Error("PDF 生成时间过长，已完成部分已保存；请稍后重新点击生成，会复用已完成部分");
+        if (state.status === "missing") {
+          if (++reissued > 3) throw Error("PDF 生成任务暂时无法续看，已完成部分已保存；请重新点击生成");
+          state = await exportStarter.mutateAsync({ documentId, expectedGeneration });
+          continue;
+        }
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        try { state = await utils.client.editableLayout.exportPublicationStatus.query({ taskId: state.taskId }); misses = 0; }
+        catch (error) { if (++misses > 5) throw error; }
+      }
+      if (state.status === "failed") throw Object.assign(Error(state.error || "PDF 暂未生成完成，请重新点击生成"), { retryable: state.retryable });
+      return (state as { result: Awaited<ReturnType<typeof utils.client.editableLayout.exportPublication.mutate>> }).result;
+    } finally {
+      if (state.status !== "running" && state.status !== "missing") try { sessionStorage.removeItem(exportMarker(documentId)); } catch { /* 忽略 */ }
+    }
+  };
   const pptxExporter = trpc.editableLayout.exportPublicationPptx.useMutation();
   const [layoutView,setLayoutView]=useState<{doc:EditableLayout;review:KnowledgeReview;images:Record<string,string>}|null>(null);
   const [layoutPreviewError,setLayoutPreviewError]=useState("");
@@ -130,6 +159,27 @@ export default function KnowledgePublicationPanel({
     setError("");
     setTerminal(false);
   }, [doc.id]);
+  // 刷新续看：本页会话里有未结束的导出标记时，按原稿件版本重新发起（服务端复用进行中/已完成任务，不重复扣费）。
+  useEffect(()=>{
+    let generation:string|null=null;
+    try{generation=sessionStorage.getItem(exportMarker(doc.id));}catch{generation=null;}
+    if(!generation||active.current)return;
+    let cancelled=false;
+    locked(true);setStage({step:4});setExporting(true);setMessage("正在继续生成 PDF（刷新前已发起）…");
+    void runExport(doc.id,generation).then(result=>{
+      if(cancelled||!alive.current||latest.current.id!==doc.id)return;
+      setFiles(result);
+      if(result.pdfUrl&&result.totalPages&&result.imagePages!==undefined){
+        setStage({step:KNOWLEDGE_PUBLICATION_STAGES.length});
+        onPagination?.(latest.current,{imagePages:result.imagePages,totalPages:result.totalPages});
+        setMessage(`排版完成：图片 ${result.imagePages} 页｜手册共 ${result.totalPages} 页。可直接下载。`);
+      }else setMessage(result.pdfError||"HTML 已生成并保存，可继续生成 PDF。");
+    },()=>{
+      try{sessionStorage.removeItem(exportMarker(doc.id));}catch{/* 忽略 */}
+      if(!cancelled&&alive.current)setMessage("刷新前的 PDF 生成未能续看，已完成部分已保存；请重新点击生成。");
+    }).finally(()=>{if(alive.current){setExporting(false);locked(false);}});
+    return ()=>{cancelled=true;};
+  },[doc.id]);
   const paginationVersion = (value: EditableLayout) => JSON.stringify([
     value.id, value.title, value.aspect, value.theme, value.fontSize, value.pages,
     value.publication?.manuscript, value.publication?.infographicTemplateId, value.publication?.designMode, value.publication?.review,
@@ -527,8 +577,8 @@ export default function KnowledgePublicationPanel({
       }else{
         setMessage("确认稿已保存，正在自动排版并生成 HTML 和 PDF…");
         setStage({step:4});setExporting(true);
-        let result:Awaited<ReturnType<typeof exporter.mutateAsync>>;
-        try{result=await exporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});}
+        let result:Awaited<ReturnType<typeof runExport>>;
+        try{result=await runExport(next.id,saved.generation);}
         finally{setExporting(false);}
         if (paginationVersion(latest.current) !== paginationVersion(next)) return;
         setFiles(result);
@@ -548,9 +598,9 @@ export default function KnowledgePublicationPanel({
   const exportLayout=async(next:EditableLayout,saved:Saved)=>{
     setFiles(null);setError("");setStage({step:4});
     setMessage("顾问方案已保存，正在按指定章节顺序和设计生成 PDF…");
-    let result:Awaited<ReturnType<typeof exporter.mutateAsync>>;
+    let result:Awaited<ReturnType<typeof runExport>>;
     setExporting(true);
-    try{result=await exporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});}
+    try{result=await runExport(next.id,saved.generation);}
     finally{setExporting(false);}
     if(latest.current.id!==next.id)return;
     setFiles(result);
