@@ -89,8 +89,10 @@ describe("审稿改稿契约", () => {
   it("准绳精简、含七个维度与前三集分工，不出现仓库名与模型名", () => {
     expect(NOVEL_CRAFT_REVIEW_RULES.length).toBeLessThanOrEqual(3500);
     for (const d of NOVEL_REVIEW_DIMENSIONS) expect(NOVEL_CRAFT_REVIEW_RULES).toContain(d);
-    expect(NOVEL_CRAFT_REVIEW_RULES).toMatch(/300 字内引爆核心冲突/);
-    expect(NOVEL_CRAFT_REVIEW_RULES).toMatch(/500 字内亮出金手指/);
+    // 前三集口径以站长校正稿为准：300—500 字给齐身份、困境、目标；金手指不强求开篇就亮。
+    expect(NOVEL_CRAFT_REVIEW_RULES).toMatch(/300—500 字内给齐主角身份、困境与目标/);
+    expect(NOVEL_CRAFT_REVIEW_RULES).toMatch(/金手指何时亮出服从开篇冲突/);
+    expect(NOVEL_CRAFT_REVIEW_RULES).not.toMatch(/500 字内亮出金手指/);
     expect(NOVEL_CRAFT_REVIEW_RULES).toMatch(/只对第 1–3 集适用/);
     const all = NOVEL_CRAFT_REVIEW_RULES + NOVEL_REVISION_DISCIPLINE;
     expect(all).not.toMatch(/github|oh-story|human-novel|howells|author-toolkit|claude|gpt|gemini|glm|deepseek|carbon|MIT/i);
