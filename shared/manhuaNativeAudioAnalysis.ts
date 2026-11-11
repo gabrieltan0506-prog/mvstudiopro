@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isGeminiModelId } from "./geminiModelConfig.js";
+import { GEMINI_CARBON_MODEL } from "./geminiCarbon.js";
 
 export const MANHUA_NATIVE_AUDIO_MODEL = "gemini-3.6-flash" as const;
 export const MANHUA_NATIVE_AUDIO_RESOLVER_MODEL = "qwen3.8-max" as const;
@@ -22,6 +23,14 @@ export const MANHUA_NATIVE_AUDIO_ARGON_MODEL = "gemini-4-argon" as const;
  * 1110 前 3.8 Flash 读出的卡都标成 3.1 Pro，照认；新卡写实际模型（如 gemini-3.8-flash 或配置出的新模型）。
  */
 export type ManhuaNativeAudioDirectModel = string;
+
+/**
+ * Gemini 4 代（Argon / Carbon，1111）回执不保证单列 AUDIO modality 用量：不伪造 AUDIO token、也不据此拒卡，
+ * 音轨内容与覆盖仍由内容门禁独立校验。Carbon 是否单列待首单真读核实（1111 交付报告未验证项）。
+ */
+export function nativeDeepReadModelMayOmitAudioTokens(model: unknown): boolean {
+  return model === MANHUA_NATIVE_AUDIO_ARGON_MODEL || model === GEMINI_CARBON_MODEL;
+}
 
 /** 直读卡读取门认的模型：旧两代（3.1 Pro / Argon）+ 任何合法 Gemini 模型标识（配置出来的新模型，换配置后旧卡仍可读）。 */
 export function isManhuaNativeAudioDirectModel(model: unknown): model is ManhuaNativeAudioDirectModel {
@@ -593,8 +602,8 @@ export function parseManhuaNativeAudioAnalysis(raw: unknown, options: { allowPar
     // Vertex 主线必须 >0（实测 360s 段音频 ≈9,001 tok）；EvoLink 兜底是否回报
     // modality 明细未实测，不据此拒卡。
     const callsFloor = isLegacyDual ? chunkCount * 2 : chunkCount;
-    // Argon回执只列VIDEO/TEXT；不伪造AUDIO用量，仍校验真实音轨内容与覆盖。
-    const requireAudioTokens = isLegacyDual || (o.resolverRoute === "vertex_gcs_video" && o.model !== MANHUA_NATIVE_AUDIO_ARGON_MODEL);
+    // Argon回执只列VIDEO/TEXT（Carbon 同代，1111 起同口径）；不伪造AUDIO用量，仍校验真实音轨内容与覆盖。
+    const requireAudioTokens = isLegacyDual || (o.resolverRoute === "vertex_gcs_video" && !nativeDeepReadModelMayOmitAudioTokens(o.model));
     if (
       chunkCount < 1 || usage.geminiCalls < callsFloor
       || (requireAudioTokens && usage.audioInputTokens <= 0) || !usage.receiptComplete

@@ -4,6 +4,7 @@ import { parseManhuaLocalVideoSourceRef } from "./manhuaLocalVideoUpload.js";
 import { isManhua0996SourceUrl } from "./manhuaLearn0996Source.js";
 import { MANHUA_LEARN_MAX_DURATION_SEC } from "./manhuaTemplateLearnSeries.js";
 import { isGeminiModelId, resolveGeminiModel, type GeminiModelEnv } from "./geminiModelConfig.js";
+import { GEMINI_CARBON_MODEL, parseGeminiCarbonChannelOrder } from "./geminiCarbon.js";
 /**
  * 0826 拍板：视觉学习整体从新加坡 Qwen 换到 Vertex Gemini 3.1 Pro 从 GCS 直读，
  * 连音轨一次调用出全六栏（实测 360s 段 144s 返回，输入 ≈129k tok）。
@@ -26,9 +27,16 @@ export const MANHUA_NATIVE_LEGACY_READ_MODEL_OPTIONS = [
 ] as const;
 /** 1014：用户授权增加 Argon；历史模型集合继续用于旧付费契约身份与路由入参校验（旧三代）。 */
 export const MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS = [...MANHUA_NATIVE_LEGACY_READ_MODEL_OPTIONS, "gemini-4-argon"] as const;
-/** 历史常量（1014 新读片可选集）：1110 起新读片只认 env 配置模型与 3.8 Flash 旧车道，见 nativeDeepReadAllowedNewReadModels。 */
-export const MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS = ["gemini-3.8-flash", "gemini-4-argon"] as const;
+/**
+ * 新学习可选集（面板偏好按账号保存用）：标准档 3.8 Flash + 整集精读升级档 Carbon。
+ * 1111 站长令「把 Argon 改成 Carbon」：Argon 退出新学习可选项；已用 Argon 学过的系列仍按 -g4a 续学与解析（历史身份只增不改）。
+ * 服务端实际放行集见 nativeDeepReadAllowedNewReadModels（升级档模型按 env 配置，缺省 gemini-4-carbon）。
+ */
+export const MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS = ["gemini-3.8-flash", GEMINI_CARBON_MODEL] as const;
+/** Argon 历史车道身份（-g4a）：只作已学系列续学 / 旧卡解析，不再出现在新学习可选项。 */
 export const MANHUA_NATIVE_ARGON_MODEL = "gemini-4-argon" as const;
+/** Carbon 车道身份（-g4c）：整集精读升级档；属贵档，只在站长主动选择时发车。 */
+export const MANHUA_NATIVE_CARBON_MODEL = GEMINI_CARBON_MODEL;
 /**
  * 3.8 Flash 旧车道身份（系列后缀 -g38f、双通道合同）。1110 起它只是缺省配置值与旧车道身份，
  * 新读片实际模型由 resolveManhuaNativeDeepReadModel() 决定；前端不再据此选模型。
@@ -43,6 +51,7 @@ export const MANHUA_NATIVE_DEEP_READ_MODEL_LABELS: Record<ManhuaNativeDeepReadMo
   "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
   "gemini-3.8-flash": "Gemini 3.8 Flash",
   "gemini-4-argon": "Gemini 4 Argon",
+  "gemini-4-carbon": "Gemini 4 Carbon",
 };
 
 /** 1110：新读片首读模型（env：MANHUA_DEEP_READ_MODEL → GEMINI_DEFAULT_MODEL → gemini-3.8-flash）。 */
@@ -57,6 +66,36 @@ export function resolveManhuaNativeDeepReadModel(env?: GeminiModelEnv): ManhuaNa
  */
 export function resolveManhuaNativeDeepReadEscalationModel(env?: GeminiModelEnv): ManhuaNativeDeepReadModelId {
   return resolveGeminiModel("manhuaDeepReadEscalation", env);
+}
+
+/**
+ * 1111：整集精读升级档模型（env：MANHUA_DEEP_READ_UPGRADE_MODEL → GEMINI_CARBON_MODEL → 领域缺省 gemini-4-carbon）。
+ * 只在新学习时由站长主动选择；不参与任何缺省路径。
+ */
+export function resolveManhuaNativeDeepReadUpgradeModel(env?: GeminiModelEnv): ManhuaNativeDeepReadModelId {
+  return resolveGeminiModel("manhuaDeepReadUpgrade", env);
+}
+
+/**
+ * Carbon 车道：Carbon 身份本身，或当前配置的升级档模型（换配置后在途 Carbon 任务仍按 Carbon 车道走）。
+ * 「当前合同」模型（配置的首读模型 / 3.8 Flash 旧车道）永远不算 Carbon 车道。
+ */
+export function isNativeDeepReadCarbonLaneModel(model: unknown, env?: GeminiModelEnv): boolean {
+  if (typeof model !== "string" || isNativeDeepReadCurrentContractModel(model, env)) return false;
+  return model === MANHUA_NATIVE_CARBON_MODEL || model === resolveManhuaNativeDeepReadUpgradeModel(env);
+}
+
+export type NativeDeepReadCarbonRoute = "evolink" | "vertex";
+/** Carbon 车道读片通道顺序 env；缺省 EvoLink → Vertex。 */
+export const NATIVE_DEEP_READ_CARBON_ROUTES_ENV = "MANHUA_DEEP_READ_CARBON_ROUTES" as const;
+/**
+ * Carbon 车道读原生视频的通道顺序（缺省 EvoLink → Vertex；1111 实测 Carbon 在 Vertex global 90 秒无回应，
+ * Vertex 复测通过后可设 "vertex,evolink" 调回首位）。
+ * **不含 Gemini API**：读视频需 Files API 上传或可公开拉取的地址，精读不做；env 里写了也忽略。
+ */
+export function nativeDeepReadCarbonRoutes(env?: GeminiModelEnv): NativeDeepReadCarbonRoute[] {
+  const source = env ?? (typeof process !== "undefined" && process?.env ? (process.env as GeminiModelEnv) : {});
+  return parseGeminiCarbonChannelOrder(source[NATIVE_DEEP_READ_CARBON_ROUTES_ENV], ["evolink", "vertex"], ["evolink", "vertex"]) as NativeDeepReadCarbonRoute[];
 }
 
 /**
@@ -77,10 +116,11 @@ export function nativeDeepReadSegmentCacheIdentityModel(model: ManhuaNativeDeepR
   return (MANHUA_NATIVE_LEGACY_READ_MODEL_OPTIONS as readonly string[]).includes(model) ? undefined : model;
 }
 
-/** 旧车道后缀（历史持久身份，只增不改）：3.1 Pro 无后缀，3.8 Flash「-g38f」，Argon「-g4a」。 */
+/** 车道后缀（历史持久身份，只增不改）：3.1 Pro 无后缀，3.8 Flash「-g38f」，Argon「-g4a」，Carbon「-g4c」（1111）。 */
 const LEGACY_SERIES_SUFFIX_BY_MODEL: Readonly<Record<string, string>> = {
   "gemini-3.8-flash": "-g38f",
   "gemini-4-argon": "-g4a",
+  [GEMINI_CARBON_MODEL]: "-g4c",
 };
 /** 1110 配置模型车道：「-gm-<去掉 gemini- 前缀、点号换下划线>」，可逆；换模型即新车道，不与旧车道混卡。 */
 const CONFIGURED_SERIES_SUFFIX_MARKER = "-gm-";
@@ -110,7 +150,8 @@ export function nativeDeepReadModelForSeriesKey(seriesKey: string): ManhuaNative
     const decoded = `gemini-${seriesKey.slice(at + CONFIGURED_SERIES_SUFFIX_MARKER.length).replace(/_/g, ".")}`;
     if (isGeminiModelId(decoded)) return decoded;
   }
-  return seriesKey.endsWith("-g4a") ? "gemini-4-argon" : seriesKey.endsWith("-g38f") ? "gemini-3.8-flash" : MANHUA_NATIVE_DEEP_READ_MODEL;
+  return seriesKey.endsWith("-g4c") ? MANHUA_NATIVE_CARBON_MODEL
+    : seriesKey.endsWith("-g4a") ? "gemini-4-argon" : seriesKey.endsWith("-g38f") ? "gemini-3.8-flash" : MANHUA_NATIVE_DEEP_READ_MODEL;
 }
 
 /**
@@ -129,9 +170,10 @@ export function parseNativeDeepReadModel(value: unknown): ManhuaNativeDeepReadMo
 /**
  * 1110：新任务入口允许的读片模型——env 配置的读片模型；3.8 Flash 旧车道（用户已批准的便宜档）保留可续学。
  * Argon / 3.1 Pro 等 Pro 级车道只有被配置成读片模型时才可新发（Pro 级需用户批准）。
+ * 1111：加整集精读升级档（缺省 Carbon，站长主动选择才发）；Argon 不再可新发，旧 -g4a 系列走续学车道。
  */
 export function nativeDeepReadAllowedNewReadModels(env?: GeminiModelEnv): ManhuaNativeDeepReadModelId[] {
-  return Array.from(new Set([resolveManhuaNativeDeepReadModel(env), MANHUA_NATIVE_CURRENT_READ_MODEL]));
+  return Array.from(new Set([resolveManhuaNativeDeepReadModel(env), MANHUA_NATIVE_CURRENT_READ_MODEL, resolveManhuaNativeDeepReadUpgradeModel(env)]));
 }
 
 /** Legacy wire selector retained for saved jobs. Actual structuring and aggregation use FlashX since 2026-10-05. */
@@ -220,6 +262,7 @@ export const NATIVE_DEEP_READ_JOB_FIELDS = [
   "nativeVideoFps",
   "nativeStandaloneSource",
   "nativeReadModel",
+  "nativeReadTier",
   "nativeResumeSeriesKey",
   "nativeStructuringModel",
   "nativeStructuringGateway",
@@ -393,6 +436,18 @@ export const NATIVE_DEEP_READ_READ_MODEL_REJECTED_ZH = "所选读片模型未在
 export const NATIVE_DEEP_READ_RESUME_SERIES_MISMATCH_ZH = "续学系列身份与本次计划不一致，未发出模型请求" as const;
 const NATIVE_DEEP_READ_SERIES_KEY_PATTERN = /^[0-9A-Za-z_-]{1,40}$/;
 
+/**
+ * 1111 精读档位：standard（缺省，配置的首读模型）/ upgrade（整集精读升级档，缺省 Carbon，更慢、成本更高）。
+ * 前端只发档位，不发模型名。
+ */
+export const NATIVE_DEEP_READ_READ_TIERS = ["standard", "upgrade"] as const;
+export type NativeDeepReadReadTier = (typeof NATIVE_DEEP_READ_READ_TIERS)[number];
+export function parseNativeDeepReadReadTier(value: unknown): NativeDeepReadReadTier {
+  if (value === undefined || value === null || value === "") return "standard";
+  if (value === "standard" || value === "upgrade") return value;
+  throw new Error("精读档位无效");
+}
+
 /** 客户端续学时随确认参数带上的系列键；只是「声明」，是否真已入库由服务端核实后才作数。 */
 export function readNativeDeepReadResumeSeriesKey(params: Record<string, unknown>): string | undefined {
   const raw = params.nativeResumeSeriesKey;
@@ -422,12 +477,20 @@ export function parseNewNativeDeepReadJobConfirmation(
   options: { extraSourceHosts?: readonly string[]; env?: GeminiModelEnv; storedSeriesKey?: string } = {},
 ): NativeDeepReadJobConfirmation {
   if (params.nativeStructuringOnly === true) return parseNativeDeepReadJobConfirmation(params, options);
+  const tier = parseNativeDeepReadReadTier(params.nativeReadTier);
   const raw = params.nativeReadModel;
-  const requested = raw === undefined || raw === null || raw === "" ? undefined : raw;
+  let requested = raw === undefined || raw === null || raw === "" ? undefined : raw;
   const laneModel = options.storedSeriesKey ? nativeDeepReadResumeLaneModel(options.storedSeriesKey) : undefined;
   if (laneModel) {
+    // 续学按系列身份走，精读档位不改已入库系列的车道（-g4a / -g4c 等原样续）。
     if (requested !== undefined && requested !== laneModel) throw new Error(NATIVE_DEEP_READ_READ_MODEL_REJECTED_ZH);
     return parseNativeDeepReadJobConfirmation({ ...params, nativeReadModel: laneModel }, options);
+  }
+  if (tier === "upgrade") {
+    // 1111 整集精读升级档：前端只发档位（不发模型名），服务端按配置解析（缺省 Carbon）。
+    const upgradeModel = resolveManhuaNativeDeepReadUpgradeModel(options.env);
+    if (requested !== undefined && requested !== upgradeModel) throw new Error(NATIVE_DEEP_READ_READ_MODEL_REJECTED_ZH);
+    requested = upgradeModel;
   }
   if (requested !== undefined && !(nativeDeepReadAllowedNewReadModels(options.env) as readonly unknown[]).includes(requested)) {
     throw new Error(NATIVE_DEEP_READ_READ_MODEL_REJECTED_ZH);

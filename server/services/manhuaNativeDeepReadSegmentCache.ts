@@ -18,6 +18,7 @@ import {
   uploadBufferToGcsIfAbsent,
 } from "./gcs.js";
 import { nativeDeepReadProposalId } from "./manhuaNativeDeepReadIngest.js";
+import { nativeDeepReadModelMayOmitAudioTokens } from "../../shared/manhuaNativeAudioAnalysis.js";
 
 export const NATIVE_DEEP_READ_SEGMENT_CACHE_PREFIX =
   "manhua-template-learn/segment-cache/";
@@ -572,7 +573,7 @@ function parseCacheEntry(
         NATIVE_DEEP_READ_RAW_ATTEMPT_EVIDENCE_PREFIX,
       ))
     || !numbers.every((number) => Number.isFinite(number) && Number(number) >= 0)
-    || (entry.hasAudio && entry.model !== "gemini-4-argon" && Number(entry.paidUsage?.audioInputTokens) <= 0)
+    || (entry.hasAudio && !nativeDeepReadModelMayOmitAudioTokens(entry.model) && Number(entry.paidUsage?.audioInputTokens) <= 0)
     || !(entry.endSec > entry.startSec)
     || Number.isNaN(Date.parse(String(entry.savedAtIso || "")))
   ) {

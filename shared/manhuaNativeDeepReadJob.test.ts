@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   hasNativeDeepReadJobFields,
   NATIVE_DEEP_READ_JOB_MAX_CALLS,
@@ -17,6 +17,12 @@ import {
   resolveManhuaNativeDeepReadEscalationModel,
   resolveNativeDeepReadJobTimeoutMs,
   sameNativeDeepReadJobConfirmation,
+  MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS,
+  MANHUA_NATIVE_CARBON_MODEL,
+  NATIVE_DEEP_READ_READ_MODEL_REJECTED_ZH,
+  parseNativeDeepReadReadTier,
+  isNativeDeepReadCarbonLaneModel,
+  nativeDeepReadCarbonRoutes,
 } from "./manhuaNativeDeepReadJob.js";
 
 describe("原生精读任务墙钟", () => {
@@ -333,8 +339,9 @@ describe("1110 模板学习读片模型 env 可配（不写死）", () => {
     expect(parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-3.8-flash" }, { env }).readModel).toBe("gemini-3.8-flash");
     expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-3.1-pro-preview" }, { env })).toThrow("未在服务端配置中启用");
     expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-4-argon" }, { env })).toThrow("未在服务端配置中启用");
-    expect(nativeDeepReadAllowedNewReadModels(env)).toEqual(["gemini-3.9-flash", "gemini-3.8-flash"]);
-    expect(nativeDeepReadAllowedNewReadModels({})).toEqual(["gemini-3.8-flash"]);
+    // 1111：加整集精读升级档（缺省 Carbon，站长主动选择才发）
+    expect(nativeDeepReadAllowedNewReadModels(env)).toEqual(["gemini-3.9-flash", "gemini-3.8-flash", "gemini-4-carbon"]);
+    expect(nativeDeepReadAllowedNewReadModels({})).toEqual(["gemini-3.8-flash", "gemini-4-carbon"]);
   });
   it("升级模型按配置：缺省同首读模型（不升级）；可单独覆盖", () => {
     expect(resolveManhuaNativeDeepReadEscalationModel({})).toBe("gemini-3.8-flash");
@@ -376,5 +383,69 @@ describe("1110 模板学习读片模型 env 可配（不写死）", () => {
     expect(parseNativeDeepReadModel("gemini-3.9-flash")).toBe("gemini-3.9-flash");
     expect(() => parseNativeDeepReadModel("glm-5.3")).toThrow("读片模型标识无效");
     expect(() => parseNativeDeepReadModel("gemini-x/../y")).toThrow("读片模型标识无效");
+  });
+});
+
+
+describe("1111 整集精读升级档：Argon 改 Carbon（新车道 -g4c，旧 -g4a 不变）", () => {
+  const params = { url: "https://www.douyin.com/video/12345", batchSize: 1,
+    nativeDeepReadConfirmed: true, nativeMaxCalls: 200, nativePlanLimit: 1 };
+  it("新学习可选项：3.8 Flash + Carbon，Argon 已退出", () => {
+    expect([...MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS]).toEqual(["gemini-3.8-flash", "gemini-4-carbon"]);
+    expect(MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS as readonly string[]).not.toContain("gemini-4-argon");
+    expect(MANHUA_NATIVE_CARBON_MODEL).toBe("gemini-4-carbon");
+  });
+  it("档位：缺省 standard 不变；upgrade 由服务端解析升级模型（env 可改），显式模型与档位冲突拒收", () => {
+    expect(parseNewNativeDeepReadJobConfirmation(params, { env: {} }).readModel).toBe("gemini-3.8-flash");
+    expect(parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadTier: "standard" }, { env: {} }).readModel).toBe("gemini-3.8-flash");
+    expect(parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadTier: "upgrade" }, { env: {} }).readModel).toBe("gemini-4-carbon");
+    expect(parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-4-carbon" }, { env: {} }).readModel).toBe("gemini-4-carbon");
+    const env = { MANHUA_DEEP_READ_UPGRADE_MODEL: "gemini-4-carbon-0115" };
+    expect(parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadTier: "upgrade" }, { env }).readModel).toBe("gemini-4-carbon-0115");
+    expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadTier: "upgrade", nativeReadModel: "gemini-3.8-flash" }, { env: {} }))
+      .toThrow(NATIVE_DEEP_READ_READ_MODEL_REJECTED_ZH);
+    expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadTier: "max" }, { env: {} })).toThrow("精读档位无效");
+    expect(parseNativeDeepReadReadTier(undefined)).toBe("standard");
+    // Argon 不再可新发（未配置为首读模型时）
+    expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-4-argon" }, { env: {} })).toThrow("未在服务端配置中启用");
+  });
+  it("续学：已入库 -g4a 系列照旧按 Argon；-g4c 系列按 Carbon；档位不改系列车道", () => {
+    expect(parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadTier: "upgrade" }, { env: {}, storedSeriesKey: "abc-g4a" }).readModel).toBe("gemini-4-argon");
+    expect(parseNewNativeDeepReadJobConfirmation(params, { env: {}, storedSeriesKey: "abc-g4c" }).readModel).toBe("gemini-4-carbon");
+    expect(parseNewNativeDeepReadJobConfirmation(params, { env: {}, storedSeriesKey: "abc-g38f" }).readModel).toBe("gemini-3.8-flash");
+  });
+  it("车道后缀：Carbon 新增 -g4c（可逆、截长不重复）；旧 -g4a / -g38f / 无后缀身份不变", () => {
+    expect(nativeDeepReadSeriesKeyForModel("abc", "gemini-4-carbon")).toBe("abc-g4c");
+    const key = nativeDeepReadSeriesKeyForModel("a".repeat(40), "gemini-4-carbon");
+    expect(key).toHaveLength(40);
+    expect(key.endsWith("-g4c")).toBe(true);
+    expect(nativeDeepReadSeriesKeyForModel(key, "gemini-4-carbon")).toBe(key);
+    expect(nativeDeepReadModelForSeriesKey(key)).toBe("gemini-4-carbon");
+    expect(nativeDeepReadSeriesKeyForModel("abc", "gemini-4-argon")).toBe("abc-g4a");
+    expect(nativeDeepReadModelForSeriesKey("abc-g4a")).toBe("gemini-4-argon");
+    expect(nativeDeepReadModelForSeriesKey("abc-g38f")).toBe("gemini-3.8-flash");
+    expect(nativeDeepReadModelForSeriesKey("abc")).toBe("gemini-3.1-pro-preview");
+    // 升级模型换成别的标识时走配置车道 -gm-，不与 -g4c 混卡
+    expect(nativeDeepReadSeriesKeyForModel("abc", "gemini-4-carbon-0115")).toBe("abc-gm-4-carbon-0115");
+  });
+  it("段缓存身份写入 Carbon 模型（不吃其他车道缓存，旧车道身份不变）；车道判定与读片通道顺序", () => {
+    expect(nativeDeepReadSegmentCacheIdentityModel("gemini-4-carbon")).toBe("gemini-4-carbon");
+    expect(nativeDeepReadSegmentCacheIdentityModel("gemini-3.8-flash")).toBeUndefined();
+    expect(isNativeDeepReadCarbonLaneModel("gemini-4-carbon", {})).toBe(true);
+    expect(isNativeDeepReadCarbonLaneModel("gemini-4-carbon-0115", { MANHUA_DEEP_READ_UPGRADE_MODEL: "gemini-4-carbon-0115" })).toBe(true);
+    expect(isNativeDeepReadCarbonLaneModel("gemini-3.8-flash", { MANHUA_DEEP_READ_UPGRADE_MODEL: "gemini-3.8-flash" })).toBe(false);
+    expect(isNativeDeepReadCarbonLaneModel("gemini-4-argon", {})).toBe(false);
+    expect(isNativeDeepReadCurrentContractModel("gemini-4-carbon", {})).toBe(false);
+    expect(nativeDeepReadCarbonRoutes({})).toEqual(["evolink", "vertex"]);
+    expect(nativeDeepReadCarbonRoutes({ MANHUA_DEEP_READ_CARBON_ROUTES: "vertex,evolink" })).toEqual(["vertex", "evolink"]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // 精读不走 Gemini API（读视频需 Files API，不做）
+    expect(nativeDeepReadCarbonRoutes({ MANHUA_DEEP_READ_CARBON_ROUTES: "gemini_api" })).toEqual(["evolink", "vertex"]);
+    warn.mockRestore();
+  });
+  it("升级重读缺省不改：未设 MANHUA_DEEP_READ_ESCALATION_MODEL 时同首读模型（不自动走贵档）", () => {
+    expect(resolveManhuaNativeDeepReadEscalationModel({})).toBe("gemini-3.8-flash");
+    expect(resolveManhuaNativeDeepReadEscalationModel({ GEMINI_CARBON_MODEL: "gemini-4-carbon" })).toBe("gemini-3.8-flash");
+    expect(resolveManhuaNativeDeepReadEscalationModel({ MANHUA_DEEP_READ_ESCALATION_MODEL: "gemini-4-carbon" })).toBe("gemini-4-carbon");
   });
 });

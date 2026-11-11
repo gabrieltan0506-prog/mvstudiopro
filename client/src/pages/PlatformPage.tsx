@@ -179,6 +179,8 @@ import {
   NATIVE_DEEP_READ_DEFAULT_SEGMENT_SECONDS,
   NATIVE_DEEP_READ_DEFAULT_VIDEO_FPS,
   MANHUA_NATIVE_DEEP_READ_MODEL,
+  MANHUA_NATIVE_CARBON_MODEL,
+  MANHUA_NATIVE_CURRENT_READ_MODEL,
   nativeDeepReadModelForSeriesKey,
   MANHUA_NATIVE_STRUCTURING_MODEL,
   MANHUA_NATIVE_STRUCTURING_MODEL_LABELS,
@@ -265,6 +267,8 @@ import {
   writeManhuaLearnResult,
   writeManhuaLearnSegmentSeconds,
   writeManhuaLearnVideoFps,
+  readManhuaLearnReadModel,
+  writeManhuaLearnReadModel,
   type ManhuaLearnActiveJobRecord,
   type ManhuaLearnBasketItem,
   type ManhuaLearnResultUi,
@@ -2689,6 +2693,11 @@ export default function PlatformPage() {
     return () => window.clearTimeout(timer);
   }, [manhuaPasteTitle]);
   /** 1110：读片模型由服务端 env 配置决定（缺省 3.8 Flash），前端不再保存或发送读片模型偏好。 */
+  /**
+   * 1111：整集精读升级档（站长令「Argon 改成 Carbon」）。前端只发档位 nativeReadTier=upgrade，不发模型名，
+   * 服务端按配置解析（缺省 Carbon）；偏好按账号存本机（存的是车道身份，不显示）。只对新学习生效，续学沿用系列原档位。
+   */
+  const [manhuaLearnUpgradeRead, setManhuaLearnUpgradeRead] = useState(false);
   /** 0916 用户拍板：整形固定 GLM-5.3。 */
   const [manhuaLearnStructuringModel, setManhuaLearnStructuringModel] = useState<ManhuaNativeStructuringModelId>(MANHUA_NATIVE_STRUCTURING_MODEL);
   const [manhuaRestructureBusy, setManhuaRestructureBusy] = useState(false);
@@ -2815,6 +2824,7 @@ export default function PlatformPage() {
     setManhuaLearnVideoFpsInput(String(readManhuaLearnVideoFps(manhuaLearnUserKey)));
     setManhuaLearnVideoFpsError("");
     setManhuaLearnStructuringModel(readManhuaLearnStructuringModel(manhuaLearnUserKey));
+    setManhuaLearnUpgradeRead(readManhuaLearnReadModel(manhuaLearnUserKey) === MANHUA_NATIVE_CARBON_MODEL);
     setManhuaLearnServerJobs([]);
     setManhuaLearnServerJobsHydrated(false);
     setManhuaLearnControlBusy(null);
@@ -6152,6 +6162,8 @@ export default function PlatformPage() {
           nativeVideoFps,
           nativeStandaloneSource: localVideoSource || manhuaLearnStandaloneSource,
           nativeReadModel: requestedReadModel,
+          // 1111 整集精读升级档：只对新学习发档位；续学（requestedReadModel 已按系列身份定）不发。
+          ...(manhuaLearnUpgradeRead && !requestedReadModel ? { nativeReadTier: "upgrade" } : {}),
           // 续学：带上系列键，服务端核实该系列已入库后按其原读片配置续学（与当前配置无关）。
           ...(requestedReadModel && resumeSeriesKey ? { nativeResumeSeriesKey: resumeSeriesKey } : {}),
           nativeStructuringModel: manhuaLearnStructuringModel,
@@ -13799,6 +13811,22 @@ export default function PlatformPage() {
                             {manhuaLearnVideoFpsError ? (
                               <span role="alert" className="text-[10px] text-rose-200">{manhuaLearnVideoFpsError}</span>
                             ) : null}
+                            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[#c9c0e6]/90">
+                              <input
+                                type="checkbox"
+                                checked={manhuaLearnUpgradeRead}
+                                disabled={Boolean(manhuaLearnBusyKey)}
+                                onChange={(event) => {
+                                  setManhuaLearnUpgradeRead(event.target.checked);
+                                  writeManhuaLearnReadModel(manhuaLearnUserKey, event.target.checked ? MANHUA_NATIVE_CARBON_MODEL : MANHUA_NATIVE_CURRENT_READ_MODEL);
+                                }}
+                                className="h-3.5 w-3.5 accent-violet-400"
+                              />
+                              整集精读升级档
+                            </label>
+                            <span className="text-[10px] text-[#c9c0e6]/50">
+                              推理更强、更慢，模型成本约为标准档数倍；只对新学习生效（另起一个系列），续学已学系列沿用其原档位。
+                            </span>
                           </>
                         ) : null}
                         <span className="text-[11px] text-[#c9c0e6]/90">逐集分析视频并整理为待审卡，完成后可查看和采用。</span>
