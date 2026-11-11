@@ -4,6 +4,7 @@ import {
   novelModelSchema,
   novelTemplateChoiceSchema,
   novelGenerationSettingsSchema,
+  novelStageSchema,
 } from "./novelWorkspace";
 const runSchema = z.object({
   input: novelTestInputSchema,
@@ -11,7 +12,7 @@ const runSchema = z.object({
     model: z.string().optional(),
     settings: novelGenerationSettingsSchema.optional(),
     requestId: z.string(),
-    stage: z.enum(["advice", "outline", "chapter", "script"]),
+    stage: novelStageSchema,
     text: z.string(),
     templateIds: z.array(z.string()),
     inputSha256: z.string(),
@@ -100,6 +101,20 @@ export const novelWorkspaceStateSchema = z.object({
   failedRequest: novelTestInputSchema.optional(),
   pendingChapterBase: z.string().optional(),
   chapterWarnings: z.record(z.string(), z.string()).optional(),
+  /** 1111 审稿改稿：每次结果（含仅有审稿、改稿失败的记录），未修改版与修改版都保留。 */
+  chapterRevisions: z
+    .array(
+      z.object({
+        index: z.number().int().nonnegative(),
+        requestId: z.string(),
+        savedAt: z.string(),
+        /** 序列化的审稿改稿结果；改稿失败时 revised 缺省。 */
+        outcome: z.string(),
+        failure: z.string().optional(),
+        adoptedAt: z.string().optional(),
+      })
+    )
+    .optional(),
   chapterVersions: z
     .array(
       z.object({

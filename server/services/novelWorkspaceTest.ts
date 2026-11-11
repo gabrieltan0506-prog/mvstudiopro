@@ -25,6 +25,11 @@ import { createGeminiCarbonGcsSaver } from "./geminiCarbonCall";
 import { resolveStableManhuaTemplatePublicCode } from "./manhuaTemplatePublicId";
 import { formatManhuaViralTemplateWriterSkillFromCard } from "../../shared/manhuaViralTemplateBank";
 import { digestNovelTemplates, shouldDigestNovelTemplates } from "./novelTemplateDigest";
+import {
+  executeNovelRevise,
+  NovelReviseError,
+  type NovelReviseStep,
+} from "./novelChapterRevise";
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 /**
  * 只有顾问阶段（推荐模板 / 故事线可从库内换组合）需要整份目录；
@@ -234,6 +239,8 @@ export async function runNovelWorkspaceTest(
           : "原请求仍待核对，不重复提交。",
     });
   }
+  if (input.stage === "revise")
+    return runNovelReviseJob(db, id, userId, input, fingerprint);
   let evidence: Record<string, unknown> = { phase: "preparing" };
   let lastHeartbeat = 0;
   let completedModel: string | undefined;
@@ -396,6 +403,146 @@ export async function runNovelWorkspaceTest(
   }
 }
 
+export const NOVEL_REVIEW_FAILED_ZH =
+  "审稿未完成，没有进行改稿；本集正文不变，记录已保留，未自动重试。";
+export const NOVEL_REVISE_FAILED_ZH =
+  "审稿已完成，但改稿未通过；审稿意见已保留可查看，本集正文不变，未自动重试。";
+
+/**
+ * 审稿改稿：沿用同一条 job 记录（幂等与重放由调用方的插入冲突处理）。
+ * review 与 revise 两次调用的原始返回与解析后 JSON 分别写入证据，失败也不删除。
+ */
+async function runNovelReviseJob(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  id: string,
+  userId: number,
+  input: NovelTestInput,
+  fingerprint: string
+): Promise<NovelTestResult> {
+  let evidence: Record<string, unknown> = {
+    phase: "reviewing",
+    inputSha256: fingerprint,
+    originalSha256: hash(input.reviseDraft || ""),
+  };
+  const write = async () => {
+    await db
+      .update(jobs)
+      .set({ output: evidence, updatedAt: new Date() })
+      .where(eq(jobs.id, id));
+  };
+  const streamed: Record<NovelReviseStep, string[]> = { review: [], revise: [] };
+  let lastHeartbeat = 0;
+  try {
+    await write();
+    const outcome = await executeNovelRevise(
+      input,
+      (step, prompt) =>
+        callNovelStage(prompt, true, `${input.requestId}:${step}`, {
+          modelPreference: input.modelPreference,
+          ...(input.modelPreference === "carbon"
+            ? {
+                saveEvidence: createGeminiCarbonGcsSaver(
+                  `${novelWorkspaceCarbonEvidencePrefix(userId, input.requestId)}/${step}`
+                ),
+              }
+            : {}),
+          onBytes: async () => {
+            if (Date.now() - lastHeartbeat < 15000) return;
+            lastHeartbeat = Date.now();
+            await write();
+          },
+          onRaw: async response => {
+            streamed[step].push(response);
+            evidence = {
+              ...evidence,
+              [`${step}RawResponses`]: streamed[step],
+              [`${step}RawResponseHashes`]: streamed[step].map(hash),
+            };
+            await write();
+          },
+        }),
+      {
+        saveRaw: async (step, response) => {
+          evidence = {
+            ...evidence,
+            [`${step}Raw`]: response,
+            [`${step}RawSha256`]: hash(JSON.stringify(response)),
+          };
+          await write();
+        },
+        saveParsed: async (step, parsed, normalized, repaired) => {
+          evidence = {
+            ...evidence,
+            [`${step}Parsed`]: parsed,
+            [`${step}ParsedSha256`]: hash(JSON.stringify(parsed)),
+            [`${step}Normalized`]: normalized,
+            [`${step}NormalizedSha256`]: hash(normalized),
+            [`${step}SyntaxNormalized`]: repaired,
+          };
+          await write();
+        },
+        onReview: async review => {
+          evidence = { ...evidence, phase: "revising", review };
+          await write();
+        },
+      }
+    );
+    const text = JSON.stringify(outcome.result, null, 2);
+    const result: NovelTestResult = {
+      model: outcome.model,
+      settings: outcome.settings,
+      requestId: input.requestId,
+      stage: "revise",
+      text,
+      templateIds: [],
+      inputSha256: fingerprint,
+      resultSha256: hash(text),
+    };
+    await db
+      .update(jobs)
+      .set({
+        status: "succeeded",
+        output: { ...evidence, result },
+        updatedAt: new Date(),
+      })
+      .where(eq(jobs.id, id));
+    return result;
+  } catch (error) {
+    const step: NovelReviseStep =
+      error instanceof NovelReviseError ? error.kind : "review";
+    evidence = {
+      ...evidence,
+      failedStep: step,
+      failureReason: error instanceof Error ? error.message : "failed",
+      ...(error instanceof NovelReviseError && error.review
+        ? { review: error.review }
+        : {}),
+    };
+    await db
+      .update(jobs)
+      .set({
+        status: "failed",
+        output: evidence,
+        error:
+          step === "review"
+            ? "审稿未完成，未改稿，保留原始记录供核对"
+            : "改稿未完成，审稿结果与原始记录保留",
+        updatedAt: new Date(),
+      })
+      .where(eq(jobs.id, id));
+    console.error(
+      "[novel-workspace-revise]",
+      id,
+      step,
+      error instanceof Error ? error.message : "failed"
+    );
+    throw new TRPCError({
+      code: "SERVICE_UNAVAILABLE",
+      message: step === "review" ? NOVEL_REVIEW_FAILED_ZH : NOVEL_REVISE_FAILED_ZH,
+    });
+  }
+}
+
 export async function readNovelWorkspaceReceipt(
   userId: number,
   requestId: string
@@ -405,6 +552,13 @@ export async function readNovelWorkspaceReceipt(
   updatedAt?: string;
   result?: NovelTestResult;
   recoverable?: boolean;
+  /** 审稿改稿失败时：停在哪一步、业务提示，以及（改稿失败时）已完成的审稿结果。 */
+  revise?: {
+    failedStep: "review" | "revise";
+    message: string;
+    review?: unknown;
+    original?: string;
+  };
 }> {
   const db = await getDb();
   if (!db) throw new Error("测试记录暂不可用");
@@ -415,14 +569,31 @@ export async function readNovelWorkspaceReceipt(
     phase?: string;
     result?: NovelTestResult;
     raw?: { text?: string };
+    failedStep?: "review" | "revise";
+    review?: unknown;
   };
+  const request = (row.input as { request?: NovelTestInput })?.request;
   return {
     status: row.status,
     recoverable:
       row.status === "failed" &&
       (row.input as any)?.request?.stage === "chapter" &&
       Boolean(output?.raw?.text),
-    phase: ["preparing", "waiting", "receiving", "validating"].includes(
+    ...(row.status === "failed" && request?.stage === "revise"
+      ? {
+          revise: {
+            failedStep: output?.failedStep || "review",
+            message:
+              output?.failedStep === "revise"
+                ? NOVEL_REVISE_FAILED_ZH
+                : NOVEL_REVIEW_FAILED_ZH,
+            ...(output?.failedStep === "revise" && output.review
+              ? { review: output.review, original: request.reviseDraft }
+              : {}),
+          },
+        }
+      : {}),
+    phase: ["preparing", "waiting", "receiving", "validating", "reviewing", "revising"].includes(
       output?.phase || ""
     )
       ? output.phase

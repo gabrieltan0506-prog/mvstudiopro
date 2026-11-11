@@ -58,7 +58,11 @@ import {
   novelTestInputSchema,
   type NovelTestInput,
 } from "@shared/novelWorkspace";
+import { NovelChapterRevisionPanel } from "@/components/canvas/NovelChapterRevision";
 import {
+  adoptNovelRevision,
+  recordNovelReviewOnly,
+  recordNovelRevision,
   applyNovelChapterCompletion,
   downloadNovelText,
   emptyNovelWorkspace,
@@ -382,6 +386,8 @@ function NovelWorkspaceEditor({
     if (input.stage === "chapter") {
       Object.assign(next, applyNovelChapterCompletion(now, input, result));
     }
+    if (input.stage === "revise")
+      Object.assign(next, recordNovelRevision(now, input, result));
     if (input.stage === "advice") {
       next.advisorAnchor = input.requestId;
       if (input.advisorMessage === now.advisorDraft?.trim())
@@ -453,6 +459,16 @@ function NovelWorkspaceEditor({
           timer = setTimeout(check, 500);
           return;
         }
+        if (receipt.status === "failed" && pending.stage === "revise") {
+          finishFailedRevise(pending, receipt.revise);
+          if (activeRequestId.current === pending.requestId) {
+            activeRequestId.current = undefined;
+            running.current = false;
+            setBusy(false);
+          }
+          setProgress("");
+          return;
+        }
         if (receipt.status === "failed") {
           queueActive.current = false;
           persist({
@@ -474,6 +490,8 @@ function NovelWorkspaceEditor({
           waiting: "模板已就绪，等待创作服务回复",
           receiving: "正在接收创作回复",
           validating: "回复已收到，正在检查内容格式",
+          reviewing: "正在审稿",
+          revising: "审稿已完成，正在按意见改稿",
         };
         setProgress(
           receipt.status === "not_found"
@@ -678,6 +696,87 @@ function NovelWorkspaceEditor({
       }
     }
   };
+  /** 审稿改稿失败：不进入小说失败恢复流程；改稿失败时保留审稿意见。 */
+  const finishFailedRevise = (
+    pending: NovelTestInput,
+    info?: { message: string; review?: unknown }
+  ) => {
+    const now = latest.current;
+    if (now.pending?.requestId !== pending.requestId) return;
+    persist({
+      ...now,
+      pending: undefined,
+      ...(info?.review
+        ? recordNovelReviewOnly(now, pending, info.review, info.message)
+        : {}),
+    });
+    setError(
+      info?.message || "审稿改稿未完成，本集正文不变，记录已保留；没有自动重试。"
+    );
+  };
+  /** 审稿改稿：沿用当前线路，先审稿再改稿；不带模板，不改动本集正文，采用需用户确认。 */
+  const reviseChapter = async (chapterIndex: number) => {
+    if (disabled || running.current || latest.current.pending || saveError)
+      return;
+    const draft = latest.current;
+    setError("");
+    let submittedId: string | undefined;
+    try {
+      if (!draft.topic.trim() || !draft.direction.trim())
+        throw new Error("请先填写作品名称与创作方向。");
+      const original = draft.chapters[chapterIndex - 1] || "";
+      if (original.trim().length < 500)
+        throw new Error("本集正文过短，暂不能审稿改稿。");
+      const input = novelTestInputSchema.parse({
+        requestId: crypto.randomUUID(),
+        roundId: draft.roundId,
+        stage: "revise",
+        topic: draft.topic,
+        direction: draft.direction,
+        ...(draft.modelPreference
+          ? { modelPreference: draft.modelPreference }
+          : {}),
+        templates: [],
+        episodeCount: 1,
+        episodeStart: chapterIndex,
+        continuity: draft.continuity || "",
+        outline: draft.outlineApproved || draft.outline,
+        novel: continuationContext(draft, chapterIndex - 1),
+        chapterIndex,
+        reviseDraft: original,
+      });
+      if (
+        !window.confirm(
+          `本次提交管理者测试：第${chapterIndex}集审稿改稿（先审稿、再按意见改稿）。将调用创作服务并产生实际成本，是否继续？`
+        )
+      )
+        return;
+      if (!(await persist({ ...draft, pending: input }))) return;
+      submittedId = input.requestId;
+      activeRequestId.current = input.requestId;
+      running.current = true;
+      setBusy(true);
+      setProgress("正在提交请求…");
+      const result = await mutation.mutateAsync(input);
+      if (alive.current) await applyResult(input, result);
+      setProgress("审稿改稿已完成，可在本集下方对照两个版本。");
+    } catch (e) {
+      if (alive.current)
+        setError(
+          e instanceof Error && !("data" in e)
+            ? "issues" in e
+              ? "本集正文或前情档案长度超出限制，请检查后再试。"
+              : e.message
+            : "本次提交未完成，请核对原请求记录；不会自动重试。"
+        );
+    } finally {
+      if (!submittedId || activeRequestId.current === submittedId) {
+        running.current = false;
+        activeRequestId.current = undefined;
+        if (alive.current) setBusy(false);
+      }
+    }
+  };
   const queueConfiguration = (d: NovelWorkspace) =>
     JSON.stringify([
       d.topic,
@@ -793,6 +892,8 @@ function NovelWorkspaceEditor({
       });
       if (receipt.status === "succeeded" && receipt.result)
         applyResult(draft.pending, receipt.result);
+      else if (receipt.status === "failed" && draft.pending.stage === "revise")
+        finishFailedRevise(draft.pending, receipt.revise);
       else if (receipt.status === "failed") {
         queueActive.current = false;
         persist({
@@ -2091,6 +2192,13 @@ function NovelWorkspaceEditor({
             >
               {draft.chapters[i] ? "重新生成本集" : "生成本集"}
             </button>
+            <button
+              className={button}
+              disabled={disabled || (draft.chapters[i] || "").trim().length < 500}
+              onClick={() => reviseChapter(i + 1)}
+            >
+              审稿改稿
+            </button>
           </div>
           <textarea
             aria-label={`第${i + 1}集小说稿`}
@@ -2110,6 +2218,23 @@ function NovelWorkspaceEditor({
             }}
           />
           <NovelQualityHints text={draft.chapters[i] || ""} />
+          <NovelChapterRevisionPanel
+            entries={(draft.chapterRevisions || []).filter(r => r.index === i)}
+            disabled={disabled || Boolean(initial.error)}
+            onAdopt={requestId => {
+              if (
+                !window.confirm(
+                  "采用最终修改版？当前正文会保留为本集历史版本。"
+                )
+              )
+                return;
+              try {
+                change(adoptNovelRevision(latest.current, requestId));
+              } catch (e) {
+                setError(e instanceof Error ? e.message : "无法采用修改版");
+              }
+            }}
+          />
           {draft.chapterWarnings?.[String(i)] && (
             <div className="mt-2 text-sm text-amber-200" role="status">
               {draft.chapterWarnings[String(i)]}
@@ -2340,6 +2465,7 @@ function NovelWorkspaceEditor({
                   outline: "提案",
                   chapter: "小说",
                   script: "剧本",
+                  revise: "审稿改稿",
                 }[run.input.stage]
               }{" "}
               · {run.result.requestId}

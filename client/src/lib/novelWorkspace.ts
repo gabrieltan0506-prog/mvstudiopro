@@ -5,6 +5,9 @@ import {
 } from "@shared/manhuaNovelSource";
 import {
   novelChapterSchema,
+  novelReviseResultSchema,
+  type NovelReview,
+  type NovelRevisedChapter,
   type NovelTestInput,
   type NovelTestResult,
 } from "@shared/novelWorkspace";
@@ -159,6 +162,105 @@ export function applyNovelChapterCompletion(
           ],
         }
       : {}),
+    novelApproved: "",
+  };
+}
+
+export type NovelRevisionEntry = NonNullable<
+  NovelWorkspace["chapterRevisions"]
+>[number];
+const revisionOutcomeSchema = novelReviseResultSchema.extend({
+  revised: novelReviseResultSchema.shape.revised.optional(),
+});
+/** 读取一条审稿改稿记录；坏数据返回 null，不让整份草稿读取失败。 */
+export function parseNovelRevisionEntry(entry: NovelRevisionEntry): {
+  original: string;
+  review: NovelReview;
+  revised?: NovelRevisedChapter;
+} | null {
+  try {
+    return revisionOutcomeSchema.parse(JSON.parse(entry.outcome));
+  } catch {
+    return null;
+  }
+}
+/** 审稿改稿成功：记录未修改版、审稿与修改版，不改动本集正文。 */
+export function recordNovelRevision(
+  now: NovelWorkspace,
+  input: NovelTestInput,
+  result: NovelTestResult
+): Partial<NovelWorkspace> {
+  if ((now.chapterRevisions || []).some(r => r.requestId === input.requestId))
+    return {};
+  return {
+    chapterRevisions: [
+      ...(now.chapterRevisions || []),
+      {
+        index: input.chapterIndex - 1,
+        requestId: input.requestId,
+        savedAt: new Date().toISOString(),
+        outcome: result.text,
+      },
+    ],
+  };
+}
+/** 改稿失败但审稿已完成：保留审稿意见供查看（无修改版）。 */
+export function recordNovelReviewOnly(
+  now: NovelWorkspace,
+  input: NovelTestInput,
+  review: unknown,
+  failure: string
+): Partial<NovelWorkspace> {
+  if ((now.chapterRevisions || []).some(r => r.requestId === input.requestId))
+    return {};
+  return {
+    chapterRevisions: [
+      ...(now.chapterRevisions || []),
+      {
+        index: input.chapterIndex - 1,
+        requestId: input.requestId,
+        savedAt: new Date().toISOString(),
+        outcome: JSON.stringify({
+          chapterIndex: input.chapterIndex,
+          original: input.reviseDraft || "",
+          review,
+        }),
+        failure,
+      },
+    ],
+  };
+}
+/** 采用最终修改版：写入本集正文，当前正文（未修改版或手动稿）存进 chapterVersions。 */
+export function adoptNovelRevision(
+  now: NovelWorkspace,
+  requestId: string
+): Partial<NovelWorkspace> {
+  const entry = now.chapterRevisions?.find(r => r.requestId === requestId);
+  const parsed = entry && parseNovelRevisionEntry(entry);
+  if (!entry || !parsed?.revised) throw new Error("这次审稿改稿没有可采用的修改版");
+  const i = entry.index;
+  const chapters = [...now.chapters];
+  chapters[i] = `${parsed.revised.title}\n\n${parsed.revised.text}`;
+  const chapterWarnings = {
+    ...now.chapterWarnings,
+    [String(i)]:
+      (now.chapters[i] || "") === parsed.original
+        ? "已采用最终修改版，请核对衔接。"
+        : "已采用最终修改版；审稿后本集曾有修改，修改前的正文已存为历史版本，请核对。",
+  };
+  for (let j = i + 1; j < chapters.length; j++)
+    if (chapters[j]) chapterWarnings[String(j)] = "前文已修改，请核对本集衔接。";
+  const savedAt = new Date().toISOString();
+  return {
+    chapters,
+    chapterWarnings,
+    chapterVersions: [
+      ...(now.chapterVersions || []),
+      { index: i, text: now.chapters[i] || "", savedAt },
+    ],
+    chapterRevisions: (now.chapterRevisions || []).map(r =>
+      r.requestId === requestId ? { ...r, adoptedAt: savedAt } : r
+    ),
     novelApproved: "",
   };
 }

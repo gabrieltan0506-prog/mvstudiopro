@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { novelExcerptSchema } from "./manhuaNovelSource";
+import {
+  NOVEL_REVIEW_DIMENSIONS,
+  type NovelReviewDimension,
+} from "./novelCraftReview";
 
 export const NOVEL_FACETS = [
   "场景",
@@ -34,11 +38,19 @@ export const novelTemplateChoiceSchema = z
     weight: z.number().int().min(0).max(100).optional(),
   })
   .strict();
+/** revise：审稿改稿（1111 新增；只追加枚举值，旧草稿仍可解析）。 */
+export const novelStageSchema = z.enum([
+  "advice",
+  "outline",
+  "chapter",
+  "script",
+  "revise",
+]);
 export const novelTestInputSchema = z
   .object({
     requestId: z.string().uuid(),
     roundId: z.string().uuid(),
-    stage: z.enum(["advice", "outline", "chapter", "script"]),
+    stage: novelStageSchema,
     topic: text.max(200),
     direction: text.max(2000),
     modelPreference: novelModelSchema.optional(),
@@ -76,6 +88,8 @@ export const novelTestInputSchema = z
     outline: z.string().max(14000).default(""),
     novel: z.string().max(20000).default(""),
     chapterIndex: z.number().int().positive().default(1),
+    /** revise 阶段：该集待审正文（未修改版，原样）。其他阶段不得携带。 */
+    reviseDraft: z.string().max(8000).optional(),
     selectedTemplateIds: z.array(z.string().max(40)).default([]),
   })
   .strict()
@@ -104,7 +118,12 @@ export const novelTestInputSchema = z
         code: "custom",
         message: "模板创作配比须全部填写，合计100%",
       });
-    if (v.stage !== "advice" && !v.templates.length)
+    if (v.stage === "revise") {
+      if ((v.reviseDraft || "").trim().length < 500)
+        c.addIssue({ code: "custom", message: "本集正文过短，暂不能审稿改稿" });
+    } else if (v.reviseDraft !== undefined)
+      c.addIssue({ code: "custom", message: "仅审稿改稿携带待审正文" });
+    if (v.stage !== "advice" && v.stage !== "revise" && !v.templates.length)
       c.addIssue({ code: "custom", message: "请选择模板" });
     if (
       v.stage === "chapter" &&
@@ -261,6 +280,78 @@ export type NovelTestResult = {
   inputSha256: string;
   resultSha256: string;
 };
+const reviewScore = z.number().int().min(1).max(5);
+export const novelReviewSchema = z
+  .object({
+    scores: z
+      .object(
+        Object.fromEntries(
+          NOVEL_REVIEW_DIMENSIONS.map(d => [d, reviewScore])
+        ) as Record<NovelReviewDimension, typeof reviewScore>
+      )
+      .strict(),
+    issues: z
+      .array(
+        z
+          .object({
+            dimension: z.enum(NOVEL_REVIEW_DIMENSIONS),
+            quote: text.max(30),
+            problem: text.max(600),
+            fix: text.max(800),
+          })
+          .strict()
+      )
+      .min(3)
+      .max(10),
+    keep: z.array(text.max(300)).max(10).default([]),
+    verdict: text.max(300),
+  })
+  .strict();
+export type NovelReview = z.infer<typeof novelReviewSchema>;
+export const novelRevisedChapterSchema = z
+  .object({
+    title: text.max(120),
+    text: text.max(6500),
+    changes: z
+      .array(z.object({ issue: text.max(400), what: text.max(800) }).strict())
+      .min(1)
+      .max(20),
+  })
+  .strict();
+export type NovelRevisedChapter = z.infer<typeof novelRevisedChapterSchema>;
+/** 审稿改稿阶段结果：未修改版（原样）、审稿意见、最终修改版同时保留。 */
+export const novelReviseResultSchema = z
+  .object({
+    chapterIndex: z.number().int().positive(),
+    original: z.string(),
+    review: novelReviewSchema,
+    revised: novelRevisedChapterSchema,
+  })
+  .strict();
+export type NovelReviseResult = z.infer<typeof novelReviseResultSchema>;
+/** 正文字数：去掉空白后的字符数（中文按字计）。 */
+export const novelTextLength = (value: string) =>
+  value.replace(/\s+/g, "").length;
+const squash = (value: string) =>
+  value.replace(/[\s「」“”"'‘’]/g, "");
+/** 审稿意见必须能在原文定位；字数、条数与维度由 schema 把关。 */
+export function validateNovelReview(original: string, value: unknown) {
+  const review = novelReviewSchema.parse(value);
+  const body = squash(original);
+  const missing = review.issues.filter(i => !body.includes(squash(i.quote)));
+  if (missing.length)
+    throw new Error("审稿意见引用的片段在原文中找不到");
+  return review;
+}
+export const NOVEL_REVISED_MIN_CHARS = 1200;
+export const NOVEL_REVISED_MAX_CHARS = 3000;
+export function validateNovelRevision(value: unknown) {
+  const revised = novelRevisedChapterSchema.parse(value);
+  const length = novelTextLength(revised.text);
+  if (length < NOVEL_REVISED_MIN_CHARS || length > NOVEL_REVISED_MAX_CHARS)
+    throw new Error(`修改稿字数${length}，不在${NOVEL_REVISED_MIN_CHARS}–${NOVEL_REVISED_MAX_CHARS}之间`);
+  return revised;
+}
 export function validateNovelStageOutput(
   input: NovelTestInput,
   value: unknown,
@@ -336,6 +427,7 @@ export function validateNovelStageOutput(
       throw new Error("推荐模板不在可用库中或数量不足");
     return result;
   }
+  if (input.stage === "revise") return novelReviseResultSchema.parse(value);
   if (input.stage === "chapter") {
     const chapter = novelChapterSchema.parse(value);
     // A missing optional continuity note must not discard a complete paid chapter.
