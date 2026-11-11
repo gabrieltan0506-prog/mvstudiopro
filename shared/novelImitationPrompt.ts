@@ -117,6 +117,7 @@ export const NOVEL_IMITATION_UI = {
   skeletonButton: "拆解底稿结构",
   skeletonRedo: "重新拆解底稿结构",
   skeletonBusy: "正在拆解底稿结构…",
+  skeletonProgress: (done: number, total: number) => `正在拆解底稿结构… ${done}/${total} 片`,
   skeletonConfirm: (chars: number) =>
     `将拆解底稿结构（约 ${chars.toLocaleString()} 字，分段并行处理，同一底稿只拆一次）。将调用创作服务并产生实际成本，是否继续？`,
   skeletonReady: (beats: number) => `底稿结构已拆解：共 ${beats} 个节拍。`,

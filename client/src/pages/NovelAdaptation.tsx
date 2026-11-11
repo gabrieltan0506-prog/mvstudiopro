@@ -89,6 +89,7 @@ import {
   NovelOriginalityNote,
 } from "@/components/canvas/NovelImitationPanels";
 import { NovelChapterRevisionPanel } from "@/components/canvas/NovelChapterRevision";
+import { NovelSkeletonTaskError, runNovelSkeletonTask } from "@/lib/novelWorkspaceSkeletonTask";
 import {
   adoptNovelRevision,
   novelOutlineAlertSummary,
@@ -231,13 +232,15 @@ function NovelWorkspaceEditor({
   const templateCatalogConnected = useManhuaTemplateCatalogEvents(Boolean(userId), () => templates.refetch());
   const cards = (templates.data?.groups || []).flatMap(g => g.items);
   const mutation = trpc.novelWorkspace.generate.useMutation();
-  const skeletonMutation = trpc.novelWorkspace.imitationSkeleton.useMutation();
+  /** 底稿结构拆解：后台任务（发起即返回任务标识，前台轮询进度）。 */
+  const skeletonStart = trpc.novelWorkspace.imitationSkeletonStart.useMutation();
   /** 拆书参考模板（公共库）；所有模式可勾选，作为大纲与正文的结构参考；仅管理员可删除。 */
   const libraryQuery = trpc.novelWorkspace.imitationLibrary.useQuery(undefined, { retry: 1, staleTime: 0 });
   const libraryDelete = trpc.novelWorkspace.deleteImitationLibrary.useMutation();
   const libraryItems = libraryQuery.data ?? [];
   const { user: authUser } = useAuth();
   const [skeletonBusy, setSkeletonBusy] = useState(false);
+  const [skeletonProgress, setSkeletonProgress] = useState<{ done: number; total: number } | null>(null);
   /** 当前底稿全文的摘要：与拆解时记录的一致才算结构骨架可用。 */
   const [currentBaseSha, setCurrentBaseSha] = useState("");
   const originalityCache = useRef(new Map<string, { names: string[]; sentences: string[] }>());
@@ -865,12 +868,26 @@ function NovelWorkspaceEditor({
     try {
       const baseSha256 = await novelTextHash(base);
       const baseTitle = latest.current.source?.name?.trim().slice(0, 200);
-      const { skeleton, library } = await skeletonMutation.mutateAsync({
-        requestId: crypto.randomUUID(),
-        baseText: base,
-        ...(baseTitle ? { baseTitle } : {}),
-        ...(latest.current.modelPreference ? { modelPreference: latest.current.modelPreference } : {}),
+      const modelPreference = latest.current.modelPreference;
+      setSkeletonProgress(null);
+      // 后台任务：每次发起带新请求号；missing 时用同一底稿重新发起（已完成的片服务端有缓存，不重做）。
+      const outcome = await runNovelSkeletonTask({
+        start: () =>
+          skeletonStart.mutateAsync({
+            requestId: crypto.randomUUID(),
+            baseText: base,
+            ...(baseTitle ? { baseTitle } : {}),
+            ...(modelPreference ? { modelPreference } : {}),
+          }),
+        status: taskId => utils.novelWorkspace.imitationSkeletonStatus.fetch({ taskId }, { staleTime: 0 }),
+        onProgress: p => {
+          if (alive.current) setSkeletonProgress(p);
+        },
+        alive: () => alive.current,
+        failedMessage: NOVEL_IMITATION_UI.skeletonFailed,
       });
+      if (!outcome) return;
+      const { skeleton, library } = outcome;
       void libraryQuery.refetch();
       if (!alive.current) return;
       await persist({
@@ -882,10 +899,17 @@ function NovelWorkspaceEditor({
     } catch (e) {
       // 服务端给的是中性的可重试提示（含未成功的片号）；拿不到时用默认提示。
       if (alive.current)
-        setError(e instanceof Error && "data" in e && e.message ? e.message : NOVEL_IMITATION_UI.skeletonFailed);
+        setError(
+          e instanceof NovelSkeletonTaskError || (e instanceof Error && "data" in e && e.message)
+            ? (e as Error).message
+            : NOVEL_IMITATION_UI.skeletonFailed
+        );
     } finally {
       running.current = false;
-      if (alive.current) setSkeletonBusy(false);
+      if (alive.current) {
+        setSkeletonBusy(false);
+        setSkeletonProgress(null);
+      }
     }
   };
   /** 审稿改稿失败：不进入小说失败恢复流程；改稿失败时保留审稿意见。 */
@@ -1738,7 +1762,9 @@ function NovelWorkspaceEditor({
                 onClick={() => void extractSkeleton()}
               >
                 {skeletonBusy
-                  ? NOVEL_IMITATION_UI.skeletonBusy
+                  ? skeletonProgress && skeletonProgress.total > 0
+                    ? NOVEL_IMITATION_UI.skeletonProgress(skeletonProgress.done, skeletonProgress.total)
+                    : NOVEL_IMITATION_UI.skeletonBusy
                   : draft.imitationSkeleton
                     ? NOVEL_IMITATION_UI.skeletonRedo
                     : NOVEL_IMITATION_UI.skeletonButton}
