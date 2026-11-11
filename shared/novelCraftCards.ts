@@ -21,15 +21,26 @@ export type NovelCraftCard = {
   source: NovelCraftSource;
   /** 越小越基础；只用于默认回退集合排序。 */
   priority?: number;
+  /** 只有题材条目（craft_genre_*）有：题材名与常见别名，用于按作品题材确定性匹配。 */
+  genres?: string[];
+  /** 只有短篇结构公式条目（craft_short_*）有：管整篇结构，只在顾问与大纲阶段按篇幅判定附带。 */
+  form?: "short";
+  /** 短篇公式的参考节数（如 "6"、"12-18"、"通用"）。 */
+  sections?: string;
+  /** 短篇公式每节（或每段）功能，一行一节；body 由它与情绪、必备场景渲染。 */
+  beats?: string[];
 };
 
-export type NovelCraftSource = "owner" | "general";
+/** owner：本站规范；genre：分题材条目（不进检索索引，按题材匹配必带）；general：通用技法。优先级 owner > genre > general。 */
+export type NovelCraftSource = "owner" | "general" | "genre";
 
 /** 条目原始数据（source 在合并时统一补上）。 */
 export type NovelCraftCardInput = Omit<NovelCraftCard, "source">;
 
 import { NOVEL_CRAFT_OWNER_CARD_INPUTS } from "./novelCraftCardsOwner";
 import { NOVEL_CRAFT_OWNER_DAY2_CARD_INPUTS, withNovelCraftOwnerDay2Supplements } from "./novelCraftCardsOwnerDay2";
+import { NOVEL_CRAFT_GENRE_CARD_INPUTS } from "./novelCraftCardsGenre";
+import { NOVEL_CRAFT_SHORT_CARD_INPUTS } from "./novelCraftCardsShort";
 
 export const NOVEL_CRAFT_FIRST_THREE_ID = "craft_first_three";
 
@@ -321,10 +332,25 @@ export const NOVEL_CRAFT_OWNER_CARDS: readonly NovelCraftCard[] = [
 /** 全库：原有通用条目在前，本站条目接在后面。 */
 export const NOVEL_CRAFT_CARDS: readonly NovelCraftCard[] = [...NOVEL_CRAFT_BASE_CARDS, ...NOVEL_CRAFT_OWNER_CARDS];
 
+/** 分题材条目（craft_genre_*）：不并入 NOVEL_CRAFT_CARDS、不进任何索引；只按 id 取用。 */
+export const NOVEL_CRAFT_GENRE_CARDS: readonly NovelCraftCard[] = NOVEL_CRAFT_GENRE_CARD_INPUTS.map(c => ({
+  ...c,
+  source: "genre" as const,
+}));
+
+/** 短篇结构公式条目（craft_short_*）：同为题材类（source = genre），不进任何索引；只按 id 取用。 */
+export const NOVEL_CRAFT_SHORT_CARDS: readonly NovelCraftCard[] = NOVEL_CRAFT_SHORT_CARD_INPUTS.map(c => ({
+  ...c,
+  source: "genre" as const,
+}));
+
 /** 给模型看的优先规则（索引与注入文本共用）。 */
 export const NOVEL_CRAFT_PREFERRED_MARK = "【优先】";
 export const NOVEL_CRAFT_PREFERRED_RULE =
   "带【优先】的条目来自本站的写作规范；与其他条目说法不一致时以【优先】条目为准，优先选用。";
+/** 注入文本里有题材条目时附带的规则。 */
+export const NOVEL_CRAFT_GENRE_RULE =
+  "【题材条目】按本作题材自动带上：与【优先】条目说法不一致时以【优先】条目为准；与通用条目不一致时以题材条目为准。题材条目是读者期待的底线，不是公式，本作独有的创意优先。";
 
 export type NovelCraftIndexEntry = Pick<NovelCraftCard, "id" | "title" | "intro" | "tags">;
 
@@ -333,16 +359,28 @@ export function novelCraftIndex(cards: readonly NovelCraftCard[] = NOVEL_CRAFT_C
   return cards.map(({ id, title, intro, tags }) => ({ id, title, intro, tags: [...tags] }));
 }
 
-/** 按 id 取条目（保持传入顺序，忽略不存在的 id、去重）。 */
+/** 按 id 取条目（保持传入顺序，忽略不存在的 id、去重）；题材条目也可按 id 取到。 */
 export function getNovelCraftCards(ids: readonly string[]): NovelCraftCard[] {
   const seen = new Set<string>();
   const out: NovelCraftCard[] = [];
   for (const id of ids) {
     if (seen.has(id)) continue;
-    const card = NOVEL_CRAFT_CARDS.find(c => c.id === id);
+    const card = NOVEL_CRAFT_CARDS.find(c => c.id === id) ?? NOVEL_CRAFT_GENRE_CARDS.find(c => c.id === id) ?? NOVEL_CRAFT_SHORT_CARDS.find(c => c.id === id);
     if (!card) continue;
     seen.add(id);
     out.push(card);
   }
   return out;
 }
+
+/**
+ * 创意优先（站长 2026-11-12）：题材条目与模板只是读者期待的底线，不是公式；
+ * 单一题材套模板难有特色，作品要像真人创作一样靠创意取胜。顾问、大纲、正文阶段都带这一段。
+ */
+export const NOVEL_CREATIVE_FIRST_RULE = [
+  "【创意优先】题材条目、结构模板、短篇公式只保证读者期待不落空，不是公式；只套单一题材的模板写不出特色。动笔前先立住本作独有的创意，再用技法去实现它：",
+  "1. 先给一个「如果……会怎样」的核心设想：一条别的作品没用过的规则、能力、处境或视角，并写明它的代价与限制。",
+  "2. 让这个设想改变故事怎么推进：关键转折、冲突与结局都要由它引出，换掉它故事就不成立；不能只是贴在常规套路外面的包装。",
+  "3. 主动打破一处本题材的惯例，或把两种看似不搭的题材、行当、时代撞在一起，写出读者没见过的局面。",
+  "4. 自查：把本作的梗概里的题材名换成别的题材，故事是否照样成立？成立说明创意还没立住，重想核心设想。",
+].join("\n");

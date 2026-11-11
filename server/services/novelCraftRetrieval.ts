@@ -11,11 +11,17 @@ import { parseNovelModelJson } from "../../shared/novelJson";
 import {
   NOVEL_CRAFT_CARDS,
   NOVEL_CRAFT_FIRST_THREE_ID,
+  NOVEL_CRAFT_GENRE_CARDS,
+  NOVEL_CRAFT_GENRE_RULE,
+  NOVEL_CREATIVE_FIRST_RULE,
+  NOVEL_CRAFT_SHORT_CARDS,
   NOVEL_CRAFT_PREFERRED_MARK,
   NOVEL_CRAFT_PREFERRED_RULE,
   getNovelCraftCards,
   type NovelCraftCard,
 } from "../../shared/novelCraftCards";
+import { matchNovelCraftGenreCards } from "../../shared/novelCraftCardsGenre";
+import { NOVEL_CRAFT_SHORT_MAX, isNovelShortForm } from "../../shared/novelCraftCardsShort";
 import type {
   NovelTemplateDigestEntry,
   NovelTemplateDigestStore,
@@ -43,7 +49,8 @@ export type NovelCraftUnifiedEntry = {
 export type NovelCraftRetrievalInput = Pick<
   NovelTestInput,
   "stage" | "topic" | "direction" | "source" | "outline" | "chapterIndex" | "episodeStart" | "episodeCount" | "requestId"
->;
+> &
+  Partial<Pick<NovelTestInput, "imitation" | "targetEpisodeCount" | "advisorMessage">>;
 
 export type NovelCraftSelection = { craft: string[]; methods: string[]; why: string };
 
@@ -151,6 +158,9 @@ export function buildNovelCraftTaskBrief(input: NovelCraftRetrievalInput) {
     material = `本集大纲：${outlineEpisode(outline, start) || outline}`;
   } else if (outline.trim()) {
     material = `全剧大纲摘要：${outline}`;
+  } else if (input.imitation) {
+    // 爆款仿写没有底本：用用户的题材与纲要。
+    material = `题材：${input.imitation.genre}\n纲要：${input.imitation.synopsis}`;
   } else {
     material = `底本摘要：${input.source ? `${input.source.label}\n${input.source.text}` : ""}`;
   }
@@ -222,17 +232,70 @@ export function defaultNovelCraftSelection(
   return { craft: [...head, ...owner, ...general], methods: index.filter(e => e.kind === "method").map(e => e.id), why: "" };
 }
 
+const genreFields = (input: Pick<NovelTestInput, "topic" | "direction" | "source">) => ({
+  topic: input.topic,
+  direction: input.direction,
+  title: input.source?.label,
+});
+const usableFor = (cards: readonly NovelCraftCard[], stage: NovelTestInput["stage"]) =>
+  cards
+    .filter(c => c.stages.includes(stage as NovelCraftCard["stages"][number]) && c.genres?.length)
+    .map(c => ({ id: c.id, genres: c.genres ?? [] }));
+
+/**
+ * 短篇结构公式条目（craft_short_*）：只在顾问与大纲阶段、判定为短篇时按题材别名匹配，最多 1 条。
+ * 纯字符串匹配，不调模型；顾问阶段不走检索，由调用方直接附在提示词末尾。
+ */
+export function novelCraftShortIdsForInput(
+  input: Pick<NovelTestInput, "stage" | "topic" | "direction" | "source"> &
+    Partial<Pick<NovelTestInput, "targetEpisodeCount" | "advisorMessage">>
+): string[] {
+  const usable = usableFor(NOVEL_CRAFT_SHORT_CARDS, input.stage);
+  if (!usable.length) return [];
+  if (!isNovelShortForm({ ...genreFields(input), targetEpisodeCount: input.targetEpisodeCount, advisorMessage: input.advisorMessage }))
+    return [];
+  return matchNovelCraftGenreCards(genreFields(input), NOVEL_CRAFT_SHORT_MAX, usable);
+}
+
+/**
+ * 题材必带条目：用作品题材 / 创作方向 / 底本标题做纯字符串匹配（不调模型）：长篇题材行文条目最多 2 条
+ * （只取当前阶段适用的），加短篇结构公式条目最多 1 条（只在大纲阶段且判定为短篇）。
+ * 题材条目不进索引，不占检索提示词字数；命中后与模型挑选（或回退默认集合）的技法 id 合并。
+ */
+export function novelCraftGenreIdsForInput(input: NovelCraftRetrievalInput): string[] {
+  const long = matchNovelCraftGenreCards(genreFields(input), undefined, usableFor(NOVEL_CRAFT_GENRE_CARDS, input.stage));
+  return [...long, ...novelCraftShortIdsForInput(input)];
+}
+
+/** 顾问阶段：短篇结构公式条目的附加文本（没有命中返回空串）。 */
+export function renderNovelCraftShortAppendix(ids: readonly string[]) {
+  const cards = getNovelCraftCards(ids).filter(c => c.form === "short");
+  if (!cards.length) return "";
+  return [
+    "【短篇结构公式】按本作题材与篇幅自动带上，只作整篇结构参考，不是必须照搬的公式，本作独有的创意优先；与本站写作规范冲突时以本站规范为准。",
+    ...cards.map(c => `《${c.title}》\n${c.body}`),
+  ].join("\n\n");
+}
+
+/** 把题材必带条目接在已选技法 id 之后（去重）。 */
+export function withNovelCraftGenreCards(sel: NovelCraftSelection, genreIds: readonly string[]): NovelCraftSelection {
+  const extra = genreIds.filter(id => !sel.craft.includes(id));
+  return extra.length ? { ...sel, craft: [...sel.craft, ...extra] } : sel;
+}
+
 /** 按选中的 id 拼出注入文本：技法条目正文 + 手法条目（name/how/when），所属模板的对白/节奏/避免各带一次。 */
 export function renderNovelCraftInjection(
   selection: Pick<NovelCraftSelection, "craft" | "methods">,
   entries: readonly NovelTemplateDigestEntry[]
 ) {
-  const parts: string[] = ["本次取用的技法与手法（按本次任务从索引中挑选；技法条目是通用写作规则，手法条目来自已选模板的手法卡）："];
-  // 本站规范条目排在通用条目前面（各自保持选择顺序）。
+  const parts: string[] = [NOVEL_CREATIVE_FIRST_RULE, "本次取用的技法与手法（按本次任务从索引中挑选；技法条目是通用写作规则，手法条目来自已选模板的手法卡）："];
+  // 本站规范条目在前，题材条目其次，通用条目最后（各自保持选择顺序）。
   const picked = getNovelCraftCards(selection.craft);
-  const craft = [...picked.filter(c => c.source === "owner"), ...picked.filter(c => c.source !== "owner")];
+  const rank = (c: NovelCraftCard) => (c.source === "owner" ? 0 : c.source === "genre" ? 1 : 2);
+  const craft = [0, 1, 2].flatMap(r => picked.filter(c => rank(c) === r));
   if (craft.length) {
     if (craft.some(c => c.source === "owner")) parts.push(NOVEL_CRAFT_PREFERRED_RULE);
+    if (craft.some(c => c.source === "genre")) parts.push(NOVEL_CRAFT_GENRE_RULE);
     parts.push("【技法条目】");
     for (const c of craft) parts.push(`《${c.source === "owner" ? NOVEL_CRAFT_PREFERRED_MARK : ""}${c.title}》\n${c.body}`);
   }
@@ -284,12 +347,17 @@ export async function retrieveNovelCraft(params: {
   const entries = params.entries.filter(Boolean);
   const now = params.now ?? Date.now;
   const index = buildNovelCraftUnifiedIndex(input, entries);
-  const finish = (sel: NovelCraftSelection, fallbackReason?: string): NovelCraftRetrievalResult => ({
-    ...sel,
-    fallback: !!fallbackReason,
-    ...(fallbackReason ? { fallbackReason } : {}),
-    text: renderNovelCraftInjection(sel, entries),
-  });
+  const genreIds = novelCraftGenreIdsForInput(input);
+  const finish = (picked: NovelCraftSelection, fallbackReason?: string): NovelCraftRetrievalResult => {
+    // 题材必带条目在检索 / 回退之后附加，不进索引。
+    const sel = withNovelCraftGenreCards(picked, genreIds);
+    return {
+      ...sel,
+      fallback: !!fallbackReason,
+      ...(fallbackReason ? { fallbackReason } : {}),
+      text: renderNovelCraftInjection(sel, entries),
+    };
+  };
   const fallback = (reason: string) => {
     console.warn("[novel-craft-retrieval] fallback", reason);
     return finish(defaultNovelCraftSelection(input, index), reason);

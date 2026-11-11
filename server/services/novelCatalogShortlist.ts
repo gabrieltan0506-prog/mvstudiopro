@@ -27,7 +27,8 @@ const sha = (v: string) => createHash("sha256").update(v).digest("hex");
 
 type CatalogEntry = { publicId: string; intro?: string; tags?: string[] };
 
-export type NovelCatalogShortlistInput = Pick<NovelTestInput, "requestId" | "stage" | "topic" | "direction" | "source" | "advisorMessage">;
+export type NovelCatalogShortlistInput = Pick<NovelTestInput, "requestId" | "stage" | "topic" | "direction" | "source" | "advisorMessage">
+  & Partial<Pick<NovelTestInput, "imitation">>;
 
 export type NovelCatalogShortlistStats = {
   shards: number;
@@ -77,6 +78,9 @@ export function buildNovelCatalogShortlistPrompt(input: NovelCatalogShortlistInp
       topic: input.topic,
       direction: input.direction,
       ...(input.advisorMessage ? { advisorMessage: String(input.advisorMessage).slice(0, 500) } : {}),
+      ...(input.imitation
+        ? { imitationBrief: { genre: input.imitation.genre, synopsis: input.imitation.synopsis.slice(0, NOVEL_CATALOG_SHORTLIST_SOURCE_MAX_CHARS) } }
+        : {}),
       sourceDigest: source.length > NOVEL_CATALOG_SHORTLIST_SOURCE_MAX_CHARS ? source.slice(0, NOVEL_CATALOG_SHORTLIST_SOURCE_MAX_CHARS) : source,
       catalogShard: shard.map(e => ({ publicId: e.publicId, intro: e.intro ?? "", tags: e.tags ?? [] })),
     }),

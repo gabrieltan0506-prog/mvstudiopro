@@ -5,7 +5,13 @@ import {
   novelTemplateChoiceSchema,
   novelGenerationSettingsSchema,
   novelStageSchema,
+  NOVEL_IMITATION_SYNOPSIS_MAX,
 } from "./novelWorkspace";
+import {
+  NOVEL_IMITATION_LIBRARY_PICK_MAX,
+  novelImitationLibraryOutcomeSchema,
+  novelImitationSkeletonSchema,
+} from "./novelImitation";
 const runSchema = z.object({
   input: novelTestInputSchema,
   result: z.object({
@@ -57,7 +63,23 @@ export const novelWorkspaceStateSchema = z.object({
   seasons: z
     .array(z.object({ season: z.number(), workspace: z.string() }))
     .optional(),
-  mode: z.enum(["source", "original"]),
+  /** imitation：爆款仿写（1112 追加枚举值，旧草稿 source / original 照常读取）。 */
+  mode: z.enum(["source", "original", "imitation"]),
+  /** 爆款仿写的题材与纲要（方向沿用 direction）；其他模式不使用。 */
+  imitationGenre: z.string().max(200).optional(),
+  imitationSynopsis: z.string().max(NOVEL_IMITATION_SYNOPSIS_MAX).optional(),
+  /** 底稿结构拆解结果：baseSha256 对应拆解时的底稿全文，底稿更换后需重新拆解。 */
+  imitationSkeleton: z
+    .object({
+      baseSha256: z.string(),
+      savedAt: z.string(),
+      skeleton: novelImitationSkeletonSchema,
+      /** 本次拆解后的收录结果（1112b，可选；旧草稿没有）。 */
+      library: novelImitationLibraryOutcomeSchema.optional(),
+    })
+    .optional(),
+  /** 拆书参考模板：勾选的公共参考模板 id，最多 3 条（1112b，可选；旧草稿没有，所有模式可用）。 */
+  libraryTemplatePicks: z.array(z.string()).max(NOVEL_IMITATION_LIBRARY_PICK_MAX).optional(),
   source: z.unknown(),
   templates: z.array(
     z.object({

@@ -132,3 +132,24 @@ it("检索抛错不挡写作：回退默认集合继续写，fallback=true", asy
   expect(memory.row.output.craftRetrieval.methods).toEqual(["mt_0001#1", "mt_0001#2"]);
   expect(memory.prompts[1]).toContain("HOW-ONE");
 });
+
+it("顾问阶段：判定为短篇且题材命中时，提示词末尾附 1 张短篇结构公式，evidence 记 craftShort", async () => {
+  await runNovelWorkspaceTest(
+    1,
+    novelTestInputSchema.parse({ ...base, stage: "advice", topic: "追夫火葬场", targetEpisodeCount: 10, advisorMessage: "怎么改" })
+  );
+  expect(memory.prompts).toHaveLength(1);
+  expect(memory.prompts[0]).toContain("DIGEST-FULL-TEXT");
+  expect(memory.prompts[0]).toContain("【短篇结构公式】");
+  expect(memory.prompts[0]).toContain("《短篇公式·追夫火葬场不原谅》");
+  expect(memory.row.output.craftShort).toEqual(["craft_short_chase_husband_no_forgive"]);
+});
+
+it("顾问阶段：长篇（总集数 >12 且无短篇字样）不附短篇公式", async () => {
+  await runNovelWorkspaceTest(
+    1,
+    novelTestInputSchema.parse({ ...base, stage: "advice", topic: "追夫火葬场", targetEpisodeCount: 60, advisorMessage: "怎么改" })
+  );
+  expect(memory.prompts[0]).not.toContain("【短篇结构公式】");
+  expect(memory.row.output.craftShort).toBeUndefined();
+});
