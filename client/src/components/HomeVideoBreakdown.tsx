@@ -11,11 +11,11 @@ export default function HomeVideoBreakdown() {
         <div>
           <div className="flex items-center gap-2 text-xs text-[var(--hp-muted)]">
             <ScanLine className="h-4 w-4 text-[var(--hp-accent)]" />
-            <span>视觉基因 · 镜头构造 · 段落表达 · 复刻提示词</span>
+            <span>拆解 · 直接复刻 · 套用拍法做新片</span>
           </div>
           <h3 id="lapian-title" className="mt-5 text-2xl font-semibold">拉片</h3>
           <p className="mt-3 max-w-2xl text-sm leading-7 text-[var(--hp-muted)]">
-            上传一支好片，逐段拆开它的美术、光色、景别与运镜，每段附可回放片段和按秒锁定的复刻提示词，复制即可用于视频生成。
+            拉一支好片，逐段拆开它的镜头与节奏：可以直接复刻这支片，也可以套用它的拍法，换上你自己的主体和场景，做一支新的短视频。
           </p>
         </div>
         <span className="inline-flex items-center gap-2 justify-self-start rounded-full bg-[var(--hp-accent)] px-5 py-3 text-sm font-medium text-white md:justify-self-end">

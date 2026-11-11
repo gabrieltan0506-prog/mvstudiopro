@@ -7,11 +7,13 @@ import { ChevronLeft, Clock, FileVideo, Loader2, Plus, RefreshCw, ScanLine, Uplo
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { Progress } from "@/components/ui/progress";
-import { VideoBreakdownFailed, VideoBreakdownIntro, VideoBreakdownResultView } from "@/components/videoBreakdown/VideoBreakdownResult";
+import { VideoBreakdownFailed, VideoBreakdownIntro, VideoBreakdownResultView, type SendToCanvasRequest } from "@/components/videoBreakdown/VideoBreakdownResult";
+import { buildVideoBreakdownCanvasHandoff, saveVideoBreakdownCanvasHandoff, videoBreakdownCanvasHref } from "@/lib/videoBreakdownCanvasHandoff";
+import { toast } from "sonner";
 import { putVideoBreakdownFile, useVideoBreakdownCreateUpload, useVideoBreakdownJob, useVideoBreakdownStart } from "@/lib/videoBreakdownApi";
 import {
   VIDEO_BREAKDOWN_LAST_JOB_KEY,
-  VIDEO_BREAKDOWN_PRICE_COPY,
+  VIDEO_BREAKDOWN_PRICING_RULE_COPY,
   VIDEO_BREAKDOWN_STAGES,
   formatDuration,
   friendlyVideoBreakdownError,
@@ -20,6 +22,7 @@ import {
   resolveVideoBreakdownContentType,
   validateVideoBreakdownDuration,
   validateVideoBreakdownFile,
+  videoBreakdownPriceCopy,
   videoBreakdownStageIndex,
   videoBreakdownStageLabel,
 } from "@/lib/videoBreakdownView";
@@ -59,7 +62,7 @@ function readVideoDuration(file: File): Promise<number | null> {
   });
 }
 
-type Picked = { file: File; contentType: string; durationSec: number | null };
+type Picked = { file: File; contentType: (typeof VIDEO_BREAKDOWN_ACCEPT)[number]; durationSec: number | null };
 type UploadPhase = { kind: "idle" } | { kind: "uploading"; fraction: number } | { kind: "starting" };
 
 function ProgressPanel({ job }: { job: VideoBreakdownJobView }) {
@@ -131,7 +134,7 @@ export default function VideoBreakdownPage() {
       if (pendingStart.current?.fileKey !== fileKey) {
         setPhase({ kind: "uploading", fraction: 0 });
         const receipt = await createUpload.mutateAsync({ fileName: picked.file.name, contentType: picked.contentType, bytes: picked.file.size });
-        await putVideoBreakdownFile({ uploadUrl: receipt.uploadUrl, file: picked.file, contentType: picked.contentType, onProgress: fraction => setPhase({ kind: "uploading", fraction }) });
+        await putVideoBreakdownFile({ uploadUrl: receipt.uploadUrl, file: picked.file, contentType: receipt.contentType || picked.contentType, requiredHeaders: receipt.requiredHeaders, onProgress: fraction => setPhase({ kind: "uploading", fraction }) });
         pendingStart.current = { fileKey, gcsUri: receipt.gcsUri, requestId: crypto.randomUUID() };
       }
       setPhase({ kind: "starting" });
@@ -151,6 +154,17 @@ export default function VideoBreakdownPage() {
     setJobId(null);
     setNotice("");
     pendingStart.current = null;
+  };
+
+  const sendToCanvas = (request: SendToCanvasRequest) => {
+    if (!user || !jobId || !job.data?.result) return;
+    try {
+      const handoff = buildVideoBreakdownCanvasHandoff({ jobId, result: job.data.result, clipUrls: job.data.clipUrls, ...request });
+      saveVideoBreakdownCanvasHandoff(window.sessionStorage, user.id, handoff);
+      window.location.assign(videoBreakdownCanvasHref());
+    } catch (error) {
+      toast.error(friendlyVideoBreakdownError(error, "送入画布未成功，可先复制提示词手动粘贴。"));
+    }
   };
 
   const onDrop = (event: DragEvent<HTMLLabelElement>) => {
@@ -184,7 +198,7 @@ export default function VideoBreakdownPage() {
       </div>
     );
     else if (isVideoBreakdownActive(view)) body = <ProgressPanel job={view} />;
-    else if (view.status === "succeeded" && view.result) body = <VideoBreakdownResultView result={view.result} sourceUrl={view.sourceUrl} clipUrls={view.clipUrls} />;
+    else if (view.status === "succeeded" && view.result) body = <VideoBreakdownResultView result={view.result} sourceUrl={view.sourceUrl} clipUrls={view.clipUrls} keyMomentFrameUrls={view.keyMomentFrameUrls} onSendToCanvas={sendToCanvas} />;
     else body = <VideoBreakdownFailed error={view.status === "failed" ? view.error : "拉片结果暂不可读，请重新拉片。"} onRetry={restart} />;
   } else {
     body = (
@@ -205,6 +219,7 @@ export default function VideoBreakdownPage() {
           </span>
           <input aria-label="选择要拉片的视频" type="file" accept={[...VIDEO_BREAKDOWN_ACCEPT, ".mp4", ".mov", ".webm"].join(",")} disabled={busy} onChange={event => { void pick(event.target.files?.[0]); event.target.value = ""; }} className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-wait" />
         </label>
+        <p data-lapian-pricing-rule className="-mt-3 text-xs text-white/45">{VIDEO_BREAKDOWN_PRICING_RULE_COPY}。</p>
         {phase.kind === "uploading" && (
           <div className="space-y-1.5" aria-live="polite">
             <Progress value={Math.round(phase.fraction * 100)} className="h-2" />
@@ -217,7 +232,7 @@ export default function VideoBreakdownPage() {
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
             {phase.kind === "uploading" ? "上传中…" : phase.kind === "starting" ? "正在开始…" : "开始拉片"}
           </button>
-          <span data-lapian-price className="text-xs text-white/50">{VIDEO_BREAKDOWN_PRICE_COPY}</span>
+          {picked && <span data-lapian-price className="text-xs text-white/60">{videoBreakdownPriceCopy(picked.durationSec)}</span>}
           {lastJobId && <button type="button" onClick={() => setJobId(lastJobId)} className="ml-auto text-xs text-white/50 underline-offset-4 hover:text-white hover:underline">查看上次拉片结果</button>}
         </div>
       </div>

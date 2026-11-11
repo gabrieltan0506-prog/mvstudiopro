@@ -1,10 +1,14 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { formatVideoBreakdownRecreatePrompt, validateVideoBreakdownTiming, videoBreakdownSchema, type VideoBreakdown, type VideoBreakdownSegment } from "@shared/videoBreakdown";
+import { formatVideoBreakdownRecreatePrompt, validateVideoBreakdownTiming, videoBreakdownSchema } from "@shared/videoBreakdown";
+import { bounds, videoBreakdownFixture, videoBreakdownFixtureRich, videoBreakdownFixtureRichFrames } from "@shared/videoBreakdown.fixture";
+import { buildVideoBreakdownBgmPrompt } from "@shared/videoBreakdownBgm";
 import { VideoBreakdownFailed, VideoBreakdownIntro, VideoBreakdownResultView } from "@/components/videoBreakdown/VideoBreakdownResult";
 import {
-  VIDEO_BREAKDOWN_PRICE_COPY,
+  VIDEO_BREAKDOWN_PRICING_RULE_COPY,
+  estimateVideoBreakdownCredits,
+  videoBreakdownPriceCopy,
   buildAllRecreatePromptsText,
   buildVideoBreakdownMarkdown,
   expressionRows,
@@ -15,47 +19,15 @@ import {
   readJobIdFromSearch,
   resolveVideoBreakdownContentType,
   segmentPlayback,
+  sortedKeyMoments,
+  splitArrowStages,
   validateVideoBreakdownDuration,
   validateVideoBreakdownFile,
   videoBreakdownStageIndex,
   videoBreakdownStageLabel,
 } from "./videoBreakdownView";
 
-const bounds: Array<[number, number, string]> = [[0, 4.2, "雨林潜行"], [4.2, 8.5, "闪电对峙"], [8.5, 12.8, "扑咬反击"], [12.8, 17, "泥沼收束"]];
-
-function segment(index: number): VideoBreakdownSegment {
-  const [startSec, endSec, title] = bounds[index];
-  const mid = Math.round(((startSec + endSec) / 2) * 10) / 10;
-  const length = Math.round((endSec - startSec) * 10) / 10;
-  return {
-    index, startSec, endSec, title,
-    shots: [
-      { startSec, endSec: mid, framing: `第${index + 1}段远景`, camera: "平视 · 缓推", blockingAndFocus: "主体居左三分线 | 焦点在眼睛" },
-      { startSec: mid, endSec, framing: `第${index + 1}段特写`, camera: "低机位 · 手持", blockingAndFocus: "雨滴在前景虚化" },
-    ],
-    expression: {
-      narrativeIntent: `第${index + 1}段建立威胁`, technique: "冷暖对比", rhythm: "先慢后快",
-      ...(index === 3 ? {} : { sound: "雷声与低频呼吸" }),
-    },
-    recreatePrompt: {
-      subject: "同一只成年恐龙，琥珀色眼睛", scene: "暴雨中的蕨类雨林",
-      timeline: [{ fromSec: 0, toSec: length / 2, text: "缓慢探头，雨水顺鳞片滑落" }, { fromSec: length / 2, toSec: length, text: "猛然张口，闪电照亮牙齿" }],
-      camera: "低机位仰拍，缓推", lightColor: "冷蓝环境光加闪电白", rhythm: "前半静默，后半鼓点", constraints: "保留雨幕；避免卡通化",
-    },
-  };
-}
-
-const fixture: VideoBreakdown = {
-  kind: "video_breakdown_v1",
-  durationSec: 17,
-  summary: "暴雨雨林里两只恐龙从对峙到扑咬，最后幼兽坠入泥沼。",
-  overview: {
-    visualGenes: { mediumAndArtStyle: "写实三维动画", color: "墨绿与冷蓝", lighting: "闪电硬光", materialTexture: "湿润鳞片", composition: "前景遮挡", camera: "低机位为主" },
-    recurringElements: ["琥珀色眼睛", "雨水高光"],
-    mustKeep: ["体型对比", "闪电节拍"],
-  },
-  segments: [0, 1, 2, 3].map(segment),
-};
+const fixture = videoBreakdownFixture;
 
 const html = (node: ReturnType<typeof createElement>) => renderToStaticMarkup(node);
 const decode = (s: string) => s.replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
@@ -136,11 +108,12 @@ describe("纯函数", () => {
 
   it("导出 Markdown：六维、元素、要点、四段表格与提示词，表格内竖线已转义", () => {
     const md = buildVideoBreakdownMarkdown(fixture);
+    expect(md).toContain("## 配乐提示词");
+    expect(md.match(/```text/g)).toHaveLength(5);
     for (const label of ["媒介与美术风格", "色彩体系", "光线体系", "材质与质感", "构图体系", "摄影机体系"]) expect(md).toContain(`| ${label} |`);
     expect(md).toContain("- 琥珀色眼睛");
     expect(md).toContain("- 闪电节拍");
     expect(md.match(/^## 片段 /gm)).toHaveLength(4);
-    expect(md.match(/```text/g)).toHaveLength(4);
     expect(md).toContain("主体居左三分线 \\| 焦点在眼睛");
     expect(md).toContain("| 00:12.8–00:14.9 | 第4段远景 |");
   });
@@ -153,11 +126,24 @@ describe("纯函数", () => {
     expect(friendlyVideoBreakdownError(null, "兜底")).toBe("兜底");
   });
 
+  it("按片长计价：一位小数后用契约函数；读不出时长给规则", () => {
+    expect(estimateVideoBreakdownCredits(17)).toBe(30);
+    expect(estimateVideoBreakdownCredits(120.04)).toBe(30);
+    expect(estimateVideoBreakdownCredits(120.06)).toBe(40);
+    expect(estimateVideoBreakdownCredits(130)).toBe(40);
+    expect(estimateVideoBreakdownCredits(130.1)).toBe(50);
+    expect(estimateVideoBreakdownCredits(300)).toBe(210);
+    expect(estimateVideoBreakdownCredits(null)).toBeNull();
+    expect(estimateVideoBreakdownCredits(0.01)).toBeNull();
+    expect(videoBreakdownPriceCopy(65.3)).toBe("本次消耗 30 积分");
+    expect(videoBreakdownPriceCopy(null)).toContain(VIDEO_BREAKDOWN_PRICING_RULE_COPY);
+    expect(VIDEO_BREAKDOWN_PRICING_RULE_COPY).toBe("按片长计费：120 秒以内 30 积分，超出部分每 10 秒加 10 积分（不足 10 秒按 10 秒计）");
+  });
+
   it("地址栏 job 参数", () => {
     expect(readJobIdFromSearch("?job=vb_123abc")).toBe("vb_123abc");
     expect(readJobIdFromSearch("job=../../x")).toBeNull();
     expect(readJobIdFromSearch("")).toBeNull();
-    expect(VIDEO_BREAKDOWN_PRICE_COPY).toBe("每次消耗 20 积分");
   });
 });
 
@@ -213,10 +199,25 @@ describe("关键渲染", () => {
     expect(html(createElement(VideoBreakdownFailed, { onRetry: () => undefined }))).toContain("请稍后重新拉片");
   });
 
-  it("空态说明拉片是什么、复刻提示词可直接用于视频生成", () => {
+  it("空态说明两种用法：直接复刻、套用拍法做新片", () => {
     const out = html(createElement(VideoBreakdownIntro));
-    expect(out).toContain("拉片");
-    expect(out).toContain("可直接用于视频生成");
+    expect(out).toContain("拉一支片");
+    expect(out).toContain("直接复刻");
+    expect(out).toContain("套用它的拍法");
+  });
+
+  it("给了送入画布回调才出现两个主行动与单段按钮；配乐提示词区块常驻", () => {
+    const without = html(createElement(VideoBreakdownResultView, { result: fixture, sourceUrl, clipUrls, onCopy: () => undefined }));
+    expect(without).not.toContain("复刻这支片");
+    expect(without).toContain("配乐提示词");
+    const out = html(createElement(VideoBreakdownResultView, { result: fixture, sourceUrl, clipUrls, onCopy: () => undefined, onSendToCanvas: () => undefined }));
+    expect(out).toContain("复刻这支片");
+    expect(out).toContain("用这套拍法创作新片");
+    expect(out.match(/data-send-segment=/g)).toHaveLength(4);
+    expect(out.match(/到自由画布创作/g)).toHaveLength(4);
+    expect(out).toContain("本段片段未裁好，只带复刻提示词");
+    const bgm = /<pre data-bgm-prompt[^>]*>([\s\S]*?)<\/pre>/.exec(out)?.[1] || "";
+    expect(decode(bgm)).toBe(buildVideoBreakdownBgmPrompt(fixture));
   });
 
   it("前台文本不含模型、通道、供应商名", () => {
@@ -226,5 +227,57 @@ describe("关键渲染", () => {
       html(createElement(VideoBreakdownIntro)),
     ].join("").replace(/<[^>]+>/g, " ");
     expect(out).not.toMatch(/gemini|gpt|claude|veo|vertex|openai|google|anthropic|seedance|evolink|fly|vercel/i);
+  });
+});
+
+describe("可选块：镜长分布 / 手法节奏情绪 / 风格判词 / 声音拆解 / 重点时刻", () => {
+  const rich = videoBreakdownFixtureRich;
+  const frames = videoBreakdownFixtureRichFrames;
+  const sourceUrl = "https://cdn.example.com/src.mp4";
+
+  it("富数据符合契约", () => {
+    expect(videoBreakdownSchema.parse(rich)).toEqual(rich);
+  });
+
+  it("阶段切分与重点时刻排序（截图按原下标对应）", () => {
+    expect(splitArrowStages("不安 → 紧张->惊惧 ➜ 怅然")).toEqual(["不安", "紧张", "惊惧", "怅然"]);
+    expect(splitArrowStages("一气呵成")).toEqual(["一气呵成"]);
+    expect(sortedKeyMoments(rich, frames).map(m => [m.atSec, m.frameUrl])).toEqual([[4.2, frames[1]], [10.2, frames[0]], [15, ""]]);
+    expect(sortedKeyMoments(fixture)).toEqual([]);
+  });
+
+  it("有可选块：全部渲染，镜长条形计数正确，截图为空串时只显示文字，可点击跳原片", () => {
+    const out = html(createElement(VideoBreakdownResultView, { result: rich, sourceUrl, keyMomentFrameUrls: frames, onCopy: () => undefined }));
+    expect(out).toContain("data-lapian-shot-lengths");
+    // 8 个镜头：2.1/2.1/2.2/2.1/2.1/2.2/2.1/2.1 秒 → 全在 2–4s
+    expect(Array.from(out.matchAll(/data-count="(\d+)"/g)).map(m => Number(m[1]))).toEqual([0, 8, 0, 0, 0, 0, 0]);
+    for (const text of ["可复用手法", "前景遮挡制造窥视感", "节奏结构", "情绪推进", "风格判词", "快切", "声音拆解", "声音节奏", "混音", "可复用声音手法", "生成声音要素", "重点时刻", "幼兽坠入泥沼"]) expect(out).toContain(text);
+    expect(out.match(/<ol[^>]*aria-label="情绪推进"/)).toBeTruthy();
+    expect(out.match(/<img /g)).toHaveLength(2);
+    const moments = Array.from(out.matchAll(/data-key-moment="([\d.]+)"><button/g)).map(m => Number(m[1]));
+    expect(moments).toEqual([4.2, 10.2, 15]);
+    expect(out).toContain("切镜");
+    expect(out).toContain("00:04.2");
+  });
+
+  it("没有原片地址时重点时刻不可点击", () => {
+    const out = html(createElement(VideoBreakdownResultView, { result: rich, keyMomentFrameUrls: frames, onCopy: () => undefined }));
+    expect(out).not.toMatch(/data-key-moment="[\d.]+"><button/);
+    expect(out).toContain("幼兽坠入泥沼");
+  });
+
+  it("无可选块：不留空壳，只有镜长分布", () => {
+    const out = html(createElement(VideoBreakdownResultView, { result: fixture, sourceUrl, onCopy: () => undefined }));
+    expect(out).toContain("镜长分布");
+    for (const marker of ["data-lapian-craft", "data-lapian-sound", "data-lapian-key-moments", "风格判词", "声音拆解", "重点时刻"]) expect(out).not.toContain(marker);
+  });
+
+  it("导出 Markdown 带上可选块；没有时不出现", () => {
+    const md = buildVideoBreakdownMarkdown(rich);
+    for (const text of ["### 镜长分布", "| 2–4s | 8 |", "### 可复用手法", "### 节奏结构", "静态铺垫 → 对峙升温", "### 情绪推进", "### 风格判词", "`压迫`", "### 声音拆解", "| 生成声音要素 |", "### 重点时刻", "| 00:04.2 | 切镜 | 闪电硬切 |"]) expect(md).toContain(text);
+    expect(md.indexOf("闪电硬切")).toBeLessThan(md.indexOf("张口特写"));
+    const plain = buildVideoBreakdownMarkdown(fixture);
+    expect(plain).toContain("### 镜长分布");
+    for (const text of ["### 可复用手法", "### 声音拆解", "### 重点时刻"]) expect(plain).not.toContain(text);
   });
 });

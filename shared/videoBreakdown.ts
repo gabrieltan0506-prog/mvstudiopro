@@ -61,6 +61,29 @@ export const videoBreakdownSchema = z.object({
     visualGenes: videoBreakdownVisualGenesSchema,
     recurringElements: z.array(text(200)).min(1).max(12), // 反复出现的画面元素
     mustKeep: z.array(text(300)).min(1).max(12), // 复刻时要保留的要点
+    /**
+     * 以下三块借鉴模板学习「逐帧审片手记」的长处（可复用手法、节奏与情绪推进、风格判词、声音节点），全部可选：
+     * 模型没给或校验不过时整块丢弃，不影响主结果。
+     */
+    craft: z.object({
+      reusableTechniques: z.array(text(300)).min(1).max(8), // 可复用手法总结
+      rhythmStructure: text(600), // 节奏结构（用 → 串起各阶段）
+      emotionArc: text(600), // 情绪推进（用 → 串起各阶段）
+      styleTags: z.array(text(20)).min(1).max(24), // 风格判词（情绪 / 叙事特色 / 视觉 / 节奏 / 声音 的短标签）
+    }).strict().optional(),
+    /** 声音拆解：有音轨时才给；generationElements 直接供配乐提示词函数使用。 */
+    sound: z.object({
+      rhythm: text(400), // 声音节奏
+      mix: text(400), // 混音（对白 / 音乐 / 音效 / 环境的主次）
+      reusableTechniques: text(400), // 可复用声音手法
+      generationElements: text(400), // 生成声音要素（乐器、音色、速度、关键音效）
+    }).strict().optional(),
+    /** 重点时刻：模型看片时自报的抓帧秒位（全片绝对秒），类型限定五类。 */
+    keyMoments: z.array(z.object({
+      atSec: sec,
+      type: z.enum(["cut", "emotion", "lighting", "story", "sound"]), // 切镜 / 情绪 / 灯光 / 剧情 / 声音
+      note: text(200),
+    }).strict()).max(60).optional(),
   }).strict(),
   segments: z.array(videoBreakdownSegmentSchema).min(1).max(200),
 }).strict();
@@ -112,6 +135,8 @@ export type VideoBreakdownJobView = {
   stage?: string;
   /** 片段可播放地址（签名，短期有效），下标与 segments 对应；裁切失败的段为空串。 */
   clipUrls?: string[];
+  /** 重点时刻截图地址（签名，短期有效），下标与 overview.keyMoments 对应；抽帧失败为空串。 */
+  keyMomentFrameUrls?: string[];
   /** 原片可播放地址（签名，短期有效）。 */
   sourceUrl?: string;
   result?: VideoBreakdown;
@@ -136,3 +161,18 @@ export function videoBreakdownCredits(durationSec: number): number {
   if (durationSec <= VIDEO_BREAKDOWN_BASE_SECONDS) return VIDEO_BREAKDOWN_BASE_CREDITS;
   return VIDEO_BREAKDOWN_BASE_CREDITS + Math.ceil((durationSec - VIDEO_BREAKDOWN_BASE_SECONDS) / VIDEO_BREAKDOWN_STEP_SECONDS) * VIDEO_BREAKDOWN_STEP_CREDITS;
 }
+
+/** 镜长分布（与模板学习的分桶一致），纯函数，由全部分段的镜头秒位算出。 */
+export const VIDEO_BREAKDOWN_SHOT_LENGTH_BUCKETS = [
+  { label: "0–2s", max: 2 }, { label: "2–4s", max: 4 }, { label: "4–6s", max: 6 }, { label: "6–10s", max: 10 },
+  { label: "10–15s", max: 15 }, { label: "15–30s", max: 30 }, { label: "30s+", max: Infinity },
+] as const;
+export function videoBreakdownShotLengthDistribution(value: VideoBreakdown): { label: string; count: number }[] {
+  const counts = VIDEO_BREAKDOWN_SHOT_LENGTH_BUCKETS.map(bucket => ({ label: bucket.label as string, count: 0 }));
+  for (const segment of value.segments) for (const shot of segment.shots) {
+    const length = shot.endSec - shot.startSec;
+    counts[VIDEO_BREAKDOWN_SHOT_LENGTH_BUCKETS.findIndex(bucket => length < bucket.max || bucket.max === Infinity)]!.count++;
+  }
+  return counts;
+}
+export const VIDEO_BREAKDOWN_KEY_MOMENT_LABELS = { cut: "切镜", emotion: "情绪", lighting: "灯光", story: "剧情", sound: "声音" } as const;

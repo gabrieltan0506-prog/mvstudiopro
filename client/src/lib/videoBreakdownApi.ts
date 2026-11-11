@@ -1,44 +1,22 @@
 /**
- * 拉片接口的唯一入口：页面组件只依赖这里导出的强类型函数。
- * tRPC 路由 videoBreakdown（全部需登录）由服务端另行实现；路径已在 trpcTransportRouting 中直连长请求通道。
+ * 拉片接口的唯一入口：页面组件只依赖这里导出的函数。
+ * tRPC 路由 videoBreakdown（全部需登录）；路径已在 trpcTransportRouting 中整组直连长请求通道。
  */
 import { trpc } from "@/lib/trpc";
 import { gcsTransferUrl, isGcsTransferUrl } from "@/lib/gcsTransfer";
-import type { VideoBreakdownJobView } from "@shared/videoBreakdown";
 import { VIDEO_BREAKDOWN_POLL_MS, isVideoBreakdownActive } from "@/lib/videoBreakdownView";
 
-export type VideoBreakdownCreateUploadInput = { fileName: string; contentType: string; bytes: number };
-export type VideoBreakdownCreateUploadOutput = { uploadUrl: string; gcsUri: string };
-export type VideoBreakdownStartInput = { gcsUri: string; requestId: string };
-export type VideoBreakdownStartOutput = { jobId: string };
-
-type Mutation<I, O> = { useMutation: () => { mutateAsync: (input: I) => Promise<O>; isPending: boolean } };
-type JobQueryResult = { data?: VideoBreakdownJobView; error: unknown; isLoading: boolean; refetch: () => Promise<unknown> };
-type VideoBreakdownRouterClient = {
-  createUpload: Mutation<VideoBreakdownCreateUploadInput, VideoBreakdownCreateUploadOutput>;
-  start: Mutation<VideoBreakdownStartInput, VideoBreakdownStartOutput>;
-  get: {
-    useQuery: (
-      input: { jobId: string },
-      options: { enabled: boolean; retry: boolean; refetchOnWindowFocus: boolean; refetchInterval: (query: { state: { data?: VideoBreakdownJobView } }) => number | false },
-    ) => JobQueryResult;
-  };
-};
-
-// 服务端合入后去掉断言：此刻 AppRouter 里还没有 videoBreakdown，类型缺口只在这一行隔开（运行时 tRPC 代理按路径名调用，不受影响）。
-const videoBreakdownClient = (trpc as unknown as { videoBreakdown: VideoBreakdownRouterClient }).videoBreakdown;
-
 export function useVideoBreakdownCreateUpload() {
-  return videoBreakdownClient.createUpload.useMutation();
+  return trpc.videoBreakdown.createUpload.useMutation();
 }
 
 export function useVideoBreakdownStart() {
-  return videoBreakdownClient.start.useMutation();
+  return trpc.videoBreakdown.start.useMutation();
 }
 
 /** 读取任务；排队/进行中每 3 秒轮询，完成或失败即停。 */
-export function useVideoBreakdownJob(jobId: string | null): JobQueryResult {
-  return videoBreakdownClient.get.useQuery(
+export function useVideoBreakdownJob(jobId: string | null) {
+  return trpc.videoBreakdown.get.useQuery(
     { jobId: jobId || "" },
     {
       enabled: !!jobId,
@@ -49,13 +27,23 @@ export function useVideoBreakdownJob(jobId: string | null): JobQueryResult {
   );
 }
 
-/** 浏览器把文件 PUT 到签名地址（带同样的 Content-Type）；GCS 地址按站内惯例经鉴权中转，签名不变。 */
-export function putVideoBreakdownFile(params: { uploadUrl: string; file: Blob; contentType: string; onProgress?: (fraction: number) => void; signal?: AbortSignal }): Promise<void> {
+/**
+ * 浏览器把文件 PUT 到签名地址：必须带签名时的 Content-Type 与全部 requiredHeaders（大小上限签在链接里，缺头存储拒收）。
+ * GCS 地址按站内惯例经鉴权中转（server/routers/gcsTransfer.ts 原样转发 content-type / content-length / x-goog-* 头，签名不变）。
+ */
+export function putVideoBreakdownFile(params: {
+  uploadUrl: string;
+  file: Blob;
+  contentType: string;
+  requiredHeaders?: Record<string, string>;
+  onProgress?: (fraction: number) => void;
+  signal?: AbortSignal;
+}): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", gcsTransferUrl(params.uploadUrl), true);
     if (isGcsTransferUrl(params.uploadUrl)) xhr.withCredentials = true;
-    xhr.setRequestHeader("Content-Type", params.contentType);
+    for (const [header, value] of videoBreakdownUploadHeaders(params.contentType, params.requiredHeaders)) xhr.setRequestHeader(header, value);
     xhr.upload.onprogress = event => {
       if (event.lengthComputable && event.total > 0) params.onProgress?.(Math.min(1, event.loaded / event.total));
     };
@@ -65,4 +53,11 @@ export function putVideoBreakdownFile(params: { uploadUrl: string; file: Blob; c
     params.signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.send(params.file);
   });
+}
+
+/** 上传请求头：Content-Type 用签名时的值；requiredHeaders 全部带上（其中若也有 Content-Type，以签名值为准）。 */
+export function videoBreakdownUploadHeaders(contentType: string, requiredHeaders?: Record<string, string>): Array<[string, string]> {
+  const extra = Object.entries(requiredHeaders || {}).filter(([key, value]) => key.trim() && typeof value === "string");
+  const signedType = extra.find(([key]) => key.toLowerCase() === "content-type")?.[1];
+  return [["Content-Type", signedType || contentType], ...extra.filter(([key]) => key.toLowerCase() !== "content-type")];
 }

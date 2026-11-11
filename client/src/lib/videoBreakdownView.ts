@@ -4,6 +4,13 @@
  */
 import {
   VIDEO_BREAKDOWN_ACCEPT,
+  VIDEO_BREAKDOWN_BASE_CREDITS,
+  VIDEO_BREAKDOWN_BASE_SECONDS,
+  VIDEO_BREAKDOWN_STEP_CREDITS,
+  VIDEO_BREAKDOWN_STEP_SECONDS,
+  videoBreakdownCredits,
+  videoBreakdownShotLengthDistribution,
+  VIDEO_BREAKDOWN_KEY_MOMENT_LABELS,
   VIDEO_BREAKDOWN_MAX_BYTES,
   VIDEO_BREAKDOWN_MAX_SECONDS,
   formatVideoBreakdownRecreatePrompt,
@@ -11,9 +18,23 @@ import {
   type VideoBreakdownJobView,
   type VideoBreakdownSegment,
 } from "@shared/videoBreakdown";
+import { buildVideoBreakdownBgmPrompt } from "@shared/videoBreakdownBgm";
 
-/** 待定价：正式价格确定后与服务端扣费口径一起改。 */
-export const VIDEO_BREAKDOWN_PRICE_COPY = "每次消耗 20 积分";
+/** 计价规则一句话（数字取自契约常量，与服务端扣费同源）。 */
+export const VIDEO_BREAKDOWN_PRICING_RULE_COPY = `按片长计费：${VIDEO_BREAKDOWN_BASE_SECONDS} 秒以内 ${VIDEO_BREAKDOWN_BASE_CREDITS} 积分，超出部分每 ${VIDEO_BREAKDOWN_STEP_SECONDS} 秒加 ${VIDEO_BREAKDOWN_STEP_CREDITS} 积分（不足 ${VIDEO_BREAKDOWN_STEP_SECONDS} 秒按 ${VIDEO_BREAKDOWN_STEP_SECONDS} 秒计）`;
+
+/** 预估积分：与服务端一致，片长先取一位小数再用契约函数计价；读不出时长返回 null。 */
+export function estimateVideoBreakdownCredits(durationSec: number | null | undefined): number | null {
+  if (durationSec == null || !Number.isFinite(durationSec) || durationSec <= 0) return null;
+  const rounded = Math.round(durationSec * 10) / 10;
+  return rounded > 0 ? videoBreakdownCredits(rounded) : null;
+}
+
+/** 开始按钮旁的价格文案：读出时长给具体积分，读不出给规则。 */
+export function videoBreakdownPriceCopy(durationSec: number | null | undefined): string {
+  const credits = estimateVideoBreakdownCredits(durationSec);
+  return credits == null ? `${VIDEO_BREAKDOWN_PRICING_RULE_COPY}，以核对后的片长为准` : `本次消耗 ${credits} 积分`;
+}
 
 /** 轮询间隔（毫秒）。 */
 export const VIDEO_BREAKDOWN_POLL_MS = 3000;
@@ -138,6 +159,20 @@ export function segmentHeading(segment: VideoBreakdownSegment): string {
   return `片段 ${segment.index + 1} · ${segment.title}`;
 }
 
+/** 「A → B → C」拆成阶段；没有箭头时返回单项。 */
+export function splitArrowStages(text: string): string[] {
+  return text.split(/\s*(?:→|->|➜|⟶)\s*/).map(part => part.trim()).filter(Boolean);
+}
+
+export type SortedKeyMoment = NonNullable<VideoBreakdown["overview"]["keyMoments"]>[number] & { originalIndex: number; frameUrl: string };
+
+/** 重点时刻按秒位排序；截图地址按原下标对应（排序前取），空串表示只显示文字。 */
+export function sortedKeyMoments(result: VideoBreakdown, frameUrls?: readonly string[]): SortedKeyMoment[] {
+  return (result.overview.keyMoments || [])
+    .map((moment, originalIndex) => ({ ...moment, originalIndex, frameUrl: String(frameUrls?.[originalIndex] || "").trim() }))
+    .sort((a, b) => a.atSec - b.atSec || a.originalIndex - b.originalIndex);
+}
+
 /** 「复制全部提示词」文本：每段带标题与时间范围，段间空行分隔。 */
 export function buildAllRecreatePromptsText(result: VideoBreakdown): string {
   return result.segments
@@ -155,6 +190,21 @@ export function buildVideoBreakdownMarkdown(result: VideoBreakdown): string {
   for (const row of VISUAL_GENE_ROWS) lines.push(`| ${row.label} | ${cell(result.overview.visualGenes[row.key])} |`);
   lines.push("", "### 反复出现的画面元素", "", ...result.overview.recurringElements.map(item => `- ${item}`));
   lines.push("", "### 复刻时要保留的要点", "", ...result.overview.mustKeep.map(item => `- ${item}`), "");
+  lines.push("### 镜长分布", "", "| 镜长 | 镜头数 |", "| --- | --- |", ...videoBreakdownShotLengthDistribution(result).map(row => `| ${row.label} | ${row.count} |`), "");
+  const { craft, sound } = result.overview;
+  if (craft) {
+    lines.push("### 可复用手法", "", ...craft.reusableTechniques.map(item => `- ${item}`), "");
+    lines.push("### 节奏结构", "", craft.rhythmStructure, "", "### 情绪推进", "", craft.emotionArc, "");
+    lines.push("### 风格判词", "", craft.styleTags.map(tag => `\`${tag}\``).join(" "), "");
+  }
+  if (sound) {
+    lines.push("### 声音拆解", "", "| 维度 | 分析 |", "| --- | --- |",
+      `| 声音节奏 | ${cell(sound.rhythm)} |`, `| 混音 | ${cell(sound.mix)} |`, `| 可复用声音手法 | ${cell(sound.reusableTechniques)} |`, `| 生成声音要素 | ${cell(sound.generationElements)} |`, "");
+  }
+  const moments = sortedKeyMoments(result);
+  if (moments.length) {
+    lines.push("### 重点时刻", "", "| 时间 | 类型 | 说明 |", "| --- | --- | --- |", ...moments.map(m => `| ${formatClock(m.atSec)} | ${VIDEO_BREAKDOWN_KEY_MOMENT_LABELS[m.type]} | ${cell(m.note)} |`), "");
+  }
   for (const segment of result.segments) {
     lines.push(`## ${segmentHeading(segment)}`, "", `时间：${formatSegmentRange(segment)}`, "", "### 镜头构造", "", "| 时间 | 画面景别 | 摄影机 | 调度 · 构图与焦点 |", "| --- | --- | --- | --- |");
     for (const shot of segment.shots) lines.push(`| ${formatClock(shot.startSec)}–${formatClock(shot.endSec)} | ${cell(shot.framing)} | ${cell(shot.camera)} | ${cell(shot.blockingAndFocus)} |`);
@@ -162,6 +212,7 @@ export function buildVideoBreakdownMarkdown(result: VideoBreakdown): string {
     for (const row of expressionRows(segment)) lines.push(`| ${row.label} | ${cell(row.value)} |`);
     lines.push("", "### 复刻生成提示词", "", "```text", formatVideoBreakdownRecreatePrompt(segment), "```", "");
   }
+  lines.push("## 配乐提示词", "", "```text", buildVideoBreakdownBgmPrompt(result), "```", "");
   return lines.join("\n");
 }
 
