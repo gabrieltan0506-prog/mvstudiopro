@@ -1046,3 +1046,16 @@ describe('篇幅容差 B：超出 ≤15% 收下转压缩，>15% 才切下一跳�
   expect(f.deps.fetch).toHaveBeenCalledTimes(3);
  });
 });
+
+describe("统稿/排版首发轮转仍覆盖三跳（1111）", () => {
+  it("GLM 族从任一通道首发都覆盖 GLM 两通道与 DeepSeek 兜底", async () => {
+    const { knowledgePublicationRoutesForChannel } = await import("./knowledgeModelCapabilities");
+    for (const channel of ["evolink", "openrouter"] as const) {
+      const routes = knowledgePublicationRoutesForChannel(channel);
+      const glmFirst = [...routes.filter(r => r.id.startsWith("glm-")), ...routes.filter(r => !r.id.startsWith("glm-"))];
+      const hops = Array.from(new Set(glmFirst.map(r => `${r.id.startsWith("glm-") ? "glm" : "deepseek"}@${r.channel}`)));
+      expect(hops[0]).toBe(`glm@${channel}`);
+      expect(hops).toEqual(expect.arrayContaining(["glm@evolink", "glm@openrouter", "deepseek@evolink", "deepseek@openrouter"]));
+    }
+  });
+});

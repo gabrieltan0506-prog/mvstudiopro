@@ -1,4 +1,4 @@
-import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
+import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeLayoutBatchChannel,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
 import { knowledgeBudgetInstructions, knowledgeReadingCharBudgets } from "../../shared/knowledgeEditionBudget";
 import {KNOWLEDGE_SUPPLEMENT_REFINEMENT_INSTRUCTIONS} from '../../shared/knowledgeSupplementRefinement';
 import { KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST } from "./knowledgeModelCapabilities";
@@ -164,7 +164,10 @@ async function reviewKnowledgeLayoutBatches(
         const indexes=groups[index], batchBook={...book,pages:indexes.map(i=>book.pages[i])};
         const batchPrefix=`${prefix}/batch-${index}`;
         const request=buildKnowledgeConversationRequest(doc,context,[],book,indexes);
-        request.executionChannel=index%2===0?"openrouter":"evolink";
+        // 排版首发通道与统稿错开（见 knowledgeLayoutBatchChannel）；新稿按 parallel.family 走 GLM 优先三跳。
+        // 已存 input.json 的批次恢复时沿用原请求，不改旧回执身份。
+        request.executionChannel=knowledgeLayoutBatchChannel(index);
+        if(doc.publication?.parallel?.family)request.executionFamily=doc.publication.parallel.family;
         // 展示正文同样服从生图前确定的篇幅预算，排版不得把已压缩的内文重新扩写。
         const pubSource=doc.publication?.source;
         if(pubSource?.detailLevel&&pubSource.reviewBatchMode==="ready-images"){

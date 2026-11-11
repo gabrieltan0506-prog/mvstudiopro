@@ -1,4 +1,4 @@
-import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
+import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeFinalRevisionChannel,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
 import { KNOWLEDGE_COMPRESSION_TARGET_RATIO, knowledgeBudgetInstructions, knowledgeBudgetOutputContract, knowledgeCompressionInstructions, knowledgeReadingCharBudgets, knowledgeReadingOverflow, type KnowledgeReadingOverflow } from "../../shared/knowledgeEditionBudget";
 import { KNOWLEDGE_VERIFICATION_POLICY, KNOWLEDGE_VERIFICATION_EDIT_POLICY, knowledgeVerificationTriggers, knowledgeVerificationQueries, knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
@@ -572,10 +572,13 @@ export async function reviewKnowledgePublication(
       const workerCount=knowledgeStageConcurrency(pages.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter+KNOWLEDGE_MODEL_CHANNEL_MAX.evolink});
       const settled=await Promise.allSettled(Array.from({length:workerCount},async(_,worker)=>{
         for(let index=worker;index<pages.length;index+=workerCount){
-          const channel=index%2===0?'openrouter':'evolink';
+          // 统稿首发通道与整册排版错开（见 knowledgeFinalRevisionChannel）；新稿按 parallel.family 走 GLM 优先三跳，
+          // 旧稿缺 family 维持原序。已存请求（request-N.json）恢复时以原请求为准，不改旧回执身份。
+          const channel=knowledgeFinalRevisionChannel(index);
           const page=pages[index],original=source.pages.find(p=>p.id===page.id)!;
           const pageSource={title:source.title,detailLevel:source.detailLevel,pages:[{...original,body:page.body,imageUrl:''}]};
           const request=buildKnowledgeFinalRevisionRequest(pageSource,digest,verifications,channel);
+          if(document.publication.parallel?.family)request.executionFamily=document.publication.parallel.family;
           const editPrefix=`${root}/final-markdown-${index}`;
           const raw=await getRaw(deps,editPrefix,context.attempt,digest,[],request);
           const edited=validateKnowledgeReview(parseRaw(raw,false),pageSource,digest).pages[0];
