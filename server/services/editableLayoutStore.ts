@@ -6,9 +6,11 @@ import {
 import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
+  statGcsObjectVersion,
   uploadBufferToGcs,
   signGsUriV4ReadUrl,
 } from "./gcs";
+import { KnowledgeTtlCache } from "./knowledgePublicationCache";
 export class LayoutConflict extends Error {
   constructor() {
     super("云端排版稿已变化，未覆盖；请导出本机备份后读取云端稿件");
@@ -19,9 +21,34 @@ const objectName = (owner: number) => {
     throw new Error("需要有效登录账号");
   return `editable-layouts/user-${owner}/library.json`;
 };
-const real = { read: downloadGcsObjectVersioned, write: uploadBufferToGcs };
+type StoreDeps = {
+  read: (params: { gcsUri: string }) => Promise<{ buffer: Buffer; generation: string }>;
+  write: typeof uploadBufferToGcs;
+  /** 提供时启用按 generation 的进程内缓存：先取元数据，同版本不再下载整库。 */
+  stat?: (params: { gcsUri: string }) => Promise<{ generation: string }>;
+};
+const real: StoreDeps = { read: downloadGcsObjectVersioned, write: uploadBufferToGcs, stat: statGcsObjectVersion };
+/**
+ * 云稿整库原文缓存（键 = 对象地址 + generation，地址本身按账号区分，不会跨用户）。
+ * 1110 实测本机库 330 万字符：报价、排版输入、预览、导出、每次保存前的旧版核对都要整库下载一次。
+ * generation 变化即换键；容量与过期双上限；超大库不进缓存。
+ */
+export const layoutLibraryBufferCache = new KnowledgeTtlCache<{ buffer: Buffer; generation: string }>(8, 5 * 60_000);
+const LIBRARY_CACHE_MAX_BYTES = 16 * 1024 * 1024;
+const libraryCacheKey = (gcsUri: string, generation: string) => `${gcsUri}#${generation}`;
 /** 并发保存可能在metadata与body读取之间替换旧generation；只重读同一稿件，不重放写入。 */
-async function readCurrentLayoutVersion(gcsUri: string, deps: typeof real) {
+async function readCurrentLayoutVersion(gcsUri: string, deps: StoreDeps) {
+  if (deps.stat) {
+    const { generation } = await deps.stat({ gcsUri });
+    const key = libraryCacheKey(gcsUri, generation);
+    const hit = layoutLibraryBufferCache.peek(key);
+    if (hit) return hit;
+  }
+  const value = await readCurrentLayoutVersionUncached(gcsUri, deps);
+  if (deps.stat && value.buffer.length <= LIBRARY_CACHE_MAX_BYTES) layoutLibraryBufferCache.set(libraryCacheKey(gcsUri, value.generation), { buffer: value.buffer, generation: value.generation });
+  return value;
+}
+async function readCurrentLayoutVersionUncached(gcsUri: string, deps: StoreDeps) {
   for (let attempt = 0; ; attempt++) {
     try { return await deps.read({ gcsUri }); }
     catch (error) {
@@ -29,6 +56,8 @@ async function readCurrentLayoutVersion(gcsUri: string, deps: typeof real) {
     }
   }
 }
+/** 本人配图归属解析结果（账号 + 地址 → 规范地址）；对象归属不会在短时间内改变。 */
+export const layoutMediaOwnershipCache = new KnowledgeTtlCache<string>(4000, 10 * 60_000);
 const media = {
   async normalize(owner: number, library: LayoutLibrary) {
     for (const doc of library.documents) {
@@ -43,28 +72,37 @@ const media = {
         /^gs:\/\/|^https:\/\/storage\.googleapis\.com\//.test(p.imageUrl)
       );
     if (!candidates.length) return;
-    const {
-      resolveRegisteredPostProdMediaSource,
-      loadSucceededJobOutputSources,
-    } = await import("./postProdMediaSource");
-    const sources = await loadSucceededJobOutputSources(
-      String(owner),
-      getGcsBucketName()
-    );
-    const context = { jobObjects: sources.objects, jobUrls: sources.urls };
     const resolved = new Map<string, string>();
+    const ownershipKey = (url: string) => `${owner}|${url}`;
+    // 每次保存都要核验全部配图归属；已核验过的地址直接复用，只有新地址才加载本人产物清单。
     for (const page of candidates) {
-      if (!resolved.has(page.imageUrl))
-        resolved.set(
-          page.imageUrl,
-          await resolveRegisteredPostProdMediaSource(
+      const key = ownershipKey(page.imageUrl);
+      const hit = resolved.has(page.imageUrl) ? undefined : layoutMediaOwnershipCache.peek(key);
+      if (hit) resolved.set(page.imageUrl, await hit);
+    }
+    if (candidates.some(page => !resolved.has(page.imageUrl))) {
+      const {
+        resolveRegisteredPostProdMediaSource,
+        loadSucceededJobOutputSources,
+      } = await import("./postProdMediaSource");
+      const sources = await loadSucceededJobOutputSources(
+        String(owner),
+        getGcsBucketName()
+      );
+      const context = { jobObjects: sources.objects, jobUrls: sources.urls };
+      for (const page of candidates) {
+        if (!resolved.has(page.imageUrl)) {
+          const canonical = await resolveRegisteredPostProdMediaSource(
             { userId: String(owner), source: page.imageUrl },
             undefined,
             context
-          )
-        );
-      page.imageUrl = resolved.get(page.imageUrl)!;
+          );
+          resolved.set(page.imageUrl, canonical);
+          layoutMediaOwnershipCache.set(ownershipKey(page.imageUrl), canonical);
+        }
+      }
     }
+    for (const page of candidates) page.imageUrl = resolved.get(page.imageUrl)!;
   },
   sign: (source: string) => signGsUriV4ReadUrl(source, 7 * 24 * 3600),
 };
@@ -94,6 +132,14 @@ export async function readLayoutLibrary(
   } catch (e) {
     if (e instanceof Error && e.message === "gcs_stat_failed:404")
       return { library: null, generation: "0", updatedAt: null };
+    throw e;
+  }
+}
+/** 只取当前云稿 generation（元数据请求，不下载整库）；不存在为 "0"。供缓存命中前核对版本未变。 */
+export async function currentLayoutGeneration(owner: number, stat: NonNullable<StoreDeps["stat"]> = statGcsObjectVersion) {
+  try { return (await stat({ gcsUri: `gs://${getGcsBucketName()}/${objectName(owner)}` })).generation; }
+  catch (e) {
+    if (e instanceof Error && e.message === "gcs_stat_failed:404") return "0";
     throw e;
   }
 }
@@ -176,6 +222,9 @@ export async function writeLayoutLibrary(
       ifGenerationMatch: generation,
     });
     if (!result.generation) throw new Error("保存缺少版本回执，请读取云端核对");
+    // 刚写入的整库就是该 generation 的原文：紧随其后的排版输入/预览/导出读取不必再下载。
+    if (deps.stat && buffer.length <= LIBRARY_CACHE_MAX_BYTES)
+      layoutLibraryBufferCache.set(libraryCacheKey(`gs://${getGcsBucketName()}/${objectName(owner)}`, String(result.generation)), { buffer, generation: String(result.generation) });
     return { generation: result.generation, updatedAt };
   } catch (e) {
     if (e instanceof Error && e.message.startsWith("gcs_upload_failed:412:"))

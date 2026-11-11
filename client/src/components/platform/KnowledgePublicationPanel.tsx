@@ -171,8 +171,12 @@ export default function KnowledgePublicationPanel({
     if(pub.layoutConversationId)return;
     const history=pub.conversation||[];
     let turn=history.find(t=>t.request.id===intent.requestId);
+    // 统稿一落盘立即衔接：顾问报价与排版输入并行读取，不再串行等待（1110 实测两者串行 + 两次保存 = 44 秒空档）。
+    const quoteFetch=turn?.response?undefined:utils.editableLayout.publicationQuote.fetch({documentId,purpose:"conversation"});
+    quoteFetch?.catch(()=>undefined);
     if(!turn){
       if(history.some(t=>!t.response))throw Error("原交流尚未结束，请先恢复该请求；整册排版尚未重复提交");
+      setMessage("统稿已保存，正在准备整册排版…");
       const input=await utils.editableLayout.bookLayoutInput.fetch({documentId});
       turn={request:{id:intent.requestId,question:"请根据完整正文和现有全部图卡重新安排整册顺序与设计，将图片放到相关内容附近，保留每段文字和每张图片，做好精美排版。",imagePageIds:[],manuscript:pub.manuscript,action:"layout",layoutSourceDigest:input.sourceDigest}};
       const fresh=current();
@@ -183,7 +187,7 @@ export default function KnowledgePublicationPanel({
     if(history.some(t=>t.request.id===intent.requestId))await save(current());
     let answer=turn.response;
     if(!answer){
-      const quote=await utils.editableLayout.publicationQuote.fetch({documentId,purpose:"conversation"});
+      const quote=await quoteFetch!;
       if(quote.maxCredits!==0)throw Error("当前服务尚未应用顾问不另收费规则，请刷新后恢复原任务");
       current();setMessage("正在将全部图片安排到对应正文，统一整册顺序、配色和版式…");
       const response=await streamKnowledgeAdvisor({question:turn.request.question,rawQuestion:turn.request.question,requestId:intent.requestId,knowledgePublicationContext:{documentId,batchIndex:current().publication!.conversation!.findIndex(t=>t.request.id===intent.requestId),attempt:0,purpose:"conversation"},confirmPaid:quote.maxCredits>0,confirmedCredits:quote.paidUnit},()=>undefined);

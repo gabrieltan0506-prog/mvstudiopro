@@ -3,6 +3,7 @@ import { completedKnowledgeBatches } from "../../shared/knowledgePublicationPara
 import { knowledgePublicationPublicError } from "../../shared/knowledgePublicationPublic";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
+import { knowledgeTimingLog } from "../services/knowledgePublicationCache";
 import { layoutLibrarySchema } from "../../shared/editableLayout";
 import {
   LayoutConflict,
@@ -10,7 +11,10 @@ import {
   writeLayoutLibrary,
 } from "../services/editableLayoutStore";
 const publicationProcedure = protectedProcedure.use(async ({ next, path }) => {
+  const startedAt = Date.now();
   const result = await next();
+  // 每个图文手册接口一行耗时（不含正文与地址），用于定位阶段间空档。
+  knowledgeTimingLog(path, startedAt, { ok: result.ok });
   if (!result.ok) {
     // 前台只收到业务提示；真实原因留在服务端日志（去地址、截断），否则出错后后台无从查起。
     const cause = result.error.cause instanceof Error ? result.error.cause.message : result.error.message;
@@ -30,17 +34,19 @@ export const editableLayoutRouter = router({
 
   bookLayoutInput: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
     const {loadKnowledgeBookLayoutInput}=await import("../services/knowledgeBookLayout");
-    const book=await loadKnowledgeBookLayoutInput(ctx.user.id,input.documentId);
+    // 同一云稿版本复用解析结果（顾问整册排版发车前也读同一份）。
+    const book=await loadKnowledgeBookLayoutInput(ctx.user.id,input.documentId,{},{cache:true});
     return {sourceDigest:book.sourceDigest,chapters:book.pages.length,images:book.pages.filter(p=>p.hasImage).length};
   }),
   bookLayoutPreview: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
-    const {readCanonicalLayoutLibrary}=await import("../services/editableLayoutStore");
+    const {currentLayoutGeneration}=await import("../services/editableLayoutStore");
     const {loadKnowledgeBookLayoutView}=await import("../services/knowledgeBookLayout");
     const {signGsUriV4ReadUrl}=await import("../services/gcs");
-    const loaded=await readCanonicalLayoutLibrary(ctx.user.id);
-    const view=await loadKnowledgeBookLayoutView(ctx.user.id,input.documentId,loaded.generation,{load:async()=>loaded});
+    const generation=await currentLayoutGeneration(ctx.user.id);
+    // 与导出共用同一 generation 的整册视图缓存；签名地址每次现签，不进缓存。
+    const view=await loadKnowledgeBookLayoutView(ctx.user.id,input.documentId,generation,{},{cache:true});
     const images=Object.fromEntries(view.doc.pages.filter(p=>p.imageUrl).map(p=>[p.imageUrl,signGsUriV4ReadUrl(p.imageUrl,3600)]));
-    return {doc:view.doc,review:view.review,images};
+    return {doc:view.doc,review:view.review,images,generation};
   }),
   conversationRetry: publicationProcedure.input(z.object({documentId:z.string().uuid(),failedRequestId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
     const {readCanonicalLayoutLibrary}=await import('../services/editableLayoutStore');
@@ -91,13 +97,17 @@ export const editableLayoutRouter = router({
         .strict()
     )
     .mutation(async ({ ctx, input }) => {
+      const startedAt = Date.now();
       try {
-        return await writeLayoutLibrary(
+        const saved = await writeLayoutLibrary(
           ctx.user.id,
           input.library,
           input.expectedGeneration
         );
+        knowledgeTimingLog("editableLayout.save", startedAt, { ok: true, documents: input.library.documents.length });
+        return saved;
       } catch (e) {
+        knowledgeTimingLog("editableLayout.save", startedAt, { ok: false, documents: input.library.documents.length });
         throw new TRPCError({
           code:
             e instanceof LayoutConflict ? "CONFLICT" : "SERVICE_UNAVAILABLE",

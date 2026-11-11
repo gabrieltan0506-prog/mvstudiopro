@@ -88,7 +88,7 @@ const store = {
   read:async(name:string)=>{try{return JSON.parse((await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${name}`})).buffer.toString("utf8"));}catch(e){if(e instanceof Error && e.message === "gcs_stat_failed:404")return null;throw e;}},
   save:async(name:string,data:unknown)=>{await uploadBufferToGcs({objectName:name,buffer:Buffer.from(JSON.stringify(data)),contentType:"application/json"});},
 };
-const real = { ...store, book: async (owner:number,id:string)=>(await import("./knowledgeBookLayout")).loadKnowledgeBookLayoutInput(owner,id), load: loadKnowledgePublication, image:readKnowledgeImage, post:invokeKnowledgePublicationRoutes,
+const real = { ...store, book: async (owner:number,id:string)=>(await import("./knowledgeBookLayout")).loadKnowledgeBookLayoutInput(owner,id,{},{cache:true}), load: loadKnowledgePublication, image:readKnowledgeImage, post:invokeKnowledgePublicationRoutes,
   authorize:async(owner:number,uri:string)=>{
     const sources=await loadSucceededJobOutputSources(String(owner),getGcsBucketName());
     const canonical=await resolveRegisteredPostProdMediaSource({userId:String(owner),source:uri},undefined,{jobObjects:sources.objects,jobUrls:sources.urls});

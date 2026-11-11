@@ -241,7 +241,10 @@ export async function exportKnowledgePublication(
 ):Promise<KnowledgePublicationExport>{
   const deps={...real,...overrides};
   const { loadKnowledgeBookLayoutView } = await import("./knowledgeBookLayout");
-  const {doc,review,receipt,prefix:sourcePrefix}=await loadKnowledgeBookLayoutView(owner,documentId,generation,deps);
+  // 生产调用（无注入依赖）复用同一 generation 的整册视图缓存，与预览/排版输入共用一次解析与核验。
+  const {doc,review,receipt,prefix:sourcePrefix}=Object.keys(overrides).length===0
+    ? await loadKnowledgeBookLayoutView(owner,documentId,generation,{},{cache:true})
+    : await loadKnowledgeBookLayoutView(owner,documentId,generation,deps);
   const prefix=`${sourcePrefix}-${KNOWLEDGE_EXPORT_IMAGE_TRANSPORT}`;
   if(doc.publication?.supplementOf && doc.publication.billing)return exportKnowledgePublication(owner,doc.publication.supplementOf.documentId,generation,overrides);
   assertKnowledgeInteriorConsent(doc);
