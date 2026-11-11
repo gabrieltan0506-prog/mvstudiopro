@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  */
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
-import { consumeUsage, resetUsageLimitsForTest, USAGE_LIMITS } from "./_core/usageLimits";
+import { consumeUsage, resetUsageLimitsForTest, USAGE_LIMITS, type UsageLimitSpec } from "./_core/usageLimits";
 
 function ctx(user: { id: number; role: string } | null, ip = "10.0.0.1"): TrpcContext {
   return {
@@ -30,11 +30,11 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-const fillQuota = (spec: { name: string; perMinute: number }, subject = "u:7") => {
+const fillQuota = (spec: UsageLimitSpec, subject = "u:7") => {
   for (let i = 0; i < spec.perMinute; i++) expect(consumeUsage(spec, [subject]).ok).toBe(true);
 };
 
-type Case = { name: string; spec: { name: string; perMinute: number }; run: (c: ReturnType<typeof caller>) => Promise<unknown> };
+type Case = { name: string; spec: UsageLimitSpec; run: (c: ReturnType<typeof caller>) => Promise<unknown> };
 const LOGIN_CASES: Case[] = [
   { name: "mvAnalysis.getGrowthSnapshot", spec: USAGE_LIMITS.growthSnapshot, run: c => c.mvAnalysis.getGrowthSnapshot({} as never) },
   { name: "mvAnalysis.getPlatformDashboard", spec: USAGE_LIMITS.platformDashboard, run: c => c.mvAnalysis.getPlatformDashboard({ windowDays: 999 } as never) },
