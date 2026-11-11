@@ -41,8 +41,11 @@ import { shortlistNovelCatalog, shouldShortlistNovelCatalog } from "./novelCatal
 import { NOVEL_CREATIVE_FIRST_RULE } from "../../shared/novelCraftCards";
 import {
   NOVEL_CREATIVE_PREMISES_FORMAT,
+  NOVEL_CREATIVE_PREMISES_TEMPLATE_FORMAT,
   buildNovelCreativePremiseBlock,
   buildNovelCreativePremisesRules,
+  buildNovelCreativePremisesTemplateRules,
+  isNovelCreativePremiseTemplateLed,
 } from "../../shared/novelCreativePremise";
 import {
   NOVEL_IMITATION_ADVICE_RULES,
@@ -97,8 +100,12 @@ export function buildNovelTestPrompt(
   options: { shortlisted?: boolean; libraryReference?: string } = {}
 ) {
   const premises = input.stage === "advice" && input.advisorIntent === "creative_premises";
+  /** 创意环节且无底本：参考模板库（入围名单）做排列组合并给简要故事大纲（1112c）。 */
+  const premisesFromTemplates = premises && isNovelCreativePremiseTemplateLed(input);
   const format = premises
-    ? NOVEL_CREATIVE_PREMISES_FORMAT
+    ? premisesFromTemplates
+      ? NOVEL_CREATIVE_PREMISES_TEMPLATE_FORMAT
+      : NOVEL_CREATIVE_PREMISES_FORMAT
     : input.advisorIntent === "story_variants"
       ? '{"assessment":"三个方案的创作依据与差异","recommendations":[],"variants":[{"id":"A/B/C","title":"方案名","changeSummary":"相对原稿或另外方案的具体差异","tradeoff":"收益与代价","templates":[{"publicId":"真实模板ID","role":"具体分工","weight":100}],"outline":{"premise":"核心冲突","characters":"人物动机与关系","episodes":[{"index":1,"title":"标题","events":"具体因果事件","payoff":"当集兑现","hook":"追看理由"}]}}]}'
       : input.stage === "advice"
@@ -128,10 +135,13 @@ export function buildNovelTestPrompt(
         ]
       : []),
     premises
-      ? buildNovelCreativePremisesRules(
-          input.imitation ? "imitation" : input.source ? "source" : "original",
-          input.premiseExclusions
-        )
+      ? [
+          buildNovelCreativePremisesRules(
+            input.imitation ? "imitation" : input.source ? "source" : "original",
+            input.premiseExclusions
+          ),
+          ...(premisesFromTemplates ? [buildNovelCreativePremisesTemplateRules()] : []),
+        ].join("\n")
       : input.advisorIntent === "story_variants"
       ? `生成恰好三个故事线方案A/B/C，每个均包含${input.episodeCount}集，便于用户先看剧情再选择。首次无advisorMessage时必须使用用户已选的全部模板及其明确配比，不擅自替换；未设配比时提出合计100的建议。结合底本、创作方向与原有情节，在关键事件、人物选择、关系走向、代价与兑现方式上给出实质不同的三条因果链，不能只改标题或形容词。后续有新方向时可结合原故事与库内其他模板提出新组合，配比仅为建议；保留未要求改变的主角、能力和世界规则。明确每版的变化、保留与取舍，使用具体事件而不是模板标签。各版先完成小闭环再抬高风险，不用硬断章冒充悬念。只输出可编辑提案，不生成小说，不宣称用户已采用任何一版。用户确认后的大纲优先于历史里的其他候选方案。`
       : input.stage === "advice" &&
@@ -160,8 +170,10 @@ export function buildNovelTestPrompt(
       ? []
       : buildNovelCreativePremiseBlock(input.creativePremise, input.stage as "advice" | "outline" | "chapter")),
     "组合模板须按分工协作；冲突以已确认方向、提案、小说为准，不堆叠互斥设定。",
-    premises
+    premises && !premisesFromTemplates
       ? "本轮不挑选模板；文末的手法卡与规则只作参考。"
+      : premisesFromTemplates
+        ? `availableCatalog 是${options.shortlisted ? "按本作品从全库逐片初选后的入围模板" : "全库每个模板"}的能力简介与特征标签（不是手法全文），templateRoles 是用户已选模板（手法见文末手法卡）：创意组合的模板只从这两处挑，不推荐模板（recommendations 返回空数组）。`
       : input.stage === "advice"
       ? `availableCatalog 是${options.shortlisted ? "入围模板" : "全库每个模板"}的能力简介与特征标签（不是手法全文）：按简介与标签挑选合适的模板；用户已选模板的具体手法见文末的手法卡，讨论具体用法时以手法卡为准，不凭简介臆造手法细节。${options.shortlisted ? "目录是初选后的入围名单：已先从全库按本作品逐片初选，只列入围条目；从入围名单里终选即可。" : ""}`
       : "文末是已针对本作品提炼的手法卡（个别模板可能仍为方法摘要原文）：每次从多张手法卡里挑适合当前场面的几条手法做排列组合，再结合人物动机与因果改写成本作品自己的内容；不必每张都用、不必一张用尽，不照搬来源剧情。",
@@ -186,8 +198,8 @@ export function buildNovelTestPrompt(
         ? { currentNovelDraft: input.novel }
         : { confirmedNovel: input.novel }),
       templateRoles: input.templates,
-      // 创意环节不挑模板，不送目录。
-      availableCatalog: premises ? [] : selectNovelPromptCatalog(input, catalog),
+      // 创意环节有底本时不挑模板、不送目录；无底本时送入围名单（只有编号、简介与标签）供排列组合。
+      availableCatalog: premises && !premisesFromTemplates ? [] : selectNovelPromptCatalog(input, catalog),
     }),
     "已核验的模板创作方法与学习摘要（非逐镜全文）：",
     templates,
@@ -481,8 +493,11 @@ export async function runNovelWorkspaceTest(
     }
     // 顾问阶段：全库目录分片并发初选，只把入围名单交给终选提示词（校验仍用全库）。shortlistNovelCatalog 不抛错。
     let promptCatalog: { publicId: string }[] | undefined;
-    // 创意环节不挑模板：不做目录初选（省掉初选调用）。
-    if (input.advisorIntent !== "creative_premises" && shouldShortlistNovelCatalog(input, catalog)) {
+    // 创意环节有底本时不挑模板：不做目录初选（省掉初选调用）；无底本时照常初选，入围名单作排列组合素材。
+    if (
+      (input.advisorIntent !== "creative_premises" || isNovelCreativePremiseTemplateLed(input)) &&
+      shouldShortlistNovelCatalog(input, catalog)
+    ) {
       try {
         const shortlist = await shortlistNovelCatalog({
           userId,

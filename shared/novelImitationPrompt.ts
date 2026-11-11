@@ -83,12 +83,14 @@ export type NovelImitationReadinessInput = {
   templateCount: number;
   /** 当前底稿已拆好结构骨架。 */
   skeletonReady: boolean;
+  /** 创意环节（1112c）：可以不靠底稿，只凭新题材与纲要出创意；没导入底稿时不拦。 */
+  premisesOnly?: boolean;
 };
 
 /** 返回拦截提示；可以提交时返回 null。审稿改稿不经此检查。 */
 export function novelImitationSubmitBlock(v: NovelImitationReadinessInput): string | null {
   if (v.stage === "revise") return null;
-  if (!v.baseText.trim()) return NOVEL_IMITATION_UI.missingBase;
+  if (!v.baseText.trim() && !(v.premisesOnly && v.stage === "advice")) return NOVEL_IMITATION_UI.missingBase;
   if (v.baseText.length > NOVEL_IMITATION_BASE_MAX_CHARS) return NOVEL_IMITATION_UI.baseTooLong;
   if (!v.genre?.trim()) return NOVEL_IMITATION_UI.missingGenre;
   if (!v.synopsis?.trim()) return NOVEL_IMITATION_UI.missingSynopsis;

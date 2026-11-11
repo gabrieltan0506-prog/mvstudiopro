@@ -341,12 +341,13 @@ function NovelWorkspaceEditor({
     }
     persist(next);
   };
-  const addTemplate = (id: string) => {
-    if (draft.templates.some(t => t.publicId === id)) return;
-    persist({
-      ...draft,
-      templates: [
-        ...draft.templates,
+  /** 依次加入本轮候选（与逐个点「加入本轮候选」结果相同）；已在候选里的跳过，库里已没有的不加。 */
+  const addTemplates = (ids: readonly string[]) => {
+    let templates = draft.templates;
+    for (const id of ids) {
+      if (templates.some(t => t.publicId === id)) continue;
+      templates = [
+        ...templates,
         {
           publicId: id,
           role: cards.find(c => c.publicId === id)?.methodBrief
@@ -355,15 +356,17 @@ function NovelWorkspaceEditor({
                 cards.find(c => c.publicId === id)?.methodBrief
               )
             : "",
-          ...(!draft.templates.length
+          ...(!templates.length
             ? { weight: 100 }
-            : draft.templates.some(t => t.weight !== undefined)
+            : templates.some(t => t.weight !== undefined)
               ? { weight: 0 }
               : {}),
         },
-      ],
-    });
+      ];
+    }
+    if (templates !== draft.templates) persist({ ...draft, templates });
   };
+  const addTemplate = (id: string) => addTemplates([id]);
   const disabled =
     busy || backupBusy || !!saveError || !!draft.pending || queueActive.current;
   const weighted = draft.templates.some(t => t.weight !== undefined);
@@ -674,7 +677,8 @@ function NovelWorkspaceEditor({
           ? prepareNovelExcerpt(draft.source)
           : undefined;
       // 爆款仿写：未导入底稿时先提示导入原文（其余检查见下方 novelImitationSubmitBlock）。
-      if (draft.mode === "source" && !source)
+      // 创意环节可以不靠底本：只给方向时参考模板库排列组合（站长 1112）。
+      if (draft.mode === "source" && !source && advisorIntent !== "creative_premises")
         throw new Error("请导入底本并勾选用于本次改编，或切换为原创新方向。");
       let imitation: NovelTestInput["imitation"];
       if (draft.mode === "imitation") {
@@ -686,6 +690,7 @@ function NovelWorkspaceEditor({
           synopsis: draft.imitationSynopsis,
           templateCount: draft.templates.length,
           skeletonReady: Boolean(skeleton),
+          premisesOnly: advisorIntent === "creative_premises",
         });
         if (blocked) throw new Error(blocked);
         // 底稿原文不随请求发送：只带新题材、纲要、底稿结构骨架与需要避开的底稿名称。
@@ -1958,6 +1963,32 @@ function NovelWorkspaceEditor({
                 <p className="mt-1 whitespace-pre-wrap text-amber-200">{NOVEL_CREATIVE_PREMISE_UI.fields.twist}：{p.twist}</p>
                 <p className="mt-1 whitespace-pre-wrap">{NOVEL_CREATIVE_PREMISE_UI.fields.logline}：{p.logline}</p>
                 <p className="mt-1 whitespace-pre-wrap text-slate-400">{NOVEL_CREATIVE_PREMISE_UI.fields.risk}：{p.risk}</p>
+                {!!p.templates?.length && (
+                  <p className="mt-1 whitespace-pre-wrap">
+                    {NOVEL_CREATIVE_PREMISE_UI.templatesLabel}：
+                    {p.templates
+                      .map(id => {
+                        const card = cards.find(c => c.publicId === id);
+                        return card ? templateChoiceLabel(card) : id;
+                      })
+                      .join("、")}
+                  </p>
+                )}
+                {!!p.outline && (
+                  <p className="mt-1 whitespace-pre-wrap">{NOVEL_CREATIVE_PREMISE_UI.fields.outline}：{"\n"}{p.outline}</p>
+                )}
+                {!!p.templates?.some(id => cards.some(c => c.publicId === id)) && (
+                  <button
+                    className={`${button} mr-2 mt-3`}
+                    disabled={
+                      disabled ||
+                      p.templates.filter(id => cards.some(c => c.publicId === id)).every(id => draft.templates.some(t => t.publicId === id))
+                    }
+                    onClick={() => addTemplates(p.templates!.filter(id => cards.some(c => c.publicId === id)))}
+                  >
+                    {NOVEL_CREATIVE_PREMISE_UI.adoptTemplates}
+                  </button>
+                )}
                 <button
                   className={`${button} mt-3`}
                   disabled={disabled}

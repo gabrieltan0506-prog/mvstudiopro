@@ -7,6 +7,7 @@ import {
   novelCreativePremiseExclusionSchema,
   novelCreativePremiseSchema,
   validateNovelCreativePremises,
+  isNovelCreativePremiseTemplateLed,
 } from "./novelCreativePremise";
 import {
   NOVEL_REVIEW_DIMENSIONS,
@@ -664,11 +665,15 @@ export function validateNovelStageOutput(
         throw new Error("故事线结果过长");
     } else if (result.variants) throw new Error("当前请求未要求故事线方案");
     if (input.advisorIntent === "creative_premises") {
-      validateNovelCreativePremises(result.premises);
+      // 无底本时每个创意须引用真实模板并给出简要大纲；引用口径与故事线方案相同（全库可用编号 + 用户已选模板）。
+      const premises = validateNovelCreativePremises(result.premises, {
+        templateLed: isNovelCreativePremiseTemplateLed(input),
+        eligibleIds: [...availableIds, ...input.templates.map(t => t.publicId)],
+      });
       if (JSON.stringify(result, null, 2).length > 60000)
         throw new Error("核心创意结果过长");
       // 创意环节不推荐模板：模型多给的推荐不展示也不保留。
-      return { ...result, recommendations: [] };
+      return { ...result, premises, recommendations: [] };
     } else if (result.premises) throw new Error("当前请求未要求核心创意");
     const ids = result.recommendations.map(r => r.publicId);
     const available = availableIds.filter(

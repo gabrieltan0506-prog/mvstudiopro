@@ -296,3 +296,13 @@ describe("爆款仿写：原创度自查接线（纯代码比对）", () => {
       expect(all).not.toContain(word);
   });
 });
+
+describe("创意环节可以不靠底稿（1112c）", () => {
+  it("仿写模式下没导入底稿也能出创意（仍要新题材与纲要）；其他环节照旧拦", () => {
+    const v = { stage: "advice" as const, baseText: "", genre: "题材", synopsis: "纲要", templateCount: 0, skeletonReady: false };
+    expect(novelImitationSubmitBlock({ ...v, premisesOnly: true })).toBeNull();
+    expect(novelImitationSubmitBlock({ ...v, premisesOnly: true, genre: "" })).toBe(NOVEL_IMITATION_UI.missingGenre);
+    expect(novelImitationSubmitBlock(v)).toBe(NOVEL_IMITATION_UI.missingBase);
+    expect(novelImitationSubmitBlock({ ...v, stage: "outline", premisesOnly: true })).toBe(NOVEL_IMITATION_UI.missingBase);
+  });
+});

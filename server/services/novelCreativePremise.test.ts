@@ -63,9 +63,11 @@ describe("创意环节 · 提示词", () => {
     expect(p).toContain("不给评分");
     expect(p).toContain('"premises":[{"title"');
     for (const k of ["whatIf", "ruleAndCost", "drives", "twist", "logline", "risk"]) expect(p).toContain(`"${k}"`);
-    // 不挑模板：不送目录
-    expect(p).toContain('"availableCatalog":[]');
-    expect(p).not.toContain("mt_b");
+    // 有底本：不挑模板，不送目录
+    const withSource = prompt({ ...premises, source: { label: "底本", text: "底本正文。".repeat(20) } });
+    expect(withSource).toContain('"availableCatalog":[]');
+    expect(withSource).not.toContain("mt_b");
+    expect(withSource).not.toContain('"outline":"开端');
   });
   it("换一批：已出过的标题与核心设想作为排除方向带上；首批没有这一段", () => {
     const first = prompt(premises);
@@ -79,7 +81,7 @@ describe("创意环节 · 提示词", () => {
     const original = prompt(premises);
     expect(original).toContain("原创新方向");
     expect(original).not.toContain("改编切入角度");
-    const source = prompt({ ...premises, source: { label: "底本", text: "底本正文" } });
+    const source = prompt({ ...premises, source: { label: "底本", text: "底本正文。".repeat(20) } });
     expect(source).toContain("改编切入角度");
     expect(source).toContain("不推翻底本主线");
     const imit = prompt({ ...premises, imitation });
@@ -142,7 +144,8 @@ describe("本作核心创意 · 进入后续阶段", () => {
 });
 
 describe("创意环节 · 结果解析与校验（照故事线方案：先存原始返回，失败抛错）", () => {
-  const input = novelTestInputSchema.parse({ ...base, advisorIntent: "creative_premises" });
+  // 有底本：维持原来的校验（不要求模板与大纲）。
+  const input = novelTestInputSchema.parse({ ...base, advisorIntent: "creative_premises", source: { label: "底本", text: "底本正文。".repeat(20) } });
   const run = (value: unknown, save = vi.fn(async () => {})) =>
     executeNovelTest(input, "", [], async () => ({ text: typeof value === "string" ? value : JSON.stringify(value), model: "test" }), save);
   it("四个合法设想通过；模型多给的模板推荐被丢弃", async () => {
@@ -169,5 +172,65 @@ describe("创意环节 · 结果解析与校验（照故事线方案：先存原
     await expect(
       executeNovelTest(plain, "", [], async () => ({ text: JSON.stringify(premiseOut()), model: "test" }), async () => {})
     ).rejects.toThrow("当前请求未要求核心创意");
+  });
+});
+
+describe("创意环节 · 无底本时参考模板库排列组合并给故事大纲（1112c）", () => {
+  const noBase = novelTestInputSchema.parse({ ...base, advisorIntent: "creative_premises" });
+  const shortlist = [
+    { publicId: "mt_b", intro: "简介乙", tags: ["反转"] },
+    { publicId: "mt_c", intro: "简介丙", tags: ["悬疑"] },
+  ];
+  const withRefs = (ids: string[][], outline = "开端：甲\n发展：乙\n转折：丙\n高潮：丁\n结局：戊") => {
+    const out = premiseOut() as any;
+    out.premises.forEach((p: any, i: number) => {
+      p.templates = ids[i % ids.length];
+      p.outline = outline;
+    });
+    return out;
+  };
+  const run = (input: any, value: unknown, catalogIds = ["mt_b", "mt_c", "mt_d"]) =>
+    executeNovelTest(input, "", catalogIds.map(publicId => ({ publicId })), async () => ({ text: JSON.stringify(value), model: "test" }), async () => {});
+  it("原创 / 改编未导入底本 / 仿写还没拆骨架：提示词带入围名单、要求引用 2–3 个模板与简要故事大纲", () => {
+    for (const input of [noBase, { ...noBase, imitation: { genre: "新题材", synopsis: "新纲要" } }]) {
+      const p = buildNovelTestPrompt(input as any, templates, shortlist, { shortlisted: true });
+      expect(p).toContain("参考平台模板库做排列组合");
+      expect(p).toContain("mt_b");
+      expect(p).toContain("mt_c");
+      expect(p).toContain("入围模板");
+      expect(p).toContain("不得编造");
+      expect(p).toContain('"templates":["真实模板公开编号"');
+      expect(p).toContain("开端：");
+      expect(p).toContain("结局：");
+    }
+    // 仿写已有骨架：维持原样
+    const imit = buildNovelTestPrompt({ ...noBase, imitation } as any, templates, shortlist);
+    expect(imit).not.toContain("参考平台模板库做排列组合");
+    expect(imit).toContain('"availableCatalog":[]');
+  });
+  it("引用真实模板（含已选模板）且带大纲才通过；结果保留 templates 与 outline", async () => {
+    const out = (await run(noBase, withRefs([["mt_b", "mt_c"], ["mt_a", "mt_d", "mt_b"]]))) as any;
+    expect(out.premises[0].templates).toEqual(["mt_b", "mt_c"]);
+    expect(out.premises[1].templates).toEqual(["mt_a", "mt_d", "mt_b"]);
+    expect(out.premises[0].outline).toContain("开端");
+  });
+  it("编造的模板编号、只引用一个、重复引用、超过三个、缺大纲都判失败", async () => {
+    for (const bad of [
+      withRefs([["mt_b", "mt_zz"]]),
+      withRefs([["mt_b"]]),
+      withRefs([["mt_b", "mt_b"]]),
+      withRefs([["mt_a", "mt_b", "mt_c", "mt_d"]]),
+      (() => {
+        const v = withRefs([["mt_b", "mt_c"]]);
+        delete v.premises[2].outline;
+        return v;
+      })(),
+    ])
+      await expect(run(noBase, bad)).rejects.toThrow();
+  });
+  it("有底本时模型多给的模板引用不保留", async () => {
+    const src = novelTestInputSchema.parse({ ...base, advisorIntent: "creative_premises", source: { label: "底本", text: "底本正文。".repeat(20) } });
+    const out = (await run(src, withRefs([["mt_b", "mt_c"]]))) as any;
+    expect(out.premises[0].templates).toBeUndefined();
   });
 });

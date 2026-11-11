@@ -109,3 +109,34 @@ describe("前台文案", () => {
     expect(NOVEL_CREATIVE_PREMISE_UI.note).toBe("核心创意会带进之后的顾问讨论、大纲与正文；修改后对已生成内容不自动重写。");
   });
 });
+
+describe("无底本创意的模板引用与故事大纲（1112c）", () => {
+  const outline = "开端：甲\n发展：乙\n转折：丙\n高潮：丁\n结局：戊";
+  it("旧数据（无 templates / outline）与新数据都能解析；模板最多 3 个", async () => {
+    const { novelCreativePremiseSchema } = await import("./novelCreativePremise");
+    expect(novelCreativePremiseSchema.safeParse(p(1)).success).toBe(true);
+    expect(novelCreativePremiseSchema.safeParse({ ...p(1), templates: ["mt_a", "mt_b"], outline }).success).toBe(true);
+    expect(novelCreativePremiseSchema.safeParse({ ...p(1), templates: ["a", "b", "c", "d"] }).success).toBe(false);
+  });
+  it("采用时故事大纲一并整理进本作核心创意；超长时优先保留核心设想、规则与代价、故事大纲", () => {
+    const short = formatNovelCreativePremise({ ...p(1), outline });
+    expect(short).toContain("故事大纲：\n开端：甲");
+    expect(short).toContain("一句话梗概");
+    const long = formatNovelCreativePremise({
+      ...p(1),
+      ruleAndCost: "规".repeat(300),
+      drives: "推".repeat(500),
+      twist: "破".repeat(300),
+      outline: "纲".repeat(500),
+    });
+    expect(Array.from(long).length).toBeLessThanOrEqual(NOVEL_CREATIVE_PREMISE_MAX);
+    expect(long).toContain("核心设想：如果1会怎样");
+    expect(long).toContain("规".repeat(300));
+    expect(long).toContain("纲".repeat(500));
+    expect(long).not.toContain("怎样推动故事");
+    // 没有大纲的旧数据：与原来一致
+    expect(formatNovelCreativePremise(p(2))).toBe(
+      ["设想2", "核心设想：如果2会怎样", "规则与代价：规则", "怎样推动故事：推动", "打破的惯例：打破", "一句话梗概：梗概"].join("\n")
+    );
+  });
+});
