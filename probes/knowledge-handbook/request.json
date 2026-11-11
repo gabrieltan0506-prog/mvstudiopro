@@ -1,7 +1,7 @@
 {
-  "id": "export-url2-1110a",
+  "id": "carbon-ping-1111a",
   "action": "start",
-  "script": "scripts/probe-knowledge-handbook-export.mts",
+  "script": "scripts/probe-gemini-carbon-ping.mts",
   "machine": "7812595b294778",
-  "config": { "owner": 1, "documentId": "503e8872-d5fa-4b7b-96f3-f5860421e167" }
+  "config": { "candidates": ["gemini-4-carbon", "gemini-4-carbon-preview"] }
 }
