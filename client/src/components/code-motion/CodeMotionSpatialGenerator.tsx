@@ -270,8 +270,7 @@ export function CodeMotionSpatialGenerator({
                 {prepared.value.worldPrompt}
               </p>
               <p className="text-xs">
-                场景：Marble
-                1.1，图片生成空间、自动判断全景。人物：Tripo，精细几何与材质、PBR、保持原图纹理和朝向。
+                场景：图片生成空间、自动判断全景。人物：精细几何与材质、PBR、保持原图纹理和朝向。
               </p>
               <p className="text-xs text-amber-900">
                 {prepared.value.costNotice}

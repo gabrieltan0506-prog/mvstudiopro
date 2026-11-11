@@ -541,3 +541,59 @@ describe("1109 逐窗节拍阶段（audiomap + 三跳链）", () => {
   });
 });
 
+
+describe("1111 MV 整片编排引擎：标准（缺省不变）/ 深度（Carbon 三通道，失败回落原三跳并标注）", () => {
+  const carbonHops: CreativeLlmHop[] = (["evolink", "gemini_api", "vertex"] as const).map((channel) => ({
+    modelName: "gemini-4-carbon", gateway: "gemini_carbon" as const, carbonChannel: channel, label: `gemini-4-carbon · ${channel}`,
+  }));
+  const hopsOf = (mocks: ReturnType<typeof fixture>["mocks"]) =>
+    (mocks.compose.mock.calls as unknown as [string, unknown, unknown, CreativeLlmHop][]).map((c) => `${c[3].gateway}:${c[3].carbonChannel ?? c[3].modelName}`);
+  const answerOf = async (raw: Promise<string>) => { const a = parseAskJson(await raw, true).answer as unknown; return (typeof a === "string" ? JSON.parse(a) : a) as any; };
+  const ACCEPTED = "canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/accepted.json";
+
+  it("缺省标准编排：只走原三跳、不取 Carbon 跳，结果标注 standard", async () => {
+    const { d, mocks, records } = fixture();
+    const deepComposeHops = vi.fn(async () => carbonHops);
+    (d as any).deepComposeHops = deepComposeHops;
+    const answer = await answerOf(askMusicMvAdvisor(7, target, "设计MV", d));
+    expect(deepComposeHops).not.toHaveBeenCalled();
+    expect(hopsOf(mocks)).toEqual(["evolink_flash_only:glm-5.3-flashx"]);
+    expect(answer.composeLine).toEqual({ requested: "standard", compose: "standard" });
+    expect(parseMusicMvAdvisorProposal(answer, target).composeLine?.compose).toBe("standard");
+    expect((records.get(ACCEPTED) as any).composeEngine).toBe("standard");
+  });
+
+  it("深度编排：Carbon 首通道出稿即用，同一合同与校验；refine 仍走原三跳", async () => {
+    const { d, mocks, records } = fixture();
+    (d as any).deepComposeHops = vi.fn(async () => carbonHops);
+    const answer = await answerOf(askMusicMvAdvisor(7, target, "设计MV", d, "mv", { composeEngine: "deep" }));
+    expect(hopsOf(mocks)).toEqual(["gemini_carbon:evolink"]);
+    expect(answer.composeLine).toEqual({ requested: "deep", compose: "deep" });
+    const used = records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/compose-hop-used.json") as any;
+    expect([used.hop, used.gateway]).toEqual([1, "gemini_carbon"]);
+    expect((mocks.refine.mock.calls as unknown as [unknown, string, unknown, CreativeLlmHop][])[0]![3].gateway).toBe("evolink_flash_only");
+    expect(Array.from(records.keys()).map((k) => k.split("/").at(-1))).toContain("compose-hop-1-gemini-4-carbon@evolink-decoded.json");
+  });
+
+  it("深度编排 Carbon 三通道全失败 → 回落原三跳第一跳出稿，结果标注实际为标准编排", async () => {
+    const { d, mocks, records } = fixture();
+    (d as any).deepComposeHops = vi.fn(async () => carbonHops);
+    for (let i = 0; i < 3; i += 1) mocks.compose.mockImplementationOnce(async () => { throw new CreativeHopTransportError("gemini-4-carbon 通道失败（请求超时）"); });
+    const answer = await answerOf(askMusicMvAdvisor(7, target, "设计MV", d, "mv", { composeEngine: "deep" }));
+    expect(hopsOf(mocks)).toEqual(["gemini_carbon:evolink", "gemini_carbon:gemini_api", "gemini_carbon:vertex", "evolink_flash_only:glm-5.3-flashx"]);
+    expect(answer.composeLine).toEqual({ requested: "deep", compose: "standard" });
+    const used = records.get("canvas-music-mv/advisor/7/11111111-1111-4111-8111-111111111111/compose-hop-used.json") as any;
+    expect([used.hop, used.gateway]).toEqual([4, "evolink_flash_only"]);
+    expect(used.failuresZh).toHaveLength(3);
+    // 前台文案只出中性叫法：标注里没有模型名 / 通道名
+    expect(JSON.stringify(answer.composeLine)).not.toMatch(/gemini|carbon|evolink|vertex|glm/i);
+  });
+
+  it("歌曲 / 学习用途忽略编排引擎（只作用于 MV 整片编排）", async () => {
+    const { d } = fixture();
+    const deepComposeHops = vi.fn(async () => carbonHops);
+    (d as any).deepComposeHops = deepComposeHops;
+    await askMusicMvAdvisor(7, target, "设计MV", d, "mv", { composeEngine: "standard" });
+    expect(deepComposeHops).not.toHaveBeenCalled();
+  });
+});

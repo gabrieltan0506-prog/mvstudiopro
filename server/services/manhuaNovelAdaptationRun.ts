@@ -34,7 +34,8 @@ export type NovelRouteAttempt = {
   attempt: number;
   requestId: string;
   model: string;
-  gateway: "openrouter" | "evolink";
+  /** gemini_api / vertex：1111 线路三（Carbon）的通道；evolink 同时用于线路一与线路三。 */
+  gateway: "openrouter" | "evolink" | "gemini_api" | "vertex";
 };
 export type NovelRouteEvent =
   | { phase: "input"; route: NovelRouteAttempt; request: Record<string, unknown> }
@@ -46,7 +47,14 @@ export type NovelStageCall = (
   prompt: string,
   json: boolean,
   requestId: string,
-  trace?: { modelPreference?: "auto" | "glm" | "deepseek"; onBytes?: (bytes:number)=>Promise<void>; onRaw?: (raw:string)=>Promise<void>; onRouteEvent?: (event: NovelRouteEvent) => Promise<void> }
+  trace?: {
+    modelPreference?: "auto" | "glm" | "deepseek" | "carbon";
+    onBytes?: (bytes:number)=>Promise<void>;
+    onRaw?: (raw:string)=>Promise<void>;
+    onRouteEvent?: (event: NovelRouteEvent) => Promise<void>;
+    /** 1111 线路三：每通道 request/raw/decoded/parsed/rejected 永久证据的落点（缺省 GCS gemini-carbon/novel/...）。 */
+    saveEvidence?: (name: string, value: unknown) => Promise<unknown>;
+  }
 ) => Promise<{ text: string; model: string; settings?: NovelGenerationSettings; route?: NovelRouteAttempt }>;
 
 async function persistNovelTrace(write: (() => Promise<void>) | undefined) {
@@ -84,9 +92,11 @@ export const callNovelStage: NovelStageCall = async (
   requestId,
   trace
 ) => {
+  const preference = trace?.modelPreference || "auto";
+  // 1111 线路三：只走 Carbon 三通道，不与线路一 / 二混用；全部失败抛可重试的业务提示（不静默换线）。
+  if (preference === "carbon") return callNovelStageCarbon(prompt, json, requestId, trace);
   const openRouterKey = getOpenRouterApiKey(),
     evolinkKey = getEvolinkApiKey();
-  const preference = trace?.modelPreference || "auto";
   const modelTargets = preference === "auto" ? MANHUA_ADVISOR_HOPS
     : preference === "glm" ? MANHUA_ADVISOR_HOPS.slice(0, 2) : MANHUA_ADVISOR_HOPS.slice(2);
   const targets = modelTargets.filter(target => target.gateway === "auto" ? Boolean(openRouterKey) : Boolean(evolinkKey));
@@ -208,6 +218,51 @@ export const callNovelStage: NovelStageCall = async (
   }
   throw new Error("创作模型暂时繁忙，旧稿保留");
 };
+
+/** 线路三全部通道失败时给用户的提示：不含模型 / 通道名；明确未扣点、旧稿保留、可重试。 */
+export const NOVEL_CARBON_UNAVAILABLE_ZH = "暂时不可用（已尝试全部通道），旧稿保留，本次未扣点，请稍后重试或改选其他线路";
+
+/**
+ * 线路三（1111）：Gemini 4 Carbon 经共用调用层（EvoLink → Gemini API → Vertex，可配），模型按 novelWriterCarbon 领域（缺省 gemini-4-carbon）。
+ * 失败定义、429 退避、写坏修复一次再切同共用层；json 阶段要求严格 JSON（下游 JSON.parse 与 parseNovelModelJson 都能读）。
+ * 证据：trace.saveEvidence 或缺省 GCS `gemini-carbon/novel/<日期>/<uuid>/`；通过的那一发原始回包再交 onRaw（与线路一 / 二同口径）。
+ */
+async function callNovelStageCarbon(
+  prompt: string,
+  json: boolean,
+  requestId: string,
+  trace: Parameters<NovelStageCall>[3],
+): Promise<Awaited<ReturnType<NovelStageCall>>> {
+  const { runGeminiCarbon, GeminiCarbonExhaustedError, createGeminiCarbonGcsSaver, geminiCarbonEvidencePrefix, GEMINI_CARBON_DEFAULT_MAX_OUTPUT_TOKENS } = await import("./geminiCarbonCall");
+  const save = trace?.saveEvidence ?? createGeminiCarbonGcsSaver(geminiCarbonEvidencePrefix("novel"));
+  const stageTag = createHash("sha256").update(requestId).digest("hex").slice(0, 12);
+  await persistNovelTrace(() => Promise.resolve(save("stage", { requestId, json, promptSha256: createHash("sha256").update(prompt).digest("hex"), promptChars: prompt.length })).then(() => undefined));
+  try {
+    const result = await runGeminiCarbon<unknown>({
+      domain: "novelWriterCarbon",
+      prompt,
+      responseFormat: json ? "json" : "text",
+      maxOutputTokens: GEMINI_CARBON_DEFAULT_MAX_OUTPUT_TOKENS,
+      validate: (decoded, text) => {
+        if (!String(text).trim()) throw new Error("创作结果为空");
+        if (json && (!decoded || typeof decoded !== "object")) throw new Error("返回的不是 JSON 对象");
+        return decoded;
+      },
+      save,
+      label: `novel:${stageTag}`,
+    });
+    const route: NovelRouteAttempt = { attempt: result.hop, requestId: `${requestId}:carbon-${result.hop}`, model: result.model, gateway: result.channel };
+    await persistNovelTrace(trace?.onBytes ? () => trace.onBytes!(Buffer.byteLength(result.text)) : undefined);
+    await persistNovelTrace(trace?.onRaw ? () => trace.onRaw!(JSON.stringify(result.payload)) : undefined);
+    await persistNovelTrace(trace?.onRouteEvent ? () => trace.onRouteEvent!({ phase: "selected", route }) : undefined);
+    return { text: result.text, model: result.model, settings: { reasoning: "enabled", maxTokens: GEMINI_CARBON_DEFAULT_MAX_OUTPUT_TOKENS }, route };
+  } catch (error) {
+    if (error instanceof GeminiCarbonExhaustedError) {
+      throw Object.assign(new Error(NOVEL_CARBON_UNAVAILABLE_ZH), { code: "NOVEL_CARBON_UNAVAILABLE", retryable: true });
+    }
+    throw error;
+  }
+}
 
 export async function runManhuaNovelAdaptation(
   input: {

@@ -59,6 +59,9 @@ import {
   nativeDeepReadSegmentCacheIdentityModel,
   resolveManhuaNativeDeepReadModel,
   resolveManhuaNativeDeepReadEscalationModel,
+  isNativeDeepReadCarbonLaneModel,
+  nativeDeepReadCarbonRoutes,
+  MANHUA_NATIVE_CARBON_MODEL,
   MANHUA_NATIVE_GLM_REASONING_EFFORT,
   NATIVE_DEEP_READ_MAX_VIDEO_FPS,
   parseNativeDeepReadVideoFps,
@@ -72,6 +75,7 @@ import {
   MANHUA_NATIVE_AUDIO_CUE_KINDS,
   MANHUA_NATIVE_AUDIO_COVERAGE_MINIMUM,
   hasClockTextZh,
+  nativeDeepReadModelMayOmitAudioTokens,
   manhuaNativeAudioChunkAnalysisSchema,
   normalizeManhuaNativeAudioChunkAnalysis,
   type ManhuaNativeAudioDirectRoute,
@@ -186,6 +190,7 @@ function resolveNativeDeepReadEvolinkBaseUrl(): string {
     .trim().replace(/\/+$/, "") || "https://direct.evolink.ai";
 }
 
+import { GEMINI_CARBON_PRICE_USD_PER_M } from "../../shared/geminiCarbon.js";
 /** 成本统计口径汇率的唯一真源在 shared/manhuaNativeDeepReadJob.ts（1 USD = 7 CNY）。 */
 import { NATIVE_DEEP_READ_PRICE_USD_TO_CNY } from "../../shared/manhuaNativeDeepReadJob.js";
 export { NATIVE_DEEP_READ_PRICE_USD_TO_CNY };
@@ -206,6 +211,8 @@ export const NATIVE_DEEP_READ_MODEL_PRICES_PER_M: Readonly<Record<string, { inPe
   "gemini-3.8-flash": nativeDeepReadPricePerM(0.3, 2.5),
   // Argon按返还前标准价估算，避免把尚未到账的50%优惠当成实扣；仅用于成本展示。
   "gemini-4-argon": nativeDeepReadPricePerM(4, 20),
+  // 1111 Carbon 整集精读升级档：首发价 $2/$10（输出含思考 token），2026-12-01 起翻倍——改 shared/geminiCarbon.ts 常量即可。
+  [MANHUA_NATIVE_CARBON_MODEL]: nativeDeepReadPricePerM(GEMINI_CARBON_PRICE_USD_PER_M.input, GEMINI_CARBON_PRICE_USD_PER_M.output),
 };
 
 /**
@@ -1805,10 +1812,19 @@ export function buildGeminiNativeDeepReadSegmentRequest(input: {
   };
 }
 
-/** 与原生学习共用结构；仅适配 Argon 明确不同的供应商参数。 */
+/**
+ * 与原生学习共用结构；仅适配 Argon 明确不同的供应商参数。
+ * 1111 Carbon（与 Argon 同代）：只去掉 candidateCount（Argon 先例，同代不收）；其余冻结参数原样——
+ * 输出上限保持 65536（Carbon 先花思考 token，砍上限会 MAX_TOKENS 空正文），thinkingLevel MEDIUM 不变。
+ * 只认 Carbon 身份本身：段缓存指纹按此计算，换配置不改历史指纹。
+ */
 export function adaptNativeDeepReadGenerationConfig(
   config: Record<string, unknown>, model: ManhuaNativeDeepReadModelId,
 ): Record<string, unknown> {
+  if (model === MANHUA_NATIVE_CARBON_MODEL) {
+    const { candidateCount: _candidateCount, ...carbon } = config;
+    return carbon;
+  }
   if (model !== "gemini-4-argon") return config;
   const { candidateCount: _candidateCount, topP: _topP, topK: _topK,
     frequencyPenalty: _frequencyPenalty, presencePenalty: _presencePenalty, ...compatible } = config;
@@ -5906,7 +5922,9 @@ async function executeNativeDeepReadBatch(
         let callId: string = crypto.randomUUID();
         const startedAt = Date.now();
         // 1110：「EvoLink 非当前合同模型记降级」与配置的缺省读片模型比较（3.8 Flash 旧车道同属当前合同）。
-        let degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK && !isNativeDeepReadCurrentContractModel(attemptModel);
+        // 1111：Carbon 车道 EvoLink 是首选通道，不记降级。
+        let degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK && !isNativeDeepReadCurrentContractModel(attemptModel)
+          && !isNativeDeepReadCarbonLaneModel(attemptModel);
         let modelCallStarted = false;
         let recoveredPaidEvidence = false;
         let evidenceBatchRequestId: string = episodeRequestId;
@@ -5979,7 +5997,8 @@ async function executeNativeDeepReadBatch(
               evidenceBatchRequestId = recovered.batchRequestId;
               evidenceVisualRoute = recovered.visualRoute;
               input.route = recovered.visualRoute;
-              degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK && !isNativeDeepReadCurrentContractModel(attemptModel);
+              degraded = input.route === NATIVE_DEEP_READ_ROUTE_EVOLINK && !isNativeDeepReadCurrentContractModel(attemptModel)
+                && !isNativeDeepReadCarbonLaneModel(attemptModel);
               response = {
                 status: recovered.httpStatus,
                 text: recovered.responseText,
@@ -6322,7 +6341,7 @@ async function executeNativeDeepReadBatch(
             }
             if (truncated) raw.truncated = true;
             const score = scoreNativeAttempt(raw, segment.startSec, segment.endSec, hasAudio);
-            if (score && (!hasAudio || attemptModel === "gemini-4-argon" || attemptAudioInput > 0)) {
+            if (score && (!hasAudio || nativeDeepReadModelMayOmitAudioTokens(attemptModel) || attemptAudioInput > 0)) {
               const candidates = rejectedAttempts.get(input.segmentIndex) ?? [];
               candidates.push({ attemptNumber: input.attemptNumber, score,
                 reasonZh: gateFailure instanceof Error ? gateFailure.message : String(gateFailure),
@@ -6537,6 +6556,26 @@ async function executeNativeDeepReadBatch(
           temperatures: readonly number[],
           attemptNumberOffset: number,
         ): Promise<SegmentAttemptResult | null> => {
+        /**
+         * 1111 Carbon 车道：通道顺序按 MANHUA_DEEP_READ_CARBON_ROUTES（缺省 EvoLink → Vertex），本趟梯度从首选通道开始；
+         * 上游失败（超时 / 断线 / HTTP / 错误包）或资源拥堵重试用尽 → 切下一通道，之后的门禁重试保留切换后的通道。
+         * 首读与升级重读（升级模型配成 Carbon 时）同一规则；非 Carbon 车道不受影响。
+         */
+        const carbonRoutes = isNativeDeepReadCarbonLaneModel(gradientModel)
+          ? nativeDeepReadCarbonRoutes().map(route => route === "evolink" ? NATIVE_DEEP_READ_ROUTE_EVOLINK : NATIVE_DEEP_READ_ROUTE_VERTEX)
+          : undefined;
+        let carbonRouteIndex = 0;
+        if (carbonRoutes) input.route = carbonRoutes[0]!;
+        const switchCarbonRoute = (error: unknown): boolean => {
+          if (!carbonRoutes || carbonRouteIndex + 1 >= carbonRoutes.length) return false;
+          carbonRouteIndex += 1;
+          console.warn(
+            `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段 ${gradientModel} 在 ${input.route} 失败，`
+            + `切 ${carbonRoutes[carbonRouteIndex]}：${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`,
+          );
+          input.route = carbonRoutes[carbonRouteIndex]!;
+          return true;
+        };
         for (let attemptIndex = 0; attemptIndex < temperatures.length; attemptIndex += 1) {
           const temperature = temperatures[attemptIndex]!;
           const attemptNumber = attemptNumberOffset + attemptIndex + 1;
@@ -6586,14 +6625,23 @@ async function executeNativeDeepReadBatch(
             } catch (error) {
               if (params.abortSignal?.aborted) throw error;
               if (error instanceof Error && error.name === "NativeDeepReadEvidencePersistenceError") throw error;
-              if (dualReadRoutes && input.route === NATIVE_DEEP_READ_ROUTE_VERTEX
+              if (carbonRoutes && (error as HttpFailure)?.nativeDeepReadUpstreamFailure === true
+                && !isNativeDeepReadResourceExhausted(error) && switchCarbonRoute(error)) {
+                resourceRetryCount = 0;
+                continue;
+              }
+              if (dualReadRoutes && !carbonRoutes && input.route === NATIVE_DEEP_READ_ROUTE_VERTEX
                 && (error as HttpFailure)?.nativeDeepReadUpstreamFailure === true) {
                 // Vertex槽位已释放；同一分片/温度转入共享六路池，后续门禁重试保留此路由。
                 input.route = NATIVE_DEEP_READ_ROUTE_EVOLINK;
                 continue;
               }
               if (isNativeDeepReadResourceExhausted(error)) {
-                if (resourceRetryCount >= NATIVE_DEEP_READ_RESOURCE_RETRY_MAX) throw error;
+                if (resourceRetryCount >= NATIVE_DEEP_READ_RESOURCE_RETRY_MAX) {
+                  // Carbon 车道：同通道资源拥堵重试用尽再切下一通道（限流先同通道重试、再换通道）。
+                  if (carbonRoutes && switchCarbonRoute(error)) { resourceRetryCount = 0; continue; }
+                  throw error;
+                }
                 resourceRetryCount += 1;
                 const errorZh = (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
                 await emitVisualModelReceipt({
@@ -6841,7 +6889,8 @@ async function executeNativeDeepReadBatch(
             model: readModel,
             requestedFps: fps,
             visualRoute: result.visualRoute,
-            degraded: result.visualRoute === NATIVE_DEEP_READ_ROUTE_EVOLINK && !isNativeDeepReadCurrentContractModel(readModel),
+            degraded: result.visualRoute === NATIVE_DEEP_READ_ROUTE_EVOLINK && !isNativeDeepReadCurrentContractModel(readModel)
+              && !isNativeDeepReadCarbonLaneModel(readModel),
             raw: result.raw,
             attemptSelection: result.attemptSelection,
             rawAttemptEvidenceObjectName: result.rawAttemptEvidenceObjectName,

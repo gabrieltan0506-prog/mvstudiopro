@@ -436,12 +436,34 @@ export const musicMvAdvisorTargetSchema = z
   .strict();
 export type MusicMvAdvisorTarget = z.infer<typeof musicMvAdvisorTargetSchema>;
 
+/**
+ * 1111 MV 整片编排引擎：standard = 标准编排（原三跳，缺省）；deep = 深度编排（推理更强、更慢，Carbon 三通道，失败回落标准）。
+ * 前台只显示中性叫法，不显示模型名。
+ */
+export const MUSIC_MV_COMPOSE_ENGINES = ["standard", "deep"] as const;
+export const musicMvComposeEngineSchema = z.enum(MUSIC_MV_COMPOSE_ENGINES);
+export type MusicMvComposeEngine = z.infer<typeof musicMvComposeEngineSchema>;
+export const MUSIC_MV_COMPOSE_ENGINE_LABELS: Record<MusicMvComposeEngine, string> = {
+  standard: "标准编排",
+  deep: "深度编排",
+};
+/** 结果里的实际线路：requested = 用户所选；compose / beats = 方案编排与逐窗节拍实际走的线路（mixed = 部分镜头块回落标准）。 */
+export const musicMvComposeLineSchema = z
+  .object({
+    requested: musicMvComposeEngineSchema,
+    compose: musicMvComposeEngineSchema,
+    beats: z.enum(["standard", "deep", "mixed"]).optional(),
+  })
+  .strict();
+export type MusicMvComposeLine = z.infer<typeof musicMvComposeLineSchema>;
+
 export const musicMvAdvisorProposalSchema = z
   .object({
     kind: z.literal("music_mv_v1"),
     sourceKey: text.max(200),
     evidenceId: z.string().uuid().optional(),
     review: creativeEvidenceReviewSchema.optional(),
+    composeLine: musicMvComposeLineSchema.optional(),
     summaryZh: text.max(4000),
     sections: z
       .array(
@@ -553,6 +575,8 @@ export const musicMvAdvisorSessionSchema = z
     target: musicMvAdvisorTargetSchema,
     question: text.max(1200),
     videoModel: text.max(100),
+    /** 1111：所选编排引擎；旧会话没有此字段 = 标准编排。 */
+    composeEngine: musicMvComposeEngineSchema.optional(),
     status: z.enum(["pending", "succeeded", "failed"]),
     proposal: musicMvAdvisorProposalSchema.optional(),
     adoption: z

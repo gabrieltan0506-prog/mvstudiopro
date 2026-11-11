@@ -84,6 +84,17 @@ export const GEMINI_MODEL_DOMAIN_ENVS = {
   codeMotionTiming: ["CODE_MOTION_TIMING_MODEL"],
   /** 创作顾问问答·联网检索摘要（googleSearch，不阻断主问答）。 */
   platformSkillQa: ["PLATFORM_SKILL_QA_GEMINI_MODEL"],
+  /**
+   * 1111 Gemini 4 Carbon（贵档，缺省非 Flash）：只在用户主动选择时调用，见 shared/geminiCarbon.ts。
+   * 共用调用层缺省模型；下面三个业务领域未设自身 env 时同样读 GEMINI_CARBON_MODEL。
+   */
+  geminiCarbon: ["GEMINI_CARBON_MODEL"],
+  /** 模板学习·整集精读升级档（新学习可选，替换原 Argon 档）。 */
+  manhuaDeepReadUpgrade: ["MANHUA_DEEP_READ_UPGRADE_MODEL", "GEMINI_CARBON_MODEL"],
+  /** MV 顾问·深度编排（整片方案 compose + 逐窗节拍）。 */
+  musicMvDeepCompose: ["MV_DEEP_COMPOSE_MODEL", "GEMINI_CARBON_MODEL"],
+  /** 小说改编 / 编剧扩写「线路三」。 */
+  novelWriterCarbon: ["NOVEL_WRITER_CARBON_MODEL", "GEMINI_CARBON_MODEL"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type GeminiModelDomain = keyof typeof GEMINI_MODEL_DOMAIN_ENVS;
@@ -104,6 +115,11 @@ export const GEMINI_MODEL_DOMAIN_DEFAULTS = {
   strategicCoverDirector: "gemini-3.1-pro-preview",
   deepResearchAssist: "gemini-3.1-pro",
   growthCampExtractor: "gemini-3.5-flash",
+  // 1111 Carbon 四个领域：缺省 gemini-4-carbon（领域缺省，改 GEMINI_DEFAULT_MODEL 不会把它们换成 Flash，也不会把 Flash 领域换成 Carbon）。
+  geminiCarbon: "gemini-4-carbon",
+  manhuaDeepReadUpgrade: "gemini-4-carbon",
+  musicMvDeepCompose: "gemini-4-carbon",
+  novelWriterCarbon: "gemini-4-carbon",
 } as const satisfies Partial<Record<GeminiModelDomain, string>>;
 
 /** 某领域在全部 env 未设时的缺省模型（表内领域取领域缺省，否则为全局兜底 gemini-3.8-flash）。 */

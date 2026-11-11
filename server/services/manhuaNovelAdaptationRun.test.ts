@@ -322,3 +322,49 @@ describe("同模型双通道", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("1111 线路三（Carbon 三通道）", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+  const carbonEnv = () => {
+    vi.stubEnv("EVOLINK_API_KEY", "evo-key");
+    vi.stubEnv("GEMINI_API_KEY", "gem-key");
+    vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS_JSON", "");
+    vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS", "");
+    vi.stubEnv("GEMINI_CARBON_CHANNEL_ORDER", "");
+  };
+  const reply = (text: string, finishReason = "STOP") => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] }, finishReason }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, thoughtsTokenCount: 3 } }), { status: 200 });
+
+  it("只走 Carbon 通道（不碰线路一 / 二的端点），证据经 saveEvidence 落盘，回执线路为 Carbon 通道", async () => {
+    carbonEnv();
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { urls.push(url); return reply('{"title":"t"}'); }));
+    const saved: string[] = [];
+    const events: NovelRouteEvent[] = [];
+    const raws: string[] = [];
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const result = await callNovelStage("提示词", true, "req-1", { modelPreference: "carbon", saveEvidence: async (name) => { saved.push(name); }, onRouteEvent: async (e) => { events.push(e); }, onRaw: async (r) => { raws.push(r); } });
+    expect(result).toMatchObject({ text: '{"title":"t"}', model: "gemini-4-carbon", route: { gateway: "evolink", attempt: 1 } });
+    expect(urls).toEqual(["https://direct.evolink.ai/v1beta/models/gemini-4-carbon:generateContent"]);
+    expect(saved).toEqual(expect.arrayContaining(["stage", "hop-1-evolink-request", "hop-1-evolink-raw", "hop-1-evolink-decoded", "hop-1-evolink-parsed", "hop-used"]));
+    expect(events.map(e => e.phase)).toEqual(["selected"]);
+    expect(JSON.parse(raws[0]!).usageMetadata.thoughtsTokenCount).toBe(3);
+  });
+
+  it("首通道失败切 Gemini API；全部失败抛可重试提示（不含模型 / 通道名），不回落线路一 / 二", async () => {
+    carbonEnv();
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { urls.push(url); return url.includes("evolink") ? new Response("{}", { status: 500 }) : reply("正文"); }));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const ok = await callNovelStage("提示词", false, "req-2", { modelPreference: "carbon", saveEvidence: async () => undefined });
+    expect(ok.route?.gateway).toBe("gemini_api");
+
+    urls.length = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => { urls.push(url); return reply("", "MAX_TOKENS"); }));
+    const error = await callNovelStage("提示词", false, "req-3", { modelPreference: "carbon", saveEvidence: async () => undefined }).catch(e => e);
+    expect(error.code).toBe("NOVEL_CARBON_UNAVAILABLE");
+    expect(error.message).toContain("本次未扣点");
+    expect(error.message).not.toMatch(/gemini|carbon|evolink|vertex|glm|deepseek|openrouter/i);
+    expect(urls.every(u => !u.includes("test.invalid") && !u.includes("fallback.invalid"))).toBe(true);
+  });
+});

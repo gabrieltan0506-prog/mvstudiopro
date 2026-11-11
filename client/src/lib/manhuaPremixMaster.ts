@@ -52,7 +52,7 @@ export function buildPremixTimelineClips(input: {
     throw new Error(`一次最多预混 ${PREMIX_MAX_CLIPS} 条音频，请先停用或合并部分对白/配乐（当前 ${cues.length} 条）。`);
   }
   if (isCanvasWan30VideoModel(normalizeCanvasVideoModel(input.videoModel || DEFAULT_CANVAS_VIDEO_MODEL)) && input.durationSec > MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30) {
-    throw new Error(`Wan 3.0 参考音频上限 ${MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30} 秒，本段 ${input.durationSec} 秒的母轨出片时会被丢弃；请把本段切到 ≤15 秒或换 Seedance 2.5。`);
+    throw new Error(`长镜直出引擎参考音频上限 ${MANHUA_SEGMENT_REFERENCE_CAP_SEC.wan30} 秒，本段 ${input.durationSec} 秒的母轨出片时会被丢弃；请把本段切到 ≤15 秒或换 Seedance 2.5。`);
   }
   const clips = cues.flatMap((cue) => {
     if (!(cue.startSec >= 0 && cue.endSec > cue.startSec && cue.endSec <= input.durationSec)) {

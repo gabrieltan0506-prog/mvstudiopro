@@ -57,7 +57,7 @@ export function NbpEngineSelector({
     },
     {
       id: "nbp_2k",
-      label: "Google 2K",
+      label: "高清 2K",
       desc: isAdmin
         ? "快速生成，高清 2K，无水印"
         : effectivePlan === "free" ? "需升级" : "高清生成，无水印",
@@ -74,7 +74,7 @@ export function NbpEngineSelector({
     },
     {
       id: "nbp_4k",
-      label: "Google 4K",
+      label: "超清 4K",
       desc: isAdmin
         ? "精细生成，超高清 4K，无水印"
         : effectivePlan === "enterprise" ? "无浮水印" : "需升级",

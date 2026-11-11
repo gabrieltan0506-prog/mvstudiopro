@@ -341,7 +341,7 @@ export default function CreativePage() {
                     >
                       <option value="seedance-2.0">成片·标准（限付费）</option>
                       <option value="seedance-2.0-fast">成片·快速（限付费）</option>
-                      <option value="minimax-hailuo-3">成片·H3（2K · 限付费）</option>
+                      <option value="minimax-hailuo-3">成片·2K 高清（限付费）</option>
                     </select>
                   </div>
                   

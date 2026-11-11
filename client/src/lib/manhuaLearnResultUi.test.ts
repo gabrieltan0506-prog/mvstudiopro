@@ -1331,13 +1331,18 @@ it("稀疏检查点使用真实片号去重，不把完成数量猜成连续前�
 });
 
 
-it("读片模型按登录账号保存Argon，旧Pro/损坏偏好不改变新任务Flash默认", () => {
+it("读片档位偏好按登录账号保存升级档（1111 Argon 改 Carbon），旧Pro/旧Argon/损坏偏好不改变新任务Flash默认", () => {
   installMemoryLocalStorage();
-  writeManhuaLearnReadModel("user_7", "gemini-4-argon");
-  expect(readManhuaLearnReadModel("user_7")).toBe("gemini-4-argon");
+  writeManhuaLearnReadModel("user_7", "gemini-4-carbon");
+  expect(readManhuaLearnReadModel("user_7")).toBe("gemini-4-carbon");
   expect(readManhuaLearnReadModel("user_8")).toBe("gemini-3.8-flash");
   writeManhuaLearnReadModel("user_7", "gemini-3.1-pro-preview");
-  expect(readManhuaLearnReadModel("user_7")).toBe("gemini-4-argon");
+  expect(readManhuaLearnReadModel("user_7")).toBe("gemini-4-carbon");
+  // Argon 已退出新学习可选项：不再写入；旧本机 Argon 偏好读回 Flash 默认
+  writeManhuaLearnReadModel("user_7", "gemini-4-argon");
+  expect(readManhuaLearnReadModel("user_7")).toBe("gemini-4-carbon");
+  localStorage.setItem("mvs-manhua-learn-read-model-v1:user_9", JSON.stringify("gemini-4-argon"));
+  expect(readManhuaLearnReadModel("user_9")).toBe("gemini-3.8-flash");
   localStorage.setItem("mvs-manhua-learn-read-model-v1:user_8", JSON.stringify("gemini-3.1-pro-preview"));
   expect(readManhuaLearnReadModel("user_8")).toBe("gemini-3.8-flash");
 });

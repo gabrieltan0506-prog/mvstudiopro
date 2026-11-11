@@ -44,10 +44,21 @@
 | `strategicCoverDirector` | 战略封面 / 扉页 / 抠图双语编导 | `STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL` → `VERTEX_GEMINI_31_PRO_MODEL` → `VERTEX_GEMINI_MODEL` | `gemini-3.1-pro-preview`（领域） | **是** |
 | `deepResearchAssist` | 战略智库辅助生成 | `DEEP_RESEARCH_ASSIST_GEMINI_MODEL` | `gemini-3.1-pro`（领域） | **是** |
 | `growthCampExtractor` | 成长营 Phase 1 音频 / 关键帧粗筛 | `GROWTH_CAMP_EXTRACTOR_MODEL` | `gemini-3.5-flash`（领域） | 否 |
+| `geminiCarbon` | Carbon 共用调用层缺省（1111） | `GEMINI_CARBON_MODEL` | `gemini-4-carbon`（领域） | 否；**缺省非 Flash，属贵档，只在用户主动选择时调用** |
+| `manhuaDeepReadUpgrade` | 模板学习·整集精读升级档（替换 Argon，车道 `-g4c`） | `MANHUA_DEEP_READ_UPGRADE_MODEL` → `GEMINI_CARBON_MODEL` | `gemini-4-carbon`（领域） | 否；贵档，只在用户主动选择时调用 |
+| `musicMvDeepCompose` | MV 顾问·深度编排（整片 compose + 逐窗节拍） | `MV_DEEP_COMPOSE_MODEL` → `GEMINI_CARBON_MODEL` | `gemini-4-carbon`（领域） | 否；贵档，只在用户主动选择时调用 |
+| `novelWriterCarbon` | 小说改编 / 连载扩写「线路三」 | `NOVEL_WRITER_CARBON_MODEL` → `GEMINI_CARBON_MODEL` | `gemini-4-carbon`（领域） | 否；贵档，只在用户主动选择时调用 |
 
 - 缺省为 Pro 的 4 个领域（`llmProTier` / `platformStage2` / `strategicCoverDirector` / `deepResearchAssist`）是搬表前就写死的旧值，行为未变；是否降到 3.8 Flash 待用户拍板（删领域缺省条目或设该领域 env）。
 - 1110 行为变化：创作顾问联网摘要原走 Flash 文案链（缺省 `gemini-3-flash-preview`），改为 `platformSkillQa` 领域后缺省 `gemini-3.8-flash`，不再读 Flash 文案旧 env 链。
 - 精读历史身份不变：`MANHUA_NATIVE_DEEP_READ_MODEL`（3.1 Pro）只作旧任务缺省 / 段缓存指纹缺省身份 / 计划码；3.1 Pro、3.8 Flash 段缓存指纹不写模型，Argon 与配置新模型写入模型；配置新模型车道系列后缀 `-gm-<去前缀、点换下划线>`。精读成本表外模型按表内最高单价估算（不按 0 元）。
+
+## Gemini 4 Carbon（1111 接入，贵档）
+- 只走 EvoLink、Gemini API、Vertex，**不接 OpenRouter**。模型标识 `gemini-4-carbon`（`-preview` 三通道 404）。1111 09:00Z 实测：EvoLink 200/2.2s，Gemini API 200/8.3s（先花思考 token，输出上限小会 MAX_TOKENS 空正文），Vertex global 90 秒无回应。
+- 价格：首发到 11-30 输入 $2 / 输出 $10 每百万 token，12-01 起 $4 / $20；输出含思考 token；上下文约 105 万。常量真源 `shared/geminiCarbon.ts`。
+- 共用调用层 `server/services/geminiCarbonCall.ts`：通道顺序 `GEMINI_CARBON_CHANNEL_ORDER`（缺省 `evolink,gemini_api,vertex`），单通道文字类缺省超时 5 分钟、输出上限 65536；超时 / 断线 / HTTP / 错误包 / 空回 / MAX_TOKENS / 拦截 / 写坏（同通道带原因修复一次）都切下一通道；429 同通道退避 2s/5s/10s（同 `GEMINI_TWO_HOP_RATE_LIMIT_BACKOFF_MS`）；每发 request/raw/decoded/parsed/rejected 永久证据，用量（输入/输出/思考）入证据与日志。带媒体请求不走 Gemini API（需 Files API，不做）。
+- 模板学习 Carbon 车道读原生视频：`MANHUA_DEEP_READ_CARBON_ROUTES`（缺省 `evolink,vertex`，不含 Gemini API）；Vertex 复测通过可设 `vertex,evolink`。升级重读缺省不改（同首读模型）；要让五发不过的分片升级到 Carbon，设 `MANHUA_DEEP_READ_ESCALATION_MODEL=gemini-4-carbon`（所有失败段都会走贵档）。
+- 用户入口（全部默认不选）：模板学习面板「整集精读升级档」、MV 顾问「深度编排」（全部通道失败回落原三跳并标注）、小说改编 / 连载扩写「线路三」（失败不换线、不扣点）。
 
 ## 视频
 - **Seedance 2.5 三通道路由拍板（用户 2026-08-13 口径）**：

@@ -31,7 +31,7 @@ it("输入证据写入失败就不调用模型", async () => {
 });
 it("保留真实连接错误，不伪称算力紧张或换到另一模型", async () => {
   stage.mockRejectedValueOnce(new Error("创作模型HTTP 403"));
-  await expect(createManhuaWriterModelCall(7,"r","deepseek")("input",false,"s")).rejects.toThrow("DeepSeek：创作模型HTTP 403");
+  await expect(createManhuaWriterModelCall(7,"r","deepseek")("input",false,"s")).rejects.toThrow("线路二：创作模型HTTP 403");
   expect(stage).toHaveBeenCalledTimes(1);
   expect(upload.mock.calls.at(-1)?.[0].objectName).toMatch(/failure.json$/);
 });

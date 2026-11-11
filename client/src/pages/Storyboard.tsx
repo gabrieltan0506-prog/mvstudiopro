@@ -1296,7 +1296,7 @@ export default function StoryboardPage() {
                     </div>
                     <div className="flex-1 text-left">
                       <p className="text-foreground font-semibold text-base">为分镜生成 BGM 配乐</p>
-                      <p className="text-muted-foreground text-sm mt-0.5">Suno AI 根据分镜风格自动生成配乐（V4: {creditCostsQuery.data?.v4 ?? 12} Cr / V5: {creditCostsQuery.data?.v5 ?? 22} Cr）</p>
+                      <p className="text-muted-foreground text-sm mt-0.5">AI 配乐引擎根据分镜风格自动生成配乐（标准版 {creditCostsQuery.data?.v4 ?? 12} Cr / 进阶版 {creditCostsQuery.data?.v5 ?? 22} Cr）</p>
                     </div>
                     <ChevronRight className="w-[22px] h-[22px] text-muted-foreground" />
                   </button>
@@ -1405,7 +1405,7 @@ export default function StoryboardPage() {
 
                   {/* Suno Model Selection */}
                   <div className="mb-4">
-                    <p className="text-sm font-medium text-foreground mb-1">Suno 引擎</p>
+                    <p className="text-sm font-medium text-foreground mb-1">配乐引擎版本</p>
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={() => setBgmModel("V4")}
@@ -1416,7 +1416,7 @@ export default function StoryboardPage() {
                         }`}
                       >
                         <p className={`font-semibold text-sm ${bgmModel === "V4" ? "text-violet-400" : "text-foreground"}`}>
-                          Suno V4
+                          标准版
                         </p>
                         <p className="text-muted-foreground text-xs mt-0.5">性价比高</p>
                         <p className="text-yellow-500 text-xs font-semibold mt-1">{creditCostsQuery.data?.v4 ?? 12} Credits</p>
@@ -1430,7 +1430,7 @@ export default function StoryboardPage() {
                         }`}
                       >
                         <p className={`font-semibold text-sm ${bgmModel === "V5" ? "text-violet-400" : "text-foreground"}`}>
-                          Suno V5
+                          进阶版
                         </p>
                         <p className="text-muted-foreground text-xs mt-0.5">最新模型，更高音质</p>
                         <p className="text-yellow-500 text-xs font-semibold mt-1">{creditCostsQuery.data?.v5 ?? 22} Credits</p>

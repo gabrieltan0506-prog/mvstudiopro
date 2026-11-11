@@ -136,3 +136,15 @@ it("前台零技术泄漏：普通用户响应里没有 model / reasoningEffort�
     expect(staff.body).toMatchObject({ model: "m", reasoningEffort: "high", vision: { model: "m", reasoningEffort: "high" } });
   }
 });
+
+it("分析失败 500：detail 去掉地址 / 模型与供应商名，原文只进服务端日志", async () => {
+  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+  h.analyze.mockRejectedValue(new Error("Gemini 3.8 Flash @ Vertex 429: https://aiplatform.googleapis.com/v1/projects/p-1/x · EvoLink 兜底失败"));
+  const result = await scan([{ dataUrl: DATA_URL }]);
+  expect(result.status).toBe(500);
+  expect(result.body.error).toBe("manhua_frame_scan_failed");
+  expect(result.body.detail).not.toMatch(/gemini|vertex|evolink|google|https?:|projects\//i);
+  expect(result.body.detail).toContain("429");
+  expect(spy.mock.calls.some(call => String(call[1]).includes("https://aiplatform.googleapis.com"))).toBe(true);
+  spy.mockRestore();
+});

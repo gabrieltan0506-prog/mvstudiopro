@@ -2850,7 +2850,7 @@ export default function FreeformCanvas({
                             {readOpenAiImageVariantMode() === "both" ? (
                               <span
                                 className="shrink-0 rounded border border-amber-400/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-50"
-                                title="出图开关在「双档各一张」：每张各出 Flare 与 Sunburst 两个版本，实际出图与扣费为张数 ×2"
+                                title="出图开关在「双档各一张」：每张各出快速与精细两个版本，实际出图与扣费为张数 ×2"
                               >
                                 ×2 双档
                               </span>
@@ -3023,9 +3023,9 @@ export default function FreeformCanvas({
                                 : block.videoModel === "seedance-2.5"
                                   ? "Seedance 2.5：官方五模式，最长约 30s；正式会员可用"
                                   : block.videoModel === "minimax-hailuo-3"
-                                    ? "Minimax H3：多图参考，5／10／15s，可选草稿或2K"
+                                    ? "2K 多图参考引擎：多图参考，5／10／15s，可选草稿或2K"
                                     : block.videoModel === "happyhorse-1.1"
-                                      ? "Happy Horse 1.1：首帧图生，最长 15s；挂 2–9 张参考图自动切多图参考模式（提示词用 character1/character2 指代各图角色）"
+                                      ? "首帧图生引擎：首帧图生，最长 15s；挂 2–9 张参考图自动切多图参考模式（提示词用 character1/character2 指代各图角色）"
                                       : block.videoModel === "wan-3.0"
                                         ? "多图参考 + 参考音频，可直出约 30s；排队时间较长，适合不赶时间的镜头"
                                         : "Seedance 2.0 fast：多图参考 + 运镜/动作/对白，更快更省，最长约 15s"}
@@ -3312,7 +3312,7 @@ export default function FreeformCanvas({
                                   className="w-full resize-y rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-[11px] leading-5 text-white placeholder:text-white/30"
                                 />
                               </div>
-                              </> : <div className="text-[11px] text-white/70">H3 参考生成：图、视频与声音合计最多12个；视频与音频分别合计不超过15秒。视频参考会产生上游输入费用。</div>}
+                              </> : <div className="text-[11px] text-white/70">多图参考生成：图、视频与声音合计最多12个；视频与音频分别合计不超过15秒。视频参考会产生上游输入费用。</div>}
                               {(() => {
                                 const vids = (block.uploadedAssets || []).filter(
                                   (a) =>

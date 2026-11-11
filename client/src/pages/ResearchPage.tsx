@@ -164,7 +164,7 @@ export default function ResearchPage() {
           <p style="color:#e8d5b0;line-height:1.8;margin:0 0 10px">${esc(sc.copywriting)}</p>
           ${sc.visualPrompt ? `<p style="font-size:12px;color:#7eb8d4;font-family:monospace;margin:0 0 6px"><b>🎨 生图提示词：</b>${esc(sc.visualPrompt)}</p>` : ""}
           ${sc.audioPrompt ? `<p style="font-size:12px;color:#f97316;margin:0 0 6px"><b>🗣️ 口播台词&拟音：</b>${esc(sc.audioPrompt)}</p>` : ""}
-          ${sc.bgmPrompt ? `<p style="font-size:12px;color:#e8c87a;margin:0"><b>🎵 BGM战略（Suno）：</b>${esc(sc.bgmPrompt)}</p>` : ""}
+          ${sc.bgmPrompt ? `<p style="font-size:12px;color:#e8c87a;margin:0"><b>🎵 BGM战略：</b>${esc(sc.bgmPrompt)}</p>` : ""}
         </div>`).join("") : "";
 
     const scriptsHtml = !Array.isArray(result.scenes) && Array.isArray(result.scripts)
@@ -759,7 +759,7 @@ function SceneVideoCard({ scene, index, platform }: {
         <div>
           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, fontWeight: 700, color: "rgba(251,191,36,0.7)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
             <Music size={11} />
-            🎵 背景音乐战略（预留给 Suno · 可修改）
+            🎵 背景音乐战略（供配乐生成 · 可修改）
           </label>
           <input
             type="text"
@@ -776,7 +776,7 @@ function SceneVideoCard({ scene, index, platform }: {
             onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(251,191,36,0.2)"; }}
           />
           <p style={{ fontSize: 10, color: "rgba(251,191,36,0.4)", margin: "4px 0 0", fontStyle: "italic" }}>
-            🎼 此战略仅供 Suno BGM 生成使用，不会混入上方对白与拟音描述
+            🎼 此战略仅供 BGM 生成使用，不会混入上方对白与拟音描述
           </p>
         </div>
 
