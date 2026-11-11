@@ -41,6 +41,11 @@ export const knowledgeSourceSchema = z
     readingPreparation: knowledgeReadingPreparationSchema.optional(),
     verificationJobId: z.string().min(1).max(100).optional(),
     reviewBatchMode: z.literal("ready-images").optional(),
+    /**
+     * 正文合同版本（2026-11-11）：image-primary-v1 = 主要重点在图、正文只写图中没有的次要重点。
+     * 只在新建稿件时写入；它参与原稿摘要（sourceDigest），旧稿没有此字段，请求与回执身份不变、不重跑、不重复扣费。
+     */
+    readingContract: z.literal("image-primary-v1").optional(),
     pages: z.array(knowledgeSourcePageSchema).min(1),
   })
   .strict()

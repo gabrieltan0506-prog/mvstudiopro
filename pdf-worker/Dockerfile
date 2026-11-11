@@ -14,6 +14,7 @@ COPY tsconfig.json ./
 COPY index.ts ./
 COPY pdfPySubset.ts ./
 COPY knowledgeBookletPagination.ts ./
+COPY pdfImageCompression.ts ./
 
 RUN npm run build
 

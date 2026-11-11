@@ -308,21 +308,27 @@ export async function exportKnowledgePublication(
         const url = doc.pages[index]!.imageUrl;
         if (url) { const p = verifyImage(url); prefetched.set(index, p); await p.catch(() => undefined); }
       });
+      // 每张图只签一次地址：本章配图与上一章「下篇预告」裁切条共用（预告条只引用地址，不另生成图）。
+      const addresses = new Map<string, Promise<string>>();
+      const addressOf = (uri: string) => { if (!addresses.has(uri)) addresses.set(uri, deps.imageUrl(uri)); return addresses.get(uri)!; };
       for (const [index, page] of Array.from(doc.pages.entries())) {
         let imageAddress = "", imageBytes = 0;
         if (page.imageUrl) {
           const image = await (prefetched.get(index) ?? verifyImage(page.imageUrl));
           if (expected.get(page.imageUrl) !== image.sha256)
             throw new Error(`第${index + 1}页配图已变化，未导出旧审校版本`);
-          imageAddress = await deps.imageUrl(page.imageUrl);
+          imageAddress = await addressOf(page.imageUrl);
           imageBytes = image.bytes;
           totalImageBytes += image.bytes;
         }
+        const nextUri = doc.pages[index + 1]?.imageUrl;
         const section = knowledgePublicationChapter(
             doc,
             review,
             index,
-            imageAddress
+            imageAddress,
+            false,
+            nextUri ? await addressOf(nextUri) : ""
           ),
           // 分卷仍按「正文 + 原图体积」计重，保持每卷载入排版服务的图片总量与原先一致；HTML 本身只含地址。
           bytes = Buffer.byteLength(section) + imageBytes;

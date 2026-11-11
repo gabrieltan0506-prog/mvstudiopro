@@ -1,6 +1,7 @@
 import { knowledgeEditionIllustratedPages, planKnowledgeCardPages } from "./knowledgeCardPagination";
 import type { LayoutSource } from "./editableLayout";
 import {knowledgeEditionParts} from './knowledgeCardEdition';
+import { KNOWLEDGE_READING_CONTRACT } from "./knowledgeEditionBudget";
 
 // 复用实际出图分页；缺图保留原页位置，不将后页配图前移。
 export function knowledgeCardLayoutSource(input: {
@@ -54,7 +55,7 @@ export function synchronizedKnowledgeCardSource(input: {
       throw Error('配图任务与实际知识模块不一致，尚未开始生成');
     return {kind:'knowledge-publication',owner:input.owner,sourceId:input.sourceId,title:edition.title,
       body:edition.knowledge,detailLevel:input.detailLevel,infographicTemplateId:input.infographicTemplateId||undefined,
-      inputFingerprint:input.inputFingerprint,reviewBatchMode:'ready-images',images:{},pages:
+      inputFingerprint:input.inputFingerprint,reviewBatchMode:'ready-images',readingContract:KNOWLEDGE_READING_CONTRACT,images:{},pages:
         pages.map((page,i)=>({pageIndex:i+1,headline:page.headline||edition.title,body:page.body,imageJobId:input.imageJobIds[i],knowledgeRole:'illustration' as const,...(page.supplement?{supplement:page.supplement}:{})})),
     };
   }
@@ -63,10 +64,10 @@ export function synchronizedKnowledgeCardSource(input: {
   if (!illustrations.length || illustrations.length !== input.imageJobIds.length || new Set(input.imageJobIds).size !== input.imageJobIds.length)
     throw new Error("配图任务与原稿页数不一致，尚未开始生成");
   if (input.detailLevel === "full") {
-    return {...reading,inputFingerprint:input.inputFingerprint,reviewBatchMode:"ready-images",pages:illustrations.map((body,i)=>({pageIndex:i+1,headline:reading.pages![i]?.headline||`配图 ${i+1}`,body,imageJobId:input.imageJobIds[i],knowledgeRole:"illustration" as const}))};
+    return {...reading,inputFingerprint:input.inputFingerprint,reviewBatchMode:"ready-images",readingContract:KNOWLEDGE_READING_CONTRACT,pages:illustrations.map((body,i)=>({pageIndex:i+1,headline:reading.pages![i]?.headline||`配图 ${i+1}`,body,imageJobId:input.imageJobIds[i],knowledgeRole:"illustration" as const}))};
   }
   const textPages = reading.pages!.map(p => ({ ...p, knowledgeRole: "reading" as const }));
-  return { ...reading, inputFingerprint: input.inputFingerprint, detailLevel: input.detailLevel, reviewBatchMode:"ready-images", pages: [
+  return { ...reading, inputFingerprint: input.inputFingerprint, detailLevel: input.detailLevel, reviewBatchMode:"ready-images", readingContract: KNOWLEDGE_READING_CONTRACT, pages: [
     ...textPages,
     ...illustrations.map((body, i) => ({
       pageIndex: textPages.length + i + 1,

@@ -7,8 +7,8 @@ import { synchronizedKnowledgeCardSource } from "../../shared/knowledgeCardEdita
 import { layoutFromSource } from "../../shared/editableLayout";
 import { compileKnowledgeEditions } from "../../shared/knowledgeCardEdition";
 import { knowledgeEditionImagePlan } from "../../shared/knowledgeCardPagination";
-import { KNOWLEDGE_LEAD_PAGE_CHARS } from "../../shared/knowledgeEditionBudget";
-import { compressKnowledgeFinalReport, reviewKnowledgePublication, knowledgeSourceDigest, knowledgeEvidencePrefix, knowledgeReviewPageChars, KNOWLEDGE_VISUAL_ADVISOR_MODEL } from "./knowledgePublicationAdvisor";
+import { KNOWLEDGE_IMAGE_PRIMARY_INSTRUCTIONS, KNOWLEDGE_IMAGE_PRIMARY_MARKER, KNOWLEDGE_LEAD_PAGE_CHARS, KNOWLEDGE_READING_CONTRACT } from "../../shared/knowledgeEditionBudget";
+import { compressKnowledgeFinalReport, dedupeKnowledgeReviewAgainstImages, KNOWLEDGE_REVIEW_INSTRUCTIONS, knowledgeExplanationInstructions, reviewKnowledgePublication, knowledgeSourceDigest, knowledgeEvidencePrefix, knowledgeReviewPageChars, KNOWLEDGE_VISUAL_ADVISOR_MODEL } from "./knowledgePublicationAdvisor";
 
 const sentence = (i: number, j: number) => `第${i}节第${j}句记述一件具体史实，以及它前后的经过与影响。`;
 const book = compileKnowledgeEditions("敦煌测试", Array.from({ length: 12 }, (_, i) => ({
@@ -17,14 +17,17 @@ const book = compileKnowledgeEditions("敦煌测试", Array.from({ length: 12 },
 // 每句互不相同（确定性去重只删重复句，不应影响模型稿的字数断言）。
 const prose = (chars: number) => Array.from({ length: Math.ceil(chars / 10) + 1 }, (_, i) => `壁画${String(i).padStart(4, "0")}年代考。`).join("").slice(0, chars);
 
-function harness(initial: number | "fail" | (number | "fail")[]) {
+// 2026-11-11 起新建稿件带正文合同 image-primary-v1；本文件原有用例覆盖的是此前建立的稿件（无合同字段），
+// 默认按旧稿构造以继续验证旧稿行为不变；新合同用例显式传 { contract: true }。
+function harness(initial: number | "fail" | (number | "fail")[], options: { contract?: boolean } = {}) {
   let compressChars: number | "fail" | (number | "fail")[] = initial;
   let compressCalls = 0;
   state.jobs.clear();
   const plan = knowledgeEditionImagePlan(book.full)!;
   const imageJobIds = plan.images.map((_, i) => `img-job-${i}`);
   imageJobIds.forEach((id, i) => state.jobs.set(id, { userId: "7", status: "succeeded", input: { action: "platform_composite_sheet_progress", params: { kind: "single_page_knowledge_card" } }, output: { compositeImageUrl: `https://storage.googleapis.com/test/${i}.png` } }));
-  const doc = layoutFromSource(synchronizedKnowledgeCardSource({ owner: "7", sourceId: "dh", fullMarkdown: book.full, illustrationMarkdown: book.full, detailLevel: "full", imageJobIds }));
+  const created = synchronizedKnowledgeCardSource({ owner: "7", sourceId: "dh", fullMarkdown: book.full, illustrationMarkdown: book.full, detailLevel: "full", imageJobIds });
+  const doc = layoutFromSource(options.contract ? created : { ...created, readingContract: undefined });
   const source = doc.publication!.source, digest = knowledgeSourceDigest(source), storage = new Map<string, any>(), sha = "b".repeat(64);
   const calls: { kind: "review" | "compress"; ids: string[] }[] = [];
   const post = vi.fn(async (request: any) => {
@@ -278,3 +281,74 @@ describe("压缩目标比例常量", () => {
   });
 });
 
+
+describe("图主文辅合同 image-primary-v1（2026-11-11：主要重点进图，正文只写图中没有的次要重点）", () => {
+  it("新稿审校请求带合同全文、建议字数按图外资料给出且注明上限不是目标；旧稿请求逐字不含合同", async () => {
+    const fresh = harness(650, { contract: true });
+    expect(fresh.source.readingContract).toBe(KNOWLEDGE_READING_CONTRACT);
+    await reviewKnowledgePublication(7, { documentId: fresh.doc.id, batchIndex: 0, attempt: 0 }, fresh.deps);
+    const text = (fresh.post.mock.calls[0]![0] as any).systemInstruction.parts.map((p: any) => p.text).join("\n");
+    expect(text).toContain(KNOWLEDGE_IMAGE_PRIMARY_INSTRUCTIONS);
+    expect(text).toContain("maxChars是上限不是目标");
+    expect(text).toMatch(/"suggestedChars":\d+/);
+    expect(text).not.toContain("按 targetChars 写");
+    // 路由仍按真实上限逐页校验。
+    expect((fresh.post.mock.calls[0]![0] as any).pageBudgets[0].maxChars).toBe(700);
+    const old = harness(650);
+    expect(old.source.readingContract).toBeUndefined();
+    await reviewKnowledgePublication(7, { documentId: old.doc.id, batchIndex: 0, attempt: 0 }, old.deps);
+    const oldText = (old.post.mock.calls[0]![0] as any).systemInstruction.parts.map((p: any) => p.text).join("\n");
+    expect(oldText).not.toContain(KNOWLEDGE_IMAGE_PRIMARY_MARKER);
+    expect(oldText).toContain("按 targetChars 写");
+    expect(oldText.startsWith(KNOWLEDGE_REVIEW_INSTRUCTIONS + "\n" + knowledgeExplanationInstructions("full") + "\n")).toBe(true);
+  });
+
+  it("合同字段参与原稿摘要：新稿摘要与去掉字段的同稿不同（新稿新身份），旧稿摘要与旧算法一致", () => {
+    const fresh = harness(650, { contract: true }), old = harness(650);
+    const { readingContract, ...stripped } = fresh.source;
+    expect(readingContract).toBe(KNOWLEDGE_READING_CONTRACT);
+    expect(knowledgeSourceDigest(fresh.source)).not.toBe(knowledgeSourceDigest(stripped as any));
+    // 旧稿 JSON 不出现该键（layoutFromSource 不写 undefined 键），摘要即旧算法结果。
+    expect(Object.keys(old.source)).not.toContain("readingContract");
+  });
+
+  it("新稿审校稿未超篇幅也做图文去重：删掉与图中文字相同的句子并留回执，图外内容原样保留；旧稿不动", async () => {
+    const run = async (contract: boolean) => {
+      const h = harness(650, { contract });
+      const imageSentences = h.source.pages[0]!.body.match(/[^。]+。/g)!.slice(0, 6).join("");
+      const unique = prose(200);
+      const post = h.post.getMockImplementation()!;
+      h.post.mockImplementation(async (request: any) => {
+        const res: any = await post(request);
+        const env = JSON.parse(res.text); const value = JSON.parse(env.candidates[0].content.parts[0].text);
+        value.pages[0].reading.blocks = [{ type: "prose", title: "壁画分期", note: "", text: imageSentences + unique }];
+        value.pages[0].body = imageSentences + unique;
+        env.candidates[0].content.parts[0].text = JSON.stringify(value); res.text = JSON.stringify(env); return res;
+      });
+      const batch = await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps) as any;
+      return { h, batch, imageSentences, unique };
+    };
+    const fresh = await run(true);
+    expect(fresh.h.calls.map(c => c.kind)).toEqual(["review"]);
+    const text = fresh.batch.pages[0].reading.blocks[0].text;
+    expect(text).toContain(fresh.unique);
+    expect(text).not.toContain(fresh.imageSentences.slice(0, 20));
+    expect(fresh.batch.pages[0].body).not.toContain(fresh.imageSentences.slice(0, 20));
+    const receipt = fresh.h.storage.get(`${fresh.h.root}/batch-0/image-dedupe.json`);
+    expect(receipt.pages[0].removed.some((r: any) => r.kind === "image_sentence")).toBe(true);
+    const old = await run(false);
+    expect(old.batch.pages[0].reading.blocks[0].text).toContain(old.imageSentences);
+    expect(old.h.storage.get(`${old.h.root}/batch-0/image-dedupe.json`)).toBeUndefined();
+  });
+
+  it("去重不会把一章删空：正文全部与图相同则保留原稿交审校处理", () => {
+    const h = harness(650, { contract: true });
+    const page = h.source.pages[0]!;
+    const same = page.body.match(/[^。]+。/g)!.slice(0, 3).join("");
+    const reviewed = [{ id: page.id, headline: page.headline, body: same, imageDescription: "", imageStatus: "consistent" as const, facts: [{ term: "x", statement: "y" }], cautions: [],
+      reading: { version: 1 as const, subtitle: "", accent: "jade" as const, blocks: [{ type: "prose" as const, title: "壁画分期", note: "", text: same }] } }];
+    const out = dedupeKnowledgeReviewAgainstImages(h.source, reviewed as any);
+    expect(out.pages[0]!.body).toBe(same);
+    expect(out.removed).toEqual([]);
+  });
+});
