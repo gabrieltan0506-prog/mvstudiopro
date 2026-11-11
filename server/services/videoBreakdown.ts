@@ -18,6 +18,10 @@
  * 进程重启：本机任务表没有、且心跳超过 VIDEO_BREAKDOWN_STALE_MS 的 queued/running 单判「中断」→ 标失败并按 chargeKey 原路全额退款
  * （refundKey 幂等，不会重复退）；用户换新 requestId 重新 start 即可。jobId 由 (userId, requestId) 派生，同单不会二次扣费。
  *
+ * 计费（用户 2026-11-11 定价）：标价唯一真源 shared/videoBreakdown.ts videoBreakdownCredits(片长)；
+ * 以 ffprobe 实测时长（取到契约精度 0.1 秒，即 result.durationSec）计价，扣费发生在时长核对通过之后、看片调用之前；
+ * chargeKey 按 jobId 幂等；管理员/supervisor 0 扣；失败按 chargeKey 原路全额退。开单时只按起步价预检余额。
+ *
  * 前台可见报错只给业务句（不含上游原文、模型名、通道名）；服务端日志只记阶段与结果码（不含地址与正文）。
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -27,16 +31,17 @@ import path from "node:path";
 import { z } from "zod";
 import {
   VIDEO_BREAKDOWN_ACCEPT,
+  VIDEO_BREAKDOWN_BASE_CREDITS,
   VIDEO_BREAKDOWN_MAX_BYTES,
   VIDEO_BREAKDOWN_MAX_SECONDS,
   validateVideoBreakdownTiming,
+  videoBreakdownCredits,
   videoBreakdownSchema,
   type VideoBreakdown,
   type VideoBreakdownJobStatus,
   type VideoBreakdownJobView,
 } from "../../shared/videoBreakdown";
 import { resolveGeminiModel, type GeminiModelEnv } from "../../shared/geminiModelConfig.js";
-import { CREDIT_COSTS } from "../plans";
 
 // ─── 常量 ─────────────────────────────────────────────
 
@@ -366,8 +371,10 @@ export type VideoBreakdownState = {
   heartbeatAt: string;
   instanceId: string;
   sourceGsUri: string;
-  /** 本单实际扣费（管理员 0）。 */
+  /** 本单实际扣费（管理员 0；扣费前为 0）。 */
   charged: number;
+  /** 管理员 / supervisor：0 扣费。 */
+  privileged?: boolean;
   /** 退款状态：none=无需退；pending=待退（退款失败，清扫 / 查询时重试）；done=已退。 */
   refund?: "none" | "pending" | "done";
   failureCode?: VideoBreakdownFailureCode;
@@ -540,14 +547,16 @@ async function failJob(c: Ctx, state: VideoBreakdownState, code: VideoBreakdownF
 async function settleRefund(c: Ctx, state: VideoBreakdownState) {
   if (state.refund === "pending") {
     try {
-      await c.d.refund({
+      const r = await c.d.refund({
         userId: state.userId,
         chargeKey: videoBreakdownChargeKey(state.userId, state.jobId),
         refundKey: videoBreakdownRefundKey(state.userId, state.jobId),
         reason: "拉片失败退回",
         actionForLog: "videoBreakdown",
       });
-      state.refund = "done";
+      // 账上查不到这笔扣费（扣费请求异常、实际未落账）：按未扣处理，前台不说「已退回」。
+      if (!(r.refunded > 0)) state.charged = 0;
+      state.refund = state.charged > 0 ? "done" : "none";
       await writeState(c, state);
     } catch (error) {
       c.d.log(`[videoBreakdown] refund_pending job=${state.jobId} user=${state.userId} ${error instanceof Error ? error.name : "error"}`);
@@ -600,8 +609,8 @@ export async function createVideoBreakdownUpload(
 
 /**
  * 开单（幂等）：jobId = f(userId, requestId)。已登记直接返回同一 jobId，不重复扣费、不重复执行。
- * 顺序：归属核验 → 对象存在与大小 → 余额预检 → 扣费（chargeKey 幂等）→ request.json 条件创建占号 → 后台执行。
- * 扣费在占号前：并发同 requestId 会撞同一 chargeKey，只扣一次；占号失败者直接返回同一 jobId。
+ * 顺序：归属核验 → 对象存在与大小 → 起步价余额预检 → request.json 条件创建占号 → 后台执行（实测时长 → 按片长扣费 → 看片）。
+ * 并发同 requestId 只有一方占号成功，另一方直接返回同一 jobId；扣费 chargeKey 按 jobId 幂等。
  */
 export async function startVideoBreakdown(
   user: VideoBreakdownUser,
@@ -619,32 +628,19 @@ export async function startVideoBreakdown(
   if (typeof meta.byteLength === "number" && meta.byteLength > VIDEO_BREAKDOWN_MAX_BYTES)
     throw new VideoBreakdownError("BAD_REQUEST", `视频超过 ${Math.round(VIDEO_BREAKDOWN_MAX_BYTES / 1024 / 1024)}MB，请压缩后重新上传`);
   const privileged = isPrivileged(user);
-  const cost = privileged ? 0 : CREDIT_COSTS.videoBreakdown;
-  if (cost > 0 && (await c.d.balance(user.id)).totalAvailable < cost)
-    throw new VideoBreakdownError("PAYMENT_REQUIRED", `拉片需要 ${cost} 积分，请充值后再试`);
-  let charged = 0;
-  if (cost > 0) {
-    const deduction = await c.d.charge(user.id, cost, "videoBreakdown", "拉片（视频创作拆解）", { chargeKey: videoBreakdownChargeKey(user.id, jobId) });
-    if (!deduction.success) throw new VideoBreakdownError("PAYMENT_REQUIRED", `拉片需要 ${cost} 积分，请充值后再试`);
-    charged = deduction.cost;
-  }
+  // 片长未知，开单只按起步价预检；按片长的实扣在 ffprobe 核对时长之后（runVideoBreakdownJob）。
+  if (!privileged && (await c.d.balance(user.id)).totalAvailable < VIDEO_BREAKDOWN_BASE_CREDITS)
+    throw new VideoBreakdownError("PAYMENT_REQUIRED", `拉片至少需要 ${VIDEO_BREAKDOWN_BASE_CREDITS} 积分，请充值后再试`);
   const model = resolveVideoBreakdownModel();
-  let claim: { created: boolean };
-  try {
-    claim = await c.d.createIfAbsent(`${prefix}/request.json`, json({
-      jobId, userId: user.id, requestId: input.requestId, sourceGsUri: `gs://${c.bucket}/${source.objectName}`,
-      mimeType: source.mimeType, bytes: meta.byteLength ?? null, model, charged, createdAt: iso(c.d.now()),
-    }), "application/json");
-  } catch {
-    // 已扣费但没占上号（存储异常）：原路退回，本单不存在。
-    if (charged > 0) await c.d.refund({ userId: user.id, chargeKey: videoBreakdownChargeKey(user.id, jobId), refundKey: videoBreakdownRefundKey(user.id, jobId), reason: "拉片开单失败退回", actionForLog: "videoBreakdown" }).catch(() => {});
-    throw new VideoBreakdownError("INTERNAL_SERVER_ERROR", "拉片暂不可用，请稍后重新发起");
-  }
+  const claim = await c.d.createIfAbsent(`${prefix}/request.json`, json({
+    jobId, userId: user.id, requestId: input.requestId, sourceGsUri: `gs://${c.bucket}/${source.objectName}`,
+    mimeType: source.mimeType, bytes: meta.byteLength ?? null, model, privileged, createdAt: iso(c.d.now()),
+  }), "application/json");
   if (!claim.created) return { jobId };
   const now = iso(c.d.now());
   const state: VideoBreakdownState = {
     jobId, userId: user.id, status: "queued", stage: "upload_checked", createdAt: now, updatedAt: now, heartbeatAt: now,
-    instanceId: INSTANCE_ID, sourceGsUri: `gs://${c.bucket}/${source.objectName}`, charged, refund: charged > 0 ? undefined : "none",
+    instanceId: INSTANCE_ID, sourceGsUri: `gs://${c.bucket}/${source.objectName}`, charged: 0, privileged,
   };
   const controller = new AbortController();
   live.set(jobId, { state, controller });
@@ -656,7 +652,7 @@ export async function startVideoBreakdown(
     await failJob(c, state, "internal");
     throw new VideoBreakdownError("INTERNAL_SERVER_ERROR", "拉片暂不可用，请稍后重新发起");
   }
-  c.d.log(`[videoBreakdown] start job=${jobId} user=${user.id} charged=${charged} model=${model}`);
+  c.d.log(`[videoBreakdown] start job=${jobId} user=${user.id} model=${model}`);
   const promise = runVideoBreakdownJob(c, state, source.mimeType, model, controller).finally(() => live.delete(jobId));
   void promise.catch(() => {});
   return { jobId, promise };
@@ -695,6 +691,19 @@ async function runVideoBreakdownJob(c: Ctx, state: VideoBreakdownState, mimeType
       if (!probed.hasVideo || !(probed.durationSec > 0)) throw new Error("unreadable");
       if (probed.durationSec > VIDEO_BREAKDOWN_MAX_SECONDS + 0.5) { failure = "too_long"; throw new Error("too_long"); }
       const durationSec = r1(probed.durationSec);
+
+      // 时长核对通过 → 按片长扣费（看片之前）。标价只用契约函数，不另写。
+      const price = state.privileged ? 0 : videoBreakdownCredits(durationSec);
+      await c.d.createIfAbsent(`${prefix}/pricing.json`, json({ durationSec, probedDurationSec: probed.durationSec, price, privileged: !!state.privileged }), "application/json");
+      if (price > 0) {
+        failure = "internal";
+        // 先记待扣：扣费请求异常（可能已落账）时失败结单会按 chargeKey 查账原路退。
+        state.charged = price;
+        const deduction = await c.d.charge(state.userId, price, "videoBreakdown", "拉片（视频创作拆解）", { chargeKey: videoBreakdownChargeKey(state.userId, state.jobId) });
+        if (!deduction.success) { state.charged = 0; failure = "insufficient_credits"; throw new Error("insufficient_credits"); }
+        state.charged = deduction.cost;
+        c.d.log(`[videoBreakdown] charged job=${state.jobId} user=${state.userId} credits=${deduction.cost} durationSec=${durationSec}`);
+      }
 
       await stage("watching");
       failure = "model_failed";

@@ -9,8 +9,7 @@ import {
   type VideoBreakdown,
 } from "../../shared/videoBreakdown";
 import { resolveGeminiModel } from "../../shared/geminiModelConfig";
-import { CREDIT_COSTS as SHARED_COSTS } from "../../shared/plans";
-import { CREDIT_COSTS as SERVER_COSTS } from "../plans";
+import { videoBreakdownCredits } from "../../shared/videoBreakdown";
 import { videoBreakdownFixture } from "./videoBreakdown.fixture";
 import {
   VIDEO_BREAKDOWN_STALE_MS,
@@ -102,9 +101,11 @@ describe("提示词与配置", () => {
     expect(resolveGeminiModel("videoBreakdown", {})).toBe("gemini-3.8-flash");
     expect(resolveGeminiModel("videoBreakdown", { VIDEO_BREAKDOWN_MODEL: "gemini-4.0-flash" })).toBe("gemini-4.0-flash");
   });
-  it("计价键两处同步（占位 20）", () => {
-    expect(SHARED_COSTS.videoBreakdown).toBe(20);
-    expect(SERVER_COSTS.videoBreakdown).toBe(SHARED_COSTS.videoBreakdown);
+  it("标价（契约函数）：120.0 秒=30、120.1 秒=40、300 秒=210", () => {
+    expect(videoBreakdownCredits(120.0)).toBe(30);
+    expect(videoBreakdownCredits(120.1)).toBe(40);
+    expect(videoBreakdownCredits(300)).toBe(210);
+    expect(videoBreakdownCredits(30)).toBe(30);
   });
 });
 
@@ -220,16 +221,16 @@ async function runToEnd(h: Harness, requestId = "req-0001", user = { id: UID } a
 }
 
 describe("开单 / 执行 / 查询", () => {
-  it("成功：扣 20 一次、各阶段落 GCS、get 现签片段与原片（1 小时）", async () => {
+  it("成功：按实测片长扣 30 一次、各阶段落 GCS、get 现签片段与原片（1 小时）", async () => {
     const h = harness();
     const jobId = await runToEnd(h);
     expect(jobId).toBe(deriveVideoBreakdownJobId(UID, "req-0001"));
     expect(h.charge).toHaveBeenCalledTimes(1);
-    expect(h.charge.mock.calls[0]![1]).toBe(20);
+    expect(h.charge.mock.calls[0]![1]).toBe(30);
     expect(h.charge.mock.calls[0]![4]).toEqual({ chargeKey: videoBreakdownChargeKey(UID, jobId) });
     expect(h.refund).not.toHaveBeenCalled();
     const prefix = videoBreakdownJobPrefix(UID, jobId);
-    for (const name of ["request.json", "state.json", "probe.json", "result.json", "evidence/hop-1-vertex-request.json", "evidence/hop-1-vertex-parsed.json", "clips/seg-000.mp4", "clips/seg-002.mp4"])
+    for (const name of ["request.json", "state.json", "probe.json", "pricing.json", "result.json", "evidence/hop-1-vertex-request.json", "evidence/hop-1-vertex-parsed.json", "clips/seg-000.mp4", "clips/seg-002.mp4"])
       expect(h.store.has(`${prefix}/${name}`), name).toBe(true);
     const call = h.call.mock.calls[0]![0] as any;
     expect(call.media.vertexFileUri).toBe(srcUri());
@@ -298,12 +299,58 @@ describe("开单 / 执行 / 查询", () => {
     expect(h.logs.some(l => l.startsWith("[videoBreakdown] failed "))).toBe(true);
   });
 
-  it("超时长：不调模型，失败并退款", async () => {
+  it("超时长：时长核对不过，不扣费、不调模型、无需退", async () => {
     const h = harness({ duration: 301 });
     const jobId = await runToEnd(h);
     expect(h.call).not.toHaveBeenCalled();
-    expect(h.state(jobId)).toMatchObject({ status: "failed", failureCode: "too_long", refund: "done" });
-    expect((await getVideoBreakdown({ id: UID }, { jobId }, h.deps)).error).toMatch(/超过 5 分钟/);
+    expect(h.charge).not.toHaveBeenCalled();
+    expect(h.refund).not.toHaveBeenCalled();
+    expect(h.state(jobId)).toMatchObject({ status: "failed", failureCode: "too_long", refund: "none", charged: 0 });
+    const error = (await getVideoBreakdown({ id: UID }, { jobId }, h.deps)).error!;
+    expect(error).toMatch(/超过 5 分钟/);
+    expect(error).not.toContain("积分");
+  });
+
+  it.each([[120.0, 30], [120.1, 40], [300, 210]])("按 ffprobe 实测片长 %s 秒扣 %s；扣费在时长核对之后、看片之前；失败全额退一次", async (duration, credits) => {
+    const order: string[] = [];
+    const h = harness({ duration, callImpl: (async () => { order.push("call"); throw new Error("x"); }) as any });
+    h.charge.mockImplementationOnce(async (_u: number, amount: number, _a: string, _d: string, o: { chargeKey: string }) => {
+      order.push("charge");
+      h.charges.set(o.chargeKey, amount);
+      return { success: true, cost: amount };
+    });
+    const jobId = await runToEnd(h, `req-price-${credits}`);
+    expect(order).toEqual(["charge", "call"]);
+    expect(h.charge).toHaveBeenCalledTimes(1);
+    expect(h.charge.mock.calls[0]![1]).toBe(credits);
+    expect(JSON.parse(h.store.get(`${videoBreakdownJobPrefix(UID, jobId)}/pricing.json`)!.toString())).toMatchObject({ durationSec: duration, price: credits });
+    expect(h.refund).toHaveBeenCalledTimes(1);
+    expect(h.state(jobId)).toMatchObject({ status: "failed", charged: credits, refund: "done" });
+    // 再查 / 再 start 同 requestId：不重复扣、不重复退
+    await getVideoBreakdown({ id: UID }, { jobId }, h.deps);
+    await startVideoBreakdown({ id: UID }, { gcsUri: srcUri(), requestId: `req-price-${credits}` }, h.deps);
+    expect(h.charge).toHaveBeenCalledTimes(1);
+    expect(h.refunds.size).toBe(1);
+  });
+
+  it("实扣时余额不足：失败、不调模型、不退款", async () => {
+    const h = harness({ duration: 300 });
+    h.charge.mockResolvedValueOnce({ success: false, cost: 0 });
+    const jobId = await runToEnd(h);
+    expect(h.call).not.toHaveBeenCalled();
+    expect(h.refund).not.toHaveBeenCalled();
+    expect(h.state(jobId)).toMatchObject({ status: "failed", failureCode: "insufficient_credits", charged: 0 });
+    expect((await getVideoBreakdown({ id: UID }, { jobId }, h.deps)).error).toMatch(/积分不足/);
+  });
+
+  it("扣费请求异常（账上实际未落）：失败结单查账退 0，前台不说已退回", async () => {
+    const h = harness();
+    h.charge.mockRejectedValueOnce(new Error("db timeout"));
+    const jobId = await runToEnd(h);
+    expect(h.call).not.toHaveBeenCalled();
+    expect(h.refund).toHaveBeenCalledTimes(1);
+    expect(h.state(jobId)).toMatchObject({ status: "failed", charged: 0, refund: "none" });
+    expect((await getVideoBreakdown({ id: UID }, { jobId }, h.deps)).error).not.toContain("积分");
   });
 
   it("退款失败保留待退，查询时重试成功", async () => {

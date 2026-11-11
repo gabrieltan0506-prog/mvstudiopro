@@ -1,7 +1,7 @@
 /**
  * 1111 拉片（视频创作拆解）tRPC 路由：契约见 shared/videoBreakdown.ts，实现见 server/services/videoBreakdown.ts。
  * 全部 protectedProcedure；归属按本人前缀核验（上传对象 uploads/u<uid>/video-breakdown/…，任务 video-breakdown/<uid>/<jobId>/…）。
- * 计费：CREDIT_COSTS.videoBreakdown（占位 20 积分/次，待用户定价）；管理员/supervisor 0 扣；失败全额退；同 requestId 幂等。
+ * 计费：按 ffprobe 实测片长调契约 videoBreakdownCredits（≤120 秒 30 积分，超出每 10 秒加 10）；管理员/supervisor 0 扣；失败全额退；同 requestId 幂等。
  */
 import { TRPCError } from "@trpc/server";
 import type { VideoBreakdownJobView } from "../../shared/videoBreakdown";
