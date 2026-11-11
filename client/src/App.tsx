@@ -88,6 +88,7 @@ const ManhuaProjects = lazy(() => import("./pages/ManhuaProjects"));
 const NovelAdaptation = lazy(() => import("./pages/NovelAdaptation"));
 const NovelProjects = lazy(() => import("./pages/NovelProjects"));
 const MusicMvProjects = lazy(() => import("./pages/MusicMvProjects"));
+const VideoBreakdown = lazy(() => import("./pages/VideoBreakdown"));
 
 function PageLoader() {
   return (
@@ -144,6 +145,7 @@ function Router() {
         <Route path="/novel-adaptation" component={NovelAdaptation} />
         <Route path="/novel-projects" component={NovelProjects} />
         <Route path="/mv-projects" component={MusicMvProjects} />
+        <Route path="/lapian" component={VideoBreakdown} />
         <Route path={"/supervisor"} component={SupervisorAccess} />
         <Route path={"/my-works"} component={MyWorks} />
         <Route path={"/my-works/:id"} component={AnalysisView} />
