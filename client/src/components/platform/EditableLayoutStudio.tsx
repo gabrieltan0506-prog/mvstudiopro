@@ -10,6 +10,18 @@ import KnowledgePublicationPanel from "./KnowledgePublicationPanel";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc";
 import {
+  compactLayoutCache,
+  compactLayoutCacheKey,
+  legacyCacheSafeToDrop,
+  legacyLayoutCacheKey,
+  mergeCompactWithCloud,
+  parseCompactLayoutCache,
+  parseLegacyLayoutCache,
+  provisionalFromCompact,
+  syncedLayoutVersions,
+  type CompactLayoutCache,
+} from "@/lib/editableLayoutLocalCache";
+import {
   buildLayoutHtml,
   editableLayoutSchema,
   layoutFromSource,
@@ -57,7 +69,9 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
   compact?: boolean;
   onSupplement?: (selection:KnowledgeSupplementSelection,markdown:string)=>Promise<void>; onPagination?: (doc: EditableLayout, pagination: KnowledgePublicationPagination | null) => void;
 }, ref) {
-  const key = `mvstudiopro.editableLayout.v1.${owner}`;
+  // 本机缓存（1111 瘦身）：云端为准，本机只完整保存当前打开的稿与未同步的稿，其他稿只留索引；旧 v1 完整库确认云端已有同版或更新版后才删除。
+  const legacyKey = legacyLayoutCacheKey(owner);
+  const key = compactLayoutCacheKey(owner);
   const [state, setState] = useState<Cache>({
     library: { version: 1, owner, documents: [] },
     generation: "0",
@@ -66,6 +80,15 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
   });
   const current = useRef(state);
   const cacheWritable = useRef(true);
+  /** 本机写入失败后降级为仅云端保存，只提示一次。 */
+  const localDegraded = useRef(false);
+  /** 最近一次与云端一致时各稿 updatedAt；用于判断哪些稿需在本机完整暂存。 */
+  const synced = useRef<Map<string, string>>(new Map());
+  /** 旧 v1 完整库仍在本机；内存库是否以它为底稿（以它为底稿时，一次云端保存成功即可安全删除）。 */
+  const legacyPresent = useRef(false);
+  const legacyInMemory = useRef(false);
+  /** 内存库只是本机暂存的部分稿件（云端尚未读回）：禁止整库保存，以免覆盖云端其他稿。 */
+  const partialLibrary = useRef(false);
   const alive = useRef(true);
   const sourceSeen = useRef<LayoutSource | null>(null);
   const [ready, setReady] = useState(false);
@@ -85,54 +108,95 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
   const install = (next: Cache) => {
     current.current = next;
     setState(next);
+    if (!next.dirty && !partialLibrary.current) synced.current = syncedLayoutVersions(next.library);
+    if (!cacheWritable.current || localDegraded.current) return;
     try {
-      if (!cacheWritable.current) throw new Error("本机原记录尚未安全备份");
-      localStorage.setItem(key, JSON.stringify(next));
+      localStorage.setItem(key, JSON.stringify(compactLayoutCache(next, synced.current)));
     } catch {
-      setError(
-        "浏览器保存失败，当前内容仍在页面；请立即导出稿件备份或保存云端"
-      );
+      // 本机空间不足：不再吓人地报「保存失败」，降级为仅云端保存并提示一次。
+      localDegraded.current = true;
+      setMessage("本机暂存空间不足，已改为仅云端保存；稿件以云端为准，修改后请及时保存云端。");
     }
+  };
+  /** 所有整库云端保存的唯一入口：不完整库拒绝保存；以旧完整库为底稿的内容一旦保存成功即删除旧 key。 */
+  const cloudSave = async (input: { library: LayoutLibrary; expectedGeneration: string }) => {
+    if (partialLibrary.current) throw new Error("云端稿件尚未读取完成，本次未保存，避免覆盖其他稿件；请先读取云端");
+    const result = await saveMutation.mutateAsync(input);
+    if (legacyPresent.current && legacyInMemory.current) {
+      try { localStorage.removeItem(legacyKey); legacyPresent.current = false; legacyInMemory.current = false; } catch { /* 删除失败下次再删 */ }
+    }
+    return result;
   };
   useEffect(() => {
     alive.current = true;
     let cancelled = false;
     let local = current.current;
-    let raw: string | null = null;
-    try {
-      raw = localStorage.getItem(key);
-      if (raw) {
-        const value = JSON.parse(raw);
-        const library = layoutLibrarySchema.parse(value.library);
-        if (library.owner !== owner || !/^\d+$/.test(value.generation))
-          throw new Error("本机稿件账号或版本不匹配");
-        local = {
-          library,
-          generation: value.generation,
-          dirty: Boolean(value.dirty),
-          activeId: "",
-        };
-        current.current = local;
-        setState(local);
-      }
-    } catch {
-      // 自动恢复云端前先保留损坏原文；备份失败时禁止后续本机写入覆盖它。
+    let legacy: Cache | null = null;
+    let compact: CompactLayoutCache | null = null;
+    // 无法读取的本机原文先另存再继续；备份失败时禁止本机写入覆盖它。
+    const preserveUnreadable = (storageKey: string, raw: string | null) => {
       try {
         if (raw === null) throw new Error("浏览器存储不可读");
-        localStorage.setItem(`${key}.unreadable.${Date.now()}`, raw);
+        localStorage.setItem(`${storageKey}.unreadable.${Date.now()}`, raw);
         setError("本机稿件无法读取，已另存原始副本；正在读取云端稿件");
       } catch {
         cacheWritable.current = false;
         setError("本机原记录无法备份，未覆盖；请保存云端或导出当前稿件");
       }
+    };
+    let rawLegacy: string | null = null, rawCompact: string | null = null;
+    try {
+      rawLegacy = localStorage.getItem(legacyKey);
+      if (rawLegacy) legacy = parseLegacyLayoutCache(rawLegacy, owner);
+    } catch {
+      preserveUnreadable(legacyKey, rawLegacy);
+      // 已另存原文副本时释放旧 key 占用的空间；另存失败则原样保留。
+      if (cacheWritable.current && rawLegacy !== null) try { localStorage.removeItem(legacyKey); } catch { /* 保留 */ }
     }
+    try {
+      rawCompact = localStorage.getItem(key);
+      if (rawCompact) compact = parseCompactLayoutCache(rawCompact, owner);
+    } catch { preserveUnreadable(key, rawCompact); }
+    if (legacy) legacyPresent.current = true;
+    // 新格式里有基于别的云端版本的未保存修改：不能叠到旧完整库上（会用旧稿覆盖云端），改走新格式路径，旧 key 原样保留。
+    if (legacy && compact?.dirty && compact.documents.length && compact.generation !== legacy.generation) legacy = null;
+    if (legacy) {
+      // 旧完整库为底稿；新格式里同版本的未保存修改叠加其上。
+      legacyInMemory.current = true;
+      local = legacy;
+      if (compact?.dirty && compact.documents.length) {
+        const merged = mergeCompactWithCloud(compact, { library: legacy.library, generation: legacy.generation }, owner).state;
+        local = { ...merged, generation: compact.generation, activeId: "" };
+      }
+    } else if (compact) {
+      local = provisionalFromCompact(compact, owner);
+      partialLibrary.current = true;
+    }
+    if (legacy || compact) { current.current = local; setState(local); }
     void utils.editableLayout.get
       .fetch()
       .then(result => {
         if (cancelled) return;
         if (result.library && result.library.owner !== owner)
           throw new Error("云端稿件账号不匹配，未读取");
-        if (!local.dirty)
+        const cloud = { library: result.library, generation: result.generation };
+        if (legacy) {
+          // 旧完整库：确认云端已有同版本或更新版本、本机无未保存修改才删；否则原样保留。
+          if (legacyCacheSafeToDrop({ generation: legacy.generation, dirty: local.dirty }, { generation: result.generation, hasLibrary: Boolean(result.library) })) {
+            try { localStorage.removeItem(legacyKey); legacyPresent.current = false; } catch { /* 下次再删 */ }
+          }
+          if (!local.dirty) {
+            legacyInMemory.current = false;
+            install({ library: result.library || { version: 1, owner, documents: [] }, generation: result.generation, dirty: false, activeId: local.activeId });
+          } else if (result.generation !== local.generation)
+            setError("云端有不同版本，本机修改已保留；先导出备份，再读取云端，避免覆盖");
+          else install(local);
+        } else if (compact) {
+          const merged = mergeCompactWithCloud(compact, cloud, owner);
+          partialLibrary.current = false;
+          install(merged.state);
+          if (merged.conflict) setError("云端有不同版本，本机修改已保留；先导出备份，再读取云端，避免覆盖");
+        } else if (!local.dirty)
           install({
             library: result.library || { version: 1, owner, documents: [] },
             generation: result.generation,
@@ -223,7 +287,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
     const previous=current.current;
     const library=layoutLibrarySchema.parse({...previous.library,documents:previous.library.documents.map(d=>d.id===nextDoc.id?nextDoc:d)});
     install({...previous,library,dirty:true});
-    const result=await saveMutation.mutateAsync({library,expectedGeneration:previous.generation});
+    const result=await cloudSave({library,expectedGeneration:previous.generation});
     if(alive.current)install({...current.current,generation:result.generation,dirty:current.current.library!==library});
     return {generation:result.generation};
   };
@@ -262,7 +326,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       const previous = current.current;
       const library = layoutLibrarySchema.parse({ ...previous.library, documents: [...previous.library.documents, nextDoc] });
       // 先保存完整底稿和全部图片任务身份，再允许任何收费请求。
-      const result = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
+      const result = await cloudSave({ library, expectedGeneration: previous.generation });
       install({ library, generation: result.generation, dirty: false, activeId: nextDoc.id });
       preparedRun.current = { documentId: nextDoc.id, waitForImages,waitForReading:options?.waitForReading,preparePresentation:options?.preparePresentation };
       setOpen(true);
@@ -300,7 +364,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
         if (!root || (pub.imageAttempts?.[root]?.jobId || root) !== originalJobId) throw new Error("补图尝试已变化，请恢复当前任务");
         const next = { ...target, publication: { ...pub, imageAttempts: { ...pub.imageAttempts, [root]: { requestId, jobId } } } };
         const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === target.id ? next : doc) });
-        const saved = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
+        const saved = await cloudSave({ library, expectedGeneration: previous.generation });
         install({ library, generation: saved.generation, dirty: false, activeId: target.id });
       } finally { locked.current = false; }
     },
@@ -317,7 +381,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
         if (!root) throw new Error("补图原稿身份不匹配");
         const next = root === replacementJobId ? target : { ...target, publication: { ...pub, imageReplacements: { ...pub.imageReplacements, [root]: replacementJobId } } };
         const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === target.id ? next : doc) });
-        const saved = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
+        const saved = await cloudSave({ library, expectedGeneration: previous.generation });
         install({ library, generation: saved.generation, dirty: false, activeId: target.id });
         setSynchronizedRun(null);
         if (resume) { setAutoPublicationId(target.id); setAutoStartToken(token => token + 1); setOpen(true); }
@@ -331,7 +395,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       const parent=previous.library.documents.find(d=>d.id===parentId);
       if(parentId&&(!parent?.publication||parent.publication.supplementDocumentId&&parent.publication.supplementDocumentId!==documentId))throw Error("本册已有补图批次，请恢复原补充稿");
       const library = layoutLibrarySchema.parse({ ...previous.library, documents: previous.library.documents.map(doc => doc.id === documentId ? { ...doc, publication: { ...doc.publication!, synchronizedStarted: true, billing:{version:"interior-pages-v1",confirmed:true} } } : doc.id===parentId?{...doc,publication:{...doc.publication!,supplementDocumentId:documentId}}:doc) });
-      const saved = await saveMutation.mutateAsync({ library, expectedGeneration: previous.generation });
+      const saved = await cloudSave({ library, expectedGeneration: previous.generation });
       install({ library, generation: saved.generation, dirty: false, activeId: documentId });
       setSynchronizedRun({ ...pending, authorizedCredits:Math.max(0,authorizedCredits-(pending.presentationCredits||0)) });
       setAutoPublicationId(documentId);
@@ -363,7 +427,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
     action(async () => {
       const captured = current.current;
       layoutLibrarySchema.parse(captured.library);
-      const result = await saveMutation.mutateAsync({
+      const result = await cloudSave({
         library: captured.library,
         expectedGeneration: captured.generation,
       });
@@ -390,6 +454,8 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       if (!alive.current) return;
       if (result.library && result.library.owner !== owner)
         throw new Error("云端稿件账号不匹配，未读取");
+      partialLibrary.current = false;
+      legacyInMemory.current = false;
       install({
         library: result.library || { version: 1, owner, documents: [] },
         generation: result.generation,

@@ -1,7 +1,8 @@
 import express from "express";
 import puppeteer, { type Page } from "puppeteer";
 import { randomBytes } from "node:crypto";
-import { finalizeKnowledgeBookletPagination } from "./knowledgeBookletPagination";
+import { finalizeKnowledgeBookletPagination, readKnowledgeBookletDetails } from "./knowledgeBookletPagination";
+import { pdfImageCompressionScript } from "./pdfImageCompression";
 import {
   buildSubsetFaceCss,
   collectPdfSubsetChars,
@@ -43,6 +44,12 @@ const SET_CONTENT_WAIT_UNTIL = ALLOWED_WAIT.has(SET_CONTENT_WAIT_RAW)
   : "load";
 
 const SET_CONTENT_TIMEOUT_MS = Number(process.env.PDF_SET_CONTENT_TIMEOUT_MS) || 1_800_000;
+
+/**
+ * 带 data-pdf-max-dim 标记的图（知识手册信息图）入版长边上限；默认 2048（与审校缩图派生件一致）。
+ * 4Gi 实例上每张 2048 图解码约 9.4MB，未超上限的 JPEG 直接透传不再占画布；可用 env 下调。
+ */
+const TAGGED_IMAGE_MAX_DIM = Math.min(4096, Math.max(256, Number(process.env.PDF_TAGGED_IMAGE_MAX_DIM) || 2048));
 
 /** 決策智庫等寬幅快照：須 ≥ 儀表板 md 寬度（1680）以免 Puppeteer 排版裁切；可 env 覆寫 */
 const PDF_VIEWPORT_WIDTH = Math.min(4096, Math.max(1280, Number(process.env.PDF_VIEWPORT_WIDTH) || 1920));
@@ -302,6 +309,7 @@ app.get("/health", (_req, res) =>
       notoSansCjkRegularTtc: NOTO_SANS_CJK_REGULAR_TTC,
       notoSansCjkBoldTtc: NOTO_SANS_CJK_BOLD_TTC,
       notoSansCjkTtcFontIndex: NOTO_SANS_CJK_TTC_FONT_INDEX,
+      taggedImageMaxDim: TAGGED_IMAGE_MAX_DIM,
     },
   }),
 );
@@ -449,39 +457,8 @@ app.post("/generate-pdf", async (req, res) => {
     // 這會將大圖片繪製到 Canvas 並以 75% 的 JPEG 格式輸出，大幅縮減最終 PDF 寫入時的體積
     const tCompress = Date.now();
     console.log(`[pdf-worker:${reqId}] step3.5/5 inline image compression start`);
-    await page.evaluate(`(async function() {
-      var images = Array.from(document.images);
-      for (var i = 0; i < images.length; i++) {
-        var img = images[i];
-        if (!img.src || img.src.indexOf('image/svg') !== -1) continue;
-        if (img.naturalWidth < 100 && img.naturalHeight < 100) continue;
-        try {
-          var canvas = document.createElement('canvas');
-          var MAX_DIM = 1200; // 限制最大邊長，超過則等比縮小
-          var w = img.naturalWidth;
-          var h = img.naturalHeight;
-          if (w > MAX_DIM || h > MAX_DIM) {
-            var ratio = Math.min(MAX_DIM / w, MAX_DIM / h);
-            w = Math.round(w * ratio);
-            h = Math.round(h * ratio);
-          }
-          canvas.width = w;
-          canvas.height = h;
-          var ctx = canvas.getContext('2d');
-          // 填白底，避免透明 PNG 轉 JPEG 變黑底
-          ctx.fillStyle = '#FFFFFF';
-          ctx.fillRect(0, 0, w, h);
-          ctx.drawImage(img, 0, 0, w, h);
-          // 壓縮為 JPEG (Quality: 0.75)
-          var newData = canvas.toDataURL('image/jpeg', 0.75);
-          // 只有當壓縮後更小，或是原本不是 data URI (外部圖片) 時才替換
-          if (newData.length < img.src.length || !img.src.startsWith('data:')) {
-            img.src = newData;
-            img.srcset = '';
-          }
-        } catch(e) {}
-      }
-    })()`);
+    // 2026-11-11 知识手册清晰度：带 data-pdf-max-dim 的图按标记上限入版（见 pdfImageCompression.ts），其余图行为不变。
+    await page.evaluate(pdfImageCompressionScript(TAGGED_IMAGE_MAX_DIM));
     console.log(`[pdf-worker:${reqId}] step3.5/5 inline image compression done +${Date.now() - tCompress}ms`);
 
     const tHard0 = Date.now();
@@ -534,7 +511,7 @@ app.post("/generate-pdf", async (req, res) => {
     const bookletPages = await finalizeKnowledgeBookletPagination(page);
     if (measureKnowledgeBooklet === true) {
       if (!bookletPages) throw new Error("预分页仅支持知识书册");
-      res.json({ pages: bookletPages });
+      res.json({ pages: bookletPages, booklets: await readKnowledgeBookletDetails(page).catch(() => []) });
       return;
     }
 

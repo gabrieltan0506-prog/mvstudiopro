@@ -9,8 +9,23 @@
  * 预算在生图前计算（两档准备阶段展示、审校请求携带），不在导出后才阻断。
  */
 import { KNOWLEDGE_TOPIC_IMAGE_CAP, KNOWLEDGE_TOPIC_IMAGE_MAX_CHARS } from "./knowledgeTopicImagePlan";
+import { knowledgeHandbookPagePlan } from "./knowledgeHandbookPagePlan";
 
 export type KnowledgeEditionLevel = "full" | "concise";
+
+/**
+ * 正文合同 image-primary-v1（用户 2026-11-11：「主要重点生成在图片中，次要重点用文字说明」）。
+ * 只写进新建稿件的 source.readingContract；旧稿不带此字段，审校/排版请求文字与摘要都不变，已有回执零调用复用。
+ */
+export const KNOWLEDGE_READING_CONTRACT = "image-primary-v1" as const;
+export type KnowledgeReadingContract = typeof KNOWLEDGE_READING_CONTRACT;
+export const KNOWLEDGE_IMAGE_PRIMARY_MARKER = "【图主文辅合同v1】";
+export const KNOWLEDGE_IMAGE_PRIMARY_INSTRUCTIONS = `${KNOWLEDGE_IMAGE_PRIMARY_MARKER}
+本合同只适用于带实际配图的页（role=illustration 或有 imageJobId）；无图的文字页照常完整整理。
+这些页的主要重点已画进同页上方的信息图：该页 body 原文就是图中文字，读者在同一页就能看到。正文（body 与 reading）只承担次要重点：图中没有的背景、原因与前提条件、具体例子、操作注意事项与适用边界，以及 supplement 中的图外资料。
+本合同优先于上文“body 保留关键事实、数字”的要求：逐句自查，凡是图中已有的要点、数字、表格行、清单项、步骤和口号，不得在正文中改写重述；确需承接时全章最多一句话带过，且不带图中的数字与表格内容。
+不写“读图提示”“对应左上角某卡”“图中已列……此处补……”之类指向图中位置的说明。
+没有图外资料时，reading 只写 1–3 句真正补充的背景或注意事项，宁短勿凑；篇幅上限不是目标字数，留白由版式处理。`;
 
 /** 直式页图片下方要点区的保守容量（中文字符，含小标题/表格开销）；完整版每图内文上限即此值。 */
 export const KNOWLEDGE_LEAD_PAGE_CHARS = 700;
@@ -51,7 +66,17 @@ const hasImage = (p: KnowledgeBudgetPage) => Boolean(p.imageJobId || p.imageUrl 
  * 完整版：每个图文章只有图下一栏（KNOWLEDGE_LEAD_PAGE_CHARS），readingPages 恒为 0——不给任何章节续页预算。
  * 精华版：按图外资料多少把纯内文页分给各章，使每章要么只占图文同页，要么同页 + 若干填满的续页，减少半页留白。
  */
-export function knowledgeReadingCharBudgets(level: KnowledgeEditionLevel, pages: KnowledgeBudgetPage[]) {
+export function knowledgeReadingCharBudgets(level: KnowledgeEditionLevel, pages: KnowledgeBudgetPage[], contract?: KnowledgeReadingContract) {
+  // 新合同完整版（用户 2026-11-11：34 图总页数 48–54）：按页数预算分配跨页/图文同页，每章正文上限 = 本章版面容量；
+  // 旧稿与精华版不变（旧稿请求身份不变）。
+  if (contract === KNOWLEDGE_READING_CONTRACT && level === "full") {
+    const plan = knowledgeHandbookPagePlan(level, pages.map(p => ({ id: p.id, body: p.body, hasImage: hasImage(p) })));
+    const modes = new Map(plan.chapters.map(c => [c.id, c]));
+    return { budget: knowledgeEditionPageBudget(level, plan.images), plan, pages: pages.map(p => {
+      const chapter = modes.get(p.id)!;
+      return { id: p.id, headline: p.headline, maxChars: chapter.maxChars, readingPages: 0, mode: chapter.mode, imageTargetChars: knowledgeImagePrimaryTarget(p, chapter.maxChars) };
+    }) };
+  }
   const illustrated = pages.filter(hasImage);
   const budget = knowledgeEditionPageBudget(level, illustrated.length);
   const material = (p: KnowledgeBudgetPage) => {
@@ -74,13 +99,23 @@ export function knowledgeReadingCharBudgets(level: KnowledgeEditionLevel, pages:
   const result = pages.map(p => {
     if (hasImage(p)) {
       const pagesForChapter = extraPages.get(p.id)!;
-      return { id: p.id, headline: p.headline, maxChars: KNOWLEDGE_LEAD_PAGE_CHARS + pagesForChapter * KNOWLEDGE_READING_PAGE_CHARS, readingPages: pagesForChapter };
+      const maxChars = KNOWLEDGE_LEAD_PAGE_CHARS + pagesForChapter * KNOWLEDGE_READING_PAGE_CHARS;
+      return { id: p.id, headline: p.headline, maxChars, readingPages: pagesForChapter, imageTargetChars: knowledgeImagePrimaryTarget(p, maxChars) };
     }
     // 旧稿或无图稿的独立文字页：平分剩余预算，至少一页（两档手册的独立文字模块已并入图文章，正常不会走到这里）。
     const share = Math.max(1, Math.floor((budget.textPages.target - Array.from(extraPages.values()).reduce((a, b) => a + b, 0)) / Math.max(1, textOnly.length)));
     return { id: p.id, headline: p.headline, maxChars: share * KNOWLEDGE_READING_PAGE_CHARS, readingPages: share };
   });
   return { budget, pages: result };
+}
+
+/**
+ * 图主文辅合同下的建议字数：按图外资料（supplement）多少定，不按上限定——资料少就写短，不拿图中内容凑字数。
+ * 约为图外资料的九成再加一两句背景（120 字），封顶为上限的九成。
+ */
+export function knowledgeImagePrimaryTarget(page: Pick<KnowledgeBudgetPage, "supplement">, maxChars: number) {
+  const offImage = (page.supplement || "").replace(/\s+/g, "").length;
+  return Math.max(120, Math.min(Math.floor(maxChars * KNOWLEDGE_BUDGET_PROMPT_MARGIN), Math.round(offImage * 0.9) + 120));
 }
 
 /** 完整版图下容量不够时的压缩方案（准备阶段报出，不自行加图）。 */
@@ -140,8 +175,11 @@ export function knowledgeEditionBudgetCheck(level: KnowledgeEditionLevel, imageP
 }
 
 /** 发给审校/排版模型的预算说明。 */
-export function knowledgeBudgetInstructions(level: KnowledgeEditionLevel | undefined, pages: { id: string; maxChars: number }[]) {
+export function knowledgeBudgetInstructions(level: KnowledgeEditionLevel | undefined, pages: { id: string; maxChars: number; imageTargetChars?: number }[], contract?: KnowledgeReadingContract) {
   if (!level || !pages.length) return "";
+  // 新合同：上限只是上限，建议字数按图外资料多少给出；旧稿保持原文字不变（请求身份不变）。
+  if (contract === KNOWLEDGE_READING_CONTRACT)
+    return `${level === "full" ? "本册为完整版：图片为主、文字为辅，图片与该图内文合并在同一页。" : "本册为精华版：图少文多，无图文字页照常详尽。"}带图页reading只写图中没有的次要重点与supplement图外资料（见${KNOWLEDGE_IMAGE_PRIMARY_MARKER}）；maxChars是上限不是目标，按suggestedChars左右写，图外资料少就写短。\n篇幅（中文字符，含表格单元格）：${JSON.stringify(pages.map(p => ({ id: p.id, maxChars: p.maxChars, ...(p.imageTargetChars ? { suggestedChars: p.imageTargetChars } : {}) })))}`;
   const rule = level === "full"
     ? `本册为完整版：图片为主、文字为辅，图片与该图内文合并在同一页，不排独立内文页。每页reading必须装进图下一栏（≤maxChars，约${KNOWLEDGE_LEAD_PAGE_CHARS}字），只写图外补充（图中没画出的条件、因果、边界、读图提示）与supplement中的图外资料，资料多时合并去重、提炼成要点；图中已出现的表格、数字清单、步骤不得在reading里重打一遍，可用一句话指向图中位置。`
     : "本册为精华版：图少文多。reading详尽讲解次要重点与supplement资料，补足条件、因果与适用边界；图中已出现的表格、数字和要点不得重复抄写。";
@@ -167,8 +205,10 @@ export const KNOWLEDGE_BUDGET_PROMPT_MARGIN = 0.9;
  * 审校输出合同中的篇幅硬约束（完整版图文同页）：每页 reading 生成稿必须 ≤maxChars；路由按此逐页校验，超出即判写坏切下一跳。
  * 精华版允许续页，不加硬约束。
  */
-export function knowledgeBudgetOutputContract(level: KnowledgeEditionLevel | undefined, pages: { id: string; headline: string; maxChars: number }[]) {
+export function knowledgeBudgetOutputContract(level: KnowledgeEditionLevel | undefined, pages: { id: string; headline: string; maxChars: number; imageTargetChars?: number }[], contract?: KnowledgeReadingContract) {
   if (level !== "full" || !pages.length) return "";
+  if (contract === KNOWLEDGE_READING_CONTRACT)
+    return `输出合同·篇幅（硬约束，程序逐页校验）：每页 pages[i].reading 的生成稿字数（中文字符，不含空白；副标题、小标题、表格、清单与图注全部计入）必须 ≤ 该页 maxChars；suggestedChars 是按图外资料估的建议值，可以更短，不得用图中已有内容凑字数。任一页超出即判不合格。超了先删与图中重复的句子、表格与清单。逐页：${JSON.stringify(pages.map(p => ({ id: p.id, headline: p.headline, maxChars: p.maxChars, suggestedChars: p.imageTargetChars ?? Math.floor(p.maxChars * KNOWLEDGE_BUDGET_PROMPT_MARGIN) })))}`;
   return `输出合同·篇幅（硬约束，程序逐页校验）：每页 pages[i].reading 的生成稿字数（中文字符，不含空白；副标题、各节小标题、表格表头与单元格、清单标题与正文、图注全部计入）必须 ≤ 该页 maxChars，按 targetChars 写；body 与 reading 同内容。任一页超出即整份回答判为不合格、换通道重做。输出前逐页自数一遍，超了就删与图中重复的表格/清单、合并并列例子，不截断半句、不删图外关键事实。逐页上限：${JSON.stringify(pages.map(p => ({ id: p.id, headline: p.headline, maxChars: p.maxChars, targetChars: Math.floor(p.maxChars * KNOWLEDGE_BUDGET_PROMPT_MARGIN) })))}`;
 }
 
@@ -178,9 +218,10 @@ export function knowledgeReadingOverflow(
   level: KnowledgeEditionLevel | undefined,
   pages: KnowledgeBudgetPage[],
   reviewed: readonly { id: string; chars: number }[],
+  contract?: KnowledgeReadingContract,
 ): KnowledgeReadingOverflow[] {
   if (!level) return [];
-  const budgets = new Map(knowledgeReadingCharBudgets(level, pages).pages.map(p => [p.id, p]));
+  const budgets = new Map<string, { headline: string; maxChars: number }>(knowledgeReadingCharBudgets(level, pages, contract).pages.map(p => [p.id, p]));
   return reviewed.flatMap(r => {
     const budget = budgets.get(r.id);
     if (!budget || r.chars <= budget.maxChars) return [];

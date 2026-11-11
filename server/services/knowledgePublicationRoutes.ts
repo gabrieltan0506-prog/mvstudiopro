@@ -133,6 +133,61 @@ async function readKnowledgeResponseBody(response: Response, controller: AbortCo
   }
 }
 
+/**
+ * 审校/统稿/排版链失败处理（用户 2026-11-11：「遇到限流或是中途断流就直接走 3 次重试，然后 fallback 到另外一个路由，再换模型」）。
+ * 跳（hop）= 模型族 × 通道；顺序固定：同通道重试 → 同模型换路由 → 换模型（GLM@首发通道 → GLM@另一通道 → DeepSeek 两通道）。
+ * 路由表每跳 4 个路由位（首发 + retry-1..3），即「同通道最多重试 3 次」，不增加任何一跳的最多购买次数。
+ *
+ * 1. 限流（429 / 明确 rate limit / 资源耗尽）：同通道最多重试 3 次，每次重试前退避 2s → 5s → 10s；上游给了 Retry-After
+ *    （响应头或错误体）按它，单次等待封顶 30s；3 次仍限流即换路由。前台批次调度的「该通道并发减半」（KnowledgeRateGate）保留不变。
+ *    5xx / 408 等明确的临时错误同样计入 3 次并按同一退避重试。
+ * 2. 中途断流 / 超时 / 连接重置（已发出、结果未知）：沿用既有规矩——先存 unknown，等迟到回执（KNOWLEDGE_LATE_RECEIPT_WAIT_MS），
+ *    到期归档 interrupted，费用未知不重复计费；同章因断流重新购买最多 KNOWLEDGE_STREAM_BREAK_REPURCHASE_MAX 次（既有规则：1 次）。
+ *    断流后同通道再试次数 KNOWLEDGE_STREAM_BREAK_SAME_ROUTE_RETRIES，默认 0：唯一一次补买直接换路由
+ *    （同通道断流再买大概率再断，1109 OpenRouter 24 章即如此）；改大时补买上限仍以上一项为准，两项须一起改。
+ * 3. 写坏（完整回答解析或合同校验不过）：不占限流/临时错误的重试计数；带原因修复重写一次（同跳下一路由位），仍不过即切下一跳。
+ * 4. 明确拒绝（非 429 / 非 408 的 4xx）与内容审核拒绝：不在同通道重试；4xx 直接切下一跳，审核拒绝按既有规则终止。
+ *    （image_url 400 拉图失败、OpenRouter key limit 仍按各自既有规则。）
+ * 5. 每次重试/切换记一行 [knowledgeRoute] 日志（批次、原因类别、第几次、下一跳；不含正文、地址、密钥）；
+ *    成功回包与 accepted.json 记录最终跳与各跳尝试次数（routeSummary）。
+ * 6. 整条链总时长上限 KNOWLEDGE_ROUTE_CHAIN_BUDGET_MS（约 10 分钟）：到上限不再发起新购买，判本批失败交给「只重试未完成部分」；
+ *    等迟到回执时到上限则保留 unknown（不提前归档，避免回执未闭合就补买）。
+ */
+export const KNOWLEDGE_SAME_ROUTE_RETRIES = 3;
+export const KNOWLEDGE_RATE_LIMIT_BACKOFF_MS = [2000, 5000, 10000] as const;
+export const KNOWLEDGE_RETRY_WAIT_CAP_MS = 30_000;
+export const KNOWLEDGE_STREAM_BREAK_SAME_ROUTE_RETRIES = 0;
+export const KNOWLEDGE_STREAM_BREAK_REPURCHASE_MAX = 1;
+export const KNOWLEDGE_ROUTE_CHAIN_BUDGET_MS = 10 * 60_000;
+export class KnowledgeRouteChainTimeoutError extends Error {}
+export type KnowledgeRouteFailureClass = "rate_limited" | "transient" | "rejected" | "bad_output";
+/** 已收到回执的失败分类：2xx 而未采用 = 写坏；429/限流文案 = 限流；408/5xx/无状态 = 临时；其余 4xx = 明确拒绝。 */
+export function classifyKnowledgeRouteFailure(response: { status: number; text: string } | undefined): KnowledgeRouteFailureClass {
+  const status = response?.status;
+  if (typeof status !== "number") return "transient";
+  if (status >= 200 && status < 300) return "bad_output";
+  if (status === 429 || /rate.?limit|too many requests|RESOURCE_EXHAUSTED|资源耗尽|限流/i.test(response?.text || "")) return "rate_limited";
+  if (status === 408 || status >= 500) return "transient";
+  return "rejected";
+}
+/** Retry-After：响应头（秒数或 HTTP 日期）优先，其次错误体 retry_after / retryAfter（秒）；封顶 30s，无则 undefined。 */
+export function knowledgeRetryAfterMs(header: string | null | undefined, text: string | undefined, now = Date.now()): number | undefined {
+  let ms: number | undefined;
+  const value = String(header ?? "").trim();
+  if (value) {
+    if (/^\d+(\.\d+)?$/.test(value)) ms = Number(value) * 1000;
+    else { const at = Date.parse(value); if (Number.isFinite(at)) ms = Math.max(0, at - now); }
+  }
+  if (ms === undefined && text) {
+    try {
+      const e = JSON.parse(text)?.error ?? {};
+      const v = e.retry_after ?? e.retryAfter ?? e.metadata?.retry_after;
+      if (typeof v === "number" && Number.isFinite(v)) ms = v * 1000;
+    } catch { /* 非 JSON 错误体 */ }
+  }
+  return ms === undefined ? undefined : Math.min(KNOWLEDGE_RETRY_WAIT_CAP_MS, Math.max(0, ms));
+}
+
 /** 传输中断后等待迟到回执的时长（用户 2026-11-09 决定：默认 3 分钟），到期仍无回执才归档并允许切下一路补买一次。 */
 export const KNOWLEDGE_LATE_RECEIPT_WAIT_MS = 3 * 60_000;
 const KNOWLEDGE_LATE_RECEIPT_POLL_MS = 10_000;
@@ -145,6 +200,10 @@ const real = {
   sleep: (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)),
   now: () => Date.now(),
   lateReceiptWaitMs: KNOWLEDGE_LATE_RECEIPT_WAIT_MS,
+  chainBudgetMs: KNOWLEDGE_ROUTE_CHAIN_BUDGET_MS,
+  streamBreakSameRouteRetries: KNOWLEDGE_STREAM_BREAK_SAME_ROUTE_RETRIES as number,
+  streamBreakRepurchaseMax: KNOWLEDGE_STREAM_BREAK_REPURCHASE_MAX as number,
+  log: (line: string) => console.info(line),
   /** hold：零调用恢复入口——未闭合回执只读不等待、不归档、不补买（保持旧语义）。 */
   interruptionPolicy: "wait-and-repurchase" as "wait-and-repurchase" | "hold",
 };
@@ -374,6 +433,23 @@ export async function invokeKnowledgePublicationRoutes(
     }
   }
   const deps = { ...real, ...overrides };
+  const chainStartedAt = deps.now();
+  const chainLeft = () => chainStartedAt + deps.chainBudgetMs - deps.now();
+  // 日志只带证据路径最后一段（如 batch-3 / consistency-0 / final-markdown-12），不含账号、稿件、正文与地址。
+  const batchLabel = evidence.prefix.split("/").slice(-1)[0] || "-";
+  type HopState = { attempts: number; transient: number; repairs: number; skip?: string; lastClass?: KnowledgeRouteFailureClass; retryAfterMs?: number; breakRetries: number };
+  const hops = new Map<string, HopState>();
+  const hopOf = (model: string, channel: KnowledgeModelChannel) => `${routeModelFamily(model)}:${channel}`;
+  const hopState = (hop: string) => { let h = hops.get(hop); if (!h) { h = { attempts: 0, transient: 0, repairs: 0, breakRetries: 0 }; hops.set(hop, h); } return h; };
+  /** 记一次失败并决定本跳是否还能重试；返回给日志用的下一步说明。 */
+  const recordFailure = (route: string, model: string, channel: KnowledgeModelChannel, cls: KnowledgeRouteFailureClass, retryAfterMs?: number) => {
+    const hop = hopOf(model, channel), h = hopState(hop);
+    h.lastClass = cls; h.retryAfterMs = retryAfterMs;
+    if (cls === "rate_limited" || cls === "transient") { h.transient += 1; if (h.transient > KNOWLEDGE_SAME_ROUTE_RETRIES) h.skip = `${cls}_retries_exhausted`; }
+    else if (cls === "rejected") h.skip = "rejected_4xx";
+    else if (cls === "bad_output") { h.repairs += 1; if (h.repairs > 1) h.skip = "bad_output_after_repair"; }
+    deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=${cls} attempt=${h.attempts} next=${h.skip ? "switch_hop" : "same_hop_retry"}`);
+  };
   const research = request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_RESEARCH_MARKER));
   let webSources: KnowledgeWebSource[] = [];
   const sourceWarnings: string[] = [];
@@ -442,7 +518,9 @@ export async function invokeKnowledgePublicationRoutes(
       if (received) return received;
       const left = deadline - deps.now();
       if (left <= 0) return null;
-      await deps.sleep(Math.min(KNOWLEDGE_LATE_RECEIPT_POLL_MS, left));
+      // 整条链到上限：保留 unknown 不归档（迟到回执窗口未满不能补买），判本批失败，恢复时再按原窗口闭合。
+      if (chainLeft() <= 0) throw new KnowledgeRouteChainTimeoutError(`本批模型调用超过约${Math.round(deps.chainBudgetMs / 60000)}分钟上限，回执未闭合已保留，未重复购买`);
+      await deps.sleep(Math.max(1, Math.min(KNOWLEDGE_LATE_RECEIPT_POLL_MS, left, Math.max(1, chainLeft()))));
     }
   };
   const interruptionSince = async (route: string, receipt: any) => {
@@ -573,11 +651,28 @@ export async function invokeKnowledgePublicationRoutes(
       // image_url 400：同通道已失败两次（首发+补一次）即跳过该通道其余重试，切下一通道。
       if (images.length && imageRejections[channel] >= 2) { traces.push({ route, model, state: "skipped_image_rejected" }); continue; }
       // 补买只用于闭合「断流不确定性」：同章第二次断流即判失败不再买；补买得到明确回执（HTTP 错/合同不符）后按正式重试链继续（四次上限、跨通道）。
-      if (interrupted.size >= 2) throw new Error(`传输中断已发生两次（${Array.from(interrupted).join("、")}），本章判失败，不再购买`);
+      if (interrupted.size > deps.streamBreakRepurchaseMax) throw new Error(`传输中断已发生${interrupted.size === 2 ? "两" : interrupted.size}次（${Array.from(interrupted).join("、")}），本章判失败，不再购买`);
+      const hop = hopOf(model, channel), h = hopState(hop);
+      // 本跳已判定不再重试（4xx 明确拒绝 / 写坏修复一次仍不过 / 限流或临时错误 3 次用尽）：切下一跳。
+      if (h.skip) { traces.push({ route, model, state: `skipped_${h.skip}` }); continue; }
       if (interrupted.size) {
-        if (interruptedChannels.has(channel) && purchasableElsewhere(routeIndex, channel)) { traces.push({ route, model, state: "skipped_interrupted_channel" }); continue; }
+        // 断流后同通道再试：默认 0 次，唯一一次补买直接换路由；只有配置允许且本跳仍有额度时才留在原通道。
+        const sameRouteBreakRetry = interruptedChannels.has(channel) && h.breakRetries < deps.streamBreakSameRouteRetries;
+        if (interruptedChannels.has(channel) && !sameRouteBreakRetry && purchasableElsewhere(routeIndex, channel)) { traces.push({ route, model, state: "skipped_interrupted_channel" }); continue; }
+        if (sameRouteBreakRetry) h.breakRetries += 1;
         if (!repurchase) { repurchase = { requestDigest, after: Array.from(interrupted), route, at: new Date().toISOString() }; await evidence.save(repurchaseKey, repurchase); }
       }
+      // 整条链总时长上限：到上限不再发起新购买，本批判失败（已完成批次与回执保留）。
+      if (chainLeft() <= 0) throw new KnowledgeRouteChainTimeoutError(`本批模型调用超过约${Math.round(deps.chainBudgetMs / 60000)}分钟上限，判本批失败；已完成内容与各跳回执保留，可只重试未完成部分`);
+      // 限流/临时错误后的同通道重试：退避 2s → 5s → 10s，有 Retry-After 按它，单次封顶 30s，不超过链剩余时长。
+      if ((h.lastClass === "rate_limited" || h.lastClass === "transient") && h.transient > 0) {
+        const wait = Math.min(KNOWLEDGE_RETRY_WAIT_CAP_MS, h.retryAfterMs ?? KNOWLEDGE_RATE_LIMIT_BACKOFF_MS[Math.min(h.transient, KNOWLEDGE_RATE_LIMIT_BACKOFF_MS.length) - 1]);
+        if (wait >= chainLeft()) throw new KnowledgeRouteChainTimeoutError(`本批模型调用超过约${Math.round(deps.chainBudgetMs / 60000)}分钟上限，判本批失败；已完成内容与各跳回执保留，可只重试未完成部分`);
+        deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=${h.lastClass} attempt=${h.transient + 1} wait_ms=${wait}`);
+        await deps.sleep(wait);
+      }
+      h.lastClass = undefined; h.retryAfterMs = undefined;
+      h.attempts += 1;
       purchased.add(route);
       assertKnowledgePaidModel(channel, model, request.researchOnly === true);
       const apiKey = deps.key(channel);
@@ -634,6 +729,7 @@ export async function invokeKnowledgePublicationRoutes(
               });
             } finally { clearTimeout(timer); }
             status = response.status;
+            const retryAfterHeader = response.ok ? null : response.headers.get("retry-after");
             let text: string;
             let heartbeat = 0;
             const onBytes = async () => {
@@ -651,7 +747,7 @@ export async function invokeKnowledgePublicationRoutes(
                 onBytes,
               });
             } else text = await readKnowledgeResponseBody(response, controller, onBytes);
-            receipt = { requestDigest, route, model, state: "received", request: storedBody, response: { status, text: text.split(apiKey).join("[REDACTED]") }, imageSources: images, ...degraded };
+            receipt = { requestDigest, route, model, state: "received", request: storedBody, response: { status, text: text.split(apiKey).join("[REDACTED]") }, imageSources: images, ...degraded, ...(retryAfterHeader ? { retryAfter: retryAfterHeader } : {}) };
           await evidence.save(key, receipt);
         } catch {
           const completedStream = await evidence.read(`${evidence.prefix}/${route}-response.json`);
@@ -674,7 +770,11 @@ export async function invokeKnowledgePublicationRoutes(
             }
           }
         }
-        if (archivedInterruption) { traces.push({ route, model, state: "interrupted", status }); continue; }
+        if (archivedInterruption) {
+          traces.push({ route, model, state: "interrupted", status });
+          deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=stream_break attempt=${hopState(hopOf(model, channel)).attempts} next=${deps.streamBreakSameRouteRetries > 0 ? "same_hop_or_switch" : "switch_hop"}`);
+          continue;
+        }
       }
     }
     if(research && receipt.response && (request.researchOnly || !researchEvidence?.validation)){
@@ -745,6 +845,9 @@ export async function invokeKnowledgePublicationRoutes(
       if(isSseContentSafetyError(error))throw error;
       lastFailure = receipt.reason;
       traces.push({ route, model, state: "failed", status: receipt.response?.status });
+      // 失败分类决定本跳是否继续重试（限流/临时 ≤3 次带退避；4xx 不重试；写坏修复一次）。
+      if (!(images.length && isImageInputRejection(receipt.response)) && !inspectKnowledgeRouteResponse(receipt.response).keyLimit)
+        recordFailure(route, model, channel, classifyKnowledgeRouteFailure(receipt.response), classifyKnowledgeRouteFailure(receipt.response) === "rate_limited" ? knowledgeRetryAfterMs(receipt.retryAfter, receipt.response?.text, deps.now()) : undefined);
       if(completeAnswerReceived&&request.generationConfig.responseMimeType==='text/markdown')markdownFailure=error instanceof Error?error:new Error(String(error));
       if (error instanceof KnowledgeJsonSyntaxError) syntaxFailure = error;
       else if (adjustments.some(item => (item as {field?:string}).field === 'json.syntax'))
@@ -763,7 +866,14 @@ export async function invokeKnowledgePublicationRoutes(
         return saved.normalized;
       }
     }
-    await evidence.save(`${evidence.prefix}/accepted.json`, { requestDigest, normalized, traces });
+    // 证据：最终用的是哪一跳、各跳尝试次数（本次调用内发出的购买）。
+    const routeSummary = { final: route, hop: hopOf(model, channel), attempts: Object.fromEntries(Array.from(hops.entries()).map(([k, v]) => [k, v.attempts])) };
+    {
+      const envelope = JSON.parse(normalized.text);
+      envelope.routeSummary = routeSummary;
+      normalized = { status: normalized.status, text: JSON.stringify(envelope) };
+    }
+    await evidence.save(`${evidence.prefix}/accepted.json`, { requestDigest, normalized, traces, routeSummary });
     if (postResearch && postWorkflow) {
       // 原正文先永久保存；检索失败/未知不能把它退回模型重购。
       const envelope = JSON.parse(normalized.text);

@@ -1,5 +1,5 @@
-import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
-import { KNOWLEDGE_COMPRESSION_TARGET_RATIO, knowledgeBudgetInstructions, knowledgeBudgetOutputContract, knowledgeCompressionInstructions, knowledgeReadingCharBudgets, knowledgeReadingOverflow, type KnowledgeReadingOverflow } from "../../shared/knowledgeEditionBudget";
+import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeFinalRevisionChannel,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
+import { KNOWLEDGE_COMPRESSION_TARGET_RATIO, KNOWLEDGE_IMAGE_PRIMARY_INSTRUCTIONS, KNOWLEDGE_READING_CONTRACT, knowledgeBudgetInstructions, knowledgeBudgetOutputContract, knowledgeCompressionInstructions, knowledgeReadingCharBudgets, knowledgeReadingOverflow, type KnowledgeReadingOverflow } from "../../shared/knowledgeEditionBudget";
 import { KNOWLEDGE_VERIFICATION_POLICY, KNOWLEDGE_VERIFICATION_EDIT_POLICY, knowledgeVerificationTriggers, knowledgeVerificationQueries, knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
 import { KNOWLEDGE_RESEARCH_INSTRUCTIONS, KNOWLEDGE_RESEARCH_MARKER } from "../../shared/knowledgeResearch";
@@ -10,6 +10,7 @@ import sharp from "sharp";
 import { KNOWLEDGE_READING_INSTRUCTIONS, knowledgeReadingMarkdown } from "../../shared/knowledgePublicationLayout";
 import { dedupeKnowledgeBody, dedupeKnowledgeReading, knowledgeReadingParagraphKeys, type KnowledgeDedupeRemoval } from "../../shared/knowledgeReadingDedupe";
 import { invokeKnowledgePublicationRoutes, KNOWLEDGE_PUBLICATION_MODEL, type KnowledgeModelRequest, type KnowledgeRouteEvidence } from "./knowledgePublicationRoutes";
+import { KnowledgeTtlCache } from "./knowledgePublicationCache";
 import { KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES, KNOWLEDGE_PUBLICATION_ROUTE_ORDER, KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST } from "./knowledgeModelCapabilities";
 import {
   knowledgePublicationContextSchema,
@@ -203,7 +204,8 @@ export function buildKnowledgeReviewRequest(
     );
   }
   return {
-    systemInstruction: { parts: [{ text: KNOWLEDGE_REVIEW_INSTRUCTIONS + "\n" + knowledgeExplanationInstructions(source.detailLevel) }] },
+    // 新稿（readingContract=image-primary-v1）追加图主文辅合同；旧稿系统指令逐字不变，已存请求/回执身份不受影响。
+    systemInstruction: { parts: [{ text: KNOWLEDGE_REVIEW_INSTRUCTIONS + "\n" + knowledgeExplanationInstructions(source.detailLevel) + (source.readingContract === KNOWLEDGE_READING_CONTRACT ? "\n" + KNOWLEDGE_IMAGE_PRIMARY_INSTRUCTIONS : "") }] },
     contents: [{ role: "user", parts }],
     generationConfig: {
       temperature: 0.3,
@@ -249,6 +251,10 @@ const real = {
   post: async (request: unknown, evidence: KnowledgeRouteEvidence) =>
     invokeKnowledgePublicationRoutes(request as KnowledgeModelRequest, evidence),
 };
+
+/** 压缩适配（knowledgeHandbookRefit）复用同一套存取与三跳路由依赖。 */
+export const knowledgePublicationAdvisorDeps = () => real;
+export type KnowledgePublicationAdvisorDeps = typeof real;
 
 export function buildKnowledgeConsistencyRequest(title:string,digest:string,facts: ReturnType<typeof planKnowledgeConsistency>["tasks"][number]): KnowledgeModelRequest {
   const verificationTriggers = knowledgeVerificationTriggers(facts);
@@ -315,6 +321,32 @@ export function buildKnowledgeCompressionRequest(pageSource: KnowledgeSource, di
   return request;
 }
 
+/** 对带图页做与图中文字的确定性去重（图主文辅合同）；返回新页面与逐页删除记录。 */
+export function dedupeKnowledgeReviewAgainstImages(source: KnowledgeSource, pages: ReturnType<typeof validateKnowledgeReview>["pages"]) {
+  const originals = new Map(source.pages.map(p => [p.id, p]));
+  const priorParagraphs = new Set<string>();
+  const removed: { id: string; headline: string; before: number; after: number; removed: KnowledgeDedupeRemoval[] }[] = [];
+  const next = pages.map(page => {
+    const original = originals.get(page.id);
+    let result = page;
+    if (original && (original.imageJobId || original.imageUrl || original.role === "illustration")) {
+      const imageText = original.body || "";
+      const reading = page.reading ? dedupeKnowledgeReading({ headline: page.headline, reading: page.reading, imageText, priorParagraphs }) : undefined;
+      const body = dedupeKnowledgeBody(page.body, imageText, priorParagraphs);
+      const gone = [...(reading?.removed || []), ...(page.reading ? [] : body.removed)];
+      // 去重后不能把一章删空（只剩小标题也算空）：删空时保留原稿（交给审校/人工处理），不制造空章。
+      const left = body.body.replace(/^#{1,6}\s.*$/gm, "").replace(/\s+/g, "");
+      if (gone.length && left) {
+        result = { ...page, body: body.body, ...(reading ? { reading: reading.reading } : {}) };
+        removed.push({ id: page.id, headline: page.headline, before: knowledgeReviewPageChars(page), after: knowledgeReviewPageChars(result), removed: gone });
+      }
+    }
+    for (const key of knowledgeReadingParagraphKeys(result.reading, result.body)) priorParagraphs.add(key);
+    return result;
+  });
+  return { pages: next, removed };
+}
+
 /** 篇幅压缩最多轮数：每轮一次正式三跳链调用（GLM FlashX@EvoLink → GLM@OpenRouter → DeepSeek v4.1 Flash 1017，超时/断线/空回/写坏由路由切下一跳）。 */
 export const KNOWLEDGE_COMPRESSION_MAX_ROUNDS = 4;
 const compressionRoundPrefix = (prefix: string, round: number) => round === 0 ? prefix : `${prefix}/round-${round}`;
@@ -329,9 +361,13 @@ const compressionRoundPrefix = (prefix: string, round: number) => round === 0 ? 
 export async function compressKnowledgeReviewToBudget(params: {
   deps: typeof real; prefix: string; attempt: number; digest: string;
   source: KnowledgeSource; pages: ReturnType<typeof validateKnowledgeReview>["pages"];
+  /** 最多轮数（默认 KNOWLEDGE_COMPRESSION_MAX_ROUNDS）；新合同整册与压缩适配每次只压 1 轮，全书合计 ≤2 次调用。 */
+  maxRounds?: number;
+  measureOverflow?: (pages: ReturnType<typeof validateKnowledgeReview>["pages"]) => KnowledgeReadingOverflow[];
 }) {
   const { deps, prefix, attempt, digest, source } = params;
-  const measure = (pages: typeof params.pages) => knowledgeReadingOverflow(source.detailLevel, source.pages, pages.map(p => ({ id: p.id, chars: knowledgeReviewPageChars(p) })));
+  // measureOverflow：调用方可给出按实测版面换算的逐章上限（压缩适配）；默认按稿件预算（含新合同的页数分配）。
+  const measure = params.measureOverflow ?? ((pages: typeof params.pages) => knowledgeReadingOverflow(source.detailLevel, source.pages, pages.map(p => ({ id: p.id, chars: knowledgeReviewPageChars(p) })), source.readingContract));
   const before = measure(params.pages);
   if (!before.length) return { pages: params.pages, before, after: [] as KnowledgeReadingOverflow[], adopted: [] as string[], error: undefined as string | undefined, rounds: 0, functionResolved: [] as string[], llmPages: {} as Record<string, number> };
   const originals = new Map(source.pages.map(p => [p.id, p]));
@@ -358,9 +394,9 @@ export async function compressKnowledgeReviewToBudget(params: {
   const functionResolved = before.map(o => o.id).filter(id => !after.some(o => o.id === id));
   if (deterministic.some(d => d.removed.length)) await deps.save(`${prefix}/deterministic.json`, { sourceDigest: digest, pages: deterministic, resolved: functionResolved });
   const rounds: { round: number; targets: KnowledgeReadingOverflow[]; adopted: string[]; after: KnowledgeReadingOverflow[]; error?: string }[] = [];
-  for (let round = 0; round < KNOWLEDGE_COMPRESSION_MAX_ROUNDS && after.length; round++) {
+  for (let round = 0; round < (params.maxRounds ?? KNOWLEDGE_COMPRESSION_MAX_ROUNDS) && after.length; round++) {
     const ids = new Set(after.map(o => o.id));
-    const pageSource: KnowledgeSource = { title: source.title, detailLevel: source.detailLevel,
+    const pageSource: KnowledgeSource = { title: source.title, detailLevel: source.detailLevel, ...(source.readingContract ? { readingContract: source.readingContract } : {}),
       pages: pages.filter(p => ids.has(p.id)).map(p => ({ ...originals.get(p.id)!, body: p.body, imageUrl: "" })) };
     // 提示词目标 = 上限 × KNOWLEDGE_COMPRESSION_TARGET_RATIO（700→595）；验收（pageBudgets）仍按真实上限。
     const targets = after.map(o => ({ ...o, maxChars: Math.floor(o.maxChars * KNOWLEDGE_COMPRESSION_TARGET_RATIO) }));
@@ -414,8 +450,10 @@ export async function compressKnowledgeReviewToBudget(params: {
  */
 export async function retryKnowledgeBatchCompression(deps: typeof real, prefix: string, attempt: number, digest: string, source: KnowledgeSource, saved: any) {
   if (!saved?.report?.pages || !(source.detailLevel && source.reviewBatchMode === "ready-images")) return saved;
+  // 新合同的超出章由统稿后整册压缩统一处理，批次再读不另发请求。
+  if (source.readingContract === KNOWLEDGE_READING_CONTRACT) return saved;
   const overflow = saved.budgetOverflow;
-  const pending = knowledgeReadingOverflow(source.detailLevel, source.pages, saved.report.pages.map((p: any) => ({ id: p.id, chars: knowledgeReviewPageChars(p) })));
+  const pending = knowledgeReadingOverflow(source.detailLevel, source.pages, saved.report.pages.map((p: any) => ({ id: p.id, chars: knowledgeReviewPageChars(p) })), source.readingContract);
   if (!pending.length) return saved;
   const compressed = await compressKnowledgeReviewToBudget({ deps, prefix: `${prefix}/compress`, attempt, digest, source, pages: saved.report.pages });
   if (compressed.error && compressed.after.length && !compressed.adopted.length) throw new Error(`第${prefix.split("/batch-").pop()}组篇幅压缩仍未完成，超出页不进排版：${compressed.error.slice(0, 200)}`);
@@ -434,9 +472,11 @@ export async function retryKnowledgeBatchCompression(deps: typeof real, prefix: 
  */
 export async function compressKnowledgeFinalReport(deps: typeof real, root: string, attempt: number, digest: string, source: KnowledgeSource, saved: any) {
   if (!saved?.report?.pages || !(source.detailLevel && source.reviewBatchMode === "ready-images")) return saved;
-  const pending = knowledgeReadingOverflow(source.detailLevel, source.pages, saved.report.pages.map((p: any) => ({ id: p.id, chars: knowledgeReviewPageChars(p) })));
+  const pending = knowledgeReadingOverflow(source.detailLevel, source.pages, saved.report.pages.map((p: any) => ({ id: p.id, chars: knowledgeReviewPageChars(p) })), source.readingContract);
   if (!pending.length) return saved;
-  const compressed = await compressKnowledgeReviewToBudget({ deps, prefix: `${root}/final-compress`, attempt, digest, source, pages: saved.report.pages });
+  // 新合同：整册只在统稿后压一次（把所有超出章连同各自目标字数放进同一请求），仍超的章再压一轮，合计 ≤2 次调用；
+  // 之后仍超出的章随报告报出、排成续页，不截断。旧稿沿用原 4 轮。
+  const compressed = await compressKnowledgeReviewToBudget({ deps, prefix: `${root}/final-compress`, attempt, digest, source, pages: saved.report.pages, ...(source.readingContract === KNOWLEDGE_READING_CONTRACT ? { maxRounds: 2 } : {}) });
   if (JSON.stringify(compressed.pages) === JSON.stringify(saved.report.pages)) {
     if (compressed.error) throw new Error(`整册篇幅压缩未完成，超出页不进排版：${compressed.error.slice(0, 200)}`);
     return saved;
@@ -466,14 +506,24 @@ async function readKnowledgeBatchReports(source:KnowledgeSource,digest:string,ro
   return results;
 }
 /** 收费前读取权威批次回执；后半本事实自动分组，每组复用原咨询计费合同。 */
+/**
+ * 全部批次完成后的工作计划只取决于账号、稿件、请求、原稿摘要与补图绑定（批次回执落盘后不再改变），
+ * 进程内短时复用：审校收尾、联网校验前、统稿与排版前的多次报价不再重复解析 34 张配图与读 34 份回执。
+ */
+const knowledgeWorkPlanCache = new KnowledgeTtlCache<{reviewBatches:number;totalBatches:number;consistencyKnown:true}>(64, 10 * 60_000);
 export async function knowledgePublicationWorkPlan(owner:number,document:Awaited<ReturnType<typeof loadKnowledgePublication>>,read=real.read){
   let {source}=document.publication;
   const {requestId}=document.publication, batches=knowledgeReviewBatches(source);
   if(document.publication.completedBatches<batches.length)return {reviewBatches:batches.length,totalBatches:batches.length+1,consistencyKnown:false};
-  source = await resolveKnowledgePublicationImages(owner, source, undefined, undefined, document.publication.imageReplacements);
-  const saved=await readKnowledgeBatchReports(source,knowledgeSourceDigest(source),knowledgeEvidencePrefix(owner,document.id,requestId),read);
-  const plan=planKnowledgeConsistency(saved.map(p=>p.report));
-  return {reviewBatches:batches.length,totalBatches:batches.length+plan.tasks.length,consistencyKnown:true};
+  const compute=async()=>{
+    source = await resolveKnowledgePublicationImages(owner, source, undefined, undefined, document.publication.imageReplacements);
+    const saved=await readKnowledgeBatchReports(source,knowledgeSourceDigest(source),knowledgeEvidencePrefix(owner,document.id,requestId),read);
+    const plan=planKnowledgeConsistency(saved.map(p=>p.report));
+    return {reviewBatches:batches.length,totalBatches:batches.length+plan.tasks.length,consistencyKnown:true as const};
+  };
+  if(read!==real.read)return compute();
+  const key=[owner,document.id,requestId,knowledgeSourceDigest(source),JSON.stringify(document.publication.imageReplacements||{})].join("|");
+  return {...await knowledgeWorkPlanCache.get(key,compute)};
 }
 
 /** 原始与解析回执分开永久保存；每批一个既有顾问事务，失败只补失败批次。 */
@@ -561,10 +611,13 @@ export async function reviewKnowledgePublication(
       const workerCount=knowledgeStageConcurrency(pages.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter+KNOWLEDGE_MODEL_CHANNEL_MAX.evolink});
       const settled=await Promise.allSettled(Array.from({length:workerCount},async(_,worker)=>{
         for(let index=worker;index<pages.length;index+=workerCount){
-          const channel=index%2===0?'openrouter':'evolink';
+          // 统稿首发通道与整册排版错开（见 knowledgeFinalRevisionChannel）；新稿按 parallel.family 走 GLM 优先三跳，
+          // 旧稿缺 family 维持原序。已存请求（request-N.json）恢复时以原请求为准，不改旧回执身份。
+          const channel=knowledgeFinalRevisionChannel(index);
           const page=pages[index],original=source.pages.find(p=>p.id===page.id)!;
-          const pageSource={title:source.title,detailLevel:source.detailLevel,pages:[{...original,body:page.body,imageUrl:''}]};
+          const pageSource={title:source.title,detailLevel:source.detailLevel,...(source.readingContract?{readingContract:source.readingContract}:{}),pages:[{...original,body:page.body,imageUrl:''}]};
           const request=buildKnowledgeFinalRevisionRequest(pageSource,digest,verifications,channel);
+          if(document.publication.parallel?.family)request.executionFamily=document.publication.parallel.family;
           const editPrefix=`${root}/final-markdown-${index}`;
           const raw=await getRaw(deps,editPrefix,context.attempt,digest,[],request);
           const edited=validateKnowledgeReview(parseRaw(raw,false),pageSource,digest).pages[0];
@@ -587,6 +640,7 @@ export async function reviewKnowledgePublication(
   const batchSource = {
     title: source.title,
     detailLevel: source.detailLevel,
+    ...(source.readingContract ? { readingContract: source.readingContract } : {}),
     pages: indices.map(i => source.pages[i]),
   };
   const prefix = `${root}/batch-${context.batchIndex}`;
@@ -619,11 +673,11 @@ export async function reviewKnowledgePublication(
   const request = applyKnowledgeReviewExecution({ ...buildKnowledgeReviewRequest(batchSource, digest, images) }, channel, document.publication.parallel?.family);
   // 页数预算按整册计算后只下发本批各页上限；图文比例在生图前已确定，这里控制内文篇幅而非导出后阻断。
   if (source.detailLevel && source.reviewBatchMode === "ready-images") {
-    const pageBudgets = knowledgeReadingCharBudgets(source.detailLevel, source.pages).pages.filter(p => indices.some(i => source.pages[i].id === p.id));
-    const budget = knowledgeBudgetInstructions(source.detailLevel, pageBudgets);
+    const pageBudgets = knowledgeReadingCharBudgets(source.detailLevel, source.pages, source.readingContract).pages.filter(p => indices.some(i => source.pages[i].id === p.id));
+    const budget = knowledgeBudgetInstructions(source.detailLevel, pageBudgets, source.readingContract);
     if (budget) request.systemInstruction.parts.push({ text: budget });
     // 2026-11-09 用户令：篇幅预算写进输出合同并由路由逐页校验——审校一次产出合篇幅的逐页稿；超出算写坏切下一跳，压缩保留为兜底。
-    const contract = knowledgeBudgetOutputContract(source.detailLevel, pageBudgets);
+    const contract = knowledgeBudgetOutputContract(source.detailLevel, pageBudgets, source.readingContract);
     if (contract) {
       request.systemInstruction.parts.push({ text: contract });
       request.pageBudgets = pageBudgets.map(p => ({ id: p.id, headline: p.headline, maxChars: p.maxChars }));
@@ -679,10 +733,20 @@ export async function reviewKnowledgePublication(
     batchSource,
     digest
   );
+  // 图主文辅合同（新稿）：零调用确定性去重对全部带图页执行（不只超篇幅页）——删与本页图中文字重复的整句/整行/整项，
+  // 不截断、不删图外事实；删除记录永久保存。旧稿不走此步，报告与原先一致。
+  if (source.readingContract === KNOWLEDGE_READING_CONTRACT) {
+    const deduped = dedupeKnowledgeReviewAgainstImages(batchSource, report.pages);
+    if (deduped.removed.length) {
+      report = { ...report, pages: deduped.pages };
+      await deps.save(`${prefix}/image-dedupe.json`, { sourceDigest: digest, pages: deduped.removed });
+    }
+  }
   // 预算的生产者：审校稿超出各页上限时一次压缩调用按页提炼，仍超出的页随报告报出（不阻断、不截断）。
   let budgetOverflow: { before: KnowledgeReadingOverflow[]; after: KnowledgeReadingOverflow[]; adopted: string[]; error?: string } | undefined;
   if (source.detailLevel && source.reviewBatchMode === "ready-images") {
-    const compressed = await compressKnowledgeReviewToBudget({ deps, prefix: `${prefix}/compress`, attempt: context.attempt, digest, source, pages: report.pages });
+    // 新合同：批次内只做零调用的确定性去重，模型压缩统一留到统稿后整册一次做（全书 ≤2 次调用，不一批一调）。
+    const compressed = await compressKnowledgeReviewToBudget({ deps, prefix: `${prefix}/compress`, attempt: context.attempt, digest, source, pages: report.pages, ...(source.readingContract === KNOWLEDGE_READING_CONTRACT ? { maxRounds: 0 } : {}) });
     if (compressed.before.length) {
       report = { ...report, pages: compressed.pages };
       budgetOverflow = { before: compressed.before, after: compressed.after, adopted: compressed.adopted, error: compressed.error };

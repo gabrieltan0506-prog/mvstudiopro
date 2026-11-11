@@ -1,5 +1,5 @@
-import { expect, it } from "vitest";
-import { completedKnowledgeBatches, knowledgeCompletedPrefix, runKnowledgeParallelBatches, type KnowledgePublicationChannel } from "./knowledgePublicationParallel";
+import { describe, expect, it, vi } from "vitest";
+import { completedKnowledgeBatches, knowledgeCoalescedUpdater, knowledgeCompletedPrefix, runKnowledgeParallelBatches, type KnowledgePublicationChannel } from "./knowledgePublicationParallel";
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; };
 it("四路真实重叠且每通道两工位，快路补位，乱序完成不跳慢批次", async () => {
   const gates=Array.from({length:6},deferred),fifth=deferred();
@@ -93,4 +93,51 @@ it("默认动态工位：16批一轮全部在途，EvoLink份额更大（2026-11
   expect(started[0][1]).toBe("evolink");
   expect(sleeps.length).toBe(14);
   gates.forEach(g=>g.resolve());expect(await pending).toEqual([]);
+});
+
+describe("合并保存发车（1110 实测：每批固定通道单独整库保存约 10 秒，34 批发车 6 分钟）", () => {
+  it("34 批：通道固定合并成少数几次保存，按通道上限一次发满，1 分钟内全部发出", async () => {
+    vi.useFakeTimers();
+    try {
+      const SAVE_MS = 10_000, BATCH_MS = 90_000;
+      let saves = 0, persisted: Record<string, KnowledgePublicationChannel> = {};
+      const pinned: Record<string, KnowledgePublicationChannel> = {};
+      const update = knowledgeCoalescedUpdater({ save: async () => { saves++; const snapshot = { ...pinned }; await new Promise(r => setTimeout(r, SAVE_MS)); persisted = snapshot; } });
+      const sentAt: number[] = [], start = Date.now();
+      const run = runKnowledgeParallelBatches({ count: 34, completed: new Set(), channels: pinned, active: () => true,
+        assign: (i, channel) => update(() => { pinned[i] = channel; }),
+        execute: async (i, channel) => {
+          // 发出前通道必须已在云稿落盘。
+          expect(persisted[i]).toBe(channel);
+          sentAt.push(Date.now() - start);
+          await new Promise(r => setTimeout(r, BATCH_MS));
+          return i;
+        },
+        complete: (i) => update(() => undefined),
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      // 32 工位（每通道上限 16）在 1 分钟内全部发出；余下 2 批等首批收妥后补位。
+      expect(sentAt.length).toBe(32);
+      expect(Math.max(...sentAt)).toBeLessThan(20_000);
+      expect(saves).toBeLessThanOrEqual(2);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(await run).toEqual([]);
+      expect(sentAt.length).toBe(34);
+      // 收尾 34 次回执也合并保存，而不是 34 次串行。
+      expect(saves).toBeLessThan(12);
+    } finally { vi.useRealTimers(); }
+  });
+  it("单个改动抛错只拒绝自己；保存失败拒绝同批改动；离开页面不保存", async () => {
+    let fail = false, saves = 0, here = true;
+    const update = knowledgeCoalescedUpdater({ guard: () => { if (!here) throw Error("已离开"); }, save: async () => { saves++; if (fail) throw Error("保存失败"); } });
+    const results = await Promise.allSettled([update(() => undefined), update(() => { throw Error("坏回执"); }), update(() => undefined)]);
+    expect(results.map(r => r.status)).toEqual(["fulfilled", "rejected", "fulfilled"]);
+    expect(saves).toBe(1);
+    fail = true;
+    const failed = await Promise.allSettled([update(() => undefined), update(() => undefined)]);
+    expect(failed.every(r => r.status === "rejected")).toBe(true);
+    fail = false; here = false;
+    await expect(update(() => undefined)).rejects.toThrow("已离开");
+    expect(saves).toBe(2);
+  });
 });

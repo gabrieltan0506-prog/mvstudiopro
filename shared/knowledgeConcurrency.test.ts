@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  KNOWLEDGE_IMAGE_CHANNEL_MAX,
+  KNOWLEDGE_IMAGE_CHANNEL_MAX, knowledgeFinalRevisionChannel, knowledgeLayoutBatchChannel,
   KNOWLEDGE_MODEL_CHANNEL_MAX,
   KnowledgeRateGate,
   isKnowledgeRateLimited,
@@ -78,4 +78,12 @@ describe("限流退避与错峰池", () => {
     expect(errors.map(e => e.index).sort()).toEqual(errors.some(e => e.index === 2) ? [2, 5] : [5]);
     expect(results[7]).toBe(70);
   });
+});
+
+it("统稿与整册排版同位首发通道错开，两步各自仍两通道交替铺满", () => {
+  for (let i = 0; i < 34; i++) expect(knowledgeFinalRevisionChannel(i)).not.toBe(knowledgeLayoutBatchChannel(i));
+  expect(knowledgeFinalRevisionChannel(0)).toBe("evolink");
+  const count = (f: (i: number) => string) => Array.from({ length: 34 }, (_, i) => f(i)).filter(c => c === "evolink").length;
+  expect(count(knowledgeFinalRevisionChannel)).toBe(17);
+  expect(count(knowledgeLayoutBatchChannel)).toBe(17);
 });
