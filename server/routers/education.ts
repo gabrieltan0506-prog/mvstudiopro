@@ -4,7 +4,8 @@
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { publicProcedure, router } from "../_core/trpc";
+import { publicProcedure, router, withUsageLimit } from "../_core/trpc";
+import { USAGE_LIMITS } from "../_core/usageLimits";
 import { sendMailWithAttachments } from "../services/smtp-mailer";
 
 const INQUIRY_TO = "benjamintan0506@163.com";
@@ -33,7 +34,9 @@ function escapeHtml(s: string): string {
 }
 
 export const educationRouter = router({
+  // 1111：首页访客入口保留匿名；原先只按「输入的邮箱」计数，换邮箱即可绕过 → 再加按 IP 的闸门
   inquiry: publicProcedure
+    .use(withUsageLimit(USAGE_LIMITS.visitorInquiry))
     .input(
       z.object({
         name:         z.string().min(1).max(60),

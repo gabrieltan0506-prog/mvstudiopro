@@ -65,6 +65,8 @@ const LEGACY_JOBS_OP_ACCESS: Record<string, LegacyJobsOpAccess> = {
   suggestclipcuts: "login",
   extractclipaudio: "login",
   eraseaicornermark: "login",
+  // 1111：密钥配置状态（暴露供应商名）只给监管；前台仅 /workflow 与 /workflow-nodes 的监管调试面板调用
+  envstatus: "supervisor",
 };
 
 export function legacyJobsOpAccess(raw: unknown): LegacyJobsOpAccess | null {

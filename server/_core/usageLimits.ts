@@ -224,6 +224,12 @@ export const USAGE_LIMITS = {
   serverUpload: { name: "server_upload", perMinute: 20, perDay: 300 },
   /** 访客留言 / MV 评论（匿名可写，按 IP）。 */
   guestbookSubmit: { name: "guestbook_submit", perMinute: 3, perDay: 20, globalPerDay: 1000 },
+  /** 首页邀请码申请 / 教育咨询（访客入口，发邮件，按 IP）。 */
+  visitorInquiry: { name: "visitor_inquiry", perMinute: 2, perDay: 10, globalPerDay: 500 },
+  /** 邮箱验证码发送（匿名，按 IP；原有按邮箱 10 分钟 5 次保留）。 */
+  otpSend: { name: "otp_send", perMinute: 3, perDay: 30, globalPerDay: 3000 },
+  /** 邮箱密码注册（按 IP）。 */
+  accountRegister: { name: "account_register", perMinute: 3, perDay: 20 },
   /** 账号密码登录失败前的尝试（按 IP + 邮箱）。 */
   passwordLogin: { name: "password_login", perMinute: 10, perDay: 100 },
 } as const satisfies Record<string, UsageLimitSpec>;
