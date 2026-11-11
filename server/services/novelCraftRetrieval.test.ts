@@ -7,6 +7,7 @@ import {
   novelCraftIndex,
 } from "../../shared/novelCraftCards";
 import {
+  defaultNovelCraftSelection,
   NOVEL_CRAFT_MAX_CRAFT,
   NOVEL_CRAFT_MAX_METHODS,
   NOVEL_CRAFT_TASK_MAX_CHARS,
@@ -80,8 +81,8 @@ describe("技法条目库", () => {
     }
     const first = NOVEL_CRAFT_CARDS.find(c => c.id === NOVEL_CRAFT_FIRST_THREE_ID)!;
     expect(first.firstEpisodesOnly).toBe(true);
-    expect(first.body).toContain("300字内引爆核心冲突");
-    expect(first.body).toContain("500字内亮出金手指");
+    // 口径已按本站开篇规范统一（身份＋困境＋目标，300—500字）。
+    expect(first.body).toContain("300—500字内给齐主角身份、困境与目标");
   });
   it("索引只有 id/title/intro/tags，不含正文", () => {
     const idx = novelCraftIndex();
@@ -221,10 +222,7 @@ describe("注入文本", () => {
   });
   it("回退时注入长度估算（4卡×8手法，chapter 默认集合）在合理范围", () => {
     const idx = buildNovelCraftUnifiedIndex(base, fourCards);
-    const text = renderNovelCraftInjection(
-      { craft: [NOVEL_CRAFT_FIRST_THREE_ID, ...novelCraftCardsForStage(base).filter(c => !c.firstEpisodesOnly).slice(0, 4).map(c => c.id)], methods: idx.filter(e => e.kind === "method").map(e => e.id) },
-      fourCards
-    );
+    const text = renderNovelCraftInjection(defaultNovelCraftSelection(base, idx), fourCards);
     expect(text.length).toBeLessThan(15000);
   });
   it("顾问阶段不走检索", () => {

@@ -3,21 +3,24 @@ import {
   NOVEL_CRAFT_BASE_CARDS,
   NOVEL_CRAFT_CARDS,
   NOVEL_CRAFT_FIRST_THREE_ID,
+  NOVEL_CRAFT_OWNER_CARDS,
+  NOVEL_CRAFT_PREFERRED_RULE,
   getNovelCraftCards,
   novelCraftIndex,
 } from "../../shared/novelCraftCards";
-import { NOVEL_CRAFT_OWNER_CARDS, NOVEL_CRAFT_OWNER_SOURCE } from "../../shared/novelCraftCardsOwner";
+import { NOVEL_CRAFT_OWNER_SOURCE } from "../../shared/novelCraftCardsOwner";
 import {
   buildNovelCraftRetrievalPrompt,
   buildNovelCraftTaskBrief,
   buildNovelCraftUnifiedIndex,
   defaultNovelCraftSelection,
   novelCraftCardsForStage,
+  renderNovelCraftInjection,
   type NovelCraftRetrievalInput,
 } from "./novelCraftRetrieval";
 import type { NovelTemplateDigestEntry } from "./novelTemplateDigest";
 
-/** 改动前（只有 18 条原有条目时）各阶段的默认回退技法集合。 */
+/** 原有 18 条通用条目的 id 与顺序。 */
 const BASE_IDS = [
   "craft_first_three",
   "craft_opening",
@@ -38,7 +41,12 @@ const BASE_IDS = [
   "craft_payoff_check",
   "craft_anti_patterns",
 ];
-const DEFAULT_GENERAL = ["craft_opening", "craft_conflict_goal", "craft_pacing", "craft_logic"];
+/** 本站规范优先的默认回退（不含前三章分工）。 */
+const DEFAULT_BY_STAGE = {
+  outline: ["craft_owner_goal_chain", "craft_owner_single_mainline", "craft_conflict_goal", "craft_pacing"],
+  chapter: ["craft_owner_goal_chain", "craft_owner_detail_writing", "craft_conflict_goal", "craft_pacing"],
+  script: ["craft_owner_goal_chain", "craft_owner_detail_writing", "craft_conflict_goal", "craft_pacing"],
+} as const;
 
 const methodCard = (publicId: string, n: number): NovelTemplateDigestEntry => ({
   publicId,
@@ -73,7 +81,7 @@ const fourCards = ["mt_a", "mt_b", "mt_c", "mt_d"].map(id => methodCard(id, 8));
 describe("站长资料技法条目", () => {
   it("字段合法：id 唯一带前缀、intro ≤60、body ≤900、stages 非空、无模型/仓库/通道名", () => {
     expect(NOVEL_CRAFT_OWNER_CARDS.length).toBeGreaterThanOrEqual(10);
-    expect(NOVEL_CRAFT_OWNER_CARDS.length).toBeLessThanOrEqual(20);
+    expect(NOVEL_CRAFT_OWNER_CARDS.length).toBeLessThanOrEqual(24);
     const ids = NOVEL_CRAFT_CARDS.map(c => c.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const c of NOVEL_CRAFT_OWNER_CARDS) {
@@ -84,15 +92,41 @@ describe("站长资料技法条目", () => {
       expect(c.body.length).toBeLessThanOrEqual(900);
       expect(c.stages.length).toBeGreaterThan(0);
       expect(c.tags.length).toBeGreaterThan(0);
+      expect(c.source).toBe("owner");
+      expect(typeof c.priority).toBe("number");
       expect(c.body + c.intro + c.title + c.tags.join("")).not.toMatch(
         /github|claude|gemini|gpt|deepseek|glm|openai|anthropic|vertex|seedance|carbon|mvstudio|fly\.io|\.md|skills\//i
       );
       expect(c.body).not.toContain("待核");
     }
   });
-  it("来源常量只保留日期；条目不带内部标记字段", () => {
+  it("来源与优先级：本站条目 source=owner 且 priority 唯一，通用条目 source=general", () => {
     expect(NOVEL_CRAFT_OWNER_SOURCE).toEqual({ date: "2026-11-11" });
+    for (const c of NOVEL_CRAFT_BASE_CARDS) expect(c.source).toBe("general");
+    const ps = NOVEL_CRAFT_OWNER_CARDS.map(c => c.priority);
+    expect(new Set(ps).size).toBe(ps.length);
     for (const c of NOVEL_CRAFT_CARDS) expect(Object.keys(c)).not.toContain("provisional");
+  });
+  it("索引行给本站条目加【优先】，提示词带优先规则且不出现内部来源字样", () => {
+    const input = { ...base, stage: "outline" as const };
+    const idx = buildNovelCraftUnifiedIndex(input, fourCards);
+    const prompt = buildNovelCraftRetrievalPrompt(buildNovelCraftTaskBrief(input), idx);
+    expect(prompt).toContain(NOVEL_CRAFT_PREFERRED_RULE);
+    expect(prompt).toContain("craft_owner_goal_chain｜【优先】主线目标三层与五环检查｜");
+    expect(prompt).toContain("craft_logic｜逻辑与因果｜");
+    expect(prompt).not.toMatch(/站长|skill|开源/i);
+    expect(JSON.stringify(novelCraftIndex())).not.toContain("【优先】");
+  });
+  it("注入时本站条目排在通用条目前面，并在开头带优先规则", () => {
+    const text = renderNovelCraftInjection({ craft: ["craft_logic", "craft_owner_detail_writing", "craft_pacing"], methods: [] }, []);
+    expect(text.indexOf(NOVEL_CRAFT_PREFERRED_RULE)).toBeGreaterThan(-1);
+    expect(text.indexOf(NOVEL_CRAFT_PREFERRED_RULE)).toBeLessThan(text.indexOf("【技法条目】"));
+    const owner = text.indexOf("《【优先】写长与名场面");
+    expect(owner).toBeGreaterThan(-1);
+    expect(owner).toBeLessThan(text.indexOf("《逻辑与因果》"));
+    expect(text.indexOf("《逻辑与因果》")).toBeLessThan(text.indexOf("《节奏与紧凑度》"));
+    const plain = renderNovelCraftInjection({ craft: ["craft_logic"], methods: [] }, []);
+    expect(plain).not.toContain(NOVEL_CRAFT_PREFERRED_RULE);
   });
   it("原有 18 条 id 与顺序不变，新条目接在后面", () => {
     expect(NOVEL_CRAFT_BASE_CARDS.map(c => c.id)).toEqual(BASE_IDS);
@@ -133,14 +167,14 @@ describe("站长资料技法条目", () => {
       for (const c of NOVEL_CRAFT_OWNER_CARDS) expect(prompt).not.toContain(c.body.slice(0, 30));
     }
   });
-  it("默认回退集合与改动前一致（新条目不挤掉原有通用条目）", () => {
+  it("默认回退集合：本站规范优先 2 条 + 通用补足到 4 条，前三集另加前三章分工", () => {
     for (const stage of ["outline", "chapter", "script"] as const) {
       const early = { ...base, stage, chapterIndex: 1, episodeStart: 1 };
       const late = { ...base, stage, chapterIndex: 8, episodeStart: 8, episodeCount: 3 };
       const e = defaultNovelCraftSelection(early, buildNovelCraftUnifiedIndex(early, fourCards));
       const l = defaultNovelCraftSelection(late, buildNovelCraftUnifiedIndex(late, fourCards));
-      expect(e.craft).toEqual([NOVEL_CRAFT_FIRST_THREE_ID, ...DEFAULT_GENERAL]);
-      expect(l.craft).toEqual(DEFAULT_GENERAL);
+      expect(e.craft).toEqual([NOVEL_CRAFT_FIRST_THREE_ID, ...DEFAULT_BY_STAGE[stage]]);
+      expect(l.craft).toEqual([...DEFAULT_BY_STAGE[stage]]);
       expect(e.methods).toHaveLength(32);
     }
   });
