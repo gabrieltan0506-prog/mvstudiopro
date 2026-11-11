@@ -445,10 +445,19 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
         el.querySelector('footer span').textContent=focus;
         const heading=el.querySelector('.reading-title h2');if(heading)heading.textContent=title;
       });
+      // 版面审查测量（只读，不改排版）：逐页记录溢出、标题裁切、补白块/图片条压字、坏图与跨页图半张数，供 auditKnowledgeBookletLayout 判定。
+      const hit=(a,b)=>a.left<b.right-1&&b.left<a.right-1&&a.top<b.bottom-1&&b.top<a.bottom-1;
+      const layout=folios.map((el,i)=>{
+        const covers=[...el.querySelectorAll('.page-filler,.preview-strip')],texts=[...el.querySelectorAll('.reading-unit h3,.reading-unit p,.reading-unit li,.reading-unit table,.reading-title h2')];
+        const overlaps=[];for(const c of covers){const r=c.getBoundingClientRect();for(const t of texts){if(c.contains(t))continue;if(hit(r,t.getBoundingClientRect())){overlaps.push({cover:c.classList.contains('next-preview')?'下篇预告':c.classList.contains('preview-strip')?'图片条':'补白块',target:(t.textContent||'').trim().slice(0,16)});break;}}}
+        const clipped=[...el.querySelectorAll('.next-preview h4,.reading-title h2,.unit-heading h3')].filter(h=>{const box=h.closest('.page-filler,.folio').getBoundingClientRect(),r=h.getBoundingClientRect();return h.scrollHeight>h.clientHeight+2||r.bottom>box.bottom+1;}).map(h=>(h.textContent||'').trim().slice(0,24));
+        const broken=[...el.querySelectorAll('img')].filter(img=>img.complete&&img.naturalWidth===0).map(img=>img.alt||img.closest('[data-card-id]')?.dataset.cardId||'图片');
+        return {page:offset+i+1,whitespace:Number(el.dataset.whitespace||0),overflow:[...el.querySelectorAll('.reading-column')].some(c=>c.scrollHeight>c.clientHeight+2),clippedHeadings:clipped,overlaps,brokenImages:broken,spreadHalves:{a:el.querySelectorAll('.spread-a').length,b:el.querySelectorAll('.spread-b').length}};
+      });
       if([...root.querySelectorAll('.reading-column')].some(el=>el.scrollHeight>el.clientHeight+2))throw new Error('正文超出页面，未裁切内容，请调整版式');
       root.dataset.ready='true';
       const imageModes=Object.fromEntries(modeOf);
-      root.__knowledgeBooklet={ready:true,imagePages:cards.length,readingPages:readingPages.length,pages:folios.length,units:units.length,columnCapacity:capacity,overflow:false,imageModes,spreadChapters:Object.values(imageModes).filter(m=>m==='spread').length,whitespace:metrics.map(m=>m.whitespace),rawWhitespace:metrics.map(m=>m.raw),maxWhitespace:Math.max(0,...metrics.map(m=>m.whitespace)),pendingContent:${JSON.stringify(input.pages.filter(p=>!hasKnowledgeBody(p.body)).map(p=>({id:p.id,headline:p.headline})))}};
+      root.__knowledgeBooklet={ready:true,layout,imagePages:cards.length,readingPages:readingPages.length,pages:folios.length,units:units.length,columnCapacity:capacity,overflow:false,imageModes,spreadChapters:Object.values(imageModes).filter(m=>m==='spread').length,whitespace:metrics.map(m=>m.whitespace),rawWhitespace:metrics.map(m=>m.raw),maxWhitespace:Math.max(0,...metrics.map(m=>m.whitespace)),pendingContent:${JSON.stringify(input.pages.filter(p=>!hasKnowledgeBody(p.body)).map(p=>({id:p.id,headline:p.headline})))}};
       window.__knowledgeBooklet=root.__knowledgeBooklet;
     };
     root.__layoutBooklet=()=>busy=busy.catch(()=>{}).then(layout).catch(e=>{
