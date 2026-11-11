@@ -77,4 +77,7 @@ it("大纲偏离：申报 major 时提醒；旧结果未申报但大纲专名在
   expect(novelOutlineAlertSummary(legacy).level).toBe("partial");
   const updated = { ...major, outline: "第2集：库房夺账\n剧情：沈昭翻墙入库", outlineApproved: "第2集：库房夺账\n剧情：沈昭翻墙入库" };
   expect(novelOutlineAlertSummary(updated).level).toBe("none");
+  // 大纲不用改时：点「大纲已核对」（写入 outlineCheckedAt）后同样不再提醒
+  const checked = { ...major, chapterRevisions: (major.chapterRevisions || []).map(e => ({ ...e, outlineCheckedAt: "2026-11-11T15:00:00.000Z" })) } as NovelWorkspace;
+  expect(novelOutlineAlertSummary(checked)).toEqual({ level: "none", chapters: [] });
 });

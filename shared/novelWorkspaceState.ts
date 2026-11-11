@@ -121,6 +121,8 @@ export const novelWorkspaceStateSchema = z.object({
         adoptedAt: z.string().optional(),
         /** 提交时的本集大纲条目；当前大纲条目与之不同即视为已核对并更新大纲，不再提醒。 */
         outlineItem: z.string().optional(),
+        /** 站长点了「大纲已核对」的时间：点过即不再提醒（大纲无需改动时用）。 */
+        outlineCheckedAt: z.string().optional(),
       })
     )
     .optional(),

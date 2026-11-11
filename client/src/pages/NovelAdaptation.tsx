@@ -2066,7 +2066,25 @@ function NovelWorkspaceEditor({
           {outlineAlert.level === "major"
             ? "修改版已偏离原大纲，采用前请先核对并更新大纲"
             : "审稿改稿改动了情节，请核对大纲"}
-          （第{outlineAlert.chapters.join("、")}集）。更新本集大纲条目后提醒自动消失。
+          （第{outlineAlert.chapters.join("、")}集）。更新本集大纲条目，或核对无误后点「大纲已核对」，提醒即消失。
+          <button
+            type="button"
+            className="ml-3 underline"
+            disabled={Boolean(initial.error)}
+            onClick={() => {
+              const flagged = new Set(outlineAlert.chapters.map(n => n - 1));
+              const now = new Date().toISOString();
+              change({
+                chapterRevisions: (draft.chapterRevisions || []).map(entry =>
+                  flagged.has(entry.index) && !entry.outlineCheckedAt
+                    ? { ...entry, outlineCheckedAt: now }
+                    : entry
+                ),
+              });
+            }}
+          >
+            大纲已核对
+          </button>
         </p>
       )}
       <label className="mt-4 block">

@@ -193,7 +193,7 @@ export function parseNovelRevisionEntry(entry: NovelRevisionEntry): {
 }
 /**
  * 某条审稿改稿记录的大纲偏离：模型申报 + 代码兜底核对。
- * 当前大纲里的本集条目已与提交时不同（用户已核对并更新大纲）时不再提醒。
+ * 当前大纲里的本集条目已与提交时不同（用户已核对并更新大纲），或用户点了「大纲已核对」时不再提醒。
  */
 export function novelRevisionOutlineAlert(
   now: Pick<NovelWorkspace, "outline" | "outlineApproved">,
@@ -213,7 +213,8 @@ export function novelRevisionOutlineAlert(
     `${parsed.revised.title}\n${parsed.revised.text}`
   );
   const level = novelOutlineAlertLevel(parsed.revised.outlineImpact, hints);
-  const stale = entry.outlineItem !== undefined && entry.outlineItem !== currentItem;
+  // 已核对 = 用户更新了本集大纲条目，或明确点了「大纲已核对」。
+  const stale = Boolean(entry.outlineCheckedAt) || (entry.outlineItem !== undefined && entry.outlineItem !== currentItem);
   return { level, hints, item, stale };
 }
 /** 需要提醒核对大纲的最高级别（每集只看最近一条记录）；用于大纲所在步骤入口的角标。 */
