@@ -27,7 +27,7 @@ export const NOVEL_CRAFT_OWNER_DAY2_SUPPLEMENTS: Readonly<Record<string, readonl
   ],
   craft_owner_goal_chain: ["感情流目标常不显眼，但不能省略；两类主线都要目标统一、层层递进。"],
   craft_owner_growth_layers: [
-    "其他分法可对照：常见三幕式约20%／60%／20%，长篇细分也有25%／60%／15%；各家首尾切分不一，较一致的是中间发展段约占六成。",
+    "其他分法可对照：三幕式只是大致比例，不必精确，例如约20%／60%／20%或25%／60%／15%；各家首尾切分不一，较一致的是中间发展段约占六成。",
     "各层标志事件就是转入下一层的节点，写大纲时用它检查转场是否成立、节奏是否拖沓。",
   ],
   craft_owner_romance_mainline: [
