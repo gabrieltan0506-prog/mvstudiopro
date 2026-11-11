@@ -1,6 +1,8 @@
 {
-  "id": "ncc-1111a",
-  "action": "status",
+  "id": "refit-1111b",
+  "action": "start",
+  "script": "scripts/probe-knowledge-handbook-refit.mts",
   "machine": "7812595b294778",
-  "collect": ["compare.md"]
+  "config": { "owner": 1, "documentId": "503e8872-d5fa-4b7b-96f3-f5860421e167" },
+  "collect": ["handbook.pdf"]
 }
