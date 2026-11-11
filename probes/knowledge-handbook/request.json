@@ -1,8 +1,8 @@
 {
-  "id": "refit-1111b",
+  "id": "ncc-1111b",
   "action": "start",
-  "script": "scripts/probe-knowledge-handbook-refit.mts",
+  "script": "scripts/probe-novel-carbon-compare.mts",
   "machine": "7812595b294778",
-  "config": { "owner": 1, "documentId": "503e8872-d5fa-4b7b-96f3-f5860421e167" },
-  "collect": ["handbook.pdf"]
+  "config": { "ownerUserId": 1, "source": "workspace", "stage": "chapter", "baselinePreference": "auto", "runId": "ncc-1111b" },
+  "collect": ["compare.md"]
 }
