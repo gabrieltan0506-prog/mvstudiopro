@@ -1,6 +1,16 @@
 {
-  "id": "refit-1111a",
-  "action": "status",
+  "id": "ncc-1111a",
+  "action": "start",
+  "script": "scripts/probe-novel-carbon-compare.mts",
   "machine": "7812595b294778",
-  "collect": ["handbook.pdf"]
+  "config": {
+    "ownerUserId": 1,
+    "source": "workspace",
+    "stage": "chapter",
+    "baselinePreference": "auto",
+    "runId": "ncc-1111a"
+  },
+  "collect": [
+    "compare.md"
+  ]
 }
