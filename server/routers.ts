@@ -8135,6 +8135,46 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         return { success: true as const, ...result };
       }),
 
+    /**
+     * 纯图片 PDF 导出（不阻塞）：发起即返回任务标识，后台合成，前台轮询。
+     * 多页 4K 合成要数分钟，同步长请求会被网关截断（1111 查实）。同一批图重复发起复用同一任务。
+     */
+    startKnowledgeCardPdfExport: protectedProcedure
+      .input(z.object({
+        imageUrls: z.array(z.string().min(1).max(4096)).min(1).max(200),
+        title: z.string().max(200).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { checkKnowledgeCardExportRate, KNOWLEDGE_CARD_EXPORT_RATE_MESSAGE, resolveKnowledgeCardImageObjectName, KNOWLEDGE_CARD_LEGACY_OBJECT_MESSAGE } =
+          await import("./services/knowledgeCardPdfExport.js");
+        const { knowledgeCardPdfTasks } = await import("./services/knowledgeCardPdfExportTasks.js");
+        const { getGcsBucketName } = await import("./services/gcs.js");
+        const tasks = knowledgeCardPdfTasks();
+        const reused = tasks.reusable(ctx.user.id, input.imageUrls);
+        if (reused) return reused;
+        // 归属校验前置：不合规的清单当场拒绝，不占任务位
+        const bucket = getGcsBucketName();
+        if (input.imageUrls.some((u) => !resolveKnowledgeCardImageObjectName(u, bucket, ctx.user.id))) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `只能导出本人在本平台生成的知识卡成品图；${KNOWLEDGE_CARD_LEGACY_OBJECT_MESSAGE}` });
+        }
+        if (tasks.hasRunning(ctx.user.id)) {
+          throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "已有一份 PDF 正在合成，请等它完成后再导出" });
+        }
+        const gate = checkKnowledgeCardExportRate(knowledgeCardPdfExportHits.get(ctx.user.id), Date.now());
+        if (!gate.allowed) {
+          throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: KNOWLEDGE_CARD_EXPORT_RATE_MESSAGE });
+        }
+        knowledgeCardPdfExportHits.set(ctx.user.id, gate.history);
+        return tasks.start(ctx.user.id, input.imageUrls, input.title);
+      }),
+    knowledgeCardPdfExportStatus: protectedProcedure
+      .input(z.object({ taskId: z.string().regex(/^[a-f0-9]{32}$/) }))
+      .query(async ({ input, ctx }) => {
+        const { knowledgeCardPdfTasks } = await import("./services/knowledgeCardPdfExportTasks.js");
+        // 未知任务（含服务重启后）返回 missing，由前台用同一清单重新发起
+        return knowledgeCardPdfTasks().status(ctx.user.id, input.taskId) ?? { status: "missing" as const, taskId: input.taskId };
+      }),
+
     /** EPUB 转好的 PDF：下载（Fly 临时副本已建好）后删 GCS 存档（0923 用户令）；只认本人 epub- 存档 */
     deleteKnowledgeCardEpubPdf: protectedProcedure
       .input(z.object({ url: z.string().min(1).max(4096) }))
