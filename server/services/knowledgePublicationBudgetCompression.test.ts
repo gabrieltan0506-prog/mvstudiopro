@@ -7,7 +7,7 @@ import { synchronizedKnowledgeCardSource } from "../../shared/knowledgeCardEdita
 import { layoutFromSource } from "../../shared/editableLayout";
 import { compileKnowledgeEditions } from "../../shared/knowledgeCardEdition";
 import { knowledgeEditionImagePlan } from "../../shared/knowledgeCardPagination";
-import { KNOWLEDGE_IMAGE_PRIMARY_INSTRUCTIONS, KNOWLEDGE_IMAGE_PRIMARY_MARKER, KNOWLEDGE_LEAD_PAGE_CHARS, KNOWLEDGE_READING_CONTRACT } from "../../shared/knowledgeEditionBudget";
+import { KNOWLEDGE_IMAGE_PRIMARY_INSTRUCTIONS, KNOWLEDGE_IMAGE_PRIMARY_MARKER, KNOWLEDGE_LEAD_PAGE_CHARS, KNOWLEDGE_READING_CONTRACT, knowledgeReadingCharBudgets } from "../../shared/knowledgeEditionBudget";
 import { compressKnowledgeFinalReport, dedupeKnowledgeReviewAgainstImages, KNOWLEDGE_REVIEW_INSTRUCTIONS, knowledgeExplanationInstructions, reviewKnowledgePublication, knowledgeSourceDigest, knowledgeEvidencePrefix, knowledgeReviewPageChars, KNOWLEDGE_VISUAL_ADVISOR_MODEL } from "./knowledgePublicationAdvisor";
 
 const sentence = (i: number, j: number) => `第${i}节第${j}句记述一件具体史实，以及它前后的经过与影响。`;
@@ -292,8 +292,8 @@ describe("图主文辅合同 image-primary-v1（2026-11-11：主要重点进图�
     expect(text).toContain("maxChars是上限不是目标");
     expect(text).toMatch(/"suggestedChars":\d+/);
     expect(text).not.toContain("按 targetChars 写");
-    // 路由仍按真实上限逐页校验。
-    expect((fresh.post.mock.calls[0]![0] as any).pageBudgets[0].maxChars).toBe(700);
+    // 路由仍按真实上限逐页校验；上限来自页数分配（本章图内文字最密，分到跨页 → 420 字）。
+    expect((fresh.post.mock.calls[0]![0] as any).pageBudgets[0].maxChars).toBe(knowledgeReadingCharBudgets("full", fresh.source.pages, KNOWLEDGE_READING_CONTRACT).pages[0]!.maxChars);
     const old = harness(650);
     expect(old.source.readingContract).toBeUndefined();
     await reviewKnowledgePublication(7, { documentId: old.doc.id, batchIndex: 0, attempt: 0 }, old.deps);
@@ -350,5 +350,30 @@ describe("图主文辅合同 image-primary-v1（2026-11-11：主要重点进图�
     const out = dedupeKnowledgeReviewAgainstImages(h.source, reviewed as any);
     expect(out.pages[0]!.body).toBe(same);
     expect(out.removed).toEqual([]);
+  });
+
+  it("新稿批次只做零调用去重，不一批一调：超出章留到统稿后整册压缩（≤2 轮）", async () => {
+    const h = harness(650, { contract: true });
+    const batch = await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps) as any;
+    expect(h.calls.map(c => c.kind)).toEqual(["review"]);
+    expect(batch.budgetOverflow.after.length).toBeGreaterThan(0);
+    // 再读批次也不补发压缩。
+    await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps);
+    expect(h.calls.map(c => c.kind)).toEqual(["review"]);
+  });
+
+  it("新稿统稿后整册压缩：全部超出章同一请求、最多 2 轮（旧稿同一情形可走 4 轮）", async () => {
+    const run = async (contract: boolean) => {
+      const h = harness([1500, 1200, 1000, 800], { contract });
+      const batch = await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps) as any;
+      const long = { ...batch.pages[0], reading: { ...batch.pages[0].reading, blocks: [{ type: "prose", title: "壁画分期", note: "", text: prose(1800) }] } };
+      const saved = { report: { kind: "knowledge_publication_v1", sourceDigest: h.digest, title: h.source.title, pages: [long] }, sourceImages: [] };
+      h.setCompress([1500, 1200, 1000, 800]);
+      const before = h.calls.filter(c => c.kind === "compress").length;
+      await compressKnowledgeFinalReport(h.deps as any, h.root, 0, h.digest, h.source, structuredClone(saved));
+      return h.calls.filter(c => c.kind === "compress").length - before;
+    };
+    expect(await run(true)).toBe(2);
+    expect(await run(false)).toBeGreaterThan(2);
   });
 });

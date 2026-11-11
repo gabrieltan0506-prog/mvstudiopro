@@ -2,13 +2,15 @@
  * 图文知识手册版式对比（本地、零付费请求、不生成图片）。
  *
  * 用法：corepack pnpm exec tsx scripts/knowledge-handbook-layout-compare.mts [--pdf 现成品.pdf] [--out 输出目录] [--base git引用]
- *   默认 --pdf /home/claude/assets/handbook-current.pdf，--out /home/claude/assets/handbook-new，--base HEAD
+ *   默认 --pdf /home/claude/assets/handbook-current.pdf，--out /home/claude/assets/handbook-new，--base aa8b125（本轮改动前的 main）
  *
  * 做什么：
- * 1. 用 pdfimages 从现成品 PDF 抽出前 8 张信息图当占位配图（本地文件经 puppeteer 请求拦截以 https 地址提供，不用 base64）；
+ * 1. 用 pdfimages 从现成品 PDF 抽出全部 34 张信息图当配图（本地文件经 puppeteer 请求拦截以 https 地址提供，不用 base64）；
  *    另用浏览器渲染一张 3840×2160 的密集小字测试图，按审校缩图派生件同法缩成 2048 JPEG，用来对比清晰度。
- * 2. 同一份 8 章假稿（长正文、短正文、表格、长列表、读图提示等）分别用「基线版式」（--base 引用里的 shared/knowledgeBooklet.ts）
- *    和「当前工作区版式」逐章排版、预分页、带全书页码打印，模拟导出流程（每章一个排版请求，图片压缩脚本与排版服务同一份）。
+ * 2. 34 章假稿：每章正文长度取自现成品同页的实际正文字数（pdftotext），含表格、长列表、读图提示等形态。
+ *    「基线」= --base 引用里的 shared/knowledgeBooklet.ts + 原长度正文；「新版」= 当前工作区版式 + 按页数分配（34 图 → 48–54 页）
+ *    的版面预算模拟压缩后的正文（本地不调模型：超出本章预算的正文按句界截到预算内，仅代表压缩后的篇幅，真实压缩须用探针）。
+ *    图内文字量按现成品内嵌图的 JPEG 字节数近似（字越密的图越难压缩）。逐章排版、预分页、带全书页码打印，与导出流程同序。
  * 3. 输出：old.pdf / new.pdf、各自的缩略总览 old-sheet.png / new-sheet.png、逐页留白指标 metrics.json、
  *    清晰度对比 clarity-old.png / clarity-new.png（两份成品实际内嵌的同一张测试图，裁同一区域放大到同宽）。
  */
@@ -20,7 +22,8 @@ import { join, resolve, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildKnowledgeBookletHtml, type KnowledgeBookletPage } from "../shared/knowledgeBooklet";
-import { knowledgePublicationHead, knowledgePublicationImageModes } from "../shared/knowledgePublicationHtml";
+import { knowledgePublicationHead } from "../shared/knowledgePublicationHtml";
+import { knowledgeHandbookPagePlan } from "../shared/knowledgeHandbookPagePlan";
 import * as paginationModule from "../pdf-worker/knowledgeBookletPagination";
 import * as compressionModule from "../pdf-worker/pdfImageCompression";
 
@@ -32,7 +35,7 @@ const arg = (name: string, fallback: string) => { const i = process.argv.indexOf
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePdf = arg("--pdf", "/home/claude/assets/handbook-current.pdf");
 const out = arg("--out", "/home/claude/assets/handbook-new");
-const baseRef = arg("--base", "HEAD");
+const baseRef = arg("--base", "aa8b125"); // 用户 11-10 实际导出成品所用版式（本轮改动之前）
 const HOST = "https://handbook.local/";
 mkdirSync(out, { recursive: true });
 const work = join(out, "src");
@@ -40,7 +43,7 @@ rmSync(work, { recursive: true, force: true });
 mkdirSync(work, { recursive: true });
 
 // 1. 占位配图：现成品内嵌的 1200×675 图 → 按缩图派生件规格存成 2048 长边 JPEG（放大只为版式对比，细节不比现成品多）。
-execFileSync("pdfimages", ["-j", "-f", "1", "-l", "8", sourcePdf, join(work, "raw")]);
+execFileSync("pdfimages", ["-j", "-f", "1", "-l", "34", sourcePdf, join(work, "raw")]);
 const raws = readdirSync(work).filter(n => n.startsWith("raw")).sort();
 const files: Record<string, Buffer> = {};
 for (const [i, name] of raws.entries())
@@ -68,25 +71,35 @@ const serve = async (page: Page) => {
   await page.close();
 }
 
-// 2. 假稿：8 章，覆盖长/短正文、表格、长列表、只指向图中位置的读图提示。
+// 2. 假稿：34 章，正文长度取自现成品同页（pdftotext 去空白后的字数，扣掉页眉页脚与标题约 40 字）。
+const realChars = Array.from({ length: raws.length }, (_, i) => {
+  const text = execFileSync("pdftotext", ["-f", String(i + 1), "-l", String(i + 1), sourcePdf, "-"], { encoding: "utf8" });
+  return Math.max(120, Array.from(text.replace(/\s+/g, "")).length - 40);
+});
 // 按句生成（每句以「。」结束），与真实正文一样可在句界切分。
-const para = (n: number, seed: string) => { const parts: string[] = []; let len = 0, k = 0; while (len < n) { const sentence = `${seed.slice(0, 8 + (k % 5) * 4)}，${seed.slice(8)}。`; parts.push(sentence); len += sentence.length; k++; } return parts.join(""); };
-const bodies = [
-  `## 签约前先看清门槛\n\n${para(420, "签约意味着平台愿意为你的作品投入推荐位与运营资源但前提是稳定更新与基本的订阅数据")}\n\n## 合同里最容易忽略的条款\n\n${para(520, "版权期限独家条款改编分成与违约责任要逐条看清楚必要时请有经验的作者帮忙把关")}\n\n## 不签约也能写吗\n\n${para(380, "免费平台靠广告分成起步门槛低但单价也低适合练笔与测试题材")}`,
-  `## 一句话结论\n\n${para(110, "收入高度分层先确定能否稳定日更再谈题材与签约")}`,
-  `## 三类平台对照\n\n|平台类型|收入来源|门槛|适合谁|\n|---|---|---|---|\n${Array.from({ length: 8 }, (_, i) => `|类型${i + 1}|订阅、广告与全勤奖励组合${i + 1}|日更四千字以上并保持三个月|有稳定时间的上班族${i + 1}|`).join("\n")}\n\n${para(160, "表中数字为公开资料与作者经验的概括各平台规则会调整以最新公告为准")}`,
-  `## 开书前的十四项自查\n\n${Array.from({ length: 14 }, (_, i) => `- 第${i + 1}项：${para(28, "确认题材赛道读者画像更新节奏与存稿数量")}`).join("\n")}`,
-  `## 题材选择的边界\n\n${para(560, "热门题材竞争大冷门题材读者少中间地带往往是新人最好的切入点要结合自己的知识储备")}`,
-  `## 读者为什么追更\n\n${para(180, "追更动力来自悬念与情绪回报而不是信息量")}\n\n> 读图提示：对应左上角三幕结构卡\n\n> 图中右下栏已列钩子类型，此处说明用法。`,
-  `## 数据复盘怎么做\n\n${para(700, "看追读率留存率与均订而不是只看收藏数每周固定复盘一次记录改动与结果")}\n\n## 复盘之后改什么\n\n${para(300, "先改开篇三章再改章节结尾钩子最后才动主线设定")}`,
-  `## 写在最后\n\n${para(90, "坚持看产出不看年限")}`,
-];
-const headlines = ["签约逻辑与合同要点", "收入分层一句话", "平台类型对照", "开书自查清单", "题材边界", "追更动力", "数据复盘", "结语"];
-const pages: KnowledgeBookletPage[] = bodies.map((body, i) => ({ id: `chapter-${i + 1}`, headline: headlines[i]!, body, imageUrl: `${HOST}img-${(i % raws.length) + 1}.jpg` }));
-// 第 4 章换成清晰度测试图，便于在成品里同处比对。
-pages[3]!.imageUrl = `${HOST}clarity.jpg`;
+const sentence = (seed: string, k: number) => `${seed}${k}，说明图中没有的背景、条件与注意事项。`;
+const prose = (n: number, seed: string) => { let out = "", k = 0; while (out.length < n) out += sentence(seed, k++); return out; };
+const shape = (i: number, n: number) => {
+  if (i % 7 === 2) return `## 对照\n\n|项目|说明|\n|---|---|\n${Array.from({ length: Math.max(2, Math.round(n / 60)) }, (_, k) => `|第${k + 1}项|${sentence("表格行", k)}|`).join("\n")}`;
+  if (i % 7 === 4) return `## 清单\n\n${Array.from({ length: Math.max(2, Math.round(n / 34)) }, (_, k) => `- ${sentence("清单项", k)}`).join("\n")}`;
+  const half = Math.round(n / 2);
+  return `## 背景\n\n${prose(half, "背景句")}\n\n## 注意\n\n${prose(n - half, "注意句")}${i % 7 === 5 ? "\n\n> 读图提示：对应左上角合同卡" : ""}`;
+};
 const title = "网文副业入门（版式对比假稿）";
 const theme = "fusion_snow_monastery" as const;
+const imageOf = (i: number) => (i === 3 ? `${HOST}clarity.jpg` : `${HOST}img-${i + 1}.jpg`);
+const oldPages: KnowledgeBookletPage[] = realChars.map((n, i) => ({ id: `chapter-${i + 1}`, headline: `第${i + 1}章`, body: shape(i, n), imageUrl: imageOf(i) }));
+// 新版：页数分配（图内文字量 ≈ 原图 JPEG 字节数）→ 每章版面预算；超出者按句界截到预算内（模拟模型压缩后的篇幅）。
+const density = raws.map(name => readFileSync(join(work, name)).length);
+const plan = knowledgeHandbookPagePlan("full", oldPages.map((p, i) => ({ id: p.id, body: "图".repeat(Math.round(density[i]! / 200)), hasImage: true })));
+const fit = (body: string, max: number) => {
+  if (body.replace(/\s+/g, "").length <= max) return body;
+  let out = "";
+  for (const piece of body.split(/(?<=。)/)) { if ((out + piece).replace(/\s+/g, "").length > max - 20) break; out += piece; }
+  return out.trim();
+};
+const pages: KnowledgeBookletPage[] = oldPages.map((p, i) => ({ ...p, body: fit(p.body, plan.chapters[i]!.maxChars) }));
+const modes = plan.chapters.map(c => c.mode);
 
 // 基线版式：从 git 取旧 shared/knowledgeBooklet.ts，相对引用改指工作区同名模块（这些依赖模块本轮未改）。
 const baseline = execFileSync("git", ["-C", repo, "show", `${baseRef}:shared/knowledgeBooklet.ts`], { encoding: "utf8" })
@@ -96,9 +109,8 @@ const baselinePath = join(tmpdir(), `knowledge-booklet-baseline-${Date.now()}.ts
 writeFileSync(baselinePath, baseline);
 const old = await import(pathToFileURL(baselinePath).href) as { buildKnowledgeBookletHtml: typeof buildKnowledgeBookletHtml };
 
-const modes = knowledgePublicationImageModes(pages, "full");
 const fragments = {
-  old: pages.map((p, i) => old.buildKnowledgeBookletHtml({ title, theme, fragment: true, chapterOffset: i, pages: [p] })),
+  old: oldPages.map((p, i) => old.buildKnowledgeBookletHtml({ title, theme, fragment: true, chapterOffset: i, pages: [p] })),
   new: pages.map((p, i) => buildKnowledgeBookletHtml({ title, theme, fragment: true, chapterOffset: i, imageMode: modes[i], pages: [p],
     next: pages[i + 1] ? { headline: pages[i + 1]!.headline, imageUrl: pages[i + 1]!.imageUrl, chapterNo: i + 2 } : null })),
 };
@@ -144,8 +156,9 @@ for (const version of ["old", "new"] as const) {
   execFileSync("pdfunite", [...parts, join(out, `${version}.pdf`)]);
   execFileSync("pdftoppm", ["-r", "16", "-png", join(out, `${version}.pdf`), join(work, `${version}-thumb`)]);
   const thumbs = readdirSync(work).filter(n => n.startsWith(`${version}-thumb`)).sort().map(n => join(work, n));
-  execFileSync("montage", [...thumbs, "-tile", "8x", "-geometry", "+6+6", "-background", "#888", join(out, `${version}-sheet.png`)]);
-  metrics[version] = { chapters: pages.length, pages: total, perChapter: counts, imageModes: version === "new" ? modes : undefined, pagesDetail: pageMetrics,
+  execFileSync("montage", [...thumbs, "-tile", "12x", "-geometry", "+6+6", "-background", "#888", join(out, `${version}-sheet.png`)]);
+  metrics[version] = { chapters: pages.length, pages: total, range: version === "new" ? plan.range : undefined, spreadSlots: version === "new" ? plan.spreadSlots : undefined,
+    chars: (version === "old" ? oldPages : pages).reduce((n, p) => n + p.body.replace(/\s+/g, "").length, 0), perChapter: counts, imageModes: version === "new" ? modes : undefined, pagesDetail: pageMetrics,
     maxRawWhitespace: Math.max(...pageMetrics.map(m => (m as { raw: number }).raw)),
     maxFilledWhitespace: version === "new" ? Math.max(...pageMetrics.map(m => (m as { filled: number }).filled ?? 0)) : undefined,
     pdfBytes: readFileSync(join(out, `${version}.pdf`)).length };

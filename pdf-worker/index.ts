@@ -1,7 +1,7 @@
 import express from "express";
 import puppeteer, { type Page } from "puppeteer";
 import { randomBytes } from "node:crypto";
-import { finalizeKnowledgeBookletPagination } from "./knowledgeBookletPagination";
+import { finalizeKnowledgeBookletPagination, readKnowledgeBookletDetails } from "./knowledgeBookletPagination";
 import { pdfImageCompressionScript } from "./pdfImageCompression";
 import {
   buildSubsetFaceCss,
@@ -511,7 +511,7 @@ app.post("/generate-pdf", async (req, res) => {
     const bookletPages = await finalizeKnowledgeBookletPagination(page);
     if (measureKnowledgeBooklet === true) {
       if (!bookletPages) throw new Error("预分页仅支持知识书册");
-      res.json({ pages: bookletPages });
+      res.json({ pages: bookletPages, booklets: await readKnowledgeBookletDetails(page).catch(() => []) });
       return;
     }
 

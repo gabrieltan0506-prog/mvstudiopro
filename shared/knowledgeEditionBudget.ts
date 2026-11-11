@@ -9,6 +9,7 @@
  * 预算在生图前计算（两档准备阶段展示、审校请求携带），不在导出后才阻断。
  */
 import { KNOWLEDGE_TOPIC_IMAGE_CAP, KNOWLEDGE_TOPIC_IMAGE_MAX_CHARS } from "./knowledgeTopicImagePlan";
+import { knowledgeHandbookPagePlan } from "./knowledgeHandbookPagePlan";
 
 export type KnowledgeEditionLevel = "full" | "concise";
 
@@ -65,7 +66,17 @@ const hasImage = (p: KnowledgeBudgetPage) => Boolean(p.imageJobId || p.imageUrl 
  * 完整版：每个图文章只有图下一栏（KNOWLEDGE_LEAD_PAGE_CHARS），readingPages 恒为 0——不给任何章节续页预算。
  * 精华版：按图外资料多少把纯内文页分给各章，使每章要么只占图文同页，要么同页 + 若干填满的续页，减少半页留白。
  */
-export function knowledgeReadingCharBudgets(level: KnowledgeEditionLevel, pages: KnowledgeBudgetPage[]) {
+export function knowledgeReadingCharBudgets(level: KnowledgeEditionLevel, pages: KnowledgeBudgetPage[], contract?: KnowledgeReadingContract) {
+  // 新合同完整版（用户 2026-11-11：34 图总页数 48–54）：按页数预算分配跨页/图文同页，每章正文上限 = 本章版面容量；
+  // 旧稿与精华版不变（旧稿请求身份不变）。
+  if (contract === KNOWLEDGE_READING_CONTRACT && level === "full") {
+    const plan = knowledgeHandbookPagePlan(level, pages.map(p => ({ id: p.id, body: p.body, hasImage: hasImage(p) })));
+    const modes = new Map(plan.chapters.map(c => [c.id, c]));
+    return { budget: knowledgeEditionPageBudget(level, plan.images), plan, pages: pages.map(p => {
+      const chapter = modes.get(p.id)!;
+      return { id: p.id, headline: p.headline, maxChars: chapter.maxChars, readingPages: 0, mode: chapter.mode, imageTargetChars: knowledgeImagePrimaryTarget(p, chapter.maxChars) };
+    }) };
+  }
   const illustrated = pages.filter(hasImage);
   const budget = knowledgeEditionPageBudget(level, illustrated.length);
   const material = (p: KnowledgeBudgetPage) => {
@@ -207,9 +218,10 @@ export function knowledgeReadingOverflow(
   level: KnowledgeEditionLevel | undefined,
   pages: KnowledgeBudgetPage[],
   reviewed: readonly { id: string; chars: number }[],
+  contract?: KnowledgeReadingContract,
 ): KnowledgeReadingOverflow[] {
   if (!level) return [];
-  const budgets = new Map(knowledgeReadingCharBudgets(level, pages).pages.map(p => [p.id, p]));
+  const budgets = new Map<string, { headline: string; maxChars: number }>(knowledgeReadingCharBudgets(level, pages, contract).pages.map(p => [p.id, p]));
   return reviewed.flatMap(r => {
     const budget = budgets.get(r.id);
     if (!budget || r.chars <= budget.maxChars) return [];

@@ -8,7 +8,7 @@ import { renderLayoutBody } from "./editableLayout";
 
 export type KnowledgeBookletPage = { id: string; headline: string; body: string; imageUrl: string };
 export type KnowledgeBookletTheme = "fusion_chinese_garden" | "fusion_ink_mountains" | "fusion_coastal_lighthouse" | "fusion_glasshouse_garden" | "fusion_maple_bridge" | "fusion_snow_monastery";
-export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1111-v14-spread-fill-hires";
+export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1111-v15-page-plan";
 /** 信息图入版上限（排版服务按 data-pdf-max-dim 执行；与审校缩图派生件 2048 一致，未超上限的 JPEG 原样入版）。 */
 export const KNOWLEDGE_BOOKLET_IMAGE_MAX_DIM = 2048;
 export const KNOWLEDGE_BOOKLET_IMAGE_QUALITY = 0.85;
@@ -20,7 +20,11 @@ export const KNOWLEDGE_BOOKLET_FILL_THRESHOLD = 0.15;
 /** 跨页：宽图（宽高比 ≥ 1.6）按左右两半分排在相邻两页，各放大约 1.9 倍；中缝两侧各重叠 3%，缝上的字至少在一页完整可见。 */
 export const KNOWLEDGE_SPREAD_MIN_ASPECT = 1.6;
 export const KNOWLEDGE_SPREAD_OVERLAP = 0.03;
-export type KnowledgeBookletImageMode = "inline" | "auto";
+/**
+ * inline=只排图文同页；spread=已分到跨页名额：跨页两页放得下本章正文才跨页，放不下退回图文同页（不为跨页多开续页）；
+ * auto=旧规则（跨页最多比图文同页多 1 页即采用），仅供直接调用，发布流程用 spread/inline。
+ */
+export type KnowledgeBookletImageMode = "inline" | "auto" | "spread";
 export type KnowledgeBookletNext = { headline: string; imageUrl: string; chapterNo: number } | null;
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 export const KNOWLEDGE_BOOKLET_THEMES: Record<KnowledgeBookletTheme, { name: string; paper: string; ink: string; accent: string; line: string; mark: string }> = {
@@ -125,7 +129,7 @@ function ornament(theme: KnowledgeBookletTheme) {
 }
 
 /**
- * imageMode：inline=图文同页（旧版式）；auto=宽图按内容量在「图文同页」与「跨页大图」间自动选择（不比同页多出 1 页以上才用跨页）。
+ * imageMode：见 KnowledgeBookletImageMode。
  * next：本片段最后一章之后的下一章（标题、配图地址、章号），供页尾留白处放「下篇预告」；null 表示全书末章；不传则只用纹样补白。
  */
 export function buildKnowledgeBookletHtml(input: { title: string; pages: KnowledgeBookletPage[]; theme?: KnowledgeBookletTheme; readingPages?: number; fragment?: boolean; decoration?: KnowledgeDecoration; chapterOffset?: number; imageMode?: KnowledgeBookletImageMode; next?: KnowledgeBookletNext }) {
@@ -157,7 +161,7 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
   // 备选版式先放在隐藏区：图片照常载入（排版服务据此压缩/透传），分页脚本按内容量选定后才计入页面。
   const visible = 0.5 + KNOWLEDGE_SPREAD_OVERLAP, scale = (100 / visible).toFixed(4), shift = ((1 - visible) / visible * 100).toFixed(4);
   const spreadHalf = (p: KnowledgeBookletPage, i: number, side: "a" | "b") => `<article class="spread-folio" data-variant="spread-${side}" data-card-id="${escape(p.id)}" data-focus="${escape(p.headline)}">${run(side === "a" ? "图文知识 · 跨页上" : "图文知识 · 跨页下", no(i))}${side === "a" ? titleHeader(p, i) : `<p class="spread-cue"><span class="chapter-no">${no(i)}</span>${escape(p.headline)} <i>· 接上页右半幅</i></p>`}<figure class="spread-card spread-${side}"><img ${imageAttrs} style="display:block;max-width:none!important;width:${scale}%!important;height:auto!important;margin-left:${side === "a" ? "0" : `-${shift}%`}!important" src="${escape(p.imageUrl)}" alt="${escape(p.headline)}${side === "a" ? "（左半幅）" : "（右半幅）"}"></figure>${columns}${foot("图文知识")}</article>`;
-  const spreads = input.imageMode === "auto" ? input.pages.map((p,i)=>p.imageUrl ? spreadHalf(p,i,"a") + spreadHalf(p,i,"b") : "").join("") : "";
+  const spreads = input.imageMode === "auto" || input.imageMode === "spread" ? input.pages.map((p,i)=>p.imageUrl ? spreadHalf(p,i,"a") + spreadHalf(p,i,"b") : "").join("") : "";
   // 下篇预告：标题 + 下一章信息图的局部裁切条（同一图片地址、CSS 裁切，不生成新图）。片段内下一章取本册下一页，末章取 input.next。
   const nextOf = (i: number): KnowledgeBookletNext | undefined => i + 1 < input.pages.length ? { headline: input.pages[i + 1]!.headline, imageUrl: input.pages[i + 1]!.imageUrl, chapterNo: offset + i + 2 } : input.next;
   const previews = input.pages.map((p, i) => {
@@ -271,7 +275,7 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
         const lead=columnLimitOf(card),a=columnLimitOf(pair[0]),b=columnLimitOf(pair[1]);
         const rest=(first,t)=>t<=first?0:Math.ceil((t-first)/(2*capacity));
         const inlinePages=1+rest(2*lead,total*1.08),spreadPages=2+rest(2*(a+b),total*1.18);
-        modeOf.set(id,spreadPages<=inlinePages+1?'spread':'inline');
+        modeOf.set(id,(root.dataset.imageMode==='spread'?spreadPages<=2:spreadPages<=inlinePages+1)?'spread':'inline');
       }
       const placed=new Set();let queue=[];
       const flushQueue=()=>{while(queue.length)startLead(queue.shift());};
@@ -469,9 +473,9 @@ ${knowledgeDecorationCss(decoration)}
 ${design?knowledgeContentDesignCss(design):""}
 @media screen and (max-width:1656px){[data-ready="true"] .folio{zoom:calc((100vw - 32px) / 1600px)}}
 @page{size:1600px 2240px;margin:0}@page reading{size:1600px 2240px;margin:0}.reading-folio{page:reading}@media print{[data-booklet-root]+[data-booklet-root]{break-before:page}html,body{margin:0;background:var(--paper);print-color-adjust:exact;-webkit-print-color-adjust:exact}.folio{margin:0;zoom:1!important;box-shadow:none;break-after:page;break-inside:avoid}.folio:last-child{break-after:auto}.layout-error{display:block}.staging{display:none}}
-</style></head><body data-booklet-root data-book-title="${escape(input.title)}" class="theme-${theme}" data-decoration="${decorationClass}"${designAttribute} data-booklet-version="${KNOWLEDGE_BOOKLET_VERSION}">${images}<div class="image-variants" style="display:none">${spreads}${previews}</div><template id="filler-ornament">${fillerOrnament}</template>${artwork ? `<img class="decoration-resource" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" alt="" src="${artwork}">` : ""}<div id="reading-pages"></div><template id="reading-template"><article class="folio reading-folio">${run("正文阅读","文")}${readingHeader}<div class="reading-columns"><div class="reading-column"></div><div class="reading-column"></div></div>${foot("图文对照 · 正文阅读")}</article></template><div id="reading-source" class="staging">${units.map(u=>u.html).join("")}</div><script>${pagination}</script></body></html>`;
+</style></head><body data-booklet-root data-image-mode="${input.imageMode || "inline"}" data-book-title="${escape(input.title)}" class="theme-${theme}" data-decoration="${decorationClass}"${designAttribute} data-booklet-version="${KNOWLEDGE_BOOKLET_VERSION}">${images}<div class="image-variants" style="display:none">${spreads}${previews}</div><template id="filler-ornament">${fillerOrnament}</template>${artwork ? `<img class="decoration-resource" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" alt="" src="${artwork}">` : ""}<div id="reading-pages"></div><template id="reading-template"><article class="folio reading-folio">${run("正文阅读","文")}${readingHeader}<div class="reading-columns"><div class="reading-column"></div><div class="reading-column"></div></div>${foot("图文对照 · 正文阅读")}</article></template><div id="reading-source" class="staging">${units.map(u=>u.html).join("")}</div><script>${pagination}</script></body></html>`;
   if (!input.fragment) return html;
   const css = html.match(/<style>([\s\S]*?)<\/style>/)![1];
   const content = html.match(/<body[^>]*>([\s\S]*)<\/body>/)![1];
-  return `<section data-booklet-root data-book-title="${escape(input.title)}" class="theme-${theme}" data-decoration="${decorationClass}"${designAttribute} data-booklet-version="${KNOWLEDGE_BOOKLET_VERSION}"><style>${css}</style>${content}</section>`;
+  return `<section data-booklet-root data-image-mode="${input.imageMode || "inline"}" data-book-title="${escape(input.title)}" class="theme-${theme}" data-decoration="${decorationClass}"${designAttribute} data-booklet-version="${KNOWLEDGE_BOOKLET_VERSION}"><style>${css}</style>${content}</section>`;
 }

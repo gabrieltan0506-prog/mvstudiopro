@@ -1095,7 +1095,7 @@ describe('1111 失败处理：同通道重试 → 同模型换路由 → 换模�
     const out = JSON.parse((await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).text);
     expect(f.deps.fetch).toHaveBeenCalledTimes(9);
     expect(out.gateway).toBe('evolink');
-    expect(f.deps.sleep.mock.calls.map(c => c[0])).toEqual([2000, 5000, 10000, 2000, 5000, 10000]);
+    expect((f.deps.sleep.mock.calls as unknown as [number][]).map(c => c[0])).toEqual([2000, 5000, 10000, 2000, 5000, 10000]);
     expect(out.routeSummary).toEqual({ final: 'evolink', hop: 'deepseek:evolink', attempts: { 'glm:evolink': 4, 'glm:openrouter': 4, 'deepseek:evolink': 1 } });
     expect(f.storage.get('test/0/accepted.json').routeSummary.final).toBe('evolink');
     expect(f.logs.filter(l => l.includes('reason=rate_limited') && l.includes('next=switch_hop'))).toHaveLength(2);
@@ -1106,7 +1106,7 @@ describe('1111 失败处理：同通道重试 → 同模型换路由 → 换模�
     f.deps.fetch.mockResolvedValueOnce(status(429, { 'Retry-After': '7' })).mockResolvedValueOnce(status(429, { 'Retry-After': '600' })).mockImplementation(ok(f));
     const out = JSON.parse((await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).text);
     expect(out.gateway).toBe('glm-evolink-retry-2');
-    expect(f.deps.sleep.mock.calls.map(c => c[0])).toEqual([7000, 30000]);
+    expect((f.deps.sleep.mock.calls as unknown as [number][]).map(c => c[0])).toEqual([7000, 30000]);
   });
   it('断流：结果未知先归档不重复扣费，唯一一次补买直接换路由（同通道再试默认0次），再断流即判失败', async () => {
     const f = glm();
@@ -1136,7 +1136,7 @@ describe('1111 失败处理：同通道重试 → 同模型换路由 → 换模�
     f.deps.fetch.mockResolvedValueOnce(f.response(GLM_53_FLASHX_EVOLINK_MODEL, bad)).mockResolvedValueOnce(status(429)).mockImplementation(ok(f));
     const out = JSON.parse((await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).text);
     expect(out.gateway).toBe('glm-evolink-retry-2');
-    expect(f.deps.sleep.mock.calls.map(c => c[0])).toEqual([2000]);
+    expect((f.deps.sleep.mock.calls as unknown as [number][]).map(c => c[0])).toEqual([2000]);
     expect(f.logs.some(l => l.includes('reason=bad_output') && l.includes('next=same_hop_retry'))).toBe(true);
   });
   it('明确4xx拒绝不在同通道重试，直接换路由', async () => {
