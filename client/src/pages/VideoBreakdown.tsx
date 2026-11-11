@@ -2,6 +2,7 @@
  * 拉片 /lapian：上传视频 → 服务端逐段拆解 → 展示全片创作拆解与逐段复刻提示词。
  * 结果以服务端为准；本机只记最近一次 jobId，地址栏带 ?job= 可刷新续看。
  */
+import { NOTE_REMIX_PATH } from "@shared/premiumRemixRetired";
 import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { ChevronLeft, Clock, FileVideo, Loader2, Plus, RefreshCw, ScanLine, UploadCloud } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -247,7 +248,7 @@ export default function VideoBreakdownPage() {
             <a href="/" aria-label="返回首页" className="text-white/50 transition hover:text-white"><ChevronLeft className="h-5 w-5" /></a>
             <div className="min-w-0">
               <h1 className="text-lg font-black">拉片复刻爆款</h1>
-              <p className="truncate text-xs text-white/40">拆开一支爆款的钩子、镜头与口播，拿到可直接复刻的提示词</p>
+              <p className="truncate text-xs text-white/40">拆开一支爆款的钩子、镜头与口播，拿到可直接复刻的提示词 · <a href={NOTE_REMIX_PATH} className="text-white/60 underline-offset-4 hover:text-white hover:underline">复刻图文笔记</a></p>
             </div>
           </div>
           {user && jobId && view && !isVideoBreakdownActive(view) && (

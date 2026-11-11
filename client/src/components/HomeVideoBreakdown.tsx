@@ -1,5 +1,5 @@
 import { ArrowUpRight, ScanLine } from "lucide-react";
-import { LAPIAN_ENTRY_TITLE, LAPIAN_PATH } from "@shared/premiumRemixRetired";
+import { LAPIAN_ENTRY_TITLE, LAPIAN_PATH, NOTE_REMIX_ENTRY_TITLE, NOTE_REMIX_PATH } from "@shared/premiumRemixRetired";
 
 /**
  * 首页「拉片复刻爆款」唯一入口（站长 2026-11-11：原「爆款复刻」与「拉片」两个入口合并，分镜和出片统一走拉片）。
@@ -37,6 +37,12 @@ export default function HomeVideoBreakdown() {
           <ArrowUpRight size={17} aria-hidden="true" />
         </span>
       </a>
+      <p className="mt-4 text-sm text-[var(--hp-muted)]">
+        想复刻的是图文笔记？
+        <a href={NOTE_REMIX_PATH} className="ml-1 font-medium text-[var(--hp-accent)] underline-offset-4 hover:underline">
+          {NOTE_REMIX_ENTRY_TITLE}
+        </a>
+      </p>
     </section>
   );
 }
