@@ -3116,7 +3116,9 @@ export const appRouter = router({
 
   mvReviews: router({
     // Submit a new review for an MV (public, no auth required)
+    // 1111：保留匿名，按 IP 限流 + 全站日总量
     submit: publicProcedure
+      .use(withUsageLimit(USAGE_LIMITS.guestbookSubmit))
       .input(
         z.object({
           mvId: z.string().min(1).max(64),
@@ -3425,7 +3427,9 @@ export const appRouter = router({
      * 审查必须修（P0·跨租户）：所有接收外部 gcsUri 的入口都要校验归属——
      * 只认本人上传前缀，否则服务账号会替调用者代读任意对象。
      */
-    analyzeGrowthCampImages: publicProcedure
+    // 1111：须登录（原先内部判登录）+ 用量闸门；该入口不扣费，是否计价待站长定
+    analyzeGrowthCampImages: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.growthCampAnalyze))
       .input(
         z.object({
           images: z
@@ -3479,7 +3483,9 @@ export const appRouter = router({
         };
       }),
 
-    synthesizeGrowthCampAnalyses: publicProcedure
+    // 1111：须登录（原先内部判登录）+ 用量闸门；该入口不扣费，是否计价待站长定
+    synthesizeGrowthCampAnalyses: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.growthCampAnalyze))
       .input(
         z.object({
           parts: z
@@ -3531,7 +3537,9 @@ export const appRouter = router({
         });
       }),
 
-    analyzeVideo: publicProcedure
+    // 1111：须登录（原先内部判登录）+ 用量闸门；该入口不扣费，是否计价待站长定
+    analyzeVideo: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.growthCampAnalyze))
       .input(z.object({
         gcsUri: z.string().optional(),
         fileBase64: z.string().optional(),
@@ -11223,8 +11231,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 敏感写操作见 setGrowthRuntimeMode / setGrowthBurstControl（adminProcedure，含 supervisor）。
      * Debug 面板只读仍走本接口，但仅在 supervisor UI 挂载时请求；勿改为仅 admin 否则正式分析会挂。
      */
-    getGrowthSystemStatus: publicProcedure
-      .query(async () => {
+    // 1111 收口：原先匿名可读内部运维信息（报表邮箱、SMTP、凭证健康、lastError、磁盘）。
+    // 普通用户只在成长营分析中读「平台扶持活动」轮播（MVAnalysis uploadStage=analyzing）→ 须登录，非监管只回这一项
+    getGrowthSystemStatus: protectedProcedure
+      .query(async ({ ctx }) => {
         const smtp = getSmtpStatus();
         const snapshot = await readGrowthStatusSnapshot();
         const runtimeMeta = snapshot?.runtimeMeta || await readTrendRuntimeMeta();
@@ -11402,6 +11412,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           })
           .filter((item) => item.supportActivities.length || item.hotTopic);
 
+        if (!resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession)) {
+          // 只回轮播所需；其余字段前台均有可选链兜底（as never 让推断类型保持完整形状）
+          return { success: true, anomalies: [] as typeof anomalies, currentSupportActivities } as never;
+        }
         return {
           success: true,
           targetEmail,
@@ -11707,42 +11721,47 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
       }),
 
-    exportGrowthTrendsCsv: publicProcedure
+    /**
+     * 1111 收口：原先匿名可调，写盘导出整份趋势并发到调用方填的任意邮箱，响应还回显内部报表邮箱。
+     * → 仅管理员 / 监管；收件人只能是当前管理员账号自己的登记邮箱（入参 email 不再使用）；响应不带任何邮箱与服务器路径。
+     */
+    exportGrowthTrendsCsv: adminProcedure
+      .use(withUsageLimit(USAGE_LIMITS.contactNotify))
       .input(z.object({
+        /** @deprecated 1111 起忽略：收件人固定为当前管理员登记邮箱 */
         email: z.string().email().optional(),
-      }))
-      .mutation(async ({ input }) => {
+      }).optional())
+      .mutation(async ({ ctx }) => {
+        const targetEmail = String(ctx.user.email || "").trim();
+        if (!targetEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(targetEmail)) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "当前账号未登记邮箱，无法发送导出文件" });
+        }
         const exported = await exportTrendCollectionsCsv();
-        const targetEmail = input.email || String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim() || undefined;
         let emailed = false;
         let emailError: string | undefined;
-
-        if (targetEmail) {
-          try {
-            await sendMailWithAttachments({
-              to: targetEmail,
-              subject: "Creator Growth Camp 趋势抓取 CSV",
-              requireResend: true,
-              text: `最新趋势抓取 CSV 已按平台分别导出，共 ${exported.rows} 行。\n清单：${exported.manifestPath}`,
-              attachments: exported.files.map((file) => ({
-                filename: file.filePath.split("/").pop() || `${file.platform}-growth-trends.csv`,
-                path: file.filePath,
-                contentType: "text/csv",
-              })),
-            });
-            emailed = true;
-          } catch (error) {
-            emailError = error instanceof Error ? error.message : String(error);
-          }
+        try {
+          await sendMailWithAttachments({
+            to: targetEmail,
+            subject: "Creator Growth Camp 趋势抓取 CSV",
+            requireResend: true,
+            text: `最新趋势抓取 CSV 已按平台分别导出，共 ${exported.rows} 行。`,
+            attachments: exported.files.map((file) => ({
+              filename: file.filePath.split("/").pop() || `${file.platform}-growth-trends.csv`,
+              path: file.filePath,
+              contentType: "text/csv",
+            })),
+          });
+          emailed = true;
+        } catch (error) {
+          console.error("[exportGrowthTrendsCsv] 发送失败:", error);
+          emailError = "邮件发送失败，请稍后重试";
         }
 
         return {
           success: true,
-          manifestPath: exported.manifestPath,
-          files: exported.files,
           rows: exported.rows,
+          fileCount: exported.files.length,
           emailed,
-          targetEmail,
           emailError,
         };
       }),
@@ -13178,7 +13197,9 @@ ${sceneSummary}
 
   guestbook: router({
     // Submit a new guestbook message (public, no auth required)
+    // 1111：保留匿名（留言是访客入口），按 IP 限流 + 全站日总量；字段长度见下方 schema
     submit: publicProcedure
+      .use(withUsageLimit(USAGE_LIMITS.guestbookSubmit))
       .input(
         z.object({
           name: z.string().min(1, "请输入姓名").max(100),
@@ -13202,8 +13223,8 @@ ${sceneSummary}
         return { success: true, id };
       }),
 
-    // List recent guestbook messages (public)
-    list: publicProcedure
+    // 1111 收口：原先匿名返回所有留言人的邮箱 / 电话 / 公司 → 仅管理员 / 监管
+    list: adminProcedure
       .input(z.object({ limit: z.number().min(1).max(100).default(20) }).optional())
       .query(async ({ input }) => {
         const limit = input?.limit ?? 20;

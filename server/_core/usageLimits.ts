@@ -222,6 +222,8 @@ export const USAGE_LIMITS = {
   growthCampAnalyze: { name: "growth_camp_analyze", perMinute: 3, perDay: 30, globalPerDay: 1500 },
   /** 服务端直收上传（/api/upload 等）。 */
   serverUpload: { name: "server_upload", perMinute: 20, perDay: 300 },
+  /** 访客留言 / MV 评论（匿名可写，按 IP）。 */
+  guestbookSubmit: { name: "guestbook_submit", perMinute: 3, perDay: 20, globalPerDay: 1000 },
   /** 账号密码登录失败前的尝试（按 IP + 邮箱）。 */
   passwordLogin: { name: "password_login", perMinute: 10, perDay: 100 },
 } as const satisfies Record<string, UsageLimitSpec>;
