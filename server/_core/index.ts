@@ -1135,6 +1135,14 @@ async function startServer() {
             `[manhua-bgm] startup recovery: resumed=${bgmRecovery.resumed} completed=${bgmRecovery.completed} manual=${bgmRecovery.manual}`,
           );
         }
+        // 1111 拉片：中断单结单退款。延迟到判死阈值之后（重启前刚心跳过的单也能判到），之后每 30 分钟补扫一次（含待退款重试）。
+        const sweepVideoBreakdown = () => void import("../services/videoBreakdown")
+          .then(m => m.recoverInterruptedVideoBreakdownJobs())
+          .catch(error => console.warn("[videoBreakdown] recovery sweep failed:", error instanceof Error ? error.name : "error"));
+        setTimeout(() => {
+          sweepVideoBreakdown();
+          setInterval(sweepVideoBreakdown, 30 * 60_000).unref();
+        }, 6 * 60_000).unref();
         startJobWorker();
         startStaleJobsReaper();
       } catch (error) {

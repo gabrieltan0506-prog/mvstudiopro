@@ -399,6 +399,13 @@ export async function geminiAudioJsonWithFallback<T>(input: {
   /** 缺省 8192；转写类按 transcriptionMaxOutputTokens() 估算后传入。 */
   maxOutputTokens?: number;
   timeoutMs?: number;
+  /** 1111 拉片：主媒体为视频时的抽帧率（videoMetadata.fps，只发 Vertex；EvoLink 忽略该参数按上游缺省）。缺省不发。 */
+  videoFps?: number;
+  /**
+   * 1111 拉片：同一跳「写坏」（JSON 解析或 validate 不过）时，带原因在同通道修复重写一次；仍不过才切下一跳。
+   * 返回修复用的完整 prompt（媒体照旧附上）；缺省不修复（旧行为）。修复请求的 request/raw/decoded/parsed/rejected 另以 -repair 后缀永久落档。
+   */
+  repairPrompt?: (reasonZh: string, badText: string) => string;
 }): Promise<{ value: T; channel: GeminiAudioJsonChannel; model: string; failuresZh: string[]; payload: unknown }> {
   // 运行时同样拒收（JS 调用方绕过类型时）：没给 GCS 媒体就不发任何请求。
   const extraMedia = input.extraMedia ?? [];
@@ -417,38 +424,39 @@ export async function geminiAudioJsonWithFallback<T>(input: {
   const timeoutMs = input.timeoutMs ?? 180_000;
   const maxOutputTokens = input.maxOutputTokens ?? 8192;
   // fileUris[0] = 主媒体，其余按 extraMedia 顺序；只有 fileData 引用，不内联媒体。
+  const videoFps = typeof input.videoFps === "number" && Number.isFinite(input.videoFps) && input.videoFps > 0 ? input.videoFps : undefined;
   const mediaParts = (fileUris: string[]) => [
     ...(input.mediaLabel ? [{ text: input.mediaLabel }] : []),
-    { fileData: { mimeType: input.mimeType, fileUri: fileUris[0]! } },
+    { fileData: { mimeType: input.mimeType, fileUri: fileUris[0]! }, ...(videoFps ? { videoMetadata: { fps: videoFps } } : {}) },
     ...extraMedia.flatMap((m, i) => [...(m.label ? [{ text: m.label }] : []), { fileData: { mimeType: m.mimeType, fileUri: fileUris[i + 1]! } }]),
   ];
-  const nativeBody = (fileUris: string[]) => ({
+  const nativeBody = (fileUris: string[], prompt: string) => ({
     ...(input.systemInstruction ? { systemInstruction: { parts: [{ text: input.systemInstruction }] } } : {}),
-    contents: [{ role: "user", parts: [...mediaParts(fileUris), { text: input.prompt }] }],
+    contents: [{ role: "user", parts: [...mediaParts(fileUris), { text: prompt }] }],
     generationConfig: { maxOutputTokens, responseMimeType: "application/json", ...(input.audioTimestamp ? { audioTimestamp: true } : {}), ...(input.nativeSchema ? { responseSchema: input.nativeSchema } : {}), temperature },
   });
-  const native = async (url: string, headers: Record<string, string>, fileUris: string[]) => {
-    const response = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify(nativeBody(fileUris)) });
+  const native = async (url: string, headers: Record<string, string>, fileUris: string[], prompt: string) => {
+    const response = await fetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify(nativeBody(fileUris, prompt)) });
     const payload = await response.json().catch(() => null);
     return { status: response.status, ok: response.ok, payload, text: readNativeGeminiMessageText(payload) };
   };
-  const channels: Array<{ name: GeminiAudioJsonChannel; available: () => boolean; model: () => string; run: () => Promise<{ status: number; ok: boolean; payload: unknown; text: string }> }> = [
+  const channels: Array<{ name: GeminiAudioJsonChannel; available: () => boolean; model: () => string; run: (prompt: string) => Promise<{ status: number; ok: boolean; payload: unknown; text: string }> }> = [
     {
       name: "Vertex", available: isManhuaDramaVertexAudioAvailable, model: () => twoHopModel,
-      run: async () => {
+      run: async (prompt) => {
         const model = twoHopModel;
         const location = resolveManhuaAudioVertexLocation();
         const url = `${baseUrlForVertex(location)}/v1/projects/${encodeURIComponent(getVertexProjectId())}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
-        return native(url, (await getVertexAuthHeaders()) as Record<string, string>, [media.vertexFileUri, ...extraMedia.map(m => m.vertexFileUri)]);
+        return native(url, (await getVertexAuthHeaders()) as Record<string, string>, [media.vertexFileUri, ...extraMedia.map(m => m.vertexFileUri)], prompt);
       },
     },
     {
       name: "EvoLink", available: isManhuaDramaEvolinkAudioAvailable, model: () => twoHopModel,
-      run: async () => {
+      run: async (prompt) => {
         // 1110：EvoLink 上的 Gemini 读不了 gs://，也不收内联 base64 —— 只认签名 https（同模板学习 manhuaNativeDeepReadRunner）
         const fileUris = [media.evolinkFileUri(), ...extraMedia.map(m => m.evolinkFileUri())];
         if (fileUris.some(fileUri => !fileUri || !/^https:\/\//.test(fileUri))) throw new Error("EvoLink 只收签名 https 媒体链接（不收 gs:// 或内联音频）");
-        return native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(twoHopModel)}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, fileUris);
+        return native(`${resolveManhuaAudioEvolinkBaseUrl()}/v1beta/models/${encodeURIComponent(twoHopModel)}:generateContent`, { Authorization: `Bearer ${String(process.env.EVOLINK_API_KEY || "").trim()}` }, fileUris, prompt);
       },
     },
   ];
@@ -458,32 +466,40 @@ export async function geminiAudioJsonWithFallback<T>(input: {
     const slug = `hop-${i + 1}-${ch.name.toLowerCase().replace(/\s+/g, "_")}`;
     if (!ch.available()) { failures.push(`${ch.name}（未配置，跳过）`); await input.save(`${slug}-skipped`, { channel: ch.name, reasonZh: "未配置" }); continue; }
     const model = ch.model();
-    await input.save(`${slug}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt: input.prompt, mimeType: input.mimeType, mediaGsUri: media.vertexFileUri, ...(extraMedia.length ? { extraMedia: extraMedia.map(m => ({ mimeType: m.mimeType, gsUri: m.vertexFileUri, ...(m.label ? { label: m.label } : {}) })) } : {}), ...(input.systemInstruction ? { systemInstruction: input.systemInstruction } : {}), maxOutputTokens, temperature, timeoutMs });
-    let result: Awaited<ReturnType<typeof ch.run>>;
-    try {
-      result = await ch.run();
-    } catch (error) {
-      const reason = error instanceof Error && error.name === "TimeoutError" ? "请求超时" : `网络异常：${error instanceof Error ? error.message.slice(0, 160) : String(error)}`;
-      failures.push(`${ch.name}（${reason}）`);
-      await input.save(`${slug}-error`, { channel: ch.name, model, reasonZh: reason });
-      continue;
-    }
-    await input.save(`${slug}-raw`, { channel: ch.name, model, status: result.status, payload: result.payload });
-    if (!result.ok) { failures.push(`${ch.name}（HTTP ${result.status}）`); continue; }
-    const payloadReject = input.checkPayload?.(result.payload);
-    if (payloadReject) { failures.push(`${ch.name}（${payloadReject}）`); await input.save(`${slug}-rejected`, { channel: ch.name, model, reasonZh: payloadReject }); continue; }
-    if (!String(result.text || "").trim()) { failures.push(`${ch.name}（空回）`); await input.save(`${slug}-rejected`, { channel: ch.name, model, reasonZh: "空回" }); continue; }
-    try {
-      const decoded = JSON.parse(String(result.text || "").replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim());
-      await input.save(`${slug}-decoded`, decoded);
-      const value = input.validate(decoded);
-      await input.save(`${slug}-parsed`, value);
-      await input.save("hop-used", { channel: ch.name, model, hop: i + 1, failuresZh: failures });
-      return { value, channel: ch.name, model, failuresZh: failures, payload: result.payload };
-    } catch (error) {
-      const reason = `写坏：${error instanceof Error ? error.message.slice(0, 300) : String(error)}`;
-      failures.push(`${ch.name}（${reason}）`);
-      await input.save(`${slug}-rejected`, { channel: ch.name, model, reasonZh: reason, textHead: String(result.text || "").slice(0, 600) });
+    // 同一跳最多两次：首发；写坏且给了 repairPrompt 时带原因修复重写一次（-repair 证据）。
+    let prompt = input.prompt;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const tag = attempt === 0 ? slug : `${slug}-repair`;
+      await input.save(`${tag}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt, mimeType: input.mimeType, mediaGsUri: media.vertexFileUri, ...(extraMedia.length ? { extraMedia: extraMedia.map(m => ({ mimeType: m.mimeType, gsUri: m.vertexFileUri, ...(m.label ? { label: m.label } : {}) })) } : {}), ...(input.systemInstruction ? { systemInstruction: input.systemInstruction } : {}), ...(videoFps ? { videoFps } : {}), maxOutputTokens, temperature, timeoutMs });
+      let result: Awaited<ReturnType<typeof ch.run>>;
+      try {
+        result = await ch.run(prompt);
+      } catch (error) {
+        const reason = error instanceof Error && error.name === "TimeoutError" ? "请求超时" : `网络异常：${error instanceof Error ? error.message.slice(0, 160) : String(error)}`;
+        failures.push(`${ch.name}（${reason}）`);
+        await input.save(`${tag}-error`, { channel: ch.name, model, reasonZh: reason });
+        break;
+      }
+      await input.save(`${tag}-raw`, { channel: ch.name, model, status: result.status, payload: result.payload });
+      if (!result.ok) { failures.push(`${ch.name}（HTTP ${result.status}）`); break; }
+      const payloadReject = input.checkPayload?.(result.payload);
+      if (payloadReject) { failures.push(`${ch.name}（${payloadReject}）`); await input.save(`${tag}-rejected`, { channel: ch.name, model, reasonZh: payloadReject }); break; }
+      if (!String(result.text || "").trim()) { failures.push(`${ch.name}（空回）`); await input.save(`${tag}-rejected`, { channel: ch.name, model, reasonZh: "空回" }); break; }
+      try {
+        const decoded = JSON.parse(String(result.text || "").replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim());
+        await input.save(`${tag}-decoded`, decoded);
+        const value = input.validate(decoded);
+        await input.save(`${tag}-parsed`, value);
+        await input.save("hop-used", { channel: ch.name, model, hop: i + 1, ...(attempt ? { repaired: true } : {}), failuresZh: failures });
+        return { value, channel: ch.name, model, failuresZh: failures, payload: result.payload };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message.slice(0, 300) : String(error);
+        const reason = `写坏：${detail}`;
+        failures.push(`${ch.name}${attempt ? "·修复" : ""}（${reason}）`);
+        await input.save(`${tag}-rejected`, { channel: ch.name, model, reasonZh: reason, textHead: String(result.text || "").slice(0, 600) });
+        if (attempt === 0 && input.repairPrompt) { prompt = input.repairPrompt(detail, String(result.text || "")); continue; }
+        break;
+      }
     }
   }
   await input.save("hop-exhausted", { failuresZh: failures });
