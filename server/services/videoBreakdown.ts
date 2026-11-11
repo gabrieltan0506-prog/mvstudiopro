@@ -42,6 +42,8 @@ import {
   type VideoBreakdownJobView,
 } from "../../shared/videoBreakdown";
 import { resolveGeminiModel, type GeminiModelEnv } from "../../shared/geminiModelConfig.js";
+// 只复用模板学习声音轨「文本不写第二份时间」的剥离函数（只读引用，不改模板学习代码）。
+import { hasClockTextZh, stripClockTextZh } from "../../shared/manhuaNativeAudioAnalysis.js";
 
 // ─── 常量 ─────────────────────────────────────────────
 
@@ -185,11 +187,120 @@ export function normalizeVideoBreakdown(value: VideoBreakdown, durationSec: numb
   return { ...value, kind: "video_breakdown_v1", durationSec: duration, segments: fixed };
 }
 
-/** 两跳 validate：结构解析 → 确定性修正 → 结构复验 → 秒位硬校验；不过抛中文原因（作为「写坏」触发修复重写 / 切下一跳）。 */
-export function parseAndFixVideoBreakdown(raw: unknown, durationSec: number): VideoBreakdown {
-  const pre = raw && typeof raw === "object" && !Array.isArray(raw)
-    ? { ...(raw as Record<string, unknown>), kind: "video_breakdown_v1", durationSec: r1(durationSec) }
-    : raw;
+// ─── 可选三块（craft / sound / keyMoments）：坏了就丢 ─────────
+
+type Overview = VideoBreakdown["overview"];
+type KeyMoment = NonNullable<Overview["keyMoments"]>[number];
+const overviewShape = videoBreakdownSchema.shape.overview.shape;
+const craftSchema = overviewShape.craft.unwrap();
+const soundSchema = overviewShape.sound.unwrap();
+const keyMomentSchema = overviewShape.keyMoments.unwrap().element;
+export const VIDEO_BREAKDOWN_KEY_MOMENTS_PER_10S = 3;
+export const VIDEO_BREAKDOWN_KEY_MOMENTS_MAX = 60;
+/** 重点时刻条数上限：每 10 秒（不足 10 秒按 10 秒）至多 3 条，总数 ≤60。 */
+export function videoBreakdownKeyMomentLimit(durationSec: number): number {
+  return Math.min(VIDEO_BREAKDOWN_KEY_MOMENTS_MAX, Math.max(1, Math.ceil(durationSec / 10)) * VIDEO_BREAKDOWN_KEY_MOMENTS_PER_10S);
+}
+
+/** 丢弃记录：解析时收集，由任务层写日志与 optional-drops 证据（不进前台）。 */
+export type VideoBreakdownOptionalDrop = { block: "craft" | "sound" | "keyMoments"; reasonZh: string; count?: number };
+
+/** 声音块：文本里的钟表式秒位剥掉（数字秒位才是时间真源）；剥后为空或仍残留即整块丢。 */
+function sanitizeSound(value: unknown): { sound?: Overview["sound"]; reasonZh?: string } {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const v = { ...(value as Record<string, unknown>) };
+    for (const k of Object.keys(v)) if (typeof v[k] === "string") v[k] = stripClockTextZh(v[k] as string);
+    value = v;
+  }
+  const parsed = soundSchema.safeParse(value);
+  if (!parsed.success) return { reasonZh: formatZodIssues(parsed.error) };
+  if (Object.values(parsed.data).some(t => hasClockTextZh(t))) return { reasonZh: "声音描述残留文本秒位" };
+  return { sound: parsed.data };
+}
+
+/**
+ * 重点时刻逐条过滤：非对象 / 类型不在五类 / 秒位越界（<0 或 > 片长）/ 说明不合格 → 逐条丢；
+ * 秒位取 0.1 秒、按 (0.1 秒, 类型) 去重、按时间排序；
+ * 条数上限：每个 10 秒窗至多 3 条（窗内类型不重复者优先、其次按时间），总数超限时按各窗名次轮转保留（保覆盖面）。
+ */
+export function filterVideoBreakdownKeyMoments(raw: unknown, durationSec: number, drops: VideoBreakdownOptionalDrop[] = []): KeyMoment[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) { drops.push({ block: "keyMoments", reasonZh: "不是数组，整块丢弃" }); return undefined; }
+  let invalid = 0;
+  const seen = new Set<string>();
+  const valid: KeyMoment[] = [];
+  for (const item of raw) {
+    const parsed = keyMomentSchema.safeParse(item);
+    if (!parsed.success || parsed.data.atSec > durationSec) { invalid += 1; continue; }
+    const m = { ...parsed.data, atSec: r1(parsed.data.atSec) };
+    const key = `${Math.round(m.atSec * 10)}|${m.type}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    valid.push(m);
+  }
+  if (invalid) drops.push({ block: "keyMoments", reasonZh: "秒位越界或类型/说明非法，逐条丢弃", count: invalid });
+  valid.sort((a, b) => a.atSec - b.atSec);
+  const windows = new Map<number, KeyMoment[]>();
+  for (const m of valid) {
+    const w = Math.min(Math.floor(m.atSec / 10), Math.max(0, Math.ceil(durationSec / 10) - 1));
+    if (!windows.has(w)) windows.set(w, []);
+    windows.get(w)!.push(m);
+  }
+  const ranked: Array<{ m: KeyMoment; rank: number }> = [];
+  let overWindow = 0;
+  windows.forEach(list => {
+    const types = new Set<string>();
+    const distinct = list.filter(m => (types.has(m.type) ? false : (types.add(m.type), true)));
+    const rest = list.filter(m => !distinct.includes(m));
+    const ordered = [...distinct, ...rest];
+    overWindow += Math.max(0, ordered.length - VIDEO_BREAKDOWN_KEY_MOMENTS_PER_10S);
+    ordered.slice(0, VIDEO_BREAKDOWN_KEY_MOMENTS_PER_10S).forEach((m, rank) => ranked.push({ m, rank }));
+  });
+  if (overWindow) drops.push({ block: "keyMoments", reasonZh: `单个 10 秒窗超过 ${VIDEO_BREAKDOWN_KEY_MOMENTS_PER_10S} 条，超出部分丢弃`, count: overWindow });
+  const limit = videoBreakdownKeyMomentLimit(durationSec);
+  ranked.sort((a, b) => a.rank - b.rank || a.m.atSec - b.m.atSec);
+  if (ranked.length > limit) drops.push({ block: "keyMoments", reasonZh: `总数超过上限 ${limit} 条，超出部分丢弃`, count: ranked.length - limit });
+  const kept = ranked.slice(0, limit).map(x => x.m).sort((a, b) => a.atSec - b.atSec);
+  return kept.length ? kept : undefined;
+}
+
+/**
+ * 两跳 validate：先把三块可选内容摘出来单独校验（任一块不过只丢那一块、记 drops，绝不抛错、不触发修复重写或切跳），
+ * 主体：结构解析 → 确定性修正 → 结构复验 → 秒位硬校验；主体不过抛中文原因（作为「写坏」触发修复重写 / 切下一跳）。
+ * 无音轨（hasAudio=false）时 sound 一律丢。
+ */
+export function parseAndFixVideoBreakdown(
+  raw: unknown,
+  durationSec: number,
+  opts: { hasAudio?: boolean; drops?: VideoBreakdownOptionalDrop[] } = {},
+): VideoBreakdown {
+  const drops = opts.drops ?? [];
+  let optional: Partial<Pick<Overview, "craft" | "sound" | "keyMoments">> = {};
+  let pre = raw;
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const top: Record<string, unknown> = { ...(raw as Record<string, unknown>), kind: "video_breakdown_v1", durationSec: r1(durationSec) };
+    const ov = top.overview;
+    if (ov && typeof ov === "object" && !Array.isArray(ov)) {
+      const { craft, sound, keyMoments, ...rest } = ov as Record<string, unknown>;
+      top.overview = rest;
+      if (craft !== undefined && craft !== null) {
+        const parsed = craftSchema.safeParse(craft);
+        if (parsed.success) optional.craft = parsed.data;
+        else drops.push({ block: "craft", reasonZh: formatZodIssues(parsed.error) });
+      }
+      if (sound !== undefined && sound !== null) {
+        if (opts.hasAudio === false) drops.push({ block: "sound", reasonZh: "无音轨，声音块丢弃" });
+        else {
+          const r = sanitizeSound(sound);
+          if (r.sound) optional.sound = r.sound;
+          else drops.push({ block: "sound", reasonZh: r.reasonZh || "声音块不合格" });
+        }
+      }
+      const km = filterVideoBreakdownKeyMoments(keyMoments, r1(durationSec), drops);
+      if (km) optional.keyMoments = km;
+    }
+    pre = top;
+  }
   const parsed = videoBreakdownSchema.safeParse(pre);
   if (!parsed.success) throw new Error(formatZodIssues(parsed.error));
   const fixed = normalizeVideoBreakdown(parsed.data, durationSec);
@@ -197,14 +308,17 @@ export function parseAndFixVideoBreakdown(raw: unknown, durationSec: number): Vi
   if (!again.success) throw new Error(formatZodIssues(again.error));
   const issues = validateVideoBreakdownTiming(again.data);
   if (issues.length) throw new Error(`秒位校验不过：${issues.join("；")}`);
-  return again.data;
+  optional = Object.fromEntries(Object.entries(optional).filter(([, v]) => v !== undefined));
+  return { ...again.data, overview: { ...again.data.overview, ...optional } };
 }
 
 // ─── 提示词与原生 schema ───────────────────────────────
 
-export function buildVideoBreakdownPrompt(input: { durationSec: number }): string {
+export function buildVideoBreakdownPrompt(input: { durationSec: number; hasAudio?: boolean }): string {
   const d = r1(input.durationSec).toFixed(1);
-  return `你是资深拉片分析师与视频复刻提示词编写者。完整观看附件视频（含音轨，时长 ${d} 秒），产出一份「创作拆解」。全部用中文，只输出一个严格 JSON 对象，不要 markdown、不要多余文字。
+  const hasAudio = input.hasAudio !== false;
+  const kmLimit = videoBreakdownKeyMomentLimit(input.durationSec);
+  return `你是资深拉片分析师与视频复刻提示词编写者。完整观看附件视频（${hasAudio ? "含音轨" : "无音轨"}，时长 ${d} 秒），产出一份「创作拆解」。全部用中文，只输出一个严格 JSON 对象，不要 markdown、不要多余文字。
 
 【硬规矩】
 1. 只写画面与音轨里真实出现的内容；看不清就写「不可辨」，禁止编造画面里没有的人物、物件、台词、字幕、地点或情节。
@@ -225,8 +339,28 @@ export function buildVideoBreakdownPrompt(input: { durationSec: number }): strin
 - segments[].expression：narrativeIntent 叙事意图；technique 表现手法；rhythm 节奏与情绪；sound 声音（可选）。
 - segments[].recreatePrompt：subject 主体一致性（外形、服装、特征）；scene 场景与美术；timeline 镜头序列（秒锁）；camera 摄影机与构图；lightColor 光色与材质；rhythm 节奏与声音；constraints 生成约束（必须保留 / 必须避免）。
 
+【可借鉴的创作手法 overview.craft】
+- reusableTechniques：可复用手法 1–8 条，每条写清「用什么拍法 / 剪法 / 光色 / 调度，达到什么效果」，例如「低机位仰拍 + 缓推，把人物压迫感推到顶点」；禁止「画面精美」「节奏紧凑」这类空话。
+- rhythmStructure：节奏结构，用 → 串起各阶段（如「慢铺垫 → 快切堆叠 → 留白收尾」），只写阶段，不写时间。
+- emotionArc：情绪推进，用 → 串起各阶段。
+- styleTags：风格判词 1–24 个短标签（每个 ≤20 字），覆盖情绪、叙事特色、视觉、节奏、声音。
+${hasAudio ? `
+【声音拆解 overview.sound】（只依据音轨；不转录台词原文、不复述对白内容；文本里不写任何时间或秒位）
+- rhythm：声音节奏（疏密、起伏、停顿）。
+- mix：混音主次（对白 / 音乐 / 音效 / 环境谁在前、谁让位）。
+- reusableTechniques：可复用声音手法（用什么声音处理达到什么效果）。
+- generationElements：供配乐生成用的声音要素——乐器、音色、速度（BPM 或快慢）、关键音效。
+` : `
+【声音】本片无音轨，不要输出 overview.sound。
+`}
+【重点时刻 overview.keyMoments】看片时自报的抓帧秒位，下游按 atSec 抓一张原片画面：
+- atSec：全片绝对秒（0.0–${d}），可保留一位小数；取事件真正发生、画面清晰落定的那一帧，不取镜头区间中点，不按剧情顺序猜。
+- type：cut 切镜（景别或机位突变后落定的代表帧）／emotion 情绪（微表情峰值）／lighting 灯光（氛围切换前后）／story 剧情（推动因果的关键节点）／sound 声音（配乐转折、关键音效）${hasAudio ? "" : "（本片无音轨，不要用 sound）"}。
+- note：本帧可见的关键事件及其作用，≤60 字，只写画面里看得到的。
+- 宁缺毋滥：普通切镜、普通打光不算；平淡区间可以留空；不要为覆盖全片或凑齐五类而硬选。每 10 秒至多 3 条，全片至多 ${kmLimit} 条。
+
 【输出 JSON 形状】
-{"kind":"video_breakdown_v1","durationSec":${d},"summary":string,"overview":{"visualGenes":{"mediumAndArtStyle":string,"color":string,"lighting":string,"materialTexture":string,"composition":string,"camera":string},"recurringElements":[string],"mustKeep":[string]},"segments":[{"index":number,"startSec":number,"endSec":number,"title":string,"shots":[{"startSec":number,"endSec":number,"framing":string,"camera":string,"blockingAndFocus":string}],"expression":{"narrativeIntent":string,"technique":string,"rhythm":string,"sound"?:string},"recreatePrompt":{"subject":string,"scene":string,"timeline":[{"fromSec":number,"toSec":number,"text":string}],"camera":string,"lightColor":string,"rhythm":string,"constraints":string}}]}`;
+{"kind":"video_breakdown_v1","durationSec":${d},"summary":string,"overview":{"visualGenes":{"mediumAndArtStyle":string,"color":string,"lighting":string,"materialTexture":string,"composition":string,"camera":string},"recurringElements":[string],"mustKeep":[string],"craft":{"reusableTechniques":[string],"rhythmStructure":string,"emotionArc":string,"styleTags":[string]},${hasAudio ? `"sound":{"rhythm":string,"mix":string,"reusableTechniques":string,"generationElements":string},` : ""}"keyMoments":[{"atSec":number,"type":"cut"|"emotion"|"lighting"|"story"|"sound","note":string}]},"segments":[{"index":number,"startSec":number,"endSec":number,"title":string,"shots":[{"startSec":number,"endSec":number,"framing":string,"camera":string,"blockingAndFocus":string}],"expression":{"narrativeIntent":string,"technique":string,"rhythm":string,"sound"?:string},"recreatePrompt":{"subject":string,"scene":string,"timeline":[{"fromSec":number,"toSec":number,"text":string}],"camera":string,"lightColor":string,"rhythm":string,"constraints":string}}]}`;
 }
 
 /** 修复重写：同一视频再附一次，带上上次输出与不过原因，要求只修问题、完整重出。 */
@@ -247,8 +381,13 @@ const obj = (properties: Record<string, unknown>, optional: string[] = []) => ({
   required: Object.keys(properties).filter(k => !optional.includes(k)),
   propertyOrdering: Object.keys(properties),
 });
-/** Gemini 原生 responseSchema（与契约同形；长度与条数上限由 zod 复验）。 */
-export const VIDEO_BREAKDOWN_NATIVE_SCHEMA = obj({
+/**
+ * Gemini 原生 responseSchema（与契约同形；长度与条数上限由 zod 复验）。
+ * craft / keyMoments 进 required（借鉴模板学习 0830：不进 required 时输出预算紧张会被整块漏掉）；sound 只在有音轨时出现。
+ * 三块即便生成了，解析时仍单独校验、坏了就丢。
+ */
+export function buildVideoBreakdownNativeSchema(hasAudio: boolean) {
+  return obj({
   kind: { type: "STRING", enum: ["video_breakdown_v1"] },
   durationSec: N,
   summary: S,
@@ -256,6 +395,9 @@ export const VIDEO_BREAKDOWN_NATIVE_SCHEMA = obj({
     visualGenes: obj({ mediumAndArtStyle: S, color: S, lighting: S, materialTexture: S, composition: S, camera: S }),
     recurringElements: { type: "ARRAY", items: S },
     mustKeep: { type: "ARRAY", items: S },
+    craft: obj({ reusableTechniques: { type: "ARRAY", items: S }, rhythmStructure: S, emotionArc: S, styleTags: { type: "ARRAY", items: S } }),
+    ...(hasAudio ? { sound: obj({ rhythm: S, mix: S, reusableTechniques: S, generationElements: S }) } : {}),
+    keyMoments: { type: "ARRAY", items: obj({ atSec: N, type: { type: "STRING", enum: ["cut", "emotion", "lighting", "story", "sound"] }, note: S }) },
   }),
   segments: {
     type: "ARRAY",
@@ -277,7 +419,10 @@ export const VIDEO_BREAKDOWN_NATIVE_SCHEMA = obj({
       }),
     }),
   },
-});
+  });
+}
+/** 有音轨口径的原生 schema（兼容旧引用）。 */
+export const VIDEO_BREAKDOWN_NATIVE_SCHEMA = buildVideoBreakdownNativeSchema(true);
 
 // ─── 裁片 ──────────────────────────────────────────────
 
@@ -349,6 +494,42 @@ export async function cutVideoBreakdownClips(
   return outcomes;
 }
 
+/** 抽一帧：按 atSec 定位，长边 ≤1280（不放大），JPEG。 */
+export function buildKeyMomentFrameArgs(input: { src: string; atSec: number; out: string }) {
+  return ["-y", "-ss", input.atSec.toFixed(3), "-i", input.src, "-frames:v", "1", "-an",
+    "-vf", "scale=w='min(1280,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease",
+    "-q:v", "3", input.out];
+}
+
+/**
+ * 重点时刻逐条抽帧并上传；某条失败该条为 null（前台空串），不影响其余条与整单；任务被中止则整体抛出。
+ * 秒位贴片尾时往前让 0.05 秒，免得定位到最后一帧之后抽不出画面。
+ */
+export async function extractKeyMomentFrames(
+  input: { srcFile: string; dir: string; durationSec: number; moments: Array<{ atSec: number }>; objectNameFor: (index: number) => string; signal: AbortSignal },
+  deps: { run: MediaRun; uploadFile: (filePath: string, objectName: string) => Promise<void> },
+): Promise<Array<string | null>> {
+  const out: Array<string | null> = [];
+  for (let index = 0; index < input.moments.length; index += 1) {
+    input.signal.throwIfAborted();
+    const file = path.join(input.dir, `km-${String(index).padStart(3, "0")}.jpg`);
+    const atSec = Math.max(0, Math.min(input.moments[index]!.atSec, input.durationSec - 0.05));
+    try {
+      await deps.run("ffmpeg", buildKeyMomentFrameArgs({ src: input.srcFile, atSec, out: file }), input.signal);
+      if ((await stat(file)).size <= 0) throw new Error("empty_frame");
+      const objectName = input.objectNameFor(index);
+      await deps.uploadFile(file, objectName);
+      out.push(objectName);
+    } catch {
+      input.signal.throwIfAborted();
+      out.push(null);
+    } finally {
+      await rm(file, { force: true }).catch(() => {});
+    }
+  }
+  return out;
+}
+
 // ─── 状态与存储 ────────────────────────────────────────
 
 export type VideoBreakdownFailureCode = "too_long" | "unreadable" | "model_failed" | "interrupted" | "insufficient_credits" | "internal";
@@ -388,6 +569,8 @@ export type VideoBreakdownStoredResult = {
   /** 下标与 result.segments 对应；裁切失败为 null。 */
   clipObjectNames: Array<string | null>;
   clipModes: Array<"copy" | "reencode" | null>;
+  /** 下标与 result.overview.keyMoments 对应；抽帧失败为 null。旧结果无此字段。 */
+  keyMomentFrameObjectNames?: Array<string | null>;
   usedBy: { channel: string; model: string; failuresZh: string[] };
   completedAt: string;
 };
@@ -707,7 +890,9 @@ async function runVideoBreakdownJob(c: Ctx, state: VideoBreakdownState, mimeType
 
       await stage("watching");
       failure = "model_failed";
-      const basePrompt = buildVideoBreakdownPrompt({ durationSec });
+      const basePrompt = buildVideoBreakdownPrompt({ durationSec, hasAudio: probed.hasAudio });
+      // 三块可选内容的丢弃记录：每次 validate 重置，留下的是最终采用那一次的。
+      let drops: VideoBreakdownOptionalDrop[] = [];
       const save = async (name: string, value: unknown) => {
         const r = await c.d.createIfAbsent(`${prefix}/evidence/${name}.json`, json(value), "application/json");
         const m = /^hop-(\d)-([a-z_]+?)(-repair)?-(raw|error|rejected|parsed|skipped)$/.exec(name);
@@ -722,9 +907,9 @@ async function runVideoBreakdownJob(c: Ctx, state: VideoBreakdownState, mimeType
         mimeType,
         model,
         prompt: basePrompt,
-        nativeSchema: VIDEO_BREAKDOWN_NATIVE_SCHEMA,
+        nativeSchema: buildVideoBreakdownNativeSchema(probed.hasAudio),
         schemaName: "video_breakdown_v1",
-        validate: v => parseAndFixVideoBreakdown(v, durationSec),
+        validate: v => { drops = []; return parseAndFixVideoBreakdown(v, durationSec, { hasAudio: probed.hasAudio, drops }); },
         repairPrompt: (reason, badText) => buildVideoBreakdownRepairPrompt(basePrompt, reason, badText),
         save,
         temperature: VIDEO_BREAKDOWN_TEMPERATURE,
@@ -736,6 +921,10 @@ async function runVideoBreakdownJob(c: Ctx, state: VideoBreakdownState, mimeType
       await stage("segmenting");
       failure = "internal";
       const result = out.value;
+      if (drops.length) {
+        await c.d.createIfAbsent(`${prefix}/evidence/optional-drops.json`, json({ channel: out.channel, drops }), "application/json").catch(() => {});
+        for (const d of drops) c.d.log(`[videoBreakdown] optional_dropped job=${state.jobId} block=${d.block}${d.count ? ` count=${d.count}` : ""}`);
+      }
 
       await stage("cutting");
       const outcomes = await cutVideoBreakdownClips({
@@ -743,6 +932,15 @@ async function runVideoBreakdownJob(c: Ctx, state: VideoBreakdownState, mimeType
         objectNameFor: i => `${prefix}/clips/seg-${String(i).padStart(3, "0")}.mp4`,
       }, { run: c.d.run, uploadFile: (file, objectName) => c.d.uploadFile(file, objectName, "video/mp4", signal) });
       const failedClips = outcomes.filter(o => !o.objectName);
+      const moments = result.overview.keyMoments ?? [];
+      const frames = moments.length
+        ? await extractKeyMomentFrames({
+          srcFile, dir, durationSec, moments, signal,
+          objectNameFor: i => `${prefix}/frames/km-${String(i).padStart(3, "0")}.jpg`,
+        }, { run: c.d.run, uploadFile: (file, objectName) => c.d.uploadFile(file, objectName, "image/jpeg", signal) })
+        : [];
+      const failedFrames = frames.filter(f => !f).length;
+      if (failedFrames) c.d.log(`[videoBreakdown] frames_partial job=${state.jobId} failed=${failedFrames}/${frames.length}`);
       if (failedClips.length) c.d.log(`[videoBreakdown] clips_partial job=${state.jobId} failed=${failedClips.length}/${outcomes.length}`);
 
       const stored: VideoBreakdownStoredResult = {
@@ -752,6 +950,7 @@ async function runVideoBreakdownJob(c: Ctx, state: VideoBreakdownState, mimeType
         result,
         clipObjectNames: outcomes.map(o => o.objectName),
         clipModes: outcomes.map(o => (o.objectName ? o.mode ?? null : null)),
+        keyMomentFrameObjectNames: frames,
         usedBy: { channel: out.channel, model: out.model, failuresZh: out.failuresZh },
         completedAt: iso(c.d.now()),
       };
@@ -825,6 +1024,12 @@ export async function getVideoBreakdown(
     result: stored.result,
     sourceUrl: c.d.sign(stored.sourceGsUri, VIDEO_BREAKDOWN_SIGNED_URL_SECONDS),
     clipUrls: stored.clipObjectNames.map(name => (name ? c.d.sign(`gs://${c.bucket}/${name}`, VIDEO_BREAKDOWN_SIGNED_URL_SECONDS) : "")),
+    ...(stored.result.overview.keyMoments?.length
+      ? { keyMomentFrameUrls: stored.result.overview.keyMoments.map((_, i) => {
+        const name = stored.keyMomentFrameObjectNames?.[i];
+        return name ? c.d.sign(`gs://${c.bucket}/${name}`, VIDEO_BREAKDOWN_SIGNED_URL_SECONDS) : "";
+      }) }
+      : {}),
   };
 }
 

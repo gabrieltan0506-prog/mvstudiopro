@@ -17,6 +17,10 @@ import {
   buildVideoBreakdownUploadObjectName,
   createVideoBreakdownUpload,
   cutVideoBreakdownClips,
+  extractKeyMomentFrames,
+  filterVideoBreakdownKeyMoments,
+  videoBreakdownKeyMomentLimit,
+  type VideoBreakdownOptionalDrop,
   deriveVideoBreakdownJobId,
   getVideoBreakdown,
   normalizeVideoBreakdown,
@@ -131,10 +135,119 @@ describe("归属校验", () => {
   });
 });
 
+describe("可选三块：坏了就丢", () => {
+  const withOverview = (extra: Record<string, unknown>) => {
+    const v = videoBreakdownFixture() as any;
+    v.overview = { ...v.overview, ...extra };
+    return v;
+  };
+  const craft = { reusableTechniques: ["低机位仰拍 + 缓推，把压迫感推到顶点"], rhythmStructure: "慢铺垫 → 快切 → 留白", emotionArc: "平静 → 紧张 → 释然", styleTags: ["冷峻", "手持"] };
+  const sound = { rhythm: "前疏后密", mix: "音乐在前，环境声让位", reusableTechniques: "鼓点卡切镜", generationElements: "钢琴 + 弦乐铺底，90 BPM，风声音效" };
+
+  it("三块合格时原样保留", () => {
+    const drops: VideoBreakdownOptionalDrop[] = [];
+    const out = parseAndFixVideoBreakdown(withOverview({ craft, sound, keyMoments: [{ atSec: 12.34, type: "emotion", note: "回头微笑" }] }), 30, { hasAudio: true, drops });
+    expect(out.overview.craft).toEqual(craft);
+    expect(out.overview.sound).toEqual(sound);
+    expect(out.overview.keyMoments).toEqual([{ atSec: 12.3, type: "emotion", note: "回头微笑" }]);
+    expect(drops).toEqual([]);
+    expect(videoBreakdownSchema.parse(out)).toEqual(out);
+  });
+  it("craft 不合格：只丢 craft，主体与其他块照留，不抛错", () => {
+    const drops: VideoBreakdownOptionalDrop[] = [];
+    const out = parseAndFixVideoBreakdown(withOverview({ craft: { reusableTechniques: [], extra: 1 }, sound }), 30, { hasAudio: true, drops });
+    expect(out.overview.craft).toBeUndefined();
+    expect(out.overview.sound).toEqual(sound);
+    expect(out.segments).toHaveLength(3);
+    expect(drops.map(d => d.block)).toEqual(["craft"]);
+  });
+  it("sound：文本秒位剥掉后保留；缺字段整块丢；无音轨整块丢", () => {
+    const a = parseAndFixVideoBreakdown(withOverview({ sound: { ...sound, rhythm: "在01:23处鼓点进入，前疏后密" } }), 30, { hasAudio: true });
+    expect(a.overview.sound!.rhythm).not.toMatch(/\d:\d\d/);
+    expect(a.overview.sound!.rhythm).toContain("鼓点进入");
+    const drops: VideoBreakdownOptionalDrop[] = [];
+    const b = parseAndFixVideoBreakdown(withOverview({ sound: { rhythm: "x" } }), 30, { hasAudio: true, drops });
+    expect(b.overview.sound).toBeUndefined();
+    expect(drops[0]!.block).toBe("sound");
+    const drops2: VideoBreakdownOptionalDrop[] = [];
+    const c = parseAndFixVideoBreakdown(withOverview({ sound }), 30, { hasAudio: false, drops: drops2 });
+    expect(c.overview.sound).toBeUndefined();
+    expect(drops2[0]!.reasonZh).toContain("无音轨");
+  });
+  it("keyMoments：越界 / 类型非法 / 说明为空逐条丢，其余保留；非数组整块丢；都不抛错", () => {
+    const drops: VideoBreakdownOptionalDrop[] = [];
+    const out = parseAndFixVideoBreakdown(withOverview({ keyMoments: [
+      { atSec: 5, type: "cut", note: "切近景" },
+      { atSec: 31, type: "cut", note: "越界" },
+      { atSec: -1, type: "cut", note: "负秒" },
+      { atSec: 8, type: "audio", note: "类型非法" },
+      { atSec: 9, type: "story", note: "" },
+      { atSec: 5.04, type: "cut", note: "重复" },
+      "garbage",
+    ] }), 30, { drops });
+    expect(out.overview.keyMoments).toEqual([{ atSec: 5, type: "cut", note: "切近景" }]);
+    expect(drops).toEqual([expect.objectContaining({ block: "keyMoments", count: 5 })]);
+    const drops2: VideoBreakdownOptionalDrop[] = [];
+    const out2 = parseAndFixVideoBreakdown(withOverview({ keyMoments: { atSec: 1 } }), 30, { drops: drops2 });
+    expect(out2.overview.keyMoments).toBeUndefined();
+    expect(drops2[0]!.reasonZh).toContain("不是数组");
+  });
+  it("keyMoments 数量上限：每 10 秒至多 3 条（类型不重复者优先），总数 ≤60", () => {
+    expect(videoBreakdownKeyMomentLimit(30)).toBe(9);
+    expect(videoBreakdownKeyMomentLimit(5)).toBe(3);
+    expect(videoBreakdownKeyMomentLimit(300)).toBe(60);
+    const drops: VideoBreakdownOptionalDrop[] = [];
+    const win = filterVideoBreakdownKeyMoments([
+      { atSec: 1, type: "cut", note: "a" }, { atSec: 2, type: "cut", note: "b" }, { atSec: 3, type: "cut", note: "c" },
+      { atSec: 4, type: "emotion", note: "d" }, { atSec: 5, type: "story", note: "e" },
+    ], 30, drops)!;
+    expect(win.map(m => m.note)).toEqual(["a", "d", "e"]);
+    expect(drops[0]).toMatchObject({ count: 2 });
+    const types = ["cut", "emotion", "lighting", "story"] as const;
+    const many = Array.from({ length: 30 }, (_, w) => types.map((type, k) => ({ atSec: w * 10 + k * 2 + 0.5, type, note: `${w}-${k}` }))).flat();
+    const drops3: VideoBreakdownOptionalDrop[] = [];
+    const kept = filterVideoBreakdownKeyMoments(many, 300, drops3)!;
+    expect(kept).toHaveLength(60);
+    // 按名次轮转保留：每个 10 秒窗都留 2 条，覆盖全片
+    for (let w = 0; w < 30; w += 1) expect(kept.filter(m => Math.floor(m.atSec / 10) === w)).toHaveLength(2);
+    expect(kept.map(m => m.atSec)).toEqual([...kept.map(m => m.atSec)].sort((a, b) => a - b));
+    expect(drops3.map(d => d.count)).toEqual([30, 30]);
+  });
+  it("提示词：有音轨要声音块与配乐要素，无音轨不要；重点时刻上限随片长", () => {
+    const a = buildVideoBreakdownPrompt({ durationSec: 30, hasAudio: true });
+    expect(a).toContain("generationElements");
+    expect(a).toContain("不转录台词");
+    expect(a).toContain("全片至多 9 条");
+    expect(a).toContain("用什么拍法");
+    const b = buildVideoBreakdownPrompt({ durationSec: 300, hasAudio: false });
+    expect(b).toContain("不要输出 overview.sound");
+    expect(b).toContain("全片至多 60 条");
+  });
+});
+
+describe("重点时刻抽帧", () => {
+  it("长边 ≤1280 的 JPEG；失败条为 null，其余照常；贴片尾往前让", async () => {
+    const dir = await mkdtemp(path.join(tmp, "km-"));
+    const calls: string[][] = [];
+    const run: MediaRun = async (_cmd, args) => {
+      calls.push(args);
+      if (args[args.length - 1]!.endsWith("km-001.jpg")) throw new Error("ffmpeg exited 1");
+      await writeFile(args[args.length - 1]!, "jpg");
+      return { stdout: "", stderr: "" };
+    };
+    const out = await extractKeyMomentFrames({ srcFile: "src.mp4", dir, durationSec: 30, moments: [{ atSec: 3 }, { atSec: 10 }, { atSec: 30 }], objectNameFor: i => `f/${i}.jpg`, signal: new AbortController().signal },
+      { run, uploadFile: async () => {} });
+    expect(out).toEqual(["f/0.jpg", null, "f/2.jpg"]);
+    expect(calls[0]!.join(" ")).toContain("min(1280,iw)");
+    expect(calls[0]!.join(" ")).toContain("-frames:v 1");
+    expect(calls[2]![calls[2]!.indexOf("-ss") + 1]).toBe("29.950");
+  });
+});
+
 // ─── 任务流程（替身：内存 GCS / ffmpeg / 模型 / 账本） ──────────────
 
 type Harness = ReturnType<typeof harness>;
-function harness(opts: { duration?: number; callImpl?: VideoBreakdownDeps["call"]; failClip?: number; balance?: number } = {}) {
+function harness(opts: { duration?: number; callImpl?: VideoBreakdownDeps["call"]; failClip?: number; failFrame?: number; balance?: number } = {}) {
   const store = new Map<string, Buffer>();
   store.set(srcObject(), Buffer.from("video"));
   let now = Date.parse("2026-11-11T00:00:00Z");
@@ -152,6 +265,8 @@ function harness(opts: { duration?: number; callImpl?: VideoBreakdownDeps["call"
     const out = args[args.length - 1]!;
     const idx = Number(/seg-(\d+)\.mp4$/.exec(out)?.[1]);
     if (idx === opts.failClip) throw new Error("ffmpeg exited 1");
+    const km = /km-(\d+)\.jpg$/.exec(out);
+    if (km && Number(km[1]) === opts.failFrame) throw new Error("ffmpeg exited 1");
     await writeFile(out, "clip");
     return { stdout: "", stderr: "" };
   };
@@ -371,6 +486,25 @@ describe("开单 / 执行 / 查询", () => {
     expect(view.clipUrls![1]).toBe("");
     expect(view.clipUrls![2]).not.toBe("");
     expect(h.refund).not.toHaveBeenCalled();
+  });
+
+  it("重点时刻抽帧：get 现签到 keyMomentFrameUrls（下标对应），某帧失败为空串、整单照常成功", async () => {
+    const withMoments = { ...videoBreakdownFixture() } as any;
+    withMoments.overview = { ...withMoments.overview, keyMoments: [{ atSec: 2, type: "cut", note: "a" }, { atSec: 12, type: "emotion", note: "b" }, { atSec: 22, type: "story", note: "c" }], craft: { reusableTechniques: [] } };
+    const h = harness({ failFrame: 1, callImpl: (async (input: any) => ({ value: input.validate(withMoments), channel: "Vertex", model: input.model, failuresZh: [], payload: {} })) as any });
+    const jobId = await runToEnd(h);
+    const view = await getVideoBreakdown({ id: UID }, { jobId }, h.deps);
+    expect(view.status).toBe("succeeded");
+    expect(view.result!.overview.keyMoments).toHaveLength(3);
+    expect(view.result!.overview.craft).toBeUndefined();
+    expect(view.keyMomentFrameUrls).toHaveLength(3);
+    expect(view.keyMomentFrameUrls![0]).toContain("frames/km-000.jpg");
+    expect(view.keyMomentFrameUrls![0]).toContain("X-Goog-Expires=3600");
+    expect(view.keyMomentFrameUrls![1]).toBe("");
+    expect(view.keyMomentFrameUrls![2]).not.toBe("");
+    expect(h.store.has(`${videoBreakdownJobPrefix(UID, jobId)}/evidence/optional-drops.json`)).toBe(true);
+    expect(h.logs.some(l => l.includes("optional_dropped") && l.includes("block=craft"))).toBe(true);
+    expect(h.logs.some(l => l.includes("frames_partial"))).toBe(true);
   });
 
   it("进程重启：进行中单心跳超时 → get 标失败并退款；已完成单重启后照样读到", async () => {

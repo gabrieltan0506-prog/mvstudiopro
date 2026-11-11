@@ -116,6 +116,19 @@ describe("拉片看片两跳切换", () => {
     expect(saved.has("hop-1-vertex-repair-parsed")).toBe(true);
   });
 
+  it("只有可选块坏（craft 不合格、keyMoments 越界）：同跳直接采用，不修复重写、不切跳", async () => {
+    const v = videoBreakdownFixture() as any;
+    v.overview = { ...v.overview, craft: { styleTags: "x" }, keyMoments: [{ atSec: 99, type: "cut", note: "越界" }, { atSec: 3, type: "cut", note: "切近景" }] };
+    fetchMock.mockImplementation(async () => reply(JSON.stringify(v)));
+    const { promise, saved } = run();
+    const out = await promise;
+    expect(out.channel).toBe("Vertex");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(saved.has("hop-1-vertex-repair-request")).toBe(false);
+    expect(out.value.overview.craft).toBeUndefined();
+    expect(out.value.overview.keyMoments).toEqual([{ atSec: 3, type: "cut", note: "切近景" }]);
+  });
+
   it("两跳都失败：抛错并记 hop-exhausted", async () => {
     fetchMock.mockImplementation(async () => new Response("{}", { status: 500 }));
     const { promise, saved } = run();
