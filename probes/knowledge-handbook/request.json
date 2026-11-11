@@ -1,8 +1,7 @@
 {
-  "id": "ncc-1111c",
+  "id": "carbon-stream-1111a",
   "action": "start",
-  "script": "scripts/probe-novel-carbon-compare.mts",
+  "script": "scripts/probe-gemini-carbon-stream.mts",
   "machine": "7812595b294778",
-  "config": { "ownerUserId": 1, "source": "workspace", "baselinePreference": "auto", "runId": "ncc-1111c" },
-  "collect": ["compare.md"]
+  "config": { "channels": ["vertex", "gemini_api", "evolink"], "createRetries": 0 }
 }
