@@ -1,4 +1,4 @@
-import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
+import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeFinalRevisionChannel,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
 import { KNOWLEDGE_COMPRESSION_TARGET_RATIO, KNOWLEDGE_IMAGE_PRIMARY_INSTRUCTIONS, KNOWLEDGE_READING_CONTRACT, knowledgeBudgetInstructions, knowledgeBudgetOutputContract, knowledgeCompressionInstructions, knowledgeReadingCharBudgets, knowledgeReadingOverflow, type KnowledgeReadingOverflow } from "../../shared/knowledgeEditionBudget";
 import { KNOWLEDGE_VERIFICATION_POLICY, KNOWLEDGE_VERIFICATION_EDIT_POLICY, knowledgeVerificationTriggers, knowledgeVerificationQueries, knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
@@ -10,6 +10,7 @@ import sharp from "sharp";
 import { KNOWLEDGE_READING_INSTRUCTIONS, knowledgeReadingMarkdown } from "../../shared/knowledgePublicationLayout";
 import { dedupeKnowledgeBody, dedupeKnowledgeReading, knowledgeReadingParagraphKeys, type KnowledgeDedupeRemoval } from "../../shared/knowledgeReadingDedupe";
 import { invokeKnowledgePublicationRoutes, KNOWLEDGE_PUBLICATION_MODEL, type KnowledgeModelRequest, type KnowledgeRouteEvidence } from "./knowledgePublicationRoutes";
+import { KnowledgeTtlCache } from "./knowledgePublicationCache";
 import { KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES, KNOWLEDGE_PUBLICATION_ROUTE_ORDER, KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST } from "./knowledgeModelCapabilities";
 import {
   knowledgePublicationContextSchema,
@@ -493,14 +494,24 @@ async function readKnowledgeBatchReports(source:KnowledgeSource,digest:string,ro
   return results;
 }
 /** 收费前读取权威批次回执；后半本事实自动分组，每组复用原咨询计费合同。 */
+/**
+ * 全部批次完成后的工作计划只取决于账号、稿件、请求、原稿摘要与补图绑定（批次回执落盘后不再改变），
+ * 进程内短时复用：审校收尾、联网校验前、统稿与排版前的多次报价不再重复解析 34 张配图与读 34 份回执。
+ */
+const knowledgeWorkPlanCache = new KnowledgeTtlCache<{reviewBatches:number;totalBatches:number;consistencyKnown:true}>(64, 10 * 60_000);
 export async function knowledgePublicationWorkPlan(owner:number,document:Awaited<ReturnType<typeof loadKnowledgePublication>>,read=real.read){
   let {source}=document.publication;
   const {requestId}=document.publication, batches=knowledgeReviewBatches(source);
   if(document.publication.completedBatches<batches.length)return {reviewBatches:batches.length,totalBatches:batches.length+1,consistencyKnown:false};
-  source = await resolveKnowledgePublicationImages(owner, source, undefined, undefined, document.publication.imageReplacements);
-  const saved=await readKnowledgeBatchReports(source,knowledgeSourceDigest(source),knowledgeEvidencePrefix(owner,document.id,requestId),read);
-  const plan=planKnowledgeConsistency(saved.map(p=>p.report));
-  return {reviewBatches:batches.length,totalBatches:batches.length+plan.tasks.length,consistencyKnown:true};
+  const compute=async()=>{
+    source = await resolveKnowledgePublicationImages(owner, source, undefined, undefined, document.publication.imageReplacements);
+    const saved=await readKnowledgeBatchReports(source,knowledgeSourceDigest(source),knowledgeEvidencePrefix(owner,document.id,requestId),read);
+    const plan=planKnowledgeConsistency(saved.map(p=>p.report));
+    return {reviewBatches:batches.length,totalBatches:batches.length+plan.tasks.length,consistencyKnown:true as const};
+  };
+  if(read!==real.read)return compute();
+  const key=[owner,document.id,requestId,knowledgeSourceDigest(source),JSON.stringify(document.publication.imageReplacements||{})].join("|");
+  return {...await knowledgeWorkPlanCache.get(key,compute)};
 }
 
 /** 原始与解析回执分开永久保存；每批一个既有顾问事务，失败只补失败批次。 */
@@ -588,10 +599,13 @@ export async function reviewKnowledgePublication(
       const workerCount=knowledgeStageConcurrency(pages.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter+KNOWLEDGE_MODEL_CHANNEL_MAX.evolink});
       const settled=await Promise.allSettled(Array.from({length:workerCount},async(_,worker)=>{
         for(let index=worker;index<pages.length;index+=workerCount){
-          const channel=index%2===0?'openrouter':'evolink';
+          // 统稿首发通道与整册排版错开（见 knowledgeFinalRevisionChannel）；新稿按 parallel.family 走 GLM 优先三跳，
+          // 旧稿缺 family 维持原序。已存请求（request-N.json）恢复时以原请求为准，不改旧回执身份。
+          const channel=knowledgeFinalRevisionChannel(index);
           const page=pages[index],original=source.pages.find(p=>p.id===page.id)!;
           const pageSource={title:source.title,detailLevel:source.detailLevel,...(source.readingContract?{readingContract:source.readingContract}:{}),pages:[{...original,body:page.body,imageUrl:''}]};
           const request=buildKnowledgeFinalRevisionRequest(pageSource,digest,verifications,channel);
+          if(document.publication.parallel?.family)request.executionFamily=document.publication.parallel.family;
           const editPrefix=`${root}/final-markdown-${index}`;
           const raw=await getRaw(deps,editPrefix,context.attempt,digest,[],request);
           const edited=validateKnowledgeReview(parseRaw(raw,false),pageSource,digest).pages[0];

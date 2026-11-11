@@ -121,6 +121,13 @@
 - **OpenRouter DeepSeek 断流**：24 章 HTTP 200、流已开始后中途断，无 402/429/5xx；`max_tokens=393216` = OR DeepSeek 自营端点 `max_completion_tokens`（EvoLink 384000），非误配。出口：unknown 回执等迟到回执 ≤3 分钟 → 归档 `interrupted` → 切下一路补买一次（同章仅一次），`interrupted-repurchase.json` 永久记录；零调用恢复入口 `interruptionPolicy=hold` 不等不买。
 - **EvoLink image_url 400「invalid or missing」**：54 次，全部是 4K PNG 13–18MB 的 GCS V4 签名 URL（即签即发，非过期），同一 URL 先 400 后 200 共 14 个 → EvoLink 上游 60 秒内拉不完境外鉴权大图。修法：审校前生成 `<原图目录>/review-thumbs/<原文件名>.jpg`（长边≤2048、JPEG q85，永久保留）签 URL 送模型，原图 URL 只作回退；不用 base64（用户明确不接受）。image_url 400 不计四次上限，同通道只补 1 次，再 400 才切通道。
 - 两模型在 OpenRouter 模型表均 text+image；EvoLink DeepSeek 同样接受 image_url（22 章成功）。capabilities 表加 `vision` 标注，带图请求只在 vision 路由间切换，无 vision 路由时降级去图并标 `degraded=text-only`（当前四路均 vision，该分支未触发）。
+- **失败处理顺序（用户 2026-11-11）**：同通道重试 → 同模型换路由 → 换模型；跳 = 模型族×通道，每跳 4 个路由位（首发+3 次重试），不增加任何一跳的最多购买次数。实现与常量见 `knowledgePublicationRoutes.ts` 顶部注释。
+  - 限流（429/rate limit/资源耗尽）与临时错误（408/5xx）：同通道最多重试 3 次，退避 2s→5s→10s，有 Retry-After（头或错误体）按它，单次封顶 30s；用尽才换跳。前台批次调度「该通道并发减半」保留。
+  - 断流/超时/连接重置（结果未知）：先等迟到回执、归档 interrupted、不重复计费；同章因断流补买上限 1 次（`KNOWLEDGE_STREAM_BREAK_REPURCHASE_MAX`）。断流后同通道再试 `KNOWLEDGE_STREAM_BREAK_SAME_ROUTE_RETRIES=0`：唯一一次补买直接换路由（同通道断流再买大概率再断）；改成 3 须同时放宽补买上限。
+  - 写坏（2xx 但解析/合同不过）：不占上面 3 次；带原因修复重写一次，仍不过切下一跳（此前实际是同跳最多 4 次）。
+  - 非 429/408 的 4xx：不在同通道重试，直接切下一跳；内容审核拒绝终止；image_url 400 与 key limit 按各自既有规则。
+  - 每次重试/切换一行 `[knowledgeRoute]`（批次、原因、第几次、下一步；无正文/地址/密钥）；accepted.json 与回包 `routeSummary` 记最终跳与各跳次数。
+  - 整条链总时长上限约 10 分钟（`KNOWLEDGE_ROUTE_CHAIN_BUDGET_MS`）：到上限不再新购，判本批失败交「只重试未完成部分」；等迟到回执中到上限则保留 unknown 不提前归档。
 
 ### Wan 3.0 / HappyHorse 1.1 三通道（PR #1308，2026-08-25）
 - **Wan 3.0**：顺序固定为 OpenRouter → EvoLink → WaveSpeed。带参考音频/视频时，OpenRouter 在真单证明字段确实被消费前默认无资格，实际从 EvoLink 开始；明确 4xx 才允许换下一家，网络断、5xx 或 2xx 缺任务号一律转人工对账，不退款、不自动重提。

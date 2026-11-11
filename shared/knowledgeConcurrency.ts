@@ -128,3 +128,12 @@ export async function knowledgePooled(count: number, worker: (index: number) => 
   });
   if (errors.length) throw errors.sort((a, b) => a.index - b.index)[0]!.error;
 }
+
+/**
+ * 统稿与整册排版的首发通道（1111）：两步严格先后执行（排版绑定统稿后的正文摘要 layoutSourceDigest，不能并行），
+ * 各自在两通道间交替铺满；统稿从 EvoLink 起（审校链 EvoLink 优先），排版从 OpenRouter 起，
+ * 使统稿收尾刚压满的通道不是排版同位批次的首发通道。首发只决定第一跳，后续仍按
+ * 「同模型族本通道 → 另一通道 → 另一模型族」覆盖全部三跳（knowledgePublicationRoutesForChannel）。
+ */
+export const knowledgeFinalRevisionChannel = (index: number): KnowledgeModelChannel => index % 2 === 0 ? "evolink" : "openrouter";
+export const knowledgeLayoutBatchChannel = (index: number): KnowledgeModelChannel => index % 2 === 0 ? "openrouter" : "evolink";

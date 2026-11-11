@@ -1,4 +1,4 @@
-import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
+import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeLayoutBatchChannel,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
 import { knowledgeBudgetInstructions, knowledgeReadingCharBudgets } from "../../shared/knowledgeEditionBudget";
 import {KNOWLEDGE_SUPPLEMENT_REFINEMENT_INSTRUCTIONS} from '../../shared/knowledgeSupplementRefinement';
 import { KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST } from "./knowledgeModelCapabilities";
@@ -88,7 +88,7 @@ const store = {
   read:async(name:string)=>{try{return JSON.parse((await downloadGcsObjectVersioned({gcsUri:`gs://${getGcsBucketName()}/${name}`})).buffer.toString("utf8"));}catch(e){if(e instanceof Error && e.message === "gcs_stat_failed:404")return null;throw e;}},
   save:async(name:string,data:unknown)=>{await uploadBufferToGcs({objectName:name,buffer:Buffer.from(JSON.stringify(data)),contentType:"application/json"});},
 };
-const real = { ...store, book: async (owner:number,id:string)=>(await import("./knowledgeBookLayout")).loadKnowledgeBookLayoutInput(owner,id), load: loadKnowledgePublication, image:readKnowledgeImage, post:invokeKnowledgePublicationRoutes,
+const real = { ...store, book: async (owner:number,id:string)=>(await import("./knowledgeBookLayout")).loadKnowledgeBookLayoutInput(owner,id,{},{cache:true}), load: loadKnowledgePublication, image:readKnowledgeImage, post:invokeKnowledgePublicationRoutes,
   authorize:async(owner:number,uri:string)=>{
     const sources=await loadSucceededJobOutputSources(String(owner),getGcsBucketName());
     const canonical=await resolveRegisteredPostProdMediaSource({userId:String(owner),source:uri},undefined,{jobObjects:sources.objects,jobUrls:sources.urls});
@@ -164,7 +164,10 @@ async function reviewKnowledgeLayoutBatches(
         const indexes=groups[index], batchBook={...book,pages:indexes.map(i=>book.pages[i])};
         const batchPrefix=`${prefix}/batch-${index}`;
         const request=buildKnowledgeConversationRequest(doc,context,[],book,indexes);
-        request.executionChannel=index%2===0?"openrouter":"evolink";
+        // 排版首发通道与统稿错开（见 knowledgeLayoutBatchChannel）；新稿按 parallel.family 走 GLM 优先三跳。
+        // 已存 input.json 的批次恢复时沿用原请求，不改旧回执身份。
+        request.executionChannel=knowledgeLayoutBatchChannel(index);
+        if(doc.publication?.parallel?.family)request.executionFamily=doc.publication.parallel.family;
         // 展示正文同样服从生图前确定的篇幅预算，排版不得把已压缩的内文重新扩写。
         const pubSource=doc.publication?.source;
         if(pubSource?.detailLevel&&pubSource.reviewBatchMode==="ready-images"){
