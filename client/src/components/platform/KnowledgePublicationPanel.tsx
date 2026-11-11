@@ -173,7 +173,7 @@ export default function KnowledgePublicationPanel({
         setStage({step:KNOWLEDGE_PUBLICATION_STAGES.length});
         onPagination?.(latest.current,{imagePages:result.imagePages,totalPages:result.totalPages});
         setMessage(`排版完成：图片 ${result.imagePages} 页｜手册共 ${result.totalPages} 页。可直接下载。`);
-      }else setMessage(result.pdfError||"HTML 已生成并保存，可继续生成 PDF。");
+      }else setMessage(result.pdfError||"排版稿已保存，可继续生成 PDF。");
     },()=>{
       try{sessionStorage.removeItem(exportMarker(doc.id));}catch{/* 忽略 */}
       if(!cancelled&&alive.current)setMessage("刷新前的 PDF 生成未能续看，已完成部分已保存；请重新点击生成。");
@@ -575,7 +575,7 @@ export default function KnowledgePublicationPanel({
         const result=await pptxExporter.mutateAsync({documentId:next.id,expectedGeneration:saved.generation});
         setPptxFile(result);setMessage(`PPTX已生成，共${result.slides}页，可下载后编辑。`);
       }else{
-        setMessage("确认稿已保存，正在自动排版并生成 HTML 和 PDF…");
+        setMessage("确认稿已保存，正在自动排版并生成 PDF…");
         setStage({step:4});setExporting(true);
         let result:Awaited<ReturnType<typeof runExport>>;
         try{result=await runExport(next.id,saved.generation);}
@@ -586,7 +586,7 @@ export default function KnowledgePublicationPanel({
         if (result.pdfUrl && result.totalPages && result.imagePages !== undefined) {
           onPagination?.(next, { imagePages: result.imagePages, totalPages: result.totalPages });
           setMessage(`排版完成：图片 ${result.imagePages} 页｜手册共 ${result.totalPages} 页。可直接下载。`);
-        } else setMessage(result.pdfError || "HTML 和 PDF 已生成并保存，可直接下载。");
+        } else setMessage(result.pdfError || "PDF 已生成并保存，可直接下载。");
       }
     } catch (e) {
       console.warn("[knowledgePublication] 导出失败原因：", String((e as Error)?.message ?? e).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 800));
@@ -856,7 +856,7 @@ export default function KnowledgePublicationPanel({
               {busy
                 ? "正在生成…"
                 : pub.confirmedManuscript === pub.manuscript
-                  ? "下载当前版 HTML 和 PDF"
+                  ? "生成并下载当前版 PDF"
                   : "确认生成图文知识手册"}
             </button>
 
@@ -864,13 +864,6 @@ export default function KnowledgePublicationPanel({
             {files?.billing&&<p className="text-sm">纯内文 {files.billing.readingPages} 页 · 本稿已结算 {files.billing.chargedCredits} 积分{files.billing.alreadyCharged?"，本次未重复扣费":""} · 顾问不另收费</p>}
             {files && (
               <>
-                <a
-                  className={button}
-                  href={flyDownloadUrl(files.htmlUrl)}
-                  download
-                >
-                  下载 HTML
-                </a>
                 {files.pdfUrl && (
                   <a
                     className={button}

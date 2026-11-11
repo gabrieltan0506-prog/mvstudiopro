@@ -9,6 +9,7 @@ import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import KnowledgePublicationPanel from "./KnowledgePublicationPanel";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc";
+import { flyDownloadUrl } from "@/lib/gcsTransfer";
 import {
   compactLayoutCache,
   compactLayoutCacheKey,
@@ -105,6 +106,42 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
   const preparedRun = useRef<{ documentId: string; presentationCredits?:number; preparePresentation?:boolean; waitForReading?:()=>Promise<void>; waitForImages: (ids: string[]) => Promise<void> } | null>(null);
   const utils = trpc.useUtils();
   const saveMutation = trpc.editableLayout.save.useMutation();
+  const finishedExportStarter = trpc.editableLayout.startExportPublication.useMutation();
+  const [finishedDownloading, setFinishedDownloading] = useState("");
+  /**
+   * 已成册的手册直接取云端成品 PDF（1111）：不重新整理、不重新生图、不重复扣费。
+   * 此前回到页面后找不到成品入口，只能再点「生成」，等于重走一遍生图。
+   */
+  const downloadFinished = async (documentId: string) => {
+    if (finishedDownloading) return;
+    setFinishedDownloading(documentId); setError(""); setMessage("正在取云端成品 PDF…");
+    try {
+      const generation = current.current.generation;
+      let task: { status: string; taskId: string; result?: unknown; error?: string } = await finishedExportStarter.mutateAsync({ documentId, expectedGeneration: generation });
+      let reissued = 0, misses = 0;
+      const deadline = Date.now() + 30 * 60_000;
+      while (task.status === "running" || task.status === "missing") {
+        if (Date.now() > deadline) throw Error("成品 PDF 读取时间过长，请稍后再试");
+        if (task.status === "missing") {
+          if (++reissued > 3) throw Error("成品 PDF 暂时无法读取，请稍后再试");
+          task = await finishedExportStarter.mutateAsync({ documentId, expectedGeneration: generation });
+          continue;
+        }
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        try { task = await utils.client.editableLayout.exportPublicationStatus.query({ taskId: task.taskId }); misses = 0; }
+        catch (e) { if (++misses > 5) throw e; }
+      }
+      if (task.status === "failed") throw Error(task.error || "成品 PDF 暂时无法读取，请稍后再试");
+      const result = task.result as { pdfUrl?: string; totalPages?: number; pdfError?: string };
+      if (!result?.pdfUrl) throw Error(result?.pdfError || "这份手册还没有成品 PDF，请打开稿件后生成");
+      const link = document.createElement("a");
+      link.href = flyDownloadUrl(result.pdfUrl); link.download = ""; link.rel = "noopener";
+      document.body.appendChild(link); link.click(); link.remove();
+      setMessage(`已开始下载成品 PDF${result.totalPages ? ` · 共 ${result.totalPages} 页` : ""}；未重新生图`);
+    } catch (e) {
+      setMessage(""); setError(e instanceof Error ? e.message : "成品 PDF 下载失败");
+    } finally { setFinishedDownloading(""); }
+  };
   const install = (next: Cache) => {
     current.current = next;
     setState(next);
@@ -527,6 +564,32 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
         </button>
       </div>
       {readingView && <div className="mt-3">{readingView}</div>}
+      {(() => {
+        const finished = state.library.documents
+          .filter(d => d.publication?.review && d.publication.confirmedManuscript && d.publication.confirmedManuscript === d.publication.manuscript)
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5);
+        if (!finished.length) return null;
+        return (
+          <div className="mt-3 rounded-xl border border-[#d7e6c4]/25 bg-[rgba(215,230,196,0.06)] p-3" aria-label="已成册手册">
+            <p className="text-sm font-semibold text-[#d7e6c4]">已成册的手册 · 直接取云端成品，不重新生图、不重复扣费</p>
+            <ul className="mt-2 space-y-2">
+              {finished.map(d => (
+                <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate">{d.title} <span className="text-xs text-gray-400">· {new Date(d.updatedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {d.pages.length} 章</span></span>
+                  <span className="flex gap-2">
+                    <button type="button" className={button} disabled={Boolean(finishedDownloading) || state.dirty} onClick={() => void downloadFinished(d.id)}>
+                      {finishedDownloading === d.id ? "正在取成品…" : "下载成品 PDF"}
+                    </button>
+                    <button type="button" className={button} disabled={busy} onClick={() => { install({ ...current.current, activeId: d.id }); setPageIndex(0); setOpen(true); }}>打开稿件</button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {!open && message && <p role="status" className="mt-2 text-xs text-emerald-200">{message}</p>}
+            {!open && error && <p role="alert" className="mt-2 text-xs text-rose-200">{sanitizePlatformUserMessage(error)}</p>}
+          </div>
+        );
+      })()}
       {open && (
         <div className="mt-4 space-y-4">
           {!ready && <p role="status">正在读取稿件…</p>}
@@ -599,7 +662,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
                   <option value="">不引用旧稿；选择稿件后恢复</option>
                   {state.library.documents.map(d => (
                     <option key={d.id} value={d.id}>
-                      {d.title}
+                      {d.title} · {new Date(d.updatedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}{d.publication?.review && d.publication.confirmedManuscript === d.publication.manuscript ? " · 已成册" : ""}
                     </option>
                   ))}
                 </select>
