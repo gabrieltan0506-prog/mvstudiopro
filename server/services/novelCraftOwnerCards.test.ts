@@ -90,15 +90,9 @@ describe("站长资料技法条目", () => {
       expect(c.body).not.toContain("待核");
     }
   });
-  it("来源未校正：版本常量 + 每条 provisional，原有条目不带；provisional 不进索引与检索提示词", () => {
-    expect(NOVEL_CRAFT_OWNER_SOURCE).toEqual({ date: "2026-11-11", status: "unverified" });
-    for (const c of NOVEL_CRAFT_OWNER_CARDS) expect(c.provisional).toBe(true);
-    for (const c of NOVEL_CRAFT_BASE_CARDS) expect(c.provisional).toBeUndefined();
-    const idxText = JSON.stringify(novelCraftIndex());
-    expect(idxText).not.toContain("provisional");
-    const input = { ...base, stage: "outline" as const };
-    const prompt = buildNovelCraftRetrievalPrompt(buildNovelCraftTaskBrief(input), buildNovelCraftUnifiedIndex(input, fourCards));
-    expect(prompt).not.toMatch(/provisional|unverified|未校正/);
+  it("来源常量只保留日期；条目不带内部标记字段", () => {
+    expect(NOVEL_CRAFT_OWNER_SOURCE).toEqual({ date: "2026-11-11" });
+    for (const c of NOVEL_CRAFT_CARDS) expect(Object.keys(c)).not.toContain("provisional");
   });
   it("原有 18 条 id 与顺序不变，新条目接在后面", () => {
     expect(NOVEL_CRAFT_BASE_CARDS.map(c => c.id)).toEqual(BASE_IDS);

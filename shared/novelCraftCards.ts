@@ -17,8 +17,6 @@ export type NovelCraftCard = {
   firstEpisodesOnly?: boolean;
   /** 单条不超过 900 字。 */
   body: string;
-  /** 内部标记：来源资料尚未校正（不进索引、不给模型看）。 */
-  provisional?: boolean;
 };
 
 import { NOVEL_CRAFT_OWNER_CARDS } from "./novelCraftCardsOwner";
