@@ -1,5 +1,8 @@
 {
-  "id": "ncc-1111b",
-  "action": "status",
-  "machine": "7812595b294778"
+  "id": "ncc-1111c",
+  "action": "start",
+  "script": "scripts/probe-novel-carbon-compare.mts",
+  "machine": "7812595b294778",
+  "config": { "ownerUserId": 1, "source": "workspace", "baselinePreference": "auto", "runId": "ncc-1111c" },
+  "collect": ["compare.md"]
 }
