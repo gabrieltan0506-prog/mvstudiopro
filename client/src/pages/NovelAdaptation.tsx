@@ -1579,7 +1579,7 @@ function NovelWorkspaceEditor({
             <option value="">沿用创作线路</option>
             {NOVEL_ADVISOR_TIER_OPTIONS.map(option => (
               <option key={option.value} value={option.value}>
-                {option.label}
+                {option.label} · {option.referenceCredits} 积分/次
               </option>
             ))}
           </select>
