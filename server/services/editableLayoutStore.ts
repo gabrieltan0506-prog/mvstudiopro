@@ -27,7 +27,7 @@ type StoreDeps = {
   /** 提供时启用按 generation 的进程内缓存：先取元数据，同版本不再下载整库。 */
   stat?: (params: { gcsUri: string }) => Promise<{ generation: string }>;
 };
-const real: StoreDeps = { read: downloadGcsObjectVersioned, write: uploadBufferToGcs, stat: statGcsObjectVersion };
+const real: StoreDeps = { read: params => downloadGcsObjectVersioned(params), write: params => uploadBufferToGcs(params), stat: params => statGcsObjectVersion(params) };
 /**
  * 云稿整库原文缓存（键 = 对象地址 + generation，地址本身按账号区分，不会跨用户）。
  * 1110 实测本机库 330 万字符：报价、排版输入、预览、导出、每次保存前的旧版核对都要整库下载一次。
@@ -136,7 +136,7 @@ export async function readLayoutLibrary(
   }
 }
 /** 只取当前云稿 generation（元数据请求，不下载整库）；不存在为 "0"。供缓存命中前核对版本未变。 */
-export async function currentLayoutGeneration(owner: number, stat: NonNullable<StoreDeps["stat"]> = statGcsObjectVersion) {
+export async function currentLayoutGeneration(owner: number, stat: NonNullable<StoreDeps["stat"]> = params => statGcsObjectVersion(params)) {
   try { return (await stat({ gcsUri: `gs://${getGcsBucketName()}/${objectName(owner)}` })).generation; }
   catch (e) {
     if (e instanceof Error && e.message === "gcs_stat_failed:404") return "0";
