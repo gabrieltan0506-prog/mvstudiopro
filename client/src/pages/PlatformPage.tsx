@@ -147,6 +147,7 @@ import {
   type PlatformVisualReportPendingJobV1,
 } from "@/lib/platformVisualReportPersist";
 import {
+  purgeShortlistTitlesPersist,
   readShortlistExpandPersist,
   writeShortlistExpandPersist,
 } from "@/lib/platformShortlistExpandPersist";
@@ -4533,7 +4534,12 @@ export default function PlatformPage() {
     ? platformContent!.contentBlueprints.length
     : 0;
 
-  // 登录后恢复：选题 + 已扩写文案（刷新/误切 Tab 不丢烧积分结果）
+  // 站长 2026-11-11：生成过的选题标题刷新即删。开页先一次性抹掉旧版本存下的候选标题（不分账号、不碰正文与在途任务）。
+  useEffect(() => {
+    purgeShortlistTitlesPersist();
+  }, []);
+
+  // 登录后恢复：已扩写文案与在途扩写任务（选题候选标题只留在本次会话内存，刷新不回填）
   useEffect(() => {
     if (!workbenchUserKey) return;
     if (shortlistExpandRestoredForKeyRef.current === workbenchUserKey) return;
@@ -4546,9 +4552,7 @@ export default function PlatformPage() {
     if (saved.viralPreferences) { setViralPlatforms(saved.viralPreferences.platforms); setXhsFormats(saved.viralPreferences.formats); }
     setCoverReferencePhotoMap(saved.referencePhotos?.byScene || {});
     setGlobalCoverReferencePhotoUrl(saved.referencePhotos?.global || null);
-    setFailedExpandPicks(saved.failedPicks || []);
     setPendingExpand(saved.pendingExpand);
-    setTopicShortlist(saved.topics);
     if (saved.contentBlueprints.length > 0) {
       setPlatformContent((prev) => {
         if (Array.isArray(prev?.contentBlueprints) && prev!.contentBlueprints.length > 0) return prev;
@@ -4559,8 +4563,6 @@ export default function PlatformPage() {
       });
       setHasAnalyzed(true);
       pushShortlistDebug(`本机恢复：扩写文案 ${saved.contentBlueprints.length} 条（刷新不丢）`);
-    } else if (saved.topics.length > 0) {
-      pushShortlistDebug(`本机恢复：选题初选 ${saved.topics.length} 条`);
     }
   }, [workbenchUserKey, pushShortlistDebug]);
 
@@ -4575,12 +4577,11 @@ export default function PlatformPage() {
       referencePhotos: { byScene: coverReferencePhotoMap, global: globalCoverReferencePhotoUrl || undefined },
       viralPreferences: { platforms: viralPlatforms, formats: xhsFormats },
       userKey: workbenchUserKey,
-      topics: topicShortlist,
+      // 选题候选标题与未出稿候选不落盘（刷新即删），只存正文与在途任务
       contentBlueprints: bps,
-      failedPicks: failedExpandPicks,
       pendingExpand,
     });
-  }, [workbenchUserKey, topicShortlist, platformContent?.contentBlueprints, failedExpandPicks, pendingExpand, viralPlatforms, xhsFormats, shortlistRestoreKey, coverReferencePhotoMap, globalCoverReferencePhotoUrl]);
+  }, [workbenchUserKey, platformContent?.contentBlueprints, pendingExpand, viralPlatforms, xhsFormats, shortlistRestoreKey, coverReferencePhotoMap, globalCoverReferencePhotoUrl]);
 
   // 监管验收：?demoExpand=1 注入假文案，不烧积分，只验同页可见
   useEffect(() => {
