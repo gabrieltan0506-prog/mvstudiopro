@@ -232,6 +232,9 @@ function NovelWorkspaceEditor({
   const templateCatalogConnected = useManhuaTemplateCatalogEvents(Boolean(userId), () => templates.refetch());
   const cards = (templates.data?.groups || []).flatMap(g => g.items);
   const mutation = trpc.novelWorkspace.generate.useMutation();
+  /** 创意环节按作品计次（服务端记录）：前两次免费，第三次起每次收费。 */
+  const premiseWorkId = draft.projectId || projectId || draft.roundId;
+  const premiseUsage = trpc.novelWorkspace.creativePremiseUsage.useQuery({ workId: premiseWorkId }, { retry: 1, staleTime: 0 });
   /** 底稿结构拆解：后台任务（发起即返回任务标识，前台轮询进度）。 */
   const skeletonStart = trpc.novelWorkspace.imitationSkeletonStart.useMutation();
   /** 拆书参考模板（公共库）；所有模式可勾选，作为大纲与正文的结构参考；仅管理员可删除。 */
@@ -490,6 +493,7 @@ function NovelWorkspaceEditor({
     if (input.stage === "revise")
       Object.assign(next, recordNovelRevision(now, input, result));
     if (input.stage === "advice" && input.advisorIntent === "creative_premises") {
+      void premiseUsage.refetch();
       // 只更新最近一批候选；已采用的核心创意、当前讨论与已确认的大纲 / 小说都不动。
       next.creativePremises = {
         requestId: input.requestId,
@@ -748,6 +752,8 @@ function NovelWorkspaceEditor({
         ...(advisorIntent === "creative_premises" && premiseExclusions?.length
           ? { premiseExclusions }
           : {}),
+        // 创意环节按作品计次：作品身份随草稿走（跨刷新、跨设备一致）。
+        ...(advisorIntent === "creative_premises" ? { workId: premiseWorkId } : {}),
         // 本作核心创意：非空时带进顾问讨论 / 故事线、大纲与正文；剧本由正文转写，不重复带。
         ...(draft.creativePremise?.trim() &&
         advisorIntent !== "creative_premises" &&
@@ -802,7 +808,7 @@ function NovelWorkspaceEditor({
       if (
         !fromQueue &&
         !window.confirm(
-          `本次提交管理者测试：${advisorIntent === "creative_premises" ? NOVEL_CREATIVE_PREMISE_UI.confirmLabel : advisorIntent === "story_variants" ? "三个故事线方案" : stage === "advice" ? "创作顾问与模板推荐" : stage === "outline" ? "改编提案" : stage === "chapter" ? `第${chapterIndex}集小说稿` : `第${chapterIndex}集剧本候选`}。将调用创作服务并产生实际成本，是否继续？`
+          `本次提交管理者测试：${advisorIntent === "creative_premises" ? `${NOVEL_CREATIVE_PREMISE_UI.confirmLabel}${premiseUsage.data?.nextCost ? `（${NOVEL_CREATIVE_PREMISE_UI.usageCost}）` : ""}` : advisorIntent === "story_variants" ? "三个故事线方案" : stage === "advice" ? "创作顾问与模板推荐" : stage === "outline" ? "改编提案" : stage === "chapter" ? `第${chapterIndex}集小说稿` : `第${chapterIndex}集剧本候选`}。将调用创作服务并产生实际成本，是否继续？`
         )
       )
         return;
@@ -831,6 +837,19 @@ function NovelWorkspaceEditor({
       return result.text;
     } catch (e) {
       queueActive.current = false;
+      // 创意环节积分不足（提交前预检或结算时）：服务端没有交付结果，清掉待处理请求并显示原提示，不继续轮询。
+      const failedId = submittedId as string | undefined;
+      if (
+        e instanceof Error &&
+        (e as { data?: { code?: string } }).data?.code === "PAYMENT_REQUIRED" &&
+        failedId &&
+        (latest.current.pending as NovelTestInput | undefined)?.requestId === failedId
+      ) {
+        await persist({ ...latest.current, pending: undefined });
+        if (alive.current) setError(e.message);
+        void premiseUsage.refetch();
+        return;
+      }
       if (alive.current)
         setError(
           e instanceof Error && !("data" in e)
@@ -1950,6 +1969,14 @@ function NovelWorkspaceEditor({
             >
               {NOVEL_CREATIVE_PREMISE_UI.refresh}
             </button>
+          )}
+          {premiseUsage.data && (
+            <span className="self-center text-xs text-slate-300" aria-label="核心创意次数">
+              {NOVEL_CREATIVE_PREMISE_UI.usage(premiseUsage.data.used)}
+              {premiseUsage.data.nextCost > 0 && (
+                <strong className="ml-2 text-amber-200">{NOVEL_CREATIVE_PREMISE_UI.usageCost}</strong>
+              )}
+            </span>
           )}
         </div>
         {!!draft.creativePremises?.premises.length && (

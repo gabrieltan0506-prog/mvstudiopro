@@ -116,6 +116,11 @@ export const novelTestInputSchema = z
      * 创意环节（1112）：「换一批」时带上已出过的设想（标题 + 核心设想）作为不要重复的方向。
      * 只随 creative_premises 请求携带；旧请求没有此字段。
      */
+    /**
+     * 创意环节计费（1112）：作品身份（草稿 projectId，缺省为 roundId）。服务端按它计「本作品第几次」；
+     * 只随 creative_premises 请求携带；旧请求没有此字段时按 roundId 计。
+     */
+    workId: z.string().uuid().optional(),
     premiseExclusions: z
       .array(novelCreativePremiseExclusionSchema)
       .max(NOVEL_CREATIVE_PREMISE_EXCLUSION_MAX)
@@ -185,6 +190,8 @@ export const novelTestInputSchema = z
       c.addIssue({ code: "custom", message: "请先选择模板，再生成故事线方案" });
     if (v.advisorIntent === "creative_premises" && v.stage !== "advice")
       c.addIssue({ code: "custom", message: "核心创意只在创作顾问环节生成" });
+    if (v.workId !== undefined && v.advisorIntent !== "creative_premises")
+      c.addIssue({ code: "custom", message: "仅核心创意请求携带作品身份" });
     if (v.premiseExclusions !== undefined && v.advisorIntent !== "creative_premises")
       c.addIssue({ code: "custom", message: "仅「换一批」核心创意携带已出过的方向" });
     if (new Set(v.templates.map(t => t.publicId)).size !== v.templates.length)

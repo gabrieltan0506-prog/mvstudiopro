@@ -673,6 +673,16 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     expect(firstPremise.advisorIntent).toBe("creative_premises");
     expect(firstPremise.premiseExclusions).toBeUndefined();
     expect(firstPremise.creativePremise).toBeUndefined();
+    // 按作品计次：请求带作品身份（草稿 projectId，缺省 roundId）
+    expect(firstPremise.workId).toBe(
+      await page.evaluate(async () => {
+        const d = await (globalThis as any).readDraft();
+        return d.projectId || d.roundId;
+      })
+    );
+    await page.evaluate(() => {
+      (globalThis as any).premiseUsage = { workId: "x", used: 2, freeRuns: 2, credits: 20, nextCost: 20, exempt: true };
+    });
     expect(await page.evaluate(async () => (await (globalThis as any).readDraft()).advisorAnchor)).toBe(anchorBefore);
     await click("采用这个创意");
     await page.waitForFunction(() =>
@@ -685,6 +695,14 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     expect(
       await page.evaluate(async () => (globalThis as any).calls.at(-1).premiseExclusions.map((e: any) => e.title))
     ).toEqual(["测试设想1-0", "测试设想1-1", "测试设想1-2", "测试设想1-3"]);
+    // 无底本：卡片显示组合的模板与故事大纲；次数与价格显示
+    await page.waitForFunction(() => document.body.innerText.includes("故事大纲："));
+    const body = await page.evaluate(() => document.body.innerText);
+    expect(body).toContain("组合的模板：");
+    expect(body).toContain("开端：测试开端");
+    expect(body).toContain("本作品已用 2 次，前 2 次免费");
+    expect(body).toContain("本次 20 积分");
+    expect(body).toContain("同时勾选这些模板");
     // 换一批不覆盖已采用的核心创意
     expect(
       await page.$eval('[aria-label="本作核心创意"]', el => (el as HTMLTextAreaElement).value)

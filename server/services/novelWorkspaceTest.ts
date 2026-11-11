@@ -57,6 +57,14 @@ import {
   buildNovelImitationOutlineRules,
 } from "../../shared/novelImitationPrompt";
 import { resolveNovelImitationSkeleton, NovelImitationSkeletonError } from "./novelImitationSkeleton";
+import {
+  type NovelCreativePremiseBillingDeps,
+  assertNovelCreativePremiseAffordable,
+  defaultNovelCreativePremiseBillingDeps,
+  novelCreativePremiseWorkId,
+  replayNovelCreativePremiseCharge,
+  settleNovelCreativePremiseRun,
+} from "./novelCreativePremiseBilling";
 import type { NovelImitationLibraryOutcome, NovelImitationSkeleton } from "../../shared/novelImitation";
 import {
   NovelImitationLibraryMissingError,
@@ -344,7 +352,9 @@ export function novelWorkspaceCarbonEvidencePrefix(userId: number, requestId: st
 
 export async function runNovelWorkspaceTest(
   userId: number,
-  input: NovelTestInput
+  input: NovelTestInput,
+  /** 创意环节计费（1112）：账号角色（管理者豁免扣费、照常计次）与可替换的计费依赖（测试注入）。 */
+  options: { role?: string | null; billing?: NovelCreativePremiseBillingDeps } = {}
 ): Promise<NovelTestResult> {
   const db = await getDb();
   if (!db)
@@ -354,6 +364,13 @@ export async function runNovelWorkspaceTest(
     });
   const id = `novel_test_${hash(`${userId}:${input.requestId}`).slice(0, 40)}`;
   const fingerprint = hash(JSON.stringify(input));
+  const creativePremise = input.stage === "advice" && input.advisorIntent === "creative_premises";
+  const billing = creativePremise ? (options.billing ?? defaultNovelCreativePremiseBillingDeps()) : undefined;
+  if (billing) {
+    // 新请求才预检余额（同 requestId 的重放不拦）；下一次要收费且不是管理者、余额不足 → 不登记、不调用。
+    const [existing] = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.id, id));
+    if (!existing) await assertNovelCreativePremiseAffordable(userId, novelCreativePremiseWorkId(input), options.role, billing);
+  }
   const inserted = await db
     .insert(jobs)
     .values({
@@ -382,8 +399,12 @@ export async function runNovelWorkspaceTest(
         code: "CONFLICT",
         message: "请求编号已绑定另一份输入",
       });
-    const output = previous.output as { result?: NovelTestResult };
-    if (previous.status === "succeeded" && output?.result) return output.result;
+    const output = previous.output as { result?: NovelTestResult; creativeBilling?: { price?: number; chargeKey?: string } };
+    if (previous.status === "succeeded" && output?.result) {
+      // 创意环节重放：按记录的价格与同 chargeKey 幂等补扣（已扣过直接命中，不重复扣）。
+      if (billing) await replayNovelCreativePremiseCharge(userId, output.creativeBilling, billing);
+      return output.result;
+    }
     throw new TRPCError({
       code: "CONFLICT",
       message:
@@ -598,6 +619,16 @@ export async function runNovelWorkspaceTest(
       inputSha256: fingerprint,
       resultSha256: hash(text),
     };
+    if (billing) {
+      // 成功返回 4 个有效创意才结算：本作品第几次；第三次起按 requestId 幂等扣费（管理者 0 扣）。扣不成即不交付、不计次。
+      const [self] = await db.select({ createdAt: jobs.createdAt }).from(jobs).where(eq(jobs.id, id));
+      const settled = await settleNovelCreativePremiseRun(
+        userId,
+        { id, createdAt: self?.createdAt ?? new Date(), requestId: input.requestId, workId: novelCreativePremiseWorkId(input) },
+        billing
+      );
+      evidence = { ...evidence, creativeBilling: settled };
+    }
     await db
       .update(jobs)
       .set({
@@ -622,6 +653,8 @@ export async function runNovelWorkspaceTest(
       id,
       error instanceof Error ? error.message : "failed"
     );
+    // 创意环节积分不足：结果不交付（本条记为失败、不计次），原始记录保留。
+    if (error instanceof TRPCError && error.code === "PAYMENT_REQUIRED") throw error;
     throw new TRPCError({
       code: "SERVICE_UNAVAILABLE",
       message:

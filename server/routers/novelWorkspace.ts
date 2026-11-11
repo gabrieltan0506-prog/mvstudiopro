@@ -110,6 +110,16 @@ export const novelWorkspaceRouter = router({
     .input(novelTestInputSchema)
     .mutation(({ ctx, input }) => {
       assertNovelTestRole(ctx.user.role);
-      return runNovelWorkspaceTest(ctx.user.id, input);
+      return runNovelWorkspaceTest(ctx.user.id, input, { role: ctx.user.role });
+    }),
+  /** 创意环节：本作品已用次数与下一次价格（前两次免费，第三次起每次 20 积分；计次存服务端）。 */
+  creativePremiseUsage: protectedProcedure
+    .input(z.object({ workId: z.string().uuid() }).strict())
+    .query(async ({ ctx, input }) => {
+      assertNovelTestRole(ctx.user.role);
+      const { defaultNovelCreativePremiseBillingDeps, readNovelCreativePremiseUsage } = await import(
+        "../services/novelCreativePremiseBilling"
+      );
+      return readNovelCreativePremiseUsage(ctx.user.id, input.workId, ctx.user.role, defaultNovelCreativePremiseBillingDeps());
     }),
 });
