@@ -14,6 +14,8 @@ import {
 import {
   parseMusicMvAdvisorProposal,
   MUSIC_MV_SHOT_LABELS,
+  MUSIC_MV_COMPOSE_ENGINE_LABELS,
+  type MusicMvComposeEngine,
   type CanvasMusicCandidate,
   type CanvasMusicMvDraftInput,
   type CanvasMusicMvPlan,
@@ -63,6 +65,8 @@ export function CanvasMvCreativeAdvisor(props: Props) {
   const [question, setQuestion] = useState(
     "请实际听完整首歌，提出一个主推荐和三个不同的MV方案，安排对口型、生成画面及可用素材切片，说明开场、高潮和结尾。"
   );
+  /** 1111 编排方式：标准（缺省）/ 深度（推理更强、更慢）。只对新咨询生效；恢复原咨询沿用其保存的选择。 */
+  const [composeEngine, setComposeEngine] = useState<MusicMvComposeEngine>("standard");
   const lock = useRef(false);
   const current = useRef(props);
   current.current = props;
@@ -171,6 +175,7 @@ export function CanvasMvCreativeAdvisor(props: Props) {
           target: { ...target, sourceKey },
           question,
           videoModel: props.videoModel,
+          ...(composeEngine === "deep" ? { composeEngine } : {}),
           status: "pending",
         };
         if (!matches(session))
@@ -267,6 +272,25 @@ export function CanvasMvCreativeAdvisor(props: Props) {
         disabled={busy || props.session?.status === "pending"}
         className="w-full rounded bg-black/30 p-2"
       />
+      <fieldset className="space-y-1" disabled={busy || props.session?.status === "pending"}>
+        <legend>编排方式</legend>
+        {(["standard", "deep"] as const).map(engine => (
+          <label key={engine} className="mr-3 inline-flex items-center gap-1">
+            <input
+              type="radio"
+              name="mv-compose-engine"
+              checked={composeEngine === engine}
+              onChange={() => setComposeEngine(engine)}
+            />
+            {MUSIC_MV_COMPOSE_ENGINE_LABELS[engine]}
+          </label>
+        ))}
+        <p className="text-white/60">
+          {composeEngine === "deep"
+            ? "深度编排：推理更强，整片方案与逐窗节拍更细；更慢（可能需要数分钟），积分更高。暂不可用时自动改用标准编排，并在结果里注明。"
+            : "标准编排：速度快，适合先出方案。"}
+        </p>
+      </fieldset>
       <details>
         <summary>可穿插的已有视频（{props.footageIds.length}）</summary>
         {videos.map(v => (
@@ -322,6 +346,13 @@ export function CanvasMvCreativeAdvisor(props: Props) {
       )}
       {props.session?.proposal && (
         <>
+          {props.session.proposal.composeLine?.requested === "deep" && (
+            <p className="text-white/60">
+              {props.session.proposal.composeLine.compose === "deep" && props.session.proposal.composeLine.beats !== "standard" && props.session.proposal.composeLine.beats !== "mixed"
+                ? "本次方案由深度编排完成。"
+                : "深度编排本次暂不可用，已用标准编排完成（部分或全部）。"}
+            </p>
+          )}
           <p>{props.session.proposal.summaryZh}</p>
           <CreativeEvidenceReviewPanel review={props.session.proposal.review} />
           <details>

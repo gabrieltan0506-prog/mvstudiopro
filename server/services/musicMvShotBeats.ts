@@ -44,6 +44,8 @@ export type MusicMvShotBeatsResult = {
   failedShotIds: string[];
   failuresZh: string[];
   fixes: BeatFix[];
+  /** 1111：各块实际通过的那一跳网关（gemini_carbon = 深度编排；其余 = 标准三跳），供结果标注实际线路。 */
+  chunkGateways: CreativeLlmHop["gateway"][];
 };
 
 function strip(text: string, n = 6000) {
@@ -67,6 +69,7 @@ export async function composeMusicMvShotBeats(
   const failedShotIds: string[] = [];
   const failuresZh: string[] = [];
   const fixes: BeatFix[] = [];
+  const chunkGateways: CreativeLlmHop["gateway"][] = [];
   // 1110 角色表：多人同框按角色表放行（不再写死单人）
   const cast = mvCastFromCreative(input.creativePrompt);
   for (let c = 0; c < chunks.length; c += 1) {
@@ -162,6 +165,7 @@ export async function composeMusicMvShotBeats(
       result.value.timing.forEach((t, id) => timings.set(id, t));
       result.value.complexity.forEach((c, id) => complexities.set(id, c));
       fixes.push(...result.value.chunkFixes);
+      chunkGateways.push(result.hop.gateway);
     } catch (error) {
       failedShotIds.push(...chunk.map(s => s.id));
       failuresZh.push(error instanceof Error ? error.message : String(error));
@@ -179,5 +183,5 @@ export async function composeMusicMvShotBeats(
     }),
   };
   await deps.save("beats-summary", { filledShotIds: Array.from(filled.keys()), failedShotIds, failuresZh, fixes });
-  return { plan, filledShotIds: Array.from(filled.keys()), failedShotIds, failuresZh, fixes };
+  return { plan, filledShotIds: Array.from(filled.keys()), failedShotIds, failuresZh, fixes, chunkGateways };
 }

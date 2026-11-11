@@ -3,7 +3,7 @@ import { MUSIC_EMOTION_INSTRUCTIONS, assertNewMusicEmotionCoverage } from "../..
 import { askManhuaFilmReview } from "./manhuaAdvisorFilmReview";
 import { advisorFilmReviewSchema } from "../../shared/manhuaAdvisorFilmReview";
 import { CREATIVE_REFINE_INSTRUCTIONS, parseRefinementEnvelope } from "./creativeAstraRefinement";
-import { CREATIVE_LLM_HOPS, invokeCreativeHop, type CreativeLlmHop } from "./creativeLlmHops";
+import { CREATIVE_LLM_HOPS, invokeCreativeHop, musicMvDeepComposeHops, type CreativeLlmHop } from "./creativeLlmHops";
 import { buildLyricReviewContext } from "../../shared/lyricCraftReview";
 import type { CreativeEvidenceReviewInput } from "../../shared/creativeEvidenceReview";
 import { readCreativeLibraryContext, assertCreativeSelections, CREATIVE_LIBRARY_SELECTION_INSTRUCTIONS } from "./creativeLibraryRetrieval";
@@ -47,6 +47,7 @@ import {
   type MusicMvAdvisorTarget,
 } from "../../shared/canvasMusicMv";
 import { musicMvAdvisorInstructionsZh, MUSIC_MV_REFINE_ENVELOPE_ZH, musicMvHardConstraintsZh } from "../../shared/musicMvCraft";
+import type { MusicMvComposeEngine, MusicMvComposeLine } from "../../shared/canvasMusicMv";
 import { repairRefinementEnvelope, repairReviewObject, restoreDraftSections } from "../../shared/creativeRefinementRepair";
 
 type Save = (name: string, value: unknown) => Promise<unknown>;
@@ -99,6 +100,8 @@ const real = {
   refine: refineCreativeAtHop,
   compose: composeCreativeAtHop,
   hops: CREATIVE_LLM_HOPS,
+  /** 1111 深度编排：Carbon 三通道跳（排在原三跳之前）；离线替身可注入。 */
+  deepComposeHops: musicMvDeepComposeHops as () => Promise<readonly CreativeLlmHop[]>,
   /** 1109 拍点网格（整首解码 + 起音包络）；离线替身可省略，省略时不出逐窗节拍。 */
   beatGrid: computeSongBeatGrid as ((buffer: Buffer, creativePrompt?: string, sections?: Array<{ startSec: number; endSec: number }>) => Promise<MusicMvBeatGrid & { strongBeatsSec?: number[] }>) | undefined,
   readKnowledge: readCreativeLibraryContext,
@@ -143,7 +146,7 @@ export async function askMusicMvAdvisor(
   deps = real,
   purpose: "mv" | "song" | "learn" = "mv",
   /** 1109 所选成片模型：MV 单镜上限按它定（mvShotPlanMaxSec），不锁 15 秒。 */
-  opts: { videoModel?: string } = {}
+  opts: { videoModel?: string; composeEngine?: MusicMvComposeEngine } = {}
 ) {
   const target =
     purpose === "learn" ? creativeLearningTargetSchema.parse(rawTarget) : purpose === "song"
@@ -237,12 +240,18 @@ export async function askMusicMvAdvisor(
   const composeInput={sourceKey:target.sourceKey,target,question,sourceEvidence,creativeLibrary,...(beatGrid?{beatGrid:{bpm:beatGrid.bpm,beatSec:beatGrid.beatSec,firstBeatSec:beatGrid.phaseSec,beatConfidence:beatGrid.beatConfidence,segments:beatGrid.segments,noteZh:"按段落节奏模式安排剪点：pacing=beat 的段剪点落在拍点（firstBeatSec + n×beatSec），服务端会吸附；phrase 段按乐句与能量峰切，不硬切网格；free 段按能量与静音切；演唱镜按唱句起止落位，不吸附"}}:{})};
   const hopsUsed:Record<string,unknown>={};
   /**
+   * 1111 编排引擎：缺省 standard（原三跳，行为不变）；deep = Carbon 三通道跳在前、原三跳在后（同一合同、同一校验 / 修复 / 证据规则）。
+   * 只作用于整片方案 compose 与逐窗节拍；联合创作 refine 仍走原三跳。Carbon 全部通道失败即自然回落原三跳，并在结果 composeLine 标明实际线路。
+   */
+  const composeEngine:MusicMvComposeEngine=purpose==="mv"&&opts.composeEngine==="deep"?"deep":"standard";
+  const composeHops:readonly CreativeLlmHop[]=composeEngine==="deep"?[...(await deps.deepComposeHops()),...deps.hops]:deps.hops;
+  /**
    * 三跳 fallback（GLM@EvoLink → GLM@OpenRouter → DeepSeek 1017@OpenRouter）：每跳 调用 → JSON 解析 → 形状/分段/镜长修复 → 校验；
    * 解析或校验失败先带具体原因重写一次，仍失败切下一跳；通道异常直接切下一跳；三跳全败抛 CreativeProposalError（含每跳原因）。
    * 证据：`<stage>-hop-<n>-<model>[-rewrite]-{request,raw,error,decoded,repaired,rejected}` 与 `<stage>-hop-used`。
    */
   const runHopChain=async<T>(stage:"compose"|"refine",chainSave:Save,call:(hop:CreativeLlmHop,hopSave:Save,repair?:{attempt:number;reasonZh:string})=>Promise<{text:string;model:string;inputSha256?:string;elapsedMs?:number}>,accept:(decoded:unknown,hopSave:Save,stageName:string,model:string,inputSha256?:string)=>Promise<T>)=>{
-    const result=await runCreativeHopChain(deps.hops,stage,chainSave,call,accept);
+    const result=await runCreativeHopChain(stage==="compose"?composeHops:deps.hops,stage,chainSave,call,accept);
     hopsUsed[stage]=result.used;
     return result;
   };
@@ -304,18 +313,23 @@ export async function askMusicMvAdvisor(
   }
   proposal=validateRefined(refinement.proposal);
   let beatsReport:unknown;
+  let beatsLine:MusicMvComposeLine["beats"];
   if(purpose==="mv"&&beatGrid&&proposal.kind==="music_mv_v1"){
     // 1109 第三阶段：主推荐方案逐窗节拍（同一三跳链）；三跳全败的镜头不出窗，编译器整镜一窗降级并标注。
     const mvTarget=target as MusicMvAdvisorTarget;
     const main=proposal.concepts[0]!;
     const gender=detectPerformerGender(mvTarget.creativePrompt);
-    const beats=await composeMusicMvShotBeats({plan:main.plan,beatGrid,lyrics:mvTarget.lyrics,creativePrompt:mvTarget.creativePrompt,concept:{titleZh:main.titleZh,rationaleZh:main.rationaleZh},sections:proposal.sections,...(gender?{performer:{genderZh:gender,descZh:performerLabelZh(gender,mvTarget)}}:{})},{hops:deps.hops,compose:deps.compose,save});
-    beatsReport={filledShotIds:beats.filledShotIds,failedShotIds:beats.failedShotIds,failuresZh:beats.failuresZh};
+    const beats=await composeMusicMvShotBeats({plan:main.plan,beatGrid,lyrics:mvTarget.lyrics,creativePrompt:mvTarget.creativePrompt,concept:{titleZh:main.titleZh,rationaleZh:main.rationaleZh},sections:proposal.sections,...(gender?{performer:{genderZh:gender,descZh:performerLabelZh(gender,mvTarget)}}:{})},{hops:composeHops,compose:deps.compose,save});
+    beatsReport={filledShotIds:beats.filledShotIds,failedShotIds:beats.failedShotIds,failuresZh:beats.failuresZh,chunkGateways:beats.chunkGateways};
+    const deepChunks=beats.chunkGateways.filter(g=>g==="gemini_carbon").length;
+    beatsLine=!beats.chunkGateways.length?undefined:deepChunks===beats.chunkGateways.length?"deep":deepChunks?"mixed":"standard";
     proposal=validateRefined({...proposal,concepts:proposal.concepts.map((c,i)=>i===0?{...c,plan:beats.plan}:c)});
   }
   const review=refinement.review;
-  const answer={...proposal,evidenceId,review};
-  await save("accepted",{target,proposal:answer,sourceEvidence,creativeLibrary,receipt,model:review.model,draftModel:composed.model,hopsUsed,beatGrid,beatsReport,mediaModel:target.audio?(hearingModel??resolveSongHearingModel()):undefined,audioTokens});
+  // 1111：实际线路标注（中性叫法，不含模型名）；只在 MV 方案上附带。
+  const composeLine:MusicMvComposeLine|undefined=purpose==="mv"?{requested:composeEngine,compose:composed.hop.gateway==="gemini_carbon"?"deep":"standard",...(beatsLine?{beats:beatsLine}:{})}:undefined;
+  const answer={...proposal,evidenceId,review,...(composeLine?{composeLine}:{})};
+  await save("accepted",{target,proposal:answer,sourceEvidence,creativeLibrary,receipt,model:review.model,draftModel:composed.model,hopsUsed,composeEngine,composeLine,beatGrid,beatsReport,mediaModel:target.audio?(hearingModel??resolveSongHearingModel()):undefined,audioTokens});
   return JSON.stringify({
     answer,
     model: review.model,

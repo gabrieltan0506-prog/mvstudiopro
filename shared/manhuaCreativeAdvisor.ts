@@ -7,7 +7,7 @@ import { digitalHumanSpatialTargetSchema } from "./digitalHumanSpatialAdvisor";
 import { manhuaAdvisorStudioContextSchema } from "./manhuaAdvisorStudioContext";
 import { advisorMediaSourceSchema } from "./manhuaAdvisorMediaEdit";
 import { advisorFilmReviewTargetSchema } from "./manhuaAdvisorFilmReview";
-import { musicMvAdvisorTargetSchema, sunoSongTargetSchema } from "./canvasMusicMv";
+import { musicMvAdvisorTargetSchema, musicMvComposeEngineSchema, sunoSongTargetSchema } from "./canvasMusicMv";
 import { advisorBgmMixTargetSchema } from "./manhuaAdvisorBgmMix";
 import { advisorWorldTargetSchema } from "./manhuaAdvisorWorld";
 import { advisorPrevisTargetSchema } from "./manhuaAdvisorPrevisEdit";
@@ -180,6 +180,8 @@ export const manhuaCreativeAdvisorContextSchema = z
     workflowOperation: z.object({workspace:contextText(30000,"工作流操作状态",true),revision:contextText(200,"工作流操作版本",true)}).strict().optional(),
     bgmMix: advisorBgmMixTargetSchema.optional(),
     musicMv: musicMvAdvisorTargetSchema.optional(),
+    /** 1111 MV 整片编排引擎（标准 / 深度）；缺省标准。 */
+    musicMvComposeEngine: musicMvComposeEngineSchema.optional(),
     sunoSong: sunoSongTargetSchema.optional(),
     creativeLearning: creativeLearningTargetSchema.optional(),
     filmReview: advisorFilmReviewTargetSchema.optional(),
