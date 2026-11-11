@@ -20,6 +20,8 @@ const CLEAN_FILES = [
   "components/canvas/ManhuaEpisodeOptimization.tsx",
   "components/canvas/ManhuaAdvisorMediaEdit.tsx",
   "components/canvas/ManhuaCreativeAdvisorPanel.tsx",
+  // 1111 MV 深度编排选择
+  "components/canvas/CanvasMvCreativeAdvisor.tsx",
   "pages/EnterpriseAgentManager.tsx",
   "pages/RemixStudio.tsx",
   "pages/ResearchPage.tsx",
@@ -116,12 +118,19 @@ it("引擎 / 线路下拉的显示名：除 Seedance 外不露模型名", async 
     ...MANHUA_WRITER_MODELS.map(o => o.label),
     manhuaWriterModelLabel("glm"),
     manhuaWriterModelLabel("deepseek"),
+    manhuaWriterModelLabel("carbon"),
     ...NOVEL_MODEL_OPTIONS.map(o => o.label),
     ...["z-ai/glm-5.3-flashx", "deepseek-v4.1-flash", "qwen3.8-max", "gpt-5.6-sol"].map(novelModelLabel),
   ];
   expect(labels.map(l => l.replace(/Seedance/g, "")).filter(l => TECH_EXTENDED.test(l))).toEqual([]);
   // 未知模型标识也不原样回显
   expect(novelModelLabel("gpt-5.6-sol")).toBe("创作线路");
+  // 1111 线路三 / 深度编排 / 精读升级档：只出中性叫法
+  const { MUSIC_MV_COMPOSE_ENGINE_LABELS } = await import("@shared/canvasMusicMv");
+  const { MANHUA_WRITER_MODEL_HINTS } = await import("@shared/manhuaWriterModels");
+  expect(novelModelLabel("gemini-4-carbon")).toBe("线路三");
+  const carbonLabels = [...Object.values(MUSIC_MV_COMPOSE_ENGINE_LABELS), ...Object.values(MANHUA_WRITER_MODEL_HINTS), manhuaWriterModelLabel("carbon"), novelModelLabel("gemini-4-carbon"), ...NOVEL_MODEL_OPTIONS.map(o => o.label)];
+  expect(carbonLabels.filter(l => /Carbon|Argon|Gemini|EvoLink|Vertex/i.test(l))).toEqual([]);
 });
 
 it("大文件逐条核对：画布出片提示、混音提示与报错不露非 Seedance 引擎 / 供应商名", () => {

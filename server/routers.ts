@@ -23,7 +23,7 @@ import { codeMotionProductionRouter } from "./routers/codeMotionProduction";
 import { fileConversionRouter } from "./routers/fileConversion";
 import { optimizationInputSchema } from "../shared/manhuaEpisodeOptimization";
 import { imageWorldRouter } from "./routers/imageWorld";
-import { manhuaWriterExpansionQuote, manhuaWriterModelLabel } from "../shared/manhuaWriterModels";
+import { manhuaWriterEpisodeCredits, manhuaWriterExpansionQuote, manhuaWriterModelLabel } from "../shared/manhuaWriterModels";
 import { advisorTemplatePlansSchema } from "../shared/manhuaAdvisorRewrite";
 import { MANHUA_ADVISOR_PROJECT_FREE, MANHUA_ADVISOR_PAID_CREDITS } from "../shared/manhuaAdvisorPolicy";
 import { assertAdvisorProject, readAdvisorProjectQuota, reserveAdvisorProjectQuota, releaseAdvisorProjectQuota } from "./services/manhuaAdvisorProjectQuota";
@@ -10149,11 +10149,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         return listManhuaTemplateCandidateHistory({ ...input, userId: ctx.user.id });
       }),
 
-    /** /canvas 编剧室连载扩写：至少三集起写，GLM/DeepSeek均按实际改写集数计价。 */
+    /** /canvas 编剧室连载扩写：至少三集起写，按实际改写集数计价；线路一 / 二每集 6 积分，线路三（1111，Carbon）每集单独计价（待站长定价）。 */
     expandManhuaWriterPack: protectedProcedure
       .input(
         z.object({
-          model: z.enum(["glm", "deepseek"]).optional(),
+          model: z.enum(["glm", "deepseek", "carbon"]).optional(),
           confirmedCredits: z.number().int().nonnegative().optional(),
           topic: z.string().max(500).optional(),
           brief: z.string().max(2000).optional(),
@@ -10191,7 +10191,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }),
       )
       .mutation(async ({ ctx, input }) => {
-        if (!input.model) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "扩写选项已更新，请刷新后选择 GLM 或 DeepSeek；本次未提交、未扣点" });
+        if (!input.model) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "扩写选项已更新，请刷新后选择创作线路；本次未提交、未扣点" });
         const writerModel = input.model;
         if (input.sourceExcerpt && input.templateTrialFingerprint) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "小说改编请使用正常扩写入口；题材试写未读取小说原文，不能直接套用" });
@@ -10303,8 +10303,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const billableEpisodes =
           fromEpisodeReq > 0 ? Math.max(1, episodeCount - fromEpisodeReq + 1) : episodeCount;
 
-        const cost = manhuaWriterExpansionQuote(episodeCount, fromEpisodeReq).credits;
-        if (input.confirmedCredits !== cost) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `扩写报价已更新：每集 6 积分，本次 ${cost} 积分，请重新确认；本次未提交、未扣点` });
+        const quote = manhuaWriterExpansionQuote(episodeCount, fromEpisodeReq, writerModel);
+        const cost = quote.credits;
+        if (input.confirmedCredits !== cost) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `扩写报价已更新：${manhuaWriterModelLabel(writerModel)}每集 ${manhuaWriterEpisodeCredits(writerModel)} 积分，本次 ${cost} 积分，请重新确认；本次未提交、未扣点` });
         if (cost > 0) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < cost) {

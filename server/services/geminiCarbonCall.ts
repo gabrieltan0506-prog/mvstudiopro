@@ -316,6 +316,8 @@ export type GeminiCarbonRunInput<T> = {
   extraGenerationConfig?: Record<string, unknown>;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** json 模式的解码（缺省去围栏后 JSON.parse）；调用方有更宽容的解析器时传入（如小说 JSON 的语法修复）。 */
+  decode?: (text: string) => unknown;
   /** 解码后校验；抛错 = 写坏（同通道带原因修复一次，仍不过切下一通道）。 */
   validate: (decoded: unknown, text: string) => T | Promise<T>;
   /** 修复提示：缺省在原 prompt 后追加拒因。 */
@@ -398,7 +400,7 @@ export async function runGeminiCarbon<T>(input: GeminiCarbonRunInput<T>): Promis
       }
       totalUsage = addGeminiUsage(totalUsage, result.usage);
       try {
-        const decoded = format === "json" ? decodeGeminiCarbonJson(result.text) : result.text;
+        const decoded = format === "json" ? (input.decode ?? decodeGeminiCarbonJson)(result.text) : result.text;
         if (format === "json") await input.save(`${slug}-decoded`, decoded);
         const value = await input.validate(decoded, result.text);
         await input.save(`${slug}-parsed`, value);

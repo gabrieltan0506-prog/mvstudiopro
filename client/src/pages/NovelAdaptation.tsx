@@ -1393,7 +1393,7 @@ function NovelWorkspaceEditor({
             value={draft.modelPreference || "auto"}
             onChange={e =>
               change({
-                modelPreference: e.target.value as "auto" | "glm" | "deepseek",
+                modelPreference: e.target.value as NovelTestInput["modelPreference"],
               })
             }
           >
