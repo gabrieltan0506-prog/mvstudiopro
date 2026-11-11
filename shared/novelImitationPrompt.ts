@@ -10,9 +10,29 @@
 /** 底稿长度上限（约 40 万字）。 */
 export const NOVEL_IMITATION_BASE_MAX_CHARS = 400_000;
 
-/** 仿写模式在大纲与正文阶段必带的站长写作规范卡。 */
-export const NOVEL_IMITATION_CRAFT_CARD_ID = "craft_owner_imitation";
+/**
+ * 仿写模式在大纲与正文阶段必带的规则卡（站长 2026-11-12：仿写只参考架构与故事纲要）。
+ * 中性规则卡，只讲正面做法；不并入技法条目库、不进检索索引，只由仿写模式按阶段直接注入。
+ */
+export const NOVEL_IMITATION_CRAFT_CARD_ID = "craft_imitation_structure";
 export const NOVEL_IMITATION_CRAFT_STAGES = ["outline", "chapter"] as const;
+export const NOVEL_IMITATION_STRUCTURE_CARD = {
+  id: NOVEL_IMITATION_CRAFT_CARD_ID,
+  title: "仿写只借结构骨架与故事纲要",
+  body: [
+    "1. 只参考示例底稿在结构骨架与故事纲要层面的安排：节拍顺序、钩子与爽点的位置、反转的密度、情绪曲线、人物功能位。",
+    "2. 题材、人物、世界设定、具体情节、对白与文字，全部按用户的新题材、方向与纲要重新写。",
+    "3. 逐拍对照时写「这一拍的功能」（例如：开局把主角压到低处、第一次反击扳回一局、卷末抛出新的悬念），不写示例底稿在这一拍里发生的原情节。",
+    "4. 人物功能位只借功能（对手、助力、引路人、对照者等）；人物的身份、姓名、背景与关系由新故事重新创造。",
+    "5. 写每一拍前先问「这一拍要让读者得到什么」，再用新故事自己的场景、人物与事件去实现它。",
+    "自查：只看新作的大纲与正文，读者能说出它自己的题材、人物与事件；与示例底稿对照时，相同的只有节拍功能与位置。",
+  ].join("\n"),
+} as const;
+/**
+ * 仿写模式下不注入的技法条目：站长第一天资料原文转录的仿写卡（原卡内容不改，只在顾问阶段标注）。
+ * 检索若自行挑中，仿写模式下从注入里剔除；仿写的做法以上面的结构卡为准。
+ */
+export const NOVEL_IMITATION_EXCLUDED_CRAFT_IDS = ["craft_owner_imitation"] as const;
 
 /** 节拍功能参考词表（提示词用；输出允许其他简短功能名）。 */
 export const NOVEL_IMITATION_BEAT_FUNCTIONS = [
@@ -48,7 +68,7 @@ export const NOVEL_IMITATION_ADVICE_RULES =
 
 /** 必带规范卡注入时的说明（内部指令）。 */
 export const NOVEL_IMITATION_CRAFT_NOTE =
-  "以下是本站的仿写写作规范（本次必带）：按其中的方法保留结构与卖点、重新创造场景与文字。规范仅供写作时遵循，输出中不要引用或复述规范原文。";
+  "以下是本站的仿写规则（本次必带）：只借示例底稿的结构骨架与故事纲要层面的安排，题材、人物、情节与文字按用户的新故事重新写。规则仅供写作时遵循，输出中不要引用或复述规则原文。";
 
 // ---------------------------------------------------------------------------
 // 提交前检查（纯函数，前台调用）

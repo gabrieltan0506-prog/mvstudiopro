@@ -38,7 +38,7 @@ import {
   shouldRetrieveNovelCraft,
 } from "./novelCraftRetrieval";
 import { shortlistNovelCatalog, shouldShortlistNovelCatalog } from "./novelCatalogShortlist";
-import { getNovelCraftCards, NOVEL_CREATIVE_FIRST_RULE } from "../../shared/novelCraftCards";
+import { NOVEL_CREATIVE_FIRST_RULE } from "../../shared/novelCraftCards";
 import {
   NOVEL_CREATIVE_PREMISES_FORMAT,
   buildNovelCreativePremiseBlock,
@@ -47,8 +47,8 @@ import {
 import {
   NOVEL_IMITATION_ADVICE_RULES,
   NOVEL_IMITATION_CHAPTER_RULES,
-  NOVEL_IMITATION_CRAFT_CARD_ID,
   NOVEL_IMITATION_CRAFT_NOTE,
+  NOVEL_IMITATION_STRUCTURE_CARD,
   NOVEL_IMITATION_CRAFT_STAGES,
   NOVEL_IMITATION_ORIGINAL_RULES,
   buildNovelImitationOutlineRules,
@@ -198,11 +198,10 @@ export function buildNovelTestPrompt(
   ].join("\n\n");
 }
 
-/** 仿写模式：大纲与正文阶段必带站长仿写规范卡（不经检索，检索失败回退时也在）。 */
+/** 仿写模式：大纲与正文阶段必带中性结构规则卡（不经检索，检索失败回退时也在）。 */
 export function novelImitationCraftBlock(input: Pick<NovelTestInput, "stage" | "imitation">): string[] {
   if (!input.imitation || !(NOVEL_IMITATION_CRAFT_STAGES as readonly string[]).includes(input.stage)) return [];
-  const [card] = getNovelCraftCards([NOVEL_IMITATION_CRAFT_CARD_ID]);
-  if (!card) return [];
+  const card = NOVEL_IMITATION_STRUCTURE_CARD;
   return [NOVEL_IMITATION_CRAFT_NOTE, `《${card.title}》\n${card.body}`];
 }
 

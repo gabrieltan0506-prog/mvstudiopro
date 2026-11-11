@@ -20,6 +20,7 @@ import { novelWorkspaceStateSchema } from "../../shared/novelWorkspaceState";
 import { getNovelCraftCards } from "../../shared/novelCraftCards";
 import {
   NOVEL_IMITATION_CRAFT_CARD_ID,
+  NOVEL_IMITATION_STRUCTURE_CARD,
   NOVEL_IMITATION_UI,
   NOVEL_IMITATION_BASE_MAX_CHARS,
   novelImitationSubmitBlock,
@@ -29,7 +30,11 @@ import {
   NOVEL_IMITATION_SKELETON_CREDITS,
 } from "../../shared/novelImitation";
 import { findNovelNameOverlaps, findNovelSentenceOverlaps } from "../../shared/novelOriginalityCheck";
-import { buildNovelCraftTaskBrief } from "./novelCraftRetrieval";
+import {
+  buildNovelCraftTaskBrief,
+  novelCraftCardsForStage,
+  withoutNovelImitationExcludedCraft,
+} from "./novelCraftRetrieval";
 import { buildNovelCatalogShortlistPrompt } from "./novelCatalogShortlist";
 
 const skeleton = [
@@ -189,8 +194,37 @@ describe("爆款仿写：提示词", () => {
     );
     for (const word of ["侵权", "抄袭", "洗稿", "查重"]) expect(own).not.toContain(word);
   });
-  it("大纲与正文阶段必带站长仿写卡；顾问与剧本阶段、非仿写请求不注入", () => {
-    const card = getNovelCraftCards([NOVEL_IMITATION_CRAFT_CARD_ID])[0]!;
+  it("仿写模式各阶段提示词（含必带卡）都不含定性用语；必带的是中性结构卡，不是站长原文仿写卡", () => {
+    const words = ["侵权", "抄袭", "洗稿", "触线", "查重", "相似度"];
+    const original = getNovelCraftCards(["craft_owner_imitation"])[0]!;
+    expect(original.body).toContain("触线"); // 原卡内容不改
+    const inputs = [
+      outlineInput,
+      chapterInput,
+      novelTestInputSchema.parse({ ...base, stage: "advice", imitation }),
+      novelTestInputSchema.parse({ ...base, stage: "advice", imitation, advisorIntent: "creative_premises" }),
+      novelTestInputSchema.parse({ ...base, stage: "script", imitation, episodeCount: 1, novel: "林晚翻开账本。".repeat(80), chapterIndex: 1 }),
+    ];
+    for (const input of inputs) {
+      const prompt = buildNovelTestPrompt(input, "", []);
+      for (const w of words) expect(prompt).not.toContain(w);
+      expect(prompt).not.toContain(original.body);
+    }
+    expect(NOVEL_IMITATION_CRAFT_CARD_ID).toBe("craft_imitation_structure");
+    for (const w of words) expect(JSON.stringify(NOVEL_IMITATION_STRUCTURE_CARD)).not.toContain(w);
+    expect(NOVEL_IMITATION_STRUCTURE_CARD.body).toContain("这一拍的功能");
+  });
+  it("检索选中站长原文仿写卡时，仿写模式下从注入里剔除；非仿写不受影响", () => {
+    const sel = { craft: ["craft_logic", "craft_owner_imitation"], methods: [] as string[] };
+    expect(withoutNovelImitationExcludedCraft(sel, { imitation }).craft).toEqual(["craft_logic"]);
+    expect(withoutNovelImitationExcludedCraft(sel, {}).craft).toEqual(sel.craft);
+    const advice = novelTestInputSchema.parse({ ...base, stage: "advice", imitation });
+    expect(novelCraftCardsForStage(advice).map(c => c.id)).not.toContain("craft_owner_imitation");
+    const plainAdvice = novelTestInputSchema.parse({ ...base, stage: "advice" });
+    expect(novelCraftCardsForStage(plainAdvice).map(c => c.id)).toContain("craft_owner_imitation");
+  });
+  it("大纲与正文阶段必带结构卡；顾问与剧本阶段、非仿写请求不注入", () => {
+    const card = NOVEL_IMITATION_STRUCTURE_CARD;
     expect(buildNovelTestPrompt(outlineInput, "", [])).toContain(card.body);
     expect(buildNovelTestPrompt(chapterInput, "", [])).toContain(card.body);
     expect(buildNovelTestPrompt(chapterInput, "", [])).toContain("仿写正文");
