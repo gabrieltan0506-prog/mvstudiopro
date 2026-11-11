@@ -1,3 +1,4 @@
+import { isKlingRetired, KLING_RETIRED_MESSAGE_ZH } from "../../shared/klingRetired.js";
 type WorkflowStep =
   | "input"
   | "script"
@@ -181,6 +182,8 @@ async function runScriptWorkflow(workflowId: string) {
   let videoIsFallback = true;
   let videoErrorMessage: string | undefined;
   try {
+    // 可灵停用（方案 A）：旧工作流唯一视频通道是可灵，停用时不再自调（入口也会 410），直接记中文失败原因。
+    if (isKlingRetired()) throw new Error(KLING_RETIRED_MESSAGE_ZH);
     const videoResp = await callWorkflowModelApi({ op: "klingT2V", prompt: scriptText, model: videoRoute.model });
     if (!videoResp.ok || !videoResp.videoUrl) throw new Error(videoResp.error || "klingT2V failed");
     videoUrl = String(videoResp.videoUrl);
@@ -256,6 +259,8 @@ async function runImageWorkflow(workflowId: string) {
   let videoIsFallback = true;
   let videoErrorMessage: string | undefined;
   try {
+    // 可灵停用（方案 A）：旧工作流唯一视频通道是可灵，停用时不再自调（入口也会 410），直接记中文失败原因。
+    if (isKlingRetired()) throw new Error(KLING_RETIRED_MESSAGE_ZH);
     const videoResp = await callWorkflowModelApi({
       op: "klingI2V",
       imageUrl: preparedImageUrl,

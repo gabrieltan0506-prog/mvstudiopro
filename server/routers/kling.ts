@@ -56,6 +56,7 @@ import {
 import { deductCredits, getUserPlan, addCredits } from "../credits";
 import { CREDIT_COSTS } from "../plans";
 import { recordCreation } from "./creations";
+import { assertKlingNotRetiredTrpc } from "../kling/retired";
 
 // ─── Initialize Kling client from env on module load ─
 
@@ -69,6 +70,15 @@ function ensureInitialized() {
   }
   initialized = true;
 }
+
+/**
+ * 可灵停用（方案 A）：所有「新建」类 mutation 走这个 procedure——停用时在扣费、建任务、调上游之前直接拒绝。
+ * 查询类（getTask / listTasks / getFaceResult / elements.get/list/delete / status / estimateCost）照常放行，在途任务能收尾。
+ */
+const klingCreateProcedure = protectedProcedure.use(async ({ next }) => {
+  assertKlingNotRetiredTrpc();
+  return next();
+});
 
 // ─── Zod Schemas ────────────────────────────────────
 
@@ -142,7 +152,7 @@ export const klingRouter = router({
 
   omniVideo: router({
     // Text-to-Video
-    createT2V: protectedProcedure
+    createT2V: klingCreateProcedure
       .input(z.object({
         prompt: z.string().min(1).max(2500),
         negativePrompt: z.string().max(500).optional(),
@@ -167,7 +177,7 @@ export const klingRouter = router({
       }),
 
     // Image-to-Video
-    createI2V: protectedProcedure
+    createI2V: klingCreateProcedure
       .input(z.object({
         prompt: z.string().min(1).max(2500),
         imageUrl: z.string().min(1),
@@ -196,7 +206,7 @@ export const klingRouter = router({
       }),
 
     // Multi-shot Storyboard
-    createStoryboard: protectedProcedure
+    createStoryboard: klingCreateProcedure
       .input(z.object({
         shots: z.array(z.object({
           prompt: z.string().min(1).max(2500),
@@ -222,7 +232,7 @@ export const klingRouter = router({
       }),
 
     // All-in-One Reference
-    createAllInOne: protectedProcedure
+    createAllInOne: klingCreateProcedure
       .input(z.object({
         prompt: z.string().min(1).max(2500),
         elementIds: z.array(z.number()).optional(),
@@ -284,7 +294,7 @@ export const klingRouter = router({
   // ═══════════════════════════════════════════════════
 
   motionControl: router({
-    create: protectedProcedure
+    create: klingCreateProcedure
       .input(z.object({
         imageUrl: z.string().min(1),
         videoUrl: z.string().min(1),
@@ -337,7 +347,7 @@ export const klingRouter = router({
 
   lipSync: router({
     // Step 1: Identify faces in video
-    identifyFaces: protectedProcedure
+    identifyFaces: klingCreateProcedure
       .input(z.object({
         videoUrl: z.string().min(1),
         region: regionSchema,
@@ -360,7 +370,7 @@ export const klingRouter = router({
       }),
 
     // Step 2: Create lip-sync task
-    create: protectedProcedure
+    create: klingCreateProcedure
       .input(z.object({
         sessionId: z.string().min(1),
         faceId: z.string().min(1),
@@ -406,7 +416,7 @@ export const klingRouter = router({
 
   elements: router({
     // Create image character element
-    createImage: protectedProcedure
+    createImage: klingCreateProcedure
       .input(z.object({
         imageUrls: z.array(z.string().min(1)).min(1),
         name: z.string().max(100).optional(),
@@ -422,7 +432,7 @@ export const klingRouter = router({
       }),
 
     // Create video character element (Elements 3.0 with audio capture)
-    createVideo: protectedProcedure
+    createVideo: klingCreateProcedure
       .input(z.object({
         videoUrl: z.string().min(1),
         name: z.string().max(100).optional(),
@@ -478,7 +488,7 @@ export const klingRouter = router({
   // ═══════════════════════════════════════════════════
 
   imageGen: router({
-    create: protectedProcedure
+    create: klingCreateProcedure
       .input(z.object({
         prompt: z.string().min(1).max(2500),
         negativePrompt: z.string().max(500).optional(),
@@ -576,7 +586,7 @@ export const klingRouter = router({
   // File Upload Helper (upload to S3 for Kling API)
   // ═══════════════════════════════════════════════════
 
-  uploadFile: protectedProcedure
+  uploadFile: klingCreateProcedure
     .input(z.object({
       fileBase64: z.string().min(1),
       fileName: z.string().min(1),

@@ -1,6 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 import { hasSupervisorRole } from "../shared/internalMediaEndpointPolicy.js";
+import { isKlingRetired } from "../shared/klingRetired.js";
+import { klingRetiredBody, KLING_RETIRED_HTTP_STATUS } from "../server/kling/retired.js";
 
 function s(v:any){
   if(v==null) return "";
@@ -45,6 +47,11 @@ async function resolveKlingImageUser(req: VercelRequest): Promise<{ userId: numb
 
 export default async function handler(req:VercelRequest,res:VercelResponse){
   try{
+    // 可灵停用（方案 A）：新建（POST 与 op=probe 真实出图）一律 410，先于鉴权、绝不打上游；GET 轮询保留，在途任务可收尾。
+    const opEarly = s((req.query as any)?.op || "");
+    if (isKlingRetired() && (req.method !== "GET" || opEarly === "probe")) {
+      return res.status(KLING_RETIRED_HTTP_STATUS).json(klingRetiredBody());
+    }
     // 本入口直调付费出图上游且不扣费，只有管理员测试台在用：一律须监管/管理员登录（原先匿名可调，含 op=probe 真实出图）。
     const viewer = await resolveKlingImageUser(req);
     if (!viewer) return res.status(401).json({ ok:false, error:"authentication_required", message:"请先登录后再使用" });

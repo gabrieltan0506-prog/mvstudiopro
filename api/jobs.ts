@@ -41,6 +41,8 @@ import {
 } from "../shared/internalMediaEndpointPolicy.js";
 import { isInternalGatewayRequest } from "../server/services/internalGatewayAuth.js";
 import { redactModelInfoForRole } from "../shared/modelInfoExposure.js";
+import { isKlingRetired } from "../shared/klingRetired.js";
+import { isKlingCreateJobsOp, klingRetiredBody, KLING_RETIRED_HTTP_STATUS } from "../server/kling/retired.js";
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 function getBody(req: VercelRequest): any {
@@ -2418,6 +2420,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
     if (!op) return res.status(400).json({ ok: false, error: "missing_op" });
+
+    // 可灵停用（方案 A）：新建可灵任务的 op 一律 410，先于鉴权与任何上游调用；klingTask 轮询不拦，在途任务可收尾。
+    if (isKlingCreateJobsOp(opNormalized) && isKlingRetired()) {
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(KLING_RETIRED_HTTP_STATUS).json(klingRetiredBody());
+    }
 
     // 历史上不认人的付费/代取入口统一在任何上游调用之前鉴权（档位见 shared/internalMediaEndpointPolicy.ts）。
     const legacyAccess = legacyJobsOpAccess(opNormalized);

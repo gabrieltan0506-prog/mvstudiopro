@@ -13,6 +13,7 @@
  * - Insert time control
  */
 
+import { assertKlingNotRetired } from "./retired";
 import { getKlingClient } from "./client";
 import type {
   IdentifyFaceRequest,
@@ -36,6 +37,7 @@ export async function identifyFaces(
   params: IdentifyFaceRequest,
   region?: "global" | "cn"
 ) {
+  assertKlingNotRetired(); // 可灵停用兜底：新建一律不打上游（轮询/查询不拦）
   const client = getKlingClient();
 
   const response = await client.request<IdentifyFaceResult>({
@@ -78,6 +80,7 @@ export async function createLipSyncTask(
   params: CreateLipSyncRequest,
   region?: "global" | "cn"
 ) {
+  assertKlingNotRetired(); // 可灵停用兜底：新建一律不打上游（轮询/查询不拦）
   const client = getKlingClient();
 
   const response = await client.request<{ task_id: string }>({

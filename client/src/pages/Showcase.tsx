@@ -1,3 +1,4 @@
+import { KLING_RETIRED_CLIENT } from "@shared/klingRetired";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "wouter";
 import Navbar from "@/components/Navbar";
@@ -391,7 +392,8 @@ function AIGallerySection() {
       <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2">
         {[
           { id: "all", label: "全部", icon: ImageIcon },
-          { id: "kling", label: "影视级视频", icon: Wand2 },
+          // 可灵停用（方案 A）：该页签按引擎名筛选可灵作品，停用后不再作为营销入口展示（画廊图片仍在「全部」里）
+          ...(KLING_RETIRED_CLIENT ? [] : [{ id: "kling", label: "影视级视频", icon: Wand2 }]),
           { id: "nbp", label: "高保真图像", icon: Palette },
           { id: "电影感", label: "电影感", icon: Film },
           { id: "动漫风", label: "动漫风", icon: Sparkles },

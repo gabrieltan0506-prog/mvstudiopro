@@ -78,15 +78,12 @@ const CUSTOMER_SERVICE_SYSTEM_PROMPT = `你是 MV Studio Pro 的 AI 客服助手
 
 3. **视频 PK 评分** — 上传视频，AI 从多维度打分并给出改进建议
 
-4. **Kling AI 工作室** — 专业视频生成
-   - Omni Video 3.0：文生视频 / 图生视频
-   - Motion Control 2.6：动作迁移
-   - Lip-Sync：口型同步
-   - Elements 3.0：角色元素管理
+4. **3D Studio** — 2D 图片转 3D 模型（Rapid 闪电模式 / Pro 精雕模式）
 
-5. **3D Studio** — 2D 图片转 3D 模型（Rapid 闪电模式 / Pro 精雕模式）
+5. **音乐生成**（开发中）— Suno V4/V4.5 AI 作曲
 
-6. **音乐生成**（开发中）— Suno V4/V4.5 AI 作曲
+## 已下线功能
+- 旧版「专业视频工作室」（文生/图生视频、动作迁移、口型同步、角色元素）已下线，不再售卖、不再接受新建。用户问起时如实说明已下线，引导使用平台其他视频生成功能；此前生成的作品仍可在「我的作品」查看、播放与下载，不要点名任何模型或供应商。
 
 ## Credits 定价
 - 所有付费功能使用 Credits（积分）
@@ -102,7 +99,6 @@ const CUSTOMER_SERVICE_SYSTEM_PROMPT = `你是 MV Studio Pro 的 AI 客服助手
   - NBP 4K 图片：9 Credits/张
   - Suno V4 音乐：12 Credits
   - 视频生成：50 Credits
-  - Kling 视频：80 Credits
   - 偶像 3D 转换：30 Credits
 
 ## 学生版

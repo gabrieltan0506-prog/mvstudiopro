@@ -58,6 +58,8 @@ import { getTierProviderChain, resolveUserTier } from "../services/tier-provider
 import { getSupervisorAllowlist, resolveSiteOwnerOnlyAllowed } from "../services/access-policy";
 import { shapeManhuaJobOutputForViewer } from "../services/manhuaNativeModelReceiptAccess";
 import { warnLegacyKlingEnvIgnored } from "../config/klingCn";
+import { isKlingRetired } from "../../shared/klingRetired";
+import { isKlingJobAction, klingRetiredBody, KLING_RETIRED_HTTP_STATUS } from "../kling/retired";
 import { registerAuthApiRoutes } from "../routers/authApi";
 import { registerSmsAuthRoutes } from "../routers/smsAuth";
 import { registerSpeechApiRoutes } from "../routers/speechApi";
@@ -301,6 +303,10 @@ async function startServer() {
           return res.status(400).json({ error: `${action} only supports image jobs` });
         }
         resolvedUserId = String(ctx.user.id);
+      }
+      if (isKlingJobAction(action) && isKlingRetired()) {
+        // 可灵停用（方案 A）：新建可灵任务一律 410，不入队、不扣费、不打上游。
+        return res.status(KLING_RETIRED_HTTP_STATUS).json(klingRetiredBody());
       }
       if (action === "nano_image" || action === "kling_image") {
         /**

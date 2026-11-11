@@ -10,6 +10,7 @@
  * - Audio generation (native audio sync)
  */
 
+import { assertKlingNotRetired } from "./retired";
 import { getKlingClient } from "./client";
 import type {
   CreateOmniVideoRequest,
@@ -29,6 +30,7 @@ export async function createOmniVideoTask(
   params: CreateOmniVideoRequest,
   region?: "global" | "cn"
 ) {
+  assertKlingNotRetired(); // 可灵停用兜底：新建一律不打上游（轮询/查询不拦）
   const client = getKlingClient();
 
   // Default model name

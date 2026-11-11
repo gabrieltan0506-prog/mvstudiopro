@@ -28,6 +28,8 @@ import {
   getOmniVideoEndpoint,
   type FalKlingEndpoint,
 } from "../kling/fal-proxy";
+import { isKlingJobAction, isKlingRetiredError, KlingRetiredError } from "../kling/retired";
+import { isKlingRetired } from "../../shared/klingRetired";
 import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "../gemini-image";
 import { normalizeOpenAiImageLane } from "../../shared/openaiImageLane.js";
 import { normalizeOpenAiImageVariant } from "../../shared/openaiImageVariant.js";
@@ -221,6 +223,8 @@ export function resolveFailedJobDisposition(job: {
   if (job.type === "image" && paidImageLedgerTaskType(job.input)) {
     return "refund_and_fail_paid_image";
   }
+  // 可灵停用：重排只会再被拒一次，直接失败（可灵队列 action 均无服务端计费，无需退款）。
+  if (isKlingRetiredError(error)) return "fail";
   return (job.attempts ?? 0) < 2 ? "requeue" : "fail";
 }
 
@@ -1435,6 +1439,14 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
    * 一删 secrets 静帧就会全挂。改成由真正用到可灵的分支各自初始化（kling_image 已自带一次，
    * 其余分支无前端生产者、不可达）。
    */
+  /*
+   * 可灵停用（方案 A）：队列里的可灵 action（入队闸已 410，这里兜住停用前已入队、尚未执行的旧单）
+   * 一律直接失败，不建上游任务；这些 action 均无服务端计费，无需退款。
+   */
+  if (isKlingJobAction(input.action) && isKlingRetired()) {
+    throw new KlingRetiredError();
+  }
+
   if (input.action === "omni_t2v") {
     ensureKlingInitialized();
     const request = buildT2VRequest({
@@ -1704,6 +1716,8 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
   }
 
   if (input.action === "kling_image") {
+    // 可灵停用（方案 A）：停用前已入队、尚未执行的旧图片单直接失败；该 action 无服务端计费，无需退款。
+    if (isKlingRetired()) throw new KlingRetiredError();
     ensureKlingInitialized();
     const request = buildImageRequest({
       prompt: String(params.prompt ?? ""),
@@ -4488,6 +4502,9 @@ export async function runClaimedJob(
       ).catch((refundError) =>
         console.error("[Jobs] paid image refund pending:", refundError),
       );
+      await markJobFailed(job.id, message);
+    } else if (resolveFailedJobDisposition(job, error) === "fail" && isKlingRetiredError(error)) {
+      // 可灵停用：不重排（重排只会再被拒），直接失败；无服务端计费，无需退款。
       await markJobFailed(job.id, message);
     } else if ((job.attempts ?? 0) < 2) {
       await requeueJob(job.id, message);

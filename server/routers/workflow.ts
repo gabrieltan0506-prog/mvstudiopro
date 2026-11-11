@@ -15,6 +15,8 @@ import {
 import { CREDIT_COSTS } from "../plans";
 import { hasUnlimitedAccess } from "../services/access-policy";
 import { hasSupervisorRole } from "../../shared/internalMediaEndpointPolicy.js";
+import { isKlingRetired } from "../../shared/klingRetired.js";
+import { assertKlingNotRetiredTrpc } from "../kling/retired";
 
 /**
  * 歷史表名 `stripe_usage_logs` 僅為功能計次／審計，與 Stripe Checkout 金流無關。
@@ -361,6 +363,8 @@ export const workflowRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      // 可灵停用（方案 A）：动作控制/口型同步/角色元素只由可灵提供，停用时不许再打开；关闭与保留旧值不受影响。
+      if (input.motionControl || input.lipsync || input.elements) assertKlingNotRetiredTrpc();
       await assertWorkflowOwner(input.workflowId, ctx.user.id);
       const database = await db();
 
@@ -534,9 +538,10 @@ export const workflowRouter = router({
         name: input.name?.trim() || template.name,
         description: template.blueprint.workflowDescription,
         status: "draft",
-        klingMotionControlEnabled: template.blueprint.klingDefaults.motionControl,
-        klingLipsyncEnabled: template.blueprint.klingDefaults.lipsync,
-        klingElementsEnabled: template.blueprint.klingDefaults.elements,
+        // 可灵停用：新建工作流不再继承模板里的可灵开关（只影响新建行，不改已有工作流）。
+        klingMotionControlEnabled: !isKlingRetired() && template.blueprint.klingDefaults.motionControl,
+        klingLipsyncEnabled: !isKlingRetired() && template.blueprint.klingDefaults.lipsync,
+        klingElementsEnabled: !isKlingRetired() && template.blueprint.klingDefaults.elements,
         klingParams: {
           sourceTemplateId: template.id,
         },
