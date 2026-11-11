@@ -1,5 +1,6 @@
 import { NOVEL_REVIEW_DIMENSIONS } from "@shared/novelCraftReview";
 import { novelTextLength } from "@shared/novelWorkspace";
+import { summarizeNovelProseLint } from "@shared/novelProseLint";
 import {
   parseNovelRevisionEntry,
   type NovelRevisionEntry,
@@ -77,6 +78,7 @@ export function NovelChapterRevisionPanel({
                 <h4 className="font-semibold">
                   未修改版 · {novelTextLength(original)}字
                 </h4>
+                <NovelProseLintLine text={original} />
                 <pre className="max-h-96 overflow-auto whitespace-pre-wrap">
                   {original}
                 </pre>
@@ -88,6 +90,7 @@ export function NovelChapterRevisionPanel({
                 </h4>
                 {revised ? (
                   <>
+                    <NovelProseLintLine text={revisedText} />
                     <pre className="max-h-96 overflow-auto whitespace-pre-wrap">
                       {revisedText}
                     </pre>
@@ -123,5 +126,17 @@ export function NovelChapterRevisionPanel({
         );
       })}
     </section>
+  );
+}
+
+/** 套话句式与高频虚词的确定性检测结果（代码规则，不调用模型）；只作复核提示。 */
+function NovelProseLintLine({ text }: { text: string }) {
+  const lint = summarizeNovelProseLint(text);
+  return (
+    <p className="mb-1 text-xs opacity-80">
+      套话句式 {lint.blocking} 处 · 高频虚词每千字 {lint.advisoryPerThousand}
+      {lint.advisoryOverLimit ? "（偏多）" : ""}
+      {lint.samples.length > 0 ? `：${lint.samples.map(h => `「${h.match}」`).join(" ")}` : ""}
+    </p>
   );
 }

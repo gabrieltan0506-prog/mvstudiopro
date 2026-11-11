@@ -30,6 +30,8 @@ export const novelWorkspaceStateSchema = z.object({
   direction: z.string(),
   advisorDraft: z.string().max(2000).optional(),
   modelPreference: novelModelSchema.optional(),
+  /** 审稿改稿单独选用的线路（站长 2026-11-11：审稿改稿可自选，不随写作线路锁定）；未设时沿用写作线路。 */
+  reviseModelPreference: novelModelSchema.optional(),
   advisorAnchor: z.string().optional(),
   storyVersions: z
     .array(

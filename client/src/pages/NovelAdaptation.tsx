@@ -714,7 +714,7 @@ function NovelWorkspaceEditor({
       info?.message || "审稿改稿未完成，本集正文不变，记录已保留；没有自动重试。"
     );
   };
-  /** 审稿改稿：沿用当前线路，先审稿再改稿；不带模板，不改动本集正文，采用需用户确认。 */
+  /** 审稿改稿：线路可单独选择（未选时沿用写作线路），先审稿再改稿；不带模板，不改动本集正文，采用需用户确认。 */
   const reviseChapter = async (chapterIndex: number) => {
     if (disabled || running.current || latest.current.pending || saveError)
       return;
@@ -733,8 +733,8 @@ function NovelWorkspaceEditor({
         stage: "revise",
         topic: draft.topic,
         direction: draft.direction,
-        ...(draft.modelPreference
-          ? { modelPreference: draft.modelPreference }
+        ...((draft.reviseModelPreference || draft.modelPreference)
+          ? { modelPreference: draft.reviseModelPreference || draft.modelPreference }
           : {}),
         templates: [],
         episodeCount: 1,
@@ -2199,6 +2199,26 @@ function NovelWorkspaceEditor({
             >
               审稿改稿
             </button>
+            <label className="inline-flex items-center gap-2 text-sm">
+              审稿改稿线路
+              <select
+                aria-label={`第${i + 1}集审稿改稿线路`}
+                className="rounded border px-2 py-1"
+                disabled={disabled}
+                value={draft.reviseModelPreference || draft.modelPreference || "auto"}
+                onChange={e =>
+                  change({
+                    reviseModelPreference: e.target.value as NovelTestInput["modelPreference"],
+                  })
+                }
+              >
+                {NOVEL_MODEL_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
           <textarea
             aria-label={`第${i + 1}集小说稿`}
