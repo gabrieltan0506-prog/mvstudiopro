@@ -68,7 +68,7 @@ it('跨页大图与留白补位：逐章渲染后每页留白 ≤ 1/3，正文�
      numbers:folios.map(f=>f.querySelector('.page-number')!.textContent),kinds:folios.map(f=>f.classList.contains('spread-folio')?'跨':f.classList.contains('lead-folio')?'图':'文'),
      mainImages:folios.flatMap(f=>Array.from(f.querySelectorAll('.main-card img,.spread-card img')).map(img=>({src:(img as HTMLImageElement).dataset.pdfMaxDim,w:img.getBoundingClientRect().width}))),
      sources:Array.from(document.querySelectorAll('#reading-pages .reading-unit')).map(u=>(u as HTMLElement).dataset.sourceId),
-     text:document.querySelector('#reading-pages')!.textContent||'',previews:Array.from(document.querySelectorAll('#reading-pages .next-preview h4')).map(e=>e.textContent),
+     text:document.querySelector('#reading-pages')!.textContent||'',previews:Array.from(document.querySelectorAll('#reading-pages .next-preview h4')).map(e=>e.textContent),previewClipped:Array.from(document.querySelectorAll('#reading-pages .next-preview')).filter(el=>{const h=el.querySelector('h4') as HTMLElement,s=el.querySelector('.preview-strip') as HTMLElement|null;const hr=h.getBoundingClientRect(),er=el.getBoundingClientRect();return h.scrollHeight-h.clientHeight>2||hr.bottom>er.bottom||(!!s&&s.getBoundingClientRect().top<hr.bottom-0.5);}).length,
      ending:Array.from(document.querySelectorAll('#reading-pages .filler-label')).map(e=>e.textContent),parkedFolios:document.querySelectorAll('.image-variants .folio').length};
    }));
    offset+=counts[i];
@@ -105,6 +105,8 @@ it('跨页大图与留白补位：逐章渲染后每页留白 ≤ 1/3，正文�
   // 下篇预告只指向真实的下一章；末章不预告。
   for(const [i,c] of Array.from(chapters.entries()))for(const title of c.previews)expect(title).toBe(doc.pages[i+1]?.headline);
   expect(chapters.at(-1)!.previews).toEqual([]);
+  // 下篇预告的标题行必须完整露出，不被裁切条挤压或遮住。
+  expect(chapters.reduce((n,c)=>n+c.previewClipped,0)).toBe(0);
  }finally{await page.close();}
 },180000);
 
