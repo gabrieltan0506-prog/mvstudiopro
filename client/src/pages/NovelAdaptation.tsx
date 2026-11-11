@@ -53,6 +53,7 @@ import {
   formatNovelOutline,
   novelModelLabel,
   NOVEL_MODEL_OPTIONS,
+  NOVEL_ADVISOR_TIER_OPTIONS,
   novelChapterSchema,
   novelOutlineSchema,
   novelTestInputSchema,
@@ -152,6 +153,8 @@ function NovelWorkspaceEditor({
   >(() => (initial.value.chapters.some(c => c?.trim()) ? "novel" : "prepare"));
   const [activeChapter, setActiveChapter] = useState(0);
   const [sideTab, setSideTab] = useState<"advisor" | "methods">("advisor");
+  /** 默认打字；勾选「语音输入」才出现语音互动（站长 2026-11-12：此前未取过建议时没有打字框）。 */
+  const [advisorVoice, setAdvisorVoice] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [showStory, setShowStory] = useState(Boolean(initial.value.outline));
   const [savePending, setSavePending] = useState(false);
@@ -603,8 +606,9 @@ function NovelWorkspaceEditor({
         stage,
         topic: draft.topic,
         direction: draft.direction,
-        ...(draft.modelPreference
-          ? { modelPreference: draft.modelPreference }
+        // 创作顾问单独选档位；未选时沿用创作线路。
+        ...((stage === "advice" ? draft.advisorModelPreference || draft.modelPreference : draft.modelPreference)
+          ? { modelPreference: stage === "advice" ? draft.advisorModelPreference || draft.modelPreference : draft.modelPreference }
           : {}),
         source,
         ...(advisorMessage ? { advisorMessage } : {}),
@@ -1558,15 +1562,48 @@ function NovelWorkspaceEditor({
   );
   const advisorContent = (
     <>
-      <NovelVoiceRevision key={draft.roundId} getWorkspace={() => latest.current} onApplyRevision={async (candidate, signal) => {
+      <div className="mb-3 flex flex-wrap items-center gap-4 text-sm">
+        <label className="inline-flex items-center gap-2">
+          顾问档位
+          <select
+            aria-label="创作顾问档位"
+            className="rounded border bg-transparent px-2 py-1"
+            disabled={disabled}
+            value={draft.advisorModelPreference || ""}
+            onChange={e =>
+              change({
+                advisorModelPreference: (e.target.value || undefined) as NovelTestInput["modelPreference"],
+              })
+            }
+          >
+            <option value="">沿用创作线路</option>
+            {NOVEL_ADVISOR_TIER_OPTIONS.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="inline-flex items-center gap-2">
+          <input
+            type="checkbox"
+            aria-label="语音输入"
+            checked={advisorVoice}
+            onChange={e => setAdvisorVoice(e.target.checked)}
+          />
+          语音输入
+        </label>
+      </div>
+      {advisorVoice && <NovelVoiceRevision key={draft.roundId} getWorkspace={() => latest.current} onApplyRevision={async (candidate, signal) => {
         if (signal.aborted || disabled || saving.current > 0) throw new Error("工作区正在保存或处理任务，未修改正文。");
         const before = latest.current;
         const next = await applyNovelVoiceCandidate(before, candidate);
         if (signal.aborted || !alive.current || latest.current !== before || running.current || saving.current > 0) throw new Error("正文或工作区在确认期间变化，未覆盖现稿。");
         if (!await persist(next, `voice-${candidate.id}`, true)) throw new Error("正文保存失败，未确认套用成功；候选稿保留，请先处理保存错误。");
         if (alive.current) { setActiveChapter(candidate.episode - 1); setWorkspaceTab("novel"); }
-      }} scopeKey={`${userId}:${draft.roundId}`} context={JSON.stringify({ workspace: workspaceTab, activeEpisode: activeChapter + 1, title: draft.topic, direction: draft.direction, outline: draft.outline, currentChapter: draft.chapters[activeChapter], templates: draft.templates, chapterCount: draft.chapters.length })} disabled={disabled} onUse={text => { change({ advisorDraft: text }); setSideTab("advisor"); }} targets={draft.chapters.map((chapter, i) => ({ episode: i + 1, label: chapter ? `第${i + 1}集小说稿` : `第${i + 1}集尚无正文` }))} onNavigate={target => { if (disabled || !latest.current.chapters[target.episode - 1]) throw new Error("该集正文尚未生成或工作区忙，未切换。"); setActiveChapter(target.episode - 1); setWorkspaceTab("novel"); return JSON.stringify({ episode: target.episode, text: latest.current.chapters[target.episode - 1], next: "以本次返回正文为准；修改前调用novelText read获取revision。" }); }} onAskAdvisor={async question => await generate("advice", undefined, 1, question)} />
-      {(advice || draft.advisorDraft?.trim()) && (
+      }} scopeKey={`${userId}:${draft.roundId}`} context={JSON.stringify({ workspace: workspaceTab, activeEpisode: activeChapter + 1, title: draft.topic, direction: draft.direction, outline: draft.outline, currentChapter: draft.chapters[activeChapter], templates: draft.templates, chapterCount: draft.chapters.length })} disabled={disabled} onUse={text => { change({ advisorDraft: text }); setSideTab("advisor"); }} targets={draft.chapters.map((chapter, i) => ({ episode: i + 1, label: chapter ? `第${i + 1}集小说稿` : `第${i + 1}集尚无正文` }))} onNavigate={target => { if (disabled || !latest.current.chapters[target.episode - 1]) throw new Error("该集正文尚未生成或工作区忙，未切换。"); setActiveChapter(target.episode - 1); setWorkspaceTab("novel"); return JSON.stringify({ episode: target.episode, text: latest.current.chapters[target.episode - 1], next: "以本次返回正文为准；修改前调用novelText read获取revision。" }); }} onAskAdvisor={async question => await generate("advice", undefined, 1, question)} />}
+      {(
+
         <div className="mt-5 space-y-3">
           <h3 className="font-semibold">与创作顾问讨论</h3>
           <div

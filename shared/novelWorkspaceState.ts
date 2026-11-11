@@ -37,6 +37,8 @@ export const novelWorkspaceStateSchema = z.object({
   reviseModelPreference: novelModelSchema.optional(),
   /** 改稿线路（1111 新增）；未设时沿用写作线路。 */
   rewriteModelPreference: novelModelSchema.optional(),
+  /** 创作顾问档位（站长 2026-11-12：顾问线路自己选）；缺省沿用 modelPreference。 */
+  advisorModelPreference: novelModelSchema.optional(),
   advisorAnchor: z.string().optional(),
   storyVersions: z
     .array(
