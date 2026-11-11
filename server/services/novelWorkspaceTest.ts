@@ -25,6 +25,17 @@ import { createGeminiCarbonGcsSaver } from "./geminiCarbonCall";
 import { resolveStableManhuaTemplatePublicCode } from "./manhuaTemplatePublicId";
 import { formatManhuaViralTemplateWriterSkillFromCard } from "../../shared/manhuaViralTemplateBank";
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
+/**
+ * 只有顾问阶段（推荐模板 / 故事线可从库内换组合）需要整份目录；
+ * 大纲、小说、剧本只送用户已选模板的条目。仅影响提示词，校验 ID 列表由调用方原样传入。
+ */
+export function selectNovelPromptCatalog(input: NovelTestInput, catalog: unknown) {
+  if (input.stage === "advice" || !Array.isArray(catalog)) return catalog;
+  const assigned = new Set(input.templates.map(t => t.publicId));
+  return catalog.filter(
+    c => !!c && typeof c === "object" && assigned.has((c as { publicId?: string }).publicId ?? "")
+  );
+}
 export function buildNovelTestPrompt(
   input: NovelTestInput,
   templates: string,
@@ -92,7 +103,7 @@ export function buildNovelTestPrompt(
         ? { currentNovelDraft: input.novel }
         : { confirmedNovel: input.novel }),
       templateRoles: input.templates,
-      availableCatalog: catalog,
+      availableCatalog: selectNovelPromptCatalog(input, catalog),
     }),
     "已核验的模板创作方法与学习摘要（非逐镜全文）：",
     templates,
