@@ -64,3 +64,11 @@ it("来源检查保留完整链接和鉴权直连，网关非JSON一次失败并
   await expect(client.query('manhuaViralTemplate.inspectLearnSource', { params: { url: source } })).rejects.toThrow('HTTP 200');
   expect(calls).toHaveLength(4);
 });
+
+it("拉片整组路由直连长请求通道，相近前缀与其他路由不受影响", () => {
+  for (const path of ["videoBreakdown.createUpload", "videoBreakdown.start", "videoBreakdown.get"]) expect(useLongTrpcHttpLink({ path })).toBe(true);
+  expect(useLongTrpcHttpLink({ path: "videoBreakdownLegacy.get" })).toBe(false);
+  expect(useLongTrpcHttpLink({ path: "fileConversion.convert" })).toBe(true);
+  expect(useLongTrpcHttpLink({ path: "codeMotion.quote" })).toBe(true);
+  expect(useLongTrpcHttpLink({ path: "auth.me" })).toBe(false);
+});

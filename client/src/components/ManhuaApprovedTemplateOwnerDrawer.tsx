@@ -8,6 +8,7 @@ import type {
   ManhuaViralTemplateOptimizeRequestModel,
 } from "@shared/manhuaViralTemplateBank";
 import { formatManhuaTemplateNativeBeatZh } from "@/lib/manhuaTemplateNativeBeat";
+import { ManhuaTemplateLapianPanel } from "@/components/ManhuaTemplateLapianPanel";
 import { X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -404,7 +405,11 @@ export function ManhuaApprovedTemplateOwnerDrawer(props: {
               </div>
             </>
           ) : (
-            <TemplateColumn card={original} optimized={false} />
+            <>
+              {/* 拉片式视图（镜头构造 / 复刻提示词 / 视觉基因）：只读学习卡证据派生，不改模板 */}
+              <ManhuaTemplateLapianPanel card={original} />
+              <TemplateColumn card={original} optimized={false} />
+            </>
           )}
         </div>
       </aside>
