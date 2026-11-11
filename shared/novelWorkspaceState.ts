@@ -12,6 +12,7 @@ import {
   novelImitationLibraryOutcomeSchema,
   novelImitationSkeletonSchema,
 } from "./novelImitation";
+import { NOVEL_CREATIVE_PREMISE_MAX, novelCreativePremiseSchema } from "./novelCreativePremise";
 const runSchema = z.object({
   input: novelTestInputSchema,
   result: z.object({
@@ -46,6 +47,16 @@ export const novelWorkspaceStateSchema = z.object({
   /** 创作顾问档位（站长 2026-11-12：顾问线路自己选）；缺省沿用 modelPreference。 */
   advisorModelPreference: novelModelSchema.optional(),
   advisorAnchor: z.string().optional(),
+  /** 创意环节（1112，可选；旧草稿没有）：最近一批核心创意候选。 */
+  creativePremises: z
+    .object({
+      requestId: z.string(),
+      savedAt: z.string(),
+      premises: z.array(novelCreativePremiseSchema),
+    })
+    .optional(),
+  /** 本作核心创意（1112，可选）：用户采用后可手改，也可完全自己写；非空时带进顾问讨论、大纲、正文与审稿改稿。 */
+  creativePremise: z.string().max(NOVEL_CREATIVE_PREMISE_MAX).optional(),
   storyVersions: z
     .array(
       z.object({

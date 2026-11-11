@@ -10,6 +10,7 @@ const generate=async input=>{
  globalThis.calls.push(input);if(input.stage==='chapter'&&input.chapterIndex===2&&globalThis.deferChapter)await new Promise(resolve=>{globalThis.releaseChapter=resolve});let value;
  if(input.stage==='advice')value={assessment:'先确定主角代价，前三集逐次兑现冲突。',recommendations:cards.filter(c=>!input.selectedTemplateIds.includes(c.publicId)).slice(0,3).map(c=>({publicId:c.publicId,reason:'强化角色抉择',tradeoff:'减少支线'}))};
  if(input.advisorIntent==='story_variants')value={assessment:'三个不同因果走向',recommendations:[],variants:['A','B','C'].map(id=>({id,title:'故事'+id,changeSummary:'选择不同的救城方式'+id,tradeoff:'承担不同代价',templates:input.templates,outline:{premise:'补天需要代价'+id,characters:'女娲与守火人',episodes:Array.from({length:input.episodeCount},(_,i)=>({index:(input.episodeStart||1)+i,title:'第'+(i+1)+'集',events:'主角作出选择'+id,hook:'新的代价',payoff:'救下一城'}))}}))};
+ if(input.advisorIntent==='creative_premises'){const b=globalThis.premiseBatch=(globalThis.premiseBatch||0)+1;value={assessment:'四个不同切入点（测试数据）',recommendations:[],premises:[0,1,2,3].map(i=>({title:'测试设想'+b+'-'+i,whatIf:'如果测试'+b+'-'+i+'会怎样',ruleAndCost:'测试规则与代价',drives:'测试推动',twist:'测试打破惯例',logline:'测试梗概',risk:'测试难点'}))};}
  if(input.stage==='outline')value={premise:'补天需要代价',characters:'女娲与守火人',episodes:Array.from({length:input.episodeCount},(_,i)=>({index:(input.episodeStart||1)+i,title:'第'+(i+1)+'集',events:'主角作出选择',hook:'新的代价',payoff:'救下一城'}))};
  if(input.stage==='chapter')value={title:'第'+input.chapterIndex+'章',text:'女娲望着破裂的天空，决定留下来。'.repeat(40),notes:'测试生成，非真实模型结果',continuity:'女娲与守火人共同守城，身份与伏笔保持；已写到第'+input.chapterIndex+'集'};
  if(input.stage==='script')value={title:'补天',applications:input.templates.map(t=>({publicId:t.publicId,method:'选择带来代价',adaptation:'让守火人通过留下来承担救城的代价。',sceneKeys:['E'+(input.episodeStart||1)+'-S1']})),episodes:Array.from({length:input.episodeCount},(_,i)=>({index:(input.episodeStart||1)+i,title:'补天',opening:'天裂',payoff:'救人',hook:'余烬',scenes:[{key:'E'+((input.episodeStart||1)+i)+'-S1',场景:'共同场景。'+(input.templates[0].publicId==='mt_0000'?'雪落城头。':'雨落城头。'),人物:'女娲与守火人。',妆容:'灰衣。',灯光:'火光。',氛围:'紧张。',对白:'女娲说：“把孩子先带出去，我来守住这里。”'}]}))};
@@ -45,7 +46,7 @@ export async function prepareNovelAction(
   label: string
 ) {
   if (
-    /^(请创作顾问|发送给顾问|按新方向|生成3个故事|采用这条|生成本批续写|确认大纲|恢复此版本)/.test(
+    /^(请创作顾问|发送给顾问|按新方向|生成3个故事|采用这条|生成本批续写|确认大纲|恢复此版本|先出 4 个核心创意|换一批|采用这个创意|清除)/.test(
       label
     )
   )

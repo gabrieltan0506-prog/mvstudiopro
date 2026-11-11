@@ -2,6 +2,13 @@ import { z } from "zod";
 import { novelExcerptSchema } from "./manhuaNovelSource";
 import { NOVEL_IMITATION_LIBRARY_PICK_MAX, novelImitationBeatSchema } from "./novelImitation";
 import {
+  NOVEL_CREATIVE_PREMISE_EXCLUSION_MAX,
+  NOVEL_CREATIVE_PREMISE_MAX,
+  novelCreativePremiseExclusionSchema,
+  novelCreativePremiseSchema,
+  validateNovelCreativePremises,
+} from "./novelCreativePremise";
+import {
   NOVEL_REVIEW_DIMENSIONS,
   type NovelReviewDimension,
 } from "./novelCraftReview";
@@ -85,8 +92,21 @@ export const novelTestInputSchema = z
     source: novelExcerptSchema.optional(),
     advisorMessage: text.max(2000).optional(),
     advisorIntent: z
-      .enum(["discussion", "recommend_templates", "story_variants"])
+      .enum(["discussion", "recommend_templates", "story_variants", "creative_premises"])
       .optional(),
+    /**
+     * 创意环节（1112）：「换一批」时带上已出过的设想（标题 + 核心设想）作为不要重复的方向。
+     * 只随 creative_premises 请求携带；旧请求没有此字段。
+     */
+    premiseExclusions: z
+      .array(novelCreativePremiseExclusionSchema)
+      .max(NOVEL_CREATIVE_PREMISE_EXCLUSION_MAX)
+      .optional(),
+    /**
+     * 本作核心创意（1112）：用户采用并可手改的核心创意文本。非空时进入顾问讨论 / 故事线、大纲、正文与审稿改稿提示词；
+     * 可选，不是任何阶段的前提。旧请求没有此字段，行为不变。
+     */
+    creativePremise: text.max(NOVEL_CREATIVE_PREMISE_MAX).optional(),
     advisorHistory: z
       .array(
         z
@@ -145,6 +165,10 @@ export const novelTestInputSchema = z
       (v.stage !== "advice" || !v.templates.length)
     )
       c.addIssue({ code: "custom", message: "请先选择模板，再生成故事线方案" });
+    if (v.advisorIntent === "creative_premises" && v.stage !== "advice")
+      c.addIssue({ code: "custom", message: "核心创意只在创作顾问环节生成" });
+    if (v.premiseExclusions !== undefined && v.advisorIntent !== "creative_premises")
+      c.addIssue({ code: "custom", message: "仅「换一批」核心创意携带已出过的方向" });
     if (new Set(v.templates.map(t => t.publicId)).size !== v.templates.length)
       c.addIssue({ code: "custom", message: "模板不可重复" });
     if (
@@ -307,6 +331,8 @@ export function formatNovelImitationOutline(plan: NovelImitationOutline) {
 export const novelAdviceSchema = z
   .object({
     variants: z.array(novelStoryVariantSchema).length(3).optional(),
+    /** 创意环节（1112）：恰好 4 个核心设想；只在 creative_premises 请求的结果里出现。 */
+    premises: z.array(novelCreativePremiseSchema).optional(),
     assessment: text.max(3000),
     recommendations: z
       .array(
@@ -620,6 +646,13 @@ export function validateNovelStageOutput(
       if (JSON.stringify(result, null, 2).length > 60000)
         throw new Error("故事线结果过长");
     } else if (result.variants) throw new Error("当前请求未要求故事线方案");
+    if (input.advisorIntent === "creative_premises") {
+      validateNovelCreativePremises(result.premises);
+      if (JSON.stringify(result, null, 2).length > 60000)
+        throw new Error("核心创意结果过长");
+      // 创意环节不推荐模板：模型多给的推荐不展示也不保留。
+      return { ...result, recommendations: [] };
+    } else if (result.premises) throw new Error("当前请求未要求核心创意");
     const ids = result.recommendations.map(r => r.publicId);
     const available = availableIds.filter(
       id => !input.selectedTemplateIds.includes(id)

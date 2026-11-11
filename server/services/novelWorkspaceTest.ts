@@ -40,6 +40,11 @@ import {
 import { shortlistNovelCatalog, shouldShortlistNovelCatalog } from "./novelCatalogShortlist";
 import { getNovelCraftCards, NOVEL_CREATIVE_FIRST_RULE } from "../../shared/novelCraftCards";
 import {
+  NOVEL_CREATIVE_PREMISES_FORMAT,
+  buildNovelCreativePremiseBlock,
+  buildNovelCreativePremisesRules,
+} from "../../shared/novelCreativePremise";
+import {
   NOVEL_IMITATION_ADVICE_RULES,
   NOVEL_IMITATION_CHAPTER_RULES,
   NOVEL_IMITATION_CRAFT_CARD_ID,
@@ -91,8 +96,10 @@ export function buildNovelTestPrompt(
   /** shortlisted：顾问目录是分片初选后的入围名单（不是全库）。libraryReference：拆书参考模板结构参考块（仅大纲 / 正文阶段生效）。 */
   options: { shortlisted?: boolean; libraryReference?: string } = {}
 ) {
-  const format =
-    input.advisorIntent === "story_variants"
+  const premises = input.stage === "advice" && input.advisorIntent === "creative_premises";
+  const format = premises
+    ? NOVEL_CREATIVE_PREMISES_FORMAT
+    : input.advisorIntent === "story_variants"
       ? '{"assessment":"三个方案的创作依据与差异","recommendations":[],"variants":[{"id":"A/B/C","title":"方案名","changeSummary":"相对原稿或另外方案的具体差异","tradeoff":"收益与代价","templates":[{"publicId":"真实模板ID","role":"具体分工","weight":100}],"outline":{"premise":"核心冲突","characters":"人物动机与关系","episodes":[{"index":1,"title":"标题","events":"具体因果事件","payoff":"当集兑现","hook":"追看理由"}]}}]}'
       : input.stage === "advice"
         ? '{"assessment":"人物动机、核心冲突、前三集留人风险与建议","recommendations":[{"publicId":"真实库内公开ID","reason":"适合原因及能强化之处","tradeoff":"取舍"}]}'
@@ -120,7 +127,12 @@ export function buildNovelTestPrompt(
           "顾问对话是用户与顾问的历史讨论。回应用户本轮问题，结合当前已选模板与分工解释具体用法、冲突和可替换方案；用户最新明确要求优先于顾问先前建议，顾问建议不等于用户已采用。保留用户明确指定的世界规则、人物能力和道具来源，不擅自替换成模板或底本的设定。assessment展示结论、创作依据、取舍和待用户决定的问题，不输出内部思维过程。生成提案时落实用户在对话中的明确修正；已确认大纲与小说仍为后续写作基准。",
         ]
       : []),
-    input.advisorIntent === "story_variants"
+    premises
+      ? buildNovelCreativePremisesRules(
+          input.imitation ? "imitation" : input.source ? "source" : "original",
+          input.premiseExclusions
+        )
+      : input.advisorIntent === "story_variants"
       ? `生成恰好三个故事线方案A/B/C，每个均包含${input.episodeCount}集，便于用户先看剧情再选择。首次无advisorMessage时必须使用用户已选的全部模板及其明确配比，不擅自替换；未设配比时提出合计100的建议。结合底本、创作方向与原有情节，在关键事件、人物选择、关系走向、代价与兑现方式上给出实质不同的三条因果链，不能只改标题或形容词。后续有新方向时可结合原故事与库内其他模板提出新组合，配比仅为建议；保留未要求改变的主角、能力和世界规则。明确每版的变化、保留与取舍，使用具体事件而不是模板标签。各版先完成小闭环再抬高风险，不用硬断章冒充悬念。只输出可编辑提案，不生成小说，不宣称用户已采用任何一版。用户确认后的大纲优先于历史里的其他候选方案。`
       : input.stage === "advice" &&
           input.advisorIntent === "recommend_templates"
@@ -143,8 +155,14 @@ export function buildNovelTestPrompt(
           ...(input.stage === "chapter" ? [NOVEL_IMITATION_CHAPTER_RULES] : []),
         ]
       : []),
+    // 本作核心创意（1112）：非空时放在这里——位于文末通用【创意优先】规则之前；剧本由正文转写，不重复注入。
+    ...(premises || (input.stage !== "advice" && input.stage !== "outline" && input.stage !== "chapter")
+      ? []
+      : buildNovelCreativePremiseBlock(input.creativePremise, input.stage as "advice" | "outline" | "chapter")),
     "组合模板须按分工协作；冲突以已确认方向、提案、小说为准，不堆叠互斥设定。",
-    input.stage === "advice"
+    premises
+      ? "本轮不挑选模板；文末的手法卡与规则只作参考。"
+      : input.stage === "advice"
       ? `availableCatalog 是${options.shortlisted ? "入围模板" : "全库每个模板"}的能力简介与特征标签（不是手法全文）：按简介与标签挑选合适的模板；用户已选模板的具体手法见文末的手法卡，讨论具体用法时以手法卡为准，不凭简介臆造手法细节。${options.shortlisted ? "目录是初选后的入围名单：已先从全库按本作品逐片初选，只列入围条目；从入围名单里终选即可。" : ""}`
       : "文末是已针对本作品提炼的手法卡（个别模板可能仍为方法摘要原文）：每次从多张手法卡里挑适合当前场面的几条手法做排列组合，再结合人物动机与因果改写成本作品自己的内容；不必每张都用、不必一张用尽，不照搬来源剧情。",
     ...(input.templates.some(t => t.weight !== undefined)
@@ -168,7 +186,8 @@ export function buildNovelTestPrompt(
         ? { currentNovelDraft: input.novel }
         : { confirmedNovel: input.novel }),
       templateRoles: input.templates,
-      availableCatalog: selectNovelPromptCatalog(input, catalog),
+      // 创意环节不挑模板，不送目录。
+      availableCatalog: premises ? [] : selectNovelPromptCatalog(input, catalog),
     }),
     "已核验的模板创作方法与学习摘要（非逐镜全文）：",
     templates,
@@ -463,7 +482,8 @@ export async function runNovelWorkspaceTest(
     }
     // 顾问阶段：全库目录分片并发初选，只把入围名单交给终选提示词（校验仍用全库）。shortlistNovelCatalog 不抛错。
     let promptCatalog: { publicId: string }[] | undefined;
-    if (shouldShortlistNovelCatalog(input, catalog)) {
+    // 创意环节不挑模板：不做目录初选（省掉初选调用）。
+    if (input.advisorIntent !== "creative_premises" && shouldShortlistNovelCatalog(input, catalog)) {
       try {
         const shortlist = await shortlistNovelCatalog({
           userId,

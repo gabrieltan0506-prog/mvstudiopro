@@ -663,6 +663,39 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
         async () => (globalThis as any).calls[0].selectedTemplateIds.length
       )
     ).toBe(6);
+    // 创意环节：先出 4 个 → 采用（可手改）→ 换一批带排除方向 → 之后的故事线请求带上核心创意。
+    const anchorBefore = await page.evaluate(async () => (await (globalThis as any).readDraft()).advisorAnchor);
+    await click("先出 4 个核心创意");
+    await page.waitForFunction(
+      async () => (await (globalThis as any).readDraft()).creativePremises?.premises.length === 4
+    );
+    const firstPremise = await page.evaluate(async () => (globalThis as any).calls.at(-1));
+    expect(firstPremise.advisorIntent).toBe("creative_premises");
+    expect(firstPremise.premiseExclusions).toBeUndefined();
+    expect(firstPremise.creativePremise).toBeUndefined();
+    expect(await page.evaluate(async () => (await (globalThis as any).readDraft()).advisorAnchor)).toBe(anchorBefore);
+    await click("采用这个创意");
+    await page.waitForFunction(() =>
+      (document.querySelector('[aria-label="本作核心创意"]') as HTMLTextAreaElement)?.value.includes("测试设想1-0")
+    );
+    await click("换一批");
+    await page.waitForFunction(
+      async () => (await (globalThis as any).readDraft()).creativePremises?.premises[0].title === "测试设想2-0"
+    );
+    expect(
+      await page.evaluate(async () => (globalThis as any).calls.at(-1).premiseExclusions.map((e: any) => e.title))
+    ).toEqual(["测试设想1-0", "测试设想1-1", "测试设想1-2", "测试设想1-3"]);
+    // 换一批不覆盖已采用的核心创意
+    expect(
+      await page.$eval('[aria-label="本作核心创意"]', el => (el as HTMLTextAreaElement).value)
+    ).toContain("测试设想1-0");
+    await click("生成3个故事方案");
+    await page.waitForFunction(async () => (globalThis as any).calls.at(-1).advisorIntent === "story_variants");
+    expect(
+      await page.evaluate(async () => (globalThis as any).calls.at(-1).creativePremise)
+    ).toContain("测试设想1-0");
+    await click("清除");
+    await page.waitForFunction(async () => !(await (globalThis as any).readDraft()).creativePremise);
     expect(errors).toEqual([]);
   } finally {
     await browser.close();

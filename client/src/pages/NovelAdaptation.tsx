@@ -63,6 +63,12 @@ import {
   type NovelTestInput,
 } from "@shared/novelWorkspace";
 import {
+  NOVEL_CREATIVE_PREMISE_MAX,
+  NOVEL_CREATIVE_PREMISE_UI,
+  collectNovelCreativePremiseExclusions,
+  formatNovelCreativePremise,
+} from "@shared/novelCreativePremise";
+import {
   NOVEL_IMITATION_SKELETON_CREDITS,
   NOVEL_IMITATION_EPISODE_CREDITS,
   NOVEL_IMITATION_LIBRARY_PICK_MAX,
@@ -369,6 +375,8 @@ function NovelWorkspaceEditor({
   const adviceRuns = draft.runs.filter(
     r =>
       r.input.stage === "advice" &&
+      // 创意环节的候选不算顾问讨论：不进对话、不改当前采用的讨论、不影响后续门槛。
+      r.input.advisorIntent !== "creative_premises" &&
       r.input.roundId === draft.roundId &&
       r.input.topic === draft.topic &&
       r.input.direction === draft.direction &&
@@ -391,6 +399,16 @@ function NovelWorkspaceEditor({
             : undefined
         )
   );
+  /** 本季已出过的核心创意（按时间先后），用于「换一批」的排除方向；只读已保存的结果，不发请求。 */
+  const premiseBatches = draft.runs
+    .filter(r => r.input.stage === "advice" && r.input.advisorIntent === "creative_premises" && r.input.roundId === draft.roundId)
+    .map(r => {
+      try {
+        return novelAdviceSchema.parse(JSON.parse(r.result.text)).premises || [];
+      } catch {
+        return [];
+      }
+    });
   useEffect(() => {
     if (conversation.current)
       conversation.current.scrollTop = conversation.current.scrollHeight;
@@ -464,7 +482,14 @@ function NovelWorkspaceEditor({
     }
     if (input.stage === "revise")
       Object.assign(next, recordNovelRevision(now, input, result));
-    if (input.stage === "advice") {
+    if (input.stage === "advice" && input.advisorIntent === "creative_premises") {
+      // 只更新最近一批候选；已采用的核心创意、当前讨论与已确认的大纲 / 小说都不动。
+      next.creativePremises = {
+        requestId: input.requestId,
+        savedAt: new Date().toISOString(),
+        premises: novelAdviceSchema.parse(JSON.parse(result.text)).premises || [],
+      };
+    } else if (input.stage === "advice") {
       next.advisorAnchor = input.requestId;
       if (input.advisorMessage === now.advisorDraft?.trim())
         next.advisorDraft = "";
@@ -596,7 +621,9 @@ function NovelWorkspaceEditor({
     chapterIndex = 1,
     advisorMessage?: string,
     advisorIntent?: NovelTestInput["advisorIntent"],
-    fromQueue = false
+    fromQueue = false,
+    /** 创意环节「换一批」：已出过的设想，作为不要重复的方向。 */
+    premiseExclusions?: NovelTestInput["premiseExclusions"]
   ) => {
     if (
       (disabled && !fromQueue) ||
@@ -613,7 +640,7 @@ function NovelWorkspaceEditor({
     setError("");
     let submittedId: string | undefined;
     try {
-      if (stage === "advice" && adviceRuns.length >= 20)
+      if (stage === "advice" && advisorIntent !== "creative_premises" && adviceRuns.length >= 20)
         throw new Error(
           "本轮已完成20次顾问讨论，请整理并确认提案后继续；历史对话完整保留。"
         );
@@ -709,6 +736,15 @@ function NovelWorkspaceEditor({
           : {}),
         ...(advisorMessage ? { advisorMessage } : {}),
         ...(advisorIntent ? { advisorIntent } : {}),
+        ...(advisorIntent === "creative_premises" && premiseExclusions?.length
+          ? { premiseExclusions }
+          : {}),
+        // 本作核心创意：非空时带进顾问讨论 / 故事线、大纲与正文；剧本由正文转写，不重复带。
+        ...(draft.creativePremise?.trim() &&
+        advisorIntent !== "creative_premises" &&
+        (stage === "advice" || stage === "outline" || stage === "chapter")
+          ? { creativePremise: draft.creativePremise.trim() }
+          : {}),
         ...(((stage === "advice" &&
           (advisorMessage || advisorIntent === "story_variants")) ||
           stage === "outline") &&
@@ -757,7 +793,7 @@ function NovelWorkspaceEditor({
       if (
         !fromQueue &&
         !window.confirm(
-          `本次提交管理者测试：${advisorIntent === "story_variants" ? "三个故事线方案" : stage === "advice" ? "创作顾问与模板推荐" : stage === "outline" ? "改编提案" : stage === "chapter" ? `第${chapterIndex}集小说稿` : `第${chapterIndex}集剧本候选`}。将调用创作服务并产生实际成本，是否继续？`
+          `本次提交管理者测试：${advisorIntent === "creative_premises" ? NOVEL_CREATIVE_PREMISE_UI.confirmLabel : advisorIntent === "story_variants" ? "三个故事线方案" : stage === "advice" ? "创作顾问与模板推荐" : stage === "outline" ? "改编提案" : stage === "chapter" ? `第${chapterIndex}集小说稿` : `第${chapterIndex}集剧本候选`}。将调用创作服务并产生实际成本，是否继续？`
         )
       )
         return;
@@ -900,6 +936,8 @@ function NovelWorkspaceEditor({
         ...((draft.rewriteModelPreference || draft.modelPreference)
           ? { rewriteModelPreference: draft.rewriteModelPreference || draft.modelPreference }
           : {}),
+        // 本作核心创意：审稿把偏离 / 闲置列为问题，改稿不得改回常规套路。
+        ...(draft.creativePremise?.trim() ? { creativePremise: draft.creativePremise.trim() } : {}),
         templates: [],
         episodeCount: 1,
         episodeStart: chapterIndex,
@@ -1845,6 +1883,88 @@ function NovelWorkspaceEditor({
         if (!await persist(next, `voice-${candidate.id}`, true)) throw new Error("正文保存失败，未确认套用成功；候选稿保留，请先处理保存错误。");
         if (alive.current) { setActiveChapter(candidate.episode - 1); setWorkspaceTab("novel"); }
       }} scopeKey={`${userId}:${draft.roundId}`} context={JSON.stringify({ workspace: workspaceTab, activeEpisode: activeChapter + 1, title: draft.topic, direction: draft.direction, outline: draft.outline, currentChapter: draft.chapters[activeChapter], templates: draft.templates, chapterCount: draft.chapters.length })} disabled={disabled} onUse={text => { change({ advisorDraft: text }); setSideTab("advisor"); }} targets={draft.chapters.map((chapter, i) => ({ episode: i + 1, label: chapter ? `第${i + 1}集小说稿` : `第${i + 1}集尚无正文` }))} onNavigate={target => { if (disabled || !latest.current.chapters[target.episode - 1]) throw new Error("该集正文尚未生成或工作区忙，未切换。"); setActiveChapter(target.episode - 1); setWorkspaceTab("novel"); return JSON.stringify({ episode: target.episode, text: latest.current.chapters[target.episode - 1], next: "以本次返回正文为准；修改前调用novelText read获取revision。" }); }} onAskAdvisor={async question => await generate("advice", undefined, 1, question)} />}
+      <section className="mt-5 space-y-3" aria-label={NOVEL_CREATIVE_PREMISE_UI.title}>
+        <h3 className="font-semibold">{NOVEL_CREATIVE_PREMISE_UI.title}</h3>
+        <p className="text-xs text-slate-400">{NOVEL_CREATIVE_PREMISE_UI.intro}</p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className={button}
+            disabled={disabled}
+            onClick={() => generate("advice", undefined, 1, undefined, "creative_premises")}
+          >
+            {NOVEL_CREATIVE_PREMISE_UI.generate}
+          </button>
+          {premiseBatches.length > 0 && (
+            <button
+              className={button}
+              disabled={disabled}
+              onClick={() =>
+                generate(
+                  "advice",
+                  undefined,
+                  1,
+                  undefined,
+                  "creative_premises",
+                  false,
+                  collectNovelCreativePremiseExclusions(premiseBatches)
+                )
+              }
+            >
+              {NOVEL_CREATIVE_PREMISE_UI.refresh}
+            </button>
+          )}
+        </div>
+        {!!draft.creativePremises?.premises.length && (
+          <div className="space-y-3" aria-label={NOVEL_CREATIVE_PREMISE_UI.batchTitle}>
+            {draft.creativePremises.premises.map((p, i) => (
+              <article key={`${draft.creativePremises!.requestId}-${i}`} className="rounded-xl border border-amber-200/20 p-3 text-sm">
+                <h4 className="font-semibold">{p.title}</h4>
+                <p className="mt-2 whitespace-pre-wrap">{NOVEL_CREATIVE_PREMISE_UI.fields.whatIf}：{p.whatIf}</p>
+                <p className="mt-1 whitespace-pre-wrap">{NOVEL_CREATIVE_PREMISE_UI.fields.ruleAndCost}：{p.ruleAndCost}</p>
+                <p className="mt-1 whitespace-pre-wrap">{NOVEL_CREATIVE_PREMISE_UI.fields.drives}：{p.drives}</p>
+                <p className="mt-1 whitespace-pre-wrap text-amber-200">{NOVEL_CREATIVE_PREMISE_UI.fields.twist}：{p.twist}</p>
+                <p className="mt-1 whitespace-pre-wrap">{NOVEL_CREATIVE_PREMISE_UI.fields.logline}：{p.logline}</p>
+                <p className="mt-1 whitespace-pre-wrap text-slate-400">{NOVEL_CREATIVE_PREMISE_UI.fields.risk}：{p.risk}</p>
+                <button
+                  className={`${button} mt-3`}
+                  disabled={disabled}
+                  onClick={() => {
+                    const text = formatNovelCreativePremise(p);
+                    const current = latest.current.creativePremise?.trim();
+                    if (current && current !== text && !window.confirm(NOVEL_CREATIVE_PREMISE_UI.adoptReplaceConfirm)) return;
+                    change({ creativePremise: text });
+                  }}
+                >
+                  {NOVEL_CREATIVE_PREMISE_UI.adopt}
+                </button>
+              </article>
+            ))}
+          </div>
+        )}
+        <label className="block text-sm">
+          {NOVEL_CREATIVE_PREMISE_UI.fieldLabel}
+          <textarea
+            aria-label={NOVEL_CREATIVE_PREMISE_UI.fieldLabel}
+            className={field}
+            rows={5}
+            maxLength={NOVEL_CREATIVE_PREMISE_MAX}
+            disabled={disabled}
+            value={draft.creativePremise || ""}
+            onChange={e => change({ creativePremise: e.target.value || undefined })}
+            placeholder={NOVEL_CREATIVE_PREMISE_UI.placeholder}
+          />
+        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            className={button}
+            disabled={disabled || !draft.creativePremise}
+            onClick={() => change({ creativePremise: undefined })}
+          >
+            {NOVEL_CREATIVE_PREMISE_UI.clear}
+          </button>
+          <p className="text-xs text-slate-400">{NOVEL_CREATIVE_PREMISE_UI.note}</p>
+        </div>
+      </section>
       {(
 
         <div className="mt-5 space-y-3">
