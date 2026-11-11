@@ -96,7 +96,7 @@ export function buildLapianFixtureCard(): ManhuaViralTemplateCard {
       model: "fixture", resolverModel: "fixture", resolverRoute: "fixture", sourceVariants: [] as never,
       hasAudio: true, alignmentMethod: "fixture" as never, durationSec: LAPIAN_FIXTURE_DURATION_SEC, chunkCount: 8,
       audioTrack, mixNotesZh: "对白居中，配乐托底", usage: {} as never,
-    } as ManhuaViralTemplateCard["audioStory"],
+    } as unknown as ManhuaViralTemplateCard["audioStory"],
     scenePoolHints: ["宫殿"],
     castShape: { leadDesireZh: "夺回主动", pressureZh: "宫廷围困" },
     densityHints: { minBodyChars: 280, minDialogueLines: 12, minLocationHits: 2 },

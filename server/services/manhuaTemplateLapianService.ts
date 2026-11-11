@@ -330,7 +330,7 @@ export async function getManhuaTemplateLapianSegmentPrompt(
     const { value, receipt } = await runHops(d, prefix, MANHUA_TEMPLATE_LAPIAN_SEGMENT_INSTRUCTIONS, evidence,
       (v) => validateManhuaTemplateLapianSegmentOutput(v, evidence.lengthSec));
     const stored: StoredResult<ManhuaTemplateLapianSegmentOutput> = {
-      version: MANHUA_TEMPLATE_LAPIAN_VERSION, templateId: input.templateId, evidenceDigest: digest,
+      version: MANHUA_TEMPLATE_LAPIAN_VERSION, evidenceDigest: digest,
       value, receipt, createdAt: new Date(d.now()).toISOString(), ...base,
     };
     const { created } = await d.createIfAbsent(`${prefix}/result.json`, json(stored), "application/json");
