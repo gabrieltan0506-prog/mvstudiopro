@@ -21,7 +21,6 @@ export default function HomePlans() {
             <div className="text-4xl text-purple-400 mb-6">¥49</div>
 
             <ul className="text-gray-300 space-y-3 mb-8">
-              <li>Kling 2.6 生成</li>
               <li>Suno 音乐</li>
               <li>基础工作流</li>
               <li>100 积分</li>

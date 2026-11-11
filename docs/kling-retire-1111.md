@@ -35,10 +35,10 @@
 | server/router/modelRouter.ts | 死代码 | 只被已退役的 videoStep 引用（抛错在用到路由之前）。不改，待拍板删除 | 否 |
 | server/prompts/promptLibrarySchema.ts | 死代码 | 无引用的示例 `recommendedModel: "kling"`，不改 | 否 |
 | server/config/env.ts / server/config/klingCn.ts / server/vercel-api-core/env.ts | 配置·类型 | 密钥读取与缺失提示，不改 | 否 |
-| server/plans.ts | 售卖 | `CREDIT_FEATURE_BREAKDOWN` 停用时不列可灵 7 行；`CREDIT_COSTS.kling*` 计价键保留 | 待改 |
+| server/plans.ts | 售卖 | `CREDIT_FEATURE_BREAKDOWN` 停用时不列可灵 7 行；`CREDIT_COSTS.kling*` 计价键保留 | 是 |
 | shared/plans.ts / shared/credits.ts | 售卖（计价键） | 计价键与历史账目不删；`IMAGE_UPSCALE_BASE_CREDIT_KEYS` 里的可灵键保留（历史可灵图放大仍要基准价） | 否 |
-| server/routers/customerService.ts | 售卖 | 客服提示词去掉可灵工作室与「Kling 视频 80」报价，改为「旧版专业视频工作室已下线」中性口径 | 待改 |
-| client/src/components/HomePlans.tsx | 售卖（死代码） | 组件无引用；仍删掉「Kling 2.6 生成」卖点 | 待改 |
+| server/routers/customerService.ts | 售卖 | 客服提示词去掉可灵工作室与「Kling 视频 80」报价，改为「旧版专业视频工作室已下线」中性口径 | 是 |
+| client/src/components/HomePlans.tsx | 售卖（死代码） | 组件无引用；仍删掉「Kling 2.6 生成」卖点 | 是 |
 | client/src/pages/TestLab.tsx | 前端入口（监管） | 停用常量下隐藏可灵生图/视频选项 | 待改 |
 | client/src/pages/WorkspaceStudio.tsx | 前端入口 / 旧工作流 | 停用常量下隐藏「工作室控制」；旧工作流开过这些开关时给中文提示、不改数据 | 待改 |
 | client/src/pages/Showcase.tsx | 前端入口（营销位） | 去掉恒为空的「影视级视频」筛选页签；风格画廊图片保留（标签中性、无创建入口） | 待改 |
