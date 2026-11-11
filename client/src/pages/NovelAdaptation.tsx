@@ -54,6 +54,7 @@ import {
   novelModelLabel,
   NOVEL_MODEL_OPTIONS,
   NOVEL_ADVISOR_TIER_OPTIONS,
+  resolveNovelAdvisorTierPrice,
   novelChapterSchema,
   novelOutlineSchema,
   novelImitationOutlineSchema,
@@ -1848,22 +1849,28 @@ function NovelWorkspaceEditor({
             }
           >
             <option value="">沿用创作线路</option>
-            {NOVEL_ADVISOR_TIER_OPTIONS.map(option => (
-              <option key={option.value} value={option.value}>
-                {option.label} · {option.originalCredits ? "限时特价 " : ""}{option.referenceCredits} 积分/次
-              </option>
-            ))}
+            {NOVEL_ADVISOR_TIER_OPTIONS.map(option => {
+              const price = resolveNovelAdvisorTierPrice(option);
+              return (
+                <option key={option.value} value={option.value}>
+                  {option.label} · {price.promo ? "限时特价 " : ""}{price.credits} 积分/次
+                </option>
+              );
+            })}
           </select>
         </label>
         <span className="inline-flex flex-wrap items-center gap-3 text-xs text-slate-300" aria-label="顾问档位价格">
-          {NOVEL_ADVISOR_TIER_OPTIONS.map(option => (
-            <span key={option.value}>
-              {option.label}{" "}
-              {option.originalCredits ? <><s className="text-slate-500">{option.originalCredits}</s>{" "}</> : null}
-              <strong className={option.originalCredits ? "text-amber-200" : undefined}>{option.referenceCredits} 积分</strong>
-              {option.originalCredits ? <span className="ml-1 rounded bg-amber-200/15 px-1 text-amber-200">限时特价</span> : null}
-            </span>
-          ))}
+          {NOVEL_ADVISOR_TIER_OPTIONS.map(option => {
+            const price = resolveNovelAdvisorTierPrice(option);
+            return (
+              <span key={option.value}>
+                {option.label}{" "}
+                {price.promo ? <><s className="text-slate-500">{price.originalCredits}</s>{" "}</> : null}
+                <strong className={price.promo ? "text-amber-200" : undefined}>{price.credits} 积分</strong>
+                {price.promo ? <span className="ml-1 rounded bg-amber-200/15 px-1 text-amber-200">限时特价</span> : null}
+              </span>
+            );
+          })}
         </span>
         <label className="inline-flex items-center gap-2">
           <input

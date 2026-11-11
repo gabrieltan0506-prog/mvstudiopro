@@ -30,13 +30,30 @@ export const NOVEL_MODEL_OPTIONS = [
 ] as const;
 /**
  * 创作顾问档位（站长 2026-11-12）：前台只显示档位名，不显示模型名。
- * 站长定价（每次顾问答复）：卓越 20（限时特价，原价 40）/ 优秀 10 / 完美 5 积分；管理者测试流程不扣积分，扣费尚未接入。
+ * 站长定价（每次顾问答复）：卓越 40（限时特价 20，截至 2026-11-30 当天结束）/ 优秀 10 / 完美 5 积分；
+ * 管理者测试流程不扣积分，扣费尚未接入。价格一律经 resolveNovelAdvisorTierPrice 读取（前台与将来的扣费同读）。
  */
+/** 卓越档限时特价截止（东八区 2026-12-01 零点起恢复原价）。 */
+export const NOVEL_ADVISOR_PROMO_UNTIL = "2026-12-01T00:00:00+08:00";
 export const NOVEL_ADVISOR_TIER_OPTIONS = [
-  { value: "carbon", label: "卓越", referenceCredits: 20, originalCredits: 40 },
-  { value: "glm", label: "优秀", referenceCredits: 10, originalCredits: undefined },
-  { value: "deepseek", label: "完美", referenceCredits: 5, originalCredits: undefined },
+  { value: "carbon", label: "卓越", credits: 40, promoCredits: 20, promoUntil: NOVEL_ADVISOR_PROMO_UNTIL },
+  { value: "glm", label: "优秀", credits: 10, promoCredits: undefined, promoUntil: undefined },
+  { value: "deepseek", label: "完美", credits: 5, promoCredits: undefined, promoUntil: undefined },
 ] as const;
+export type NovelAdvisorTierOption = (typeof NOVEL_ADVISOR_TIER_OPTIONS)[number];
+/**
+ * 顾问档位在 now 时刻的价格：特价期内 credits = 特价、originalCredits = 原价、promo = true；
+ * 截止时刻起（含）只返回原价，不再带特价信息。
+ */
+export function resolveNovelAdvisorTierPrice(
+  tier: Pick<NovelAdvisorTierOption, "credits" | "promoCredits" | "promoUntil">,
+  now: Date | number = Date.now()
+): { credits: number; originalCredits?: number; promo: boolean } {
+  const at = typeof now === "number" ? now : now.getTime();
+  if (tier.promoCredits !== undefined && tier.promoUntil && at < Date.parse(tier.promoUntil))
+    return { credits: tier.promoCredits, originalCredits: tier.credits, promo: true };
+  return { credits: tier.credits, promo: false };
+}
 export const novelModelSchema = z.enum(["auto", "glm", "deepseek", "carbon"]);
 /** 前台只显示中性线路名；模型名是商业机密，未知模型也不回显原始标识。 */
 export function novelModelLabel(model?: string) {
