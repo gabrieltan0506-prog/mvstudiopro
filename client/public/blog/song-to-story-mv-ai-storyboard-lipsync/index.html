@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>一首歌怎么生成一支有剧情的 MV？AI 分镜、对口型与参考图驱动实录 · MV Studio Pro</title>
+<meta name="description" content="一首约 3 分半、没有歌词文本的原创歌，取 59 秒高光段，按节拍拆成逐秒分镜，参考图驱动生成画面、唱词段对口型，两段约 30 秒在指定秒点拼接成竖屏剧情 MV。附真实步骤、踩坑和成本量级。">
+<meta name="keywords" content="一首歌生成MV,AI生成MV,AI MV分镜,AI MV对口型,歌曲生成视频,剧情MV,竖屏MV,抖音MV,参考图生成视频">
+<link rel="canonical" href="https://www.mvstudiopro.com/blog/song-to-story-mv-ai-storyboard-lipsync">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MV Studio Pro">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:url" content="https://www.mvstudiopro.com/blog/song-to-story-mv-ai-storyboard-lipsync">
+<meta property="og:title" content="一首歌怎么生成一支有剧情的 MV？AI 分镜、对口型与参考图驱动实录 · MV Studio Pro">
+<meta property="og:description" content="一首约 3 分半、没有歌词文本的原创歌，取 59 秒高光段，按节拍拆成逐秒分镜，参考图驱动生成画面、唱词段对口型，两段约 30 秒在指定秒点拼接成竖屏剧情 MV。附真实步骤、踩坑和成本量级。">
+<meta property="og:image" content="https://www.mvstudiopro.com/blog-assets/mv-rainy-duet/mv-rainy-duet-cover-20261111.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="一首歌怎么生成一支有剧情的 MV？AI 分镜、对口型与参考图驱动实录 · MV Studio Pro">
+<meta name="twitter:description" content="一首约 3 分半、没有歌词文本的原创歌，取 59 秒高光段，按节拍拆成逐秒分镜，参考图驱动生成画面、唱词段对口型，两段约 30 秒在指定秒点拼接成竖屏剧情 MV。附真实步骤、踩坑和成本量级。">
+<meta name="twitter:image" content="https://www.mvstudiopro.com/blog-assets/mv-rainy-duet/mv-rainy-duet-cover-20261111.jpg">
+<link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<link rel="alternate" type="application/rss+xml" title="MV Studio Pro 博客" href="https://www.mvstudiopro.com/blog/rss.xml">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg0: #141a22;
+    --bg1: #1a2430;
+    --surface: #1e2834;
+    --surface-2: #243041;
+    --line: #2c3848;
+    --text: #e8edf2;
+    --muted: #93a0b0;
+    --soft: #b7c2cf;
+    --accent: #6ec8ff;
+    --accent-soft: rgba(110, 200, 255, 0.14);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--text);
+    font: 16px/1.85 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background-color: var(--bg0);
+    background-image:
+      radial-gradient(1200px 520px at 12% -8%, rgba(78, 140, 180, 0.22), transparent 60%),
+      radial-gradient(900px 480px at 92% 8%, rgba(56, 110, 150, 0.16), transparent 55%),
+      linear-gradient(180deg, var(--bg1) 0%, var(--bg0) 42%, #121820 100%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 96px; }
+  nav.top { font-size: 13px; color: var(--muted); margin-bottom: 32px; }
+  nav.top a { color: var(--accent); text-decoration: none; }
+  nav.top a:hover { text-decoration: underline; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; color: #f4f7fa; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid var(--line); color: #f1f5f8; }
+  h3 { font-size: 17px; margin: 28px 0 10px; color: #edf2f6; }
+  .meta { font-size: 13px; color: var(--muted); margin-bottom: 36px; }
+  p { margin: 0 0 18px; }
+  ul, ol { margin: 0 0 18px; padding-left: 24px; }
+  li { margin: 6px 0; }
+  strong { color: #fff; }
+  a { color: var(--accent); }
+  blockquote {
+    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid var(--accent);
+    background: var(--accent-soft); color: var(--soft); font-size: 15px;
+    border-radius: 0 8px 8px 0;
+  }
+  blockquote p { margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 14.5px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; }
+  th { color: #fff; background: var(--surface); font-weight: 600; }
+  code {
+    background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
+    font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre {
+    background: var(--surface); padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+    margin: 0 0 22px; border: 1px solid var(--line);
+  }
+  pre code { background: none; padding: 0; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+  em { color: var(--soft); }
+
+  /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
+  img, video { max-width: 100%; height: auto; display: block;
+               border-radius: 8px; border: 1px solid var(--line); margin: 0 0 8px; }
+  /* 自有样片：尽量藏下载按钮（非 DRM，只挡控件一键另存） */
+  video::-webkit-media-controls-download-button { display: none !important; }
+  video::-internal-media-controls-download-button { display: none !important; }
+  figure { margin: 24px 0; }
+  figure img, figure video { margin-bottom: 8px; }
+  figcaption { font-size: 13px; color: var(--muted); text-align: center; }
+  /* B 站 / YouTube 等外链视频：按 16:9 自适应，手机上也不会溢出 */
+  .video-embed { position: relative; padding-bottom: 56.25%; height: 0;
+                 margin: 24px 0; border-radius: 8px; overflow: hidden;
+                 border: 1px solid var(--line); }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--line);
+           font-size: 13px; color: var(--muted); }
+  footer a { margin-right: 16px; }
+  .cards { display: grid; gap: 14px; margin: 28px 0 0; }
+  .card { display: block; padding: 18px 20px; background: var(--surface);
+          border: 1px solid var(--line);
+          border-radius: 10px; text-decoration: none; color: inherit; }
+  .card:hover { border-color: rgba(110, 200, 255, 0.45); background: var(--surface-2); }
+  .card h2 { margin: 0 0 8px; font-size: 18px; border: 0; padding: 0; color: #fff; }
+  .card p { margin: 0; font-size: 14px; color: var(--soft); }
+  .card .meta { margin: 10px 0 0; font-size: 12px; }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Article",
+      "headline": "一首歌怎么生成一支有剧情的 MV？AI 分镜、对口型与参考图驱动实录",
+      "description": "一首约 3 分半、没有歌词文本的原创歌，取 59 秒高光段，按节拍拆成逐秒分镜，参考图驱动生成画面、唱词段对口型，两段约 30 秒在指定秒点拼接成竖屏剧情 MV。附真实步骤、踩坑和成本量级。",
+      "datePublished": "2026-11-11",
+      "dateModified": "2026-11-11",
+      "inLanguage": "zh-CN",
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "https://www.mvstudiopro.com/blog/song-to-story-mv-ai-storyboard-lipsync"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://www.mvstudiopro.com/pwa-icon-512.png"
+        }
+      },
+      "keywords": "一首歌生成MV,AI生成MV,AI MV分镜,AI MV对口型,歌曲生成视频,剧情MV,竖屏MV,抖音MV,参考图生成视频",
+      "image": "https://www.mvstudiopro.com/blog-assets/mv-rainy-duet/mv-rainy-duet-cover-20261111.jpg"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "首页",
+          "item": "https://www.mvstudiopro.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "文章",
+          "item": "https://www.mvstudiopro.com/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "一首歌怎么生成一支有剧情的 MV？AI 分镜、对口型与参考图驱动实录",
+          "item": "https://www.mvstudiopro.com/blog/song-to-story-mv-ai-storyboard-lipsync"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "一首歌能自动生成一支 MV 吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "可以。上传歌曲后，系统会先听歌，得到节拍、段落结构和逐句歌词时间，再根据你给的剧情大纲拆成按节拍对齐的分镜，逐段生成画面并拼接成片，主音轨始终用原歌。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "没有歌词文本，AI 能对口型吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "能。听歌这一步会识别出逐句歌词和每一句的时间点，没有现成歌词文本也可以。识别结果可以手动校对，校对后的歌词时间会用在唱词段的对口型镜头上。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "AI 生成 MV 的分镜是怎么来的？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "创作顾问会把你的剧情大纲按歌曲节拍拆成一个个时间窗，每个时间窗写清表情、动作、光线和氛围。唱词段安排对口型，无词吟唱段用剧情画面填充，你可以在生成前逐条修改。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "为什么 AI MV 里的人物和场景能前后一致？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "因为每个镜头都用参考图驱动：同一地点用同一张场景底图，只改天气和光线；人物用定妆和身份参考锁住长相；站位和运镜也有参考图。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "生成一支约 1 分钟的剧情 MV 要多久、多少钱？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "本文这支 59 秒高光段分两段生成，每段约 30 秒，各约 6–7 分钟出片。成本在几十美元量级，其中视频生成占绝大部分，场景图与分镜编排只占很小一部分。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "成片里有几秒不满意，需要整支重做吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不需要。用「局部修改」只重做出问题的那几秒，其余部分保持不变。成片后还可以做 AI 调色建议、转场溶解和 2K / 4K 超分。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "提示词写了动作，生成出来却不对，是什么原因？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "最常见的原因是参考图和提示词冲突，画面会跟参考图走。例如参考图里伞是撑开的，提示词写「伞收拢落地」也没用，需要换一张伞已收拢的参考图。"
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+<nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
+<article>
+<h1>一首歌怎么生成一支有剧情的 MV？AI 分镜、对口型与参考图驱动实录</h1>
+<p class="meta">2026-11-11 · 约 10 分钟</p>
+<p><strong>能做到什么程度：给一首歌和一段剧情大纲，系统会先听歌拿到节拍、段落和逐句歌词时间，再按节拍拆出逐个时间窗的分镜，用参考图生成画面，唱词段对口型，最后在歌曲指定秒点拼成一支竖屏剧情 MV。</strong> 这次做的 59 秒高光段，就是用一首约 3 分半的原创歌，走完这条链路做出来的。</p>
+<figure>
+  <img src="/blog-assets/mv-rainy-duet/mv-rainy-duet-cover-20261111.jpg" alt="成片高光段的四个关键画面：晴天等待、转阴对话、雨中、雨后蝴蝶定格" width="1280" height="720" loading="lazy" draggable="false" oncontextmenu="return false">
+  <figcaption>成片高光段的四个关键画面：720×1280 竖屏，59.4 秒，取自原曲第 18.2–77.5 秒，天气从晴转阴、下雨，再在雨后转亮。完整成片视频稍后补上。</figcaption>
+</figure><p>想直接做一支：<strong><a href="/mv-projects">打开「我的 MV」，新建一部作品</a></strong></p>
+<h2>这支片子的输入只有两样：一首歌和一段剧情大纲</h2>
+<p>做一支剧情 MV，用户只需准备歌和故事，歌词和分镜表由系统先出初稿。</p>
+<p>这次的输入是：</p>
+<ul>
+<li><strong>歌</strong>：一首约 3 分半的原创歌曲，手里没有现成歌词文本。</li>
+<li><strong>剧情大纲</strong>：男主撑伞等待 → 女主跑来，两人对话时天色转阴 → 一记耳光用慢动作表现，同时开始下雨 → 雨水和泪水交织 → 雨后转亮，一只蝴蝶飞来停在唇前，画面定格。</li>
+</ul>
+<p>大纲里藏着一条天气弧线：<strong>晴 → 阴 → 雨 → 雨后转亮</strong>，它决定了每个镜头的光线怎么写。</p>
+<h2>从一首歌到成片，一共 6 步</h2>
+<p>整条链路可以拆成 6 个有先后的步骤，每一步的产物都是下一步的输入。</p>
+<ol>
+<li><strong>听歌</strong>：系统分析整首歌，得到节拍、段落结构和逐句歌词的时间点。没有歌词文本也能听出来，用户可以手动校对每一句的文字。</li>
+<li><strong>选高光段</strong>：只取有歌词的高光段做成片。这支取的是歌曲第 18.2–77.5 秒，约 59 秒，正好适合竖屏短视频。</li>
+<li><strong>拆分镜</strong>：创作顾问把剧情大纲按节拍拆成一个个时间窗，每个窗口写清表情、动作、光线和氛围，也就是「秒锁」提示词。唱词段安排对口型，无词吟唱段用剧情画面填满。</li>
+<li><strong>备参考图</strong>：每个镜头配好实拍场景底图、人物定妆与身份参考、站位与运镜参考（下一节细说）。</li>
+<li><strong>分段生成并拼接</strong>：画面分两大段生成，每段约 30 秒，各约 6–7 分钟出片；两段在歌曲指定的秒点帧精确拼接。</li>
+<li><strong>混音收尾</strong>：主音轨始终是原歌，镜头自带的环境声压低垫底；结尾只淡出音乐，画面保持亮度定格，不做黑场。</li>
+</ol>
+<figure>
+  <img src="/blog-assets/mv-rainy-duet/mv-rainy-duet-sunny-wait-20261111.jpg" alt="AI 生成 MV 开场：晴天里男主撑着白伞在店门口等待" loading="lazy" decoding="async" width="720" height="1280" oncontextmenu="return false" draggable="false">
+  <figcaption>开场：晴天，男主撑伞等待，这一段是唱词段，做了对口型。</figcaption>
+</figure><h2>分镜按节拍切，而不是按句子平均切</h2>
+<p>MV 的分镜要跟着音乐走：镜头切换落在节拍上，情绪转折落在段落交界处，观众才会觉得「画面在跟着歌动」。</p>
+<p>所以分镜表不是把 59 秒平均切开，而是以节拍和段落为骨架，把每个剧情动作挂到具体秒数上。比如「天色转阴」放在两人开始对话的那一段，「耳光 + 开始下雨」落在情绪最重的那一拍，并用慢动作拉长。</p>
+<p>每个时间窗的秒锁提示词写四件事：<strong>表情</strong>（期待、委屈、沉默）、<strong>动作</strong>（撑伞、跑来、抬手、伞落地）、<strong>光线</strong>（暖阳 → 冷灰 → 雨后转亮）、<strong>氛围</strong>（街道湿度、雨势、环境声轻重）。</p>
+<figure>
+  <img src="/blog-assets/mv-rainy-duet/mv-rainy-duet-overcast-talk-20261111.jpg" alt="AI MV 分镜：天色转阴，女主含泪与男主对话" loading="lazy" decoding="async" width="720" height="1280" oncontextmenu="return false" draggable="false">
+  <figcaption>转阴：两人对话，同一条街、同一个店门口，只换了天气与光线。</figcaption>
+</figure><h2>为什么每个镜头都用参考图驱动，而不是纯文字抽卡</h2>
+<p>纯文字生成每次都像重新抽卡，人物长相、街道、伞的颜色都可能变，十几个镜头很难连成同一个故事。参考图驱动是先钉住「这个人、这条街、这个站位」，文字只描述这一秒发生什么。</p>
+<p>每个镜头都带 3 类参考：</p>
+<ol>
+<li><strong>实拍场景底图</strong>：同一地点用同一张母版底图，只改天气和光线。晴天和阴天的店门口是同一张图变出来的，所以门框、遮阳棚、花盆都在原位。</li>
+<li><strong>人物定妆与身份参考</strong>：锁住脸、发型和服装，跨镜头不换人。</li>
+<li><strong>站位与运镜参考</strong>：谁站左谁站右、镜头推还是拉，用图说比用字说可靠。</li>
+</ol>
+<p>代价是前期多准备几张图，换来的是不用反复重抽；这些图在总成本里只占很小一部分。</p>
+<figure>
+  <img src="/blog-assets/mv-rainy-duet/mv-rainy-duet-rain-umbrella-20261111.jpg" alt="AI 生成剧情 MV 雨中镜头：伞落进积水溅起水花" loading="lazy" decoding="async" width="720" height="1280" oncontextmenu="return false" draggable="false">
+  <figcaption>雨中：伞落进积水。这个镜头的参考图里，伞本身就是收拢的。</figcaption>
+</figure><h2>踩过的坑：参考图说了算，提示词拗不过它</h2>
+<p>这支片子踩了 2 个坑，结论都一样：<strong>当参考图和提示词冲突时，画面会跟参考图走。</strong></p>
+<p><strong>坑一：伞的状态。</strong> 有一个镜头的参考图里伞是撑开的，提示词写了「伞收拢落地」，生成出来伞还是撑着。改法是换一张伞已收拢的参考图。经验：参考图里每样东西的状态都必须和这一秒的剧情一致，不能指望文字去改。</p>
+<p><strong>坑二：场景穿帮。</strong> 同一个店门口，有一个镜头换了另一张底图，生成出来就像换了一条街，前后镜头接不上。改法是同一地点全部锁回同一张母版底图，只在提示词里改天气和光线。经验：一个地点只能有一张底图。</p>
+<h2>成片之后还能做的 4 件事</h2>
+<p>成片后还有 4 个可选的收尾工具：</p>
+<ol>
+<li><strong>AI 调色建议</strong>：听着歌看片，按段落给出分段调色方案，让晴、阴、雨、雨后的色调过渡更顺。</li>
+<li><strong>转场溶解</strong>：在段与段之间加溶解转场，让拼接处更柔和。</li>
+<li><strong>局部修改</strong>：哪几秒坏了只重做那几秒，不用整段重来，省时间也省钱。</li>
+<li><strong>2K / 4K 超分</strong>：定稿后对整条成片升清晰度，适合大屏播放或二次剪辑。</li>
+</ol>
+<figure>
+  <img src="/blog-assets/mv-rainy-duet/mv-rainy-duet-butterfly-ending-20261111.jpg" alt="AI MV 结尾：雨后转亮，一只蝴蝶停在男主唇前定格" loading="lazy" decoding="async" width="720" height="1280" oncontextmenu="return false" draggable="false">
+  <figcaption>结尾：雨后转亮，蝴蝶停在唇前，画面保持亮度定格，只淡出音乐。</figcaption>
+</figure><h2>花了多久、花了多少</h2>
+<p><strong>时间</strong>：两大段画面各约 6–7 分钟出片；前期校对歌词、改分镜的时间取决于改几轮。</p>
+<p><strong>成本</strong>：整支 59 秒高光段在「几十美元量级」，其中视频生成占绝大部分，场景图与分镜编排只占很小一部分。返工时用局部修改只重做出问题的那几秒，不用整段重新生成。</p>
+<p>完整版 3 分半的整首 MV、以及调色前后的对比，这次没有放出，下期补上。</p>
+<h2>适合谁，怎么开始</h2>
+<p>适合手里有歌、想要一支带剧情的竖屏 MV 的人：独立音乐人、给自己的歌做短视频宣传的创作者、想给朋友的歌拍一支故事片的人。</p>
+<p>开始只需要 3 步：</p>
+<ol>
+<li>打开 <strong><a href="/mv-projects">我的 MV</a></strong>，输入歌名，新建一部作品（新建只建立作品，不会生成歌曲、图片或视频）；</li>
+<li>上传歌曲，等听歌结果出来后校对歌词，选一段 30–60 秒的高光；</li>
+<li>写一段剧情大纲，让创作顾问拆分镜，补齐场景、人物和站位参考后再生成。</li>
+</ol>
+<h2>常见问题</h2>
+<h3>一首歌能自动生成一支 MV 吗？</h3>
+<p>可以。上传歌曲后，系统会先听歌，得到节拍、段落结构和逐句歌词时间，再根据你给的剧情大纲拆成按节拍对齐的分镜，逐段生成画面并拼接成片，主音轨始终用原歌。</p>
+<h3>没有歌词文本，AI 能对口型吗？</h3>
+<p>能。听歌这一步会识别出逐句歌词和每一句的时间点，没有现成歌词文本也可以。识别结果可以手动校对，校对后的歌词时间会用在唱词段的对口型镜头上。</p>
+<h3>AI 生成 MV 的分镜是怎么来的？</h3>
+<p>创作顾问会把你的剧情大纲按歌曲节拍拆成一个个时间窗，每个时间窗写清表情、动作、光线和氛围。唱词段安排对口型，无词吟唱段用剧情画面填充，你可以在生成前逐条修改。</p>
+<h3>为什么 AI MV 里的人物和场景能前后一致？</h3>
+<p>因为每个镜头都用参考图驱动：同一地点用同一张场景底图，只改天气和光线；人物用定妆和身份参考锁住长相；站位和运镜也有参考图。</p>
+<h3>生成一支约 1 分钟的剧情 MV 要多久、多少钱？</h3>
+<p>本文这支 59 秒高光段分两段生成，每段约 30 秒，各约 6–7 分钟出片。成本在几十美元量级，其中视频生成占绝大部分，场景图与分镜编排只占很小一部分。</p>
+<h3>成片里有几秒不满意，需要整支重做吗？</h3>
+<p>不需要。用「局部修改」只重做出问题的那几秒，其余部分保持不变。成片后还可以做 AI 调色建议、转场溶解和 2K / 4K 超分。</p>
+<h3>提示词写了动作，生成出来却不对，是什么原因？</h3>
+<p>最常见的原因是参考图和提示词冲突，画面会跟参考图走。例如参考图里伞是撑开的，提示词写「伞收拢落地」也没用，需要换一张伞已收拢的参考图。</p>
+
+</article>
+<footer>
+  <a href="/">MV Studio Pro 首页</a>
+  <a href="/blog/">全部文章</a>
+  <a href="/pricing">定价</a>
+</footer>
+</div>
+<script>
+/* 博客样片均为站内自生成：挡右键菜单与拖拽另存；无法阻止抓包，只提高随手拿走成本 */
+(function () {
+  function isOwnedMedia(t) {
+    return t && (t.tagName === "VIDEO" || t.tagName === "IMG" || (t.closest && (t.closest("video") || t.closest("figure"))));
+  }
+  document.addEventListener("contextmenu", function (e) {
+    if (isOwnedMedia(e.target)) e.preventDefault();
+  }, true);
+  document.addEventListener("dragstart", function (e) {
+    if (isOwnedMedia(e.target)) e.preventDefault();
+  }, true);
+})();
+</script>
+</body>
+</html>
