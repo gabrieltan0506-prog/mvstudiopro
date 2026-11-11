@@ -13,12 +13,14 @@ import {
   NOVEL_CRAFT_FIRST_THREE_ID,
   NOVEL_CRAFT_GENRE_CARDS,
   NOVEL_CRAFT_GENRE_RULE,
+  NOVEL_CRAFT_SHORT_CARDS,
   NOVEL_CRAFT_PREFERRED_MARK,
   NOVEL_CRAFT_PREFERRED_RULE,
   getNovelCraftCards,
   type NovelCraftCard,
 } from "../../shared/novelCraftCards";
 import { matchNovelCraftGenreCards } from "../../shared/novelCraftCardsGenre";
+import { NOVEL_CRAFT_SHORT_MAX, isNovelShortForm } from "../../shared/novelCraftCardsShort";
 import type {
   NovelTemplateDigestEntry,
   NovelTemplateDigestStore,
@@ -46,7 +48,8 @@ export type NovelCraftUnifiedEntry = {
 export type NovelCraftRetrievalInput = Pick<
   NovelTestInput,
   "stage" | "topic" | "direction" | "source" | "outline" | "chapterIndex" | "episodeStart" | "episodeCount" | "requestId"
->;
+> &
+  Partial<Pick<NovelTestInput, "targetEpisodeCount" | "advisorMessage">>;
 
 export type NovelCraftSelection = { craft: string[]; methods: string[]; why: string };
 
@@ -225,17 +228,49 @@ export function defaultNovelCraftSelection(
   return { craft: [...head, ...owner, ...general], methods: index.filter(e => e.kind === "method").map(e => e.id), why: "" };
 }
 
+const genreFields = (input: Pick<NovelTestInput, "topic" | "direction" | "source">) => ({
+  topic: input.topic,
+  direction: input.direction,
+  title: input.source?.label,
+});
+const usableFor = (cards: readonly NovelCraftCard[], stage: NovelTestInput["stage"]) =>
+  cards
+    .filter(c => c.stages.includes(stage as NovelCraftCard["stages"][number]) && c.genres?.length)
+    .map(c => ({ id: c.id, genres: c.genres ?? [] }));
+
 /**
- * 题材必带条目：用作品题材 / 创作方向 / 底本标题做纯字符串匹配（不调模型），最多 2 条，只取当前阶段适用的。
+ * 短篇结构公式条目（craft_short_*）：只在顾问与大纲阶段、判定为短篇时按题材别名匹配，最多 1 条。
+ * 纯字符串匹配，不调模型；顾问阶段不走检索，由调用方直接附在提示词末尾。
+ */
+export function novelCraftShortIdsForInput(
+  input: Pick<NovelTestInput, "stage" | "topic" | "direction" | "source"> &
+    Partial<Pick<NovelTestInput, "targetEpisodeCount" | "advisorMessage">>
+): string[] {
+  const usable = usableFor(NOVEL_CRAFT_SHORT_CARDS, input.stage);
+  if (!usable.length) return [];
+  if (!isNovelShortForm({ ...genreFields(input), targetEpisodeCount: input.targetEpisodeCount, advisorMessage: input.advisorMessage }))
+    return [];
+  return matchNovelCraftGenreCards(genreFields(input), NOVEL_CRAFT_SHORT_MAX, usable);
+}
+
+/**
+ * 题材必带条目：用作品题材 / 创作方向 / 底本标题做纯字符串匹配（不调模型）：长篇题材行文条目最多 2 条
+ * （只取当前阶段适用的），加短篇结构公式条目最多 1 条（只在大纲阶段且判定为短篇）。
  * 题材条目不进索引，不占检索提示词字数；命中后与模型挑选（或回退默认集合）的技法 id 合并。
  */
 export function novelCraftGenreIdsForInput(input: NovelCraftRetrievalInput): string[] {
-  const stage = input.stage as NovelCraftCard["stages"][number];
-  const usable = NOVEL_CRAFT_GENRE_CARDS.filter(c => c.stages.includes(stage) && c.genres?.length).map(c => ({
-    id: c.id,
-    genres: c.genres ?? [],
-  }));
-  return matchNovelCraftGenreCards({ topic: input.topic, direction: input.direction, title: input.source?.label }, undefined, usable);
+  const long = matchNovelCraftGenreCards(genreFields(input), undefined, usableFor(NOVEL_CRAFT_GENRE_CARDS, input.stage));
+  return [...long, ...novelCraftShortIdsForInput(input)];
+}
+
+/** 顾问阶段：短篇结构公式条目的附加文本（没有命中返回空串）。 */
+export function renderNovelCraftShortAppendix(ids: readonly string[]) {
+  const cards = getNovelCraftCards(ids).filter(c => c.form === "short");
+  if (!cards.length) return "";
+  return [
+    "【短篇结构公式】按本作题材与篇幅自动带上，只作整篇结构参考；与本站写作规范冲突时以本站规范为准。",
+    ...cards.map(c => `《${c.title}》\n${c.body}`),
+  ].join("\n\n");
 }
 
 /** 把题材必带条目接在已选技法 id 之后（去重）。 */

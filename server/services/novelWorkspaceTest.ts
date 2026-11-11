@@ -31,7 +31,12 @@ import {
   type NovelReviseStep,
 } from "./novelChapterRevise";
 import { novelRevisePreference } from "../../shared/novelWorkspace";
-import { retrieveNovelCraft, shouldRetrieveNovelCraft } from "./novelCraftRetrieval";
+import {
+  novelCraftShortIdsForInput,
+  renderNovelCraftShortAppendix,
+  retrieveNovelCraft,
+  shouldRetrieveNovelCraft,
+} from "./novelCraftRetrieval";
 import { shortlistNovelCatalog, shouldShortlistNovelCatalog } from "./novelCatalogShortlist";
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 /**
@@ -321,6 +326,15 @@ export async function runNovelWorkspaceTest(
         templatesForPrompt = prepared.templates;
         evidence = { ...evidence, templateDigest: { cached: 0, fresh: 0, fallback: prepared.selectedTexts.length, failed: true } };
         console.warn(`[novelTemplateDigest] 提炼环节异常，回退模板原文：${digestError instanceof Error ? digestError.name : "error"}`);
+      }
+    }
+    if (input.stage === "advice") {
+      // 短篇结构公式：判定为短篇且题材命中时附 1 条（纯字符串匹配，不调模型；大纲阶段由检索结果附带）。
+      const shortIds = novelCraftShortIdsForInput(input);
+      const appendix = renderNovelCraftShortAppendix(shortIds);
+      if (appendix) {
+        templatesForPrompt = templatesForPrompt ? `${templatesForPrompt}\n\n${appendix}` : appendix;
+        evidence = { ...evidence, craftShort: shortIds };
       }
     }
     // 顾问阶段：全库目录分片并发初选，只把入围名单交给终选提示词（校验仍用全库）。shortlistNovelCatalog 不抛错。

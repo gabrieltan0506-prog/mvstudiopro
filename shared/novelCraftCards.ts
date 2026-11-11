@@ -23,6 +23,12 @@ export type NovelCraftCard = {
   priority?: number;
   /** 只有题材条目（craft_genre_*）有：题材名与常见别名，用于按作品题材确定性匹配。 */
   genres?: string[];
+  /** 只有短篇结构公式条目（craft_short_*）有：管整篇结构，只在顾问与大纲阶段按篇幅判定附带。 */
+  form?: "short";
+  /** 短篇公式的参考节数（如 "6"、"12-18"、"通用"）。 */
+  sections?: string;
+  /** 短篇公式每节（或每段）功能，一行一节；body 由它与情绪、必备场景渲染。 */
+  beats?: string[];
 };
 
 /** owner：本站规范；genre：分题材条目（不进检索索引，按题材匹配必带）；general：通用技法。优先级 owner > genre > general。 */
@@ -34,6 +40,7 @@ export type NovelCraftCardInput = Omit<NovelCraftCard, "source">;
 import { NOVEL_CRAFT_OWNER_CARD_INPUTS } from "./novelCraftCardsOwner";
 import { NOVEL_CRAFT_OWNER_DAY2_CARD_INPUTS, withNovelCraftOwnerDay2Supplements } from "./novelCraftCardsOwnerDay2";
 import { NOVEL_CRAFT_GENRE_CARD_INPUTS } from "./novelCraftCardsGenre";
+import { NOVEL_CRAFT_SHORT_CARD_INPUTS } from "./novelCraftCardsShort";
 
 export const NOVEL_CRAFT_FIRST_THREE_ID = "craft_first_three";
 
@@ -331,6 +338,12 @@ export const NOVEL_CRAFT_GENRE_CARDS: readonly NovelCraftCard[] = NOVEL_CRAFT_GE
   source: "genre" as const,
 }));
 
+/** 短篇结构公式条目（craft_short_*）：同为题材类（source = genre），不进任何索引；只按 id 取用。 */
+export const NOVEL_CRAFT_SHORT_CARDS: readonly NovelCraftCard[] = NOVEL_CRAFT_SHORT_CARD_INPUTS.map(c => ({
+  ...c,
+  source: "genre" as const,
+}));
+
 /** 给模型看的优先规则（索引与注入文本共用）。 */
 export const NOVEL_CRAFT_PREFERRED_MARK = "【优先】";
 export const NOVEL_CRAFT_PREFERRED_RULE =
@@ -352,7 +365,7 @@ export function getNovelCraftCards(ids: readonly string[]): NovelCraftCard[] {
   const out: NovelCraftCard[] = [];
   for (const id of ids) {
     if (seen.has(id)) continue;
-    const card = NOVEL_CRAFT_CARDS.find(c => c.id === id) ?? NOVEL_CRAFT_GENRE_CARDS.find(c => c.id === id);
+    const card = NOVEL_CRAFT_CARDS.find(c => c.id === id) ?? NOVEL_CRAFT_GENRE_CARDS.find(c => c.id === id) ?? NOVEL_CRAFT_SHORT_CARDS.find(c => c.id === id);
     if (!card) continue;
     seen.add(id);
     out.push(card);
