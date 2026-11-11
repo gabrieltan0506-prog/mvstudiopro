@@ -3364,12 +3364,12 @@ export default function MVAnalysisPage({ remixWorkspace = false }: { remixWorksp
           {!remixWorkspace && <div className="mb-6 rounded-2xl border border-[#ff4fb8]/30 bg-[rgba(255,79,184,0.08)] px-4 py-3 text-sm leading-relaxed text-[#ffd4ec]">
             素材上传与视觉分析已迁移至{" "}
             <a
-              href="/creator-growth-camp/premium-remix"
+              href="/lapian"
               className="font-semibold text-[#ff9fe0] underline underline-offset-2"
             >
-              爆款复刻
+              拉片复刻爆款
             </a>
-            。本页为旧版调试入口，新链路请使用导航中的“爆款复刻”。
+            。本页为旧版调试入口，新链路请使用导航中的“拉片复刻爆款”。
           </div>}
 
           <div className="mb-8 flex items-center justify-between">
@@ -3615,7 +3615,7 @@ export default function MVAnalysisPage({ remixWorkspace = false }: { remixWorksp
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">扶持信号</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">发平台判断</div>
                     <a href="/creator-growth-camp" className="rounded-2xl border border-[#ffcf92]/25 bg-[rgba(255,207,146,0.08)] px-4 py-3 text-sm text-[#fff0d4] transition hover:bg-[rgba(255,207,146,0.12)]">返回成长营全页</a>
-                    <a href="/creator-growth-camp/premium-remix" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入二次创作中心</a>
+                    <a href="/lapian" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入拉片复刻爆款</a>
                   </>
                 ) : (
                   <>
@@ -3625,7 +3625,7 @@ export default function MVAnalysisPage({ remixWorkspace = false }: { remixWorksp
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">推荐平台</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">7 天增长规划</div>
                     <a href="/platform" className="rounded-2xl border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.08)] px-4 py-3 text-sm text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.12)]">进入平台分析页</a>
-                    <a href="/creator-growth-camp/premium-remix" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入二次创作中心</a>
+                    <a href="/lapian" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入拉片复刻爆款</a>
                   </>
                 )}
               </div>

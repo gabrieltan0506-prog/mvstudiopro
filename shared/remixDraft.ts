@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-export const REMIX_WORKSPACE_URL = "/creator-growth-camp/premium-remix";
+/** 爆款复刻已并入拉片（2026-11-11），旧工作台地址改指拉片页。 */
+export const REMIX_WORKSPACE_URL = "/lapian";
 export const remixDraftSchema = z.object({
   version: z.literal(1),
   format: z.enum(["video", "note"]),
