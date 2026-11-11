@@ -18,6 +18,10 @@ import { assertSongOperationMaterialRead } from "../server/services/songOperatio
 import { redactModelInfoForRole } from "../shared/modelInfoExposure";
 import { isAllowedCanvasMaterialGcsUri } from "../shared/canvasMaterialReadPolicy";
 import { logAndSanitizeUpstreamError } from "../shared/upstreamErrorForClient";
+import { USAGE_LIMITS, clientIpOf, consumeUsage } from "../server/_core/usageLimits";
+
+/** geminiScript 单次提示词上限（字符）。画布角色卡 / 分镜文案远低于此值。 */
+const GEMINI_SCRIPT_MAX_PROMPT_CHARS = 120_000;
 export { runVertexUpscaleImage, type VertexUpscaleResult };
 
 /**
@@ -930,6 +934,21 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(200).json({ ok: true, markdown: outcome.markdown, imageCount: images.length });
     }
 
+    // geminiScript：须登录 + 用量闸门 + 提示词长度上限，均在取 Vertex 令牌与任何上游调用之前（原先匿名可调且可指定模型）
+    if (op === "geminiScript") {
+      const scriptViewer = await resolveGoogleGatewayUser(req);
+      if (!scriptViewer) return res.status(401).json({ ok: false, error: "authentication_required", message: "请先登录后再使用" });
+      const scriptPrompt = s(b.prompt || q.prompt || "");
+      if (scriptPrompt.length > GEMINI_SCRIPT_MAX_PROMPT_CHARS) {
+        return res.status(413).json({ ok: false, error: "prompt_too_long", message: "输入内容过长，请精简后重试" });
+      }
+      const usage = consumeUsage(USAGE_LIMITS.geminiScript, [`u:${scriptViewer.userId}`, `ip:${clientIpOf(req as any)}`]);
+      if (!usage.ok) {
+        res.setHeader("Retry-After", String(usage.retryAfterSec));
+        return res.status(429).json({ ok: false, error: "rate_limited", message: usage.message });
+      }
+    }
+
     const projectId = s(process.env.VERTEX_PROJECT_ID).trim();
     if(!projectId){
       console.error("[api/google] missing_env VERTEX_PROJECT_ID");
@@ -944,7 +963,8 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
 
       const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
-      const model = (s(b.model || q.model || "") || s(process.env.VERTEX_GEMINI_MODEL) || "gemini-3.1-pro-preview").trim();
+      // 模型只由服务端配置决定（GEMINI_SCRIPT_MODEL → VERTEX_GEMINI_MODEL → 领域缺省），调用方传的 model 一律忽略
+      const model = resolveGeminiModel("geminiScript");
       const is31Pro = /gemini-3\.1.*pro/i.test(model);
       const is25Pro = /gemini-2\.5/i.test(model) && /pro/i.test(model) && !/flash/i.test(model);
       const is3Flash =

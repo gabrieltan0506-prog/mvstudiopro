@@ -82,6 +82,8 @@ export const GEMINI_MODEL_DOMAIN_ENVS = {
   codeMotionTiming: ["CODE_MOTION_TIMING_MODEL"],
   /** 创作顾问问答·联网检索摘要（googleSearch，不阻断主问答）。 */
   platformSkillQa: ["PLATFORM_SKILL_QA_GEMINI_MODEL"],
+  /** 画布文案 / 角色卡（/api/google?op=geminiScript）：模型只由服务端决定，调用方传入的一律忽略；旧 env VERTEX_GEMINI_MODEL 兼容。 */
+  geminiScript: ["GEMINI_SCRIPT_MODEL", "VERTEX_GEMINI_MODEL"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type GeminiModelDomain = keyof typeof GEMINI_MODEL_DOMAIN_ENVS;
@@ -102,6 +104,8 @@ export const GEMINI_MODEL_DOMAIN_DEFAULTS = {
   strategicCoverDirector: "gemini-3.1-pro-preview",
   deepResearchAssist: "gemini-3.1-pro",
   growthCampExtractor: "gemini-3.5-flash",
+  // 原先由前端传入 3.1 Pro（画布 CANVAS_GEMINI_FALLBACK_MODEL），收归服务端时行为不变；改便宜档在 Fly 设 GEMINI_SCRIPT_MODEL 或删本条
+  geminiScript: "gemini-3.1-pro-preview",
 } as const satisfies Partial<Record<GeminiModelDomain, string>>;
 
 /** 某领域在全部 env 未设时的缺省模型（表内领域取领域缺省，否则为全局兜底 gemini-3.8-flash）。 */

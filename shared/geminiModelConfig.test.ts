@@ -38,6 +38,7 @@ describe("resolveGeminiModel", () => {
       strategicCoverDirector: "gemini-3.1-pro-preview",
       deepResearchAssist: "gemini-3.1-pro",
       growthCampExtractor: "gemini-3.5-flash",
+      geminiScript: "gemini-3.1-pro-preview",
     });
     for (const domain of Array.from(pinned)) {
       expect(GEMINI_MODEL_DOMAIN_ENVS).toHaveProperty(domain);
