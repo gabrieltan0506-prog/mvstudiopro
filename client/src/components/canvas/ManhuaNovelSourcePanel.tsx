@@ -35,11 +35,11 @@ export function ManhuaNovelSourcePanel({ value, onChange, disabled, episodes, sa
   return <Container className="my-3 rounded-xl border border-white/15 bg-white/[0.03] p-3" data-manhua-novel-source>
     {!inline && <summary className="cursor-pointer text-sm font-semibold text-white/80">底本改编 · 原文与章节 <span className="text-xs font-normal text-white/45">{value?.text ? `${chapters.length} 个选段` : "可选"}</span></summary>}
     <div className="mt-3 space-y-3">
-      <p className="text-xs leading-5 text-white/55">doc、docx、pdf、md、txt、epub。上传后选择正文范围，再填写创作方向。</p>
+      <p className="text-xs leading-5 text-white/55">支持 epub、fb2、pdf、docx、doc、md、txt、html；txt 自动识别 UTF-8 / GBK / Big5。上传后选择正文范围，再填写创作方向。</p>
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <button type="button" disabled={disabled || importing} onClick={()=>fileRef.current?.click()} className="rounded-lg border border-white/20 px-3 py-2">导入文件</button>
         <span className="text-white/45">{draft.text.length.toLocaleString()} / 400,000 字符</span>
-        <input ref={fileRef} type="file" accept=".epub,.pdf,.docx,.doc,.txt,.md,.markdown,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" disabled={disabled || importing} className="hidden" onChange={async e=>{
+        <input ref={fileRef} type="file" accept=".epub,.fb2,.html,.htm,.xhtml,.mobi,.azw,.azw3,.pdf,.docx,.doc,.txt,.md,.markdown,text/html,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" disabled={disabled || importing} className="hidden" onChange={async e=>{
           const file=e.target.files?.[0]; e.target.value=""; if(!file)return;
           importAbort.current?.abort();
           const controller=new AbortController(); importAbort.current=controller;
