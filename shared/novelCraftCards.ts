@@ -21,15 +21,19 @@ export type NovelCraftCard = {
   source: NovelCraftSource;
   /** 越小越基础；只用于默认回退集合排序。 */
   priority?: number;
+  /** 只有题材条目（craft_genre_*）有：题材名与常见别名，用于按作品题材确定性匹配。 */
+  genres?: string[];
 };
 
-export type NovelCraftSource = "owner" | "general";
+/** owner：本站规范；genre：分题材条目（不进检索索引，按题材匹配必带）；general：通用技法。优先级 owner > genre > general。 */
+export type NovelCraftSource = "owner" | "general" | "genre";
 
 /** 条目原始数据（source 在合并时统一补上）。 */
 export type NovelCraftCardInput = Omit<NovelCraftCard, "source">;
 
 import { NOVEL_CRAFT_OWNER_CARD_INPUTS } from "./novelCraftCardsOwner";
 import { NOVEL_CRAFT_OWNER_DAY2_CARD_INPUTS, withNovelCraftOwnerDay2Supplements } from "./novelCraftCardsOwnerDay2";
+import { NOVEL_CRAFT_GENRE_CARD_INPUTS } from "./novelCraftCardsGenre";
 
 export const NOVEL_CRAFT_FIRST_THREE_ID = "craft_first_three";
 
@@ -321,10 +325,19 @@ export const NOVEL_CRAFT_OWNER_CARDS: readonly NovelCraftCard[] = [
 /** 全库：原有通用条目在前，本站条目接在后面。 */
 export const NOVEL_CRAFT_CARDS: readonly NovelCraftCard[] = [...NOVEL_CRAFT_BASE_CARDS, ...NOVEL_CRAFT_OWNER_CARDS];
 
+/** 分题材条目（craft_genre_*）：不并入 NOVEL_CRAFT_CARDS、不进任何索引；只按 id 取用。 */
+export const NOVEL_CRAFT_GENRE_CARDS: readonly NovelCraftCard[] = NOVEL_CRAFT_GENRE_CARD_INPUTS.map(c => ({
+  ...c,
+  source: "genre" as const,
+}));
+
 /** 给模型看的优先规则（索引与注入文本共用）。 */
 export const NOVEL_CRAFT_PREFERRED_MARK = "【优先】";
 export const NOVEL_CRAFT_PREFERRED_RULE =
   "带【优先】的条目来自本站的写作规范；与其他条目说法不一致时以【优先】条目为准，优先选用。";
+/** 注入文本里有题材条目时附带的规则。 */
+export const NOVEL_CRAFT_GENRE_RULE =
+  "【题材条目】按本作题材自动带上：与【优先】条目说法不一致时以【优先】条目为准；与通用条目不一致时以题材条目为准。";
 
 export type NovelCraftIndexEntry = Pick<NovelCraftCard, "id" | "title" | "intro" | "tags">;
 
@@ -333,13 +346,13 @@ export function novelCraftIndex(cards: readonly NovelCraftCard[] = NOVEL_CRAFT_C
   return cards.map(({ id, title, intro, tags }) => ({ id, title, intro, tags: [...tags] }));
 }
 
-/** 按 id 取条目（保持传入顺序，忽略不存在的 id、去重）。 */
+/** 按 id 取条目（保持传入顺序，忽略不存在的 id、去重）；题材条目也可按 id 取到。 */
 export function getNovelCraftCards(ids: readonly string[]): NovelCraftCard[] {
   const seen = new Set<string>();
   const out: NovelCraftCard[] = [];
   for (const id of ids) {
     if (seen.has(id)) continue;
-    const card = NOVEL_CRAFT_CARDS.find(c => c.id === id);
+    const card = NOVEL_CRAFT_CARDS.find(c => c.id === id) ?? NOVEL_CRAFT_GENRE_CARDS.find(c => c.id === id);
     if (!card) continue;
     seen.add(id);
     out.push(card);
