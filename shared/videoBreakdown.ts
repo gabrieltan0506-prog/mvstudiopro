@@ -122,3 +122,17 @@ export type VideoBreakdownJobView = {
 export const VIDEO_BREAKDOWN_MAX_BYTES = 500 * 1024 * 1024;
 export const VIDEO_BREAKDOWN_MAX_SECONDS = 300;
 export const VIDEO_BREAKDOWN_ACCEPT = ["video/mp4", "video/quicktime", "video/webm"] as const;
+
+/**
+ * 定价（用户 2026-11-11 定）：按片长计，不超过 120 秒一律 30 积分；超过部分每 10 秒加 10 积分（不足 10 秒按 10 秒）。
+ * 管理员 0 扣费由计费层处理，这里只给标价。前后端都用这一个函数，不各写一份。
+ */
+export const VIDEO_BREAKDOWN_BASE_SECONDS = 120;
+export const VIDEO_BREAKDOWN_BASE_CREDITS = 30;
+export const VIDEO_BREAKDOWN_STEP_SECONDS = 10;
+export const VIDEO_BREAKDOWN_STEP_CREDITS = 10;
+export function videoBreakdownCredits(durationSec: number): number {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) throw new Error("片长无效，无法计价");
+  if (durationSec <= VIDEO_BREAKDOWN_BASE_SECONDS) return VIDEO_BREAKDOWN_BASE_CREDITS;
+  return VIDEO_BREAKDOWN_BASE_CREDITS + Math.ceil((durationSec - VIDEO_BREAKDOWN_BASE_SECONDS) / VIDEO_BREAKDOWN_STEP_SECONDS) * VIDEO_BREAKDOWN_STEP_CREDITS;
+}
