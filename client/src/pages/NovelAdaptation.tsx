@@ -72,6 +72,8 @@ import {
   type NovelWorkspace,
 } from "@/lib/novelWorkspace";
 
+/** 上一项任务未结束或正在保存时点击被挡下的提示（不悄悄忽略点击）。 */
+const NOVEL_BLOCKED_CLICK_NOTICE = "上一项操作还在进行或保存中，这次点击没有提交，请稍候再点。";
 export default function NovelAdaptation() {
   const { user, loading } = useAuth();
   if (loading) return <main className="p-8">正在读取账号…</main>;
@@ -528,8 +530,11 @@ function NovelWorkspaceEditor({
       running.current ||
       latest.current.pending ||
       saveError
-    )
+    ) {
+      // 站长 2026-11-11：被挡下的点击不能悄悄吞掉，要让用户知道这次没有提交。
+      if (!fromQueue && !saveError) setError(NOVEL_BLOCKED_CLICK_NOTICE);
       return;
+    }
     const draft = latest.current;
     const currentNovel = batchNovel(draft);
     setError("");
@@ -717,8 +722,10 @@ function NovelWorkspaceEditor({
   };
   /** 审稿改稿：线路可单独选择（未选时沿用写作线路），先审稿再改稿；不带模板，不改动本集正文，采用需用户确认。 */
   const reviseChapter = async (chapterIndex: number) => {
-    if (disabled || running.current || latest.current.pending || saveError)
+    if (disabled || running.current || latest.current.pending || saveError) {
+      if (!saveError) setError(NOVEL_BLOCKED_CLICK_NOTICE);
       return;
+    }
     const draft = latest.current;
     setError("");
     let submittedId: string | undefined;
@@ -1518,6 +1525,7 @@ function NovelWorkspaceEditor({
         </label>
         <button
           className={`${button} mt-4 bg-amber-200 text-slate-950`}
+          disabled={disabled}
           onClick={() => {
             setSideTab("advisor");
             generate("advice");
