@@ -73,7 +73,7 @@ describe("技法条目库", () => {
     expect(NOVEL_CRAFT_BASE_CARDS.length).toBeLessThanOrEqual(19);
     expect(new Set(NOVEL_CRAFT_CARDS.map(c => c.id)).size).toBe(NOVEL_CRAFT_CARDS.length);
     for (const c of NOVEL_CRAFT_CARDS) {
-      expect(c.id).toMatch(/^craft_[a-z_]+$/);
+      expect(c.id).toMatch(/^craft_[a-z0-9_]+$/);
       expect(c.intro.length).toBeLessThanOrEqual(60);
       expect(c.body.length).toBeLessThanOrEqual(900);
       expect(c.stages.length).toBeGreaterThan(0);

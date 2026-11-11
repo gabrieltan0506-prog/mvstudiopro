@@ -84,6 +84,15 @@ export function novelCraftCardsForStage(input: NovelCraftRetrievalInput): NovelC
   );
 }
 
+/**
+ * 索引里的技法条目只放一句话用途（简介第一句），控制检索提示词长度；
+ * 本站条目简介本身就是一句，原样保留，不会被截。
+ */
+export function novelCraftIndexIntro(intro: string) {
+  const i = intro.indexOf("。");
+  return i >= 0 && i < intro.length - 1 ? intro.slice(0, i + 1) : intro;
+}
+
 /** 统一索引：技法条目 + 每条手法（回退原文的模板整块算一条 `#raw`）。只有简介，不含正文。 */
 export function buildNovelCraftUnifiedIndex(
   input: NovelCraftRetrievalInput,
@@ -93,7 +102,7 @@ export function buildNovelCraftUnifiedIndex(
     id: c.id,
     kind: "craft" as const,
     title: c.title,
-    intro: c.intro,
+    intro: novelCraftIndexIntro(c.intro),
     ...(c.source === "owner" ? { preferred: true } : {}),
   }));
   const methods: NovelCraftUnifiedEntry[] = [];

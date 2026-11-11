@@ -8,13 +8,20 @@ import {
   getNovelCraftCards,
   novelCraftIndex,
 } from "../../shared/novelCraftCards";
-import { NOVEL_CRAFT_OWNER_SOURCE } from "../../shared/novelCraftCardsOwner";
+import { NOVEL_CRAFT_OWNER_CARD_INPUTS, NOVEL_CRAFT_OWNER_SOURCE } from "../../shared/novelCraftCardsOwner";
+import {
+  NOVEL_CRAFT_OWNER_DAY2_CARD_INPUTS,
+  NOVEL_CRAFT_OWNER_DAY2_SOURCE,
+  NOVEL_CRAFT_OWNER_DAY2_SUPPLEMENTS,
+  NOVEL_CRAFT_OWNER_DAY2_SUPPLEMENT_PREFIX,
+} from "../../shared/novelCraftCardsOwnerDay2";
 import {
   buildNovelCraftRetrievalPrompt,
   buildNovelCraftTaskBrief,
   buildNovelCraftUnifiedIndex,
   defaultNovelCraftSelection,
   novelCraftCardsForStage,
+  novelCraftIndexIntro,
   renderNovelCraftInjection,
   type NovelCraftRetrievalInput,
 } from "./novelCraftRetrieval";
@@ -85,7 +92,7 @@ describe("站长资料技法条目", () => {
     const ids = NOVEL_CRAFT_CARDS.map(c => c.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const c of NOVEL_CRAFT_OWNER_CARDS) {
-      expect(c.id).toMatch(/^craft_owner_[a-z_]+$/);
+      expect(c.id).toMatch(/^craft_owner_(d2_)?[a-z_]+$/);
       expect(c.title.length).toBeGreaterThan(0);
       expect(c.intro.length).toBeLessThanOrEqual(60);
       expect(c.body.length).toBeGreaterThan(100);
@@ -177,5 +184,47 @@ describe("站长资料技法条目", () => {
       expect(l.craft).toEqual([...DEFAULT_BY_STAGE[stage]]);
       expect(e.methods).toHaveLength(32);
     }
+  });
+});
+
+describe("站长第二天资料（增量）", () => {
+  it("来源日期；新条目 id 带 craft_owner_d2_ 前缀、接在第一天条目之后", () => {
+    expect(NOVEL_CRAFT_OWNER_DAY2_SOURCE).toEqual({ date: "2026-11-12" });
+    expect(NOVEL_CRAFT_OWNER_DAY2_CARD_INPUTS.length).toBeGreaterThan(0);
+    for (const c of NOVEL_CRAFT_OWNER_DAY2_CARD_INPUTS) expect(c.id.startsWith("craft_owner_d2_")).toBe(true);
+    expect(NOVEL_CRAFT_OWNER_CARDS.map(c => c.id)).toEqual([
+      ...NOVEL_CRAFT_OWNER_CARD_INPUTS.map(c => c.id),
+      ...NOVEL_CRAFT_OWNER_DAY2_CARD_INPUTS.map(c => c.id),
+    ]);
+  });
+  it("补充行只追加不改写：原句全部保留且顺序不变，补充行插在「不做/自查」之前", () => {
+    for (const orig of NOVEL_CRAFT_OWNER_CARD_INPUTS) {
+      const merged = NOVEL_CRAFT_OWNER_CARDS.find(c => c.id === orig.id)!;
+      const extra = NOVEL_CRAFT_OWNER_DAY2_SUPPLEMENTS[orig.id] ?? [];
+      const lines = merged.body.split("\n");
+      expect(lines.filter(l => !l.startsWith(NOVEL_CRAFT_OWNER_DAY2_SUPPLEMENT_PREFIX))).toEqual(orig.body.split("\n"));
+      expect(lines.filter(l => l.startsWith(NOVEL_CRAFT_OWNER_DAY2_SUPPLEMENT_PREFIX))).toEqual(
+        extra.map(l => `${NOVEL_CRAFT_OWNER_DAY2_SUPPLEMENT_PREFIX}${l}`)
+      );
+      const lastExtra = lines.map(l => l.startsWith(NOVEL_CRAFT_OWNER_DAY2_SUPPLEMENT_PREFIX)).lastIndexOf(true);
+      const firstTail = lines.findIndex(l => l.startsWith("不做：") || l.startsWith("自查："));
+      if (extra.length && firstTail !== -1) expect(lastExtra).toBeLessThan(firstTail);
+      expect(merged.intro).toBe(orig.intro);
+      expect(merged.priority).toBe(orig.priority);
+    }
+    for (const id of Object.keys(NOVEL_CRAFT_OWNER_DAY2_SUPPLEMENTS)) {
+      expect(NOVEL_CRAFT_OWNER_CARD_INPUTS.some(c => c.id === id)).toBe(true);
+    }
+  });
+  it("索引只放一句话用途：本站条目简介原样保留，通用条目只留第一句", () => {
+    for (const c of NOVEL_CRAFT_OWNER_CARDS) expect(novelCraftIndexIntro(c.intro)).toBe(c.intro);
+    expect(novelCraftIndexIntro("甲乙丙。丁时取。")).toBe("甲乙丙。");
+    const input = { ...base, stage: "outline" as const, chapterIndex: 1 };
+    const idx = buildNovelCraftUnifiedIndex(input, fourCards);
+    const prompt = buildNovelCraftRetrievalPrompt(buildNovelCraftTaskBrief(input), idx);
+    for (const c of NOVEL_CRAFT_OWNER_CARDS.filter(x => x.stages.includes("outline"))) {
+      expect(prompt).toContain(`${c.id}｜【优先】${c.title}｜${c.intro}`);
+    }
+    expect(prompt.length).toBeLessThan(6000);
   });
 });
