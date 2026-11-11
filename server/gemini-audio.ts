@@ -366,6 +366,8 @@ export type GeminiAudioJsonChannel = "Vertex" | "EvoLink";
  * 每跳：调用 → JSON 解析 → validate；超时、断线、HTTP 错误、空回、写坏（解析/校验不过）都切下一跳。
  * 每路的请求摘要、原始回包、解析结果或拒收原因经 save 永久落证据；未配置的通道跳过并记录。
  */
+/** 限流（HTTP 429）同通道退避重试的间隔：3 次，约 2s → 5s → 10s；之后切下一跳（用户 2026-11-11 定）。 */
+export const GEMINI_TWO_HOP_RATE_LIMIT_BACKOFF_MS: readonly number[] = [2_000, 5_000, 10_000];
 export async function geminiAudioJsonWithFallback<T>(input: {
   mimeType: string;
   /**
@@ -406,6 +408,10 @@ export async function geminiAudioJsonWithFallback<T>(input: {
    * 返回修复用的完整 prompt（媒体照旧附上）；缺省不修复（旧行为）。修复请求的 request/raw/decoded/parsed/rejected 另以 -repair 后缀永久落档。
    */
   repairPrompt?: (reasonZh: string, badText: string) => string;
+  /** 1111：限流时同通道的退避间隔（毫秒），条数即重试次数；缺省 GEMINI_TWO_HOP_RATE_LIMIT_BACKOFF_MS，传 [] 即不重试直接切下一跳。 */
+  rateLimitBackoffMs?: readonly number[];
+  /** 测试注入用的等待函数。 */
+  sleep?: (ms: number) => Promise<void>;
 }): Promise<{ value: T; channel: GeminiAudioJsonChannel; model: string; failuresZh: string[]; payload: unknown }> {
   // 运行时同样拒收（JS 调用方绕过类型时）：没给 GCS 媒体就不发任何请求。
   const extraMedia = input.extraMedia ?? [];
@@ -423,6 +429,8 @@ export async function geminiAudioJsonWithFallback<T>(input: {
   const twoHopModel = String(input.model || "").trim() || resolveGeminiAudioTwoHopModel();
   const timeoutMs = input.timeoutMs ?? 180_000;
   const maxOutputTokens = input.maxOutputTokens ?? 8192;
+  const rateLimitBackoffMs = input.rateLimitBackoffMs ?? GEMINI_TWO_HOP_RATE_LIMIT_BACKOFF_MS;
+  const sleep = input.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
   // fileUris[0] = 主媒体，其余按 extraMedia 顺序；只有 fileData 引用，不内联媒体。
   const videoFps = typeof input.videoFps === "number" && Number.isFinite(input.videoFps) && input.videoFps > 0 ? input.videoFps : undefined;
   const mediaParts = (fileUris: string[]) => [
@@ -471,9 +479,15 @@ export async function geminiAudioJsonWithFallback<T>(input: {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const tag = attempt === 0 ? slug : `${slug}-repair`;
       await input.save(`${tag}-request`, { channel: ch.name, model, schemaName: input.schemaName, prompt, mimeType: input.mimeType, mediaGsUri: media.vertexFileUri, ...(extraMedia.length ? { extraMedia: extraMedia.map(m => ({ mimeType: m.mimeType, gsUri: m.vertexFileUri, ...(m.label ? { label: m.label } : {}) })) } : {}), ...(input.systemInstruction ? { systemInstruction: input.systemInstruction } : {}), ...(videoFps ? { videoFps } : {}), maxOutputTokens, temperature, timeoutMs });
-      let result: Awaited<ReturnType<typeof ch.run>>;
+      let result!: Awaited<ReturnType<typeof ch.run>>;
       try {
-        result = await ch.run(prompt);
+        // 1111 用户定：限流（HTTP 429，实测几乎只出现在 Vertex）先在同通道带退避重试，最多 3 次（约 2s→5s→10s），仍限流才切下一跳。
+        for (let limited = 0; ; limited += 1) {
+          result = await ch.run(prompt);
+          if (result.status !== 429 || limited >= rateLimitBackoffMs.length) break;
+          await input.save(`${tag}-rate-limited-${limited + 1}`, { channel: ch.name, model, status: result.status, waitMs: rateLimitBackoffMs[limited] });
+          await sleep(rateLimitBackoffMs[limited]!);
+        }
       } catch (error) {
         const reason = error instanceof Error && error.name === "TimeoutError" ? "请求超时" : `网络异常：${error instanceof Error ? error.message.slice(0, 160) : String(error)}`;
         failures.push(`${ch.name}（${reason}）`);
@@ -481,7 +495,7 @@ export async function geminiAudioJsonWithFallback<T>(input: {
         break;
       }
       await input.save(`${tag}-raw`, { channel: ch.name, model, status: result.status, payload: result.payload });
-      if (!result.ok) { failures.push(`${ch.name}（HTTP ${result.status}）`); break; }
+      if (!result.ok) { failures.push(`${ch.name}（HTTP ${result.status}${result.status === 429 && rateLimitBackoffMs.length ? `，已退避重试 ${rateLimitBackoffMs.length} 次` : ""}）`); break; }
       const payloadReject = input.checkPayload?.(result.payload);
       if (payloadReject) { failures.push(`${ch.name}（${payloadReject}）`); await input.save(`${tag}-rejected`, { channel: ch.name, model, reasonZh: payloadReject }); break; }
       if (!String(result.text || "").trim()) { failures.push(`${ch.name}（空回）`); await input.save(`${tag}-rejected`, { channel: ch.name, model, reasonZh: "空回" }); break; }
