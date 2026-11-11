@@ -20,6 +20,14 @@ type ShowcaseEntry = {
 
 const POOL: ShowcaseEntry[] = [
   {
+    cover: "/blog-assets/mv-rainy-duet/mv-rainy-duet-cover-20261111.jpg",
+    title: "一首歌，生成一支有剧情的 MV",
+    line: "听歌 → 按节拍拆分镜 → 参考图驱动 → 对口型 → 秒点拼接，59 秒从晴到雨再转亮。",
+    generateHref: "/mv-projects",
+    generateLabel: "去做我的 MV",
+    articleHref: "/blog/song-to-story-mv-ai-storyboard-lipsync",
+  },
+  {
     cover: "/blog-assets/pk-kimi-vs-qwen/pk-05-overview.jpg",
     title: "一条爆款选题，从文案写到 4K 成片",
     line: "选题 → 拆片表 → 海报 → 5 秒成片 → 4K 超分，全程没离开这个网站。",

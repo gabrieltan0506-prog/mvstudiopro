@@ -6,7 +6,14 @@
     <atom:link href="https://www.mvstudiopro.com/blog/rss.xml" rel="self" type="application/rss+xml"/>
     <description>AI 漫剧与视频生成实测：模型对比、真实价格、工作流拆解</description>
     <language>zh-CN</language>
-    <lastBuildDate>Sun, 13 Sep 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Wed, 11 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>一首歌怎么生成一支有剧情的 MV？AI 分镜、对口型与参考图驱动实录</title>
+      <link>https://www.mvstudiopro.com/blog/song-to-story-mv-ai-storyboard-lipsync</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/song-to-story-mv-ai-storyboard-lipsync</guid>
+      <pubDate>Wed, 11 Nov 2026 00:00:00 GMT</pubDate>
+      <description>一首约 3 分半、没有歌词文本的原创歌，取 59 秒高光段，按节拍拆成逐秒分镜，参考图驱动生成画面、唱词段对口型，两段约 30 秒在指定秒点拼接成竖屏剧情 MV。附真实步骤、踩坑和成本量级。</description>
+    </item>
     <item>
       <title>AI都这么能干了，公司为什么还在加班？聊聊FDE的真本事</title>
       <link>https://www.mvstudiopro.com/blog/fde-real-work-starter</link>
