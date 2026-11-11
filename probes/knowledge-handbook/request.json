@@ -1,16 +1,6 @@
 {
   "id": "ncc-1111a",
-  "action": "start",
-  "script": "scripts/probe-novel-carbon-compare.mts",
+  "action": "status",
   "machine": "7812595b294778",
-  "config": {
-    "ownerUserId": 1,
-    "source": "workspace",
-    "stage": "chapter",
-    "baselinePreference": "auto",
-    "runId": "ncc-1111a"
-  },
-  "collect": [
-    "compare.md"
-  ]
+  "collect": ["compare.md"]
 }
