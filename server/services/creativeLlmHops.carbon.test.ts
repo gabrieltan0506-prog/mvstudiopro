@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CreativeHopTransportError, creativeHopSlug, invokeCreativeHop, musicMvDeepComposeHops } from "./creativeLlmHops";
 import type { GeminiCarbonDeps } from "./geminiCarbonCall";
 
-const env = { EVOLINK_API_KEY: "k", GEMINI_API_KEY: "g", GOOGLE_APPLICATION_CREDENTIALS_JSON: "{}", VERTEX_PROJECT_ID: "p" };
+const env = { GEMINI_CARBON_CHANNEL_ORDER: "evolink,gemini_api,vertex", EVOLINK_API_KEY: "k", GEMINI_API_KEY: "g", GOOGLE_APPLICATION_CREDENTIALS_JSON: "{}", VERTEX_PROJECT_ID: "p" };
 const carbonDeps = (reply: { status: number; body: unknown }): GeminiCarbonDeps & { calls: any[] } => {
   const calls: any[] = [];
   return {
@@ -13,18 +13,18 @@ const carbonDeps = (reply: { status: number; body: unknown }): GeminiCarbonDeps 
 };
 
 describe("1111 创作顾问 Carbon 跳", () => {
-  it("深度编排跳：按共用通道顺序（缺省 EvoLink → Gemini API → Vertex），模型按 musicMvDeepCompose 领域", async () => {
+  it("深度编排跳：按共用通道顺序（缺省 Vertex → Gemini API → EvoLink），模型按 musicMvDeepCompose 领域", async () => {
     const hops = await musicMvDeepComposeHops({});
     expect(hops.map((h) => [h.gateway, h.carbonChannel, h.modelName])).toEqual([
-      ["gemini_carbon", "evolink", "gemini-4-carbon"], ["gemini_carbon", "gemini_api", "gemini-4-carbon"], ["gemini_carbon", "vertex", "gemini-4-carbon"],
+      ["gemini_carbon", "vertex", "gemini-4-carbon"], ["gemini_carbon", "gemini_api", "gemini-4-carbon"], ["gemini_carbon", "evolink", "gemini-4-carbon"],
     ]);
     const custom = await musicMvDeepComposeHops({ MV_DEEP_COMPOSE_MODEL: "gemini-4-carbon-x", GEMINI_CARBON_CHANNEL_ORDER: "vertex,evolink" });
     expect(custom.map((h) => `${h.carbonChannel}:${h.modelName}`)).toEqual(["vertex:gemini-4-carbon-x", "evolink:gemini-4-carbon-x"]);
-    expect(creativeHopSlug(hops[0]!)).toBe("gemini-4-carbon@evolink");
+    expect(creativeHopSlug(hops[0]!)).toBe("gemini-4-carbon@vertex");
   });
 
   it("单通道调用：系统提示 + 完整上下文，JSON 输出，65536 上限；request 与 carbon-raw 落盘", async () => {
-    const [hop] = await musicMvDeepComposeHops({});
+    const [hop] = await musicMvDeepComposeHops({ GEMINI_CARBON_CHANNEL_ORDER: "evolink" });
     const deps = carbonDeps({ status: 200, body: { candidates: [{ content: { parts: [{ text: '{"ok":1}' }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 9, candidatesTokenCount: 3, thoughtsTokenCount: 7 } } });
     const saved: Record<string, any> = {};
     vi.spyOn(console, "info").mockImplementation(() => undefined);

@@ -2,7 +2,7 @@
  * Gemini 4 Carbon 共用调用层（1111）：文字 / 多模态 generateContent，三通道 fallback。
  *
  * 站长口径：Carbon 只走 EvoLink、Gemini API、Vertex，**不接 OpenRouter**；属贵档，只在用户主动选择时调用。
- * 缺省通道顺序 EvoLink → Gemini API → Vertex（1111 实测 Vertex global 90 秒无回应），env `GEMINI_CARBON_CHANNEL_ORDER` 可改，
+ * 缺省通道顺序 Vertex → Gemini API → EvoLink（站长 1111 指定先走 Vertex；Vertex 非末位时单次超时 180 秒），env `GEMINI_CARBON_CHANNEL_ORDER` 可改，
  * 调用方也可传 channels（如模板学习只允许 EvoLink / Vertex）。
  *
  * 失败定义（任一即切下一通道）：超时、断线、HTTP 错、上游错误包、空回、MAX_TOKENS（含「先花完思考 token、正文为空」）、
@@ -37,6 +37,8 @@ import { resolveGeminiModel, type GeminiModelDomain } from "../../shared/geminiM
 export const GEMINI_CARBON_RATE_LIMIT_BACKOFF_MS: readonly number[] = [2_000, 5_000, 10_000];
 /** 文字类单通道缺省超时：5 分钟（Carbon 偏慢、先思考）。调用方可传。 */
 export const GEMINI_CARBON_TEXT_TIMEOUT_MS = 5 * 60_000;
+/** Vertex 排在前面且后面还有通道时的单次超时：避免 Vertex 无回应时每次都空等满 5 分钟才切换（env GEMINI_CARBON_VERTEX_LEAD_TIMEOUT_MS 可改）。 */
+export const GEMINI_CARBON_VERTEX_LEAD_TIMEOUT_MS = 180_000;
 /** 缺省输出上限：输出含思考 token，给小了会 MAX_TOKENS 空正文（1111 实测）。 */
 export const GEMINI_CARBON_DEFAULT_MAX_OUTPUT_TOKENS = 65_536;
 
@@ -105,7 +107,7 @@ async function defaultDeps(): Promise<GeminiCarbonDeps> {
   return { ...realDeps(), signGsUri: signImpl };
 }
 
-/** 通道顺序：调用方显式给出优先；否则读 env（缺省 EvoLink → Gemini API → Vertex）。allowed 限制可用通道。 */
+/** 通道顺序：调用方显式给出优先；否则读 env（缺省 Vertex → Gemini API → EvoLink）。allowed 限制可用通道。 */
 export function resolveGeminiCarbonChannelOrder(
   env: Record<string, string | undefined> = process.env as Record<string, string | undefined>,
   options: { envName?: string; fallback?: readonly GeminiCarbonChannel[]; allowed?: readonly GeminiCarbonChannel[] } = {},
@@ -384,7 +386,10 @@ export async function runGeminiCarbon<T>(input: GeminiCarbonRunInput<T>): Promis
       await input.save(`${slug}-request`, { ...requestEvidence(request), channel, label: input.label, promptSha256, repairOf: reasonZh, timeoutMs: input.timeoutMs ?? GEMINI_CARBON_TEXT_TIMEOUT_MS });
       let result: GeminiCarbonChannelResult;
       try {
-        result = await callGeminiCarbonChannel(channel, request, { timeoutMs: input.timeoutMs, signal: input.signal, save: input.save, slug, backoffMs: input.backoffMs, deps });
+        const fullTimeoutMs = input.timeoutMs ?? GEMINI_CARBON_TEXT_TIMEOUT_MS;
+        const leadCap = Number(process.env.GEMINI_CARBON_VERTEX_LEAD_TIMEOUT_MS) > 0 ? Number(process.env.GEMINI_CARBON_VERTEX_LEAD_TIMEOUT_MS) : GEMINI_CARBON_VERTEX_LEAD_TIMEOUT_MS;
+        const hopTimeoutMs = channel === "vertex" && index < channels.length - 1 ? Math.min(fullTimeoutMs, leadCap) : fullTimeoutMs;
+        result = await callGeminiCarbonChannel(channel, request, { timeoutMs: hopTimeoutMs, signal: input.signal, save: input.save, slug, backoffMs: input.backoffMs, deps });
       } catch (error) {
         if (!(error instanceof GeminiCarbonChannelError)) {
           if (input.signal?.aborted) throw error;

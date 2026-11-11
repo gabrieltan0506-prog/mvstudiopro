@@ -8,7 +8,7 @@ import {
 } from "./geminiCarbonCall";
 import { estimateGeminiCarbonCostUsd, parseGeminiCarbonChannelOrder } from "../../shared/geminiCarbon";
 
-const ENV = {
+const ENV = { GEMINI_CARBON_CHANNEL_ORDER: "evolink,gemini_api,vertex", /* 机制用例固定旧顺序；缺省顺序另测 */
   EVOLINK_API_KEY: "k-evo",
   GEMINI_API_KEY: "k-gem",
   GOOGLE_APPLICATION_CREDENTIALS_JSON: "{}",
@@ -52,12 +52,21 @@ const validateObj = (decoded: unknown) => {
   return decoded as { ok: boolean };
 };
 
+describe("Carbon 缺省顺序下的首发通道", () => {
+  it("未设 env：三通道齐备时第一发走 Vertex，成功即停", async () => {
+    const { GEMINI_CARBON_CHANNEL_ORDER: _pinned, ...env } = ENV;
+    const h = harness({ vertex: [ok('{"ok":true}')] }, env);
+    await runGeminiCarbon({ prompt: "p", label: "t", save: h.save, deps: h.deps, validate: validateObj, json: true } as any);
+    expect(h.calls.map((c) => c.channel)).toEqual(["vertex"]);
+  });
+});
+
 describe("Carbon 通道顺序", () => {
-  it("缺省 EvoLink → Gemini API → Vertex；env 可改，去重、忽略无效项", () => {
-    expect(resolveGeminiCarbonChannelOrder({})).toEqual(["evolink", "gemini_api", "vertex"]);
+  it("缺省 Vertex → Gemini API → EvoLink；env 可改，去重、忽略无效项", () => {
+    expect(resolveGeminiCarbonChannelOrder({})).toEqual(["vertex", "gemini_api", "evolink"]);
     expect(resolveGeminiCarbonChannelOrder({ GEMINI_CARBON_CHANNEL_ORDER: "vertex, evolink ,vertex" })).toEqual(["vertex", "evolink"]);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    expect(resolveGeminiCarbonChannelOrder({ GEMINI_CARBON_CHANNEL_ORDER: "openrouter" })).toEqual(["evolink", "gemini_api", "vertex"]);
+    expect(resolveGeminiCarbonChannelOrder({ GEMINI_CARBON_CHANNEL_ORDER: "openrouter" })).toEqual(["vertex", "gemini_api", "evolink"]);
     // 只允许 EvoLink / Vertex 的调用方（模板学习精读）：gemini_api 被忽略
     expect(parseGeminiCarbonChannelOrder("gemini_api,vertex", ["evolink", "vertex"], ["evolink", "vertex"])).toEqual(["vertex"]);
     warn.mockRestore();
@@ -65,7 +74,7 @@ describe("Carbon 通道顺序", () => {
 });
 
 describe("runGeminiCarbon 三通道 fallback", () => {
-  it("缺省先走 EvoLink；成功即停，证据含 request/raw/decoded/parsed/hop-used，用量与估价记录", async () => {
+  it("顺序首位成功即停，证据含 request/raw/decoded/parsed/hop-used，用量与估价记录", async () => {
     const h = harness({ evolink: [ok('{"ok":true}')] });
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const result = await runGeminiCarbon({ prompt: "p", validate: validateObj, save: h.save, label: "t", deps: h.deps });
@@ -149,7 +158,7 @@ describe("runGeminiCarbon 三通道 fallback", () => {
   });
 
   it("全部失败抛 GeminiCarbonExhaustedError，并落 hop-exhausted；未配置通道记 skipped", async () => {
-    const h = harness({ evolink: [{ status: 503 }] }, { EVOLINK_API_KEY: "k" });
+    const h = harness({ evolink: [{ status: 503 }] }, { EVOLINK_API_KEY: "k", GEMINI_CARBON_CHANNEL_ORDER: "evolink,gemini_api,vertex" });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await expect(runGeminiCarbon({ prompt: "p", validate: validateObj, save: h.save, label: "t", deps: h.deps })).rejects.toBeInstanceOf(GeminiCarbonExhaustedError);
     expect(h.saved).toHaveProperty("hop-2-gemini_api-skipped");
