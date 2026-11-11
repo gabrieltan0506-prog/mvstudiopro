@@ -20,6 +20,14 @@ type ShowcaseEntry = {
 
 const POOL: ShowcaseEntry[] = [
   {
+    cover: "/blog-assets/lapian-remix/lapian-remix-cover-20261112.jpg",
+    title: "拉片复刻爆款：拆开一支爆款，拿到能直接用的提示词",
+    line: "上传一支片 → 爆款策略、逐段镜头与口播拆解 → 按秒锁定的复刻提示词，1 分 20 秒口播片约 4 分钟出结果。",
+    generateHref: "/lapian",
+    generateLabel: "去拆我的爆款",
+    articleHref: "/blog/video-breakdown-remix-viral-shorts",
+  },
+  {
     cover: "/blog-assets/mv-rainy-duet/mv-rainy-duet-cover-20261111.jpg",
     title: "一首歌，生成一支有剧情的 MV",
     line: "听歌 → 按节拍拆分镜 → 参考图驱动 → 对口型 → 秒点拼接，59 秒从晴到雨再转亮。",
