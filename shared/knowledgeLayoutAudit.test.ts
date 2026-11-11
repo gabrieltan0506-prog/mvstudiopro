@@ -24,3 +24,19 @@ it("抓出标题遮挡、溢出、留白超限、页码不连续、坏图与跨�
   expect(lines).toContain("第 1 页 · 元素遮挡 · 图片条 压住 下篇预告标题");
   expect(lines).not.toMatch(/GLM|DeepSeek|OpenRouter|EvoLink|Gemini/);
 });
+
+import { auditKnowledgeExportSegments, readKnowledgeLayoutAuditSummary, KNOWLEDGE_LAYOUT_AUDIT_MAX_ISSUES } from "./knowledgeLayoutAudit";
+it("分段审查：按段起始页与段内多个排版根换算全书页码，截断清单并保留总数", () => {
+  const seg = (count: number, roots: number[], extra: Record<string, unknown> = {}) => ({ count, booklets: roots.map(n => ({ pages: n, layout: Array.from({ length: n }, (_, i) => ({ page: i + 1, ...extra })) })) });
+  const ok = auditKnowledgeExportSegments([seg(2, [2]), seg(3, [1, 2])], [0, 2]);
+  expect(ok).toEqual({ checked: true, passed: true, pages: 5, issueCount: 0, issues: [] });
+  const many = auditKnowledgeExportSegments([seg(80, [80], { overflow: true })], [10]);
+  expect(many.checked && many.issueCount).toBe(80);
+  expect(many.checked && many.issues.length).toBe(KNOWLEDGE_LAYOUT_AUDIT_MAX_ISSUES);
+  expect(many.checked && many.issues[0]).toEqual({ page: 11, kind: "overflow", target: "正文栏" });
+  expect(auditKnowledgeExportSegments([seg(2, [2]), { count: 3, booklets: [] }], [0, 2])).toEqual({ checked: false });
+  expect(auditKnowledgeExportSegments([seg(2, [2]), undefined], [0, 2])).toEqual({ checked: false });
+  expect(readKnowledgeLayoutAuditSummary(undefined)).toBeUndefined();
+  expect(readKnowledgeLayoutAuditSummary({ checked: false })).toEqual({ checked: false });
+  expect(readKnowledgeLayoutAuditSummary(ok)).toEqual(ok);
+});

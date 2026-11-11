@@ -1,4 +1,5 @@
 import {refineKnowledgeSupplement} from '@/lib/knowledgeSupplementRefine';
+import KnowledgeLayoutAuditNotice from "./KnowledgeLayoutAuditNotice";
 import {withKnowledgeAdvisorRecovery} from '@/lib/knowledgeAdvisorRecovery';
 import {streamManhuaAdvisor} from '@/lib/manhuaAdvisorStream';
 import { knowledgePresentationSourceManuscript } from "@shared/knowledgePresentation";
@@ -108,13 +109,14 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
   const saveMutation = trpc.editableLayout.save.useMutation();
   const finishedExportStarter = trpc.editableLayout.startExportPublication.useMutation();
   const [finishedDownloading, setFinishedDownloading] = useState("");
+  const [finishedAudit, setFinishedAudit] = useState<{ documentId: string; audit: unknown } | null>(null);
   /**
    * 已成册的手册直接取云端成品 PDF（1111）：不重新整理、不重新生图、不重复扣费。
    * 此前回到页面后找不到成品入口，只能再点「生成」，等于重走一遍生图。
    */
   const downloadFinished = async (documentId: string) => {
     if (finishedDownloading) return;
-    setFinishedDownloading(documentId); setError(""); setMessage("正在取云端成品 PDF…");
+    setFinishedDownloading(documentId); setFinishedAudit(null); setError(""); setMessage("正在取云端成品 PDF…");
     try {
       const generation = current.current.generation;
       let task: { status: string; taskId: string; result?: unknown; error?: string } = await finishedExportStarter.mutateAsync({ documentId, expectedGeneration: generation });
@@ -132,12 +134,13 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
         catch (e) { if (++misses > 5) throw e; }
       }
       if (task.status === "failed") throw Error(task.error || "成品 PDF 暂时无法读取，请稍后再试");
-      const result = task.result as { pdfUrl?: string; totalPages?: number; pdfError?: string };
+      const result = task.result as { pdfUrl?: string; totalPages?: number; pdfError?: string; layoutAudit?: unknown };
       if (!result?.pdfUrl) throw Error(result?.pdfError || "这份手册还没有成品 PDF，请打开稿件后生成");
       const link = document.createElement("a");
       link.href = flyDownloadUrl(result.pdfUrl); link.download = ""; link.rel = "noopener";
       document.body.appendChild(link); link.click(); link.remove();
       setMessage(`已开始下载成品 PDF${result.totalPages ? ` · 共 ${result.totalPages} 页` : ""}；未重新生图`);
+      setFinishedAudit({ documentId, audit: result.layoutAudit });
     } catch (e) {
       setMessage(""); setError(e instanceof Error ? e.message : "成品 PDF 下载失败");
     } finally { setFinishedDownloading(""); }
@@ -586,6 +589,7 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
               ))}
             </ul>
             {!open && message && <p role="status" className="mt-2 text-xs text-emerald-200">{message}</p>}
+            {!open && finishedAudit && <div className="mt-1"><KnowledgeLayoutAuditNotice audit={finishedAudit.audit} compact /></div>}
             {!open && error && <p role="alert" className="mt-2 text-xs text-rose-200">{sanitizePlatformUserMessage(error)}</p>}
           </div>
         );
