@@ -224,6 +224,7 @@ import { manhuaCloudDraftRouter } from "./routers/manhuaCloudDraft";
 import { manhuaAgentLoopRouter } from "./routers/manhuaAgentLoop";
 import { manhuaAssetShareRouter } from "./routers/manhuaAssetShare";
 import { manhuaViralTemplateRouter } from "./routers/manhuaViralTemplate";
+import { manhuaTemplateLapianRouter } from "./routers/manhuaTemplateLapian";
 import { manhua3dRouter } from "./routers/manhua3d";
 import { manhua3dAssetRouter } from "./routers/manhua3dAsset";
 import { manhuaWorldRouter } from "./routers/manhuaWorld";
@@ -3035,6 +3036,7 @@ export const appRouter = router({
   manhuaAssetShare: manhuaAssetShareRouter,
   manhuaAgentLoop: manhuaAgentLoopRouter,
   manhuaViralTemplate: manhuaViralTemplateRouter,
+  manhuaTemplateLapian: manhuaTemplateLapianRouter,
   manhua3d: manhua3dRouter,
   manhua3dAsset: manhua3dAssetRouter,
   manhuaWorld: manhuaWorldRouter,
