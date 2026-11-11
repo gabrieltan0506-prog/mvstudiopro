@@ -24,6 +24,7 @@ import { listMergedApprovedManhuaViralTemplatesGrouped } from "./manhuaViralTemp
 import { createGeminiCarbonGcsSaver } from "./geminiCarbonCall";
 import { resolveStableManhuaTemplatePublicCode } from "./manhuaTemplatePublicId";
 import { formatManhuaViralTemplateWriterSkillFromCard } from "../../shared/manhuaViralTemplateBank";
+import { digestNovelTemplates, shouldDigestNovelTemplates } from "./novelTemplateDigest";
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 export function buildNovelTestPrompt(
   input: NovelTestInput,
@@ -137,6 +138,7 @@ export async function prepareNovelTestTemplates(input: NovelTestInput) {
   const catalogSnapshot = buildNovelStageCraftCatalog(groups.flatMap(g => g.items), input);
   const full: string[] = [];
   const selectedEvidence: Array<{ publicId: string; cardSha256: string }> = [];
+  const selectedTexts: Array<{ publicId: string; role: string; cardSha256: string; text: string }> = [];
   const approved = groups.flatMap(g => g.items);
   for (const selected of input.templates) {
     const card = approved.find(c => {
@@ -144,10 +146,13 @@ export async function prepareNovelTestTemplates(input: NovelTestInput) {
       return code && `mt_${code.toLowerCase()}` === selected.publicId;
     });
     if (!card) throw new Error("所选模板已下架或不可用");
-    selectedEvidence.push({ publicId: selected.publicId, cardSha256: hash(JSON.stringify(card)) });
-    full.push(`${selected.publicId} / 分工：${selected.role}\n${formatManhuaViralTemplateWriterSkillFromCard(card)}`);
+    const cardSha256 = hash(JSON.stringify(card));
+    const text = formatManhuaViralTemplateWriterSkillFromCard(card);
+    selectedEvidence.push({ publicId: selected.publicId, cardSha256 });
+    selectedTexts.push({ publicId: selected.publicId, role: selected.role, cardSha256, text });
+    full.push(`${selected.publicId} / 分工：${selected.role}\n${text}`);
   }
-  return { catalogSnapshot, templates: full.join("\n\n"), selectedEvidence };
+  return { catalogSnapshot, templates: full.join("\n\n"), selectedEvidence, selectedTexts };
 }
 
 /** 1111 线路三证据目录：与该账号该请求绑定，永久保存（不随测试失败删除）。 */
@@ -229,9 +234,35 @@ export async function runNovelWorkspaceTest(
       .update(jobs)
       .set({ output: evidence, updatedAt: new Date() })
       .where(eq(jobs.id, id));
+    let templatesForPrompt = prepared.templates;
+    if (shouldDigestNovelTemplates(input.stage)) {
+      // 手法卡：同一线路提炼，每部作品每模板只提炼一次；失败模板回退原文。
+      const digest = await digestNovelTemplates({
+        userId,
+        input,
+        sources: prepared.selectedTexts,
+        call: (prompt, json, requestId) =>
+          callNovelStage(prompt, json, requestId, {
+            modelPreference: input.modelPreference,
+            ...(input.modelPreference === "carbon"
+              ? { saveEvidence: createGeminiCarbonGcsSaver(`${novelWorkspaceCarbonEvidencePrefix(userId, input.requestId)}/template-digest`) }
+              : {}),
+          }),
+      });
+      templatesForPrompt = digest.templates;
+      evidence = {
+        ...evidence,
+        templateDigest: digest.stats,
+        templatesSha256: hash(templatesForPrompt),
+      };
+      await db
+        .update(jobs)
+        .set({ output: evidence, updatedAt: new Date() })
+        .where(eq(jobs.id, id));
+    }
     const value = await executeNovelTest(
       input,
-      prepared.templates,
+      templatesForPrompt,
       catalog,
       (prompt, json, requestId) =>
         callNovelStage(prompt, json, requestId, {
