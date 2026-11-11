@@ -64,6 +64,7 @@ import {
   withUsageLimit,
 } from "./_core/trpc";
 import { USAGE_LIMITS } from "./_core/usageLimits";
+import { PdfHtmlRejectedError, sanitizePdfHtml } from "./services/pdfHtmlSanitize";
 import { TRPCError } from "@trpc/server";
 import { postProdJobInputSchema } from "./jobs/postProdInput";
 import {
@@ -3011,6 +3012,18 @@ function ambientDashboardOpts(input: z.infer<typeof ambientDashboardInputSchema>
   };
 }
 
+/** 同步 PDF：净化提交的 HTML（大小上限、去脚本与外链、注入 CSP），超限给 PAYLOAD_TOO_LARGE。 */
+function sanitizePdfHtmlOrThrow(html: string): string {
+  try {
+    const result = sanitizePdfHtml(html);
+    if (result.removedTags > 0) console.warn(`[pdfHtmlSanitize] 去掉 ${result.removedTags} 个危险标签 / 外链（${result.bytes} 字节）`);
+    return result.html;
+  } catch (error) {
+    if (error instanceof PdfHtmlRejectedError) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: error.message });
+    throw error;
+  }
+}
+
 export const appRouter = router({
   guaikei: guaikeiRouter,
   codeMotion: codeMotionRouter,
@@ -4280,15 +4293,19 @@ export const appRouter = router({
 
     // Platform-specific PDF download — same as downloadAnalysisPdf but named
     // separately so PlatformPage can use it without touching MVAnalysis routes.
-    downloadPlatformPdf: publicProcedure
+    // 1111 收口：原先匿名可提交任意 HTML 让渲染端加载外链（SSRF）。前台调用点均在登录页（PlatformPage / MyReportsPage / MVAnalysis / ResearchPage / ReportEditor）
+    downloadPlatformPdf: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.pdfRender))
       .input(z.object({
         html: z.string().min(100),
         token: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
+        const safeHtml = sanitizePdfHtmlOrThrow(input.html);
         const cloudRunUrl = String(process.env.CLOUD_RUN_PDF_URL || "").trim();
         if (!cloudRunUrl) {
-          throw new Error("CLOUD_RUN_PDF_URL env var is not set.");
+          console.error("[downloadPlatformPdf] CLOUD_RUN_PDF_URL 未配置");
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "PDF 服务暂未配置，请稍后重试" });
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
@@ -4297,7 +4314,7 @@ export const appRouter = router({
           const res = await fetch(proxyUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ html: input.html, token: input.token ?? "" }),
+            body: JSON.stringify({ html: safeHtml, token: input.token ?? "" }),
             signal: controller.signal,
           });
           if (!res.ok) {
@@ -4310,13 +4327,15 @@ export const appRouter = router({
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           console.error("[downloadPlatformPdf] proxy error:", msg);
-          throw new Error(`downloadPlatformPdf failed: ${msg}`);
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "PDF 生成失败，请稍后重试" });
         } finally {
           clearTimeout(timeoutId);
         }
       }),
 
-    downloadAnalysisPdf: publicProcedure
+    // 1111 收口：原先匿名可提交任意 HTML 让渲染端加载外链（SSRF）。前台调用点均在登录页（PlatformPage / MyReportsPage / MVAnalysis / ResearchPage / ReportEditor）
+    downloadAnalysisPdf: protectedProcedure
+      .use(withUsageLimit(USAGE_LIMITS.pdfRender))
       .input(z.object({
         html: z.string().min(100),
         // Optional token forwarded from the frontend for auditing / future auth use.
@@ -4327,9 +4346,11 @@ export const appRouter = router({
         token: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
+        const safeHtml = sanitizePdfHtmlOrThrow(input.html);
         const cloudRunUrl = String(process.env.CLOUD_RUN_PDF_URL || "").trim();
         if (!cloudRunUrl) {
-          throw new Error("CLOUD_RUN_PDF_URL env var is not set. Deploy the pdf-worker to Cloud Run and set this variable.");
+          console.error("[downloadAnalysisPdf] CLOUD_RUN_PDF_URL 未配置");
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "PDF 服务暂未配置，请稍后重试" });
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
@@ -4339,7 +4360,7 @@ export const appRouter = router({
             method: "POST",
             headers: { "Content-Type": "application/json" },
             // Forward html + token to pdf-worker so it can use token for future page.goto() auth
-            body: JSON.stringify({ html: input.html, token: input.token ?? "" }),
+            body: JSON.stringify({ html: safeHtml, token: input.token ?? "" }),
             signal: controller.signal,
           });
           if (!res.ok) {
@@ -4352,7 +4373,7 @@ export const appRouter = router({
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           console.error("[downloadAnalysisPdf] proxy error:", msg);
-          throw new Error(`downloadAnalysisPdf failed: ${msg}`);
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "PDF 生成失败，请稍后重试" });
         } finally {
           clearTimeout(timeoutId);
         }
