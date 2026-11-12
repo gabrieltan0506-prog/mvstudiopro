@@ -56,6 +56,17 @@ class KnowledgeRoutesExhaustedError extends Error {
 /** 篇幅预算跳数：GLM FlashX@首选通道 → GLM@另一通道 → DeepSeek，三跳都超出即停止购买，取超出最少的回答交压缩兜底。 */
 export const KNOWLEDGE_BUDGET_MAX_HOPS = 3;
 export type KnowledgeBudgetOverflowPage = { id: string; headline: string; chars: number; maxChars: number; excess: number; ratio: number; path: "tolerated_to_compression" | "rejected_next_hop" };
+/** [knowledgeRoute] 日志的 detail 字段：只留拒收原因的骨架，不带地址、密钥、章节标题、引文正文；单行、≤160 字；空原因返回空串。 */
+export function knowledgeRouteLogDetail(reason: unknown): string {
+  return String(reason ?? "")
+    .replace(/(?:https?|gs):\/\/\S+/gi, "[地址]")
+    .replace(/《[^》]*》/g, "《章》")
+    .replace(/「[^」]*」|“[^”]*”|‘[^’]*’|"[^"\n]*"/g, "「…」")
+    .replace(/[A-Za-z0-9_-]{32,}/g, "[略]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+}
 class KnowledgeBudgetOverflowError extends Error {
   constructor(message: string, readonly normalized: { status: number; text: string }, readonly excess: number, readonly overflow: KnowledgeBudgetOverflowPage[]) { super(message); }
 }
@@ -149,6 +160,9 @@ async function readKnowledgeResponseBody(response: Response, controller: AbortCo
  * 4. 明确拒绝（非 429 / 非 408 的 4xx）与内容审核拒绝：不在同通道重试；4xx 直接切下一跳，审核拒绝按既有规则终止。
  *    （image_url 400 拉图失败、OpenRouter key limit 仍按各自既有规则。）
  * 5. 每次重试/切换记一行 [knowledgeRoute] 日志（批次、原因类别、第几次、下一跳；不含正文、地址、密钥）；
+ *    写坏等有拒收原因时追加 detail=（knowledgeRouteLogDetail 脱敏：去 http/https/gs 地址、去 ≥32 位字母数字下划线短横线的疑似密钥/长 token、
+ *    《…》章节标题换成《章》、引号内引文换成「…」、压成单行并截到 160 字；原因为空不加该字段）。篇幅超出切跳另记 reason=budget_overflow，
+ *    detail 只写「N页超出，共超X字」统计，不含标题与正文；
  *    成功回包与 accepted.json 记录最终跳与各跳尝试次数（routeSummary）。
  * 6. 整条链总时长上限 KNOWLEDGE_ROUTE_CHAIN_BUDGET_MS（约 10 分钟）：到上限不再发起新购买，判本批失败交给「只重试未完成部分」；
  *    等迟到回执时到上限则保留 unknown（不提前归档，避免回执未闭合就补买）。
@@ -442,13 +456,14 @@ export async function invokeKnowledgePublicationRoutes(
   const hopOf = (model: string, channel: KnowledgeModelChannel) => `${routeModelFamily(model)}:${channel}`;
   const hopState = (hop: string) => { let h = hops.get(hop); if (!h) { h = { attempts: 0, transient: 0, repairs: 0, breakRetries: 0 }; hops.set(hop, h); } return h; };
   /** 记一次失败并决定本跳是否还能重试；返回给日志用的下一步说明。 */
-  const recordFailure = (route: string, model: string, channel: KnowledgeModelChannel, cls: KnowledgeRouteFailureClass, retryAfterMs?: number) => {
+  const recordFailure = (route: string, model: string, channel: KnowledgeModelChannel, cls: KnowledgeRouteFailureClass, retryAfterMs?: number, reason?: string) => {
     const hop = hopOf(model, channel), h = hopState(hop);
     h.lastClass = cls; h.retryAfterMs = retryAfterMs;
     if (cls === "rate_limited" || cls === "transient") { h.transient += 1; if (h.transient > KNOWLEDGE_SAME_ROUTE_RETRIES) h.skip = `${cls}_retries_exhausted`; }
     else if (cls === "rejected") h.skip = "rejected_4xx";
     else if (cls === "bad_output") { h.repairs += 1; if (h.repairs > 1) h.skip = "bad_output_after_repair"; }
-    deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=${cls} attempt=${h.attempts} next=${h.skip ? "switch_hop" : "same_hop_retry"}`);
+    const detail = knowledgeRouteLogDetail(reason);
+    deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=${cls} attempt=${h.attempts} next=${h.skip ? "switch_hop" : "same_hop_retry"}${detail ? ` detail=${detail}` : ""}`);
   };
   const research = request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_RESEARCH_MARKER));
   let webSources: KnowledgeWebSource[] = [];
@@ -836,6 +851,8 @@ export async function invokeKnowledgePublicationRoutes(
         lastFailure = receipt.reason;
         budgetHops.add(`${routeModelFamily(model)}:${channel}`);
         if (!budgetBest || error.excess < budgetBest.excess) budgetBest = { excess: error.excess, normalized: error.normalized, route, overflow: error.overflow };
+        // 只记统计（几页超出、共超几字），不记标题与正文；切跳决定不变。
+        deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=budget_overflow attempt=${hopState(hopOf(model, channel)).attempts} next=${budgetHops.size >= KNOWLEDGE_BUDGET_MAX_HOPS ? "budget_fallback" : "switch_hop"} detail=${error.overflow.length}页超出，共超${error.excess}字`);
         if (budgetHops.size >= KNOWLEDGE_BUDGET_MAX_HOPS) break;
         continue;
       }
@@ -847,7 +864,7 @@ export async function invokeKnowledgePublicationRoutes(
       traces.push({ route, model, state: "failed", status: receipt.response?.status });
       // 失败分类决定本跳是否继续重试（限流/临时 ≤3 次带退避；4xx 不重试；写坏修复一次）。
       if (!(images.length && isImageInputRejection(receipt.response)) && !inspectKnowledgeRouteResponse(receipt.response).keyLimit)
-        recordFailure(route, model, channel, classifyKnowledgeRouteFailure(receipt.response), classifyKnowledgeRouteFailure(receipt.response) === "rate_limited" ? knowledgeRetryAfterMs(receipt.retryAfter, receipt.response?.text, deps.now()) : undefined);
+        recordFailure(route, model, channel, classifyKnowledgeRouteFailure(receipt.response), classifyKnowledgeRouteFailure(receipt.response) === "rate_limited" ? knowledgeRetryAfterMs(receipt.retryAfter, receipt.response?.text, deps.now()) : undefined, receipt.reason);
       if(completeAnswerReceived&&request.generationConfig.responseMimeType==='text/markdown')markdownFailure=error instanceof Error?error:new Error(String(error));
       if (error instanceof KnowledgeJsonSyntaxError) syntaxFailure = error;
       else if (adjustments.some(item => (item as {field?:string}).field === 'json.syntax'))

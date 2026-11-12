@@ -40,3 +40,17 @@ it("分段审查：按段起始页与段内多个排版根换算全书页码，�
   expect(readKnowledgeLayoutAuditSummary({ checked: false })).toEqual({ checked: false });
   expect(readKnowledgeLayoutAuditSummary(ok)).toEqual(ok);
 });
+
+it("整图版式（站长 2026-11-12）：没有跨页图不误报；裁切条/跨页半张、变形与缩过下限的图被抓出", () => {
+  const whole = { width: 1450, height: 815.63, naturalWidth: 1600, naturalHeight: 900, fullWidth: 1450, minWidth: 1254.6, inside: true };
+  const pages = [1, 2, 3, 4].map(page => ({ page, whitespace: 0.1, croppedImages: 0, images: page === 4 ? [] : [whole], spreadHalves: { a: 0, b: 0 } }));
+  expect(auditKnowledgeBookletLayout(pages)).toEqual({ passed: true, issues: [] });
+  // 缩到下限仍合格；高度上限约束下满幅本就低于下限的图不算过小。
+  expect(auditKnowledgeBookletLayout([{ page: 1, images: [{ ...whole, width: 1254.6, height: 1254.6 * 900 / 1600 }] }]).passed).toBe(true);
+  expect(auditKnowledgeBookletLayout([{ page: 1, images: [{ ...whole, width: 1200, height: 900, naturalWidth: 1200, naturalHeight: 900, fullWidth: 1200 }] }]).passed).toBe(true);
+  const bad = structuredClone(pages);
+  bad[0].croppedImages = 1;
+  bad[1].images = [{ ...whole, height: 900 }];
+  bad[2].images = [{ ...whole, width: 1100, height: 1100 * 900 / 1600 }];
+  expect(auditKnowledgeBookletLayout(bad).issues.map(i => [i.page, i.kind])).toEqual([[1, "image_cropped"], [2, "image_cropped"], [3, "image_too_small"]]);
+});

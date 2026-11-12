@@ -3,12 +3,14 @@ import puppeteer,{type Browser,type Page} from 'puppeteer';
 import {deflateSync} from 'node:zlib';
 import {layoutFromSource} from './editableLayout';
 import {knowledgePublicationChapter,knowledgePublicationHead} from './knowledgePublicationHtml';
-import {KNOWLEDGE_BOOKLET_MAX_WHITESPACE} from './knowledgeBooklet';
+import {KNOWLEDGE_BOOKLET_MAX_WHITESPACE,KNOWLEDGE_BOOKLET_IMAGE_MIN_WIDTH_RATIO} from './knowledgeBooklet';
+import {mkdirSync} from 'node:fs';
 import {auditKnowledgeBookletLayout} from './knowledgeLayoutAudit';
 import {finalizeKnowledgeBookletPagination} from '../pdf-worker/knowledgeBookletPagination';
 import {pdfImageCompressionScript} from '../pdf-worker/pdfImageCompression';
 
-// 2026-11-11 用户四条意见的版式验收：跨页大图、每页留白 ≤ 1/3、下篇预告、清晰度标记。
+// 版式验收：站长 2026-11-12 整图版式（不切图、无跨页半张、预告无裁切条、图等比例不变形、缩小不低于版心 85%），
+// 沿用 2026-11-11 每页留白 ≤ 1/3、下篇预告标题、清晰度标记。
 // 按导出真实路径逐章渲染（每章一个片段、先预分页再带全书页码定稿），配图以 https 地址经请求拦截提供（不内嵌）。
 const png=(w:number,h:number,shade:number)=>{const crc=(b:Buffer)=>{let c=~0;for(let i=0;i<b.length;i++){c^=b[i];for(let k=0;k<8;k++)c=(c>>>1)^(0xedb88320&-(c&1));}return (~c)>>>0;};
  const chunk=(t:string,d:Buffer)=>{const l=Buffer.alloc(4);l.writeUInt32BE(d.length);const td=Buffer.concat([Buffer.from(t),d]);const c=Buffer.alloc(4);c.writeUInt32BE(crc(td));return Buffer.concat([l,td,c]);};
@@ -16,6 +18,7 @@ const png=(w:number,h:number,shade:number)=>{const crc=(b:Buffer)=>{let c=~0;for
  const row=Buffer.concat([Buffer.from([0]),Buffer.alloc(w*3,shade)]);
  return Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),chunk('IHDR',ih),chunk('IDAT',deflateSync(Buffer.concat(Array.from({length:h},()=>row)))),chunk('IEND',Buffer.alloc(0))]);};
 const HOST='https://images.test.invalid/';
+const LONG_MIN=1500,LONG_SPAN=500;
 const files=new Map(Array.from({length:7},(_,i)=>[`${HOST}${i}.png`,png(1600,900,0x90+i*10)]));
 // 按句生成正文并嵌入唯一标记，验收「不截断、不重复、不换序」。
 let mark=0;const marks:string[]=[];
@@ -30,7 +33,7 @@ const bodies=[
  `## 结语\n\n${sentences(2,'坚持看产出不看年限')}`,
 ];
 const doc=layoutFromSource({kind:'knowledge-publication',detailLevel:'full',owner:'7',sourceId:'spread-fill',title:'网文副业入门',body:'',pages:bodies.map((body,i)=>({headline:`第${i+1}章`,body,pageIndex:i+1})),images:Object.fromEntries(bodies.map((_,i)=>[i+1,`gs://test/${i}.png`]))});
-// 图内文字量（跨页名额按它分配）：短正文的第 2、5、6、7 章图最密，应分到跨页；其余章图文同页。
+// 图内文字量（旧版按它分配跨页名额；新版式忽略，一律整图图文同页）。
 doc.publication!.source.pages.forEach((p,i)=>{p.body='图内要点'.repeat([1,30,2,3,25,28,26][i]!);});
 const review:any={title:doc.title,pages:doc.pages.map(p=>({...p,imageDescription:'测试配图',reading:{templateId:'fusion_snow_monastery'},cautions:[]}))};
 const address=(i:number)=>`${HOST}${i}.png`;
@@ -52,7 +55,7 @@ const prepare=async(page:Page,html:string)=>{
 };
 const section=(i:number)=>knowledgePublicationChapter(doc,review,i,address(i),false,doc.pages[i+1]?address(i+1):'');
 
-it('跨页大图与留白补位：逐章渲染后每页留白 ≤ 1/3，正文不截断不越界，页码连续，章序不变，图片数正确',async()=>{
+it('整图版式与留白补位：逐章渲染后每章一张完整整图在上、无裁切，每页留白 ≤ 1/3，正文不截断不越界，页码连续，章序不变',async()=>{
  const page=await open();
  try{
   const counts:number[]=[];
@@ -67,7 +70,9 @@ it('跨页大图与留白补位：逐章渲染后每页留白 ≤ 1/3，正文�
     const fillerOverlap=folios.some(f=>{const units=Array.from(f.querySelectorAll('.reading-unit')).map(u=>u.getBoundingClientRect());return Array.from(f.querySelectorAll('.page-filler')).some(x=>{const b=x.getBoundingClientRect();return units.some(u=>u.left<b.right-1&&b.left<u.right-1&&u.top<b.bottom-1&&b.top<u.bottom-1);});});
     return {result:root.__knowledgeBooklet,overflow,fillerOverlap,columnsOverflow:Array.from(document.querySelectorAll('#reading-pages .reading-column')).some(c=>c.scrollHeight>c.clientHeight+2),
      numbers:folios.map(f=>f.querySelector('.page-number')!.textContent),kinds:folios.map(f=>f.classList.contains('spread-folio')?'跨':f.classList.contains('lead-folio')?'图':'文'),
-     mainImages:folios.flatMap(f=>Array.from(f.querySelectorAll('.main-card img,.spread-card img')).map(img=>({src:(img as HTMLImageElement).dataset.pdfMaxDim,w:img.getBoundingClientRect().width}))),
+     mainImages:folios.flatMap(f=>Array.from(f.querySelectorAll('.main-card img')).map(img=>{const r=img.getBoundingClientRect(),cs=getComputedStyle(f);const i=img as HTMLImageElement;return {src:i.dataset.pdfMaxDim,quality:i.dataset.pdfQuality,w:r.width,h:r.height,nw:i.naturalWidth,nh:i.naturalHeight,inner:f.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight)};})),
+     cropped:document.querySelectorAll('.spread-folio,.spread-card,.preview-strip,.next-preview img,.next-source img').length,
+     allImages:Array.from(document.querySelectorAll('img')).filter(i=>!i.classList.contains('decoration-resource')&&!i.closest('.reading-unit')).length,
      sources:Array.from(document.querySelectorAll('#reading-pages .reading-unit')).map(u=>(u as HTMLElement).dataset.sourceId),
      text:document.querySelector('#reading-pages')!.textContent||'',previews:Array.from(document.querySelectorAll('#reading-pages .next-preview h4')).map(e=>e.textContent),previewClipped:Array.from(document.querySelectorAll('#reading-pages .next-preview')).filter(el=>{const h=el.querySelector('h4') as HTMLElement,s=el.querySelector('.preview-strip') as HTMLElement|null;const hr=h.getBoundingClientRect(),er=el.getBoundingClientRect();return h.scrollHeight-h.clientHeight>2||hr.bottom>er.bottom||(!!s&&s.getBoundingClientRect().top<hr.bottom-0.5);}).length,
      ending:Array.from(document.querySelectorAll('#reading-pages .filler-label')).map(e=>e.textContent),parkedFolios:document.querySelectorAll('.image-variants .folio').length};
@@ -84,12 +89,16 @@ it('跨页大图与留白补位：逐章渲染后每页留白 ≤ 1/3，正文�
    expect(c.parkedFolios).toBe(0);
    // 章序不变：本片段正文全部来自本章。
    expect(new Set(c.sources)).toEqual(new Set([doc.pages[i].id]));
-   // 图片元素：图文同页 1 张、跨页两半各 1 张（同一地址），均带清晰度标记。
-   const mode=c.result.imageModes[doc.pages[i].id];
-   expect(c.mainImages).toHaveLength(mode==='spread'?2:1);
-   expect(c.mainImages.every((m:any)=>m.src==='2048')).toBe(true);
-   if(mode==='spread'){expect(c.kinds.slice(0,2)).toEqual(['跨','跨']);expect(c.mainImages[0].w).toBeGreaterThan(2400);}
-   else expect(c.kinds[0]).toBe('图');
+   // 整图：每章恰好 1 张、在首页（图文同页），带清晰度标记 2048/0.85；无跨页半张、无预告图片条，片段里不再出现下一章图片。
+   expect(c.result.imageModes[doc.pages[i].id]).toBe('inline');
+   expect(c.kinds[0]).toBe('图');expect(c.kinds.slice(1).every((k:string)=>k==='文')).toBe(true);
+   expect(c.mainImages).toHaveLength(1);expect(c.allImages).toBe(1);expect(c.cropped).toBe(0);
+   const m=c.mainImages[0];
+   expect([m.src,m.quality]).toEqual(['2048','0.85']);
+   // 等比例、完整：显示宽高比 = 原图宽高比（±1px）；宽度 ≥ 版心 × 下限。
+   expect(Math.abs(m.h-m.w*m.nh/m.nw)).toBeLessThanOrEqual(1);
+   expect(m.w).toBeGreaterThanOrEqual(m.inner*KNOWLEDGE_BOOKLET_IMAGE_MIN_WIDTH_RATIO-1);
+   expect(m.w).toBeLessThanOrEqual(m.inner+1);
   }
   // 页码连续：01/NN … NN/NN。
   expect(chapters.flatMap(c=>c.numbers)).toEqual(Array.from({length:total},(_,i)=>`${String(i+1).padStart(2,'0')} / ${String(total).padStart(2,'0')}`));
@@ -99,14 +108,13 @@ it('跨页大图与留白补位：逐章渲染后每页留白 ≤ 1/3，正文�
   expect(found).toEqual(marks);
   // 只指向图中位置的读图提示不印出。
   expect(all).not.toContain('读图提示');
-  // 跨页名额按图内文字量分配（7 图 → 目标 10–11 页，4 个名额给图最密的第 2、5、6、7 章），名额内正文放得下即跨页。
-  const modes=chapters.map((c,i)=>c.result.imageModes[doc.pages[i].id]);
-  expect(modes).toEqual(['inline','spread','inline','inline','spread','spread','spread']);
+  // 一律整图图文同页（不再分配跨页名额）。
+  expect(chapters.every(c=>c.result.spreadChapters===0)).toBe(true);
   expect(total).toBeLessThanOrEqual(11+2);
   // 下篇预告只指向真实的下一章；末章不预告。
   for(const [i,c] of Array.from(chapters.entries()))for(const title of c.previews)expect(title).toBe(doc.pages[i+1]?.headline);
   expect(chapters.at(-1)!.previews).toEqual([]);
-  // 下篇预告的标题行必须完整露出，不被裁切条挤压或遮住。
+  // 下篇预告的标题行必须完整露出（已无裁切条）。
   expect(chapters.reduce((n,c)=>n+c.previewClipped,0)).toBe(0);
  }finally{await page.close();}
 },180000);
@@ -131,12 +139,12 @@ it('排版服务图片压缩：带标记且未超上限的图原样透传，超�
  }finally{await page.close();}
 },60000);
 
-it('34 章完整版（长短混合，正文已按版面预算压过）：逐章排版后总页数落在 48–54，任一页留白 ≤ 1/3',async()=>{
+it('34 章完整版（整图版式，长短混合）：逐章排版后总页数落在 48–54，任一页留白 ≤ 1/3，整图完整不裁切',async()=>{
  const n=34;
- // 正文长度按「压缩后」的真实分布：跨页名额章 120–400 字，图文同页章 200–650 字，另有 2 章仍超出（≈900 字，排成续页）。
- const density=(i:number)=>(i*37)%n;            // 图内文字量的名次打散到各章
- const spread=(i:number)=>density(i)>=n-17;      // 前 17 密 → 跨页名额
- const sizes=Array.from({length:n},(_,i)=>spread(i)?120+(i*53)%280:(i===9||i===20?900:200+(i*71)%450));
+ // 参考成品（站长上传，34 图 51 页）的分布：约一半章节图下放不完、接一页纯文字续页，其余章图文同页即可放下。
+ const density=(i:number)=>(i*37)%n;            // 打散长章位置
+ const long=(i:number)=>density(i)>=n-17;
+ const sizes=Array.from({length:n},(_,i)=>long(i)?LONG_MIN+(i*53)%LONG_SPAN:200+(i*71)%450);
  const book=layoutFromSource({kind:'knowledge-publication',detailLevel:'full',owner:'7',sourceId:'thirty-four',title:'网文副业入门',body:'',
   pages:sizes.map((size,i)=>({headline:`第${i+1}章 标题`,body:`## 小节甲\n\n${sentences(Math.max(1,Math.round(size/2/24)),'作者经验与平台规则的背景说明')}\n\n## 小节乙\n\n${sentences(Math.max(1,Math.round(size/2/24)),'例子与注意事项')}`,pageIndex:i+1})),
   images:Object.fromEntries(Array.from({length:n},(_,i)=>[i+1,`gs://test/${i%7}.png`]))});
@@ -151,15 +159,28 @@ it('34 章完整版（长短混合，正文已按版面预算压过）：逐章�
   const total=counts.reduce((a,b)=>a+b,0);
   expect(total).toBeGreaterThanOrEqual(48);expect(total).toBeLessThanOrEqual(54);
   let offset=0;const whitespace:number[]=[];let spreads=0;const layout:any[]=[];
+  const snapshots=process.env.KNOWLEDGE_LAYOUT_SNAPSHOT_DIR;if(snapshots)mkdirSync(snapshots,{recursive:true});
   for(let i=0;i<n;i++){
    await prepare(page,html(i,{offset,total,count:counts[i]!}));
    const r=await page.evaluate(()=>(document.querySelector('[data-booklet-root]') as any).__knowledgeBooklet);
-   expect(r.ready).toBe(true);whitespace.push(...r.whitespace);layout.push(...r.layout);spreads+=r.spreadChapters;offset+=counts[i]!;
+   expect(r.ready).toBe(true);whitespace.push(...r.whitespace);layout.push(...r.layout);spreads+=r.spreadChapters;
+   // 样张（可选）：设 KNOWLEDGE_LAYOUT_SNAPSHOT_DIR 时把前几章逐页截图。
+   if(snapshots&&i<8){const els=await page.$$('#reading-pages .folio');for(let k=0;k<els.length;k++){const el=els[k]!;await el.screenshot({path:`${snapshots}/page-${String(offset+k+1).padStart(2,'0')}.png`});}}
+   offset+=counts[i]!;
   }
   expect(whitespace).toHaveLength(total);
   expect(Math.max(...whitespace)).toBeLessThanOrEqual(KNOWLEDGE_BOOKLET_MAX_WHITESPACE);
-  expect(spreads).toBe(17);
-  // 排版后快速版面审查（确定性、不调模型）：真实渲染的整册无溢出/遮挡/裁切/超限留白/页码断档/坏图/跨页图不成对。
+  expect(spreads).toBe(0);
+  // 每页整图实测：等比例（±1px）、完整在框内、宽度不低于版心 × 下限；全册无裁切图。
+  const images=layout.flatMap((p:any)=>p.images||[]);
+  expect(images).toHaveLength(n);
+  for(const img of images){
+   expect(Math.abs(img.height-img.width*img.naturalHeight/img.naturalWidth)).toBeLessThanOrEqual(1);
+   expect(img.inside).toBe(true);
+   expect(img.width).toBeGreaterThanOrEqual(img.contentWidth*KNOWLEDGE_BOOKLET_IMAGE_MIN_WIDTH_RATIO-1);
+  }
+  expect(layout.every((p:any)=>p.croppedImages===0)).toBe(true);
+  // 排版后快速版面审查（确定性、不调模型）：真实渲染的整册无溢出/遮挡/裁切/变形/过小/超限留白/页码断档/坏图。
   expect(layout).toHaveLength(total);
   expect(auditKnowledgeBookletLayout(layout).issues).toEqual([]);
  }finally{await page.close();}

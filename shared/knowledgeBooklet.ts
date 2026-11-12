@@ -10,24 +10,29 @@ export type KnowledgeBookletPage = { id: string; headline: string; body: string;
 export type KnowledgeBookletTheme = "fusion_chinese_garden" | "fusion_ink_mountains" | "fusion_coastal_lighthouse" | "fusion_glasshouse_garden" | "fusion_maple_bridge" | "fusion_snow_monastery";
 /** 手册每页的半透明平铺水印（用户 2026-11-11 定：图文手册生成时打上，单张图片不打）。 */
 export const KNOWLEDGE_BOOKLET_WATERMARK = "mvstudiopro.com";
-export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1111-v17-preview-title";
-/** 信息图入版上限（排版服务按 data-pdf-max-dim 执行；与审校缩图派生件 2048 一致，未超上限的 JPEG 原样入版）。 */
+export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1112-v18-whole-image";
+/**
+ * 信息图入版上限（排版服务按 data-pdf-max-dim 执行；与审校缩图派生件 2048 一致，未超上限的 JPEG 原样入版）。
+ * 站长 2026-11-12：整图清晰度是硬要求——版面上等比例缩小只改显示尺寸，入版像素一律按这一档（2048 / 0.85），不另设低档。
+ */
 export const KNOWLEDGE_BOOKLET_IMAGE_MAX_DIM = 2048;
 export const KNOWLEDGE_BOOKLET_IMAGE_QUALITY = 0.85;
-/** 下篇预告裁切条只是导读，入版长边 1024 即可，控制 PDF 体积。 */
-export const KNOWLEDGE_BOOKLET_PREVIEW_MAX_DIM = 1024;
 /** 用户 2026-11-11：每页留白不得超过版心 1/3（硬上限）；超过 FILL 阈值就开始补位（预告/纹样），不等到贴线。 */
 export const KNOWLEDGE_BOOKLET_MAX_WHITESPACE = 1 / 3;
 export const KNOWLEDGE_BOOKLET_FILL_THRESHOLD = 0.15;
-/** 跨页：宽图（宽高比 ≥ 1.6）按左右两半分排在相邻两页，各放大约 1.9 倍；中缝两侧各重叠 3%，缝上的字至少在一页完整可见。 */
-export const KNOWLEDGE_SPREAD_MIN_ASPECT = 1.6;
-export const KNOWLEDGE_SPREAD_OVERLAP = 0.03;
 /**
- * inline=只排图文同页；spread=已分到跨页名额：跨页两页放得下本章正文才跨页，放不下退回图文同页（不为跨页多开续页）；
- * auto=旧规则（跨页最多比图文同页多 1 页即采用），仅供直接调用，发布流程用 spread/inline。
+ * 整图版式等比例缩小的下限（站长 2026-11-12「圖片可以做尺寸的等比例稍微的壓縮」）：
+ * 只在某章正文差一点就要多开一页续页时，才把该章信息图等比例缩小（完整、居中、不变形、不裁切），
+ * 显示宽度不得小于版心宽 × 本值，保证图上文字仍清楚；缩到下限仍放不下就正常接续页，不再继续缩。
+ */
+export const KNOWLEDGE_BOOKLET_IMAGE_MIN_WIDTH_RATIO = 0.85;
+/**
+ * 站长 2026-11-12：不再切图——每章信息图整张置于章标题下、正文上（图文同页，满版心宽、等比例），正文放不下接续页。
+ * "spread"（跨页切半）与 "auto" 只为兼容旧调用方保留在类型里，一律按 "inline" 排版。
  */
 export type KnowledgeBookletImageMode = "inline" | "auto" | "spread";
-export type KnowledgeBookletNext = { headline: string; imageUrl: string; chapterNo: number } | null;
+/** imageUrl 仅为兼容旧调用方保留：下篇预告只印标题与纹样框，不再放下一章图片的局部裁切条。 */
+export type KnowledgeBookletNext = { headline: string; imageUrl?: string; chapterNo: number } | null;
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]!);
 export const KNOWLEDGE_BOOKLET_THEMES: Record<KnowledgeBookletTheme, { name: string; paper: string; ink: string; accent: string; line: string; mark: string }> = {
   fusion_chinese_garden: { name:"中式园林融合",paper:"#fff2df",ink:"#713e2b",accent:"#b64632",line:"#d8ac83",mark:"园" },
@@ -132,14 +137,13 @@ function ornament(theme: KnowledgeBookletTheme) {
 
 /**
  * imageMode：见 KnowledgeBookletImageMode。
- * next：本片段最后一章之后的下一章（标题、配图地址、章号），供页尾留白处放「下篇预告」；null 表示全书末章；不传则只用纹样补白。
+ * next：本片段最后一章之后的下一章（标题、章号），供页尾留白处放「下篇预告」（只印标题＋纹样框，不放图片）；null 表示全书末章；不传则只用纹样补白。
  */
 export function buildKnowledgeBookletHtml(input: { title: string; pages: KnowledgeBookletPage[]; theme?: KnowledgeBookletTheme; readingPages?: number; fragment?: boolean; decoration?: KnowledgeDecoration; chapterOffset?: number; imageMode?: KnowledgeBookletImageMode; next?: KnowledgeBookletNext }) {
   if (!input.pages.length) throw new Error("没有可分页的章节，原稿保留");
   if (new Set(input.pages.map(p=>p.id)).size !== input.pages.length) throw new Error("知识卡页编号重复");
   const validImage = (url: string) => /^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$|^https:\/\//.test(url);
   if (input.pages.some(p=>p.imageUrl && !validImage(p.imageUrl))) throw new Error("配图地址无效");
-  if (input.next?.imageUrl && !validImage(input.next.imageUrl)) throw new Error("下一章配图地址无效");
   const theme = input.theme || chooseKnowledgeBookletTheme(input.title+input.pages.map(p=>p.body).join("\n"));
   const style = KNOWLEDGE_BOOKLET_THEMES[theme];
   if (!style) throw new Error("请选择已有融合模板");
@@ -159,18 +163,13 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
   const columns = `<div class="reading-columns lead-columns"><div class="reading-column"></div><div class="reading-column"></div></div>`;
   // 直式图文同页：图在上、本章要点在下，同页放不下的才流入续页；不让单图独占一页。
   const images = input.pages.map((p,i)=>p.imageUrl ? `<article class="folio lead-folio" data-variant="inline" data-card-id="${escape(p.id)}" data-focus="${escape(p.headline)}">${run("图文知识",no(i))}${titleHeader(p,i)}<figure class="main-card"><img ${imageAttrs} style="display:block;width:100%!important;height:auto!important;max-height:900px!important;object-fit:contain!important" src="${escape(p.imageUrl)}" alt="${escape(p.headline)}"></figure>${columns}${foot("图文知识")}</article>` : "").join("");
-  // 跨页大图（用户 2026-11-11「可以改成跨页」）：同一张图左右两半分排在相邻两页，两页下方都带本章正文，图不独占一页。
-  // 备选版式先放在隐藏区：图片照常载入（排版服务据此压缩/透传），分页脚本按内容量选定后才计入页面。
-  const visible = 0.5 + KNOWLEDGE_SPREAD_OVERLAP, scale = (100 / visible).toFixed(4), shift = ((1 - visible) / visible * 100).toFixed(4);
-  const spreadHalf = (p: KnowledgeBookletPage, i: number, side: "a" | "b") => `<article class="spread-folio" data-variant="spread-${side}" data-card-id="${escape(p.id)}" data-focus="${escape(p.headline)}">${run(side === "a" ? "图文知识 · 跨页上" : "图文知识 · 跨页下", no(i))}${side === "a" ? titleHeader(p, i) : `<p class="spread-cue"><span class="chapter-no">${no(i)}</span>${escape(p.headline)} <i>· 接上页右半幅</i></p>`}<figure class="spread-card spread-${side}"><img ${imageAttrs} style="display:block;max-width:none!important;width:${scale}%!important;height:auto!important;margin-left:${side === "a" ? "0" : `-${shift}%`}!important" src="${escape(p.imageUrl)}" alt="${escape(p.headline)}${side === "a" ? "（左半幅）" : "（右半幅）"}"></figure>${columns}${foot("图文知识")}</article>`;
-  const spreads = input.imageMode === "auto" || input.imageMode === "spread" ? input.pages.map((p,i)=>p.imageUrl ? spreadHalf(p,i,"a") + spreadHalf(p,i,"b") : "").join("") : "";
-  // 下篇预告：标题 + 下一章信息图的局部裁切条（同一图片地址、CSS 裁切，不生成新图）。片段内下一章取本册下一页，末章取 input.next。
-  const nextOf = (i: number): KnowledgeBookletNext | undefined => i + 1 < input.pages.length ? { headline: input.pages[i + 1]!.headline, imageUrl: input.pages[i + 1]!.imageUrl, chapterNo: offset + i + 2 } : input.next;
+  // 下篇预告：只放下一章标题（站长 2026-11-12：不再放下一章图片的局部裁切条）。片段内下一章取本册下一页，末章取 input.next。
+  const nextOf = (i: number): KnowledgeBookletNext | undefined => i + 1 < input.pages.length ? { headline: input.pages[i + 1]!.headline, chapterNo: offset + i + 2 } : input.next;
   const previews = input.pages.map((p, i) => {
     const next = nextOf(i);
     if (next === undefined) return "";
     if (next === null) return `<div class="next-source" data-for="${escape(p.id)}" data-end="true"></div>`;
-    return `<div class="next-source" data-for="${escape(p.id)}" data-headline="${escape(next.headline)}" data-no="${String(next.chapterNo).padStart(2, "0")}">${next.imageUrl ? `<img class="preview-img" data-pdf-max-dim="${KNOWLEDGE_BOOKLET_PREVIEW_MAX_DIM}" data-pdf-quality="0.8" src="${escape(next.imageUrl)}" alt="">` : ""}</div>`;
+    return `<div class="next-source" data-for="${escape(p.id)}" data-headline="${escape(next.headline)}" data-no="${String(next.chapterNo).padStart(2, "0")}"></div>`;
   }).join("");
   const fillerOrnament = design ? knowledgeMotifSvg(design.motif) : ornamentHtml;
   const readingHeader = `<header class="reading-title"><div><p class="eyebrow">图文对照 <span>／</span> 知识阅读</p><h2>${escape(input.title)}</h2><p class="reading-subtitle">${input.pages.map((p,i)=>`${String((input.chapterOffset ?? 0)+i+1).padStart(2,"0")} ${escape(p.headline)}`).join("　·　")}</p></div>${design?knowledgeMotifSvg(design.motif):ornamentHtml}</header>`;
@@ -181,29 +180,30 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
     const staging=root.querySelector('#reading-source'), units=[...staging.children];
     const template=root.querySelector('#reading-template'),host=root.querySelector('#reading-pages');
     const cards=[...root.querySelectorAll('.lead-folio')];
-    // 跨页备选、下篇预告素材都在隐藏区；选中的版式才放进页面并计为 .folio。
-    const spreadMap=new Map();
-    for(const el of [...root.querySelectorAll('.spread-folio')]){if(!spreadMap.has(el.dataset.cardId))spreadMap.set(el.dataset.cardId,[]);spreadMap.get(el.dataset.cardId).push(el);}
-    const allSpreads=[...spreadMap.values()].flat();
-    const nextMap=new Map([...root.querySelectorAll('.next-source')].map(el=>{el.__img=el.querySelector('img');return [el.dataset.for,el];}));
+    // 下篇预告素材在隐藏区（只有标题与章号，不含图片）。
+    const nextMap=new Map([...root.querySelectorAll('.next-source')].map(el=>[el.dataset.for,el]));
     const ornamentSvg=(root.querySelector('#filler-ornament')||{innerHTML:''}).innerHTML;
     const place=el=>{el.classList.add('folio','lead-folio');host.append(el);};
     // 未选用的版式移出文档（引用留在脚本里供重排）：不计页、不被页眉/题名查询误取；隐藏区只在首轮排版前供图片载入。
     const park=el=>{el.classList.remove('folio','lead-folio');el.remove();};
-    const SPREAD_MIN_ASPECT=${KNOWLEDGE_SPREAD_MIN_ASPECT},FILL=${KNOWLEDGE_BOOKLET_FILL_THRESHOLD};
+    const FILL=${KNOWLEDGE_BOOKLET_FILL_THRESHOLD},MIN_IMAGE_RATIO=${KNOWLEDGE_BOOKLET_IMAGE_MIN_WIDTH_RATIO},MAX_IMAGE_HEIGHT=900;
+    // 整图尺寸（站长 2026-11-12）：等比例、完整、居中；显示框严格按原图宽高比（不靠 object-fit 留边），满版心宽（受原 900px 高度上限约束）。
+    // 缩小只改显示尺寸，入版像素仍按 data-pdf-max-dim 标记，不降清晰度。
+    const innerWidth=folio=>{const cs=getComputedStyle(folio);return folio.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);};
+    const fullWidthOf=img=>{const card=img.closest('.main-card'),cs=getComputedStyle(card);const w=card.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);const a=img.naturalWidth&&img.naturalHeight?img.naturalWidth/img.naturalHeight:0;return a?Math.min(w,MAX_IMAGE_HEIGHT*a):w;};
+    const sizeImage=(img,width)=>{const a=img.naturalWidth&&img.naturalHeight?img.naturalWidth/img.naturalHeight:0;img.style.setProperty('width',width+'px','important');img.style.setProperty('height',a?(width/a)+'px':'auto','important');img.style.setProperty('max-height','none','important');img.style.setProperty('max-width','100%','important');img.dataset.displayWidth=String(width);};
+    // 下限 = max(版心宽 × 85%, 不超过满幅)：原图本身受高度上限约束、满幅已低于 85% 时不再缩。
+    const minWidthOf=(folio,img)=>Math.min(fullWidthOf(img),MIN_IMAGE_RATIO*innerWidth(folio));
     let busy=Promise.resolve();
     const layout=async()=>{
       root.dataset.ready='loading';
       await document.fonts.ready;
       for(const unit of units)staging.append(unit);
-      // 重排前把预告图放回素材区（它会被移进页尾预告块），清掉上一轮的补白块与密度档。
-      for(const source of nextMap.values())if(source.__img)source.append(source.__img);
+      // 清掉上一轮的补白块与密度档。
       host.replaceChildren();
-      for(const card of [...cards,...allSpreads]){for(const column of card.querySelectorAll('.reading-column'))column.replaceChildren();for(const f of [...card.querySelectorAll('.page-filler')])f.remove();delete card.dataset.density;}
+      for(const card of cards){for(const column of card.querySelectorAll('.reading-column'))column.replaceChildren();for(const f of [...card.querySelectorAll('.page-filler')])f.remove();delete card.dataset.density;}
       for(const card of cards)park(card);
-      for(const el of allSpreads)park(el);
       await Promise.all([...root.querySelectorAll('.main-card img,.staging img,.decoration-resource')].map(i=>i.decode()));
-      await Promise.all([...root.querySelectorAll('.spread-folio img,.next-source img')].map(i=>i.decode().catch(()=>{})));
       // 量尺寸用一张临时续页；图下要点栏与续页栏同宽，块高可共用。
       const probe=template.content.firstElementChild.cloneNode(true);host.append(probe);
       const measure=probe.querySelector('.reading-column'),capacity=measure.clientHeight;
@@ -212,7 +212,7 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
       const pages=[],readingPages=[];let page=null,col=0,used=0,limit=0;
       const columnsOf=folio=>[...folio.querySelectorAll('.reading-column')];
       const startReading=()=>{const next=template.content.firstElementChild.cloneNode(true);host.append(next);if(readingPages.length||pages.length)next.classList.add('reading-continuation');readingPages.push(next);pages.push(next);page=next;col=0;used=0;limit=capacity;next.dataset.columnLimit=String(limit);};
-      const startLead=card=>{place(card);pages.push(card);page=card;col=0;used=0;limit=columnsOf(card)[0].clientHeight;card.dataset.columnLimit=String(limit);};
+      const startLead=card=>{place(card);const img=card.querySelector('.main-card img');if(img)sizeImage(img,fullWidthOf(img));pages.push(card);page=card;col=0;used=0;limit=columnsOf(card)[0].clientHeight;card.dataset.columnLimit=String(limit);};
       const unitHeight=u=>u.offsetHeight+parseFloat(getComputedStyle(u).marginBottom||'0');
       const columnUsed=c=>[...c.children].reduce((n,u)=>n+unitHeight(u),0);
       // 图页首块高于图下栏时不能整块让到续页（图会独占一页）：在图下栏可用高度内切开，
@@ -265,26 +265,12 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
         heights.set(first.part,firstHeight);heights.set(rest.part,restHeight);
         return [first.part,rest.part];
       };
-      // 版式选择（按内容量）：宽图可跨页放大；跨页比图文同页最多多 1 页才采用，否则仍图文同页。
-      // 用实测栏高与块高估算两种排法的页数（块粒度损耗：常规栏按 8%、跨页矮栏按 18% 计，宁可少用跨页），全书页数上限由调用方按章控制 imageMode。
-      const modeOf=new Map();
-      const columnLimitOf=folio=>{place(folio);const v=columnsOf(folio)[0].clientHeight;folio.remove();return v;};
-      for(const card of cards){
-        const id=card.dataset.cardId,pair=spreadMap.get(id)||[],img=card.querySelector('.main-card img');
-        const aspect=img&&img.naturalHeight?img.naturalWidth/img.naturalHeight:0;
-        if(pair.length!==2||aspect<SPREAD_MIN_ASPECT){modeOf.set(id,'inline');continue;}
-        const total=units.filter(u=>u.dataset.sourceId===id).reduce((n,u)=>n+(heights.get(u)||0),0);
-        const lead=columnLimitOf(card),a=columnLimitOf(pair[0]),b=columnLimitOf(pair[1]);
-        const rest=(first,t)=>t<=first?0:Math.ceil((t-first)/(2*capacity));
-        const inlinePages=1+rest(2*lead,total*1.08),spreadPages=2+rest(2*(a+b),total*1.18);
-        modeOf.set(id,(root.dataset.imageMode==='spread'?spreadPages<=2:spreadPages<=inlinePages+1)?'spread':'inline');
-      }
       const placed=new Set();let queue=[];
       const flushQueue=()=>{while(queue.length)startLead(queue.shift());};
       for(let index=0;index<units.length;index++){
         let unit=units[index];
         const id=unit.dataset.sourceId,card=cards.find(c=>c.dataset.cardId===id&&!placed.has(c));
-        if(card){flushQueue();placed.add(card);queue=modeOf.get(id)==='spread'?[...spreadMap.get(id)]:[card];startLead(queue.shift());}
+        if(card){flushQueue();placed.add(card);queue=[card];startLead(queue.shift());}
         if(!page)startReading();
         let height=heights.get(unit);
         // 图下栏放不下首块：先按原字号切开；切不开（单句/单行过高）再收紧图页一档，必要时收紧后再切。图页必须带要点。
@@ -302,21 +288,15 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
         }
         if(height>capacity+1)throw new Error('单个内容块超过一页，请拆分长表或长段落后再导出');
         // 顺序填栏：先填满左栏再右栏，再开续页；不把少量内容均摊成两半空栏。
-        // 跨页两页的图下栏较矮：放不下时在本栏剩余高度内按句/项/行切开（与图页首块同一切法），不让半栏空着。
         const fits=()=>used===0?height<=limit+1:used+height<=limit;
         while(!fits()){
-          if(page.classList.contains('spread-folio')){
-            const room=used===0?limit:limit-used;
-            const parts=room>=96?splitToFit(unit,columnsOf(page)[col],room):null;
-            if(parts){units.splice(index,1,...parts);unit=parts[0];height=heights.get(unit);continue;}
-          }
           if(col===0){col=1;used=0;continue;}
           if(queue.length)startLead(queue.shift());else startReading();
         }
         columnsOf(page)[col].append(unit);used+=height;
       }
       flushQueue();
-      for(const card of cards)if(!placed.has(card)){placed.add(card);place(card);pages.push(card);}
+      for(const card of cards)if(!placed.has(card)){placed.add(card);place(card);const img=card.querySelector('.main-card img');if(img)sizeImage(img,fullWidthOf(img));pages.push(card);}
       // 每段末页把两栏高度平衡，避免一栏写满、另一栏全空。
       const balance=folio=>{
         const [left,right]=columnsOf(folio);if(!right)return;
@@ -327,9 +307,10 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
       };
       const ordered=[...host.querySelectorAll('.folio')];
       ordered.forEach((folio,i)=>{const next=ordered[i+1];if(!next||next.classList.contains('lead-folio'))balance(folio);});
-      // 顺序填栏已是保序下最省栏的排法；章末续页只剩少量块时（≤35%栏高），保序无法再收回，
-      // 只能二选一：A 原字号把这几块接到本章前页仍有余白的栏末（同章内，轻微换序）；
-      // B 本章各页收紧一档字号后按原顺序重排，剩余块再按 A 补位。两者都放不下才保留续页。
+      // 顺序填栏已是保序下最省栏的排法；章末续页只剩少量块时（≤35%栏高），保序无法再收回，依次尝试：
+      // A 原字号把这几块接到本章前页仍有余白的栏末（同章内，轻微换序）；
+      // C 把本章图等比例缩小（站长 2026-11-12，宽度不低于版心 × KNOWLEDGE_BOOKLET_IMAGE_MIN_WIDTH_RATIO），图下栏变高后按原顺序重排；
+      // B 本章各页收紧一档字号（图保持满幅）后按原顺序重排；D 缩图＋收紧字号。剩余块再按 A 补位。都放不下才保留续页，图恢复满幅。
       // 图下要点栏高度随内容伸缩（会挤压配图），不能用 scrollHeight 判断；一律按建页时量得的栏高核对块高之和。
       const columnsFit=folio=>{const max=Number(folio.dataset.columnLimit);return max>0&&columnsOf(folio).every(c=>columnUsed(c)<=max+1);};
       const fillGap=(chain,list)=>{
@@ -360,14 +341,27 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
         if(tailUsed>capacity*0.35)continue;
         const home=new Map([...chain,tail].flatMap(f=>columnsOf(f).flatMap(c=>[...c.children])).map(u=>[u,u.parentElement]));
         const density=new Map(chain.map(f=>[f,f.dataset.density]));
-        const restore=()=>{for(const f of chain){const d=density.get(f);if(d)f.dataset.density=d;else delete f.dataset.density;}for(const [u,parent] of home)parent.append(u);};
-        let done=fillGap(chain,tailUnits);
-        if(!done){
-          restore();
-          for(const f of chain)f.dataset.density='snug';
+        const lead=chain[0].classList.contains('lead-folio')?chain[0]:null,img=lead&&lead.querySelector('.main-card img');
+        const fullWidth=img?Number(img.dataset.displayWidth)||fullWidthOf(img):0,leadLimit=lead?lead.dataset.columnLimit:'';
+        const setWidth=width=>{if(!img)return;sizeImage(img,width);lead.dataset.columnLimit=String(columnsOf(lead)[0].clientHeight);};
+        const restore=()=>{for(const f of chain){const d=density.get(f);if(d)f.dataset.density=d;else delete f.dataset.density;}for(const [u,parent] of home)parent.append(u);if(img){sizeImage(img,fullWidth);lead.dataset.columnLimit=leadLimit;}};
+        const relayout=(width,snug)=>{
+          restore();if(width)setWidth(width);
+          if(snug)for(const f of chain)f.dataset.density='snug';
           const all=[...home.keys()];all.forEach(u=>u.remove());
-          done=fillGap(chain,refill(chain,all));
+          return fillGap(chain,refill(chain,all))&&chain.every(columnsFit);
+        };
+        // 缩图候选：按续页内容估算的最小缩幅，再试下限；只取「比满幅小、不低于下限」的宽度。
+        const widths=[];
+        if(img){
+          const min=minWidthOf(lead,img),h=img.getBoundingClientRect().height||1;
+          const tailSum=columnsOf(tail).reduce((n,c)=>n+[...c.children].reduce((m,u)=>m+(heights.get(u)||unitHeight(u)),0),0);
+          for(const w of [fullWidth*(1-tailSum/(2*h)),min])if(w>=min-0.5&&w<fullWidth-1&&!widths.some(x=>Math.abs(x-w)<1))widths.push(Math.max(min,w));
         }
+        let done=fillGap(chain,tailUnits)&&chain.every(columnsFit);
+        for(const w of widths){if(done)break;done=relayout(w,false);}
+        if(!done)done=relayout(0,true);
+        for(const w of widths){if(done)break;done=relayout(w,true);}
         if(done&&chain.every(columnsFit)){readingPages.splice(readingPages.indexOf(tail),1);pages.splice(pages.indexOf(tail),1);tail.remove();}
         else restore();
       }
@@ -390,7 +384,7 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
       }
       for(const reading of [...readingPages])if(!reading.querySelector('.reading-unit')){readingPages.splice(readingPages.indexOf(reading),1);reading.remove();}
       // 留白补位（用户 2026-11-11：每页留白 ≤ 版心 1/3）。章内后续内容已由顺序填栏、章末回收、字号档提上来；
-      // 仍有明显空栏时按序补：章末页放「下篇预告」（下一章标题＋其信息图局部裁切条），其余用主题纹样框。
+      // 仍有明显空栏时按序补：章末页放「下篇预告」（下一章标题，不放图片；站长 2026-11-12 去掉裁切条），其余用主题纹样框。
       // 留白 = 各栏未用高度×栏宽之和 ÷ 版心面积；补白块绝对定位在栏区，不进栏、不改正文顺序与页数。
       const metrics=[];
       const inner=folio=>{const cs=getComputedStyle(folio);return (folio.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight))*(folio.clientHeight-parseFloat(cs.paddingTop)-parseFloat(cs.paddingBottom));};
@@ -412,14 +406,10 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
           if(gap>=120){
             let top=top0+max-gap+6,height=gap-12;
             if(source&&source.dataset.end!=='true'&&height>=150){
-              // 下篇预告：标题行 + 裁切条（最高 720px，余下高度给纹样框）。
-              const head=124,strip=source.__img?Math.min(720,height-head):0,blockHeight=strip>=120?strip+head:head;
+              // 下篇预告：纹样框在上、标题行在下（不放任何图片）。
+              const head=124,blockHeight=head;
               if(height-blockHeight>=120){box.append(ornamentPanel(top,left,right-left,height-blockHeight-12,''));top+=height-blockHeight;}
-              const el=panel('next-preview',top,left,right-left,blockHeight,'<p class="next-eyebrow">下篇预告 <b>'+source.dataset.no+'</b></p><h4>'+source.dataset.headline.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])+'</h4>');
-              let holder=null;if(strip>=120){holder=document.createElement('div');holder.className='preview-strip';holder.style.height=strip+'px';holder.append(source.__img);el.append(holder);}
-              box.append(el);
-              // 自检：标题行必须完整露出；被裁切条挤占时把裁切条按实测高度下收，仍不够就去掉裁切条。
-              if(holder){const title=el.querySelector('h4'),need=title.offsetTop+title.scrollHeight+12,room=el.clientHeight-need-14;if(holder.offsetTop<need-12||title.scrollHeight-title.clientHeight>2){if(room>=120)holder.style.height=room+'px';else holder.remove();}}
+              box.append(panel('next-preview',top,left,right-left,blockHeight,'<p class="next-eyebrow">下篇预告 <b>'+source.dataset.no+'</b></p><h4>'+source.dataset.headline.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])+'</h4>'));
             }else box.append(ornamentPanel(top,left,right-left,height,source&&source.dataset.end==='true'?'全书完':''));
             covered+=gap*cols.reduce((n,c)=>n+c.clientWidth,0);
           }
@@ -445,19 +435,22 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
         el.querySelector('footer span').textContent=focus;
         const heading=el.querySelector('.reading-title h2');if(heading)heading.textContent=title;
       });
-      // 版面审查测量（只读，不改排版）：逐页记录溢出、标题裁切、补白块/图片条压字、坏图与跨页图半张数，供 auditKnowledgeBookletLayout 判定。
+      // 版面审查测量（只读，不改排版）：逐页记录溢出、标题裁切、补白块压字、坏图、裁切图（跨页半张/局部条，新版式应为 0）与整图尺寸，供 auditKnowledgeBookletLayout 判定。
       const hit=(a,b)=>a.left<b.right-1&&b.left<a.right-1&&a.top<b.bottom-1&&b.top<a.bottom-1;
       const layout=folios.map((el,i)=>{
-        const covers=[...el.querySelectorAll('.page-filler,.preview-strip')],texts=[...el.querySelectorAll('.reading-unit h3,.reading-unit p,.reading-unit li,.reading-unit table,.reading-title h2')];
-        const overlaps=[];for(const c of covers){const r=c.getBoundingClientRect();for(const t of texts){if(c.contains(t))continue;if(hit(r,t.getBoundingClientRect())){overlaps.push({cover:c.classList.contains('next-preview')?'下篇预告':c.classList.contains('preview-strip')?'图片条':'补白块',target:(t.textContent||'').trim().slice(0,16)});break;}}}
+        const covers=[...el.querySelectorAll('.page-filler')],texts=[...el.querySelectorAll('.reading-unit h3,.reading-unit p,.reading-unit li,.reading-unit table,.reading-title h2')];
+        const overlaps=[];for(const c of covers){const r=c.getBoundingClientRect();for(const t of texts){if(c.contains(t))continue;if(hit(r,t.getBoundingClientRect())){overlaps.push({cover:c.classList.contains('next-preview')?'下篇预告':'补白块',target:(t.textContent||'').trim().slice(0,16)});break;}}}
         const clipped=[...el.querySelectorAll('.next-preview h4,.reading-title h2,.unit-heading h3')].filter(h=>{const box=h.closest('.page-filler,.folio').getBoundingClientRect(),r=h.getBoundingClientRect();return h.scrollHeight>h.clientHeight+2||r.bottom>box.bottom+1;}).map(h=>(h.textContent||'').trim().slice(0,24));
         const broken=[...el.querySelectorAll('img')].filter(img=>img.complete&&img.naturalWidth===0).map(img=>img.alt||img.closest('[data-card-id]')?.dataset.cardId||'图片');
-        return {page:offset+i+1,whitespace:Number(el.dataset.whitespace||0),overflow:[...el.querySelectorAll('.reading-column')].some(c=>c.scrollHeight>c.clientHeight+2),clippedHeadings:clipped,overlaps,brokenImages:broken,spreadHalves:{a:el.querySelectorAll('.spread-a').length,b:el.querySelectorAll('.spread-b').length}};
+        const images=[...el.querySelectorAll('.main-card img')].filter(img=>img.naturalWidth>0).map(img=>{const r=img.getBoundingClientRect(),card=img.closest('.main-card').getBoundingClientRect();return {width:Number(r.width.toFixed(2)),height:Number(r.height.toFixed(2)),naturalWidth:img.naturalWidth,naturalHeight:img.naturalHeight,fullWidth:Number(fullWidthOf(img).toFixed(2)),minWidth:Number(minWidthOf(el,img).toFixed(2)),contentWidth:Number(innerWidth(el).toFixed(2)),inside:r.left>=card.left-1&&r.right<=card.right+1&&r.top>=card.top-1&&r.bottom<=card.bottom+1};});
+        const croppedImages=el.querySelectorAll('.spread-card img,.preview-strip img,.next-preview img').length;
+        return {page:offset+i+1,images,croppedImages,whitespace:Number(el.dataset.whitespace||0),overflow:[...el.querySelectorAll('.reading-column')].some(c=>c.scrollHeight>c.clientHeight+2),clippedHeadings:clipped,overlaps,brokenImages:broken,spreadHalves:{a:el.querySelectorAll('.spread-a').length,b:el.querySelectorAll('.spread-b').length}};
       });
       if([...root.querySelectorAll('.reading-column')].some(el=>el.scrollHeight>el.clientHeight+2))throw new Error('正文超出页面，未裁切内容，请调整版式');
       root.dataset.ready='true';
-      const imageModes=Object.fromEntries(modeOf);
-      root.__knowledgeBooklet={ready:true,layout,imagePages:cards.length,readingPages:readingPages.length,pages:folios.length,units:units.length,columnCapacity:capacity,overflow:false,imageModes,spreadChapters:Object.values(imageModes).filter(m=>m==='spread').length,whitespace:metrics.map(m=>m.whitespace),rawWhitespace:metrics.map(m=>m.raw),maxWhitespace:Math.max(0,...metrics.map(m=>m.whitespace)),pendingContent:${JSON.stringify(input.pages.filter(p=>!hasKnowledgeBody(p.body)).map(p=>({id:p.id,headline:p.headline})))}};
+      // imageModes/spreadChapters 保留给旧读取方：新版式一律 inline、跨页 0。
+      const imageModes=Object.fromEntries(cards.map(c=>[c.dataset.cardId,'inline']));
+      root.__knowledgeBooklet={ready:true,layout,imagePages:cards.length,readingPages:readingPages.length,pages:folios.length,units:units.length,columnCapacity:capacity,overflow:false,imageModes,spreadChapters:0,imageWidths:Object.fromEntries(cards.map(c=>[c.dataset.cardId,Number(c.querySelector('.main-card img')?.dataset.displayWidth||0)])),whitespace:metrics.map(m=>m.whitespace),rawWhitespace:metrics.map(m=>m.raw),maxWhitespace:Math.max(0,...metrics.map(m=>m.whitespace)),pendingContent:${JSON.stringify(input.pages.filter(p=>!hasKnowledgeBody(p.body)).map(p=>({id:p.id,headline:p.headline})))}};
       window.__knowledgeBooklet=root.__knowledgeBooklet;
     };
     root.__layoutBooklet=()=>busy=busy.catch(()=>{}).then(layout).catch(e=>{
@@ -478,17 +471,15 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
 /* 直式图文同页：图在上，本章要点两栏在下，余下高度全部给要点。 */
 .lead-folio .image-title{margin:18px 0 18px;min-height:0}.lead-folio .image-title h1{font-size:46px}.lead-folio .eyebrow .chapter-no{display:inline-grid;place-items:center;width:34px;height:34px;margin-right:12px;border:3px double var(--accent);border-radius:50%;font:15px/1 Georgia,serif;letter-spacing:0;color:var(--accent)}.image-title .content-motif,.image-title .botanical{width:260px!important;height:120px!important;flex:none;opacity:.6;color:var(--accent)}.reading-title .botanical{width:300px;height:110px;flex:none}.lead-columns{flex:1 1 auto!important;height:auto!important;min-height:0;margin:26px 0 19px!important}.lead-columns .reading-column{height:100%!important}
 .lead-columns{position:relative;padding:22px 22px 6px;border:1px solid color-mix(in srgb,var(--line) 70%,transparent);border-radius:16px;background:color-mix(in srgb,var(--paper) 55%,#fff)}.folio[data-density=snug] .reading-unit p,.folio[data-density=snug] .reading-unit li{font-size:22px!important;line-height:1.66!important}.folio[data-density=snug] .unit-heading h3{font-size:26px!important}.folio[data-density=snug] .reading-unit{padding:12px 16px 13px!important;margin-bottom:12px!important}.folio[data-density=snug] .reading-unit td,.folio[data-density=snug] .reading-unit td p,.folio[data-density=snug] .reading-unit th p{font-size:21px!important}.lead-folio[data-density=roomy] .reading-unit p,.lead-folio[data-density=roomy] .reading-unit li{font-size:26px!important;line-height:1.95!important}.lead-folio[data-density=roomy] .unit-heading h3{font-size:31px!important}.lead-folio[data-density=airy] .reading-unit p,.lead-folio[data-density=airy] .reading-unit li{font-size:28px!important;line-height:2.05!important}.lead-folio[data-density=airy] .unit-heading h3{font-size:33px!important}.lead-folio:is([data-density=roomy],[data-density=airy]) .reading-unit{padding:22px 28px 24px!important;margin-bottom:22px}
-/* 跨页大图：左右两半各占一页上部，下方照常两栏正文；中缝两侧重叠 3%。 */
-.spread-card{flex:none;margin:0;padding:10px;border:3px double var(--line);background:color-mix(in srgb,var(--paper) 45%,var(--white));overflow:hidden}.spread-card img{display:block}.spread-a{border-right-style:dashed}.spread-b{border-left-style:dashed}.spread-folio .image-title{margin:14px 0 14px}.spread-folio .lead-columns{margin:18px 0 16px!important}.spread-cue{display:flex;align-items:center;gap:12px;margin:14px 0 12px;font:700 26px/1.3 "Songti SC",serif;letter-spacing:2px}.spread-cue .chapter-no{display:inline-grid;place-items:center;width:34px;height:34px;border:3px double var(--accent);border-radius:50%;font:15px/1 Georgia,serif;letter-spacing:0;color:var(--accent)}.spread-cue i{font:400 17px sans-serif;opacity:.6;font-style:normal}
 /* 页尾补白：下篇预告与纹样框绝对定位在栏区，不进栏、不改正文。 */
-.reading-columns{position:relative}.page-filler{position:absolute;box-sizing:border-box;border:3px double var(--line);border-radius:14px 0 14px 0;overflow:hidden;pointer-events:none}.filler-ornament{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:repeating-linear-gradient(45deg,color-mix(in srgb,var(--line) 16%,transparent) 0 1px,transparent 1px 14px),color-mix(in srgb,var(--paper) 70%,var(--white))}.filler-motif{width:min(86%,1100px);height:min(72%,340px);display:flex;align-items:center;justify-content:center;color:var(--accent);opacity:.7}.filler-motif svg{width:100%!important;height:100%!important;opacity:1!important;stroke-width:2.2}.filler-ornament:before{content:"";position:absolute;inset:10px;border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:9px 0 9px 0}.filler-label{margin:0;font:700 30px "Songti SC",serif;letter-spacing:12px;color:var(--accent)}.next-preview{display:flex;flex-direction:column;background:color-mix(in srgb,var(--paper) 55%,var(--white));border-color:var(--accent)}.next-eyebrow{flex:none;margin:14px 22px 2px;font-size:15px;letter-spacing:4px;color:var(--accent)}.next-eyebrow b{font:20px Georgia,serif;margin-left:8px}.next-preview h4{flex:none;margin:0 22px 12px;font:700 32px/1.3 "Songti SC",serif;letter-spacing:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.preview-strip{flex:none;margin:0 14px 14px;border-radius:8px;overflow:hidden;opacity:.92}.preview-strip img{display:block;width:100%!important;height:100%!important;max-height:none!important;object-fit:cover!important;object-position:50% 38%}
+.reading-columns{position:relative}.page-filler{position:absolute;box-sizing:border-box;border:3px double var(--line);border-radius:14px 0 14px 0;overflow:hidden;pointer-events:none}.filler-ornament{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:repeating-linear-gradient(45deg,color-mix(in srgb,var(--line) 16%,transparent) 0 1px,transparent 1px 14px),color-mix(in srgb,var(--paper) 70%,var(--white))}.filler-motif{width:min(86%,1100px);height:min(72%,340px);display:flex;align-items:center;justify-content:center;color:var(--accent);opacity:.7}.filler-motif svg{width:100%!important;height:100%!important;opacity:1!important;stroke-width:2.2}.filler-ornament:before{content:"";position:absolute;inset:10px;border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:9px 0 9px 0}.filler-label{margin:0;font:700 30px "Songti SC",serif;letter-spacing:12px;color:var(--accent)}.next-preview{display:flex;flex-direction:column;background:color-mix(in srgb,var(--paper) 55%,var(--white));border-color:var(--accent)}.next-eyebrow{flex:none;margin:14px 22px 2px;font-size:15px;letter-spacing:4px;color:var(--accent)}.next-eyebrow b{font:20px Georgia,serif;margin-left:8px}.next-preview h4{flex:none;margin:0 22px 12px;font:700 32px/1.3 "Songti SC",serif;letter-spacing:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 ${knowledgeDecorationCss(decoration)}
 ${design?knowledgeContentDesignCss(design):""}
 @media screen and (max-width:1656px){[data-ready="true"] .folio{zoom:calc((100vw - 32px) / 1600px)}}
 @page{size:1600px 2240px;margin:0}@page reading{size:1600px 2240px;margin:0}.reading-folio{page:reading}@media print{[data-booklet-root]+[data-booklet-root]{break-before:page}html,body{margin:0;background:var(--paper);print-color-adjust:exact;-webkit-print-color-adjust:exact}.folio{margin:0;zoom:1!important;box-shadow:none;break-after:page;break-inside:avoid}.folio:last-child{break-after:auto}.layout-error{display:block}.staging{display:none}}
-</style></head><body data-booklet-root data-image-mode="${input.imageMode || "inline"}" data-book-title="${escape(input.title)}" class="theme-${theme}" data-decoration="${decorationClass}"${designAttribute} data-booklet-version="${KNOWLEDGE_BOOKLET_VERSION}">${images}<div class="image-variants" style="display:none">${spreads}${previews}</div><template id="filler-ornament">${fillerOrnament}</template>${artwork ? `<img class="decoration-resource" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" alt="" src="${artwork}">` : ""}<div id="reading-pages"></div><template id="reading-template"><article class="folio reading-folio">${run("正文阅读","文")}${readingHeader}<div class="reading-columns"><div class="reading-column"></div><div class="reading-column"></div></div>${foot("图文对照 · 正文阅读")}</article></template><div id="reading-source" class="staging">${units.map(u=>u.html).join("")}</div><script>${pagination}</script></body></html>`;
+</style></head><body data-booklet-root data-image-mode="inline" data-book-title="${escape(input.title)}" class="theme-${theme}" data-decoration="${decorationClass}"${designAttribute} data-booklet-version="${KNOWLEDGE_BOOKLET_VERSION}">${images}<div class="image-variants" style="display:none">${previews}</div><template id="filler-ornament">${fillerOrnament}</template>${artwork ? `<img class="decoration-resource" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none" alt="" src="${artwork}">` : ""}<div id="reading-pages"></div><template id="reading-template"><article class="folio reading-folio">${run("正文阅读","文")}${readingHeader}<div class="reading-columns"><div class="reading-column"></div><div class="reading-column"></div></div>${foot("图文对照 · 正文阅读")}</article></template><div id="reading-source" class="staging">${units.map(u=>u.html).join("")}</div><script>${pagination}</script></body></html>`;
   if (!input.fragment) return html;
   const css = html.match(/<style>([\s\S]*?)<\/style>/)![1];
   const content = html.match(/<body[^>]*>([\s\S]*)<\/body>/)![1];
-  return `<section data-booklet-root data-image-mode="${input.imageMode || "inline"}" data-book-title="${escape(input.title)}" class="theme-${theme}" data-decoration="${decorationClass}"${designAttribute} data-booklet-version="${KNOWLEDGE_BOOKLET_VERSION}"><style>${css}</style>${content}</section>`;
+  return `<section data-booklet-root data-image-mode="inline" data-book-title="${escape(input.title)}" class="theme-${theme}" data-decoration="${decorationClass}"${designAttribute} data-booklet-version="${KNOWLEDGE_BOOKLET_VERSION}"><style>${css}</style>${content}</section>`;
 }
