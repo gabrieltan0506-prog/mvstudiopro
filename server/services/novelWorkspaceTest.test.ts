@@ -6,7 +6,6 @@ vi.mock("./manhuaViralTemplateStore", () => ({
 vi.mock("./manhuaNovelAdaptationRun", () => ({ callNovelStage: vi.fn() }));
 import { executeNovelTest, buildNovelTestPrompt } from "./novelWorkspaceTest";
 import { novelTestInputSchema } from "../../shared/novelWorkspace";
-import { assertNovelTestRole } from "../routers/novelWorkspace";
 const input = novelTestInputSchema.parse({
   requestId: "11111111-1111-4111-8111-111111111111",
   roundId: "22222222-2222-4222-8222-222222222222",
@@ -15,11 +14,6 @@ const input = novelTestInputSchema.parse({
   direction: "代价与抉择",
   templates: [],
   episodeCount: 3,
-});
-it("管理者测试禁止普通账号", () => {
-  expect(() => assertNovelTestRole("user")).toThrow();
-  expect(() => assertNovelTestRole("admin")).not.toThrow();
-  expect(() => assertNovelTestRole("supervisor")).not.toThrow();
 });
 it("解析失败也先保存完整响应，保存失败不继续", async () => {
   const save = vi.fn(async () => {}),

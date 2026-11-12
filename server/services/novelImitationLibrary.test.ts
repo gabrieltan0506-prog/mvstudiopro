@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+// 1112 计费：余额充足、扣费成功（不连库）。
+vi.mock("../credits", () => ({ getCredits: async () => ({ totalAvailable: 1e9 }), deductCreditsAmount: async () => ({ success: true, cost: 0 }) }));
 vi.mock("./manhuaViralTemplateStore", () => ({
   listMergedApprovedManhuaViralTemplatesGrouped: vi.fn(),
   resolveViralTemplateForExpand: vi.fn(),

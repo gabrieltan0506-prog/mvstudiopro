@@ -5,6 +5,8 @@ const memory = vi.hoisted(() => ({
   objects: new Map<string, string>(),
   retrieval: "ok" as "ok" | "throw",
 }));
+// 1112 计费：余额充足、扣费成功（不连库）。
+vi.mock("../credits", () => ({ getCredits: async () => ({ totalAvailable: 1e9 }), deductCreditsAmount: async () => ({ success: true, cost: 0 }) }));
 vi.mock("../db", () => ({
   getDb: async () => ({
     insert: () => ({

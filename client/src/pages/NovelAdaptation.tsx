@@ -100,6 +100,7 @@ import {
 } from "@/components/canvas/NovelImitationPanels";
 import { NovelChapterRevisionPanel } from "@/components/canvas/NovelChapterRevision";
 import { NovelSkeletonTaskError, runNovelSkeletonTask } from "@/lib/novelWorkspaceSkeletonTask";
+import { NOVEL_STEP_COST_LABEL, novelImitationSkeletonCredits, novelStepCredits } from "@shared/novelStepBilling";
 import {
   adoptNovelRevision,
   novelOutlineAlertSummary,
@@ -133,6 +134,17 @@ const NOVEL_BLOCKED_CLICK_NOTICE = "上一项操作还在进行或保存中，�
 /** 多线路审稿对比：某条线路未完成时的提示（只影响这一条）。 */
 const NOVEL_REVIEW_COMPARE_LANE_FAILED = "这条线路审稿未完成，记录已保留；可单独重试，其他线路不受影响。";
 const NOVEL_REVIEW_COMPARE_NOT_SUBMITTED = "这条线路没有提交成功，可单独重试。";
+/** 余额不足提示（服务端 PAYMENT_REQUIRED 的原文）：错误处附充值入口。 */
+const NOVEL_RECHARGE_HINT = /余额不足|积分不足/;
+const isPaymentRequired = (e: unknown): e is Error =>
+  e instanceof Error && (e as { data?: { code?: string } }).data?.code === "PAYMENT_REQUIRED";
+/** 批量生成每集价格：与逐集请求同一线路（写作线路）；仿写正文按仿写每集价。 */
+const queueEpisodeCredits = (d: NovelWorkspace, stage: "chapter" | "script") =>
+  novelStepCredits({
+    stage,
+    modelPreference: d.modelPreference,
+    ...(stage === "chapter" && d.mode === "imitation" ? { imitation: true } : {}),
+  });
 export default function NovelAdaptation() {
   const { user, loading } = useAuth();
   if (loading) return <main className="p-8">正在读取账号…</main>;
@@ -144,12 +156,6 @@ export default function NovelAdaptation() {
           登录
         </Link>
         。
-      </main>
-    );
-  if (user.role !== "admin" && user.role !== "supervisor")
-    return (
-      <main className="p-8">
-        小说改编当前仅开放管理者测试。<Link href="/canvas">返回漫剧工厂</Link>
       </main>
     );
   let scope;
@@ -259,6 +265,7 @@ function NovelWorkspaceEditor({
   const libraryDelete = trpc.novelWorkspace.deleteImitationLibrary.useMutation();
   const libraryItems = libraryQuery.data ?? [];
   const { user: authUser } = useAuth();
+  const isManager = authUser?.role === "admin" || authUser?.role === "supervisor";
   const [skeletonBusy, setSkeletonBusy] = useState(false);
   const [skeletonProgress, setSkeletonProgress] = useState<{ done: number; total: number } | null>(null);
   /** 当前底稿全文的摘要：与拆解时记录的一致才算结构骨架可用。 */
@@ -825,7 +832,9 @@ function NovelWorkspaceEditor({
       if (
         !fromQueue &&
         !window.confirm(
-          `本次提交管理者测试：${advisorIntent === "creative_premises" ? `${NOVEL_CREATIVE_PREMISE_UI.confirmLabel}${premiseUsage.data?.nextCost ? `（${NOVEL_CREATIVE_PREMISE_UI.usageCost}）` : ""}` : advisorIntent === "story_variants" ? "三个故事线方案" : stage === "advice" ? "创作顾问与模板推荐" : stage === "outline" ? "改编提案" : stage === "chapter" ? `第${chapterIndex}集小说稿` : `第${chapterIndex}集剧本候选`}。将调用创作服务并产生实际成本，是否继续？`
+          advisorIntent === "creative_premises"
+            ? `本次提交：${NOVEL_CREATIVE_PREMISE_UI.confirmLabel}${premiseUsage.data?.nextCost ? `（${NOVEL_CREATIVE_PREMISE_UI.usageCost}）` : ""}。是否继续？`
+            : `本次提交：${advisorIntent === "story_variants" ? "三个故事线方案" : stage === "advice" ? "创作顾问与模板推荐" : stage === "outline" ? "改编提案" : stage === "chapter" ? `第${chapterIndex}集小说稿` : `第${chapterIndex}集剧本候选`}。${NOVEL_STEP_COST_LABEL(novelStepCredits(input))}，是否继续？`
         )
       )
         return;
@@ -854,7 +863,7 @@ function NovelWorkspaceEditor({
       return result.text;
     } catch (e) {
       queueActive.current = false;
-      // 创意环节积分不足（提交前预检或结算时）：服务端没有交付结果，清掉待处理请求并显示原提示，不继续轮询。
+      // 积分不足（提交前预检或结算时，创意环节与各收费环节同一处理）：服务端没有交付结果，清掉待处理请求并显示原提示，不继续轮询。
       const failedId = submittedId as string | undefined;
       if (
         e instanceof Error &&
@@ -902,7 +911,12 @@ function NovelWorkspaceEditor({
       setError(blocked);
       return;
     }
-    if (!window.confirm(NOVEL_IMITATION_UI.skeletonConfirm(base.length))) return;
+    if (
+      !window.confirm(
+        `${NOVEL_IMITATION_UI.skeletonConfirm(base.length).replace(/将调用创作服务并产生实际成本，是否继续？$/, "")}${NOVEL_STEP_COST_LABEL(novelImitationSkeletonCredits())}，是否继续？`
+      )
+    )
+      return;
     setError("");
     setSkeletonBusy(true);
     running.current = true;
@@ -1041,8 +1055,8 @@ function NovelWorkspaceEditor({
       if (
         !window.confirm(
           combined
-            ? `本次提交管理者测试：第${chapterIndex}集按所选的 ${combined.override.issues.length} 处意见改稿（不再审稿）。将调用创作服务并产生实际成本，是否继续？`
-            : `本次提交管理者测试：第${chapterIndex}集审稿改稿（先审稿、再按意见改稿）。将调用创作服务并产生实际成本，是否继续？`
+            ? `本次提交：第${chapterIndex}集按所选的 ${combined.override.issues.length} 处意见改稿（不再审稿）。${NOVEL_STEP_COST_LABEL(novelStepCredits(input))}，是否继续？`
+            : `本次提交：第${chapterIndex}集审稿改稿（先审稿、再按意见改稿）。${NOVEL_STEP_COST_LABEL(novelStepCredits(input))}，是否继续？`
         )
       )
         return;
@@ -1056,6 +1070,16 @@ function NovelWorkspaceEditor({
       if (alive.current) await applyResult(input, result);
       setProgress("审稿改稿已完成，可在本集下方对照两个版本。");
     } catch (e) {
+      // 积分不足：服务端没有交付结果，清掉待处理请求并显示原提示（含充值入口）。
+      if (
+        isPaymentRequired(e) &&
+        submittedId &&
+        (latest.current.pending as NovelTestInput | undefined)?.requestId === submittedId
+      ) {
+        await persist({ ...latest.current, pending: undefined });
+        if (alive.current) setError(e.message);
+        return;
+      }
       if (alive.current)
         setError(
           e instanceof Error && !("data" in e)
@@ -1111,7 +1135,13 @@ function NovelWorkspaceEditor({
     try {
       const result = await compareMutation.mutateAsync(input);
       settleCompareLane(input.requestId, { status: "succeeded", outcome: result.text });
-    } catch {
+    } catch (e) {
+      // 积分不足：这一条没有提交成功，标失败并显示原提示（含充值入口）。
+      if (isPaymentRequired(e)) {
+        settleCompareLane(input.requestId, { status: "failed", failure: e.message });
+        if (alive.current) setError(e.message);
+        return;
+      }
       // 以回执为准：失败即标这一条；查不到说明没提交成功；仍在处理就交给轮询。
       try {
         const receipt = await utils.novelWorkspace.receipt.fetch({ requestId: input.requestId });
@@ -1153,7 +1183,7 @@ function NovelWorkspaceEditor({
       const inputs = lanes.map(lane => reviewOnlyInput(d, chapterIndex, lane, original));
       if (
         !window.confirm(
-          `本次提交管理者测试：第${chapterIndex}集多线路审稿对比（${lanes.map(novelReviewLaneLabel).join("、")}各审一遍，只审稿、不改稿）。将调用创作服务并产生实际成本，是否继续？`
+          `本次提交：第${chapterIndex}集多线路审稿对比（${lanes.map(novelReviewLaneLabel).join("、")}各审一遍，只审稿、不改稿）。${NOVEL_STEP_COST_LABEL(novelReviewCompareCredits(lanes))}，是否继续？`
         )
       )
         return;
@@ -1188,7 +1218,7 @@ function NovelWorkspaceEditor({
       const input = reviewOnlyInput(d, entry.index + 1, lane, entry.original);
       if (
         !window.confirm(
-          `本次提交管理者测试：重试第${entry.index + 1}集${novelReviewLaneLabel(lane)}的审稿（只审稿、不改稿）。将调用创作服务并产生实际成本，是否继续？`
+          `本次提交：重试第${entry.index + 1}集${novelReviewLaneLabel(lane)}的审稿（只审稿、不改稿）。${NOVEL_STEP_COST_LABEL(novelStepCredits(input))}，是否继续？`
         )
       )
         return;
@@ -1277,7 +1307,7 @@ function NovelWorkspaceEditor({
     }
     if (
       !window.confirm(
-        `依次生成第${next}–${end}集${stage === "chapter" ? "小说稿" : "剧本"}，每集单独调用模型并产生实际成本；失败即停，不自动重试，批末停下审阅。继续？`
+        `依次生成第${next}–${end}集${stage === "chapter" ? "小说稿" : "剧本"}，每集单独提交，每集${NOVEL_STEP_COST_LABEL(queueEpisodeCredits(d, stage)).replace(/^本次/, "")}（共 ${end - next + 1} 集）；失败即停，不自动重试，批末停下审阅。继续？`
       )
     )
       return;
@@ -1361,7 +1391,7 @@ function NovelWorkspaceEditor({
           pending: undefined,
           failedRequest: draft.pending,
         });
-        setError("原请求失败，证据保留；如需重做，请手动提交新的测试。");
+        setError("原请求失败，记录已保留；如需重做，请重新提交。");
       } else
         setError(
           receipt.status === "not_found"
@@ -1664,6 +1694,12 @@ function NovelWorkspaceEditor({
       {error && (
         <p role="alert" className="mb-4 text-amber-200">
           {error}
+          {NOVEL_RECHARGE_HINT.test(error) && (
+            <>
+              {" "}
+              <Link href="/pricing" className="underline">前往充值</Link>
+            </>
+          )}
         </p>
       )}
       {failedChapter?.stage === "chapter" && (
@@ -1923,7 +1959,7 @@ function NovelWorkspaceEditor({
           <div className="mt-3 text-sm" data-imitation-intro>
             <p>{NOVEL_IMITATION_UI.modeIntro}</p>
             <p className="mt-1 text-xs text-slate-400" aria-label="爆款仿写参考价">
-              {NOVEL_IMITATION_UI.priceNote(NOVEL_IMITATION_SKELETON_CREDITS, NOVEL_IMITATION_EPISODE_CREDITS)}
+              {NOVEL_IMITATION_UI.priceNote(NOVEL_IMITATION_SKELETON_CREDITS, NOVEL_IMITATION_EPISODE_CREDITS).replace(/当前为管理者测试流程，暂不扣积分。$/, "")}
             </p>
           </div>
         )}
@@ -2066,6 +2102,12 @@ function NovelWorkspaceEditor({
           {error && (
             <p role="alert" className="text-amber-200">
               {error}
+              {NOVEL_RECHARGE_HINT.test(error) && (
+                <>
+                  {" "}
+                  <Link href="/pricing" className="underline">前往充值</Link>
+                </>
+              )}
             </p>
           )}
           {saveError && (
@@ -2127,7 +2169,8 @@ function NovelWorkspaceEditor({
             );
           })}
         </span>
-        <label className="inline-flex items-center gap-2">
+        {/* 语音／看片尚未定价，仍只对管理员开放。 */}
+        {isManager && <label className="inline-flex items-center gap-2">
           <input
             type="checkbox"
             aria-label="语音输入"
@@ -2135,9 +2178,9 @@ function NovelWorkspaceEditor({
             onChange={e => setAdvisorVoice(e.target.checked)}
           />
           语音输入
-        </label>
+        </label>}
       </div>
-      {advisorVoice && <NovelVoiceRevision key={draft.roundId} getWorkspace={() => latest.current} onApplyRevision={async (candidate, signal) => {
+      {isManager && advisorVoice && <NovelVoiceRevision key={draft.roundId} getWorkspace={() => latest.current} onApplyRevision={async (candidate, signal) => {
         if (signal.aborted || disabled || saving.current > 0) throw new Error("工作区正在保存或处理任务，未修改正文。");
         const before = latest.current;
         const next = await applyNovelVoiceCandidate(before, candidate);
@@ -2897,7 +2940,7 @@ function NovelWorkspaceEditor({
               onClick={() => {
                 if (
                   window.confirm(
-                    "从下一集继续已确认批次？每集会调用模型，失败即停。"
+                    `从下一集继续已确认批次？每集单独提交，每集${NOVEL_STEP_COST_LABEL(queueEpisodeCredits(draft, draft.generationQueue?.stage === "script" ? "script" : "chapter")).replace(/^本次/, "")}，失败即停。`
                   )
                 ) {
                   queueActive.current = true;

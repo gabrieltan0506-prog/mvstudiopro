@@ -32,6 +32,7 @@ type Task = { owner: number; state: NovelImitationSkeletonTaskState; promise: Pr
 type Deps = {
   run: (params: {
     userId: number;
+    role?: string | null;
     input: NovelImitationSkeletonTaskInput;
     onShard: (progress: { done: number; total: number }) => void;
   }) => Promise<NovelImitationSkeletonTaskResult>;
@@ -62,7 +63,8 @@ export function createNovelImitationSkeletonTasks(deps: Deps) {
     }
   };
   return {
-    start(owner: number, input: NovelImitationSkeletonTaskInput): NovelImitationSkeletonTaskState {
+    /** role：1112 计费用（管理者跳过预检、0 扣）；预检与扣费都在 run（runNovelImitationSkeleton）里。 */
+    start(owner: number, input: NovelImitationSkeletonTaskInput, role?: string | null): NovelImitationSkeletonTaskState {
       prune();
       const taskId = novelImitationSkeletonTaskKey(owner, input.baseText, input.modelPreference);
       const prior = tasks.get(taskId);
@@ -80,6 +82,7 @@ export function createNovelImitationSkeletonTasks(deps: Deps) {
         .then(() =>
           deps.run({
             userId: owner,
+            role,
             input,
             onShard: p => {
               progress = { done: Math.max(0, Math.min(p.done, p.total)), total: Math.max(0, p.total) };
@@ -118,10 +121,11 @@ export function createNovelImitationSkeletonTasks(deps: Deps) {
 let shared: ReturnType<typeof createNovelImitationSkeletonTasks> | undefined;
 export function novelImitationSkeletonTasks() {
   shared ??= createNovelImitationSkeletonTasks({
-    run: async ({ userId, input, onShard }) => {
+    run: async ({ userId, role, input, onShard }) => {
       const { runNovelImitationSkeleton } = await import("./novelWorkspaceTest");
       const { resolveNovelImitationSkeleton } = await import("./novelImitationSkeleton");
       return runNovelImitationSkeleton(userId, input, {
+        role,
         resolve: params => resolveNovelImitationSkeleton({ ...params, onShard }),
       });
     },
