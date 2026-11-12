@@ -6,6 +6,7 @@ import {
   novelTextLength,
 } from "@shared/novelWorkspace";
 import { summarizeNovelProseLint } from "@shared/novelProseLint";
+import { novelReviewLaneLabel } from "@shared/novelReviewCompare";
 import { diffNovelText, type NovelDiffSegment } from "@shared/novelTextDiff";
 import type { NovelOutlineAlert } from "@shared/novelOutlineDrift";
 import {
@@ -87,7 +88,7 @@ function RevisionEntry({
     return (
       <p className="text-amber-200">{label}：记录无法读取，原始记录已保留。</p>
     );
-  const { review, revised, original, models } = parsed;
+  const { review, revised, original, models, reviewOrigin } = parsed;
   const alert = novelRevisionOutlineAlert(outlineState, entry);
   const alertLevel = alert.stale ? "none" : alert.level;
   const impact = revised?.outlineImpact;
@@ -95,6 +96,11 @@ function RevisionEntry({
     (a, b) => Number(a.located === false) - Number(b.located === false)
   );
   const routes = [
+    reviewOrigin
+      ? reviewOrigin.sources.length > 1
+        ? `审稿：综合${reviewOrigin.sources.map(s => novelReviewLaneLabel(s.lane)).join("、")}的意见`
+        : `审稿：只用${novelReviewLaneLabel(reviewOrigin.sources[0].lane)}的意见`
+      : "",
     models?.review ? `审稿：${novelModelLabel(models.review)}` : "",
     models?.revise ? `改稿：${novelModelLabel(models.revise)}` : "",
   ].filter(Boolean);

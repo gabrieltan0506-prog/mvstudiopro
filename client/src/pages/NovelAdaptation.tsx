@@ -61,8 +61,18 @@ import {
   formatNovelImitationOutline,
   novelTestInputSchema,
   NOVEL_IMITATION_SYNOPSIS_MAX,
+  type NovelReviewLane,
+  type NovelReviewOverride,
   type NovelTestInput,
 } from "@shared/novelWorkspace";
+import {
+  NOVEL_REVIEW_COMPARE_DEFAULT_LANES,
+  NOVEL_REVIEW_COMPARE_LANES,
+  NOVEL_REVIEW_COMPARE_MIN_LANES,
+  novelReviewCompareCredits,
+  novelReviewLaneLabel,
+} from "@shared/novelReviewCompare";
+import { NovelReviewComparePanel, NovelReviewCompareStart } from "@/components/canvas/NovelReviewCompare";
 import {
   NOVEL_CREATIVE_PREMISE_MAX,
   NOVEL_CREATIVE_PREMISE_UI,
@@ -95,6 +105,10 @@ import {
   novelOutlineAlertSummary,
   recordNovelReviewOnly,
   recordNovelRevision,
+  retryNovelReviewCompareLane,
+  settleNovelReviewCompareLane,
+  startNovelReviewCompare,
+  type NovelReviewCompareEntry,
   applyNovelChapterCompletion,
   downloadNovelText,
   emptyNovelWorkspace,
@@ -116,6 +130,9 @@ function imitationIdentity(draft: Pick<NovelWorkspace, "mode" | "imitationGenre"
 }
 /** 上一项任务未结束或正在保存时点击被挡下的提示（不悄悄忽略点击）。 */
 const NOVEL_BLOCKED_CLICK_NOTICE = "上一项操作还在进行或保存中，这次点击没有提交，请稍候再点。";
+/** 多线路审稿对比：某条线路未完成时的提示（只影响这一条）。 */
+const NOVEL_REVIEW_COMPARE_LANE_FAILED = "这条线路审稿未完成，记录已保留；可单独重试，其他线路不受影响。";
+const NOVEL_REVIEW_COMPARE_NOT_SUBMITTED = "这条线路没有提交成功，可单独重试。";
 export default function NovelAdaptation() {
   const { user, loading } = useAuth();
   if (loading) return <main className="p-8">正在读取账号…</main>;
@@ -955,7 +972,11 @@ function NovelWorkspaceEditor({
     );
   };
   /** 审稿改稿：线路可单独选择（未选时沿用写作线路），先审稿再改稿；不带模板，不改动本集正文，采用需用户确认。 */
-  const reviseChapter = async (chapterIndex: number) => {
+  const reviseChapter = async (
+    chapterIndex: number,
+    /** 多线路对比后「按所选意见改稿」：综合意见代替审稿一步；缺省即原单线路流程（行为与提示词不变）。 */
+    combined?: { override: NovelReviewOverride; original: string }
+  ) => {
     if (disabled || running.current || latest.current.pending || saveError) {
       if (!saveError) setError(NOVEL_BLOCKED_CLICK_NOTICE);
       return;
@@ -969,7 +990,28 @@ function NovelWorkspaceEditor({
       const original = draft.chapters[chapterIndex - 1] || "";
       if (original.trim().length < 500)
         throw new Error("本集正文过短，暂不能审稿改稿。");
-      const input = novelTestInputSchema.parse({
+      if (combined && combined.original !== original)
+        throw new Error("本集正文在对比后有修改，意见可能已对不上原文；请重新对比后再改稿。");
+      const rewriteLane = draft.rewriteModelPreference || draft.modelPreference;
+      const input = novelTestInputSchema.parse(combined ? {
+        requestId: crypto.randomUUID(),
+        roundId: draft.roundId,
+        stage: "revise",
+        topic: draft.topic,
+        direction: draft.direction,
+        // 综合意见改稿：不再审稿，只用改稿线路。
+        ...(rewriteLane ? { modelPreference: rewriteLane, rewriteModelPreference: rewriteLane } : {}),
+        ...(draft.creativePremise?.trim() ? { creativePremise: draft.creativePremise.trim() } : {}),
+        templates: [],
+        episodeCount: 1,
+        episodeStart: chapterIndex,
+        continuity: draft.continuity || "",
+        outline: draft.outlineApproved || draft.outline,
+        novel: continuationContext(draft, chapterIndex - 1),
+        chapterIndex,
+        reviseDraft: original,
+        reviewOverride: combined.override,
+      } : {
         requestId: crypto.randomUUID(),
         roundId: draft.roundId,
         stage: "revise",
@@ -998,7 +1040,9 @@ function NovelWorkspaceEditor({
       });
       if (
         !window.confirm(
-          `本次提交管理者测试：第${chapterIndex}集审稿改稿（先审稿、再按意见改稿）。将调用创作服务并产生实际成本，是否继续？`
+          combined
+            ? `本次提交管理者测试：第${chapterIndex}集按所选的 ${combined.override.issues.length} 处意见改稿（不再审稿）。将调用创作服务并产生实际成本，是否继续？`
+            : `本次提交管理者测试：第${chapterIndex}集审稿改稿（先审稿、再按意见改稿）。将调用创作服务并产生实际成本，是否继续？`
         )
       )
         return;
@@ -1028,6 +1072,167 @@ function NovelWorkspaceEditor({
       }
     }
   };
+  /* ---------- 多线路审稿对比（1112）：每条线路一个只审稿请求，并发执行，互不影响 ---------- */
+  const compareMutation = trpc.novelWorkspace.generate.useMutation();
+  const [compareFor, setCompareFor] = useState<number | null>(null);
+  const [compareLanes, setCompareLanes] = useState<NovelReviewLane[]>([...NOVEL_REVIEW_COMPARE_DEFAULT_LANES]);
+  /** 本页发出、尚未返回的对比请求（这期间回执查不到属正常，不判失败）。 */
+  const compareInFlight = useRef(new Set<string>());
+  const settleCompareLane = (
+    requestId: string,
+    patch: { status: "succeeded"; outcome: string } | { status: "failed"; failure: string }
+  ) => {
+    const delta = settleNovelReviewCompareLane(latest.current, requestId, patch);
+    if (delta.reviewCompares) void persist({ ...latest.current, ...delta });
+  };
+  /** 只审稿请求：与「审稿改稿」的审稿一步同一提示词，审稿线路 = 该线路。 */
+  const reviewOnlyInput = (d: NovelWorkspace, chapterIndex: number, lane: NovelReviewLane, original: string) =>
+    novelTestInputSchema.parse({
+      requestId: crypto.randomUUID(),
+      roundId: d.roundId,
+      stage: "revise",
+      topic: d.topic,
+      direction: d.direction,
+      modelPreference: lane,
+      reviewModelPreference: lane,
+      reviseMode: "review_only",
+      ...(d.creativePremise?.trim() ? { creativePremise: d.creativePremise.trim() } : {}),
+      templates: [],
+      episodeCount: 1,
+      episodeStart: chapterIndex,
+      continuity: d.continuity || "",
+      outline: d.outlineApproved || d.outline,
+      novel: continuationContext(d, chapterIndex - 1),
+      chapterIndex,
+      reviseDraft: original,
+    });
+  const submitCompareLane = async (input: NovelTestInput) => {
+    compareInFlight.current.add(input.requestId);
+    try {
+      const result = await compareMutation.mutateAsync(input);
+      settleCompareLane(input.requestId, { status: "succeeded", outcome: result.text });
+    } catch {
+      // 以回执为准：失败即标这一条；查不到说明没提交成功；仍在处理就交给轮询。
+      try {
+        const receipt = await utils.novelWorkspace.receipt.fetch({ requestId: input.requestId });
+        if (receipt.status === "succeeded" && receipt.result)
+          settleCompareLane(input.requestId, { status: "succeeded", outcome: receipt.result.text });
+        else if (receipt.status === "failed")
+          settleCompareLane(input.requestId, { status: "failed", failure: NOVEL_REVIEW_COMPARE_LANE_FAILED });
+        else if (receipt.status === "not_found")
+          settleCompareLane(input.requestId, { status: "failed", failure: NOVEL_REVIEW_COMPARE_NOT_SUBMITTED });
+      } catch {}
+    } finally {
+      compareInFlight.current.delete(input.requestId);
+    }
+  };
+  const compareError = (e: unknown) =>
+    setError(
+      e instanceof Error
+        ? "issues" in e
+          ? "本集正文或前情档案长度超出限制，请检查后再试。"
+          : e.message
+        : "本次提交未完成，请稍后再试。"
+    );
+  const startCompare = async (chapterIndex: number) => {
+    if (disabled || saveError) {
+      if (!saveError) setError(NOVEL_BLOCKED_CLICK_NOTICE);
+      return;
+    }
+    const d = latest.current;
+    setError("");
+    try {
+      if (!d.topic.trim() || !d.direction.trim()) throw new Error("请先填写作品名称与创作方向。");
+      const original = d.chapters[chapterIndex - 1] || "";
+      if (original.trim().length < 500) throw new Error("本集正文过短，暂不能审稿。");
+      const lanes = NOVEL_REVIEW_COMPARE_LANES.map(l => l.value).filter(v => compareLanes.includes(v));
+      if (lanes.length < NOVEL_REVIEW_COMPARE_MIN_LANES)
+        throw new Error(`请至少选择 ${NOVEL_REVIEW_COMPARE_MIN_LANES} 条线路。`);
+      if ((d.reviewCompares || []).some(c => c.index === chapterIndex - 1 && c.lanes.some(l => l.status === "pending")))
+        throw new Error("本集上一次对比仍在进行，完成后再开始新的对比。");
+      const inputs = lanes.map(lane => reviewOnlyInput(d, chapterIndex, lane, original));
+      if (
+        !window.confirm(
+          `本次提交管理者测试：第${chapterIndex}集多线路审稿对比（${lanes.map(novelReviewLaneLabel).join("、")}各审一遍，只审稿、不改稿）。将调用创作服务并产生实际成本，是否继续？`
+        )
+      )
+        return;
+      const at = new Date().toISOString();
+      const entry: NovelReviewCompareEntry = {
+        index: chapterIndex - 1,
+        compareId: crypto.randomUUID(),
+        createdAt: at,
+        original,
+        lanes: inputs.map(i => ({
+          lane: i.reviewModelPreference as NovelReviewLane,
+          requestId: i.requestId,
+          status: "pending",
+          submittedAt: at,
+        })),
+      };
+      if (!(await persist({ ...latest.current, ...startNovelReviewCompare(latest.current, entry) }))) return;
+      setCompareFor(null);
+      setProgress("多线路审稿对比已提交，各线路完成后结果出现在本集下方。");
+      inputs.forEach(i => void submitCompareLane(i));
+    } catch (e) {
+      compareError(e);
+    }
+  };
+  const retryCompareLane = async (entry: NovelReviewCompareEntry, lane: NovelReviewLane) => {
+    if (saveError) return;
+    const d = latest.current;
+    setError("");
+    try {
+      if ((d.chapters[entry.index] || "") !== entry.original)
+        throw new Error("本集正文在对比后有修改，请重新对比。");
+      const input = reviewOnlyInput(d, entry.index + 1, lane, entry.original);
+      if (
+        !window.confirm(
+          `本次提交管理者测试：重试第${entry.index + 1}集${novelReviewLaneLabel(lane)}的审稿（只审稿、不改稿）。将调用创作服务并产生实际成本，是否继续？`
+        )
+      )
+        return;
+      const delta = retryNovelReviewCompareLane(latest.current, entry.compareId, lane, input.requestId, new Date().toISOString());
+      if (!(await persist({ ...latest.current, ...delta }))) return;
+      void submitCompareLane(input);
+    } catch (e) {
+      compareError(e);
+    }
+  };
+  // 对比中的线路按现有回执续查（刷新页面后接着查，不重复提交）。
+  const pendingCompareKey = (draft.reviewCompares || [])
+    .flatMap(c => c.lanes.filter(l => l.status === "pending").map(l => l.requestId))
+    .join(",");
+  useEffect(() => {
+    if (!pendingCompareKey || saveError) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const check = async () => {
+      const pendingLanes = (latest.current.reviewCompares || []).flatMap(c => c.lanes).filter(l => l.status === "pending");
+      for (const l of pendingLanes) {
+        try {
+          const receipt = await utils.novelWorkspace.receipt.fetch({ requestId: l.requestId });
+          if (stopped) return;
+          if (receipt.status === "succeeded" && receipt.result)
+            settleCompareLane(l.requestId, { status: "succeeded", outcome: receipt.result.text });
+          else if (receipt.status === "failed")
+            settleCompareLane(l.requestId, { status: "failed", failure: NOVEL_REVIEW_COMPARE_LANE_FAILED });
+          else if (
+            receipt.status === "not_found" &&
+            !compareInFlight.current.has(l.requestId) &&
+            Date.now() - Date.parse(l.submittedAt) > 120_000
+          )
+            settleCompareLane(l.requestId, { status: "failed", failure: NOVEL_REVIEW_COMPARE_NOT_SUBMITTED });
+        } catch {}
+      }
+      if (!stopped) timer = setTimeout(check, 3000);
+    };
+    timer = setTimeout(check, 1500);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [pendingCompareKey, saveError]);
   const queueConfiguration = (d: NovelWorkspace) =>
     JSON.stringify([
       d.topic,
@@ -2777,6 +2982,13 @@ function NovelWorkspaceEditor({
             >
               审稿改稿
             </button>
+            <button
+              className={button}
+              disabled={disabled || (draft.chapters[i] || "").trim().length < 500}
+              onClick={() => setCompareFor(compareFor === i ? null : i)}
+            >
+              多线路审稿对比
+            </button>
             {(
               [
                 ["reviseModelPreference", "审稿线路"],
@@ -2805,6 +3017,18 @@ function NovelWorkspaceEditor({
               </label>
             ))}
           </div>
+          {compareFor === i && (
+            <NovelReviewCompareStart
+              chapterIndex={i + 1}
+              selected={compareLanes}
+              credits={novelReviewCompareCredits(compareLanes)}
+              disabled={disabled}
+              minLanes={NOVEL_REVIEW_COMPARE_MIN_LANES}
+              onChange={setCompareLanes}
+              onStart={() => void startCompare(i + 1)}
+              onCancel={() => setCompareFor(null)}
+            />
+          )}
           <textarea
             aria-label={`第${i + 1}集小说稿`}
             disabled={Boolean(initial.error)}
@@ -2829,6 +3053,23 @@ function NovelWorkspaceEditor({
               <NovelOriginalityNote names={check.names} sentences={check.sentences} episode={i + 1} />
             ) : null;
           })()}
+          {(draft.reviewCompares || [])
+            .filter(c => c.index === i)
+            .map(entry => (
+              <NovelReviewComparePanel
+                key={entry.compareId}
+                entry={entry}
+                currentText={draft.chapters[i] || ""}
+                disabled={disabled || Boolean(initial.error)}
+                rewriteLabel={
+                  NOVEL_MODEL_OPTIONS.find(
+                    o => o.value === (draft.rewriteModelPreference || draft.modelPreference || "auto")
+                  )?.label || "自动"
+                }
+                onRetry={lane => void retryCompareLane(entry, lane)}
+                onRevise={override => void reviseChapter(i + 1, { override, original: entry.original })}
+              />
+            ))}
           <NovelChapterRevisionPanel
             entries={(draft.chapterRevisions || []).filter(r => r.index === i)}
             disabled={disabled || Boolean(initial.error)}
