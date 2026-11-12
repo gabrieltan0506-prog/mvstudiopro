@@ -107,6 +107,16 @@ export const novelTestInputSchema = z
     /** revise 阶段：审稿、改稿各自的线路（1111 站长：拆成两个下拉）；缺省沿用 modelPreference。 */
     reviewModelPreference: novelModelSchema.optional(),
     rewriteModelPreference: novelModelSchema.optional(),
+    /**
+     * 多线路审稿对比（1112）：review_only = 只跑审稿这一步，不改稿（结果里 revised 缺省）。
+     * 只随 revise 请求携带；旧请求没有此字段，行为不变。
+     */
+    reviseMode: z.enum(["review_only"]).optional(),
+    /**
+     * 按所选意见改稿（1112）：多线路对比后勾选的综合意见，服务端校验后跳过审稿直接改稿。
+     * 只随 revise 请求携带；旧请求没有此字段，行为不变。
+     */
+    reviewOverride: z.lazy(() => novelReviewOverrideSchema).optional(),
     source: novelExcerptSchema.optional(),
     advisorMessage: text.max(2000).optional(),
     advisorIntent: z
@@ -216,6 +226,16 @@ export const novelTestInputSchema = z
         v.rewriteModelPreference !== undefined)
     )
       c.addIssue({ code: "custom", message: "仅审稿改稿可分别选择审稿与改稿线路" });
+    if (v.stage !== "revise" && (v.reviseMode !== undefined || v.reviewOverride !== undefined))
+      c.addIssue({ code: "custom", message: "仅审稿改稿可选择只审稿或按所选意见改稿" });
+    if (v.reviseMode === "review_only" && v.reviewOverride)
+      c.addIssue({ code: "custom", message: "只审稿时不能同时携带所选意见" });
+    if (
+      v.stage === "revise" &&
+      v.reviewOverride &&
+      v.reviewOverride.issues.some(i => !locateNovelQuote(v.reviseDraft || "", i.quote))
+    )
+      c.addIssue({ code: "custom", message: "所选意见的原文片段在本集正文中找不到，请重新对比" });
     if (v.stage !== "advice" && v.stage !== "revise" && !v.templates.length)
       c.addIssue({ code: "custom", message: "请选择模板" });
     if (
@@ -479,6 +499,38 @@ export const novelReviewSchema = z
   })
   .strict();
 export type NovelReview = z.infer<typeof novelReviewSchema>;
+/** 多线路审稿对比可选的线路（与 NOVEL_MODEL_OPTIONS 的三条线路一一对应；不含「自动」）。 */
+export const NOVEL_REVIEW_LANES = ["glm", "deepseek", "carbon"] as const;
+export const novelReviewLaneSchema = z.enum(NOVEL_REVIEW_LANES);
+export type NovelReviewLane = z.infer<typeof novelReviewLaneSchema>;
+const novelReviewSourceSchema = z
+  .object({ requestId: z.string().uuid(), lane: novelReviewLaneSchema })
+  .strict();
+/**
+ * 按所选意见改稿（1112）：结构 = novelReviewSchema（评分、意见、保留、结论）+ 来源（各线路审稿的 requestId）。
+ * 意见必须都能在原文定位（不接受 located:false），来源不重复。
+ */
+export const novelReviewOverrideSchema = novelReviewSchema
+  .extend({
+    sources: z.array(novelReviewSourceSchema).min(1).max(NOVEL_REVIEW_LANES.length),
+  })
+  .superRefine((v, c) => {
+    if (v.issues.some(i => i.located === false))
+      c.addIssue({ code: "custom", message: "未能定位原文的意见不能用于改稿" });
+    if (new Set(v.sources.map(s => s.requestId)).size !== v.sources.length)
+      c.addIssue({ code: "custom", message: "意见来源不可重复" });
+  });
+export type NovelReviewOverride = z.infer<typeof novelReviewOverrideSchema>;
+/** 综合意见 → 改稿用的审稿结果：每条意见都必须能在原文定位（定位不到即报错，不静默丢弃）。 */
+export function validateNovelReviewOverride(original: string, value: unknown): NovelReview {
+  const { sources: _, ...review } = novelReviewOverrideSchema.parse(value);
+  const issues = review.issues.map(issue => {
+    const hit = locateNovelQuote(original, issue.quote);
+    if (!hit) throw new Error("所选意见的原文片段在本集正文中找不到，请重新对比");
+    return { ...issue, quote: hit.text.length <= 60 ? hit.text : issue.quote };
+  });
+  return novelReviewSchema.parse({ ...review, issues });
+}
 const clip = (max: number) =>
   z.preprocess(
     v => (typeof v === "string" ? Array.from(v.trim()).slice(0, max).join("") : v),
@@ -530,9 +582,19 @@ export const novelReviseResultSchema = z
       .object({ review: z.string().optional(), revise: z.string().optional() })
       .strict()
       .optional(),
+    /** 按所选意见改稿（1112）：审稿结果来自多线路综合意见，记来源各 requestId；单线路结果缺省。 */
+    reviewOrigin: z
+      .object({ kind: z.literal("combined"), sources: z.array(novelReviewSourceSchema).min(1) })
+      .strict()
+      .optional(),
   })
   .strict();
 export type NovelReviseResult = z.infer<typeof novelReviseResultSchema>;
+/** 只审稿（review_only）的结果：同上，revised 缺省。 */
+export const novelReviewOnlyResultSchema = novelReviseResultSchema.extend({
+  revised: novelRevisedChapterSchema.optional(),
+});
+export type NovelReviewOnlyResult = z.infer<typeof novelReviewOnlyResultSchema>;
 /** 正文字数：去掉空白后的字符数（中文按字计）。 */
 export const novelTextLength = (value: string) =>
   value.replace(/\s+/g, "").length;

@@ -5,6 +5,7 @@ import {
   novelTemplateChoiceSchema,
   novelGenerationSettingsSchema,
   novelStageSchema,
+  novelReviewLaneSchema,
   NOVEL_IMITATION_SYNOPSIS_MAX,
 } from "./novelWorkspace";
 import {
@@ -158,6 +159,32 @@ export const novelWorkspaceStateSchema = z.object({
         outlineItem: z.string().optional(),
         /** 站长点了「大纲已核对」的时间：点过即不再提醒（大纲无需改动时用）。 */
         outlineCheckedAt: z.string().optional(),
+      })
+    )
+    .optional(),
+  /**
+   * 多线路审稿对比（1112，可选；旧草稿没有）：每集只保存最近一次对比。
+   * 每条线路独立 requestId；pending 的按现有回执续查，succeeded 的 outcome 为只审稿结果（序列化）。
+   */
+  reviewCompares: z
+    .array(
+      z.object({
+        index: z.number().int().nonnegative(),
+        compareId: z.string(),
+        createdAt: z.string(),
+        /** 对比时的本集正文（意见定位与按所选意见改稿都以它为准）。 */
+        original: z.string(),
+        lanes: z.array(
+          z.object({
+            lane: novelReviewLaneSchema,
+            requestId: z.string(),
+            status: z.enum(["pending", "succeeded", "failed"]),
+            submittedAt: z.string(),
+            /** 序列化的只审稿结果（含 review 与实际所用模型标识）。 */
+            outcome: z.string().optional(),
+            failure: z.string().optional(),
+          })
+        ),
       })
     )
     .optional(),
