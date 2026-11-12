@@ -213,7 +213,8 @@ export function knowledgeBudgetOutputContract(level: KnowledgeEditionLevel | und
 }
 
 /** 审校后逐页核对：reading 实际字数（不含空白）对照各页预算，返回超出的页。 */
-export type KnowledgeReadingOverflow = { id: string; headline: string; chars: number; maxChars: number; excess: number };
+/** minChars 只在「正文偏少、需扩写」的标记上出现（此时 excess 为 0，maxChars 为扩写上限）。 */
+export type KnowledgeReadingOverflow = { id: string; headline: string; chars: number; maxChars: number; excess: number; minChars?: number };
 export function knowledgeReadingOverflow(
   level: KnowledgeEditionLevel | undefined,
   pages: KnowledgeBudgetPage[],
@@ -261,6 +262,17 @@ export function knowledgeFinalCompressionMarks(
     .sort((a, b) => b.r.chars - a.r.chars || a.index - b.index).slice(0, slots).map(({ r }) => r.id));
   return reviewed.flatMap(r => {
     const maxChars = twoPage.has(r.id) ? twoMax(r) : one(r);
-    return r.chars > maxChars ? [{ id: r.id, headline: headline.get(r.id) || "", chars: r.chars, maxChars, excess: r.chars - maxChars }] : [];
+    if (r.chars > maxChars) return [{ id: r.id, headline: headline.get(r.id) || "", chars: r.chars, maxChars, excess: r.chars - maxChars }];
+    // 正文偏少（站长 2026-11-13：文字不够就扩写）：一页章的图下留白超过 1/4 页（图下正文区约占半页 ⇒ 字数不足一页容量的一半）时标记扩写，上限为一页容量。
+    const minChars = Math.ceil(one(r) * (1 - 2 * KNOWLEDGE_TWO_PAGE_MAX_BLANK));
+    if (!twoPage.has(r.id) && r.chars < minChars) return [{ id: r.id, headline: headline.get(r.id) || "", chars: r.chars, maxChars, excess: 0, minChars }];
+    return [];
   });
+}
+/**
+ * 扩写指令（站长 2026-11-13：文字不够就扩写；扩写的资料必须来自联网检索，不靠模型编造）。
+ * 调用方须同时带上联网检索指令（KNOWLEDGE_RESEARCH_INSTRUCTIONS）：路由先联网搜索，再只用检索到的真实资料与原稿扩写。
+ */
+export function knowledgeExpansionInstructions(marks: readonly KnowledgeReadingOverflow[]) {
+  return `这是篇幅扩写：以下各页审校后的reading偏短，版面会留下大片空白，须把每页reading扩写到不少于该页minChars、且不超过该页maxChars（中文字符，不含空白；含表格单元格与小标题）。扩写内容只能来自两处：原稿中尚未写进图和正文的资料，以及随本批提供的真实联网检索资料（补背景、成因、影响、具体例子），并按来源规则标注。没有可用资料的页保持原样、原字数输出，不为凑字数编造；不得杜撰数字、日期、引文、人名与出处；不复述图中已画出的内容；不改动、不删除已有内容的事实与结论。body与reading表达相同内容。沿用knowledge_publication_v1 JSON合同。各页目标：${JSON.stringify(marks.map(o => ({ id: o.id, headline: o.headline, minChars: o.minChars, maxChars: o.maxChars })))}`;
 }

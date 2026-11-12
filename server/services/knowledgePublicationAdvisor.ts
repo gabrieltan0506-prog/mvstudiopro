@@ -1,5 +1,5 @@
 import {KNOWLEDGE_MODEL_CHANNEL_MAX,knowledgeFinalRevisionChannel,knowledgeStageConcurrency} from '../../shared/knowledgeConcurrency';
-import { KNOWLEDGE_COMPRESSION_TARGET_RATIO, KNOWLEDGE_IMAGE_PRIMARY_INSTRUCTIONS, KNOWLEDGE_READING_CONTRACT, knowledgeBudgetInstructions, knowledgeBudgetOutputContract, knowledgeCompressionInstructions, knowledgeFinalCompressionMarks, knowledgeReadingCharBudgets, knowledgeReadingOverflow, type KnowledgeReadingOverflow } from "../../shared/knowledgeEditionBudget";
+import { KNOWLEDGE_COMPRESSION_TARGET_RATIO, KNOWLEDGE_IMAGE_PRIMARY_INSTRUCTIONS, KNOWLEDGE_READING_CONTRACT, knowledgeBudgetInstructions, knowledgeBudgetOutputContract, knowledgeCompressionInstructions, knowledgeExpansionInstructions, knowledgeFinalCompressionMarks, knowledgeReadingCharBudgets, knowledgeReadingOverflow, type KnowledgeReadingOverflow } from "../../shared/knowledgeEditionBudget";
 import { KNOWLEDGE_VERIFICATION_POLICY, KNOWLEDGE_VERIFICATION_EDIT_POLICY, knowledgeVerificationTriggers, knowledgeVerificationQueries, knowledgeVerificationSourceEvidence } from './knowledgeVerificationPolicy';
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
 import { KNOWLEDGE_RESEARCH_INSTRUCTIONS, KNOWLEDGE_RESEARCH_MARKER } from "../../shared/knowledgeResearch";
@@ -311,12 +311,14 @@ export function knowledgeReviewPageChars(page: { body: string; reading?: Paramet
  * 篇幅压缩请求（预算的生产者）：只对审校后超出各页 maxChars 的页，一次廉价文字调用按目标提炼 reading；
  * 不带图片、不改图片审校结论（imageDescription/imageStatus 由调用方从原审校复制回去）。
  */
-export function buildKnowledgeCompressionRequest(pageSource: KnowledgeSource, digest: string, overflow: readonly KnowledgeReadingOverflow[], channel: "openrouter" | "evolink" = "evolink"): KnowledgeModelRequest {
+export function buildKnowledgeCompressionRequest(pageSource: KnowledgeSource, digest: string, overflow: readonly KnowledgeReadingOverflow[], channel: "openrouter" | "evolink" = "evolink", mode: "compress" | "expand" = "compress"): KnowledgeModelRequest {
   const request = buildKnowledgeReviewRequest(pageSource, digest, new Map());
   // 2026-11-09 用户令：每次 LLM 调用按 GLM FlashX@EvoLink→GLM@OR→DeepSeek 链执行（压缩从未发出过，改序不影响旧回执）。
   request.executionChannel = channel;
   request.executionFamily = "glm";
-  request.systemInstruction.parts.push({ text: knowledgeCompressionInstructions(pageSource.detailLevel || "full", overflow) });
+  // 扩写必须联网取材：带上检索指令后，路由会先联网搜索、再把真实来源交给本请求整理（与审校阶段的联网补充同一条链）。
+  if (mode === "expand" && !request.systemInstruction.parts.some(p => p.text.includes(KNOWLEDGE_RESEARCH_MARKER))) request.systemInstruction.parts.push({ text: KNOWLEDGE_RESEARCH_INSTRUCTIONS });
+  request.systemInstruction.parts.push({ text: mode === "expand" ? knowledgeExpansionInstructions(overflow) : knowledgeCompressionInstructions(pageSource.detailLevel || "full", overflow) });
   request.systemInstruction.parts.push({ text: "严格保持层级：根对象只有kind、sourceDigest、title、pages；每页都要给完整reading（version:1,subtitle,accent,blocks），imageDescription写\"\"、imageStatus写\"absent\"（图片审校结论由程序保留原值）。" });
   return request;
 }
@@ -405,13 +407,17 @@ export async function compressKnowledgeReviewToBudget(params: {
     const roundSource = (keep: ReadonlySet<string>): KnowledgeSource => ({ title: source.title, detailLevel: source.detailLevel, ...(source.readingContract ? { readingContract: source.readingContract } : {}),
       pages: pages.filter(p => keep.has(p.id)).map(p => ({ ...originals.get(p.id)!, body: p.body, imageUrl: "" })) });
     // 提示词目标 = 上限 × KNOWLEDGE_COMPRESSION_TARGET_RATIO（700→595）；验收（pageBudgets）仍按真实上限。
+    // 扩写标记（minChars）：提示词上限同样留余量，下限按标记；验收仍按真实上限。
+    const expandIds = new Set(after.filter(o => o.minChars !== undefined).map(o => o.id));
+    const capOf = new Map(after.map(o => [o.id, o.maxChars]));
     const targets = after.map(o => ({ ...o, maxChars: Math.floor(o.maxChars * KNOWLEDGE_COMPRESSION_TARGET_RATIO) }));
     const roundRequest = (keep: ReadonlySet<string>, channel: "openrouter" | "evolink" = "evolink") => {
-      const request = buildKnowledgeCompressionRequest(roundSource(keep), digest, targets.filter(t => keep.has(t.id)), channel);
+      const expand = Array.from(keep).every(id => expandIds.has(id));
+      const request = buildKnowledgeCompressionRequest(roundSource(keep), digest, targets.filter(t => keep.has(t.id)), channel, expand ? "expand" : "compress");
       // 压缩输出按真实上限逐页校验、容差 0：仍超出即算写坏，由路由切下一跳（GLM@EvoLink → GLM@OR → DeepSeek），三跳都超取最短的一份。
       request.pageBudgets = after.filter(o => keep.has(o.id)).map(o => ({ id: o.id, headline: o.headline, maxChars: o.maxChars }));
       request.budgetTolerance = 0;
-      if (round > 0) request.systemInstruction.parts.push({ text: `上一轮压缩后这些页仍超出图下容量（第${round + 1}轮）。本轮每页必须低于给定目标maxChars：先删与图中已画出内容重复的表格/清单，再把并列例子合并成一句，仍超出则只保留最关键的事实与数字。` });
+      if (round > 0 && !expand) request.systemInstruction.parts.push({ text: `上一轮压缩后这些页仍超出图下容量（第${round + 1}轮）。本轮每页必须低于给定目标maxChars：先删与图中已画出内容重复的表格/清单，再把并列例子合并成一句，仍超出则只保留最关键的事实与数字。` });
       return request;
     };
     const roundAdopted: string[] = [];
@@ -425,7 +431,10 @@ export async function compressKnowledgeReviewToBudget(params: {
       const byId = new Map(compressedPages.map(p => [p.id, p]));
       pages = pages.map(page => {
         const next = byId.get(page.id);
-        if (!next || knowledgeReviewPageChars(next) >= knowledgeReviewPageChars(page)) return page;
+        if (!next) return page;
+        // 压缩：比当前稿短才采用；扩写：比当前稿长且不超过本页上限才采用（超过上限会挤出续页，反而留白）。
+        const nextChars = knowledgeReviewPageChars(next), currentChars = knowledgeReviewPageChars(page);
+        if (expandIds.has(page.id) ? !(nextChars > currentChars && nextChars <= (capOf.get(page.id) ?? 0)) : nextChars >= currentChars) return page;
         roundAdopted.push(page.id); adopted.add(page.id);
         // 图片审校结论与图文疑点来自原审校；压缩只改文字。
         return { ...next, imageDescription: page.imageDescription, imageStatus: page.imageStatus,
@@ -436,7 +445,8 @@ export async function compressKnowledgeReviewToBudget(params: {
     // 此前把全部超出章放进同一请求，单次调用即超过整条链约 10 分钟上限，后续重试 / 换跳来不及执行，整册卡在排版前；
     // 一章一次又会让长册每次都多打几十次接口（站长 11-13：一次并发两到三章，走不同路由、互相兜底）。
     // 仍走整批请求的情形：超出章不多于一组；该轮已有整批成功回包（零调用回放）；该轮整批请求尚有未闭合回执（不另买，交路由按原请求处理）。
-    const split = after.length > KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS && !wholeReplayed && !await knowledgeRouteReceiptUnresolved(deps.read, `${roundPrefix}/attempt-${attempt}`);
+    const mixedKinds = expandIds.size > 0 && expandIds.size < after.length;
+    const split = (after.length > KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS || mixedKinds) && !wholeReplayed && !await knowledgeRouteReceiptUnresolved(deps.read, `${roundPrefix}/attempt-${attempt}`);
     let replayed = wholeReplayed;
     if (split) {
       const order = after.map(o => o.id);
@@ -444,10 +454,12 @@ export async function compressKnowledgeReviewToBudget(params: {
       const hasPageRaw = await Promise.all(order.map(id => deps.read(`${roundPrefix}/page-${id}/raw-${attempt}.json`)));
       const units: { prefix: string; ids: string[] }[] = order.filter((_, i) => hasPageRaw[i]).map(id => ({ prefix: `${roundPrefix}/page-${id}`, ids: [id] }));
       const pending = order.filter((_, i) => !hasPageRaw[i]);
-      for (let i = 0; i < pending.length; i += KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS) {
-        const group = pending.slice(i, i + KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS);
-        units.push({ prefix: `${roundPrefix}/group-${createHash("sha256").update(group.join(",")).digest("hex").slice(0, 16)}`, ids: group });
-      }
+      // 要压缩的章与要扩写的章分开成组（两种请求的指令不同），各自按章序三章一组。
+      for (const kind of [pending.filter(id => !expandIds.has(id)), pending.filter(id => expandIds.has(id))])
+        for (let i = 0; i < kind.length; i += KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS) {
+          const group = kind.slice(i, i + KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS);
+          units.push({ prefix: `${roundPrefix}/group-${createHash("sha256").update(group.join(",")).digest("hex").slice(0, 16)}`, ids: group });
+        }
       receiptPrefixes.push(...units.map(u => u.prefix));
       replayed = (await Promise.all(units.map(u => deps.read(`${u.prefix}/raw-${attempt}.json`)))).every(Boolean);
       const headlineOf = new Map(after.map(o => [o.id, o.headline]));
