@@ -100,8 +100,9 @@ const real = {
   review: readKnowledgePublicationReview,
   image: readKnowledgeImage,
   // 导出配图只以签名地址交给排版服务与阅读稿 HTML，不把图片数据内嵌进 HTML（禁 base64）。
-  // 地址指向缩图派生件（长边 ≤2048 的 JPEG，审校时已生成）：排版服务入版前本就把每张图缩到长边 1200，
-  // 送 13–18MB 的 4K 原图只会让并发取图超时（1110 实测 34 段有 11 段预分页失败）；缩图不可得时回退原图地址。
+  // 地址指向缩图派生件（长边 ≤2048、q85 的 JPEG，审校时已生成）：信息图带 data-pdf-max-dim=2048 标记，
+  // 排版服务对未超上限的外链 JPEG 不重编码、原字节入版（2026-11-11 起不再压到 1200），故 2048 派生件即最终入版像素；
+  // 送 13–18MB 的 4K 原图只会让并发取图超时（1110 实测 34 段有 11 段预分页失败），且排版服务仍会缩回 2048；缩图不可得时回退原图地址。
   imageUrl: async (uri: string) => signGsUriV4ReadUrl((await ensureKnowledgeReviewThumbnail(uri)) || uri, KNOWLEDGE_EXPORT_IMAGE_URL_TTL_SECONDS),
   pdf: fetchPdfBufferFromWorker,
   // 预分页同时带回逐章细节；排版服务未更新时 booklets 为空 → 版面审查记为未审查，不影响导出。

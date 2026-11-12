@@ -15,15 +15,20 @@ export type KnowledgeLayoutPageMeasure = {
   overlaps?: { cover: string; target: string }[];
   /** 未加载成功的图片（标题或序号）。 */
   brokenImages?: string[];
-  /** 本页跨页图左右半张计数。 */
+  /** 本页跨页图左右半张计数（旧版式；新版式恒为 0，保留字段兼容旧测量）。 */
   spreadHalves?: { a: number; b: number };
+  /** 本页被裁切的图片元素数（跨页半张、预告裁切条）；站长 2026-11-12 起不允许任何裁切，应为 0。 */
+  croppedImages?: number;
+  /** 本页整图的实测显示尺寸：须与原图等比例（±1px）、完整落在图框内、宽度不低于 min(满幅, 下限)。 */
+  images?: { width: number; height: number; naturalWidth: number; naturalHeight: number; fullWidth: number; minWidth: number; contentWidth?: number; inside?: boolean }[];
 };
-export type KnowledgeLayoutIssueKind = "overflow" | "clipped" | "occluded" | "whitespace" | "page_number" | "image_missing" | "spread_unpaired";
+export type KnowledgeLayoutIssueKind = "overflow" | "clipped" | "occluded" | "whitespace" | "page_number" | "image_missing" | "spread_unpaired" | "image_cropped" | "image_too_small";
 export type KnowledgeLayoutIssue = { page: number; kind: KnowledgeLayoutIssueKind; target: string };
 export const KNOWLEDGE_LAYOUT_MAX_WHITESPACE = 1 / 3;
 export const KNOWLEDGE_LAYOUT_ISSUE_LABEL: Record<KnowledgeLayoutIssueKind, string> = {
   overflow: "文字溢出", clipped: "标题被裁切", occluded: "元素遮挡", whitespace: "留白超过三分之一",
   page_number: "页码不连续", image_missing: "图片缺失", spread_unpaired: "跨页图不成对",
+  image_cropped: "图片被裁切或变形", image_too_small: "图片缩得过小",
 };
 
 export function auditKnowledgeBookletLayout(pages: KnowledgeLayoutPageMeasure[]): { passed: boolean; issues: KnowledgeLayoutIssue[] } {
@@ -38,6 +43,15 @@ export function auditKnowledgeBookletLayout(pages: KnowledgeLayoutPageMeasure[])
     if (typeof m.whitespace === "number" && m.whitespace > KNOWLEDGE_LAYOUT_MAX_WHITESPACE)
       issues.push({ page: m.page, kind: "whitespace", target: `留白 ${Math.round(m.whitespace * 100)}%` });
     for (const img of m.brokenImages || []) issues.push({ page: m.page, kind: "image_missing", target: img });
+    if (m.croppedImages) issues.push({ page: m.page, kind: "image_cropped", target: `裁切图 ${m.croppedImages} 处` });
+    for (const img of m.images || []) {
+      if (!(img.naturalWidth > 0 && img.naturalHeight > 0)) continue;
+      const expectedHeight = img.width * img.naturalHeight / img.naturalWidth;
+      if (Math.abs(img.height - expectedHeight) > 1 || img.inside === false)
+        issues.push({ page: m.page, kind: "image_cropped", target: `显示 ${Math.round(img.width)}×${Math.round(img.height)}，原图 ${img.naturalWidth}×${img.naturalHeight}` });
+      if (img.width + 1 < Math.min(img.fullWidth, img.minWidth))
+        issues.push({ page: m.page, kind: "image_too_small", target: `宽 ${Math.round(img.width)}，下限 ${Math.round(Math.min(img.fullWidth, img.minWidth))}` });
+    }
     spreadA += m.spreadHalves?.a || 0; spreadB += m.spreadHalves?.b || 0;
   });
   if (spreadA !== spreadB) issues.push({ page: pages.at(-1)?.page ?? 0, kind: "spread_unpaired", target: `左半 ${spreadA} 张、右半 ${spreadB} 张` });

@@ -100,3 +100,30 @@ it('图页首块是无句读的单句：切不开时收紧图页一档，仍在�
   expect(out.overflow).toEqual([]);
   expect(out.text.replace(/\s/g,'')).toContain(first);
 },60000);
+
+it('整图等比例稍缩（站长 2026-11-12）：正文只差一点就要接续页时把图等比例缩小收回续页，宽度不低于版心 85%；差得多就接续页、图保持满幅',async()=>{
+  const {KNOWLEDGE_BOOKLET_IMAGE_MIN_WIDTH_RATIO}=await import('./knowledgeBooklet');
+  const wide=png(1600,900);
+  const measure=async(n:number)=>{
+    const page=await browser.newPage();await page.setViewport({width:1920,height:1600});
+    await page.setContent(buildKnowledgeBookletHtml({title:'控脂手册',pages:[{id:'fish',headline:'鳕鱼营养成分',body:`## 甲\n\n${para(n,'真鳕鱼是低脂高蛋白白肉鱼')}\n\n## 乙\n\n${para(60,'牛奶与含铁食物间隔一到两小时')}`,imageUrl:wide}]}));
+    await page.waitForFunction(()=>Boolean((window as any).__knowledgeBooklet?.ready||(window as any).__knowledgeBooklet?.error));
+    const out=await page.evaluate(()=>{const f=document.querySelector('.lead-folio') as HTMLElement,img=f.querySelector('.main-card img') as HTMLImageElement,r=img.getBoundingClientRect(),cs=getComputedStyle(f);
+      return {result:(window as any).__knowledgeBooklet,w:r.width,h:r.height,nw:img.naturalWidth,nh:img.naturalHeight,inner:f.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight),text:document.querySelector('#reading-pages')!.textContent||''};});
+    await page.close();return out;
+  };
+  const base=await measure(100);
+  const full=base.w;
+  expect(base.result.readingPages).toBe(0);
+  let shrunk:any=null;
+  for(let n=700;n<=1400&&!shrunk;n+=25){const m=await measure(n);if(m.result.readingPages===0&&m.w<full-1)shrunk=m;}
+  expect(shrunk).not.toBeNull();
+  expect(shrunk.w).toBeGreaterThanOrEqual(shrunk.inner*KNOWLEDGE_BOOKLET_IMAGE_MIN_WIDTH_RATIO-1);
+  expect(Math.abs(shrunk.h-shrunk.w*shrunk.nh/shrunk.nw)).toBeLessThanOrEqual(1);
+  expect(shrunk.result.layout.every((p:any)=>p.overflow===false)).toBe(true);
+  expect(shrunk.text).toContain('牛奶与含铁食物间隔一到两小时');
+  // 差得多：照常接续页，图恢复满幅，不为省页继续缩。
+  const long=await measure(3000);
+  expect(long.result.readingPages).toBeGreaterThan(0);
+  expect(long.w).toBeCloseTo(full,0);
+},180000);
