@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank";
+import { flattenManhuaTemplateClassification, type ManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank";
 import {
   buildTemplateCraftProfile,
   TEMPLATE_CRAFT_APPLICATION_RULES,
@@ -55,11 +55,29 @@ export function buildNovelStageCraftCatalog(
 ) {
   const assigned = new Set(input.templates.map(t => t.publicId));
   const excluded = new Set(input.selectedTemplateIds);
-  return buildTemplateCraftCatalog(
-    cards.filter(card => {
+  const eligible = cards.filter(card => {
+    const code = resolveStableManhuaTemplatePublicCode(card);
+    const id = code ? `mt_${code.toLowerCase()}` : "";
+    return input.stage === "advice" ? !excluded.has(id) : assigned.has(id);
+  });
+  const snapshot = buildTemplateCraftCatalog(eligible);
+  // 站长 2026-11-11：创作顾问只读每张模板的「能力简介」挑选，不读全库手法全文。
+  // 简介与标签只附在小说线的目录条目上（sha256 仍按原目录计算，画布顾问用的共用目录不变）。
+  const briefs = new Map<string, { intro: string; tags: string[] }>(
+    eligible.flatMap(card => {
       const code = resolveStableManhuaTemplatePublicCode(card);
-      const id = code ? `mt_${code.toLowerCase()}` : "";
-      return input.stage === "advice" ? !excluded.has(id) : assigned.has(id);
+      return code
+        ? [[`mt_${code.toLowerCase()}`, {
+            intro: String(card.summaryZh || "").slice(0, NOVEL_CATALOG_INTRO_MAX_CHARS),
+            tags: card.classification ? flattenManhuaTemplateClassification(card.classification).slice(0, NOVEL_CATALOG_TAGS_MAX) : [],
+          }] as [string, { intro: string; tags: string[] }]]
+        : [];
     })
   );
+  return {
+    ...snapshot,
+    catalog: snapshot.catalog.map(entry => ({ ...entry, ...(briefs.get(entry.publicId) ?? { intro: "", tags: [] as string[] }) })),
+  };
 }
+export const NOVEL_CATALOG_INTRO_MAX_CHARS = 400;
+export const NOVEL_CATALOG_TAGS_MAX = 24;

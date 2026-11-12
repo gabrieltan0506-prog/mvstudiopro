@@ -10,12 +10,10 @@ it("实际选题组件在手机和桌面完整展示恢复内容与逐题依据�
  import React from 'react';import {createRoot} from 'react-dom/client';
  import {TopicSelectionPanel} from './client/src/components/platform/TopicSelectionPanel';
  import {rankTopicShortlistByViralScore} from './shared/platformTopicShortlist';
- import {writeShortlistExpandPersist,readShortlistExpandPersist} from './client/src/lib/platformShortlistExpandPersist';
- const storage=window.localStorage;
- const evidence={platform:'xiaohongshu',version:'test',capturedAt:'2026-10-30T00:00:00Z',windowStart:'2026-10-23T00:00:00Z',windowEnd:'2026-10-30T00:00:00Z',sourceCount:1,eligibleCount:1,excludedUnknownDate:0,excludedOutsideWindow:0,duplicateCount:0,selectedCount:1,samples:[{id:'real-shape',title:'会议沟通参考样本',url:'https://example.com/fictional-source',date:'2026-10-29T00:00:00Z',dateKind:'publishedAt',likes:12,comments:3,tags:[]}],note:'离线测试样本，不是真实热度证明。'};
+  const evidence={platform:'xiaohongshu',version:'test',capturedAt:'2026-10-30T00:00:00Z',windowStart:'2026-10-23T00:00:00Z',windowEnd:'2026-10-30T00:00:00Z',sourceCount:1,eligibleCount:1,excludedUnknownDate:0,excludedOutsideWindow:0,duplicateCount:0,selectedCount:1,samples:[{id:'real-shape',title:'会议沟通参考样本',url:'https://example.com/fictional-source',date:'2026-10-29T00:00:00Z',dateKind:'publishedAt',likes:12,comments:3,tags:[]}],note:'离线测试样本，不是真实热度证明。'};
  const base={title:'会议沟通练习方案',conveyGoal:${JSON.stringify(full)},hookSketch:${JSON.stringify(full)},viralReason:${JSON.stringify(full)},skillsUsed:['xhs-content-growth'],primaryLane:'default',formatHint:'图文',dedupeKey:'meeting',isTopPick:true,evidenceBindingVersion:'topic-v1'};
- writeShortlistExpandPersist({userKey:'offline-user',topics:[{...base,id:'first',viralScore:95,commentHeat:90,xhsGrowthEvidence:evidence},{...base,id:'second',viralScore:70,commentHeat:70},{...base,id:'third',viralScore:40,commentHeat:40}],contentBlueprints:[]},storage);
- const topics=rankTopicShortlistByViralScore(readShortlistExpandPersist('offline-user',storage).topics);
+ const raw=[{...base,id:'first',viralScore:95,commentHeat:90,xhsGrowthEvidence:evidence},{...base,id:'second',viralScore:70,commentHeat:70},{...base,id:'third',viralScore:40,commentHeat:40}];
+ const topics=rankTopicShortlistByViralScore(raw);
  const noop=()=>{};const forbidden=()=>{throw Error('不能自动生成')};
  createRoot(document.getElementById('root')).render(<TopicSelectionPanel id="topic" windowDays={7} topics={topics} selectedIds={[]} count={3} countOptions={[2,3]} onCount={noop} generationCost={12} expansionCount={0} expansionCost={0} loading={false} expanding={false} authenticated={true} onGenerate={forbidden} onToggle={noop} onSelectSuggested={noop} onClear={noop} onExpand={forbidden} editingId={null} editingTitle="" onEditingTitle={noop} onEdit={noop} onSave={noop} onCancel={noop}/>);
  `},bundle:true,write:false,platform:"browser",format:"iife",jsx:"automatic",alias:{"@":path.resolve("client/src"),"@shared":path.resolve("shared")},define:{"process.env.NODE_ENV":'"production"'},logLevel:"silent"});

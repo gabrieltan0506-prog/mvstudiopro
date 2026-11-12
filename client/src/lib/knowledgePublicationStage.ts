@@ -1,6 +1,10 @@
 // 图文知识手册前台阶段与整册预览读取（1111）：与整理/导出状态分开，纯函数便于单测。
-/** 前台阶段（用户可见，不含模型/通道名）：逐章整理 → 联网校验 → 统稿 → 整册排版 → 生成 PDF。 */
-export const KNOWLEDGE_PUBLICATION_STAGES = ["逐章整理", "联网校验", "统稿", "整册排版", "生成 PDF"] as const;
+/**
+ * 前台阶段（用户可见，不含模型/通道名）：逐章整理 → 统稿 → 整册排版 → 版面审查与 PDF。
+ * 1111 站长令：生图前已集中联网核实，审校后不再重复「联网校验」；排版后只做确定性版面审查（不调模型）。
+ * 旧稿仍在跑的全册核对批次计入「统稿」的进度计数。
+ */
+export const KNOWLEDGE_PUBLICATION_STAGES = ["逐章整理", "统稿", "整册排版", "版面审查与 PDF"] as const;
 export type KnowledgePublicationStage = { step: number; done?: number; total?: number };
 /** 整册预览读取：首读失败后按退避自动重试最多 3 次；与整理/导出状态分开显示。 */
 export const KNOWLEDGE_PREVIEW_RETRY_DELAYS_MS = [2000, 5000, 10000] as const;

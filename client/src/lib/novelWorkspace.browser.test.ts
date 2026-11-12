@@ -268,7 +268,11 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
     ).toBe("deepseek");
     expect(
       await page.$eval('[aria-label="顾问对话记录"]', el => el.textContent)
-    ).toContain("DeepSeek V4.1 Flash");
+    ).toContain("线路二");
+    // 前台只显示中性线路名（1111-c 起），不得回显模型名。
+    expect(
+      await page.$eval('[aria-label="顾问对话记录"]', el => el.textContent)
+    ).not.toMatch(/DeepSeek|GLM/i);
     await click("生成3个故事方案");
     await page.waitForSelector('[aria-label="故事线方案"]');
     expect(
@@ -505,12 +509,23 @@ it("浏览器完整走原创→顾问→分章→单独/组合比较→重开恢
       async () => (await (globalThis as any).readDraft()).chapters.length === 3
     );
     await page.select('[aria-label="创作模型"]', "glm");
-    await click("请创作顾问建议方向与模板");
+    // 线路选择先落进草稿再提交：否则紧跟着点击时，请求可能带上旧线路（时序偶发）。
     await page.waitForFunction(
-      async () =>
+      async () => (await (globalThis as any).readDraft()).modelPreference === "glm"
+    );
+    const callsBeforeComparison = await page.evaluate(
+      async () => (globalThis as any).calls.length
+    );
+    await click("请创作顾问建议方向与模板");
+    // 等这次请求真的发出并结束，而不是只看下拉是否可用（请求发出前它本来就可用）。
+    await page.waitForFunction(
+      async (before: number) =>
+        (globalThis as any).calls.length > before &&
         !(
           document.querySelector('[aria-label="创作模型"]') as HTMLSelectElement
-        ).disabled
+        ).disabled,
+      {},
+      callsBeforeComparison
     );
     const comparisonInput = await page.evaluate(async () =>
       (globalThis as any).calls.at(-1)

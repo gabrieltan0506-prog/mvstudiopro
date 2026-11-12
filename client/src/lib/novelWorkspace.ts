@@ -5,10 +5,19 @@ import {
 } from "@shared/manhuaNovelSource";
 import {
   novelChapterSchema,
+  novelReviseResultSchema,
+  type NovelReview,
+  type NovelRevisedChapter,
   type NovelTestInput,
   type NovelTestResult,
 } from "@shared/novelWorkspace";
 import { novelWorkspaceStateSchema as stateSchema } from "@shared/novelWorkspaceState";
+import {
+  detectOutlineDrift,
+  extractEpisodeOutline,
+  novelOutlineAlertLevel,
+  type NovelOutlineAlert,
+} from "@shared/novelOutlineDrift";
 export type NovelWorkspace = Omit<z.infer<typeof stateSchema>, "source"> & {
   source: ManhuaNovelDraft | null;
 };
@@ -91,6 +100,10 @@ export function novelSourceIdentity(draft: NovelWorkspace) {
     draft.mode === "source" ? draft.source : null,
     draft.episodeCount,
     draft.episodeStart,
+    // 爆款仿写：题材与纲要变了，已确认的大纲与小说需要重新确认（其他模式不追加，身份串不变）。
+    ...(draft.mode === "imitation"
+      ? [draft.imitationGenre || "", draft.imitationSynopsis || ""]
+      : []),
   ]);
 }
 export function scriptBaseline(input: NovelTestInput) {
@@ -159,6 +172,150 @@ export function applyNovelChapterCompletion(
           ],
         }
       : {}),
+    novelApproved: "",
+  };
+}
+
+export type NovelRevisionEntry = NonNullable<
+  NovelWorkspace["chapterRevisions"]
+>[number];
+const revisionOutcomeSchema = novelReviseResultSchema.extend({
+  revised: novelReviseResultSchema.shape.revised.optional(),
+});
+/** 读取一条审稿改稿记录；坏数据返回 null，不让整份草稿读取失败。 */
+export function parseNovelRevisionEntry(entry: NovelRevisionEntry): {
+  original: string;
+  review: NovelReview;
+  revised?: NovelRevisedChapter;
+  models?: { review?: string; revise?: string };
+} | null {
+  try {
+    return revisionOutcomeSchema.parse(JSON.parse(entry.outcome));
+  } catch {
+    return null;
+  }
+}
+/**
+ * 某条审稿改稿记录的大纲偏离：模型申报 + 代码兜底核对。
+ * 当前大纲里的本集条目已与提交时不同（用户已核对并更新大纲），或用户点了「大纲已核对」时不再提醒。
+ */
+export function novelRevisionOutlineAlert(
+  now: Pick<NovelWorkspace, "outline" | "outlineApproved">,
+  entry: NovelRevisionEntry
+) {
+  const parsed = parseNovelRevisionEntry(entry);
+  const currentItem = extractEpisodeOutline(
+    now.outlineApproved || now.outline,
+    entry.index + 1
+  );
+  const item = entry.outlineItem ?? currentItem;
+  if (!parsed?.revised)
+    return { level: "none" as NovelOutlineAlert, hints: [], item, stale: false };
+  const hints = detectOutlineDrift(
+    item,
+    parsed.original,
+    `${parsed.revised.title}\n${parsed.revised.text}`
+  );
+  const level = novelOutlineAlertLevel(parsed.revised.outlineImpact, hints);
+  // 已核对 = 用户更新了本集大纲条目，或明确点了「大纲已核对」。
+  const stale = Boolean(entry.outlineCheckedAt) || (entry.outlineItem !== undefined && entry.outlineItem !== currentItem);
+  return { level, hints, item, stale };
+}
+/** 需要提醒核对大纲的最高级别（每集只看最近一条记录）；用于大纲所在步骤入口的角标。 */
+export function novelOutlineAlertSummary(
+  now: Pick<NovelWorkspace, "outline" | "outlineApproved" | "chapterRevisions">
+): { level: NovelOutlineAlert; chapters: number[] } {
+  const latestByChapter = new Map<number, NovelRevisionEntry>();
+  for (const entry of now.chapterRevisions || []) latestByChapter.set(entry.index, entry);
+  let level: NovelOutlineAlert = "none";
+  const chapters: number[] = [];
+  for (const entry of Array.from(latestByChapter.values())) {
+    const alert = novelRevisionOutlineAlert(now, entry);
+    if (alert.stale || alert.level === "none") continue;
+    chapters.push(entry.index + 1);
+    if (alert.level === "major" || level === "none") level = alert.level;
+  }
+  return { level, chapters: chapters.sort((a, b) => a - b) };
+}
+/** 审稿改稿成功：记录未修改版、审稿与修改版，不改动本集正文。 */
+export function recordNovelRevision(
+  now: NovelWorkspace,
+  input: NovelTestInput,
+  result: NovelTestResult
+): Partial<NovelWorkspace> {
+  if ((now.chapterRevisions || []).some(r => r.requestId === input.requestId))
+    return {};
+  return {
+    chapterRevisions: [
+      ...(now.chapterRevisions || []),
+      {
+        index: input.chapterIndex - 1,
+        requestId: input.requestId,
+        savedAt: new Date().toISOString(),
+        outcome: result.text,
+        outlineItem: extractEpisodeOutline(input.outline, input.chapterIndex),
+      },
+    ],
+  };
+}
+/** 改稿失败但审稿已完成：保留审稿意见供查看（无修改版）。 */
+export function recordNovelReviewOnly(
+  now: NovelWorkspace,
+  input: NovelTestInput,
+  review: unknown,
+  failure: string
+): Partial<NovelWorkspace> {
+  if ((now.chapterRevisions || []).some(r => r.requestId === input.requestId))
+    return {};
+  return {
+    chapterRevisions: [
+      ...(now.chapterRevisions || []),
+      {
+        index: input.chapterIndex - 1,
+        requestId: input.requestId,
+        savedAt: new Date().toISOString(),
+        outcome: JSON.stringify({
+          chapterIndex: input.chapterIndex,
+          original: input.reviseDraft || "",
+          review,
+        }),
+        failure,
+        outlineItem: extractEpisodeOutline(input.outline, input.chapterIndex),
+      },
+    ],
+  };
+}
+/** 采用最终修改版：写入本集正文，当前正文（未修改版或手动稿）存进 chapterVersions。 */
+export function adoptNovelRevision(
+  now: NovelWorkspace,
+  requestId: string
+): Partial<NovelWorkspace> {
+  const entry = now.chapterRevisions?.find(r => r.requestId === requestId);
+  const parsed = entry && parseNovelRevisionEntry(entry);
+  if (!entry || !parsed?.revised) throw new Error("这次审稿改稿没有可采用的修改版");
+  const i = entry.index;
+  const chapters = [...now.chapters];
+  chapters[i] = `${parsed.revised.title}\n\n${parsed.revised.text}`;
+  const chapterWarnings = {
+    ...now.chapterWarnings,
+    [String(i)]:
+      (now.chapters[i] || "") === parsed.original
+        ? "已采用最终修改版，请核对衔接。"
+        : "已采用最终修改版；审稿后本集曾有修改，修改前的正文已存为历史版本，请核对。",
+  };
+  for (let j = i + 1; j < chapters.length; j++)
+    if (chapters[j]) chapterWarnings[String(j)] = "前文已修改，请核对本集衔接。";
+  const savedAt = new Date().toISOString();
+  return {
+    chapters,
+    chapterWarnings,
+    chapterVersions: [
+      ...(now.chapterVersions || []),
+      { index: i, text: now.chapters[i] || "", savedAt },
+    ],
+    chapterRevisions: (now.chapterRevisions || []).map(r =>
+      r.requestId === requestId ? { ...r, adoptedAt: savedAt } : r
+    ),
     novelApproved: "",
   };
 }

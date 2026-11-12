@@ -153,7 +153,7 @@ it("真实单框组件自动分批、断线恢复同编号、可选手改与确�
     await page.waitForFunction(()=>Array.from(document.querySelectorAll('a')).some(a=>a.textContent?.includes('下载 PPTX')));
     expect(await page.evaluate(()=>(window as any).pptxExports.length)).toBe(1);
     expect(await page.evaluate(()=>(window as any).exports.length)).toBe(0);
-    await click("下载当前版 HTML 和 PDF");
+    await click("生成并下载当前版 PDF");
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll("a")).some(
         a => a.textContent === "下载 PDF"

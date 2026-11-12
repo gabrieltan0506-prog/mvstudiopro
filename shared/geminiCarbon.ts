@@ -17,8 +17,8 @@ export const GEMINI_CARBON_MODEL = "gemini-4-carbon" as const;
 
 export const GEMINI_CARBON_CHANNELS = ["evolink", "gemini_api", "vertex"] as const;
 export type GeminiCarbonChannel = (typeof GEMINI_CARBON_CHANNELS)[number];
-/** 缺省通道顺序（1111 实测：Vertex 超时，排最后）。env `GEMINI_CARBON_CHANNEL_ORDER` 可改，如 "vertex,evolink,gemini_api"。 */
-export const GEMINI_CARBON_DEFAULT_CHANNEL_ORDER: readonly GeminiCarbonChannel[] = ["evolink", "gemini_api", "vertex"];
+/** 缺省通道顺序：站长 2026-11-11 指定先走 Vertex（当日连通测试 Vertex global 曾 90 秒无回应，故调用层对「非末位的 Vertex」设较短超时后再切下一通道）。env `GEMINI_CARBON_CHANNEL_ORDER` 可改，如 "vertex,evolink,gemini_api"。 */
+export const GEMINI_CARBON_DEFAULT_CHANNEL_ORDER: readonly GeminiCarbonChannel[] = ["vertex", "gemini_api", "evolink"];
 export const GEMINI_CARBON_CHANNEL_ORDER_ENV = "GEMINI_CARBON_CHANNEL_ORDER" as const;
 
 /**

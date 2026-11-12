@@ -4,6 +4,7 @@ import {deflateSync} from 'node:zlib';
 import {layoutFromSource} from './editableLayout';
 import {knowledgePublicationChapter,knowledgePublicationHead} from './knowledgePublicationHtml';
 import {KNOWLEDGE_BOOKLET_MAX_WHITESPACE} from './knowledgeBooklet';
+import {auditKnowledgeBookletLayout} from './knowledgeLayoutAudit';
 import {finalizeKnowledgeBookletPagination} from '../pdf-worker/knowledgeBookletPagination';
 import {pdfImageCompressionScript} from '../pdf-worker/pdfImageCompression';
 
@@ -68,7 +69,7 @@ it('跨页大图与留白补位：逐章渲染后每页留白 ≤ 1/3，正文�
      numbers:folios.map(f=>f.querySelector('.page-number')!.textContent),kinds:folios.map(f=>f.classList.contains('spread-folio')?'跨':f.classList.contains('lead-folio')?'图':'文'),
      mainImages:folios.flatMap(f=>Array.from(f.querySelectorAll('.main-card img,.spread-card img')).map(img=>({src:(img as HTMLImageElement).dataset.pdfMaxDim,w:img.getBoundingClientRect().width}))),
      sources:Array.from(document.querySelectorAll('#reading-pages .reading-unit')).map(u=>(u as HTMLElement).dataset.sourceId),
-     text:document.querySelector('#reading-pages')!.textContent||'',previews:Array.from(document.querySelectorAll('#reading-pages .next-preview h4')).map(e=>e.textContent),
+     text:document.querySelector('#reading-pages')!.textContent||'',previews:Array.from(document.querySelectorAll('#reading-pages .next-preview h4')).map(e=>e.textContent),previewClipped:Array.from(document.querySelectorAll('#reading-pages .next-preview')).filter(el=>{const h=el.querySelector('h4') as HTMLElement,s=el.querySelector('.preview-strip') as HTMLElement|null;const hr=h.getBoundingClientRect(),er=el.getBoundingClientRect();return h.scrollHeight-h.clientHeight>2||hr.bottom>er.bottom||(!!s&&s.getBoundingClientRect().top<hr.bottom-0.5);}).length,
      ending:Array.from(document.querySelectorAll('#reading-pages .filler-label')).map(e=>e.textContent),parkedFolios:document.querySelectorAll('.image-variants .folio').length};
    }));
    offset+=counts[i];
@@ -105,6 +106,8 @@ it('跨页大图与留白补位：逐章渲染后每页留白 ≤ 1/3，正文�
   // 下篇预告只指向真实的下一章；末章不预告。
   for(const [i,c] of Array.from(chapters.entries()))for(const title of c.previews)expect(title).toBe(doc.pages[i+1]?.headline);
   expect(chapters.at(-1)!.previews).toEqual([]);
+  // 下篇预告的标题行必须完整露出，不被裁切条挤压或遮住。
+  expect(chapters.reduce((n,c)=>n+c.previewClipped,0)).toBe(0);
  }finally{await page.close();}
 },180000);
 
@@ -147,14 +150,17 @@ it('34 章完整版（长短混合，正文已按版面预算压过）：逐章�
   for(let i=0;i<n;i++)counts.push(await prepare(page,html(i)));
   const total=counts.reduce((a,b)=>a+b,0);
   expect(total).toBeGreaterThanOrEqual(48);expect(total).toBeLessThanOrEqual(54);
-  let offset=0;const whitespace:number[]=[];let spreads=0;
+  let offset=0;const whitespace:number[]=[];let spreads=0;const layout:any[]=[];
   for(let i=0;i<n;i++){
    await prepare(page,html(i,{offset,total,count:counts[i]!}));
    const r=await page.evaluate(()=>(document.querySelector('[data-booklet-root]') as any).__knowledgeBooklet);
-   expect(r.ready).toBe(true);whitespace.push(...r.whitespace);spreads+=r.spreadChapters;offset+=counts[i]!;
+   expect(r.ready).toBe(true);whitespace.push(...r.whitespace);layout.push(...r.layout);spreads+=r.spreadChapters;offset+=counts[i]!;
   }
   expect(whitespace).toHaveLength(total);
   expect(Math.max(...whitespace)).toBeLessThanOrEqual(KNOWLEDGE_BOOKLET_MAX_WHITESPACE);
   expect(spreads).toBe(17);
+  // 排版后快速版面审查（确定性、不调模型）：真实渲染的整册无溢出/遮挡/裁切/超限留白/页码断档/坏图/跨页图不成对。
+  expect(layout).toHaveLength(total);
+  expect(auditKnowledgeBookletLayout(layout).issues).toEqual([]);
  }finally{await page.close();}
 },300000);

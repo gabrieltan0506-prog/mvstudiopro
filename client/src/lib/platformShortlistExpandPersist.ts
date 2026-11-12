@@ -1,9 +1,12 @@
 /**
- * 全案选题初选 + 扩写结果本机持久化。
- * 烧积分打 API 后刷新/切 Tab 也不能丢。
+ * 爆款创作：扩写结果本机持久化。
+ *
+ * 站长 2026-11-11：「之前生成过的标题不要保留，刷新就删除了。」
+ * 因此选题候选标题（topics）与未出稿的候选（failedPicks）只留在本次会话内存，
+ * 不再写入本机，读取时也一律丢弃；旧版本已存下的这两类数据由 purgeShortlistTitlesPersist 一次性抹掉。
+ * 已扩写出的正文（contentBlueprints，含其选定标题）与在途扩写任务（pendingExpand）随后续产物保留。
  */
 
-import { XHS_CONTENT_SKILL_ID } from "@shared/xhsContentStrategy";
 import type { PlatformTopicShortlistItem } from "@shared/platformTopicShortlist";
 
 export const PLATFORM_SHORTLIST_EXPAND_LS_KEY = "mvstudiopro.platform.shortlistExpand.v1";
@@ -57,17 +60,17 @@ export function readShortlistExpandPersist(
     if (!raw) return null;
     const parsed = JSON.parse(raw) as PlatformShortlistExpandPersist;
     if (!parsed || parsed.v !== 1 || parsed.userKey !== userKey) return null;
-    if (!Array.isArray(parsed.topics) && !Array.isArray(parsed.contentBlueprints)) return null;
+    if (!Array.isArray(parsed.contentBlueprints) && !parsed.pendingExpand) return null;
     return {
       v: 1,
       userKey: parsed.userKey,
       savedAt: String(parsed.savedAt || ""),
       referencePhotos: readReferencePhotos(parsed.referencePhotos),
       viralPreferences: readViralPreferences(parsed.viralPreferences),
-      failedPicks: Array.isArray(parsed.failedPicks) ? parsed.failedPicks : [],
+      // 生成过的候选标题刷新即丢：未出稿的候选与选题候选都不回填
+      failedPicks: [],
       pendingExpand: parsed.pendingExpand && typeof parsed.pendingExpand.jobId === "string" && Array.isArray(parsed.pendingExpand.picks) ? parsed.pendingExpand : undefined,
-      // 用户要求刷新淘汰旧选题；只保留新创作候选，正文和在途任务不清除。
-      topics: Array.isArray(parsed.topics) ? parsed.topics.filter(topic => Array.isArray(topic?.skillsUsed) && topic.skillsUsed.includes(XHS_CONTENT_SKILL_ID)) : [],
+      topics: [],
       contentBlueprints: Array.isArray(parsed.contentBlueprints)
         ? (parsed.contentBlueprints as Array<Record<string, unknown>>)
         : [],
@@ -82,9 +85,11 @@ export function writeShortlistExpandPersist(
     referencePhotos?: CoverReferencePhotos;
     viralPreferences?: ViralCreationPreferences;
     userKey: string;
+    /** @deprecated 已忽略：候选标题不再落盘（保留参数只为兼容旧调用） */
     failedPicks?: PlatformTopicShortlistItem[];
     pendingExpand?: { jobId: string; picks: PlatformTopicShortlistItem[] };
-    topics: PlatformTopicShortlistItem[];
+    /** @deprecated 已忽略：选题候选标题不再落盘（保留参数只为兼容旧调用） */
+    topics?: PlatformTopicShortlistItem[];
     contentBlueprints: Array<Record<string, unknown>>;
   },
   storage: Ls | null = defaultLs(),
@@ -97,12 +102,35 @@ export function writeShortlistExpandPersist(
       savedAt: new Date().toISOString(),
       referencePhotos: readReferencePhotos(input.referencePhotos),
       viralPreferences: readViralPreferences(input.viralPreferences),
-      failedPicks: input.failedPicks?.slice(0, 20),
+      // 候选标题不落盘：topics / failedPicks 恒为空，刷新后不再出现
+      failedPicks: [],
       pendingExpand: input.pendingExpand,
-      topics: (input.topics || []).slice(0, 40),
+      topics: [],
       contentBlueprints: (input.contentBlueprints || []).slice(0, 40),
     };
     storage.setItem(PLATFORM_SHORTLIST_EXPAND_LS_KEY, JSON.stringify(payload));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 一次性清理：抹掉旧版本已写入本机的选题候选标题（所有账号桶通用，只有一个 key）。
+ * 只改 topics / failedPicks 两个字段，正文、在途任务、平台偏好、参考人像原样保留。
+ * 返回是否实际改写了存储。
+ */
+export function purgeShortlistTitlesPersist(storage: Ls | null = defaultLs()): boolean {
+  if (!storage) return false;
+  try {
+    const raw = storage.getItem(PLATFORM_SHORTLIST_EXPAND_LS_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as Record<string, unknown> | null;
+    if (!parsed || typeof parsed !== "object") return false;
+    const hasTopics = Array.isArray(parsed.topics) && parsed.topics.length > 0;
+    const hasFailed = Array.isArray(parsed.failedPicks) && parsed.failedPicks.length > 0;
+    if (!hasTopics && !hasFailed) return false;
+    storage.setItem(PLATFORM_SHORTLIST_EXPAND_LS_KEY, JSON.stringify({ ...parsed, topics: [], failedPicks: [] }));
     return true;
   } catch {
     return false;

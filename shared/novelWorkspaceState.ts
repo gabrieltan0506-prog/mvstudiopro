@@ -4,14 +4,21 @@ import {
   novelModelSchema,
   novelTemplateChoiceSchema,
   novelGenerationSettingsSchema,
+  novelStageSchema,
+  NOVEL_IMITATION_SYNOPSIS_MAX,
 } from "./novelWorkspace";
+import {
+  NOVEL_IMITATION_LIBRARY_PICK_MAX,
+  novelImitationLibraryOutcomeSchema,
+  novelImitationSkeletonSchema,
+} from "./novelImitation";
 const runSchema = z.object({
   input: novelTestInputSchema,
   result: z.object({
     model: z.string().optional(),
     settings: novelGenerationSettingsSchema.optional(),
     requestId: z.string(),
-    stage: z.enum(["advice", "outline", "chapter", "script"]),
+    stage: novelStageSchema,
     text: z.string(),
     templateIds: z.array(z.string()),
     inputSha256: z.string(),
@@ -29,6 +36,15 @@ export const novelWorkspaceStateSchema = z.object({
   direction: z.string(),
   advisorDraft: z.string().max(2000).optional(),
   modelPreference: novelModelSchema.optional(),
+  /**
+   * 审稿线路（站长 2026-11-11：审稿、改稿拆成两个下拉）。字段名沿用旧的 reviseModelPreference，
+   * 旧草稿里的值即作为审稿线路读取；未设时沿用写作线路。
+   */
+  reviseModelPreference: novelModelSchema.optional(),
+  /** 改稿线路（1111 新增）；未设时沿用写作线路。 */
+  rewriteModelPreference: novelModelSchema.optional(),
+  /** 创作顾问档位（站长 2026-11-12：顾问线路自己选）；缺省沿用 modelPreference。 */
+  advisorModelPreference: novelModelSchema.optional(),
   advisorAnchor: z.string().optional(),
   storyVersions: z
     .array(
@@ -47,7 +63,23 @@ export const novelWorkspaceStateSchema = z.object({
   seasons: z
     .array(z.object({ season: z.number(), workspace: z.string() }))
     .optional(),
-  mode: z.enum(["source", "original"]),
+  /** imitation：爆款仿写（1112 追加枚举值，旧草稿 source / original 照常读取）。 */
+  mode: z.enum(["source", "original", "imitation"]),
+  /** 爆款仿写的题材与纲要（方向沿用 direction）；其他模式不使用。 */
+  imitationGenre: z.string().max(200).optional(),
+  imitationSynopsis: z.string().max(NOVEL_IMITATION_SYNOPSIS_MAX).optional(),
+  /** 底稿结构拆解结果：baseSha256 对应拆解时的底稿全文，底稿更换后需重新拆解。 */
+  imitationSkeleton: z
+    .object({
+      baseSha256: z.string(),
+      savedAt: z.string(),
+      skeleton: novelImitationSkeletonSchema,
+      /** 本次拆解后的收录结果（1112b，可选；旧草稿没有）。 */
+      library: novelImitationLibraryOutcomeSchema.optional(),
+    })
+    .optional(),
+  /** 拆书参考模板：勾选的公共参考模板 id，最多 3 条（1112b，可选；旧草稿没有，所有模式可用）。 */
+  libraryTemplatePicks: z.array(z.string()).max(NOVEL_IMITATION_LIBRARY_PICK_MAX).optional(),
   source: z.unknown(),
   templates: z.array(
     z.object({
@@ -100,6 +132,24 @@ export const novelWorkspaceStateSchema = z.object({
   failedRequest: novelTestInputSchema.optional(),
   pendingChapterBase: z.string().optional(),
   chapterWarnings: z.record(z.string(), z.string()).optional(),
+  /** 1111 审稿改稿：每次结果（含仅有审稿、改稿失败的记录），未修改版与修改版都保留。 */
+  chapterRevisions: z
+    .array(
+      z.object({
+        index: z.number().int().nonnegative(),
+        requestId: z.string(),
+        savedAt: z.string(),
+        /** 序列化的审稿改稿结果；改稿失败时 revised 缺省。 */
+        outcome: z.string(),
+        failure: z.string().optional(),
+        adoptedAt: z.string().optional(),
+        /** 提交时的本集大纲条目；当前大纲条目与之不同即视为已核对并更新大纲，不再提醒。 */
+        outlineItem: z.string().optional(),
+        /** 站长点了「大纲已核对」的时间：点过即不再提醒（大纲无需改动时用）。 */
+        outlineCheckedAt: z.string().optional(),
+      })
+    )
+    .optional(),
   chapterVersions: z
     .array(
       z.object({

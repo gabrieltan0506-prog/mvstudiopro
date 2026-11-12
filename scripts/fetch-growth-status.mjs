@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 export async function fetchGrowthStatus(baseUrl, outputPath, { fetchImpl = fetch, timeoutMs = 30_000 } = {}) {
-  const endpoint = `${baseUrl.replace(/\/$/, "")}/api/trpc/mvAnalysis.getGrowthSystemStatus?batch=1&input=%7B%7D`;
+  const endpoint = `${baseUrl.replace(/\/$/, "")}/api/trpc/mvAnalysis.getGrowthDeployCounts?batch=1&input=%7B%7D`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let body;

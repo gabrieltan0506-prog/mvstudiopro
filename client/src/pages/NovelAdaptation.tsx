@@ -53,12 +53,40 @@ import {
   formatNovelOutline,
   novelModelLabel,
   NOVEL_MODEL_OPTIONS,
+  NOVEL_ADVISOR_TIER_OPTIONS,
   novelChapterSchema,
   novelOutlineSchema,
+  novelImitationOutlineSchema,
+  formatNovelImitationOutline,
   novelTestInputSchema,
+  NOVEL_IMITATION_SYNOPSIS_MAX,
   type NovelTestInput,
 } from "@shared/novelWorkspace";
 import {
+  NOVEL_IMITATION_SKELETON_CREDITS,
+  NOVEL_IMITATION_EPISODE_CREDITS,
+  NOVEL_IMITATION_LIBRARY_PICK_MAX,
+} from "@shared/novelImitation";
+import {
+  NOVEL_IMITATION_UI,
+  novelImitationSubmitBlock,
+} from "@shared/novelImitationPrompt";
+import {
+  findNovelNameOverlaps,
+  findNovelSentenceOverlaps,
+} from "@shared/novelOriginalityCheck";
+import {
+  NovelImitationLibraryPicker,
+  NovelImitationScoreCard,
+  NovelImitationStructureMap,
+  NovelOriginalityNote,
+} from "@/components/canvas/NovelImitationPanels";
+import { NovelChapterRevisionPanel } from "@/components/canvas/NovelChapterRevision";
+import {
+  adoptNovelRevision,
+  novelOutlineAlertSummary,
+  recordNovelReviewOnly,
+  recordNovelRevision,
   applyNovelChapterCompletion,
   downloadNovelText,
   emptyNovelWorkspace,
@@ -67,6 +95,19 @@ import {
   type NovelWorkspace,
 } from "@/lib/novelWorkspace";
 
+/** 爆款仿写的底稿：已导入并勾选用于本次的原文全文；没有则为空串。 */
+function imitationBaseText(draft: Pick<NovelWorkspace, "mode" | "source">) {
+  return draft.mode === "imitation" && draft.source?.enabled ? draft.source.text : "";
+}
+/** 爆款仿写请求里的题材与纲要（比对顾问记录用）；非仿写模式或未填写时为 undefined。 */
+function imitationIdentity(draft: Pick<NovelWorkspace, "mode" | "imitationGenre" | "imitationSynopsis">) {
+  if (draft.mode !== "imitation") return undefined;
+  const genre = draft.imitationGenre?.trim() || "";
+  const synopsis = draft.imitationSynopsis?.trim() || "";
+  return genre && synopsis ? { genre, synopsis } : undefined;
+}
+/** 上一项任务未结束或正在保存时点击被挡下的提示（不悄悄忽略点击）。 */
+const NOVEL_BLOCKED_CLICK_NOTICE = "上一项操作还在进行或保存中，这次点击没有提交，请稍候再点。";
 export default function NovelAdaptation() {
   const { user, loading } = useAuth();
   if (loading) return <main className="p-8">正在读取账号…</main>;
@@ -145,6 +186,8 @@ function NovelWorkspaceEditor({
   >(() => (initial.value.chapters.some(c => c?.trim()) ? "novel" : "prepare"));
   const [activeChapter, setActiveChapter] = useState(0);
   const [sideTab, setSideTab] = useState<"advisor" | "methods">("advisor");
+  /** 默认打字；勾选「语音输入」才出现语音互动（站长 2026-11-12：此前未取过建议时没有打字框）。 */
+  const [advisorVoice, setAdvisorVoice] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [showStory, setShowStory] = useState(Boolean(initial.value.outline));
   const [savePending, setSavePending] = useState(false);
@@ -181,6 +224,36 @@ function NovelWorkspaceEditor({
   const templateCatalogConnected = useManhuaTemplateCatalogEvents(Boolean(userId), () => templates.refetch());
   const cards = (templates.data?.groups || []).flatMap(g => g.items);
   const mutation = trpc.novelWorkspace.generate.useMutation();
+  const skeletonMutation = trpc.novelWorkspace.imitationSkeleton.useMutation();
+  /** 拆书参考模板（公共库）；所有模式可勾选，作为大纲与正文的结构参考；仅管理员可删除。 */
+  const libraryQuery = trpc.novelWorkspace.imitationLibrary.useQuery(undefined, { retry: 1, staleTime: 0 });
+  const libraryDelete = trpc.novelWorkspace.deleteImitationLibrary.useMutation();
+  const libraryItems = libraryQuery.data ?? [];
+  const { user: authUser } = useAuth();
+  const [skeletonBusy, setSkeletonBusy] = useState(false);
+  /** 当前底稿全文的摘要：与拆解时记录的一致才算结构骨架可用。 */
+  const [currentBaseSha, setCurrentBaseSha] = useState("");
+  const originalityCache = useRef(new Map<string, { names: string[]; sentences: string[] }>());
+  const baseTextForSha = imitationBaseText(draft);
+  useEffect(() => {
+    let stale = false;
+    if (!baseTextForSha) {
+      setCurrentBaseSha("");
+      return;
+    }
+    void novelTextHash(baseTextForSha).then(sha => {
+      if (!stale) setCurrentBaseSha(sha);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [baseTextForSha]);
+  const skeletonReady = Boolean(
+    draft.mode === "imitation" &&
+      draft.imitationSkeleton &&
+      currentBaseSha &&
+      draft.imitationSkeleton.baseSha256 === currentBaseSha
+  );
   const [savedRaw, setSavedRaw] = useState<{
     requestId: string;
     text: string;
@@ -292,12 +365,18 @@ function NovelWorkspaceEditor({
     !weighted ||
     (weightTotal === 100 && draft.templates.every(t => t.weight !== undefined));
   const currentNovel = batchNovel(draft);
+  const imitationKey = JSON.stringify(imitationIdentity(draft));
   const adviceRuns = draft.runs.filter(
     r =>
       r.input.stage === "advice" &&
       r.input.roundId === draft.roundId &&
       r.input.topic === draft.topic &&
       r.input.direction === draft.direction &&
+      JSON.stringify(
+        r.input.imitation
+          ? { genre: r.input.imitation.genre, synopsis: r.input.imitation.synopsis }
+          : undefined
+      ) === imitationKey &&
       (r.input.episodeStart || 1) === batchStart(draft) &&
       JSON.stringify(r.input.source) ===
         JSON.stringify(
@@ -360,8 +439,9 @@ function NovelWorkspaceEditor({
       runs: [...now.runs, { input, result }],
     };
     if (input.stage === "outline") {
-      const plan = novelOutlineSchema.parse(JSON.parse(result.text));
-      next.outline = formatNovelOutline(plan);
+      next.outline = input.imitation
+        ? formatNovelImitationOutline(novelImitationOutlineSchema.parse(JSON.parse(result.text)))
+        : formatNovelOutline(novelOutlineSchema.parse(JSON.parse(result.text)));
       next.outlineApproved = "";
       next.storyVersions = [
         ...(now.storyVersions || []),
@@ -382,6 +462,8 @@ function NovelWorkspaceEditor({
     if (input.stage === "chapter") {
       Object.assign(next, applyNovelChapterCompletion(now, input, result));
     }
+    if (input.stage === "revise")
+      Object.assign(next, recordNovelRevision(now, input, result));
     if (input.stage === "advice") {
       next.advisorAnchor = input.requestId;
       if (input.advisorMessage === now.advisorDraft?.trim())
@@ -453,6 +535,16 @@ function NovelWorkspaceEditor({
           timer = setTimeout(check, 500);
           return;
         }
+        if (receipt.status === "failed" && pending.stage === "revise") {
+          finishFailedRevise(pending, receipt.revise);
+          if (activeRequestId.current === pending.requestId) {
+            activeRequestId.current = undefined;
+            running.current = false;
+            setBusy(false);
+          }
+          setProgress("");
+          return;
+        }
         if (receipt.status === "failed") {
           queueActive.current = false;
           persist({
@@ -474,6 +566,8 @@ function NovelWorkspaceEditor({
           waiting: "模板已就绪，等待创作服务回复",
           receiving: "正在接收创作回复",
           validating: "回复已收到，正在检查内容格式",
+          reviewing: "正在审稿",
+          revising: "审稿已完成，正在按意见改稿",
         };
         setProgress(
           receipt.status === "not_found"
@@ -509,8 +603,11 @@ function NovelWorkspaceEditor({
       running.current ||
       latest.current.pending ||
       saveError
-    )
+    ) {
+      // 站长 2026-11-11：被挡下的点击不能悄悄吞掉，要让用户知道这次没有提交。
+      if (!fromQueue && !saveError) setError(NOVEL_BLOCKED_CLICK_NOTICE);
       return;
+    }
     const draft = latest.current;
     const currentNovel = batchNovel(draft);
     setError("");
@@ -545,8 +642,28 @@ function NovelWorkspaceEditor({
         draft.mode === "source" && draft.source
           ? prepareNovelExcerpt(draft.source)
           : undefined;
+      // 爆款仿写：未导入底稿时先提示导入原文（其余检查见下方 novelImitationSubmitBlock）。
       if (draft.mode === "source" && !source)
         throw new Error("请导入底本并勾选用于本次改编，或切换为原创新方向。");
+      let imitation: NovelTestInput["imitation"];
+      if (draft.mode === "imitation") {
+        const skeleton = skeletonReady ? draft.imitationSkeleton?.skeleton : undefined;
+        const blocked = novelImitationSubmitBlock({
+          stage,
+          baseText: imitationBaseText(draft),
+          genre: draft.imitationGenre,
+          synopsis: draft.imitationSynopsis,
+          templateCount: draft.templates.length,
+          skeletonReady: Boolean(skeleton),
+        });
+        if (blocked) throw new Error(blocked);
+        // 底稿原文不随请求发送：只带新题材、纲要、底稿结构骨架与需要避开的底稿名称。
+        imitation = {
+          genre: draft.imitationGenre!.trim(),
+          synopsis: draft.imitationSynopsis!.trim(),
+          ...(skeleton ? { skeleton: skeleton.beats, avoidNames: skeleton.properNouns.slice(0, 500) } : {}),
+        };
+      }
       if (stage === "outline" && !advice)
         throw new Error("请先让创作顾问提出建议。");
       if (stage === "chapter" && draft.outlineApproved !== draft.outline)
@@ -573,16 +690,23 @@ function NovelWorkspaceEditor({
         );
       if (choices.some(t => !cards.some(c => c.publicId === t.publicId)))
         throw new Error("所选模板已不可用，请重新选择。");
+      const libraryPicks = (draft.libraryTemplatePicks ?? []).filter(id => libraryItems.some(i => i.id === id));
       const input = novelTestInputSchema.parse({
         requestId: crypto.randomUUID(),
         roundId: draft.roundId,
         stage,
         topic: draft.topic,
         direction: draft.direction,
-        ...(draft.modelPreference
-          ? { modelPreference: draft.modelPreference }
+        // 创作顾问单独选档位；未选时沿用创作线路。
+        ...((stage === "advice" ? draft.advisorModelPreference || draft.modelPreference : draft.modelPreference)
+          ? { modelPreference: stage === "advice" ? draft.advisorModelPreference || draft.modelPreference : draft.modelPreference }
           : {}),
         source,
+        ...(imitation ? { imitation } : {}),
+        // 拆书参考模板：只在大纲与正文阶段带上；已不在库里的勾选不发送。
+        ...((stage === "outline" || stage === "chapter") && libraryPicks.length
+          ? { libraryTemplateIds: libraryPicks }
+          : {}),
         ...(advisorMessage ? { advisorMessage } : {}),
         ...(advisorIntent ? { advisorIntent } : {}),
         ...(((stage === "advice" &&
@@ -678,6 +802,145 @@ function NovelWorkspaceEditor({
       }
     }
   };
+  /** 爆款仿写：拆解底稿结构（服务端分片并行、按底稿摘要缓存）。 */
+  const extractSkeleton = async () => {
+    if (disabled || skeletonBusy || running.current) {
+      setError(NOVEL_BLOCKED_CLICK_NOTICE);
+      return;
+    }
+    const base = imitationBaseText(latest.current);
+    const blocked = novelImitationSubmitBlock({
+      stage: "advice",
+      baseText: base,
+      genre: "-",
+      synopsis: "-",
+      templateCount: 0,
+      skeletonReady: false,
+    });
+    if (blocked) {
+      setError(blocked);
+      return;
+    }
+    if (!window.confirm(NOVEL_IMITATION_UI.skeletonConfirm(base.length))) return;
+    setError("");
+    setSkeletonBusy(true);
+    running.current = true;
+    try {
+      const baseSha256 = await novelTextHash(base);
+      const baseTitle = latest.current.source?.name?.trim().slice(0, 200);
+      const { skeleton, library } = await skeletonMutation.mutateAsync({
+        requestId: crypto.randomUUID(),
+        baseText: base,
+        ...(baseTitle ? { baseTitle } : {}),
+        ...(latest.current.modelPreference ? { modelPreference: latest.current.modelPreference } : {}),
+      });
+      void libraryQuery.refetch();
+      if (!alive.current) return;
+      await persist({
+        ...latest.current,
+        imitationSkeleton: { baseSha256, savedAt: new Date().toISOString(), skeleton, library },
+        outlineApproved: "",
+        novelApproved: "",
+      });
+    } catch (e) {
+      // 服务端给的是中性的可重试提示（含未成功的片号）；拿不到时用默认提示。
+      if (alive.current)
+        setError(e instanceof Error && "data" in e && e.message ? e.message : NOVEL_IMITATION_UI.skeletonFailed);
+    } finally {
+      running.current = false;
+      if (alive.current) setSkeletonBusy(false);
+    }
+  };
+  /** 审稿改稿失败：不进入小说失败恢复流程；改稿失败时保留审稿意见。 */
+  const finishFailedRevise = (
+    pending: NovelTestInput,
+    info?: { message: string; review?: unknown }
+  ) => {
+    const now = latest.current;
+    if (now.pending?.requestId !== pending.requestId) return;
+    persist({
+      ...now,
+      pending: undefined,
+      ...(info?.review
+        ? recordNovelReviewOnly(now, pending, info.review, info.message)
+        : {}),
+    });
+    setError(
+      info?.message || "审稿改稿未完成，本集正文不变，记录已保留；没有自动重试。"
+    );
+  };
+  /** 审稿改稿：线路可单独选择（未选时沿用写作线路），先审稿再改稿；不带模板，不改动本集正文，采用需用户确认。 */
+  const reviseChapter = async (chapterIndex: number) => {
+    if (disabled || running.current || latest.current.pending || saveError) {
+      if (!saveError) setError(NOVEL_BLOCKED_CLICK_NOTICE);
+      return;
+    }
+    const draft = latest.current;
+    setError("");
+    let submittedId: string | undefined;
+    try {
+      if (!draft.topic.trim() || !draft.direction.trim())
+        throw new Error("请先填写作品名称与创作方向。");
+      const original = draft.chapters[chapterIndex - 1] || "";
+      if (original.trim().length < 500)
+        throw new Error("本集正文过短，暂不能审稿改稿。");
+      const input = novelTestInputSchema.parse({
+        requestId: crypto.randomUUID(),
+        roundId: draft.roundId,
+        stage: "revise",
+        topic: draft.topic,
+        direction: draft.direction,
+        // 审稿、改稿线路分开选；未选时都沿用写作线路。modelPreference 带审稿线路，兼容旧服务端。
+        ...((draft.reviseModelPreference || draft.modelPreference)
+          ? {
+              modelPreference: draft.reviseModelPreference || draft.modelPreference,
+              reviewModelPreference: draft.reviseModelPreference || draft.modelPreference,
+            }
+          : {}),
+        ...((draft.rewriteModelPreference || draft.modelPreference)
+          ? { rewriteModelPreference: draft.rewriteModelPreference || draft.modelPreference }
+          : {}),
+        templates: [],
+        episodeCount: 1,
+        episodeStart: chapterIndex,
+        continuity: draft.continuity || "",
+        outline: draft.outlineApproved || draft.outline,
+        novel: continuationContext(draft, chapterIndex - 1),
+        chapterIndex,
+        reviseDraft: original,
+      });
+      if (
+        !window.confirm(
+          `本次提交管理者测试：第${chapterIndex}集审稿改稿（先审稿、再按意见改稿）。将调用创作服务并产生实际成本，是否继续？`
+        )
+      )
+        return;
+      if (!(await persist({ ...draft, pending: input }))) return;
+      submittedId = input.requestId;
+      activeRequestId.current = input.requestId;
+      running.current = true;
+      setBusy(true);
+      setProgress("正在提交请求…");
+      const result = await mutation.mutateAsync(input);
+      if (alive.current) await applyResult(input, result);
+      setProgress("审稿改稿已完成，可在本集下方对照两个版本。");
+    } catch (e) {
+      if (alive.current)
+        setError(
+          e instanceof Error && !("data" in e)
+            ? "issues" in e
+              ? "本集正文或前情档案长度超出限制，请检查后再试。"
+              : e.message
+            : "本次提交未完成，请核对原请求记录；不会自动重试。"
+        );
+    } finally {
+      if (!submittedId || activeRequestId.current === submittedId) {
+        running.current = false;
+        activeRequestId.current = undefined;
+        if (alive.current) setBusy(false);
+      }
+    }
+  };
   const queueConfiguration = (d: NovelWorkspace) =>
     JSON.stringify([
       d.topic,
@@ -688,6 +951,10 @@ function NovelWorkspaceEditor({
       d.source,
       d.episodeStart,
       d.episodeCount,
+      ...(d.mode === "imitation"
+        ? [d.imitationGenre || "", d.imitationSynopsis || "", d.imitationSkeleton?.baseSha256 || ""]
+        : []),
+      ...(d.libraryTemplatePicks?.length ? [d.libraryTemplatePicks] : []),
     ]);
   const startBatch = async (stage: "chapter" | "script", single?: string) => {
     if (disabled || queueSubmitting.current) return;
@@ -793,6 +1060,8 @@ function NovelWorkspaceEditor({
       });
       if (receipt.status === "succeeded" && receipt.result)
         applyResult(draft.pending, receipt.result);
+      else if (receipt.status === "failed" && draft.pending.stage === "revise")
+        finishFailedRevise(draft.pending, receipt.revise);
       else if (receipt.status === "failed") {
         queueActive.current = false;
         persist({
@@ -1272,6 +1541,10 @@ function NovelWorkspaceEditor({
               direction: draft.direction,
               source: draft.source,
               mode: draft.mode,
+              imitationGenre: draft.imitationGenre,
+              imitationSynopsis: draft.imitationSynopsis,
+              imitationSkeleton: draft.imitationSkeleton,
+              libraryTemplatePicks: draft.libraryTemplatePicks,
               templates: draft.templates,
               modelPreference: draft.modelPreference,
               targetEpisodeCount: draft.targetEpisodeCount,
@@ -1339,22 +1612,30 @@ function NovelWorkspaceEditor({
     <>
       <fieldset disabled={disabled}>
         <div className="mt-4 flex gap-2">
-          {(["source", "original"] as const).map(mode => (
+          {(["source", "original", "imitation"] as const).map(mode => (
             <button
               key={mode}
               className={`${button} ${draft.mode === mode ? "bg-amber-200 text-slate-950" : ""}`}
               onClick={() => {
-                if (mode === "source") {
+                if (mode === "source" || (mode === "imitation" && !draft.source)) {
                   flushSync(() => change({ mode }));
                   sourceFileInput.current?.click();
                 } else change({ mode });
               }}
             >
-              {mode === "source" ? "上传底本改编" : "原创新方向"}
+              {mode === "source" ? "上传底本改编" : mode === "original" ? "原创新方向" : NOVEL_IMITATION_UI.modeLabel}
             </button>
           ))}
         </div>
-        {draft.mode === "source" && (
+        {draft.mode === "imitation" && (
+          <div className="mt-3 text-sm" data-imitation-intro>
+            <p>{NOVEL_IMITATION_UI.modeIntro}</p>
+            <p className="mt-1 text-xs text-slate-400" aria-label="爆款仿写参考价">
+              {NOVEL_IMITATION_UI.priceNote(NOVEL_IMITATION_SKELETON_CREDITS, NOVEL_IMITATION_EPISODE_CREDITS)}
+            </p>
+          </div>
+        )}
+        {(draft.mode === "source" || draft.mode === "imitation") && (
           <ManhuaNovelSourcePanel
             inline
             fileInputRef={sourceFileInput}
@@ -1385,6 +1666,76 @@ function NovelWorkspaceEditor({
             placeholder="主角想得到什么？障碍是什么？希望观众期待什么？"
           />
         </label>
+        {draft.mode === "imitation" && (
+          <>
+            <label className="mt-4 block">
+              {NOVEL_IMITATION_UI.genreLabel}
+              <input
+                aria-label={NOVEL_IMITATION_UI.genreLabel}
+                className={field}
+                maxLength={200}
+                value={draft.imitationGenre || ""}
+                placeholder={NOVEL_IMITATION_UI.genrePlaceholder}
+                onChange={e => change({ imitationGenre: e.target.value })}
+              />
+            </label>
+            <label className="mt-4 block">
+              {NOVEL_IMITATION_UI.synopsisLabel}
+              <textarea
+                aria-label={NOVEL_IMITATION_UI.synopsisLabel}
+                className={field}
+                maxLength={NOVEL_IMITATION_SYNOPSIS_MAX}
+                rows={6}
+                value={draft.imitationSynopsis || ""}
+                placeholder={NOVEL_IMITATION_UI.synopsisPlaceholder}
+                onChange={e => change({ imitationSynopsis: e.target.value })}
+              />
+            </label>
+            <p className="mt-2 text-xs text-slate-400">{NOVEL_IMITATION_UI.templateHint}</p>
+            <div className="mt-4" data-imitation-skeleton>
+              <button
+                className={button}
+                disabled={disabled || skeletonBusy || !imitationBaseText(draft).trim()}
+                onClick={() => void extractSkeleton()}
+              >
+                {skeletonBusy
+                  ? NOVEL_IMITATION_UI.skeletonBusy
+                  : draft.imitationSkeleton
+                    ? NOVEL_IMITATION_UI.skeletonRedo
+                    : NOVEL_IMITATION_UI.skeletonButton}
+              </button>
+              {draft.imitationSkeleton && (
+                <p className="mt-2 text-sm" role="status">
+                  {skeletonReady
+                    ? NOVEL_IMITATION_UI.skeletonReady(draft.imitationSkeleton.skeleton.beats.length)
+                    : NOVEL_IMITATION_UI.skeletonStale}
+                </p>
+              )}
+              {skeletonReady && draft.imitationSkeleton && (
+                <NovelImitationScoreCard
+                  score={draft.imitationSkeleton.skeleton.score}
+                  library={draft.imitationSkeleton.library}
+                />
+              )}
+              {skeletonReady && draft.imitationSkeleton && (
+                <details className="mt-2 text-sm">
+                  <summary className="cursor-pointer">{NOVEL_IMITATION_UI.skeletonTitle}</summary>
+                  <ol className="mt-1 list-decimal space-y-1 pl-5">
+                    {draft.imitationSkeleton.skeleton.beats.map((b, i) => (
+                      <li key={i}>
+                        <strong>{b.name}</strong>
+                        <span className="ml-1 rounded bg-amber-200/15 px-1 text-xs text-amber-200">{b.function}</span>
+                        <span className="ml-2 text-xs text-slate-400">{b.position}</span>
+                        {b.roles.length ? <span className="ml-2 text-xs text-slate-400">{b.roles.join("、")}</span> : null}
+                        <div className="text-xs text-slate-300">{b.summary}</div>
+                      </li>
+                    ))}
+                  </ol>
+                </details>
+              )}
+            </div>
+          </>
+        )}
         <label className="mt-4 block text-sm">
           创作模型
           <select
@@ -1409,6 +1760,7 @@ function NovelWorkspaceEditor({
         </label>
         <button
           className={`${button} mt-4 bg-amber-200 text-slate-950`}
+          disabled={disabled}
           onClick={() => {
             setSideTab("advisor");
             generate("advice");
@@ -1432,7 +1784,9 @@ function NovelWorkspaceEditor({
           )}
           {!error && !saveError && !draft.pending && (
             <p className="text-slate-400">
-              填好作品名称、方向，并采用正文选段后提交；无需先选择模板。
+              {draft.mode === "imitation"
+                ? NOVEL_IMITATION_UI.readyHint
+                : "填好作品名称、方向，并采用正文选段后提交；无需先选择模板。"}
             </p>
           )}
         </div>
@@ -1441,15 +1795,58 @@ function NovelWorkspaceEditor({
   );
   const advisorContent = (
     <>
-      <NovelVoiceRevision key={draft.roundId} getWorkspace={() => latest.current} onApplyRevision={async (candidate, signal) => {
+      <div className="mb-3 flex flex-wrap items-center gap-4 text-sm">
+        <label className="inline-flex items-center gap-2">
+          顾问档位
+          <select
+            aria-label="创作顾问档位"
+            className="rounded border bg-transparent px-2 py-1"
+            disabled={disabled}
+            value={draft.advisorModelPreference || ""}
+            onChange={e =>
+              change({
+                advisorModelPreference: (e.target.value || undefined) as NovelTestInput["modelPreference"],
+              })
+            }
+          >
+            <option value="">沿用创作线路</option>
+            {NOVEL_ADVISOR_TIER_OPTIONS.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label} · {option.originalCredits ? "限时特价 " : ""}{option.referenceCredits} 积分/次
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="inline-flex flex-wrap items-center gap-3 text-xs text-slate-300" aria-label="顾问档位价格">
+          {NOVEL_ADVISOR_TIER_OPTIONS.map(option => (
+            <span key={option.value}>
+              {option.label}{" "}
+              {option.originalCredits ? <><s className="text-slate-500">{option.originalCredits}</s>{" "}</> : null}
+              <strong className={option.originalCredits ? "text-amber-200" : undefined}>{option.referenceCredits} 积分</strong>
+              {option.originalCredits ? <span className="ml-1 rounded bg-amber-200/15 px-1 text-amber-200">限时特价</span> : null}
+            </span>
+          ))}
+        </span>
+        <label className="inline-flex items-center gap-2">
+          <input
+            type="checkbox"
+            aria-label="语音输入"
+            checked={advisorVoice}
+            onChange={e => setAdvisorVoice(e.target.checked)}
+          />
+          语音输入
+        </label>
+      </div>
+      {advisorVoice && <NovelVoiceRevision key={draft.roundId} getWorkspace={() => latest.current} onApplyRevision={async (candidate, signal) => {
         if (signal.aborted || disabled || saving.current > 0) throw new Error("工作区正在保存或处理任务，未修改正文。");
         const before = latest.current;
         const next = await applyNovelVoiceCandidate(before, candidate);
         if (signal.aborted || !alive.current || latest.current !== before || running.current || saving.current > 0) throw new Error("正文或工作区在确认期间变化，未覆盖现稿。");
         if (!await persist(next, `voice-${candidate.id}`, true)) throw new Error("正文保存失败，未确认套用成功；候选稿保留，请先处理保存错误。");
         if (alive.current) { setActiveChapter(candidate.episode - 1); setWorkspaceTab("novel"); }
-      }} scopeKey={`${userId}:${draft.roundId}`} context={JSON.stringify({ workspace: workspaceTab, activeEpisode: activeChapter + 1, title: draft.topic, direction: draft.direction, outline: draft.outline, currentChapter: draft.chapters[activeChapter], templates: draft.templates, chapterCount: draft.chapters.length })} disabled={disabled} onUse={text => { change({ advisorDraft: text }); setSideTab("advisor"); }} targets={draft.chapters.map((chapter, i) => ({ episode: i + 1, label: chapter ? `第${i + 1}集小说稿` : `第${i + 1}集尚无正文` }))} onNavigate={target => { if (disabled || !latest.current.chapters[target.episode - 1]) throw new Error("该集正文尚未生成或工作区忙，未切换。"); setActiveChapter(target.episode - 1); setWorkspaceTab("novel"); return JSON.stringify({ episode: target.episode, text: latest.current.chapters[target.episode - 1], next: "以本次返回正文为准；修改前调用novelText read获取revision。" }); }} onAskAdvisor={async question => await generate("advice", undefined, 1, question)} />
-      {(advice || draft.advisorDraft?.trim()) && (
+      }} scopeKey={`${userId}:${draft.roundId}`} context={JSON.stringify({ workspace: workspaceTab, activeEpisode: activeChapter + 1, title: draft.topic, direction: draft.direction, outline: draft.outline, currentChapter: draft.chapters[activeChapter], templates: draft.templates, chapterCount: draft.chapters.length })} disabled={disabled} onUse={text => { change({ advisorDraft: text }); setSideTab("advisor"); }} targets={draft.chapters.map((chapter, i) => ({ episode: i + 1, label: chapter ? `第${i + 1}集小说稿` : `第${i + 1}集尚无正文` }))} onNavigate={target => { if (disabled || !latest.current.chapters[target.episode - 1]) throw new Error("该集正文尚未生成或工作区忙，未切换。"); setActiveChapter(target.episode - 1); setWorkspaceTab("novel"); return JSON.stringify({ episode: target.episode, text: latest.current.chapters[target.episode - 1], next: "以本次返回正文为准；修改前调用novelText read获取revision。" }); }} onAskAdvisor={async question => await generate("advice", undefined, 1, question)} />}
+      {(
+
         <div className="mt-5 space-y-3">
           <h3 className="font-semibold">与创作顾问讨论</h3>
           <div
@@ -1756,6 +2153,41 @@ function NovelWorkspaceEditor({
       ))}
     </>
   );
+  /** 审稿改稿改动情节时提醒核对大纲（模型申报 + 代码兜底核对）。 */
+  const outlineAlert = novelOutlineAlertSummary(draft);
+  /** 最近一次仿写大纲结果（结构对照）；当前不是仿写模式或解析失败时不显示。 */
+  const imitationOutline = (() => {
+    if (draft.mode !== "imitation") return null;
+    const run = [...draft.runs]
+      .reverse()
+      .find(r => r.input.stage === "outline" && r.input.imitation && r.input.roundId === draft.roundId);
+    if (!run) return null;
+    const parsed = novelImitationOutlineSchema.safeParse(
+      (() => {
+        try {
+          return JSON.parse(run.result.text);
+        } catch {
+          return null;
+        }
+      })()
+    );
+    return parsed.success ? parsed.data : null;
+  })();
+  /** 原创度自查（纯代码比对，只提示不改稿）：重名比对底稿名称表，句子比对底稿全文。结果按文本缓存。 */
+  const originality = (text: string, withSentences: boolean) => {
+    if (draft.mode !== "imitation" || !skeletonReady || !text.trim()) return null;
+    const base = imitationBaseText(draft);
+    const key = `${withSentences ? 1 : 0}|${currentBaseSha}|${text}`;
+    const hit = originalityCache.current.get(key);
+    if (hit) return hit;
+    const value = {
+      names: findNovelNameOverlaps(text, draft.imitationSkeleton?.skeleton.properNouns ?? []),
+      sentences: withSentences ? findNovelSentenceOverlaps(text, base).map(s => s.fragment) : [],
+    };
+    if (originalityCache.current.size > 50) originalityCache.current.clear();
+    originalityCache.current.set(key, value);
+    return value;
+  };
   const storyContent = (
     <>
       <button
@@ -1950,12 +2382,38 @@ function NovelWorkspaceEditor({
       >
         生成本批续写提案
       </button>
+      {outlineAlert.level !== "none" && (
+        <p className="novel-outline-alert-note mt-4" role="status">
+          {outlineAlert.level === "major"
+            ? "修改版已偏离原大纲，采用前请先核对并更新大纲"
+            : "审稿改稿改动了情节，请核对大纲"}
+          （第{outlineAlert.chapters.join("、")}集）。更新本集大纲条目，或核对无误后点「大纲已核对」，提醒即消失。
+          <button
+            type="button"
+            className="ml-3 underline"
+            disabled={Boolean(initial.error)}
+            onClick={() => {
+              const flagged = new Set(outlineAlert.chapters.map(n => n - 1));
+              const now = new Date().toISOString();
+              change({
+                chapterRevisions: (draft.chapterRevisions || []).map(entry =>
+                  flagged.has(entry.index) && !entry.outlineCheckedAt
+                    ? { ...entry, outlineCheckedAt: now }
+                    : entry
+                ),
+              });
+            }}
+          >
+            大纲已核对
+          </button>
+        </p>
+      )}
       <label className="mt-4 block">
         提案与大纲 · 可修改
         <textarea
           aria-label="提案与大纲"
           disabled={disabled}
-          className={field}
+          className={`${field}${outlineAlert.level === "major" ? " novel-outline-alert novel-outline-alert-flash" : outlineAlert.level === "partial" ? " novel-outline-alert" : ""}`}
           rows={12}
           value={draft.outline}
           onChange={e =>
@@ -1968,6 +2426,16 @@ function NovelWorkspaceEditor({
           maxLength={14000}
         />
       </label>
+      {imitationOutline && (
+        <NovelImitationStructureMap
+          plan={imitationOutline}
+          stale={formatNovelImitationOutline(imitationOutline) !== draft.outline}
+        />
+      )}
+      {(() => {
+        const check = originality(draft.outline, false);
+        return check ? <NovelOriginalityNote names={check.names} sentences={[]} /> : null;
+      })()}
       <button
         disabled={disabled || !draft.outline.trim()}
         className={`${button} mt-3`}
@@ -2091,6 +2559,40 @@ function NovelWorkspaceEditor({
             >
               {draft.chapters[i] ? "重新生成本集" : "生成本集"}
             </button>
+            <button
+              className={button}
+              disabled={disabled || (draft.chapters[i] || "").trim().length < 500}
+              onClick={() => reviseChapter(i + 1)}
+            >
+              审稿改稿
+            </button>
+            {(
+              [
+                ["reviseModelPreference", "审稿线路"],
+                ["rewriteModelPreference", "改稿线路"],
+              ] as const
+            ).map(([key, title]) => (
+              <label key={key} className="inline-flex items-center gap-2 text-sm">
+                {title}
+                <select
+                  aria-label={`第${i + 1}集${title}`}
+                  className="rounded border px-2 py-1"
+                  disabled={disabled}
+                  value={draft[key] || draft.modelPreference || "auto"}
+                  onChange={e =>
+                    change({
+                      [key]: e.target.value as NovelTestInput["modelPreference"],
+                    })
+                  }
+                >
+                  {NOVEL_MODEL_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
           </div>
           <textarea
             aria-label={`第${i + 1}集小说稿`}
@@ -2110,6 +2612,34 @@ function NovelWorkspaceEditor({
             }}
           />
           <NovelQualityHints text={draft.chapters[i] || ""} />
+          {(() => {
+            const check = originality(draft.chapters[i] || "", true);
+            return check ? (
+              <NovelOriginalityNote names={check.names} sentences={check.sentences} episode={i + 1} />
+            ) : null;
+          })()}
+          <NovelChapterRevisionPanel
+            entries={(draft.chapterRevisions || []).filter(r => r.index === i)}
+            disabled={disabled || Boolean(initial.error)}
+            outlineState={draft}
+            onAdopt={(requestId, outlineAlert) => {
+              if (
+                !window.confirm(
+                  outlineAlert === "major"
+                    ? "修改版已偏离原大纲，采用前请先核对并更新大纲。\n仍要采用最终修改版？当前正文会保留为本集历史版本。"
+                    : outlineAlert === "partial"
+                      ? "本次修改改动了情节，请留意与大纲是否一致。\n采用最终修改版？当前正文会保留为本集历史版本。"
+                      : "采用最终修改版？当前正文会保留为本集历史版本。"
+                )
+              )
+                return;
+              try {
+                change(adoptNovelRevision(latest.current, requestId));
+              } catch (e) {
+                setError(e instanceof Error ? e.message : "无法采用修改版");
+              }
+            }}
+          />
           {draft.chapterWarnings?.[String(i)] && (
             <div className="mt-2 text-sm text-amber-200" role="status">
               {draft.chapterWarnings[String(i)]}
@@ -2340,6 +2870,7 @@ function NovelWorkspaceEditor({
                   outline: "提案",
                   chapter: "小说",
                   script: "剧本",
+                  revise: "审稿改稿",
                 }[run.input.stage]
               }{" "}
               · {run.result.requestId}
@@ -2497,6 +3028,15 @@ function NovelWorkspaceEditor({
           >
             <Icon size={19} />
             <span>{label}</span>
+            {id === "prepare" && outlineAlert.level !== "none" && (
+              <span
+                className="novel-step-alert"
+                title="审稿改稿改动了情节，请核对大纲"
+                aria-label="大纲待核对"
+              >
+                大纲待核对
+              </span>
+            )}
             <span className="novel-step-number">0{i + 1}</span>
           </button>
         ))}
@@ -2602,6 +3142,33 @@ function NovelWorkspaceEditor({
                   </p>
                 )}
                 <div className="novel-mix-content">{templateMix}</div>
+                <NovelImitationLibraryPicker
+                  items={libraryItems}
+                  failed={libraryQuery.isError}
+                  picked={(draft.libraryTemplatePicks ?? []).filter(id => libraryItems.some(i => i.id === id))}
+                  disabled={disabled}
+                  canDelete={authUser?.role === "admin" || authUser?.role === "supervisor"}
+                  onToggle={(id, checked) => {
+                    const current = (latest.current.libraryTemplatePicks ?? []).filter(p => p !== id);
+                    const next = checked ? [...current, id] : current;
+                    if (next.length > NOVEL_IMITATION_LIBRARY_PICK_MAX) {
+                      setError(NOVEL_IMITATION_UI.libraryPickLimit(NOVEL_IMITATION_LIBRARY_PICK_MAX));
+                      return;
+                    }
+                    change({ libraryTemplatePicks: next });
+                  }}
+                  onDelete={id => {
+                    if (!window.confirm(NOVEL_IMITATION_UI.libraryDeleteConfirm)) return;
+                    void libraryDelete
+                      .mutateAsync({ id })
+                      .then(() => {
+                        const picks = latest.current.libraryTemplatePicks ?? [];
+                        if (picks.includes(id)) change({ libraryTemplatePicks: picks.filter(p => p !== id) });
+                        return libraryQuery.refetch();
+                      })
+                      .catch(() => setError(NOVEL_IMITATION_UI.libraryDeleteFailed));
+                  }}
+                />
                 <div className="novel-mix-actions">
                   <button
                     className={`${button} novel-primary`}

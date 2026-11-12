@@ -15,8 +15,8 @@ export async function fetchPdfBufferFromWorker(html: string, token?: string): Pr
 export async function measureKnowledgeBookletFromWorker(html: string): Promise<number> {
   return (await requestPdfWorker(html, undefined, true) as KnowledgeBookletMeasure).pages;
 }
-/** 预分页逐章细节（排版服务新版才回报 booklets；旧版只有页数，booklets 为空数组）。 */
-export type KnowledgeBookletMeasure = { pages: number; booklets: { pages: number; imageModes: Record<string, string>; maxWhitespace: number }[] };
+/** 预分页逐章细节（排版服务新版才回报 booklets；旧版只有页数，booklets 为空数组）。layout=逐页版面测量（更新后的排版服务才有，缺失即「未审查」）。 */
+export type KnowledgeBookletMeasure = { pages: number; booklets: { pages: number; imageModes: Record<string, string>; maxWhitespace: number; layout?: unknown[] }[] };
 export async function measureKnowledgeBookletDetailsFromWorker(html: string): Promise<KnowledgeBookletMeasure> {
   return requestPdfWorker(html, undefined, true) as Promise<KnowledgeBookletMeasure>;
 }

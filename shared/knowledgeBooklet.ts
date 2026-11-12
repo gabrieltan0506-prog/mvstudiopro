@@ -10,7 +10,7 @@ export type KnowledgeBookletPage = { id: string; headline: string; body: string;
 export type KnowledgeBookletTheme = "fusion_chinese_garden" | "fusion_ink_mountains" | "fusion_coastal_lighthouse" | "fusion_glasshouse_garden" | "fusion_maple_bridge" | "fusion_snow_monastery";
 /** 手册每页的半透明平铺水印（用户 2026-11-11 定：图文手册生成时打上，单张图片不打）。 */
 export const KNOWLEDGE_BOOKLET_WATERMARK = "mvstudiopro.com";
-export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1111-v16-watermark";
+export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1111-v17-preview-title";
 /** 信息图入版上限（排版服务按 data-pdf-max-dim 执行；与审校缩图派生件 2048 一致，未超上限的 JPEG 原样入版）。 */
 export const KNOWLEDGE_BOOKLET_IMAGE_MAX_DIM = 2048;
 export const KNOWLEDGE_BOOKLET_IMAGE_QUALITY = 0.85;
@@ -413,11 +413,13 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
             let top=top0+max-gap+6,height=gap-12;
             if(source&&source.dataset.end!=='true'&&height>=150){
               // 下篇预告：标题行 + 裁切条（最高 720px，余下高度给纹样框）。
-              const strip=source.__img?Math.min(720,height-96):0,blockHeight=strip>=120?strip+96:96;
+              const head=124,strip=source.__img?Math.min(720,height-head):0,blockHeight=strip>=120?strip+head:head;
               if(height-blockHeight>=120){box.append(ornamentPanel(top,left,right-left,height-blockHeight-12,''));top+=height-blockHeight;}
               const el=panel('next-preview',top,left,right-left,blockHeight,'<p class="next-eyebrow">下篇预告 <b>'+source.dataset.no+'</b></p><h4>'+source.dataset.headline.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'})[c])+'</h4>');
-              if(strip>=120){const holder=document.createElement('div');holder.className='preview-strip';holder.style.height=strip+'px';holder.append(source.__img);el.append(holder);}
+              let holder=null;if(strip>=120){holder=document.createElement('div');holder.className='preview-strip';holder.style.height=strip+'px';holder.append(source.__img);el.append(holder);}
               box.append(el);
+              // 自检：标题行必须完整露出；被裁切条挤占时把裁切条按实测高度下收，仍不够就去掉裁切条。
+              if(holder){const title=el.querySelector('h4'),need=title.offsetTop+title.scrollHeight+12,room=el.clientHeight-need-14;if(holder.offsetTop<need-12||title.scrollHeight-title.clientHeight>2){if(room>=120)holder.style.height=room+'px';else holder.remove();}}
             }else box.append(ornamentPanel(top,left,right-left,height,source&&source.dataset.end==='true'?'全书完':''));
             covered+=gap*cols.reduce((n,c)=>n+c.clientWidth,0);
           }
@@ -443,10 +445,19 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
         el.querySelector('footer span').textContent=focus;
         const heading=el.querySelector('.reading-title h2');if(heading)heading.textContent=title;
       });
+      // 版面审查测量（只读，不改排版）：逐页记录溢出、标题裁切、补白块/图片条压字、坏图与跨页图半张数，供 auditKnowledgeBookletLayout 判定。
+      const hit=(a,b)=>a.left<b.right-1&&b.left<a.right-1&&a.top<b.bottom-1&&b.top<a.bottom-1;
+      const layout=folios.map((el,i)=>{
+        const covers=[...el.querySelectorAll('.page-filler,.preview-strip')],texts=[...el.querySelectorAll('.reading-unit h3,.reading-unit p,.reading-unit li,.reading-unit table,.reading-title h2')];
+        const overlaps=[];for(const c of covers){const r=c.getBoundingClientRect();for(const t of texts){if(c.contains(t))continue;if(hit(r,t.getBoundingClientRect())){overlaps.push({cover:c.classList.contains('next-preview')?'下篇预告':c.classList.contains('preview-strip')?'图片条':'补白块',target:(t.textContent||'').trim().slice(0,16)});break;}}}
+        const clipped=[...el.querySelectorAll('.next-preview h4,.reading-title h2,.unit-heading h3')].filter(h=>{const box=h.closest('.page-filler,.folio').getBoundingClientRect(),r=h.getBoundingClientRect();return h.scrollHeight>h.clientHeight+2||r.bottom>box.bottom+1;}).map(h=>(h.textContent||'').trim().slice(0,24));
+        const broken=[...el.querySelectorAll('img')].filter(img=>img.complete&&img.naturalWidth===0).map(img=>img.alt||img.closest('[data-card-id]')?.dataset.cardId||'图片');
+        return {page:offset+i+1,whitespace:Number(el.dataset.whitespace||0),overflow:[...el.querySelectorAll('.reading-column')].some(c=>c.scrollHeight>c.clientHeight+2),clippedHeadings:clipped,overlaps,brokenImages:broken,spreadHalves:{a:el.querySelectorAll('.spread-a').length,b:el.querySelectorAll('.spread-b').length}};
+      });
       if([...root.querySelectorAll('.reading-column')].some(el=>el.scrollHeight>el.clientHeight+2))throw new Error('正文超出页面，未裁切内容，请调整版式');
       root.dataset.ready='true';
       const imageModes=Object.fromEntries(modeOf);
-      root.__knowledgeBooklet={ready:true,imagePages:cards.length,readingPages:readingPages.length,pages:folios.length,units:units.length,columnCapacity:capacity,overflow:false,imageModes,spreadChapters:Object.values(imageModes).filter(m=>m==='spread').length,whitespace:metrics.map(m=>m.whitespace),rawWhitespace:metrics.map(m=>m.raw),maxWhitespace:Math.max(0,...metrics.map(m=>m.whitespace)),pendingContent:${JSON.stringify(input.pages.filter(p=>!hasKnowledgeBody(p.body)).map(p=>({id:p.id,headline:p.headline})))}};
+      root.__knowledgeBooklet={ready:true,layout,imagePages:cards.length,readingPages:readingPages.length,pages:folios.length,units:units.length,columnCapacity:capacity,overflow:false,imageModes,spreadChapters:Object.values(imageModes).filter(m=>m==='spread').length,whitespace:metrics.map(m=>m.whitespace),rawWhitespace:metrics.map(m=>m.raw),maxWhitespace:Math.max(0,...metrics.map(m=>m.whitespace)),pendingContent:${JSON.stringify(input.pages.filter(p=>!hasKnowledgeBody(p.body)).map(p=>({id:p.id,headline:p.headline})))}};
       window.__knowledgeBooklet=root.__knowledgeBooklet;
     };
     root.__layoutBooklet=()=>busy=busy.catch(()=>{}).then(layout).catch(e=>{
@@ -470,7 +481,7 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
 /* 跨页大图：左右两半各占一页上部，下方照常两栏正文；中缝两侧重叠 3%。 */
 .spread-card{flex:none;margin:0;padding:10px;border:3px double var(--line);background:color-mix(in srgb,var(--paper) 45%,var(--white));overflow:hidden}.spread-card img{display:block}.spread-a{border-right-style:dashed}.spread-b{border-left-style:dashed}.spread-folio .image-title{margin:14px 0 14px}.spread-folio .lead-columns{margin:18px 0 16px!important}.spread-cue{display:flex;align-items:center;gap:12px;margin:14px 0 12px;font:700 26px/1.3 "Songti SC",serif;letter-spacing:2px}.spread-cue .chapter-no{display:inline-grid;place-items:center;width:34px;height:34px;border:3px double var(--accent);border-radius:50%;font:15px/1 Georgia,serif;letter-spacing:0;color:var(--accent)}.spread-cue i{font:400 17px sans-serif;opacity:.6;font-style:normal}
 /* 页尾补白：下篇预告与纹样框绝对定位在栏区，不进栏、不改正文。 */
-.reading-columns{position:relative}.page-filler{position:absolute;box-sizing:border-box;border:3px double var(--line);border-radius:14px 0 14px 0;overflow:hidden;pointer-events:none}.filler-ornament{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:repeating-linear-gradient(45deg,color-mix(in srgb,var(--line) 16%,transparent) 0 1px,transparent 1px 14px),color-mix(in srgb,var(--paper) 70%,var(--white))}.filler-motif{width:min(86%,1100px);height:min(72%,340px);display:flex;align-items:center;justify-content:center;color:var(--accent);opacity:.7}.filler-motif svg{width:100%!important;height:100%!important;opacity:1!important;stroke-width:2.2}.filler-ornament:before{content:"";position:absolute;inset:10px;border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:9px 0 9px 0}.filler-label{margin:0;font:700 30px "Songti SC",serif;letter-spacing:12px;color:var(--accent)}.next-preview{display:flex;flex-direction:column;background:color-mix(in srgb,var(--paper) 55%,var(--white));border-color:var(--accent)}.next-eyebrow{margin:14px 22px 2px;font-size:15px;letter-spacing:4px;color:var(--accent)}.next-eyebrow b{font:20px Georgia,serif;margin-left:8px}.next-preview h4{margin:0 22px 12px;font:700 32px/1.3 "Songti SC",serif;letter-spacing:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.preview-strip{flex:none;margin:0 14px 14px;border-radius:8px;overflow:hidden;opacity:.92}.preview-strip img{display:block;width:100%!important;height:100%!important;max-height:none!important;object-fit:cover!important;object-position:50% 38%}
+.reading-columns{position:relative}.page-filler{position:absolute;box-sizing:border-box;border:3px double var(--line);border-radius:14px 0 14px 0;overflow:hidden;pointer-events:none}.filler-ornament{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:repeating-linear-gradient(45deg,color-mix(in srgb,var(--line) 16%,transparent) 0 1px,transparent 1px 14px),color-mix(in srgb,var(--paper) 70%,var(--white))}.filler-motif{width:min(86%,1100px);height:min(72%,340px);display:flex;align-items:center;justify-content:center;color:var(--accent);opacity:.7}.filler-motif svg{width:100%!important;height:100%!important;opacity:1!important;stroke-width:2.2}.filler-ornament:before{content:"";position:absolute;inset:10px;border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:9px 0 9px 0}.filler-label{margin:0;font:700 30px "Songti SC",serif;letter-spacing:12px;color:var(--accent)}.next-preview{display:flex;flex-direction:column;background:color-mix(in srgb,var(--paper) 55%,var(--white));border-color:var(--accent)}.next-eyebrow{flex:none;margin:14px 22px 2px;font-size:15px;letter-spacing:4px;color:var(--accent)}.next-eyebrow b{font:20px Georgia,serif;margin-left:8px}.next-preview h4{flex:none;margin:0 22px 12px;font:700 32px/1.3 "Songti SC",serif;letter-spacing:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.preview-strip{flex:none;margin:0 14px 14px;border-radius:8px;overflow:hidden;opacity:.92}.preview-strip img{display:block;width:100%!important;height:100%!important;max-height:none!important;object-fit:cover!important;object-position:50% 38%}
 ${knowledgeDecorationCss(decoration)}
 ${design?knowledgeContentDesignCss(design):""}
 @media screen and (max-width:1656px){[data-ready="true"] .folio{zoom:calc((100vw - 32px) / 1600px)}}

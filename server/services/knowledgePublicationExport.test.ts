@@ -314,3 +314,59 @@ describe("pdf-worker 瞬时故障原地重试一次", () => {
     expect(f.deduct).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("版面审查随导出结果保存（只提示，不拦截）", () => {
+  async function twoChapters() {
+    const { writeFile } = await import("node:fs/promises");
+    const f = fixture(), pub = f.doc.publication!;
+    const first = f.doc.pages[0];
+    f.doc.pages = [{ ...first, headline: "甲章" }, { ...first, id: crypto.randomUUID(), headline: "乙章" }];
+    pub.source.pages = f.doc.pages.map(({ id, headline, body, imageUrl }) => ({ id, headline, body, imageUrl }));
+    pub.review = { ...pub.review!, sourceDigest: knowledgeSourceDigest(pub.source), pages: f.doc.pages.map(p => ({ ...pub.review!.pages[0], id: p.id, headline: p.headline, body: p.body })) };
+    pub.manuscript = pub.confirmedManuscript = knowledgeManuscript(pub.review);
+    f.deps.review.mockResolvedValue({ report: pub.review, sourceImages: [] });
+    f.deps.merge.mockImplementation(async (_paths?: string[], target?: string) => { await writeFile(target!, Buffer.from("%PDF" + "merged-test-only".repeat(20))); });
+    f.deps.countPages.mockResolvedValue(5);
+    return f;
+  }
+  const page = (n: number, extra: Record<string, unknown> = {}) => ({ page: n, whitespace: 0.1, overflow: false, clippedHeadings: [], overlaps: [], brokenImages: [], spreadHalves: { a: 0, b: 0 }, ...extra });
+
+  it("排版服务未带回测量（旧版只给页数）：导出照常成功，标记未审查", async () => {
+    const f = await twoChapters();
+    const measure = vi.fn(async (html: string) => html.includes(own("乙章")) ? { pages: 3, booklets: [] } : 2);
+    const result = await exportKnowledgePublication(7, f.doc.id, "10", { ...f.deps, measure } as any);
+    expect(result.pdfUrl).toBeTruthy();
+    expect(result.totalPages).toBe(5);
+    expect(result.layoutAudit).toEqual({ checked: false });
+  });
+
+  it("有问题时清单进入导出结果，页码换算成全书页码；重复取成品能读回", async () => {
+    const f = await twoChapters();
+    // 甲章 2 页、乙章 3 页；乙章局部第 2 页留白过多、第 3 页标题被裁 → 全书第 4、5 页。
+    const measure = vi.fn(async (html: string) => html.includes(own("乙章"))
+      ? { pages: 3, booklets: [{ pages: 3, imageModes: {}, maxWhitespace: 0.5, layout: [page(1), page(2, { whitespace: 0.5 }), page(3, { clippedHeadings: ["乙章小结"] })] }] }
+      : { pages: 2, booklets: [{ pages: 2, imageModes: {}, maxWhitespace: 0.1, layout: [page(1), page(2)] }] });
+    const result = await exportKnowledgePublication(7, f.doc.id, "10", { ...f.deps, measure } as any);
+    expect(result.pdfUrl).toBeTruthy();
+    expect(result.layoutAudit).toEqual({
+      checked: true, passed: false, pages: 5, issueCount: 2,
+      issues: [{ page: 4, kind: "whitespace", target: "留白 50%" }, { page: 5, kind: "clipped", target: "乙章小结" }],
+    });
+    const manifest = JSON.parse(Array.from(f.storage.entries()).find(([k]) => k.endsWith("/manifest.json"))![1].toString("utf8"));
+    expect(manifest.layoutAudit.issueCount).toBe(2);
+    const pdfCalls = f.deps.pdf.mock.calls.length;
+    const again = await exportKnowledgePublication(7, f.doc.id, "10", { ...f.deps, measure } as any);
+    expect(f.deps.pdf.mock.calls.length).toBe(pdfCalls);
+    expect(again.layoutAudit).toEqual(result.layoutAudit);
+  });
+
+  it("测量页数与计页不符或测量格式异常：不报错、记为未审查", async () => {
+    const f = await twoChapters();
+    const measure = vi.fn(async (html: string) => html.includes(own("乙章"))
+      ? { pages: 3, booklets: [{ pages: 3, imageModes: {}, maxWhitespace: 0, layout: [page(1)] }] }
+      : { pages: 2, booklets: [{ pages: 2, imageModes: {}, maxWhitespace: 0, layout: "坏数据" }] });
+    const result = await exportKnowledgePublication(7, f.doc.id, "10", { ...f.deps, measure } as any);
+    expect(result.pdfUrl).toBeTruthy();
+    expect(result.layoutAudit).toEqual({ checked: false });
+  });
+});
