@@ -95,7 +95,7 @@ await saveNovelWorkspaceDb('1',loaded.raw,draft)}createRoot(document.getElementB
       }, t);
     await clickText("多线路审稿对比");
     await p.waitForSelector('[aria-label="对比线路三"]');
-    expect(await p.evaluate(() => document.body.textContent)).toContain("合计参考价 10 积分");
+    expect(await p.evaluate(() => document.body.textContent)).toContain("合计参考价 15 积分");
     await clickText("开始对比");
     await p.waitForFunction(() => document.querySelectorAll('[data-lane-status="succeeded"]').length === 2 && !document.body.textContent!.includes("续上的结论"));
     const calls = await p.evaluate(() => (globalThis as any).calls);

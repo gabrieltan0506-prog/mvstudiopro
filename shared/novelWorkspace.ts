@@ -492,7 +492,9 @@ export const novelReviewSchema = z
           })
           .strict()
       )
-      .min(3)
+      // 结构下限 1 条：按所选意见改稿可以只带 1 条（站长 1112：不硬凑意见）；
+      // 模型审稿仍要求至少 NOVEL_REVIEW_MIN_ISSUES 条，由 validateNovelReview 把关。
+      .min(1)
       .max(10),
     keep: z.array(text.max(300)).max(10).default([]),
     verdict: text.max(300),
@@ -680,8 +682,11 @@ export function normalizeNovelReviewDimensions(value: unknown): unknown {
   // 丢弃后不足下限：不动原值，让 schema 给出明确原因。
   return kept.length >= 3 ? { ...(value as object), issues: kept } : value;
 }
+export const NOVEL_REVIEW_MIN_ISSUES = 3;
 export function validateNovelReview(original: string, value: unknown) {
   const review = novelReviewSchema.parse(normalizeNovelReviewDimensions(value));
+  if (review.issues.length < NOVEL_REVIEW_MIN_ISSUES)
+    throw new Error(`审稿意见不足${NOVEL_REVIEW_MIN_ISSUES}条（仅${review.issues.length}条）`);
   const located: NovelReview["issues"] = [];
   const missing: NovelReview["issues"] = [];
   for (const { located: _, ...issue } of review.issues) {

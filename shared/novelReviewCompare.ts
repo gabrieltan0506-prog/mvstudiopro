@@ -4,8 +4,10 @@
  */
 import { NOVEL_REVIEW_DIMENSIONS, type NovelReviewDimension } from "./novelCraftReview";
 import {
+  NOVEL_ADVISOR_TIER_OPTIONS,
   NOVEL_REVIEW_LANES,
   locateNovelQuote,
+  resolveNovelAdvisorTierPrice,
   type NovelReview,
   type NovelReviewLane,
   type NovelReviewOverride,
@@ -28,16 +30,17 @@ export const novelReviewLaneLabel = (lane: NovelReviewLane) =>
 const laneOrder = (lane: NovelReviewLane) => NOVEL_REVIEW_LANES.indexOf(lane);
 
 /**
- * 对比审稿参考价（积分 / 每条线路一次审稿）——【占位，待站长定价】。
- * 工作台是管理者测试流程，本次不扣费；界面只在开始前显示合计参考价。
+ * 对比审稿价格（积分 / 每条线路一次审稿）：沿用站长 2026-11-11 定的三档价，与创作顾问档位同一真源
+ * （NOVEL_ADVISOR_TIER_OPTIONS，经 resolveNovelAdvisorTierPrice 读取）：
+ * 线路一 10、线路二 5、线路三限时特价 20（2026-12-01 起 40）。管理者测试流程暂不扣费。
  */
-export const NOVEL_REVIEW_COMPARE_CREDITS_PLACEHOLDER: Readonly<Record<NovelReviewLane, number>> = {
-  glm: 5,
-  deepseek: 5,
-  carbon: 35,
-};
-export function novelReviewCompareCredits(lanes: readonly NovelReviewLane[]) {
-  return Array.from(new Set(lanes)).reduce((sum, lane) => sum + NOVEL_REVIEW_COMPARE_CREDITS_PLACEHOLDER[lane], 0);
+export function novelReviewLaneCredits(lane: NovelReviewLane, now: Date | number = Date.now()) {
+  const tier = NOVEL_ADVISOR_TIER_OPTIONS.find(option => option.value === lane);
+  if (!tier) throw new Error(`未知线路：${lane}`);
+  return resolveNovelAdvisorTierPrice(tier, now).credits;
+}
+export function novelReviewCompareCredits(lanes: readonly NovelReviewLane[], now: Date | number = Date.now()) {
+  return Array.from(new Set(lanes)).reduce((sum, lane) => sum + novelReviewLaneCredits(lane, now), 0);
 }
 
 /** 同一处问题：两条意见在原文的区间重叠，或相距不超过这么多字。 */
@@ -175,7 +178,8 @@ export function novelReviewScoreTable(lanes: readonly NovelReviewLaneResult[]): 
 }
 
 /** 改稿清单条数限制与审稿结果一致（3–10 条）。 */
-export const NOVEL_REVIEW_OVERRIDE_MIN_ISSUES = 3;
+/** 站长 2026-11-12：下限 1 条，不硬凑意见。 */
+export const NOVEL_REVIEW_OVERRIDE_MIN_ISSUES = 1;
 export const NOVEL_REVIEW_OVERRIDE_MAX_ISSUES = 10;
 const clip = (value: string, max: number) => {
   const chars = Array.from(value);

@@ -164,9 +164,11 @@ describe("综合意见（按所选意见改稿）", () => {
     if (!("override" in built)) throw new Error("应可组成");
     expect(built.override.issues[0]).toMatchObject({ problem: "问题2a", fix: "改法2a" });
   });
-  it("不足 3 条、超过 10 条、勾了未能定位的意见 → 不能组成", () => {
+  it("下限 1 条（不硬凑意见）；一条都没勾、勾了未能定位的意见 → 不能组成", () => {
     expect(buildNovelReviewOverride(ORIGINAL, lanes, ["glm:0", "deepseek:0"])).toMatchObject({ issueCount: 1 });
-    expect("error" in buildNovelReviewOverride(ORIGINAL, lanes, ["glm:0", "glm:1"])).toBe(true);
+    expect("error" in buildNovelReviewOverride(ORIGINAL, lanes, ["glm:0", "glm:1"])).toBe(false);
+    expect("error" in buildNovelReviewOverride(ORIGINAL, lanes, ["glm:0"])).toBe(false);
+    expect("error" in buildNovelReviewOverride(ORIGINAL, lanes, [])).toBe(true);
     expect(buildNovelReviewOverride(ORIGINAL, lanes, ["carbon:0", "glm:1", "glm:2", "glm:0"])).toEqual({
       error: "未能定位原文的意见不能用于改稿",
       issueCount: 0,
@@ -180,9 +182,13 @@ describe("综合意见（按所选意见改稿）", () => {
     expect(only.override.verdict).toBe("只用线路一的意见。线路一：结论glm");
     expect(only.override.sources).toEqual([{ requestId: ID1, lane: "glm" }]);
   });
-  it("参考价占位：线路一 / 二各 5、线路三 35", () => {
-    expect(novelReviewCompareCredits(["glm", "deepseek"])).toBe(10);
-    expect(novelReviewCompareCredits(["glm", "deepseek", "carbon"])).toBe(45);
+  it("价格沿用站长定的三档：线路一 10、线路二 5、线路三特价 20（12-01 起 40）", () => {
+    const before = Date.parse("2026-11-20T00:00:00+08:00");
+    const after = Date.parse("2026-12-01T00:00:00+08:00");
+    expect(novelReviewCompareCredits(["glm", "deepseek"], before)).toBe(15);
+    expect(novelReviewCompareCredits(["glm", "deepseek", "carbon"], before)).toBe(35);
+    expect(novelReviewCompareCredits(["glm", "deepseek", "carbon"], after)).toBe(55);
+    expect(novelReviewCompareCredits(["glm", "glm"], before)).toBe(10);
   });
 });
 
@@ -219,7 +225,8 @@ describe("请求字段校验", () => {
     const bad = (o: object) => novelTestInputSchema.safeParse({ ...base, reviewOverride: o }).success;
     expect(bad({ ...override, issues: [...override.issues.slice(0, 2), issue("反转", "不在原文", "x")] })).toBe(false);
     expect(bad({ ...override, issues: [...override.issues.slice(0, 2), { ...issue("反转", D, "x"), located: false }] })).toBe(false);
-    expect(bad({ ...override, issues: override.issues.slice(0, 2) })).toBe(false);
+    expect(bad({ ...override, issues: override.issues.slice(0, 2) })).toBe(true); // 1112：下限 1 条
+    expect(bad({ ...override, issues: [] })).toBe(false);
     expect(bad({ ...override, sources: [override.sources[0], override.sources[0]] })).toBe(false);
     expect(bad({ ...override, sources: [] })).toBe(false);
     expect(() => validateNovelReviewOverride("别的正文".repeat(200), override)).toThrow(/找不到/);

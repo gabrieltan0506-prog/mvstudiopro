@@ -73,7 +73,7 @@ beforeAll(async () => {
 import{NovelReviewComparePanel,NovelReviewCompareStart}from'./client/src/components/canvas/NovelReviewCompare';
 const f=globalThis.fx={revise:[],retry:[],started:0,lanes:null};
 function App(){const[text,setText]=useState(${JSON.stringify(REVISE_ORIGINAL)});const[lanes,setLanes]=useState(['glm','deepseek']);f.setText=setText;f.lanes=lanes;
-return <div><NovelReviewCompareStart chapterIndex={3} selected={lanes} credits={lanes.reduce((s,l)=>s+(l==='carbon'?35:5),0)} disabled={false} minLanes={2} onChange={setLanes} onStart={()=>f.started++} onCancel={()=>{}}/>
+return <div><NovelReviewCompareStart chapterIndex={3} selected={lanes} credits={lanes.reduce((s,l)=>s+(l==='carbon'?20:l==='glm'?10:5),0)} disabled={false} minLanes={2} onChange={setLanes} onStart={()=>f.started++} onCancel={()=>{}}/>
 <NovelReviewComparePanel entry={${JSON.stringify(ENTRY)}} currentText={text} disabled={false} rewriteLabel="线路二" onRetry={l=>f.retry.push(l)} onRevise={(o,a)=>f.revise.push({o,a})}/></div>}
 createRoot(document.getElementById('root')).render(<App/>);`,
     },
@@ -138,13 +138,13 @@ it("打分表、分歧标记、结论行；共同 / 独有分区与默认勾选�
   expect(progress).toContain("线路三：这条线路审稿未完成");
   const body = await p.evaluate(() => document.body.textContent || "");
   expect(body).not.toMatch(/glm|deepseek|gemini|carbon|\$|侵权|抄袭|洗稿|触线|查重|相似度/i);
-  expect(body).toContain("合计参考价 10 积分");
+  expect(body).toContain("合计参考价 15 积分");
   expect(body).toContain("更深、更慢，约需数分钟");
-  // 默认只勾了合并后的一处：不足 3 处，不能改稿
+  // 默认只勾了合并后的一处：下限 1 条，可以直接改稿（1112 站长：不硬凑意见）
   const reviseButton = () =>
     p.evaluate(() => Array.from(document.querySelectorAll("button")).find(b => b.textContent === "按所选意见改稿")!.disabled);
-  expect(await reviseButton()).toBe(true);
-  expect(body).toContain("至少选 3 处意见");
+  expect(await reviseButton()).toBe(false);
+  expect(body).not.toContain("至少选 3 处意见");
   await p.close();
 });
 
@@ -177,7 +177,7 @@ it("勾选后「按所选意见改稿」回调综合意见；「只用这条线�
     await p.evaluate(() => Array.from(document.querySelectorAll("button")).find(b => b.textContent === "开始对比")!.disabled)
   ).toBe(true);
   await tick(p, "对比线路三");
-  expect(await p.evaluate(() => document.body.textContent)).toContain("合计参考价 40 积分");
+  expect(await p.evaluate(() => document.body.textContent)).toContain("合计参考价 30 积分");
   await clickText(p, "开始对比");
   expect((await fx(p)).started).toBe(1);
   // 正文改过：意见对不上原文，改稿按钮全部不可用
