@@ -78,9 +78,9 @@ describe("审稿改稿流程", () => {
     expect(err.kind).toBe("review");
     // 写坏也算失败：带拒因同线路重写一次，仍不过才失败；两次原始返回都已保存。
     expect(call).toHaveBeenCalledTimes(2);
-    expect(String(call.mock.calls[1]![1])).toContain("上一次输出未通过校验");
+    expect(String((call.mock.calls as unknown[][])[1]![1])).toContain("上一次输出未通过校验");
     expect(r.log).toEqual(["raw:review", "raw:review"]);
-    expect(r.saveRaw.mock.calls.map(c => c[2])).toEqual([1, 2]);
+    expect((r.saveRaw.mock.calls as unknown[][]).map(c => c[2])).toEqual([1, 2]);
   });
   it("审稿首次写坏、重写后通过：继续改稿", async () => {
     const r = recorder();
