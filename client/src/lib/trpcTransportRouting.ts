@@ -64,7 +64,8 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
 ]);
 
 /** 整个路由前缀直连 Fly：拉片上传签名、启动与 3 秒轮询都走同一鉴权长请求通道，避免反代超时或质询回 HTML。 */
-const TRPC_LONG_HTTP_LINK_PREFIXES = ["editableLayout.", "codeMotion.", "codeMotionProduction.", "fileConversion.", "videoBreakdown."];
+/** 1112：小说工作台的生成与回执轮询此前走反代，单次请求约 2 分钟即被截断，前台误报「本次提交未完成」；整条前缀改直连。 */
+const TRPC_LONG_HTTP_LINK_PREFIXES = ["editableLayout.", "codeMotion.", "codeMotionProduction.", "fileConversion.", "videoBreakdown.", "novelWorkspace."];
 
 export function useLongTrpcHttpLink(op: { path: string }) {
   return TRPC_LONG_HTTP_LINK_PREFIXES.some(prefix => op.path.startsWith(prefix)) || TRPC_LONG_HTTP_LINK_PATHS.has(op.path);
