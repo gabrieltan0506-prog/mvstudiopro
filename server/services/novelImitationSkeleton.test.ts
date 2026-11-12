@@ -199,3 +199,40 @@ describe("resolveNovelImitationSkeleton", () => {
     expect(e3.failures).toEqual([{ shard: 1, reason: "raw_evidence_unsaved" }]);
   });
 });
+
+describe("onShard 分片进度", () => {
+  it("先报 0/N，每完成一片报一次，最终 N/N；失败片不计；整份缓存命中直接报 N/N", async () => {
+    const text = book(12);
+    const total = splitNovelImitationShards(text).length;
+    const { store } = memoryStore();
+    const bad = fakeCall({ fail: rid => (rid === "req-1:imitation-skeleton-1" ? "不是JSON" : null) });
+    const seen: { done: number; total: number }[] = [];
+    await resolveNovelImitationSkeleton({ ...base, baseText: text, call: bad.call, store, onShard: p => seen.push(p) }).catch(() => undefined);
+    expect(seen[0]).toEqual({ done: 0, total });
+    expect(seen.at(-1)).toEqual({ done: total - 1, total });
+    expect(seen.every(p => p.total === total)).toBe(true);
+
+    const again: { done: number; total: number }[] = [];
+    await resolveNovelImitationSkeleton({ ...base, baseText: text, call: fakeCall().call, store, onShard: p => again.push(p) });
+    expect(again[0]).toEqual({ done: 0, total });
+    expect(again.at(-1)).toEqual({ done: total, total });
+
+    const cached: { done: number; total: number }[] = [];
+    const third = fakeCall();
+    await resolveNovelImitationSkeleton({ ...base, baseText: text, call: third.call, store, onShard: p => cached.push(p) });
+    expect(third.call).not.toHaveBeenCalled();
+    expect(cached).toEqual([{ done: total, total }]);
+  });
+  it("回调抛错不影响拆解", async () => {
+    const skeleton = await resolveNovelImitationSkeleton({
+      ...base,
+      baseText: chapter(1, 3000),
+      call: fakeCall().call,
+      store: memoryStore().store,
+      onShard: () => {
+        throw new Error("ui gone");
+      },
+    });
+    expect(skeleton.beats.length).toBeGreaterThan(0);
+  });
+});

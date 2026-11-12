@@ -54,14 +54,31 @@ import {
   novelModelLabel,
   NOVEL_MODEL_OPTIONS,
   NOVEL_ADVISOR_TIER_OPTIONS,
+  resolveNovelAdvisorTierPrice,
   novelChapterSchema,
   novelOutlineSchema,
   novelImitationOutlineSchema,
   formatNovelImitationOutline,
   novelTestInputSchema,
   NOVEL_IMITATION_SYNOPSIS_MAX,
+  type NovelReviewLane,
+  type NovelReviewOverride,
   type NovelTestInput,
 } from "@shared/novelWorkspace";
+import {
+  NOVEL_REVIEW_COMPARE_DEFAULT_LANES,
+  NOVEL_REVIEW_COMPARE_LANES,
+  NOVEL_REVIEW_COMPARE_MIN_LANES,
+  novelReviewCompareCredits,
+  novelReviewLaneLabel,
+} from "@shared/novelReviewCompare";
+import { NovelReviewComparePanel, NovelReviewCompareStart } from "@/components/canvas/NovelReviewCompare";
+import {
+  NOVEL_CREATIVE_PREMISE_MAX,
+  NOVEL_CREATIVE_PREMISE_UI,
+  collectNovelCreativePremiseExclusions,
+  formatNovelCreativePremise,
+} from "@shared/novelCreativePremise";
 import {
   NOVEL_IMITATION_SKELETON_CREDITS,
   NOVEL_IMITATION_EPISODE_CREDITS,
@@ -82,11 +99,16 @@ import {
   NovelOriginalityNote,
 } from "@/components/canvas/NovelImitationPanels";
 import { NovelChapterRevisionPanel } from "@/components/canvas/NovelChapterRevision";
+import { NovelSkeletonTaskError, runNovelSkeletonTask } from "@/lib/novelWorkspaceSkeletonTask";
 import {
   adoptNovelRevision,
   novelOutlineAlertSummary,
   recordNovelReviewOnly,
   recordNovelRevision,
+  retryNovelReviewCompareLane,
+  settleNovelReviewCompareLane,
+  startNovelReviewCompare,
+  type NovelReviewCompareEntry,
   applyNovelChapterCompletion,
   downloadNovelText,
   emptyNovelWorkspace,
@@ -108,6 +130,9 @@ function imitationIdentity(draft: Pick<NovelWorkspace, "mode" | "imitationGenre"
 }
 /** 上一项任务未结束或正在保存时点击被挡下的提示（不悄悄忽略点击）。 */
 const NOVEL_BLOCKED_CLICK_NOTICE = "上一项操作还在进行或保存中，这次点击没有提交，请稍候再点。";
+/** 多线路审稿对比：某条线路未完成时的提示（只影响这一条）。 */
+const NOVEL_REVIEW_COMPARE_LANE_FAILED = "这条线路审稿未完成，记录已保留；可单独重试，其他线路不受影响。";
+const NOVEL_REVIEW_COMPARE_NOT_SUBMITTED = "这条线路没有提交成功，可单独重试。";
 export default function NovelAdaptation() {
   const { user, loading } = useAuth();
   if (loading) return <main className="p-8">正在读取账号…</main>;
@@ -224,13 +249,18 @@ function NovelWorkspaceEditor({
   const templateCatalogConnected = useManhuaTemplateCatalogEvents(Boolean(userId), () => templates.refetch());
   const cards = (templates.data?.groups || []).flatMap(g => g.items);
   const mutation = trpc.novelWorkspace.generate.useMutation();
-  const skeletonMutation = trpc.novelWorkspace.imitationSkeleton.useMutation();
+  /** 创意环节按作品计次（服务端记录）：前两次免费，第三次起每次收费。 */
+  const premiseWorkId = draft.projectId || projectId || draft.roundId;
+  const premiseUsage = trpc.novelWorkspace.creativePremiseUsage.useQuery({ workId: premiseWorkId }, { retry: 1, staleTime: 0 });
+  /** 底稿结构拆解：后台任务（发起即返回任务标识，前台轮询进度）。 */
+  const skeletonStart = trpc.novelWorkspace.imitationSkeletonStart.useMutation();
   /** 拆书参考模板（公共库）；所有模式可勾选，作为大纲与正文的结构参考；仅管理员可删除。 */
   const libraryQuery = trpc.novelWorkspace.imitationLibrary.useQuery(undefined, { retry: 1, staleTime: 0 });
   const libraryDelete = trpc.novelWorkspace.deleteImitationLibrary.useMutation();
   const libraryItems = libraryQuery.data ?? [];
   const { user: authUser } = useAuth();
   const [skeletonBusy, setSkeletonBusy] = useState(false);
+  const [skeletonProgress, setSkeletonProgress] = useState<{ done: number; total: number } | null>(null);
   /** 当前底稿全文的摘要：与拆解时记录的一致才算结构骨架可用。 */
   const [currentBaseSha, setCurrentBaseSha] = useState("");
   const originalityCache = useRef(new Map<string, { names: string[]; sentences: string[] }>());
@@ -331,12 +361,13 @@ function NovelWorkspaceEditor({
     }
     persist(next);
   };
-  const addTemplate = (id: string) => {
-    if (draft.templates.some(t => t.publicId === id)) return;
-    persist({
-      ...draft,
-      templates: [
-        ...draft.templates,
+  /** 依次加入本轮候选（与逐个点「加入本轮候选」结果相同）；已在候选里的跳过，库里已没有的不加。 */
+  const addTemplates = (ids: readonly string[]) => {
+    let templates = draft.templates;
+    for (const id of ids) {
+      if (templates.some(t => t.publicId === id)) continue;
+      templates = [
+        ...templates,
         {
           publicId: id,
           role: cards.find(c => c.publicId === id)?.methodBrief
@@ -345,15 +376,17 @@ function NovelWorkspaceEditor({
                 cards.find(c => c.publicId === id)?.methodBrief
               )
             : "",
-          ...(!draft.templates.length
+          ...(!templates.length
             ? { weight: 100 }
-            : draft.templates.some(t => t.weight !== undefined)
+            : templates.some(t => t.weight !== undefined)
               ? { weight: 0 }
               : {}),
         },
-      ],
-    });
+      ];
+    }
+    if (templates !== draft.templates) persist({ ...draft, templates });
   };
+  const addTemplate = (id: string) => addTemplates([id]);
   const disabled =
     busy || backupBusy || !!saveError || !!draft.pending || queueActive.current;
   const weighted = draft.templates.some(t => t.weight !== undefined);
@@ -369,6 +402,8 @@ function NovelWorkspaceEditor({
   const adviceRuns = draft.runs.filter(
     r =>
       r.input.stage === "advice" &&
+      // 创意环节的候选不算顾问讨论：不进对话、不改当前采用的讨论、不影响后续门槛。
+      r.input.advisorIntent !== "creative_premises" &&
       r.input.roundId === draft.roundId &&
       r.input.topic === draft.topic &&
       r.input.direction === draft.direction &&
@@ -391,6 +426,16 @@ function NovelWorkspaceEditor({
             : undefined
         )
   );
+  /** 本季已出过的核心创意（按时间先后），用于「换一批」的排除方向；只读已保存的结果，不发请求。 */
+  const premiseBatches = draft.runs
+    .filter(r => r.input.stage === "advice" && r.input.advisorIntent === "creative_premises" && r.input.roundId === draft.roundId)
+    .map(r => {
+      try {
+        return novelAdviceSchema.parse(JSON.parse(r.result.text)).premises || [];
+      } catch {
+        return [];
+      }
+    });
   useEffect(() => {
     if (conversation.current)
       conversation.current.scrollTop = conversation.current.scrollHeight;
@@ -464,7 +509,15 @@ function NovelWorkspaceEditor({
     }
     if (input.stage === "revise")
       Object.assign(next, recordNovelRevision(now, input, result));
-    if (input.stage === "advice") {
+    if (input.stage === "advice" && input.advisorIntent === "creative_premises") {
+      void premiseUsage.refetch();
+      // 只更新最近一批候选；已采用的核心创意、当前讨论与已确认的大纲 / 小说都不动。
+      next.creativePremises = {
+        requestId: input.requestId,
+        savedAt: new Date().toISOString(),
+        premises: novelAdviceSchema.parse(JSON.parse(result.text)).premises || [],
+      };
+    } else if (input.stage === "advice") {
       next.advisorAnchor = input.requestId;
       if (input.advisorMessage === now.advisorDraft?.trim())
         next.advisorDraft = "";
@@ -596,7 +649,9 @@ function NovelWorkspaceEditor({
     chapterIndex = 1,
     advisorMessage?: string,
     advisorIntent?: NovelTestInput["advisorIntent"],
-    fromQueue = false
+    fromQueue = false,
+    /** 创意环节「换一批」：已出过的设想，作为不要重复的方向。 */
+    premiseExclusions?: NovelTestInput["premiseExclusions"]
   ) => {
     if (
       (disabled && !fromQueue) ||
@@ -613,7 +668,7 @@ function NovelWorkspaceEditor({
     setError("");
     let submittedId: string | undefined;
     try {
-      if (stage === "advice" && adviceRuns.length >= 20)
+      if (stage === "advice" && advisorIntent !== "creative_premises" && adviceRuns.length >= 20)
         throw new Error(
           "本轮已完成20次顾问讨论，请整理并确认提案后继续；历史对话完整保留。"
         );
@@ -643,7 +698,8 @@ function NovelWorkspaceEditor({
           ? prepareNovelExcerpt(draft.source)
           : undefined;
       // 爆款仿写：未导入底稿时先提示导入原文（其余检查见下方 novelImitationSubmitBlock）。
-      if (draft.mode === "source" && !source)
+      // 创意环节可以不靠底本：只给方向时参考模板库排列组合（站长 1112）。
+      if (draft.mode === "source" && !source && advisorIntent !== "creative_premises")
         throw new Error("请导入底本并勾选用于本次改编，或切换为原创新方向。");
       let imitation: NovelTestInput["imitation"];
       if (draft.mode === "imitation") {
@@ -655,6 +711,7 @@ function NovelWorkspaceEditor({
           synopsis: draft.imitationSynopsis,
           templateCount: draft.templates.length,
           skeletonReady: Boolean(skeleton),
+          premisesOnly: advisorIntent === "creative_premises",
         });
         if (blocked) throw new Error(blocked);
         // 底稿原文不随请求发送：只带新题材、纲要、底稿结构骨架与需要避开的底稿名称。
@@ -709,6 +766,17 @@ function NovelWorkspaceEditor({
           : {}),
         ...(advisorMessage ? { advisorMessage } : {}),
         ...(advisorIntent ? { advisorIntent } : {}),
+        ...(advisorIntent === "creative_premises" && premiseExclusions?.length
+          ? { premiseExclusions }
+          : {}),
+        // 创意环节按作品计次：作品身份随草稿走（跨刷新、跨设备一致）。
+        ...(advisorIntent === "creative_premises" ? { workId: premiseWorkId } : {}),
+        // 本作核心创意：非空时带进顾问讨论 / 故事线、大纲与正文；剧本由正文转写，不重复带。
+        ...(draft.creativePremise?.trim() &&
+        advisorIntent !== "creative_premises" &&
+        (stage === "advice" || stage === "outline" || stage === "chapter")
+          ? { creativePremise: draft.creativePremise.trim() }
+          : {}),
         ...(((stage === "advice" &&
           (advisorMessage || advisorIntent === "story_variants")) ||
           stage === "outline") &&
@@ -757,7 +825,7 @@ function NovelWorkspaceEditor({
       if (
         !fromQueue &&
         !window.confirm(
-          `本次提交管理者测试：${advisorIntent === "story_variants" ? "三个故事线方案" : stage === "advice" ? "创作顾问与模板推荐" : stage === "outline" ? "改编提案" : stage === "chapter" ? `第${chapterIndex}集小说稿` : `第${chapterIndex}集剧本候选`}。将调用创作服务并产生实际成本，是否继续？`
+          `本次提交管理者测试：${advisorIntent === "creative_premises" ? `${NOVEL_CREATIVE_PREMISE_UI.confirmLabel}${premiseUsage.data?.nextCost ? `（${NOVEL_CREATIVE_PREMISE_UI.usageCost}）` : ""}` : advisorIntent === "story_variants" ? "三个故事线方案" : stage === "advice" ? "创作顾问与模板推荐" : stage === "outline" ? "改编提案" : stage === "chapter" ? `第${chapterIndex}集小说稿` : `第${chapterIndex}集剧本候选`}。将调用创作服务并产生实际成本，是否继续？`
         )
       )
         return;
@@ -786,6 +854,19 @@ function NovelWorkspaceEditor({
       return result.text;
     } catch (e) {
       queueActive.current = false;
+      // 创意环节积分不足（提交前预检或结算时）：服务端没有交付结果，清掉待处理请求并显示原提示，不继续轮询。
+      const failedId = submittedId as string | undefined;
+      if (
+        e instanceof Error &&
+        (e as { data?: { code?: string } }).data?.code === "PAYMENT_REQUIRED" &&
+        failedId &&
+        (latest.current.pending as NovelTestInput | undefined)?.requestId === failedId
+      ) {
+        await persist({ ...latest.current, pending: undefined });
+        if (alive.current) setError(e.message);
+        void premiseUsage.refetch();
+        return;
+      }
       if (alive.current)
         setError(
           e instanceof Error && !("data" in e)
@@ -828,12 +909,26 @@ function NovelWorkspaceEditor({
     try {
       const baseSha256 = await novelTextHash(base);
       const baseTitle = latest.current.source?.name?.trim().slice(0, 200);
-      const { skeleton, library } = await skeletonMutation.mutateAsync({
-        requestId: crypto.randomUUID(),
-        baseText: base,
-        ...(baseTitle ? { baseTitle } : {}),
-        ...(latest.current.modelPreference ? { modelPreference: latest.current.modelPreference } : {}),
+      const modelPreference = latest.current.modelPreference;
+      setSkeletonProgress(null);
+      // 后台任务：每次发起带新请求号；missing 时用同一底稿重新发起（已完成的片服务端有缓存，不重做）。
+      const outcome = await runNovelSkeletonTask({
+        start: () =>
+          skeletonStart.mutateAsync({
+            requestId: crypto.randomUUID(),
+            baseText: base,
+            ...(baseTitle ? { baseTitle } : {}),
+            ...(modelPreference ? { modelPreference } : {}),
+          }),
+        status: taskId => utils.novelWorkspace.imitationSkeletonStatus.fetch({ taskId }, { staleTime: 0 }),
+        onProgress: p => {
+          if (alive.current) setSkeletonProgress(p);
+        },
+        alive: () => alive.current,
+        failedMessage: NOVEL_IMITATION_UI.skeletonFailed,
       });
+      if (!outcome) return;
+      const { skeleton, library } = outcome;
       void libraryQuery.refetch();
       if (!alive.current) return;
       await persist({
@@ -845,10 +940,17 @@ function NovelWorkspaceEditor({
     } catch (e) {
       // 服务端给的是中性的可重试提示（含未成功的片号）；拿不到时用默认提示。
       if (alive.current)
-        setError(e instanceof Error && "data" in e && e.message ? e.message : NOVEL_IMITATION_UI.skeletonFailed);
+        setError(
+          e instanceof NovelSkeletonTaskError || (e instanceof Error && "data" in e && e.message)
+            ? (e as Error).message
+            : NOVEL_IMITATION_UI.skeletonFailed
+        );
     } finally {
       running.current = false;
-      if (alive.current) setSkeletonBusy(false);
+      if (alive.current) {
+        setSkeletonBusy(false);
+        setSkeletonProgress(null);
+      }
     }
   };
   /** 审稿改稿失败：不进入小说失败恢复流程；改稿失败时保留审稿意见。 */
@@ -870,7 +972,11 @@ function NovelWorkspaceEditor({
     );
   };
   /** 审稿改稿：线路可单独选择（未选时沿用写作线路），先审稿再改稿；不带模板，不改动本集正文，采用需用户确认。 */
-  const reviseChapter = async (chapterIndex: number) => {
+  const reviseChapter = async (
+    chapterIndex: number,
+    /** 多线路对比后「按所选意见改稿」：综合意见代替审稿一步；缺省即原单线路流程（行为与提示词不变）。 */
+    combined?: { override: NovelReviewOverride; original: string }
+  ) => {
     if (disabled || running.current || latest.current.pending || saveError) {
       if (!saveError) setError(NOVEL_BLOCKED_CLICK_NOTICE);
       return;
@@ -884,7 +990,28 @@ function NovelWorkspaceEditor({
       const original = draft.chapters[chapterIndex - 1] || "";
       if (original.trim().length < 500)
         throw new Error("本集正文过短，暂不能审稿改稿。");
-      const input = novelTestInputSchema.parse({
+      if (combined && combined.original !== original)
+        throw new Error("本集正文在对比后有修改，意见可能已对不上原文；请重新对比后再改稿。");
+      const rewriteLane = draft.rewriteModelPreference || draft.modelPreference;
+      const input = novelTestInputSchema.parse(combined ? {
+        requestId: crypto.randomUUID(),
+        roundId: draft.roundId,
+        stage: "revise",
+        topic: draft.topic,
+        direction: draft.direction,
+        // 综合意见改稿：不再审稿，只用改稿线路。
+        ...(rewriteLane ? { modelPreference: rewriteLane, rewriteModelPreference: rewriteLane } : {}),
+        ...(draft.creativePremise?.trim() ? { creativePremise: draft.creativePremise.trim() } : {}),
+        templates: [],
+        episodeCount: 1,
+        episodeStart: chapterIndex,
+        continuity: draft.continuity || "",
+        outline: draft.outlineApproved || draft.outline,
+        novel: continuationContext(draft, chapterIndex - 1),
+        chapterIndex,
+        reviseDraft: original,
+        reviewOverride: combined.override,
+      } : {
         requestId: crypto.randomUUID(),
         roundId: draft.roundId,
         stage: "revise",
@@ -900,6 +1027,8 @@ function NovelWorkspaceEditor({
         ...((draft.rewriteModelPreference || draft.modelPreference)
           ? { rewriteModelPreference: draft.rewriteModelPreference || draft.modelPreference }
           : {}),
+        // 本作核心创意：审稿把偏离 / 闲置列为问题，改稿不得改回常规套路。
+        ...(draft.creativePremise?.trim() ? { creativePremise: draft.creativePremise.trim() } : {}),
         templates: [],
         episodeCount: 1,
         episodeStart: chapterIndex,
@@ -911,7 +1040,9 @@ function NovelWorkspaceEditor({
       });
       if (
         !window.confirm(
-          `本次提交管理者测试：第${chapterIndex}集审稿改稿（先审稿、再按意见改稿）。将调用创作服务并产生实际成本，是否继续？`
+          combined
+            ? `本次提交管理者测试：第${chapterIndex}集按所选的 ${combined.override.issues.length} 处意见改稿（不再审稿）。将调用创作服务并产生实际成本，是否继续？`
+            : `本次提交管理者测试：第${chapterIndex}集审稿改稿（先审稿、再按意见改稿）。将调用创作服务并产生实际成本，是否继续？`
         )
       )
         return;
@@ -941,6 +1072,167 @@ function NovelWorkspaceEditor({
       }
     }
   };
+  /* ---------- 多线路审稿对比（1112）：每条线路一个只审稿请求，并发执行，互不影响 ---------- */
+  const compareMutation = trpc.novelWorkspace.generate.useMutation();
+  const [compareFor, setCompareFor] = useState<number | null>(null);
+  const [compareLanes, setCompareLanes] = useState<NovelReviewLane[]>([...NOVEL_REVIEW_COMPARE_DEFAULT_LANES]);
+  /** 本页发出、尚未返回的对比请求（这期间回执查不到属正常，不判失败）。 */
+  const compareInFlight = useRef(new Set<string>());
+  const settleCompareLane = (
+    requestId: string,
+    patch: { status: "succeeded"; outcome: string } | { status: "failed"; failure: string }
+  ) => {
+    const delta = settleNovelReviewCompareLane(latest.current, requestId, patch);
+    if (delta.reviewCompares) void persist({ ...latest.current, ...delta });
+  };
+  /** 只审稿请求：与「审稿改稿」的审稿一步同一提示词，审稿线路 = 该线路。 */
+  const reviewOnlyInput = (d: NovelWorkspace, chapterIndex: number, lane: NovelReviewLane, original: string) =>
+    novelTestInputSchema.parse({
+      requestId: crypto.randomUUID(),
+      roundId: d.roundId,
+      stage: "revise",
+      topic: d.topic,
+      direction: d.direction,
+      modelPreference: lane,
+      reviewModelPreference: lane,
+      reviseMode: "review_only",
+      ...(d.creativePremise?.trim() ? { creativePremise: d.creativePremise.trim() } : {}),
+      templates: [],
+      episodeCount: 1,
+      episodeStart: chapterIndex,
+      continuity: d.continuity || "",
+      outline: d.outlineApproved || d.outline,
+      novel: continuationContext(d, chapterIndex - 1),
+      chapterIndex,
+      reviseDraft: original,
+    });
+  const submitCompareLane = async (input: NovelTestInput) => {
+    compareInFlight.current.add(input.requestId);
+    try {
+      const result = await compareMutation.mutateAsync(input);
+      settleCompareLane(input.requestId, { status: "succeeded", outcome: result.text });
+    } catch {
+      // 以回执为准：失败即标这一条；查不到说明没提交成功；仍在处理就交给轮询。
+      try {
+        const receipt = await utils.novelWorkspace.receipt.fetch({ requestId: input.requestId });
+        if (receipt.status === "succeeded" && receipt.result)
+          settleCompareLane(input.requestId, { status: "succeeded", outcome: receipt.result.text });
+        else if (receipt.status === "failed")
+          settleCompareLane(input.requestId, { status: "failed", failure: NOVEL_REVIEW_COMPARE_LANE_FAILED });
+        else if (receipt.status === "not_found")
+          settleCompareLane(input.requestId, { status: "failed", failure: NOVEL_REVIEW_COMPARE_NOT_SUBMITTED });
+      } catch {}
+    } finally {
+      compareInFlight.current.delete(input.requestId);
+    }
+  };
+  const compareError = (e: unknown) =>
+    setError(
+      e instanceof Error
+        ? "issues" in e
+          ? "本集正文或前情档案长度超出限制，请检查后再试。"
+          : e.message
+        : "本次提交未完成，请稍后再试。"
+    );
+  const startCompare = async (chapterIndex: number) => {
+    if (disabled || saveError) {
+      if (!saveError) setError(NOVEL_BLOCKED_CLICK_NOTICE);
+      return;
+    }
+    const d = latest.current;
+    setError("");
+    try {
+      if (!d.topic.trim() || !d.direction.trim()) throw new Error("请先填写作品名称与创作方向。");
+      const original = d.chapters[chapterIndex - 1] || "";
+      if (original.trim().length < 500) throw new Error("本集正文过短，暂不能审稿。");
+      const lanes = NOVEL_REVIEW_COMPARE_LANES.map(l => l.value).filter(v => compareLanes.includes(v));
+      if (lanes.length < NOVEL_REVIEW_COMPARE_MIN_LANES)
+        throw new Error(`请至少选择 ${NOVEL_REVIEW_COMPARE_MIN_LANES} 条线路。`);
+      if ((d.reviewCompares || []).some(c => c.index === chapterIndex - 1 && c.lanes.some(l => l.status === "pending")))
+        throw new Error("本集上一次对比仍在进行，完成后再开始新的对比。");
+      const inputs = lanes.map(lane => reviewOnlyInput(d, chapterIndex, lane, original));
+      if (
+        !window.confirm(
+          `本次提交管理者测试：第${chapterIndex}集多线路审稿对比（${lanes.map(novelReviewLaneLabel).join("、")}各审一遍，只审稿、不改稿）。将调用创作服务并产生实际成本，是否继续？`
+        )
+      )
+        return;
+      const at = new Date().toISOString();
+      const entry: NovelReviewCompareEntry = {
+        index: chapterIndex - 1,
+        compareId: crypto.randomUUID(),
+        createdAt: at,
+        original,
+        lanes: inputs.map(i => ({
+          lane: i.reviewModelPreference as NovelReviewLane,
+          requestId: i.requestId,
+          status: "pending",
+          submittedAt: at,
+        })),
+      };
+      if (!(await persist({ ...latest.current, ...startNovelReviewCompare(latest.current, entry) }))) return;
+      setCompareFor(null);
+      setProgress("多线路审稿对比已提交，各线路完成后结果出现在本集下方。");
+      inputs.forEach(i => void submitCompareLane(i));
+    } catch (e) {
+      compareError(e);
+    }
+  };
+  const retryCompareLane = async (entry: NovelReviewCompareEntry, lane: NovelReviewLane) => {
+    if (saveError) return;
+    const d = latest.current;
+    setError("");
+    try {
+      if ((d.chapters[entry.index] || "") !== entry.original)
+        throw new Error("本集正文在对比后有修改，请重新对比。");
+      const input = reviewOnlyInput(d, entry.index + 1, lane, entry.original);
+      if (
+        !window.confirm(
+          `本次提交管理者测试：重试第${entry.index + 1}集${novelReviewLaneLabel(lane)}的审稿（只审稿、不改稿）。将调用创作服务并产生实际成本，是否继续？`
+        )
+      )
+        return;
+      const delta = retryNovelReviewCompareLane(latest.current, entry.compareId, lane, input.requestId, new Date().toISOString());
+      if (!(await persist({ ...latest.current, ...delta }))) return;
+      void submitCompareLane(input);
+    } catch (e) {
+      compareError(e);
+    }
+  };
+  // 对比中的线路按现有回执续查（刷新页面后接着查，不重复提交）。
+  const pendingCompareKey = (draft.reviewCompares || [])
+    .flatMap(c => c.lanes.filter(l => l.status === "pending").map(l => l.requestId))
+    .join(",");
+  useEffect(() => {
+    if (!pendingCompareKey || saveError) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const check = async () => {
+      const pendingLanes = (latest.current.reviewCompares || []).flatMap(c => c.lanes).filter(l => l.status === "pending");
+      for (const l of pendingLanes) {
+        try {
+          const receipt = await utils.novelWorkspace.receipt.fetch({ requestId: l.requestId });
+          if (stopped) return;
+          if (receipt.status === "succeeded" && receipt.result)
+            settleCompareLane(l.requestId, { status: "succeeded", outcome: receipt.result.text });
+          else if (receipt.status === "failed")
+            settleCompareLane(l.requestId, { status: "failed", failure: NOVEL_REVIEW_COMPARE_LANE_FAILED });
+          else if (
+            receipt.status === "not_found" &&
+            !compareInFlight.current.has(l.requestId) &&
+            Date.now() - Date.parse(l.submittedAt) > 120_000
+          )
+            settleCompareLane(l.requestId, { status: "failed", failure: NOVEL_REVIEW_COMPARE_NOT_SUBMITTED });
+        } catch {}
+      }
+      if (!stopped) timer = setTimeout(check, 3000);
+    };
+    timer = setTimeout(check, 1500);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [pendingCompareKey, saveError]);
   const queueConfiguration = (d: NovelWorkspace) =>
     JSON.stringify([
       d.topic,
@@ -1699,7 +1991,9 @@ function NovelWorkspaceEditor({
                 onClick={() => void extractSkeleton()}
               >
                 {skeletonBusy
-                  ? NOVEL_IMITATION_UI.skeletonBusy
+                  ? skeletonProgress && skeletonProgress.total > 0
+                    ? NOVEL_IMITATION_UI.skeletonProgress(skeletonProgress.done, skeletonProgress.total)
+                    : NOVEL_IMITATION_UI.skeletonBusy
                   : draft.imitationSkeleton
                     ? NOVEL_IMITATION_UI.skeletonRedo
                     : NOVEL_IMITATION_UI.skeletonButton}
@@ -1810,22 +2104,28 @@ function NovelWorkspaceEditor({
             }
           >
             <option value="">沿用创作线路</option>
-            {NOVEL_ADVISOR_TIER_OPTIONS.map(option => (
-              <option key={option.value} value={option.value}>
-                {option.label} · {option.originalCredits ? "限时特价 " : ""}{option.referenceCredits} 积分/次
-              </option>
-            ))}
+            {NOVEL_ADVISOR_TIER_OPTIONS.map(option => {
+              const price = resolveNovelAdvisorTierPrice(option);
+              return (
+                <option key={option.value} value={option.value}>
+                  {option.label} · {price.promo ? "限时特价 " : ""}{price.credits} 积分/次
+                </option>
+              );
+            })}
           </select>
         </label>
         <span className="inline-flex flex-wrap items-center gap-3 text-xs text-slate-300" aria-label="顾问档位价格">
-          {NOVEL_ADVISOR_TIER_OPTIONS.map(option => (
-            <span key={option.value}>
-              {option.label}{" "}
-              {option.originalCredits ? <><s className="text-slate-500">{option.originalCredits}</s>{" "}</> : null}
-              <strong className={option.originalCredits ? "text-amber-200" : undefined}>{option.referenceCredits} 积分</strong>
-              {option.originalCredits ? <span className="ml-1 rounded bg-amber-200/15 px-1 text-amber-200">限时特价</span> : null}
-            </span>
-          ))}
+          {NOVEL_ADVISOR_TIER_OPTIONS.map(option => {
+            const price = resolveNovelAdvisorTierPrice(option);
+            return (
+              <span key={option.value}>
+                {option.label}{" "}
+                {price.promo ? <><s className="text-slate-500">{price.originalCredits}</s>{" "}</> : null}
+                <strong className={price.promo ? "text-amber-200" : undefined}>{price.credits} 积分</strong>
+                {price.promo ? <span className="ml-1 rounded bg-amber-200/15 px-1 text-amber-200">限时特价</span> : null}
+              </span>
+            );
+          })}
         </span>
         <label className="inline-flex items-center gap-2">
           <input
@@ -1845,6 +2145,122 @@ function NovelWorkspaceEditor({
         if (!await persist(next, `voice-${candidate.id}`, true)) throw new Error("正文保存失败，未确认套用成功；候选稿保留，请先处理保存错误。");
         if (alive.current) { setActiveChapter(candidate.episode - 1); setWorkspaceTab("novel"); }
       }} scopeKey={`${userId}:${draft.roundId}`} context={JSON.stringify({ workspace: workspaceTab, activeEpisode: activeChapter + 1, title: draft.topic, direction: draft.direction, outline: draft.outline, currentChapter: draft.chapters[activeChapter], templates: draft.templates, chapterCount: draft.chapters.length })} disabled={disabled} onUse={text => { change({ advisorDraft: text }); setSideTab("advisor"); }} targets={draft.chapters.map((chapter, i) => ({ episode: i + 1, label: chapter ? `第${i + 1}集小说稿` : `第${i + 1}集尚无正文` }))} onNavigate={target => { if (disabled || !latest.current.chapters[target.episode - 1]) throw new Error("该集正文尚未生成或工作区忙，未切换。"); setActiveChapter(target.episode - 1); setWorkspaceTab("novel"); return JSON.stringify({ episode: target.episode, text: latest.current.chapters[target.episode - 1], next: "以本次返回正文为准；修改前调用novelText read获取revision。" }); }} onAskAdvisor={async question => await generate("advice", undefined, 1, question)} />}
+      <section className="mt-5 space-y-3" aria-label={NOVEL_CREATIVE_PREMISE_UI.title}>
+        <h3 className="font-semibold">{NOVEL_CREATIVE_PREMISE_UI.title}</h3>
+        <p className="text-xs text-slate-400">{NOVEL_CREATIVE_PREMISE_UI.intro}</p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className={button}
+            disabled={disabled}
+            onClick={() => generate("advice", undefined, 1, undefined, "creative_premises")}
+          >
+            {NOVEL_CREATIVE_PREMISE_UI.generate}
+          </button>
+          {premiseBatches.length > 0 && (
+            <button
+              className={button}
+              disabled={disabled}
+              onClick={() =>
+                generate(
+                  "advice",
+                  undefined,
+                  1,
+                  undefined,
+                  "creative_premises",
+                  false,
+                  collectNovelCreativePremiseExclusions(premiseBatches)
+                )
+              }
+            >
+              {NOVEL_CREATIVE_PREMISE_UI.refresh}
+            </button>
+          )}
+          {premiseUsage.data && (
+            <span className="self-center text-xs text-slate-300" aria-label="核心创意次数">
+              {NOVEL_CREATIVE_PREMISE_UI.usage(premiseUsage.data.used)}
+              {premiseUsage.data.nextCost > 0 && (
+                <strong className="ml-2 text-amber-200">{NOVEL_CREATIVE_PREMISE_UI.usageCost}</strong>
+              )}
+            </span>
+          )}
+        </div>
+        {!!draft.creativePremises?.premises.length && (
+          <div className="space-y-3" aria-label={NOVEL_CREATIVE_PREMISE_UI.batchTitle}>
+            {draft.creativePremises.premises.map((p, i) => (
+              <article key={`${draft.creativePremises!.requestId}-${i}`} className="rounded-xl border border-amber-200/20 p-3 text-sm">
+                <h4 className="font-semibold">{p.title}</h4>
+                <p className="mt-2 whitespace-pre-wrap">{NOVEL_CREATIVE_PREMISE_UI.fields.whatIf}：{p.whatIf}</p>
+                <p className="mt-1 whitespace-pre-wrap">{NOVEL_CREATIVE_PREMISE_UI.fields.ruleAndCost}：{p.ruleAndCost}</p>
+                <p className="mt-1 whitespace-pre-wrap">{NOVEL_CREATIVE_PREMISE_UI.fields.drives}：{p.drives}</p>
+                <p className="mt-1 whitespace-pre-wrap text-amber-200">{NOVEL_CREATIVE_PREMISE_UI.fields.twist}：{p.twist}</p>
+                <p className="mt-1 whitespace-pre-wrap">{NOVEL_CREATIVE_PREMISE_UI.fields.logline}：{p.logline}</p>
+                <p className="mt-1 whitespace-pre-wrap text-slate-400">{NOVEL_CREATIVE_PREMISE_UI.fields.risk}：{p.risk}</p>
+                {!!p.templates?.length && (
+                  <p className="mt-1 whitespace-pre-wrap">
+                    {NOVEL_CREATIVE_PREMISE_UI.templatesLabel}：
+                    {p.templates
+                      .map(id => {
+                        const card = cards.find(c => c.publicId === id);
+                        return card ? templateChoiceLabel(card) : id;
+                      })
+                      .join("、")}
+                  </p>
+                )}
+                {!!p.outline && (
+                  <p className="mt-1 whitespace-pre-wrap">{NOVEL_CREATIVE_PREMISE_UI.fields.outline}：{"\n"}{p.outline}</p>
+                )}
+                {!!p.templates?.some(id => cards.some(c => c.publicId === id)) && (
+                  <button
+                    className={`${button} mr-2 mt-3`}
+                    disabled={
+                      disabled ||
+                      p.templates.filter(id => cards.some(c => c.publicId === id)).every(id => draft.templates.some(t => t.publicId === id))
+                    }
+                    onClick={() => addTemplates(p.templates!.filter(id => cards.some(c => c.publicId === id)))}
+                  >
+                    {NOVEL_CREATIVE_PREMISE_UI.adoptTemplates}
+                  </button>
+                )}
+                <button
+                  className={`${button} mt-3`}
+                  disabled={disabled}
+                  onClick={() => {
+                    const text = formatNovelCreativePremise(p);
+                    const current = latest.current.creativePremise?.trim();
+                    if (current && current !== text && !window.confirm(NOVEL_CREATIVE_PREMISE_UI.adoptReplaceConfirm)) return;
+                    change({ creativePremise: text });
+                  }}
+                >
+                  {NOVEL_CREATIVE_PREMISE_UI.adopt}
+                </button>
+              </article>
+            ))}
+          </div>
+        )}
+        <label className="block text-sm">
+          {NOVEL_CREATIVE_PREMISE_UI.fieldLabel}
+          <textarea
+            aria-label={NOVEL_CREATIVE_PREMISE_UI.fieldLabel}
+            className={field}
+            rows={5}
+            maxLength={NOVEL_CREATIVE_PREMISE_MAX}
+            disabled={disabled}
+            value={draft.creativePremise || ""}
+            onChange={e => change({ creativePremise: e.target.value || undefined })}
+            placeholder={NOVEL_CREATIVE_PREMISE_UI.placeholder}
+          />
+        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            className={button}
+            disabled={disabled || !draft.creativePremise}
+            onClick={() => change({ creativePremise: undefined })}
+          >
+            {NOVEL_CREATIVE_PREMISE_UI.clear}
+          </button>
+          <p className="text-xs text-slate-400">{NOVEL_CREATIVE_PREMISE_UI.note}</p>
+        </div>
+      </section>
       {(
 
         <div className="mt-5 space-y-3">
@@ -2566,6 +2982,13 @@ function NovelWorkspaceEditor({
             >
               审稿改稿
             </button>
+            <button
+              className={button}
+              disabled={disabled || (draft.chapters[i] || "").trim().length < 500}
+              onClick={() => setCompareFor(compareFor === i ? null : i)}
+            >
+              多线路审稿对比
+            </button>
             {(
               [
                 ["reviseModelPreference", "审稿线路"],
@@ -2594,6 +3017,18 @@ function NovelWorkspaceEditor({
               </label>
             ))}
           </div>
+          {compareFor === i && (
+            <NovelReviewCompareStart
+              chapterIndex={i + 1}
+              selected={compareLanes}
+              credits={novelReviewCompareCredits(compareLanes)}
+              disabled={disabled}
+              minLanes={NOVEL_REVIEW_COMPARE_MIN_LANES}
+              onChange={setCompareLanes}
+              onStart={() => void startCompare(i + 1)}
+              onCancel={() => setCompareFor(null)}
+            />
+          )}
           <textarea
             aria-label={`第${i + 1}集小说稿`}
             disabled={Boolean(initial.error)}
@@ -2618,6 +3053,23 @@ function NovelWorkspaceEditor({
               <NovelOriginalityNote names={check.names} sentences={check.sentences} episode={i + 1} />
             ) : null;
           })()}
+          {(draft.reviewCompares || [])
+            .filter(c => c.index === i)
+            .map(entry => (
+              <NovelReviewComparePanel
+                key={entry.compareId}
+                entry={entry}
+                currentText={draft.chapters[i] || ""}
+                disabled={disabled || Boolean(initial.error)}
+                rewriteLabel={
+                  NOVEL_MODEL_OPTIONS.find(
+                    o => o.value === (draft.rewriteModelPreference || draft.modelPreference || "auto")
+                  )?.label || "自动"
+                }
+                onRetry={lane => void retryCompareLane(entry, lane)}
+                onRevise={override => void reviseChapter(i + 1, { override, original: entry.original })}
+              />
+            ))}
           <NovelChapterRevisionPanel
             entries={(draft.chapterRevisions || []).filter(r => r.index === i)}
             disabled={disabled || Boolean(initial.error)}

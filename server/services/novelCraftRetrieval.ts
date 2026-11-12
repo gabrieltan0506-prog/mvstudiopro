@@ -21,6 +21,7 @@ import {
   type NovelCraftCard,
 } from "../../shared/novelCraftCards";
 import { matchNovelCraftGenreCards } from "../../shared/novelCraftCardsGenre";
+import { NOVEL_IMITATION_EXCLUDED_CRAFT_IDS } from "../../shared/novelImitationPrompt";
 import { NOVEL_CRAFT_SHORT_MAX, isNovelShortForm } from "../../shared/novelCraftCardsShort";
 import type {
   NovelTemplateDigestEntry,
@@ -87,8 +88,21 @@ function episodeRange(input: NovelCraftRetrievalInput): [number, number] {
 export function novelCraftCardsForStage(input: NovelCraftRetrievalInput): NovelCraftCard[] {
   const [start] = episodeRange(input);
   return NOVEL_CRAFT_CARDS.filter(
-    c => c.stages.includes(input.stage as NovelCraftCard["stages"][number]) && (!c.firstEpisodesOnly || start <= 3)
+    c =>
+      c.stages.includes(input.stage as NovelCraftCard["stages"][number]) &&
+      (!c.firstEpisodesOnly || start <= 3) &&
+      !(input.imitation && isNovelImitationExcludedCraft(c.id))
   );
+}
+
+const isNovelImitationExcludedCraft = (id: string) => (NOVEL_IMITATION_EXCLUDED_CRAFT_IDS as readonly string[]).includes(id);
+/** 仿写模式：从选中的技法条目里剔除不注入的条目（站长原文仿写卡）；非仿写请求原样返回。 */
+export function withoutNovelImitationExcludedCraft<T extends Pick<NovelCraftSelection, "craft">>(
+  sel: T,
+  input: Pick<NovelCraftRetrievalInput, "imitation">
+): T {
+  if (!input.imitation || !sel.craft.some(isNovelImitationExcludedCraft)) return sel;
+  return { ...sel, craft: sel.craft.filter(id => !isNovelImitationExcludedCraft(id)) };
 }
 
 /**
@@ -350,7 +364,7 @@ export async function retrieveNovelCraft(params: {
   const genreIds = novelCraftGenreIdsForInput(input);
   const finish = (picked: NovelCraftSelection, fallbackReason?: string): NovelCraftRetrievalResult => {
     // 题材必带条目在检索 / 回退之后附加，不进索引。
-    const sel = withNovelCraftGenreCards(picked, genreIds);
+    const sel = withoutNovelImitationExcludedCraft(withNovelCraftGenreCards(picked, genreIds), input);
     return {
       ...sel,
       fallback: !!fallbackReason,

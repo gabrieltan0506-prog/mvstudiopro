@@ -2,6 +2,14 @@ import { z } from "zod";
 import { novelExcerptSchema } from "./manhuaNovelSource";
 import { NOVEL_IMITATION_LIBRARY_PICK_MAX, novelImitationBeatSchema } from "./novelImitation";
 import {
+  NOVEL_CREATIVE_PREMISE_EXCLUSION_MAX,
+  NOVEL_CREATIVE_PREMISE_MAX,
+  novelCreativePremiseExclusionSchema,
+  novelCreativePremiseSchema,
+  validateNovelCreativePremises,
+  isNovelCreativePremiseTemplateLed,
+} from "./novelCreativePremise";
+import {
   NOVEL_REVIEW_DIMENSIONS,
   type NovelReviewDimension,
 } from "./novelCraftReview";
@@ -23,13 +31,30 @@ export const NOVEL_MODEL_OPTIONS = [
 ] as const;
 /**
  * 创作顾问档位（站长 2026-11-12）：前台只显示档位名，不显示模型名。
- * 站长定价（每次顾问答复）：卓越 20（限时特价，原价 40）/ 优秀 10 / 完美 5 积分；管理者测试流程不扣积分，扣费尚未接入。
+ * 站长定价（每次顾问答复）：卓越 40（限时特价 20，截至 2026-11-30 当天结束）/ 优秀 10 / 完美 5 积分；
+ * 管理者测试流程不扣积分，扣费尚未接入。价格一律经 resolveNovelAdvisorTierPrice 读取（前台与将来的扣费同读）。
  */
+/** 卓越档限时特价截止（东八区 2026-12-01 零点起恢复原价）。 */
+export const NOVEL_ADVISOR_PROMO_UNTIL = "2026-12-01T00:00:00+08:00";
 export const NOVEL_ADVISOR_TIER_OPTIONS = [
-  { value: "carbon", label: "卓越", referenceCredits: 20, originalCredits: 40 },
-  { value: "glm", label: "优秀", referenceCredits: 10, originalCredits: undefined },
-  { value: "deepseek", label: "完美", referenceCredits: 5, originalCredits: undefined },
+  { value: "carbon", label: "卓越", credits: 40, promoCredits: 20, promoUntil: NOVEL_ADVISOR_PROMO_UNTIL },
+  { value: "glm", label: "优秀", credits: 10, promoCredits: undefined, promoUntil: undefined },
+  { value: "deepseek", label: "完美", credits: 5, promoCredits: undefined, promoUntil: undefined },
 ] as const;
+export type NovelAdvisorTierOption = (typeof NOVEL_ADVISOR_TIER_OPTIONS)[number];
+/**
+ * 顾问档位在 now 时刻的价格：特价期内 credits = 特价、originalCredits = 原价、promo = true；
+ * 截止时刻起（含）只返回原价，不再带特价信息。
+ */
+export function resolveNovelAdvisorTierPrice(
+  tier: Pick<NovelAdvisorTierOption, "credits" | "promoCredits" | "promoUntil">,
+  now: Date | number = Date.now()
+): { credits: number; originalCredits?: number; promo: boolean } {
+  const at = typeof now === "number" ? now : now.getTime();
+  if (tier.promoCredits !== undefined && tier.promoUntil && at < Date.parse(tier.promoUntil))
+    return { credits: tier.promoCredits, originalCredits: tier.credits, promo: true };
+  return { credits: tier.credits, promo: false };
+}
 export const novelModelSchema = z.enum(["auto", "glm", "deepseek", "carbon"]);
 /** 前台只显示中性线路名；模型名是商业机密，未知模型也不回显原始标识。 */
 export function novelModelLabel(model?: string) {
@@ -82,11 +107,39 @@ export const novelTestInputSchema = z
     /** revise 阶段：审稿、改稿各自的线路（1111 站长：拆成两个下拉）；缺省沿用 modelPreference。 */
     reviewModelPreference: novelModelSchema.optional(),
     rewriteModelPreference: novelModelSchema.optional(),
+    /**
+     * 多线路审稿对比（1112）：review_only = 只跑审稿这一步，不改稿（结果里 revised 缺省）。
+     * 只随 revise 请求携带；旧请求没有此字段，行为不变。
+     */
+    reviseMode: z.enum(["review_only"]).optional(),
+    /**
+     * 按所选意见改稿（1112）：多线路对比后勾选的综合意见，服务端校验后跳过审稿直接改稿。
+     * 只随 revise 请求携带；旧请求没有此字段，行为不变。
+     */
+    reviewOverride: z.lazy(() => novelReviewOverrideSchema).optional(),
     source: novelExcerptSchema.optional(),
     advisorMessage: text.max(2000).optional(),
     advisorIntent: z
-      .enum(["discussion", "recommend_templates", "story_variants"])
+      .enum(["discussion", "recommend_templates", "story_variants", "creative_premises"])
       .optional(),
+    /**
+     * 创意环节（1112）：「换一批」时带上已出过的设想（标题 + 核心设想）作为不要重复的方向。
+     * 只随 creative_premises 请求携带；旧请求没有此字段。
+     */
+    /**
+     * 创意环节计费（1112）：作品身份（草稿 projectId，缺省为 roundId）。服务端按它计「本作品第几次」；
+     * 只随 creative_premises 请求携带；旧请求没有此字段时按 roundId 计。
+     */
+    workId: z.string().uuid().optional(),
+    premiseExclusions: z
+      .array(novelCreativePremiseExclusionSchema)
+      .max(NOVEL_CREATIVE_PREMISE_EXCLUSION_MAX)
+      .optional(),
+    /**
+     * 本作核心创意（1112）：用户采用并可手改的核心创意文本。非空时进入顾问讨论 / 故事线、大纲、正文与审稿改稿提示词；
+     * 可选，不是任何阶段的前提。旧请求没有此字段，行为不变。
+     */
+    creativePremise: text.max(NOVEL_CREATIVE_PREMISE_MAX).optional(),
     advisorHistory: z
       .array(
         z
@@ -145,6 +198,12 @@ export const novelTestInputSchema = z
       (v.stage !== "advice" || !v.templates.length)
     )
       c.addIssue({ code: "custom", message: "请先选择模板，再生成故事线方案" });
+    if (v.advisorIntent === "creative_premises" && v.stage !== "advice")
+      c.addIssue({ code: "custom", message: "核心创意只在创作顾问环节生成" });
+    if (v.workId !== undefined && v.advisorIntent !== "creative_premises")
+      c.addIssue({ code: "custom", message: "仅核心创意请求携带作品身份" });
+    if (v.premiseExclusions !== undefined && v.advisorIntent !== "creative_premises")
+      c.addIssue({ code: "custom", message: "仅「换一批」核心创意携带已出过的方向" });
     if (new Set(v.templates.map(t => t.publicId)).size !== v.templates.length)
       c.addIssue({ code: "custom", message: "模板不可重复" });
     if (
@@ -167,6 +226,16 @@ export const novelTestInputSchema = z
         v.rewriteModelPreference !== undefined)
     )
       c.addIssue({ code: "custom", message: "仅审稿改稿可分别选择审稿与改稿线路" });
+    if (v.stage !== "revise" && (v.reviseMode !== undefined || v.reviewOverride !== undefined))
+      c.addIssue({ code: "custom", message: "仅审稿改稿可选择只审稿或按所选意见改稿" });
+    if (v.reviseMode === "review_only" && v.reviewOverride)
+      c.addIssue({ code: "custom", message: "只审稿时不能同时携带所选意见" });
+    if (
+      v.stage === "revise" &&
+      v.reviewOverride &&
+      v.reviewOverride.issues.some(i => !locateNovelQuote(v.reviseDraft || "", i.quote))
+    )
+      c.addIssue({ code: "custom", message: "所选意见的原文片段在本集正文中找不到，请重新对比" });
     if (v.stage !== "advice" && v.stage !== "revise" && !v.templates.length)
       c.addIssue({ code: "custom", message: "请选择模板" });
     if (
@@ -307,6 +376,8 @@ export function formatNovelImitationOutline(plan: NovelImitationOutline) {
 export const novelAdviceSchema = z
   .object({
     variants: z.array(novelStoryVariantSchema).length(3).optional(),
+    /** 创意环节（1112）：恰好 4 个核心设想；只在 creative_premises 请求的结果里出现。 */
+    premises: z.array(novelCreativePremiseSchema).optional(),
     assessment: text.max(3000),
     recommendations: z
       .array(
@@ -421,13 +492,47 @@ export const novelReviewSchema = z
           })
           .strict()
       )
-      .min(3)
+      // 结构下限 1 条：按所选意见改稿可以只带 1 条（站长 1112：不硬凑意见）；
+      // 模型审稿仍要求至少 NOVEL_REVIEW_MIN_ISSUES 条，由 validateNovelReview 把关。
+      .min(1)
       .max(10),
     keep: z.array(text.max(300)).max(10).default([]),
     verdict: text.max(300),
   })
   .strict();
 export type NovelReview = z.infer<typeof novelReviewSchema>;
+/** 多线路审稿对比可选的线路（与 NOVEL_MODEL_OPTIONS 的三条线路一一对应；不含「自动」）。 */
+export const NOVEL_REVIEW_LANES = ["glm", "deepseek", "carbon"] as const;
+export const novelReviewLaneSchema = z.enum(NOVEL_REVIEW_LANES);
+export type NovelReviewLane = z.infer<typeof novelReviewLaneSchema>;
+const novelReviewSourceSchema = z
+  .object({ requestId: z.string().uuid(), lane: novelReviewLaneSchema })
+  .strict();
+/**
+ * 按所选意见改稿（1112）：结构 = novelReviewSchema（评分、意见、保留、结论）+ 来源（各线路审稿的 requestId）。
+ * 意见必须都能在原文定位（不接受 located:false），来源不重复。
+ */
+export const novelReviewOverrideSchema = novelReviewSchema
+  .extend({
+    sources: z.array(novelReviewSourceSchema).min(1).max(NOVEL_REVIEW_LANES.length),
+  })
+  .superRefine((v, c) => {
+    if (v.issues.some(i => i.located === false))
+      c.addIssue({ code: "custom", message: "未能定位原文的意见不能用于改稿" });
+    if (new Set(v.sources.map(s => s.requestId)).size !== v.sources.length)
+      c.addIssue({ code: "custom", message: "意见来源不可重复" });
+  });
+export type NovelReviewOverride = z.infer<typeof novelReviewOverrideSchema>;
+/** 综合意见 → 改稿用的审稿结果：每条意见都必须能在原文定位（定位不到即报错，不静默丢弃）。 */
+export function validateNovelReviewOverride(original: string, value: unknown): NovelReview {
+  const { sources: _, ...review } = novelReviewOverrideSchema.parse(value);
+  const issues = review.issues.map(issue => {
+    const hit = locateNovelQuote(original, issue.quote);
+    if (!hit) throw new Error("所选意见的原文片段在本集正文中找不到，请重新对比");
+    return { ...issue, quote: hit.text.length <= 60 ? hit.text : issue.quote };
+  });
+  return novelReviewSchema.parse({ ...review, issues });
+}
 const clip = (max: number) =>
   z.preprocess(
     v => (typeof v === "string" ? Array.from(v.trim()).slice(0, max).join("") : v),
@@ -479,9 +584,19 @@ export const novelReviseResultSchema = z
       .object({ review: z.string().optional(), revise: z.string().optional() })
       .strict()
       .optional(),
+    /** 按所选意见改稿（1112）：审稿结果来自多线路综合意见，记来源各 requestId；单线路结果缺省。 */
+    reviewOrigin: z
+      .object({ kind: z.literal("combined"), sources: z.array(novelReviewSourceSchema).min(1) })
+      .strict()
+      .optional(),
   })
   .strict();
 export type NovelReviseResult = z.infer<typeof novelReviseResultSchema>;
+/** 只审稿（review_only）的结果：同上，revised 缺省。 */
+export const novelReviewOnlyResultSchema = novelReviseResultSchema.extend({
+  revised: novelRevisedChapterSchema.optional(),
+});
+export type NovelReviewOnlyResult = z.infer<typeof novelReviewOnlyResultSchema>;
 /** 正文字数：去掉空白后的字符数（中文按字计）。 */
 export const novelTextLength = (value: string) =>
   value.replace(/\s+/g, "").length;
@@ -567,8 +682,11 @@ export function normalizeNovelReviewDimensions(value: unknown): unknown {
   // 丢弃后不足下限：不动原值，让 schema 给出明确原因。
   return kept.length >= 3 ? { ...(value as object), issues: kept } : value;
 }
+export const NOVEL_REVIEW_MIN_ISSUES = 3;
 export function validateNovelReview(original: string, value: unknown) {
   const review = novelReviewSchema.parse(normalizeNovelReviewDimensions(value));
+  if (review.issues.length < NOVEL_REVIEW_MIN_ISSUES)
+    throw new Error(`审稿意见不足${NOVEL_REVIEW_MIN_ISSUES}条（仅${review.issues.length}条）`);
   const located: NovelReview["issues"] = [];
   const missing: NovelReview["issues"] = [];
   for (const { located: _, ...issue } of review.issues) {
@@ -650,6 +768,17 @@ export function validateNovelStageOutput(
       if (JSON.stringify(result, null, 2).length > 60000)
         throw new Error("故事线结果过长");
     } else if (result.variants) throw new Error("当前请求未要求故事线方案");
+    if (input.advisorIntent === "creative_premises") {
+      // 无底本时每个创意须引用真实模板并给出简要大纲；引用口径与故事线方案相同（全库可用编号 + 用户已选模板）。
+      const premises = validateNovelCreativePremises(result.premises, {
+        templateLed: isNovelCreativePremiseTemplateLed(input),
+        eligibleIds: [...availableIds, ...input.templates.map(t => t.publicId)],
+      });
+      if (JSON.stringify(result, null, 2).length > 60000)
+        throw new Error("核心创意结果过长");
+      // 创意环节不推荐模板：模型多给的推荐不展示也不保留。
+      return { ...result, premises, recommendations: [] };
+    } else if (result.premises) throw new Error("当前请求未要求核心创意");
     const ids = result.recommendations.map(r => r.publicId);
     const available = availableIds.filter(
       id => !input.selectedTemplateIds.includes(id)

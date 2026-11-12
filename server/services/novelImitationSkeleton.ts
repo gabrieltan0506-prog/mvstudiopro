@@ -271,6 +271,11 @@ export async function resolveNovelImitationSkeleton(params: {
   shardChars?: number;
   concurrency?: number;
   onStats?: (stats: NovelImitationSkeletonStats) => void;
+  /**
+   * 分片进度（可选，只读通知）：分好片后先报一次 done=0，之后每完成一片（命中分片缓存或新拆成功）报一次；
+   * 整份缓存命中时直接报 done=total。失败的片不计入；回调抛错不影响拆解。
+   */
+  onShard?: (progress: { done: number; total: number }) => void;
 }): Promise<NovelImitationSkeleton> {
   const { userId, baseText, requestId } = params;
   const modelPreference = params.modelPreference ?? "auto";
@@ -300,8 +305,16 @@ export async function resolveNovelImitationSkeleton(params: {
   };
 
   const shards = splitNovelImitationShards(baseText, params.shardChars ?? NOVEL_IMITATION_SHARD_CHARS);
+  const reportShard = (done: number) => {
+    try {
+      params.onShard?.({ done, total: shards.length });
+    } catch {
+      // 进度只是通知，不影响拆解。
+    }
+  };
   const whole = await readCache(cacheName);
   if (whole) {
+    reportShard(shards.length);
     params.onStats?.({ key, cached: true, shards: shards.length, shardCached: [], shardFresh: [], merged: false });
     return whole;
   }
@@ -366,12 +379,14 @@ export async function resolveNovelImitationSkeleton(params: {
 
   const shardCached: number[] = [];
   const shardFresh: number[] = [];
+  reportShard(0);
   const results = await mapWithLimit(shards, params.concurrency ?? NOVEL_IMITATION_SHARD_CONCURRENCY, async (shard, index) => {
     const shardSha = sha(shard);
     const shardCacheName = `${prefix}/shards/${key}/${index}-${shardSha}.json`;
     const hit = await readCache(shardCacheName);
     if (hit) {
       shardCached.push(index + 1);
+      reportShard(shardCached.length + shardFresh.length);
       return { ok: true as const, value: hit };
     }
     const out = await step(`shard-${index}`, buildNovelImitationShardPrompt(shard, index, shards.length), `${requestId}:imitation-skeleton-${index}`, {
@@ -383,6 +398,7 @@ export async function resolveNovelImitationSkeleton(params: {
     }
     shardFresh.push(index + 1);
     if (shards.length > 1) await store.writeIfAbsent(shardCacheName, JSON.stringify(out.value)).catch(() => undefined);
+    reportShard(shardCached.length + shardFresh.length);
     return out;
   });
 

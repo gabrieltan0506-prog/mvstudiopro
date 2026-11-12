@@ -6,12 +6,15 @@ import {
 import {
   novelChapterSchema,
   novelReviseResultSchema,
+  novelReviewOnlyResultSchema,
   type NovelReview,
+  type NovelReviewLane,
   type NovelRevisedChapter,
   type NovelTestInput,
   type NovelTestResult,
 } from "@shared/novelWorkspace";
 import { novelWorkspaceStateSchema as stateSchema } from "@shared/novelWorkspaceState";
+import type { NovelReviewLaneResult } from "@shared/novelReviewCompare";
 import {
   detectOutlineDrift,
   extractEpisodeOutline,
@@ -188,6 +191,7 @@ export function parseNovelRevisionEntry(entry: NovelRevisionEntry): {
   review: NovelReview;
   revised?: NovelRevisedChapter;
   models?: { review?: string; revise?: string };
+  reviewOrigin?: { kind: "combined"; sources: { requestId: string; lane: NovelReviewLane }[] };
 } | null {
   try {
     return revisionOutcomeSchema.parse(JSON.parse(entry.outcome));
@@ -317,5 +321,79 @@ export function adoptNovelRevision(
       r.requestId === requestId ? { ...r, adoptedAt: savedAt } : r
     ),
     novelApproved: "",
+  };
+}
+
+/* ---------- 多线路审稿对比（1112） ---------- */
+export type NovelReviewCompareEntry = NonNullable<NovelWorkspace["reviewCompares"]>[number];
+export type NovelReviewCompareLaneEntry = NovelReviewCompareEntry["lanes"][number];
+/** 读取某条线路的只审稿结果；坏数据返回 null，不让整份草稿读取失败。 */
+export function parseNovelReviewCompareLane(
+  lane: NovelReviewCompareLaneEntry
+): { review: NovelReview; model?: string } | null {
+  if (lane.status !== "succeeded" || !lane.outcome) return null;
+  try {
+    const parsed = novelReviewOnlyResultSchema.parse(JSON.parse(lane.outcome));
+    return { review: parsed.review, model: parsed.models?.review };
+  } catch {
+    return null;
+  }
+}
+/** 已完成线路的审稿结果（供聚类、打分表与综合意见使用）。 */
+export function novelReviewCompareResults(entry: NovelReviewCompareEntry): NovelReviewLaneResult[] {
+  return entry.lanes.flatMap(l => {
+    const parsed = parseNovelReviewCompareLane(l);
+    return parsed ? [{ lane: l.lane, requestId: l.requestId, review: parsed.review }] : [];
+  });
+}
+/** 开始一次对比：本集只保留最近一次（旧的对比记录被替换；各线路服务端证据不受影响）。 */
+export function startNovelReviewCompare(
+  now: NovelWorkspace,
+  entry: NovelReviewCompareEntry
+): Partial<NovelWorkspace> {
+  return {
+    reviewCompares: [...(now.reviewCompares || []).filter(c => c.index !== entry.index), entry],
+  };
+}
+/** 某条线路有了结果（按 requestId 对号；晚到的、已被替换的对比里的结果直接忽略）。 */
+export function settleNovelReviewCompareLane(
+  now: NovelWorkspace,
+  requestId: string,
+  patch:
+    | { status: "succeeded"; outcome: string }
+    | { status: "failed"; failure: string }
+): Partial<NovelWorkspace> {
+  if (!(now.reviewCompares || []).some(c => c.lanes.some(l => l.requestId === requestId && l.status === "pending")))
+    return {};
+  return {
+    reviewCompares: (now.reviewCompares || []).map(c => ({
+      ...c,
+      lanes: c.lanes.map(l =>
+        l.requestId === requestId && l.status === "pending"
+          ? { lane: l.lane, requestId: l.requestId, submittedAt: l.submittedAt, ...patch }
+          : l
+      ),
+    })),
+  };
+}
+/** 重试失败的一条线路：换新的 requestId，其他线路不动。 */
+export function retryNovelReviewCompareLane(
+  now: NovelWorkspace,
+  compareId: string,
+  lane: NovelReviewLane,
+  requestId: string,
+  submittedAt: string
+): Partial<NovelWorkspace> {
+  return {
+    reviewCompares: (now.reviewCompares || []).map(c =>
+      c.compareId !== compareId
+        ? c
+        : {
+            ...c,
+            lanes: c.lanes.map(l =>
+              l.lane === lane && l.status === "failed" ? { lane, requestId, status: "pending" as const, submittedAt } : l
+            ),
+          }
+    ),
   };
 }
