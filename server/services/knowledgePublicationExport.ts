@@ -33,7 +33,8 @@ import {
   uploadBufferToGcs,
   uploadStreamToGcs,
 } from "./gcs";
-import { fetchPdfBufferFromWorker, measureKnowledgeBookletFromWorker } from "./pdfWorkerClient";
+import { fetchPdfBufferFromWorker, measureKnowledgeBookletDetailsFromWorker, type KnowledgeBookletMeasure } from "./pdfWorkerClient";
+import { auditKnowledgeExportSegments, readKnowledgeLayoutAuditSummary, type KnowledgeLayoutAuditSummary } from "../../shared/knowledgeLayoutAudit";
 import type { KnowledgeBookletImageMode } from "../../shared/knowledgeBooklet";
 import { ensureKnowledgeReviewThumbnail } from "./knowledgeReviewThumbnail";
 import { knowledgeStageConcurrency, runKnowledgeStaggeredPool } from "../../shared/knowledgeConcurrency";
@@ -87,7 +88,12 @@ export type KnowledgePublicationExport = {
   totalPages?: number;
   pdfError?: string;
   billing?: Awaited<ReturnType<typeof settleKnowledgeInterior>>;
+  /** 版面审查（只提示，不拦截下载）；旧成品清单没有此字段。 */
+  layoutAudit?: KnowledgeLayoutAuditSummary;
 };
+/** 预分页结果：旧注入/旧排版服务只给页数，新版带逐章细节（含版面测量）。 */
+const measuredOf = (value: number | KnowledgeBookletMeasure): { count: number; booklets?: KnowledgeBookletMeasure["booklets"] } =>
+  typeof value === "number" ? { count: value } : { count: value?.pages, booklets: Array.isArray(value?.booklets) ? value.booklets : undefined };
 const real = {
   settle: settleKnowledgeInterior,
   load: readCanonicalLayoutLibrary,
@@ -98,7 +104,8 @@ const real = {
   // 送 13–18MB 的 4K 原图只会让并发取图超时（1110 实测 34 段有 11 段预分页失败）；缩图不可得时回退原图地址。
   imageUrl: async (uri: string) => signGsUriV4ReadUrl((await ensureKnowledgeReviewThumbnail(uri)) || uri, KNOWLEDGE_EXPORT_IMAGE_URL_TTL_SECONDS),
   pdf: fetchPdfBufferFromWorker,
-  measure: measureKnowledgeBookletFromWorker,
+  // 预分页同时带回逐章细节；排版服务未更新时 booklets 为空 → 版面审查记为未审查，不影响导出。
+  measure: measureKnowledgeBookletDetailsFromWorker as (html: string) => Promise<number | KnowledgeBookletMeasure>,
   // 使用镜像已有poppler，按真实PDF物理页保存，不用估算页数。
   savePages: async (bytes: Buffer, save: (index:number,page:Buffer)=>Promise<void>) => {
     const folder=await mkdtemp(join(tmpdir(),'knowledge-pdf-pages-'));
@@ -258,7 +265,7 @@ export async function exportKnowledgePublication(
   const prefix=`${sourcePrefix}-${KNOWLEDGE_EXPORT_IMAGE_TRANSPORT}${derived.prefixTag?`-${derived.prefixTag}`:""}`;
   if(doc.publication?.supplementOf && doc.publication.billing)return exportKnowledgePublication(owner,doc.publication.supplementOf.documentId,generation,overrides,derived.view?{}:derived);
   assertKnowledgeInteriorConsent(doc);
-  const run = async () => {
+  const run = async (): Promise<KnowledgePublicationExport> => {
     const manifest = await deps.read(`${prefix}/manifest.json`);
     if (manifest) {
       const saved = JSON.parse(manifest.toString("utf8"));
@@ -288,6 +295,7 @@ export async function exportKnowledgePublication(
           chapters: doc.pages.length,
           imagePages: doc.pages.filter(page => page.imageUrl).length,
           totalPages: saved.totalPages,
+          ...(saved.layoutAudit ? { layoutAudit: readKnowledgeLayoutAuditSummary(saved.layoutAudit) } : {}),
         };
       }
     }
@@ -366,14 +374,17 @@ export async function exportKnowledgePublication(
       exportLog("html", { owner, document: documentId, htmlBytes, parts: chunks.length, imageBytes: totalImageBytes, ms: Date.now() - startedAt });
       // 分段先在最终字体下计数，再带全书页码渲染。只保留一段HTML在内存中。
       const counts: number[] = [];
+      const measured: ReturnType<typeof measuredOf>[] = [];
       if (chunks.length > 1) {
         // 各段预分页互不依赖：同时计数（按段数动态并发），结果按原段序写回。
         await knowledgeExportPool(chunks.length, async index => {
           try {
             const chunkHtml = head + await readFile(chunks[index]!, "utf8") + tail;
-            const count = await retryKnowledgeExportStep(() => deps.measure(chunkHtml));
+            const result = measuredOf(await retryKnowledgeExportStep(() => deps.measure(chunkHtml)));
+            const count = result.count;
             if (!Number.isSafeInteger(count) || count < 1) throw new Error("预分页结果无效");
             counts[index] = count;
+            measured[index] = result;
           } catch (error) {
             counts[index]=0;
             failures.push(index + 1);
@@ -384,9 +395,11 @@ export async function exportKnowledgePublication(
         for (const part of failures.splice(0)) {
           try {
             const chunkHtml = head + await readFile(chunks[part - 1]!, "utf8") + tail;
-            const count = await retryKnowledgeExportStep(() => deps.measure(chunkHtml));
+            const result = measuredOf(await retryKnowledgeExportStep(() => deps.measure(chunkHtml)));
+            const count = result.count;
             if (!Number.isSafeInteger(count) || count < 1) throw new Error("预分页结果无效");
             counts[part - 1] = count;
+            measured[part - 1] = result;
           } catch (error) {
             failures.push(part);
             exportLog("measure-failed-again", { owner, document: documentId, part, reason: knowledgeExportLogReason(error) });
@@ -463,6 +476,16 @@ export async function exportKnowledgePublication(
       const totalPages = await deps.countPages(active[0]);
       if (!Number.isSafeInteger(totalPages) || totalPages < 1) throw new Error("手册实际总页数无效");
       const imagePages = doc.pages.filter(page => page.imageUrl).length;
+      // 版面审查：只用预分页已带回的测量，不另发请求；单段（未预分页）、缺数据或审查出错都记为未审查。
+      let layoutAudit: KnowledgeLayoutAuditSummary = { checked: false };
+      try {
+        if (measured.length === chunks.length && chunks.length > 1) {
+          const offsets = counts.map((_, i) => counts.slice(0, i).reduce((a, b) => a + (b || 0), 0));
+          layoutAudit = auditKnowledgeExportSegments(measured, offsets);
+          if (layoutAudit.checked && measured.reduce((n, m) => n + (m?.count || 0), 0) !== totalPages) layoutAudit = { checked: false };
+        }
+      } catch { layoutAudit = { checked: false }; }
+      exportLog("layout-audit", { owner, document: documentId, checked: layoutAudit.checked ? 1 : 0, issues: layoutAudit.checked ? layoutAudit.issueCount : undefined });
       const pdfBytes = await deps.file(
         `${prefix}/阅读稿.pdf`,
         active[0],
@@ -478,6 +501,7 @@ export async function exportKnowledgePublication(
             imagePages,
             totalPages,
             sourceDigest: review.sourceDigest,
+            layoutAudit,
           })
         ),
         "application/json"
@@ -492,6 +516,7 @@ export async function exportKnowledgePublication(
         chapters: doc.pages.length,
         imagePages,
         totalPages,
+        layoutAudit,
       };
     } finally {
       await html.close().catch(() => undefined);

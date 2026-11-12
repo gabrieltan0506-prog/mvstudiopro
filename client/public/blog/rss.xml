@@ -6,7 +6,14 @@
     <atom:link href="https://www.mvstudiopro.com/blog/rss.xml" rel="self" type="application/rss+xml"/>
     <description>AI 漫剧与视频生成实测：模型对比、真实价格、工作流拆解</description>
     <language>zh-CN</language>
-    <lastBuildDate>Wed, 11 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Thu, 12 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>拉片是什么？怎么复刻一支爆款短视频：上传一支片，拿到分段拆解和可直接用的提示词</title>
+      <link>https://www.mvstudiopro.com/blog/video-breakdown-remix-viral-shorts</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/video-breakdown-remix-viral-shorts</guid>
+      <pubDate>Thu, 12 Nov 2026 00:00:00 GMT</pubDate>
+      <description>拉片就是把一支视频按段、按镜头拆开，看清它的钩子、镜头、口播和节奏。上传一支 5 分钟以内的短视频，几分钟拿到爆款策略、逐段镜头与口播拆解、按秒锁定的复刻提示词，可一键送进画布逐段生成。附 1 分 20 秒口播片实测与计价。</description>
+    </item>
     <item>
       <title>一首歌怎么生成一支有剧情的 MV？AI 分镜、对口型与参考图驱动实录</title>
       <link>https://www.mvstudiopro.com/blog/song-to-story-mv-ai-storyboard-lipsync</link>
