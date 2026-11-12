@@ -305,7 +305,7 @@ export function NovelReviewCompareStart({
         ))}
       </div>
       <p className="mt-2 text-xs opacity-80">
-        合计参考价 {credits} 积分（每条线路按一次审稿计；管理者测试暂不扣）
+        合计参考价 {credits} 积分（每条线路按一次审稿计）
       </p>
       <div className="mt-2 flex gap-3">
         <button

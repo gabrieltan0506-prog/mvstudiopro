@@ -4,6 +4,8 @@ const memory = vi.hoisted(() => ({
   calls: 0,
   writes: [] as any[],
 }));
+// 1112 计费：余额充足、扣费成功（不连库）。
+vi.mock("../credits", () => ({ getCredits: async () => ({ totalAvailable: 1e9 }), deductCreditsAmount: async () => ({ success: true, cost: 0 }) }));
 vi.mock("../db", () => ({
   getDb: async () => ({
     insert: () => ({

@@ -114,7 +114,7 @@ export const NOVEL_IMITATION_UI = {
   synopsisPlaceholder: "你的新故事：主角是谁、想要什么、遇到什么阻碍、大致怎么发展。可短可长。",
   templateHint: "在「模板与配比」里自己挑选结构模板，或请创作顾问按题材推荐；模板用来加固底稿的结构。",
   priceNote: (skeletonCredits: number, episodeCredits: number) =>
-    `参考价：底稿结构拆解每次 ${skeletonCredits} 积分；仿写正文每集 ${episodeCredits} 积分。当前为管理者测试流程，暂不扣积分。`,
+    `参考价：底稿结构拆解每次 ${skeletonCredits} 积分；仿写正文每集 ${episodeCredits} 积分。`,
   readyHint: "导入底稿并拆解结构，填好作品名称、新题材、方向与纲要后提交；模板可以自己选，也可以让顾问推荐。",
   skeletonButton: "拆解底稿结构",
   skeletonRedo: "重新拆解底稿结构",

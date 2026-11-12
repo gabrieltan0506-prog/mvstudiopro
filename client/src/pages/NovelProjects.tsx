@@ -20,12 +20,6 @@ export default function NovelProjects() {
         <a href="/login">请先登录</a>
       </main>
     );
-  if (user.role !== "admin" && user.role !== "supervisor")
-    return (
-      <main className="p-8">
-        小说改编当前仅开放管理者测试。<a href="/">返回首页</a>
-      </main>
-    );
   return <NovelProjectLibrary key={user.id} userId={String(user.id)} />;
 }
 

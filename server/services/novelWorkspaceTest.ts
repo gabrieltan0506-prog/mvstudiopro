@@ -57,7 +57,7 @@ import {
   NOVEL_IMITATION_ORIGINAL_RULES,
   buildNovelImitationOutlineRules,
 } from "../../shared/novelImitationPrompt";
-import { resolveNovelImitationSkeleton, NovelImitationSkeletonError } from "./novelImitationSkeleton";
+import { resolveNovelImitationSkeleton, NovelImitationSkeletonError, novelImitationSkeletonKey } from "./novelImitationSkeleton";
 import {
   type NovelCreativePremiseBillingDeps,
   assertNovelCreativePremiseAffordable,
@@ -66,6 +66,16 @@ import {
   replayNovelCreativePremiseCharge,
   settleNovelCreativePremiseRun,
 } from "./novelCreativePremiseBilling";
+import {
+  type NovelStepBillingDeps,
+  type NovelStepBillingRecord,
+  NOVEL_STEP_CHARGE_DESC,
+  assertNovelStepAffordable,
+  defaultNovelStepBillingDeps,
+  replayNovelStepCharge,
+  settleNovelStep,
+} from "./novelStepBilling";
+import { novelImitationSkeletonCredits, novelStepCredits } from "../../shared/novelStepBilling";
 import type { NovelImitationLibraryOutcome, NovelImitationSkeleton } from "../../shared/novelImitation";
 import {
   NovelImitationLibraryMissingError,
@@ -236,8 +246,16 @@ export async function runNovelImitationSkeleton(
   deps: {
     resolve?: typeof resolveNovelImitationSkeleton;
     collect?: typeof collectNovelImitationLibrary;
+    /** 1112 计费：账号角色（管理者跳过预检、0 扣）与可替换的余额 / 扣费依赖（测试注入）。 */
+    role?: string | null;
+    billing?: NovelStepBillingDeps;
   } = {}
 ): Promise<{ skeleton: NovelImitationSkeleton; library: NovelImitationLibraryOutcome }> {
+  const billing = deps.billing ?? defaultNovelStepBillingDeps();
+  const price = novelImitationSkeletonCredits();
+  // 发起前预检；拆解成功后按「账号 + 底稿 + 线路」扣一次（与拆解缓存同键：同一份拆解只扣一次，命中已扣过的缓存不再扣）。
+  await assertNovelStepAffordable(userId, deps.role, price, billing);
+  const chargeRequestId = `skeleton-${novelImitationSkeletonKey(input.baseText, input.modelPreference ?? "auto")}`;
   let skeleton: NovelImitationSkeleton;
   try {
     // call 缺省为 callNovelStage（带本次线路；线路三另带证据落点），不另造调用层。
@@ -251,6 +269,8 @@ export async function runNovelImitationSkeleton(
     console.error("[novel-imitation-skeleton]", input.requestId, error instanceof Error ? error.message : "failed");
     throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: novelImitationSkeletonFailureMessage(error) });
   }
+  // 扣不成（余额不足）抛 PAYMENT_REQUIRED：骨架不交付、不收录；拆解缓存与证据保留，补足后重新发起只扣这一次。
+  await settleNovelStep(userId, chargeRequestId, price, NOVEL_STEP_CHARGE_DESC.skeleton, billing);
   // 自动收录到拆书参考模板库（公共库）；收录没写成不影响结构骨架本身（前台提示可重新拆解再收录）。
   let library: NovelImitationLibraryOutcome;
   try {
@@ -355,22 +375,28 @@ export async function runNovelWorkspaceTest(
   userId: number,
   input: NovelTestInput,
   /** 创意环节计费（1112）：账号角色（管理者豁免扣费、照常计次）与可替换的计费依赖（测试注入）。 */
-  options: { role?: string | null; billing?: NovelCreativePremiseBillingDeps } = {}
+  /** 其余环节计费（1112）：stepBilling 为可替换的余额 / 扣费依赖（测试注入）。 */
+  options: { role?: string | null; billing?: NovelCreativePremiseBillingDeps; stepBilling?: NovelStepBillingDeps } = {}
 ): Promise<NovelTestResult> {
   const db = await getDb();
   if (!db)
     throw new TRPCError({
       code: "SERVICE_UNAVAILABLE",
-      message: "测试记录暂不可用，未提交",
+      message: "记录暂不可用，未提交",
     });
   const id = `novel_test_${hash(`${userId}:${input.requestId}`).slice(0, 40)}`;
   const fingerprint = hash(JSON.stringify(input));
   const creativePremise = input.stage === "advice" && input.advisorIntent === "creative_premises";
   const billing = creativePremise ? (options.billing ?? defaultNovelCreativePremiseBillingDeps()) : undefined;
-  if (billing) {
-    // 新请求才预检余额（同 requestId 的重放不拦）；下一次要收费且不是管理者、余额不足 → 不登记、不调用。
+  // 其余环节（advice 其余意图 / outline / chapter / script / revise）：请求进入时按价格真源算一次并记下，结算用这一个数。
+  const stepBilling = creativePremise ? undefined : (options.stepBilling ?? defaultNovelStepBillingDeps());
+  const stepPrice = creativePremise ? 0 : novelStepCredits(input);
+  const stepDesc = NOVEL_STEP_CHARGE_DESC[input.stage] ?? "小说创作";
+  if (billing || stepBilling) {
+    // 新请求才预检余额（同 requestId 的重放不拦）；余额不足且不是管理者 → 不登记、不调用。
     const [existing] = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.id, id));
-    if (!existing) await assertNovelCreativePremiseAffordable(userId, novelCreativePremiseWorkId(input), options.role, billing);
+    if (!existing && billing) await assertNovelCreativePremiseAffordable(userId, novelCreativePremiseWorkId(input), options.role, billing);
+    if (!existing && stepBilling) await assertNovelStepAffordable(userId, options.role, stepPrice, stepBilling);
   }
   const inserted = await db
     .insert(jobs)
@@ -385,6 +411,7 @@ export async function runNovelWorkspaceTest(
         action: "novel_workspace_test",
         requestFingerprint: fingerprint,
         request: input,
+        ...(stepBilling ? { stepPrice } : {}),
       },
     })
     .onConflictDoNothing()
@@ -400,22 +427,34 @@ export async function runNovelWorkspaceTest(
         code: "CONFLICT",
         message: "请求编号已绑定另一份输入",
       });
-    const output = previous.output as { result?: NovelTestResult; creativeBilling?: { price?: number; chargeKey?: string } };
+    const output = previous.output as {
+      result?: NovelTestResult;
+      creativeBilling?: { price?: number; chargeKey?: string };
+      stepBilling?: { price?: number; chargeKey?: string };
+    };
     if (previous.status === "succeeded" && output?.result) {
-      // 创意环节重放：按记录的价格与同 chargeKey 幂等补扣（已扣过直接命中，不重复扣）。
+      // 重放：按记录的价格与同 chargeKey 幂等补扣（已扣过直接命中，不重复扣）。
       if (billing) await replayNovelCreativePremiseCharge(userId, output.creativeBilling, billing);
+      if (stepBilling) await replayNovelStepCharge(userId, output.stepBilling, stepDesc, stepBilling);
       return output.result;
     }
     throw new TRPCError({
       code: "CONFLICT",
       message:
         previous.status === "failed"
-          ? "该次测试失败，原始记录已保留。核对后另建一次测试。"
+          ? "该次生成失败，原始记录已保留。请重新发起一次。"
           : "原请求仍待核对，不重复提交。",
     });
   }
   if (input.stage === "revise")
-    return runNovelReviseJob(db, id, userId, input, fingerprint);
+    return runNovelReviseJob(
+      db,
+      id,
+      userId,
+      input,
+      fingerprint,
+      stepBilling ? () => settleNovelStep(userId, input.requestId, stepPrice, stepDesc, stepBilling) : undefined
+    );
   let evidence: Record<string, unknown> = { phase: "preparing" };
   let lastHeartbeat = 0;
   let completedModel: string | undefined;
@@ -630,6 +669,10 @@ export async function runNovelWorkspaceTest(
       );
       evidence = { ...evidence, creativeBilling: settled };
     }
+    if (stepBilling) {
+      // 成功、校验通过后才扣（按进入时记下的价格；同 requestId 幂等；管理者 0 扣）。扣不成即不交付。
+      evidence = { ...evidence, stepBilling: await settleNovelStep(userId, input.requestId, stepPrice, stepDesc, stepBilling) };
+    }
     await db
       .update(jobs)
       .set({
@@ -645,7 +688,7 @@ export async function runNovelWorkspaceTest(
       .set({
         status: "failed",
         output: evidence,
-        error: "管理者改编测试未完成，保留原始记录供核对",
+        error: "本次生成未完成，保留原始记录供核对",
         updatedAt: new Date(),
       })
       .where(eq(jobs.id, id));
@@ -654,14 +697,14 @@ export async function runNovelWorkspaceTest(
       id,
       error instanceof Error ? error.message : "failed"
     );
-    // 创意环节积分不足：结果不交付（本条记为失败、不计次），原始记录保留。
+    // 积分不足：结果不交付（本条记为失败、创意环节不计次），原始记录保留。
     if (error instanceof TRPCError && error.code === "PAYMENT_REQUIRED") throw error;
     throw new TRPCError({
       code: "SERVICE_UNAVAILABLE",
       message:
         error instanceof NovelImitationLibraryMissingError
           ? error.message
-          : "本次测试未完成，原稿与已收到的记录保留；未自动重试。",
+          : "本次生成未完成，原稿与已收到的记录保留；未自动重试。",
     });
   }
 }
@@ -680,7 +723,9 @@ async function runNovelReviseJob(
   id: string,
   userId: number,
   input: NovelTestInput,
-  fingerprint: string
+  fingerprint: string,
+  /** 成功、校验通过后结算（1112）；扣不成抛 PAYMENT_REQUIRED，本次记为未交付。 */
+  settle?: () => Promise<NovelStepBillingRecord>
 ): Promise<NovelTestResult> {
   let evidence: Record<string, unknown> = {
     // 综合意见改稿不调用审稿，直接进入改稿。
@@ -782,6 +827,7 @@ async function runNovelReviseJob(
       inputSha256: fingerprint,
       resultSha256: hash(text),
     };
+    if (settle) evidence = { ...evidence, stepBilling: await settle() };
     await db
       .update(jobs)
       .set({
@@ -792,6 +838,14 @@ async function runNovelReviseJob(
       .where(eq(jobs.id, id));
     return result;
   } catch (error) {
+    if (error instanceof TRPCError && error.code === "PAYMENT_REQUIRED") {
+      // 审稿改稿已完成但积分不足：结果不交付，审稿 / 改稿原始记录保留。
+      await db
+        .update(jobs)
+        .set({ status: "failed", output: { ...evidence, unpaid: true }, error: "积分不足，结果未交付，原始记录保留", updatedAt: new Date() })
+        .where(eq(jobs.id, id));
+      throw error;
+    }
     const step: NovelReviseStep =
       error instanceof NovelReviseError ? error.kind : "review";
     evidence = {
@@ -845,7 +899,7 @@ export async function readNovelWorkspaceReceipt(
   };
 }> {
   const db = await getDb();
-  if (!db) throw new Error("测试记录暂不可用");
+  if (!db) throw new Error("记录暂不可用");
   const id = `novel_test_${hash(`${userId}:${requestId}`).slice(0, 40)}`;
   const [row] = await db.select().from(jobs).where(eq(jobs.id, id));
   if (!row || row.userId !== String(userId)) return { status: "not_found" };

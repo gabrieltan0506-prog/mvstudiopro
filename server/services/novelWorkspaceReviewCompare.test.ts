@@ -8,6 +8,8 @@ const memory = vi.hoisted(() => ({
   replies: {} as Record<string, string | ((requestId: string) => string)>,
   failCall: new Set<string>(),
 }));
+// 1112 计费：余额充足、扣费成功（不连库）。
+vi.mock("../credits", () => ({ getCredits: async () => ({ totalAvailable: 1e9 }), deductCreditsAmount: async () => ({ success: true, cost: 0 }) }));
 vi.mock("drizzle-orm", async original => ({
   ...(await original<typeof import("drizzle-orm")>()),
   eq: (_column: unknown, value: unknown) => ({ __id: value }),

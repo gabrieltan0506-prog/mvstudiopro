@@ -16,9 +16,9 @@ export const NOVEL_IMITATION_MAX_BEATS = 80;
 export const NOVEL_IMITATION_MAX_PROPER_NOUNS = 200;
 export const NOVEL_IMITATION_PROPER_NOUN_MAX = 60;
 
-/** 占位，待站长定价；当前管理者测试流程不扣积分。 */
+/** 扣费已接入（1112），经 shared/novelStepBilling.ts 读取。 */
 export const NOVEL_IMITATION_SKELETON_CREDITS = 30;
-/** 占位，待站长定价；当前管理者测试流程不扣积分。 */
+/** 扣费已接入（1112），经 shared/novelStepBilling.ts 读取。 */
 export const NOVEL_IMITATION_EPISODE_CREDITS = 15;
 
 /** 底稿拆解分片大小（字）与并发上限。 */

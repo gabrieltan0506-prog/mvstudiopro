@@ -152,7 +152,7 @@ export function defaultNovelCreativePremiseBillingDeps(): NovelCreativePremiseBi
         import("drizzle-orm"),
       ]);
       const db = await getDb();
-      if (!db) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "测试记录暂不可用，未提交" });
+      if (!db) throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: "记录暂不可用，未提交" });
       const rows = await db
         .select({ id: jobs.id, createdAt: jobs.createdAt, input: jobs.input })
         .from(jobs)
