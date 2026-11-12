@@ -6,11 +6,11 @@
  * 成品写到带版本标记的独立导出目录（exportKnowledgePublication 的 derived.prefixTag）。
  *
  * 流程（全书合计 ≤2 轮文字模型压缩，复用 #1765 篇幅压缩链：函数去重 → 三跳路由 GLM@EvoLink → GLM@OpenRouter → DeepSeek；
- *   2026-11-13 起每轮一章一次调用、并发发出——全部超出章放进同一请求会超过整条链约 10 分钟上限）：
+ *   2026-11-13 起每轮超出章三章一组、各组并发发出——全部超出章放进同一请求会超过整条链约 10 分钟上限）：
  * 版式（2026-11-13 站长：不再切图）：取消跨页，所有章一律图文同页——整张横版图在上、两栏正文在下、放不完接纯文字续页。
  * 1. 页数分配：knowledgeHandbookPagePlan（完整版 = 图数 × 1.41～1.59，≤72，只作上限校核与报告）；不分配跨页名额，
  *    每章正文上限一律图文同页档 700 字（KNOWLEDGE_LEAD_PAGE_CHARS）。
- * 2. 第 1 轮：按字数找出超出本章版面的章，每章带各自目标字数单独请求，并发压缩。
+ * 2. 第 1 轮：按字数找出超出本章版面的章，三章一组、各带各自目标字数，各组并发压缩。
  * 3. 预分页实测（排版服务逐章计页，新版服务另报实际版式与留白）：超过 1 页即为仍超。
  * 4. 第 2 轮（仅仍超的章）：按实测页数换算更紧的目标字数再压一轮；之后仍超的章排成续页并报出，不截断。
  * 5. 总页数超过上限：已无跨页名额可收，只如实报出（retractedSpreads 恒为 0、spreadChapters 恒为 0，字段保留）；低于下限不凑页。
@@ -28,7 +28,7 @@ import type { KnowledgeBookletMeasure } from "./pdfWorkerClient";
 import type { KnowledgeDerivedExport } from "./knowledgePublicationExport";
 
 export const KNOWLEDGE_REFIT_VERSION = "knowledge-refit-1111-v1";
-/** 压缩适配的轮数上限：全书 2 轮；每轮一章一次请求、并发发出（只有一章时即一次请求）。 */
+/** 压缩适配的轮数上限：全书 2 轮；每轮三章一组、各组并发发出（不多于一组时即一次请求）。 */
 export const KNOWLEDGE_REFIT_MAX_ROUNDS = 2;
 
 /** 整册视图（loadKnowledgeBookLayoutView 的返回）；派生视图原样交给 exportKnowledgePublication。 */
@@ -65,19 +65,14 @@ async function pool<T>(items: readonly T[], limit: number, worker: (item: T) => 
 }
 
 /** 读取一轮压缩的原始回包，取实际模型、网关、用量与路由摘要（不含正文）。 */
-async function roundEvidence(advisor: KnowledgePublicationAdvisorDeps, prefix: string, ids: readonly string[]) {
-  const envelopeOf = (raw: any) => { try { return JSON.parse(raw.response.text); } catch { return undefined; } };
-  const raw = await advisor.read(`${prefix}/raw-0.json`);
-  if (raw?.response?.text) {
-    const envelope = envelopeOf(raw);
-    return envelope ? { calls: 1, model: envelope.modelVersion, gateway: envelope.gateway, usage: envelope.usageMetadata, routeSummary: envelope.routeSummary } : { calls: 1 };
-  }
-  // 一章一次请求：回包在 page-<章id> 目录；用量按章列出，不合并估算。
-  const perPage = (await Promise.all(ids.map(async id => ({ id, raw: await advisor.read(`${prefix}/page-${id}/raw-0.json`) })))).filter(item => item.raw?.response?.text);
-  if (!perPage.length) return { calls: 0 };
-  const envelopes = perPage.map(item => ({ id: item.id, envelope: envelopeOf(item.raw) }));
-  return { calls: perPage.length, model: envelopes.find(e => e.envelope)?.envelope.modelVersion,
-    usage: envelopes.map(e => ({ id: e.id, gateway: e.envelope?.gateway, usage: e.envelope?.usageMetadata })) };
+async function roundEvidence(advisor: KnowledgePublicationAdvisorDeps, prefixes: readonly string[]) {
+  // 每个回执目录一次请求（整批一个目录；分组并发时每组一个）；用量按请求列出，不合并估算。
+  const raws = (await Promise.all(prefixes.map(prefix => advisor.read(`${prefix}/raw-0.json`)))).filter(raw => raw?.response?.text);
+  if (!raws.length) return { calls: 0 };
+  const envelopes = raws.map(raw => { try { return JSON.parse(raw.response.text); } catch { return undefined; } });
+  const first = envelopes.find(Boolean);
+  if (raws.length === 1) return first ? { calls: 1, model: first.modelVersion, gateway: first.gateway, usage: first.usageMetadata, routeSummary: first.routeSummary } : { calls: 1 };
+  return { calls: raws.length, model: first?.modelVersion, usage: envelopes.map(e => ({ gateway: e?.gateway, usage: e?.usageMetadata })) };
 }
 
 export async function refitKnowledgeHandbook(owner: number, view: View, deps: KnowledgeRefitDeps): Promise<KnowledgeRefitResult> {
@@ -109,7 +104,7 @@ export async function refitKnowledgeHandbook(owner: number, view: View, deps: Kn
     const result = await compressKnowledgeReviewToBudget({ deps: advisor, prefix, attempt: 0, digest: view.review.sourceDigest, source: compressSource, pages, maxRounds: 1, measureOverflow: overflowBy(limits) });
     pages = result.pages;
     result.adopted.forEach(id => adopted.add(id));
-    rounds.push({ round, targets: result.before, adopted: result.adopted, after: result.after, ...(result.error ? { error: result.error } : {}), ...await roundEvidence(advisor, prefix, result.before.map(o => o.id)) });
+    rounds.push({ round, targets: result.before, adopted: result.adopted, after: result.after, ...(result.error ? { error: result.error } : {}), ...await roundEvidence(advisor, result.receiptPrefixes) });
   };
 
   if (overflowBy(budgets)(pages).length) await compress(1, budgets);

@@ -43,8 +43,8 @@ export function knowledgeDecorationCss(d:KnowledgeDecoration){
  } else if(d.header==='plain'){
    css+=rule('.reading-title','height:220px');css+=rule('.reading-title .art-window','display:none');css+=rule('.reading-columns,.reading-column','height:1800px');
  } else {
-   css+=rule('.reading-title .art-window','width:440px!important;height:280px;mask-image:none;mix-blend-mode:normal');
-   css+=rule('.reading-title .art-window>img','position:static;transform:none;width:100%!important;height:100%!important;max-height:280px!important;object-fit:contain!important;opacity:1');
+   // 站长 2026-11-13：续页右上角用本章信息图的局部、四周淡出（史记导读手册的做法）；尺寸与遮罩沿用版式基础样式 .art-window，不再改成整图小窗。
+   css+=rule('.reading-title .art-window','width:440px!important;height:280px');
  }
  if(d.table==='floral-corner'){
    if(!art)throw new Error('所选表格角饰缺少实际素材');
