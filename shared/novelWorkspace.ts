@@ -588,8 +588,38 @@ export const NOVEL_REVIEW_MIN_LOCATED = 3;
  * 审稿意见定位（1111 放宽失败方式，标准不降）：归一化后能在原文找到的，quote 修正为原文原始片段；
  * 仍找不到的标 located:false 排在后面、不进改稿清单；能定位的少于 3 条才判审稿失败。
  */
+/**
+ * 审稿维度归一（1112 线上实测：模型把第 5 条意见的 dimension 写成七个维度之外的词，整次审稿被判失败）。
+ * 常见近义写法映射到七个维度；仍无法归入的意见丢弃——丢弃后不足 3 条时保持原样交给 schema 报错（由调用方带原因重写）。
+ */
+const NOVEL_REVIEW_DIMENSION_ALIASES: Record<string, NovelReviewDimension> = {
+  紧凑: "紧凑度", 节奏: "紧凑度", 行文: "紧凑度", 文字: "紧凑度", 语言: "紧凑度", 文风: "紧凑度", 注水: "紧凑度",
+  逻辑性: "逻辑", 因果: "逻辑", 连续性: "逻辑", 人物: "逻辑", 动机: "逻辑", 人物动机: "逻辑", 设定: "逻辑", 一致性: "逻辑",
+  精彩: "精彩度", 爽点: "精彩度", 钩子: "精彩度", 看点: "精彩度", 创意: "精彩度", 核心创意: "精彩度",
+  转折: "反转", 反转设计: "反转",
+  高潮: "情绪高潮", 情绪: "情绪高潮", 情感: "情绪高潮",
+  矛盾: "冲突", 对抗: "冲突", 冲突设计: "冲突",
+  悬念: "伏笔", 铺垫: "伏笔", 伏笔回收: "伏笔", 伏笔与回收: "伏笔",
+};
+export function normalizeNovelReviewDimensions(value: unknown): unknown {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { issues?: unknown }).issues)) return value;
+  const known = new Set<string>(NOVEL_REVIEW_DIMENSIONS);
+  const issues = (value as { issues: unknown[] }).issues;
+  const mapped = issues.map(issue => {
+    if (!issue || typeof issue !== "object") return issue;
+    const raw = String((issue as { dimension?: unknown }).dimension ?? "").trim();
+    if (known.has(raw)) return issue;
+    const alias =
+      NOVEL_REVIEW_DIMENSION_ALIASES[raw] ??
+      NOVEL_REVIEW_DIMENSIONS.find(d => raw.includes(d) || (raw.length >= 2 && d.includes(raw)));
+    return alias ? { ...(issue as object), dimension: alias } : null;
+  });
+  const kept = mapped.filter(issue => issue !== null);
+  // 丢弃后不足下限：不动原值，让 schema 给出明确原因。
+  return kept.length >= 3 ? { ...(value as object), issues: kept } : value;
+}
 export function validateNovelReview(original: string, value: unknown) {
-  const review = novelReviewSchema.parse(value);
+  const review = novelReviewSchema.parse(normalizeNovelReviewDimensions(value));
   const located: NovelReview["issues"] = [];
   const missing: NovelReview["issues"] = [];
   for (const { located: _, ...issue } of review.issues) {

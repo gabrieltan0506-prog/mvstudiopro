@@ -97,7 +97,7 @@ it("成功：结果带 original/review/revised；review 与 revise 的原始与�
 it("审稿失败：不改稿，阶段失败给业务提示，原始返回保留", async () => {
   memory.replies.review = "{坏的";
   await expect(runNovelWorkspaceTest(1, input)).rejects.toThrow(/审稿未完成/);
-  expect(memory.calls.map(c => c.step)).toEqual(["review"]);
+  expect(memory.calls.map(c => c.step)).toEqual(["review", "review"]); // 写坏带拒因重写一次
   expect(memory.row.status).toBe("failed");
   expect(memory.row.output.reviewRaw.text).toBe("{坏的");
   const receipt = await readNovelWorkspaceReceipt(1, input.requestId);
@@ -105,12 +105,12 @@ it("审稿失败：不改稿，阶段失败给业务提示，原始返回保留"
   expect(receipt.revise?.review).toBeUndefined();
   // 失败后重放也不再调用
   await expect(runNovelWorkspaceTest(1, input)).rejects.toThrow();
-  expect(memory.calls).toHaveLength(1);
+  expect(memory.calls).toHaveLength(2);
 });
 it("改稿失败：阶段失败但审稿结果保留并经回执返回，两份证据都在", async () => {
   memory.replies.revise = JSON.stringify({ ...REVISE_REVISED, text: "短".repeat(800) });
   await expect(runNovelWorkspaceTest(1, input)).rejects.toThrow(/审稿意见已保留/);
-  expect(memory.calls.map(c => c.step)).toEqual(["review", "revise"]);
+  expect(memory.calls.map(c => c.step)).toEqual(["review", "revise", "revise"]) // 改稿写坏同样重写一次;
   const out = memory.row.output;
   expect(out.reviewParsed).toEqual(REVISE_REVIEW);
   expect(out.reviseRaw.text).toBe(memory.replies.revise);

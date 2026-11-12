@@ -99,16 +99,45 @@ export class NovelReviseError extends Error {
   }
 }
 
+/**
+ * 「写坏也算失败」（1112 线上实测补齐）：输出解析或校验不过时，带拒因在同一线路重写一次；仍不过才报失败。
+ * 通道层失败（call 自身抛错）不在这里重试，由线路回退处理。
+ */
+class ReviseCallFailure extends Error {
+  constructor(readonly original: unknown) {
+    super("call failed");
+  }
+}
+const callOrFail = <T>(work: Promise<T>) => work.catch(e => { throw new ReviseCallFailure(e); });
+async function withOneRewrite<T>(run: (rejection: string | null, attempt: number) => Promise<T>): Promise<T> {
+  try {
+    return await run(null, 1);
+  } catch (first) {
+    if (first instanceof ReviseCallFailure) throw first.original;
+    const reason = (first instanceof Error ? first.message : String(first)).replace(/\s+/g, " ").slice(0, 600);
+    try {
+      return await run(reason, 2);
+    } catch (second) {
+      throw second instanceof ReviseCallFailure ? second.original : second;
+    }
+  }
+}
+function rewriteNote(rejection: string | null, hint: string) {
+  return rejection ? `\n\n【上一次输出未通过校验】${rejection}\n请修正后重新输出完整 JSON，不要解释。${hint}` : "";
+}
+
 export async function executeNovelRevise(
   input: NovelTestInput,
   call: NovelReviseCall,
   evidence: {
-    saveRaw: (step: NovelReviseStep, response: StageResponse) => Promise<void>;
+    /** attempt：1 = 首次，2 = 带拒因重写；两次的原始与解析证据分别保存，互不覆盖。 */
+    saveRaw: (step: NovelReviseStep, response: StageResponse, attempt?: number) => Promise<void>;
     saveParsed: (
       step: NovelReviseStep,
       value: unknown,
       normalized: string,
-      repaired: boolean
+      repaired: boolean,
+      attempt?: number
     ) => Promise<void>;
     onReview?: (review: NovelReview) => Promise<void>;
   }
@@ -119,12 +148,15 @@ export async function executeNovelRevise(
   const original = input.reviseDraft;
   let review: NovelReview;
   try {
-    const response = await call("review", buildNovelReviewPrompt(input));
-    await evidence.saveRaw("review", response); // 先落原始返回，再解析。
-    reviewModel = response.model;
-    const { value, normalized, repaired } = parseNovelModelJson(response.text);
-    await evidence.saveParsed("review", value, normalized, repaired);
-    review = validateNovelReview(original, value);
+    review = await withOneRewrite(async (rejection, attempt) => {
+      const prompt = buildNovelReviewPrompt(input) + rewriteNote(rejection, `issues[].dimension 只能是：${NOVEL_REVIEW_DIMENSIONS.join("、")}。`);
+      const response = await callOrFail(call("review", prompt));
+      await evidence.saveRaw("review", response, attempt); // 先落原始返回，再解析。
+      reviewModel = response.model;
+      const { value, normalized, repaired } = parseNovelModelJson(response.text);
+      await evidence.saveParsed("review", value, normalized, repaired, attempt);
+      return validateNovelReview(original, value);
+    });
   } catch (error) {
     throw new NovelReviseError(
       "review",
@@ -133,22 +165,24 @@ export async function executeNovelRevise(
   }
   await evidence.onReview?.(review);
   try {
-    const response = await call("revise", buildNovelRevisePrompt(input, review));
-    await evidence.saveRaw("revise", response);
-    const { value, normalized, repaired } = parseNovelModelJson(response.text);
-    await evidence.saveParsed("revise", value, normalized, repaired);
-    const revised = validateNovelRevision(value);
-    return {
-      result: {
-        chapterIndex: input.chapterIndex,
-        original,
-        review,
-        revised,
-        models: { review: reviewModel, revise: response.model },
-      },
-      model: response.model,
-      settings: response.settings,
-    };
+    return await withOneRewrite(async (rejection, attempt) => {
+      const response = await callOrFail(call("revise", buildNovelRevisePrompt(input, review) + rewriteNote(rejection, "")));
+      await evidence.saveRaw("revise", response, attempt);
+      const { value, normalized, repaired } = parseNovelModelJson(response.text);
+      await evidence.saveParsed("revise", value, normalized, repaired, attempt);
+      const revised = validateNovelRevision(value);
+      return {
+        result: {
+          chapterIndex: input.chapterIndex,
+          original,
+          review,
+          revised,
+          models: { review: reviewModel, revise: response.model },
+        },
+        model: response.model,
+        settings: response.settings,
+      };
+    });
   } catch (error) {
     throw new NovelReviseError(
       "revise",
