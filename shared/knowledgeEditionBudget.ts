@@ -9,7 +9,7 @@
  * 预算在生图前计算（两档准备阶段展示、审校请求携带），不在导出后才阻断。
  */
 import { KNOWLEDGE_TOPIC_IMAGE_CAP, KNOWLEDGE_TOPIC_IMAGE_MAX_CHARS } from "./knowledgeTopicImagePlan";
-import { knowledgeHandbookPagePlan } from "./knowledgeHandbookPagePlan";
+import { knowledgeHandbookPagePlan, knowledgeFullPageRange } from "./knowledgeHandbookPagePlan";
 
 export type KnowledgeEditionLevel = "full" | "concise";
 
@@ -213,7 +213,8 @@ export function knowledgeBudgetOutputContract(level: KnowledgeEditionLevel | und
 }
 
 /** 审校后逐页核对：reading 实际字数（不含空白）对照各页预算，返回超出的页。 */
-export type KnowledgeReadingOverflow = { id: string; headline: string; chars: number; maxChars: number; excess: number };
+/** minChars 只在「正文偏少、需扩写」的标记上出现（此时 excess 为 0，maxChars 为扩写上限）。 */
+export type KnowledgeReadingOverflow = { id: string; headline: string; chars: number; maxChars: number; excess: number; minChars?: number };
 export function knowledgeReadingOverflow(
   level: KnowledgeEditionLevel | undefined,
   pages: KnowledgeBudgetPage[],
@@ -233,4 +234,45 @@ export function knowledgeReadingOverflow(
 export function knowledgeCompressionInstructions(level: KnowledgeEditionLevel, overflow: readonly KnowledgeReadingOverflow[]) {
   const target = level === "full" ? `图下一栏（每页约${KNOWLEDGE_LEAD_PAGE_CHARS}字）` : "本页预算";
   return `这是篇幅压缩：以下各页审校后的reading超出${target}，须把每页reading压缩到不超过该页maxChars（中文字符，不含空白；含表格单元格与小标题）。合并去重、提炼成要点、删除与图中已画出内容重复的表格/清单/步骤，保留全部关键事实、数字、条件与边界；不新增事实、不改变结论、不写“详见图中”以外的空话。body与reading表达相同内容。沿用knowledge_publication_v1 JSON合同，pages与输入同id同顺序、一个不少。各页目标：${JSON.stringify(overflow.map(o => ({ id: o.id, chars: o.chars, maxChars: o.maxChars })))}`;
+}
+
+/**
+ * 统稿后「哪些章要压缩」的标记（站长 2026-11-13：不必每章都压缩；放宽为一章可占两页，但两页的留白不得超过四分之一页；
+ * 需要压缩的章先标记好，再分两路并发）。只用于新合同完整版的整册补压；审校阶段的建议字数不变。
+ * - 一页容量：带表格的章按 KNOWLEDGE_LEAD_PAGE_CHARS（700，实测带 5 行表格约 700–730）；
+ *   纯段落的章按 KNOWLEDGE_LEAD_PROSE_PAGE_CHARS（实测满幅图下约 1130 字，留一成余量）。字数略超时版式会先等比例缩图收进同页。
+ * - 两页容量：一页容量 + 一整页续页 KNOWLEDGE_READING_PAGE_CHARS；两页留白 ≤ 1/4 页 ⇒ 字数不少于「一页容量 + 续页 × 3/4」。
+ * - 两页名额 = 完整版总页数上限（图数 × 1.59，≤72）− 章数；字数最多的章优先占用，名额用完的章仍按一页处理。
+ * 返回要压缩的章及其目标上限：占两页仍超的压到两页容量；其余超过一页容量的压到一页容量；放得下的不出现在结果里（不调模型）。
+ */
+export const KNOWLEDGE_LEAD_PROSE_PAGE_CHARS = 1000;
+export const KNOWLEDGE_TWO_PAGE_MAX_BLANK = 0.25;
+export function knowledgeFinalCompressionMarks(
+  pages: KnowledgeBudgetPage[],
+  reviewed: readonly { id: string; chars: number; hasTable: boolean }[],
+): KnowledgeReadingOverflow[] {
+  const headline = new Map(pages.map(p => [p.id, p.headline]));
+  const range = knowledgeFullPageRange(pages.filter(hasImage).length);
+  const slots = Math.max(0, (range?.max ?? reviewed.length) - reviewed.length);
+  const one = (r: { hasTable: boolean }) => (r.hasTable ? KNOWLEDGE_LEAD_PAGE_CHARS : KNOWLEDGE_LEAD_PROSE_PAGE_CHARS);
+  const twoMin = (r: { hasTable: boolean }) => one(r) + Math.ceil(KNOWLEDGE_READING_PAGE_CHARS * (1 - KNOWLEDGE_TWO_PAGE_MAX_BLANK));
+  const twoMax = (r: { hasTable: boolean }) => one(r) + KNOWLEDGE_READING_PAGE_CHARS;
+  // 字数够填满两页（留白 ≤ 1/4）的章按字数从多到少占两页名额；同字数按章序，保证确定。
+  const twoPage = new Set(reviewed.map((r, index) => ({ r, index })).filter(({ r }) => r.chars >= twoMin(r))
+    .sort((a, b) => b.r.chars - a.r.chars || a.index - b.index).slice(0, slots).map(({ r }) => r.id));
+  return reviewed.flatMap(r => {
+    const maxChars = twoPage.has(r.id) ? twoMax(r) : one(r);
+    if (r.chars > maxChars) return [{ id: r.id, headline: headline.get(r.id) || "", chars: r.chars, maxChars, excess: r.chars - maxChars }];
+    // 正文偏少（站长 2026-11-13：文字不够就扩写）：一页章的图下留白超过 1/4 页（图下正文区约占半页 ⇒ 字数不足一页容量的一半）时标记扩写，上限为一页容量。
+    const minChars = Math.ceil(one(r) * (1 - 2 * KNOWLEDGE_TWO_PAGE_MAX_BLANK));
+    if (!twoPage.has(r.id) && r.chars < minChars) return [{ id: r.id, headline: headline.get(r.id) || "", chars: r.chars, maxChars, excess: 0, minChars }];
+    return [];
+  });
+}
+/**
+ * 扩写指令（站长 2026-11-13：文字不够就扩写；扩写的资料必须来自联网检索，不靠模型编造）。
+ * 调用方须同时带上联网检索指令（KNOWLEDGE_RESEARCH_INSTRUCTIONS）：路由先联网搜索，再只用检索到的真实资料与原稿扩写。
+ */
+export function knowledgeExpansionInstructions(marks: readonly KnowledgeReadingOverflow[]) {
+  return `这是篇幅扩写：以下各页审校后的reading偏短，版面会留下大片空白，须把每页reading扩写到不少于该页minChars、且不超过该页maxChars（中文字符，不含空白；含表格单元格与小标题）。扩写内容只能来自两处：原稿中尚未写进图和正文的资料，以及随本批提供的真实联网检索资料（补背景、成因、影响、具体例子），并按来源规则标注。没有可用资料的页保持原样、原字数输出，不为凑字数编造；不得杜撰数字、日期、引文、人名与出处；不复述图中已画出的内容；不改动、不删除已有内容的事实与结论。body与reading表达相同内容。沿用knowledge_publication_v1 JSON合同。各页目标：${JSON.stringify(marks.map(o => ({ id: o.id, headline: o.headline, minChars: o.minChars, maxChars: o.maxChars })))}`;
 }

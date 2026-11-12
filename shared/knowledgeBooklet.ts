@@ -10,7 +10,7 @@ export type KnowledgeBookletPage = { id: string; headline: string; body: string;
 export type KnowledgeBookletTheme = "fusion_chinese_garden" | "fusion_ink_mountains" | "fusion_coastal_lighthouse" | "fusion_glasshouse_garden" | "fusion_maple_bridge" | "fusion_snow_monastery";
 /** 手册每页的半透明平铺水印（用户 2026-11-11 定：图文手册生成时打上，单张图片不打）。 */
 export const KNOWLEDGE_BOOKLET_WATERMARK = "mvstudiopro.com";
-export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1112-v18-whole-image";
+export const KNOWLEDGE_BOOKLET_VERSION = "knowledge-booklet-1113-v19-fit-image";
 /**
  * 信息图入版上限（排版服务按 data-pdf-max-dim 执行；与审校缩图派生件 2048 一致，未超上限的 JPEG 原样入版）。
  * 站长 2026-11-12：整图清晰度是硬要求——版面上等比例缩小只改显示尺寸，入版像素一律按这一档（2048 / 0.85），不另设低档。
@@ -22,7 +22,7 @@ export const KNOWLEDGE_BOOKLET_MAX_WHITESPACE = 1 / 3;
 export const KNOWLEDGE_BOOKLET_FILL_THRESHOLD = 0.15;
 /**
  * 整图版式等比例缩小的下限（站长 2026-11-12「圖片可以做尺寸的等比例稍微的壓縮」）：
- * 只在某章正文差一点就要多开一页续页时，才把该章信息图等比例缩小（完整、居中、不变形、不裁切），
+ * 某章有续页时先试把该章信息图等比例缩小来收回续页（完整、居中、不变形、不裁切；缩到够用为止——站长 2026-11-13「每页的图按正文多少等比例缩放，用来吃掉留白」），
  * 显示宽度不得小于版心宽 × 本值，保证图上文字仍清楚；缩到下限仍放不下就正常接续页，不再继续缩。
  */
 export const KNOWLEDGE_BOOKLET_IMAGE_MIN_WIDTH_RATIO = 0.85;
@@ -172,7 +172,10 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
     return `<div class="next-source" data-for="${escape(p.id)}" data-headline="${escape(next.headline)}" data-no="${String(next.chapterNo).padStart(2, "0")}"></div>`;
   }).join("");
   const fillerOrnament = design ? knowledgeMotifSvg(design.motif) : ornamentHtml;
-  const readingHeader = `<header class="reading-title"><div><p class="eyebrow">图文对照 <span>／</span> 知识阅读</p><h2>${escape(input.title)}</h2><p class="reading-subtitle">${input.pages.map((p,i)=>`${String((input.chapterOffset ?? 0)+i+1).padStart(2,"0")} ${escape(p.headline)}`).join("　·　")}</p></div>${design?knowledgeMotifSvg(design.motif):ornamentHtml}</header>`;
+  // 续页页眉右上角：本章信息图的局部、四周淡出，纯装饰（站长 2026-11-13：可以采用信息图的局部；不要的是把图拆成两半）。
+  // 只在单章片段（发布流程逐章渲染）且本章有图时放；低档标记控制体积，不影响首页整图的保清晰档。
+  const artWindow = input.pages.length === 1 && input.pages[0]!.imageUrl ? `<figure class="art-window" aria-hidden="true"><img alt="" src="${escape(input.pages[0]!.imageUrl)}" data-pdf-max-dim="1024" data-pdf-quality="0.8"></figure>` : "";
+  const readingHeader = `<header class="reading-title"><div><p class="eyebrow">图文对照 <span>／</span> 知识阅读</p><h2>${escape(input.title)}</h2><p class="reading-subtitle">${input.pages.map((p,i)=>`${String((input.chapterOffset ?? 0)+i+1).padStart(2,"0")} ${escape(p.headline)}`).join("　·　")}</p></div>${artWindow||(design?knowledgeMotifSvg(design.motif):ornamentHtml)}</header>`;
   // 同一脚本在预览和PDF环境中测量实际字体与块高，不以overflow:hidden强塞固定页数。
   const pagination = String.raw`
   (()=>{
@@ -338,7 +341,8 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
         const tailUnits=columnsOf(tail).flatMap(c=>[...c.children]);
         if(!tailUnits.length)continue;
         const tailUsed=Math.max(...columnsOf(tail).map(c=>[...c.children].reduce((n,u)=>n+(heights.get(u)||unitHeight(u)),0)));
-        if(tailUsed>capacity*0.35)continue;
+        // 站长 2026-11-13：每页的图按正文多少等比例缩放来吃留白——只要有续页就先试缩图收回；换序补位与收紧字号仍只在续页很少（≤35% 栏高）时用。
+        const small=tailUsed<=capacity*0.35;
         const home=new Map([...chain,tail].flatMap(f=>columnsOf(f).flatMap(c=>[...c.children])).map(u=>[u,u.parentElement]));
         const density=new Map(chain.map(f=>[f,f.dataset.density]));
         const lead=chain[0].classList.contains('lead-folio')?chain[0]:null,img=lead&&lead.querySelector('.main-card img');
@@ -358,10 +362,12 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
           const tailSum=columnsOf(tail).reduce((n,c)=>n+[...c.children].reduce((m,u)=>m+(heights.get(u)||unitHeight(u)),0),0);
           for(const w of [fullWidth*(1-tailSum/(2*h)),min])if(w>=min-0.5&&w<fullWidth-1&&!widths.some(x=>Math.abs(x-w)<1))widths.push(Math.max(min,w));
         }
-        let done=fillGap(chain,tailUnits)&&chain.every(columnsFit);
+        if(!small&&!widths.length)continue;
+        let done=false;
         for(const w of widths){if(done)break;done=relayout(w,false);}
-        if(!done)done=relayout(0,true);
-        for(const w of widths){if(done)break;done=relayout(w,true);}
+        if(!done&&small){restore();done=fillGap(chain,tailUnits)&&chain.every(columnsFit);}
+        if(!done&&small)done=relayout(0,true);
+        if(small)for(const w of widths){if(done)break;done=relayout(w,true);}
         if(done&&chain.every(columnsFit)){readingPages.splice(readingPages.indexOf(tail),1);pages.splice(pages.indexOf(tail),1);tail.remove();}
         else restore();
       }
@@ -465,12 +471,13 @@ export function buildKnowledgeBookletHtml(input: { title: string; pages: Knowled
 .theme-fusion_ink_mountains .folio{background:linear-gradient(155deg,#fff7 0%,transparent 35%),var(--paper)}.theme-fusion_ink_mountains .seal{border-radius:50%;color:#925f45}.theme-fusion_ink_mountains .main-card{border-width:1px;padding:13px;box-shadow:0 0 0 5px var(--paper),0 0 0 6px var(--line)}.theme-fusion_coastal_lighthouse .image-title{flex-direction:row-reverse;text-align:right}.theme-fusion_coastal_lighthouse .main-card{border-radius:26px 3px 26px 3px;padding:12px}.theme-fusion_coastal_lighthouse .reading-unit{border:1px solid var(--line);border-top:3px solid var(--line);border-radius:10px 2px}.theme-fusion_glasshouse_garden .main-card{border-radius:48px 48px 5px 5px;padding:15px}.theme-fusion_glasshouse_garden .reading-unit{border-radius:16px 3px;border-width:1px;border-left:3px solid var(--line)}.theme-fusion_glasshouse_garden .seal{border-radius:50% 50% 4px 4px}.theme-fusion_maple_bridge .image-title{border-left:4px solid var(--accent);padding-left:22px}.theme-fusion_snow_monastery .main-card{box-shadow:none;border:1px solid var(--line);background:#fff9}.theme-fusion_snow_monastery .seal{transform:none}
 .table-unit{position:relative;padding:24px 26px 22px;border:1px solid var(--line)!important;border-radius:14px 3px!important;background:linear-gradient(135deg,color-mix(in srgb,var(--paper) 80%,var(--white)),var(--white) 46%,color-mix(in srgb,var(--paper) 68%,var(--white)))!important;box-shadow:3px 4px 0 color-mix(in srgb,var(--line) 15%,transparent)}.table-unit:before{content:"";position:absolute;inset:7px;border:1px solid color-mix(in srgb,var(--line) 55%,transparent);border-radius:9px 1px;pointer-events:none}.table-unit:after{content:"";position:absolute;right:11px;top:11px;width:13px;height:13px;border-top:2px solid var(--accent);border-right:2px solid var(--accent);opacity:.65;pointer-events:none}.table-unit .unit-heading{border-bottom:3px double var(--line);padding-bottom:13px;margin-bottom:15px}.table-unit .unit-heading>span{background:var(--paper);border:3px double var(--line);width:31px;height:31px}.table-unit th,.table-unit td{min-width:calc(2em + 20px)}.table-unit th{border-bottom:3px double var(--line);letter-spacing:.5px}.table-unit tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--paper) 80%,var(--white))}.table-unit tbody tr:last-child td{border-bottom:1px solid var(--line)}
 
-/* 题签与主题纹样必须在整页比例下可见，不盖住正文。 */
-.reading-title{border-bottom:7px double var(--accent);background:linear-gradient(110deg,color-mix(in srgb,var(--accent) 14%,var(--paper)),transparent 70%);padding:20px 26px;border-radius:32px 0 32px 0}.reading-title h2{border-left:12px solid var(--accent);padding-left:22px}.reading-title .botanical{opacity:.85;stroke-width:3}.reading-unit{border:2px solid var(--line);border-radius:14px 0 14px 0;overflow:hidden}.unit-heading{margin:-14px -18px 14px;padding:13px 18px;background:var(--ink);color:var(--white);border:0}.unit-heading h3{color:var(--white)}.unit-heading>span{background:var(--paper);color:var(--ink);border:0}.table-unit{padding:24px 26px 22px!important;border:3px solid var(--accent)!important;box-shadow:7px 7px 0 color-mix(in srgb,var(--accent) 23%,transparent)!important}.table-unit .unit-heading{margin:-24px -26px 18px;padding:17px 26px;background:var(--accent);border:0}.table-unit:before{inset:9px;border:2px solid var(--line);border-top:0}.table-unit:after{content:"✦";position:absolute;right:14px;top:auto;bottom:12px;width:28px;height:28px;font:28px Georgia;color:var(--accent);border:0;opacity:.8}.prose-unit blockquote{border-left:7px solid var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--paper));padding:16px 20px}.reading-folio footer{border-top:4px double var(--accent)}
+/* 史记导读手册的做法（站长 2026-11-13）：题签不铺底色、粗体加宽字距；卡片细线框小圆角浅阴影；小标题下只一条细线、编号是小圆徽标；
+   表头深色、表格卡右上角小角标；小结条左侧细竖线；页脚单细线。主题色仍由各主题变量决定。 */
+.reading-title{border-bottom:1px solid var(--line);background:none;padding:14px 0 18px;border-radius:0}.reading-title h2{border-left:0;padding-left:0;letter-spacing:6px}.reading-title .botanical{opacity:.7;stroke-width:2}.reading-unit{border:1px solid var(--line);border-radius:12px 2px 12px 2px;overflow:hidden;box-shadow:2px 3px 0 color-mix(in srgb,var(--line) 14%,transparent)}.unit-heading{background:none;color:var(--ink);border:0;border-bottom:1px solid var(--line)}.unit-heading h3{color:var(--ink)}.unit-heading>span{background:var(--paper);color:var(--accent);border:1px solid var(--line);border-radius:50%}.table-unit th{background:var(--ink);color:var(--white);border-bottom:0}.table-unit th p{color:var(--white)}.prose-unit blockquote{border-left:3px solid var(--accent);background:none;padding:10px 18px}.reading-folio footer{border-top:1px solid var(--line)}
 
 /* 直式图文同页：图在上，本章要点两栏在下，余下高度全部给要点。 */
 .lead-folio .image-title{margin:18px 0 18px;min-height:0}.lead-folio .image-title h1{font-size:46px}.lead-folio .eyebrow .chapter-no{display:inline-grid;place-items:center;width:34px;height:34px;margin-right:12px;border:3px double var(--accent);border-radius:50%;font:15px/1 Georgia,serif;letter-spacing:0;color:var(--accent)}.image-title .content-motif,.image-title .botanical{width:260px!important;height:120px!important;flex:none;opacity:.6;color:var(--accent)}.reading-title .botanical{width:300px;height:110px;flex:none}.lead-columns{flex:1 1 auto!important;height:auto!important;min-height:0;margin:26px 0 19px!important}.lead-columns .reading-column{height:100%!important}
-.lead-columns{position:relative;padding:22px 22px 6px;border:1px solid color-mix(in srgb,var(--line) 70%,transparent);border-radius:16px;background:color-mix(in srgb,var(--paper) 55%,#fff)}.folio[data-density=snug] .reading-unit p,.folio[data-density=snug] .reading-unit li{font-size:22px!important;line-height:1.66!important}.folio[data-density=snug] .unit-heading h3{font-size:26px!important}.folio[data-density=snug] .reading-unit{padding:12px 16px 13px!important;margin-bottom:12px!important}.folio[data-density=snug] .reading-unit td,.folio[data-density=snug] .reading-unit td p,.folio[data-density=snug] .reading-unit th p{font-size:21px!important}.lead-folio[data-density=roomy] .reading-unit p,.lead-folio[data-density=roomy] .reading-unit li{font-size:26px!important;line-height:1.95!important}.lead-folio[data-density=roomy] .unit-heading h3{font-size:31px!important}.lead-folio[data-density=airy] .reading-unit p,.lead-folio[data-density=airy] .reading-unit li{font-size:28px!important;line-height:2.05!important}.lead-folio[data-density=airy] .unit-heading h3{font-size:33px!important}.lead-folio:is([data-density=roomy],[data-density=airy]) .reading-unit{padding:22px 28px 24px!important;margin-bottom:22px}
+.lead-columns{position:relative}.folio[data-density=snug] .reading-unit p,.folio[data-density=snug] .reading-unit li{font-size:22px!important;line-height:1.66!important}.folio[data-density=snug] .unit-heading h3{font-size:26px!important}.folio[data-density=snug] .reading-unit{padding:12px 16px 13px!important;margin-bottom:12px!important}.folio[data-density=snug] .reading-unit td,.folio[data-density=snug] .reading-unit td p,.folio[data-density=snug] .reading-unit th p{font-size:21px!important}.lead-folio[data-density=roomy] .reading-unit p,.lead-folio[data-density=roomy] .reading-unit li{font-size:26px!important;line-height:1.95!important}.lead-folio[data-density=roomy] .unit-heading h3{font-size:31px!important}.lead-folio[data-density=airy] .reading-unit p,.lead-folio[data-density=airy] .reading-unit li{font-size:28px!important;line-height:2.05!important}.lead-folio[data-density=airy] .unit-heading h3{font-size:33px!important}.lead-folio:is([data-density=roomy],[data-density=airy]) .reading-unit{padding:22px 28px 24px!important;margin-bottom:22px}
 /* 页尾补白：下篇预告与纹样框绝对定位在栏区，不进栏、不改正文。 */
 .reading-columns{position:relative}.page-filler{position:absolute;box-sizing:border-box;border:3px double var(--line);border-radius:14px 0 14px 0;overflow:hidden;pointer-events:none}.filler-ornament{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:repeating-linear-gradient(45deg,color-mix(in srgb,var(--line) 16%,transparent) 0 1px,transparent 1px 14px),color-mix(in srgb,var(--paper) 70%,var(--white))}.filler-motif{width:min(86%,1100px);height:min(72%,340px);display:flex;align-items:center;justify-content:center;color:var(--accent);opacity:.7}.filler-motif svg{width:100%!important;height:100%!important;opacity:1!important;stroke-width:2.2}.filler-ornament:before{content:"";position:absolute;inset:10px;border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:9px 0 9px 0}.filler-label{margin:0;font:700 30px "Songti SC",serif;letter-spacing:12px;color:var(--accent)}.next-preview{display:flex;flex-direction:column;background:color-mix(in srgb,var(--paper) 55%,var(--white));border-color:var(--accent)}.next-eyebrow{flex:none;margin:14px 22px 2px;font-size:15px;letter-spacing:4px;color:var(--accent)}.next-eyebrow b{font:20px Georgia,serif;margin-left:8px}.next-preview h4{flex:none;margin:0 22px 12px;font:700 32px/1.3 "Songti SC",serif;letter-spacing:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 ${knowledgeDecorationCss(decoration)}

@@ -1,7 +1,7 @@
 import {it,expect,beforeAll,afterAll} from 'vitest';
 import puppeteer,{type Browser} from 'puppeteer';
 import {deflateSync} from 'node:zlib';
-import {buildKnowledgeBookletHtml,isImagePointerNote} from './knowledgeBooklet';
+import {buildKnowledgeBookletHtml,isImagePointerNote, KNOWLEDGE_BOOKLET_IMAGE_MIN_WIDTH_RATIO } from './knowledgeBooklet';
 
 // 1200×840 纯色 PNG，模拟置顶配图（尺寸与正式页一致比例）。
 const png=(w:number,h:number)=>{const crc=(b:Buffer)=>{let c=~0;for(let i=0;i<b.length;i++){const x=b[i];c^=x;for(let k=0;k<8;k++)c=(c>>>1)^(0xedb88320&-(c&1));}return (~c)>>>0;};
@@ -31,7 +31,7 @@ const render=async(html:string)=>{
 // 第31/32页形态：图下左栏一块短文、右栏一块长文，章末一小块补充放不进右栏，旧排法另开一页只放这一块。
 const chapter=(tail:string)=>[`## 为什么它被列为控脂食材\n\n${para(230,'真鳕鱼是低脂高蛋白白肉鱼')}`,`## 选购与食用要点\n\n${para(470,'认准具体鱼种标注并按建议频率轮换')}`,`## 牛奶与浓茶的位置\n\n${tail}`].join('\n\n');
 
-it('章末少量补充不再独占续页：收回本章前页余白，全文保留且不越过页脚、不压缩配图',async()=>{
+it('章末少量补充不再独占续页：先等比例缩图收回（不低于下限），全文保留且不越过页脚',async()=>{
   const body=chapter(para(40,'牛奶与含铁食物间隔一到两小时'));
   const after=await render(buildKnowledgeBookletHtml({title:'控脂手册',pages:[{id:'fish',headline:'鳕鱼营养成分',body,imageUrl:img}]}));
   expect(after.result.ready).toBe(true);
@@ -41,7 +41,9 @@ it('章末少量补充不再独占续页：收回本章前页余白，全文保�
   expect(after.text).toContain('牛奶与含铁食物间隔一到两小时');
   expect(after.text).toContain('认准具体鱼种标注');
   const alone=await render(buildKnowledgeBookletHtml({title:'控脂手册',pages:[{id:'fish',headline:'鳕鱼营养成分',body:`## 只有一块\n\n${para(40,'短')}`,imageUrl:img}]}));
-  expect(after.figure[0]).toBeCloseTo(alone.figure[0],0);
+  // 站长 2026-11-13：按正文多少等比例缩图吃留白——图可以略缩，但不低于满幅的下限比例，也不放大。
+  expect(after.figure[0]).toBeLessThanOrEqual(alone.figure[0]+0.5);
+  expect(after.figure[0]).toBeGreaterThanOrEqual(alone.figure[0]*KNOWLEDGE_BOOKLET_IMAGE_MIN_WIDTH_RATIO-1);
 },60000);
 
 it('续页内容多时照常分页，不硬塞、不越界',async()=>{
