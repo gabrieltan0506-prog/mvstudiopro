@@ -1,6 +1,8 @@
 /** 固定业务原因可保存和重放；不把模型原文、网址或凭证返回前台。 */
 const knowledgeFailureCategories = [
   { pattern: /回执尚未闭合|结果尚待核实|传输或回执|原请求.*状态.*未确认/, message: "原请求的结果尚未确认，已保留原稿与任务；请恢复原任务，不要重新付费。", retryable: false },
+  // 排版前的整册/分组篇幅整理（压缩）未完成：常见为单次调用超时；说清是哪一步、原稿保留、可只重试未完成部分。
+  { pattern: /篇幅压缩[^。]{0,12}未完成/, message: "排版前的篇幅整理未完成（处理超时或结果未通过检查），超出的页面暂未进入排版；原稿和已完成部分已保留，可以仅重试未完成部分。", retryable: true },
   { pattern: /缺少来源|未取得真实联网来源|引用不属于本次检索|来源未融入|缺少可复用检索片段/, message: "本次整理缺少可核实的来源，未采用这份补充内容；原稿和已完成部分已保留。", retryable: true },
   { pattern: /装饰组件配置|自动选版结果|自动表格图文结构/, message: "本次整理未返回完整的排版内容，未采用不完整结果；原稿和已完成部分已保留。", retryable: true },
   { pattern: /JSON|输出合同不符|页编号.*不符|缺少实际配图审校|图文疑点没有说明|跨页核对返回未知页号|一致性核对未返回完整合同/, message: "本次整理返回的格式不完整或与原稿不符，未采用错误内容；原稿和已完成部分已保留。", retryable: true },
@@ -31,6 +33,12 @@ export function knowledgePublicationPublicError(error: unknown): { message: stri
     return { message: "本次整理未完成，积分仍在核对中。原稿已保存，请稍后继续。", retryable: false };
   const category = knowledgeFailureCategories.find(item => raw.includes(item.message));
   if (category) return { message: category.message, retryable: category.retryable };
+  // 未经操作层归类就直接抛出的原因（如失败任务恢复时重跑篇幅整理再次超时）也要落到具体业务句，不落兜底句。
+  // 原请求回执未闭合优先（不可重购）；其次才是篇幅整理未完成。
+  const unclassified = knowledgeFailureCategories.slice(0, 2).find(item => item.pattern.test(raw));
+  if (unclassified && /篇幅压缩/.test(raw)) return { message: unclassified.message, retryable: unclassified.retryable };
+  if (/模型调用超过约\d+分钟上限|可只重试未完成部分/.test(raw))
+    return { message: "本次整理未完成，已完成的内容和原稿均已保留，可以仅重试未完成部分。", retryable: true };
   if (raw.includes("ADVISOR_OPERATION_FAILED"))
     return { message: "本次整理未完成，已完成的内容和原稿均已保留，可以仅重试未完成部分。", retryable: true };
   if (/顾问提纲超出|单页内容超出|表格超出单页/.test(raw)) return {message:"顾问提纲超出页数或单页容量，尚未渲染。请调整提纲后再导出。",retryable:false};

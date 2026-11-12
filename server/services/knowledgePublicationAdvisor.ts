@@ -396,26 +396,27 @@ export async function compressKnowledgeReviewToBudget(params: {
   const rounds: { round: number; targets: KnowledgeReadingOverflow[]; adopted: string[]; after: KnowledgeReadingOverflow[]; error?: string }[] = [];
   for (let round = 0; round < (params.maxRounds ?? KNOWLEDGE_COMPRESSION_MAX_ROUNDS) && after.length; round++) {
     const ids = new Set(after.map(o => o.id));
-    const pageSource: KnowledgeSource = { title: source.title, detailLevel: source.detailLevel, ...(source.readingContract ? { readingContract: source.readingContract } : {}),
-      pages: pages.filter(p => ids.has(p.id)).map(p => ({ ...originals.get(p.id)!, body: p.body, imageUrl: "" })) };
+    const roundSource = (keep: ReadonlySet<string>): KnowledgeSource => ({ title: source.title, detailLevel: source.detailLevel, ...(source.readingContract ? { readingContract: source.readingContract } : {}),
+      pages: pages.filter(p => keep.has(p.id)).map(p => ({ ...originals.get(p.id)!, body: p.body, imageUrl: "" })) });
     // 提示词目标 = 上限 × KNOWLEDGE_COMPRESSION_TARGET_RATIO（700→595）；验收（pageBudgets）仍按真实上限。
     const targets = after.map(o => ({ ...o, maxChars: Math.floor(o.maxChars * KNOWLEDGE_COMPRESSION_TARGET_RATIO) }));
-    const request = buildKnowledgeCompressionRequest(pageSource, digest, targets);
-    // 压缩输出按真实上限逐页校验、容差 0：仍超出即算写坏，由路由切下一跳（GLM@EvoLink → GLM@OR → DeepSeek），三跳都超取最短的一份。
-    request.pageBudgets = after.map(o => ({ id: o.id, headline: o.headline, maxChars: o.maxChars }));
-    request.budgetTolerance = 0;
-    if (round > 0) request.systemInstruction.parts.push({ text: `上一轮压缩后这些页仍超出图下容量（第${round + 1}轮）。本轮每页必须低于给定目标maxChars：先删与图中已画出内容重复的表格/清单，再把并列例子合并成一句，仍超出则只保留最关键的事实与数字。` });
+    const roundRequest = (keep: ReadonlySet<string>, channel: "openrouter" | "evolink" = "evolink") => {
+      const request = buildKnowledgeCompressionRequest(roundSource(keep), digest, targets.filter(t => keep.has(t.id)), channel);
+      // 压缩输出按真实上限逐页校验、容差 0：仍超出即算写坏，由路由切下一跳（GLM@EvoLink → GLM@OR → DeepSeek），三跳都超取最短的一份。
+      request.pageBudgets = after.filter(o => keep.has(o.id)).map(o => ({ id: o.id, headline: o.headline, maxChars: o.maxChars }));
+      request.budgetTolerance = 0;
+      if (round > 0) request.systemInstruction.parts.push({ text: `上一轮压缩后这些页仍超出图下容量（第${round + 1}轮）。本轮每页必须低于给定目标maxChars：先删与图中已画出内容重复的表格/清单，再把并列例子合并成一句，仍超出则只保留最关键的事实与数字。` });
+      return request;
+    };
     const roundAdopted: string[] = [];
     let roundError: string | undefined;
     const roundPrefix = compressionRoundPrefix(prefix, round);
     // 每轮首次得到回包时记下本轮是否有进展；再读时按记录决定是否继续，保证回放确定、不在无进展处反复付费。
     const outcomeKey = `${roundPrefix}/outcome-${attempt}.json`;
     const recorded = await deps.read(outcomeKey);
-    const replayed = !!await deps.read(`${roundPrefix}/raw-${attempt}.json`);
-    try {
-      const raw = await getRaw(deps, roundPrefix, attempt, digest, [], request, { firstSendWithoutReceipt: true });
-      const compressed = validateKnowledgeReview(parseRaw(raw, false), pageSource, digest);
-      const byId = new Map(compressed.pages.map(p => [p.id, p]));
+    const wholeReplayed = !!await deps.read(`${roundPrefix}/raw-${attempt}.json`);
+    const adopt = (compressedPages: ReturnType<typeof validateKnowledgeReview>["pages"]) => {
+      const byId = new Map(compressedPages.map(p => [p.id, p]));
       pages = pages.map(page => {
         const next = byId.get(page.id);
         if (!next || knowledgeReviewPageChars(next) >= knowledgeReviewPageChars(page)) return page;
@@ -424,9 +425,46 @@ export async function compressKnowledgeReviewToBudget(params: {
         return { ...next, imageDescription: page.imageDescription, imageStatus: page.imageStatus,
           cautions: Array.from(new Map([...page.cautions.filter(c => c.kind === "image_text" || c.kind === "uncertain"), ...next.cautions].map(c => [JSON.stringify(c), c])).values()) };
       });
-    } catch (e) {
-      roundError = e instanceof Error ? e.message : String(e);
-      console.warn(`[knowledgePublication] 篇幅压缩第${round + 1}轮未完成（正式链已用尽），保留当前稿并报出超出页：${roundError.slice(0, 200)}`);
+    };
+    // 2026-11-13：多章超出时一章一次调用、并发发出（各章独立三跳链与回执，目录 page-<章id>）。
+    // 此前把全部超出章放进同一请求，单次调用即超过整条链约 10 分钟上限，后续重试 / 换跳来不及执行，整册卡在排版前。
+    // 仍走整批请求的情形：只有一章超出；该轮已有整批成功回包（零调用回放）；该轮整批请求尚有未闭合回执（不另买，交路由按原请求处理）。
+    const split = after.length > 1 && !wholeReplayed && !await knowledgeRouteReceiptUnresolved(deps.read, `${roundPrefix}/attempt-${attempt}`);
+    let replayed = wholeReplayed;
+    if (split) {
+      const order = after.map(o => o.id);
+      const pagePrefix = (id: string) => `${roundPrefix}/page-${id}`;
+      replayed = (await Promise.all(order.map(id => deps.read(`${pagePrefix(id)}/raw-${attempt}.json`)))).every(Boolean);
+      const results: (ReturnType<typeof validateKnowledgeReview>["pages"] | undefined)[] = new Array(order.length);
+      const failed: (string | undefined)[] = new Array(order.length);
+      const workerCount = knowledgeStageConcurrency(order.length, { max: KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter + KNOWLEDGE_MODEL_CHANNEL_MAX.evolink });
+      await Promise.all(Array.from({ length: workerCount }, async (_, worker) => {
+        for (let index = worker; index < order.length; index += workerCount) {
+          const keep = new Set([order[index]!]);
+          try {
+            // 首跳在两个通道间交错，避免同一通道瞬时并发过高；各章的后续跳仍按正式链顺序。
+            const raw = await getRaw(deps, pagePrefix(order[index]!), attempt, digest, [], roundRequest(keep, index % 2 === 0 ? "evolink" : "openrouter"), { firstSendWithoutReceipt: true });
+            results[index] = validateKnowledgeReview(parseRaw(raw, false), roundSource(keep), digest).pages;
+          } catch (e) {
+            failed[index] = `《${after[index]!.headline}》${e instanceof Error ? e.message : String(e)}`;
+          }
+        }
+      }));
+      // 按章序采纳，保证回放与并发完成顺序无关。
+      for (const result of results) if (result) adopt(result);
+      const failures = failed.filter((f): f is string => !!f);
+      if (failures.length) {
+        roundError = `${failures.length}/${order.length}章压缩未完成：${failures.join("；")}`;
+        console.warn(`[knowledgePublication] 篇幅压缩第${round + 1}轮 ${failures.length}/${order.length} 章未完成，其余章已采纳：${roundError.slice(0, 300)}`);
+      }
+    } else {
+      try {
+        const raw = await getRaw(deps, roundPrefix, attempt, digest, [], roundRequest(ids), { firstSendWithoutReceipt: true });
+        adopt(validateKnowledgeReview(parseRaw(raw, false), roundSource(ids), digest).pages);
+      } catch (e) {
+        roundError = e instanceof Error ? e.message : String(e);
+        console.warn(`[knowledgePublication] 篇幅压缩第${round + 1}轮未完成（正式链已用尽），保留当前稿并报出超出页：${roundError.slice(0, 200)}`);
+      }
     }
     after = measure(pages);
     rounds.push({ round, targets, adopted: roundAdopted, after, ...(roundError ? { error: roundError } : {}) });
@@ -478,7 +516,12 @@ export async function compressKnowledgeFinalReport(deps: typeof real, root: stri
   // 之后仍超出的章随报告报出、排成续页，不截断。旧稿沿用原 4 轮。
   const compressed = await compressKnowledgeReviewToBudget({ deps, prefix: `${root}/final-compress`, attempt, digest, source, pages: saved.report.pages, ...(source.readingContract === KNOWLEDGE_READING_CONTRACT ? { maxRounds: 2 } : {}) });
   if (JSON.stringify(compressed.pages) === JSON.stringify(saved.report.pages)) {
-    if (compressed.error) throw new Error(`整册篇幅压缩未完成，超出页不进排版：${compressed.error.slice(0, 200)}`);
+    if (compressed.error) {
+      // 旧稿（图下一栏硬上限）：超出页不进排版，报错交重试。
+      if (source.readingContract !== KNOWLEDGE_READING_CONTRACT) throw new Error(`整册篇幅压缩未完成，超出页不进排版：${compressed.error.slice(0, 200)}`);
+      // 新合同（2026-11-13 站长确认）：压缩失败或超时不挡排版，超出的章排成续页；原因与超出章已记入 final-compress/budget.json。
+      console.warn(`[knowledgePublication] 整册篇幅压缩未完成，超出的${compressed.after.length}章按续页进排版：${compressed.error.slice(0, 200)}`);
+    }
     return saved;
   }
   if (!await deps.read(`${root}/report-precompress.json`)) await deps.save(`${root}/report-precompress.json`, saved);
@@ -852,6 +895,14 @@ async function getRaw(
 async function knowledgeRouteReceiptExists(read: (name: string) => Promise<any>, prefix: string) {
   if (await read(`${prefix}/interrupted-repurchase.json`)) return true;
   for (const id of KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES) if (await read(`${prefix}/route-${id}.json`)) return true;
+  return false;
+}
+/** 该请求目录下是否有尚未闭合（pending / unknown）的路由回执：有则不能另起请求身份，须交路由按原请求处理。 */
+async function knowledgeRouteReceiptUnresolved(read: (name: string) => Promise<any>, prefix: string) {
+  for (const id of KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES) {
+    const receipt = await read(`${prefix}/route-${id}.json`);
+    if (receipt && ["pending", "unknown"].includes(receipt.state)) return true;
+  }
   return false;
 }
 function parseRaw(raw: any, hasImages: boolean): unknown {

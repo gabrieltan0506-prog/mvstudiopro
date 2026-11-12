@@ -1163,3 +1163,43 @@ describe('1111 失败处理：同通道重试 → 同模型换路由 → 换模�
     expect(f.storage.has('test/0/interrupted-repurchase.json')).toBe(false);
   });
 });
+
+describe('[knowledgeRoute] 日志带脱敏后的拒收原因 detail', async () => {
+  const { knowledgeRouteLogDetail } = await import('./knowledgePublicationRoutes');
+  const { GLM_53_FLASHX_EVOLINK_MODEL } = await import('./glmModels');
+  const withLogs = <T extends ReturnType<typeof make>>(f: T) => { const logs: string[] = []; (f.deps as any).log = (l: string) => logs.push(l); return logs; };
+  it('脱敏：去地址、去长 token、章节标题换《章》、引文换「…」、单行、≤160 字；空原因为空串', () => {
+    const d = knowledgeRouteLogDetail('输出合同不符：《水循环与蒸发》缺 reading\n见 https://api.example.com/v1/x?key=1 与 gs://bucket/a.json，key=sk_abcdefghijklmnopqrstuvwxyz0123456789 原句“海水蒸发形成云”' + '多'.repeat(300));
+    expect(d).toContain('输出合同不符：《章》缺 reading');
+    expect(d).not.toMatch(/https?:|gs:\/\/|example\.com|bucket|sk_abc|水循环|海水蒸发|\n/);
+    expect(d.length).toBeLessThanOrEqual(160);
+    expect(knowledgeRouteLogDetail('模型输出未完整结束（finish_reason=length），原稿与回包已保留，未采用不完整正文')).toBe('模型输出未完整结束（finish_reason=length），原稿与回包已保留，未采用不完整正文');
+    expect(knowledgeRouteLogDetail(undefined)).toBe('');
+    expect(knowledgeRouteLogDetail('  \n ')).toBe('');
+  });
+  it('写坏：日志带 detail，且不含地址、章节标题、正文', async () => {
+    const f = make(); f.request.executionChannel = 'evolink'; f.request.executionFamily = 'glm'; const logs = withLogs(f);
+    const bad = structuredClone(f.report); delete (bad.pages[0] as any).reading;
+    f.deps.fetch.mockResolvedValueOnce(f.response(GLM_53_FLASHX_EVOLINK_MODEL, bad)).mockImplementation(async (_u?: unknown, init?: RequestInit) => f.response(JSON.parse(String(init?.body)).model));
+    await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps);
+    const line = logs.find(l => l.includes('reason=bad_output'));
+    expect(line).toMatch(/ detail=\S/);
+    expect(line).not.toMatch(/https?:|gs:\/\/|test-key|水循环|\n/);
+    expect(line!.split(' detail=')[1].length).toBeLessThanOrEqual(160);
+    expect(f.storage.get('test/0/route-glm-evolink.json').reason).toBeTruthy();
+  });
+  it('篇幅超出切跳：记一行 reason=budget_overflow，detail 只有页数与超出字数', async () => {
+    const f = make(), r = structuredClone(f.report) as any; r.pages[0].reading.blocks[0].rows.push(['补充', '液'.repeat(200)]);
+    const chars = knowledgeAnswerBudgetOverflow(r, [{ id: r.pages[0].id, headline: '水循环', maxChars: 0 }])[0].chars;
+    f.request.executionFamily = 'glm'; f.request.executionChannel = 'evolink'; f.request.pageBudgets = [{ id: r.pages[0].id, headline: '水循环', maxChars: Math.round(chars / 1.3) }];
+    const logs = withLogs(f);
+    let n = 0; f.deps.fetch.mockImplementation(async (_u?: unknown, init?: RequestInit) => f.response(JSON.parse(String(init?.body)).model, n++ === 0 ? r : undefined));
+    const out = JSON.parse((await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).text);
+    expect(out.gateway).toBe('glm-openrouter');
+    const lines = logs.filter(l => l.includes('reason=budget_overflow'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/route=glm-evolink reason=budget_overflow attempt=\d+ next=switch_hop detail=1页超出，共超\d+字$/);
+    expect(lines[0]).not.toMatch(/水循环|液/);
+    expect(f.storage.get('test/0/route-glm-evolink.json').reason).toContain('《水循环》');
+  });
+});

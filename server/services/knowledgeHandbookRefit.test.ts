@@ -3,7 +3,7 @@ vi.mock("./gcs", async importOriginal => ({ ...await importOriginal<any>(), getG
 import { layoutFromSource } from "../../shared/editableLayout";
 import { KNOWLEDGE_SPREAD_PAGE_CHARS } from "../../shared/knowledgeHandbookPagePlan";
 import { KNOWLEDGE_VISUAL_ADVISOR_MODEL, knowledgeReviewPageChars } from "./knowledgePublicationAdvisor";
-import { refitKnowledgeHandbook, KNOWLEDGE_REFIT_MAX_CALLS } from "./knowledgeHandbookRefit";
+import { refitKnowledgeHandbook, KNOWLEDGE_REFIT_MAX_ROUNDS } from "./knowledgeHandbookRefit";
 
 // 每句互不相同，便于确认没有截断。
 const prose = (chars: number, tag: string) => { let out = "", k = 0; while (out.length < chars) out += `${tag}第${k++}句说明背景与注意事项。`; return out; };
@@ -48,18 +48,21 @@ function fixture(options: { stubborn?: number[]; dropPage?: boolean; spreadPages
   return { doc, review, view, storage, post, measure, requests, advisor, deps: { advisor, measure, imageUrl: async (uri: string) => `https://test.invalid/${encodeURIComponent(uri)}` } };
 }
 
-describe("压缩适配：LLM 把正文压进版面，全书 ≤2 次调用", () => {
-  it("超出章合并成一次请求压缩；实测仍超的章再压一轮；跨页章落进跨页、其余图文同页；原稿与已确认正文不动", async () => {
+describe("压缩适配：LLM 把正文压进版面，全书 ≤2 轮、每轮一章一次并发调用", () => {
+  it("超出章一章一次请求并发压缩；实测仍超的章再压一轮；跨页章落进跨页、其余图文同页；原稿与已确认正文不动", async () => {
     const f = fixture();
     const before = structuredClone(f.view.doc);
     const result = await refitKnowledgeHandbook(7, f.view as any, f.deps);
-    expect(f.post.mock.calls.length).toBeLessThanOrEqual(KNOWLEDGE_REFIT_MAX_CALLS);
-    // 第一次请求就带上全部超出章（8 章都超），不是一章一调。
-    expect(f.requests[0]!.ids).toHaveLength(8);
-    expect(f.requests[0]!.targets.filter(t => t.maxChars <= KNOWLEDGE_SPREAD_PAGE_CHARS)).toHaveLength(4);
+    expect(result.summary.rounds.length).toBeLessThanOrEqual(KNOWLEDGE_REFIT_MAX_ROUNDS);
+    // 第一轮 8 章都超：一章一次请求（2026-11-13：全部放进同一请求会超过整条链时限），每次只带本章与本章目标。
+    const first = f.requests.slice(0, 8);
+    expect(first.every(r => r.ids.length === 1 && r.targets.length === 1 && r.targets[0]!.id === r.ids[0])).toBe(true);
+    expect(first.map(r => r.ids[0]).sort()).toEqual(f.doc.pages.map(p => p.id).sort());
+    expect(first.filter(r => r.targets[0]!.maxChars <= KNOWLEDGE_SPREAD_PAGE_CHARS)).toHaveLength(4);
+    expect(result.summary.rounds[0]!.calls).toBe(8);
     expect(result.summary.compressedChapters).toBe(8);
     expect(result.summary.modelCalls).toBe(f.post.mock.calls.length);
-    expect(result.summary.rounds[0]!.usage).toEqual({ promptTokenCount: 1000, candidatesTokenCount: 500 });
+    expect((result.summary.rounds[0]!.usage as any[]).map(u => u.usage)).toEqual(Array.from({ length: 8 }, () => ({ promptTokenCount: 1000, candidatesTokenCount: 500 })));
     // 回填闭合：章 id 与顺序不变，每章都有正文。
     expect(result.view.doc.pages.map(p => p.id)).toEqual(before.pages.map(p => p.id));
     expect(result.view.doc.pages.every(p => p.body.includes("压缩"))).toBe(true);
@@ -74,7 +77,7 @@ describe("压缩适配：LLM 把正文压进版面，全书 ≤2 次调用", () 
     expect(derived.pages.map((p: any) => p.derived)).toEqual(result.view.doc.pages.map(p => p.body));
     expect(result.prefixTag).toMatch(/^refit-[0-9a-f]{16}$/);
     // 原始回包永久保存。
-    expect(Array.from(f.storage.keys()).some(k => k.startsWith(`${result.evidencePrefix}/round-1/`) && k.endsWith("raw-0.json"))).toBe(true);
+    expect(Array.from(f.storage.keys()).filter(k => k.startsWith(`${result.evidencePrefix}/round-1/page-`) && k.endsWith("/raw-0.json"))).toHaveLength(8);
     // 再跑一次：已有回包零调用回放，结果一致。
     const again = await refitKnowledgeHandbook(7, f.view as any, f.deps);
     expect(f.post.mock.calls.length).toBe(result.summary.modelCalls);
@@ -85,8 +88,9 @@ describe("压缩适配：LLM 把正文压进版面，全书 ≤2 次调用", () 
     const f = fixture({ stubborn: [5] });
     const stubbornId = f.doc.pages[5]!.id;
     const result = await refitKnowledgeHandbook(7, f.view as any, f.deps);
-    expect(f.post.mock.calls.length).toBe(2);
-    expect(f.requests[1]!.ids).toEqual([stubbornId]);
+    // 第一轮 8 章各一次；第二轮只送仍超的那一章。
+    expect(f.post.mock.calls.length).toBe(9);
+    expect(f.requests[8]!.ids).toEqual([stubbornId]);
     const page = result.view.doc.pages.find(p => p.id === stubbornId)!;
     // 第 6 章顽固：两轮后仍 > 700 字 → 续页（2 页），报出且全文保留（句子完整、比上限长，没有被裁到上限）。
     expect(result.summary.overflowChapters.map(c => c.id)).toEqual([stubbornId]);
@@ -102,7 +106,9 @@ describe("压缩适配：LLM 把正文压进版面，全书 ≤2 次调用", () 
     const result = await refitKnowledgeHandbook(7, f.view as any, f.deps);
     expect(result.summary.rounds[0]!.error).toBeTruthy();
     expect(result.view.doc.pages.map(p => p.body)).toEqual(f.view.doc.pages.map(p => p.body));
-    expect(f.post.mock.calls.length).toBeLessThanOrEqual(2);
+    // 每轮每章至多一次请求，全书至多两轮。
+    expect(result.summary.rounds.length).toBeLessThanOrEqual(KNOWLEDGE_REFIT_MAX_ROUNDS);
+    expect(f.post.mock.calls.length).toBeLessThanOrEqual(8 * KNOWLEDGE_REFIT_MAX_ROUNDS);
   });
 
   it("实测总页数超过上限：先收跨页名额（图内文字最少的跨页章先改图文同页），不再加调用", async () => {
@@ -110,6 +116,6 @@ describe("压缩适配：LLM 把正文压进版面，全书 ≤2 次调用", () 
     const result = await refitKnowledgeHandbook(7, f.view as any, f.deps);
     expect(result.summary.totalPages).toBeLessThanOrEqual(result.plan.range!.max);
     expect(result.summary.retractedSpreads).toBeGreaterThan(0);
-    expect(f.post.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(result.summary.rounds.length).toBeLessThanOrEqual(KNOWLEDGE_REFIT_MAX_ROUNDS);
   });
 });

@@ -30,12 +30,15 @@ function harness(initial: number | "fail" | (number | "fail")[], options: { cont
   const doc = layoutFromSource(options.contract ? created : { ...created, readingContract: undefined });
   const source = doc.publication!.source, digest = knowledgeSourceDigest(source), storage = new Map<string, any>(), sha = "b".repeat(64);
   const calls: { kind: "review" | "compress"; ids: string[] }[] = [];
+  /** 指定章的压缩请求返回未完整结束（并发下按章控制，不依赖调用顺序）。 */
+  const failPages = new Set<string>();
   const post = vi.fn(async (request: any) => {
     const payload = request.contents[0].parts.map((p: any) => { try { return JSON.parse(p.text); } catch { return {}; } }).find((p: any) => p.source);
     const compress = request.systemInstruction.parts.some((p: any) => /篇幅压缩/.test(p.text));
     calls.push({ kind: compress ? "compress" : "review", ids: payload.source.pages.map((p: any) => p.id) });
     const planned = Array.isArray(compressChars) ? compressChars[Math.min(compressCalls, compressChars.length - 1)] : compressChars;
     if (compress) compressCalls++;
+    if (compress && payload.source.pages.some((p: any) => failPages.has(p.id))) return { status: 200, text: JSON.stringify({ modelVersion: KNOWLEDGE_VISUAL_ADVISOR_MODEL, candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: "{}" }] } }] }) };
     if (compress && planned === "fail") return { status: 200, text: JSON.stringify({ modelVersion: KNOWLEDGE_VISUAL_ADVISOR_MODEL, candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: "{}" }] } }] }) };
     const value = { kind: "knowledge_publication_v1", sourceDigest: digest, title: source.title, pages: payload.source.pages.map((page: any) => ({
       id: page.id, headline: page.headline, body: page.body,
@@ -46,7 +49,7 @@ function harness(initial: number | "fail" | (number | "fail")[], options: { cont
     return { status: 200, text: JSON.stringify({ modelVersion: KNOWLEDGE_VISUAL_ADVISOR_MODEL, usageMetadata: { promptTokensDetails: payload.source.pages.some((p: any) => p.imageUrl) ? [{ modality: "IMAGE", tokenCount: 10 }] : [] }, candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(value) }] } }] }) };
   });
   const deps = { load: async () => doc as any, read: async (name: string) => storage.get(name) || null, save: async (name: string, value: any) => { storage.set(name, structuredClone(value)); }, count: async () => ({ totalTokens: 500, method: "test" }), post, image: async () => ({ buffer: Buffer.from("image"), mimeType: "image/png", width: 10, height: 10, sha256: sha }) };
-  return { setCompress: (v: number | "fail" | (number | "fail")[]) => { compressChars = v; compressCalls = 0; }, doc, source, digest, storage, post, calls, deps, root: knowledgeEvidencePrefix(7, doc.id, doc.publication!.requestId) };
+  return { failPages, setCompress: (v: number | "fail" | (number | "fail")[]) => { compressChars = v; compressCalls = 0; }, doc, source, digest, storage, post, calls, deps, root: knowledgeEvidencePrefix(7, doc.id, doc.publication!.requestId) };
 }
 
 describe("完整版图文同页：审校后按页预算压缩（预算的生产者）", () => {
@@ -375,5 +378,93 @@ describe("图主文辅合同 image-primary-v1（2026-11-11：主要重点进图�
     };
     expect(await run(true)).toBe(2);
     expect(await run(false)).toBeGreaterThan(2);
+  });
+});
+
+describe("整册压缩一章一次、并发发出（2026-11-13：全部超出章同一请求会超过整条链约 10 分钟上限）", () => {
+  const multi = async (h: ReturnType<typeof harness>, count = 3) => {
+    const batch = await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps) as any;
+    const pages = h.source.pages.slice(0, count).map((sp: any) => ({ ...batch.pages[0], id: sp.id, headline: sp.headline,
+      reading: { ...batch.pages[0].reading, blocks: [{ type: "prose", title: "壁画分期", note: "", text: prose(1800) }] } }));
+    const saved = { report: { kind: "knowledge_publication_v1", sourceDigest: h.digest, title: h.source.title, pages }, sourceImages: [] };
+    const compressCalls = () => h.calls.filter(c => c.kind === "compress");
+    return { saved, ids: pages.map((p: any) => p.id as string), compressCalls, before: compressCalls().length };
+  };
+
+  it("三章超出 → 三次调用、每次只送一章，回执各在 page-<章id> 目录；全部达标；再读零调用", async () => {
+    const h = harness(400, { contract: true });
+    const m = await multi(h);
+    const next = await compressKnowledgeFinalReport(h.deps as any, h.root, 0, h.digest, h.source, structuredClone(m.saved));
+    const sent = m.compressCalls().slice(m.before);
+    expect(sent.length).toBe(3);
+    expect(sent.every(c => c.ids.length === 1)).toBe(true);
+    expect(sent.map(c => c.ids[0]).sort()).toEqual([...m.ids].sort());
+    for (const id of m.ids) expect(h.storage.has(`${h.root}/final-compress/page-${id}/raw-0.json`)).toBe(true);
+    expect(h.storage.has(`${h.root}/final-compress/raw-0.json`)).toBe(false);
+    expect(next.budgetOverflow.after).toEqual([]);
+    expect(next.report.pages.map((p: any) => knowledgeReviewPageChars(p))).toEqual([407, 407, 407]);
+    await compressKnowledgeFinalReport(h.deps as any, h.root, 0, h.digest, h.source, structuredClone(m.saved));
+    expect(m.compressCalls().length).toBe(m.before + 3);
+  });
+
+  it("首跳在两个通道间交错", async () => {
+    const h = harness(400, { contract: true });
+    const m = await multi(h, 4);
+    const from = h.post.mock.calls.length;
+    await compressKnowledgeFinalReport(h.deps as any, h.root, 0, h.digest, h.source, structuredClone(m.saved));
+    const channels = h.post.mock.calls.slice(from).map(c => (c[0] as any).executionChannel).sort();
+    expect(channels).toEqual(["evolink", "evolink", "openrouter", "openrouter"]);
+  });
+
+  it("其中一章失败：其余章照常采纳并落盘，失败章保留原稿并报出；不抛错、不挡排版", async () => {
+    const h = harness(400, { contract: true });
+    const m = await multi(h);
+    h.failPages.add(m.ids[1]!);
+    const next = await compressKnowledgeFinalReport(h.deps as any, h.root, 0, h.digest, h.source, structuredClone(m.saved));
+    expect(next.report.pages.map((p: any) => knowledgeReviewPageChars(p))).toEqual([407, 1807, 407]);
+    expect(next.budgetOverflow.adopted.sort()).toEqual([m.ids[0], m.ids[2]].sort());
+    expect(next.budgetOverflow.after.map((o: any) => o.id)).toEqual([m.ids[1]]);
+    expect(next.budgetOverflow.error).toMatch(/^1\/3章压缩未完成/);
+  });
+
+  it("新合同全部失败：不抛错，原报告原样返回（超出章按续页进排版），原因记入 budget.json", async () => {
+    const h = harness(400, { contract: true });
+    const m = await multi(h);
+    m.ids.forEach(id => h.failPages.add(id));
+    const next = await compressKnowledgeFinalReport(h.deps as any, h.root, 0, h.digest, h.source, structuredClone(m.saved));
+    expect(next).toEqual(m.saved);
+    const budget = h.storage.get(`${h.root}/final-compress/budget.json`);
+    expect(budget.error).toMatch(/^3\/3章压缩未完成/);
+    expect(budget.after.length).toBe(3);
+  });
+
+  it("旧稿全部失败：仍报错，超出页不进排版", async () => {
+    const h = harness(650);
+    const m = await multi(h);
+    m.ids.forEach(id => h.failPages.add(id));
+    await expect(compressKnowledgeFinalReport(h.deps as any, h.root, 0, h.digest, h.source, structuredClone(m.saved))).rejects.toThrow(/整册篇幅压缩未完成/);
+  });
+
+  it("该轮已有整批成功回包：零调用回放整批结果，不拆分", async () => {
+    const h = harness(400, { contract: true });
+    const m = await multi(h);
+    // 先在整批目录造出旧版的成功回包：单章走整批路径得到 raw，再把它的 pages 扩成三章。
+    const whole = { model: KNOWLEDGE_VISUAL_ADVISOR_MODEL, sourceDigest: h.digest, sourceImages: [], response: { status: 200, text: JSON.stringify({ modelVersion: KNOWLEDGE_VISUAL_ADVISOR_MODEL, usageMetadata: { promptTokensDetails: [] },
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({ kind: "knowledge_publication_v1", sourceDigest: h.digest, title: h.source.title, pages: m.saved.report.pages.map((p: any) => ({ id: p.id, headline: p.headline, body: p.body, imageDescription: "", imageStatus: "absent", facts: p.facts, cautions: [],
+        reading: { version: 1, subtitle: "", accent: "jade", blocks: [{ type: "prose", title: "壁画分期", note: "", text: prose(380) }] } })) }) }] } }] }) } };
+    h.storage.set(`${h.root}/final-compress/raw-0.json`, whole);
+    const next = await compressKnowledgeFinalReport(h.deps as any, h.root, 0, h.digest, h.source, structuredClone(m.saved));
+    expect(m.compressCalls().length).toBe(m.before);
+    expect(next.report.pages.map((p: any) => knowledgeReviewPageChars(p))).toEqual([387, 387, 387]);
+  });
+
+  it("该轮整批请求有未闭合回执：不另起逐章请求，仍交整批请求处理", async () => {
+    const h = harness(400, { contract: true });
+    const m = await multi(h);
+    h.storage.set(`${h.root}/final-compress/attempt-0/route-openrouter.json`, { state: "unknown", route: "openrouter" });
+    await compressKnowledgeFinalReport(h.deps as any, h.root, 0, h.digest, h.source, structuredClone(m.saved));
+    const sent = m.compressCalls().slice(m.before);
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent[0]!.ids.length).toBe(3);
   });
 });

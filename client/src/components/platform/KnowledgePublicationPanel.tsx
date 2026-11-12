@@ -132,6 +132,14 @@ export default function KnowledgePublicationPanel({
   const [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
+  // 进度记录（1113 站长令：排版内容框与进度分开，最新在上）：只记录前台已显示过的进度句，纯展示，不影响任务。
+  const [progressLog, setProgressLog] = useState<{ at: string; text: string }[]>([]);
+  useEffect(() => {
+    if (!message) return;
+    const at = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setProgressLog(log => log[0]?.text === message ? log : [{ at, text: message }, ...log]);
+  }, [message]);
+  useEffect(() => { setProgressLog([]); }, [doc.id]);
   const [terminal, setTerminal] = useState(false),
     [manual, setManual] = useState(false),
     [onlyIssues, setOnlyIssues] = useState(false);
@@ -622,6 +630,8 @@ export default function KnowledgePublicationPanel({
   const displayedPlan=pub.presentationRevision??pub.presentationPlan;
   const capacityIssues=displayedPlan?knowledgePresentationCapacityIssues(displayedPlan):[];
   const draftIssues=planDraft?knowledgePresentationCapacityIssues(planDraft):[];
+  // 当前进度句已在上方单独显示，历史区只列更早的记录。
+  const progressHistory = message && progressLog[0]?.text === message ? progressLog.slice(1) : progressLog;
   const issues = review?.pages.filter(p => p.cautions.length).length || 0;
   const visible =
     review?.pages
@@ -668,6 +678,44 @@ export default function KnowledgePublicationPanel({
           整套 {pub.source.pages.length} 章内容、{pub.source.pages.filter(p => p.imageUrl).length} 张原图；按原顺序处理全部正文，手册按内容自动分页。
         </p>
       </div>
+      {/* 进度区块独立于排版内容框，固定在内容上方：当前阶段与最新进度在前，历史记录按时间倒序在后。 */}
+      {(stage || message || error || !review || progressLog.length > 0) && (
+        <section aria-label="手册处理进度" className="space-y-2 rounded-xl border border-[#b9c4ad]/40 bg-[#1f3329] p-4">
+          <h5 className="text-sm font-semibold text-[#d7e6c4]">处理进度</h5>
+          {stage && (
+            <p aria-label="手册处理阶段" className="text-xs text-[#c0cabb]">
+              {knowledgeStageLabel(stage)}
+            </p>
+          )}
+          {message && (
+            <p role="status" className="text-sm text-[#d6e4bd]">
+              {message}
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="whitespace-pre-wrap text-sm text-rose-200">
+              {error}
+            </p>
+          )}
+          {!review && (
+            <p aria-label="正文整理进度" className="text-sm">
+              正文整理 {Math.round(completedCount/Math.max(1,pub.source.pages.length)*100)}% · 已完成 {completedCount}/{pub.source.pages.length} 章。原稿与配图已保留。
+              {pendingChapters.length>0 && <span>第 {pendingChapters.join("、")} 章{error ? "尚未成功，已完成章节不会重做。" : "正在等待或整理。"}</span>}
+              {completedCount===pub.source.pages.length && <span>正在汇总全册整理结果，尚未完成最终统稿。</span>}
+            </p>
+          )}
+          {progressHistory.length > 0 && (
+            <details className="text-xs text-[#c0cabb]">
+              <summary className="cursor-pointer">历史进度（{progressHistory.length} 条，最新在上）</summary>
+              <ol aria-label="历史进度" className="mt-2 max-h-48 space-y-1 overflow-y-auto">
+                {progressHistory.map((entry, i) => (
+                  <li key={`${entry.at}-${i}`}><span className="tabular-nums opacity-70">{entry.at}</span> · {entry.text}</li>
+                ))}
+              </ol>
+            </details>
+          )}
+        </section>
+      )}
       <p className="text-xs text-[#c0cabb]">{KNOWLEDGE_INTERIOR_PRICE_COPY}</p>
       <details open={!compact} className="space-y-3">
       <summary className="cursor-pointer text-sm text-[#c0cabb]">手册与阅读设置</summary>
@@ -693,21 +741,6 @@ export default function KnowledgePublicationPanel({
         {!pub.infographicTemplateId && review.pages[index]?.reading?.templateReason ? ` · ${review.pages[index].reading!.templateReason}` : ""}
       </p>}
       </details>
-      {stage && (
-        <p aria-label="手册处理阶段" className="text-xs text-[#c0cabb]">
-          {knowledgeStageLabel(stage)}
-        </p>
-      )}
-      {message && (
-        <p role="status" className="text-sm text-[#d6e4bd]">
-          {message}
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="whitespace-pre-wrap text-sm text-rose-200">
-          {error}
-        </p>
-      )}
           <section className="space-y-3 rounded-xl border border-[#b9c4ad]/40 p-4" aria-label="PPTX课件规划">
             <div><h3 className="font-semibold">PPTX 页数与提纲</h3><p className="text-sm text-[#c0cabb]">可在出图期间按完整文字稿提前规划；待生成图片只预留位置，实际图片与整稿审校通过后确认导出。标题、总结也计入总页数。</p></div>
             <div className="flex flex-wrap items-end gap-3">
@@ -743,11 +776,6 @@ export default function KnowledgePublicationPanel({
           </section>
       {!review ? (
         <div className="space-y-3">
-          <p className="text-sm">
-            正文整理 {Math.round(completedCount/Math.max(1,pub.source.pages.length)*100)}% · 已完成 {completedCount}/{pub.source.pages.length} 章。原稿与配图已保留。
-            {pendingChapters.length>0 && <span>第 {pendingChapters.join("、")} 章{error ? "尚未成功，已完成章节不会重做。" : "正在等待或整理。"}</span>}
-            {completedCount===pub.source.pages.length && <span>正在汇总全册整理结果，尚未完成最终统稿。</span>}
-          </p>
           <div aria-label="已整理章节" aria-live="polite" className="max-h-[720px] space-y-4 overflow-y-auto">
             {pub.source.pages.map((source,i)=>{const chapter=pub.chapterReviews?.[source.id];if(!chapter || !pub.chapterReviewDigest)return null;
               const page=doc.pages.find(p=>p.id===source.id);
