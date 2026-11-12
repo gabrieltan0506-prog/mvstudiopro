@@ -76,8 +76,46 @@ describe("审稿改稿流程", () => {
     const err = await executeNovelRevise(input, call, r).catch(e => e);
     expect(err).toBeInstanceOf(NovelReviseError);
     expect(err.kind).toBe("review");
+    // 写坏也算失败：带拒因同线路重写一次，仍不过才失败；两次原始返回都已保存。
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(String(call.mock.calls[1]![1])).toContain("上一次输出未通过校验");
+    expect(r.log).toEqual(["raw:review", "raw:review"]);
+    expect(r.saveRaw.mock.calls.map(c => c[2])).toEqual([1, 2]);
+  });
+  it("审稿首次写坏、重写后通过：继续改稿", async () => {
+    const r = recorder();
+    let n = 0;
+    const call = vi.fn(async (step: string) => ({
+      text: step === "review" ? (n++ === 0 ? "不是JSON" : JSON.stringify(REVISE_REVIEW)) : JSON.stringify(REVISE_REVISED),
+      model: "m",
+    }));
+    const out = await executeNovelRevise(input, call, r);
+    expect(call.mock.calls.map(c => c[0])).toEqual(["review", "review", "revise"]);
+    expect(out.result.review.verdict).toBe(REVISE_REVIEW.verdict);
+  });
+  it("线路本身失败（调用抛错）不重写，直接失败", async () => {
+    const r = recorder();
+    const call = vi.fn(async () => { throw new Error("线路不可用"); });
+    const err = await executeNovelRevise(input, call, r).catch(e => e);
+    expect(err.kind).toBe("review");
+    expect(err.message).toContain("线路不可用");
     expect(call).toHaveBeenCalledTimes(1);
-    expect(r.log).toEqual(["raw:review"]);
+  });
+  it("意见的维度写成近义词时归入七个维度；无法归入的丢弃，不让整次审稿失败（1112 线上实测）", async () => {
+    const r = recorder();
+    const issues = [
+      ...REVISE_REVIEW.issues.map((issue, i) => (i === 0 ? { ...issue, dimension: "节奏" } : issue)),
+      { ...REVISE_REVIEW.issues[0]!, dimension: "完全不相干的词" },
+    ];
+    const call = vi.fn(async (step: string) => ({
+      text: JSON.stringify(step === "review" ? { ...REVISE_REVIEW, issues } : REVISE_REVISED),
+      model: "m",
+    }));
+    const out = await executeNovelRevise(input, call, r);
+    expect(call.mock.calls.map(c => c[0])).toEqual(["review", "revise"]);
+    expect(out.result.review.issues.length).toBe(REVISE_REVIEW.issues.length);
+    expect(out.result.review.issues.every(i => (NOVEL_REVIEW_DIMENSIONS as readonly string[]).includes(i.dimension))).toBe(true);
+    expect(out.result.review.issues.some(i => i.dimension === "紧凑度")).toBe(true);
   });
   it("改稿字数不合格：阶段失败但带回审稿结果，两份原始证据都已保存", async () => {
     const r = recorder();
@@ -88,7 +126,7 @@ describe("审稿改稿流程", () => {
     const err = await executeNovelRevise(input, call, r).catch(e => e);
     expect(err.kind).toBe("revise");
     expect(err.review.verdict).toBe(REVISE_REVIEW.verdict);
-    expect(r.log).toEqual(["raw:review", "parsed:review", "raw:revise", "parsed:revise"]);
+    expect(r.log).toEqual(["raw:review", "parsed:review", "raw:revise", "parsed:revise", "raw:revise", "parsed:revise"]);
   });
   it("结果记录审稿、改稿各自所用的模型标识；未定位的意见不进改稿提示的落实清单", async () => {
     const r = recorder();

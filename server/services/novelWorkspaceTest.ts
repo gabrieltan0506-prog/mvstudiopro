@@ -658,22 +658,24 @@ async function runNovelReviseJob(
           },
         }),
       {
-        saveRaw: async (step, response) => {
+        saveRaw: async (step, response, attempt = 1) => {
+          const key = attempt > 1 ? `${step}Rewrite` : step;
           evidence = {
             ...evidence,
-            [`${step}Raw`]: response,
-            [`${step}RawSha256`]: hash(JSON.stringify(response)),
+            [`${key}Raw`]: response,
+            [`${key}RawSha256`]: hash(JSON.stringify(response)),
           };
           await write();
         },
-        saveParsed: async (step, parsed, normalized, repaired) => {
+        saveParsed: async (step, parsed, normalized, repaired, attempt = 1) => {
+          const key = attempt > 1 ? `${step}Rewrite` : step;
           evidence = {
             ...evidence,
-            [`${step}Parsed`]: parsed,
-            [`${step}ParsedSha256`]: hash(JSON.stringify(parsed)),
-            [`${step}Normalized`]: normalized,
-            [`${step}NormalizedSha256`]: hash(normalized),
-            [`${step}SyntaxNormalized`]: repaired,
+            [`${key}Parsed`]: parsed,
+            [`${key}ParsedSha256`]: hash(JSON.stringify(parsed)),
+            [`${key}Normalized`]: normalized,
+            [`${key}NormalizedSha256`]: hash(normalized),
+            [`${key}SyntaxNormalized`]: repaired,
           };
           await write();
         },
