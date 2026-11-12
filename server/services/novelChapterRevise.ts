@@ -1,6 +1,9 @@
 /**
  * 小说「审稿改稿」阶段（管理者测试，不扣积分）：两次调用——先审稿，再按审稿意见改稿；两步线路可分别选择。
  * 不带模板目录与模板全文。原始返回与解析后 JSON 由调用方分别永久保存（review / revise 分开命名）。
+ * 多线路审稿对比（1112）另有两种方式，提示词与单线路完全相同：
+ *  - reviseMode: "review_only"：只跑审稿一步，结果 revised 缺省；
+ *  - reviewOverride：用多线路综合意见代替审稿一步（不调用审稿），直接改稿。
  */
 import { parseNovelModelJson } from "../../shared/novelJson";
 import {
@@ -13,9 +16,11 @@ import { buildNovelCreativePremiseBlock } from "../../shared/novelCreativePremis
 import {
   type NovelGenerationSettings,
   type NovelReview,
+  type NovelReviewOnlyResult,
   type NovelReviseResult,
   type NovelTestInput,
   validateNovelReview,
+  validateNovelReviewOverride,
   validateNovelRevision,
 } from "../../shared/novelWorkspace";
 
@@ -126,44 +131,101 @@ function rewriteNote(rejection: string | null, hint: string) {
   return rejection ? `\n\n【上一次输出未通过校验】${rejection}\n请修正后重新输出完整 JSON，不要解释。${hint}` : "";
 }
 
-export async function executeNovelRevise(
+type NovelReviseEvidence = {
+  /** attempt：1 = 首次，2 = 带拒因重写；两次的原始与解析证据分别保存，互不覆盖。 */
+  saveRaw: (step: NovelReviseStep, response: StageResponse, attempt?: number) => Promise<void>;
+  saveParsed: (
+    step: NovelReviseStep,
+    value: unknown,
+    normalized: string,
+    repaired: boolean,
+    attempt?: number
+  ) => Promise<void>;
+  onReview?: (review: NovelReview) => Promise<void>;
+};
+
+/** 审稿一步（单线路审稿改稿与只审稿共用）：写坏带拒因重写一次；先落原始返回再解析；validateNovelReview 校验。 */
+async function runNovelReviewStep(
   input: NovelTestInput,
+  original: string,
   call: NovelReviseCall,
-  evidence: {
-    /** attempt：1 = 首次，2 = 带拒因重写；两次的原始与解析证据分别保存，互不覆盖。 */
-    saveRaw: (step: NovelReviseStep, response: StageResponse, attempt?: number) => Promise<void>;
-    saveParsed: (
-      step: NovelReviseStep,
-      value: unknown,
-      normalized: string,
-      repaired: boolean,
-      attempt?: number
-    ) => Promise<void>;
-    onReview?: (review: NovelReview) => Promise<void>;
-  }
-): Promise<{ result: NovelReviseResult; model: string; settings?: NovelGenerationSettings }> {
-  let reviewModel: string | undefined;
-  if (input.stage !== "revise" || !input.reviseDraft)
-    throw new NovelReviseError("review", "缺少待审正文");
-  const original = input.reviseDraft;
-  let review: NovelReview;
+  evidence: NovelReviseEvidence
+): Promise<{ review: NovelReview; model?: string; settings?: NovelGenerationSettings }> {
+  let model: string | undefined;
+  let settings: NovelGenerationSettings | undefined;
   try {
-    review = await withOneRewrite(async (rejection, attempt) => {
+    const review = await withOneRewrite(async (rejection, attempt) => {
       const prompt = buildNovelReviewPrompt(input) + rewriteNote(rejection, `issues[].dimension 只能是：${NOVEL_REVIEW_DIMENSIONS.join("、")}。`);
       const response = await callOrFail(call("review", prompt));
       await evidence.saveRaw("review", response, attempt); // 先落原始返回，再解析。
-      reviewModel = response.model;
+      model = response.model;
+      settings = response.settings;
       const { value, normalized, repaired } = parseNovelModelJson(response.text);
       await evidence.saveParsed("review", value, normalized, repaired, attempt);
       return validateNovelReview(original, value);
     });
+    return { review, model, settings };
   } catch (error) {
     throw new NovelReviseError(
       "review",
       error instanceof Error ? error.message : "审稿失败"
     );
   }
+}
+
+/** 多线路审稿对比（1112）：只审稿，不改稿；结果 revised 缺省。 */
+export async function executeNovelReviewOnly(
+  input: NovelTestInput,
+  call: NovelReviseCall,
+  evidence: NovelReviseEvidence
+): Promise<{ result: NovelReviewOnlyResult; model: string; settings?: NovelGenerationSettings }> {
+  if (input.stage !== "revise" || !input.reviseDraft)
+    throw new NovelReviseError("review", "缺少待审正文");
+  if (input.reviseMode !== "review_only" || input.reviewOverride)
+    throw new NovelReviseError("review", "只审稿请求格式不对");
+  const original = input.reviseDraft;
+  const step = await runNovelReviewStep(input, original, call, evidence);
+  await evidence.onReview?.(step.review);
+  return {
+    result: {
+      chapterIndex: input.chapterIndex,
+      original,
+      review: step.review,
+      models: { review: step.model },
+    },
+    model: step.model || "",
+    settings: step.settings,
+  };
+}
+
+export async function executeNovelRevise(
+  input: NovelTestInput,
+  call: NovelReviseCall,
+  evidence: NovelReviseEvidence
+): Promise<{ result: NovelReviseResult; model: string; settings?: NovelGenerationSettings }> {
+  let reviewModel: string | undefined;
+  if (input.stage !== "revise" || !input.reviseDraft)
+    throw new NovelReviseError("review", "缺少待审正文");
+  if (input.reviseMode === "review_only")
+    throw new NovelReviseError("review", "只审稿请求不改稿");
+  const original = input.reviseDraft;
+  let review: NovelReview;
+  if (input.reviewOverride) {
+    // 综合意见（多线路对比后勾选）：不调用审稿，服务端再校验一次（每条意见都必须能在原文定位）。
+    try {
+      review = validateNovelReviewOverride(original, input.reviewOverride);
+    } catch (error) {
+      throw new NovelReviseError("review", error instanceof Error ? error.message : "所选意见无效");
+    }
+  } else {
+    const step = await runNovelReviewStep(input, original, call, evidence);
+    review = step.review;
+    reviewModel = step.model;
+  }
   await evidence.onReview?.(review);
+  const reviewOrigin = input.reviewOverride
+    ? { kind: "combined" as const, sources: input.reviewOverride.sources }
+    : undefined;
   try {
     return await withOneRewrite(async (rejection, attempt) => {
       const response = await callOrFail(call("revise", buildNovelRevisePrompt(input, review) + rewriteNote(rejection, "")));
@@ -178,6 +240,7 @@ export async function executeNovelRevise(
           review,
           revised,
           models: { review: reviewModel, revise: response.model },
+          ...(reviewOrigin ? { reviewOrigin } : {}),
         },
         model: response.model,
         settings: response.settings,

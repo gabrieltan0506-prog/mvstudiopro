@@ -27,6 +27,7 @@ import { formatManhuaViralTemplateWriterSkillFromCard } from "../../shared/manhu
 import { digestNovelTemplates, shouldDigestNovelTemplates } from "./novelTemplateDigest";
 import {
   executeNovelRevise,
+  executeNovelReviewOnly,
   NovelReviseError,
   type NovelReviseStep,
 } from "./novelChapterRevise";
@@ -682,9 +683,21 @@ async function runNovelReviseJob(
   fingerprint: string
 ): Promise<NovelTestResult> {
   let evidence: Record<string, unknown> = {
-    phase: "reviewing",
+    // 综合意见改稿不调用审稿，直接进入改稿。
+    phase: input.reviewOverride ? "revising" : "reviewing",
     inputSha256: fingerprint,
     originalSha256: hash(input.reviseDraft || ""),
+    // 多线路审稿对比（1112）：记明审稿方式；综合意见记来源各 requestId 与所用意见全文摘要。
+    ...(input.reviseMode ? { reviseMode: input.reviseMode } : {}),
+    ...(input.reviewOverride
+      ? {
+          reviewSource: "combined",
+          reviewSourceRequestIds: input.reviewOverride.sources.map(s => s.requestId),
+          reviewSources: input.reviewOverride.sources,
+          reviewOverride: input.reviewOverride,
+          reviewOverrideSha256: hash(JSON.stringify(input.reviewOverride)),
+        }
+      : {}),
   };
   const write = async () => {
     await db
@@ -696,7 +709,9 @@ async function runNovelReviseJob(
   let lastHeartbeat = 0;
   try {
     await write();
-    const outcome = await executeNovelRevise(
+    // 多线路审稿对比的单条线路只审稿；其余（含综合意见改稿）走审稿改稿。两者调用与证据通路相同。
+    const execute = input.reviseMode === "review_only" ? executeNovelReviewOnly : executeNovelRevise;
+    const outcome = await execute(
       input,
       (step, prompt) =>
         callNovelStage(prompt, true, `${input.requestId}:${step}`, {
@@ -747,7 +762,11 @@ async function runNovelReviseJob(
           await write();
         },
         onReview: async review => {
-          evidence = { ...evidence, phase: "revising", review };
+          evidence = {
+            ...evidence,
+            phase: input.reviseMode === "review_only" ? "validating" : "revising",
+            review,
+          };
           await write();
         },
       }
