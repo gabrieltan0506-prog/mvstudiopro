@@ -5,7 +5,7 @@ name: Growth Backup
 on:
   schedule:
     # 每 3 小时（UTC :00）。必须与 growth-archive-offload 的 30 */3 同频，错开 30 分钟。
-    - cron: "17 */6 * * *"  # 每 6 小时（1110 用户定：仓库转私有后节省 Actions 分钟）；非整点：GitHub 整点 cron 常被丢班
+    - cron: "17 2,14 * * *"  # 每 12 小时（1113 站长定：私有仓库每月 2000 分钟，备份+归档按 6 小时一个月约 3000 分钟）；避开 UTC 19–20 点采集繁忙段；非整点：GitHub 整点 cron 常被丢班
   workflow_dispatch:
 
 concurrency:

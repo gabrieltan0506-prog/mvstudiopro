@@ -5,7 +5,7 @@ name: Growth Archive Offload
 on:
   schedule:
     # 每 3 小时（UTC :30）。必须与 growth-backup 的 0 */3 同频，错开 30 分钟，减少串行排队。
-    - cron: "47 */6 * * *"  # 随 Growth Backup 改为每 6 小时，仍错开 30 分钟、避开整点/半点
+    - cron: "47 2,14 * * *"  # 随 Growth Backup 改为每 12 小时（1113），仍错开 30 分钟、避开整点/半点
   workflow_dispatch:
     inputs:
       archive_dir:
@@ -243,7 +243,8 @@ jobs:
             /tmp/growth-archive-offload/*.jsonl
             /tmp/growth-archive-offload/*.tsv
             /tmp/growth-archive-offload/UPLOAD_VERIFIED
-          if-no-files-found: error
+          # 采集繁忙让行（见上一步 exit 0）或本轮无分片时没有任何产物：只告警，不把让行算成失败（1113 误报修正）。
+          if-no-files-found: warn
           retention-days: 30
 
 
