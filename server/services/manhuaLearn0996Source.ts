@@ -89,12 +89,16 @@ export async function assertPublicManhuaSourceHost(
   hostname: string,
   resolve = lookup,
 ): Promise<void> {
-  let addresses: Array<{ address: string }>;
-  try {
-    addresses = await resolve(hostname, { all: true, verbatim: true });
-  } catch {
-    throw new Error("第三方播放站点 DNS 解析失败，已停止");
+  let addresses: Array<{ address: string }> | undefined;
+  // 1113：解析器偶发抖动不直接判死——同一域名再查一次；仍失败才报错，由换域重试接手。
+  for (let attempt = 0; attempt < 2 && !addresses; attempt += 1) {
+    try {
+      addresses = await resolve(hostname, { all: true, verbatim: true });
+    } catch {
+      if (attempt === 0) await new Promise((done) => setTimeout(done, 500));
+    }
   }
+  if (!addresses) throw new Error("第三方播放站点 DNS 解析失败，已停止");
   if (!addresses.length || addresses.some((row) => !isIP(row.address) || isPrivateAddress(row.address))) {
     throw new Error("第三方播放站点解析到非公网地址，已停止");
   }
@@ -313,7 +317,8 @@ function withManhua0996Host(source: Manhua0996SourceRef, host: string): Manhua09
 /** 换域名重试的判据：网络失败/超时、以及站点侧 5xx/403/429。 */
 function isManhua0996HostRetryable(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  if (/网络请求失败或超时/.test(error.message)) return true;
+  // 1113：域名解析失败（镜像域失效或解析器抖动）同样换域重试；解析到非公网地址仍立即停止。
+  if (/网络请求失败或超时|DNS 解析失败/.test(error.message)) return true;
   const status = Number(/HTTP (\d{3})/.exec(error.message)?.[1]);
   return status >= 500 || status === 403 || status === 429;
 }

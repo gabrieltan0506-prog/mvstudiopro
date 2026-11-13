@@ -12451,11 +12451,14 @@ export default function PlatformPage() {
   }, [snapshot, platformDashboard]);
 
 
-  // 产品页不提供工程诊断入口；原始日志仍留在服务端。
-  const canShowPlatformDebug = false;
+  // 1113 站长令：工程诊断面板恢复，仅管理员 / 监管可见；普通用户不显示。
+  const canShowPlatformDebug = hasSupervisorOpsAccess;
 
+  // 管理员进入页面默认打开诊断面板（学节奏进度、采集与接口报错一眼可见）；手动关掉后本次不再自动打开。
+  const debugAutoOpenedRef = useRef(false);
   useEffect(() => {
-    if (!canShowPlatformDebug && debugMode) setDebugMode(false);
+    if (!canShowPlatformDebug) { if (debugMode) setDebugMode(false); return; }
+    if (!debugAutoOpenedRef.current) { debugAutoOpenedRef.current = true; setDebugMode(true); }
   }, [canShowPlatformDebug, debugMode]);
 
   // P1：仅存背景/配置草稿（不含生成结果）；按账号隔离；hydration 前不写
@@ -13305,7 +13308,7 @@ export default function PlatformPage() {
           </div>
         ) : null}
 
-        {workbenchUserKey && <StableStudioDock target={knowledgeAdvisorDock}><EditableLayoutStudio compact={Boolean(knowledgeAdvisorDock)} ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} readingView={<KnowledgeReadingLive status={readingAdvisorStatus} drafts={readingAdvisorDrafts} />} onSupplement={async(supplementOf,text)=>{await handleGenerateCustomNote({text,kind:"single_page_knowledge_card",supplementOf});}} onPagination={(doc, pagination) => {
+        {workbenchUserKey && <StableStudioDock target={knowledgeAdvisorDock} hideWhenUndocked={platformMode !== "create"}><EditableLayoutStudio compact={Boolean(knowledgeAdvisorDock)} ref={layoutStudioRef} key={workbenchUserKey} owner={workbenchUserKey} source={layoutSource} readingView={<KnowledgeReadingLive status={readingAdvisorStatus} drafts={readingAdvisorDrafts} />} onSupplement={async(supplementOf,text)=>{await handleGenerateCustomNote({text,kind:"single_page_knowledge_card",supplementOf});}} onPagination={(doc, pagination) => {
           if (doc.sourceId !== knowledgeCardLayoutSourceIdRef.current) return;
           if (!pagination) { setCustomNotePagination(null); return; }
           if (!doc.publication?.inputFingerprint || paginationFingerprint?.key !== customNotePaginationKey || doc.publication.inputFingerprint !== paginationFingerprint.hash) return;
@@ -13746,42 +13749,31 @@ export default function PlatformPage() {
                             {manhuaLearnVideoFpsError ? (
                               <span role="alert" className="text-[10px] text-rose-200">{manhuaLearnVideoFpsError}</span>
                             ) : null}
-                            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[#c9c0e6]/90" htmlFor="manhua-learn-standard-read-model">
-                              标准档读片模型
+                            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[#c9c0e6]/90" htmlFor="manhua-learn-read-model">
+                              读片模型
                               <select
-                                id="manhua-learn-standard-read-model"
-                                value={manhuaLearnStandardReadModel}
-                                disabled={Boolean(manhuaLearnBusyKey) || manhuaLearnUpgradeRead}
+                                id="manhua-learn-read-model"
+                                value={manhuaLearnUpgradeRead ? MANHUA_NATIVE_CARBON_MODEL : manhuaLearnStandardReadModel}
+                                disabled={Boolean(manhuaLearnBusyKey)}
                                 onChange={(event) => {
-                                  setManhuaLearnStandardReadModel(event.target.value);
-                                  writeManhuaLearnStandardReadModel(manhuaLearnUserKey, event.target.value);
-                                  writeManhuaLearnReadModel(manhuaLearnUserKey, event.target.value);
+                                  const model = event.target.value;
+                                  const upgrade = model === MANHUA_NATIVE_CARBON_MODEL;
+                                  setManhuaLearnUpgradeRead(upgrade);
+                                  if (!upgrade) {
+                                    setManhuaLearnStandardReadModel(model);
+                                    writeManhuaLearnStandardReadModel(manhuaLearnUserKey, model);
+                                  }
+                                  writeManhuaLearnReadModel(manhuaLearnUserKey, model);
                                 }}
                                 className="rounded border border-violet-300/30 bg-[#1b1630] px-1.5 py-0.5 text-[11px] text-[#e6e0f8]"
                               >
-                                {MANHUA_NATIVE_STANDARD_READ_MODEL_OPTIONS.map((model) => (
+                                {[...MANHUA_NATIVE_STANDARD_READ_MODEL_OPTIONS, MANHUA_NATIVE_CARBON_MODEL].map((model) => (
                                   <option key={model} value={model}>{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[model] || model}</option>
                                 ))}
                               </select>
                             </label>
                             <span className="text-[10px] text-[#c9c0e6]/50">
-                              两个模型都走主通道并发读片，备用通道只在主通道故障时接手；只对新学习生效（换模型另起一个系列），续学已学系列沿用其原模型。勾选升级档时本项不生效。
-                            </span>
-                            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[#c9c0e6]/90">
-                              <input
-                                type="checkbox"
-                                checked={manhuaLearnUpgradeRead}
-                                disabled={Boolean(manhuaLearnBusyKey)}
-                                onChange={(event) => {
-                                  setManhuaLearnUpgradeRead(event.target.checked);
-                                  writeManhuaLearnReadModel(manhuaLearnUserKey, event.target.checked ? MANHUA_NATIVE_CARBON_MODEL : manhuaLearnStandardReadModel);
-                                }}
-                                className="h-3.5 w-3.5 accent-violet-400"
-                              />
-                              整集精读升级档
-                            </label>
-                            <span className="text-[10px] text-[#c9c0e6]/50">
-                              推理更强、更慢，模型成本约为标准档数倍；只对新学习生效（另起一个系列），续学已学系列沿用其原档位。
+                              只对新学习生效（换模型另起一个系列），续学已学系列沿用其原模型。Carbon 推理更强、更慢，成本约为其余两项的数倍。
                             </span>
                           </>
                         ) : null}
