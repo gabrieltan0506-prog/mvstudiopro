@@ -1179,7 +1179,7 @@ async function startServer() {
       console.warn("[boot] JOB_WORKER_ROLE=rig：跳过 /data 依赖的启动恢复与账本回收器");
       return;
     }
-    // 启动时扫描并恢复孤儿 deepResearch 任务（机器重启/部署可能中断异步任务）
+    // 研报生成链路 1113 已下线：启动时把未终态的遗留 deepResearch 任务标失败并按规则幂等退积分（不再重新拉起）
     import("../services/deepResearchService").then(({ recoverOrphanedJobs }) => {
       recoverOrphanedJobs().catch((e) => console.warn("[deepResearch] recover failed:", e));
     }).catch(() => {});
