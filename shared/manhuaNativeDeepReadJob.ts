@@ -74,6 +74,16 @@ export function resolveManhuaNativeDeepReadEscalationModel(env?: GeminiModelEnv)
 }
 
 /**
+ * 1113 站长令：面板选 Hydrogen 首读、单片五发都不过时，固定改用 3.8 Flash 重读（不随环境变量变化）；
+ * 其余首读模型仍按配置的升级模型。
+ */
+export function resolveManhuaNativeDeepReadEscalationModelFor(
+  readModel: unknown, env?: GeminiModelEnv,
+): ManhuaNativeDeepReadModelId {
+  return readModel === "gemini-4-hydrogen" ? MANHUA_NATIVE_CURRENT_READ_MODEL : resolveManhuaNativeDeepReadEscalationModel(env);
+}
+
+/**
  * 1111：整集精读升级档模型（env：MANHUA_DEEP_READ_UPGRADE_MODEL → GEMINI_CARBON_MODEL → 领域缺省 gemini-4-carbon）。
  * 只在新学习时由站长主动选择；不参与任何缺省路径。
  */
