@@ -39,6 +39,7 @@ export type NovelCraftCardInput = Omit<NovelCraftCard, "source">;
 
 import { NOVEL_CRAFT_OWNER_CARD_INPUTS } from "./novelCraftCardsOwner";
 import { NOVEL_CRAFT_OWNER_DAY2_CARD_INPUTS, withNovelCraftOwnerDay2Supplements } from "./novelCraftCardsOwnerDay2";
+import { NOVEL_CRAFT_OWNER_DAY3_CARD_INPUTS, withNovelCraftOwnerDay3Supplements } from "./novelCraftCardsOwnerDay3";
 import { NOVEL_CRAFT_GENRE_CARD_INPUTS } from "./novelCraftCardsGenre";
 import { NOVEL_CRAFT_SHORT_CARD_INPUTS } from "./novelCraftCardsShort";
 
@@ -323,10 +324,14 @@ const BASE_CARD_INPUTS: readonly NovelCraftCardInput[] = [
 /** 原有通用条目（id 与顺序固定）。 */
 export const NOVEL_CRAFT_BASE_CARDS: readonly NovelCraftCard[] = BASE_CARD_INPUTS.map(c => ({ ...c, source: "general" as const }));
 
-/** 本站写作规范条目（craft_owner_*）：第一天条目（并入第二天补充行）在前，第二天新建条目（craft_owner_d2_*）接在后面。 */
+/**
+ * 本站写作规范条目（craft_owner_*）：第一天条目（依次并入第二天、第三天补充行）在前，
+ * 第二天新建条目（craft_owner_d2_*）、第三天新建条目（craft_owner_d3_*）依次接在后面。
+ */
 export const NOVEL_CRAFT_OWNER_CARDS: readonly NovelCraftCard[] = [
-  ...withNovelCraftOwnerDay2Supplements(NOVEL_CRAFT_OWNER_CARD_INPUTS),
+  ...withNovelCraftOwnerDay3Supplements(withNovelCraftOwnerDay2Supplements(NOVEL_CRAFT_OWNER_CARD_INPUTS)),
   ...NOVEL_CRAFT_OWNER_DAY2_CARD_INPUTS,
+  ...NOVEL_CRAFT_OWNER_DAY3_CARD_INPUTS,
 ].map(c => ({ ...c, source: "owner" as const }));
 
 /** 全库：原有通用条目在前，本站条目接在后面。 */
