@@ -40,15 +40,14 @@
 | `flashCopywriting` | Flash 文案 / 生图英文化 | `GEMINI_35_FLASH_MODEL` → `GROWTH_CAMP_EXTRACTOR_MODEL` → `GEMINI_FLASH_TRANSLATION_MODEL` → `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` → `VERTEX_GEMINI_COVER_TRANSLATION_MODEL` | `gemini-3-flash-preview`（领域） | 否 |
 | `compositeFlashTranslation` | 平台 composite 英文化 | `VERTEX_GEMINI_FLASH_TRANSLATION_MODEL` → 其余同 Flash 文案链 | `gemini-3-flash-preview`（领域） | 否 |
 | `coverTranslation` | 选题竖封英文化 | `VERTEX_GEMINI_COVER_TRANSLATION_MODEL` → 其余同 Flash 文案链 | `gemini-3-flash-preview`（领域） | 否 |
-| `strategicCoverDirector` | 战略封面 / 扉页 / 抠图双语编导 | `STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL` → `VERTEX_GEMINI_31_PRO_MODEL` → `VERTEX_GEMINI_MODEL` | `gemini-3.8-flash`（全局；1113 删领域缺省 3.1 Pro） | 否 |
-| `deepResearchAssist` | 战略智库辅助生成 | `DEEP_RESEARCH_ASSIST_GEMINI_MODEL` | `gemini-3.8-flash`（全局；1113 删领域缺省 3.1 Pro） | 否 |
-| `growthCampExtractor` | 成长营 Phase 1 音频 / 关键帧粗筛 | `GROWTH_CAMP_EXTRACTOR_MODEL` | `gemini-3.5-flash`（领域） | 否 |
+| `strategicCoverDirector` | 双语编导：1113 起只剩创作顾问问答出图的中文描述英文化（战略封面 / 扉页 / 自定义抠像已删） | `STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL` → `VERTEX_GEMINI_31_PRO_MODEL` → `VERTEX_GEMINI_MODEL` | `gemini-3.8-flash`（全局；1113 删领域缺省 3.1 Pro） | 否 |
+| `growthCampExtractor` | 平台页素材分析 / 图文笔记复刻 Phase 1 音频 / 关键帧粗筛（成长营入口 1113 已下线） | `GROWTH_CAMP_EXTRACTOR_MODEL` | `gemini-3.5-flash`（领域） | 否 |
 | `geminiCarbon` | Carbon 共用调用层缺省（1111） | `GEMINI_CARBON_MODEL` | `gemini-4-carbon`（领域） | 否；**缺省非 Flash，属贵档，只在用户主动选择时调用** |
 | `manhuaDeepReadUpgrade` | 模板学习·整集精读升级档（替换 Argon，车道 `-g4c`） | `MANHUA_DEEP_READ_UPGRADE_MODEL` → `GEMINI_CARBON_MODEL` | `gemini-4-carbon`（领域） | 否；贵档，只在用户主动选择时调用 |
 | `musicMvDeepCompose` | MV 顾问·深度编排（整片 compose + 逐窗节拍） | `MV_DEEP_COMPOSE_MODEL` → `GEMINI_CARBON_MODEL` | `gemini-4-carbon`（领域） | 否；贵档，只在用户主动选择时调用 |
 | `novelWriterCarbon` | 小说改编 / 连载扩写「线路三」 | `NOVEL_WRITER_CARBON_MODEL` → `GEMINI_CARBON_MODEL` | `gemini-4-carbon`（领域） | 否；贵档，只在用户主动选择时调用 |
 
-- 1113 站长确认 `llmProTier` / `strategicCoverDirector` / `deepResearchAssist` 入口已下线不再开发：服务端仍有可达调用，故只删领域缺省 3.1 Pro（回落全局）；`platformStage2` 无调用方，领域连同解析函数删除。`geminiScript` 缺省仍为 3.1 Pro（画布文案在用）。
+- 1113 站长拍板下线成长营、战略封面导演、深度研究：`deepResearchAssist` 领域与研报生成链路、自定义抠像、研报扉页 / 封面生成已删除；`platformStage2` 无调用方已删。`llmProTier`（付款截图核验、老照片裁切、平台素材分析等仍在用）与 `strategicCoverDirector`（创作顾问问答出图英文化仍在用）保留，只删领域缺省 3.1 Pro（回落全局）。`geminiScript` 缺省仍为 3.1 Pro（画布文案在用）。
 - `geminiDecision`（1113）：EvoLink Decisions API 选择题判定，`GEMINI_DECISION_MODEL`，缺省 `gemini-decision-1`（领域）；只做参考自查（`KNOWLEDGE_DECISION_CHECK=1` / `NOVEL_ADAPTATION_DECISION_CHECK=1` 才调用，缺省关），输入 $0.10/M；请求 criteria 形状与回包字段未经真实调用验证。
 - 1110 行为变化：创作顾问联网摘要原走 Flash 文案链（缺省 `gemini-3-flash-preview`），改为 `platformSkillQa` 领域后缺省 `gemini-3.8-flash`，不再读 Flash 文案旧 env 链。
 - 精读历史身份不变：`MANHUA_NATIVE_DEEP_READ_MODEL`（3.1 Pro）只作旧任务缺省 / 段缓存指纹缺省身份 / 计划码；3.1 Pro、3.8 Flash 段缓存指纹不写模型，Argon 与配置新模型写入模型；配置新模型车道系列后缀 `-gm-<去前缀、点换下划线>`。精读成本表外模型按表内最高单价估算（不按 0 元）。

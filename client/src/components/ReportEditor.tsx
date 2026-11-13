@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Pencil, Trash2, Plus, Wand2, ArrowUp, ArrowDown, Save, Send, Loader2,
-  ChevronLeft, FileDown, X, Sparkles, RefreshCw, Type, Maximize2, Minimize2, Table as TableIcon,
+  Pencil, Trash2, Plus, ArrowUp, ArrowDown, Save, Send, Loader2,
+  ChevronLeft, FileDown, X, Type,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import ReportRenderer from "@/components/ReportRenderer";
@@ -188,8 +188,6 @@ export default function ReportEditor({
     onError: (e) => toast.error(e.message || "出刊失败"),
   });
 
-  // ── tRPC：AI 助手 ───────────────────────────────────────────────────────────
-  const aiAssistMutation = trpc.deepResearch.aiAssist.useMutation();
 
   // ── tRPC：PDF 导出（GCS pdf-worker） ────────────────────────────────────────
   const downloadPdfMutation = trpc.mvAnalysis.downloadAnalysisPdf.useMutation({
@@ -371,7 +369,7 @@ export default function ReportEditor({
         {/* ── 左栏：块编辑列表 ── */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ padding: "14px 16px", borderRadius: 12, background: "rgba(255,250,240,0.85)", border: "1px solid rgba(122,84,16,0.18)", fontSize: 12, color: "rgba(61,44,20,0.75)", lineHeight: 1.7, fontWeight: 600 }}>
-            <strong style={{ color: "#7a5410" }}>主编工作流</strong> · 鼠标悬停在每个区块上会出现 ⋮ 菜单 · 可调用 AI 助手对该段重写 / 扩写 / 缩写 / 补一张表 · 草稿每 1.5 秒自动保存 · 出刊后才能下载无水印正式版
+            <strong style={{ color: "#7a5410" }}>主编工作流</strong> · 鼠标悬停在每个区块上会出现 ⋮ 菜单 · 草稿每 1.5 秒自动保存 · 出刊后才能下载无水印正式版
           </div>
 
           {chunks.map((chunk, idx) => (
@@ -388,8 +386,6 @@ export default function ReportEditor({
               onMoveUp={() => moveChunk(idx, -1)}
               onMoveDown={() => moveChunk(idx, +1)}
               onInsertAfter={() => insertAfter(idx)}
-              aiAssistMutation={aiAssistMutation}
-              recordId={recordId}
             />
           ))}
 
@@ -427,7 +423,6 @@ function BlockCard({
   chunk, idx, total,
   isEditing, onEditOpen, onEditClose,
   onUpdate, onDelete, onMoveUp, onMoveDown, onInsertAfter,
-  aiAssistMutation, recordId,
 }: {
   chunk: string;
   idx: number;
@@ -440,8 +435,6 @@ function BlockCard({
   onMoveUp: () => void;
   onMoveDown: () => void;
   onInsertAfter: () => void;
-  aiAssistMutation: ReturnType<typeof trpc.deepResearch.aiAssist.useMutation>;
-  recordId: number;
 }) {
   const kind = detectBlockKind(chunk);
   const meta = BLOCK_KIND_META[kind] || BLOCK_KIND_META.paragraph;
@@ -486,8 +479,6 @@ function BlockCard({
           chunk={chunk}
           onSave={(next) => { onUpdate(next); onEditClose(); }}
           onClose={onEditClose}
-          aiAssistMutation={aiAssistMutation}
-          recordId={recordId}
         />
       )}
     </div>
@@ -515,39 +506,17 @@ function IconBtn({ icon, title, onClick, disabled, accent, danger }: { icon: Rea
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 区块编辑抽屉：textarea + AI 助手按钮组
+// 区块编辑抽屉：textarea
 // ─────────────────────────────────────────────────────────────────────────────
 
 function BlockDrawerEditor({
-  chunk, onSave, onClose, aiAssistMutation, recordId,
+  chunk, onSave, onClose,
 }: {
   chunk: string;
   onSave: (next: string) => void;
   onClose: () => void;
-  aiAssistMutation: ReturnType<typeof trpc.deepResearch.aiAssist.useMutation>;
-  recordId: number;
 }) {
   const [draft, setDraft] = useState(chunk);
-  const [aiInstruction, setAiInstruction] = useState("");
-  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
-  const [aiAction, setAiAction] = useState<"rewrite" | "expand" | "shrink" | "addTable" | "freeform" | null>(null);
-
-  const callAi = async (action: "rewrite" | "expand" | "shrink" | "addTable" | "freeform") => {
-    setAiAction(action);
-    setAiSuggestion(null);
-    try {
-      const r = await aiAssistMutation.mutateAsync({
-        recordId,
-        action,
-        blockText: draft,
-        instruction: action === "freeform" ? aiInstruction : undefined,
-      });
-      setAiSuggestion(r.suggestion);
-    } catch (e: any) {
-      toast.error(e.message || "AI 调用失败");
-      setAiAction(null);
-    }
-  };
 
   return (
     <div
@@ -565,30 +534,11 @@ function BlockDrawerEditor({
           </div>
           <div>
             <div style={{ fontSize: 15, fontWeight: 900, color: "#3d2c14" }}>编辑区块</div>
-            <div style={{ fontSize: 11, color: "rgba(61,44,20,0.65)", fontWeight: 600 }}>支持 Markdown 语法 · AI 助手按次扣 5 点</div>
+            <div style={{ fontSize: 11, color: "rgba(61,44,20,0.65)", fontWeight: 600 }}>支持 Markdown 语法</div>
           </div>
           <button onClick={onClose} style={{ marginLeft: "auto", width: 30, height: 30, borderRadius: 8, background: "rgba(122,84,16,0.08)", border: "1px solid rgba(122,84,16,0.20)", color: "#7a5410", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <X size={14} />
           </button>
-        </div>
-
-        {/* AI 助手按钮组 */}
-        <div style={{ padding: "12px 22px", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", borderBottom: "1px solid rgba(122,84,16,0.10)" }}>
-          <span style={{ fontSize: 11, fontWeight: 800, color: "#7a5410", letterSpacing: "0.05em", marginRight: 4 }}>
-            <Sparkles size={11} style={{ display: "inline", marginRight: 4 }} />
-            AI 助手
-          </span>
-          <AiBtn label="重写" icon={<RefreshCw size={11} />} onClick={() => callAi("rewrite")} loading={aiAssistMutation.isPending && aiAction === "rewrite"} />
-          <AiBtn label="扩写 1.6×" icon={<Maximize2 size={11} />} onClick={() => callAi("expand")} loading={aiAssistMutation.isPending && aiAction === "expand"} />
-          <AiBtn label="缩写 0.6×" icon={<Minimize2 size={11} />} onClick={() => callAi("shrink")} loading={aiAssistMutation.isPending && aiAction === "shrink"} />
-          <AiBtn label="补一张表" icon={<TableIcon size={11} />} onClick={() => callAi("addTable")} loading={aiAssistMutation.isPending && aiAction === "addTable"} />
-          <input
-            placeholder="自定义指令（如：把这段改成更口语化）…"
-            value={aiInstruction}
-            onChange={(e) => setAiInstruction(e.target.value)}
-            style={{ flex: 1, minWidth: 200, padding: "6px 10px", borderRadius: 6, border: "1px solid rgba(122,84,16,0.30)", fontSize: 11.5, background: "#fff", outline: "none" }}
-          />
-          <AiBtn label="自定义" icon={<Wand2 size={11} />} onClick={() => callAi("freeform")} loading={aiAssistMutation.isPending && aiAction === "freeform"} disabled={!aiInstruction.trim()} primary />
         </div>
 
         {/* 编辑器主体：textarea */}
@@ -604,35 +554,6 @@ function BlockDrawerEditor({
             style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid rgba(122,84,16,0.25)", background: "#fff", color: "#1c1407", fontSize: 13.5, lineHeight: 1.7, fontFamily: "ui-monospace, 'Cascadia Code', 'Source Code Pro', monospace", resize: "vertical", outline: "none", boxSizing: "border-box" }}
           />
         </div>
-
-        {/* AI 建议预览 */}
-        {aiSuggestion && (
-          <div style={{ padding: "0 22px 16px" }}>
-            <div style={{ borderRadius: 12, background: "rgba(31,122,82,0.06)", border: "1px solid rgba(31,122,82,0.30)", padding: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                <Sparkles size={13} color="#1f7a52" />
-                <strong style={{ color: "#0e5b3b", fontSize: 12, letterSpacing: "0.05em" }}>AI 建议</strong>
-                <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                  <button
-                    onClick={() => { setDraft(aiSuggestion); setAiSuggestion(null); }}
-                    style={{ padding: "5px 12px", borderRadius: 6, background: "linear-gradient(135deg,#1f7a52,#0e5b3b)", border: "none", color: "#f0fdf4", fontSize: 11, fontWeight: 800, cursor: "pointer" }}
-                  >
-                    ✓ 采纳替换
-                  </button>
-                  <button
-                    onClick={() => setAiSuggestion(null)}
-                    style={{ padding: "5px 12px", borderRadius: 6, background: "rgba(122,84,16,0.08)", border: "1px solid rgba(122,84,16,0.20)", color: "#7a5410", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                  >
-                    取消
-                  </button>
-                </span>
-              </div>
-              <div style={{ background: "#fff", borderRadius: 8, padding: 12, fontSize: 12.5, lineHeight: 1.7, color: "#1c1407", maxHeight: 280, overflow: "auto", whiteSpace: "pre-wrap", fontFamily: "ui-monospace, monospace" }}>
-                {aiSuggestion}
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* 底部按钮 */}
         <div style={{ padding: "12px 22px 18px", borderTop: "1px solid rgba(122,84,16,0.15)", display: "flex", justifyContent: "flex-end", gap: 10 }}>
@@ -652,26 +573,5 @@ function BlockDrawerEditor({
         </div>
       </div>
     </div>
-  );
-}
-
-function AiBtn({ label, icon, onClick, loading, disabled, primary }: { label: string; icon: React.ReactNode; onClick: () => void; loading?: boolean; disabled?: boolean; primary?: boolean }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={loading || disabled}
-      style={{
-        display: "flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 6,
-        background: loading ? "rgba(168,118,27,0.20)" : primary ? "linear-gradient(135deg,#a8761b,#7a5410)" : "rgba(168,118,27,0.10)",
-        border: `1px solid ${primary ? "rgba(168,118,27,0.55)" : "rgba(168,118,27,0.30)"}`,
-        color: primary ? "#fff7df" : "#7a5410",
-        fontSize: 11.5, fontWeight: 800,
-        cursor: loading || disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-      }}
-    >
-      {loading ? <Loader2 size={11} className="animate-spin" /> : icon}
-      {label}
-    </button>
   );
 }

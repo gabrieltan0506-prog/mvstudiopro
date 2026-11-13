@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-/** 爆款复刻分镜 / 出片退役：真实 appRouter；旧实现、扣费、模型与出片全部替身，验证「先拒绝、零扣费、零上游」。 */
+/** 爆款复刻分镜 / 出片退役：真实 appRouter（旧实现 premiumRemix.ts 1113 已删）；扣费、模型与出片全部替身，验证「先拒绝、零扣费、零上游」。 */
 const h = vi.hoisted(() => ({
   buildPremiumRemixPlan: vi.fn(),
   generatePremiumRemixAssets: vi.fn(),
@@ -11,7 +11,6 @@ const h = vi.hoisted(() => ({
   deductCreditsAmount: vi.fn(),
   createJob: vi.fn(),
 }));
-vi.mock("./premiumRemix", () => ({ buildPremiumRemixPlan: h.buildPremiumRemixPlan, generatePremiumRemixAssets: h.generatePremiumRemixAssets }));
 vi.mock("../_core/llm", async (importOriginal) => ({ ...(await importOriginal<typeof import("../_core/llm")>()), invokeLLM: h.invokeLLM }));
 vi.mock("../veo", async (importOriginal) => ({ ...(await importOriginal<typeof import("../veo")>()), generateVideo: h.generateVideo }));
 vi.mock("../gemini-image", async (importOriginal) => ({ ...(await importOriginal<typeof import("../gemini-image")>()), generateGeminiImage: h.generateGeminiImage }));

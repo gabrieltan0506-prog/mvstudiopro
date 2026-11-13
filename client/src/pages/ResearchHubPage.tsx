@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowLeft, BookOpen, Crown, Loader2, Radar, Search, Sparkles, Users } from "lucide-react";
+import { ArrowLeft, BookOpen, Loader2, Search } from "lucide-react";
 import { ResearchHubEmbedProvider } from "@/lib/researchHubContext";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
@@ -11,17 +11,9 @@ import {
 } from "@/lib/competitorResearchBeta";
 
 const ResearchPage = lazy(() => import("./ResearchPage"));
-const GodViewPage = lazy(() => import("./GodViewPage"));
-const CompetitorRadarPage = lazy(() => import("./CompetitorRadarPage"));
-const PlatformIpMatrixPage = lazy(() => import("./PlatformIpMatrixPage"));
-const VipTrackerPage = lazy(() => import("./VipTrackerPage"));
 
-export type ResearchHubTab =
-  | "research"
-  | "god-view"
-  | "competitor-radar"
-  | "ip-matrix"
-  | "vip-tracker";
+/** 1113：战略智库 / 赛道雷达 / IP 矩阵 / VIP 追踪已下线，只剩竞品调研；旧 tab 参数一律落到竞品调研。 */
+export type ResearchHubTab = "research";
 
 const TABS: {
   id: ResearchHubTab;
@@ -30,10 +22,6 @@ const TABS: {
   icon: React.ComponentType<{ className?: string }>;
 }[] = [
   { id: "research", label: "竞品调研", hint: "60 点/次", icon: Search },
-  { id: "god-view", label: "战略智库", hint: "半月刊 · 订阅 · 私订", icon: Crown },
-  { id: "competitor-radar", label: "赛道雷达", hint: "720 点", icon: Radar },
-  { id: "ip-matrix", label: "IP 矩阵", hint: "多平台布局", icon: Sparkles },
-  { id: "vip-tracker", label: "VIP 追踪", hint: "高价值客户", icon: Users },
 ];
 
 function parseTab(search: string): ResearchHubTab {
@@ -59,31 +47,18 @@ function CompetitorResearchBetaNotice() {
           去平台创作
         </Link>
         <Link
-          href="/research?tab=god-view"
+          href="/my-reports"
           className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-[13px] font-semibold text-white/80 no-underline"
         >
-          看战略智库
+          查看历史研报
         </Link>
       </div>
     </div>
   );
 }
 
-function TabPanel({ tab, canResearch }: { tab: ResearchHubTab; canResearch: boolean }) {
-  switch (tab) {
-    case "research":
-      return canResearch ? <ResearchPage /> : <CompetitorResearchBetaNotice />;
-    case "god-view":
-      return <GodViewPage />;
-    case "competitor-radar":
-      return <CompetitorRadarPage />;
-    case "ip-matrix":
-      return <PlatformIpMatrixPage />;
-    case "vip-tracker":
-      return <VipTrackerPage />;
-    default:
-      return canResearch ? <ResearchPage /> : <CompetitorResearchBetaNotice />;
-  }
+function TabPanel({ canResearch }: { tab: ResearchHubTab; canResearch: boolean }) {
+  return canResearch ? <ResearchPage /> : <CompetitorResearchBetaNotice />;
 }
 
 export default function ResearchHubPage() {

@@ -74,7 +74,8 @@ export type PlatformFunnelEventName =
   | "skill_toggle"
   | "legacy_tab_mapped";
 
-export type PlatformToolsQueryKey = "htmlPpt" | "matting" | "assets";
+/** 1113：自定义抠像已下线，旧 `tool=matting` / `tab=matting` 按非法值回落 AI PPT。 */
+export type PlatformToolsQueryKey = "htmlPpt" | "assets";
 
 /** 旧「视频深度拆解」书签 → 明确映射到素材分析（assets），非静默无关工具 */
 export const LEGACY_VIDEO_TAB_ALIASES = ["video", "deep-video", "video-deep"] as const;
@@ -155,7 +156,7 @@ export function writePlatformModeToStorage(mode: PlatformWorkbenchMode): void {
 
 export function parsePlatformToolsQuery(raw: string | null | undefined): PlatformToolsQueryKey | null {
   const v = String(raw || "").trim();
-  if (v === "htmlPpt" || v === "matting" || v === "assets") return v;
+  if (v === "htmlPpt" || v === "assets") return v;
   return null;
 }
 
@@ -214,7 +215,7 @@ export function resolvePlatformLocation(search?: string): PlatformLocationResolv
       tool = "assets";
       legacyVideoMapped = true;
       normalized = true;
-    } else if (tabParam === "htmlPpt" || tabParam === "matting" || tabParam === "assets") {
+    } else if (tabParam === "htmlPpt" || tabParam === "assets") {
       tool = tabParam;
       normalized = Boolean(toolParam && !parsePlatformToolsQuery(toolParam));
     } else if (toolParam != null && String(toolParam).trim() !== "") {
@@ -566,7 +567,7 @@ export function trackPlatformFunnel(
 export type PlatformCreateWorkspaceTab = "copy" | "topic" | "imageGen";
 
 /** 工具区 Tab */
-export type PlatformToolsWorkspaceTab = "matting" | "assets" | "htmlPpt";
+export type PlatformToolsWorkspaceTab = "assets" | "htmlPpt";
 
 export type PlatformCustomWorkspaceTab = PlatformCreateWorkspaceTab | PlatformToolsWorkspaceTab;
 
@@ -578,7 +579,7 @@ export function toolsTabFromMode(
     return current === "copy" || current === "topic" || current === "imageGen" ? current : "copy";
   }
   if (mode === "tools") {
-    return current === "htmlPpt" || current === "matting" || current === "assets" ? current : "htmlPpt";
+    return current === "htmlPpt" || current === "assets" ? current : "htmlPpt";
   }
   return current;
 }

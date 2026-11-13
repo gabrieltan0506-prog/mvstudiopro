@@ -688,56 +688,8 @@ ${buildPlatformEditorialCoverGuidance(ctx)}
 ${PLATFORM_TOPIC_GRAPHIC_PROMPT_FOOTER}`.trim();
 }
 
-/** 战略智库杂志封面：双语编导（Vertex Global · 领域 strategicCoverDirector）把中文题与出版语境压成英文视觉 prompt → GPT-IMAGE-2 */
-export function buildStrategicCoverGeminiTask(input: {
-  chineseTitle: string;
-  englishMonthYear: string;
-  chinesePublicationDate: string;
-}): string {
-  const title = String(input.chineseTitle || "").trim().slice(0, 80);
-  return `
-You are a bilingual (English and Simplified Chinese) elite magazine art director and prompt engineer.
-
-CRITICAL PIPELINE (DO NOT SKIP):
-**GPT-IMAGE-2** only receives **your English output** and paints pixels—it **cannot** translate or interpret the Chinese title by itself. You MUST read the Chinese title and publication hints below and output **ONLY ONE** final **English** prompt string that already encodes all layout, materials, and **Simplified-Chinese** hero typography requirements (stated in English for the image model).
-**Execution-first:** prioritize **numbered, concrete directives** (scene / light / typography zone / Chinese glyph specs) so GPT-Image-2 can render without guessing; Chinese is reference for in-image text content only.
-
-Read the Chinese report title and publication hints, then output ONLY ONE final English prompt string for GPT-IMAGE-2.
-
-MANDATORY RULES FOR YOUR OUTPUT PROMPT:
-1. START WITH a **premium editorial magazine cover** opener tailored to the Chinese title mood—**9:16 vertical portrait**, cinematic editorial photography, masterpiece print quality. **Strongly recommended palette:** let the title/context drive light and color (daylight, soft overcast, warm interior, or restrained dark-gold **only when the brief supports it**). **Not recommended:** defaulting every cover to heavy dark-gold / low-key gloom without narrative reason.
-2. SCENE: Describe layout, lighting, textures, and luxury materials in vivid English only for non-text regions.
-3. CRITICAL TYPOGRAPHY (SIMPLIFIED CHINESE ONLY): **Strongly recommended** to include this requirement: "All masthead lines, hero headline, and every readable word on the cover should be in Simplified Chinese only (no Traditional Chinese). Bake the following Chinese string as the main cover headline, large and legible: 「${title}」. Optional tiny corner line in English may show only the masthead date token: ${input.englishMonthYear}. If any secondary Chinese tagline is needed, use Simplified Chinese (e.g. 战略情报)."
-4. Add publication context in English for the model only: "Chinese publication calendar note: ${input.chinesePublicationDate}."
-5. OUTPUT: Output ONLY the English prompt string. No explanations.
-
-[Chinese title]: ${title}
-`.trim();
-}
-
-/** GodView 章节扉页：双语编导读中文 → 一条英文视觉 prompt；GPT-IMAGE-2 无翻译能力 */
-export function buildChapterPosterGeminiTask(chineseTitle: string, chineseContext: string): string {
-  const t = String(chineseTitle || "").trim().slice(0, 120);
-  const c = String(chineseContext || "").trim().slice(0, 2000);
-  return `
-You are a bilingual (English and Simplified Chinese) art director and strategic visual translator.
-
-CRITICAL PIPELINE (DO NOT SKIP):
-**GPT-IMAGE-2** sees **only** your **English** prompt—**not** the Chinese passage. You MUST distill the Chinese title and passage into **one** self-contained **English** visual prompt, with hero **Simplified-Chinese** lines specified via explicit English instructions to the image model.
-**Execution-first:** lock **layout, lighting, and on-image Chinese type specs** in plain English **before** any lyrical phrasing.
-
-Output ONLY ONE English prompt for GPT-IMAGE-2.
-
-MANDATORY RULES:
-1. START WITH a **premium strategic intelligence chapter poster**, **9:16 vertical**, cinematic editorial, museum-grade lighting. **Palette:** follow the Chinese passage—**recommended** varied light (daylight / soft interior / selective dark accent) rather than default dark-gold and ink for every poster.
-2. Describe visual scene in English; all prominent typography on the poster **should be** Simplified Chinese only. Hero title **strongly recommended** to include exactly: 「${t}」.
-3. Summarize supporting context from the Chinese passage into English visual staging cues only (do not paste the Chinese paragraph as unreadable microtext). Chinese passage for your analysis:\n${c}
-4. OUTPUT: English prompt only, no chitchat.
-`.trim();
-}
-
 /**
- * 战略封面 / 章节扉页 / 自定义抠图：**Vertex Global** 双语编导 → 一条英文视觉 prompt。
+ * 双语编导 → 一条英文视觉 prompt（1113：战略封面 / 章节扉页 / 自定义抠像已下线，现只剩创作顾问问答出图的中文描述英文化在用）。
  * 模型不写死：领域 strategicCoverDirector（STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL → 旧 VERTEX_GEMINI_31_PRO_MODEL → VERTEX_GEMINI_MODEL → 全局缺省；1113 起不再缺省 3.1 Pro）。
  */
 export async function runGemini31ProPreviewText(userTask: string): Promise<string> {

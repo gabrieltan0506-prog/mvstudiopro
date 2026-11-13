@@ -70,10 +70,11 @@ export const GEMINI_MODEL_DOMAIN_ENVS = {
     "GEMINI_FLASH_TRANSLATION_MODEL",
     "VERTEX_GEMINI_FLASH_TRANSLATION_MODEL",
   ],
-  /** 战略封面 / 章节扉页 / 自定义抠图的双语编导（runGemini31ProPreviewText）；旧 env VERTEX_GEMINI_31_PRO_MODEL、VERTEX_GEMINI_MODEL 兼容。 */
+  /**
+   * 双语编导（runGemini31ProPreviewText）；旧 env VERTEX_GEMINI_31_PRO_MODEL、VERTEX_GEMINI_MODEL 兼容。
+   * 1113：战略封面 / 章节扉页 / 自定义抠像已删除，现只剩创作顾问问答出图的中文描述英文化（translateMattingUserPromptToEnglish）在用。
+   */
   strategicCoverDirector: ["STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL", "VERTEX_GEMINI_31_PRO_MODEL", "VERTEX_GEMINI_MODEL"],
-  /** 战略智库辅助生成（报告合成 / 灯塔标题 / 趋势图数据 / 配图场景抽取）。 */
-  deepResearchAssist: ["DEEP_RESEARCH_ASSIST_GEMINI_MODEL"],
   /** 成长营 Phase 1 音频 / 关键帧粗筛。 */
   growthCampExtractor: ["GROWTH_CAMP_EXTRACTOR_MODEL"],
   /** 代码动画·原图语义预检（看原图 + 听已采用原声窗 + 看参考影片，一次两跳）。 */
@@ -108,9 +109,8 @@ export type GeminiModelEnv = Record<string, string | undefined>;
  * 用户口径 Gemini 一律 3.8 Flash、Pro 级需批准：拍板后删掉对应条目即回落全局缺省；或在 Fly 设该领域 env 立即生效。
  */
 export const GEMINI_MODEL_DOMAIN_DEFAULTS = {
-  // 1113 站长确认：llmProTier / strategicCoverDirector / deepResearchAssist 原领域缺省 3.1 Pro 已删除（入口已下线不再开发，
-  // 但服务端仍有可达调用），现回落全局缺省（GEMINI_DEFAULT_MODEL → gemini-3.8-flash）；需要时在 Fly 设该领域 env。
-  // platformStage2 领域无任何调用方，连同 resolvePlatformStage2GeminiModel 一并删除。
+  // 1113 站长确认：llmProTier / strategicCoverDirector 原领域缺省 3.1 Pro 已删除，现回落全局缺省（GEMINI_DEFAULT_MODEL → gemini-3.8-flash）；
+  // 需要时在 Fly 设该领域 env。platformStage2 与 deepResearchAssist（深度研究生成链路已删）两个领域无调用方，已删除。
   llmFlashTier: "gemini-2.5-flash",
   flashCopywriting: "gemini-3-flash-preview",
   compositeFlashTranslation: "gemini-3-flash-preview",
