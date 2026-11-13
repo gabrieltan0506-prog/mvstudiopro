@@ -113,6 +113,9 @@ describe("原生精读音轨合并", () => {
     expect(parseManhuaNativeAudioAnalysis(noAudioManhuaNativeDirectAnalysis(30, "vertex_gcs_video", "gemini-4-argon"))?.model).toBe("gemini-4-argon");
     const argon = mergeManhuaNativeDirectAudioChunks({ durationSec, chunks: [chunk], usage: zeroAudioUsage, route: "vertex_gcs_video", model: "gemini-4-argon" });
     expect(parseManhuaNativeAudioAnalysis(JSON.parse(JSON.stringify(argon)))?.model).toBe("gemini-4-argon");
+    const hydrogen = mergeManhuaNativeDirectAudioChunks({ durationSec, chunks: [chunk], usage: zeroAudioUsage, route: "vertex_gcs_video", model: "gemini-4-hydrogen" });
+    expect(parseManhuaNativeAudioAnalysis(JSON.parse(JSON.stringify(hydrogen)))?.model).toBe("gemini-4-hydrogen");
+    expect(parseManhuaNativeAudioAnalysis({ ...hydrogen, audioTrack: [] })).toBeUndefined();
     expect(parseManhuaNativeAudioAnalysis({ ...argon, audioTrack: [] })).toBeUndefined();
     expect(parseManhuaNativeAudioAnalysis({ ...argon, resolverModel: "gemini-3.1-pro-preview" })).toBeUndefined();
   });
