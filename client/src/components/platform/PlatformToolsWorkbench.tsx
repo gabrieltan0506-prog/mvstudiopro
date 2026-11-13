@@ -1,7 +1,7 @@
 import React from "react";
 import { Presentation } from "lucide-react";
 
-export type PlatformToolsTab = "htmlPpt" | "matting" | "assets";
+export type PlatformToolsTab = "htmlPpt" | "assets";
 
 type Props = {
   activeTab: PlatformToolsTab;

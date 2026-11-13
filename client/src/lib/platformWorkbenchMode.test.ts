@@ -31,7 +31,8 @@ describe("platformWorkbenchMode", () => {
     expect(legacy.tool).toBe("assets");
     expect(legacy.legacyVideoMapped).toBe(true);
     expect(isLegacyVideoTabAlias("deep-video")).toBe(true);
-    expect(parsePlatformToolsQuery("matting")).toBe("matting");
+    expect(parsePlatformToolsQuery("matting")).toBeNull();
+    expect(resolvePlatformLocation("?mode=tools&tool=matting").tool).toBe("htmlPpt");
     expect(parsePlatformToolsQuery("video")).toBeNull();
     expect(resolvePlatformLocation("?mode=tools&tool=assets").tool).toBe("assets");
     expect(resolvePlatformLocation("?mode=tools&tool=bogus").tool).toBe("htmlPpt");
@@ -54,7 +55,7 @@ describe("platformWorkbenchMode", () => {
     expect(toolsTabFromMode("create", "htmlPpt")).toBe("copy");
     expect(toolsTabFromMode("create", "topic")).toBe("topic");
     expect(toolsTabFromMode("tools", "copy")).toBe("htmlPpt");
-    expect(toolsTabFromMode("tools", "matting")).toBe("matting");
+    expect(toolsTabFromMode("tools", "assets")).toBe("assets");
   });
 });
 

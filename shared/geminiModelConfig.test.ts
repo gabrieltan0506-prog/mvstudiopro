@@ -73,7 +73,6 @@ describe("resolveGeminiModel", () => {
     expect(resolveGeminiModel("audioTwoHop", env)).toBe("gemini-3.8-flash");
     expect(resolveGeminiModel("llmProTier", { LLM_GEMINI_PRO_TIER_MODEL: "gemini-3.8-flash" })).toBe("gemini-3.8-flash");
     expect(resolveGeminiModel("llmFlashTier", { LLM_GEMINI_FLASH_TIER_MODEL: "gemini-3.8-flash" })).toBe("gemini-3.8-flash");
-    expect(resolveGeminiModel("deepResearchAssist", { DEEP_RESEARCH_ASSIST_GEMINI_MODEL: "gemini-3.8-flash" })).toBe("gemini-3.8-flash");
     expect(resolveGeminiModel("strategicCoverDirector", { STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL: "gemini-3.8-flash", VERTEX_GEMINI_31_PRO_MODEL: "gemini-3.1-pro-preview" })).toBe("gemini-3.8-flash");
   });
 
@@ -97,7 +96,6 @@ describe("resolveGeminiModel", () => {
     expect(resolveGeminiModel("flashCopywriting", { VERTEX_GEMINI_COVER_TRANSLATION_MODEL: "gemini-a", GROWTH_CAMP_EXTRACTOR_MODEL: "gemini-b" })).toBe("gemini-b");
     expect(resolveGeminiModel("compositeFlashTranslation", { VERTEX_GEMINI_FLASH_TRANSLATION_MODEL: "gemini-a", GEMINI_35_FLASH_MODEL: "gemini-b" })).toBe("gemini-a");
     expect(resolveGeminiModel("coverTranslation", { VERTEX_GEMINI_COVER_TRANSLATION_MODEL: "gemini-a", GEMINI_35_FLASH_MODEL: "gemini-b" })).toBe("gemini-a");
-    expect(resolveGeminiModel("deepResearchAssist", { GEMINI_DEFAULT_MODEL: "gemini-3.9-flash" })).toBe("gemini-3.9-flash");
   });
 
   it("领域缺省为 Pro 时同样告警（来自 领域缺省），只记一次", () => {
@@ -107,12 +105,13 @@ describe("resolveGeminiModel", () => {
     expect(String(warn.mock.calls[0]![0])).toMatch(/geminiScript.*领域缺省.*批准/);
   });
 
-  it("1113 已下线入口的三个旧 Pro 领域：缺省回落全局（不再 3.1 Pro）；platformStage2 领域已删除", () => {
-    for (const d of ["llmProTier", "strategicCoverDirector", "deepResearchAssist"] as const) {
+  it("1113 两个旧 Pro 领域：缺省回落全局（不再 3.1 Pro）；platformStage2 / deepResearchAssist 领域已删除", () => {
+    for (const d of ["llmProTier", "strategicCoverDirector"] as const) {
       expect(resolveGeminiModel(d, {})).toBe(GEMINI_DEFAULT_MODEL_FALLBACK);
       expect(resolveGeminiModel(d, { GEMINI_DEFAULT_MODEL: "gemini-3.9-flash" })).toBe("gemini-3.9-flash");
     }
     expect(GEMINI_MODEL_DOMAIN_ENVS).not.toHaveProperty("platformStage2");
+    expect(GEMINI_MODEL_DOMAIN_ENVS).not.toHaveProperty("deepResearchAssist");
     expect(warn).not.toHaveBeenCalled();
   });
 
