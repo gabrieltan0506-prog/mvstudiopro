@@ -44,6 +44,7 @@ describe("resolveGeminiModel", () => {
       musicMvDeepCompose: "gemini-4-carbon",
       novelWriterCarbon: "gemini-4-carbon",
       geminiScript: "gemini-3.1-pro-preview",
+      geminiDecision: "gemini-decision-1",
     });
     for (const domain of Array.from(pinned)) {
       expect(GEMINI_MODEL_DOMAIN_ENVS).toHaveProperty(domain);
@@ -78,6 +79,13 @@ describe("resolveGeminiModel", () => {
     expect(resolveGeminiModel("llmFlashTier", { LLM_GEMINI_FLASH_TIER_MODEL: "gemini-3.8-flash" })).toBe("gemini-3.8-flash");
     expect(resolveGeminiModel("deepResearchAssist", { DEEP_RESEARCH_ASSIST_GEMINI_MODEL: "gemini-3.8-flash" })).toBe("gemini-3.8-flash");
     expect(resolveGeminiModel("strategicCoverDirector", { STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL: "gemini-3.8-flash", VERTEX_GEMINI_31_PRO_MODEL: "gemini-3.1-pro-preview" })).toBe("gemini-3.8-flash");
+  });
+
+  it("1113 geminiDecision：缺省 gemini-decision-1，全局缺省不影响，GEMINI_DECISION_MODEL 可覆盖", () => {
+    expect(resolveGeminiModel("geminiDecision", {})).toBe("gemini-decision-1");
+    expect(resolveGeminiModel("geminiDecision", { GEMINI_DEFAULT_MODEL: "gemini-3.8-flash" })).toBe("gemini-decision-1");
+    expect(resolveGeminiModel("geminiDecision", { GEMINI_DECISION_MODEL: "gemini-decision-2" })).toBe("gemini-decision-2");
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("旧 env 兼容", () => {
