@@ -52,6 +52,7 @@ export const MANHUA_NATIVE_DEEP_READ_MODEL_LABELS: Record<ManhuaNativeDeepReadMo
   "gemini-3.8-flash": "Gemini 3.8 Flash",
   "gemini-4-argon": "Gemini 4 Argon",
   "gemini-4-carbon": "Gemini 4 Carbon",
+  "gemini-4-hydrogen": "Gemini 4 Hydrogen",
 };
 
 /** 1110：新读片首读模型（env：MANHUA_DEEP_READ_MODEL → GEMINI_DEFAULT_MODEL → gemini-3.8-flash）。 */

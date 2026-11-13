@@ -24,6 +24,9 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   # ⚠ Fly secret 的优先级高于这里的 [env]：同名键一律以 secret 为准，改本文件不生效。
   # 标了「secret 接管」的键值已对齐线上实际（2026-07-26 由 fly ssh console printenv 抄回），
   # 只作存档，改它们必须走 `fly secrets set`。secret 值不可读回，只能看键名与运行时 env。
+  # 1113 站长令：模板学习（读片）首读模型从 3.8 Flash 改为 Gemini 4 Hydrogen（通道顺序不变：Vertex 优先）。
+  # 已学过的系列按各自车道续学，不受影响；改回只需删掉本行或改值。同名 secret 存在时以 secret 为准。
+  MANHUA_DEEP_READ_MODEL = 'gemini-4-hydrogen'
   GROWTH_STORE_DIR = '/data/growth'
   GROWTH_LEGACY_STORE_FILE = '/data/growth-trends.json'
   # 网站 8GB 整机给 V8 老生代最多 6GB，其余留给原生缓冲与系统。

@@ -209,6 +209,8 @@ function nativeDeepReadPricePerM(inUsdPerM: number, outUsdPerM: number): { inPer
 export const NATIVE_DEEP_READ_MODEL_PRICES_PER_M: Readonly<Record<string, { inPerM: number; outPerM: number }>> = {
   "gemini-3.1-pro-preview": nativeDeepReadPricePerM(1.25, 10),
   "gemini-3.8-flash": nativeDeepReadPricePerM(0.3, 2.5),
+  // 1113 站长令：模板学习读片从 3.8 Flash 改为 Hydrogen。按 Google 目录价 $1.50/$7.50（输出含思考 token）估算，仅用于成本展示；待账单核实。
+  "gemini-4-hydrogen": nativeDeepReadPricePerM(1.5, 7.5),
   // Argon按返还前标准价估算，避免把尚未到账的50%优惠当成实扣；仅用于成本展示。
   "gemini-4-argon": nativeDeepReadPricePerM(4, 20),
   // 1111 Carbon 整集精读升级档：首发价 $2/$10（输出含思考 token），2026-12-01 起翻倍——改 shared/geminiCarbon.ts 常量即可。
