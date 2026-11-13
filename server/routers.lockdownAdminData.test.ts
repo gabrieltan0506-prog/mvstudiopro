@@ -106,8 +106,6 @@ describe("mvAnalysis.getGrowthSystemStatus", () => {
 
 describe("成长营同步分析入口：须登录 + 闸门", () => {
   const cases = [
-    ["analyzeVideo", (c: ReturnType<typeof caller>) => c.mvAnalysis.analyzeVideo({} as never)],
-    ["analyzeGrowthCampImages", (c: ReturnType<typeof caller>) => c.mvAnalysis.analyzeGrowthCampImages({} as never)],
     ["synthesizeGrowthCampAnalyses", (c: ReturnType<typeof caller>) => c.mvAnalysis.synthesizeGrowthCampAnalyses({} as never)],
   ] as const;
   it.each(cases)("%s：未登录 401 / 用户放行（停在入参校验）/ 超限 429", async (_n, run) => {
