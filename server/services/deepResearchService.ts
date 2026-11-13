@@ -319,7 +319,7 @@ ${vals.map((v, i) => `<circle cx="${toX(i)}" cy="${toY(v)}" r="3.5" fill="${colo
 
 /**
  * 直接 HTTP 调用 Gemini API（普通模式）。
- * 模型不写死：领域 deepResearchAssist（DEEP_RESEARCH_ASSIST_GEMINI_MODEL → 领域缺省，见 shared/geminiModelConfig）。
+ * 模型不写死：领域 deepResearchAssist（DEEP_RESEARCH_ASSIST_GEMINI_MODEL → 全局缺省，见 shared/geminiModelConfig；1113 起不再缺省 3.1 Pro）。
  * 原第一个参数（调用处传的模型名）从未生效，已删除，免得调用处继续写死模型名。
  */
 async function generate(

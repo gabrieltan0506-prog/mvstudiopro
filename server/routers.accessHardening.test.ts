@@ -83,7 +83,6 @@ describe("原先匿名可触发付费上游的接口须登录", () => {
     const anon = caller(null) as any;
     for (const [path, input] of [
       ["mvAnalysis.analyzeFrame", { imageBase64: "AAAA", mimeType: "image/jpeg" }],
-      ["mvAnalysis.analyzeDocument", {}],
       ["mvAnalysis.buildPremiumRemix", {}],
       ["mvAnalysis.generatePremiumRemixAssets", {}],
       ["mvAnalysis.askPlatformFollowUp", {}],

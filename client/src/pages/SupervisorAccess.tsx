@@ -33,11 +33,6 @@ export default function SupervisorAccess() {
           <div className="mt-8 grid gap-4 md:grid-cols-3">
             {[
               {
-                title: "创作商业成长营",
-                desc: "直接进入成长营主页面，不跳登录。",
-                path: "/creator-growth-camp",
-              },
-              {
                 title: "分镜工作流",
                 desc: "进入旧版 workflow 继续验收流程。",
                 path: "/workflow",

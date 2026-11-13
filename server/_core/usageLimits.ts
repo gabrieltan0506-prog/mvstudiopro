@@ -218,7 +218,7 @@ export const USAGE_LIMITS = {
   pdfRender: { name: "pdf_render", perMinute: 4, perDay: 80, globalPerDay: 4000 },
   /** /api/export 分镜 / 报告导出。 */
   storyboardExport: { name: "storyboard_export", perMinute: 4, perDay: 60, globalPerDay: 3000 },
-  /** 成长营同步分析入口（analyzeVideo / analyzeGrowthCampImages / synthesizeGrowthCampAnalyses），目前不扣费。 */
+  /** 成长营同步分析入口（synthesizeGrowthCampAnalyses；1113 同步 analyzeVideo / analyzeGrowthCampImages 入口已删），目前不扣费。 */
   growthCampAnalyze: { name: "growth_camp_analyze", perMinute: 3, perDay: 30, globalPerDay: 1500 },
   /** 服务端直收上传（/api/upload 等）。 */
   serverUpload: { name: "server_upload", perMinute: 20, perDay: 300 },

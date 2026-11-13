@@ -6673,11 +6673,11 @@ describe("Argon复用原生音画builder", () => {
 });
 
 
-describe("3.8 Flash学习五加六真实调度", () => {
+describe("3.8 Flash学习首读只走Vertex五路、EvoLink只兜底", () => {
   const segments = Array.from({ length: 22 }, (_, index) => ({ startSec: index * 30, endSec: (index + 1) * 30 }));
   const episode = { episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 660 };
 
-  it.each([0, 429, 500, 503, 523, 400])("在途峰值5+6且Vertex状态%s迁移不突破六路", async (failureStatus) => {
+  it.each([0, 429, 500, 503, 523, 400])("在途峰值Vertex五路，Vertex状态%s时该片转EvoLink", async (failureStatus) => {
     const active = { vertex: 0, evolink: 0 };
     const peak = { vertex: 0, evolink: 0 };
     const calls: Array<{ route: string; index: number; body: any }> = [];
@@ -6703,18 +6703,18 @@ describe("3.8 Flash学习五加六真实调度", () => {
       signReadUrl: vi.fn((uri: string) => uri.replace("gs://test-bucket/", "https://storage.googleapis.com/test-bucket/")) });
     const run = runManhuaNativeDeepReadBatch({ episodes: [episode], readModel: "gemini-3.8-flash" }, deps);
     try {
-      await vi.waitFor(() => expect(active).toEqual({ vertex: 5, evolink: 6 }));
-      expect(calls).toHaveLength(11);
-      // 先释放第一路Vertex，Evolink仍满载：迁移必须等待，不能成为第七路。
-      releases[0]!();
+      await vi.waitFor(() => expect(active).toEqual({ vertex: 5, evolink: 0 }));
+      expect(calls).toHaveLength(5);
+      // 1113 站长令：首读不分流到EvoLink；其余片排队等Vertex空位。
       await new Promise(resolve => setTimeout(resolve, 20));
-      expect(peak.evolink).toBe(6);
+      expect(peak.evolink).toBe(0);
       released = true;
       releases.forEach(resolve => resolve());
       const result = await run;
       expect(result.episodes).toHaveLength(1);
-      expect(peak).toEqual({ vertex: 5, evolink: 6 });
+      expect(peak).toEqual({ vertex: 5, evolink: failureStatus ? 1 : 0 });
       expect(calls).toHaveLength(22 + (failureStatus ? 1 : 0));
+      expect(calls.filter(call => call.route === "evolink")).toHaveLength(failureStatus ? 1 : 0);
       if (failureStatus) expect(calls.filter(call => call.index === 0).map(call => call.route)).toEqual(["vertex", "evolink"]);
       for (const call of calls) {
         expect(call.body.contents[0].parts[0].fileData.fileUri.startsWith(call.route === "vertex" ? "gs://" : "https://")).toBe(true);
@@ -6748,7 +6748,8 @@ it.each([false, true])("3.8双通道恢复已有Vertex原稿，零外呼且沿�
   expect(deps.signReadUrl).not.toHaveBeenCalled();
   expect(deps.writeRawAttemptEvidence).not.toHaveBeenCalled();
   expect(vi.mocked(deps.writeSegmentCache).mock.calls.every(([entry]) => entry.visualRoute === "vertex_gcs_video")).toBe(true);
-  expect(vi.mocked(deps.readRawAttemptEvidence).mock.calls.some(([input]) => input.visualRoute === "evolink_gemini_video")).toBe(true);
+  // 首读只走Vertex；仅失败恢复按EvoLink通道查找（证据身份不含路由，仍能复用Vertex原稿）。
+  expect(vi.mocked(deps.readRawAttemptEvidence).mock.calls.some(([input]) => input.visualRoute === "evolink_gemini_video")).toBe(evolinkOnly);
 });
 
 
@@ -6763,9 +6764,9 @@ it("备料首五片、次六片、其后逐片上传回调", async () => {
   expect(groups.flat().sort((a, b) => a - b)).toEqual(segments.map((_, index) => index));
 });
 
-it.each(["vertex", "evolink"] as const)("先五后六分批备料，%s先空时续片直接补该通道", async (freeRoute) => {
+it("首读备料不再按五加六分批，续片只补Vertex空位", async () => {
   const segments = Array.from({ length: 13 }, (_, index) => ({ startSec: index * 30, endSec: (index + 1) * 30 }));
-  const second = deferred(), rest = deferred();
+  const second = deferred();
   const calls: Array<{ route: string; index: number; release: () => void }> = [];
   let open = false;
   const post = (route: string) => vi.fn(async (_body: unknown, _signal?: AbortSignal, ctx?: any) => {
@@ -6777,37 +6778,32 @@ it.each(["vertex", "evolink"] as const)("先五后六分批备料，%s先空时�
   });
   const deps = makeRunnerDeps({ postVertex: post("vertex"), postEvolink: post("evolink"),
     prepareVideos: vi.fn(async (_episode, _signal, _deps, limits) => {
-      expect(limits?.preparedGroupSizes).toEqual([5, 6, 1]);
+      expect(limits?.preparedGroupSizes).toBeUndefined();
       const videos = segments.map((segment, index) => ({ ...segment, gsUri: `gs://test-bucket/seg-${index}.mp4`,
         temporaryGcs: { bucket: "test-bucket", objectName: `seg-${index}.mp4` }, bytes: 100000, hasAudio: true }));
       const send = async (indexes: number[]) => limits?.onPreparedGroup?.(indexes.map(index => ({ segmentIndex: index, video: videos[index]! })));
-      // 0/1切得较慢，先就绪的五片仍立即进入Vertex，不等待原索引队头。
       await send([2, 3, 4, 5, 6]);
       await second.promise;
-      await send([0, 1, 7, 8, 9, 10]);
-      await rest.promise;
-      await send([11]); await send([12]);
+      await send([0, 1, 7, 8, 9, 10, 11, 12]);
       return videos;
     }) });
   const run = runManhuaNativeDeepReadBatch({ readModel: "gemini-3.8-flash",
     episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 390 }] }, deps);
   try {
     await vi.waitFor(() => expect(calls).toHaveLength(5));
-    expect(calls.map(call => call.route)).toEqual(Array(5).fill("vertex"));
     expect(calls.map(call => call.index)).toEqual([2, 3, 4, 5, 6]);
     second.resolve();
-    await vi.waitFor(() => expect(calls).toHaveLength(11));
-    expect(calls.slice(5).map(call => call.route)).toEqual(Array(6).fill("evolink"));
-    calls.find(call => call.route === freeRoute)!.release();
-    rest.resolve();
-    await vi.waitFor(() => expect(calls).toHaveLength(12));
-    expect(calls[11]!.index).toBe(11);
-    expect(calls[11]!.route).toBe(freeRoute);
+    // Vertex五路满载：其余片就绪后排队，不分流到EvoLink。
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(calls).toHaveLength(5);
+    calls[0]!.release();
+    await vi.waitFor(() => expect(calls).toHaveLength(6));
   } finally {
-    open = true; second.resolve(); rest.resolve(); calls.forEach(call => call.release());
+    open = true; second.resolve(); calls.forEach(call => call.release());
     await run;
   }
   expect(calls).toHaveLength(13);
+  expect(calls.every(call => call.route === "vertex")).toBe(true);
 });
 
 
@@ -6832,7 +6828,8 @@ it("网络中断后续读只请求缺失片，五片成功缓存不重新调用�
     episodes: [{ episodeIndex: 1, resolveNodes: async () => [], segments, sourceDurationSec: 180, cacheSourceDigest: "c".repeat(64) }] };
   await expect(runManhuaNativeDeepReadBatch(params, deps)).rejects.toThrow("socket hang up");
   expect(cache.size).toBe(5);
-  expect(requested.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5]);
+  // 第6片先在Vertex断线，转EvoLink兜底再断线后才整体失败。
+  expect(requested.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 5]);
   shouldFail = false; requested.length = 0;
   vi.mocked(deps.postVertex).mockClear(); vi.mocked(deps.postEvolink).mockClear();
   const result = await runManhuaNativeDeepReadBatch({ ...params, evolinkOnly: true }, deps);

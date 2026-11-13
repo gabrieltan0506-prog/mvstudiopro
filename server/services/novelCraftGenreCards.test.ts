@@ -194,14 +194,14 @@ describe("短篇公式附带", () => {
 
 describe("检索接线", () => {
   it("各阶段索引字数与改动前完全一致，索引不含题材条目", () => {
-    // 改动前基线（2026-11-12 实测，无手法条目时的技法索引行总长）；新增通用 / 站长条目时同步更新。
+    // 改动前基线（2026-11-13 实测，含站长第三天条目；无手法条目时的技法索引行总长）；新增通用 / 站长条目时同步更新。
     const baseline: Record<string, number> = {
-      "outline-1": 2380,
-      "outline-5": 2160,
-      "chapter-1": 1662,
-      "chapter-5": 1442,
-      "script-1": 1662,
-      "script-5": 1442,
+      "outline-1": 2447,
+      "outline-5": 2227,
+      "chapter-1": 2240,
+      "chapter-5": 1660,
+      "script-1": 2240,
+      "script-5": 1660,
     };
     for (const stage of ["outline", "chapter", "script"] as const) {
       for (const ep of [1, 5]) {

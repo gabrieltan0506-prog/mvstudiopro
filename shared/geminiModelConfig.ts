@@ -46,8 +46,6 @@ export const GEMINI_MODEL_DOMAIN_ENVS = {
   llmProTier: ["LLM_GEMINI_PRO_TIER_MODEL", "VERTEX_GEMINI_MODEL"],
   /** invokeLLM 未指定档位 / flash 档且未给 modelName 时的 Gemini 缺省；旧 env VERTEX_GEMINI_MODEL 兼容。 */
   llmFlashTier: ["LLM_GEMINI_FLASH_TIER_MODEL", "VERTEX_GEMINI_MODEL"],
-  /** Stage2 专属 Gemini 文案兜底（resolvePlatformStage2GeminiModel）。 */
-  platformStage2: ["PLATFORM_STAGE2_GEMINI_MODEL"],
   /** Flash 文案 / 联网摘要 / 生图英文化（gemini35FlashRuntime）；旧 env 链原样保留。 */
   flashCopywriting: [
     "GEMINI_35_FLASH_MODEL",
@@ -97,6 +95,8 @@ export const GEMINI_MODEL_DOMAIN_ENVS = {
   novelWriterCarbon: ["NOVEL_WRITER_CARBON_MODEL", "GEMINI_CARBON_MODEL"],
   /** 画布文案 / 角色卡（/api/google?op=geminiScript）：模型只由服务端决定，调用方传入的一律忽略；旧 env VERTEX_GEMINI_MODEL 兼容。 */
   geminiScript: ["GEMINI_SCRIPT_MODEL", "VERTEX_GEMINI_MODEL"],
+  /** 1113 Gemini Decision 1（EvoLink Decisions API 选择题判定，server/services/geminiDecisionGateway.ts）：只做参考性自查，不阻断。 */
+  geminiDecision: ["GEMINI_DECISION_MODEL"],
 } as const satisfies Record<string, readonly string[]>;
 
 export type GeminiModelDomain = keyof typeof GEMINI_MODEL_DOMAIN_ENVS;
@@ -108,14 +108,13 @@ export type GeminiModelEnv = Record<string, string | undefined>;
  * 用户口径 Gemini 一律 3.8 Flash、Pro 级需批准：拍板后删掉对应条目即回落全局缺省；或在 Fly 设该领域 env 立即生效。
  */
 export const GEMINI_MODEL_DOMAIN_DEFAULTS = {
-  llmProTier: "gemini-3.1-pro-preview",
+  // 1113 站长确认：llmProTier / strategicCoverDirector / deepResearchAssist 原领域缺省 3.1 Pro 已删除（入口已下线不再开发，
+  // 但服务端仍有可达调用），现回落全局缺省（GEMINI_DEFAULT_MODEL → gemini-3.8-flash）；需要时在 Fly 设该领域 env。
+  // platformStage2 领域无任何调用方，连同 resolvePlatformStage2GeminiModel 一并删除。
   llmFlashTier: "gemini-2.5-flash",
-  platformStage2: "gemini-3.1-pro-preview",
   flashCopywriting: "gemini-3-flash-preview",
   compositeFlashTranslation: "gemini-3-flash-preview",
   coverTranslation: "gemini-3-flash-preview",
-  strategicCoverDirector: "gemini-3.1-pro-preview",
-  deepResearchAssist: "gemini-3.1-pro",
   growthCampExtractor: "gemini-3.5-flash",
   // 1111 Carbon 四个领域：缺省 gemini-4-carbon（领域缺省，改 GEMINI_DEFAULT_MODEL 不会把它们换成 Flash，也不会把 Flash 领域换成 Carbon）。
   geminiCarbon: "gemini-4-carbon",
@@ -124,6 +123,8 @@ export const GEMINI_MODEL_DOMAIN_DEFAULTS = {
   novelWriterCarbon: "gemini-4-carbon",
   // 原先由前端传入 3.1 Pro（画布 CANVAS_GEMINI_FALLBACK_MODEL），收归服务端时行为不变；改便宜档在 Fly 设 GEMINI_SCRIPT_MODEL 或删本条
   geminiScript: "gemini-3.1-pro-preview",
+  // 1113 Decisions API 专用判定模型（不是通用文本模型；改 GEMINI_DEFAULT_MODEL 不会把它换成 Flash）。
+  geminiDecision: "gemini-decision-1",
 } as const satisfies Partial<Record<GeminiModelDomain, string>>;
 
 /** 某领域在全部 env 未设时的缺省模型（表内领域取领域缺省，否则为全局兜底 gemini-3.8-flash）。 */

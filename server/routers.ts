@@ -150,10 +150,7 @@ import { manhuaAutoRigRouter } from "./routers/manhuaAutoRig";
 import { manhuaPrevisRouter } from "./routers/manhuaPrevis";
 import { enterpriseAgentsRouter } from "./routers/enterpriseAgents";
 import { buildAuthorAnalysis, buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, buildPlatformSupportActivities, normalizePlatforms } from "./growth/growthSchema";
-import { analyzeDocument } from "./growth/analyzeDocument";
-import { analyzeGrowthCampImages } from "./growth/analyzeGrowthCampImages";
 import { synthesizeGrowthAnalyses } from "./growth/synthesizeGrowthAnalyses";
-import { analyzeVideo } from "./growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
 import { rejectRetiredPremiumRemix } from "./growth/premiumRemixRetired";
 import { buildAiManhuaRisingByPlatform } from "./growth/aiManhuaRising";
@@ -295,7 +292,6 @@ import { registerOriginalVideo } from "./video-signature";
 import { nanoid } from "nanoid";
 import {
   growthAssetAdaptationSchema,
-  growthAnalysisModeSchema,
   activeGrowthPlatformValues,
   activeGrowthPlatformSchema,
   scheduledGrowthPlatformValues,
@@ -3376,116 +3372,6 @@ export const appRouter = router({
         }
       }),
 
-    analyzeDocument: protectedProcedure
-      .input(z.object({
-        fileBase64: z.string().min(1),
-        mimeType: z.string().min(1),
-        fileName: z.string().optional(),
-        context: z.string().optional(),
-        modelName: growthCampModelSchema.optional(),
-        mode: growthAnalysisModeSchema.default("GROWTH"),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        // ── 扣費邏輯：每次分析扣除對應積分 ──────────────────────────────
-        if (ctx.user?.id) {
-          const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-          if (!isAdminUser) {
-            const mode = input.mode || "GROWTH";
-            const creditKey = mode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
-            const cost = CREDIT_COSTS[creditKey];
-            const creditsInfo = await getCredits(ctx.user.id);
-            if (creditsInfo.totalAvailable < cost) {
-              throw new Error(
-                `Credits 不足，${mode === "REMIX" ? "二創分析" : "成長營分析"}需要 ${cost} Credits（當前餘額：${creditsInfo.totalAvailable}）`
-              );
-            }
-            await deductCredits(
-              ctx.user.id,
-              creditKey,
-              `創作者成長營 ${mode} 分析（文件）`
-            );
-          }
-        } else {
-          throw new Error("請先登入，才能使用分析功能");
-        }
-        const result = await analyzeDocument(input);
-        return {
-          success: true,
-          analysis: result.analysis,
-          fileUrl: result.documentMeta.fileUrl,
-          extractionMethod: result.documentMeta.extractionMethod,
-          extractedTextPreview: result.documentMeta.extractedTextPreview,
-          debug: debugForRole(ctx.user?.role, {
-            route: "analyzeDocument",
-            provider: result.documentMeta.provider,
-            model: result.documentMeta.model,
-            fallback: result.documentMeta.fallback,
-            extractionMethod: result.documentMeta.extractionMethod,
-          }),
-        };
-      }),
-
-
-    /**
-     * 审查必须修（P0·跨租户）：所有接收外部 gcsUri 的入口都要校验归属——
-     * 只认本人上传前缀，否则服务账号会替调用者代读任意对象。
-     */
-    // 1111：须登录（原先内部判登录）+ 用量闸门；该入口不扣费，是否计价待站长定
-    analyzeGrowthCampImages: protectedProcedure
-      .use(withUsageLimit(USAGE_LIMITS.growthCampAnalyze))
-      .input(
-        z.object({
-          images: z
-            .array(
-              z
-                .object({
-                  gcsUri: z.string().min(1).optional(),
-                  fileBase64: z.string().min(1).optional(),
-                  mimeType: z.string().min(1),
-                  fileName: z.string().optional(),
-                })
-                .refine((item) => Boolean(String(item.gcsUri || "").trim() || String(item.fileBase64 || "").trim()), {
-                  message: "每张图片需提供 gcsUri 或 fileBase64",
-                }),
-            )
-            .min(1)
-            .max(64),
-          context: z.string().optional(),
-          modelName: growthCampModelSchema.optional(),
-          mode: growthAnalysisModeSchema.default("GROWTH"),
-        }),
-      )
-      .mutation(async ({ input, ctx }) => {
-        if (!ctx.user?.id) {
-          throw new Error("請先登入，才能使用分析功能");
-        }
-        {
-          const { getGcsBucketName } = await import("./services/gcs.js");
-          const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${ctx.user.id}/`;
-          for (const img of input.images) {
-            if (img.gcsUri && !String(img.gcsUri).startsWith(allowedPrefix)) {
-              throw new Error("直传文件校验失败，请重新上传后再试");
-            }
-          }
-        }
-        // 积分在 growth_analyze_images Job 内扣除；此 mutation 仅供兼容/调试，勿在前端主路径调用
-        const result = await analyzeGrowthCampImages(input);
-        return {
-          success: true,
-          analysis: result.analysis,
-          fileUrls: result.imageMeta.fileUrls,
-          imageCount: result.imageMeta.imageCount,
-          debug: debugForRole(ctx.user?.role, {
-            route: "analyzeGrowthCampImages",
-            provider: result.imageMeta.provider,
-            model: result.imageMeta.model,
-            fallback: result.imageMeta.fallback,
-            primaryError: result.imageMeta.primaryError || null,
-            imageCount: result.imageMeta.imageCount,
-          }),
-        };
-      }),
-
     // 1111：须登录（原先内部判登录）+ 用量闸门；该入口不扣费，是否计价待站长定
     synthesizeGrowthCampAnalyses: protectedProcedure
       .use(withUsageLimit(USAGE_LIMITS.growthCampAnalyze))
@@ -3538,71 +3424,6 @@ export const appRouter = router({
           // 前端各上传点都经站内转发并原样带上 requiredHeaders（转发会透传 x-goog-* 请求头）。
           maxBytes: (await import("./services/uploadLimits")).resolveUploadMaxBytes(),
         });
-      }),
-
-    // 1111：须登录（原先内部判登录）+ 用量闸门；该入口不扣费，是否计价待站长定
-    analyzeVideo: protectedProcedure
-      .use(withUsageLimit(USAGE_LIMITS.growthCampAnalyze))
-      .input(z.object({
-        gcsUri: z.string().optional(),
-        fileBase64: z.string().optional(),
-        fileUrl: z.string().optional(),
-        fileKey: z.string().optional(),
-        mimeType: z.string().min(1),
-        fileName: z.string().optional(),
-        context: z.string().optional(),
-        modelName: growthCampModelSchema.optional(),
-        forceRefresh: z.boolean().optional().default(false),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        // 审查必须修：曾是匿名入口 + 任意 gs:// 代读
-        if (!ctx.user?.id) {
-          throw new Error("請先登入，才能使用分析功能");
-        }
-        if (input.gcsUri) {
-          const { getGcsBucketName } = await import("./services/gcs.js");
-          const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${ctx.user.id}/`;
-          if (!String(input.gcsUri).startsWith(allowedPrefix)) {
-            throw new Error("直传文件校验失败，请重新上传后再试");
-          }
-        }
-        // 第五轮复审 P0·5：fileKey/fileUrl 旁路同口径封（worker 层为终闸，这里提前拦）
-        if (input.fileKey && !String(input.fileKey).startsWith(`uploads/u${ctx.user.id}/`)) {
-          throw new Error("直传文件校验失败，请重新上传后再试");
-        }
-        if (input.fileUrl) {
-          let allowed = false;
-          try {
-            const { getGcsBucketName } = await import("./services/gcs.js");
-            const u = new URL(String(input.fileUrl));
-            // 前缀校验：桶名+本人目录整段匹配，includes 会放过任意外部桶
-            allowed =
-              u.protocol === "https:" &&
-              u.hostname === "storage.googleapis.com" &&
-              u.pathname.startsWith(`/${getGcsBucketName()}/uploads/u${ctx.user.id}/`);
-          } catch {
-            allowed = false;
-          }
-          if (!allowed) throw new Error("直传文件校验失败，请重新上传后再试");
-        }
-        const result = await analyzeVideo(input);
-        return {
-          success: true,
-          analysis: result.analysis,
-          videoUrl: result.videoMeta.videoUrl,
-          transcript: result.videoMeta.transcript,
-          videoDuration: result.videoMeta.videoDuration,
-          debug: debugForRole(ctx.user?.role, {
-            route: "analyzeVideo",
-            provider: result.videoMeta.provider,
-            model: result.videoMeta.model,
-            fallback: result.videoMeta.fallback,
-            transcriptChars: result.videoMeta.transcript.length,
-            videoDuration: result.videoMeta.videoDuration,
-            failureStage: result.videoMeta.failureStage || null,
-            failureReason: result.videoMeta.failureReason || null,
-          }),
-        };
       }),
 
     /**

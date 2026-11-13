@@ -25,6 +25,7 @@ import {
 import {
   MANHUA_NATIVE_CURRENT_READ_MODEL,
   MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS,
+  MANHUA_NATIVE_STANDARD_READ_MODEL_OPTIONS,
   MANHUA_NATIVE_STRUCTURING_MODEL,
   parseNativeStructuringModel,
   type ManhuaNativeStructuringModelId,
@@ -43,6 +44,7 @@ const LS_MANHUA_LEARN_MISSING_DISMISSED = "mvs-manhua-learn-missing-dismissed-v1
 const LS_MANHUA_LEARN_SEGMENT_SECONDS = "mvs-manhua-learn-segment-seconds-v1";
 const LS_MANHUA_LEARN_VIDEO_FPS = "mvs-manhua-learn-video-fps-v1";
 const LS_MANHUA_LEARN_READ_MODEL = "mvs-manhua-learn-read-model-v1";
+const LS_MANHUA_LEARN_STANDARD_READ_MODEL = "mvs-manhua-learn-standard-read-model-v1";
 const LS_MANHUA_LEARN_STRUCTURING_MODEL = "mvs-manhua-learn-structuring-model-v2-glm-default";
 const LS_MANHUA_LEARN_STANDALONE = "mvs-manhua-learn-standalone-v1";
 
@@ -178,6 +180,21 @@ export function readManhuaLearnReadModel(userKey: string): ManhuaNativeDeepReadM
 export function writeManhuaLearnReadModel(userKey: string, value: ManhuaNativeDeepReadModelId): void {
   const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_READ_MODEL, userKey);
   if (!key || !(MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS as readonly string[]).includes(value)) return;
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* 偏好不影响提交 */ }
+}
+
+/** 1113：标准档读片模型选单（3.8 Flash / Gemini 4 Hydrogen），按账号保存；缺失或无效时为 3.8 Flash。 */
+export function readManhuaLearnStandardReadModel(userKey: string): ManhuaNativeDeepReadModelId {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_STANDARD_READ_MODEL, userKey);
+  try {
+    const value = key ? JSON.parse(localStorage.getItem(key) || "null") : null;
+    return (MANHUA_NATIVE_STANDARD_READ_MODEL_OPTIONS as readonly unknown[]).includes(value) ? value : MANHUA_NATIVE_CURRENT_READ_MODEL;
+  } catch { return MANHUA_NATIVE_CURRENT_READ_MODEL; }
+}
+
+export function writeManhuaLearnStandardReadModel(userKey: string, value: ManhuaNativeDeepReadModelId): void {
+  const key = manhuaLearnUserStorageKey(LS_MANHUA_LEARN_STANDARD_READ_MODEL, userKey);
+  if (!key || !(MANHUA_NATIVE_STANDARD_READ_MODEL_OPTIONS as readonly string[]).includes(value)) return;
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* 偏好不影响提交 */ }
 }
 

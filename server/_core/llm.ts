@@ -617,7 +617,8 @@ const normalizeToolChoice = (
 
 /**
  * 未给 modelName 时按档位取 Gemini 模型：不写死，经 shared/geminiModelConfig（领域 llmProTier / llmFlashTier）。
- * 缺省保持原值（pro 档 3.1 Pro、其余 2.5 Flash，见 GEMINI_MODEL_DOMAIN_DEFAULTS）；旧 env VERTEX_GEMINI_MODEL 已并入两档 env 链。
+ * 缺省：pro 档回落全局缺省（GEMINI_DEFAULT_MODEL → gemini-3.8-flash，1113 起不再缺省 3.1 Pro），其余 2.5 Flash（见 GEMINI_MODEL_DOMAIN_DEFAULTS）；
+ * 旧 env VERTEX_GEMINI_MODEL 已并入两档 env 链。
  */
 const getGeminiModelName = (modelTier: ModelTier | undefined) =>
   resolveGeminiModel(modelTier === "pro" ? "llmProTier" : "llmFlashTier");

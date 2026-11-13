@@ -209,6 +209,8 @@ function nativeDeepReadPricePerM(inUsdPerM: number, outUsdPerM: number): { inPer
 export const NATIVE_DEEP_READ_MODEL_PRICES_PER_M: Readonly<Record<string, { inPerM: number; outPerM: number }>> = {
   "gemini-3.1-pro-preview": nativeDeepReadPricePerM(1.25, 10),
   "gemini-3.8-flash": nativeDeepReadPricePerM(0.3, 2.5),
+  // 1113 站长令：模板学习读片从 3.8 Flash 改为 Hydrogen。按 Google 目录价 $1.50/$7.50（输出含思考 token）估算，仅用于成本展示；待账单核实。
+  "gemini-4-hydrogen": nativeDeepReadPricePerM(1.5, 7.5),
   // Argon按返还前标准价估算，避免把尚未到账的50%优惠当成实扣；仅用于成本展示。
   "gemini-4-argon": nativeDeepReadPricePerM(4, 20),
   // 1111 Carbon 整集精读升级档：首发价 $2/$10（输出含思考 token），2026-12-01 起翻倍——改 shared/geminiCarbon.ts 常量即可。
@@ -5645,7 +5647,8 @@ async function executeNativeDeepReadBatch(
             uploadConcurrency: process.env.JOB_WORKER_ROLE === "rig" ? Math.min(2, params.mediaUploadConcurrency || 2) : params.mediaUploadConcurrency,
             onSourceFetchProgress: params.onMediaProgressZh,
             preparedGroupSize: NATIVE_DEEP_READ_PREPARED_GROUP_SIZE,
-            preparedGroupSizes: evolinkOnly ? [6, 1] : dualReadRoutes ? [5, 6, 1] : undefined,
+            // 1113 站长令：首读只走 Vertex 并发（EvoLink 不按请求 fps 取帧，实测画面 token 约十分之一），EvoLink 只作故障兜底与失败续跑。
+            preparedGroupSizes: evolinkOnly ? [6, 1] : undefined,
             onPreparedGroup: (rows) => {
               // 备料层给的是「本次请求内的段号」＝ selectedSegments 的下标，换回真实段号
               registerPreparedGroup(rows.map((row) => ({
@@ -6939,9 +6942,8 @@ async function executeNativeDeepReadBatch(
       const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
       const scheduledSegmentIndexes = selectedSegmentIndexes ?? episode.segments.map((_, index) => index);
       const pendingSegmentIndexes = new Set(scheduledSegmentIndexes.filter(index => !committedIndexes.includes(index)));
-      let routeOrdinal = 0;
-      // 3.8 Flash首次五路Vertex加六路Evolink；失败恢复仅六路Evolink，显式并发只允许调低。
-      const modelCap = evolinkOnly ? 6 : dualReadRoutes ? 11 : NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY;
+      // 1113 站长令：首读五路 Vertex 并发；EvoLink 只在 Vertex 上游故障时接手同一分片，失败恢复仍为六路 EvoLink。显式并发只允许调低。
+      const modelCap = evolinkOnly ? 6 : NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY;
       const segmentModelCap = Math.min(
         modelCap,
         Math.max(1, Math.floor(Number(params.segmentModelConcurrency) || modelCap)),
@@ -6970,9 +6972,7 @@ async function executeNativeDeepReadBatch(
               }));
             }
             if (segmentIndex < 0 || stopSchedulingSegments) return;
-            const ordinal = routeOrdinal++;
-            const route = evolinkOnly ? NATIVE_DEEP_READ_ROUTE_EVOLINK : !dualReadRoutes || ordinal < 5 ? NATIVE_DEEP_READ_ROUTE_VERTEX
-              : ordinal < 11 ? NATIVE_DEEP_READ_ROUTE_EVOLINK : "available";
+            const route = evolinkOnly ? NATIVE_DEEP_READ_ROUTE_EVOLINK : NATIVE_DEEP_READ_ROUTE_VERTEX;
             await processSegment(segmentIndex, route);
           } catch (error) {
             segmentFailures.push({ segmentIndex, error });

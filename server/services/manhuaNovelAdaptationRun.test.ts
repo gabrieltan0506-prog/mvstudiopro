@@ -57,6 +57,24 @@ describe("底本→小说→模板剧情", () => {
     expect(result.novel.sourceSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(result.novel.text).toBe(good.text.trim());
   });
+  it("1113 参考自查：缺省不附结果；开启时并行执行、只附在返回值，失败不影响改编", async () => {
+    const call = () => vi.fn()
+      .mockResolvedValueOnce(reply(JSON.stringify(good)))
+      .mockResolvedValueOnce(reply("完整剧本" + good.text));
+    const plain = await runManhuaNovelAdaptation(input, call());
+    expect(plain).not.toHaveProperty("adaptationAdvisory");
+    const advisory = { kind: "novel_adaptation_decision_check_v1", advisory: true, status: "ok", checkedAt: "t", novelSha256: "x", answers: {} } as const;
+    const check = vi.fn(async () => advisory as any);
+    const withCheck = await runManhuaNovelAdaptation(input, call(), check);
+    expect(check).toHaveBeenCalledTimes(1);
+    expect((check.mock.calls[0] as any[])[0].novel.text).toBe(good.text.trim());
+    expect(withCheck.adaptationAdvisory).toEqual(advisory);
+    expect(withCheck.markdown).toBe(plain.markdown);
+    const failing = vi.fn(async () => { throw new Error("down"); });
+    const survived = await runManhuaNovelAdaptation(input, call(), failing as any);
+    expect(survived.markdown).toBe(plain.markdown);
+    expect(survived).not.toHaveProperty("adaptationAdvisory");
+  });
   it("没有模板零调用", async () => {
     const call = vi.fn();
     await expect(

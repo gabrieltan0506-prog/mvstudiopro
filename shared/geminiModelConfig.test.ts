@@ -29,14 +29,10 @@ describe("resolveGeminiModel", () => {
 
   it("1110c 领域缺省：保持原写死值（行为不变）", () => {
     expect(GEMINI_MODEL_DOMAIN_DEFAULTS).toEqual({
-      llmProTier: "gemini-3.1-pro-preview",
       llmFlashTier: "gemini-2.5-flash",
-      platformStage2: "gemini-3.1-pro-preview",
       flashCopywriting: "gemini-3-flash-preview",
       compositeFlashTranslation: "gemini-3-flash-preview",
       coverTranslation: "gemini-3-flash-preview",
-      strategicCoverDirector: "gemini-3.1-pro-preview",
-      deepResearchAssist: "gemini-3.1-pro",
       growthCampExtractor: "gemini-3.5-flash",
       // 1111 Carbon 贵档四个领域（只在用户主动选择时调用）
       geminiCarbon: "gemini-4-carbon",
@@ -44,6 +40,7 @@ describe("resolveGeminiModel", () => {
       musicMvDeepCompose: "gemini-4-carbon",
       novelWriterCarbon: "gemini-4-carbon",
       geminiScript: "gemini-3.1-pro-preview",
+      geminiDecision: "gemini-decision-1",
     });
     for (const domain of Array.from(pinned)) {
       expect(GEMINI_MODEL_DOMAIN_ENVS).toHaveProperty(domain);
@@ -71,7 +68,7 @@ describe("resolveGeminiModel", () => {
 
   it("领域缺省优先于 GEMINI_DEFAULT_MODEL；领域 env 仍可覆盖", () => {
     const env = { GEMINI_DEFAULT_MODEL: "gemini-3.8-flash" };
-    expect(resolveGeminiModel("llmProTier", env)).toBe("gemini-3.1-pro-preview");
+    expect(resolveGeminiModel("llmFlashTier", env)).toBe("gemini-2.5-flash");
     expect(resolveGeminiModel("growthCampExtractor", env)).toBe("gemini-3.5-flash");
     expect(resolveGeminiModel("audioTwoHop", env)).toBe("gemini-3.8-flash");
     expect(resolveGeminiModel("llmProTier", { LLM_GEMINI_PRO_TIER_MODEL: "gemini-3.8-flash" })).toBe("gemini-3.8-flash");
@@ -80,8 +77,14 @@ describe("resolveGeminiModel", () => {
     expect(resolveGeminiModel("strategicCoverDirector", { STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL: "gemini-3.8-flash", VERTEX_GEMINI_31_PRO_MODEL: "gemini-3.1-pro-preview" })).toBe("gemini-3.8-flash");
   });
 
+  it("1113 geminiDecision：缺省 gemini-decision-1，全局缺省不影响，GEMINI_DECISION_MODEL 可覆盖", () => {
+    expect(resolveGeminiModel("geminiDecision", {})).toBe("gemini-decision-1");
+    expect(resolveGeminiModel("geminiDecision", { GEMINI_DEFAULT_MODEL: "gemini-3.8-flash" })).toBe("gemini-decision-1");
+    expect(resolveGeminiModel("geminiDecision", { GEMINI_DECISION_MODEL: "gemini-decision-2" })).toBe("gemini-decision-2");
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("旧 env 兼容", () => {
-    expect(resolveGeminiModel("platformStage2", { PLATFORM_STAGE2_GEMINI_MODEL: "gemini-3.8-flash" })).toBe("gemini-3.8-flash");
     expect(resolveGeminiModel("growthCampExtractor", { GROWTH_CAMP_EXTRACTOR_MODEL: "gemini-3.8-flash" })).toBe("gemini-3.8-flash");
     // VERTEX_GEMINI_MODEL 原本两档共用：仍覆盖两档，但新档位 env 更具体、优先
     const vx = { VERTEX_GEMINI_MODEL: "gemini-3.9-flash" };
@@ -94,14 +97,23 @@ describe("resolveGeminiModel", () => {
     expect(resolveGeminiModel("flashCopywriting", { VERTEX_GEMINI_COVER_TRANSLATION_MODEL: "gemini-a", GROWTH_CAMP_EXTRACTOR_MODEL: "gemini-b" })).toBe("gemini-b");
     expect(resolveGeminiModel("compositeFlashTranslation", { VERTEX_GEMINI_FLASH_TRANSLATION_MODEL: "gemini-a", GEMINI_35_FLASH_MODEL: "gemini-b" })).toBe("gemini-a");
     expect(resolveGeminiModel("coverTranslation", { VERTEX_GEMINI_COVER_TRANSLATION_MODEL: "gemini-a", GEMINI_35_FLASH_MODEL: "gemini-b" })).toBe("gemini-a");
-    expect(resolveGeminiModel("deepResearchAssist", { GEMINI_DEFAULT_MODEL: "gemini-3.8-flash" })).toBe("gemini-3.1-pro");
+    expect(resolveGeminiModel("deepResearchAssist", { GEMINI_DEFAULT_MODEL: "gemini-3.9-flash" })).toBe("gemini-3.9-flash");
   });
 
   it("领域缺省为 Pro 时同样告警（来自 领域缺省），只记一次", () => {
-    resolveGeminiModel("llmProTier", {});
-    resolveGeminiModel("llmProTier", {});
+    resolveGeminiModel("geminiScript", {});
+    resolveGeminiModel("geminiScript", {});
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(String(warn.mock.calls[0]![0])).toMatch(/llmProTier.*领域缺省.*批准/);
+    expect(String(warn.mock.calls[0]![0])).toMatch(/geminiScript.*领域缺省.*批准/);
+  });
+
+  it("1113 已下线入口的三个旧 Pro 领域：缺省回落全局（不再 3.1 Pro）；platformStage2 领域已删除", () => {
+    for (const d of ["llmProTier", "strategicCoverDirector", "deepResearchAssist"] as const) {
+      expect(resolveGeminiModel(d, {})).toBe(GEMINI_DEFAULT_MODEL_FALLBACK);
+      expect(resolveGeminiModel(d, { GEMINI_DEFAULT_MODEL: "gemini-3.9-flash" })).toBe("gemini-3.9-flash");
+    }
+    expect(GEMINI_MODEL_DOMAIN_ENVS).not.toHaveProperty("platformStage2");
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("GEMINI_DEFAULT_MODEL 改全局；领域 env 只改该领域；读取时 trim、空白回落", () => {
