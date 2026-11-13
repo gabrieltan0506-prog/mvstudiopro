@@ -738,7 +738,7 @@ MANDATORY RULES:
 
 /**
  * 战略封面 / 章节扉页 / 自定义抠图：**Vertex Global** 双语编导 → 一条英文视觉 prompt。
- * 模型不写死：领域 strategicCoverDirector（STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL → 旧 VERTEX_GEMINI_31_PRO_MODEL → VERTEX_GEMINI_MODEL → 领域缺省）。
+ * 模型不写死：领域 strategicCoverDirector（STRATEGIC_COVER_DIRECTOR_GEMINI_MODEL → 旧 VERTEX_GEMINI_31_PRO_MODEL → VERTEX_GEMINI_MODEL → 全局缺省；1113 起不再缺省 3.1 Pro）。
  */
 export async function runGemini31ProPreviewText(userTask: string): Promise<string> {
   const { callGemini3_1_Pro } = await import("./vertexGemini31ProGlobal.js");

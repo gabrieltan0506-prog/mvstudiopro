@@ -51,11 +51,6 @@ export function resolveGemini35FlashModelName(): string {
   return resolveGeminiModel("flashCopywriting");
 }
 
-/** Stage2 专属文案 fallback（领域 platformStage2：PLATFORM_STAGE2_GEMINI_MODEL → 领域缺省）。简体硬锁仍走 callGemini35FlashCopywriting。 */
-export function resolvePlatformStage2GeminiModel(): string {
-  return resolveGeminiModel("platformStage2");
-}
-
 export function requireGeminiApiKey(): string {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) {
