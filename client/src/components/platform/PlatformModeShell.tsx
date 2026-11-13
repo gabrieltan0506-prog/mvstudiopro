@@ -2,7 +2,7 @@ import React from "react";
 import { ArrowLeft, ChevronDown, HelpCircle, Sparkles, TrendingUp, Wrench } from "lucide-react";
 import type { PlatformWorkbenchMode } from "@/lib/platformWorkbenchMode";
 
-type ToolsKey = "htmlPpt" | "matting" | "assets";
+type ToolsKey = "htmlPpt" | "assets";
 
 type Props = {
   mode: PlatformWorkbenchMode;

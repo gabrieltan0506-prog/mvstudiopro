@@ -58,19 +58,16 @@ describe("platformWorkbenchCta", () => {
     expect(ok.disabled).toBe(false);
   });
 
-  it("tools matting CTA isolates handler", () => {
+  it("tools CTA has no page-level charge handler", () => {
     const cta = buildToolsPrimaryCta({
-      toolsTab: "matting",
+      toolsTab: "htmlPpt",
       isAuthenticated: true,
-      mattingPrompt: "白底站姿",
-      mattingCount: 1,
-      mattingBusy: false,
       customNoteBusy: false,
       customTopicBusy: false,
       assetBusy: false,
     });
-    expect(cta.handlerKey).toBe("customMattingGenerate");
-    expect(cta.confirmKind).toBe("custom_matting");
+    expect(cta.credits).toBe(0);
+    expect(cta.handlerKey).not.toBe("handleAnalyze");
   });
 
   it("exposes matrix for docs", () => {

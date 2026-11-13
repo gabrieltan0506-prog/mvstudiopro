@@ -49,7 +49,7 @@ import {
   advisorProjectRef,
 } from "../shared/manhuaCreativeAdvisor.js";
 
-import { COOKIE_NAME, TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../shared/const.js";
+import { COOKIE_NAME } from "../shared/const.js";
 import {
   CANVAS_TTS_CREDITS_PER_LINE,
   CANVAS_BGM_CREDITS_PER_RUN,
@@ -252,9 +252,6 @@ import {
   platformCoverBundleTotalCredits,
   platformCoverCompositeBundleCreditsForCompositeKindGrid,
   platformCompositeBundleTotalCreditsForGrid,
-  platformCustomMattingTotalCredits,
-  PLATFORM_MATTING_ASPECT_RATIOS,
-  PLATFORM_MATTING_BATCH_COUNTS,
   type ImageUpscaleBaseCreditKey,
 } from "../shared/plans";
 import {
@@ -8946,131 +8943,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           if (imageReservation) await failCompositeProgress(imageReservation.id, error instanceof Error ? error.message : String(error));
           throw error;
         }
-      }),
-
-    /**
-     * 平台页·自定义抠像：用户描述主体、姿态与场景（如坐姿+海边/书房）→ GPT-IMAGE-2 生图。
-     * 若描述含「去背景 / 自动去背景」等关键词，则 GPT-IMAGE-2 直出白底主体图（无 fal 后处理）。
-     * 单独扣费：1 张原价、2 张九折、4 张八折（见 platformCustomMattingTotalCredits）。
-     */
-    generatePlatformCustomMatting: protectedProcedure
-      .input(
-        z.object({
-          prompt: z.string().min(4).max(2000),
-          aspectRatio: z.enum(PLATFORM_MATTING_ASPECT_RATIOS),
-          count: z.union([z.literal(1), z.literal(2), z.literal(4)]),
-        }),
-      )
-      .mutation(async ({ input, ctx }) => {
-        const userId = ctx.user.id;
-        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const cost = platformCustomMattingTotalCredits(input.count);
-
-        if (!isAdminUser) {
-          const creditsInfo = await getCredits(userId);
-          if (creditsInfo.totalAvailable < cost) {
-            throw new TRPCError({
-              code: "PAYMENT_REQUIRED",
-              message: `Credits 不足，需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
-            });
-          }
-          await deductCreditsAmount(
-            userId,
-            cost,
-            "platformCustomMatting",
-            `自定义抠像 · ${input.aspectRatio} · ${input.count} 张 · ${input.prompt.slice(0, 48)}`,
-          );
-        }
-
-        const imageGenFlowLog: string[] = [];
-        const { generatePlatformCustomMattingImages } = await import("./services/platformCustomMatting.js");
-        const { imageUrls, englishPrompt, transparentCutout } = await generatePlatformCustomMattingImages({
-          userPrompt: input.prompt,
-          aspectRatio: input.aspectRatio,
-          count: input.count,
-          flowLog: imageGenFlowLog,
-        });
-
-        return {
-          success: true as const,
-          imageUrls,
-          totalCost: isAdminUser ? 0 : cost,
-          aspectRatio: input.aspectRatio,
-          count: input.count,
-          englishPrompt,
-          imageGenFlowLog,
-          transparentCutout,
-        };
-      }),
-
-    /**
-     * GodView 研报完成后：按章节一键生成战略扉页竖版海报（Gemini 英文指令 → GPT-IMAGE-2 + Nano Banana 2 兜底；试用水印跟任务走）。
-     * 不扣积分；水印严格跟随该任务的 `strategicImagesTrialWatermark`（首购尝鲜），不信任客户端传参绕过。
-     */
-    generateGodViewChapterPosters: protectedProcedure
-      .input(z.object({
-        jobId: z.string().min(1),
-        chapters: z.array(z.object({
-          id: z.string().min(1).max(128),
-          title: z.string().min(1).max(220),
-          context: z.string().max(2500).optional(),
-        })).min(1).max(24),
-      }))
-      .mutation(async ({ input, ctx }) => {
-        const { readJob } = await import("./services/deepResearchService");
-        const job = await readJob(input.jobId);
-        if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "任务不存在" });
-        if (job.userId !== String(ctx.user.id)) throw new TRPCError({ code: "FORBIDDEN" });
-        const allowed = new Set(["completed", "awaiting_review"]);
-        if (!allowed.has(job.status)) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "研报未完成，无法生成扉页" });
-        }
-        const md = String(job.reportMarkdown || "").trim();
-        if (md.length < 40) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "报告正文不可用" });
-        }
-        const isTrial = !!job.strategicImagesTrialWatermark;
-        const { buildChapterPosterGeminiTask, runGemini31ProPreviewText } = await import(
-          "./services/geminiPlatformCompositeTranslation.js",
-        );
-        const { generateImageGpt2WithImagenFallback, generateGptImage2FromRawEnglishPrompt } = await import(
-          "./services/proxyImageService",
-        );
-        const results: { id: string; title: string; url: string | null }[] = [];
-        for (const ch of input.chapters) {
-          const ctxText = String(ch.context || "").trim() || ch.title;
-          let url: string | null = null;
-          try {
-            const englishPrompt = await runGemini31ProPreviewText(
-              buildChapterPosterGeminiTask(ch.title, ctxText),
-            );
-            url = await generateGptImage2FromRawEnglishPrompt({
-              englishPrompt,
-              aspectRatio: "9:16",
-              gcsSubdir: "godview_chapter_poster_gpt2",
-              trialWatermarkPromptSuffix: isTrial ? TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION : undefined,
-            });
-          } catch (e: unknown) {
-            console.warn(
-              `[mvAnalysis.generateGodViewChapterPosters] Gemini→GPT-IMAGE-2 失败 chapter=${ch.id}:`,
-              e instanceof Error ? e.message : e,
-            );
-          }
-          if (!url) {
-            url = await generateImageGpt2WithImagenFallback({
-              title: ch.title,
-              copywriting: ctxText,
-              mode: "STRATEGIC",
-              isTrial,
-            });
-          }
-          results.push({ id: ch.id, title: ch.title, url });
-        }
-        const okCount = results.filter((r) => r.url).length;
-        if (okCount === 0) {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "扉页生成失败（生图服务不可用）" });
-        }
-        return { ok: true as const, totalCost: 0 as const, results, isTrial };
       }),
 
     // 1111 收口：原先匿名可调 LLM、不扣费；前台调用点 PlatformPage 在登录页内。

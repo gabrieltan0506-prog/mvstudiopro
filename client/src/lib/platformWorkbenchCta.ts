@@ -5,8 +5,6 @@
 
 import {
   CREDIT_COSTS,
-  platformCustomMattingTotalCredits,
-  type PlatformMattingBatchCount,
 } from "@shared/plans";
 import { platformTopicShortlistTotalCredits } from "@shared/platformTopicShortlist";
 import type { PlatformCreateStepId, PlatformWorkbenchMode } from "./platformWorkbenchMode";
@@ -18,7 +16,6 @@ export type PlatformCtaConfirmKind =
   | "topic_shortlist"
   | "custom_copy"
   | "custom_topic"
-  | "custom_matting"
   | "html_ppt";
 
 export type PlatformPrimaryCtaState = {
@@ -35,7 +32,6 @@ export type PlatformPrimaryCtaState = {
     | "handleTrendStandaloneAnalyze"
     | "handleAnalyze"
     | "generateTopicShortlist"
-    | "customMattingGenerate"
     | "panelLocal"
     | "noop";
 };
@@ -58,11 +54,8 @@ type TrendCtaInput = {
 };
 
 type ToolsCtaInput = {
-  toolsTab: "htmlPpt" | "matting" | "assets";
+  toolsTab: "htmlPpt" | "assets";
   isAuthenticated: boolean;
-  mattingPrompt: string;
-  mattingCount: PlatformMattingBatchCount;
-  mattingBusy: boolean;
   customNoteBusy: boolean;
   customTopicBusy: boolean;
   assetBusy: boolean;
@@ -149,29 +142,6 @@ export function buildTrendPrimaryCta(input: TrendCtaInput): PlatformPrimaryCtaSt
 }
 
 export function buildToolsPrimaryCta(input: ToolsCtaInput): PlatformPrimaryCtaState {
-  if (input.toolsTab === "matting") {
-    const credits = platformCustomMattingTotalCredits(input.mattingCount);
-    const busy = input.mattingBusy;
-    const disabled = !input.isAuthenticated || !input.mattingPrompt.trim() || busy;
-    return {
-      mode: "tools",
-      label: busy ? "抠像生成中…" : `开始抠像 · 预计 ${credits} 点`,
-      credits,
-      creditsLabel: `${credits} 点`,
-      disabled,
-      disabledReason: !input.isAuthenticated
-        ? "请先登录"
-        : !input.mattingPrompt.trim()
-          ? "请先填写主体描述"
-          : busy
-            ? "生成中"
-            : undefined,
-      busy,
-      confirmKind: "custom_matting",
-      handlerKey: "customMattingGenerate",
-    };
-  }
-
   // PPT / 素材：无页级扣费 CTA，仅引导面板内唯一步骤按钮（禁止落入 create/trend handler）
   if (input.toolsTab === "assets") {
     return {
@@ -225,10 +195,10 @@ export function describePlatformCtaMatrix(): Array<{
     },
     {
       mode: "tools",
-      labelExample: "开始抠像 / 素材分析 / 动效 PPT（面板内）",
-      creditsSource: "platformCustomMattingTotalCredits / 面板内 htmlPpt·assets helpers",
-      confirmKind: "custom_matting",
-      handlerKey: "customMattingGenerate | panel-local",
+      labelExample: "素材分析 / 动效 PPT（面板内）",
+      creditsSource: "面板内 htmlPpt·assets helpers",
+      confirmKind: "none",
+      handlerKey: "panel-local",
     },
   ];
 }
