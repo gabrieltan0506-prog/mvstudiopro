@@ -13233,66 +13233,6 @@ export default function PlatformPage() {
             )}
           </div>
         ) : null}
-        {canShowPlatformDebug && debugMode && (manhuaLearnJobPollTrace || manhuaLearnResult || manhuaLearnSyncError) ? (
-          <div className="mb-6 rounded-[24px] border border-amber-300/25 bg-amber-500/5 p-5">
-            <div className="text-sm font-semibold text-amber-100">AI 漫剧 · 学节奏 Debug</div>
-            <p className="mt-1 text-[11px] leading-relaxed text-amber-50/70">
-              云端 Job 阶段与错误（下片失败不再静默）。可复制 jobId 对照服务端日志。
-            </p>
-            {manhuaLearnSyncError ? <p role="status" className="mt-2 text-xs text-rose-200">{manhuaLearnSyncError}</p> : null}
-            {manhuaLearnJobPollTrace ? (
-              <div className="mt-3 space-y-2 rounded-2xl border border-amber-300/20 bg-black/25 p-3 text-[11px] text-amber-50/85">
-                <div>
-                  <span className="text-amber-100/60">label</span> · {manhuaLearnJobPollTrace.label}
-                </div>
-                <div>
-                  <span className="text-amber-100/60">jobId</span> ·{" "}
-                  <span className="font-mono text-[#ffdd44]">{manhuaLearnJobPollTrace.jobId}</span>
-                </div>
-                <div>
-                  <span className="text-amber-100/60">轮询</span> · {manhuaLearnJobPollTrace.pollCount} 次
-                  {manhuaLearnJobPollTrace.terminalStatus
-                    ? ` · 终态 ${manhuaLearnJobPollTrace.terminalStatus}`
-                    : " · 进行中"}
-                </div>
-                {manhuaLearnJobPollTrace.currentStep ? (
-                  <div>
-                    <span className="text-amber-100/60">当前</span> · {manhuaLearnJobPollTrace.currentStep}
-                  </div>
-                ) : null}
-                {manhuaLearnResult?.errorZh ? (
-                  <div className="rounded-lg border border-rose-300/30 bg-rose-500/10 px-2 py-1.5 text-rose-100">
-                    错误：{manhuaLearnResult.errorZh}
-                  </div>
-                ) : null}
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words border-t border-amber-300/15 pt-2 text-[10px] leading-5 text-amber-50/75">
-                  {(manhuaLearnJobPollTrace.lines || []).join("\n") || "（尚无轮询行）"}
-                </pre>
-              </div>
-            ) : (
-              <div className="mt-3 text-[11px] text-amber-50/60">
-                正在从云端任务恢复本会话进度，无需再次提交学习。
-                {manhuaLearnResult?.errorZh ? (
-                  <div className="mt-2 rounded-lg border border-rose-300/30 bg-rose-500/10 px-2 py-1.5 text-rose-100">
-                    错误：{manhuaLearnResult.errorZh}
-                  </div>
-                ) : null}
-              </div>
-            )}
-            {(manhuaLearnResult?.progressLines?.length || 0) > 0 ? (
-              <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/50">
-                  面板进度行
-                </div>
-                <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#d7d0ef]">
-                  {(manhuaLearnResult?.progressLines || [])
-                    .map((l) => `${l.atIso || ""} [${l.stage}] ${l.detailZh}`)
-                    .join("\n")}
-                </pre>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
 
         {platformMode === "create" ? (
           <div className="mb-4">
@@ -14551,6 +14491,67 @@ export default function PlatformPage() {
                               </button>
                             </div>
                           )}
+                        </div>
+                      ) : null}
+                      {/* 1113 站长令：学习进度（任务号、轮询、当前步骤、进度行）放在学习面板内，不与诊断面板混在一起；仅管理员可见。 */}
+                      {canShowPlatformDebug && (manhuaLearnJobPollTrace || manhuaLearnResult || manhuaLearnSyncError) ? (
+                        <div className="mt-3 rounded-xl border border-amber-300/25 bg-amber-500/5 p-3">
+                          <div className="text-xs font-semibold text-amber-100">学习进度 · 云端任务</div>
+                          <p className="mt-1 text-[11px] leading-relaxed text-amber-50/70">
+                            云端 Job 阶段与错误（下片失败不再静默）。可复制 jobId 对照服务端日志。
+                          </p>
+                          {manhuaLearnSyncError ? <p role="status" className="mt-2 text-xs text-rose-200">{manhuaLearnSyncError}</p> : null}
+                          {manhuaLearnJobPollTrace ? (
+                            <div className="mt-3 space-y-2 rounded-2xl border border-amber-300/20 bg-black/25 p-3 text-[11px] text-amber-50/85">
+                              <div>
+                                <span className="text-amber-100/60">label</span> · {manhuaLearnJobPollTrace.label}
+                              </div>
+                              <div>
+                                <span className="text-amber-100/60">jobId</span> ·{" "}
+                                <span className="font-mono text-[#ffdd44]">{manhuaLearnJobPollTrace.jobId}</span>
+                              </div>
+                              <div>
+                                <span className="text-amber-100/60">轮询</span> · {manhuaLearnJobPollTrace.pollCount} 次
+                                {manhuaLearnJobPollTrace.terminalStatus
+                                  ? ` · 终态 ${manhuaLearnJobPollTrace.terminalStatus}`
+                                  : " · 进行中"}
+                              </div>
+                              {manhuaLearnJobPollTrace.currentStep ? (
+                                <div>
+                                  <span className="text-amber-100/60">当前</span> · {manhuaLearnJobPollTrace.currentStep}
+                                </div>
+                              ) : null}
+                              {manhuaLearnResult?.errorZh ? (
+                                <div className="rounded-lg border border-rose-300/30 bg-rose-500/10 px-2 py-1.5 text-rose-100">
+                                  错误：{manhuaLearnResult.errorZh}
+                                </div>
+                              ) : null}
+                              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words border-t border-amber-300/15 pt-2 text-[10px] leading-5 text-amber-50/75">
+                                {(manhuaLearnJobPollTrace.lines || []).join("\n") || "（尚无轮询行）"}
+                              </pre>
+                            </div>
+                          ) : (
+                            <div className="mt-3 text-[11px] text-amber-50/60">
+                              正在从云端任务恢复本会话进度，无需再次提交学习。
+                              {manhuaLearnResult?.errorZh ? (
+                                <div className="mt-2 rounded-lg border border-rose-300/30 bg-rose-500/10 px-2 py-1.5 text-rose-100">
+                                  错误：{manhuaLearnResult.errorZh}
+                                </div>
+                              ) : null}
+                            </div>
+                          )}
+                          {(manhuaLearnResult?.progressLines?.length || 0) > 0 ? (
+                            <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/50">
+                                面板进度行
+                              </div>
+                              <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#d7d0ef]">
+                                {(manhuaLearnResult?.progressLines || [])
+                                  .map((l) => `${l.atIso || ""} [${l.stage}] ${l.detailZh}`)
+                                  .join("\n")}
+                              </pre>
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
 
