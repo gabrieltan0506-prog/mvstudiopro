@@ -13863,7 +13863,7 @@ export default function PlatformPage() {
                               </select>
                             </label>
                             <span className="text-[10px] text-[#c9c0e6]/50">
-                              两个模型都按双通道并发读片；只对新学习生效（换模型另起一个系列），续学已学系列沿用其原模型。勾选升级档时本项不生效。
+                              两个模型都走主通道并发读片，备用通道只在主通道故障时接手；只对新学习生效（换模型另起一个系列），续学已学系列沿用其原模型。勾选升级档时本项不生效。
                             </span>
                             <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[#c9c0e6]/90">
                               <input

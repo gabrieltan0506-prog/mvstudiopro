@@ -5647,7 +5647,8 @@ async function executeNativeDeepReadBatch(
             uploadConcurrency: process.env.JOB_WORKER_ROLE === "rig" ? Math.min(2, params.mediaUploadConcurrency || 2) : params.mediaUploadConcurrency,
             onSourceFetchProgress: params.onMediaProgressZh,
             preparedGroupSize: NATIVE_DEEP_READ_PREPARED_GROUP_SIZE,
-            preparedGroupSizes: evolinkOnly ? [6, 1] : dualReadRoutes ? [5, 6, 1] : undefined,
+            // 1113 站长令：首读只走 Vertex 并发（EvoLink 不按请求 fps 取帧，实测画面 token 约十分之一），EvoLink 只作故障兜底与失败续跑。
+            preparedGroupSizes: evolinkOnly ? [6, 1] : undefined,
             onPreparedGroup: (rows) => {
               // 备料层给的是「本次请求内的段号」＝ selectedSegments 的下标，换回真实段号
               registerPreparedGroup(rows.map((row) => ({
@@ -6941,9 +6942,8 @@ async function executeNativeDeepReadBatch(
       const segmentFailures: Array<{ segmentIndex: number; error: unknown }> = [];
       const scheduledSegmentIndexes = selectedSegmentIndexes ?? episode.segments.map((_, index) => index);
       const pendingSegmentIndexes = new Set(scheduledSegmentIndexes.filter(index => !committedIndexes.includes(index)));
-      let routeOrdinal = 0;
-      // 3.8 Flash首次五路Vertex加六路Evolink；失败恢复仅六路Evolink，显式并发只允许调低。
-      const modelCap = evolinkOnly ? 6 : dualReadRoutes ? 11 : NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY;
+      // 1113 站长令：首读五路 Vertex 并发；EvoLink 只在 Vertex 上游故障时接手同一分片，失败恢复仍为六路 EvoLink。显式并发只允许调低。
+      const modelCap = evolinkOnly ? 6 : NATIVE_DEEP_READ_SEGMENT_MODEL_MAX_CONCURRENCY;
       const segmentModelCap = Math.min(
         modelCap,
         Math.max(1, Math.floor(Number(params.segmentModelConcurrency) || modelCap)),
@@ -6972,9 +6972,7 @@ async function executeNativeDeepReadBatch(
               }));
             }
             if (segmentIndex < 0 || stopSchedulingSegments) return;
-            const ordinal = routeOrdinal++;
-            const route = evolinkOnly ? NATIVE_DEEP_READ_ROUTE_EVOLINK : !dualReadRoutes || ordinal < 5 ? NATIVE_DEEP_READ_ROUTE_VERTEX
-              : ordinal < 11 ? NATIVE_DEEP_READ_ROUTE_EVOLINK : "available";
+            const route = evolinkOnly ? NATIVE_DEEP_READ_ROUTE_EVOLINK : NATIVE_DEEP_READ_ROUTE_VERTEX;
             await processSegment(segmentIndex, route);
           } catch (error) {
             segmentFailures.push({ segmentIndex, error });

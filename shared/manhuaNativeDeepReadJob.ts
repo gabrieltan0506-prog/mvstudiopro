@@ -32,7 +32,7 @@ export const MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS = [...MANHUA_NATIVE_LEGACY_RE
  * 1111 站长令「把 Argon 改成 Carbon」：Argon 退出新学习可选项；已用 Argon 学过的系列仍按 -g4a 续学与解析（历史身份只增不改）。
  * 服务端实际放行集见 nativeDeepReadAllowedNewReadModels（升级档模型按 env 配置，缺省 gemini-4-carbon）。
  */
-/** 1113 站长令：标准档读片可在 3.8 Flash 与 Gemini 4 Hydrogen 之间选（面板选单）；两者都走双通道并发读片。 */
+/** 1113 站长令：标准档读片可在 3.8 Flash 与 Gemini 4 Hydrogen 之间选（面板选单）；首读只走 Vertex 并发，EvoLink 只作兜底。 */
 export const MANHUA_NATIVE_HYDROGEN_MODEL = "gemini-4-hydrogen" as const;
 /** 标准档可选模型（面板选单顺序）。 */
 export const MANHUA_NATIVE_STANDARD_READ_MODEL_OPTIONS = ["gemini-3.8-flash", MANHUA_NATIVE_HYDROGEN_MODEL] as const;
@@ -109,7 +109,7 @@ export function nativeDeepReadCarbonRoutes(env?: GeminiModelEnv): NativeDeepRead
  * 1110 前写死为「=== gemini-3.8-flash」，现与配置的缺省模型比较。
  */
 export function isNativeDeepReadCurrentContractModel(model: unknown, env?: GeminiModelEnv): boolean {
-  // 1113：Hydrogen 与 3.8 Flash 同为标准档，同样走 Vertex + EvoLink 双通道并发，不单靠 Vertex。
+  // 1113：Hydrogen 与 3.8 Flash 同为标准档当前合同；首读只走 Vertex，EvoLink 兜底不记降级。
   return model === MANHUA_NATIVE_CURRENT_READ_MODEL || model === MANHUA_NATIVE_HYDROGEN_MODEL || model === resolveManhuaNativeDeepReadModel(env);
 }
 
