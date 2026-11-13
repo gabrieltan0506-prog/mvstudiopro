@@ -306,13 +306,11 @@ import {
   platformCompositeBundleTotalCreditsForGrid,
   platformCoverCompositeBulkBundleTotalCreditsForGrid,
   platformCoverCompositeBundleCreditsForFormatGrid,
-  platformCustomMattingTotalCredits,
   platformCustomTopicImageCredits,
 } from "@shared/plans";
 import {
   getPlatformTrendReportCredits,
 } from "@shared/platformTrendPricing";
-import type { PlatformMattingAspectRatio, PlatformMattingBatchCount } from "@shared/plans";
 import {
   buildCustomCopyPdfHtml,
   hasCustomCopyPdfContent,
@@ -445,7 +443,6 @@ import {
   Rocket,
   Presentation,
   RefreshCw,
-  Scissors,
   Share2,
   ShieldCheck,
   Sparkles,
@@ -3305,9 +3302,9 @@ export default function PlatformPage() {
   const [locationPath, setLocationPath] = useLocation();
   /** 素材分析完成后的拍摄手法摘要，注入分镜 scriptContext */
   const lastShootingTechniqueBriefRef = useRef<string>("");
-  /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 文生图海报 vs 自定义抠像 */
+  /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 文生图海报 */
   const [customWorkspaceTab, setCustomWorkspaceTab] = useState<
-    "copy" | "topic" | "imageGen" | "matting" | "assets" | "htmlPpt"
+    "copy" | "topic" | "imageGen" | "assets" | "htmlPpt"
   >("copy");
   /** 顶栏双模式 + 更多工具（URL ?mode= / localStorage） */
   const [platformMode, setPlatformMode] = useState<PlatformWorkbenchMode>(() =>
@@ -3380,7 +3377,7 @@ export default function PlatformPage() {
   }, [workbenchStorageReady, workbenchUserKey]);
 
   const applyPlatformMode = useCallback(
-    (next: PlatformWorkbenchMode, opts?: { toolTab?: "htmlPpt" | "matting" | "assets"; skipDirtyCheck?: boolean; history?: "push" | "replace" }) => {
+    (next: PlatformWorkbenchMode, opts?: { toolTab?: "htmlPpt" | "assets"; skipDirtyCheck?: boolean; history?: "push" | "replace" }) => {
       if (!opts?.skipDirtyCheck && next !== platformMode) {
         const draft = workbenchUserKey ? readWorkbenchDraft(workbenchUserKey) : null;
         const dirty =
@@ -3413,7 +3410,6 @@ export default function PlatformPage() {
         ? opts.toolTab
         : next === "tools"
           ? customWorkspaceTab === "htmlPpt" ||
-              customWorkspaceTab === "matting" ||
               customWorkspaceTab === "assets"
             ? customWorkspaceTab
             : resolvePlatformLocation().tool
@@ -3423,7 +3419,7 @@ export default function PlatformPage() {
       if (!applyingFromHistoryRef.current) {
         syncPlatformModeToUrl(next, {
           tool:
-            next === "tools" && (tab === "htmlPpt" || tab === "matting" || tab === "assets")
+            next === "tools" && (tab === "htmlPpt" || tab === "assets")
               ? tab
               : undefined,
           createTab: next === "create" ? (tab === "topic" ? "topic" : "copy") : undefined,
@@ -3527,16 +3523,8 @@ export default function PlatformPage() {
   const [customTopicCoverUrl, setCustomTopicCoverUrl] = useState<string | null>(null);
   const [customTopicStoryboardUrl, setCustomTopicStoryboardUrl] = useState<string | null>(null);
   const [customTopicError, setCustomTopicError] = useState<string | null>(null);
-  /** 自定义抠像：提示词、比例、张数、结果 */
-  const [customMattingPrompt, setCustomMattingPrompt] = useState("");
-  const [customMattingAspect, setCustomMattingAspect] = useState<PlatformMattingAspectRatio>("9:16");
-  const [customMattingCount, setCustomMattingCount] = useState<PlatformMattingBatchCount>(1);
-  const [customMattingBusy, setCustomMattingBusy] = useState(false);
-  const [customMattingImages, setCustomMattingImages] = useState<string[]>([]);
-  const [customMattingTransparentCutout, setCustomMattingTransparentCutout] = useState(false);
-  const [customMattingError, setCustomMattingError] = useState<string | null>(null);
   const customWorkspaceOperating =
-    customNoteBusy || customTopicBusy || customMattingBusy;
+    customNoteBusy || customTopicBusy;
   /** 自定义选题：勾选生成项（文案 / 封面 / 分镜） */
   const [customTopicGenCopy, setCustomTopicGenCopy] = useState(true);
   const [customTopicGenCover, setCustomTopicGenCover] = useState(true);
@@ -9298,61 +9286,6 @@ export default function PlatformPage() {
     [customTopicGenCover, customTopicGenStoryboard, customTopicGridVariant],
   );
 
-  const customMattingCost = useMemo(
-    () => platformCustomMattingTotalCredits(customMattingCount),
-    [customMattingCount],
-  );
-
-  const handleGenerateCustomMatting = async () => {
-    const prompt = customMattingPrompt.trim();
-    if (prompt.length < 4) {
-      toast.error("请至少输入 4 个字的描述");
-      return;
-    }
-    if (!isAuthenticated) {
-      toast.error("请先登录");
-      return;
-    }
-
-    const discountLabel =
-      customMattingCount === 1
-        ? "原价"
-        : customMattingCount === 2
-          ? "九折"
-          : "八折";
-    if (
-      !supervisorAccess &&
-      !window.confirm(
-        `将消耗 ${customMattingCost} 积分（${customMattingCount} 张 · ${discountLabel}），按描述生成 ${customMattingAspect} 人物/主体图。是否继续？`,
-      )
-    ) {
-      return;
-    }
-
-    setCustomMattingBusy(true);
-    setCustomMattingError(null);
-    setCustomMattingImages([]);
-    setCustomMattingTransparentCutout(false);
-
-    try {
-      const res = await generatePlatformCustomMattingMutation.mutateAsync({
-        prompt,
-        aspectRatio: customMattingAspect,
-        count: customMattingCount,
-      });
-      setCustomMattingImages(res.imageUrls ?? []);
-      setCustomMattingTransparentCutout(!!res.transparentCutout);
-      toast.success(`已生成 ${res.imageUrls?.length ?? 0} 张图片`);
-      void queryClient.invalidateQueries({ queryKey: [["credits"]] });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setCustomMattingError(msg);
-      toast.error(msg.slice(0, 120));
-    } finally {
-      setCustomMattingBusy(false);
-    }
-  };
-
   const customTopicActionLabel = useMemo(() => {
     const parts: string[] = [];
     if (customTopicGenCopy) parts.push("文案");
@@ -10246,10 +10179,6 @@ export default function PlatformPage() {
   const generateDecisionIntelTopicCopyMutation =
     trpc.mvAnalysis.generateDecisionIntelTopicExecutionCopy.useMutation({
       onError: (e) => toast.error(e.message || "战略选题文案扩写失败"),
-    });
-  const generatePlatformCustomMattingMutation =
-    trpc.mvAnalysis.generatePlatformCustomMatting.useMutation({
-      onError: (e) => toast.error(e.message || "自定义抠像生成失败"),
     });
   const unlockedStrategicReport = useMemo((): AdvancedAIReportData | null => {
     const fromLatest = decisionIntelLatestQuery.data?.report;
@@ -12640,13 +12569,10 @@ export default function PlatformPage() {
     () =>
       buildToolsPrimaryCta({
         toolsTab:
-          customWorkspaceTab === "matting" || customWorkspaceTab === "assets" || customWorkspaceTab === "htmlPpt"
+          customWorkspaceTab === "assets" || customWorkspaceTab === "htmlPpt"
             ? customWorkspaceTab
             : "htmlPpt",
         isAuthenticated,
-        mattingPrompt: customMattingPrompt,
-        mattingCount: customMattingCount,
-        mattingBusy: customMattingBusy,
         customNoteBusy,
         customTopicBusy,
         assetBusy: assetAnalysisBusy,
@@ -12654,9 +12580,6 @@ export default function PlatformPage() {
     [
       customWorkspaceTab,
       isAuthenticated,
-      customMattingPrompt,
-      customMattingCount,
-      customMattingBusy,
       customNoteBusy,
       customTopicBusy,
       assetAnalysisBusy,
@@ -12860,26 +12783,6 @@ export default function PlatformPage() {
       }
 
       if (startedMode === "tools") {
-        if (startedHandler === "customMattingGenerate") {
-          void (async () => {
-            try {
-              if (!stillSameMode()) return;
-              await handleGenerateCustomMatting();
-              if (!stillSameMode()) return;
-              if (workbenchUserKey) {
-                pushRecentTask(workbenchUserKey, {
-                  mode: "tools",
-                  label: "自定义抠像",
-                  credits: startedCredits,
-                });
-                setRecentTasks(readRecentTasks(workbenchUserKey));
-              }
-            } finally {
-              release();
-            }
-          })();
-          return;
-        }
         if (startedHandler === "panelLocal") {
           // 页级不代扣、不记虚假成功任务
           document.getElementById("platform-tools-htmlppt")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -12946,7 +12849,6 @@ export default function PlatformPage() {
     activePrimaryCta,
     platformMode,
     handleTrendStandaloneAnalyze,
-    handleGenerateCustomMatting,
     handleAnalyze,
     runCreateTopicShortlist,
     scrollToPlatformSection,
@@ -16195,26 +16097,26 @@ export default function PlatformPage() {
             {platformMode === "tools" ? (
               <PlatformToolsWorkbench
                 activeTab={
-                  customWorkspaceTab === "matting" || customWorkspaceTab === "assets" || customWorkspaceTab === "htmlPpt"
+                  customWorkspaceTab === "assets" || customWorkspaceTab === "htmlPpt"
                     ? customWorkspaceTab
                     : "htmlPpt"
                 }
                 onTabChange={(tab) => applyPlatformMode("tools", { toolTab: tab, skipDirtyCheck: true })}
-                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+                disabled={customNoteBusy || customTopicBusy || assetAnalysisBusy}
               >
                 <div className="mb-3 hidden lg:block">{stickyCtaNode}</div>
                 <div id="platform-tools-htmlppt" className="scroll-mt-24">
           {customWorkspaceTab === "htmlPpt" ? (
             <PlatformHtmlPptPanel
               key={workbenchUserKey || "guest"} draftKey={workbenchUserKey ? `platform:ppt:v1:${workbenchUserKey}` : undefined}
-              disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+              disabled={customNoteBusy || customTopicBusy || assetAnalysisBusy}
             />
           ) : customWorkspaceTab === "assets" ? (
             <>
               <PlatformAssetAnalysisPanel
                 debugMode={debugMode}
                 supervisorAccess={hasSupervisorOpsAccess}
-                disabled={customNoteBusy || customTopicBusy || customMattingBusy}
+                disabled={customNoteBusy || customTopicBusy}
                 personaSummary={personaSummary}
                 ipProfile={undefined}
                 trendPlatforms={
@@ -16281,185 +16183,7 @@ export default function PlatformPage() {
               ) : null}
             </>
 
-          ) : (
-            <>
-              <div className="mb-5 grid gap-2 sm:grid-cols-2">
-                <PlatformWorkspaceStepHint
-                  step={1}
-                  title="描述场景"
-                  lines={["写人物姿态、服装与背景提示词。", "需要白底主体请在描述中注明「去背景」。"]}
-                  active={!customMattingPrompt.trim()}
-                  done={Boolean(customMattingPrompt.trim())}
-                />
-                <PlatformWorkspaceStepHint
-                  step={2}
-                  title="生成下载"
-                  lines={["选择比例与张数，点击开始生成。", `单张 ${CREDIT_COSTS.platformCustomMattingImage} 积分，2/4 张有折扣。`]}
-                  active={Boolean(customMattingPrompt.trim()) && customMattingImages.length === 0}
-                  done={customMattingImages.length > 0}
-                />
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-1.5 block">
-                    主体描述 / 场景提示词
-                  </label>
-                  <textarea
-                    className="w-full min-h-[120px] resize-y rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#34d399]/60 focus:outline-none focus:ring-1 focus:ring-[#34d399]/30 transition"
-                    placeholder="例：年轻女医生穿白大褂，坐姿，微笑，背景是明亮的书房；或：全身站姿，自动去背景，双手自然下垂…"
-                    value={customMattingPrompt}
-                    onChange={(e) => setCustomMattingPrompt(e.target.value)}
-                    disabled={customMattingBusy}
-                  />
-                </div>
-
-                <div>
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">画面比例</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(["9:16", "16:9", "3:4", "4:3", "21:9"] as const).map((ratio) => (
-                      <button
-                        key={ratio}
-                        type="button"
-                        onClick={() => setCustomMattingAspect(ratio)}
-                        disabled={customMattingBusy}
-                        className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition disabled:opacity-50 ${
-                          customMattingAspect === ratio
-                            ? "bg-[linear-gradient(135deg,#34d399,#059669)] text-white shadow-sm"
-                            : "border border-white/10 bg-black/35 text-[#c9c0e6]/70 hover:text-white"
-                        }`}
-                      >
-                        {ratio}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#c9c0e6]/60 mb-2">一次生成张数</div>
-                  <div className="inline-flex rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
-                    {([1, 2, 4] as const).map((n) => (
-                      <button
-                        key={n}
-                        type="button"
-                        onClick={() => setCustomMattingCount(n)}
-                        disabled={customMattingBusy}
-                        className={`rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
-                          customMattingCount === n
-                            ? "bg-[linear-gradient(135deg,#34d399,#059669)] text-white shadow-sm"
-                            : "text-[#c9c0e6]/70 hover:text-white"
-                        }`}
-                      >
-                        {n} 张
-                        {n === 1 ? " · 原价" : n === 2 ? " · 九折" : " · 八折"}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mt-1.5 text-[11px] text-[#c9c0e6]/50">
-                    本次合计 <strong className="text-[#6ee7b7]">{customMattingCost} 积分</strong>
-                    {customMattingCount > 1 && `（单张 ${CREDIT_COSTS.platformCustomMattingImage} × ${customMattingCount}${customMattingCount === 2 ? " × 0.9" : " × 0.8"}）`}
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => void handleGenerateCustomMatting()}
-                    disabled={customMattingBusy || customMattingPrompt.trim().length < 4}
-                    className="inline-flex items-center gap-2 rounded-full border border-[#34d399]/30 bg-[linear-gradient(135deg,#34d399,#059669)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(52,211,153,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {customMattingBusy ? (
-                      <><Loader2 className="h-4 w-4 animate-spin" />生成抠像中…</>
-                    ) : (
-                      <><Scissors className="h-4 w-4" />开始生成（{customMattingCost} 积分）</>
-                    )}
-                  </button>
-                  {(customMattingImages.length > 0 || customMattingError) && !customMattingBusy && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCustomMattingImages([]);
-                        setCustomMattingError(null);
-                        setCustomMattingTransparentCutout(false);
-                        setCustomMattingPrompt("");
-                      }}
-                      className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
-                    >
-                      清除
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {customMattingBusy && (
-                <div className="mt-5 flex items-center gap-2 rounded-2xl border border-[#34d399]/15 bg-[rgba(52,211,153,0.05)] px-4 py-3 text-sm text-[#6ee7b7]/80">
-                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#34d399]" />
-                  正在生成 {customMattingCount} 张 {customMattingAspect} 图片，每张约 2–4 分钟，请勿关闭页面…
-                </div>
-              )}
-
-              {customMattingError && (
-                <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-                  ❌ {sanitizePlatformUserMessage(customMattingError || "")}
-                </div>
-              )}
-
-              {customMattingImages.length > 0 && (
-                <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {customMattingImages.map((url, idx) => (
-                    <div key={`${url}-${idx}`} className="space-y-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[#6ee7b7]/70">
-                        生成结果 #{idx + 1} · {customMattingAspect}
-                        {customMattingTransparentCutout ? " · 白底主体" : ""}
-                      </div>
-                      <div
-                        className={
-                          customMattingTransparentCutout
-                            ? "rounded-2xl border border-white/10 bg-white p-3"
-                            : "rounded-2xl border border-white/10 bg-black/20 p-3"
-                        }
-                      >
-                        <img
-                          src={url}
-                          alt={`自定义抠像 ${idx + 1}`}
-                          className="w-full rounded-xl object-contain max-h-[420px]"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = "none";
-                            setCustomMattingError("图片加载失败，请确认 URL 是否有效");
-                          }}
-                        />
-                      </div>
-                      <div className="flex flex-wrap justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCustomTopicPhotoUrl(url);
-                            setCustomTopicPhotoPreview(url);
-                            setCustomWorkspaceTab("topic");
-                            toast.success("已设为参考人像，可在「主人公融合选题」生成封面与分镜");
-                          }}
-                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
-                        >
-                          <UserRound className="h-4 w-4" />
-                          设为参考人像
-                        </button>
-                        <a
-                          href={gcsTransferUrl(url)}
-                          download={`custom-matting-${customMattingAspect.replace(":", "x")}-${idx + 1}.png`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded-full border border-[#34d399]/25 bg-[rgba(52,211,153,0.08)] px-4 py-2 text-sm font-semibold text-[#6ee7b7] transition hover:bg-[rgba(52,211,153,0.15)]"
-                        >
-                          <Download className="h-4 w-4" />
-                          下载 PNG
-                        </a>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
+          ) : null}
                 </div>
               </PlatformToolsWorkbench>
             ) : null}

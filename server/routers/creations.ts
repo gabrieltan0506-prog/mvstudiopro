@@ -639,45 +639,6 @@ export const creationsRouter = router({
   }),
 
   // ═══════════════════════════════════════════════════
-  // 封面补生（PDF v2 客户端快照模式专用）
-  // ═══════════════════════════════════════════════════
-  //
-  // 客户端在 MyReportsPage 进入阅读模式做 DOM 快照前，先调一次此 mutation：
-  //   - 已有 thumbnailUrl 直接返回（幂等，避免重复消耗 nano banana 配额）
-  //   - 缺失时 on-demand 调 Nano Banana 2 (flash) 补生 9:16 纯封面，写回 DB
-  // 这样 React 重渲染后 cover 已经在 DOM 里，PDF 快照立刻包含封面。
-  //
-  // 与 server-side `exportBlackGoldPdf` 路径里的 ensureCoverForCreation 共用同一函数，
-  // 唯一区别是这里通过 tRPC 暴露，并校验作品归属（exportInteractiveHtml 已经校验过）。
-  ensureCover: protectedProcedure
-    .input(z.object({
-      creationId: z.number().int().positive(),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      const database = await db();
-      const [row] = await database
-        .select()
-        .from(userCreations)
-        .where(and(
-          eq(userCreations.id, input.creationId),
-          eq(userCreations.userId, ctx.user.id),
-        ))
-        .limit(1);
-      if (!row) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "作品不存在或无权访问" });
-      }
-      let meta: any = {};
-      try { meta = JSON.parse(row.metadata || "{}"); } catch {}
-      const title = String(meta.lighthouseTitle || row.title || "战略情报报告").slice(0, 80);
-
-      const { ensureCoverForCreation } = await import("../services/deepResearchService");
-      const coverUrl = await ensureCoverForCreation(input.creationId, title);
-      return {
-        coverUrl: coverUrl ?? null,
-      };
-    }),
-
-  // ═══════════════════════════════════════════════════
   // 交互版 HTML 导出（PDF 之外的第二条下载路径）
   // ═══════════════════════════════════════════════════
   //
@@ -789,13 +750,8 @@ export const creationsRouter = router({
           await import("../services/htmlReportTemplate");
         // 用户决策（2026-05-01）：HTML 离线打开也要看到封面 → HTTP 签名 URL 在导出时
         // 抓下来内联成 base64 data URI（>8MB 或失败时 fallback 原 URL）
-        // 用户决策续（2026-05-01）：thumbnailUrl=NULL（主流程 6 次重试全败）时，
-        // 此处 on-demand 调 Nano Banana 2 (flash) 补生 9:16 纯封面再下载，避免封面缺失。
-        let resolvedCoverUrl = row.thumbnailUrl || undefined;
-        if (!resolvedCoverUrl) {
-          const { ensureCoverForCreation } = await import("../services/deepResearchService");
-          resolvedCoverUrl = await ensureCoverForCreation(input.creationId, title);
-        }
+        // 1113：研报封面补生已下线；无封面时直接导出无封面版本。
+        const resolvedCoverUrl = row.thumbnailUrl || undefined;
         const inlinedCoverUrl = await inlineCoverIfHttp(resolvedCoverUrl);
         const storyboardSheet = resolveHtmlReportStoryboardSheet(meta, input.storyboardSheet ?? null);
         const xhsDualNote = resolveHtmlReportXhsDualNote(meta, input.xhsDualNote ?? null);
