@@ -11,6 +11,7 @@ import { KNOWLEDGE_READING_INSTRUCTIONS, knowledgeReadingMarkdown } from "../../
 import { dedupeKnowledgeBody, dedupeKnowledgeReading, knowledgeReadingParagraphKeys, type KnowledgeDedupeRemoval } from "../../shared/knowledgeReadingDedupe";
 import { invokeKnowledgePublicationRoutes, KNOWLEDGE_PUBLICATION_MODEL, type KnowledgeModelRequest, type KnowledgeRouteEvidence } from "./knowledgePublicationRoutes";
 import { KnowledgeTtlCache } from "./knowledgePublicationCache";
+import { knowledgeDecisionCheckEnabled, readKnowledgeDecisionCheck, runKnowledgeDecisionCheck } from "./knowledgeDecisionCheck";
 import { KNOWLEDGE_PUBLICATION_RECEIPT_ROUTES, KNOWLEDGE_PUBLICATION_ROUTE_ORDER, KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST } from "./knowledgeModelCapabilities";
 import {
   knowledgePublicationContextSchema,
@@ -621,6 +622,15 @@ export async function knowledgePublicationWorkPlan(owner:number,document:Awaited
   return {...await knowledgeWorkPlanCache.get(key,compute)};
 }
 
+/**
+ * 1113 审校收尾后的参考自查（Gemini Decision 1 选择题，KNOWLEDGE_DECISION_CHECK=1 才开，缺省关闭）：
+ * 后台执行、不等待、不改报告、不新增阻断、不触发压缩；结果只落 <root>/decision-check/ 证据（见 knowledgeDecisionCheck.ts）。
+ */
+function scheduleKnowledgeDecisionCheck(deps: Pick<typeof real, "read" | "save">, root: string, digest: string, source: KnowledgeSource, saved: any) {
+  if (!knowledgeDecisionCheckEnabled() || !Array.isArray(saved?.report?.pages)) return;
+  void runKnowledgeDecisionCheck({ deps: { read: deps.read, save: deps.save }, root, digest, source, pages: saved.report.pages }).catch(() => undefined);
+}
+
 /** 原始与解析回执分开永久保存；每批一个既有顾问事务，失败只补失败批次。 */
 export async function reviewKnowledgePublication(
   owner: number,
@@ -645,6 +655,7 @@ export async function reviewKnowledgePublication(
       validateKnowledgeImageReceipts(source, previous.sourceImages);
       validateKnowledgeReview(previous.report, source, digest);
       previous = await compressKnowledgeFinalReport(deps, root, context.attempt, digest, source, previous);
+      scheduleKnowledgeDecisionCheck(deps, root, digest, source, previous);
       return validateKnowledgeReview(previous.report, source, digest);
     }
     const savedReports = await readKnowledgeBatchReports(source, digest, root, deps.read, deps, document.publication.attempts);
@@ -659,7 +670,9 @@ export async function reviewKnowledgePublication(
       const consolidated = {report,sourceImages,model:KNOWLEDGE_VISUAL_ADVISOR_MODEL,reportedModels:[] as string[],
         consistency:{taskCount:0,factCount:plan.factCount,skipped:"生图前已集中联网核实，审校后不重复核对"}};
       await deps.save(`${root}/report.json`, consolidated);
-      return validateKnowledgeReview((await compressKnowledgeFinalReport(deps, root, context.attempt, digest, source, consolidated)).report, source, digest);
+      const finalSaved = await compressKnowledgeFinalReport(deps, root, context.attempt, digest, source, consolidated);
+      scheduleKnowledgeDecisionCheck(deps, root, digest, source, finalSaved);
+      return validateKnowledgeReview(finalSaved.report, source, digest);
     }
     const taskIndex = context.batchIndex - batches.length;
     if (taskIndex >= plan.tasks.length) throw new Error("整套核对进度超出当前资料");
@@ -738,7 +751,9 @@ export async function reviewKnowledgePublication(
     const consolidated = {report,sourceImages,model:KNOWLEDGE_VISUAL_ADVISOR_MODEL,reportedModels:models,consistency:{taskCount:plan.tasks.length,factCount:plan.factCount}};
     await deps.save(`${root}/report.json`, consolidated);
     // 最终修订可能把已压缩页重新写长：整册落盘后按页预算补压（未超出零调用）。
-    return validateKnowledgeReview((await compressKnowledgeFinalReport(deps, root, context.attempt, digest, source, consolidated)).report, source, digest);
+    const finalSaved = await compressKnowledgeFinalReport(deps, root, context.attempt, digest, source, consolidated);
+    scheduleKnowledgeDecisionCheck(deps, root, digest, source, finalSaved);
+    return validateKnowledgeReview(finalSaved.report, source, digest);
   }
   const indices = batches[context.batchIndex];
   const batchSource = {
@@ -987,4 +1002,9 @@ export async function readKnowledgePublicationReview(
     report: unknown;
     sourceImages: { uri: string; sha256: string }[];
   };
+}
+
+/** 1113 管理/审计读取：审校后参考自查（Gemini Decision 1）的最近一次汇总；未开启或未跑过为 null。只读，不触发调用。 */
+export async function readKnowledgePublicationDecisionCheck(owner: number, documentId: string, requestId: string) {
+  return readKnowledgeDecisionCheck(real.read, knowledgeEvidencePrefix(owner, documentId, requestId));
 }

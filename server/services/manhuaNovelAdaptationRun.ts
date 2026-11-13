@@ -29,6 +29,7 @@ import {
   type ManhuaNovelAdaptation,
 } from "../../shared/manhuaNovelAdaptation";
 import type { ManhuaNovelExcerpt } from "../../shared/manhuaNovelSource";
+import { runNovelAdaptationDecisionCheck, type NovelAdaptationDecisionAdvisory } from "./novelAdaptationDecisionCheck";
 
 export type NovelRouteAttempt = {
   attempt: number;
@@ -274,7 +275,9 @@ export async function runManhuaNovelAdaptation(
     requestId: string;
     scriptPrompt: (novel: ManhuaNovelAdaptation) => string;
   },
-  call: NovelStageCall = callNovelStage
+  call: NovelStageCall = callNovelStage,
+  /** 1113 参考自查（NOVEL_ADAPTATION_DECISION_CHECK=1 才执行，缺省关闭）：与剧本阶段并行，永不抛错、不阻断、不改稿、不扣费。 */
+  advisoryCheck: typeof runNovelAdaptationDecisionCheck = runNovelAdaptationDecisionCheck
 ) {
   if (!input.template.trim()) throw new Error("请先选择故事模板");
   const novelPrompt = buildNovelizationPrompt(input);
@@ -316,6 +319,10 @@ export async function runManhuaNovelAdaptation(
     if (inspectFragmentedDialogue(novel.text).fragmented)
       throw new Error("小说对白修订仍未通过，旧稿保留，本次未扣点");
   }
+  // 小说已定稿：参考自查在后台与剧本阶段并行，结果只附在返回值与证据里，不参与任何通过 / 失败判定。
+  const advisory: Promise<NovelAdaptationDecisionAdvisory | null> = Promise.resolve()
+    .then(() => advisoryCheck({ source: input.source, novel, requestId: input.requestId }))
+    .catch(() => null);
   const scriptPrompt =
     input.scriptPrompt(novel) +
     "\n\n【对白质量复核】\n" +
@@ -332,5 +339,6 @@ export async function runManhuaNovelAdaptation(
     if (inspectFragmentedDialogue(second.text).fragmented)
       throw new Error("剧情对白修订仍未通过，旧稿保留，本次未扣点");
   }
-  return { markdown: second.text, novel, scriptModel: second.model };
+  const adaptationAdvisory = await advisory;
+  return { markdown: second.text, novel, scriptModel: second.model, ...(adaptationAdvisory ? { adaptationAdvisory } : {}) };
 }
