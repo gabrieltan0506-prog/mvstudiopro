@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lookup } from "node:dns/promises";
+import { lookup, resolve4 } from "node:dns/promises";
 import { isIP } from "node:net";
 import { Agent, fetch as undiciFetch } from "undici";
 import { discoverSourceMedia } from "./manhuaSourceMediaDiscovery.js";
@@ -96,6 +96,14 @@ export async function assertPublicManhuaSourceHost(
       addresses = await resolve(hostname, { all: true, verbatim: true });
     } catch {
       if (attempt === 0) await new Promise((done) => setTimeout(done, 500));
+    }
+  }
+  // 系统解析器两次都失败时（多级 CNAME + 短 TTL 的 CDN 域常见），改用直接查询 A 记录再试一次。
+  if (!addresses && resolve === lookup) {
+    try {
+      addresses = (await resolve4(hostname)).map((address) => ({ address }));
+    } catch {
+      // 落到下方统一报错，由换域重试接手
     }
   }
   if (!addresses) throw new Error("第三方播放站点 DNS 解析失败，已停止");
