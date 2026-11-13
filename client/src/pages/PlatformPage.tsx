@@ -182,6 +182,8 @@ import {
   MANHUA_NATIVE_DEEP_READ_MODEL,
   MANHUA_NATIVE_CARBON_MODEL,
   MANHUA_NATIVE_CURRENT_READ_MODEL,
+  MANHUA_NATIVE_DEEP_READ_MODEL_LABELS,
+  MANHUA_NATIVE_STANDARD_READ_MODEL_OPTIONS,
   nativeDeepReadModelForSeriesKey,
   MANHUA_NATIVE_STRUCTURING_MODEL,
   MANHUA_NATIVE_STRUCTURING_MODEL_LABELS,
@@ -269,6 +271,8 @@ import {
   writeManhuaLearnSegmentSeconds,
   writeManhuaLearnVideoFps,
   readManhuaLearnReadModel,
+  readManhuaLearnStandardReadModel,
+  writeManhuaLearnStandardReadModel,
   writeManhuaLearnReadModel,
   type ManhuaLearnActiveJobRecord,
   type ManhuaLearnBasketItem,
@@ -2699,6 +2703,8 @@ export default function PlatformPage() {
    * 服务端按配置解析（缺省 Carbon）；偏好按账号存本机（存的是车道身份，不显示）。只对新学习生效，续学沿用系列原档位。
    */
   const [manhuaLearnUpgradeRead, setManhuaLearnUpgradeRead] = useState(false);
+  // 1113：标准档读片模型选单（3.8 Flash / Gemini 4 Hydrogen）；只对新学习生效。
+  const [manhuaLearnStandardReadModel, setManhuaLearnStandardReadModel] = useState<string>(MANHUA_NATIVE_CURRENT_READ_MODEL);
   /** 0916 用户拍板：整形固定 GLM-5.3。 */
   const [manhuaLearnStructuringModel, setManhuaLearnStructuringModel] = useState<ManhuaNativeStructuringModelId>(MANHUA_NATIVE_STRUCTURING_MODEL);
   const [manhuaRestructureBusy, setManhuaRestructureBusy] = useState(false);
@@ -2826,6 +2832,7 @@ export default function PlatformPage() {
     setManhuaLearnVideoFpsError("");
     setManhuaLearnStructuringModel(readManhuaLearnStructuringModel(manhuaLearnUserKey));
     setManhuaLearnUpgradeRead(readManhuaLearnReadModel(manhuaLearnUserKey) === MANHUA_NATIVE_CARBON_MODEL);
+    setManhuaLearnStandardReadModel(readManhuaLearnStandardReadModel(manhuaLearnUserKey));
     setManhuaLearnServerJobs([]);
     setManhuaLearnServerJobsHydrated(false);
     setManhuaLearnControlBusy(null);
@@ -6162,7 +6169,8 @@ export default function PlatformPage() {
           nativeSegmentSeconds,
           nativeVideoFps,
           nativeStandaloneSource: localVideoSource || manhuaLearnStandaloneSource,
-          nativeReadModel: requestedReadModel,
+          // 1113：新学习且未选升级档时，按面板选单发标准档读片模型；续学（含旧车道）不发，仍按系列身份 / 服务端配置。
+          nativeReadModel: requestedReadModel ?? (manhuaLearnUpgradeRead || resumeSeriesKey ? undefined : manhuaLearnStandardReadModel),
           // 1111 整集精读升级档：只对新学习发档位；续学（requestedReadModel 已按系列身份定）不发。
           ...(manhuaLearnUpgradeRead && !requestedReadModel ? { nativeReadTier: "upgrade" } : {}),
           // 续学：带上系列键，服务端核实该系列已入库后按其原读片配置续学（与当前配置无关）。
@@ -13836,6 +13844,27 @@ export default function PlatformPage() {
                             {manhuaLearnVideoFpsError ? (
                               <span role="alert" className="text-[10px] text-rose-200">{manhuaLearnVideoFpsError}</span>
                             ) : null}
+                            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[#c9c0e6]/90" htmlFor="manhua-learn-standard-read-model">
+                              标准档读片模型
+                              <select
+                                id="manhua-learn-standard-read-model"
+                                value={manhuaLearnStandardReadModel}
+                                disabled={Boolean(manhuaLearnBusyKey) || manhuaLearnUpgradeRead}
+                                onChange={(event) => {
+                                  setManhuaLearnStandardReadModel(event.target.value);
+                                  writeManhuaLearnStandardReadModel(manhuaLearnUserKey, event.target.value);
+                                  writeManhuaLearnReadModel(manhuaLearnUserKey, event.target.value);
+                                }}
+                                className="rounded border border-violet-300/30 bg-[#1b1630] px-1.5 py-0.5 text-[11px] text-[#e6e0f8]"
+                              >
+                                {MANHUA_NATIVE_STANDARD_READ_MODEL_OPTIONS.map((model) => (
+                                  <option key={model} value={model}>{MANHUA_NATIVE_DEEP_READ_MODEL_LABELS[model] || model}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <span className="text-[10px] text-[#c9c0e6]/50">
+                              两个模型都按双通道并发读片；只对新学习生效（换模型另起一个系列），续学已学系列沿用其原模型。勾选升级档时本项不生效。
+                            </span>
                             <label className="flex items-center gap-1.5 text-[11px] font-semibold text-[#c9c0e6]/90">
                               <input
                                 type="checkbox"
@@ -13843,7 +13872,7 @@ export default function PlatformPage() {
                                 disabled={Boolean(manhuaLearnBusyKey)}
                                 onChange={(event) => {
                                   setManhuaLearnUpgradeRead(event.target.checked);
-                                  writeManhuaLearnReadModel(manhuaLearnUserKey, event.target.checked ? MANHUA_NATIVE_CARBON_MODEL : MANHUA_NATIVE_CURRENT_READ_MODEL);
+                                  writeManhuaLearnReadModel(manhuaLearnUserKey, event.target.checked ? MANHUA_NATIVE_CARBON_MODEL : manhuaLearnStandardReadModel);
                                 }}
                                 className="h-3.5 w-3.5 accent-violet-400"
                               />

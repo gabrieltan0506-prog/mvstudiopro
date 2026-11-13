@@ -32,7 +32,11 @@ export const MANHUA_NATIVE_DEEP_READ_MODEL_OPTIONS = [...MANHUA_NATIVE_LEGACY_RE
  * 1111 站长令「把 Argon 改成 Carbon」：Argon 退出新学习可选项；已用 Argon 学过的系列仍按 -g4a 续学与解析（历史身份只增不改）。
  * 服务端实际放行集见 nativeDeepReadAllowedNewReadModels（升级档模型按 env 配置，缺省 gemini-4-carbon）。
  */
-export const MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS = ["gemini-3.8-flash", GEMINI_CARBON_MODEL] as const;
+/** 1113 站长令：标准档读片可在 3.8 Flash 与 Gemini 4 Hydrogen 之间选（面板选单）；两者都走双通道并发读片。 */
+export const MANHUA_NATIVE_HYDROGEN_MODEL = "gemini-4-hydrogen" as const;
+/** 标准档可选模型（面板选单顺序）。 */
+export const MANHUA_NATIVE_STANDARD_READ_MODEL_OPTIONS = ["gemini-3.8-flash", MANHUA_NATIVE_HYDROGEN_MODEL] as const;
+export const MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS = [...MANHUA_NATIVE_STANDARD_READ_MODEL_OPTIONS, GEMINI_CARBON_MODEL] as const;
 /** Argon 历史车道身份（-g4a）：只作已学系列续学 / 旧卡解析，不再出现在新学习可选项。 */
 export const MANHUA_NATIVE_ARGON_MODEL = "gemini-4-argon" as const;
 /** Carbon 车道身份（-g4c）：整集精读升级档；属贵档，只在站长主动选择时发车。 */
@@ -105,7 +109,8 @@ export function nativeDeepReadCarbonRoutes(env?: GeminiModelEnv): NativeDeepRead
  * 1110 前写死为「=== gemini-3.8-flash」，现与配置的缺省模型比较。
  */
 export function isNativeDeepReadCurrentContractModel(model: unknown, env?: GeminiModelEnv): boolean {
-  return model === MANHUA_NATIVE_CURRENT_READ_MODEL || model === resolveManhuaNativeDeepReadModel(env);
+  // 1113：Hydrogen 与 3.8 Flash 同为标准档，同样走 Vertex + EvoLink 双通道并发，不单靠 Vertex。
+  return model === MANHUA_NATIVE_CURRENT_READ_MODEL || model === MANHUA_NATIVE_HYDROGEN_MODEL || model === resolveManhuaNativeDeepReadModel(env);
 }
 
 /**
@@ -174,7 +179,7 @@ export function parseNativeDeepReadModel(value: unknown): ManhuaNativeDeepReadMo
  * 1111：加整集精读升级档（缺省 Carbon，站长主动选择才发）；Argon 不再可新发，旧 -g4a 系列走续学车道。
  */
 export function nativeDeepReadAllowedNewReadModels(env?: GeminiModelEnv): ManhuaNativeDeepReadModelId[] {
-  return Array.from(new Set([resolveManhuaNativeDeepReadModel(env), MANHUA_NATIVE_CURRENT_READ_MODEL, resolveManhuaNativeDeepReadUpgradeModel(env)]));
+  return Array.from(new Set([resolveManhuaNativeDeepReadModel(env), ...MANHUA_NATIVE_STANDARD_READ_MODEL_OPTIONS, resolveManhuaNativeDeepReadUpgradeModel(env)]));
 }
 
 /** Legacy wire selector retained for saved jobs. Actual structuring and aggregation use FlashX since 2026-10-05. */

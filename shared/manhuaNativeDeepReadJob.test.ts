@@ -340,8 +340,8 @@ describe("1110 模板学习读片模型 env 可配（不写死）", () => {
     expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-3.1-pro-preview" }, { env })).toThrow("未在服务端配置中启用");
     expect(() => parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-4-argon" }, { env })).toThrow("未在服务端配置中启用");
     // 1111：加整集精读升级档（缺省 Carbon，站长主动选择才发）
-    expect(nativeDeepReadAllowedNewReadModels(env)).toEqual(["gemini-3.9-flash", "gemini-3.8-flash", "gemini-4-carbon"]);
-    expect(nativeDeepReadAllowedNewReadModels({})).toEqual(["gemini-3.8-flash", "gemini-4-carbon"]);
+    expect(nativeDeepReadAllowedNewReadModels(env)).toEqual(["gemini-3.9-flash", "gemini-3.8-flash", "gemini-4-hydrogen", "gemini-4-carbon"]);
+    expect(nativeDeepReadAllowedNewReadModels({})).toEqual(["gemini-3.8-flash", "gemini-4-hydrogen", "gemini-4-carbon"]);
   });
   it("升级模型按配置：缺省同首读模型（不升级）；可单独覆盖", () => {
     expect(resolveManhuaNativeDeepReadEscalationModel({})).toBe("gemini-3.8-flash");
@@ -390,8 +390,13 @@ describe("1110 模板学习读片模型 env 可配（不写死）", () => {
 describe("1111 整集精读升级档：Argon 改 Carbon（新车道 -g4c，旧 -g4a 不变）", () => {
   const params = { url: "https://www.douyin.com/video/12345", batchSize: 1,
     nativeDeepReadConfirmed: true, nativeMaxCalls: 200, nativePlanLimit: 1 };
-  it("新学习可选项：3.8 Flash + Carbon，Argon 已退出", () => {
-    expect([...MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS]).toEqual(["gemini-3.8-flash", "gemini-4-carbon"]);
+  it("新学习可选项：标准档 3.8 Flash / Hydrogen（1113 选单）+ 升级档 Carbon，Argon 已退出", () => {
+    expect([...MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS]).toEqual(["gemini-3.8-flash", "gemini-4-hydrogen", "gemini-4-carbon"]);
+    // Hydrogen 可显式选用，且与 3.8 Flash 一样走双通道并发合同。
+    expect(parseNewNativeDeepReadJobConfirmation({ ...params, nativeReadModel: "gemini-4-hydrogen" }, { env: {} }).readModel).toBe("gemini-4-hydrogen");
+    expect(isNativeDeepReadCurrentContractModel("gemini-4-hydrogen", {})).toBe(true);
+    expect(isNativeDeepReadCurrentContractModel("gemini-3.8-flash", {})).toBe(true);
+    expect(isNativeDeepReadCurrentContractModel("gemini-4-carbon", {})).toBe(false);
     expect(MANHUA_NATIVE_NEW_READ_MODEL_OPTIONS as readonly string[]).not.toContain("gemini-4-argon");
     expect(MANHUA_NATIVE_CARBON_MODEL).toBe("gemini-4-carbon");
   });

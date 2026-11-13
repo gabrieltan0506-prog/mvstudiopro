@@ -36,7 +36,7 @@ describe("精读成本表汇率口径（1 USD = 7 CNY，kb/billing.md）", () =>
   });
 
   it("表内没有任何按 7.2 折算的残留单价", () => {
-    const usd = { "gemini-3.1-pro-preview": [1.25, 10], "gemini-3.8-flash": [0.3, 2.5], "gemini-4-argon": [4, 20], "gemini-4-carbon": [2, 10] } as const;
+    const usd = { "gemini-3.1-pro-preview": [1.25, 10], "gemini-3.8-flash": [0.3, 2.5], "gemini-4-argon": [4, 20], "gemini-4-carbon": [2, 10], "gemini-4-hydrogen": [1.5, 7.5] } as const;
     expect(Object.keys(NATIVE_DEEP_READ_MODEL_PRICES_PER_M).sort()).toEqual(Object.keys(usd).sort());
     for (const [model, [inUsd, outUsd]] of Object.entries(usd)) {
       const row = NATIVE_DEEP_READ_MODEL_PRICES_PER_M[model]!;
