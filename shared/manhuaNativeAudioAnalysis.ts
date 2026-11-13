@@ -29,7 +29,9 @@ export type ManhuaNativeAudioDirectModel = string;
  * 音轨内容与覆盖仍由内容门禁独立校验。Carbon 是否单列待首单真读核实（1111 交付报告未验证项）。
  */
 export function nativeDeepReadModelMayOmitAudioTokens(model: unknown): boolean {
-  return model === MANHUA_NATIVE_AUDIO_ARGON_MODEL || model === GEMINI_CARBON_MODEL;
+  // 1113：Hydrogen 同为 4 代。探针实测 Vertex 回执只列 VIDEO / TEXT，不单列 AUDIO；
+  // 缺这一项会让已付费的段缓存读不回来（「段缓存字段或对象身份不完整」），续学失效。
+  return model === MANHUA_NATIVE_AUDIO_ARGON_MODEL || model === GEMINI_CARBON_MODEL || model === "gemini-4-hydrogen";
 }
 
 /** 直读卡读取门认的模型：旧两代（3.1 Pro / Argon）+ 任何合法 Gemini 模型标识（配置出来的新模型，换配置后旧卡仍可读）。 */

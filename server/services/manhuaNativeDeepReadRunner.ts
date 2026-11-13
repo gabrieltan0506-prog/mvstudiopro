@@ -58,7 +58,7 @@ import {
   isNativeDeepReadCurrentContractModel,
   nativeDeepReadSegmentCacheIdentityModel,
   resolveManhuaNativeDeepReadModel,
-  resolveManhuaNativeDeepReadEscalationModel,
+  resolveManhuaNativeDeepReadEscalationModelFor,
   isNativeDeepReadCarbonLaneModel,
   nativeDeepReadCarbonRoutes,
   MANHUA_NATIVE_CARBON_MODEL,
@@ -6712,7 +6712,8 @@ async function executeNativeDeepReadBatch(
          * 只有「当前合同」读片（配置的缺省读片模型 / 3.8 Flash 旧车道）才升级，且升级模型与首读模型相同即不升级；
          * 在途的旧 Pro / Argon 任务保持原合同不升级。
          */
-        const escalationModel = resolveManhuaNativeDeepReadEscalationModel();
+        // 1113 站长令：Hydrogen 首读五发不过 → 固定改 3.8 Flash 重读。
+        const escalationModel = resolveManhuaNativeDeepReadEscalationModelFor(readModel);
         if (isNativeDeepReadCurrentContractModel(readModel) && escalationModel !== readModel) {
           console.warn(
             `[nativeDeepRead] 第${episode.episodeIndex}集第${input.segmentIndex + 1}段`
