@@ -25,7 +25,6 @@ const IMPLEMENTATION_FILE = "lib/copyText.ts";
  * 多出第二处就会让守门测试变红，防止例外文件继续长出新的裸写入。
  */
 const KNOWN_EXCEPTIONS: Record<string, number> = {
-  "pages/GodViewPage.tsx": 1,
 };
 const EXCEPTION_FILES = Object.keys(KNOWN_EXCEPTIONS);
 

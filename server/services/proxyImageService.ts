@@ -2440,20 +2440,6 @@ export async function generateImageGpt2WithImagenFallback(options: {
   return fallbackNanoBanana2FromPrompt(withProVisual, "9:16", L);
 }
 
-/** 深研报告场景配图：主路径 gpt-image-2，STRATEGIC 画风 + 试用水印。 */
-export async function generateDeepResearchSceneIllustration(options: {
-  caption: string;
-  imagePrompt: string;
-  isTrial?: boolean;
-}): Promise<string | null> {
-  return generateImageGpt2WithImagenFallback({
-    title: options.caption || "Strategic insight",
-    copywriting: [options.imagePrompt, options.caption].filter(Boolean).join("\n"),
-    mode: "STRATEGIC",
-    isTrial: options.isTrial,
-  });
-}
-
 /** 雙軌 · 生圖翻譯：AI Studio `gemini-3.1-pro`（`GEMINI_API_KEY`），與 Vertex `vertexGemini31ProGlobal` 並存。 */
 export type CallGemini31ProAiStudioOptions = {
   maxOutputTokens?: number;

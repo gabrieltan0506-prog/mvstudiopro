@@ -11,7 +11,6 @@ import ReportEditor from "@/components/ReportEditor";
 import { toast } from "sonner";
 import { TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePicker";
 import { optimizePdfSnapshotHtml } from "@/lib/pdfHtmlOptimize";
-import { RESEARCH_HUB_GOD_VIEW_PATH } from "@/lib/researchHubRoutes";
 
 import { copyTextWithToast } from "@/lib/copyText";
 /** 作品库阅读模式：PDF 只克隆此容器（封面 + 正文），避免整页 document 带入 Toast / #root 等污染 */
@@ -236,7 +235,6 @@ export default function MyReportsPage() {
   /** 供 PDF mutation onError 读取（避免 React state 闭包滞后） */
   const pdfRunReportIdRef = useRef<number | null>(null);
   // 取消任务（卡片级）：当前正在请求取消哪一份的 jobId（防止重复点击）
-  const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
   // 软删除（卡片级）：当前正在请求删除哪一份的 reportId
   const [deletingReportId, setDeletingReportId] = useState<number | null>(null);
 
@@ -425,7 +423,6 @@ export default function MyReportsPage() {
   }, [asyncPdfJobId, pdfExportPollQuery.data, resetPdfDownloadUi]);
 
   // 客户端 DOM 快照前先确保 thumbnailUrl 已落地（NULL 就 on-demand 补一张）。
-  const ensureCoverMutation = trpc.creations.ensureCover.useMutation();
 
   // ── HTML 交互版导出（PDF 之外的第二条下载路径） ─────────────────────────
   // 用户决策："直接让用户下载 PDF 跟 HTML 的选项就好，除非档案很大，超过 10 MB，
@@ -531,40 +528,6 @@ export default function MyReportsPage() {
       return hasProcessing ? 30000 : false;
     },
   });
-
-  // 取消正在跑的研报任务（status=processing）。
-  // ⚠️ 商业护栏（防恶意刷算力）：用户主动取消的任务**按规则不退还积分**。
-  //    系统故障 / 部署中断 / 进程崩溃才会幂等退还积分。
-  const cancelJobMutation = trpc.deepResearch.cancelJob.useMutation({
-    onSuccess: (result) => {
-      setCancellingJobId(null);
-      toast.success(result?.message || "任务已取消（按规则不退还积分）");
-      refetch();
-    },
-    onError: (err) => {
-      setCancellingJobId(null);
-      toast.error("取消失败：" + err.message);
-    },
-  });
-
-  const handleCancelJob = useCallback((report: Report) => {
-    if (!report.jobId) {
-      toast.error("该报告缺少 jobId，无法取消");
-      return;
-    }
-    if (cancellingJobId) return; // 防止并发取消
-    const ok = window.confirm(
-      `确定要取消任务「${report.lighthouseTitle || report.title}」吗？\n\n` +
-        `⚠️ 重要：用户主动取消的任务不退还积分。\n` +
-        `   此规则用于防止恶意消耗算力，请谨慎操作。\n\n` +
-        `如因系统故障 / 部署中断导致任务失败，\n` +
-        `积分会自动幂等退还至您的账户。\n\n` +
-        `确认主动取消？（不退还积分）`,
-    );
-    if (!ok) return;
-    setCancellingJobId(report.jobId);
-    cancelJobMutation.mutate({ jobId: report.jobId });
-  }, [cancelJobMutation, cancellingJobId]);
 
   const reports = (data?.reports ?? []) as Report[];
 
@@ -801,21 +764,7 @@ export default function MyReportsPage() {
     autoExitReadingAfterDownloadRef.current = true;
     beginMyReportsPdfAutoDebug();
 
-    // 0) thumbnailUrl=NULL 时先 on-demand 补一张 9:16 纯封面，避免 PDF 缺封面
-    if (!report.coverUrl) {
-      setDownloadStage("ensuring-cover");
-      downloadStageRef.current = "ensuring-cover";
-      toast.info("封面尚未生成，正在补一张 9:16 杂志封面…");
-      try {
-        await ensureCoverMutation.mutateAsync({ creationId: report.id });
-        // 后端写回 DB 后这里 refetch 一次，让 reading mode 拿到最新 coverUrl
-        await refetch();
-      } catch (e: any) {
-        // 封面补生失败不阻塞下载流程：报告主体 + recharts 仍能成像
-        console.warn("[MyReports] ensureCover 失败，PDF 将无封面继续生成：", e?.message);
-      }
-    }
-
+    // 1113：封面补生已下线；无封面时 PDF 直接无封面生成。
     // 1) 进阅读模式（按 selectedStyle 渲染）
     setPdfStyle(styleOf(report.id));
     setSelectedReport({
@@ -827,7 +776,7 @@ export default function MyReportsPage() {
     // 2) 切到 rendering 阶段，等 useEffect 触发 captureAndUploadSnapshot
     setDownloadStage("rendering");
     downloadStageRef.current = "rendering";
-  }, [beginMyReportsPdfAutoDebug, ensureCoverMutation, refetch, styleOf]);
+  }, [beginMyReportsPdfAutoDebug, styleOf]);
 
   const handleDownloadFromReadingMode = useCallback(async () => {
     if (!selectedReport?.id) {
@@ -845,20 +794,9 @@ export default function MyReportsPage() {
     toast.info("正在准备 PDF：一般报告约 1～3 分钟自动下载；若体积很大将自动改走云端队列。", { duration: 10_000 });
     beginMyReportsPdfAutoDebug();
 
-    // 阅读模式里没法直接读 reports 行的 coverUrl（用户可能已经被 ReportCoverCard
-    // 卸载了）；ensureCover 是幂等的，已存在直接 NOOP，不会重复扣 nano banana 配额。
-    setDownloadStage("ensuring-cover");
-    downloadStageRef.current = "ensuring-cover";
-    try {
-      await ensureCoverMutation.mutateAsync({ creationId: reportId });
-      await refetch();
-    } catch (e: any) {
-      console.warn("[MyReports] ensureCover 失败，PDF 将无封面继续生成：", e?.message);
-    }
-
     setDownloadStage("rendering");
     downloadStageRef.current = "rendering";
-  }, [beginMyReportsPdfAutoDebug, ensureCoverMutation, refetch, selectedReport?.id]);
+  }, [beginMyReportsPdfAutoDebug, selectedReport?.id]);
 
   const handleDownloadMd = () => {
     if (!selectedReport) return;
@@ -1231,12 +1169,6 @@ export default function MyReportsPage() {
             </h1>
             <p style={{ color: "rgba(61,44,20,0.55)", fontSize: 12, margin: "4px 0 0", fontWeight: 600 }}>AI 上帝视角 · 全景行业战报 · 历史数据资产</p>
           </div>
-          <button
-            onClick={() => navigate(RESEARCH_HUB_GOD_VIEW_PATH)}
-            style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 7, padding: "11px 22px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "none", color: "#fff7df", fontWeight: 900, fontSize: 13, cursor: "pointer", boxShadow: "0 6px 20px rgba(168,118,27,0.30)", flexShrink: 0 }}
-          >
-            <Sparkles size={14} />发起新战报
-          </button>
         </div>
 
         {isLoading && (
@@ -1249,13 +1181,7 @@ export default function MyReportsPage() {
         {!isLoading && reports.length === 0 && (
           <div style={{ textAlign: "center", padding: "80px 24px" }}>
             <div style={{ fontSize: 52, marginBottom: 16 }}>📭</div>
-            <p style={{ color: "rgba(61,44,20,0.55)", fontSize: 15, marginBottom: 24, fontWeight: 600 }}>作品库还是空的，发起第一份战报吧</p>
-            <button
-              onClick={() => navigate(RESEARCH_HUB_GOD_VIEW_PATH)}
-              style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "none", color: "#fff7df", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 20px rgba(168,118,27,0.30)" }}
-            >
-              <Crown size={15} />立即发起首份战报
-            </button>
+            <p style={{ color: "rgba(61,44,20,0.55)", fontSize: 15, marginBottom: 24, fontWeight: 600 }}>作品库还是空的</p>
           </div>
         )}
 
@@ -1273,7 +1199,6 @@ export default function MyReportsPage() {
                     report={report}
                     isDownloading={downloadingCardId === report.id}
                     isHtmlDownloading={htmlDownloadingCardId === report.id}
-                    isCancelling={!!report.jobId && cancellingJobId === report.jobId}
                     isDeleting={deletingReportId === report.id}
                     pdfStyle={styleOf(report.id)}
                     onPdfStyleChange={(next) => setStyleOf(report.id, next)}
@@ -1285,7 +1210,6 @@ export default function MyReportsPage() {
                     onEdit={() => setEditingReport(report)}
                     onDownload={() => void handleDownloadFromCard(report)}
                     onDownloadHtml={() => handleDownloadHtmlFromCard(report)}
-                    onCancel={() => handleCancelJob(report)}
                     onSoftDelete={() => handleSoftDelete(report)}
                   />
                 ))}
@@ -1308,8 +1232,8 @@ export default function MyReportsPage() {
 // ─── 封面卡片组件 ──────────────────────────────────────────────────────────────
 
 function ReportCoverCard({
-  report, onRead, onEdit, onDownload, onDownloadHtml, onCancel, onSoftDelete,
-  isDownloading, isHtmlDownloading, isCancelling, isDeleting,
+  report, onRead, onEdit, onDownload, onDownloadHtml, onSoftDelete,
+  isDownloading, isHtmlDownloading, isDeleting,
   pdfStyle, onPdfStyleChange,
 }: {
   report: Report;
@@ -1317,11 +1241,9 @@ function ReportCoverCard({
   onEdit: () => void;
   onDownload: () => void;
   onDownloadHtml: () => void;
-  onCancel: () => void;
   onSoftDelete: () => void;
   isDownloading?: boolean;
   isHtmlDownloading?: boolean;
-  isCancelling?: boolean;
   isDeleting?: boolean;
   pdfStyle: PdfStyleKey;
   onPdfStyleChange: (next: PdfStyleKey) => void;
@@ -1515,31 +1437,6 @@ function ReportCoverCard({
             <div style={{ fontSize: 11, color: "#d97706", textAlign: "center", padding: "4px 0 0", fontStyle: "italic" }}>
               约 15-30 分钟，完成后自动更新
             </div>
-            {report.jobId && (
-              <button
-                onClick={onCancel}
-                disabled={isCancelling}
-                title="主动取消任务（不退还积分，防止算力恶意消耗）"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 6,
-                  padding: "8px 0",
-                  borderRadius: 9,
-                  background: isCancelling ? "rgba(220,38,38,0.30)" : "rgba(220,38,38,0.10)",
-                  border: "1px solid rgba(220,38,38,0.40)",
-                  color: isCancelling ? "rgba(220,38,38,0.60)" : "#dc2626",
-                  fontSize: 11.5,
-                  fontWeight: 800,
-                  cursor: isCancelling ? "not-allowed" : "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                {isCancelling ? <Loader2 size={11} className="animate-spin" /> : <XCircle size={11} />}
-                {isCancelling ? "取消中…" : "✕ 取消任务（不退还积分）"}
-              </button>
-            )}
           </div>
         )}
         {report.status === "failed" && (
