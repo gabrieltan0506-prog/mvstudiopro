@@ -14154,7 +14154,7 @@ export default function PlatformPage() {
                                 void runManhuaTemplateLearnCloud(next.row, next.rank, next.seriesKey);
                               }}
                               title={manhuaLearnContinueControl.titleZh}
-                              className="rounded-full border border-white/15 bg-black/25 px-2 py-0.5 transition enabled:cursor-pointer enabled:hover:border-sky-200/50 enabled:hover:bg-sky-400/15 enabled:hover:text-sky-50 disabled:cursor-default"
+                              className="rounded-lg border border-sky-300/60 bg-sky-500/25 px-3 py-1.5 text-xs font-semibold text-sky-50 transition enabled:cursor-pointer enabled:hover:bg-sky-400/40 disabled:cursor-not-allowed disabled:border-white/15 disabled:bg-black/25 disabled:font-normal disabled:text-white/45"
                             >
                               {`原生精读 · ${manhuaLearnContinueControl.labelZh}`}
                             </button>
