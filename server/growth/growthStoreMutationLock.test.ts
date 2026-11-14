@@ -137,7 +137,8 @@ describe("growth mutation lease failure protection", () => {
     let captured = "";
     await withGrowthStoreMutationLock("seed", async () => { captured = await fs.readFile(lock, "utf8"); });
     await fs.writeFile(lock, captured.replace(/"token":"[^"]+"/, '"token":"paused-owner"'));
-    await ageAfterBoot(lock);
+    // 带本次开机 bootId 的锁：即使 mtime 极旧（时钟跳变/长时间无心跳）也不得按「开机前」回收。
+    await fs.utimes(lock, new Date(0), new Date(0));
     await expect(withGrowthStoreMutationLock("contender", async () => true, { waitTimeoutMs: 1000, staleAfterMs: 1000 })).rejects.toThrow("growth_store_mutation_lock_timeout");
     expect(JSON.parse(await fs.readFile(lock, "utf8")).token).toBe("paused-owner");
   });

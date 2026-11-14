@@ -99,6 +99,19 @@ describe("post-production resource ownership", () => {
     expect(timeline.indexOf("released")).toBeGreaterThan(timeline.indexOf("locked-wait"));
     expect(held).toBe(0);
   });
+  it("app machine: no priority lease while waiting for memory outside the locks", async () => {
+    const { withPostProdResources } = await import("./postProdResources");
+    let waits = 0; let leaseHeldDuringOutsideWait = false; let leased = false;
+    mocks.begin.mockImplementation(async () => { leased = true; return async () => { leased = false; }; });
+    mocks.available = 1024 ** 3;
+    mocks.delay = async () => { if (leased) leaseHeldDuringOutsideWait = true; if (++waits >= 3) mocks.available = 6 * 1024 ** 3; };
+    const work = vi.fn(async () => { expect(leased).toBe(true); return "done"; });
+    expect(await withPostProdResources("lease-order", new AbortController().signal, { phase: "new" }, work)).toBe("done");
+    expect(waits).toBe(3);
+    expect(leaseHeldDuringOutsideWait).toBe(false);
+    expect(mocks.begin).toHaveBeenCalledTimes(1);
+    expect(leased).toBe(false);
+  });
   it("lease loss aborts only the protected task and waits for its cleanup", async () => {
     const { withPostProdResources } = await import("./postProdResources");
     let lose!: () => void;

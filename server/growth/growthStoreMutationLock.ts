@@ -62,7 +62,7 @@ function systemBootTimeMs(now: number) {
   const uptimeSec = os.uptime();
   return Number.isFinite(uptimeSec) && uptimeSec > 0 ? now - uptimeSec * 1000 : null;
 }
-/** Heartbeat is at most every 30 s; demand two missed beats plus slack so a clock step cannot fake it. */
+/** Heartbeat is at most every 30 s; demand two missed beats plus slack. Locks carrying this boot's id never take this path; for id-less locks a large forward clock step early in boot could still misjudge, which is accepted as very unlikely. */
 const PREVIOUS_BOOT_MIN_AGE_MS = 65_000;
 const BOOT_TIME_TOLERANCE_MS = 1_000;
 

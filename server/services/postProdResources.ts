@@ -86,7 +86,14 @@ export async function withPostProdResources<T>(
   let sampling = false;
   try {
     combined.throwIfAborted();
-    releasePriority = await beginGrowthInteractiveWorkload(`post_prod:${jobId}`);
+    // 前台优先租约会让后台采集让路：工作机照旧开工即取；网站机改到「内存已足够」之后再取，
+    // 否则一个等不到内存的后期任务会靠心跳一直续着租约，采集被无限期让路（1114 独立审查发现）。
+    const takePriority = async () => { releasePriority ??= await beginGrowthInteractiveWorkload(`post_prod:${jobId}`); };
+    const dropPriority = async () => {
+      const held = releasePriority; releasePriority = undefined;
+      try { await held?.(); } catch { console.warn("[post-prod] priority lease cleanup deferred"); }
+    };
+    if (process.env.JOB_WORKER_ROLE === "rig") await takePriority();
     const memoryReady = async () => (await readResourceSnapshot(state)).availableBytes >= MIN_AVAILABLE_BYTES;
     /** 等内存；limitMs 未给时不设上限（只在未持有任何 growth 锁时使用）。 */
     const waitForMemory = async (limitMs?: number) => {
@@ -123,6 +130,7 @@ export async function withPostProdResources<T>(
     while (true) {
       await waitForMemory();
       combined.throwIfAborted();
+      await takePriority();
       state.phase = "waiting_growth";
       try {
         return await withGrowthCollectionExclusive(combined,
@@ -131,6 +139,8 @@ export async function withPostProdResources<T>(
             onLeaseLost: () => controller.abort(new Error("后期存储互斥租约续期失败，已停止本任务")) }));
       } catch (error) {
         if (!(error instanceof PostProdMemoryNotReady)) throw error;
+        // 回到锁外等内存期间不占前台优先租约，让后台采集照常进行。
+        await dropPriority();
         console.warn(`[post-prod] ${jobId} 持锁复核内存仍不足，已释放 growth 锁并在锁外继续等待`);
       }
     }
