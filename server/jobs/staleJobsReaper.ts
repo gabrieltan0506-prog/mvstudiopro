@@ -16,7 +16,7 @@ import { MANHUA_ASSEMBLE_LEDGER_TYPE } from "../services/manhuaAssembleBilling.j
  * 優先讀 `JOBS_STALE_MINUTES`，否則 `JOBS_STALE_RUNNING_MINUTES`（預設 **20** 分鐘）。
  * 下限 5、上限 10080（7 天），可用環境變數加大 PDF 等長任務的容忍度。
  */
-function resolveStaleWallMinutes(): number {
+export function resolveStaleWallMinutes(): number {
   const unified = Number(process.env.JOBS_STALE_MINUTES);
   if (Number.isFinite(unified)) {
     return Math.max(5, Math.min(10_080, Math.floor(unified)));
@@ -29,7 +29,7 @@ function resolveStaleWallMinutes(): number {
 }
 
 /** `queued` 可單獨用小時（歷史）；未設時與 {@link resolveStaleWallMinutes} 相同。 */
-function resolveQueuedStaleMinutes(): number {
+export function resolveQueuedStaleMinutes(): number {
   const rawH = Number(process.env.JOBS_STALE_QUEUED_HOURS);
   if (Number.isFinite(rawH)) {
     const hours = Math.max(1 / 60, Math.min(168, rawH));

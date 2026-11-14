@@ -8503,7 +8503,17 @@ export default function PlatformPage() {
       return String(queued.distilledMarkdown || "").trim();
     }
 
-    if(queued?.progressJobId && queued.progressJobId!==trackedJobId)throw Error("任务回执身份不一致，已停止后续处理");
+    // 同一份资料已在另一页处理中（1114）：服务端不建第二单，本页改跟原任务的进度与结果，不另计费
+    const attachedJobId = queued?.attachedToExistingJob && typeof queued.progressJobId === "string" && /^[\w-]{8,64}$/.test(queued.progressJobId)
+      ? queued.progressJobId : "";
+    if(queued?.progressJobId && queued.progressJobId!==trackedJobId && !attachedJobId)throw Error("任务回执身份不一致，已停止后续处理");
+    const followJobId = attachedJobId || trackedJobId;
+    if (attachedJobId) {
+      // 本页的请求编号没有建单，离页无须停止；停止按钮改为直接作用于跟进中的原任务
+      knowledgeCardPageTasks.finish(pageRequestId);
+      if(customNoteTrackedRequestRef.current?.jobId===trackedJobId)customNoteTrackedRequestRef.current=null;
+      toast.message("这份资料正在处理中，本页已接上原进度，完成后结果同步显示");
+    }
     const totalHint = Math.max(1, queued?.estimatedChunks || 1);
     args.onStatus?.(
       queued && queued.sourceChars > 0
@@ -8527,11 +8537,11 @@ export default function PlatformPage() {
       const tc = Number(out.distillTotalChunks) || totalHint;
       return `分段提炼 ${dc}/${tc} 段`;
     };
-    setCustomNoteDistillJobId(trackedJobId);
+    setCustomNoteDistillJobId(followJobId);
     // 提交请求在途时点中止：取得同一任务 ID 后请求停止，失败仍继续轮询并允许重试中止。
     if (customNoteUploadStopRef.current && args.files?.length) {
       try {
-        const response = await fetch(withLongJobsFlyDirect(`/api/jobs/knowledge-card/${encodeURIComponent(trackedJobId)}/cancel`), { method: "POST", credentials: "include" });
+        const response = await fetch(withLongJobsFlyDirect(`/api/jobs/knowledge-card/${encodeURIComponent(followJobId)}/cancel`), { method: "POST", credentials: "include" });
         const result = await response.json();
         if (!response.ok) throw new Error("中止请求未确认，请再点中止任务；不要重复提交精炼");
         setCustomNoteCancelRequested(Boolean(result.cancelled));
@@ -8541,9 +8551,9 @@ export default function PlatformPage() {
         toast.error(error instanceof Error ? error.message : "中止请求未确认，请再点中止任务");
       }
     }
-    const ownedJobId = trackedJobId;
+    const ownedJobId = followJobId;
     try {
-    const job = await pollJobUntilTerminal(trackedJobId, {
+    const job = await pollJobUntilTerminal(followJobId, {
         signal:pollController.signal,
         onUnavailable: error => {
           const message=knowledgeCardRecoveryMessage(error);
