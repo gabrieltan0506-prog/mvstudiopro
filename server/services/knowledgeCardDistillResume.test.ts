@@ -66,7 +66,10 @@ it('(ii) 一段失败不拖停其余段：其余段跑完并落盘，最后按�
   const run = (job: string) => knowledgeStructuredDistillContext.run(
     { evidence: b.store(`knowledge-card-distill/user-7/${job}`), resume: b.store('knowledge-card-distill/user-7/resume'), invoke: invoke as any },
     () => invokeDistillLlmPossiblyChunked({ sourceText: text, extraText: '', imageUrls: [], documents: [], modelName: 'glm-5.3-flashx', detailLevel: 'full', minSectionsTotal: 4 }));
-  await expect(run('job-a')).rejects.toThrow(/已完成 4\/5 段，1 段未完成/);
+  const failure = await run('job-a').catch(error => error);
+  expect(failure.message).toMatch(/已完成 4\/5 段，1 段未完成/);
+  expect(failure.knowledgeDistillDiagnostics).toHaveLength(1);
+  expect(failure.knowledgeDistillDiagnostics[0]).toMatchObject({ segment: 2, total: 5 });
   expect(invoke).toHaveBeenCalledTimes(5);
   failSecond = false;
   expect(await run('job-b')).toContain('## 饮食与活动配合');
@@ -100,3 +103,19 @@ it('双通道接手：一个通道全程余额不足（402），全部分段仍�
   expect(badCalls).toBeGreaterThan(0); expect(badCalls).toBeLessThanOrEqual(3);
   expect(logs.some(l => l.includes('reason=channel_down') && l.includes('channel=evolink'))).toBe(true);
 }, 60_000);
+
+it('失败诊断：按回执汇总类别、各跳通道与结果、各跳耗时、最后心跳距失败多久；不含正文/地址', async () => {
+  const { collectKnowledgeDistillDiagnostic, knowledgeDistillDiagnosticsOf } = await import('./knowledgeDistillDiagnostics');
+  const b = bucket(); const s = b.store('x');
+  await s.save('p/batch-0/route-glm-evolink.json', { state: 'interrupted', startedAt: '2026-11-14T00:00:00.000Z', interruptedAt: '2026-11-14T00:06:00.000Z', reason: '传输中断，见 https://api.example.com/v1' });
+  await s.save('p/batch-0/glm-evolink-heartbeat.json', { at: '2026-11-14T00:02:00.000Z' });
+  await s.save('p/batch-0/route-glm-openrouter.json', { state: 'failed', startedAt: '2026-11-14T00:06:00.000Z', endedAt: '2026-11-14T00:06:05.000Z', response: { status: 402, text: '{}' }, reason: 'HTTP 402' });
+  const d = await collectKnowledgeDistillDiagnostic(s, 'p/batch-0', new Error('图文整理的所有已配置通道均失败'), { segment: 29, total: 164, label: '史记 p300' }, new Date('2026-11-14T00:10:00.000Z'));
+  expect(d).toMatchObject({ segment: 29, total: 164, category: 'insufficient_credit', categoryZh: '该通道额度不足（HTTP 402）', lastHeartbeatAgoMs: 8 * 60_000 });
+  expect(d.hops).toEqual([
+    { route: 'glm-evolink', channel: 'evolink', family: 'glm', state: 'interrupted', reason: '传输中断，见 [地址]', durationMs: 6 * 60_000 },
+    { route: 'glm-openrouter', channel: 'openrouter', family: 'glm', state: 'failed', httpStatus: 402, reason: '该通道额度不足', durationMs: 5000 },
+  ]);
+  const wrapped = new Error('读档整理未完成', { cause: Object.assign(new Error('x'), { knowledgeDistillDiagnostics: [d] }) });
+  expect(knowledgeDistillDiagnosticsOf(wrapped)).toEqual([d]);
+});

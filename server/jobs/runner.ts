@@ -3957,6 +3957,10 @@ async function processPlatformJob(
       }, cancel);
       } catch (error) {
         cancel.signal.throwIfAborted();
+        // 管理员 Debug 面板直接看失败分段的诊断（类别/各跳/耗时/最后心跳）；普通用户只看中性错误文案。
+        const { knowledgeDistillDiagnosticsOf } = await import("../services/knowledgeDistillDiagnostics.js");
+        const diagnostics = knowledgeDistillDiagnosticsOf(error);
+        if (diagnostics?.length && platformJobId) await patchJobRunningProgress(platformJobId, { distillFailureDiagnostics: diagnostics }).catch(() => {});
         throw error;
       } finally {
         cancel.dispose();

@@ -951,6 +951,8 @@ async function startServer() {
         rawOutput,
         Boolean(ctx.user && resolveSiteOwnerOnlyAllowed(ctx.user)),
       ) as Record<string, unknown> | undefined;
+      // 读档失败诊断含通道/模型代号：只给站长账号，其他人（含任务本人）只看中性错误文案。
+      if (output && !(ctx.user && resolveSiteOwnerOnlyAllowed(ctx.user))) delete output.distillFailureDiagnostics;
 
       if (job.status === "succeeded" && output) {
         const taskId = typeof output.taskId === "string" ? output.taskId.trim() : "";

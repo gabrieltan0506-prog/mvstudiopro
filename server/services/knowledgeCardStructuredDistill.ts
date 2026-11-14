@@ -64,6 +64,8 @@ export async function invokeKnowledgeStructuredDistill(params: {
   // 上限取本任务读档总工位数（两路各 3 = 6，≤通道上限 16）：初始不挡任何请求；每次无心跳/429 该通道减半（6→3→1），成功逐次回升。
   const channelHealth=context.channelHealth||(context.channelHealth=createKnowledgeChannelHealth());
   const gates=context.gates||(context.gates={openrouter:new KnowledgeRateGate(Math.min(KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter,KNOWLEDGE_DISTILL_GATE_MAX)),evolink:new KnowledgeRateGate(Math.min(KNOWLEDGE_MODEL_CHANNEL_MAX.evolink,KNOWLEDGE_DISTILL_GATE_MAX))});
+  // 日志标签只取外层分段序号（「第 29/164 段（…）」→ seg-29of164），不带文件名。
+  const segment=(params.chunkLabel||'').match(/第\s*(\d+)\s*\/\s*(\d+)\s*段/),logLabel=segment?`seg-${segment[1]}of${segment[2]}`:undefined;
   const references=[...(params.pageImages||[]).map(p=>({...p,ocr:false})),...(params.ocrImages||[]).map(p=>({...p,ocr:true}))]
     .map(p=>({...p,url:canonicalImage(p.url)}));
   const uploaded=params.imageUrls.map(canonicalImage);
@@ -80,7 +82,7 @@ export async function invokeKnowledgeStructuredDistill(params: {
   const oldPlan=await context.evidence.read(`${root}/input.json`);
   if(oldPlan&&JSON.stringify(oldPlan)!==JSON.stringify(plan))throw Error('提炼原稿身份变化，禁止覆盖旧结果');
   if(!oldPlan)await context.evidence.save(`${root}/input.json`,plan);
-  let cursor=0,stopped=false;
+  let cursor=0,stopped=false;const lastPrefix:string[]=[];
   const outcomes=await Promise.allSettled(Array.from({length:knowledgeStageConcurrency(batches.length,{max:KNOWLEDGE_DISTILL_BATCH_CONCURRENCY_MAX})},async()=>{
     while(!stopped){
       const index=cursor++;if(index>=batches.length)return;
@@ -89,7 +91,7 @@ export async function invokeKnowledgeStructuredDistill(params: {
         const partial={...source,pages:batches[index].map(i=>source.pages[i])};
         // 路由每收到字节约 15 秒落一次心跳文件：借此续任务心跳，长单发只要有字节就不被判卡死。
         const withActivity=(prefix:string)=>({...context.evidence,prefix,save:async(key:string,value:unknown)=>{touchKnowledgeCardDistillActivity();await context.evidence.save(key,value);}});
-        let prefix=`${root}/batch-${index}`,evidence=withActivity(prefix);
+        let prefix=`${root}/batch-${index}`,evidence=withActivity(prefix);lastPrefix[index]=prefix;
         // 跨任务续做：批次身份 = 本批原文/参考页/附图/档位/阶段的 digest（与本任务号无关），只在同一用户根下查找。
         const shared=context.resume?`${context.resume.prefix}/${KNOWLEDGE_DISTILL_RESUME_VERSION}/json-${digest}/batch-${index}`:'';
         let saved=await evidence.read(`${prefix}/report.json`);
@@ -109,7 +111,7 @@ export async function invokeKnowledgeStructuredDistill(params: {
           // 不在新目录另起一笔（与同一任务恢复时完全相同的防重买保证）。回执均已闭合（明确失败）时本任务重新起算。
           const owner=await context.resume!.read(`${shared}/attempt.json`);
           if(owner&&owner.digest===digest&&typeof owner.prefix==='string'&&owner.prefix!==prefix&&(await context.evidence.read(`${owner.prefix}/raw.json`)||await hasUnresolvedKnowledgeReceipt(context.evidence,owner.prefix))){
-            prefix=owner.prefix;evidence=withActivity(prefix);
+            prefix=owner.prefix;evidence=withActivity(prefix);lastPrefix[index]=prefix;
             saved=await evidence.read(`${prefix}/report.json`);
           }else if(!owner||owner.prefix!==prefix)await context.resume!.save(`${shared}/attempt.json`,{digest,prefix,at:new Date().toISOString()});
         }
@@ -130,7 +132,7 @@ ${KNOWLEDGE_READING_INSTRUCTIONS}`;
           if(previous&&previous.digest!==digest)throw Error('提炼请求身份变化');
           if(!previous)await evidence.save(`${prefix}/request.json`,{digest,request});
           let raw=await evidence.read(`${prefix}/raw.json`);
-          if(!raw){raw=await (context.invoke||invokeKnowledgePublicationRoutes)(previous?.request||request,evidence,{gates,channelHealth,...(params.abortSignal?{fetch:(url:string|URL|Request,init?:RequestInit)=>fetch(url,{...init,signal:init?.signal?AbortSignal.any([init.signal,params.abortSignal!]):params.abortSignal})}:{})});await evidence.save(`${prefix}/raw.json`,raw);}
+          if(!raw){raw=await (context.invoke||invokeKnowledgePublicationRoutes)(previous?.request||request,evidence,{gates,channelHealth,logLabel,...(params.abortSignal?{fetch:(url:string|URL|Request,init?:RequestInit)=>fetch(url,{...init,signal:init?.signal?AbortSignal.any([init.signal,params.abortSignal!]):params.abortSignal})}:{})});await evidence.save(`${prefix}/raw.json`,raw);}
           const envelope=JSON.parse(raw.text),candidate=envelope.candidates?.[0];
           if(raw.status<200||raw.status>=300||candidate?.finishReason!=='STOP')throw Error('提炼JSON尚未完整返回，保留当前批次');
           const report=validateKnowledgeReview(JSON.parse(candidate.content.parts.map((p:{text?:string})=>p.text||'').join('')),partial,digest);
@@ -142,12 +144,17 @@ ${KNOWLEDGE_READING_INSTRUCTIONS}`;
         const report=validateKnowledgeReview(saved.report,partial,digest);
         const rendered:string[]=[];
         for(const page of report.pages)rendered.push(await bindKnowledgeDistillCautions(page,{
-          evidence,invoke:context.invoke,abortSignal:params.abortSignal,family:params.modelName===KNOWLEDGE_CARD_DISTILL_MODEL_GLM?'glm':'deepseek',
+          evidence,invoke:context.invoke,abortSignal:params.abortSignal,routeOverrides:{gates,channelHealth,logLabel},family:params.modelName===KNOWLEDGE_CARD_DISTILL_MODEL_GLM?'glm':'deepseek',
           channel:params.chainOverride?.[0]?.gateway==='evolink'?'evolink':'openrouter',
         }));
         outputs[index]=`# ${report.title}\n\n`+rendered.join('\n\n');
         if(shared)await context.resume!.save(`${shared}/rendered.json`,{digest,markdown:outputs[index],from:prefix});
-      }catch(error){stopped=true;throw error;}
+      }catch(error){
+        stopped=true;
+        // 失败诊断定位：记下本批实际使用的证据目录（可能是接回的前次目录），由上层汇总给管理员 Debug 面板。
+        if(error&&typeof error==='object'&&!(error as any).knowledgeDistillBatch)(error as any).knowledgeDistillBatch={prefix:`${root}/batch-${index}`,...(lastPrefix[index]?{prefix:lastPrefix[index]}:{})};
+        throw error;
+      }
     }
   }));
   const failed=outcomes.find((outcome):outcome is PromiseRejectedResult=>outcome.status==='rejected');

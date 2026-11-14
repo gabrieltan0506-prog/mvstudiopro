@@ -2556,12 +2556,19 @@ function resolveKnowledgeCardSourceText(existing: string, fileCount: number): st
   return merge ? text : undefined;
 }
 
+type KnowledgeDistillDiagnosticView = {
+  segment: number; total: number; label: string; category: string; categoryZh: string; failedAt: string; lastHeartbeatAgoMs?: number;
+  hops: { route: string; channel: string; family: string; state: string; httpStatus?: number; reason?: string; durationMs?: number }[];
+};
+
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [supervisorSessionReady, setSupervisorSessionReady] = useState(
     hasSupervisorSessionHint,
   );
   const [debugMode, setDebugMode] = useState(false);
+  /** 读档提炼失败诊断（服务端只对站长账号下发）：Debug 面板展示，普通用户不可见。 */
+  const [knowledgeDistillDiagnostics, setKnowledgeDistillDiagnostics] = useState<KnowledgeDistillDiagnosticView[]>([]);
   /** Debug 开启时加快轮询与刷新，让进度面板更接近即时 */
   const platformImageFlowPollIntervalMs = debugMode ? 650 : 2500;
   const compositeSheetLivePollIntervalMs = debugMode ? 380 : 850;
@@ -8578,7 +8585,11 @@ export default function PlatformPage() {
     });
     knowledgeCardPageTasks.finish(pageRequestId);
     knowledgeCardPageTasks.assertLive();
-    if (job.status === "failed") throw new Error(job.error || "提炼失败，请查看原任务");
+    if (job.status === "failed") {
+      const diagnostics = (job.output as { distillFailureDiagnostics?: KnowledgeDistillDiagnosticView[] } | undefined)?.distillFailureDiagnostics;
+      if (hasSupervisorOpsAccess && Array.isArray(diagnostics)) setKnowledgeDistillDiagnostics(diagnostics);
+      throw new Error(job.error || "提炼失败，请查看原任务");
+    }
     setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
     const out = (job.output || {}) as { distilledMarkdown?: string; distillModel?: string; epubPdfs?: Array<{ fileName: string; url: string }>; readingPreparation?:KnowledgeReadingProgress };
     readingFullMarkdownRef.current=String(out.distilledMarkdown||"").trim();
@@ -13178,6 +13189,24 @@ export default function PlatformPage() {
           </div>
         ) : null}
         {canShowPlatformDebug && debugMode ? <ApiErrorDebugPanel /> : null}
+        {canShowPlatformDebug && debugMode && knowledgeDistillDiagnostics.length ? (
+          <div className="mb-6 rounded-2xl border border-[#ff9c7a]/30 bg-[rgba(255,156,122,0.06)] p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#ffb59c]">读档提炼失败诊断 Debug</div>
+              <button onClick={() => setKnowledgeDistillDiagnostics([])} className="text-[10px] text-white/30 hover:text-white/60">清空</button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {knowledgeDistillDiagnostics.map(item => (
+                <div key={`${item.segment}-${item.failedAt}`} className="font-mono text-[11px] leading-5 text-[#d7d0ef]">
+                  <div className="text-[#ffb59c]">第 {item.segment}/{item.total} 段 · {item.categoryZh}{typeof item.lastHeartbeatAgoMs === "number" ? ` · 最后心跳距失败 ${Math.round(item.lastHeartbeatAgoMs / 1000)} 秒` : " · 无心跳记录"}</div>
+                  {item.hops.map(hop => (
+                    <div key={hop.route} className="pl-3">{hop.route}（{hop.family}@{hop.channel}）{hop.state}{hop.httpStatus ? ` HTTP ${hop.httpStatus}` : ""}{typeof hop.durationMs === "number" ? ` · ${Math.round(hop.durationMs / 1000)} 秒` : ""}{hop.reason ? ` · ${hop.reason}` : ""}</div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         {canShowPlatformDebug && debugMode ? (
           <GrowthSystemDebugPanel
             enabled={debugMode}

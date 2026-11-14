@@ -247,6 +247,8 @@ const real = {
   gates: undefined as Partial<Record<KnowledgeModelChannel, KnowledgeRateGate>> | undefined,
   /** 任务内共享的通道健康；不传则每次调用独立判断（审校等调用方行为不变）。 */
   channelHealth: undefined as KnowledgeChannelHealth | undefined,
+  /** 日志批次标签前缀（读档传外层分段序号如 seg-29of164；不含书名/正文）。 */
+  logLabel: undefined as string | undefined,
   streamBreakSameRouteRetries: KNOWLEDGE_STREAM_BREAK_SAME_ROUTE_RETRIES as number,
   streamBreakRepurchaseMax: KNOWLEDGE_STREAM_BREAK_REPURCHASE_MAX as number,
   log: (line: string) => console.info(line),
@@ -480,7 +482,7 @@ export async function invokeKnowledgePublicationRoutes(
   }
   const deps = { ...real, idleTimeoutMs: knowledgeRouteIdleTimeoutMs(), ...overrides };
   // 日志只带证据路径最后一段（如 batch-3 / consistency-0 / final-markdown-12），不含账号、稿件、正文与地址。
-  const batchLabel = evidence.prefix.split("/").slice(-1)[0] || "-";
+  const batchLabel = `${deps.logLabel ? `${deps.logLabel}/` : ""}${evidence.prefix.split("/").slice(-1)[0] || "-"}`;
   type HopState = { attempts: number; transient: number; repairs: number; skip?: string; lastClass?: KnowledgeRouteFailureClass; retryAfterMs?: number; breakRetries: number };
   const hops = new Map<string, HopState>();
   const hopOf = (model: string, channel: KnowledgeModelChannel) => `${routeModelFamily(model)}:${channel}`;
@@ -770,7 +772,8 @@ export async function invokeKnowledgePublicationRoutes(
         let gateOutcome: "ok" | "rate_limited" | "error" = "error";
         let gateReleased = false;
         const releaseGate = () => { if (gate && !gateReleased) { gateReleased = true; gate.release(gateOutcome); } };
-        try { await evidence.save(key, { requestDigest, route, model, state: "pending", startedAt: new Date().toISOString(), request: storedBody, imageSources: images, ...degraded }); }
+        const purchaseStartedAt = new Date().toISOString();
+        try { await evidence.save(key, { requestDigest, route, model, state: "pending", startedAt: purchaseStartedAt, request: storedBody, imageSources: images, ...degraded }); }
         catch (error) { releaseGate(); throw error; }
         attempts[routeModelFamily(model)][channel]+=1;
         let status: number | undefined;
@@ -807,7 +810,7 @@ export async function invokeKnowledgePublicationRoutes(
                 idleTimeoutMs: deps.idleTimeoutMs,
               });
             } else text = await readKnowledgeResponseBody(response, controller, onBytes, deps.idleTimeoutMs);
-            receipt = { requestDigest, route, model, state: "received", request: storedBody, response: { status, text: text.split(apiKey).join("[REDACTED]") }, imageSources: images, ...degraded, ...(retryAfterHeader ? { retryAfter: retryAfterHeader } : {}) };
+            receipt = { requestDigest, route, model, state: "received", purchaseStartedAt, endedAt: new Date().toISOString(), request: storedBody, response: { status, text: text.split(apiKey).join("[REDACTED]") }, imageSources: images, ...degraded, ...(retryAfterHeader ? { retryAfter: retryAfterHeader } : {}) };
             gateOutcome = classifyKnowledgeRouteFailure({ status: status!, text: "" }) === "rate_limited" ? "rate_limited" : "ok";
             releaseGate();
           await evidence.save(key, receipt);
@@ -824,11 +827,11 @@ export async function invokeKnowledgePublicationRoutes(
           const completedStream = await evidence.read(`${evidence.prefix}/${route}-response.json`);
           if (completedStream) {
             // 结束帧明确说明输出截断时已有永久回执，可按失败处理；不能把断流猜成同一种情况。
-            receipt = { requestDigest, route, model, state: "received", request: storedBody, response: completedStream, imageSources: images, ...degraded };
+            receipt = { requestDigest, route, model, state: "received", purchaseStartedAt, endedAt: new Date().toISOString(), request: storedBody, response: completedStream, imageSources: images, ...degraded };
             await evidence.save(key, receipt);
           } else {
             // 中断后是否计费未知，不能冒充“明确失败”立刻重购：先存 unknown，等迟到回执；到期仍无则归档 interrupted，允许切下一路补买一次。
-            const unknown = { requestDigest, route, model, state: "unknown", at: new Date().toISOString(), request: storedBody, status, reason: "传输或回执保存未闭合", imageSources: images, ...degraded };
+            const unknown = { requestDigest, route, model, state: "unknown", purchaseStartedAt, at: new Date().toISOString(), request: storedBody, status, reason: "传输或回执保存未闭合", imageSources: images, ...degraded };
             await evidence.save(key, unknown);
             if (deps.interruptionPolicy === "hold") throw new Error(`${route}传输或回执尚未闭合，未重复提交，原稿已保留`);
             const late = await awaitLateReceipt(route, deps.now());
@@ -932,7 +935,7 @@ export async function invokeKnowledgePublicationRoutes(
       else if (inspectKnowledgeRouteResponse(receipt.response).keyLimit) {
         deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=key_limit status=403 next=switch_channel`);
         markChannelDown(channel, "key_limit");
-      } else if ([401, 402, 403].includes(receipt.response?.status)) markChannelDown(channel, `http_${receipt.response.status}`);
+      } else if ([401, 402, 403].includes(receipt.response?.status)) markChannelDown(channel, receipt.response.status === 402 ? "insufficient_credit_http_402" : `http_${receipt.response.status}`);
       if (!(images.length && isImageInputRejection(receipt.response)) && !inspectKnowledgeRouteResponse(receipt.response).keyLimit && !(outputLimitedFamilies.has(routeModelFamily(model)) && /单次输出容量/.test(receipt.reason)))
         recordFailure(route, model, channel, classifyKnowledgeRouteFailure(receipt.response), classifyKnowledgeRouteFailure(receipt.response) === "rate_limited" ? knowledgeRetryAfterMs(receipt.retryAfter, receipt.response?.text, deps.now()) : undefined, receipt.reason);
       if(completeAnswerReceived&&request.generationConfig.responseMimeType==='text/markdown')markdownFailure=error instanceof Error?error:new Error(String(error));

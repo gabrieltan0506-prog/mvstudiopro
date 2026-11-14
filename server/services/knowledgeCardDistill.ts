@@ -1,5 +1,6 @@
 import { KNOWLEDGE_MODEL_CHANNEL_MAX, knowledgePooled, knowledgeStageConcurrency } from "../../shared/knowledgeConcurrency";
 import { knowledgeStructuredDistillContext, invokeKnowledgeStructuredDistill } from './knowledgeCardStructuredDistill';
+import { collectKnowledgeDistillDiagnostic, type KnowledgeDistillSegmentDiagnostic } from './knowledgeDistillDiagnostics';
 import type { KnowledgeRouteEvidence } from './knowledgePublicationRoutes';
 import { KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION, preserveKnowledgePendingResearch } from './knowledgeVerificationPolicy';
 import { KNOWLEDGE_NARRATIVE_STYLE } from '../../shared/knowledgeNarrativeStyle';
@@ -1688,6 +1689,16 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
   // 某段致命失败（额度/拒答/终止）：其它工位不再领新段
   let stopped = false;
   const structuredFailures: { index: number; error: unknown }[] = [];
+  const structuredDiagnostics: KnowledgeDistillSegmentDiagnostic[] = [];
+  /** 管理员可见的失败诊断（只读本批路由回执，不含正文/地址/密钥）；汇总失败不影响原错误。 */
+  const recordStructuredDiagnostic = async (idx: number, err: unknown) => {
+    const store = knowledgeStructuredDistillContext.getStore();
+    const batch = (err as { knowledgeDistillBatch?: { prefix?: string } } | null)?.knowledgeDistillBatch;
+    if (!store || !batch?.prefix) return;
+    try {
+      structuredDiagnostics.push(await collectKnowledgeDistillDiagnostic(store.evidence, batch.prefix, err, { segment: idx + 1, total: chunks.length, label: chunks[idx]!.label }));
+    } catch { /* 诊断尽力而为 */ }
+  };
   const worker = async (chain: readonly KnowledgeCardGatewayStep[]) => {
     while (!stopped && nextIdx < chunks.length) {
       params.abortSignal?.throwIfAborted();
@@ -1718,11 +1729,16 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
         if (!knowledgeStructuredDistillContext.getStore() || isKnowledgeCardCancelledError(err, params.abortSignal) || isSseContentSafetyError(err)
           || (!isSseIncompleteStreamError(err) && isFatalDistillError(err))) {
           stopped = true;
+          if (knowledgeStructuredDistillContext.getStore() && !isKnowledgeCardCancelledError(err, params.abortSignal)) {
+            await recordStructuredDiagnostic(idx, err);
+            if (err && typeof err === "object") (err as { knowledgeDistillDiagnostics?: unknown }).knowledgeDistillDiagnostics = structuredDiagnostics;
+          }
           throw err;
         }
         const message = err instanceof Error ? err.message : String(err);
         console.warn(`[knowledgeCardDistill] 第 ${idx + 1}/${chunks.length} 段未完成，其余段继续：${message.slice(0, 160)}`);
         structuredFailures.push({ index: idx, error: err });
+        await recordStructuredDiagnostic(idx, err);
         outputs[idx] = { ok: false, whereZh: `第 ${idx + 1}/${chunks.length} 段`, reasonZh: message.slice(0, 120) };
       }
       const ready = outputs[idx];
@@ -1742,7 +1758,9 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
   const failedWorker=chunkOutcomes.find((outcome):outcome is PromiseRejectedResult=>outcome.status === "rejected");
   if(failedWorker)throw failedWorker.reason;
   if (structuredFailures.length) {
-    throw new Error(knowledgeDistillPartialFailureMessage(chunks.length - structuredFailures.length, chunks.length), { cause: structuredFailures[0]!.error });
+    const partial = new Error(knowledgeDistillPartialFailureMessage(chunks.length - structuredFailures.length, chunks.length), { cause: structuredFailures[0]!.error });
+    (partial as { knowledgeDistillDiagnostics?: unknown }).knowledgeDistillDiagnostics = structuredDiagnostics.sort((a, b) => a.segment - b.segment);
+    throw partial;
   }
 
   // 审查 P1：只有真正成功的段进正文；全失败＝本次没有稿子，按失败结算
