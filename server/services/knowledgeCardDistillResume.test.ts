@@ -268,3 +268,30 @@ it('N3 两任务都在跑：A 的某段最终失败后租约标 failed，等待�
     () => invokeKnowledgeStructuredDistill(params('另一段原文。')))).rejects.toThrow('等待超时，本段未完成');
   expect(invokeD).not.toHaveBeenCalled();
 });
+
+it('M1 自动续做重新认领自己的租约时清掉 failed 标记：另一任务此后只能等待，不会把正在重做的段当成可接管而重复购买', async () => {
+  const b = versionedBucket(); const active = new Set(['job-a', 'job-b']);
+  const text = '短原文一段。';
+  const ctx = (job: string, invoke: any, extra: object = {}) => ({ evidence: b.store(`knowledge-card-distill/user-7/${job}`), resume: b.store('knowledge-card-distill/user-7/resume'), invoke, jobId: job, jobActive: async (id: string) => active.has(id), leaseWaitMs: 5, ...extra });
+  // 第一轮：A 的这一段最终失败，租约被标 failed
+  const failing = vi.fn(async () => { throw Error('各跳均失败（测试）'); });
+  await knowledgeStructuredDistillContext.run(ctx('job-a', failing), () => invokeKnowledgeStructuredDistill(params(text))).catch(() => undefined);
+  const leaseKey = Array.from(b.data.keys()).find(k => k.endsWith('/attempt.json'))!;
+  expect(b.data.get(leaseKey)).toMatchObject({ jobId: 'job-a', failed: true });
+  // 第二轮（同任务号自动续做）：A 重新认领并开始购买，购买在途
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  const retrying = vi.fn(async (request: any) => { await gate; return report(request); });
+  const a = knowledgeStructuredDistillContext.run(ctx('job-a', retrying), () => invokeKnowledgeStructuredDistill(params(text)));
+  await vi.waitFor(() => expect(retrying).toHaveBeenCalledTimes(1));
+  expect(b.data.get(leaseKey)).toMatchObject({ jobId: 'job-a', failed: false });
+  // B 到达同一段：必须等待 A，不购买
+  const invokeB = vi.fn(async (request: any) => report(request));
+  const bRun = knowledgeStructuredDistillContext.run(ctx('job-b', invokeB), () => invokeKnowledgeStructuredDistill(params(text)));
+  await new Promise(r => setTimeout(r, 40));
+  expect(invokeB).not.toHaveBeenCalled();
+  release();
+  expect(await a).toContain('明确的知识说明');
+  expect(await bRun).toContain('明确的知识说明');
+  expect(invokeB).not.toHaveBeenCalled();
+  expect(retrying).toHaveBeenCalledTimes(1);
+});
