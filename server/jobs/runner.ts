@@ -4526,6 +4526,22 @@ export async function runClaimedJob(
     } else if (resolveFailedJobDisposition(job, error) === "fail" && isKlingRetiredError(error)) {
       // 可灵停用：不重排（重排只会再被拒），直接失败；无服务端计费，无需退款。
       await markJobFailed(job.id, message);
+    } else if (job.type === "platform" && isRecord(job.input) && job.input.action === "knowledge_card_distill"
+      && isRecord(job.input.params) && job.input.params.billingPolicy === "interior-pages-v1") {
+      /**
+       * 图文手册读档提炼的失败处置（2026-11-14）：最多自动续做一次（attempts<2），且只在会「只补未完成段」时续做——
+       * 同一任务号的购买证据、用户级续做根与逐页备料缓存（同一文件不再转换/挑页）保证已完成段零模型调用复用。
+       * 内容安全、熔断（含两通道均不可用）与确定性失败直接终态，避免重排原样再烧一遍。续做期间任务回到 queued，
+       * 入队去重仍视为在途；计费只在成稿结算时发生，续做不新增扣费身份。
+       */
+      const { knowledgeDistillRequeuePlan } = await import("../services/knowledgeDistillDiagnostics.js");
+      const plan = (job.attempts ?? 0) < 2 ? knowledgeDistillRequeuePlan(error) : null;
+      if (plan) {
+        await patchJobRunningProgress(job.id, { distillResumeNotice: plan.notice, distillStage: "resuming", distillPercent: 0 }).catch(() => {});
+        await requeueJob(job.id, message);
+      } else {
+        await markJobFailed(job.id, message);
+      }
     } else if ((job.attempts ?? 0) < 2) {
       await requeueJob(job.id, message);
     } else {

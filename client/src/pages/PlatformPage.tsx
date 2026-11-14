@@ -8519,9 +8519,18 @@ export default function PlatformPage() {
     );
     const stageLabel = (out: {
       distillStage?: string; distillStageDone?: number; distillStageTotal?: number; distillFileName?: string;
+      distillPhase?: string; distillDoneChunks?: number; distillTotalChunks?: number; distillResumeNotice?: string;
+    }): string => {
+      // 服务端自动续做：说明只补未完成段，不让用户以为从头开始。
+      const resume = typeof out.distillResumeNotice === "string" && out.distillResumeNotice ? `${out.distillResumeNotice} · ` : "";
+      return resume + stageLabelBase(out);
+    };
+    const stageLabelBase = (out: {
+      distillStage?: string; distillStageDone?: number; distillStageTotal?: number; distillFileName?: string;
       distillPhase?: string; distillDoneChunks?: number; distillTotalChunks?: number;
     }): string => {
       const stage = out.distillStage || out.distillPhase || "";
+      if (stage === "resuming") return "准备续做";
       const done = Number(out.distillStageDone) || 0;
       const total = Number(out.distillStageTotal) || 0;
       if (stage === "converting") return `EPUB 转 PDF · ${out.distillFileName || ""}`;

@@ -81,3 +81,24 @@ export function knowledgeDistillDiagnosticsOf(error: unknown): KnowledgeDistillS
   }
   return undefined;
 }
+
+/**
+ * 读档提炼（手册结构化）失败后的自动续做策略（2026-11-14）：
+ * - 有续做根与稳定原稿身份（逐页备料缓存按文件字节复用 docKey/挑页/分段）后，同一任务重排只补未完成段，
+ *   已完成段按批次身份零模型调用复用；因此保留通用的「最多自动重排一次」。
+ * - 以下不重排、直接终态：用户取消（上层已先处理）、内容安全拒绝、熔断（连续失败/失败率/两通道均不可用）、
+ *   以及重排只会原样再失败的确定性错误（无内容、原稿/请求身份变化、额度不足、通道未配置等）。
+ * 返回 null 表示不重排；否则返回给用户看的中性续做文案。
+ */
+export function knowledgeDistillRequeuePlan(error: unknown): { notice: string } | null {
+  let incomplete: { completed: number; total: number } | undefined;
+  for (let current: any = error, depth = 0; current && depth < 6; current = current.cause, depth++) {
+    if (current.knowledgeDistillNoRequeue) return null;
+    if (current.code === 'sse_content_safety') return null;
+    const message = String(current.message || '');
+    if (/未能从文件|请先输入|旧版任务|原稿身份变化|请求身份变化|结果身份不符|结果过短|额度不足|通道不可用|未配置|内容被安全策略拦截|安全分类器拒答/.test(message)) return null;
+    if (!incomplete && current.knowledgeDistillIncomplete) incomplete = current.knowledgeDistillIncomplete;
+  }
+  const missing = incomplete ? incomplete.total - incomplete.completed : 0;
+  return { notice: missing > 0 ? `上次有 ${missing} 段未完成，正在自动续做，已完成的不重做` : '上次读档未完成，正在自动续做，已完成的不重做' };
+}

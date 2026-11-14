@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { KNOWLEDGE_MODEL_CHANNEL_MAX, knowledgePooled, knowledgeStageConcurrency } from "../../shared/knowledgeConcurrency";
 import { knowledgeStructuredDistillContext, invokeKnowledgeStructuredDistill } from './knowledgeCardStructuredDistill';
 import { collectKnowledgeDistillDiagnostic, type KnowledgeDistillSegmentDiagnostic } from './knowledgeDistillDiagnostics';
@@ -431,6 +432,13 @@ export async function extractKnowledgeCardUploads(
     onReadingSource?: (sourceKey: string, parts: string[]) => Promise<void>;
     /** EPUB 一转完就回调（后面提炼失败也能下载转好的 PDF） */
     onConvertedPdf?: (all: KnowledgeCardConvertedPdf[]) => void | Promise<void>;
+    /**
+     * 手册读档的逐页备料缓存（用户级续做根）：按原文件字节 sha256 + 档位缓存 EPUB 转换、逐页文字、挑页与页图结果。
+     * 同一任务被自动重排、或用户再提交同一份文件时，直接复用上次的原稿身份（docKey、参考页、分段），
+     * 不重新转换、不重新挑页——已完成分段的身份因此与上次完全一致，零模型调用复用（不依赖 Chromium 输出是否确定）。
+     */
+    documentCache?: KnowledgeRouteEvidence;
+    documentCacheModel?: string;
   } = {},
 ): Promise<KnowledgeCardExtractResult> {
   const docParts: string[] = [];
@@ -477,6 +485,22 @@ export async function extractKnowledgeCardUploads(
       continue;
     }
 
+    const cacheKey = options.documentCache && pagesEnabled && (isEpubFile(file.mimeType, file.fileName) || isPdfFile(file.mimeType, file.fileName))
+      ? `${options.documentCache.prefix}/documents/${KNOWLEDGE_DOCUMENT_CACHE_VERSION}-${createHash("sha256").update(buffer).digest("hex")}-${options.documentCacheModel || "default"}.json`
+      : "";
+    const cached = cacheKey ? await options.documentCache!.read(cacheKey).catch(() => null) : null;
+    if (cached && cached.version === KNOWLEDGE_DOCUMENT_CACHE_VERSION && cached.set?.docKey && Array.isArray(cached.set.pages)) {
+      const set = cached.set as KnowledgeCardDocumentPageSet;
+      methods.push(...(Array.isArray(cached.methods) ? cached.methods : []), `${name}:document_pages_resumed`);
+      const textReady = set.pages.map(p => p.text).filter(Boolean).join("\n\n").trim();
+      if (textReady) await options.onReadingSource?.(`file-${fileIndex}:${set.docKey}`, splitSourceTextForDistill(textReady, 5999));
+      if (cached.convertedPdf) { convertedPdfs.push(cached.convertedPdf); await options.onConvertedPdf?.(convertedPdfs.slice()); }
+      documents.push(set);
+      if (textReady) docParts.push(`【文件·${name}】\n${textReady}`);
+      continue;
+    }
+    const methodsBefore = methods.length;
+    let archivedPdf: KnowledgeCardConvertedPdf | undefined;
     let pdfBuffer: Buffer | null = null;
     let pdfDocKey: string | undefined;
     let mimeType = file.mimeType;
@@ -500,6 +524,7 @@ export async function extractKnowledgeCardUploads(
       if (options.userId && options.userId > 0) {
         const archived = await archiveConvertedEpubPdf({ pdf: converted.pdf, fileName: name, userId: options.userId, abortSignal: options.abortSignal });
         if (archived) {
+          archivedPdf = archived;
           convertedPdfs.push(archived);
           await options.onConvertedPdf?.(convertedPdfs.slice());
         }
@@ -526,6 +551,11 @@ export async function extractKnowledgeCardUploads(
         },
       });
       documents.push(set);
+      if (cacheKey) {
+        // 只记本文件的转换/备料说明（notice 等），复用时原样回放；缓存失败不影响本次读档。
+        await options.documentCache!.save(cacheKey, { version: KNOWLEDGE_DOCUMENT_CACHE_VERSION, set, methods: methods.slice(methodsBefore), ...(archivedPdf ? { convertedPdf: archivedPdf } : {}) })
+          .catch(error => console.warn(`[knowledgeCardDistill] 逐页备料缓存写入失败（不影响本次）：${String((error as Error)?.message || error).slice(0, 120)}`));
+      }
       const text = set.pages.map((pg) => pg.text).filter(Boolean).join("\n\n").trim();
       const ocrPages = set.pages.filter((pg) => pg.ocrImageUrl).length;
       if (text) {
@@ -1792,6 +1822,8 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
     const completed = outputs.filter(o => o?.ok).length;
     const partial = new Error(breaker.tripped ? knowledgeDistillBreakerMessage(completed, chunks.length) : knowledgeDistillPartialFailureMessage(completed, chunks.length), { cause: structuredFailures[0]?.error });
     (partial as { knowledgeDistillDiagnostics?: unknown }).knowledgeDistillDiagnostics = structuredDiagnostics.sort((a, b) => a.segment - b.segment);
+    // 供任务层决定是否自动续做：熔断（含两通道均不可用）不重排；部分段未完成可续做一次。
+    Object.assign(partial, { knowledgeDistillIncomplete: { completed, total: chunks.length }, ...(breaker.tripped ? { knowledgeDistillNoRequeue: `breaker:${breaker.tripped}` } : {}) });
     throw partial;
   }
 
@@ -1954,6 +1986,8 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
   };
 }
 
+/** 逐页备料缓存版本：转换、逐页文字、挑页或页图口径改变时递增。 */
+export const KNOWLEDGE_DOCUMENT_CACHE_VERSION = "document-pages-v1";
 /** 挑页结果缓存的合同版本；改挑页提示词或解析口径时递增，旧缓存自然失效。 */
 export const KNOWLEDGE_PAGE_SELECTION_CACHE_VERSION = "page-selection-v1";
 
@@ -1967,7 +2001,6 @@ export function knowledgeCardResumablePageSelector(modelName: string, abortSigna
   if (!context) return makeKnowledgeCardPageSelector(modelName, abortSignal);
   return async (sheets: KnowledgeCardContactSheet[], pageCount: number, onProgress?: (doneSheets: number, totalSheets: number) => void | Promise<void>) => {
     const identity = { version: KNOWLEDGE_PAGE_SELECTION_CACHE_VERSION, model: resolveKnowledgeCardDistillModel(modelName), pageCount, sheets: sheets.map((sheet) => ({ gcsUri: sheet.gcsUri, pageNumbers: sheet.pageNumbers })) };
-    const { createHash } = await import("node:crypto");
     const store = context.resume || context.evidence;
     const key = `${store.prefix}/page-selection/${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}.json`;
     const saved = await store.read(key);
@@ -2029,6 +2062,7 @@ export async function prepareKnowledgeCardCopy(input: {
           abortSignal: input.abortSignal,
           userId: input.userId,
           selectPages: input.userId ? knowledgeCardResumablePageSelector(modelName, input.abortSignal) : undefined,
+          ...(knowledgeStructuredDistillContext.getStore()?.resume ? { documentCache: knowledgeStructuredDistillContext.getStore()!.resume, documentCacheModel: modelName } : {}),
           onProgress: input.onExtractProgress,
           onReadingSource: input.onReadingSource,
           onConvertedPdf: input.onConvertedPdf,
