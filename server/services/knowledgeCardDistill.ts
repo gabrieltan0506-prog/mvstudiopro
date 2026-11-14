@@ -1,6 +1,7 @@
 import { KNOWLEDGE_MODEL_CHANNEL_MAX, knowledgePooled, knowledgeStageConcurrency } from "../../shared/knowledgeConcurrency";
 import { knowledgeStructuredDistillContext, invokeKnowledgeStructuredDistill } from './knowledgeCardStructuredDistill';
 import { collectKnowledgeDistillDiagnostic, type KnowledgeDistillSegmentDiagnostic } from './knowledgeDistillDiagnostics';
+import { knowledgeChannelSkipped } from './knowledgePublicationRoutes';
 import type { KnowledgeRouteEvidence } from './knowledgePublicationRoutes';
 import { KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION, preserveKnowledgePendingResearch } from './knowledgeVerificationPolicy';
 import { KNOWLEDGE_NARRATIVE_STYLE } from '../../shared/knowledgeNarrativeStyle';
@@ -1591,6 +1592,17 @@ export function buildPageAlignedChunks(
   return chunks;
 }
 
+/**
+ * 手册分段提炼熔断（取值偏保守）：连续 5 段失败，或已结束 ≥10 段中失败 ≥60%，或两个通道都被判不可用，即停止领取新段。
+ * 依据：正常运行里单段失败是零星的（各跳已在段内重试换路），连续 5 段都失败几乎只可能是系统性问题（合同写坏、余额、上游故障）；
+ * 「前 10 段失败 ≥6」覆盖交错成功但整体不可用的情况。在途段（每通道 3、共 ≤6）照常收尾，已完成段全部保存可续做。
+ */
+export const KNOWLEDGE_DISTILL_BREAKER_CONSECUTIVE = 5;
+export const KNOWLEDGE_DISTILL_BREAKER_MIN_FINISHED = 10;
+export const KNOWLEDGE_DISTILL_BREAKER_FAIL_RATIO = 0.6;
+export function knowledgeDistillBreakerMessage(completed: number, total: number): string {
+  return `多段连续未通过，已停止后续分段；已完成 ${completed}/${total} 段并已保存，重新提交同一份资料只补未完成段`;
+}
 /** 手册分段提炼部分失败的用户文案：只给段数，不带模型/通道细节（原始错误进日志与 cause）。 */
 export function knowledgeDistillPartialFailureMessage(completed: number, total: number): string {
   return `已完成 ${completed}/${total} 段，${total - completed} 段未完成；已完成部分已保存，重新提交同一份资料只补未完成段`;
@@ -1689,6 +1701,8 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
   // 某段致命失败（额度/拒答/终止）：其它工位不再领新段
   let stopped = false;
   const structuredFailures: { index: number; error: unknown }[] = [];
+  /** 熔断计数（按完成先后）：连续失败段数、已结束段数、失败段数。 */
+  const breaker = { consecutive: 0, finished: 0, failed: 0, tripped: "" };
   const structuredDiagnostics: KnowledgeDistillSegmentDiagnostic[] = [];
   /** 管理员可见的失败诊断（只读本批路由回执，不含正文/地址/密钥）；汇总失败不影响原错误。 */
   const recordStructuredDiagnostic = async (idx: number, err: unknown) => {
@@ -1725,9 +1739,12 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
       } catch (err) {
         // 手册结构化提炼：单段失败（超时、各跳均失败、写坏）不拖停其它段——在途与剩余段照常跑完、各自落盘，
         // 最后按「已完成/未完成」段数判本次失败；重新提交同一份资料只补未完成段（已完成段按内容身份零调用复用）。
-        // 取消、内容安全拒绝、额度/配置等致命错误继续跑只会多花钱：照旧叫停其它工位。
-        if (!knowledgeStructuredDistillContext.getStore() || isKnowledgeCardCancelledError(err, params.abortSignal) || isSseContentSafetyError(err)
-          || (!isSseIncompleteStreamError(err) && isFatalDistillError(err))) {
+        // 手册结构化提炼只在取消时整单立刻停；其余（含单段内容审核拒绝、单段 4xx）只算本段失败，
+        // 系统性问题由下面的熔断（连续失败/失败率/双通道均不可用）收口，不让一段拖垮整单。
+        // 旧裸 Markdown 读档保持原规则：取消、内容安全、致命配置/额度错误叫停其它工位。
+        const structured = Boolean(knowledgeStructuredDistillContext.getStore());
+        if (isKnowledgeCardCancelledError(err, params.abortSignal) || (!structured && (isSseContentSafetyError(err)
+          || (!isSseIncompleteStreamError(err) && isFatalDistillError(err))))) {
           stopped = true;
           if (knowledgeStructuredDistillContext.getStore() && !isKnowledgeCardCancelledError(err, params.abortSignal)) {
             await recordStructuredDiagnostic(idx, err);
@@ -1740,6 +1757,20 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
         structuredFailures.push({ index: idx, error: err });
         await recordStructuredDiagnostic(idx, err);
         outputs[idx] = { ok: false, whereZh: `第 ${idx + 1}/${chunks.length} 段`, reasonZh: message.slice(0, 120) };
+      }
+      if (knowledgeStructuredDistillContext.getStore()) {
+        const ok = Boolean(outputs[idx]?.ok);
+        breaker.finished += 1; if (!ok) breaker.failed += 1;
+        breaker.consecutive = ok ? 0 : breaker.consecutive + 1;
+        const health = knowledgeStructuredDistillContext.getStore()?.channelHealth;
+        const bothDown = Boolean(health) && (["openrouter", "evolink"] as const).every(c => knowledgeChannelSkipped(health, c, Date.now()));
+        const reason = breaker.consecutive >= KNOWLEDGE_DISTILL_BREAKER_CONSECUTIVE ? `consecutive=${breaker.consecutive}`
+          : breaker.finished >= KNOWLEDGE_DISTILL_BREAKER_MIN_FINISHED && breaker.failed / breaker.finished >= KNOWLEDGE_DISTILL_BREAKER_FAIL_RATIO ? `failed=${breaker.failed}/${breaker.finished}`
+          : bothDown ? "both_channels_down" : "";
+        if (reason && !breaker.tripped) {
+          breaker.tripped = reason; stopped = true;
+          console.warn(`[knowledgeCardDistill] 熔断：${reason}，停止领取新分段（在途分段照常收尾）`);
+        }
       }
       const ready = outputs[idx];
       await params.onReadingChunk?.({index:idx,total:chunks.length,markdown:ready?.ok ? ready.markdown : "",...(!ready?.ok ? {error:"本段未读取成功"} : {})});
@@ -1757,8 +1788,9 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
 
   const failedWorker=chunkOutcomes.find((outcome):outcome is PromiseRejectedResult=>outcome.status === "rejected");
   if(failedWorker)throw failedWorker.reason;
-  if (structuredFailures.length) {
-    const partial = new Error(knowledgeDistillPartialFailureMessage(chunks.length - structuredFailures.length, chunks.length), { cause: structuredFailures[0]!.error });
+  if (structuredFailures.length || breaker.tripped) {
+    const completed = outputs.filter(o => o?.ok).length;
+    const partial = new Error(breaker.tripped ? knowledgeDistillBreakerMessage(completed, chunks.length) : knowledgeDistillPartialFailureMessage(completed, chunks.length), { cause: structuredFailures[0]?.error });
     (partial as { knowledgeDistillDiagnostics?: unknown }).knowledgeDistillDiagnostics = structuredDiagnostics.sort((a, b) => a.segment - b.segment);
     throw partial;
   }
@@ -1930,7 +1962,7 @@ export const KNOWLEDGE_PAGE_SELECTION_CACHE_VERSION = "page-selection-v1";
  * 同一用户证据根下，按目录页对象（随原稿内容寻址）+ 页数 + 档位缓存挑页结果；只有全部目录组都扫读成功才落盘，
  * 部分失败的残缺挑页不固化。非手册（无证据上下文）照旧每次扫读。
  */
-function knowledgeCardResumablePageSelector(modelName: string, abortSignal?: AbortSignal) {
+export function knowledgeCardResumablePageSelector(modelName: string, abortSignal?: AbortSignal) {
   const context = knowledgeStructuredDistillContext.getStore();
   if (!context) return makeKnowledgeCardPageSelector(modelName, abortSignal);
   return async (sheets: KnowledgeCardContactSheet[], pageCount: number, onProgress?: (doneSheets: number, totalSheets: number) => void | Promise<void>) => {
@@ -1958,7 +1990,9 @@ function knowledgeCardResumablePageSelector(modelName: string, abortSignal?: Abo
 export async function prepareKnowledgeCardCopy(input: {
   publicationEvidence?: KnowledgeRouteEvidence;
   /** 跨任务续做根（按用户）：已完成批次与挑页结果按内容身份复用；不传则只按本任务证据恢复 */
-  publicationResumeEvidence?: KnowledgeRouteEvidence;
+  publicationResumeEvidence?: KnowledgeRouteEvidence & { readVersioned?: (key: string) => Promise<{ value: any; generation: string } | null>; saveIfGeneration?: (key: string, value: unknown, generation: string) => Promise<boolean> };
+  /** 本任务号与「另一任务是否仍在运行」判断：续做租约用 */
+  publicationJob?: { jobId: string; jobActive: (jobId: string) => Promise<boolean> };
   sourceText?: string;
   files?: KnowledgeCardUploadFile[];
   forceDistill?: boolean;
@@ -1979,7 +2013,7 @@ export async function prepareKnowledgeCardCopy(input: {
   abortSignal?: AbortSignal;
 }): Promise<PrepareKnowledgeCardCopyResult> {
   if (input.publicationEvidence && !knowledgeStructuredDistillContext.getStore())
-    return knowledgeStructuredDistillContext.run({evidence:input.publicationEvidence,...(input.publicationResumeEvidence?{resume:input.publicationResumeEvidence}:{})},()=>prepareKnowledgeCardCopy({...input,publicationEvidence:undefined,publicationResumeEvidence:undefined}));
+    return knowledgeStructuredDistillContext.run({evidence:input.publicationEvidence,...(input.publicationResumeEvidence?{resume:input.publicationResumeEvidence}:{}),...(input.publicationJob?{jobId:input.publicationJob.jobId,jobActive:input.publicationJob.jobActive}:{})},()=>prepareKnowledgeCardCopy({...input,publicationEvidence:undefined,publicationResumeEvidence:undefined,publicationJob:undefined}));
   // 已经取消就别起步：抽取、挑页、提炼一律不做
   input.abortSignal?.throwIfAborted();
   const modelName = resolveKnowledgeCardDistillModel(input.distillModel);

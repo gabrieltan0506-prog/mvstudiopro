@@ -10,7 +10,7 @@ type Page=KnowledgeReview['pages'][number];
 /** 只确定疑点所在章节；正文与疑点原句始终由程序取原值，模型不能改写。 */
 export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:KnowledgeRouteEvidence;invoke?:typeof invokeKnowledgePublicationRoutes;family:'glm'|'deepseek';channel:'openrouter'|'evolink';abortSignal?:AbortSignal;
  /** 读档任务共享的通道健康/并发闸/日志标签：某通道已判不可用（如余额不足 402）时直接从另一通道起步，不逐个先撞。 */
- routeOverrides?:Pick<NonNullable<Parameters<typeof invokeKnowledgePublicationRoutes>[2]>,'gates'|'channelHealth'|'logLabel'>}) {
+ routeOverrides?:Pick<NonNullable<Parameters<typeof invokeKnowledgePublicationRoutes>[2]>,'gates'|'channelHealth'|'logLabel'|'signal'>}) {
  options.abortSignal?.throwIfAborted();
  if(!page.reading)throw Error('提炼JSON缺少章节结构');
  const body=knowledgeReadingMarkdown(page.reading).replace(/^### /gm,'## ').replace(/^> (?!〔参考原页)/gm,'说明：');
@@ -103,7 +103,7 @@ export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:K
        if(dispatched&&value?.state==='pending'&&/\/route-[^/]+\.json$/.test(key))throw Error('关联请求已有一次派发，禁止自动重购');
        await evidence.save(key,value);
       }};
-      raw=await (options.invoke||invokeKnowledgePublicationRoutes)(old?.request||request,guardedEvidence,{...options.routeOverrides,fetch:async(url,init)=>{
+      raw=await (options.invoke||invokeKnowledgePublicationRoutes)(old?.request||request,guardedEvidence,{...options.routeOverrides,...(options.abortSignal?{signal:options.abortSignal}:{}),fetch:async(url,init)=>{
        if(dispatched)throw Error('关联请求已有一次派发，禁止自动重购');dispatched=true;
        return fetch(url,{...init,signal:options.abortSignal?(init?.signal?AbortSignal.any([init.signal,options.abortSignal]):options.abortSignal):init?.signal});
       }});

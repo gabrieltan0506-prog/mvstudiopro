@@ -37,6 +37,8 @@ export type KnowledgeModelRequest = {
   /** 篇幅容差覆盖：审校稿按 KNOWLEDGE_BUDGET_TOLERANCE；篇幅压缩请求传 0（必须 ≤maxChars，否则切下一跳）。 */
   budgetTolerance?: number;
   researchOnly?: true;
+  /** 仅读档提炼请求带：启用 reading 写法差异的无损归一（见 restoreKnowledgeReviewStructure）；审校/统稿/排版不带，保持原校验。 */
+  readingNormalization?: "distill-v1";
   researchRequired?: boolean;
   researchAfterReview?: true;
   researchPages?: { id: string; headline: string; body?: string }[];
@@ -51,14 +53,35 @@ export type KnowledgeRouteEvidence = {
 };
 export type KnowledgeRoute = string;
 /**
- * 调用方任务内跨批次共享的通道健康（读档提炼按任务一份）：某通道整体不可用（key limit、401/402/403 鉴权或余额拒绝、
- * 连续两发无心跳）即标 down，此后其余批次在另一通道仍可购买时直接从另一通道起步，不再每批先撞一次；
- * 两个通道都 down 时照常按原顺序尝试（不因标记而无路可走）。
+ * 调用方任务内跨批次共享的通道健康（读档提炼按任务一份）。判「整个通道不可用」需要通道级证据：
+ * - 402 余额不足、OpenRouter key limit：一次即判（报文本身就是账户级）；
+ * - 401/403（非 key limit、非内容审核 flagged）：同一通道在 ≥2 个不同分段出现才判；
+ * - 无心跳：同一通道在 10 分钟窗口内 ≥3 次且窗口内该通道无任何成功才判（并发下同一时刻两段卡住不足以判死）。
+ * 判 down 后其余批次在另一通道仍可购买时直接从另一通道起步；两个通道都 down 时照常按原顺序尝试。
+ * down 可恢复：冷却 5 分钟后放行一发探测，成功即恢复，失败再冷却。
  */
-export type KnowledgeChannelHealth = { down: Set<KnowledgeModelChannel>; noHeartbeat: Record<KnowledgeModelChannel, number> };
-export const createKnowledgeChannelHealth = (): KnowledgeChannelHealth => ({ down: new Set(), noHeartbeat: { openrouter: 0, evolink: 0 } });
-/** 连续几发无心跳判该通道整体不可用。 */
-export const KNOWLEDGE_CHANNEL_DOWN_AFTER_NO_HEARTBEAT = 2;
+export type KnowledgeChannelHealth = {
+  down: Map<KnowledgeModelChannel, { since: number; until: number; probing: boolean; cause: string }>;
+  noHeartbeatAt: Record<KnowledgeModelChannel, number[]>;
+  lastSuccessAt: Record<KnowledgeModelChannel, number>;
+  authRejectSegments: Record<KnowledgeModelChannel, Set<string>>;
+};
+export const createKnowledgeChannelHealth = (): KnowledgeChannelHealth => ({
+  down: new Map(), noHeartbeatAt: { openrouter: [], evolink: [] }, lastSuccessAt: { openrouter: 0, evolink: 0 },
+  authRejectSegments: { openrouter: new Set(), evolink: new Set() },
+});
+export const KNOWLEDGE_CHANNEL_NO_HEARTBEAT_WINDOW_MS = 10 * 60_000;
+export const KNOWLEDGE_CHANNEL_DOWN_AFTER_NO_HEARTBEAT = 3;
+export const KNOWLEDGE_CHANNEL_DOWN_AFTER_AUTH_SEGMENTS = 2;
+export const KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS = 5 * 60_000;
+/** 该通道此刻是否按 down 跳过；冷却到期时放行一发探测（返回 false 并占住探测位）。 */
+export function knowledgeChannelSkipped(health: KnowledgeChannelHealth | undefined, channel: KnowledgeModelChannel, now: number, claimProbe = false): boolean {
+  const state = health?.down.get(channel);
+  if (!state) return false;
+  if (state.probing || now < state.until) return true;
+  if (claimProbe) state.probing = true;
+  return false;
+}
 class KnowledgeRoutesExhaustedError extends Error {
   constructor(message: string, readonly traces: unknown[]) { super(message); }
 }
@@ -187,12 +210,29 @@ export const KNOWLEDGE_STREAM_BREAK_SAME_ROUTE_RETRIES = 0;
 export const KNOWLEDGE_STREAM_BREAK_REPURCHASE_MAX = 1;
 /**
  * 本链「无心跳」阈值：连续这么久收不到任何字节即判断流（只作用于 knowledgePublicationRoutes，不改全局 GLM_STREAM_IDLE_TIMEOUT_MS）。
- * 缺省 180 秒；env KNOWLEDGE_ROUTE_IDLE_TIMEOUT_MS 可调，夹在 60 秒–600 秒之间（低于 60 秒易误杀尚未回响应头的正常请求，
- * 高于 600 秒即回到旧的 10 分钟空等）。
+ * 缺省 180 秒；env KNOWLEDGE_ROUTE_IDLE_TIMEOUT_MS 可调，夹在 60 秒–300 秒之间（低于 60 秒易误杀尚未回响应头的正常请求；
+ * 高于 300 秒时 undici 自身的 300 秒头/体超时先触发，不再按本规则计无心跳）。
  */
 export const KNOWLEDGE_ROUTE_IDLE_TIMEOUT_DEFAULT_MS = 180_000;
 export const KNOWLEDGE_ROUTE_IDLE_TIMEOUT_MIN_MS = 60_000;
-export const KNOWLEDGE_ROUTE_IDLE_TIMEOUT_MAX_MS = 600_000;
+/**
+ * 「仅保活」阈值（站长 2026-11-14：连续 15 分钟只有空讯息就换通道）：流式读取中连续这么久没有任何实质增量
+ * （正文内容或推理/思考增量的数据帧），即使期间一直有保活注释（如 `: OPENROUTER PROCESSING`）或空帧，也视同无心跳中断。
+ * 缺省 15 分钟；env KNOWLEDGE_ROUTE_KEEPALIVE_ONLY_TIMEOUT_MS 可调，夹在 5–60 分钟（下限须大于无字节阈值上限 300 秒，
+ * 否则保活规则会先于无字节规则触发；上限 60 分钟防止退回无限空等）。
+ * undici 的 bodyTimeout 计的是两次收到数据之间的间隔，保活字节会重置它，所以有保活时底层不会先截断，本规则才生效。
+ * 只作用于 SSE 流；非流式回包（只在上游回错误体或非 SSE 时出现）没有保活/实质之分，任何字节都算心跳，只受无字节阈值约束。
+ */
+export const KNOWLEDGE_ROUTE_KEEPALIVE_ONLY_DEFAULT_MS = 15 * 60_000;
+export const KNOWLEDGE_ROUTE_KEEPALIVE_ONLY_MIN_MS = 5 * 60_000;
+export const KNOWLEDGE_ROUTE_KEEPALIVE_ONLY_MAX_MS = 60 * 60_000;
+export function knowledgeRouteKeepaliveOnlyTimeoutMs(env: string | undefined = process.env.KNOWLEDGE_ROUTE_KEEPALIVE_ONLY_TIMEOUT_MS): number {
+  const value = Number(env);
+  if (!String(env ?? "").trim() || !Number.isFinite(value)) return KNOWLEDGE_ROUTE_KEEPALIVE_ONLY_DEFAULT_MS;
+  return Math.min(KNOWLEDGE_ROUTE_KEEPALIVE_ONLY_MAX_MS, Math.max(KNOWLEDGE_ROUTE_KEEPALIVE_ONLY_MIN_MS, Math.floor(value)));
+}
+/** 上限 300 秒：fetch（undici）缺省 headersTimeout/bodyTimeout 均为 300 秒，更大的阈值会先被它们打断且不计为无心跳。 */
+export const KNOWLEDGE_ROUTE_IDLE_TIMEOUT_MAX_MS = 300_000;
 export function knowledgeRouteIdleTimeoutMs(env: string | undefined = process.env.KNOWLEDGE_ROUTE_IDLE_TIMEOUT_MS): number {
   const value = Number(env);
   if (!String(env ?? "").trim() || !Number.isFinite(value)) return KNOWLEDGE_ROUTE_IDLE_TIMEOUT_DEFAULT_MS;
@@ -240,6 +280,8 @@ const real = {
   lateReceiptWaitMs: KNOWLEDGE_LATE_RECEIPT_WAIT_MS,
   /** 无心跳阈值（调用时读 env）；测试可覆盖。 */
   idleTimeoutMs: knowledgeRouteIdleTimeoutMs(),
+  /** 仅保活阈值（调用时读 env）；测试可覆盖。 */
+  keepaliveOnlyTimeoutMs: knowledgeRouteKeepaliveOnlyTimeoutMs(),
   /**
    * 调用方（如读档提炼任务）按通道共享的自适应并发闸（复用 KnowledgeRateGate）：每次购买前占位；
    * 429 或无心跳中断记 rate_limited → 该通道本任务并发减半，成功逐次回升。不传则不限（审校等调用方行为不变）。
@@ -249,6 +291,11 @@ const real = {
   channelHealth: undefined as KnowledgeChannelHealth | undefined,
   /** 日志批次标签前缀（读档传外层分段序号如 seg-29of164；不含书名/正文）。 */
   logLabel: undefined as string | undefined,
+  /**
+   * 调用方取消信号：每次购买前、退避与等迟到回执的每一轮都检查；已取消则不再发起新购买、不再等迟到回执
+   * （已发出那一发的 unknown 回执照旧保留），立即抛出取消。也接到在途请求上。
+   */
+  signal: undefined as AbortSignal | undefined,
   streamBreakSameRouteRetries: KNOWLEDGE_STREAM_BREAK_SAME_ROUTE_RETRIES as number,
   streamBreakRepurchaseMax: KNOWLEDGE_STREAM_BREAK_REPURCHASE_MAX as number,
   log: (line: string) => console.info(line),
@@ -361,7 +408,7 @@ function validateAnswer(content: string, request: KnowledgeModelRequest, sources
     // 旧提示词未明确来源层级。仅空根数组没有内容可丢失；非空来源仍由严格合同拒收。
     if (candidate.kind === "knowledge_publication_v1" && Array.isArray(candidate.sources) && candidate.sources.length === 0)
       candidate = Object.fromEntries(Object.entries(candidate).filter(([key]) => key !== "sources"));
-    const restored = restoreKnowledgeReviewStructure(candidate, source.source, inputs.some(p=>Array.isArray(p.finalVerification)) && source.source.pages.every((p:any)=>!p.imageUrl));
+    const restored = restoreKnowledgeReviewStructure(candidate, source.source, inputs.some(p=>Array.isArray(p.finalVerification)) && source.source.pages.every((p:any)=>!p.imageUrl), request.readingNormalization === "distill-v1");
     adjustments.push(...restored.adjustments);
     const adjusted = adjustKnowledgeReviewPresentation(restored.value, source.source, request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_DESIGN_MARKER)), request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_DECORATION_MARKER)));
     adjustments.push(...adjusted.adjustments);
@@ -480,7 +527,7 @@ export async function invokeKnowledgePublicationRoutes(
       return normalized;
     }
   }
-  const deps = { ...real, idleTimeoutMs: knowledgeRouteIdleTimeoutMs(), ...overrides };
+  const deps = { ...real, idleTimeoutMs: knowledgeRouteIdleTimeoutMs(), keepaliveOnlyTimeoutMs: knowledgeRouteKeepaliveOnlyTimeoutMs(), ...overrides };
   // 日志只带证据路径最后一段（如 batch-3 / consistency-0 / final-markdown-12），不含账号、稿件、正文与地址。
   const batchLabel = `${deps.logLabel ? `${deps.logLabel}/` : ""}${evidence.prefix.split("/").slice(-1)[0] || "-"}`;
   type HopState = { attempts: number; transient: number; repairs: number; skip?: string; lastClass?: KnowledgeRouteFailureClass; retryAfterMs?: number; breakRetries: number };
@@ -498,10 +545,21 @@ export async function invokeKnowledgePublicationRoutes(
     deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=${cls} attempt=${h.attempts} next=${h.skip ? "switch_hop" : "same_hop_retry"}${detail ? ` detail=${detail}` : ""}`);
   };
   const markChannelDown = (channel: KnowledgeModelChannel, why: string) => {
-    if (!deps.channelHealth || deps.channelHealth.down.has(channel)) return;
-    deps.channelHealth.down.add(channel);
-    deps.log(`[knowledgeRoute] batch=${batchLabel} channel=${channel} reason=channel_down cause=${why} next=other_channel_takes_over`);
+    const health = deps.channelHealth;
+    if (!health) return;
+    const now = deps.now(), state = health.down.get(channel);
+    if (state && !state.probing) return;
+    health.down.set(channel, { since: state?.since ?? now, until: now + KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS, probing: false, cause: why });
+    deps.log(`[knowledgeRoute] batch=${batchLabel} channel=${channel} reason=${state ? "channel_probe_failed" : "channel_down"} cause=${why} cooldown_ms=${KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS} next=other_channel_takes_over`);
   };
+  const markChannelSuccess = (channel: KnowledgeModelChannel) => {
+    const health = deps.channelHealth;
+    if (!health) return;
+    health.lastSuccessAt[channel] = deps.now(); health.noHeartbeatAt[channel] = [];
+    if (health.down.delete(channel)) deps.log(`[knowledgeRoute] batch=${batchLabel} channel=${channel} reason=channel_recovered`);
+  };
+  /** 本发之后若通道仍处于探测位且未成功，释放探测位（失败时由 markChannelDown 重新冷却）。 */
+  const releaseProbe = (channel: KnowledgeModelChannel) => { const state = deps.channelHealth?.down.get(channel); if (state?.probing) markChannelDown(channel, `${state.cause}+probe_failed`); };
   const research = request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_RESEARCH_MARKER));
   let webSources: KnowledgeWebSource[] = [];
   const sourceWarnings: string[] = [];
@@ -520,6 +578,8 @@ export async function invokeKnowledgePublicationRoutes(
   let researchEvidence: { status: "succeeded" | "failed"; model?: string; gateway?: string; usage?: unknown; traces: unknown; validation?: unknown; pages?: unknown } | undefined;
   const images = request.contents.flatMap(c => c.parts).flatMap(p => "fileData" in p ? [p.fileData.fileUri] : []);
   // 已撤回模型只读历史回执；未知结果不能因为删除旧路由就变成可重新购买。
+  const cancelled = () => deps.signal?.throwIfAborted();
+  cancelled();
   const legacy = await evidence.read(`${evidence.prefix}/route-vertex.json`);
   if (legacy && ["pending", "unknown"].includes(legacy.state))
     throw new Error("历史整理请求回执尚未闭合，保留原任务；不会再调用已停用模型");
@@ -572,6 +632,8 @@ export async function invokeKnowledgePublicationRoutes(
       if (received) return received;
       const left = deadline - deps.now();
       if (left <= 0) return null;
+      // 已取消：保留 unknown 原样，不归档、不补买，直接收口。
+      cancelled();
       await deps.sleep(Math.max(1, Math.min(KNOWLEDGE_LATE_RECEIPT_POLL_MS, left)));
     }
   };
@@ -591,7 +653,7 @@ export async function invokeKnowledgePublicationRoutes(
   };
   /** 补买时是否还有其他通道的可买路由（无回执、未超次、未限额、未因拉图失败跳过）。 */
   const purchasableElsewhere = (fromIndex: number, channel: KnowledgeModelChannel) => routeOrder.slice(fromIndex + 1).some(t =>
-    t.channel !== channel && !existing.has(t.id) && !purchased.has(t.id) && !keyLimitedChannels.has(t.channel) && !deps.channelHealth?.down.has(t.channel) && attempts[routeModelFamily(t.model)][t.channel] < 4 && !(images.length && imageRejections[t.channel] >= 2) && (!images.length || degradedTextOnly || visionRoutes.has(t.id)));
+    t.channel !== channel && !existing.has(t.id) && !purchased.has(t.id) && !keyLimitedChannels.has(t.channel) && !knowledgeChannelSkipped(deps.channelHealth, t.channel, deps.now()) && attempts[routeModelFamily(t.model)][t.channel] < 4 && !(images.length && imageRejections[t.channel] >= 2) && (!images.length || degradedTextOnly || visionRoutes.has(t.id)));
   const routeOrder = [
     // 可重验的完整回包优先。未知费用记录仍保留，只允许零调用恢复已有正文。
     ...KNOWLEDGE_PUBLICATION_ALL_ROUTES.filter(target => existing.has(target.id) && !unresolved.has(target.id)),
@@ -659,6 +721,8 @@ export async function invokeKnowledgePublicationRoutes(
   }
   for (let routeIndex = 0; routeIndex < routeOrder.length; routeIndex++) {
     const target = routeOrder[routeIndex];
+    /** 本发是否为 down 通道冷却后的探测。 */
+    let probing = false;
     const { id: route, channel } = target;
     const capability = knowledgeModelCapabilities(target.model, channel);
     const model = capability.model;
@@ -694,11 +758,15 @@ export async function invokeKnowledgePublicationRoutes(
       continue;
     }
     if (!receipt) {
+      // 已取消：不再发起任何新购买（含断流补买），也不写补买记录。
+      cancelled();
       if (unresolved.size) throw new Error("原请求回执尚未闭合，保留原任务，不重复提交或切换通道");
       // 旧已发送回执计入对应模型/通道的四次上限；改变首选通道不重置已用次数。
       if(keyLimitedChannels.has(channel) || attempts[routeModelFamily(model)][channel]>=4)continue;
       // 本任务已判该通道整体不可用：另一通道还能买就交给另一通道接手。
-      if (deps.channelHealth?.down.has(channel) && purchasableElsewhere(routeIndex, channel)) { traces.push({ route, model, state: "skipped_channel_down" }); continue; }
+      if (knowledgeChannelSkipped(deps.channelHealth, channel, deps.now()) && purchasableElsewhere(routeIndex, channel)) { traces.push({ route, model, state: "skipped_channel_down" }); continue; }
+      // 冷却到期：本发作为探测（占住探测位，其余批次仍走另一通道），成功即恢复。
+      probing = Boolean(deps.channelHealth?.down.get(channel)) && !knowledgeChannelSkipped(deps.channelHealth, channel, deps.now(), true);
       // 篇幅超出算写坏：同模型同通道不再重买，直接切下一跳。
       if (budgetHops.has(`${routeModelFamily(model)}:${channel}`)) { traces.push({ route, model, state: "skipped_budget_hop" }); continue; }
       if (outputLimitedFamilies.has(routeModelFamily(model))) { traces.push({ route, model, state: "skipped_output_limit" }); continue; }
@@ -721,7 +789,9 @@ export async function invokeKnowledgePublicationRoutes(
       if ((h.lastClass === "rate_limited" || h.lastClass === "transient") && h.transient > 0) {
         const wait = Math.min(KNOWLEDGE_RETRY_WAIT_CAP_MS, h.retryAfterMs ?? KNOWLEDGE_RATE_LIMIT_BACKOFF_MS[Math.min(h.transient, KNOWLEDGE_RATE_LIMIT_BACKOFF_MS.length) - 1]);
         deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=${h.lastClass} attempt=${h.transient + 1} wait_ms=${wait}`);
+        cancelled();
         await deps.sleep(wait);
+        cancelled();
       }
       h.lastClass = undefined; h.retryAfterMs = undefined;
       h.attempts += 1;
@@ -768,7 +838,9 @@ export async function invokeKnowledgePublicationRoutes(
         const storedBody = { ...body, messages: redactedMessages };
         const degraded = degradedTextOnly ? { degraded: "text-only" as const } : {};
         const gate = deps.gates?.[channel];
+        cancelled();
         if (gate) await gate.acquire();
+        if (deps.signal?.aborted) { gate?.release("ok"); cancelled(); }
         let gateOutcome: "ok" | "rate_limited" | "error" = "error";
         let gateReleased = false;
         const releaseGate = () => { if (gate && !gateReleased) { gateReleased = true; gate.release(gateOutcome); } };
@@ -779,6 +851,8 @@ export async function invokeKnowledgePublicationRoutes(
         let status: number | undefined;
         let archivedInterruption = false;
         let headerIdle = false;
+        let lastContentAt = 0;
+        let keepaliveOnly = false;
         try {
             const controller = new AbortController();
             // 等响应头也算「无字节」：超过无心跳阈值未回响应头即判断流（原固定 120 秒）。
@@ -787,7 +861,7 @@ export async function invokeKnowledgePublicationRoutes(
             try {
               response = await deps.fetch(channel === "openrouter" ? "https://openrouter.ai/api/v1/chat/completions" : "https://api.evolink.ai/v1/chat/completions", {
                 method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-                body: JSON.stringify(body), signal: controller.signal,
+                body: JSON.stringify(body), signal: deps.signal ? AbortSignal.any([controller.signal, deps.signal]) : controller.signal,
               });
             } finally { clearTimeout(timer); }
             status = response.status;
@@ -796,19 +870,31 @@ export async function invokeKnowledgePublicationRoutes(
             let heartbeat = 0;
             const onBytes = async () => {
               if (Date.now() - heartbeat > 15000) {
-                await evidence.save(`${evidence.prefix}/${route}-heartbeat.json`, { at: new Date().toISOString(), requestDigest });
+                // at = 最后收到任何字节（含推理增量与保活注释）；lastContentAt = 最后收到正文增量（区分「仅保活/仅推理」）。
+                await evidence.save(`${evidence.prefix}/${route}-heartbeat.json`, { at: new Date().toISOString(), ...(lastContentAt ? { lastContentAt: new Date(lastContentAt).toISOString() } : {}), requestDigest });
                 heartbeat = Date.now();
               }
             };
             if (response.ok && (response.headers.get("content-type") || "").includes("text/event-stream")) {
               if (!response.body) throw new Error("上游流为空");
+              // 仅保活看门狗：从响应头起算，每收到实质增量重置；超时即中断本发（按无心跳处理）。
+              let lastSubstantiveAt = Date.now();
+              const keepaliveWatch = setInterval(() => {
+                if (Date.now() - lastSubstantiveAt >= deps.keepaliveOnlyTimeoutMs) { keepaliveOnly = true; controller.abort(); }
+              }, Math.max(1_000, Math.min(15_000, Math.floor(deps.keepaliveOnlyTimeoutMs / 10))));
+              try {
               text = await readGlmSseStream(response.body, 8 * 1024 * 1024, {
+                onSubstantiveDelta: () => { lastSubstantiveAt = Date.now(); },
                 strictCompletion: true,
                 preserveAnnotations: research,
                 onComplete: async raw => evidence.save(`${evidence.prefix}/${route}-response.json`, { status, text: raw.split(apiKey).join("[REDACTED]") }),
                 onBytes,
+                onContentDelta: () => { lastContentAt = Date.now(); },
                 idleTimeoutMs: deps.idleTimeoutMs,
+                // 本链专用：无数据先判失败再取消（缺省行为不变，其它调用方不受影响）。
+                idleRejectBeforeCancel: true,
               });
+              } finally { clearInterval(keepaliveWatch); }
             } else text = await readKnowledgeResponseBody(response, controller, onBytes, deps.idleTimeoutMs);
             receipt = { requestDigest, route, model, state: "received", purchaseStartedAt, endedAt: new Date().toISOString(), request: storedBody, response: { status, text: text.split(apiKey).join("[REDACTED]") }, imageSources: images, ...degraded, ...(retryAfterHeader ? { retryAfter: retryAfterHeader } : {}) };
             gateOutcome = classifyKnowledgeRouteFailure({ status: status!, text: "" }) === "rate_limited" ? "rate_limited" : "ok";
@@ -816,14 +902,20 @@ export async function invokeKnowledgePublicationRoutes(
           await evidence.save(key, receipt);
         } catch (transportError) {
           // 无心跳（等响应头或读正文连续无字节）= 可能被上游排队/放慢：本通道本任务并发减半，再按断流规矩处理。
-          const noHeartbeat = headerIdle || /秒无数据|正文失联/.test(transportError instanceof Error ? transportError.message : "");
+          const noHeartbeat = headerIdle || keepaliveOnly || /秒无数据|正文失联/.test(transportError instanceof Error ? transportError.message : "");
           gateOutcome = noHeartbeat ? "rate_limited" : "error";
           const limitBefore = gate?.limit;
           releaseGate();
           if (noHeartbeat) {
-            deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=no_heartbeat idle_ms=${deps.idleTimeoutMs} stage=${headerIdle ? "headers" : "body"}${gate ? ` channel_limit=${limitBefore}->${gate.limit}` : ""}`);
-            if (deps.channelHealth && ++deps.channelHealth.noHeartbeat[channel] >= KNOWLEDGE_CHANNEL_DOWN_AFTER_NO_HEARTBEAT) markChannelDown(channel, "no_heartbeat");
-          }
+            const contentIdle = lastContentAt ? ` content_idle_ms=${Date.now() - lastContentAt}` : " content_idle_ms=none";
+            deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=${keepaliveOnly ? "keepalive_only" : "no_heartbeat"} idle_ms=${keepaliveOnly ? deps.keepaliveOnlyTimeoutMs : deps.idleTimeoutMs} stage=${headerIdle ? "headers" : "body"}${contentIdle}${gate ? ` channel_limit=${limitBefore}->${gate.limit}` : ""}`);
+            const health = deps.channelHealth;
+            if (health) {
+              const now = deps.now(), windowStart = now - KNOWLEDGE_CHANNEL_NO_HEARTBEAT_WINDOW_MS;
+              health.noHeartbeatAt[channel] = [...health.noHeartbeatAt[channel].filter(at => at >= windowStart), now];
+              if (probing || (health.noHeartbeatAt[channel].length >= KNOWLEDGE_CHANNEL_DOWN_AFTER_NO_HEARTBEAT && health.lastSuccessAt[channel] < windowStart)) markChannelDown(channel, "no_heartbeat");
+            }
+          } else if (probing) releaseProbe(channel);
           const completedStream = await evidence.read(`${evidence.prefix}/${route}-response.json`);
           if (completedStream) {
             // 结束帧明确说明输出截断时已有永久回执，可按失败处理；不能把断流猜成同一种情况。
@@ -831,7 +923,7 @@ export async function invokeKnowledgePublicationRoutes(
             await evidence.save(key, receipt);
           } else {
             // 中断后是否计费未知，不能冒充“明确失败”立刻重购：先存 unknown，等迟到回执；到期仍无则归档 interrupted，允许切下一路补买一次。
-            const unknown = { requestDigest, route, model, state: "unknown", purchaseStartedAt, at: new Date().toISOString(), request: storedBody, status, reason: "传输或回执保存未闭合", imageSources: images, ...degraded };
+            const unknown = { requestDigest, route, model, state: "unknown", purchaseStartedAt, at: new Date().toISOString(), request: storedBody, status, reason: "传输或回执保存未闭合", transportCause: keepaliveOnly ? "keepalive_only" : noHeartbeat ? (headerIdle ? "no_heartbeat_headers" : "no_heartbeat") : "transport", imageSources: images, ...degraded };
             await evidence.save(key, unknown);
             if (deps.interruptionPolicy === "hold") throw new Error(`${route}传输或回执尚未闭合，未重复提交，原稿已保留`);
             const late = await awaitLateReceipt(route, deps.now());
@@ -893,7 +985,7 @@ export async function invokeKnowledgePublicationRoutes(
           candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(answer) }] } }],
         };
       traces.push({ route, model: String(output.modelVersion), state: "succeeded", status: response.status });
-      if (deps.channelHealth) deps.channelHealth.noHeartbeat[channel] = 0;
+      markChannelSuccess(channel);
       normalized = { status: 200, text: JSON.stringify({ ...output, gateway: route, gatewayTrace: traces, ...(researchEvidence ? { research: researchEvidence } : {}),
         inputEvidence: { imageSources: images, imageInputCount: images.length, requestDigest, imageTokenReporting: "provider_specific" } }) };
       const tolerance = request.budgetTolerance ?? KNOWLEDGE_BUDGET_TOLERANCE;
@@ -935,7 +1027,15 @@ export async function invokeKnowledgePublicationRoutes(
       else if (inspectKnowledgeRouteResponse(receipt.response).keyLimit) {
         deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=key_limit status=403 next=switch_channel`);
         markChannelDown(channel, "key_limit");
-      } else if ([401, 402, 403].includes(receipt.response?.status)) markChannelDown(channel, receipt.response.status === 402 ? "insufficient_credit_http_402" : `http_${receipt.response.status}`);
+      } else if (receipt.response?.status === 402) markChannelDown(channel, "insufficient_credit_http_402");
+      else if ([401, 403].includes(receipt.response?.status) && !/flagged|moderat/i.test(String(receipt.response?.text || "")) && deps.channelHealth) {
+        // 401/403 需跨分段的通道级证据：同一通道 ≥2 个不同分段出现才判；内容审核类 403（flagged）只算本段，不判通道。
+        const segments = deps.channelHealth.authRejectSegments[channel];
+        segments.add(deps.logLabel || evidence.prefix);
+        if (segments.size >= KNOWLEDGE_CHANNEL_DOWN_AFTER_AUTH_SEGMENTS) markChannelDown(channel, `http_${receipt.response.status}`);
+        else if (probing) releaseProbe(channel);
+      } else if (typeof receipt.response?.status === "number" && receipt.response.status >= 200 && receipt.response.status < 300) markChannelSuccess(channel);
+      else if (probing) releaseProbe(channel);
       if (!(images.length && isImageInputRejection(receipt.response)) && !inspectKnowledgeRouteResponse(receipt.response).keyLimit && !(outputLimitedFamilies.has(routeModelFamily(model)) && /单次输出容量/.test(receipt.reason)))
         recordFailure(route, model, channel, classifyKnowledgeRouteFailure(receipt.response), classifyKnowledgeRouteFailure(receipt.response) === "rate_limited" ? knowledgeRetryAfterMs(receipt.retryAfter, receipt.response?.text, deps.now()) : undefined, receipt.reason);
       if(completeAnswerReceived&&request.generationConfig.responseMimeType==='text/markdown')markdownFailure=error instanceof Error?error:new Error(String(error));

@@ -3875,10 +3875,23 @@ async function processPlatformJob(
       };
       // 购买回执仍按任务号落盘（在途旧任务原样恢复）；跨提交续做根按用户，批次按内容身份命中，不跨用户。
       const publicationEvidence=params.billingPolicy==='interior-pages-v1'?{prefix:`knowledge-card-distill/user-${jobUserId}/${platformJobId}`,...distillStore}:undefined;
-      const publicationResumeEvidence=publicationEvidence?{prefix:`knowledge-card-distill/user-${jobUserId}/resume`,...distillStore}:undefined;
+      const publicationResumeEvidence=publicationEvidence?{prefix:`knowledge-card-distill/user-${jobUserId}/resume`,...distillStore,
+        // 续做租约：带 generation 读、ifGenerationMatch 条件写（412 = 被别人抢先），同一段同一时刻只有一个任务在买。
+        readVersioned:async(key:string)=>{try{const got=await readDistillObject({gcsUri:`gs://${distillBucket()}/${key}`});return {value:JSON.parse(got.buffer.toString()),generation:got.generation};}catch(error){if((error as Error).message==='gcs_stat_failed:404')return null;throw error;}},
+        saveIfGeneration:async(key:string,value:unknown,generation:string)=>{try{await saveDistillObject({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json',ifGenerationMatch:generation});return true;}catch(error){if(/gcs_upload_failed:412/.test((error as Error).message))return false;throw error;}},
+      }:undefined;
+      // 租约持有任务是否仍在排队/运行：取消已登记或心跳落盘超过卡死阈值（缺省 20 分钟）视为已结束。
+      const distillJobActive=async(otherJobId:string)=>{
+        const row=await getJobByIdStrict(otherJobId);
+        if(!row||!['queued','running'].includes(String(row.status)))return false;
+        if((row.input as {cancelRequestedAt?:unknown}|null)?.cancelRequestedAt)return false;
+        const updated=new Date(row.updatedAt as unknown as string).getTime();
+        return Number.isFinite(updated)&&Date.now()-updated<resolveKnowledgeCardDistillStallMs();
+      };
       const prepared = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => prepareKnowledgeCardCopy({
         publicationEvidence,
         publicationResumeEvidence,
+        publicationJob:{jobId:platformJobId!,jobActive:distillJobActive},
         sourceText,
         files: jobFiles,
         abortSignal: cancel.signal,

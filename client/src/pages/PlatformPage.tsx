@@ -2557,8 +2557,8 @@ function resolveKnowledgeCardSourceText(existing: string, fileCount: number): st
 }
 
 type KnowledgeDistillDiagnosticView = {
-  segment: number; total: number; label: string; category: string; categoryZh: string; failedAt: string; lastHeartbeatAgoMs?: number;
-  hops: { route: string; channel: string; family: string; state: string; httpStatus?: number; reason?: string; durationMs?: number }[];
+  segment: number; total: number; label: string; category: string; categoryZh: string; failedAt: string; lastHeartbeatAgoMs?: number; lastContentAgoMs?: number;
+  hops: { route: string; channel: string; family: string; state: string; httpStatus?: number; reason?: string; durationMs?: number; transportCause?: string }[];
 };
 
 export default function PlatformPage() {
@@ -13198,9 +13198,9 @@ export default function PlatformPage() {
             <div className="mt-3 space-y-2">
               {knowledgeDistillDiagnostics.map(item => (
                 <div key={`${item.segment}-${item.failedAt}`} className="font-mono text-[11px] leading-5 text-[#d7d0ef]">
-                  <div className="text-[#ffb59c]">第 {item.segment}/{item.total} 段 · {item.categoryZh}{typeof item.lastHeartbeatAgoMs === "number" ? ` · 最后心跳距失败 ${Math.round(item.lastHeartbeatAgoMs / 1000)} 秒` : " · 无心跳记录"}</div>
+                  <div className="text-[#ffb59c]">第 {item.segment}/{item.total} 段 · {item.categoryZh}{typeof item.lastHeartbeatAgoMs === "number" ? ` · 最后任意字节距失败 ${Math.round(item.lastHeartbeatAgoMs / 1000)} 秒` : " · 无心跳记录"}{typeof item.lastContentAgoMs === "number" ? ` · 最后正文增量距失败 ${Math.round(item.lastContentAgoMs / 1000)} 秒` : " · 无正文增量"}</div>
                   {item.hops.map(hop => (
-                    <div key={hop.route} className="pl-3">{hop.route}（{hop.family}@{hop.channel}）{hop.state}{hop.httpStatus ? ` HTTP ${hop.httpStatus}` : ""}{typeof hop.durationMs === "number" ? ` · ${Math.round(hop.durationMs / 1000)} 秒` : ""}{hop.reason ? ` · ${hop.reason}` : ""}</div>
+                    <div key={hop.route} className="pl-3">{hop.route}（{hop.family}@{hop.channel}）{hop.state}{hop.httpStatus ? ` HTTP ${hop.httpStatus}` : ""}{hop.transportCause ? ` · ${hop.transportCause}` : ""}{typeof hop.durationMs === "number" ? ` · ${Math.round(hop.durationMs / 1000)} 秒` : ""}{hop.reason ? ` · ${hop.reason}` : ""}</div>
                   ))}
                 </div>
               ))}

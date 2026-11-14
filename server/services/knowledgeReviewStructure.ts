@@ -4,14 +4,22 @@ import { readingFromMarkdown } from '../../shared/knowledgePublicationLayout';
 const object = (v: unknown): v is Record<string, any> => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const CAUTION_KINDS = new Set(['image_text', 'text', 'uncertain']);
 const RELATIONS = new Set(['chronology', 'process', 'comparison']);
-/** 关系写法近义归一：时间类→chronology，步骤类→process，其余（并列/层级/对照/不明）→comparison（与提炼指令「并列或世系不明用comparison」一致）。 */
-function normalizeRelation(value: string): string {
+/** 关系写法只按明确近义词表归一；表外的值（如 hierarchy）不猜，原样交合同校验拒收。 */
+const RELATION_ALIASES: Record<string, 'chronology' | 'process' | 'comparison'> = {
+  chronological: 'chronology', timeline: 'chronology', temporal: 'chronology', time: 'chronology', 时间: 'chronology', 时序: 'chronology', 编年: 'chronology', 年代: 'chronology', 时间顺序: 'chronology', 先后: 'chronology',
+  steps: 'process', step: 'process', procedure: 'process', flow: 'process', workflow: 'process', 流程: 'process', 步骤: 'process', 过程: 'process', 程序: 'process',
+  compare: 'comparison', contrast: 'comparison', parallel: 'comparison', 对比: 'comparison', 比较: 'comparison', 对照: 'comparison', 并列: 'comparison',
+};
+function normalizeRelation(value: string): string | undefined {
   const raw = value.trim().toLowerCase();
-  if (RELATIONS.has(raw)) return raw;
-  if (/chrono|time|timeline|history|date|year|时间|时序|年代|编年|历史|先后/.test(raw)) return 'chronology';
-  if (/process|step|flow|procedure|stage|phase|sequence|流程|步骤|阶段|过程|程序/.test(raw)) return 'process';
-  return 'comparison';
+  return RELATIONS.has(raw) ? raw : RELATION_ALIASES[raw];
 }
+/** 疑点类别明确别名；表外的值不猜（避免把其他类别误归为待核实而多触发联网核实）。 */
+const CAUTION_KIND_ALIASES: Record<string, 'image_text' | 'text' | 'uncertain'> = {
+  uncertainty: 'uncertain', unverified: 'uncertain', doubt: 'uncertain', doubtful: 'uncertain', 疑点: 'uncertain', 存疑: 'uncertain', 待核实: 'uncertain', 不确定: 'uncertain',
+  'image-text': 'image_text', imagetext: 'image_text', image: 'image_text', 图文: 'image_text', 图文不符: 'image_text',
+  textual: 'text', 文本: 'text', 文字: 'text',
+};
 /** 块类型别名：只映射到字段形状完全一致的合同类型。 */
 const BLOCK_TYPE_ALIASES: Record<string, string> = {
   paragraph: 'prose', text: 'prose', 段落: 'prose', 正文: 'prose',
@@ -29,7 +37,7 @@ function normalizeReadingBlock(block: any, index: number, pageId: string, adjust
     const shapeOk = alias === 'prose' ? typeof block.text === 'string' : alias === 'table' ? Array.isArray(block.columns) && Array.isArray(block.rows) : alias ? Array.isArray(block.items) : false;
     if (alias && shapeOk) {
       if (alias === 'sequence' && typeof block.relation !== 'string') {
-        const relation = normalizeRelation(block.type);
+        const relation = normalizeRelation(block.type) ?? (block.type.trim().toLowerCase() === 'process' || block.type.trim() === '流程' ? 'process' : 'chronology');
         adjustments.push({ pageId, field: field('relation'), before: null, after: relation, reason: '由块类型别名推出关系，正文未改' });
         block.relation = relation;
       }
@@ -37,8 +45,8 @@ function normalizeReadingBlock(block: any, index: number, pageId: string, adjust
       block.type = alias;
     }
   }
-  if (block.type === 'sequence' && typeof block.relation === 'string' && !RELATIONS.has(block.relation)) {
-    const relation = normalizeRelation(block.relation);
+  const relation = block.type === 'sequence' && typeof block.relation === 'string' && !RELATIONS.has(block.relation) ? normalizeRelation(block.relation) : undefined;
+  if (relation) {
     adjustments.push({ pageId, field: field('relation'), before: block.relation, after: relation, reason: '关系写法归一到合同三选一，条目原样保留' });
     block.relation = relation;
   }
@@ -60,7 +68,7 @@ function normalizeReadingBlock(block: any, index: number, pageId: string, adjust
 }
 
 /** 只归位可唯一绑定的已有正文；原回包与每项调整由路由分别保存。 */
-export function restoreKnowledgeReviewStructure(value: any, source: KnowledgeSource, finalTextRevision = false) {
+export function restoreKnowledgeReviewStructure(value: any, source: KnowledgeSource, finalTextRevision = false, normalizeWriting = false) {
   const result = structuredClone(value), adjustments: unknown[] = [], bodyReadingIds = new Set<string>();
   // 仅恢复真实回包中见到的判别字段写法；后续仍完整校验正文、原页和摘要。
   if (object(result) && !Object.prototype.hasOwnProperty.call(result, 'kind') && result.type === 'knowledge_publication_v1') {
@@ -111,12 +119,13 @@ export function restoreKnowledgeReviewStructure(value: any, source: KnowledgeSou
   }
   // 2026-11-14 史记读档实测（EvoLink GLM 大量「输出合同不符」）：只做可无损归一的写法差异，内容一字不丢；
   // 任何含不明正文的多余字段（如 blocks2_placeholder）、缺页、错页仍原样交给合同校验拒收。
-  for (const page of result.pages) {
+  if (normalizeWriting) for (const page of result.pages) {
     if (!object(page)) continue;
     if (Array.isArray(page.cautions)) page.cautions.forEach((caution: any, index: number) => {
-      if (object(caution) && typeof caution.kind === 'string' && !CAUTION_KINDS.has(caution.kind)) {
-        adjustments.push({ pageId: page.id, field: `cautions[${index}].kind`, before: caution.kind, after: 'uncertain', reason: '疑点类别写法不在合同内，按待核实归类；证据与说明原样保留' });
-        caution.kind = 'uncertain';
+      const alias = object(caution) && typeof caution.kind === 'string' && !CAUTION_KINDS.has(caution.kind) ? CAUTION_KIND_ALIASES[caution.kind.trim().toLowerCase()] : undefined;
+      if (alias) {
+        adjustments.push({ pageId: page.id, field: `cautions[${index}].kind`, before: caution.kind, after: alias, reason: '疑点类别明确别名归位；证据与说明原样保留' });
+        caution.kind = alias;
       }
     });
     if (!object(page.reading) || !Array.isArray(page.reading.blocks)) continue;

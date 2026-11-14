@@ -1170,10 +1170,14 @@ describe('1111 失败处理：同通道重试 → 同模型换路由 → 换模�
     expect(f.storage.get('test/0/route-glm-evolink.json').state).toBe('interrupted');
     expect(clock).toBe(11 * 60_000 + KNOWLEDGE_LATE_RECEIPT_WAIT_MS);
   });
-  it('无心跳阈值：缺省 180 秒，env 夹在 60–600 秒', () => {
+  it('无心跳阈值：缺省 180 秒，env 夹在 60–300 秒（undici 头/体超时 300 秒）；仅保活阈值缺省 15 分钟，夹在 5–60 分钟', async () => {
+    const { knowledgeRouteKeepaliveOnlyTimeoutMs } = await import('./knowledgePublicationRoutes');
+    expect(knowledgeRouteKeepaliveOnlyTimeoutMs(undefined)).toBe(15 * 60_000);
+    expect(knowledgeRouteKeepaliveOnlyTimeoutMs('1000')).toBe(5 * 60_000);
+    expect(knowledgeRouteKeepaliveOnlyTimeoutMs('99999999')).toBe(60 * 60_000);
     expect(knowledgeRouteIdleTimeoutMs(undefined)).toBe(180_000);
     expect(knowledgeRouteIdleTimeoutMs('5000')).toBe(60_000);
-    expect(knowledgeRouteIdleTimeoutMs('9999999')).toBe(600_000);
+    expect(knowledgeRouteIdleTimeoutMs('9999999')).toBe(300_000);
     expect(knowledgeRouteIdleTimeoutMs('240000')).toBe(240_000);
     expect(knowledgeRouteIdleTimeoutMs('abc')).toBe(180_000);
   });
@@ -1213,6 +1217,85 @@ describe('1111 失败处理：同通道重试 → 同模型换路由 → 换模�
       await vi.advanceTimersByTimeAsync(181_000);
       expect(JSON.parse((await pending).text).gateway).toBe('glm-openrouter');
       expect(f.logs.some(l => l.includes('reason=no_heartbeat') && l.includes('stage=headers'))).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+  it('仅保活：连续 15 分钟只有保活注释与空帧 → 判仅保活超时、换通道；保活中夹有推理增量则计时重置、继续等', async () => {
+    vi.useFakeTimers();
+    try {
+      const enc = (t: string) => new TextEncoder().encode(t);
+      const frame = (o: unknown) => enc('data: ' + JSON.stringify(o) + '\n\n');
+      // 1) 只有保活：每 2 分钟一条注释 + 一个无内容增量的空帧，16 分钟后应被判仅保活超时并换通道。
+      const f = glm(); f.deps.lateReceiptWaitMs = 0;
+      let s1!: ReadableStreamDefaultController<Uint8Array>;
+      // 与真实 fetch 一致：请求被中断时响应体随之报错。
+      f.deps.fetch.mockImplementationOnce(async (_u?: unknown, init?: RequestInit) => { const body = new ReadableStream<Uint8Array>({ start(c) { s1 = c; } }); (init?.signal as AbortSignal).addEventListener('abort', () => { try { s1.error(new Error('aborted')); } catch { /* 已关闭 */ } }); return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }); }).mockImplementation(ok(f));
+      const first = invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps); await vi.advanceTimersByTimeAsync(0);
+      for (let m = 0; m < 16; m += 2) { await vi.advanceTimersByTimeAsync(120_000); try { s1.enqueue(enc(': OPENROUTER PROCESSING\n\n')); s1.enqueue(frame({ choices: [{ index: 0, delta: {}, finish_reason: null }] })); } catch { /* 已中断 */ } }
+      await vi.advanceTimersByTimeAsync(60_000);
+      const out1 = JSON.parse((await first).text);
+      expect(out1.gateway).toBe('glm-openrouter');
+      expect(f.storage.get('test/0/route-glm-evolink.json')).toMatchObject({ state: 'interrupted', transportCause: 'keepalive_only' });
+      expect(f.logs.some(l => l.includes('reason=keepalive_only'))).toBe(true);
+      // 2) 保活中每 10 分钟夹一次推理增量：30 分钟仍等这一发完成。
+      const g = glm(); g.deps.lateReceiptWaitMs = 0;
+      let s2!: ReadableStreamDefaultController<Uint8Array>;
+      g.deps.fetch.mockResolvedValueOnce(new Response(new ReadableStream({ start(c) { s2 = c; } }), { headers: { 'Content-Type': 'text/event-stream' } }));
+      const second = invokeKnowledgePublicationRoutes(g.request, g.evidence, g.deps); await vi.advanceTimersByTimeAsync(0);
+      for (let m = 2; m <= 30; m += 2) { await vi.advanceTimersByTimeAsync(120_000); s2.enqueue(enc(': OPENROUTER PROCESSING\n\n')); if (m % 10 === 0) s2.enqueue(frame({ model: GLM_53_FLASHX_EVOLINK_MODEL, choices: [{ index: 0, delta: { reasoning_content: '思考' }, finish_reason: null }] })); }
+      s2.enqueue(frame({ model: GLM_53_FLASHX_EVOLINK_MODEL, choices: [{ index: 0, delta: { content: JSON.stringify(g.report) }, finish_reason: null }] }));
+      s2.enqueue(frame({ model: GLM_53_FLASHX_EVOLINK_MODEL, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })); s2.close();
+      expect(JSON.parse((await second).text).gateway).toBe('glm-evolink'); expect(g.deps.fetch).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+  it('取消：等迟到回执时已取消 → 立即抛出取消，unknown 回执保留，不归档、不补买、不写补买记录', async () => {
+    const f = glm(); const controller = new AbortController(); f.deps.lateReceiptWaitMs = KNOWLEDGE_LATE_RECEIPT_WAIT_MS;
+    (f.deps as any).signal = controller.signal;
+    f.deps.fetch.mockImplementation(async () => { controller.abort(new Error('用户已停止读档')); throw new Error('aborted'); });
+    await expect(invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).rejects.toThrow('用户已停止读档');
+    expect(f.deps.fetch).toHaveBeenCalledTimes(1); expect(f.deps.sleep).not.toHaveBeenCalled();
+    expect(f.storage.get('test/0/route-glm-evolink.json').state).toBe('unknown');
+    expect(f.storage.has('test/0/interrupted-repurchase.json')).toBe(false);
+    // 已取消的信号上再次恢复：一笔都不发
+    await expect(invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).rejects.toThrow('用户已停止读档'); expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+  });
+  it('通道健康：401/403 需跨 2 个分段才判 down；内容审核 403（flagged）不判；402 一次即判；冷却后放行一发探测，成功即恢复', async () => {
+    const { createKnowledgeChannelHealth, knowledgeChannelSkipped, KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS } = await import('./knowledgePublicationRoutes');
+    const health = createKnowledgeChannelHealth(); let clock = 1_000_000;
+    const run = async (label: string, first: Response) => {
+      const f = glm(); (f.deps as any).channelHealth = health; (f.deps as any).logLabel = label; f.deps.now = () => clock;
+      f.deps.fetch.mockResolvedValueOnce(first).mockImplementation(ok(f));
+      await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps); return f;
+    };
+    await run('seg-1of9', status(403, {}, '{"error":{"message":"Your input was flagged for moderation"}}'));
+    await run('seg-2of9', status(403, {}, '{"error":{"message":"forbidden"}}'));
+    expect(health.down.has('evolink')).toBe(false);
+    await run('seg-3of9', status(403, {}, '{"error":{"message":"forbidden"}}'));
+    expect(health.down.has('evolink')).toBe(true);
+    // down 期间其余分段直接从另一通道起步
+    const skipped = glm(); (skipped.deps as any).channelHealth = health; skipped.deps.now = () => clock; skipped.deps.fetch.mockImplementation(ok(skipped));
+    expect(JSON.parse((await invokeKnowledgePublicationRoutes(skipped.request, skipped.evidence, skipped.deps)).text).gateway).toBe('glm-openrouter');
+    // 冷却到期：放行一发探测，成功即恢复
+    clock += KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS + 1;
+    const probe = glm(); (probe.deps as any).channelHealth = health; probe.deps.now = () => clock; probe.deps.fetch.mockImplementation(ok(probe));
+    expect(JSON.parse((await invokeKnowledgePublicationRoutes(probe.request, probe.evidence, probe.deps)).text).gateway).toBe('glm-evolink');
+    expect(health.down.has('evolink')).toBe(false);
+    // 402 一次即判
+    await run('seg-4of9', status(402, {}, '{"error":{"message":"This request requires more credits, or fewer max_tokens"}}'));
+    expect(health.down.get('evolink')?.cause).toBe('insufficient_credit_http_402');
+    expect(knowledgeChannelSkipped(health, 'evolink', clock)).toBe(true);
+  });
+  it('无心跳判通道 down 需 10 分钟内 ≥3 次且期间该通道无成功', async () => {
+    const { createKnowledgeChannelHealth } = await import('./knowledgePublicationRoutes');
+    vi.useFakeTimers();
+    try {
+      const health = createKnowledgeChannelHealth();
+      const stall = async () => {
+        const f = glm(); f.deps.lateReceiptWaitMs = 0; (f.deps as any).channelHealth = health;
+        f.deps.fetch.mockResolvedValueOnce(new Response(new ReadableStream({ start() {} }), { headers: { 'Content-Type': 'text/event-stream' } })).mockImplementation(ok(f));
+        const p = invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps); await vi.advanceTimersByTimeAsync(181_000); await p;
+      };
+      await stall(); await stall(); expect(health.down.has('evolink')).toBe(false);
+      await stall(); expect(health.down.has('evolink')).toBe(true);
     } finally { vi.useRealTimers(); }
   });
   it('key limit / 未配置 / 402 余额不足切跳时都留 [knowledgeRoute] 日志（只记类别）', async () => {
