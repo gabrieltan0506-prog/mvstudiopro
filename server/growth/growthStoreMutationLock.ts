@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -21,7 +22,7 @@ export type GrowthStoreMutationLease = {
   signal: AbortSignal;
 };
 
-type LockOwner = { token?: unknown; pid?: unknown; bootId?: unknown; pidStartTicks?: unknown };
+type LockOwner = { token?: unknown; pid?: unknown; bootId?: unknown; pidStartTicks?: unknown; operation?: unknown; acquiredAt?: unknown };
 
 /**
  * Identity of "this process on this boot". A pid number alone is not enough:
@@ -45,27 +46,131 @@ function readPidStartTicks(pid: number): string | null {
   } catch { return null; }
 }
 
-const SELF_BOOT_ID = readBootId();
-const SELF_PID_START_TICKS = readPidStartTicks(process.pid);
-
-/** Conservative: only returns false when we can prove the owner is gone. */
-function ownerIsAlive(owner: LockOwner) {
-  const pid = owner.pid;
-  if (!Number.isSafeInteger(pid) || Number(pid) <= 0) return true;
-  if (typeof owner.bootId === "string" && owner.bootId && SELF_BOOT_ID && owner.bootId !== SELF_BOOT_ID) {
-    return false; // written on a previous boot: no process from that boot survives.
-  }
-  if (typeof owner.pidStartTicks === "string" && owner.pidStartTicks) {
-    const current = readPidStartTicks(Number(pid));
-    if (current === null) return !processExists(Number(pid));
-    if (current !== owner.pidStartTicks) return false; // same pid number, different process.
-  }
-  return processExists(Number(pid));
+let selfIdentity: { bootId: string | null; pidStartTicks: string | null } | null = null;
+function self() {
+  if (!selfIdentity) selfIdentity = { bootId: readBootId(), pidStartTicks: readPidStartTicks(process.pid) };
+  return selfIdentity;
 }
+
+/**
+ * Wall-clock time this kernel booted. Independent of boot_id (which may be
+ * unreadable) and of the lock contents (which may be empty after a crash):
+ * every writer refreshes the lock mtime at least every 30 s, so a lock whose
+ * mtime predates this boot by more than that cannot belong to a live process.
+ */
+function systemBootTimeMs(now: number) {
+  const uptimeSec = os.uptime();
+  return Number.isFinite(uptimeSec) && uptimeSec > 0 ? now - uptimeSec * 1000 : null;
+}
+/** Heartbeat is at most every 30 s; demand two missed beats plus slack so a clock step cannot fake it. */
+const PREVIOUS_BOOT_MIN_AGE_MS = 65_000;
+const BOOT_TIME_TOLERANCE_MS = 1_000;
 
 function processExists(pid: number) {
   try { process.kill(pid, 0); return true; }
   catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+}
+
+type OwnerVerdict = { alive: boolean; reason: string };
+
+/** Conservative: only returns alive=false when we can prove the owner is gone. */
+function assessOwner(owner: LockOwner): OwnerVerdict {
+  const pid = owner.pid;
+  if (!Number.isSafeInteger(pid) || Number(pid) <= 0) return { alive: true, reason: "no_pid" };
+  const { bootId: selfBootId } = self();
+  const ownerBootId = typeof owner.bootId === "string" && owner.bootId ? owner.bootId : null;
+  if (ownerBootId && selfBootId && ownerBootId !== selfBootId) {
+    return { alive: false, reason: "previous_boot_id" }; // no process from that boot survives.
+  }
+  // Within one boot a pid that no longer exists can never come back as the same owner.
+  if (!processExists(Number(pid))) return { alive: false, reason: "pid_gone" };
+  if (typeof owner.pidStartTicks === "string" && owner.pidStartTicks) {
+    const current = readPidStartTicks(Number(pid));
+    if (current !== null && current !== owner.pidStartTicks) return { alive: false, reason: "pid_reused" };
+  }
+  return { alive: true, reason: ownerBootId && selfBootId ? "pid_alive_same_boot" : "pid_alive_boot_unknown" };
+}
+
+type LockInspection = {
+  stat: fsSync.Stats;
+  raw: string;
+  reclaimable: boolean;
+  reason: string;
+  holder: Record<string, unknown>;
+};
+
+/** Read-only look at the current lock file; decides whether it provably has no live owner. */
+async function inspectLock(lockPath: string, staleAfterMs: number): Promise<LockInspection | null> {
+  const stat = await fs.lstat(lockPath).catch(() => null);
+  if (!stat) return null;
+  const raw = await fs.readFile(lockPath, "utf8").catch(() => "");
+  const now = Date.now();
+  const ageMs = Math.max(0, Math.round(now - stat.mtimeMs));
+  let owner: LockOwner | null = null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && typeof parsed.token === "string") owner = parsed;
+  } catch { /* empty / truncated (e.g. crash right after open) */ }
+  const ownerBootId = owner && typeof owner.bootId === "string" && owner.bootId ? owner.bootId : null;
+  const selfBootId = self().bootId;
+  const sameBootProven = Boolean(ownerBootId && selfBootId && ownerBootId === selfBootId);
+  const bootTimeMs = systemBootTimeMs(now);
+  const predatesBoot = bootTimeMs !== null && stat.mtimeMs < bootTimeMs - BOOT_TIME_TOLERANCE_MS;
+  const holder: Record<string, unknown> = {
+    operation: owner && typeof owner.operation === "string" ? owner.operation : null,
+    acquiredAt: owner && typeof owner.acquiredAt === "string" ? owner.acquiredAt : null,
+    pid: owner && Number.isSafeInteger(owner.pid) ? owner.pid : null,
+    ageMs,
+    bytes: stat.size,
+    parsable: Boolean(owner),
+    sameBoot: sameBootProven ? true : ownerBootId && selfBootId ? false : predatesBoot ? false : null,
+  };
+  let reclaimable = false;
+  let reason = "fresh";
+  if (!stat.isFile()) {
+    reason = "not_a_file";
+  } else if (!sameBootProven && predatesBoot && ageMs > PREVIOUS_BOOT_MIN_AGE_MS) {
+    // Covers empty/legacy/unknown-boot files too: nothing written before this boot is alive.
+    reclaimable = true; reason = "mtime_before_boot";
+  } else if (ageMs > staleAfterMs) {
+    if (!owner) {
+      // A live owner refreshes and asserts its token every <=30 s; an unparsable file this old
+      // fails every assertOwned(), so no legitimate holder can still be relying on it.
+      reclaimable = true; reason = raw.length ? "stale_unparsable" : "stale_empty";
+    } else {
+      const verdict = assessOwner(owner);
+      reclaimable = !verdict.alive; reason = verdict.reason;
+    }
+  }
+  holder.ownerAlive = reclaimable ? false : reason === "fresh" ? null : true;
+  holder.reason = reason;
+  return { stat, raw, reclaimable, reason, holder };
+}
+
+/** Unlink only if it is still exactly the file we inspected (same inode, mtime and content). */
+async function reclaimIfUnchanged(lockPath: string, seen: LockInspection) {
+  const current = await fs.lstat(lockPath).catch(() => null);
+  if (!current || current.ino !== seen.stat.ino || current.dev !== seen.stat.dev || current.mtimeMs !== seen.stat.mtimeMs) return false;
+  if (await fs.readFile(lockPath, "utf8").catch(() => null) !== seen.raw) return false;
+  await fs.unlink(lockPath).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+  console.warn(`[growth.lock] 已回收无存活持有者的存储锁 ${JSON.stringify(seen.holder)}`);
+  return true;
+}
+
+/**
+ * Boot-time cleanup: a lock left by a previous boot (deploy/VM crash) is removed
+ * right away instead of failing every writer until someone intervenes. Locks that
+ * might still be live are left alone and only described in the log.
+ */
+export async function reclaimGrowthStoreMutationLockFromPreviousBoot() {
+  const lockPath = getGrowthStoreMutationLockPath();
+  const seen = await inspectLock(lockPath, DEFAULT_STALE_AFTER_MS).catch(() => null);
+  if (!seen) return { present: false, reclaimed: false } as const;
+  if (seen.reclaimable && await reclaimIfUnchanged(lockPath, seen).catch(() => false)) {
+    return { present: true, reclaimed: true, holder: seen.holder } as const;
+  }
+  console.warn(`[growth.lock] 启动时存储锁仍被占用，未回收 ${JSON.stringify(seen.holder)}`);
+  return { present: true, reclaimed: false, holder: seen.holder } as const;
 }
 
 function delay(delayMs: number) {
@@ -107,45 +212,44 @@ export async function withGrowthStoreMutationLock<T>(
 
   while (true) {
     options?.signal?.throwIfAborted();
+    let handle: Awaited<ReturnType<typeof fs.open>>;
     try {
-      const handle = await fs.open(lockPath, "wx");
-      heldHandle = handle;
-      await handle.writeFile(JSON.stringify({ token, pid: process.pid, bootId: SELF_BOOT_ID, pidStartTicks: SELF_PID_START_TICKS, operation, acquiredAt: new Date().toISOString() }));
-      heartbeat = setInterval(() => {
-        if (heartbeatPending || leaseLost) return;
-        heartbeatPending = (async () => {
-          await assertOwned();
-          const now = new Date();
-          // Touch our inode, never a replacement owned by another process.
-          await handle.utimes(now, now);
-        })().catch(markLost).finally(() => { heartbeatPending = null; });
-      }, Math.min(30_000, Math.max(1_000, Math.floor(staleAfterMs / 3))));
-      break;
+      handle = await fs.open(lockPath, "wx");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-        await heldHandle?.close();
-        throw error;
-      }
-      const stat = await fs.lstat(lockPath).catch(() => null);
-      if (stat?.isFile() && Date.now() - stat.mtimeMs > staleAfterMs) {
-        // Age alone cannot prove that a paused process stopped writing.
-        const raw = await fs.readFile(lockPath, "utf8").catch(() => "");
-        let owner: LockOwner = {};
-        try { owner = JSON.parse(raw); } catch {}
-        if (typeof owner.token === "string" && !ownerIsAlive(owner)) {
-          const current = await fs.lstat(lockPath).catch(() => null);
-          if (current?.ino === stat.ino && current.dev === stat.dev
-              && await fs.readFile(lockPath, "utf8").catch(() => "") === raw) {
-            await fs.unlink(lockPath);
-            continue;
-          }
-        }
-      }
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      // Age alone cannot prove that a paused process stopped writing; inspectLock needs proof.
+      const seen = await inspectLock(lockPath, staleAfterMs);
+      if (seen?.reclaimable && await reclaimIfUnchanged(lockPath, seen)) continue;
       if (!options?.waitUntilReleased && Date.now() - startedAt >= waitTimeoutMs) {
-        throw new Error(`growth_store_mutation_lock_timeout:${operation}:${waitTimeoutMs}`);
+        const holder = seen ? seen.holder : { gone: true };
+        throw new Error(`growth_store_mutation_lock_timeout:${operation}:${waitTimeoutMs} holder=${JSON.stringify(holder)}`);
       }
       await delay(RETRY_INTERVAL_MS);
+      continue;
     }
+    try {
+      const { bootId, pidStartTicks } = self();
+      await handle.writeFile(JSON.stringify({ token, pid: process.pid, bootId, pidStartTicks, operation, acquiredAt: new Date().toISOString() }));
+    } catch (error) {
+      // Never leave our own half-written file behind: nobody could ever prove it dead.
+      try {
+        const [current, held] = await Promise.all([fs.lstat(lockPath), handle.stat()]);
+        if (current.ino === held.ino && current.dev === held.dev) await fs.unlink(lockPath);
+      } catch { /* already gone or replaced */ }
+      await handle.close().catch(() => {});
+      throw error;
+    }
+    heldHandle = handle;
+    heartbeat = setInterval(() => {
+      if (heartbeatPending || leaseLost) return;
+      heartbeatPending = (async () => {
+        await assertOwned();
+        const now = new Date();
+        // Touch our inode, never a replacement owned by another process.
+        await handle.utimes(now, now);
+      })().catch(markLost).finally(() => { heartbeatPending = null; });
+    }, Math.min(30_000, Math.max(1_000, Math.floor(staleAfterMs / 3))));
+    break;
   }
 
   try {

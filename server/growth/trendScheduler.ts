@@ -1,3 +1,4 @@
+import { reclaimGrowthStoreMutationLockFromPreviousBoot } from "./growthStoreMutationLock";
 import fs from "node:fs/promises";
 import { resolveCollectionCalendar, resolveCollectionMode } from "./collectionCalendar";
 import path from "node:path";
@@ -844,6 +845,11 @@ export async function bootstrapGrowthTrendScheduler() {
   const deployId = String(process.env.FLY_MACHINE_VERSION || process.env.FLY_IMAGE_REF || "").trim();
   await resetTrendRuntimeForDeploy(deployId).catch((error) => {
     console.warn("[growth.scheduler] deploy runtime reset failed:", error);
+  });
+
+  // 部署/整机异常退出可能遗留存储锁（含崩溃后零字节锁文件）；只回收可证明属于上一次开机的锁。
+  await reclaimGrowthStoreMutationLockFromPreviousBoot().catch((error) => {
+    console.warn("[growth.lock] boot-time lock inspection failed:", error);
   });
 
   if (!/^(1|true|yes)$/i.test(String(process.env.GROWTH_DISABLE_HISTORY_LEDGER_UPDATES || "").trim())) {
