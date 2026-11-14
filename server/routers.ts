@@ -8084,10 +8084,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             files: stored,
             chargeDistillFee: false,
           };
-          // 同一用户同一份原稿同一设置已在读：不建第二单，回原任务让本页跟进（1114）
+          // 同一用户同一份原稿同一设置已在读：不建第二单，本页落跟进记录跟原任务（1114）
           const { knowledgeCardDistillSourceKey } = await import("./services/knowledgeCardDistillSourceKey.js");
           const sourceKey = await knowledgeCardDistillSourceKey(fileParams);
-          const { id: jobId, attachedToExistingJob } = await createKnowledgeCardDistillJob({
+          const { id: jobId, attachedTo } = await createKnowledgeCardDistillJob({
             userId: String(userId),
             requestId: input.pageRequestId,
             params: fileParams,
@@ -8096,8 +8096,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           return {
             success: true as const,
             isAsync: true as const,
+            // 挂靠时 jobId 是本页的跟进记录编号：轮询它即跟到原任务的进度与结果
             progressJobId: jobId,
-            attachedToExistingJob,
+            attachedToExistingJob: Boolean(attachedTo),
             distillFeeCharged: 0,
             sourceChars: 0,
             distillModel: modelName,
@@ -8126,7 +8127,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           };
           const { knowledgeCardDistillSourceKey } = await import("./services/knowledgeCardDistillSourceKey.js");
           const sourceKey = await knowledgeCardDistillSourceKey(textParams);
-          const { id: jobId, attachedToExistingJob } = await createKnowledgeCardDistillJob({
+          const { id: jobId, attachedTo } = await createKnowledgeCardDistillJob({
             userId: String(userId),
             requestId: input.pageRequestId,
             params: textParams,
@@ -8135,8 +8136,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           return {
             success: true as const,
             isAsync: true as const,
+            // 挂靠时 jobId 是本页的跟进记录编号：轮询它即跟到原任务的进度与结果
             progressJobId: jobId,
-            attachedToExistingJob,
+            attachedToExistingJob: Boolean(attachedTo),
             // 后台任务在提炼成功后自己扣，这里还没发生
             distillFeeCharged: 0,
             sourceChars: mergedRaw.length,

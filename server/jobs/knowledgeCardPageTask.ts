@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 import { isDeepStrictEqual } from "node:util";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { jobs } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { createJob, getJobByIdStrict, requestPlatformJobCancel } from "./repository";
@@ -35,34 +36,49 @@ export async function createKnowledgeCardPageJob(args: {
   return id;
 }
 
+/** 跟进记录：第二页挂靠原任务时为本页请求编号落的轻量指针。status 永不为 queued/running，执行器、僵尸清理器、在途计数都不认。 */
+export const KNOWLEDGE_CARD_FOLLOW_ACTION = "knowledge_card_distill_follow" as const;
+export const KNOWLEDGE_CARD_FOLLOW_STATUS = "following" as const;
+/** 跟进页轮询会续这条记录；超过此时长没有轮询视为该页已离开，不再替原任务挡停止。 */
+export const KNOWLEDGE_CARD_FOLLOW_STALE_MS = 3 * 60_000;
+export const KNOWLEDGE_CARD_FOLLOW_DETACHED_MESSAGE = "本页已停止跟进，资料仍在原页面处理";
+export const KNOWLEDGE_CARD_STOPPED_ELSEWHERE_MESSAGE = "任务已在另一页被停止";
+
+type JobRowLike = { id: string; userId: string; status: string; input: unknown; output?: unknown; error?: string | null };
+const inputOf = (row: { input: unknown }) => (row.input && typeof row.input === "object" ? row.input : {}) as Record<string, unknown>;
+export function isKnowledgeCardFollowJob(row: { input: unknown } | null | undefined): boolean {
+  return Boolean(row && inputOf(row).action === KNOWLEDGE_CARD_FOLLOW_ACTION);
+}
+
 /**
  * 读档建单 + 同源在途去重（1114 用户令：两个标签页重复提交同一本书只跑一单）。
  * 同一用户、同一原稿身份（dedupeKey 已含提炼档位/成稿档/计费口径）若已有活着的 queued/running 提炼，
- * 不建第二单，直接回原任务编号让第二个页面跟进同一进度与结果；不产生新扣费身份。
+ * 不建第二单；为本页请求编号落一条跟进记录指向原任务（不计费、不执行），本页仍按自己的编号轮询，
+ * 回包丢失也能经跟进记录跟到原任务。
  * 「活着」沿用僵尸清理器的窗口：running 看心跳刷的 updatedAt，queued 看最近一次写入；
  * 已结束（成功/失败/取消）或已请求停止的任务不挡新提交。
  * 本请求编号已有行（重试/刷新占位）时仍走原有 createKnowledgeCardPageJob 语义。
- * 可串行化事务：两页同时提交只会有一单插入，另一单冲突重试后跟进。
+ * 同一用户的建单先取事务级咨询锁串行化，第二条语句读已提交快照，看得到对方刚建的任务；不用可串行化，避免全表冲突重试。
  */
 export async function createKnowledgeCardDistillJob(args: {
   userId: string; requestId?: string; params: Record<string, unknown>; dedupeKey?: string | null;
-}): Promise<{ id: string; attachedToExistingJob: boolean }> {
+}): Promise<{ id: string; attachedTo: string | null }> {
   const action = "knowledge_card_distill" as const;
   const dedupeKey = String(args.dedupeKey || "").trim();
-  if (!dedupeKey) {
-    return { id: await createKnowledgeCardPageJob({ userId: args.userId, action, requestId: args.requestId, params: args.params }), attachedToExistingJob: false };
-  }
+  const fallback = async () => ({ id: await createKnowledgeCardPageJob({ userId: args.userId, action, requestId: args.requestId, params: args.params }), attachedTo: null });
+  if (!dedupeKey) return fallback();
   const id = args.requestId ? knowledgeCardPageJobId(args.userId, action, args.requestId) : nanoid(16);
   const db = await getDb();
   if (!db) throw new Error("Database unavailable — cannot create knowledge card job");
   const { resolveStaleWallMinutes, resolveQueuedStaleMinutes } = await import("./staleJobsReaper");
   const input = JSON.parse(JSON.stringify({ action, params: args.params, dedupeKey }));
+  const follow = { action: KNOWLEDGE_CARD_FOLLOW_ACTION, dedupeKey };
   const text = `
     WITH own AS (
-      SELECT id FROM jobs WHERE id = $1
+      SELECT id, input::jsonb->>'action' AS action, input::jsonb->>'attachedTo' AS "attachedTo" FROM jobs WHERE id = $1
     ), alive AS (
       SELECT id FROM jobs
-      WHERE "userId" = $2 AND type = 'platform' AND id <> $1
+      WHERE "userId" = $2 AND status IN ('queued', 'running') AND type = 'platform' AND id <> $1
         AND input::jsonb->>'action' = 'knowledge_card_distill'
         AND input::jsonb->>'dedupeKey' = $3
         AND coalesce(input::jsonb->>'cancelRequestedAt', '') = ''
@@ -74,34 +90,99 @@ export async function createKnowledgeCardDistillJob(args: {
       INSERT INTO jobs (id, "userId", type, provider, status, input, attempts)
       SELECT $1, $2, 'platform', 'evolink', 'queued', $6::json, 0
       WHERE NOT EXISTS (SELECT 1 FROM own) AND NOT EXISTS (SELECT 1 FROM alive)
+      ON CONFLICT (id) DO NOTHING
       RETURNING id
+    ), followed AS (
+      INSERT INTO jobs (id, "userId", type, provider, status, input, attempts)
+      SELECT $1, $2, 'platform', 'evolink', '${KNOWLEDGE_CARD_FOLLOW_STATUS}', ($7::jsonb || jsonb_build_object('attachedTo', alive.id))::json, 0
+      FROM alive WHERE NOT EXISTS (SELECT 1 FROM own)
+      ON CONFLICT (id) DO NOTHING
+      RETURNING id, input::jsonb->>'attachedTo' AS "attachedTo"
     )
-    SELECT 'own' AS kind, id FROM own
-    UNION ALL SELECT 'attach' AS kind, id FROM alive WHERE NOT EXISTS (SELECT 1 FROM own)
-    UNION ALL SELECT 'new' AS kind, id FROM inserted`;
-  const params = [id, args.userId, dedupeKey, resolveStaleWallMinutes(), resolveQueuedStaleMinutes(), JSON.stringify(input)];
+    SELECT 'own' AS kind, id, action, "attachedTo" FROM own
+    UNION ALL SELECT 'attach' AS kind, id, NULL, "attachedTo" FROM followed
+    UNION ALL SELECT 'new' AS kind, id, NULL, NULL FROM inserted`;
+  const params = [id, args.userId, dedupeKey, resolveStaleWallMinutes(), resolveQueuedStaleMinutes(), JSON.stringify(input), JSON.stringify(follow)];
   const client = (db as unknown as { $client: { transaction: (fn: (tx: { query: (t: string, p: unknown[]) => unknown }) => unknown[], opts: Record<string, unknown>) => Promise<unknown[]> } }).$client;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const results = await client.transaction(tx => [tx.query(text, params)], { isolationLevel: "Serializable", fullResults: false, arrayMode: false });
-      const rows = (results[0] as Array<{ kind: string; id: string }>) || [];
-      const row = rows.find(r => r.kind === "own") || rows.find(r => r.kind === "attach") || rows.find(r => r.kind === "new");
-      if (!row) break;
-      if (row.kind === "attach") return { id: row.id, attachedToExistingJob: true };
-      if (row.kind === "new") return { id, attachedToExistingJob: false };
-      // 本请求编号已登记（重试或刷新占位）：沿用原校验，不复活、不换原稿
-      return { id: await createKnowledgeCardPageJob({ userId: args.userId, action, requestId: args.requestId, params: args.params }), attachedToExistingJob: false };
-    } catch (error) {
-      // 并发两页同时建单：可串行化冲突只重试这条建单语句，重试时会看到对方已建的任务
-      if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "40001" && attempt < 2) continue;
-      throw error;
-    }
-  }
-  throw new Error("无法确认读档任务，请稍后重试");
+  const results = await client.transaction(tx => [
+    tx.query("SELECT pg_advisory_xact_lock(hashtext($1)) IS NULL AS locked", [`knowledge_card_distill_admission:${args.userId}`]),
+    tx.query(text, params),
+  ], { isolationLevel: "ReadCommitted", fullResults: false, arrayMode: false });
+  const rows = (results[1] as Array<{ kind: string; id: string; action?: string | null; attachedTo?: string | null }>) || [];
+  const own = rows.find(r => r.kind === "own");
+  if (own?.action === KNOWLEDGE_CARD_FOLLOW_ACTION && own.attachedTo) return { id, attachedTo: own.attachedTo };
+  const attach = rows.find(r => r.kind === "attach");
+  if (!own && attach?.attachedTo) return { id, attachedTo: attach.attachedTo };
+  if (!own && rows.some(r => r.kind === "new")) return { id, attachedTo: null };
+  // 本请求编号已登记（重试或刷新占位），或与刷新占位同时到达：沿用原校验，不复活、不换原稿
+  return fallback();
 }
 
+/**
+ * 跟进页轮询自己的编号：续跟进记录，并把原任务的进度/结果原样给出。
+ * 原任务被别处停止时，跟进页看到的原因统一是「任务已在另一页被停止」。
+ */
+export async function resolveKnowledgeCardFollowJob(pointer: JobRowLike): Promise<{ status: string; output?: unknown; error?: string }> {
+  if (pointer.status !== KNOWLEDGE_CARD_FOLLOW_STATUS) return { status: "failed", error: KNOWLEDGE_CARD_FOLLOW_DETACHED_MESSAGE };
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot read followed job");
+  await db.update(jobs).set({ updatedAt: new Date() })
+    .where(and(eq(jobs.id, pointer.id), eq(jobs.userId, pointer.userId), eq(jobs.status, KNOWLEDGE_CARD_FOLLOW_STATUS)));
+  const targetId = String(inputOf(pointer).attachedTo || "");
+  const target = targetId ? await getJobByIdStrict(targetId) : null;
+  if (!target || String(target.userId) !== String(pointer.userId) || inputOf(target).action !== "knowledge_card_distill") {
+    return { status: "failed", error: "原任务已无法查看，请重新提交" };
+  }
+  if (target.status === "failed" && inputOf(target).cancelRequestedAt) {
+    return { status: "failed", output: target.output ?? undefined, error: KNOWLEDGE_CARD_STOPPED_ELSEWHERE_MESSAGE };
+  }
+  return { status: target.status, output: target.output ?? undefined, error: target.error ?? undefined };
+}
+
+/** 解除本页跟进：只改本人的跟进记录，原任务不受影响。非跟进记录返回 null。 */
+export async function detachKnowledgeCardFollow(args: { userId: string; jobId: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot detach follow");
+  const row = await getJobByIdStrict(args.jobId);
+  if (!row || String(row.userId) !== String(args.userId) || !isKnowledgeCardFollowJob(row)) return null;
+  await db.update(jobs).set({
+    status: "failed",
+    input: sql`coalesce(${jobs.input}::jsonb, '{}'::jsonb) || ${JSON.stringify({ detachedAt: new Date().toISOString() })}::jsonb` as never,
+    error: KNOWLEDGE_CARD_FOLLOW_DETACHED_MESSAGE,
+    updatedAt: new Date(),
+  }).where(and(eq(jobs.id, args.jobId), eq(jobs.userId, args.userId), eq(jobs.status, KNOWLEDGE_CARD_FOLLOW_STATUS)));
+  const detached = await getJobByIdStrict(args.jobId);
+  return detached ? Object.assign(detached, { followDetached: true as const }) : null;
+}
+
+/** 是否还有别的页面在跟进这一单（跟进记录未解除且近期仍在轮询）。 */
+export async function hasLiveKnowledgeCardFollowers(userId: string, jobId: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  try {
+  const rows = await db.select({ id: jobs.id }).from(jobs).where(and(
+    eq(jobs.userId, userId),
+    eq(jobs.status, KNOWLEDGE_CARD_FOLLOW_STATUS),
+    sql`${jobs.input}::jsonb->>'action' = ${KNOWLEDGE_CARD_FOLLOW_ACTION}`,
+    sql`${jobs.input}::jsonb->>'attachedTo' = ${jobId}`,
+    gte(jobs.updatedAt, new Date(Date.now() - KNOWLEDGE_CARD_FOLLOW_STALE_MS)),
+  )).limit(1);
+  return rows.length > 0;
+  } catch (error) {
+    // 查不到跟进者时按原有离页语义停止，不让任务因查询故障失去停止路径
+    console.warn(`[knowledgeCardPageTask] follower lookup failed job=${jobId}: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
+}
+
+/**
+ * 按请求编号停止（离页信标 / 刷新恢复 / 面板「停止」按钮）。
+ * - 本页是跟进页：只解除本页跟进，不碰原任务。
+ * - 本页是原始页且只是离页/刷新（explicit=false）：仍有别的页在跟进时不停任务，交给跟进页。
+ * - 用户主动按停止（explicit=true）：照常停止；跟进页看到「任务已在另一页被停止」。
+ */
 export async function cancelKnowledgeCardPageRequest(args: {
-  userId: string; action: KnowledgeCardPageAction; requestId: string;
+  userId: string; action: KnowledgeCardPageAction; requestId: string; explicit?: boolean;
 }) {
   const id = knowledgeCardPageJobId(args.userId, args.action, args.requestId);
   const db = await getDb();
@@ -113,6 +194,16 @@ export async function cancelKnowledgeCardPageRequest(args: {
     ...(args.action === "platform_composite_sheet_progress" ? { output: { knowledgeImageRetry: { version: 1, reason: "not_charged", checkedAt: new Date().toISOString() } } } : {}),
     error: "页面已刷新或关闭，已停止知识卡后续处理",
   }).onConflictDoNothing({ target: jobs.id });
+  if (args.action === "knowledge_card_distill") {
+    const row = await getJobByIdStrict(id);
+    if (row && String(row.userId) === String(args.userId) && isKnowledgeCardFollowJob(row)) {
+      return detachKnowledgeCardFollow({ userId: args.userId, jobId: id });
+    }
+    if (!args.explicit && row && String(row.userId) === String(args.userId) && (row.status === "queued" || row.status === "running")
+      && !inputOf(row).cancelRequestedAt && await hasLiveKnowledgeCardFollowers(args.userId, id)) {
+      return Object.assign(row, { handedOff: true as const });
+    }
+  }
   return requestPlatformJobCancel({ jobId: id, userId: args.userId, actions: [args.action], queuedError: "页面已刷新或关闭，已停止知识卡后续处理" });
 }
 
