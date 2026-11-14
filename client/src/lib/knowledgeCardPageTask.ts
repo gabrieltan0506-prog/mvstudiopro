@@ -44,7 +44,8 @@ export class KnowledgeCardPageTasks {
     const response = await fetch(this.url(r), { method: "POST", credentials: "include", keepalive: true });
     if (!response.ok) throw new Error("上次任务的停止状态暂未确认，请保持联网后重试刷新");
     const receipt = await response.json();
-    if (!receipt.cancelled && receipt.status !== "succeeded" && receipt.status !== "failed") {
+    // handedOff：还有别的页在跟进这一单，任务交给它，不停止；本页记录照常结束
+    if (!receipt.cancelled && !receipt.handedOff && receipt.status !== "succeeded" && receipt.status !== "failed") {
       throw new Error("上次任务正在保存结果，请稍后核对任务状态");
     }
     this.finish(r.requestId);

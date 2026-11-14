@@ -783,9 +783,18 @@ async function startServer() {
         return res.status(400).json({ error: "无效的读档停止请求" });
       }
       const { cancelKnowledgeCardPageRequest } = await import("../jobs/knowledgeCardPageTask");
-      const job = await cancelKnowledgeCardPageRequest({ userId: String(ctx.user.id), requestId, action: action as typeof KNOWLEDGE_CARD_PAGE_ACTIONS[number] });
+      // reason=user：面板「停止」按钮（明确意图）；离页信标与刷新恢复不带
+      const explicit = String(req.query.reason || "") === "user";
+      const job = await cancelKnowledgeCardPageRequest({ userId: String(ctx.user.id), requestId, action: action as typeof KNOWLEDGE_CARD_PAGE_ACTIONS[number], explicit });
       if (!job) return res.status(503).json({ error: "暂时无法确认停止状态" });
-      return res.status(200).json({ jobId: job.id, status: job.status, cancelled: Boolean((job.input as any)?.cancelRequestedAt) });
+      const { KNOWLEDGE_CARD_FOLLOW_DETACHED_MESSAGE } = await import("../jobs/knowledgeCardPageTask");
+      const followDetached = "followDetached" in job && job.followDetached === true;
+      const handedOff = "handedOff" in job && job.handedOff === true;
+      return res.status(200).json({
+        jobId: job.id, status: job.status, cancelled: Boolean((job.input as any)?.cancelRequestedAt),
+        ...(followDetached ? { followDetached: true, messageZh: job.error || KNOWLEDGE_CARD_FOLLOW_DETACHED_MESSAGE } : {}),
+        ...(handedOff ? { handedOff: true } : {}),
+      });
     } catch (error) {
       console.error("[Jobs] cancel knowledge card page request failed:", error);
       return res.status(503).json({ error: "暂时无法确认停止状态，请稍后重试" });
@@ -797,6 +806,12 @@ async function startServer() {
       const ctx = await createContext({ req: req as any, res: res as any } as any);
       if (!ctx.user) return res.status(401).json({ error: "请先登录" });
       const { requestPlatformJobCancel, getKnowledgeCardSettlement } = await import("../jobs/repository");
+      // 跟进页（挂靠原任务）的停止：只解除本页跟进，不停原任务
+      const { detachKnowledgeCardFollow, KNOWLEDGE_CARD_FOLLOW_DETACHED_MESSAGE } = await import("../jobs/knowledgeCardPageTask");
+      const detached = await detachKnowledgeCardFollow({ userId: String(ctx.user.id), jobId: String(req.params.id || ""), explicit: true });
+      if (detached) {
+        return res.status(200).json({ jobId: detached.id, status: detached.status, cancelled: true, followDetached: true, messageZh: detached.error || KNOWLEDGE_CARD_FOLLOW_DETACHED_MESSAGE });
+      }
       const job = await requestPlatformJobCancel({
         jobId: String(req.params.id || ""),
         userId: String(ctx.user.id),
@@ -912,7 +927,7 @@ async function startServer() {
         return res.status(400).json({ error: "Job id is required" });
       }
 
-      const job = await getJobById(jobId);
+      let job = await getJobById(jobId);
       if (!job) {
         return res.status(404).json({ error: "Job not found" });
       }
@@ -931,6 +946,15 @@ async function startServer() {
           ctx.user.openId !== String(job.userId)
         ) {
           return res.status(403).json({ error: "Forbidden" });
+        }
+      }
+
+      // 读档跟进记录（第二页挂靠原任务）：本页编号映射到原任务的进度与结果，并续跟进心跳
+      {
+        const { isKnowledgeCardFollowJob, resolveKnowledgeCardFollowJob } = await import("../jobs/knowledgeCardPageTask");
+        if (isKnowledgeCardFollowJob(job)) {
+          const view = await resolveKnowledgeCardFollowJob(job as any);
+          job = { ...job, status: view.status as typeof job.status, output: view.output as typeof job.output, error: view.error ?? null };
         }
       }
 
