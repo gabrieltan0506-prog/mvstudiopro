@@ -15,12 +15,19 @@ export const GLM_STREAM_IDLE_TIMEOUT_MS = 10 * 60_000;
 export async function readWithIdleTimeout<T>(
   reader: { read(): Promise<T>; cancel(reason?: unknown): Promise<void> },
   idleMs = GLM_STREAM_IDLE_TIMEOUT_MS,
+  /**
+   * true：先拒绝再取消。cancel 会让悬挂的 read() 立刻以 done 收场，先 cancel 时 race 可能把「无数据」当成正常结束、
+   * 把半截流当完整回包（2026-11-14 复现）。缺省 false 保持原行为，只有显式启用的调用方（图文手册路由链）改变。
+   */
+  rejectBeforeCancel = false,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const idle = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      const error = new Error(`上游流 ${Math.round(idleMs / 1000)} 秒无数据，判本档失败并切下一档`);
+      if (rejectBeforeCancel) reject(error);
       reader.cancel("idle").catch(() => undefined);
-      reject(new Error(`上游流 ${Math.round(idleMs / 1000)} 秒无数据，判本档失败并切下一档`));
+      if (!rejectBeforeCancel) reject(error);
     }, idleMs);
   });
   try {
@@ -48,6 +55,12 @@ export type SseReadOptions = {
   onErrorFrame?: (error: Record<string, unknown>) => void;
   /** 仅正文增量；推理内容不向用户展示。 */
   onContentDelta?: (delta: string) => void;
+  /** 调用方专用的无字节判死阈值；不传沿用 GLM_STREAM_IDLE_TIMEOUT_MS（其它调用方行为不变）。 */
+  idleTimeoutMs?: number;
+  /** 无数据判死时先拒绝再取消（见 readWithIdleTimeout）；缺省 false 保持原行为。 */
+  idleRejectBeforeCancel?: boolean;
+  /** 收到「实质增量」的数据帧（正文内容或推理/思考增量非空）时回调；注释行、空行、无内容增量的帧不算。 */
+  onSubstantiveDelta?: () => void;
 };
 
 /** 成功的结束原因：只有这些才算生成正常收口 */
@@ -179,6 +192,14 @@ export async function readGlmSseStream(
       }
     }
     const delta = chunk.choices?.[0]?.delta?.content;
+    if (options.onSubstantiveDelta) {
+      const d = (chunk.choices?.[0]?.delta || {}) as Record<string, unknown>;
+      const nonEmpty = (v: unknown) => (typeof v === "string" && v.length > 0) || (Array.isArray(v) && v.length > 0);
+      const message = (chunk.choices?.[0]?.message || {}) as Record<string, unknown>;
+      // 联网检索阶段的工具调用帧、引用注释与检索回执也算实质进展，不按「仅保活」误切。
+      if (nonEmpty(d.content) || nonEmpty(d.reasoning) || nonEmpty(d.reasoning_content) || nonEmpty(d.reasoning_details)
+        || nonEmpty(d.tool_calls) || nonEmpty(d.annotations) || nonEmpty(message.annotations) || nonEmpty(chunk.web_search)) options.onSubstantiveDelta();
+    }
     if (typeof delta === "string") content += delta;
     if (Buffer.byteLength(content) + (options.preserveAnnotations ? Buffer.byteLength(JSON.stringify(annotations)) + Buffer.byteLength(JSON.stringify(webSearch)) : 0) > cap) throw new Error("GLM 链响应超过处理上限");
     if (typeof delta === "string" && delta) options.onContentDelta?.(delta);
@@ -202,7 +223,7 @@ export async function readGlmSseStream(
     });
   try {
     for (;;) {
-      const { done, value } = await readWithIdleTimeout(reader);
+      const { done, value } = await readWithIdleTimeout(reader, options.idleTimeoutMs ?? GLM_STREAM_IDLE_TIMEOUT_MS, options.idleRejectBeforeCancel === true);
       if (done) break;
       rawBytes += value.byteLength;
       if (value.byteLength) await options.onBytes?.(value.byteLength);
