@@ -158,7 +158,13 @@ export async function invokeKnowledgeStructuredDistill(params: {
             if(!current){ if(await writeLease({digest,prefix,jobId:context.jobId,at:new Date().toISOString()},'0'))claimed=prefix; }
             else{
               const lease=current.value||{};
-              if((lease.jobId&&lease.jobId===context.jobId)||(!lease.jobId&&lease.prefix===prefix))claimed=typeof lease.prefix==='string'?lease.prefix:prefix;
+              if((lease.jobId&&lease.jobId===context.jobId)||(!lease.jobId&&lease.prefix===prefix)){
+                const own=typeof lease.prefix==='string'?lease.prefix:prefix;
+                // 本任务自动续做时重新认领：上一轮留下的 failed 标记必须先清掉（条件写），否则别的任务会把正在重做的段当成可接管而重复购买；
+                // 条件写失败说明租约刚被别人改写，回到循环重新判断。
+                if(!lease.failed)claimed=own;
+                else if(await writeLease({...lease,failed:false,at:new Date().toISOString()},current.generation))claimed=own;
+              }
               else if(!lease.failed&&lease.jobId&&context.jobActive&&await context.jobActive(lease.jobId)){
                 // 等待上限：持有方单段可能较长（无总时长上限、最多 16 笔购买），但超过上限仍未出成果时本段按未完成收口、不购买，
                 // 避免两个都在跑的任务互等对方失败段而永不结束；用户再提交时按续做根复用。
