@@ -3184,6 +3184,8 @@ export default function PlatformPage() {
   const [customNoteCancelRequested, setCustomNoteCancelRequested] = useState(false);
   const customNoteUploadStopRef = useRef(false);
   const knowledgePollingRef = useRef<AbortController | null>(null);
+  /** 降级跟进（服务端未写成跟进记录）时本页只读跟进的原任务编号 */
+  const customNoteFollowOnlyJobRef = useRef("");
   const customNoteTrackedRequestRef = useRef<{jobId:string;requestId:string;action:"knowledge_card_distill"|"knowledge_card_derive_level"} | null>(null);
 
   /**
@@ -8503,10 +8505,20 @@ export default function PlatformPage() {
       return String(queued.distilledMarkdown || "").trim();
     }
 
-    if(queued?.progressJobId && queued.progressJobId!==trackedJobId)throw Error("任务回执身份不一致，已停止后续处理");
-    // 同一份资料已在另一页处理中（1114）：服务端不建第二单，只为本页编号落跟进记录；本页照常轮询自己的编号即跟到原任务，不另计费。
-    // 本页「停止」或离页只解除本页跟进，不停原任务。
+    // 同一份资料已在另一页处理中（1114）：服务端不建第二单。两种回执：
+    // · 常规：回本页自己的编号（服务端落了跟进记录），照常轮询它即跟到原任务；停止/离页由服务端按交接规则处理。
+    // · 降级（跟进记录没写成）：回原任务编号，本页只读跟进；本页的停止只停止本页跟进，不动原任务。
+    const followOnlyJobId = queued?.attachedToExistingJob && typeof queued.progressJobId === "string"
+      && queued.progressJobId !== trackedJobId && /^[\w-]{8,64}$/.test(queued.progressJobId) ? queued.progressJobId : "";
+    if(queued?.progressJobId && queued.progressJobId!==trackedJobId && !followOnlyJobId)throw Error("任务回执身份不一致，已停止后续处理");
     if (queued?.attachedToExistingJob) toast.message("这份资料正在处理中，本页已接上原进度，完成后结果同步显示");
+    const pollJobId = followOnlyJobId || trackedJobId;
+    if (followOnlyJobId) {
+      // 本页请求编号没有建任何行，离页无须停止；停止按钮只断本页轮询
+      knowledgeCardPageTasks.finish(pageRequestId);
+      if(customNoteTrackedRequestRef.current?.jobId===trackedJobId)customNoteTrackedRequestRef.current=null;
+      customNoteFollowOnlyJobRef.current = followOnlyJobId;
+    }
     const totalHint = Math.max(1, queued?.estimatedChunks || 1);
     args.onStatus?.(
       queued && queued.sourceChars > 0
@@ -8530,8 +8542,11 @@ export default function PlatformPage() {
       const tc = Number(out.distillTotalChunks) || totalHint;
       return `分段提炼 ${dc}/${tc} 段`;
     };
-    setCustomNoteDistillJobId(trackedJobId);
+    setCustomNoteDistillJobId(pollJobId);
     // 提交请求在途时点中止：取得同一任务 ID 后请求停止，失败仍继续轮询并允许重试中止。
+    if (customNoteUploadStopRef.current && args.files?.length && followOnlyJobId) {
+      throw new Error("本页已停止跟进");
+    }
     if (customNoteUploadStopRef.current && args.files?.length) {
       try {
         const response = await fetch(withLongJobsFlyDirect(`/api/jobs/knowledge-card/${encodeURIComponent(trackedJobId)}/cancel`), { method: "POST", credentials: "include" });
@@ -8544,9 +8559,9 @@ export default function PlatformPage() {
         toast.error(error instanceof Error ? error.message : "中止请求未确认，请再点中止任务");
       }
     }
-    const ownedJobId = trackedJobId;
+    const ownedJobId = pollJobId;
     try {
-    const job = await pollJobUntilTerminal(trackedJobId, {
+    const job = await pollJobUntilTerminal(pollJobId, {
         signal:pollController.signal,
         onUnavailable: error => {
           const message=knowledgeCardRecoveryMessage(error);
@@ -8592,6 +8607,7 @@ export default function PlatformPage() {
       // 只清自己那单：迟到的旧轮询不许把新任务的终止按钮抹掉
       setCustomNoteDistillJobId((prev) => (prev === ownedJobId ? "" : prev));
       if(customNoteTrackedRequestRef.current?.jobId===ownedJobId)customNoteTrackedRequestRef.current=null;
+      if(customNoteFollowOnlyJobRef.current===ownedJobId)customNoteFollowOnlyJobRef.current="";
       setCustomNoteCancelRequested(false);
     }
   };
@@ -8626,6 +8642,13 @@ export default function PlatformPage() {
       return;
     }
     if (!jobId) return;
+    if (customNoteFollowOnlyJobRef.current === jobId) {
+      // 降级跟进：本页没有自己的任务，只断本页轮询，不停原任务
+      customNoteFollowOnlyJobRef.current = "";
+      knowledgePollingRef.current?.abort(new Error("本页已停止跟进"));
+      toast.message("本页已停止跟进");
+      return;
+    }
     setCustomNoteCancelBusy(true);
     try {
       const tracked=customNoteTrackedRequestRef.current;

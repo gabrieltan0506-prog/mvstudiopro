@@ -6,8 +6,9 @@ vi.mock("../db", () => ({ getDb: async () => state.db }));
 import {
   createKnowledgeCardDistillJob, cancelKnowledgeCardPageRequest, knowledgeCardPageJobId, resolveKnowledgeCardFollowJob, detachKnowledgeCardFollow,
   hasLiveKnowledgeCardFollowers, isKnowledgeCardFollowJob, KNOWLEDGE_CARD_FOLLOW_ACTION, KNOWLEDGE_CARD_FOLLOW_DETACHED_MESSAGE, KNOWLEDGE_CARD_STOPPED_ELSEWHERE_MESSAGE,
+  KNOWLEDGE_CARD_FOLLOW_DETACHED_OTHERS_MESSAGE, KNOWLEDGE_CARD_FOLLOW_STOPPED_MESSAGE, stopAbandonedHandedOffKnowledgeCardJobs,
 } from "./knowledgeCardPageTask";
-import { claimNextQueuedJob, getJobByIdStrict, requestPlatformJobCancel } from "./repository";
+import { claimNextQueuedJob, getJobByIdStrict, isPlatformJobCancelRequested, requestPlatformJobCancel } from "./repository";
 import { reapStaleJobsOnce } from "./staleJobsReaper";
 import { knowledgeCardDistillSourceKey } from "../services/knowledgeCardDistillSourceKey";
 
@@ -52,11 +53,11 @@ describe("读档同源在途去重（真实 Postgres 语义）", () => {
   it("同一用户同一原稿：第一单排队或运行中，第二页不建新单，只落跟进记录指向原任务", async () => {
     const first = await submit("1", 1);
     expect(first).toEqual({ id: own("1", 1), attachedTo: null });
-    expect(await submit("1", 2)).toEqual({ id: own("1", 2), attachedTo: first.id });
+    expect(await submit("1", 2)).toEqual({ id: own("1", 2), attachedTo: first.id, followRecorded: true });
     await setRow(first.id, `status = 'running', "updatedAt" = now()`);
-    expect(await submit("1", 3)).toEqual({ id: own("1", 3), attachedTo: first.id });
+    expect(await submit("1", 3)).toEqual({ id: own("1", 3), attachedTo: first.id, followRecorded: true });
     // 同一跟进页重试提交：仍是同一条跟进记录
-    expect(await submit("1", 2)).toEqual({ id: own("1", 2), attachedTo: first.id });
+    expect(await submit("1", 2)).toEqual({ id: own("1", 2), attachedTo: first.id, followRecorded: true });
     const all = await rows();
     expect(all.filter(r => r.input.action === "knowledge_card_distill")).toHaveLength(1);
     expect(all.filter(r => r.input.action === KNOWLEDGE_CARD_FOLLOW_ACTION).map(r => [r.status, r.input.attachedTo])).toEqual([["following", first.id], ["following", first.id]]);
@@ -153,6 +154,82 @@ describe("读档同源在途去重（真实 Postgres 语义）", () => {
     await pg.query(`INSERT INTO jobs (id, "userId", type, provider, status, input) VALUES ('forged', '2', 'platform', 'evolink', 'following', $1::json)`, [JSON.stringify({ action: KNOWLEDGE_CARD_FOLLOW_ACTION, attachedTo: first.id })]);
     expect(await resolveKnowledgeCardFollowJob((await getJobByIdStrict("forged")) as any)).toMatchObject({ status: "failed" });
     expect((await submit("2", 5)).attachedTo).toBeNull();
+  });
+
+  it("1a 未交接（原始页仍在）：跟进页主动停止只解除本页；已交接：主动停止真正停止原任务", async () => {
+    const first = await submit("1", 1);
+    await setRow(first.id, `status = 'running'`);
+    await submit("1", 2);
+    const r = await cancelKnowledgeCardPageRequest({ userId: "1", action: "knowledge_card_distill", requestId: uuid(2), explicit: true });
+    expect(r).toMatchObject({ followDetached: true, error: KNOWLEDGE_CARD_FOLLOW_DETACHED_MESSAGE });
+    expect((await row(first.id))?.input.cancelRequestedAt).toBeUndefined();
+    // 第二个跟进页；原始页离开 → 交接，原任务记 handedOffAt
+    await submit("1", 3);
+    expect(await cancelKnowledgeCardPageRequest({ userId: "1", action: "knowledge_card_distill", requestId: uuid(1) })).toMatchObject({ handedOff: true });
+    expect((await row(first.id))?.input.handedOffAt).toBeTruthy();
+    expect((await row(first.id))?.input.cancelRequestedAt).toBeUndefined();
+    // 跟进页主动停止（按任务编号的停止路由同一函数）→ 原任务真正停止，提示为已停止
+    const stopped = await detachKnowledgeCardFollow({ userId: "1", jobId: own("1", 3), explicit: true });
+    expect(stopped).toMatchObject({ followDetached: true, error: KNOWLEDGE_CARD_FOLLOW_STOPPED_MESSAGE });
+    expect((await row(first.id))?.input.cancelRequestedAt).toBeTruthy();
+    expect(await resolveKnowledgeCardFollowJob((await getJobByIdStrict(own("1", 3))) as any)).toEqual({ status: "failed", error: KNOWLEDGE_CARD_FOLLOW_STOPPED_MESSAGE });
+  });
+
+  it("1b 已交接后跟进页离开：还有别的跟进页则不停；最后一个跟进页离开则按离页口径停止", async () => {
+    const first = await submit("1", 1);
+    await setRow(first.id, `status = 'running'`);
+    await submit("1", 2);
+    await submit("1", 3);
+    await cancelKnowledgeCardPageRequest({ userId: "1", action: "knowledge_card_distill", requestId: uuid(1) });
+    const b = await cancelKnowledgeCardPageRequest({ userId: "1", action: "knowledge_card_distill", requestId: uuid(2) });
+    expect(b).toMatchObject({ followDetached: true, error: KNOWLEDGE_CARD_FOLLOW_DETACHED_OTHERS_MESSAGE });
+    expect((await row(first.id))?.input.cancelRequestedAt).toBeUndefined();
+    const c = await cancelKnowledgeCardPageRequest({ userId: "1", action: "knowledge_card_distill", requestId: uuid(3) });
+    expect(c).toMatchObject({ followDetached: true, error: KNOWLEDGE_CARD_FOLLOW_STOPPED_MESSAGE });
+    expect((await row(first.id))?.input.cancelRequestedAt).toBeTruthy();
+    expect((await row(first.id))?.status).toBe("running"); // 运行单交执行器取消监视收口
+  });
+
+  it("1c 已交接且跟进页全部失联超过兜底时长：执行器取消监视与清理器都会停止；未超时不停", async () => {
+    const first = await submit("1", 1);
+    await setRow(first.id, `status = 'running'`);
+    await submit("1", 2);
+    await cancelKnowledgeCardPageRequest({ userId: "1", action: "knowledge_card_distill", requestId: uuid(1) });
+    const old = new Date(Date.now() - 11 * 60_000).toISOString();
+    await setRow(first.id, `input = (input::jsonb || jsonb_build_object('handedOffAt', '${old}'))::json`);
+    await setRow(own("1", 2), `"updatedAt" = now() - interval '5 minutes'`);
+    expect(await stopAbandonedHandedOffKnowledgeCardJobs(first.id)).toBe(0);
+    expect((await row(first.id))?.input.cancelRequestedAt).toBeUndefined();
+    await setRow(own("1", 2), `"updatedAt" = now() - interval '11 minutes'`);
+    // 执行器取消监视每 2 s 调的就是这个函数：它自己发现失联并停止
+    expect(await isPlatformJobCancelRequested(first.id)).toBe(true);
+    expect((await row(first.id))?.input.cancelRequestedAt).toBeTruthy();
+    expect((await row(first.id))?.input.abandonedAfterHandoffAt).toBeTruthy();
+    // 排队中的交接单由清理器判失败
+    const q = await submit("1", 5, "K2");
+    await submit("1", 6, "K2");
+    await cancelKnowledgeCardPageRequest({ userId: "1", action: "knowledge_card_distill", requestId: uuid(5) });
+    expect((await row(q.id))?.input.handedOffAt).toBeTruthy();
+    await setRow(own("1", 6), `"updatedAt" = now() - interval '11 minutes'`);
+    await reapStaleJobsOnce({ bypassDisable: true });
+    expect(await row(q.id)).toMatchObject({ status: "failed" });
+  });
+
+  it("2 跟进记录写不进（线上状态列不接受）：降级为直接回原任务编号，不建第二单", async () => {
+    const first = await submit("1", 1);
+    await pg.exec(`ALTER TABLE jobs ADD CONSTRAINT status_four CHECK (status IN ('queued','running','succeeded','failed'))`);
+    try {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      expect(await submit("1", 2)).toEqual({ id: first.id, attachedTo: first.id, followRecorded: false });
+      expect(warn.mock.calls.some(c => String(c[0]).includes("follow record admission failed"))).toBe(true);
+      warn.mockRestore();
+      expect(await rows()).toHaveLength(1);
+      // 非挂靠的新提交在降级语句下照常建单
+      expect((await submit("1", 3, "K-other")).attachedTo).toBeNull();
+      expect(await rows()).toHaveLength(2);
+    } finally {
+      await pg.exec(`ALTER TABLE jobs DROP CONSTRAINT status_four`);
+    }
   });
 
   it("不同原稿或不同设置（身份键不同）都建新单", async () => {

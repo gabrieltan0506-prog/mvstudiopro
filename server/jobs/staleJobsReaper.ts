@@ -109,6 +109,9 @@ export async function reapStaleJobsOnce(
         ),
       );
 
+    // 读档已交接给跟进页且跟进页全部失联：按离页口径停止（排队单在此判失败，运行单由执行器取消监视收口）
+    await (await import("./knowledgeCardPageTask")).stopAbandonedHandedOffKnowledgeCardJobs();
+
     // 合成任务保留输入、成片和字幕回执。只终止确已失活的记录，不删除、不重排。
     const staleAssembles = await db.select({ id: jobs.id, userId: jobs.userId, status: jobs.status, updatedAt: jobs.updatedAt })
       .from(jobs).where(and(
