@@ -3869,13 +3869,16 @@ async function processPlatformJob(
       const { createKnowledgeReadingPreparation } = await import("../services/knowledgeReadingPreparation");
       const readingPreparation = createKnowledgeReadingPreparation(Number(jobUserId), platformJobId!);
       const {downloadGcsObjectVersioned:readDistillObject,uploadBufferToGcs:saveDistillObject,getGcsBucketName:distillBucket}=await import('../services/gcs.js');
-      const publicationEvidence=params.billingPolicy==='interior-pages-v1'?{
-        prefix:`knowledge-card-distill/user-${jobUserId}/${platformJobId}`,
+      const distillStore={
         read:async(key:string)=>{try{return JSON.parse((await readDistillObject({gcsUri:`gs://${distillBucket()}/${key}`})).buffer.toString());}catch(error){if((error as Error).message==='gcs_stat_failed:404')return null;throw error;}},
         save:async(key:string,value:unknown)=>{await saveDistillObject({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json'});},
-      }:undefined;
+      };
+      // 购买回执仍按任务号落盘（在途旧任务原样恢复）；跨提交续做根按用户，批次按内容身份命中，不跨用户。
+      const publicationEvidence=params.billingPolicy==='interior-pages-v1'?{prefix:`knowledge-card-distill/user-${jobUserId}/${platformJobId}`,...distillStore}:undefined;
+      const publicationResumeEvidence=publicationEvidence?{prefix:`knowledge-card-distill/user-${jobUserId}/resume`,...distillStore}:undefined;
       const prepared = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => prepareKnowledgeCardCopy({
         publicationEvidence,
+        publicationResumeEvidence,
         sourceText,
         files: jobFiles,
         abortSignal: cancel.signal,

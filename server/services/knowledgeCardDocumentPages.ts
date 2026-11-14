@@ -73,6 +73,18 @@ export function knowledgeCardDocumentKey(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex").slice(0, 16);
 }
 
+/**
+ * EPUB 转出的 PDF 的原稿身份：Chromium 每次打印都写入当次 CreationDate/ModDate，pdfunite 合并另写随机 /ID，
+ * 同一本 EPUB 两次转换字节不同（2026-11-14 实测），按字节哈希会让页图、参考页与已付费分段全部换身份。
+ * 只抹掉这三项元数据再哈希；版面、字体、图片任何实质变化仍得到新身份。前缀 e 与直接上传的 PDF 身份区分。
+ */
+export function knowledgeCardConvertedPdfKey(pdf: Buffer): string {
+  const normalized = pdf.toString("latin1")
+    .replace(/\/(CreationDate|ModDate)\s*\((?:\\.|[^\\)])*\)/g, "/$1()")
+    .replace(/\/ID\s*\[\s*(?:<[0-9A-Fa-f]*>|\((?:\\.|[^\\)])*\))\s*(?:<[0-9A-Fa-f]*>|\((?:\\.|[^\\)])*\))\s*\]/g, "/ID[]");
+  return `e${createHash("sha256").update(normalized, "latin1").digest("hex").slice(0, 15)}`;
+}
+
 export function knowledgeCardPageObjectName(userId: number, docKey: string, pageNumber: number): string {
   return `knowledge-card-distill/pages/u${userId}/${docKey}/p-${String(pageNumber).padStart(3, "0")}.jpg`;
 }
@@ -178,6 +190,8 @@ export async function buildContactSheets(thumbs: Map<number, Buffer>, indexOffse
  */
 export async function prepareKnowledgeCardDocumentPages(params: {
   buffer: Buffer;
+  /** 原稿身份；不传按 PDF 字节哈希（EPUB 转出的 PDF 传 knowledgeCardConvertedPdfKey） */
+  docKey?: string;
   fileName: string;
   userId: number;
   abortSignal?: AbortSignal;
@@ -194,7 +208,7 @@ export async function prepareKnowledgeCardDocumentPages(params: {
   uploadPage?: (objectName: string, jpeg: Buffer) => Promise<{ gcsUri: string; url: string }>;
 }): Promise<KnowledgeCardDocumentPageSet> {
   params.abortSignal?.throwIfAborted();
-  const docKey = knowledgeCardDocumentKey(params.buffer);
+  const docKey = params.docKey || knowledgeCardDocumentKey(params.buffer);
   const uploadPage =
     params.uploadPage ||
     (async (objectName: string, jpeg: Buffer) => {

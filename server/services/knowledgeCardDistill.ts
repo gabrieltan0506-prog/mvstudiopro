@@ -59,6 +59,7 @@ import {
   formatKnowledgeCardPageRef,
   isKnowledgeCardScannedPage,
   prepareKnowledgeCardDocumentPages,
+  knowledgeCardConvertedPdfKey,
   type KnowledgeCardContactSheet,
   type KnowledgeCardDocumentPageSet,
   type KnowledgeCardPageSelection,
@@ -475,11 +476,14 @@ export async function extractKnowledgeCardUploads(
     }
 
     let pdfBuffer: Buffer | null = null;
+    let pdfDocKey: string | undefined;
     let mimeType = file.mimeType;
     if (isEpubFile(file.mimeType, file.fileName)) {
       await report("converting", 0, 1);
       const converted = await convertEpubToPdf(buffer, { abortSignal: options.abortSignal });
       pdfBuffer = converted.pdf;
+      // 转换产物带当次时间戳：按去元数据后的内容定身份，同一本书再提交时页图与分段身份不变（可续做）
+      pdfDocKey = knowledgeCardConvertedPdfKey(converted.pdf);
       mimeType = "application/pdf";
       if (converted.mode === "stripped") {
         // 让用户知道哪几片的插图被剥了，不只藏在 methods 里
@@ -506,6 +510,7 @@ export async function extractKnowledgeCardUploads(
       const set = await prepareKnowledgeCardDocumentPages({
         abortSignal: options.abortSignal,
         buffer: pdfBuffer,
+        docKey: pdfDocKey,
         fileName: name,
         userId: options.userId!,
         selectPages: options.selectPages!,
@@ -1585,12 +1590,19 @@ export function buildPageAlignedChunks(
   return chunks;
 }
 
+/** 手册分段提炼部分失败的用户文案：只给段数，不带模型/通道细节（原始错误进日志与 cause）。 */
+export function knowledgeDistillPartialFailureMessage(completed: number, total: number): string {
+  return `已完成 ${completed}/${total} 段，${total - completed} 段未完成；已完成部分已保存，重新提交同一份资料只补未完成段`;
+}
+
 /** 短文一次直出（顶档）；长文按模型 profile 分段（中档）→ 合并 → 顶档统稿。（导出供分段失败回归用） */
 /** 0926 用户令：带扫描页读字图的段单跳超时 6 分钟（读图 + 提炼比纯文字重）；纯文字段仍按 profile */
 export const KNOWLEDGE_CARD_OCR_CHUNK_TIMEOUT_MS = 6 * 60_000;
 
-/** 每路 5 个在读文件，两路总上限 10；完成一份立即补下一份。 */
-export const KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE = 5;
+/** 每路 3 个在读分段，两路总上限 6（站长 2026-11-14「并发数量减半」：原 5×2=10）；完成一份立即补下一份。 */
+export const KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE = 3;
+/** 读档挑页每通道在途上限（原取 KNOWLEDGE_MODEL_CHANNEL_MAX=16，2026-11-14 减半为 8；审校/排版/生图常量不变）。 */
+export const KNOWLEDGE_CARD_TRIAGE_CHANNEL_MAX = 8;
 export const KNOWLEDGE_CARD_ROUTE_STAGGER_MS = 3_500;
 
 export async function invokeDistillLlmPossiblyChunked(rawParams: {
@@ -1675,6 +1687,7 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
   let nextIdx = 0;
   // 某段致命失败（额度/拒答/终止）：其它工位不再领新段
   let stopped = false;
+  const structuredFailures: { index: number; error: unknown }[] = [];
   const worker = async (chain: readonly KnowledgeCardGatewayStep[]) => {
     while (!stopped && nextIdx < chunks.length) {
       params.abortSignal?.throwIfAborted();
@@ -1699,8 +1712,18 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
           chainOverride: chain,
         }));
       } catch (err) {
-        stopped = true;
-        throw err;
+        // 手册结构化提炼：单段失败（超时、各跳均失败、写坏）不拖停其它段——在途与剩余段照常跑完、各自落盘，
+        // 最后按「已完成/未完成」段数判本次失败；重新提交同一份资料只补未完成段（已完成段按内容身份零调用复用）。
+        // 取消、内容安全拒绝、额度/配置等致命错误继续跑只会多花钱：照旧叫停其它工位。
+        if (!knowledgeStructuredDistillContext.getStore() || isKnowledgeCardCancelledError(err, params.abortSignal) || isSseContentSafetyError(err)
+          || (!isSseIncompleteStreamError(err) && isFatalDistillError(err))) {
+          stopped = true;
+          throw err;
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[knowledgeCardDistill] 第 ${idx + 1}/${chunks.length} 段未完成，其余段继续：${message.slice(0, 160)}`);
+        structuredFailures.push({ index: idx, error: err });
+        outputs[idx] = { ok: false, whereZh: `第 ${idx + 1}/${chunks.length} 段`, reasonZh: message.slice(0, 120) };
       }
       const ready = outputs[idx];
       await params.onReadingChunk?.({index:idx,total:chunks.length,markdown:ready?.ok ? ready.markdown : "",...(!ready?.ok ? {error:"本段未读取成功"} : {})});
@@ -1718,6 +1741,9 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
 
   const failedWorker=chunkOutcomes.find((outcome):outcome is PromiseRejectedResult=>outcome.status === "rejected");
   if(failedWorker)throw failedWorker.reason;
+  if (structuredFailures.length) {
+    throw new Error(knowledgeDistillPartialFailureMessage(chunks.length - structuredFailures.length, chunks.length), { cause: structuredFailures[0]!.error });
+  }
 
   // 审查 P1：只有真正成功的段进正文；全失败＝本次没有稿子，按失败结算
   const failedChunks = outputs.filter((o): o is Extract<DistillChunkResult, { ok: false }> => !o?.ok);
@@ -1791,7 +1817,7 @@ const TRIAGE_SHEETS_PER_CALL = 8;
  * 目录页扫读挑页：用所选档位模型看缩略图目录，返回值得参考的页码。
  * 扫读失败不阻断整体提炼（退回无参考页）。
  */
-export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: AbortSignal) {
+export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: AbortSignal, hooks: { onGroupFailed?: () => void } = {}) {
   // GLM与DeepSeek均保持既有模型合同，各批首选通道独立分流。
   const glmTier = resolveKnowledgeCardDistillModel(modelName) === KNOWLEDGE_CARD_DISTILL_MODEL_GLM;
   const fallbackChain = glmTier ? KNOWLEDGE_CARD_GLM_FIRST_ORDER : KNOWLEDGE_CARD_PREMIUM_FALLBACK_TAIL;
@@ -1854,6 +1880,7 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
       } catch (err) {
         // 取消原样抛：不能被「本组不选参考页」这条容错吞掉（复审 P1）
         if (isKnowledgeCardCancelledError(err, signal) || isSseContentSafetyError(err)) { stop.abort(err); throw err; }
+        hooks.onGroupFailed?.();
         console.warn(`[knowledgeCardDistill] 目录页扫读失败（第 ${Math.floor(i / TRIAGE_SHEETS_PER_CALL) + 1}/${Math.ceil(sheets.length / TRIAGE_SHEETS_PER_CALL)} 组，目录页 ${i + 1}–${Math.min(sheets.length, i + TRIAGE_SHEETS_PER_CALL)}），本组不选参考页：${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`);
       }
       doneSheets+=group.length;
@@ -1861,12 +1888,12 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
       progress=progress.then(async()=>{ await onProgress?.(completed,sheets.length); });
       await progress;
     };
-    // 两通道同时领取不同批次，各最多5个在途；完成即补位，已成功组不重发。
+    // 两通道同时领取不同批次，各最多 8 个在途；完成即补位，已成功组不重发。
     const work=(['openrouter','evolink'] as const).flatMap((primary,routeIndex)=>{
       const indices=groups.map((_,i)=>i).filter(i=>i%2===routeIndex);
       let next=0;
-      // 每通道按本通道组数动态并发（≥原 5 路，≤通道上限），一轮发完。
-      return Array.from({length:Math.max(Math.min(KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE,indices.length),knowledgeStageConcurrency(indices.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX[primary]}))},async()=>{
+      // 每通道按本通道组数动态并发（≥读档每路工位数，≤挑页通道上限 8）。
+      return Array.from({length:Math.max(Math.min(KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE,indices.length),knowledgeStageConcurrency(indices.length,{max:Math.min(KNOWLEDGE_MODEL_CHANNEL_MAX[primary],KNOWLEDGE_CARD_TRIAGE_CHANNEL_MAX)}))},async()=>{
         while(next<indices.length){ signal.throwIfAborted(); await runGroup(indices[next++]!,primary); }
       });
     });
@@ -1877,6 +1904,34 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
   };
 }
 
+/** 挑页结果缓存的合同版本；改挑页提示词或解析口径时递增，旧缓存自然失效。 */
+export const KNOWLEDGE_PAGE_SELECTION_CACHE_VERSION = "page-selection-v1";
+
+/**
+ * 手册读档的挑页可续做：挑页是模型判断，两次提交选出的参考页不同会让分段与每段身份全变，已付费的分段无法复用。
+ * 同一用户证据根下，按目录页对象（随原稿内容寻址）+ 页数 + 档位缓存挑页结果；只有全部目录组都扫读成功才落盘，
+ * 部分失败的残缺挑页不固化。非手册（无证据上下文）照旧每次扫读。
+ */
+function knowledgeCardResumablePageSelector(modelName: string, abortSignal?: AbortSignal) {
+  const context = knowledgeStructuredDistillContext.getStore();
+  if (!context) return makeKnowledgeCardPageSelector(modelName, abortSignal);
+  return async (sheets: KnowledgeCardContactSheet[], pageCount: number, onProgress?: (doneSheets: number, totalSheets: number) => void | Promise<void>) => {
+    const identity = { version: KNOWLEDGE_PAGE_SELECTION_CACHE_VERSION, model: resolveKnowledgeCardDistillModel(modelName), pageCount, sheets: sheets.map((sheet) => ({ gcsUri: sheet.gcsUri, pageNumbers: sheet.pageNumbers })) };
+    const { createHash } = await import("node:crypto");
+    const store = context.resume || context.evidence;
+    const key = `${store.prefix}/page-selection/${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}.json`;
+    const saved = await store.read(key);
+    if (saved && JSON.stringify(saved.identity) === JSON.stringify(identity) && Array.isArray(saved.pages)) {
+      await onProgress?.(sheets.length, sheets.length);
+      return saved.pages as KnowledgeCardPageSelection[];
+    }
+    let failedGroups = 0;
+    const pages = await makeKnowledgeCardPageSelector(modelName, abortSignal, { onGroupFailed: () => { failedGroups += 1; } })(sheets, pageCount, onProgress);
+    if (!failedGroups) await store.save(key, { identity, pages });
+    return pages;
+  };
+}
+
 /**
  * 合并文本框 + 上传 → 读文/读图 + 提炼 → 可分页 Markdown。
  * 短贴文且无上传：跳过提炼。
@@ -1884,6 +1939,8 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
  */
 export async function prepareKnowledgeCardCopy(input: {
   publicationEvidence?: KnowledgeRouteEvidence;
+  /** 跨任务续做根（按用户）：已完成批次与挑页结果按内容身份复用；不传则只按本任务证据恢复 */
+  publicationResumeEvidence?: KnowledgeRouteEvidence;
   sourceText?: string;
   files?: KnowledgeCardUploadFile[];
   forceDistill?: boolean;
@@ -1904,7 +1961,7 @@ export async function prepareKnowledgeCardCopy(input: {
   abortSignal?: AbortSignal;
 }): Promise<PrepareKnowledgeCardCopyResult> {
   if (input.publicationEvidence && !knowledgeStructuredDistillContext.getStore())
-    return knowledgeStructuredDistillContext.run({evidence:input.publicationEvidence},()=>prepareKnowledgeCardCopy({...input,publicationEvidence:undefined}));
+    return knowledgeStructuredDistillContext.run({evidence:input.publicationEvidence,...(input.publicationResumeEvidence?{resume:input.publicationResumeEvidence}:{})},()=>prepareKnowledgeCardCopy({...input,publicationEvidence:undefined,publicationResumeEvidence:undefined}));
   // 已经取消就别起步：抽取、挑页、提炼一律不做
   input.abortSignal?.throwIfAborted();
   const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
@@ -1919,7 +1976,7 @@ export async function prepareKnowledgeCardCopy(input: {
       ? await extractKnowledgeCardUploads(files, {
           abortSignal: input.abortSignal,
           userId: input.userId,
-          selectPages: input.userId ? makeKnowledgeCardPageSelector(modelName, input.abortSignal) : undefined,
+          selectPages: input.userId ? knowledgeCardResumablePageSelector(modelName, input.abortSignal) : undefined,
           onProgress: input.onExtractProgress,
           onReadingSource: input.onReadingSource,
           onConvertedPdf: input.onConvertedPdf,

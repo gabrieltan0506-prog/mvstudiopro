@@ -19,8 +19,10 @@ export async function readWithIdleTimeout<T>(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const idle = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      reader.cancel("idle").catch(() => undefined);
+      // 先拒绝再取消：cancel 会让悬挂的 read() 立刻以 done 收场，若先 cancel，race 会把「无数据」当成正常结束，
+      // 进而把半截流当完整回包落盘（2026-11-14 复现）。
       reject(new Error(`上游流 ${Math.round(idleMs / 1000)} 秒无数据，判本档失败并切下一档`));
+      reader.cancel("idle").catch(() => undefined);
     }, idleMs);
   });
   try {
@@ -48,6 +50,8 @@ export type SseReadOptions = {
   onErrorFrame?: (error: Record<string, unknown>) => void;
   /** 仅正文增量；推理内容不向用户展示。 */
   onContentDelta?: (delta: string) => void;
+  /** 调用方专用的无字节判死阈值；不传沿用 GLM_STREAM_IDLE_TIMEOUT_MS（其它调用方行为不变）。 */
+  idleTimeoutMs?: number;
 };
 
 /** 成功的结束原因：只有这些才算生成正常收口 */
@@ -202,7 +206,7 @@ export async function readGlmSseStream(
     });
   try {
     for (;;) {
-      const { done, value } = await readWithIdleTimeout(reader);
+      const { done, value } = await readWithIdleTimeout(reader, options.idleTimeoutMs ?? GLM_STREAM_IDLE_TIMEOUT_MS);
       if (done) break;
       rawBytes += value.byteLength;
       if (value.byteLength) await options.onBytes?.(value.byteLength);
