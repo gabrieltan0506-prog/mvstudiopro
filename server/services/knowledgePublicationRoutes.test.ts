@@ -1284,6 +1284,29 @@ describe('1111 失败处理：同通道重试 → 同模型换路由 → 换模�
     expect(health.down.get('evolink')?.cause).toBe('insufficient_credit_http_402');
     expect(knowledgeChannelSkipped(health, 'evolink', clock)).toBe(true);
   });
+  it('探测位不泄漏：冷却期满后本批在探测通道上恰好被跳过/抛错 → 不占探测位；真正发出后抛错也会释放；下一批仍能探测并恢复', async () => {
+    const { createKnowledgeChannelHealth, KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS } = await import('./knowledgePublicationRoutes');
+    const health = createKnowledgeChannelHealth(); let clock = 5_000_000;
+    health.down.set('evolink', { since: clock, until: clock + KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS, probing: false, cause: 'insufficient_credit_http_402' });
+    clock += KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS + 1;
+    // 1) 本批另一通道已断流两次 → 走到探测通道那一跳时直接判本章失败（跳过/抛错发生在购买之前）
+    const a = glm(); (a.deps as any).channelHealth = health; a.deps.now = () => clock;
+    const { researchAfterReview: _r, ...identity } = a.request as any;
+    const requestDigest = createHash('sha256').update(JSON.stringify([KNOWLEDGE_PUBLICATION_ROUTE_VERSION, identity])).digest('hex');
+    for (const id of ['glm-openrouter', 'glm-openrouter-retry-1']) a.storage.set(`test/0/route-${id}.json`, { requestDigest, route: id, model: GLM_53_FLASHX_OPENROUTER_MODEL, state: 'interrupted', status: 200 });
+    await expect(invokeKnowledgePublicationRoutes(a.request, a.evidence, a.deps)).rejects.toThrow('传输中断已发生两次');
+    expect(a.deps.fetch).not.toHaveBeenCalled(); expect(health.down.get('evolink')?.probing).toBe(false);
+    // 2) 真正发出探测前保存回执失败（抛错）→ 结束时释放探测位并重新冷却
+    const b = glm(); (b.deps as any).channelHealth = health; b.deps.now = () => clock;
+    const save = b.evidence.save; b.evidence.save = vi.fn(async (k: string, v: any) => { if (/route-glm-evolink\.json$/.test(k) && v?.state === 'pending') throw Error('storage failure'); await save(k, v); });
+    await expect(invokeKnowledgePublicationRoutes(b.request, b.evidence, b.deps)).rejects.toThrow('storage failure');
+    expect(health.down.get('evolink')?.probing).toBe(false); expect(health.down.get('evolink')!.until).toBe(clock + KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS);
+    // 3) 再过冷却期：下一批照常探测并恢复
+    clock += KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS + 1;
+    const c = glm(); (c.deps as any).channelHealth = health; c.deps.now = () => clock; c.deps.fetch.mockImplementation(ok(c));
+    expect(JSON.parse((await invokeKnowledgePublicationRoutes(c.request, c.evidence, c.deps)).text).gateway).toBe('glm-evolink');
+    expect(health.down.has('evolink')).toBe(false);
+  });
   it('无心跳判通道 down 需 10 分钟内 ≥3 次且期间该通道无成功', async () => {
     const { createKnowledgeChannelHealth } = await import('./knowledgePublicationRoutes');
     vi.useFakeTimers();
@@ -1350,4 +1373,16 @@ describe('[knowledgeRoute] 日志带脱敏后的拒收原因 detail', async () =
     expect(lines[0]).not.toMatch(/水循环|液/);
     expect(f.storage.get('test/0/route-glm-evolink.json').reason).toContain('《水循环》');
   });
+});
+
+it('仅保活判定：联网检索的工具调用帧、引用注释与检索回执帧算实质增量，注释行与空增量帧不算', async () => {
+  const { readGlmSseStream } = await import('./sseChatStream');
+  const enc = new TextEncoder();
+  const frames = [': OPENROUTER PROCESSING\n\n', 'data: {"choices":[{"delta":{}}]}\n\n',
+    'data: {"choices":[{"delta":{"tool_calls":[{"id":"t1"}]}}]}\n\n', 'data: {"choices":[{"delta":{"annotations":[{"url":"x"}]}}]}\n\n',
+    'data: {"web_search":[{"link":"y"}],"choices":[{"delta":{}}]}\n\n', 'data: {"choices":[{"delta":{"content":"正文"},"finish_reason":"stop"}]}\n\n'];
+  const body = new ReadableStream<Uint8Array>({ start(c) { for (const f of frames) c.enqueue(enc.encode(f)); c.close(); } });
+  let substantive = 0;
+  await readGlmSseStream(body, 1024 * 1024, { onSubstantiveDelta: () => { substantive += 1; } });
+  expect(substantive).toBe(4);
 });

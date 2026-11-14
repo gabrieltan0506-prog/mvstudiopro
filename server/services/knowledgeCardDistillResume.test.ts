@@ -244,3 +244,27 @@ it('挑页结果缓存：同一目录页对象再提交零模型调用；有组�
     expect(Array.from(b.data.keys()).filter(k => k.includes('/page-selection/'))).toHaveLength(1);
   } finally { __setKnowledgeCardDistillGatewayInvokerForTest(null); }
 }, 60_000);
+
+it('N3 两任务都在跑：A 的某段最终失败后租约标 failed，等待中的 B 接管重做；持有方一直不出成果时 B 等到上限按本段未完成收口、不购买', async () => {
+  const b = versionedBucket(); const active = new Set(['job-a', 'job-b']);
+  const invokeA = vi.fn(async () => { await new Promise(r => setTimeout(r, 30)); throw Error('各跳均失败（测试）'); });
+  const invokeB = vi.fn(async (request: any) => report(request));
+  const ctx = (job: string, invoke: any, extra: object = {}) => ({ evidence: b.store(`knowledge-card-distill/user-7/${job}`), resume: b.store('knowledge-card-distill/user-7/resume'), invoke, jobId: job, jobActive: async (id: string) => active.has(id), leaseWaitMs: 5, ...extra });
+  const text = '短原文一段。';
+  const a = knowledgeStructuredDistillContext.run(ctx('job-a', invokeA), () => invokeKnowledgeStructuredDistill(params(text))).catch(e => e);
+  await new Promise(r => setTimeout(r, 5));
+  const out = await knowledgeStructuredDistillContext.run(ctx('job-b', invokeB), () => invokeKnowledgeStructuredDistill(params(text)));
+  expect((await a).message).toContain('各跳均失败'); expect(active.has('job-a')).toBe(true); // A 仍在跑（其它段），但本段已标 failed
+  expect(out).toContain('明确的知识说明'); expect(invokeB).toHaveBeenCalledTimes(1);
+  const lease = Array.from(b.data.entries()).find(([k]) => k.endsWith('/attempt.json'))![1];
+  expect(lease).toMatchObject({ jobId: 'job-b', previous: 'job-a' });
+  // 等待上限：持有方 C 在跑且一直不出成果
+  const c = versionedBucket(); const hold = new Promise<never>(() => {});
+  const holder = knowledgeStructuredDistillContext.run({ evidence: c.store('u/job-c'), resume: c.store('u/resume'), invoke: (async () => hold) as any, jobId: 'job-c', jobActive: async () => true }, () => invokeKnowledgeStructuredDistill(params('另一段原文。')));
+  void holder;
+  await new Promise(r => setTimeout(r, 10));
+  const invokeD = vi.fn(async (request: any) => report(request));
+  await expect(knowledgeStructuredDistillContext.run({ evidence: c.store('u/job-d'), resume: c.store('u/resume'), invoke: invokeD as any, jobId: 'job-d', jobActive: async () => true, leaseWaitMs: 5, leaseWaitMaxMs: 40 },
+    () => invokeKnowledgeStructuredDistill(params('另一段原文。')))).rejects.toThrow('等待超时，本段未完成');
+  expect(invokeD).not.toHaveBeenCalled();
+});

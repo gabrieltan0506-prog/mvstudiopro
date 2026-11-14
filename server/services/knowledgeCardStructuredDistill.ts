@@ -30,6 +30,10 @@ export const knowledgeStructuredDistillContext = new AsyncLocalStorage<{
   jobActive?: (jobId: string) => Promise<boolean>;
   /** 另一任务正在处理同一段时的轮询间隔（测试可调小）。 */
   leaseWaitMs?: number;
+  /** 等另一任务处理同一段的总上限（测试可调小）；超时本段按未完成处理，不购买。 */
+  leaseWaitMaxMs?: number;
+  /** 本任务原稿准备是否已写入可复用缓存（false = 挑页残缺/EPUB 降级/缓存写失败，失败时不自动续做）。 */
+  documentsResumable?: boolean;
   invoke?: typeof invokeKnowledgePublicationRoutes;
   /** 本任务内按通道共享的并发闸（首次提炼时建立）；无心跳中断/429 时该通道并发减半。 */
   gates?: { openrouter: KnowledgeRateGate; evolink: KnowledgeRateGate };
@@ -38,6 +42,11 @@ export const knowledgeStructuredDistillContext = new AsyncLocalStorage<{
 }>();
 /** 续做根下的合同版本；提炼提示词或输出合同改变时递增，旧成果不再复用。 */
 export const KNOWLEDGE_DISTILL_RESUME_VERSION = 'distill-resume-v1';
+/**
+ * 等另一任务处理同一段的总上限：30 分钟。依据：段内单发无总时长上限，但正常一段（含换跳）在 10–15 分钟内收口；
+ * 任务卡死判定为连续 20 分钟无心跳。30 分钟覆盖一次慢段加一次换跳，超过即按本段未完成处理（不购买）。
+ */
+export const KNOWLEDGE_DISTILL_LEASE_WAIT_MAX_MS = 30 * 60_000;
 /** 读档任务内单通道并发闸上限 = 两路工位总数（knowledgeCardDistill 的 3×2）：另一通道整体接手时可承接全部 6 路。 */
 export const KNOWLEDGE_DISTILL_GATE_MAX = 6;
 /** 单段内多批（极少见）的并发上限：原取通道上限 16，2026-11-14 减半为 8。 */
@@ -134,6 +143,7 @@ export async function invokeKnowledgeStructuredDistill(params: {
             if(rendered&&rendered.digest===digest&&typeof rendered.markdown==='string')return {rendered:rendered.markdown as string};
             return null;
           };
+          const waitStarted=Date.now();
           for(;;){
             const done=await reuseShared();
             if(done){
@@ -149,7 +159,11 @@ export async function invokeKnowledgeStructuredDistill(params: {
             else{
               const lease=current.value||{};
               if((lease.jobId&&lease.jobId===context.jobId)||(!lease.jobId&&lease.prefix===prefix))claimed=typeof lease.prefix==='string'?lease.prefix:prefix;
-              else if(lease.jobId&&context.jobActive&&await context.jobActive(lease.jobId)){
+              else if(!lease.failed&&lease.jobId&&context.jobActive&&await context.jobActive(lease.jobId)){
+                // 等待上限：持有方单段可能较长（无总时长上限、最多 16 笔购买），但超过上限仍未出成果时本段按未完成收口、不购买，
+                // 避免两个都在跑的任务互等对方失败段而永不结束；用户再提交时按续做根复用。
+                if(Date.now()-waitStarted>=(context.leaseWaitMaxMs??KNOWLEDGE_DISTILL_LEASE_WAIT_MAX_MS))
+                  throw Object.assign(new Error('该段正由同一份资料的另一任务处理，等待超时，本段未完成；已完成部分已保存'),{knowledgeDistillLeaseWaitTimeout:true});
                 await evidence.save(`${prefix}/waiting.json`,{digest,holder:lease.jobId,at:new Date().toISOString()});
                 touchKnowledgeCardDistillActivity();
                 await abortableSleep(context.leaseWaitMs??20_000,params.abortSignal);
@@ -214,6 +228,20 @@ ${KNOWLEDGE_READING_INSTRUCTIONS}`;
         if(shared)await context.resume!.save(`${shared}/rendered.json`,{digest,markdown:outputs[index],from:prefix});
       }catch(error){
         stopped=true;
+        // 本任务在本段最终失败：把自己持有的续做租约标 failed，其他在跑任务的等待方即可接管重做（不必等本任务整体结束）。
+        if(context.resume&&!(error as any)?.knowledgeDistillLeaseWaitTimeout){
+          const attemptKey=`${context.resume.prefix}/${KNOWLEDGE_DISTILL_RESUME_VERSION}/json-${digest}/batch-${index}/attempt.json`;
+          try{
+            let current:{value:any;generation:string}|null;
+            if(context.resume.readVersioned)current=await context.resume.readVersioned(attemptKey);
+            else{const v=await context.resume.read(attemptKey);current=v?{value:v,generation:''}:null;}
+            if(current&&current.value?.jobId&&current.value.jobId===context.jobId&&!current.value.failed){
+              const next={...current.value,failed:true,failedAt:new Date().toISOString()};
+              if(context.resume.saveIfGeneration&&current.generation)await context.resume.saveIfGeneration(attemptKey,next,current.generation);
+              else await context.resume.save(attemptKey,next);
+            }
+          }catch{ /* 标记失败不影响原错误上抛；等待方仍有等待上限兜底 */ }
+        }
         // 失败诊断定位：记下本批实际使用的证据目录（可能是接回的前次目录），由上层汇总给管理员 Debug 面板。
         if(error&&typeof error==='object'&&!(error as any).knowledgeDistillBatch)(error as any).knowledgeDistillBatch={prefix:`${root}/batch-${index}`,...(lastPrefix[index]?{prefix:lastPrefix[index]}:{})};
         throw error;

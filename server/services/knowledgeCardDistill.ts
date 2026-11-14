@@ -439,6 +439,8 @@ export async function extractKnowledgeCardUploads(
      */
     documentCache?: KnowledgeRouteEvidence;
     documentCacheModel?: string;
+    /** 返回 false 时本文件备料不写缓存（挑页有失败组）；EPUB 降级为去图版本时同样不写。 */
+    documentCacheEligible?: () => boolean;
   } = {},
 ): Promise<KnowledgeCardExtractResult> {
   const docParts: string[] = [];
@@ -494,13 +496,18 @@ export async function extractKnowledgeCardUploads(
       methods.push(...(Array.isArray(cached.methods) ? cached.methods : []), `${name}:document_pages_resumed`);
       const textReady = set.pages.map(p => p.text).filter(Boolean).join("\n\n").trim();
       if (textReady) await options.onReadingSource?.(`file-${fileIndex}:${set.docKey}`, splitSourceTextForDistill(textReady, 5999));
-      if (cached.convertedPdf) { convertedPdfs.push(cached.convertedPdf); await options.onConvertedPdf?.(convertedPdfs.slice()); }
+      // 转换后 PDF 的下载链接只有 7 天且用户下载后会删存档：回放时按对象地址重新签名，对象已不在则不回放。
+      if (cached.convertedPdf) {
+        const refreshed = await refreshConvertedPdfLink(cached.convertedPdf);
+        if (refreshed) { convertedPdfs.push(refreshed); await options.onConvertedPdf?.(convertedPdfs.slice()); }
+      }
       documents.push(set);
       if (textReady) docParts.push(`【文件·${name}】\n${textReady}`);
       continue;
     }
     const methodsBefore = methods.length;
     let archivedPdf: KnowledgeCardConvertedPdf | undefined;
+    let epubStripped = false;
     let pdfBuffer: Buffer | null = null;
     let pdfDocKey: string | undefined;
     let mimeType = file.mimeType;
@@ -511,6 +518,7 @@ export async function extractKnowledgeCardUploads(
       // 转换产物带当次时间戳：按去元数据后的内容定身份，同一本书再提交时页图与分段身份不变（可续做）
       pdfDocKey = knowledgeCardConvertedPdfKey(converted.pdf);
       mimeType = "application/pdf";
+      epubStripped = converted.mode === "stripped";
       if (converted.mode === "stripped") {
         // 让用户知道哪几片的插图被剥了，不只藏在 methods 里
         methods.push(
@@ -551,10 +559,21 @@ export async function extractKnowledgeCardUploads(
         },
       });
       documents.push(set);
-      if (cacheKey) {
+      // 残缺结果不固化：挑页有失败组、或 EPUB 有分片降级为去图版本时不写缓存；这种情况下本任务的原稿身份不保证可复用，
+      // 由上层把本次失败判为「不自动续做」（见 knowledgeDistillRequeuePlan）。
+      const cacheable = Boolean(cacheKey) && (options.documentCacheEligible?.() ?? true) && !epubStripped;
+      if (cacheKey && !cacheable) {
+        const store = knowledgeStructuredDistillContext.getStore();
+        if (store) store.documentsResumable = false;
+        methods.push(`${name}:document_pages_not_cached`);
+      }
+      if (cacheable) {
         // 只记本文件的转换/备料说明（notice 等），复用时原样回放；缓存失败不影响本次读档。
         await options.documentCache!.save(cacheKey, { version: KNOWLEDGE_DOCUMENT_CACHE_VERSION, set, methods: methods.slice(methodsBefore), ...(archivedPdf ? { convertedPdf: archivedPdf } : {}) })
-          .catch(error => console.warn(`[knowledgeCardDistill] 逐页备料缓存写入失败（不影响本次）：${String((error as Error)?.message || error).slice(0, 120)}`));
+          .catch(error => {
+            const store = knowledgeStructuredDistillContext.getStore(); if (store) store.documentsResumable = false;
+            console.warn(`[knowledgeCardDistill] 逐页备料缓存写入失败（不影响本次）：${String((error as Error)?.message || error).slice(0, 120)}`);
+          });
       }
       const text = set.pages.map((pg) => pg.text).filter(Boolean).join("\n\n").trim();
       const ocrPages = set.pages.filter((pg) => pg.ocrImageUrl).length;
@@ -1823,7 +1842,10 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
     const partial = new Error(breaker.tripped ? knowledgeDistillBreakerMessage(completed, chunks.length) : knowledgeDistillPartialFailureMessage(completed, chunks.length), { cause: structuredFailures[0]?.error });
     (partial as { knowledgeDistillDiagnostics?: unknown }).knowledgeDistillDiagnostics = structuredDiagnostics.sort((a, b) => a.segment - b.segment);
     // 供任务层决定是否自动续做：熔断（含两通道均不可用）不重排；部分段未完成可续做一次。
-    Object.assign(partial, { knowledgeDistillIncomplete: { completed, total: chunks.length }, ...(breaker.tripped ? { knowledgeDistillNoRequeue: `breaker:${breaker.tripped}` } : {}) });
+    // 原稿准备未写入可复用缓存（挑页残缺/EPUB 降级/缓存写失败）时，同任务重排无法保证已完成段零调用复用：不自动续做。
+    const notResumable = knowledgeStructuredDistillContext.getStore()?.documentsResumable === false;
+    Object.assign(partial, { knowledgeDistillIncomplete: { completed, total: chunks.length },
+      ...(breaker.tripped ? { knowledgeDistillNoRequeue: `breaker:${breaker.tripped}` } : notResumable ? { knowledgeDistillNoRequeue: "documents_not_resumable" } : {}) });
     throw partial;
   }
 
@@ -1986,6 +2008,17 @@ export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: A
   };
 }
 
+/** 回放缓存里的转换 PDF：解析出对象地址，存在才重新签 7 天链接；不可解析或已删除返回 null。 */
+async function refreshConvertedPdfLink(pdf: KnowledgeCardConvertedPdf): Promise<KnowledgeCardConvertedPdf | null> {
+  try {
+    const parsed = new URL(pdf.url);
+    if (parsed.hostname !== "storage.googleapis.com") return null;
+    const gsUri = `gs://${decodeURIComponent(parsed.pathname.slice(1))}`;
+    const { statGcsObjectVersion, signGsUriV4ReadUrl } = await import("./gcs.js");
+    await statGcsObjectVersion({ gcsUri: gsUri });
+    return { fileName: pdf.fileName, url: signGsUriV4ReadUrl(gsUri, 7 * 24 * 3600) };
+  } catch { return null; }
+}
 /** 逐页备料缓存版本：转换、逐页文字、挑页或页图口径改变时递增。 */
 export const KNOWLEDGE_DOCUMENT_CACHE_VERSION = "document-pages-v1";
 /** 挑页结果缓存的合同版本；改挑页提示词或解析口径时递增，旧缓存自然失效。 */
@@ -1996,7 +2029,7 @@ export const KNOWLEDGE_PAGE_SELECTION_CACHE_VERSION = "page-selection-v1";
  * 同一用户证据根下，按目录页对象（随原稿内容寻址）+ 页数 + 档位缓存挑页结果；只有全部目录组都扫读成功才落盘，
  * 部分失败的残缺挑页不固化。非手册（无证据上下文）照旧每次扫读。
  */
-export function knowledgeCardResumablePageSelector(modelName: string, abortSignal?: AbortSignal) {
+export function knowledgeCardResumablePageSelector(modelName: string, abortSignal?: AbortSignal, onIncomplete?: () => void) {
   const context = knowledgeStructuredDistillContext.getStore();
   if (!context) return makeKnowledgeCardPageSelector(modelName, abortSignal);
   return async (sheets: KnowledgeCardContactSheet[], pageCount: number, onProgress?: (doneSheets: number, totalSheets: number) => void | Promise<void>) => {
@@ -2011,6 +2044,7 @@ export function knowledgeCardResumablePageSelector(modelName: string, abortSigna
     let failedGroups = 0;
     const pages = await makeKnowledgeCardPageSelector(modelName, abortSignal, { onGroupFailed: () => { failedGroups += 1; } })(sheets, pageCount, onProgress);
     if (!failedGroups) await store.save(key, { identity, pages });
+    else onIncomplete?.();
     return pages;
   };
 }
@@ -2055,14 +2089,16 @@ export async function prepareKnowledgeCardCopy(input: {
   if (!files.length && !input.extracted && input.sourceText?.trim()) {
     await input.onReadingSource?.("pasted", splitSourceTextForDistill(input.sourceText, 5999));
   }
+  // 挑页有失败组：本次备料不写入逐页备料缓存（不固化残缺挑页）。
+  let selectionIncomplete = false;
   const extracted: KnowledgeCardExtractResult =
     input.extracted ??
     (files.length
       ? await extractKnowledgeCardUploads(files, {
           abortSignal: input.abortSignal,
           userId: input.userId,
-          selectPages: input.userId ? knowledgeCardResumablePageSelector(modelName, input.abortSignal) : undefined,
-          ...(knowledgeStructuredDistillContext.getStore()?.resume ? { documentCache: knowledgeStructuredDistillContext.getStore()!.resume, documentCacheModel: modelName } : {}),
+          selectPages: input.userId ? knowledgeCardResumablePageSelector(modelName, input.abortSignal, () => { selectionIncomplete = true; }) : undefined,
+          ...(knowledgeStructuredDistillContext.getStore()?.resume ? { documentCache: knowledgeStructuredDistillContext.getStore()!.resume, documentCacheModel: modelName, documentCacheEligible: () => !selectionIncomplete } : {}),
           onProgress: input.onExtractProgress,
           onReadingSource: input.onReadingSource,
           onConvertedPdf: input.onConvertedPdf,

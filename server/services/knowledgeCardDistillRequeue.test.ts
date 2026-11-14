@@ -1,20 +1,20 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
-const pages = vi.hoisted(() => ({ calls: 0 }));
+const pages = vi.hoisted(() => ({ calls: 0, sheets: [] as any[] }));
 vi.mock('./gcs.js', async (original) => ({ ...(await original() as object), signGsUriV4ReadUrl: () => 'https://example.invalid/upload.pdf' }));
 vi.mock('./knowledgeCardDocumentPages.js', async (original) => ({
   ...(await original() as object),
   // 逐页备料（转换/抽字/挑页/渲染）计次：续做时应直接复用缓存，不再进入这里。
   prepareKnowledgeCardDocumentPages: vi.fn(async (params: any) => {
     pages.calls += 1;
-    await params.selectPages([], 8);
+    await params.selectPages(pages.sheets, 8);
     return { docKey: 'e0123456789abcde', fileName: params.fileName, pageCount: 8, selectedPages: [],
       pages: Array.from({ length: 8 }, (_, i) => ({ pageNumber: i + 1, text: `${'甲乙丙丁戊己庚辛'[i]}页知识与条件。`.repeat(1300) })) };
   }),
 }));
 
 import { knowledgeStructuredDistillContext } from './knowledgeCardStructuredDistill';
-import { prepareKnowledgeCardCopy } from './knowledgeCardDistill';
+import { prepareKnowledgeCardCopy, __setKnowledgeCardDistillGatewayInvokerForTest } from './knowledgeCardDistill';
 import { knowledgeDistillRequeuePlan } from './knowledgeDistillDiagnostics';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
@@ -64,3 +64,32 @@ it('不得自动续做：熔断、内容安全、确定性失败；可续做：�
   expect(knowledgeDistillRequeuePlan(wrap(Object.assign(new Error('已完成 160/164 段'), { knowledgeDistillIncomplete: { completed: 160, total: 164 } })))?.notice)
     .toBe('上次有 4 段未完成，正在自动续做，已完成的不重做');
 });
+
+it('N2 挑页有一组失败：逐页备料不写缓存，本次失败不自动续做；同任务再执行时重新准备，不复用残缺结果', async () => {
+  vi.stubEnv('OPENROUTER_API_KEY', 'test-key'); vi.stubEnv('EVOLINK_API_KEY', 'test-key');
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(Buffer.from('%PDF-1.4 另一份原稿'), { status: 200 })));
+  pages.calls = 0; pages.sheets = [{ index: 0, pageNumbers: [1, 2, 3, 4, 5, 6, 7, 8], imageUrl: 'https://example.invalid/s.jpg', gcsUri: 'gs://b/knowledge-card-distill/sheets/u7/e0123456789abcde/s-000.jpg' }];
+  __setKnowledgeCardDistillGatewayInvokerForTest(async () => { throw Error('HTTP 401'); }); // 挑页组失败（确定性错误，不退避）
+  try {
+    const data = new Map<string, any>();
+    const store = (prefix: string) => ({ prefix, read: async (k: string) => data.get(k) ?? null, save: async (k: string, v: any) => { data.set(k, structuredClone(v)); } });
+    let failOnce = true;
+    const invoke = vi.fn(async (request: any) => {
+      const body = JSON.parse(request.contents[0].parts[0].text).source.pages.map((p: any) => p.body).join('');
+      if (failOnce && body.includes('丙页')) throw Error('各跳均失败（测试）');
+      return report(request);
+    });
+    const run = () => knowledgeStructuredDistillContext.run({ evidence: store('knowledge-card-distill/user-7/kc_job2'), resume: store('knowledge-card-distill/user-7/resume'), jobId: 'kc_job2', invoke: invoke as any }, () => prepareKnowledgeCardCopy({
+      publicationEvidence: store('knowledge-card-distill/user-7/kc_job2'), publicationResumeEvidence: store('knowledge-card-distill/user-7/resume'),
+      files: [{ gcsUri: 'gs://b/uploads/u7/y.pdf', mimeType: 'application/pdf', fileName: '史记.pdf' }], userId: 7, forceDistill: true,
+      distillModel: 'glm-5.3-flashx', detailLevel: 'full',
+    }));
+    const failure = await run().catch(e => e);
+    expect(pages.calls).toBe(1);
+    expect(Array.from(data.keys()).some(k => k.includes('/documents/'))).toBe(false);
+    expect(knowledgeDistillRequeuePlan(failure)).toBeNull();
+    failOnce = false;
+    await run();
+    expect(pages.calls).toBe(2); // 重新准备，不复用残缺挑页
+  } finally { __setKnowledgeCardDistillGatewayInvokerForTest(null); pages.sheets = []; }
+}, 60_000);

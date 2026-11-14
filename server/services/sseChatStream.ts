@@ -195,7 +195,10 @@ export async function readGlmSseStream(
     if (options.onSubstantiveDelta) {
       const d = (chunk.choices?.[0]?.delta || {}) as Record<string, unknown>;
       const nonEmpty = (v: unknown) => (typeof v === "string" && v.length > 0) || (Array.isArray(v) && v.length > 0);
-      if (nonEmpty(d.content) || nonEmpty(d.reasoning) || nonEmpty(d.reasoning_content) || nonEmpty(d.reasoning_details)) options.onSubstantiveDelta();
+      const message = (chunk.choices?.[0]?.message || {}) as Record<string, unknown>;
+      // 联网检索阶段的工具调用帧、引用注释与检索回执也算实质进展，不按「仅保活」误切。
+      if (nonEmpty(d.content) || nonEmpty(d.reasoning) || nonEmpty(d.reasoning_content) || nonEmpty(d.reasoning_details)
+        || nonEmpty(d.tool_calls) || nonEmpty(d.annotations) || nonEmpty(message.annotations) || nonEmpty(chunk.web_search)) options.onSubstantiveDelta();
     }
     if (typeof delta === "string") content += delta;
     if (Buffer.byteLength(content) + (options.preserveAnnotations ? Buffer.byteLength(JSON.stringify(annotations)) + Buffer.byteLength(JSON.stringify(webSearch)) : 0) > cap) throw new Error("GLM 链响应超过处理上限");

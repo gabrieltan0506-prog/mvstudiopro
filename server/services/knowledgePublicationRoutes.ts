@@ -719,6 +719,9 @@ export async function invokeKnowledgePublicationRoutes(
     }
     await evidence.save(`${evidence.prefix}/web-sources.json`, { requestDigest, sources: webSources, research: researchEvidence });
   }
+  /** 本次调用占过探测位的通道：结束时仍处于探测中（未判成功/失败）的一律释放并重新冷却。 */
+  const claimedProbes = new Set<KnowledgeModelChannel>();
+  try {
   for (let routeIndex = 0; routeIndex < routeOrder.length; routeIndex++) {
     const target = routeOrder[routeIndex];
     /** 本发是否为 down 通道冷却后的探测。 */
@@ -765,8 +768,6 @@ export async function invokeKnowledgePublicationRoutes(
       if(keyLimitedChannels.has(channel) || attempts[routeModelFamily(model)][channel]>=4)continue;
       // 本任务已判该通道整体不可用：另一通道还能买就交给另一通道接手。
       if (knowledgeChannelSkipped(deps.channelHealth, channel, deps.now()) && purchasableElsewhere(routeIndex, channel)) { traces.push({ route, model, state: "skipped_channel_down" }); continue; }
-      // 冷却到期：本发作为探测（占住探测位，其余批次仍走另一通道），成功即恢复。
-      probing = Boolean(deps.channelHealth?.down.get(channel)) && !knowledgeChannelSkipped(deps.channelHealth, channel, deps.now(), true);
       // 篇幅超出算写坏：同模型同通道不再重买，直接切下一跳。
       if (budgetHops.has(`${routeModelFamily(model)}:${channel}`)) { traces.push({ route, model, state: "skipped_budget_hop" }); continue; }
       if (outputLimitedFamilies.has(routeModelFamily(model))) { traces.push({ route, model, state: "skipped_output_limit" }); continue; }
@@ -794,6 +795,10 @@ export async function invokeKnowledgePublicationRoutes(
         cancelled();
       }
       h.lastClass = undefined; h.retryAfterMs = undefined;
+      // 冷却到期：本发作为探测——只在真正发出购买前占探测位（之前的各种跳过/抛错不占），其余批次仍走另一通道；
+      // 本次调用结束时仍未判定的探测位一律释放（见函数末尾 finally），不会把通道永久卡在探测中。
+      probing = Boolean(deps.channelHealth?.down.get(channel)) && !knowledgeChannelSkipped(deps.channelHealth, channel, deps.now(), true);
+      if (probing) claimedProbes.add(channel);
       h.attempts += 1;
       purchased.add(route);
       assertKnowledgePaidModel(channel, model, request.researchOnly === true);
@@ -802,6 +807,7 @@ export async function invokeKnowledgePublicationRoutes(
         receipt = { requestDigest, route, model, state: "failed", reason: "通道未配置", sent: false };
         await evidence.save(key, receipt);
         deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=not_configured attempt=${h.attempts} next=switch_hop`);
+        if (probing) releaseProbe(channel);
       } else {
         // 配图：签名 URL 指向缩图派生件（review-thumbs/），缩图不可得时回退原图签名 URL；不用 base64 内联。
         const thumbs = new Map<string, string | null>();
@@ -1109,4 +1115,7 @@ export async function invokeKnowledgePublicationRoutes(
   }
   if (syntaxFailure) throw syntaxFailure;
   throw new KnowledgeRoutesExhaustedError(`图文整理的所有已配置通道均失败，原稿与各跳回执已保存${lastFailure ? `：${lastFailure}` : ""}`, traces);
+  } finally {
+    for (const channel of Array.from(claimedProbes)) releaseProbe(channel);
+  }
 }
