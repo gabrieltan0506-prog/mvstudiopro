@@ -2556,12 +2556,19 @@ function resolveKnowledgeCardSourceText(existing: string, fileCount: number): st
   return merge ? text : undefined;
 }
 
+type KnowledgeDistillDiagnosticView = {
+  segment: number; total: number; label: string; category: string; categoryZh: string; failedAt: string; lastHeartbeatAgoMs?: number; lastContentAgoMs?: number;
+  hops: { route: string; channel: string; family: string; state: string; httpStatus?: number; reason?: string; durationMs?: number; transportCause?: string }[];
+};
+
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [supervisorSessionReady, setSupervisorSessionReady] = useState(
     hasSupervisorSessionHint,
   );
   const [debugMode, setDebugMode] = useState(false);
+  /** 读档提炼失败诊断（服务端只对站长账号下发）：Debug 面板展示，普通用户不可见。 */
+  const [knowledgeDistillDiagnostics, setKnowledgeDistillDiagnostics] = useState<KnowledgeDistillDiagnosticView[]>([]);
   /** Debug 开启时加快轮询与刷新，让进度面板更接近即时 */
   const platformImageFlowPollIntervalMs = debugMode ? 650 : 2500;
   const compositeSheetLivePollIntervalMs = debugMode ? 380 : 850;
@@ -3184,6 +3191,8 @@ export default function PlatformPage() {
   const [customNoteCancelRequested, setCustomNoteCancelRequested] = useState(false);
   const customNoteUploadStopRef = useRef(false);
   const knowledgePollingRef = useRef<AbortController | null>(null);
+  /** 降级跟进（服务端未写成跟进记录）时本页只读跟进的原任务编号 */
+  const customNoteFollowOnlyJobRef = useRef("");
   const customNoteTrackedRequestRef = useRef<{jobId:string;requestId:string;action:"knowledge_card_distill"|"knowledge_card_derive_level"} | null>(null);
 
   /**
@@ -8503,7 +8512,20 @@ export default function PlatformPage() {
       return String(queued.distilledMarkdown || "").trim();
     }
 
-    if(queued?.progressJobId && queued.progressJobId!==trackedJobId)throw Error("任务回执身份不一致，已停止后续处理");
+    // 同一份资料已在另一页处理中（1114）：服务端不建第二单。两种回执：
+    // · 常规：回本页自己的编号（服务端落了跟进记录），照常轮询它即跟到原任务；停止/离页由服务端按交接规则处理。
+    // · 降级（跟进记录没写成）：回原任务编号，本页只读跟进；本页的停止只停止本页跟进，不动原任务。
+    const followOnlyJobId = queued?.attachedToExistingJob && typeof queued.progressJobId === "string"
+      && queued.progressJobId !== trackedJobId && /^[\w-]{8,64}$/.test(queued.progressJobId) ? queued.progressJobId : "";
+    if(queued?.progressJobId && queued.progressJobId!==trackedJobId && !followOnlyJobId)throw Error("任务回执身份不一致，已停止后续处理");
+    if (queued?.attachedToExistingJob) toast.message("这份资料正在处理中，本页已接上原进度，完成后结果同步显示");
+    const pollJobId = followOnlyJobId || trackedJobId;
+    if (followOnlyJobId) {
+      // 本页请求编号没有建任何行，离页无须停止；停止按钮只断本页轮询
+      knowledgeCardPageTasks.finish(pageRequestId);
+      if(customNoteTrackedRequestRef.current?.jobId===trackedJobId)customNoteTrackedRequestRef.current=null;
+      customNoteFollowOnlyJobRef.current = followOnlyJobId;
+    }
     const totalHint = Math.max(1, queued?.estimatedChunks || 1);
     args.onStatus?.(
       queued && queued.sourceChars > 0
@@ -8512,9 +8534,18 @@ export default function PlatformPage() {
     );
     const stageLabel = (out: {
       distillStage?: string; distillStageDone?: number; distillStageTotal?: number; distillFileName?: string;
+      distillPhase?: string; distillDoneChunks?: number; distillTotalChunks?: number; distillResumeNotice?: string;
+    }): string => {
+      // 服务端自动续做：说明只补未完成段，不让用户以为从头开始。
+      const resume = typeof out.distillResumeNotice === "string" && out.distillResumeNotice ? `${out.distillResumeNotice} · ` : "";
+      return resume + stageLabelBase(out);
+    };
+    const stageLabelBase = (out: {
+      distillStage?: string; distillStageDone?: number; distillStageTotal?: number; distillFileName?: string;
       distillPhase?: string; distillDoneChunks?: number; distillTotalChunks?: number;
     }): string => {
       const stage = out.distillStage || out.distillPhase || "";
+      if (stage === "resuming") return "准备续做";
       const done = Number(out.distillStageDone) || 0;
       const total = Number(out.distillStageTotal) || 0;
       if (stage === "converting") return `EPUB 转 PDF · ${out.distillFileName || ""}`;
@@ -8527,7 +8558,13 @@ export default function PlatformPage() {
       const tc = Number(out.distillTotalChunks) || totalHint;
       return `分段提炼 ${dc}/${tc} 段`;
     };
-    setCustomNoteDistillJobId(trackedJobId);
+    // 只读跟进时在上传途中点了中止：先于登记任务编号退出，否则后面的收尾走不到，页面会一直显示「任务进行中」。
+    if (customNoteUploadStopRef.current && args.files?.length && followOnlyJobId) {
+      customNoteFollowOnlyJobRef.current = "";
+      setCustomNoteCancelRequested(false);
+      throw new Error("本页已停止跟进");
+    }
+    setCustomNoteDistillJobId(pollJobId);
     // 提交请求在途时点中止：取得同一任务 ID 后请求停止，失败仍继续轮询并允许重试中止。
     if (customNoteUploadStopRef.current && args.files?.length) {
       try {
@@ -8541,9 +8578,9 @@ export default function PlatformPage() {
         toast.error(error instanceof Error ? error.message : "中止请求未确认，请再点中止任务");
       }
     }
-    const ownedJobId = trackedJobId;
+    const ownedJobId = pollJobId;
     try {
-    const job = await pollJobUntilTerminal(trackedJobId, {
+    const job = await pollJobUntilTerminal(pollJobId, {
         signal:pollController.signal,
         onUnavailable: error => {
           const message=knowledgeCardRecoveryMessage(error);
@@ -8578,7 +8615,11 @@ export default function PlatformPage() {
     });
     knowledgeCardPageTasks.finish(pageRequestId);
     knowledgeCardPageTasks.assertLive();
-    if (job.status === "failed") throw new Error(job.error || "提炼失败，请查看原任务");
+    if (job.status === "failed") {
+      const diagnostics = (job.output as { distillFailureDiagnostics?: KnowledgeDistillDiagnosticView[] } | undefined)?.distillFailureDiagnostics;
+      if (hasSupervisorOpsAccess && Array.isArray(diagnostics)) setKnowledgeDistillDiagnostics(diagnostics);
+      throw new Error(job.error || "提炼失败，请查看原任务");
+    }
     setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromDistill(98), label: "提炼完成" });
     const out = (job.output || {}) as { distilledMarkdown?: string; distillModel?: string; epubPdfs?: Array<{ fileName: string; url: string }>; readingPreparation?:KnowledgeReadingProgress };
     readingFullMarkdownRef.current=String(out.distilledMarkdown||"").trim();
@@ -8589,6 +8630,7 @@ export default function PlatformPage() {
       // 只清自己那单：迟到的旧轮询不许把新任务的终止按钮抹掉
       setCustomNoteDistillJobId((prev) => (prev === ownedJobId ? "" : prev));
       if(customNoteTrackedRequestRef.current?.jobId===ownedJobId)customNoteTrackedRequestRef.current=null;
+      if(customNoteFollowOnlyJobRef.current===ownedJobId)customNoteFollowOnlyJobRef.current="";
       setCustomNoteCancelRequested(false);
     }
   };
@@ -8623,11 +8665,18 @@ export default function PlatformPage() {
       return;
     }
     if (!jobId) return;
+    if (customNoteFollowOnlyJobRef.current === jobId) {
+      // 降级跟进：本页没有自己的任务，只断本页轮询，不停原任务
+      customNoteFollowOnlyJobRef.current = "";
+      knowledgePollingRef.current?.abort(new Error("本页已停止跟进"));
+      toast.message("本页已停止跟进");
+      return;
+    }
     setCustomNoteCancelBusy(true);
     try {
       const tracked=customNoteTrackedRequestRef.current;
       const path=tracked?.jobId===jobId
-        ? `/api/jobs/knowledge-card/request/${encodeURIComponent(tracked.requestId)}/cancel?action=${tracked.action}`
+        ? `/api/jobs/knowledge-card/request/${encodeURIComponent(tracked.requestId)}/cancel?action=${tracked.action}&reason=user`
         : `/api/jobs/knowledge-card/${encodeURIComponent(jobId)}/cancel`;
       const res = await fetch(withLongJobsFlyDirect(path), {
         method: "POST",
@@ -13178,6 +13227,24 @@ export default function PlatformPage() {
           </div>
         ) : null}
         {canShowPlatformDebug && debugMode ? <ApiErrorDebugPanel /> : null}
+        {canShowPlatformDebug && debugMode && knowledgeDistillDiagnostics.length ? (
+          <div className="mb-6 rounded-2xl border border-[#ff9c7a]/30 bg-[rgba(255,156,122,0.06)] p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#ffb59c]">读档提炼失败诊断 Debug</div>
+              <button onClick={() => setKnowledgeDistillDiagnostics([])} className="text-[10px] text-white/30 hover:text-white/60">清空</button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {knowledgeDistillDiagnostics.map(item => (
+                <div key={`${item.segment}-${item.failedAt}`} className="font-mono text-[11px] leading-5 text-[#d7d0ef]">
+                  <div className="text-[#ffb59c]">第 {item.segment}/{item.total} 段 · {item.categoryZh}{typeof item.lastHeartbeatAgoMs === "number" ? ` · 最后任意字节距失败 ${Math.round(item.lastHeartbeatAgoMs / 1000)} 秒` : " · 无心跳记录"}{typeof item.lastContentAgoMs === "number" ? ` · 最后正文增量距失败 ${Math.round(item.lastContentAgoMs / 1000)} 秒` : " · 无正文增量"}</div>
+                  {item.hops.map(hop => (
+                    <div key={hop.route} className="pl-3">{hop.route}（{hop.family}@{hop.channel}）{hop.state}{hop.httpStatus ? ` HTTP ${hop.httpStatus}` : ""}{hop.transportCause ? ` · ${hop.transportCause}` : ""}{typeof hop.durationMs === "number" ? ` · ${Math.round(hop.durationMs / 1000)} 秒` : ""}{hop.reason ? ` · ${hop.reason}` : ""}</div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         {canShowPlatformDebug && debugMode ? (
           <GrowthSystemDebugPanel
             enabled={debugMode}

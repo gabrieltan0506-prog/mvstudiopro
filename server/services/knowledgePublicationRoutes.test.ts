@@ -370,10 +370,14 @@ describe('图文手册限定模型与同款通道恢复',()=>{
   await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('storage failure');
   expect(f.deps.fetch).toHaveBeenCalledTimes(1);expect(f.deps.vertex).not.toHaveBeenCalled();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(1);
  });
- it('收到明确length结束帧会保留原回执并在原通道重试，不把已知失败当未知断流',async()=>{
-  const f=make();const chunk={id:'test',model:OR_MODEL,choices:[{index:0,delta:{content:'不完整'},finish_reason:'length'}]};
-  f.deps.fetch.mockResolvedValueOnce(new Response('data: '+JSON.stringify(chunk)+'\n\ndata: [DONE]\n\n',{status:200,headers:{'Content-Type':'text/event-stream'}})).mockResolvedValueOnce(f.response(OR_MODEL));
-  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);expect(result.gateway).toBe('openrouter-retry-1');expect(f.storage.has('test/0/openrouter-response.json')).toBe(true);expect(f.deps.vertex).not.toHaveBeenCalled();
+ it('收到明确length结束帧（撞单次输出上限）保留原回执，不原样重发同模型，直接换模型',async()=>{
+  const f=make();const logs:string[]=[];(f.deps as any).log=(l:string)=>logs.push(l);const chunk={id:'test',model:OR_MODEL,choices:[{index:0,delta:{content:'不完整'},finish_reason:'length'}]};
+  f.deps.fetch.mockResolvedValueOnce(new Response('data: '+JSON.stringify(chunk)+'\n\ndata: [DONE]\n\n',{status:200,headers:{'Content-Type':'text/event-stream'}})).mockImplementation(async(_u?:unknown,init?:RequestInit)=>f.response(JSON.parse(String(init?.body)).model));
+  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);
+  expect(result.gateway).toBe('glm-openrouter');expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+  expect(f.storage.has('test/0/openrouter-response.json')).toBe(true);expect(f.storage.get('test/0/route-openrouter.json').reason).toContain('单次输出容量');
+  expect(result.gatewayTrace.filter((t:any)=>t.state==='skipped_output_limit')).toHaveLength(7);
+  expect(logs.some(l=>l.includes('reason=output_limit')&&l.includes('next=switch_model'))).toBe(true);expect(f.deps.vertex).not.toHaveBeenCalled();
  });
  it('模型输入变化不能回放另一版原始回执',async()=>{
   const f=make();await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);f.request.systemInstruction.parts[0].text='new';await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('版本变化');expect(f.deps.fetch).toHaveBeenCalledTimes(1);
@@ -395,10 +399,10 @@ it('非流式正文失联会取消连接并保留unknown，重放不再付费',a
  try{
   const f=make(),cancel=vi.fn();let signal:AbortSignal|undefined;
   f.deps.fetch.mockImplementation(async(_url?:unknown,init?:RequestInit)=>{signal=init?.signal as AbortSignal;return new Response(new ReadableStream({cancel}),{status:503,headers:{'Content-Type':'application/json'}});});
-  // 本例只验失联窗口（虚拟时钟推进 11 分钟），整条链时限另有单测。
-  (f.deps as any).chainBudgetMs=Infinity;f.deps.lateReceiptWaitMs=KNOWLEDGE_LATE_RECEIPT_WAIT_MS;f.deps.sleep=vi.fn(async()=>{throw Error('等待迟到回执中');});
+  // 本例只验失联窗口（虚拟时钟推进超过无心跳阈值）。
+  f.deps.lateReceiptWaitMs=KNOWLEDGE_LATE_RECEIPT_WAIT_MS;f.deps.sleep=vi.fn(async()=>{throw Error('等待迟到回执中');});
   const pending=expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('等待迟到回执中');
-  await vi.advanceTimersByTimeAsync(11*60_000);await pending;
+  await vi.advanceTimersByTimeAsync(4*60_000);await pending;
   expect(signal?.aborted).toBe(true);expect(cancel).toHaveBeenCalled();expect(f.storage.get('test/0/route-openrouter.json').state).toBe('unknown');
   await expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('等待迟到回执中');expect(f.deps.fetch).toHaveBeenCalledTimes(1);expect(f.deps.vertex).not.toHaveBeenCalled();
  }finally{vi.useRealTimers();}
@@ -409,7 +413,9 @@ it('非流式有效字节持续到达时按失联窗口续期，不按总时长�
   const f=make();const raw=await f.response(OR_MODEL).text();let stream!:ReadableStreamDefaultController<Uint8Array>;
   f.deps.fetch.mockResolvedValueOnce(new Response(new ReadableStream({start(c){stream=c;}}),{headers:{'Content-Type':'application/json'}}));
   const pending=invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);await vi.advanceTimersByTimeAsync(0);
-  for(const part of [raw.slice(0,20),raw.slice(20,40),raw.slice(40)]){await vi.advanceTimersByTimeAsync(9*60_000);stream.enqueue(new TextEncoder().encode(part));await vi.advanceTimersByTimeAsync(0);}
+  // 每 2.5 分钟到一段字节（低于 180 秒无心跳阈值），总时长 25 分钟，远超旧的 10 分钟总上限，仍按一发完成。
+  const step=Math.ceil(raw.length/10);
+  for(let i=0;i<raw.length;i+=step){await vi.advanceTimersByTimeAsync(150_000);stream.enqueue(new TextEncoder().encode(raw.slice(i,i+step)));await vi.advanceTimersByTimeAsync(0);}
   stream.close();expect((await pending).status).toBe(200);expect(f.deps.fetch).toHaveBeenCalledTimes(1);
  }finally{vi.useRealTimers();}
 });
@@ -418,8 +424,8 @@ it('空字节不延长非流式失联窗口，超大正文也不切换付费通�
  try{
   const f=make();let stream!:ReadableStreamDefaultController<Uint8Array>;
   f.deps.fetch.mockResolvedValueOnce(new Response(new ReadableStream({start(c){stream=c;}}),{headers:{'Content-Type':'application/json'}}));
-  (f.deps as any).chainBudgetMs=Infinity;f.deps.lateReceiptWaitMs=KNOWLEDGE_LATE_RECEIPT_WAIT_MS;f.deps.sleep=vi.fn(async()=>{throw Error('等待迟到回执中');});
-  const pending=expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('等待迟到回执中');await vi.advanceTimersByTimeAsync(9*60_000);stream.enqueue(new Uint8Array());await vi.advanceTimersByTimeAsync(2*60_000);await pending;
+  f.deps.lateReceiptWaitMs=KNOWLEDGE_LATE_RECEIPT_WAIT_MS;f.deps.sleep=vi.fn(async()=>{throw Error('等待迟到回执中');});
+  const pending=expect(invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).rejects.toThrow('等待迟到回执中');await vi.advanceTimersByTimeAsync(150_000);stream.enqueue(new Uint8Array());await vi.advanceTimersByTimeAsync(60_000);await pending;
   const oversized=make();oversized.deps.lateReceiptWaitMs=KNOWLEDGE_LATE_RECEIPT_WAIT_MS;oversized.deps.sleep=vi.fn(async()=>{throw Error('等待迟到回执中');});oversized.deps.fetch.mockResolvedValueOnce(new Response(new Uint8Array(8*1024*1024+1),{headers:{'Content-Type':'application/json'}}));
   await expect(invokeKnowledgePublicationRoutes(oversized.request,oversized.evidence,oversized.deps)).rejects.toThrow('等待迟到回执中');expect(oversized.deps.fetch).toHaveBeenCalledTimes(1);expect(oversized.storage.get('test/0/route-openrouter.json').state).toBe('unknown');
  }finally{vi.useRealTimers();}
@@ -469,9 +475,9 @@ describe('联网补充与真实来源贯穿正文',()=>{
   const {buildKnowledgeBookletHtml}=await import('../../shared/knowledgeBooklet');expect(buildKnowledgeBookletHtml({title:report.title,pages:[{...report.pages[0],imageUrl:''}]})).toContain(`href="${url}"`);
   await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps);expect(f.deps.fetch).toHaveBeenCalledTimes(2);
  });
- it('首跳完整失败后原通道重试使用同一检索片段，不重开搜索',async()=>{
-  const f=await prepare();f.deps.fetch.mockResolvedValueOnce(f.webResponse(f.report,'length')).mockResolvedValueOnce(f.response(OR_MODEL,f.report));
-  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);expect(result.gateway).toBe('openrouter-retry-1');
+ it('首跳完整失败（撞输出上限）后换模型重试仍使用同一检索片段，不重开搜索',async()=>{
+  const f=await prepare();f.deps.fetch.mockResolvedValueOnce(f.webResponse(f.report,'length')).mockResolvedValueOnce(f.response('z-ai/glm-5.3-flashx',f.report));
+  const result=JSON.parse((await invokeKnowledgePublicationRoutes(f.request,f.evidence,f.deps)).text);expect(result.gateway).toBe('glm-openrouter');
   const sent=JSON.parse((f.deps.fetch.mock.calls[1] as any)[1].body);expect(sent.plugins).toBeUndefined();expect(JSON.stringify(sent.messages)).toContain('原始来源对本页主题的解释');expect(f.storage.has('test/0/web-sources.json')).toBe(true);
  });
  it('无检索回执也保留原文整理，不因来源缺失重买，恢复零新增调用',async()=>{
@@ -1067,7 +1073,8 @@ describe("统稿/排版首发轮转仍覆盖三跳（1111）", () => {
 
 describe('1111 失败处理：同通道重试 → 同模型换路由 → 换模型', async () => {
   const { GLM_53_FLASHX_EVOLINK_MODEL, GLM_53_FLASHX_OPENROUTER_MODEL } = await import('./glmModels');
-  const { classifyKnowledgeRouteFailure, knowledgeRetryAfterMs, KnowledgeRouteChainTimeoutError } = await import('./knowledgePublicationRoutes');
+  const { classifyKnowledgeRouteFailure, knowledgeRetryAfterMs, knowledgeRouteIdleTimeoutMs } = await import('./knowledgePublicationRoutes');
+  const { KnowledgeRateGate } = await import('../../shared/knowledgeConcurrency');
   const glm = () => { const f = make(); f.request.executionChannel = 'evolink'; f.request.executionFamily = 'glm'; const logs: string[] = []; (f.deps as any).log = (l: string) => logs.push(l); return { ...f, logs }; };
   const ok = (f: ReturnType<typeof make>) => async (_u?: unknown, init?: RequestInit) => f.response(JSON.parse(String(init?.body)).model);
   const status = (code: number, headers: Record<string, string> = {}, body = '{}') => new Response(body, { status: code, headers });
@@ -1148,19 +1155,183 @@ describe('1111 失败处理：同通道重试 → 同模型换路由 → 换模�
     expect(f.deps.sleep).not.toHaveBeenCalled();
     expect(out.gatewayTrace.map((t: any) => t.state)).toEqual(['failed', 'skipped_rejected_4xx', 'skipped_rejected_4xx', 'skipped_rejected_4xx', 'succeeded']);
   });
-  it('整条链总时长到上限即判本批失败，不再发起新购买', async () => {
+  it('不再有整条链总时长上限：每发耗时 6 分钟的临时错误照常按同通道 3 次重试与换跳规则走完，不因总时长判失败', async () => {
     const f = glm(); let clock = 0; f.deps.now = () => clock;
-    f.deps.fetch.mockImplementation(async () => { clock += 6 * 60_000; return status(503); });
-    await expect(invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).rejects.toBeInstanceOf(KnowledgeRouteChainTimeoutError);
-    expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+    f.deps.fetch.mockImplementation(async (_u?: unknown, init?: RequestInit) => { clock += 6 * 60_000; const model = JSON.parse(String(init?.body)).model; return model === GLM_53_FLASHX_EVOLINK_MODEL ? status(503) : f.response(model); });
+    const out = JSON.parse((await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).text);
+    expect(out.gateway).toBe('glm-openrouter'); expect(f.deps.fetch).toHaveBeenCalledTimes(5); expect(clock).toBe(30 * 60_000);
   });
-  it('等迟到回执时到总时限：保留 unknown 不提前归档、不补买', async () => {
+  it('等迟到回执只受迟到回执窗口约束：总时长再长也照常归档并换通道补买一次', async () => {
     const f = glm(); let clock = 0; f.deps.now = () => clock; f.deps.lateReceiptWaitMs = KNOWLEDGE_LATE_RECEIPT_WAIT_MS;
-    f.deps.fetch.mockImplementation(async () => { clock += 11 * 60_000; throw new Error('connection reset'); });
-    await expect(invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).rejects.toBeInstanceOf(KnowledgeRouteChainTimeoutError);
-    expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+    f.deps.sleep = vi.fn(async (ms: number) => { clock += ms; });
+    f.deps.fetch.mockImplementationOnce(async () => { clock += 11 * 60_000; throw new Error('connection reset'); }).mockImplementation(ok(f));
+    const out = JSON.parse((await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).text);
+    expect(out.gateway).toBe('glm-openrouter'); expect(f.deps.fetch).toHaveBeenCalledTimes(2);
+    expect(f.storage.get('test/0/route-glm-evolink.json').state).toBe('interrupted');
+    expect(clock).toBe(11 * 60_000 + KNOWLEDGE_LATE_RECEIPT_WAIT_MS);
+  });
+  it('无心跳阈值：缺省 180 秒，env 夹在 60–300 秒（undici 头/体超时 300 秒）；仅保活阈值缺省 15 分钟，夹在 5–60 分钟', async () => {
+    const { knowledgeRouteKeepaliveOnlyTimeoutMs } = await import('./knowledgePublicationRoutes');
+    expect(knowledgeRouteKeepaliveOnlyTimeoutMs(undefined)).toBe(15 * 60_000);
+    expect(knowledgeRouteKeepaliveOnlyTimeoutMs('1000')).toBe(5 * 60_000);
+    expect(knowledgeRouteKeepaliveOnlyTimeoutMs('99999999')).toBe(60 * 60_000);
+    expect(knowledgeRouteIdleTimeoutMs(undefined)).toBe(180_000);
+    expect(knowledgeRouteIdleTimeoutMs('5000')).toBe(60_000);
+    expect(knowledgeRouteIdleTimeoutMs('9999999')).toBe(300_000);
+    expect(knowledgeRouteIdleTimeoutMs('240000')).toBe(240_000);
+    expect(knowledgeRouteIdleTimeoutMs('abc')).toBe(180_000);
+  });
+  it('有心跳（SSE 字节持续到达）总时长 30 分钟仍等这一发完成；无字节超过阈值 → 判无心跳、该通道并发减半、换通道补买', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = glm(); f.deps.lateReceiptWaitMs = 0;
+      const frame = (o: unknown) => new TextEncoder().encode('data: ' + JSON.stringify(o) + '\n\n');
+      let stream!: ReadableStreamDefaultController<Uint8Array>;
+      f.deps.fetch.mockResolvedValueOnce(new Response(new ReadableStream({ start(c) { stream = c; } }), { headers: { 'Content-Type': 'text/event-stream' } }));
+      const pending = invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps); await vi.advanceTimersByTimeAsync(0);
+      const content = JSON.stringify(f.report);
+      for (let minute = 0; minute < 30; minute += 2) { await vi.advanceTimersByTimeAsync(120_000); stream.enqueue(new TextEncoder().encode(': OPENROUTER PROCESSING\n\n')); }
+      stream.enqueue(frame({ model: GLM_53_FLASHX_EVOLINK_MODEL, choices: [{ index: 0, delta: { content }, finish_reason: null }] }));
+      stream.enqueue(frame({ model: GLM_53_FLASHX_EVOLINK_MODEL, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }));
+      stream.close();
+      const out = JSON.parse((await pending).text); expect(out.gateway).toBe('glm-evolink'); expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+
+      const g = glm(); g.deps.lateReceiptWaitMs = 0; const gates = { evolink: new KnowledgeRateGate(10), openrouter: new KnowledgeRateGate(10) }; (g.deps as any).gates = gates;
+      g.deps.fetch.mockResolvedValueOnce(new Response(new ReadableStream({ start() { /* 响应头已回、之后再无字节 */ } }), { headers: { 'Content-Type': 'text/event-stream' } })).mockImplementation(ok(g));
+      const second = invokeKnowledgePublicationRoutes(g.request, g.evidence, g.deps);
+      await vi.advanceTimersByTimeAsync(181_000);
+      const result = JSON.parse((await second).text);
+      expect(result.gateway).toBe('glm-openrouter'); expect(g.deps.fetch).toHaveBeenCalledTimes(2);
+      expect(g.storage.get('test/0/route-glm-evolink.json').state).toBe('interrupted');
+      expect(gates.evolink.limit).toBe(5);
+      expect(g.logs.some(l => l.includes('reason=no_heartbeat') && l.includes('stage=body') && l.includes('channel_limit=10->5'))).toBe(true);
+      expect(g.logs.some(l => l.includes('reason=stream_break') && l.includes('next=switch_hop'))).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+  it('等响应头超过无心跳阈值同样判无心跳并换通道', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = glm(); f.deps.lateReceiptWaitMs = 0;
+      f.deps.fetch.mockImplementationOnce((_u?: unknown, init?: RequestInit) => new Promise<Response>((_, reject) => { (init?.signal as AbortSignal).addEventListener('abort', () => reject(new Error('aborted'))); })).mockImplementation(ok(f));
+      const pending = invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps);
+      await vi.advanceTimersByTimeAsync(181_000);
+      expect(JSON.parse((await pending).text).gateway).toBe('glm-openrouter');
+      expect(f.logs.some(l => l.includes('reason=no_heartbeat') && l.includes('stage=headers'))).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+  it('仅保活：连续 15 分钟只有保活注释与空帧 → 判仅保活超时、换通道；保活中夹有推理增量则计时重置、继续等', async () => {
+    vi.useFakeTimers();
+    try {
+      const enc = (t: string) => new TextEncoder().encode(t);
+      const frame = (o: unknown) => enc('data: ' + JSON.stringify(o) + '\n\n');
+      // 1) 只有保活：每 2 分钟一条注释 + 一个无内容增量的空帧，16 分钟后应被判仅保活超时并换通道。
+      const f = glm(); f.deps.lateReceiptWaitMs = 0;
+      let s1!: ReadableStreamDefaultController<Uint8Array>;
+      // 与真实 fetch 一致：请求被中断时响应体随之报错。
+      f.deps.fetch.mockImplementationOnce(async (_u?: unknown, init?: RequestInit) => { const body = new ReadableStream<Uint8Array>({ start(c) { s1 = c; } }); (init?.signal as AbortSignal).addEventListener('abort', () => { try { s1.error(new Error('aborted')); } catch { /* 已关闭 */ } }); return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }); }).mockImplementation(ok(f));
+      const first = invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps); await vi.advanceTimersByTimeAsync(0);
+      for (let m = 0; m < 16; m += 2) { await vi.advanceTimersByTimeAsync(120_000); try { s1.enqueue(enc(': OPENROUTER PROCESSING\n\n')); s1.enqueue(frame({ choices: [{ index: 0, delta: {}, finish_reason: null }] })); } catch { /* 已中断 */ } }
+      await vi.advanceTimersByTimeAsync(60_000);
+      const out1 = JSON.parse((await first).text);
+      expect(out1.gateway).toBe('glm-openrouter');
+      expect(f.storage.get('test/0/route-glm-evolink.json')).toMatchObject({ state: 'interrupted', transportCause: 'keepalive_only' });
+      expect(f.logs.some(l => l.includes('reason=keepalive_only'))).toBe(true);
+      // 2) 保活中每 10 分钟夹一次推理增量：30 分钟仍等这一发完成。
+      const g = glm(); g.deps.lateReceiptWaitMs = 0;
+      let s2!: ReadableStreamDefaultController<Uint8Array>;
+      g.deps.fetch.mockResolvedValueOnce(new Response(new ReadableStream({ start(c) { s2 = c; } }), { headers: { 'Content-Type': 'text/event-stream' } }));
+      const second = invokeKnowledgePublicationRoutes(g.request, g.evidence, g.deps); await vi.advanceTimersByTimeAsync(0);
+      for (let m = 2; m <= 30; m += 2) { await vi.advanceTimersByTimeAsync(120_000); s2.enqueue(enc(': OPENROUTER PROCESSING\n\n')); if (m % 10 === 0) s2.enqueue(frame({ model: GLM_53_FLASHX_EVOLINK_MODEL, choices: [{ index: 0, delta: { reasoning_content: '思考' }, finish_reason: null }] })); }
+      s2.enqueue(frame({ model: GLM_53_FLASHX_EVOLINK_MODEL, choices: [{ index: 0, delta: { content: JSON.stringify(g.report) }, finish_reason: null }] }));
+      s2.enqueue(frame({ model: GLM_53_FLASHX_EVOLINK_MODEL, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })); s2.close();
+      expect(JSON.parse((await second).text).gateway).toBe('glm-evolink'); expect(g.deps.fetch).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+  it('取消：等迟到回执时已取消 → 立即抛出取消，unknown 回执保留，不归档、不补买、不写补买记录', async () => {
+    const f = glm(); const controller = new AbortController(); f.deps.lateReceiptWaitMs = KNOWLEDGE_LATE_RECEIPT_WAIT_MS;
+    (f.deps as any).signal = controller.signal;
+    f.deps.fetch.mockImplementation(async () => { controller.abort(new Error('用户已停止读档')); throw new Error('aborted'); });
+    await expect(invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).rejects.toThrow('用户已停止读档');
+    expect(f.deps.fetch).toHaveBeenCalledTimes(1); expect(f.deps.sleep).not.toHaveBeenCalled();
     expect(f.storage.get('test/0/route-glm-evolink.json').state).toBe('unknown');
     expect(f.storage.has('test/0/interrupted-repurchase.json')).toBe(false);
+    // 已取消的信号上再次恢复：一笔都不发
+    await expect(invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).rejects.toThrow('用户已停止读档'); expect(f.deps.fetch).toHaveBeenCalledTimes(1);
+  });
+  it('通道健康：401/403 需跨 2 个分段才判 down；内容审核 403（flagged）不判；402 一次即判；冷却后放行一发探测，成功即恢复', async () => {
+    const { createKnowledgeChannelHealth, knowledgeChannelSkipped, KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS } = await import('./knowledgePublicationRoutes');
+    const health = createKnowledgeChannelHealth(); let clock = 1_000_000;
+    const run = async (label: string, first: Response) => {
+      const f = glm(); (f.deps as any).channelHealth = health; (f.deps as any).logLabel = label; f.deps.now = () => clock;
+      f.deps.fetch.mockResolvedValueOnce(first).mockImplementation(ok(f));
+      await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps); return f;
+    };
+    await run('seg-1of9', status(403, {}, '{"error":{"message":"Your input was flagged for moderation"}}'));
+    await run('seg-2of9', status(403, {}, '{"error":{"message":"forbidden"}}'));
+    expect(health.down.has('evolink')).toBe(false);
+    await run('seg-3of9', status(403, {}, '{"error":{"message":"forbidden"}}'));
+    expect(health.down.has('evolink')).toBe(true);
+    // down 期间其余分段直接从另一通道起步
+    const skipped = glm(); (skipped.deps as any).channelHealth = health; skipped.deps.now = () => clock; skipped.deps.fetch.mockImplementation(ok(skipped));
+    expect(JSON.parse((await invokeKnowledgePublicationRoutes(skipped.request, skipped.evidence, skipped.deps)).text).gateway).toBe('glm-openrouter');
+    // 冷却到期：放行一发探测，成功即恢复
+    clock += KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS + 1;
+    const probe = glm(); (probe.deps as any).channelHealth = health; probe.deps.now = () => clock; probe.deps.fetch.mockImplementation(ok(probe));
+    expect(JSON.parse((await invokeKnowledgePublicationRoutes(probe.request, probe.evidence, probe.deps)).text).gateway).toBe('glm-evolink');
+    expect(health.down.has('evolink')).toBe(false);
+    // 402 一次即判
+    await run('seg-4of9', status(402, {}, '{"error":{"message":"This request requires more credits, or fewer max_tokens"}}'));
+    expect(health.down.get('evolink')?.cause).toBe('insufficient_credit_http_402');
+    expect(knowledgeChannelSkipped(health, 'evolink', clock)).toBe(true);
+  });
+  it('探测位不泄漏：冷却期满后本批在探测通道上恰好被跳过/抛错 → 不占探测位；真正发出后抛错也会释放；下一批仍能探测并恢复', async () => {
+    const { createKnowledgeChannelHealth, KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS } = await import('./knowledgePublicationRoutes');
+    const health = createKnowledgeChannelHealth(); let clock = 5_000_000;
+    health.down.set('evolink', { since: clock, until: clock + KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS, probing: false, cause: 'insufficient_credit_http_402' });
+    clock += KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS + 1;
+    // 1) 本批另一通道已断流两次 → 走到探测通道那一跳时直接判本章失败（跳过/抛错发生在购买之前）
+    const a = glm(); (a.deps as any).channelHealth = health; a.deps.now = () => clock;
+    const { researchAfterReview: _r, ...identity } = a.request as any;
+    const requestDigest = createHash('sha256').update(JSON.stringify([KNOWLEDGE_PUBLICATION_ROUTE_VERSION, identity])).digest('hex');
+    for (const id of ['glm-openrouter', 'glm-openrouter-retry-1']) a.storage.set(`test/0/route-${id}.json`, { requestDigest, route: id, model: GLM_53_FLASHX_OPENROUTER_MODEL, state: 'interrupted', status: 200 });
+    await expect(invokeKnowledgePublicationRoutes(a.request, a.evidence, a.deps)).rejects.toThrow('传输中断已发生两次');
+    expect(a.deps.fetch).not.toHaveBeenCalled(); expect(health.down.get('evolink')?.probing).toBe(false);
+    // 2) 真正发出探测前保存回执失败（抛错）→ 结束时释放探测位并重新冷却
+    const b = glm(); (b.deps as any).channelHealth = health; b.deps.now = () => clock;
+    const save = b.evidence.save; b.evidence.save = vi.fn(async (k: string, v: any) => { if (/route-glm-evolink\.json$/.test(k) && v?.state === 'pending') throw Error('storage failure'); await save(k, v); });
+    await expect(invokeKnowledgePublicationRoutes(b.request, b.evidence, b.deps)).rejects.toThrow('storage failure');
+    expect(health.down.get('evolink')?.probing).toBe(false); expect(health.down.get('evolink')!.until).toBe(clock + KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS);
+    // 3) 再过冷却期：下一批照常探测并恢复
+    clock += KNOWLEDGE_CHANNEL_DOWN_COOLDOWN_MS + 1;
+    const c = glm(); (c.deps as any).channelHealth = health; c.deps.now = () => clock; c.deps.fetch.mockImplementation(ok(c));
+    expect(JSON.parse((await invokeKnowledgePublicationRoutes(c.request, c.evidence, c.deps)).text).gateway).toBe('glm-evolink');
+    expect(health.down.has('evolink')).toBe(false);
+  });
+  it('无心跳判通道 down 需 10 分钟内 ≥3 次且期间该通道无成功', async () => {
+    const { createKnowledgeChannelHealth } = await import('./knowledgePublicationRoutes');
+    vi.useFakeTimers();
+    try {
+      const health = createKnowledgeChannelHealth();
+      const stall = async () => {
+        const f = glm(); f.deps.lateReceiptWaitMs = 0; (f.deps as any).channelHealth = health;
+        f.deps.fetch.mockResolvedValueOnce(new Response(new ReadableStream({ start() {} }), { headers: { 'Content-Type': 'text/event-stream' } })).mockImplementation(ok(f));
+        const p = invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps); await vi.advanceTimersByTimeAsync(181_000); await p;
+      };
+      await stall(); await stall(); expect(health.down.has('evolink')).toBe(false);
+      await stall(); expect(health.down.has('evolink')).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+  it('key limit / 未配置 / 402 余额不足切跳时都留 [knowledgeRoute] 日志（只记类别）', async () => {
+    const f = glm();
+    f.deps.fetch.mockResolvedValueOnce(status(402, {}, '{"error":{"message":"Insufficient credits"}}')).mockResolvedValueOnce(status(403, {}, '{"error":{"message":"Key limit exceeded","metadata":{"limit_source":"openrouter_key_limit"}}}')).mockImplementation(ok(f));
+    const out = JSON.parse((await invokeKnowledgePublicationRoutes(f.request, f.evidence, f.deps)).text);
+    expect(out.gateway).toBe('evolink');
+    expect(f.logs.some(l => l.includes('route=glm-evolink') && l.includes('reason=rejected'))).toBe(true);
+    expect(f.logs.some(l => l.includes('route=glm-openrouter') && l.includes('reason=key_limit'))).toBe(true);
+    const g = glm(); (g.deps as any).key = (c: string) => c === 'evolink' ? '' : 'test-key'; g.deps.fetch.mockImplementation(ok(g));
+    await invokeKnowledgePublicationRoutes(g.request, g.evidence, g.deps);
+    expect(g.logs.some(l => l.includes('reason=not_configured'))).toBe(true);
+    expect([...f.logs, ...g.logs].join('\n')).not.toMatch(/test-key|Insufficient|水循环/);
   });
 });
 
@@ -1202,4 +1373,16 @@ describe('[knowledgeRoute] 日志带脱敏后的拒收原因 detail', async () =
     expect(lines[0]).not.toMatch(/水循环|液/);
     expect(f.storage.get('test/0/route-glm-evolink.json').reason).toContain('《水循环》');
   });
+});
+
+it('仅保活判定：联网检索的工具调用帧、引用注释与检索回执帧算实质增量，注释行与空增量帧不算', async () => {
+  const { readGlmSseStream } = await import('./sseChatStream');
+  const enc = new TextEncoder();
+  const frames = [': OPENROUTER PROCESSING\n\n', 'data: {"choices":[{"delta":{}}]}\n\n',
+    'data: {"choices":[{"delta":{"tool_calls":[{"id":"t1"}]}}]}\n\n', 'data: {"choices":[{"delta":{"annotations":[{"url":"x"}]}}]}\n\n',
+    'data: {"web_search":[{"link":"y"}],"choices":[{"delta":{}}]}\n\n', 'data: {"choices":[{"delta":{"content":"正文"},"finish_reason":"stop"}]}\n\n'];
+  const body = new ReadableStream<Uint8Array>({ start(c) { for (const f of frames) c.enqueue(enc.encode(f)); c.close(); } });
+  let substantive = 0;
+  await readGlmSseStream(body, 1024 * 1024, { onSubstantiveDelta: () => { substantive += 1; } });
+  expect(substantive).toBe(4);
 });

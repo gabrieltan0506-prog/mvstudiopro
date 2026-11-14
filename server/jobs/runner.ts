@@ -3869,13 +3869,29 @@ async function processPlatformJob(
       const { createKnowledgeReadingPreparation } = await import("../services/knowledgeReadingPreparation");
       const readingPreparation = createKnowledgeReadingPreparation(Number(jobUserId), platformJobId!);
       const {downloadGcsObjectVersioned:readDistillObject,uploadBufferToGcs:saveDistillObject,getGcsBucketName:distillBucket}=await import('../services/gcs.js');
-      const publicationEvidence=params.billingPolicy==='interior-pages-v1'?{
-        prefix:`knowledge-card-distill/user-${jobUserId}/${platformJobId}`,
+      const distillStore={
         read:async(key:string)=>{try{return JSON.parse((await readDistillObject({gcsUri:`gs://${distillBucket()}/${key}`})).buffer.toString());}catch(error){if((error as Error).message==='gcs_stat_failed:404')return null;throw error;}},
         save:async(key:string,value:unknown)=>{await saveDistillObject({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json'});},
+      };
+      // 购买回执仍按任务号落盘（在途旧任务原样恢复）；跨提交续做根按用户，批次按内容身份命中，不跨用户。
+      const publicationEvidence=params.billingPolicy==='interior-pages-v1'?{prefix:`knowledge-card-distill/user-${jobUserId}/${platformJobId}`,...distillStore}:undefined;
+      const publicationResumeEvidence=publicationEvidence?{prefix:`knowledge-card-distill/user-${jobUserId}/resume`,...distillStore,
+        // 续做租约：带 generation 读、ifGenerationMatch 条件写（412 = 被别人抢先），同一段同一时刻只有一个任务在买。
+        readVersioned:async(key:string)=>{try{const got=await readDistillObject({gcsUri:`gs://${distillBucket()}/${key}`});return {value:JSON.parse(got.buffer.toString()),generation:got.generation};}catch(error){if((error as Error).message==='gcs_stat_failed:404')return null;throw error;}},
+        saveIfGeneration:async(key:string,value:unknown,generation:string)=>{try{await saveDistillObject({objectName:key,buffer:Buffer.from(JSON.stringify(value)),contentType:'application/json',ifGenerationMatch:generation});return true;}catch(error){if(/gcs_upload_failed:412/.test((error as Error).message))return false;throw error;}},
       }:undefined;
+      // 租约持有任务是否仍在排队/运行：取消已登记或心跳落盘超过卡死阈值（缺省 20 分钟）视为已结束。
+      const distillJobActive=async(otherJobId:string)=>{
+        const row=await getJobByIdStrict(otherJobId);
+        if(!row||!['queued','running'].includes(String(row.status)))return false;
+        if((row.input as {cancelRequestedAt?:unknown}|null)?.cancelRequestedAt)return false;
+        const updated=new Date(row.updatedAt as unknown as string).getTime();
+        return Number.isFinite(updated)&&Date.now()-updated<resolveKnowledgeCardDistillStallMs();
+      };
       const prepared = await knowledgeCardDistillActivity.run(() => touchJobHeartbeat(platformJobId), () => prepareKnowledgeCardCopy({
         publicationEvidence,
+        publicationResumeEvidence,
+        publicationJob:{jobId:platformJobId!,jobActive:distillJobActive},
         sourceText,
         files: jobFiles,
         abortSignal: cancel.signal,
@@ -3954,6 +3970,10 @@ async function processPlatformJob(
       }, cancel);
       } catch (error) {
         cancel.signal.throwIfAborted();
+        // 管理员 Debug 面板直接看失败分段的诊断（类别/各跳/耗时/最后心跳）；普通用户只看中性错误文案。
+        const { knowledgeDistillDiagnosticsOf } = await import("../services/knowledgeDistillDiagnostics.js");
+        const diagnostics = knowledgeDistillDiagnosticsOf(error);
+        if (diagnostics?.length && platformJobId) await patchJobRunningProgress(platformJobId, { distillFailureDiagnostics: diagnostics }).catch(() => {});
         throw error;
       } finally {
         cancel.dispose();
@@ -4506,6 +4526,22 @@ export async function runClaimedJob(
     } else if (resolveFailedJobDisposition(job, error) === "fail" && isKlingRetiredError(error)) {
       // 可灵停用：不重排（重排只会再被拒），直接失败；无服务端计费，无需退款。
       await markJobFailed(job.id, message);
+    } else if (job.type === "platform" && isRecord(job.input) && job.input.action === "knowledge_card_distill"
+      && isRecord(job.input.params) && job.input.params.billingPolicy === "interior-pages-v1") {
+      /**
+       * 图文手册读档提炼的失败处置（2026-11-14）：最多自动续做一次（attempts<2），且只在会「只补未完成段」时续做——
+       * 同一任务号的购买证据、用户级续做根与逐页备料缓存（同一文件不再转换/挑页）保证已完成段零模型调用复用。
+       * 内容安全、熔断（含两通道均不可用）与确定性失败直接终态，避免重排原样再烧一遍。续做期间任务回到 queued，
+       * 入队去重仍视为在途；计费只在成稿结算时发生，续做不新增扣费身份。
+       */
+      const { knowledgeDistillRequeuePlan } = await import("../services/knowledgeDistillDiagnostics.js");
+      const plan = (job.attempts ?? 0) < 2 ? knowledgeDistillRequeuePlan(error) : null;
+      if (plan) {
+        await patchJobRunningProgress(job.id, { distillResumeNotice: plan.notice, distillStage: "resuming", distillPercent: 0 }).catch(() => {});
+        await requeueJob(job.id, message);
+      } else {
+        await markJobFailed(job.id, message);
+      }
     } else if ((job.attempts ?? 0) < 2) {
       await requeueJob(job.id, message);
     } else {

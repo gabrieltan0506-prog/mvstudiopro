@@ -783,10 +783,21 @@ export async function markKnowledgeCardSettlementSucceeded(
  * 再被这里解释成「取消」，等于数据库一抖就把用户跑了半小时的活判死。
  * 现在故障原样抛给 watcher，由它暂缓判断继续盯；只有**查询成功且确实没有这行**才算孤儿任务。
  */
+const knowledgeHandoffAbandonCheckedAt = new Map<string, number>();
 export async function isPlatformJobCancelRequested(jobId: string): Promise<boolean> {
   const job = await getJobByIdStrict(jobId);
   if (!job) return true;
   const raw = parseMaybeJson(job.input);
+  // 读档已交接给跟进页（原始页已离开）：所有跟进页都失联超过兜底时长就按离页口径停止（每单 30 s 最多查一次）
+  const handedOffAt = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>).handedOffAt : undefined;
+  if (handedOffAt && job.status === "running" && !(raw as Record<string, unknown>).cancelRequestedAt) {
+    const { stopAbandonedHandedOffKnowledgeCardJobs, KNOWLEDGE_CARD_HANDOFF_ABANDON_MS } = await import("./knowledgeCardPageTask");
+    const last = knowledgeHandoffAbandonCheckedAt.get(jobId) ?? 0;
+    if (Date.now() - Date.parse(String(handedOffAt)) >= KNOWLEDGE_CARD_HANDOFF_ABANDON_MS && Date.now() - last >= 30_000) {
+      knowledgeHandoffAbandonCheckedAt.set(jobId, Date.now());
+      if (await stopAbandonedHandedOffKnowledgeCardJobs(jobId) > 0) { knowledgeHandoffAbandonCheckedAt.delete(jobId); return true; }
+    }
+  }
   return Boolean(
     job.status === "failed"
     || (raw && typeof raw === "object" && !Array.isArray(raw)

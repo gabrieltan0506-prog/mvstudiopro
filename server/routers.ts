@@ -28,7 +28,7 @@ import { advisorTemplatePlansSchema } from "../shared/manhuaAdvisorRewrite";
 import { MANHUA_ADVISOR_PROJECT_FREE, MANHUA_ADVISOR_PAID_CREDITS } from "../shared/manhuaAdvisorPolicy";
 import { assertAdvisorProject, readAdvisorProjectQuota, reserveAdvisorProjectQuota, releaseAdvisorProjectQuota } from "./services/manhuaAdvisorProjectQuota";
 import { novelWorkspaceRouter } from "./routers/novelWorkspace";
-import { createKnowledgeCardPageJob, reserveKnowledgeCardImageJob, checkKnowledgeCardImageMaySubmit } from "./jobs/knowledgeCardPageTask";
+import { createKnowledgeCardPageJob, createKnowledgeCardDistillJob, reserveKnowledgeCardImageJob, checkKnowledgeCardImageMaySubmit } from "./jobs/knowledgeCardPageTask";
 import { novelExcerptSchema } from "../shared/manhuaNovelSource.js";
 import { canvasMusicMvRouter } from "./routers/canvasMusicMv";
 import { videoBreakdownRouter } from "./routers/videoBreakdown";
@@ -8076,23 +8076,29 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             .map((f) => ({ gcsUri: String(f.gcsUri || "").trim(), mimeType: f.mimeType, fileName: f.fileName }))
             .filter((f) => f.gcsUri);
           if (!stored.length) throw new Error("上传文件为空，请重新选择文件");
-          const jobId = await createKnowledgeCardPageJob({
+          const fileParams = {
+            sourceText: pasted.length <= 3200 ? pasted : "",
+            distillModel: modelName,
+            detailLevel,
+            billingPolicy: input.billingPolicy,
+            files: stored,
+            chargeDistillFee: false,
+          };
+          // 同一用户同一份原稿同一设置已在读：不建第二单，本页落跟进记录跟原任务（1114）
+          const { knowledgeCardDistillSourceKey } = await import("./services/knowledgeCardDistillSourceKey.js");
+          const sourceKey = await knowledgeCardDistillSourceKey(fileParams);
+          const { id: jobId, attachedTo } = await createKnowledgeCardDistillJob({
             userId: String(userId),
             requestId: input.pageRequestId,
-            action: "knowledge_card_distill",
-            params: {
-              sourceText: pasted.length <= 3200 ? pasted : "",
-              distillModel: modelName,
-              detailLevel,
-              billingPolicy: input.billingPolicy,
-              files: stored,
-              chargeDistillFee: false,
-            },
+            params: fileParams,
+            dedupeKey: sourceKey?.key,
           });
           return {
             success: true as const,
             isAsync: true as const,
+            // 挂靠时 jobId 是本页的跟进记录编号：轮询它即跟到原任务的进度与结果
             progressJobId: jobId,
+            attachedToExistingJob: Boolean(attachedTo),
             distillFeeCharged: 0,
             sourceChars: 0,
             distillModel: modelName,
@@ -8110,24 +8116,29 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         if (input.pageRequestId || shouldRunKnowledgeCardDistillAsync(mergedRaw.length)) {
           const userId = ctx.user?.id;
           if (!userId) throw new Error("请先登录后再上传长文档");
-          const jobId = await createKnowledgeCardPageJob({
+          const textParams = {
+            sourceText: mergedRaw,
+            distillModel: modelName,
+            detailLevel,
+            billingPolicy: input.billingPolicy,
+            imageDataUrls: [] as string[],
+            extractionMethods: [] as string[],
+            chargeDistillFee: input.chargeDistillFee === true && input.billingPolicy !== "interior-pages-v1",
+          };
+          const { knowledgeCardDistillSourceKey } = await import("./services/knowledgeCardDistillSourceKey.js");
+          const sourceKey = await knowledgeCardDistillSourceKey(textParams);
+          const { id: jobId, attachedTo } = await createKnowledgeCardDistillJob({
             userId: String(userId),
             requestId: input.pageRequestId,
-            action: "knowledge_card_distill",
-            params: {
-              sourceText: mergedRaw,
-              distillModel: modelName,
-              detailLevel,
-              billingPolicy: input.billingPolicy,
-              imageDataUrls: [] as string[],
-              extractionMethods: [] as string[],
-              chargeDistillFee: input.chargeDistillFee === true && input.billingPolicy !== "interior-pages-v1",
-            },
+            params: textParams,
+            dedupeKey: sourceKey?.key,
           });
           return {
             success: true as const,
             isAsync: true as const,
+            // 挂靠时 jobId 是本页的跟进记录编号：轮询它即跟到原任务的进度与结果
             progressJobId: jobId,
+            attachedToExistingJob: Boolean(attachedTo),
             // 后台任务在提炼成功后自己扣，这里还没发生
             distillFeeCharged: 0,
             sourceChars: mergedRaw.length,
@@ -8205,6 +8216,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           success: true as const,
           isAsync: false as const,
           progressJobId: null,
+          attachedToExistingJob: false,
           distillFeeCharged,
           distilledMarkdown: prepared.distilledMarkdown,
           skippedDistill: prepared.skippedDistill,
