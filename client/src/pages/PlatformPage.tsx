@@ -8542,11 +8542,14 @@ export default function PlatformPage() {
       const tc = Number(out.distillTotalChunks) || totalHint;
       return `分段提炼 ${dc}/${tc} 段`;
     };
-    setCustomNoteDistillJobId(pollJobId);
-    // 提交请求在途时点中止：取得同一任务 ID 后请求停止，失败仍继续轮询并允许重试中止。
+    // 只读跟进时在上传途中点了中止：先于登记任务编号退出，否则后面的收尾走不到，页面会一直显示「任务进行中」。
     if (customNoteUploadStopRef.current && args.files?.length && followOnlyJobId) {
+      customNoteFollowOnlyJobRef.current = "";
+      setCustomNoteCancelRequested(false);
       throw new Error("本页已停止跟进");
     }
+    setCustomNoteDistillJobId(pollJobId);
+    // 提交请求在途时点中止：取得同一任务 ID 后请求停止，失败仍继续轮询并允许重试中止。
     if (customNoteUploadStopRef.current && args.files?.length) {
       try {
         const response = await fetch(withLongJobsFlyDirect(`/api/jobs/knowledge-card/${encodeURIComponent(trackedJobId)}/cancel`), { method: "POST", credentials: "include" });
