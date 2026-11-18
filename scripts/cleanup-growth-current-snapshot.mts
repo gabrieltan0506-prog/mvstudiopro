@@ -50,7 +50,9 @@ async function main() {
     await lease.assertOwned();
     // Only this exact owned temporary tree. rm unlinks hardlinks; source inodes remain.
     await fs.rm(target, { recursive: true, force: false });
-  }, { waitTimeoutMs: 5_000 });
+  // 2026-11-18：原本只等 5 秒。采集 merge 持锁可达数十秒，清理抢不到就放弃，
+  // 残留快照在来源被重写后变成实占，把 /data 写满。与存储锁默认等待一致。
+  }, { waitTimeoutMs: 120_000 });
   console.log(JSON.stringify({ ok: true, batchId, removed: true, sourceDeletionAuthorized: false }));
 }
 main().catch(error => {

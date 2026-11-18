@@ -249,7 +249,7 @@ jobs:
 
 
       - name: Always release archive hardlink snapshot
-        timeout-minutes: 2
+        timeout-minutes: 12
         if: always()
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -258,13 +258,20 @@ jobs:
             exit 0
           fi
           BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
-          if timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-            -C "sh -s -- cleanup '$BATCH_ID'" \
-            < scripts/growth-archive-offload-remote.sh; then
-            touch /tmp/growth-archive-offload/SNAPSHOT_RELEASED
-          else
-            echo "::warning::临时快照清理未完成，保留待后续回收；未删除源归档"
-          fi
+          # 1118：此前只试一次，采集正占着锁就直接放弃，快照永久残留、本批来源清理也被跳过。
+          ATTEMPTS="${GROWTH_SNAPSHOT_RELEASE_ATTEMPTS:-5}"
+          for release_attempt in $(seq 1 "$ATTEMPTS"); do
+            if timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "sh -s -- cleanup '$BATCH_ID'" \
+              < scripts/growth-archive-offload-remote.sh; then
+              touch /tmp/growth-archive-offload/SNAPSHOT_RELEASED
+              exit 0
+            fi
+            echo "归档临时快照清理未完成（${release_attempt}/${ATTEMPTS}）"
+            [ "$release_attempt" = "$ATTEMPTS" ] || sleep "${GROWTH_SNAPSHOT_RELEASE_WAIT_SECONDS:-60}"
+          done
+          touch /tmp/growth-archive-offload/SNAPSHOT_RETAINED
+          echo "::warning::归档临时快照清理未完成（${BATCH_ID}），未删除源归档；本轮将标红，超过 24 小时由下一轮备份自动回收"
 
       - name: Retire verified Bilibili archive sources
         if: success()
@@ -352,3 +359,15 @@ jobs:
             /tmp/growth-archive-offload/retirement-result-*.json
           if-no-files-found: ignore
           retention-days: 30
+      - name: Fail run when a temporary snapshot was left on Fly
+        if: always()
+        run: |
+          # 1118：残留不能只打 warning 当成功。放在最末，不影响前面条件为 success() 的步骤。
+          LEFT=""
+          [ ! -f /tmp/growth-backup/CURRENT_SNAPSHOT_RETAINED ] || LEFT="$LEFT current"
+          [ ! -f /tmp/growth-archive-offload/SNAPSHOT_RETAINED ] || LEFT="$LEFT archive"
+          if [ -n "$LEFT" ]; then
+            echo "本轮有临时快照未能从 Fly 删除：$LEFT。数据未受影响；下一轮备份开头会自动回收。" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::临时快照残留在 Fly：$LEFT"
+            exit 1
+          fi
