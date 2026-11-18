@@ -491,6 +491,15 @@ snapshot_report() {
 
 cleanup_snapshot() {
   # 这里只清理已验证批次的临时 hardlink；不触碰 archive 源目录。
+  # 1118：本批从未建出快照（prepare 让行/失败）时无需取 lease；否则采集繁忙会让释放步骤
+  # 重试约 10 分钟后记 SNAPSHOT_RETAINED，把「让行」误报成快照残留并标红。
+  # 本批 prepare 仍持有 lease（SSH 断开但远端未退出）时照常走 lease，等它结束再判断。
+  if [ ! -e "$snapshot_root" ] && [ ! -L "$snapshot_root" ] && [ ! -e "$snapshot_root.next" ] && [ ! -L "$snapshot_root.next" ]; then
+    case "$(cat "$COLLECTION_LOCK" 2>/dev/null || true)" in
+      "github-growth-archive:$batch_id:prepare:"*) ;;
+      *) echo "archive 快照本批未建立，无需释放: $batch_id" >&2; return 0 ;;
+    esac
+  fi
   acquire_collection_lease
   trap 'release_collection_lease' EXIT HUP INT TERM
   [ -e "$snapshot_root" ] || return 0
