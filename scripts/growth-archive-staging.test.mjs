@@ -43,6 +43,14 @@ test('损坏退役marker也隔离桶，不把剩余子集再次发布',t=>{
  assert(!fs.existsSync(path.join(f.root,'backups/archive-offload/123-1/archive',dir)));
 });
 
+test('verified-archives退役marker合法：记为retired不要求人工复核，也不再发布',t=>{
+ const f=fixture(t),dir='2026-09-01-00';fs.mkdirSync(path.join(f.root,'.growth-archive-retired'));
+ for(const [platform,expected] of [['verified-archives','"state":"retired"'],['other','retirement-marker-invalid']]){
+  fs.writeFileSync(path.join(f.root,'.growth-archive-retired',dir+'.json'),JSON.stringify({schemaVersion:1,dir,platform,receiptSha256:'a'.repeat(64),restore:{dir}}));
+  const batch=platform==='other'?'125-1':'124-1',run=prepare(f,batch);assert.equal(run.status,0,run.stderr);assert(run.stderr.includes(expected),run.stderr);
+  assert(!fs.existsSync(path.join(f.root,'backups/archive-offload',batch,dir)));
+ }
+});
 function addOldBucket(f,dir='2026-08-31-00') {
  fs.mkdirSync(path.join(f.root,'archive',dir));
  fs.writeFileSync(path.join(f.root,'archive',dir,'bilibili-valid.json.gz'),gzipSync('{"items":[]}'));
@@ -91,15 +99,64 @@ test('workflow先校验单桶参数再传给远端prepare',()=>{
  assert(source.includes("sh -s -- prepare '$BATCH_ID' '${GROWTH_ARCHIVE_PROBE_DIR:-}'"));
 });
 
+const commit=(f,batch,list)=>spawnSync('sh',[script,'commit-cursor',batch,...(list===undefined?[]:[list])],{env:f.env,encoding:'utf8'});
+const rotation=(f,batch)=>JSON.parse(fs.readFileSync(path.join(f.root,'backups/archive-offload',batch,'rotation.json')));
+const readCursor=f=>JSON.parse(fs.readFileSync(path.join(f.root,'backups/archive-offload/.rotation-cursor.json')));
+const selectedDirs=run=>run.stdout.trim().split('\n').filter(Boolean).map(l=>l.split('\t')[0]);
+function addBuckets(f,n){const dirs=[];for(let i=1;i<=n;i++){const dir=`2026-08-${String(i).padStart(2,'0')}-00`;fs.mkdirSync(path.join(f.root,'archive',dir));fs.writeFileSync(path.join(f.root,'archive',dir,'bilibili-valid.json.gz'),gzipSync('{"items":[]}'));dirs.push(dir);}return dirs;}
 test('默认轮转跨两轮覆盖候选、环绕且同batch重入不推进游标',t=>{
- const f=fixture(t);for(let i=1;i<=14;i++){const dir=`2026-08-${String(i).padStart(2,'0')}-00`;fs.mkdirSync(path.join(f.root,'archive',dir));fs.writeFileSync(path.join(f.root,'archive',dir,'bilibili-valid.json.gz'),gzipSync('{"items":[]}'));}
+ const f=fixture(t);addBuckets(f,14);
  const cursorFile=path.join(f.root,'backups/archive-offload/.rotation-cursor.json');
- const a=prepare(f,'201-1');assert.equal(a.status,0,a.stderr);const first=JSON.parse(fs.readFileSync(path.join(f.root,'backups/archive-offload/201-1/rotation.json')));assert.equal(first.scannedCount,12);assert.equal(first.deferred.length,3);
+ const a=prepare(f,'201-1');assert.equal(a.status,0,a.stderr);const first=rotation(f,'201-1');assert.equal(first.scannedCount,12);assert.equal(first.deferred.length,3);
  const saved=fs.readFileSync(cursorFile,'utf8');assert.equal(prepare(f,'201-1').status,0);assert.equal(fs.readFileSync(cursorFile,'utf8'),saved);
- const b=prepare(f,'202-1');assert.equal(b.status,0,b.stderr);const second=JSON.parse(fs.readFileSync(path.join(f.root,'backups/archive-offload/202-1/rotation.json')));assert.equal(second.scannedCount,12);assert.equal(second.cursorBefore,first.cursorAfter);assert(second.cursorAfter<first.cursorAfter);
+ // prepare 只登记 inflight，不推进；退役报告完成后才越过本班全部桶。
+ assert.equal(readCursor(f).lastDir,null);assert.deepEqual(readCursor(f).inflight.visited,selectedDirs(a));
+ const c1=commit(f,'201-1',selectedDirs(a).join(','));assert.equal(c1.status,0,c1.stderr);const afterFirst=readCursor(f).lastDir;assert.equal(afterFirst,selectedDirs(a).at(-1));assert.equal(readCursor(f).inflight,null);
+ const b=prepare(f,'202-1');assert.equal(b.status,0,b.stderr);const second=rotation(f,'202-1');assert.equal(second.scannedCount,12);assert.equal(second.cursorBefore,afterFirst);
+ assert.equal(commit(f,'202-1',selectedDirs(b).join(',')).status,0);assert(readCursor(f).lastDir<afterFirst);
  const union=new Set([...fs.readdirSync(path.join(f.root,'backups/archive-offload/201-1/inventories')),...fs.readdirSync(path.join(f.root,'backups/archive-offload/202-1/inventories'))]);assert.equal(union.size,15);
  assert(![...union].some(d=>d.startsWith('2026-09-02')||d.startsWith('2026-09-03')));
  const beforeProbe=fs.readFileSync(cursorFile,'utf8');assert.equal(prepare(f,'203-1','2026-09-01-00').status,0);assert.equal(fs.readFileSync(cursorFile,'utf8'),beforeProbe);
+});
+test('退役跳过/延后/失败（commit 未报告完成）不推进游标，下班重选同一批',t=>{
+ const f=fixture(t);addBuckets(f,14);
+ const a=prepare(f,'301-1');assert.equal(a.status,0,a.stderr);const first=selectedDirs(a);
+ const c=commit(f,'301-1','');assert.equal(c.status,0,c.stderr);assert.match(c.stderr,/"committed":true.*"passed":0/);
+ const cur=readCursor(f);assert.equal(cur.lastDir,null);for(const d of first)assert.equal(cur.attempts[d],1);
+ const b=prepare(f,'302-1');assert.equal(b.status,0,b.stderr);assert.deepEqual(selectedDirs(b),first);
+ // 部分完成：只越过连续完成前缀，停在第一个未完成桶之前。
+ const done=first.filter((_,i)=>i!==3);assert.equal(commit(f,'302-1',done.join(',')).status,0);
+ const cur2=readCursor(f);assert.equal(cur2.lastDir,first[2]);assert.equal(cur2.attempts[first[3]],2);assert.equal(cur2.attempts[first[0]],undefined);
+ const next=prepare(f,'303-1');assert.equal(next.status,0,next.stderr);assert.equal(selectedDirs(next)[0],first[3]);
+});
+test('未调用commit的上一班在下一次prepare按失败结算并计尝试',t=>{
+ const f=fixture(t);addBuckets(f,2);
+ assert.equal(prepare(f,'311-1').status,0);const b=prepare(f,'312-1');assert.equal(b.status,0,b.stderr);assert.match(b.stderr,/"staleShiftSettled":\{"passed":0,"retry":3\}/);
+ const cur=readCursor(f);assert.equal(cur.lastDir,null);assert.equal(cur.attempts['2026-08-01-00'],1);assert.equal(cur.inflight.batchId,'312-1');
+ // 迟到的旧批次commit不能改写新inflight。
+ const late=commit(f,'311-1','2026-08-01-00');assert.equal(late.status,0);assert.match(late.stderr,/no-inflight-for-batch/);assert.equal(readCursor(f).inflight.batchId,'312-1');
+});
+test('坏桶最多卡3班，之后放行但保留待重试记录，下一圈重试并在完成后清除',t=>{
+ const f=fixture(t),dirs=addBuckets(f,2),bad=dirs[0];
+ for(let i=1;i<=3;i++){const run=prepare(f,`32${i}-1`);assert.equal(run.status,0,run.stderr);assert.equal(selectedDirs(run)[0],bad);assert.equal(commit(f,`32${i}-1`,selectedDirs(run).filter(d=>d!==bad).join(',')).status,0);}
+ const cur=readCursor(f);assert.equal(cur.attempts[bad],3);assert.equal(cur.lastDir,'2026-09-01-00');
+ const lap=prepare(f,'324-1');assert.equal(lap.status,0,lap.stderr);assert.deepEqual(selectedDirs(lap),[bad,dirs[1],'2026-09-01-00']);
+ assert.equal(commit(f,'324-1',bad).status,0);const cleared=readCursor(f);assert.equal(cleared.attempts[bad],undefined);assert.equal(cleared.lastDir,bad);
+});
+test('已退役桶不占12桶额度，commit未报告也可越过；损坏cursor或非法完成列表拒绝且不改游标',t=>{
+ const f=fixture(t),dirs=addBuckets(f,14);fs.mkdirSync(path.join(f.root,'.growth-archive-retired'));
+ for(const d of dirs.slice(0,5))fs.writeFileSync(path.join(f.root,'.growth-archive-retired',d+'.json'),'{}');
+ const run=prepare(f,'331-1');assert.equal(run.status,0,run.stderr);const r=rotation(f,'331-1');
+ assert.equal(r.retiredCount,5);assert.equal(r.nonemptyVisited,10);assert.equal(r.deferred.length,0);
+ assert.equal(fs.readFileSync(path.join(f.root,'backups/archive-offload/331-1/retired.jsonl'),'utf8').trim().split('\n').length,5);
+ assert.equal(commit(f,'331-1','').status,0);assert.equal(readCursor(f).lastDir,dirs[4]);
+ const saved=fs.readFileSync(path.join(f.root,'backups/archive-offload/.rotation-cursor.json'),'utf8');
+ assert.notEqual(commit(f,'331-1','../x').status,0);assert.equal(fs.readFileSync(path.join(f.root,'backups/archive-offload/.rotation-cursor.json'),'utf8'),saved);
+});
+test('schemaVersion 1 旧游标兼容读取并从其后续接',t=>{
+ const f=fixture(t),dirs=addBuckets(f,3);fs.mkdirSync(path.join(f.root,'backups/archive-offload'),{recursive:true});
+ fs.writeFileSync(path.join(f.root,'backups/archive-offload/.rotation-cursor.json'),JSON.stringify({schemaVersion:1,batchId:'1-1',lastDir:dirs[0]}));
+ const run=prepare(f,'341-1');assert.equal(run.status,0,run.stderr);assert.equal(selectedDirs(run)[0],dirs[1]);assert.equal(readCursor(f).schemaVersion,2);
 });
 test('超大桶显式延后并推进、失败快照不提交游标',t=>{
  const f=fixture(t),old=addOldBucket(f),huge=path.join(f.root,'archive',old,'bilibili-valid.json.gz');fs.truncateSync(huge,513*1024*1024);
@@ -114,7 +171,7 @@ test('plan保留未扫描deferred且remaining零不代表无积压',async t=>{
 test('全超大批次仍报告deferred并推进游标，不声称无积压',t=>{
  const f=fixture(t),dir='2026-09-01-00';fs.truncateSync(path.join(f.root,'archive',dir,'bilibili-valid.json.gz'),513*1024*1024);
  const run=prepare(f,'220-1');assert.equal(run.status,0,run.stderr);assert.equal(run.stdout.trim(),'');assert.match(run.stderr,/GROWTH_ARCHIVE_ROTATION.*"deferred":1/);assert.match(run.stderr,/GROWTH_ARCHIVE_DEFERRED.*oversized/);
- const c=JSON.parse(fs.readFileSync(path.join(f.root,'backups/archive-offload/.rotation-cursor.json')));assert.equal(c.lastDir,dir);
+ assert.equal(commit(f,'220-1','').status,0);const c=readCursor(f);assert.equal(c.lastDir,dir);assert.equal(c.attempts[dir],3);
 });
 
 

@@ -219,3 +219,36 @@ test("archive cleanup rejects unowned snapshots, parent links, legacy current by
   assert.match(result.stderr,/archive_snapshot_path_type_invalid/);
   assert(fs.existsSync(path.join(root,"outside/archive-offload",batch,"evidence")));
 });
+
+test("archive lease reports disk full honestly with exit 44 and leaves no lock files", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "growth-disk-full-"));
+  const source = path.join(root, "source"), bin = path.join(root, "bin");
+  fs.mkdirSync(path.join(source, "archive/2026-09-01-00"), { recursive: true });
+  fs.mkdirSync(bin);
+  const fakeDf = kb => executable(path.join(bin, "df"),
+    `#!/bin/sh\necho 'Filesystem 1024-blocks Used Available Capacity Mounted on'\necho '/dev/vdb 11000000 10999488 ${kb} 100% /data'\n`);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, GROWTH_STORE_DIR: source,
+    GROWTH_INTERACTIVE_FALLBACK_DIR: path.join(root, "interactive") };
+  const run = (...args) => spawnSync("sh", ["scripts/growth-archive-offload-remote.sh", ...args], { env, encoding: "utf8", timeout: 10000 });
+  const locks = [".growth-platform-collection.lock", ".growth-store-mutation.lock"].map(name => path.join(source, name));
+  fakeDf(512);
+  for (const args of [["prepare", "123-1"], ["cleanup", "123-1"], ["bundle", "123-1", "2026-09-01-00"]]) {
+    const result = run(...args);
+    assert.equal(result.status, 44, args.join(" "));
+    assert.match(result.stderr, /GROWTH_ARCHIVE_DISK_FULL/);
+    assert.doesNotMatch(result.stderr, /GROWTH_ARCHIVE_BUSY|lease 竞争/);
+    for (const lock of locks) assert(!fs.existsSync(lock));
+  }
+  assert(!fs.existsSync(path.join(source, "backups/archive-offload/123-1.next")));
+  // 刚好 1024KB 不算满；占用中的 lease 仍按原协议让行，不按时长抢锁。
+  fakeDf(1024);
+  fs.writeFileSync(locks[0], "another-owner");
+  fs.utimesSync(locks[0], new Date(0), new Date(0));
+  const busy = run("prepare", "124-1");
+  assert.equal(busy.status, 43, busy.stderr);
+  assert.equal(fs.readFileSync(locks[0], "utf8"), "another-owner");
+  fs.unlinkSync(locks[0]);
+  assert.equal(run("prepare", "125-1").status, 0);
+  for (const lock of locks) assert(!fs.existsSync(lock));
+  fs.rmSync(root, { recursive: true, force: true });
+});
