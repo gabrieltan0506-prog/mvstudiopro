@@ -45,7 +45,7 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: 隔离验证候选、内容、同名冲突与发布恢复
         run: |
-          node --test scripts/growth-archive-publication.test.mjs scripts/growth-archive-cleanup.test.mjs scripts/growth-archive-delete-verified.test.mjs scripts/growth-archive-staging.test.mjs scripts/growth-archive-retirement-wiring.test.mjs scripts/growth-archive-retire.test.mjs
+          node --test scripts/growth-archive-publication.test.mjs scripts/growth-archive-cleanup.test.mjs scripts/growth-archive-delete-verified.test.mjs scripts/growth-archive-staging.test.mjs scripts/growth-archive-retirement-wiring.test.mjs scripts/growth-archive-retire.test.mjs scripts/growth-archive-legacy-report.test.mjs
           node --test scripts/growth-workflow-wiring.test.mjs scripts/growth-current-snapshot-cleanup.test.mjs scripts/growth-excluded-platform-cleanup.test.mjs scripts/growth-reclaim-stale-snapshots.test.mjs scripts/growth-snapshot-space-gate.test.mjs
           node --test scripts/growth-backup-ledger-assets.test.mjs
           node --test scripts/growth-backup-maintenance.test.mjs scripts/growth-backup-fly-gateway.test.mjs scripts/growth-backup-generation.test.mjs shared/growthArchiveRestore.test.mjs scripts/growth-backup-coverage.test.mjs scripts/growth-backup-workflows.test.mjs scripts/growth-core-workflow.test.mjs scripts/growth-runtime-packaging.test.mjs shared/growthPrivateAssetFetch.test.mjs scripts/growth-backup-target.test.mjs

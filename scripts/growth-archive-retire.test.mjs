@@ -312,3 +312,16 @@ test('8个不一致桶+1个可删桶：两班内可删桶完成，不一致桶�
  fs.writeFileSync(path.join(f.evidence,'legacy-retired-cursor.json'),'{broken');
  const s4=await f.run();assert.equal(s4.buckets.length,8);
 });
+// [复审] 0 字节/无法解析的标记：来源保留，但必须明确报告该桶未完成（completed=false），其余桶照常处理。
+test('无法解析的退役标记：来源保留、该桶报 marker-invalid 且本班不算完成，不阻塞其他桶',async t=>{
+ const f=await legacyFixture(t);
+ const broken='2026-08-01-00',src=path.join(f.store,'archive',broken,'douyin-x.json.gz');
+ fs.mkdirSync(path.join(f.store,'archive',broken));fs.writeFileSync(src,'abc');
+ fs.writeFileSync(path.join(f.store,'.growth-archive-retired',broken+'.json'),'');
+ const result=await f.run();
+ assert.equal(result.completed,false);assert.deepEqual(result.invalidMarkers,[broken]);
+ const row=result.buckets.find(b=>b.dir===broken);
+ assert.equal(row.state,'marker-invalid');assert.equal(row.retirementCompleted,false);
+ assert(fs.existsSync(src));assert.equal(fs.statSync(path.join(f.store,'.growth-archive-retired',broken+'.json')).size,0);
+ assert.equal(result.buckets.find(b=>b.dir===f.dir).state,'retired');assert(!fs.existsSync(f.douyin));
+});

@@ -296,3 +296,33 @@ test("标记先写 pending，逐文件删除全部完成后才改 completed；�
   const done = JSON.parse(await fs.readFile(path.join(g.root, ".growth-archive-retired/2026-09-01-00.json"), "utf8"));
   assert.equal(done.state, "completed"); assert.equal(done.receiptSha256, cleanupReceiptSha256(g.receipt));
 });
+// [复审] 首次写 pending 遇盘满：不得在正式路径留下 0 字节标记，否则普通扫描与续删都会永久跳过该桶。
+test("首次写 pending 标记时盘满：正式标记不出现、暂存文件已清、来源一个不删，下一轮可正常退役", async t => {
+  const f = await fixture(t, 2);
+  const markers = path.join(f.root, ".growth-archive-retired"), markerFile = path.join(markers, "2026-09-01-00.json");
+  const realOpen = fs.open;
+  t.after(() => { fs.open = realOpen; });
+  fs.open = async (file, ...rest) => {
+    const handle = await realOpen(file, ...rest);
+    if (String(file).startsWith(markers + path.sep) && String(file).includes(".json.next-"))
+      handle.writeFile = async () => { throw Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" }); };
+    return handle;
+  };
+  await assert.rejects(deleteVerifiedArchive(f.options), /ENOSPC/);
+  fs.open = realOpen;
+  assert.equal(await exists(markerFile), false, "盘满时不得发布正式标记");
+  assert.deepEqual((await fs.readdir(markers)).filter(name => name.includes(".next-")), []);
+  for (const row of f.files) assert(await exists(path.join(f.root, row.path)), row.path);
+  await deleteVerifiedArchive({ ...f.options, journalPath: `${f.options.journalPath}.retry` });
+  assert.equal(JSON.parse(await fs.readFile(markerFile, "utf8")).state, "completed");
+  for (const row of f.files) assert.equal(await exists(path.join(f.root, row.path)), false);
+});
+test("现存标记无法解析（旧版本留下的 0 字节文件）：拒绝删除并保留全部来源，不覆盖该标记", async t => {
+  const f = await fixture(t, 2);
+  const markers = path.join(f.root, ".growth-archive-retired"), markerFile = path.join(markers, "2026-09-01-00.json");
+  await fs.mkdir(markers, { recursive: true }); await fs.writeFile(markerFile, "");
+  await assert.rejects(deleteVerifiedArchive(f.options), /retirement_marker_invalid/);
+  assert.equal((await fs.stat(markerFile)).size, 0);
+  for (const row of f.files) assert(await exists(path.join(f.root, row.path)), row.path);
+  assert.deepEqual((await fs.readdir(markers)).filter(name => name.includes(".next-")), []);
+});

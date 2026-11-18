@@ -196,10 +196,15 @@ export async function retireLegacyMarkedArchives(request,{root,receiptsRoot='/da
       const st=await fs.lstat(path.join(markersRoot,name));if(!st.isFile() || st.isSymbolicLink())throw Error('type');
       marker=JSON.parse(await fs.readFile(path.join(markersRoot,name),'utf8'));
       if(marker.schemaVersion!==1 || marker.dir!==dir || !/^[a-f0-9]{64}$/.test(marker.receiptSha256 || ''))throw Error('contract');
-    } catch { result.invalidMarkers.push(dir); continue; }
+    } catch {
+      // 标记无法解析（如 0 字节）：来源一律保留，但必须明确报告该桶未完成，不能算本班成功。
+      result.invalidMarkers.push(dir);result.completed=false;
+      result.buckets.push({dir,state:'marker-invalid',retirementCompleted:false,removedFiles:0,removedLogicalBytes:0,keptFiles:0,keptBytes:0,error:'retirement_marker_unreadable'});
+      continue;
+    }
     if(marker.platform==='verified-archives' && marker.state==='completed')continue;
     const report=(state,extra={})=>{result.buckets.push({dir,state,retirementCompleted:false,removedFiles:0,removedLogicalBytes:0,keptFiles:0,keptBytes:0,...extra});};
-    if(!['bilibili','verified-archives'].includes(marker.platform) || (marker.state!==undefined && !['pending','completed'].includes(marker.state))){result.invalidMarkers.push(dir);continue;}
+    if(!['bilibili','verified-archives'].includes(marker.platform) || (marker.state!==undefined && !['pending','completed'].includes(marker.state))){result.invalidMarkers.push(dir);result.completed=false;report('marker-invalid',{error:'retirement_marker_contract'});continue;}
     // verified 标记未完成（pending，或旧格式无 state 但仍有授权来源）：按原回执续删。
     const resume=marker.platform==='verified-archives';
     if(newest.includes(dir)){report('latest-bucket-protected');continue;}

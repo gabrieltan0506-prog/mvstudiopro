@@ -164,13 +164,25 @@ async function preserveRetirementMarkers(root, receipt, receiptSha256, upgradeMa
     const value={schemaVersion:1,dir,platform,state:'pending',scope,receiptSha256,restore,
       files:receipt.files.filter(row=>bucketOf(row.path)===dir),createdAt:new Date().toISOString()};
     if(Object.hasOwn(upgradeMarkers,dir) || Object.hasOwn(resumeMarkers,dir))await fs.lstat(marker).catch(()=>fail('retirement_marker_missing'));
-    let handle;
-    try { handle=await fs.open(marker,'wx',0o600); }
-    catch(error) {
-      if(error.code!=='EEXIST')throw error;
+    // 先在同目录把标记完整写入并落盘，再以「不覆盖已有标记」的方式原子发布（link 遇已存在即 EEXIST）。
+    // 此前直接在正式路径创建后再写内容：写入时盘满会留下 0 字节正式标记，普通扫描因标记存在跳过、
+    // 续删因无法解析跳过，该桶被永久跳过。
+    const staged=path.join(parent,`.${dir}.json.next-${randomUUID()}`);
+    let published=false;
+    try {
+      const stagedHandle=await fs.open(staged,'wx',0o600);
+      try { await stagedHandle.writeFile(JSON.stringify(value,null,2)); await stagedHandle.sync(); }
+      finally { await stagedHandle.close(); }
+      try { await fs.link(staged,marker); published=true; }
+      catch(error) { if(error.code!=='EEXIST')throw error; }
+    } finally { await fs.rm(staged,{force:true}).catch(()=>{}); }
+    if(!published) {
       const st=await fs.lstat(marker);
       if(!st.isFile() || st.isSymbolicLink())fail('retirement_marker_invalid');
-      const existing=JSON.parse(await fs.readFile(marker,'utf8'));
+      let existing;
+      // 无法解析的现存标记（如旧版本留下的 0 字节文件）：不删除任何来源，由续删入口报告该桶未完成。
+      try { existing=JSON.parse(await fs.readFile(marker,'utf8')); } catch { fail('retirement_marker_invalid'); }
+      if(!existing || typeof existing!=='object')fail('retirement_marker_invalid');
       // 旧B站标记且与调用方核对的回执一致：删除完成后再升级，期间旧标记继续冻结整桶。
       if(platform==='verified-archives' && existing.schemaVersion===1 && existing.dir===dir && existing.platform==='bilibili'
           && (keepLegacy || (Object.hasOwn(upgradeMarkers,dir) && existing.receiptSha256===upgradeMarkers[dir])))continue;
@@ -179,10 +191,7 @@ async function preserveRetirementMarkers(root, receipt, receiptSha256, upgradeMa
           && Object.hasOwn(resumeMarkers,dir) && existing.receiptSha256===resumeMarkers[dir])continue;
       if(existing.schemaVersion!==1 || existing.dir!==dir || existing.platform!==platform
           || existing.receiptSha256!==receiptSha256)fail('retirement_marker_conflict');
-      continue;
     }
-    try { await handle.writeFile(JSON.stringify(value,null,2)); await handle.sync(); }
-    finally { await handle.close(); }
   }
   const handle=await fs.open(parent,'r');try{await handle.sync();}finally{await handle.close();}
 }
