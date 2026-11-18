@@ -290,8 +290,14 @@ async function probeCreatorIndex(
 async function writeReport(report: DouyinCredentialHealthReport) {
   await fs.mkdir(STORE_DIR, { recursive: true });
   const tempPath = `${REPORT_FILE}.${process.pid}.${Date.now()}.next`;
-  await fs.writeFile(tempPath, JSON.stringify(report, null, 2), "utf8");
-  await fs.rename(tempPath, REPORT_FILE);
+  try {
+    await fs.writeFile(tempPath, JSON.stringify(report, null, 2), "utf8");
+    await fs.rename(tempPath, REPORT_FILE);
+  } catch (error) {
+    // 写盘/改名失败（如 ENOSPC）须回收本写者的临时文件，避免大文件残留占满卷；原目标文件未被触碰。
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 export async function readDouyinCredentialHealthReport(): Promise<DouyinCredentialHealthReport | null> {

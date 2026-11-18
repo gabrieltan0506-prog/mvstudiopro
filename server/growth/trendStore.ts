@@ -1918,15 +1918,27 @@ async function writeJsonAtomic(filePath: string, value: unknown, options?: { com
     }
     throw error;
   }
-  await fs.writeFile(tempPath, payload, "utf8");
-  await fs.rename(tempPath, filePath);
+  try {
+    await fs.writeFile(tempPath, payload, "utf8");
+    await fs.rename(tempPath, filePath);
+  } catch (error) {
+    // 写盘/改名失败（如 ENOSPC）须回收本写者的临时文件，避免大文件残留占满卷；原目标文件未被触碰。
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 async function writeBufferAtomic(filePath: string, payload: Buffer) {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.next`;
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(tempPath, payload);
-  await fs.rename(tempPath, filePath);
+  try {
+    await fs.writeFile(tempPath, payload);
+    await fs.rename(tempPath, filePath);
+  } catch (error) {
+    // 写盘/改名失败（如 ENOSPC）须回收本写者的临时文件，避免大文件残留占满卷；原目标文件未被触碰。
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 async function writeJsonGzipAtomic(plainPath: string, value: unknown) {

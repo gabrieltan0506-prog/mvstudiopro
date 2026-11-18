@@ -136,8 +136,14 @@ async function writeState(state: WeixinChannelsMinerState) {
   await fs.mkdir(path.dirname(file), { recursive: true });
   const next = { ...state, version: 3 as const, updatedAt: new Date().toISOString() };
   const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(temp, JSON.stringify(next, null, 2), "utf8");
-  await fs.rename(temp, file);
+  try {
+    await fs.writeFile(temp, JSON.stringify(next, null, 2), "utf8");
+    await fs.rename(temp, file);
+  } catch (error) {
+    // 写盘/改名失败（如 ENOSPC）须回收本写者的临时文件，避免大文件残留占满卷；原目标文件未被触碰。
+    await fs.rm(temp, { force: true }).catch(() => {});
+    throw error;
+  }
   return next;
 }
 

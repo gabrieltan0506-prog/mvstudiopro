@@ -1,4 +1,5 @@
 import { reclaimGrowthStoreMutationLockFromPreviousBoot } from "./growthStoreMutationLock";
+import { sweepGrowthStoreStaleTempFiles } from "./growthStoreTempSweep";
 import fs from "node:fs/promises";
 import { resolveCollectionCalendar, resolveCollectionMode } from "./collectionCalendar";
 import path from "node:path";
@@ -851,6 +852,7 @@ export async function bootstrapGrowthTrendScheduler() {
   await reclaimGrowthStoreMutationLockFromPreviousBoot().catch((error) => {
     console.warn("[growth.lock] boot-time lock inspection failed:", error);
   });
+  await sweepGrowthStoreStaleTempFiles();
 
   if (!/^(1|true|yes)$/i.test(String(process.env.GROWTH_DISABLE_HISTORY_LEDGER_UPDATES || "").trim())) {
     await reconcileTrendHistoryState().catch((error) => {

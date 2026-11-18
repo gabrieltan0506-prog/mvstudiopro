@@ -87,8 +87,14 @@ export class GuaikeiService {
     await fs.mkdir(this.root, { recursive: true });
     const target = path.join(this.root, file), temporary = `${target}.${randomUUID()}.tmp`;
     const handle = await fs.open(temporary, "wx", 0o600);
-    try { await handle.writeFile(JSON.stringify(data)); await handle.sync(); } finally { await handle.close(); }
-    await fs.rename(temporary, target);
+    try {
+      try { await handle.writeFile(JSON.stringify(data)); await handle.sync(); } finally { await handle.close(); }
+      await fs.rename(temporary, target);
+    } catch (error) {
+      // 写盘/改名失败（如 ENOSPC）须回收本写者的临时文件；原目标文件未被触碰。
+      await fs.rm(temporary, { force: true }).catch(() => {});
+      throw error;
+    }
     // 提交前台账必须持久化；崩溃恢复只GET原任务，不重复POST。
     const directory = await fs.open(this.root, "r");
     try { await directory.sync(); } finally { await directory.close(); }

@@ -92,8 +92,14 @@ async function writeAdaptiveConfigFile(next: AdaptiveConfigFile) {
   // rename 本身同分区原子，后写覆盖先写即可（自适应配置本就是尽力而为）。
   adaptiveConfigWriteSeq = (adaptiveConfigWriteSeq + 1) % 1_000_000;
   const tempPath = `${ADAPTIVE_CONFIG_FILE}.${process.pid}.${adaptiveConfigWriteSeq}.next`;
-  await fs.writeFile(tempPath, JSON.stringify(next, null, 2), "utf8");
-  await fs.rename(tempPath, ADAPTIVE_CONFIG_FILE);
+  try {
+    await fs.writeFile(tempPath, JSON.stringify(next, null, 2), "utf8");
+    await fs.rename(tempPath, ADAPTIVE_CONFIG_FILE);
+  } catch (error) {
+    // 写盘/改名失败（如 ENOSPC）须回收本写者的临时文件，避免大文件残留占满卷；原目标文件未被触碰。
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 function ensurePlatformState(file: AdaptiveConfigFile, platform: GrowthPlatform) {

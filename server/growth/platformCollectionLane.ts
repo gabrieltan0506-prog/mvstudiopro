@@ -219,6 +219,7 @@ async function runWithCrossProcessCollectionLease<T>(
         }), "utf8");
         await fs.rename(temp, files.state);
       } catch (error) {
+        await fs.rm(temp, { force: true }).catch(() => {});
         console.warn("[growth.collection-lane] 无法持久化跨进程间隔状态", error);
       }
     }
