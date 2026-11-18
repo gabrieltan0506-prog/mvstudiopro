@@ -157,7 +157,7 @@ import { buildAiManhuaRisingByPlatform } from "./growth/aiManhuaRising";
 import { AI_MANHUA_RISING_BOARD_LIMIT } from "../shared/manhuaDramaClassify";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
 import { withAbortableTimeout } from "./growth/collectorAbort";
-import { exportTrendCollectionsCsv, fetchGrowthReleaseAsset, getGrowthTrendStats, isTrendCollectionStale, loadDouyinDramaBaselineItems, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, fetchGrowthReleaseAsset, getGrowthTrendStats, isTrendCollectionStale, loadDouyinDramaBaselineItems, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readLocalHistoryLedgerForStats, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { readDouyinCredentialHealthReport } from "./growth/douyinCredentialHealth";
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
 import { summarizeTrendWindowCounts } from "./growth/trendWindow";
@@ -531,7 +531,6 @@ async function readDouyinCreatorCenterStatsLite(): Promise<CreatorCenterLiteStat
   );
   const platformFile = path.join(storeDir, "platforms", "douyin.json");
   const storeFile = path.join(storeDir, "current.json");
-  const ledgerFile = path.join(storeDir, "history-ledger", "douyin.json");
   const diagnostics = {
     hasCreatorCenterCookie: Boolean(String(process.env.DOUYIN_CREATOR_CENTER_COOKIE || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_COOKIE_BACKUP || "").trim()),
     hasCreatorIndexCookie: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_COOKIE || "").trim()),
@@ -587,10 +586,8 @@ async function readDouyinCreatorCenterStatsLite(): Promise<CreatorCenterLiteStat
   }
 
   try {
-    const parsed = JSON.parse(await fs.readFile(ledgerFile, "utf8")) as
-      | { items?: Record<string, { bucket?: string }> }
-      | Record<string, { bucket?: string }>;
-    const entries = "items" in parsed && parsed.items ? Object.values(parsed.items) : Object.values(parsed || {});
+    // 账本可能是旧 .json 或新 .json.gz（流式读取，并存时取并集），统一走 trendStore 的读取入口。
+    const entries = Object.values(await readLocalHistoryLedgerForStats("douyin"));
     for (const entry of entries) {
       const bucket = String(entry?.bucket || "").trim();
       if (!isDouyinCreatorCenterBucket(bucket)) continue;
