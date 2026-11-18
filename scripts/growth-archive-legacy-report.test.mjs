@@ -35,6 +35,9 @@ test("仅锁竞争：让行退出 0，已完成部分照实写入摘要", t => {
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /::warning::.*延后到下一班/); assert.match(r.summary, /完成 1 桶，删除 2 个文件 10 字节/);
   assert.doesNotMatch(r.stdout + r.summary, /未删除任何来源/);
+  // 有完整回执但随后 SSH 断线（255）：不按让行处理。
+  const cut = report(t, { status: 255, result: { ...base([row("2026-09-03-00", "deferred-busy", { error: "growth_cleanup_busy" })]), stopped: "growth_cleanup_busy" } });
+  assert.equal(cut.status, 255, cut.stdout);
 });
 test("标记无效的桶：非零退出并点名；失败输出里夹带 busy 字样也不能放行", t => {
   const r = report(t, { status: 3, stderr: "growth_cleanup_busy\n", result: { ...base([row("2026-08-01-00", "marker-invalid", { error: "retirement_marker_unreadable" })]), invalidMarkers: ["2026-08-01-00", "2026-08-02-00"] } });
@@ -43,6 +46,16 @@ test("标记无效的桶：非零退出并点名；失败输出里夹带 busy �
 test("全部完成退出 0；没有结构化结果时只有远端明确报锁竞争才让行，否则非零", t => {
   assert.equal(report(t, { status: 0, result: { ...base([row("2026-09-01-00", "retired", { retirementCompleted: true, removedFiles: 1, removedLogicalBytes: 3 })]), completed: true } }).status, 0);
   assert.equal(report(t, { status: 1, result: undefined, stderr: '{"error":"growth_cleanup_busy"}\n' }).status, 0);
+  // [复审] 回执丢失 + busy 字样 + SSH 断线（退出 255）：不得放行，处理数量报未知。
+  const reset = report(t, { status: 255, result: undefined, stderr: '{"error":"growth_cleanup_busy"}\nError: ssh: connection reset by peer\n' });
+  assert.equal(reset.status, 255, reset.stdout); assert.match(reset.summary, /实际处理数量未知/); assert.doesNotMatch(reset.stdout, /尚未处理任何桶/);
+  assert.equal(report(t, { status: 1, result: undefined, stderr: '{"error":"growth_cleanup_busy"}\nError: ssh: connection reset by peer\n' }).status, 1);
+  assert.equal(report(t, { status: 124, result: undefined, stderr: '{"error":"growth_cleanup_busy"}\n' }).status, 124);
+  assert.equal(report(t, { status: 1, result: undefined, stderr: 'growth_cleanup_busy\n' }).status, 1);
+  assert.equal(report(t, { status: 1, result: undefined, stderr: '{"error":"growth_cleanup_busy","partial":{"removed":["a"]}}\n' }).status, 1);
+  // 截断的结果（不是完整 JSON）同样不放行。
+  const truncated = report(t, { status: 0, result: undefined, stderr: "" });
+  assert.equal(truncated.status, 1); assert.match(truncated.summary, /实际处理数量未知/);
   assert.equal(report(t, { status: 1, result: undefined, stderr: '{"error":"boom"}\n' }).status, 1);
   assert.equal(report(t, { status: 0, result: undefined }).status, 1);
   assert.equal(report(t, { status: 3, result: { ...base([]), completed: false } }).status, 3);

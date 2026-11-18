@@ -211,24 +211,29 @@ export async function retireLegacyMarkedArchives(request,{root,receiptsRoot='/da
     if(!buckets.includes(dir)){report('bucket-absent');continue;}
     const scan=await scanLegacyBucket(store,dir),restore=marker.restore;
     const keep=rows=>({keptFiles:rows.length,keptBytes:rows.reduce((n,row)=>n+row.bytes,0)});
+    // 续删凭据损坏：来源一律保留。待续删（verified）的桶此后永远删不完，必须计为失败并点名损坏字段；
+    // 旧B站标记桶本就只是「可选的额外清理」，保留并报告即可。
+    const unusable=field=>{
+      const kept=keep([...scan.present,...scan.outside]);result.keptFiles+=kept.keptFiles;result.keptBytes+=kept.keptBytes;
+      if(resume){result.completed=false;report('failed',{...kept,error:`retirement_marker_evidence_unusable:${field}`});}
+      else report('marker-evidence-unusable',kept);
+    };
+    let damaged='restore.manifestBase64';
     try {
       manifestRaw=Buffer.from(restore?.manifestBase64 || '','base64');
       manifest=parseGrowthArchiveManifest(JSON.parse(manifestRaw.toString('utf8')),dir);
-      if(restore.dir!==dir || sha(manifestRaw)!==restore.manifestSha256 || typeof restore.releaseTag!=='string'
-          || !Array.isArray(restore.inventory) || manifest.archive.sha256!==restore.archiveSha256)throw Error('evidence');
-    } catch {
-      const kept=keep([...scan.present,...scan.outside]);result.keptFiles+=kept.keptFiles;result.keptBytes+=kept.keptBytes;
-      report('marker-evidence-unusable',kept);continue;
-    }
+      damaged=restore.dir!==dir?'restore.dir':sha(manifestRaw)!==restore.manifestSha256?'restore.manifestSha256'
+        :typeof restore.releaseTag!=='string'?'restore.releaseTag':!Array.isArray(restore.inventory)?'restore.inventory'
+        :manifest.archive.sha256!==restore.archiveSha256?'restore.archiveSha256':'';
+      if(damaged)throw Error('evidence');
+    } catch { unusable(damaged || 'restore'); continue; }
     // 授权文件：旧B站桶 = 标记中已核验还原清单；pending = 原回执 files；旧格式 verified = 原回执的构造规则
     // （还原清单中本范围成员），可由标记自身证明。
     const {member}=RETIREMENT_SCOPES['verified-archives'];
     let cold=new Map(restore.inventory.map(row=>[`archive/${dir}/${row.path}`,row]));
     if(resume && marker.state==='pending') {
-      if(!Array.isArray(marker.files) || marker.files.some(row=>typeof row?.path!=='string' || !row.path.startsWith(`archive/${dir}/`))) {
-        const kept=keep([...scan.present,...scan.outside]);result.keptFiles+=kept.keptFiles;result.keptBytes+=kept.keptBytes;
-        report('marker-evidence-unusable',kept);continue;
-      }
+      if(!Array.isArray(marker.files) || marker.files.some(row=>typeof row?.path!=='string' || !row.path.startsWith(`archive/${dir}/`)
+          || !Number.isSafeInteger(row.bytes) || !/^[a-f0-9]{64}$/.test(row.sha256 || ''))) { unusable('files'); continue; }
       cold=new Map(marker.files.map(row=>[row.path,row]));
     } else if(resume) {
       if(!scan.present.length)continue;

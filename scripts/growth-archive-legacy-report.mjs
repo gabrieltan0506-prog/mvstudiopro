@@ -22,12 +22,23 @@ const say = line => {
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, line + "\n");
 };
 if (!result) {
-  // 没有结构化结果：只有远端明确报锁竞争、且没有任何其他可判定信息时才让行。
-  if (/growth_cleanup_busy/.test(stderrText) && !/"buckets"/.test(stderrText)) {
-    console.log("::warning::旧桶剩余来源清理遇到服务端采集锁，尚未处理任何桶，延后到下一班");
+  // 没有结构化结果时实际处理了多少桶是未知的。只接受「独立、明确、无矛盾」的锁竞争回执：
+  // 远端脚本自己以 1 退出，stderr 的每一行都是该脚本的 JSON 错误且都是锁竞争。
+  // SSH 断线、超时（255/124/137 等）、截断或夹带任何其他内容，一律保留非零退出。
+  const lines = stderrText.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const busyOnly = remoteStatus === 1 && lines.length > 0 && lines.every(line => {
+    try {
+      const parsed = JSON.parse(line);
+      return parsed && typeof parsed === "object" && typeof parsed.error === "string"
+        && /^growth_cleanup_busy(?::|$)/.test(parsed.error) && !("buckets" in parsed) && !parsed.partial;
+    } catch { return false; }
+  });
+  if (busyOnly) {
+    console.log("::warning::旧桶剩余来源清理遇到服务端采集锁，本班未取得处理结果，延后到下一班");
     process.exit(0);
   }
-  console.log("::error::旧桶剩余来源清理没有返回可解析的结果");
+  say("旧桶剩余来源：没有返回可解析的结果，本班实际处理数量未知（远端退出码 " + (Number.isInteger(remoteStatus) ? remoteStatus : "未知") + "）。");
+  console.log("::error::旧桶剩余来源清理没有返回可解析的结果，处理数量未知；请查看本步骤日志与 Fly 上的清理收据");
   process.exit(Number.isInteger(remoteStatus) && remoteStatus !== 0 ? remoteStatus : 1);
 }
 const buckets = result.buckets.filter(row => row && typeof row === "object");
@@ -46,6 +57,12 @@ for (const row of failed)
 for (const dir of invalid) console.log(`::error::旧桶 ${safe(dir)} 的退役标记无效，来源已保留，该桶未完成`);
 if (failed.length || invalid.length) process.exit(Number.isInteger(remoteStatus) && remoteStatus !== 0 ? remoteStatus : 3);
 if (busy.length || /growth_cleanup_busy|cancelled/.test(String(result.stopped || ""))) {
+  // 让行只在远端脚本自己正常收尾时成立（0，或它在未完成时的 3 / 经 flyctl 包装后的 1）；
+  // SSH 断线、超时等其他退出码说明结果之后还发生了别的事，保留非零。
+  if (![0, 1, 3].includes(remoteStatus)) {
+    console.log(`::error::旧桶剩余来源清理结果之后连接异常（远端退出码 ${Number.isInteger(remoteStatus) ? remoteStatus : "未知"}），不按让行处理`);
+    process.exit(Number.isInteger(remoteStatus) && remoteStatus !== 0 ? remoteStatus : 1);
+  }
   console.log("::warning::旧桶剩余来源清理遇到服务端采集锁或被取消，未完成的桶延后到下一班");
   process.exit(0);
 }

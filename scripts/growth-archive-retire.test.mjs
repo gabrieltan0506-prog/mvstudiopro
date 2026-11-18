@@ -325,3 +325,23 @@ test('无法解析的退役标记：来源保留、该桶报 marker-invalid 且�
  assert(fs.existsSync(src));assert.equal(fs.statSync(path.join(f.store,'.growth-archive-retired',broken+'.json')).size,0);
  assert.equal(result.buckets.find(b=>b.dir===f.dir).state,'retired');assert(!fs.existsSync(f.douyin));
 });
+// [复审] pending 标记可解析但续删凭据损坏：来源保留，该桶计为失败并点名损坏字段，本班不算完成。
+for(const [label,damage,field] of [
+ ['移除 files',m=>{delete m.files;},'files'],
+ ['破坏恢复清单',m=>{m.restore.manifestBase64=Buffer.from('{"broken":true}').toString('base64');},'restore'],
+ ['清单摘要不符',m=>{m.restore.manifestSha256='0'.repeat(64);},'restore.manifestSha256'],
+])test(`pending 标记续删凭据损坏（${label}）：来源保留、桶报 failed 并点名字段、completed=false`,async t=>{
+ const f=await legacyFixture(t);
+ const m=JSON.parse(fs.readFileSync(f.markerFile,'utf8'));
+ Object.assign(m,{platform:'verified-archives',state:'pending',scope:'verified-archives',
+  files:[{path:`archive/${f.dir}/${f.files[1].path}`,bytes:f.files[1].bytes,sha256:f.files[1].sha256}]});
+ damage(m);fs.writeFileSync(f.markerFile,JSON.stringify(m));
+ for(const shift of [1,2]) {
+  const result=await f.run();
+  assert.equal(result.completed,false,`shift ${shift}`);
+  const row=result.buckets.find(b=>b.dir===f.dir);
+  assert.equal(row.state,'failed');assert.equal(row.retirementCompleted,false);
+  assert.match(row.error,new RegExp(`^retirement_marker_evidence_unusable:${field.replace('.','\\.')}`));
+  assert(row.keptFiles>=1);assert(fs.existsSync(f.douyin));
+ }
+});
