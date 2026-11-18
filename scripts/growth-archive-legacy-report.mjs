@@ -7,11 +7,12 @@ import fs from "node:fs";
 
 const [resultFile, stderrFile, statusArg] = process.argv.slice(2);
 const remoteStatus = Number(statusArg);
-const readText = file => { try { return fs.readFileSync(file, "utf8"); } catch { return ""; } };
+const readText = file => { try { return fs.readFileSync(file, "utf8"); } catch { return null; } };
 const safe = value => String(value ?? "").replace(/[^0-9A-Za-z._:,=\- ]/g, "?").slice(0, 160);
-const stderrText = readText(stderrFile);
+const stderrText = readText(stderrFile) ?? "";
 let result = null;
-for (const line of readText(resultFile).split(/\r?\n/).reverse()) {
+const resultText = readText(resultFile);
+for (const line of (resultText ?? "").split(/\r?\n/).reverse()) {
   try {
     const parsed = JSON.parse(line);
     if (parsed && typeof parsed === "object" && Array.isArray(parsed.buckets)) { result = parsed; break; }
@@ -26,7 +27,7 @@ if (!result) {
   // 远端脚本自己以 1 退出，stderr 的每一行都是该脚本的 JSON 错误且都是锁竞争。
   // SSH 断线、超时（255/124/137 等）、截断或夹带任何其他内容，一律保留非零退出。
   const lines = stderrText.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-  const busyOnly = remoteStatus === 1 && lines.length > 0 && lines.every(line => {
+  const busyOnly = remoteStatus === 1 && resultText?.trim() === "" && lines.length > 0 && lines.every(line => {
     try {
       const parsed = JSON.parse(line);
       return parsed && typeof parsed === "object" && typeof parsed.error === "string"

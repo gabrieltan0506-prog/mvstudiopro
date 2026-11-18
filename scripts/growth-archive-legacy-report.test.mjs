@@ -6,10 +6,10 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const row = (dir, state, extra = {}) => ({ dir, state, retirementCompleted: false, removedFiles: 0, removedLogicalBytes: 0, keptFiles: 0, keptBytes: 0, ...extra });
-function report(t, { result, stderr = "", status = 0 }) {
+function report(t, { result, rawResult, stderr = "", status = 0 }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "legacy-report-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const resultFile = path.join(root, "r.json"), errFile = path.join(root, "e.log"), summary = path.join(root, "summary.md");
-  fs.writeFileSync(resultFile, result === undefined ? "" : JSON.stringify(result) + "\n"); fs.writeFileSync(errFile, stderr);
+  fs.writeFileSync(resultFile, rawResult ?? (result === undefined ? "" : JSON.stringify(result) + "\n")); fs.writeFileSync(errFile, stderr);
   const run = spawnSync(process.execPath, ["scripts/growth-archive-legacy-report.mjs", resultFile, errFile, String(status)],
     { env: { ...process.env, GITHUB_STEP_SUMMARY: summary }, encoding: "utf8" });
   return { ...run, summary: fs.existsSync(summary) ? fs.readFileSync(summary, "utf8") : "" };
@@ -54,7 +54,7 @@ test("全部完成退出 0；没有结构化结果时只有远端明确报锁竞
   assert.equal(report(t, { status: 1, result: undefined, stderr: 'growth_cleanup_busy\n' }).status, 1);
   assert.equal(report(t, { status: 1, result: undefined, stderr: '{"error":"growth_cleanup_busy","partial":{"removed":["a"]}}\n' }).status, 1);
   // 截断的结果（不是完整 JSON）同样不放行。
-  const truncated = report(t, { status: 0, result: undefined, stderr: "" });
+  const truncated = report(t, { status: 1, rawResult: '{"buckets":[{"state":"failed","removedFiles":1}', stderr: '{"error":"growth_cleanup_busy"}\n' });
   assert.equal(truncated.status, 1); assert.match(truncated.summary, /实际处理数量未知/);
   assert.equal(report(t, { status: 1, result: undefined, stderr: '{"error":"boom"}\n' }).status, 1);
   assert.equal(report(t, { status: 0, result: undefined }).status, 1);
