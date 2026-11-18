@@ -198,3 +198,13 @@ describe("growth history-ledger 持久化", () => {
     expect(await ledgerKeys()).toContain("douyin:only-in-ledger");
   });
 });
+
+describe("账本合并规则单一真源", () => {
+  it("共享 .mjs 的标签归一与 trendNormalize.normalizeStringList 输出一致", async () => {
+    const { normalizeLedgerLabels } = await import("./growthJsonStreamLedger.mjs");
+    const { normalizeStringList } = await import("./trendNormalize");
+    for (const value of [["a", " b ", "a", "", null, 0, 3], "x|y, z,,x", "", undefined, null, 5, { a: 1 }, [" 美食 ", "美食", "短剧"]]) {
+      expect(normalizeLedgerLabels(value)).toEqual(normalizeStringList(value));
+    }
+  });
+});

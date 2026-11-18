@@ -4,6 +4,8 @@ import { downloadGrowthBackupGenerationAsset, loadGrowthBackupGeneration } from 
 import { readTrendShortlistIndex, writeTrendShortlistIndex, ensureTrendShortlistIndex, type ShortlistCollection } from "./trendShortlistIndex";
 import { buildGrowthStatusProjection, type GrowthStatusProjection } from "./growthStatusProjection";
 import { readGrowthGzipJson, readGrowthJsonItemsStream, writeGrowthGzipJson, mapGrowthSequential } from "./growthJsonStream";
+// 合并规则与冷备 runner 脚本共用同一份实现（scripts/growth-backup-ledger-assets.mjs）。
+import { mergeHistoryLedgerEntries } from "./growthJsonStreamLedger.mjs";
 import { observeRuntimeMemory } from "../services/runtimeMemory";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -1200,30 +1202,6 @@ async function writeHistoryLedger(platform: GrowthPlatform, items: Record<string
     );
   }
   await fs.rm(plainPath);
-}
-
-function mergeHistoryLedgerEntries(
-  local: Record<string, TrendHistoryLedgerEntry>,
-  remote: Record<string, TrendHistoryLedgerEntry>,
-) {
-  const merged = { ...local };
-  for (const [key, entry] of Object.entries(remote)) {
-    const current = merged[key];
-    if (!current) {
-      merged[key] = entry;
-      continue;
-    }
-    merged[key] = {
-      ...current,
-      bucket: entry.bucket || current.bucket,
-      industryLabels: normalizeLabels([...(current.industryLabels || []), ...(entry.industryLabels || [])]),
-      ageLabels: normalizeLabels([...(current.ageLabels || []), ...(entry.ageLabels || [])]),
-      contentLabels: normalizeLabels([...(current.contentLabels || []), ...(entry.contentLabels || [])]),
-      firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
-      lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
-    };
-  }
-  return merged;
 }
 
 const REPO_SNAPSHOT_LEDGER_DIR = path.resolve(process.cwd(), "data", "growth-snapshots", "latest", "history-ledger");
