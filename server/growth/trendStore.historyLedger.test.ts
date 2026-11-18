@@ -94,7 +94,7 @@ describe("growth history-ledger 持久化", () => {
     expect(await fs.readdir(ledgerDir)).toEqual(["douyin.json.gz"]);
   });
 
-  it("现存账本读不出（损坏 gzip / 截断旧 json）时报错且原文件逐字节不变", async () => {
+  it("现存账本读不出（损坏 gzip / 截断旧 json）时不覆盖：采集照常落盘，账本读取报错且原文件逐字节不变", async () => {
     const at = new Date().toISOString();
     for (const [file, bytes] of [
       [gzFile, Buffer.from("not-gzip")],
@@ -106,7 +106,8 @@ describe("growth history-ledger 持久化", () => {
       await fs.mkdir(ledgerDir, { recursive: true });
       await fs.writeFile(file, bytes);
       const m = await import("./trendStore");
-      await expect(m.mergeTrendCollections({ douyin: makeCollection(["new"], at) })).rejects.toThrow(/growth_store_file_unreadable/);
+      await m.mergeTrendCollections({ douyin: makeCollection(["new"], at) });
+      await expect(m.readLocalHistoryLedgerForStats("douyin")).rejects.toThrow(/growth_store_file_unreadable/);
       expect(await fs.readFile(file)).toEqual(bytes);
       expect(await fs.readdir(ledgerDir)).toEqual([path.basename(file)]);
     }
@@ -141,8 +142,9 @@ describe("growth history-ledger 持久化", () => {
       return original(plain, value, options);
     });
     const m = await import("./trendStore");
-    await expect(m.mergeTrendCollections({ douyin: makeCollection(["fresh"], new Date().toISOString()) }))
-      .rejects.toThrow(/growth_history_ledger_migration_unverified/);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await m.mergeTrendCollections({ douyin: makeCollection(["fresh"], new Date().toISOString()) });
+    expect(String(errors.mock.calls.flat().join(" "))).toMatch(/growth_history_ledger_migration_unverified/);
     expect(await fs.readFile(plainFile)).toEqual(legacyBytes);
     vi.restoreAllMocks();
     expect((await fs.readdir(ledgerDir)).sort()).toEqual(["douyin.json", "douyin.json.gz"]);
@@ -184,6 +186,40 @@ describe("growth history-ledger 持久化", () => {
     const fresh = await import("./trendStore");
     await expect(fresh.mergeTrendCollections({ douyin: makeCollection(["z"], at) })).rejects.toThrow(/growth_store_file_unreadable/);
     expect(await fs.readFile(truthFile)).toEqual(broken);
+  });
+
+  it("单个平台账本读不出时只跳过该平台账本：采集照常落盘，其它平台账本照常更新，坏文件逐字节不变", async () => {
+    const at = new Date().toISOString();
+    const broken = Buffer.from("not-gzip");
+    await fs.writeFile(gzFile, broken);
+    const m = await import("./trendStore");
+    const bilibili = { ...makeCollection(["b1"], at), platform: "bilibili" } as PlatformTrendCollection;
+    await m.mergeTrendCollections({ douyin: makeCollection(["new-1", "new-2"], at), bilibili });
+    expect(await fs.readFile(gzFile)).toEqual(broken);
+    const store = await m.readTrendStore();
+    expect(store.collections.douyin?.items.map(item => item.id).sort()).toEqual(["new-1", "new-2"]);
+    expect(Object.keys(await m.readLocalHistoryLedgerForStats("bilibili"))).toEqual(["b1"]);
+  });
+
+  it("读账本时另一写者恰好完成迁移（删旧 .json）不报读坏，读到完整新文件", async () => {
+    const at = new Date(Date.now() - 60_000).toISOString();
+    const value = legacyLedger(["douyin:r1", "douyin:r2"], at);
+    await fs.writeFile(plainFile, JSON.stringify(value, null, 2));
+    const stream = await import("./growthJsonStream");
+    const original = stream.readGrowthJsonItemsStream;
+    let raced = false;
+    vi.spyOn(stream, "readGrowthJsonItemsStream").mockImplementation(async (file, options) => {
+      if (!raced && file === plainFile) {
+        raced = true;
+        // 模拟并发写者：stat 之后、打开之前写好新 .gz 并删掉旧 .json
+        await fs.writeFile(gzFile, gzipSync(Buffer.from(JSON.stringify(value))));
+        await fs.rm(plainFile);
+      }
+      return original(file, options);
+    });
+    const m = await import("./trendStore");
+    expect(Object.keys(await m.readLocalHistoryLedgerForStats("douyin")).sort()).toEqual(["douyin:r1", "douyin:r2"]);
+    expect(raced).toBe(true);
   });
 
   it("reconcile force 不清空现有账本", async () => {

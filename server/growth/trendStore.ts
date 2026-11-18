@@ -1125,20 +1125,27 @@ async function readHistoryLedgerItemsFile(file: string, gzip: boolean) {
  * 旧 `X.json` 与新 `X.json.gz` 并存（迁移中断、旧版本回滚后又写了 .json、恢复脚本拷入）时两份都读并按键合并：
  * 账本只增不减，取并集与谁新谁旧无关，结果确定，任何一份陈旧文件都遮蔽不了另一份。
  */
-async function readLocalHistoryLedger(platform: GrowthPlatform): Promise<Record<string, TrendHistoryLedgerEntry> | null> {
+async function readLocalHistoryLedger(
+  platform: GrowthPlatform,
+  attempt = 0,
+): Promise<Record<string, TrendHistoryLedgerEntry> | null> {
   const plainPath = getHistoryLedgerFile(platform);
   const gzPath = `${plainPath}.gz`;
   const [hasGz, hasPlain] = await Promise.all([growthFileExists(gzPath), growthFileExists(plainPath)]);
   if (!hasGz && !hasPlain) return null;
+  let vanished = false;
   const readOne = async (file: string, gzip: boolean) => {
     try {
       return await observeRuntimeMemory(`growth:read:${path.basename(file)}`, () => readHistoryLedgerItemsFile(file, gzip));
     } catch (error) {
+      // stat 之后文件消失＝锁外读者撞上并发写者完成迁移（新 .gz 已到位、旧 .json 已删），重新探测即可，不是读坏。
+      if (isMissingFileError(error) && attempt < 3) { vanished = true; return null; }
       throw growthUnreadableError(file, error);
     }
   };
   const gzItems = hasGz ? await readOne(gzPath, true) : null;
-  const plainItems = hasPlain ? await readOne(plainPath, false) : null;
+  const plainItems = hasPlain && !vanished ? await readOne(plainPath, false) : null;
+  if (vanished) return readLocalHistoryLedger(platform, attempt + 1);
   if (gzItems && plainItems) return mergeHistoryLedgerEntries(gzItems, plainItems);
   return gzItems || plainItems || {};
 }
@@ -1356,19 +1363,25 @@ async function updateHistoryFromCollections(
   const touched = new Set<GrowthPlatform>();
   for (const [platform, collection] of Object.entries(collections) as Array<[GrowthPlatform, PlatformTrendCollection | undefined]>) {
     if (!collection?.items?.length) continue;
-    const ledger = await readHistoryLedger(platform);
-    for (const rawItem of collection.items) {
-      const entry = buildHistoryLedgerEntry(rawItem, collection.collectedAt);
-      if (!entry) continue;
-      const current = ledger[entry.key];
-      if (!current) {
-        ledger[entry.key] = entry;
-        continue;
+    // 单个平台账本读不出/迁移校验不过只跳过该平台账本（原文件不动），不能让整轮采集落盘失败：
+    // 本轮条目仍写入平台池与归档，账本之后可由 reconcile 从池与归档补回。
+    try {
+      const ledger = await readHistoryLedger(platform);
+      for (const rawItem of collection.items) {
+        const entry = buildHistoryLedgerEntry(rawItem, collection.collectedAt);
+        if (!entry) continue;
+        const current = ledger[entry.key];
+        if (!current) {
+          ledger[entry.key] = entry;
+          continue;
+        }
+        ledger[entry.key] = mergeHistoryLedgerEntry(current, entry);
       }
-      ledger[entry.key] = mergeHistoryLedgerEntry(current, entry);
+      await writeHistoryLedger(platform, ledger);
+      touched.add(platform);
+    } catch (error) {
+      console.error(`[growth.history] ${platform} history-ledger 更新失败，本轮跳过该平台账本（采集照常落盘）:`, error);
     }
-    await writeHistoryLedger(platform, ledger);
-    touched.add(platform);
     if (platform === "douyin") {
       await appendDramaMixDailySnapshot(collection);
     }
