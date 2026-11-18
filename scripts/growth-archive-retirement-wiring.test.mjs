@@ -20,6 +20,7 @@ function fixture(t,name){
  fs.writeFileSync(path.join(bin,'flyctl'),`#!/usr/bin/env node
 const fs=require('node:fs');const args=process.argv.slice(2),input=fs.readFileSync(0,'utf8');
 fs.writeFileSync(process.env.CAPTURE,JSON.stringify({args,input}));
+if(process.env.OLD_IMAGE==='1'&&args.at(-1).includes('--scope=verified-archives')){console.error(JSON.stringify({error:'Usage: growth-archive-retire.mjs --scope=bilibili-archives --allow-remote-download < metadata.json'}));process.exit(1);}
 if(process.env.BUSY==='1'){console.error(JSON.stringify({error:'growth_cleanup_busy'}));process.stdout.write(JSON.stringify({error:'growth_cleanup_busy'})+'\\n');process.exit(1);}
 process.stdout.write(JSON.stringify({completed:process.env.FAIL!=='1',removed:2,actualFreeBytesDelta:4096})+'\\n');
 process.exit(process.env.FAIL==='1'?23:0);
@@ -55,6 +56,13 @@ for(const name of files){
   assert.deepEqual(JSON.parse(captured.input),{batch:f.batch,publication:f.publication,manifests:{[`archive-${f.dir}.manifest.json`]:Buffer.from(JSON.stringify(f.manifest)).toString("base64")}});
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.store,'retirement-result-new.json'))).actualFreeBytesDelta,4096);
   assert(fs.readFileSync(f.summary,'utf8').includes('逐文件清理已执行'));
+ });
+ test(`${name}: 线上仍是旧版本时退回只退役B站，不因部署顺序失败`,t=>{
+  const f=fixture(t,name);f.seed();
+  const r=f.run(undefined,{OLD_IMAGE:'1'});assert.equal(r.status,0,r.stderr);
+  assert.match(r.stdout,/本轮按旧范围只退役 B站/);
+  assert.match(JSON.parse(fs.readFileSync(f.capture)).args.at(-1),/--scope=bilibili-archives --allow-remote-download/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.store,'retirement-result-new.json'))).actualFreeBytesDelta,4096);
  });
  test(`${name}: 无发布回执或快照未释放不调用清理`,t=>{
   const f=fixture(t,name);assert.equal(f.run().status,0);assert(!fs.existsSync(f.capture));
