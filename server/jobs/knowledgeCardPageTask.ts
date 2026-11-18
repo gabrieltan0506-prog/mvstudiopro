@@ -276,6 +276,10 @@ export async function stopAbandonedHandedOffKnowledgeCardJobs(jobId?: string): P
     status: sql`case when ${jobs.status} = 'queued' then 'failed' else ${jobs.status} end` as never,
     error: sql`case when ${jobs.status} = 'queued' then '页面已关闭，已停止知识卡后续处理' else ${jobs.error} end` as never,
   }).where(abandoned).returning({ id: jobs.id });
+  if (rows.length) {
+    const { scheduleKnowledgeCancelRecovery } = await import("./repository");
+    scheduleKnowledgeCancelRecovery();
+  }
   return rows.length;
 }
 

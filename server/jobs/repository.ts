@@ -611,6 +611,50 @@ export async function requestManhuaTemplateLearnJobCancel(input: {
   return getJobById(input.jobId);
 }
 
+const KNOWLEDGE_CANCEL_GRACE_MS = 120_000;
+const knowledgeReadActions = ["knowledge_card_distill", "knowledge_card_derive_level"];
+
+function pendingKnowledgeCancellation() {
+  return and(
+    eq(jobs.type, "platform"), eq(jobs.status, "running"),
+    sql`${jobs.input}::jsonb->>'action' in ('knowledge_card_distill','knowledge_card_derive_level')`,
+    sql`coalesce(${jobs.input}::jsonb->>'cancelRequestedAt','') <> ''`,
+    sql`not (coalesce(${jobs.output}::jsonb,'{}'::jsonb) ? 'knowledgeCardSettlement')`,
+  );
+}
+
+/** 活跃执行器优先协作退出；只接手已要求停止且两分钟没有进展的读档。 */
+export async function finishAbandonedKnowledgeCancellations(jobId?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("无法核对读档停止状态");
+  return db.update(jobs).set({ status: "failed", error: "已按你的要求停止读档", updatedAt: new Date() })
+    .where(and(pendingKnowledgeCancellation(),
+      sql`${jobs.updatedAt} < now() - (${KNOWLEDGE_CANCEL_GRACE_MS}::int * interval '1 millisecond')`,
+      jobId ? eq(jobs.id, jobId) : undefined))
+    .returning({ id: jobs.id });
+}
+
+let knowledgeCancelTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** 同一进程共用一次检查。有未收尾取消或数据库故障才续查，空闲时停止。 */
+export function scheduleKnowledgeCancelRecovery() {
+  if (knowledgeCancelTimer) return;
+  knowledgeCancelTimer = setTimeout(async () => {
+    knowledgeCancelTimer = undefined;
+    try {
+      await finishAbandonedKnowledgeCancellations();
+      const db = await getDb();
+      if (!db) throw new Error("数据库不可用");
+      const pending = await db.select({ id: jobs.id }).from(jobs).where(pendingKnowledgeCancellation()).limit(1);
+      if (pending.length) scheduleKnowledgeCancelRecovery();
+    } catch (error) {
+      console.warn("[knowledgeCardCancel] 失联任务收尾待重试", error instanceof Error ? error.name : "error");
+      scheduleKnowledgeCancelRecovery();
+    }
+  }, KNOWLEDGE_CANCEL_GRACE_MS + 1000);
+  knowledgeCancelTimer.unref();
+}
+
 /**
  * 通用「请求停止」：把 cancelRequestedAt 写进 jobs.input，worker 在下一次进度回调时看到就 abort。
  * 与漫剧学习那套是同一个字段，只是不再限定 action——读档/派生也要有终止按钮（0911 用户令）。
@@ -672,11 +716,13 @@ export async function requestPlatformJobCancel(input: {
     // CAS 没命中＝这中间被领走了：按 running 再来一次
   }
 
-  // running（或刚被领走）：只登记取消请求，不碰 status / error
-  await db
+  // 与重排竞态时以写入瞬间的状态为准；仍运行的交执行器退出，已回到队列的立即停止。
+  const changed = await db
     .update(jobs)
     .set({
       input: mergeCancelFlag as unknown as InsertJob["input"],
+      status: sql`case when ${jobs.status} = 'queued' then 'failed' else ${jobs.status} end`,
+      error: sql`case when ${jobs.status} = 'queued' then ${input.queuedError} else ${jobs.error} end`,
       updatedAt: new Date(),
     })
     .where(
@@ -684,9 +730,14 @@ export async function requestPlatformJobCancel(input: {
         eq(jobs.id, input.jobId),
         eq(jobs.userId, String(input.userId)),
         inArray(jobs.status, ["queued", "running"]),
+        sql`coalesce(${jobs.input}::jsonb->>'cancelRequestedAt','') = ''`,
         sql`not (coalesce(${jobs.output}::jsonb, '{}'::jsonb) ? 'knowledgeCardSettlement')`,
       ),
-    );
+    ).returning({ id: jobs.id });
+  if (knowledgeReadActions.includes(action)) {
+    if (changed.length) scheduleKnowledgeCancelRecovery();
+    else await finishAbandonedKnowledgeCancellations(input.jobId);
+  }
   return readCancelReceipt();
 }
 
@@ -1642,7 +1693,10 @@ export async function requeueJob(id: string, error: string): Promise<void> {
     await db
       .update(jobs)
       .set({ status: "queued", error, updatedAt: new Date() })
-      .where(eq(jobs.id, id));
+      .where(and(eq(jobs.id, id), sql`not (
+        ${jobs.type} = 'platform' and coalesce(${jobs.input}::jsonb->>'action','') in ('knowledge_card_distill','knowledge_card_derive_level')
+        and (coalesce(${jobs.input}::jsonb->>'cancelRequestedAt','') <> '' or ${jobs.status} <> 'running')
+      )`));
   } catch (dbError) {
     console.error("[JobsRepo] requeueJob failed:", dbError);
   }

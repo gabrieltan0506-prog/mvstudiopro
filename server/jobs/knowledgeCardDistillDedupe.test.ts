@@ -8,7 +8,7 @@ import {
   hasLiveKnowledgeCardFollowers, isKnowledgeCardFollowJob, KNOWLEDGE_CARD_FOLLOW_ACTION, KNOWLEDGE_CARD_FOLLOW_DETACHED_MESSAGE, KNOWLEDGE_CARD_STOPPED_ELSEWHERE_MESSAGE,
   KNOWLEDGE_CARD_FOLLOW_DETACHED_OTHERS_MESSAGE, KNOWLEDGE_CARD_FOLLOW_STOPPED_MESSAGE, stopAbandonedHandedOffKnowledgeCardJobs,
 } from "./knowledgeCardPageTask";
-import { claimNextQueuedJob, getJobByIdStrict, isPlatformJobCancelRequested, requestPlatformJobCancel } from "./repository";
+import { finishAbandonedKnowledgeCancellations, requeueJob, claimNextQueuedJob, getJobByIdStrict, isPlatformJobCancelRequested, requestPlatformJobCancel } from "./repository";
 import { reapStaleJobsOnce } from "./staleJobsReaper";
 import { knowledgeCardDistillSourceKey } from "../services/knowledgeCardDistillSourceKey";
 
@@ -253,6 +253,32 @@ describe("读档同源在途去重（真实 Postgres 语义）", () => {
     expect(r?.status).toBe("running");
     expect((await row(a.id))?.input.cancelRequestedAt).toBeTruthy();
     expect(await submit("1", 2)).toEqual({ id: own("1", 2), attachedTo: null });
+  });
+
+  it("中止后进程失联：重复停止不续心跳，保留回执且晚到重排不能复活任务", async () => {
+    const a = await submit("1", 1);
+    await setRow(a.id, `status='running', output='{"distillStage":"reading"}'::json`);
+    const cancel = () => requestPlatformJobCancel({ jobId:a.id, userId:"1", actions:["knowledge_card_distill"], queuedError:"停止" });
+    const first = await cancel();
+    expect(first?.status).toBe("running");
+    expect(await finishAbandonedKnowledgeCancellations(a.id)).toHaveLength(0);
+    await setRow(a.id, `"updatedAt"=now()-interval '3 minutes'`);
+    const stopped = await cancel();
+    expect(stopped?.status).toBe("failed");
+    expect(stopped?.output).toEqual({distillStage:"reading"});
+    expect((stopped?.input as any).cancelRequestedAt).toBe((first?.input as any).cancelRequestedAt);
+    await requeueJob(a.id,"迟到的重试");
+    expect((await row(a.id))?.status).toBe("failed");
+  });
+
+  it("启动补扫只处理失联且已中止的读档，保留结算和其他任务", async () => {
+    const ids = await Promise.all([1,2,3].map(i => submit("1", i, "source-"+i)));
+    for(const j of ids) await setRow(j.id, `status='running',"updatedAt"=now()-interval '5 minutes'`);
+    for(const j of ids.slice(1)) await setRow(j.id, `input=(input::jsonb || '{"cancelRequestedAt":"requested"}')::json`);
+    await setRow(ids[2]!.id, `output='{"knowledgeCardSettlement":{}}'::json`);
+    expect(await finishAbandonedKnowledgeCancellations()).toEqual([{id:ids[1]!.id}]);
+    expect((await row(ids[0]!.id))?.status).toBe("running");
+    expect((await row(ids[2]!.id))?.status).toBe("running");
   });
 
   it("运行中但心跳超过僵尸窗口（进程已崩）：允许新提交；窗口内仍跟进", async () => {

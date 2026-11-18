@@ -1183,6 +1183,8 @@ async function startServer() {
         }, 6 * 60_000).unref();
         startJobWorker();
         startStaleJobsReaper();
+        const { scheduleKnowledgeCancelRecovery } = await import("../jobs/repository");
+        scheduleKnowledgeCancelRecovery();
       } catch (error) {
         // 不可在恢复失败后直接启动 worker：数据库稍后恢复时，queued 会继续跑，
         // 旧 running 却永远无人接管，形成“前一条僵尸挡住后一条”的假学习中。
