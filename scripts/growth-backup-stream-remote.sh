@@ -1,53 +1,11 @@
 #!/bin/sh
 
-# GitHub Growth 冷备的 Fly 端流式读取器。长传输必须在同一个 SSH 会话内检查
-# 前台任务；禁止从 Runner 另开 SSH 探针，否则会与正在传输的连接争抢资源并误杀自己。
+# 固定快照允许与前台任务并行；子进程由限速读取器管理。
 set -eu
-
 ROOT="${GROWTH_STORE_DIR:-/data/growth}"
-INTERACTIVE_DIR="$ROOT/runtime-interactive-workloads"
 mode="${1:-}"
-
-has_interactive_workload() {
-  for lease_dir in "$INTERACTIVE_DIR" "${GROWTH_INTERACTIVE_FALLBACK_DIR:-${TMPDIR:-/tmp}/mvstudiopro-growth-runtime-interactive-workloads}"; do
-    [ -d "$lease_dir" ] || continue
-    fresh=$(find "$lease_dir" -type f -mmin -2 -print -quit 2>/dev/null) || return 0
-    [ -z "$fresh" ] || return 0
-  done
-  return 1
-}
-
-kill_tree() {
-  target_pid="$1"
-  children=$(pgrep -P "$target_pid" 2>/dev/null || true)
-  for child in $children; do
-    kill_tree "$child"
-  done
-  kill -TERM "$target_pid" 2>/dev/null || true
-}
-
-run_monitored() {
-  if has_interactive_workload; then
-    echo "前台平台任务运行中，冷备流式读取主动让行" >&2
-    exit 75
-  fi
-  "$@" &
-  command_pid=$!
-  while kill -0 "$command_pid" 2>/dev/null; do
-    # 两秒轮询兼顾前台抢占速度，并避免短命令完成后仍无谓等待十秒。
-    sleep 2
-    kill -0 "$command_pid" 2>/dev/null || break
-    if has_interactive_workload; then
-      echo "前台平台任务出现，中止当前冷备流式读取" >&2
-      kill_tree "$command_pid"
-      sleep 1
-      kill -KILL "$command_pid" 2>/dev/null || true
-      wait "$command_pid" 2>/dev/null || true
-      exit 75
-    fi
-  done
-  wait "$command_pid"
-}
+guard=scripts/growth-backup-io.py
+[ -f "$guard" ] || guard=/app/scripts/growth-backup-io.py
 
 validate_growth_path() {
   case "$1" in
@@ -72,7 +30,7 @@ case "$mode" in
       echo "非法分片大小" >&2
       exit 64
     fi
-    run_monitored nice -n 15 dd if="$source_file" bs="$block_bytes" skip="$skip_blocks" count="$count_blocks" status=none
+    exec python3 "$guard" --stream dd if="$source_file" bs="$block_bytes" skip="$skip_blocks" count="$count_blocks" status=none
     ;;
   stream-directory)
     dir="${2:-}"
@@ -83,7 +41,7 @@ case "$mode" in
     [ -d "$snapshot/$dir" ] || { echo "快照目录缺失" >&2; exit 1; }
     [ ! -L "$snapshot/$dir" ] || exit 64
     # 版本名与当前回执可共享 inode；传输包必须逐文件携带内容，恢复校验继续拒绝链接。
-    run_monitored nice -n 15 tar --hard-dereference -C "$snapshot" -czf - "$dir"
+    exec python3 "$guard" --stream tar --hard-dereference -C "$snapshot" -czf - "$dir"
     ;;
   *)
     echo "用法: $0 {stream-file PATH BLOCK_BYTES SKIP_BLOCKS COUNT_BLOCKS|stream-directory DIR BATCH}" >&2
