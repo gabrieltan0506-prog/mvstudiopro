@@ -624,7 +624,6 @@ async function runPlatformTask(platform: GrowthPlatform) {
       timeoutStreak,
       timeoutCooldownUntil: cooldownUntil,
       totalRuns: (current?.totalRuns || 0) + 1,
-      totalFailures: (current?.totalFailures || 0) + 1,
       lastFailureAt: nowShanghaiIso(),
       lastDurationMs: Date.now() - startedAtMs,
       lastError: message,
@@ -641,7 +640,7 @@ async function runPlatformTask(platform: GrowthPlatform) {
         : forcedBurst
           ? getForceBurstLabel(platform)
           : current?.lastFrequencyLabel,
-    });
+    }, { incrementFailureTotal: true });
     if (timedOut) {
       console.warn(
         `[growth.scheduler] ${platform} aborted/timeout → exit burst, cooldown ${Math.round(cooldownMs / 60_000)}min (streak=${timeoutStreak})` +

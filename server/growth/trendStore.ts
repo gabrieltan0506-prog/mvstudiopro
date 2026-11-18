@@ -3180,7 +3180,8 @@ export async function resetLegacyGrowthFailureTotals() {
 
 export async function updateTrendSchedulerState(
   platform: GrowthPlatform,
-  patch: Partial<TrendSchedulerState>,
+  patch: Partial<Omit<TrendSchedulerState, "totalFailures" | "failureCounterEpoch">>,
+  options?: { incrementFailureTotal: true },
 ) {
   // 控制面会同时更新三个平台，视频号后台 merge 也可能在同一时刻写健康状态。
   // 旧的 read-modify-write 没有锁，并行写会让最后一个写入者覆盖其他平台刚落盘的状态。
@@ -3194,7 +3195,9 @@ export async function updateTrendSchedulerState(
     scheduler[platform] = {
       ...current,
       ...patch,
-      failureCounterEpoch: current.failureCounterEpoch ?? (scheduler[platform] ? undefined : 1),
+      totalFailures: (current.failureCounterEpoch === 1 ? current.totalFailures ?? 0 : 0)
+        + (options?.incrementFailureTotal ? 1 : 0),
+      failureCounterEpoch: 1,
       platform,
     };
     const updatedAt = nowShanghaiIso();

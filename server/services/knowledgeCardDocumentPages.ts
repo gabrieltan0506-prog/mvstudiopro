@@ -234,16 +234,24 @@ export async function prepareKnowledgeCardDocumentPages(params: {
       params.abortSignal?.throwIfAborted();
       const last = Math.min(total, first + textBatch - 1);
       const key = `${params.textCache?.prefix}/page-text-v1/${docKey}/${total}-${first}-${last}.json`;
-      let texts = await params.textCache?.read(key);
+      let texts: unknown = await params.textCache?.read(key).catch(() => {
+        params.abortSignal?.throwIfAborted();
+        console.warn("[knowledgeCard] 文字断点不可读，本批从原稿提取", first, last);
+        return null;
+      });
       if (!Array.isArray(texts) || texts.length !== last - first + 1 || !texts.every(t => typeof t === "string")) {
         const { stdout } = await execFileAsync("pdftotext", ["-layout", "-enc", "UTF-8", "-f", String(first), "-l", String(last), pdfPath, "-"], {
           maxBuffer: 256 * 1024 * 1024, signal: params.abortSignal,
         });
-        texts = splitPdfTextByPage(stdout);
-        if (texts.length !== last - first + 1) throw new Error(`原稿文字页数不符：${first}–${last}`);
-        await params.textCache?.save(key, texts);
+        const extracted = splitPdfTextByPage(stdout);
+        if (extracted.length !== last - first + 1) throw new Error(`原稿文字页数不符：${first}–${last}`);
+        texts = extracted;
+        await params.textCache?.save(key, extracted).catch(() => {
+          params.abortSignal?.throwIfAborted();
+          console.warn("[knowledgeCard] 文字断点保存失败，本批继续使用已提取文字", first, last);
+        });
       }
-      for (const text of texts) pages.push({ pageNumber: pages.length + 1, text });
+      for (const text of texts as string[]) pages.push({ pageNumber: pages.length + 1, text });
       await params.onProgress?.("text", last, total);
     }
 
@@ -253,7 +261,11 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     // 分批渲染缩略图并即拼即弃，千页书也不把整本缩略图驻留内存
     const sheets: KnowledgeCardContactSheet[] = [];
     const sheetPrefix = `knowledge-card-distill/sheets/u${params.userId}/${docKey}/`;
-    const existing = await params.existingSheets?.(sheetPrefix);
+    const existing = await params.existingSheets?.(sheetPrefix).catch(() => {
+      params.abortSignal?.throwIfAborted();
+      console.warn("[knowledgeCard] 已存目录图列表暂时不可读，从原稿准备目录图");
+      return undefined;
+    });
     for (let first = 1; first <= total; first += KNOWLEDGE_CARD_SHEET_CELLS) {
       params.abortSignal?.throwIfAborted();
       const last = Math.min(total, first + KNOWLEDGE_CARD_SHEET_CELLS - 1);

@@ -29,9 +29,22 @@ describe("trend scheduler state persistence", () => {
     }));
     await resetLegacyGrowthFailureTotals();
     expect((await readTrendSchedulerState()).douyin).toMatchObject({ failureCount: 3, totalFailures: 0, totalRuns: 120 });
-    await updateTrendSchedulerState("douyin", { totalFailures: 1 });
+    await Promise.all([
+      updateTrendSchedulerState("douyin", {}, { incrementFailureTotal: true }),
+      updateTrendSchedulerState("douyin", {}, { incrementFailureTotal: true }),
+    ]);
     await resetLegacyGrowthFailureTotals();
-    expect((await readTrendSchedulerState()).douyin?.totalFailures).toBe(1);
+    expect((await readTrendSchedulerState()).douyin?.totalFailures).toBe(2);
+  });
+
+  it("启动迁移晚于首次失败时保留新失败", async () => {
+    const { resetLegacyGrowthFailureTotals, readTrendSchedulerState, updateTrendSchedulerState } = await import("./trendStore");
+    await fs.writeFile(path.join(tempRoot, "runtime-scheduler.json"), JSON.stringify({
+      value: { weixin_channels: { platform: "weixin_channels", failureCount: 3, totalFailures: 85 } },
+    }));
+    await updateTrendSchedulerState("weixin_channels", {}, { incrementFailureTotal: true });
+    await resetLegacyGrowthFailureTotals();
+    expect((await readTrendSchedulerState()).weixin_channels?.totalFailures).toBe(1);
   });
 
   it("并行控制面写入不会互相覆盖不同平台状态", async () => {

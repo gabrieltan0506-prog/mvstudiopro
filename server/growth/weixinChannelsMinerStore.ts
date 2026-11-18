@@ -212,7 +212,6 @@ function scheduleWeixinChannelsGrowthMerge() {
           lastRunAt: failedAt,
           failureCount: (currentScheduler?.failureCount || 0) + 1,
           totalRuns: (currentScheduler?.totalRuns || 0) + 1,
-          totalFailures: (currentScheduler?.totalFailures || 0) + 1,
           lastFailureAt: failedAt,
           newDataMonitoringStartedAt: currentScheduler?.newDataMonitoringStartedAt
             || currentScheduler?.lastSuccessAt
@@ -220,7 +219,7 @@ function scheduleWeixinChannelsGrowthMerge() {
             || failedAt,
           lastFrequencyLabel: "本机双窗持续采集",
           lastError: error instanceof Error ? error.message : String(error),
-        }).catch((stateError) => {
+        }, { incrementFailureTotal: true }).catch((stateError) => {
           console.error("[weixin-channels] failed to persist growth health", stateError);
         });
       }
