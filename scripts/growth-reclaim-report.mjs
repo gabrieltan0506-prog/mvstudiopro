@@ -23,6 +23,7 @@ for (const item of sole)
   console.log(`::warning::临时快照 ${safe(item.kind)}/${safe(item.batch)} 含 ${Number(item.soleCopies) || 0} 个只剩这一份的文件，已保留，需站长确认后处理`);
 const others = result.retained.filter(item => !String(item.reason).startsWith("sole-copy") && item.reason !== "too-new");
 for (const item of others) lines.push(`保留 ${safe(item.kind)}/${safe(item.batch)}：${safe(item.reason)}`);
+for (const item of result.errors || []) console.log(`::warning::历史临时快照回收检查异常 ${safe(item.kind)}：${safe(item.error)}`);
 for (const item of result.errors || []) lines.push(`回收检查异常 ${safe(item.kind)}：${safe(item.error)}`);
 for (const line of lines) console.log(line);
 if (!lines.length && !sole.length) console.log("没有需要回收的历史临时快照");

@@ -312,11 +312,12 @@ jobs:
           }
 
           release_backup_lane() {
+            # 心跳要保持到快照释放完：释放最长约 10 分钟，采集把超过 15 分钟没心跳的通道锁视为过期。
+            release_current_snapshot_in_lane || true
             if [ -n "${BACKUP_HEARTBEAT_PID:-}" ]; then
               kill "$BACKUP_HEARTBEAT_PID" 2>/dev/null || true
               wait "$BACKUP_HEARTBEAT_PID" 2>/dev/null || true
             fi
-            release_current_snapshot_in_lane || true
             flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc '
               now_ms=\$(date +%s)000
               state=/data/growth/.growth-platform-collection-state.json
