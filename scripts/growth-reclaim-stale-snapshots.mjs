@@ -19,6 +19,8 @@ const dryRun = args.includes("--dry-run");
 const hours = (name, fallback) => {
   const raw = flag(name);
   if (raw === undefined) return fallback;
+  // 空值 Number("") 为 0，会把「不限龄」误当成显式参数：一律拒绝。
+  if (!/^\d+(?:\.\d+)?$/.test(raw)) throw new Error(`growth_reclaim_${name}_invalid`);
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0) throw new Error(`growth_reclaim_${name}_invalid`);
   return value;
@@ -106,9 +108,9 @@ const kinds = [
       if (owner.schemaVersion !== 1 || owner.batchId !== name || owner.kind !== "archive-hardlink-snapshot")
         return { keep: "marker-invalid" };
       if (now - st.mtimeMs < this.minAgeMs) return { keep: "too-new" };
-      // 顶层是快照自己写的清单；分桶子目录里全是归档来源的硬链接。
+      // 顶层与 inventories/ 是快照自己写的清单（链接数恒为 1）；分桶子目录里全是归档来源的硬链接。
       // 链接数为 1 表示来源已被删除，无法在此证明冷备已核验：保留并上报。
-      const sole = soleCopies(directory, relative => relative.includes("/"));
+      const sole = soleCopies(directory, relative => relative.includes("/") && !relative.startsWith("inventories/"));
       if (sole) return { keep: "sole-copy-archive", soleCopies: sole };
       return { keep: null };
     },

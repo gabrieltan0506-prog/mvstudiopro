@@ -85,9 +85,15 @@ for(const name of files){
  });
  test(`${name}: 仅快照清理成功才建立释放标记`,t=>{
   const f=fixture(t,name);f.seed();fs.unlinkSync(path.join(f.store,'SNAPSHOT_RELEASED'));
-  assert.equal(f.run('Always release archive hardlink snapshot',{FAIL:'1'}).status,0);
+  // 1118：释放步骤改为重试；失败 shim 下不等待，只验证最终保留标记。
+  const failed=f.run('Always release archive hardlink snapshot',{FAIL:'1',GROWTH_SNAPSHOT_RELEASE_ATTEMPTS:'2',GROWTH_SNAPSHOT_RELEASE_WAIT_SECONDS:'0'});
+  assert.equal(failed.status,0,failed.stderr);
   assert(!fs.existsSync(path.join(f.store,'SNAPSHOT_RELEASED')));
+  assert(fs.existsSync(path.join(f.store,'SNAPSHOT_RETAINED')));
+  assert.match(failed.stdout,/（2\/2）/);
+  fs.unlinkSync(path.join(f.store,'SNAPSHOT_RETAINED'));
   assert.equal(f.run('Always release archive hardlink snapshot').status,0);
   assert(fs.existsSync(path.join(f.store,'SNAPSHOT_RELEASED')));
+  assert(!fs.existsSync(path.join(f.store,'SNAPSHOT_RETAINED')));
  });
 }

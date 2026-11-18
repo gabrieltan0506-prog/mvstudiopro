@@ -80,7 +80,7 @@ async function main() {
   const space = await assertSnapshotSpaceForStore({
     storeDir,
     copyFiles: [...REQUIRED_CORE_FILES, ...OPTIONAL_CORE_FILES],
-    linkedDirectories: ["platforms", "history-ledger"],
+    linkedDirectories: ["platforms", "history-ledger", "paid-research/guaikei"],
     linkedFiles: PLATFORMS.map(platform => `platform-current/${platform}.current.json.gz`),
   });
   console.error(`growth_snapshot_space_ok:available=${space.availableBytes}:required=${space.required}`);

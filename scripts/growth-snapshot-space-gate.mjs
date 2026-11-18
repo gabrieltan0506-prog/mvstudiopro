@@ -9,7 +9,8 @@ export const DEFAULT_SNAPSHOT_RESERVE_BYTES = 256 * 1024 * 1024;
 export function resolveSnapshotReserveBytes(raw = process.env.GROWTH_SNAPSHOT_RESERVE_BYTES) {
   if (raw === undefined || raw === "") return DEFAULT_SNAPSHOT_RESERVE_BYTES;
   const value = Number(raw);
-  if (!Number.isFinite(value) || value < 0) throw new Error("growth_snapshot_reserve_invalid");
+  // 纯空白 Number(" ") 为 0，会悄悄关掉预留：一律按无效拒绝。
+  if (!raw.trim() || !Number.isFinite(value) || value < 0) throw new Error("growth_snapshot_reserve_invalid");
   return Math.floor(value);
 }
 
