@@ -188,7 +188,8 @@ export async function retireLegacyMarkedArchives(request,{root,receiptsRoot='/da
   const start=lastDir===null?0:Math.max(0,sorted.findIndex(n=>n.slice(0,-5)>lastDir));
   let used=0,processed=0,charged=null;
   for(const name of [...sorted.slice(start),...sorted.slice(0,start)]) {
-    signal?.throwIfAborted();
+    // 中途取消：保留已完成桶的结果再停，不能把已删除的来源从输出里丢掉。
+    if(signal?.aborted){result.completed=false;result.stopped=String(signal.reason?.message||'cancelled');break;}
     const dir=name.slice(0,-5);
     let marker,manifest,manifestRaw;
     try {
@@ -278,7 +279,14 @@ export async function retireLegacyMarkedArchives(request,{root,receiptsRoot='/da
         removedLogicalBytes:removed.removedLogicalBytes,...keptSummary,evidenceDirectory});
     } catch(error) {
       await durable(path.join(evidenceDirectory,'failure.json'),{error:error.message,partial:error.cleanupResult || null});
-      if(/growth_cleanup_busy|cancelled/.test(error.message))throw error;
+      result.removedLogicalBytes+=error.cleanupResult?.removedLogicalBytes || 0;
+      if(/growth_cleanup_busy|cancelled/.test(error.message)){
+        // 采集占锁或被取消：本班到此为止，但前面桶已删除的内容必须如实出现在结果里。
+        result.completed=false;result.stopped=error.message;
+        report('deferred-busy',{error:error.message,removedFiles:error.cleanupResult?.removed?.length || 0,
+          removedLogicalBytes:error.cleanupResult?.removedLogicalBytes || 0,...keptSummary,evidenceDirectory});
+        break;
+      }
       result.completed=false;
       report('failed',{error:error.message,removedFiles:error.cleanupResult?.removed?.length || 0,
         removedLogicalBytes:error.cleanupResult?.removedLogicalBytes || 0,...keptSummary,evidenceDirectory});

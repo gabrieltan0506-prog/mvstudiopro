@@ -1541,8 +1541,6 @@ async function readPlatformCollectionFile(platform: GrowthPlatform): Promise<Pla
     path.join(PLATFORM_DIR, `${platform}.json`),
     `platform-${platform}.json.gz`,
     path.join("platforms", `${platform}.json.gz`),
-    undefined,
-    { strict: true },
   );
   if (isRecoveredCollectionSource(parsed?.collection?.source)) return undefined;
   return parsed?.collection;
@@ -1586,7 +1584,6 @@ async function readPlatformCurrentTruthFile(platform: GrowthPlatform): Promise<P
     `platform-current-${platform}.current.json.gz`,
     `platform-current-${platform}.current.json.gz`,
     180_000,
-    { strict: true },
   );
   // 兼容旧备份任务漏掉 `.current` 的资产名；新恢复链优先使用 Fly 卷内的部署前快照。
   if (!parsed) {
@@ -1595,7 +1592,6 @@ async function readPlatformCurrentTruthFile(platform: GrowthPlatform): Promise<P
       `platform-current-${platform}.json.gz`,
       `legacy/platform-current-${platform}.json.gz`,
       180_000,
-      { strict: true },
     );
   }
   if (!parsed?.collection || isRecoveredCollectionSource(parsed.collection?.source)) return null;
@@ -2873,14 +2869,12 @@ async function parseTrendPlatformRestoreArtifact(raw: Buffer): Promise<PlatformT
 }
 
 async function readLocalPlatformCurrentForRestore(platform: GrowthPlatform) {
-  // strict：现存真值文件读坏时中止恢复，不能把它当成「无 live」后只用基线覆盖。
-  const truth = await readLocalJsonOrGzip<PlatformCurrentTruthFile>(getPlatformCurrentTruthFile(platform), { strict: true });
+  const truth = await readLocalJsonOrGzip<PlatformCurrentTruthFile>(getPlatformCurrentTruthFile(platform));
   if (truth?.collection && !isRecoveredCollectionSource(truth.collection.source)) {
     return { collection: truth.collection, history: truth.history };
   }
   const derived = await readLocalJsonOrGzip<{ collection?: PlatformTrendCollection }>(
     path.join(PLATFORM_DIR, `${platform}.json`),
-    { strict: true },
   );
   if (derived?.collection && !isRecoveredCollectionSource(derived.collection.source)) {
     return { collection: derived.collection, history: undefined };

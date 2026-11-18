@@ -1013,16 +1013,18 @@ jobs:
             echo "::warning::线上版本尚未支持旧B站退役桶的剩余来源清理（新版本部署后生效），本轮未删除任何来源"
             exit 0
           fi
-          if grep -q '"growth_cleanup_busy"' "$ROOT/retirement-result-legacy.json" "$ROOT/retirement-stderr-legacy.log"; then
-            echo "::warning::旧B站退役桶清理遇到服务端采集锁，延后到下一班，未删除任何来源"
-            exit 0
+          LEGACY_BUSY=false
+          if grep -q 'growth_cleanup_busy' "$ROOT/retirement-result-legacy.json" "$ROOT/retirement-stderr-legacy.log"; then
+            echo "::warning::旧B站退役桶清理遇到服务端采集锁，未完成的桶延后到下一班；本班已完成的部分见下一行结果"
+            LEGACY_BUSY=true
           fi
           node -e '
             const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n").pop());
             const done=r.buckets.filter(b=>b.retirementCompleted).length,kept=r.buckets.filter(b=>b.keptFiles>0);
             const line=`旧B站退役桶剩余来源：完成 ${done} 桶，删除 ${r.removedLogicalBytes} 字节；保留未核验 ${r.keptFiles} 个文件 ${r.keptBytes} 字节（${kept.map(b=>b.dir).join(",")||"无"}）；延后 ${r.deferred} 桶。`;
             console.log(line);if(process.env.GITHUB_STEP_SUMMARY)require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY,line+"\n");
-          ' "$ROOT/retirement-result-legacy.json"
+          ' "$ROOT/retirement-result-legacy.json" || [ "$LEGACY_BUSY" = true ]
+          [ "$LEGACY_BUSY" != true ] || exit 0
           [ "$status" -eq 0 ] || exit "$status"
       - name: Preserve archive retirement receipts
         if: always()

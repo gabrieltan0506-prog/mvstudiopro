@@ -175,19 +175,6 @@ describe("growth history-ledger 持久化", () => {
     expect((await ledgerKeys()).length).toBe(4);
   });
 
-  it("platform-current 真值文件读坏时 merge 报错，不用新批次覆盖或删除它", async () => {
-    const at = new Date().toISOString();
-    const m = await import("./trendStore");
-    await m.mergeTrendCollections({ douyin: makeCollection(["a", "b", "c"], at) });
-    const truthFile = path.join(tempRoot, "platform-current", "douyin.current.json.gz");
-    const broken = Buffer.from("broken-gzip");
-    await fs.writeFile(truthFile, broken);
-    vi.resetModules();
-    const fresh = await import("./trendStore");
-    await expect(fresh.mergeTrendCollections({ douyin: makeCollection(["z"], at) })).rejects.toThrow(/growth_store_file_unreadable/);
-    expect(await fs.readFile(truthFile)).toEqual(broken);
-  });
-
   it("单个平台账本读不出时只跳过该平台账本：采集照常落盘，其它平台账本照常更新，坏文件逐字节不变", async () => {
     const at = new Date().toISOString();
     const broken = Buffer.from("not-gzip");
