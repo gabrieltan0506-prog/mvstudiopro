@@ -40,6 +40,17 @@ process.exit(process.env.FAIL==='1'?23:0);
  };
  return{root,store,source,capture,summary,run,seed,batch,publication,manifest,dir};
 }
+test('单桶任务（archive_dir=A）不触发其他历史桶的正式删源：步骤条件与脚本内双重拦截',t=>{
+ const f=fixture(t,'growth-archive-offload.yml'),label='Retire remaining sources of Bilibili-retired archive buckets';
+ const block=f.source.split(`      - name: ${label}\n`)[1].split('\n      - ')[0];
+ assert.match(block,/if: \$\{\{ success\(\) && \(inputs\.archive_dir \|\| ''\) == '' \}\}/);
+ const probe=f.run(label,{GROWTH_ARCHIVE_PROBE_DIR:'2026-10-01-00'});
+ assert.equal(probe.status,0,probe.stderr);assert(!fs.existsSync(f.capture),'单桶任务不得调用 Fly');
+ assert(!fs.existsSync(path.join(f.store,'retirement-request-legacy.json')));
+ const scheduled=f.run(label,{GROWTH_ARCHIVE_PROBE_DIR:''});
+ assert(fs.existsSync(f.capture),scheduled.stderr);
+ assert.match(JSON.parse(fs.readFileSync(f.capture)).args.at(-1),/--legacy-retired-markers/);
+});
 for(const name of files){
  test(`${name}: 成功发布且释放快照后只传本批metadata到指定Fly机器`,t=>{
   const f=fixture(t,name);f.seed();

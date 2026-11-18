@@ -191,6 +191,40 @@ for (const args of [["--bogus"], ["--current-hours=3", "extra"], ["--current-hou
   assert(exists(dir)); assert(exists(arch));
 });
 
+test("two names inside one batch pointing at the same receipt inode with no copy outside: batch retained, content survives", t => {
+  const f = fixture(t), dir = f.currentBatch("300-1"), receipts = path.join(dir, "directories/paid-research/guaikei");
+  const first = path.join(receipts, "00000000-0000-0000-0000-000000000009.raw.json");
+  fs.writeFileSync(first, '{"only":"copy-with-two-names"}');
+  fs.linkSync(first, path.join(receipts, "00000000-0000-0000-0000-000000000009.parsed.json")); // nlink 2，两条链接都在批内
+  const result = parse(runStdin(f, ["--current-hours=3"]));
+  assert.deepEqual(result.removed, []);
+  assert.equal(reasonOf(result, "300-1"), "sole-copy-receipt");
+  assert.equal(result.retained.find(r => r.batch === "300-1").soleCopies, 2);
+  assert.equal(fs.readFileSync(first, "utf8"), '{"only":"copy-with-two-names"}');
+  // 批外确有一条链接时不算唯一副本：整批可回收，批外副本内容不变。
+  const g = fixture(t), other = g.currentBatch("301-1"), dup = path.join(other, "directories/paid-research/guaikei/dup.raw.json");
+  fs.linkSync(g.sources.receipt, dup);
+  const before = g.hashes(), second = parse(runStdin(g, ["--current-hours=3"]));
+  assert.deepEqual(second.removed.map(r => r.batch), ["301-1"]); assert.deepEqual(g.hashes(), before);
+});
+
+test("archive-offload: interrupted <batch>.next staging dir is reclaimed when over-age and fully hardlinked; kept when too new or holding a sole copy", t => {
+  const f = fixture(t), before = f.hashes();
+  const stale = f.archiveBatch("456-1.next", { batchId: "456-1" });
+  const young = f.archiveBatch("457-1.next", { batchId: "457-1", hours: 2 });
+  const sole = f.archiveBatch("458-1.next", { batchId: "458-1" }); fs.writeFileSync(path.join(sole, "2026-11-01/only.json"), '{"only":"copy"}');
+  const twin = f.archiveBatch("459-1.next", { batchId: "459-1" });
+  fs.writeFileSync(path.join(twin, "2026-11-01/x.json"), '{"twin":"copy"}'); fs.linkSync(path.join(twin, "2026-11-01/x.json"), path.join(twin, "2026-11-01/y.json"));
+  const result = parse(runStdin(f));
+  assert.deepEqual(result.removed.map(r => [r.kind, r.batch]), [["archive", "456-1.next"]]);
+  assert(!exists(stale));
+  assert.equal(reasonOf(result, "457-1.next"), "too-new");
+  assert.equal(reasonOf(result, "458-1.next"), "sole-copy-archive");
+  assert.equal(reasonOf(result, "459-1.next"), "sole-copy-archive");
+  for (const dir of [young, sole, twin]) assert(exists(path.join(dir, "2026-11-01/a.json")));
+  assert.deepEqual(f.hashes(), before);
+});
+
 test("archive-offload: over-age all-hardlinked batch removed; sole-copy bucket file retained; .next and cursor untouched", t => {
   const f = fixture(t), before = f.hashes();
   const removable = f.archiveBatch("20261101T000000Z-1");
@@ -199,6 +233,7 @@ test("archive-offload: over-age all-hardlinked batch removed; sole-copy bucket f
   const wrongKind = f.archiveBatch("20261101T000000Z-4");
   fs.writeFileSync(path.join(wrongKind, ".snapshot-owner.json"), JSON.stringify({ schemaVersion: 1, batchId: "20261101T000000Z-4", kind: "other" }));
   age(path.join(wrongKind, ".snapshot-owner.json"), 30);
+  // 标记批号带 .next 的不是归档脚本写出的合法暂存目录：保留。
   const next = f.archiveBatch("20261101T000000Z-5.next", { batchId: "20261101T000000Z-5.next" });
   const cursor = path.join(f.archive, ".rotation-cursor.json"); fs.writeFileSync(cursor, '{"schemaVersion":1,"lastDir":"2026-11-01"}');
   const cursorBefore = fs.readFileSync(cursor, "utf8");
@@ -209,7 +244,7 @@ test("archive-offload: over-age all-hardlinked batch removed; sole-copy bucket f
   assert.equal(result.retained.find(r => r.batch === "20261101T000000Z-2").soleCopies, 1);
   assert.equal(reasonOf(result, "20261101T000000Z-3"), "too-new");
   assert.equal(reasonOf(result, "20261101T000000Z-4"), "marker-invalid");
-  assert.equal(reasonOf(result, "20261101T000000Z-5.next"), "name-invalid");
+  assert.equal(reasonOf(result, "20261101T000000Z-5.next"), "marker-invalid");
   for (const dir of [sole, young, wrongKind, next]) assert(exists(path.join(dir, "2026-11-01/a.json")));
   assert.equal(fs.readFileSync(path.join(sole, "2026-11-01/only.json"), "utf8"), '{"only":"copy"}');
   assert.equal(fs.readFileSync(cursor, "utf8"), cursorBefore);

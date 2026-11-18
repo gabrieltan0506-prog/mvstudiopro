@@ -65,10 +65,20 @@ function* regularFiles(directory, relative = "") {
   }
 }
 
+/**
+ * 受保护文件里「批外已无副本」的个数。不能只看链接数是否为 1：同一批内两个文件名可能指向
+ * 同一 inode（链接数为 2，但两条链接都在待删目录里），删掉整批内容就没了。
+ * 所以按 设备号:inode 统计整批目录内的链接数，链接总数不多于批内链接数即视为唯一一份。
+ */
 function soleCopies(directory, isProtected) {
+  const inside = new Map(), files = [...regularFiles(directory)];
+  for (const file of files) {
+    const id = `${file.st.dev}:${file.st.ino}`;
+    inside.set(id, (inside.get(id) || 0) + 1);
+  }
   let count = 0;
-  if (!fs.existsSync(directory)) return 0;
-  for (const file of regularFiles(directory)) if (file.st.nlink === 1 && isProtected(file.relative)) count += 1;
+  for (const file of files)
+    if (isProtected(file.relative) && file.st.nlink <= inside.get(`${file.st.dev}:${file.st.ino}`)) count += 1;
   return count;
 }
 
@@ -92,8 +102,8 @@ const kinds = [
       if (!ownerExited(owner.pid, st.mtimeMs)) return { keep: "owner-alive" };
       // 付费原始/解析回执写入后不再改写；链接数为 1 表示来源已不在，快照是唯一一份。
       // 两份共享账本会被原子重写，链接数为 1 属正常，不算唯一回执。
-      const sole = soleCopies(path.join(directory, "directories", "paid-research"),
-        relative => !/(?:^|\/)(?:index|automation)\.json$/.test(relative));
+      const sole = soleCopies(directory,
+        relative => relative.startsWith("directories/paid-research/") && !/\/(?:index|automation)\.json$/.test(relative));
       if (sole) return { keep: "sole-copy-receipt", soleCopies: sole };
       return { keep: null };
     },
@@ -102,10 +112,13 @@ const kinds = [
     kind: "archive",
     parent: path.join(root, "backups", "archive-offload"),
     minAgeMs: archiveHours * 3600_000,
-    nameOk: name => /^[0-9A-Za-z._-]+$/.test(name) && !name.startsWith(".") && !name.endsWith(".next"),
+    nameOk: name => /^[0-9A-Za-z._-]+$/.test(name) && !name.startsWith("."),
     inspect(directory, name) {
       const { st, owner } = readMarker(directory);
-      if (owner.schemaVersion !== 1 || owner.batchId !== name || owner.kind !== "archive-hardlink-snapshot")
+      // 归档快照先在 <批号>.next 里写标记和硬链接，完成后才改名；机器中途重启会留下 .next 暂存目录。
+      // 它的标记批号是不带 .next 的批号；同一并发组串行、job 上限 120 分钟，超龄即不可能仍在途。
+      const batchId = name.endsWith(".next") ? name.slice(0, -5) : name;
+      if (owner.schemaVersion !== 1 || owner.batchId !== batchId || owner.kind !== "archive-hardlink-snapshot")
         return { keep: "marker-invalid" };
       if (now - st.mtimeMs < this.minAgeMs) return { keep: "too-new" };
       // 顶层与 inventories/ 是快照自己写的清单（链接数恒为 1）；分桶子目录里全是归档来源的硬链接。
