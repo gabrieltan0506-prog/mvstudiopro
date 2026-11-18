@@ -4,10 +4,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {buildCleanupReceipt, verifyCleanupEvidenceOnFly} from './growth-archive-cleanup.mjs';
-import {deleteVerifiedArchive,RETIREMENT_SCOPES} from './growth-archive-delete-verified.mjs';
+import {deleteVerifiedArchive,RETIREMENT_SCOPES,cleanupReceiptSha256,upgradeRetirementMarker} from './growth-archive-delete-verified.mjs';
+import {parseGrowthArchiveManifest} from '../shared/growthArchiveRestore.mjs';
 
 const SCOPES = Object.keys(RETIREMENT_SCOPES);
 const POLICIES = {'bilibili-archives':'verified-published-bilibili-only','verified-archives':'verified-published-archive-sources'};
@@ -142,8 +143,133 @@ export async function retirePublishedArchives(input, {root,rootScope,allowRemote
   }
 }
 
+// 2026-11-18 用户授权（验快照即可）：旧范围只退B站的桶被 offload 冻结、不再进批次。其剩余已发布平台来源
+// 只与该桶旧标记中已核验的冷备证据（清单原字节 + 当时实际还原后的逐文件清单）比对大小与 sha256，
+// 不再下载还原；远端只复核资产元数据仍在。一致者走同一双锁逐文件删除器；不一致/未列出者保留并
+// 报数量与字节，不阻塞其他文件或桶。整桶无剩余后升级标记，不再每班重复处理。
+const LEGACY_MAX_BUCKETS=8, LEGACY_MAX_BYTES=1024*1024*1024;
+const sha=raw=>createHash('sha256').update(raw).digest('hex');
+async function fileSha(file){const digest=createHash('sha256');const handle=await fs.open(file,'r');
+  try{for await(const chunk of handle.createReadStream({autoClose:false}))digest.update(chunk);}finally{await handle.close();}
+  return digest.digest('hex');}
+async function scanLegacyBucket(store,dir) {
+  const {member}=RETIREMENT_SCOPES['verified-archives'],present=[],outside=[];
+  const visit=async relative=>{
+    for(const entry of await fs.readdir(path.join(store,relative),{withFileTypes:true})) {
+      const child=`${relative}/${entry.name}`;
+      if(entry.isDirectory()){await visit(child);continue;}
+      if(/^(kuaishou|toutiao)[-_.]/i.test(entry.name) || entry.name.startsWith('._'))continue;
+      const row={path:child,bytes:(await fs.lstat(path.join(store,child))).size};
+      (entry.isFile() && relative===`archive/${dir}` && member.test(entry.name)?present:outside).push(row);
+    }
+  };
+  await visit(`archive/${dir}`);
+  return {present:present.sort((a,b)=>a.path.localeCompare(b.path,'en')),outside};
+}
+export async function retireLegacyMarkedArchives(request,{root,receiptsRoot='/data/growth-cleanup-receipts',
+    verifyEvidence=verifyCleanupEvidenceOnFly,repository=process.env.GROWTH_BACKUP_REPOSITORY || 'gabrieltan0506-prog/mvstudiopro-growth-data',
+    maxBuckets=LEGACY_MAX_BUCKETS,maxBytes=LEGACY_MAX_BYTES,signal}={}) {
+  if(request?.schemaVersion!==1 || request.mode!=='legacy-retired-markers' || !/^\d+-\d+(?:-backup)?$/.test(request.batchId || ''))
+    throw Error('growth_retire_legacy_request_invalid');
+  if(typeof root!=='string' || !root)throw Error('growth_retire_store_required');
+  const store=await realDirectory(path.resolve(root));
+  await fs.mkdir(receiptsRoot,{recursive:true});
+  const persistent=await realDirectory(path.resolve(receiptsRoot));
+  if(persistent===store || persistent.startsWith(`${store}${path.sep}`))throw Error('growth_retire_receipts_must_be_outside_store');
+  const result={schemaVersion:1,mode:'legacy-retired-markers',batchId:request.batchId,rootScope:'verified-archives',
+    completed:true,buckets:[],invalidMarkers:[],deferred:0,removedLogicalBytes:0,keptFiles:0,keptBytes:0};
+  const markersRoot=path.join(store,'.growth-archive-retired');
+  let names=[];try{names=await fs.readdir(markersRoot);}catch(error){if(error.code!=='ENOENT')throw error;}
+  const buckets=(await fs.readdir(path.join(store,'archive'))).filter(validDir).sort(),newest=buckets.slice(-2);
+  let used=0,processed=0;
+  for(const name of names.filter(n=>/^\d{4}-\d{2}-\d{2}(?:-\d{2})?\.json$/.test(n)).sort()) {
+    signal?.throwIfAborted();
+    const dir=name.slice(0,-5);
+    let marker,manifest,manifestRaw;
+    try {
+      const st=await fs.lstat(path.join(markersRoot,name));if(!st.isFile() || st.isSymbolicLink())throw Error('type');
+      marker=JSON.parse(await fs.readFile(path.join(markersRoot,name),'utf8'));
+      if(marker.schemaVersion!==1 || marker.dir!==dir || !/^[a-f0-9]{64}$/.test(marker.receiptSha256 || ''))throw Error('contract');
+    } catch { result.invalidMarkers.push(dir); continue; }
+    if(marker.platform==='verified-archives')continue;
+    const report=(state,extra={})=>{result.buckets.push({dir,state,retirementCompleted:false,removedFiles:0,removedLogicalBytes:0,keptFiles:0,keptBytes:0,...extra});};
+    if(marker.platform!=='bilibili'){result.invalidMarkers.push(dir);continue;}
+    if(newest.includes(dir)){report('latest-bucket-protected');continue;}
+    if(!buckets.includes(dir)){report('bucket-absent');continue;}
+    const scan=await scanLegacyBucket(store,dir),restore=marker.restore;
+    const keep=rows=>({keptFiles:rows.length,keptBytes:rows.reduce((n,row)=>n+row.bytes,0)});
+    try {
+      manifestRaw=Buffer.from(restore?.manifestBase64 || '','base64');
+      manifest=parseGrowthArchiveManifest(JSON.parse(manifestRaw.toString('utf8')),dir);
+      if(restore.dir!==dir || sha(manifestRaw)!==restore.manifestSha256 || typeof restore.releaseTag!=='string'
+          || !Array.isArray(restore.inventory) || manifest.archive.sha256!==restore.archiveSha256)throw Error('evidence');
+    } catch {
+      const kept=keep([...scan.present,...scan.outside]);result.keptFiles+=kept.keptFiles;result.keptBytes+=kept.keptBytes;
+      report('marker-evidence-unusable',kept);continue;
+    }
+    // 只按名称+大小可能匹配的文件计入哈希额度；明确未列出者直接保留，不占额度、不阻塞后续桶。
+    const cold=new Map(restore.inventory.map(row=>[`archive/${dir}/${row.path}`,row]));
+    const candidates=scan.present.filter(row=>cold.get(row.path)?.bytes===row.bytes);
+    const kept=[...scan.outside,...scan.present.filter(row=>!candidates.includes(row))];
+    const bytes=candidates.reduce((n,row)=>n+row.bytes,0);
+    if(candidates.length && (processed>=maxBuckets || (processed && used+bytes>maxBytes))){result.deferred++;continue;}
+    if(candidates.length){processed++;used+=bytes;}
+    const matched=[];
+    for(const row of candidates) {
+      const expected=cold.get(row.path);
+      if(await fileSha(path.join(store,row.path))===expected.sha256)matched.push({path:row.path,bytes:row.bytes,sha256:expected.sha256});
+      else kept.push(row);
+    }
+    const keptSummary=keep(kept);result.keptFiles+=keptSummary.keptFiles;result.keptBytes+=keptSummary.keptBytes;
+    if(!matched.length) {
+      if(kept.length){report('kept-not-in-verified-backup',keptSummary);continue;}
+      // 本范围内已无来源（只剩已退出平台/元数据）：无需删除，直接升级标记。
+      await upgradeRetirementMarker(store,dir,marker.receiptSha256,{receiptSha256:marker.receiptSha256,restore,createdAt:new Date().toISOString()});
+      result.buckets.push({dir,state:'nothing-to-retire',retirementCompleted:true,removedFiles:0,removedLogicalBytes:0,keptFiles:0,keptBytes:0});
+      continue;
+    }
+    const assets=[{releaseTag:restore.releaseTag,name:`archive-${dir}.manifest.json`,bytes:manifestRaw.length,sha256:restore.manifestSha256},
+      ...manifest.parts.map(part=>({releaseTag:restore.releaseTag,name:part.assetName,bytes:part.bytes,sha256:part.sha256}))];
+    const receipt={schemaVersion:1,evidenceKind:'remote-restore',repository,createdAt:new Date().toISOString(),scope:'verified-archives',
+      evidenceSource:'legacy-marker-restore',legacyMarkerReceiptSha256:marker.receiptSha256,files:matched,
+      backup:{batchId:request.batchId,assets,restores:[restore]}};
+    const digest=cleanupReceiptSha256(receipt);
+    const evidenceDirectory=path.join(persistent,`${request.batchId}-legacy-${dir}-${randomUUID()}`);
+    await fs.mkdir(evidenceDirectory,{mode:0o700});
+    await durable(path.join(evidenceDirectory,'cleanup-receipt.json'),receipt);
+    await durable(path.join(evidenceDirectory,'authorization.json'),{rootScope:'verified-archives',policy:'legacy-marker-verified-inventory',
+      receiptSha256:digest,batchId:request.batchId,files:matched,kept:kept.map(({path,bytes})=>({path,bytes})),createdAt:new Date().toISOString()});
+    try {
+      const removed=await deleteVerifiedArchive({root:store,receipt,receiptSha256:digest,apply:true,approveSha256:digest,verifyEvidence,
+        journalPath:path.join(evidenceDirectory,'cleanup-journal.jsonl'),signal,
+        ...(kept.length?{keepUnlistedInLegacyBuckets:true}:{upgradeMarkers:{[dir]:marker.receiptSha256}})});
+      await durable(path.join(evidenceDirectory,'result.json'),removed);
+      result.removedLogicalBytes+=removed.removedLogicalBytes;
+      report(kept.length?'retired-partially-kept':'retired',{retirementCompleted:!kept.length,removedFiles:removed.removed.length,
+        removedLogicalBytes:removed.removedLogicalBytes,...keptSummary,evidenceDirectory});
+    } catch(error) {
+      await durable(path.join(evidenceDirectory,'failure.json'),{error:error.message,partial:error.cleanupResult || null});
+      if(/growth_cleanup_busy|cancelled/.test(error.message))throw error;
+      result.completed=false;
+      report('failed',{error:error.message,removedFiles:error.cleanupResult?.removed?.length || 0,
+        removedLogicalBytes:error.cleanupResult?.removedLogicalBytes || 0,...keptSummary,evidenceDirectory});
+    }
+  }
+  return result;
+}
+
 async function main() {
   const flags=process.argv.slice(2);
+  if(flags.length===3 && flags.includes('--legacy-retired-markers') && flags.includes('--scope=verified-archives') && flags.includes('--allow-remote-download')) {
+    if(!process.env.FLY_APP_NAME || !process.env.GROWTH_STORE_DIR)throw Error('growth_retire_fly_store_required');
+    const chunks=[];for await(const chunk of process.stdin){chunks.push(chunk);if(chunks.length>64)throw Error('growth_retire_input_too_large');}
+    const controller=new AbortController();
+    for(const name of ['SIGINT','SIGTERM'])process.once(name,()=>controller.abort(Error(`growth_retire_cancelled:${name}`)));
+    const result=await retireLegacyMarkedArchives(JSON.parse(Buffer.concat(chunks).toString('utf8')),{root:process.env.GROWTH_STORE_DIR,signal:controller.signal});
+    process.stdout.write(JSON.stringify(result)+'\n');
+    if(!result.completed)process.exitCode=3;
+    return;
+  }
   const scope=SCOPES.find(name=>flags.includes(`--scope=${name}`));
   if(flags.length!==2 || !scope || !flags.includes('--allow-remote-download'))
     throw Error('Usage: growth-archive-retire.mjs --scope=bilibili-archives|verified-archives --allow-remote-download < metadata.json');

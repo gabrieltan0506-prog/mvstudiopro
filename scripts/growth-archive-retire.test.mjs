@@ -159,3 +159,67 @@ test('verified-archives 远端损坏、来源变动、最新桶时一律不删',
  const c=fixture(t);fs.rmdirSync(path.join(c.store,'archive','2026-10-03-00'));
  await assert.rejects(retirePublishedArchives(c.input,verified(c)),/latest_bucket_protected/);assert(present(c));
 });
+
+// 2026-11-18 用户授权（验快照即可）：旧范围已退B站的桶，剩余来源只比对旧标记中已核验的冷备清单，不再下载还原。
+import {retireLegacyMarkedArchives} from './growth-archive-retire.mjs';
+async function legacyFixture(t){
+ const f=fixture(t);await retirePublishedArchives(f.input,f.options);
+ const markerFile=path.join(f.store,'.growth-archive-retired',f.dir+'.json');
+ const oldMarker=JSON.parse(fs.readFileSync(markerFile,'utf8'));assert.equal(oldMarker.platform,'bilibili');
+ const downloadsBefore=f.calls.filter(c=>c[0]==='download').length;
+ const run=(extra={})=>retireLegacyMarkedArchives({schemaVersion:1,mode:'legacy-retired-markers',batchId:'90-1'},
+  {root:f.store,receiptsRoot:f.evidence,repository:'gabrieltan0506-prog/mvstudiopro-growth-data',
+   verifyEvidence:receipt=>verifyCleanupEvidence(receipt,f.options.gh),...extra});
+ const downloads=()=>f.calls.filter(c=>c[0]==='download').length-downloadsBefore;
+ const douyin=path.join(f.store,'archive',f.dir,f.files[1].path);
+ return {...f,markerFile,oldMarker,run,downloads,douyin};
+}
+test('旧B站标记桶：剩余来源与已核验清单一致即逐文件删除，升级标记保留B站历史，不下载、快手不动、不重复处理',async t=>{
+ const f=await legacyFixture(t);const kuaishou=path.join(f.store,'archive',f.dir,'kuaishou-keep.json.gz');fs.writeFileSync(kuaishou,'x');
+ const evidenceBefore=fs.readdirSync(f.evidence).length;
+ const result=await f.run();
+ assert.equal(result.completed,true);assert.equal(f.downloads(),0);
+ assert.deepEqual(result.buckets.map(({evidenceDirectory,...row})=>row),[{dir:f.dir,state:'retired',retirementCompleted:true,removedFiles:1,
+  removedLogicalBytes:f.files[1].bytes,keptFiles:0,keptBytes:0}]);
+ assert(!fs.existsSync(f.douyin));assert(fs.existsSync(kuaishou));
+ const marker=JSON.parse(fs.readFileSync(f.markerFile,'utf8'));
+ assert.equal(marker.platform,'verified-archives');assert.deepEqual(marker.previous,f.oldMarker);assert.deepEqual(marker.restore,f.oldMarker.restore);
+ assert.equal(fs.readdirSync(f.evidence).length,evidenceBefore+1);
+ const journal=fs.readFileSync(path.join(result.buckets[0].evidenceDirectory,'cleanup-journal.jsonl'),'utf8');
+ assert(journal.includes('marker-upgraded'));assert(journal.includes('"completed"'));
+ const again=await f.run();assert.deepEqual(again.buckets,[]);assert.equal(fs.readdirSync(f.evidence).length,evidenceBefore+1);
+ const run=spawnSync('sh',['scripts/growth-archive-offload-remote.sh','prepare','91-1'],{env:{...process.env,GROWTH_STORE_DIR:f.store,GROWTH_INTERACTIVE_FALLBACK_DIR:path.join(f.root,'unused')},encoding:'utf8'});
+ assert.equal(run.status,0,run.stderr);
+ const retired=fs.readFileSync(path.join(f.store,'backups/archive-offload/91-1/retired.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ assert.deepEqual(retired,[{dir:f.dir,state:'retired',reason:'complete-cold-backup-retained'}]);
+});
+test('旧B站标记桶：未列出或内容不同的文件逐文件保留并报数量字节，不阻塞同桶一致文件与其他桶',async t=>{
+ const f=await legacyFixture(t);
+ const late=path.join(f.store,'archive',f.dir,'xiaohongshu-late.json.gz');fs.writeFileSync(late,'late-bytes');
+ const other='2026-09-30-00';fs.mkdirSync(path.join(f.store,'archive',other));
+ fs.writeFileSync(path.join(f.store,'archive',other,'douyin-x.json.gz'),'abc');
+ fs.writeFileSync(path.join(f.store,'.growth-archive-retired',other+'.json'),JSON.stringify({schemaVersion:1,dir:other,platform:'bilibili',receiptSha256:'a'.repeat(64),restore:{dir:other}}));
+ const result=await f.run();
+ const rows=Object.fromEntries(result.buckets.map(({evidenceDirectory,...row})=>[row.dir,row]));
+ assert.deepEqual(rows[other],{dir:other,state:'marker-evidence-unusable',retirementCompleted:false,removedFiles:0,removedLogicalBytes:0,keptFiles:1,keptBytes:3});
+ assert.deepEqual(rows[f.dir],{dir:f.dir,state:'retired-partially-kept',retirementCompleted:false,removedFiles:1,removedLogicalBytes:f.files[1].bytes,keptFiles:1,keptBytes:10});
+ assert.equal(result.keptFiles,2);assert.equal(result.keptBytes,13);
+ assert(!fs.existsSync(f.douyin));assert(fs.existsSync(late));assert(fs.existsSync(path.join(f.store,'archive',other,'douyin-x.json.gz')));
+ assert.equal(JSON.parse(fs.readFileSync(f.markerFile,'utf8')).platform,'bilibili');
+ const again=await f.run();
+ assert.equal(again.buckets.find(row=>row.dir===f.dir).state,'kept-not-in-verified-backup');assert(fs.existsSync(late));
+});
+test('旧B站标记桶：同大小不同内容不删；最新两桶不碰；每班额度外延后',async t=>{
+ const a=await legacyFixture(t);const raw=fs.readFileSync(a.douyin);raw[raw.length-1]^=1;fs.writeFileSync(a.douyin,raw);
+ const r1=await a.run();assert.equal(r1.buckets[0].state,'kept-not-in-verified-backup');assert.equal(r1.buckets[0].keptBytes,raw.length);assert(fs.existsSync(a.douyin));
+ const b=await legacyFixture(t);fs.rmdirSync(path.join(b.store,'archive','2026-10-03-00'));
+ const r2=await b.run();assert.equal(r2.buckets[0].state,'latest-bucket-protected');assert(fs.existsSync(b.douyin));
+ const c=await legacyFixture(t);
+ const r3=await c.run({maxBuckets:0});assert.equal(r3.deferred,1);assert.deepEqual(r3.buckets,[]);assert(fs.existsSync(c.douyin));
+ assert.equal(JSON.parse(fs.readFileSync(c.markerFile,'utf8')).platform,'bilibili');
+});
+test('旧标记桶远端备份元数据已变时不删',async t=>{
+ const f=await legacyFixture(t);const name=[...f.remote.keys()][0];f.remote.set(name,Buffer.from('changed-remote'));
+ const result=await f.run();assert.equal(result.completed,false);assert.equal(result.buckets[0].state,'failed');
+ assert.match(result.buckets[0].error,/remote_asset_changed/);assert(fs.existsSync(f.douyin));
+});

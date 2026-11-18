@@ -107,19 +107,37 @@ async function assertBucketsFullyVerified(root, receipt) {
   };
   for (const bucket of new Set(receipt.files.map(row => bucketOf(row.path)))) await visit(`archive/${bucket}`);
 }
-async function inspect(root, receipt) {
+async function inspect(root, receipt, keepUnlisted = false) {
   const protectedNames = await protectedBuckets(root);
   const files = [];
   for (const row of receipt.files) {
     if (protectedNames.includes(bucketOf(row.path))) fail("latest_bucket_protected");
     files.push(await sourceFile(root, row));
   }
-  if (retirementScope(receipt.scope).name === "verified-archives") await assertBucketsFullyVerified(root, receipt);
+  if (retirementScope(receipt.scope).name === "verified-archives" && !keepUnlisted) await assertBucketsFullyVerified(root, receipt);
   return files;
 }
 
 // 部分平台退役后冻结整桶发布，避免剩余子集覆盖仍被冷读引用的完整备份。
-async function preserveRetirementMarkers(root, receipt, receiptSha256) {
+// 旧B站标记桶（2026-11-18 授权）：旧标记保持冻结直到本次逐文件删除全部完成，再原子升级为
+// verified-archives 并保留旧标记全文作为 previous，B站回执历史不丢。
+export async function upgradeRetirementMarker(root, dir, previousReceiptSha256, value) {
+  if (!bucketPattern.test(dir) || !validHash(previousReceiptSha256)) fail("retirement_marker_upgrade_invalid");
+  const parent = path.join(root, ".growth-archive-retired"), marker = path.join(parent, `${dir}.json`);
+  await directory(parent);
+  const st = await fs.lstat(marker);
+  if (!st.isFile() || st.isSymbolicLink()) fail("retirement_marker_invalid");
+  const existing = JSON.parse(await fs.readFile(marker, "utf8"));
+  if (existing.schemaVersion !== 1 || existing.dir !== dir || existing.platform !== "bilibili"
+      || existing.receiptSha256 !== previousReceiptSha256) fail("retirement_marker_conflict");
+  const next = path.join(parent, `.${dir}.json.next-${randomUUID()}`);
+  const handle = await fs.open(next, "wx", 0o600);
+  try { await handle.writeFile(JSON.stringify({ ...value, schemaVersion: 1, dir, platform: "verified-archives", previous: existing }, null, 2)); await handle.sync(); }
+  finally { await handle.close(); }
+  await fs.rename(next, marker);
+  const held = await fs.open(parent, "r"); try { await held.sync(); } finally { await held.close(); }
+}
+async function preserveRetirementMarkers(root, receipt, receiptSha256, upgradeMarkers = {}, keepLegacy = false) {
   const parent=path.join(root,'.growth-archive-retired');
   const {platform}=retirementScope(receipt.scope);
   await fs.mkdir(parent,{recursive:true}); await directory(parent);
@@ -128,6 +146,7 @@ async function preserveRetirementMarkers(root, receipt, receiptSha256) {
     if(!restore)fail('retirement_restore_missing');
     const marker=path.join(parent,`${dir}.json`);
     const value={schemaVersion:1,dir,platform,receiptSha256,restore,createdAt:new Date().toISOString()};
+    if(Object.hasOwn(upgradeMarkers,dir))await fs.lstat(marker).catch(()=>fail('retirement_marker_missing'));
     let handle;
     try { handle=await fs.open(marker,'wx',0o600); }
     catch(error) {
@@ -135,6 +154,9 @@ async function preserveRetirementMarkers(root, receipt, receiptSha256) {
       const st=await fs.lstat(marker);
       if(!st.isFile() || st.isSymbolicLink())fail('retirement_marker_invalid');
       const existing=JSON.parse(await fs.readFile(marker,'utf8'));
+      // 旧B站标记且与调用方核对的回执一致：删除完成后再升级，期间旧标记继续冻结整桶。
+      if(platform==='verified-archives' && existing.schemaVersion===1 && existing.dir===dir && existing.platform==='bilibili'
+          && (keepLegacy || (Object.hasOwn(upgradeMarkers,dir) && existing.receiptSha256===upgradeMarkers[dir])))continue;
       if(existing.schemaVersion!==1 || existing.dir!==dir || existing.platform!==platform
           || existing.receiptSha256!==receiptSha256)fail('retirement_marker_conflict');
       continue;
@@ -206,8 +228,22 @@ async function acquireLeases(root) {
  * preflights every file, then rechecks each file immediately before unlink.
  */
 export async function deleteVerifiedArchive({ root: rootArg, receipt, receiptSha256,
-  approveSha256, apply = false, verifyEvidence, journalPath, now = Date.now(), signal, onJournal }) {
+  approveSha256, apply = false, verifyEvidence, journalPath, now = Date.now(), signal, onJournal, upgradeMarkers = {}, keepUnlistedInLegacyBuckets = false }) {
   validateReceipt(receipt, now);
+  if (Object.keys(upgradeMarkers).length && (retirementScope(receipt.scope).name !== "verified-archives"
+      || Object.keys(upgradeMarkers).some(dir => !receipt.files.some(row => bucketOf(row.path) === dir))))
+    fail("retirement_marker_upgrade_invalid");
+  // 仅旧B站标记冻结的桶允许回执外同桶文件留在原地（逐文件保留），且此时不得升级标记。
+  if (keepUnlistedInLegacyBuckets) {
+    if (retirementScope(receipt.scope).name !== "verified-archives" || Object.keys(upgradeMarkers).length) fail("legacy_keep_invalid");
+    for (const dir of new Set(receipt.files.map(row => bucketOf(row.path)))) {
+      const marker = path.join(rootArg, ".growth-archive-retired", `${dir}.json`);
+      const st = await fs.lstat(marker).catch(() => null);
+      if (!st?.isFile() || st.isSymbolicLink()) fail("legacy_marker_required");
+      const existing = JSON.parse(await fs.readFile(marker, "utf8"));
+      if (existing.schemaVersion !== 1 || existing.dir !== dir || existing.platform !== "bilibili") fail("legacy_marker_required");
+    }
+  }
   const digest = cleanupReceiptSha256(receipt);
   if (receiptSha256 !== undefined && receiptSha256 !== digest) fail("receipt_digest_mismatch");
   const root = path.resolve(rootArg);
@@ -245,13 +281,13 @@ export async function deleteVerifiedArchive({ root: rootArg, receipt, receiptSha
       journal = await fs.open(journalAbsolute, "wx", 0o600);
       await record({ event: "start", files: receipt.files });
     }
-    result.files = await inspect(root, receipt);
+    result.files = await inspect(root, receipt, keepUnlistedInLegacyBuckets);
     result.logicalBytes = result.files.reduce((total, row) => total + row.bytes, 0);
     result.estimatedReclaimableAllocatedBytes = result.files.reduce((total, row) =>
       total + (row.nlink === 1 ? row.allocatedBytes || 0 : 0), 0);
     result.allocatedBytesKnown = result.files.every(row => row.allocatedBytes !== null);
     if (!apply) { result.completed = true; return result; }
-    await preserveRetirementMarkers(root,receipt,digest);
+    await preserveRetirementMarkers(root,receipt,digest,upgradeMarkers,keepUnlistedInLegacyBuckets);
     await record({ event: "preflight", files: result.files });
     for (const expected of result.files) {
       signal?.throwIfAborted();
@@ -279,6 +315,13 @@ export async function deleteVerifiedArchive({ root: rootArg, receipt, receiptSha
       try { await parent.sync(); } finally { await parent.close(); }
       await record({ event: "unlinked", file: expected.path, logicalBytes: expected.bytes,
         lastLink: current.nlink === 1, allocatedBytes: current.allocatedBytes });
+    }
+    for (const [dir, previous] of Object.entries(upgradeMarkers)) {
+      await lease.assertOwned();
+      const restore = receipt.backup.restores.find(row => row.dir === dir);
+      if (!restore || !result.files.some(row => bucketOf(row.path) === dir)) fail("retirement_restore_missing");
+      await upgradeRetirementMarker(root, dir, previous, { receiptSha256: digest, restore, createdAt: new Date().toISOString() });
+      await record({ event: "marker-upgraded", dir });
     }
     result.completed = true;
     await record({ event: "completed", result });

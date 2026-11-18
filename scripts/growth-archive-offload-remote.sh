@@ -335,7 +335,7 @@ prepare_snapshot() {
           const parent=path.join(root,".growth-archive-retired"),file=path.join(parent,dir+".json");
           if(!fs.lstatSync(parent).isDirectory()||!fs.lstatSync(file).isFile())throw Error("marker-type");
           const m=JSON.parse(fs.readFileSync(file,"utf8"));
-          if(m.schemaVersion!==1||m.dir!==dir||m.platform!=="bilibili"||!/^[a-f0-9]{64}$/.test(m.receiptSha256)||m.restore?.dir!==dir)throw Error("marker-contract");
+          if(m.schemaVersion!==1||m.dir!==dir||(m.platform!=="bilibili"&&m.platform!=="verified-archives")||!/^[a-f0-9]{64}$/.test(m.receiptSha256)||m.restore?.dir!==dir)throw Error("marker-contract");
         } catch(e) {state="retirement-marker-invalid";reason="manual-review-required";}
         const row=JSON.stringify({dir,state,reason});console.log(row);console.error("GROWTH_ARCHIVE_RETIRED "+row);
       ' "$ROOT" "$dir" >> "$snapshot_next/retired.jsonl"

@@ -278,3 +278,10 @@ test("verified-archives 同样保护最新两桶", async t => {
   await assert.rejects(deleteVerifiedArchive(f.options), /latest_bucket_protected/);
   assert(await exists(f.other)); assert(await exists(path.join(f.root, f.files[0].path)));
 });
+test("保留同桶未列出文件仅限旧B站标记桶，且不得同时升级标记", async t => {
+  const f = await fixture(t, 1); await verifiedScope(f);
+  await fs.writeFile(path.join(f.root, "archive/2026-09-01-00/douyin-late.json.gz"), "x");
+  await assert.rejects(deleteVerifiedArchive({ ...f.options, keepUnlistedInLegacyBuckets: true }), /legacy_marker_required/);
+  await assert.rejects(deleteVerifiedArchive({ ...f.options, keepUnlistedInLegacyBuckets: true, upgradeMarkers: { "2026-09-01-00": "a".repeat(64) } }), /legacy_keep_invalid|marker_upgrade_invalid/);
+  assert(await exists(f.other)); assert(await exists(path.join(f.root, f.files[0].path)));
+});
