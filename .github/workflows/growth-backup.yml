@@ -978,6 +978,39 @@ jobs:
           if ! ls "$ROOT"/RETIREMENT_DEFERRED_* >/dev/null 2>&1; then
             printf '本批已发布归档（全部平台）还原核验与逐文件清理已执行；实际删除与空间变化见retirement-result-*.json。\n' >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           fi
+      - name: Retire remaining sources of Bilibili-retired archive buckets
+        if: ${{ success() && env.BACKUP_DEFERRED != 'true' }}
+        timeout-minutes: 15
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          ROOT=/tmp/growth-archive-offload
+          mkdir -p "$ROOT"
+          : "${FLY_MACHINE_ID:?缺少本批已核对的机器ID}"
+          # 1118 站长授权（验快照即可）：旧范围已退B站的桶，剩余来源只比对旧标记中已核验的冷备清单，不下载还原；
+          # 每班有上限，不一致/未列出者保留并报数量与字节。
+          printf '{"schemaVersion":1,"mode":"legacy-retired-markers","batchId":"%s-%s"}\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$ROOT/retirement-request-legacy.json"
+          status=0
+          timeout --kill-after=10s 540s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+            -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth node scripts/growth-archive-retire.mjs --scope=verified-archives --allow-remote-download --legacy-retired-markers'" \
+            < "$ROOT/retirement-request-legacy.json" > "$ROOT/retirement-result-legacy.json" 2> "$ROOT/retirement-stderr-legacy.log" || status=$?
+          cat "$ROOT/retirement-result-legacy.json"; cat "$ROOT/retirement-stderr-legacy.log" >&2
+          if grep -qF 'Usage: growth-archive-retire.mjs' "$ROOT/retirement-result-legacy.json" "$ROOT/retirement-stderr-legacy.log"; then
+            echo "::warning::线上版本尚未支持旧B站退役桶的剩余来源清理（新版本部署后生效），本轮未删除任何来源"
+            exit 0
+          fi
+          if grep -q '"growth_cleanup_busy"' "$ROOT/retirement-result-legacy.json" "$ROOT/retirement-stderr-legacy.log"; then
+            echo "::warning::旧B站退役桶清理遇到服务端采集锁，延后到下一班，未删除任何来源"
+            exit 0
+          fi
+          node -e '
+            const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n").pop());
+            const done=r.buckets.filter(b=>b.retirementCompleted).length,kept=r.buckets.filter(b=>b.keptFiles>0);
+            const line=`旧B站退役桶剩余来源：完成 ${done} 桶，删除 ${r.removedLogicalBytes} 字节；保留未核验 ${r.keptFiles} 个文件 ${r.keptBytes} 字节（${kept.map(b=>b.dir).join(",")||"无"}）；延后 ${r.deferred} 桶。`;
+            console.log(line);if(process.env.GITHUB_STEP_SUMMARY)require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY,line+"\n");
+          ' "$ROOT/retirement-result-legacy.json"
+          [ "$status" -eq 0 ] || exit "$status"
       - name: Preserve archive retirement receipts
         if: always()
         uses: actions/upload-artifact@v4
