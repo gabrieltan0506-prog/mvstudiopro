@@ -3,7 +3,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { downloadGrowthBackupGenerationAsset, loadGrowthBackupGeneration } from "../../shared/growthBackupGeneration.mjs";
 import { readTrendShortlistIndex, writeTrendShortlistIndex, ensureTrendShortlistIndex, type ShortlistCollection } from "./trendShortlistIndex";
 import { buildGrowthStatusProjection, type GrowthStatusProjection } from "./growthStatusProjection";
-import { readGrowthGzipJson, writeGrowthGzipJson, mapGrowthSequential } from "./growthJsonStream";
+import { readGrowthGzipJson, readGrowthJsonItemsStream, writeGrowthGzipJson, mapGrowthSequential } from "./growthJsonStream";
+// 合并规则与冷备 runner 脚本共用同一份实现（scripts/growth-backup-ledger-assets.mjs）。
+import { mergeHistoryLedgerEntries } from "./growthJsonStreamLedger.mjs";
 import { observeRuntimeMemory } from "../services/runtimeMemory";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -652,14 +654,42 @@ async function downloadColdStoreAsset(
   return cachePath;
 }
 
-async function readLocalJsonOrGzip<T>(plainPath: string): Promise<T | null> {
+function isMissingFileError(error: unknown) {
+  return (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+}
+
+/** 只有 ENOENT 算「不存在」；其余 stat 失败（权限、IO）一律抛出，不能当作空。 */
+async function growthFileExists(file: string) {
+  try {
+    await fs.stat(file);
+    return true;
+  } catch (error) {
+    if (isMissingFileError(error)) return false;
+    throw error;
+  }
+}
+
+function growthUnreadableError(file: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(`growth_store_file_unreadable:${file}: ${message}`);
+}
+
+/**
+ * strict：文件存在却读不出/解析失败（含超出字符串上限）时抛错，绝不返回 null；
+ * 否则调用方会把「读失败」当作「无数据」，再用空或少量数据覆盖/删除真文件。
+ */
+async function readLocalJsonOrGzip<T>(plainPath: string, options?: { strict?: boolean }): Promise<T | null> {
   const gzPath = `${plainPath}.gz`;
   try {
     return await observeRuntimeMemory(`growth:read:${path.basename(plainPath)}`, () => readGrowthGzipJson<T>(gzPath));
-  } catch {}
+  } catch (error) {
+    if (options?.strict && !isMissingFileError(error)) throw growthUnreadableError(gzPath, error);
+  }
   try {
     return JSON.parse(await fs.readFile(plainPath, "utf8")) as T;
-  } catch {}
+  } catch (error) {
+    if (options?.strict && !isMissingFileError(error)) throw growthUnreadableError(plainPath, error);
+  }
   return null;
 }
 
@@ -668,8 +698,9 @@ async function readJsonWithGzipFallback<T>(
   assetName: string,
   cacheRelativePath: string,
   downloadTimeoutMs = 15_000,
+  options?: { strict?: boolean },
 ): Promise<T | null> {
-  const local = await readLocalJsonOrGzip<T>(localPath);
+  const local = await readLocalJsonOrGzip<T>(localPath, options);
   if (local) return local;
   const downloaded = await downloadColdStoreAsset(assetName, cacheRelativePath, downloadTimeoutMs);
   if (!downloaded) return null;
@@ -1080,47 +1111,105 @@ function getHistoryLedgerFile(platform: GrowthPlatform) {
   return path.join(HISTORY_LEDGER_DIR, `${platform}.json`);
 }
 
+async function readHistoryLedgerItemsFile(file: string, gzip: boolean) {
+  const items: Record<string, TrendHistoryLedgerEntry> = {};
+  const result = await readGrowthJsonItemsStream(file, {
+    gzip,
+    onItem: (key, value) => { items[key] = value as TrendHistoryLedgerEntry; },
+  });
+  if (!result.hasItems) throw new Error("growth_history_ledger_items_missing");
+  return items;
+}
+
+/**
+ * 本地账本：两种形态都不存在（ENOENT）返回 null；存在却读不出一律抛错，绝不当作空账本。
+ * 旧 `X.json` 与新 `X.json.gz` 并存（迁移中断、旧版本回滚后又写了 .json、恢复脚本拷入）时两份都读并按键合并：
+ * 账本只增不减，取并集与谁新谁旧无关，结果确定，任何一份陈旧文件都遮蔽不了另一份。
+ */
+async function readLocalHistoryLedger(
+  platform: GrowthPlatform,
+  attempt = 0,
+): Promise<Record<string, TrendHistoryLedgerEntry> | null> {
+  const plainPath = getHistoryLedgerFile(platform);
+  const gzPath = `${plainPath}.gz`;
+  const [hasGz, hasPlain] = await Promise.all([growthFileExists(gzPath), growthFileExists(plainPath)]);
+  if (!hasGz && !hasPlain) return null;
+  let vanished = false;
+  const readOne = async (file: string, gzip: boolean) => {
+    try {
+      return await observeRuntimeMemory(`growth:read:${path.basename(file)}`, () => readHistoryLedgerItemsFile(file, gzip));
+    } catch (error) {
+      // stat 之后文件消失＝锁外读者撞上并发写者完成迁移（新 .gz 已到位、旧 .json 已删），重新探测即可，不是读坏。
+      if (isMissingFileError(error) && attempt < 3) { vanished = true; return null; }
+      throw growthUnreadableError(file, error);
+    }
+  };
+  const gzItems = hasGz ? await readOne(gzPath, true) : null;
+  const plainItems = hasPlain && !vanished ? await readOne(plainPath, false) : null;
+  if (vanished) return readLocalHistoryLedger(platform, attempt + 1);
+  if (gzItems && plainItems) return mergeHistoryLedgerEntries(gzItems, plainItems);
+  return gzItems || plainItems || {};
+}
+
 async function readHistoryLedger(platform: GrowthPlatform): Promise<Record<string, TrendHistoryLedgerEntry>> {
   if (isRetiredGrowthPlatform(platform)) return {};
+  const local = await readLocalHistoryLedger(platform);
+  if (local) return local;
   const parsed = await readJsonWithGzipFallback<{ items?: Record<string, TrendHistoryLedgerEntry> }>(
     getHistoryLedgerFile(platform),
     `history-ledger-${platform}.json.gz`,
     path.join("history-ledger", `${platform}.json.gz`),
+    undefined,
+    { strict: true },
   );
   return parsed?.items || {};
 }
 
+/** 只读统计用：本地账本（.json / .json.gz 任一形态，并存时取并集）；不存在返回空对象，读坏抛错。 */
+export async function readLocalHistoryLedgerForStats(platform: GrowthPlatform) {
+  return (await readLocalHistoryLedger(platform)) || {};
+}
+
+/**
+ * 账本统一写成流式 gzip 的 `X.json.gz`（紧凑 JSON，逐条序列化），临时空间只需压缩后的大小。
+ * 旧 `X.json` 只在新 .gz 已 rename 到位、回读条数与键完全一致、且旧文件每条键都在新文件里之后才删除；
+ * 任何疑点保留旧文件并抛错（读取侧会合并两份，不丢记录）。
+ */
 async function writeHistoryLedger(platform: GrowthPlatform, items: Record<string, TrendHistoryLedgerEntry>) {
   await ensureStoreDir();
-  await writeJsonAtomic(getHistoryLedgerFile(platform), {
+  const plainPath = getHistoryLedgerFile(platform);
+  const gzPath = `${plainPath}.gz`;
+  await observeRuntimeMemory(`growth:write:${path.basename(gzPath)}`, () => writeGrowthGzipJson(plainPath, {
     updatedAt: nowShanghaiIso(),
     platform,
     items,
+  }, { keepPlain: true }));
+  if (!(await growthFileExists(plainPath))) return;
+  const expectedCount = Object.keys(items).length;
+  let writtenCount = 0;
+  let writtenUnknown = 0;
+  await readGrowthJsonItemsStream(gzPath, {
+    gzip: true,
+    onItem: (key) => {
+      writtenCount++;
+      if (!Object.prototype.hasOwnProperty.call(items, key)) writtenUnknown++;
+    },
   });
-}
-
-function mergeHistoryLedgerEntries(
-  local: Record<string, TrendHistoryLedgerEntry>,
-  remote: Record<string, TrendHistoryLedgerEntry>,
-) {
-  const merged = { ...local };
-  for (const [key, entry] of Object.entries(remote)) {
-    const current = merged[key];
-    if (!current) {
-      merged[key] = entry;
-      continue;
-    }
-    merged[key] = {
-      ...current,
-      bucket: entry.bucket || current.bucket,
-      industryLabels: normalizeLabels([...(current.industryLabels || []), ...(entry.industryLabels || [])]),
-      ageLabels: normalizeLabels([...(current.ageLabels || []), ...(entry.ageLabels || [])]),
-      contentLabels: normalizeLabels([...(current.contentLabels || []), ...(entry.contentLabels || [])]),
-      firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
-      lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
-    };
+  let legacyCount = 0;
+  let legacyMissing = 0;
+  await readGrowthJsonItemsStream(plainPath, {
+    gzip: false,
+    onItem: (key) => {
+      legacyCount++;
+      if (!Object.prototype.hasOwnProperty.call(items, key)) legacyMissing++;
+    },
+  });
+  if (writtenCount !== expectedCount || writtenUnknown > 0 || legacyMissing > 0 || writtenCount < legacyCount) {
+    throw new Error(
+      `growth_history_ledger_migration_unverified:${platform}:expected=${expectedCount}:written=${writtenCount}:unknown=${writtenUnknown}:legacy=${legacyCount}:legacyMissing=${legacyMissing}`,
+    );
   }
-  return merged;
+  await fs.rm(plainPath);
 }
 
 const REPO_SNAPSHOT_LEDGER_DIR = path.resolve(process.cwd(), "data", "growth-snapshots", "latest", "history-ledger");
@@ -1275,19 +1364,25 @@ async function updateHistoryFromCollections(
   const touched = new Set<GrowthPlatform>();
   for (const [platform, collection] of Object.entries(collections) as Array<[GrowthPlatform, PlatformTrendCollection | undefined]>) {
     if (!collection?.items?.length) continue;
-    const ledger = await readHistoryLedger(platform);
-    for (const rawItem of collection.items) {
-      const entry = buildHistoryLedgerEntry(rawItem, collection.collectedAt);
-      if (!entry) continue;
-      const current = ledger[entry.key];
-      if (!current) {
-        ledger[entry.key] = entry;
-        continue;
+    // 单个平台账本读不出/迁移校验不过只跳过该平台账本（原文件不动），不能让整轮采集落盘失败：
+    // 本轮条目仍写入平台池与归档，账本之后可由 reconcile 从池与归档补回。
+    try {
+      const ledger = await readHistoryLedger(platform);
+      for (const rawItem of collection.items) {
+        const entry = buildHistoryLedgerEntry(rawItem, collection.collectedAt);
+        if (!entry) continue;
+        const current = ledger[entry.key];
+        if (!current) {
+          ledger[entry.key] = entry;
+          continue;
+        }
+        ledger[entry.key] = mergeHistoryLedgerEntry(current, entry);
       }
-      ledger[entry.key] = mergeHistoryLedgerEntry(current, entry);
+      await writeHistoryLedger(platform, ledger);
+      touched.add(platform);
+    } catch (error) {
+      console.error(`[growth.history] ${platform} history-ledger 更新失败，本轮跳过该平台账本（采集照常落盘）:`, error);
     }
-    await writeHistoryLedger(platform, ledger);
-    touched.add(platform);
     if (platform === "douyin") {
       await appendDramaMixDailySnapshot(collection);
     }
@@ -1919,15 +2014,27 @@ async function writeJsonAtomic(filePath: string, value: unknown, options?: { com
     }
     throw error;
   }
-  await fs.writeFile(tempPath, payload, "utf8");
-  await fs.rename(tempPath, filePath);
+  try {
+    await fs.writeFile(tempPath, payload, "utf8");
+    await fs.rename(tempPath, filePath);
+  } catch (error) {
+    // 写盘/改名失败（如 ENOSPC）须回收本写者的临时文件，避免大文件残留占满卷；原目标文件未被触碰。
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 async function writeBufferAtomic(filePath: string, payload: Buffer) {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.next`;
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(tempPath, payload);
-  await fs.rename(tempPath, filePath);
+  try {
+    await fs.writeFile(tempPath, payload);
+    await fs.rename(tempPath, filePath);
+  } catch (error) {
+    // 写盘/改名失败（如 ENOSPC）须回收本写者的临时文件，避免大文件残留占满卷；原目标文件未被触碰。
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 async function writeJsonGzipAtomic(plainPath: string, value: unknown) {
@@ -2132,16 +2239,12 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
     ) {
       return store;
     }
-    const platforms = new Set<GrowthPlatform>(
-      activeGrowthPlatformValues.filter((platform) =>
-        Boolean(store.collections?.[platform]?.items?.length)
-          || (store.archiveIndex || []).some((entry) => entry.platform === platform),
-      ),
-    );
     const ledgers = new Map<GrowthPlatform, Record<string, TrendHistoryLedgerEntry>>();
 
-    for (const platform of Array.from(platforms)) {
-      ledgers.set(platform, options?.force ? {} : await readHistoryLedger(platform));
+    // 账本只增不减：force 也从现有账本起步再并入当前池与归档，绝不先清空再重建；
+    // 末尾会重写全部活跃平台的账本，所以未入选的平台也要先读出现有账本，不能写成空对象。
+    for (const platform of activeGrowthPlatformValues) {
+      ledgers.set(platform, await readHistoryLedger(platform));
     }
 
     for (const [platform, collection] of Object.entries(store.collections) as Array<[GrowthPlatform, PlatformTrendCollection | undefined]>) {

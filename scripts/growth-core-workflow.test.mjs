@@ -34,7 +34,7 @@ function prepare() {
   for (const p of platforms) {
     fs.writeFileSync(path.join(source, "platform-current", `${p}.current.json.gz`), gzipSync(JSON.stringify({ platform: p, collection: { items: [{ id: `${p}-before` }] } })));
     fs.writeFileSync(path.join(source, "platforms", `${p}.json`), JSON.stringify({ platform: p, items: [{ id: `${p}-directory` }] }));
-    fs.writeFileSync(path.join(source, "history-ledger", `${p}.json`), JSON.stringify({ platform: p, ids: [`${p}-history`] }));
+    fs.writeFileSync(path.join(source, "history-ledger", `${p}.json`), JSON.stringify({ platform: p, ids: [`${p}-history`], items: { [`${p}:history`]: { key: `${p}:history`, bucket: "feed", firstSeenAt: "2026-01-01", lastSeenAt: "2026-01-01" } } }));
   }
   for (const name of ["current.json", "runtime-meta.json", "history-summary.json", "weixin-channels-miner.json", "platform-current-manifest.json", "backups/growth-debug-summary.json"])
     fs.writeFileSync(path.join(source, name), JSON.stringify({ epoch: "before", platforms: {} }));

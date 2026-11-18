@@ -44,7 +44,7 @@ async function main() {
   const historyDir = path.join(DEFAULT_STORE_DIR, "history-ledger");
   if (await pathExists(historyDir)) {
     const historyFiles = await fs.readdir(historyDir);
-    for (const fileName of historyFiles.filter((name) => name.endsWith(".json"))) {
+    for (const fileName of historyFiles.filter((name) => name.endsWith(".json") || name.endsWith(".json.gz"))) {
       await copyFilePreservingParents(
         path.join(historyDir, fileName),
         snapshotDir,

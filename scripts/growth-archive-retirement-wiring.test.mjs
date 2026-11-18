@@ -6,6 +6,8 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 
 const files=['growth-backup.yml','growth-archive-offload.yml'];
+// 2026-11-18 授权后步骤改名并改用 verified-archives；集成方改 YAML 前旧 B站 步骤仍合法。
+const retireStep=source=>source.includes('      - name: Retire verified archive sources\n')?'Retire verified archive sources':'Retire verified Bilibili archive sources';
 function step(source,name){
  const block=source.split(`      - name: ${name}\n`)[1]?.split('\n      - ')[0];
  assert(block,name);return block.split('        run: |\n')[1].replace(/^ {10}/gm,'');
@@ -18,13 +20,14 @@ function fixture(t,name){
  fs.writeFileSync(path.join(bin,'flyctl'),`#!/usr/bin/env node
 const fs=require('node:fs');const args=process.argv.slice(2),input=fs.readFileSync(0,'utf8');
 fs.writeFileSync(process.env.CAPTURE,JSON.stringify({args,input}));
+if(process.env.OLD_IMAGE==='1'&&args.at(-1).includes('--scope=verified-archives')){console.error(JSON.stringify({error:'Usage: growth-archive-retire.mjs --scope=bilibili-archives --allow-remote-download < metadata.json'}));process.exit(1);}
 if(process.env.BUSY==='1'){console.error(JSON.stringify({error:'growth_cleanup_busy'}));process.stdout.write(JSON.stringify({error:'growth_cleanup_busy'})+'\\n');process.exit(1);}
 process.stdout.write(JSON.stringify({completed:process.env.FAIL!=='1',removed:2,actualFreeBytesDelta:4096})+'\\n');
 process.exit(process.env.FAIL==='1'?23:0);
 `,{mode:0o755});
  const source=fs.readFileSync(`.github/workflows/${name}`,'utf8');
  const env={...process.env,PATH:`${bin}:${process.env.PATH}`,CAPTURE:capture,GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'4',FLY_MACHINE_ID:'selected-app',GITHUB_STEP_SUMMARY:summary};
- const run=(label='Retire verified Bilibili archive sources',extra={})=>spawnSync('bash',['-euo','pipefail','-c',step(source,label).replaceAll('/tmp/growth-archive-offload',store)],{env:{...env,...extra},encoding:'utf8'});
+ const run=(label=retireStep(source),extra={})=>spawnSync('bash',['-euo','pipefail','-c',step(source,label).replaceAll('/tmp/growth-archive-offload',store)],{env:{...env,...extra},encoding:'utf8'});
  const dir='2026-10-01-00',batchId=name==='growth-backup.yml'?'123-4-backup':'123-4';
  const batch={schemaVersion:3,batchId,archives:[{dir,releaseTag:'growth-archive-2026-10-01'}]};
  const publication={schemaVersion:1,batchId,uploaded:[{dir,releaseTag:'growth-archive-2026-10-01'}]};
@@ -37,10 +40,21 @@ process.exit(process.env.FAIL==='1'?23:0);
  };
  return{root,store,source,capture,summary,run,seed,batch,publication,manifest,dir};
 }
+test('单桶任务（archive_dir=A）不触发其他历史桶的正式删源：步骤条件与脚本内双重拦截',t=>{
+ const f=fixture(t,'growth-archive-offload.yml'),label='Retire remaining sources of Bilibili-retired archive buckets';
+ const block=f.source.split(`      - name: ${label}\n`)[1].split('\n      - ')[0];
+ assert.match(block,/if: \$\{\{ success\(\) && \(inputs\.archive_dir \|\| ''\) == '' \}\}/);
+ const probe=f.run(label,{GROWTH_ARCHIVE_PROBE_DIR:'2026-10-01-00'});
+ assert.equal(probe.status,0,probe.stderr);assert(!fs.existsSync(f.capture),'单桶任务不得调用 Fly');
+ assert(!fs.existsSync(path.join(f.store,'retirement-request-legacy.json')));
+ const scheduled=f.run(label,{GROWTH_ARCHIVE_PROBE_DIR:''});
+ assert(fs.existsSync(f.capture),scheduled.stderr);
+ assert.match(JSON.parse(fs.readFileSync(f.capture)).args.at(-1),/--legacy-retired-markers/);
+});
 for(const name of files){
  test(`${name}: 成功发布且释放快照后只传本批metadata到指定Fly机器`,t=>{
   const f=fixture(t,name);f.seed();
-  const idx=f.source.indexOf('- name: Retire verified Bilibili archive sources');
+  const idx=f.source.indexOf(`- name: ${retireStep(f.source)}`);
   assert(idx>f.source.indexOf('- name: Always release archive hardlink snapshot'));
   if(name==='growth-backup.yml')assert(idx>f.source.indexOf('- name: Always release owned current snapshot'));
   // 允许带 BACKUP_DEFERRED 让路守卫的写法：if: ${{ success() && env.BACKUP_DEFERRED != 'true' }}
@@ -48,11 +62,18 @@ for(const name of files){
   const r=f.run();assert.equal(r.status,0,r.stderr);
   const captured=JSON.parse(fs.readFileSync(f.capture));
   assert(captured.args.includes('selected-app'));
-  assert.match(captured.args.at(-1),/node scripts\/growth-archive-retire.mjs --scope=bilibili-archives --allow-remote-download/);
+  assert.match(captured.args.at(-1),/node scripts\/growth-archive-retire.mjs --scope=(?:verified|bilibili)-archives --allow-remote-download/);
   assert.doesNotMatch(captured.args.join(' '),/machine start|sftp|curl|gh release/);
   assert.deepEqual(JSON.parse(captured.input),{batch:f.batch,publication:f.publication,manifests:{[`archive-${f.dir}.manifest.json`]:Buffer.from(JSON.stringify(f.manifest)).toString("base64")}});
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.store,'retirement-result-new.json'))).actualFreeBytesDelta,4096);
   assert(fs.readFileSync(f.summary,'utf8').includes('逐文件清理已执行'));
+ });
+ test(`${name}: 线上仍是旧版本时退回只退役B站，不因部署顺序失败`,t=>{
+  const f=fixture(t,name);f.seed();
+  const r=f.run(undefined,{OLD_IMAGE:'1'});assert.equal(r.status,0,r.stderr);
+  assert.match(r.stdout,/本轮按旧范围只退役 B站/);
+  assert.match(JSON.parse(fs.readFileSync(f.capture)).args.at(-1),/--scope=bilibili-archives --allow-remote-download/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.store,'retirement-result-new.json'))).actualFreeBytesDelta,4096);
  });
  test(`${name}: 无发布回执或快照未释放不调用清理`,t=>{
   const f=fixture(t,name);assert.equal(f.run().status,0);assert(!fs.existsSync(f.capture));
@@ -85,9 +106,15 @@ for(const name of files){
  });
  test(`${name}: 仅快照清理成功才建立释放标记`,t=>{
   const f=fixture(t,name);f.seed();fs.unlinkSync(path.join(f.store,'SNAPSHOT_RELEASED'));
-  assert.equal(f.run('Always release archive hardlink snapshot',{FAIL:'1'}).status,0);
+  // 1118：释放步骤改为重试；失败 shim 下不等待，只验证最终保留标记。
+  const failed=f.run('Always release archive hardlink snapshot',{FAIL:'1',GROWTH_SNAPSHOT_RELEASE_ATTEMPTS:'2',GROWTH_SNAPSHOT_RELEASE_WAIT_SECONDS:'0'});
+  assert.equal(failed.status,0,failed.stderr);
   assert(!fs.existsSync(path.join(f.store,'SNAPSHOT_RELEASED')));
+  assert(fs.existsSync(path.join(f.store,'SNAPSHOT_RETAINED')));
+  assert.match(failed.stdout,/（2\/2）/);
+  fs.unlinkSync(path.join(f.store,'SNAPSHOT_RETAINED'));
   assert.equal(f.run('Always release archive hardlink snapshot').status,0);
   assert(fs.existsSync(path.join(f.store,'SNAPSHOT_RELEASED')));
+  assert(!fs.existsSync(path.join(f.store,'SNAPSHOT_RETAINED')));
  });
 }

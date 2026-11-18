@@ -220,7 +220,7 @@ describe("growth store merge + hot-window prune", () => {
     const archivedCollection = JSON.parse(gunzipSync(beforeArchive).toString("utf8")) as PlatformTrendCollection;
     expect(archivedCollection.items).toHaveLength(1);
     expect(beforeStore.collections.douyin?.items).toHaveLength(11);
-    const ledgerFile = path.join(tempRoot, "history-ledger", "douyin.json");
+    const ledgerFile = path.join(tempRoot, "history-ledger", "douyin.json.gz");
     const beforeLedger = await fs.readFile(ledgerFile);
 
     const enrichedAt = new Date().toISOString();

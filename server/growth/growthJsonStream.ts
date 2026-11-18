@@ -31,6 +31,21 @@ export function* growthJsonChunks(value: unknown): Generator<string> {
       }
       if (chunk) yield chunk;
       yield "]";
+    } else if (key === "items" && item && typeof item === "object" && Object.getPrototypeOf(item) === Object.prototype
+      && typeof (item as { toJSON?: unknown }).toJSON !== "function") {
+      // history-ledger 的 items 是按键索引的对象；逐条序列化，避免整份账本拼成一个超长字符串。
+      yield "{";
+      let chunk = "";
+      let entrySeparator = "";
+      for (const [entryKey, entry] of Object.entries(item)) {
+        const encoded = JSON.stringify(entry);
+        if (encoded === undefined) continue;
+        chunk += entrySeparator + JSON.stringify(entryKey) + ":" + encoded;
+        entrySeparator = ",";
+        if (chunk.length >= 64 * 1024) { yield chunk; chunk = ""; }
+      }
+      if (chunk) yield chunk;
+      yield "}";
     } else if (key === "collection" && item && typeof item === "object") {
       const nested = growthJsonChunks(item);
       for (let next = nested.next(); !next.done; next = nested.next()) yield next.value;
@@ -55,17 +70,21 @@ export async function readGrowthGzipJson<T>(file: string): Promise<T> {
   return JSON.parse(chunks.join("")) as T;
 }
 
-export async function writeGrowthGzipJson(plainPath: string, value: unknown) {
+export async function writeGrowthGzipJson(plainPath: string, value: unknown, options?: { keepPlain?: boolean }) {
   const gzPath = `${plainPath}.gz`;
   const tempPath = `${gzPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.next`;
   try {
     await pipeline(Readable.from(growthJsonChunks(value)), createGzip({ level: 6 }), createWriteStream(tempPath, { flags: "wx" }));
     await rename(tempPath, gzPath);
-    await rm(plainPath, { force: true });
+    // keepPlain：调用方需先回读校验新 .gz 再自行删除旧 .json（history-ledger 迁移）。
+    if (!options?.keepPlain) await rm(plainPath, { force: true });
   } finally {
     await rm(tempPath, { force: true }).catch(() => {});
   }
 }
+
+// 流式账本读取迁到纯 .mjs，冷备 runner 脚本可直接 import 同一份实现。
+export { readGrowthJsonItemsStream } from "./growthJsonStreamLedger.mjs";
 
 export async function mapGrowthSequential<T, R>(values: readonly T[], run: (value: T) => Promise<R>): Promise<R[]> {
   const result: R[] = [];

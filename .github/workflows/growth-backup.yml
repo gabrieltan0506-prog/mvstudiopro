@@ -5,7 +5,7 @@ name: Growth Backup
 on:
   schedule:
     # 每 3 小时（UTC :00）。必须与 growth-archive-offload 的 30 */3 同频，错开 30 分钟。
-    - cron: "17 2,14 * * *"  # 每 12 小时（1113 站长定：私有仓库每月 2000 分钟，备份+归档按 6 小时一个月约 3000 分钟）；避开 UTC 19–20 点采集繁忙段；非整点：GitHub 整点 cron 常被丢班
+    - cron: "17 4,10,16,22 * * *"  # 每 6 小时（1118 站长定，原为 1113 的每 12 小时；仓库是公开的，Actions 不计分钟）；避开 UTC 19–20 点采集繁忙段；非整点：GitHub 整点 cron 常被丢班
   workflow_dispatch:
 
 concurrency:
@@ -219,7 +219,15 @@ jobs:
               exit 43
             fi
           fi
-          (set -C; printf '%s' 'github-growth-backup' > "$LOCK") 2>/dev/null
+          # 1118：盘满时建锁必然失败，此前被报成「冷备锁获取异常」，还会留下空锁
+          # 把采集挡 15 分钟。先查剩余空间，盘满就如实报盘满且不去建锁。
+          AVAILABLE_KB=$(df -Pk "$ROOT" | awk 'NR==2 {print $4}')
+          case "$AVAILABLE_KB" in ''|*[!0-9]*) AVAILABLE_KB=0 ;; esac
+          if [ "$AVAILABLE_KB" -lt 1024 ]; then
+            echo GROWTH_BACKUP_DISK_FULL >&2
+            exit 44
+          fi
+          (set -C; printf '%s' 'github-growth-backup' > "$LOCK")
           SH
             local lane_attempt
             for lane_attempt in $(seq 1 60); do
@@ -230,6 +238,10 @@ jobs:
                 return 0
               fi
               cat /tmp/growth-backup/lane-error.log >&2
+              if grep -Eq '^GROWTH_BACKUP_DISK_FULL$' /tmp/growth-backup/lane-error.log; then
+                echo "::error::Fly /data 卷已写满（剩余不足 1MB），冷备无法取得通道；这不是锁故障" >&2
+                return 1
+              fi
               # flyctl 将远端退出码包装为本地 1；只接受远端明确的繁忙标记。
               if ! grep -Eq '^GROWTH_BACKUP_LANE_BUSY=(interactive|collection)$' /tmp/growth-backup/lane-error.log; then
                 echo "::error::冷备锁获取异常，不能作为正常让路处理" >&2
@@ -276,7 +288,32 @@ jobs:
             fi
           }
 
+          # 1118 根因修复：current 临时快照只在本步骤内使用。此前要等到整轮备份最后
+          # 才删，其间采集已恢复并重写来源，硬链接快照变成实占（约 1.7GB），清理一旦
+          # 失败就把 /data 写满。现在在仍占着采集通道时就地删除：此刻没有采集 merge
+          # 抢存储锁，采集恢复之前快照已不存在。失败不影响本步骤，由后面的 always
+          # 步骤重试，再失败则本轮标红，下一轮开头自动回收。
+          release_current_snapshot_in_lane() {
+            [ -s /tmp/growth-backup/remote-current-batch-dir.txt ] || return 0
+            [ -n "${BATCH_ID:-}" ] || return 0
+            case "$BATCH_ID" in *[!0-9-]*|*-*-*) return 0 ;; esac
+            [ "$(cat /tmp/growth-backup/remote-current-batch-dir.txt)" = "/data/growth/backups/current-batches/${BATCH_ID}" ] || return 0
+            local release_attempt
+            for release_attempt in 1 2 3; do
+              if timeout --kill-after=5s 180s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+                -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth pnpm exec tsx scripts/cleanup-growth-current-snapshot.mts --batch-id=${BATCH_ID}'" </dev/null; then
+                touch /tmp/growth-backup/CURRENT_SNAPSHOT_RELEASED
+                return 0
+              fi
+              echo "current 临时快照就地释放未完成（${release_attempt}/3）" >&2
+              [ "$release_attempt" = 3 ] || sleep "${GROWTH_SNAPSHOT_RELEASE_WAIT_SECONDS:-20}"
+            done
+            return 0
+          }
+
           release_backup_lane() {
+            # 心跳要保持到快照释放完：释放最长约 10 分钟，采集把超过 15 分钟没心跳的通道锁视为过期。
+            release_current_snapshot_in_lane || true
             if [ -n "${BACKUP_HEARTBEAT_PID:-}" ]; then
               kill "$BACKUP_HEARTBEAT_PID" 2>/dev/null || true
               wait "$BACKUP_HEARTBEAT_PID" 2>/dev/null || true
@@ -293,6 +330,19 @@ jobs:
               fi
             '" >/dev/null 2>&1 || true
           }
+
+          # 1118：建新快照之前先回收历史残留的临时快照。脚本经 stdin 传入，不依赖
+          # Fly 当前部署版本；不拿锁、不写文件，盘已写满时也能执行，所以放在取得
+          # 冷备通道（要建锁文件）之前。只输出批次名与字节数。
+          if wait_for_started_vm && timeout --kill-after=5s 180s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+            -C "sh -c 'exec node --input-type=module - --current-hours=3 --archive-hours=24'" \
+            < scripts/growth-reclaim-stale-snapshots.mjs > /tmp/growth-backup/stale-snapshot-reclaim.out 2>/tmp/growth-backup/stale-snapshot-reclaim.err \
+            && node scripts/growth-reclaim-report.mjs /tmp/growth-backup/stale-snapshot-reclaim.out; then
+            :
+          else
+            cat /tmp/growth-backup/stale-snapshot-reclaim.err >&2 2>/dev/null || true
+            echo "::warning::历史临时快照回收未完成；本轮继续，建快照前的空间闸门仍会把关"
+          fi
 
           if acquire_backup_lane; then
             :
@@ -486,10 +536,8 @@ jobs:
             /tmp/growth-backup/platform-current \
             /tmp/growth-backup/release-current
           # 本机校验完成；失败批次快照保留调查，不按年龄删除任何来源或备份。
-          for ledger_file in /tmp/growth-backup/store/history-ledger/*.json; do
-            [ -f "$ledger_file" ] || continue
-            gzip -c "$ledger_file" > "/tmp/growth-backup/history-ledger-$(basename "$ledger_file" .json).json.gz"
-          done
+          # .json 与 .json.gz 并存时按线上规则合并为同名资产，不能后者覆盖前者；任一账本损坏即失败。
+          node scripts/growth-backup-ledger-assets.mjs /tmp/growth-backup/store/history-ledger /tmp/growth-backup
           for platform_file in /tmp/growth-backup/store/platforms/*.json; do
             [ -f "$platform_file" ] || continue
             gzip -c "$platform_file" > "/tmp/growth-backup/platform-$(basename "$platform_file" .json).json.gz"
@@ -497,10 +545,6 @@ jobs:
           for platform_file in /tmp/growth-backup/store/platforms/*.json.gz; do
             [ -f "$platform_file" ] || continue
             cp "$platform_file" "/tmp/growth-backup/platform-$(basename "$platform_file")"
-          done
-          for ledger_file in /tmp/growth-backup/store/history-ledger/*.json.gz; do
-            [ -f "$ledger_file" ] || continue
-            cp "$ledger_file" "/tmp/growth-backup/history-ledger-$(basename "$ledger_file")"
           done
           if [ -d /tmp/growth-backup/store/platform-current ]; then
             for platform_file in /tmp/growth-backup/store/platform-current/*.json; do
@@ -786,7 +830,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
       - name: Always release archive hardlink snapshot
-        timeout-minutes: 2
+        timeout-minutes: 12
         if: always()
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -795,15 +839,22 @@ jobs:
             exit 0
           fi
           BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
-          if timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-            -C "sh -s -- cleanup '$BATCH_ID'" \
-            < scripts/growth-archive-offload-remote.sh; then
-            touch /tmp/growth-archive-offload/SNAPSHOT_RELEASED
-          else
-            echo "::warning::临时快照清理未完成，保留待后续回收；未删除源归档"
-          fi
+          # 1118：此前只试一次，采集正占着锁就直接放弃，快照永久残留、本批来源清理也被跳过。
+          ATTEMPTS="${GROWTH_SNAPSHOT_RELEASE_ATTEMPTS:-5}"
+          for release_attempt in $(seq 1 "$ATTEMPTS"); do
+            if timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "sh -s -- cleanup '$BATCH_ID'" \
+              < scripts/growth-archive-offload-remote.sh; then
+              touch /tmp/growth-archive-offload/SNAPSHOT_RELEASED
+              exit 0
+            fi
+            echo "归档临时快照清理未完成（${release_attempt}/${ATTEMPTS}）"
+            [ "$release_attempt" = "$ATTEMPTS" ] || sleep "${GROWTH_SNAPSHOT_RELEASE_WAIT_SECONDS:-60}"
+          done
+          touch /tmp/growth-archive-offload/SNAPSHOT_RETAINED
+          echo "::warning::归档临时快照清理未完成（${BATCH_ID}），未删除源归档；本轮将标红，超过 24 小时由下一轮备份自动回收"
       - name: Always release owned current snapshot
-        timeout-minutes: 2
+        timeout-minutes: 12
         if: always()
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -811,16 +862,29 @@ jobs:
           if [ -z "${FLY_MACHINE_ID:-}" ] || [ ! -s /tmp/growth-backup/remote-current-batch-dir.txt ]; then
             exit 0
           fi
+          if [ -f /tmp/growth-backup/CURRENT_SNAPSHOT_RELEASED ]; then
+            echo "current 临时快照已在取数步骤内释放"
+            exit 0
+          fi
           BATCH_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           case "$BATCH_ID" in *[!0-9-]*|*-*-*) exit 64 ;; esac
           test "$(cat /tmp/growth-backup/remote-current-batch-dir.txt)" = "/data/growth/backups/current-batches/${BATCH_ID}"
           # The deployed CLI checks the owner marker, exited PID, path identity and
           # mutation lease. Only this run's temporary hardlinks can be removed.
-          timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-            -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth pnpm exec tsx scripts/cleanup-growth-current-snapshot.mts --batch-id=${BATCH_ID}'" \
-            || echo "::warning::本批 current 临时快照未清理，来源及其他批次保留；需后续处理"
+          # 1118：此前只试一次、远端只等锁 5 秒，失败只打 warning 当成功，残留无人回收。
+          for release_attempt in 1 2 3; do
+            if timeout --kill-after=5s 180s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth pnpm exec tsx scripts/cleanup-growth-current-snapshot.mts --batch-id=${BATCH_ID}'" </dev/null; then
+              touch /tmp/growth-backup/CURRENT_SNAPSHOT_RELEASED
+              exit 0
+            fi
+            echo "current 临时快照清理未完成（${release_attempt}/3）"
+            [ "$release_attempt" = 3 ] || sleep "${GROWTH_SNAPSHOT_RELEASE_WAIT_SECONDS:-30}"
+          done
+          touch /tmp/growth-backup/CURRENT_SNAPSHOT_RETAINED
+          echo "::warning::本批 current 临时快照未清理（${BATCH_ID}），来源及其他批次保留；本轮将标红，下一轮开头自动回收"
 
-      - name: Retire verified Bilibili archive sources
+      - name: Retire verified archive sources
         if: ${{ success() && env.BACKUP_DEFERRED != 'true' }}
         timeout-minutes: 20
         env:
@@ -868,6 +932,10 @@ jobs:
           NODE
           # 服务端采集/变更锁被占时清理脚本立刻报 growth_cleanup_busy；这是真实竞争不是陈旧锁，
           # 等一等再试即可，不该让整个 run 红掉（1109 事故：07:01Z run 仅此一步失败）。
+          # 1118 站长授权：冷备核验通过后，同桶全部已发布平台的归档来源一并退役（原先只退役 B站）。
+          # 退役脚本跑的是 Fly 上已部署的版本：部署完成前旧版本不认识新范围，只在那种情况下
+          # 本轮退回旧范围（只退役 B站），不让流程顺序造成失败。
+          RETIRE_SCOPE=verified-archives
           for kind in new reused; do
             request="$ROOT/retirement-request-$kind.json"
             [ -s "$request" ] || continue
@@ -876,9 +944,17 @@ jobs:
               attempt=$((attempt+1))
               status=0
               timeout --kill-after=10s 540s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-                -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth node scripts/growth-archive-retire.mjs --scope=bilibili-archives --allow-remote-download'" \
-                < "$request" > "$ROOT/retirement-result-$kind.json" || status=$?
+                -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth node scripts/growth-archive-retire.mjs --scope=${RETIRE_SCOPE} --allow-remote-download'" \
+                < "$request" > "$ROOT/retirement-result-$kind.json" 2> "$ROOT/retirement-stderr-$kind.log" || status=$?
               cat "$ROOT/retirement-result-$kind.json"
+              cat "$ROOT/retirement-stderr-$kind.log" >&2
+              if [ "$status" -ne 0 ] && [ "$RETIRE_SCOPE" = verified-archives ] \
+                && grep -qF -- 'Usage: growth-archive-retire.mjs --scope=bilibili-archives --allow-remote-download' "$ROOT/retirement-result-$kind.json" "$ROOT/retirement-stderr-$kind.log"; then
+                echo "::warning::线上版本尚未支持全部平台归档退役（新版本部署后生效），本轮按旧范围只退役 B站"
+                RETIRE_SCOPE=bilibili-archives
+                attempt=0
+                continue
+              fi
               if [ "$status" -eq 0 ] || ! grep -q '"growth_cleanup_busy"' "$ROOT/retirement-result-$kind.json"; then
                 [ "$status" -eq 0 ] || exit "$status"
                 break
@@ -894,8 +970,51 @@ jobs:
             done
           done
           if ! ls "$ROOT"/RETIREMENT_DEFERRED_* >/dev/null 2>&1; then
-            printf '本批B站归档还原核验与逐文件清理已执行；实际删除与空间变化见retirement-result-*.json。\n' >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            printf '本批已发布归档（全部平台）还原核验与逐文件清理已执行；实际删除与空间变化见retirement-result-*.json。\n' >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           fi
+      - name: Commit archive rotation cursor
+        if: always()
+        timeout-minutes: 5
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          ROOT=/tmp/growth-archive-offload
+          if [ ! -s "$ROOT/batch-id.txt" ] || [ -z "${FLY_MACHINE_ID:-}" ]; then exit 0; fi
+          BATCH_ID=$(cat "$ROOT/batch-id.txt")
+          # 1118：游标只越过真正处理完的桶。只有退役结果里 retirementCompleted===true 的桶才算完成；缺 buckets 视为未完成。
+          COMPLETED=$(node -e 'const fs=require("fs"),dirs=new Set();for(const kind of ["new","reused"]){let r;try{r=JSON.parse(fs.readFileSync(`/tmp/growth-archive-offload/retirement-result-${kind}.json`,"utf8").trim().split("\n").pop())}catch{continue}for(const b of Array.isArray(r.buckets)?r.buckets:[])if(b&&b.retirementCompleted===true&&/^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(b.dir))dirs.add(b.dir)}process.stdout.write([...dirs].join(","))')
+          for attempt in 1 2 3; do
+            if timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "sh -s -- commit-cursor '$BATCH_ID' '$COMPLETED'" < scripts/growth-archive-offload-remote.sh; then
+              exit 0
+            fi
+            [ "$attempt" = 3 ] || sleep "${GROWTH_CURSOR_COMMIT_WAIT_SECONDS:-20}"
+          done
+          echo "::warning::轮转游标未提交（${BATCH_ID}）；下一班 prepare 会按本班失败结算，不跳桶"
+      - name: Retire remaining sources of Bilibili-retired archive buckets
+        if: ${{ success() && env.BACKUP_DEFERRED != 'true' }}
+        timeout-minutes: 15
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          ROOT=/tmp/growth-archive-offload
+          mkdir -p "$ROOT"
+          : "${FLY_MACHINE_ID:?缺少本批已核对的机器ID}"
+          # 1118 站长授权（验快照即可）：旧范围已退B站的桶，剩余来源只比对旧标记中已核验的冷备清单，不下载还原；
+          # 每班有上限，不一致/未列出者保留并报数量与字节。
+          printf '{"schemaVersion":1,"mode":"legacy-retired-markers","batchId":"%s-%s"}\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$ROOT/retirement-request-legacy.json"
+          status=0
+          timeout --kill-after=10s 540s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+            -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth node scripts/growth-archive-retire.mjs --scope=verified-archives --allow-remote-download --legacy-retired-markers'" \
+            < "$ROOT/retirement-request-legacy.json" > "$ROOT/retirement-result-legacy.json" 2> "$ROOT/retirement-stderr-legacy.log" || status=$?
+          cat "$ROOT/retirement-result-legacy.json"; cat "$ROOT/retirement-stderr-legacy.log" >&2
+          if grep -qF 'Usage: growth-archive-retire.mjs' "$ROOT/retirement-result-legacy.json" "$ROOT/retirement-stderr-legacy.log"; then
+            echo "::warning::线上版本尚未支持旧B站退役桶的剩余来源清理（新版本部署后生效），本轮未删除任何来源"
+            exit 0
+          fi
+          # 按桶读取结构化结果：仅有锁竞争才让行；只要有失败或标记无效的桶就列出并返回非零。
+          node scripts/growth-archive-legacy-report.mjs "$ROOT/retirement-result-legacy.json" "$ROOT/retirement-stderr-legacy.log" "$status"
       - name: Preserve archive retirement receipts
         if: always()
         uses: actions/upload-artifact@v4
@@ -906,3 +1025,15 @@ jobs:
             /tmp/growth-archive-offload/retirement-result-*.json
           if-no-files-found: ignore
           retention-days: 30
+      - name: Fail run when a temporary snapshot was left on Fly
+        if: always()
+        run: |
+          # 1118：残留不能只打 warning 当成功。放在最末，不影响前面条件为 success() 的步骤。
+          LEFT=""
+          [ ! -f /tmp/growth-backup/CURRENT_SNAPSHOT_RETAINED ] || LEFT="$LEFT current"
+          [ ! -f /tmp/growth-archive-offload/SNAPSHOT_RETAINED ] || LEFT="$LEFT archive"
+          if [ -n "$LEFT" ]; then
+            echo "本轮有临时快照未能从 Fly 删除：$LEFT。数据未受影响；下一轮备份开头会自动回收。" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::临时快照残留在 Fly：$LEFT"
+            exit 1
+          fi

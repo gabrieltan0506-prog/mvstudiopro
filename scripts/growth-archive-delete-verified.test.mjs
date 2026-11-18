@@ -59,7 +59,7 @@ test("apply unlinks exact Bilibili files including valid empty items; mixed plat
   assert.equal(await exists(path.join(f.root, ".growth-platform-collection.lock")), false);
   assert.equal(await exists(path.join(f.root, ".growth-store-mutation.lock")), false);
   const journal = (await fs.readFile(f.options.journalPath, "utf8")).trim().split("\n").map(JSON.parse);
-  assert.deepEqual(journal.map(row => row.event), ["start", "preflight", "unlink-intent", "unlinked", "unlink-intent", "unlinked", "completed"]);
+  assert.deepEqual(journal.map(row => row.event), ["start", "preflight", "unlink-intent", "unlinked", "unlink-intent", "unlinked", "marker-completed", "completed"]);
 });
 
 test("apply requires exact review digest and verified remote evidence binding", async t => {
@@ -230,4 +230,99 @@ test("写入删除意图后取消也必须保留尚未删除的来源", async t 
   assert.match(error.message, /cancel-before-unlink/);
   assert.equal(error.cleanupResult.removed.length, 0);
   assert(await exists(path.join(f.root, f.files[0].path)));
+});
+
+// 2026-11-18 用户授权：冷备核验后的非B站归档来源也可退役（verified-archives）；旧回执仍只认B站。
+async function verifiedScope(f) {
+  const raw = await fs.readFile(f.other);
+  f.receipt.scope = "verified-archives";
+  f.receipt.files = [...f.files, { path: "archive/2026-09-01-00/douyin-keep.json.gz", bytes: raw.length, sha256: sha(raw) }]
+    .sort((a, b) => a.path.localeCompare(b.path, "en"));
+  f.options.approveSha256 = cleanupReceiptSha256(f.receipt);
+}
+test("verified-archives 回执逐文件删除同桶非B站来源，快手/头条与元数据保留并写退役标记", async t => {
+  const f = await fixture(t, 1); await verifiedScope(f);
+  const kept = path.join(f.root, "archive/2026-09-01-00/kuaishou-keep.json.gz");
+  await fs.writeFile(kept, gzipSync('{"items":[]}'));
+  const result = await deleteVerifiedArchive(f.options);
+  assert.equal(result.completed, true); assert.equal(result.removed.length, 2);
+  assert.equal(await exists(f.other), false); assert(await exists(kept));
+  const marker = JSON.parse(await fs.readFile(path.join(f.root, ".growth-archive-retired/2026-09-01-00.json"), "utf8"));
+  assert.equal(marker.platform, "verified-archives");
+});
+test("verified-archives 桶内存在回执外来源时整批保留", async t => {
+  for (const extra of ["douyin-late.json.gz", "unknown-prefix.json.gz", "nested/xiaohongshu-x.json.gz"]) {
+    const f = await fixture(t, 1); await verifiedScope(f);
+    const file = path.join(f.root, "archive/2026-09-01-00", extra);
+    await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, "x");
+    await assert.rejects(deleteVerifiedArchive(f.options), /unverified_source_present/);
+    assert(await exists(f.other)); assert(await exists(path.join(f.root, f.files[0].path)));
+    assert.equal(await exists(path.join(f.root, ".growth-archive-retired")), false);
+  }
+});
+test("回执范围：旧回执拒绝非B站，新范围拒绝已退出平台与未知范围", async t => {
+  const f = await fixture(t, 1);
+  const raw = await fs.readFile(f.other);
+  const douyin = { path: "archive/2026-09-01-00/douyin-keep.json.gz", bytes: raw.length, sha256: sha(raw) };
+  await assert.rejects(deleteVerifiedArchive({ root: f.root, receipt: { ...f.receipt, files: [douyin] } }), /file_scope_invalid/);
+  for (const name of ["kuaishou-x.json.gz", "toutiao-x.json.gz"])
+    await assert.rejects(deleteVerifiedArchive({ root: f.root, receipt: { ...f.receipt, scope: "verified-archives",
+      files: [{ ...douyin, path: `archive/2026-09-01-00/${name}` }] } }), /file_scope_invalid/);
+  for (const scope of ["all", "constructor", null])
+    await assert.rejects(deleteVerifiedArchive({ root: f.root, receipt: { ...f.receipt, scope } }), /scope_invalid/);
+  assert(await exists(f.other)); assert(await exists(path.join(f.root, f.files[0].path)));
+});
+test("verified-archives 同样保护最新两桶", async t => {
+  const f = await fixture(t, 1); await verifiedScope(f);
+  await fs.rmdir(path.join(f.root, "archive/2026-09-03-00"));
+  await assert.rejects(deleteVerifiedArchive(f.options), /latest_bucket_protected/);
+  assert(await exists(f.other)); assert(await exists(path.join(f.root, f.files[0].path)));
+});
+test("保留同桶未列出文件仅限旧B站标记桶，且不得同时升级标记", async t => {
+  const f = await fixture(t, 1); await verifiedScope(f);
+  await fs.writeFile(path.join(f.root, "archive/2026-09-01-00/douyin-late.json.gz"), "x");
+  await assert.rejects(deleteVerifiedArchive({ ...f.options, keepUnlistedInLegacyBuckets: true }), /legacy_marker_required/);
+  await assert.rejects(deleteVerifiedArchive({ ...f.options, keepUnlistedInLegacyBuckets: true, upgradeMarkers: { "2026-09-01-00": "a".repeat(64) } }), /legacy_keep_invalid|marker_upgrade_invalid/);
+  assert(await exists(f.other)); assert(await exists(path.join(f.root, f.files[0].path)));
+});
+test("标记先写 pending，逐文件删除全部完成后才改 completed；中断保持 pending", async t => {
+  const f = await fixture(t, 2);
+  const markerFile = path.join(f.root, ".growth-archive-retired/2026-09-01-00.json");
+  await assert.rejects(deleteVerifiedArchive({ ...f.options, onJournal: e => { if (e.event === "unlinked") throw Error("crash"); } }), /crash/);
+  const pending = JSON.parse(await fs.readFile(markerFile, "utf8"));
+  assert.equal(pending.state, "pending"); assert.deepEqual(pending.files, f.files);
+  const g = await fixture(t, 1);
+  await deleteVerifiedArchive(g.options);
+  const done = JSON.parse(await fs.readFile(path.join(g.root, ".growth-archive-retired/2026-09-01-00.json"), "utf8"));
+  assert.equal(done.state, "completed"); assert.equal(done.receiptSha256, cleanupReceiptSha256(g.receipt));
+});
+// [复审] 首次写 pending 遇盘满：不得在正式路径留下 0 字节标记，否则普通扫描与续删都会永久跳过该桶。
+test("首次写 pending 标记时盘满：正式标记不出现、暂存文件已清、来源一个不删，下一轮可正常退役", async t => {
+  const f = await fixture(t, 2);
+  const markers = path.join(f.root, ".growth-archive-retired"), markerFile = path.join(markers, "2026-09-01-00.json");
+  const realOpen = fs.open;
+  t.after(() => { fs.open = realOpen; });
+  fs.open = async (file, ...rest) => {
+    const handle = await realOpen(file, ...rest);
+    if (String(file).startsWith(markers + path.sep) && String(file).includes(".json.next-"))
+      handle.writeFile = async () => { throw Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" }); };
+    return handle;
+  };
+  await assert.rejects(deleteVerifiedArchive(f.options), /ENOSPC/);
+  fs.open = realOpen;
+  assert.equal(await exists(markerFile), false, "盘满时不得发布正式标记");
+  assert.deepEqual((await fs.readdir(markers)).filter(name => name.includes(".next-")), []);
+  for (const row of f.files) assert(await exists(path.join(f.root, row.path)), row.path);
+  await deleteVerifiedArchive({ ...f.options, journalPath: `${f.options.journalPath}.retry` });
+  assert.equal(JSON.parse(await fs.readFile(markerFile, "utf8")).state, "completed");
+  for (const row of f.files) assert.equal(await exists(path.join(f.root, row.path)), false);
+});
+test("现存标记无法解析（旧版本留下的 0 字节文件）：拒绝删除并保留全部来源，不覆盖该标记", async t => {
+  const f = await fixture(t, 2);
+  const markers = path.join(f.root, ".growth-archive-retired"), markerFile = path.join(markers, "2026-09-01-00.json");
+  await fs.mkdir(markers, { recursive: true }); await fs.writeFile(markerFile, "");
+  await assert.rejects(deleteVerifiedArchive(f.options), /retirement_marker_invalid/);
+  assert.equal((await fs.stat(markerFile)).size, 0);
+  for (const row of f.files) assert(await exists(path.join(f.root, row.path)), row.path);
+  assert.deepEqual((await fs.readdir(markers)).filter(name => name.includes(".next-")), []);
 });

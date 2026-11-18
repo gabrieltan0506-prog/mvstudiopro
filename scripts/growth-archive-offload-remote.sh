@@ -12,6 +12,47 @@ MUTATION_LOCK="$ROOT/.growth-store-mutation.lock"
 mutation_acquired=false
 INTERACTIVE_DIR="$ROOT/runtime-interactive-workloads"
 LOCK_STALE_MINUTES=15
+# 轮转游标 schemaVersion 2（1118）：prepare 只登记本班 inflight，不再在快照时推进；
+# 桶已退役（marker）、已空/消失或 commit-cursor 报告退役完成，才允许越过。未完成的桶每班记一次
+# 尝试，满 3 次放行但保留在 attempts（待处理），下一圈照常重试，坏桶不会卡死轮转。
+ROTATION_CURSOR_JS='
+const fs=require("fs"),path=require("path"),MAX_ATTEMPTS=3,DIR_RE=/^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/;
+function bucketEntries(dir){let entries=0;for(const e of fs.readdirSync(dir,{withFileTypes:true}))entries+=e.isDirectory()?bucketEntries(path.join(dir,e.name)):1;return entries;}
+function retiredMarker(store,dir){try{fs.lstatSync(path.join(store,".growth-archive-retired",dir+".json"));return true;}catch(e){if(e.code==="ENOENT")return false;throw e;}}
+// 有标记即冻结；但 state:"pending"（删除未完成待续删）或读不懂的标记不算完成。无 state 的旧标记视为完成。
+function retiredComplete(store,dir){if(!retiredMarker(store,dir))return false;try{return JSON.parse(fs.readFileSync(path.join(store,".growth-archive-retired",dir+".json"),"utf8")).state!=="pending";}catch{return false;}}
+function bucketSettled(store,dir){const d=path.join(store,"archive",dir);if(!fs.existsSync(d)||retiredComplete(store,dir))return true;return bucketEntries(d)===0;}
+function readCursor(file){
+  if(!fs.existsSync(file))return null;const st=fs.lstatSync(file);if(!st.isFile()||st.isSymbolicLink())throw Error("archive_rotation_cursor_type");
+  const c=JSON.parse(fs.readFileSync(file,"utf8"));
+  if(c.schemaVersion===1&&typeof c.lastDir==="string")return {schemaVersion:2,lastDir:c.lastDir,attempts:{},inflight:null};
+  const okDirs=v=>Array.isArray(v)&&v.every(d=>typeof d==="string"&&DIR_RE.test(d));
+  if(c.schemaVersion!==2||(c.lastDir!==null&&typeof c.lastDir!=="string")||!c.attempts||typeof c.attempts!=="object"||Array.isArray(c.attempts)
+    ||Object.entries(c.attempts).some(([d,n])=>!DIR_RE.test(d)||!Number.isSafeInteger(n)||n<1)
+    ||(c.inflight!==null&&(typeof c.inflight?.batchId!=="string"||!okDirs(c.inflight.visited)||!okDirs(c.inflight.oversized))))throw Error("archive_rotation_cursor_invalid");
+  return c;
+}
+// 按 visited 顺序结算：完成的桶清除尝试记录；未完成的每班 +1（超大桶直接记满）；
+// 游标只越过连续的「完成或尝试已满」前缀，停在第一个仍需重试的桶之前。
+function settleCursor(store,cursor,completed){
+  const inflight=cursor.inflight;if(!inflight)return {next:cursor,passed:0,retry:0};
+  const attempts={...cursor.attempts};let lastDir=cursor.lastDir,blocked=false,passed=0,retry=0;
+  for(const dir of inflight.visited){
+    const done=completed.has(dir)||bucketSettled(store,dir);
+    if(done)delete attempts[dir];
+    else attempts[dir]=inflight.oversized.includes(dir)?Math.max(MAX_ATTEMPTS,(attempts[dir]||0)+1):(attempts[dir]||0)+1;
+    if(!blocked&&(done||attempts[dir]>=MAX_ATTEMPTS)){lastDir=dir;passed++;}else{blocked=true;retry++;}
+  }
+  for(const dir of Object.keys(attempts))if(!fs.existsSync(path.join(store,"archive",dir)))delete attempts[dir];
+  return {next:{schemaVersion:2,batchId:inflight.batchId,lastDir,attempts,inflight:null},passed,retry};
+}
+function writeCursor(parent,batch,value,suffix){
+  const file=path.join(parent,".rotation-cursor.json"),next=file+"."+batch+suffix;
+  if(fs.existsSync(file)&&(!fs.lstatSync(file).isFile()||fs.lstatSync(file).isSymbolicLink()))throw Error("archive_rotation_cursor_type");
+  const fd=fs.openSync(next,"wx",0o600);try{fs.writeFileSync(fd,JSON.stringify(value));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+  fs.renameSync(next,file);const dirFd=fs.openSync(parent,"r");try{fs.fsyncSync(dirFd);}finally{fs.closeSync(dirFd);}
+}
+'
 
 mode="${1:-}"
 batch_id="${2:-}"
@@ -89,6 +130,18 @@ assert_lease() {
 
 acquire_collection_lease() {
   mkdir -p "$ROOT"
+  # 1118：磁盘满时 set -C 建锁会留下空锁文件并被误报为 lease 竞争；先如实报满，不建任何锁。
+  available_kb=$(df -Pk "$ROOT" 2>/dev/null | awk 'NR==2{print $4}') || available_kb=""
+  case "$available_kb" in
+    ""|*[!0-9]*) ;;
+    *)
+      if [ "$available_kb" -lt 1024 ]; then
+        echo "growth 存储剩余 ${available_kb}KB，archive offload 不建锁直接退出" >&2
+        echo "GROWTH_ARCHIVE_DISK_FULL" >&2
+        exit 44
+      fi
+      ;;
+  esac
   if has_interactive_workload; then
     echo "前台交互任务运行中，archive offload 主动让行" >&2
     echo "GROWTH_ARCHIVE_BUSY" >&2
@@ -293,21 +346,24 @@ prepare_snapshot() {
     printf '%s\n' "$probe_dir" > "$selected_dirs"
   else
     # 默认轮转仅做有界候选的metadata估算；整桶超限显式延后，绝不截断内容。
-    node -e '
-      const fs=require("fs"),path=require("path"),root=process.argv[1],list=process.argv[2],out=process.argv[3],batch=process.argv[4];
+    node -e "$ROTATION_CURSOR_JS"'
+      const root=process.argv[1],list=process.argv[2],out=process.argv[3],batch=process.argv[4];
       const cursorFile=path.join(root,"backups/archive-offload/.rotation-cursor.json");
-      let cursor=null;
-      if(fs.existsSync(cursorFile)){const st=fs.lstatSync(cursorFile);if(!st.isFile()||st.isSymbolicLink())throw Error("archive_rotation_cursor_type");cursor=JSON.parse(fs.readFileSync(cursorFile,"utf8"));if(cursor.schemaVersion!==1||typeof cursor.lastDir!=="string")throw Error("archive_rotation_cursor_invalid");}
-      const dirs=fs.readFileSync(list,"utf8").trim().split(/\n/).filter(Boolean),start=cursor?dirs.findIndex(d=>d>cursor.lastDir):0;
+      let cursor=readCursor(cursorFile),stale=null;
+      // 上一班登记了 inflight 却没提交（取消、失败或未调 commit-cursor）：按「无完成」结算并计尝试。
+      if(cursor?.inflight&&cursor.inflight.batchId!==batch){stale=settleCursor(root,cursor,new Set());cursor=stale.next;}
+      const dirs=fs.readFileSync(list,"utf8").trim().split(/\n/).filter(Boolean),start=cursor?.lastDir!=null?dirs.findIndex(d=>d>cursor.lastDir):0;
       const offset=start<0?0:start,ordered=[...dirs.slice(offset),...dirs.slice(0,offset)],selected=[],visited=[],oversized=[];
-      const maxBytes=512*1024*1024,maxMetadataBuckets=4096;let estimatedBytes=0,nonemptyVisited=0;const empty=[];
+      const maxBytes=512*1024*1024,maxMetadataBuckets=4096;let estimatedBytes=0,nonemptyVisited=0;const empty=[],retired=[];
       function size(dir){let bytes=0,entries=0;for(const e of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,e.name);if(e.isDirectory()){const nested=size(p);bytes+=nested.bytes;entries+=nested.entries;}else{entries++;if(e.isFile())bytes+=fs.lstatSync(p).size;}}return {bytes,entries};}
-      // 空目录仅推进游标，不占内容处理额度；零字节文件和软链接仍交原校验链。
-      for(const dir of ordered){if(nonemptyVisited>=12||visited.length>=maxMetadataBuckets)break;const {bytes,entries}=size(path.join(root,"archive",dir));if(!entries){visited.push(dir);empty.push(dir);continue;}if(bytes>maxBytes){visited.push(dir);nonemptyVisited++;oversized.push({dir,reason:"oversized",estimatedBytes:bytes});continue;}if(estimatedBytes+bytes>maxBytes)break;visited.push(dir);nonemptyVisited++;selected.push(dir);estimatedBytes+=bytes;}
+      // 空目录与已退役桶仅推进游标，不占内容处理额度（退役桶仍交下方循环记入 retired.jsonl，不再发布）；零字节文件和软链接仍交原校验链。
+      for(const dir of ordered){if(nonemptyVisited>=12||visited.length>=maxMetadataBuckets)break;if(retiredMarker(root,dir)){visited.push(dir);retired.push(dir);selected.push(dir);continue;}const {bytes,entries}=size(path.join(root,"archive",dir));if(!entries){visited.push(dir);empty.push(dir);continue;}if(bytes>maxBytes){visited.push(dir);nonemptyVisited++;oversized.push({dir,reason:"oversized",estimatedBytes:bytes});continue;}if(estimatedBytes+bytes>maxBytes)break;visited.push(dir);nonemptyVisited++;selected.push(dir);estimatedBytes+=bytes;}
       const deferred=ordered.filter(d=>!visited.includes(d)).map(dir=>({dir,reason:"rotation-budget"})).concat(oversized);
-      const report={schemaVersion:1,batchId:batch,eligibleCount:dirs.length,scannedCount:visited.length,nonemptyVisited,emptyCount:empty.length,maxMetadataBuckets,selectedCount:selected.length,estimatedBytes,maxBuckets:12,maxBytes,cursorBefore:cursor?.lastDir||null,cursorAfter:visited.at(-1)||cursor?.lastDir||null,deferred,oversized};
+      const lastDir=cursor?.lastDir??null,attempts=cursor?.attempts||{};
+      const cursorNext={schemaVersion:2,batchId:batch,lastDir,attempts,inflight:{batchId:batch,visited,oversized:oversized.map(o=>o.dir)}};
+      const report={schemaVersion:1,batchId:batch,eligibleCount:dirs.length,scannedCount:visited.length,nonemptyVisited,emptyCount:empty.length,retiredCount:retired.length,maxMetadataBuckets,selectedCount:selected.length,estimatedBytes,maxBuckets:12,maxBytes,cursorBefore:lastDir,cursorAfter:lastDir,cursorPendingCommit:true,pendingRetry:Object.keys(attempts).length,deferred,oversized,cursorNext};
       fs.writeFileSync(out,JSON.stringify(report));fs.writeFileSync(list,selected.length?selected.join("\n")+"\n":"");
-      console.error("GROWTH_ARCHIVE_ROTATION "+JSON.stringify({eligible:report.eligibleCount,visited:report.scannedCount,selected:report.selectedCount,deferred:deferred.length,oversized:oversized.length,sourceRetained:true}));
+      console.error("GROWTH_ARCHIVE_ROTATION "+JSON.stringify({eligible:report.eligibleCount,visited:report.scannedCount,selected:report.selectedCount,retired:retired.length,deferred:deferred.length,oversized:oversized.length,pendingRetry:report.pendingRetry,staleShiftSettled:stale?{passed:stale.passed,retry:stale.retry}:null,sourceRetained:true}));
       if(deferred.length)console.error("GROWTH_ARCHIVE_DEFERRED "+JSON.stringify(deferred));
     ' "$ROOT" "$selected_dirs" "$snapshot_next/rotation.json" "$batch_id"
   fi
@@ -326,7 +382,7 @@ prepare_snapshot() {
       exit 42
     fi
     assert_lease
-    # B站已退役后，剩余平台子集不能发布为新的整桶版本。
+    # B站或全量已核验来源（verified-archives）退役后，剩余子集不能发布为新的整桶版本。
     if [ -e "$ROOT/.growth-archive-retired/$dir.json" ] || [ -L "$ROOT/.growth-archive-retired/$dir.json" ]; then
       node -e '
         const fs=require("fs"),path=require("path"),root=process.argv[1],dir=process.argv[2];
@@ -335,7 +391,8 @@ prepare_snapshot() {
           const parent=path.join(root,".growth-archive-retired"),file=path.join(parent,dir+".json");
           if(!fs.lstatSync(parent).isDirectory()||!fs.lstatSync(file).isFile())throw Error("marker-type");
           const m=JSON.parse(fs.readFileSync(file,"utf8"));
-          if(m.schemaVersion!==1||m.dir!==dir||m.platform!=="bilibili"||!/^[a-f0-9]{64}$/.test(m.receiptSha256)||m.restore?.dir!==dir)throw Error("marker-contract");
+          if(m.schemaVersion!==1||m.dir!==dir||(m.platform!=="bilibili"&&m.platform!=="verified-archives")||!/^[a-f0-9]{64}$/.test(m.receiptSha256)||m.restore?.dir!==dir)throw Error("marker-contract");
+          if(m.state==="pending"){state="retirement-pending";reason="resume-required";}
         } catch(e) {state="retirement-marker-invalid";reason="manual-review-required";}
         const row=JSON.stringify({dir,state,reason});console.log(row);console.error("GROWTH_ARCHIVE_RETIRED "+row);
       ' "$ROOT" "$dir" >> "$snapshot_next/retired.jsonl"
@@ -370,11 +427,11 @@ prepare_snapshot() {
   rm -f -- "$all_dirs" "$archive_dirs" "$selected_dirs"
   assert_lease
   mv "$snapshot_next" "$snapshot_root"
-  # 只在完整快照已原子发布后推进；同batch重入在前面返回，不二次推进。
+  # 只在完整快照已原子发布后登记 inflight（游标位置不动）；同batch重入在前面返回，不二次登记。
   if [ -z "$probe_dir" ]; then
-    node -e '
-      const fs=require("fs"),path=require("path"),root=process.argv[1],batch=process.argv[2],r=JSON.parse(fs.readFileSync(path.join(root,batch,"rotation.json"),"utf8"));
-      if(r.cursorAfter){const file=path.join(root,".rotation-cursor.json"),next=file+"."+batch+".next";if(fs.existsSync(file)&&(!fs.lstatSync(file).isFile()||fs.lstatSync(file).isSymbolicLink()))throw Error("archive_rotation_cursor_type");const fd=fs.openSync(next,"wx",0o600);try{fs.writeFileSync(fd,JSON.stringify({schemaVersion:1,batchId:batch,lastDir:r.cursorAfter}));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(next,file);const parent=fs.openSync(root,"r");try{fs.fsyncSync(parent);}finally{fs.closeSync(parent);}}
+    node -e "$ROTATION_CURSOR_JS"'
+      const parent=process.argv[1],batch=process.argv[2],r=JSON.parse(fs.readFileSync(path.join(parent,batch,"rotation.json"),"utf8"));
+      writeCursor(parent,batch,r.cursorNext,".next");
     ' "$SNAPSHOT_PARENT" "$batch_id"
   fi
   cat "$snapshot_root/snapshot.tsv"
@@ -434,6 +491,15 @@ snapshot_report() {
 
 cleanup_snapshot() {
   # 这里只清理已验证批次的临时 hardlink；不触碰 archive 源目录。
+  # 1118：本批从未建出快照（prepare 让行/失败）时无需取 lease；否则采集繁忙会让释放步骤
+  # 重试约 10 分钟后记 SNAPSHOT_RETAINED，把「让行」误报成快照残留并标红。
+  # 本批 prepare 仍持有 lease（SSH 断开但远端未退出）时照常走 lease，等它结束再判断。
+  if [ ! -e "$snapshot_root" ] && [ ! -L "$snapshot_root" ] && [ ! -e "$snapshot_root.next" ] && [ ! -L "$snapshot_root.next" ]; then
+    case "$(cat "$COLLECTION_LOCK" 2>/dev/null || true)" in
+      "github-growth-archive:$batch_id:prepare:"*) ;;
+      *) echo "archive 快照本批未建立，无需释放: $batch_id" >&2; return 0 ;;
+    esac
+  fi
   acquire_collection_lease
   trap 'release_collection_lease' EXIT HUP INT TERM
   [ -e "$snapshot_root" ] || return 0
@@ -441,6 +507,22 @@ cleanup_snapshot() {
   assert_snapshot_owner
   assert_lease
   rm -rf -- "$snapshot_root"
+}
+
+# 退役步骤之后调用：COMPLETED_DIRS 为逗号分隔、本班「已发布核验且退役报告 completed」的桶。
+# 不取采集 lease：只改 backups/archive-offload 下的游标文件，两条 workflow 已由同一 concurrency 串行。
+# 没有匹配本 batch 的 inflight（让行、probe、prepare 失败）时什么也不做。
+commit_rotation_cursor() {
+  node -e "$ROTATION_CURSOR_JS"'
+    const store=process.argv[1],parent=process.argv[2],batch=process.argv[3],list=process.argv[4]||"";
+    const completed=list?list.split(","):[];
+    if(completed.length>4096||completed.some(d=>!DIR_RE.test(d)))throw Error("archive_rotation_completed_invalid");
+    const cursor=readCursor(path.join(parent,".rotation-cursor.json"));
+    if(!cursor?.inflight||cursor.inflight.batchId!==batch){console.error("GROWTH_ARCHIVE_CURSOR "+JSON.stringify({committed:false,reason:"no-inflight-for-batch"}));process.exit(0);}
+    const {next,passed,retry}=settleCursor(store,cursor,new Set(completed));
+    writeCursor(parent,batch,next,".commit.next");
+    console.error("GROWTH_ARCHIVE_CURSOR "+JSON.stringify({committed:true,visited:cursor.inflight.visited.length,reportedCompleted:completed.length,passed,retry,pendingRetry:Object.keys(next.attempts).length,lastDir:next.lastDir}));
+  ' "$ROOT" "$SNAPSHOT_PARENT" "$batch_id" "${1:-}"
 }
 
 cleanup_current_batch() {
@@ -456,8 +538,9 @@ case "$mode" in
   delete) delete_verified_source "${3:-}" "${4:-}" ;;
   cleanup) cleanup_snapshot ;;
   cleanup-current-batch) cleanup_current_batch ;;
+  commit-cursor) commit_rotation_cursor "${3:-}" ;;
   *)
-    echo "用法: $0 {prepare|bundle|delete|cleanup|cleanup-current-batch} BATCH_ID [DIR] [SOURCE_FINGERPRINT]" >&2
+    echo "用法: $0 {prepare|bundle|delete|cleanup|cleanup-current-batch|commit-cursor} BATCH_ID [DIR|COMPLETED_DIRS] [SOURCE_FINGERPRINT]" >&2
     exit 64
     ;;
 esac

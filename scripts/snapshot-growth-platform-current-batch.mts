@@ -5,6 +5,7 @@ import { readGrowthGzipJson } from "../server/growth/growthJsonStream";
 import { inventoryGrowthCoverage, REQUIRED_CORE_FILES, OPTIONAL_CORE_FILES, REQUIRED_CURRENT_PLATFORMS, EXCLUDED_PLATFORMS } from "./growth-backup-coverage.mjs";
 
 import { withGrowthStoreMutationLock } from "../server/growth/growthStoreMutationLock";
+import { assertSnapshotSpaceForStore } from "./growth-snapshot-space-gate.mjs";
 
 const PLATFORMS: readonly string[] = REQUIRED_CURRENT_PLATFORMS;
 const PART_BYTES = 32 * 1024 * 1024;
@@ -75,6 +76,14 @@ async function main() {
   const assetGeneration = String(readFlag("asset-generation") || batchId)
     .replace(/[^0-9A-Za-z._-]+/g, "-");
   const storeDir = path.resolve(process.env.GROWTH_STORE_DIR || path.join(process.cwd(), ".cache", "growth"));
+  // 2026-11-18：空间不够就不建快照（不建目录），避免备份把采集所在的卷写满。
+  const space = await assertSnapshotSpaceForStore({
+    storeDir,
+    copyFiles: [...REQUIRED_CORE_FILES, ...OPTIONAL_CORE_FILES],
+    linkedDirectories: ["platforms", "history-ledger", "paid-research/guaikei"],
+    linkedFiles: PLATFORMS.map(platform => `platform-current/${platform}.current.json.gz`),
+  });
+  console.error(`growth_snapshot_space_ok:available=${space.availableBytes}:required=${space.required}`);
   await fs.mkdir(path.dirname(outputDir), { recursive: true });
   await fs.mkdir(outputDir, { recursive: false });
   // This marker owns only this temporary batch, never its linked source files.

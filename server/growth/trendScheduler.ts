@@ -1,4 +1,5 @@
 import { reclaimGrowthStoreMutationLockFromPreviousBoot } from "./growthStoreMutationLock";
+import { sweepGrowthStoreStaleTempFiles } from "./growthStoreTempSweep";
 import fs from "node:fs/promises";
 import { resolveCollectionCalendar, resolveCollectionMode } from "./collectionCalendar";
 import path from "node:path";
@@ -851,6 +852,7 @@ export async function bootstrapGrowthTrendScheduler() {
   await reclaimGrowthStoreMutationLockFromPreviousBoot().catch((error) => {
     console.warn("[growth.lock] boot-time lock inspection failed:", error);
   });
+  await sweepGrowthStoreStaleTempFiles();
 
   await resetLegacyGrowthFailureTotals().catch(error => {
     console.warn("[growth.scheduler] 历史累计抓取失败次数未清零，将在下次启动重试", error);
