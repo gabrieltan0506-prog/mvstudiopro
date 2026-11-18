@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// 仅已授权的B站策略可调用精确回执约束的来源退役，禁止整桶或其他平台删除。
+// 仅已授权范围可调用精确回执约束的来源退役，禁止整桶删除：bilibili-archives（默认，旧回执无 scope）
+// 或 verified-archives（2026-11-18 用户授权：冷备核验后已发布平台的 archive 来源；快手/头条永不入选）。
 import fs from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
@@ -9,8 +10,24 @@ import { pathToFileURL } from "node:url";
 const hash = data => createHash("sha256").update(data).digest("hex");
 const validHash = value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const bucketPattern = /^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/;
-const filePattern = /^archive\/(\d{4}-\d{2}-\d{2}(?:-\d{2})?)\/bilibili-[A-Za-z0-9_.+-]+\.json\.gz$/;
 const fail = reason => { throw new Error(`growth_cleanup_${reason}`); };
+// 与 offload content_inventory 的授权平台前缀一致；kuaishou/toutiao 已退出，不在任何范围内。
+const ARCHIVE_PLATFORMS = "douyin|xiaohongshu|bilibili|weixin_channels|wechat|tiktok";
+const BUCKET = "(\\d{4}-\\d{2}-\\d{2}(?:-\\d{2})?)";
+export const RETIREMENT_SCOPES = Object.freeze({
+  "bilibili-archives": Object.freeze({ platform: "bilibili", member: /^bilibili-[^/]+\.json\.gz$/,
+    file: new RegExp(`^archive\\/${BUCKET}\\/bilibili-[A-Za-z0-9_.+-]+\\.json\\.gz$`) }),
+  "verified-archives": Object.freeze({ platform: "verified-archives",
+    member: new RegExp(`^(?:${ARCHIVE_PLATFORMS})[-_.][A-Za-z0-9_.+-]*\\.json\\.gz$`),
+    file: new RegExp(`^archive\\/${BUCKET}\\/(?:${ARCHIVE_PLATFORMS})[-_.][A-Za-z0-9_.+-]*\\.json\\.gz$`) }),
+});
+/** 回执无 scope 即旧B站回执；字节与摘要不变。未知范围一律拒绝。 */
+export function retirementScope(value) {
+  const name = value === undefined ? "bilibili-archives" : value;
+  if (typeof name !== "string" || !Object.hasOwn(RETIREMENT_SCOPES, name)) fail("scope_invalid");
+  return { name, ...RETIREMENT_SCOPES[name] };
+}
+const bucketOf = file => /^archive\/([^/]+)\//.exec(file)[1];
 export const cleanupReceiptSha256 = receipt => hash(JSON.stringify(receipt));
 
 function validateReceipt(receipt, now) {
@@ -20,6 +37,7 @@ function validateReceipt(receipt, now) {
       || !Array.isArray(receipt.backup?.assets) || !receipt.backup.assets.length
       || !Array.isArray(receipt.backup?.restores) || !receipt.backup.restores.length)
     fail("receipt_invalid");
+  const { file: filePattern } = retirementScope(receipt.scope);
   const timestamp = Date.parse(receipt.createdAt);
   if (!Number.isFinite(timestamp) || timestamp > now + 60_000 || now - timestamp > 24 * 60 * 60_000)
     fail("receipt_expired_or_future");
@@ -38,7 +56,7 @@ async function directory(file) {
   return st;
 }
 async function sourceFile(root, row) {
-  const bucket = filePattern.exec(row.path)[1];
+  const bucket = bucketOf(row.path);
   await directory(root);
   await directory(path.join(root, "archive"));
   await directory(path.join(root, "archive", bucket));
@@ -75,25 +93,41 @@ function sameInspection(a, b) {
 async function protectedBuckets(root) {
   return (await fs.readdir(path.join(root, "archive"))).filter(name => bucketPattern.test(name)).sort().slice(-2);
 }
+// verified-archives 退役后整桶冻结：桶内除已退出平台与文件系统元数据外，任何未在核验回执中的
+// 条目（新写入、未覆盖前缀、软链接、子目录文件）都意味着冷备不完整，整批一律保留。
+async function assertBucketsFullyVerified(root, receipt) {
+  const wanted = new Set(receipt.files.map(row => row.path));
+  const visit = async relative => {
+    for (const entry of await fs.readdir(path.join(root, relative), { withFileTypes: true })) {
+      const child = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) { await visit(child); continue; }
+      if (/^(kuaishou|toutiao)[-_.]/i.test(entry.name) || entry.name.startsWith("._")) continue;
+      if (!entry.isFile() || !wanted.has(child)) fail("unverified_source_present");
+    }
+  };
+  for (const bucket of new Set(receipt.files.map(row => bucketOf(row.path)))) await visit(`archive/${bucket}`);
+}
 async function inspect(root, receipt) {
   const protectedNames = await protectedBuckets(root);
   const files = [];
   for (const row of receipt.files) {
-    if (protectedNames.includes(filePattern.exec(row.path)[1])) fail("latest_bucket_protected");
+    if (protectedNames.includes(bucketOf(row.path))) fail("latest_bucket_protected");
     files.push(await sourceFile(root, row));
   }
+  if (retirementScope(receipt.scope).name === "verified-archives") await assertBucketsFullyVerified(root, receipt);
   return files;
 }
 
 // 部分平台退役后冻结整桶发布，避免剩余子集覆盖仍被冷读引用的完整备份。
 async function preserveRetirementMarkers(root, receipt, receiptSha256) {
   const parent=path.join(root,'.growth-archive-retired');
+  const {platform}=retirementScope(receipt.scope);
   await fs.mkdir(parent,{recursive:true}); await directory(parent);
-  for(const dir of new Set(receipt.files.map(row=>filePattern.exec(row.path)[1]))) {
+  for(const dir of new Set(receipt.files.map(row=>bucketOf(row.path)))) {
     const restore=receipt.backup.restores.find(row=>row.dir===dir);
     if(!restore)fail('retirement_restore_missing');
     const marker=path.join(parent,`${dir}.json`);
-    const value={schemaVersion:1,dir,platform:'bilibili',receiptSha256,restore,createdAt:new Date().toISOString()};
+    const value={schemaVersion:1,dir,platform,receiptSha256,restore,createdAt:new Date().toISOString()};
     let handle;
     try { handle=await fs.open(marker,'wx',0o600); }
     catch(error) {
@@ -101,7 +135,7 @@ async function preserveRetirementMarkers(root, receipt, receiptSha256) {
       const st=await fs.lstat(marker);
       if(!st.isFile() || st.isSymbolicLink())fail('retirement_marker_invalid');
       const existing=JSON.parse(await fs.readFile(marker,'utf8'));
-      if(existing.schemaVersion!==1 || existing.dir!==dir || existing.platform!=='bilibili'
+      if(existing.schemaVersion!==1 || existing.dir!==dir || existing.platform!==platform
           || existing.receiptSha256!==receiptSha256)fail('retirement_marker_conflict');
       continue;
     }
@@ -222,7 +256,7 @@ export async function deleteVerifiedArchive({ root: rootArg, receipt, receiptSha
     for (const expected of result.files) {
       signal?.throwIfAborted();
       await lease.assertOwned();
-      if ((await protectedBuckets(root)).includes(filePattern.exec(expected.path)[1])) fail("latest_bucket_protected");
+      if ((await protectedBuckets(root)).includes(bucketOf(expected.path))) fail("latest_bucket_protected");
       const current = await sourceFile(root, expected);
       if (!sameInspection(expected, current)) fail("source_changed_after_preflight");
       await record({ event: "unlink-intent", file: expected.path });

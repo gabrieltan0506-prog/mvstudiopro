@@ -6,6 +6,8 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 
 const files=['growth-backup.yml','growth-archive-offload.yml'];
+// 2026-11-18 授权后步骤改名并改用 verified-archives；集成方改 YAML 前旧 B站 步骤仍合法。
+const retireStep=source=>source.includes('      - name: Retire verified archive sources\n')?'Retire verified archive sources':'Retire verified Bilibili archive sources';
 function step(source,name){
  const block=source.split(`      - name: ${name}\n`)[1]?.split('\n      - ')[0];
  assert(block,name);return block.split('        run: |\n')[1].replace(/^ {10}/gm,'');
@@ -24,7 +26,7 @@ process.exit(process.env.FAIL==='1'?23:0);
 `,{mode:0o755});
  const source=fs.readFileSync(`.github/workflows/${name}`,'utf8');
  const env={...process.env,PATH:`${bin}:${process.env.PATH}`,CAPTURE:capture,GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'4',FLY_MACHINE_ID:'selected-app',GITHUB_STEP_SUMMARY:summary};
- const run=(label='Retire verified Bilibili archive sources',extra={})=>spawnSync('bash',['-euo','pipefail','-c',step(source,label).replaceAll('/tmp/growth-archive-offload',store)],{env:{...env,...extra},encoding:'utf8'});
+ const run=(label=retireStep(source),extra={})=>spawnSync('bash',['-euo','pipefail','-c',step(source,label).replaceAll('/tmp/growth-archive-offload',store)],{env:{...env,...extra},encoding:'utf8'});
  const dir='2026-10-01-00',batchId=name==='growth-backup.yml'?'123-4-backup':'123-4';
  const batch={schemaVersion:3,batchId,archives:[{dir,releaseTag:'growth-archive-2026-10-01'}]};
  const publication={schemaVersion:1,batchId,uploaded:[{dir,releaseTag:'growth-archive-2026-10-01'}]};
@@ -40,7 +42,7 @@ process.exit(process.env.FAIL==='1'?23:0);
 for(const name of files){
  test(`${name}: 成功发布且释放快照后只传本批metadata到指定Fly机器`,t=>{
   const f=fixture(t,name);f.seed();
-  const idx=f.source.indexOf('- name: Retire verified Bilibili archive sources');
+  const idx=f.source.indexOf(`- name: ${retireStep(f.source)}`);
   assert(idx>f.source.indexOf('- name: Always release archive hardlink snapshot'));
   if(name==='growth-backup.yml')assert(idx>f.source.indexOf('- name: Always release owned current snapshot'));
   // 允许带 BACKUP_DEFERRED 让路守卫的写法：if: ${{ success() && env.BACKUP_DEFERRED != 'true' }}
@@ -48,7 +50,7 @@ for(const name of files){
   const r=f.run();assert.equal(r.status,0,r.stderr);
   const captured=JSON.parse(fs.readFileSync(f.capture));
   assert(captured.args.includes('selected-app'));
-  assert.match(captured.args.at(-1),/node scripts\/growth-archive-retire.mjs --scope=bilibili-archives --allow-remote-download/);
+  assert.match(captured.args.at(-1),/node scripts\/growth-archive-retire.mjs --scope=(?:verified|bilibili)-archives --allow-remote-download/);
   assert.doesNotMatch(captured.args.join(' '),/machine start|sftp|curl|gh release/);
   assert.deepEqual(JSON.parse(captured.input),{batch:f.batch,publication:f.publication,manifests:{[`archive-${f.dir}.manifest.json`]:Buffer.from(JSON.stringify(f.manifest)).toString("base64")}});
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.store,'retirement-result-new.json'))).actualFreeBytesDelta,4096);

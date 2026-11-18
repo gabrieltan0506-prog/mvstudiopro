@@ -111,3 +111,51 @@ test('复用旧备份支持非格式化原始manifest字节并实际还原',asyn
  const result=await retirePublishedArchives(f.input,f.options);
  assert.equal(result.completed,true);assert.equal(result.removed.length,1);assert.equal(result.remoteRestoreVerified,true);
 });
+
+// 2026-11-18 用户授权：冷备核验后同桶非B站归档来源也退役（verified-archives）；bilibili-archives 行为不变。
+const verified=f=>({...f.options,rootScope:'verified-archives'});
+test('旧范围仍只删B站并逐桶回报完成状态',async t=>{
+ const f=fixture(t);const result=await retirePublishedArchives(f.input,f.options);
+ assert.deepEqual(result.removed,[`archive/${f.dir}/${f.files[0].path}`]);
+ assert(fs.existsSync(path.join(f.store,'archive',f.dir,f.files[1].path)));
+ assert.deepEqual(result.buckets,[{dir:f.dir,state:'retired',retirementCompleted:true,candidateFiles:1,removedFiles:1,removedLogicalBytes:f.files[0].bytes}]);
+ const receipt=JSON.parse(fs.readFileSync(path.join(result.evidenceDirectory,'cleanup-receipt.json'),'utf8'));
+ assert.equal('scope' in receipt,false);
+});
+test('verified-archives 真实还原核验后删同桶全部已发布平台来源，保留快手与远端备份',async t=>{
+ const f=fixture(t),before=new Map([...f.remote].map(([k,v])=>[k,sha(v)]));
+ const kuaishou=path.join(f.store,'archive',f.dir,'kuaishou-keep.json.gz');fs.writeFileSync(kuaishou,gzipSync('{"items":[]}'));
+ const result=await retirePublishedArchives(f.input,verified(f));
+ assert.equal(result.completed,true);assert.equal(result.remoteRestoreVerified,true);
+ assert.deepEqual(result.removed.sort(),f.files.map(row=>`archive/${f.dir}/${row.path}`).sort());
+ assert.equal(result.removedLogicalBytes,f.files.reduce((n,row)=>n+row.bytes,0));
+ assert(!f.files.some(row=>fs.existsSync(path.join(f.store,'archive',f.dir,row.path))));assert(fs.existsSync(kuaishou));
+ assert.deepEqual(result.buckets,[{dir:f.dir,state:'retired',retirementCompleted:true,candidateFiles:2,removedFiles:2,
+  removedLogicalBytes:result.removedLogicalBytes}]);
+ assert.deepEqual(new Map([...f.remote].map(([k,v])=>[k,sha(v)])),before);
+ const receipt=JSON.parse(fs.readFileSync(path.join(result.evidenceDirectory,'cleanup-receipt.json'),'utf8'));
+ assert.equal(receipt.scope,'verified-archives');
+ assert.equal(JSON.parse(fs.readFileSync(path.join(result.evidenceDirectory,'authorization.json'),'utf8')).policy,'verified-published-archive-sources');
+ const marker=JSON.parse(fs.readFileSync(path.join(f.store,'.growth-archive-retired',f.dir+'.json'),'utf8'));
+ assert.equal(marker.platform,'verified-archives');assert.equal(marker.restore.dir,f.dir);
+ assert.deepEqual(fs.readdirSync(f.temp),[]);
+});
+test('verified-archives 冷备后新写入的未核验来源使整批保留并逐桶报未完成',async t=>{
+ const f=fixture(t);fs.writeFileSync(path.join(f.store,'archive',f.dir,'douyin-late.json.gz'),gzipSync('{"items":[]}'));
+ const error=await retirePublishedArchives(f.input,verified(f)).then(()=>null,e=>e);
+ assert.match(error?.message||'',/unverified_source_present/);assert(present(f));
+ assert.deepEqual(error.retirementBuckets,[{dir:f.dir,state:'failed',retirementCompleted:false,candidateFiles:2,removedFiles:0,removedLogicalBytes:0}]);
+ const folder=path.join(f.evidence,fs.readdirSync(f.evidence)[0]);
+ assert.equal(JSON.parse(fs.readFileSync(path.join(folder,'failure.json'),'utf8')).buckets[0].retirementCompleted,false);
+ assert(!fs.existsSync(path.join(f.store,'.growth-archive-retired')));
+});
+test('verified-archives 远端损坏、来源变动、最新桶时一律不删',async t=>{
+ const a=fixture(t);a.remote.set([...a.remote.keys()][0],Buffer.from('broken'));
+ await assert.rejects(retirePublishedArchives(a.input,verified(a)),/part_mismatch/);assert(present(a));
+ const b=fixture(t);
+ await assert.rejects(retirePublishedArchives(b.input,{...verified(b),verifyEvidence:receipt=>{
+  const proof=verifyCleanupEvidence(receipt,b.options.gh);fs.writeFileSync(path.join(b.store,'archive',b.dir,b.files[1].path),'changed');return proof;
+ }}),/source_changed/);assert(present(b));
+ const c=fixture(t);fs.rmdirSync(path.join(c.store,'archive','2026-10-03-00'));
+ await assert.rejects(retirePublishedArchives(c.input,verified(c)),/latest_bucket_protected/);assert(present(c));
+});

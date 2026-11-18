@@ -231,3 +231,50 @@ test("写入删除意图后取消也必须保留尚未删除的来源", async t 
   assert.equal(error.cleanupResult.removed.length, 0);
   assert(await exists(path.join(f.root, f.files[0].path)));
 });
+
+// 2026-11-18 用户授权：冷备核验后的非B站归档来源也可退役（verified-archives）；旧回执仍只认B站。
+async function verifiedScope(f) {
+  const raw = await fs.readFile(f.other);
+  f.receipt.scope = "verified-archives";
+  f.receipt.files = [...f.files, { path: "archive/2026-09-01-00/douyin-keep.json.gz", bytes: raw.length, sha256: sha(raw) }]
+    .sort((a, b) => a.path.localeCompare(b.path, "en"));
+  f.options.approveSha256 = cleanupReceiptSha256(f.receipt);
+}
+test("verified-archives 回执逐文件删除同桶非B站来源，快手/头条与元数据保留并写退役标记", async t => {
+  const f = await fixture(t, 1); await verifiedScope(f);
+  const kept = path.join(f.root, "archive/2026-09-01-00/kuaishou-keep.json.gz");
+  await fs.writeFile(kept, gzipSync('{"items":[]}'));
+  const result = await deleteVerifiedArchive(f.options);
+  assert.equal(result.completed, true); assert.equal(result.removed.length, 2);
+  assert.equal(await exists(f.other), false); assert(await exists(kept));
+  const marker = JSON.parse(await fs.readFile(path.join(f.root, ".growth-archive-retired/2026-09-01-00.json"), "utf8"));
+  assert.equal(marker.platform, "verified-archives");
+});
+test("verified-archives 桶内存在回执外来源时整批保留", async t => {
+  for (const extra of ["douyin-late.json.gz", "unknown-prefix.json.gz", "nested/xiaohongshu-x.json.gz"]) {
+    const f = await fixture(t, 1); await verifiedScope(f);
+    const file = path.join(f.root, "archive/2026-09-01-00", extra);
+    await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, "x");
+    await assert.rejects(deleteVerifiedArchive(f.options), /unverified_source_present/);
+    assert(await exists(f.other)); assert(await exists(path.join(f.root, f.files[0].path)));
+    assert.equal(await exists(path.join(f.root, ".growth-archive-retired")), false);
+  }
+});
+test("回执范围：旧回执拒绝非B站，新范围拒绝已退出平台与未知范围", async t => {
+  const f = await fixture(t, 1);
+  const raw = await fs.readFile(f.other);
+  const douyin = { path: "archive/2026-09-01-00/douyin-keep.json.gz", bytes: raw.length, sha256: sha(raw) };
+  await assert.rejects(deleteVerifiedArchive({ root: f.root, receipt: { ...f.receipt, files: [douyin] } }), /file_scope_invalid/);
+  for (const name of ["kuaishou-x.json.gz", "toutiao-x.json.gz"])
+    await assert.rejects(deleteVerifiedArchive({ root: f.root, receipt: { ...f.receipt, scope: "verified-archives",
+      files: [{ ...douyin, path: `archive/2026-09-01-00/${name}` }] } }), /file_scope_invalid/);
+  for (const scope of ["all", "constructor", null])
+    await assert.rejects(deleteVerifiedArchive({ root: f.root, receipt: { ...f.receipt, scope } }), /scope_invalid/);
+  assert(await exists(f.other)); assert(await exists(path.join(f.root, f.files[0].path)));
+});
+test("verified-archives 同样保护最新两桶", async t => {
+  const f = await fixture(t, 1); await verifiedScope(f);
+  await fs.rmdir(path.join(f.root, "archive/2026-09-03-00"));
+  await assert.rejects(deleteVerifiedArchive(f.options), /latest_bucket_protected/);
+  assert(await exists(f.other)); assert(await exists(path.join(f.root, f.files[0].path)));
+});

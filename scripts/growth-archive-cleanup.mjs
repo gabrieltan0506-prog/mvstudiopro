@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { restoreGrowthArchive, parseGrowthArchiveManifest } from '../shared/growthArchiveRestore.mjs';
 import { createGrowthPrivateAssetFetch } from '../shared/growthPrivateAssetFetch.mjs';
 import { privateGrowthBackupTarget, runBackupGh } from './growth-backup-target.mjs';
+import { retirementScope } from './growth-archive-delete-verified.mjs';
 const sha = raw => createHash('sha256').update(raw).digest('hex');
 const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const dirPattern = /^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/;
@@ -69,6 +70,7 @@ export function verifyCleanupEvidence(receipt, rawGh = runBackupGh) {
       || !Array.isArray(receipt.backup?.assets) || !receipt.backup.assets.length
       || !Array.isArray(receipt.backup?.restores) || !receipt.backup.restores.length)
     throw Error('cleanup_evidence_incomplete');
+  const { member } = retirementScope(receipt.scope);
   const target = privateGrowthBackupTarget(rawGh, { repository: receipt.repository });
   const releases = JSON.parse(target.gh(['api','--paginate','--slurp',`repos/${target.repository}/releases?per_page=100`])).flat();
   const byTag = new Map();
@@ -106,7 +108,7 @@ export function verifyCleanupEvidence(receipt, rawGh = runBackupGh) {
       if (!receipt.backup.assets.some(a => a.releaseTag === proof.releaseTag && a.name === asset.name
           && a.bytes === asset.bytes && a.sha256 === asset.sha256)) throw Error('cleanup_restore_assets_incomplete');
     }
-    for (const f of proof.inventory) if (/^bilibili-[^/]+\.json\.gz$/.test(f.path))
+    for (const f of proof.inventory) if (member.test(f.path))
       restored.push({path:`archive/${proof.dir}/${f.path}`,bytes:f.bytes,sha256:f.sha256});
   }
   const wanted = new Map(restored.map(f => [f.path, f]));
@@ -117,8 +119,10 @@ export function verifyCleanupEvidence(receipt, rawGh = runBackupGh) {
 }
 
 export async function buildCleanupReceipt({ root, cacheRoot, allowRemoteDownload = false,
-    gh, fetchAsset, signal, now = Date.now() }) {
+    gh, fetchAsset, signal, now = Date.now(), scope }) {
   signal?.throwIfAborted();
+  // scope 缺省即旧B站策略；回执仅在新范围时写入 scope，旧回执字节不变。
+  const { member, name: scopeName } = retirementScope(scope);
   if (!allowRemoteDownload) throw Error('cleanup_remote_restore_requires_download_authorization');
   const batch = JSON.parse(await fs.readFile(path.join(root,'offload-manifest.json'),'utf8'));
   const publication = JSON.parse(await fs.readFile(path.join(root,'publication-result.json'),'utf8'));
@@ -146,7 +150,7 @@ export async function buildCleanupReceipt({ root, cacheRoot, allowRemoteDownload
     const manifest = parseGrowthArchiveManifest(JSON.parse(expectedRaw),dir);
     if (!manifest.inventory?.length || manifest.sourceFingerprint !== entry.sourceFingerprint)
       throw Error('cleanup_manifest_inventory_required');
-    if (!manifest.inventory.some(f => /^bilibili-[^/]+\.json\.gz$/.test(f.path))) continue;
+    if (!manifest.inventory.some(f => member.test(f.path))) continue;
     let fetchedManifest;
     const restoredDir = await restoreGrowthArchive({dir,cacheRoot:owned,fetchAsset:async(assetName) => {
       // Pin to the batch's immutable revision, never resolve a mutable latest pointer.
@@ -167,11 +171,12 @@ export async function buildCleanupReceipt({ root, cacheRoot, allowRemoteDownload
       ...manifest.parts.map(p=>({releaseTag,name:p.assetName,bytes:p.bytes,sha256:p.sha256})));
     restores.push({dir,releaseTag,manifestSha256:sha(expectedRaw),archiveSha256:manifest.archive.sha256,
       manifestBase64:expectedRaw.toString('base64'),manifest,inventory:proof.inventory});
-    for (const f of proof.inventory) if (/^bilibili-[^/]+\.json\.gz$/.test(f.path))
+    for (const f of proof.inventory) if (member.test(f.path))
       files.push({path:`archive/${dir}/${f.path}`,bytes:f.bytes,sha256:f.sha256});
   }
   const receipt = {schemaVersion:1,evidenceKind:'remote-restore',repository:target.repository,
-    createdAt:new Date(now).toISOString(),files:files.sort((a,b)=>a.path.localeCompare(b.path,'en')),
+    createdAt:new Date(now).toISOString(),...(scopeName==='bilibili-archives' ? {} : {scope:scopeName}),
+    files:files.sort((a,b)=>a.path.localeCompare(b.path,'en')),
     backup:{batchId:batch.batchId,assets,restores}};
   verifyCleanupEvidence(receipt,gh);
   signal?.throwIfAborted();

@@ -7,8 +7,10 @@ describe("scheduled backups cannot authorize source or historical backup deletio
   expect(text).not.toContain("sh -s -- delete");
   expect(text).not.toContain("growth-release-headroom.sh");
   expect(text).not.toContain("prune-growth-release-batch-assets.sh");
-  expect(text).toContain("growth-archive-retire.mjs --scope=bilibili-archives --allow-remote-download");
-  expect(text.indexOf("- name: Retire verified Bilibili archive sources")).toBeGreaterThan(text.indexOf("- name: Always release archive hardlink snapshot"));
+  // 2026-11-18 授权后改用 verified-archives；集成方改 YAML 前旧 B站 步骤仍合法。
+  expect(text).toMatch(/growth-archive-retire\.mjs --scope=(?:verified|bilibili)-archives --allow-remote-download/);
+  const retireStep=text.includes("- name: Retire verified archive sources") ? "- name: Retire verified archive sources" : "- name: Retire verified Bilibili archive sources";
+  expect(text.indexOf(retireStep)).toBeGreaterThan(text.indexOf("- name: Always release archive hardlink snapshot"));
   expect(text).toContain("SNAPSHOT_RELEASED");
   expect(text).toContain("source-inventory.json");
   expect(text).toContain("anomalies.jsonl");
