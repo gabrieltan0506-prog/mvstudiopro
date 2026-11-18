@@ -978,6 +978,25 @@ jobs:
           if ! ls "$ROOT"/RETIREMENT_DEFERRED_* >/dev/null 2>&1; then
             printf '本批已发布归档（全部平台）还原核验与逐文件清理已执行；实际删除与空间变化见retirement-result-*.json。\n' >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           fi
+      - name: Commit archive rotation cursor
+        if: always()
+        timeout-minutes: 5
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          ROOT=/tmp/growth-archive-offload
+          if [ ! -s "$ROOT/batch-id.txt" ] || [ -z "${FLY_MACHINE_ID:-}" ]; then exit 0; fi
+          BATCH_ID=$(cat "$ROOT/batch-id.txt")
+          # 1118：游标只越过真正处理完的桶。只有退役结果里 retirementCompleted===true 的桶才算完成；缺 buckets 视为未完成。
+          COMPLETED=$(node -e 'const fs=require("fs"),dirs=new Set();for(const kind of ["new","reused"]){let r;try{r=JSON.parse(fs.readFileSync(`/tmp/growth-archive-offload/retirement-result-${kind}.json`,"utf8").trim().split("\n").pop())}catch{continue}for(const b of Array.isArray(r.buckets)?r.buckets:[])if(b&&b.retirementCompleted===true&&/^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(b.dir))dirs.add(b.dir)}process.stdout.write([...dirs].join(","))')
+          for attempt in 1 2 3; do
+            if timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+              -C "sh -s -- commit-cursor '$BATCH_ID' '$COMPLETED'" < scripts/growth-archive-offload-remote.sh; then
+              exit 0
+            fi
+            [ "$attempt" = 3 ] || sleep "${GROWTH_CURSOR_COMMIT_WAIT_SECONDS:-20}"
+          done
+          echo "::warning::轮转游标未提交（${BATCH_ID}）；下一班 prepare 会按本班失败结算，不跳桶"
       - name: Retire remaining sources of Bilibili-retired archive buckets
         if: ${{ success() && env.BACKUP_DEFERRED != 'true' }}
         timeout-minutes: 15
