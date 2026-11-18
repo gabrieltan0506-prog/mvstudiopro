@@ -536,10 +536,8 @@ jobs:
             /tmp/growth-backup/platform-current \
             /tmp/growth-backup/release-current
           # 本机校验完成；失败批次快照保留调查，不按年龄删除任何来源或备份。
-          for ledger_file in /tmp/growth-backup/store/history-ledger/*.json; do
-            [ -f "$ledger_file" ] || continue
-            gzip -c "$ledger_file" > "/tmp/growth-backup/history-ledger-$(basename "$ledger_file" .json).json.gz"
-          done
+          # .json 与 .json.gz 并存时按线上规则合并为同名资产，不能后者覆盖前者；任一账本损坏即失败。
+          node scripts/growth-backup-ledger-assets.mjs /tmp/growth-backup/store/history-ledger /tmp/growth-backup
           for platform_file in /tmp/growth-backup/store/platforms/*.json; do
             [ -f "$platform_file" ] || continue
             gzip -c "$platform_file" > "/tmp/growth-backup/platform-$(basename "$platform_file" .json).json.gz"
@@ -547,10 +545,6 @@ jobs:
           for platform_file in /tmp/growth-backup/store/platforms/*.json.gz; do
             [ -f "$platform_file" ] || continue
             cp "$platform_file" "/tmp/growth-backup/platform-$(basename "$platform_file")"
-          done
-          for ledger_file in /tmp/growth-backup/store/history-ledger/*.json.gz; do
-            [ -f "$ledger_file" ] || continue
-            cp "$ledger_file" "/tmp/growth-backup/history-ledger-$(basename "$ledger_file")"
           done
           if [ -d /tmp/growth-backup/store/platform-current ]; then
             for platform_file in /tmp/growth-backup/store/platform-current/*.json; do
