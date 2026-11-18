@@ -20,10 +20,9 @@ export const GROWTH_STORE_TEMP_NAME_PATTERNS: readonly RegExp[] = [
   new RegExp(`^.+\\.\\d+\\.${UUID}\\.next$`),
   // weixinChannelsMinerStore：<目标>.<pid>.<毫秒>.tmp
   /^.+\.\d+\.\d{13}\.tmp$/,
-  // guaikei automation / service：<目标>.<uuid>.tmp
-  new RegExp(`^.+\\.${UUID}\\.tmp$`),
 ];
-const PROTECTED_DIR_NAMES = new Set(["backups", "archive"]);
+// paid-research 下是付费原始/解析回执：其临时文件可能是唯一一份已付费响应，不自动清理（体积也很小）。
+const PROTECTED_DIR_NAMES = new Set(["backups", "archive", "paid-research"]);
 const DEFAULT_MIN_AGE_MS = 60 * 60 * 1000;
 const MAX_DEPTH = 8;
 

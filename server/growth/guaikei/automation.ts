@@ -69,14 +69,8 @@ export class GuaikeiAutomation {
     await fs.mkdir(this.root, { recursive: true });
     const temporary = path.join(this.root, `automation.${randomUUID()}.tmp`);
     const handle = await fs.open(temporary, "wx", 0o600);
-    try {
-      try { await handle.writeFile(JSON.stringify(state)); await handle.sync(); } finally { await handle.close(); }
-      await fs.rename(temporary, path.join(this.root, "automation.json"));
-    } catch (error) {
-      // 写盘/改名失败（如 ENOSPC）须回收本写者的临时文件；原目标文件未被触碰。
-      await fs.rm(temporary, { force: true }).catch(() => {});
-      throw error;
-    }
+    try { await handle.writeFile(JSON.stringify(state)); await handle.sync(); } finally { await handle.close(); }
+    await fs.rename(temporary, path.join(this.root, "automation.json"));
   }
   private locked<T>(fn: () => Promise<T>) { return withGrowthStoreMutationLock("guaikei-automation", fn); }
   async settings() { const state = await this.read(); return { settings: state.settings, owner: state.owner, runs: state.runs.slice(-20).reverse() }; }

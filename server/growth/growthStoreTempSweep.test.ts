@@ -66,10 +66,9 @@ describe("growth store 临时文件", () => {
       ".growth-platform-collection-state.json.42.1763450000000.next",
       `douyin.json.42.${UUID}.next`,
       "weixin-channels-miner.json.42.1763450000000.tmp",
-      `automation.${UUID}.tmp`,
-      `jobs.json.${UUID}.tmp`,
     ]) expect(isGrowthStoreTempFileName(name), name).toBe(true);
     for (const name of [
+      `automation.${UUID}.tmp`, `jobs.json.${UUID}.tmp`, // 付费回执临时文件不自动清理
       "current.json", "current.json.gz", "123-1.next", "history-ledger.json.next", "a.json.tmp",
       "douyin.json.next-123-1763450000000", ".growth-platform-collection.lock", "notes.1.tmp",
     ]) expect(isGrowthStoreTempFileName(name), name).toBe(false);
@@ -79,7 +78,6 @@ describe("growth store 临时文件", () => {
     const stale = [
       path.join(root, "current.json.1.1763450000000.abc.next"),
       path.join(root, "platform-current", "douyin.current.json.gz.1.1763450000000.zz.next"),
-      path.join(root, "paid-research", "guaikei", `automation.${UUID}.tmp`),
     ];
     for (const file of stale) await put(file, "0123456789");
     const fresh = path.join(root, "runtime-meta.json.1.1763450000000.abc.next");
@@ -102,12 +100,14 @@ describe("growth store 临时文件", () => {
       path.join(root, "backups", "archive-offload", "123-1.next", "a.json.1.1763450000000.abc.next"),
       path.join(root, "archive", "2026-11", "x.json.gz.1.1763450000000.abc.next"),
       path.join(root, "platform-current", "archive", "y.json.1.1763450000000.abc.next"),
+      path.join(root, "paid-research", "guaikei", `automation.${UUID}.tmp`),
+      path.join(root, "paid-research", "guaikei", "index.json.1.1763450000000.abc.next"),
     ];
     for (const file of protectedFiles) await put(file);
 
     try {
       const result = await sweepGrowthStoreStaleTempFiles();
-      expect(result).toEqual({ removed: 3, bytes: 30 });
+      expect(result).toEqual({ removed: 2, bytes: 20 });
       for (const file of stale) expect(await exists(file), file).toBe(false);
       for (const file of [fresh, data, dirLike, link, linkTarget, outsideTemp, ...protectedFiles]) {
         expect(await exists(file), file).toBe(true);
