@@ -5,7 +5,7 @@ name: Growth Archive Offload
 on:
   schedule:
     # 每 3 小时（UTC :30）。必须与 growth-backup 的 0 */3 同频，错开 30 分钟，减少串行排队。
-    - cron: "47 2,14 * * *"  # 随 Growth Backup 改为每 12 小时（1113），仍错开 30 分钟、避开整点/半点
+    - cron: "47 4,10,16,22 * * *"  # 随 Growth Backup 改为每 6 小时（1118），仍错开 30 分钟、避开整点/半点
   workflow_dispatch:
     inputs:
       archive_dir:
