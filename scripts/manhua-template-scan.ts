@@ -6,6 +6,7 @@
  * - MANHUA_TEMPLATE_SCAN_DRY=1 只打印不写盘
  * - 无网络或抓取失败时写 stub 提案（status=proposed，note 标明待人工补全）
  */
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -57,14 +58,14 @@ async function fetchText(url: string): Promise<string> {
       headers: { "User-Agent": "mvstudiopro-manhua-template-scan/1.0" },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const raw = await res.text();
-    return raw
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 4000);
+    const type = res.headers.get("content-type") || "";
+    if (!/text\/html|application\/xhtml\+xml/i.test(type)) throw new Error("响应不是 HTML 报道");
+    const parsed = spawnSync("python3", [path.join(__dirname, "manhua-scan-body.py")], {
+      input: await res.text(), encoding: "utf8", timeout: 10_000,
+    });
+    if (parsed.error) throw parsed.error;
+    if (parsed.status !== 0) throw new Error(parsed.stderr.trim() || "正文提取失败");
+    return parsed.stdout.trim();
   } finally {
     clearTimeout(timer);
   }
@@ -103,7 +104,7 @@ function buildStubCard(source: SourceRow, snippet: string, ok: boolean): ManhuaV
         url: source.url,
         fetchedAt: today,
         noteZh: ok
-          ? `自动扫描摘要：${snippet.slice(0, 80)}`
+          ? `正文摘录：${snippet.slice(0, 80)}`
           : "抓取失败，仅登记 URL",
       },
     ],
