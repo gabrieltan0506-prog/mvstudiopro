@@ -19,7 +19,9 @@ ROTATION_CURSOR_JS='
 const fs=require("fs"),path=require("path"),MAX_ATTEMPTS=3,DIR_RE=/^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/;
 function bucketEntries(dir){let entries=0;for(const e of fs.readdirSync(dir,{withFileTypes:true}))entries+=e.isDirectory()?bucketEntries(path.join(dir,e.name)):1;return entries;}
 function retiredMarker(store,dir){try{fs.lstatSync(path.join(store,".growth-archive-retired",dir+".json"));return true;}catch(e){if(e.code==="ENOENT")return false;throw e;}}
-function bucketSettled(store,dir){const d=path.join(store,"archive",dir);if(!fs.existsSync(d)||retiredMarker(store,dir))return true;return bucketEntries(d)===0;}
+// 有标记即冻结；但 state:"pending"（删除未完成待续删）或读不懂的标记不算完成。无 state 的旧标记视为完成。
+function retiredComplete(store,dir){if(!retiredMarker(store,dir))return false;try{return JSON.parse(fs.readFileSync(path.join(store,".growth-archive-retired",dir+".json"),"utf8")).state!=="pending";}catch{return false;}}
+function bucketSettled(store,dir){const d=path.join(store,"archive",dir);if(!fs.existsSync(d)||retiredComplete(store,dir))return true;return bucketEntries(d)===0;}
 function readCursor(file){
   if(!fs.existsSync(file))return null;const st=fs.lstatSync(file);if(!st.isFile()||st.isSymbolicLink())throw Error("archive_rotation_cursor_type");
   const c=JSON.parse(fs.readFileSync(file,"utf8"));
@@ -390,6 +392,7 @@ prepare_snapshot() {
           if(!fs.lstatSync(parent).isDirectory()||!fs.lstatSync(file).isFile())throw Error("marker-type");
           const m=JSON.parse(fs.readFileSync(file,"utf8"));
           if(m.schemaVersion!==1||m.dir!==dir||(m.platform!=="bilibili"&&m.platform!=="verified-archives")||!/^[a-f0-9]{64}$/.test(m.receiptSha256)||m.restore?.dir!==dir)throw Error("marker-contract");
+          if(m.state==="pending"){state="retirement-pending";reason="resume-required";}
         } catch(e) {state="retirement-marker-invalid";reason="manual-review-required";}
         const row=JSON.stringify({dir,state,reason});console.log(row);console.error("GROWTH_ARCHIVE_RETIRED "+row);
       ' "$ROOT" "$dir" >> "$snapshot_next/retired.jsonl"

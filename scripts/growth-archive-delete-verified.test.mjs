@@ -59,7 +59,7 @@ test("apply unlinks exact Bilibili files including valid empty items; mixed plat
   assert.equal(await exists(path.join(f.root, ".growth-platform-collection.lock")), false);
   assert.equal(await exists(path.join(f.root, ".growth-store-mutation.lock")), false);
   const journal = (await fs.readFile(f.options.journalPath, "utf8")).trim().split("\n").map(JSON.parse);
-  assert.deepEqual(journal.map(row => row.event), ["start", "preflight", "unlink-intent", "unlinked", "unlink-intent", "unlinked", "completed"]);
+  assert.deepEqual(journal.map(row => row.event), ["start", "preflight", "unlink-intent", "unlinked", "unlink-intent", "unlinked", "marker-completed", "completed"]);
 });
 
 test("apply requires exact review digest and verified remote evidence binding", async t => {
@@ -284,4 +284,15 @@ test("保留同桶未列出文件仅限旧B站标记桶，且不得同时升级�
   await assert.rejects(deleteVerifiedArchive({ ...f.options, keepUnlistedInLegacyBuckets: true }), /legacy_marker_required/);
   await assert.rejects(deleteVerifiedArchive({ ...f.options, keepUnlistedInLegacyBuckets: true, upgradeMarkers: { "2026-09-01-00": "a".repeat(64) } }), /legacy_keep_invalid|marker_upgrade_invalid/);
   assert(await exists(f.other)); assert(await exists(path.join(f.root, f.files[0].path)));
+});
+test("标记先写 pending，逐文件删除全部完成后才改 completed；中断保持 pending", async t => {
+  const f = await fixture(t, 2);
+  const markerFile = path.join(f.root, ".growth-archive-retired/2026-09-01-00.json");
+  await assert.rejects(deleteVerifiedArchive({ ...f.options, onJournal: e => { if (e.event === "unlinked") throw Error("crash"); } }), /crash/);
+  const pending = JSON.parse(await fs.readFile(markerFile, "utf8"));
+  assert.equal(pending.state, "pending"); assert.deepEqual(pending.files, f.files);
+  const g = await fixture(t, 1);
+  await deleteVerifiedArchive(g.options);
+  const done = JSON.parse(await fs.readFile(path.join(g.root, ".growth-archive-retired/2026-09-01-00.json"), "utf8"));
+  assert.equal(done.state, "completed"); assert.equal(done.receiptSha256, cleanupReceiptSha256(g.receipt));
 });

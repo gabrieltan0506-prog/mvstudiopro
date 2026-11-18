@@ -184,10 +184,10 @@ test('旧B站标记桶：剩余来源与已核验清单一致即逐文件删除�
  assert(!fs.existsSync(f.douyin));assert(fs.existsSync(kuaishou));
  const marker=JSON.parse(fs.readFileSync(f.markerFile,'utf8'));
  assert.equal(marker.platform,'verified-archives');assert.deepEqual(marker.previous,f.oldMarker);assert.deepEqual(marker.restore,f.oldMarker.restore);
- assert.equal(fs.readdirSync(f.evidence).length,evidenceBefore+1);
+ assert.equal(fs.readdirSync(f.evidence).filter(n=>n!=="legacy-retired-cursor.json").length,evidenceBefore+1);
  const journal=fs.readFileSync(path.join(result.buckets[0].evidenceDirectory,'cleanup-journal.jsonl'),'utf8');
  assert(journal.includes('marker-upgraded'));assert(journal.includes('"completed"'));
- const again=await f.run();assert.deepEqual(again.buckets,[]);assert.equal(fs.readdirSync(f.evidence).length,evidenceBefore+1);
+ const again=await f.run();assert.deepEqual(again.buckets,[]);assert.equal(fs.readdirSync(f.evidence).filter(n=>n!=="legacy-retired-cursor.json").length,evidenceBefore+1);
  const run=spawnSync('sh',['scripts/growth-archive-offload-remote.sh','prepare','91-1'],{env:{...process.env,GROWTH_STORE_DIR:f.store,GROWTH_INTERACTIVE_FALLBACK_DIR:path.join(f.root,'unused')},encoding:'utf8'});
  assert.equal(run.status,0,run.stderr);
  const retired=fs.readFileSync(path.join(f.store,'backups/archive-offload/91-1/retired.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
@@ -222,4 +222,93 @@ test('旧标记桶远端备份元数据已变时不删',async t=>{
  const f=await legacyFixture(t);const name=[...f.remote.keys()][0];f.remote.set(name,Buffer.from('changed-remote'));
  const result=await f.run();assert.equal(result.completed,false);assert.equal(result.buckets[0].state,'failed');
  assert.match(result.buckets[0].error,/remote_asset_changed/);assert(fs.existsSync(f.douyin));
+});
+
+// [P1] 删除中断：标记 pending 冻结整桶、轮转不算完成，下一班按原回执续删后标记 completed。
+async function interrupted(t,when){
+ const f=await legacyFixture(t);
+ // legacyFixture 已以旧范围退役B站；改用一个全新 verified 桶：恢复B站文件并清掉旧标记，模拟新范围运行。
+ fs.rmSync(path.join(f.store,'.growth-archive-retired'),{recursive:true});
+ const bili=path.join(f.store,'archive',f.dir,f.files[0].path);fs.writeFileSync(bili,gzipSync(JSON.stringify({items:[]})));
+ assert.equal(sha(fs.readFileSync(bili)),f.files[0].sha256);
+ let seen=0;
+ await assert.rejects(retirePublishedArchives(f.input,{...f.options,rootScope:'verified-archives',onJournal:entry=>{
+  if(entry.event===when && ++seen===1)throw Error('simulated_crash');}}),/simulated_crash/);
+ const marker=JSON.parse(fs.readFileSync(f.markerFile,'utf8'));
+ assert.equal(marker.state,'pending');assert.equal(marker.platform,'verified-archives');assert.equal(marker.files.length,2);
+ return {...f,bili,marker};
+}
+const cursorRun=(f,batch)=>{
+ const env={...process.env,GROWTH_STORE_DIR:f.store,GROWTH_INTERACTIVE_FALLBACK_DIR:path.join(f.root,'unused')};
+ const prep=spawnSync('sh',['scripts/growth-archive-offload-remote.sh','prepare',batch],{env,encoding:'utf8'});assert.equal(prep.status,0,prep.stderr);
+ const commit=spawnSync('sh',['scripts/growth-archive-offload-remote.sh','commit-cursor',batch,''],{env,encoding:'utf8'});assert.equal(commit.status,0,commit.stderr);
+ const retired=fs.readFileSync(path.join(f.store,'backups/archive-offload',batch,'retired.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+ return {retired,cursor:JSON.parse(fs.readFileSync(path.join(f.store,'backups/archive-offload/.rotation-cursor.json'),'utf8')),
+  republished:fs.existsSync(path.join(f.store,'backups/archive-offload',batch,'archive',f.dir))};
+};
+test('删除前中断：pending 不发布、轮转不算完成；续删按原回执删完并标记完成',async t=>{
+ const f=await interrupted(t,'preflight');
+ assert(fs.existsSync(f.bili) && fs.existsSync(f.douyin));
+ const c1=cursorRun(f,'95-1');
+ assert.deepEqual(c1.retired,[{dir:f.dir,state:'retirement-pending',reason:'resume-required'}]);assert.equal(c1.republished,false);
+ assert.equal(c1.cursor.attempts[f.dir],1);
+ const d0=f.downloads(),result=await f.run();assert.equal(f.downloads(),d0);
+ assert.equal(result.buckets[0].state,'resumed');assert.equal(result.buckets[0].retirementCompleted,true);assert.equal(result.buckets[0].removedFiles,2);
+ assert(!fs.existsSync(f.bili) && !fs.existsSync(f.douyin));
+ const marker=JSON.parse(fs.readFileSync(f.markerFile,'utf8'));
+ assert.equal(marker.state,'completed');assert.equal(marker.receiptSha256,f.marker.receiptSha256);assert.deepEqual(marker.files,f.marker.files);
+ assert.match(marker.resumedReceiptSha256,/^[a-f0-9]{64}$/);
+ assert.deepEqual((await f.run()).buckets,[]);
+ const c2=cursorRun(f,'96-1');assert.equal(c2.retired[0].state,'retired');assert.equal(c2.cursor.attempts[f.dir],undefined);
+});
+test('删除中途中断：已删部分不重复，剩余续删完成',async t=>{
+ const f=await interrupted(t,'unlinked');
+ assert.equal([f.bili,f.douyin].filter(file=>fs.existsSync(file)).length,1);
+ const result=await f.run();
+ assert.equal(result.buckets[0].state,'resumed');assert.equal(result.buckets[0].removedFiles,1);
+ assert(!fs.existsSync(f.bili) && !fs.existsSync(f.douyin));
+ assert.equal(JSON.parse(fs.readFileSync(f.markerFile,'utf8')).state,'completed');
+});
+test('续删时文件已变：该文件保留并报告，桶保持 pending，一致文件照删',async t=>{
+ const f=await interrupted(t,'preflight');
+ const raw=fs.readFileSync(f.douyin);raw[raw.length-1]^=1;fs.writeFileSync(f.douyin,raw);
+ const result=await f.run();
+ assert.equal(result.buckets[0].state,'resumed-partially-kept');assert.equal(result.buckets[0].retirementCompleted,false);
+ assert.equal(result.buckets[0].keptFiles,1);assert.equal(result.buckets[0].keptBytes,raw.length);
+ assert(!fs.existsSync(f.bili));assert(fs.existsSync(f.douyin));
+ assert.equal(JSON.parse(fs.readFileSync(f.markerFile,'utf8')).state,'pending');
+ const again=await f.run();assert.equal(again.buckets[0].state,'resume-kept');assert(fs.existsSync(f.douyin));
+ assert.equal(cursorRun(f,'97-1').retired[0].state,'retirement-pending');
+});
+test('旧格式（无 state）verified 标记：仍有授权来源时按标记还原清单改为 pending 续删；无剩余视为完成',async t=>{
+ const f=await interrupted(t,'preflight');
+ const old={...f.marker};delete old.state;delete old.files;delete old.scope;fs.writeFileSync(f.markerFile,JSON.stringify(old));
+ const result=await f.run();
+ assert.equal(result.buckets[0].state,'resumed');assert(!fs.existsSync(f.bili) && !fs.existsSync(f.douyin));
+ const marker=JSON.parse(fs.readFileSync(f.markerFile,'utf8'));assert.equal(marker.state,'completed');assert.equal(marker.files.length,2);
+ fs.writeFileSync(f.markerFile,JSON.stringify(old));
+ assert.deepEqual((await f.run()).buckets,[]);assert.equal(JSON.parse(fs.readFileSync(f.markerFile,'utf8')).state,undefined);
+});
+
+// [P2] 每班从上次消耗额度处之后轮转：8 个持续不一致的前排桶不能让后排可删桶永远延后。
+test('8个不一致桶+1个可删桶：两班内可删桶完成，不一致桶照常报告',async t=>{
+ const f=await legacyFixture(t);
+ const bad=Array.from({length:8},(_,i)=>`2026-09-0${i+1}-00`);
+ for(const dir of bad) {
+  fs.mkdirSync(path.join(f.store,'archive',dir));fs.writeFileSync(path.join(f.store,'archive',dir,'douyin-x.json.gz'),'abd');
+  const tar=Buffer.from('tar-'+dir),archive={assetName:`archive-${dir}.tar.gz`,bytes:tar.length,sha256:sha(tar)};
+  const manifest=Buffer.from(JSON.stringify({schemaVersion:1,dir,archive,parts:[{...archive,index:0}],inventory:[{path:'douyin-x.json.gz',bytes:3,sha256:sha('abc'),items:0}]}));
+  fs.writeFileSync(path.join(f.store,'.growth-archive-retired',dir+'.json'),JSON.stringify({schemaVersion:1,dir,platform:'bilibili',receiptSha256:sha(dir),
+   restore:{dir,releaseTag:'growth-cold-store-2026-09-01',manifestSha256:sha(manifest),archiveSha256:archive.sha256,manifestBase64:manifest.toString('base64'),
+    manifest:JSON.parse(manifest),inventory:[{path:'douyin-x.json.gz',bytes:3,sha256:sha('abc'),items:0}]}}));
+ }
+ const s1=await f.run();
+ assert.equal(s1.deferred,1);assert(fs.existsSync(f.douyin));
+ assert.deepEqual(s1.buckets.map(b=>[b.dir,b.state,b.keptFiles,b.keptBytes]),bad.map(dir=>[dir,'kept-not-in-verified-backup',1,3]));
+ const s2=await f.run();
+ assert.equal(s2.buckets[0].dir,f.dir);assert.equal(s2.buckets[0].state,'retired');assert(!fs.existsSync(f.douyin));
+ assert.equal(s2.buckets.filter(b=>b.state==='kept-not-in-verified-backup').length,7);
+ const s3=await f.run();assert(s3.buckets.some(b=>b.dir==='2026-09-08-00' && b.keptBytes===3));
+ fs.writeFileSync(path.join(f.evidence,'legacy-retired-cursor.json'),'{broken');
+ const s4=await f.run();assert.equal(s4.buckets.length,8);
 });

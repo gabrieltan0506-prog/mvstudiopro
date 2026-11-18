@@ -7,7 +7,7 @@ import os from 'node:os';
 import {createHash,randomUUID} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {buildCleanupReceipt, verifyCleanupEvidenceOnFly} from './growth-archive-cleanup.mjs';
-import {deleteVerifiedArchive,RETIREMENT_SCOPES,cleanupReceiptSha256,upgradeRetirementMarker} from './growth-archive-delete-verified.mjs';
+import {deleteVerifiedArchive,RETIREMENT_SCOPES,cleanupReceiptSha256,upgradeRetirementMarker,markRetirementPending,completeRetirementMarker} from './growth-archive-delete-verified.mjs';
 import {parseGrowthArchiveManifest} from '../shared/growthArchiveRestore.mjs';
 
 const SCOPES = Object.keys(RETIREMENT_SCOPES);
@@ -48,7 +48,7 @@ function observation(stat) {
 export async function retirePublishedArchives(input, {root,rootScope,allowRemoteDownload=false,
     receiptsRoot='/data/growth-cleanup-receipts',temporaryRoot=os.tmpdir(),
     gh,fetchAsset,verifyEvidence=verifyCleanupEvidenceOnFly,statfs=directory=>fs.statfs(directory,{bigint:true}),
-    signal}={}) {
+    signal,onJournal}={}) {
   if(!SCOPES.includes(rootScope))throw Error('growth_retire_bilibili_scope_required');
   const {member}=RETIREMENT_SCOPES[rootScope];
   if(!allowRemoteDownload)throw Error('growth_retire_remote_restore_authorization_required');
@@ -120,7 +120,7 @@ export async function retirePublishedArchives(input, {root,rootScope,allowRemote
     });
     const removed=await deleteVerifiedArchive({root:store,receipt:proof.receipt,receiptSha256:proof.receiptSha256,
       apply:true,approveSha256:proof.receiptSha256,verifyEvidence,
-      journalPath:path.join(evidenceDirectory,'cleanup-journal.jsonl'),signal});
+      journalPath:path.join(evidenceDirectory,'cleanup-journal.jsonl'),signal,onJournal});
     completedDeletion=removed;
     await cleanupTemporary();
     const after=observation(await statfs(store));
@@ -181,8 +181,13 @@ export async function retireLegacyMarkedArchives(request,{root,receiptsRoot='/da
   const markersRoot=path.join(store,'.growth-archive-retired');
   let names=[];try{names=await fs.readdir(markersRoot);}catch(error){if(error.code!=='ENOENT')throw error;}
   const buckets=(await fs.readdir(path.join(store,'archive'))).filter(validDir).sort(),newest=buckets.slice(-2);
-  let used=0,processed=0;
-  for(const name of names.filter(n=>/^\d{4}-\d{2}-\d{2}(?:-\d{2})?\.json$/.test(n)).sort()) {
+  // 每班从上次消耗额度的最后一桶之后开始轮转，持续不一致的前排桶不能让后排桶永远延后。
+  const cursorFile=path.join(persistent,'legacy-retired-cursor.json');
+  let lastDir=null;try{const c=JSON.parse(await fs.readFile(cursorFile,'utf8'));if(c?.schemaVersion===1 && validDir(c.lastDir))lastDir=c.lastDir;}catch{}
+  const sorted=names.filter(n=>/^\d{4}-\d{2}-\d{2}(?:-\d{2})?\.json$/.test(n)).sort();
+  const start=lastDir===null?0:Math.max(0,sorted.findIndex(n=>n.slice(0,-5)>lastDir));
+  let used=0,processed=0,charged=null;
+  for(const name of [...sorted.slice(start),...sorted.slice(0,start)]) {
     signal?.throwIfAborted();
     const dir=name.slice(0,-5);
     let marker,manifest,manifestRaw;
@@ -191,9 +196,11 @@ export async function retireLegacyMarkedArchives(request,{root,receiptsRoot='/da
       marker=JSON.parse(await fs.readFile(path.join(markersRoot,name),'utf8'));
       if(marker.schemaVersion!==1 || marker.dir!==dir || !/^[a-f0-9]{64}$/.test(marker.receiptSha256 || ''))throw Error('contract');
     } catch { result.invalidMarkers.push(dir); continue; }
-    if(marker.platform==='verified-archives')continue;
+    if(marker.platform==='verified-archives' && marker.state==='completed')continue;
     const report=(state,extra={})=>{result.buckets.push({dir,state,retirementCompleted:false,removedFiles:0,removedLogicalBytes:0,keptFiles:0,keptBytes:0,...extra});};
-    if(marker.platform!=='bilibili'){result.invalidMarkers.push(dir);continue;}
+    if(!['bilibili','verified-archives'].includes(marker.platform) || (marker.state!==undefined && !['pending','completed'].includes(marker.state))){result.invalidMarkers.push(dir);continue;}
+    // verified 标记未完成（pending，或旧格式无 state 但仍有授权来源）：按原回执续删。
+    const resume=marker.platform==='verified-archives';
     if(newest.includes(dir)){report('latest-bucket-protected');continue;}
     if(!buckets.includes(dir)){report('bucket-absent');continue;}
     const scan=await scanLegacyBucket(store,dir),restore=marker.restore;
@@ -207,13 +214,28 @@ export async function retireLegacyMarkedArchives(request,{root,receiptsRoot='/da
       const kept=keep([...scan.present,...scan.outside]);result.keptFiles+=kept.keptFiles;result.keptBytes+=kept.keptBytes;
       report('marker-evidence-unusable',kept);continue;
     }
+    // 授权文件：旧B站桶 = 标记中已核验还原清单；pending = 原回执 files；旧格式 verified = 原回执的构造规则
+    // （还原清单中本范围成员），可由标记自身证明。
+    const {member}=RETIREMENT_SCOPES['verified-archives'];
+    let cold=new Map(restore.inventory.map(row=>[`archive/${dir}/${row.path}`,row]));
+    if(resume && marker.state==='pending') {
+      if(!Array.isArray(marker.files) || marker.files.some(row=>typeof row?.path!=='string' || !row.path.startsWith(`archive/${dir}/`))) {
+        const kept=keep([...scan.present,...scan.outside]);result.keptFiles+=kept.keptFiles;result.keptBytes+=kept.keptBytes;
+        report('marker-evidence-unusable',kept);continue;
+      }
+      cold=new Map(marker.files.map(row=>[row.path,row]));
+    } else if(resume) {
+      if(!scan.present.length)continue;
+      const files=restore.inventory.filter(row=>member.test(row.path)).map(row=>({path:`archive/${dir}/${row.path}`,bytes:row.bytes,sha256:row.sha256}));
+      await markRetirementPending(store,dir,marker.receiptSha256,files);
+      marker={...marker,state:'pending',files};cold=new Map(files.map(row=>[row.path,row]));
+    }
     // 只按名称+大小可能匹配的文件计入哈希额度；明确未列出者直接保留，不占额度、不阻塞后续桶。
-    const cold=new Map(restore.inventory.map(row=>[`archive/${dir}/${row.path}`,row]));
     const candidates=scan.present.filter(row=>cold.get(row.path)?.bytes===row.bytes);
     const kept=[...scan.outside,...scan.present.filter(row=>!candidates.includes(row))];
     const bytes=candidates.reduce((n,row)=>n+row.bytes,0);
     if(candidates.length && (processed>=maxBuckets || (processed && used+bytes>maxBytes))){result.deferred++;continue;}
-    if(candidates.length){processed++;used+=bytes;}
+    if(candidates.length){processed++;used+=bytes;charged=dir;}
     const matched=[];
     for(const row of candidates) {
       const expected=cold.get(row.path);
@@ -222,7 +244,12 @@ export async function retireLegacyMarkedArchives(request,{root,receiptsRoot='/da
     }
     const keptSummary=keep(kept);result.keptFiles+=keptSummary.keptFiles;result.keptBytes+=keptSummary.keptBytes;
     if(!matched.length) {
-      if(kept.length){report('kept-not-in-verified-backup',keptSummary);continue;}
+      if(kept.length){report(resume?'resume-kept':'kept-not-in-verified-backup',keptSummary);continue;}
+      if(resume) {
+        await completeRetirementMarker(store,dir,marker.receiptSha256);
+        result.buckets.push({dir,state:'resume-nothing-left',retirementCompleted:true,removedFiles:0,removedLogicalBytes:0,keptFiles:0,keptBytes:0});
+        continue;
+      }
       // 本范围内已无来源（只剩已退出平台/元数据）：无需删除，直接升级标记。
       await upgradeRetirementMarker(store,dir,marker.receiptSha256,{receiptSha256:marker.receiptSha256,restore,createdAt:new Date().toISOString()});
       result.buckets.push({dir,state:'nothing-to-retire',retirementCompleted:true,removedFiles:0,removedLogicalBytes:0,keptFiles:0,keptBytes:0});
@@ -231,21 +258,23 @@ export async function retireLegacyMarkedArchives(request,{root,receiptsRoot='/da
     const assets=[{releaseTag:restore.releaseTag,name:`archive-${dir}.manifest.json`,bytes:manifestRaw.length,sha256:restore.manifestSha256},
       ...manifest.parts.map(part=>({releaseTag:restore.releaseTag,name:part.assetName,bytes:part.bytes,sha256:part.sha256}))];
     const receipt={schemaVersion:1,evidenceKind:'remote-restore',repository,createdAt:new Date().toISOString(),scope:'verified-archives',
-      evidenceSource:'legacy-marker-restore',legacyMarkerReceiptSha256:marker.receiptSha256,files:matched,
+      evidenceSource:resume?'resume-pending-marker':'legacy-marker-restore',
+      [resume?'resumedMarkerReceiptSha256':'legacyMarkerReceiptSha256']:marker.receiptSha256,files:matched,
       backup:{batchId:request.batchId,assets,restores:[restore]}};
     const digest=cleanupReceiptSha256(receipt);
     const evidenceDirectory=path.join(persistent,`${request.batchId}-legacy-${dir}-${randomUUID()}`);
     await fs.mkdir(evidenceDirectory,{mode:0o700});
     await durable(path.join(evidenceDirectory,'cleanup-receipt.json'),receipt);
-    await durable(path.join(evidenceDirectory,'authorization.json'),{rootScope:'verified-archives',policy:'legacy-marker-verified-inventory',
+    await durable(path.join(evidenceDirectory,'authorization.json'),{rootScope:'verified-archives',policy:resume?'resume-pending-marker-receipt':'legacy-marker-verified-inventory',
       receiptSha256:digest,batchId:request.batchId,files:matched,kept:kept.map(({path,bytes})=>({path,bytes})),createdAt:new Date().toISOString()});
     try {
       const removed=await deleteVerifiedArchive({root:store,receipt,receiptSha256:digest,apply:true,approveSha256:digest,verifyEvidence,
         journalPath:path.join(evidenceDirectory,'cleanup-journal.jsonl'),signal,
-        ...(kept.length?{keepUnlistedInLegacyBuckets:true}:{upgradeMarkers:{[dir]:marker.receiptSha256}})});
+        ...(resume?{resumeMarkers:{[dir]:marker.receiptSha256}}:{}),
+        ...(kept.length?{keepUnlistedInLegacyBuckets:true}:resume?{}:{upgradeMarkers:{[dir]:marker.receiptSha256}})});
       await durable(path.join(evidenceDirectory,'result.json'),removed);
       result.removedLogicalBytes+=removed.removedLogicalBytes;
-      report(kept.length?'retired-partially-kept':'retired',{retirementCompleted:!kept.length,removedFiles:removed.removed.length,
+      report(`${resume?'resumed':'retired'}${kept.length?'-partially-kept':''}`,{retirementCompleted:!kept.length,removedFiles:removed.removed.length,
         removedLogicalBytes:removed.removedLogicalBytes,...keptSummary,evidenceDirectory});
     } catch(error) {
       await durable(path.join(evidenceDirectory,'failure.json'),{error:error.message,partial:error.cleanupResult || null});
@@ -254,6 +283,10 @@ export async function retireLegacyMarkedArchives(request,{root,receiptsRoot='/da
       report('failed',{error:error.message,removedFiles:error.cleanupResult?.removed?.length || 0,
         removedLogicalBytes:error.cleanupResult?.removedLogicalBytes || 0,...keptSummary,evidenceDirectory});
     }
+  }
+  if(charged) {
+    const next=`${cursorFile}.next-${randomUUID()}`;
+    await durable(next,{schemaVersion:1,lastDir:charged,batchId:request.batchId});await fs.rename(next,cursorFile);
   }
   return result;
 }
