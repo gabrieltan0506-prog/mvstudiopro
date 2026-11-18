@@ -62,7 +62,7 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          timeout 20 flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "test -r /app/scripts/growth-backup-io.py" </dev/null
+          timeout --kill-after=5s 20s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "test -r /app/scripts/growth-backup-io.py" </dev/null
           # 新工作流先于服务器上线时明确暂停，不能发布旧读取器无法恢复的新归档。
           timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
             -C "node /app/scripts/growth-cold-store-routing-check.mjs '$GROWTH_BACKUP_REPOSITORY'" </dev/null | jq -e '.codeAndConfigurationReady == true and .metadataReadable == true and .restoreVerified == false'

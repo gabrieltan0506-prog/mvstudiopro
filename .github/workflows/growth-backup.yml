@@ -79,7 +79,7 @@ jobs:
           # 「多久没成功备份」决定是让路还是标红，不会无声停摆。
           ROUTING_READY=false
           for attempt in $(seq 1 20); do
-            if timeout 20 flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "test -r /app/scripts/growth-backup-io.py" </dev/null && \
+            if timeout --kill-after=5s 20s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "test -r /app/scripts/growth-backup-io.py" </dev/null && \
               timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
               -C "node /app/scripts/growth-cold-store-routing-check.mjs '$GROWTH_BACKUP_REPOSITORY'" </dev/null | jq -e '.codeAndConfigurationReady == true and .metadataReadable == true and .restoreVerified == false'; then
               ROUTING_READY=true
