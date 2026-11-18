@@ -546,6 +546,15 @@ export async function extractKnowledgeCardUploads(
         abortSignal: options.abortSignal,
         buffer: pdfBuffer,
         docKey: pdfDocKey,
+        textCache: options.documentCache,
+        existingSheets: options.documentCache ? async prefix => {
+          const { listGcsObjectNamesByPrefix, getGcsBucketName, signGsUriV4ReadUrl } = await import("./gcs.js");
+          const names = await listGcsObjectNamesByPrefix({ prefix, allPages: true });
+          return new Map(names.map(name => {
+            const gcsUri = `gs://${getGcsBucketName()}/${name}`;
+            return [name, { gcsUri, url: signGsUriV4ReadUrl(gcsUri, 4 * 3600) }];
+          }));
+        } : undefined,
         fileName: name,
         userId: options.userId!,
         selectPages: options.selectPages!,

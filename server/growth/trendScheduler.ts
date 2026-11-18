@@ -21,6 +21,7 @@ import {
   readGrowthRuntimeControl,
   reconcileTrendHistoryState,
   resetTrendRuntimeForDeploy,
+  resetLegacyGrowthFailureTotals,
   updateTrendSchedulerState,
 } from "./trendStore";
 import { notifyGrowthCollectionUpdate } from "./trendMailDigest";
@@ -623,7 +624,6 @@ async function runPlatformTask(platform: GrowthPlatform) {
       timeoutStreak,
       timeoutCooldownUntil: cooldownUntil,
       totalRuns: (current?.totalRuns || 0) + 1,
-      totalFailures: (current?.totalFailures || 0) + 1,
       lastFailureAt: nowShanghaiIso(),
       lastDurationMs: Date.now() - startedAtMs,
       lastError: message,
@@ -640,7 +640,7 @@ async function runPlatformTask(platform: GrowthPlatform) {
         : forcedBurst
           ? getForceBurstLabel(platform)
           : current?.lastFrequencyLabel,
-    });
+    }, { incrementFailureTotal: true });
     if (timedOut) {
       console.warn(
         `[growth.scheduler] ${platform} aborted/timeout → exit burst, cooldown ${Math.round(cooldownMs / 60_000)}min (streak=${timeoutStreak})` +
@@ -850,6 +850,10 @@ export async function bootstrapGrowthTrendScheduler() {
   // 部署/整机异常退出可能遗留存储锁（含崩溃后零字节锁文件）；只回收可证明属于上一次开机的锁。
   await reclaimGrowthStoreMutationLockFromPreviousBoot().catch((error) => {
     console.warn("[growth.lock] boot-time lock inspection failed:", error);
+  });
+
+  await resetLegacyGrowthFailureTotals().catch(error => {
+    console.warn("[growth.scheduler] 历史累计抓取失败次数未清零，将在下次启动重试", error);
   });
 
   if (!/^(1|true|yes)$/i.test(String(process.env.GROWTH_DISABLE_HISTORY_LEDGER_UPDATES || "").trim())) {

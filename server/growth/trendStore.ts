@@ -42,6 +42,7 @@ export type TrendSchedulerState = {
   failureCount: number;
   totalRuns?: number;
   totalFailures?: number;
+  failureCounterEpoch?: 1;
   /** 最近一次抓取失败的时间；前端只短暂展示，累计次数长期保留。 */
   lastFailureAt?: string;
   successCount?: number;
@@ -3161,9 +3162,26 @@ export async function mergeTrendCollectionsWithOptions(
   );
 }
 
+/** 在同一份调度状态内原子保存清零值和迁移标记，重启后保留新增失败。 */
+export async function resetLegacyGrowthFailureTotals() {
+  return withGrowthStoreMutationLock("reset-growth-failure-totals", async () => {
+    const scheduler = await readTrendSchedulerState();
+    const legacy = Object.values(scheduler).filter(row => row && row.failureCounterEpoch !== 1);
+    if (!legacy.length) return;
+    for (const row of legacy) {
+      row.totalFailures = 0;
+      row.failureCounterEpoch = 1;
+    }
+    const updatedAt = nowShanghaiIso();
+    await writeRuntimeSegment(RUNTIME_SCHEDULER_FILE, scheduler, updatedAt);
+    await writeRuntimeMetaSnapshot(updatedAt);
+  });
+}
+
 export async function updateTrendSchedulerState(
   platform: GrowthPlatform,
-  patch: Partial<TrendSchedulerState>,
+  patch: Partial<Omit<TrendSchedulerState, "totalFailures" | "failureCounterEpoch">>,
+  options?: { incrementFailureTotal: true },
 ) {
   // 控制面会同时更新三个平台，视频号后台 merge 也可能在同一时刻写健康状态。
   // 旧的 read-modify-write 没有锁，并行写会让最后一个写入者覆盖其他平台刚落盘的状态。
@@ -3177,6 +3195,9 @@ export async function updateTrendSchedulerState(
     scheduler[platform] = {
       ...current,
       ...patch,
+      totalFailures: (current.failureCounterEpoch === 1 ? current.totalFailures ?? 0 : 0)
+        + (options?.incrementFailureTotal ? 1 : 0),
+      failureCounterEpoch: 1,
       platform,
     };
     const updatedAt = nowShanghaiIso();

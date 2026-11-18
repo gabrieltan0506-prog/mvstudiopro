@@ -134,6 +134,52 @@ describe("EPUB → PDF → 逐页备料（真实 Chromium + poppler）", () => {
     expect(stages).toEqual(expect.arrayContaining(["text", "thumbs", "select", "render"]));
   }, 120_000);
 
+  it("挑页中断后，新任务直接读文字断点和旧目录图", async () => {
+    const pdf = await renderHtmlToPdf("<p>checkpoint book</p>");
+    const saved = new Map<string, unknown>();
+    const sheets = new Map<string, { gcsUri: string; url: string }>();
+    const params = {
+      buffer: pdf, fileName: "book.pdf", userId: 9,
+      textCache: {
+        prefix: "fixture/u9", read: async (key: string) => saved.get(key),
+        save: async (key: string, value: unknown) => { saved.set(key, value); },
+      },
+      existingSheets: async () => sheets,
+      uploadPage: async (key: string) => {
+        const uploaded = { gcsUri: "gs://fixture/" + key, url: "https://example.test/" + key };
+        sheets.set(key, uploaded);
+        return uploaded;
+      },
+    };
+    await expect(prepareKnowledgeCardDocumentPages({ ...params, selectPages: async () => { throw Error("中断"); } })).rejects.toThrow("中断");
+    expect(saved.size).toBe(1);
+    expect(sheets.size).toBe(1);
+    let rewrites = 0;
+    const recovered = await prepareKnowledgeCardDocumentPages({
+      ...params,
+      textCache: { ...params.textCache, save: async () => { rewrites++; } },
+      uploadPage: async () => { throw Error("不应重建目录图"); },
+      selectPages: async items => { expect(items[0]?.pageNumbers).toEqual([1]); return []; },
+    });
+    expect(rewrites).toBe(0);
+    expect(recovered.pages[0]?.text).toContain("checkpoint book");
+  }, 60_000);
+
+  it("文字断点损坏、缓存写失败及目录列表不可用仍可提取原稿", async () => {
+    const pdf = await renderHtmlToPdf("<p>recover from cache failure</p>");
+    const result = await prepareKnowledgeCardDocumentPages({
+      buffer: pdf, fileName: "test.pdf", userId: 9,
+      textCache: {
+        prefix: "fixture/u9", read: async () => { throw new SyntaxError("bad json"); },
+        save: async () => { throw Error("unavailable"); },
+      },
+      existingSheets: async () => { throw Error("unavailable"); },
+      uploadPage: async key => ({ gcsUri: "gs://fixture/" + key, url: "https://example.test/" + key }),
+      selectPages: async () => [],
+    });
+    expect(result.pages[0]?.text).toContain("recover from cache failure");
+  }, 60_000);
+
   it("renderHtmlToPdf produces a PDF for plain HTML", async () => {
     const pdf = await renderHtmlToPdf("<html><body><h1>只有一页</h1></body></html>");
     expect(pdf.subarray(0, 4).toString()).toBe("%PDF");
