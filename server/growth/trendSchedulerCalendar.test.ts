@@ -9,6 +9,7 @@ vi.mock("./trendStore", () => ({
   readGrowthRuntimeControl: vi.fn(async () => ({ mode: "auto", burst: "manual", burstPlatforms: ["douyin", "bilibili", "xiaohongshu"] })),
   readTrendSchedulerState: vi.fn(async () => ({})),
   updateTrendSchedulerState: vi.fn(async () => undefined),
+  resetLegacyGrowthFailureTotals: vi.fn(async () => undefined),
   resetTrendRuntimeForDeploy: vi.fn(async () => undefined),
   ensureGrowthStoreSplitGzipLayout: vi.fn(async () => undefined),
   warmTrendShortlistIndexes: vi.fn(async () => undefined),

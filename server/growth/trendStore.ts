@@ -42,6 +42,7 @@ export type TrendSchedulerState = {
   failureCount: number;
   totalRuns?: number;
   totalFailures?: number;
+  failureCounterEpoch?: 1;
   /** 最近一次抓取失败的时间；前端只短暂展示，累计次数长期保留。 */
   lastFailureAt?: string;
   successCount?: number;
@@ -3161,6 +3162,22 @@ export async function mergeTrendCollectionsWithOptions(
   );
 }
 
+/** 在同一份调度状态内原子保存清零值和迁移标记，重启后保留新增失败。 */
+export async function resetLegacyGrowthFailureTotals() {
+  return withGrowthStoreMutationLock("reset-growth-failure-totals", async () => {
+    const scheduler = await readTrendSchedulerState();
+    const legacy = Object.values(scheduler).filter(row => row && row.failureCounterEpoch !== 1);
+    if (!legacy.length) return;
+    for (const row of legacy) {
+      row.totalFailures = 0;
+      row.failureCounterEpoch = 1;
+    }
+    const updatedAt = nowShanghaiIso();
+    await writeRuntimeSegment(RUNTIME_SCHEDULER_FILE, scheduler, updatedAt);
+    await writeRuntimeMetaSnapshot(updatedAt);
+  });
+}
+
 export async function updateTrendSchedulerState(
   platform: GrowthPlatform,
   patch: Partial<TrendSchedulerState>,
@@ -3177,6 +3194,7 @@ export async function updateTrendSchedulerState(
     scheduler[platform] = {
       ...current,
       ...patch,
+      failureCounterEpoch: current.failureCounterEpoch ?? (scheduler[platform] ? undefined : 1),
       platform,
     };
     const updatedAt = nowShanghaiIso();

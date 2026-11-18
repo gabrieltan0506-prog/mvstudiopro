@@ -12,6 +12,7 @@
  *
  * 需要 poppler-utils（Fly 镜像已装）。
  */
+import type { KnowledgeRouteEvidence } from "./knowledgePublicationRoutes";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -205,6 +206,8 @@ export async function prepareKnowledgeCardDocumentPages(params: {
   /** 原文一读出就交给顾问，不等待缩略图、选页或参考图渲染。 */
   onTextReady?: (document: KnowledgeCardDocumentPageSet) => Promise<void>;
   /** 测试注入：不传则真实上传 GCS 并返回 { gcsUri, url(签名 https) } */
+  textCache?: KnowledgeRouteEvidence;
+  existingSheets?: (prefix: string) => Promise<ReadonlyMap<string, { gcsUri: string; url: string }>>;
   uploadPage?: (objectName: string, jpeg: Buffer) => Promise<{ gcsUri: string; url: string }>;
 }): Promise<KnowledgeCardDocumentPageSet> {
   params.abortSignal?.throwIfAborted();
@@ -225,31 +228,49 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     const total = await pdfPageCount(pdfPath, params.abortSignal);
 
     await params.onProgress?.("text", 0, total);
-    const { stdout: textRaw } = await execFileAsync("pdftotext", ["-layout", "-enc", "UTF-8", pdfPath, "-"], {
-      maxBuffer: 256 * 1024 * 1024,
-      signal: params.abortSignal,
-    });
-    const texts = splitPdfTextByPage(textRaw);
-    const pages: KnowledgeCardDocumentPage[] = Array.from({ length: total }, (_, i) => ({ pageNumber: i + 1, text: texts[i] || "" }));
+    const pages: KnowledgeCardDocumentPage[] = [];
+    const textBatch = params.textCache ? THUMB_BATCH_PAGES : total;
+    for (let first = 1; first <= total; first += textBatch) {
+      params.abortSignal?.throwIfAborted();
+      const last = Math.min(total, first + textBatch - 1);
+      const key = `${params.textCache?.prefix}/page-text-v1/${docKey}/${total}-${first}-${last}.json`;
+      let texts = await params.textCache?.read(key);
+      if (!Array.isArray(texts) || texts.length !== last - first + 1 || !texts.every(t => typeof t === "string")) {
+        const { stdout } = await execFileAsync("pdftotext", ["-layout", "-enc", "UTF-8", "-f", String(first), "-l", String(last), pdfPath, "-"], {
+          maxBuffer: 256 * 1024 * 1024, signal: params.abortSignal,
+        });
+        texts = splitPdfTextByPage(stdout);
+        if (texts.length !== last - first + 1) throw new Error(`原稿文字页数不符：${first}–${last}`);
+        await params.textCache?.save(key, texts);
+      }
+      for (const text of texts) pages.push({ pageNumber: pages.length + 1, text });
+      await params.onProgress?.("text", last, total);
+    }
 
     await params.onTextReady?.({docKey, fileName:params.fileName, pageCount:total, pages, selectedPages:[]});
-    await params.onProgress?.("text", total, total);
+
     await params.onProgress?.("thumbs", 0, total);
     // 分批渲染缩略图并即拼即弃，千页书也不把整本缩略图驻留内存
     const sheets: KnowledgeCardContactSheet[] = [];
-    let thumbsDone = 0;
-    for (let first = 1; first <= total; first += THUMB_BATCH_PAGES) {
+    const sheetPrefix = `knowledge-card-distill/sheets/u${params.userId}/${docKey}/`;
+    const existing = await params.existingSheets?.(sheetPrefix);
+    for (let first = 1; first <= total; first += KNOWLEDGE_CARD_SHEET_CELLS) {
       params.abortSignal?.throwIfAborted();
-      const last = Math.min(total, first + THUMB_BATCH_PAGES - 1);
-      const thumbs = await renderPdfPagesToJpeg(pdfPath, dir, `t${first}`, THUMB_WIDTH, { first, last }, params.abortSignal);
-      if (thumbs.size !== last - first + 1) throw new Error(`原稿缩略图页数不符：第 ${first}–${last} 页应 ${last - first + 1} 页，实得 ${thumbs.size} 页`);
-      for (const sheet of await awaitKnowledgeCardAbort(buildContactSheets(thumbs, sheets.length), params.abortSignal)) {
-        params.abortSignal?.throwIfAborted();
-        const uploaded = await awaitKnowledgeCardAbort(uploadPage(knowledgeCardSheetObjectName(params.userId, docKey, sheet.index), sheet.jpeg), params.abortSignal);
-        sheets.push({ index: sheet.index, pageNumbers: sheet.pageNumbers, imageUrl: uploaded.url, gcsUri: uploaded.gcsUri });
+      const last = Math.min(total, first + KNOWLEDGE_CARD_SHEET_CELLS - 1);
+      const index = sheets.length + 1;
+      const objectName = knowledgeCardSheetObjectName(params.userId, docKey, index);
+      const cached = existing?.get(objectName);
+      if (cached) {
+        sheets.push({ index, pageNumbers: Array.from({ length: last - first + 1 }, (_, i) => first + i),
+          imageUrl: cached.url, gcsUri: cached.gcsUri });
+      } else {
+        const thumbs = await renderPdfPagesToJpeg(pdfPath, dir, `t${first}`, THUMB_WIDTH, { first, last }, params.abortSignal);
+        if (thumbs.size !== last - first + 1) throw new Error(`原稿缩略图页数不符：${first}–${last}`);
+        const [sheet] = await awaitKnowledgeCardAbort(buildContactSheets(thumbs, sheets.length), params.abortSignal);
+        const uploaded = await awaitKnowledgeCardAbort(uploadPage(objectName, sheet!.jpeg), params.abortSignal);
+        sheets.push({ index, pageNumbers: sheet!.pageNumbers, imageUrl: uploaded.url, gcsUri: uploaded.gcsUri });
       }
-      thumbsDone += thumbs.size;
-      await params.onProgress?.("thumbs", thumbsDone, total);
+      await params.onProgress?.("thumbs", last, total);
     }
 
     await params.onProgress?.("select", 0, sheets.length);
