@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { KNOWLEDGE_MODEL_CHANNEL_MAX, knowledgePooled, knowledgeStageConcurrency } from "../../shared/knowledgeConcurrency";
 import { knowledgeStructuredDistillContext, invokeKnowledgeStructuredDistill } from './knowledgeCardStructuredDistill';
 import { collectKnowledgeDistillDiagnostic, type KnowledgeDistillSegmentDiagnostic } from './knowledgeDistillDiagnostics';
-import { knowledgeChannelSkipped } from './knowledgePublicationRoutes';
+import { knowledgeChannelSkipped, knowledgeRouteKeepaliveOnlyTimeoutMs, knowledgeRouteIdleTimeoutMs } from './knowledgePublicationRoutes';
 import type { KnowledgeRouteEvidence } from './knowledgePublicationRoutes';
 import { KNOWLEDGE_PENDING_RESEARCH_INSTRUCTION, preserveKnowledgePendingResearch } from './knowledgeVerificationPolicy';
 import { KNOWLEDGE_NARRATIVE_STYLE } from '../../shared/knowledgeNarrativeStyle';
@@ -862,6 +862,13 @@ async function invokeDistillViaGateway(params: {
    * 实测 GLM 两家被外壳带偏，把挑页答成提炼稿；与 DeepSeek 挑页专链一样只发原话 + 图。
    */
   plainUserContent?: boolean;
+  /**
+   * 心跳规则（站长 2026-11-14，挑页用）：两项都给时本跳不设固定总时长，改为
+   * 等响应头或读流连续 idleTimeoutMs 无字节、或只收到保活（无实质增量）keepaliveOnlyTimeoutMs 即判本跳失败换下一跳（与 knowledgePublicationRoutes 同口径）。
+   * 不给时行为不变（固定总时长 distillFetchTimeoutMs）。
+   */
+  keepaliveOnlyTimeoutMs?: number;
+  idleTimeoutMs?: number;
 }): Promise<string> {
   const userContent: Array<Record<string, unknown>> = params.plainUserContent
     ? [
@@ -971,16 +978,36 @@ async function invokeDistillViaGateway(params: {
   // 单次统稿可达 15 分钟，超过卡死阈值：请求在途也按分钟 touch 心跳，别把自己判死
   const inflightBeat = setInterval(() => touchKnowledgeCardDistillActivity(), 60_000);
   let raw: string;
+  // 心跳模式（见 keepaliveOnlyTimeoutMs）：本跳自己的中断器；它触发的中断按「本跳无数据」失败换跳，不当作用户取消。
+  const heartbeat = params.keepaliveOnlyTimeoutMs !== undefined && params.idleTimeoutMs !== undefined
+    ? { keepaliveOnlyMs: params.keepaliveOnlyTimeoutMs, idleMs: params.idleTimeoutMs, hop: new AbortController(), cause: "" as "" | "headers" | "keepalive_only" }
+    : undefined;
+  let keepaliveWatch: ReturnType<typeof setInterval> | undefined;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      // 终止信号与超时合并：用户点停要立刻断在途请求，超时保护同时保留
-      signal: params.abortSignal
-        ? AbortSignal.any([params.abortSignal, AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs))])
-        : AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs)),
-      body: JSON.stringify(body),
-    });
+    const headerTimer = heartbeat ? setTimeout(() => { heartbeat.cause = "headers"; heartbeat.hop.abort(); }, heartbeat.idleMs) : undefined;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        // 终止信号与超时合并：用户点停要立刻断在途请求，超时保护同时保留（心跳模式不设固定总时长）
+        signal: heartbeat
+          ? (params.abortSignal ? AbortSignal.any([params.abortSignal, heartbeat.hop.signal]) : heartbeat.hop.signal)
+          : params.abortSignal
+            ? AbortSignal.any([params.abortSignal, AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs))])
+            : AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs)),
+        body: JSON.stringify(body),
+      });
+    } finally { if (headerTimer) clearTimeout(headerTimer); }
+    if (heartbeat && res.ok && isSseResponse(res) && res.body) {
+      let lastSubstantiveAt = Date.now();
+      keepaliveWatch = setInterval(() => {
+        if (Date.now() - lastSubstantiveAt >= heartbeat.keepaliveOnlyMs) { heartbeat.cause = "keepalive_only"; heartbeat.hop.abort(); }
+      }, Math.max(1_000, Math.min(15_000, Math.floor(heartbeat.keepaliveOnlyMs / 10))));
+      raw = await readGlmSseStream(res.body, undefined, {
+        strictCompletion: true, idleTimeoutMs: heartbeat.idleMs, idleRejectBeforeCancel: true,
+        onSubstantiveDelta: () => { lastSubstantiveAt = Date.now(); },
+      });
+    } else
     // 按**响应类型**决定读法：上游忽略 stream 直接回 JSON 时用 SSE 读取器会读出空正文
     // 先看状态码再决定读法（复审 P2）：上游用 text/event-stream 回非 200 时，
     // strict 会先抛断流错误，mapDistillUpstreamError 根本轮不到——402「额度不足」
@@ -991,9 +1018,16 @@ async function invokeDistillViaGateway(params: {
       ? await readGlmSseStream(res.body, undefined, { strictCompletion: true })
       : await res.text();
   } catch (err) {
+    // 本跳心跳中断（用户未取消）：普通失败，由链换下一跳；文案不含取消字样。
+    if (heartbeat?.cause && !params.abortSignal?.aborted) {
+      throw new Error(heartbeat.cause === "keepalive_only"
+        ? `上游 ${Math.round(heartbeat.keepaliveOnlyMs / 1000)} 秒只有保活无实质内容，判本跳失败并切下一跳`
+        : `上游 ${Math.round(heartbeat.idleMs / 1000)} 秒未返回响应头，判本跳失败并切下一跳`);
+    }
     throw mapFetchAbortError(err);
   } finally {
     clearInterval(inflightBeat);
+    if (keepaliveWatch) clearInterval(keepaliveWatch);
   }
   if (!res.ok) {
     console.warn(
@@ -1050,7 +1084,7 @@ export function __setKnowledgeCardDistillGatewayInvokerForTest(
   distillGatewayInvoker = fn || invokeDistillViaGateway;
 }
 
-async function invokeDistillLlm(params: {
+export async function invokeDistillLlm(params: {
   sourceText: string;
   imageUrls: string[];
   pageImages?: DistillPageImage[];
@@ -1086,6 +1120,9 @@ async function invokeDistillLlm(params: {
   jsonObject?: boolean;
   /** 不套提炼外壳（挑页用，见 invokeDistillViaGateway） */
   plainUserContent?: boolean;
+  /** 按心跳换跳、不设固定总时长（挑页用，两项须同时给；见 invokeDistillViaGateway） */
+  keepaliveOnlyTimeoutMs?: number;
+  idleTimeoutMs?: number;
 }): Promise<string> {
   if (knowledgeStructuredDistillContext.getStore() && !params.plainUserContent) return invokeKnowledgeStructuredDistill(params);
   if (params.chainRetry === false) return invokeDistillChainOnce(params);
@@ -2032,6 +2069,7 @@ function createKnowledgeCardPageTriageRun(
           effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "high"),
           systemOverride: buildPageTriageSystem(),
           timeoutMs: TRIAGE_REQUEST_TIMEOUT_CAP_MS,
+          keepaliveOnlyTimeoutMs: knowledgeRouteKeepaliveOnlyTimeoutMs(), idleTimeoutMs: knowledgeRouteIdleTimeoutMs(),
           chainOverride: knowledgeCardChainForPrimary(KNOWLEDGE_CARD_GLM_FIRST_ORDER, primary),
           // 0923 热修：挑页要 JSON，OpenRouter 跳开 json_object
           jsonObject: true,
