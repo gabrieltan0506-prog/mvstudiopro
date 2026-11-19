@@ -15,7 +15,7 @@ import { exportKnowledgePublication } from "./knowledgePublicationExport";
 import { loadKnowledgeBookLayoutInput, loadKnowledgeBookLayoutView, validateKnowledgeBookLayoutTransition } from "./knowledgeBookLayout";
 import { buildKnowledgePublicationHtml } from "../../shared/knowledgePublicationHtml";
 
-// 本组非视觉用例使用有效测试PDF，仍经过正式pdfseparate/pdfunite，不能用伪PDF字节跳过分片合同。
+// 本组非视觉用例使用有效测试PDF，仍经过正式pdfunite合并与pdfinfo计页，不能用伪PDF字节跳过分片合同。
 const fixturePageCount = (_html:string) => 1;
 const fixturePdf = (html:string) => new Promise<Buffer>((resolve,reject)=>{
   const pdf=new PDFDocument({autoFirstPage:false}),chunks:Buffer[]=[];
@@ -130,7 +130,12 @@ it("真实顾问路由产出方案，经永久回执与保存校验后控制合�
   expect(Array.from(f.objects.keys()).filter(name=>name.endsWith('/阅读稿.html')).every(name=>name.includes('-url2/'))).toBe(true);
   const sentHtml=f.deps.pdf.mock.calls.map(([html])=>html).join('\n');
   for(const end of ["末句一必须保留","末句二必须保留","末句三必须保留","末句四必须保留"])expect(sentHtml).toContain(end);
-  expect(Array.from(f.objects.keys()).filter(name=>/\.pdf\.pages\/\d+\.pdf$/.test(name))).toHaveLength(4);
+  // 逐页 PDF 已停写（站长 1120 定）：整册 PDF 与页数不变，分片照存，不再产出 <分片>.pdf.pages/。
+  expect(Array.from(f.objects.keys()).filter(name=>name.includes('.pdf.pages/'))).toHaveLength(0);
+  expect(Array.from(f.objects.keys()).filter(name=>/\/pdf-parts\/\d+-\d+-1-4\.pdf$/.test(name))).toHaveLength(4);
+  const book=Array.from(f.objects.entries()).find(([name])=>name.endsWith('/阅读稿.pdf'))![1];
+  const bookPath=`${process.env.TMPDIR||'/tmp'}/book-${randomUUID()}.pdf`;await writeFile(bookPath,book);
+  expect(await countPdfPages(bookPath)).toBe(4);
   await f.run();await exportKnowledgePublication(7,f.parent.id,"10",f.deps);
   expect(f.fetch).toHaveBeenCalledTimes(1);expect(f.deps.pdf).toHaveBeenCalledTimes(4);
   expect(Array.from(f.models.keys()).some(k=>k.endsWith("/raw.json"))).toBe(true);

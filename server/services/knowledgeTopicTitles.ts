@@ -16,7 +16,7 @@ import {
   type KnowledgeTopicTitles,
 } from "../../shared/knowledgeTopicImagePlan";
 import { KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST } from "./knowledgeModelCapabilities";
-import { KNOWLEDGE_MODEL_CHANNEL_MAX, knowledgePooled } from "../../shared/knowledgeConcurrency";
+import { KNOWLEDGE_MODEL_CHANNEL_MAX, knowledgePooled, type KnowledgeModelChannel } from "../../shared/knowledgeConcurrency";
 import {
   invokeKnowledgePublicationRoutes,
   type KnowledgeModelRequest,
@@ -82,14 +82,31 @@ const TITLE_SYSTEM_PROMPT = `你为图文知识手册的每个主题图拟定标
 
 type TitleTopic = { id: string; headlines: string[]; body: string; index: number };
 
-function buildTitleRequest(model: string | undefined, title: string, sourceDigest: string, topics: readonly TitleTopic[]): KnowledgeModelRequest {
+/**
+ * 命题首发通道（D2 2026-11-19）：按批序交替 EvoLink / OpenRouter，两通道并行；每批都走 GLM 首发链
+ * （GLM@本通道 → GLM@另一通道 → DeepSeek v4.1 Flash 1017），写坏/超时/仅保活由路由按心跳换路。
+ * 只影响新建请求；已存 request.json 的批次按原请求回放，回执身份不变。
+ */
+export const knowledgeTopicTitleChannel = (index: number): KnowledgeModelChannel => index % 2 === 0 ? "evolink" : "openrouter";
+
+function buildTitleRequest(channel: KnowledgeModelChannel, title: string, sourceDigest: string, topics: readonly TitleTopic[]): KnowledgeModelRequest {
   return {
-    executionChannel: "openrouter",
-    executionFamily: String(model || "").includes("glm") ? "glm" : "deepseek",
+    executionChannel: channel,
+    executionFamily: "glm",
     systemInstruction: { parts: [{ text: TITLE_SYSTEM_PROMPT }] },
     contents: [{ role: "user", parts: [{ text: JSON.stringify({ sourceDigest, source: { title, pages: topics.map(t => ({ id: t.id, headline: `主题${t.index + 1}`, body: `原小节：${t.headlines.join("｜")}\n\n${t.body}`, imageUrl: "" })) } }) }] }],
     generationConfig: { temperature: 0.3, maxOutputTokens: KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST, responseMimeType: "application/json" },
   };
+}
+
+/** 按序号交替分到两通道，各通道独立池并发（各自 ≤ 通道上限）；全部在途收口后才抛出首个错误，不留后台写入。 */
+async function pooledAcrossChannels(count: number, worker: (index: number, channel: KnowledgeModelChannel) => Promise<void>) {
+  const settled = await Promise.allSettled((["evolink", "openrouter"] as const).map(channel => {
+    const indices = Array.from({ length: count }, (_, i) => i).filter(i => knowledgeTopicTitleChannel(i) === channel);
+    return knowledgePooled(indices.length, k => worker(indices[k]!, channel), KNOWLEDGE_MODEL_CHANNEL_MAX[channel]);
+  }));
+  const failed = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) throw failed.reason;
 }
 
 /**
@@ -126,11 +143,11 @@ export async function nameKnowledgeEditionTopics(params: {
     ? { fetch: (url: Parameters<typeof fetch>[0], init?: RequestInit) => fetch(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, params.abortSignal!]) : params.abortSignal }) }
     : {};
   /** 一次命题调用：请求先存、原始回包永久保存、解析结果另存；路由拒收或解析失败记 failure.json 并返回空结果。 */
-  const call = async (prefix: string, subset: readonly TitleTopic[], sourceDigest: string) => {
+  const call = async (prefix: string, subset: readonly TitleTopic[], sourceDigest: string, channel: KnowledgeModelChannel) => {
     const sub = { ...scope, prefix };
     const done = await sub.read(`${prefix}/parsed.json`);
     if (done?.digest === digest) return { titles: done.titles as KnowledgeTopicTitles, rejected: (done.rejected || []) as string[], error: undefined as string | undefined };
-    const request = buildTitleRequest(params.model, plan.title, sourceDigest, subset);
+    const request = buildTitleRequest(channel, plan.title, sourceDigest, subset);
     const saved = await sub.read(`${prefix}/request.json`);
     if (saved && saved.digest !== digest) throw Error("主题命题输入版本变化，保留原回执");
     if (!saved) await sub.save(`${prefix}/request.json`, { digest, request });
@@ -154,10 +171,10 @@ export async function nameKnowledgeEditionTopics(params: {
   const batches: TitleTopic[][] = [];
   for (let i = 0; i < topics.length; i += KNOWLEDGE_TOPIC_TITLE_BATCH) batches.push(topics.slice(i, i + KNOWLEDGE_TOPIC_TITLE_BATCH));
   const firsts: Awaited<ReturnType<typeof call>>[] = new Array(batches.length);
-  await knowledgePooled(batches.length, async b => {
+  await pooledAcrossChannels(batches.length, async (b, channel) => {
     const batchDigest = createHash("sha256").update(`${digest}/batch/${b}`).digest("hex");
-    firsts[b] = await call(`${scope.prefix}/batch-${b}`, batches[b]!, batchDigest);
-  }, KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter);
+    firsts[b] = await call(`${scope.prefix}/batch-${b}`, batches[b]!, batchDigest, channel);
+  });
   const titles: KnowledgeTopicTitles = Object.assign({}, ...firsts.map(f => f.titles));
   const rejected = firsts.flatMap(f => f.rejected);
   const incomplete = topics.filter(t => !isKnowledgeTopicTitleComplete(titles[knowledgeTopicKey(t.headlines)], t.headlines));
@@ -166,11 +183,11 @@ export async function nameKnowledgeEditionTopics(params: {
   if (incomplete.length) {
     // 只对缺页/缺项逐主题补一次：每个主题独立请求（单页合同不会因别页缺失整批拒收），并发走同一通道上限。
     const outcomes: Awaited<ReturnType<typeof call>>[] = new Array(incomplete.length);
-    await knowledgePooled(incomplete.length, async k => {
+    await pooledAcrossChannels(incomplete.length, async (k, channel) => {
       const topic = incomplete[k]!;
       const topicDigest = createHash("sha256").update(`${digest}/retry/${topic.index}`).digest("hex");
-      outcomes[k] = await call(`${scope.prefix}/retry/topic-${topic.index}`, [topic], topicDigest);
-    }, KNOWLEDGE_MODEL_CHANNEL_MAX.openrouter);
+      outcomes[k] = await call(`${scope.prefix}/retry/topic-${topic.index}`, [topic], topicDigest, channel);
+    });
     incomplete.forEach((topic, k) => {
       const key = knowledgeTopicKey(topic.headlines);
       const outcome = outcomes[k]!;

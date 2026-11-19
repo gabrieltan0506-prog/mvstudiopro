@@ -166,3 +166,57 @@ it('恢复缓存用当前分页器刷新图片计数但保留文字实测与原�
  expect(result.editionPageCounts!.concise.pageBudget!.budget.textPages).toEqual({min:2,target:3,max:3});
  expect(prior.result.editionPageCounts.full.imagePages).toBe(99);expect(invoke).not.toHaveBeenCalled();expect(save).not.toHaveBeenCalled();
 });
+
+// D1：逐页回执有界并发写入——键、内容与结果不变；中途一条失败整步失败，重跑幂等。
+const d1Source=()=>'# 原书\n\n'+Array.from({length:18},(_,i)=>`## 原始主题${i}\n\n步骤${i}：保留数值${100+i}克、每周3次。\n\n| 项目 | 条件 |\n|---|---|\n| 项${i} | 每天${i+1}次 |`).join('\n\n')+'\n\n## 注意事项\n\n此处保留原书适用条件，不能遗漏。';
+const d1Invoke=()=>vi.fn(async()=>({status:200,text:JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify({pages:[{reading:{blocks:[0,1,2].map(i=>({title:`原始主题${i}`,type:'prose',text:'选择理由',note:''}))}}]})}]}}]})}));
+const KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY_FOR_TEST=16;
+const pageKey=(k:string)=>/\/pages\/(full|concise)\/(chapters|images)\/\d+\.json$/.test(k);
+
+it('D1 逐页回执并发写入：同键同内容，在途>1且不超上限，结果与计数不变',async()=>{
+ const {KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY}=await import('./knowledgeCardEditionPreparation');
+ const serial=new Map<string,any>(),parallel=new Map<string,any>();
+ const sourceMarkdown=d1Source();
+ // 参照：每次写入立即完成（等价串行）。
+ const ref=await prepareKnowledgeCardEditions({sourceMarkdown,targetSections:3,invoke:d1Invoke() as any,measure:async()=>2,
+  evidence:{prefix:'d1',read:async k=>serial.get(k)??null,save:async(k,v)=>{serial.set(k,structuredClone(v));}}});
+ let inflight=0,peak=0;
+ const result=await prepareKnowledgeCardEditions({sourceMarkdown,targetSections:3,invoke:d1Invoke() as any,measure:async()=>2,
+  evidence:{prefix:'d1',read:async k=>parallel.get(k)??null,save:async(k,v)=>{
+   if(pageKey(k)){inflight++;peak=Math.max(peak,inflight);await new Promise(r=>setTimeout(r,2));inflight--;}
+   parallel.set(k,structuredClone(v));}}});
+ expect(peak).toBeGreaterThan(1);expect(peak).toBeLessThanOrEqual(KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY);
+ expect(Array.from(parallel.keys()).filter(pageKey).length).toBeGreaterThan(20);
+ expect(new Set(parallel.keys())).toEqual(new Set(serial.keys()));
+ for(const [k,v] of Array.from(serial))expect(parallel.get(k)).toEqual(v);
+ expect(result).toEqual(ref);
+ expect(Object.keys(result.editionPageCounts)).toEqual(['full','concise']);
+});
+
+it('D1 并发池中途一条回执写入失败：整步失败不报部分成功、不写editions.json；重跑零模型调用且与干净运行逐键一致',async()=>{
+ const sourceMarkdown=d1Source(),invoke=d1Invoke();
+ const clean=new Map<string,any>();
+ await prepareKnowledgeCardEditions({sourceMarkdown,targetSections:3,invoke:d1Invoke() as any,measure:async()=>2,
+  evidence:{prefix:'d1f',read:async k=>clean.get(k)??null,save:async(k,v)=>{clean.set(k,structuredClone(v));}}});
+ expect(Array.from(clean.keys()).filter(k=>/\/pages\/full\/chapters\//.test(k)).length).toBeGreaterThan(KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY_FOR_TEST);
+ const storage=new Map<string,any>();let imageWrites=0,failOnce=true;const after:string[]=[];let failed=false;
+ const evidence={prefix:'d1f',read:async(k:string)=>storage.get(k)??null,save:async(k:string,v:any)=>{
+  if(/\/pages\/full\/chapters\/\d+\.json$/.test(k)&&++imageWrites===5&&failOnce){failOnce=false;failed=true;await new Promise(r=>setTimeout(r,1));throw Error('ENOSPC: no space left on device');}
+  if(failed)after.push(k);
+  await new Promise(r=>setTimeout(r,1));storage.set(k,structuredClone(v));}};
+ const params={sourceMarkdown,targetSections:3,invoke:invoke as any,evidence,measure:async()=>2};
+ await expect(prepareKnowledgeCardEditions(params)).rejects.toThrow('章节检查点保存或读取失败，保留任务等待恢复');
+ expect(storage.has('d1f/editions.json')).toBe(false);
+ // 失败后不再领取新条目（在途的最多再收口 上限-1 条）：图片页、精华档与文字测量阶段都未开始。
+ expect(after.length).toBeLessThan(KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY_FOR_TEST);
+ expect(after.some(k=>k.includes('/images/')||k.includes('/pages/concise/')||k.endsWith('reading-layout.json'))).toBe(false);
+ const calls=invoke.mock.calls.length;
+ const result=await prepareKnowledgeCardEditions(params);
+ expect(invoke).toHaveBeenCalledTimes(calls);expect(result.verificationProcessed).toBe(true);
+ expect(new Set(storage.keys())).toEqual(new Set(clean.keys()));
+ for(const [k,v] of Array.from(clean))expect(storage.get(k)).toEqual(v);
+ // 再跑一次：命中 editions.json 零写入零调用。
+ const before=JSON.stringify(Array.from(storage.entries()));
+ await prepareKnowledgeCardEditions(params);
+ expect(JSON.stringify(Array.from(storage.entries()))).toBe(before);expect(invoke).toHaveBeenCalledTimes(calls);
+});

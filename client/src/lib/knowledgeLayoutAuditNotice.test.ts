@@ -10,8 +10,8 @@ it("版面审查提示三种状态：通过 / 有问题（默认前 5 条可展�
   const issues = Array.from({ length: 7 }, (_, i) => ({ page: i + 3, kind: "whitespace", target: `留白 ${40 + i}%` }));
   const out = html({ checked: true, passed: false, pages: 12, issueCount: 9, issues });
   expect(out).toContain("版面审查发现 9 处需要留意，PDF 仍可照常下载");
-  expect(out).toContain("第 3 页 · 留白超过三分之一 · 留白 40%");
-  expect(out).toContain("第 7 页 · 留白超过三分之一 · 留白 44%");
+  expect(out).toContain("第 3 页 · 留白超过四分之一 · 留白 40%");
+  expect(out).toContain("第 7 页 · 留白超过四分之一 · 留白 44%");
   expect(out).not.toContain("第 8 页");
   expect(out).toContain("展开其余 2 条");
   expect(renderToStaticMarkup(createElement(KnowledgeLayoutAuditNotice, { audit: { checked: true, passed: false, pages: 12, issueCount: 9, issues }, defaultExpanded: true }))).toContain("另有 2 处未逐条列出");

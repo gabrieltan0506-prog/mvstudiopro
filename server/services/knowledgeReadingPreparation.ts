@@ -21,15 +21,26 @@ const store = {
     await uploadBufferToGcs({objectName:name, buffer:Buffer.from(JSON.stringify(value)), contentType:"application/json"});
   },
 };
+/** 读档原文分组写入的并发数（2026-11-19）：首个失败后不再领新组，等在途收尾后抛首个错误。 */
+export const KNOWLEDGE_READING_SOURCE_WRITE_CONCURRENCY = 16;
+async function pooledSourceWrites(offsets: number[], worker: (offset: number) => Promise<void>) {
+  let next = 0, failed = false, firstError: unknown;
+  await Promise.all(Array.from({length:Math.max(1,Math.min(KNOWLEDGE_READING_SOURCE_WRITE_CONCURRENCY,offsets.length))},async()=>{
+    while(!failed && next<offsets.length){
+      const offset=offsets[next++]!;
+      try { await worker(offset); } catch (error) { if(!failed){failed=true;firstError=error;} }
+    }
+  }));
+  if (failed) throw firstError;
+}
 const planSchema = knowledgeReadingPreparationSchema.extend({ totalChunks: z.number().int().min(1), rawSources: z.array(z.object({key:z.string(),digest:z.string()}).strict()).optional() }).strict();
 const batchSchema = z.object({ index:z.number().int().min(0), source:knowledgeSourceSchema, sourceDigest:z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export function createKnowledgeReadingPreparation(owner: number, jobId: string, deps = store) {
   const root = prefix(owner, jobId), chunks = new Map<number, KnowledgeReadingChunk>(), pending = new Map<number, Promise<void>>(), ready = new Set<number>();
   let plan: z.infer<typeof planSchema> | undefined;
   const progress = (): KnowledgeReadingProgress | undefined => plan && ({jobId,documentId:plan.documentId,batches:plan.batches,ready:Array.from(ready).sort((a,b)=>a-b)});
-  return {
-    progress,
-    async onSource(key: string, parts: string[]) {
+  let sourceChain: Promise<void> = Promise.resolve();
+  const writeSource = async (key: string, parts: string[]) => {
       if (!parts.length || parts.some(p => !p.trim() || p.length > 6000)) throw Error("原文分段为空或超出容量");
       const digest = hash(JSON.stringify(parts));
       const prior = plan || await deps.read(`${root}/plan.json`);
@@ -42,7 +53,8 @@ export function createKnowledgeReadingPreparation(owner: number, jobId: string, 
         return;
       }
       const start = plan?.batches || 0;
-      for (let offset=0;offset<parts.length;offset+=4) {
+      const offsets = Array.from({length:Math.ceil(parts.length/4)},(_,i)=>i*4);
+      await pooledSourceWrites(offsets, async offset => {
         const index=start+Math.floor(offset/4);
         const source=knowledgeSourceSchema.parse({title:"读档中的知识整理",pages:parts.slice(offset,offset+4).map((body,i)=>({id:stableId(`${jobId}:${key}:${offset+i}`),headline:body.split(/\r?\n/).find(line=>line.trim())!.replace(/^#+\s*/, "").slice(0,100),body,imageUrl:"",role:"reading"}))});
         const value=batchSchema.parse({index,source,sourceDigest:hash(JSON.stringify(source))});
@@ -50,9 +62,21 @@ export function createKnowledgeReadingPreparation(owner: number, jobId: string, 
         if(old && JSON.stringify(old)!==JSON.stringify(value))throw Error("原顾问分段内容已改变，未重复提交");
         if(!old)await deps.save(`${root}/batch-${index}/input.json`,value);
         ready.add(index);
-      }
+      });
       plan=planSchema.parse({jobId,documentId:stableId(jobId),totalChunks:(plan?.totalChunks||0)+parts.length,batches:start+Math.ceil(parts.length/4),rawSources:[...(plan?.rawSources||[]),{key,digest}]});
       await deps.save(`${root}/plan.json`,plan);
+  };
+  return {
+    progress,
+    /**
+     * 原文顾问分组写入（2026-11-19）：约 440 组改为 16 路并发读比写；「内容不同禁止覆盖」逐组保持不变，
+     * 任一组失败即不再领新组、等在途收尾后抛首个错误，plan.json 只在全部组写完后落盘（与以前相同）。
+     * 同一实例的多次调用串行执行：起始批号取自上一次写完的计划，不能并发交错。
+     */
+    onSource(key: string, parts: string[]) {
+      const run = sourceChain.then(() => writeSource(key, parts));
+      sourceChain = run.then(() => undefined, () => undefined);
+      return run;
     },
     async onPlan(total: number) {
       if (plan?.rawSources) return;

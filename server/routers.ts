@@ -8833,6 +8833,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 imageGenFlowLog,
                 compositeSheetProgress: true,
                 compositeImageUrl: imageUrl,
+                // 落盘时已算好的 SHA/字节/宽高（本进程上传才有；取不到就不写该键，读者回退下载求哈希）。
+                compositeImageFacts: (await import("./services/evolinkGptImage2.js")).takePlatformStoredImageFacts(imageUrl),
                 knowledgeCardBillingModel: input.kind === "single_page_knowledge_card" ? effectiveDistillModel : undefined,
                 creditsCharged: compositeChargeReceipt?.cost || 0,
                 done: true,

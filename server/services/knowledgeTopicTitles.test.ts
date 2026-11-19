@@ -47,9 +47,10 @@ describe("主题图与内文命题：每档一次廉价批量调用", () => {
     expect(named.status).toBe("named");
     expect(bookBatches).toBeGreaterThan(1);
     expect(invoke).toHaveBeenCalledTimes(bookBatches);
-    const request = invoke.mock.calls[0]![0] as any;
-    expect(request.executionChannel).toBe("openrouter");
-    expect(request.executionFamily).toBe("glm");
+    // D2：批次交替首发 EvoLink / OpenRouter，均为 GLM 首发链。
+    const requests = invoke.mock.calls.map(c => c[0] as any);
+    expect(new Set(requests.map(r => r.executionChannel))).toEqual(new Set(["evolink", "openrouter"]));
+    expect(requests.every(r => r.executionFamily === "glm")).toBe(true);
 
     const plan = knowledgeEditionImagePlan(named.markdown)!;
     const imagePages = planKnowledgeCardPages(named.markdown).pages;
