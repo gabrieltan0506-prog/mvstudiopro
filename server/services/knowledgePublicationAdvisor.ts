@@ -24,6 +24,8 @@ import {
   type KnowledgeSource,
 } from "../../shared/knowledgePublication";
 import { readCanonicalLayoutLibrary } from "./editableLayoutStore";
+import { getJobByIdStrict } from "../jobs/repository";
+import type { KnowledgeReadingPreparation } from "../../shared/knowledgeReadingPreparation";
 import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
@@ -63,6 +65,31 @@ export async function loadKnowledgePublication(
   };
 }
 
+/**
+ * 读档预整理（同步顾问分段笔记）的进程内复用（1119 E3）。原先每个审校批次在「权限核验」与「审校」各重读一遍：
+ * 解析整本读档稿 + 读全部分段回执（大书数百个对象）。
+ * 键 = 账号 | 读档任务 | 稿件 | 分段数 | 档位 | 本稿参与核对的正文摘要（与 loadVerifiedKnowledgeReadingNotes 的一致性核对同输入）：
+ * 正文一改、换读档任务、换稿件或换账号，键即不同。只缓存「全部分段都已完成」的结果——分段回执落盘后永久不变；
+ * 未完成（还有分段在读）的结果不缓存，下次重读以拿到新完成的分段；加载失败不缓存。容量 4、10 分钟过期。
+ */
+const knowledgeReadingNotesCache = new KnowledgeTtlCache<Awaited<ReturnType<typeof import("./knowledgeReadingPreparation").loadVerifiedKnowledgeReadingNotes>>>(4, 10 * 60_000);
+export function knowledgeReadingNotesCacheKey(owner: number, link: KnowledgeReadingPreparation, source: KnowledgeSource) {
+  const reading = source.pages.filter(p => p.role === "reading" || source.detailLevel === "full").map(p => p.body);
+  return [owner, link.jobId, link.documentId, link.batches, source.detailLevel ?? "", createHash("sha256").update(JSON.stringify(reading)).digest("hex")].join("|");
+}
+export async function loadKnowledgeReadingNotesForReview(
+  owner: number, link: KnowledgeReadingPreparation, source: KnowledgeSource,
+  load?: (owner: number, link: KnowledgeReadingPreparation, source: KnowledgeSource) => ReturnType<typeof import("./knowledgeReadingPreparation").loadVerifiedKnowledgeReadingNotes>,
+) {
+  const key = knowledgeReadingNotesCacheKey(owner, link, source);
+  const hit = knowledgeReadingNotesCache.peek(key);
+  if (hit) return [...await hit];
+  const notes = await (load ?? (async (o, l, s) => (await import("./knowledgeReadingPreparation")).loadVerifiedKnowledgeReadingNotes(o, l, s, undefined, false)))(owner, link, source);
+  if (notes.length === link.batches) knowledgeReadingNotesCache.set(key, notes);
+  return [...notes];
+}
+export const clearKnowledgeReadingNotesCache = () => knowledgeReadingNotesCache.clear();
+
 /** 按权威素材登记验证归属，不能把客户端提供的地址当作读取许可。 */
 export async function validateKnowledgePublicationAccess(
   owner: number,
@@ -95,13 +122,16 @@ export async function validateKnowledgePublicationAccess(
     const { checkKnowledgePublicationRetry } = await import("./knowledgePublicationRetry");
     await checkKnowledgePublicationRetry(owner, document, context.batchIndex, context.attempt - 1, { read });
   }
-  if (document.publication.source.readingPreparation) await (await import("./knowledgeReadingPreparation")).loadVerifiedKnowledgeReadingNotes(owner,document.publication.source.readingPreparation,document.publication.source,undefined,false);
+  if (document.publication.source.readingPreparation) await loadKnowledgeReadingNotesForReview(owner,document.publication.source.readingPreparation,document.publication.source);
   const selected = knowledgeReviewBatches(document.publication.source)[context.batchIndex];
-  const resolvedSource = await resolveKnowledgePublicationImages(owner, document.publication.source, selected, undefined, document.publication.imageReplacements);
-  const sources = await loadSucceededJobOutputSources(
-    String(owner),
-    getGcsBucketName()
-  );
+  // 本人成功任务产物登记（整表分页扫描）在本次核验内只读一次：配图解析与归属核对共用同一份，不跨请求缓存（权威登记以本次读取为准）。
+  let jobSources: ReturnType<typeof loadSucceededJobOutputSources> | undefined;
+  const loadJobSources = () => (jobSources ??= loadSucceededJobOutputSources(String(owner), getGcsBucketName()));
+  const resolvedSource = await resolveKnowledgePublicationImages(owner, document.publication.source, selected, {
+    job: getJobByIdStrict,
+    canonical: async (o: number, url: string) => { const s = await loadJobSources(); return resolveRegisteredPostProdMediaSource({ userId: String(o), source: url }, undefined, { jobObjects: s.objects, jobUrls: s.urls }); },
+  }, document.publication.imageReplacements);
+  const sources = await loadJobSources();
   for (const page of resolvedSource.pages) {
     if (!page.imageUrl) continue;
     const canonical = await resolveRegisteredPostProdMediaSource(
@@ -865,7 +895,7 @@ export async function reviewKnowledgePublication(
     }
   }
   if (source.readingPreparation) {
-    const notes = await (await import("./knowledgeReadingPreparation")).loadVerifiedKnowledgeReadingNotes(owner,source.readingPreparation,source,undefined,false);
+    const notes = await loadKnowledgeReadingNotesForReview(owner,source.readingPreparation,source);
     // 已读分段是前期工作，最终稿仍是真源；不拿旧段落覆盖统稿修订。
     const batchText=batchSource.pages.map(p=>p.body).join("\n");
     const relevant=notes.flatMap(note=>note.pages).flatMap(page=>{
