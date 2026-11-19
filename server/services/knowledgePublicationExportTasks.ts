@@ -114,10 +114,19 @@ export function createKnowledgeExportTasks(deps: Deps) {
     holding.add(renderKey);
     let lost = false, beating = false;
     const startedAt = now();
+    // 条件写入 412 时先重读：上一次写入可能已生效而应答丢失（超时/断线），此时租约仍是本进程的、只是 generation 已前进。
+    // 本进程渲染期间同一渲染键不会被本进程再次取得（holding），所以 holder 仍是自己即是本次的租约：采用新 generation 重写一次。
+    const writeOwn = async (lease: Lease) => {
+      const r = await store.write(name, lease, generation);
+      if (r.ok) return r;
+      const current = await store.read(name);
+      if ((current?.value as Lease | undefined)?.holder !== holder) return r;
+      return store.write(name, lease, current!.generation);
+    };
     const stop = every(heartbeatMs, () => {
       if (lost || beating) return;
       beating = true;
-      void store.write(name, { kind: "knowledge_export_lease_v1", renderKey, holder, status: "running", startedAt, heartbeatAt: now() } satisfies Lease, generation)
+      void writeOwn({ kind: "knowledge_export_lease_v1", renderKey, holder, status: "running", startedAt, heartbeatAt: now() })
         .then(r => { if (r.ok) generation = r.generation; else { lost = true; console.warn("[knowledgeExport] lease lost to another holder; this render continues but will not release the lease"); } },
           e => console.warn(`[knowledgeExport] lease heartbeat not written (not counted as renewal) reason=${safeLog(e)}`))
         .finally(() => { beating = false; });
@@ -133,7 +142,7 @@ export function createKnowledgeExportTasks(deps: Deps) {
       // 等在途心跳落定，再以最新 generation 释放；释放失败只记日志——租约随后在 staleMs 内失联、可被接管。
       while (beating) await sleep(10);
       if (!lost) {
-        await store.write(name, { kind: "knowledge_export_lease_v1", renderKey, holder, status: outcome, startedAt, heartbeatAt: now(), finishedAt: now() } satisfies Lease, generation)
+        await writeOwn({ kind: "knowledge_export_lease_v1", renderKey, holder, status: outcome, startedAt, heartbeatAt: now(), finishedAt: now() })
           .then(r => { if (!r.ok) console.warn("[knowledgeExport] lease release skipped: taken over"); }, e => console.warn(`[knowledgeExport] lease release failed reason=${safeLog(e)}`));
       }
     }
@@ -211,16 +220,21 @@ export function createKnowledgeExportTasks(deps: Deps) {
 }
 
 /** 生产存储：出版证据同一 GCS 桶，条件写入用 ifGenerationMatch（0 = 只在不存在时创建）。 */
-async function gcsTaskStore(): Promise<KnowledgeExportTaskStore> {
+export async function gcsTaskStore(): Promise<KnowledgeExportTaskStore> {
   const gcs = await import("./gcs");
   return {
     async read(name) {
-      try {
-        const got = await gcs.downloadGcsObjectVersioned({ gcsUri: `gs://${gcs.getGcsBucketName()}/${name}` });
-        return { value: JSON.parse(got.buffer.toString("utf8")), generation: got.generation };
-      } catch (e) {
-        if (e instanceof Error && e.message === "gcs_stat_failed:404") return null;
-        throw e;
+      // 读 = 先取 generation 再按该 generation 下载；两步之间对象被改写（持有者每分钟续心跳），旧 generation 下载即 404。
+      // 这是「刚被改写」而非读错：重取最新 generation 再读，不把它当成存储故障让等待中的导出失败。
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const got = await gcs.downloadGcsObjectVersioned({ gcsUri: `gs://${gcs.getGcsBucketName()}/${name}` });
+          return { value: JSON.parse(got.buffer.toString("utf8")), generation: got.generation };
+        } catch (e) {
+          if (e instanceof Error && e.message === "gcs_stat_failed:404") return null;
+          if (e instanceof Error && e.message === "gcs_download_failed:404" && attempt < 4) continue;
+          throw e;
+        }
       }
     },
     async write(name, value, ifGeneration) {

@@ -205,3 +205,24 @@ describe("E4 导出任务持久化与渲染租约（GCS 证据桶，条件写入
     expect(c.t - t0).toBeLessThan(60_000);
   });
 });
+
+describe("审查回归（1120）", () => {
+  it("心跳其实已写入但应答丢失（超时/断线）：持有者不误判失去租约，结束时照常释放，等待者不必再等 10 分钟", async () => {
+    const store = memoryStore(), c = clock(), ex = fakeExport();
+    const name = knowledgeExportLeaseName(7, "7|doc|10");
+    let lostReply = 0;
+    const flaky: KnowledgeExportTaskStore = { ...store, write: async (n, v, g) => { const r = await store.write(n, v, g); if (lostReply > 0 && r.ok) { lostReply--; throw Error("fetch failed"); } return r; } };
+    const a = createKnowledgeExportTasks({ run: ex.run, store: flaky, holder: "A", now: c.now, sleep: c.sleep, every: c.every });
+    const sa = await a.start(7, "doc", "10"); await flush();
+    lostReply = 1; c.t += 60_000; c.beats.forEach(f => f()); await flush(5); // 写入生效、应答丢失
+    c.t += 60_000; c.beats.forEach(f => f()); await flush(5); // 下一次心跳以旧 generation 条件写入 → 412
+    expect(store.objects.get(name)!.value.heartbeatAt).toBe(c.t);
+    ex.gates[0]!.resolve(); await a.settled(sa.taskId);
+    expect(store.objects.get(name)!.value).toMatchObject({ holder: "A", status: "succeeded" });
+    // 另一台机器随后发起：租约已释放，立即执行（复用成品），不等失联窗口。
+    const b = createKnowledgeExportTasks({ run: ex.run, store, holder: "B", now: c.now, sleep: c.sleep, every: c.every });
+    const t0 = c.t; const sb = await b.start(7, "doc", "10"); await b.settled(sb.taskId);
+    expect(b.status(7, sb.taskId)?.status).toBe("succeeded");
+    expect(c.t - t0).toBeLessThan(60_000);
+  });
+});
