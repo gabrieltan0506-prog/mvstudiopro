@@ -44,4 +44,11 @@ describe("手册配图授权（服务端绑定）", () => {
     await caller().mvAnalysis.generatePlatformCompositeSheet({ sceneId: "s", title: "t", scriptContext: "分镜正文", kind: "storyboard_sheet_landscape", openaiImageVariant: "flare" }).catch(() => {});
     expect(mocks.image.mock.calls[0]?.[0]?.openaiImageVariant).toBe("flare");
   });
+  it("整链超时但已提交（结果未知）：不退款，页记为 pending（不可重买）", async () => {
+    mocks.image.mockRejectedValue(Object.assign(new Error("图片已提交但未确认结果"), { kind: "unknown" }));
+    await caller().mvAnalysis.generatePlatformCompositeSheet({ ...base, openaiImageVariant: "sunburst" }).catch(() => {});
+    await vi.waitFor(() => expect(mocks.failed).toHaveBeenCalled());
+    expect(mocks.failed.mock.calls.at(-1)?.[3]).toBe("pending");
+    expect(mocks.image).toHaveBeenCalledTimes(1);
+  });
 });

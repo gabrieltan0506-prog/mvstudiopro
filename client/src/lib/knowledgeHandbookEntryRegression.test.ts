@@ -11,7 +11,7 @@ import * as selection from "../../../shared/knowledgeCardIllustrationSelection";
 import * as lifecycle from "./knowledgeIllustrationRun";
 import * as handbookVariant from "../../../shared/openaiImageVariant";
 import { knowledgeCardPlannedTextPages } from "./knowledgeCardPreflightCounts";
-import { knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh } from "./knowledgeIllustrationBatchCounts";
+import { knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh, knowledgeIllustrationBatchUserMessage } from "./knowledgeIllustrationBatchCounts";
 import { handbookManuscriptNeedsStaging, stageHandbookManuscript } from "./handbookManuscriptStage";
 
 // 执行生产处理函数，避免只测辅助函数而遗漏按钮之间的真实组合。
@@ -26,7 +26,7 @@ function take(start: string, end: string) {
 }
 function run(raw: string, ctx: any) {
   // 1119：出图 hook 新引用的模块级导入（授权档常量、文字页数、批次计数）按真实实现注入。
-  Object.assign(ctx, { ...handbookVariant, knowledgeCardPlannedTextPages, knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh, handbookManuscriptNeedsStaging, stageHandbookManuscript }, { customNoteCardsOnly: ctx.customNoteCardsOnly ?? false, setKnowledgeDistillLive: ctx.setKnowledgeDistillLive });
+  Object.assign(ctx, { ...handbookVariant, knowledgeCardPlannedTextPages, knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh, knowledgeIllustrationBatchUserMessage, handbookManuscriptNeedsStaging, stageHandbookManuscript }, { customNoteCardsOnly: ctx.customNoteCardsOnly ?? false, setKnowledgeDistillLive: ctx.setKnowledgeDistillLive });
   // 与 useKnowledgeCardRender 内同名辅助一致（1119 C4）：20 万字及以下原样 {markdown}，超过才走摘要
   ctx.handbookStageApi ??= () => ({
     stageChunk: (input: any) => ctx.trpcUtils.client.mvAnalysis.stageKnowledgeCardManuscriptChunk.mutate(input),
@@ -365,9 +365,60 @@ describe("1119 C1/C2/C3 生成入口", () => {
   });
   it("批次错误带分项计数时，失败提示如实报已完成页而非「未生成」", () => {
     const counts = knowledgeIllustrationBatchCounts(Object.assign(new Error("部分页失败"), { counts: { succeeded: 3, failed: 1, pendingVerification: 1, notDispatched: 2 } }));
-    expect(counts).toEqual({ succeeded: 3, failed: 1, pending: 1, notDispatched: 2 });
+    expect(counts).toMatchObject({ succeeded: 3, failed: 1, pending: 1, notDispatched: 2 });
     expect(knowledgeIllustrationBatchSummaryZh(counts!)).toContain("已完成 3 页");
     expect(knowledgeIllustrationBatchCounts(new Error("旧版普通错误"))).toBeNull();
+  });
+  // 线 D 的 KnowledgeIllustrationBatchError（鸭子类型）：Error + summary{succeeded,failed,unknown,notDispatched,stoppedBy}
+  const batchError = (message: string, summary: Record<string, unknown>) => Object.assign(new Error(message), { summary: { total: 4, dispatched: 4, ...summary } });
+  function batchContext(behaviour: (ctx: any) => Promise<void>) {
+    const ctx = renderContext();
+    ctx.toast = { error: vi.fn(), success: vi.fn(), info: vi.fn(), message: vi.fn() };
+    ctx.setCustomNoteError = vi.fn();
+    ctx.mapCustomNoteError = vi.fn((e: Error) => e.message);
+    const progress: any[] = [];
+    ctx.setCustomNoteProgress = (v: any) => progress.push(typeof v === "function" ? v({ status: "running", percent: 40 }) : v);
+    ctx.runKnowledgeIllustrationBatch = vi.fn(async () => behaviour(ctx));
+    return { ctx, progress };
+  }
+  it("批次错误（服务端新形态）：用户句只由计数拼成，不带引擎名/401，也不交给脱敏", async () => {
+    const { ctx, progress } = batchContext(async () => { throw batchError("配图完成 2/4 页：OpenAI generations HTTP 401: invalid api key (gpt-image-2.6-sunburst)", { succeeded: 2, failed: 1, unknown: 1, notDispatched: 0, stoppedBy: null }); });
+    await ctx.generate();
+    const shown = ctx.toast.error.mock.calls[0][0] as string;
+    expect(shown).toContain("已完成 2 页");
+    expect(shown).toContain("1 页结果待核实（不会自动重新购买）");
+    expect(shown).not.toMatch(/openai|gpt|sunburst|401|api key/i);
+    expect(ctx.setCustomNoteError.mock.calls.at(-1)[0]).toBe(shown);
+    expect(ctx.mapCustomNoteError).not.toHaveBeenCalled();
+    expect(progress.at(-1).status).toBe("failed");
+  });
+  it("用户按停止且有页失败（非整批必败）：走「已停止」并报分项计数", async () => {
+    const { ctx, progress } = batchContext(async (c) => { c.customNoteStopRenderRef.current = true; throw batchError("配图完成 1/4 页：EvoLink 失败", { succeeded: 1, failed: 1, unknown: 1, notDispatched: 1, stoppedBy: "inactive" }); });
+    await ctx.generate();
+    expect(progress.at(-1).status).toBe("stopped");
+    expect(progress.at(-1).error).toContain("1 页结果待核实");
+    expect(ctx.toast.message.mock.calls[0][0]).toContain("已停止出图");
+    expect(ctx.toast.message.mock.calls[0][0]).not.toMatch(/evolink/i);
+    expect(ctx.toast.error).not.toHaveBeenCalled();
+  });
+  it("用户按停止但批次因整批必败停止：仍报失败（不被说成用户停止）", async () => {
+    const { ctx, progress } = batchContext(async (c) => { c.customNoteStopRenderRef.current = true; throw batchError("x", { succeeded: 0, failed: 1, unknown: 0, notDispatched: 3, stoppedBy: "batch_fatal" }); });
+    await ctx.generate();
+    expect(progress.at(-1).status).toBe("failed");
+    expect(ctx.toast.error.mock.calls[0][0]).toContain("已停止派发新页");
+  });
+  it("旧版批次（首错即抛普通错误）：按原逻辑报失败并经 mapCustomNoteError", async () => {
+    const { ctx, progress } = batchContext(async (c) => { c.customNoteStopRenderRef.current = true; throw new Error("旧版首个错误"); });
+    await ctx.generate();
+    expect(progress.at(-1).status).toBe("failed");
+    expect(ctx.mapCustomNoteError).toHaveBeenCalledTimes(1);
+    expect(ctx.toast.error.mock.calls[0][0]).toContain("旧版首个错误");
+  });
+  it("旧版批次（void 返回）+ 用户停止：仍按已出页数报「已停止」", async () => {
+    const { ctx, progress } = batchContext(async (c) => { c.customNoteStopRenderRef.current = true; });
+    await ctx.generate();
+    expect(progress.at(-1).status).toBe("stopped");
+    expect(ctx.toast.error).not.toHaveBeenCalled();
   });
 });
 

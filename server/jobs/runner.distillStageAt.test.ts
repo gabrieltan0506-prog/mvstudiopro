@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 // 1119 F1：真实 worker 控制流里的分段计时。提炼服务被桩掉：只按顺序触发既有进度回调，然后中止（不进入结算/扣费）。
-const state = vi.hoisted(() => ({ job: null as any, claim: vi.fn(), patch: vi.fn(), failed: vi.fn(), prepare: vi.fn() }));
+const state = vi.hoisted(() => ({ job: null as any, claim: vi.fn(), patch: vi.fn(), failed: vi.fn(), prepare: vi.fn(), settle: vi.fn() }));
 vi.mock("./repository", async load => ({
   ...await load<Record<string, unknown>>(),
   claimNextQueuedJob: state.claim,
@@ -10,6 +10,7 @@ vi.mock("./repository", async load => ({
   markJobFailed: state.failed,
   isPlatformJobCancelRequested: vi.fn(async () => false),
   touchJobHeartbeat: vi.fn(),
+  beginKnowledgeCardSettlement: state.settle,
 }));
 vi.mock("../services/knowledgeCardDistill.js", async load => ({ ...await load<Record<string, unknown>>(), prepareKnowledgeCardCopy: state.prepare }));
 vi.mock("../services/knowledgeReadingPreparation", () => ({ createKnowledgeReadingPreparation: () => ({ onSource: async () => {}, onPlan: async () => {}, onChunk: async () => {}, progress: () => ({}), finish: async () => ({}) }) }));
@@ -58,4 +59,17 @@ it("续做沿用上次已记时刻（取最早），只补新阶段", async () =
   expect(at.textReady).toBe("2026-11-19T00:01:00.000Z");
   expect(at.runnerStarted).toBe("2026-11-19T00:00:30.000Z");
   expect(typeof at.lastDistillReport).toBe("string");
+});
+it("提炼成功进入结算时，成品 output 带上全部分段计时（结算检查点即最终 output 来源）", async () => {
+  // 结算闸门返回 cancelled：只截获检查点，不进入扣费
+  state.settle.mockResolvedValue("cancelled");
+  state.prepare.mockImplementation(async (o: any) => {
+    await o.onExtractProgress({ stage: "reading", done: 1, total: 1 });
+    await o.onProgress({ phase: "distilling", doneChunks: 1, totalChunks: 1 });
+    return { distilledMarkdown: "# 标题\n\n正文", skippedDistill: false, distillModel: "deepseek-v4.1-flash-1017", documents: [], extractionMethods: [], sourceChars: 2, detailLevel: "full", convertedPdfs: [] };
+  });
+  await processJobsOnce();
+  expect(state.settle).toHaveBeenCalledTimes(1);
+  const at = state.settle.mock.calls[0][1].output.distillStageAt as Record<string, string>;
+  for (const k of ["jobCreated", "runnerStarted", "textReady", "firstDistillRequest", "lastDistillReport", "distillOutputReady"]) expect(typeof at[k]).toBe("string");
 });

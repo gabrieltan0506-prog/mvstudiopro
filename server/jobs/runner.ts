@@ -3871,8 +3871,10 @@ async function processPlatformJob(
         touchJobHeartbeat(platformJobId);
         await cancel.check();
         if (!platformJobId) return;
-        await patchJobRunningProgress(platformJobId, patch).catch(() => {});
+        // 整条 output 读改写：后台原文进度与目录页进度并发时串行写，后写的不抹掉先写的字段
+        await (progressWrites = progressWrites.then(() => patchJobRunningProgress(platformJobId, patch).catch(() => {})));
       };
+      let progressWrites: Promise<void> = Promise.resolve();
       const stampAndPatch = (keys: string[], patch: Record<string, unknown>) =>
         patchProgress(keys.map(stampDistillStage).some(Boolean) ? { ...patch, distillStageAt: { ...distillStageAt } } : patch);
       try {
@@ -3991,6 +3993,8 @@ async function processPlatformJob(
         credits: plan.credits,
         pages: plan.pages,
         epubPdfs: prepared.convertedPdfs,
+        // 1119 F1：分段计时随成品保留（仅 Debug 面板读取）；不进任何摘要/扣费键
+        distillStageAt: { ...distillStageAt },
       };
       return await finishKnowledgeCardProduction(platformJobId!, Number(jobUserId), {
         version: 1, output,

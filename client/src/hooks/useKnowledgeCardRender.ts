@@ -18,7 +18,7 @@ import { knowledgeCardRecordedModelLabel } from "@shared/knowledgeCardDistillMod
 import { HANDBOOK_IMAGE_MODEL, HANDBOOK_IMAGE_TIER_LABEL_ZH, HANDBOOK_IMAGE_VARIANT } from "@shared/openaiImageVariant";
 import { knowledgeCardPlannedTextPages } from "@/lib/knowledgeCardPreflightCounts";
 import { handbookManuscriptNeedsStaging, stageHandbookManuscript } from "@/lib/handbookManuscriptStage";
-import { knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh } from "@/lib/knowledgeIllustrationBatchCounts";
+import { knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh, knowledgeIllustrationBatchUserMessage } from "@/lib/knowledgeIllustrationBatchCounts";
 import { synchronizedKnowledgeCardSource } from "@shared/knowledgeCardEditableLayout";
 import { toast } from "@/lib/platformToast";
 import type { KnowledgeSupplementSelection } from "@shared/knowledgeSupplement";
@@ -682,6 +682,8 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
         setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), stageDone: 0, stageTotal: total, label: `出图 0/${total} 页（并发 ${knowledgeCardRenderConcurrency(total)}）` });
         customNoteStopRenderRef.current = false;
         setCustomNoteRendering(true);
+        // 用户已按停止、批次又因个别页失败抛错（非整批必败）：按「已停止」收口并如实报分项计数，不报成「生成失败」
+        let stoppedBatch: ReturnType<typeof knowledgeIllustrationBatchCounts> = null;
         try {
           await runKnowledgeIllustrationBatch({
             count: total,
@@ -711,6 +713,10 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
               publish();
             },
           });
+        } catch (batchError) {
+          const counts = knowledgeIllustrationBatchCounts(batchError);
+          if (counts && customNoteStopRenderRef.current && counts.stoppedBy !== "batch_fatal") stoppedBatch = counts;
+          else throw batchError;
         } finally {
           if (urls.some(url => !url)) illustrationRun.stop();
         }
@@ -718,7 +724,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
         const stoppedByUser = customNoteStopRenderRef.current;
         customNoteStopRenderRef.current = false;
         const madePages = urls.filter(Boolean).length;
-        if (stoppedByUser && madePages < total) {
+        if (stoppedByUser && (madePages < total || stoppedBatch)) {
           // 复审 P2：这里以前写 succeeded，子组件就把进度强拉 100%、还藏掉停止说明。
           // 停止是独立终态：已出的页保留（已计费），进度条如实停在完成度，缺页的补出入口照常开着。
           setCustomNoteProgress({
@@ -726,9 +732,11 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
             percent: knowledgeCardProgressFromRender(madePages, total),
             label: `已停止 · 出图 ${madePages}/${total} 页`,
             stageDone: madePages, stageTotal: total,
-            error: `未出的 ${total - madePages} 页不扣费；需要的话可以逐页补出`,
+            error: stoppedBatch ? knowledgeIllustrationBatchSummaryZh(stoppedBatch) : `未出的 ${total - madePages} 页不扣费；需要的话可以逐页补出`,
           });
-          toast.message(`已停止出图：完成 ${madePages}/${total} 页，按已出页计费（未出的页不扣）`);
+          toast.message(stoppedBatch
+            ? `已停止出图：${knowledgeIllustrationBatchSummaryZh(stoppedBatch)}`
+            : `已停止出图：完成 ${madePages}/${total} 页，按已出页计费（未出的页不扣）`);
         } else {
           setCustomNoteProgress({ status: "succeeded", percent: 100, successLabel: "配图完成", label: cardsOnly ? "卡片已全部生成，可导出纯图 PDF" : "正在自动整理正文与版面" });
           toast.success(`已生成 ${total} 页手册配图（${qLabel} · 约 ${credits} 积分）`);
@@ -743,16 +751,17 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
         toast.success("分鏡圖已生成");
       }
     } catch (e) {
-      const msg = mapCustomNoteError(e);
+      // 新批次函数（线 D）抛错时带分项计数：用户句只由计数拼成，不把底层原文交给脱敏（含引擎名/401 时会整句被替换、计数丢失）。
+      const batchCounts = kind === "single_page_knowledge_card" ? knowledgeIllustrationBatchCounts(e) : null;
+      const msg = batchCounts ? knowledgeIllustrationBatchUserMessage(batchCounts) : mapCustomNoteError(e);
       setCustomNoteError(msg);
       if (kind === "single_page_knowledge_card") {
         setCustomNoteProgress((prev) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
         // 在途页会继续出图并回填，这里如实告知已完成页数与对应页费（读同步镜像，不在 updater 里做副作用）
         const doneCount = customNoteImagesRef.current.filter(Boolean).length;
-        // 新批次函数（线 D）抛错时带分项计数：已出页不能被说成「什么都没生成」。旧版普通错误仍按已回填页数计。
-        const batchCounts = knowledgeIllustrationBatchCounts(e);
+        // 旧版普通错误仍按已回填页数计。
         toast.error(batchCounts
-          ? `生成未全部完成：${msg.slice(0, 80)}（${knowledgeIllustrationBatchSummaryZh(batchCounts)}）`
+          ? msg
           : doneCount > 0
           ? `生成失败：${msg.slice(0, 100)}（已完成 ${doneCount} 页，按已成功页计费，失败页不扣费）`
           : `生成失败：${msg.slice(0, 120)}`);

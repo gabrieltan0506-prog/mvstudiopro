@@ -1263,7 +1263,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const requireExactVariant = options.requireImageVariant || options.imageModelVersion === "2.6";
   // 2.6 只有手册与人物换景两处使用，二者都只准 Sunburst（1119 C1）：缺档或 Flare 在任何供应商请求之前拒绝，不再静默落到 Flare。
   if (options.imageModelVersion === "2.6" && options.openaiImageVariant !== HANDBOOK_IMAGE_VARIANT) {
-    throw new Error("2.6 出图只准授权档，未提交出图");
+    throw new Error("出图只准授权档，未提交出图");
   }
   const exactModel = options.imageModelVersion === "2.6"
     ? HANDBOOK_IMAGE_MODEL
@@ -1649,10 +1649,33 @@ export async function generatePlatformCompositeSheetImage(options: {
     `[2×4·时限] 整链硬上限 ${Math.round(totalMs / 60000)} 分钟（PLATFORM_COMPOSITE_SHEET_JOB_TIMEOUT_MS 可覆寫，≥60000ms）`,
   );
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * 整链硬上限只停止等待，不会中止已发出的供应商请求（上游照出图照扣费）。
+   * 生图调用在途且已越过提交闸门时超时＝结果未知：带 kind="unknown" 上抛，路由转对账而不是退款+可重买，
+   * 避免用户重试同一页再买一次。提交之前超时仍是确定失败。
+   */
+  let imageCallsInFlight = 0;
+  let submissionInFlight = false;
+  const markImageSubmit = async () => {
+    await options.beforeImageSubmit?.();
+    if (imageCallsInFlight > 0) submissionInFlight = true;
+  };
+  const trackImageCall = async <T>(call: () => Promise<T>): Promise<T> => {
+    imageCallsInFlight += 1;
+    try {
+      return await call();
+    } finally {
+      imageCallsInFlight -= 1;
+      if (imageCallsInFlight === 0) submissionInFlight = false;
+    }
+  };
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
+      const minutes = Math.round(totalMs / 60000);
       reject(
-        new Error(`2×4 分镜/八格合成超时（${Math.round(totalMs / 60000)} 分钟硬上限，已终止）`),
+        submissionInFlight
+          ? Object.assign(new Error(`图片已提交但 ${minutes} 分钟内未确认结果，请恢复原任务核对（不会自动重新购买）`), { kind: "unknown" })
+          : new Error(`2×4 分镜/八格合成超时（${minutes} 分钟硬上限，已终止）`),
       );
     }, totalMs);
   });
@@ -2017,7 +2040,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         openaiError?: string;
         openrouterError?: string;
       } = {};
-      let fromGpt = await generateGptImage2FromRawEnglishPrompt({
+      let fromGpt = await trackImageCall(() => generateGptImage2FromRawEnglishPrompt({
         englishPrompt: promptForPixel,
         aspectRatio: isGraphicPage ? "9:16" : "16:9",
         gcsSubdir: subdir,
@@ -2036,8 +2059,8 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         // 0908 用户：官方也出 3840x2160，与 EvoLink 同尺寸，PDF 合成不用补边
         openaiSize: options.viralCreation ? (isGraphicPage ? "1152x2048" : "2048x1152") : isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
         captureError: gptCapture,
-        beforeImageSubmit: options.beforeImageSubmit,
-      });
+        beforeImageSubmit: markImageSubmit,
+      }));
 
       // 良性人像误杀：与旧 EvoLink 路径一致，附澄清语境再试一次
       if (
@@ -2048,7 +2071,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       ) {
         appendImageFlowLog(L, "[2×4·主人公参考] 审核拦截 → 附澄清语境重试一次（OpenAI/OpenRouter）");
         const retryCapture: typeof gptCapture = {};
-        fromGpt = await generateGptImage2FromRawEnglishPrompt({
+        fromGpt = await trackImageCall(() => generateGptImage2FromRawEnglishPrompt({
           englishPrompt: `${promptForPixel}\n${COVER_REFERENCE_BENIGN_CLARIFIER_EN}`,
           aspectRatio: isGraphicPage ? "9:16" : "16:9",
           gcsSubdir: subdir,
@@ -2064,8 +2087,8 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           evolinkResolution: options.viralCreation ? "2K" : isKnowledgeCard ? "4K" : undefined,
           openaiSize: options.viralCreation ? (isGraphicPage ? "1152x2048" : "2048x1152") : isKnowledgeCard ? KNOWLEDGE_CARD_OPENAI_SIZE : undefined,
           captureError: retryCapture,
-          beforeImageSubmit: options.beforeImageSubmit,
-        });
+          beforeImageSubmit: markImageSubmit,
+        }));
         if (!fromGpt && (retryCapture.moderationBlocked || isEvolinkModerationFailure(retryCapture.message))) {
           moderationBlocked = true;
           lastFailure = new Error(
