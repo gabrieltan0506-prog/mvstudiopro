@@ -12,9 +12,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readCanonicalLayoutLibrary } from "./editableLayoutStore";
 import {
+  knowledgeImageFingerprintName,
   knowledgeSourceDigest,
+  parseKnowledgeImageFingerprint,
   readKnowledgeImage,
   readKnowledgePublicationReview,
+  recordKnowledgeImageFingerprint,
   validateKnowledgeImageReceipts,
 } from "./knowledgePublicationAdvisor";
 import {
@@ -30,6 +33,7 @@ import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
   signGsUriV4ReadUrl,
+  statGcsObjectVersion,
   uploadBufferToGcs,
   uploadStreamToGcs,
 } from "./gcs";
@@ -99,14 +103,15 @@ const real = {
   load: readCanonicalLayoutLibrary,
   review: readKnowledgePublicationReview,
   image: readKnowledgeImage,
-  // 导出配图只以签名地址交给排版服务与阅读稿 HTML，不把图片数据内嵌进 HTML（禁 base64）。
-  // 地址指向缩图派生件（长边 ≤2048、q85 的 JPEG，审校时已生成）：信息图带 data-pdf-max-dim=2048 标记，
-  // 排版服务对未超上限的外链 JPEG 不重编码、原字节入版（2026-11-11 起不再压到 1200），故 2048 派生件即最终入版像素；
-  // 送 13–18MB 的 4K 原图只会让并发取图超时（1110 实测 34 段有 11 段预分页失败），且排版服务仍会缩回 2048；缩图不可得时回退原图地址。
-  imageUrl: async (uri: string) => signGsUriV4ReadUrl((await ensureKnowledgeReviewThumbnail(uri)) || uri, KNOWLEDGE_EXPORT_IMAGE_URL_TTL_SECONDS),
-  pdf: fetchPdfBufferFromWorker,
-  // 预分页同时带回逐章细节；排版服务未更新时 booklets 为空 → 版面审查记为未审查，不影响导出。
-  measure: measureKnowledgeBookletDetailsFromWorker as (html: string) => Promise<number | KnowledgeBookletMeasure>,
+  /** 配图当前版本元数据（一次元数据请求，不下载内容）。 */
+  imageVersion: async (uri: string) => { const v = await statGcsObjectVersion({ gcsUri: uri }); return { generation: v.generation, crc32c: v.crc32c, byteLength: v.byteLength }; },
+  /** 读审校/上次导出记下的版本指纹；没有返回 null。 */
+  imageFingerprint: async (uri: string, generation: string): Promise<unknown> => {
+    try { return JSON.parse((await downloadGcsObjectVersioned({ gcsUri: `gs://${getGcsBucketName()}/${knowledgeImageFingerprintName(uri, generation)}` })).buffer.toString("utf8")); }
+    catch (e) { if (e instanceof Error && e.message === "gcs_stat_failed:404") return null; throw e; }
+  },
+  /** 下载核对后补记指纹（条件创建，只建不改）。 */
+  recordImage: (uri: string, image: Awaited<ReturnType<typeof readKnowledgeImage>>) => recordKnowledgeImageFingerprint(uri, image),
   // 使用镜像已有poppler，按真实PDF物理页保存，不用估算页数。
   savePages: async (bytes: Buffer, save: (index:number,page:Buffer)=>Promise<void>) => {
     const folder=await mkdtemp(join(tmpdir(),'knowledge-pdf-pages-'));
@@ -118,6 +123,14 @@ const real = {
       for(const name of names)await save(Number(name.match(/\d+/)![0])-1,await readFile(join(folder,name)));
     }finally{await rm(folder,{recursive:true,force:true});}
   },
+  // 导出配图只以签名地址交给排版服务与阅读稿 HTML，不把图片数据内嵌进 HTML（禁 base64）。
+  // 地址指向缩图派生件（长边 ≤2048、q85 的 JPEG，审校时已生成）：信息图带 data-pdf-max-dim=2048 标记，
+  // 排版服务对未超上限的外链 JPEG 不重编码、原字节入版（2026-11-11 起不再压到 1200），故 2048 派生件即最终入版像素；
+  // 送 13–18MB 的 4K 原图只会让并发取图超时（1110 实测 34 段有 11 段预分页失败），且排版服务仍会缩回 2048；缩图不可得时回退原图地址。
+  imageUrl: async (uri: string) => signGsUriV4ReadUrl((await ensureKnowledgeReviewThumbnail(uri)) || uri, KNOWLEDGE_EXPORT_IMAGE_URL_TTL_SECONDS),
+  pdf: fetchPdfBufferFromWorker,
+  // 预分页同时带回逐章细节；排版服务未更新时 booklets 为空 → 版面审查记为未审查，不影响导出。
+  measure: measureKnowledgeBookletDetailsFromWorker as (html: string) => Promise<number | KnowledgeBookletMeasure>,
   countPages: async (path: string) => {
     const { stdout } = await promisify(execFile)("pdfinfo", [path], {
       timeout: 30000, maxBuffer: 1024 * 1024, env: { ...process.env, LC_ALL: "C" },
@@ -324,7 +337,30 @@ export async function exportKnowledgePublication(
       await html.writeFile(head);
       // 配图先并发取回（按页数动态并发），装配仍按页序；校验与原逻辑相同。
       // 只为核对原图指纹与体积而读取，读完即释放；图片数据不进入 HTML。
-      const verifyImage = async (url: string) => { const image = await deps.image(url); return { sha256: image.sha256, bytes: image.buffer.length }; };
+      // 1119 提速：先比对元数据——当前 generation / crc32c / 字节数与审校或上次导出记下的指纹一致、且指纹 sha256 等于审校回执，
+      // 即确认原图未变，体积取自同一记录（与下载所得字节数相同，分卷与成品不变），不再下载 4K 原图。
+      // 无指纹（旧回执/旧成品）、元数据不符、指纹与回执不符或取元数据出错：一律走原下载核对路径，下载后补记指纹。
+      // 注入了读图却没注入元数据/指纹读取（旧测试与派生调用）时不走元数据路径，避免触达真实存储。
+      const metadataPath = !("image" in overrides) || ("imageVersion" in overrides && "imageFingerprint" in overrides);
+      const verifyByMetadata = async (url: string) => {
+        if (!metadataPath) return undefined;
+        try {
+          const current = await deps.imageVersion(url);
+          if (!current.generation || !Number.isSafeInteger(current.byteLength)) return undefined;
+          const fp = parseKnowledgeImageFingerprint(await deps.imageFingerprint(url, current.generation), url, current.generation);
+          if (!fp || fp.byteLength !== current.byteLength || (fp.crc32c ?? "") !== (current.crc32c ?? "") || fp.sha256 !== expected.get(url)) return undefined;
+          return { sha256: fp.sha256, bytes: fp.byteLength };
+        } catch { return undefined; }
+      };
+      let metadataHits = 0, downloads = 0;
+      const verifyImage = async (url: string) => {
+        const hit = await verifyByMetadata(url);
+        if (hit) { metadataHits++; return hit; }
+        downloads++;
+        const image = await deps.image(url);
+        if (metadataPath) await Promise.resolve(deps.recordImage(url, image)).catch(() => undefined);
+        return { sha256: image.sha256, bytes: image.buffer.length };
+      };
       const prefetched = new Map<number, ReturnType<typeof verifyImage>>();
       await knowledgeExportPool(doc.pages.length, async index => {
         const url = doc.pages[index]!.imageUrl;
@@ -360,8 +396,8 @@ export async function exportKnowledgePublication(
         await html.writeFile(section);
         chunk += section;
         chunkBytes += bytes;
-        // 每个源页立即写检查点，不等后续章节或整册PDF完成。
-        await deps.save(`${prefix}/source-pages/${index}.html`,Buffer.from(head+section+tail),'text/html;charset=utf-8');
+        // 每章单独成段（逐章预分页与渲染）。原先这里另存 source-pages/<章>.html：2026-11-19 全仓（server/client/shared/scripts/
+        // probes/pdf-worker/.github 与全部测试）检索确认无任何读取方（导出续做只读 manifest.json 与 pdf-parts/ 分片），已停写；已存对象不删。
         await flush();
       }
       await html.writeFile(tail);
@@ -372,7 +408,7 @@ export async function exportKnowledgePublication(
         htmlPath,
         "text/html;charset=utf-8"
       );
-      exportLog("html", { owner, document: documentId, htmlBytes, parts: chunks.length, imageBytes: totalImageBytes, ms: Date.now() - startedAt });
+      exportLog("html", { owner, document: documentId, htmlBytes, parts: chunks.length, imageBytes: totalImageBytes, imageMetadataHits: metadataHits, imageDownloads: downloads, ms: Date.now() - startedAt });
       // 分段先在最终字体下计数，再带全书页码渲染。只保留一段HTML在内存中。
       const counts: number[] = [];
       const measured: ReturnType<typeof measuredOf>[] = [];

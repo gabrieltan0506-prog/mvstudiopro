@@ -28,7 +28,9 @@ import {
   downloadGcsObjectVersioned,
   getGcsBucketName,
   inspectGcsObjectBounded,
+  statGcsObjectVersion,
   uploadBufferToGcs,
+  uploadBufferToGcsIfAbsent,
   signGsUriV4ReadUrl,
 } from "./gcs";
 import {
@@ -117,14 +119,30 @@ export async function validateKnowledgePublicationAccess(
 }
 
 export async function readKnowledgeImage(uri: string) {
-  const chunks: Buffer[] = [];
-  const inspected = await inspectGcsObjectBounded({
-    gcsUri: uri,
-    maxBytes: 20 * 1024 * 1024,
-    timeoutMs: 60000,
-    onChunk: chunk => chunks.push(Buffer.from(chunk)),
-  });
-  const buffer = Buffer.concat(chunks);
+  // 先取对象版本（generation / crc32c / 字节数）再按该 generation 锁定下载：指纹与版本一一对应，供导出只比对元数据（见 knowledgeImageFingerprint*）。
+  // 取版本失败、或下载时对象已被换版（412）：回到原先的不锁版本下载，不返回版本（调用方不记指纹），读图行为与原先一致。
+  let version: Awaited<ReturnType<typeof statGcsObjectVersion>> | undefined;
+  try { version = await statGcsObjectVersion({ gcsUri: uri }); } catch { version = undefined; }
+  const download = async (generation?: string) => {
+    const chunks: Buffer[] = [];
+    const inspected = await inspectGcsObjectBounded({
+      gcsUri: uri,
+      maxBytes: 20 * 1024 * 1024,
+      timeoutMs: 60000,
+      ...(generation ? { generation } : {}),
+      onChunk: chunk => chunks.push(Buffer.from(chunk)),
+    });
+    return { inspected, buffer: Buffer.concat(chunks) };
+  };
+  let read: Awaited<ReturnType<typeof download>>;
+  if (version) {
+    try { read = await download(version.generation); }
+    catch (e) {
+      if (!(e instanceof Error && /^gcs_download_failed:(412|404)$/.test(e.message))) throw e;
+      version = undefined; read = await download();
+    }
+  } else read = await download();
+  const { inspected, buffer } = read;
   const meta = await sharp(buffer, { limitInputPixels: 40_000_000 }).metadata();
   if (
     !meta.width ||
@@ -138,7 +156,42 @@ export async function readKnowledgeImage(uri: string) {
     mimeType: `image/${meta.format}`,
     width: meta.width,
     height: meta.height,
+    // 仅当按 generation 锁定下载、且实读字节数与该版本登记大小一致时才带回版本，否则不带（不记指纹）。
+    ...(version && inspected.generation === version.generation && version.byteLength === buffer.length
+      ? { generation: version.generation, crc32c: version.crc32c, byteLength: buffer.length } : {}),
   };
+}
+
+/**
+ * 配图版本指纹（1119 导出提速）：审校读图 / 导出回退下载时，把「对象 + generation → sha256、字节数、crc32c」永久记下。
+ * GCS 同一对象同一 generation 内容不可变，所以导出时只需取一次对象元数据比对 generation / crc32c / 字节数，
+ * 一致且指纹 sha256 等于审校回执中的 sha256 即可确认原图未变，不必重新下载 4K 原图计算指纹。
+ * 记录按 (对象, generation) 只建不改（条件创建），不进任何回执、摘要或成品目录身份。
+ */
+export type KnowledgeImageFingerprint = { kind: "knowledge_image_fingerprint_v1"; uri: string; generation: string; crc32c?: string; byteLength: number; sha256: string; recordedAt: string };
+export const knowledgeImageFingerprintName = (uri: string, generation: string) =>
+  `knowledge-publications/image-fingerprints/${createHash("sha256").update(uri).digest("hex")}/${generation}.json`;
+/** 读回指纹：格式、对象与 generation 任何一项不符都视为没有（走下载）。 */
+export function parseKnowledgeImageFingerprint(value: unknown, uri: string, generation: string): KnowledgeImageFingerprint | undefined {
+  const v = value as Partial<KnowledgeImageFingerprint> | null;
+  if (!v || v.kind !== "knowledge_image_fingerprint_v1" || v.uri !== uri || v.generation !== generation) return undefined;
+  if (typeof v.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(v.sha256) || !Number.isSafeInteger(v.byteLength) || (v.byteLength as number) < 1) return undefined;
+  if (v.crc32c !== undefined && typeof v.crc32c !== "string") return undefined;
+  return v as KnowledgeImageFingerprint;
+}
+export async function recordKnowledgeImageFingerprint(
+  uri: string,
+  image: { sha256: string; generation?: string; crc32c?: string; byteLength?: number },
+  create: (name: string, buffer: Buffer) => Promise<unknown> = (name, buffer) => uploadBufferToGcsIfAbsent({ objectName: name, buffer, contentType: "application/json" }),
+) {
+  if (!image.generation || !Number.isSafeInteger(image.byteLength) || !/^[a-f0-9]{64}$/.test(image.sha256)) return false;
+  const record: KnowledgeImageFingerprint = { kind: "knowledge_image_fingerprint_v1", uri, generation: image.generation, ...(image.crc32c ? { crc32c: image.crc32c } : {}), byteLength: image.byteLength!, sha256: image.sha256, recordedAt: new Date().toISOString() };
+  try { await create(knowledgeImageFingerprintName(uri, image.generation), Buffer.from(JSON.stringify(record))); return true; }
+  catch (e) {
+    // 指纹只是提速：写失败不影响审校/导出，下次导出走下载并补记。
+    console.warn(`[knowledgePublication] 配图指纹未记下（下次导出改为下载核对）：${String(e instanceof Error ? e.message : e).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 200)}`);
+    return false;
+  }
 }
 
 /** 回执必须覆盖全部实际配图；空回执或额外页均不能证明读图。 */
@@ -219,7 +272,9 @@ export function buildKnowledgeReviewRequest(
 
 const real = {
   load: loadKnowledgePublication,
-  image: readKnowledgeImage,
+  image: readKnowledgeImage as (uri: string) => Promise<Awaited<ReturnType<typeof readKnowledgeImage>>>,
+  /** 审校读图后记版本指纹（可选注入；缺省按条件创建写入 GCS）。 */
+  recordImage: undefined as undefined | ((uri: string, image: Awaited<ReturnType<typeof readKnowledgeImage>>) => Promise<unknown>),
   read: async (name: string) => {
     try {
       return JSON.parse(
@@ -791,6 +846,8 @@ export async function reviewKnowledgePublication(
   for (const page of batchSource.pages)
     if (page.imageUrl && !images.has(page.imageUrl))
       images.set(page.imageUrl, await deps.image(page.imageUrl));
+  // 审校读图时记下版本指纹（只有锁版本读到的图才有 generation；测试注入的读图不带版本即不记）。写失败只记日志。
+  for (const [uri, image] of Array.from(images.entries())) await Promise.resolve((deps.recordImage ?? recordKnowledgeImageFingerprint)(uri, image)).catch(() => undefined);
   // 分配保存在原稿中；旧请求恢复时 getRaw 仍以原始永久请求为准。
   const channel = document.publication.parallel?.channels[String(context.batchIndex)];
   // 审校批次：通道由 parallel.channels 指定（EvoLink 优先分配）；模型序按稿件 parallel.family（新稿 glm→deepseek，旧稿沿用 deepseek 优先）。

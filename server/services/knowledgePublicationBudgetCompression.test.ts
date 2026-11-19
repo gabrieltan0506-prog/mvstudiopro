@@ -382,6 +382,20 @@ describe("图主文辅合同 image-primary-v1（2026-11-11：主要重点进图�
   });
 });
 
+describe("E1 审校读图时记下配图版本指纹", () => {
+  it("本批每张实际读过的图各记一次（带审校读到的 sha256 与版本）；记录失败不影响审校", async () => {
+    const h = harness(700, { contract: true });
+    const recorded: [string, any][] = [];
+    const image = async () => ({ buffer: Buffer.from("image"), mimeType: "image/png", width: 10, height: 10, sha256: "b".repeat(64), generation: "77", byteLength: 5 });
+    const batch = await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, { ...h.deps, image, recordImage: async (uri: string, img: any) => { recorded.push([uri, img]); throw Error("ENOSPC"); } } as any) as any;
+    // 本批读过的图 = 本批报告的配图（已解析成本人云端对象）；每张恰好记一次。
+    const uris = batch.images.map((i: any) => i.url.replace("https://storage.googleapis.com/", "gs://"));
+    expect(uris.length).toBeGreaterThan(0);
+    expect(recorded.map(([u]) => u).sort()).toEqual([...uris].sort());
+    expect(recorded.every(([, img]) => img.generation === "77" && img.sha256 === "b".repeat(64))).toBe(true);
+  });
+});
+
 describe("整册压缩三章一组、各组并发发出（2026-11-13：全部超出章同一请求会超过整条链约 10 分钟上限；一章一次调用次数太多）", () => {
   const multi = async (h: ReturnType<typeof harness>, count = 7) => {
     const batch = await reviewKnowledgePublication(7, { documentId: h.doc.id, batchIndex: 0, attempt: 0 }, h.deps) as any;
