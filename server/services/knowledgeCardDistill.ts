@@ -1957,96 +1957,191 @@ function parsePageTriage(raw: string): KnowledgeCardPageSelection[] {
 
 /** 每次扫读最多几张目录页（12 格/张 → 约 96 页一发） */
 const TRIAGE_SHEETS_PER_CALL = 8;
+/**
+ * 挑页单发请求的时长：按心跳规则不设总时长上限（站长 2026-11-14），只受提炼单跳允许的最大值约束；
+ * 换路由无心跳判定（流 10 分钟无字节）与上游自身超时决定。以前固定 180 秒总时长会把仍在出字的回包掐断。
+ */
+const TRIAGE_REQUEST_TIMEOUT_CAP_MS = 60 * 60_000;
+
+type KnowledgeCardPageSelectionStream = import("./knowledgeCardDocumentPages.js").KnowledgeCardPageSelectionStream;
+type KnowledgeCardPageSelectorFn = import("./knowledgeCardDocumentPages.js").KnowledgeCardPageSelector;
+type KnowledgeCardTriageProgress = (doneSheets: number, totalSheets: number) => void | Promise<void>;
+/** 按组的挑页缓存（手册续做用）：读写失败照常上抛，不当作「本组不选参考页」吞掉 */
+type KnowledgeCardTriageGroupCache = {
+  read: (group: KnowledgeCardContactSheet[], pageCount: number) => Promise<KnowledgeCardPageSelection[] | null>;
+  save: (group: KnowledgeCardContactSheet[], pageCount: number, pages: KnowledgeCardPageSelection[]) => Promise<void>;
+};
 
 /**
- * 目录页扫读挑页：用所选档位模型看缩略图目录，返回值得参考的页码。
- * 扫读失败不阻断整体提炼（退回无参考页）。
+ * 一次挑页（整本或流式）：目录页每凑齐一组（8 张）就进本组通道队列，两通道各自的工位领取，
+ * 工位数与以前相同（按本通道组数动态，≤挑页通道上限）。结果按组序归位，进度按完成顺序串行回报、不倒退。
  */
-export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: AbortSignal, hooks: { onGroupFailed?: () => void } = {}) {
-  // GLM与DeepSeek均保持既有模型合同，各批首选通道独立分流。
-  const glmTier = resolveKnowledgeCardDistillModel(modelName) === KNOWLEDGE_CARD_DISTILL_MODEL_GLM;
-  const fallbackChain = glmTier ? KNOWLEDGE_CARD_GLM_FIRST_ORDER : KNOWLEDGE_CARD_PREMIUM_FALLBACK_TAIL;
-  return async (
-    sheets: KnowledgeCardContactSheet[],
-    pageCount: number,
-    onProgress?: (doneSheets: number, totalSheets: number) => void | Promise<void>,
-  ): Promise<KnowledgeCardPageSelection[]> => {
-    const groups = Array.from({length:Math.ceil(sheets.length/TRIAGE_SHEETS_PER_CALL)},(_,index)=>sheets.slice(index*TRIAGE_SHEETS_PER_CALL,(index+1)*TRIAGE_SHEETS_PER_CALL));
-    const picked: KnowledgeCardPageSelection[][] = groups.map(()=>[]);
-    const stop = new AbortController();
-    const signal = abortSignal ? AbortSignal.any([abortSignal,stop.signal]) : stop.signal;
-    let doneSheets=0;
-    let progress=Promise.resolve();
-    const runGroup = async (groupIndex:number,primary:'openrouter'|'evolink') => {
-      const i=groupIndex*TRIAGE_SHEETS_PER_CALL;
-      // 每组开始前先看有没有被叫停：不靠进度回调，也不等本组跑完
-      signal.throwIfAborted();
-      const group=groups[groupIndex]!;
-      const pageNumbers = group.flatMap((sheet) => sheet.pageNumbers);
+function createKnowledgeCardPageTriageRun(
+  modelName: string,
+  abortSignal: AbortSignal | undefined,
+  hooks: { onGroupFailed?: () => void; groupCache?: KnowledgeCardTriageGroupCache },
+  pageCount: number,
+  totalSheets: number,
+  onProgress?: KnowledgeCardTriageProgress,
+): KnowledgeCardPageSelectionStream {
+  const groupCount = Math.ceil(totalSheets / TRIAGE_SHEETS_PER_CALL);
+  const groups: KnowledgeCardContactSheet[][] = Array.from({ length: groupCount }, (_, g) => new Array(Math.min(TRIAGE_SHEETS_PER_CALL, totalSheets - g * TRIAGE_SHEETS_PER_CALL)));
+  const filled: number[] = groups.map(() => 0);
+  const picked: KnowledgeCardPageSelection[][] = groups.map(() => []);
+  const stop = new AbortController();
+  const signal = abortSignal ? AbortSignal.any([abortSignal, stop.signal]) : stop.signal;
+  let doneSheets = 0;
+  let progress = Promise.resolve();
+  /** 不再派发新组：目录页准备失败（abandon）或缓存读写失败 */
+  let closed = false;
+  let fatal: { error: unknown } | undefined;
+  const routes = ["openrouter", "evolink"] as const;
+  type Route = (typeof routes)[number];
+  const routeOf = (groupIndex: number): Route => routes[groupIndex % 2]!;
+  const queues: Record<Route, number[]> = { openrouter: [], evolink: [] };
+  const dispatched: Record<Route, number> = { openrouter: 0, evolink: 0 };
+  const routeTotal: Record<Route, number> = { openrouter: 0, evolink: 0 };
+  groups.forEach((_, g) => { routeTotal[routeOf(g)] += 1; });
+  let waiters: Array<() => void> = [];
+  const wake = () => { const pending = waiters; waiters = []; for (const resume of pending) resume(); };
+  signal.addEventListener("abort", wake, { once: true });
+
+  const runGroup = async (groupIndex: number, primary: Route) => {
+    const i = groupIndex * TRIAGE_SHEETS_PER_CALL;
+    // 每组开始前先看有没有被叫停：不靠进度回调，也不等本组跑完
+    signal.throwIfAborted();
+    const group = groups[groupIndex]!;
+    const pageNumbers = group.flatMap((sheet) => sheet.pageNumbers);
+    const cached = hooks.groupCache ? await hooks.groupCache.read(group, pageCount) : null;
+    if (cached) {
+      picked[groupIndex] = cached.slice();
+    } else {
+      let succeeded = false;
       try {
         const userText = `全书共 ${pageCount} 页；本次目录页覆盖第 ${pageNumbers[0]}–${pageNumbers[pageNumbers.length - 1]} 页（共 ${group.length} 张目录页）。`;
         const imageUrls = group.map((sheet) => sheet.imageUrl);
-        const chainFallback = () =>
-          invokeDistillLlm({
-            abortSignal:signal,
-            sourceText: userText,
-            imageUrls,
-            modelName: resolveKnowledgeCardDistillModel(modelName),
-            minSections: 1,
-            // 用户 0910 令：思考一律 high（Qwen 走 EvoLink 时映射 medium 是 0909 拍板）
-            effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "high"),
-            systemOverride: buildPageTriageSystem(),
-            timeoutMs: 180_000,
-            chainOverride: knowledgeCardChainForPrimary(fallbackChain,primary),
-            // 0923 热修：挑页要 JSON，OpenRouter 跳开 json_object（选 GLM 时这里是整条挑页链）
-            jsonObject: true,
-            // 0926：用户消息只发挑页原话 + 目录页图，不套提炼外壳
-            plainUserContent: true,
-            // 终审第五条：JSON 校验放进每一跳——新加坡回非 JSON 要在跳内判失败换下一跳，
-            // 而不是整个 fallback 回来才发现；合法的 {"pages":[]} 是成功，降门槛放行
-            minOutputChars: 2,
-            validate: (out) => (looksLikeTriageJson(out) ? null : `挑页回包不是合法 JSON：${out.slice(0, 60)}`),
-          });
-        // 选 GLM 时不打 DeepSeek 视觉专链，直接走 GLM 起跳的整条链；
-        // 选 DeepSeek 时先打两家 DeepSeek 视觉，失败再落降档尾段
-        const raw = glmTier
-          ? await chainFallback()
-          : await invokePageTriageJson({
-              system: buildPageTriageSystem(),
-              userText,
-              imageUrls,
-              // 复审 P1：主通道以前根本没拿到取消信号，已取消还会照打一次 fetch
-              abortSignal:signal,
-              primary,
-              fallback: chainFallback,
-            });
+        // 2026-11-19 共同硬规矩第 3 条：每个模型调用的回落链 GLM 两家 → DeepSeek 1017 两家（本组首选通道先打，
+        // 与 knowledgePublicationRoutes 按 executionChannel 分流同口径）；不论所选档位，不再先打 DeepSeek 视觉专链。
+        const raw = await invokeDistillLlm({
+          abortSignal: signal,
+          sourceText: userText,
+          imageUrls,
+          modelName: resolveKnowledgeCardDistillModel(modelName),
+          minSections: 1,
+          // 用户 0910 令：思考一律 high（Qwen 走 EvoLink 时映射 medium 是 0909 拍板）
+          effort: envStr("KNOWLEDGE_CARD_PAGE_TRIAGE_EFFORT", "high"),
+          systemOverride: buildPageTriageSystem(),
+          timeoutMs: TRIAGE_REQUEST_TIMEOUT_CAP_MS,
+          chainOverride: knowledgeCardChainForPrimary(KNOWLEDGE_CARD_GLM_FIRST_ORDER, primary),
+          // 0923 热修：挑页要 JSON，OpenRouter 跳开 json_object
+          jsonObject: true,
+          // 0926：用户消息只发挑页原话 + 目录页图，不套提炼外壳
+          plainUserContent: true,
+          // 终审第五条：JSON 校验放进每一跳——回非 JSON 要在跳内判失败换下一跳；合法的 {"pages":[]} 是成功，降门槛放行
+          minOutputChars: 2,
+          validate: (out) => (looksLikeTriageJson(out) ? null : `挑页回包不是合法 JSON：${out.slice(0, 60)}`),
+        });
         const allowed = new Set(pageNumbers);
         for (const item of parsePageTriage(raw)) if (allowed.has(item.pageNumber)) picked[groupIndex]!.push(item);
+        succeeded = true;
       } catch (err) {
         // 取消原样抛：不能被「本组不选参考页」这条容错吞掉（复审 P1）
         if (isKnowledgeCardCancelledError(err, signal) || isSseContentSafetyError(err)) { stop.abort(err); throw err; }
         hooks.onGroupFailed?.();
-        console.warn(`[knowledgeCardDistill] 目录页扫读失败（第 ${Math.floor(i / TRIAGE_SHEETS_PER_CALL) + 1}/${Math.ceil(sheets.length / TRIAGE_SHEETS_PER_CALL)} 组，目录页 ${i + 1}–${Math.min(sheets.length, i + TRIAGE_SHEETS_PER_CALL)}），本组不选参考页：${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`);
+        console.warn(`[knowledgeCardDistill] 目录页扫读失败（第 ${groupIndex + 1}/${groupCount} 组，目录页 ${i + 1}–${Math.min(totalSheets, i + TRIAGE_SHEETS_PER_CALL)}），本组不选参考页：${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`);
       }
-      doneSheets+=group.length;
-      const completed=doneSheets;
-      progress=progress.then(async()=>{ await onProgress?.(completed,sheets.length); });
-      await progress;
-    };
-    // 两通道同时领取不同批次，各最多 8 个在途；完成即补位，已成功组不重发。
-    const work=(['openrouter','evolink'] as const).flatMap((primary,routeIndex)=>{
-      const indices=groups.map((_,i)=>i).filter(i=>i%2===routeIndex);
-      let next=0;
-      // 每通道按本通道组数动态并发（≥读档每路工位数，≤挑页通道上限 8）。
-      return Array.from({length:Math.max(Math.min(KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE,indices.length),knowledgeStageConcurrency(indices.length,{max:Math.min(KNOWLEDGE_MODEL_CHANNEL_MAX[primary],KNOWLEDGE_CARD_TRIAGE_CHANNEL_MAX)}))},async()=>{
-        while(next<indices.length){ signal.throwIfAborted(); await runGroup(indices[next++]!,primary); }
-      });
-    });
-    const settled=await Promise.allSettled(work);
-    const failed=settled.find((r):r is PromiseRejectedResult=>r.status==='rejected');
-    if(failed)throw failed.reason;
-    return picked.flat();
+      // 只缓存扫读成功的组；失败组下次续做重扫
+      if (succeeded && hooks.groupCache) await hooks.groupCache.save(group, pageCount, picked[groupIndex]!);
+    }
+    doneSheets += group.length;
+    const completed = doneSheets;
+    progress = progress.then(async () => { await onProgress?.(completed, totalSheets); });
+    await progress;
   };
+  const take = async (route: Route): Promise<number | undefined> => {
+    for (;;) {
+      signal.throwIfAborted();
+      if (closed) return undefined;
+      if (queues[route].length) { dispatched[route] += 1; return queues[route].shift(); }
+      if (dispatched[route] >= routeTotal[route]) return undefined;
+      await new Promise<void>((resolve) => waiters.push(resolve));
+    }
+  };
+  // 两通道同时领取不同批次；完成即补位，已成功组不重发。
+  const work = routes.flatMap((primary) => {
+    const count = routeTotal[primary];
+    // 每通道按本通道组数动态并发（≥读档每路工位数，≤挑页通道上限 8）。
+    return Array.from({ length: Math.max(Math.min(KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE, count), knowledgeStageConcurrency(count, { max: Math.min(KNOWLEDGE_MODEL_CHANNEL_MAX[primary], KNOWLEDGE_CARD_TRIAGE_CHANNEL_MAX) })) }, async () => {
+      for (;;) {
+        const groupIndex = await take(primary);
+        if (groupIndex === undefined) return;
+        try {
+          await runGroup(groupIndex, primary);
+        } catch (err) {
+          if (!fatal) fatal = { error: err };
+          closed = true;
+          wake();
+          throw err;
+        }
+      }
+    });
+  });
+  const settled = Promise.allSettled(work);
+  return {
+    add(position, sheet) {
+      const g = Math.floor(position / TRIAGE_SHEETS_PER_CALL);
+      const slot = position % TRIAGE_SHEETS_PER_CALL;
+      const group = groups[g];
+      if (!group || slot < 0 || slot >= group.length) throw new Error("目录页序号超出挑页范围");
+      if (group[slot]) return;
+      group[slot] = sheet;
+      filled[g] = (filled[g] || 0) + 1;
+      if (filled[g] === group.length) {
+        const queue = queues[routeOf(g)];
+        queue.push(g);
+        queue.sort((a, b) => a - b);
+        wake();
+      }
+    },
+    async finish() {
+      if (filled.some((n, g) => n !== groups[g]!.length)) {
+        closed = true;
+        wake();
+        await settled;
+        throw new Error("目录页未全部就绪，挑页未完成");
+      }
+      const results = await settled;
+      const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+      if (failed) throw failed.reason;
+      return picked.flat();
+    },
+    async abandon() {
+      closed = true;
+      wake();
+      await settled;
+    },
+    failure: () => fatal?.error,
+  };
+}
+
+/**
+ * 目录页扫读挑页：用所选档位模型看缩略图目录，返回值得参考的页码。
+ * 扫读失败不阻断整体提炼（退回无参考页）。返回的函数带 `stream`：备料时每凑齐一组目录页即开扫。
+ */
+export function makeKnowledgeCardPageSelector(modelName: string, abortSignal?: AbortSignal, hooks: { onGroupFailed?: () => void; groupCache?: KnowledgeCardTriageGroupCache } = {}): KnowledgeCardPageSelectorFn {
+  const select = async (
+    sheets: KnowledgeCardContactSheet[],
+    pageCount: number,
+    onProgress?: KnowledgeCardTriageProgress,
+  ): Promise<KnowledgeCardPageSelection[]> => {
+    const run = createKnowledgeCardPageTriageRun(modelName, abortSignal, hooks, pageCount, sheets.length, onProgress);
+    sheets.forEach((sheet, position) => run.add(position, sheet));
+    return run.finish();
+  };
+  return Object.assign(select, {
+    stream: (pageCount: number, totalSheets: number, onProgress?: KnowledgeCardTriageProgress) =>
+      createKnowledgeCardPageTriageRun(modelName, abortSignal, hooks, pageCount, totalSheets, onProgress),
+  });
 }
 
 /** 回放缓存里的转换 PDF：解析出对象地址，存在才重新签 7 天链接；不可解析或已删除返回 null。 */
@@ -2062,32 +2157,70 @@ async function refreshConvertedPdfLink(pdf: KnowledgeCardConvertedPdf): Promise<
 }
 /** 逐页备料缓存版本：转换、逐页文字、挑页或页图口径改变时递增。 */
 export const KNOWLEDGE_DOCUMENT_CACHE_VERSION = "document-pages-v1";
-/** 挑页结果缓存的合同版本；改挑页提示词或解析口径时递增，旧缓存自然失效。 */
-export const KNOWLEDGE_PAGE_SELECTION_CACHE_VERSION = "page-selection-v1";
+/**
+ * 挑页结果缓存的合同版本；改挑页提示词或解析口径时递增，旧缓存自然失效。
+ * v2（2026-11-19）：改为按挑页组（8 张目录页）逐组缓存，组一扫完就落盘。
+ */
+export const KNOWLEDGE_PAGE_SELECTION_CACHE_VERSION = "page-selection-v2";
+/** v1 整本挑页缓存：只读命中（已扫完的书不重扫、参考页不变），不再写入 */
+const KNOWLEDGE_PAGE_SELECTION_LEGACY_VERSION = "page-selection-v1";
 
 /**
  * 手册读档的挑页可续做：挑页是模型判断，两次提交选出的参考页不同会让分段与每段身份全变，已付费的分段无法复用。
- * 同一用户证据根下，按目录页对象（随原稿内容寻址）+ 页数 + 档位缓存挑页结果；只有全部目录组都扫读成功才落盘，
- * 部分失败的残缺挑页不固化。非手册（无证据上下文）照旧每次扫读。
+ * 同一用户证据根下，按目录页对象（随原稿内容寻址）+ 页数 + 档位缓存挑页结果：
+ * - 先查 v1 整本缓存（只读）；命中即原样返回；
+ * - 否则逐组扫读，每组成功即按组落 v2 缓存，失败组不落盘并回报 onIncomplete（残缺挑页不当成完整成功）。
+ * 非手册（无证据上下文）照旧每次扫读。
  */
-export function knowledgeCardResumablePageSelector(modelName: string, abortSignal?: AbortSignal, onIncomplete?: () => void) {
+export function knowledgeCardResumablePageSelector(modelName: string, abortSignal?: AbortSignal, onIncomplete?: () => void): KnowledgeCardPageSelectorFn {
   const context = knowledgeStructuredDistillContext.getStore();
   if (!context) return makeKnowledgeCardPageSelector(modelName, abortSignal);
-  return async (sheets: KnowledgeCardContactSheet[], pageCount: number, onProgress?: (doneSheets: number, totalSheets: number) => void | Promise<void>) => {
-    const identity = { version: KNOWLEDGE_PAGE_SELECTION_CACHE_VERSION, model: resolveKnowledgeCardDistillModel(modelName), pageCount, sheets: sheets.map((sheet) => ({ gcsUri: sheet.gcsUri, pageNumbers: sheet.pageNumbers })) };
-    const store = context.resume || context.evidence;
-    const key = `${store.prefix}/page-selection/${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}.json`;
-    const saved = await store.read(key);
-    if (saved && JSON.stringify(saved.identity) === JSON.stringify(identity) && Array.isArray(saved.pages)) {
+  const store = context.resume || context.evidence;
+  const model = resolveKnowledgeCardDistillModel(modelName);
+  const keyOf = (identity: unknown) => `${store.prefix}/page-selection/${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}.json`;
+  const sheetIdentity = (sheets: KnowledgeCardContactSheet[]) => sheets.map((sheet) => ({ gcsUri: sheet.gcsUri, pageNumbers: sheet.pageNumbers }));
+  const readSaved = async (identity: unknown): Promise<KnowledgeCardPageSelection[] | null> => {
+    const saved = await store.read(keyOf(identity));
+    return saved && JSON.stringify(saved.identity) === JSON.stringify(identity) && Array.isArray(saved.pages) ? saved.pages as KnowledgeCardPageSelection[] : null;
+  };
+  const readLegacy = (sheets: KnowledgeCardContactSheet[], pageCount: number) =>
+    readSaved({ version: KNOWLEDGE_PAGE_SELECTION_LEGACY_VERSION, model, pageCount, sheets: sheetIdentity(sheets) });
+  const groupIdentity = (group: KnowledgeCardContactSheet[], pageCount: number) => ({ version: KNOWLEDGE_PAGE_SELECTION_CACHE_VERSION, model, pageCount, sheets: sheetIdentity(group) });
+  const groupCache: KnowledgeCardTriageGroupCache = {
+    read: (group, pageCount) => readSaved(groupIdentity(group, pageCount)),
+    save: async (group, pageCount, pages) => { const identity = groupIdentity(group, pageCount); await store.save(keyOf(identity), { identity, pages }); },
+  };
+  const select = async (sheets: KnowledgeCardContactSheet[], pageCount: number, onProgress?: KnowledgeCardTriageProgress) => {
+    const legacy = await readLegacy(sheets, pageCount);
+    if (legacy) {
       await onProgress?.(sheets.length, sheets.length);
-      return saved.pages as KnowledgeCardPageSelection[];
+      return legacy;
     }
     let failedGroups = 0;
-    const pages = await makeKnowledgeCardPageSelector(modelName, abortSignal, { onGroupFailed: () => { failedGroups += 1; } })(sheets, pageCount, onProgress);
-    if (!failedGroups) await store.save(key, { identity, pages });
-    else onIncomplete?.();
+    const pages = await makeKnowledgeCardPageSelector(modelName, abortSignal, { onGroupFailed: () => { failedGroups += 1; }, groupCache })(sheets, pageCount, onProgress);
+    if (failedGroups) onIncomplete?.();
     return pages;
   };
+  return Object.assign(select, {
+    stream: (pageCount: number, totalSheets: number, onProgress?: KnowledgeCardTriageProgress): KnowledgeCardPageSelectionStream => {
+      let failedGroups = 0;
+      const all: KnowledgeCardContactSheet[] = [];
+      const run = createKnowledgeCardPageTriageRun(modelName, abortSignal, { onGroupFailed: () => { failedGroups += 1; }, groupCache }, pageCount, totalSheets, onProgress);
+      return {
+        add: (position, sheet) => { all[position] = sheet; run.add(position, sheet); },
+        abandon: run.abandon,
+        failure: run.failure,
+        async finish() {
+          const pages = await run.finish();
+          // 流式只在有目录页需要新渲染时使用；目录图列表不可读时也可能是旧书，v1 整本缓存仍优先
+          const legacy = await readLegacy(all, pageCount);
+          if (legacy) return legacy;
+          if (failedGroups) onIncomplete?.();
+          return pages;
+        },
+      };
+    },
+  });
 }
 
 /**
