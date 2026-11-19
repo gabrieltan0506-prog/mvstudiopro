@@ -9,7 +9,7 @@ import { layoutFromSource } from "../../shared/editableLayout";
 import { compileKnowledgeEditions } from "../../shared/knowledgeCardEdition";
 import { knowledgeEditionImagePlan } from "../../shared/knowledgeCardPagination";
 import { KNOWLEDGE_IMAGE_PRIMARY_INSTRUCTIONS, KNOWLEDGE_IMAGE_PRIMARY_MARKER, KNOWLEDGE_LEAD_PAGE_CHARS, KNOWLEDGE_READING_CONTRACT, knowledgeReadingCharBudgets } from "../../shared/knowledgeEditionBudget";
-import { compressKnowledgeFinalReport, KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS, dedupeKnowledgeReviewAgainstImages, KNOWLEDGE_REVIEW_INSTRUCTIONS, knowledgeExplanationInstructions, reviewKnowledgePublication, knowledgeSourceDigest, knowledgeEvidencePrefix, knowledgeReviewPageChars, KNOWLEDGE_VISUAL_ADVISOR_MODEL } from "./knowledgePublicationAdvisor";
+import { compressKnowledgeFinalReport, KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS, KNOWLEDGE_COMPRESSION_LANES, dedupeKnowledgeReviewAgainstImages, KNOWLEDGE_REVIEW_INSTRUCTIONS, knowledgeExplanationInstructions, reviewKnowledgePublication, knowledgeSourceDigest, knowledgeEvidencePrefix, knowledgeReviewPageChars, KNOWLEDGE_VISUAL_ADVISOR_MODEL } from "./knowledgePublicationAdvisor";
 
 const sentence = (i: number, j: number) => `第${i}节第${j}句记述一件具体史实，以及它前后的经过与影响。`;
 const book = compileKnowledgeEditions("敦煌测试", Array.from({ length: 12 }, (_, i) => ({
@@ -428,6 +428,53 @@ describe("整册压缩三章一组、各组并发发出（2026-11-13：全部超
     const sent = h.post.mock.calls.slice(from).map(c => c[0] as any);
     const channelOfFirst = (id: string) => sent.find(r => JSON.parse(r.contents[0].parts.find((p: any) => p.text.includes('"source"')).text).source.pages[0].id === id).executionChannel;
     expect([0, 3, 6, 9].map(i => channelOfFirst(m.ids[i]!))).toEqual(["evolink", "openrouter", "evolink", "openrouter"]);
+  });
+
+  it("四路并发（2026-11-19）：两通道各两路；一路中途断网失败不丢章、不重复；采纳结果与完成先后无关", async () => {
+    expect(KNOWLEDGE_COMPRESSION_LANES).toBe(4);
+    const runOnce = async (delayOf: (groupStart: number) => number) => {
+      const h = harness(700, { contract: true });
+      const m = await multi(h, 12);
+      const inner = h.deps.post;
+      let active = 0, peak = 0;
+      const sent: { ids: string[]; channel: string }[] = [];
+      (h.deps as any).post = async (request: any, evidence: any) => {
+        const payload = request.contents[0].parts.map((p: any) => { try { return JSON.parse(p.text); } catch { return {}; } }).find((p: any) => p.source);
+        const ids: string[] = payload.source.pages.map((p: any) => p.id);
+        const compress = request.systemInstruction.parts.some((p: any) => /篇幅压缩|篇幅扩写/.test(p.text));
+        if (!compress) return inner(request, evidence);
+        sent.push({ ids, channel: request.executionChannel });
+        active++; peak = Math.max(peak, active);
+        try {
+          await new Promise(r => setTimeout(r, delayOf(m.ids.indexOf(ids[0]!))));
+          // 第二组（下标 1，OpenRouter 首跳那一路）在其余三路仍在途时断网：整条链抛错。
+          if (ids[0] === m.ids[3]) throw Object.assign(new Error("fetch failed"), { code: "ECONNRESET" });
+          return await inner(request, evidence);
+        } finally { active--; }
+      };
+      const next = await compressKnowledgeFinalReport(h.deps as any, h.root, 0, h.digest, h.source, structuredClone(m.saved));
+      return { h, m, next, peak, sent };
+    };
+    // 先发的组最后完成（倒序完成）与按序完成各跑一次。
+    const reversed = await runOnce(start => 80 - start * 5);
+    const forward = await runOnce(start => 5 + start * 5);
+    for (const run of [reversed, forward]) {
+      const { m, next, peak, sent } = run;
+      expect(peak).toBe(4);
+      // 四组（3 章一组）各发一次，每章恰好一次；首跳通道 EvoLink / OpenRouter 各两路。
+      expect(sent.map(s => s.ids.length)).toEqual([3, 3, 3, 3]);
+      expect(sent.flatMap(s => s.ids).sort()).toEqual([...m.ids].sort());
+      expect(sent.map(s => s.channel).sort()).toEqual(["evolink", "evolink", "openrouter", "openrouter"]);
+      // 失败那组的三章保留原稿、按续页进排版（报出超出），其余九章采纳；不抛错。
+      expect(next.report.pages.map((p: any) => knowledgeReviewPageChars(p))).toEqual([707, 707, 707, 1807, 1807, 1807, 707, 707, 707, 707, 707, 707]);
+      expect(next.report.pages.map((p: any) => p.id)).toEqual(m.ids);
+      expect(next.budgetOverflow.after.map((o: any) => o.id)).toEqual(m.ids.slice(3, 6));
+      expect(next.budgetOverflow.adopted).toEqual([...m.ids.slice(0, 3), ...m.ids.slice(6)]);
+      expect(next.budgetOverflow.error).toMatch(/^3\/12章压缩未完成/);
+    }
+    // 完成先后不同，整册结果一致（两次是不同稿件身份，按章序下标比较正文与采纳次序）。
+    const shape = (run: typeof reversed) => ({ texts: run.next.report.pages.map((p: any) => JSON.stringify(p.reading.blocks.map((b: any) => b.text))), adopted: run.next.budgetOverflow.adopted.map((id: string) => run.m.ids.indexOf(id)) });
+    expect(shape(reversed)).toEqual(shape(forward));
   });
 
   it("其中一组失败：其余组照常采纳并落盘，失败组的章保留原稿并报出；不抛错、不挡排版", async () => {

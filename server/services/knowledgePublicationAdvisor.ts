@@ -350,8 +350,11 @@ export function dedupeKnowledgeReviewAgainstImages(source: KnowledgeSource, page
   return { pages: next, removed };
 }
 
-/** 篇幅压缩同时在途的请求路数（站长 2026-11-13：一次并发两路）。 */
-export const KNOWLEDGE_COMPRESSION_LANES = 2;
+/**
+ * 篇幅压缩同时在途的请求路数（站长 2026-11-19：由两路改为四路——两个通道各两路；每路首跳失败按正式链切到另一通道再到备用模型）。
+ * 通道按组序交错（第 0/2/4… 组首跳 EvoLink，第 1/3/5… 组首跳 OpenRouter），与路数无关，已存请求的首跳通道不因改路数而变。
+ */
+export const KNOWLEDGE_COMPRESSION_LANES = 4;
 /** 篇幅压缩每次请求的章数上限（站长 2026-11-13：一次并发两到三章）。 */
 export const KNOWLEDGE_COMPRESSION_GROUP_CHAPTERS = 3;
 /** 篇幅压缩最多轮数：每轮一次正式三跳链调用（GLM FlashX@EvoLink → GLM@OpenRouter → DeepSeek v4.1 Flash 1017，超时/断线/空回/写坏由路由切下一跳）。 */
@@ -466,7 +469,8 @@ export async function compressKnowledgeReviewToBudget(params: {
       const headlineOf = new Map(after.map(o => [o.id, o.headline]));
       const results: (ReturnType<typeof validateKnowledgeReview>["pages"] | undefined)[] = new Array(units.length);
       const failed: (string | undefined)[] = new Array(units.length);
-      // 一次并发两路（站长 2026-11-13）：两路各走一个通道作首跳，失败按正式链切到另一通道再到备用模型。
+      // 四路并发（站长 2026-11-19，原两路）：两个通道各两路作首跳，失败按正式链切到另一通道再到备用模型。
+      // 每路按固定步长取组（第 worker、worker+路数… 组），结果按组下标写回；一组失败只记该组，路继续取下一组，不丢章、不重复。
       const workerCount = Math.min(KNOWLEDGE_COMPRESSION_LANES, units.length);
       await Promise.all(Array.from({ length: workerCount }, async (_, worker) => {
         for (let index = worker; index < units.length; index += workerCount) {
@@ -474,7 +478,8 @@ export async function compressKnowledgeReviewToBudget(params: {
           try {
             // 各组首跳在两个通道间交错（相邻组走不同路由）；本组首跳失败后按正式链切到另一通道再到备用模型，互相兜底。
             // 输入容量由 getRaw 的容量核算把关（超上限即不发、不截断）；一组至多三章，远低于上限。
-            const raw = await getRaw(deps, unit.prefix, attempt, digest, [], roundRequest(keep, worker % 2 === 0 ? "evolink" : "openrouter"), { firstSendWithoutReceipt: true });
+            // 首跳通道按组下标奇偶（index % 2）：两路时 worker===index%2、四路时 worker%2===index%2，与原两路分配逐组一致。
+            const raw = await getRaw(deps, unit.prefix, attempt, digest, [], roundRequest(keep, index % 2 === 0 ? "evolink" : "openrouter"), { firstSendWithoutReceipt: true });
             results[index] = validateKnowledgeReview(parseRaw(raw, false), roundSource(keep), digest).pages;
           } catch (e) {
             failed[index] = `${unit.ids.map(id => `《${headlineOf.get(id)}》`).join("")}${e instanceof Error ? e.message : String(e)}`;
@@ -552,7 +557,7 @@ export async function compressKnowledgeFinalReport(deps: typeof real, root: stri
   const pending = measureOverflow ? measureOverflow(saved.report.pages)
     : knowledgeReadingOverflow(source.detailLevel, source.pages, saved.report.pages.map((p: any) => ({ id: p.id, chars: knowledgeReviewPageChars(p) })), source.readingContract);
   if (!pending.length) return saved;
-  // 新合同：统稿后标记的章三章一组、两路并发压一轮，仍超的章再压一轮（合计 ≤2 轮）；
+  // 新合同：统稿后标记的章三章一组、四路并发（两通道各两路，2026-11-19）压一轮，仍超的章再压一轮（合计 ≤2 轮）；
   // 之后仍超出的章随报告报出、排成续页，不截断。旧稿沿用原 4 轮。
   const compressed = await compressKnowledgeReviewToBudget({ deps, prefix: `${root}/final-compress`, attempt, digest, source, pages: saved.report.pages, ...(source.readingContract === KNOWLEDGE_READING_CONTRACT ? { maxRounds: 2 } : {}), ...(measureOverflow ? { measureOverflow } : {}) });
   if (JSON.stringify(compressed.pages) === JSON.stringify(saved.report.pages)) {
