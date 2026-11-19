@@ -408,12 +408,14 @@ export async function prepareKnowledgeCardDocumentPages(params: {
 
     async function prepareDocumentPagesInDir(dir: string, pdfPath: string, total: number): Promise<KnowledgeCardDocumentPageSet> {
     const pages: KnowledgeCardDocumentPage[] = (await readPageTexts()).map((text, i) => ({ pageNumber: i + 1, text }));
+    let textReadyFailure: { error: unknown } | undefined;
 
     if (params.onTextReady) {
       const onTextReady = params.onTextReady;
       const document: KnowledgeCardDocumentPageSet = { docKey, fileName: params.fileName, pageCount: total, pages: pages.map((p) => ({ ...p })), selectedPages: [] };
       textReadyTask = Promise.resolve().then(() => onTextReady(document));
-      textReadyTask.catch(() => undefined);
+      // 原文写入一失败（如原读档内容已改变）就收口：不再渲染目录页、不再开扫挑页，免得为注定失败的备料付模型费
+      textReadyTask.catch((error) => { textReadyFailure ??= { error }; });
     }
 
     await report("thumbs", 0, total);
@@ -447,7 +449,9 @@ export async function prepareKnowledgeCardDocumentPages(params: {
       await report("select", done, totalSheets);
     };
     // 全部目录页都已存在（续做/旧书）时不必流式：整本一次交给挑页器，旧版整本挑页缓存照常命中
-    const stream = missing.length && params.selectPages.stream ? params.selectPages.stream(total, sheetCount, selectProgress) : undefined;
+    // 目录图列表暂时不可读时不流式：可能是已扫完的旧书，流式会先把每组重扫（付费）再在末尾被 v1 整本缓存覆盖
+    const listUnreadable = Boolean(params.existingSheets) && !existing;
+    const stream = missing.length && !listUnreadable && params.selectPages.stream ? params.selectPages.stream(total, sheetCount, selectProgress) : undefined;
     if (stream) sheets.forEach((sheet, position) => { if (sheet) stream.add(position, sheet); });
 
     let readyPages = sheets.reduce((n, sheet) => n + (sheet ? sheet.pageNumbers.length : 0), 0);
@@ -477,6 +481,7 @@ export async function prepareKnowledgeCardDocumentPages(params: {
       params.abortSignal?.throwIfAborted();
       const triageFailure = stream?.failure();
       if (triageFailure) throw triageFailure;
+      if (textReadyFailure) throw textReadyFailure.error;
       const first = sheetRange(batch[0]!).first;
       const last = sheetRange(batch[batch.length - 1]!).last;
       // 每批独立子目录：并行的 pdftoppm 输出互不混读
@@ -530,6 +535,7 @@ export async function prepareKnowledgeCardDocumentPages(params: {
     if (sheets.some((sheet) => !sheet)) throw new Error("原稿目录页未全部就绪");
     await report("thumbs", total, total);
 
+    if (textReadyFailure) { await stream?.abandon(); throw textReadyFailure.error; }
     await report("select", 0, sheets.length);
     selectLive = true;
     if (pendingSelect) await report("select", pendingSelect[0], pendingSelect[1]);

@@ -528,3 +528,43 @@ describe("挑页：按组提前开扫、按组缓存、旧整本缓存只读", (
     })).rejects.toThrow(/停止读档|aborted/);
   }, 60_000);
 });
+
+describe("审查回归（2026-11-19）", () => {
+  it("目录图列表暂时不可读 + v1 整本挑页缓存在：不流式重扫，零模型调用，参考页取 v1", async () => {
+    const sheets = await referenceSheets();
+    const bucket = fakeBucket();
+    for (const [k, v] of sheets) bucket.objects.set(k, v);
+    const resume = memoryStore();
+    const identity = { version: "page-selection-v1", model: "glm-5.3-flashx", pageCount: PAGES, sheets: Array.from({ length: SHEETS }, (_, i) => {
+      const first = i * 12 + 1;
+      return { gcsUri: `gs://test/${knowledgeCardSheetObjectName(USER, DOC, i + 1)}`, pageNumbers: Array.from({ length: Math.min(PAGES, first + 11) - first + 1 }, (_, k) => first + k) };
+    }) };
+    const key = `${resume.store.prefix}/page-selection/${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}.json`;
+    resume.data.set(key, { identity, pages: [{ pageNumber: 55, reason: "旧书已选" }] });
+    const hook = vi.fn(async () => '{"pages":[]}');
+    __setKnowledgeCardDistillGatewayInvokerForTest(hook as any);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const set = await knowledgeStructuredDistillContext.run({ evidence: memoryStore("e").store, resume: resume.store } as any, () => prepareKnowledgeCardDocumentPages({
+        buffer: pdf, docKey: DOC, fileName: "s.pdf", userId: USER, selectPages: knowledgeCardResumablePageSelector("glm-5.3-flashx"),
+        uploadPage: bucket.uploadPage, existingSheets: async () => { throw new Error("list 503 (test)"); },
+      }));
+      expect(hook).not.toHaveBeenCalled();
+      expect(set.selectedPages).toEqual([55]);
+      expect(resume.saves).toEqual([]);
+    } finally { warn.mockRestore(); }
+  }, 60_000);
+
+  it("顾问原文写入先失败（如原读档内容已改变）：不再继续渲染目录页、不再派发挑页（不白付模型费），报原文写入的错", async () => {
+    const bucket = fakeBucket();
+    const hook = vi.fn(async (p: any) => triageAnswer(p));
+    __setKnowledgeCardDistillGatewayInvokerForTest(hook as any);
+    await expect(prepareKnowledgeCardDocumentPages({
+      buffer: pdf, docKey: DOC, fileName: "s.pdf", userId: USER, selectPages: makeKnowledgeCardPageSelector("glm-5.3-flashx"),
+      uploadPage: bucket.uploadPage, existingSheets: bucket.existingSheets,
+      onTextReady: async () => { throw new Error("原读档内容已改变，禁止重复购买（test）"); },
+    })).rejects.toThrow("原读档内容已改变");
+    expect(hook).not.toHaveBeenCalled();
+    expect(bucket.uploads).toBe(0);
+  }, 60_000);
+});

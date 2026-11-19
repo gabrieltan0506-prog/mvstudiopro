@@ -3861,8 +3861,10 @@ async function processPlatformJob(
         touchJobHeartbeat(platformJobId);
         await cancel.check();
         if (!platformJobId) return;
-        await patchJobRunningProgress(platformJobId, patch).catch(() => {});
+        // 整条 output 读改写：后台原文进度与目录页进度并发时串行写，后写的不抹掉先写的字段
+        await (progressWrites = progressWrites.then(() => patchJobRunningProgress(platformJobId, patch).catch(() => {})));
       };
+      let progressWrites: Promise<void> = Promise.resolve();
       try {
       await cancel.check({ force: true });
       const { knowledgeCardDistillActivity } = await import("../services/knowledgeCardDistillActivity.js");
