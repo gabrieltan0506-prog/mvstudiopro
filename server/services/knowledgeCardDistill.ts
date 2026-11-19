@@ -70,6 +70,8 @@ import {
 import { convertEpubToPdf, isEpubFile } from "./knowledgeCardEpubToPdf.js";
 import { archiveConvertedEpubPdf, type KnowledgeCardConvertedPdf } from "./knowledgeCardEpubPdfArchive.js";
 import { looksLikeTriageJson, invokePageTriageJson } from "./knowledgeCardPageTriage.js";
+import { KnowledgeAdaptiveWorkerLimit, KNOWLEDGE_DISTILL_WORKERS_START } from "../../shared/knowledgeConcurrency";
+import { knowledgeDistillRouteControls, knowledgeDistillWorkersCeiling } from './knowledgeCardStructuredDistill';
 
 /** 百炼新加坡 Token Plan（Qwen 官方兜底）；与整形链 `plan_sg_qwen` 同一端点与密钥 */
 const DASHSCOPE_SG_PLAN_CHAT_URL =
@@ -1653,7 +1655,7 @@ export function buildPageAlignedChunks(
 /**
  * 手册分段提炼熔断（取值偏保守）：连续 5 段失败，或已结束 ≥10 段中失败 ≥60%，或两个通道都被判不可用，即停止领取新段。
  * 依据：正常运行里单段失败是零星的（各跳已在段内重试换路），连续 5 段都失败几乎只可能是系统性问题（合同写坏、余额、上游故障）；
- * 「前 10 段失败 ≥6」覆盖交错成功但整体不可用的情况。在途段（每通道 3、共 ≤6）照常收尾，已完成段全部保存可续做。
+ * 「前 10 段失败 ≥6」覆盖交错成功但整体不可用的情况。在途段（每通道当前工位上限，起步 3、上限默认 8）照常收尾，已完成段全部保存可续做。
  */
 export const KNOWLEDGE_DISTILL_BREAKER_CONSECUTIVE = 5;
 export const KNOWLEDGE_DISTILL_BREAKER_MIN_FINISHED = 10;
@@ -1670,7 +1672,11 @@ export function knowledgeDistillPartialFailureMessage(completed: number, total: 
 /** 0926 用户令：带扫描页读字图的段单跳超时 6 分钟（读图 + 提炼比纯文字重）；纯文字段仍按 profile */
 export const KNOWLEDGE_CARD_OCR_CHUNK_TIMEOUT_MS = 6 * 60_000;
 
-/** 每路 3 个在读分段，两路总上限 6（站长 2026-11-14「并发数量减半」：原 5×2=10）；完成一份立即补下一份。 */
+/**
+ * 旧裸 Markdown 读档：每路 3 个在读分段，两路总上限 6（站长 2026-11-14「并发数量减半」：原 5×2=10）；完成一份立即补下一份。
+ * 手册结构化读档改为自适应工位（站长 2026-11-19）：每通道起步 KNOWLEDGE_DISTILL_WORKERS_START=3，连续成功 +1、429/无心跳减半，
+ * 上限 knowledgeDistillWorkersCeiling()（默认 8/通道）。
+ */
 export const KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE = 3;
 /** 读档挑页每通道在途上限（原取 KNOWLEDGE_MODEL_CHANNEL_MAX=16，2026-11-14 减半为 8；审校/排版/生图常量不变）。 */
 export const KNOWLEDGE_CARD_TRIAGE_CHANNEL_MAX = 8;
@@ -1736,7 +1742,7 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
   });
   console.info(
     `[knowledgeCardDistill] long doc ${text.length} chars → ${chunks.length} chunks ` +
-      `(model=${params.modelName} chunkChars=${profile.chunkChars} concurrency=${KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE}×2路 effort=${profile.effortChunk} level=${params.detailLevel} refPages=${allPageImages.length} docs=${params.documents.length})`,
+      `(model=${params.modelName} chunkChars=${profile.chunkChars} concurrency=${knowledgeStructuredDistillContext.getStore() ? `adaptive${KNOWLEDGE_DISTILL_WORKERS_START}-${knowledgeDistillWorkersCeiling()}` : KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE}×2路 effort=${profile.effortChunk} level=${params.detailLevel} refPages=${allPageImages.length} docs=${params.documents.length})`,
   );
 
   await params.onReadingPlan?.(chunks.length);
@@ -1771,10 +1777,30 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
       structuredDiagnostics.push(await collectKnowledgeDistillDiagnostic(store.evidence, batch.prefix, err, { segment: idx + 1, total: chunks.length, label: chunks[idx]!.label }));
     } catch { /* 诊断尽力而为 */ }
   };
+  // 手册结构化读档：按通道自适应工位（见 KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE 注释）。限流/无心跳信号来自该通道共享请求闸（与各请求同一组对象）。
+  // 段身份（第 N/总数 段）、结果按下标写入 outputs、合并顺序均与在读数量无关；同一份资料两任务并发仍由续做租约互斥。
+  const structuredStore = knowledgeStructuredDistillContext.getStore();
+  const ceiling = knowledgeDistillWorkersCeiling();
+  const limits = structuredStore ? (() => {
+    const { gates } = knowledgeDistillRouteControls(structuredStore);
+    const make = (channel: "openrouter" | "evolink") => {
+      const limit = new KnowledgeAdaptiveWorkerLimit(ceiling, KNOWLEDGE_DISTILL_WORKERS_START, undefined,
+        change => console.info(`[knowledgeCardDistill] 分段工位 channel=${channel} ${change.from}->${change.to} cause=${change.cause}`));
+      gates[channel].onOutcome = outcome => { if (outcome === "rate_limited") limit.throttle(); };
+      return limit;
+    };
+    return { openrouter: make("openrouter"), evolink: make("evolink") };
+  })() : undefined;
   const worker = async (chain: readonly KnowledgeCardGatewayStep[]) => {
+    const limit = limits?.[chain[0]?.gateway === "evolink" ? "evolink" : "openrouter"];
     while (!stopped && nextIdx < chunks.length) {
       params.abortSignal?.throwIfAborted();
+      if (limit && !(await limit.acquire(() => !stopped && nextIdx < chunks.length && !params.abortSignal?.aborted))) return;
+      // await 恢复前其他工位可能已取走最后一段或已叫停：同步复核，领不到就退位（不计成败）。
+      if (limit && (stopped || nextIdx >= chunks.length || params.abortSignal?.aborted)) { limit.abandon(); params.abortSignal?.throwIfAborted(); return; }
       const idx = nextIdx++;
+      let slotOutcome: "ok" | "error" = "error";
+      try {
       try {
         const chunk = chunks[idx]!;
         outputs[idx] = await distillOneChunkOrSkip(params.onNotice, chunks.length, idx, chunk.label, () => distillOneChunkWithRetry({
@@ -1830,6 +1856,12 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
           console.warn(`[knowledgeCardDistill] 熔断：${reason}，停止领取新分段（在途分段照常收尾）`);
         }
       }
+      slotOutcome = outputs[idx]?.ok ? "ok" : "error";
+      } finally {
+        // 工位释放放在本段任何出口（含取消/致命错误抛出）；叫停后唤醒等待中的工位让其退出。
+        limit?.release(slotOutcome);
+        if (stopped && limits) { limits.openrouter.wake(); limits.evolink.wake(); }
+      }
       const ready = outputs[idx];
       await params.onReadingChunk?.({index:idx,total:chunks.length,markdown:ready?.ok ? ready.markdown : "",...(!ready?.ok ? {error:"本段未读取成功"} : {})});
       done += 1;
@@ -1837,7 +1869,7 @@ export async function invokeDistillLlmPossiblyChunked(rawParams: {
     }
   };
   const chunkOutcomes = await Promise.allSettled(
-    routes.flatMap(({ chain, delay }) => Array.from({ length: KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE }, async () => {
+    routes.flatMap(({ chain, delay }) => Array.from({ length: limits ? knowledgeStageConcurrency(chunks.length, { max: ceiling }) : KNOWLEDGE_CARD_CHUNK_WORKERS_PER_ROUTE }, async () => {
       await waitAbortable(delay, params.abortSignal);
       params.abortSignal?.throwIfAborted();
       if (!stopped) await worker(chain);

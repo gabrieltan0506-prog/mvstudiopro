@@ -68,6 +68,8 @@ export class KnowledgeRateGate {
   private waiters: (() => void)[] = [];
   limit: number;
   rateLimited = 0;
+  /** 可选观察者：每次 release 后按结果回调（读档分段工位控制器借此感知 429/无心跳）；观察者抛错不影响闸门。 */
+  onOutcome?: (outcome: "ok" | "rate_limited" | "error") => void;
   constructor(readonly max: number) { this.limit = Math.max(1, max); }
   async acquire() {
     while (this.inFlight >= this.limit) await new Promise<void>(resolve => this.waiters.push(resolve));
@@ -79,6 +81,73 @@ export class KnowledgeRateGate {
     else if (outcome === "ok" && this.limit < this.max) this.limit++;
     const wake = this.waiters.splice(0);
     for (const resolve of wake) resolve();
+    try { this.onOutcome?.(outcome); } catch { /* 观察者故障不改变闸门语义 */ }
+  }
+}
+
+/**
+ * 读档分段工位（站长 2026-11-19 拍板）：每通道起步 3 个在读分段，连续成功 KNOWLEDGE_DISTILL_SUCCESS_STREAK 段 +1，
+ * 遇 429 / 无心跳（经该通道请求闸 onOutcome 感知）立即减半，最低 1；上限默认 8/通道（两通道合计 16），
+ * env KNOWLEDGE_DISTILL_WORKERS_PER_CHANNEL_MAX 可调，夹在 1–KNOWLEDGE_MODEL_CHANNEL_MAX。
+ */
+export const KNOWLEDGE_DISTILL_WORKERS_START = 3;
+export const KNOWLEDGE_DISTILL_WORKERS_CEILING_DEFAULT = 8;
+export const KNOWLEDGE_DISTILL_SUCCESS_STREAK = 2;
+/** 解析上限（不读 process.env：本模块也被前端引用，由服务端调用方传入 env 原值）。 */
+export function knowledgeDistillWorkerCeiling(env: string | undefined, channel: KnowledgeModelChannel = "openrouter"): number {
+  const value = Number(env);
+  if (!String(env ?? "").trim() || !Number.isFinite(value)) return KNOWLEDGE_DISTILL_WORKERS_CEILING_DEFAULT;
+  return Math.min(KNOWLEDGE_MODEL_CHANNEL_MAX[channel], Math.max(1, Math.floor(value)));
+}
+
+/**
+ * 自适应工位上限（单通道）：只决定何时允许领取下一段，不取消已在途分段。
+ * 不变量：每次放行时 inFlight < limit；limit 缩小后已在途的照常收尾，在途数降到 limit 以下前不放行新段。
+ */
+export class KnowledgeAdaptiveWorkerLimit {
+  limit: number;
+  inFlight = 0;
+  private streak = 0;
+  private waiters: (() => void)[] = [];
+  /** 每次上限变化的记录（日志/测试用）。 */
+  readonly changes: { from: number; to: number; cause: "success_streak" | "throttled" }[] = [];
+  constructor(readonly ceiling: number, start = KNOWLEDGE_DISTILL_WORKERS_START, readonly streakToGrow = KNOWLEDGE_DISTILL_SUCCESS_STREAK,
+    private readonly onChange?: (change: { from: number; to: number; cause: "success_streak" | "throttled" }) => void) {
+    this.ceiling = Math.max(1, Math.floor(ceiling));
+    this.limit = Math.max(1, Math.min(this.ceiling, Math.floor(start)));
+  }
+  /** 等到有空位；proceed() 为 false（无剩余分段/已叫停）时放弃并返回 false，不占位。 */
+  async acquire(proceed: () => boolean = () => true): Promise<boolean> {
+    for (;;) {
+      if (!proceed()) return false;
+      if (this.inFlight < this.limit) { this.inFlight++; return true; }
+      await new Promise<void>(resolve => this.waiters.push(resolve));
+    }
+  }
+  /** 分段结束：ok 计入连续成功；error（本段失败）清零连续成功但不减半（失败原因由请求层闸门另行判断）。 */
+  release(outcome: "ok" | "error") {
+    this.inFlight = Math.max(0, this.inFlight - 1);
+    if (outcome === "ok") {
+      this.streak++;
+      if (this.streak >= this.streakToGrow && this.limit < this.ceiling) this.change(this.limit + 1, "success_streak");
+      if (this.streak >= this.streakToGrow) this.streak = 0;
+    } else this.streak = 0;
+    this.wake();
+  }
+  /** 限流 / 无心跳：立即减半（最低 1），连续成功清零。 */
+  throttle() {
+    this.streak = 0;
+    const next = Math.max(1, Math.floor(this.limit / 2));
+    if (next !== this.limit) this.change(next, "throttled");
+  }
+  /** 已占位但最终没有领到任务（await 恢复前别的工位取走了最后一段 / 已叫停）：退位，不计成功或失败。 */
+  abandon() { this.inFlight = Math.max(0, this.inFlight - 1); this.wake(); }
+  /** 叫停/队列取空时唤醒全部等待者，让它们按 proceed() 退出。 */
+  wake() { const wake = this.waiters.splice(0); for (const resolve of wake) resolve(); }
+  private change(to: number, cause: "success_streak" | "throttled") {
+    const record = { from: this.limit, to, cause };
+    this.limit = to; this.changes.push(record);
+    try { this.onChange?.(record); } catch { /* 日志故障不影响并发控制 */ }
   }
 }
 

@@ -119,6 +119,59 @@ export function knowledgeAnswerBudgetOverflow(answer: unknown, budgets: Knowledg
 }
 const digest = (data: unknown) => createHash("sha256").update(JSON.stringify(data)).digest("hex");
 
+/**
+ * 思考档位按请求类型传入（站长 2026-11-19）：主提炼固定 high；疑点归属与挑页缺省 medium，可用 env 覆盖（只认 low/medium/high）。
+ * 档位只放进本次发送的请求体（overrides.reasoningEffort），不进入 requestDigest / 回执身份 / 续做键：改档不作废任何已付回执。
+ */
+export type KnowledgeReasoningEffort = "low" | "medium" | "high";
+export type KnowledgeReasoningRequestKind = "distill" | "caution_binding" | "page_triage";
+export const KNOWLEDGE_REASONING_EFFORT_DEFAULTS: Record<KnowledgeReasoningRequestKind, KnowledgeReasoningEffort> = { distill: "high", caution_binding: "medium", page_triage: "medium" };
+const KNOWLEDGE_REASONING_EFFORT_ENV: Record<Exclude<KnowledgeReasoningRequestKind, "distill">, string> = {
+  caution_binding: "KNOWLEDGE_CAUTION_BINDING_REASONING_EFFORT", page_triage: "KNOWLEDGE_PAGE_TRIAGE_REASONING_EFFORT",
+};
+export function knowledgeReasoningEffort(kind: KnowledgeReasoningRequestKind, env: Record<string, string | undefined> = process.env): KnowledgeReasoningEffort {
+  if (kind === "distill") return "high";
+  const value = String(env[KNOWLEDGE_REASONING_EFFORT_ENV[kind]] ?? "").trim().toLowerCase();
+  return value === "low" || value === "medium" || value === "high" ? value : KNOWLEDGE_REASONING_EFFORT_DEFAULTS[kind];
+}
+/** 请求体档位：OpenRouter 原样（low/medium/high）；EvoLink 上 GLM 5.3 / DeepSeek V4.1 只认 low/high/max（见 glm53ReasoningEffort），medium 按 high 发送。 */
+export function knowledgeChannelReasoningEffort(channel: KnowledgeModelChannel, effort: KnowledgeReasoningEffort): string {
+  return channel === "openrouter" ? effort : effort === "low" ? "low" : "high";
+}
+
+/**
+ * 读档提炼（distill-v1）单页正文容量：原 12000 字上限是图文审校逐页版面的容量，读档单页输入可达 24000 字，
+ * 合法的压实稿（含表格语法与参考页标记）可超过 12000 而被判写坏、逐跳重买。读档改为按本页输入计：
+ * max(12000, 2×输入字数)，且不超过合同 body 上限 50000——任何输入都不比原规则更严，失控的超长输出仍拒收。
+ */
+export const KNOWLEDGE_PAGE_BODY_CAPACITY = 12000;
+export const KNOWLEDGE_DISTILL_PAGE_BODY_MAX = 50000;
+export function knowledgeDistillPageBodyCapacity(inputChars: number): number {
+  return Math.min(KNOWLEDGE_DISTILL_PAGE_BODY_MAX, Math.max(KNOWLEDGE_PAGE_BODY_CAPACITY, 2 * Math.max(0, Math.floor(inputChars || 0))));
+}
+/** 回执里的失败原因类别（可统计；不含正文、地址、密钥）。 */
+export type KnowledgeRouteReasonCategory = "content_safety" | "http_rate_limited" | "http_transient" | "http_rejected" | "model_mismatch" | "output_limit"
+  | "incomplete" | "json_syntax" | "contract_schema" | "page_identity" | "missing_reading" | "body_over_capacity" | "budget_overflow" | "not_configured" | "contract_other";
+export function knowledgeRouteReasonCategory(error: unknown, response: { status: number; text: string } | undefined): KnowledgeRouteReasonCategory {
+  if (isSseContentSafetyError(error)) return "content_safety";
+  const tagged = (error as { knowledgeReasonCategory?: KnowledgeRouteReasonCategory } | null)?.knowledgeReasonCategory;
+  if (tagged) return tagged;
+  const status = response?.status;
+  if (typeof status === "number" && !(status >= 200 && status < 300)) {
+    const cls = classifyKnowledgeRouteFailure(response);
+    return cls === "rate_limited" ? "http_rate_limited" : cls === "transient" ? "http_transient" : "http_rejected";
+  }
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/实际模型版本不符/.test(message)) return "model_mismatch";
+  if (/单次输出容量/.test(message)) return "output_limit";
+  if (/未完整结束/.test(message)) return "incomplete";
+  if (error instanceof KnowledgeJsonSyntaxError || error instanceof SyntaxError) return "json_syntax";
+  if ((error as { name?: string } | null)?.name === "ZodError") return "contract_schema";
+  if (/页编号与本批原稿不符|原稿页号不一致/.test(message)) return "page_identity";
+  if (/自动表格图文结构/.test(message)) return "missing_reading";
+  return "contract_other";
+}
+
 /** 仅采用明确的上游分类，不把余额、普通403或限流误判为内容拒答。 */
 function inspectKnowledgeRouteResponse(response: {status:number;text:string} | undefined) {
   let envelope:any;
@@ -301,6 +354,8 @@ const real = {
   log: (line: string) => console.info(line),
   /** hold：零调用恢复入口——未闭合回执只读不等待、不归档、不补买（保持旧语义）。 */
   interruptionPolicy: "wait-and-repurchase" as "wait-and-repurchase" | "hold",
+  /** 本次调用的思考档位（见 knowledgeReasoningEffort）；不进入 requestDigest。缺省 high（与原硬编码一致）。 */
+  reasoningEffort: "high" as KnowledgeReasoningEffort,
 };
 /** EvoLink/OpenRouter 对 image_url 的 400：拉图失败而非模型不支持；不计入四次上限，同通道最多再补一次，再 400 才切通道。 */
 /** 1109 之前的回执把配图标为 "[服务端即时签名]"（无后缀）＝直送 4K 原图；其 image_url 400 已由缩图修法消除，不再作为通道拉图失败证据。 */
@@ -424,7 +479,10 @@ function validateAnswer(content: string, request: KnowledgeModelRequest, sources
       if (request.systemInstruction.parts.some(p => p.text.includes(KNOWLEDGE_DECORATION_MARKER)) && !page.reading.decoration) throw new Error("未取得本页装饰组件配置");
       if(page.reading.decoration?.interleave === "original-image" && !source.source.pages.find((p:any)=>p.id===page.id)?.imageUrl) throw new Error("无原图章节不能配置原图穿插");
       if (!restored.bodyReadingIds.has(page.id)) page.body = knowledgeReadingMarkdown(page.reading);
-      if (page.body.length > 12000) throw new Error("本页结构化正文超出容量，未截断采用");
+      const capacity = request.readingNormalization === "distill-v1"
+        ? knowledgeDistillPageBodyCapacity(String(source.source.pages.find((p: any) => p.id === page.id)?.body ?? "").length)
+        : KNOWLEDGE_PAGE_BODY_CAPACITY;
+      if (page.body.length > capacity) throw Object.assign(new Error("本页结构化正文超出容量，未截断采用"), { knowledgeReasonCategory: "body_over_capacity" as const });
     }
     if (request.systemInstruction.parts.some(p=>p.text.includes(KNOWLEDGE_RESEARCH_MARKER))) validateKnowledgeResearch(review,sources);
     return validateKnowledgeReview(review, source.source, source.sourceDigest);
@@ -535,14 +593,14 @@ export async function invokeKnowledgePublicationRoutes(
   const hopOf = (model: string, channel: KnowledgeModelChannel) => `${routeModelFamily(model)}:${channel}`;
   const hopState = (hop: string) => { let h = hops.get(hop); if (!h) { h = { attempts: 0, transient: 0, repairs: 0, breakRetries: 0 }; hops.set(hop, h); } return h; };
   /** 记一次失败并决定本跳是否还能重试；返回给日志用的下一步说明。 */
-  const recordFailure = (route: string, model: string, channel: KnowledgeModelChannel, cls: KnowledgeRouteFailureClass, retryAfterMs?: number, reason?: string) => {
+  const recordFailure = (route: string, model: string, channel: KnowledgeModelChannel, cls: KnowledgeRouteFailureClass, retryAfterMs?: number, reason?: string, category?: string) => {
     const hop = hopOf(model, channel), h = hopState(hop);
     h.lastClass = cls; h.retryAfterMs = retryAfterMs;
     if (cls === "rate_limited" || cls === "transient") { h.transient += 1; if (h.transient > KNOWLEDGE_SAME_ROUTE_RETRIES) h.skip = `${cls}_retries_exhausted`; }
     else if (cls === "rejected") h.skip = "rejected_4xx";
     else if (cls === "bad_output") { h.repairs += 1; if (h.repairs > 1) h.skip = "bad_output_after_repair"; }
     const detail = knowledgeRouteLogDetail(reason);
-    deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=${cls} attempt=${h.attempts} next=${h.skip ? "switch_hop" : "same_hop_retry"}${detail ? ` detail=${detail}` : ""}`);
+    deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=${cls}${category ? ` category=${category}` : ""} attempt=${h.attempts} next=${h.skip ? "switch_hop" : "same_hop_retry"}${detail ? ` detail=${detail}` : ""}`);
   };
   const markChannelDown = (channel: KnowledgeModelChannel, why: string) => {
     const health = deps.channelHealth;
@@ -804,7 +862,7 @@ export async function invokeKnowledgePublicationRoutes(
       assertKnowledgePaidModel(channel, model, request.researchOnly === true);
       const apiKey = deps.key(channel);
       if (!apiKey) {
-        receipt = { requestDigest, route, model, state: "failed", reason: "通道未配置", sent: false };
+        receipt = { requestDigest, route, model, state: "failed", reason: "通道未配置", reasonCategory: "not_configured", sent: false };
         await evidence.save(key, receipt);
         deps.log(`[knowledgeRoute] batch=${batchLabel} route=${route} reason=not_configured attempt=${h.attempts} next=switch_hop`);
         if (probing) releaseProbe(channel);
@@ -837,8 +895,8 @@ export async function invokeKnowledgePublicationRoutes(
           } : {}),
           model, messages, max_tokens: knowledgeOutputBudget(model, channel, request.generationConfig.responseMimeType === 'text/markdown' ? KNOWLEDGE_UNCAPPED_OUTPUT_REQUEST : request.generationConfig.maxOutputTokens, inputBudget),
           stream: true, stream_options: { include_usage: true }, ...(request.generationConfig.responseMimeType === "text/markdown" ? {} : {response_format: { type: "json_object" }}),
-          ...(channel === "openrouter" ? { provider: capability.provider, reasoning: { effort: "high" } } :
-            { ...(model.startsWith("deepseek") ? { thinking: { type: "enabled" } } : {}), reasoning_effort: "high" }),
+          ...(channel === "openrouter" ? { provider: capability.provider, reasoning: { effort: knowledgeChannelReasoningEffort(channel, deps.reasoningEffort) } } :
+            { ...(model.startsWith("deepseek") ? { thinking: { type: "enabled" } } : {}), reasoning_effort: knowledgeChannelReasoningEffort(channel, deps.reasoningEffort) }),
         };
         // 只存无凭证的模型输入；私有配图签名只在服务端即时请求中使用。
         const storedBody = { ...body, messages: redactedMessages };
@@ -1009,7 +1067,7 @@ export async function invokeKnowledgePublicationRoutes(
       if (error instanceof KnowledgeBudgetOverflowError) {
         // 完整回答但篇幅超出：按写坏记失败（原始回包保留），切下一跳；保留超出最少的一份作压缩兜底。
         traces.pop(); traces.push({ route, model, state: "budget_overflow", status: 200 });
-        receipt = { ...receipt, state: "failed", adjustments, reason: error.message, budgetOverflow: error.overflow };
+        receipt = { ...receipt, state: "failed", adjustments, reason: error.message, reasonCategory: "budget_overflow", budgetOverflow: error.overflow };
         await evidence.save(key, receipt);
         lastFailure = receipt.reason;
         budgetHops.add(`${routeModelFamily(model)}:${channel}`);
@@ -1020,7 +1078,7 @@ export async function invokeKnowledgePublicationRoutes(
         continue;
       }
       // HTTP错误、版本不符或完整响应校验失败均有原始回执，不以成功掩盖缺页。
-      receipt = { ...receipt, state: "failed", ...(isSseContentSafetyError(error)?{safetyBlocked:true}:{}), adjustments, reason: error instanceof Error ? `${error.name === "ZodError" ? "输出合同不符：" : ""}${error.message}` : "输出合同不符" };
+      receipt = { ...receipt, state: "failed", ...(isSseContentSafetyError(error)?{safetyBlocked:true}:{}), adjustments, reason: error instanceof Error ? `${error.name === "ZodError" ? "输出合同不符：" : ""}${error.message}` : "输出合同不符", reasonCategory: knowledgeRouteReasonCategory(error, receipt.response) };
       await evidence.save(key, receipt);
       if(isSseContentSafetyError(error))throw error;
       lastFailure = receipt.reason;
@@ -1043,7 +1101,7 @@ export async function invokeKnowledgePublicationRoutes(
       } else if (typeof receipt.response?.status === "number" && receipt.response.status >= 200 && receipt.response.status < 300) markChannelSuccess(channel);
       else if (probing) releaseProbe(channel);
       if (!(images.length && isImageInputRejection(receipt.response)) && !inspectKnowledgeRouteResponse(receipt.response).keyLimit && !(outputLimitedFamilies.has(routeModelFamily(model)) && /单次输出容量/.test(receipt.reason)))
-        recordFailure(route, model, channel, classifyKnowledgeRouteFailure(receipt.response), classifyKnowledgeRouteFailure(receipt.response) === "rate_limited" ? knowledgeRetryAfterMs(receipt.retryAfter, receipt.response?.text, deps.now()) : undefined, receipt.reason);
+        recordFailure(route, model, channel, classifyKnowledgeRouteFailure(receipt.response), classifyKnowledgeRouteFailure(receipt.response) === "rate_limited" ? knowledgeRetryAfterMs(receipt.retryAfter, receipt.response?.text, deps.now()) : undefined, receipt.reason, receipt.reasonCategory);
       if(completeAnswerReceived&&request.generationConfig.responseMimeType==='text/markdown')markdownFailure=error instanceof Error?error:new Error(String(error));
       if (error instanceof KnowledgeJsonSyntaxError) syntaxFailure = error;
       else if (adjustments.some(item => (item as {field?:string}).field === 'json.syntax'))
@@ -1052,7 +1110,7 @@ export async function invokeKnowledgePublicationRoutes(
     }
     if (receipt.state === "failed") {
       // 解析器修复后允许重验已有完整响应；不重发请求，不覆盖原始response。
-      await evidence.save(key, { ...receipt, state: "received", priorFailureReason: receipt.reason, reason: undefined, recoveredAt: new Date().toISOString() });
+      await evidence.save(key, { ...receipt, state: "received", priorFailureReason: receipt.reason, reason: undefined, ...(receipt.reasonCategory ? { priorReasonCategory: receipt.reasonCategory, reasonCategory: undefined } : {}), recoveredAt: new Date().toISOString() });
     }
     // 保存失败不能当成模型失败去买下一跳；已收到的原始回执可直接复用。
     if (postResearch && postWorkflow) {
