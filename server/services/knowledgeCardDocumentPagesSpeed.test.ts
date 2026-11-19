@@ -170,7 +170,8 @@ describe("目录页：批量渲染、对象与内容不变", () => {
     expect(Array.from(bucket.objects.keys()).sort()).toEqual(Array.from(ref.keys()).sort());
     for (const [name, jpeg] of ref) expect(bucket.objects.get(name)!.equals(jpeg), name).toBe(true);
     // 11 张目录页：第 1 组 8 张一次渲染（96 页），第 2 组 3 张一次渲染；以前是 11 次
-    expect(thumbCalls().map((c) => [c.args[c.args.indexOf("-f") + 1], c.args[c.args.indexOf("-l") + 1]])).toEqual([["1", "96"], ["97", "130"]]);
+    // 两批并行渲染，启动先后不保证：按起始页排序后比较
+    expect(thumbCalls().map((c) => [c.args[c.args.indexOf("-f") + 1], c.args[c.args.indexOf("-l") + 1]]).sort((a, b) => Number(a[0]) - Number(b[0]))).toEqual([["1", "96"], ["97", "130"]]);
 
     const refText = await referenceTexts();
     expect(set.pages.map((p) => p.text)).toEqual(refText.pages);
