@@ -44,8 +44,7 @@ import { KnowledgeCardPageTasks } from "@/lib/knowledgeCardPageTask";
 import { gcsTransferUrl } from "@/lib/gcsTransfer";
 import { cachePhotoTemporaryMedia, triggerTemporaryDownload } from "@/lib/photoTemporaryMedia";
 import { mergeNativeProposalListAndDetail } from "@/lib/manhuaLearnResultUi";
-import { readOpenAiImageVariantPref } from "@/lib/openaiImageVariantPref";
-import OpenAiImageVariantSwitch from "@/components/OpenAiImageVariantSwitch";
+import { HANDBOOK_IMAGE_TIER_LABEL_ZH } from "@shared/openaiImageVariant";
 import { NATIVE_REPORT_THEME_OPTIONS, type NativeReportThemeChoice } from "../../../shared/manhuaNativeReportThemeChoice";
 import { ManhuaRestructureControl } from "@/components/ManhuaRestructureControl";
 import { buildManhuaRestructureParams } from "@/lib/manhuaRestructure";
@@ -3217,6 +3216,8 @@ export default function PlatformPage() {
    * resolve 存在 ref 里——弹窗的两个按钮要把等待中的生成流程接回去。
    */
   const [customNotePreflight, setCustomNotePreflight] = useState<KnowledgeCardPreflightSummary | null>(null);
+  /** 只出卡片（1119 C3）：不建手册排版、不启动顾问；默认关（原手册流程） */
+  const [customNoteCardsOnly, setCustomNoteCardsOnly] = useState(false);
   /**
    * 等确认期间的互锁（复审 P1）：state 用来锁 UI，ref 用来在 handler 里同步判断——
    * 光靠按钮 disabled 挡不住键盘绕行与同帧重入。
@@ -8092,7 +8093,7 @@ export default function PlatformPage() {
   const knowledgeVerifiedEditionRef=useRef<{jobId:string;full:string;concise:string}|null>(null);
   const renderedImageJobsRef = useRef<string[] | null>(null);
   const renderedSubmittedImageJobsRef = useRef<Set<string> | null>(null);
-  const renderedSettingsRef = useRef<{ imageVariant?: ReturnType<typeof readOpenAiImageVariantPref>; distillModel: KnowledgeCardDistillModelId; billingModel: string; subjectPosition: KnowledgeCardSubjectPosition; infographicTemplateId: string | null } | null>(null);
+  const renderedSettingsRef = useRef<{ distillModel: KnowledgeCardDistillModelId; billingModel: string; subjectPosition: KnowledgeCardSubjectPosition; infographicTemplateId: string | null } | null>(null);
   /** customNoteImages 的同步镜像：计数用，不在 state updater 里做副作用 */
   const customNoteImagesRef = useRef<string[]>([]);
   const recoveryBlocked = customNoteBusy || knowledgeCardPdfBusy || customNoteUploadBusy || customNoteLevelSwitching || Boolean(customNoteDistillJobId) || Boolean(customNotePreflight);
@@ -8205,7 +8206,7 @@ export default function PlatformPage() {
     }
   };
 
-  const { retryKnowledgeCardPage, downloadKnowledgeCardEpubPdf, downloadKnowledgeCardPdf, generateCustomNoteOne, mapCustomNoteError, handleGenerateCustomNote } = useKnowledgeCardRender({ COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR, adoptDistilledFullMarkdown, allowBloggerTitle, askKnowledgeCardPreflight, customNoteBusy, customNoteCompactMarkdownRef, customNoteDetailLevel, customNoteDistillJobId, customNoteDistillModel, customNoteDistillPhase, customNoteFullMarkdown, customNoteFullMarkdownRef, customNoteImagesRef, customNoteInfographicLabelZh, customNoteInfographicTemplateId, customNoteKind, customNoteLevelSwitching, customNotePendingFilesRef, customNoteRevisionRef, customNoteSelectedFileCount, customNoteStopRenderRef, customNoteSubjectPosition, customNoteText, customNoteUploadBusy, customOptimizeBrief, deleteKnowledgeCardEpubPdfMutation, deriveCompactFromFull, enabledPlatformSkillIds, generateCustomNoteMutation, isKnowledgeCardDeriveStale, knowledgeCardDraftChanged, knowledgeCardEpubPdfBusy, knowledgeCardEpubPdfTakenRef, knowledgeCardInflight, knowledgeCardLayoutSourceIdRef, knowledgeCardPageTasks, knowledgeCardPdfBusy, knowledgeCardRenderConcurrency, knowledgeVerifiedEditionRef, layoutStudioRef, markInflight, newPlatformCompositeProgressJobId, optimizeCustomCopyMutation, pendingOptimizeLiveTrendsRef, pendingOptimizeVisionRef, readPosterResumeRecord, readingControllerRef, readingFullMarkdownRef, renderRunIdRef, renderedDetailLevelRef, renderedDraftRef, renderedFullManuscriptRef, renderedImageJobsRef, renderedSettingsRef, renderedSubmittedImageJobsRef, resolveKnowledgeCardSourceText, runKnowledgeCardDistill, setCustomNoteBusy, setCustomNoteDistillPhase, setCustomNoteError, setCustomNoteImageLower, setCustomNoteImageUpper, setCustomNoteImages, setCustomNotePageProgress, setCustomNotePartInFlight, setCustomNotePendingMeta, setCustomNoteProgress, setCustomNoteRendering, setCustomNoteText, setCustomNoteUploadStatus, setCustomOptimizeResult, setCustomOptimizeSummary, setKnowledgeCardEpubPdfBusy, setKnowledgeCardEpubPdfs, setKnowledgeCardInflight, setKnowledgeCardPdfBusy, setKnowledgeCardPdfProgress, setKnowledgeCardPdfUrl, startKnowledgeCardPdfExportMutation, trpcUtils, workbenchUserKey, writePosterResumeRecord });
+  const { retryKnowledgeCardPage, downloadKnowledgeCardEpubPdf, downloadKnowledgeCardPdf, generateCustomNoteOne, mapCustomNoteError, handleGenerateCustomNote } = useKnowledgeCardRender({ COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR, customNoteCardsOnly, adoptDistilledFullMarkdown, allowBloggerTitle, askKnowledgeCardPreflight, customNoteBusy, customNoteCompactMarkdownRef, customNoteDetailLevel, customNoteDistillJobId, customNoteDistillModel, customNoteDistillPhase, customNoteFullMarkdown, customNoteFullMarkdownRef, customNoteImagesRef, customNoteInfographicLabelZh, customNoteInfographicTemplateId, customNoteKind, customNoteLevelSwitching, customNotePendingFilesRef, customNoteRevisionRef, customNoteSelectedFileCount, customNoteStopRenderRef, customNoteSubjectPosition, customNoteText, customNoteUploadBusy, customOptimizeBrief, deleteKnowledgeCardEpubPdfMutation, deriveCompactFromFull, enabledPlatformSkillIds, generateCustomNoteMutation, isKnowledgeCardDeriveStale, knowledgeCardDraftChanged, knowledgeCardEpubPdfBusy, knowledgeCardEpubPdfTakenRef, knowledgeCardInflight, knowledgeCardLayoutSourceIdRef, knowledgeCardPageTasks, knowledgeCardPdfBusy, knowledgeCardRenderConcurrency, knowledgeVerifiedEditionRef, layoutStudioRef, markInflight, newPlatformCompositeProgressJobId, optimizeCustomCopyMutation, pendingOptimizeLiveTrendsRef, pendingOptimizeVisionRef, readPosterResumeRecord, readingControllerRef, readingFullMarkdownRef, renderRunIdRef, renderedDetailLevelRef, renderedDraftRef, renderedFullManuscriptRef, renderedImageJobsRef, renderedSettingsRef, renderedSubmittedImageJobsRef, resolveKnowledgeCardSourceText, runKnowledgeCardDistill, setCustomNoteBusy, setCustomNoteDistillPhase, setCustomNoteError, setCustomNoteImageLower, setCustomNoteImageUpper, setCustomNoteImages, setCustomNotePageProgress, setCustomNotePartInFlight, setCustomNotePendingMeta, setCustomNoteProgress, setCustomNoteRendering, setCustomNoteText, setCustomNoteUploadStatus, setCustomOptimizeResult, setCustomOptimizeSummary, setKnowledgeCardEpubPdfBusy, setKnowledgeCardEpubPdfs, setKnowledgeCardInflight, setKnowledgeCardPdfBusy, setKnowledgeCardPdfProgress, setKnowledgeCardPdfUrl, startKnowledgeCardPdfExportMutation, trpcUtils, workbenchUserKey, writePosterResumeRecord });
 
   const handleAssetDeepOptimize = useCallback(
     async (payload: AssetAnalysisHandoffPayload) => {
@@ -14830,9 +14831,19 @@ export default function PlatformPage() {
                         ))}
                       </select>
                       {customNotePreparedModel && <span>当前稿件：{knowledgeCardRecordedModelLabel(customNotePreparedModel)}；选择框用于下次读档</span>}
-                      <OpenAiImageVariantSwitch compact hideModelNames />
+                      <span>配图：{HANDBOOK_IMAGE_TIER_LABEL_ZH}（手册固定档）</span>
                     </label>
                   ) : null}
+                  <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70" title="只逐页出图并按原序汇集，可导出纯图 PDF；不排版成册、不启动顾问整理。">
+                    <input
+                      type="checkbox"
+                      aria-label="只出卡片"
+                      checked={customNoteCardsOnly}
+                      disabled={customNoteBusy || customNoteUploadBusy || customNoteLevelSwitching || Boolean(customNotePreflight)}
+                      onChange={(e) => setCustomNoteCardsOnly(e.target.checked)}
+                    />
+                    <span className="shrink-0">只出卡片（不排版成册）</span>
+                  </label>
                   <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
                     <span className="shrink-0">成稿</span>
                     <select
@@ -14892,6 +14903,7 @@ export default function PlatformPage() {
                   )}
                   <KnowledgeCardPreflight
                     summary={customNotePreflight}
+                    debug={canShowPlatformDebug && debugMode}
                     onConfirm={() => closeKnowledgeCardPreflight(true)}
                     onCancel={() => closeKnowledgeCardPreflight(false)}
                   />

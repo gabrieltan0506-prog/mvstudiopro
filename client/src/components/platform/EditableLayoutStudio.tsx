@@ -50,7 +50,7 @@ const field =
 export type EditableLayoutStudioHandle = {
   refineSupplement: (sourceId:string)=>Promise<{selection:KnowledgeSupplementSelection;markdown:string}>;
   beginNewSource: () => void;
-  prepare: (source: LayoutSource, waitForImages: (ids: string[]) => Promise<void>, supplementOf?: KnowledgeSupplementSelection, options?: {waitForReading?:()=>Promise<void>;preparePresentation?:boolean}) => Promise<{ documentId: string; maxCredits: number; estimatedCredits: number; presentationCredits?:number }>;
+  prepare: (source: LayoutSource, waitForImages: (ids: string[]) => Promise<void>, supplementOf?: KnowledgeSupplementSelection, options?: {waitForReading?:()=>Promise<void>;preparePresentation?:boolean;cardsOnly?:boolean}) => Promise<{ documentId: string; maxCredits: number; estimatedCredits: number; presentationCredits?:number }>;
   start: (documentId: string, authorizedCredits: number) => Promise<void>;
   imageJobs: (markdown: string, model: string, template: string | null) => string[] | null;
   beginImageAttempt: (originalJobId: string, requestId: string, jobId: string) => Promise<void>;
@@ -359,6 +359,18 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
     async prepare(source, waitForImages, supplementOf, options) {
       if (!ready || !cloudReady || locked.current || source.owner !== owner) throw new Error("云端稿件尚未就绪或正在整理，请稍后开始");
       const nextDoc = layoutFromSource(source);
+      if (options?.cardsOnly) {
+        // 只出卡片（1119 C3）：一次云端保存即写入 synchronizedStarted（图片任务身份随稿入库，补图/恢复照常找得到），
+        // 不写 automaticLayout、不取顾问与排版报价、不调用 start——不启动任何顾问或排版收费。
+        if (supplementOf || options.preparePresentation) throw new Error("只出卡片不能同时补图或准备演示稿，未开始生成");
+        if (nextDoc.publication) nextDoc.publication.synchronizedStarted = true;
+        const previous = current.current;
+        const library = layoutLibrarySchema.parse({ ...previous.library, documents: [...previous.library.documents, nextDoc] });
+        const result = await cloudSave({ library, expectedGeneration: previous.generation });
+        install({ library, generation: result.generation, dirty: false, activeId: nextDoc.id });
+        preparedRun.current = null;
+        return { documentId: nextDoc.id, maxCredits: 0, estimatedCredits: 0, presentationCredits: 0 };
+      }
       if (nextDoc.publication) {
         nextDoc.publication.synchronizedStarted = false;nextDoc.publication.supplementOf=supplementOf;
         if(options?.preparePresentation)nextDoc.publication.presentationRequest={id:crypto.randomUUID(),basis:"source",minSlides:15,maxSlides:20,manuscript:knowledgePresentationSourceManuscript(nextDoc.publication.source)};
@@ -370,9 +382,19 @@ const EditableLayoutStudio = forwardRef<EditableLayoutStudioHandle, { owner: str
       install({ library, generation: result.generation, dirty: false, activeId: nextDoc.id });
       preparedRun.current = { documentId: nextDoc.id, waitForImages,waitForReading:options?.waitForReading,preparePresentation:options?.preparePresentation };
       setOpen(true);
-      const quote = await utils.editableLayout.publicationQuote.fetch({ documentId: nextDoc.id });
-      const presentation = options?.preparePresentation ? await utils.editableLayout.publicationQuote.fetch({documentId:nextDoc.id,purpose:"presentation"}) : null;
-      const layoutQuote = !supplementOf ? await utils.editableLayout.publicationQuote.fetch({documentId:nextDoc.id,purpose:"conversation"}) : null;
+      // 三项报价并发（1119 C3）；任一失败按原串行顺序抛第一个错误，绝不带着部分报价继续。
+      const settled = await Promise.allSettled([
+        utils.editableLayout.publicationQuote.fetch({ documentId: nextDoc.id }),
+        options?.preparePresentation ? utils.editableLayout.publicationQuote.fetch({documentId:nextDoc.id,purpose:"presentation"}) : Promise.resolve(null),
+        !supplementOf ? utils.editableLayout.publicationQuote.fetch({documentId:nextDoc.id,purpose:"conversation"}) : Promise.resolve(null),
+      ]);
+      const failed = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
+      if (failed) throw failed.reason;
+      const [quote, presentation, layoutQuote] = settled.map(r => (r as PromiseFulfilledResult<unknown>).value) as [
+        Awaited<ReturnType<typeof utils.editableLayout.publicationQuote.fetch>>,
+        Awaited<ReturnType<typeof utils.editableLayout.publicationQuote.fetch>> | null,
+        Awaited<ReturnType<typeof utils.editableLayout.publicationQuote.fetch>> | null,
+      ];
       if(layoutQuote && nextDoc.publication){
         nextDoc.publication.automaticLayout={requestId:crypto.randomUUID(),maxCredits:layoutQuote.maxCredits};
         await commitPublication(nextDoc);

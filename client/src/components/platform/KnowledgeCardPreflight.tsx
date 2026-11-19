@@ -27,18 +27,37 @@ export type KnowledgeCardPreflightSummary = {
   /** 读档档位，如「读档·DeepSeek V4.1 Flash」 */
   distillModelZh: string;
   pageCount: number;
+  /** 计划文字页数（1119 C2）；null＝排版时核算 */
+  textPageCount?: number | null;
+  /** 只出卡片：不成册、不排版 */
+  cardsOnly?: boolean;
+  /** 配图档名（普通用户可见，不含模型名） */
+  imageTierZh?: string;
+  /** 精确模型名：只在 debug 模式显示 */
+  imageModelDebug?: string;
   pageContents?: string[];
   qualityZh: string;
   credits: number;
   advisorCredits?: number;
 };
 
+/** 读档标签去掉模型名：「标准 · DeepSeek V4.1 Flash 1017」→「标准」；历史模型 id 不外露。 */
+export function knowledgeCardPublicTierLabel(label: string): string {
+  const raw = String(label || "").trim();
+  if (!raw || raw.startsWith("未记录")) return "未记录";
+  if (raw.startsWith("原读档模型")) return "历史档位（按原价）";
+  return raw.split(" · ")[0]!.trim();
+}
+
 export function KnowledgeCardPreflight({
   summary,
   onConfirm,
   onCancel,
+  debug = false,
 }: {
   summary: KnowledgeCardPreflightSummary | null;
+  /** 父级 debug 开关（仅监管账号可开）；关闭时绝不显示模型/供应商名 */
+  debug?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -47,11 +66,20 @@ export function KnowledgeCardPreflight({
         { k: "成稿档", v: summary.levelZh, accent: true },
         { k: "版式", v: summary.layoutZh, accent: true },
         { k: "模板类型", v: summary.templateZh, accent: true },
-        { k: "读档模型", v: summary.distillModelZh },
-        { k: "配图数量", v: `${summary.pageCount} 张` },
-        { k: "同步准备", v: "顾问边出图边读图排版，并提前规划15–20页可编辑PPTX；完成后仍需核对确认导出" },
-        { k: "画质", v: summary.qualityZh },
-        { k: "顾问整理与排版", v: "包含在内文页费中，不另收费" },
+        // 普通用户只见档名（「标准 · DeepSeek …」只留「标准」）；debug 才显示完整读档模型
+        debug ? { k: "读档模型", v: summary.distillModelZh } : { k: "读档档位", v: knowledgeCardPublicTierLabel(summary.distillModelZh) },
+        { k: "图片页数", v: `${summary.pageCount} 张`, accent: true },
+        {
+          k: "文字页数",
+          v: summary.cardsOnly ? "不排版（只出卡片）" : summary.textPageCount == null ? "排版时核算" : summary.textPageCount === 0 ? "0 页（图文同页）" : `约 ${summary.textPageCount} 页`,
+          accent: true,
+        },
+        ...(summary.cardsOnly
+          ? [{ k: "交付", v: "只出卡片：逐页出图、按原序汇集，可导出纯图 PDF" }]
+          : [{ k: "同步准备", v: "顾问边出图边读图排版；完成后仍需核对确认，再导出 PDF" }]),
+        { k: "画质", v: summary.imageTierZh ? `${summary.qualityZh} · ${summary.imageTierZh}` : summary.qualityZh },
+        ...(debug && summary.imageModelDebug ? [{ k: "出图模型（Debug）", v: summary.imageModelDebug }] : []),
+        ...(summary.cardsOnly ? [] : [{ k: "顾问整理与排版", v: "包含在内文页费中，不另收费" }]),
       ]
     : [];
   return (

@@ -46,7 +46,7 @@ import {
 import { knowledgeCardImageQuality } from "../../shared/knowledgeCardPagination.js";
 import { resolveGptImage2ProviderOrder } from "../../shared/gptImage2ProviderPricing.js";
 import { isWavespeedGptImage2Configured, postWavespeedGptImage2AndUpload } from "./wavespeedGptImage2.js";
-import type { OpenAiImageVariant } from "../../shared/openaiImageVariant.js";
+import { HANDBOOK_IMAGE_MODEL, HANDBOOK_IMAGE_VARIANT, handbookImageVariantAuthorized, type OpenAiImageVariant } from "../../shared/openaiImageVariant.js";
 import {
   getGptImage2PrimaryTimeoutMs,
   isTimeoutLikeError,
@@ -1261,8 +1261,12 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const openrouterFallbackAllowed =
     String(process.env.GPT_IMAGE2_ALLOW_OPENROUTER_FALLBACK || "").trim() === "1";
   const requireExactVariant = options.requireImageVariant || options.imageModelVersion === "2.6";
+  // 2.6 只有手册与人物换景两处使用，二者都只准 Sunburst（1119 C1）：缺档或 Flare 在任何供应商请求之前拒绝，不再静默落到 Flare。
+  if (options.imageModelVersion === "2.6" && options.openaiImageVariant !== HANDBOOK_IMAGE_VARIANT) {
+    throw new Error("2.6 出图只准授权档，未提交出图");
+  }
   const exactModel = options.imageModelVersion === "2.6"
-    ? (options.openaiImageVariant === "sunburst" ? "gpt-image-2.6-sunburst" : "gpt-image-2.6-flare")
+    ? HANDBOOK_IMAGE_MODEL
     : options.exactSunburst ? "gpt-image-2.5-sunburst"
     : options.requireImageVariant ? (options.openaiImageVariant === "sunburst" ? "gpt-image-2.5-sunburst" : "gpt-image-2.5-flare")
     : undefined;
@@ -1661,6 +1665,10 @@ export async function generatePlatformCompositeSheetImage(options: {
   const isXhs = k === "xiaohongshu_dual_note";
   const isKnowledgeCard = k === "single_page_knowledge_card";
   const isKnowledgeHandbook = isKnowledgeCard && !options.viralCreation;
+  // 手册配图授权（1119 C1）：服务端绑定 2.6 Sunburst；调用方传来其他档位即在任何占位/供应商请求之前拒绝。
+  if (isKnowledgeHandbook && !handbookImageVariantAuthorized(options.openaiImageVariant)) {
+    throw new Error("本次配图档位未获授权，未提交出图");
+  }
   const isGraphicPage = isKnowledgeCard && options.viralCreation === true && options.singleGraphicPage === true;
   if (!isStoryboard && !isXhs && !isKnowledgeCard) {
     throw new Error(`Unsupported sheet kind: ${String(k)}`);
@@ -1998,7 +2006,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           options.viralCreation
             ? `[爆款图片·主路径] Image 2.5 Sunburst · 官方→EvoLink · 2K · medium`
             : isKnowledgeCard
-            ? `[图文知识手册·主路径] GPT Image 2.6 ${options.openaiImageVariant || "flare"} · ${options.knowledgeCardImageProvider === "evolink" ? "EvoLink → OpenAI 官方" : "OpenAI 官方 → EvoLink"} · 4K · quality=high · 16:9`
+            ? `[图文知识手册·主路径] ${HANDBOOK_IMAGE_MODEL} · ${options.knowledgeCardImageProvider === "evolink" ? "EvoLink → OpenAI 官方" : "OpenAI 官方 → EvoLink"} · 4K · quality=high · 16:9`
             : `[2×4·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
         );
       }
@@ -2020,7 +2028,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         // 图文知识手册：官方优先，同档2.6回落EvoLink；固定high/4K。
         providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "openai") : undefined,
         imageLane: isKnowledgeCard ? "asset" : undefined,
-        openaiImageVariant: options.openaiImageVariant ?? null,
+        openaiImageVariant: isKnowledgeHandbook ? HANDBOOK_IMAGE_VARIANT : options.openaiImageVariant ?? null,
         imageModelVersion: isKnowledgeHandbook ? "2.6" : undefined,
         ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
         qualityOverride: options.viralCreation ? "medium" : knowledgeCardQuality,
@@ -2049,7 +2057,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           generalImageEdit: true,
           providerOverride: isKnowledgeCard ? (options.knowledgeCardImageProvider || "openai") : undefined,
           imageLane: isKnowledgeCard ? "asset" : undefined,
-          openaiImageVariant: options.openaiImageVariant ?? null,
+          openaiImageVariant: isKnowledgeHandbook ? HANDBOOK_IMAGE_VARIANT : options.openaiImageVariant ?? null,
           imageModelVersion: isKnowledgeHandbook ? "2.6" : undefined,
           ...(options.viralCreation ? XHS_IMAGE_POLICY : {}),
           qualityOverride: options.viralCreation ? "medium" : knowledgeCardQuality,

@@ -15,7 +15,9 @@ import { inspectKnowledgeIllustrationRetry, knowledgeIllustrationJobId, knowledg
 import { knowledgeCardFullManuscript, knowledgeCardInputFingerprint, knowledgeCardInputKey } from "@shared/knowledgeCardSourceIdentity";
 import { knowledgeCardProgressFromRender } from "@/components/platform/KnowledgeCardProgress";
 import { knowledgeCardRecordedModelLabel } from "@shared/knowledgeCardDistillModels";
-import { readOpenAiImageVariantPref } from "@/lib/openaiImageVariantPref";
+import { HANDBOOK_IMAGE_MODEL, HANDBOOK_IMAGE_TIER_LABEL_ZH, HANDBOOK_IMAGE_VARIANT } from "@shared/openaiImageVariant";
+import { knowledgeCardPlannedTextPages } from "@/lib/knowledgeCardPreflightCounts";
+import { knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh } from "@/lib/knowledgeIllustrationBatchCounts";
 import { synchronizedKnowledgeCardSource } from "@shared/knowledgeCardEditableLayout";
 import { toast } from "@/lib/platformToast";
 import type { KnowledgeSupplementSelection } from "@shared/knowledgeSupplement";
@@ -32,6 +34,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
     allowBloggerTitle,
     askKnowledgeCardPreflight,
     customNoteBusy,
+    customNoteCardsOnly,
     customNoteCompactMarkdownRef,
     customNoteDetailLevel,
     customNoteDistillJobId,
@@ -263,7 +266,6 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
      * 实测：确认期间改了正文/版式，付费请求发的仍是旧闭包的稿，用户看到的和买到的对不上。
      */
     snapshot?: {
-      imageVariant?: ReturnType<typeof readOpenAiImageVariantPref>;
       distillModel: typeof customNoteDistillModel;
       billingModel: string;
       subjectPosition: typeof customNoteSubjectPosition;
@@ -303,7 +305,8 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
             subjectPosition: snapshot?.subjectPosition ?? customNoteSubjectPosition,
             ...(imageProvider ? { imageProvider } : {}),
             // 多页入口显式分配官方/EvoLink；未指定通道的旧入口仍使用服务端默认。
-            openaiImageVariant: snapshot?.imageVariant ?? readOpenAiImageVariantPref(),
+            // 手册配图只准授权档（1119 C1）：不读前台偏好——偏好为空/缺失时会落到 Flare；服务端另行绑定并拒绝其他档位。
+            openaiImageVariant: HANDBOOK_IMAGE_VARIANT,
             // 版式走独立字段进出图指令；拼进 scriptContext 会被当正文印出来
             ...((snapshot ? snapshot.infographicTemplateId : customNoteInfographicTemplateId)
               ? { infographicTemplateId: (snapshot ? snapshot.infographicTemplateId : customNoteInfographicTemplateId)! }
@@ -380,6 +383,8 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
     text?: string;
     kind?: typeof customNoteKind;
     skipClearOptimize?: boolean;
+    /** 只出卡片（1119 C3）：不建手册排版、不报顾问与排版价、不启动顾问；只逐页出图。 */
+    cardsOnly?: boolean;
   }) => {
     // 同一原稿仍在读档或恢复查询时，另一生成入口也不能再建任务。
     if (customNoteBusy || customNoteUploadBusy || customNoteDistillJobId) {
@@ -541,7 +546,6 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
          */
         const confirmRevision = customNoteRevisionRef.current;
         const pendingSnapshot = {
-          imageVariant: readOpenAiImageVariantPref(),
           distilled,
           revision: confirmRevision,
           distillModel: customNoteDistillModel,
@@ -560,7 +564,8 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
         const fullMarkdown = pendingSnapshot.detailLevel === "full" ? distilled : completeManuscript || "";
         if (!fullMarkdown.trim()) throw new Error("缺少完整版文字底稿，请先恢复完整稿；尚未开始出图或整理");
         const inputFingerprint = await knowledgeCardInputFingerprint(knowledgeCardInputKey({ owner: workbenchUserKey, text: distilled, full: fullMarkdown, level: pendingSnapshot.detailLevel, template: pendingSnapshot.infographicTemplateId, model: pendingSnapshot.distillModel }));
-        const { pageRequestIds, imageJobIds, illustrationRun, publicationQuote } = await (async () => {
+        const cardsOnly = (overrides?.cardsOnly ?? customNoteCardsOnly) === true && !overrides?.supplementOf;
+        const { pageRequestIds, imageJobIds, illustrationRun, publicationQuote, textPageCount } = await (async () => {
           const pageRequestIds: string[] = [];
           try {
             for (let i = 0; i < pages.length; i++) pageRequestIds.push(knowledgeCardPageTasks.begin("platform_composite_sheet_progress"));
@@ -576,8 +581,9 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
             const readingController = readingControllerRef.current;
             const readingPreparation = readingFullMarkdownRef.current === fullMarkdown.trim() ? readingController?.link() : undefined;
             if(readingPreparation && !overrides?.supplementOf) synchronizedSource.readingPreparation = readingPreparation;
-            const publicationQuote = await studio.prepare(synchronizedSource, illustrationRun.wait,overrides?.supplementOf,{waitForReading:readingPreparation?()=>readingController!.wait():undefined,preparePresentation:false});
-            return { pageRequestIds, imageJobIds, illustrationRun, publicationQuote };
+            const textPageCount = knowledgeCardPlannedTextPages(distilled, synchronizedSource, cardsOnly);
+            const publicationQuote = await studio.prepare(synchronizedSource, illustrationRun.wait,overrides?.supplementOf,{waitForReading:readingPreparation?()=>readingController!.wait():undefined,preparePresentation:false,...(cardsOnly?{cardsOnly:true}:{})});
+            return { pageRequestIds, imageJobIds, illustrationRun, publicationQuote, textPageCount };
           } catch (error) {
             pageRequestIds.forEach(id => knowledgeCardPageTasks.finish(id));
             throw error;
@@ -590,6 +596,10 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
           distillModelZh:
             knowledgeCardRecordedModelLabel(pendingSnapshot.billingModel),
           pageCount: pendingSnapshot.pageCount,
+          textPageCount,
+          cardsOnly,
+          imageTierZh: HANDBOOK_IMAGE_TIER_LABEL_ZH,
+          imageModelDebug: HANDBOOK_IMAGE_MODEL,
           pageContents: pages,
           qualityZh: pendingSnapshot.qualityZh,
           credits: pendingSnapshot.credits,
@@ -610,14 +620,16 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
           setCustomNoteProgress({ status: "idle", percent: 0 });
           return;
         }
-        try { await studio.start(publicationQuote.documentId, publicationQuote.maxCredits); }
-        catch (error) { pageRequestIds.forEach(id => knowledgeCardPageTasks.finish(id)); throw error; }
+        // 只出卡片不调用 start：prepare 已写入 synchronizedStarted，不启动顾问/排版。
+        if (!cardsOnly) {
+          try { await studio.start(publicationQuote.documentId, publicationQuote.maxCredits); }
+          catch (error) { pageRequestIds.forEach(id => knowledgeCardPageTasks.finish(id)); throw error; }
+        }
         setCustomNoteImages([]);
         setCustomNoteImageUpper(null);
         setCustomNoteImageLower(null);
         setKnowledgeCardPdfUrl(null);
         const renderSnapshot = {
-          imageVariant: pendingSnapshot.imageVariant,
           distillModel: pendingSnapshot.distillModel,
           billingModel: pendingSnapshot.billingModel,
           subjectPosition: pendingSnapshot.subjectPosition,
@@ -704,7 +716,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
           });
           toast.message(`已停止出图：完成 ${madePages}/${total} 页，按已出页计费（未出的页不扣）`);
         } else {
-          setCustomNoteProgress({ status: "succeeded", percent: 100, successLabel: "配图完成", label: "正在自动整理正文与版面" });
+          setCustomNoteProgress({ status: "succeeded", percent: 100, successLabel: "配图完成", label: cardsOnly ? "卡片已全部生成，可导出纯图 PDF" : "正在自动整理正文与版面" });
           toast.success(`已生成 ${total} 页手册配图（${qLabel} · 约 ${credits} 积分）`);
         }
         setCustomNoteDistillPhase("idle");
@@ -723,7 +735,11 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
         setCustomNoteProgress((prev) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
         // 在途页会继续出图并回填，这里如实告知已完成页数与对应页费（读同步镜像，不在 updater 里做副作用）
         const doneCount = customNoteImagesRef.current.filter(Boolean).length;
-        toast.error(doneCount > 0
+        // 新批次函数（线 D）抛错时带分项计数：已出页不能被说成「什么都没生成」。旧版普通错误仍按已回填页数计。
+        const batchCounts = knowledgeIllustrationBatchCounts(e);
+        toast.error(batchCounts
+          ? `生成未全部完成：${msg.slice(0, 80)}（${knowledgeIllustrationBatchSummaryZh(batchCounts)}）`
+          : doneCount > 0
           ? `生成失败：${msg.slice(0, 100)}（已完成 ${doneCount} 页，按已成功页计费，失败页不扣费）`
           : `生成失败：${msg.slice(0, 120)}`);
       } else {

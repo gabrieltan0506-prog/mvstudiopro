@@ -1,3 +1,4 @@
+import { HANDBOOK_IMAGE_VARIANT, handbookImageVariantAuthorized } from "../shared/openaiImageVariant";
 import { markKnowledgeImageFailed } from "./services/knowledgeImageFailure";
 import type { KnowledgeImageRetryReason } from "../shared/knowledgeImageRetry";
 import { resolveKnowledgeCardDistillModel } from "../shared/knowledgeCardDistillModels";
@@ -8317,6 +8318,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               .optional(),
           })
           .superRefine((data, ctx) => {
+            // 手册配图授权（1119 C1）：只准 GPT Image 2.6 Sunburst 高质量。校验在 zod 层，早于占位预留与扣费；
+            // 未带档位由服务端绑定授权档，带了其他档位（含 Flare）一律拒绝。
+            if (data.kind === "single_page_knowledge_card" && !data.viralCreation && !handbookImageVariantAuthorized(data.openaiImageVariant)) {
+              ctx.addIssue({ code: z.ZodIssueCode.custom, message: "本次配图档位未获授权，请刷新页面后重新确认；未扣费、未提交出图", path: ["openaiImageVariant"] });
+            }
             if ((data.kind !== "single_page_knowledge_card" || data.viralCreation) && data.scriptContext.length > 50000) {
               ctx.addIssue({ code: z.ZodIssueCode.custom, message: "分镜与独立图文正文不能超过50000字符", path: ["scriptContext"] });
             }
@@ -8357,6 +8363,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       )
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
+        /** 手册配图：服务端自行绑定授权档，Skill 与前台偏好都改不了（1119 C1） */
+        const handbookImageRequest = input.kind === "single_page_knowledge_card" && !input.viralCreation;
         const imageReservation = input.pageRequestId
           ? await reserveKnowledgeCardImageJob({ userId: String(userId), requestId: input.pageRequestId, params: { ...input } })
           : null;
@@ -8706,7 +8714,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
               appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
               imageUrl = await generateSheet({
-                viralCreation: input.viralCreation === true || input.enabledSkillIds?.includes("xhs-content-growth") === true,
+                viralCreation: input.viralCreation === true || (input.kind !== "single_page_knowledge_card" && input.enabledSkillIds?.includes("xhs-content-growth") === true),
                 singleGraphicPage: input.singleGraphicPage === true,
                 beforeImageSubmit,
                 kind: input.kind,
@@ -8730,7 +8738,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 subjectPosition: input.subjectPosition,
                 knowledgeCardReferencePageUrls,
                 knowledgeCardImageProvider: input.imageProvider,
-            openaiImageVariant: input.openaiImageVariant,
+            openaiImageVariant: handbookImageRequest ? HANDBOOK_IMAGE_VARIANT : input.openaiImageVariant,
               });
 
               // 第五轮复审 P0·1：空产物不许标成功——扣了费没有图，必须走统一失败退款
@@ -8802,7 +8810,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
           appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
           imageUrl = await generateSheet({
-                viralCreation: input.viralCreation === true || input.enabledSkillIds?.includes("xhs-content-growth") === true,
+                viralCreation: input.viralCreation === true || (input.kind !== "single_page_knowledge_card" && input.enabledSkillIds?.includes("xhs-content-growth") === true),
                 singleGraphicPage: input.singleGraphicPage === true,
             kind: input.kind,
             title: input.title,
@@ -8825,7 +8833,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             subjectPosition: input.subjectPosition,
             knowledgeCardReferencePageUrls,
             knowledgeCardImageProvider: input.imageProvider,
-            openaiImageVariant: input.openaiImageVariant,
+            openaiImageVariant: handbookImageRequest ? HANDBOOK_IMAGE_VARIANT : input.openaiImageVariant,
           });
         } catch (error: any) {
           stopSyncHeartbeat();

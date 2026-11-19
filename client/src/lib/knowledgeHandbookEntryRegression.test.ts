@@ -9,6 +9,9 @@ import * as source from "../../../shared/knowledgeCardEditableLayout";
 import * as identity from "../../../shared/knowledgeCardSourceIdentity";
 import * as selection from "../../../shared/knowledgeCardIllustrationSelection";
 import * as lifecycle from "./knowledgeIllustrationRun";
+import * as handbookVariant from "../../../shared/openaiImageVariant";
+import { knowledgeCardPlannedTextPages } from "./knowledgeCardPreflightCounts";
+import { knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh } from "./knowledgeIllustrationBatchCounts";
 
 // 执行生产处理函数，避免只测辅助函数而遗漏按钮之间的真实组合。
 // 1119 C0：手册前台流程已原样搬到两个 hook；三份源码拼接后按原标记提取同一段生产代码。
@@ -21,6 +24,8 @@ function take(start: string, end: string) {
   return platform.slice(a, b);
 }
 function run(raw: string, ctx: any) {
+  // 1119：出图 hook 新引用的模块级导入（授权档常量、文字页数、批次计数）按真实实现注入。
+  Object.assign(ctx, { ...handbookVariant, knowledgeCardPlannedTextPages, knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh }, { customNoteCardsOnly: ctx.customNoteCardsOnly ?? false });
   vm.createContext(ctx);
   vm.runInContext(ts.transpileModule(raw, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText, ctx);
 }
@@ -155,6 +160,8 @@ it("素材按钮到实际单图请求保持同一报价和一次确认 KH-PRICE-
     generateCustomNoteMutation: { mutateAsync: vi.fn(async (input: any) => {
       expect(ctx.askKnowledgeCardPreflight).toHaveBeenCalledTimes(1);
       assertKnowledgeCardConfirmedPrice(input.distillModel, input.notePageIndex, input.confirmedPageCredits);
+      // 1119 C1：手册请求固定授权档，不读前台偏好（偏好桩返回非法值也不影响）
+      expect(input.openaiImageVariant).toBe("sunburst");
       expect(input.scriptContext).toBe("素材正文：月球影响潮汐。");
       return { imageUrl: "https://test.invalid/image.png" };
     }) },
@@ -184,7 +191,11 @@ describe("真实云稿句柄保存与恢复 KH-SYNC-02", () => {
       setSynchronizedRun: noop, setAutoPublicationId: noop, setAutoStartToken: noop, setOpen: noop,
     };
     ctx.install = (next: any) => { ctx.current.current = next; };
-    run("globalThis.handle = {" + methods + "};", ctx);
+    // 根因（1119）：生产方法改经 cloudSave 统一入口保存，旧夹具只给了 saveMutation，于是报 cloudSave is not defined。
+    // 这里一并提取真实的 cloudSave，保留「不完整库拒绝保存」等原有保护。
+    Object.assign(ctx, { partialLibrary: { current: false }, legacyPresent: { current: false }, legacyInMemory: { current: false }, legacyKey: "test", localStorage: { removeItem: noop } });
+    const cloudSave = studio.slice(studio.indexOf("  const cloudSave = async"), studio.indexOf("\n  useEffect(", studio.indexOf("  const cloudSave = async")));
+    run(cloudSave + "\nglobalThis.handle = {" + methods + "};", ctx);
     return ctx;
   }
   it("条件保存先于读取当前尝试，第二次失败重试仍绑定原始页", async () => {
@@ -295,4 +306,51 @@ it('手册正式生成入口只准备PDF，不自动发起PPTX规划',async()=>{
  expect(ctx.layoutStudioRef.current.prepare).toHaveBeenCalledTimes(1);
  expect(ctx.layoutStudioRef.current.prepare.mock.calls[0][3].preparePresentation).toBe(false);
  expect(ctx.generateCustomNoteOne).not.toHaveBeenCalled();
+});
+
+describe("1119 C1/C2/C3 生成入口", () => {
+  function renderContext() {
+    const ctx = entryContext();
+    Object.assign(ctx, {
+      KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH, KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH, knowledgeCardRecordedModelLabel,
+      knowledgeCardRenderConcurrency: (n: number) => Math.min(n, 32), customNoteInfographicLabelZh: "", knowledgeCardProgressFromRender: () => 50,
+      askKnowledgeCardPreflight: vi.fn(async () => true), markInflight: noop, setKnowledgeCardInflight: noop,
+      newPlatformCompositeProgressJobId: randomUUID, extractInfographicSubjectFromUserCopy: () => "稿",
+      COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR: "gpt54",
+      generateCustomNoteMutation: { mutateAsync: vi.fn(async () => ({ imageUrl: "https://test.invalid/image.png" })) },
+    });
+    delete ctx.readOpenAiImageVariantPref;
+    for (const name of ["renderRunIdRef", "renderedSettingsRef", "renderedImageJobsRef", "renderedSubmittedImageJobsRef", "renderedDraftRef", "renderedFullManuscriptRef", "renderedDetailLevelRef", "knowledgeCardLayoutSourceIdRef"]) ctx[name] = { current: name === "renderRunIdRef" ? 0 : null };
+    ctx.knowledgeCardPageTasks.assertLive = noop;
+    ctx.layoutStudioRef.current.prepare = vi.fn(async () => ({ documentId: "doc", maxCredits: 3 }));
+    ctx.layoutStudioRef.current.start = vi.fn(async () => {});
+    run(take("  const generateCustomNoteOne = async (", "\n  const mapCustomNoteError"), ctx);
+    return ctx;
+  }
+  it("确认弹窗带图片页数、文字页数、档名与仅 debug 用的模型名；请求只带授权档", async () => {
+    const ctx = renderContext();
+    await ctx.generate();
+    const summary = ctx.askKnowledgeCardPreflight.mock.calls[0][0];
+    expect(summary.pageCount).toBe(1);
+    expect(typeof summary.textPageCount).toBe("number");
+    expect(summary.imageTierZh).toBe(handbookVariant.HANDBOOK_IMAGE_TIER_LABEL_ZH);
+    expect(summary.imageTierZh).not.toMatch(/gpt|sunburst|flare|openai|evolink/i);
+    expect(summary.imageModelDebug).toBe("gpt-image-2.6-sunburst");
+    expect(ctx.generateCustomNoteMutation.mutateAsync.mock.calls[0][0].openaiImageVariant).toBe("sunburst");
+    expect(ctx.layoutStudioRef.current.start).toHaveBeenCalledTimes(1);
+  });
+  it("只出卡片：prepare 带 cardsOnly，不调用 start，仍逐页出图", async () => {
+    const ctx = renderContext(); ctx.customNoteCardsOnly = true;
+    await ctx.generate();
+    expect(ctx.layoutStudioRef.current.prepare.mock.calls[0][3]).toMatchObject({ cardsOnly: true, preparePresentation: false });
+    expect(ctx.askKnowledgeCardPreflight.mock.calls[0][0]).toMatchObject({ cardsOnly: true, textPageCount: 0 });
+    expect(ctx.layoutStudioRef.current.start).not.toHaveBeenCalled();
+    expect(ctx.generateCustomNoteMutation.mutateAsync).toHaveBeenCalledTimes(1);
+  });
+  it("批次错误带分项计数时，失败提示如实报已完成页而非「未生成」", () => {
+    const counts = knowledgeIllustrationBatchCounts(Object.assign(new Error("部分页失败"), { counts: { succeeded: 3, failed: 1, pendingVerification: 1, notDispatched: 2 } }));
+    expect(counts).toEqual({ succeeded: 3, failed: 1, pending: 1, notDispatched: 2 });
+    expect(knowledgeIllustrationBatchSummaryZh(counts!)).toContain("已完成 3 页");
+    expect(knowledgeIllustrationBatchCounts(new Error("旧版普通错误"))).toBeNull();
+  });
 });
