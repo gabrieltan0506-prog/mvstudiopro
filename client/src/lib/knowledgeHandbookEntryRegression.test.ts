@@ -348,6 +348,13 @@ describe("1119 C1/C2/C3 生成入口", () => {
     expect(ctx.generateCustomNoteMutation.mutateAsync.mock.calls[0][0].openaiImageVariant).toBe("sunburst");
     expect(ctx.layoutStudioRef.current.start).toHaveBeenCalledTimes(1);
   });
+  it("确认弹窗点「返回修改」：零出图请求、不启动", async () => {
+    const ctx = renderContext(); ctx.askKnowledgeCardPreflight = vi.fn(async () => false);
+    await ctx.generate();
+    expect(ctx.askKnowledgeCardPreflight).toHaveBeenCalledTimes(1);
+    expect(ctx.generateCustomNoteMutation.mutateAsync).not.toHaveBeenCalled();
+    expect(ctx.layoutStudioRef.current.start).not.toHaveBeenCalled();
+  });
   it("只出卡片：prepare 带 cardsOnly，不调用 start，仍逐页出图", async () => {
     const ctx = renderContext(); ctx.customNoteCardsOnly = true;
     await ctx.generate();
