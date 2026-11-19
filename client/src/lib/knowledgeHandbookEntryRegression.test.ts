@@ -11,7 +11,10 @@ import * as selection from "../../../shared/knowledgeCardIllustrationSelection";
 import * as lifecycle from "./knowledgeIllustrationRun";
 
 // 执行生产处理函数，避免只测辅助函数而遗漏按钮之间的真实组合。
-const platform = readFileSync(new URL("../pages/PlatformPage.tsx", import.meta.url), "utf8");
+// 1119 C0：手册前台流程已原样搬到两个 hook；三份源码拼接后按原标记提取同一段生产代码。
+const platform = [
+  "../pages/PlatformPage.tsx", "../hooks/useKnowledgeCardDistill.ts", "../hooks/useKnowledgeCardRender.ts",
+].map(file => readFileSync(new URL(file, import.meta.url), "utf8")).join("\n");
 function take(start: string, end: string) {
   const a = platform.indexOf(start), b = platform.indexOf(end, a);
   if (a < 0 || b < a) throw new Error("生产处理函数位置变化，请更新测试提取范围");
@@ -101,7 +104,7 @@ function entryContext(full: string | null = null) {
   };
   for (const name of ["setCustomNoteImageUpper", "setCustomNoteImageLower", "setCustomNoteImages", "setCustomNotePageProgress", "setCustomNoteError", "setCustomOptimizeResult", "setCustomOptimizeSummary", "setCustomNoteProgress", "setCustomNotePartInFlight", "setCustomNoteDistillPhase", "setCustomNoteRendering", "setKnowledgeCardPdfUrl"]) ctx[name] = noop;
   ctx.setCustomNoteBusy = (value: boolean) => { ctx.customNoteBusy = value; };
-  run(take("  const handleGenerateCustomNote = async", "\n  const handleAssetDeepOptimize") + take("  const handleAssetGenerateFromText = useCallback(", "\n  const handleGenerateFromOptimizedCopy") + "\nglobalThis.generate = handleGenerateCustomNote; globalThis.asset = handleAssetGenerateFromText;", ctx);
+  run(take("  const handleGenerateCustomNote = async", "\n\n  return { retryKnowledgeCardPage") + take("  const handleAssetGenerateFromText = useCallback(", "\n  const handleGenerateFromOptimizedCopy") + "\nglobalThis.generate = handleGenerateCustomNote; globalThis.asset = handleAssetGenerateFromText;", ctx);
   return ctx;
 }
 describe("原稿和另一入口 KH-SYNC-03/KH-PRICE-04", () => {
@@ -271,7 +274,7 @@ it("已成功统稿不被同步顾问状态查询失败阻断",async()=>{
  const requestId=randomUUID(),trackedJobId=await knowledgeCardTrackedJobId("1","knowledge_card_distill",requestId);
  const ctx:any={AbortController,readingControllerRef:{current:null},setReadingAdvisorDrafts:noop,knowledgePollingRef:{current:null},knowledgeCardTrackedJobId,submitKnowledgeCardOnce,workbenchUserKey:"1",customNoteTrackedRequestRef:{current:null},customNoteFollowOnlyJobRef:{current:""},startReadingAdvisor:()=>({update}),readingFullMarkdownRef:{current:""},bumpCustomNoteRevision:noop,customNoteDistillModel:"deepseek-v4.1-flash-1017",customNoteUploadStopRef:{current:false},knowledgeCardPageTasks:{begin:()=>requestId,finish:noop,assertLive:noop},prepareKnowledgeCardCopyMutation:{mutateAsync:async()=>({isAsync:true,progressJobId:trackedJobId,estimatedChunks:1})},pollJobUntilTerminal:async()=>({status:"succeeded",output:{distilledMarkdown:full,readingPreparation:{jobId:"kc_original",documentId:randomUUID(),batches:1,ready:[0]}}}),knowledgeCardProgressFromDistill:(n:number)=>n};
  for(const name of ["setCustomNoteProgress","setCustomNoteFullMarkdown","setCustomNotePreparedModel","setCustomNoteCompactMarkdown","setKnowledgeCardEpubPdfs","setCustomNoteCancelRequested","setCustomNoteDistillJobId","setReadingAdvisorStatus","setCustomNoteUploadStatus"])ctx[name]=vi.fn();
- run(take("  const runKnowledgeCardDistill = async", "\n  /**\n   * 终止后台读档")+"\nglobalThis.distill=runKnowledgeCardDistill;",ctx);
+ run(take("  const runKnowledgeCardDistill = async", "\n\n  return { customNotePaginationKey")+"\nglobalThis.distill=runKnowledgeCardDistill;",ctx);
  expect(await ctx.distill({sourceText:"原始全文"})).toBe(full);expect(ctx.readingFullMarkdownRef.current).toBe(full);expect(update).not.toHaveBeenCalled();
 });
 it('保有完整统稿回执时取消过报价也不再提炼长文',async()=>{

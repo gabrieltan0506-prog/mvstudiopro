@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const src = readFileSync(new URL("./proxyImageService.ts", import.meta.url), "utf8");
-const platform = readFileSync(new URL("../../client/src/pages/PlatformPage.tsx", import.meta.url), "utf8");
+// 1119 C0：手册出图流程原样搬到 useKnowledgeCardRender，接线断言随之读取 hook 源码。
+const platform = ["../../client/src/pages/PlatformPage.tsx", "../../client/src/hooks/useKnowledgeCardRender.ts"]
+  .map(file => readFileSync(new URL(file, import.meta.url), "utf8")).join("\n");
 
 describe("gpt-image 供应商顺序接线（0910：OpenAI 官方 → EvoLink 2.5 → WaveSpeed）", () => {
   it("三家都进候选，主路径日志写官方优先，知识卡默认 openai", () => {
