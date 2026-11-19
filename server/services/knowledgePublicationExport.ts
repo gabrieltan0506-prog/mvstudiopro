@@ -3,7 +3,7 @@ import type {EditableLayout} from "../../shared/editableLayout";
 import type {KnowledgeReview} from "../../shared/knowledgePublication";
 import { resolveKnowledgePublicationImages } from "./knowledgePublicationImages";
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile, readFile, stat, rm, open, readdir } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, stat, rm, open } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { join } from "node:path";
@@ -112,17 +112,6 @@ const real = {
   },
   /** 下载核对后补记指纹（条件创建，只建不改）。 */
   recordImage: (uri: string, image: Awaited<ReturnType<typeof readKnowledgeImage>>) => recordKnowledgeImageFingerprint(uri, image),
-  // 使用镜像已有poppler，按真实PDF物理页保存，不用估算页数。
-  savePages: async (bytes: Buffer, save: (index:number,page:Buffer)=>Promise<void>) => {
-    const folder=await mkdtemp(join(tmpdir(),'knowledge-pdf-pages-'));
-    try{
-      const source=join(folder,'source.pdf');await writeFile(source,bytes);
-      await promisify(execFile)('pdfseparate',[source,join(folder,'page-%d.pdf')],{timeout:300000,maxBuffer:1024*1024});
-      const names=(await readdir(folder)).filter(n=>/^page-\d+\.pdf$/.test(n)).sort((a,b)=>Number(a.match(/\d+/)![0])-Number(b.match(/\d+/)![0]));
-      if(!names.length)throw Error('未取得PDF分页，原分片已保留');
-      for(const name of names)await save(Number(name.match(/\d+/)![0])-1,await readFile(join(folder,name)));
-    }finally{await rm(folder,{recursive:true,force:true});}
-  },
   // 导出配图只以签名地址交给排版服务与阅读稿 HTML，不把图片数据内嵌进 HTML（禁 base64）。
   // 地址指向缩图派生件（长边 ≤2048、q85 的 JPEG，审校时已生成）：信息图带 data-pdf-max-dim=2048 标记，
   // 排版服务对未超上限的外链 JPEG 不重编码、原字节入版（2026-11-11 起不再压到 1200），故 2048 派生件即最终入版像素；
@@ -462,10 +451,8 @@ export async function exportKnowledgePublication(
             const bytes = cached || await retryKnowledgeExportStep(async () => deps.pdf(knowledgePublicationHead(doc.title, pagination) + await readFile(sourcePath, "utf8") + tail));
             if (bytes.length < 100 || bytes.subarray(0, 4).toString() !== "%PDF") throw new Error("导出没有返回有效PDF");
             if (!cached) await deps.save(name, bytes, "application/pdf");
-            await deps.savePages(bytes,async(pageIndex,page)=>{
-              const key=`${name}.pages/${pageIndex}.pdf`;
-              if(!await deps.read(key))await deps.save(key,page,'application/pdf');
-            });
+            // 逐页 PDF（<分片>.pdf.pages/<页>.pdf）已停写（站长 2026-11-20 定）：全仓检索无读取方；它只是对已得分片的拆页另存，
+            // 不参与计页（预分页 measure 与成品 pdfinfo）与页码（offset/total 由 counts 定），去掉后合并输入与整册 PDF 不变；已存对象不删。
             await writeFile(path, bytes);
             rendered[index] = path;
           } catch (error) {

@@ -49,7 +49,6 @@ function fixture() {
     pdf: vi.fn(async (_html: string) => Buffer.from("%PDF" + "test-only".repeat(20))),
     merge: vi.fn(async (_p: string[], target: string) => { await writeFile(target, Buffer.from("%PDF" + "merged-test-only".repeat(20))); }),
     countPages: vi.fn(async () => 5),
-    savePages: vi.fn(async (bytes: Buffer, save: (i: number, b: Buffer) => Promise<void>) => { await save(0, bytes); }),
   };
   const seed = () => { for (const uri of versions.keys()) { const v = versions.get(uri)!; fingerprints.set(knowledgeImageFingerprintName(uri, v.generation), { kind: "knowledge_image_fingerprint_v1", uri, generation: v.generation, crc32c: v.crc32c, byteLength: v.byteLength, sha256: SHA, recordedAt: "review" }); } };
   return { doc, deps, storage, fingerprints, versions, seed };
@@ -125,14 +124,14 @@ describe("导出配图核对：元数据比对代替重下原图", () => {
   });
 });
 
-describe("E2：停写无人读取的逐章 HTML（逐页 PDF 有测试合同，保留）", () => {
-  it("导出不再写 source-pages/；逐页 PDF、续做所需的 pdf-parts 分片与 manifest 仍写", async () => {
+describe("E2：停写无人读取的逐章 HTML 与逐页 PDF（站长 1120 定）", () => {
+  it("导出不再写 source-pages/ 与逐页 PDF；续做所需的 pdf-parts 分片与 manifest 仍写", async () => {
     const f = fixture();
     await exportKnowledgePublication(7, f.doc.id, "10", f.deps as any);
     const keys = Array.from(f.storage.keys());
     expect(keys.some(k => k.includes("/source-pages/"))).toBe(false);
-    expect(keys.filter(k => /\.pdf\.pages\/\d+\.pdf$/.test(k))).toHaveLength(2);
-    expect(keys.filter(k => k.includes("/pdf-parts/") && !k.includes(".pages/"))).toHaveLength(2);
+    expect(keys.some(k => k.includes(".pdf.pages/"))).toBe(false);
+    expect(keys.filter(k => k.includes("/pdf-parts/"))).toHaveLength(2);
     expect(keys.some(k => k.endsWith("/manifest.json"))).toBe(true);
   });
 });
