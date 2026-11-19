@@ -192,3 +192,41 @@ describe("D2 末段核实修订：GLM 首发链", () => {
     expect(body).toContain("修订后的完整步骤");
   });
 });
+
+describe("D2 旧任务回放：main 上已存的修订请求（openrouter、未设模型族=DeepSeek 首发）原样回放，续做零重买", () => {
+  const revisionReport = (input: any) => JSON.stringify({ kind: "knowledge_publication_v1", sourceDigest: input.sourceDigest, title: input.source.title, pages: input.source.pages.map((p: any) => ({
+    id: p.id, headline: p.headline, body: "## 方法\n\n修订后的完整步骤与适用条件。", imageDescription: "", imageStatus: "absent", facts: [{ term: "方法", statement: "修订后的完整步骤" }], cautions: [],
+  })) });
+  const research = async () => ({ status: 200, text: JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ verificationMarkdown: "有资料", sources: [{ title: "测试资料", url: "https://example.invalid/source", content: "步骤条件" }] }) }] } }] }) });
+  const source = "# 手册\n\n## 主要重点｜方法\n\n原有步骤。\n\n<!-- 待核：原句「原有步骤」；问题：条件不清楚 -->";
+
+  it("旧形状 request.json 按 DeepSeek@OpenRouter 首发回放；回执在、结果丢失时重跑不发任何请求", async () => {
+    const calls: string[] = [];
+    const fetch = vi.fn(async (url: any, init: any) => {
+      const body = JSON.parse(init.body);
+      calls.push(`${body.model}@${channelOf(url)}`);
+      return jsonResponse(body, revisionReport(inputOf(body)));
+    });
+    const invoke = (async (request: any, scope: any) => request.researchOnly ? research() : invokeKnowledgePublicationRoutes(request, scope, baseDeps(fetch))) as any;
+    // 新代码先跑一遍拿到真实的检索回执与修订请求，再把修订请求改回 main 的形状并清掉其回执，模拟升级前已落盘、尚未得到回包的任务。
+    const fresh = memoryEvidence("final");
+    await verifyKnowledgeEditionManuscripts([source], fresh.evidence, invoke);
+    const saved = fresh.store.get("final/revision-0/request.json");
+    expect(saved.request).toMatchObject({ executionChannel: "evolink", executionFamily: "glm" });
+    const { executionFamily: _drop, ...oldRequest } = saved.request;
+    const old = memoryEvidence("final");
+    for (const [k, v] of fresh.store) if (k.startsWith("final/search-0/") || k === "final/input.json" || k.startsWith("final/candidates-")) old.store.set(k, v);
+    old.store.set("final/revision-0/request.json", { ...saved, request: { ...oldRequest, executionChannel: "openrouter" } });
+    calls.length = 0;
+    const [body] = await verifyKnowledgeEditionManuscripts([source], old.evidence, invoke);
+    expect(body).toContain("修订后的完整步骤");
+    expect(calls).toEqual(["deepseek/deepseek-v4.1-flash-1017@openrouter"]);
+    expect(old.store.get("final/revision-0/request.json").request.executionFamily).toBeUndefined();
+    // 进程在保存修订结果前被杀：路由回执已在，修订结果/页检查点/汇总丢失。重跑只读回执，不再购买。
+    for (const k of ["final/revision-0/report.json", "final/pages/0.json", "final/verified.json"]) old.store.delete(k);
+    calls.length = 0;
+    const [again] = await verifyKnowledgeEditionManuscripts([source], old.evidence, invoke);
+    expect(calls).toEqual([]);
+    expect(again).toBe(body);
+  });
+});

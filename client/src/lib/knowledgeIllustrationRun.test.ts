@@ -80,15 +80,26 @@ describe("图片并发批次收口", () => {
     expect(submitted).toEqual(ids.slice(0, 3));
   });
 
-  it("结果未知的页本批只派发一次、不停批，计入待核实；恢复时对账拒绝重买，只补明确失败且已退款的页", async () => {
+  it("结果未知的页本批只派发一次并停领新页（上游可能已照扣），计入待核实；恢复时对账拒绝重买，只补明确失败且已退款的页", async () => {
+    const gates = Array.from({ length: 4 }, deferred);
     const calls: number[] = [];
     const unknown = Object.assign(new Error("图片提交或保存结果尚未确认，请恢复原任务核对"), { kind: "unknown" });
-    const error = await runKnowledgeIllustrationBatch({ count: 4, concurrency: 2, active: () => true,
-      execute: async index => { calls.push(index); if (index === 1) throw unknown; if (index === 2) throw new Error("生成服务未返回图片（imageUrl 为空）\n（积分已退回）"); },
+    const pending = runKnowledgeIllustrationBatch({ count: 4, concurrency: 2, active: () => true,
+      execute: async index => { calls.push(index); await gates[index].promise; },
     }).then(() => null, e => e);
-    expect(calls.sort()).toEqual([0, 1, 2, 3]);
-    expect(error.summary).toMatchObject({ succeeded: 2, failed: 1, unknown: 1, stoppedBy: null });
-    expect(error.summary.failures.map((f: any) => [f.index, f.kind])).toEqual([[1, "unknown"], [2, "page"]]);
+    gates[0].reject(new Error("生成服务未返回图片（imageUrl 为空）\n（积分已退回）"));
+    await new Promise(r => setTimeout(r, 0));
+    expect(calls).toEqual([0, 1, 2]); // 单页失败照常补位
+    gates[1].reject(unknown);
+    await new Promise(r => setTimeout(r, 0));
+    expect(calls).toEqual([0, 1, 2]); // 结果未知：不再领新页
+    gates[2].resolve();
+    const error = await pending;
+    expect(calls).toEqual([0, 1, 2]);
+    expect(error.cause).toBe(unknown);
+    expect(error.summary).toMatchObject({ dispatched: 3, succeeded: 1, failed: 1, unknown: 1, notDispatched: 1, stoppedBy: "unknown" });
+    expect(error.summary.failures.map((f: any) => [f.index, f.kind])).toEqual([[0, "page"], [1, "unknown"]]);
+    expect(error.message).toContain("配图已停止派发新页");
     expect(error.message).toContain("1 页结果待核实，不会自动重新购买");
     // 恢复：按服务端任务状态对账，仅可补买的页再派发。
     const jobs: Record<string, { status: string; output?: unknown }> = {
@@ -101,6 +112,15 @@ describe("图片并发批次收口", () => {
       if (url === null) rebuy.push(id);
     }
     expect(rebuy).toEqual(["p2"]);
+  });
+
+  it("回归：存储/上游故障使每页都结果未知（已付费）时，只烧在途页，不把整本书都派发出去", async () => {
+    let dispatched = 0;
+    const error = await runKnowledgeIllustrationBatch({ count: 20, concurrency: 2, active: () => true,
+      execute: async () => { dispatched++; throw new Error("图片提交或保存结果尚未确认，请恢复原任务核对\n── log ──\n[GPT-IMAGE-2·OpenAI] 异常 · ENOSPC: no space left on device\n（出图结果无法确认，供应商可能已建单：为避免重复扣费未退款，已转人工对账，请勿重试）"); },
+    }).then(() => null, e => e);
+    expect(dispatched).toBeLessThanOrEqual(2);
+    expect(error.summary).toMatchObject({ unknown: dispatched, notDispatched: 20 - dispatched, stoppedBy: "unknown" });
   });
 
   it("全部成功才正常返回，计数如实", async () => {
@@ -169,9 +189,19 @@ describe("出图失败分类", () => {
     "Credits 不足，需要 30 点（当前可用：0）",
     "EvoLink 通道未配置",
     "页面已离开，已停止本次任务",
+    // 服务端取消（checkKnowledgeCardImageMaySubmit）的实际文案，经 routers 落库后的形状。
+    "页面已刷新或关闭，已停止知识卡后续出图\n── log ──\n[2×4 接口] 开始\n（积分已退回）",
+    "[2×4 宽幅合成·3 次尝试均失败]\n最后原因: GPT-IMAGE-2（OpenAI/OpenRouter）未返回图像 · Incorrect API key provided\n执行日志:\n[单帧·OpenAI] 失败",
+    "GPT-IMAGE-2（OpenAI/OpenRouter）未返回图像 · Insufficient account balance",
   ];
-  const unknown = ["图片提交或保存结果尚未确认，请恢复原任务核对", "出图结果无法确认，供应商可能已建单：为避免重复扣费未退款，已转人工对账，请勿重试", "原配图仍在执行或结果待核实，请等待原任务"];
-  const page = ["EvoLink task failed: content policy\n── log ──\n[GPT-IMAGE-2·OpenAI] 异常 · OpenAI generations HTTP 401: Incorrect API key（已回落另一通道）", "OpenAI generations HTTP 400: Your request was rejected by the safety system", "EvoLink task failed: content policy", "生成服务未返回图片（imageUrl 为空）", "OpenAI generations HTTP 500: server error", "The operation was aborted due to timeout"];
+  const unknown = [
+    // routers 落库形状：日志尾巴之后追加的转对账说明是结果未知的权威标记（首句本身不含「尚未确认」）。
+    "EvoLink创建响应缺少任务ID，请核对原请求\n── log ──\n[GPT-IMAGE-2·EvoLink] 创建响应无 task id\n（出图结果无法确认，供应商可能已建单：为避免重复扣费未退款，已转人工对账，请勿重试）",
+    "图片提交或保存结果尚未确认，请恢复原任务核对", "出图结果无法确认，供应商可能已建单：为避免重复扣费未退款，已转人工对账，请勿重试", "原配图仍在执行或结果待核实，请等待原任务"];
+  const page = [
+    // 整链错误内嵌「执行日志:」，其中含书名与另一通道已回落的错误：不能据此停批。
+    "[2×4 宽幅合成·内容审核拦截]\n该选题文案/画面触发了内容审核，已立即停止（未重复重试）。请调整文案后再试。\n最后原因: 内容审核拦截（moderation_blocked）\n执行日志:\n[2×4 接口] generatePlatformCompositeSheet 开始 (异步背景执行) · kind=single_page_knowledge_card · title=无权者的权力：API Key 与额度 · 本笔 30 点\n[GPT-IMAGE-2·OpenAI] 异常 · 钥=primary · OpenAI generations HTTP 401: Incorrect API key\n── log ──\n同上\n（积分已退回）",
+    "EvoLink task failed: content policy\n── log ──\n[GPT-IMAGE-2·OpenAI] 异常 · OpenAI generations HTTP 401: Incorrect API key（已回落另一通道）", "OpenAI generations HTTP 400: Your request was rejected by the safety system", "EvoLink task failed: content policy", "生成服务未返回图片（imageUrl 为空）", "OpenAI generations HTTP 500: server error", "The operation was aborted due to timeout"];
   it.each(fatal)("整批必败：%s", m => expect(classifyKnowledgeIllustrationFailure(new Error(m))).toBe("batch_fatal"));
   it.each(unknown)("结果未知：%s", m => expect(classifyKnowledgeIllustrationFailure(new Error(m))).toBe("unknown"));
   it.each(page)("单页失败：%s", m => expect(classifyKnowledgeIllustrationFailure(new Error(m))).toBe("page"));
