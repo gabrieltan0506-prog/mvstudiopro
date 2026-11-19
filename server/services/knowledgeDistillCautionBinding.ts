@@ -39,14 +39,18 @@ function similarityMeasures(candidates:readonly string[],query:string){
 }
 export function knowledgeCautionSimilarityScores(candidates:readonly string[],query:string):number[]{return similarityMeasures(candidates,query).map(m=>m.cosine);}
 export function knowledgeCautionCoverage(candidates:readonly string[],query:string):number[]{return similarityMeasures(candidates,query).map(m=>m.coverage);}
-export type KnowledgeCautionProgramResult={targets:number[];method:'heading'|'quotation'|'similarity'}|{targets:[];method:'ambiguous';reason:'multiple_headings'|'heading_quote_conflict'|'quotation_ambiguous'|'similarity_near_tie'|'no_basis'};
+export type KnowledgeCautionProgramResult={targets:number[];method:'heading'|'quotation'|'similarity'}|{targets:[];method:'ambiguous';reason:'multiple_headings'|'heading_quote_conflict'|'heading_unconfirmed'|'quotation_ambiguous'|'similarity_near_tie'|'no_basis'};
 /** 单条疑点的程序归属；chapters 的 index 为章节在正文中的块序号。只有唯一且无矛盾的依据才返回目标。 */
 export function knowledgeCautionProgramBinding(chapters:readonly {index:number;title?:string;text:string}[],evidence:string):KnowledgeCautionProgramResult{
  const clean=(text:string)=>text.replace(new RegExp('[\\s\\p{P}\\p{S}]','gu'),'');
  const ev=clean(evidence);
  // 1. 章节标题：证据逐字含某章标题（去空白标点后 ≥4 字）；被另一个命中标题包含的短标题不单独算。
  let heading=chapters.filter(c=>{const t=clean(c.title||'');return t.length>=KNOWLEDGE_CAUTION_TITLE_MIN_CHARS&&ev.includes(t);});
- heading=heading.filter(c=>!heading.some(o=>o!==c&&clean(o.title||'')!==clean(c.title||'')&&clean(o.title||'').includes(clean(c.title||''))));
+ // 短标题只在去掉包含它的长标题字样后仍独立出现时才算（「用药剂量」与「儿童用药剂量」各自被提到 = 两个标题）。
+ heading=heading.filter(c=>{
+  const t=clean(c.title||''),longer=heading.map(o=>clean(o.title||'')).filter(u=>u!==t&&u.includes(t));
+  return !longer.length||longer.reduce((rest,u)=>rest.split(u).join('\u0000'),ev).includes(t);
+ });
  if(heading.length>1)return {targets:[],method:'ambiguous',reason:'multiple_headings'};
  // 2. 原句片段：按引号与标点切开，去空白标点后 ≥8 字且逐字出现在某章的片段。
  const fragments=Array.from(new Set(evidence.split(/[「」“”"『』‘’'，。；;：:！？!?、,\n（）()【】\[\]]/).map(clean).filter(f=>f.length>=KNOWLEDGE_CAUTION_FRAGMENT_MIN_CHARS)));
@@ -57,15 +61,23 @@ export function knowledgeCautionProgramBinding(chapters:readonly {index:number;t
   const common=found.reduce((acc,set)=>acc.filter(i=>set.includes(i)));
   return common.length===1?{targets:[common[0]],method:'quotation'}:{targets:[],method:'ambiguous',reason:'quotation_ambiguous'};
  }
- if(heading.length===1)return {targets:[heading[0].index],method:'heading'};
  // 3. 相似度：第一名须过下限且明显领先，否则不猜。
- const measures=similarityMeasures(chapters.map(c=>c.text),evidence);
- const byCosine=measures.map((m,i)=>({...m,i})).sort((a,b)=>b.cosine-a.cosine),byCoverage=measures.map((m,i)=>({...m,i})).sort((a,b)=>b.coverage-a.coverage);
- const top=byCoverage[0],second=byCoverage[1];
- if(!top||top.coverage<KNOWLEDGE_CAUTION_COVERAGE_MIN)return {targets:[],method:'ambiguous',reason:'no_basis'};
- if(byCosine[0].i!==top.i||top.coverage-(second?.coverage??0)<KNOWLEDGE_CAUTION_COVERAGE_LEAD||byCosine[0].cosine<KNOWLEDGE_CAUTION_SIMILARITY_RATIO*(byCosine[1]?.cosine??0))
-  return {targets:[],method:'ambiguous',reason:'similarity_near_tie'};
- return {targets:[chapters[top.i].index],method:'similarity'};
+ const bySimilarity=(query:string):KnowledgeCautionProgramResult=>{
+  const measures=similarityMeasures(chapters.map(c=>c.text),query);
+  const byCosine=measures.map((m,i)=>({...m,i})).sort((a,b)=>b.cosine-a.cosine),byCoverage=measures.map((m,i)=>({...m,i})).sort((a,b)=>b.coverage-a.coverage);
+  const top=byCoverage[0],second=byCoverage[1];
+  if(!top||top.coverage<KNOWLEDGE_CAUTION_COVERAGE_MIN)return {targets:[],method:'ambiguous',reason:'no_basis'};
+  if(byCosine[0].i!==top.i||top.coverage-(second?.coverage??0)<KNOWLEDGE_CAUTION_COVERAGE_LEAD||byCosine[0].cosine<KNOWLEDGE_CAUTION_SIMILARITY_RATIO*(byCosine[1]?.cosine??0))
+   return {targets:[],method:'ambiguous',reason:'similarity_near_tie'};
+  return {targets:[chapters[top.i].index],method:'similarity'};
+ };
+ // 只有标题、没有原句：证据提到某章标题不等于疑点原句在该章（常见「与××一节矛盾」「可参见注意事项」）。
+ // 去掉标题字样后，余下文字须按相似度独立、明确地指向同一章才算确定；否则交模型。
+ if(heading.length===1){
+  const rest=bySimilarity(ev.split(clean(heading[0].title||'')).join('\u0000'));
+  return rest.targets.length&&rest.targets[0]===heading[0].index?{targets:[heading[0].index],method:'heading'}:{targets:[],method:'ambiguous',reason:'heading_unconfirmed'};
+ }
+ return bySimilarity(evidence);
 }
 /** 只确定疑点所在章节；正文与疑点原句始终由程序取原值，模型不能改写。 */
 export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:KnowledgeRouteEvidence;invoke?:typeof invokeKnowledgePublicationRoutes;family:'glm'|'deepseek';channel:'openrouter'|'evolink';abortSignal?:AbortSignal;

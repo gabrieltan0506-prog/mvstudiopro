@@ -109,7 +109,9 @@ describe('B2 程序归属：标题 → 唯一原句 → 相似度（领先门槛
   {index:2,title:'附录',text:'## 附录\n\n其他附录内容。'},
  ];
  const table:[string,string,{targets:number[];method:string;reason?:string}][]=[
-  ['唯一标题','「快走与心率」一节的估算公式未给出来源',{targets:[1],method:'heading'}],
+  ['唯一标题且余下文字印证同章','「快走与心率」一节心率区间按年龄估算的方法未给出来源',{targets:[1],method:'heading'}],
+  ['唯一标题但余下文字无依据（不能凭提到标题就定）','「快走与心率」一节的估算公式未给出来源',{targets:[],method:'ambiguous',reason:'heading_unconfirmed'}],
+  ['唯一标题但余下文字指向另一章','快走与心率一节的说法与膳食纤维来源与每日摄入量说明矛盾',{targets:[],method:'ambiguous',reason:'heading_unconfirmed'}],
   ['唯一原句','原句“成人每日二十五克”与其他资料不一致',{targets:[0],method:'quotation'}],
   ['标题与原句同章','「快走与心率」写“心率区间按年龄估算”，未说明公式',{targets:[1],method:'heading'}],
   ['标题与原句矛盾','「快走与心率」一节写道：“成人每日二十五克”',{targets:[],method:'ambiguous',reason:'heading_quote_conflict'}],
@@ -122,6 +124,19 @@ describe('B2 程序归属：标题 → 唯一原句 → 相似度（领先门槛
  ];
  it.each(table)('%s',(_name,evidence,expected)=>{
   expect(knowledgeCautionProgramBinding(chapters,evidence)).toEqual(expected);
+ });
+ it('对抗：证据只是提到另一章标题（「与××矛盾」「可参见注意事项」）时不得程序定到被提到的章',()=>{
+  const ch=(rows:[string,string][])=>rows.map(([t,x],index)=>({index,title:t,text:`## ${t}\n\n${x}`}));
+  // 疑点原句（改写过、不逐字）在第 0 章，证据顺带提到第 1 章标题：模型应关联第 0 章（或两章），程序不能单凭标题定到第 1 章。
+  expect(knowledgeCautionProgramBinding(ch([['布洛芬用法用量','布洛芬成人每次200至400毫克，每日最大剂量为1200毫克，儿童按体重计算。'],['用药注意事项','胃溃疡患者慎用，避免与酒精同服，孕晚期禁用。']]),
+   '原文称布洛芬一天最多可吃1200毫克，这与用药注意事项里提醒的胃肠风险相比剂量偏高，需核对').targets).toEqual([]);
+  expect(knowledgeCautionProgramBinding(ch([['降压药的选择','钙通道阻滞剂适合老年人，血压控制目标为一百四十。'],['注意事项','服药期间定期监测肾功能。']]),
+   '原书说老年人血压目标一百四十，未区分是否合并糖尿病，可参见注意事项').targets).toEqual([]);
+  // 短标题被长标题包含、但在证据里也独立出现：两章都被提到，不能只定长标题那章。
+  expect(knowledgeCautionProgramBinding(ch([['用药剂量','成人每日两次。'],['儿童用药剂量','儿童每日三次。']]),'儿童用药剂量写每日三次而用药剂量写每日两次，二者矛盾'))
+   .toEqual({targets:[],method:'ambiguous',reason:'multiple_headings'});
+  // 只出现长标题时短标题不单独算（原规则保留）。
+  expect(knowledgeCautionProgramBinding(ch([['用药剂量','成人每日两次。'],['儿童用药剂量','儿童每日三次，按体重计算。']]),'儿童用药剂量一节每日三次按体重计算未说明体重区间').targets).toEqual([1]);
  });
  it('相似度分数与原 bestKnowledgeTextMatch 选出的第一名一致（同构实现）',()=>{
   for(const [, evidence] of table){

@@ -108,3 +108,25 @@ it('B3 取消：等待工位的分段不再领取，整单以取消收口且不�
   expect(calls).toBeLessThan(40);
   expect(Date.now() - started).toBeLessThan(10_000);
 }, 30_000);
+
+it('B3 接线：该通道请求闸收到限流/无心跳结果时，本通道分段工位立即减半（另一通道不受影响）', async () => {
+  const { invokeDistillLlmPossiblyChunked } = await import('./knowledgeCardDistill');
+  vi.stubEnv('OPENROUTER_API_KEY', 'test-key'); vi.stubEnv('EVOLINK_API_KEY', 'test-key');
+  const f = fixture(); const logs: string[] = [];
+  const info = vi.spyOn(console, 'info').mockImplementation((line: unknown) => { logs.push(String(line)); });
+  let calls = 0;
+  const invoke = vi.fn(async (request: any, _s: any, overrides: any) => {
+    await new Promise(r => setTimeout(r, 2));
+    // 第 12 次请求：EvoLink 闸记一次限流（与路由层 429/无心跳同一出口 release('rate_limited')）。
+    if (++calls === 12) { await overrides.gates.evolink.acquire(); overrides.gates.evolink.release('rate_limited'); }
+    return f.response(request);
+  });
+  try {
+    await knowledgeStructuredDistillContext.run({ evidence: f.store('kc/user-5/job-a'), invoke: invoke as any },
+      () => invokeDistillLlmPossiblyChunked({ sourceText: book(30), extraText: '', imageUrls: [], documents: [], modelName: 'glm-5.3-flashx', detailLevel: 'full', minSectionsTotal: 4 }));
+  } finally { info.mockRestore(); }
+  const throttled = logs.filter(l => /分段工位 channel=\w+ \d+->\d+ cause=throttled/.test(l));
+  expect(throttled).toHaveLength(1);
+  const [, from, to] = throttled[0].match(/channel=evolink (\d+)->(\d+)/)!.map(Number) as unknown as [string, number, number];
+  expect(to).toBe(Math.max(1, Math.floor(from / 2)));
+}, 60_000);
