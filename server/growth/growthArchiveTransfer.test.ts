@@ -167,13 +167,14 @@ describe("归档传输实际子进程保护", () => {
       path.join(dir, "runtime-interactive-workloads", "busy"),
       "test"
     );
+    await fs.writeFile(path.join(dir, ".growth-platform-collection.lock"), "collection");
     const busy = await run(
       process.execPath,
       [guard, "--", "sh", remote, "bundle", "test-batch", "2026-09-01-00"],
       { env: { GROWTH_STORE_DIR: dir } }
     );
     expect(busy.code).toBe(75);
-    await fs.unlink(path.join(dir, "runtime-interactive-workloads", "busy"));
+    await fs.unlink(path.join(dir, ".growth-platform-collection.lock"));
     const owned = path.join(dir, "backups/archive-offload/test-batch");
     await fs.mkdir(owned, { recursive: true });
     await fs.writeFile(path.join(owned, ".snapshot-owner.json"), JSON.stringify({ schemaVersion: 1, batchId: "test-batch", kind: "archive-hardlink-snapshot" }));

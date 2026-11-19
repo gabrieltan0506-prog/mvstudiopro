@@ -79,7 +79,8 @@ jobs:
           # 「多久没成功备份」决定是让路还是标红，不会无声停摆。
           ROUTING_READY=false
           for attempt in $(seq 1 20); do
-            if timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+            if timeout --kill-after=5s 20s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "test -r /app/scripts/growth-backup-io.py" </dev/null && \
+              timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
               -C "node /app/scripts/growth-cold-store-routing-check.mjs '$GROWTH_BACKUP_REPOSITORY'" </dev/null | jq -e '.codeAndConfigurationReady == true and .metadataReadable == true and .restoreVerified == false'; then
               ROUTING_READY=true
               break
@@ -114,28 +115,6 @@ jobs:
             echo "No started VM became available in time"
             return 1
           }
-
-          # 前台平台 Job 拥有最高优先级；最多等待 30 分钟，仍繁忙则让本轮冷备失败并由下个周期重试。
-          PRIORITY_READY=false
-          for attempt in $(seq 1 60); do
-            if wait_for_started_vm && flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc '
-              find /data/growth/runtime-interactive-workloads -type f -mmin +2 -delete 2>/dev/null || true
-              test -z \"\$(find /data/growth/runtime-interactive-workloads -type f -mmin -2 -print -quit 2>/dev/null)\"
-            '"; then
-              PRIORITY_READY=true
-              break
-            fi
-            echo "前台平台任务运行中，冷备评估暂停 30 秒（${attempt}/60）"
-            sleep 30
-          done
-          # 0911：等满 30 分钟仍被前台占用，不再直接标红——那是让路，不是备份故障
-          # （0910 18:00 那轮就是知识卡长跑占着机器）。由 defer 脚本按
-          # 「最近一次成功备份多久以前」决定让路还是标红。
-          if [ "$PRIORITY_READY" != "true" ]; then
-            node scripts/growth-backup-defer.mjs "前台平台任务持续占用，等待 30 分钟仍未让开"
-            echo "BACKUP_DEFERRED=true" >> "$GITHUB_ENV"
-            exit 0
-          fi
 
           for attempt in 1 2 3 4 5; do
             if wait_for_started_vm && node scripts/growth-archive-transfer.mjs --max-ms 60000 -- flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
@@ -206,11 +185,6 @@ jobs:
           set -eu
           ROOT=/data/growth
           LOCK="$ROOT/.growth-platform-collection.lock"
-          find "$ROOT/runtime-interactive-workloads" -type f -mmin +2 -delete 2>/dev/null || true
-          if [ -n "$(find "$ROOT/runtime-interactive-workloads" -type f -mmin -2 -print -quit 2>/dev/null)" ]; then
-            echo GROWTH_BACKUP_LANE_BUSY=interactive >&2
-            exit 42
-          fi
           if [ -e "$LOCK" ]; then
             if find "$LOCK" -mmin +15 -print -quit 2>/dev/null | grep -q .; then
               rm -f "$LOCK"
@@ -243,49 +217,14 @@ jobs:
                 return 1
               fi
               # flyctl 将远端退出码包装为本地 1；只接受远端明确的繁忙标记。
-              if ! grep -Eq '^GROWTH_BACKUP_LANE_BUSY=(interactive|collection)$' /tmp/growth-backup/lane-error.log; then
+              if ! grep -Eq '^GROWTH_BACKUP_LANE_BUSY=collection$' /tmp/growth-backup/lane-error.log; then
                 echo "::error::冷备锁获取异常，不能作为正常让路处理" >&2
                 return 1
               fi
-              echo "采集或前台平台任务仍在运行，冷备暂停 30 秒（${lane_attempt}/60）"
+              echo "采集通道仍被占用，冷备暂停 30 秒（${lane_attempt}/60）"
               sleep 30
             done
             return 75
-          }
-
-          wait_for_interactive_workload() {
-            local priority_attempt
-            for priority_attempt in $(seq 1 60); do
-              # 本函数会从 `while read ... < <(jq ...)` 内调用。SSH 若继承循环 stdin，
-              # 会把尚未读取的分片清单吞掉，表现为首片成功后整文件大小校验失败。
-              # 探针不需要请求体，必须与清单文件描述符隔离。
-              if wait_for_started_vm && timeout 20 flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc '
-                find /data/growth/runtime-interactive-workloads -type f -mmin +2 -delete 2>/dev/null || true
-                test -z \"\$(find /data/growth/runtime-interactive-workloads -type f -mmin -2 -print -quit 2>/dev/null)\"
-              '" </dev/null; then
-                return 0
-              fi
-              echo "前台平台任务运行中，冷备传输暂停 30 秒（${priority_attempt}/60）"
-              sleep 30
-            done
-            return 1
-          }
-
-          # Runner 不得在长 SSH 传输期间另开 SSH 探针：实测 32MiB 分片需约 79 秒，
-          # 第二条探针连接会争抢 Fly SSH 资源并把健康传输误判为繁忙。长流由同一
-          # SSH 会话内的 growth-backup-stream-remote.sh 监控前台 marker。
-          run_with_interactive_preemption() {
-            BACKUP_REMOTE_WORK_STARTED=true
-            # 本步骤以 bash -e 运行。远端读取发现前台任务时会按设计返回 75；若直接
-            # 裸执行，errexit 会在调用方进入重试分支前终止整次 Action。必须把命令
-            # 放进显式条件并原样返回状态，让 fetch/capture 的重试循环接管。
-            if "$@"; then
-              return 0
-            else
-              local command_status=$?
-              echo "冷备远端操作暂未完成，交给调用方重试（status=${command_status}）" >&2
-              return "$command_status"
-            fi
           }
 
           # 1118 根因修复：current 临时快照只在本步骤内使用。此前要等到整轮备份最后
@@ -351,7 +290,7 @@ jobs:
             if [ "$lane_status" -ne 75 ]; then
               exit "$lane_status"
             fi
-            node scripts/growth-backup-defer.mjs "采集锁或前台平台任务持续占用，等待 30 分钟仍未让开"
+            node scripts/growth-backup-defer.mjs "采集通道持续占用，等待 30 分钟仍未让开"
             echo "BACKUP_DEFERRED=true" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -369,9 +308,14 @@ jobs:
             local output_path="$2"
             local required="${3:-false}"
             local timeout_seconds="${4:-180}"
+            case "$remote_path" in
+              "$REMOTE_BATCH_DIR/snapshot-manifest.json"|"$REMOTE_BATCH_DIR/coverage.json"|"$REMOTE_BATCH_DIR/core/"*) ;;
+              *) return 64 ;;
+            esac
             for attempt in 1 2 3 4 5; do
               echo "Fetching file from Fly: ${remote_path} -> ${output_path} (attempt ${attempt}/5)"
-              if wait_for_interactive_workload && run_with_interactive_preemption timeout "${timeout_seconds}" flyctl ssh sftp get -a mvstudiopro --machine "$FLY_MACHINE_ID" "$remote_path" "$output_path"; then
+              if timeout "${timeout_seconds}" flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+                -C "sh -c 'cd /app && exec python3 scripts/growth-backup-io.py --stream cat -- $remote_path'" </dev/null > "$output_path"; then
                 return 0
               fi
               if [ "$required" != "true" ]; then
@@ -391,7 +335,7 @@ jobs:
             local timeout_seconds="${3:-480}"
             for attempt in 1 2 3 4 5; do
               echo "Capturing Growth directory from Fly: ${directory} (attempt ${attempt}/5)"
-              if wait_for_interactive_workload && run_with_interactive_preemption timeout "${timeout_seconds}" \
+              if timeout "${timeout_seconds}" \
                 flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -s -- stream-directory '${directory}' '${BATCH_ID}'" \
                 < scripts/growth-backup-stream-remote.sh > "$output_path"; then
                 return 0
@@ -413,13 +357,14 @@ jobs:
           ASSET_GENERATION="batch-${BATCH_ID}"
           REMOTE_BATCH_DIR="/data/growth/backups/current-batches/${BATCH_ID}"
           printf '%s\n' "$REMOTE_BATCH_DIR" > /tmp/growth-backup/remote-current-batch-dir.txt
-          wait_for_interactive_workload
-          run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth pnpm exec tsx scripts/snapshot-growth-platform-current-batch.mts --output=${REMOTE_BATCH_DIR} --batch-id=${BATCH_ID} --asset-generation=${ASSET_GENERATION}'"
+          BACKUP_REMOTE_WORK_STARTED=true
+          timeout 720 flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "sh -lc 'cd /app && python3 scripts/growth-backup-io.py --check && GROWTH_STORE_DIR=/data/growth nice -n 15 pnpm exec tsx scripts/snapshot-growth-platform-current-batch.mts --output=${REMOTE_BATCH_DIR} --batch-id=${BATCH_ID} --asset-generation=${ASSET_GENERATION}'"
           fetch_file_from_fly "${REMOTE_BATCH_DIR}/snapshot-manifest.json" /tmp/growth-backup/platform-current-snapshot-manifest.json true
           test "$(jq '.files | length' /tmp/growth-backup/platform-current-snapshot-manifest.json)" -ge 4
           # Core metadata belongs to the same mutation-locked snapshot as platform-current.
           while IFS=$'\t' read -r relative snapshot_file expected_bytes expected_sha; do
             case "$relative" in current.json|runtime-meta.json|archive-index.json|history-summary.json|platform-current-manifest.json|weixin-channels-miner.json|backups/growth-debug-summary.json) ;; *) exit 64 ;; esac
+            test "$snapshot_file" = "core/$relative"
             output="/tmp/growth-backup/store/$relative"
             fetch_file_from_fly "${REMOTE_BATCH_DIR}/${snapshot_file}" "$output.next" true
             test "$(stat -c%s "$output.next")" = "$expected_bytes"
@@ -474,14 +419,10 @@ jobs:
               local actual_sha="missing"
               rm -f "$next_path"
               echo "Fetching verified part: $(basename "$remote_file") offset=${offset} attempt=${attempt}/5"
-              if wait_for_interactive_workload; then
-                if run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
-                  -C "sh -s -- stream-file '${remote_file}' '${block_bytes}' '${skip_blocks}' '${count_blocks}'" \
-                  < scripts/growth-backup-stream-remote.sh > "$next_path"; then
-                  transfer_status=0
-                else
-                  transfer_status=$?
-                fi
+              if timeout 720 flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
+                -C "sh -s -- stream-file '${remote_file}' '${block_bytes}' '${skip_blocks}' '${count_blocks}'" \
+                < scripts/growth-backup-stream-remote.sh > "$next_path"; then
+                transfer_status=0
               else
                 transfer_status=$?
               fi
@@ -668,7 +609,7 @@ jobs:
               echo "::error::archive 快照失败（status=${transfer_status}），停止本轮；保留源数据"
               exit "$transfer_status"
             fi
-            echo "采集 lease 或前台任务繁忙，archive 快照让行 30 秒（${attempt}/20）"
+            echo "采集通道或磁盘 I/O 繁忙，archive 快照让行 30 秒（${attempt}/20）"
             sleep 30
           done
           if [ "$SNAPSHOT_READY" != "true" ]; then
@@ -749,7 +690,7 @@ jobs:
                 echo "::error::归档 $dir 传输失败（status=${transfer_status}），未发布本轮归档；保留源数据"
                 exit "$transfer_status"
               fi
-              echo "前台任务繁忙，archive bundle 让行 30 秒：$dir（${attempt}/20）"
+              echo "采集通道或磁盘 I/O 繁忙，archive bundle 让行 30 秒：$dir（${attempt}/20）"
               sleep 30
             done
             if [ "$BUNDLE_READY" != "true" ]; then
@@ -793,7 +734,7 @@ jobs:
           completed=$(wc -l < /tmp/growth-archive-offload/archives.tsv)
           planned=$(wc -l < /tmp/growth-archive-offload/selected.tsv)
           if [ "$DEFERRED" = "true" ]; then
-            echo "::warning::前台繁忙或本批时间预算用尽：已下载验真 ${completed}/${planned} 个；其余归档延期，源数据保留。"
+            echo "::warning::采集通道或磁盘 I/O 繁忙，或本批时间预算用尽：已下载验真 ${completed}/${planned} 个；其余归档延期，源数据保留。"
             printf '归档延期：本批下载验真 %s/%s 个，尚未发布的目录下轮续传。\n' "$completed" "$planned" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
             touch /tmp/growth-archive-offload/DEFERRED
             if [ "$completed" -eq 0 ]; then touch /tmp/growth-archive-offload/EMPTY; fi

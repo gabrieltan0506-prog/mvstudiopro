@@ -65,11 +65,6 @@ const args=process.argv.slice(2),source=process.env.TEST_FLY_SOURCE,repo=process
 fs.appendFileSync(process.env.TEST_FLY_LOG,JSON.stringify(args)+"\n");
 if(args[0]==="machines"&&args[1]==="list") { console.log(JSON.stringify([{id:"fixture-app",state:"started"}])); process.exit(0); }
 if(args[0]!=="ssh") throw Error("unexpected Fly mutation");
-if(args[1]==="sftp"&&args[2]==="get") {
- const [input,output]=args.slice(-2);
- if(!input.startsWith(source+"/backups/current-batches/")) throw Error("live core fetch is not a snapshot:"+input);
- fs.copyFileSync(input,output); process.exit(0);
-}
 const index=args.indexOf("-C");if(index<0)throw Error("missing remote command");
 let command=args[index+1].replaceAll("/app",repo).replaceAll("pnpm exec tsx","node --import tsx").replaceAll("sh -lc","sh -c");
 const isSnapshot=command.includes("snapshot-growth-platform-current-batch.mts");
@@ -104,6 +99,7 @@ process.exit(result.status??1);
 test("actual backup YAML snapshots same-generation core and four authorized platforms, verifies parts and builds restorable bundles", { timeout: 60_000 }, t => {
   const fixture = prepare();
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(fixture.source, "runtime-interactive-workloads", "handbook"), "running");
   const result = spawnSync("/bin/bash", ["-e", "-o", "pipefail", fixture.scriptFile], { cwd: repo, env: fixture.env, encoding: "utf8", timeout: 45_000, maxBuffer: 8 * 1024 * 1024 });
   assert.equal(result.status, 0, `${result.error || ""}\n${result.stderr}\n${result.stdout}`);
   const manifest = JSON.parse(fs.readFileSync(path.join(fixture.output, "platform-current-snapshot-manifest.json")));
@@ -197,6 +193,6 @@ test("actual backup YAML snapshots same-generation core and four authorized plat
   assert.equal(fs.existsSync(path.join(fixture.source, ".growth-platform-collection.lock")), false);
   assert.equal(fs.existsSync(path.join(fixture.source, ".growth-store-mutation.lock")), false);
   const calls = fs.readFileSync(fixture.log, "utf8").trim().split("\n").map(JSON.parse);
-  assert.equal(calls.filter(args => args[1] === "sftp").length, 9); // manifest + seven core files + coverage
+  assert.equal(calls.filter(args => args.some(arg => arg.includes("--stream cat --"))).length, 9); // manifest + seven core files + coverage
   console.log(JSON.stringify({ actualWorkflowStep: "Fetch growth store files from Fly", tiktokItems:manifest.paidResearch.tiktokItems, dataPlatforms:manifest.dataPlatforms, platforms: manifest.files.length, coreFiles: manifest.coreFiles.length, directoryFiles:manifest.directoryFiles.length, excludedPlatforms:manifest.excludedPlatforms, partFiles: manifest.files.reduce((n, f) => n + f.parts.length, 0), bundleParts: finalized.bundle.parts.length, snapshotEpochPreserved: true, sourceStillPresent: true, fullStoreComplete: false }));
 });

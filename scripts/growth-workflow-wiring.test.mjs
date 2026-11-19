@@ -67,13 +67,14 @@ for (const file of ["growth-backup.yml","growth-archive-offload.yml"]) test(`${f
 test("actual deployed gate rejects old deployed checker output and accepts explicit metadata-only readiness",t=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),"growth-gate-wiring-"));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   fs.writeFileSync(path.join(root,"timeout"),'#!/bin/sh\nshift\nshift\nexec "$@"\n',{mode:0o755});
-  fs.writeFileSync(path.join(root,"flyctl"),'#!/usr/bin/env node\nprocess.stdout.write(process.env.GATE_OUTPUT+"\\n");\n',{mode:0o755});
+  fs.writeFileSync(path.join(root,"flyctl"),'#!/usr/bin/env node\nif(process.argv.at(-1)==="test -r /app/scripts/growth-backup-io.py")process.exit(process.env.MISSING_READER==="1"?1:0);process.stdout.write(process.env.GATE_OUTPUT+"\\n");\n',{mode:0o755});
   const script=step(fs.readFileSync('.github/workflows/growth-archive-offload.yml','utf8'),'Verify deployed cold-store routing');
   const env={...process.env,PATH:`${root}:${process.env.PATH}`,FLY_MACHINE_ID:'synthetic',GROWTH_BACKUP_REPOSITORY:repository};
-  const run=output=>spawnSync('bash',['-euo','pipefail','-c',script],{env:{...env,GATE_OUTPUT:output},encoding:'utf8'});
+  const run=(output,missing=false)=>spawnSync('bash',['-euo','pipefail','-c',script],{env:{...env,GATE_OUTPUT:output,MISSING_READER:missing?'1':'0'},encoding:'utf8'});
   assert.notEqual(run('冷备分仓读取版本已就绪').status,0);
   assert.notEqual(run(JSON.stringify({codeAndConfigurationReady:true,metadataReadable:false,restoreVerified:false})).status,0);
   assert.equal(run(JSON.stringify({codeAndConfigurationReady:true,metadataReadable:true,restoreVerified:false})).status,0);
+  assert.notEqual(run(JSON.stringify({codeAndConfigurationReady:true,metadataReadable:true,restoreVerified:false}),true).status,0);
 });
 function shims(t, flyctlExit = 0) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "growth-wiring-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));

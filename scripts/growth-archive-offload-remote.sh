@@ -10,7 +10,8 @@ SNAPSHOT_PARENT="$ROOT/backups/archive-offload"
 COLLECTION_LOCK="$ROOT/.growth-platform-collection.lock"
 MUTATION_LOCK="$ROOT/.growth-store-mutation.lock"
 mutation_acquired=false
-INTERACTIVE_DIR="$ROOT/runtime-interactive-workloads"
+guard=scripts/growth-backup-io.py
+[ -f "$guard" ] || guard=/app/scripts/growth-backup-io.py
 LOCK_STALE_MINUTES=15
 # 轮转游标 schemaVersion 2（1118）：prepare 只登记本班 inflight，不再在快照时推进；
 # 桶已退役（marker）、已空/消失或 commit-cursor 报告退役完成，才允许越过。未完成的桶每班记一次
@@ -93,15 +94,6 @@ assert_snapshot_owner() {
 
 assert_owned_paths
 
-has_interactive_workload() {
-  for lease_dir in "$INTERACTIVE_DIR" "${GROWTH_INTERACTIVE_FALLBACK_DIR:-${TMPDIR:-/tmp}/mvstudiopro-growth-runtime-interactive-workloads}"; do
-    [ -d "$lease_dir" ] || continue
-    fresh=$(find "$lease_dir" -type f -mmin -2 -print -quit 2>/dev/null) || return 0
-    [ -z "$fresh" ] || return 0
-  done
-  return 1
-}
-
 release_collection_lease() {
   if [ -n "$heartbeat_pid" ]; then
     kill "$heartbeat_pid" 2>/dev/null || true
@@ -142,11 +134,6 @@ acquire_collection_lease() {
       fi
       ;;
   esac
-  if has_interactive_workload; then
-    echo "前台交互任务运行中，archive offload 主动让行" >&2
-    echo "GROWTH_ARCHIVE_BUSY" >&2
-    exit 42
-  fi
   # Never steal a lease based only on age: a paused owner may still be writing.
   if ! (set -C; umask 077; printf '%s' "$lock_owner" > "$COLLECTION_LOCK") 2>/dev/null; then
     echo "采集 lease 竞争失败，archive offload 主动让行" >&2
@@ -160,12 +147,6 @@ acquire_collection_lease() {
     exit 43
   fi
   mutation_acquired=true
-  if has_interactive_workload; then
-    release_collection_lease
-    echo "取得 lease 后检测到前台交互任务，archive offload 主动让行" >&2
-    echo "GROWTH_ARCHIVE_BUSY" >&2
-    exit 42
-  fi
   (
     while sleep 30; do
       if [ "$(cat "$COLLECTION_LOCK" 2>/dev/null || true)" != "$lock_owner" ]; then
@@ -295,6 +276,7 @@ cleanup_failed_snapshot() {
 prepare_snapshot() {
   probe_dir="${1:-}"
   node -e 'const v=process.argv[1];if(v&&(!/^\d{4}-\d{2}-\d{2}(?:-\d{2})?$/.test(v)||/[\r\n]/.test(v)))throw Error("archive_probe_directory_invalid");' "$probe_dir"
+  python3 "$guard" --check
   acquire_collection_lease
   snapshot_next="$snapshot_root.next"
   snapshot_next_owned=false
@@ -376,11 +358,6 @@ prepare_snapshot() {
   while IFS= read -r dir; do
     [ -n "$dir" ] || continue
     validate_dir_name "$dir"
-    if has_interactive_workload; then
-      echo "创建 archive 快照时出现前台交互任务，本轮让行" >&2
-      echo "GROWTH_ARCHIVE_BUSY" >&2
-      exit 42
-    fi
     assert_lease
     # B站或全量已核验来源（verified-archives）退役后，剩余子集不能发布为新的整桶版本。
     if [ -e "$ROOT/.growth-archive-retired/$dir.json" ] || [ -L "$ROOT/.growth-archive-retired/$dir.json" ]; then
@@ -441,14 +418,10 @@ stream_bundle() {
   dir="${1:-}"
   validate_dir_name "$dir"
   # Serialize streaming with snapshot cleanup and cooperative source writers.
+  python3 "$guard" --check
   acquire_collection_lease
   trap 'release_collection_lease' EXIT HUP INT TERM
   assert_snapshot_owner
-  if has_interactive_workload; then
-    echo "前台交互任务运行中，archive 压缩主动让行" >&2
-    echo "GROWTH_ARCHIVE_BUSY" >&2
-    exit 42
-  fi
   source_dir="$snapshot_root/$dir"
   if [ ! -d "$source_dir" ]; then
     echo "archive 快照目录不存在: $dir" >&2
@@ -461,7 +434,7 @@ stream_bundle() {
   fi
 
   # gzip success must not hide a tar failure. The snapshot is immutable under atomic writers.
-  node -e '
+  python3 "$guard" --stream node -e '
     const {spawn}=require("child_process"),{pipeline}=require("stream/promises"),{createGzip}=require("zlib");
     const child=spawn("nice",["-n","19","tar","-C",process.argv[1],"-cf","-","--",process.argv[2]],{stdio:["ignore","pipe","inherit"],env:{...process.env,COPYFILE_DISABLE:"1"}});
     const exit=new Promise((resolve,reject)=>{child.on("error",reject);child.on("close",code=>code===0?resolve():reject(Error("archive_tar_failed:"+code)));});

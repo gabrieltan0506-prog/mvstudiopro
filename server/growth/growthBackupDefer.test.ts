@@ -188,7 +188,7 @@ describe("工作流接线", () => {
 describe("备份锁等待", () => {
   async function lane(mode: "busy" | "error" | "ready") {
     const yml = await readFile(".github/workflows/growth-backup.yml", "utf8");
-    const fn = yml.slice(yml.indexOf("          acquire_backup_lane()"), yml.indexOf("          wait_for_interactive_workload()"));
+    const fn = yml.slice(yml.indexOf("          acquire_backup_lane()"), yml.indexOf("          # 1118 根因修复"));
     const dir = await mkdtemp(nodePath.join(tmpdir(), "backup-lane-"));
     const script = `set -e
 mkdir -p "${dir}/growth-backup"

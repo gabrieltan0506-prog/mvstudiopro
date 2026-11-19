@@ -62,6 +62,7 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
+          timeout --kill-after=5s 20s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" -C "test -r /app/scripts/growth-backup-io.py" </dev/null
           # 新工作流先于服务器上线时明确暂停，不能发布旧读取器无法恢复的新归档。
           timeout --kill-after=5s 60s flyctl ssh console -a mvstudiopro --machine "$FLY_MACHINE_ID" \
             -C "node /app/scripts/growth-cold-store-routing-check.mjs '$GROWTH_BACKUP_REPOSITORY'" </dev/null | jq -e '.codeAndConfigurationReady == true and .metadataReadable == true and .restoreVerified == false'
@@ -92,7 +93,7 @@ jobs:
               echo "::error::archive 快照失败（status=${transfer_status}），停止本轮；保留源数据"
               exit "$transfer_status"
             fi
-            echo "采集 lease 或前台任务繁忙，archive 快照让行 30 秒（${attempt}/20）"
+            echo "采集通道或磁盘 I/O 繁忙，archive 快照让行 30 秒（${attempt}/20）"
             sleep 30
           done
           if [ "$SNAPSHOT_READY" != "true" ]; then
@@ -171,7 +172,7 @@ jobs:
                 echo "::error::归档 $dir 传输失败（status=${transfer_status}），未发布本轮归档；保留源数据"
                 exit "$transfer_status"
               fi
-              echo "前台任务繁忙，archive bundle 让行 30 秒：$dir（${attempt}/20）"
+              echo "采集通道或磁盘 I/O 繁忙，archive bundle 让行 30 秒：$dir（${attempt}/20）"
               sleep 30
             done
             if [ "$BUNDLE_READY" != "true" ]; then
@@ -215,7 +216,7 @@ jobs:
           completed=$(wc -l < /tmp/growth-archive-offload/archives.tsv)
           planned=$(wc -l < /tmp/growth-archive-offload/selected.tsv)
           if [ "$DEFERRED" = "true" ]; then
-            echo "::warning::前台繁忙或本批时间预算用尽：已下载验真 ${completed}/${planned} 个；其余归档延期，源数据保留。"
+            echo "::warning::采集通道或磁盘 I/O 繁忙，或本批时间预算用尽：已下载验真 ${completed}/${planned} 个；其余归档延期，源数据保留。"
             printf '归档延期：本批下载验真 %s/%s 个，尚未发布的目录下轮续传。\n' "$completed" "$planned" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
             touch /tmp/growth-archive-offload/DEFERRED
             if [ "$completed" -eq 0 ]; then touch /tmp/growth-archive-offload/EMPTY; fi
