@@ -1,5 +1,8 @@
 const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.quoteKnowledgeCardForGeneration",
+  /** 1119 C4：大稿分段（每段约 60 万字节）与封存（服务端整本拼回重算摘要）同走鉴权 Fly，不经 Vercel 反代 */
+  "mvAnalysis.stageKnowledgeCardManuscriptChunk",
+  "mvAnalysis.finalizeKnowledgeCardManuscript",
   "mvAnalysis.prepareKnowledgeCardCopy",
   "mvAnalysis.enqueueKnowledgeCardLevelDerive",
   "mvAnalysis.getGrowthSnapshot",

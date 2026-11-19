@@ -140,15 +140,29 @@ export async function finalizeHandbookManuscript(
 
 const cache = new Map<string, string>();
 const CACHE_MAX = 4;
+/** 同一用户同一原稿的冷读只做一次：并发逐页请求共用同一次取回，不各自整本拼装 */
+const loading = new Map<string, Promise<string>>();
 /** 测试用：清空进程内全文缓存 */
-export function __clearHandbookManuscriptCacheForTest() { cache.clear(); }
+export function __clearHandbookManuscriptCacheForTest() { cache.clear(); loading.clear(); }
 
 /** 取回已封存原稿全文（逐段校验 + 重算摘要）；未封存/缺段/不一致都明确报错，绝不返回部分文本。 */
 export async function loadHandbookManuscript(userId: number, digest: string, store: HandbookManuscriptStore = realStore()): Promise<string> {
   const base = root(userId, digest);
   const key = `${userId}:${digest}`;
   const hit = cache.get(key);
-  if (hit !== undefined) return hit;
+  if (hit !== undefined) {
+    // 最近使用的放到队尾：多本大书交替出图时不互相挤掉、逐页重读整本
+    cache.delete(key); cache.set(key, hit);
+    return hit;
+  }
+  const running = loading.get(key);
+  if (running) return running;
+  const work = readSealedManuscript(base, digest, key, store);
+  loading.set(key, work);
+  try { return await work; } finally { if (loading.get(key) === work) loading.delete(key); }
+}
+
+async function readSealedManuscript(base: string, digest: string, key: string, store: HandbookManuscriptStore): Promise<string> {
   let manifestRaw: unknown;
   try { manifestRaw = await store.read(`${base}/manifest.json`); }
   catch { throw new HandbookManuscriptError("暂存原稿暂时读不到，请稍后重试；未扣费、未提交出图", "UNAVAILABLE"); }

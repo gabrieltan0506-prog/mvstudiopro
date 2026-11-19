@@ -70,7 +70,9 @@ if(!state){
   for(const [i,id] of imageJobIds.entries()){
     const job=await getJobByIdStrict(id),params:any=(job?.input as any)?.params;
     if(!job||String(job.userId)!==String(user.id)||job.status!=='succeeded'||params?.kind!=='single_page_knowledge_card')throw Error(`第${i+1}张原图任务不可复用`);
-    if(Number(params.notePageIndex)!==i+1||createHash('sha256').update(String(params.scriptContext||'')).digest('hex')!==digest)throw Error(`第${i+1}张原图与本稿页不对应，未复用`);
+    // 1119 C4 双形态：旧行存整稿 scriptContext；大稿行只存原稿 sha256（manuscriptDigest，与此处同为 utf8 sha256）
+    const rowDigest=params.scriptContext?createHash('sha256').update(String(params.scriptContext)).digest('hex'):/^[a-f0-9]{64}$/.test(String(params.manuscriptDigest||''))?String(params.manuscriptDigest):createHash('sha256').update('').digest('hex');
+    if(Number(params.notePageIndex)!==i+1||rowDigest!==digest)throw Error(`第${i+1}张原图与本稿页不对应，未复用`);
   }
   state={edition:edition.id,level:config.level,digest,imageJobIds,template:source.pages.length?previous!.publication!.infographicTemplateId:undefined,createdAt:new Date().toISOString()};
   const fresh=synchronizedKnowledgeCardSource({owner:String(user.id),sourceId:`knowledge-card:${edition.id}:${config.level}:relayout-${Date.now()}`,fullMarkdown:out.fullEditionMarkdown,illustrationMarkdown:markdown,detailLevel:config.level,distillModel:out.distillModel,infographicTemplateId:state.template,imageJobIds});

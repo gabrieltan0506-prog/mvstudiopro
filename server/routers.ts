@@ -368,7 +368,9 @@ async function handbookManuscriptCall<T>(fn: () => Promise<T>): Promise<T> {
     if (e instanceof HandbookManuscriptError) {
       throw new TRPCError({ code: e.code === "UNAVAILABLE" ? "INTERNAL_SERVER_ERROR" : e.code, message: e.message });
     }
-    throw e;
+    // 存储层原始错误（含桶名、响应体）只进服务端日志，前台只给业务句
+    console.error("[handbookManuscript] storage call failed:", e);
+    throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "原稿暂存暂时不可用，请稍后重试；未扣费、未提交出图" });
   }
 }
 async function loadStagedHandbookManuscriptOrThrow(userId: number, digest: string): Promise<string> {

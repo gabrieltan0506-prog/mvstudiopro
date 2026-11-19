@@ -3,6 +3,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { jobs } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { downloadGcsObjectVersioned, uploadBufferToGcs, getGcsBucketName, signGcsObjectPathV4ReadUrl } from "./gcs";
+import { HandbookManuscriptError } from "./handbookManuscriptStage";
 
 type Row = { id: string; userId: string; status: string; input: unknown; output: unknown; createdAt: Date };
 const recordedModel = (params: Record<string, any>, output: Record<string, any>) =>
@@ -20,7 +21,7 @@ export function recoveryDraft(row: Row) {
 /**
  * 1119 C4 双形态：大稿出图任务行只存 params.manuscriptDigest（不存全文）。这里按任务行所属用户取回已封存全文，
  * 补成与旧形态相同的 params.scriptContext 视图，之后的 recoveryDraft / 恢复键 / 组装逻辑与旧行完全一样。
- * 旧行（带 scriptContext）原样返回；取回失败的行不参与恢复（不猜文本、不报部分成功）。
+ * 旧行（带 scriptContext）原样返回；确定取不回（未封存/内容不符）的行不参与恢复（不猜文本）；暂时读不到则整体报错，不报部分成功。
  */
 const STAGED_DIGEST = /^[a-f0-9]{64}$/;
 export type StagedManuscriptLoader = (userId: number, digest: string) => Promise<string>;
@@ -33,12 +34,15 @@ export async function hydrateStagedManuscriptRows<T extends Row>(rows: T[], load
     const digest = params.manuscriptDigest;
     if (input.action !== "platform_composite_sheet_progress" || params.kind !== "single_page_knowledge_card" || params.scriptContext || typeof digest !== "string" || !STAGED_DIGEST.test(digest)) return row;
     const key = `${row.userId}:${digest}`;
-    if (!texts.has(key)) texts.set(key, load(Number(row.userId), digest).catch(error => { if (strict) throw error; return null; }));
+    // 非严格模式只跳过「确定取不回」的行（未封存/内容不符）；暂时读不到必须报错，不能把缺图的恢复结果当完整成功返回
+    if (!texts.has(key)) texts.set(key, load(Number(row.userId), digest).catch(error => { if (strict || !stagedManuscriptGone(error)) throw error; return null; }));
     const text = await texts.get(key)!;
     if (text === null) return null;
     return { ...row, input: { ...input, params: { ...params, scriptContext: text } } };
   }))).filter((row): row is Awaited<T> => row !== null) as T[];
 }
+const stagedManuscriptGone = (error: unknown) =>
+  error instanceof HandbookManuscriptError && (error.code === "NOT_FOUND" || error.code === "CONFLICT");
 const stagedDigestOf = (markdown: string) => createHash("sha256").update(markdown, "utf8").digest("hex");
 
 export function assembleRecovery(userId: string, anchor: Row, rows: Row[]) {

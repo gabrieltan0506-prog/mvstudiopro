@@ -1,4 +1,4 @@
-import { KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS } from "@shared/knowledgeCardPagination";
+import { KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS, planKnowledgeCardPages } from "@shared/knowledgeCardPagination";
 
 /**
  * 1119 C4：超过 20 万字的手册原稿先分段暂存（每段恰好 20 万字，末段为余数），报价与出图只带摘要。
@@ -20,9 +20,22 @@ export async function handbookManuscriptDigest(text: string): Promise<string> {
 /** 本页会话内已封存的原稿摘要（只省去重复上传；服务端仍逐次核验） */
 const finalized = new Set<string>();
 const inflight = new Map<string, Promise<string>>();
+/** 逐页出图对同一本稿只算一次摘要与分页（整本数百万字，逐页重算会卡住页面）；只记最近一本 */
+let memo: { text: string; digest?: Promise<string>; pages?: string[] } | null = null;
+const memoFor = (text: string) => (memo && memo.text === text ? memo : (memo = { text }));
+
+/** 大稿路径本页正文：与服务端核对用的同一分页函数 */
+export function handbookManuscriptPageBody(text: string, pageIndex: number): string {
+  const entry = memoFor(text);
+  entry.pages ??= planKnowledgeCardPages(text).pages;
+  return entry.pages[pageIndex - 1] ?? "";
+}
 
 export async function stageHandbookManuscript(text: string, api: HandbookManuscriptStageApi): Promise<string> {
-  const digest = await handbookManuscriptDigest(text);
+  const entry = memoFor(text);
+  const pending = entry.digest ??= handbookManuscriptDigest(text);
+  let digest: string;
+  try { digest = await pending; } catch (error) { if (entry.digest === pending) entry.digest = undefined; throw error; }
   if (finalized.has(digest)) return digest;
   const running = inflight.get(digest);
   if (running) return running;
@@ -41,4 +54,4 @@ export async function stageHandbookManuscript(text: string, api: HandbookManuscr
 }
 
 /** 测试用 */
-export function __resetHandbookManuscriptStageForTest() { finalized.clear(); inflight.clear(); }
+export function __resetHandbookManuscriptStageForTest() { finalized.clear(); inflight.clear(); memo = null; }

@@ -37,7 +37,7 @@ import { __clearHandbookManuscriptCacheForTest } from "./services/handbookManusc
 import { recoveryDraft, hydrateStagedManuscriptRows } from "./services/knowledgeCardRecovery";
 import { validateKnowledgeImageReplacements } from "./services/knowledgePublicationImages";
 import { knowledgeCardPageJobId } from "./jobs/knowledgeCardPageTask";
-import { loadHandbookManuscript } from "./services/handbookManuscriptStage";
+import { loadHandbookManuscript, HandbookManuscriptError } from "./services/handbookManuscriptStage";
 
 const sha = (t: string) => createHash("sha256").update(t, "utf8").digest("hex");
 const caller = (id = 7) => appRouter.createCaller({ user: { id, role: "user" } } as never);
@@ -162,8 +162,9 @@ describe("恢复与配图绑定：新旧两种任务行", () => {
     // 旧行原样返回（同一对象），不读暂存
     const [same] = await hydrateStagedManuscriptRows([oldRow], async () => { throw new Error("不应读取"); });
     expect(same).toBe(oldRow);
-    // 取回失败的新行不参与恢复（不猜文本）
-    expect(await hydrateStagedManuscriptRows([newRow], async () => { throw new Error("503"); })).toEqual([]);
+    // 确定取不回（未封存/内容不符）的新行不参与恢复（不猜文本）；暂时读不到整体报错，不把缺图的恢复当成功
+    expect(await hydrateStagedManuscriptRows([newRow], async () => { throw new HandbookManuscriptError("未封存", "NOT_FOUND"); })).toEqual([]);
+    await expect(hydrateStagedManuscriptRows([newRow], async () => { throw new Error("503"); })).rejects.toThrow("503");
     // 配图绑定：替换任务是新形态行
     const requestId = "22222222-2222-4222-8222-222222222222";
     const replacement = knowledgeCardPageJobId("7", "platform_composite_sheet_progress", requestId);

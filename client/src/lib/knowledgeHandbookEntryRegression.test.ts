@@ -12,7 +12,7 @@ import * as lifecycle from "./knowledgeIllustrationRun";
 import * as handbookVariant from "../../../shared/openaiImageVariant";
 import { knowledgeCardPlannedTextPages } from "./knowledgeCardPreflightCounts";
 import { knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh, knowledgeIllustrationBatchUserMessage } from "./knowledgeIllustrationBatchCounts";
-import { handbookManuscriptNeedsStaging, stageHandbookManuscript } from "./handbookManuscriptStage";
+import { handbookManuscriptNeedsStaging, handbookManuscriptPageBody, stageHandbookManuscript } from "./handbookManuscriptStage";
 
 // 执行生产处理函数，避免只测辅助函数而遗漏按钮之间的真实组合。
 // 1119 C0：手册前台流程已原样搬到两个 hook；三份源码拼接后按原标记提取同一段生产代码。
@@ -26,7 +26,7 @@ function take(start: string, end: string) {
 }
 function run(raw: string, ctx: any) {
   // 1119：出图 hook 新引用的模块级导入（授权档常量、文字页数、批次计数）按真实实现注入。
-  Object.assign(ctx, { ...handbookVariant, knowledgeCardPlannedTextPages, knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh, knowledgeIllustrationBatchUserMessage, handbookManuscriptNeedsStaging, stageHandbookManuscript }, { customNoteCardsOnly: ctx.customNoteCardsOnly ?? false, setKnowledgeDistillLive: ctx.setKnowledgeDistillLive });
+  Object.assign(ctx, { ...handbookVariant, knowledgeCardPlannedTextPages, knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh, knowledgeIllustrationBatchUserMessage, handbookManuscriptNeedsStaging, handbookManuscriptPageBody, stageHandbookManuscript }, { customNoteCardsOnly: ctx.customNoteCardsOnly ?? false, setKnowledgeDistillLive: ctx.setKnowledgeDistillLive });
   // 与 useKnowledgeCardRender 内同名辅助一致（1119 C4）：20 万字及以下原样 {markdown}，超过才走摘要
   ctx.handbookStageApi ??= () => ({
     stageChunk: (input: any) => ctx.trpcUtils.client.mvAnalysis.stageKnowledgeCardManuscriptChunk.mutate(input),

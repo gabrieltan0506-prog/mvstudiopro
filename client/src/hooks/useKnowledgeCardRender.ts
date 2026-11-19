@@ -17,7 +17,7 @@ import { knowledgeCardProgressFromRender } from "@/components/platform/Knowledge
 import { knowledgeCardRecordedModelLabel } from "@shared/knowledgeCardDistillModels";
 import { HANDBOOK_IMAGE_MODEL, HANDBOOK_IMAGE_TIER_LABEL_ZH, HANDBOOK_IMAGE_VARIANT } from "@shared/openaiImageVariant";
 import { knowledgeCardPlannedTextPages } from "@/lib/knowledgeCardPreflightCounts";
-import { handbookManuscriptNeedsStaging, stageHandbookManuscript } from "@/lib/handbookManuscriptStage";
+import { handbookManuscriptNeedsStaging, handbookManuscriptPageBody, stageHandbookManuscript } from "@/lib/handbookManuscriptStage";
 import { knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh, knowledgeIllustrationBatchUserMessage } from "@/lib/knowledgeIllustrationBatchCounts";
 import { synchronizedKnowledgeCardSource } from "@shared/knowledgeCardEditableLayout";
 import { toast } from "@/lib/platformToast";
@@ -299,7 +299,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
     const scriptContext = trimmed;
     // 1119 C4：超过 20 万字的手册原稿只带摘要与本页正文（服务端取回全文核对）；20 万字及以下请求形状不变
     const staged = kind === "single_page_knowledge_card" && notePage && handbookManuscriptNeedsStaging(scriptContext)
-      ? { manuscriptDigest: await stageHandbookManuscript(scriptContext, handbookStageApi()), pageBody: planKnowledgeCardPages(scriptContext).pages[notePage.index - 1] ?? "" }
+      ? { manuscriptDigest: await stageHandbookManuscript(scriptContext, handbookStageApi()), pageBody: handbookManuscriptPageBody(scriptContext, notePage.index) }
       : null;
     const res = await generateCustomNoteMutation.mutateAsync({
       sceneId,

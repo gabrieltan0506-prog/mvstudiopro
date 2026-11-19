@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { handbookManuscriptDigest, handbookManuscriptNeedsStaging, stageHandbookManuscript, __resetHandbookManuscriptStageForTest } from "./handbookManuscriptStage";
+import { handbookManuscriptDigest, handbookManuscriptNeedsStaging, handbookManuscriptPageBody, stageHandbookManuscript, __resetHandbookManuscriptStageForTest } from "./handbookManuscriptStage";
 const big = "知".repeat(450_001);
 beforeEach(() => __resetHandbookManuscriptStageForTest());
 it("摘要与服务端一致（sha256/utf8）；20 万字及以下不走暂存", async () => {
@@ -26,4 +26,22 @@ it("第 2 段上传失败：不封存、整体失败；再次调用补齐后封�
   // 已封存：同会话再用不重复上传
   await stageHandbookManuscript(big, api);
   expect(api.stageChunk).toHaveBeenCalledTimes(5);
+});
+it("逐页出图同一本稿：摘要与分页各只算一次；换稿后重算", async () => {
+  const digestSpy = vi.spyOn(crypto.subtle, "digest");
+  const api = { stageChunk: vi.fn(async () => {}), finalize: vi.fn(async () => {}) };
+  const { planKnowledgeCardPages } = await import("@shared/knowledgeCardPagination");
+  const text = `# 书\n\n${Array.from({ length: 400 }, (_, i) => `## 第${i}节\n${"知".repeat(1100)}`).join("\n\n")}`;
+  const pages = planKnowledgeCardPages(text).pages;
+  for (let i = 1; i <= 5; i++) {
+    await stageHandbookManuscript(text, api);
+    expect(handbookManuscriptPageBody(text, i)).toBe(pages[i - 1]);
+  }
+  expect(digestSpy).toHaveBeenCalledTimes(1);
+  expect(handbookManuscriptPageBody(text, pages.length + 1)).toBe("");
+  const other = text.replace("# 书", "# 另一本");
+  await stageHandbookManuscript(other, api);
+  expect(digestSpy).toHaveBeenCalledTimes(2);
+  expect(handbookManuscriptPageBody(other, 1)).toBe(planKnowledgeCardPages(other).pages[0]);
+  digestSpy.mockRestore();
 });
