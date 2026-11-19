@@ -83,12 +83,12 @@ describe('B5 读档单页容量：合法长稿收下，失控稿仍拒收并换�
 });
 
 describe('B4 思考档位按请求类型传入，不进入回执身份', () => {
-  it('缺省：主提炼 high，疑点归属/挑页 medium；env 只认 low/medium/high', () => {
+  it('缺省：全部 high（1120 站长定）；env 只认 low/medium/high', () => {
     expect(knowledgeReasoningEffort('distill', { KNOWLEDGE_CAUTION_BINDING_REASONING_EFFORT: 'low' })).toBe('high');
-    expect(knowledgeReasoningEffort('caution_binding', {})).toBe('medium');
-    expect(knowledgeReasoningEffort('page_triage', {})).toBe('medium');
+    expect(knowledgeReasoningEffort('caution_binding', {})).toBe('high');
+    expect(knowledgeReasoningEffort('page_triage', {})).toBe('high');
     expect(knowledgeReasoningEffort('caution_binding', { KNOWLEDGE_CAUTION_BINDING_REASONING_EFFORT: 'LOW' })).toBe('low');
-    expect(knowledgeReasoningEffort('page_triage', { KNOWLEDGE_PAGE_TRIAGE_REASONING_EFFORT: 'xhigh' })).toBe('medium');
+    expect(knowledgeReasoningEffort('page_triage', { KNOWLEDGE_PAGE_TRIAGE_REASONING_EFFORT: 'xhigh' })).toBe('high');
     expect(knowledgeChannelReasoningEffort('openrouter', 'medium')).toBe('medium');
     expect(knowledgeChannelReasoningEffort('evolink', 'medium')).toBe('high');
     expect(knowledgeChannelReasoningEffort('evolink', 'low')).toBe('low');

@@ -71,7 +71,7 @@ export function knowledgeCautionProgramBinding(chapters:readonly {index:number;t
 export async function bindKnowledgeDistillCautions(page:Page,options:{evidence:KnowledgeRouteEvidence;invoke?:typeof invokeKnowledgePublicationRoutes;family:'glm'|'deepseek';channel:'openrouter'|'evolink';abortSignal?:AbortSignal;
  /** 读档任务共享的通道健康/并发闸/日志标签：某通道已判不可用（如余额不足 402）时直接从另一通道起步，不逐个先撞。 */
  routeOverrides?:Pick<NonNullable<Parameters<typeof invokeKnowledgePublicationRoutes>[2]>,'gates'|'channelHealth'|'logLabel'|'signal'>;
- /** 本请求思考档位；缺省按 knowledgeReasoningEffort('caution_binding')（medium，env 可调）。不进入归属身份 digest。 */
+ /** 本请求思考档位；缺省按 knowledgeReasoningEffort('caution_binding')（high，env 可调）。不进入归属身份 digest。 */
  reasoningEffort?:KnowledgeReasoningEffort}) {
  options.abortSignal?.throwIfAborted();
  if(!page.reading)throw Error('提炼JSON缺少章节结构');

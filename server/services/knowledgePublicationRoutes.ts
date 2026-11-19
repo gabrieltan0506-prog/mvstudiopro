@@ -125,7 +125,7 @@ const digest = (data: unknown) => createHash("sha256").update(JSON.stringify(dat
  */
 export type KnowledgeReasoningEffort = "low" | "medium" | "high";
 export type KnowledgeReasoningRequestKind = "distill" | "caution_binding" | "page_triage";
-export const KNOWLEDGE_REASONING_EFFORT_DEFAULTS: Record<KnowledgeReasoningRequestKind, KnowledgeReasoningEffort> = { distill: "high", caution_binding: "medium", page_triage: "medium" };
+export const KNOWLEDGE_REASONING_EFFORT_DEFAULTS: Record<KnowledgeReasoningRequestKind, KnowledgeReasoningEffort> = { distill: "high", caution_binding: "high", page_triage: "high" }; // 1120 站长定：全部维持 high（medium 在现有通道上不生效）；需要时用 env 调
 const KNOWLEDGE_REASONING_EFFORT_ENV: Record<Exclude<KnowledgeReasoningRequestKind, "distill">, string> = {
   caution_binding: "KNOWLEDGE_CAUTION_BINDING_REASONING_EFFORT", page_triage: "KNOWLEDGE_PAGE_TRIAGE_REASONING_EFFORT",
 };
