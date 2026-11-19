@@ -50,11 +50,12 @@ export const KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY=16;
 async function saveKnowledgeEditionReceipts(evidence:KnowledgeRouteEvidence,entries:readonly (readonly [string,unknown])[]){
   // 用对象承载首个失败：直接用 let 变量时，TS 会把闭包内的赋值在外层误收窄为 never。
   let next=0;const state:{failure?:{index:number;error:unknown}}={};
+  const record=(index:number,error:unknown)=>{const prior=state.failure as {index:number;error:unknown}|undefined;if(!prior||index<prior.index)state.failure={index,error};};
   await Promise.all(Array.from({length:Math.min(KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY,entries.length)},async()=>{
     while(!state.failure&&next<entries.length){
       const index=next++;
       try{await evidence.save(entries[index]![0],entries[index]![1]);}
-      catch(error){if(!state.failure||index<state.failure.index)state.failure={index,error};}
+      catch(error){record(index,error);}
     }
   }));
   if(state.failure)throw state.failure.error;
