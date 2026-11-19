@@ -215,7 +215,7 @@ describe("D2 旧任务回放：main 上已存的修订请求（openrouter、未�
     expect(saved.request).toMatchObject({ executionChannel: "evolink", executionFamily: "glm" });
     const { executionFamily: _drop, ...oldRequest } = saved.request;
     const old = memoryEvidence("final");
-    for (const [k, v] of fresh.store) if (k.startsWith("final/search-0/") || k === "final/input.json" || k.startsWith("final/candidates-")) old.store.set(k, v);
+    for (const [k, v] of Array.from(fresh.store)) if (k.startsWith("final/search-0/") || k === "final/input.json" || k.startsWith("final/candidates-")) old.store.set(k, v);
     old.store.set("final/revision-0/request.json", { ...saved, request: { ...oldRequest, executionChannel: "openrouter" } });
     calls.length = 0;
     const [body] = await verifyKnowledgeEditionManuscripts([source], old.evidence, invoke);

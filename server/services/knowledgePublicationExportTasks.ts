@@ -200,7 +200,7 @@ export function createKnowledgeExportTasks(deps: Deps) {
           const saved = await deps.store.read(knowledgeExportTaskRecordName(owner, taskId)).catch(() => null);
           const state = saved?.value?.state as KnowledgeExportTaskState | undefined;
           if (saved?.value?.kind === "knowledge_export_task_v1" && saved.value.owner === owner && state?.taskId === taskId
-            && complete(state) && now() - state.finishedAt <= KEEP_FINISHED_MS) {
+            && state.status === "succeeded" && complete(state) && now() - state.finishedAt <= KEEP_FINISHED_MS) {
             tasks.set(taskId, { owner, key, state, promise: Promise.resolve() });
             return state;
           }

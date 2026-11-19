@@ -456,14 +456,14 @@ describe("整册压缩三章一组、各组并发发出（2026-11-13：全部超
         const payload = request.contents[0].parts.map((p: any) => { try { return JSON.parse(p.text); } catch { return {}; } }).find((p: any) => p.source);
         const ids: string[] = payload.source.pages.map((p: any) => p.id);
         const compress = request.systemInstruction.parts.some((p: any) => /篇幅压缩|篇幅扩写/.test(p.text));
-        if (!compress) return inner(request, evidence);
+        if (!compress) return (inner as any)(request, evidence);
         sent.push({ ids, channel: request.executionChannel });
         active++; peak = Math.max(peak, active);
         try {
           await new Promise(r => setTimeout(r, delayOf(m.ids.indexOf(ids[0]!))));
           // 第二组（下标 1，OpenRouter 首跳那一路）在其余三路仍在途时断网：整条链抛错。
           if (ids[0] === m.ids[3]) throw Object.assign(new Error("fetch failed"), { code: "ECONNRESET" });
-          return await inner(request, evidence);
+          return await (inner as any)(request, evidence);
         } finally { active--; }
       };
       const next = await compressKnowledgeFinalReport(h.deps as any, h.root, 0, h.digest, h.source, structuredClone(m.saved));

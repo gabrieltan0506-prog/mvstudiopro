@@ -48,15 +48,16 @@ export const KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY=16;
  * 不留后台写入、不报部分成功；重跑按同键同内容覆盖写，幂等。
  */
 async function saveKnowledgeEditionReceipts(evidence:KnowledgeRouteEvidence,entries:readonly (readonly [string,unknown])[]){
-  let next=0;let failure:{index:number;error:unknown}|undefined;
+  // 用对象承载首个失败：直接用 let 变量时，TS 会把闭包内的赋值在外层误收窄为 never。
+  let next=0;const state:{failure?:{index:number;error:unknown}}={};
   await Promise.all(Array.from({length:Math.min(KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY,entries.length)},async()=>{
-    while(!failure&&next<entries.length){
+    while(!state.failure&&next<entries.length){
       const index=next++;
       try{await evidence.save(entries[index]![0],entries[index]![1]);}
-      catch(error){if(!failure||index<failure.index)failure={index,error};}
+      catch(error){if(!state.failure||index<state.failure.index)state.failure={index,error};}
     }
   }));
-  if(failure)throw failure.error;
+  if(state.failure)throw state.failure.error;
 }
 
 /** 同一底稿只整理一次；两版由同一份模块确定性编译，恢复读取原回执。 */

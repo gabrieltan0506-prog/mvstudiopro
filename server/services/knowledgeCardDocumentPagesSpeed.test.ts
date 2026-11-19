@@ -168,7 +168,7 @@ describe("目录页：批量渲染、对象与内容不变", () => {
     });
     const ref = await referenceSheets();
     expect(Array.from(bucket.objects.keys()).sort()).toEqual(Array.from(ref.keys()).sort());
-    for (const [name, jpeg] of ref) expect(bucket.objects.get(name)!.equals(jpeg), name).toBe(true);
+    for (const [name, jpeg] of Array.from(ref)) expect(bucket.objects.get(name)!.equals(jpeg), name).toBe(true);
     // 11 张目录页：第 1 组 8 张一次渲染（96 页），第 2 组 3 张一次渲染；以前是 11 次
     // 两批并行渲染，启动先后不保证：按起始页排序后比较
     expect(thumbCalls().map((c) => [c.args[c.args.indexOf("-f") + 1], c.args[c.args.indexOf("-l") + 1]]).sort((a, b) => Number(a[0]) - Number(b[0]))).toEqual([["1", "96"], ["97", "130"]]);
@@ -236,7 +236,7 @@ describe("目录页：失败注入与续做", () => {
     expect(set.pageCount).toBe(PAGES);
     expect(bucket.uploads - uploadsBefore).toBe(SHEETS - afterCrash.size);
     const ref = await referenceSheets();
-    for (const [name, jpeg] of ref) expect(bucket.objects.get(name)!.equals(jpeg), name).toBe(true);
+    for (const [name, jpeg] of Array.from(ref)) expect(bucket.objects.get(name)!.equals(jpeg), name).toBe(true);
   }, 60_000);
 
   it("一批 pdftoppm 失败：报错、另一批已传的保留；续做只渲染失败那批", async () => {
@@ -275,7 +275,7 @@ describe("目录页：失败注入与续做", () => {
     expect(uploaded.map((n) => Number(/s-(\d+)\.jpg$/.exec(n)![1])).sort((a, b) => a - b)).toEqual([2, 6, 7, 8, 11]);
     // 连续缺口合批：2 | 6–8 | 11
     expect(thumbCalls().map((c) => [c.args[c.args.indexOf("-f") + 1], c.args[c.args.indexOf("-l") + 1]]).sort()).toEqual([["121", "130"], ["13", "24"], ["61", "96"]].sort());
-    for (const [name, jpeg] of ref) expect(bucket.objects.get(name)!.equals(jpeg), name).toBe(true);
+    for (const [name, jpeg] of Array.from(ref)) expect(bucket.objects.get(name)!.equals(jpeg), name).toBe(true);
     expect(sheetsSeen).toEqual([Array.from({ length: SHEETS }, (_, i) => i + 1)]);
   }, 60_000);
 });
@@ -326,7 +326,7 @@ describe("顾问原文与文字断点：后台执行，末尾统一收口", () =
     const ref = await referenceTexts();
     const bucket = fakeBucket();
     const text = memoryStore("text");
-    for (const [k, v] of ref.checkpoints) if (!k.endsWith("-49-96.json")) text.data.set(k, v);
+    for (const [k, v] of Array.from(ref.checkpoints)) if (!k.endsWith("-49-96.json")) text.data.set(k, v);
     const set = await prepareKnowledgeCardDocumentPages({ buffer: pdf, docKey: DOC, fileName: "s.pdf", userId: USER, selectPages: noSelect, uploadPage: bucket.uploadPage, textCache: text.store });
     expect(textCalls().map((c) => [c.args[c.args.indexOf("-f") + 1], c.args[c.args.indexOf("-l") + 1]])).toEqual([["49", "96"]]);
     expect(set.pages.map((p) => p.text)).toEqual(ref.pages);
@@ -376,9 +376,9 @@ describe("顾问原文与文字断点：后台执行，末尾统一收口", () =
     const ref = await referenceTexts();
     const sheets = await referenceSheets();
     const bucket = fakeBucket();
-    for (const [k, v] of sheets) bucket.objects.set(k, v);
+    for (const [k, v] of Array.from(sheets)) bucket.objects.set(k, v);
     const text = memoryStore("text");
-    for (const [k, v] of ref.checkpoints) text.data.set(k, v);
+    for (const [k, v] of Array.from(ref.checkpoints)) text.data.set(k, v);
     const uploadsBefore = bucket.uploads;
     let streamed = false;
     const selector = Object.assign(async () => [], { stream: () => { streamed = true; throw new Error("不该流式"); } }) as KnowledgeCardPageSelector;
@@ -486,7 +486,7 @@ describe("挑页：按组提前开扫、按组缓存、旧整本缓存只读", (
   it("v1 整本挑页缓存只读命中：已扫完的旧书零调用、不写 v2，参考页不变", async () => {
     const sheets = await referenceSheets();
     const bucket = fakeBucket();
-    for (const [k, v] of sheets) bucket.objects.set(k, v);
+    for (const [k, v] of Array.from(sheets)) bucket.objects.set(k, v);
     const resume = memoryStore();
     const identity = { version: "page-selection-v1", model: "glm-5.3-flashx", pageCount: PAGES, sheets: Array.from({ length: SHEETS }, (_, i) => {
       const first = i * 12 + 1;
@@ -534,7 +534,7 @@ describe("审查回归（2026-11-19）", () => {
   it("目录图列表暂时不可读 + v1 整本挑页缓存在：不流式重扫，零模型调用，参考页取 v1", async () => {
     const sheets = await referenceSheets();
     const bucket = fakeBucket();
-    for (const [k, v] of sheets) bucket.objects.set(k, v);
+    for (const [k, v] of Array.from(sheets)) bucket.objects.set(k, v);
     const resume = memoryStore();
     const identity = { version: "page-selection-v1", model: "glm-5.3-flashx", pageCount: PAGES, sheets: Array.from({ length: SHEETS }, (_, i) => {
       const first = i * 12 + 1;

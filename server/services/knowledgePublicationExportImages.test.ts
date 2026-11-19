@@ -50,7 +50,7 @@ function fixture() {
     merge: vi.fn(async (_p: string[], target: string) => { await writeFile(target, Buffer.from("%PDF" + "merged-test-only".repeat(20))); }),
     countPages: vi.fn(async () => 5),
   };
-  const seed = () => { for (const uri of versions.keys()) { const v = versions.get(uri)!; fingerprints.set(knowledgeImageFingerprintName(uri, v.generation), { kind: "knowledge_image_fingerprint_v1", uri, generation: v.generation, crc32c: v.crc32c, byteLength: v.byteLength, sha256: SHA, recordedAt: "review" }); } };
+  const seed = () => { for (const uri of Array.from(versions.keys())) { const v = versions.get(uri)!; fingerprints.set(knowledgeImageFingerprintName(uri, v.generation), { kind: "knowledge_image_fingerprint_v1", uri, generation: v.generation, crc32c: v.crc32c, byteLength: v.byteLength, sha256: SHA, recordedAt: "review" }); } };
   return { doc, deps, storage, fingerprints, versions, seed };
 }
 const renders = (f: ReturnType<typeof fixture>) => (f.deps.pdf.mock.calls as unknown as [string][]).map(([h]) => h).sort();

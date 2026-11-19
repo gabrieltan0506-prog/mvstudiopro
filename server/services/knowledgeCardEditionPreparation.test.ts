@@ -188,7 +188,7 @@ it('D1 逐页回执并发写入：同键同内容，在途>1且不超上限，�
  expect(peak).toBeGreaterThan(1);expect(peak).toBeLessThanOrEqual(KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY);
  expect(Array.from(parallel.keys()).filter(pageKey).length).toBeGreaterThan(20);
  expect(new Set(parallel.keys())).toEqual(new Set(serial.keys()));
- for(const [k,v] of serial)expect(parallel.get(k)).toEqual(v);
+ for(const [k,v] of Array.from(serial))expect(parallel.get(k)).toEqual(v);
  expect(result).toEqual(ref);
  expect(Object.keys(result.editionPageCounts)).toEqual(['full','concise']);
 });
@@ -214,7 +214,7 @@ it('D1 并发池中途一条回执写入失败：整步失败不报部分成功�
  const result=await prepareKnowledgeCardEditions(params);
  expect(invoke).toHaveBeenCalledTimes(calls);expect(result.verificationProcessed).toBe(true);
  expect(new Set(storage.keys())).toEqual(new Set(clean.keys()));
- for(const [k,v] of clean)expect(storage.get(k)).toEqual(v);
+ for(const [k,v] of Array.from(clean))expect(storage.get(k)).toEqual(v);
  // 再跑一次：命中 editions.json 零写入零调用。
  const before=JSON.stringify(Array.from(storage.entries()));
  await prepareKnowledgeCardEditions(params);
