@@ -40,7 +40,7 @@ export async function resolveKnowledgePublicationImages(owner: number, source: K
 }
 
 /** 补图只能首次绑定到失败/尚未提交的原任务，且必须是同一正文页与版式。 */
-export async function validateKnowledgeImageReplacements(owner: number, before: KnowledgePublication | undefined, next: KnowledgePublication, read = getJobByIdStrict) {
+export async function validateKnowledgeImageReplacements(owner: number, before: KnowledgePublication | undefined, next: KnowledgePublication, read = getJobByIdStrict, loadStaged: (userId: number, digest: string) => Promise<string> = async (userId, digest) => (await import("./handbookManuscriptStage")).loadHandbookManuscript(userId, digest)) {
   const previousAttempts = before?.imageAttempts || {}, attempts = next.imageAttempts || {};
   for (const original of Object.keys(previousAttempts))
     if (!attempts[original]) throw new Error("补图尝试记录不能删除，请先恢复原任务");
@@ -67,11 +67,14 @@ export async function validateKnowledgeImageReplacements(owner: number, before: 
     const old = await read(original);
     if (old && (String(old.userId) !== String(owner) || !knowledgeImageMayRetry(old))) throw new Error("原配图任务尚未确认失败，不可替换或重复购买");
     const job = await read(replacement);
-    const input = job?.input as { action?: string; params?: { kind?: string; scriptContext?: string; distillModel?: string; notePageIndex?: number; infographicTemplateId?: string } } | undefined;
+    const input = job?.input as { action?: string; params?: { kind?: string; scriptContext?: string; manuscriptDigest?: string; distillModel?: string; notePageIndex?: number; infographicTemplateId?: string } } | undefined;
     const params = input?.params;
     if (!job || String(job.userId) !== String(owner) || job.status !== "succeeded" || input?.action !== "platform_composite_sheet_progress" || params?.kind !== "single_page_knowledge_card")
       throw new Error("补图不是当前账号的成功知识配图任务");
-    const body = planKnowledgeCardPages(params.scriptContext || "", params.distillModel).pages[(params.notePageIndex || 0) - 1];
+    // 1119 C4 双形态：旧行用 params.scriptContext（原样）；大稿行只存摘要，按本人取回已封存全文后同样逐页比对
+    const manuscript = params.scriptContext
+      || (typeof params.manuscriptDigest === "string" && /^[a-f0-9]{64}$/.test(params.manuscriptDigest) ? await loadStaged(owner, params.manuscriptDigest) : "");
+    const body = planKnowledgeCardPages(manuscript, params.distillModel).pages[(params.notePageIndex || 0) - 1];
     if (body !== page.body || (params.infographicTemplateId || "") !== (next.infographicTemplateId || "")) throw new Error("补图正文或版式与原稿不一致");
   }
 }

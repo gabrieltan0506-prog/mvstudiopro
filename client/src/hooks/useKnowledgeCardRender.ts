@@ -17,6 +17,7 @@ import { knowledgeCardProgressFromRender } from "@/components/platform/Knowledge
 import { knowledgeCardRecordedModelLabel } from "@shared/knowledgeCardDistillModels";
 import { HANDBOOK_IMAGE_MODEL, HANDBOOK_IMAGE_TIER_LABEL_ZH, HANDBOOK_IMAGE_VARIANT } from "@shared/openaiImageVariant";
 import { knowledgeCardPlannedTextPages } from "@/lib/knowledgeCardPreflightCounts";
+import { handbookManuscriptNeedsStaging, stageHandbookManuscript } from "@/lib/handbookManuscriptStage";
 import { knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh } from "@/lib/knowledgeIllustrationBatchCounts";
 import { synchronizedKnowledgeCardSource } from "@shared/knowledgeCardEditableLayout";
 import { toast } from "@/lib/platformToast";
@@ -143,7 +144,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
       }
       const reusedOriginal = Boolean(url);
       if (!url) {
-        const quote = await trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate({ markdown: text, distillModel: settings.distillModel });
+        const quote = await trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate(await handbookQuoteInput(text, settings.distillModel));
         const price = knowledgeCardCreditsForPageIndex(idx + 1, quote.billingModel);
         if (!window.confirm(`补出第 ${idx + 1}/${total} 页，${price} 积分，是否继续？`)) return;
         const replacementRequestId = knowledgeCardPageTasks.begin("platform_composite_sheet_progress");
@@ -255,6 +256,15 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
    * 生成一張卡片：同步回 imageUrl 直接用；非同步回 progressJobId 則輪詢至終態取圖。
    * @param notePart 舊上/下篇兼容；新路径用 notePageIndex。
    */
+  /** 1119 C4：大稿分段暂存接口（服务端按用户 + sha256 内容寻址，幂等） */
+  const handbookStageApi = () => ({
+    stageChunk: (input: { digest: string; index: number; count: number; totalChars: number; text: string }) => trpcUtils.client.mvAnalysis.stageKnowledgeCardManuscriptChunk.mutate(input),
+    finalize: (input: { digest: string; count: number; totalChars: number }) => trpcUtils.client.mvAnalysis.finalizeKnowledgeCardManuscript.mutate(input),
+  });
+  const handbookQuoteInput = async (markdown: string, distillModel: string) => handbookManuscriptNeedsStaging(markdown)
+    ? { manuscriptDigest: await stageHandbookManuscript(markdown, handbookStageApi()), distillModel }
+    : { markdown, distillModel };
+
   const generateCustomNoteOne = async (
     trimmed: string,
     kind: "single_page_knowledge_card" | "storyboard_sheet_landscape",
@@ -287,11 +297,15 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
      * 版式意图只能走出图约束，不能当内容。
      */
     const scriptContext = trimmed;
+    // 1119 C4：超过 20 万字的手册原稿只带摘要与本页正文（服务端取回全文核对）；20 万字及以下请求形状不变
+    const staged = kind === "single_page_knowledge_card" && notePage && handbookManuscriptNeedsStaging(scriptContext)
+      ? { manuscriptDigest: await stageHandbookManuscript(scriptContext, handbookStageApi()), pageBody: planKnowledgeCardPages(scriptContext).pages[notePage.index - 1] ?? "" }
+      : null;
     const res = await generateCustomNoteMutation.mutateAsync({
       sceneId,
       pageRequestId,
       title,
-      scriptContext,
+      ...(staged ? staged : { scriptContext }),
       kind,
       ...(notePage
         ? { notePageIndex: notePage.index, notePageTotal: notePage.total }
@@ -536,7 +550,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
         const total = pages.length;
         if(overrides?.supplementOf&&total>8)throw new Error("补充图卡实际分页超过8页，未提交生成");
         const qLabel = "4K";
-        const priceQuote = await trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate({ markdown: distilled, distillModel: customNoteDistillModel });
+        const priceQuote = await trpcUtils.client.mvAnalysis.quoteKnowledgeCardForGeneration.mutate(await handbookQuoteInput(distilled, customNoteDistillModel));
         if (priceQuote.pageCount !== total) throw new Error("报价页数与当前稿件不一致，请重新确认");
         const credits = priceQuote.credits;
         /**

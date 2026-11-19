@@ -17,6 +17,30 @@ export function recoveryDraft(row: Row) {
   const settings = image ? [params.notePageTotal, recordedModel(params, output), params.subjectPosition, params.openaiImageVariant, params.infographicTemplateId].map(v => v ?? null) : [];
   return { markdown, input, output, params, image, key: createHash("sha256").update(JSON.stringify([markdown, settings])).digest("hex") };
 }
+/**
+ * 1119 C4 双形态：大稿出图任务行只存 params.manuscriptDigest（不存全文）。这里按任务行所属用户取回已封存全文，
+ * 补成与旧形态相同的 params.scriptContext 视图，之后的 recoveryDraft / 恢复键 / 组装逻辑与旧行完全一样。
+ * 旧行（带 scriptContext）原样返回；取回失败的行不参与恢复（不猜文本、不报部分成功）。
+ */
+const STAGED_DIGEST = /^[a-f0-9]{64}$/;
+export type StagedManuscriptLoader = (userId: number, digest: string) => Promise<string>;
+const defaultStagedLoader: StagedManuscriptLoader = async (userId, digest) =>
+  (await import("./handbookManuscriptStage")).loadHandbookManuscript(userId, digest);
+export async function hydrateStagedManuscriptRows<T extends Row>(rows: T[], load: StagedManuscriptLoader = defaultStagedLoader, strict = false): Promise<T[]> {
+  const texts = new Map<string, Promise<string | null>>();
+  return (await Promise.all(rows.map(async row => {
+    const input = object(row.input), params = object(input.params);
+    const digest = params.manuscriptDigest;
+    if (input.action !== "platform_composite_sheet_progress" || params.kind !== "single_page_knowledge_card" || params.scriptContext || typeof digest !== "string" || !STAGED_DIGEST.test(digest)) return row;
+    const key = `${row.userId}:${digest}`;
+    if (!texts.has(key)) texts.set(key, load(Number(row.userId), digest).catch(error => { if (strict) throw error; return null; }));
+    const text = await texts.get(key)!;
+    if (text === null) return null;
+    return { ...row, input: { ...input, params: { ...params, scriptContext: text } } };
+  }))).filter((row): row is Awaited<T> => row !== null) as T[];
+}
+const stagedDigestOf = (markdown: string) => createHash("sha256").update(markdown, "utf8").digest("hex");
+
 export function assembleRecovery(userId: string, anchor: Row, rows: Row[]) {
   if (anchor.userId !== userId) throw new Error("无法读取这份备份");
   const draft = recoveryDraft(anchor);
@@ -61,8 +85,9 @@ export async function markKnowledgeRecoveryDeleted(userId:string,anchor:Row,stor
 }
 export async function deleteKnowledgeCardRecovery(userId:string,jobId:string){
   const db=await database();
-  const [anchor]=await db.select().from(jobs).where(and(eq(jobs.id,jobId),eq(jobs.userId,userId))).limit(1);
-  if(!anchor)throw Error("无法删除这份备份");
+  const [rawAnchor]=await db.select().from(jobs).where(and(eq(jobs.id,jobId),eq(jobs.userId,userId))).limit(1);
+  if(!rawAnchor)throw Error("无法删除这份备份");
+  const [anchor]=await hydrateStagedManuscriptRows([rawAnchor],undefined,true);
   return markKnowledgeRecoveryDeleted(userId,anchor);
 }
 export async function listKnowledgeCardRecovery(userId: string, cursor?: { at: string; id: string }) {
@@ -72,21 +97,22 @@ export async function listKnowledgeCardRecovery(userId: string, cursor?: { at: s
     .from(jobs).where(and(eq(jobs.userId,userId),eq(jobs.status,"succeeded"),eligible,
       ...(cursor ? [sql`(${jobs.createdAt},${jobs.id}) < (${new Date(cursor.at)},${cursor.id})`] : [])))
     .orderBy(desc(jobs.createdAt),desc(jobs.id)).limit(41);
-  const page=rows.slice(0,40), seen=new Set<string>();
+  const page=await hydrateStagedManuscriptRows(rows.slice(0,40)), seen=new Set<string>();
   const items=page.flatMap(row=>{const d=recoveryDraft(row);if(!d||seen.has(d.key))return [];seen.add(d.key);return [{jobId:row.id,key:d.key,title:d.markdown.split('\n').find(x=>x.trim())?.replace(/^#+\s*/,"").slice(0,100)||"知识卡成品",createdAt:row.createdAt.toISOString(),kind:d.image?"图文成品":"正文备份",total:d.image?Number(d.params.notePageTotal)||0:0}];});
   const visible=await Promise.all(items.map(async item=>await deletionStore.read(deletionPath(userId,item.key))?null:item));
-  const last=page.at(-1);return {items:visible.filter((item):item is typeof items[number]=>item!==null),nextCursor:rows.length>40&&last?{at:last.createdAt.toISOString(),id:last.id}:null};
+  const last=rows.slice(0,40).at(-1);return {items:visible.filter((item):item is typeof items[number]=>item!==null),nextCursor:rows.length>40&&last?{at:last.createdAt.toISOString(),id:last.id}:null};
 }
 export async function getKnowledgeCardRecovery(userId: string, jobId: string) {
   const db = await database();
-  const [anchor]=await db.select().from(jobs).where(and(eq(jobs.id,jobId),eq(jobs.userId,userId))).limit(1);
-  if(!anchor)throw new Error("无法读取这份备份");const draft=recoveryDraft(anchor);if(!draft)throw new Error("这份任务没有可恢复的成品");
+  const [rawAnchor]=await db.select().from(jobs).where(and(eq(jobs.id,jobId),eq(jobs.userId,userId))).limit(1);
+  if(!rawAnchor)throw new Error("无法读取这份备份");
+  const [anchor]=await hydrateStagedManuscriptRows([rawAnchor],undefined,true);const draft=recoveryDraft(anchor);if(!draft)throw new Error("这份任务没有可恢复的成品");
   if(await deletionStore.read(deletionPath(userId,draft.key)))throw Error("这份备份已删除，不能恢复");
   const rows=await db.select({id:jobs.id,userId:jobs.userId,status:jobs.status,input:jobs.input,createdAt:jobs.createdAt,
     output:sql<unknown>`jsonb_build_object('distilledMarkdown',${jobs.output}->'distilledMarkdown','detailLevel',${jobs.output}->'detailLevel','fullEditionMarkdown',${jobs.output}->'fullEditionMarkdown','verificationProcessed',${jobs.output}->'verificationProcessed','distillModel',${jobs.output}->'distillModel','compositeImageUrl',${jobs.output}->'compositeImageUrl','knowledgeCardBillingModel',${jobs.output}->'knowledgeCardBillingModel')`})
     .from(jobs).where(and(eq(jobs.userId,userId),eq(jobs.status,"succeeded"),eligible,
-      sql`(${jobs.input}->'params'->>'scriptContext' = ${draft.markdown} or ${jobs.output}->>'distilledMarkdown' = ${draft.markdown} or ${jobs.output}->>'fullEditionMarkdown' = ${draft.markdown})`));
-  const result=assembleRecovery(userId,anchor,rows);
+      sql`(${jobs.input}->'params'->>'scriptContext' = ${draft.markdown} or ${jobs.input}->'params'->>'manuscriptDigest' = ${stagedDigestOf(draft.markdown)} or ${jobs.output}->>'distilledMarkdown' = ${draft.markdown} or ${jobs.output}->>'fullEditionMarkdown' = ${draft.markdown})`));
+  const result=assembleRecovery(userId,anchor,await hydrateStagedManuscriptRows(rows));
   result.images=result.images.map(image=>{
     const u=new URL(image.url);const [bucket,...segments]=u.pathname.slice(1).split('/');
     if(u.hostname==='storage.googleapis.com' && bucket===getGcsBucketName()) return {...image,url:signGcsObjectPathV4ReadUrl(bucket,segments.map(decodeURIComponent).join('/'),7*24*3600)};

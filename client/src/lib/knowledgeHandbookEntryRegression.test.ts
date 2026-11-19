@@ -12,6 +12,7 @@ import * as lifecycle from "./knowledgeIllustrationRun";
 import * as handbookVariant from "../../../shared/openaiImageVariant";
 import { knowledgeCardPlannedTextPages } from "./knowledgeCardPreflightCounts";
 import { knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh } from "./knowledgeIllustrationBatchCounts";
+import { handbookManuscriptNeedsStaging, stageHandbookManuscript } from "./handbookManuscriptStage";
 
 // 执行生产处理函数，避免只测辅助函数而遗漏按钮之间的真实组合。
 // 1119 C0：手册前台流程已原样搬到两个 hook；三份源码拼接后按原标记提取同一段生产代码。
@@ -25,7 +26,15 @@ function take(start: string, end: string) {
 }
 function run(raw: string, ctx: any) {
   // 1119：出图 hook 新引用的模块级导入（授权档常量、文字页数、批次计数）按真实实现注入。
-  Object.assign(ctx, { ...handbookVariant, knowledgeCardPlannedTextPages, knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh }, { customNoteCardsOnly: ctx.customNoteCardsOnly ?? false, setKnowledgeDistillLive: ctx.setKnowledgeDistillLive });
+  Object.assign(ctx, { ...handbookVariant, knowledgeCardPlannedTextPages, knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh, handbookManuscriptNeedsStaging, stageHandbookManuscript }, { customNoteCardsOnly: ctx.customNoteCardsOnly ?? false, setKnowledgeDistillLive: ctx.setKnowledgeDistillLive });
+  // 与 useKnowledgeCardRender 内同名辅助一致（1119 C4）：20 万字及以下原样 {markdown}，超过才走摘要
+  ctx.handbookStageApi ??= () => ({
+    stageChunk: (input: any) => ctx.trpcUtils.client.mvAnalysis.stageKnowledgeCardManuscriptChunk.mutate(input),
+    finalize: (input: any) => ctx.trpcUtils.client.mvAnalysis.finalizeKnowledgeCardManuscript.mutate(input),
+  });
+  ctx.handbookQuoteInput ??= async (markdown: string, distillModel: string) => handbookManuscriptNeedsStaging(markdown)
+    ? { manuscriptDigest: await stageHandbookManuscript(markdown, ctx.handbookStageApi()), distillModel }
+    : { markdown, distillModel };
   vm.createContext(ctx);
   vm.runInContext(ts.transpileModule(raw, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText, ctx);
 }
@@ -352,5 +361,40 @@ describe("1119 C1/C2/C3 生成入口", () => {
     expect(counts).toEqual({ succeeded: 3, failed: 1, pending: 1, notDispatched: 2 });
     expect(knowledgeIllustrationBatchSummaryZh(counts!)).toContain("已完成 3 页");
     expect(knowledgeIllustrationBatchCounts(new Error("旧版普通错误"))).toBeNull();
+  });
+});
+
+describe("1119 C4 生成入口：大稿只带摘要与本页正文", () => {
+  function oneContext() {
+    const sent: any[] = [];
+    const ctx: any = { console, crypto: webcrypto, TextEncoder, Set, Map, ...pagination, knowledgeCardPageTasks: { assertLive: noop, begin: () => randomUUID(), finish: noop },
+      newPlatformCompositeProgressJobId: randomUUID, extractInfographicSubjectFromUserCopy: () => "稿", COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR: "gpt54",
+      customNoteDistillModel: "deepseek-v4.1-flash-1017", customNoteSubjectPosition: "left", customNoteInfographicTemplateId: null, enabledPlatformSkillIds: new Set(), allowBloggerTitle: false,
+      generateCustomNoteMutation: { mutateAsync: vi.fn(async (input: any) => { sent.push(input); return { imageUrl: "https://test.invalid/x.png" }; }) },
+      trpcUtils: { client: { mvAnalysis: { stageKnowledgeCardManuscriptChunk: { mutate: vi.fn(async () => ({ stored: true })) }, finalizeKnowledgeCardManuscript: { mutate: vi.fn(async () => ({})) } } } } };
+    run(take("  const generateCustomNoteOne = async (", "\n  const mapCustomNoteError") + "\nglobalThis.one = generateCustomNoteOne;", ctx);
+    return { ctx, sent };
+  }
+  const snap = { distillModel: "deepseek-v4.1-flash-1017", billingModel: "deepseek-v4.1-flash-1017", subjectPosition: "left", infographicTemplateId: null };
+  it("15 万字：请求仍带整份 scriptContext，无摘要字段，不上传", async () => {
+    const { ctx, sent } = oneContext();
+    const text = "## 一\n" + "光合作用。".repeat(30_000);
+    await ctx.one(text, "single_page_knowledge_card", undefined, { index: 1, total: 1 }, "openai", snap, { requestId: randomUUID(), jobId: "kc_a" });
+    expect(sent[0].scriptContext).toBe(text);
+    expect(sent[0]).not.toHaveProperty("manuscriptDigest");
+    expect(sent[0]).not.toHaveProperty("pageBody");
+    expect(ctx.trpcUtils.client.mvAnalysis.stageKnowledgeCardManuscriptChunk.mutate).not.toHaveBeenCalled();
+  });
+  it("超过 20 万字：先暂存，再只带摘要与本页正文；无任何字段超过 20 万字", async () => {
+    const { ctx, sent } = oneContext();
+    const text = Array.from({ length: 400 }, (_, i) => `## 第${i + 1}节\n${"细胞呼吸释放能量。".repeat(70)}`).join("\n\n");
+    expect(text.length).toBeGreaterThan(200_000);
+    const page = pagination.planKnowledgeCardPages(text).pages[1];
+    await ctx.one(text, "single_page_knowledge_card", undefined, { index: 2, total: pagination.planKnowledgeCardPages(text).pageCount }, "openai", snap, { requestId: randomUUID(), jobId: "kc_b" });
+    expect(sent[0]).not.toHaveProperty("scriptContext");
+    expect(sent[0].manuscriptDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(sent[0].pageBody).toBe(page);
+    for (const v of Object.values(sent[0])) if (typeof v === "string") expect(v.length).toBeLessThanOrEqual(200_000);
+    expect(ctx.trpcUtils.client.mvAnalysis.finalizeKnowledgeCardManuscript.mutate).toHaveBeenCalledTimes(1);
   });
 });
