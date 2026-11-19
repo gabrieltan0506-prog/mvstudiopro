@@ -25,7 +25,7 @@ function take(start: string, end: string) {
 }
 function run(raw: string, ctx: any) {
   // 1119：出图 hook 新引用的模块级导入（授权档常量、文字页数、批次计数）按真实实现注入。
-  Object.assign(ctx, { ...handbookVariant, knowledgeCardPlannedTextPages, knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh }, { customNoteCardsOnly: ctx.customNoteCardsOnly ?? false });
+  Object.assign(ctx, { ...handbookVariant, knowledgeCardPlannedTextPages, knowledgeIllustrationBatchCounts, knowledgeIllustrationBatchSummaryZh }, { customNoteCardsOnly: ctx.customNoteCardsOnly ?? false, setKnowledgeDistillLive: ctx.setKnowledgeDistillLive });
   vm.createContext(ctx);
   vm.runInContext(ts.transpileModule(raw, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText, ctx);
 }

@@ -67,6 +67,7 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
     setCustomNoteUploadStatus,
     setKnowledgeCardEpubPdfs,
     setKnowledgeDistillDiagnostics,
+    setKnowledgeDistillLive,
     setReadingAdvisorDrafts,
     setReadingAdvisorStatus,
     showKnowledgeCardEpubPdfs,
@@ -392,7 +393,10 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
           distillPhase?: string; distillDoneChunks?: number; distillTotalChunks?: number;
           epubPdfs?: Array<{ fileName: string; url: string }>;
           readingPreparation?: KnowledgeReadingProgress;
+          distillStageAt?: Record<string, string>;
         };
+        // 1119 F1/F2：只读记录本次提炼的分段计时与已就绪分组数，供 Debug 计时与进行中预览；不触发任何请求或收费
+        setKnowledgeDistillLive?.({ jobId: pollJobId, readyBatches: Array.isArray(out.readingPreparation?.ready) ? out.readingPreparation!.ready.length : 0, stageAt: out.distillStageAt && typeof out.distillStageAt === "object" ? out.distillStageAt : undefined });
         // EPUB 一转完就出下载按钮，不等提炼结束（后面提炼失败也能下载）
         if (Array.isArray(out.epubPdfs) && out.epubPdfs.length) showKnowledgeCardEpubPdfs(out.epubPdfs);
         const label = stageLabel(out);
@@ -425,6 +429,8 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
       if(customNoteTrackedRequestRef.current?.jobId===ownedJobId)customNoteTrackedRequestRef.current=null;
       if(customNoteFollowOnlyJobRef.current===ownedJobId)customNoteFollowOnlyJobRef.current="";
       setCustomNoteCancelRequested(false);
+      // 进行中预览只属于这单；结束（成功/失败/停止）即收起，计时留给 Debug 面板
+      setKnowledgeDistillLive?.((prev: { jobId: string } | null) => (prev?.jobId === ownedJobId ? { ...prev, done: true } : prev));
     }
   };
 

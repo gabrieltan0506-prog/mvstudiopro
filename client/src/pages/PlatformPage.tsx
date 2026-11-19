@@ -5,6 +5,7 @@ import { KnowledgeReadingLive } from "@/components/platform/KnowledgeReadingLive
 import type { ReadingDraft } from "@/lib/knowledgeReadingPreparation";
 import { useKnowledgeCardDistill } from "@/hooks/useKnowledgeCardDistill";
 import { useKnowledgeCardRender } from "@/hooks/useKnowledgeCardRender";
+import { KnowledgeDistillPreview, KnowledgeDistillStageTimes, type KnowledgeDistillLive } from "@/components/platform/KnowledgeDistillPreview";
 import { createKnowledgeReadingController } from "@/lib/knowledgeReadingPreparation";
 import { streamManhuaAdvisor } from "@/lib/manhuaAdvisorStream";
 import type { KnowledgeReadingProgress } from "@shared/knowledgeReadingPreparation";
@@ -3218,6 +3219,8 @@ export default function PlatformPage() {
   const [customNotePreflight, setCustomNotePreflight] = useState<KnowledgeCardPreflightSummary | null>(null);
   /** 只出卡片（1119 C3）：不建手册排版、不启动顾问；默认关（原手册流程） */
   const [customNoteCardsOnly, setCustomNoteCardsOnly] = useState(false);
+  /** 1119 F1/F2：本次提炼的分段计时（仅 Debug）与已就绪分组数（进行中预览） */
+  const [knowledgeDistillLive, setKnowledgeDistillLive] = useState<KnowledgeDistillLive | null>(null);
   /**
    * 等确认期间的互锁（复审 P1）：state 用来锁 UI，ref 用来在 handler 里同步判断——
    * 光靠按钮 disabled 挡不住键盘绕行与同帧重入。
@@ -8146,7 +8149,7 @@ export default function PlatformPage() {
     customNoteKnowledgePlan.credits ||
     knowledgeCardCreditsForPages(customNoteKnowledgePlan.pageCount || 0, customNoteDistillModel);
 
-  const { customNotePaginationKey, paginationFingerprint, setPaginationFingerprint, currentNotePagination, deriveCompactFromFull, adoptDistilledFullMarkdown, isKnowledgeCardDeriveStale, switchKnowledgeCardLevel, runKnowledgeCardDistill } = useKnowledgeCardDistill({ KNOWLEDGE_CARD_DERIVE_STALE_MESSAGE, bumpCustomNoteRevision, customNoteBusy, customNoteCompactMarkdown, customNoteCompactMarkdownRef, customNoteDetailLevel, customNoteDistillModel, customNoteDistillPhase, customNoteFollowOnlyJobRef, customNoteFullMarkdown, customNoteFullMarkdownRef, customNoteIllustrationMarkdown, customNoteInfographicTemplateId, customNoteLevelSwitching, customNotePagination, customNotePendingConfirmRef, customNotePendingFilesRef, customNoteRevisionRef, customNoteText, customNoteTrackedRequestRef, customNoteUploadBusy, customNoteUploadStopRef, deriveOwnedJobIdRef, enqueueKnowledgeCardLevelDeriveMutation, hasSupervisorOpsAccess, knowledgeCardLayoutSourceIdRef, knowledgeCardPageTasks, knowledgePollingRef, knowledgeVerifiedEditionRef, prepareKnowledgeCardCopyMutation, readingControllerRef, readingFullMarkdownRef, setCustomNoteCancelRequested, setCustomNoteCompactMarkdown, setCustomNoteDetailLevel, setCustomNoteDistillJobId, setCustomNoteFullMarkdown, setCustomNoteLevelSwitching, setCustomNotePendingMeta, setCustomNotePreparedModel, setCustomNoteProgress, setCustomNoteText, setCustomNoteUploadStatus, setKnowledgeCardEpubPdfs, setKnowledgeDistillDiagnostics, setReadingAdvisorDrafts, setReadingAdvisorStatus, showKnowledgeCardEpubPdfs, workbenchUserKey });
+  const { customNotePaginationKey, paginationFingerprint, setPaginationFingerprint, currentNotePagination, deriveCompactFromFull, adoptDistilledFullMarkdown, isKnowledgeCardDeriveStale, switchKnowledgeCardLevel, runKnowledgeCardDistill } = useKnowledgeCardDistill({ KNOWLEDGE_CARD_DERIVE_STALE_MESSAGE, bumpCustomNoteRevision, customNoteBusy, customNoteCompactMarkdown, customNoteCompactMarkdownRef, customNoteDetailLevel, customNoteDistillModel, customNoteDistillPhase, customNoteFollowOnlyJobRef, customNoteFullMarkdown, customNoteFullMarkdownRef, customNoteIllustrationMarkdown, customNoteInfographicTemplateId, customNoteLevelSwitching, customNotePagination, customNotePendingConfirmRef, customNotePendingFilesRef, customNoteRevisionRef, customNoteText, customNoteTrackedRequestRef, customNoteUploadBusy, customNoteUploadStopRef, deriveOwnedJobIdRef, enqueueKnowledgeCardLevelDeriveMutation, hasSupervisorOpsAccess, knowledgeCardLayoutSourceIdRef, knowledgeCardPageTasks, knowledgePollingRef, knowledgeVerifiedEditionRef, prepareKnowledgeCardCopyMutation, readingControllerRef, readingFullMarkdownRef, setCustomNoteCancelRequested, setCustomNoteCompactMarkdown, setCustomNoteDetailLevel, setCustomNoteDistillJobId, setCustomNoteFullMarkdown, setCustomNoteLevelSwitching, setCustomNotePendingMeta, setCustomNotePreparedModel, setCustomNoteProgress, setCustomNoteText, setCustomNoteUploadStatus, setKnowledgeCardEpubPdfs, setKnowledgeDistillDiagnostics, setKnowledgeDistillLive, setReadingAdvisorDrafts, setReadingAdvisorStatus, showKnowledgeCardEpubPdfs, workbenchUserKey });
 
   /**
    * 终止后台读档（0911 用户令）。只发停止请求，真正收口由 worker 做：
@@ -12251,6 +12254,12 @@ export default function PlatformPage() {
           </div>
         ) : null}
         {canShowPlatformDebug && debugMode ? <ApiErrorDebugPanel /> : null}
+        {canShowPlatformDebug && debugMode && knowledgeDistillLive?.stageAt ? (
+          <div className="mb-6 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-[#d7d0ef]">
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8cefff]">读档提炼分段计时 Debug · {knowledgeDistillLive.jobId}</div>
+            <KnowledgeDistillStageTimes stageAt={knowledgeDistillLive.stageAt} />
+          </div>
+        ) : null}
         {canShowPlatformDebug && debugMode && knowledgeDistillDiagnostics.length ? (
           <div className="mb-6 rounded-2xl border border-[#ff9c7a]/30 bg-[rgba(255,156,122,0.06)] p-4">
             <div className="flex items-center justify-between">
@@ -14901,6 +14910,7 @@ export default function PlatformPage() {
                         if(prepared)await handleGenerateCustomNote({text:prepared.markdown,kind:'single_page_knowledge_card',supplementOf:prepared.selection});
                       })();}} />
                   )}
+                  <KnowledgeDistillPreview live={knowledgeDistillLive} />
                   <KnowledgeCardPreflight
                     summary={customNotePreflight}
                     debug={canShowPlatformDebug && debugMode}

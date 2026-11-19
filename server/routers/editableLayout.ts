@@ -33,6 +33,12 @@ export const editableLayoutRouter = router({
     return {...state,paidUnit,maxCredits:0,estimatedCredits:0};
   }),
 
+  /** 1119 F2：提炼中已完成分段的只读预览（原顺序，非最终稿）；不调模型、不扣费、不写对象。 */
+  distillPreview: publicationProcedure.input(z.object({jobId:z.string().regex(/^kc_[a-zA-Z0-9_-]+$/),fromBatch:z.number().int().min(0).max(1_000_000)}).strict()).query(async({ctx,input})=>{
+    const {knowledgeDistillPreview}=await import("../services/handbookDistillPreview");
+    return knowledgeDistillPreview(ctx.user.id,input.jobId,input.fromBatch);
+  }),
+
   bookLayoutInput: publicationProcedure.input(z.object({documentId:z.string().uuid()}).strict()).query(async({ctx,input})=>{
     const {loadKnowledgeBookLayoutInput}=await import("../services/knowledgeBookLayout");
     // 同一云稿版本复用解析结果（顾问整册排版发车前也读同一份）。
