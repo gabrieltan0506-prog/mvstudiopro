@@ -8435,6 +8435,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           if (plannedBody === undefined || plannedBody !== rawInput.pageBody) {
             throw new TRPCError({ code: "BAD_REQUEST", message: "本页正文与已上传原稿不一致，请重新确认；未扣费、未提交出图" });
           }
+          // 大稿路径：总页数也在占位之前核对（旧路径仍在占位后由 assertKnowledgeCardPageSelection 核对，行为不变）。
+          const plannedTotal = planKnowledgeCardPages(stagedManuscript).pages.length;
+          if (rawInput.notePageTotal !== undefined && rawInput.notePageTotal !== plannedTotal) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "总页数与已上传原稿不一致，请重新确认；未扣费、未提交出图" });
+          }
+          // 大稿路径不接受把结果挂到别的任务或作品记录：否则整份原稿会被写进那一行。
+          if (rawInput.jobId || rawInput.creationRecordId) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "该请求不支持关联其他任务；未扣费、未提交出图" });
+          }
         }
         const input = { ...rawInput, scriptContext: stagedManuscript ?? rawInput.scriptContext ?? "" };
         /** 手册配图：服务端自行绑定授权档，Skill 与前台偏好都改不了（1119 C1） */
