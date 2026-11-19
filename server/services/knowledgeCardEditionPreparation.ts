@@ -40,6 +40,25 @@ export function knowledgeEditionSelectionDigest(sourceMarkdown:string,targetSect
     modules:parsed.modules.map(m=>({headline:m.headline,body:m.body.replace(/<!--\s*待核[：:][\s\S]*?-->/g,'').replace(/\s+/g,' ').trim()}))})).digest('hex');
 }
 
+/** 逐页回执写入并发上限（每条一次对象存储上传）。 */
+export const KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY=16;
+/**
+ * 逐页回执有界并发写入：键与内容与逐条串行写完全相同（每键只写一次、互不依赖，无读者依赖写入先后）。
+ * 任一条失败即停止领取新条目，等在途全部收口后抛出序号最小的那条错误（与串行时最先失败的一条一致），
+ * 不留后台写入、不报部分成功；重跑按同键同内容覆盖写，幂等。
+ */
+async function saveKnowledgeEditionReceipts(evidence:KnowledgeRouteEvidence,entries:readonly (readonly [string,unknown])[]){
+  let next=0;let failure:{index:number;error:unknown}|undefined;
+  await Promise.all(Array.from({length:Math.min(KNOWLEDGE_EDITION_RECEIPT_WRITE_CONCURRENCY,entries.length)},async()=>{
+    while(!failure&&next<entries.length){
+      const index=next++;
+      try{await evidence.save(entries[index]![0],entries[index]![1]);}
+      catch(error){if(!failure||index<failure.index)failure={index,error};}
+    }
+  }));
+  if(failure)throw failure.error;
+}
+
 /** 同一底稿只整理一次；两版由同一份模块确定性编译，恢复读取原回执。 */
 export async function prepareKnowledgeCardEditions(params:{
   sourceMarkdown:string;model?:string;targetSections?:number;evidence:KnowledgeRouteEvidence;abortSignal?:AbortSignal;
@@ -195,15 +214,16 @@ ${KNOWLEDGE_EDITION_INSTRUCTIONS}`}]},
     await evidence.save(`${evidence.prefix}/pages/${level}/manuscript.json`,{inputDigest,markdown});
     const parts=knowledgeEditionParts(markdown)!;
     editionPageCounts[level]={imagePages:null,readingPages:null};
-    for(const [index,module] of Array.from(parts.modules.entries()))
-      await evidence.save(`${evidence.prefix}/pages/${level}/chapters/${index}.json`,{inputDigest,...module,status:hasKnowledgeBody(module.body)?'saved':'pending_content'});
+    await saveKnowledgeEditionReceipts(evidence,Array.from(parts.modules.entries()).map(([index,module])=>
+      [`${evidence.prefix}/pages/${level}/chapters/${index}.json`,{inputDigest,...module,status:hasKnowledgeBody(module.body)?'saved':'pending_content'}] as const));
     try{
       const plan=planKnowledgeCardPages(markdown,params.model);
       editionPageCounts[level].imagePages=plan.pageCount;
       // 生图前预检（完整版≤48张主题图、图文同页、页数=图数、内文超图下容量时报压缩目标；精华版≤30张、图:文1:2–1:3）；只提示不阻断。
       const topics=knowledgeEditionImagePlan(markdown);
       editionPageCounts[level].pageBudget=knowledgeEditionBudgetCheck(level,plan.pageCount,topics?.readingChars||0,knowledgeEditionImageChars(topics));
-      for(const [index,body] of Array.from(plan.pages.entries()))await evidence.save(`${evidence.prefix}/pages/${level}/images/${index}.json`,{inputDigest,pageIndex:index,body,status:'saved'});
+      await saveKnowledgeEditionReceipts(evidence,Array.from(plan.pages.entries()).map(([index,body])=>
+        [`${evidence.prefix}/pages/${level}/images/${index}.json`,{inputDigest,pageIndex:index,body,status:'saved'}] as const));
     }catch(error){rethrowKnowledgeEditionInvariant(error);issues.push({kind:'pagination',message:knowledgeEditionErrorMessage(error),level});}
     try{
       const text=parts.modules.filter(m=>m.medium==='text');

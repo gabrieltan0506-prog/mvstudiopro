@@ -84,6 +84,9 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
      const id=`${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
      const source={title:'图文知识手册',pages:[{id,headline:'章节补齐与疑点修订',body:prepared[i],imageUrl:''}]};
      const request=buildKnowledgeFinalRevisionRequest(source,digest,[verification],channel);
+     // 修订走 GLM 首发链：GLM@本页通道 → GLM@另一通道 → DeepSeek v4.1 Flash 1017（未设模型族时路由表默认 DeepSeek 先发）。
+     // 只影响新建请求；已存 request.json 的页按原请求回放，回执身份不变。
+     request.executionFamily='glm';
      request.systemInstruction.parts.push({text:'保留原有内容、章节标题、主要/次要标记及图说明；只补齐本页缺失正文并处理实际疑点。不得删除空章节来伪装补齐，不虚构原书内容或来源。不能补齐的章节保留原样并保留待核注释。'});
      const old=await evidence.read(`${revisionPrefix}/request.json`);
      if(old&&old.digest!==digest)throw Error('修订输入变化，不能重新购买');
@@ -146,7 +149,8 @@ export async function verifyKnowledgeEditionManuscripts(bodies:string[],storage:
  let questionIndex=0;
  const routeByPage=required.map((needs,i)=>needs?questionIndex++%2:i%2);
  let stopped=false;
- const work=(['openrouter','evolink'] as const).flatMap((channel,routeIndex)=>{
+ // 首个待核页从 EvoLink 起（GLM@EvoLink 首发），其后两通道交替；各页仍可经路由回落到另一通道与 DeepSeek。
+ const work=(['evolink','openrouter'] as const).flatMap((channel,routeIndex)=>{
   const indices=bodies.map((_,i)=>i).filter(i=>routeByPage[i]===routeIndex);
   let next=0;
   return Array.from({length:knowledgeStageConcurrency(indices.length,{max:KNOWLEDGE_MODEL_CHANNEL_MAX[channel]})},async()=>{
