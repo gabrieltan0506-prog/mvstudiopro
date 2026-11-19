@@ -225,4 +225,25 @@ describe("审查回归（1120）", () => {
     expect(b.status(7, sb.taskId)?.status).toBe("succeeded");
     expect(c.t - t0).toBeLessThan(60_000);
   });
+  it("PDF 部分段未完成（结果带 pdfError、无 pdfUrl）：再次发起要真正续做，不能把半成品当已完成复用 30 分钟（同进程与重启后都一样）", async () => {
+    const store = memoryStore(), c = clock();
+    const partial = { htmlUrl: "h", htmlBytes: 1, chapters: 2, pdfError: "HTML已保存，PDF有1段未完成；可继续生成PDF，已成功部分会复用" } as any;
+    let calls = 0;
+    const run = async () => (++calls === 1 ? partial : result);
+    const a = createKnowledgeExportTasks({ run, store, holder: "A", now: c.now, sleep: c.sleep, every: c.every });
+    const s1 = await a.start(7, "doc", "10"); await a.settled(s1.taskId);
+    expect(a.status(7, s1.taskId)).toMatchObject({ status: "succeeded", result: partial });
+    const s2 = await a.start(7, "doc", "10"); await a.settled(s2.taskId);
+    expect(calls).toBe(2);
+    expect(a.status(7, s2.taskId)).toMatchObject({ status: "succeeded", result });
+    // 重启：持久记录里若是半成品，也要重新执行。
+    calls = 0;
+    const store2 = memoryStore();
+    const b = createKnowledgeExportTasks({ run, store: store2, holder: "B", now: c.now, sleep: c.sleep, every: c.every });
+    const t1 = await b.start(7, "doc", "10"); await b.settled(t1.taskId);
+    const b2 = createKnowledgeExportTasks({ run, store: store2, holder: "C", now: c.now, sleep: c.sleep, every: c.every });
+    const t2 = await b2.start(7, "doc", "10"); await b2.settled(t2.taskId);
+    expect(calls).toBe(2);
+    expect(b2.status(7, t2.taskId)).toMatchObject({ status: "succeeded", result });
+  });
 });

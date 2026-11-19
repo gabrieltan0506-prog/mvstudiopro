@@ -69,6 +69,8 @@ export const knowledgeExportTaskRecordName = (owner: number, taskId: string) => 
 export const knowledgeExportLeaseName = (owner: number, renderKey: string) =>
   `knowledge-publications/user-${owner}/export-leases/${createHash("sha256").update(renderKey).digest("hex").slice(0, 32)}.json`;
 type Lease = { kind: "knowledge_export_lease_v1"; renderKey: string; holder: string; status: "running" | "succeeded" | "failed"; startedAt: number; heartbeatAt: number; finishedAt?: number };
+/** 完整成功 = 成功且已得到整册 PDF；只保存了 HTML、PDF 有段未完成的结果须可续做，不当成品复用。 */
+const complete = (state: KnowledgeExportTaskState) => state.status === "succeeded" && !!state.result?.pdfUrl && !state.result.pdfError;
 const safeLog = (error: unknown) => String((error as Error)?.message ?? error).replace(/(?:https?|gs):\/\/\S+/g, "[地址]").slice(0, 300);
 
 export function createKnowledgeExportTasks(deps: Deps) {
@@ -187,8 +189,8 @@ export function createKnowledgeExportTasks(deps: Deps) {
       const key = `${owner}|${documentId}|${generation}`;
       const taskId = taskIdOf(key);
       const prior = tasks.get(taskId);
-      // 进行中或已成功：复用；失败：允许重新发起（已完成分片在云端复用）。
-      if (prior && prior.owner === owner && prior.state.status !== "failed") return prior.state;
+      // 进行中或已完整成功（有 PDF）：复用；失败或只完成一部分（带 pdfError、无 pdfUrl，提示「可继续生成」）：允许重新发起（已完成分片在云端复用）。
+      if (prior && prior.owner === owner && (prior.state.status === "running" || complete(prior.state))) return prior.state;
       // 同一进程内并发发起：合并为一次（含读持久记录的那段等待）。
       const pending = starting.get(taskId);
       if (pending) return pending;
@@ -198,7 +200,7 @@ export function createKnowledgeExportTasks(deps: Deps) {
           const saved = await deps.store.read(knowledgeExportTaskRecordName(owner, taskId)).catch(() => null);
           const state = saved?.value?.state as KnowledgeExportTaskState | undefined;
           if (saved?.value?.kind === "knowledge_export_task_v1" && saved.value.owner === owner && state?.taskId === taskId
-            && state.status === "succeeded" && now() - state.finishedAt <= KEEP_FINISHED_MS) {
+            && complete(state) && now() - state.finishedAt <= KEEP_FINISHED_MS) {
             tasks.set(taskId, { owner, key, state, promise: Promise.resolve() });
             return state;
           }
