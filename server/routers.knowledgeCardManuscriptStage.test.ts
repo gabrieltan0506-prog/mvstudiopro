@@ -79,7 +79,7 @@ describe("暂存：内容寻址、幂等、缺段与摘要校验", () => {
     const wrong = "f".repeat(64), count = Math.ceil(BIG.length / KNOWLEDGE_CARD_MAX_MANUSCRIPT_CHARS);
     for (let index = 0; index < count; index++) await caller().mvAnalysis.stageKnowledgeCardManuscriptChunk({ digest: wrong, index, count, totalChars: BIG.length, text: BIG.slice(index * 200_000, (index + 1) * 200_000) });
     await expect(caller().mvAnalysis.finalizeKnowledgeCardManuscript({ digest: wrong, count, totalChars: BIG.length })).rejects.toThrow("不一致");
-    expect([...mocks.objects.keys()].some(k => k.endsWith("manifest.json"))).toBe(false);
+    expect(Array.from(mocks.objects.keys()).some(k => k.endsWith("manifest.json"))).toBe(false);
   });
   it("缺段（客户端中途死掉）：不能封存、不能报价、不能出图；补传后可继续", async () => {
     const { digest, count } = await stage(BIG, 7, [3]);

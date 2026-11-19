@@ -173,7 +173,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
     } catch (e) {
       const msg = mapCustomNoteError(e);
       setCustomNoteError(msg);
-      setCustomNoteProgress((prev) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
+      setCustomNoteProgress((prev: any) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
       toast.error(`补出失败：${msg.slice(0, 120)}`);
     } finally {
       markInflight(runId, idx, false);
@@ -191,8 +191,8 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
       // 0923 用户令：下载后直接删档、按钮消失。Fly 临时副本已建好（下载走它，12 小时自动过期），
       // 所以此刻删 GCS 存档不影响这次下载
       knowledgeCardEpubPdfTakenRef.current.add(pdf.url);
-      setKnowledgeCardEpubPdfs((prev) => prev.filter((p) => p.url !== pdf.url));
-      deleteKnowledgeCardEpubPdfMutation.mutateAsync({ url: pdf.url }).catch((err) => {
+      setKnowledgeCardEpubPdfs((prev: any) => prev.filter((p: any) => p.url !== pdf.url));
+      deleteKnowledgeCardEpubPdfMutation.mutateAsync({ url: pdf.url }).catch((err: any) => {
         console.warn("[knowledgeCard] EPUB PDF 存档删除失败：", err);
       });
     } catch (e) {
@@ -604,8 +604,8 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
           }
         })();
         const continueGen = await askKnowledgeCardPreflight({
-          levelZh: KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH[pendingSnapshot.detailLevel],
-          layoutZh: KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[pendingSnapshot.subjectPosition],
+          levelZh: KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH[pendingSnapshot.detailLevel as keyof typeof KNOWLEDGE_CARD_DETAIL_LEVEL_LABEL_ZH],
+          layoutZh: KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[pendingSnapshot.subjectPosition as keyof typeof KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH],
           templateZh: customNoteInfographicLabelZh || "未选（按正文自动）",
           distillModelZh:
             knowledgeCardRecordedModelLabel(pendingSnapshot.billingModel),
@@ -647,7 +647,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
           subjectPosition: pendingSnapshot.subjectPosition,
           infographicTemplateId: pendingSnapshot.infographicTemplateId,
         };
-        toast.success(`开始出图 · ${total} 页 · ${qLabel} · ${KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[customNoteSubjectPosition]}`);
+        toast.success(`开始出图 · ${total} 页 · ${qLabel} · ${KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH[customNoteSubjectPosition as keyof typeof KNOWLEDGE_CARD_SUBJECT_POSITION_LABEL_ZH]}`);
         /**
          * 官方与 EvoLink 同时首发，各两个 worker，共四路；空闲 worker 领取下一页。
          * 每页只发一次，明确失败由服务端同型号回落，结果未知保留原任务；按原页序回填。
@@ -675,7 +675,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
           setCustomNoteImageUpper(urls[0] ?? null);
           setCustomNoteImageLower(urls[1] ?? null);
           // 已判失败的终态不被在途页的回填覆盖回「运行中」
-          setCustomNoteProgress((prev) => prev.status === "failed" ? prev : { status: "running", percent: knowledgeCardProgressFromRender(ready.length, total), stageDone: ready.length, stageTotal: total, label: `出图 ${ready.length}/${total} 页（并发 ${knowledgeCardRenderConcurrency(total)}）` });
+          setCustomNoteProgress((prev: any) => prev.status === "failed" ? prev : { status: "running", percent: knowledgeCardProgressFromRender(ready.length, total), stageDone: ready.length, stageTotal: total, label: `出图 ${ready.length}/${total} 页（并发 ${knowledgeCardRenderConcurrency(total)}）` });
         };
         setCustomNoteProgress({ status: "running", percent: knowledgeCardProgressFromRender(0, total), stageDone: 0, stageTotal: total, label: `出图 0/${total} 页（并发 ${knowledgeCardRenderConcurrency(total)}）` });
         customNoteStopRenderRef.current = false;
@@ -754,7 +754,7 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
       const msg = batchCounts ? knowledgeIllustrationBatchUserMessage(batchCounts) : mapCustomNoteError(e);
       setCustomNoteError(msg);
       if (kind === "single_page_knowledge_card") {
-        setCustomNoteProgress((prev) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
+        setCustomNoteProgress((prev: any) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
         // 在途页会继续出图并回填，这里如实告知已完成页数与对应页费（读同步镜像，不在 updater 里做副作用）
         const doneCount = customNoteImagesRef.current.filter(Boolean).length;
         // 旧版普通错误仍按已回填页数计。

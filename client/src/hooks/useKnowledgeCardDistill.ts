@@ -108,7 +108,7 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
       customNoteTrackedRequestRef.current={jobId:derivedJobId,requestId:pageRequestId,action:"knowledge_card_derive_level"};
       setCustomNoteDistillJobId(derivedJobId);
       deriveOwnedJobIdRef.current = derivedJobId;
-      const queued = await submitKnowledgeCardOnce(() => enqueueKnowledgeCardLevelDeriveMutation.mutateAsync({
+      const queued: any = await submitKnowledgeCardOnce(() => enqueueKnowledgeCardLevelDeriveMutation.mutateAsync({
         pageRequestId,
         fullMarkdown: full,
         distillModel: customNoteDistillModel,
@@ -120,7 +120,7 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
         signal:pollController.signal,
         onUnavailable: error => {
           const message=knowledgeCardRecoveryMessage(error);
-          setCustomNoteProgress(prev=>({...prev,status:"running",label:message}));
+          setCustomNoteProgress((prev: any)=>({...prev,status:"running",label:message}));
           setCustomNoteUploadStatus(message);
         },
         intervalMs: 3000,
@@ -176,7 +176,7 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
       // 只清自己那单（迟到的旧派生不许抹掉新任务的终止按钮）
       const owned = deriveOwnedJobIdRef.current;
       if (owned) {
-        setCustomNoteDistillJobId((prev) => (prev === owned ? "" : prev));
+        setCustomNoteDistillJobId((prev: any) => (prev === owned ? "" : prev));
         deriveOwnedJobIdRef.current = "";
         if(customNoteTrackedRequestRef.current?.jobId===owned)customNoteTrackedRequestRef.current=null;
         setCustomNoteCancelRequested(false);
@@ -247,7 +247,7 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
       setCustomNoteDetailLevel(previousLevel);
       try { localStorage.setItem("mvs-knowledge-card-detail-level", previousLevel); } catch { /* ignore */ }
       toast.error(`${msg}；正文未改变，未开始出图`);
-      setCustomNoteProgress((prev) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
+      setCustomNoteProgress((prev: any) => ({ ...prev, status: "failed", percent: prev.status === "running" ? prev.percent : 0, error: msg }));
     }
   };
 
@@ -260,7 +260,7 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
     /** 纯文本长文里用户主动买的提炼，服务端据此收提炼费 */
     chargeDistillFee?: boolean;
   }): Promise<string> => {
-    setCustomNoteProgress((prev) => ({ status: "running", percent: Math.max(prev.status === "running" ? prev.percent : 0, 1), label: "提交提炼任务…" }));
+    setCustomNoteProgress((prev: any) => ({ status: "running", percent: Math.max(prev.status === "running" ? prev.percent : 0, 1), label: "提交提炼任务…" }));
     // 新一轮提炼开始：旧书的真源作废，避免切档把上一本写回来；版本 +1 让在途派生的回写失效
     bumpCustomNoteRevision();
     // 原文提炼已经产出完整 Markdown，不再额外启动逐段设计顾问。
@@ -279,7 +279,7 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
     setCustomNoteDistillJobId(trackedJobId);
     const pollController=new AbortController();
     knowledgePollingRef.current?.abort();knowledgePollingRef.current=pollController;
-    const queued = await submitKnowledgeCardOnce(() => prepareKnowledgeCardCopyMutation.mutateAsync({
+    const queued: any = await submitKnowledgeCardOnce(() => prepareKnowledgeCardCopyMutation.mutateAsync({
       pageRequestId,
       sourceText: args.sourceText,
       files: args.files?.length ? args.files : undefined,
@@ -292,7 +292,7 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
     }), error=>{knowledgeCardPageTasks.finish(pageRequestId);pollController.abort(error);}).catch(error=>{
       knowledgeCardPageTasks.finish(pageRequestId);
       readingControllerRef.current?.stop();
-      setCustomNoteDistillJobId(prev=>prev===trackedJobId?"":prev);
+      setCustomNoteDistillJobId((prev: any)=>prev===trackedJobId?"":prev);
       if(customNoteTrackedRequestRef.current?.jobId===trackedJobId)customNoteTrackedRequestRef.current=null;
       throw error;
     });
@@ -378,7 +378,7 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
         signal:pollController.signal,
         onUnavailable: error => {
           const message=knowledgeCardRecoveryMessage(error);
-          setCustomNoteProgress(prev=>({...prev,status:"running",label:message}));
+          setCustomNoteProgress((prev: any)=>({...prev,status:"running",label:message}));
           setCustomNoteUploadStatus(message);
         },
       intervalMs: 3000,
@@ -425,7 +425,7 @@ export function useKnowledgeCardDistill(deps: UseKnowledgeCardDistillDeps) {
     return String(out.distilledMarkdown || "").trim();
     } finally {
       // 只清自己那单：迟到的旧轮询不许把新任务的终止按钮抹掉
-      setCustomNoteDistillJobId((prev) => (prev === ownedJobId ? "" : prev));
+      setCustomNoteDistillJobId((prev: any) => (prev === ownedJobId ? "" : prev));
       if(customNoteTrackedRequestRef.current?.jobId===ownedJobId)customNoteTrackedRequestRef.current=null;
       if(customNoteFollowOnlyJobRef.current===ownedJobId)customNoteFollowOnlyJobRef.current="";
       setCustomNoteCancelRequested(false);

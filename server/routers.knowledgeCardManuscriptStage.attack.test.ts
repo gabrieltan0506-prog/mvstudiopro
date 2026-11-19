@@ -186,7 +186,7 @@ describe("篡改与越界：全部在占位与扣费之前拒绝", () => {
     const digest = sha(BIG);
     await caller().mvAnalysis.stageKnowledgeCardManuscriptChunk({ digest, index: 0, count: 3, totalChars: BIG.length, text: BIG.slice(0, C) });
     await expect(caller().mvAnalysis.finalizeKnowledgeCardManuscript({ digest, count: 3, totalChars: BIG.length })).rejects.toThrow("缺第 2、3 段");
-    expect([...mocks.objects.keys()].some(k => k.endsWith("manifest.json"))).toBe(false);
+    expect(Array.from(mocks.objects.keys()).some(k => k.endsWith("manifest.json"))).toBe(false);
     await sealed();
     const snapshot = new Map(mocks.objects);
     await expect(caller().mvAnalysis.stageKnowledgeCardManuscriptChunk({ digest, index: 2, count: 3, totalChars: BIG.length, text: "改".repeat(BIG.length - 2 * C) })).rejects.toThrow("内容不同");
@@ -207,7 +207,7 @@ describe("篡改与越界：全部在占位与扣费之前拒绝", () => {
     };
     const [a, b] = await Promise.all([upload(), upload()]);
     expect(a).toEqual(b);
-    expect([...mocks.objects.keys()].filter(k => k.endsWith("manifest.json"))).toHaveLength(1);
+    expect(Array.from(mocks.objects.keys()).filter(k => k.endsWith("manifest.json"))).toHaveLength(1);
     expect(await loadHandbookManuscript(7, digest)).toBe(BIG);
   });
 
