@@ -351,6 +351,7 @@ import {
 } from "@/components/platform/KnowledgeCardProgress";
 import {
   KnowledgeCardPreflight,
+  knowledgeCardPublicTierLabel,
   type KnowledgeCardPreflightSummary,
 } from "@/components/platform/KnowledgeCardPreflight";
 import {
@@ -14819,8 +14820,8 @@ export default function PlatformPage() {
                         }
                         title={
                           customNotePreparedModel
-                            ? "选择影响下一次读档；当前稿件仍保留原读档模型和计费依据"
-                            : "选择本次读档模型"
+                            ? "选择影响下一次读档；当前稿件仍保留原读档档位和计费依据"
+                            : "选择本次读档档位"
                         }
                         onChange={(e) => {
                           const next = e.target.value as KnowledgeCardDistillModelId;
@@ -14835,11 +14836,11 @@ export default function PlatformPage() {
                       >
                         {KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.map((o) => (
                           <option key={o.id} value={o.id}>
-                            {o.labelZh} · {o.creditsFull}积分/页
+                            {canShowPlatformDebug && debugMode ? o.labelZh : knowledgeCardPublicTierLabel(o.labelZh)} · {o.creditsFull}积分/页
                           </option>
                         ))}
                       </select>
-                      {customNotePreparedModel && <span>当前稿件：{knowledgeCardRecordedModelLabel(customNotePreparedModel)}；选择框用于下次读档</span>}
+                      {customNotePreparedModel && <span>当前稿件：{canShowPlatformDebug && debugMode ? knowledgeCardRecordedModelLabel(customNotePreparedModel) : knowledgeCardPublicTierLabel(knowledgeCardRecordedModelLabel(customNotePreparedModel))}；选择框用于下次读档</span>}
                       <span>配图：{HANDBOOK_IMAGE_TIER_LABEL_ZH}（手册固定档）</span>
                     </label>
                   ) : null}

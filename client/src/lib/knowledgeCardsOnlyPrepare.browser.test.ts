@@ -1,6 +1,6 @@
 /**
  * 1119 C3：真实 EditableLayoutStudio（esbuild 打包 + puppeteer，全离线；只桩 trpc 与顾问流）。
- * - 只出卡片：一次云端保存、写 synchronizedStarted、不写 automaticLayout、零报价、零顾问请求、不需要 start。
+ * - 只出卡片：确认前零保存；确认后 start 一次云端保存、写 synchronizedStarted 与内文未授权、不写 automaticLayout、零报价、零顾问请求；补齐不自动续整理。
  * - 手册路径：三项报价并发发出；任一失败按原串行顺序抛第一个错误，不提交排版、不继续。
  */
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -15,7 +15,9 @@ beforeAll(async () => {
     stdin: { resolveDir: process.cwd(), sourcefile: "cards-only.tsx", loader: "tsx", contents: `
 import React,{useRef}from'react';import{createRoot}from'react-dom/client';import Studio from'./client/src/components/platform/EditableLayoutStudio';
 window.saved={library:{version:1,owner:'7',documents:[]},generation:'0'};window.saves=0;window.calls=[];window.quotes=[];window.quoteMode={};window.pendingQuotes=[];
-function App(){const ref=useRef();window.prepare=(opts)=>ref.current.prepare({kind:'knowledge-publication',owner:'7',sourceId:'cards',title:'新手册',body:'完整资料'},async()=>{},undefined,opts);window.start=(id,c)=>ref.current.start(id,c);return <Studio ref={ref} owner='7' source={null} compact/>};createRoot(document.getElementById('root')).render(<App/>);
+function App(){const ref=useRef();const src={kind:'knowledge-publication',owner:'7',sourceId:'cards',title:'新手册',body:'完整资料'};const imgSrc={...src,pages:[{headline:'第一页',body:'光合作用',pageIndex:1,imageJobId:'job-1'}]};
+window.prepare=(opts,withImage)=>ref.current.prepare(withImage?{...imgSrc,sourceId:'cards-'+Math.random()}:src,async()=>{},undefined,opts);window.start=(id,c)=>ref.current.start(id,c);
+window.imageJobs=()=>ref.current.imageJobs('光合作用','deepseek-v4.1-flash-1017',null);window.attach=(a,b,r)=>ref.current.attachImage(a,b,r);return <Studio ref={ref} owner='7' source={null} compact/>};createRoot(document.getElementById('root')).render(<App/>);
 ` },
     bundle: true, write: false, format: "iife", platform: "browser", jsx: "automatic",
     alias: { "@": path.resolve("client/src"), "@shared": path.resolve("shared") },
@@ -50,19 +52,51 @@ async function mount(): Promise<{ page: Page; errors: string[] }> {
 }
 const w = (page: Page, expr: string) => page.evaluate(expr) as Promise<any>;
 
-it("只出卡片：一次云端保存，写 synchronizedStarted，不写 automaticLayout，零报价零顾问", async () => {
+it("只出卡片：确认前零保存零报价；确认后 start 一次云端保存，写 synchronizedStarted、内文未授权，不写 automaticLayout，零顾问", async () => {
   const { page, errors } = await mount();
   const quote = await page.evaluate(() => (window as any).prepare({ cardsOnly: true }));
   expect(quote).toMatchObject({ maxCredits: 0, estimatedCredits: 0 });
+  expect(await w(page, "window.saves")).toBe(0);
+  expect(await w(page, "window.quotes.length")).toBe(0);
+  await expect(page.evaluate(q => (window as any).start(q.documentId, 5), quote)).rejects.toThrow("不含排版收费");
+  await page.evaluate(q => (window as any).start(q.documentId, 0), quote);
   expect(await w(page, "window.saves")).toBe(1);
   expect(await w(page, "window.quotes.length")).toBe(0);
   const pub = await w(page, "window.saved.library.documents[0].publication");
   expect(pub.synchronizedStarted).toBe(true);
+  expect(pub.billing).toEqual({ version: "interior-pages-v1", confirmed: false });
   expect(pub.automaticLayout).toBeUndefined();
   await new Promise(r => setTimeout(r, 500));
   expect(await w(page, "window.calls.length")).toBe(0);
-  // 不调用 start：start 对只出卡片会因无准备记录而拒绝，证明不存在可被误触的顾问启动
+  // 准备记录只用一次：再次 start 拒绝
   await expect(page.evaluate(q => (window as any).start(q.documentId, 0), quote)).rejects.toThrow("同步稿件已变化");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 60_000);
+
+it("只出卡片：确认弹窗取消（不 start）不留「已开始」空壳稿，补图身份仍指向原成品", async () => {
+  const { page, errors } = await mount();
+  // 原成品（已确认并开始出图的只出卡片稿）
+  const first = await page.evaluate(() => (window as any).prepare({ cardsOnly: true }, true));
+  await page.evaluate(q => (window as any).start(q.documentId, 0), first);
+  expect(await w(page, "window.imageJobs()")).toEqual(["job-1"]);
+  // 同一正文再点「只出卡片」，弹窗里取消：不能出现更新的「已开始」稿抢走补图身份
+  await page.evaluate(() => (window as any).prepare({ cardsOnly: true }, true));
+  expect(await w(page, "window.saved.library.documents.length")).toBe(1);
+  expect(await w(page, "window.imageJobs()")).toEqual(["job-1"]);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 60_000);
+
+it("只出卡片：补齐最后一页（resume）不自动启动顾问整理", async () => {
+  const { page, errors } = await mount();
+  const cards = await page.evaluate(() => (window as any).prepare({ cardsOnly: true }, true));
+  await page.evaluate(q => (window as any).start(q.documentId, 0), cards);
+  const before = await w(page, "window.quotes.length");
+  await page.evaluate(() => (window as any).attach("job-1", "job-1", true));
+  await new Promise(r => setTimeout(r, 800));
+  expect(await w(page, "window.quotes.length")).toBe(before);
+  expect(await w(page, "window.calls.length")).toBe(0);
   expect(errors).toEqual([]);
   await page.close();
 }, 60_000);

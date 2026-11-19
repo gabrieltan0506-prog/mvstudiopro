@@ -355,13 +355,21 @@ describe("1119 C1/C2/C3 生成入口", () => {
     expect(ctx.generateCustomNoteMutation.mutateAsync).not.toHaveBeenCalled();
     expect(ctx.layoutStudioRef.current.start).not.toHaveBeenCalled();
   });
-  it("只出卡片：prepare 带 cardsOnly，不调用 start，仍逐页出图", async () => {
+  it("只出卡片：prepare 带 cardsOnly，确认后 start 授权额为 0（只存云稿），仍逐页出图", async () => {
     const ctx = renderContext(); ctx.customNoteCardsOnly = true;
+    ctx.layoutStudioRef.current.prepare = vi.fn(async () => ({ documentId: "doc", maxCredits: 0 }));
     await ctx.generate();
     expect(ctx.layoutStudioRef.current.prepare.mock.calls[0][3]).toMatchObject({ cardsOnly: true, preparePresentation: false });
     expect(ctx.askKnowledgeCardPreflight.mock.calls[0][0]).toMatchObject({ cardsOnly: true, textPageCount: 0 });
-    expect(ctx.layoutStudioRef.current.start).not.toHaveBeenCalled();
+    expect(ctx.layoutStudioRef.current.start).toHaveBeenCalledWith("doc", 0);
+    expect(ctx.layoutStudioRef.current.start.mock.invocationCallOrder[0]).toBeLessThan(ctx.generateCustomNoteMutation.mutateAsync.mock.invocationCallOrder[0]);
     expect(ctx.generateCustomNoteMutation.mutateAsync).toHaveBeenCalledTimes(1);
+  });
+  it("只出卡片：确认弹窗取消→不调用 start（云稿不写「已开始」），零出图", async () => {
+    const ctx = renderContext(); ctx.customNoteCardsOnly = true; ctx.askKnowledgeCardPreflight = vi.fn(async () => false);
+    await ctx.generate();
+    expect(ctx.layoutStudioRef.current.start).not.toHaveBeenCalled();
+    expect(ctx.generateCustomNoteMutation.mutateAsync).not.toHaveBeenCalled();
   });
   it("批次错误带分项计数时，失败提示如实报已完成页而非「未生成」", () => {
     const counts = knowledgeIllustrationBatchCounts(Object.assign(new Error("部分页失败"), { counts: { succeeded: 3, failed: 1, pendingVerification: 1, notDispatched: 2 } }));
@@ -454,5 +462,22 @@ describe("1119 C4 生成入口：大稿只带摘要与本页正文", () => {
     expect(sent[0].pageBody).toBe(page);
     for (const v of Object.values(sent[0])) if (typeof v === "string") expect(v.length).toBeLessThanOrEqual(200_000);
     expect(ctx.trpcUtils.client.mvAnalysis.finalizeKnowledgeCardManuscript.mutate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("读档档位下拉：普通用户只见档名（1119 复审）", () => {
+  it("下拉选项与「当前稿件」在非 debug 时经 knowledgeCardPublicTierLabel，且档名不含任何模型/供应商名", async () => {
+    const { KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS, knowledgeCardRecordedModelLabel: label } = await import("../../../shared/knowledgeCardDistillModels");
+    const { knowledgeCardPublicTierLabel } = await import("../components/platform/KnowledgeCardPreflight");
+    for (const o of KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS) {
+      expect(knowledgeCardPublicTierLabel(o.labelZh)).not.toMatch(/deepseek|glm|gpt|gemini|flash|openai|evolink/i);
+      expect(knowledgeCardPublicTierLabel(label(o.id))).not.toMatch(/deepseek|glm|gpt|gemini|flash/i);
+    }
+    expect(knowledgeCardPublicTierLabel(label("some-old-model-id"))).not.toContain("some-old-model-id");
+    const page = readFileSync(new URL("../pages/PlatformPage.tsx", import.meta.url), "utf8");
+    const select = page.slice(page.indexOf("KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.map((o) =>"), page.indexOf("选择框用于下次读档"));
+    expect(select).toContain("canShowPlatformDebug && debugMode ? o.labelZh : knowledgeCardPublicTierLabel(o.labelZh)");
+    expect(select).toContain("knowledgeCardPublicTierLabel(knowledgeCardRecordedModelLabel(customNotePreparedModel))");
+    expect(select).not.toMatch(/\{o\.labelZh\} ·/);
   });
 });

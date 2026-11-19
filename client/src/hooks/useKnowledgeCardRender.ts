@@ -634,11 +634,9 @@ export function useKnowledgeCardRender(deps: UseKnowledgeCardRenderDeps) {
           setCustomNoteProgress({ status: "idle", percent: 0 });
           return;
         }
-        // 只出卡片不调用 start：prepare 已写入 synchronizedStarted，不启动顾问/排版。
-        if (!cardsOnly) {
-          try { await studio.start(publicationQuote.documentId, publicationQuote.maxCredits); }
-          catch (error) { pageRequestIds.forEach(id => knowledgeCardPageTasks.finish(id)); throw error; }
-        }
+        // 确认后才写入「已开始」：只出卡片时 start 只保存一次云稿（图片任务身份），不启动顾问/排版、授权额为 0。
+        try { await studio.start(publicationQuote.documentId, cardsOnly ? 0 : publicationQuote.maxCredits); }
+        catch (error) { pageRequestIds.forEach(id => knowledgeCardPageTasks.finish(id)); throw error; }
         setCustomNoteImages([]);
         setCustomNoteImageUpper(null);
         setCustomNoteImageLower(null);
